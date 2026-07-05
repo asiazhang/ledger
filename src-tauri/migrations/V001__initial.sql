@@ -28,17 +28,18 @@ CREATE TABLE IF NOT EXISTS categories (
 );
 
 CREATE TABLE IF NOT EXISTS transactions (
-    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-    kind                 TEXT NOT NULL CHECK(kind IN ('income','expense','transfer')),
-    amount_cents         INTEGER NOT NULL,
-    currency_code        TEXT NOT NULL,
-    amount_native_cents  INTEGER NOT NULL,
-    account_id           INTEGER NOT NULL,
-    to_account_id        INTEGER,
-    category_id          INTEGER,
-    note                 TEXT,
-    date                 TEXT NOT NULL,
-    created_at           TEXT NOT NULL
+    id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind                      TEXT NOT NULL CHECK(kind IN ('income','expense','transfer','refund')),
+    amount_cents              INTEGER NOT NULL,
+    currency_code             TEXT NOT NULL,
+    amount_native_cents       INTEGER NOT NULL,
+    account_id                INTEGER NOT NULL,
+    to_account_id             INTEGER,
+    category_id               INTEGER,
+    refund_of_transaction_id  INTEGER,
+    note                      TEXT,
+    date                      TEXT NOT NULL,
+    created_at                TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS budgets (
@@ -60,3 +61,4 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
 CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_refund ON transactions(refund_of_transaction_id);

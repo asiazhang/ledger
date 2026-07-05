@@ -32,7 +32,9 @@ const amount = ref<number | null>(null)
 const startDate = ref(Date.now())
 
 const categoryOptions = () =>
-  store.expenseCategories.map((c) => ({ label: c.name, value: c.id }))
+  store.rootCategories
+    .filter((c) => c.kind === 'expense')
+    .map((c) => ({ label: c.name, value: c.id }))
 
 async function refresh() {
   loading.value = true

@@ -5,6 +5,7 @@ import {
   NButton,
   NSpace,
   NPopconfirm,
+  NTag,
   useMessage,
   type DataTableColumns,
 } from 'naive-ui'
@@ -45,13 +46,27 @@ const columns: DataTableColumns<Transaction> = [
     title: '类型',
     key: 'kind',
     width: 80,
-    render: (row) => TRANSACTION_KIND_LABELS[row.kind as keyof typeof TRANSACTION_KIND_LABELS],
+    render: (row) => {
+      const type =
+        row.kind === 'income'
+          ? 'success'
+          : row.kind === 'expense'
+            ? 'warning'
+            : row.kind === 'refund'
+              ? 'info'
+              : 'default'
+      return h(
+        NTag,
+        { type },
+        () => TRANSACTION_KIND_LABELS[row.kind as keyof typeof TRANSACTION_KIND_LABELS],
+      )
+    },
   },
   {
     title: '分类',
     key: 'category_id',
     render: (row) =>
-      row.category_id ? store.categoryMap.get(row.category_id)?.name ?? '-' : '-',
+      row.category_id ? store.categoryPath(row.category_id) || '-' : '-',
   },
   {
     title: '账户',
@@ -67,11 +82,13 @@ const columns: DataTableColumns<Transaction> = [
       h(
         'span',
         {
-          style:
-            row.kind === 'income'
-              ? 'color: #18a058'
-              : row.kind === 'expense'
-                ? 'color: #d03050'
+        style:
+          row.kind === 'income'
+            ? 'color: #18a058'
+            : row.kind === 'expense'
+              ? 'color: #d03050'
+              : row.kind === 'refund'
+                ? 'color: #2080f0'
                 : '',
         },
         formatAmount(row.amount_native_cents, store.getCurrency(row.currency_code)),

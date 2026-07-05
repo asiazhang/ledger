@@ -46,7 +46,7 @@ export interface CategoryInput {
   parent_id?: number | null
 }
 
-export type TransactionKind = 'income' | 'expense' | 'transfer'
+export type TransactionKind = 'income' | 'expense' | 'transfer' | 'refund'
 
 export interface Transaction {
   id: number
@@ -57,6 +57,7 @@ export interface Transaction {
   account_id: number
   to_account_id: number | null
   category_id: number | null
+  refund_of_transaction_id: number | null
   note: string | null
   date: string
   created_at: string
@@ -69,6 +70,7 @@ export interface TransactionInput {
   account_id: number
   to_account_id?: number | null
   category_id?: number | null
+  refund_of_transaction_id?: number | null
   note?: string | null
   date: string
 }
@@ -99,6 +101,7 @@ export interface MonthlySummary {
   month: string
   income_cents: number
   expense_cents: number
+  refund_cents: number
 }
 
 export interface CategoryShare {
@@ -136,4 +139,5 @@ export const TRANSACTION_KIND_LABELS: Record<TransactionKind, string> = {
   income: '收入',
   expense: '支出',
   transfer: '转账',
+  refund: '退款',
 }

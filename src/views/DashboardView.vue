@@ -55,7 +55,7 @@ onMounted(async () => {
                 <NText depth="3" style="font-size: 12px">{{ t.date }}</NText>
                 <NText depth="2">{{ t.note }}</NText>
               </NSpace>
-              <NText :type="t.kind === 'income' ? 'success' : t.kind === 'expense' ? 'error' : 'default'">
+              <NText :type="t.kind === 'income' ? 'success' : t.kind === 'expense' ? 'error' : t.kind === 'refund' ? 'info' : 'default'">
                 {{ formatAmount(t.amount_native_cents, store.getCurrency(t.currency_code)) }}
               </NText>
             </div>

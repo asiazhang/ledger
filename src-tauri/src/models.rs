@@ -56,6 +56,7 @@ pub struct Transaction {
     pub account_id: i64,
     pub to_account_id: Option<i64>,
     pub category_id: Option<i64>,
+    pub refund_of_transaction_id: Option<i64>,
     pub note: Option<String>,
     pub date: String,
     pub created_at: String,
@@ -69,6 +70,7 @@ pub struct TransactionInput {
     pub account_id: i64,
     pub to_account_id: Option<i64>,
     pub category_id: Option<i64>,
+    pub refund_of_transaction_id: Option<i64>,
     pub note: Option<String>,
     pub date: String,
 }
@@ -101,6 +103,7 @@ pub struct MonthlySummary {
     pub month: String,
     pub income_cents: i64,
     pub expense_cents: i64,
+    pub refund_cents: i64,
 }
 
 #[derive(Debug, Serialize)]

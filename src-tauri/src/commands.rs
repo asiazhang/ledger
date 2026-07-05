@@ -117,9 +117,19 @@ fn account_balance(conn: &Connection, account_id: i64) -> Result<i64> {
             |r| r.get(0),
         )
         .ok();
+    // 退款退回原账户（refund 继承原交易 account_id），计入账户余额。
+    let refund: Option<i64> = conn
+        .query_row(
+            "SELECT COALESCE(SUM(amount_native_cents),0) FROM transactions \
+             WHERE account_id=?1 AND kind='refund'",
+            params![account_id],
+            |r| r.get(0),
+        )
+        .ok();
     Ok(
         initial + income.unwrap_or(0) - expense.unwrap_or(0) + transfer_in.unwrap_or(0)
-            - transfer_out.unwrap_or(0),
+            - transfer_out.unwrap_or(0)
+            + refund.unwrap_or(0),
     )
 }
 
@@ -206,13 +216,13 @@ pub fn list_transactions(db: State<'_, DbState>, limit: Option<i64>) -> Result<V
     let sql = match limit {
         Some(n) => format!(
             "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
-             to_account_id,category_id,note,date,created_at FROM transactions \
-             ORDER BY date DESC, id DESC LIMIT {n}"
+             to_account_id,category_id,refund_of_transaction_id,note,date,created_at \
+             FROM transactions ORDER BY date DESC, id DESC LIMIT {n}"
         ),
         None => String::from(
             "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
-             to_account_id,category_id,note,date,created_at FROM transactions \
-             ORDER BY date DESC, id DESC",
+             to_account_id,category_id,refund_of_transaction_id,note,date,created_at \
+             FROM transactions ORDER BY date DESC, id DESC",
         ),
     };
     let mut stmt = conn.prepare(&sql)?;
@@ -226,9 +236,10 @@ pub fn list_transactions(db: State<'_, DbState>, limit: Option<i64>) -> Result<V
             account_id: r.get(5)?,
             to_account_id: r.get(6)?,
             category_id: r.get(7)?,
-            note: r.get(8)?,
-            date: r.get(9)?,
-            created_at: r.get(10)?,
+            refund_of_transaction_id: r.get(8)?,
+            note: r.get(9)?,
+            date: r.get(10)?,
+            created_at: r.get(11)?,
         })
     })?;
     rows.collect::<std::result::Result<Vec<_>, _>>()
@@ -243,22 +254,54 @@ pub fn create_transaction(db: State<'_, DbState>, input: TransactionInput) -> Re
     if input.kind == "transfer" && input.to_account_id.is_none() {
         return Err(AppError::Invalid("转账必须指定目标账户".into()));
     }
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+
+    // 退款必须从已有支出交易发起：校验原交易存在且 kind='expense'，
+    // 并强制继承原交易的分类、账户、币种（忽略前端传入的不一致值）。
+    let (category_id, account_id, currency_code, refund_of_id) = if input.kind == "refund" {
+        let ref_id = input
+            .refund_of_transaction_id
+            .ok_or_else(|| AppError::Invalid("退款必须关联原支出交易".into()))?;
+        let (cat, acc, cur, okind): (Option<i64>, i64, String, String) = conn.query_row(
+            "SELECT category_id, account_id, currency_code, kind \
+             FROM transactions WHERE id=?1",
+            params![ref_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
+        if okind != "expense" {
+            return Err(AppError::Invalid("退款只能关联支出交易".into()));
+        }
+        (cat, acc, cur, Some(ref_id))
+    } else {
+        (
+            input.category_id,
+            input.account_id,
+            input.currency_code.clone(),
+            None,
+        )
+    };
+
     // MVP：amount_native 直接等于 amount_cents（暂按 1:1，多币种换算留待后续）。
     let native = input.amount_cents;
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let to_account_id = if input.kind == "transfer" {
+        input.to_account_id
+    } else {
+        None
+    };
     conn.execute(
         "INSERT INTO transactions \
          (kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
-         category_id,note,date,created_at) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+         category_id,refund_of_transaction_id,note,date,created_at) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
         params![
             input.kind,
             input.amount_cents,
-            input.currency_code,
+            currency_code,
             native,
-            input.account_id,
-            input.to_account_id,
-            input.category_id,
+            account_id,
+            to_account_id,
+            category_id,
+            refund_of_id,
             input.note,
             input.date,
             now_iso()
@@ -329,7 +372,8 @@ pub fn monthly_summary(db: State<'_, DbState>, year: i64) -> Result<Vec<MonthlyS
     let mut stmt = conn.prepare(
         "SELECT substr(date,1,7) AS month, \
          SUM(CASE WHEN kind='income' THEN amount_native_cents ELSE 0 END) AS income, \
-         SUM(CASE WHEN kind='expense' THEN amount_native_cents ELSE 0 END) AS expense \
+         SUM(CASE WHEN kind='expense' THEN amount_native_cents ELSE 0 END) AS expense, \
+         SUM(CASE WHEN kind='refund' THEN amount_native_cents ELSE 0 END) AS refund \
          FROM transactions WHERE substr(date,1,4)=?1 \
          GROUP BY month ORDER BY month",
     )?;
@@ -338,6 +382,7 @@ pub fn monthly_summary(db: State<'_, DbState>, year: i64) -> Result<Vec<MonthlyS
             month: r.get::<_, String>(0)?,
             income_cents: r.get::<_, Option<i64>>(1)?.unwrap_or(0),
             expense_cents: r.get::<_, Option<i64>>(2)?.unwrap_or(0),
+            refund_cents: r.get::<_, Option<i64>>(3)?.unwrap_or(0),
         })
     })?;
     rows.collect::<std::result::Result<Vec<_>, _>>()
@@ -351,17 +396,28 @@ pub fn category_shares(
     month: Option<String>,
 ) -> Result<Vec<CategoryShare>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let mut sql = String::from(
-        "SELECT t.category_id, COALESCE(c.name,'未分类'), SUM(t.amount_native_cents) \
+    // 支出饼图按净支出（expense - refund）聚合；收入饼图仅聚合 income。
+    // 退款复用原支出交易的 category_id，因此与 expense 同分类聚合即可冲减。
+    let (kinds, sign_expr) = if kind == "expense" {
+        (
+            "'expense','refund'",
+            "CASE WHEN t.kind='expense' THEN t.amount_native_cents \
+              WHEN t.kind='refund' THEN -t.amount_native_cents ELSE 0 END",
+        )
+    } else {
+        ("'income'", "t.amount_native_cents")
+    };
+    let mut sql = format!(
+        "SELECT t.category_id, COALESCE(c.name,'未分类'), SUM({sign_expr}) AS net \
          FROM transactions t LEFT JOIN categories c ON c.id=t.category_id \
-         WHERE t.kind=?1",
+         WHERE t.kind IN ({kinds})"
     );
-    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(kind.clone())];
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
     if let Some(m) = month {
-        sql.push_str(" AND substr(t.date,1,7)=?2");
+        sql.push_str(" AND substr(t.date,1,7)=?1");
         params_vec.push(Box::new(m));
     }
-    sql.push_str(" GROUP BY t.category_id ORDER BY SUM(t.amount_native_cents) DESC");
+    sql.push_str(" GROUP BY t.category_id ORDER BY net DESC");
     let params_ref: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params_ref.as_slice(), |r| {
@@ -380,9 +436,13 @@ pub fn budget_progress(db: State<'_, DbState>) -> Result<Vec<BudgetProgress>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let mut stmt = conn.prepare(
         "SELECT b.id,b.category_id,b.period,b.amount_cents,b.start_date,c.name, \
-         COALESCE((SELECT SUM(amount_native_cents) FROM transactions t \
-                   WHERE t.category_id=b.category_id AND t.kind='expense' \
-                   AND substr(t.date,1,7)=substr(b.start_date,1,7)),0) \
+         COALESCE((SELECT SUM(CASE WHEN t.kind='expense' THEN t.amount_native_cents \
+                                   WHEN t.kind='refund' THEN -t.amount_native_cents \
+                                   ELSE 0 END) \
+                   FROM transactions t \
+                   JOIN categories tc ON tc.id=t.category_id \
+                   WHERE (tc.id=b.category_id OR tc.parent_id=b.category_id) \
+                     AND substr(t.date,1,7)=substr(b.start_date,1,7)),0) \
          FROM budgets b LEFT JOIN categories c ON c.id=b.category_id ORDER BY b.id",
     )?;
     let rows = stmt.query_map([], |r| {
