@@ -1,0 +1,63 @@
+# AGENTS.md
+
+This file provides guidance to WARP (warp.dev) when working with code in this repository.
+
+## 项目概览
+
+Ledger 是一个基于 Tauri 2 的桌面记账应用（账本）。前端 Vue 3 + TypeScript + Vite，后端 Rust。数据存储在嵌入式 SQLite（`rusqlite` bundled）中，UI 全中文，使用 Naive UI 组件库与 ECharts 图表。
+
+## 常用命令
+
+开发与构建（在仓库根目录执行）：
+- `npm run tauri dev` — 启动完整开发环境（Vite dev server + Rust 后端，热重载）。这是日常开发主命令。
+- `npm run tauri build` — 构建发布版桌面应用（先 `npm run build` 再编译 Rust 并打包）。
+- `npm run build` — 仅构建前端（等价 `vue-tsc --noEmit && vite build`，会做类型检查）。
+- `npm run dev` — 仅启动前端 Vite（端口 1420），无 Rust 后端，invoke 调用会失败，仅在纯 UI 调试时使用。
+
+类型检查与 Rust 质量检查：
+- 前端类型检查：`npx vue-tsc --noEmit`（`tsconfig.json` 开启了 strict、noUnusedLocals、noUnusedParameters）。
+- Rust 检查（在 `src-tauri/` 下）：`cargo clippy --all-targets --all-features`，并运行 `cargo fmt` 格式化。请修复所有 clippy 警告。
+- Rust 单测：`cargo test --all`（在 `src-tauri/` 下）。当前项目尚无测试用例，新增逻辑时应补充。
+
+> 注意：Vite dev server 固定占用 1420 端口（`strictPort: true`），且 Vite 配置已忽略 `src-tauri/**` 的文件监听，改 Rust 代码需靠 `tauri dev` 自身的 Rust 热重载。
+
+## 架构要点
+
+### Tauri IPC 数据流
+后端命令集中在 `src-tauri/src/commands.rs`，每个 `#[tauri::command]` 函数在 `src-tauri/src/lib.rs` 的 `generate_handler![...]` 中注册。前端通过 `@tauri-apps/api/core` 的 `invoke` 调用，所有调用统一封装在 `src/api/index.ts` 的 `api` 对象里——新增后端命令时必须同步三处：
+1. `commands.rs` 加 `#[tauri::command]` 函数；
+2. `lib.rs` 的 `generate_handler!` 注册；
+3. `src/api/index.ts` 加对应方法；
+4. 必要时在 `src/types/index.ts` 加 TS 类型（与 `src-tauri/src/models.rs` 的 serde 结构对应，注意 `#[serde(rename = "type")]` 这类字段名映射）。
+
+### 数据库
+- 单一 SQLite 连接封装在 `DbState { conn: Mutex<Connection> }`，于 `lib.rs` 的 `setup` 中通过 `commands::open_db` 创建并 `app.manage()` 注入为 Tauri State。数据库文件位于 `app_data_dir/ledger.db`（macOS 上是 `~/Library/Application Support/com.zhangheng.ledger/ledger.db`）。
+- Schema 与种子数据在 `src-tauri/src/db.rs::init_db` 中以 `CREATE TABLE IF NOT EXISTS` 幂等创建，首次启动自动写入默认币种（CNY/USD/EUR）与中文常用分类（餐饮/交通/…/工资/奖金…）。修改表结构直接在此函数内加 `CREATE TABLE IF NOT EXISTS` / 迁移 SQL，无独立迁移工具。
+- 表：`currencies`、`accounts`、`categories`、`transactions`、`budgets`、`exchange_rates`（已建表但尚未使用）。
+
+### 金额与多币种（重要约定）
+- 所有金额以**整数分**存储，字段统一用 `_cents` 后缀（如 `amount_cents`、`initial_balance_cents`、`balance_cents`）。前端用 `src/types/index.ts` 的 `formatAmount(cents, currency)` 按币种 `decimal_places` 格式化展示。
+- `transactions` 同时存 `amount_cents`（原始币种金额）和 `amount_native_cents`（本位币金额）。**当前 MVP 阶段二者始终相等（1:1）**，多币种汇率换算尚未实现，`exchange_rates` 表为此预留。改动金额相关逻辑时勿破坏此约定。
+- 账户余额**不持久化**，由 `commands::account_balance` 实时计算：`初始余额 + 收入 - 支出 + 转入 - 转出`。转账（`kind='transfer'`）用 `account_id` 表示转出账户、`to_account_id` 表示转入账户。
+
+### 交易类型约束
+`transactions.kind` 受数据库 CHECK 约束为 `'income' | 'expense' | 'transfer'`；`categories.kind` 为 `'income' | 'expense'`。`create_transaction` 在 Rust 侧校验金额 > 0、转账必须有 `to_account_id`。前端 `TransactionForm.vue` 与 `ImportView.vue` 同样遵循：导入时按金额正负判定为 income/expense。
+
+### 错误处理
+`src-tauri/src/error.rs` 定义 `AppError`（thiserror + serde，`#[serde(tag = "kind", content = "message")]`），序列化为 `{kind, message}` 传到前端。`Result<T>` 是 `std::result::Result<T, AppError>`。已实现 `From` 转换：`rusqlite::Error`、`std::io::Error`、`csv::Error`。新增可失败命令用 `?` 即可。
+
+### 前端状态与路由
+- 单一 Pinia store `src/stores/app.ts`（`useAppStore`）缓存 `currencies/accounts/categories`，并提供 `currencyMap/categoryMap/accountMap` 计算属性与 `expenseCategories/incomeCategories`。`loadAll()` 幂等加载，`App.vue` 在 `onMounted` 调用一次；各视图按需调用 `store.loadAccounts()` 等刷新。
+- 路由用 hash 模式（`createWebHashHistory`，Tauri webview 需要），7 个视图：dashboard / transactions / accounts / reports / budget / import / settings。视图均懒加载。
+- `@` 别名指向 `./src`（在 `vite.config.ts` 与 `tsconfig.json` 同时配置）。
+- Naive UI 采用**按需 import**（非全局注册），`App.vue` 硬编码使用 `darkTheme` 暗色主题。
+
+### 导入流程（CSV / Excel）
+`preview_import` 命令在 Rust 侧**仅解析不写库**：按表头列名匹配 `date`/`日期`、`amount`/`金额`、`note`/`备注`/`描述`、`category`/`分类`（CSV 用 `csv` crate flexible 模式，Excel 用 `calamine`）。`parse_amount_cents` 支持千分位逗号与负数。实际写库由 `ImportView.vue` 在前端循环调用 `createTransaction` 完成（按金额正负判定 income/expense，单条失败跳过继续）。
+
+## 编码约定
+
+- Rust 代码请保持 `cargo fmt` 格式化、零 clippy 警告；时间戳统一用 `db::now_iso()`（UTC ISO 字符串）。
+- Rust 字符串/错误信息使用中文（与现有 `AppError` 枚举、种子数据一致）。
+- 前端新组件沿用 Naive UI 按需 import + `<script setup lang="ts">` 风格；金额一律走 `formatAmount`，不要在视图中手写 `/100`。
+- 提交代码时使用中文 conventional commit + emoji（详见用户规则），提交信息末尾加 `Co-Authored-By: Oz <oz-agent@warp.dev>` 与 Warp 标识。
