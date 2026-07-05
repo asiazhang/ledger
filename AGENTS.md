@@ -4,7 +4,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## 项目概览
 
-Ledger 是一个基于 Tauri 2 的桌面记账应用（账本）。前端 Vue 3 + TypeScript + Vite，后端 Rust。数据存储在嵌入式 SQLite（`rusqlite` bundled）中，UI 全中文，使用 Naive UI 组件库与 ECharts 图表。
+Ledger 是一个基于 Tauri 2 的桌面记账应用（账本）。前端 Vue 3 + TypeScript + Vite，后端 Rust。数据存储在嵌入式 SQLite（`rusqlite` bundled）中，使用 `rusqlite_migration` 管理 schema 迁移，UI 全中文，使用 Naive UI 组件库与 ECharts 图表。
 
 ## 常用命令
 
@@ -32,7 +32,7 @@ Ledger 是一个基于 Tauri 2 的桌面记账应用（账本）。前端 Vue 3 
 
 ### 数据库
 - 单一 SQLite 连接封装在 `DbState { conn: Mutex<Connection> }`，于 `lib.rs` 的 `setup` 中通过 `commands::open_db` 创建并 `app.manage()` 注入为 Tauri State。数据库文件位于 `app_data_dir/ledger.db`（macOS 上是 `~/Library/Application Support/com.zhangheng.ledger/ledger.db`）。
-- Schema 与种子数据在 `src-tauri/src/db.rs::init_db` 中以 `CREATE TABLE IF NOT EXISTS` 幂等创建，首次启动自动写入默认币种（CNY/USD/EUR）与中文常用分类（餐饮/交通/…/工资/奖金…）。修改表结构直接在此函数内加 `CREATE TABLE IF NOT EXISTS` / 迁移 SQL，无独立迁移工具。
+- Schema 与种子数据均由 `rusqlite_migration` 管理迁移。迁移 SQL 放在 `src-tauri/migrations/` 下（如 `V001__initial.sql`、`V002__seed_defaults.sql`），在 `src-tauri/src/db.rs` 的 `migrations()` 函数里以 `M::up(include_str!("../migrations/V00X__名称.sql"))` 编译期嵌入（用 `OnceLock` 缓存）；默认币种（CNY/USD/EUR）与中文常用分类（餐饮/交通/…/工资/奖金…）由 `V002__seed_defaults.sql` 写入，对已有数据的老用户库升级安全（currencies 走主键 `INSERT OR IGNORE`，categories 走 `WHERE NOT EXISTS` 按 (name,kind) 去重，不产生重复）。**新增表结构变更或种子数据时**：在 `src-tauri/migrations/` 下加 `V00X__名称.sql`，并在 `db.rs` 的 `migrations()` 函数 `vec!` 里追加一条 `M::up(include_str!(...))`，版本由 SQLite `user_version` 字段自动追踪，无需手动维护版本表。
 - 表：`currencies`、`accounts`、`categories`、`transactions`、`budgets`、`exchange_rates`（已建表但尚未使用）。
 
 ### 金额与多币种（重要约定）
