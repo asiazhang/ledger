@@ -15,7 +15,8 @@ fn migrations() -> &'static Migrations<'static> {
     MIGRATIONS.get_or_init(|| {
         Migrations::new(vec![
             M::up(include_str!("../migrations/V001__initial.sql")),
-            M::up(include_str!("../migrations/V002__seed_defaults.sql")),
+            M::up(include_str!("../migrations/V002__investment.sql")),
+            M::up(include_str!("../migrations/V003__seed_defaults.sql")),
         ])
     })
 }
