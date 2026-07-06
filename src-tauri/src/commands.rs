@@ -1,7 +1,7 @@
 use rusqlite::{Connection, params};
 use tauri::{Manager, State};
 
-use crate::db::now_iso;
+use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{
     Account, AccountBalance, AccountInput, Budget, BudgetInput, BudgetProgress, Category,
@@ -38,7 +38,8 @@ pub fn list_currencies(db: State<'_, DbState>) -> Result<Vec<Currency>> {
 pub fn list_accounts(db: State<'_, DbState>) -> Result<Vec<Account>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let mut stmt = conn.prepare(
-        "SELECT id,name,type,currency_code,initial_balance_cents,created_at FROM accounts ORDER BY id",
+        "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted \
+         FROM accounts WHERE is_deleted=0 ORDER BY created_at",
     )?;
     let rows = stmt.query_map([], |r| {
         Ok(Account {
@@ -48,6 +49,10 @@ pub fn list_accounts(db: State<'_, DbState>) -> Result<Vec<Account>> {
             currency_code: r.get(3)?,
             initial_balance_cents: r.get(4)?,
             created_at: r.get(5)?,
+            updated_at: r.get(6)?,
+            version: r.get(7)?,
+            device_id: r.get(8)?,
+            is_deleted: r.get::<_, i64>(9)? != 0,
         })
     })?;
     rows.collect::<std::result::Result<Vec<_>, _>>()
@@ -55,31 +60,40 @@ pub fn list_accounts(db: State<'_, DbState>) -> Result<Vec<Account>> {
 }
 
 #[tauri::command]
-pub fn create_account(db: State<'_, DbState>, input: AccountInput) -> Result<i64> {
+pub fn create_account(db: State<'_, DbState>, input: AccountInput) -> Result<String> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let id = new_uuid();
+    let now = now_iso();
     conn.execute(
-        "INSERT INTO accounts (name,type,currency_code,initial_balance_cents,created_at) \
-         VALUES (?1,?2,?3,?4,?5)",
+        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0)",
         params![
+            id,
             input.name,
             input.kind,
             input.currency_code,
             input.initial_balance_cents.unwrap_or(0),
-            now_iso()
+            now,
+            now,
+            1,
+            device_id()
         ],
     )?;
-    Ok(conn.last_insert_rowid())
+    Ok(id)
 }
 
 #[tauri::command]
-pub fn delete_account(db: State<'_, DbState>, id: i64) -> Result<()> {
+pub fn delete_account(db: State<'_, DbState>, id: String) -> Result<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    conn.execute("DELETE FROM accounts WHERE id=?1", params![id])?;
+    conn.execute(
+        "UPDATE accounts SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
+        params![id, now_iso(), device_id()],
+    )?;
     Ok(())
 }
 
 /// 计算账户当前余额 = 初始余额 + 收入 - 支出（转账从转出账户减，加到转入账户）。
-fn account_balance(conn: &Connection, account_id: i64) -> Result<i64> {
+fn account_balance(conn: &Connection, account_id: &str) -> Result<i64> {
     let initial: i64 = conn.query_row(
         "SELECT initial_balance_cents FROM accounts WHERE id=?1",
         params![account_id],
@@ -88,7 +102,7 @@ fn account_balance(conn: &Connection, account_id: i64) -> Result<i64> {
     let income: Option<i64> = conn
         .query_row(
             "SELECT COALESCE(SUM(amount_native_cents),0) FROM transactions \
-             WHERE account_id=?1 AND kind='income'",
+             WHERE account_id=?1 AND kind='income' AND is_deleted=0",
             params![account_id],
             |r| r.get(0),
         )
@@ -96,7 +110,7 @@ fn account_balance(conn: &Connection, account_id: i64) -> Result<i64> {
     let expense: Option<i64> = conn
         .query_row(
             "SELECT COALESCE(SUM(amount_native_cents),0) FROM transactions \
-             WHERE account_id=?1 AND kind='expense'",
+             WHERE account_id=?1 AND kind='expense' AND is_deleted=0",
             params![account_id],
             |r| r.get(0),
         )
@@ -104,7 +118,7 @@ fn account_balance(conn: &Connection, account_id: i64) -> Result<i64> {
     let transfer_in: Option<i64> = conn
         .query_row(
             "SELECT COALESCE(SUM(amount_native_cents),0) FROM transactions \
-             WHERE to_account_id=?1 AND kind='transfer'",
+             WHERE to_account_id=?1 AND kind='transfer' AND is_deleted=0",
             params![account_id],
             |r| r.get(0),
         )
@@ -112,7 +126,7 @@ fn account_balance(conn: &Connection, account_id: i64) -> Result<i64> {
     let transfer_out: Option<i64> = conn
         .query_row(
             "SELECT COALESCE(SUM(amount_native_cents),0) FROM transactions \
-             WHERE account_id=?1 AND kind='transfer'",
+             WHERE account_id=?1 AND kind='transfer' AND is_deleted=0",
             params![account_id],
             |r| r.get(0),
         )
@@ -121,7 +135,7 @@ fn account_balance(conn: &Connection, account_id: i64) -> Result<i64> {
     let refund: Option<i64> = conn
         .query_row(
             "SELECT COALESCE(SUM(amount_native_cents),0) FROM transactions \
-             WHERE account_id=?1 AND kind='refund'",
+             WHERE account_id=?1 AND kind='refund' AND is_deleted=0",
             params![account_id],
             |r| r.get(0),
         )
@@ -137,7 +151,8 @@ fn account_balance(conn: &Connection, account_id: i64) -> Result<i64> {
 pub fn list_account_balances(db: State<'_, DbState>) -> Result<Vec<AccountBalance>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let mut stmt = conn.prepare(
-        "SELECT id,name,type,currency_code,initial_balance_cents,created_at FROM accounts ORDER BY id",
+        "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted \
+         FROM accounts WHERE is_deleted=0 ORDER BY created_at",
     )?;
     let accounts: Vec<Account> = stmt
         .query_map([], |r| {
@@ -148,6 +163,10 @@ pub fn list_account_balances(db: State<'_, DbState>) -> Result<Vec<AccountBalanc
                 currency_code: r.get(3)?,
                 initial_balance_cents: r.get(4)?,
                 created_at: r.get(5)?,
+                updated_at: r.get(6)?,
+                version: r.get(7)?,
+                device_id: r.get(8)?,
+                is_deleted: r.get::<_, i64>(9)? != 0,
             })
         })?
         .filter_map(|r| r.ok())
@@ -157,7 +176,7 @@ pub fn list_account_balances(db: State<'_, DbState>) -> Result<Vec<AccountBalanc
         .into_iter()
         .map(|a| {
             Ok(AccountBalance {
-                balance_cents: account_balance(&conn, a.id)?,
+                balance_cents: account_balance(&conn, &a.id)?,
                 account: a,
             })
         })
@@ -172,7 +191,8 @@ pub fn list_account_balances(db: State<'_, DbState>) -> Result<Vec<AccountBalanc
 pub fn list_categories(db: State<'_, DbState>) -> Result<Vec<Category>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let mut stmt = conn.prepare(
-        "SELECT id,name,kind,parent_id,icon,color,created_at FROM categories ORDER BY id",
+        "SELECT id,name,kind,parent_id,icon,color,created_at,updated_at,version,device_id,is_deleted \
+         FROM categories WHERE is_deleted=0 ORDER BY kind, created_at",
     )?;
     let rows = stmt.query_map([], |r| {
         Ok(Category {
@@ -183,6 +203,10 @@ pub fn list_categories(db: State<'_, DbState>) -> Result<Vec<Category>> {
             icon: r.get(4)?,
             color: r.get(5)?,
             created_at: r.get(6)?,
+            updated_at: r.get(7)?,
+            version: r.get(8)?,
+            device_id: r.get(9)?,
+            is_deleted: r.get::<_, i64>(10)? != 0,
         })
     })?;
     rows.collect::<std::result::Result<Vec<_>, _>>()
@@ -190,19 +214,25 @@ pub fn list_categories(db: State<'_, DbState>) -> Result<Vec<Category>> {
 }
 
 #[tauri::command]
-pub fn create_category(db: State<'_, DbState>, input: CategoryInput) -> Result<i64> {
+pub fn create_category(db: State<'_, DbState>, input: CategoryInput) -> Result<String> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let id = new_uuid();
+    let now = now_iso();
     conn.execute(
-        "INSERT INTO categories (name,kind,parent_id,created_at) VALUES (?1,?2,?3,?4)",
-        params![input.name, input.kind, input.parent_id, now_iso()],
+        "INSERT INTO categories (id,name,kind,parent_id,icon,color,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,?3,?4,NULL,NULL,?5,?6,?7,?8,0)",
+        params![id, input.name, input.kind, input.parent_id, now, now, 1, device_id()],
     )?;
-    Ok(conn.last_insert_rowid())
+    Ok(id)
 }
 
 #[tauri::command]
-pub fn delete_category(db: State<'_, DbState>, id: i64) -> Result<()> {
+pub fn delete_category(db: State<'_, DbState>, id: String) -> Result<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    conn.execute("DELETE FROM categories WHERE id=?1", params![id])?;
+    conn.execute(
+        "UPDATE categories SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
+        params![id, now_iso(), device_id()],
+    )?;
     Ok(())
 }
 
@@ -213,17 +243,12 @@ pub fn delete_category(db: State<'_, DbState>, id: i64) -> Result<()> {
 #[tauri::command]
 pub fn list_transactions(db: State<'_, DbState>, limit: Option<i64>) -> Result<Vec<Transaction>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let base_sql = "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
+         to_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted \
+         FROM transactions WHERE is_deleted=0 ORDER BY date DESC, created_at DESC";
     let sql = match limit {
-        Some(n) => format!(
-            "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
-             to_account_id,category_id,refund_of_transaction_id,note,date,created_at \
-             FROM transactions ORDER BY date DESC, id DESC LIMIT {n}"
-        ),
-        None => String::from(
-            "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
-             to_account_id,category_id,refund_of_transaction_id,note,date,created_at \
-             FROM transactions ORDER BY date DESC, id DESC",
-        ),
+        Some(n) => format!("{base_sql} LIMIT {n}"),
+        None => String::from(base_sql),
     };
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], |r| {
@@ -240,6 +265,10 @@ pub fn list_transactions(db: State<'_, DbState>, limit: Option<i64>) -> Result<V
             note: r.get(9)?,
             date: r.get(10)?,
             created_at: r.get(11)?,
+            updated_at: r.get(12)?,
+            version: r.get(13)?,
+            device_id: r.get(14)?,
+            is_deleted: r.get::<_, i64>(15)? != 0,
         })
     })?;
     rows.collect::<std::result::Result<Vec<_>, _>>()
@@ -247,7 +276,7 @@ pub fn list_transactions(db: State<'_, DbState>, limit: Option<i64>) -> Result<V
 }
 
 #[tauri::command]
-pub fn create_transaction(db: State<'_, DbState>, input: TransactionInput) -> Result<i64> {
+pub fn create_transaction(db: State<'_, DbState>, input: TransactionInput) -> Result<String> {
     if input.amount_cents <= 0 {
         return Err(AppError::Invalid("金额必须大于 0".into()));
     }
@@ -262,9 +291,9 @@ pub fn create_transaction(db: State<'_, DbState>, input: TransactionInput) -> Re
         let ref_id = input
             .refund_of_transaction_id
             .ok_or_else(|| AppError::Invalid("退款必须关联原支出交易".into()))?;
-        let (cat, acc, cur, okind): (Option<i64>, i64, String, String) = conn.query_row(
+        let (cat, acc, cur, okind): (Option<String>, String, String, String) = conn.query_row(
             "SELECT category_id, account_id, currency_code, kind \
-             FROM transactions WHERE id=?1",
+             FROM transactions WHERE id=?1 AND is_deleted=0",
             params![ref_id],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )?;
@@ -288,12 +317,15 @@ pub fn create_transaction(db: State<'_, DbState>, input: TransactionInput) -> Re
     } else {
         None
     };
+    let id = new_uuid();
+    let now = now_iso();
     conn.execute(
         "INSERT INTO transactions \
-         (kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
-         category_id,refund_of_transaction_id,note,date,created_at) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+         (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
+         category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,0)",
         params![
+            id,
             input.kind,
             input.amount_cents,
             currency_code,
@@ -304,16 +336,22 @@ pub fn create_transaction(db: State<'_, DbState>, input: TransactionInput) -> Re
             refund_of_id,
             input.note,
             input.date,
-            now_iso()
+            now,
+            now,
+            1,
+            device_id()
         ],
     )?;
-    Ok(conn.last_insert_rowid())
+    Ok(id)
 }
 
 #[tauri::command]
-pub fn delete_transaction(db: State<'_, DbState>, id: i64) -> Result<()> {
+pub fn delete_transaction(db: State<'_, DbState>, id: String) -> Result<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    conn.execute("DELETE FROM transactions WHERE id=?1", params![id])?;
+    conn.execute(
+        "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
+        params![id, now_iso(), device_id()],
+    )?;
     Ok(())
 }
 
@@ -325,7 +363,8 @@ pub fn delete_transaction(db: State<'_, DbState>, id: i64) -> Result<()> {
 pub fn list_budgets(db: State<'_, DbState>) -> Result<Vec<Budget>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let mut stmt = conn
-        .prepare("SELECT id,category_id,period,amount_cents,start_date FROM budgets ORDER BY id")?;
+        .prepare("SELECT id,category_id,period,amount_cents,start_date,created_at,updated_at,version,device_id,is_deleted \
+         FROM budgets WHERE is_deleted=0 ORDER BY created_at")?;
     let rows = stmt.query_map([], |r| {
         Ok(Budget {
             id: r.get(0)?,
@@ -333,6 +372,11 @@ pub fn list_budgets(db: State<'_, DbState>) -> Result<Vec<Budget>> {
             period: r.get(2)?,
             amount_cents: r.get(3)?,
             start_date: r.get(4)?,
+            created_at: r.get(5)?,
+            updated_at: r.get(6)?,
+            version: r.get(7)?,
+            device_id: r.get(8)?,
+            is_deleted: r.get::<_, i64>(9)? != 0,
         })
     })?;
     rows.collect::<std::result::Result<Vec<_>, _>>()
@@ -340,25 +384,35 @@ pub fn list_budgets(db: State<'_, DbState>) -> Result<Vec<Budget>> {
 }
 
 #[tauri::command]
-pub fn create_budget(db: State<'_, DbState>, input: BudgetInput) -> Result<i64> {
+pub fn create_budget(db: State<'_, DbState>, input: BudgetInput) -> Result<String> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let id = new_uuid();
+    let now = now_iso();
     conn.execute(
-        "INSERT INTO budgets (category_id,period,amount_cents,start_date) \
-         VALUES (?1,?2,?3,?4)",
+        "INSERT INTO budgets (id,category_id,period,amount_cents,start_date,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0)",
         params![
+            id,
             input.category_id,
             input.period.unwrap_or_else(|| "monthly".into()),
             input.amount_cents,
-            input.start_date
+            input.start_date,
+            now,
+            now,
+            1,
+            device_id()
         ],
     )?;
-    Ok(conn.last_insert_rowid())
+    Ok(id)
 }
 
 #[tauri::command]
-pub fn delete_budget(db: State<'_, DbState>, id: i64) -> Result<()> {
+pub fn delete_budget(db: State<'_, DbState>, id: String) -> Result<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    conn.execute("DELETE FROM budgets WHERE id=?1", params![id])?;
+    conn.execute(
+        "UPDATE budgets SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
+        params![id, now_iso(), device_id()],
+    )?;
     Ok(())
 }
 
@@ -374,7 +428,7 @@ pub fn monthly_summary(db: State<'_, DbState>, year: i64) -> Result<Vec<MonthlyS
          SUM(CASE WHEN kind='income' THEN amount_native_cents ELSE 0 END) AS income, \
          SUM(CASE WHEN kind='expense' THEN amount_native_cents ELSE 0 END) AS expense, \
          SUM(CASE WHEN kind='refund' THEN amount_native_cents ELSE 0 END) AS refund \
-         FROM transactions WHERE substr(date,1,4)=?1 \
+         FROM transactions WHERE substr(date,1,4)=?1 AND is_deleted=0 \
          GROUP BY month ORDER BY month",
     )?;
     let rows = stmt.query_map(params![format!("{year}")], |r| {
@@ -410,7 +464,7 @@ pub fn category_shares(
     let mut sql = format!(
         "SELECT t.category_id, COALESCE(c.name,'未分类'), SUM({sign_expr}) AS net \
          FROM transactions t LEFT JOIN categories c ON c.id=t.category_id \
-         WHERE t.kind IN ({kinds})"
+         WHERE t.kind IN ({kinds}) AND t.is_deleted=0"
     );
     let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
     if let Some(m) = month {
@@ -422,7 +476,7 @@ pub fn category_shares(
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params_ref.as_slice(), |r| {
         Ok(CategoryShare {
-            category_id: r.get::<_, Option<i64>>(0)?.unwrap_or(0),
+            category_id: r.get::<_, Option<String>>(0)?.unwrap_or_default(),
             category_name: r.get(1)?,
             amount_cents: r.get::<_, Option<i64>>(2)?.unwrap_or(0),
         })
@@ -435,19 +489,21 @@ pub fn category_shares(
 pub fn budget_progress(db: State<'_, DbState>) -> Result<Vec<BudgetProgress>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let mut stmt = conn.prepare(
-        "SELECT b.id,b.category_id,b.period,b.amount_cents,b.start_date,c.name, \
+        "SELECT b.id,b.category_id,b.period,b.amount_cents,b.start_date,b.created_at,b.updated_at,b.version,b.device_id,b.is_deleted,c.name, \
          COALESCE((SELECT SUM(CASE WHEN t.kind='expense' THEN t.amount_native_cents \
                                    WHEN t.kind='refund' THEN -t.amount_native_cents \
                                    ELSE 0 END) \
                    FROM transactions t \
                    JOIN categories tc ON tc.id=t.category_id \
                    WHERE (tc.id=b.category_id OR tc.parent_id=b.category_id) \
+                     AND t.is_deleted=0 \
                      AND substr(t.date,1,7)=substr(b.start_date,1,7)),0) \
-         FROM budgets b LEFT JOIN categories c ON c.id=b.category_id ORDER BY b.id",
+         FROM budgets b LEFT JOIN categories c ON c.id=b.category_id \
+         WHERE b.is_deleted=0 ORDER BY b.created_at",
     )?;
     let rows = stmt.query_map([], |r| {
         let amount_cents: i64 = r.get(3)?;
-        let spent: i64 = r.get(6)?;
+        let spent: i64 = r.get(10)?;
         Ok(BudgetProgress {
             budget: Budget {
                 id: r.get(0)?,
@@ -455,9 +511,14 @@ pub fn budget_progress(db: State<'_, DbState>) -> Result<Vec<BudgetProgress>> {
                 period: r.get(2)?,
                 amount_cents,
                 start_date: r.get(4)?,
+                created_at: r.get(5)?,
+                updated_at: r.get(6)?,
+                version: r.get(7)?,
+                device_id: r.get(8)?,
+                is_deleted: r.get::<_, i64>(9)? != 0,
             },
             category_name: r
-                .get::<_, Option<String>>(5)?
+                .get::<_, Option<String>>(11)?
                 .unwrap_or_else(|| "未分类".into()),
             spent_cents: spent,
             over_budget: spent > amount_cents,

@@ -62,7 +62,7 @@ async function create() {
   }
 }
 
-async function remove(id: number) {
+async function remove(id: string) {
   try {
     await api.deleteAccount(id)
     message.success('已删除')

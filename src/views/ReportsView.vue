@@ -73,7 +73,7 @@ const pieData = computed(() => {
       .filter((s) => s.amount_cents !== 0)
       .map((s) => ({ name: s.category_name, value: s.amount_cents }))
   }
-  const map = new Map<number, { name: string; value: number }>()
+  const map = new Map<string, { name: string; value: number }>()
   for (const s of shares.value) {
     if (s.amount_cents === 0) continue
     const cat = store.categoryMap.get(s.category_id)

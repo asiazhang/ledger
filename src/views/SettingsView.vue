@@ -23,8 +23,8 @@ const message = useMessage()
 
 const name = ref('')
 const kind = ref<CategoryKind>('expense')
-// -1 表示无父分类（创建顶级）
-const parentId = ref<number>(-1)
+// null 表示无父分类（创建顶级）
+const parentId = ref<string>('')
 
 const kindOptions = [
   { label: '支出', value: 'expense' },
@@ -32,7 +32,7 @@ const kindOptions = [
 ]
 
 const parentOptions = computed(() => [
-  { label: '无（顶级）', value: -1 },
+  { label: '无（顶级）', value: '' },
   ...store.rootCategories
     .filter((c) => c.kind === kind.value)
     .map((c) => ({ label: c.name, value: c.id })),
@@ -41,16 +41,16 @@ const parentOptions = computed(() => [
 // 顶级在前、二级紧跟其父的排序，便于查看层级
 const sortedCategories = computed<Category[]>(() => {
   const result: Category[] = []
-  const roots = store.rootCategories.slice().sort((a, b) => a.id - b.id)
+  const roots = store.rootCategories.slice().sort((a, b) => a.id.localeCompare(b.id))
   for (const root of roots) {
     result.push(root)
-    result.push(...store.categoryChildren(root.id).sort((a, b) => a.id - b.id))
+    result.push(...store.categoryChildren(root.id).sort((a, b) => a.id.localeCompare(b.id)))
   }
   return result
 })
 
 watch(kind, () => {
-  parentId.value = -1
+  parentId.value = ''
 })
 
 async function addCategory() {
@@ -59,7 +59,7 @@ async function addCategory() {
     return
   }
   // 选了父分类时校验：父必须存在、同 kind、本身为顶级（防三级嵌套）
-  const parent_id: number | null = parentId.value === -1 ? null : parentId.value
+  const parent_id: string | null = parentId.value || null
   if (parent_id != null) {
     const parent = store.categoryMap.get(parent_id)
     if (!parent) {
@@ -84,14 +84,14 @@ async function addCategory() {
     await api.createCategory(input)
     message.success('已添加分类')
     name.value = ''
-    parentId.value = -1
+    parentId.value = ''
     await store.loadCategories()
   } catch (e) {
     message.error(`添加失败: ${e}`)
   }
 }
 
-async function removeCategory(id: number) {
+async function removeCategory(id: string) {
   try {
     await api.deleteCategory(id)
     message.success('已删除')

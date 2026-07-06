@@ -32,6 +32,16 @@ pub fn now_iso() -> String {
     chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
+/// 生成新的 UUID v7（时间有序，适合主键与同步）。
+pub fn new_uuid() -> String {
+    uuid::Uuid::new_v7(uuid::Timestamp::now(uuid::NoContext)).to_string()
+}
+
+/// 当前设备标识。MVP 阶段使用固定占位值，后续可改为从配置文件读取。
+pub fn device_id() -> String {
+    String::from("device-1")
+}
+
 /// 打开数据库连接并启用外键约束（SQLite 默认关闭，需每次连接显式开启）。
 /// 所有数据库连接都应通过此函数或其派生函数创建，以保证外键生效。
 pub fn open_connection<P: AsRef<Path>>(path: P) -> Result<Connection> {
@@ -106,16 +116,14 @@ mod tests {
         let mut conn = open_in_memory().unwrap();
         init_db(&mut conn).unwrap();
 
+        let account_id = "acc-test-01";
         conn.execute(
-            "INSERT INTO accounts (name,type,currency_code,initial_balance_cents,created_at) \
-             VALUES ('现金','cash','CNY',0,'2026-01-01T00:00:00Z')",
-            [],
+            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,'现金','cash','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            params![account_id],
         )
         .unwrap();
-        let account_id: i64 = conn
-            .query_row("SELECT id FROM accounts", [], |r| r.get(0))
-            .unwrap();
-        let cat_id: i64 = conn
+        let cat_id: String = conn
             .query_row(
                 "SELECT id FROM categories WHERE name='外卖' AND kind='expense'",
                 [],
@@ -124,23 +132,24 @@ mod tests {
             .unwrap();
 
         // 一笔支出 100 元
+        let expense_id = "txn-test-expense";
         conn.execute(
             "INSERT INTO transactions \
-             (kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id, \
-             category_id,refund_of_transaction_id,note,date,created_at) \
-             VALUES ('expense',10000,'CNY',10000,?1,NULL,?2,NULL,'外卖','2026-01-10','2026-01-10T00:00:00Z')",
-            params![account_id, cat_id],
+             (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id, \
+             category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,'expense',10000,'CNY',10000,?2,NULL,?3,NULL,'外卖','2026-01-10','2026-01-10T00:00:00Z','2026-01-10T00:00:00Z',1,'test',0)",
+            params![expense_id, account_id, cat_id],
         )
         .unwrap();
-        let expense_id: i64 = conn.last_insert_rowid();
 
         // 退款 30 元，关联原支出，继承原账户与分类
+        let refund_id = "txn-test-refund";
         conn.execute(
             "INSERT INTO transactions \
-             (kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id, \
-             category_id,refund_of_transaction_id,note,date,created_at) \
-             VALUES ('refund',3000,'CNY',3000,?1,NULL,?2,?3,'退部分','2026-01-12','2026-01-12T00:00:00Z')",
-            params![account_id, cat_id, expense_id],
+             (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id, \
+             category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,'refund',3000,'CNY',3000,?2,NULL,?3,?4,'退部分','2026-01-12','2026-01-12T00:00:00Z','2026-01-12T00:00:00Z',1,'test',0)",
+            params![refund_id, account_id, cat_id, expense_id],
         )
         .unwrap();
 
@@ -149,11 +158,11 @@ mod tests {
             .query_row(
                 "SELECT \
                    (SELECT initial_balance_cents FROM accounts WHERE id=?1) \
-                 + COALESCE((SELECT SUM(amount_native_cents) FROM transactions WHERE account_id=?1 AND kind='income'),0) \
-                 - COALESCE((SELECT SUM(amount_native_cents) FROM transactions WHERE account_id=?1 AND kind='expense'),0) \
-                 + COALESCE((SELECT SUM(amount_native_cents) FROM transactions WHERE to_account_id=?1 AND kind='transfer'),0) \
-                 - COALESCE((SELECT SUM(amount_native_cents) FROM transactions WHERE account_id=?1 AND kind='transfer'),0) \
-                 + COALESCE((SELECT SUM(amount_native_cents) FROM transactions WHERE account_id=?1 AND kind='refund'),0)",
+                 + COALESCE((SELECT SUM(amount_native_cents) FROM transactions WHERE account_id=?1 AND kind='income' AND is_deleted=0),0) \
+                 - COALESCE((SELECT SUM(amount_native_cents) FROM transactions WHERE account_id=?1 AND kind='expense' AND is_deleted=0),0) \
+                 + COALESCE((SELECT SUM(amount_native_cents) FROM transactions WHERE to_account_id=?1 AND kind='transfer' AND is_deleted=0),0) \
+                 - COALESCE((SELECT SUM(amount_native_cents) FROM transactions WHERE account_id=?1 AND kind='transfer' AND is_deleted=0),0) \
+                 + COALESCE((SELECT SUM(amount_native_cents) FROM transactions WHERE account_id=?1 AND kind='refund' AND is_deleted=0),0)",
                 params![account_id],
                 |r| r.get(0),
             )
@@ -164,7 +173,7 @@ mod tests {
         let refund: i64 = conn
             .query_row(
                 "SELECT SUM(CASE WHEN kind='refund' THEN amount_native_cents ELSE 0 END) \
-                 FROM transactions WHERE substr(date,1,7)='2026-01'",
+                 FROM transactions WHERE substr(date,1,7)='2026-01' AND is_deleted=0",
                 [],
                 |r| r.get::<_, Option<i64>>(0).map(|o| o.unwrap_or(0)),
             )
@@ -172,7 +181,7 @@ mod tests {
         assert_eq!(refund, 3000);
 
         // 退款关联原交易
-        let linked: i64 = conn
+        let linked: String = conn
             .query_row(
                 "SELECT refund_of_transaction_id FROM transactions WHERE kind='refund'",
                 [],

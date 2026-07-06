@@ -76,13 +76,17 @@ pub struct Currency {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Account {
-    pub id: i64,
+    pub id: String,
     pub name: String,
     #[serde(rename = "type")]
     pub kind: AccountType,
     pub currency_code: String,
     pub initial_balance_cents: i64,
     pub created_at: String,
+    pub updated_at: String,
+    pub version: i64,
+    pub device_id: String,
+    pub is_deleted: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -96,36 +100,44 @@ pub struct AccountInput {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Category {
-    pub id: i64,
+    pub id: String,
     pub name: String,
     pub kind: String,
-    pub parent_id: Option<i64>,
+    pub parent_id: Option<String>,
     pub icon: Option<String>,
     pub color: Option<String>,
     pub created_at: String,
+    pub updated_at: String,
+    pub version: i64,
+    pub device_id: String,
+    pub is_deleted: bool,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct CategoryInput {
     pub name: String,
     pub kind: String,
-    pub parent_id: Option<i64>,
+    pub parent_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Transaction {
-    pub id: i64,
+    pub id: String,
     pub kind: String,
     pub amount_cents: i64,
     pub currency_code: String,
     pub amount_native_cents: i64,
-    pub account_id: i64,
-    pub to_account_id: Option<i64>,
-    pub category_id: Option<i64>,
-    pub refund_of_transaction_id: Option<i64>,
+    pub account_id: String,
+    pub to_account_id: Option<String>,
+    pub category_id: Option<String>,
+    pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
     pub created_at: String,
+    pub updated_at: String,
+    pub version: i64,
+    pub device_id: String,
+    pub is_deleted: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -133,26 +145,31 @@ pub struct TransactionInput {
     pub kind: String,
     pub amount_cents: i64,
     pub currency_code: String,
-    pub account_id: i64,
-    pub to_account_id: Option<i64>,
-    pub category_id: Option<i64>,
-    pub refund_of_transaction_id: Option<i64>,
+    pub account_id: String,
+    pub to_account_id: Option<String>,
+    pub category_id: Option<String>,
+    pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Budget {
-    pub id: i64,
-    pub category_id: i64,
+    pub id: String,
+    pub category_id: String,
     pub period: String,
     pub amount_cents: i64,
     pub start_date: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub version: i64,
+    pub device_id: String,
+    pub is_deleted: bool,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct BudgetInput {
-    pub category_id: i64,
+    pub category_id: String,
     pub period: Option<String>,
     pub amount_cents: i64,
     pub start_date: String,
@@ -174,7 +191,7 @@ pub struct MonthlySummary {
 
 #[derive(Debug, Serialize)]
 pub struct CategoryShare {
-    pub category_id: i64,
+    pub category_id: String,
     pub category_name: String,
     pub amount_cents: i64,
 }

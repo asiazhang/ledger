@@ -29,10 +29,10 @@ const message = useMessage()
 const kind = ref<TransactionKind>('expense')
 const amount = ref<number | null>(null)
 const currencyCode = ref('CNY')
-const accountId = ref<number | null>(null)
-const toAccountId = ref<number | null>(null)
-const categoryId = ref<number | null>(null)
-const refundTargetId = ref<number | null>(null)
+const accountId = ref<string | null>(null)
+const toAccountId = ref<string | null>(null)
+const categoryId = ref<string | null>(null)
+const refundTargetId = ref<string | null>(null)
 const note = ref('')
 const date = ref(Date.now())
 
@@ -102,7 +102,7 @@ async function submit() {
       kind: 'refund',
       amount_cents: Math.round(amount.value * 100),
       currency_code: currencyCode.value,
-      account_id: accountId.value ?? 0,
+      account_id: accountId.value!,
       to_account_id: null,
       category_id: null,
       refund_of_transaction_id: refundTargetId.value,

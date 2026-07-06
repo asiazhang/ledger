@@ -21,7 +21,7 @@ import type { Account, ImportedRow } from '@/types'
 const store = useAppStore()
 const message = useMessage()
 const rows = ref<ImportedRow[]>([])
-const accountId = ref<number | null>(null)
+const accountId = ref<string | null>(null)
 const importing = ref(false)
 
 const accountOptions = () =>

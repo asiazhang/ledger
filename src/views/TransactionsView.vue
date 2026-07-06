@@ -30,7 +30,7 @@ async function refresh() {
   }
 }
 
-async function remove(id: number) {
+async function remove(id: string) {
   try {
     await api.deleteTransaction(id)
     message.success('已删除')

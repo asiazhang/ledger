@@ -5,7 +5,7 @@ import type { Account, Category, Currency } from '@/types'
 
 /** NTreeSelect 树形节点（key/label/children）。 */
 export interface CategoryTreeNode {
-  key: number
+  key: string
   label: string
   children?: CategoryTreeNode[]
   [key: string]: unknown
@@ -24,13 +24,13 @@ export const useAppStore = defineStore('app', () => {
   })
 
   const categoryMap = computed(() => {
-    const m = new Map<number, Category>()
+    const m = new Map<string, Category>()
     categories.value.forEach((c) => m.set(c.id, c))
     return m
   })
 
   const accountMap = computed(() => {
-    const m = new Map<number, Account>()
+    const m = new Map<string, Account>()
     accounts.value.forEach((a) => m.set(a.id, a))
     return m
   })
@@ -48,12 +48,12 @@ export const useAppStore = defineStore('app', () => {
   )
 
   /** 取某父分类的直系子分类。 */
-  function categoryChildren(parentId: number): Category[] {
+  function categoryChildren(parentId: string): Category[] {
     return categories.value.filter((c) => c.parent_id === parentId)
   }
 
   /** 分类层级路径文本：二级显示“父 > 子”，顶级显示单级名；找不到返回空串。 */
-  function categoryPath(id: number | null | undefined): string {
+  function categoryPath(id: string | null | undefined): string {
     if (id == null) return ''
     const cat = categoryMap.value.get(id)
     if (!cat) return ''

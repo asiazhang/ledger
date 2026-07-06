@@ -4,7 +4,9 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## 项目概览
 
-Ledger 是一个基于 Tauri 2 的桌面记账应用（账本）。前端 Vue 3 + TypeScript + Vite，后端 Rust。数据存储在嵌入式 SQLite（`rusqlite` bundled）中，使用 `rusqlite_migration` 管理 schema 迁移，UI 全中文，使用 Naive UI 组件库与 ECharts 图表。
+Ledger 是一个基于 Tauri 2 的桌面记账应用，前端 Vue 3 + TypeScript + Vite，后端 Rust。
+
+> **版本状态：当前尚未发布，处于早期开发/MVP 阶段。任何数据库 schema、API、数据模型的重构或迁移都无需考虑向后兼容，可直接按最合理的方式调整。**
 
 ## 常用命令
 
@@ -30,11 +32,6 @@ Ledger 是一个基于 Tauri 2 的桌面记账应用（账本）。前端 Vue 3 
 3. `src/api/index.ts` 加对应方法；
 4. 必要时在 `src/types/index.ts` 加 TS 类型（与 `src-tauri/src/models.rs` 的 serde 结构对应，注意 `#[serde(rename = "type")]` 这类字段名映射）。
 
-### 数据库
-- 单一 SQLite 连接封装在 `DbState { conn: Mutex<Connection> }`，于 `lib.rs` 的 `setup` 中通过 `commands::open_db` 创建并 `app.manage()` 注入为 Tauri State。数据库文件位于 `app_data_dir/ledger.db`（macOS 上是 `~/Library/Application Support/com.zhangheng.ledger/ledger.db`）。
-- Schema 与种子数据均由 `rusqlite_migration` 管理迁移。迁移 SQL 放在 `src-tauri/migrations/` 下（如 `V001__initial.sql`、`V002__seed_defaults.sql`），在 `src-tauri/src/db.rs` 的 `migrations()` 函数里以 `M::up(include_str!("../migrations/V00X__名称.sql"))` 编译期嵌入（用 `OnceLock` 缓存）；默认币种（CNY/USD/EUR）与中文常用分类（餐饮/交通/…/工资/奖金…）由 `V002__seed_defaults.sql` 写入，对已有数据的老用户库升级安全（currencies 走主键 `INSERT OR IGNORE`，categories 走 `WHERE NOT EXISTS` 按 (name,kind) 去重，不产生重复）。**新增表结构变更或种子数据时**：在 `src-tauri/migrations/` 下加 `V00X__名称.sql`，并在 `db.rs` 的 `migrations()` 函数 `vec!` 里追加一条 `M::up(include_str!(...))`，版本由 SQLite `user_version` 字段自动追踪，无需手动维护版本表。
-- 表：`currencies`、`accounts`、`categories`、`transactions`、`budgets`、`exchange_rates`（已建表但尚未使用）。
-
 ### 金额与多币种（重要约定）
 - 所有金额以**整数分**存储，字段统一用 `_cents` 后缀（如 `amount_cents`、`initial_balance_cents`、`balance_cents`）。前端用 `src/types/index.ts` 的 `formatAmount(cents, currency)` 按币种 `decimal_places` 格式化展示。
 - `transactions` 同时存 `amount_cents`（原始币种金额）和 `amount_native_cents`（本位币金额）。**当前 MVP 阶段二者始终相等（1:1）**，多币种汇率换算尚未实现，`exchange_rates` 表为此预留。改动金额相关逻辑时勿破坏此约定。
@@ -57,7 +54,6 @@ Ledger 是一个基于 Tauri 2 的桌面记账应用（账本）。前端 Vue 3 
 
 ## 编码约定
 
-- Rust 代码请保持 `cargo fmt` 格式化、零 clippy 警告；时间戳统一用 `db::now_iso()`（UTC ISO 字符串）。
+- Rust 代码请保持零 clippy 警告；时间戳统一用 `db::now_iso()`（UTC ISO 字符串）。
 - Rust 字符串/错误信息使用中文（与现有 `AppError` 枚举、种子数据一致）。
 - 前端新组件沿用 Naive UI 按需 import + `<script setup lang="ts">` 风格；金额一律走 `formatAmount`，不要在视图中手写 `/100`。
-- 提交代码时使用中文 conventional commit + emoji（详见用户规则），提交信息末尾加 `Co-Authored-By: Oz <oz-agent@warp.dev>` 与 Warp 标识。

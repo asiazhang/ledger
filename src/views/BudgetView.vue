@@ -27,7 +27,7 @@ const message = useMessage()
 const list = ref<BudgetProgress[]>([])
 const loading = ref(false)
 
-const categoryId = ref<number | null>(null)
+const categoryId = ref<string | null>(null)
 const amount = ref<number | null>(null)
 const startDate = ref(Date.now())
 
@@ -66,7 +66,7 @@ async function create() {
   }
 }
 
-async function remove(id: number) {
+async function remove(id: string) {
   try {
     await api.deleteBudget(id)
     message.success('已删除')

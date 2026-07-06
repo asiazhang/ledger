@@ -6,12 +6,15 @@
 --    - 交易与持仓通过 (symbol, instrument_type) 与它关联，避免重复录入名称和币种。
 --    - currency_code 表示该工具报价和交易的币种。
 CREATE TABLE IF NOT EXISTS instruments (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,  -- 工具唯一 ID
+    id              TEXT PRIMARY KEY,  -- 工具全局唯一 ID（UUID v7）
     symbol          TEXT NOT NULL,                      -- 代码，如 "600519.SH" / "NVDA" / "000001"
     instrument_type TEXT NOT NULL CHECK(instrument_type IN ('stock','fund','bond','etf','other')),  -- 金融工具类型
     name            TEXT,                                -- 名称（可选，如 "贵州茅台"）
     currency_code   TEXT NOT NULL,                     -- 报价币种
     created_at      TEXT NOT NULL,                     -- 创建时间
+    updated_at      TEXT NOT NULL,                     -- 最后修改时间
+    version         INTEGER NOT NULL DEFAULT 1,          -- 版本计数
+    device_id       TEXT NOT NULL,                       -- 创建设备/最后修改设备标识
     UNIQUE(symbol, instrument_type)
 );
 
@@ -20,7 +23,7 @@ CREATE TABLE IF NOT EXISTS instruments (
 --    - 现金部分仍由 transactions 表表达，账户余额计算无需额外 JOIN。
 --    - 分红/拆股等无资金变动时，transactions.amount_cents 为 0。
 CREATE TABLE IF NOT EXISTS security_transactions (
-    transaction_id   INTEGER PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,  -- 关联交易 ID
+    transaction_id   TEXT PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,  -- 关联交易 ID
     instrument_type  TEXT NOT NULL DEFAULT 'stock' CHECK(instrument_type IN ('stock','fund','bond','etf','other')),  -- 金融工具类型：股票/基金/债券/ETF/其他
     symbol           TEXT NOT NULL,                       -- 代码，如 "600519.SH" / "NVDA" / "000001"
     action           TEXT NOT NULL CHECK(action IN ('buy','sell','dividend','split')),  -- 交易动作：买入/卖出/分红/拆股
@@ -34,8 +37,8 @@ CREATE TABLE IF NOT EXISTS security_transactions (
 --    - 数量、总成本、已实现盈亏由证券交易流水聚合维护（也可在交易写入时增量更新）。
 --    - 未实现盈亏需结合 market_prices（后续表）最新价格计算。
 CREATE TABLE IF NOT EXISTS holdings (
-    id                    INTEGER PRIMARY KEY AUTOINCREMENT,  -- 持仓唯一 ID
-    account_id            INTEGER NOT NULL REFERENCES accounts(id),  -- 关联账户 ID
+    id                    TEXT PRIMARY KEY,  -- 持仓全局唯一 ID（UUID v7）
+    account_id            TEXT NOT NULL REFERENCES accounts(id),  -- 关联账户 ID
     instrument_type       TEXT NOT NULL CHECK(instrument_type IN ('stock','fund','bond','etf','other')),  -- 金融工具类型
     symbol                TEXT NOT NULL,                     -- 代码，如 "600519.SH" / "NVDA" / "000001"
     name                  TEXT,                              -- 名称（可选，如 "贵州茅台"）
@@ -45,7 +48,10 @@ CREATE TABLE IF NOT EXISTS holdings (
     currency_code         TEXT NOT NULL,                     -- 持仓币种
     created_at            TEXT NOT NULL,                     -- 创建时间
     updated_at            TEXT NOT NULL,                     -- 最后更新时间
+    version               INTEGER NOT NULL DEFAULT 1,          -- 版本计数
+    device_id             TEXT NOT NULL,                       -- 创建设备/最后修改设备标识
     UNIQUE(account_id, instrument_type, symbol)
 );
 
 CREATE INDEX IF NOT EXISTS idx_holdings_account ON holdings(account_id);
+CREATE INDEX IF NOT EXISTS idx_holdings_sync ON holdings(updated_at, device_id);

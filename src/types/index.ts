@@ -7,8 +7,15 @@ export interface Currency {
 
 export type AccountType = 'cash' | 'bank' | 'credit' | 'ewallet' | 'investment' | 'debt' | 'receivable' | 'other'
 
-export interface Account {
-  id: number
+export interface Syncable {
+  updated_at: string
+  version: number
+  device_id: string
+  is_deleted: boolean
+}
+
+export interface Account extends Syncable {
+  id: string
   name: string
   type: AccountType
   currency_code: string
@@ -30,11 +37,11 @@ export interface AccountBalance {
 
 export type CategoryKind = 'income' | 'expense'
 
-export interface Category {
-  id: number
+export interface Category extends Syncable {
+  id: string
   name: string
   kind: CategoryKind
-  parent_id: number | null
+  parent_id: string | null
   icon: string | null
   color: string | null
   created_at: string
@@ -43,21 +50,21 @@ export interface Category {
 export interface CategoryInput {
   name: string
   kind: CategoryKind
-  parent_id?: number | null
+  parent_id?: string | null
 }
 
 export type TransactionKind = 'income' | 'expense' | 'transfer' | 'refund'
 
-export interface Transaction {
-  id: number
+export interface Transaction extends Syncable {
+  id: string
   kind: TransactionKind
   amount_cents: number
   currency_code: string
   amount_native_cents: number
-  account_id: number
-  to_account_id: number | null
-  category_id: number | null
-  refund_of_transaction_id: number | null
+  account_id: string
+  to_account_id: string | null
+  category_id: string | null
+  refund_of_transaction_id: string | null
   note: string | null
   date: string
   created_at: string
@@ -67,24 +74,25 @@ export interface TransactionInput {
   kind: TransactionKind
   amount_cents: number
   currency_code: string
-  account_id: number
-  to_account_id?: number | null
-  category_id?: number | null
-  refund_of_transaction_id?: number | null
+  account_id: string
+  to_account_id?: string | null
+  category_id?: string | null
+  refund_of_transaction_id?: string | null
   note?: string | null
   date: string
 }
 
-export interface Budget {
-  id: number
-  category_id: number
+export interface Budget extends Syncable {
+  id: string
+  category_id: string
   period: string
   amount_cents: number
   start_date: string
+  created_at: string
 }
 
 export interface BudgetInput {
-  category_id: number
+  category_id: string
   period?: string
   amount_cents: number
   start_date: string
@@ -105,7 +113,7 @@ export interface MonthlySummary {
 }
 
 export interface CategoryShare {
-  category_id: number
+  category_id: string
   category_name: string
   amount_cents: number
 }

@@ -25,6 +25,7 @@ serde_json = "1"
 rusqlite = { version = "0.40", features = ["bundled"] }
 rusqlite_migration = "2.6"
 chrono = { version = "0.4.45", features = ["serde"] }
+uuid = { version = "1.23", features = ["v7", "serde"] }
 thiserror = "2.0.18"
 csv = "1.4.0"
 calamine = "0.35.0"
