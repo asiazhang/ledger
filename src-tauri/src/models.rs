@@ -1,4 +1,70 @@
+use std::fmt;
+use std::str::FromStr;
+
+use rusqlite::types::{FromSql, FromSqlError, ToSql, ToSqlOutput, ValueRef};
 use serde::{Deserialize, Serialize};
+
+use crate::error::AppError;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccountType {
+    Cash,
+    Bank,
+    Credit,
+    Ewallet,
+    Investment,
+    Debt,
+    Receivable,
+    Other,
+}
+
+impl fmt::Display for AccountType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AccountType::Cash => write!(f, "cash"),
+            AccountType::Bank => write!(f, "bank"),
+            AccountType::Credit => write!(f, "credit"),
+            AccountType::Ewallet => write!(f, "ewallet"),
+            AccountType::Investment => write!(f, "investment"),
+            AccountType::Debt => write!(f, "debt"),
+            AccountType::Receivable => write!(f, "receivable"),
+            AccountType::Other => write!(f, "other"),
+        }
+    }
+}
+
+impl FromStr for AccountType {
+    type Err = AppError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "cash" => Ok(AccountType::Cash),
+            "bank" => Ok(AccountType::Bank),
+            "credit" => Ok(AccountType::Credit),
+            "ewallet" => Ok(AccountType::Ewallet),
+            "investment" => Ok(AccountType::Investment),
+            "debt" => Ok(AccountType::Debt),
+            "receivable" => Ok(AccountType::Receivable),
+            "other" => Ok(AccountType::Other),
+            _ => Err(AppError::Invalid(format!("未知账户类型: {s}"))),
+        }
+    }
+}
+
+impl ToSql for AccountType {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::from(self.to_string()))
+    }
+}
+
+impl FromSql for AccountType {
+    fn column_result(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
+        value
+            .as_str()?
+            .parse()
+            .map_err(|e: AppError| FromSqlError::Other(Box::new(e)))
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Currency {
@@ -13,7 +79,7 @@ pub struct Account {
     pub id: i64,
     pub name: String,
     #[serde(rename = "type")]
-    pub kind: String,
+    pub kind: AccountType,
     pub currency_code: String,
     pub initial_balance_cents: i64,
     pub created_at: String,
@@ -23,7 +89,7 @@ pub struct Account {
 pub struct AccountInput {
     pub name: String,
     #[serde(rename = "type")]
-    pub kind: String,
+    pub kind: AccountType,
     pub currency_code: String,
     pub initial_balance_cents: Option<i64>,
 }

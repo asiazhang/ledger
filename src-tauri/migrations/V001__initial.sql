@@ -22,13 +22,14 @@ CREATE TABLE IF NOT EXISTS accounts (
     name                  TEXT NOT NULL,                       -- 账户名称，如「现金」「招行储蓄卡」
     -- type 取值说明：
     -- cash：       手头现金（钱包、零钱），余额非负。
-    -- bank：       银行借记类账户（储蓄卡、工资卡、活期账户），余额非负，不能透支。
+    -- bank：       银行借记/储蓄类账户（储蓄卡、工资卡、活期、定期、公积金等），余额非负。
     -- credit：     信用卡、花呗、白条等信用支付账户，余额可为负表示欠款。
-    -- savings：    专门储蓄账户（定期、公积金、应急金），余额非负，通常不做日常消费。
     -- ewallet：    电子钱包（微信钱包、支付宝余额等第三方支付账户），余额非负。
+    -- investment： 投资账户（股票、基金、债券、ETF 等证券资金账户），余额非负。
     -- debt：       负债账户（房贷、车贷、消费贷等），余额为负表示尚未偿还的欠款。
-    -- receivable： 债权账户（借出款项、应收款），余额为正表示对方尚未归还的金额。
-    type                  TEXT NOT NULL CHECK(type IN ('cash','bank','credit','savings','ewallet','debt','receivable')),
+    -- receivable： 借出款/应收款账户，余额为正表示对方尚未归还的金额。
+    -- other：      其他账户（押金、公司垫付、自定义账户等），作为兜底类型。
+    type                  TEXT NOT NULL CHECK(type IN ('cash','bank','credit','ewallet','investment','debt','receivable','other')),
     currency_code         TEXT NOT NULL REFERENCES currencies(code),  -- 账户本位币代码，外键关联 currencies.code
     initial_balance_cents INTEGER NOT NULL DEFAULT 0,        -- 初始余额，以本位币「分」为单位的整数
     created_at            TEXT NOT NULL                        -- 创建时间，UTC ISO 8601 格式
