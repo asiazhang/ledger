@@ -626,7 +626,7 @@ pub fn open_db(app: &tauri::AppHandle) -> Result<DbState> {
         .map_err(|e| AppError::Io(e.to_string()))?;
     std::fs::create_dir_all(&dir)?;
     let db_path = dir.join("ledger.db");
-    let mut conn = Connection::open(db_path)?;
+    let mut conn = crate::db::open_connection(db_path)?;
     crate::db::init_db(&mut conn)?;
     Ok(DbState {
         conn: std::sync::Mutex::new(conn),

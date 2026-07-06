@@ -1,61 +1,96 @@
 -- V001 初始 schema：从 init_db 原样迁出
 -- 使用 IF NOT EXISTS 保证老用户库平滑过渡（已有表为 no-op）
+--
+-- 表设计说明：
+-- 1. currencies（币种表）
+--    - 以 ISO 4217 代码作为主键，避免自增 ID 带来的多库同步歧义。
+--    - 金额统一按「分」整数存储，decimal_places 仅用于前端展示格式化。
+--
+-- 2. accounts（账户表）
+--    - 每个账户绑定一个本位币（currency_code），余额不持久化，由交易实时聚合。
+--    - type 限定为 cash / bank / credit / savings / ewallet / debt / receivable，与前端 AccountType 保持一致。
+--      * cash：手头现金（钱包、零钱），余额非负。
+--      * bank：银行借记类账户（储蓄卡、工资卡、活期账户），余额非负，不能透支。
+--      * credit：信用卡、花呗、白条等信用支付账户，余额可为负表示欠款。
+--      * savings：专门储蓄账户（定期、公积金、应急金），余额非负，通常不做日常消费。
+--      * ewallet：电子钱包（微信钱包、支付宝余额等第三方支付账户），余额非负。
+--      * debt：负债账户（房贷、车贷、消费贷等），余额为负表示尚未偿还的欠款。
+--      * receivable：债权账户（借出款项、应收款），余额为正表示对方尚未归还的金额。
+--    - currency_code 外键关联 currencies(code)，确保账户引用的币种必须存在。
+--    - initial_balance_cents 表示启用本账本时的初始余额。
+--
+-- 3. categories（分类表）
+--    - kind 限定为 income / expense，与交易类型约束一致。
+--    - 支持二级分类：parent_id 指向同表 id，NULL 表示顶级分类。
+--
+-- 4. transactions（交易表）
+--    - 核心表。所有金额以「分」为单位整数存储。
+--    - amount_cents 记录原始币种金额；amount_native_cents 记录本位币金额（MVP 阶段 1:1，多币种汇率预留）。
+--    - kind='transfer' 使用 account_id（转出）和 to_account_id（转入）。
+--    - kind='refund' 通过 refund_of_transaction_id 关联原支出交易。
+--
+-- 5. budgets（预算表）
+--    - 按支出分类维度设置周期预算。
+--    - period 默认 monthly，后续可扩展 yearly / weekly。
+--
+-- 6. exchange_rates（汇率表）
+--    - 多币种换算预留表，目前未实际使用。base_code / quote_code 记录一对货币汇率。
 
 CREATE TABLE IF NOT EXISTS currencies (
-    code            TEXT PRIMARY KEY,
-    name            TEXT NOT NULL,
-    symbol          TEXT NOT NULL,
-    decimal_places  INTEGER NOT NULL DEFAULT 2
+    code            TEXT PRIMARY KEY,           -- 货币代码（ISO 4217），如 CNY / USD / EUR
+    name            TEXT NOT NULL,              -- 货币中文名称
+    symbol          TEXT NOT NULL,              -- 展示符号，如 ¥ / $ / €
+    decimal_places  INTEGER NOT NULL DEFAULT 2  -- 最小小数位，金额按分存储时用于格式化展示
 );
 
 CREATE TABLE IF NOT EXISTS accounts (
-    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-    name                  TEXT NOT NULL,
-    type                  TEXT NOT NULL,
-    currency_code         TEXT NOT NULL,
-    initial_balance_cents INTEGER NOT NULL DEFAULT 0,
-    created_at            TEXT NOT NULL
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,  -- 账户唯一 ID
+    name                  TEXT NOT NULL,                       -- 账户名称，如「现金」「招行储蓄卡」
+    type                  TEXT NOT NULL CHECK(type IN ('cash','bank','credit','savings','ewallet','debt','receivable')),  -- 账户类型：现金/银行卡/信用卡/储蓄/电子钱包/负债/债权
+    currency_code         TEXT NOT NULL REFERENCES currencies(code),  -- 账户本位币代码，外键关联 currencies.code
+    initial_balance_cents INTEGER NOT NULL DEFAULT 0,        -- 初始余额，以本位币「分」为单位的整数
+    created_at            TEXT NOT NULL                        -- 创建时间，UTC ISO 8601 格式
 );
 
 CREATE TABLE IF NOT EXISTS categories (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    name       TEXT NOT NULL,
-    kind       TEXT NOT NULL CHECK(kind IN ('income','expense')),
-    parent_id  INTEGER,
-    icon       TEXT,
-    color      TEXT,
-    created_at TEXT NOT NULL
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,                  -- 分类唯一 ID
+    name       TEXT NOT NULL,                                      -- 分类名称，如「餐饮」「工资」
+    kind       TEXT NOT NULL CHECK(kind IN ('income','expense')),   -- 分类类型：income（收入）或 expense（支出）
+    parent_id  INTEGER,                                            -- 父分类 ID，NULL 表示顶级分类；指向同表 id
+    icon       TEXT,                                               -- 图标名称（可选）
+    color      TEXT,                                               -- 展示颜色（可选）
+    created_at TEXT NOT NULL                                       -- 创建时间，UTC ISO 8601 格式
 );
 
 CREATE TABLE IF NOT EXISTS transactions (
-    id                        INTEGER PRIMARY KEY AUTOINCREMENT,
-    kind                      TEXT NOT NULL CHECK(kind IN ('income','expense','transfer','refund')),
-    amount_cents              INTEGER NOT NULL,
-    currency_code             TEXT NOT NULL,
-    amount_native_cents       INTEGER NOT NULL,
-    account_id                INTEGER NOT NULL,
-    to_account_id             INTEGER,
-    category_id               INTEGER,
-    refund_of_transaction_id  INTEGER,
-    note                      TEXT,
-    date                      TEXT NOT NULL,
-    created_at                TEXT NOT NULL
+    id                        INTEGER PRIMARY KEY AUTOINCREMENT,                        -- 交易唯一 ID
+    kind                      TEXT NOT NULL CHECK(kind IN ('income','expense','transfer','refund')),  -- 交易类型：收入/支出/转账/退款
+    amount_cents              INTEGER NOT NULL,                                        -- 原始币种金额，以「分」为单位的整数
+    currency_code             TEXT NOT NULL,                                           -- 原始币种代码，关联 currencies.code
+    amount_native_cents       INTEGER NOT NULL,                                        -- 本位币金额（当前 1:1，预留多币种换算），以「分」为单位
+    account_id                INTEGER NOT NULL,                                       -- 关联账户 ID；支出/收入/转出账户
+    to_account_id             INTEGER,                                               -- 转入账户 ID，仅转账（transfer）时必填
+    category_id               INTEGER,                                                 -- 关联分类 ID，转账通常为空
+    refund_of_transaction_id  INTEGER,                                                 -- 退款关联的原始支出交易 ID
+    note                      TEXT,                                                    -- 交易备注（可选）
+    date                      TEXT NOT NULL,                                           -- 交易日期，ISO 8601 日期格式（YYYY-MM-DD）
+    created_at                TEXT NOT NULL                                            -- 创建时间，UTC ISO 8601 格式
 );
 
 CREATE TABLE IF NOT EXISTS budgets (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    category_id  INTEGER NOT NULL,
-    period       TEXT NOT NULL DEFAULT 'monthly',
-    amount_cents INTEGER NOT NULL,
-    start_date   TEXT NOT NULL
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,  -- 预算唯一 ID
+    category_id  INTEGER NOT NULL,                   -- 关联支出分类 ID
+    period       TEXT NOT NULL DEFAULT 'monthly',      -- 预算周期，如 monthly / yearly / weekly
+    amount_cents INTEGER NOT NULL,                   -- 预算金额上限，以「分」为单位的整数
+    start_date   TEXT NOT NULL                       -- 预算开始日期，ISO 8601 日期格式（YYYY-MM-DD）
 );
 
 CREATE TABLE IF NOT EXISTS exchange_rates (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    base_code  TEXT NOT NULL,
-    quote_code TEXT NOT NULL,
-    rate       REAL NOT NULL,
-    updated_at TEXT NOT NULL
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,  -- 汇率记录唯一 ID
+    base_code  TEXT NOT NULL,                      -- 基础货币代码，如 USD
+    quote_code TEXT NOT NULL,                      -- 报价货币代码，如 CNY
+    rate       REAL NOT NULL,                      -- 汇率值，表示 1 base = ? quote
+    updated_at TEXT NOT NULL                       -- 更新时间，UTC ISO 8601 格式
 );
 
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);

@@ -5,7 +5,7 @@ export interface Currency {
   decimal_places: number
 }
 
-export type AccountType = 'cash' | 'bank' | 'credit' | 'savings'
+export type AccountType = 'cash' | 'bank' | 'credit' | 'savings' | 'ewallet' | 'debt' | 'receivable'
 
 export interface Account {
   id: number
@@ -133,6 +133,9 @@ export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
   bank: '银行卡',
   credit: '信用卡',
   savings: '储蓄',
+  ewallet: '电子钱包',
+  debt: '负债',
+  receivable: '债权',
 }
 
 export const TRANSACTION_KIND_LABELS: Record<TransactionKind, string> = {

@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::OnceLock;
 
 use rusqlite::Connection;
@@ -30,6 +31,22 @@ pub fn now_iso() -> String {
     chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
+/// 打开数据库连接并启用外键约束（SQLite 默认关闭，需每次连接显式开启）。
+/// 所有数据库连接都应通过此函数或其派生函数创建，以保证外键生效。
+pub fn open_connection<P: AsRef<Path>>(path: P) -> Result<Connection> {
+    let conn = Connection::open(path)?;
+    conn.execute("PRAGMA foreign_keys = ON", [])?;
+    Ok(conn)
+}
+
+/// 打开内存数据库连接并启用外键约束（用于测试）。
+#[cfg(test)]
+pub fn open_in_memory() -> Result<Connection> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute("PRAGMA foreign_keys = ON", [])?;
+    Ok(conn)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -41,23 +58,23 @@ mod tests {
         assert!(migrations().validate().is_ok());
     }
 
-    /// init_db 应幂等：连续跑两次不报错，且默认币种 3 条、分类 89 条已写入
-    /// （18 顶级 + 71 二级）。
+    /// init_db 应幂等：连续跑两次不报错，且默认币种 11 条、分类 92 条已写入
+    /// （18 顶级 + 74 二级）。
     #[test]
     fn init_db_is_idempotent_and_seeds_defaults() {
-        let mut conn = Connection::open_in_memory().unwrap();
+        let mut conn = open_in_memory().unwrap();
         init_db(&mut conn).unwrap();
         init_db(&mut conn).unwrap();
 
         let currency_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM currencies", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(currency_count, 3);
+        assert_eq!(currency_count, 11);
 
         let cat_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM categories", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(cat_count, 89);
+        assert_eq!(cat_count, 92);
 
         let root_count: i64 = conn
             .query_row(
@@ -85,7 +102,7 @@ mod tests {
     /// 计入账户余额（+退款），月度报表单独列退款，并记录关联原交易 id。
     #[test]
     fn refund_transaction_schema_and_aggregation() {
-        let mut conn = Connection::open_in_memory().unwrap();
+        let mut conn = open_in_memory().unwrap();
         init_db(&mut conn).unwrap();
 
         conn.execute(
