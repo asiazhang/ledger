@@ -41,8 +41,8 @@ mod tests {
         assert!(migrations().validate().is_ok());
     }
 
-    /// init_db 应幂等：连续跑两次不报错，且默认币种 3 条、分类 64 条已写入
-    /// （16 顶级 + 48 二级）。
+    /// init_db 应幂等：连续跑两次不报错，且默认币种 3 条、分类 89 条已写入
+    /// （18 顶级 + 71 二级）。
     #[test]
     fn init_db_is_idempotent_and_seeds_defaults() {
         let mut conn = Connection::open_in_memory().unwrap();
@@ -57,7 +57,7 @@ mod tests {
         let cat_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM categories", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(cat_count, 64);
+        assert_eq!(cat_count, 89);
 
         let root_count: i64 = conn
             .query_row(
@@ -66,7 +66,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(root_count, 16);
+        assert_eq!(root_count, 18);
 
         // 每个二级分类的 parent_id 必须指向同 kind 的顶级分类。
         let mismatched: i64 = conn
