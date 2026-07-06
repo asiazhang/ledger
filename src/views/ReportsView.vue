@@ -1,17 +1,24 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { NCard, NSelect, NSpace, NEmpty, NSpin, NRadioGroup, NRadio, NText } from 'naive-ui'
-import VChart from 'vue-echarts'
-import { use } from 'echarts/core'
-import { BarChart, PieChart } from 'echarts/charts'
-import { GridComponent, TooltipComponent, LegendComponent, TitleComponent } from 'echarts/components'
-import { CanvasRenderer } from 'echarts/renderers'
+import { Bar, Doughnut } from 'vue-chartjs'
+import {
+  Chart as ChartJS,
+  Title,
+  Tooltip,
+  Legend,
+  BarElement,
+  ArcElement,
+  CategoryScale,
+  LinearScale,
+} from 'chart.js'
+import type { ChartOptions, TooltipItem } from 'chart.js'
 import { api } from '@/api'
 import { useAppStore } from '@/stores/app'
 import { formatAmount } from '@/types'
 import type { CategoryShare, MonthlySummary } from '@/types'
 
-use([BarChart, PieChart, GridComponent, TooltipComponent, LegendComponent, TitleComponent, CanvasRenderer])
+ChartJS.register(Title, Tooltip, Legend, BarElement, ArcElement, CategoryScale, LinearScale)
 
 const store = useAppStore()
 const year = ref(new Date().getFullYear())
@@ -36,35 +43,47 @@ async function refresh() {
 
 watch(year, refresh)
 
-const barOption = () => ({
-  tooltip: {
-    trigger: 'axis',
-    formatter: (params: { seriesName: string; value: number; axisValue: string }[]) => {
-      let income = 0
-      let expense = 0
-      let refund = 0
-      for (const p of params) {
-        if (p.seriesName === '收入') income = p.value
-        if (p.seriesName === '支出') expense = p.value
-        if (p.seriesName === '退款') refund = p.value
-      }
-      const net = income - expense + refund
-      return `${params[0]?.axisValue ?? ''}<br/>收入: ${formatAmount(income)}<br/>支出: ${formatAmount(expense)}<br/>退款: ${formatAmount(refund)}<br/>净额: ${formatAmount(net)}`
+const barChartData = computed(() => ({
+  labels: monthly.value.map((m) => m.month),
+  datasets: [
+    { label: '收入', data: monthly.value.map((m) => m.income_cents), backgroundColor: '#18a058' },
+    { label: '支出', data: monthly.value.map((m) => m.expense_cents), backgroundColor: '#d03050' },
+    { label: '退款', data: monthly.value.map((m) => m.refund_cents), backgroundColor: '#2080f0' },
+  ],
+}))
+
+const barChartOptions: ChartOptions<'bar'> = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: {
+    legend: { position: 'top' },
+    tooltip: {
+      callbacks: {
+        label: (context: TooltipItem<'bar'>) =>
+          `${context.dataset.label}: ${formatAmount(context.raw as number)}`,
+        afterBody: (items: TooltipItem<'bar'>[]) => {
+          let income = 0
+          let expense = 0
+          let refund = 0
+          for (const item of items) {
+            if (item.dataset.label === '收入') income = item.raw as number
+            if (item.dataset.label === '支出') expense = item.raw as number
+            if (item.dataset.label === '退款') refund = item.raw as number
+          }
+          const net = income - expense + refund
+          return `净额: ${formatAmount(net)}`
+        },
+      },
     },
   },
-  legend: { data: ['收入', '支出', '退款'], top: 0 },
-  grid: { left: 50, right: 20, top: 40, bottom: 30 },
-  xAxis: { type: 'category', data: monthly.value.map((m) => m.month) },
-  yAxis: {
-    type: 'value',
-    axisLabel: { formatter: (v: number) => formatAmount(v) },
+  scales: {
+    y: {
+      ticks: {
+        callback: (value: number | string) => formatAmount(Number(value)),
+      },
+    },
   },
-  series: [
-    { name: '收入', type: 'bar', data: monthly.value.map((m) => m.income_cents) },
-    { name: '支出', type: 'bar', data: monthly.value.map((m) => m.expense_cents) },
-    { name: '退款', type: 'bar', data: monthly.value.map((m) => m.refund_cents) },
-  ],
-})
+}
 
 // 支出分类饼图数据：level2 用二级分类，level1 上卷到顶级分类
 const pieData = computed(() => {
@@ -89,19 +108,36 @@ const pieData = computed(() => {
   return Array.from(map.values())
 })
 
-const pieOption = () => ({
-  tooltip: { trigger: 'item', formatter: (p: { name: string; value: number }) => `${p.name}: ${formatAmount(p.value)}` },
-  legend: { type: 'scroll', orient: 'vertical', right: 0, top: 'middle' },
-  series: [
+const PALETTE = [
+  '#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272',
+  '#fc8452', '#9a60b4', '#ea7ccc', '#18a058', '#d03050', '#2080f0',
+]
+
+const doughnutChartData = computed(() => ({
+  labels: pieData.value.map((d) => d.name),
+  datasets: [
     {
-      name: '支出分类',
-      type: 'pie',
-      radius: ['40%', '70%'],
-      center: ['40%', '50%'],
-      data: pieData.value,
+      data: pieData.value.map((d) => d.value),
+      backgroundColor: pieData.value.map((_, i) => PALETTE[i % PALETTE.length]),
+      hoverOffset: 4,
     },
   ],
-})
+}))
+
+const doughnutChartOptions: ChartOptions<'doughnut'> = {
+  responsive: true,
+  maintainAspectRatio: false,
+  cutout: '40%',
+  plugins: {
+    legend: { position: 'right' },
+    tooltip: {
+      callbacks: {
+        label: (context: TooltipItem<'doughnut'>) =>
+          `${context.label}: ${formatAmount(context.raw as number)}`,
+      },
+    },
+  },
+}
 
 onMounted(async () => {
   await store.loadAll()
@@ -120,7 +156,9 @@ onMounted(async () => {
       />
       <NCard title="月度收支" size="small">
         <NEmpty v-if="monthly.length === 0" description="本年暂无数据" />
-        <VChart v-else :option="barOption()" style="height: 320px" autoresize />
+        <div v-else style="height: 320px">
+          <Bar :data="barChartData" :options="barChartOptions" />
+        </div>
       </NCard>
       <NCard title="支出分类占比" size="small">
         <NSpace v-if="shares.length > 0" align="center" :size="12" style="margin-bottom: 8px">
@@ -131,7 +169,9 @@ onMounted(async () => {
           </NRadioGroup>
         </NSpace>
         <NEmpty v-if="shares.length === 0" description="暂无支出数据" />
-        <VChart v-else :option="pieOption()" style="height: 320px" autoresize />
+        <div v-else style="height: 320px">
+          <Doughnut :data="doughnutChartData" :options="doughnutChartOptions" />
+        </div>
       </NCard>
     </NSpace>
   </NSpin>
