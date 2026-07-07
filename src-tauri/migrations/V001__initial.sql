@@ -83,7 +83,10 @@ CREATE TABLE IF NOT EXISTS transactions (
 CREATE TABLE IF NOT EXISTS budgets (
     id           TEXT PRIMARY KEY,  -- 预算全局唯一 ID（UUID v7）
     category_id  TEXT NOT NULL REFERENCES categories(id),  -- 关联支出分类 ID
-    period       TEXT NOT NULL DEFAULT 'monthly',      -- 预算周期，如 monthly / yearly / weekly
+    -- period 取值说明：
+    -- monthly：按月预算。
+    -- yearly： 按年预算。
+    period       TEXT NOT NULL DEFAULT 'monthly' CHECK(period IN ('monthly','yearly')),  -- 预算周期
     amount_cents INTEGER NOT NULL,                   -- 预算金额上限，以「分」为单位的整数
     start_date   TEXT NOT NULL,                       -- 预算开始日期，ISO 8601 日期格式（YYYY-MM-DD）
     created_at   TEXT NOT NULL,                         -- 创建时间，UTC ISO 8601 格式
@@ -98,10 +101,12 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
     base_code  TEXT NOT NULL,                      -- 基础货币代码，如 USD
     quote_code TEXT NOT NULL,                      -- 报价货币代码，如 CNY
     rate       REAL NOT NULL,                      -- 汇率值，表示 1 base = ? quote
+    priced_at  TEXT NOT NULL,                       -- 汇率生效日期，ISO 8601 日期格式（YYYY-MM-DD）
+    source     TEXT,                                -- 数据来源：manual、api、close 等
     updated_at TEXT NOT NULL,                       -- 更新时间，UTC ISO 8601 格式
     version    INTEGER NOT NULL DEFAULT 1,          -- 版本计数
     device_id  TEXT NOT NULL,                       -- 创建设备/最后修改设备标识
-    UNIQUE(base_code, quote_code)
+    UNIQUE(base_code, quote_code, priced_at)
 );
 
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
@@ -114,3 +119,4 @@ CREATE INDEX IF NOT EXISTS idx_accounts_sync ON accounts(updated_at, device_id);
 CREATE INDEX IF NOT EXISTS idx_categories_sync ON categories(updated_at, device_id);
 CREATE INDEX IF NOT EXISTS idx_budgets_sync ON budgets(updated_at, device_id);
 CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories(parent_id);
+CREATE INDEX IF NOT EXISTS idx_exchange_rates_lookup ON exchange_rates(base_code, quote_code, priced_at);

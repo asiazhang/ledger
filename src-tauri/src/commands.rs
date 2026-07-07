@@ -4,9 +4,9 @@ use tauri::{Manager, State};
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{
-    Account, AccountBalance, AccountInput, Budget, BudgetInput, BudgetProgress, Category,
-    CategoryInput, CategoryShare, Currency, ImportRequest, ImportedRow, MonthlySummary,
-    Transaction, TransactionInput,
+    Account, AccountBalance, AccountInput, Budget, BudgetInput, BudgetPeriod, BudgetProgress, Category,
+    CategoryInput, CategoryShare, Currency, ExchangeRate, ExchangeRateInput, Holding, ImportRequest,
+    ImportedRow, MarketPrice, MarketPriceInput, MonthlySummary, Transaction, TransactionInput,
 };
 
 // ---------------------------------------------------------------------------
@@ -240,6 +240,56 @@ pub fn delete_category(db: State<'_, DbState>, id: String) -> Result<()> {
 // 交易
 // ---------------------------------------------------------------------------
 
+/// 查询账户本位币代码。
+pub(crate) fn account_currency_code(conn: &Connection, account_id: &str) -> Result<String> {
+    conn.query_row(
+        "SELECT currency_code FROM accounts WHERE id=?1",
+        params![account_id],
+        |r| r.get(0),
+    )
+    .map_err(Into::into)
+}
+
+/// 查询指定日期可用的最新汇率（priced_at <= date）。
+pub(crate) fn exchange_rate_for_date(
+    conn: &Connection,
+    base_code: &str,
+    quote_code: &str,
+    priced_at: &str,
+) -> Result<f64> {
+    let rate: Option<f64> = conn
+        .query_row(
+            "SELECT rate FROM exchange_rates \
+             WHERE base_code=?1 AND quote_code=?2 AND priced_at<=?3 \
+             ORDER BY priced_at DESC LIMIT 1",
+            params![base_code, quote_code, priced_at],
+            |r| r.get(0),
+        )
+        .ok();
+    rate.ok_or_else(|| {
+        AppError::Invalid(format!(
+            "未找到 {base_code} -> {quote_code} 在 {priced_at} 的汇率"
+        ))
+    })
+}
+
+/// 将交易金额折算为账户本位币金额。
+pub(crate) fn convert_to_native(
+    conn: &Connection,
+    amount_cents: i64,
+    currency_code: &str,
+    account_id: &str,
+    rate_date: &str,
+) -> Result<i64> {
+    let account_currency = account_currency_code(conn, account_id)?;
+    if currency_code == account_currency {
+        Ok(amount_cents)
+    } else {
+        let rate = exchange_rate_for_date(conn, currency_code, &account_currency, rate_date)?;
+        Ok((amount_cents as f64 * rate).round() as i64)
+    }
+}
+
 #[tauri::command]
 pub fn list_transactions(db: State<'_, DbState>, limit: Option<i64>) -> Result<Vec<Transaction>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
@@ -287,31 +337,33 @@ pub fn create_transaction(db: State<'_, DbState>, input: TransactionInput) -> Re
 
     // 退款必须从已有支出交易发起：校验原交易存在且 kind='expense'，
     // 并强制继承原交易的分类、账户、币种（忽略前端传入的不一致值）。
-    let (category_id, account_id, currency_code, refund_of_id) = if input.kind == "refund" {
+    let (category_id, account_id, currency_code, refund_of_id, rate_date) = if input.kind == "refund" {
         let ref_id = input
             .refund_of_transaction_id
             .ok_or_else(|| AppError::Invalid("退款必须关联原支出交易".into()))?;
-        let (cat, acc, cur, okind): (Option<String>, String, String, String) = conn.query_row(
-            "SELECT category_id, account_id, currency_code, kind \
-             FROM transactions WHERE id=?1 AND is_deleted=0",
-            params![ref_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-        )?;
+        let (cat, acc, cur, okind, odate): (Option<String>, String, String, String, String) =
+            conn.query_row(
+                "SELECT category_id, account_id, currency_code, kind, date \
+                 FROM transactions WHERE id=?1 AND is_deleted=0",
+                params![ref_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )?;
         if okind != "expense" {
             return Err(AppError::Invalid("退款只能关联支出交易".into()));
         }
-        (cat, acc, cur, Some(ref_id))
+        (cat, acc, cur, Some(ref_id), odate)
     } else {
         (
             input.category_id,
             input.account_id,
             input.currency_code.clone(),
             None,
+            input.date.clone(),
         )
     };
 
-    // MVP：amount_native 直接等于 amount_cents（暂按 1:1，多币种换算留待后续）。
-    let native = input.amount_cents;
+    // 按交易日期查询汇率，将交易币种金额折算到账户本位币。
+    let native = convert_to_native(&conn, input.amount_cents, &currency_code, &account_id, &rate_date)?;
     let to_account_id = if input.kind == "transfer" {
         input.to_account_id
     } else {
@@ -356,6 +408,147 @@ pub fn delete_transaction(db: State<'_, DbState>, id: String) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// 汇率
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn list_exchange_rates(db: State<'_, DbState>) -> Result<Vec<ExchangeRate>> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let mut stmt = conn.prepare(
+        "SELECT id,base_code,quote_code,rate,priced_at,source,updated_at,version,device_id \
+         FROM exchange_rates ORDER BY base_code, quote_code, priced_at DESC",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(ExchangeRate {
+            id: r.get(0)?,
+            base_code: r.get(1)?,
+            quote_code: r.get(2)?,
+            rate: r.get(3)?,
+            priced_at: r.get(4)?,
+            source: r.get(5)?,
+            updated_at: r.get(6)?,
+            version: r.get(7)?,
+            device_id: r.get(8)?,
+        })
+    })?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn create_exchange_rate(db: State<'_, DbState>, input: ExchangeRateInput) -> Result<String> {
+    if input.rate <= 0.0 {
+        return Err(AppError::Invalid("汇率必须大于 0".into()));
+    }
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let id = new_uuid();
+    let now = now_iso();
+    conn.execute(
+        "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,source,updated_at,version,device_id) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+        params![
+            id,
+            input.base_code,
+            input.quote_code,
+            input.rate,
+            input.priced_at,
+            input.source,
+            now,
+            1,
+            device_id()
+        ],
+    )?;
+    Ok(id)
+}
+
+// ---------------------------------------------------------------------------
+// 市场价格
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn list_market_prices(db: State<'_, DbState>) -> Result<Vec<MarketPrice>> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let mut stmt = conn.prepare(
+        "SELECT id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id \
+         FROM market_prices ORDER BY instrument_id, priced_at DESC",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(MarketPrice {
+            id: r.get(0)?,
+            instrument_id: r.get(1)?,
+            price_cents: r.get(2)?,
+            currency_code: r.get(3)?,
+            priced_at: r.get(4)?,
+            source: r.get(5)?,
+            created_at: r.get(6)?,
+            updated_at: r.get(7)?,
+            version: r.get(8)?,
+            device_id: r.get(9)?,
+        })
+    })?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn create_market_price(db: State<'_, DbState>, input: MarketPriceInput) -> Result<String> {
+    if input.price_cents <= 0 {
+        return Err(AppError::Invalid("价格必须大于 0".into()));
+    }
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let id = new_uuid();
+    let now = now_iso();
+    conn.execute(
+        "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        params![
+            id,
+            input.instrument_id,
+            input.price_cents,
+            input.currency_code,
+            input.priced_at,
+            input.source,
+            now,
+            now,
+            1,
+            device_id()
+        ],
+    )?;
+    Ok(id)
+}
+
+// ---------------------------------------------------------------------------
+// 持仓
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn list_holdings(db: State<'_, DbState>) -> Result<Vec<Holding>> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let mut stmt = conn.prepare(
+        "SELECT id,account_id,instrument_id,quantity,cost_basis_cents,cost_currency_code, \
+         latest_price_cents,latest_price_currency_code,market_value_cents,unrealized_pnl_cents,updated_at \
+         FROM v_holdings ORDER BY account_id, instrument_id",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(Holding {
+            id: r.get(0)?,
+            account_id: r.get(1)?,
+            instrument_id: r.get(2)?,
+            quantity: r.get(3)?,
+            cost_basis_cents: r.get(4)?,
+            cost_currency_code: r.get(5)?,
+            latest_price_cents: r.get(6)?,
+            latest_price_currency_code: r.get(7)?,
+            market_value_cents: r.get(8)?,
+            unrealized_pnl_cents: r.get(9)?,
+            updated_at: r.get(10)?,
+        })
+    })?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
+// ---------------------------------------------------------------------------
 // 预算
 // ---------------------------------------------------------------------------
 
@@ -388,13 +581,14 @@ pub fn create_budget(db: State<'_, DbState>, input: BudgetInput) -> Result<Strin
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let id = new_uuid();
     let now = now_iso();
+    let period = input.period.unwrap_or(BudgetPeriod::Monthly).to_string();
     conn.execute(
         "INSERT INTO budgets (id,category_id,period,amount_cents,start_date,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0)",
         params![
             id,
             input.category_id,
-            input.period.unwrap_or_else(|| "monthly".into()),
+            period,
             input.amount_cents,
             input.start_date,
             now,

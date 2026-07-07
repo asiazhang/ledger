@@ -190,4 +190,128 @@ mod tests {
             .unwrap();
         assert_eq!(linked, expense_id);
     }
+
+    /// 汇率表支持按日期生效，查询时取 priced_at <= 目标日期的最新汇率。
+    #[test]
+    fn exchange_rate_with_priced_at() {
+        let mut conn = open_in_memory().unwrap();
+        init_db(&mut conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,source,updated_at,version,device_id) \
+             VALUES (?1,'USD','CNY',7.0,'2026-01-01','manual','2026-01-01T00:00:00Z',1,'test')",
+            params!["er-01"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,source,updated_at,version,device_id) \
+             VALUES (?1,'USD','CNY',7.2,'2026-06-01','manual','2026-06-01T00:00:00Z',1,'test')",
+            params!["er-02"],
+        )
+        .unwrap();
+
+        let rate = crate::commands::exchange_rate_for_date(&conn, "USD", "CNY", "2026-01-15")
+            .unwrap();
+        assert!((rate - 7.0).abs() < 0.0001);
+
+        let rate = crate::commands::exchange_rate_for_date(&conn, "USD", "CNY", "2026-07-01")
+            .unwrap();
+        assert!((rate - 7.2).abs() < 0.0001);
+    }
+
+    /// market_prices 写入最新价后，v_holdings 能正确输出市值和未实现盈亏。
+    #[test]
+    fn market_price_and_holding_view() {
+        let mut conn = open_in_memory().unwrap();
+        init_db(&mut conn).unwrap();
+
+        let account_id = "acc-test-inv";
+        let instrument_id = "inst-test-nvda";
+        conn.execute(
+            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,'美股','investment','USD',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            params![account_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id) \
+             VALUES (?1,'NVDA','stock','NVIDIA','USD','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+            params![instrument_id],
+        )
+        .unwrap();
+
+        let buy_txn_id = "txn-buy-01";
+        conn.execute(
+            "INSERT INTO transactions (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,'buy',100000,'USD',100000,?2,NULL,NULL,NULL,'买 NVDA','2026-01-10','2026-01-10T00:00:00Z','2026-01-10T00:00:00Z',1,'test',0)",
+            params![buy_txn_id, account_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO security_transactions (transaction_id,instrument_id,action,quantity,price_cents,fee_cents) \
+             VALUES (?1,?2,'buy',10,10000,0)",
+            params![buy_txn_id, instrument_id],
+        )
+        .unwrap();
+        let lot_id = "lot-01";
+        conn.execute(
+            "INSERT INTO security_lots (id,account_id,instrument_id,buy_transaction_id,initial_quantity,remaining_quantity,cost_per_unit_cents,currency_code,created_at,updated_at,version,device_id) \
+             VALUES (?1,?2,?3,?4,10,10,10000,'USD','2026-01-10T00:00:00Z','2026-01-10T00:00:00Z',1,'test')",
+            params![lot_id, account_id, instrument_id, buy_txn_id],
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
+             VALUES (?1,?2,12000,'USD','2026-07-07','yahoo','2026-07-07T00:00:00Z','2026-07-07T00:00:00Z',1,'test')",
+            params!["mp-01", instrument_id],
+        )
+        .unwrap();
+
+        let (quantity, cost_basis, market_value, unrealized_pnl): (f64, i64, i64, i64) = conn
+            .query_row(
+                "SELECT quantity, cost_basis_cents, market_value_cents, unrealized_pnl_cents \
+                 FROM v_holdings WHERE id=?1",
+                params![format!("{account_id}-{instrument_id}")],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert!((quantity - 10.0).abs() < 0.0001);
+        assert_eq!(cost_basis, 100000);
+        assert_eq!(market_value, 120000);
+        assert_eq!(unrealized_pnl, 20000);
+    }
+
+    /// 非本位币交易按日期汇率折算到 amount_native_cents。
+    #[test]
+    fn transaction_currency_conversion() {
+        let mut conn = open_in_memory().unwrap();
+        init_db(&mut conn).unwrap();
+
+        let account_id = "acc-test-cny";
+        conn.execute(
+            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,'现金','cash','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            params![account_id],
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,source,updated_at,version,device_id) \
+             VALUES (?1,'USD','CNY',7.2,'2026-01-01','manual','2026-01-01T00:00:00Z',1,'test')",
+            params!["er-01"],
+        )
+        .unwrap();
+
+        let native =
+            crate::commands::convert_to_native(&conn, 10000, "USD", account_id, "2026-01-10")
+                .unwrap();
+        assert_eq!(native, 72000);
+
+        // 同币种无需汇率，1:1 返回。
+        let native =
+            crate::commands::convert_to_native(&conn, 10000, "CNY", account_id, "2026-01-10")
+                .unwrap();
+        assert_eq!(native, 10000);
+    }
 }

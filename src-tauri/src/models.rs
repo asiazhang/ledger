@@ -66,6 +66,48 @@ impl FromSql for AccountType {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BudgetPeriod {
+    Monthly,
+    Yearly,
+}
+
+impl fmt::Display for BudgetPeriod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BudgetPeriod::Monthly => write!(f, "monthly"),
+            BudgetPeriod::Yearly => write!(f, "yearly"),
+        }
+    }
+}
+
+impl FromStr for BudgetPeriod {
+    type Err = AppError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "monthly" => Ok(BudgetPeriod::Monthly),
+            "yearly" => Ok(BudgetPeriod::Yearly),
+            _ => Err(AppError::Invalid(format!("未知预算周期: {s}"))),
+        }
+    }
+}
+
+impl ToSql for BudgetPeriod {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::from(self.to_string()))
+    }
+}
+
+impl FromSql for BudgetPeriod {
+    fn column_result(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
+        value
+            .as_str()?
+            .parse()
+            .map_err(|e: AppError| FromSqlError::Other(Box::new(e)))
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Currency {
     pub code: String,
@@ -157,7 +199,7 @@ pub struct TransactionInput {
 pub struct Budget {
     pub id: String,
     pub category_id: String,
-    pub period: String,
+    pub period: BudgetPeriod,
     pub amount_cents: i64,
     pub start_date: String,
     pub created_at: String,
@@ -170,7 +212,7 @@ pub struct Budget {
 #[derive(Debug, Deserialize)]
 pub struct BudgetInput {
     pub category_id: String,
-    pub period: Option<String>,
+    pub period: Option<BudgetPeriod>,
     pub amount_cents: i64,
     pub start_date: String,
 }
@@ -215,4 +257,64 @@ pub struct ImportedRow {
 #[derive(Debug, Deserialize)]
 pub struct ImportRequest {
     pub path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ExchangeRate {
+    pub id: String,
+    pub base_code: String,
+    pub quote_code: String,
+    pub rate: f64,
+    pub priced_at: String,
+    pub source: Option<String>,
+    pub updated_at: String,
+    pub version: i64,
+    pub device_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExchangeRateInput {
+    pub base_code: String,
+    pub quote_code: String,
+    pub rate: f64,
+    pub priced_at: String,
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MarketPrice {
+    pub id: String,
+    pub instrument_id: String,
+    pub price_cents: i64,
+    pub currency_code: String,
+    pub priced_at: String,
+    pub source: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub version: i64,
+    pub device_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MarketPriceInput {
+    pub instrument_id: String,
+    pub price_cents: i64,
+    pub currency_code: String,
+    pub priced_at: String,
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Holding {
+    pub id: String,
+    pub account_id: String,
+    pub instrument_id: String,
+    pub quantity: f64,
+    pub cost_basis_cents: i64,
+    pub cost_currency_code: String,
+    pub latest_price_cents: Option<i64>,
+    pub latest_price_currency_code: Option<String>,
+    pub market_value_cents: Option<i64>,
+    pub unrealized_pnl_cents: Option<i64>,
+    pub updated_at: String,
 }

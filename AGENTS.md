@@ -1,12 +1,16 @@
 # AGENTS.md
 
-This file provides guidance to WARP (warp.dev) when working with code in this repository.
+本文件为 WARP（warp.dev）在本仓库中处理代码时提供指导。
 
 ## 项目概览
 
 Ledger 是一个基于 Tauri 2 的桌面记账应用，前端 Vue 3 + TypeScript + Vite，后端 Rust。
 
 > **版本状态：当前尚未发布，处于早期开发/MVP 阶段。任何数据库 schema、API、数据模型的重构或迁移都无需考虑向后兼容，可直接按最合理的方式调整。**
+
+## 需求文档归档
+
+需求文档（`specs/*.md`）的文件名必须使用英文。按完成/归档日期存放到英文归档目录 `specs/archive/` 下，目录结构为 `YYYY/MM/DD/`。例如 2026 年 7 月 7 日完成的需求文档归档到 `specs/archive/2026/07/07/`。
 
 ## 常用命令
 
