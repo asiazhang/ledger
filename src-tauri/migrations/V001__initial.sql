@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     -- receivable： 借出款/应收款账户，余额为正表示对方尚未归还的金额。
     -- other：      其他账户（押金、公司垫付、自定义账户等），作为兜底类型。
     type                  TEXT NOT NULL CHECK(type IN ('cash','bank','credit','ewallet','investment','debt','receivable','other')),
-    currency_code         TEXT NOT NULL REFERENCES currencies(code),  -- 账户本位币代码，外键关联 currencies.code
+    currency_code         TEXT NOT NULL REFERENCES currencies(code) ON DELETE RESTRICT,  -- 账户本位币代码，外键关联 currencies.code
     initial_balance_cents INTEGER NOT NULL DEFAULT 0,        -- 初始余额，以本位币「分」为单位的整数
     created_at            TEXT NOT NULL,                        -- 创建时间，UTC ISO 8601 格式
     updated_at            TEXT NOT NULL,                        -- 最后修改时间，UTC ISO 8601 格式（LWW 冲突解决）
@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS categories (
     id         TEXT PRIMARY KEY,                  -- 分类全局唯一 ID（UUID v7）
     name       TEXT NOT NULL,                                      -- 分类名称，如「餐饮」「工资」
     kind       TEXT NOT NULL CHECK(kind IN ('income','expense')),   -- 分类类型：income（收入）或 expense（支出）
-    parent_id  TEXT REFERENCES categories(id),                    -- 父分类 ID，NULL 表示顶级分类；指向同表 id
+    parent_id  TEXT REFERENCES categories(id) ON DELETE SET NULL,  -- 父分类 ID，NULL 表示顶级分类；指向同表 id；父分类硬删时置空
     icon       TEXT,                                               -- 图标名称（可选）
     color      TEXT,                                               -- 展示颜色（可选）
     created_at TEXT NOT NULL,                                       -- 创建时间，UTC ISO 8601 格式
@@ -65,12 +65,12 @@ CREATE TABLE IF NOT EXISTS transactions (
     -- split：   拆股/送股，不改变账户现金，仅通过 security_transactions 调整持仓数量。
     kind                      TEXT NOT NULL CHECK(kind IN ('income','expense','transfer','refund','buy','sell','dividend','split')),
     amount_cents              INTEGER NOT NULL,                                        -- 原始币种金额，以「分」为单位的整数
-    currency_code             TEXT NOT NULL,                                           -- 原始币种代码，关联 currencies.code
+    currency_code             TEXT NOT NULL REFERENCES currencies(code) ON DELETE RESTRICT,  -- 原始币种代码，关联 currencies.code
     amount_native_cents       INTEGER NOT NULL,                                        -- 本位币金额（当前 1:1，预留多币种换算），以「分」为单位
-    account_id                TEXT NOT NULL REFERENCES accounts(id),                 -- 关联账户 ID；支出/收入/转出账户
-    to_account_id             TEXT REFERENCES accounts(id),                        -- 转入账户 ID，仅转账（transfer）时必填
-    category_id               TEXT REFERENCES categories(id),                       -- 关联分类 ID，转账通常为空
-    refund_of_transaction_id  TEXT REFERENCES transactions(id),                      -- 退款关联的原始支出交易 ID
+    account_id                TEXT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,  -- 关联账户 ID；支出/收入/转出账户
+    to_account_id             TEXT REFERENCES accounts(id) ON DELETE SET NULL,    -- 转入账户 ID，仅转账（transfer）时必填；账户硬删时置空
+    category_id               TEXT REFERENCES categories(id) ON DELETE SET NULL,   -- 关联分类 ID，转账通常为空；分类硬删时置空
+    refund_of_transaction_id  TEXT REFERENCES transactions(id) ON DELETE SET NULL,  -- 退款关联的原始支出交易 ID；原交易硬删时置空
     note                      TEXT,                                                    -- 交易备注（可选）
     date                      TEXT NOT NULL,                                           -- 交易日期，ISO 8601 日期格式（YYYY-MM-DD）
     created_at                TEXT NOT NULL,                                            -- 创建时间，UTC ISO 8601 格式
@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS transactions (
 
 CREATE TABLE IF NOT EXISTS budgets (
     id           TEXT PRIMARY KEY,  -- 预算全局唯一 ID（UUID v7）
-    category_id  TEXT NOT NULL REFERENCES categories(id),  -- 关联支出分类 ID
+    category_id  TEXT NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,  -- 关联支出分类 ID
     -- period 取值说明：
     -- monthly：按月预算。
     -- yearly： 按年预算。
@@ -98,8 +98,8 @@ CREATE TABLE IF NOT EXISTS budgets (
 
 CREATE TABLE IF NOT EXISTS exchange_rates (
     id         TEXT PRIMARY KEY,  -- 汇率记录全局唯一 ID（UUID v7）
-    base_code  TEXT NOT NULL,                      -- 基础货币代码，如 USD
-    quote_code TEXT NOT NULL,                      -- 报价货币代码，如 CNY
+    base_code  TEXT NOT NULL REFERENCES currencies(code) ON DELETE RESTRICT,  -- 基础货币代码，如 USD
+    quote_code TEXT NOT NULL REFERENCES currencies(code) ON DELETE RESTRICT,  -- 报价货币代码，如 CNY
     rate       REAL NOT NULL,                      -- 汇率值，表示 1 base = ? quote
     priced_at  TEXT NOT NULL,                       -- 行情采集时间，ISO 8601 格式；不参与取数，仅记录该汇率何时采集
     source     TEXT,                                -- 数据来源：manual、api、close 等

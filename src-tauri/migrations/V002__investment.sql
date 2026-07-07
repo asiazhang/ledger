@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS instruments (
     symbol          TEXT NOT NULL,                      -- 代码，如 "600519.SH" / "NVDA" / "000001"
     instrument_type TEXT NOT NULL CHECK(instrument_type IN ('stock','fund','bond','etf','other')),  -- 金融工具类型
     name            TEXT,                                -- 名称（可选，如 "贵州茅台"）
-    currency_code   TEXT NOT NULL,                     -- 报价币种
+    currency_code   TEXT NOT NULL REFERENCES currencies(code) ON DELETE RESTRICT,  -- 报价币种
     created_at      TEXT NOT NULL,                     -- 创建时间
     updated_at      TEXT NOT NULL,                     -- 最后修改时间
     version         INTEGER NOT NULL DEFAULT 1,          -- 版本计数
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS instruments (
 --    - 分红/拆股等无资金变动时，transactions.amount_cents 为 0。
 CREATE TABLE IF NOT EXISTS security_transactions (
     transaction_id   TEXT PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,  -- 关联交易 ID
-    instrument_id    TEXT NOT NULL REFERENCES instruments(id),  -- 关联金融工具，通过 instruments 取 symbol / type / currency
+    instrument_id    TEXT NOT NULL REFERENCES instruments(id) ON DELETE RESTRICT,  -- 关联金融工具，通过 instruments 取 symbol / type / currency
     action           TEXT NOT NULL CHECK(action IN ('buy','sell','dividend','split')),  -- 交易动作：买入/卖出/分红/拆股
     quantity         REAL,                                -- 数量变化（拆股/送股/分红可用 NULL）
     price_cents      INTEGER,                             -- 成交单价（分），分红/拆股可为 NULL
@@ -39,13 +39,13 @@ CREATE TABLE IF NOT EXISTS security_transactions (
 --    - 拆股/送股等公司行为需要应用层调整所有相关 lot 的 quantity 和 cost_per_unit_cents。
 CREATE TABLE IF NOT EXISTS security_lots (
     id                    TEXT PRIMARY KEY,  -- 批次全局唯一 ID（UUID v7）
-    account_id            TEXT NOT NULL REFERENCES accounts(id),  -- 关联账户 ID
-    instrument_id         TEXT NOT NULL REFERENCES instruments(id),  -- 关联金融工具
+    account_id            TEXT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,  -- 关联账户 ID
+    instrument_id         TEXT NOT NULL REFERENCES instruments(id) ON DELETE RESTRICT,  -- 关联金融工具
     buy_transaction_id    TEXT NOT NULL REFERENCES security_transactions(transaction_id) ON DELETE CASCADE,  -- 关联买入交易
     initial_quantity      REAL NOT NULL,                     -- 买入数量
     remaining_quantity    REAL NOT NULL,                     -- 剩余数量（卖出后扣减）
     cost_per_unit_cents   INTEGER NOT NULL,                  -- 单位成本（分），已含买入手续费摊薄
-    currency_code         TEXT NOT NULL,                     -- 成本币种
+    currency_code         TEXT NOT NULL REFERENCES currencies(code) ON DELETE RESTRICT,  -- 成本币种
     created_at            TEXT NOT NULL,                     -- 创建时间
     updated_at            TEXT NOT NULL,                     -- 最后更新时间
     version               INTEGER NOT NULL DEFAULT 1,          -- 版本计数
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS security_lot_sales (
     quantity            REAL NOT NULL,                     -- 卖出的该批次数量
     cost_per_unit_cents INTEGER NOT NULL,                  -- 卖出时该批次单位成本（分）
     realized_pnl_cents  INTEGER NOT NULL,                  -- 该匹配项已实现盈亏（分），已扣除卖出手续费
-    currency_code       TEXT NOT NULL,                     -- 币种
+    currency_code       TEXT NOT NULL REFERENCES currencies(code) ON DELETE RESTRICT,  -- 币种
     created_at          TEXT NOT NULL                      -- 创建时间
 );
 
@@ -72,9 +72,9 @@ CREATE TABLE IF NOT EXISTS security_lot_sales (
 --    - priced_at 记录该价格对应的行情日期，updated_at 记录写入时间。
 CREATE TABLE IF NOT EXISTS market_prices (
     id              TEXT PRIMARY KEY,  -- 价格记录全局唯一 ID（UUID v7）
-    instrument_id   TEXT NOT NULL REFERENCES instruments(id),  -- 关联金融工具
+    instrument_id   TEXT NOT NULL REFERENCES instruments(id) ON DELETE CASCADE,  -- 关联金融工具
     price_cents     INTEGER NOT NULL,        -- 最新价（分）
-    currency_code   TEXT NOT NULL,           -- 报价币种
+    currency_code   TEXT NOT NULL REFERENCES currencies(code) ON DELETE RESTRICT,  -- 报价币种
     priced_at       TEXT NOT NULL,           -- 行情日期，ISO 8601 日期格式
     source          TEXT,                    -- 数据来源（如 yahoo、manual）
     created_at      TEXT NOT NULL,
