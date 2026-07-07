@@ -101,12 +101,12 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
     base_code  TEXT NOT NULL,                      -- 基础货币代码，如 USD
     quote_code TEXT NOT NULL,                      -- 报价货币代码，如 CNY
     rate       REAL NOT NULL,                      -- 汇率值，表示 1 base = ? quote
-    priced_at  TEXT NOT NULL,                       -- 汇率生效日期，ISO 8601 日期格式（YYYY-MM-DD）
+    priced_at  TEXT NOT NULL,                       -- 行情采集时间，ISO 8601 格式；不参与取数，仅记录该汇率何时采集
     source     TEXT,                                -- 数据来源：manual、api、close 等
     updated_at TEXT NOT NULL,                       -- 更新时间，UTC ISO 8601 格式
     version    INTEGER NOT NULL DEFAULT 1,          -- 版本计数
     device_id  TEXT NOT NULL,                       -- 创建设备/最后修改设备标识
-    UNIQUE(base_code, quote_code, priced_at)
+    UNIQUE(base_code, quote_code)                  -- 每货币对仅保留一行最新汇率；create_exchange_rate 走 upsert
 );
 
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
@@ -119,4 +119,3 @@ CREATE INDEX IF NOT EXISTS idx_accounts_sync ON accounts(updated_at, device_id);
 CREATE INDEX IF NOT EXISTS idx_categories_sync ON categories(updated_at, device_id);
 CREATE INDEX IF NOT EXISTS idx_budgets_sync ON budgets(updated_at, device_id);
 CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories(parent_id);
-CREATE INDEX IF NOT EXISTS idx_exchange_rates_lookup ON exchange_rates(base_code, quote_code, priced_at);

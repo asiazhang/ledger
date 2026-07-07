@@ -68,19 +68,20 @@ CREATE TABLE IF NOT EXISTS security_lot_sales (
 );
 
 -- 5. market_prices（市场价格表）
---    - 按 instrument + 日期记录收盘价/最新价，用于计算持仓市值和未实现盈亏。
+--    - 每个 instrument 仅保留最新价格，用于计算持仓市值和未实现盈亏。
+--    - priced_at 记录该价格对应的行情日期，updated_at 记录写入时间。
 CREATE TABLE IF NOT EXISTS market_prices (
     id              TEXT PRIMARY KEY,  -- 价格记录全局唯一 ID（UUID v7）
     instrument_id   TEXT NOT NULL REFERENCES instruments(id),  -- 关联金融工具
-    price_cents     INTEGER NOT NULL,        -- 最新/收盘价（分）
+    price_cents     INTEGER NOT NULL,        -- 最新价（分）
     currency_code   TEXT NOT NULL,           -- 报价币种
-    priced_at       TEXT NOT NULL,           -- 日期或时间戳，ISO 8601 日期格式
+    priced_at       TEXT NOT NULL,           -- 行情日期，ISO 8601 日期格式
     source          TEXT,                    -- 数据来源（如 yahoo、manual）
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL,
     version         INTEGER NOT NULL DEFAULT 1,
     device_id       TEXT NOT NULL,
-    UNIQUE(instrument_id, priced_at)
+    UNIQUE(instrument_id)
 );
 
 -- 6. v_holdings（当前持仓视图）
@@ -98,22 +99,41 @@ SELECT
     h.currency_code AS cost_currency_code,
     p.price_cents AS latest_price_cents,
     p.currency_code AS latest_price_currency_code,
+    -- 有效汇率：优先正向 (价格币→账户币)，缺失时用反向 (账户币→价格币) 取倒数。
+    -- 同币种时汇率视为 1（无需查表）。
     CASE
         WHEN p.price_cents IS NULL THEN NULL
         WHEN p.currency_code = a.currency_code THEN CAST(ROUND(h.quantity * p.price_cents) AS INTEGER)
         WHEN er.rate IS NOT NULL THEN CAST(ROUND(h.quantity * p.price_cents * er.rate) AS INTEGER)
+        WHEN er_rev.rate IS NOT NULL THEN CAST(ROUND(h.quantity * p.price_cents / er_rev.rate) AS INTEGER)
         ELSE NULL
     END AS market_value_cents,
+    -- 未实现盈亏 = 账户币市值 − 账户币成本。市值经 er/er_rev（价格币→账户币）折算，
+    -- 成本经 ec/ec_rev（lot 成本币→账户币）折算，两者同币后再相减；
+    -- 任一折算缺失（行情或对应汇率不存在）时结果为 NULL。
     CASE
         WHEN p.price_cents IS NULL THEN NULL
-        WHEN p.currency_code = a.currency_code THEN CAST(ROUND(h.quantity * p.price_cents) AS INTEGER) - h.cost_basis_cents
-        WHEN er.rate IS NOT NULL THEN CAST(ROUND(h.quantity * p.price_cents * er.rate) AS INTEGER) - h.cost_basis_cents
-        ELSE NULL
+        ELSE
+            (CASE
+                WHEN p.currency_code = a.currency_code THEN CAST(ROUND(h.quantity * p.price_cents) AS INTEGER)
+                WHEN er.rate IS NOT NULL THEN CAST(ROUND(h.quantity * p.price_cents * er.rate) AS INTEGER)
+                WHEN er_rev.rate IS NOT NULL THEN CAST(ROUND(h.quantity * p.price_cents / er_rev.rate) AS INTEGER)
+                ELSE NULL
+            END)
+            -
+            (CASE
+                WHEN h.currency_code = a.currency_code THEN h.cost_basis_cents
+                WHEN ec.rate IS NOT NULL THEN CAST(ROUND(h.cost_basis_cents * ec.rate) AS INTEGER)
+                WHEN ec_rev.rate IS NOT NULL THEN CAST(ROUND(h.cost_basis_cents / ec_rev.rate) AS INTEGER)
+                ELSE NULL
+            END)
     END AS unrealized_pnl_cents,
     h.updated_at
 FROM (
     SELECT
-        account_id || '-' || instrument_id AS id,
+        -- id 纳入 currency_code：GROUP BY 含 currency_code，若同账户同标的存在不同币种的 lot，
+        -- 仅用 account_id-instrument_id 会生成重复 key。
+        account_id || '-' || instrument_id || '-' || currency_code AS id,
         account_id,
         instrument_id,
         SUM(remaining_quantity) AS quantity,
@@ -122,32 +142,28 @@ FROM (
         MAX(updated_at) AS updated_at
     FROM security_lots
     WHERE remaining_quantity > 0
+      -- 排除软删除账户的持仓：在聚合前剔除已删账户的 lot，避免其持仓行进入视图。
+      AND account_id IN (SELECT id FROM accounts WHERE is_deleted = 0)
     GROUP BY account_id, instrument_id, currency_code
 ) h
 LEFT JOIN accounts a ON a.id = h.account_id
-LEFT JOIN (
-    SELECT mp1.instrument_id, mp1.price_cents, mp1.currency_code
-    FROM market_prices mp1
-    WHERE mp1.priced_at = (
-        SELECT MAX(mp2.priced_at)
-        FROM market_prices mp2
-        WHERE mp2.instrument_id = mp1.instrument_id
-    )
-) p ON p.instrument_id = h.instrument_id
-LEFT JOIN (
-    SELECT er1.base_code, er1.quote_code, er1.rate
-    FROM exchange_rates er1
-    WHERE er1.priced_at = (
-        SELECT MAX(er2.priced_at)
-        FROM exchange_rates er2
-        WHERE er2.base_code = er1.base_code AND er2.quote_code = er1.quote_code
-    )
-) er ON er.base_code = p.currency_code AND er.quote_code = a.currency_code;
+LEFT JOIN market_prices p ON p.instrument_id = h.instrument_id
+-- er/er_rev：价格币→账户币的正向与反向（兜底）
+LEFT JOIN exchange_rates er     ON er.base_code = p.currency_code     AND er.quote_code = a.currency_code
+LEFT JOIN exchange_rates er_rev ON er_rev.base_code = a.currency_code AND er_rev.quote_code = p.currency_code
+-- ec/ec_rev：lot 成本币→账户币的正向与反向（兜底）
+LEFT JOIN exchange_rates ec     ON ec.base_code = h.currency_code     AND ec.quote_code = a.currency_code
+LEFT JOIN exchange_rates ec_rev ON ec_rev.base_code = a.currency_code AND ec_rev.quote_code = h.currency_code;
 
-CREATE INDEX IF NOT EXISTS idx_security_lots_account_instrument ON security_lots(account_id, instrument_id);
+-- v_holdings 聚合子查询按 (account_id, instrument_id, currency_code) GROUP BY 且 WHERE remaining_quantity > 0，
+-- 故用 partial covering index：前三列对齐 GROUP BY 提供有序扫描免排序，后三列覆盖
+-- SUM(remaining_quantity) / SUM(remaining_quantity * cost_per_unit_cents) / MAX(updated_at) 免回表。
+-- account_id + instrument_id 查询已由 UNIQUE(account_id, instrument_id, buy_transaction_id) 自动索引覆盖，无需单独索引。
+CREATE INDEX IF NOT EXISTS idx_security_lots_active_covering
+    ON security_lots(account_id, instrument_id, currency_code, remaining_quantity, cost_per_unit_cents, updated_at)
+    WHERE remaining_quantity > 0;
 CREATE INDEX IF NOT EXISTS idx_security_lots_buy_transaction ON security_lots(buy_transaction_id);
 CREATE INDEX IF NOT EXISTS idx_security_lots_sync ON security_lots(updated_at, device_id);
 CREATE INDEX IF NOT EXISTS idx_security_lot_sales_lot ON security_lot_sales(lot_id);
 CREATE INDEX IF NOT EXISTS idx_security_transactions_instrument ON security_transactions(instrument_id);
 CREATE INDEX IF NOT EXISTS idx_market_prices_instrument ON market_prices(instrument_id);
-CREATE INDEX IF NOT EXISTS idx_market_prices_lookup ON market_prices(instrument_id, priced_at);

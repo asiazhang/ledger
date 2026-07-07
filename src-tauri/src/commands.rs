@@ -250,42 +250,59 @@ pub(crate) fn account_currency_code(conn: &Connection, account_id: &str) -> Resu
     .map_err(Into::into)
 }
 
-/// 查询指定日期可用的最新汇率（priced_at <= date）。
-pub(crate) fn exchange_rate_for_date(
+/// 查询货币对的当前汇率。exchange_rates 每货币对仅保留一行最新，无需日期参数。
+/// 查不到正向 (base→quote) 时，兜底查反向 (quote→base) 并取倒数。
+pub(crate) fn exchange_rate(
     conn: &Connection,
     base_code: &str,
     quote_code: &str,
-    priced_at: &str,
 ) -> Result<f64> {
-    let rate: Option<f64> = conn
+    if base_code == quote_code {
+        return Ok(1.0);
+    }
+    if let Some(rate) = conn
         .query_row(
-            "SELECT rate FROM exchange_rates \
-             WHERE base_code=?1 AND quote_code=?2 AND priced_at<=?3 \
-             ORDER BY priced_at DESC LIMIT 1",
-            params![base_code, quote_code, priced_at],
+            "SELECT rate FROM exchange_rates WHERE base_code=?1 AND quote_code=?2",
+            params![base_code, quote_code],
             |r| r.get(0),
         )
-        .ok();
-    rate.ok_or_else(|| {
-        AppError::Invalid(format!(
-            "未找到 {base_code} -> {quote_code} 在 {priced_at} 的汇率"
-        ))
-    })
+        .ok()
+    {
+        return Ok(rate);
+    }
+    // 反向兜底：1 / (quote→base 的 rate)
+    if let Some(rev) = conn
+        .query_row(
+            "SELECT rate FROM exchange_rates WHERE base_code=?1 AND quote_code=?2",
+            params![quote_code, base_code],
+            |r| r.get::<_, f64>(0),
+        )
+        .ok()
+    {
+        if rev <= 0.0 {
+            return Err(AppError::Invalid(format!(
+                "反向汇率 {quote_code}->{base_code} 非正: {rev}"
+            )));
+        }
+        return Ok(1.0 / rev);
+    }
+    Err(AppError::Invalid(format!(
+        "未找到 {base_code} -> {quote_code} 的汇率（正反向均无）"
+    )))
 }
 
-/// 将交易金额折算为账户本位币金额。
+/// 将交易金额折算为账户本位币金额。汇率取当前最新，无需交易日期。
 pub(crate) fn convert_to_native(
     conn: &Connection,
     amount_cents: i64,
     currency_code: &str,
     account_id: &str,
-    rate_date: &str,
 ) -> Result<i64> {
     let account_currency = account_currency_code(conn, account_id)?;
     if currency_code == account_currency {
         Ok(amount_cents)
     } else {
-        let rate = exchange_rate_for_date(conn, currency_code, &account_currency, rate_date)?;
+        let rate = exchange_rate(conn, currency_code, &account_currency)?;
         Ok((amount_cents as f64 * rate).round() as i64)
     }
 }
@@ -337,33 +354,31 @@ pub fn create_transaction(db: State<'_, DbState>, input: TransactionInput) -> Re
 
     // 退款必须从已有支出交易发起：校验原交易存在且 kind='expense'，
     // 并强制继承原交易的分类、账户、币种（忽略前端传入的不一致值）。
-    let (category_id, account_id, currency_code, refund_of_id, rate_date) = if input.kind == "refund" {
+    let (category_id, account_id, currency_code, refund_of_id) = if input.kind == "refund" {
         let ref_id = input
             .refund_of_transaction_id
             .ok_or_else(|| AppError::Invalid("退款必须关联原支出交易".into()))?;
-        let (cat, acc, cur, okind, odate): (Option<String>, String, String, String, String) =
-            conn.query_row(
-                "SELECT category_id, account_id, currency_code, kind, date \
-                 FROM transactions WHERE id=?1 AND is_deleted=0",
-                params![ref_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-            )?;
+        let (cat, acc, cur, okind): (Option<String>, String, String, String) = conn.query_row(
+            "SELECT category_id, account_id, currency_code, kind \
+             FROM transactions WHERE id=?1 AND is_deleted=0",
+            params![ref_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
         if okind != "expense" {
             return Err(AppError::Invalid("退款只能关联支出交易".into()));
         }
-        (cat, acc, cur, Some(ref_id), odate)
+        (cat, acc, cur, Some(ref_id))
     } else {
         (
             input.category_id,
             input.account_id,
             input.currency_code.clone(),
             None,
-            input.date.clone(),
         )
     };
 
-    // 按交易日期查询汇率，将交易币种金额折算到账户本位币。
-    let native = convert_to_native(&conn, input.amount_cents, &currency_code, &account_id, &rate_date)?;
+    // 按当前最新汇率将交易币种金额折算到账户本位币。
+    let native = convert_to_native(&conn, input.amount_cents, &currency_code, &account_id)?;
     let to_account_id = if input.kind == "transfer" {
         input.to_account_id
     } else {
@@ -416,7 +431,7 @@ pub fn list_exchange_rates(db: State<'_, DbState>) -> Result<Vec<ExchangeRate>> 
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let mut stmt = conn.prepare(
         "SELECT id,base_code,quote_code,rate,priced_at,source,updated_at,version,device_id \
-         FROM exchange_rates ORDER BY base_code, quote_code, priced_at DESC",
+         FROM exchange_rates ORDER BY base_code, quote_code",
     )?;
     let rows = stmt.query_map([], |r| {
         Ok(ExchangeRate {
@@ -443,9 +458,21 @@ pub fn create_exchange_rate(db: State<'_, DbState>, input: ExchangeRateInput) ->
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let id = new_uuid();
     let now = now_iso();
+    // 每个货币对只保留一行最新汇率；已存在则更新，否则插入。
+    let existing_id: Option<String> = conn
+        .query_row(
+            "SELECT id FROM exchange_rates WHERE base_code=?1 AND quote_code=?2",
+            params![input.base_code, input.quote_code],
+            |r| r.get(0),
+        )
+        .ok();
+    let id = existing_id.unwrap_or(id);
     conn.execute(
         "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,source,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9) \
+         ON CONFLICT(base_code, quote_code) DO UPDATE SET \
+         rate=excluded.rate, priced_at=excluded.priced_at, source=excluded.source, \
+         updated_at=excluded.updated_at, version=version+1, device_id=excluded.device_id",
         params![
             id,
             input.base_code,
@@ -498,9 +525,22 @@ pub fn create_market_price(db: State<'_, DbState>, input: MarketPriceInput) -> R
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let id = new_uuid();
     let now = now_iso();
+    // 每个 instrument 只保留一行最新价格；已存在则更新，否则插入。
+    let existing_id: Option<String> = conn
+        .query_row(
+            "SELECT id FROM market_prices WHERE instrument_id=?1",
+            params![input.instrument_id],
+            |r| r.get(0),
+        )
+        .ok();
+    let id = existing_id.unwrap_or(id);
     conn.execute(
         "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) \
+         ON CONFLICT(instrument_id) DO UPDATE SET \
+         price_cents=excluded.price_cents, currency_code=excluded.currency_code, \
+         priced_at=excluded.priced_at, source=excluded.source, \
+         updated_at=excluded.updated_at, version=version+1, device_id=excluded.device_id",
         params![
             id,
             input.instrument_id,
