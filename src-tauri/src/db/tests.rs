@@ -47,8 +47,6 @@ fn init_db_is_idempotent_and_seeds_defaults() {
     assert_eq!(mismatched, 0);
 }
 
-
-
 /// 汇率表每货币对仅保留一行最新；exchange_rate 按 (base_code, quote_code) 直查。
 #[test]
 fn exchange_rate_single_row_per_pair() {
@@ -88,8 +86,6 @@ fn exchange_rate_single_row_per_pair() {
         (crate::commands::fx::exchange_rate(&conn, "USD", "USD").unwrap() - 1.0).abs() < 0.0001
     );
 }
-
-
 
 /// 跨币种持仓：CNY 账户持 USD 标的，市值与成本都应折算到 CNY 后再相减。
 /// 旧实现只折算市值、不折算成本，会把 CNY 市值直接减 USD 成本，结果错误。
@@ -490,12 +486,10 @@ fn transaction_currency_conversion() {
     )
     .unwrap();
 
-    let native =
-        crate::commands::fx::convert_to_native(&conn, 10000, "USD", account_id).unwrap();
+    let native = crate::commands::fx::convert_to_native(&conn, 10000, "USD", account_id).unwrap();
     assert_eq!(native, 72000);
 
     // 同币种无需汇率，1:1 返回。
-    let native =
-        crate::commands::fx::convert_to_native(&conn, 10000, "CNY", account_id).unwrap();
+    let native = crate::commands::fx::convert_to_native(&conn, 10000, "CNY", account_id).unwrap();
     assert_eq!(native, 10000);
 }

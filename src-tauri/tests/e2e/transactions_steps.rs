@@ -1,4 +1,4 @@
-use cucumber::{given, when, then};
+use cucumber::{given, then, when};
 
 use tauri_app_lib::commands::transactions::insert_transaction;
 use tauri_app_lib::error::AppError;
@@ -223,7 +223,11 @@ fn check_txn_kind_amount_note(
     let txn = &world.transactions_list[idx];
     assert_eq!(txn.kind, expected_kind, "交易类型不匹配");
     assert_eq!(txn.amount_cents, expected_amount, "交易金额不匹配");
-    assert_eq!(txn.note.as_deref(), Some(expected_note.as_str()), "备注不匹配");
+    assert_eq!(
+        txn.note.as_deref(),
+        Some(expected_note.as_str()),
+        "备注不匹配"
+    );
 }
 
 #[then(expr = "应返回错误 {string}")]
@@ -239,39 +243,27 @@ fn check_error(world: &mut LedgerWorld, expected_msg: String) {
 
 #[then(expr = "该转账类型应为 {string}")]
 fn check_transfer_kind(world: &mut LedgerWorld, expected_kind: String) {
-    let txn = world
-        .transactions_list
-        .last()
-        .expect("交易列表为空");
+    let txn = world.transactions_list.last().expect("交易列表为空");
     assert_eq!(txn.kind, expected_kind);
 }
 
 #[then(expr = "该转账 account_id 应匹配账户 {string}")]
 fn check_transfer_from(world: &mut LedgerWorld, account_name: String) {
-    let txn = world
-        .transactions_list
-        .last()
-        .expect("交易列表为空");
+    let txn = world.transactions_list.last().expect("交易列表为空");
     let expected_id = world.account_id(&account_name);
     assert_eq!(txn.account_id, expected_id);
 }
 
 #[then(expr = "该转账 to_account_id 应匹配账户 {string}")]
 fn check_transfer_to(world: &mut LedgerWorld, account_name: String) {
-    let txn = world
-        .transactions_list
-        .last()
-        .expect("交易列表为空");
+    let txn = world.transactions_list.last().expect("交易列表为空");
     let expected_id = world.account_id(&account_name);
     assert_eq!(txn.to_account_id.as_deref(), Some(expected_id.as_str()));
 }
 
 #[then(expr = "退款交易的 refund_of 应指向原支出交易")]
 fn check_refund_linked(world: &mut LedgerWorld) {
-    assert!(
-        world.transactions_list.len() >= 2,
-        "需要有至少 2 条交易"
-    );
+    assert!(world.transactions_list.len() >= 2, "需要有至少 2 条交易");
     // 第一条是原支出（date DESC 排序，后创建的 refund 排前面）
     // 实际上：expense 日期 04-01, refund 日期 04-05
     // 按 date DESC: refund (04-05) 在前，expense (04-01) 在后

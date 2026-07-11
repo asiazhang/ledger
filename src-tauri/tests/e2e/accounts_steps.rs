@@ -1,4 +1,4 @@
-use cucumber::{when, then};
+use cucumber::{then, when};
 use rusqlite::params;
 
 use tauri_app_lib::db::{balance::compute_balance, device_id, new_uuid, now_iso};

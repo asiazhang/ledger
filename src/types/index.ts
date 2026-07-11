@@ -295,3 +295,58 @@ export interface UpdateStatusInput {
 export interface ExecuteOccurrenceInput {
   occurrence_id: string
 }
+
+export interface ExchangeRate {
+  id: string
+  base_code: string
+  quote_code: string
+  rate: number
+  priced_at: string
+  source: string | null
+  updated_at: string
+  version: number
+  device_id: string
+}
+
+export interface ExchangeRateInput {
+  base_code: string
+  quote_code: string
+  rate: number
+  priced_at: string
+  source?: string | null
+}
+
+export interface MarketPrice {
+  id: string
+  instrument_id: string
+  price_cents: number
+  currency_code: string
+  priced_at: string
+  source: string | null
+  created_at: string
+  updated_at: string
+  version: number
+  device_id: string
+}
+
+export interface MarketPriceInput {
+  instrument_id: string
+  price_cents: number
+  currency_code: string
+  priced_at: string
+  source?: string | null
+}
+
+export interface Holding {
+  id: string
+  account_id: string
+  instrument_id: string
+  quantity: number
+  cost_basis_cents: number
+  cost_currency_code: string
+  latest_price_cents: number | null
+  latest_price_currency_code: string | null
+  market_value_cents: number | null
+  unrealized_pnl_cents: number | null
+  updated_at: string
+}

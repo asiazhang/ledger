@@ -9,7 +9,7 @@ INSERT OR IGNORE INTO currencies (code, name, symbol, decimal_places) VALUES
   ('CNY', '人民币', '¥', 2),
   ('USD', '美元', '$', 2),
   ('EUR', '欧元', '€', 2),
-  ('JPY', '日元', '¥', 2),
+  ('JPY', '日元', '¥', 0),
   ('GBP', '英镑', '£', 2),
   ('HKD', '港币', 'HK$', 2),
   ('AUD', '澳元', 'A$', 2),

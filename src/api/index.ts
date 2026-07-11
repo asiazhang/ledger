@@ -12,10 +12,15 @@ import type {
   CreateScheduledInput,
   CreateTransactionResult,
   Currency,
+  ExchangeRate,
+  ExchangeRateInput,
   ExecuteOccurrenceInput,
+  Holding,
   ImportedRow,
   Instrument,
   InstrumentInput,
+  MarketPrice,
+  MarketPriceInput,
   MonthlySummary,
   ScheduledTransactionDetail,
   ScheduledTransactionWithExt,
@@ -67,6 +72,19 @@ export const api = {
   listInstruments: () => invoke<Instrument[]>('list_instruments'),
   createInstrument: (input: InstrumentInput) =>
     invoke<string>('create_instrument', { input }),
+
+  // 持仓
+  listHoldings: () => invoke<Holding[]>('list_holdings'),
+
+  // 汇率
+  listExchangeRates: () => invoke<ExchangeRate[]>('list_exchange_rates'),
+  createExchangeRate: (input: ExchangeRateInput) =>
+    invoke<string>('create_exchange_rate', { input }),
+
+  // 行情价格
+  listMarketPrices: () => invoke<MarketPrice[]>('list_market_prices'),
+  createMarketPrice: (input: MarketPriceInput) =>
+    invoke<string>('create_market_price', { input }),
 
   // 定时交易
   createScheduledTransaction: (input: CreateScheduledInput) =>
