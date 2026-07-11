@@ -1,6 +1,7 @@
 mod commands;
 mod db;
 mod error;
+mod import_parser;
 mod models;
 
 use tauri::Manager;

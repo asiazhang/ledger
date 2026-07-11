@@ -800,8 +800,8 @@ mod tests {
             )
             .unwrap();
         assert!((qty - 10.0).abs() < 0.0001);
-        assert_eq!(cost_basis, 151000);             // 10 * 15000 + 1000
-        assert_eq!(market_value, 160000);            // 10 * 16000
-        assert_eq!(unrealized_pnl, 9000);            // 160000 - 151000
+        assert_eq!(cost_basis, 151000); // 10 * 15000 + 1000
+        assert_eq!(market_value, 160000); // 10 * 16000
+        assert_eq!(unrealized_pnl, 9000); // 160000 - 151000
     }
 }

@@ -146,7 +146,14 @@ mod tests {
         .unwrap()
     }
 
-    fn insert_account(conn: &rusqlite::Connection, id: &str, name: &str, kind: &str, currency: &str, initial: i64) {
+    fn insert_account(
+        conn: &rusqlite::Connection,
+        id: &str,
+        name: &str,
+        kind: &str,
+        currency: &str,
+        initial: i64,
+    ) {
         let now = now_iso();
         conn.execute(
             "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
@@ -155,7 +162,14 @@ mod tests {
         ).unwrap();
     }
 
-    fn insert_tx(conn: &rusqlite::Connection, id: &str, kind: &str, amount: i64, account_id: &str, to_account_id: Option<&str>) {
+    fn insert_tx(
+        conn: &rusqlite::Connection,
+        id: &str,
+        kind: &str,
+        amount: i64,
+        account_id: &str,
+        to_account_id: Option<&str>,
+    ) {
         let now = now_iso();
         conn.execute(
             "INSERT INTO transactions \
@@ -167,11 +181,13 @@ mod tests {
     }
 
     fn balance(conn: &rusqlite::Connection, account_id: &str) -> i64 {
-        let initial: i64 = conn.query_row(
-            "SELECT initial_balance_cents FROM accounts WHERE id=?1",
-            rusqlite::params![account_id],
-            |r| r.get(0),
-        ).unwrap();
+        let initial: i64 = conn
+            .query_row(
+                "SELECT initial_balance_cents FROM accounts WHERE id=?1",
+                rusqlite::params![account_id],
+                |r| r.get(0),
+            )
+            .unwrap();
         let income: i64 = conn
             .query_row(
                 "SELECT COALESCE(SUM(amount_native_cents),0) FROM transactions \
