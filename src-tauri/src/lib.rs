@@ -26,6 +26,7 @@ pub fn run() {
             commands::delete_category,
             commands::list_transactions,
             commands::create_transaction,
+            commands::create_transactions,
             commands::delete_transaction,
             commands::list_exchange_rates,
             commands::create_exchange_rate,

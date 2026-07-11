@@ -129,6 +129,12 @@ export interface CategoryShare {
   amount_cents: number
 }
 
+export interface CreateTransactionResult {
+  success: boolean
+  id: string | null
+  error: string | null
+}
+
 export interface ImportedRow {
   date: string
   amount_cents: number

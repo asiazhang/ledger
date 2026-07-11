@@ -55,25 +55,23 @@ async function doImport() {
   const account = store.accountMap.get(accountId.value) as Account | undefined
   if (!account) return
   importing.value = true
-  let ok = 0
   try {
-    for (const r of rows.value) {
-      const kind = r.amount_cents >= 0 ? 'income' : 'expense'
-      try {
-        await api.createTransaction({
-          kind,
-          amount_cents: Math.abs(r.amount_cents),
-          currency_code: account.currency_code,
-          account_id: accountId.value,
-          note: r.note || null,
-          date: r.date,
-        })
-        ok++
-      } catch {
-        // 单条失败继续导入其余
-      }
+    const inputs = rows.value.map((r) => ({
+      kind: (r.amount_cents >= 0 ? 'income' : 'expense') as 'income' | 'expense',
+      amount_cents: Math.abs(r.amount_cents),
+      currency_code: account.currency_code,
+      account_id: accountId.value!,
+      note: r.note || null,
+      date: r.date,
+    }))
+    const results = await api.createTransactions(inputs)
+    const ok = results.filter((r) => r.success).length
+    const failed = results.filter((r) => !r.success)
+    if (failed.length > 0) {
+      message.warning(`成功导入 ${ok} 条，${failed.length} 条失败`)
+    } else {
+      message.success(`成功导入 ${ok} 条`)
     }
-    message.success(`成功导入 ${ok} 条`)
     rows.value = []
   } finally {
     importing.value = false

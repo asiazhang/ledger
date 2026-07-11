@@ -182,7 +182,7 @@ pub struct Transaction {
     pub is_deleted: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct TransactionInput {
     pub kind: String,
     pub amount_cents: i64,
@@ -261,6 +261,13 @@ pub struct ImportedRow {
 #[derive(Debug, Deserialize)]
 pub struct ImportRequest {
     pub path: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateTransactionResult {
+    pub success: bool,
+    pub id: Option<String>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

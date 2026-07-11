@@ -9,6 +9,7 @@ import type {
   Category,
   CategoryInput,
   CategoryShare,
+  CreateTransactionResult,
   Currency,
   ImportedRow,
   Instrument,
@@ -38,6 +39,8 @@ export const api = {
     invoke<Transaction[]>('list_transactions', { limit: limit ?? null }),
   createTransaction: (input: TransactionInput) =>
     invoke<string>('create_transaction', { input }),
+  createTransactions: (inputs: TransactionInput[]) =>
+    invoke<CreateTransactionResult[]>('create_transactions', { inputs }),
   deleteTransaction: (id: string) => invoke<void>('delete_transaction', { id }),
 
   // 预算
