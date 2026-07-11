@@ -4,6 +4,7 @@ use std::str::FromStr;
 use rusqlite::types::{FromSql, FromSqlError, ToSql, ToSqlOutput, ValueRef};
 use serde::{Deserialize, Serialize};
 
+use crate::db::query::FromRow;
 use crate::error::AppError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -394,5 +395,183 @@ impl FromSql for InstrumentType {
             .as_str()?
             .parse()
             .map_err(|e: AppError| FromSqlError::Other(Box::new(e)))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FromRow implementations (for db::query helpers)
+// ---------------------------------------------------------------------------
+
+impl FromRow for Account {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(Account {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            kind: row.get(2)?,
+            currency_code: row.get(3)?,
+            initial_balance_cents: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+            version: row.get(7)?,
+            device_id: row.get(8)?,
+            is_deleted: row.get::<_, i64>(9)? != 0,
+        })
+    }
+}
+
+impl FromRow for Category {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(Category {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            kind: row.get(2)?,
+            parent_id: row.get(3)?,
+            icon: row.get(4)?,
+            color: row.get(5)?,
+            created_at: row.get(6)?,
+            updated_at: row.get(7)?,
+            version: row.get(8)?,
+            device_id: row.get(9)?,
+            is_deleted: row.get::<_, i64>(10)? != 0,
+        })
+    }
+}
+
+impl FromRow for Currency {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(Currency {
+            code: row.get(0)?,
+            name: row.get(1)?,
+            symbol: row.get(2)?,
+            decimal_places: row.get(3)?,
+        })
+    }
+}
+
+impl FromRow for Transaction {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(Transaction {
+            id: row.get(0)?,
+            kind: row.get(1)?,
+            amount_cents: row.get(2)?,
+            currency_code: row.get(3)?,
+            amount_native_cents: row.get(4)?,
+            account_id: row.get(5)?,
+            to_account_id: row.get(6)?,
+            category_id: row.get(7)?,
+            refund_of_transaction_id: row.get(8)?,
+            note: row.get(9)?,
+            date: row.get(10)?,
+            created_at: row.get(11)?,
+            updated_at: row.get(12)?,
+            version: row.get(13)?,
+            device_id: row.get(14)?,
+            is_deleted: row.get::<_, i64>(15)? != 0,
+        })
+    }
+}
+
+impl FromRow for Budget {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(Budget {
+            id: row.get(0)?,
+            category_id: row.get(1)?,
+            period: row.get(2)?,
+            amount_cents: row.get(3)?,
+            start_date: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+            version: row.get(7)?,
+            device_id: row.get(8)?,
+            is_deleted: row.get::<_, i64>(9)? != 0,
+        })
+    }
+}
+
+impl FromRow for Holding {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(Holding {
+            id: row.get(0)?,
+            account_id: row.get(1)?,
+            instrument_id: row.get(2)?,
+            quantity: row.get(3)?,
+            cost_basis_cents: row.get(4)?,
+            cost_currency_code: row.get(5)?,
+            latest_price_cents: row.get(6)?,
+            latest_price_currency_code: row.get(7)?,
+            market_value_cents: row.get(8)?,
+            unrealized_pnl_cents: row.get(9)?,
+            updated_at: row.get(10)?,
+        })
+    }
+}
+
+impl FromRow for ExchangeRate {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(ExchangeRate {
+            id: row.get(0)?,
+            base_code: row.get(1)?,
+            quote_code: row.get(2)?,
+            rate: row.get(3)?,
+            priced_at: row.get(4)?,
+            source: row.get(5)?,
+            updated_at: row.get(6)?,
+            version: row.get(7)?,
+            device_id: row.get(8)?,
+        })
+    }
+}
+
+impl FromRow for MarketPrice {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(MarketPrice {
+            id: row.get(0)?,
+            instrument_id: row.get(1)?,
+            price_cents: row.get(2)?,
+            currency_code: row.get(3)?,
+            priced_at: row.get(4)?,
+            source: row.get(5)?,
+            created_at: row.get(6)?,
+            updated_at: row.get(7)?,
+            version: row.get(8)?,
+            device_id: row.get(9)?,
+        })
+    }
+}
+
+impl FromRow for Instrument {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(Instrument {
+            id: row.get(0)?,
+            symbol: row.get(1)?,
+            kind: row.get(2)?,
+            name: row.get(3)?,
+            currency_code: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+            version: row.get(7)?,
+            device_id: row.get(8)?,
+        })
+    }
+}
+
+impl FromRow for MonthlySummary {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(MonthlySummary {
+            month: row.get::<_, String>(0)?,
+            income_cents: row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+            expense_cents: row.get::<_, Option<i64>>(2)?.unwrap_or(0),
+            refund_cents: row.get::<_, Option<i64>>(3)?.unwrap_or(0),
+        })
+    }
+}
+
+impl FromRow for CategoryShare {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(CategoryShare {
+            category_id: row.get::<_, Option<String>>(0)?.unwrap_or_default(),
+            category_name: row.get(1)?,
+            amount_cents: row.get::<_, Option<i64>>(2)?.unwrap_or(0),
+        })
     }
 }

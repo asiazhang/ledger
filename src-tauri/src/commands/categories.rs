@@ -1,5 +1,6 @@
 use tauri::State;
 
+use crate::db::query::query_all;
 use crate::db::{DbState, device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{Category, CategoryInput};
@@ -7,27 +8,12 @@ use crate::models::{Category, CategoryInput};
 #[tauri::command]
 pub fn list_categories(db: State<'_, DbState>) -> Result<Vec<Category>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let mut stmt = conn.prepare(
+    query_all(
+        &conn,
         "SELECT id,name,kind,parent_id,icon,color,created_at,updated_at,version,device_id,is_deleted \
          FROM categories WHERE is_deleted=0 ORDER BY kind, created_at",
-    )?;
-    let rows = stmt.query_map([], |r| {
-        Ok(Category {
-            id: r.get(0)?,
-            name: r.get(1)?,
-            kind: r.get(2)?,
-            parent_id: r.get(3)?,
-            icon: r.get(4)?,
-            color: r.get(5)?,
-            created_at: r.get(6)?,
-            updated_at: r.get(7)?,
-            version: r.get(8)?,
-            device_id: r.get(9)?,
-            is_deleted: r.get::<_, i64>(10)? != 0,
-        })
-    })?;
-    rows.collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(Into::into)
+        [],
+    )
 }
 
 #[tauri::command]

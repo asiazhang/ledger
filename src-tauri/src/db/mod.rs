@@ -8,6 +8,8 @@ use tauri::Manager;
 
 use crate::error::{AppError, Result};
 
+pub mod query;
+
 /// 迁移集合。新增 schema 变更或种子数据时，在 `src-tauri/migrations/` 下新建
 /// `V00X__名称.sql`，并在 `migrations()` 的 `vec!` 里追加
 /// `M::up(include_str!("../migrations/V00X__名称.sql"))`。
@@ -16,9 +18,9 @@ fn migrations() -> &'static Migrations<'static> {
     static MIGRATIONS: OnceLock<Migrations<'static>> = OnceLock::new();
     MIGRATIONS.get_or_init(|| {
         Migrations::new(vec![
-            M::up(include_str!("../migrations/V001__initial.sql")),
-            M::up(include_str!("../migrations/V002__investment.sql")),
-            M::up(include_str!("../migrations/V003__seed_defaults.sql")),
+            M::up(include_str!("../../migrations/V001__initial.sql")),
+            M::up(include_str!("../../migrations/V002__investment.sql")),
+            M::up(include_str!("../../migrations/V003__seed_defaults.sql")),
         ])
     })
 }

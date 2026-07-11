@@ -1,30 +1,23 @@
 use tauri::State;
 
 use crate::db::DbState;
+use crate::db::query::query_all;
 use crate::error::{AppError, Result};
 use crate::models::{CategoryShare, MonthlySummary};
 
 #[tauri::command]
 pub fn monthly_summary(db: State<'_, DbState>, year: i64) -> Result<Vec<MonthlySummary>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let mut stmt = conn.prepare(
+    query_all(
+        &conn,
         "SELECT substr(date,1,7) AS month, \
          SUM(CASE WHEN kind='income' THEN amount_native_cents ELSE 0 END) AS income, \
          SUM(CASE WHEN kind='expense' THEN amount_native_cents ELSE 0 END) AS expense, \
          SUM(CASE WHEN kind='refund' THEN amount_native_cents ELSE 0 END) AS refund \
          FROM transactions WHERE substr(date,1,4)=?1 AND is_deleted=0 \
          GROUP BY month ORDER BY month",
-    )?;
-    let rows = stmt.query_map(rusqlite::params![format!("{year}")], |r| {
-        Ok(MonthlySummary {
-            month: r.get::<_, String>(0)?,
-            income_cents: r.get::<_, Option<i64>>(1)?.unwrap_or(0),
-            expense_cents: r.get::<_, Option<i64>>(2)?.unwrap_or(0),
-            refund_cents: r.get::<_, Option<i64>>(3)?.unwrap_or(0),
-        })
-    })?;
-    rows.collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(Into::into)
+        rusqlite::params![format!("{year}")],
+    )
 }
 
 #[tauri::command]
@@ -55,14 +48,5 @@ pub fn category_shares(
     }
     sql.push_str(" GROUP BY t.category_id ORDER BY net DESC");
     let params_ref: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params_ref.as_slice(), |r| {
-        Ok(CategoryShare {
-            category_id: r.get::<_, Option<String>>(0)?.unwrap_or_default(),
-            category_name: r.get(1)?,
-            amount_cents: r.get::<_, Option<i64>>(2)?.unwrap_or(0),
-        })
-    })?;
-    rows.collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(Into::into)
+    query_all(&conn, &sql, params_ref.as_slice())
 }

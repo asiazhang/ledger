@@ -1,6 +1,7 @@
 use tauri::State;
 
 use crate::commands::fx::convert_to_native;
+use crate::db::query::query_all;
 use crate::db::{DbState, device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{Transaction, TransactionInput};
@@ -15,29 +16,7 @@ pub fn list_transactions(db: State<'_, DbState>, limit: Option<i64>) -> Result<V
         Some(n) => format!("{base_sql} LIMIT {n}"),
         None => String::from(base_sql),
     };
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map([], |r| {
-        Ok(Transaction {
-            id: r.get(0)?,
-            kind: r.get(1)?,
-            amount_cents: r.get(2)?,
-            currency_code: r.get(3)?,
-            amount_native_cents: r.get(4)?,
-            account_id: r.get(5)?,
-            to_account_id: r.get(6)?,
-            category_id: r.get(7)?,
-            refund_of_transaction_id: r.get(8)?,
-            note: r.get(9)?,
-            date: r.get(10)?,
-            created_at: r.get(11)?,
-            updated_at: r.get(12)?,
-            version: r.get(13)?,
-            device_id: r.get(14)?,
-            is_deleted: r.get::<_, i64>(15)? != 0,
-        })
-    })?;
-    rows.collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(Into::into)
+    query_all(&conn, &sql, [])
 }
 
 #[tauri::command]
