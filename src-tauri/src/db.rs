@@ -1,10 +1,12 @@
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use rusqlite::Connection;
 use rusqlite_migration::{M, Migrations};
 
-use crate::error::Result;
+use tauri::Manager;
+
+use crate::error::{AppError, Result};
 
 /// 迁移集合。新增 schema 变更或种子数据时，在 `src-tauri/migrations/` 下新建
 /// `V00X__名称.sql`，并在 `migrations()` 的 `vec!` 里追加
@@ -56,6 +58,28 @@ pub fn open_in_memory() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
     conn.execute("PRAGMA foreign_keys = ON", [])?;
     Ok(conn)
+}
+
+// ---------------------------------------------------------------------------
+// 应用状态
+// ---------------------------------------------------------------------------
+
+pub struct DbState {
+    pub conn: Mutex<Connection>,
+}
+
+pub fn open_db(app: &tauri::AppHandle) -> Result<DbState> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Io(e.to_string()))?;
+    std::fs::create_dir_all(&dir)?;
+    let db_path = dir.join("ledger.db");
+    let mut conn = open_connection(db_path)?;
+    init_db(&mut conn)?;
+    Ok(DbState {
+        conn: Mutex::new(conn),
+    })
 }
 
 #[cfg(test)]
@@ -204,7 +228,7 @@ mod tests {
         )
         .unwrap();
 
-        let rate = crate::commands::exchange_rate(&conn, "USD", "CNY").unwrap();
+        let rate = crate::commands::fx::exchange_rate(&conn, "USD", "CNY").unwrap();
         assert!((rate - 7.2).abs() < 0.0001);
 
         // 同货币对第二行应被 UNIQUE(base_code, quote_code) 拒绝。
@@ -216,14 +240,19 @@ mod tests {
         assert!(dup.is_err(), "同货币对第二行应违反唯一约束");
 
         // 反向兌底：CNY->USD 未直接录入，但 USD->CNY 存在，应返回 1/7.2。
-        let rev = crate::commands::exchange_rate(&conn, "CNY", "USD").unwrap();
-        assert!((rev - 1.0 / 7.2).abs() < 0.0001, "反向汇率应为 1/7.2: {rev}");
+        let rev = crate::commands::fx::exchange_rate(&conn, "CNY", "USD").unwrap();
+        assert!(
+            (rev - 1.0 / 7.2).abs() < 0.0001,
+            "反向汇率应为 1/7.2: {rev}"
+        );
 
         // 正反向均未录入的货币对才返回错误。
-        assert!(crate::commands::exchange_rate(&conn, "EUR", "JPY").is_err());
+        assert!(crate::commands::fx::exchange_rate(&conn, "EUR", "JPY").is_err());
 
         // 同币种直返回 1.0，无需查表。
-        assert!((crate::commands::exchange_rate(&conn, "USD", "USD").unwrap() - 1.0).abs() < 0.0001);
+        assert!(
+            (crate::commands::fx::exchange_rate(&conn, "USD", "USD").unwrap() - 1.0).abs() < 0.0001
+        );
     }
 
     /// market_prices 写入最新价后，v_holdings 能正确输出市值和未实现盈亏。
@@ -546,7 +575,10 @@ mod tests {
         .unwrap();
 
         // 两个账户各一笔买入 + lot
-        for (acc, txn, lot) in [(active_acc, "txn-soft-a", "lot-soft-a"), (deleted_acc, "txn-soft-d", "lot-soft-d")] {
+        for (acc, txn, lot) in [
+            (active_acc, "txn-soft-a", "lot-soft-a"),
+            (deleted_acc, "txn-soft-d", "lot-soft-d"),
+        ] {
             conn.execute(
                 "INSERT INTO transactions (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
                  VALUES (?1,'buy',10000,'USD',10000,?2,NULL,NULL,NULL,'buy','2026-01-10','2026-01-10T00:00:00Z','2026-01-10T00:00:00Z',1,'test',0)",
@@ -592,7 +624,11 @@ mod tests {
             .unwrap()
             .filter_map(|r| r.ok())
             .collect();
-        assert_eq!(account_ids, vec![active_acc.to_string()], "软删除账户的持仓不应出现在视图");
+        assert_eq!(
+            account_ids,
+            vec![active_acc.to_string()],
+            "软删除账户的持仓不应出现在视图"
+        );
     }
 
     /// security_lots 聚合索引：partial covering index 存在并覆盖聚合列，旧冗余索引已删除，
@@ -633,7 +669,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(old, 0, "旧冗余索引 idx_security_lots_account_instrument 应已删除");
+        assert_eq!(
+            old, 0,
+            "旧冗余索引 idx_security_lots_account_instrument 应已删除"
+        );
 
         // 聚合子查询应使用新覆盖索引，避免全表扫描与回表。
         let mut stmt = conn
@@ -679,14 +718,12 @@ mod tests {
         .unwrap();
 
         let native =
-            crate::commands::convert_to_native(&conn, 10000, "USD", account_id)
-                .unwrap();
+            crate::commands::fx::convert_to_native(&conn, 10000, "USD", account_id).unwrap();
         assert_eq!(native, 72000);
 
         // 同币种无需汇率，1:1 返回。
         let native =
-            crate::commands::convert_to_native(&conn, 10000, "CNY", account_id)
-                .unwrap();
+            crate::commands::fx::convert_to_native(&conn, 10000, "CNY", account_id).unwrap();
         assert_eq!(native, 10000);
     }
 }

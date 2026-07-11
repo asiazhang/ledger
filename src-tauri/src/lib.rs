@@ -11,7 +11,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let db_state = commands::open_db(app.handle())?;
+            let db_state = db::open_db(app.handle())?;
             app.manage(db_state);
             Ok(())
         })
