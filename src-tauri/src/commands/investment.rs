@@ -706,4 +706,102 @@ mod tests {
             .unwrap();
         assert_eq!(amount_cents, 5 * 12000 - 200);
     }
+
+    // ---- instruments CRUD tests ----
+
+    #[test]
+    fn list_instruments_empty_initially() {
+        let conn = setup_db();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM instruments", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn create_instrument_inserts_and_returns_id() {
+        let conn = setup_db();
+        let id = crate::db::new_uuid();
+        let now = crate::db::now_iso();
+        conn.execute(
+            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id) \
+             VALUES (?1,?2,'stock',?3,?4,?5,?6,?7,?8)",
+            params![id, "NVDA", "NVIDIA Corporation", "USD", now, now, 1, "test"],
+        ).unwrap();
+        let (symbol, name, ccy): (String, Option<String>, String) = conn
+            .query_row(
+                "SELECT symbol, name, currency_code FROM instruments WHERE id=?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(symbol, "NVDA");
+        assert_eq!(name.as_deref(), Some("NVIDIA Corporation"));
+        assert_eq!(ccy, "USD");
+    }
+
+    #[test]
+    fn create_instrument_is_idempotent() {
+        let conn = setup_db();
+        let id1 = crate::db::new_uuid();
+        let id2 = crate::db::new_uuid();
+        let now = crate::db::now_iso();
+        // Insert first
+        conn.execute(
+            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id) \
+             VALUES (?1,'AAPL','stock',?2,'USD',?3,?4,?5,?6)",
+            params![id1, "Apple Inc.", now, now, 1, "test"],
+        ).unwrap();
+        // Attempt duplicate (same symbol+type) — should be rejected by UNIQUE constraint
+        let result = conn.execute(
+            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id) \
+             VALUES (?1,'AAPL','stock',?2,'USD',?3,?4,?5,?6)",
+            params![id2, "Apple Again", now, now, 1, "test"],
+        );
+        assert!(result.is_err());
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM instruments WHERE symbol='AAPL' AND instrument_type='stock'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    // ---- holdings tests ----
+
+    #[test]
+    fn list_holdings_returns_after_buy_and_market_price() {
+        let conn = setup_db();
+        insert_account(&conn, "acc-hold", "投资账户", "investment", "USD");
+        insert_instrument(&conn, "inst-hold", "GOOGL", "Alphabet", "USD");
+
+        // Buy 10 shares at $150, fee $10
+        let buy_input = make_buy_input("acc-hold", "inst-hold", 10.0, 15000, 1000);
+        create_buy_transaction(&conn, buy_input).unwrap();
+
+        // Insert market price
+        let now = crate::db::now_iso();
+        let price_id = crate::db::new_uuid();
+        conn.execute(
+            "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
+             VALUES (?1,?2,16000,'USD',?3,NULL,?4,?5,?6,?7)",
+            params![price_id, "inst-hold", now, now, now, 1, "test"],
+        ).unwrap();
+
+        // Query v_holdings view
+        let (qty, cost_basis, market_value, unrealized_pnl): (f64, i64, i64, i64) = conn
+            .query_row(
+                "SELECT quantity, cost_basis_cents, market_value_cents, unrealized_pnl_cents \
+                 FROM v_holdings WHERE instrument_id=?1",
+                params!["inst-hold"],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert!((qty - 10.0).abs() < 0.0001);
+        assert_eq!(cost_basis, 151000);             // 10 * 15000 + 1000
+        assert_eq!(market_value, 160000);            // 10 * 16000
+        assert_eq!(unrealized_pnl, 9000);            // 160000 - 151000
+    }
 }

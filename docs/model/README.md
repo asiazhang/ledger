@@ -35,29 +35,50 @@ Ledger 采用 SQLite 作为本地数据库，面向**多设备同步的离线优
 ### 搜索索引
 - [search_transactions（交易搜索索引）](./basic/search-transactions.md)
 
+### 计划交易
+- [scheduled_transactions 模块概览](./scheduled-transactions/index.md)
+- [installment_plans（分期计划）](./scheduled-transactions/installment.md)
+- [subscription_plans（订阅计划）](./scheduled-transactions/subscription.md)
+- [scheduled_transfer_plans（计划转账）](./scheduled-transactions/scheduled-transfer.md)
+
 ---
 
 ## 关系图
 
 ```
-currencies (币种)
+currencies (币种)  ←──  exchange_rates (汇率)
+    │
     ↓
-accounts (账户) ←→ transactions (交易)
-    ↓                    ↓
-categories (分类)    security_transactions (证券交易扩展)
-    ↓                    ↓
-budgets (预算)       instruments (金融工具)
-                           ↓
-                    security_lots (持仓批次)
-                           ↓
-                    security_lot_sales (批次卖出匹配)
-                           ↓
-                    market_prices (市场价格)
+accounts (账户)  ←── transactions (交易)  ──→  categories (分类)
+    │                      │                        │
+    │                      ├── security_transactions  budgets (预算)
+    │                      │        │
+    │                      │   instruments (金融工具)
+    │                      │        │
+    │                      │   security_lots (持仓批次)
+    │                      │        │
+    │                      │   security_lot_sales (批次卖出匹配)
+    │                      │        │
+    │                      │   market_prices (市场价格)
+    │                      │
+    │                      └── search_reindex_queue
+    │                               │
+    │                          search_transactions (FTS5 索引)
+    │
+    ↓
+scheduled_transactions (计划交易)
+    │
+    ├── scheduled_transaction_occurrences (已发生执行)
+    │
+    ├── installment_plans (分期扩展)
+    ├── subscription_plans (订阅扩展)
+    └── scheduled_transfer_plans (计划转账扩展)
 ```
 
 **核心关系**：
 - accounts.currency_code → currencies.code
 - transactions.account_id → accounts.id
+- transactions.to_account_id → accounts.id（转账转入）
 - transactions.category_id → categories.id
 - transactions.refund_of_transaction_id → transactions.id（自引用）
 - budgets.category_id → categories.id
@@ -70,6 +91,13 @@ budgets (预算)       instruments (金融工具)
 - security_lot_sales.lot_id → security_lots.id
 - market_prices.instrument_id → instruments.id
 - exchange_rates.base_code / quote_code → currencies.code
+- scheduled_transactions.account_id → accounts.id
+- scheduled_transactions.category_id → categories.id
+- scheduled_transactions.to_account_id → accounts.id（计划转账转入）
+- scheduled_transaction_occurrences.scheduled_transaction_id → scheduled_transactions.id
+- installment_plans.id → scheduled_transactions.id
+- subscription_plans.id → scheduled_transactions.id
+- scheduled_transfer_plans.id → scheduled_transactions.id
 
 ---
 
@@ -136,9 +164,9 @@ budgets (预算)       instruments (金融工具)
 
 ### 当前未实现
 
-1. **投资交易**：数据库 schema 完整，但尚未有实际数据写入
-2. **多币种换算**：汇率表存在，但尚未有实际汇率数据
-3. **分类深层级**：数据库支持两级，未实现更深层级
+1. **多币种换算**：汇率表存在，但当前 MVP 阶段 transactions 的 amount_native_cents 与 amount_cents 1:1 相等，尚未根据实际汇率折算
+2. **分类深层级**：数据库支持两级，未实现更深层级
+3. **计划交易自动执行**：scheduled_transactions 模块 schema 完整，尚未接入定时执行逻辑
 
 ---
 

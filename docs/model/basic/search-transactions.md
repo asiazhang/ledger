@@ -124,6 +124,6 @@ LIMIT ?;
 
 ## 参考
 
-- ADR-005：`docs/adr/005-fuzzy-search-transactions.md`
+- ADR-0004：`docs/adr/0004-fuzzy-search-transactions.md`
 - `docs/adr/glossary-fuzzy-search.md`
 - Migration：待新增（`V00X__search_transactions.sql`）

@@ -44,4 +44,4 @@ FTS5 根据词频、字段权重等计算出的匹配得分。搜索结果默认
 
 ## 参考
 
-- ADR-005：`docs/adr/005-fuzzy-search-transactions.md`
+- ADR-0004：`docs/adr/0004-fuzzy-search-transactions.md`

@@ -266,4 +266,198 @@ mod tests {
             _ => panic!("expected Invalid error"),
         }
     }
+
+    #[test]
+    fn create_income_and_expense_transactions() {
+        let conn = setup();
+        insert_account(&conn, "acc-crud", "现金", "cash", "CNY");
+
+        let id1 = insert_transaction(
+            &conn,
+            make_input("acc-crud", "income", 5000, "2026-02-01"),
+        )
+        .unwrap();
+        let id2 = insert_transaction(
+            &conn,
+            TransactionInput {
+                amount_cents: 1500,
+                note: Some("午餐".into()),
+                category_id: None,
+                ..make_input("acc-crud", "expense", 100, "2026-02-02")
+            },
+        )
+        .unwrap();
+        assert_ne!(id1, id2);
+        let row1: (String, String, i64, Option<String>) = conn
+            .query_row(
+                "SELECT kind, account_id, amount_cents, note FROM transactions WHERE id=?1",
+                params![id1],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(row1.0, "income");
+        assert_eq!(row1.2, 5000);
+    }
+
+    #[test]
+    fn create_transfer_with_to_account() {
+        let conn = setup();
+        insert_account(&conn, "acc-from", "A账户", "cash", "CNY");
+        insert_account(&conn, "acc-to", "B账户", "cash", "CNY");
+
+        let id = insert_transaction(
+            &conn,
+            TransactionInput {
+                kind: "transfer".into(),
+                amount_cents: 3000,
+                currency_code: "CNY".into(),
+                account_id: "acc-from".into(),
+                to_account_id: Some("acc-to".into()),
+                date: "2026-03-01".into(),
+                category_id: None,
+                refund_of_transaction_id: None,
+                note: None,
+                instrument_id: None,
+                quantity: None,
+                price_cents: None,
+                fee_cents: None,
+            },
+        )
+        .unwrap();
+        let (kind, from, to): (String, String, Option<String>) = conn
+            .query_row(
+                "SELECT kind, account_id, to_account_id FROM transactions WHERE id=?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(kind, "transfer");
+        assert_eq!(from, "acc-from");
+        assert_eq!(to.as_deref(), Some("acc-to"));
+    }
+
+    #[test]
+    fn list_transactions_ordered_by_date_desc() {
+        let conn = setup();
+        insert_account(&conn, "acc-list", "现金", "cash", "CNY");
+
+        insert_transaction(&conn, make_input("acc-list", "income", 100, "2026-01-03")).unwrap();
+        insert_transaction(&conn, make_input("acc-list", "income", 200, "2026-01-01")).unwrap();
+        insert_transaction(&conn, make_input("acc-list", "income", 300, "2026-01-02")).unwrap();
+
+        let rows: Vec<(String, i64)> = conn
+            .prepare(
+                "SELECT kind, amount_cents FROM transactions WHERE is_deleted=0 \
+                 ORDER BY date DESC, created_at DESC",
+            )
+            .unwrap()
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].1, 100); // 01-03 first
+        assert_eq!(rows[1].1, 300); // 01-02
+        assert_eq!(rows[2].1, 200); // 01-01 last
+    }
+
+    #[test]
+    fn list_transactions_limit() {
+        let conn = setup();
+        insert_account(&conn, "acc-limit", "现金", "cash", "CNY");
+
+        insert_transaction(&conn, make_input("acc-limit", "income", 100, "2026-01-01")).unwrap();
+        insert_transaction(&conn, make_input("acc-limit", "income", 200, "2026-01-02")).unwrap();
+        insert_transaction(&conn, make_input("acc-limit", "income", 300, "2026-01-03")).unwrap();
+
+        let rows: Vec<i64> = conn
+            .prepare(
+                "SELECT amount_cents FROM transactions WHERE is_deleted=0 \
+                 ORDER BY date DESC, created_at DESC LIMIT 2",
+            )
+            .unwrap()
+            .query_map([], |r| r.get::<_, i64>(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
+    fn delete_transaction_soft_deletes() {
+        let conn = setup();
+        insert_account(&conn, "acc-del", "现金", "cash", "CNY");
+
+        let id = insert_transaction(&conn, make_input("acc-del", "income", 1000, "2026-01-01")).unwrap();
+        let count_before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM transactions WHERE is_deleted=0", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count_before, 1);
+
+        conn.execute(
+            "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
+            params![id, now_iso(), device_id()],
+        ).unwrap();
+
+        let count_after: i64 = conn
+            .query_row("SELECT COUNT(*) FROM transactions WHERE is_deleted=0", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count_after, 0);
+    }
+
+    #[test]
+    fn create_refund_linked_to_expense() {
+        let conn = setup();
+        insert_account(&conn, "acc-ref", "现金", "cash", "CNY");
+
+        let expense_id = insert_transaction(
+            &conn,
+            TransactionInput {
+                kind: "expense".into(),
+                amount_cents: 1000,
+                currency_code: "CNY".into(),
+                account_id: "acc-ref".into(),
+                date: "2026-04-01".into(),
+                category_id: None,
+                to_account_id: None,
+                refund_of_transaction_id: None,
+                note: None,
+                instrument_id: None,
+                quantity: None,
+                price_cents: None,
+                fee_cents: None,
+            },
+        )
+        .unwrap();
+
+        let refund_id = insert_transaction(
+            &conn,
+            TransactionInput {
+                kind: "refund".into(),
+                amount_cents: 200,
+                currency_code: "CNY".into(),
+                account_id: "acc-ref".into(),
+                date: "2026-04-05".into(),
+                refund_of_transaction_id: Some(expense_id.clone()),
+                category_id: None,
+                to_account_id: None,
+                note: None,
+                instrument_id: None,
+                quantity: None,
+                price_cents: None,
+                fee_cents: None,
+            },
+        )
+        .unwrap();
+
+        let (kind, refund_of): (String, Option<String>) = conn
+            .query_row(
+                "SELECT kind, refund_of_transaction_id FROM transactions WHERE id=?1",
+                params![refund_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(kind, "refund");
+        assert_eq!(refund_of, Some(expense_id));
+    }
 }
