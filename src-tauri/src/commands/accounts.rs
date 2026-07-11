@@ -1,6 +1,7 @@
 use rusqlite::Connection;
 use tauri::State;
 
+use crate::db::query::query_all;
 use crate::db::{DbState, device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{Account, AccountBalance, AccountInput};
@@ -8,26 +9,12 @@ use crate::models::{Account, AccountBalance, AccountInput};
 #[tauri::command]
 pub fn list_accounts(db: State<'_, DbState>) -> Result<Vec<Account>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let mut stmt = conn.prepare(
+    query_all(
+        &conn,
         "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted \
          FROM accounts WHERE is_deleted=0 ORDER BY created_at",
-    )?;
-    let rows = stmt.query_map([], |r| {
-        Ok(Account {
-            id: r.get(0)?,
-            name: r.get(1)?,
-            kind: r.get(2)?,
-            currency_code: r.get(3)?,
-            initial_balance_cents: r.get(4)?,
-            created_at: r.get(5)?,
-            updated_at: r.get(6)?,
-            version: r.get(7)?,
-            device_id: r.get(8)?,
-            is_deleted: r.get::<_, i64>(9)? != 0,
-        })
-    })?;
-    rows.collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(Into::into)
+        [],
+    )
 }
 
 #[tauri::command]
@@ -120,31 +107,15 @@ fn account_balance(conn: &Connection, account_id: &str) -> Result<i64> {
 #[tauri::command]
 pub fn list_account_balances(db: State<'_, DbState>) -> Result<Vec<AccountBalance>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let mut stmt = conn.prepare(
+    let accounts = query_all(
+        &conn,
         "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted \
          FROM accounts WHERE is_deleted=0 ORDER BY created_at",
+        [],
     )?;
-    let accounts: Vec<Account> = stmt
-        .query_map([], |r| {
-            Ok(Account {
-                id: r.get(0)?,
-                name: r.get(1)?,
-                kind: r.get(2)?,
-                currency_code: r.get(3)?,
-                initial_balance_cents: r.get(4)?,
-                created_at: r.get(5)?,
-                updated_at: r.get(6)?,
-                version: r.get(7)?,
-                device_id: r.get(8)?,
-                is_deleted: r.get::<_, i64>(9)? != 0,
-            })
-        })?
-        .filter_map(|r| r.ok())
-        .collect();
-    drop(stmt);
     accounts
         .into_iter()
-        .map(|a| {
+        .map(|a: Account| {
             Ok(AccountBalance {
                 balance_cents: account_balance(&conn, &a.id)?,
                 account: a,

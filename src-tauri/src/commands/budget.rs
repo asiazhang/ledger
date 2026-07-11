@@ -1,5 +1,6 @@
 use tauri::State;
 
+use crate::db::query::query_all;
 use crate::db::{DbState, device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{Budget, BudgetInput, BudgetPeriod, BudgetProgress};
@@ -7,25 +8,12 @@ use crate::models::{Budget, BudgetInput, BudgetPeriod, BudgetProgress};
 #[tauri::command]
 pub fn list_budgets(db: State<'_, DbState>) -> Result<Vec<Budget>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let mut stmt = conn
-        .prepare("SELECT id,category_id,period,amount_cents,start_date,created_at,updated_at,version,device_id,is_deleted \
-         FROM budgets WHERE is_deleted=0 ORDER BY created_at")?;
-    let rows = stmt.query_map([], |r| {
-        Ok(Budget {
-            id: r.get(0)?,
-            category_id: r.get(1)?,
-            period: r.get(2)?,
-            amount_cents: r.get(3)?,
-            start_date: r.get(4)?,
-            created_at: r.get(5)?,
-            updated_at: r.get(6)?,
-            version: r.get(7)?,
-            device_id: r.get(8)?,
-            is_deleted: r.get::<_, i64>(9)? != 0,
-        })
-    })?;
-    rows.collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(Into::into)
+    query_all(
+        &conn,
+        "SELECT id,category_id,period,amount_cents,start_date,created_at,updated_at,version,device_id,is_deleted \
+         FROM budgets WHERE is_deleted=0 ORDER BY created_at",
+        [],
+    )
 }
 
 #[tauri::command]

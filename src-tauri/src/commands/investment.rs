@@ -1,6 +1,7 @@
 use rusqlite::Connection;
 
 use crate::commands::fx::account_currency_code;
+use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{AccountType, TransactionInput};
@@ -250,28 +251,13 @@ pub fn list_holdings(
     db: tauri::State<'_, crate::db::DbState>,
 ) -> Result<Vec<crate::models::Holding>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let mut stmt = conn.prepare(
+    query_all(
+        &conn,
         "SELECT id,account_id,instrument_id,quantity,cost_basis_cents,cost_currency_code, \
          latest_price_cents,latest_price_currency_code,market_value_cents,unrealized_pnl_cents,updated_at \
          FROM v_holdings ORDER BY account_id, instrument_id",
-    )?;
-    let rows = stmt.query_map([], |r| {
-        Ok(crate::models::Holding {
-            id: r.get(0)?,
-            account_id: r.get(1)?,
-            instrument_id: r.get(2)?,
-            quantity: r.get(3)?,
-            cost_basis_cents: r.get(4)?,
-            cost_currency_code: r.get(5)?,
-            latest_price_cents: r.get(6)?,
-            latest_price_currency_code: r.get(7)?,
-            market_value_cents: r.get(8)?,
-            unrealized_pnl_cents: r.get(9)?,
-            updated_at: r.get(10)?,
-        })
-    })?;
-    rows.collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(Into::into)
+        [],
+    )
 }
 
 #[tauri::command]
@@ -279,25 +265,12 @@ pub fn list_exchange_rates(
     db: tauri::State<'_, crate::db::DbState>,
 ) -> Result<Vec<crate::models::ExchangeRate>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let mut stmt = conn.prepare(
+    query_all(
+        &conn,
         "SELECT id,base_code,quote_code,rate,priced_at,source,updated_at,version,device_id \
          FROM exchange_rates ORDER BY base_code, quote_code",
-    )?;
-    let rows = stmt.query_map([], |r| {
-        Ok(crate::models::ExchangeRate {
-            id: r.get(0)?,
-            base_code: r.get(1)?,
-            quote_code: r.get(2)?,
-            rate: r.get(3)?,
-            priced_at: r.get(4)?,
-            source: r.get(5)?,
-            updated_at: r.get(6)?,
-            version: r.get(7)?,
-            device_id: r.get(8)?,
-        })
-    })?;
-    rows.collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(Into::into)
+        [],
+    )
 }
 
 #[tauri::command]
@@ -345,26 +318,12 @@ pub fn list_market_prices(
     db: tauri::State<'_, crate::db::DbState>,
 ) -> Result<Vec<crate::models::MarketPrice>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let mut stmt = conn.prepare(
+    query_all(
+        &conn,
         "SELECT id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id \
          FROM market_prices ORDER BY instrument_id, priced_at DESC",
-    )?;
-    let rows = stmt.query_map([], |r| {
-        Ok(crate::models::MarketPrice {
-            id: r.get(0)?,
-            instrument_id: r.get(1)?,
-            price_cents: r.get(2)?,
-            currency_code: r.get(3)?,
-            priced_at: r.get(4)?,
-            source: r.get(5)?,
-            created_at: r.get(6)?,
-            updated_at: r.get(7)?,
-            version: r.get(8)?,
-            device_id: r.get(9)?,
-        })
-    })?;
-    rows.collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(Into::into)
+        [],
+    )
 }
 
 #[tauri::command]
@@ -414,25 +373,12 @@ pub fn list_instruments(
     db: tauri::State<'_, crate::db::DbState>,
 ) -> Result<Vec<crate::models::Instrument>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let mut stmt = conn.prepare(
+    query_all(
+        &conn,
         "SELECT id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id \
          FROM instruments ORDER BY symbol",
-    )?;
-    let rows = stmt.query_map([], |r| {
-        Ok(crate::models::Instrument {
-            id: r.get(0)?,
-            symbol: r.get(1)?,
-            kind: r.get(2)?,
-            name: r.get(3)?,
-            currency_code: r.get(4)?,
-            created_at: r.get(5)?,
-            updated_at: r.get(6)?,
-            version: r.get(7)?,
-            device_id: r.get(8)?,
-        })
-    })?;
-    rows.collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(Into::into)
+        [],
+    )
 }
 
 #[tauri::command]
