@@ -31,6 +31,8 @@ pub fn run() {
             commands::create_exchange_rate,
             commands::list_market_prices,
             commands::create_market_price,
+            commands::list_instruments,
+            commands::create_instrument,
             commands::list_holdings,
             commands::list_budgets,
             commands::create_budget,

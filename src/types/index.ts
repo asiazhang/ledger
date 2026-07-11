@@ -53,7 +53,7 @@ export interface CategoryInput {
   parent_id?: string | null
 }
 
-export type TransactionKind = 'income' | 'expense' | 'transfer' | 'refund'
+export type TransactionKind = 'income' | 'expense' | 'transfer' | 'refund' | 'buy' | 'sell'
 
 export interface Transaction extends Syncable {
   id: string
@@ -80,6 +80,10 @@ export interface TransactionInput {
   refund_of_transaction_id?: string | null
   note?: string | null
   date: string
+  instrument_id?: string | null
+  quantity?: number | null
+  price_cents?: number | null
+  fee_cents?: number | null
 }
 
 export type BudgetPeriod = 'monthly' | 'yearly'
@@ -132,6 +136,32 @@ export interface ImportedRow {
   category_name: string | null
 }
 
+export type InstrumentType = 'stock' | 'fund' | 'bond' | 'etf' | 'other'
+
+export const INSTRUMENT_TYPE_LABELS: Record<InstrumentType, string> = {
+  stock: '股票',
+  fund: '基金',
+  bond: '债券',
+  etf: 'ETF',
+  other: '其他',
+}
+
+export interface Instrument extends Syncable {
+  id: string
+  symbol: string
+  type: InstrumentType
+  name: string | null
+  currency_code: string
+  created_at: string
+}
+
+export interface InstrumentInput {
+  symbol: string
+  type: InstrumentType
+  name?: string | null
+  currency_code: string
+}
+
 /** 分 -> 元字符串，按币种小数位格式化 */
 export function formatAmount(cents: number, currency?: Currency): string {
   const dp = currency?.decimal_places ?? 2
@@ -159,4 +189,6 @@ export const TRANSACTION_KIND_LABELS: Record<TransactionKind, string> = {
   expense: '支出',
   transfer: '转账',
   refund: '退款',
+  buy: '买入',
+  sell: '卖出',
 }

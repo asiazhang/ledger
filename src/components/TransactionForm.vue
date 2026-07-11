@@ -17,8 +17,8 @@ import {
 } from 'naive-ui'
 import { api } from '@/api'
 import { useAppStore } from '@/stores/app'
-import { formatAmount } from '@/types'
-import type { Transaction, TransactionInput, TransactionKind } from '@/types'
+import { formatAmount, INSTRUMENT_TYPE_LABELS } from '@/types'
+import type { Instrument, InstrumentType, Transaction, TransactionInput, TransactionKind } from '@/types'
 
 const props = defineProps<{ onCreated?: () => void }>()
 const emit = defineEmits<{ created: [] }>()
@@ -36,11 +36,33 @@ const refundTargetId = ref<string | null>(null)
 const note = ref('')
 const date = ref(Date.now())
 
+// 投资交易字段
+const instrumentId = ref<string | null>(null)
+const quantity = ref<number | null>(null)
+const price = ref<number | null>(null)
+const fee = ref<number | null>(null)
+const instruments = ref<Instrument[]>([])
+const showNewInstrument = ref(false)
+const newInstrumentSymbol = ref('')
+const newInstrumentName = ref('')
+const newInstrumentType = ref<InstrumentType>('stock')
+
 // 交易列表（供退款关联选择原支出交易）
 const transactions = ref<Transaction[]>([])
 
 const accountOptions = computed(() =>
   store.accounts.map((a) => ({ label: a.name, value: a.id })),
+)
+const investmentAccountOptions = computed(() =>
+  store.accounts
+    .filter((a) => a.type === 'investment')
+    .map((a) => ({ label: a.name, value: a.id })),
+)
+const instrumentOptions = computed(() =>
+  instruments.value.map((i) => ({
+    label: i.name ? `${i.symbol} · ${i.name}` : i.symbol,
+    value: i.id,
+  })),
 )
 const currencyOptions = computed(() =>
   store.currencies.map((c) => ({ label: `${c.name} (${c.code})`, value: c.code })),
@@ -76,8 +98,21 @@ watch(kind, () => {
   categoryId.value = null
   toAccountId.value = null
   refundTargetId.value = null
+  instrumentId.value = null
+  quantity.value = null
+  price.value = null
+  fee.value = null
+  showNewInstrument.value = false
   // 退款时账户由关联决定，清空用户先前选的账户
   if (kind.value === 'refund') accountId.value = null
+})
+
+// 买入时账户切换，自动同步币种为账户本位币
+watch(accountId, () => {
+  if (kind.value === 'buy' && accountId.value) {
+    const account = store.accountMap.get(accountId.value)
+    if (account) currencyCode.value = account.currency_code
+  }
 })
 
 // 选定退款关联后，锁定账户与币种为原交易
@@ -87,6 +122,37 @@ watch(refundTargetId, () => {
     currencyCode.value = refundTarget.value.currency_code
   }
 })
+
+async function createNewInstrument() {
+  if (!newInstrumentSymbol.value.trim()) {
+    message.warning('请输入标的代码')
+    return
+  }
+  try {
+    const id = await api.createInstrument({
+      symbol: newInstrumentSymbol.value.trim(),
+      type: newInstrumentType.value,
+      name: newInstrumentName.value.trim() || null,
+      currency_code: currencyCode.value,
+    })
+    message.success('已新增标的')
+    await loadInstruments()
+    instrumentId.value = id
+    showNewInstrument.value = false
+    newInstrumentSymbol.value = ''
+    newInstrumentName.value = ''
+  } catch (e) {
+    message.error(`新增标的失败: ${e}`)
+  }
+}
+
+async function loadInstruments() {
+  try {
+    instruments.value = await api.listInstruments()
+  } catch {
+    // 加载失败忽略，可后续重试
+  }
+}
 
 async function submit() {
   if (kind.value === 'refund') {
@@ -123,6 +189,55 @@ async function submit() {
     }
     return
   }
+
+  if (kind.value === 'buy') {
+    if (!accountId.value) {
+      message.warning('请选择投资账户')
+      return
+    }
+    if (!instrumentId.value) {
+      message.warning('请选择标的')
+      return
+    }
+    if (quantity.value == null || quantity.value <= 0) {
+      message.warning('请输入买入数量')
+      return
+    }
+    if (price.value == null || price.value <= 0) {
+      message.warning('请输入买入单价')
+      return
+    }
+    const input: TransactionInput = {
+      kind: 'buy',
+      amount_cents: 0,
+      currency_code: currencyCode.value,
+      account_id: accountId.value,
+      to_account_id: null,
+      category_id: null,
+      refund_of_transaction_id: null,
+      note: note.value || null,
+      date: new Date(date.value).toISOString().slice(0, 10),
+      instrument_id: instrumentId.value,
+      quantity: quantity.value,
+      price_cents: Math.round(price.value * 100),
+      fee_cents: fee.value ? Math.round(fee.value * 100) : null,
+    }
+    try {
+      await api.createTransaction(input)
+      message.success('已记买入')
+      instrumentId.value = null
+      quantity.value = null
+      price.value = null
+      fee.value = null
+      note.value = ''
+      emit('created')
+      props.onCreated?.()
+    } catch (e) {
+      message.error(`买入失败: ${e}`)
+    }
+    return
+  }
+
   if (!accountId.value) {
     message.warning('请选择账户')
     return
@@ -168,7 +283,7 @@ async function loadTransactions() {
 
 onMounted(async () => {
   await store.loadAll()
-  await loadTransactions()
+  await Promise.all([loadTransactions(), loadInstruments()])
 })
 </script>
 
@@ -180,9 +295,10 @@ onMounted(async () => {
         <NRadio value="income">收入</NRadio>
         <NRadio value="transfer">转账</NRadio>
         <NRadio value="refund">退款</NRadio>
+        <NRadio value="buy">买入</NRadio>
       </NRadioGroup>
 
-      <NFormItem label="金额">
+      <NFormItem v-if="kind !== 'buy'" label="金额">
         <NInputNumber
           v-model:value="amount"
           :min="0"
@@ -192,17 +308,45 @@ onMounted(async () => {
         />
         <NSelect
           v-model:value="currencyCode"
-          :options="currencyOptions"
           :disabled="kind === 'refund'"
           style="width: 130px; margin-left: 8px"
         />
       </NFormItem>
 
-      <NFormItem v-if="kind !== 'refund'" label="账户">
+      <NFormItem v-if="kind === 'buy'" label="金额">
+        <NInputNumber
+          :value="
+            quantity && price
+              ? Math.round((quantity * price + (fee ?? 0)) * 100) / 100
+              : 0
+          "
+          :disabled="true"
+          :precision="2"
+          placeholder="自动计算"
+          style="width: 160px"
+        />
+        <NSelect
+          v-model:value="currencyCode"
+          :options="currencyOptions"
+          :disabled="true"
+          style="width: 130px; margin-left: 8px"
+        />
+      </NFormItem>
+
+      <NFormItem v-if="kind !== 'refund' && kind !== 'buy'" label="账户">
         <NSelect
           v-model:value="accountId"
           :options="accountOptions"
           placeholder="选择账户"
+          style="width: 200px"
+        />
+      </NFormItem>
+
+      <NFormItem v-if="kind === 'buy'" label="投资账户">
+        <NSelect
+          v-model:value="accountId"
+          :options="investmentAccountOptions"
+          placeholder="选择投资账户"
           style="width: 200px"
         />
       </NFormItem>
@@ -213,6 +357,79 @@ onMounted(async () => {
           :options="accountOptions"
           placeholder="目标账户"
           style="width: 200px"
+        />
+      </NFormItem>
+
+      <NFormItem v-if="kind === 'buy'" label="标的">
+        <NSpace align="center" :size="8">
+          <NSelect
+            v-model:value="instrumentId"
+            :options="instrumentOptions"
+            placeholder="选择标的"
+            filterable
+            clearable
+            style="width: 200px"
+          />
+          <NButton size="tiny" @click="showNewInstrument = !showNewInstrument">
+            {{ showNewInstrument ? '取消' : '新增标的' }}
+          </NButton>
+        </NSpace>
+      </NFormItem>
+
+      <NSpace v-if="kind === 'buy' && showNewInstrument" vertical :size="8">
+        <NFormItem label="代码">
+          <NInput
+            v-model:value="newInstrumentSymbol"
+            placeholder="如 NVDA"
+            style="width: 120px"
+          />
+        </NFormItem>
+        <NFormItem label="名称">
+          <NInput
+            v-model:value="newInstrumentName"
+            placeholder="名称（可选）"
+            style="width: 180px"
+          />
+        </NFormItem>
+        <NFormItem label="类型">
+          <NSelect
+            v-model:value="newInstrumentType"
+            :options="Object.entries(INSTRUMENT_TYPE_LABELS).map(([value, label]) => ({ label, value }))"
+            style="width: 120px"
+          />
+        </NFormItem>
+        <NButton size="small" @click="createNewInstrument">
+          保存标的
+        </NButton>
+      </NSpace>
+
+      <NFormItem v-if="kind === 'buy'" label="数量">
+        <NInputNumber
+          v-model:value="quantity"
+          :min="0"
+          :precision="4"
+          placeholder="数量"
+          style="width: 160px"
+        />
+      </NFormItem>
+
+      <NFormItem v-if="kind === 'buy'" label="单价">
+        <NInputNumber
+          v-model:value="price"
+          :min="0"
+          :precision="2"
+          placeholder="单价"
+          style="width: 160px"
+        />
+      </NFormItem>
+
+      <NFormItem v-if="kind === 'buy'" label="手续费">
+        <NInputNumber
+          v-model:value="fee"
+          :min="0"
+          :precision="2"
+          placeholder="手续费"
+          style="width: 160px"
         />
       </NFormItem>
 

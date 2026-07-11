@@ -4,9 +4,10 @@ use tauri::{Manager, State};
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{
-    Account, AccountBalance, AccountInput, Budget, BudgetInput, BudgetPeriod, BudgetProgress, Category,
-    CategoryInput, CategoryShare, Currency, ExchangeRate, ExchangeRateInput, Holding, ImportRequest,
-    ImportedRow, MarketPrice, MarketPriceInput, MonthlySummary, Transaction, TransactionInput,
+    Account, AccountBalance, AccountInput, AccountType, Budget, BudgetInput, BudgetPeriod, BudgetProgress,
+    Category, CategoryInput, CategoryShare, Currency, ExchangeRate, ExchangeRateInput, Holding,
+    ImportRequest, ImportedRow, Instrument, InstrumentInput, MarketPrice, MarketPriceInput,
+    MonthlySummary, Transaction, TransactionInput,
 };
 
 // ---------------------------------------------------------------------------
@@ -260,25 +261,19 @@ pub(crate) fn exchange_rate(
     if base_code == quote_code {
         return Ok(1.0);
     }
-    if let Some(rate) = conn
-        .query_row(
-            "SELECT rate FROM exchange_rates WHERE base_code=?1 AND quote_code=?2",
-            params![base_code, quote_code],
-            |r| r.get(0),
-        )
-        .ok()
-    {
+    if let Ok(rate) = conn.query_row(
+        "SELECT rate FROM exchange_rates WHERE base_code=?1 AND quote_code=?2",
+        params![base_code, quote_code],
+        |r| r.get(0),
+    ) {
         return Ok(rate);
     }
     // 反向兜底：1 / (quote→base 的 rate)
-    if let Some(rev) = conn
-        .query_row(
-            "SELECT rate FROM exchange_rates WHERE base_code=?1 AND quote_code=?2",
-            params![quote_code, base_code],
-            |r| r.get::<_, f64>(0),
-        )
-        .ok()
-    {
+    if let Ok(rev) = conn.query_row(
+        "SELECT rate FROM exchange_rates WHERE base_code=?1 AND quote_code=?2",
+        params![quote_code, base_code],
+        |r| r.get::<_, f64>(0),
+    ) {
         if rev <= 0.0 {
             return Err(AppError::Invalid(format!(
                 "反向汇率 {quote_code}->{base_code} 非正: {rev}"
@@ -342,15 +337,85 @@ pub fn list_transactions(db: State<'_, DbState>, limit: Option<i64>) -> Result<V
         .map_err(Into::into)
 }
 
+/// 买入交易：校验、写入 transactions / security_transactions / security_lots。
+fn create_buy_transaction(conn: &Connection, input: TransactionInput) -> Result<String> {
+    let instrument_id = input
+        .instrument_id
+        .as_ref()
+        .ok_or_else(|| AppError::Invalid("买入必须指定标的".into()))?
+        .clone();
+    let quantity = input.quantity.unwrap_or(0.0);
+    let price_cents = input.price_cents.unwrap_or(0);
+    let fee_cents = input.fee_cents.unwrap_or(0);
+    if quantity <= 0.0 {
+        return Err(AppError::Invalid("买入数量必须大于 0".into()));
+    }
+    if price_cents <= 0 {
+        return Err(AppError::Invalid("买入单价必须大于 0".into()));
+    }
+    let account_type: AccountType = conn
+        .query_row(
+            "SELECT type FROM accounts WHERE id=?1",
+            params![input.account_id],
+            |r| r.get::<_, String>(0),
+        )?
+        .parse()?;
+    if account_type != AccountType::Investment {
+        return Err(AppError::Invalid("买入交易必须使用投资账户".into()));
+    }
+    let account_currency = account_currency_code(conn, &input.account_id)?;
+    let amount_cents = (quantity * price_cents as f64).round() as i64 + fee_cents;
+
+    let id = new_uuid();
+    let now = now_iso();
+    conn.execute(
+        "INSERT INTO transactions \
+         (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
+         category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,NULL,NULL,?8,?9,?10,?11,?12,?13,0)",
+        params![
+            id,
+            input.kind,
+            amount_cents,
+            account_currency,
+            amount_cents,
+            input.account_id,
+            input.to_account_id,
+            input.note,
+            input.date,
+            now,
+            now,
+            1,
+            device_id()
+        ],
+    )?;
+    create_buy_lot(
+        conn,
+        &id,
+        &input.account_id,
+        &instrument_id,
+        quantity,
+        price_cents,
+        fee_cents,
+        &account_currency,
+    )?;
+    Ok(id)
+}
+
 #[tauri::command]
 pub fn create_transaction(db: State<'_, DbState>, input: TransactionInput) -> Result<String> {
-    if input.amount_cents <= 0 {
-        return Err(AppError::Invalid("金额必须大于 0".into()));
-    }
     if input.kind == "transfer" && input.to_account_id.is_none() {
         return Err(AppError::Invalid("转账必须指定目标账户".into()));
     }
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+
+    if input.kind == "buy" {
+        return create_buy_transaction(&conn, input);
+    }
+
+    if input.amount_cents <= 0 {
+        return Err(AppError::Invalid("金额必须大于 0".into()));
+    }
 
     // 退款必须从已有支出交易发起：校验原交易存在且 kind='expense'，
     // 并强制继承原交易的分类、账户、币种（忽略前端传入的不一致值）。
@@ -372,7 +437,7 @@ pub fn create_transaction(db: State<'_, DbState>, input: TransactionInput) -> Re
         (
             input.category_id,
             input.account_id,
-            input.currency_code.clone(),
+            input.currency_code,
             None,
         )
     };
@@ -412,9 +477,86 @@ pub fn create_transaction(db: State<'_, DbState>, input: TransactionInput) -> Re
     Ok(id)
 }
 
+/// 买入交易创建对应的 lot。必须在同一个事务中调用，参数已校验。
+#[allow(clippy::too_many_arguments)]
+fn create_buy_lot(
+    conn: &Connection,
+    transaction_id: &str,
+    account_id: &str,
+    instrument_id: &str,
+    quantity: f64,
+    price_cents: i64,
+    fee_cents: i64,
+    currency_code: &str,
+) -> Result<()> {
+    let lot_id = new_uuid();
+    let now = now_iso();
+    // 单位成本含手续费摊薄：总成本 / 数量，四舍五入到分。
+    let total_cost_cents = (quantity * price_cents as f64).round() as i64 + fee_cents;
+    let cost_per_unit = if quantity > 0.0 {
+        (total_cost_cents as f64 / quantity).round() as i64
+    } else {
+        0
+    };
+    conn.execute(
+        "INSERT INTO security_transactions (transaction_id,instrument_id,action,quantity,price_cents,fee_cents) \
+         VALUES (?1,?2,'buy',?3,?4,?5)",
+        params![transaction_id, instrument_id, quantity, price_cents, fee_cents],
+    )?;
+    conn.execute(
+        "INSERT INTO security_lots (id,account_id,instrument_id,buy_transaction_id,initial_quantity,remaining_quantity,cost_per_unit_cents,currency_code,created_at,updated_at,version,device_id) \
+         VALUES (?1,?2,?3,?4,?5,?5,?6,?7,?8,?8,?9,?10)",
+        params![
+            lot_id,
+            account_id,
+            instrument_id,
+            transaction_id,
+            quantity,
+            cost_per_unit,
+            currency_code,
+            now,
+            1,
+            device_id()
+        ],
+    )?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn delete_transaction(db: State<'_, DbState>, id: String) -> Result<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+
+    // 买入交易删除时需同步清理未卖出的 lot 与 security_transaction，避免持仓视图仍显示已删交易。
+    let is_buy: Option<bool> = conn
+        .query_row(
+            "SELECT kind='buy' FROM transactions WHERE id=?1 AND is_deleted=0",
+            params![id],
+            |r| r.get::<_, i64>(0).map(|v| v != 0),
+        )
+        .ok();
+    if is_buy == Some(true) {
+        let sold: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM security_lots \
+             WHERE buy_transaction_id=(SELECT transaction_id FROM security_transactions WHERE transaction_id=?1) \
+             AND remaining_quantity < initial_quantity",
+            params![id],
+            |r| r.get(0),
+        )?;
+        if sold > 0 {
+            return Err(AppError::Invalid(
+                "该买入交易已有部分卖出，无法删除".into(),
+            ));
+        }
+        conn.execute(
+            "DELETE FROM security_lots WHERE buy_transaction_id=(SELECT transaction_id FROM security_transactions WHERE transaction_id=?1)",
+            params![id],
+        )?;
+        conn.execute(
+            "DELETE FROM security_transactions WHERE transaction_id=?1",
+            params![id],
+        )?;
+    }
+
     conn.execute(
         "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         params![id, now_iso(), device_id()],
@@ -548,6 +690,71 @@ pub fn create_market_price(db: State<'_, DbState>, input: MarketPriceInput) -> R
             input.currency_code,
             input.priced_at,
             input.source,
+            now,
+            now,
+            1,
+            device_id()
+        ],
+    )?;
+    Ok(id)
+}
+
+// ---------------------------------------------------------------------------
+// 金融工具
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn list_instruments(db: State<'_, DbState>) -> Result<Vec<Instrument>> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let mut stmt = conn.prepare(
+        "SELECT id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id \
+         FROM instruments ORDER BY symbol",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(Instrument {
+            id: r.get(0)?,
+            symbol: r.get(1)?,
+            kind: r.get(2)?,
+            name: r.get(3)?,
+            currency_code: r.get(4)?,
+            created_at: r.get(5)?,
+            updated_at: r.get(6)?,
+            version: r.get(7)?,
+            device_id: r.get(8)?,
+        })
+    })?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn create_instrument(db: State<'_, DbState>, input: InstrumentInput) -> Result<String> {
+    if input.symbol.trim().is_empty() {
+        return Err(AppError::Invalid("标的代码不能为空".into()));
+    }
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    // 同 (symbol, type) 已存在则返回已有 ID，避免重复创建。
+    let existing_id: Option<String> = conn
+        .query_row(
+            "SELECT id FROM instruments WHERE symbol=?1 AND instrument_type=?2",
+            params![input.symbol, input.kind],
+            |r| r.get(0),
+        )
+        .ok();
+    if let Some(id) = existing_id {
+        return Ok(id);
+    }
+    let id = new_uuid();
+    let now = now_iso();
+    conn.execute(
+        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+        params![
+            id,
+            input.symbol,
+            input.kind,
+            input.name,
+            input.currency_code,
             now,
             now,
             1,
@@ -926,4 +1133,134 @@ pub fn open_db(app: &tauri::AppHandle) -> Result<DbState> {
     Ok(DbState {
         conn: std::sync::Mutex::new(conn),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::params;
+
+    /// create_buy_transaction 写入交易、security_transaction 和未卖出的 lot。
+    #[test]
+    fn buy_transaction_creates_lot() {
+        let mut conn = crate::db::open_in_memory().unwrap();
+        crate::db::init_db(&mut conn).unwrap();
+
+        let account_id = "acc-test-buy";
+        conn.execute(
+            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,'美股','investment','USD',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            params![account_id],
+        )
+        .unwrap();
+        let instrument_id = "inst-test-nvda";
+        conn.execute(
+            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id) \
+             VALUES (?1,'NVDA','stock','NVIDIA','USD','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+            params![instrument_id],
+        )
+        .unwrap();
+
+        let input = TransactionInput {
+            kind: "buy".into(),
+            amount_cents: 0,
+            currency_code: "USD".into(),
+            account_id: account_id.into(),
+            to_account_id: None,
+            category_id: None,
+            refund_of_transaction_id: None,
+            note: None,
+            date: "2026-01-10".into(),
+            instrument_id: Some(instrument_id.into()),
+            quantity: Some(10.0),
+            price_cents: Some(10000),
+            fee_cents: Some(500),
+        };
+        let txn_id = create_buy_transaction(&conn, input).unwrap();
+
+        // 交易总金额为 10 * 10000 + 500 = 100500 分
+        let (kind, amount_cents, currency_code): (String, i64, String) = conn
+            .query_row(
+                "SELECT kind, amount_cents, currency_code FROM transactions WHERE id=?1",
+                params![txn_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(kind, "buy");
+        assert_eq!(amount_cents, 100500);
+        assert_eq!(currency_code, "USD");
+
+        let (action, quantity, price_cents, fee_cents): (String, f64, i64, i64) = conn
+            .query_row(
+                "SELECT action, quantity, price_cents, fee_cents FROM security_transactions WHERE transaction_id=?1",
+                params![txn_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(action, "buy");
+        assert!((quantity - 10.0).abs() < 0.0001);
+        assert_eq!(price_cents, 10000);
+        assert_eq!(fee_cents, 500);
+
+        let (remaining_quantity, cost_per_unit): (f64, i64) = conn
+            .query_row(
+                "SELECT remaining_quantity, cost_per_unit_cents FROM security_lots WHERE buy_transaction_id=?1",
+                params![txn_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!((remaining_quantity - 10.0).abs() < 0.0001);
+        // 单位成本 = (10 * 10000 + 500) / 10 = 10050 分
+        assert_eq!(cost_per_unit, 10050);
+
+        // 持仓视图能读到该 lot
+        let (holding_quantity, cost_basis): (f64, i64) = conn
+            .query_row(
+                "SELECT quantity, cost_basis_cents FROM v_holdings WHERE id=?1",
+                params![format!("{account_id}-{instrument_id}-USD")],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!((holding_quantity - 10.0).abs() < 0.0001);
+        assert_eq!(cost_basis, 100500);
+    }
+
+    /// 非投资账户不能录入买入交易。
+    #[test]
+    fn buy_transaction_requires_investment_account() {
+        let mut conn = crate::db::open_in_memory().unwrap();
+        crate::db::init_db(&mut conn).unwrap();
+
+        let account_id = "acc-test-cash";
+        conn.execute(
+            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,'现金','cash','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            params![account_id],
+        )
+        .unwrap();
+        let instrument_id = "inst-test-cny";
+        conn.execute(
+            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id) \
+             VALUES (?1,'600519','stock','茅台','CNY','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+            params![instrument_id],
+        )
+        .unwrap();
+
+        let input = TransactionInput {
+            kind: "buy".into(),
+            amount_cents: 0,
+            currency_code: "CNY".into(),
+            account_id: account_id.into(),
+            to_account_id: None,
+            category_id: None,
+            refund_of_transaction_id: None,
+            note: None,
+            date: "2026-01-10".into(),
+            instrument_id: Some(instrument_id.into()),
+            quantity: Some(1.0),
+            price_cents: Some(10000),
+            fee_cents: None,
+        };
+        assert!(create_buy_transaction(&conn, input).is_err());
+    }
 }

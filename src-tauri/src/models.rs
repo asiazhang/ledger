@@ -193,6 +193,10 @@ pub struct TransactionInput {
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
+    pub instrument_id: Option<String>,
+    pub quantity: Option<f64>,
+    pub price_cents: Option<i64>,
+    pub fee_cents: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -317,4 +321,78 @@ pub struct Holding {
     pub market_value_cents: Option<i64>,
     pub unrealized_pnl_cents: Option<i64>,
     pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Instrument {
+    pub id: String,
+    pub symbol: String,
+    #[serde(rename = "type")]
+    pub kind: InstrumentType,
+    pub name: Option<String>,
+    pub currency_code: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub version: i64,
+    pub device_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InstrumentInput {
+    pub symbol: String,
+    #[serde(rename = "type")]
+    pub kind: InstrumentType,
+    pub name: Option<String>,
+    pub currency_code: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InstrumentType {
+    Stock,
+    Fund,
+    Bond,
+    Etf,
+    Other,
+}
+
+impl fmt::Display for InstrumentType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InstrumentType::Stock => write!(f, "stock"),
+            InstrumentType::Fund => write!(f, "fund"),
+            InstrumentType::Bond => write!(f, "bond"),
+            InstrumentType::Etf => write!(f, "etf"),
+            InstrumentType::Other => write!(f, "other"),
+        }
+    }
+}
+
+impl FromStr for InstrumentType {
+    type Err = AppError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "stock" => Ok(InstrumentType::Stock),
+            "fund" => Ok(InstrumentType::Fund),
+            "bond" => Ok(InstrumentType::Bond),
+            "etf" => Ok(InstrumentType::Etf),
+            "other" => Ok(InstrumentType::Other),
+            _ => Err(AppError::Invalid(format!("未知金融工具类型: {s}"))),
+        }
+    }
+}
+
+impl ToSql for InstrumentType {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::from(self.to_string()))
+    }
+}
+
+impl FromSql for InstrumentType {
+    fn column_result(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
+        value
+            .as_str()?
+            .parse()
+            .map_err(|e: AppError| FromSqlError::Other(Box::new(e)))
+    }
 }

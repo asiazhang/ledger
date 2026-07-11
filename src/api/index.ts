@@ -11,6 +11,8 @@ import type {
   CategoryShare,
   Currency,
   ImportedRow,
+  Instrument,
+  InstrumentInput,
   MonthlySummary,
   Transaction,
   TransactionInput,
@@ -52,4 +54,9 @@ export const api = {
   // 导入
   previewImport: (path: string) =>
     invoke<ImportedRow[]>('preview_import', { req: { path } }),
+
+  // 金融工具
+  listInstruments: () => invoke<Instrument[]>('list_instruments'),
+  createInstrument: (input: InstrumentInput) =>
+    invoke<string>('create_instrument', { input }),
 }
