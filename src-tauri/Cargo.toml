@@ -31,3 +31,12 @@ csv = "1.4.0"
 calamine = "0.35.0"
 tauri-plugin-dialog = "2"
 
+[dev-dependencies]
+cucumber = "0.21"
+tokio = { version = "1", features = ["rt", "macros", "time"] }
+futures = "0.3"
+
+[[test]]
+name = "e2e"
+harness = false
+

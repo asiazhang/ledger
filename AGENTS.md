@@ -23,7 +23,12 @@ Ledger 是一个基于 Tauri 2 的桌面记账应用，前端 Vue 3 + TypeScript
 类型检查与 Rust 质量检查：
 - 前端类型检查：`npx vue-tsc --noEmit`（`tsconfig.json` 开启了 strict、noUnusedLocals、noUnusedParameters）。
 - Rust 检查（在 `src-tauri/` 下）：`cargo clippy --all-targets --all-features`，并运行 `cargo fmt` 格式化。请修复所有 clippy 警告。
-- Rust 单测：`cargo test --all`（在 `src-tauri/` 下）。当前项目尚无测试用例，新增逻辑时应补充。
+- Rust 测试（在 `src-tauri/` 下）：`cargo test --all`（71 个单元测试 + 6 个 BDD 场景）。
+- BDD 测试（Rust 后端，cucumber）：`cargo test --test e2e`（在 `src-tauri/` 下）。使用 Gherkin 语法，feature 文件在 `src-tauri/tests/e2e/features/`。
+- 前端测试：`npm test`（Vitest，37 个测试，4 个文件）。使用 jsdom 环境 + `@vue/test-utils`，mock `@tauri-apps/api/core` 的 `invoke`。测试文件位于 `src/__tests__/`。
+  - `npm run test:watch` — watch 模式。
+- 新增 Rust 业务逻辑时，考虑补充 BDD feature 场景（`src-tauri/tests/e2e/features/`）和对应的 step 定义（`src-tauri/tests/e2e/*_steps.rs`）。
+- 新增前端逻辑时，补充 Vitest 测试到 `src/__tests__/`（纯函数、composables、组件均可测）。
 
 > 注意：Vite dev server 固定占用 1420 端口（`strictPort: true`），且 Vite 配置已忽略 `src-tauri/**` 的文件监听，改 Rust 代码需靠 `tauri dev` 自身的 Rust 热重载。
 

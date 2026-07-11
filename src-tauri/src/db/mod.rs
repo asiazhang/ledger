@@ -58,8 +58,7 @@ pub fn open_connection<P: AsRef<Path>>(path: P) -> Result<Connection> {
     Ok(conn)
 }
 
-/// 打开内存数据库连接并启用外键约束（用于测试）。
-#[cfg(test)]
+/// 打开内存数据库连接并启用外键约束（用于测试和 BDD 集成测试）。
 pub fn open_in_memory() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
     conn.execute("PRAGMA foreign_keys = ON", [])?;

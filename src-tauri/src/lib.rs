@@ -1,9 +1,9 @@
-mod commands;
-mod db;
-mod error;
-mod import_parser;
-mod models;
-mod scheduled_transactions;
+pub mod commands;
+pub mod db;
+pub mod error;
+pub mod import_parser;
+pub mod models;
+pub mod scheduled_transactions;
 
 use tauri::Manager;
 

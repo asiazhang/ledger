@@ -7,7 +7,7 @@ use crate::db::{DbState, device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{CreateTransactionResult, Transaction, TransactionInput};
 
-fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<String> {
+pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<String> {
     if input.kind == "transfer" && input.to_account_id.is_none() {
         return Err(AppError::Invalid("转账必须指定目标账户".into()));
     }
