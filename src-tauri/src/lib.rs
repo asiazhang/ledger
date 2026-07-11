@@ -21,7 +21,7 @@ fn try_init_database(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
             let confirmed = app
                 .dialog()
                 .message(format!(
-                    "数据库初始化失败：\n\n{e}\n\n是否删除旧数据库后重试？"
+                    "数据库初始化失败：\n\n{e}\n\n是否备份旧数据并重置数据库？"
                 ))
                 .title("数据库错误")
                 .kind(MessageDialogKind::Warning)
@@ -36,7 +36,8 @@ fn try_init_database(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
                     .app_data_dir()
                     .map_err(|e| format!("获取数据目录失败：{e}"))?;
                 let db_path = dir.join("ledger.db");
-                std::fs::remove_file(&db_path).ok();
+                let bak_path = db_path.with_extension("db.bak");
+                std::fs::rename(&db_path, &bak_path).ok();
                 let db_state = db::open_db(app.handle())?;
                 app.manage(db_state);
                 Ok(())
