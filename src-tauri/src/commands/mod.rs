@@ -6,6 +6,7 @@ pub mod fx;
 pub mod import;
 pub mod investment;
 pub mod reports;
+pub mod scheduled;
 pub mod transactions;
 
 pub use accounts::*;
@@ -15,4 +16,5 @@ pub use currencies::*;
 pub use import::*;
 pub use investment::*;
 pub use reports::*;
+pub use scheduled::*;
 pub use transactions::*;

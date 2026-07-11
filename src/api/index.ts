@@ -9,14 +9,19 @@ import type {
   Category,
   CategoryInput,
   CategoryShare,
+  CreateScheduledInput,
   CreateTransactionResult,
   Currency,
+  ExecuteOccurrenceInput,
   ImportedRow,
   Instrument,
   InstrumentInput,
   MonthlySummary,
+  ScheduledTransactionDetail,
+  ScheduledTransactionWithExt,
   Transaction,
   TransactionInput,
+  UpdateStatusInput,
 } from '@/types'
 
 export const api = {
@@ -62,4 +67,18 @@ export const api = {
   listInstruments: () => invoke<Instrument[]>('list_instruments'),
   createInstrument: (input: InstrumentInput) =>
     invoke<string>('create_instrument', { input }),
+
+  // 定时交易
+  createScheduledTransaction: (input: CreateScheduledInput) =>
+    invoke<string>('create_scheduled_transaction', { input }),
+  listScheduledTransactions: () =>
+    invoke<ScheduledTransactionWithExt[]>('list_scheduled_transactions'),
+  getScheduledTransactionDetail: (id: string) =>
+    invoke<ScheduledTransactionDetail>('get_scheduled_transaction_detail', { id }),
+  updateScheduledTransactionStatus: (input: UpdateStatusInput) =>
+    invoke<void>('update_scheduled_transaction_status', { input }),
+  executeScheduledOccurrence: (input: ExecuteOccurrenceInput) =>
+    invoke<string>('execute_scheduled_occurrence', { input }),
+  expandScheduledOccurrences: (id: string) =>
+    invoke<string[]>('expand_scheduled_occurrences', { id }),
 }

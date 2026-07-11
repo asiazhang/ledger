@@ -3,6 +3,7 @@ mod db;
 mod error;
 mod import_parser;
 mod models;
+mod scheduled_transactions;
 
 use tauri::Manager;
 
@@ -43,6 +44,12 @@ pub fn run() {
             commands::category_shares,
             commands::budget_progress,
             commands::preview_import,
+            commands::create_scheduled_transaction,
+            commands::list_scheduled_transactions,
+            commands::get_scheduled_transaction_detail,
+            commands::update_scheduled_transaction_status,
+            commands::execute_scheduled_occurrence,
+            commands::expand_scheduled_occurrences,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
