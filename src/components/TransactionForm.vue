@@ -94,6 +94,17 @@ const refundTarget = computed(() =>
     : (expenseTransactions.value.find((t) => t.id === refundTargetId.value) ?? null),
 )
 
+const isInvestmentTransaction = computed(() => kind.value === 'buy' || kind.value === 'sell')
+
+const investmentAmount = computed(() => {
+  if (quantity.value == null || price.value == null) return 0
+  const feeValue = fee.value ?? 0
+  const raw = kind.value === 'buy'
+    ? quantity.value * price.value + feeValue
+    : quantity.value * price.value - feeValue
+  return Math.round(raw * 100) / 100
+})
+
 watch(kind, () => {
   categoryId.value = null
   toAccountId.value = null
@@ -107,9 +118,9 @@ watch(kind, () => {
   if (kind.value === 'refund') accountId.value = null
 })
 
-// 买入时账户切换，自动同步币种为账户本位币
+// 买入/卖出时账户切换，自动同步币种为账户本位币
 watch(accountId, () => {
-  if (kind.value === 'buy' && accountId.value) {
+  if (isInvestmentTransaction.value && accountId.value) {
     const account = store.accountMap.get(accountId.value)
     if (account) currencyCode.value = account.currency_code
   }
@@ -238,6 +249,54 @@ async function submit() {
     return
   }
 
+  if (kind.value === 'sell') {
+    if (!accountId.value) {
+      message.warning('请选择投资账户')
+      return
+    }
+    if (!instrumentId.value) {
+      message.warning('请选择标的')
+      return
+    }
+    if (quantity.value == null || quantity.value <= 0) {
+      message.warning('请输入卖出数量')
+      return
+    }
+    if (price.value == null || price.value <= 0) {
+      message.warning('请输入卖出单价')
+      return
+    }
+    const input: TransactionInput = {
+      kind: 'sell',
+      amount_cents: 0,
+      currency_code: currencyCode.value,
+      account_id: accountId.value,
+      to_account_id: null,
+      category_id: null,
+      refund_of_transaction_id: null,
+      note: note.value || null,
+      date: new Date(date.value).toISOString().slice(0, 10),
+      instrument_id: instrumentId.value,
+      quantity: quantity.value,
+      price_cents: Math.round(price.value * 100),
+      fee_cents: fee.value ? Math.round(fee.value * 100) : null,
+    }
+    try {
+      await api.createTransaction(input)
+      message.success('已记卖出')
+      instrumentId.value = null
+      quantity.value = null
+      price.value = null
+      fee.value = null
+      note.value = ''
+      emit('created')
+      props.onCreated?.()
+    } catch (e) {
+      message.error(`卖出失败: ${e}`)
+    }
+    return
+  }
+
   if (!accountId.value) {
     message.warning('请选择账户')
     return
@@ -296,9 +355,10 @@ onMounted(async () => {
         <NRadio value="transfer">转账</NRadio>
         <NRadio value="refund">退款</NRadio>
         <NRadio value="buy">买入</NRadio>
+        <NRadio value="sell">卖出</NRadio>
       </NRadioGroup>
 
-      <NFormItem v-if="kind !== 'buy'" label="金额">
+      <NFormItem v-if="!isInvestmentTransaction" label="金额">
         <NInputNumber
           v-model:value="amount"
           :min="0"
@@ -313,13 +373,9 @@ onMounted(async () => {
         />
       </NFormItem>
 
-      <NFormItem v-if="kind === 'buy'" label="金额">
+      <NFormItem v-if="isInvestmentTransaction" label="金额">
         <NInputNumber
-          :value="
-            quantity && price
-              ? Math.round((quantity * price + (fee ?? 0)) * 100) / 100
-              : 0
-          "
+          :value="investmentAmount"
           :disabled="true"
           :precision="2"
           placeholder="自动计算"
@@ -333,7 +389,7 @@ onMounted(async () => {
         />
       </NFormItem>
 
-      <NFormItem v-if="kind !== 'refund' && kind !== 'buy'" label="账户">
+      <NFormItem v-if="kind !== 'refund' && !isInvestmentTransaction" label="账户">
         <NSelect
           v-model:value="accountId"
           :options="accountOptions"
@@ -342,7 +398,7 @@ onMounted(async () => {
         />
       </NFormItem>
 
-      <NFormItem v-if="kind === 'buy'" label="投资账户">
+      <NFormItem v-if="isInvestmentTransaction" label="投资账户">
         <NSelect
           v-model:value="accountId"
           :options="investmentAccountOptions"
@@ -360,7 +416,7 @@ onMounted(async () => {
         />
       </NFormItem>
 
-      <NFormItem v-if="kind === 'buy'" label="标的">
+      <NFormItem v-if="isInvestmentTransaction" label="标的">
         <NSpace align="center" :size="8">
           <NSelect
             v-model:value="instrumentId"
@@ -376,7 +432,7 @@ onMounted(async () => {
         </NSpace>
       </NFormItem>
 
-      <NSpace v-if="kind === 'buy' && showNewInstrument" vertical :size="8">
+      <NSpace v-if="isInvestmentTransaction && showNewInstrument" vertical :size="8">
         <NFormItem label="代码">
           <NInput
             v-model:value="newInstrumentSymbol"
@@ -403,7 +459,7 @@ onMounted(async () => {
         </NButton>
       </NSpace>
 
-      <NFormItem v-if="kind === 'buy'" label="数量">
+      <NFormItem v-if="isInvestmentTransaction" label="数量">
         <NInputNumber
           v-model:value="quantity"
           :min="0"
@@ -413,7 +469,7 @@ onMounted(async () => {
         />
       </NFormItem>
 
-      <NFormItem v-if="kind === 'buy'" label="单价">
+      <NFormItem v-if="isInvestmentTransaction" label="单价">
         <NInputNumber
           v-model:value="price"
           :min="0"
@@ -423,7 +479,7 @@ onMounted(async () => {
         />
       </NFormItem>
 
-      <NFormItem v-if="kind === 'buy'" label="手续费">
+      <NFormItem v-if="isInvestmentTransaction" label="手续费">
         <NInputNumber
           v-model:value="fee"
           :min="0"

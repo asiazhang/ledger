@@ -402,6 +402,135 @@ fn create_buy_transaction(conn: &Connection, input: TransactionInput) -> Result<
     Ok(id)
 }
 
+/// 卖出交易：校验、按 FIFO 匹配同账户同标的未卖出 lot、扣减 remaining_quantity、写入 security_lot_sales。
+fn create_sell_transaction(conn: &Connection, input: TransactionInput) -> Result<String> {
+    let instrument_id = input
+        .instrument_id
+        .as_ref()
+        .ok_or_else(|| AppError::Invalid("卖出必须指定标的".into()))?
+        .clone();
+    let quantity = input.quantity.unwrap_or(0.0);
+    let price_cents = input.price_cents.unwrap_or(0);
+    let fee_cents = input.fee_cents.unwrap_or(0);
+    if quantity <= 0.0 {
+        return Err(AppError::Invalid("卖出数量必须大于 0".into()));
+    }
+    if price_cents <= 0 {
+        return Err(AppError::Invalid("卖出单价必须大于 0".into()));
+    }
+    let account_type: AccountType = conn
+        .query_row(
+            "SELECT type FROM accounts WHERE id=?1",
+            params![input.account_id],
+            |r| r.get::<_, String>(0),
+        )?
+        .parse()?;
+    if account_type != AccountType::Investment {
+        return Err(AppError::Invalid("卖出交易必须使用投资账户".into()));
+    }
+    let account_currency = account_currency_code(conn, &input.account_id)?;
+    let gross_proceeds = (quantity * price_cents as f64).round() as i64;
+    if fee_cents > gross_proceeds {
+        return Err(AppError::Invalid("卖出手续费不能超过卖出收入".into()));
+    }
+    let amount_cents = gross_proceeds - fee_cents;
+
+    // 先按 FIFO 读取可用 lot 并检查是否足够，避免部分扣减后才发现超卖。
+    let mut stmt = conn.prepare(
+        "SELECT id, remaining_quantity, cost_per_unit_cents, currency_code \
+         FROM security_lots \
+         WHERE account_id=?1 AND instrument_id=?2 AND remaining_quantity > 0 \
+         ORDER BY created_at ASC, id ASC",
+    )?;
+    let lots = stmt
+        .query_map(params![input.account_id, instrument_id], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, f64>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })?
+        .collect::<std::result::Result<Vec<(String, f64, i64, String)>, _>>()?;
+    drop(stmt);
+
+    let total_available: f64 = lots.iter().map(|(_, rem, _, _)| rem).sum();
+    if total_available < quantity {
+        return Err(AppError::Invalid(format!(
+            "可卖出数量不足，当前持有 {}，尝试卖出 {}",
+            total_available, quantity
+        )));
+    }
+
+    let id = new_uuid();
+    let now = now_iso();
+    conn.execute(
+        "INSERT INTO transactions \
+         (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
+         category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,NULL,NULL,?8,?9,?10,?11,?12,?13,0)",
+        params![
+            id,
+            input.kind,
+            amount_cents,
+            account_currency,
+            amount_cents,
+            input.account_id,
+            input.to_account_id,
+            input.note,
+            input.date,
+            now,
+            now,
+            1,
+            device_id()
+        ],
+    )?;
+    conn.execute(
+        "INSERT INTO security_transactions (transaction_id,instrument_id,action,quantity,price_cents,fee_cents) \
+         VALUES (?1,?2,'sell',?3,?4,?5)",
+        params![id, instrument_id, quantity, price_cents, fee_cents],
+    )?;
+
+    // 按 FIFO 实际扣减 lot；手续费按卖出数量比例 floor 分配给前 n-1 笔，最后一笔拿剩余。
+    let mut remaining_to_sell = quantity;
+    let mut matched_lots: Vec<(String, f64, i64, String)> = Vec::new();
+    for (lot_id, rem, cost, ccy) in lots {
+        if remaining_to_sell <= 0.0 {
+            break;
+        }
+        let matched = rem.min(remaining_to_sell);
+        matched_lots.push((lot_id, matched, cost, ccy));
+        remaining_to_sell -= matched;
+    }
+
+    let match_count = matched_lots.len();
+    let mut allocated_fee_total = 0i64;
+    for (i, (lot_id, matched_qty, cost_per_unit, ccy)) in matched_lots.iter().enumerate() {
+        let lot_proceeds = (matched_qty * price_cents as f64).round() as i64;
+        let lot_cost = (matched_qty * *cost_per_unit as f64).round() as i64;
+        let allocated_fee = if i == match_count - 1 {
+            fee_cents - allocated_fee_total
+        } else {
+            let fee = (fee_cents as f64 * matched_qty / quantity).floor() as i64;
+            allocated_fee_total += fee;
+            fee
+        };
+        let realized_pnl = lot_proceeds - lot_cost - allocated_fee;
+        let sale_id = new_uuid();
+        conn.execute(
+            "INSERT INTO security_lot_sales (id,sell_transaction_id,lot_id,quantity,cost_per_unit_cents,realized_pnl_cents,currency_code,created_at) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+            params![sale_id, id, lot_id, matched_qty, cost_per_unit, realized_pnl, ccy, now],
+        )?;
+        conn.execute(
+            "UPDATE security_lots SET remaining_quantity=remaining_quantity-?1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
+            params![matched_qty, now, device_id(), lot_id],
+        )?;
+    }
+
+    Ok(id)
+}
+
 #[tauri::command]
 pub fn create_transaction(db: State<'_, DbState>, input: TransactionInput) -> Result<String> {
     if input.kind == "transfer" && input.to_account_id.is_none() {
@@ -411,6 +540,10 @@ pub fn create_transaction(db: State<'_, DbState>, input: TransactionInput) -> Re
 
     if input.kind == "buy" {
         return create_buy_transaction(&conn, input);
+    }
+
+    if input.kind == "sell" {
+        return create_sell_transaction(&conn, input);
     }
 
     if input.amount_cents <= 0 {
@@ -1262,5 +1395,303 @@ mod tests {
             fee_cents: None,
         };
         assert!(create_buy_transaction(&conn, input).is_err());
+    }
+
+    /// 卖出交易按 FIFO 匹配多 lot，并计算扣除手续费后的已实现盈亏。
+    #[test]
+    fn sell_transaction_matches_multiple_lots_fifo() {
+        let mut conn = crate::db::open_in_memory().unwrap();
+        crate::db::init_db(&mut conn).unwrap();
+
+        let account_id = "acc-test-sell";
+        conn.execute(
+            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,'美股','investment','USD',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            params![account_id],
+        )
+        .unwrap();
+        let instrument_id = "inst-test-sell";
+        conn.execute(
+            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id) \
+             VALUES (?1,'TSLA','stock','Tesla','USD','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+            params![instrument_id],
+        )
+        .unwrap();
+
+        // 买入 lot1：10 股 @ 10000 分，1 月 10 日
+        let buy1 = TransactionInput {
+            kind: "buy".into(),
+            amount_cents: 0,
+            currency_code: "USD".into(),
+            account_id: account_id.into(),
+            to_account_id: None,
+            category_id: None,
+            refund_of_transaction_id: None,
+            note: None,
+            date: "2026-01-10".into(),
+            instrument_id: Some(instrument_id.into()),
+            quantity: Some(10.0),
+            price_cents: Some(10000),
+            fee_cents: Some(0),
+        };
+        let lot1_txn = create_buy_transaction(&conn, buy1).unwrap();
+
+        // 买入 lot2：5 股 @ 12000 分，1 月 15 日
+        let buy2 = TransactionInput {
+            kind: "buy".into(),
+            amount_cents: 0,
+            currency_code: "USD".into(),
+            account_id: account_id.into(),
+            to_account_id: None,
+            category_id: None,
+            refund_of_transaction_id: None,
+            note: None,
+            date: "2026-01-15".into(),
+            instrument_id: Some(instrument_id.into()),
+            quantity: Some(5.0),
+            price_cents: Some(12000),
+            fee_cents: Some(0),
+        };
+        let lot2_txn = create_buy_transaction(&conn, buy2).unwrap();
+
+        // 显式设置 lot 创建时间，确保 FIFO 顺序可复现：lot1 早于 lot2
+        conn.execute(
+            "UPDATE security_lots SET created_at='2026-01-10T00:00:00Z' WHERE buy_transaction_id=?1",
+            params![lot1_txn],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE security_lots SET created_at='2026-01-15T00:00:00Z' WHERE buy_transaction_id=?1",
+            params![lot2_txn],
+        )
+        .unwrap();
+
+        // 卖出 12 股 @ 15000 分，手续费 600 分
+        let sell = TransactionInput {
+            kind: "sell".into(),
+            amount_cents: 0,
+            currency_code: "USD".into(),
+            account_id: account_id.into(),
+            to_account_id: None,
+            category_id: None,
+            refund_of_transaction_id: None,
+            note: None,
+            date: "2026-01-20".into(),
+            instrument_id: Some(instrument_id.into()),
+            quantity: Some(12.0),
+            price_cents: Some(15000),
+            fee_cents: Some(600),
+        };
+        let sell_txn = create_sell_transaction(&conn, sell).unwrap();
+
+        let (kind, amount_cents): (String, i64) = conn
+            .query_row(
+                "SELECT kind, amount_cents FROM transactions WHERE id=?1",
+                params![sell_txn],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(kind, "sell");
+        // 卖出净收入 = 12 * 15000 - 600 = 179400 分
+        assert_eq!(amount_cents, 179400);
+
+        let (action, qty, price, fee): (String, f64, i64, i64) = conn
+            .query_row(
+                "SELECT action, quantity, price_cents, fee_cents FROM security_transactions WHERE transaction_id=?1",
+                params![sell_txn],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(action, "sell");
+        assert!((qty - 12.0).abs() < 0.0001);
+        assert_eq!(price, 15000);
+        assert_eq!(fee, 600);
+
+        // lot1 卖完，lot2 剩 3 股
+        let rem1: f64 = conn
+            .query_row(
+                "SELECT remaining_quantity FROM security_lots WHERE buy_transaction_id=?1",
+                params![lot1_txn],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((rem1 - 0.0).abs() < 0.0001);
+        let rem2: f64 = conn
+            .query_row(
+                "SELECT remaining_quantity FROM security_lots WHERE buy_transaction_id=?1",
+                params![lot2_txn],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((rem2 - 3.0).abs() < 0.0001);
+
+        // 匹配记录：lot1 10 股，lot2 2 股；费用按数量比例分配，剩余费用给最后一笔匹配
+        let rows: Vec<(f64, i64, i64, String)> = conn
+            .prepare(
+                "SELECT quantity, cost_per_unit_cents, realized_pnl_cents, currency_code \
+                 FROM security_lot_sales WHERE sell_transaction_id=?1 ORDER BY quantity DESC",
+            )
+            .unwrap()
+            .query_map(params![sell_txn], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(rows.len(), 2);
+        // lot1: 10 股，成本 10000，分配费用 round(600 * 10 / 12) = 500，盈亏 150000 - 100000 - 500 = 49500
+        assert!((rows[0].0 - 10.0).abs() < 0.0001);
+        assert_eq!(rows[0].1, 10000);
+        assert_eq!(rows[0].2, 49500);
+        assert_eq!(rows[0].3, "USD");
+        // lot2: 2 股，成本 12000，分配剩余费用 100，盈亏 30000 - 24000 - 100 = 5900
+        assert!((rows[1].0 - 2.0).abs() < 0.0001);
+        assert_eq!(rows[1].1, 12000);
+        assert_eq!(rows[1].2, 5900);
+        assert_eq!(rows[1].3, "USD");
+    }
+
+    /// 卖出数量超过可卖数量时，应拒绝并回滚。
+    #[test]
+    fn sell_transaction_rejects_oversell() {
+        let mut conn = crate::db::open_in_memory().unwrap();
+        crate::db::init_db(&mut conn).unwrap();
+
+        let account_id = "acc-test-oversell";
+        conn.execute(
+            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,'美股','investment','USD',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            params![account_id],
+        )
+        .unwrap();
+        let instrument_id = "inst-test-oversell";
+        conn.execute(
+            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id) \
+             VALUES (?1,'MSFT','stock','Microsoft','USD','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+            params![instrument_id],
+        )
+        .unwrap();
+
+        let buy = TransactionInput {
+            kind: "buy".into(),
+            amount_cents: 0,
+            currency_code: "USD".into(),
+            account_id: account_id.into(),
+            to_account_id: None,
+            category_id: None,
+            refund_of_transaction_id: None,
+            note: None,
+            date: "2026-01-10".into(),
+            instrument_id: Some(instrument_id.into()),
+            quantity: Some(5.0),
+            price_cents: Some(10000),
+            fee_cents: Some(0),
+        };
+        create_buy_transaction(&conn, buy).unwrap();
+
+        let sell = TransactionInput {
+            kind: "sell".into(),
+            amount_cents: 0,
+            currency_code: "USD".into(),
+            account_id: account_id.into(),
+            to_account_id: None,
+            category_id: None,
+            refund_of_transaction_id: None,
+            note: None,
+            date: "2026-01-20".into(),
+            instrument_id: Some(instrument_id.into()),
+            quantity: Some(6.0),
+            price_cents: Some(12000),
+            fee_cents: Some(0),
+        };
+        assert!(create_sell_transaction(&conn, sell).is_err());
+    }
+
+    /// 卖出盈亏已扣除卖出手续费。
+    #[test]
+    fn sell_transaction_pnl_deducts_fee() {
+        let mut conn = crate::db::open_in_memory().unwrap();
+        crate::db::init_db(&mut conn).unwrap();
+
+        let account_id = "acc-test-pnl";
+        conn.execute(
+            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,'美股','investment','USD',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            params![account_id],
+        )
+        .unwrap();
+        let instrument_id = "inst-test-pnl";
+        conn.execute(
+            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id) \
+             VALUES (?1,'AAPL','stock','Apple','USD','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+            params![instrument_id],
+        )
+        .unwrap();
+
+        let buy = TransactionInput {
+            kind: "buy".into(),
+            amount_cents: 0,
+            currency_code: "USD".into(),
+            account_id: account_id.into(),
+            to_account_id: None,
+            category_id: None,
+            refund_of_transaction_id: None,
+            note: None,
+            date: "2026-01-10".into(),
+            instrument_id: Some(instrument_id.into()),
+            quantity: Some(10.0),
+            price_cents: Some(10000),
+            fee_cents: Some(0),
+        };
+        let buy_txn = create_buy_transaction(&conn, buy).unwrap();
+
+        let sell = TransactionInput {
+            kind: "sell".into(),
+            amount_cents: 0,
+            currency_code: "USD".into(),
+            account_id: account_id.into(),
+            to_account_id: None,
+            category_id: None,
+            refund_of_transaction_id: None,
+            note: None,
+            date: "2026-01-20".into(),
+            instrument_id: Some(instrument_id.into()),
+            quantity: Some(5.0),
+            price_cents: Some(12000),
+            fee_cents: Some(200),
+        };
+        let sell_txn = create_sell_transaction(&conn, sell).unwrap();
+
+        let rem: f64 = conn
+            .query_row(
+                "SELECT remaining_quantity FROM security_lots WHERE buy_transaction_id=?1",
+                params![buy_txn],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((rem - 5.0).abs() < 0.0001);
+
+        let (qty, cost, pnl, ccy): (f64, i64, i64, String) = conn
+            .query_row(
+                "SELECT quantity, cost_per_unit_cents, realized_pnl_cents, currency_code \
+                 FROM security_lot_sales WHERE sell_transaction_id=?1",
+                params![sell_txn],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert!((qty - 5.0).abs() < 0.0001);
+        assert_eq!(cost, 10000);
+        // 盈亏 = 5 * 12000 - 5 * 10000 - 200 = 9800
+        assert_eq!(pnl, 9800);
+        assert_eq!(ccy, "USD");
+
+        let amount_cents: i64 = conn
+            .query_row(
+                "SELECT amount_cents FROM transactions WHERE id=?1",
+                params![sell_txn],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(amount_cents, 5 * 12000 - 200); // 59800
     }
 }
