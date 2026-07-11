@@ -8,6 +8,7 @@ use tauri::Manager;
 
 use crate::error::{AppError, Result};
 
+pub mod balance;
 pub mod query;
 
 /// 迁移集合。新增 schema 变更或种子数据时，在 `src-tauri/migrations/` 下新建

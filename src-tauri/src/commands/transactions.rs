@@ -272,11 +272,8 @@ mod tests {
         let conn = setup();
         insert_account(&conn, "acc-crud", "现金", "cash", "CNY");
 
-        let id1 = insert_transaction(
-            &conn,
-            make_input("acc-crud", "income", 5000, "2026-02-01"),
-        )
-        .unwrap();
+        let id1 = insert_transaction(&conn, make_input("acc-crud", "income", 5000, "2026-02-01"))
+            .unwrap();
         let id2 = insert_transaction(
             &conn,
             TransactionInput {
@@ -388,9 +385,14 @@ mod tests {
         let conn = setup();
         insert_account(&conn, "acc-del", "现金", "cash", "CNY");
 
-        let id = insert_transaction(&conn, make_input("acc-del", "income", 1000, "2026-01-01")).unwrap();
+        let id =
+            insert_transaction(&conn, make_input("acc-del", "income", 1000, "2026-01-01")).unwrap();
         let count_before: i64 = conn
-            .query_row("SELECT COUNT(*) FROM transactions WHERE is_deleted=0", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(count_before, 1);
 
@@ -400,7 +402,11 @@ mod tests {
         ).unwrap();
 
         let count_after: i64 = conn
-            .query_row("SELECT COUNT(*) FROM transactions WHERE is_deleted=0", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(count_after, 0);
     }
