@@ -50,58 +50,9 @@ pub fn delete_account(db: State<'_, DbState>, id: String) -> Result<()> {
     Ok(())
 }
 
-/// 计算账户当前余额 = 初始余额 + 收入 - 支出（转账从转出账户减，加到转入账户）。
+/// 计算账户当前余额 = 初始余额 + 收入 - 支出 + 转入 - 转出 + 退款。
 fn account_balance(conn: &Connection, account_id: &str) -> Result<i64> {
-    let initial: i64 = conn.query_row(
-        "SELECT initial_balance_cents FROM accounts WHERE id=?1",
-        rusqlite::params![account_id],
-        |r| r.get(0),
-    )?;
-    let income: Option<i64> = conn
-        .query_row(
-            "SELECT COALESCE(SUM(amount_native_cents),0) FROM transactions \
-             WHERE account_id=?1 AND kind='income' AND is_deleted=0",
-            rusqlite::params![account_id],
-            |r| r.get(0),
-        )
-        .ok();
-    let expense: Option<i64> = conn
-        .query_row(
-            "SELECT COALESCE(SUM(amount_native_cents),0) FROM transactions \
-             WHERE account_id=?1 AND kind='expense' AND is_deleted=0",
-            rusqlite::params![account_id],
-            |r| r.get(0),
-        )
-        .ok();
-    let transfer_in: Option<i64> = conn
-        .query_row(
-            "SELECT COALESCE(SUM(amount_native_cents),0) FROM transactions \
-             WHERE to_account_id=?1 AND kind='transfer' AND is_deleted=0",
-            rusqlite::params![account_id],
-            |r| r.get(0),
-        )
-        .ok();
-    let transfer_out: Option<i64> = conn
-        .query_row(
-            "SELECT COALESCE(SUM(amount_native_cents),0) FROM transactions \
-             WHERE account_id=?1 AND kind='transfer' AND is_deleted=0",
-            rusqlite::params![account_id],
-            |r| r.get(0),
-        )
-        .ok();
-    let refund: Option<i64> = conn
-        .query_row(
-            "SELECT COALESCE(SUM(amount_native_cents),0) FROM transactions \
-             WHERE account_id=?1 AND kind='refund' AND is_deleted=0",
-            rusqlite::params![account_id],
-            |r| r.get(0),
-        )
-        .ok();
-    Ok(
-        initial + income.unwrap_or(0) - expense.unwrap_or(0) + transfer_in.unwrap_or(0)
-            - transfer_out.unwrap_or(0)
-            + refund.unwrap_or(0),
-    )
+    crate::db::balance::compute_balance(conn, account_id)
 }
 
 #[tauri::command]
@@ -146,7 +97,14 @@ mod tests {
         .unwrap()
     }
 
-    fn insert_account(conn: &rusqlite::Connection, id: &str, name: &str, kind: &str, currency: &str, initial: i64) {
+    fn insert_account(
+        conn: &rusqlite::Connection,
+        id: &str,
+        name: &str,
+        kind: &str,
+        currency: &str,
+        initial: i64,
+    ) {
         let now = now_iso();
         conn.execute(
             "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
@@ -155,7 +113,14 @@ mod tests {
         ).unwrap();
     }
 
-    fn insert_tx(conn: &rusqlite::Connection, id: &str, kind: &str, amount: i64, account_id: &str, to_account_id: Option<&str>) {
+    fn insert_tx(
+        conn: &rusqlite::Connection,
+        id: &str,
+        kind: &str,
+        amount: i64,
+        account_id: &str,
+        to_account_id: Option<&str>,
+    ) {
         let now = now_iso();
         conn.execute(
             "INSERT INTO transactions \
@@ -167,52 +132,7 @@ mod tests {
     }
 
     fn balance(conn: &rusqlite::Connection, account_id: &str) -> i64 {
-        let initial: i64 = conn.query_row(
-            "SELECT initial_balance_cents FROM accounts WHERE id=?1",
-            rusqlite::params![account_id],
-            |r| r.get(0),
-        ).unwrap();
-        let income: i64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(amount_native_cents),0) FROM transactions \
-                 WHERE account_id=?1 AND kind='income' AND is_deleted=0",
-                rusqlite::params![account_id],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
-        let expense: i64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(amount_native_cents),0) FROM transactions \
-                 WHERE account_id=?1 AND kind='expense' AND is_deleted=0",
-                rusqlite::params![account_id],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
-        let transfer_in: i64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(amount_native_cents),0) FROM transactions \
-                 WHERE to_account_id=?1 AND kind='transfer' AND is_deleted=0",
-                rusqlite::params![account_id],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
-        let transfer_out: i64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(amount_native_cents),0) FROM transactions \
-                 WHERE account_id=?1 AND kind='transfer' AND is_deleted=0",
-                rusqlite::params![account_id],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
-        let refund: i64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(amount_native_cents),0) FROM transactions \
-                 WHERE account_id=?1 AND kind='refund' AND is_deleted=0",
-                rusqlite::params![account_id],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
-        initial + income - expense + transfer_in - transfer_out + refund
+        crate::db::balance::compute_balance(conn, account_id).unwrap()
     }
 
     #[test]

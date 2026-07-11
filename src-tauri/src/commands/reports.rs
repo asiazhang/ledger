@@ -72,7 +72,14 @@ mod tests {
         ).unwrap();
     }
 
-    fn insert_tx(conn: &rusqlite::Connection, id: &str, kind: &str, amount: i64, category_id: Option<&str>, date: &str) {
+    fn insert_tx(
+        conn: &rusqlite::Connection,
+        id: &str,
+        kind: &str,
+        amount: i64,
+        category_id: Option<&str>,
+        date: &str,
+    ) {
         let now = now_iso();
         conn.execute(
             "INSERT INTO transactions \
@@ -98,7 +105,8 @@ mod tests {
              FROM transactions WHERE substr(date,1,4)='2026' AND is_deleted=0 \
              GROUP BY month ORDER BY month",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         assert!(rows.is_empty());
     }
 
@@ -118,7 +126,8 @@ mod tests {
              FROM transactions WHERE substr(date,1,4)='2026' AND is_deleted=0 \
              GROUP BY month ORDER BY month",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].month, "2026-01");
         assert_eq!(rows[0].income_cents, 1000);
@@ -142,7 +151,8 @@ mod tests {
              FROM transactions WHERE substr(date,1,4)='2026' AND is_deleted=0 \
              GROUP BY month ORDER BY month",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(rows[0].expense_cents, 1000);
         assert_eq!(rows[0].refund_cents, 200);
     }
@@ -162,7 +172,8 @@ mod tests {
              FROM transactions WHERE substr(date,1,4)='2025' AND is_deleted=0 \
              GROUP BY month ORDER BY month",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(rows_2025.len(), 1);
         assert_eq!(rows_2025[0].income_cents, 1000);
         let rows_2026: Vec<MonthlySummary> = query_all(
@@ -174,7 +185,8 @@ mod tests {
              FROM transactions WHERE substr(date,1,4)='2026' AND is_deleted=0 \
              GROUP BY month ORDER BY month",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(rows_2026.len(), 1);
         assert_eq!(rows_2026[0].income_cents, 2000);
     }
@@ -213,7 +225,8 @@ mod tests {
              WHERE t.kind IN ('expense','refund') AND t.is_deleted=0 \
              GROUP BY t.category_id ORDER BY 3 DESC",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].amount_cents, 800);
     }
@@ -233,7 +246,8 @@ mod tests {
              WHERE t.kind IN ('income') AND t.is_deleted=0 \
              GROUP BY t.category_id ORDER BY 3 DESC",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].amount_cents, 5000);
     }
@@ -270,7 +284,8 @@ mod tests {
              WHERE t.kind IN ('expense','refund') AND t.is_deleted=0 \
              GROUP BY t.category_id ORDER BY 3 DESC",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(rows[0].category_name, "未分类");
     }
 }

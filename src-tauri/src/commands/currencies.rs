@@ -55,7 +55,11 @@ mod tests {
         )
         .unwrap();
         for c in &currencies {
-            assert!(c.decimal_places >= 0, "{} decimal_places is negative", c.code);
+            assert!(
+                c.decimal_places >= 0,
+                "{} decimal_places is negative",
+                c.code
+            );
         }
         let cny = currencies.iter().find(|c| c.code == "CNY").unwrap();
         assert_eq!(cny.decimal_places, 2);
