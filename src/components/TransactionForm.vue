@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { NRadioGroup, NRadio } from 'naive-ui'
-import { useTransactionForm } from '@/composables/useTransactionForm'
+import type { TransactionKind } from '@/types'
 import CategoryForm from '@/components/CategoryForm.vue'
 import TransferForm from '@/components/TransferForm.vue'
 import RefundForm from '@/components/RefundForm.vue'
@@ -9,12 +10,12 @@ import InvestmentForm from '@/components/InvestmentForm.vue'
 const emit = defineEmits<{ created: [] }>()
 defineProps<{ onCreated?: () => void }>()
 
-const ctx = useTransactionForm({ onCreated: () => emit('created') })
+const kind = ref<TransactionKind>('expense')
 </script>
 
 <template>
   <div>
-    <NRadioGroup v-model:value="ctx.kind.value" style="margin-bottom: 12px">
+    <NRadioGroup v-model:value="kind" style="margin-bottom: 12px">
       <NRadio value="expense">支出</NRadio>
       <NRadio value="income">收入</NRadio>
       <NRadio value="transfer">转账</NRadio>
@@ -24,36 +25,36 @@ const ctx = useTransactionForm({ onCreated: () => emit('created') })
     </NRadioGroup>
 
     <CategoryForm
-      v-if="ctx.kind.value === 'expense'"
-      :ctx="ctx"
-      :kind="'expense'"
+      v-if="kind === 'expense'"
+      kind="expense"
       submit-label="记支出"
+      @created="emit('created')"
     />
     <CategoryForm
-      v-if="ctx.kind.value === 'income'"
-      :ctx="ctx"
-      :kind="'income'"
+      v-if="kind === 'income'"
+      kind="income"
       submit-label="记收入"
+      @created="emit('created')"
     />
     <TransferForm
-      v-if="ctx.kind.value === 'transfer'"
-      :ctx="ctx"
+      v-if="kind === 'transfer'"
+      @created="emit('created')"
     />
     <RefundForm
-      v-if="ctx.kind.value === 'refund'"
-      :ctx="ctx"
+      v-if="kind === 'refund'"
+      @created="emit('created')"
     />
     <InvestmentForm
-      v-if="ctx.kind.value === 'buy'"
-      :ctx="ctx"
-      :kind="'buy'"
+      v-if="kind === 'buy'"
+      kind="buy"
       submit-label="记买入"
+      @created="emit('created')"
     />
     <InvestmentForm
-      v-if="ctx.kind.value === 'sell'"
-      :ctx="ctx"
-      :kind="'sell'"
+      v-if="kind === 'sell'"
+      kind="sell"
       submit-label="记卖出"
+      @created="emit('created')"
     />
   </div>
 </template>

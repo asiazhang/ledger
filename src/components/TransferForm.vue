@@ -9,11 +9,11 @@ import {
   NButton,
   NSpace,
 } from 'naive-ui'
-import type { TransactionFormContext } from '@/composables/useTransactionForm'
+import { useTransferForm } from '@/composables/useTransferForm'
 
-defineProps<{
-  ctx: TransactionFormContext
-}>()
+const emit = defineEmits<{ created: [] }>()
+
+const ctx = useTransferForm({ onCreated: () => emit('created') })
 </script>
 
 <template>

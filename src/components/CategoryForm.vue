@@ -10,14 +10,15 @@ import {
   NButton,
   NSpace,
 } from 'naive-ui'
-import type { TransactionFormContext } from '@/composables/useTransactionForm'
-import type { TransactionKind } from '@/types'
+import { useCategoryForm } from '@/composables/useCategoryForm'
 
 const props = defineProps<{
-  ctx: TransactionFormContext
-  kind: TransactionKind
+  kind: 'expense' | 'income'
   submitLabel: string
 }>()
+const emit = defineEmits<{ created: [] }>()
+
+const ctx = useCategoryForm(props.kind, { onCreated: () => emit('created') })
 </script>
 
 <template>

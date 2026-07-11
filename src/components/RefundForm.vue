@@ -10,14 +10,13 @@ import {
   NText,
   NSpace,
 } from 'naive-ui'
-import type { TransactionFormContext } from '@/composables/useTransactionForm'
+import { useRefundForm } from '@/composables/useRefundForm'
 import { formatAmount } from '@/types'
 import { useAppStore } from '@/stores/app'
 
-const props = defineProps<{
-  ctx: TransactionFormContext
-}>()
+const emit = defineEmits<{ created: [] }>()
 
+const ctx = useRefundForm({ onCreated: () => emit('created') })
 const store = useAppStore()
 </script>
 
