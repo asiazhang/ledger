@@ -9,15 +9,16 @@ import {
   NButton,
   NSpace,
 } from 'naive-ui'
-import type { TransactionFormContext } from '@/composables/useTransactionForm'
+import { useInvestmentForm } from '@/composables/useInvestmentForm'
 import { INSTRUMENT_TYPE_LABELS } from '@/types'
-import type { TransactionKind } from '@/types'
 
 const props = defineProps<{
-  ctx: TransactionFormContext
-  kind: TransactionKind
+  kind: 'buy' | 'sell'
   submitLabel: string
 }>()
+const emit = defineEmits<{ created: [] }>()
+
+const ctx = useInvestmentForm(props.kind, { onCreated: () => emit('created') })
 </script>
 
 <template>
