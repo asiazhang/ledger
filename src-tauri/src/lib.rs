@@ -6,6 +6,46 @@ pub mod models;
 pub mod scheduled_transactions;
 
 use tauri::Manager;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+
+fn init_database(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let db_state = db::open_db(app.handle())?;
+    app.manage(db_state);
+    Ok(())
+}
+
+fn try_init_database(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    match init_database(app) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let confirmed = app
+                .dialog()
+                .message(format!(
+                    "数据库初始化失败：\n\n{e}\n\n是否删除旧数据库后重试？"
+                ))
+                .title("数据库错误")
+                .kind(MessageDialogKind::Warning)
+                .buttons(MessageDialogButtons::OkCancelCustom(
+                    "重置数据库".into(),
+                    "退出".into(),
+                ))
+                .blocking_show();
+            if confirmed {
+                let dir = app
+                    .path()
+                    .app_data_dir()
+                    .map_err(|e| format!("获取数据目录失败：{e}"))?;
+                let db_path = dir.join("ledger.db");
+                std::fs::remove_file(&db_path).ok();
+                let db_state = db::open_db(app.handle())?;
+                app.manage(db_state);
+                Ok(())
+            } else {
+                std::process::exit(0);
+            }
+        }
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -13,9 +53,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let db_state = db::open_db(app.handle())?;
-            app.manage(db_state);
-            Ok(())
+            try_init_database(app).map_err(|e| {
+                app.dialog()
+                    .message(format!("数据库初始化失败：\n\n{e}"))
+                    .title("启动失败")
+                    .kind(MessageDialogKind::Error)
+                    .blocking_show();
+                std::process::exit(1);
+            })
         })
         .invoke_handler(tauri::generate_handler![
             commands::list_currencies,
