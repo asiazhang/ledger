@@ -115,3 +115,13 @@
   - `installment` → `expense`
   - `subscription` → `expense`
   - `scheduled_transfer` → `transfer`
+
+## Category（分类）
+
+- **定义**：对交易（Transaction）进行归类的标签体系。两级结构：顶级分类和二级子分类，不支持三级及以上嵌套。
+- **边界**：
+  - 每个分类属于 `income`（收入）或 `expense`（支出）两种类型之一，子分类必须与父分类类型一致。
+  - 分类具有 visual identity：`icon`（图标/emoji）和 `color`（颜色），用于交易表单、报表、图表等场景的视觉辨识。
+  - 分类排序由 `sort_order` 字段控制，同级内可拖拽重排，parent 变更通过编辑操作进行。
+  - 软删除（`is_deleted`），删除操作同时级联删除子分类。
+- **别名**：不使用 "标签"、"类别"、"分组" 等词，统一使用 "分类"。
