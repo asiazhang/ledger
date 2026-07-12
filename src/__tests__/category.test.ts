@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import type { Category } from '@/types'
-import { rootCategories, categoryChildren, categoryPath, treeCategoryOptions } from '@/types/category'
+import {
+  rootCategories,
+  categoryChildren,
+  categoryPath,
+  buildCategoryTree,
+  categoryRoot,
+} from '@/utils/category-tree'
 
 function makeCategory(overrides: Partial<Category> = {}): Category {
   return {
@@ -19,10 +25,10 @@ function makeCategory(overrides: Partial<Category> = {}): Category {
   }
 }
 
-const food = makeCategory({ id: 'food', name: '餐饮', kind: 'expense' })
-const lunch = makeCategory({ id: 'lunch', name: '午餐', kind: 'expense', parent_id: 'food' })
-const dinner = makeCategory({ id: 'dinner', name: '晚餐', kind: 'expense', parent_id: 'food' })
-const transport = makeCategory({ id: 'transport', name: '交通', kind: 'expense' })
+const food = makeCategory({ id: 'food', name: '餐饮', kind: 'expense', sort_order: 1 })
+const lunch = makeCategory({ id: 'lunch', name: '午餐', kind: 'expense', parent_id: 'food', sort_order: 2 })
+const dinner = makeCategory({ id: 'dinner', name: '晚餐', kind: 'expense', parent_id: 'food', sort_order: 1 })
+const transport = makeCategory({ id: 'transport', name: '交通', kind: 'expense', sort_order: 0 })
 const salary = makeCategory({ id: 'salary', name: '工资', kind: 'income' })
 
 const categories: Category[] = [food, lunch, dinner, transport, salary]
@@ -71,29 +77,55 @@ describe('categoryPath', () => {
   })
 })
 
-describe('treeCategoryOptions', () => {
-  it('按 kind 过滤并构建树形结构', () => {
-    const result = treeCategoryOptions(categories, 'expense')
-    expect(result).toHaveLength(2) // food, transport (salary is income)
+describe('buildCategoryTree', () => {
+  it('按 kind 过滤并构建树形结构，默认排序', () => {
+    const result = buildCategoryTree(categories, { kind: 'expense' })
+    expect(result).toHaveLength(2)
 
-    const foodNode = result.find((n) => n.key === 'food')
-    expect(foodNode).toBeDefined()
-    expect(foodNode!.label).toBe('餐饮')
-    expect(foodNode!.children).toHaveLength(2)
-    expect(foodNode!.children![0]).toEqual({ key: 'lunch', label: '午餐' })
-    expect(foodNode!.children![1]).toEqual({ key: 'dinner', label: '晚餐' })
+    expect(result[0].key).toBe('transport')
+    expect(result[0].label).toBe('交通')
+    expect(result[0].depth).toBe(0)
+    expect(result[0].category).toBe(transport)
+    expect(result[0].children).toBeUndefined()
 
-    const transportNode = result.find((n) => n.key === 'transport')
-    expect(transportNode!.children).toBeUndefined()
+    const foodNode = result[1]
+    expect(foodNode.key).toBe('food')
+    expect(foodNode.depth).toBe(0)
+    expect(foodNode.children).toHaveLength(2)
+    expect(foodNode.children![0].key).toBe('dinner')
+    expect(foodNode.children![0].depth).toBe(1)
+    expect(foodNode.children![1].key).toBe('lunch')
+    expect(foodNode.children![1].depth).toBe(1)
   })
 
-  it('income 分类只返回收入分类', () => {
-    const result = treeCategoryOptions(categories, 'income')
-    expect(result).toHaveLength(1)
-    expect(result[0].key).toBe('salary')
+  it('不传 kind 返回全量分类', () => {
+    const result = buildCategoryTree(categories)
+    expect(result).toHaveLength(3)
+  })
+
+  it('sort:false 不排序', () => {
+    const result = buildCategoryTree(categories, { kind: 'expense', sort: false })
+    expect(result).toHaveLength(2)
+    expect(result[0].key).toBe('food')
   })
 
   it('空数组返回空数组', () => {
-    expect(treeCategoryOptions([], 'expense')).toEqual([])
+    expect(buildCategoryTree([])).toEqual([])
+  })
+})
+
+describe('categoryRoot', () => {
+  it('二级分类上卷到顶级父分类', () => {
+    const root = categoryRoot(categories, 'lunch')
+    expect(root).toBe(food)
+  })
+
+  it('顶级分类返回自身', () => {
+    const root = categoryRoot(categories, 'transport')
+    expect(root).toBe(transport)
+  })
+
+  it('不存在的 ID 返回 undefined', () => {
+    expect(categoryRoot(categories, 'nonexistent')).toBeUndefined()
   })
 })

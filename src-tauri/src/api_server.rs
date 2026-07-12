@@ -10,7 +10,9 @@ use rusqlite::Connection;
 use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::AppError;
-use crate::models::{Account, AccountInput, CategoryInput, CreateTransactionResult, TransactionInput};
+use crate::models::{
+    Account, AccountInput, CategoryInput, CreateTransactionResult, TransactionInput,
+};
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {

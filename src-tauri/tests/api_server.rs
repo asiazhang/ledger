@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
+use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use axum::Router;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
@@ -339,9 +339,11 @@ async fn test_batch_create_transactions_partial_failure() {
 
     let count: i64 = {
         let conn = conn.lock().unwrap();
-        conn.query_row("SELECT COUNT(*) FROM transactions WHERE is_deleted=0", [], |r| {
-            r.get(0)
-        })
+        conn.query_row(
+            "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+            [],
+            |r| r.get(0),
+        )
         .unwrap()
     };
     assert_eq!(count, 2);

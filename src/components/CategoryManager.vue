@@ -22,6 +22,7 @@ import { api } from '@/api'
 import { useAppStore } from '@/stores/app'
 import type { Category, CategoryInput, CategoryUpdateInput, CategoryKind } from '@/types'
 import { getIconComponent } from '@/types/icon'
+import { buildCategoryTree } from '@/utils/category-tree'
 
 const store = useAppStore()
 const message = useMessage()
@@ -32,25 +33,9 @@ interface TreeCategoryNode extends TreeOption {
 
 const activeKind = ref<CategoryKind>('expense')
 
-// ── 树形数据（按 activeKind 过滤）─
-const treeData = computed<TreeCategoryNode[]>(() => {
-  const roots = store.categories
-    .filter((c) => c.parent_id == null && c.kind === activeKind.value)
-    .sort((a, b) => a.sort_order - b.sort_order)
-  return roots.map((root) => {
-    const children = store.categories
-      .filter((c) => c.parent_id === root.id)
-      .sort((a, b) => a.sort_order - b.sort_order)
-    return {
-      key: root.id,
-      label: root.name,
-      category: root,
-      children: children.length > 0
-        ? children.map((c) => ({ key: c.id, label: c.name, category: c }))
-        : undefined,
-    }
-  })
-})
+const treeData = computed<TreeCategoryNode[]>(() =>
+  buildCategoryTree(store.categories, { kind: activeKind.value, sort: true }) as unknown as TreeCategoryNode[],
+)
 
 // ── 自定义渲染 ──
 function renderIcon(name: string | null) {

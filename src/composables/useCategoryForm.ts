@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
+import type { TreeSelectOption } from 'naive-ui'
 import { api } from '@/api'
 import { useFormShared } from '@/composables/useFormShared'
 import type { TransactionInput } from '@/types'
@@ -15,7 +16,7 @@ export function useCategoryForm(kind: 'expense' | 'income', options?: { onCreate
   const note = ref('')
   const date = ref(Date.now())
 
-  const treeOptions = computed(() => store.treeCategoryOptions(kind))
+  const treeOptions = computed<TreeSelectOption[]>(() => store.treeCategoryOptions(kind) as unknown as TreeSelectOption[])
 
   async function submit() {
     if (!accountId.value) {

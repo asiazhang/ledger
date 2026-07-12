@@ -17,6 +17,7 @@ import { api } from '@/api'
 import { useAppStore } from '@/stores/app'
 import { formatAmount } from '@/types'
 import type { CategoryShare, MonthlySummary } from '@/types'
+import { categoryRoot } from '@/utils/category-tree'
 
 ChartJS.register(Title, Tooltip, Legend, BarElement, ArcElement, CategoryScale, LinearScale)
 
@@ -85,7 +86,6 @@ const barChartOptions: ChartOptions<'bar'> = {
   },
 }
 
-// 支出分类饼图数据：level2 用二级分类，level1 上卷到顶级分类
 const pieData = computed(() => {
   if (groupLevel.value === 'level2') {
     return shares.value
@@ -95,10 +95,7 @@ const pieData = computed(() => {
   const map = new Map<string, { name: string; value: number }>()
   for (const s of shares.value) {
     if (s.amount_cents === 0) continue
-    const cat = store.categoryMap.get(s.category_id)
-    const root = cat && cat.parent_id != null
-      ? (store.categoryMap.get(cat.parent_id) ?? cat)
-      : cat
+    const root = categoryRoot(store.categories, s.category_id)
     const key = root ? root.id : s.category_id
     const name = root ? root.name : s.category_name
     const exist = map.get(key)

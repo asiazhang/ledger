@@ -6,9 +6,9 @@ import {
   rootCategories as pureRootCategories,
   categoryChildren as pureCategoryChildren,
   categoryPath as pureCategoryPath,
-  treeCategoryOptions as pureTreeCategoryOptions,
+  buildCategoryTree as pureBuildCategoryTree,
   type CategoryTreeNode,
-} from '@/types/category'
+} from '@/utils/category-tree'
 
 function loadLocal<T>(key: string, fallback: T): T {
   try {
@@ -71,7 +71,7 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function treeCategoryOptions(kind: Category['kind']): CategoryTreeNode[] {
-    return pureTreeCategoryOptions(categories.value, kind)
+    return pureBuildCategoryTree(categories.value, { kind })
   }
 
   async function loadAll() {
