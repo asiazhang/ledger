@@ -1,5 +1,19 @@
 import { vi } from 'vitest'
 
+// jsdom 环境下 localStorage 不可用，使用 polyfill
+if (typeof localStorage === 'undefined' || localStorage === null) {
+  const store: Record<string, string> = {}
+  const mockStorage = {
+    getItem: (key: string) => store[key] ?? null,
+    setItem: (key: string, value: string) => { store[key] = value },
+    removeItem: (key: string) => { delete store[key] },
+    clear: () => { Object.keys(store).forEach((k) => delete store[k]) },
+    get length() { return Object.keys(store).length },
+    key: (index: number) => Object.keys(store)[index] ?? null,
+  }
+  Object.defineProperty(globalThis, 'localStorage', { value: mockStorage })
+}
+
 // Mock Tauri IPC invoke - 所有测试共享同一 mock
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),

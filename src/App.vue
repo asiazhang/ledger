@@ -42,7 +42,7 @@ const title = () => h('div', { style: 'padding: 16px 18px; font-size: 18px; font
 </script>
 
 <template>
-  <NConfigProvider :theme="darkTheme">
+  <NConfigProvider :theme="store.theme === 'dark' ? darkTheme : null">
     <NMessageProvider>
       <NDialogProvider>
         <NLayout has-sider style="height: 100vh">

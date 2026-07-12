@@ -10,11 +10,30 @@ import {
   type CategoryTreeNode,
 } from '@/types/category'
 
+function loadLocal<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key)
+    if (raw !== null) return JSON.parse(raw) as T
+  } catch { /* ignore */ }
+  return fallback
+}
+
+function saveLocal<T>(key: string, value: T) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value))
+  } catch { /* ignore */ }
+}
+
+export type Theme = 'dark' | 'light'
+
 export const useAppStore = defineStore('app', () => {
   const currencies = ref<Currency[]>([])
   const accounts = ref<Account[]>([])
   const categories = ref<Category[]>([])
   const loaded = ref(false)
+
+  const theme = ref<Theme>(loadLocal<Theme>('appearance', 'dark'))
+  const defaultCurrency = ref<string>(loadLocal<string>('default_currency', 'CNY'))
 
   const currencyMap = computed(() => {
     const m = new Map<string, Currency>()
@@ -75,6 +94,16 @@ export const useAppStore = defineStore('app', () => {
     return currencyMap.value.get(code)
   }
 
+  function setTheme(t: Theme) {
+    theme.value = t
+    saveLocal('appearance', t)
+  }
+
+  function setDefaultCurrency(code: string) {
+    defaultCurrency.value = code
+    saveLocal('default_currency', code)
+  }
+
   return {
     currencies,
     accounts,
@@ -94,5 +123,9 @@ export const useAppStore = defineStore('app', () => {
     loadAccounts,
     loadCategories,
     getCurrency,
+    theme,
+    defaultCurrency,
+    setTheme,
+    setDefaultCurrency,
   }
 })
