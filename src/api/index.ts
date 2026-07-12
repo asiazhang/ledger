@@ -22,6 +22,8 @@ import type {
   MarketPrice,
   MarketPriceInput,
   MonthlySummary,
+  PnlFilter,
+  RealizedPnlSummary,
   ScheduledTransactionDetail,
   ScheduledTransactionWithExt,
   Transaction,
@@ -75,6 +77,10 @@ export const api = {
 
   // 持仓
   listHoldings: () => invoke<Holding[]>('list_holdings'),
+
+  // 已实现盈亏汇总
+  realizedPnlSummary: (filter?: PnlFilter) =>
+    invoke<RealizedPnlSummary>('realized_pnl_summary', { filter: filter ?? null }),
 
   // 汇率
   listExchangeRates: () => invoke<ExchangeRate[]>('list_exchange_rates'),

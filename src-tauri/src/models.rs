@@ -546,6 +546,36 @@ impl FromRow for MarketPrice {
     }
 }
 
+impl FromRow for YearPnl {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(YearPnl {
+            year: row.get(0)?,
+            realized_pnl_cents: row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+        })
+    }
+}
+
+impl FromRow for AccountPnl {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(AccountPnl {
+            account_id: row.get(0)?,
+            account_name: row.get(1)?,
+            realized_pnl_cents: row.get::<_, Option<i64>>(2)?.unwrap_or(0),
+        })
+    }
+}
+
+impl FromRow for InstrumentPnl {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(InstrumentPnl {
+            instrument_id: row.get(0)?,
+            symbol: row.get(1)?,
+            name: row.get(2)?,
+            realized_pnl_cents: row.get::<_, Option<i64>>(3)?.unwrap_or(0),
+        })
+    }
+}
+
 impl FromRow for Instrument {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
         Ok(Instrument {
@@ -558,6 +588,75 @@ impl FromRow for Instrument {
             updated_at: row.get(6)?,
             version: row.get(7)?,
             device_id: row.get(8)?,
+        })
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct RealizedPnlSummary {
+    pub total_realized_pnl_cents: i64,
+    pub by_year: Vec<YearPnl>,
+    pub by_account: Vec<AccountPnl>,
+    pub by_instrument: Vec<InstrumentPnl>,
+    pub details: Vec<PnlDetail>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct YearPnl {
+    pub year: String,
+    pub realized_pnl_cents: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AccountPnl {
+    pub account_id: String,
+    pub account_name: String,
+    pub realized_pnl_cents: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InstrumentPnl {
+    pub instrument_id: String,
+    pub symbol: String,
+    pub name: Option<String>,
+    pub realized_pnl_cents: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PnlDetail {
+    pub id: String,
+    pub sell_date: String,
+    pub account_id: String,
+    pub account_name: String,
+    pub instrument_id: String,
+    pub instrument_symbol: String,
+    pub instrument_name: Option<String>,
+    pub quantity: f64,
+    pub cost_per_unit_cents: i64,
+    pub realized_pnl_cents: i64,
+    pub currency_code: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PnlFilter {
+    pub account_id: Option<String>,
+    pub instrument_id: Option<String>,
+}
+
+impl FromRow for PnlDetail {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(PnlDetail {
+            id: row.get(0)?,
+            sell_date: row.get(1)?,
+            account_id: row.get(2)?,
+            account_name: row.get(3)?,
+            instrument_id: row.get(4)?,
+            instrument_symbol: row.get(5)?,
+            instrument_name: row.get(6)?,
+            quantity: row.get(7)?,
+            cost_per_unit_cents: row.get(8)?,
+            realized_pnl_cents: row.get(9)?,
+            currency_code: row.get(10)?,
         })
     }
 }

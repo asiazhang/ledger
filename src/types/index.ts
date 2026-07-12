@@ -337,6 +337,51 @@ export interface MarketPriceInput {
   source?: string | null
 }
 
+export interface YearPnl {
+  year: string
+  realized_pnl_cents: number
+}
+
+export interface AccountPnl {
+  account_id: string
+  account_name: string
+  realized_pnl_cents: number
+}
+
+export interface InstrumentPnl {
+  instrument_id: string
+  symbol: string
+  name: string | null
+  realized_pnl_cents: number
+}
+
+export interface PnlDetail {
+  id: string
+  sell_date: string
+  account_id: string
+  account_name: string
+  instrument_id: string
+  instrument_symbol: string
+  instrument_name: string | null
+  quantity: number
+  cost_per_unit_cents: number
+  realized_pnl_cents: number
+  currency_code: string
+}
+
+export interface PnlFilter {
+  account_id?: string | null
+  instrument_id?: string | null
+}
+
+export interface RealizedPnlSummary {
+  total_realized_pnl_cents: number
+  by_year: YearPnl[]
+  by_account: AccountPnl[]
+  by_instrument: InstrumentPnl[]
+  details: PnlDetail[]
+}
+
 export interface Holding {
   id: string
   account_id: string

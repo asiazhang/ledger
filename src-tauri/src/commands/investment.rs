@@ -4,7 +4,10 @@ use crate::commands::fx::account_currency_code;
 use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::models::{AccountType, TransactionInput};
+use crate::models::{
+    AccountPnl, AccountType, InstrumentPnl, PnlDetail, PnlFilter, RealizedPnlSummary,
+    TransactionInput, YearPnl,
+};
 
 /// 买入交易：校验、写入 transactions / security_transactions / security_lots。
 pub(crate) fn create_buy_transaction(conn: &Connection, input: TransactionInput) -> Result<String> {
@@ -257,6 +260,101 @@ pub fn list_holdings(
          latest_price_cents,latest_price_currency_code,market_value_cents,unrealized_pnl_cents,updated_at \
          FROM v_holdings ORDER BY account_id, instrument_id",
         [],
+    )
+}
+
+/// 已实现盈亏汇总查询（核心逻辑，可被命令和测试共用）。
+pub(crate) fn query_realized_pnl_summary(
+    conn: &Connection,
+    filter: &PnlFilter,
+) -> Result<RealizedPnlSummary> {
+    let base_from = "FROM security_lot_sales sls \
+                     JOIN transactions t ON t.id = sls.sell_transaction_id \
+                     JOIN security_transactions st ON st.transaction_id = sls.sell_transaction_id \
+                     JOIN instruments i ON i.id = st.instrument_id \
+                     JOIN accounts a ON a.id = t.account_id";
+
+    let mut conditions: Vec<String> = Vec::new();
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+    if let Some(acct_id) = &filter.account_id {
+        params.push(Box::new(acct_id.clone()));
+        conditions.push(format!("t.account_id=?{}", params.len()));
+    }
+    if let Some(inst_id) = &filter.instrument_id {
+        params.push(Box::new(inst_id.clone()));
+        conditions.push(format!("st.instrument_id=?{}", params.len()));
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", conditions.join(" AND "))
+    };
+
+    let total_sql = format!(
+        "SELECT COALESCE(SUM(sls.realized_pnl_cents), 0) {}{}",
+        base_from, where_clause
+    );
+    let year_sql = format!(
+        "SELECT substr(t.date, 1, 4) AS year, SUM(sls.realized_pnl_cents) \
+         {}{} GROUP BY year ORDER BY year",
+        base_from, where_clause
+    );
+    let account_sql = format!(
+        "SELECT a.id, a.name, COALESCE(SUM(sls.realized_pnl_cents), 0) \
+         {}{} GROUP BY a.id ORDER BY a.name",
+        base_from, where_clause
+    );
+    let instrument_sql = format!(
+        "SELECT i.id, i.symbol, i.name, COALESCE(SUM(sls.realized_pnl_cents), 0) \
+         {}{} GROUP BY i.id ORDER BY i.symbol",
+        base_from, where_clause
+    );
+    let detail_sql = format!(
+        "SELECT sls.id, t.date, t.account_id, a.name, i.id, i.symbol, i.name, \
+         sls.quantity, sls.cost_per_unit_cents, sls.realized_pnl_cents, sls.currency_code \
+         {}{} ORDER BY t.date DESC, sls.created_at DESC",
+        base_from, where_clause
+    );
+
+    let params_ref: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+
+    let total_realized_pnl_cents: i64 = conn
+        .query_row(&total_sql, params_ref.as_slice(), |r| {
+            r.get::<_, Option<i64>>(0)
+        })
+        .unwrap_or(None)
+        .unwrap_or(0);
+
+    let by_year: Vec<YearPnl> = query_all(conn, &year_sql, params_ref.as_slice())?;
+    let by_account: Vec<AccountPnl> = query_all(conn, &account_sql, params_ref.as_slice())?;
+    let by_instrument: Vec<InstrumentPnl> =
+        query_all(conn, &instrument_sql, params_ref.as_slice())?;
+    let details: Vec<PnlDetail> = query_all(conn, &detail_sql, params_ref.as_slice())?;
+
+    Ok(RealizedPnlSummary {
+        total_realized_pnl_cents,
+        by_year,
+        by_account,
+        by_instrument,
+        details,
+    })
+}
+
+/// 已实现盈亏汇总：总盈亏、按年度、按账户、按标的、明细。
+#[tauri::command]
+pub fn realized_pnl_summary(
+    db: tauri::State<'_, crate::db::DbState>,
+    filter: Option<PnlFilter>,
+) -> Result<RealizedPnlSummary> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    query_realized_pnl_summary(
+        &conn,
+        &filter.unwrap_or(PnlFilter {
+            account_id: None,
+            instrument_id: None,
+        }),
     )
 }
 
@@ -803,5 +901,128 @@ mod tests {
         assert_eq!(cost_basis, 151000); // 10 * 15000 + 1000
         assert_eq!(market_value, 160000); // 10 * 16000
         assert_eq!(unrealized_pnl, 9000); // 160000 - 151000
+    }
+
+    // ---- realized_pnl_summary tests ----
+
+    fn empty_filter() -> PnlFilter {
+        PnlFilter {
+            account_id: None,
+            instrument_id: None,
+        }
+    }
+
+    #[test]
+    fn realized_pnl_summary_empty_when_no_sales() {
+        let conn = setup_db();
+        let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
+        assert_eq!(result.total_realized_pnl_cents, 0);
+        assert!(result.by_year.is_empty());
+        assert!(result.by_account.is_empty());
+        assert!(result.by_instrument.is_empty());
+        assert!(result.details.is_empty());
+    }
+
+    #[test]
+    fn realized_pnl_summary_aggregates_single_sale() {
+        let conn = setup_db();
+        insert_account(&conn, "acc-pnl", "美股账户", "investment", "USD");
+        insert_instrument(&conn, "inst-pnl", "AAPL", "Apple", "USD");
+
+        let _buy =
+            create_buy_transaction(&conn, make_buy_input("acc-pnl", "inst-pnl", 10.0, 10000, 0))
+                .unwrap();
+        let _sell = create_sell_transaction(
+            &conn,
+            make_sell_input("acc-pnl", "inst-pnl", 5.0, 12000, 200),
+        )
+        .unwrap();
+
+        let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
+
+        assert_eq!(result.total_realized_pnl_cents, 9800);
+        assert_eq!(result.by_year.len(), 1);
+        assert_eq!(result.by_year[0].realized_pnl_cents, 9800);
+        assert_eq!(result.by_account.len(), 1);
+        assert_eq!(result.by_account[0].account_id, "acc-pnl");
+        assert_eq!(result.by_account[0].realized_pnl_cents, 9800);
+        assert_eq!(result.by_instrument.len(), 1);
+        assert_eq!(result.by_instrument[0].instrument_id, "inst-pnl");
+        assert_eq!(result.by_instrument[0].symbol, "AAPL");
+        assert_eq!(result.by_instrument[0].realized_pnl_cents, 9800);
+        assert_eq!(result.details.len(), 1);
+        assert_eq!(result.details[0].instrument_symbol, "AAPL");
+        assert_eq!(result.details[0].quantity, 5.0);
+        assert_eq!(result.details[0].realized_pnl_cents, 9800);
+    }
+
+    #[test]
+    fn realized_pnl_summary_aggregates_multiple_accounts() {
+        let conn = setup_db();
+        insert_account(&conn, "acc-a", "账户A", "investment", "USD");
+        insert_account(&conn, "acc-b", "账户B", "investment", "USD");
+        insert_instrument(&conn, "inst-xyz", "XYZ", "Test Corp", "USD");
+
+        create_buy_transaction(&conn, make_buy_input("acc-a", "inst-xyz", 10.0, 1000, 0)).unwrap();
+        create_buy_transaction(&conn, make_buy_input("acc-b", "inst-xyz", 5.0, 2000, 0)).unwrap();
+        create_sell_transaction(&conn, make_sell_input("acc-a", "inst-xyz", 4.0, 1500, 0)).unwrap();
+        create_sell_transaction(&conn, make_sell_input("acc-b", "inst-xyz", 2.0, 2500, 0)).unwrap();
+
+        let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
+
+        assert_eq!(result.total_realized_pnl_cents, 3000);
+        assert_eq!(result.by_account.len(), 2);
+        assert_eq!(result.by_account[0].account_id, "acc-a");
+        assert_eq!(result.by_account[0].realized_pnl_cents, 2000);
+        assert_eq!(result.by_account[1].account_id, "acc-b");
+        assert_eq!(result.by_account[1].realized_pnl_cents, 1000);
+        assert_eq!(result.details.len(), 2);
+    }
+
+    #[test]
+    fn realized_pnl_summary_filter_by_account() {
+        let conn = setup_db();
+        insert_account(&conn, "acc-a", "账户A", "investment", "USD");
+        insert_account(&conn, "acc-b", "账户B", "investment", "USD");
+        insert_instrument(&conn, "inst-xyz", "XYZ", "Test Corp", "USD");
+
+        create_buy_transaction(&conn, make_buy_input("acc-a", "inst-xyz", 10.0, 1000, 0)).unwrap();
+        create_buy_transaction(&conn, make_buy_input("acc-b", "inst-xyz", 5.0, 2000, 0)).unwrap();
+        create_sell_transaction(&conn, make_sell_input("acc-a", "inst-xyz", 4.0, 1500, 0)).unwrap();
+        create_sell_transaction(&conn, make_sell_input("acc-b", "inst-xyz", 2.0, 2500, 0)).unwrap();
+
+        let filter = PnlFilter {
+            account_id: Some("acc-a".into()),
+            instrument_id: None,
+        };
+        let result = query_realized_pnl_summary(&conn, &filter).unwrap();
+
+        assert_eq!(result.total_realized_pnl_cents, 2000);
+        assert_eq!(result.by_account.len(), 1);
+        assert_eq!(result.details.len(), 1);
+    }
+
+    #[test]
+    fn realized_pnl_summary_filter_by_instrument() {
+        let conn = setup_db();
+        insert_account(&conn, "acc-pnl", "美股", "investment", "USD");
+        insert_instrument(&conn, "inst-a", "AAPL", "Apple", "USD");
+        insert_instrument(&conn, "inst-b", "GOOGL", "Alphabet", "USD");
+
+        create_buy_transaction(&conn, make_buy_input("acc-pnl", "inst-a", 10.0, 1000, 0)).unwrap();
+        create_buy_transaction(&conn, make_buy_input("acc-pnl", "inst-b", 5.0, 2000, 0)).unwrap();
+        create_sell_transaction(&conn, make_sell_input("acc-pnl", "inst-a", 4.0, 1500, 0)).unwrap();
+        create_sell_transaction(&conn, make_sell_input("acc-pnl", "inst-b", 2.0, 2500, 0)).unwrap();
+
+        let filter = PnlFilter {
+            account_id: None,
+            instrument_id: Some("inst-a".into()),
+        };
+        let result = query_realized_pnl_summary(&conn, &filter).unwrap();
+
+        assert_eq!(result.total_realized_pnl_cents, 2000);
+        assert_eq!(result.by_instrument.len(), 1);
+        assert_eq!(result.by_instrument[0].instrument_id, "inst-a");
+        assert_eq!(result.details.len(), 1);
     }
 }

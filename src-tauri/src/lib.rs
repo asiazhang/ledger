@@ -96,6 +96,7 @@ pub fn run() {
             commands::update_scheduled_transaction_status,
             commands::execute_scheduled_occurrence,
             commands::expand_scheduled_occurrences,
+            commands::realized_pnl_summary,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
