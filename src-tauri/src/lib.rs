@@ -1,3 +1,4 @@
+pub mod api_server;
 pub mod commands;
 pub mod db;
 pub mod error;
@@ -61,7 +62,9 @@ pub fn run() {
                     .kind(MessageDialogKind::Error)
                     .blocking_show();
                 std::process::exit(1);
-            })
+            })?;
+            api_server::start_http_server(app.state::<db::DbState>().conn.clone());
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::list_currencies,
