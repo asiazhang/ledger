@@ -158,8 +158,86 @@ const treeData = computed<CategoryRow[]>(() => {
   return result
 })
 
+const draggedRow = ref<CategoryRow | null>(null)
+const dragOverRowId = ref<string | null>(null)
+
+async function handleDrop(target: CategoryRow) {
+  const source = draggedRow.value
+  if (!source || source.id === target.id) return
+
+  if (source.depth !== target.depth) return
+  if (source.kind !== target.kind) return
+  if (source.parent_id !== target.parent_id) return
+
+  const groupItems = treeData.value.filter(
+    (r) => r.depth === source.depth && r.kind === source.kind && r.parent_id === source.parent_id,
+  )
+
+  const sorted = [...groupItems]
+  const sourceIdx = sorted.findIndex((r) => r.id === source.id)
+  const targetIdx = sorted.findIndex((r) => r.id === target.id)
+  if (sourceIdx === -1 || targetIdx === -1) return
+
+  const [item] = sorted.splice(sourceIdx, 1)
+  sorted.splice(targetIdx, 0, item)
+
+  const items = sorted.map((r, i) => ({
+    id: r.id,
+    sort_order: i,
+  }))
+
+  try {
+    await api.reorderCategories(items)
+    await store.loadCategories()
+  } catch (e) {
+    message.error(`排序失败: ${e}`)
+  }
+}
+
+function getRowProps(row: CategoryRow) {
+  return {
+    draggable: 'true' as const,
+    'data-category-id': row.id,
+    class: dragOverRowId.value === row.id ? 'drag-over' : undefined,
+    onDragstart: (e: DragEvent) => {
+      draggedRow.value = row
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move'
+        e.dataTransfer.setData('text/plain', row.id)
+      }
+    },
+    onDragover: (e: DragEvent) => {
+      e.preventDefault()
+      if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = 'move'
+      }
+      dragOverRowId.value = row.id
+    },
+    onDragleave: () => {
+      if (dragOverRowId.value === row.id) {
+        dragOverRowId.value = null
+      }
+    },
+    onDrop: (e: DragEvent) => {
+      e.preventDefault()
+      dragOverRowId.value = null
+      handleDrop(row)
+    },
+    onDragend: () => {
+      draggedRow.value = null
+      dragOverRowId.value = null
+    },
+  }
+}
+
 // ── 表格列定义 ──
 const categoryColumns: DataTableColumns<CategoryRow> = [
+  {
+    title: '',
+    key: 'drag-handle',
+    width: 32,
+    render: () => h('span', { style: { cursor: 'grab', fontSize: '16px', userSelect: 'none' } }, '☰'),
+  },
   {
     title: '',
     key: 'icon',
@@ -247,7 +325,7 @@ const categoryColumns: DataTableColumns<CategoryRow> = [
     </NCard>
 
     <NCard title="分类列表" size="small">
-      <NDataTable :columns="categoryColumns" :data="treeData" :bordered="false" size="small" :single-line="false" />
+      <NDataTable :columns="categoryColumns" :data="treeData" :row-props="getRowProps" :bordered="false" size="small" :single-line="false" />
     </NCard>
 
     <NModal v-model:show="showEditModal" title="编辑分类" preset="card" style="width: 420px" :bordered="false">
@@ -275,3 +353,11 @@ const categoryColumns: DataTableColumns<CategoryRow> = [
     </NModal>
   </NSpace>
 </template>
+
+<style scoped>
+:deep(tr.drag-over) {
+  outline: 2px dashed #18a058;
+  outline-offset: -2px;
+  background-color: rgba(24, 160, 58, 0.04);
+}
+</style>
