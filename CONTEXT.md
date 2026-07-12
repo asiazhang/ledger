@@ -137,3 +137,14 @@
 - **定义**：用户对应用视觉呈现的选择，当前支持暗色（`dark`）和亮色（`light`）两种主题。
 - **边界**：主题切换仅影响视觉表现层，不改变业务逻辑；MVP 阶段默认为暗色主题。
 - **别名**：不使用"皮肤"（偏自定义程度更高的概念）、"配色方案"。
+
+## AI API（AI 编程接口）
+
+- **定义**：Ledger 在 `127.0.0.1:9527` 上提供的 RESTful HTTP API，专供 AI 编程助手（如 Cursor、Claude Code）通过 HTTP 请求读写 Ledger 数据。
+- **边界**：
+  - 仅监听 localhost，无认证，适用于单机桌面场景。
+  - URL 前缀 `/api/v1`，JSON 请求/响应。
+  - 错误格式复用 `{kind, message}`。
+  - **专用场景**：数据迁移（从第三方 APP 的 CSV/Excel 导入）。
+  - **暴露的接口**：`accounts`（list/create）、`categories`（list/create）、`transactions/batch`，共 5 个端点。
+- **别名**：不使用"本地 API"（过于泛化）、"后端 API"（与 Tauri IPC 混淆）。
