@@ -8,7 +8,9 @@ import type {
   BudgetProgress,
   Category,
   CategoryInput,
+  CategoryUpdateInput,
   CategoryShare,
+  ReorderItem,
   CreateScheduledInput,
   CreateTransactionResult,
   Currency,
@@ -44,6 +46,10 @@ export const api = {
   // 分类
   listCategories: () => invoke<Category[]>('list_categories'),
   createCategory: (input: CategoryInput) => invoke<string>('create_category', { input }),
+  updateCategory: (id: string, input: CategoryUpdateInput) =>
+    invoke<void>('update_category', { id, input }),
+  reorderCategories: (items: ReorderItem[]) =>
+    invoke<void>('reorder_categories', { items }),
   deleteCategory: (id: string) => invoke<void>('delete_category', { id }),
 
   // 交易

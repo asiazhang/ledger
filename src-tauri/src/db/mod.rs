@@ -25,6 +25,9 @@ fn migrations() -> &'static Migrations<'static> {
             M::up(include_str!(
                 "../../migrations/V004__scheduled_transactions.sql"
             )),
+            M::up(include_str!(
+                "../../migrations/V005__category_sort_order.sql"
+            )),
         ])
     })
 }

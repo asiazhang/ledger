@@ -71,6 +71,8 @@ pub fn run() {
             commands::list_account_balances,
             commands::list_categories,
             commands::create_category,
+            commands::update_category,
+            commands::reorder_categories,
             commands::delete_category,
             commands::list_transactions,
             commands::create_transaction,
