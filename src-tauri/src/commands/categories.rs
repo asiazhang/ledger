@@ -41,7 +41,11 @@ pub fn create_category(db: State<'_, DbState>, input: CategoryInput) -> Result<S
 }
 
 #[tauri::command]
-pub fn update_category(db: State<'_, DbState>, id: String, input: CategoryUpdateInput) -> Result<()> {
+pub fn update_category(
+    db: State<'_, DbState>,
+    id: String,
+    input: CategoryUpdateInput,
+) -> Result<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let now = now_iso();
     let did = device_id();
