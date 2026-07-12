@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use rusqlite::Connection;
 use rusqlite_migration::{M, Migrations};
@@ -70,7 +70,7 @@ pub fn open_in_memory() -> Result<Connection> {
 // ---------------------------------------------------------------------------
 
 pub struct DbState {
-    pub conn: Mutex<Connection>,
+    pub conn: Arc<Mutex<Connection>>,
 }
 
 pub fn open_db(app: &tauri::AppHandle) -> Result<DbState> {
@@ -83,7 +83,7 @@ pub fn open_db(app: &tauri::AppHandle) -> Result<DbState> {
     let mut conn = open_connection(db_path)?;
     init_db(&mut conn)?;
     Ok(DbState {
-        conn: Mutex::new(conn),
+        conn: Arc::new(Mutex::new(conn)),
     })
 }
 

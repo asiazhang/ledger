@@ -30,11 +30,14 @@ thiserror = "2.0.18"
 csv = "1.4.0"
 calamine = "0.35.0"
 tauri-plugin-dialog = "2"
+tokio = { version = "1", features = ["rt", "macros", "time"] }
+axum = "0.7"
 
 [dev-dependencies]
 cucumber = "0.21"
-tokio = { version = "1", features = ["rt", "macros", "time"] }
 futures = "0.3"
+tower = { version = "0.4", features = ["util"] }
+http-body-util = "0.1"
 
 [[test]]
 name = "e2e"
