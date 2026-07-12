@@ -11,8 +11,9 @@ import {
   NSelect,
   NSpace,
   NPopconfirm,
-  NTag,
   NModal,
+  NTabs,
+  NTabPane,
   useMessage,
   type TreeOption,
   type TreeDropInfo,
@@ -29,10 +30,12 @@ interface TreeCategoryNode extends TreeOption {
   category: Category
 }
 
-// ── 树形数据 ──
+const activeKind = ref<CategoryKind>('expense')
+
+// ── 树形数据（按 activeKind 过滤）─
 const treeData = computed<TreeCategoryNode[]>(() => {
   const roots = store.categories
-    .filter((c) => c.parent_id == null)
+    .filter((c) => c.parent_id == null && c.kind === activeKind.value)
     .sort((a, b) => a.sort_order - b.sort_order)
   return roots.map((root) => {
     const children = store.categories
@@ -64,11 +67,6 @@ function renderPrefix(info: { option: TreeOption }) {
 function renderSuffix(info: { option: TreeOption }) {
   const cat = (info.option as TreeCategoryNode).category
   return h(NSpace, { size: 'small', align: 'center' }, () => [
-    h(NTag, {
-      type: cat.kind === 'income' ? 'success' : 'warning',
-      size: 'tiny',
-      bordered: false,
-    }, () => cat.kind === 'income' ? '收入' : '支出'),
     h(NButton, {
       size: 'tiny',
       quaternary: true,
@@ -119,24 +117,20 @@ async function handleDrop(info: TreeDropInfo) {
 
 // ── 添加表单 ──
 const name = ref('')
-const kind = ref<CategoryKind>('expense')
 const parentId = ref<string>('')
 const icon = ref('')
-
-const kindOptions = [
-  { label: '支出', value: 'expense' },
-  { label: '收入', value: 'income' },
-]
 
 const parentOptions = computed(() => [
   { label: '无（顶级）', value: '' },
   ...store.rootCategories
-    .filter((c) => c.kind === kind.value)
+    .filter((c) => c.kind === activeKind.value)
     .map((c) => ({ label: c.name, value: c.id })),
 ])
 
-watch(kind, () => {
+watch(activeKind, () => {
+  name.value = ''
   parentId.value = ''
+  icon.value = ''
 })
 
 async function addCategory() {
@@ -151,7 +145,7 @@ async function addCategory() {
       message.warning('父分类不存在')
       return
     }
-    if (parent.kind !== kind.value) {
+    if (parent.kind !== activeKind.value) {
       message.warning('父分类类型需一致')
       return
     }
@@ -162,7 +156,7 @@ async function addCategory() {
   }
   const input: CategoryInput = {
     name: name.value,
-    kind: kind.value,
+    kind: activeKind.value,
     parent_id,
     icon: icon.value || null,
   }
@@ -184,6 +178,13 @@ const editingCategory = ref<Category | null>(null)
 const editName = ref('')
 const editIcon = ref('')
 const editParentId = ref<string>('')
+
+const editParentOptions = computed(() => [
+  { label: '无（顶级）', value: '' },
+  ...store.rootCategories
+    .filter((c) => c.kind === editingCategory.value?.kind)
+    .map((c) => ({ label: c.name, value: c.id })),
+])
 
 function openEdit(cat: Category) {
   editingCategory.value = cat
@@ -228,56 +229,87 @@ async function removeCategory(id: string) {
 </script>
 
 <template>
-  <NSpace vertical :size="16">
-    <NCard title="新增分类" size="small">
-      <NForm label-placement="left" :show-feedback="false" inline size="small">
-        <NFormItem label="名称">
-          <NInput v-model:value="name" placeholder="分类名称" style="width: 140px" />
-        </NFormItem>
-        <NFormItem label="类型">
-          <NSelect v-model:value="kind" :options="kindOptions" style="width: 100px" />
-        </NFormItem>
-        <NFormItem label="父分类">
-          <NSelect v-model:value="parentId" :options="parentOptions" style="width: 140px" />
-        </NFormItem>
-        <NFormItem label="图标">
-          <NInput v-model:value="icon" placeholder="图标名" style="width: 140px" />
-        </NFormItem>
-        <NButton type="primary" @click="addCategory">添加</NButton>
-      </NForm>
-    </NCard>
+  <NTabs type="line" :value="activeKind" @update:value="(v) => activeKind = v as CategoryKind">
+    <NTabPane name="expense" tab="支出">
+      <NSpace vertical :size="16">
+        <NCard title="新增分类" size="small">
+          <NForm label-placement="left" :show-feedback="false" inline size="small">
+            <NFormItem label="名称">
+              <NInput v-model:value="name" placeholder="分类名称" style="width: 140px" />
+            </NFormItem>
+            <NFormItem label="父分类">
+              <NSelect v-model:value="parentId" :options="parentOptions" style="width: 140px" />
+            </NFormItem>
+            <NFormItem label="图标">
+              <NInput v-model:value="icon" placeholder="图标名" style="width: 140px" />
+            </NFormItem>
+            <NButton type="primary" @click="addCategory">添加</NButton>
+          </NForm>
+        </NCard>
 
-    <NCard title="分类列表" size="small">
-      <NTree
-        :data="treeData"
-        :render-prefix="renderPrefix"
-        :render-suffix="renderSuffix"
-        draggable
-        block-line
-        :default-expand-all="true"
-        @drop="handleDrop"
-      />
-    </NCard>
-
-    <NModal v-model:show="showEditModal" title="编辑分类" preset="card" style="width: 420px" :bordered="false">
-      <NForm label-placement="left" :show-feedback="false" size="small">
-        <NFormItem label="名称">
-          <NInput v-model:value="editName" placeholder="分类名称" />
-        </NFormItem>
-        <NFormItem label="图标">
-          <NInput v-model:value="editIcon" placeholder="图标名" style="width: 120px" />
-        </NFormItem>
-        <NFormItem label="父分类">
-          <NSelect
-            v-model:value="editParentId"
-            :options="parentOptions"
-            placeholder="选择父分类"
-            clearable
-            style="width: 200px"
+        <NCard title="分类列表" size="small">
+          <NTree
+            :data="treeData"
+            :render-prefix="renderPrefix"
+            :render-suffix="renderSuffix"
+            draggable
+            block-line
+            :default-expand-all="true"
+            @drop="handleDrop"
           />
-        </NFormItem>
-        <NButton type="primary" block @click="saveEdit">保存</NButton>
-      </NForm>
-    </NModal>
-  </NSpace>
+        </NCard>
+      </NSpace>
+    </NTabPane>
+    <NTabPane name="income" tab="收入">
+      <NSpace vertical :size="16">
+        <NCard title="新增分类" size="small">
+          <NForm label-placement="left" :show-feedback="false" inline size="small">
+            <NFormItem label="名称">
+              <NInput v-model:value="name" placeholder="分类名称" style="width: 140px" />
+            </NFormItem>
+            <NFormItem label="父分类">
+              <NSelect v-model:value="parentId" :options="parentOptions" style="width: 140px" />
+            </NFormItem>
+            <NFormItem label="图标">
+              <NInput v-model:value="icon" placeholder="图标名" style="width: 140px" />
+            </NFormItem>
+            <NButton type="primary" @click="addCategory">添加</NButton>
+          </NForm>
+        </NCard>
+
+        <NCard title="分类列表" size="small">
+          <NTree
+            :data="treeData"
+            :render-prefix="renderPrefix"
+            :render-suffix="renderSuffix"
+            draggable
+            block-line
+            :default-expand-all="true"
+            @drop="handleDrop"
+          />
+        </NCard>
+      </NSpace>
+    </NTabPane>
+  </NTabs>
+
+  <NModal v-model:show="showEditModal" title="编辑分类" preset="card" style="width: 420px" :bordered="false">
+    <NForm label-placement="left" :show-feedback="false" size="small">
+      <NFormItem label="名称">
+        <NInput v-model:value="editName" placeholder="分类名称" />
+      </NFormItem>
+      <NFormItem label="图标">
+        <NInput v-model:value="editIcon" placeholder="图标名" style="width: 120px" />
+      </NFormItem>
+      <NFormItem label="父分类">
+        <NSelect
+          v-model:value="editParentId"
+          :options="editParentOptions"
+          placeholder="选择父分类"
+          clearable
+          style="width: 200px"
+        />
+      </NFormItem>
+      <NButton type="primary" block @click="saveEdit">保存</NButton>
+    </NForm>
+  </NModal>
 </template>

@@ -34,7 +34,10 @@ describe('SettingsView.vue', () => {
   it('渲染 4 个 TabPane', () => {
     const wrapper = mount(SettingsView)
     const tabs = wrapper.findAll('.n-tabs-tab')
-    expect(tabs.length).toBe(4)
+    const settingsTabs = tabs.filter(
+      (t) => ['分类', '币种', '外观', '关于'].includes(t.text()),
+    )
+    expect(settingsTabs.length).toBe(4)
   })
 
   it('Tab 标签文本正确', () => {

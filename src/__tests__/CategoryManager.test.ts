@@ -56,12 +56,20 @@ describe('CategoryManager.vue', () => {
     await store.loadAll()
   })
 
-  it('挂载并渲染分类列表', () => {
+  it('挂载并渲染分类列表（默认支出 Tab）', () => {
     const wrapper = mount(CategoryManager)
     expect(wrapper.text()).toContain('餐饮')
     expect(wrapper.text()).toContain('交通')
-    expect(wrapper.text()).toContain('工资')
+    expect(wrapper.text()).not.toContain('工资')
     expect(wrapper.text()).toContain('新增分类')
+  })
+
+  it('切换到收入 Tab 显示收入分类', async () => {
+    const wrapper = mount(CategoryManager)
+    const incomeTab = wrapper.findAll('.n-tabs-tab')[1]
+    await incomeTab.trigger('click')
+    expect(wrapper.text()).toContain('工资')
+    expect(wrapper.text()).not.toContain('餐饮')
   })
 
   it('添加分类时校验空名称', async () => {
