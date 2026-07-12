@@ -45,15 +45,18 @@ pub fn build_router(state: Arc<Mutex<Connection>>) -> Router {
 }
 
 pub fn start_http_server(state: Arc<Mutex<Connection>>) {
-    tokio::spawn(async move {
-        let router = build_router(state);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:9527")
-            .await
-            .expect("绑定 9527 端口失败");
-        println!("Ledger API 服务已启动: http://127.0.0.1:9527");
-        axum::serve(listener, router)
-            .await
-            .expect("HTTP 服务器异常退出");
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().expect("创建 Tokio 运行时失败");
+        rt.block_on(async move {
+            let router = build_router(state);
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:9527")
+                .await
+                .expect("绑定 9527 端口失败");
+            println!("Ledger API 服务已启动: http://127.0.0.1:9527");
+            axum::serve(listener, router)
+                .await
+                .expect("HTTP 服务器异常退出");
+        });
     });
 }
 
