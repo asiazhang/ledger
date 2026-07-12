@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { NTabs, NTabPane, NCard, NDataTable, NSpace, NSelect, NSwitch, NText } from 'naive-ui'
 import { useAppStore } from '@/stores/app'
 import CategoryManager from '@/components/CategoryManager.vue'
@@ -18,13 +18,13 @@ const currencyOptions = computed(() =>
   store.currencies.map((c) => ({ label: `${c.code} - ${c.name}`, value: c.code })),
 )
 
+const isDark = ref(store.theme === 'dark')
+watch(isDark, (val) => store.setTheme(val ? 'dark' : 'light'))
+watch(() => store.theme, (theme) => { isDark.value = theme === 'dark' })
+
 onMounted(async () => {
   await store.loadAll()
 })
-
-function toggleTheme() {
-  store.setTheme(store.theme === 'dark' ? 'light' : 'dark')
-}
 </script>
 
 <template>
@@ -55,10 +55,7 @@ function toggleTheme() {
         <NCard title="主题模式" size="small">
           <NSpace align="center" :size="12">
             <NText>深色模式</NText>
-            <NSwitch
-              :value="store.theme === 'dark'"
-              @update:value="toggleTheme"
-            />
+            <NSwitch v-model:value="isDark" />
           </NSpace>
         </NCard>
       </NSpace>
