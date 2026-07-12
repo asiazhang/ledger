@@ -19,20 +19,20 @@ INSERT OR IGNORE INTO currencies (code, name, symbol, decimal_places) VALUES
   ('CHF', '瑞士法郎', 'Fr.', 2);
 
 -- 支出顶级分类：13
-INSERT OR IGNORE INTO categories (id, name, kind, created_at, updated_at, version, device_id) VALUES
-  ('95d6dc66-12c4-5f2b-bf9b-1d439a9c8100', '餐饮', 'expense', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
-  ('6f7a88e1-fb21-5409-b6b3-606787668c02', '交通', 'expense', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
-  ('3feb7580-9bad-5c6a-bf4f-db9e59eb3e64', '购物', 'expense', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
-  ('7913daff-f5fc-5ce2-98a0-85c5f0c53db9', '住房', 'expense', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
-  ('805a7628-6497-5252-b4ab-a76361e5aa0a', '娱乐', 'expense', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
-  ('f0683ffe-fe9c-593f-8701-4ec1c296b32c', '医疗', 'expense', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
-  ('b41989ae-e78a-59f2-9c02-4f904d8e6841', '教育', 'expense', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
-  ('f24916fd-6c9a-5ecd-afa5-09c1bcc5590a', '其他支出', 'expense', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
-  ('3f673b97-a17f-5dc5-92fb-5bd4d40b7b2c', '生活缴费', 'expense', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
-  ('7e0c4d7e-15e9-5cbf-a3c9-059d14a86383', '人情', 'expense', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
-  ('cabb2911-56c1-51b8-b6c7-e4cffbcabac4', '金融保险', 'expense', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
-  ('6f3bfe07-0782-52f4-8984-b147205dcba0', '数码产品', 'expense', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
-  ('6b978f24-2393-56a4-b3df-50c5d054cbc9', '汽车', 'expense', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed');
+INSERT OR IGNORE INTO categories (id, name, kind, icon, created_at, updated_at, version, device_id) VALUES
+  ('95d6dc66-12c4-5f2b-bf9b-1d439a9c8100', '餐饮', 'expense', 'RestaurantOutline', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
+  ('6f7a88e1-fb21-5409-b6b3-606787668c02', '交通', 'expense', 'BusOutline', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
+  ('3feb7580-9bad-5c6a-bf4f-db9e59eb3e64', '购物', 'expense', 'CartOutline', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
+  ('7913daff-f5fc-5ce2-98a0-85c5f0c53db9', '住房', 'expense', 'HomeOutline', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
+  ('805a7628-6497-5252-b4ab-a76361e5aa0a', '娱乐', 'expense', 'GameControllerOutline', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
+  ('f0683ffe-fe9c-593f-8701-4ec1c296b32c', '医疗', 'expense', 'MedkitOutline', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
+  ('b41989ae-e78a-59f2-9c02-4f904d8e6841', '教育', 'expense', 'SchoolOutline', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
+  ('f24916fd-6c9a-5ecd-afa5-09c1bcc5590a', '其他支出', 'expense', 'EllipsisHorizontalOutline', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
+  ('3f673b97-a17f-5dc5-92fb-5bd4d40b7b2c', '生活缴费', 'expense', 'FlashOutline', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
+  ('7e0c4d7e-15e9-5cbf-a3c9-059d14a86383', '人情', 'expense', 'GiftOutline', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
+  ('cabb2911-56c1-51b8-b6c7-e4cffbcabac4', '金融保险', 'expense', 'CardOutline', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
+  ('6f3bfe07-0782-52f4-8984-b147205dcba0', '数码产品', 'expense', 'PhonePortraitOutline', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
+  ('6b978f24-2393-56a4-b3df-50c5d054cbc9', '汽车', 'expense', 'CarOutline', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed');
 
 -- 支出二级分类：61
 INSERT OR IGNORE INTO categories (id, name, kind, parent_id, created_at, updated_at, version, device_id) VALUES
@@ -101,12 +101,12 @@ INSERT OR IGNORE INTO categories (id, name, kind, parent_id, created_at, updated
   ('35ae5a07-45b9-579e-a1ee-729dc66df036', '数码配件', 'expense', '6f3bfe07-0782-52f4-8984-b147205dcba0', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed');
 
 -- 收入顶级分类：5
-INSERT OR IGNORE INTO categories (id, name, kind, created_at, updated_at, version, device_id) VALUES
-  ('5c7b17d7-a3ec-59c0-b2ad-4a62ad32f2c3', '工资', 'income', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
-  ('a163e39c-8eb4-5317-8ef9-7c433897b569', '奖金', 'income', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
-  ('0aacf353-c7a5-5ac1-8da6-5b8815ffcef7', '投资收益', 'income', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
-  ('60549cc0-9b4b-584c-8891-9705c0416247', '其他收入', 'income', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
-  ('17494b6f-b527-5c4b-9af4-ecff194dba7d', '兼职劳务', 'income', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed');
+INSERT OR IGNORE INTO categories (id, name, kind, icon, created_at, updated_at, version, device_id) VALUES
+  ('5c7b17d7-a3ec-59c0-b2ad-4a62ad32f2c3', '工资', 'income', 'WalletOutline', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
+  ('a163e39c-8eb4-5317-8ef9-7c433897b569', '奖金', 'income', 'TrophyOutline', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
+  ('0aacf353-c7a5-5ac1-8da6-5b8815ffcef7', '投资收益', 'income', 'TrendingUpOutline', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
+  ('60549cc0-9b4b-584c-8891-9705c0416247', '其他收入', 'income', 'EllipsisHorizontalOutline', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
+  ('17494b6f-b527-5c4b-9af4-ecff194dba7d', '兼职劳务', 'income', 'BriefcaseOutline', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed');
 
 -- 收入二级分类：11
 INSERT OR IGNORE INTO categories (id, name, kind, parent_id, created_at, updated_at, version, device_id) VALUES

@@ -23,13 +23,13 @@ const mockAccounts: Account[] = [
 const mockCategories: Category[] = [
   {
     id: 'cat-1', name: '餐饮', kind: 'expense', parent_id: null,
-    icon: null, color: null, created_at: '2026-01-01T00:00:00Z',
+    icon: null, created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test',
     is_deleted: false,
   },
   {
     id: 'cat-2', name: '工资', kind: 'income', parent_id: null,
-    icon: null, color: null, created_at: '2026-01-01T00:00:00Z',
+    icon: null, created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test',
     is_deleted: false,
   },

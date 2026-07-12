@@ -43,7 +43,6 @@ export interface Category extends Syncable {
   kind: CategoryKind
   parent_id: string | null
   icon: string | null
-  color: string | null
   sort_order: number
   created_at: string
 }
@@ -53,13 +52,11 @@ export interface CategoryInput {
   kind: CategoryKind
   parent_id?: string | null
   icon?: string | null
-  color?: string | null
 }
 
 export interface CategoryUpdateInput {
   name?: string
   icon?: string | null
-  color?: string | null
   parent_id?: string | null
 }
 

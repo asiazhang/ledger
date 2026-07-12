@@ -10,7 +10,7 @@ pub fn list_categories(db: State<'_, DbState>) -> Result<Vec<Category>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     query_all(
         &conn,
-        "SELECT id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted \
+        "SELECT id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted \
          FROM categories WHERE is_deleted=0 ORDER BY kind, sort_order, created_at",
         [],
     )
@@ -22,15 +22,14 @@ pub fn create_category(db: State<'_, DbState>, input: CategoryInput) -> Result<S
     let id = new_uuid();
     let now = now_iso();
     conn.execute(
-        "INSERT INTO categories (id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,0)",
+        "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,0)",
         rusqlite::params![
             id,
             input.name,
             input.kind,
             input.parent_id,
             input.icon,
-            input.color,
             0,
             now,
             now,
@@ -49,7 +48,7 @@ pub fn update_category(db: State<'_, DbState>, id: String, input: CategoryUpdate
 
     let existing: Category = query_all(
         &conn,
-        "SELECT id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted \
+        "SELECT id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted \
          FROM categories WHERE id=?1 AND is_deleted=0",
         rusqlite::params![id],
     )?
@@ -65,7 +64,7 @@ pub fn update_category(db: State<'_, DbState>, id: String, input: CategoryUpdate
         }
         let parent: Category = query_all(
             &conn,
-            "SELECT id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted \
+            "SELECT id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted \
              FROM categories WHERE id=?1 AND is_deleted=0",
             rusqlite::params![pid],
         )?
@@ -79,11 +78,10 @@ pub fn update_category(db: State<'_, DbState>, id: String, input: CategoryUpdate
 
     let name = input.name.unwrap_or(existing.name);
     let icon = input.icon.or(existing.icon);
-    let color = input.color.or(existing.color);
 
     conn.execute(
-        "UPDATE categories SET name=?1, icon=?2, color=?3, parent_id=?4, updated_at=?5, version=version+1, device_id=?6 WHERE id=?7",
-        rusqlite::params![name, icon, color, parent_id, now, did, id],
+        "UPDATE categories SET name=?1, icon=?2, parent_id=?3, updated_at=?4, version=version+1, device_id=?5 WHERE id=?6",
+        rusqlite::params![name, icon, parent_id, now, did, id],
     )?;
     Ok(())
 }
@@ -127,7 +125,7 @@ mod tests {
     fn list_categories(conn: &rusqlite::Connection) -> Vec<Category> {
         query_all(
             conn,
-            "SELECT id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted \
+            "SELECT id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted \
              FROM categories WHERE is_deleted=0 ORDER BY kind, sort_order, created_at",
             [],
         )
@@ -151,8 +149,8 @@ mod tests {
         let id = new_uuid();
         let now = now_iso();
         conn.execute(
-            "INSERT INTO categories (id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES (?1,?2,?3,NULL,NULL,NULL,0,?4,?5,?6,?7,0)",
+            "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,?2,?3,NULL,NULL,0,?4,?5,?6,?7,0)",
             rusqlite::params![id, "交通", "expense", now, now, 1, device_id()],
         )
         .unwrap();
@@ -167,14 +165,14 @@ mod tests {
         let child_id = new_uuid();
         let now = now_iso();
         conn.execute(
-            "INSERT INTO categories (id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES (?1,?2,'expense',NULL,NULL,NULL,0,?3,?4,?5,?6,0)",
+            "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,?2,'expense',NULL,NULL,0,?3,?4,?5,?6,0)",
             rusqlite::params![parent_id, "出行", now, now, 1, device_id()],
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO categories (id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES (?1,?2,'expense',?3,NULL,NULL,0,?4,?5,?6,?7,0)",
+            "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,?2,'expense',?3,NULL,0,?4,?5,?6,?7,0)",
             rusqlite::params![child_id, "打车", parent_id, now, now, 1, device_id()],
         )
         .unwrap();
@@ -189,8 +187,8 @@ mod tests {
         let id = new_uuid();
         let now = now_iso();
         conn.execute(
-            "INSERT INTO categories (id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES (?1,?2,'expense',NULL,NULL,NULL,0,?3,?4,?5,?6,0)",
+            "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,?2,'expense',NULL,NULL,0,?3,?4,?5,?6,0)",
             rusqlite::params![id, "临时分类", now, now, 1, device_id()],
         )
         .unwrap();
@@ -210,8 +208,8 @@ mod tests {
         let id = new_uuid();
         let now = now_iso();
         conn.execute(
-            "INSERT INTO categories (id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES (?1,?2,'expense',NULL,NULL,NULL,0,?3,?4,?5,?6,0)",
+            "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,?2,'expense',NULL,NULL,0,?3,?4,?5,?6,0)",
             rusqlite::params![id, "原始分类", now, now, 1, device_id()],
         )
         .unwrap();
@@ -219,19 +217,17 @@ mod tests {
         let input = CategoryUpdateInput {
             name: Some("更新后".into()),
             icon: Some("🍕".into()),
-            color: Some("#FF0000".into()),
             parent_id: None,
         };
         conn.execute(
-            "UPDATE categories SET name=?1, icon=?2, color=?3, parent_id=?4, updated_at=?5, version=version+1, device_id=?6 WHERE id=?7",
-            rusqlite::params![input.name, input.icon, input.color, input.parent_id.unwrap_or(None), now_iso(), device_id(), id],
+            "UPDATE categories SET name=?1, icon=?2, parent_id=?3, updated_at=?4, version=version+1, device_id=?5 WHERE id=?6",
+            rusqlite::params![input.name, input.icon, input.parent_id.unwrap_or(None), now_iso(), device_id(), id],
         )
         .unwrap();
         let cats = list_categories(&conn);
         let updated = cats.iter().find(|c| c.id == id).unwrap();
         assert_eq!(updated.name, "更新后");
         assert_eq!(updated.icon.as_deref(), Some("🍕"));
-        assert_eq!(updated.color.as_deref(), Some("#FF0000"));
     }
 
     #[test]
@@ -241,14 +237,14 @@ mod tests {
         let id2 = new_uuid();
         let now = now_iso();
         conn.execute(
-            "INSERT INTO categories (id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES (?1,?2,'expense',NULL,NULL,NULL,0,?3,?4,?5,?6,0)",
+            "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,?2,'expense',NULL,NULL,0,?3,?4,?5,?6,0)",
             rusqlite::params![id1, "分类A", now, now, 1, device_id()],
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO categories (id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES (?1,?2,'expense',NULL,NULL,NULL,0,?3,?4,?5,?6,0)",
+            "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,?2,'expense',NULL,NULL,0,?3,?4,?5,?6,0)",
             rusqlite::params![id2, "分类B", now, now, 1, device_id()],
         )
         .unwrap();

@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS categories (
     kind       TEXT NOT NULL CHECK(kind IN ('income','expense')),   -- 分类类型：income（收入）或 expense（支出）
     parent_id  TEXT REFERENCES categories(id) ON DELETE SET NULL,  -- 父分类 ID，NULL 表示顶级分类；指向同表 id；父分类硬删时置空
     icon       TEXT,                                               -- 图标名称（可选）
-    color      TEXT,                                               -- 展示颜色（可选）
+    sort_order INTEGER NOT NULL DEFAULT 0,                         -- 排序序号，用于手动排序
     created_at TEXT NOT NULL,                                       -- 创建时间，UTC ISO 8601 格式
     updated_at TEXT NOT NULL,                                       -- 最后修改时间，UTC ISO 8601 格式
     version    INTEGER NOT NULL DEFAULT 1,                          -- 版本计数

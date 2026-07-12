@@ -21,13 +21,10 @@ fn migrations() -> &'static Migrations<'static> {
         Migrations::new(vec![
             M::up(include_str!("../../migrations/V001__initial.sql")),
             M::up(include_str!("../../migrations/V002__investment.sql")),
-            M::up(include_str!("../../migrations/V003__seed_defaults.sql")),
             M::up(include_str!(
-                "../../migrations/V004__scheduled_transactions.sql"
+                "../../migrations/V003__scheduled_transactions.sql"
             )),
-            M::up(include_str!(
-                "../../migrations/V005__category_sort_order.sql"
-            )),
+            M::up(include_str!("../../migrations/V004__seed_defaults.sql")),
         ])
     })
 }
