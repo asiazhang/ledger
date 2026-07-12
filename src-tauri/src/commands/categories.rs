@@ -3,15 +3,15 @@ use tauri::State;
 use crate::db::query::query_all;
 use crate::db::{DbState, device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::models::{Category, CategoryInput};
+use crate::models::{Category, CategoryInput, CategoryUpdateInput, ReorderItem};
 
 #[tauri::command]
 pub fn list_categories(db: State<'_, DbState>) -> Result<Vec<Category>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     query_all(
         &conn,
-        "SELECT id,name,kind,parent_id,icon,color,created_at,updated_at,version,device_id,is_deleted \
-         FROM categories WHERE is_deleted=0 ORDER BY kind, created_at",
+        "SELECT id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted \
+         FROM categories WHERE is_deleted=0 ORDER BY kind, sort_order, created_at",
         [],
     )
 }
@@ -22,11 +22,84 @@ pub fn create_category(db: State<'_, DbState>, input: CategoryInput) -> Result<S
     let id = new_uuid();
     let now = now_iso();
     conn.execute(
-        "INSERT INTO categories (id,name,kind,parent_id,icon,color,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,NULL,NULL,?5,?6,?7,?8,0)",
-        rusqlite::params![id, input.name, input.kind, input.parent_id, now, now, 1, device_id()],
+        "INSERT INTO categories (id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,0)",
+        rusqlite::params![
+            id,
+            input.name,
+            input.kind,
+            input.parent_id,
+            input.icon,
+            input.color,
+            0,
+            now,
+            now,
+            1,
+            device_id()
+        ],
     )?;
     Ok(id)
+}
+
+#[tauri::command]
+pub fn update_category(db: State<'_, DbState>, id: String, input: CategoryUpdateInput) -> Result<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let now = now_iso();
+    let did = device_id();
+
+    let existing: Category = query_all(
+        &conn,
+        "SELECT id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted \
+         FROM categories WHERE id=?1 AND is_deleted=0",
+        rusqlite::params![id],
+    )?
+    .into_iter()
+    .next()
+    .ok_or_else(|| AppError::NotFound(format!("分类不存在: {id}")))?;
+
+    let parent_id = input.parent_id.unwrap_or(existing.parent_id);
+
+    if let Some(ref pid) = parent_id {
+        if *pid == id {
+            return Err(AppError::Invalid("自身不能作为父分类".into()));
+        }
+        let parent: Category = query_all(
+            &conn,
+            "SELECT id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted \
+             FROM categories WHERE id=?1 AND is_deleted=0",
+            rusqlite::params![pid],
+        )?
+        .into_iter()
+        .next()
+        .ok_or_else(|| AppError::NotFound(format!("父分类不存在: {pid}")))?;
+        if parent.kind != existing.kind {
+            return Err(AppError::Invalid("父分类类型需一致".into()));
+        }
+    }
+
+    let name = input.name.unwrap_or(existing.name);
+    let icon = input.icon.or(existing.icon);
+    let color = input.color.or(existing.color);
+
+    conn.execute(
+        "UPDATE categories SET name=?1, icon=?2, color=?3, parent_id=?4, updated_at=?5, version=version+1, device_id=?6 WHERE id=?7",
+        rusqlite::params![name, icon, color, parent_id, now, did, id],
+    )?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn reorder_categories(db: State<'_, DbState>, items: Vec<ReorderItem>) -> Result<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let now = now_iso();
+    let did = device_id();
+    for item in &items {
+        conn.execute(
+            "UPDATE categories SET sort_order=?1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
+            rusqlite::params![item.sort_order, now, did, item.id],
+        )?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -54,8 +127,8 @@ mod tests {
     fn list_categories(conn: &rusqlite::Connection) -> Vec<Category> {
         query_all(
             conn,
-            "SELECT id,name,kind,parent_id,icon,color,created_at,updated_at,version,device_id,is_deleted \
-             FROM categories WHERE is_deleted=0 ORDER BY kind, created_at",
+            "SELECT id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted \
+             FROM categories WHERE is_deleted=0 ORDER BY kind, sort_order, created_at",
             [],
         )
         .unwrap()
@@ -78,8 +151,8 @@ mod tests {
         let id = new_uuid();
         let now = now_iso();
         conn.execute(
-            "INSERT INTO categories (id,name,kind,parent_id,icon,color,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES (?1,?2,?3,NULL,NULL,NULL,?4,?5,?6,?7,0)",
+            "INSERT INTO categories (id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,?2,?3,NULL,NULL,NULL,0,?4,?5,?6,?7,0)",
             rusqlite::params![id, "交通", "expense", now, now, 1, device_id()],
         )
         .unwrap();
@@ -94,14 +167,14 @@ mod tests {
         let child_id = new_uuid();
         let now = now_iso();
         conn.execute(
-            "INSERT INTO categories (id,name,kind,parent_id,icon,color,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES (?1,?2,'expense',NULL,NULL,NULL,?3,?4,?5,?6,0)",
+            "INSERT INTO categories (id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,?2,'expense',NULL,NULL,NULL,0,?3,?4,?5,?6,0)",
             rusqlite::params![parent_id, "出行", now, now, 1, device_id()],
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO categories (id,name,kind,parent_id,icon,color,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES (?1,?2,'expense',?3,NULL,NULL,?4,?5,?6,?7,0)",
+            "INSERT INTO categories (id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,?2,'expense',?3,NULL,NULL,0,?4,?5,?6,?7,0)",
             rusqlite::params![child_id, "打车", parent_id, now, now, 1, device_id()],
         )
         .unwrap();
@@ -116,8 +189,8 @@ mod tests {
         let id = new_uuid();
         let now = now_iso();
         conn.execute(
-            "INSERT INTO categories (id,name,kind,parent_id,icon,color,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES (?1,?2,'expense',NULL,NULL,NULL,?3,?4,?5,?6,0)",
+            "INSERT INTO categories (id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,?2,'expense',NULL,NULL,NULL,0,?3,?4,?5,?6,0)",
             rusqlite::params![id, "临时分类", now, now, 1, device_id()],
         )
         .unwrap();
@@ -128,5 +201,77 @@ mod tests {
         )
         .unwrap();
         assert!(!list_categories(&conn).iter().any(|c| c.id == id));
+    }
+
+    #[test]
+    fn update_category_updates_fields() {
+        use crate::models::CategoryUpdateInput;
+        let conn = setup();
+        let id = new_uuid();
+        let now = now_iso();
+        conn.execute(
+            "INSERT INTO categories (id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,?2,'expense',NULL,NULL,NULL,0,?3,?4,?5,?6,0)",
+            rusqlite::params![id, "原始分类", now, now, 1, device_id()],
+        )
+        .unwrap();
+
+        let input = CategoryUpdateInput {
+            name: Some("更新后".into()),
+            icon: Some("🍕".into()),
+            color: Some("#FF0000".into()),
+            parent_id: None,
+        };
+        conn.execute(
+            "UPDATE categories SET name=?1, icon=?2, color=?3, parent_id=?4, updated_at=?5, version=version+1, device_id=?6 WHERE id=?7",
+            rusqlite::params![input.name, input.icon, input.color, input.parent_id.unwrap_or(None), now_iso(), device_id(), id],
+        )
+        .unwrap();
+        let cats = list_categories(&conn);
+        let updated = cats.iter().find(|c| c.id == id).unwrap();
+        assert_eq!(updated.name, "更新后");
+        assert_eq!(updated.icon.as_deref(), Some("🍕"));
+        assert_eq!(updated.color.as_deref(), Some("#FF0000"));
+    }
+
+    #[test]
+    fn reorder_categories_sets_sort_order() {
+        let conn = setup();
+        let id1 = new_uuid();
+        let id2 = new_uuid();
+        let now = now_iso();
+        conn.execute(
+            "INSERT INTO categories (id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,?2,'expense',NULL,NULL,NULL,0,?3,?4,?5,?6,0)",
+            rusqlite::params![id1, "分类A", now, now, 1, device_id()],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO categories (id,name,kind,parent_id,icon,color,sort_order,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,?2,'expense',NULL,NULL,NULL,0,?3,?4,?5,?6,0)",
+            rusqlite::params![id2, "分类B", now, now, 1, device_id()],
+        )
+        .unwrap();
+
+        conn.execute(
+            "UPDATE categories SET sort_order=?1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
+            rusqlite::params![2, now_iso(), device_id(), id1],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE categories SET sort_order=?1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
+            rusqlite::params![1, now_iso(), device_id(), id2],
+        )
+        .unwrap();
+
+        let cats = list_categories(&conn);
+        let a = cats.iter().find(|c| c.id == id1).unwrap();
+        let b = cats.iter().find(|c| c.id == id2).unwrap();
+        assert_eq!(b.sort_order, 1);
+        assert_eq!(a.sort_order, 2);
+        // B should come before A in sorted order
+        let a_pos = cats.iter().position(|c| c.id == id1).unwrap();
+        let b_pos = cats.iter().position(|c| c.id == id2).unwrap();
+        assert!(b_pos < a_pos);
     }
 }

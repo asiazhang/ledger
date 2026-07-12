@@ -44,6 +44,7 @@ export interface Category extends Syncable {
   parent_id: string | null
   icon: string | null
   color: string | null
+  sort_order: number
   created_at: string
 }
 
@@ -51,6 +52,20 @@ export interface CategoryInput {
   name: string
   kind: CategoryKind
   parent_id?: string | null
+  icon?: string | null
+  color?: string | null
+}
+
+export interface CategoryUpdateInput {
+  name?: string
+  icon?: string | null
+  color?: string | null
+  parent_id?: string | null
+}
+
+export interface ReorderItem {
+  id: string
+  sort_order: number
 }
 
 export type TransactionKind = 'income' | 'expense' | 'transfer' | 'refund' | 'buy' | 'sell'

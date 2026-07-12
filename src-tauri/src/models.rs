@@ -149,6 +149,7 @@ pub struct Category {
     pub parent_id: Option<String>,
     pub icon: Option<String>,
     pub color: Option<String>,
+    pub sort_order: i64,
     pub created_at: String,
     pub updated_at: String,
     pub version: i64,
@@ -161,6 +162,22 @@ pub struct CategoryInput {
     pub name: String,
     pub kind: String,
     pub parent_id: Option<String>,
+    pub icon: Option<String>,
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CategoryUpdateInput {
+    pub name: Option<String>,
+    pub icon: Option<String>,
+    pub color: Option<String>,
+    pub parent_id: Option<Option<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReorderItem {
+    pub id: String,
+    pub sort_order: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -435,11 +452,12 @@ impl FromRow for Category {
             parent_id: row.get(3)?,
             icon: row.get(4)?,
             color: row.get(5)?,
-            created_at: row.get(6)?,
-            updated_at: row.get(7)?,
-            version: row.get(8)?,
-            device_id: row.get(9)?,
-            is_deleted: row.get::<_, i64>(10)? != 0,
+            sort_order: row.get(6)?,
+            created_at: row.get(7)?,
+            updated_at: row.get(8)?,
+            version: row.get(9)?,
+            device_id: row.get(10)?,
+            is_deleted: row.get::<_, i64>(11)? != 0,
         })
     }
 }
