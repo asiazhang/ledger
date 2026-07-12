@@ -1,3 +1,4 @@
+use rusqlite::Connection;
 use tauri::State;
 
 use crate::db::query::query_all;
@@ -5,20 +6,16 @@ use crate::db::{DbState, device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{Category, CategoryInput, CategoryUpdateInput, ReorderItem};
 
-#[tauri::command]
-pub fn list_categories(db: State<'_, DbState>) -> Result<Vec<Category>> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+pub fn list_categories_internal(conn: &Connection) -> Result<Vec<Category>> {
     query_all(
-        &conn,
+        conn,
         "SELECT id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted \
          FROM categories WHERE is_deleted=0 ORDER BY kind, sort_order, created_at",
         [],
     )
 }
 
-#[tauri::command]
-pub fn create_category(db: State<'_, DbState>, input: CategoryInput) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+pub fn create_category_internal(conn: &Connection, input: CategoryInput) -> Result<String> {
     let id = new_uuid();
     let now = now_iso();
     conn.execute(
@@ -38,6 +35,18 @@ pub fn create_category(db: State<'_, DbState>, input: CategoryInput) -> Result<S
         ],
     )?;
     Ok(id)
+}
+
+#[tauri::command]
+pub fn list_categories(db: State<'_, DbState>) -> Result<Vec<Category>> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    list_categories_internal(&conn)
+}
+
+#[tauri::command]
+pub fn create_category(db: State<'_, DbState>, input: CategoryInput) -> Result<String> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    create_category_internal(&conn, input)
 }
 
 #[tauri::command]
@@ -269,7 +278,6 @@ mod tests {
         let b = cats.iter().find(|c| c.id == id2).unwrap();
         assert_eq!(b.sort_order, 1);
         assert_eq!(a.sort_order, 2);
-        // B should come before A in sorted order
         let a_pos = cats.iter().position(|c| c.id == id1).unwrap();
         let b_pos = cats.iter().position(|c| c.id == id2).unwrap();
         assert!(b_pos < a_pos);
