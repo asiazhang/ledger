@@ -149,6 +149,7 @@ export interface CreateTransactionResult {
 
 export interface ImportedRow {
   date: string
+  kind: 'income' | 'expense'
   amount_cents: number
   note: string
   category_name: string | null

@@ -28,6 +28,12 @@ const accountOptions = () =>
   store.accounts.map((a) => ({ label: a.name, value: a.id }))
 
 async function pickFile() {
+  if (!accountId.value) {
+    message.warning('请先选择目标账户')
+    return
+  }
+  const account = store.accountMap.get(accountId.value) as Account | undefined
+  if (!account) return
   const selected = await open({
     multiple: false,
     filters: [
@@ -57,8 +63,8 @@ async function doImport() {
   importing.value = true
   try {
     const inputs = rows.value.map((r) => ({
-      kind: (r.amount_cents >= 0 ? 'income' : 'expense') as 'income' | 'expense',
-      amount_cents: Math.abs(r.amount_cents),
+      kind: r.kind,
+      amount_cents: r.amount_cents,
       currency_code: account.currency_code,
       account_id: accountId.value!,
       note: r.note || null,
@@ -78,18 +84,20 @@ async function doImport() {
   }
 }
 
+const kindLabel: Record<string, string> = { income: '收入', expense: '支出' }
+
 const columns: DataTableColumns<ImportedRow> = [
   { title: '日期', key: 'date', width: 120 },
   {
     title: '金额',
     key: 'amount_cents',
     render: (row) =>
-      row.amount_cents >= 0
+      row.kind === 'income'
         ? h(NTag, { type: 'success' }, () => formatAmount(row.amount_cents))
         : h(NTag, { type: 'error' }, () => formatAmount(row.amount_cents)),
   },
   { title: '备注', key: 'note' },
-  { title: '分类', key: 'category_name', render: (row) => row.category_name ?? '-' },
+  { title: '类型', key: 'kind', render: (row) => kindLabel[row.kind] ?? row.kind },
 ]
 
 onMounted(async () => {

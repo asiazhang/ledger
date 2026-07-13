@@ -40,6 +40,22 @@ pub fn parse_amount_cents(raw: &str) -> Result<i64> {
     Ok((parsed * 100.0).round() as i64)
 }
 
+fn make_imported_row(
+    date: String,
+    amount_cents: i64,
+    note: String,
+    category_name: Option<String>,
+) -> ImportedRow {
+    let kind = if amount_cents >= 0 { "income" } else { "expense" };
+    ImportedRow {
+        date,
+        kind: kind.to_string(),
+        amount_cents: amount_cents.abs(),
+        note,
+        category_name,
+    }
+}
+
 pub fn parse_csv(path: &str) -> Result<Vec<ImportedRow>> {
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(true)
@@ -76,12 +92,7 @@ pub fn parse_csv(path: &str) -> Result<Vec<ImportedRow>> {
         if date.is_empty() {
             continue;
         }
-        out.push(ImportedRow {
-            date,
-            amount_cents,
-            note,
-            category_name,
-        });
+        out.push(make_imported_row(date, amount_cents, note, category_name));
     }
     Ok(out)
 }
@@ -128,12 +139,7 @@ pub fn parse_excel(path: &str) -> Result<Vec<ImportedRow>> {
         if date.is_empty() {
             continue;
         }
-        out.push(ImportedRow {
-            date,
-            amount_cents,
-            note,
-            category_name,
-        });
+        out.push(make_imported_row(date, amount_cents, note, category_name));
     }
     Ok(out)
 }
@@ -230,5 +236,40 @@ mod tests {
     fn test_parse_csv_no_file() {
         let result = parse_csv("/nonexistent/file.csv");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_make_imported_row_income() {
+        let row = make_imported_row("2026-01-01".into(), 5000, "salary".into(), None);
+        assert_eq!(row.kind, "income");
+        assert_eq!(row.amount_cents, 5000);
+        assert_eq!(row.date, "2026-01-01");
+    }
+
+    #[test]
+    fn test_make_imported_row_expense() {
+        let row = make_imported_row("2026-01-02".into(), -1234, "lunch".into(), None);
+        assert_eq!(row.kind, "expense");
+        assert_eq!(row.amount_cents, 1234);
+    }
+
+    #[test]
+    fn test_make_imported_row_zero() {
+        let row = make_imported_row("2026-01-03".into(), 0, "free".into(), None);
+        assert_eq!(row.kind, "income");
+        assert_eq!(row.amount_cents, 0);
+    }
+
+    #[test]
+    fn test_make_imported_row_with_category() {
+        let row = make_imported_row(
+            "2026-01-04".into(),
+            -9999,
+            "groceries".into(),
+            Some("Food".into()),
+        );
+        assert_eq!(row.kind, "expense");
+        assert_eq!(row.amount_cents, 9999);
+        assert_eq!(row.category_name.as_deref(), Some("Food"));
     }
 }

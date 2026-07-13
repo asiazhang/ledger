@@ -268,6 +268,7 @@ pub struct BudgetProgress {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ImportedRow {
     pub date: String,
+    pub kind: String,
     pub amount_cents: i64,
     pub note: String,
     pub category_name: Option<String>,
