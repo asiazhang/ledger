@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rusqlite::Connection;
 
 use crate::error::Result;
@@ -56,4 +58,38 @@ pub fn compute_balance(conn: &Connection, account_id: &str) -> Result<i64> {
             - transfer_out.unwrap_or(0)
             + refund.unwrap_or(0),
     )
+}
+
+/// 批量计算所有未删除账户的余额，单条 SQL 查询。
+///
+/// 原理：一次 LEFT JOIN + CASE WHEN 聚合所有维度的金额，
+/// 按 `a.id` 分组，初始余额与五类交易在一条 SQL 内完成汇总。
+/// 对 N 个账户，从 O(6N) 次数据库往返降为 O(1)。
+pub fn compute_all_balances(conn: &Connection) -> Result<HashMap<String, i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT a.id,
+                a.initial_balance_cents
+                + COALESCE(SUM(CASE WHEN t.kind='income'   THEN t.amount_native_cents ELSE 0 END), 0)
+                - COALESCE(SUM(CASE WHEN t.kind='expense'  THEN t.amount_native_cents ELSE 0 END), 0)
+                + COALESCE(SUM(CASE WHEN t.kind='transfer' AND t.to_account_id = a.id THEN t.amount_native_cents ELSE 0 END), 0)
+                - COALESCE(SUM(CASE WHEN t.kind='transfer' AND t.account_id  = a.id THEN t.amount_native_cents ELSE 0 END), 0)
+                + COALESCE(SUM(CASE WHEN t.kind='refund'   THEN t.amount_native_cents ELSE 0 END), 0)
+         FROM accounts a
+         LEFT JOIN transactions t ON (t.account_id = a.id OR t.to_account_id = a.id) AND t.is_deleted = 0
+         WHERE a.is_deleted = 0
+         GROUP BY a.id",
+    )?;
+
+    let rows = stmt.query_map([], |row| {
+        let id: String = row.get(0)?;
+        let balance: i64 = row.get(1)?;
+        Ok((id, balance))
+    })?;
+
+    let mut map = HashMap::new();
+    for row in rows {
+        let (id, balance) = row?;
+        map.insert(id, balance);
+    }
+    Ok(map)
 }

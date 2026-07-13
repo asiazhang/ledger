@@ -6,20 +6,16 @@ use crate::db::{DbState, device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{Account, AccountBalance, AccountInput};
 
-#[tauri::command]
-pub fn list_accounts(db: State<'_, DbState>) -> Result<Vec<Account>> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+pub fn list_accounts_internal(conn: &Connection) -> Result<Vec<Account>> {
     query_all(
-        &conn,
+        conn,
         "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted \
          FROM accounts WHERE is_deleted=0 ORDER BY created_at",
         [],
     )
 }
 
-#[tauri::command]
-pub fn create_account(db: State<'_, DbState>, input: AccountInput) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+pub fn create_account_internal(conn: &Connection, input: AccountInput) -> Result<String> {
     let id = new_uuid();
     let now = now_iso();
     conn.execute(
@@ -40,9 +36,7 @@ pub fn create_account(db: State<'_, DbState>, input: AccountInput) -> Result<Str
     Ok(id)
 }
 
-#[tauri::command]
-pub fn delete_account(db: State<'_, DbState>, id: String) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+pub fn delete_account_internal(conn: &Connection, id: &str) -> Result<()> {
     conn.execute(
         "UPDATE accounts SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id()],
@@ -50,25 +44,41 @@ pub fn delete_account(db: State<'_, DbState>, id: String) -> Result<()> {
     Ok(())
 }
 
-/// 计算账户当前余额 = 初始余额 + 收入 - 支出 + 转入 - 转出 + 退款。
-fn account_balance(conn: &Connection, account_id: &str) -> Result<i64> {
-    crate::db::balance::compute_balance(conn, account_id)
+#[tauri::command]
+pub fn list_accounts(db: State<'_, DbState>) -> Result<Vec<Account>> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    list_accounts_internal(&conn)
 }
 
 #[tauri::command]
+pub fn create_account(db: State<'_, DbState>, input: AccountInput) -> Result<String> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    create_account_internal(&conn, input)
+}
+
+#[tauri::command]
+pub fn delete_account(db: State<'_, DbState>, id: String) -> Result<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    delete_account_internal(&conn, &id)
+}
+
+/// 批量查询所有账户余额，单次数据库往返完成。
+#[tauri::command]
 pub fn list_account_balances(db: State<'_, DbState>) -> Result<Vec<AccountBalance>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let accounts = query_all(
+    let accounts: Vec<Account> = query_all(
         &conn,
         "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted \
          FROM accounts WHERE is_deleted=0 ORDER BY created_at",
         [],
     )?;
+    let balances = crate::db::balance::compute_all_balances(&conn)?;
     accounts
         .into_iter()
-        .map(|a: Account| {
+        .map(|a| {
+            let balance_cents = balances.get(&a.id).copied().unwrap_or(0);
             Ok(AccountBalance {
-                balance_cents: account_balance(&conn, &a.id)?,
+                balance_cents,
                 account: a,
             })
         })
@@ -240,5 +250,51 @@ mod tests {
         assert_eq!(accounts.len(), 2);
         assert_eq!(balance(&conn, "acc-list-1"), 13000);
         assert_eq!(balance(&conn, "acc-list-2"), 48000);
+    }
+
+    #[test]
+    fn compute_all_balances_matches_per_account() {
+        let conn = setup();
+        insert_account(&conn, "acc-bulk-1", "现金", "cash", "CNY", 10000);
+        insert_account(&conn, "acc-bulk-2", "储蓄卡", "bank", "CNY", 50000);
+        insert_account(&conn, "acc-bulk-3", "信用卡", "credit", "CNY", 0);
+        insert_tx(&conn, "tx-b1", "income", 5000, "acc-bulk-1", None);
+        insert_tx(&conn, "tx-b2", "expense", 2000, "acc-bulk-1", None);
+        insert_tx(&conn, "tx-b3", "expense", 1500, "acc-bulk-2", None);
+        insert_tx(
+            &conn,
+            "tx-b4",
+            "transfer",
+            3000,
+            "acc-bulk-1",
+            Some("acc-bulk-2"),
+        );
+        insert_tx(&conn, "tx-b5", "refund", 500, "acc-bulk-1", None);
+
+        let all = crate::db::balance::compute_all_balances(&conn).unwrap();
+
+        for id in ["acc-bulk-1", "acc-bulk-2", "acc-bulk-3"] {
+            let expected = balance(&conn, id);
+            let got = *all.get(id).unwrap_or(&0);
+            assert_eq!(
+                got, expected,
+                "余额不一致: {id}, 期望 {expected}, 得到 {got}"
+            );
+        }
+    }
+
+    #[test]
+    fn compute_all_balances_excludes_soft_deleted_accounts() {
+        let conn = setup();
+        insert_account(&conn, "acc-active", "活动账户", "cash", "CNY", 1000);
+        insert_account(&conn, "acc-deleted", "已删除", "cash", "CNY", 2000);
+        conn.execute(
+            "UPDATE accounts SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
+            rusqlite::params!["acc-deleted", now_iso(), device_id()],
+        ).unwrap();
+
+        let all = crate::db::balance::compute_all_balances(&conn).unwrap();
+        assert!(all.contains_key("acc-active"), "应包含活动账户");
+        assert!(!all.contains_key("acc-deleted"), "不应包含已删除账户");
     }
 }

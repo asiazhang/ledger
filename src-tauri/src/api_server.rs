@@ -7,8 +7,6 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use rusqlite::Connection;
 
-use crate::db::query::query_all;
-use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::AppError;
 use crate::models::{
     Account, AccountInput, CategoryInput, CreateTransactionResult, TransactionInput,
@@ -64,39 +62,16 @@ async fn list_accounts_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
 ) -> Result<Json<Vec<Account>>, AppError> {
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let accounts = query_all(
-        &conn,
-        "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted \
-         FROM accounts WHERE is_deleted=0 ORDER BY created_at",
-        [],
-    )?;
+    let accounts = crate::commands::list_accounts_internal(&conn)?;
     Ok(Json(accounts))
 }
 
 async fn create_account_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
-    body: String,
+    Json(input): Json<AccountInput>,
 ) -> Result<(StatusCode, Json<String>), AppError> {
-    let input: AccountInput =
-        serde_json::from_str(&body).map_err(|e| AppError::Invalid(e.to_string()))?;
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let id = new_uuid();
-    let now = now_iso();
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0)",
-        rusqlite::params![
-            id,
-            input.name,
-            input.kind,
-            input.currency_code,
-            input.initial_balance_cents.unwrap_or(0),
-            now,
-            now,
-            1,
-            device_id()
-        ],
-    )?;
+    let id = crate::commands::create_account_internal(&conn, input)?;
     Ok((StatusCode::CREATED, Json(id)))
 }
 
@@ -120,31 +95,9 @@ async fn create_category_handler(
 
 async fn batch_create_transactions_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
-    body: String,
+    Json(inputs): Json<Vec<TransactionInput>>,
 ) -> Result<Json<Vec<CreateTransactionResult>>, AppError> {
-    let inputs: Vec<TransactionInput> =
-        serde_json::from_str(&body).map_err(|e| AppError::Invalid(e.to_string()))?;
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    conn.execute("BEGIN", [])?;
-    let mut results = Vec::with_capacity(inputs.len());
-    for input in inputs {
-        match crate::commands::insert_transaction(&conn, input) {
-            Ok(id) => results.push(CreateTransactionResult {
-                success: true,
-                id: Some(id),
-                error: None,
-            }),
-            Err(AppError::Invalid(msg)) => results.push(CreateTransactionResult {
-                success: false,
-                id: None,
-                error: Some(msg),
-            }),
-            Err(e) => {
-                conn.execute("ROLLBACK", [])?;
-                return Err(e);
-            }
-        }
-    }
-    conn.execute("COMMIT", [])?;
+    let results = crate::commands::create_transactions_internal(&conn, inputs)?;
     Ok(Json(results))
 }

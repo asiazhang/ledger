@@ -100,16 +100,14 @@ pub fn create_transaction(db: State<'_, DbState>, input: TransactionInput) -> Re
     insert_transaction(&conn, input)
 }
 
-#[tauri::command]
-pub fn create_transactions(
-    db: State<'_, DbState>,
+pub fn create_transactions_internal(
+    conn: &Connection,
     inputs: Vec<TransactionInput>,
 ) -> Result<Vec<CreateTransactionResult>> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     conn.execute("BEGIN", [])?;
     let mut results = Vec::with_capacity(inputs.len());
     for input in inputs {
-        match insert_transaction(&conn, input) {
+        match insert_transaction(conn, input) {
             Ok(id) => results.push(CreateTransactionResult {
                 success: true,
                 id: Some(id),
@@ -128,6 +126,15 @@ pub fn create_transactions(
     }
     conn.execute("COMMIT", [])?;
     Ok(results)
+}
+
+#[tauri::command]
+pub fn create_transactions(
+    db: State<'_, DbState>,
+    inputs: Vec<TransactionInput>,
+) -> Result<Vec<CreateTransactionResult>> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    create_transactions_internal(&conn, inputs)
 }
 
 #[tauri::command]
