@@ -1,9 +1,28 @@
 use rusqlite::Connection;
 
 use crate::commands::fx::account_currency_code;
+use crate::db::query::{FromRow, query_all};
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{AccountType, TransactionInput};
+
+struct ActiveLot {
+    id: String,
+    remaining_quantity: f64,
+    cost_per_unit_cents: i64,
+    currency_code: String,
+}
+
+impl FromRow for ActiveLot {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(ActiveLot {
+            id: row.get(0)?,
+            remaining_quantity: row.get(1)?,
+            cost_per_unit_cents: row.get(2)?,
+            currency_code: row.get(3)?,
+        })
+    }
+}
 
 pub(crate) fn create_buy_transaction(conn: &Connection, input: TransactionInput) -> Result<String> {
     let instrument_id = input
@@ -104,25 +123,16 @@ pub(crate) fn create_sell_transaction(
     }
     let amount_cents = gross_proceeds - fee_cents;
 
-    let mut stmt = conn.prepare(
+    let lots: Vec<ActiveLot> = query_all(
+        conn,
         "SELECT id, remaining_quantity, cost_per_unit_cents, currency_code \
          FROM security_lots \
          WHERE account_id=?1 AND instrument_id=?2 AND remaining_quantity > 0 \
          ORDER BY created_at ASC, id ASC",
+        rusqlite::params![input.account_id, instrument_id],
     )?;
-    let lots = stmt
-        .query_map(rusqlite::params![input.account_id, instrument_id], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, f64>(1)?,
-                r.get::<_, i64>(2)?,
-                r.get::<_, String>(3)?,
-            ))
-        })?
-        .collect::<std::result::Result<Vec<(String, f64, i64, String)>, _>>()?;
-    drop(stmt);
 
-    let total_available: f64 = lots.iter().map(|(_, rem, _, _)| rem).sum();
+    let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
     if total_available < quantity {
         return Err(AppError::Invalid(format!(
             "可卖出数量不足，当前持有 {}，尝试卖出 {}",
@@ -160,25 +170,28 @@ pub(crate) fn create_sell_transaction(
     )?;
 
     let mut remaining_to_sell = quantity;
-    let mut matched_lots: Vec<(String, f64, i64, String)> = Vec::new();
-    for (lot_id, rem, cost, ccy) in lots {
+    let mut matched_lots: Vec<ActiveLot> = Vec::new();
+    for lot in lots {
         if remaining_to_sell <= 0.0 {
             break;
         }
-        let matched = rem.min(remaining_to_sell);
-        matched_lots.push((lot_id, matched, cost, ccy));
+        let matched = lot.remaining_quantity.min(remaining_to_sell);
+        matched_lots.push(ActiveLot {
+            remaining_quantity: matched,
+            ..lot
+        });
         remaining_to_sell -= matched;
     }
 
     let match_count = matched_lots.len();
     let mut allocated_fee_total = 0i64;
-    for (i, (lot_id, matched_qty, cost_per_unit, ccy)) in matched_lots.iter().enumerate() {
-        let lot_proceeds = (matched_qty * price_cents as f64).round() as i64;
-        let lot_cost = (matched_qty * *cost_per_unit as f64).round() as i64;
+    for (i, lot) in matched_lots.iter().enumerate() {
+        let lot_proceeds = (lot.remaining_quantity * price_cents as f64).round() as i64;
+        let lot_cost = (lot.remaining_quantity * lot.cost_per_unit_cents as f64).round() as i64;
         let allocated_fee = if i == match_count - 1 {
             fee_cents - allocated_fee_total
         } else {
-            let fee = (fee_cents as f64 * matched_qty / quantity).floor() as i64;
+            let fee = (fee_cents as f64 * lot.remaining_quantity / quantity).floor() as i64;
             allocated_fee_total += fee;
             fee
         };
@@ -187,11 +200,11 @@ pub(crate) fn create_sell_transaction(
         conn.execute(
             "INSERT INTO security_lot_sales (id,sell_transaction_id,lot_id,quantity,cost_per_unit_cents,realized_pnl_cents,currency_code,created_at) \
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-            rusqlite::params![sale_id, id, lot_id, matched_qty, cost_per_unit, realized_pnl, ccy, now],
+            rusqlite::params![sale_id, id, lot.id, lot.remaining_quantity, lot.cost_per_unit_cents, realized_pnl, lot.currency_code, now],
         )?;
         conn.execute(
             "UPDATE security_lots SET remaining_quantity=remaining_quantity-?1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
-            rusqlite::params![matched_qty, now, device_id(), lot_id],
+            rusqlite::params![lot.remaining_quantity, now, device_id(), lot.id],
         )?;
     }
 

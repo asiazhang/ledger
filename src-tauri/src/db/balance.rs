@@ -2,7 +2,22 @@ use std::collections::HashMap;
 
 use rusqlite::Connection;
 
+use crate::db::query::{FromRow, query_all};
 use crate::error::Result;
+
+struct AccountBalanceEntry {
+    id: String,
+    balance_cents: i64,
+}
+
+impl FromRow for AccountBalanceEntry {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(AccountBalanceEntry {
+            id: row.get(0)?,
+            balance_cents: row.get(1)?,
+        })
+    }
+}
 
 /// 计算账户当前余额 = 初始余额 + 收入 - 支出 + 转入 - 转出 + 退款。
 ///
@@ -66,7 +81,8 @@ pub fn compute_balance(conn: &Connection, account_id: &str) -> Result<i64> {
 /// 按 `a.id` 分组，初始余额与五类交易在一条 SQL 内完成汇总。
 /// 对 N 个账户，从 O(6N) 次数据库往返降为 O(1)。
 pub fn compute_all_balances(conn: &Connection) -> Result<HashMap<String, i64>> {
-    let mut stmt = conn.prepare(
+    let entries: Vec<AccountBalanceEntry> = query_all(
+        conn,
         "SELECT a.id,
                 a.initial_balance_cents
                 + COALESCE(SUM(CASE WHEN t.kind='income'   THEN t.amount_native_cents ELSE 0 END), 0)
@@ -78,18 +94,11 @@ pub fn compute_all_balances(conn: &Connection) -> Result<HashMap<String, i64>> {
          LEFT JOIN transactions t ON (t.account_id = a.id OR t.to_account_id = a.id) AND t.is_deleted = 0
          WHERE a.is_deleted = 0
          GROUP BY a.id",
+        [],
     )?;
 
-    let rows = stmt.query_map([], |row| {
-        let id: String = row.get(0)?;
-        let balance: i64 = row.get(1)?;
-        Ok((id, balance))
-    })?;
-
-    let mut map = HashMap::new();
-    for row in rows {
-        let (id, balance) = row?;
-        map.insert(id, balance);
-    }
-    Ok(map)
+    Ok(entries
+        .into_iter()
+        .map(|e| (e.id, e.balance_cents))
+        .collect())
 }

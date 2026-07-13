@@ -696,3 +696,29 @@ impl FromRow for CategoryShare {
         })
     }
 }
+
+impl FromRow for BudgetProgress {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        let amount_cents: i64 = row.get(3)?;
+        let spent_cents: i64 = row.get(11)?;
+        Ok(BudgetProgress {
+            budget: Budget {
+                id: row.get(0)?,
+                category_id: row.get(1)?,
+                period: row.get(2)?,
+                amount_cents,
+                start_date: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+                version: row.get(7)?,
+                device_id: row.get(8)?,
+                is_deleted: row.get::<_, i64>(9)? != 0,
+            },
+            category_name: row
+                .get::<_, Option<String>>(10)?
+                .unwrap_or_else(|| "未分类".into()),
+            spent_cents,
+            over_budget: spent_cents > amount_cents,
+        })
+    }
+}

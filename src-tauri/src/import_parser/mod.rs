@@ -46,7 +46,11 @@ fn make_imported_row(
     note: String,
     category_name: Option<String>,
 ) -> ImportedRow {
-    let kind = if amount_cents >= 0 { "income" } else { "expense" };
+    let kind = if amount_cents >= 0 {
+        "income"
+    } else {
+        "expense"
+    };
     ImportedRow {
         date,
         kind: kind.to_string(),
