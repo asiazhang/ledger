@@ -354,6 +354,7 @@ pub struct Instrument {
     pub kind: InstrumentType,
     pub name: Option<String>,
     pub currency_code: String,
+    pub market: String,
     pub created_at: String,
     pub updated_at: String,
     pub version: i64,
@@ -367,6 +368,18 @@ pub struct InstrumentInput {
     pub kind: InstrumentType,
     pub name: Option<String>,
     pub currency_code: String,
+    pub market: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncProgress {
+    pub current: usize,
+    pub total: usize,
+    pub market: String,
+    pub done: bool,
+    pub total_inserted: usize,
+    pub total_updated: usize,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -599,10 +612,11 @@ impl FromRow for Instrument {
             kind: row.get(2)?,
             name: row.get(3)?,
             currency_code: row.get(4)?,
-            created_at: row.get(5)?,
-            updated_at: row.get(6)?,
-            version: row.get(7)?,
-            device_id: row.get(8)?,
+            market: row.get(5)?,
+            created_at: row.get(6)?,
+            updated_at: row.get(7)?,
+            version: row.get(8)?,
+            device_id: row.get(9)?,
         })
     }
 }

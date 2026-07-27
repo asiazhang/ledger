@@ -19,8 +19,8 @@ fn insert_account(conn: &Connection, id: &str, name: &str, kind: &str, currency:
 
 fn insert_instrument(conn: &Connection, id: &str, symbol: &str, name: &str, currency: &str) {
     conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,'stock',?3,?4,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+         "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+          VALUES (?1,?2,'stock',?3,?4,'unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
         params![id, symbol, name, currency],
     ).unwrap();
 }
@@ -300,8 +300,8 @@ fn create_instrument_inserts_and_returns_id() {
     let id = crate::db::new_uuid();
     let now = crate::db::now_iso();
     conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,'stock',?3,?4,?5,?6,?7,?8)",
+        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+         VALUES (?1,?2,'stock',?3,?4,'unknown',?5,?6,?7,?8)",
         params![id, "NVDA", "NVIDIA Corporation", "USD", now, now, 1, "test"],
     ).unwrap();
     let (symbol, name, ccy): (String, Option<String>, String) = conn
@@ -323,13 +323,13 @@ fn create_instrument_is_idempotent() {
     let id2 = crate::db::new_uuid();
     let now = crate::db::now_iso();
     conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id) \
-         VALUES (?1,'AAPL','stock',?2,'USD',?3,?4,?5,?6)",
+        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+         VALUES (?1,'AAPL','stock',?2,'USD','unknown',?3,?4,?5,?6)",
         params![id1, "Apple Inc.", now, now, 1, "test"],
     ).unwrap();
     let result = conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id) \
-         VALUES (?1,'AAPL','stock',?2,'USD',?3,?4,?5,?6)",
+        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+         VALUES (?1,'AAPL','stock',?2,'USD','unknown',?3,?4,?5,?6)",
         params![id2, "Apple Again", now, now, 1, "test"],
     );
     assert!(result.is_err());

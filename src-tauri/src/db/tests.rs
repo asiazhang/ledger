@@ -103,8 +103,8 @@ fn cross_currency_holding_pnl() {
     )
     .unwrap();
     conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id) \
-         VALUES (?1,'NVDA','stock','NVIDIA','USD','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+          VALUES (?1,'NVDA','stock','NVIDIA','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
         params![instrument_id],
     )
     .unwrap();
@@ -178,8 +178,8 @@ fn holding_reverse_rate_fallback() {
     )
     .unwrap();
     conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id) \
-         VALUES (?1,'REV','stock','reverse test','USD','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+          VALUES (?1,'REV','stock','reverse test','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
         params![instrument_id],
     )
     .unwrap();
@@ -249,8 +249,8 @@ fn holding_id_unique_across_currencies() {
     )
     .unwrap();
     conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id) \
-         VALUES (?1,'MULTI','stock','多币种标的','USD','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+          VALUES (?1,'MULTI','stock','多币种标的','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
         params![instrument_id],
     )
     .unwrap();
@@ -337,8 +337,8 @@ fn holding_excludes_soft_deleted_account() {
         .unwrap();
     }
     conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id) \
-         VALUES (?1,'SOFT','stock','soft-delete test','USD','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+          VALUES (?1,'SOFT','stock','soft-delete test','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
         params![instrument_id],
     )
     .unwrap();

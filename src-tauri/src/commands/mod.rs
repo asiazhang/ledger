@@ -7,6 +7,7 @@ pub mod import;
 pub mod investment;
 pub mod reports;
 pub mod scheduled;
+pub mod sync;
 pub mod transactions;
 
 pub use accounts::*;
@@ -17,4 +18,5 @@ pub use import::*;
 pub use investment::*;
 pub use reports::*;
 pub use scheduled::*;
+pub use sync::*;
 pub use transactions::*;

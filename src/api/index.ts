@@ -111,4 +111,7 @@ export const api = {
     invoke<string>('execute_scheduled_occurrence', { input }),
   expandScheduledOccurrences: (id: string) =>
     invoke<string[]>('expand_scheduled_occurrences', { id }),
+
+  // 数据同步
+  syncInstruments: () => invoke<void>('sync_instruments'),
 }

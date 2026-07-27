@@ -111,7 +111,7 @@ pub(crate) fn create_market_price(conn: &Connection, input: MarketPriceInput) ->
 pub(crate) fn list_instruments(conn: &Connection) -> Result<Vec<Instrument>> {
     query_all(
         conn,
-        "SELECT id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id \
+        "SELECT id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id \
          FROM instruments ORDER BY symbol",
         [],
     )
@@ -121,27 +121,38 @@ pub(crate) fn create_instrument(conn: &Connection, input: InstrumentInput) -> Re
     if input.symbol.trim().is_empty() {
         return Err(AppError::Invalid("标的代码不能为空".into()));
     }
-    let existing_id: Option<String> = conn
+    let market = input.market.as_deref().unwrap_or("unknown");
+    let existing_id: Option<(String, Option<String>, String)> = conn
         .query_row(
-            "SELECT id FROM instruments WHERE symbol=?1 AND instrument_type=?2",
+            "SELECT id, name, market FROM instruments WHERE symbol=?1 AND instrument_type=?2",
             rusqlite::params![input.symbol, input.kind],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .ok();
-    if let Some(id) = existing_id {
-        return Ok(id);
+    if let Some((existing_id, existing_name, existing_market)) = existing_id {
+        let name_changed = input.name != existing_name;
+        let market_changed = market != existing_market;
+        if name_changed || market_changed {
+            let now = now_iso();
+            conn.execute(
+                "UPDATE instruments SET name=?1, market=?2, updated_at=?3, version=version+1 WHERE id=?4",
+                rusqlite::params![input.name, market, now, existing_id],
+            )?;
+        }
+        return Ok(existing_id);
     }
     let id = new_uuid();
     let now = now_iso();
     conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
         rusqlite::params![
             id,
             input.symbol,
             input.kind,
             input.name,
             input.currency_code,
+            market,
             now,
             now,
             1,

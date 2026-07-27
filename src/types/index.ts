@@ -157,6 +157,15 @@ export interface ImportedRow {
 
 export type InstrumentType = 'stock' | 'fund' | 'bond' | 'etf' | 'other'
 
+export type MarketType = 'sh' | 'sz' | 'hk' | 'unknown'
+
+export const MARKET_TYPE_LABELS: Record<MarketType, string> = {
+  sh: '沪市',
+  sz: '深市',
+  hk: '港股',
+  unknown: '未知',
+}
+
 export const INSTRUMENT_TYPE_LABELS: Record<InstrumentType, string> = {
   stock: '股票',
   fund: '基金',
@@ -171,6 +180,7 @@ export interface Instrument extends Syncable {
   type: InstrumentType
   name: string | null
   currency_code: string
+  market: MarketType
   created_at: string
 }
 
@@ -179,6 +189,7 @@ export interface InstrumentInput {
   type: InstrumentType
   name?: string | null
   currency_code: string
+  market?: MarketType | null
 }
 
 /** 分 -> 元字符串，按币种小数位格式化 */
@@ -407,4 +418,14 @@ export interface Holding {
   market_value_cents: number | null
   unrealized_pnl_cents: number | null
   updated_at: string
+}
+
+export interface SyncProgress {
+  current: number
+  total: number
+  market: string
+  done: boolean
+  total_inserted: number
+  total_updated: number
+  error: string | null
 }

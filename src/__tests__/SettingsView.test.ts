@@ -31,13 +31,13 @@ beforeEach(async () => {
 })
 
 describe('SettingsView.vue', () => {
-  it('渲染 4 个 TabPane', () => {
+  it('渲染 5 个 TabPane', () => {
     const wrapper = mount(SettingsView)
     const tabs = wrapper.findAll('.n-tabs-tab')
     const settingsTabs = tabs.filter(
-      (t) => ['分类', '币种', '外观', '关于'].includes(t.text()),
+      (t) => ['分类', '币种', '数据管理', '外观', '关于'].includes(t.text()),
     )
-    expect(settingsTabs.length).toBe(4)
+    expect(settingsTabs.length).toBe(5)
   })
 
   it('Tab 标签文本正确', () => {
@@ -46,6 +46,7 @@ describe('SettingsView.vue', () => {
     const labels = tabs.map((t) => t.text())
     expect(labels).toContain('分类')
     expect(labels).toContain('币种')
+    expect(labels).toContain('数据管理')
     expect(labels).toContain('外观')
     expect(labels).toContain('关于')
   })
@@ -65,7 +66,7 @@ describe('SettingsView.vue', () => {
 
   it('外观 Tab 包含主题切换开关', async () => {
     const wrapper = mount(SettingsView)
-    const appearanceTab = wrapper.findAll('.n-tabs-tab')[2]
+    const appearanceTab = wrapper.findAll('.n-tabs-tab')[3]
     await appearanceTab.trigger('click')
     await nextTick()
     expect(wrapper.html()).toContain('深色模式')
@@ -73,7 +74,7 @@ describe('SettingsView.vue', () => {
 
   it('关于 Tab 显示版本号', async () => {
     const wrapper = mount(SettingsView)
-    const aboutTab = wrapper.findAll('.n-tabs-tab')[3]
+    const aboutTab = wrapper.findAll('.n-tabs-tab')[4]
     await aboutTab.trigger('click')
     await nextTick()
     expect(wrapper.html()).toContain('版本号')
