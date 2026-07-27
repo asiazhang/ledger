@@ -49,6 +49,7 @@ struct StockItem {
 }
 
 fn fetch_page(market: &MarketConfig, page: usize) -> Result<Vec<StockItem>, AppError> {
+    tracing::debug!(market = %market.name, page = %page, "获取股票数据页");
     let client = reqwest::blocking::Client::builder()
         .user_agent("Mozilla/5.0")
         .build()
@@ -63,11 +64,17 @@ fn fetch_page(market: &MarketConfig, page: usize) -> Result<Vec<StockItem>, AppE
         .get(&url)
         .timeout(std::time::Duration::from_secs(30))
         .send()
-        .map_err(|e| AppError::Io(format!("HTTP 请求失败: {e}")))?;
+        .map_err(|e| {
+            tracing::error!(market = %market.name, page = %page, error = %e, "HTTP 请求失败");
+            AppError::Io(format!("HTTP 请求失败: {e}"))
+        })?;
 
     let json: Value = resp
         .json()
-        .map_err(|e| AppError::Parse(format!("JSON 解析失败: {e}")))?;
+        .map_err(|e| {
+            tracing::warn!(market = %market.name, page = %page, error = %e, "JSON 解析失败");
+            AppError::Parse(format!("JSON 解析失败: {e}"))
+        })?;
 
     let diff = json["data"]["diff"]
         .as_array()

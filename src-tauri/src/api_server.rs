@@ -6,6 +6,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use rusqlite::Connection;
+use tower_http::trace::TraceLayer;
 
 use crate::error::AppError;
 use crate::models::{
@@ -27,6 +28,7 @@ impl IntoResponse for AppError {
 
 pub fn build_router(state: Arc<Mutex<Connection>>) -> Router {
     Router::new()
+        .layer(TraceLayer::new_for_http())
         .route(
             "/api/v1/accounts",
             get(list_accounts_handler).post(create_account_handler),

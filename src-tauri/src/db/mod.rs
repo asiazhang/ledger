@@ -34,7 +34,9 @@ fn migrations() -> &'static Migrations<'static> {
 
 /// 初始化数据库 schema 与默认种子数据（全部由迁移驱动）。
 pub fn init_db(conn: &mut Connection) -> Result<()> {
+    tracing::info!("开始执行数据库迁移");
     migrations().to_latest(conn)?;
+    tracing::info!("数据库迁移完成");
     Ok(())
 }
 
@@ -83,6 +85,7 @@ pub fn open_db(app: &tauri::AppHandle) -> Result<DbState> {
         .map_err(|e| AppError::Io(e.to_string()))?;
     std::fs::create_dir_all(&dir)?;
     let db_path = dir.join("ledger.db");
+    tracing::info!(db_path = %db_path.display(), "打开数据库");
     let mut conn = open_connection(db_path)?;
     init_db(&mut conn)?;
     Ok(DbState {

@@ -13,6 +13,7 @@ import {
   NProgress,
   useMessage,
 } from 'naive-ui'
+import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useAppStore } from '@/stores/app'
 import { api } from '@/api'
@@ -66,6 +67,14 @@ onMounted(async () => {
 onUnmounted(() => {
   unlisten?.()
 })
+
+async function openLogDir() {
+  try {
+    await invoke('plugin:log|open_log_dir')
+  } catch (e: any) {
+    message.error(`打开日志目录失败: ${e}`)
+  }
+}
 
 async function startSync() {
   if (syncStatus.value === 'syncing') return
@@ -159,6 +168,7 @@ async function startSync() {
           <NText>应用名称：Ledger</NText>
           <NText>版本号：{{ pkg.version }}</NText>
           <NText>构建平台：Tauri + Vue 3 + TypeScript</NText>
+          <NButton size="small" @click="openLogDir">打开日志目录</NButton>
         </NSpace>
       </NCard>
     </NTabPane>

@@ -477,6 +477,7 @@ fn days_in_month(year: i64, month: u32) -> u32 {
 
 /// 执行一条 pending 期次：生成 Transaction 并回填。
 pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<String> {
+    tracing::info!(occurrence_id = %occurrence_id, "开始执行定时交易期次");
     let occ: ScheduledTransactionOccurrence = query_one(
         conn,
         "SELECT id,scheduled_transaction_id,scheduled_date,status,transaction_id,amount_cents,\
@@ -487,6 +488,7 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
     .ok_or_else(|| AppError::NotFound("期次不存在".into()))?;
 
     if occ.status != "pending" && occ.status != "failed" {
+        tracing::warn!(occurrence_id = %occurrence_id, status = %occ.status, "期次不能执行，状态不匹配");
         return Err(AppError::Invalid(format!(
             "期次状态为 {}，不能执行",
             occ.status
@@ -515,6 +517,7 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
         rusqlite::params![occurrence_id, now, device_id(), occ.status],
     )?;
     if updated == 0 {
+        tracing::warn!(occurrence_id = %occurrence_id, "期次 CAS 冲突，已被其他设备执行");
         return Err(AppError::Invalid("期次已被其他设备执行".into()));
     }
 
@@ -565,6 +568,7 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
     // 检查计划是否应标记为 completed
     check_and_complete_plan(conn, &st.id)?;
 
+    tracing::info!(occurrence_id = %occurrence_id, transaction_id = %txn_id, "定时交易期次执行成功");
     Ok(txn_id)
 }
 

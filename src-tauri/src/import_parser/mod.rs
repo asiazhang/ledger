@@ -36,7 +36,10 @@ pub fn parse_amount_cents(raw: &str) -> Result<i64> {
     }
     let parsed: f64 = cleaned
         .parse()
-        .map_err(|e| AppError::Parse(format!("无法解析金额 '{raw}': {e}")))?;
+        .map_err(|e| {
+            tracing::warn!(raw = %raw, error = %e, "解析金额失败");
+            AppError::Parse(format!("无法解析金额 '{raw}': {e}"))
+        })?;
     Ok((parsed * 100.0).round() as i64)
 }
 
@@ -61,6 +64,7 @@ fn make_imported_row(
 }
 
 pub fn parse_csv(path: &str) -> Result<Vec<ImportedRow>> {
+    tracing::debug!(path = %path, "开始解析 CSV 文件");
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(true)
         .flexible(true)
@@ -73,8 +77,14 @@ pub fn parse_csv(path: &str) -> Result<Vec<ImportedRow>> {
         .collect();
     let idx = match_columns(&headers);
     let mut out = Vec::new();
-    for record in rdr.records() {
-        let record = record?;
+    for (line_num, record) in rdr.records().enumerate() {
+        let record = match record {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(path = %path, line = line_num + 2, error = %e, "CSV 解析行失败");
+                continue;
+            }
+        };
         let date = idx
             .date
             .and_then(|i| record.get(i))
@@ -102,6 +112,7 @@ pub fn parse_csv(path: &str) -> Result<Vec<ImportedRow>> {
 }
 
 pub fn parse_excel(path: &str) -> Result<Vec<ImportedRow>> {
+    tracing::debug!(path = %path, "开始解析 Excel 文件");
     use calamine::{Reader, open_workbook_auto};
     let mut workbook =
         open_workbook_auto(path).map_err(|e| AppError::Parse(format!("打开 Excel 失败: {e}")))?;
