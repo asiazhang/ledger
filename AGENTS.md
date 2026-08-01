@@ -59,7 +59,7 @@ Ledger 是一个基于 Tauri 2 的桌面记账应用，前端 Vue 3 + TypeScript
 - Naive UI 采用**按需 import**（非全局注册），`App.vue` 硬编码使用 `darkTheme` 暗色主题。
 
 ### 导入流程（AI 驱动）
-导入**不按文件类型解析**，旧入口（`preview_import` 命令、`import_parser` 模块、`ImportView.vue`）已删除。唯一入口是本地 HTTP API `/api/v1`（基础地址 `http://127.0.0.1:9527`）：AI 编程助手读取原始文件、分析格式、把行映射为账户/分类/交易，再通过 `POST /api/v1/accounts`、`POST /api/v1/categories`、`POST /api/v1/transactions/batch` 等端点幂等写库。端点契约与迁移场景参见 `src-tauri/prompts/ledger-api.md`。
+导入**不按文件类型解析**，旧入口（`preview_import` 命令、`import_parser` 模块、`ImportView.vue`）已删除。唯一入口是本地 HTTP API `/api/v1`（基础地址 `http://127.0.0.1:9527`）：AI 编程助手读取原始文件、分析格式、把行映射为账户/分类/交易，再通过 `POST /api/v1/accounts`、`POST /api/v1/categories`、`POST /api/v1/transactions/batch` 等端点幂等写库。端点契约与迁移场景参见 `src-tauri/prompts/ledger-api.md`；机器可读的完整契约由 `GET /api/v1/openapi.json` 生成式返回（utoipa），交互式 UI 在 `http://127.0.0.1:9527/swagger-ui`。
 
 ## 编码约定
 

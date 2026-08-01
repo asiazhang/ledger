@@ -808,3 +808,138 @@ async fn test_batch_dedup_keeps_dedup_hash_unchanged() {
     };
     assert_eq!(hash, hash_after, "dedup_hash 导入后保持不变");
 }
+
+#[tokio::test]
+async fn test_openapi_json_endpoint_returns_doc() {
+    let (app, _) = setup_app();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/openapi.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = body_to_bytes(response.into_body()).await;
+    let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(doc["openapi"].as_str(), Some("3.1.0"));
+    assert!(doc["info"]["title"].is_string());
+    assert_eq!(doc["info"]["version"].as_str(), Some("0.1.0"));
+}
+
+#[tokio::test]
+async fn test_openapi_doc_covers_all_six_endpoints() {
+    let (app, _) = setup_app();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/openapi.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = body_to_bytes(response.into_body()).await;
+    let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let paths = doc["paths"].as_object().expect("应包含 paths 对象");
+
+    let expected: &[(&str, &str)] = &[
+        ("/api/v1/accounts", "get"),
+        ("/api/v1/accounts", "post"),
+        ("/api/v1/categories", "get"),
+        ("/api/v1/categories", "post"),
+        ("/api/v1/currencies", "get"),
+        ("/api/v1/transactions/batch", "post"),
+    ];
+    for (path, method) in expected {
+        assert!(
+            paths.get(*path).and_then(|p| p.get(*method)).is_some(),
+            "OpenAPI 文档应包含端点 {method} {path}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_openapi_doc_batch_wrapper_and_duplicate_field() {
+    let (app, _) = setup_app();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/openapi.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = body_to_bytes(response.into_body()).await;
+    let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let schemas = doc["components"]["schemas"].as_object().unwrap();
+
+    // batch 请求体 wrapper：{ transactions, dedup }
+    let batch = &schemas["TransactionBatchInput"];
+    let props = batch["properties"].as_object().unwrap();
+    assert!(props.contains_key("transactions"));
+    assert!(
+        props.contains_key("dedup"),
+        "batch wrapper 应包含 dedup 字段"
+    );
+    let required = batch["required"].as_array().unwrap();
+    assert!(
+        required.iter().any(|r| r == "transactions"),
+        "transactions 应必填"
+    );
+    assert!(
+        !required.iter().any(|r| r == "dedup"),
+        "dedup 应可缺省（默认 true）"
+    );
+
+    // CreateTransactionResult 应包含 duplicate 字段
+    let result = &schemas["CreateTransactionResult"];
+    assert!(
+        result["properties"]["duplicate"].is_object(),
+        "CreateTransactionResult 应包含 duplicate 字段"
+    );
+
+    // 账户响应应包含 is_hidden（黑洞账户契约）
+    let account = &schemas["Account"];
+    assert!(
+        account["properties"]["is_hidden"].is_object(),
+        "Account 应包含 is_hidden 字段"
+    );
+}
+
+#[tokio::test]
+async fn test_openapi_doc_has_currencies_endpoint() {
+    let (app, _) = setup_app();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/openapi.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = body_to_bytes(response.into_body()).await;
+    let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let paths = doc["paths"].as_object().unwrap();
+    let currencies = &paths["/api/v1/currencies"]["get"];
+    assert!(currencies["summary"].is_string());
+    let schemas = doc["components"]["schemas"].as_object().unwrap();
+    assert!(schemas.contains_key("Currency"));
+    assert!(schemas.contains_key("TransactionInput"));
+}

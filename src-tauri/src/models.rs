@@ -3,11 +3,12 @@ use std::str::FromStr;
 
 use rusqlite::types::{FromSql, FromSqlError, ToSql, ToSqlOutput, ValueRef};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::db::query::FromRow;
 use crate::error::AppError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountType {
     Cash,
@@ -109,7 +110,7 @@ impl FromSql for BudgetPeriod {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct Currency {
     pub code: String,
     pub name: String,
@@ -117,7 +118,7 @@ pub struct Currency {
     pub decimal_places: i64,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct Account {
     pub id: String,
     pub name: String,
@@ -134,7 +135,7 @@ pub struct Account {
     pub is_hidden: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct AccountInput {
     pub name: String,
     #[serde(rename = "type")]
@@ -143,7 +144,7 @@ pub struct AccountInput {
     pub initial_balance_cents: Option<i64>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct Category {
     pub id: String,
     pub name: String,
@@ -158,7 +159,7 @@ pub struct Category {
     pub is_deleted: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct CategoryInput {
     pub name: String,
     pub kind: String,
@@ -199,7 +200,7 @@ pub struct Transaction {
     pub is_deleted: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct TransactionInput {
     pub kind: String,
     pub amount_cents: i64,
@@ -267,7 +268,7 @@ pub struct BudgetProgress {
     pub over_budget: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct CreateTransactionResult {
     pub success: bool,
     pub duplicate: bool,
@@ -275,7 +276,7 @@ pub struct CreateTransactionResult {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct TransactionBatchInput {
     pub transactions: Vec<TransactionInput>,
     #[serde(default = "default_dedup")]
