@@ -282,8 +282,20 @@ pub struct ImportRequest {
 #[derive(Debug, Serialize)]
 pub struct CreateTransactionResult {
     pub success: bool,
+    pub duplicate: bool,
     pub id: Option<String>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TransactionBatchInput {
+    pub transactions: Vec<TransactionInput>,
+    #[serde(default = "default_dedup")]
+    pub dedup: bool,
+}
+
+fn default_dedup() -> bool {
+    true
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

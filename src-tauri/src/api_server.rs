@@ -10,7 +10,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::error::AppError;
 use crate::models::{
-    Account, AccountInput, CategoryInput, CreateTransactionResult, TransactionInput,
+    Account, AccountInput, CategoryInput, CreateTransactionResult, TransactionBatchInput,
 };
 
 impl IntoResponse for AppError {
@@ -97,9 +97,10 @@ async fn create_category_handler(
 
 async fn batch_create_transactions_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
-    Json(inputs): Json<Vec<TransactionInput>>,
+    Json(body): Json<TransactionBatchInput>,
 ) -> Result<Json<Vec<CreateTransactionResult>>, AppError> {
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let results = crate::commands::create_transactions_internal(&conn, inputs)?;
+    let results =
+        crate::commands::create_transactions_internal(&conn, body.transactions, body.dedup)?;
     Ok(Json(results))
 }
