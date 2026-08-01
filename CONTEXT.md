@@ -146,8 +146,9 @@
   - URL 前缀 `/api/v1`，JSON 请求/响应。
   - 错误格式复用 `{kind, message}`。
   - **专用场景**：数据迁移（从第三方 APP 的 CSV/Excel 导入）。
-  - **暴露的接口**：`accounts`（list/create）、`categories`（list/create）、`transactions/batch`、`currencies`（list），共 6 个端点。
+  - **暴露的接口**：`accounts`（list/create）、`categories`（list/create）、`transactions/batch`、`currencies`（list）、`import/knowledge`，共 7 个端点。
   - `accounts` / `categories` 的 create 按自然键幂等（同名复用已有记录）；`transactions/batch` 支持 `dedup` 参数（默认开启）。
+  - `import/knowledge` 返回精简的导入约定文本（Pixiu 列映射、转账拆分、黑洞账户、币种映射、分单位、日期、dedup），供 AI 直接注入系统提示词。
 - **别名**：不使用"本地 API"（过于泛化）、"后端 API"（与 Tauri IPC 混淆）。
 
 ## ImportDedup（导入去重）

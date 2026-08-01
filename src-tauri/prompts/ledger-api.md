@@ -6,6 +6,7 @@
 - **请求格式**: JSON (`Content-Type: application/json`)
 - **响应格式**: JSON
 - **完整契约**: `GET /api/v1/openapi.json` 返回机器可读的 OpenAPI 文档（含全部端点与数据模型），交互式 UI 见 `http://127.0.0.1:9527/swagger-ui`
+- **导入知识**: `GET /api/v1/import/knowledge` 返回精简的导入约定文本（Pixiu 列映射、转账拆分、黑洞账户、币种映射、分单位、日期、dedup），供直接注入系统提示词
 - **错误格式**: `{ "kind": "<ErrorKind>", "message": "<中文错误描述>" }`
   - `Invalid` (400) — 参数校验失败
   - `Parse` (400) — 导入解析失败
@@ -291,11 +292,20 @@
 
 ---
 
+### 7. 获取导入知识
+
+`GET /api/v1/import/knowledge` — 返回精简的导入约定文本（`text/plain`），覆盖 Pixiu 列映射与正负判定 kind、`A → B` 转账拆分、`无`/`→ 无` 映射黑洞账户、中文币种名映射、金额分单位、日期格式、`dedup` 语义，可直接注入系统提示词。
+
+> 各端点的请求/响应结构与字段说明以本地 Swagger UI（`http://127.0.0.1:9527/swagger-ui`）返回的 OpenAPI 契约为准，本文件不再重复。
+
+---
+
 ## 迁移场景典型流程
 
 以从其他记账 App 导入 CSV 数据为例：
 
-1. **拉取已有数据** — `GET /api/v1/currencies` 获取币种清单，构造 `币种名 → code` 映射；`GET /api/v1/categories` 获取分类列表，构造 `分类名称 → 分类 ID` 映射表；`GET /api/v1/accounts` 获取账户列表，构造 `账户名称 → 账户 ID` 映射表
-2. **补齐缺失数据** — 对 CSV 中 `category` 列在映射表中找不到的分类，调用 `POST /api/v1/categories` 创建；对不存在的账户，调用 `POST /api/v1/accounts` 创建（账户/分类创建均按自然键幂等，同名复用已有记录，可放心重跑）
-3. **批量写入交易** — 将 CSV 行转换为 `TransactionInput[]`，按金额正负决定 `kind`（正为 `income`，负为 `expense`），填充 `account_id` 和 `category_id` 后以 `{transactions, dedup}` 包裹调用 `POST /api/v1/transactions/batch` 批量写入；`dedup` 缺省开启，命中 `duplicate: true` 的行说明已存在，跳过即可
-4. **黑洞账户** — `资金账户=无` 的交易映射到预置黑洞账户 `无(CNY)` / `无(HKD)`（`GET /api/v1/accounts` 返回，`is_hidden=true`）；`x → 无` / `无 → x` 按转账处理（`to_account_id` 指向黑洞账户），kind 照常按金额正负判定
+1. **获取导入知识** — `GET /api/v1/import/knowledge` 读取导入约定（列映射、转账拆分、黑洞账户、币种映射、分单位、日期、dedup），作为拆解每行的依据
+2. **拉取已有数据** — `GET /api/v1/currencies` 获取币种清单，构造 `币种名 → code` 映射；`GET /api/v1/categories` 获取分类列表，构造 `分类名称 → 分类 ID` 映射表；`GET /api/v1/accounts` 获取账户列表，构造 `账户名称 → 账户 ID` 映射表
+3. **补齐缺失数据** — 对 CSV 中 `category` 列在映射表中找不到的分类，调用 `POST /api/v1/categories` 创建；对不存在的账户，调用 `POST /api/v1/accounts` 创建（账户/分类创建均按自然键幂等，同名复用已有记录，可放心重跑）
+4. **批量写入交易** — 将 CSV 行转换为 `TransactionInput[]`，按金额正负决定 `kind`（正为 `income`，负为 `expense`），填充 `account_id` 和 `category_id` 后以 `{transactions, dedup}` 包裹调用 `POST /api/v1/transactions/batch` 批量写入；`dedup` 缺省开启，命中 `duplicate: true` 的行说明已存在，跳过即可
+5. **黑洞账户** — `资金账户=无` 的交易映射到预置黑洞账户 `无(CNY)` / `无(HKD)`（`GET /api/v1/accounts` 返回，`is_hidden=true`）；`x → 无` / `无 → x` 按转账处理（`to_account_id` 指向黑洞账户），kind 照常按金额正负判定

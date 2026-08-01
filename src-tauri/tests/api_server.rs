@@ -833,7 +833,7 @@ async fn test_openapi_json_endpoint_returns_doc() {
 }
 
 #[tokio::test]
-async fn test_openapi_doc_covers_all_six_endpoints() {
+async fn test_openapi_doc_covers_all_endpoints() {
     let (app, _) = setup_app();
 
     let response = app
@@ -858,6 +858,7 @@ async fn test_openapi_doc_covers_all_six_endpoints() {
         ("/api/v1/categories", "post"),
         ("/api/v1/currencies", "get"),
         ("/api/v1/transactions/batch", "post"),
+        ("/api/v1/import/knowledge", "get"),
     ];
     for (path, method) in expected {
         assert!(
@@ -942,4 +943,110 @@ async fn test_openapi_doc_has_currencies_endpoint() {
     let schemas = doc["components"]["schemas"].as_object().unwrap();
     assert!(schemas.contains_key("Currency"));
     assert!(schemas.contains_key("TransactionInput"));
+}
+
+#[tokio::test]
+async fn test_import_knowledge_returns_ok_as_text_plain() {
+    let (app, _) = setup_app();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/import/knowledge")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    assert!(
+        content_type.starts_with("text/plain"),
+        "应返回纯文本，实际 content-type: {content_type}"
+    );
+
+    let bytes = body_to_bytes(response.into_body()).await;
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(!text.trim().is_empty(), "知识内容不应为空");
+    assert!(
+        text.contains("/api/v1/openapi.json"),
+        "知识应内嵌 OpenAPI 文档地址"
+    );
+}
+
+#[tokio::test]
+async fn test_import_knowledge_covers_key_conventions() {
+    let (app, _) = setup_app();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/import/knowledge")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = body_to_bytes(response.into_body()).await;
+    let text = String::from_utf8(bytes).unwrap();
+
+    let required_keywords = [
+        "流入金额",
+        "流出金额",
+        "income",
+        "expense",
+        "transfer",
+        "→",
+        "无",
+        "人民币",
+        "CNY",
+        "_cents",
+        "YYYY-MM-DD",
+        "dedup",
+        "sha256",
+        "account_id",
+        "to_account_id",
+        "currency_code",
+    ];
+    for kw in required_keywords {
+        assert!(text.contains(kw), "导入知识应包含关键约定关键词 {kw:?}");
+    }
+}
+
+#[tokio::test]
+async fn test_openapi_doc_covers_knowledge_endpoint() {
+    let (app, _) = setup_app();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/openapi.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = body_to_bytes(response.into_body()).await;
+    let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let paths = doc["paths"].as_object().unwrap();
+    let knowledge = &paths["/api/v1/import/knowledge"]["get"];
+    assert!(knowledge["summary"].is_string());
+
+    let responses = knowledge["responses"].as_object().unwrap();
+    let ok = responses.get("200").expect("应包含 200 响应");
+    let content = ok["content"].as_object().expect("200 响应应声明 content");
+    assert!(
+        content.contains_key("text/plain"),
+        "knowledge 端点应声明 text/plain 响应"
+    );
 }
