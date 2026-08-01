@@ -65,7 +65,7 @@ async fn list_accounts_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
 ) -> Result<Json<Vec<Account>>, AppError> {
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let accounts = crate::commands::list_accounts_internal(&conn)?;
+    let accounts = crate::commands::list_accounts_for_api_internal(&conn)?;
     Ok(Json(accounts))
 }
 

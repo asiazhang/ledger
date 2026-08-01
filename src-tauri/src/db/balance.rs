@@ -92,7 +92,7 @@ pub fn compute_all_balances(conn: &Connection) -> Result<HashMap<String, i64>> {
                 + COALESCE(SUM(CASE WHEN t.kind='refund'   THEN t.amount_native_cents ELSE 0 END), 0)
          FROM accounts a
          LEFT JOIN transactions t ON (t.account_id = a.id OR t.to_account_id = a.id) AND t.is_deleted = 0
-         WHERE a.is_deleted = 0
+         WHERE a.is_deleted = 0 AND a.is_hidden = 0
          GROUP BY a.id",
         [],
     )?;

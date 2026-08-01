@@ -21,6 +21,7 @@ export interface Account extends Syncable {
   currency_code: string
   initial_balance_cents: number
   created_at: string
+  is_hidden: boolean
 }
 
 export interface AccountInput {

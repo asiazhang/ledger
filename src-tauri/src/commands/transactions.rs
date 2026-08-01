@@ -99,9 +99,10 @@ pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<
     Ok(id)
 }
 
-#[tauri::command]
-pub fn list_transactions(db: State<'_, DbState>, limit: Option<i64>) -> Result<Vec<Transaction>> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+pub fn list_transactions_internal(
+    conn: &Connection,
+    limit: Option<i64>,
+) -> Result<Vec<Transaction>> {
     let base_sql = "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
          to_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted \
          FROM transactions WHERE is_deleted=0 ORDER BY date DESC, created_at DESC";
@@ -109,7 +110,13 @@ pub fn list_transactions(db: State<'_, DbState>, limit: Option<i64>) -> Result<V
         Some(n) => format!("{base_sql} LIMIT {n}"),
         None => String::from(base_sql),
     };
-    query_all(&conn, &sql, [])
+    query_all(conn, &sql, [])
+}
+
+#[tauri::command]
+pub fn list_transactions(db: State<'_, DbState>, limit: Option<i64>) -> Result<Vec<Transaction>> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    list_transactions_internal(&conn, limit)
 }
 
 #[tauri::command]
@@ -131,7 +138,7 @@ pub fn create_transactions_internal(
             let existing: Option<String> = conn
                 .query_row(
                     "SELECT id FROM transactions \
-                     WHERE dedup_hash=?1 AND is_deleted=0 LIMIT 1",
+                     WHERE dedup_hash=?1 AND is_deleted=0 ORDER BY created_at LIMIT 1",
                     rusqlite::params![dedup_hash],
                     |r| r.get(0),
                 )
@@ -148,10 +155,13 @@ pub fn create_transactions_internal(
         }
         match insert_transaction(conn, input) {
             Ok(id) => {
-                conn.execute(
+                if let Err(e) = conn.execute(
                     "UPDATE transactions SET dedup_hash=?1 WHERE id=?2",
                     rusqlite::params![dedup_hash, id],
-                )?;
+                ) {
+                    conn.execute("ROLLBACK", [])?;
+                    return Err(e.into());
+                }
                 results.push(CreateTransactionResult {
                     success: true,
                     duplicate: false,

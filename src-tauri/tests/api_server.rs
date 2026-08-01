@@ -29,7 +29,7 @@ fn create_account_json(account_id: &str) -> String {
 }
 
 #[tokio::test]
-async fn test_get_accounts_returns_empty_list_initially() {
+async fn test_get_accounts_returns_black_hole_seed_accounts_initially() {
     let (app, _) = setup_app();
 
     let response = app
@@ -46,7 +46,13 @@ async fn test_get_accounts_returns_empty_list_initially() {
 
     let bytes = body_to_bytes(response.into_body()).await;
     let accounts: Vec<serde_json::Value> = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(accounts.len(), 0, "种子数据不含账户");
+    assert_eq!(accounts.len(), 2, "种子应预置两个黑洞账户");
+    for a in &accounts {
+        assert_eq!(a["is_hidden"], true, "种子黑洞账户应带 is_hidden=true");
+        assert_eq!(a["type"], "other");
+    }
+    assert!(accounts.iter().any(|a| a["name"] == "无(CNY)"));
+    assert!(accounts.iter().any(|a| a["name"] == "无(HKD)"));
 }
 
 #[tokio::test]
@@ -80,8 +86,12 @@ async fn test_get_accounts_includes_newly_created_account() {
 
     let bytes = body_to_bytes(response.into_body()).await;
     let accounts: Vec<serde_json::Value> = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(accounts.len(), 1);
-    assert_eq!(accounts[0]["name"], "现金账户");
+    assert_eq!(accounts.len(), 3);
+    let created = accounts
+        .iter()
+        .find(|a| a["name"] == "现金账户")
+        .expect("应包含新建账户");
+    assert_eq!(created["is_hidden"], false);
 }
 
 #[tokio::test]
@@ -307,11 +317,16 @@ async fn test_create_account_idempotent_returns_same_id() {
     let second = create_account_via_api(&app, "现金账户").await;
 
     assert_eq!(first, second, "同名账户应返回同一 id");
-    assert_eq!(
-        count_rows(&conn.lock().unwrap(), "accounts"),
-        1,
-        "库中应仅有一行"
-    );
+    let visible: i64 = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM accounts WHERE is_deleted=0 AND is_hidden=0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(visible, 1, "用户侧应仅有一行（黑洞账户不计入）");
 }
 
 #[tokio::test]

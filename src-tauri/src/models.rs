@@ -130,6 +130,8 @@ pub struct Account {
     pub version: i64,
     pub device_id: String,
     pub is_deleted: bool,
+    /// 黑洞账户标志：对用户侧列表/余额/下拉选择器隐藏，但交易仍参与交易列表与报表。
+    pub is_hidden: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -450,6 +452,7 @@ impl FromRow for Account {
             version: row.get(7)?,
             device_id: row.get(8)?,
             is_deleted: row.get::<_, i64>(9)? != 0,
+            is_hidden: row.get::<_, i64>(10)? != 0,
         })
     }
 }
