@@ -43,6 +43,7 @@
 - market_prices.currency_code → currencies.code（ON DELETE RESTRICT）
 - exchange_rates.base_code → currencies.code（ON DELETE RESTRICT）
 - exchange_rates.quote_code → currencies.code（ON DELETE RESTRICT）
+- scheduled_transactions.currency_code → currencies.code
 
 ## 参考
 

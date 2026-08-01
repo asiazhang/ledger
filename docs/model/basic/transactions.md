@@ -56,6 +56,7 @@
 ## 被引用关系
 
 - security_transactions.transaction_id → transactions.id（ON DELETE CASCADE）
+- scheduled_transaction_occurrences.transaction_id → transactions.id（计划期次执行完成后回填，唯一索引）
 - transactions.refund_of_transaction_id → transactions.id（ON DELETE SET NULL，自引用）
 
 ## 参考

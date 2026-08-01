@@ -62,6 +62,7 @@
 - 默认分类使用基于 name+kind 的确定性 UUID v5，保证所有设备初始化后默认分类的 ID 一致
 - 交易（transactions）的 category_id 删除时置空（ON DELETE SET NULL）
 - 预算（budgets）的 category_id 删除时受限（ON DELETE RESTRICT），防止有预算的分类被误删
+- 计划交易（scheduled_transactions）的 category_id 关联分类（转账类计划通常为空）
 
 ## 索引
 

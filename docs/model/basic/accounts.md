@@ -46,6 +46,8 @@
 - transactions.account_id → accounts.id（ON DELETE RESTRICT）
 - transactions.to_account_id → accounts.id（ON DELETE SET NULL）
 - security_lots.account_id → accounts.id（ON DELETE RESTRICT）
+- scheduled_transactions.account_id → accounts.id（计划扣款/转出账户）
+- scheduled_transfer_plans.to_account_id → accounts.id（计划转账转入账户）
 
 ## 参考
 
