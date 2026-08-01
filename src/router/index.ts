@@ -39,12 +39,6 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '预算' },
   },
   {
-    path: '/import',
-    name: 'import',
-    component: () => import('@/views/ImportView.vue'),
-    meta: { title: '导入' },
-  },
-  {
     path: '/settings',
     name: 'settings',
     component: () => import('@/views/SettingsView.vue'),

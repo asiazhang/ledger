@@ -265,20 +265,6 @@ pub struct BudgetProgress {
     pub over_budget: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ImportedRow {
-    pub date: String,
-    pub kind: String,
-    pub amount_cents: i64,
-    pub note: String,
-    pub category_name: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ImportRequest {
-    pub path: String,
-}
-
 #[derive(Debug, Serialize)]
 pub struct CreateTransactionResult {
     pub success: bool,

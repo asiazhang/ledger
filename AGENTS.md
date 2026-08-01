@@ -47,19 +47,19 @@ Ledger 是一个基于 Tauri 2 的桌面记账应用，前端 Vue 3 + TypeScript
 - 账户余额**不持久化**，由 `commands::account_balance` 实时计算：`初始余额 + 收入 - 支出 + 转入 - 转出`。转账（`kind='transfer'`）用 `account_id` 表示转出账户、`to_account_id` 表示转入账户。
 
 ### 交易类型约束
-`transactions.kind` 受数据库 CHECK 约束为 `'income' | 'expense' | 'transfer'`；`categories.kind` 为 `'income' | 'expense'`。`create_transaction` 在 Rust 侧校验金额 > 0、转账必须有 `to_account_id`。前端 `TransactionForm.vue` 与 `ImportView.vue` 同样遵循：导入时按金额正负判定为 income/expense。
+`transactions.kind` 受数据库 CHECK 约束为 `'income' | 'expense' | 'transfer'`；`categories.kind` 为 `'income' | 'expense'`。`create_transaction` 在 Rust 侧校验金额 > 0、转账必须有 `to_account_id`。前端 `TransactionForm.vue` 同样遵循：按金额正负判定为 income/expense。
 
 ### 错误处理
-`src-tauri/src/error.rs` 定义 `AppError`（thiserror + serde，`#[serde(tag = "kind", content = "message")]`），序列化为 `{kind, message}` 传到前端。`Result<T>` 是 `std::result::Result<T, AppError>`。已实现 `From` 转换：`rusqlite::Error`、`std::io::Error`、`csv::Error`。新增可失败命令用 `?` 即可。
+`src-tauri/src/error.rs` 定义 `AppError`（thiserror + serde，`#[serde(tag = "kind", content = "message")]`），序列化为 `{kind, message}` 传到前端。`Result<T>` 是 `std::result::Result<T, AppError>`。已实现 `From` 转换：`rusqlite::Error`、`std::io::Error`。新增可失败命令用 `?` 即可。
 
 ### 前端状态与路由
 - 单一 Pinia store `src/stores/app.ts`（`useAppStore`）缓存 `currencies/accounts/categories`，并提供 `currencyMap/categoryMap/accountMap` 计算属性与 `expenseCategories/incomeCategories`。`loadAll()` 幂等加载，`App.vue` 在 `onMounted` 调用一次；各视图按需调用 `store.loadAccounts()` 等刷新。
-- 路由用 hash 模式（`createWebHashHistory`，Tauri webview 需要），7 个视图：dashboard / transactions / accounts / reports / budget / import / settings。视图均懒加载。
+- 路由用 hash 模式（`createWebHashHistory`，Tauri webview 需要），6 个视图：dashboard / transactions / accounts / reports / budget / settings。视图均懒加载。
 - `@` 别名指向 `./src`（在 `vite.config.ts` 与 `tsconfig.json` 同时配置）。
 - Naive UI 采用**按需 import**（非全局注册），`App.vue` 硬编码使用 `darkTheme` 暗色主题。
 
-### 导入流程（CSV / Excel）
-`preview_import` 命令在 Rust 侧**仅解析不写库**：按表头列名匹配 `date`/`日期`、`amount`/`金额`、`note`/`备注`/`描述`、`category`/`分类`（CSV 用 `csv` crate flexible 模式，Excel 用 `calamine`）。`parse_amount_cents` 支持千分位逗号与负数。实际写库由 `ImportView.vue` 在前端循环调用 `createTransaction` 完成（按金额正负判定 income/expense，单条失败跳过继续）。
+### 导入流程（AI 驱动）
+导入**不按文件类型解析**，旧入口（`preview_import` 命令、`import_parser` 模块、`ImportView.vue`）已删除。唯一入口是本地 HTTP API `/api/v1`（基础地址 `http://127.0.0.1:9527`）：AI 编程助手读取原始文件、分析格式、把行映射为账户/分类/交易，再通过 `POST /api/v1/accounts`、`POST /api/v1/categories`、`POST /api/v1/transactions/batch` 等端点幂等写库。端点契约与迁移场景参见 `src-tauri/prompts/ledger-api.md`。
 
 ## 编码约定
 

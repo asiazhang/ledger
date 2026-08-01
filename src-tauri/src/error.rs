@@ -29,12 +29,6 @@ impl From<std::io::Error> for AppError {
     }
 }
 
-impl From<csv::Error> for AppError {
-    fn from(e: csv::Error) -> Self {
-        Self::Parse(e.to_string())
-    }
-}
-
 impl From<rusqlite_migration::Error> for AppError {
     fn from(e: rusqlite_migration::Error) -> Self {
         Self::Db(e.to_string())

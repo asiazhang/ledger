@@ -18,7 +18,6 @@ import type {
   ExchangeRateInput,
   ExecuteOccurrenceInput,
   Holding,
-  ImportedRow,
   Instrument,
   InstrumentInput,
   MarketPrice,
@@ -71,10 +70,6 @@ export const api = {
   categoryShares: (kind: string, month?: string) =>
     invoke<CategoryShare[]>('category_shares', { kind, month: month ?? null }),
   budgetProgress: () => invoke<BudgetProgress[]>('budget_progress'),
-
-  // 导入
-  previewImport: (path: string) =>
-    invoke<ImportedRow[]>('preview_import', { req: { path } }),
 
   // 金融工具
   listInstruments: () => invoke<Instrument[]>('list_instruments'),

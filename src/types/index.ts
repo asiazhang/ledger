@@ -147,14 +147,6 @@ export interface CreateTransactionResult {
   error: string | null
 }
 
-export interface ImportedRow {
-  date: string
-  kind: 'income' | 'expense'
-  amount_cents: number
-  note: string
-  category_name: string | null
-}
-
 export type InstrumentType = 'stock' | 'fund' | 'bond' | 'etf' | 'other'
 
 export type MarketType = 'sh' | 'sz' | 'hk' | 'unknown'
