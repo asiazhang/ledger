@@ -2,14 +2,13 @@ pub mod api_server;
 pub mod commands;
 pub mod db;
 pub mod error;
-pub mod import_parser;
 pub mod log_plugin;
 pub mod logger;
 pub mod models;
 pub mod scheduled_transactions;
 
-use tauri::ipc::Invoke;
 use tauri::Manager;
+use tauri::ipc::Invoke;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 fn init_database(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -103,7 +102,6 @@ pub fn run() {
             commands::monthly_summary,
             commands::category_shares,
             commands::budget_progress,
-            commands::preview_import,
             commands::create_scheduled_transaction,
             commands::list_scheduled_transactions,
             commands::get_scheduled_transaction_detail,
