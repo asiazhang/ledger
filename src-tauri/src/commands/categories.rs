@@ -37,6 +37,33 @@ pub fn create_category_internal(conn: &Connection, input: CategoryInput) -> Resu
     Ok(id)
 }
 
+/// 按自然键（name + kind + parent_id）幂等创建分类：已存在（未删除）时返回已有 id，
+/// 不重复插入、不报错。供 HTTP 导入 API 使用。
+pub fn create_category_idempotent_internal(
+    conn: &Connection,
+    input: CategoryInput,
+) -> Result<String> {
+    if let Some(id) = find_category_by_natural_key(conn, &input)? {
+        return Ok(id);
+    }
+    create_category_internal(conn, input)
+}
+
+fn find_category_by_natural_key(
+    conn: &Connection,
+    input: &CategoryInput,
+) -> Result<Option<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT id FROM categories \
+         WHERE name=?1 AND kind=?2 AND parent_id IS ?3 AND is_deleted=0 LIMIT 1",
+    )?;
+    let mut rows = stmt.query(rusqlite::params![input.name, input.kind, input.parent_id])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(row.get(0)?)),
+        None => Ok(None),
+    }
+}
+
 #[tauri::command]
 pub fn list_categories(db: State<'_, DbState>) -> Result<Vec<Category>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;

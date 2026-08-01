@@ -36,6 +36,34 @@ pub fn create_account_internal(conn: &Connection, input: AccountInput) -> Result
     Ok(id)
 }
 
+/// 按自然键（name + type + currency_code）幂等创建账户：已存在（未删除）时返回已有 id，
+/// 不重复插入、不报错。供 HTTP 导入 API 使用。
+pub fn create_account_idempotent_internal(
+    conn: &Connection,
+    input: AccountInput,
+) -> Result<String> {
+    if let Some(id) = find_account_by_natural_key(conn, &input)? {
+        return Ok(id);
+    }
+    create_account_internal(conn, input)
+}
+
+fn find_account_by_natural_key(conn: &Connection, input: &AccountInput) -> Result<Option<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT id FROM accounts \
+         WHERE name=?1 AND type=?2 AND currency_code=?3 AND is_deleted=0 LIMIT 1",
+    )?;
+    let mut rows = stmt.query(rusqlite::params![
+        input.name,
+        input.kind,
+        input.currency_code
+    ])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(row.get(0)?)),
+        None => Ok(None),
+    }
+}
+
 pub fn delete_account_internal(conn: &Connection, id: &str) -> Result<()> {
     conn.execute(
         "UPDATE accounts SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",

@@ -86,6 +86,10 @@
 "uuid-of-new-account"
 ```
 
+**幂等语义**:
+- ⚠️ 按自然键（`name` + `type` + `currency_code`）幂等：若存在同名、同类型、同币种且未删除的账户，**直接返回已有账户的 id**，不重复插入、不报错。
+- 重跑导入同一批账户不会产生重复记录；需要刻意区分账户时，使用不同的 `name` 或 `currency_code`。
+
 ---
 
 ### 3. 列出所有分类
@@ -156,6 +160,11 @@
 ```json
 "uuid-of-new-category"
 ```
+
+**幂等语义**:
+- ⚠️ 按自然键（`name` + `kind` + `parent_id`）幂等：若存在同名、同类型、同父分类且未删除的分类，**直接返回已有分类的 id**，不重复插入、不报错。
+- `parent_id` 为 `null` 表示顶级分类，顶级与子分类即使同名也视为不同记录。
+- 重跑导入同一批分类不会产生重复记录。
 
 ---
 
@@ -233,10 +242,38 @@
 
 ---
 
+### 6. 列出所有币种
+
+`GET /api/v1/currencies`
+
+**请求**: 无
+
+**响应**: `Currency[]`
+
+```json
+[
+  { "code": "CNY", "name": "人民币", "symbol": "¥", "decimal_places": 2 },
+  { "code": "HKD", "name": "港币", "symbol": "$", "decimal_places": 2 }
+]
+```
+
+**字段说明**:
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `code` | string | 币种代码, 如 `CNY` / `HKD` |
+| `name` | string | 币种中文名称, 如 `人民币` |
+| `symbol` | string | 币种符号 |
+| `decimal_places` | integer | 小数位数 |
+
+**说明**: 返回全部种子币种清单（含 `人民币→CNY`、`港币→HKD`）。导入时可用它把源数据的中文币种名映射为 `currency_code`，无需在提示词中硬编码。
+
+---
+
 ## 迁移场景典型流程
 
 以从其他记账 App 导入 CSV 数据为例：
 
-1. **拉取已有数据** — `GET /api/v1/categories` 获取分类列表，构造 `分类名称 → 分类 ID` 映射表；`GET /api/v1/accounts` 获取账户列表，构造 `账户名称 → 账户 ID` 映射表
-2. **补齐缺失数据** — 对 CSV 中 `category` 列在映射表中找不到的分类，调用 `POST /api/v1/categories` 创建；对不存在的账户，调用 `POST /api/v1/accounts` 创建
+1. **拉取已有数据** — `GET /api/v1/currencies` 获取币种清单，构造 `币种名 → code` 映射；`GET /api/v1/categories` 获取分类列表，构造 `分类名称 → 分类 ID` 映射表；`GET /api/v1/accounts` 获取账户列表，构造 `账户名称 → 账户 ID` 映射表
+2. **补齐缺失数据** — 对 CSV 中 `category` 列在映射表中找不到的分类，调用 `POST /api/v1/categories` 创建；对不存在的账户，调用 `POST /api/v1/accounts` 创建（账户/分类创建均按自然键幂等，同名复用已有记录，可放心重跑）
 3. **批量写入交易** — 将 CSV 行转换为 `TransactionInput[]`，按金额正负决定 `kind`（正为 `income`，负为 `expense`），填充 `account_id` 和 `category_id` 后调用 `POST /api/v1/transactions/batch` 批量写入

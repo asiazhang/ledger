@@ -10,7 +10,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::error::AppError;
 use crate::models::{
-    Account, AccountInput, CategoryInput, CreateTransactionResult, TransactionInput,
+    Account, AccountInput, CategoryInput, CreateTransactionResult, Currency, TransactionInput,
 };
 
 impl IntoResponse for AppError {
@@ -41,6 +41,7 @@ pub fn build_router(state: Arc<Mutex<Connection>>) -> Router {
             "/api/v1/transactions/batch",
             post(batch_create_transactions_handler),
         )
+        .route("/api/v1/currencies", get(list_currencies_handler))
         .with_state(state)
 }
 
@@ -73,7 +74,7 @@ async fn create_account_handler(
     Json(input): Json<AccountInput>,
 ) -> Result<(StatusCode, Json<String>), AppError> {
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let id = crate::commands::create_account_internal(&conn, input)?;
+    let id = crate::commands::create_account_idempotent_internal(&conn, input)?;
     Ok((StatusCode::CREATED, Json(id)))
 }
 
@@ -91,8 +92,17 @@ async fn create_category_handler(
     let input: CategoryInput =
         serde_json::from_str(&body).map_err(|e| AppError::Invalid(e.to_string()))?;
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let id = crate::commands::create_category_internal(&conn, input)?;
+    let id = crate::commands::create_category_idempotent_internal(&conn, input)?;
     Ok((StatusCode::CREATED, Json(id)))
+}
+
+async fn list_currencies_handler(
+    State(conn): State<Arc<Mutex<Connection>>>,
+) -> Result<Json<Vec<Currency>>, AppError> {
+    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    Ok(Json(crate::commands::currencies::list_currencies_internal(
+        &conn,
+    )?))
 }
 
 async fn batch_create_transactions_handler(
