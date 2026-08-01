@@ -39,14 +39,15 @@ struct ErrorResponse {
     message: String,
 }
 
-/// Ledger 导入 API 的 OpenAPI 契约文档。
+/// Ledger 记账 API 的 OpenAPI 契约文档。
 ///
 /// 供 AI 编程助手读取完整端点契约（账户/分类幂等创建、批量交易去重、币种清单、导入知识）。
 #[derive(OpenApi)]
 #[openapi(
     info(
-        title = "Ledger 导入 API",
-        description = "Ledger 记账应用本地导入 API（基础地址 http://127.0.0.1:9527/api/v1）。\
+        title = "Ledger 记账 API",
+        description = "Ledger 记账应用本地 API（基础地址 http://127.0.0.1:9527/api/v1），供 AI 编程助手读写记账数据\
+                      （账户/分类/交易），主要场景为数据迁移，亦可直接录入。\
                       所有金额均以整数分（`_cents` 后缀）为单位。\
                       账户/分类按自然键幂等创建；批量交易默认去重，命中返回 `duplicate: true`。",
         version = "0.1.0"
