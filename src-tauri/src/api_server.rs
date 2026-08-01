@@ -15,7 +15,6 @@ use rusqlite::Connection;
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
 use utoipa::ToSchema;
-use utoipa_swagger_ui::SwaggerUi;
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
@@ -76,10 +75,15 @@ struct ErrorResponse {
 )]
 struct ApiDoc;
 
+/// 生成式返回 OpenAPI 文档（机器可读契约，供 AI 查询端点结构）。
+async fn openapi_json_handler() -> impl IntoResponse {
+    Json(ApiDoc::openapi())
+}
+
 pub fn build_router(state: Arc<Mutex<Connection>>) -> Router {
     Router::new()
-        .merge(SwaggerUi::new("/swagger-ui").url("/api/v1/openapi.json", ApiDoc::openapi()))
         .layer(TraceLayer::new_for_http())
+        .route("/api/v1/openapi.json", get(openapi_json_handler))
         .route(
             "/api/v1/accounts",
             get(list_accounts_handler).post(create_account_handler),
