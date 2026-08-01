@@ -1,4 +1,5 @@
 use rusqlite::Connection;
+use sha2::{Digest, Sha256};
 use tauri::State;
 
 use crate::commands::fx::convert_to_native;
@@ -6,6 +7,22 @@ use crate::db::query::query_all;
 use crate::db::{DbState, device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{CreateTransactionResult, Transaction, TransactionInput};
+
+/// 计算导入去重哈希：`sha256("date|kind|amount_cents|currency_code|account_id|to_account_id")`。
+/// `to_account_id` 缺省拼空串；刻意排除 note/category（AI 生成文本非确定性，会让哈希漂移）。
+pub fn compute_dedup_hash(input: &TransactionInput) -> String {
+    let to_account_id = input.to_account_id.as_deref().unwrap_or("");
+    let payload = format!(
+        "{}|{}|{}|{}|{}|{}",
+        input.date,
+        input.kind,
+        input.amount_cents,
+        input.currency_code,
+        input.account_id,
+        to_account_id
+    );
+    format!("{:x}", Sha256::digest(payload.as_bytes()))
+}
 
 pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<String> {
     if input.kind == "transfer" && input.to_account_id.is_none() {
@@ -81,9 +98,10 @@ pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<
     Ok(id)
 }
 
-#[tauri::command]
-pub fn list_transactions(db: State<'_, DbState>, limit: Option<i64>) -> Result<Vec<Transaction>> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+pub fn list_transactions_internal(
+    conn: &Connection,
+    limit: Option<i64>,
+) -> Result<Vec<Transaction>> {
     let base_sql = "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
          to_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted \
          FROM transactions WHERE is_deleted=0 ORDER BY date DESC, created_at DESC";
@@ -91,7 +109,13 @@ pub fn list_transactions(db: State<'_, DbState>, limit: Option<i64>) -> Result<V
         Some(n) => format!("{base_sql} LIMIT {n}"),
         None => String::from(base_sql),
     };
-    query_all(&conn, &sql, [])
+    query_all(conn, &sql, [])
+}
+
+#[tauri::command]
+pub fn list_transactions(db: State<'_, DbState>, limit: Option<i64>) -> Result<Vec<Transaction>> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    list_transactions_internal(&conn, limit)
 }
 
 #[tauri::command]
@@ -103,18 +127,50 @@ pub fn create_transaction(db: State<'_, DbState>, input: TransactionInput) -> Re
 pub fn create_transactions_internal(
     conn: &Connection,
     inputs: Vec<TransactionInput>,
+    dedup: bool,
 ) -> Result<Vec<CreateTransactionResult>> {
     conn.execute("BEGIN", [])?;
     let mut results = Vec::with_capacity(inputs.len());
     for input in inputs {
+        let dedup_hash = compute_dedup_hash(&input);
+        if dedup {
+            let existing: Option<String> = conn
+                .query_row(
+                    "SELECT id FROM transactions \
+                     WHERE dedup_hash=?1 AND is_deleted=0 ORDER BY created_at LIMIT 1",
+                    rusqlite::params![dedup_hash],
+                    |r| r.get(0),
+                )
+                .ok();
+            if existing.is_some() {
+                results.push(CreateTransactionResult {
+                    success: true,
+                    duplicate: true,
+                    id: None,
+                    error: None,
+                });
+                continue;
+            }
+        }
         match insert_transaction(conn, input) {
-            Ok(id) => results.push(CreateTransactionResult {
-                success: true,
-                id: Some(id),
-                error: None,
-            }),
+            Ok(id) => {
+                if let Err(e) = conn.execute(
+                    "UPDATE transactions SET dedup_hash=?1 WHERE id=?2",
+                    rusqlite::params![dedup_hash, id],
+                ) {
+                    conn.execute("ROLLBACK", [])?;
+                    return Err(e.into());
+                }
+                results.push(CreateTransactionResult {
+                    success: true,
+                    duplicate: false,
+                    id: Some(id),
+                    error: None,
+                });
+            }
             Err(AppError::Invalid(msg)) => results.push(CreateTransactionResult {
                 success: false,
+                duplicate: false,
                 id: None,
                 error: Some(msg),
             }),
@@ -134,7 +190,7 @@ pub fn create_transactions(
     inputs: Vec<TransactionInput>,
 ) -> Result<Vec<CreateTransactionResult>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    create_transactions_internal(&conn, inputs)
+    create_transactions_internal(&conn, inputs, false)
 }
 
 #[tauri::command]
@@ -212,6 +268,167 @@ mod tests {
             price_cents: None,
             fee_cents: None,
         }
+    }
+
+    #[test]
+    fn dedup_hash_is_stable_for_same_fields() {
+        let a = make_input("acc-dedup", "income", 1000, "2026-07-01");
+        let b = make_input("acc-dedup", "income", 1000, "2026-07-01");
+        assert_eq!(compute_dedup_hash(&a), compute_dedup_hash(&b));
+    }
+
+    #[test]
+    fn dedup_hash_excludes_note_and_category() {
+        let base = make_input("acc-dedup", "expense", 500, "2026-07-02");
+        let with_note = TransactionInput {
+            note: Some("备注".into()),
+            ..base.clone()
+        };
+        let with_category = TransactionInput {
+            category_id: Some("cat-1".into()),
+            ..base.clone()
+        };
+        let h = compute_dedup_hash(&base);
+        assert_eq!(compute_dedup_hash(&with_note), h);
+        assert_eq!(compute_dedup_hash(&with_category), h);
+    }
+
+    #[test]
+    fn dedup_hash_changes_when_content_fields_change() {
+        let base = make_input("acc-dedup", "income", 1000, "2026-07-01");
+        let h = compute_dedup_hash(&base);
+        assert_ne!(
+            compute_dedup_hash(&make_input("acc-dedup", "income", 2000, "2026-07-01")),
+            h
+        );
+        assert_ne!(
+            compute_dedup_hash(&make_input("acc-dedup", "expense", 1000, "2026-07-01")),
+            h
+        );
+        assert_ne!(
+            compute_dedup_hash(&make_input("acc-other", "income", 1000, "2026-07-01")),
+            h
+        );
+        assert_ne!(
+            compute_dedup_hash(&make_input("acc-dedup", "income", 1000, "2026-07-02")),
+            h
+        );
+    }
+
+    #[test]
+    fn dedup_hash_pins_empty_to_account_id_as_empty_string() {
+        let no_to = make_input("acc-dedup", "transfer", 3000, "2026-07-03");
+        let empty_to = TransactionInput {
+            to_account_id: Some("".into()),
+            ..no_to.clone()
+        };
+        assert_eq!(
+            compute_dedup_hash(&no_to),
+            compute_dedup_hash(&empty_to),
+            "缺省 to_account_id 应等同空串"
+        );
+        let with_to = TransactionInput {
+            to_account_id: Some("acc-to".into()),
+            ..no_to.clone()
+        };
+        assert_ne!(
+            compute_dedup_hash(&no_to),
+            compute_dedup_hash(&with_to),
+            "指定 to_account_id 应改变哈希"
+        );
+    }
+
+    #[test]
+    fn dedup_hash_matches_known_sha256_vector() {
+        let input = make_input("acc-1", "income", 1000, "2026-07-01");
+        // sha256("2026-07-01|income|1000|CNY|acc-1|")
+        assert_eq!(
+            compute_dedup_hash(&input),
+            "d5a4ee5fa04913672a319a06c454283d74d312f13506a27fc81c72b09602a558"
+        );
+    }
+
+    #[test]
+    fn batch_create_marks_duplicates_and_keeps_rows() {
+        let conn = setup();
+        insert_account(&conn, "acc-dedup", "现金", "cash", "CNY");
+
+        let inputs = vec![
+            make_input("acc-dedup", "income", 1000, "2026-07-01"),
+            make_input("acc-dedup", "expense", 500, "2026-07-02"),
+        ];
+        let first = create_transactions_internal(&conn, inputs.clone(), true).unwrap();
+        assert_eq!(first.len(), 2);
+        assert!(
+            first
+                .iter()
+                .all(|r| r.success && !r.duplicate && r.id.is_some())
+        );
+
+        let second = create_transactions_internal(&conn, inputs, true).unwrap();
+        assert_eq!(second.len(), 2);
+        assert!(
+            second
+                .iter()
+                .all(|r| r.success && r.duplicate && r.id.is_none())
+        );
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn batch_create_with_dedup_false_writes_duplicates() {
+        let conn = setup();
+        insert_account(&conn, "acc-dedup", "现金", "cash", "CNY");
+
+        let inputs = vec![make_input("acc-dedup", "income", 1000, "2026-07-01")];
+        create_transactions_internal(&conn, inputs.clone(), true).unwrap();
+        let second = create_transactions_internal(&conn, inputs.clone(), false).unwrap();
+        assert_eq!(second.len(), 1);
+        assert!(second[0].success && !second[0].duplicate && second[0].id.is_some());
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn dedup_ignores_soft_deleted_transactions() {
+        let conn = setup();
+        insert_account(&conn, "acc-dedup", "现金", "cash", "CNY");
+
+        let input = make_input("acc-dedup", "income", 1000, "2026-07-01");
+        let first = create_transactions_internal(&conn, vec![input.clone()], true).unwrap();
+        let id = first[0].id.clone().unwrap();
+
+        conn.execute(
+            "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
+            params![id, now_iso(), device_id()],
+        ).unwrap();
+
+        let second = create_transactions_internal(&conn, vec![input], true).unwrap();
+        assert!(second[0].success && !second[0].duplicate && second[0].id.is_some());
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
     }
 
     #[test]

@@ -28,6 +28,10 @@ fn migrations() -> &'static Migrations<'static> {
             M::up(include_str!(
                 "../../migrations/V005__instruments_market.sql"
             )),
+            M::up(include_str!("../../migrations/V006__import_dedup.sql")),
+            M::up(include_str!(
+                "../../migrations/V007__black_hole_accounts.sql"
+            )),
         ])
     })
 }

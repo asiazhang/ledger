@@ -29,7 +29,7 @@ fn create_account_json(account_id: &str) -> String {
 }
 
 #[tokio::test]
-async fn test_get_accounts_returns_empty_list_initially() {
+async fn test_get_accounts_returns_black_hole_seed_accounts_initially() {
     let (app, _) = setup_app();
 
     let response = app
@@ -46,7 +46,13 @@ async fn test_get_accounts_returns_empty_list_initially() {
 
     let bytes = body_to_bytes(response.into_body()).await;
     let accounts: Vec<serde_json::Value> = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(accounts.len(), 0, "种子数据不含账户");
+    assert_eq!(accounts.len(), 2, "种子应预置两个黑洞账户");
+    for a in &accounts {
+        assert_eq!(a["is_hidden"], true, "种子黑洞账户应带 is_hidden=true");
+        assert_eq!(a["type"], "other");
+    }
+    assert!(accounts.iter().any(|a| a["name"] == "无(CNY)"));
+    assert!(accounts.iter().any(|a| a["name"] == "无(HKD)"));
 }
 
 #[tokio::test]
@@ -80,8 +86,12 @@ async fn test_get_accounts_includes_newly_created_account() {
 
     let bytes = body_to_bytes(response.into_body()).await;
     let accounts: Vec<serde_json::Value> = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(accounts.len(), 1);
-    assert_eq!(accounts[0]["name"], "现金账户");
+    assert_eq!(accounts.len(), 3);
+    let created = accounts
+        .iter()
+        .find(|a| a["name"] == "现金账户")
+        .expect("应包含新建账户");
+    assert_eq!(created["is_hidden"], false);
 }
 
 #[tokio::test]
@@ -261,11 +271,13 @@ async fn test_batch_create_transactions_all_success() {
     let account_id = create_account_via_api(&app, "现金账户").await;
 
     let body = format!(
-        r#"[
-            {{"kind":"income","amount_cents":1000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01"}},
-            {{"kind":"expense","amount_cents":500,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-02"}},
-            {{"kind":"income","amount_cents":2000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-03"}}
-        ]"#
+        r#"{{
+            "transactions": [
+                {{"kind":"income","amount_cents":1000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01"}},
+                {{"kind":"expense","amount_cents":500,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-02"}},
+                {{"kind":"income","amount_cents":2000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-03"}}
+            ]
+        }}"#
     );
 
     let response = app
@@ -297,12 +309,14 @@ async fn test_batch_create_transactions_partial_failure() {
     let account_id = create_account_via_api(&app, "现金账户").await;
 
     let body = format!(
-        r#"[
-            {{"kind":"income","amount_cents":1000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01"}},
-            {{"kind":"income","amount_cents":0,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-02"}},
-            {{"kind":"expense","amount_cents":500,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-03"}},
-            {{"kind":"transfer","amount_cents":300,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-04"}}
-        ]"#
+        r#"{{
+            "transactions": [
+                {{"kind":"income","amount_cents":1000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01"}},
+                {{"kind":"income","amount_cents":0,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-02"}},
+                {{"kind":"expense","amount_cents":500,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-03"}},
+                {{"kind":"transfer","amount_cents":300,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-04"}}
+            ]
+        }}"#
     );
 
     let response = app

@@ -38,7 +38,8 @@
     "updated_at": "2026-01-01T00:00:00Z",
     "version": 1,
     "device_id": "device-uuid",
-    "is_deleted": false
+    "is_deleted": false,
+    "is_hidden": false
   }
 ]
 ```
@@ -53,6 +54,9 @@
 | `currency_code` | string | 币种代码, 如 `CNY` / `USD` |
 | `initial_balance_cents` | integer | 初始余额(分) |
 | `is_deleted` | boolean | 软删除标记 |
+| `is_hidden` | boolean | 黑洞账户标记（对用户隐藏，但对 AI 可见） |
+
+**种子数据**: 系统预置两个黑洞账户 `无(CNY)`、`无(HKD)`（`type=other`, `is_hidden=true`），用于承接来源不明的 `无` 交易。本接口返回的完整列表包含它们，AI 可把 `资金账户=无` 的交易映射到对应币种的黑洞账户。
 
 ---
 
@@ -163,60 +167,68 @@
 
 `POST /api/v1/transactions/batch`
 
-**请求**: `TransactionInput[]`
+**请求**: `{ "transactions": TransactionInput[], "dedup": boolean }`
+
+`dedup` 默认 `true`：对每条交易计算确定性内容哈希，命中已存在（未删除）交易则跳过并返回 `duplicate: true`，不重复写库；设为 `false` 可强制重新导入。哈希基于 `date|kind|amount_cents|currency_code|account_id|to_account_id`，与备注/分类无关。
 
 ```json
-[
-  {
-    "kind": "income",
-    "amount_cents": 500000,
-    "currency_code": "CNY",
-    "account_id": "uuid-of-account",
-    "to_account_id": null,
-    "category_id": "uuid-of-category",
-    "note": "1月工资",
-    "date": "2026-01-15"
-  },
-  {
-    "kind": "expense",
-    "amount_cents": 3500,
-    "currency_code": "CNY",
-    "account_id": "uuid-of-account",
-    "category_id": "uuid-of-category",
-    "note": "午餐",
-    "date": "2026-01-15"
-  },
-  {
-    "kind": "transfer",
-    "amount_cents": 100000,
-    "currency_code": "CNY",
-    "account_id": "uuid-of-source-account",
-    "to_account_id": "uuid-of-target-account",
-    "date": "2026-01-15"
-  }
-]
+{
+  "dedup": true,
+  "transactions": [
+    {
+      "kind": "income",
+      "amount_cents": 500000,
+      "currency_code": "CNY",
+      "account_id": "uuid-of-account",
+      "to_account_id": null,
+      "category_id": "uuid-of-category",
+      "note": "1月工资",
+      "date": "2026-01-15"
+    },
+    {
+      "kind": "expense",
+      "amount_cents": 3500,
+      "currency_code": "CNY",
+      "account_id": "uuid-of-account",
+      "category_id": "uuid-of-category",
+      "note": "午餐",
+      "date": "2026-01-15"
+    },
+    {
+      "kind": "transfer",
+      "amount_cents": 100000,
+      "currency_code": "CNY",
+      "account_id": "uuid-of-source-account",
+      "to_account_id": "uuid-of-target-account",
+      "date": "2026-01-15"
+    }
+  ]
+}
 ```
 
 **字段说明**:
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `kind` | string | 是 | `income` / `expense` / `transfer` |
-| `amount_cents` | integer | 是 | 金额(分), **必须大于 0** |
-| `currency_code` | string | 是 | 币种代码 |
-| `account_id` | string | 是 | 账户 ID (对 transfer 为转出账户) |
-| `to_account_id` | string\|null | 否 | **transfer 必填** — 转入账户 ID |
-| `category_id` | string\|null | 否 | 分类 ID |
-| `note` | string\|null | 否 | 备注 |
-| `date` | string | 是 | 日期, 格式 `YYYY-MM-DD` |
+| `dedup` | boolean | 否 | 去重开关, 默认 `true` |
+| `transactions` | TransactionInput[] | 是 | 交易列表 |
+| `transactions[].kind` | string | 是 | `income` / `expense` / `transfer` |
+| `transactions[].amount_cents` | integer | 是 | 金额(分), **必须大于 0** |
+| `transactions[].currency_code` | string | 是 | 币种代码 |
+| `transactions[].account_id` | string | 是 | 账户 ID (对 transfer 为转出账户) |
+| `transactions[].to_account_id` | string\|null | 否 | **transfer 必填** — 转入账户 ID |
+| `transactions[].category_id` | string\|null | 否 | 分类 ID |
+| `transactions[].note` | string\|null | 否 | 备注 |
+| `transactions[].date` | string | 是 | 日期, 格式 `YYYY-MM-DD` |
 
 **响应**: `CreateTransactionResult[]`
 
 ```json
 [
-  { "success": true, "id": "uuid-1", "error": null },
-  { "success": true, "id": "uuid-2", "error": null },
-  { "success": false, "id": null, "error": "金额必须大于 0" }
+  { "success": true, "duplicate": false, "id": "uuid-1", "error": null },
+  { "success": true, "duplicate": false, "id": "uuid-2", "error": null },
+  { "success": true, "duplicate": true, "id": null, "error": null },
+  { "success": false, "duplicate": false, "id": null, "error": "金额必须大于 0" }
 ]
 ```
 
@@ -224,6 +236,7 @@
 - ⚠️ `amount_cents` 必须 > 0
 - ⚠️ `kind = "transfer"` 必须同时指定 `account_id`（转出）和 `to_account_id`（转入）
 - ⚠️ `category_id` 和 `account_id` 必须事先存在于数据库中
+- ⚠️ 去重命中的交易返回 `success: true, duplicate: true, id: null` — 既非新建也非失败，AI 无需重试、不应上报错误
 - 日期格式严格为 `YYYY-MM-DD`
 
 **重要边界**:
@@ -240,3 +253,4 @@
 1. **拉取已有数据** — `GET /api/v1/categories` 获取分类列表，构造 `分类名称 → 分类 ID` 映射表；`GET /api/v1/accounts` 获取账户列表，构造 `账户名称 → 账户 ID` 映射表
 2. **补齐缺失数据** — 对 CSV 中 `category` 列在映射表中找不到的分类，调用 `POST /api/v1/categories` 创建；对不存在的账户，调用 `POST /api/v1/accounts` 创建
 3. **批量写入交易** — 将 CSV 行转换为 `TransactionInput[]`，按金额正负决定 `kind`（正为 `income`，负为 `expense`），填充 `account_id` 和 `category_id` 后调用 `POST /api/v1/transactions/batch` 批量写入
+4. **黑洞账户** — `资金账户=无` 的交易映射到预置黑洞账户 `无(CNY)` / `无(HKD)`（`GET /api/v1/accounts` 返回，`is_hidden=true`）；`x → 无` / `无 → x` 按转账处理（`to_account_id` 指向黑洞账户），kind 照常按金额正负判定

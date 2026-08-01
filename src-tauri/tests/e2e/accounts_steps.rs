@@ -52,7 +52,7 @@ fn check_account_count(world: &mut LedgerWorld, expected: i64) {
     let count: i64 = world
         .conn
         .query_row(
-            "SELECT COUNT(*) FROM accounts WHERE is_deleted=0",
+            "SELECT COUNT(*) FROM accounts WHERE is_deleted=0 AND is_hidden=0",
             [],
             |r| r.get(0),
         )

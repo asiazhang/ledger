@@ -130,6 +130,8 @@ pub struct Account {
     pub version: i64,
     pub device_id: String,
     pub is_deleted: bool,
+    /// 黑洞账户标志：对用户侧列表/余额/下拉选择器隐藏，但交易仍参与交易列表与报表。
+    pub is_hidden: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -282,8 +284,20 @@ pub struct ImportRequest {
 #[derive(Debug, Serialize)]
 pub struct CreateTransactionResult {
     pub success: bool,
+    pub duplicate: bool,
     pub id: Option<String>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TransactionBatchInput {
+    pub transactions: Vec<TransactionInput>,
+    #[serde(default = "default_dedup")]
+    pub dedup: bool,
+}
+
+fn default_dedup() -> bool {
+    true
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -452,6 +466,7 @@ impl FromRow for Account {
             version: row.get(7)?,
             device_id: row.get(8)?,
             is_deleted: row.get::<_, i64>(9)? != 0,
+            is_hidden: row.get::<_, i64>(10)? != 0,
         })
     }
 }

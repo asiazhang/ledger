@@ -71,7 +71,7 @@ const columns: DataTableColumns<Transaction> = [
   {
     title: '账户',
     key: 'account_id',
-    render: (row) => store.accountMap.get(row.account_id)?.name ?? '-',
+    render: (row) => store.accountMap.get(row.account_id)?.name ?? '无',
   },
   { title: '备注', key: 'note', render: (row) => row.note ?? '-' },
   {

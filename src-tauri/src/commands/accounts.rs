@@ -6,13 +6,29 @@ use crate::db::{DbState, device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{Account, AccountBalance, AccountInput};
 
-pub fn list_accounts_internal(conn: &Connection) -> Result<Vec<Account>> {
+fn list_accounts_with_visibility(conn: &Connection, include_hidden: bool) -> Result<Vec<Account>> {
+    let where_clause = if include_hidden {
+        "is_deleted=0"
+    } else {
+        "is_deleted=0 AND is_hidden=0"
+    };
     query_all(
         conn,
-        "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted \
-         FROM accounts WHERE is_deleted=0 ORDER BY created_at",
+        &format!(
+            "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden \
+             FROM accounts WHERE {where_clause} ORDER BY created_at"
+        ),
         [],
     )
+}
+
+pub fn list_accounts_internal(conn: &Connection) -> Result<Vec<Account>> {
+    list_accounts_with_visibility(conn, false)
+}
+
+/// AI 侧完整账户列表：不过滤 `is_hidden`，返回含 `is_hidden` 字段的完整列表。
+pub fn list_accounts_for_api_internal(conn: &Connection) -> Result<Vec<Account>> {
+    list_accounts_with_visibility(conn, true)
 }
 
 pub fn create_account_internal(conn: &Connection, input: AccountInput) -> Result<String> {
@@ -68,8 +84,8 @@ pub fn list_account_balances(db: State<'_, DbState>) -> Result<Vec<AccountBalanc
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let accounts: Vec<Account> = query_all(
         &conn,
-        "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted \
-         FROM accounts WHERE is_deleted=0 ORDER BY created_at",
+        "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden \
+         FROM accounts WHERE is_deleted=0 AND is_hidden=0 ORDER BY created_at",
         [],
     )?;
     let balances = crate::db::balance::compute_all_balances(&conn)?;
@@ -100,8 +116,8 @@ mod tests {
     fn list_accounts(conn: &rusqlite::Connection) -> Vec<Account> {
         query_all(
             conn,
-            "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted \
-             FROM accounts WHERE is_deleted=0 ORDER BY created_at",
+            "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden \
+             FROM accounts WHERE is_deleted=0 AND is_hidden=0 ORDER BY created_at",
             [],
         )
         .unwrap()
@@ -117,9 +133,18 @@ mod tests {
     ) {
         let now = now_iso();
         conn.execute(
-            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0)",
+            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0,0)",
             rusqlite::params![id, name, kind, currency, initial, now, now, 1, device_id()],
+        ).unwrap();
+    }
+
+    fn insert_hidden_account(conn: &rusqlite::Connection, id: &str, name: &str, currency: &str) {
+        let now = now_iso();
+        conn.execute(
+            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden) \
+             VALUES (?1,?2,'other',?3,0,?4,?5,?6,?7,0,1)",
+            rusqlite::params![id, name, currency, now, now, 1, device_id()],
         ).unwrap();
     }
 
@@ -296,5 +321,108 @@ mod tests {
         let all = crate::db::balance::compute_all_balances(&conn).unwrap();
         assert!(all.contains_key("acc-active"), "应包含活动账户");
         assert!(!all.contains_key("acc-deleted"), "不应包含已删除账户");
+    }
+
+    #[test]
+    fn list_accounts_excludes_hidden_accounts() {
+        let conn = setup();
+        insert_account(&conn, "acc-normal", "现金", "cash", "CNY", 0);
+        insert_hidden_account(&conn, "acc-hidden", "无(CNY)", "CNY");
+
+        let accounts = list_accounts(&conn);
+        assert!(
+            accounts.iter().any(|a| a.id == "acc-normal"),
+            "应包含普通账户"
+        );
+        assert!(
+            !accounts.iter().any(|a| a.id == "acc-hidden"),
+            "不应包含黑洞账户"
+        );
+    }
+
+    #[test]
+    fn list_accounts_for_api_includes_hidden_with_flag() {
+        let conn = setup();
+        insert_account(&conn, "acc-normal", "现金", "cash", "CNY", 0);
+        insert_hidden_account(&conn, "acc-hidden", "无(CNY)", "CNY");
+
+        let accounts = super::list_accounts_for_api_internal(&conn).unwrap();
+        let hidden = accounts.iter().find(|a| a.id == "acc-hidden").unwrap();
+        assert!(hidden.is_hidden, "API 应返回 is_hidden=true 的黑洞账户");
+        let normal = accounts.iter().find(|a| a.id == "acc-normal").unwrap();
+        assert!(!normal.is_hidden);
+    }
+
+    #[test]
+    fn hidden_account_transaction_visible_in_transaction_list() {
+        let conn = setup();
+        insert_hidden_account(&conn, "acc-hidden", "无(CNY)", "CNY");
+        insert_tx(&conn, "tx-hidden", "expense", 3000, "acc-hidden", None);
+
+        let rows = crate::commands::list_transactions_internal(&conn, None).unwrap();
+        assert!(
+            rows.iter()
+                .any(|t| t.id == "tx-hidden" && t.account_id == "acc-hidden"),
+            "黑洞账户的交易应仍在交易列表中"
+        );
+    }
+
+    #[test]
+    fn hidden_account_balance_excluded_from_all_balances() {
+        let conn = setup();
+        insert_hidden_account(&conn, "acc-hidden", "无(CNY)", "CNY");
+        insert_tx(&conn, "tx-h", "income", 5000, "acc-hidden", None);
+
+        let all = crate::db::balance::compute_all_balances(&conn).unwrap();
+        assert!(
+            !all.contains_key("acc-hidden"),
+            "compute_all_balances 不应包含黑洞账户"
+        );
+    }
+
+    #[test]
+    fn hidden_account_transactions_included_in_reports() {
+        let conn = setup();
+        insert_account(&conn, "acc-normal", "现金", "cash", "CNY", 0);
+        insert_hidden_account(&conn, "acc-hidden", "无(CNY)", "CNY");
+        insert_tx(&conn, "tx-normal", "income", 1000, "acc-normal", None);
+        insert_tx(&conn, "tx-hidden", "expense", 2000, "acc-hidden", None);
+
+        let summary: crate::models::MonthlySummary = query_all(
+            &conn,
+            "SELECT substr(date,1,7) AS month, \
+             SUM(CASE WHEN kind='income' THEN amount_native_cents ELSE 0 END), \
+             SUM(CASE WHEN kind='expense' THEN amount_native_cents ELSE 0 END), \
+             SUM(CASE WHEN kind='refund' THEN amount_native_cents ELSE 0 END) \
+             FROM transactions WHERE is_deleted=0 GROUP BY month",
+            [],
+        )
+        .unwrap()
+        .remove(0);
+        assert_eq!(summary.income_cents, 1000);
+        assert_eq!(summary.expense_cents, 2000, "黑洞账户的支出应计入报表");
+    }
+
+    #[test]
+    fn seed_contains_black_hole_accounts_for_cny_and_hkd() {
+        let conn = setup();
+        let mut stmt = conn
+            .prepare(
+                "SELECT name, currency_code, is_hidden FROM accounts WHERE is_hidden=1 ORDER BY currency_code",
+            )
+            .unwrap();
+        let rows: Vec<(String, String, i64)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("无(CNY)".to_string(), "CNY".to_string(), 1),
+                ("无(HKD)".to_string(), "HKD".to_string(), 1),
+            ],
+            "种子应预置 CNY/HKD 两个黑洞账户"
+        );
     }
 }

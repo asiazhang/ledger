@@ -54,10 +54,10 @@ pub fn query_all_transactions(conn: &Connection) -> Vec<Transaction> {
     .collect()
 }
 
-/// 查询所有未删除账户名称。
+/// 查询所有未删除、未隐藏账户名称（用户侧视角）。
 pub fn query_accounts_by_name(conn: &Connection) -> Vec<String> {
     let mut stmt = conn
-        .prepare("SELECT name FROM accounts WHERE is_deleted=0 ORDER BY created_at")
+        .prepare("SELECT name FROM accounts WHERE is_deleted=0 AND is_hidden=0 ORDER BY created_at")
         .unwrap();
     stmt.query_map([], |r| r.get::<_, String>(0))
         .unwrap()
