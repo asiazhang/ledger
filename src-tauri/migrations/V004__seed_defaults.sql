@@ -121,3 +121,9 @@ INSERT OR IGNORE INTO categories (id, name, kind, parent_id, created_at, updated
   ('4e41cb64-9647-5106-bb5e-4502d8912c0a', '兼职', 'income', '17494b6f-b527-5c4b-9af4-ecff194dba7d', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
   ('03f7c38e-4935-5fdd-bd2d-a08361ebbadb', '劳务报酬', 'income', '17494b6f-b527-5c4b-9af4-ecff194dba7d', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed'),
   ('891d7c2e-65b3-59a2-83aa-c886d2d997a2', '物品售出', 'income', '60549cc0-9b4b-584c-8891-9705c0416247', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed');
+
+-- 黑洞账户种子：承接「资金账户=无」的导入交易，作为数据修正缓冲池。
+-- 使用确定性 UUID v5（基于 name+currency_code）保证多设备种子一致，账户对用户隐藏（is_hidden=1）。
+INSERT OR IGNORE INTO accounts (id, name, type, currency_code, initial_balance_cents, created_at, updated_at, version, device_id, is_deleted, is_hidden) VALUES
+  ('6f51d386-8c74-5bc6-9176-a4a7e09ae1d5', '无(CNY)', 'other', 'CNY', 0, strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed', 0, 1),
+  ('325c4ee3-77ea-5352-8521-15989b0a815b', '无(HKD)', 'other', 'HKD', 0, strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1, 'seed', 0, 1);

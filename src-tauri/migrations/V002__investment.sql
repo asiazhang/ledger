@@ -5,12 +5,14 @@
 --    - 统一维护股票、基金、债券、ETF 等金融工具的基础信息。
 --    - 交易、持仓批次通过 instrument_id 与它关联，避免重复录入名称和币种。
 --    - currency_code 表示该工具报价和交易的币种。
+--    - market 表示工具所属市场：sh（上交所）/ sz（深交所）/ hk（港交所）/ unknown（其他，默认）。
 CREATE TABLE IF NOT EXISTS instruments (
     id              TEXT PRIMARY KEY,  -- 工具全局唯一 ID（UUID v7）
     symbol          TEXT NOT NULL,                      -- 代码，如 "600519.SH" / "NVDA" / "000001"
     instrument_type TEXT NOT NULL CHECK(instrument_type IN ('stock','fund','bond','etf','other')),  -- 金融工具类型
     name            TEXT,                                -- 名称（可选，如 "贵州茅台"）
     currency_code   TEXT NOT NULL REFERENCES currencies(code) ON DELETE RESTRICT,  -- 报价币种
+    market          TEXT NOT NULL DEFAULT 'unknown' CHECK(market IN ('sh','sz','hk','unknown')),  -- 所属市场
     created_at      TEXT NOT NULL,                     -- 创建时间
     updated_at      TEXT NOT NULL,                     -- 最后修改时间
     version         INTEGER NOT NULL DEFAULT 1,          -- 版本计数

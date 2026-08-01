@@ -35,7 +35,10 @@ CREATE TABLE IF NOT EXISTS accounts (
     updated_at            TEXT NOT NULL,                        -- 最后修改时间，UTC ISO 8601 格式（LWW 冲突解决）
     version               INTEGER NOT NULL DEFAULT 1,           -- 版本计数，每次修改 +1
     device_id             TEXT NOT NULL,                        -- 创建设备/最后修改设备标识
-    is_deleted            INTEGER NOT NULL DEFAULT 0 CHECK(is_deleted IN (0, 1))  -- 软删除标志
+    is_deleted            INTEGER NOT NULL DEFAULT 0 CHECK(is_deleted IN (0, 1)),  -- 软删除标志
+    -- is_hidden：黑洞账户标志。黑洞账户用于承接「资金账户=无」的导入交易，交易照常写入
+    -- 并出现在列表/报表，但账户本身对用户隐藏。
+    is_hidden             INTEGER NOT NULL DEFAULT 0 CHECK(is_hidden IN (0, 1))   -- 隐藏标志（黑洞账户）
 );
 
 CREATE TABLE IF NOT EXISTS categories (
@@ -72,6 +75,9 @@ CREATE TABLE IF NOT EXISTS transactions (
     category_id               TEXT REFERENCES categories(id) ON DELETE SET NULL,   -- 关联分类 ID，转账通常为空；分类硬删时置空
     refund_of_transaction_id  TEXT REFERENCES transactions(id) ON DELETE SET NULL,  -- 退款关联的原始支出交易 ID；原交易硬删时置空
     note                      TEXT,                                                    -- 交易备注（可选）
+    -- dedup_hash：导入去重哈希，可空（应用层行为，不建唯一索引）。
+    -- 哈希：sha256("date|kind|amount_cents|currency_code|account_id|to_account_id")
+    dedup_hash                TEXT,                                                    -- 导入去重哈希（可选）
     date                      TEXT NOT NULL,                                           -- 交易日期，ISO 8601 日期格式（YYYY-MM-DD）
     created_at                TEXT NOT NULL,                                            -- 创建时间，UTC ISO 8601 格式
     updated_at                TEXT NOT NULL,                                            -- 最后修改时间，UTC ISO 8601 格式
