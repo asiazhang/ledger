@@ -148,3 +148,44 @@
   - **专用场景**：数据迁移（从第三方 APP 的 CSV/Excel 导入）。
   - **暴露的接口**：`accounts`（list/create）、`categories`（list/create）、`transactions/batch`，共 5 个端点。
 - **别名**：不使用"本地 API"（过于泛化）、"后端 API"（与 Tauri IPC 混淆）。
+
+## Instrument（金融工具/标的）
+
+- **定义**：用户可交易的金融产品，例如某只股票、某只基金、某只债券。
+- **边界**：
+  - 包含五种类型：`stock`（股票）、`fund`（基金）、`bond`（债券）、`etf`（ETF）、`other`（其他）。
+  - `symbol` 为显示代码（如 `600519`、`000001`、`00700`），`market` 区分市场（`sh`/`sz`/`hk`；手动创建未指定时为 `unknown`），两者共同标识一个标的。
+  - 股票类标的由"标的全量同步"从东方财富 API 批量拉取填充（代码、名称、市场、币种），用户无需手动录入；基金、债券等非股票标的仍可手动创建。
+  - `name` 为标的名称（如 "贵州茅台"），同步时自动填充。
+- **别名**：不使用"证券"（偏法律概念）、"产品"（过于泛化）。不单独使用 "market_symbol" 或 "ticker"——统一使用 "symbol"。
+
+## MarketPrice（市场价格）
+
+- **定义**：某个 Instrument 在某个时间点的市场报价快照。
+- **边界**：
+  - MVP 阶段不保留历史价格：每个 Instrument 全局只保留一条 MarketPrice 记录，每次同步覆盖更新。
+  - `price_cents` 和 `currency_code` 由数据源（东方财富）返回，币种按市场固定：`sh`/`sz` → `CNY`，`hk` → `HKD`。
+  - `priced_at` 记录同步时间。
+  - `source` 标记数据来源，当前为 `eastmoney`。
+- **别名**：不使用"行情"（偏实时交易概念）、"报价"（偏询价场景）。
+
+## Holding（持仓）
+
+- **定义**：用户在某个投资账户中持有的某个 Instrument 的数量及成本信息。
+- **边界**：
+  - `quantity` 为当前持有数量（由各持仓批次 `remaining_quantity` 实时聚合）。
+  - `cost_basis_cents` 为持有成本（买入总金额），`cost_currency_code` 为成本币种。
+  - `latest_price_cents`、`market_value_cents`、`unrealized_pnl_cents` 由 `v_holdings` 视图实时计算（关联最新 MarketPrice 与汇率折算到账户本位币），不落库存储。
+  - 市值 = quantity × latest_price_cents（按汇率折算）；未实现盈亏 = 账户币市值 - 账户币成本。
+- **别名**：不使用"仓位"（偏交易术语）、"库存"（偏实物）。
+
+## InstrumentSync（标的全量同步）
+
+- **定义**：用户手动触发、系统从东方财富 API 一次性全量拉取沪市/深市/港股股票标的信息（代码、名称、最新价），upsert 到本地 `instruments` 与 `market_prices` 的过程。
+- **边界**：
+  - 触发方式：手动触发（设置页"股票标的全量同步"），不做自动定时刷新。
+  - 同步范围：沪市（`sh`）、深市（`sz`）、港股（`hk`），币种分别固定为 `CNY`/`CNY`/`HKD`。
+  - 执行方式：一次性全量同步、分页拉取，无并发限制、无失败重试。
+  - 去重：按 `symbol` 匹配已有标的，名称或市场变更则更新，不存在则插入，并同步 upsert 该标的最新价到 `market_prices`。
+  - 进度反馈：通过 `sync-instruments:progress` 事件向前端汇报当前页数/总数与累计新增、更新数量。
+- **别名**：不使用"同步价格"（偏持续同步）、"更新行情"（偏实时）。
