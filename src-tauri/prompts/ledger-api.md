@@ -5,6 +5,7 @@
 - **基础地址**: `http://127.0.0.1:9527/api/v1`
 - **请求格式**: JSON (`Content-Type: application/json`)
 - **响应格式**: JSON
+- **完整契约**: `GET /api/v1/openapi.json` 返回机器可读的 OpenAPI 文档（含全部端点与数据模型），交互式 UI 见 `http://127.0.0.1:9527/swagger-ui`
 - **错误格式**: `{ "kind": "<ErrorKind>", "message": "<中文错误描述>" }`
   - `Invalid` (400) — 参数校验失败
   - `Parse` (400) — 导入解析失败
