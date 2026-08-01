@@ -172,44 +172,49 @@
 
 `POST /api/v1/transactions/batch`
 
-**请求**: `TransactionInput[]`
+**请求**: `{ "transactions": TransactionInput[], "dedup": bool }` — `dedup` 缺省 `true`（重复导入自动跳过）
 
 ```json
-[
-  {
-    "kind": "income",
-    "amount_cents": 500000,
-    "currency_code": "CNY",
-    "account_id": "uuid-of-account",
-    "to_account_id": null,
-    "category_id": "uuid-of-category",
-    "note": "1月工资",
-    "date": "2026-01-15"
-  },
-  {
-    "kind": "expense",
-    "amount_cents": 3500,
-    "currency_code": "CNY",
-    "account_id": "uuid-of-account",
-    "category_id": "uuid-of-category",
-    "note": "午餐",
-    "date": "2026-01-15"
-  },
-  {
-    "kind": "transfer",
-    "amount_cents": 100000,
-    "currency_code": "CNY",
-    "account_id": "uuid-of-source-account",
-    "to_account_id": "uuid-of-target-account",
-    "date": "2026-01-15"
-  }
-]
+{
+  "dedup": true,
+  "transactions": [
+    {
+      "kind": "income",
+      "amount_cents": 500000,
+      "currency_code": "CNY",
+      "account_id": "uuid-of-account",
+      "to_account_id": null,
+      "category_id": "uuid-of-category",
+      "note": "1月工资",
+      "date": "2026-01-15"
+    },
+    {
+      "kind": "expense",
+      "amount_cents": 3500,
+      "currency_code": "CNY",
+      "account_id": "uuid-of-account",
+      "category_id": "uuid-of-category",
+      "note": "午餐",
+      "date": "2026-01-15"
+    },
+    {
+      "kind": "transfer",
+      "amount_cents": 100000,
+      "currency_code": "CNY",
+      "account_id": "uuid-of-source-account",
+      "to_account_id": "uuid-of-target-account",
+      "date": "2026-01-15"
+    }
+  ]
+}
 ```
 
 **字段说明**:
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
+| `transactions` | array | 是 | 交易数组（结构见下） |
+| `dedup` | bool | 否 | 是否去重，缺省 `true` |
 | `kind` | string | 是 | `income` / `expense` / `transfer` |
 | `amount_cents` | integer | 是 | 金额(分), **必须大于 0** |
 | `currency_code` | string | 是 | 币种代码 |
@@ -223,11 +228,18 @@
 
 ```json
 [
-  { "success": true, "id": "uuid-1", "error": null },
-  { "success": true, "id": "uuid-2", "error": null },
-  { "success": false, "id": null, "error": "金额必须大于 0" }
+  { "success": true, "duplicate": false, "id": "uuid-1", "error": null },
+  { "success": true, "duplicate": true, "id": null, "error": null },
+  { "success": false, "duplicate": false, "id": null, "error": "金额必须大于 0" }
 ]
 ```
+
+**去重规则**:
+- `dedup: true`（缺省）时，命中已存在（`is_deleted=0`）的同 `dedup_hash` 交易则跳过，返回 `{success: true, duplicate: true, id: null}`——既非新建也非失败，无需重试、不应上报错误
+- `dedup: false` 时不做去重，重复写入成功（新增行）
+- `dedup_hash = sha256(date|kind|amount_cents|currency_code|account_id|to_account_id)`，排除 note/category，`to_account_id` 缺省拼空串
+- 只匹配 `is_deleted=0` 的交易：软删除的交易不占去重位，重跑会重新写入
+- `dedup_hash` 导入后保持不变，编辑/同步无特殊处理
 
 **业务约束**:
 - ⚠️ `amount_cents` 必须 > 0
@@ -276,4 +288,4 @@
 
 1. **拉取已有数据** — `GET /api/v1/currencies` 获取币种清单，构造 `币种名 → code` 映射；`GET /api/v1/categories` 获取分类列表，构造 `分类名称 → 分类 ID` 映射表；`GET /api/v1/accounts` 获取账户列表，构造 `账户名称 → 账户 ID` 映射表
 2. **补齐缺失数据** — 对 CSV 中 `category` 列在映射表中找不到的分类，调用 `POST /api/v1/categories` 创建；对不存在的账户，调用 `POST /api/v1/accounts` 创建（账户/分类创建均按自然键幂等，同名复用已有记录，可放心重跑）
-3. **批量写入交易** — 将 CSV 行转换为 `TransactionInput[]`，按金额正负决定 `kind`（正为 `income`，负为 `expense`），填充 `account_id` 和 `category_id` 后调用 `POST /api/v1/transactions/batch` 批量写入
+3. **批量写入交易** — 将 CSV 行转换为 `TransactionInput[]`，按金额正负决定 `kind`（正为 `income`，负为 `expense`），填充 `account_id` 和 `category_id` 后以 `{transactions, dedup}` 包裹调用 `POST /api/v1/transactions/batch` 批量写入；`dedup` 缺省开启，命中 `duplicate: true` 的行说明已存在，跳过即可

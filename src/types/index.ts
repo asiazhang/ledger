@@ -143,6 +143,7 @@ export interface CategoryShare {
 
 export interface CreateTransactionResult {
   success: boolean
+  duplicate: boolean
   id: string | null
   error: string | null
 }
