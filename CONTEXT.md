@@ -146,8 +146,29 @@
   - URL 前缀 `/api/v1`，JSON 请求/响应。
   - 错误格式复用 `{kind, message}`。
   - **专用场景**：数据迁移（从第三方 APP 的 CSV/Excel 导入）。
-  - **暴露的接口**：`accounts`（list/create）、`categories`（list/create）、`transactions/batch`，共 5 个端点。
+  - **暴露的接口**：`accounts`（list/create）、`categories`（list/create）、`transactions/batch`、`currencies`（list），共 6 个端点。
+  - `accounts` / `categories` 的 create 按自然键幂等（同名复用已有记录）；`transactions/batch` 支持 `dedup` 参数（默认开启）。
 - **别名**：不使用"本地 API"（过于泛化）、"后端 API"（与 Tauri IPC 混淆）。
+
+## ImportDedup（导入去重）
+
+- **定义**：在 `POST /api/v1/transactions/batch` 导入入口，由后端对每条 `TransactionInput` 计算确定性内容哈希（`dedup_hash`），命中已存在的未删除交易则跳过并返回 `duplicate`，避免重复导入污染账本。
+- **哈希**：`sha256(date|kind|amount_cents|currency_code|account_id|to_account_id)`，`to_account_id` 缺省空串。字段集排除 note/category（AI 生成文本非确定性，会导致哈希漂移）。
+- **边界**：
+  - 只在导入入口生效，手工记账与定时交易引擎不受影响；`dedup` 参数默认开启、可关闭。
+  - 只匹配 `is_deleted=0` 的交易：软删除的交易不占去重位，重跑导入会重新写入。
+  - `dedup_hash` 导入后保持不变，编辑/同步无特殊处理。
+  - `dedup_hash` 落库但不建唯一约束——去重是应用层行为，不是数据库硬约束。
+
+## BlackHoleAccount（黑洞账户）
+
+- **定义**：用于承接来源不明资金变动的占位账户（如第三方导出中 `资金账户=无` 的交易），作为数据修正的缓冲池。交易照常写入、参与列表与报表，但账户本身对用户隐藏。
+- **边界**：
+  - 是 `accounts` 表中的真实记录，`is_hidden=1`；按币种预置（当前为 `无(CNY)`、`无(HKD)`），由迁移种子保证存在，不依赖导入方创建。
+  - `is_hidden` 只过滤账户的展示与余额汇总（账户列表、下拉选择器、`compute_all_balances`）；其交易仍正常出现在交易列表与报表，便于用户改挂到真实账户后清空删除。
+  - 对 AI 的 `GET /api/v1/accounts` 可见（返回 `is_hidden` 标志），以便把"无"交易映射到黑洞账户。
+  - `无` 交易的 kind 照常按金额正负判定为 income/expense；`x → 无` / `无 → x` 按转账处理（`to_account_id` 指向黑洞账户）。
+- **别名**：不使用"垃圾账户"、"清理账户"（偏贬义/一次性）；不使用"未知账户"（与未知金额混淆）。
 
 ## Instrument（金融工具/标的）
 
