@@ -1,16 +1,87 @@
 use std::collections::HashMap;
 use std::thread;
+use std::time::{Duration, Instant};
 
 use rusqlite::params;
-use serde_json::Value;
+use serde::Deserialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::AppError;
 use crate::models::SyncProgress;
 
-const API_BASE: &str = "https://push2.eastmoney.com/api/qt/clist/get";
+// 行情接口路径。东财 clist 接口同一数据结构分布在多个主机，按顺序尝试，失败自动切换下一个。
+const API_PATH: &str = "/api/qt/clist/get";
+// 优先使用延迟行情主机池：push2 实时主机曾被东财对该出口 IP 触发风控（连接重置），
+// push2delay 返回相同数据结构且对批量访问更稳定；延迟行情对全量标的同步足够。
+const API_HOSTS: &[&str] = &[
+    "https://push2delay.eastmoney.com",
+    "https://12.push2delay.eastmoney.com",
+    "https://21.push2delay.eastmoney.com",
+    "https://60.push2delay.eastmoney.com",
+    "https://90.push2delay.eastmoney.com",
+    "https://push2.eastmoney.com",
+];
 const PAGE_SIZE: usize = 500;
+// 东方财富公开行情接口限频约 60 次/分钟（1 次/秒），此处留更多余量并串行访问。
+// 出口 IP 会被 onegate WAF 间歇性限流（返回 200 非 JSON 拦截页或 429），限流窗口约 2-4 分钟自动恢复。
+const REQUEST_INTERVAL: Duration = Duration::from_millis(2000);
+const MAX_RETRIES: u32 = 3;
+const BASE_BACKOFF: Duration = Duration::from_secs(1);
+const THROTTLE_COOLDOWN: Duration = Duration::from_secs(30);
+const MAX_THROTTLE_RETRIES: u32 = 6;
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// 重试策略：传输层错误走短退避，风控限流（429 / 200 非 JSON）走长冷却等待窗口过去。
+#[derive(Clone, Copy)]
+struct RetryConfig {
+    max_retries: u32,
+    base_backoff: Duration,
+    max_throttle_retries: u32,
+    throttle_cooldown: Duration,
+}
+
+impl RetryConfig {
+    fn production() -> Self {
+        Self {
+            max_retries: MAX_RETRIES,
+            base_backoff: BASE_BACKOFF,
+            max_throttle_retries: MAX_THROTTLE_RETRIES,
+            throttle_cooldown: THROTTLE_COOLDOWN,
+        }
+    }
+}
+
+/// 串行限速器：保证相邻两次 HTTP 请求之间至少间隔 interval。
+struct Pacer {
+    last: Option<Instant>,
+    interval: Duration,
+}
+
+impl Pacer {
+    fn new(interval: Duration) -> Self {
+        Self {
+            last: None,
+            interval,
+        }
+    }
+
+    fn wait(&mut self) {
+        if let Some(last) = self.last {
+            let elapsed = last.elapsed();
+            if elapsed < self.interval {
+                thread::sleep(self.interval - elapsed);
+            }
+        }
+        self.last = Some(Instant::now());
+    }
+}
+
+impl Default for Pacer {
+    fn default() -> Self {
+        Self::new(REQUEST_INTERVAL)
+    }
+}
 
 struct MarketConfig {
     code: &'static str,
@@ -42,89 +113,249 @@ const MARKETS: &[MarketConfig] = &[
 
 type ExistingInstrument = (String, Option<String>, String);
 
+/// 行情接口返回的单个股票条目（字段 f12=代码, f14=名称, f2=价格原始值）。
+/// 注意 f2 的隐含小数位因市场而异：A 股 2 位（f2=951 表示 9.51），港股 3 位（f2=475200 表示 475.200），
+/// 因此这里保留原始 f2，换算成分在 `f2_to_cents` 按市场处理。
+/// get_total 请求只带 fields=f12，响应条目可能缺 f14/f2，因此名称与价格均可缺省。
+#[derive(Debug, Deserialize)]
 struct StockItem {
+    #[serde(rename = "f12")]
     code: String,
+    #[serde(rename = "f14", default)]
     name: String,
-    price: Option<i64>,
+    #[serde(rename = "f2", default, deserialize_with = "deserialize_f2")]
+    price: Option<f64>,
 }
 
-fn fetch_page(market: &MarketConfig, page: usize) -> Result<Vec<StockItem>, AppError> {
-    tracing::debug!(market = %market.name, page = %page, "获取股票数据页");
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("Mozilla/5.0")
-        .build()
-        .map_err(|e| AppError::Io(e.to_string()))?;
+fn deserialize_f2<'de, D>(d: D) -> Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(d)?;
+    let raw = match value {
+        serde_json::Value::Number(n) => n.as_f64(),
+        _ => None,
+    };
+    Ok(raw.filter(|&p| p > 0.0))
+}
 
-    let url = format!(
-        "{}?fs={}&pn={}&pz={}&fields=f12,f14,f2",
-        API_BASE, market.fs, page, PAGE_SIZE
-    );
+/// 将原始 f2 换算为整数分：A 股 f2=价格×100（×1 即得分），港股 f2=价格×1000（÷10 得分）。
+fn f2_to_cents(raw: f64, market_code: &str) -> i64 {
+    if market_code == "hk" {
+        (raw / 10.0).round() as i64
+    } else {
+        raw.round() as i64
+    }
+}
 
-    let resp = client
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(30))
-        .send()
-        .map_err(|e| {
-            tracing::error!(market = %market.name, page = %page, error = %e, "HTTP 请求失败");
-            AppError::Io(format!("HTTP 请求失败: {e}"))
-        })?;
+/// 行情列表接口整体响应。
+#[derive(Debug, Deserialize)]
+struct ClistResponse {
+    data: ClistData,
+}
 
-    let json: Value = resp
-        .json()
-        .map_err(|e| {
-            tracing::warn!(market = %market.name, page = %page, error = %e, "JSON 解析失败");
-            AppError::Parse(format!("JSON 解析失败: {e}"))
-        })?;
+#[derive(Debug, Deserialize)]
+struct ClistData {
+    total: Option<u64>,
+    diff: Option<DiffField>,
+}
 
-    let diff = json["data"]["diff"]
-        .as_array()
-        .ok_or_else(|| AppError::Parse("响应中缺少 data.diff 字段".into()))?;
+/// data.diff 东财既可能返回按序号 key 的对象，也可能返回数组。
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum DiffField {
+    Object(HashMap<String, StockItem>),
+    Array(Vec<StockItem>),
+}
 
-    let items: Vec<StockItem> = diff
-        .iter()
-        .filter_map(|item| {
-            let code = item["f12"].as_str()?;
-            let name = item["f14"].as_str()?;
-            if code.is_empty() || name.is_empty() {
-                return None;
+impl DiffField {
+    fn into_items(self) -> Vec<StockItem> {
+        let mut items: Vec<StockItem> = match self {
+            DiffField::Object(map) => {
+                let mut pairs: Vec<_> = map.into_iter().collect();
+                pairs.sort_by_key(|(k, _)| k.parse::<usize>().unwrap_or(usize::MAX));
+                pairs.into_iter().map(|(_, v)| v).collect()
             }
-            let price = match &item["f2"] {
-                Value::Number(n) => n.as_f64().or(n.as_i64().map(|i| i as f64)),
-                Value::String(s) if s == "-" => None,
-                _ => None,
-            };
-            let price_cents = price.map(|p| (p * 100.0).round() as i64);
-            Some(StockItem {
-                code: code.to_string(),
-                name: name.to_string(),
-                price: price_cents.filter(|&c| c > 0),
-            })
-        })
-        .collect();
-
-    Ok(items)
+            DiffField::Array(items) => items,
+        };
+        items.retain(|s| !s.code.is_empty() && !s.name.is_empty());
+        items
+    }
 }
 
-fn get_total(market: &MarketConfig) -> Result<usize, AppError> {
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("Mozilla/5.0")
-        .build()
-        .map_err(|e| AppError::Io(e.to_string()))?;
+/// 发送请求并解析 JSON，按序尝试多个主机，对传输错误做短退避、对限流拦截做长冷却重试。
+fn request_json(
+    client: &reqwest::blocking::Client,
+    params: &[(&str, &str)],
+    pacer: &mut Pacer,
+    ctx: &str,
+) -> Result<ClistResponse, AppError> {
+    request_json_from_hosts(
+        client,
+        params,
+        API_HOSTS,
+        RetryConfig::production(),
+        pacer,
+        ctx,
+    )
+}
 
-    let url = format!("{}?fs={}&pn=1&pz=1&fields=f12", API_BASE, market.fs);
+fn request_json_from_hosts(
+    client: &reqwest::blocking::Client,
+    params: &[(&str, &str)],
+    hosts: &[&str],
+    cfg: RetryConfig,
+    pacer: &mut Pacer,
+    ctx: &str,
+) -> Result<ClistResponse, AppError> {
+    let mut failures: Vec<String> = Vec::new();
+    for host in hosts {
+        let url = format!("{host}{API_PATH}");
+        match request_json_with_retry(client, &url, params, pacer, ctx, cfg) {
+            Ok(resp) => return Ok(resp),
+            Err(e) => failures.push(format!("{host}: {e}")),
+        }
+    }
+    Err(AppError::Io(format!(
+        "全部行情主机请求失败: {}",
+        failures.join("; ")
+    )))
+}
 
-    let resp = client
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(30))
-        .send()
-        .map_err(|e| AppError::Io(format!("HTTP 请求失败: {e}")))?;
+fn request_json_with_retry(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    params: &[(&str, &str)],
+    pacer: &mut Pacer,
+    ctx: &str,
+    cfg: RetryConfig,
+) -> Result<ClistResponse, AppError> {
+    let mut transport_attempts = 0u32;
+    let mut throttle_attempts = 0u32;
+    loop {
+        pacer.wait();
+        let resp = match client
+            .get(url)
+            .query(params)
+            .timeout(REQUEST_TIMEOUT)
+            .send()
+        {
+            Ok(r) => r,
+            Err(e) => {
+                transport_attempts += 1;
+                if transport_attempts <= cfg.max_retries {
+                    tracing::warn!(ctx = %ctx, attempt = transport_attempts, error = %e, "HTTP 请求失败，准备重试");
+                    thread::sleep(cfg.base_backoff * (1u32 << (transport_attempts - 1)));
+                    continue;
+                }
+                tracing::error!(ctx = %ctx, error = %e, "HTTP 请求失败");
+                return Err(AppError::Io(format!("HTTP 请求失败: {e}")));
+            }
+        };
 
-    let json: Value = resp
-        .json()
-        .map_err(|e| AppError::Parse(format!("JSON 解析失败: {e}")))?;
+        let status = resp.status();
+        let content_encoding = resp
+            .headers()
+            .get(reqwest::header::CONTENT_ENCODING)
+            .map(|v| v.to_str().unwrap_or("?").to_string())
+            .unwrap_or_default();
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .map(|v| v.to_str().unwrap_or("?").to_string())
+            .unwrap_or_default();
 
-    json["data"]["total"]
-        .as_u64()
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            throttle_attempts += 1;
+            if throttle_attempts <= cfg.max_throttle_retries {
+                tracing::warn!(ctx = %ctx, attempt = throttle_attempts, "触发接口限流(429)，冷却后重试");
+                thread::sleep(cfg.throttle_cooldown);
+                continue;
+            }
+            return Err(AppError::Io("接口限流(429)，请稍后再试".into()));
+        }
+
+        let bytes = match resp.bytes() {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(ctx = %ctx, error = %e, "读取响应失败");
+                thread::sleep(cfg.throttle_cooldown);
+                continue;
+            }
+        };
+        match serde_json::from_slice::<ClistResponse>(&bytes) {
+            Ok(json) => return Ok(json),
+            Err(e) => {
+                let head = String::from_utf8_lossy(&bytes[..bytes.len().min(120)]);
+                throttle_attempts += 1;
+                if throttle_attempts <= cfg.max_throttle_retries {
+                    tracing::warn!(
+                        ctx = %ctx, attempt = throttle_attempts, status = %status,
+                        content_type = %content_type, content_encoding = %content_encoding,
+                        body_head = %head, error = %e,
+                        "响应解析失败（疑似被风控拦截），冷却后重试"
+                    );
+                    thread::sleep(cfg.throttle_cooldown);
+                    continue;
+                }
+                tracing::error!(
+                    ctx = %ctx, status = %status, content_type = %content_type,
+                    content_encoding = %content_encoding, body_head = %head, error = %e,
+                    "响应解析失败"
+                );
+                return Err(AppError::Parse(format!("JSON 解析失败: {e}")));
+            }
+        }
+    }
+}
+
+fn fetch_page(
+    client: &reqwest::blocking::Client,
+    pacer: &mut Pacer,
+    market: &MarketConfig,
+    page: usize,
+) -> Result<Vec<StockItem>, AppError> {
+    tracing::debug!(market = %market.name, page = %page, "获取股票数据页");
+    let page_str = page.to_string();
+    let size_str = PAGE_SIZE.to_string();
+    let params = [
+        ("fs", market.fs),
+        ("pn", page_str.as_str()),
+        ("pz", size_str.as_str()),
+        ("fields", "f12,f14,f2"),
+    ];
+    let resp = request_json(
+        client,
+        &params,
+        pacer,
+        &format!("fetch_page:{}({})", market.name, page),
+    )?;
+    resp.data
+        .diff
+        .map(DiffField::into_items)
+        .ok_or_else(|| AppError::Parse("响应中缺少 data.diff 字段".into()))
+}
+
+fn get_total(
+    client: &reqwest::blocking::Client,
+    pacer: &mut Pacer,
+    market: &MarketConfig,
+) -> Result<usize, AppError> {
+    let params = [
+        ("fs", market.fs),
+        ("pn", "1"),
+        ("pz", "1"),
+        ("fields", "f12"),
+    ];
+    let resp = request_json(
+        client,
+        &params,
+        pacer,
+        &format!("get_total:{}", market.name),
+    )?;
+
+    resp.data
+        .total
         .map(|t| t as usize)
         .ok_or_else(|| AppError::Parse("响应中缺少 data.total 字段".into()))
 }
@@ -184,10 +415,16 @@ fn do_sync(conn: &rusqlite::Connection, app: &AppHandle) -> Result<(usize, usize
     let mut total_inserted = 0usize;
     let mut total_updated = 0usize;
 
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("Mozilla/5.0")
+        .build()
+        .map_err(|e| AppError::Io(e.to_string()))?;
+    let mut pacer = Pacer::default();
+
     let mut existing_map = build_existing_instruments(conn)?;
 
     for market in MARKETS {
-        let total = match get_total(market) {
+        let total = match get_total(&client, &mut pacer, market) {
             Ok(t) => t,
             Err(e) => {
                 let _ = app.emit(
@@ -210,7 +447,7 @@ fn do_sync(conn: &rusqlite::Connection, app: &AppHandle) -> Result<(usize, usize
         let mut processed = 0usize;
 
         for page in 1..=pages {
-            let items = fetch_page(market, page)?;
+            let items = fetch_page(&client, &mut pacer, market, page)?;
             for item in &items {
                 if let Some((existing_id, existing_name, existing_market)) =
                     existing_map.get(&item.code)
@@ -225,7 +462,8 @@ fn do_sync(conn: &rusqlite::Connection, app: &AppHandle) -> Result<(usize, usize
                         )?;
                         total_updated += 1;
                     }
-                    if let Some(price) = item.price {
+                    if let Some(raw) = item.price {
+                        let price = f2_to_cents(raw, market.code);
                         upsert_market_price(conn, existing_id, price, market.currency)?;
                     }
                 } else {
@@ -247,7 +485,8 @@ fn do_sync(conn: &rusqlite::Connection, app: &AppHandle) -> Result<(usize, usize
                         ],
                     )?;
                     total_inserted += 1;
-                    if let Some(price) = item.price {
+                    if let Some(raw) = item.price {
+                        let price = f2_to_cents(raw, market.code);
                         upsert_market_price(conn, &id, price, market.currency)?;
                     }
                     existing_map.insert(
@@ -317,6 +556,7 @@ pub fn sync_instruments(
         };
 
         if let Err(e) = do_sync(&conn_guard, &app) {
+            tracing::error!(error = %e, "股票同步失败");
             let _ = app.emit(
                 "sync-instruments:progress",
                 SyncProgress {
@@ -344,6 +584,206 @@ mod tests {
         let mut conn = crate::db::open_in_memory().unwrap();
         crate::db::init_db(&mut conn).unwrap();
         conn
+    }
+
+    fn fast_cfg(max_retries: u32, max_throttle_retries: u32) -> RetryConfig {
+        RetryConfig {
+            max_retries,
+            base_backoff: Duration::from_millis(1),
+            max_throttle_retries,
+            throttle_cooldown: Duration::from_millis(1),
+        }
+    }
+
+    /// 起一个本地 HTTP 服务，按调用次数回调响应 (status, body)，返回基础地址。
+    fn spawn_http_server(responder: impl Fn(usize) -> (u16, String) + Send + 'static) -> String {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let mut seq = 0usize;
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf);
+                seq += 1;
+                let (status, body) = responder(seq);
+                let reason = if status == 200 { "OK" } else { "Limited" };
+                let resp = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(resp.as_bytes());
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn request_json_retries_429_then_succeeds() {
+        let url = spawn_http_server(|n| {
+            if n == 1 {
+                (429, "rate limited".into())
+            } else {
+                (200, r#"{"data":{"total":7}}"#.into())
+            }
+        });
+        let client = reqwest::blocking::Client::new();
+        let mut pacer = Pacer::new(Duration::ZERO);
+        let params = [("fs", "test"), ("pn", "1")];
+        let json =
+            request_json_with_retry(&client, &url, &params, &mut pacer, "test", fast_cfg(3, 3))
+                .unwrap();
+        assert_eq!(json.data.total, Some(7));
+    }
+
+    #[test]
+    fn request_json_retries_on_json_decode_failure() {
+        let url = spawn_http_server(|n| {
+            if n == 1 {
+                (200, "not json at all".into())
+            } else {
+                (200, r#"{"data":{"total":9}}"#.into())
+            }
+        });
+        let client = reqwest::blocking::Client::new();
+        let mut pacer = Pacer::new(Duration::ZERO);
+        let params = [("fs", "test")];
+        let json =
+            request_json_with_retry(&client, &url, &params, &mut pacer, "test", fast_cfg(3, 3))
+                .unwrap();
+        assert_eq!(json.data.total, Some(9));
+    }
+
+    #[test]
+    fn request_json_returns_error_after_429_exhausted() {
+        let url = spawn_http_server(|_| (429, "rate limited".into()));
+        let client = reqwest::blocking::Client::new();
+        let mut pacer = Pacer::new(Duration::ZERO);
+        let params = [("fs", "test")];
+        let err =
+            request_json_with_retry(&client, &url, &params, &mut pacer, "test", fast_cfg(2, 2))
+                .unwrap_err();
+        assert!(err.to_string().contains("429"));
+    }
+
+    #[test]
+    fn request_json_returns_error_when_connection_refused() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/x", listener.local_addr().unwrap());
+        drop(listener);
+        let client = reqwest::blocking::Client::new();
+        let mut pacer = Pacer::new(Duration::ZERO);
+        let params = [("fs", "test")];
+        let err =
+            request_json_with_retry(&client, &url, &params, &mut pacer, "test", fast_cfg(2, 0))
+                .unwrap_err();
+        assert!(err.to_string().contains("HTTP 请求失败"));
+    }
+
+    #[test]
+    fn request_json_falls_back_to_next_host() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let h1 = hits.clone();
+        let url1 = spawn_http_server(move |_| {
+            h1.fetch_add(1, Ordering::SeqCst);
+            (500, "boom".into())
+        });
+        let h2 = hits.clone();
+        let url2 = spawn_http_server(move |_| {
+            h2.fetch_add(1, Ordering::SeqCst);
+            (200, r#"{"data":{"total":7}}"#.into())
+        });
+
+        let hosts = [url1.as_str(), url2.as_str()];
+        let client = reqwest::blocking::Client::new();
+        let mut pacer = Pacer::new(Duration::ZERO);
+        let params = [("fs", "test")];
+        let resp =
+            request_json_from_hosts(&client, &params, &hosts, fast_cfg(0, 0), &mut pacer, "test")
+                .unwrap();
+        assert_eq!(resp.data.total, Some(7));
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn request_json_returns_error_when_all_hosts_fail() {
+        let url = spawn_http_server(|_| (500, "boom".into()));
+        let hosts = [url.as_str()];
+        let client = reqwest::blocking::Client::new();
+        let mut pacer = Pacer::new(Duration::ZERO);
+        let params = [("fs", "test")];
+        let err =
+            request_json_from_hosts(&client, &params, &hosts, fast_cfg(0, 0), &mut pacer, "test")
+                .unwrap_err();
+        assert!(err.to_string().contains("全部行情主机请求失败"));
+    }
+
+    #[test]
+    fn clist_response_deserializes_object_diff() {
+        let json: ClistResponse = serde_json::from_str(
+            r#"{"data":{"total":3,"diff":{"0":{"f12":"600000","f14":"浦发银行","f2":951},"1":{"f12":"600001","f14":"邯郸钢铁","f2":0},"2":{"f12":"600002","f14":"齐鲁石化","f2":"-"}}}}"#,
+        )
+        .unwrap();
+        assert_eq!(json.data.total, Some(3));
+        let items = json.data.diff.unwrap().into_items();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].code, "600000");
+        assert_eq!(items[0].name, "浦发银行");
+        assert_eq!(items[0].price, Some(951.0));
+        assert_eq!(items[1].price, None);
+        assert_eq!(items[2].price, None);
+    }
+
+    #[test]
+    fn clist_response_deserializes_array_diff() {
+        let json: ClistResponse = serde_json::from_str(
+            r#"{"data":{"diff":[{"f12":"600000","f14":"浦发银行","f2":951}]}}"#,
+        )
+        .unwrap();
+        let items = json.data.diff.unwrap().into_items();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].code, "600000");
+        assert_eq!(items[0].price, Some(951.0));
+    }
+
+    #[test]
+    fn f2_to_cents_scales_by_market() {
+        assert_eq!(f2_to_cents(951.0, "sh"), 951);
+        assert_eq!(f2_to_cents(1700.0, "sz"), 1700);
+        assert_eq!(f2_to_cents(475200.0, "hk"), 47520);
+        assert_eq!(f2_to_cents(73600.0, "hk"), 7360);
+    }
+
+    #[test]
+    fn clist_response_deserializes_f12_only_get_total() {
+        let json: ClistResponse =
+            serde_json::from_str(r#"{"data":{"total":2461,"diff":{"0":{"f12":"600000"}}}}"#)
+                .unwrap();
+        assert_eq!(json.data.total, Some(2461));
+        let items = json.data.diff.unwrap().into_items();
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn clist_response_missing_diff_yields_none() {
+        let json: ClistResponse = serde_json::from_str(r#"{"data":{"total":5}}"#).unwrap();
+        assert_eq!(json.data.total, Some(5));
+        assert!(json.data.diff.is_none());
+    }
+
+    #[test]
+    fn clist_response_ignores_suspension_prices() {
+        let json: ClistResponse = serde_json::from_str(
+            r#"{"data":{"diff":{"0":{"f12":"600000","f14":"浦发银行","f2":-1},"1":{"f12":"600001","f14":"邯郸钢铁","f2":0}}}}"#,
+        )
+        .unwrap();
+        let items = json.data.diff.unwrap().into_items();
+        assert!(items.iter().all(|s| s.price.is_none()));
     }
 
     #[test]
@@ -380,12 +820,12 @@ mod tests {
             StockItem {
                 code: "000001".into(),
                 name: "平安银行".into(),
-                price: Some(1234),
+                price: Some(1234.0),
             },
             StockItem {
                 code: "000002".into(),
                 name: "万科A".into(),
-                price: Some(1500),
+                price: Some(1500.0),
             },
         ];
 
@@ -426,14 +866,14 @@ mod tests {
         let existing = vec![StockItem {
             code: "000001".into(),
             name: "旧名称".into(),
-            price: Some(500),
+            price: Some(500.0),
         }];
         do_sync_with_items(&conn, "sh", "CNY", &existing).unwrap();
 
         let updated = vec![StockItem {
             code: "000001".into(),
             name: "平安银行".into(),
-            price: Some(1234),
+            price: Some(1234.0),
         }];
         let (inserted, u) = do_sync_with_items(&conn, "sz", "CNY", &updated).unwrap();
         assert_eq!(inserted, 0);
@@ -484,14 +924,14 @@ mod tests {
         let first = vec![StockItem {
             code: "000001".into(),
             name: "平安银行".into(),
-            price: Some(1000),
+            price: Some(1000.0),
         }];
         do_sync_with_items(&conn, "sh", "CNY", &first).unwrap();
 
         let second = vec![StockItem {
             code: "000001".into(),
             name: "平安银行".into(),
-            price: Some(2000),
+            price: Some(2000.0),
         }];
         do_sync_with_items(&conn, "sh", "CNY", &second).unwrap();
 
@@ -527,7 +967,8 @@ mod tests {
                     )?;
                     total_updated += 1;
                 }
-                if let Some(price) = item.price {
+                if let Some(raw) = item.price {
+                    let price = f2_to_cents(raw, market_code);
                     upsert_market_price(conn, existing_id, price, currency)?;
                 }
             } else {
@@ -549,16 +990,13 @@ mod tests {
                     ],
                 )?;
                 total_inserted += 1;
-                if let Some(price) = item.price {
+                if let Some(raw) = item.price {
+                    let price = f2_to_cents(raw, market_code);
                     upsert_market_price(conn, &id, price, currency)?;
                 }
                 existing_map.insert(
                     item.code.clone(),
-                    (
-                        id.clone(),
-                        Some(item.name.clone()),
-                        market_code.to_string(),
-                    ),
+                    (id.clone(), Some(item.name.clone()), market_code.to_string()),
                 );
             }
         }

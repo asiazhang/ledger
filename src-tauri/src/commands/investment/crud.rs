@@ -111,8 +111,10 @@ pub(crate) fn create_market_price(conn: &Connection, input: MarketPriceInput) ->
 pub(crate) fn list_instruments(conn: &Connection) -> Result<Vec<Instrument>> {
     query_all(
         conn,
-        "SELECT id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id \
-         FROM instruments ORDER BY symbol",
+        "SELECT i.id,i.symbol,i.instrument_type,i.name,i.currency_code,i.market,i.created_at,i.updated_at,i.version,i.device_id,p.price_cents \
+         FROM instruments i \
+         LEFT JOIN market_prices p ON p.instrument_id = i.id \
+         ORDER BY i.symbol",
         [],
     )
 }

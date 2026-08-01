@@ -159,6 +159,16 @@ const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
   { title: '代码', key: 'symbol', width: 100 },
   { title: '名称', key: 'name', width: 200 },
   {
+    title: '现价',
+    key: 'price_cents',
+    width: 100,
+    render(row) {
+      if (row.price_cents === null || row.price_cents === undefined) return '-'
+      const ccy = currencyByCode.value.get(row.currency_code)
+      return formatAmount(row.price_cents, ccy)
+    },
+  },
+  {
     title: '市场',
     key: 'market',
     width: 80,

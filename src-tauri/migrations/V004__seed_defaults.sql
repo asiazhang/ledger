@@ -11,7 +11,7 @@ INSERT OR IGNORE INTO currencies (code, name, symbol, decimal_places) VALUES
   ('EUR', '欧元', '€', 2),
   ('JPY', '日元', '¥', 0),
   ('GBP', '英镑', '£', 2),
-  ('HKD', '港币', 'HK$', 2),
+  ('HKD', '港币', '$', 2),
   ('AUD', '澳元', 'A$', 2),
   ('CAD', '加元', 'C$', 2),
   ('KRW', '韩元', '₩', 0),

@@ -359,6 +359,8 @@ pub struct Instrument {
     pub updated_at: String,
     pub version: i64,
     pub device_id: String,
+    /// 最新市场价格（分），同步来源；无行情时为空。
+    pub price_cents: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -617,6 +619,7 @@ impl FromRow for Instrument {
             updated_at: row.get(7)?,
             version: row.get(8)?,
             device_id: row.get(9)?,
+            price_cents: row.get(10)?,
         })
     }
 }

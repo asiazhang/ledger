@@ -182,6 +182,7 @@ export interface Instrument extends Syncable {
   currency_code: string
   market: MarketType
   created_at: string
+  price_cents: number | null
 }
 
 export interface InstrumentInput {
