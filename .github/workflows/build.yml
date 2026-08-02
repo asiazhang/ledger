@@ -19,7 +19,7 @@ jobs:
 
       - run: rustup update stable
 
-      - run: brew install create-dmg
+      - run: brew untap aws/tap 2>/dev/null; brew install create-dmg
 
       - run: npm ci
 
