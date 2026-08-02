@@ -22,7 +22,7 @@ const API_HOSTS: &[&str] = &[
     "https://90.push2delay.eastmoney.com",
     "https://push2.eastmoney.com",
 ];
-const PAGE_SIZE: usize = 500;
+const PAGE_SIZE: usize = 100;
 // 东方财富公开行情接口限频约 60 次/分钟（1 次/秒），此处留更多余量并串行访问。
 // 出口 IP 会被 onegate WAF 间歇性限流（返回 200 非 JSON 拦截页或 429），限流窗口约 2-4 分钟自动恢复。
 const REQUEST_INTERVAL: Duration = Duration::from_millis(2000);
