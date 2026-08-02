@@ -423,10 +423,10 @@ fn do_sync(conn: &rusqlite::Connection, app: &AppHandle) -> Result<(usize, usize
 
     let mut existing_map = build_existing_instruments(conn)?;
 
-    for market in MARKETS {
-        let total = match get_total(&client, &mut pacer, market) {
-            Ok(t) => t,
-            Err(e) => {
+    let market_totals: Vec<(usize, &MarketConfig)> = MARKETS
+        .iter()
+        .map(|m| {
+            get_total(&client, &mut pacer, m).map(|t| (t, m)).map_err(|e| {
                 let _ = app.emit(
                     "sync-instruments:progress",
                     SyncProgress {
@@ -436,15 +436,19 @@ fn do_sync(conn: &rusqlite::Connection, app: &AppHandle) -> Result<(usize, usize
                         done: true,
                         total_inserted: 0,
                         total_updated: 0,
-                        error: Some(format!("获取{}总数失败: {e}", market.name)),
+                        error: Some(format!("获取{}总数失败: {e}", m.name)),
                     },
                 );
-                return Err(e);
-            }
-        };
+                e
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
+    let grand_total: usize = market_totals.iter().map(|(t, _)| *t).sum();
+    let mut cumulative_processed = 0usize;
+
+    for (total, market) in market_totals {
         let pages = total.div_ceil(PAGE_SIZE);
-        let mut processed = 0usize;
 
         for page in 1..=pages {
             let items = fetch_page(&client, &mut pacer, market, page)?;
@@ -494,14 +498,14 @@ fn do_sync(conn: &rusqlite::Connection, app: &AppHandle) -> Result<(usize, usize
                         (id.clone(), Some(item.name.clone()), market.code.to_string()),
                     );
                 }
-                processed += 1;
             }
+            cumulative_processed += items.len();
 
             let _ = app.emit(
                 "sync-instruments:progress",
                 SyncProgress {
-                    current: processed,
-                    total,
+                    current: cumulative_processed,
+                    total: grand_total,
                     market: market.code.to_string(),
                     done: false,
                     total_inserted,
