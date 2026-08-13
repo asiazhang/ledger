@@ -102,21 +102,44 @@ pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<
 pub fn list_transactions_internal(
     conn: &Connection,
     limit: Option<i64>,
+    from: Option<&str>,
+    to: Option<&str>,
+    account_id: Option<&str>,
+    kind: Option<&str>,
 ) -> Result<Vec<Transaction>> {
-    let base_sql = "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
+    let mut sql = String::from(
+        "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
          to_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted \
-         FROM transactions WHERE is_deleted=0 ORDER BY date DESC, created_at DESC";
-    let sql = match limit {
-        Some(n) => format!("{base_sql} LIMIT {n}"),
-        None => String::from(base_sql),
-    };
-    query_all(conn, &sql, [])
+         FROM transactions WHERE is_deleted=0",
+    );
+    let mut params: Vec<String> = Vec::new();
+    if let Some(from) = from {
+        sql.push_str(" AND date >= ?");
+        params.push(from.to_string());
+    }
+    if let Some(to) = to {
+        sql.push_str(" AND date <= ?");
+        params.push(to.to_string());
+    }
+    if let Some(account_id) = account_id {
+        sql.push_str(" AND account_id = ?");
+        params.push(account_id.to_string());
+    }
+    if let Some(kind) = kind {
+        sql.push_str(" AND kind = ?");
+        params.push(kind.to_string());
+    }
+    sql.push_str(" ORDER BY date DESC, created_at DESC");
+    if let Some(n) = limit {
+        sql.push_str(&format!(" LIMIT {n}"));
+    }
+    query_all(conn, &sql, rusqlite::params_from_iter(params))
 }
 
 #[tauri::command]
 pub fn list_transactions(db: State<'_, DbState>, limit: Option<i64>) -> Result<Vec<Transaction>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    list_transactions_internal(&conn, limit)
+    list_transactions_internal(&conn, limit, None, None, None, None)
 }
 
 #[tauri::command]

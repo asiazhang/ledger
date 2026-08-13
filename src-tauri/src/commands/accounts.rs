@@ -387,7 +387,8 @@ mod tests {
         insert_hidden_account(&conn, "acc-hidden", "无(CNY)", "CNY");
         insert_tx(&conn, "tx-hidden", "expense", 3000, "acc-hidden", None);
 
-        let rows = crate::commands::list_transactions_internal(&conn, None).unwrap();
+        let rows = crate::commands::list_transactions_internal(&conn, None, None, None, None, None)
+            .unwrap();
         assert!(
             rows.iter()
                 .any(|t| t.id == "tx-hidden" && t.account_id == "acc-hidden"),

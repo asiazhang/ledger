@@ -809,6 +809,186 @@ async fn test_batch_dedup_keeps_dedup_hash_unchanged() {
     assert_eq!(hash, hash_after, "dedup_hash 导入后保持不变");
 }
 
+async fn get_json(app: &Router, uri: &str) -> (StatusCode, serde_json::Value) {
+    let response = app
+        .clone()
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = body_to_bytes(response.into_body()).await;
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+#[tokio::test]
+async fn test_get_transactions_returns_empty_list_when_none() {
+    let (app, _) = setup_app();
+
+    let (status, body) = get_json(&app, "/api/v1/transactions").await;
+    assert_eq!(status, StatusCode::OK);
+    let txs = body.as_array().expect("应返回交易数组");
+    assert!(txs.is_empty(), "无交易时应返回空数组");
+}
+
+#[tokio::test]
+async fn test_get_transactions_returns_all_undeleted_newest_first() {
+    let (app, _) = setup_app();
+    let account_id = create_account_via_api(&app, "现金账户").await;
+
+    let tx_jan = format!(
+        r#"{{"kind":"income","amount_cents":100,"currency_code":"CNY","account_id":"{account_id}","date":"2026-01-01"}}"#
+    );
+    let tx_mar = format!(
+        r#"{{"kind":"expense","amount_cents":300,"currency_code":"CNY","account_id":"{account_id}","date":"2026-03-01"}}"#
+    );
+    let tx_feb = format!(
+        r#"{{"kind":"income","amount_cents":200,"currency_code":"CNY","account_id":"{account_id}","date":"2026-02-01"}}"#
+    );
+    post_batch(&app, batch_body(&[&tx_jan, &tx_mar, &tx_feb], None)).await;
+
+    let (status, body) = get_json(&app, "/api/v1/transactions").await;
+    assert_eq!(status, StatusCode::OK);
+    let txs = body.as_array().expect("应返回交易数组");
+    assert_eq!(txs.len(), 3);
+    assert_eq!(txs[0]["date"], "2026-03-01");
+    assert_eq!(txs[0]["amount_cents"], 300);
+    assert_eq!(txs[1]["date"], "2026-02-01");
+    assert_eq!(txs[1]["amount_cents"], 200);
+    assert_eq!(txs[2]["date"], "2026-01-01");
+    assert_eq!(txs[2]["amount_cents"], 100);
+    for tx in txs {
+        assert_eq!(tx["is_deleted"], false);
+        assert_eq!(tx["account_id"], account_id);
+    }
+}
+
+async fn seed_readback_transactions(app: &Router) -> (String, String) {
+    let cash = create_account_via_api(app, "现金账户").await;
+    let bank = create_account_via_api(app, "银行账户").await;
+    let txs = [
+        format!(
+            r#"{{"kind":"income","amount_cents":1000,"currency_code":"CNY","account_id":"{cash}","date":"2026-01-01"}}"#
+        ),
+        format!(
+            r#"{{"kind":"expense","amount_cents":200,"currency_code":"CNY","account_id":"{cash}","date":"2026-01-15"}}"#
+        ),
+        format!(
+            r#"{{"kind":"income","amount_cents":3000,"currency_code":"CNY","account_id":"{bank}","date":"2026-02-01"}}"#
+        ),
+        format!(
+            r#"{{"kind":"transfer","amount_cents":400,"currency_code":"CNY","account_id":"{cash}","to_account_id":"{bank}","date":"2026-02-15"}}"#
+        ),
+        format!(
+            r#"{{"kind":"expense","amount_cents":500,"currency_code":"CNY","account_id":"{bank}","date":"2026-03-01"}}"#
+        ),
+    ];
+    let refs: Vec<&str> = txs.iter().map(String::as_str).collect();
+    post_batch(app, batch_body(&refs, None)).await;
+    (cash, bank)
+}
+
+fn dates_of(body: &serde_json::Value) -> Vec<&str> {
+    body.as_array()
+        .expect("应返回交易数组")
+        .iter()
+        .map(|t| t["date"].as_str().unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn test_get_transactions_from_to_is_inclusive() {
+    let (app, _) = setup_app();
+    seed_readback_transactions(&app).await;
+
+    let (status, body) = get_json(&app, "/api/v1/transactions?from=2026-01-15&to=2026-02-15").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        dates_of(&body),
+        vec!["2026-02-15", "2026-02-01", "2026-01-15"]
+    );
+    let sum: i64 = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["amount_cents"].as_i64().unwrap())
+        .sum();
+    assert_eq!(sum, 3600);
+}
+
+#[tokio::test]
+async fn test_get_transactions_filters_by_account_id() {
+    let (app, _) = setup_app();
+    let (cash, bank) = seed_readback_transactions(&app).await;
+
+    let (status, body) = get_json(&app, &format!("/api/v1/transactions?account_id={cash}")).await;
+    assert_eq!(status, StatusCode::OK);
+    let txs = body.as_array().expect("应返回交易数组");
+    assert_eq!(txs.len(), 3);
+    assert!(txs.iter().all(|t| t["account_id"] == cash));
+    assert!(txs.iter().all(|t| t["account_id"] != bank));
+    let sum: i64 = txs
+        .iter()
+        .map(|t| t["amount_cents"].as_i64().unwrap())
+        .sum();
+    assert_eq!(sum, 1600);
+}
+
+#[tokio::test]
+async fn test_get_transactions_filters_by_kind() {
+    let (app, _) = setup_app();
+    seed_readback_transactions(&app).await;
+
+    let (status, body) = get_json(&app, "/api/v1/transactions?kind=expense").await;
+    assert_eq!(status, StatusCode::OK);
+    let txs = body.as_array().expect("应返回交易数组");
+    assert_eq!(txs.len(), 2);
+    assert!(txs.iter().all(|t| t["kind"] == "expense"));
+    let sum: i64 = txs
+        .iter()
+        .map(|t| t["amount_cents"].as_i64().unwrap())
+        .sum();
+    assert_eq!(sum, 700);
+}
+
+#[tokio::test]
+async fn test_get_transactions_limit_truncates() {
+    let (app, _) = setup_app();
+    seed_readback_transactions(&app).await;
+
+    let (status, body) = get_json(&app, "/api/v1/transactions?limit=2").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(dates_of(&body), vec!["2026-03-01", "2026-02-15"]);
+}
+
+#[tokio::test]
+async fn test_get_transactions_excludes_soft_deleted() {
+    let (app, conn) = setup_app();
+    let account_id = create_account_via_api(&app, "现金账户").await;
+    let keep = format!(
+        r#"{{"kind":"income","amount_cents":1000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-01-01"}}"#
+    );
+    let drop = format!(
+        r#"{{"kind":"expense","amount_cents":200,"currency_code":"CNY","account_id":"{account_id}","date":"2026-01-02"}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&keep, &drop], None)).await;
+    let deleted_id = created[1]["id"].as_str().unwrap();
+    {
+        let conn = conn.lock().unwrap();
+        conn.execute(
+            "UPDATE transactions SET is_deleted=1 WHERE id=?1",
+            rusqlite::params![deleted_id],
+        )
+        .unwrap();
+    }
+
+    let (status, body) = get_json(&app, "/api/v1/transactions").await;
+    assert_eq!(status, StatusCode::OK);
+    let txs = body.as_array().expect("应返回交易数组");
+    assert_eq!(txs.len(), 1);
+    assert_eq!(txs[0]["amount_cents"], 1000);
+    assert_eq!(txs[0]["date"], "2026-01-01");
+}
+
 #[tokio::test]
 async fn test_openapi_json_endpoint_returns_doc() {
     let (app, _) = setup_app();
@@ -857,6 +1037,7 @@ async fn test_openapi_doc_covers_all_endpoints() {
         ("/api/v1/categories", "get"),
         ("/api/v1/categories", "post"),
         ("/api/v1/currencies", "get"),
+        ("/api/v1/transactions", "get"),
         ("/api/v1/transactions/batch", "post"),
         ("/api/v1/import/knowledge", "get"),
     ];
@@ -1049,4 +1230,39 @@ async fn test_openapi_doc_covers_knowledge_endpoint() {
         content.contains_key("text/plain"),
         "knowledge 端点应声明 text/plain 响应"
     );
+}
+
+#[tokio::test]
+async fn test_openapi_doc_covers_list_transactions_params_and_schema() {
+    let (app, _) = setup_app();
+    let (_, doc) = get_json(&app, "/api/v1/openapi.json").await;
+    let get = &doc["paths"]["/api/v1/transactions"]["get"];
+    assert!(get["summary"].is_string());
+    let params = get["parameters"]
+        .as_array()
+        .expect("GET /transactions 应声明查询参数");
+    let names: Vec<&str> = params.iter().map(|p| p["name"].as_str().unwrap()).collect();
+    for expected in ["from", "to", "account_id", "kind", "limit"] {
+        assert!(
+            names.contains(&expected),
+            "OpenAPI 应包含查询参数 {expected}"
+        );
+    }
+    let schemas = doc["components"]["schemas"]
+        .as_object()
+        .expect("应包含 schemas");
+    let tx = schemas
+        .get("Transaction")
+        .expect("OpenAPI 应包含 Transaction schema");
+    let props = tx["properties"].as_object().unwrap();
+    for field in [
+        "id",
+        "kind",
+        "amount_cents",
+        "account_id",
+        "date",
+        "is_deleted",
+    ] {
+        assert!(props.contains_key(field), "Transaction 应包含字段 {field}");
+    }
 }

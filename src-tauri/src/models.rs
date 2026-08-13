@@ -180,7 +180,7 @@ pub struct ReorderItem {
     pub sort_order: i64,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct Transaction {
     pub id: String,
     pub kind: String,
