@@ -106,27 +106,34 @@ pub fn delete_account(db: State<'_, DbState>, id: String) -> Result<()> {
     delete_account_internal(&conn, &id)
 }
 
+fn list_account_balances_with_visibility(
+    conn: &Connection,
+    include_hidden: bool,
+) -> Result<Vec<AccountBalance>> {
+    let accounts = list_accounts_with_visibility(conn, include_hidden)?;
+    let balances = crate::db::balance::compute_all_balances_with_visibility(conn, include_hidden)?;
+    Ok(accounts
+        .into_iter()
+        .map(|a| {
+            let balance_cents = balances.get(&a.id).copied().unwrap_or(0);
+            AccountBalance {
+                balance_cents,
+                account: a,
+            }
+        })
+        .collect())
+}
+
+/// AI 侧余额清单：含黑洞账户。
+pub fn list_account_balances_for_api_internal(conn: &Connection) -> Result<Vec<AccountBalance>> {
+    list_account_balances_with_visibility(conn, true)
+}
+
 /// 批量查询所有账户余额，单次数据库往返完成。
 #[tauri::command]
 pub fn list_account_balances(db: State<'_, DbState>) -> Result<Vec<AccountBalance>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let accounts: Vec<Account> = query_all(
-        &conn,
-        "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden \
-         FROM accounts WHERE is_deleted=0 AND is_hidden=0 ORDER BY created_at",
-        [],
-    )?;
-    let balances = crate::db::balance::compute_all_balances(&conn)?;
-    accounts
-        .into_iter()
-        .map(|a| {
-            let balance_cents = balances.get(&a.id).copied().unwrap_or(0);
-            Ok(AccountBalance {
-                balance_cents,
-                account: a,
-            })
-        })
-        .collect()
+    list_account_balances_with_visibility(&conn, false)
 }
 
 #[cfg(test)]

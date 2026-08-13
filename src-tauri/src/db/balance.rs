@@ -80,9 +80,22 @@ pub fn compute_balance(conn: &Connection, account_id: &str) -> Result<i64> {
 /// 原理：一次 LEFT JOIN + CASE WHEN 聚合所有维度的金额，
 /// 按 `a.id` 分组，初始余额与五类交易在一条 SQL 内完成汇总。
 /// 对 N 个账户，从 O(6N) 次数据库往返降为 O(1)。
+/// UI 侧不包含黑洞账户；AI 对账需要 `include_hidden = true`。
 pub fn compute_all_balances(conn: &Connection) -> Result<HashMap<String, i64>> {
-    let entries: Vec<AccountBalanceEntry> = query_all(
-        conn,
+    compute_all_balances_with_visibility(conn, false)
+}
+
+/// 批量计算未删除账户余额；`include_hidden` 为 true 时含黑洞账户。
+pub fn compute_all_balances_with_visibility(
+    conn: &Connection,
+    include_hidden: bool,
+) -> Result<HashMap<String, i64>> {
+    let hidden_clause = if include_hidden {
+        ""
+    } else {
+        "AND a.is_hidden = 0"
+    };
+    let sql = format!(
         "SELECT a.id,
                 a.initial_balance_cents
                 + COALESCE(SUM(CASE WHEN t.kind='income'   THEN t.amount_native_cents ELSE 0 END), 0)
@@ -92,10 +105,10 @@ pub fn compute_all_balances(conn: &Connection) -> Result<HashMap<String, i64>> {
                 + COALESCE(SUM(CASE WHEN t.kind='refund'   THEN t.amount_native_cents ELSE 0 END), 0)
          FROM accounts a
          LEFT JOIN transactions t ON (t.account_id = a.id OR t.to_account_id = a.id) AND t.is_deleted = 0
-         WHERE a.is_deleted = 0 AND a.is_hidden = 0
-         GROUP BY a.id",
-        [],
-    )?;
+         WHERE a.is_deleted = 0 {hidden_clause}
+         GROUP BY a.id"
+    );
+    let entries: Vec<AccountBalanceEntry> = query_all(conn, &sql, [])?;
 
     Ok(entries
         .into_iter()

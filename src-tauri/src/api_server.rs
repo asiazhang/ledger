@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::error::AppError;
 use crate::models::{
-    Account, AccountInput, AccountType, Category, CategoryInput, CreateTransactionResult, Currency,
-    Transaction, TransactionBatchInput, TransactionInput,
+    Account, AccountBalance, AccountInput, AccountType, Category, CategoryInput,
+    CreateTransactionResult, Currency, Transaction, TransactionBatchInput, TransactionInput,
 };
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
@@ -56,6 +56,7 @@ struct ErrorResponse {
     paths(
         list_accounts_handler,
         create_account_handler,
+        list_account_balances_handler,
         list_categories_handler,
         create_category_handler,
         list_currencies_handler,
@@ -65,6 +66,7 @@ struct ErrorResponse {
     ),
     components(schemas(
         Account,
+        AccountBalance,
         AccountInput,
         AccountType,
         Category,
@@ -91,6 +93,10 @@ pub fn build_router(state: Arc<Mutex<Connection>>) -> Router {
         .route(
             "/api/v1/accounts",
             get(list_accounts_handler).post(create_account_handler),
+        )
+        .route(
+            "/api/v1/accounts/balances",
+            get(list_account_balances_handler),
         )
         .route(
             "/api/v1/categories",
@@ -163,6 +169,27 @@ async fn create_account_handler(
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let id = crate::commands::create_account_idempotent_internal(&conn, input)?;
     Ok((StatusCode::CREATED, Json(id)))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/accounts/balances",
+    tag = "accounts",
+    summary = "列出全部未删除账户的实时余额（含黑洞账户）",
+    description = "返回 `{account, balance_cents}[]`，与 AI 侧账户列表一致**包含 `is_hidden` 黑洞账户**。\
+                  余额口径 = 初始余额 + 收入 − 支出 + 转入 − 转出 + 退款，实时计算不持久化。\
+                  软删除账户不在列表中。转账分别计入转出与转入账户。",
+    responses(
+        (status = 200, description = "账户余额列表（含黑洞账户）", body = [AccountBalance]),
+        (status = 500, description = "数据库错误", body = ErrorResponse)
+    )
+)]
+async fn list_account_balances_handler(
+    State(conn): State<Arc<Mutex<Connection>>>,
+) -> Result<Json<Vec<AccountBalance>>, AppError> {
+    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let balances = crate::commands::list_account_balances_for_api_internal(&conn)?;
+    Ok(Json(balances))
 }
 
 #[utoipa::path(

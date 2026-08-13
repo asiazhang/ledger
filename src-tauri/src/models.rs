@@ -239,7 +239,7 @@ pub struct BudgetInput {
     pub start_date: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AccountBalance {
     pub account: Account,
     pub balance_cents: i64,
