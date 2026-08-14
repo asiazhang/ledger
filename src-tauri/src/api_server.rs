@@ -56,9 +56,11 @@ struct ErrorResponse {
     paths(
         list_accounts_handler,
         create_account_handler,
+        delete_account_handler,
         list_account_balances_handler,
         list_categories_handler,
         create_category_handler,
+        delete_category_handler,
         list_currencies_handler,
         list_transactions_handler,
         batch_create_transactions_handler,
@@ -95,6 +97,7 @@ pub fn build_router(state: Arc<Mutex<Connection>>) -> Router {
             "/api/v1/accounts",
             get(list_accounts_handler).post(create_account_handler),
         )
+        .route("/api/v1/accounts/{id}", delete(delete_account_handler))
         .route(
             "/api/v1/accounts/balances",
             get(list_account_balances_handler),
@@ -103,6 +106,7 @@ pub fn build_router(state: Arc<Mutex<Connection>>) -> Router {
             "/api/v1/categories",
             get(list_categories_handler).post(create_category_handler),
         )
+        .route("/api/v1/categories/{id}", delete(delete_category_handler))
         .route("/api/v1/transactions", get(list_transactions_handler))
         .route(
             "/api/v1/transactions/batch",
@@ -177,6 +181,31 @@ async fn create_account_handler(
 }
 
 #[utoipa::path(
+    delete,
+    path = "/api/v1/accounts/{id}",
+    tag = "accounts",
+    summary = "删除账户（软删除）",
+    description = "按 `id` 软删除账户（`is_deleted=1`）。**不校验引用**（与 UI 行为一致：删除有交易的账户后历史交易仍保留）。\
+                  不存在的 id 返回 404。成功返回 204 No Content。",
+    params(
+        ("id" = String, Path, description = "账户 ID")
+    ),
+    responses(
+        (status = 204, description = "删除成功（无响应体）"),
+        (status = 404, description = "账户不存在", body = ErrorResponse),
+        (status = 500, description = "数据库错误", body = ErrorResponse)
+    )
+)]
+async fn delete_account_handler(
+    State(conn): State<Arc<Mutex<Connection>>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    crate::commands::delete_account_internal(&conn, &id)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
     get,
     path = "/api/v1/accounts/balances",
     tag = "accounts",
@@ -238,6 +267,31 @@ async fn create_category_handler(
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let id = crate::commands::create_category_idempotent_internal(&conn, input)?;
     Ok((StatusCode::CREATED, Json(id)))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/categories/{id}",
+    tag = "categories",
+    summary = "删除分类（软删除）",
+    description = "按 `id` 软删除分类（`is_deleted=1`）。**不校验引用**（与 UI 行为一致）。\
+                  不存在的 id 返回 404。成功返回 204 No Content。",
+    params(
+        ("id" = String, Path, description = "分类 ID")
+    ),
+    responses(
+        (status = 204, description = "删除成功（无响应体）"),
+        (status = 404, description = "分类不存在", body = ErrorResponse),
+        (status = 500, description = "数据库错误", body = ErrorResponse)
+    )
+)]
+async fn delete_category_handler(
+    State(conn): State<Arc<Mutex<Connection>>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    crate::commands::delete_category_internal(&conn, &id)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[utoipa::path(

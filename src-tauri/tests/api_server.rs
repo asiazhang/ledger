@@ -1237,9 +1237,11 @@ async fn test_openapi_doc_covers_all_endpoints() {
     let expected: &[(&str, &str)] = &[
         ("/api/v1/accounts", "get"),
         ("/api/v1/accounts", "post"),
+        ("/api/v1/accounts/{id}", "delete"),
         ("/api/v1/accounts/balances", "get"),
         ("/api/v1/categories", "get"),
         ("/api/v1/categories", "post"),
+        ("/api/v1/categories/{id}", "delete"),
         ("/api/v1/currencies", "get"),
         ("/api/v1/transactions", "get"),
         ("/api/v1/transactions/batch", "post"),
@@ -1598,5 +1600,176 @@ async fn test_openapi_doc_covers_list_transactions_params_and_schema() {
         "is_deleted",
     ] {
         assert!(props.contains_key(field), "Transaction 应包含字段 {field}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/v1/accounts/{id}
+// ---------------------------------------------------------------------------
+
+async fn delete_account_via_api(app: &Router, id: &str) -> (StatusCode, Vec<u8>) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/accounts/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = body_to_bytes(response.into_body()).await;
+    (status, bytes)
+}
+
+#[tokio::test]
+async fn test_delete_account_returns_204_and_removes_from_readback() {
+    let (app, conn) = setup_app();
+    let id = create_account_via_api(&app, "待删除账户").await;
+
+    let (status, body) = delete_account_via_api(&app, &id).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(body.is_empty(), "204 响应应无响应体");
+
+    let active: i64 = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM accounts WHERE id=?1 AND is_deleted=0",
+            rusqlite::params![id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(active, 0, "删除后该账户应 is_deleted=1");
+
+    let (_, body) = get_json(&app, "/api/v1/accounts").await;
+    let accounts = body.as_array().unwrap();
+    assert!(
+        !accounts.iter().any(|a| a["id"] == id),
+        "删除后该账户不应出现在读回结果中"
+    );
+}
+
+#[tokio::test]
+async fn test_delete_account_not_found_returns_404() {
+    let (app, _) = setup_app();
+
+    let (status, body) = delete_account_via_api(&app, "不存在的id").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let err: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(err["kind"], "NotFound");
+    assert!(err["message"].as_str().unwrap().contains("账户不存在"));
+}
+
+#[tokio::test]
+async fn test_delete_account_does_not_validate_references() {
+    let (app, conn) = setup_app();
+    let account_id = create_account_via_api(&app, "有交易账户").await;
+    let tx = format!(
+        r#"{{"kind":"expense","amount_cents":500,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01"}}"#
+    );
+    post_batch(&app, batch_body(&[&tx], None)).await;
+
+    let (status, _) = delete_account_via_api(&app, &account_id).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let tx_count: i64 = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM transactions WHERE account_id=?1 AND is_deleted=0",
+            rusqlite::params![account_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(tx_count, 1, "删除账户不应清理其历史交易");
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/v1/categories/{id}
+// ---------------------------------------------------------------------------
+
+async fn delete_category_via_api(app: &Router, id: &str) -> (StatusCode, Vec<u8>) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/categories/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = body_to_bytes(response.into_body()).await;
+    (status, bytes)
+}
+
+#[tokio::test]
+async fn test_delete_category_returns_204_and_removes_from_readback() {
+    let (app, conn) = setup_app();
+    let id = create_category_via_api(&app, r#"{"name":"待删除分类","kind":"expense"}"#).await;
+
+    let (status, body) = delete_category_via_api(&app, &id).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(body.is_empty(), "204 响应应无响应体");
+
+    let active: i64 = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM categories WHERE id=?1 AND is_deleted=0",
+            rusqlite::params![id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(active, 0, "删除后该分类应 is_deleted=1");
+
+    let (_, body) = get_json(&app, "/api/v1/categories").await;
+    let categories = body.as_array().unwrap();
+    assert!(
+        !categories.iter().any(|c| c["id"] == id),
+        "删除后该分类不应出现在读回结果中"
+    );
+}
+
+#[tokio::test]
+async fn test_delete_category_not_found_returns_404() {
+    let (app, _) = setup_app();
+
+    let (status, body) = delete_category_via_api(&app, "不存在的id").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let err: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(err["kind"], "NotFound");
+    assert!(err["message"].as_str().unwrap().contains("分类不存在"));
+}
+
+#[tokio::test]
+async fn test_openapi_doc_covers_delete_account_and_category_endpoints() {
+    let (app, _) = setup_app();
+    let (_, doc) = get_json(&app, "/api/v1/openapi.json").await;
+
+    for (path, label) in [
+        ("/api/v1/accounts/{id}", "账户"),
+        ("/api/v1/categories/{id}", "分类"),
+    ] {
+        let delete = &doc["paths"][path]["delete"];
+        assert!(
+            delete["summary"].is_string(),
+            "OpenAPI 应包含 {label} DELETE 端点"
+        );
+        let params = delete["parameters"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{label} DELETE 应声明 path 参数"));
+        assert!(
+            params.iter().any(|p| p["name"] == "id"),
+            "{label} DELETE 端点应声明 id 路径参数"
+        );
+        let responses = delete["responses"].as_object().unwrap();
+        assert!(responses.contains_key("204"), "{label} 应声明 204 响应");
+        assert!(responses.contains_key("404"), "{label} 应声明 404 响应");
     }
 }

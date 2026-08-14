@@ -1,4 +1,4 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use tauri::State;
 
 use crate::db::query::query_all;
@@ -140,14 +140,31 @@ pub fn reorder_categories(db: State<'_, DbState>, items: Vec<ReorderItem>) -> Re
     Ok(())
 }
 
-#[tauri::command]
-pub fn delete_category(db: State<'_, DbState>, id: String) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+/// 软删除分类（`is_deleted=1`）。不校验引用（与 UI 行为一致）。不存在的 id
+/// 返回 `AppError::NotFound`（HTTP 侧映射 404）。IPC 与 HTTP 端点共用本函数。
+pub fn delete_category_internal(conn: &Connection, id: &str) -> Result<()> {
+    let exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM categories WHERE id=?1 AND is_deleted=0",
+            rusqlite::params![id],
+            |_| Ok(true),
+        )
+        .optional()?
+        .is_some();
+    if !exists {
+        return Err(AppError::NotFound(format!("分类不存在: {id}")));
+    }
     conn.execute(
         "UPDATE categories SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id()],
     )?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn delete_category(db: State<'_, DbState>, id: String) -> Result<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    delete_category_internal(&conn, &id)
 }
 
 #[cfg(test)]
@@ -239,6 +256,51 @@ mod tests {
         )
         .unwrap();
         assert!(!list_categories(&conn).iter().any(|c| c.id == id));
+    }
+
+    #[test]
+    fn delete_category_internal_soft_deletes_and_excludes_from_readback() {
+        let conn = setup();
+        let id = new_uuid();
+        let now = now_iso();
+        conn.execute(
+            "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,?2,'expense',NULL,NULL,0,?3,?4,?5,?6,0)",
+            rusqlite::params![id, "临时分类", now, now, 1, device_id()],
+        )
+        .unwrap();
+        super::delete_category_internal(&conn, &id).unwrap();
+        assert!(
+            !list_categories(&conn).iter().any(|c| c.id == id),
+            "删除后不应出现在读回结果中"
+        );
+    }
+
+    #[test]
+    fn delete_category_internal_returns_not_found_for_missing_id() {
+        let conn = setup();
+        let err = super::delete_category_internal(&conn, "不存在的id").unwrap_err();
+        assert!(matches!(err, crate::error::AppError::NotFound(_)));
+        assert!(err.to_string().contains("分类不存在"));
+    }
+
+    #[test]
+    fn delete_category_internal_returns_not_found_for_already_deleted() {
+        let conn = setup();
+        let id = new_uuid();
+        let now = now_iso();
+        conn.execute(
+            "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,?2,'expense',NULL,NULL,0,?3,?4,?5,?6,0)",
+            rusqlite::params![id, "临时分类", now, now, 1, device_id()],
+        )
+        .unwrap();
+        super::delete_category_internal(&conn, &id).unwrap();
+        let err = super::delete_category_internal(&conn, &id).unwrap_err();
+        assert!(
+            matches!(err, crate::error::AppError::NotFound(_)),
+            "已删除分类应再次返回 404"
+        );
     }
 
     #[test]

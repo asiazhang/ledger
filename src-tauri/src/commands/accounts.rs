@@ -1,4 +1,4 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use tauri::State;
 
 use crate::db::query::query_all;
@@ -80,7 +80,21 @@ fn find_account_by_natural_key(conn: &Connection, input: &AccountInput) -> Resul
     }
 }
 
+/// 软删除账户（`is_deleted=1`）。不校验引用（与 UI 行为一致：删除有交易的账户后
+/// 历史交易仍保留）。不存在的 id 返回 `AppError::NotFound`（HTTP 侧映射 404）。
+/// IPC 与 HTTP 端点共用本函数。
 pub fn delete_account_internal(conn: &Connection, id: &str) -> Result<()> {
+    let exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM accounts WHERE id=?1 AND is_deleted=0",
+            rusqlite::params![id],
+            |_| Ok(true),
+        )
+        .optional()?
+        .is_some();
+    if !exists {
+        return Err(AppError::NotFound(format!("账户不存在: {id}")));
+    }
     conn.execute(
         "UPDATE accounts SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id()],
@@ -140,6 +154,7 @@ pub fn list_account_balances(db: State<'_, DbState>) -> Result<Vec<AccountBalanc
 mod tests {
     use crate::db::query::query_all;
     use crate::db::{device_id, new_uuid, now_iso};
+    use crate::error::AppError;
     use crate::models::Account;
 
     fn setup() -> rusqlite::Connection {
@@ -242,6 +257,37 @@ mod tests {
             rusqlite::params![id, now_iso(), device_id()],
         ).unwrap();
         assert!(!list_accounts(&conn).iter().any(|a| a.id == id));
+    }
+
+    #[test]
+    fn delete_account_internal_soft_deletes_and_excludes_from_readback() {
+        let conn = setup();
+        insert_account(&conn, "acc-del-1", "现金", "cash", "CNY", 0);
+        super::delete_account_internal(&conn, "acc-del-1").unwrap();
+        assert!(
+            !list_accounts(&conn).iter().any(|a| a.id == "acc-del-1"),
+            "删除后不应出现在读回结果中"
+        );
+    }
+
+    #[test]
+    fn delete_account_internal_returns_not_found_for_missing_id() {
+        let conn = setup();
+        let err = super::delete_account_internal(&conn, "不存在的id").unwrap_err();
+        assert!(matches!(err, AppError::NotFound(_)));
+        assert!(err.to_string().contains("账户不存在"));
+    }
+
+    #[test]
+    fn delete_account_internal_returns_not_found_for_already_deleted() {
+        let conn = setup();
+        insert_account(&conn, "acc-del-2", "现金", "cash", "CNY", 0);
+        super::delete_account_internal(&conn, "acc-del-2").unwrap();
+        let err = super::delete_account_internal(&conn, "acc-del-2").unwrap_err();
+        assert!(
+            matches!(err, AppError::NotFound(_)),
+            "已删除账户应再次返回 404"
+        );
     }
 
     #[test]
