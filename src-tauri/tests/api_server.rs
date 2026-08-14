@@ -1010,6 +1010,188 @@ async fn test_get_transactions_excludes_soft_deleted() {
     assert_eq!(txs[0]["date"], "2026-01-01");
 }
 
+async fn delete_transaction_via_api(app: &Router, id: &str) -> (StatusCode, Vec<u8>) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/transactions/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = body_to_bytes(response.into_body()).await;
+    (status, bytes)
+}
+
+#[tokio::test]
+async fn test_delete_transaction_returns_204_and_removes_from_readback() {
+    let (app, conn) = setup_app();
+    let account_id = create_account_via_api(&app, "现金账户").await;
+    let tx = format!(
+        r#"{{"kind":"income","amount_cents":1000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01"}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&tx], None)).await;
+    let id = created[0]["id"].as_str().unwrap();
+
+    let (status, body) = delete_transaction_via_api(&app, id).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(body.is_empty(), "204 响应应无响应体");
+
+    let active: i64 = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM transactions WHERE id=?1 AND is_deleted=0",
+            rusqlite::params![id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(active, 0, "删除后该交易应 is_deleted=1");
+
+    let (_, body) = get_json(&app, "/api/v1/transactions").await;
+    let txs = body.as_array().unwrap();
+    assert!(
+        !txs.iter().any(|t| t["id"] == id),
+        "删除后该行不应出现在读回结果中"
+    );
+}
+
+#[tokio::test]
+async fn test_delete_transaction_not_found_returns_404() {
+    let (app, _) = setup_app();
+
+    let (status, body) = delete_transaction_via_api(&app, "不存在的id").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let err: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(err["kind"], "NotFound");
+    assert!(err["message"].as_str().unwrap().contains("交易不存在"));
+}
+
+#[tokio::test]
+async fn test_delete_transaction_frees_dedup_slot_for_reimport() {
+    let (app, _) = setup_app();
+    let account_id = create_account_via_api(&app, "现金账户").await;
+    let tx = format!(
+        r#"{{"kind":"income","amount_cents":1000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01"}}"#
+    );
+
+    let first = post_batch(&app, batch_body(&[&tx], None)).await;
+    let id = first[0]["id"].as_str().unwrap();
+
+    let (status, _) = delete_transaction_via_api(&app, id).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let second = post_batch(&app, batch_body(&[&tx], None)).await;
+    assert_eq!(second[0]["duplicate"], false, "删除后重跑应重新写入");
+    assert!(!second[0]["id"].as_str().unwrap_or("").is_empty());
+}
+
+#[tokio::test]
+async fn test_delete_buy_transaction_cleans_up_security_lots() {
+    use tauri_app_lib::commands::insert_transaction;
+    use tauri_app_lib::models::TransactionInput;
+
+    let (app, conn) = setup_app();
+    {
+        let conn = conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES ('acc-inv-del','美股','investment','USD',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+             VALUES ('inst-del','DEL','stock','Delete','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+            [],
+        )
+        .unwrap();
+        let buy = TransactionInput {
+            kind: "buy".into(),
+            amount_cents: 0,
+            currency_code: "USD".into(),
+            account_id: "acc-inv-del".into(),
+            to_account_id: None,
+            category_id: None,
+            refund_of_transaction_id: None,
+            note: None,
+            date: "2026-01-10".into(),
+            instrument_id: Some("inst-del".into()),
+            quantity: Some(10.0),
+            price_cents: Some(10000),
+            fee_cents: Some(500),
+        };
+        insert_transaction(&conn, buy).unwrap();
+    }
+
+    let buy_id: String = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT id FROM transactions WHERE kind='buy' AND is_deleted=0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+
+    let lots_before: i64 = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM security_lots WHERE buy_transaction_id=?1",
+            rusqlite::params![buy_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(lots_before, 1);
+
+    let (status, _) = delete_transaction_via_api(&app, &buy_id).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let lots_after: i64 = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM security_lots WHERE buy_transaction_id=?1",
+            rusqlite::params![buy_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(lots_after, 0, "删除买入应清理 security_lots");
+    let stx_after: i64 = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM security_transactions WHERE transaction_id=?1",
+            rusqlite::params![buy_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(stx_after, 0, "删除买入应清理 security_transactions");
+}
+
+#[tokio::test]
+async fn test_openapi_doc_covers_delete_transaction_endpoint() {
+    let (app, _) = setup_app();
+    let (_, doc) = get_json(&app, "/api/v1/openapi.json").await;
+    let delete = &doc["paths"]["/api/v1/transactions/{id}"]["delete"];
+    assert!(delete["summary"].is_string(), "OpenAPI 应包含 DELETE 端点");
+    let params = delete["parameters"]
+        .as_array()
+        .expect("DELETE 应声明 path 参数");
+    assert!(
+        params.iter().any(|p| p["name"] == "id"),
+        "DELETE 端点应声明 id 路径参数"
+    );
+    let responses = delete["responses"].as_object().unwrap();
+    assert!(responses.contains_key("204"), "应声明 204 响应");
+    assert!(responses.contains_key("404"), "应声明 404 响应");
+}
+
 #[tokio::test]
 async fn test_openapi_json_endpoint_returns_doc() {
     let (app, _) = setup_app();
@@ -1061,6 +1243,7 @@ async fn test_openapi_doc_covers_all_endpoints() {
         ("/api/v1/currencies", "get"),
         ("/api/v1/transactions", "get"),
         ("/api/v1/transactions/batch", "post"),
+        ("/api/v1/transactions/{id}", "delete"),
         ("/api/v1/import/knowledge", "get"),
     ];
     for (path, method) in expected {

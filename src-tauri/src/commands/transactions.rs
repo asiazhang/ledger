@@ -217,21 +217,25 @@ pub fn create_transactions(
     create_transactions_internal(&conn, inputs, false)
 }
 
-#[tauri::command]
-pub fn delete_transaction(db: State<'_, DbState>, id: String) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-
-    let is_buy: Option<bool> = conn
+/// 删除交易（软删除 `is_deleted=1`）。
+///
+/// buy 交易同步清理关联持仓（`security_lots` / `security_transactions`）：
+/// 若该买入已有部分卖出（`remaining_quantity < initial_quantity`）则拒绝删除。
+/// 不存在的 id 返回 `AppError::NotFound`（HTTP 侧映射 404）。IPC 与 HTTP 端点共用本函数。
+pub fn delete_transaction_internal(conn: &Connection, id: &str) -> Result<()> {
+    let is_buy: bool = conn
         .query_row(
             "SELECT kind='buy' FROM transactions WHERE id=?1 AND is_deleted=0",
             rusqlite::params![id],
             |r| r.get::<_, i64>(0).map(|v| v != 0),
         )
-        .ok();
-    if is_buy == Some(true) {
+        .optional()?
+        .ok_or_else(|| AppError::NotFound(format!("交易不存在: {id}")))?;
+
+    if is_buy {
         let sold: i64 = conn.query_row(
             "SELECT COUNT(*) FROM security_lots \
-             WHERE buy_transaction_id=(SELECT transaction_id FROM security_transactions WHERE transaction_id=?1) \
+             WHERE buy_transaction_id=?1 \
              AND remaining_quantity < initial_quantity",
             rusqlite::params![id],
             |r| r.get(0),
@@ -240,7 +244,7 @@ pub fn delete_transaction(db: State<'_, DbState>, id: String) -> Result<()> {
             return Err(AppError::Invalid("该买入交易已有部分卖出，无法删除".into()));
         }
         conn.execute(
-            "DELETE FROM security_lots WHERE buy_transaction_id=(SELECT transaction_id FROM security_transactions WHERE transaction_id=?1)",
+            "DELETE FROM security_lots WHERE buy_transaction_id=?1",
             rusqlite::params![id],
         )?;
         conn.execute(
@@ -254,6 +258,12 @@ pub fn delete_transaction(db: State<'_, DbState>, id: String) -> Result<()> {
         rusqlite::params![id, now_iso(), device_id()],
     )?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn delete_transaction(db: State<'_, DbState>, id: String) -> Result<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    delete_transaction_internal(&conn, &id)
 }
 
 #[cfg(test)]
@@ -657,6 +667,181 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count_after, 0);
+    }
+
+    #[test]
+    fn delete_transaction_internal_returns_not_found_for_missing_id() {
+        let conn = setup();
+        insert_account(&conn, "acc-missing", "现金", "cash", "CNY");
+
+        let err = delete_transaction_internal(&conn, "不存在的id").unwrap_err();
+        match err {
+            AppError::NotFound(msg) => assert!(msg.contains("交易不存在")),
+            other => panic!("expected NotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn delete_transaction_internal_returns_not_found_for_already_deleted() {
+        let conn = setup();
+        insert_account(&conn, "acc-gone", "现金", "cash", "CNY");
+        let id = insert_transaction(&conn, make_input("acc-gone", "income", 1000, "2026-01-01"))
+            .unwrap();
+        conn.execute(
+            "UPDATE transactions SET is_deleted=1 WHERE id=?1",
+            params![id],
+        )
+        .unwrap();
+
+        let err = delete_transaction_internal(&conn, &id).unwrap_err();
+        assert!(matches!(err, AppError::NotFound(_)));
+    }
+
+    #[test]
+    fn delete_transaction_internal_frees_dedup_slot_for_reimport() {
+        let conn = setup();
+        insert_account(&conn, "acc-reimport", "现金", "cash", "CNY");
+
+        let input = make_input("acc-reimport", "income", 1000, "2026-07-01");
+        let first = create_transactions_internal(&conn, vec![input.clone()], true).unwrap();
+        let id = first[0].id.clone().unwrap();
+
+        delete_transaction_internal(&conn, &id).unwrap();
+
+        let second = create_transactions_internal(&conn, vec![input], true).unwrap();
+        assert!(
+            second[0].success && !second[0].duplicate && second[0].id.is_some(),
+            "删除后重跑应重新写入（duplicate=false）"
+        );
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    fn make_buy_input(
+        account_id: &str,
+        instrument_id: &str,
+        qty: f64,
+        price: i64,
+        fee: i64,
+    ) -> TransactionInput {
+        TransactionInput {
+            kind: "buy".into(),
+            amount_cents: 0,
+            currency_code: "USD".into(),
+            account_id: account_id.into(),
+            to_account_id: None,
+            category_id: None,
+            refund_of_transaction_id: None,
+            note: None,
+            date: "2026-01-10".into(),
+            instrument_id: Some(instrument_id.into()),
+            quantity: Some(qty),
+            price_cents: Some(price),
+            fee_cents: Some(fee),
+        }
+    }
+
+    fn setup_investment_account(conn: &Connection, account_id: &str, instrument_id: &str) {
+        conn.execute(
+            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,'美股','investment','USD',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            params![account_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+             VALUES (?1,'SYM','stock','Symbol','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+            params![instrument_id],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn delete_transaction_internal_cleans_up_buy_lots() {
+        use crate::commands::investment::create_buy_transaction;
+        let conn = setup();
+        setup_investment_account(&conn, "acc-inv", "inst-aapl");
+
+        let buy_id = create_buy_transaction(
+            &conn,
+            make_buy_input("acc-inv", "inst-aapl", 10.0, 10000, 500),
+        )
+        .unwrap();
+
+        let lots: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM security_lots WHERE buy_transaction_id=?1",
+                params![buy_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(lots, 1, "买入应建仓一个 lot");
+        let stx: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM security_transactions WHERE transaction_id=?1",
+                params![buy_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stx, 1);
+
+        delete_transaction_internal(&conn, &buy_id).unwrap();
+
+        let lots_after: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM security_lots WHERE buy_transaction_id=?1",
+                params![buy_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(lots_after, 0, "删除买入应清理 security_lots");
+        let stx_after: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM security_transactions WHERE transaction_id=?1",
+                params![buy_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stx_after, 0, "删除买入应清理 security_transactions");
+        let deleted: i64 = conn
+            .query_row(
+                "SELECT is_deleted FROM transactions WHERE id=?1",
+                params![buy_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(deleted, 1, "交易应被软删除");
+    }
+
+    #[test]
+    fn delete_transaction_internal_rejects_partially_sold_buy() {
+        use crate::commands::investment::{create_buy_transaction, create_sell_transaction};
+        let conn = setup();
+        setup_investment_account(&conn, "acc-inv2", "inst-msft");
+
+        let buy_id = create_buy_transaction(
+            &conn,
+            make_buy_input("acc-inv2", "inst-msft", 10.0, 10000, 0),
+        )
+        .unwrap();
+
+        let mut sell = make_buy_input("acc-inv2", "inst-msft", 4.0, 11000, 0);
+        sell.kind = "sell".into();
+        sell.date = "2026-01-20".into();
+        create_sell_transaction(&conn, sell).unwrap();
+
+        let err = delete_transaction_internal(&conn, &buy_id).unwrap_err();
+        match err {
+            AppError::Invalid(msg) => assert!(msg.contains("部分卖出")),
+            other => panic!("expected Invalid, got {other:?}"),
+        }
     }
 
     #[test]

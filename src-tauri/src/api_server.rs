@@ -5,11 +5,11 @@ use crate::models::{
     Account, AccountBalance, AccountInput, AccountType, Category, CategoryInput,
     CreateTransactionResult, Currency, Transaction, TransactionBatchInput, TransactionInput,
 };
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use rusqlite::Connection;
 use serde::Deserialize;
@@ -62,6 +62,7 @@ struct ErrorResponse {
         list_currencies_handler,
         list_transactions_handler,
         batch_create_transactions_handler,
+        delete_transaction_handler,
         import_knowledge_handler
     ),
     components(schemas(
@@ -106,6 +107,10 @@ pub fn build_router(state: Arc<Mutex<Connection>>) -> Router {
         .route(
             "/api/v1/transactions/batch",
             post(batch_create_transactions_handler),
+        )
+        .route(
+            "/api/v1/transactions/{id}",
+            delete(delete_transaction_handler),
         )
         .route("/api/v1/currencies", get(list_currencies_handler))
         .route("/api/v1/import/knowledge", get(import_knowledge_handler))
@@ -325,6 +330,34 @@ async fn batch_create_transactions_handler(
     let results =
         crate::commands::create_transactions_internal(&conn, body.transactions, body.dedup)?;
     Ok(Json(results))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/transactions/{id}",
+    tag = "transactions",
+    summary = "删除交易（软删除）",
+    description = "按 `id` 软删除交易（`is_deleted=1`）。buy 交易同步清理关联持仓\
+                  （`security_lots` / `security_transactions`）；若该买入已有部分卖出则返回 400。\
+                  删除后该交易不再占用去重位，重跑批量导入会重新写入（`duplicate: false`）。\
+                  不存在的 id 返回 404。成功返回 204 No Content。",
+    params(
+        ("id" = String, Path, description = "交易 ID")
+    ),
+    responses(
+        (status = 204, description = "删除成功（无响应体）"),
+        (status = 400, description = "该买入交易已有部分卖出，无法删除", body = ErrorResponse),
+        (status = 404, description = "交易不存在", body = ErrorResponse),
+        (status = 500, description = "数据库错误", body = ErrorResponse)
+    )
+)]
+async fn delete_transaction_handler(
+    State(conn): State<Arc<Mutex<Connection>>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    crate::commands::delete_transaction_internal(&conn, &id)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// LLM 导入知识（纯文本），供 AI 编程助手直接注入系统提示词。
