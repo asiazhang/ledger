@@ -426,21 +426,23 @@ fn do_sync(conn: &rusqlite::Connection, app: &AppHandle) -> Result<(usize, usize
     let market_totals: Vec<(usize, &MarketConfig)> = MARKETS
         .iter()
         .map(|m| {
-            get_total(&client, &mut pacer, m).map(|t| (t, m)).map_err(|e| {
-                let _ = app.emit(
-                    "sync-instruments:progress",
-                    SyncProgress {
-                        current: 0,
-                        total: 0,
-                        market: String::new(),
-                        done: true,
-                        total_inserted: 0,
-                        total_updated: 0,
-                        error: Some(format!("获取{}总数失败: {e}", m.name)),
-                    },
-                );
-                e
-            })
+            get_total(&client, &mut pacer, m)
+                .map(|t| (t, m))
+                .map_err(|e| {
+                    let _ = app.emit(
+                        "sync-instruments:progress",
+                        SyncProgress {
+                            current: 0,
+                            total: 0,
+                            market: String::new(),
+                            done: true,
+                            total_inserted: 0,
+                            total_updated: 0,
+                            error: Some(format!("获取{}总数失败: {e}", m.name)),
+                        },
+                    );
+                    e
+                })
         })
         .collect::<Result<Vec<_>, _>>()?;
 
