@@ -145,11 +145,30 @@
   - 仅监听 localhost，无认证，适用于单机桌面场景。
   - URL 前缀 `/api/v1`，JSON 请求/响应。
   - 错误格式复用 `{kind, message}`。
-  - **场景**：主要场景是数据迁移（从第三方 APP 的 CSV/Excel 导入），亦可直接录入记账（账户/分类幂等创建、批量写交易）。
-  - **暴露的接口**：`accounts`（list/create）、`categories`（list/create）、`transactions/batch`、`currencies`（list）、`import/knowledge`，共 7 个端点。
+  - **场景**：主要场景是数据迁移（从第三方 APP 的 CSV/Excel 导入），亦可直接录入记账（账户/分类幂等创建、批量写交易）；迁移完成后支持读回验证与纠错删除（见 AIReadbackVerification / AICleanupDeletion）。
+  - **暴露的接口**（13 个端点）：`openapi.json`、`accounts`（list/create/delete）、`accounts/balances`（含黑洞账户）、`categories`（list/create/delete）、`transactions`（list，可按日期/账户/类型过滤）、`transactions/batch`、`transactions/{id}`（delete）、`currencies`（list）、`import/knowledge`。
   - `accounts` / `categories` 的 create 按自然键幂等（同名复用已有记录）；`transactions/batch` 支持 `dedup` 参数（默认开启）。
   - `import/knowledge` 返回精简的导入约定文本（Pixiu 列映射、转账拆分、黑洞账户、币种映射、分单位、日期、dedup），供 AI 直接注入系统提示词。
 - **别名**：不使用"本地 API"（过于泛化）、"后端 API"（与 Tauri IPC 混淆）。
+
+## AIReadbackVerification（AI 读回验证）
+
+- **定义**：AI 编程助手完成批量导入后，通过读回接口核对迁移结果是否完整的环节——用 `GET /api/v1/transactions` 按日期区间/账户/类型过滤读回交易，核对源文件各行是否全部落库、金额合计是否一致；再用 `GET /api/v1/accounts/balances` 拿到各账户（**含黑洞账户**）实时余额，核对期末余额与源数据吻合。
+- **边界**：
+  - 读回是查询能力：`transactions` 返回未删除交易（按 `date DESC` 排序），`balances` 口径 = 初始余额 + 收入 − 支出 + 转入 − 转出 + 退款，实时计算不持久化。
+  - 对账要点：余额清单包含黑洞账户，可识别误挂到 `无` 的交易；转账按转出账户对账（MVP 不按转入账户过滤）。
+  - 与手工记账共用同一套查询实现，无独立数据视图。
+- **别名**：不使用"审计"（偏外部合规）、"校验导入"（含糊）。
+
+## AICleanupDeletion（AI 纠错删除）
+
+- **定义**：AI 编程助手读回发现写错的数据后，通过软删除接口纠正的环节——`DELETE /api/v1/transactions/{id}` 删除错行，`DELETE /api/v1/accounts/{id}`、`DELETE /api/v1/categories/{id}` 删除误建记录，删除后重跑同一批导入即可重新写回。
+- **边界**：
+  - 全部软删除（`is_deleted=1`），与 UI 删除行为一致（IPC 与 HTTP 共用同一内部函数）；buy 交易删除同步清理关联持仓。
+  - 删除后重跑导入可重新写入：去重只匹配 `is_deleted=0` 的交易，软删除不占去重位，同一份源文件可反复安全重跑。
+  - 删除不校验引用（与 UI 一致）：删除有交易的账户后历史交易仍保留，由用户/AI 自行管理。
+  - 不存在的 id 返回 404。
+- **别名**：不使用"回滚"（偏事务语义）、"清理"（偏一次性）。
 
 ## ImportDedup（导入去重）
 
