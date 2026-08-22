@@ -2,6 +2,16 @@
 
 本文件记录 Ledger 各版本对使用者可见的变更，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)规则。
 
+## [0.1.1] - 2026-08-22
+
+### Changed
+
+- **依赖**：升级后端 Rust 依赖，HTTP 客户端切换为 rustls
+
+### Fixed
+
+- **构建**：修复 clippy 警告，CI 补充后端检查
+
 ## [0.1.0] - 2026-08-22
 
 ### Added
