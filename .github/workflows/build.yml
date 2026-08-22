@@ -16,7 +16,26 @@ permissions:
   contents: write
 
 jobs:
-  macos:
+  check:
+    name: 前端检查
+    if: "!startsWith(github.ref, 'refs/tags/')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - run: npm test
+
+  release:
+    name: 构建 DMG 并发布
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -35,14 +54,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/upload-artifact@v7
-        with:
-          name: Ledger-macOS-aarch64
-          path: src-tauri/target/release/bundle/dmg/*.dmg
-
       - name: 提取 CHANGELOG 条目作为 Release 说明
         id: changelog
-        if: startsWith(github.ref, 'refs/tags/v')
         env:
           TAG_VERSION: ${{ github.ref_name }}
         run: |
@@ -59,7 +72,6 @@ jobs:
           echo "body_file=/tmp/release_body.md" >> "$GITHUB_OUTPUT"
 
       - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/v')
         with:
           body_path: ${{ steps.changelog.outputs.body_file }}
           files: src-tauri/target/release/bundle/dmg/*.dmg
