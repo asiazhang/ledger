@@ -109,4 +109,7 @@ export const api = {
 
   // 数据同步
   syncInstruments: () => invoke<void>('sync_instruments'),
+
+  // AI
+  getAiPrompt: () => invoke<string>('get_ai_prompt'),
 }

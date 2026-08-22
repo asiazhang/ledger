@@ -75,6 +75,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(logged_invoke_handler(tauri::generate_handler![
+            commands::get_ai_prompt,
             commands::list_currencies,
             commands::list_accounts,
             commands::create_account,

@@ -1,4 +1,5 @@
 pub mod accounts;
+pub mod ai;
 pub mod budget;
 pub mod categories;
 pub mod currencies;
@@ -10,6 +11,7 @@ pub mod sync;
 pub mod transactions;
 
 pub use accounts::*;
+pub use ai::*;
 pub use budget::*;
 pub use categories::*;
 pub use currencies::*;

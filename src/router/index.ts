@@ -39,6 +39,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '预算' },
   },
   {
+    path: '/ai',
+    name: 'ai',
+    component: () => import('@/views/AiPromptView.vue'),
+    meta: { title: 'AI 提示词' },
+  },
+  {
     path: '/settings',
     name: 'settings',
     component: () => import('@/views/SettingsView.vue'),

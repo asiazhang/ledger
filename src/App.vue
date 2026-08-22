@@ -27,6 +27,7 @@ const menuOptions: MenuOption[] = [
   { label: '报表', key: 'reports' },
   { label: '投资', key: 'investments' },
   { label: '预算', key: 'budget' },
+  { label: 'AI', key: 'ai' },
   { label: '设置', key: 'settings' },
 ]
 
