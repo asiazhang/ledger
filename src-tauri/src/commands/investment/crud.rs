@@ -4,8 +4,8 @@ use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{
-    ExchangeRate, ExchangeRateInput, Holding, Instrument, InstrumentInput, MarketPrice,
-    MarketPriceInput,
+    ExchangeRate, ExchangeRateInput, Holding, InstrumentInput, InstrumentListFilter,
+    InstrumentListResult, MarketPrice, MarketPriceInput,
 };
 
 pub(crate) fn list_holdings(conn: &Connection) -> Result<Vec<Holding>> {
@@ -108,15 +108,61 @@ pub(crate) fn create_market_price(conn: &Connection, input: MarketPriceInput) ->
     Ok(id)
 }
 
-pub(crate) fn list_instruments(conn: &Connection) -> Result<Vec<Instrument>> {
-    query_all(
-        conn,
+pub(crate) fn list_instruments(
+    conn: &Connection,
+    filter: &InstrumentListFilter,
+) -> Result<InstrumentListResult> {
+    let mut conditions: Vec<String> = Vec::new();
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+    if let Some(search) = filter
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        params.push(Box::new(format!("%{}%", search.to_lowercase())));
+        conditions.push(format!(
+            "(LOWER(i.symbol) LIKE ?{} OR LOWER(COALESCE(i.name, '')) LIKE ?{})",
+            params.len(),
+            params.len()
+        ));
+    }
+    if let Some(market) = filter.market.as_deref().filter(|m| !m.is_empty()) {
+        params.push(Box::new(market.to_string()));
+        conditions.push(format!("i.market=?{}", params.len()));
+    }
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", conditions.join(" AND "))
+    };
+
+    let params_ref: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+    let total: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) FROM instruments i{where_clause}"),
+        params_ref.as_slice(),
+        |r| r.get(0),
+    )?;
+
+    let page = filter.page.unwrap_or(1).max(1);
+    let page_size = filter.page_size.unwrap_or(50).clamp(1, 500);
+    let offset = (page - 1) * page_size;
+    params.push(Box::new(page_size as i64));
+    params.push(Box::new(offset as i64));
+
+    let sql = format!(
         "SELECT i.id,i.symbol,i.instrument_type,i.name,i.currency_code,i.market,i.created_at,i.updated_at,i.version,i.device_id,p.price_cents \
          FROM instruments i \
          LEFT JOIN market_prices p ON p.instrument_id = i.id \
-         ORDER BY i.symbol",
-        [],
-    )
+         {where_clause} ORDER BY i.symbol LIMIT ?{} OFFSET ?{}",
+        params.len() - 1,
+        params.len()
+    );
+    let params_ref: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+    let items = query_all(conn, &sql, params_ref.as_slice())?;
+
+    Ok(InstrumentListResult { items, total })
 }
 
 pub(crate) fn create_instrument(conn: &Connection, input: InstrumentInput) -> Result<String> {

@@ -31,7 +31,6 @@ const store = useAppStore()
 const loading = ref(false)
 const summary = ref<RealizedPnlSummary | null>(null)
 const accounts = ref<Account[]>([])
-const instruments = ref<Instrument[]>([])
 const selectedAccountId = ref<string | null>(null)
 const selectedInstrumentId = ref<string | null>(null)
 
@@ -39,12 +38,49 @@ const accountOptions = computed(() =>
   accounts.value.map((a) => ({ label: a.name, value: a.id }))
 )
 
-const instrumentOptions = computed(() =>
-  instruments.value.map((i) => ({
-    label: `${i.symbol}${i.name ? ` - ${i.name}` : ''}`,
-    value: i.id,
-  }))
-)
+// 盈亏 tab：标的筛选下拉（远程搜索，不前端全量驻留）
+const searchInstrumentOptions = ref<{ label: string; value: string }[]>([])
+const selectedInstrumentOption = ref<{ label: string; value: string } | null>(null)
+const searchingInstruments = ref(false)
+let instrumentSearchTimer: ReturnType<typeof setTimeout> | undefined
+
+const pnlInstrumentOptions = computed(() => {
+  const opts = [...searchInstrumentOptions.value]
+  const sel = selectedInstrumentOption.value
+  if (sel && !opts.some((o) => o.value === sel.value)) {
+    opts.push(sel)
+  }
+  return opts
+})
+
+async function searchInstruments(query: string) {
+  clearTimeout(instrumentSearchTimer)
+  instrumentSearchTimer = setTimeout(async () => {
+    if (!query.trim()) {
+      searchInstrumentOptions.value = []
+      return
+    }
+    searchingInstruments.value = true
+    try {
+      const res = await api.listInstruments({ search: query.trim(), page_size: 50 })
+      searchInstrumentOptions.value = res.items.map((i) => ({
+        label: `${i.symbol}${i.name ? ` - ${i.name}` : ''}`,
+        value: i.id,
+      }))
+    } catch {
+      searchInstrumentOptions.value = []
+    } finally {
+      searchingInstruments.value = false
+    }
+  }, 300)
+}
+
+function onSelectInstrument(value: string | null) {
+  selectedInstrumentId.value = value
+  selectedInstrumentOption.value =
+    searchInstrumentOptions.value.find((o) => o.value === value) ?? null
+  refresh()
+}
 
 const currencyByCode = computed(() => store.currencyMap)
 
@@ -129,9 +165,15 @@ const instPnlColumns: DataTableColumn[] = [
   },
 ]
 
-// 标的浏览 tab
+// 标的浏览 tab：服务端分页 + 搜索
 const searchText = ref('')
 const selectedMarket = ref<MarketType | null>(null)
+const browseInstruments = ref<Instrument[]>([])
+const browseTotal = ref(0)
+const browsePage = ref(1)
+const browsePageSize = 50
+const browseLoading = ref(false)
+let browseSearchTimer: ReturnType<typeof setTimeout> | undefined
 
 const marketOptions = computed(() =>
   (Object.entries(MARKET_TYPE_LABELS) as [MarketType, string][]).map(
@@ -139,21 +181,42 @@ const marketOptions = computed(() =>
   )
 )
 
-const filteredInstruments = computed(() => {
-  let result = instruments.value
-  if (searchText.value) {
-    const kw = searchText.value.toLowerCase()
-    result = result.filter(
-      (i) =>
-        i.symbol.toLowerCase().includes(kw) ||
-        (i.name && i.name.toLowerCase().includes(kw)),
-    )
+async function loadBrowse() {
+  browseLoading.value = true
+  try {
+    const res = await api.listInstruments({
+      search: searchText.value.trim() || null,
+      market: selectedMarket.value,
+      page: browsePage.value,
+      page_size: browsePageSize,
+    })
+    browseInstruments.value = res.items
+    browseTotal.value = res.total
+  } finally {
+    browseLoading.value = false
   }
-  if (selectedMarket.value) {
-    result = result.filter((i) => i.market === selectedMarket.value)
-  }
-  return result
+}
+
+function reloadBrowse() {
+  browsePage.value = 1
+  loadBrowse()
+}
+
+watch(searchText, () => {
+  clearTimeout(browseSearchTimer)
+  browseSearchTimer = setTimeout(reloadBrowse, 300)
 })
+watch(selectedMarket, reloadBrowse)
+
+const browsePagination = computed(() => ({
+  page: browsePage.value,
+  pageSize: browsePageSize,
+  itemCount: browseTotal.value,
+  onChange: (page: number) => {
+    browsePage.value = page
+    loadBrowse()
+  },
+}))
 
 const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
   { title: '代码', key: 'symbol', width: 100 },
@@ -190,15 +253,15 @@ const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
 onMounted(async () => {
   await store.loadAll()
   accounts.value = await api.listAccounts()
-  instruments.value = await api.listInstruments()
+  loadBrowse()
   await refresh()
 })
 
 // 切换 tab 时刷新数据
 const activeTab = ref('pnl')
-watch(activeTab, async (tab) => {
+watch(activeTab, (tab) => {
   if (tab === 'instruments') {
-    instruments.value = await api.listInstruments()
+    loadBrowse()
   }
 })
 </script>
@@ -219,11 +282,16 @@ watch(activeTab, async (tab) => {
             />
             <NSelect
               v-model:value="selectedInstrumentId"
-              :options="instrumentOptions"
-              placeholder="全部标的"
+              :options="pnlInstrumentOptions"
+              placeholder="搜索标的"
+              remote
+              filterable
               clearable
+              :loading="searchingInstruments"
+              virtual-scroll
               style="width: 220px"
-              @update:value="refresh"
+              @update:value="onSelectInstrument"
+              @search="searchInstruments"
             />
           </NSpace>
 
@@ -285,6 +353,7 @@ watch(activeTab, async (tab) => {
                 :data="summary.details"
                 :bordered="true"
                 size="small"
+                :pagination="{ pageSize: 20 }"
               />
             </NCard>
           </template>
@@ -311,11 +380,12 @@ watch(activeTab, async (tab) => {
         </NSpace>
         <NDataTable
           :columns="instrumentBrowseColumns"
-          :data="filteredInstruments"
+          :data="browseInstruments"
+          :loading="browseLoading"
           :bordered="false"
           size="small"
-          :max-height="500"
-          virtual-scroll
+          remote
+          :pagination="browsePagination"
         />
       </NSpace>
     </NTabPane>

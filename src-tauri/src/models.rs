@@ -677,6 +677,27 @@ pub struct PnlFilter {
     pub instrument_id: Option<String>,
 }
 
+/// 标的列表查询过滤条件（服务端分页 + 搜索）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct InstrumentListFilter {
+    /// 对 symbol / name 的大小写不敏感子串匹配。
+    pub search: Option<String>,
+    /// 交易市场精确匹配（sh / sz / hk / unknown）。
+    pub market: Option<String>,
+    /// 页码，从 1 开始，默认 1。
+    pub page: Option<usize>,
+    /// 每页条数，默认 50，上限 500。
+    pub page_size: Option<usize>,
+}
+
+/// 标的列表分页结果。
+#[derive(Debug, Serialize)]
+pub struct InstrumentListResult {
+    pub items: Vec<Instrument>,
+    /// 满足过滤条件的总条数（用于分页条）。
+    pub total: i64,
+}
+
 impl FromRow for PnlDetail {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
         Ok(PnlDetail {

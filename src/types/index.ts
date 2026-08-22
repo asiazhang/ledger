@@ -187,6 +187,25 @@ export interface InstrumentInput {
   market?: MarketType | null
 }
 
+/** 标的列表查询过滤条件（服务端分页 + 搜索） */
+export interface InstrumentListFilter {
+  /** 对 symbol / name 的大小写不敏感子串匹配 */
+  search?: string | null
+  /** 交易市场精确匹配（sh / sz / hk / unknown） */
+  market?: MarketType | null
+  /** 页码，从 1 开始，默认 1 */
+  page?: number
+  /** 每页条数，默认 50，上限 500 */
+  page_size?: number
+}
+
+/** 标的列表分页结果 */
+export interface InstrumentListResult {
+  items: Instrument[]
+  /** 满足过滤条件的总条数（用于分页条） */
+  total: number
+}
+
 /** 分 -> 元字符串，按币种小数位格式化 */
 export function formatAmount(cents: number, currency?: Currency): string {
   const dp = currency?.decimal_places ?? 2

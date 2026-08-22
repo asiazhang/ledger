@@ -25,6 +25,21 @@ fn insert_instrument(conn: &Connection, id: &str, symbol: &str, name: &str, curr
     ).unwrap();
 }
 
+fn insert_instrument_with_market(
+    conn: &Connection,
+    id: &str,
+    symbol: &str,
+    name: &str,
+    currency: &str,
+    market: &str,
+) {
+    conn.execute(
+         "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+          VALUES (?1,?2,'stock',?3,?4,?5,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+        params![id, symbol, name, currency, market],
+    ).unwrap();
+}
+
 fn make_buy_input(
     account_id: &str,
     instrument_id: &str,
@@ -71,6 +86,97 @@ fn make_sell_input(
         price_cents: Some(price),
         fee_cents: Some(fee),
     }
+}
+
+#[test]
+fn list_instruments_pagination_and_search() {
+    let conn = setup_db();
+    for i in 0..5 {
+        insert_instrument_with_market(
+            &conn,
+            &format!("inst-list-{i}"),
+            &format!("SYM{i}"),
+            &format!("名称{i}"),
+            "USD",
+            if i % 2 == 0 { "sh" } else { "sz" },
+        );
+    }
+
+    // 默认第一页（page_size=50），返回全量
+    let filter = InstrumentListFilter::default();
+    let result = super::crud::list_instruments(&conn, &filter).unwrap();
+    assert_eq!(result.total, 5);
+    assert_eq!(result.items.len(), 5);
+    assert_eq!(result.items[0].symbol, "SYM0");
+
+    // 分页：每页 2 条，第 1 页
+    let filter = InstrumentListFilter {
+        search: None,
+        market: None,
+        page: None,
+        page_size: Some(2),
+    };
+    let result = super::crud::list_instruments(&conn, &filter).unwrap();
+    assert_eq!(result.total, 5);
+    assert_eq!(result.items.len(), 2);
+    assert_eq!(result.items[0].symbol, "SYM0");
+    assert_eq!(result.items[1].symbol, "SYM1");
+
+    // 分页：第 2 页
+    let filter = InstrumentListFilter {
+        search: None,
+        market: None,
+        page: Some(2),
+        page_size: Some(2),
+    };
+    let result = super::crud::list_instruments(&conn, &filter).unwrap();
+    assert_eq!(result.items.len(), 2);
+    assert_eq!(result.items[0].symbol, "SYM2");
+
+    // 搜索：代码大小写不敏感
+    let filter = InstrumentListFilter {
+        search: Some("sym1".into()),
+        market: None,
+        page: None,
+        page_size: None,
+    };
+    let result = super::crud::list_instruments(&conn, &filter).unwrap();
+    assert_eq!(result.total, 1);
+    assert_eq!(result.items[0].symbol, "SYM1");
+
+    // 搜索：名称
+    let filter = InstrumentListFilter {
+        search: Some("名称3".into()),
+        market: None,
+        page: None,
+        page_size: None,
+    };
+    let result = super::crud::list_instruments(&conn, &filter).unwrap();
+    assert_eq!(result.total, 1);
+    assert_eq!(result.items[0].symbol, "SYM3");
+
+    // 市场筛选
+    let filter = InstrumentListFilter {
+        search: None,
+        market: Some("sh".into()),
+        page: None,
+        page_size: None,
+    };
+    let result = super::crud::list_instruments(&conn, &filter).unwrap();
+    assert_eq!(result.total, 3);
+    assert!(result.items.iter().all(|i| i.market == "sh"));
+
+    // 搜索 + 市场组合
+    let filter = InstrumentListFilter {
+        search: Some("SYM".into()),
+        market: Some("sz".into()),
+        page: Some(2),
+        page_size: Some(1),
+    };
+    let result = super::crud::list_instruments(&conn, &filter).unwrap();
+    assert_eq!(result.total, 2);
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].symbol, "SYM3");
 }
 
 #[test]

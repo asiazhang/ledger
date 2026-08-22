@@ -61,7 +61,8 @@ beforeEach(async () => {
   mockInvoke.mockImplementation((cmd: string) => {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_instruments') return Promise.resolve(mockInstruments)
+    if (cmd === 'list_instruments')
+      return Promise.resolve({ items: mockInstruments, total: mockInstruments.length })
     if (cmd === 'list_categories') return Promise.resolve([])
     if (cmd === 'realized_pnl_summary')
       return Promise.resolve({
@@ -123,5 +124,18 @@ describe('InvestmentsView 标的 tab', () => {
     await nextTick()
     await nextTick()
     expect(wrapper.html()).toContain('全部市场')
+  })
+
+  it('标的 tab 分页请求携带 page/page_size', async () => {
+    const wrapper = mount(InvestmentsView)
+    await nextTick()
+    const instTab = wrapper.findAll('.n-tabs-tab')[1]
+    await instTab.trigger('click')
+    await nextTick()
+    await nextTick()
+    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments')
+    expect(calls.length).toBeGreaterThan(0)
+    const [, args] = calls[calls.length - 1]
+    expect(args.filter).toMatchObject({ page: 1, page_size: 50 })
   })
 })

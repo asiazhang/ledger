@@ -7,8 +7,8 @@ mod trade;
 use crate::db::DbState;
 use crate::error::{AppError, Result};
 use crate::models::{
-    ExchangeRate, ExchangeRateInput, Holding, Instrument, InstrumentInput, MarketPrice,
-    MarketPriceInput, PnlFilter, RealizedPnlSummary,
+    ExchangeRate, ExchangeRateInput, Holding, InstrumentInput, InstrumentListFilter,
+    InstrumentListResult, MarketPrice, MarketPriceInput, PnlFilter, RealizedPnlSummary,
 };
 
 pub(crate) use reports::query_realized_pnl_summary;
@@ -70,9 +70,13 @@ pub fn create_market_price(
 }
 
 #[tauri::command]
-pub fn list_instruments(db: tauri::State<'_, DbState>) -> Result<Vec<Instrument>> {
+pub fn list_instruments(
+    db: tauri::State<'_, DbState>,
+    filter: Option<InstrumentListFilter>,
+) -> Result<InstrumentListResult> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    crud::list_instruments(&conn)
+    let filter = filter.unwrap_or_default();
+    crud::list_instruments(&conn, &filter)
 }
 
 #[tauri::command]

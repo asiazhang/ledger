@@ -18,8 +18,9 @@ import type {
   ExchangeRateInput,
   ExecuteOccurrenceInput,
   Holding,
-  Instrument,
   InstrumentInput,
+  InstrumentListFilter,
+  InstrumentListResult,
   MarketPrice,
   MarketPriceInput,
   MonthlySummary,
@@ -72,7 +73,8 @@ export const api = {
   budgetProgress: () => invoke<BudgetProgress[]>('budget_progress'),
 
   // 金融工具
-  listInstruments: () => invoke<Instrument[]>('list_instruments'),
+  listInstruments: (filter?: InstrumentListFilter | null) =>
+    invoke<InstrumentListResult>('list_instruments', { filter: filter ?? null }),
   createInstrument: (input: InstrumentInput) =>
     invoke<string>('create_instrument', { input }),
 

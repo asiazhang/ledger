@@ -54,10 +54,14 @@ const ctx = useInvestmentForm(props.kind, { onCreated: () => emit('created') })
           <NSelect
             v-model:value="ctx.instrumentId.value"
             :options="ctx.instrumentOptions.value"
-            placeholder="选择标的"
+            placeholder="选择标的（输入代码/名称搜索）"
+            remote
             filterable
             clearable
-            style="width: 200px"
+            :loading="ctx.searchingInstruments.value"
+            virtual-scroll
+            style="width: 240px"
+            @search="ctx.searchInstruments"
           />
           <NButton size="tiny" @click="ctx.showNewInstrument.value = !ctx.showNewInstrument.value">
             {{ ctx.showNewInstrument.value ? '取消' : '新增标的' }}

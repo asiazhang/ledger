@@ -41,6 +41,13 @@
 - security_lots.instrument_id → instruments.id（ON DELETE RESTRICT）
 - market_prices.instrument_id → instruments.id（ON DELETE CASCADE）
 
+## 查询约定（服务端分页）
+
+- `list_instruments` 支持服务端分页与搜索：`filter = { search?, market?, page?, page_size? }`，返回 `{ items, total }`。
+- 默认 `page=1`、`page_size=50`（上限 500），排序固定 `ORDER BY symbol`（分页依赖稳定排序）。
+- `search` 对 `symbol` / `name` 做大小写不敏感子串匹配（`LOWER` + `LIKE`），`market` 精确匹配。
+- 标的全量可达万级（全量同步自东方财富），标的浏览列表与两个标的筛选下拉均走服务端分页/远程搜索，不在前端全量驻留；而交易列表、卖出明细等量级有上限的数据沿用客户端分页（NDataTable 内置）。两者不一致是有意为之：量级不同，内存代价不同。
+
 ## 参考
 
 - Migration：`src-tauri/migrations/V002__investment.sql`（基础结构）、`V005__instruments_market.sql`（新增 market 列）

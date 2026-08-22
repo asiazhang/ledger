@@ -18,7 +18,9 @@ export function useInvestmentForm(kind: 'buy' | 'sell', options?: { onCreated?: 
   const currencyCode = ref('CNY')
 
   const instruments = ref<Instrument[]>([])
+  const searchingInstruments = ref(false)
   const showNewInstrument = ref(false)
+  let searchTimer: ReturnType<typeof setTimeout> | undefined
   const newInstrumentSymbol = ref('')
   const newInstrumentName = ref('')
   const newInstrumentType = ref<InstrumentType>('stock')
@@ -58,7 +60,7 @@ export function useInvestmentForm(kind: 'buy' | 'sell', options?: { onCreated?: 
         currency_code: currencyCode.value,
       })
       message.success('已新增标的')
-      await loadInstruments()
+      await refreshInstrumentsAfterCreate()
       instrumentId.value = id
       showNewInstrument.value = false
       newInstrumentSymbol.value = ''
@@ -68,11 +70,33 @@ export function useInvestmentForm(kind: 'buy' | 'sell', options?: { onCreated?: 
     }
   }
 
-  async function loadInstruments() {
+  /** 远程搜索标的（防抖），不前端全量驻留 */
+  function searchInstruments(query: string) {
+    clearTimeout(searchTimer)
+    searchTimer = setTimeout(async () => {
+      if (!query.trim()) {
+        instruments.value = []
+        return
+      }
+      searchingInstruments.value = true
+      try {
+        const res = await api.listInstruments({ search: query.trim(), page_size: 50 })
+        instruments.value = res.items
+      } catch {
+        instruments.value = []
+      } finally {
+        searchingInstruments.value = false
+      }
+    }, 300)
+  }
+
+  /** 新增标的成功后，按代码回查以保证选项包含新标的 */
+  async function refreshInstrumentsAfterCreate() {
     try {
-      instruments.value = await api.listInstruments()
+      const res = await api.listInstruments({ search: newInstrumentSymbol.value.trim(), page_size: 50 })
+      instruments.value = res.items
     } catch {
-      // 加载失败忽略，可后续重试
+      instruments.value = []
     }
   }
 
@@ -139,6 +163,7 @@ export function useInvestmentForm(kind: 'buy' | 'sell', options?: { onCreated?: 
     accountId, instrumentId, quantity, price, fee, note, date, currencyCode,
     investmentAmount, investmentAccountOptions, instrumentOptions, currencyOptions,
     showNewInstrument, newInstrumentSymbol, newInstrumentName, newInstrumentType,
-    submit, createNewInstrument, resetForm,
+    searchingInstruments,
+    submit, createNewInstrument, searchInstruments, resetForm,
   }
 }
