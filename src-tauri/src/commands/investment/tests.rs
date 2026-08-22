@@ -118,7 +118,7 @@ fn buy_transaction_creates_lot() {
     let (holding_quantity, cost_basis): (f64, i64) = conn
         .query_row(
             "SELECT quantity, cost_basis_cents FROM v_holdings WHERE id=?1",
-            params![format!("acc-test-buy-inst-test-nvda-USD")],
+            params!["acc-test-buy-inst-test-nvda-USD"],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
