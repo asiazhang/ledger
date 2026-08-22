@@ -4,5 +4,6 @@
     "src-tauri/Cargo.toml",
     "src-tauri/tauri.conf.json"
   ],
-  "changelog": "CHANGELOG.md"
+  "changelog": "CHANGELOG.md",
+  "postUpdateCommand": "cd src-tauri && cargo generate-lockfile"
 }
