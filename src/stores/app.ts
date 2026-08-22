@@ -30,7 +30,6 @@ export const useAppStore = defineStore('app', () => {
   const currencies = ref<Currency[]>([])
   const accounts = ref<Account[]>([])
   const categories = ref<Category[]>([])
-  const loaded = ref(false)
 
   const theme = ref<Theme>(loadLocal<Theme>('appearance', 'dark'))
   const defaultCurrency = ref<string>(loadLocal<string>('default_currency', 'CNY'))
@@ -74,10 +73,11 @@ export const useAppStore = defineStore('app', () => {
     return pureBuildCategoryTree(categories.value, { kind })
   }
 
+  // 注意：不缓存、不幂等。账户/分类/币种可能被本地 HTTP API（AI 导入流程）
+  // 外部修改，而 store 是内存态；各视图挂载时调用本函数重新拉取，
+  // 确保界面始终反映最新数据（本地 SQLite + IPC，开销可忽略）。
   async function loadAll() {
-    if (loaded.value) return
     await Promise.all([loadCurrencies(), loadAccounts(), loadCategories()])
-    loaded.value = true
   }
 
   async function loadCurrencies() {
@@ -117,7 +117,6 @@ export const useAppStore = defineStore('app', () => {
     categoryChildren,
     categoryPath,
     treeCategoryOptions,
-    loaded,
     loadAll,
     loadCurrencies,
     loadAccounts,
