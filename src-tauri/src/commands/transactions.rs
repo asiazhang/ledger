@@ -22,7 +22,8 @@ pub fn compute_dedup_hash(input: &TransactionInput) -> String {
         input.account_id,
         to_account_id
     );
-    format!("{:x}", Sha256::digest(payload.as_bytes()))
+    let digest = Sha256::digest(payload.as_bytes());
+    digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<String> {
