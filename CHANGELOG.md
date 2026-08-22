@@ -2,6 +2,12 @@
 
 本文件记录 Ledger 各版本对使用者可见的变更，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)规则。
 
+## [0.2.0] - 2026-08-22
+
+### Added
+
+- **AI 导入**：新增 AI 系统提示词视图，可在应用内查看并一键复制 AI 导入入口提示词（供 Cursor、Claude Code 等 AI 助手使用），提示词指引 AI 通过 HTTP API 自行发现端点与获取导入约定
+
 ## [0.1.1] - 2026-08-22
 
 ### Changed
