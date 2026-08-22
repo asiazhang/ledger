@@ -7,7 +7,6 @@ pub enum AppError {
     #[error("数据库错误: {0}")]
     Db(String),
     #[error("数据不存在: {0}")]
-    #[allow(dead_code)]
     NotFound(String),
     #[error("参数错误: {0}")]
     Invalid(String),

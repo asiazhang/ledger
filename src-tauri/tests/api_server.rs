@@ -1748,6 +1748,77 @@ async fn test_delete_category_not_found_returns_404() {
 }
 
 #[tokio::test]
+async fn test_delete_category_does_not_validate_references() {
+    let (app, conn) = setup_app();
+    let category_id =
+        create_category_via_api(&app, r#"{"name":"有交易分类","kind":"expense"}"#).await;
+    let account_id = create_account_via_api(&app, "现金").await;
+    let tx = format!(
+        r#"{{"kind":"expense","amount_cents":500,"currency_code":"CNY","account_id":"{account_id}","category_id":"{category_id}","date":"2026-07-01"}}"#
+    );
+    post_batch(&app, batch_body(&[&tx], None)).await;
+
+    let (status, _) = delete_category_via_api(&app, &category_id).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let tx_count: i64 = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM transactions WHERE category_id=?1 AND is_deleted=0",
+            rusqlite::params![category_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(tx_count, 1, "删除分类不应清理引用它的历史交易");
+}
+
+#[tokio::test]
+async fn test_delete_account_then_reimport_recreates() {
+    let (app, conn) = setup_app();
+    let id = create_account_via_api(&app, "重导账户").await;
+
+    let (status, _) = delete_account_via_api(&app, &id).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // 删除后重跑导入：幂等创建不再命中已删除记录，应重新创建新 id（去重位天然释放）
+    let new_id = create_account_via_api(&app, "重导账户").await;
+    assert_ne!(new_id, id, "删除后重导应创建新账户而非复用旧 id");
+    let active: i64 = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM accounts WHERE name=?1 AND is_deleted=0",
+            rusqlite::params!["重导账户"],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(active, 1, "重导后应恰好存在一个未删除的同名账户");
+}
+
+#[tokio::test]
+async fn test_delete_category_then_reimport_recreates() {
+    let (app, conn) = setup_app();
+    let id = create_category_via_api(&app, r#"{"name":"重导分类","kind":"expense"}"#).await;
+
+    let (status, _) = delete_category_via_api(&app, &id).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let new_id = create_category_via_api(&app, r#"{"name":"重导分类","kind":"expense"}"#).await;
+    assert_ne!(new_id, id, "删除后重导应创建新分类而非复用旧 id");
+    let active: i64 = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM categories WHERE name=?1 AND is_deleted=0",
+            rusqlite::params!["重导分类"],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(active, 1, "重导后应恰好存在一个未删除的同名分类");
+}
+
+#[tokio::test]
 async fn test_openapi_doc_covers_delete_account_and_category_endpoints() {
     let (app, _) = setup_app();
     let (_, doc) = get_json(&app, "/api/v1/openapi.json").await;
