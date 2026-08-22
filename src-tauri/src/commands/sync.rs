@@ -676,10 +676,14 @@ mod tests {
 
     #[test]
     fn request_json_returns_error_when_connection_refused() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}/x", listener.local_addr().unwrap());
-        drop(listener);
-        let client = reqwest::blocking::Client::new();
+        // 显式禁用系统代理：默认 Client 会读取系统代理（如 Clash/Surge 监听 127.0.0.1），
+        // 代理转发到无监听的端口时会返回空 body 响应，导致“连接被拒绝”语义失效。
+        // 目标用保留端口 1，本机几乎不可能有服务监听，可稳定触发 ECONNREFUSED。
+        let client = reqwest::blocking::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap();
+        let url = "http://127.0.0.1:1/x".to_string();
         let mut pacer = Pacer::new(Duration::ZERO);
         let params = [("fs", "test")];
         let err =

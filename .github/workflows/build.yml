@@ -16,7 +16,7 @@ permissions:
   contents: write
 
 jobs:
-  check:
+  frontend:
     name: 前端检查
     if: "!startsWith(github.ref, 'refs/tags/')"
     runs-on: ubuntu-latest
@@ -32,6 +32,42 @@ jobs:
       - run: npm run build
 
       - run: npm test
+
+  backend:
+    name: 后端检查（Rust 单测 + e2e）
+    if: "!startsWith(github.ref, 'refs/tags/')"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 安装 Linux 系统依赖（tauri 编译所需）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 格式检查
+        run: cargo fmt --check
+
+      - name: Clippy 检查
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Rust 单元测试 + BDD/e2e 测试（cucumber）
+        run: cargo test --all
 
   release:
     name: 构建 DMG 并发布
