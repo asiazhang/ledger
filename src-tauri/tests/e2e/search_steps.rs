@@ -1,7 +1,9 @@
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::commands::search::{rebuild_search_index, search_transactions_internal};
+use tauri_app_lib::commands::search::{
+    process_reindex_queue, rebuild_search_index, search_transactions_internal,
+};
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
 use tauri_app_lib::models::TransactionSearchResult;
 
@@ -43,6 +45,12 @@ fn legacy_txn(
 #[when(expr = "重建搜索索引")]
 fn rebuild_index(world: &mut LedgerWorld) {
     rebuild_search_index(&world.conn).expect("重建搜索索引失败");
+}
+
+/// 消费搜索重建队列（模拟后台定时刷新的单次周期，ADR-0004 决策 #14）。
+#[when(expr = "执行索引刷新")]
+fn refresh_index(world: &mut LedgerWorld) {
+    process_reindex_queue(&world.conn).expect("执行索引刷新失败");
 }
 
 #[when(expr = "搜索 {string}")]

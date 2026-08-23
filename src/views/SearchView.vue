@@ -29,6 +29,8 @@ const dateFrom = ref<string | null>(null)
 const dateTo = ref<string | null>(null)
 const results = ref<Transaction[]>([])
 const total = ref(0)
+// 索引是否可能滞后（存在尚未刷新的写入）：显示弱化提示
+const stale = ref(false)
 const page = ref(1)
 const pageSize = 20
 const loading = ref(false)
@@ -95,6 +97,7 @@ async function runSearch() {
     if (seq !== searchSeq) return
     results.value = res.items
     total.value = res.total
+    stale.value = res.stale
     searched.value = true
   } catch (e) {
     if (seq !== searchSeq) return
@@ -117,6 +120,7 @@ function resetResults() {
   searchSeq++ // 使在途请求过期
   results.value = []
   total.value = 0
+  stale.value = false
   page.value = 1
   searched.value = false
   loading.value = false
@@ -213,6 +217,9 @@ onMounted(async () => {
     </NSpace>
     <template v-if="searched">
       <NText depth="3">命中 {{ total }} 条</NText>
+      <NText v-if="stale" depth="3" style="font-size: 12px">
+        索引更新中，结果可能滞后于最近的操作
+      </NText>
       <NEmpty v-if="total === 0" description="无匹配结果" />
       <NDataTable
         v-else

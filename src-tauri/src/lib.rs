@@ -73,6 +73,9 @@ pub fn run() {
                 std::process::exit(1);
             })?;
             api_server::start_http_server(app.state::<db::DbState>().conn.clone());
+            // 后台索引刷新线程：固定周期消费搜索重建队列（ADR-0004 决策 #14，
+            // 写路径零索引工作，界面操作不受索引维护影响）。
+            commands::search::start_search_refresh_thread(app.state::<db::DbState>().conn.clone());
             Ok(())
         })
         .invoke_handler(logged_invoke_handler(tauri::generate_handler![

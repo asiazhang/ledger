@@ -2,11 +2,15 @@
 //!
 //! - 可搜索内容：备注 + 账户名 + 二者拼音首字母（仅首字母缩写、小写）。
 //! - 匹配语义：整词匹配 + 拼音首字母匹配 + 前缀通配；词条间 AND、词条内原词/前缀 OR。
-//! - 索引维护：交易创建/删除后应用层即时重建；账户/分类改名由触发器入队
-//!   `search_reindex_queue`，消费后批量重建；启动时按文档数对账兜底全量重建。
+//! - 索引维护（ADR-0004 决策 #14 刷新策略）：**后台定时刷新**——交易写入路径不做任何
+//!   同步索引工作（界面操作零索引开销），由触发器纯 SQL 入队 `search_reindex_queue`，
+//!   后台线程固定周期（默认 60s）消费队列批量重建；批量导入完成后在命令内立即消费一次；
+//!   启动时按文档数对账兜底全量重建。
+//! - 搜索结果附 `stale` 标志：队列非空（存在未消费写入）时 true，供前端提示索引可能滞后。
 
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
+use std::sync::{Arc, Mutex};
 use tauri::State;
 
 use crate::db::DbState;
@@ -111,6 +115,38 @@ pub fn build_match_query(query: &str) -> String {
 /// 每页条数上限（防呆，防止极端输入拖垮查询）。
 const MAX_PAGE_SIZE: usize = 200;
 
+/// 后台刷新周期：固定间隔轮询搜索重建队列（秒）。
+/// 时效性要求低（用户可接受分钟级滞后），周期内写入不立即可搜。
+const REFRESH_INTERVAL_SECS: u64 = 60;
+
+/// 搜索重建队列是否非空（存在尚未消费的写入）。
+fn reindex_queue_pending(conn: &Connection) -> Result<bool> {
+    let pending: i64 = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM search_reindex_queue)",
+        [],
+        |r| r.get(0),
+    )?;
+    Ok(pending != 0)
+}
+
+/// 启动后台索引刷新线程：固定周期（`REFRESH_INTERVAL_SECS`）检查搜索重建队列，
+/// 非空则消费批量重建 FTS 文档。空队列时仅做一次存在性查询，开销可忽略。
+/// Daemon 线程随进程退出，无需优雅停止（Tauri 退出即进程结束）。
+/// 每次周期短暂持 `Mutex<Connection>`，消费小批量、持锁毫秒级；
+/// 全量重建仅在启动对账（`reconcile_search_index`）时执行，不在此线程内。
+pub fn start_search_refresh_thread(conn: Arc<Mutex<Connection>>) {
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(REFRESH_INTERVAL_SECS));
+            let Ok(guard) = conn.lock() else {
+                // 连接锁损坏（极不可能）：跳过本轮，下个周期重试。
+                continue;
+            };
+            let _ = process_reindex_queue(&guard);
+        }
+    });
+}
+
 /// 服务端分页搜索交易。整词/前缀匹配（FTS5 MATCH），JOIN 回主表过滤软删除，
 /// 排序按相关度 rank 优先、日期倒序次之、id 兜底（与交易列表先例一致，防同秒
 /// 批量写入翻页漂移）；返回当前页与命中总数。
@@ -146,6 +182,7 @@ pub fn search_transactions_internal(
         return Ok(TransactionSearchResult {
             items: Vec::new(),
             total: 0,
+            stale: reindex_queue_pending(conn)?,
         });
     }
     let page = page.max(1);
@@ -233,7 +270,11 @@ pub fn search_transactions_internal(
         rusqlite::params_from_iter(item_params),
     )?;
 
-    Ok(TransactionSearchResult { items, total })
+    Ok(TransactionSearchResult {
+        items,
+        total,
+        stale: reindex_queue_pending(conn)?,
+    })
 }
 
 /// IPC 命令：搜索交易（可选金额/日期筛选与关键字 AND 组合）。
@@ -282,23 +323,6 @@ pub fn reindex_transaction(conn: &Connection, transaction_id: &str) -> Result<()
         return delete_index_document(conn, transaction_id);
     }
     upsert_index_document(conn, transaction_id, &payload.content)
-}
-
-/// 为**新建**交易直接插入 FTS 文档（免查重：不扫描表判断是否已存在，O(1)）。
-/// 仅用于刚插入、确定没有文档的交易（如 `insert_transaction` 钩子）；
-/// 批量导入下避免每次插入都全表扫描（UNINDEXED 列无索引可走）。
-pub fn insert_index_document(conn: &Connection, transaction_id: &str) -> Result<()> {
-    let Some(payload) = read_index_payload(conn, transaction_id)? else {
-        return Ok(());
-    };
-    if payload.is_deleted {
-        return Ok(());
-    }
-    conn.execute(
-        "INSERT INTO search_transactions(content, transaction_id) VALUES(?1, ?2)",
-        rusqlite::params![payload.content, transaction_id],
-    )?;
-    Ok(())
 }
 
 /// 索引载荷：可搜索内容与软删除标志。
@@ -731,7 +755,9 @@ mod tests {
             fee_cents: None,
         };
         let id = insert_transaction(&conn, input).unwrap();
-        // 转出账户名（含拼音首字母）可搜；转入账户名不在索引中
+        // 写入路径不做同步索引（ADR-0004 决策 #14）：消费队列后转出账户名
+        // （含拼音首字母）可搜；转入账户名不在索引中
+        process_reindex_queue(&conn).unwrap();
         assert_eq!(search(&conn, "现金").unwrap().total, 1);
         assert_eq!(search(&conn, "xj").unwrap().total, 1);
         assert_eq!(search(&conn, "招商").unwrap().total, 0);
@@ -888,6 +914,69 @@ mod tests {
         // 空查询 + 无筛选 → 维持空结果
         assert_eq!(search(&conn, "").unwrap().total, 0);
         assert_eq!(search(&conn, "   ").unwrap().total, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // 后台定时刷新（ADR-0004 决策 #14）与 stale 标志
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn write_path_does_not_index_until_queue_consumed() {
+        let conn = setup();
+        insert_account(&conn, "acc-1", "现金", "cash", "CNY");
+        // 单笔写入路径不再同步建索引（触发器已入队）：未消费前搜不到
+        insert_txn(&conn, "tx-1", "acc-1", None, Some("午餐"), "2026-02-01");
+        assert_eq!(
+            search(&conn, "午餐").unwrap().total,
+            0,
+            "写入后未刷新不可搜"
+        );
+        // 消费队列后立即可搜
+        process_reindex_queue(&conn).unwrap();
+        assert_eq!(search(&conn, "午餐").unwrap().total, 1);
+    }
+
+    #[test]
+    fn search_reports_stale_while_queue_pending() {
+        let conn = setup();
+        insert_account(&conn, "acc-1", "现金", "cash", "CNY");
+        rebuild_search_index(&conn).unwrap();
+        assert!(!search(&conn, "午餐").unwrap().stale, "队列为空时不滞后");
+
+        // 软删除入队（触发器）后队列非空：搜索报告 stale=true（搜索不消费队列）
+        insert_txn(&conn, "tx-1", "acc-1", None, Some("午餐"), "2026-02-01");
+        let r = search(&conn, "午餐").unwrap();
+        assert!(r.stale, "存在未消费写入时 stale=true");
+
+        // 消费后队列清空：stale 回落 false
+        process_reindex_queue(&conn).unwrap();
+        assert!(!search(&conn, "午餐").unwrap().stale);
+    }
+
+    #[test]
+    fn batch_import_consumes_queue_immediately() {
+        let conn = setup();
+        insert_account(&conn, "acc-1", "现金", "cash", "CNY");
+        let input = crate::models::TransactionInput {
+            kind: "expense".into(),
+            amount_cents: 1000,
+            currency_code: "CNY".into(),
+            account_id: "acc-1".into(),
+            to_account_id: None,
+            category_id: None,
+            refund_of_transaction_id: None,
+            note: Some("午餐".into()),
+            date: "2026-02-01".into(),
+            instrument_id: None,
+            quantity: None,
+            price_cents: None,
+            fee_cents: None,
+        };
+        // 批量导入命令内部在事务提交后立即消费队列
+        crate::commands::transactions::create_transactions_internal(&conn, vec![input], false)
+            .unwrap();
+        assert_eq!(search(&conn, "午餐").unwrap().total, 1, "导入后立即可搜");
+        assert!(!search(&conn, "午餐").unwrap().stale, "导入消费后不滞后");
     }
 
     #[test]
@@ -1061,7 +1150,8 @@ mod tests {
             fee_cents: Some(0),
         };
         let id = insert_transaction(&conn, input).unwrap();
-        // insert_transaction 已即时重建索引
+        // 写入路径不做同步索引（ADR-0004 决策 #14）：消费队列后立即可搜
+        process_reindex_queue(&conn).unwrap();
         assert_eq!(search(&conn, "加仓").unwrap().total, 1);
         assert_eq!(
             search(&conn, "美股账户").unwrap().total,

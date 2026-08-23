@@ -98,9 +98,8 @@ pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<
         )?;
         id
     };
-    // 新建交易后即时更新搜索索引（含 buy/sell 路径；新建文档免查重插入，
-    // 触发器入队由队列消费兜底）
-    crate::commands::search::insert_index_document(conn, &id)?;
+    // 索引维护由后台定时刷新（ADR-0004 决策 #14）承担：触发器已入队
+    // `search_reindex_queue`，写路径不做任何同步索引工作（界面操作零索引开销）。
     Ok(id)
 }
 
@@ -234,6 +233,11 @@ pub fn create_transactions_internal(
         }
     }
     conn.execute("COMMIT", [])?;
+    // 批量导入完成后立即消费搜索重建队列：导入是成批写入场景，
+    // 一次性重建比等下一个后台刷新周期（60s）更合理；消费总成本不变，
+    // 只是从「逐条即时」挪到「导入结束一次性」，且导入命令本就持锁、
+    // 不额外影响界面响应（ADR-0004 决策 #14）。
+    crate::commands::search::process_reindex_queue(conn)?;
     Ok(results)
 }
 
@@ -286,8 +290,9 @@ pub fn delete_transaction_internal(conn: &Connection, id: &str) -> Result<()> {
         "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id()],
     )?;
-    // 软删除后即时从搜索索引移除文档
-    crate::commands::search::delete_index_document(conn, id)?;
+    // 索引维护由后台定时刷新承担：触发器（trg_search_enqueue_txn_update）已入队
+    // `search_reindex_queue`，软删除后到下次刷新前该交易仍可能被搜到（时效性要求低，
+    // 可接受，见 ADR-0004 决策 #14）。
     Ok(())
 }
 
