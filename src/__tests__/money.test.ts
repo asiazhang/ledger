@@ -13,6 +13,11 @@ describe('yuanToCents（元 → 分）', () => {
     expect(yuanToCents('0.01')).toBe(1)
   })
 
+  it('省略整数部分的写法 .5 可用', () => {
+    expect(yuanToCents('.5')).toBe(50)
+    expect(yuanToCents('-.5')).toBe(-50)
+  })
+
   it('超过两位小数四舍五入', () => {
     expect(yuanToCents('15.505')).toBe(1551)
     expect(yuanToCents('15.504')).toBe(1550)
@@ -37,5 +42,10 @@ describe('yuanToCents（元 → 分）', () => {
     expect(yuanToCents('1e3')).toBeNull() // 科学计数法不识别
     expect(yuanToCents('12.34.56')).toBeNull()
     expect(yuanToCents('--5')).toBeNull()
+    expect(yuanToCents('15.')).toBeNull() // 小数点后必须有数字
+  })
+
+  it('超大数字溢出 → null（不产生 Infinity）', () => {
+    expect(yuanToCents('1' + '0'.repeat(308))).toBeNull()
   })
 })

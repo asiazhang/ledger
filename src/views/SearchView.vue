@@ -57,7 +57,8 @@ const hasQuery = computed(() => keyword.value.trim() !== '' || filtersActive.val
 /** 当前筛选条件的可读描述（供「已应用筛选」展示） */
 const activeFilterDescriptions = computed(() => {
   const parts: string[] = []
-  const currency = store.currencyMap.get('CNY')
+  // 按用户默认币种展示符号（设置页可改），避免硬编码 CNY
+  const currency = store.getCurrency(store.defaultCurrency)
   const min = amountMinCents.value
   const max = amountMaxCents.value
   if (min !== null && max !== null) {
@@ -121,17 +122,8 @@ function resetResults() {
   loading.value = false
 }
 
-// 关键字变化：空输入且无筛选 → 占位；否则防抖查询
-watch(keyword, () => {
-  if (!hasQuery.value) {
-    resetResults()
-    return
-  }
-  scheduleSearch()
-})
-
-// 筛选变化：与关键字同样防抖（~300ms）触发查询
-watch([amountMinYuan, amountMaxYuan, dateFrom, dateTo], () => {
+// 关键字或筛选任一变化：空查询（无关键字且无筛选）→ 占位；否则防抖查询
+watch([keyword, amountMinYuan, amountMaxYuan, dateFrom, dateTo], () => {
   if (!hasQuery.value) {
     resetResults()
     return
