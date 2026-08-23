@@ -149,9 +149,9 @@
   - 仅监听 localhost，无认证，适用于单机桌面场景。
   - URL 前缀 `/api/v1`，JSON 请求/响应。
   - 错误格式复用 `{kind, message}`。
-  - **场景**：主要场景是数据迁移（从第三方 APP 的 CSV/Excel 导入），亦可直接录入记账（账户/分类幂等创建、批量写交易）；迁移完成后支持读回验证与纠错删除（见 AIReadbackVerification / AICleanupDeletion）。
-  - **暴露的接口**（13 个端点）：`openapi.json`、`accounts`（list/create/delete）、`accounts/balances`（含黑洞账户）、`categories`（list/create/delete）、`transactions`（list，可按日期/账户/类型过滤）、`transactions/batch`、`transactions/{id}`（delete）、`currencies`（list）、`import/knowledge`。
-  - `accounts` / `categories` 的 create 按自然键幂等（同名复用已有记录）；`transactions/batch` 支持 `dedup` 参数（默认开启）。
+  - **场景**：主要场景是数据迁移（从第三方 APP 的 CSV/Excel 导入），亦可直接录入记账（账户/分类幂等创建、批量写交易）；迁移完成后支持读回验证与纠错（删除/修改，见 AIReadbackVerification / AICleanupDeletion / AICleanupModify）。
+  - **暴露的接口**（13 个端点）：`openapi.json`、`accounts`（list/create/delete）、`accounts/balances`（含黑洞账户）、`categories`（list/create/delete）、`transactions`（list，可按日期/账户/类型过滤）、`transactions/batch`、`transactions/{id}`（delete/update）、`currencies`（list）、`import/knowledge`。
+  - `accounts` / `categories` 的 create 按自然键幂等（同名复用已有记录）；`transactions/batch` 支持 `dedup` 参数（默认开启）与客户端 `idempotency_key`（见 ImportDedup / IdempotencyKey）。
   - `import/knowledge` 返回精简的导入约定文本（Pixiu 列映射、转账拆分、黑洞账户、币种映射、分单位、日期、dedup），供 AI 直接注入系统提示词。
 - **别名**：不使用"本地 API"（过于泛化）、"后端 API"（与 Tauri IPC 混淆）。
 
@@ -174,15 +174,33 @@
   - 不存在的 id 返回 404。
 - **别名**：不使用"回滚"（偏事务语义）、"清理"（偏一次性）。
 
+## AICleanupModify（AI 纠错修改）
+
+- **定义**：AI 编程助手读回发现写错的交易后，用修改接口按 `id` 纠错、而非"删除→重导"的环节——`PUT /api/v1/transactions/{id}` 全字段替换该交易，幂等键保持不变。
+- **边界**：
+  - 与 AICleanupDeletion 互补：删账户/删分类/整笔移除仍走软删除；单笔交易写错用"改"而非"删后重导"，避免重导覆盖界面手动编辑、也不产生重复。
+  - 编辑不重算去重身份：幂等键不变；内容哈希兜底行被编辑后 `dedup_hash` 不再准确，仅影响旧兜底路径，新导入（带幂等键）不受影响。
+- **别名**：不使用"更新"/"PUT"（偏实现细节）、"纠错覆盖"（含糊）。
+
 ## ImportDedup（导入去重）
 
-- **定义**：在 `POST /api/v1/transactions/batch` 导入入口，由后端对每条 `TransactionInput` 计算确定性内容哈希（`dedup_hash`），命中已存在的未删除交易则跳过并返回 `duplicate`，避免重复导入污染账本。
-- **哈希**：`sha256(date|kind|amount_cents|currency_code|account_id|to_account_id)`，`to_account_id` 缺省空串。字段集排除 note/category（AI 生成文本非确定性，会导致哈希漂移）。
+- **定义**：在 `POST /api/v1/transactions/batch` 导入入口，由后端判断"这条交易是否已导入过"并跳过、返回 `duplicate`，避免重复导入污染账本。
+- **幂等键优先**：每条 `TransactionInput` 可带客户端提供的 `idempotency_key`（见 IdempotencyKey）。带键时，去重以幂等键为准——命中已存在的未删除交易则跳过，与内容无关。
+- **内容哈希兜底**：不带幂等键的行，回退到确定性内容哈希 `dedup_hash = sha256(date|kind|amount_cents|currency_code|account_id|to_account_id)`（`to_account_id` 缺省空串，排除 note/category）。这是冻结契约的保留路径，仅作旧调用兜底。
 - **边界**：
   - 只在导入入口生效，手工记账与定时交易引擎不受影响；`dedup` 参数默认开启、可关闭。
   - 只匹配 `is_deleted=0` 的交易：软删除的交易不占去重位，重跑导入会重新写入。
-  - `dedup_hash` 导入后保持不变，编辑/同步无特殊处理。
-  - `dedup_hash` 落库但不建唯一约束——去重是应用层行为，不是数据库硬约束。
+  - 目标：新导入一律带幂等键，让内容哈希退化为历史兼容路径，避免 buy/sell 等"雷同交易"被内容哈希误去重。
+
+## IdempotencyKey（导入幂等键）
+
+- **定义**：客户端在批量导入时给每条 `TransactionInput` 提供的、内容无关的稳定标识，指向"这条交易来自源文件的哪一行"。
+- **边界**：
+  - 客户端自行保证唯一；服务端只约束"同键至多对应一笔未删除交易"（部分唯一索引 `WHERE idempotency_key IS NOT NULL AND is_deleted=0`），并据此做到 O(log n) 去重查询。
+  - 内容无关：编辑交易内容（金额/账户/备注等）不改变幂等键，故编辑不导致去重身份漂移——这是相较内容哈希的核心优势。
+  - 不可编辑：修改 API 不提供改幂等键的入口；幂等键只在导入时落定。
+  - 一次源行拆多笔时，客户端派生"源文件:行号:交易序号"的独立键。
+- **别名**：不使用"去重哈希"（偏内容签名）、"duplicate key"（偏数据库约束）。
 
 ## BlackHoleAccount（黑洞账户）
 
@@ -196,7 +214,7 @@
 
 ## AIPrompt（AI 提示词）
 
-- **定义**：人类用户在“AI”菜单中查看、可一键复制给 AI 编程助手（如 Cursor、Claude Code）的系统提示词文本。AI 收到后据此通过本地 HTTP API 读写账本：先发现端点，再获取导入知识，完成迁移后读回对账，必要时纠错删除。
+- **定义**：人类用户在“AI”菜单中查看、可一键复制给 AI 编程助手（如 Cursor、Claude Code）的系统提示词文本。AI 收到后据此通过本地 HTTP API 读写账本：先发现端点，再获取导入知识，完成迁移后读回对账，必要时纠错（删除/修改）。
 - **边界**：
   - 与导入知识（import knowledge）互补：提示词是入口指引，导入知识是拆行约定细节；AI 按提示词指引自行通过 HTTP 获取导入知识，人类用户无需复制后者。
   - 与 AI API（AI 编程接口）的关系：AI API 是 AI 主动调用的接口，AI 提示词是人类主动提供给 AI 的入口文本，二者共同构成 AI 导入闭环。
