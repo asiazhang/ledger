@@ -8,7 +8,8 @@ use crate::db::query::query_all;
 use crate::db::{DbState, device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{
-    CreateTransactionResult, TransactionInput, TransactionListFilter, TransactionListResult,
+    CreateTransactionResult, NormalizedTransaction, TransactionInput, TransactionListFilter,
+    TransactionListResult,
 };
 
 /// 计算导入去重哈希：`sha256("date|kind|amount_cents|currency_code|account_id|to_account_id")`。
@@ -29,48 +30,12 @@ pub fn compute_dedup_hash(input: &TransactionInput) -> String {
 }
 
 pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<String> {
-    if input.kind == "transfer" && input.to_account_id.is_none() {
-        return Err(AppError::Invalid("转账必须指定目标账户".into()));
-    }
-
     let id = if input.kind == "buy" {
         crate::commands::investment::create_buy_transaction(conn, input)?
     } else if input.kind == "sell" {
         crate::commands::investment::create_sell_transaction(conn, input)?
     } else {
-        if input.amount_cents <= 0 {
-            return Err(AppError::Invalid("金额必须大于 0".into()));
-        }
-
-        let (category_id, account_id, currency_code, refund_of_id) = if input.kind == "refund" {
-            let ref_id = input
-                .refund_of_transaction_id
-                .ok_or_else(|| AppError::Invalid("退款必须关联原支出交易".into()))?;
-            let (cat, acc, cur, okind): (Option<String>, String, String, String) = conn.query_row(
-                "SELECT category_id, account_id, currency_code, kind \
-                 FROM transactions WHERE id=?1 AND is_deleted=0",
-                rusqlite::params![ref_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            )?;
-            if okind != "expense" {
-                return Err(AppError::Invalid("退款只能关联支出交易".into()));
-            }
-            (cat, acc, cur, Some(ref_id))
-        } else {
-            (
-                input.category_id,
-                input.account_id,
-                input.currency_code,
-                None,
-            )
-        };
-
-        let native = convert_to_native(conn, input.amount_cents, &currency_code, &account_id)?;
-        let to_account_id = if input.kind == "transfer" {
-            input.to_account_id
-        } else {
-            None
-        };
+        let norm = normalize_transaction(conn, &input)?;
         let id = new_uuid();
         let now = now_iso();
         conn.execute(
@@ -80,16 +45,16 @@ pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,0)",
             rusqlite::params![
                 id,
-                input.kind,
-                input.amount_cents,
-                currency_code,
-                native,
-                account_id,
-                to_account_id,
-                category_id,
-                refund_of_id,
-                input.note,
-                input.date,
+                norm.kind,
+                norm.amount_cents,
+                norm.currency_code,
+                norm.amount_native_cents,
+                norm.account_id,
+                norm.to_account_id,
+                norm.category_id,
+                norm.refund_of_transaction_id,
+                norm.note,
+                norm.date,
                 now,
                 now,
                 1,
@@ -101,6 +66,71 @@ pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<
     // 索引维护由后台定时刷新（ADR-0004 决策 #14）承担：触发器已入队
     // `search_reindex_queue`，写路径不做任何同步索引工作（界面操作零索引开销）。
     Ok(id)
+}
+
+/// 校验并按 kind 归一化交易字段，产出可直接 INSERT/UPDATE 的交易行字段。
+///
+/// 创建与修改共用：只做校验与字段解析，不做任何落库——buy/sell 的持仓建仓、
+/// 卖出匹配等副作用由调用方在落库时按其身份（新增或替换）另行执行。
+/// 转账需 `to_account_id`、退款需关联未删除的支出交易、买入/卖出需投资账户与标的校验。
+pub fn normalize_transaction(
+    conn: &Connection,
+    input: &TransactionInput,
+) -> Result<NormalizedTransaction> {
+    if input.kind == "transfer" && input.to_account_id.is_none() {
+        return Err(AppError::Invalid("转账必须指定目标账户".into()));
+    }
+    match input.kind.as_str() {
+        "buy" => crate::commands::investment::prepare_buy(conn, input).map(|p| p.normalized),
+        "sell" => crate::commands::investment::prepare_sell(conn, input).map(|p| p.normalized),
+        _ => {
+            if input.amount_cents <= 0 {
+                return Err(AppError::Invalid("金额必须大于 0".into()));
+            }
+            let (category_id, account_id, currency_code, refund_of_id) = if input.kind == "refund" {
+                let ref_id = input
+                    .refund_of_transaction_id
+                    .clone()
+                    .ok_or_else(|| AppError::Invalid("退款必须关联原支出交易".into()))?;
+                let (cat, acc, cur, okind): (Option<String>, String, String, String) = conn
+                    .query_row(
+                        "SELECT category_id, account_id, currency_code, kind \
+                         FROM transactions WHERE id=?1 AND is_deleted=0",
+                        rusqlite::params![ref_id],
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                    )?;
+                if okind != "expense" {
+                    return Err(AppError::Invalid("退款只能关联支出交易".into()));
+                }
+                (cat, acc, cur, Some(ref_id))
+            } else {
+                (
+                    input.category_id.clone(),
+                    input.account_id.clone(),
+                    input.currency_code.clone(),
+                    None,
+                )
+            };
+            let native = convert_to_native(conn, input.amount_cents, &currency_code, &account_id)?;
+            let to_account_id = if input.kind == "transfer" {
+                input.to_account_id.clone()
+            } else {
+                None
+            };
+            Ok(NormalizedTransaction {
+                kind: input.kind.clone(),
+                amount_cents: input.amount_cents,
+                currency_code,
+                amount_native_cents: native,
+                account_id,
+                to_account_id,
+                category_id,
+                refund_of_transaction_id: refund_of_id,
+                note: input.note.clone(),
+                date: input.date.clone(),
+            })
+        }
+    }
 }
 
 pub fn list_transactions_internal(
@@ -1113,6 +1143,118 @@ mod tests {
             params![instrument_id],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn normalize_transaction_rejects_transfer_without_target() {
+        let conn = setup();
+        insert_account(&conn, "acc-norm", "现金", "cash", "CNY");
+        let result = normalize_transaction(
+            &conn,
+            &make_input("acc-norm", "transfer", 1000, "2026-01-01"),
+        );
+        match result {
+            Err(AppError::Invalid(msg)) => assert!(msg.contains("目标账户")),
+            _ => panic!("expected Invalid error"),
+        }
+    }
+
+    #[test]
+    fn normalize_transaction_income_passthrough() {
+        let conn = setup();
+        insert_account(&conn, "acc-norm", "现金", "cash", "CNY");
+        let norm =
+            normalize_transaction(&conn, &make_input("acc-norm", "income", 5000, "2026-01-01"))
+                .unwrap();
+        assert_eq!(norm.kind, "income");
+        assert_eq!(norm.amount_cents, 5000);
+        assert_eq!(norm.account_id, "acc-norm");
+        assert_eq!(norm.amount_native_cents, 5000, "本位币与原始币种应 1:1");
+    }
+
+    #[test]
+    fn normalize_transaction_resolves_refund_fields_from_source_expense() {
+        let conn = setup();
+        insert_account(&conn, "acc-norm", "现金", "cash", "CNY");
+        let expense_id = insert_transaction(
+            &conn,
+            TransactionInput {
+                kind: "expense".into(),
+                amount_cents: 1000,
+                currency_code: "CNY".into(),
+                account_id: "acc-norm".into(),
+                to_account_id: None,
+                category_id: None,
+                refund_of_transaction_id: None,
+                note: None,
+                date: "2026-01-01".into(),
+                instrument_id: None,
+                quantity: None,
+                price_cents: None,
+                fee_cents: None,
+            },
+        )
+        .unwrap();
+        let norm = normalize_transaction(
+            &conn,
+            &TransactionInput {
+                kind: "refund".into(),
+                amount_cents: 200,
+                currency_code: "CNY".into(),
+                account_id: "acc-other".into(),
+                to_account_id: None,
+                category_id: None,
+                refund_of_transaction_id: Some(expense_id.clone()),
+                note: None,
+                date: "2026-01-02".into(),
+                instrument_id: None,
+                quantity: None,
+                price_cents: None,
+                fee_cents: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(norm.kind, "refund");
+        assert_eq!(norm.amount_cents, 200);
+        // 退款继承原支出的账户/币种，而非调用方填的字段
+        assert_eq!(norm.account_id, "acc-norm");
+        assert_eq!(norm.currency_code, "CNY");
+        assert_eq!(
+            norm.refund_of_transaction_id.as_deref(),
+            Some(expense_id.as_str())
+        );
+    }
+
+    #[test]
+    fn normalize_transaction_computes_buy_amount_and_native() {
+        let conn = setup();
+        setup_investment_account(&conn, "acc-inv", "inst-aapl");
+        let norm = normalize_transaction(
+            &conn,
+            &make_buy_input("acc-inv", "inst-aapl", 10.0, 10000, 500),
+        )
+        .unwrap();
+        assert_eq!(norm.kind, "buy");
+        assert_eq!(norm.amount_cents, 10 * 10000 + 500);
+        assert_eq!(norm.currency_code, "USD");
+        assert_eq!(
+            norm.amount_native_cents, norm.amount_cents,
+            "买入本位币与原始币种应 1:1"
+        );
+        assert_eq!(norm.category_id, None);
+        assert_eq!(norm.refund_of_transaction_id, None);
+    }
+
+    #[test]
+    fn normalize_transaction_rejects_buy_non_investment_account() {
+        let conn = setup();
+        insert_account(&conn, "acc-cash", "现金", "cash", "CNY");
+        let result =
+            normalize_transaction(&conn, &make_buy_input("acc-cash", "inst-x", 1.0, 1000, 0));
+        match result {
+            Err(AppError::Invalid(msg)) => assert!(msg.contains("投资账户")),
+            _ => panic!("expected Invalid error"),
+        }
     }
 
     #[test]

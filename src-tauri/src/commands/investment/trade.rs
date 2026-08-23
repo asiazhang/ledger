@@ -4,13 +4,13 @@ use crate::commands::fx::account_currency_code;
 use crate::db::query::{FromRow, query_all};
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::models::{AccountType, TransactionInput};
+use crate::models::{AccountType, NormalizedTransaction, TransactionInput};
 
-struct ActiveLot {
-    id: String,
-    remaining_quantity: f64,
-    cost_per_unit_cents: i64,
-    currency_code: String,
+pub(crate) struct ActiveLot {
+    pub(crate) id: String,
+    pub(crate) remaining_quantity: f64,
+    pub(crate) cost_per_unit_cents: i64,
+    pub(crate) currency_code: String,
 }
 
 impl FromRow for ActiveLot {
@@ -24,7 +24,17 @@ impl FromRow for ActiveLot {
     }
 }
 
-pub(crate) fn create_buy_transaction(conn: &Connection, input: TransactionInput) -> Result<String> {
+pub(crate) struct BuyPlan {
+    pub(crate) normalized: NormalizedTransaction,
+    pub(crate) instrument_id: String,
+    pub(crate) quantity: f64,
+    pub(crate) price_cents: i64,
+    pub(crate) fee_cents: i64,
+}
+
+/// 校验并归一化一笔买入交易（不落库）。创建与修改共用；
+/// 只做校验与字段解析，持仓建仓等副作用由调用方在落库时按其身份（新增或替换）执行。
+pub(crate) fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
     let instrument_id = input
         .instrument_id
         .as_ref()
@@ -52,23 +62,49 @@ pub(crate) fn create_buy_transaction(conn: &Connection, input: TransactionInput)
     let account_currency = account_currency_code(conn, &input.account_id)?;
     let amount_cents = (quantity * price_cents as f64).round() as i64 + fee_cents;
 
+    Ok(BuyPlan {
+        normalized: NormalizedTransaction {
+            kind: "buy".into(),
+            amount_cents,
+            currency_code: account_currency,
+            amount_native_cents: amount_cents,
+            account_id: input.account_id.clone(),
+            to_account_id: input.to_account_id.clone(),
+            category_id: None,
+            refund_of_transaction_id: None,
+            note: input.note.clone(),
+            date: input.date.clone(),
+        },
+        instrument_id,
+        quantity,
+        price_cents,
+        fee_cents,
+    })
+}
+
+pub(crate) fn create_buy_transaction(conn: &Connection, input: TransactionInput) -> Result<String> {
+    let plan = prepare_buy(conn, &input)?;
+    write_buy(conn, &plan)
+}
+
+fn write_buy(conn: &Connection, plan: &BuyPlan) -> Result<String> {
     let id = new_uuid();
     let now = now_iso();
+    let norm = &plan.normalized;
     conn.execute(
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,NULL,NULL,?8,?9,?10,?11,?12,?13,0)",
+         VALUES (?1,'buy',?2,?3,?4,?5,?6,NULL,NULL,?7,?8,?9,?10,?11,?12,0)",
         rusqlite::params![
             id,
-            input.kind,
-            amount_cents,
-            account_currency,
-            amount_cents,
-            input.account_id,
-            input.to_account_id,
-            input.note,
-            input.date,
+            norm.amount_cents,
+            norm.currency_code,
+            norm.amount_native_cents,
+            norm.account_id,
+            norm.to_account_id,
+            norm.note,
+            norm.date,
             now,
             now,
             1,
@@ -78,20 +114,19 @@ pub(crate) fn create_buy_transaction(conn: &Connection, input: TransactionInput)
     create_buy_lot(
         conn,
         &id,
-        &input.account_id,
-        &instrument_id,
-        quantity,
-        price_cents,
-        fee_cents,
-        &account_currency,
+        &norm.account_id,
+        &plan.instrument_id,
+        plan.quantity,
+        plan.price_cents,
+        plan.fee_cents,
+        &norm.currency_code,
     )?;
     Ok(id)
 }
 
-pub(crate) fn create_sell_transaction(
-    conn: &Connection,
-    input: TransactionInput,
-) -> Result<String> {
+/// 校验并归一化一笔卖出交易（不落库）。创建与修改共用；
+/// 卖出匹配持仓等副作用由调用方在落库时按其身份执行。
+pub(crate) fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan> {
     let instrument_id = input
         .instrument_id
         .as_ref()
@@ -131,7 +166,6 @@ pub(crate) fn create_sell_transaction(
          ORDER BY created_at ASC, id ASC",
         rusqlite::params![input.account_id, instrument_id],
     )?;
-
     let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
     if total_available < quantity {
         return Err(AppError::Invalid(format!(
@@ -140,23 +174,53 @@ pub(crate) fn create_sell_transaction(
         )));
     }
 
+    Ok(SellPlan {
+        normalized: NormalizedTransaction {
+            kind: "sell".into(),
+            amount_cents,
+            currency_code: account_currency,
+            amount_native_cents: amount_cents,
+            account_id: input.account_id.clone(),
+            to_account_id: input.to_account_id.clone(),
+            category_id: None,
+            refund_of_transaction_id: None,
+            note: input.note.clone(),
+            date: input.date.clone(),
+        },
+        instrument_id,
+        quantity,
+        price_cents,
+        fee_cents,
+        lots,
+    })
+}
+
+pub(crate) fn create_sell_transaction(
+    conn: &Connection,
+    input: TransactionInput,
+) -> Result<String> {
+    let plan = prepare_sell(conn, &input)?;
+    write_sell(conn, &plan)
+}
+
+fn write_sell(conn: &Connection, plan: &SellPlan) -> Result<String> {
     let id = new_uuid();
     let now = now_iso();
+    let norm = &plan.normalized;
     conn.execute(
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,NULL,NULL,?8,?9,?10,?11,?12,?13,0)",
+         VALUES (?1,'sell',?2,?3,?4,?5,?6,NULL,NULL,?7,?8,?9,?10,?11,?12,0)",
         rusqlite::params![
             id,
-            input.kind,
-            amount_cents,
-            account_currency,
-            amount_cents,
-            input.account_id,
-            input.to_account_id,
-            input.note,
-            input.date,
+            norm.amount_cents,
+            norm.currency_code,
+            norm.amount_native_cents,
+            norm.account_id,
+            norm.to_account_id,
+            norm.note,
+            norm.date,
             now,
             now,
             1,
@@ -166,19 +230,21 @@ pub(crate) fn create_sell_transaction(
     conn.execute(
         "INSERT INTO security_transactions (transaction_id,instrument_id,action,quantity,price_cents,fee_cents) \
          VALUES (?1,?2,'sell',?3,?4,?5)",
-        rusqlite::params![id, instrument_id, quantity, price_cents, fee_cents],
+        rusqlite::params![id, plan.instrument_id, plan.quantity, plan.price_cents, plan.fee_cents],
     )?;
 
-    let mut remaining_to_sell = quantity;
+    let mut remaining_to_sell = plan.quantity;
     let mut matched_lots: Vec<ActiveLot> = Vec::new();
-    for lot in lots {
+    for lot in &plan.lots {
         if remaining_to_sell <= 0.0 {
             break;
         }
         let matched = lot.remaining_quantity.min(remaining_to_sell);
         matched_lots.push(ActiveLot {
+            id: lot.id.clone(),
             remaining_quantity: matched,
-            ..lot
+            cost_per_unit_cents: lot.cost_per_unit_cents,
+            currency_code: lot.currency_code.clone(),
         });
         remaining_to_sell -= matched;
     }
@@ -186,12 +252,13 @@ pub(crate) fn create_sell_transaction(
     let match_count = matched_lots.len();
     let mut allocated_fee_total = 0i64;
     for (i, lot) in matched_lots.iter().enumerate() {
-        let lot_proceeds = (lot.remaining_quantity * price_cents as f64).round() as i64;
+        let lot_proceeds = (lot.remaining_quantity * plan.price_cents as f64).round() as i64;
         let lot_cost = (lot.remaining_quantity * lot.cost_per_unit_cents as f64).round() as i64;
         let allocated_fee = if i == match_count - 1 {
-            fee_cents - allocated_fee_total
+            plan.fee_cents - allocated_fee_total
         } else {
-            let fee = (fee_cents as f64 * lot.remaining_quantity / quantity).floor() as i64;
+            let fee =
+                (plan.fee_cents as f64 * lot.remaining_quantity / plan.quantity).floor() as i64;
             allocated_fee_total += fee;
             fee
         };
@@ -209,6 +276,15 @@ pub(crate) fn create_sell_transaction(
     }
 
     Ok(id)
+}
+
+pub(crate) struct SellPlan {
+    pub(crate) normalized: NormalizedTransaction,
+    pub(crate) instrument_id: String,
+    pub(crate) quantity: f64,
+    pub(crate) price_cents: i64,
+    pub(crate) fee_cents: i64,
+    pub(crate) lots: Vec<ActiveLot>,
 }
 
 #[allow(clippy::too_many_arguments)]

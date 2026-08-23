@@ -229,6 +229,24 @@ pub struct TransactionInput {
     pub fee_cents: Option<i64>,
 }
 
+/// 按 kind 校验并归一化后的一笔交易行字段（供创建与修改共用）。
+///
+/// 创建路径据此 INSERT、修改路径据此 UPDATE —— 校验与字段解析只做一次。
+/// buy/sell 的持仓/卖出关联等副作用由调用方在落库时按其身份（新增或替换）另行执行。
+#[derive(Debug, Clone)]
+pub struct NormalizedTransaction {
+    pub kind: String,
+    pub amount_cents: i64,
+    pub currency_code: String,
+    pub amount_native_cents: i64,
+    pub account_id: String,
+    pub to_account_id: Option<String>,
+    pub category_id: Option<String>,
+    pub refund_of_transaction_id: Option<String>,
+    pub note: Option<String>,
+    pub date: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Budget {
     pub id: String,

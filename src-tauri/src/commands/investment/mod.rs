@@ -12,7 +12,9 @@ use crate::models::{
 };
 
 pub(crate) use reports::query_realized_pnl_summary;
-pub(crate) use trade::{create_buy_transaction, create_sell_transaction};
+pub(crate) use trade::{
+    create_buy_transaction, create_sell_transaction, prepare_buy, prepare_sell,
+};
 
 #[tauri::command]
 pub fn list_holdings(db: tauri::State<'_, DbState>) -> Result<Vec<Holding>> {
