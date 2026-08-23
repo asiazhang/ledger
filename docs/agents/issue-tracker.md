@@ -29,6 +29,22 @@ GitHub 的 issue 和 PR 共享编号空间，单独的 `#42` 可能是任一类�
 
 创建一条 GitHub issue。
 
+## Spec 与实现 ticket 的关联
+
+- **Spec issue**：功能规格文档（PRD）类 issue 必须带 `spec` 标签（分类标签，见 `triage-labels.md`），与实现 ticket 区分。
+- **子 ticket 必须通过 sub-issue 关联回父 spec**：从 spec 拆出的实现 ticket 一律用 GitHub 原生 sub-issue 挂到父 spec issue 下，并在 ticket 正文顶部写 `## Parent` 引用父 spec：
+  ```bash
+  # 1) 创建 ticket（依赖序：blocker 先建），拿到 issue 号
+  gh issue create --label ready-for-agent --body-file t.md
+  # 2) 获取子 issue 的数据库 ID（不是 #number）
+  CHILD_ID=$(gh api repos/<owner>/<repo>/issues/<child-number> --jq .id)
+  # 3) 挂到父 spec 下
+  gh api --method POST repos/<owner>/<repo>/issues/<parent-number>/sub_issues \
+    --input <(echo "{\"sub_issue_id\": $CHILD_ID}")
+  ```
+- 若 sub-issue 功能不可用（API 返回 404/501），回退为：子 ticket 正文顶部写 `Part of #<parent>`，并在父 spec 正文维护任务列表。
+- 同一 spec 下的多个 ticket 也互为 sub-issue 关系：存在先后依赖时，后者正文写 `Blocked by: #<n>`（或使用 GitHub 原生 issue 依赖，见下文 Wayfinding 操作的阻塞关系）。
+
 ## 当 skill 说“获取相关 ticket”
 
 运行 `gh issue view <number> --comments`。

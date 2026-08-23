@@ -13,3 +13,11 @@
 当技能提到某个角色（例如“应用 AFK-ready triage label”）时，请使用本表中对应的标签字符串。
 
 如需匹配实际使用的标签词汇，编辑右侧列。
+
+## 分类标签（非 triage 角色）
+
+| 标签 | 含义 |
+| ---- | ---- |
+| `spec` | 功能规格文档（PRD）：标注 spec 类 issue，与实现 ticket 区分 |
+
+`spec` 标签用于父 spec issue；由其拆出的实现 ticket 不重复加 `spec`（只加 triage 标签，并按下文 `issue-tracker.md` 约定以 sub-issue 关联回父 spec）。
