@@ -5,13 +5,12 @@ import {
   NButton,
   NSpace,
   NPopconfirm,
-  NTag,
   useMessage,
-  type DataTableColumns,
+  type DataTableColumn,
 } from 'naive-ui'
 import { api } from '@/api'
 import { useAppStore } from '@/stores/app'
-import { formatAmount, TRANSACTION_KIND_LABELS } from '@/types'
+import { buildTransactionColumns } from '@/components/transactionColumns'
 import type { Transaction } from '@/types'
 
 const store = useAppStore()
@@ -40,60 +39,8 @@ async function remove(id: string) {
   }
 }
 
-const columns: DataTableColumns<Transaction> = [
-  { title: '日期', key: 'date', width: 120 },
-  {
-    title: '类型',
-    key: 'kind',
-    width: 80,
-    render: (row) => {
-      const type =
-        row.kind === 'income'
-          ? 'success'
-          : row.kind === 'expense'
-            ? 'warning'
-            : row.kind === 'refund'
-              ? 'info'
-              : 'default'
-      return h(
-        NTag,
-        { type },
-        () => TRANSACTION_KIND_LABELS[row.kind as keyof typeof TRANSACTION_KIND_LABELS],
-      )
-    },
-  },
-  {
-    title: '分类',
-    key: 'category_id',
-    render: (row) =>
-      row.category_id ? store.categoryPath(row.category_id) || '-' : '-',
-  },
-  {
-    title: '账户',
-    key: 'account_id',
-    render: (row) => store.accountMap.get(row.account_id)?.name ?? '无',
-  },
-  { title: '备注', key: 'note', render: (row) => row.note ?? '-' },
-  {
-    title: '金额',
-    key: 'amount_native_cents',
-    width: 140,
-    render: (row) =>
-      h(
-        'span',
-        {
-        style:
-          row.kind === 'income'
-            ? 'color: #18a058'
-            : row.kind === 'expense'
-              ? 'color: #d03050'
-              : row.kind === 'refund'
-                ? 'color: #2080f0'
-                : '',
-        },
-        formatAmount(row.amount_native_cents, store.getCurrency(row.currency_code)),
-      ),
-  },
+const columns: DataTableColumn<Transaction>[] = [
+  ...buildTransactionColumns(store),
   {
     title: '操作',
     key: 'actions',

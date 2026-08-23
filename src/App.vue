@@ -31,6 +31,7 @@ const store = useAppStore()
 const menuOptions: MenuOption[] = [
   { label: '概览', key: 'dashboard' },
   { label: '交易', key: 'transactions' },
+  { label: '搜索', key: 'search' },
   { label: '账户', key: 'accounts' },
   { label: '报表', key: 'reports' },
   { label: '投资', key: 'investments' },

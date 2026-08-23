@@ -16,6 +16,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '交易' },
   },
   {
+    path: '/search',
+    name: 'search',
+    component: () => import('@/views/SearchView.vue'),
+    meta: { title: '搜索' },
+  },
+  {
     path: '/accounts',
     name: 'accounts',
     component: () => import('@/views/AccountsView.vue'),
