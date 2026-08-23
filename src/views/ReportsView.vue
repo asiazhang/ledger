@@ -18,6 +18,11 @@ import { useAppStore } from '@/stores/app'
 import { formatAmount } from '@/types'
 import type { CategoryShare, MonthlySummary } from '@/types'
 import { categoryRoot } from '@/utils/category-tree'
+import {
+  loadReportsGroupLevel,
+  saveReportsGroupLevel,
+  type ReportsGroupLevel,
+} from '@/utils/viewState'
 
 ChartJS.register(Title, Tooltip, Legend, BarElement, ArcElement, CategoryScale, LinearScale)
 
@@ -26,7 +31,10 @@ const year = ref(new Date().getFullYear())
 const monthly = ref<MonthlySummary[]>([])
 const shares = ref<CategoryShare[]>([])
 const loading = ref(false)
-const groupLevel = ref<'level1' | 'level2'>('level2')
+const groupLevel = ref<ReportsGroupLevel>(loadReportsGroupLevel())
+
+// ViewState：汇总层级跨启动保持。
+watch(groupLevel, (v) => saveReportsGroupLevel(v))
 
 async function refresh() {
   loading.value = true

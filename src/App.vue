@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, onMounted } from 'vue'
+import { h, onMounted, ref } from 'vue'
 import { RouterView, useRouter, useRoute } from 'vue-router'
 import {
   NConfigProvider,
@@ -15,9 +15,17 @@ import {
   type MenuOption,
 } from 'naive-ui'
 import { useAppStore } from '@/stores/app'
+import { loadSidebarCollapsed, saveSidebarCollapsed } from '@/utils/viewState'
 
 const router = useRouter()
 const route = useRoute()
+
+// ViewState：侧边栏折叠状态跨启动保持。
+const sidebarCollapsed = ref(loadSidebarCollapsed())
+function updateSidebarCollapsed(collapsed: boolean) {
+  sidebarCollapsed.value = collapsed
+  saveSidebarCollapsed(collapsed)
+}
 const store = useAppStore()
 
 const menuOptions: MenuOption[] = [
@@ -50,9 +58,11 @@ const title = () => h('div', { style: 'padding: 16px 18px; font-size: 18px; font
           <NLayoutSider
             bordered
             :width="200"
+            :collapsed="sidebarCollapsed"
             :collapsed-width="0"
             show-trigger="arrow-circle"
             collapse-mode="width"
+            @update:collapsed="updateSidebarCollapsed"
           >
             <NSpace vertical :size="0">
               <component :is="title" />

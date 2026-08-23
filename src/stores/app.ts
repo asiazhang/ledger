@@ -9,20 +9,7 @@ import {
   buildCategoryTree as pureBuildCategoryTree,
   type CategoryTreeNode,
 } from '@/utils/category-tree'
-
-function loadLocal<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key)
-    if (raw !== null) return JSON.parse(raw) as T
-  } catch { /* ignore */ }
-  return fallback
-}
-
-function saveLocal<T>(key: string, value: T) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value))
-  } catch { /* ignore */ }
-}
+import { loadLocal, saveLocal } from '@/utils/storage'
 
 export type Theme = 'dark' | 'light'
 

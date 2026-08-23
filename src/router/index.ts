@@ -1,4 +1,5 @@
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router'
+import { saveRouteName } from '@/utils/viewState'
 
 const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/dashboard' },
@@ -55,4 +56,9 @@ const routes: RouteRecordRaw[] = [
 export const router = createRouter({
   history: createWebHashHistory(),
   routes,
+})
+
+// 记住当前所在视图，供下次启动恢复（ViewState）。
+router.afterEach((to) => {
+  if (typeof to.name === 'string') saveRouteName(to.name)
 })
