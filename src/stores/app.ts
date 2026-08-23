@@ -21,6 +21,7 @@ export const useAppStore = defineStore('app', () => {
   const theme = ref<Theme>(loadLocal<Theme>('appearance', 'dark'))
   const defaultCurrency = ref<string>(loadLocal<string>('default_currency', 'CNY'))
   const backupDir = ref<string>(loadLocal<string>('backup_dir', ''))
+  const backupMaxCount = ref<number>(loadLocal<number>('backup_max_count', 30))
 
   const currencyMap = computed(() => {
     const m = new Map<string, Currency>()
@@ -97,6 +98,11 @@ export const useAppStore = defineStore('app', () => {
     saveLocal('backup_dir', dir)
   }
 
+  function setBackupMaxCount(n: number) {
+    backupMaxCount.value = n
+    saveLocal('backup_max_count', n)
+  }
+
   return {
     currencies,
     accounts,
@@ -118,8 +124,10 @@ export const useAppStore = defineStore('app', () => {
     theme,
     defaultCurrency,
     backupDir,
+    backupMaxCount,
     setTheme,
     setDefaultCurrency,
     setBackupDir,
+    setBackupMaxCount,
   }
 })

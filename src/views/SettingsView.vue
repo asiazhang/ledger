@@ -10,6 +10,7 @@ import {
   NSwitch,
   NText,
   NButton,
+  NInputNumber,
   NProgress,
   useMessage,
 } from 'naive-ui'
@@ -19,7 +20,7 @@ import { open, save, confirm } from '@tauri-apps/plugin-dialog'
 import { useAppStore } from '@/stores/app'
 import { api } from '@/api'
 import CategoryManager from '@/components/CategoryManager.vue'
-import type { SyncProgress } from '@/types'
+import type { BackupFileInfo, SyncProgress } from '@/types'
 import pkg from '@/../package.json'
 
 const store = useAppStore()
@@ -43,6 +44,7 @@ let unlisten: UnlistenFn | null = null
 
 onMounted(async () => {
   await store.loadAll()
+  await refreshBackups()
   unlisten = await listen<SyncProgress>('sync-instruments:progress', (event) => {
     const p = event.payload
     if (p.error) {
@@ -98,6 +100,36 @@ const backingUp = ref(false)
 const restoring = ref(false)
 const lastBackup = ref('')
 
+// 备份文件列表与滚动清理。命名规则与后端受管备份规则保持一致。
+const MANAGED_BACKUP_PREFIX = 'ledger-backup-'
+const MANAGED_BACKUP_SUFFIX = '.db.zip'
+const backups = ref<BackupFileInfo[]>([])
+const pruning = ref(false)
+
+const backupColumns = [
+  { title: '文件名', key: 'file_name' },
+  { title: '大小', key: 'size_text', width: 100 },
+  { title: '备份时间', key: 'created_at', width: 160 },
+]
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function formatBackupTime(iso: string): string {
+  return iso.slice(0, 16).replace('T', ' ')
+}
+
+const backupRows = computed(() =>
+  backups.value.map((b) => ({
+    ...b,
+    size_text: formatSize(b.size_bytes),
+    created_at: formatBackupTime(b.created_at),
+  })),
+)
+
 function defaultBackupFileName(): string {
   const d = new Date()
   const pad = (n: number) => String(n).padStart(2, '0')
@@ -109,6 +141,85 @@ async function pickBackupDir() {
   if (typeof dir === 'string' && dir) {
     store.setBackupDir(dir)
     message.success('备份目录已设置')
+    await refreshBackups()
+  }
+}
+
+function clearBackupDir() {
+  store.setBackupDir('')
+  backups.value = []
+}
+
+/// 目标路径是否为受管备份：位于配置的备份目录内且文件名匹配自动命名规则。
+function isManagedBackupPath(target: string): boolean {
+  if (!store.backupDir) return false
+  const dir = store.backupDir.replace(/[\\/]+$/, '')
+  const sep = dir.includes('\\') ? '\\' : '/'
+  const base = target.split(/[\\/]/).pop() ?? ''
+  return (
+    target.startsWith(dir + sep) &&
+    base.startsWith(MANAGED_BACKUP_PREFIX) &&
+    base.endsWith(MANAGED_BACKUP_SUFFIX)
+  )
+}
+
+async function refreshBackups() {
+  if (!store.backupDir) {
+    backups.value = []
+    return
+  }
+  try {
+    backups.value = await api.listBackups(store.backupDir)
+  } catch (e: any) {
+    backups.value = []
+    message.error(`读取备份列表失败: ${e}`)
+  }
+}
+
+/// 将备份目录中的受管备份修剪到 `keep` 个，并刷新列表。
+async function pruneToLimit(keep: number) {
+  if (!store.backupDir) return
+  try {
+    const r = await api.pruneBackups(store.backupDir, keep)
+    await refreshBackups()
+    if (r.failed.length > 0) {
+      message.warning(`清理完成：已删除 ${r.deleted.length} 个，${r.failed.length} 个失败`)
+    } else if (r.deleted.length > 0) {
+      message.success(`已清理 ${r.deleted.length} 个旧备份`)
+    }
+  } catch (e: any) {
+    message.error(`清理备份失败: ${e}`)
+  }
+}
+
+/// 上限变更：调小时立即清理到新值（输入框 blur/回车提交，不弹确认，仅提示）。
+function onBackupMaxCountChange(n: number | null) {
+  if (n == null) return
+  const prev = store.backupMaxCount
+  store.setBackupMaxCount(n)
+  if (store.backupDir && n < prev) {
+    void pruneToLimit(n)
+  }
+}
+
+/// 手动立即清理：超过上限时弹确认后执行。
+async function manualPrune() {
+  if (!store.backupDir) return
+  const excess = Math.max(0, backups.value.length - store.backupMaxCount)
+  if (excess === 0) {
+    message.info('无需清理：备份数量未超过上限')
+    return
+  }
+  const ok = await confirm(`将删除最旧的 ${excess} 个备份，删除后不可恢复。确定继续吗？`, {
+    title: '确认清理',
+    kind: 'warning',
+  })
+  if (!ok) return
+  pruning.value = true
+  try {
+    await pruneToLimit(store.backupMaxCount)
+  } finally {
+    pruning.value = false
   }
 }
 
@@ -118,6 +229,12 @@ async function doBackup(target: string) {
     const r = await api.createBackup(target)
     lastBackup.value = `${r.path}（${(r.size_bytes / 1024).toFixed(1)} KB）`
     message.success('备份成功')
+    if (isManagedBackupPath(target)) {
+      // 受管备份写入后立即滚动清理（一键备份/另存为同规则）。
+      await pruneToLimit(store.backupMaxCount)
+    } else {
+      await refreshBackups()
+    }
   } catch (e: any) {
     message.error(`备份失败: ${e}`)
   } finally {
@@ -247,9 +364,21 @@ async function pickRestore() {
               <NButton size="small" @click="pickBackupDir">
                 {{ store.backupDir ? '更改目录' : '选择目录' }}
               </NButton>
-              <NButton v-if="store.backupDir" size="small" quaternary type="error" @click="store.setBackupDir('')">
+              <NButton v-if="store.backupDir" size="small" quaternary type="error" @click="clearBackupDir">
                 清除
               </NButton>
+            </NSpace>
+            <NSpace align="center" :size="12">
+              <NText>备份保留上限</NText>
+              <NInputNumber
+                :value="store.backupMaxCount"
+                :min="1"
+                :max="100"
+                :update-value-on-input="false"
+                style="max-width: 120px"
+                @update:value="onBackupMaxCountChange"
+              />
+              <NText depth="3">个（1–100）。超出上限的最旧备份会在备份后自动清理。</NText>
             </NSpace>
           </NSpace>
         </NCard>
@@ -267,6 +396,29 @@ async function pickRestore() {
             <NText v-if="lastBackup" type="success" style="word-break: break-all">
               最近备份：{{ lastBackup }}
             </NText>
+          </NSpace>
+        </NCard>
+
+        <NCard title="备份文件列表" size="small">
+          <NSpace vertical :size="12">
+            <NSpace align="center" justify="space-between" style="width: 100%">
+              <NText depth="3">当前共 {{ backups.length }} 个备份，上限 {{ store.backupMaxCount }} 个。</NText>
+              <NButton
+                size="small"
+                :disabled="backups.length === 0 || pruning"
+                :loading="pruning"
+                @click="manualPrune"
+              >
+                立即清理
+              </NButton>
+            </NSpace>
+            <NDataTable
+              :columns="backupColumns"
+              :data="backupRows"
+              :bordered="false"
+              size="small"
+              :empty="store.backupDir ? '备份目录中暂无备份文件' : '未设置备份目录'"
+            />
           </NSpace>
         </NCard>
 

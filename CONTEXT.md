@@ -285,3 +285,32 @@
 - **定义**：用户配置的默认备份存放位置；配置后"一键备份"直接写入该目录，无需每次选择。
 - **边界**：属设备本地偏好（与 Appearance、DefaultCurrency 同类），不进入 `ledger.db`，也不随 Backup/Restore 迁移。
 - **别名**：不使用"导出目录"（备份 ≠ 导出）。
+
+## BackupRetentionLimit（备份保留上限）
+
+- **定义**：用户可配置的受管备份最大保留数量，默认 30，可调范围 1–100。
+- **边界**：
+  - 属设备本地偏好（与 BackupDirectory 同类），不进入 `ledger.db`，也不随 Backup/Restore 迁移。
+  - 只约束 ManagedBackup（受管备份）；ManualBackup（另存备份）不受约束。
+  - 上限调小时立即滚动清理到新值；受管备份写入后自动滚动清理。
+- **别名**：不使用"最大保存文件个数"（口语化）、"保留策略"（偏宽泛）。
+
+## BackupPruning（备份滚动清理）
+
+- **定义**：把 ManagedBackup 数量修剪到 BackupRetentionLimit 之内的过程：删除最旧的超出部分。
+- **边界**：
+  - 触发点：任何一次成功写入且落点为受管备份之后；上限调小时立即执行。
+  - 排序以备份文件名时间戳为准，解析失败回退文件修改时间。
+  - 删除失败的文件跳过并报告，不中断其余清理。
+  - 与 RestoreSafetyBackup（恢复安全备份）无关：后者在应用数据目录、命名不同，不受清理影响。
+
+## ManagedBackup（受管备份）
+
+- **定义**：位于配置的 BackupDirectory 内、按自动命名规则（`ledger-backup-YYYYMMDD-HHMMSS.db.zip`）生成的备份文件；受 BackupRetentionLimit 约束。
+- **边界**：一键备份与使用默认文件名存入备份目录的"另存为"都会产生受管备份；改名后不属于受管备份。
+- **别名**：不使用"自动备份"（易与"自动定时备份"混淆，当前没有定时备份）。
+
+## ManualBackup（另存备份）
+
+- **定义**：用户通过"另存为…"主动选择存放位置或文件名的备份文件。
+- **边界**：若写入配置的 BackupDirectory 且文件名匹配自动命名规则，则视为 ManagedBackup；否则不受 BackupRetentionLimit 约束，永不被自动删除。

@@ -80,6 +80,8 @@ pub fn run() {
             commands::create_backup,
             commands::restore_backup,
             commands::restart_app,
+            commands::list_backups,
+            commands::prune_backups,
             commands::list_currencies,
             commands::list_accounts,
             commands::create_account,

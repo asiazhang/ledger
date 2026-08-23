@@ -92,3 +92,23 @@ describe('useAppStore backupDir', () => {
     expect(localStorage.getItem('backup_dir')).toBe('""')
   })
 })
+
+describe('useAppStore backupMaxCount', () => {
+  it('默认值为 30', () => {
+    const store = useAppStore()
+    expect(store.backupMaxCount).toBe(30)
+  })
+
+  it('setBackupMaxCount 修改并持久化', () => {
+    const store = useAppStore()
+    store.setBackupMaxCount(10)
+    expect(store.backupMaxCount).toBe(10)
+    expect(localStorage.getItem('backup_max_count')).toBe('10')
+  })
+
+  it('从 localStorage 恢复保留上限', () => {
+    localStorage.setItem('backup_max_count', '5')
+    const store = useAppStore()
+    expect(store.backupMaxCount).toBe(5)
+  })
+})

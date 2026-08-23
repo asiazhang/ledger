@@ -48,6 +48,8 @@ beforeEach(async () => {
       return Promise.resolve({ schema_version: 4, restored_at: '2026-01-01T00:00:00Z' })
     }
     if (cmd === 'restart_app') return Promise.resolve()
+    if (cmd === 'list_backups') return Promise.resolve([])
+    if (cmd === 'prune_backups') return Promise.resolve({ kept: 0, deleted: [], failed: [] })
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
   mockOpen.mockReset()
@@ -149,6 +151,90 @@ describe('SettingsView.vue', () => {
       expect.objectContaining({ targetPath: expect.stringMatching(/ledger-backup-\d{8}-\d{6}\.db\.zip$/) }),
     )
     expect(wrapper.html()).toContain('最近备份')
+  })
+
+  it('一键备份写入受管目录后自动滚动清理', async () => {
+    const store = useAppStore()
+    store.setBackupDir('/Users/me/backups')
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
+      if (cmd === 'list_accounts') return Promise.resolve([])
+      if (cmd === 'list_categories') return Promise.resolve([])
+      if (cmd === 'list_backups') return Promise.resolve([])
+      if (cmd === 'create_backup') {
+        return Promise.resolve({
+          path: '/Users/me/backups/ledger-backup-20260101-010101.db.zip',
+          size_bytes: 1024,
+          schema_version: 4,
+          created_at: '2026-01-01T01:01:01Z',
+        })
+      }
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const wrapper = mount(SettingsView)
+    const backupTab = wrapper.findAll('.n-tabs-tab')[3]
+    await backupTab.trigger('click')
+    await nextTick()
+    const backupBtn = wrapper.findAll('button').find((b) => b.text().includes('一键备份'))!
+    await backupBtn.trigger('click')
+    await flushPromises()
+    expect(mockInvoke).toHaveBeenCalledWith('prune_backups', { dir: '/Users/me/backups', keep: 30 })
+  })
+
+  it('备份文件列表展示数量与上限，手动清理需确认', async () => {
+    const store = useAppStore()
+    store.setBackupDir('/Users/me/backups')
+    store.setBackupMaxCount(1)
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
+      if (cmd === 'list_accounts') return Promise.resolve([])
+      if (cmd === 'list_categories') return Promise.resolve([])
+      if (cmd === 'list_backups') {
+        return Promise.resolve([
+          {
+            file_name: 'ledger-backup-20260102-010101.db.zip',
+            path: '/Users/me/backups/ledger-backup-20260102-010101.db.zip',
+            size_bytes: 2048,
+            created_at: '2026-01-02T01:01:01Z',
+          },
+          {
+            file_name: 'ledger-backup-20260101-010101.db.zip',
+            path: '/Users/me/backups/ledger-backup-20260101-010101.db.zip',
+            size_bytes: 1024,
+            created_at: '2026-01-01T01:01:01Z',
+          },
+        ])
+      }
+      if (cmd === 'prune_backups') {
+        return Promise.resolve({ kept: 1, deleted: ['ledger-backup-20260101-010101.db.zip'], failed: [] })
+      }
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    mockConfirm.mockResolvedValueOnce(true)
+    const wrapper = mount(SettingsView)
+    const backupTab = wrapper.findAll('.n-tabs-tab')[3]
+    await backupTab.trigger('click')
+    await nextTick()
+    await flushPromises()
+    expect(wrapper.html()).toContain('当前共 2 个备份，上限 1 个')
+    const pruneBtn = wrapper.findAll('button').find((b) => b.text().includes('立即清理'))!
+    await pruneBtn.trigger('click')
+    await flushPromises()
+    expect(mockConfirm).toHaveBeenCalled()
+    expect(mockInvoke).toHaveBeenCalledWith('prune_backups', { dir: '/Users/me/backups', keep: 1 })
+  })
+
+  it('备份保留上限可配置并持久化', async () => {
+    const store = useAppStore()
+    const wrapper = mount(SettingsView)
+    const backupTab = wrapper.findAll('.n-tabs-tab')[3]
+    await backupTab.trigger('click')
+    await nextTick()
+    const input = wrapper.find('.n-input-number input')
+    await input.setValue('10')
+    await input.trigger('blur')
+    expect(store.backupMaxCount).toBe(10)
+    expect(localStorage.getItem('backup_max_count')).toBe('10')
   })
 
   it('恢复前需要确认，确认后调用 restore_backup 与 restart_app', async () => {

@@ -3,6 +3,7 @@ import type {
   Account,
   AccountBalance,
   AccountInput,
+  BackupFileInfo,
   BackupResult,
   Budget,
   BudgetInput,
@@ -26,6 +27,7 @@ import type {
   MarketPriceInput,
   MonthlySummary,
   PnlFilter,
+  PruneResult,
   RealizedPnlSummary,
   RestoreResult,
   ScheduledTransactionDetail,
@@ -118,6 +120,8 @@ export const api = {
   createBackup: (targetPath: string) => invoke<BackupResult>('create_backup', { targetPath }),
   restoreBackup: (backupPath: string) => invoke<RestoreResult>('restore_backup', { backupPath }),
   restartApp: () => invoke<void>('restart_app'),
+  listBackups: (dir: string) => invoke<BackupFileInfo[]>('list_backups', { dir }),
+  pruneBackups: (dir: string, keep: number) => invoke<PruneResult>('prune_backups', { dir, keep }),
 
   // AI
   getAiPrompt: () => invoke<string>('get_ai_prompt'),
