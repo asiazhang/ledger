@@ -15,8 +15,16 @@
 ## 幂等与去重
 
 - 账户/分类创建按自然键幂等：重复创建返回已有 id，可放心重跑。
-- 批量交易默认去重：`dedup_hash = sha256(date|kind|amount_cents|currency_code|account_id|to_account_id)`，排除 note/category。
-- 命中 `duplicate: true` → 该交易已存在，跳过即可，不算错误、无需重试。
-- 每行拆法必须固定不变，否则哈希漂移、去重失效。
+- 每行交易**一律携带 `idempotency_key`**——内容无关身份，取源内稳定键（如 `{源文件名}:{行号}`；一行拆多笔时用 `{源文件名}:{行号}:{交易序号}` 派生各笔独立键）：
+  - 同键重跑 → 跳过（`duplicate: true`），不重复写入、不算错误、无需重试；
+  - 同键但本轮内容不同 → 仍按同键去重、**跳过并返回已有 id**；改内容请走 `PUT /api/v1/transactions/{id}`（见对账纠错）；
+  - 不同键但内容完全相同 → 视为不同交易，都保留。
+- 不带键行回退至 `dedup_hash = sha256(date|kind|amount_cents|currency_code|account_id|to_account_id)` 兜底去重（排除 note/category；命中 `duplicate: true` 且 `id: null`）。
+- 每行拆法必须固定不变，否则哈希漂移、去重失效；键取源内稳定行号可避免内容漂移影响去重身份。
+
+## 对账纠错
+
+- 写错的单笔交易 → `PUT /api/v1/transactions/{id}` 按 id 全字段替换（`idempotency_key` 不可编辑，修改后重跑同批导入仍按同键去重、不产生重复），**不要「删后重导」**。
+- 整笔移除（该行本就不该存在）或误建的账户/分类 → 软删除：`DELETE /api/v1/transactions/{id}`、`DELETE /api/v1/accounts/{id}`、`DELETE /api/v1/categories/{id}`（软删不占去重位）。
 
 端点字段结构见 `GET /api/v1/openapi.json`。
