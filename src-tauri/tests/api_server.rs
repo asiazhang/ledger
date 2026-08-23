@@ -1176,6 +1176,7 @@ async fn test_delete_buy_transaction_cleans_up_security_lots() {
             quantity: Some(10.0),
             price_cents: Some(10000),
             fee_cents: Some(500),
+            idempotency_key: None,
         };
         insert_transaction(&conn, buy).unwrap();
     }

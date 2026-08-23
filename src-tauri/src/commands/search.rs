@@ -753,6 +753,7 @@ mod tests {
             quantity: None,
             price_cents: None,
             fee_cents: None,
+            idempotency_key: None,
         };
         let id = insert_transaction(&conn, input).unwrap();
         // 写入路径不做同步索引（ADR-0004 决策 #14）：消费队列后转出账户名
@@ -971,6 +972,7 @@ mod tests {
             quantity: None,
             price_cents: None,
             fee_cents: None,
+            idempotency_key: None,
         };
         // 批量导入命令内部在事务提交后立即消费队列
         crate::commands::transactions::create_transactions_internal(&conn, vec![input], false)
@@ -1148,6 +1150,7 @@ mod tests {
             quantity: Some(10.0),
             price_cents: Some(10000),
             fee_cents: Some(0),
+            idempotency_key: None,
         };
         let id = insert_transaction(&conn, input).unwrap();
         // 写入路径不做同步索引（ADR-0004 决策 #14）：消费队列后立即可搜

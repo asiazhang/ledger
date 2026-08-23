@@ -227,6 +227,9 @@ pub struct TransactionInput {
     pub quantity: Option<f64>,
     pub price_cents: Option<i64>,
     pub fee_cents: Option<i64>,
+    /// 客户端提供的、内容无关的导入幂等键（指向"该交易来自源文件哪一行"）。
+    /// 带键时批量导入以其为准去重（同键跳过、内容无关）；无键时回退内容哈希兜底。
+    pub idempotency_key: Option<String>,
 }
 
 /// 按 kind 校验并归一化后的一笔交易行字段（供创建与修改共用）。

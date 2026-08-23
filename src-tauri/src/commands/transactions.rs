@@ -215,20 +215,38 @@ pub fn create_transactions_internal(
     let mut results = Vec::with_capacity(inputs.len());
     for input in inputs {
         let dedup_hash = compute_dedup_hash(&input);
+        // 客户端幂等键：带键时作为去重身份（内容无关），无键时 None 走内容哈希兜底。
+        let idempotency_key = input.idempotency_key.clone();
         if dedup {
-            let existing: Option<String> = conn
-                .query_row(
-                    "SELECT id FROM transactions \
-                     WHERE dedup_hash=?1 AND is_deleted=0 ORDER BY created_at LIMIT 1",
-                    rusqlite::params![dedup_hash],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            if existing.is_some() {
+            // `keyed` 用于区分去重身份：带键命中应回传已有 id，内容哈希命中维持既有
+            // `id: None` 的冻结行为（不回归）。查询带键时走部分唯一索引命中，非全表扫描。
+            let (existing, keyed): (Option<String>, bool) = if let Some(ref key) = idempotency_key {
+                let hit = conn
+                    .query_row(
+                        "SELECT id FROM transactions \
+                         WHERE idempotency_key=?1 AND is_deleted=0 LIMIT 1",
+                        rusqlite::params![key],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                (hit, true)
+            } else {
+                let hit = conn
+                    .query_row(
+                        "SELECT id FROM transactions \
+                         WHERE dedup_hash=?1 AND is_deleted=0 ORDER BY created_at LIMIT 1",
+                        rusqlite::params![dedup_hash],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                (hit, false)
+            };
+            if let Some(id) = existing {
                 results.push(CreateTransactionResult {
                     success: true,
                     duplicate: true,
-                    id: None,
+                    // 带键命中回传已有 id；内容哈希命中维持 `id: None`（冻结契约，不回归）。
+                    id: keyed.then_some(id),
                     error: None,
                 });
                 continue;
@@ -237,8 +255,8 @@ pub fn create_transactions_internal(
         match insert_transaction(conn, input) {
             Ok(id) => {
                 if let Err(e) = conn.execute(
-                    "UPDATE transactions SET dedup_hash=?1 WHERE id=?2",
-                    rusqlite::params![dedup_hash, id],
+                    "UPDATE transactions SET dedup_hash=?1, idempotency_key=?2 WHERE id=?3",
+                    rusqlite::params![dedup_hash, idempotency_key, id],
                 ) {
                     conn.execute("ROLLBACK", [])?;
                     return Err(e.into());
@@ -367,6 +385,7 @@ mod tests {
             quantity: None,
             price_cents: None,
             fee_cents: None,
+            idempotency_key: None,
         }
     }
 
@@ -532,6 +551,203 @@ mod tests {
     }
 
     #[test]
+    fn batch_create_idempotency_key_rerun_skips_and_returns_id() {
+        let conn = setup();
+        insert_account(&conn, "acc-key", "现金", "cash", "CNY");
+
+        let mut a = make_input("acc-key", "income", 1000, "2026-01-01");
+        a.idempotency_key = Some("file:1:1".into());
+        let first = create_transactions_internal(&conn, vec![a.clone()], true).unwrap();
+        assert_eq!(first.len(), 1);
+        assert!(first[0].success && !first[0].duplicate, "首次导入应新写入");
+        let id1 = first[0].id.clone().unwrap();
+
+        let second = create_transactions_internal(&conn, vec![a], true).unwrap();
+        assert_eq!(second.len(), 1);
+        assert!(
+            second[0].success && second[0].duplicate,
+            "同幂等键重跑应去重跳过"
+        );
+        assert_eq!(
+            second[0].id.as_deref(),
+            Some(id1.as_str()),
+            "同键重跑应返回该笔已有 id"
+        );
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "重复导入不应新增交易");
+    }
+
+    #[test]
+    fn batch_create_idempotency_key_content_agnostic() {
+        let conn = setup();
+        insert_account(&conn, "acc-key", "现金", "cash", "CNY");
+
+        let mut a = make_input("acc-key", "income", 1000, "2026-01-01");
+        a.idempotency_key = Some("file:1:1".into());
+        create_transactions_internal(&conn, vec![a.clone()], true).unwrap();
+
+        // 同一幂等键、本轮内容不同：仍应按同一条跳过（内容无关）。
+        let mut b = make_input("acc-key", "expense", 2000, "2026-02-01");
+        b.idempotency_key = Some("file:1:1".into());
+        let second = create_transactions_internal(&conn, vec![b], true).unwrap();
+        assert!(
+            second[0].success && second[0].duplicate,
+            "同键不同内容仍应去重跳过"
+        );
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "内容无关：即便内容变化也不新增");
+    }
+
+    #[test]
+    fn batch_create_idempotency_key_different_keys_same_content_keeps_both() {
+        let conn = setup();
+        insert_account(&conn, "acc-key", "现金", "cash", "CNY");
+
+        let mut a = make_input("acc-key", "income", 1000, "2026-01-01");
+        a.idempotency_key = Some("file:1:1".into());
+        let mut b = make_input("acc-key", "income", 1000, "2026-01-01");
+        b.idempotency_key = Some("file:2:1".into());
+        let r = create_transactions_internal(&conn, vec![a, b], true).unwrap();
+        assert_eq!(r.len(), 2);
+        assert!(
+            r.iter().all(|x| x.success && !x.duplicate),
+            "不同键但内容完全相同应都保留"
+        );
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2, "内容相同的两笔独立交易都应落库");
+    }
+
+    #[test]
+    fn batch_create_idempotency_key_same_key_dedup_false_raises_constraint() {
+        let conn = setup();
+        insert_account(&conn, "acc-key", "现金", "cash", "CNY");
+
+        let mut a = make_input("acc-key", "income", 1000, "2026-01-01");
+        a.idempotency_key = Some("dup-key".into());
+        let mut b = make_input("acc-key", "income", 2000, "2026-01-02");
+        b.idempotency_key = Some("dup-key".into());
+
+        // dedup=false 直接落库两笔同键：部分唯一索引应拒绝（一键至多一活交易）。
+        let err = create_transactions_internal(&conn, vec![a, b], false).unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("unique"),
+            "同键重复应触发唯一索引约束，实际: {err:?}"
+        );
+    }
+
+    #[test]
+    fn idempotency_key_dedup_query_uses_partial_index() {
+        let conn = setup();
+        insert_account(&conn, "acc-key", "现金", "cash", "CNY");
+        let mut a = make_input("acc-key", "income", 1000, "2026-01-01");
+        a.idempotency_key = Some("file:1:1".into());
+        create_transactions_internal(&conn, vec![a], true).unwrap();
+
+        // EXPLAIN QUERY PLAN 的 detail 列（第 4 列，索引 3）应命中部分唯一索引，而非全表扫描。
+        let mut stmt = conn
+            .prepare(
+                "EXPLAIN QUERY PLAN \
+                 SELECT id FROM transactions \
+                 WHERE idempotency_key=?1 AND is_deleted=0 LIMIT 1",
+            )
+            .unwrap();
+        let details: Vec<String> = stmt
+            .query_map(rusqlite::params!["file:1:1"], |r| r.get::<_, String>(3))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        let plan = details.join(" | ");
+        assert!(
+            plan.contains("idx_transactions_idempotency_key"),
+            "幂等键去重查询应命中部分唯一索引: {plan}"
+        );
+    }
+
+    #[test]
+    fn batch_create_idempotency_key_soft_deleted_frees_slot() {
+        let conn = setup();
+        insert_account(&conn, "acc-key", "现金", "cash", "CNY");
+
+        let mut a = make_input("acc-key", "income", 1000, "2026-01-01");
+        a.idempotency_key = Some("file:1:1".into());
+        let first = create_transactions_internal(&conn, vec![a.clone()], true).unwrap();
+        let id = first[0].id.clone().unwrap();
+        delete_transaction_internal(&conn, &id).unwrap();
+
+        // 软删除后同键重跑：部分唯一索引只约束未删除交易，应重新写入。
+        let second = create_transactions_internal(&conn, vec![a], true).unwrap();
+        assert!(
+            second[0].success && !second[0].duplicate && second[0].id.is_some(),
+            "软删除后同键应重新写入"
+        );
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn batch_create_idempotency_key_buy_sell_different_instruments_kept() {
+        let conn = setup();
+        setup_investment_account(&conn, "acc-inv-key", "inst-aapl");
+        // 第二个不同标的（相同币种 USD）。
+        conn.execute(
+            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+             VALUES (?1,'MSFT','stock','Msft','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+            params!["inst-msft"],
+        )
+        .unwrap();
+
+        // 两笔买入：不同标的、相同原始金额字段（amount_cents=0，内容哈希盲区），带键应都保留。
+        let mut buy1 = make_buy_input("acc-inv-key", "inst-aapl", 10.0, 10000, 500);
+        buy1.idempotency_key = Some("file:1:1".into());
+        let mut buy2 = make_buy_input("acc-inv-key", "inst-msft", 5.0, 20000, 300);
+        buy2.idempotency_key = Some("file:1:2".into());
+
+        let r = create_transactions_internal(&conn, vec![buy1, buy2], true).unwrap();
+        assert_eq!(r.len(), 2);
+        assert!(
+            r.iter().all(|x| x.success && !x.duplicate),
+            "不同标的(带键)都应保留，不应被内容哈希误去重"
+        );
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
     fn batch_creates_all_valid_transactions() {
         let conn = setup();
         insert_account(&conn, "acc-batch", "现金", "cash", "CNY");
@@ -642,6 +858,7 @@ mod tests {
                 quantity: None,
                 price_cents: None,
                 fee_cents: None,
+                idempotency_key: None,
             },
         )
         .unwrap();
@@ -1127,6 +1344,7 @@ mod tests {
             quantity: Some(qty),
             price_cents: Some(price),
             fee_cents: Some(fee),
+            idempotency_key: None,
         }
     }
 
@@ -1192,6 +1410,7 @@ mod tests {
                 quantity: None,
                 price_cents: None,
                 fee_cents: None,
+                idempotency_key: None,
             },
         )
         .unwrap();
@@ -1211,6 +1430,7 @@ mod tests {
                 quantity: None,
                 price_cents: None,
                 fee_cents: None,
+                idempotency_key: None,
             },
         )
         .unwrap();
@@ -1359,6 +1579,7 @@ mod tests {
                 quantity: None,
                 price_cents: None,
                 fee_cents: None,
+                idempotency_key: None,
             },
         )
         .unwrap();
@@ -1379,6 +1600,7 @@ mod tests {
                 quantity: None,
                 price_cents: None,
                 fee_cents: None,
+                idempotency_key: None,
             },
         )
         .unwrap();

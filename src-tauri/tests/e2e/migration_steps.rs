@@ -14,22 +14,36 @@ use crate::common::query_all_transactions;
 use crate::world::{ImportedRow, LedgerWorld};
 
 /// 批量导入：模拟 AI 迁移，走与 HTTP 批量导入一致的 `create_transactions_internal`（dedup=true）。
-/// 表格列：kind | 金额 | 币种 | 账户 | 转入账户 | 日期 [| 备注]
+/// 表格列（按表头名解析，缺失可省略）：kind | 金额 | 币种 | 账户 | 转入账户 | 日期 [| 备注 [| 幂等键]]。
 #[when(expr = "批量导入交易")]
 fn batch_import(world: &mut LedgerWorld, #[step] step: &Step) {
     let table = step.table.as_ref().expect("批量导入步骤缺少数据表");
+    // 表头行是 rows[0]，据此建立列名 → 列号映射，未出现的列缺省为空。
+    let headers = &table.rows[0];
+    let col = |name: &str| headers.iter().position(|h| h == name);
+    let get = |row: &[String], name: &str| {
+        col(name)
+            .and_then(|i| row.get(i).cloned())
+            .unwrap_or_default()
+    };
     let rows: Vec<ImportedRow> = table
         .rows
         .iter()
         .skip(1)
-        .map(|row| ImportedRow {
-            kind: row[0].clone(),
-            amount_cents: row[1].parse().expect("金额必须是整数"),
-            currency_code: row[2].clone(),
-            account_name: row[3].clone(),
-            to_account_name: (!row[4].is_empty()).then(|| row[4].clone()),
-            note: row.get(6).cloned().filter(|s| !s.is_empty()),
-            date: row[5].clone(),
+        .map(|row| {
+            let to_account = get(row, "转入账户");
+            let note = get(row, "备注");
+            let key = get(row, "幂等键");
+            ImportedRow {
+                kind: get(row, "kind"),
+                amount_cents: get(row, "金额").parse().expect("金额必须是整数"),
+                currency_code: get(row, "币种"),
+                account_name: get(row, "账户"),
+                to_account_name: (!to_account.is_empty()).then_some(to_account),
+                note: (!note.is_empty()).then_some(note),
+                date: get(row, "日期"),
+                idempotency_key: (!key.is_empty()).then_some(key),
+            }
         })
         .collect();
     let inputs: Vec<TransactionInput> = rows.iter().map(|r| r.to_input(world)).collect();
@@ -256,4 +270,27 @@ fn check_batch_results(world: &mut LedgerWorld, duplicates: i64, new: i64) {
         .count();
     assert_eq!(dup_count as i64, duplicates, "去重跳过条数不匹配");
     assert_eq!(new_count as i64, new, "新写入条数不匹配");
+}
+
+/// 校验幂等键命中的去重结果携带该笔已有 id（并确证该 id 确为库中一笔未删除交易）。
+#[then(expr = "最近一次导入的去重结果应通过幂等键返回已有 id")]
+fn check_dup_returns_existing_id(world: &mut LedgerWorld) {
+    let dups: Vec<&tauri_app_lib::models::CreateTransactionResult> = world
+        .last_batch_results
+        .iter()
+        .filter(|r| r.duplicate)
+        .collect();
+    assert!(!dups.is_empty(), "应存在去重结果以校验返回已有 id");
+    for d in dups {
+        let id = d.id.as_ref().expect("幂等键命中的去重应返回已有 id");
+        let exists: i64 = world
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE id=?1 AND is_deleted=0",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(exists, 1, "去重返回的 id 应对应一笔未删除交易");
+    }
 }

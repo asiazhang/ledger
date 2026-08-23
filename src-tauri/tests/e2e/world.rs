@@ -21,6 +21,8 @@ pub struct ImportedRow {
     pub to_account_name: Option<String>,
     pub note: Option<String>,
     pub date: String,
+    /// 客户端提供的导入幂等键（内容无关身份，重跑时保持不变）。
+    pub idempotency_key: Option<String>,
 }
 
 impl ImportedRow {
@@ -42,6 +44,7 @@ impl ImportedRow {
             quantity: None,
             price_cents: None,
             fee_cents: None,
+            idempotency_key: self.idempotency_key.clone(),
         }
     }
 }

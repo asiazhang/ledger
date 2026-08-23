@@ -48,6 +48,7 @@ fn create_txn(
         quantity: None,
         price_cents: None,
         fee_cents: None,
+        idempotency_key: None,
     };
     let result = insert_transaction(&world.conn, input);
     assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
@@ -78,6 +79,7 @@ fn create_txn_with_note(
         quantity: None,
         price_cents: None,
         fee_cents: None,
+        idempotency_key: None,
     };
     let result = insert_transaction(&world.conn, input);
     assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
@@ -106,6 +108,7 @@ fn try_transfer_without_target(
         quantity: None,
         price_cents: None,
         fee_cents: None,
+        idempotency_key: None,
     };
     let result = insert_transaction(&world.conn, input);
     world.last_error = match result {
@@ -136,6 +139,7 @@ fn create_transfer(
         quantity: None,
         price_cents: None,
         fee_cents: None,
+        idempotency_key: None,
     };
     let result = insert_transaction(&world.conn, input);
     assert!(result.is_ok(), "创建转账失败: {:?}", result.err());
@@ -171,6 +175,7 @@ fn create_refund(world: &mut LedgerWorld, amount: i64, date: String) {
         quantity: None,
         price_cents: None,
         fee_cents: None,
+        idempotency_key: None,
     };
     let result = insert_transaction(&world.conn, input);
     assert!(result.is_ok(), "创建退款失败: {:?}", result.err());

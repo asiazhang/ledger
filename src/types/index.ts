@@ -97,6 +97,8 @@ export interface TransactionInput {
   quantity?: number | null
   price_cents?: number | null
   fee_cents?: number | null
+  /** 客户端提供的、内容无关的导入幂等键（指向"该交易来自源文件哪一行"） */
+  idempotency_key?: string | null
 }
 
 /** 交易列表查询过滤条件（服务端分页 + 过滤） */

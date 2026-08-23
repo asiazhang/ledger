@@ -355,9 +355,11 @@ async fn list_transactions_handler(
     tag = "transactions",
     summary = "批量创建交易（默认去重）",
     description = "请求体为 `{ \"transactions\": TransactionInput[], \"dedup\": bool }`，`dedup` 默认 `true`。\
-                  对每条交易计算确定性内容哈希 `sha256(date|kind|amount_cents|currency_code|account_id|to_account_id)`，\
-                  命中已存在（`is_deleted=0`）交易则跳过并返回 `{success: true, duplicate: true, id: null}`。\
-                  单条校验失败返回 `success: false` 并附带 `error`，不影响其他交易。",
+                  去重以交易身份为准：若一行携带 `idempotency_key`，则按该幂等键去重（内容无关——同键重跑\
+                  跳过、同键但本轮内容不同仍跳过；不同键但内容完全相同则都保留），命中已存在（`is_deleted=0`）\
+                  交易返回 `{success: true, duplicate: true, id: <已有 id>}`；命中查询走部分唯一索引，非全表扫描。\
+                  不带幂等键的行回退到确定性内容哈希 `sha256(date|kind|amount_cents|currency_code|account_id|to_account_id)`\
+                  去重（冻结契约，命中返回 `id: null`）。单条校验失败返回 `success: false` 并附带 `error`，不影响其他交易。",
     request_body = TransactionBatchInput,
     responses(
         (status = 200, description = "逐条创建结果（含 duplicate 标记）", body = [CreateTransactionResult]),

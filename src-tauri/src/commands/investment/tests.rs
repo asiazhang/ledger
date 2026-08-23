@@ -61,6 +61,7 @@ fn make_buy_input(
         quantity: Some(qty),
         price_cents: Some(price),
         fee_cents: Some(fee),
+        idempotency_key: None,
     }
 }
 
@@ -85,6 +86,7 @@ fn make_sell_input(
         quantity: Some(qty),
         price_cents: Some(price),
         fee_cents: Some(fee),
+        idempotency_key: None,
     }
 }
 
