@@ -22,7 +22,7 @@ const loading = ref(false)
 async function refresh() {
   loading.value = true
   try {
-    data.value = await api.listTransactions()
+    data.value = (await api.listTransactions()).items
   } catch (e) {
     message.error(`加载失败: ${e}`)
   } finally {

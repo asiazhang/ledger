@@ -287,6 +287,38 @@ fn default_dedup() -> bool {
     true
 }
 
+/// 交易列表查询过滤条件（服务端分页 + 过滤）。
+///
+/// 与 `InstrumentListFilter` 先例对齐（`page_size` 下划线命名，serde 保持原样透传）。
+/// 分页语义：`page` 从 1 起、缺省 1；`page_size` 缺省时返回全部（`total` 恒返回）；
+/// `limit` 为独立的"取前 N 条"参数（仪表盘"最近 N 条"场景），传 `page_size` 时分页路径生效。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TransactionListFilter {
+    /// 起始日期（含），YYYY-MM-DD。
+    pub from: Option<String>,
+    /// 结束日期（含），YYYY-MM-DD。
+    pub to: Option<String>,
+    /// 按转出账户过滤。
+    pub account_id: Option<String>,
+    /// 交易类型过滤（income / expense / transfer / buy / sell / refund）。
+    pub kind: Option<String>,
+    /// 取前 N 条（仪表盘"最近 N 条"场景），与分页互斥：传 `page_size` 时分页路径生效。
+    /// 沿用 SQLite 原生语义：`limit=0` 返回空，负值无上限。
+    pub limit: Option<i64>,
+    /// 页码，从 1 开始，默认 1。
+    pub page: Option<usize>,
+    /// 每页条数，缺省返回全部（total 恒返回）；小于 1 按 1 处理。
+    pub page_size: Option<usize>,
+}
+
+/// 交易列表分页结果。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TransactionListResult {
+    pub items: Vec<Transaction>,
+    /// 满足过滤条件的未删除交易总数（用于分页条）。
+    pub total: i64,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ExchangeRate {
     pub id: String,

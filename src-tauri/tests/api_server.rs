@@ -841,14 +841,22 @@ async fn get_json(app: &Router, uri: &str) -> (StatusCode, serde_json::Value) {
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 
+/// 取响应体中的交易数组（新契约：`{items, total}` 的 `items`）。
+fn items_of(body: &serde_json::Value) -> &[serde_json::Value] {
+    body["items"]
+        .as_array()
+        .expect("应返回 {items, total} 结构")
+        .as_slice()
+}
+
 #[tokio::test]
 async fn test_get_transactions_returns_empty_list_when_none() {
     let (app, _) = setup_app();
 
     let (status, body) = get_json(&app, "/api/v1/transactions").await;
     assert_eq!(status, StatusCode::OK);
-    let txs = body.as_array().expect("应返回交易数组");
-    assert!(txs.is_empty(), "无交易时应返回空数组");
+    assert!(items_of(&body).is_empty(), "无交易时应返回空 items");
+    assert_eq!(body["total"], 0, "total 应为 0");
 }
 
 #[tokio::test]
@@ -869,8 +877,9 @@ async fn test_get_transactions_returns_all_undeleted_newest_first() {
 
     let (status, body) = get_json(&app, "/api/v1/transactions").await;
     assert_eq!(status, StatusCode::OK);
-    let txs = body.as_array().expect("应返回交易数组");
+    let txs = items_of(&body);
     assert_eq!(txs.len(), 3);
+    assert_eq!(body["total"], 3, "缺省返回全部时 total 应为全部条数");
     assert_eq!(txs[0]["date"], "2026-03-01");
     assert_eq!(txs[0]["amount_cents"], 300);
     assert_eq!(txs[1]["date"], "2026-02-01");
@@ -909,8 +918,7 @@ async fn seed_readback_transactions(app: &Router) -> (String, String) {
 }
 
 fn dates_of(body: &serde_json::Value) -> Vec<&str> {
-    body.as_array()
-        .expect("应返回交易数组")
+    items_of(body)
         .iter()
         .map(|t| t["date"].as_str().unwrap())
         .collect()
@@ -927,9 +935,8 @@ async fn test_get_transactions_from_to_is_inclusive() {
         dates_of(&body),
         vec!["2026-02-15", "2026-02-01", "2026-01-15"]
     );
-    let sum: i64 = body
-        .as_array()
-        .unwrap()
+    assert_eq!(body["total"], 3, "日期过滤后 total 应为过滤后总数");
+    let sum: i64 = items_of(&body)
         .iter()
         .map(|t| t["amount_cents"].as_i64().unwrap())
         .sum();
@@ -943,8 +950,9 @@ async fn test_get_transactions_filters_by_account_id() {
 
     let (status, body) = get_json(&app, &format!("/api/v1/transactions?account_id={cash}")).await;
     assert_eq!(status, StatusCode::OK);
-    let txs = body.as_array().expect("应返回交易数组");
+    let txs = items_of(&body);
     assert_eq!(txs.len(), 3);
+    assert_eq!(body["total"], 3);
     assert!(txs.iter().all(|t| t["account_id"] == cash));
     assert!(txs.iter().all(|t| t["account_id"] != bank));
     let sum: i64 = txs
@@ -961,8 +969,9 @@ async fn test_get_transactions_filters_by_kind() {
 
     let (status, body) = get_json(&app, "/api/v1/transactions?kind=expense").await;
     assert_eq!(status, StatusCode::OK);
-    let txs = body.as_array().expect("应返回交易数组");
+    let txs = items_of(&body);
     assert_eq!(txs.len(), 2);
+    assert_eq!(body["total"], 2);
     assert!(txs.iter().all(|t| t["kind"] == "expense"));
     let sum: i64 = txs
         .iter()
@@ -979,6 +988,48 @@ async fn test_get_transactions_limit_truncates() {
     let (status, body) = get_json(&app, "/api/v1/transactions?limit=2").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(dates_of(&body), vec!["2026-03-01", "2026-02-15"]);
+    assert_eq!(body["total"], 5, "limit 只截取 items，total 仍为过滤后总数");
+}
+
+#[tokio::test]
+async fn test_get_transactions_pagination_returns_page_and_total() {
+    let (app, _) = setup_app();
+    let account_id = create_account_via_api(&app, "现金账户").await;
+    let txs: Vec<String> = (1..=25)
+        .map(|i| {
+            format!(
+                r#"{{"kind":"expense","amount_cents":{},"currency_code":"CNY","account_id":"{account_id}","date":"2026-06-{:02}"}}"#,
+                i * 100,
+                i
+            )
+        })
+        .collect();
+    let refs: Vec<&str> = txs.iter().map(String::as_str).collect();
+    post_batch(&app, batch_body(&refs, None)).await;
+
+    let (status, p1) = get_json(&app, "/api/v1/transactions?page=1&page_size=10").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(items_of(&p1).len(), 10, "第 1 页应返回 10 条");
+    assert_eq!(p1["total"], 25);
+
+    let (_, p3) = get_json(&app, "/api/v1/transactions?page=3&page_size=10").await;
+    assert_eq!(items_of(&p3).len(), 5, "第 3 页应返回剩余 5 条");
+    assert_eq!(p3["total"], 25);
+}
+
+#[tokio::test]
+async fn test_get_transactions_pagination_out_of_range_page() {
+    let (app, _) = setup_app();
+    let account_id = create_account_via_api(&app, "现金账户").await;
+    let tx = format!(
+        r#"{{"kind":"expense","amount_cents":300,"currency_code":"CNY","account_id":"{account_id}","date":"2026-06-01"}}"#
+    );
+    post_batch(&app, batch_body(&[&tx], None)).await;
+
+    let (status, body) = get_json(&app, "/api/v1/transactions?page=99&page_size=10").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(items_of(&body).is_empty(), "超范围页码应返回空 items");
+    assert_eq!(body["total"], 1, "total 仍为过滤后总数");
 }
 
 #[tokio::test]
@@ -1004,8 +1055,9 @@ async fn test_get_transactions_excludes_soft_deleted() {
 
     let (status, body) = get_json(&app, "/api/v1/transactions").await;
     assert_eq!(status, StatusCode::OK);
-    let txs = body.as_array().expect("应返回交易数组");
+    let txs = items_of(&body);
     assert_eq!(txs.len(), 1);
+    assert_eq!(body["total"], 1);
     assert_eq!(txs[0]["amount_cents"], 1000);
     assert_eq!(txs[0]["date"], "2026-01-01");
 }
@@ -1053,7 +1105,7 @@ async fn test_delete_transaction_returns_204_and_removes_from_readback() {
     assert_eq!(active, 0, "删除后该交易应 is_deleted=1");
 
     let (_, body) = get_json(&app, "/api/v1/transactions").await;
-    let txs = body.as_array().unwrap();
+    let txs = items_of(&body);
     assert!(
         !txs.iter().any(|t| t["id"] == id),
         "删除后该行不应出现在读回结果中"
@@ -1578,15 +1630,36 @@ async fn test_openapi_doc_covers_list_transactions_params_and_schema() {
         .as_array()
         .expect("GET /transactions 应声明查询参数");
     let names: Vec<&str> = params.iter().map(|p| p["name"].as_str().unwrap()).collect();
-    for expected in ["from", "to", "account_id", "kind", "limit"] {
+    for expected in [
+        "from",
+        "to",
+        "account_id",
+        "kind",
+        "limit",
+        "page",
+        "page_size",
+    ] {
         assert!(
             names.contains(&expected),
             "OpenAPI 应包含查询参数 {expected}"
         );
     }
+    let response_200 = get["responses"]["200"]["content"]["application/json"]["schema"]
+        .as_object()
+        .unwrap();
+    assert_eq!(
+        response_200["$ref"], "#/components/schemas/TransactionListResult",
+        "响应 schema 应为 TransactionListResult"
+    );
     let schemas = doc["components"]["schemas"]
         .as_object()
         .expect("应包含 schemas");
+    let list_result = schemas
+        .get("TransactionListResult")
+        .expect("OpenAPI 应包含 TransactionListResult schema");
+    let props = list_result["properties"].as_object().unwrap();
+    assert!(props.contains_key("items"));
+    assert!(props.contains_key("total"));
     let tx = schemas
         .get("Transaction")
         .expect("OpenAPI 应包含 Transaction schema");

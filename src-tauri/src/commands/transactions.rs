@@ -7,7 +7,9 @@ use crate::commands::fx::convert_to_native;
 use crate::db::query::query_all;
 use crate::db::{DbState, device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::models::{CreateTransactionResult, Transaction, TransactionInput};
+use crate::models::{
+    CreateTransactionResult, TransactionInput, TransactionListFilter, TransactionListResult,
+};
 
 /// 计算导入去重哈希：`sha256("date|kind|amount_cents|currency_code|account_id|to_account_id")`。
 /// `to_account_id` 缺省拼空串；刻意排除 note/category（AI 生成文本非确定性，会让哈希漂移）。
@@ -102,45 +104,69 @@ pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<
 
 pub fn list_transactions_internal(
     conn: &Connection,
-    limit: Option<i64>,
-    from: Option<&str>,
-    to: Option<&str>,
-    account_id: Option<&str>,
-    kind: Option<&str>,
-) -> Result<Vec<Transaction>> {
-    let mut sql = String::from(
-        "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
-         to_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted \
-         FROM transactions WHERE is_deleted=0",
-    );
+    filter: &TransactionListFilter,
+) -> Result<TransactionListResult> {
+    // 过滤条件与 total/items 共用同一 WHERE 子句，保证 total 恒为"满足过滤条件的未删除交易总数"。
+    let mut where_clause = String::from("WHERE is_deleted=0");
     let mut params: Vec<String> = Vec::new();
-    if let Some(from) = from {
-        sql.push_str(" AND date >= ?");
+    if let Some(from) = filter.from.as_deref() {
+        where_clause.push_str(" AND date >= ?");
         params.push(from.to_string());
     }
-    if let Some(to) = to {
-        sql.push_str(" AND date <= ?");
+    if let Some(to) = filter.to.as_deref() {
+        where_clause.push_str(" AND date <= ?");
         params.push(to.to_string());
     }
-    if let Some(account_id) = account_id {
-        sql.push_str(" AND account_id = ?");
+    if let Some(account_id) = filter.account_id.as_deref() {
+        where_clause.push_str(" AND account_id = ?");
         params.push(account_id.to_string());
     }
-    if let Some(kind) = kind {
-        sql.push_str(" AND kind = ?");
+    if let Some(kind) = filter.kind.as_deref() {
+        where_clause.push_str(" AND kind = ?");
         params.push(kind.to_string());
     }
-    sql.push_str(" ORDER BY date DESC, created_at DESC");
-    if let Some(n) = limit {
+
+    let total: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) FROM transactions {where_clause}"),
+        rusqlite::params_from_iter(params.iter()),
+        |r| r.get(0),
+    )?;
+
+    // 确定性排序：date DESC, created_at DESC, id DESC。
+    // id 是最终 tiebreaker——`now_iso()` 为秒级精度，同一秒内写入的行 created_at 相同，
+    // 不加 id 翻页会漂移（重复/遗漏）。
+    let mut sql = format!(
+        "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
+         to_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted \
+         FROM transactions {where_clause} ORDER BY date DESC, created_at DESC, id DESC"
+    );
+    // 分页路径优先：传 page_size 时按 offset 页码取当前页（小于 1 按 1 处理，
+    // 与 InstrumentListFilter 先例一致；offset 用 saturating 运算防溢出）；
+    // 否则 limit 路径取前 N 条（沿用 SQLite 原生语义：LIMIT 0 返回空、负值无上限）；
+    // 两者都缺省时返回全部（total 恒返回）。
+    if let Some(page_size) = filter.page_size {
+        // 钳制到 SQLite 可接受的 64 位整数范围，防止极端输入（usize::MAX）产生
+        // "datatype mismatch" 或 debug 构建 panic。
+        let page_size = i64::try_from(page_size.max(1)).unwrap_or(i64::MAX);
+        let page = filter.page.unwrap_or(1).max(1);
+        let offset = i64::try_from(page.saturating_sub(1).saturating_mul(page_size as usize))
+            .unwrap_or(i64::MAX);
+        sql.push_str(&format!(" LIMIT {page_size} OFFSET {offset}"));
+    } else if let Some(n) = filter.limit {
         sql.push_str(&format!(" LIMIT {n}"));
     }
-    query_all(conn, &sql, rusqlite::params_from_iter(params))
+    let items = query_all(conn, &sql, rusqlite::params_from_iter(params))?;
+    Ok(TransactionListResult { items, total })
 }
 
 #[tauri::command]
-pub fn list_transactions(db: State<'_, DbState>, limit: Option<i64>) -> Result<Vec<Transaction>> {
+pub fn list_transactions(
+    db: State<'_, DbState>,
+    filter: Option<TransactionListFilter>,
+) -> Result<TransactionListResult> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    list_transactions_internal(&conn, limit, None, None, None, None)
+    let filter = filter.unwrap_or_default();
+    list_transactions_internal(&conn, &filter)
 }
 
 #[tauri::command]
@@ -637,6 +663,322 @@ mod tests {
             .filter_map(|r| r.ok())
             .collect();
         assert_eq!(rows.len(), 2);
+    }
+
+    /// 把所有交易的时间戳改为同一值，模拟"同一批导入每批一个时间戳"。
+    fn set_created_at(conn: &Connection, created_at: &str) {
+        conn.execute(
+            "UPDATE transactions SET created_at=?1, updated_at=?1",
+            params![created_at],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn list_transactions_pagination_returns_page_and_total() {
+        let conn = setup();
+        insert_account(&conn, "acc-page", "现金", "cash", "CNY");
+
+        for i in 1..=25 {
+            insert_transaction(
+                &conn,
+                make_input("acc-page", "expense", i * 100, &format!("2026-01-{:02}", i)),
+            )
+            .unwrap();
+        }
+
+        let p1 = list_transactions_internal(
+            &conn,
+            &TransactionListFilter {
+                page: Some(1),
+                page_size: Some(10),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(p1.items.len(), 10, "第 1 页应返回 10 条");
+        assert_eq!(p1.total, 25, "total 应为过滤后总数");
+
+        let p3 = list_transactions_internal(
+            &conn,
+            &TransactionListFilter {
+                page: Some(3),
+                page_size: Some(10),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(p3.items.len(), 5, "最后一页应返回剩余条数");
+        assert_eq!(p3.total, 25);
+    }
+
+    #[test]
+    fn list_transactions_pagination_total_respects_filters() {
+        let conn = setup();
+        insert_account(&conn, "acc-f1", "现金", "cash", "CNY");
+        insert_account(&conn, "acc-f2", "银行", "bank", "CNY");
+
+        for i in 1..=8 {
+            insert_transaction(
+                &conn,
+                make_input("acc-f1", "expense", i * 100, &format!("2026-02-{:02}", i)),
+            )
+            .unwrap();
+        }
+        insert_transaction(&conn, make_input("acc-f2", "income", 9000, "2026-02-09")).unwrap();
+        insert_transaction(&conn, make_input("acc-f1", "income", 1000, "2026-02-10")).unwrap();
+
+        let by_account = list_transactions_internal(
+            &conn,
+            &TransactionListFilter {
+                account_id: Some("acc-f1".into()),
+                page: Some(1),
+                page_size: Some(5),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(by_account.items.len(), 5);
+        assert_eq!(by_account.total, 9, "total 应按过滤后计数");
+
+        let by_kind = list_transactions_internal(
+            &conn,
+            &TransactionListFilter {
+                kind: Some("income".into()),
+                page: Some(1),
+                page_size: Some(1),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(by_kind.items.len(), 1);
+        assert_eq!(by_kind.total, 2);
+
+        let by_date = list_transactions_internal(
+            &conn,
+            &TransactionListFilter {
+                from: Some("2026-02-03".into()),
+                to: Some("2026-02-06".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(by_date.items.len(), 4);
+        assert_eq!(by_date.total, 4);
+    }
+
+    #[test]
+    fn list_transactions_deterministic_order_by_id_when_same_timestamp() {
+        let conn = setup();
+        insert_account(&conn, "acc-same", "现金", "cash", "CNY");
+
+        let mut ids = Vec::new();
+        for i in 1..=5 {
+            let id = insert_transaction(
+                &conn,
+                make_input("acc-same", "expense", i * 100, "2026-03-01"),
+            )
+            .unwrap();
+            ids.push(id);
+        }
+        // 同一批导入：所有行 created_at 相同（每批一个时间戳）
+        set_created_at(&conn, "2026-01-01T00:00:00Z");
+
+        // 期望顺序 = SQLite TEXT 列的 id DESC（字典序降序，确定性 tiebreaker）
+        let mut expected = ids.clone();
+        expected.sort_by(|a, b| b.cmp(a));
+
+        let mut got = Vec::new();
+        for page in 1..=3 {
+            let result = list_transactions_internal(
+                &conn,
+                &TransactionListFilter {
+                    page: Some(page),
+                    page_size: Some(2),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(result.total, 5);
+            for t in result.items {
+                got.push(t.id);
+            }
+        }
+        assert_eq!(
+            got, expected,
+            "同日期同时间戳应按 id DESC 稳定排序，翻页无重复无遗漏"
+        );
+    }
+
+    #[test]
+    fn list_transactions_default_returns_all_with_total() {
+        let conn = setup();
+        insert_account(&conn, "acc-all", "现金", "cash", "CNY");
+        for i in 1..=5 {
+            insert_transaction(
+                &conn,
+                make_input("acc-all", "expense", i * 100, &format!("2026-04-{:02}", i)),
+            )
+            .unwrap();
+        }
+        let result = list_transactions_internal(&conn, &TransactionListFilter::default()).unwrap();
+        assert_eq!(result.items.len(), 5, "缺省应返回全部");
+        assert_eq!(result.total, 5);
+    }
+
+    #[test]
+    fn list_transactions_limit_path_unchanged() {
+        let conn = setup();
+        insert_account(&conn, "acc-lim", "现金", "cash", "CNY");
+        for i in 1..=5 {
+            insert_transaction(
+                &conn,
+                make_input("acc-lim", "expense", i * 100, &format!("2026-05-{:02}", i)),
+            )
+            .unwrap();
+        }
+
+        let r3 = list_transactions_internal(
+            &conn,
+            &TransactionListFilter {
+                limit: Some(3),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(r3.items.len(), 3, "limit 路径取前 N 条");
+        assert_eq!(r3.total, 5);
+
+        let r10 = list_transactions_internal(
+            &conn,
+            &TransactionListFilter {
+                limit: Some(10),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(r10.items.len(), 5, "limit 大于总数时返回全部");
+        assert_eq!(r10.total, 5);
+
+        let both = list_transactions_internal(
+            &conn,
+            &TransactionListFilter {
+                limit: Some(1),
+                page: Some(1),
+                page_size: Some(2),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            both.items.len(),
+            2,
+            "传 page_size 时分页路径生效，limit 被忽略"
+        );
+    }
+
+    #[test]
+    fn list_transactions_out_of_range_page_and_empty_result() {
+        let conn = setup();
+        insert_account(&conn, "acc-bnd", "现金", "cash", "CNY");
+        for i in 1..=3 {
+            insert_transaction(
+                &conn,
+                make_input("acc-bnd", "expense", i * 100, &format!("2026-06-{:02}", i)),
+            )
+            .unwrap();
+        }
+
+        // 超范围页码：空 items，total 不变
+        let far = list_transactions_internal(
+            &conn,
+            &TransactionListFilter {
+                page: Some(99),
+                page_size: Some(10),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(far.items.len(), 0, "超范围页码应返回空列表");
+        assert_eq!(far.total, 3);
+
+        // page=0 视为第 1 页（page 从 1 起）
+        let p0 = list_transactions_internal(
+            &conn,
+            &TransactionListFilter {
+                page: Some(0),
+                page_size: Some(10),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(p0.items.len(), 3);
+        assert_eq!(p0.total, 3);
+
+        // 无匹配过滤：空结果 total 0
+        let none = list_transactions_internal(
+            &conn,
+            &TransactionListFilter {
+                kind: Some("income".into()),
+                page: Some(1),
+                page_size: Some(10),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(none.items.len(), 0);
+        assert_eq!(none.total, 0);
+    }
+
+    #[test]
+    fn list_transactions_degenerate_inputs_do_not_panic() {
+        let conn = setup();
+        insert_account(&conn, "acc-deg", "现金", "cash", "CNY");
+        for i in 1..=5 {
+            insert_transaction(
+                &conn,
+                make_input("acc-deg", "expense", i * 100, &format!("2026-07-{:02}", i)),
+            )
+            .unwrap();
+        }
+
+        // page_size=0：进入分页路径且钳制为 1 条/页（与 InstrumentListFilter 先例一致）
+        let zero_ps = list_transactions_internal(
+            &conn,
+            &TransactionListFilter {
+                page: Some(1),
+                page_size: Some(0),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(zero_ps.items.len(), 1, "page_size=0 应按 1 条/页处理");
+        assert_eq!(zero_ps.total, 5);
+
+        // limit=0：沿用 SQLite 原生语义返回空（与旧实现一致）
+        let zero_limit = list_transactions_internal(
+            &conn,
+            &TransactionListFilter {
+                limit: Some(0),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(zero_limit.items.len(), 0, "limit=0 应返回空");
+        assert_eq!(zero_limit.total, 5);
+
+        // 极端 page 不应溢出 panic，返回空页且 total 正确
+        let huge_page = list_transactions_internal(
+            &conn,
+            &TransactionListFilter {
+                page: Some(usize::MAX),
+                page_size: Some(2),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(huge_page.items.len(), 0, "极端页码应返回空");
+        assert_eq!(huge_page.total, 5);
     }
 
     #[test]

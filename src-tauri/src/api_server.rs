@@ -4,6 +4,7 @@ use crate::error::AppError;
 use crate::models::{
     Account, AccountBalance, AccountInput, AccountType, Category, CategoryInput,
     CreateTransactionResult, Currency, Transaction, TransactionBatchInput, TransactionInput,
+    TransactionListFilter, TransactionListResult,
 };
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -12,7 +13,6 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use rusqlite::Connection;
-use serde::Deserialize;
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
 use utoipa::ToSchema;
@@ -78,6 +78,7 @@ struct ErrorResponse {
         Transaction,
         TransactionInput,
         TransactionBatchInput,
+        TransactionListResult,
         CreateTransactionResult,
         ErrorResponse
     ))
@@ -315,49 +316,37 @@ async fn list_currencies_handler(
     )?))
 }
 
-#[derive(Debug, Deserialize, Default)]
-struct ListTransactionsQuery {
-    from: Option<String>,
-    to: Option<String>,
-    account_id: Option<String>,
-    kind: Option<String>,
-    limit: Option<i64>,
-}
-
 #[utoipa::path(
     get,
     path = "/api/v1/transactions",
     tag = "transactions",
-    summary = "列出交易（可按日期/账户/类型过滤）",
-    description = "返回未删除交易，默认按 `date DESC, created_at DESC` 排序。\
+    summary = "列出交易（可按日期/账户/类型过滤 + 服务端分页）",
+    description = "返回 `{items, total}`：`items` 为当前页未删除交易，`total` 恒为满足过滤条件的未删除交易总数。\
+                  默认按 `date DESC, created_at DESC, id DESC` 确定性排序（同日期同时间戳时按 id 稳定，翻页无重复无遗漏）。\
                   查询参数均为可选：`from`/`to`（YYYY-MM-DD 闭区间）、`account_id`（转出账户）、\
-                  `kind`（income/expense/transfer/buy/sell/refund）、`limit`（条数上限，缺省返回全部）。",
+                  `kind`（income/expense/transfer/buy/sell/refund）、`page`（从 1 起，默认 1）、\
+                  `page_size`（每页条数，缺省返回全部）、`limit`（取前 N 条，与分页互斥：传 `page_size` 时分页生效）。",
     params(
         ("from" = Option<String>, Query, description = "起始日期（含），YYYY-MM-DD"),
         ("to" = Option<String>, Query, description = "结束日期（含），YYYY-MM-DD"),
         ("account_id" = Option<String>, Query, description = "按转出账户过滤"),
         ("kind" = Option<String>, Query, description = "income / expense / transfer / buy / sell / refund"),
-        ("limit" = Option<i64>, Query, description = "返回条数上限，缺省返回全部")
+        ("limit" = Option<i64>, Query, description = "取前 N 条，缺省返回全部；传 page_size 时分页路径生效"),
+        ("page" = Option<usize>, Query, description = "页码，从 1 开始，默认 1"),
+        ("page_size" = Option<usize>, Query, description = "每页条数，缺省返回全部（total 恒返回）")
     ),
     responses(
-        (status = 200, description = "交易列表", body = [Transaction]),
+        (status = 200, description = "交易分页结果 {items, total}", body = TransactionListResult),
         (status = 500, description = "数据库错误", body = ErrorResponse)
     )
 )]
 async fn list_transactions_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
-    Query(query): Query<ListTransactionsQuery>,
-) -> Result<Json<Vec<Transaction>>, AppError> {
+    Query(query): Query<TransactionListFilter>,
+) -> Result<Json<TransactionListResult>, AppError> {
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let txs = crate::commands::list_transactions_internal(
-        &conn,
-        query.limit,
-        query.from.as_deref(),
-        query.to.as_deref(),
-        query.account_id.as_deref(),
-        query.kind.as_deref(),
-    )?;
-    Ok(Json(txs))
+    let result = crate::commands::list_transactions_internal(&conn, &query)?;
+    Ok(Json(result))
 }
 
 #[utoipa::path(

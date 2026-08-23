@@ -32,8 +32,9 @@ import type {
   RestoreResult,
   ScheduledTransactionDetail,
   ScheduledTransactionWithExt,
-  Transaction,
   TransactionInput,
+  TransactionListFilter,
+  TransactionListResult,
   UpdateStatusInput,
 } from '@/types'
 
@@ -57,8 +58,8 @@ export const api = {
   deleteCategory: (id: string) => invoke<void>('delete_category', { id }),
 
   // 交易
-  listTransactions: (limit?: number) =>
-    invoke<Transaction[]>('list_transactions', { limit: limit ?? null }),
+  listTransactions: (filter?: TransactionListFilter | null) =>
+    invoke<TransactionListResult>('list_transactions', { filter: filter ?? null }),
   createTransaction: (input: TransactionInput) =>
     invoke<string>('create_transaction', { input }),
   createTransactions: (inputs: TransactionInput[]) =>

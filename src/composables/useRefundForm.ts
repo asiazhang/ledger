@@ -43,7 +43,7 @@ export function useRefundForm(options?: { onCreated?: () => void }) {
 
   async function loadTransactions() {
     try {
-      transactions.value = await api.listTransactions()
+      transactions.value = (await api.listTransactions()).items
     } catch {
       // 加载失败忽略，退款关联可后续重试
     }

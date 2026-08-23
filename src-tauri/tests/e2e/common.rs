@@ -19,14 +19,14 @@ pub fn new_account_id() -> String {
     new_uuid()
 }
 
-/// 查询全部未删除交易，按日期倒序。
+/// 查询全部未删除交易，按日期倒序（与 `list_transactions_internal` 的确定性排序一致，id 为 tiebreaker）。
 pub fn query_all_transactions(conn: &Connection) -> Vec<Transaction> {
     let mut stmt = conn
         .prepare(
             "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
              to_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,\
              version,device_id,is_deleted \
-             FROM transactions WHERE is_deleted=0 ORDER BY date DESC, created_at DESC",
+             FROM transactions WHERE is_deleted=0 ORDER BY date DESC, created_at DESC, id DESC",
         )
         .unwrap();
     stmt.query_map([], |r| {

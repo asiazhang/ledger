@@ -13,7 +13,7 @@ const recent = ref<Transaction[]>([])
 
 async function refresh() {
   balances.value = await api.listAccountBalances()
-  recent.value = await api.listTransactions(10)
+  recent.value = (await api.listTransactions({ limit: 10 })).items
 }
 
 onMounted(async () => {

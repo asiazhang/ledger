@@ -8,7 +8,7 @@ use tauri_app_lib::commands::accounts::{
 use tauri_app_lib::commands::transactions::{
     create_transactions_internal, delete_transaction_internal, list_transactions_internal,
 };
-use tauri_app_lib::models::{AccountInput, AccountType, TransactionInput};
+use tauri_app_lib::models::{AccountInput, AccountType, TransactionInput, TransactionListFilter};
 
 use crate::common::query_all_transactions;
 use crate::world::{ImportedRow, LedgerWorld};
@@ -104,18 +104,25 @@ fn reimport_create_account(world: &mut LedgerWorld, name: String, kind: String, 
 
 #[then(expr = "读回交易 应包含 {int} 条记录")]
 fn readback_count(world: &mut LedgerWorld, expected: i64) {
-    let txs = list_transactions_internal(&world.conn, None, None, None, None, None)
+    let result = list_transactions_internal(&world.conn, &TransactionListFilter::default())
         .expect("读回交易失败");
-    assert_eq!(txs.len() as i64, expected, "读回交易数量不匹配");
-    world.transactions_list = txs;
+    assert_eq!(result.items.len() as i64, expected, "读回交易数量不匹配");
+    world.transactions_list = result.items;
 }
 
 #[then(expr = "读回 {string} 至 {string} 交易 应包含 {int} 条记录")]
 fn readback_range(world: &mut LedgerWorld, from: String, to: String, expected: i64) {
-    let txs = list_transactions_internal(&world.conn, None, Some(&from), Some(&to), None, None)
-        .expect("读回交易失败");
+    let result = list_transactions_internal(
+        &world.conn,
+        &TransactionListFilter {
+            from: Some(from.clone()),
+            to: Some(to.clone()),
+            ..Default::default()
+        },
+    )
+    .expect("读回交易失败");
     assert_eq!(
-        txs.len() as i64,
+        result.items.len() as i64,
         expected,
         "日期区间 [{from}, {to}] 交易数量不匹配"
     );
@@ -124,9 +131,19 @@ fn readback_range(world: &mut LedgerWorld, from: String, to: String, expected: i
 #[then(expr = "读回 账户 {string} 的交易 应包含 {int} 条记录")]
 fn readback_account(world: &mut LedgerWorld, name: String, expected: i64) {
     let account_id = world.account_id(&name);
-    let txs = list_transactions_internal(&world.conn, None, None, None, Some(&account_id), None)
-        .expect("读回交易失败");
-    assert_eq!(txs.len() as i64, expected, "账户 '{name}' 的交易数量不匹配");
+    let result = list_transactions_internal(
+        &world.conn,
+        &TransactionListFilter {
+            account_id: Some(account_id),
+            ..Default::default()
+        },
+    )
+    .expect("读回交易失败");
+    assert_eq!(
+        result.items.len() as i64,
+        expected,
+        "账户 '{name}' 的交易数量不匹配"
+    );
 }
 
 #[then(expr = "读回 kind 为 {string} 的交易 应包含 {int} 条记录 金额合计 {int}")]
@@ -136,14 +153,20 @@ fn readback_kind_amount(
     expected_count: i64,
     expected_sum: i64,
 ) {
-    let txs = list_transactions_internal(&world.conn, None, None, None, None, Some(&kind))
-        .expect("读回交易失败");
+    let result = list_transactions_internal(
+        &world.conn,
+        &TransactionListFilter {
+            kind: Some(kind.clone()),
+            ..Default::default()
+        },
+    )
+    .expect("读回交易失败");
     assert_eq!(
-        txs.len() as i64,
+        result.items.len() as i64,
         expected_count,
         "kind={kind} 交易数量不匹配"
     );
-    let sum: i64 = txs.iter().map(|t| t.amount_cents).sum();
+    let sum: i64 = result.items.iter().map(|t| t.amount_cents).sum();
     assert_eq!(sum, expected_sum, "kind={kind} 金额合计不匹配");
 }
 

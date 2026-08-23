@@ -440,10 +440,14 @@ mod tests {
         insert_hidden_account(&conn, "acc-hidden", "无(CNY)", "CNY");
         insert_tx(&conn, "tx-hidden", "expense", 3000, "acc-hidden", None);
 
-        let rows = crate::commands::list_transactions_internal(&conn, None, None, None, None, None)
-            .unwrap();
+        let rows = crate::commands::list_transactions_internal(
+            &conn,
+            &crate::models::TransactionListFilter::default(),
+        )
+        .unwrap();
         assert!(
-            rows.iter()
+            rows.items
+                .iter()
                 .any(|t| t.id == "tx-hidden" && t.account_id == "acc-hidden"),
             "黑洞账户的交易应仍在交易列表中"
         );
