@@ -237,8 +237,9 @@ pub fn search_transactions_internal(
 }
 
 /// IPC 命令：搜索交易（可选金额/日期筛选与关键字 AND 组合）。
-/// 四个筛选参数为前端契约（issue #41：`amount_min_cents?/amount_max_cents?/
-/// date_from?/date_to?`）要求的独立命令参数，故显式 allow `too_many_arguments`。
+/// 四个筛选参数与内部函数一一对应（issue #40），作为独立命令参数暴露，
+/// 前端按 issue #41 契约以 camelCase 键名调用（Tauri 自动转 snake_case），
+/// 故显式 allow `too_many_arguments`。
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub fn search_transactions(
@@ -887,6 +888,31 @@ mod tests {
         // 空查询 + 无筛选 → 维持空结果
         assert_eq!(search(&conn, "").unwrap().total, 0);
         assert_eq!(search(&conn, "   ").unwrap().total, 0);
+    }
+
+    #[test]
+    fn search_amount_and_date_filters_without_keyword() {
+        let conn = setup();
+        insert_account(&conn, "acc-1", "现金", "cash", "CNY");
+        insert_txn_amount(&conn, "tx-1", "acc-1", None, "2026-02-01", 1000);
+        insert_txn_amount(&conn, "tx-2", "acc-1", None, "2026-02-02", 1550);
+        insert_txn_amount(&conn, "tx-3", "acc-1", None, "2026-02-10", 1550);
+        rebuild_search_index(&conn).unwrap();
+
+        // 无关键字 + 金额与日期同时筛选（AND 组合，含边界）
+        let r = search_transactions_internal(
+            &conn,
+            "",
+            1,
+            20,
+            Some(1500),
+            Some(2000),
+            Some("2026-02-01"),
+            Some("2026-02-05"),
+        )
+        .unwrap();
+        assert_eq!(r.total, 1, "金额与日期同时命中才返回");
+        assert_eq!(r.items[0].id, "tx-2");
     }
 
     #[test]
