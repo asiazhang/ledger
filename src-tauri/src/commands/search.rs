@@ -52,27 +52,28 @@ pub fn pinyin_initials(text: &str) -> String {
     out
 }
 
-/// 拼接可搜索内容：`备注 账户名 分类名 备注拼音 账户拼音 分类拼音`。
-/// 空字段跳过；所有字段为空时返回空串（仍保留文档行，后续补充文本后可重建）。
+/// 拼接可搜索内容：`备注 转出账户名 转入账户名 分类名 备注拼音 转出账户拼音 转入账户拼音 分类拼音`。
+/// 转账同时携带转出/转入账户名；空字段跳过；所有字段为空时返回空串（仍保留文档行）。
 pub fn build_search_content(
     note: Option<&str>,
     account_name: &str,
+    to_account_name: &str,
     category_name: Option<&str>,
 ) -> String {
-    let mut parts: Vec<String> = Vec::with_capacity(6);
-    for text in [note, Some(account_name), category_name]
-        .into_iter()
-        .flatten()
-    {
+    let mut parts: Vec<String> = Vec::with_capacity(8);
+    let text_parts = [
+        note,
+        Some(account_name),
+        Some(to_account_name),
+        category_name,
+    ];
+    for text in text_parts.into_iter().flatten() {
         let text = text.trim();
         if !text.is_empty() {
             parts.push(text.to_string());
         }
     }
-    for text in [note, Some(account_name), category_name]
-        .into_iter()
-        .flatten()
-    {
+    for text in text_parts.into_iter().flatten() {
         let initials = pinyin_initials(text);
         if !initials.is_empty() {
             parts.push(initials);
@@ -117,8 +118,12 @@ pub fn build_match_query(query: &str) -> String {
 // 查询执行
 // ---------------------------------------------------------------------------
 
+/// 每页条数上限（防呆，防止极端输入拖垮查询）。
+const MAX_PAGE_SIZE: usize = 200;
+
 /// 服务端分页搜索交易。整词/前缀匹配（FTS5 MATCH），JOIN 回主表过滤软删除，
-/// 排序按相关度 rank 优先、日期倒序次之；返回当前页与命中总数。
+/// 排序按相关度 rank 优先、日期倒序次之、id 兜底（与交易列表先例一致，防同秒
+/// 批量写入翻页漂移）；返回当前页与命中总数。
 pub fn search_transactions_internal(
     conn: &Connection,
     query: &str,
@@ -133,8 +138,11 @@ pub fn search_transactions_internal(
         });
     }
     let page = page.max(1);
-    let page_size = page_size.clamp(1, 200);
-    let offset = (page - 1) * page_size;
+    let page_size = page_size.clamp(1, MAX_PAGE_SIZE);
+    // offset 用 saturating 运算 + try_from 钳制，防极端输入（usize::MAX）产生
+    // debug 构建 panic 或 SQLite datatype mismatch（与 list_transactions 先例一致）
+    let offset =
+        i64::try_from(page.saturating_sub(1).saturating_mul(page_size)).unwrap_or(i64::MAX);
 
     let join = "FROM search_transactions s \
                 JOIN transactions t ON s.transaction_id = t.id \
@@ -156,10 +164,10 @@ pub fn search_transactions_internal(
              t.to_account_id,t.category_id,t.refund_of_transaction_id,t.note,t.date,t.created_at,\
              t.updated_at,t.version,t.device_id,t.is_deleted \
              {join} \
-             ORDER BY rank DESC, t.date DESC, t.created_at DESC \
+             ORDER BY rank DESC, t.date DESC, t.created_at DESC, t.id DESC \
              LIMIT ?2 OFFSET ?3"
         ),
-        rusqlite::params![match_expr, page_size as i64, offset as i64],
+        rusqlite::params![match_expr, page_size as i64, offset],
     )?;
 
     Ok(TransactionSearchResult { items, total })
@@ -186,25 +194,73 @@ pub fn search_transactions(
 /// 重建单条交易的 FTS 文档（读取当前内容组装后 upsert）。
 /// 交易不存在或已软删除时删除对应文档。
 pub fn reindex_transaction(conn: &Connection, transaction_id: &str) -> Result<()> {
-    let row: Option<(Option<String>, String, Option<String>, i64)> = conn
+    let Some(payload) = read_index_payload(conn, transaction_id)? else {
+        return delete_index_document(conn, transaction_id);
+    };
+    if payload.is_deleted {
+        return delete_index_document(conn, transaction_id);
+    }
+    upsert_index_document(conn, transaction_id, &payload.content)
+}
+
+/// 为**新建**交易直接插入 FTS 文档（免查重：不扫描表判断是否已存在，O(1)）。
+/// 仅用于刚插入、确定没有文档的交易（如 `insert_transaction` 钩子）；
+/// 批量导入下避免每次插入都全表扫描（UNINDEXED 列无索引可走）。
+pub fn insert_index_document(conn: &Connection, transaction_id: &str) -> Result<()> {
+    let Some(payload) = read_index_payload(conn, transaction_id)? else {
+        return Ok(());
+    };
+    if payload.is_deleted {
+        return Ok(());
+    }
+    conn.execute(
+        "INSERT INTO search_transactions(content, transaction_id) VALUES(?1, ?2)",
+        rusqlite::params![payload.content, transaction_id],
+    )?;
+    Ok(())
+}
+
+/// 索引载荷：可搜索内容与软删除标志。
+struct IndexPayload {
+    content: String,
+    is_deleted: bool,
+}
+
+/// 读取交易的索引载荷。交易不存在返回 None。
+/// 内容 = 备注 + 转出账户名 + 转入账户名 + 分类名 + 四者拼音首字母。
+fn read_index_payload(conn: &Connection, transaction_id: &str) -> Result<Option<IndexPayload>> {
+    let row = conn
         .query_row(
-            "SELECT t.note, COALESCE(a.name,''), COALESCE(c.name,''), t.is_deleted \
+            "SELECT t.note, COALESCE(a.name,''), COALESCE(a2.name,''), COALESCE(c.name,''), \
+             t.is_deleted \
              FROM transactions t \
              LEFT JOIN accounts a ON t.account_id = a.id \
+             LEFT JOIN accounts a2 ON t.to_account_id = a2.id \
              LEFT JOIN categories c ON t.category_id = c.id \
              WHERE t.id = ?1",
             [transaction_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            |r| {
+                Ok((
+                    r.get::<_, Option<String>>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                    r.get::<_, i64>(4)?,
+                ))
+            },
         )
         .optional()?;
-    let Some((note, account_name, category_name, is_deleted)) = row else {
-        return delete_index_document(conn, transaction_id);
-    };
-    if is_deleted != 0 {
-        return delete_index_document(conn, transaction_id);
-    }
-    let content = build_search_content(note.as_deref(), &account_name, category_name.as_deref());
-    upsert_index_document(conn, transaction_id, &content)
+    Ok(row.map(
+        |(note, account_name, to_account_name, category_name, is_deleted)| IndexPayload {
+            content: build_search_content(
+                note.as_deref(),
+                &account_name,
+                &to_account_name,
+                category_name.as_deref(),
+            ),
+            is_deleted: is_deleted != 0,
+        },
+    ))
 }
 
 /// 删除单条交易的 FTS 文档（不存在时为空操作）。
@@ -389,15 +445,24 @@ mod tests {
 
     #[test]
     fn build_content_joins_note_account_category_and_initials() {
-        let content = build_search_content(Some("吃饭"), "招商银行", Some("餐饮"));
+        let content = build_search_content(Some("吃饭"), "招商银行", "", Some("餐饮"));
         assert_eq!(content, "吃饭 招商银行 餐饮 cf zsyh cy");
     }
 
     #[test]
+    fn build_content_includes_transfer_to_account() {
+        let content = build_search_content(Some("转账"), "现金", "银行", None);
+        assert_eq!(content, "转账 现金 银行 zz xj yh");
+    }
+
+    #[test]
     fn build_content_skips_empty_fields() {
-        assert_eq!(build_search_content(None, "现金", None), "现金 xj");
-        assert_eq!(build_search_content(Some("   "), "现金", None), "现金 xj");
-        assert_eq!(build_search_content(None, "", None), "");
+        assert_eq!(build_search_content(None, "现金", "", None), "现金 xj");
+        assert_eq!(
+            build_search_content(Some("   "), "现金", "", None),
+            "现金 xj"
+        );
+        assert_eq!(build_search_content(None, "", "", None), "");
     }
 
     // -----------------------------------------------------------------------
@@ -590,6 +655,67 @@ mod tests {
         let r = search_transactions_internal(&conn, "午餐", 3, 2).unwrap();
         assert_eq!(r.items.len(), 1);
         assert_eq!(r.items[0].id, "tx-1");
+    }
+
+    #[test]
+    fn search_transfer_by_to_account_name() {
+        use crate::commands::transactions::insert_transaction;
+        use crate::models::TransactionInput;
+        let conn = setup();
+        insert_account(&conn, "acc-1", "现金", "cash", "CNY");
+        insert_account(&conn, "acc-2", "招商银行", "bank", "CNY");
+        let input = TransactionInput {
+            kind: "transfer".into(),
+            amount_cents: 3000,
+            currency_code: "CNY".into(),
+            account_id: "acc-1".into(),
+            to_account_id: Some("acc-2".into()),
+            category_id: None,
+            refund_of_transaction_id: None,
+            note: Some("转账".into()),
+            date: "2026-02-01".into(),
+            instrument_id: None,
+            quantity: None,
+            price_cents: None,
+            fee_cents: None,
+        };
+        let id = insert_transaction(&conn, input).unwrap();
+        // 转出账户名、转入账户名（含拼音首字母）均可搜
+        assert_eq!(
+            search_transactions_internal(&conn, "现金", 1, 20)
+                .unwrap()
+                .total,
+            1
+        );
+        assert_eq!(
+            search_transactions_internal(&conn, "招商", 1, 20)
+                .unwrap()
+                .total,
+            1
+        );
+        assert_eq!(
+            search_transactions_internal(&conn, "zsyh", 1, 20)
+                .unwrap()
+                .total,
+            1
+        );
+        let _ = id;
+    }
+
+    #[test]
+    fn search_extreme_page_inputs_do_not_panic() {
+        let conn = setup();
+        insert_account(&conn, "acc-1", "现金", "cash", "CNY");
+        insert_txn(&conn, "tx-1", "acc-1", None, Some("午餐"), "2026-02-01");
+        rebuild_search_index(&conn).unwrap();
+
+        // 极端输入：usize::MAX 页/页大小不 panic、不破坏 total；page=0 钳制为 1
+        let r = search_transactions_internal(&conn, "午餐", usize::MAX, usize::MAX).unwrap();
+        assert_eq!(r.total, 1);
+        assert_eq!(r.items.len(), 0);
+        let r = search_transactions_internal(&conn, "午餐", 0, 0).unwrap();
+        assert_eq!(r.total, 1);
+        assert_eq!(r.items.len(), 1);
     }
 
     #[test]

@@ -98,8 +98,9 @@ pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<
         )?;
         id
     };
-    // 新建交易后即时更新搜索索引（含 buy/sell 路径；触发器入队由队列消费兜底）
-    crate::commands::search::reindex_transaction(conn, &id)?;
+    // 新建交易后即时更新搜索索引（含 buy/sell 路径；新建文档免查重插入，
+    // 触发器入队由队列消费兜底）
+    crate::commands::search::insert_index_document(conn, &id)?;
     Ok(id)
 }
 
