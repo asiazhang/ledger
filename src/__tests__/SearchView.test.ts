@@ -3,6 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
+import { NDatePicker } from 'naive-ui'
 import { useAppStore } from '@/stores/app'
 import SearchView from '@/views/SearchView.vue'
 import type { Account, Category, Currency, Transaction } from '@/types'
@@ -45,13 +46,13 @@ const mockCategories: Category[] = [
   },
 ]
 
-function makeTransaction(id: string, note: string, date: string): Transaction {
+function makeTransaction(id: string, note: string, date: string, amountCents: number): Transaction {
   return {
     id,
     kind: 'expense',
-    amount_cents: 2500,
+    amount_cents: amountCents,
     currency_code: 'CNY',
-    amount_native_cents: 2500,
+    amount_native_cents: amountCents,
     account_id: 'acc-cash',
     to_account_id: null,
     category_id: 'cat-food',
@@ -66,12 +67,14 @@ function makeTransaction(id: string, note: string, date: string): Transaction {
   }
 }
 
-// 25 条：前 23 条备注「午餐」、后 2 条备注「报销」（跨 2 页，pageSize=20）
+// 25 条：前 23 条备注「午餐」、后 2 条备注「报销」（跨 2 页，pageSize=20）。
+// 金额随索引递增（1000 + i*100 分），日期逐日递增（2026-02-01 ~ 2026-02-25），供金额/日期筛选测试。
 const mockTransactions: Transaction[] = Array.from({ length: 25 }, (_, i) =>
   makeTransaction(
     `tx-${i + 1}`,
     i < 23 ? '午餐' : '报销',
     `2026-02-${String(i + 1).padStart(2, '0')}`,
+    1000 + i * 100,
   ),
 )
 
@@ -82,13 +85,51 @@ function searchCalls() {
 function lastSearchArgs() {
   const calls = searchCalls()
   expect(calls.length).toBeGreaterThan(0)
-  return calls[calls.length - 1][1] as { query: string; page: number; pageSize: number }
+  return calls[calls.length - 1][1] as {
+    query: string
+    page: number
+    pageSize: number
+    amountMinCents: number | null
+    amountMaxCents: number | null
+    dateFrom: string | null
+    dateTo: string | null
+  }
 }
 
 /** 输入关键字并等待防抖与异步搜索完成（fake timers 下微任务由 advance 驱动）。 */
 async function typeAndSearch(wrapper: VueWrapper, text: string, delay = 300) {
   await wrapper.find('input').setValue(text)
   await nextTick()
+  await vi.advanceTimersByTimeAsync(delay)
+  await nextTick()
+  await nextTick()
+}
+
+function minAmountInput(wrapper: VueWrapper) {
+  const el = wrapper
+    .findAll('input')
+    .find((i) => i.attributes('placeholder')?.includes('最低金额'))
+  expect(el).toBeTruthy()
+  return el!
+}
+
+function maxAmountInput(wrapper: VueWrapper) {
+  const el = wrapper
+    .findAll('input')
+    .find((i) => i.attributes('placeholder')?.includes('最高金额'))
+  expect(el).toBeTruthy()
+  return el!
+}
+
+/** 直接向 NDatePicker emit update:formattedValue 设置日期（避免在 fake timers 下打开面板）。 */
+async function setDate(wrapper: VueWrapper, index: 0 | 1, value: string) {
+  const pickers = wrapper.findAllComponents(NDatePicker)
+  expect(pickers.length).toBe(2)
+  pickers[index].vm.$emit('update:formattedValue', value)
+  await nextTick()
+}
+
+async function applyFilters(wrapper: VueWrapper, delay = 300) {
   await vi.advanceTimersByTimeAsync(delay)
   await nextTick()
   await nextTick()
@@ -102,13 +143,33 @@ beforeEach(async () => {
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve(mockCategories)
     if (cmd === 'search_transactions') {
-      const { query, page = 1, pageSize = 20 } = (args ?? {}) as {
+      const {
+        query,
+        page = 1,
+        pageSize = 20,
+        amountMinCents = null,
+        amountMaxCents = null,
+        dateFrom = null,
+        dateTo = null,
+      } = (args ?? {}) as {
         query?: string
         page?: number
         pageSize?: number
+        amountMinCents?: number | null
+        amountMaxCents?: number | null
+        dateFrom?: string | null
+        dateTo?: string | null
       }
-      if (!query) return Promise.resolve({ items: [], total: 0 })
-      const all = mockTransactions.filter((t) => (t.note ?? '').includes(query))
+      // 与后端一致：仅筛选（无关键字）也正常执行
+      const all = mockTransactions.filter((t) => {
+        if (query && !(t.note ?? '').includes(query)) return false
+        if (amountMinCents != null && t.amount_cents < amountMinCents) return false
+        if (amountMaxCents != null && t.amount_cents > amountMaxCents) return false
+        // 日期为 YYYY-MM-DD 字符串，字典序即时间序（含边界）
+        if (dateFrom && t.date < dateFrom) return false
+        if (dateTo && t.date > dateTo) return false
+        return true
+      })
       const start = (page - 1) * pageSize
       return Promise.resolve({ items: all.slice(start, start + pageSize), total: all.length })
     }
@@ -127,8 +188,18 @@ describe('SearchView.vue', () => {
   it('空输入显示占位提示且不触发搜索', async () => {
     const wrapper = mount(SearchView)
     await flushPromises()
-    expect(wrapper.text()).toContain('输入关键字开始搜索')
+    expect(wrapper.text()).toContain('输入关键字或设置筛选开始搜索')
     expect(searchCalls().length).toBe(0)
+  })
+
+  it('筛选器 UI：最低/最高金额输入与起止日期选择器位于关键字下方', async () => {
+    const wrapper = mount(SearchView)
+    await flushPromises()
+    const keywordInput = wrapper.find('input')
+    expect(keywordInput.attributes('placeholder')).toContain('输入关键字')
+    expect(minAmountInput(wrapper).attributes('placeholder')).toBe('最低金额（元）')
+    expect(maxAmountInput(wrapper).attributes('placeholder')).toBe('最高金额（元）')
+    expect(wrapper.findAllComponents(NDatePicker).length).toBe(2)
   })
 
   it('输入后防抖 300ms 才触发一次搜索', async () => {
@@ -166,7 +237,7 @@ describe('SearchView.vue', () => {
     await typeAndSearch(wrapper, '报销')
     expect(wrapper.text()).toContain('命中 2 条')
     expect(wrapper.text()).toContain('报销')
-    expect(wrapper.text()).toContain('¥25.00')
+    expect(wrapper.text()).toContain('¥33.00')
     expect(wrapper.text()).toContain('支出')
     expect(wrapper.text()).toContain('餐饮')
     expect(wrapper.text()).toContain('现金')
@@ -177,7 +248,15 @@ describe('SearchView.vue', () => {
     const wrapper = mount(SearchView)
     await nextTick()
     await typeAndSearch(wrapper, '午餐')
-    expect(lastSearchArgs()).toMatchObject({ query: '午餐', page: 1, pageSize: 20 })
+    expect(lastSearchArgs()).toMatchObject({
+      query: '午餐',
+      page: 1,
+      pageSize: 20,
+      amountMinCents: null,
+      amountMaxCents: null,
+      dateFrom: null,
+      dateTo: null,
+    })
   })
 
   it('分页：点击第 2 页携带 page=2 重新搜索', async () => {
@@ -213,5 +292,133 @@ describe('SearchView.vue', () => {
     await nextTick()
     await typeAndSearch(wrapper, '报销')
     expect(wrapper.text()).not.toContain('删除')
+  })
+
+  describe('金额/日期筛选（issue #41）', () => {
+    it('单边筛选：只填最低金额生效，金额小数元 → 分（15.5 → 1550）', async () => {
+      vi.useFakeTimers()
+      const wrapper = mount(SearchView)
+      await nextTick()
+      await minAmountInput(wrapper).setValue('15.5')
+      await applyFilters(wrapper)
+      expect(searchCalls().length).toBe(1)
+      expect(lastSearchArgs()).toMatchObject({
+        query: '',
+        page: 1,
+        pageSize: 20,
+        amountMinCents: 1550,
+        amountMaxCents: null,
+        dateFrom: null,
+        dateTo: null,
+      })
+    })
+
+    it('单边筛选：只填最高金额生效', async () => {
+      vi.useFakeTimers()
+      const wrapper = mount(SearchView)
+      await nextTick()
+      await maxAmountInput(wrapper).setValue('20')
+      await applyFilters(wrapper)
+      expect(lastSearchArgs()).toMatchObject({
+        query: '',
+        amountMinCents: null,
+        amountMaxCents: 2000,
+      })
+    })
+
+    it('筛选+关键字 AND 组合时 invoke 参数正确', async () => {
+      vi.useFakeTimers()
+      const wrapper = mount(SearchView)
+      await nextTick()
+      await typeAndSearch(wrapper, '午餐')
+      await minAmountInput(wrapper).setValue('15')
+      await maxAmountInput(wrapper).setValue('30')
+      await setDate(wrapper, 0, '2026-02-05')
+      await setDate(wrapper, 1, '2026-02-20')
+      await applyFilters(wrapper)
+      expect(lastSearchArgs()).toMatchObject({
+        query: '午餐',
+        amountMinCents: 1500,
+        amountMaxCents: 3000,
+        dateFrom: '2026-02-05',
+        dateTo: '2026-02-20',
+      })
+    })
+
+    it('无关键字仅筛选可出结果', async () => {
+      vi.useFakeTimers()
+      const wrapper = mount(SearchView)
+      await nextTick()
+      await minAmountInput(wrapper).setValue('30')
+      await applyFilters(wrapper)
+      // 金额 ≥ 3000 分：i=20..24 共 5 条（¥30.00 ~ ¥34.00）
+      expect(wrapper.text()).toContain('命中 5 条')
+      expect(lastSearchArgs()).toMatchObject({ query: '', amountMinCents: 3000 })
+    })
+
+    it('日期筛选（含边界）生效：起始+结束', async () => {
+      vi.useFakeTimers()
+      const wrapper = mount(SearchView)
+      await nextTick()
+      await setDate(wrapper, 0, '2026-02-01')
+      await setDate(wrapper, 1, '2026-02-03')
+      await applyFilters(wrapper)
+      // 2026-02-01 ~ 02-03 含边界：i=0..2 共 3 条
+      expect(wrapper.text()).toContain('命中 3 条')
+      expect(lastSearchArgs()).toMatchObject({
+        query: '',
+        dateFrom: '2026-02-01',
+        dateTo: '2026-02-03',
+      })
+    })
+
+    it('筛选变化同样防抖 ~300ms 触发查询', async () => {
+      vi.useFakeTimers()
+      const wrapper = mount(SearchView)
+      await nextTick()
+      await minAmountInput(wrapper).setValue('10')
+      await vi.advanceTimersByTimeAsync(299)
+      expect(searchCalls().length).toBe(0)
+      await minAmountInput(wrapper).setValue('15')
+      await vi.advanceTimersByTimeAsync(200)
+      expect(searchCalls().length).toBe(0)
+      await vi.advanceTimersByTimeAsync(100)
+      await nextTick()
+      await nextTick()
+      expect(searchCalls().length).toBe(1)
+      expect(lastSearchArgs()).toMatchObject({ query: '', amountMinCents: 1500 })
+    })
+
+    it('筛选激活时显示当前筛选条件，清除筛选后重置', async () => {
+      vi.useFakeTimers()
+      const wrapper = mount(SearchView)
+      await nextTick()
+      await minAmountInput(wrapper).setValue('15.5')
+      await setDate(wrapper, 0, '2026-02-05')
+      await applyFilters(wrapper)
+      expect(wrapper.text()).toContain('已应用筛选')
+      expect(wrapper.text()).toContain('最低 ¥15.50')
+      expect(wrapper.text()).toContain('起始 2026-02-05')
+
+      const clearBtn = wrapper.findAll('button').find((b) => b.text() === '清除筛选')
+      expect(clearBtn).toBeTruthy()
+      await clearBtn!.trigger('click')
+      await applyFilters(wrapper)
+      expect(wrapper.text()).not.toContain('已应用筛选')
+      expect(minAmountInput(wrapper).element as HTMLInputElement).toHaveProperty('value', '')
+      // 关键字也为空 → 回到占位提示
+      expect(wrapper.text()).toContain('输入关键字或设置筛选开始搜索')
+      expect(searchCalls().length).toBe(1) // 清除后无新查询
+    })
+
+    it('非法金额输入视为无筛选，不触发查询', async () => {
+      vi.useFakeTimers()
+      const wrapper = mount(SearchView)
+      await nextTick()
+      await minAmountInput(wrapper).setValue('abc')
+      await applyFilters(wrapper)
+      expect(searchCalls().length).toBe(0)
+      expect(wrapper.text()).toContain('输入关键字或设置筛选开始搜索')
+    })
   })
 })

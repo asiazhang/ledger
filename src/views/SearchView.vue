@@ -1,16 +1,32 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { NDataTable, NEmpty, NInput, NSpace, NText, useMessage } from 'naive-ui'
+import {
+  NButton,
+  NDataTable,
+  NDatePicker,
+  NEmpty,
+  NInput,
+  NSpace,
+  NText,
+  useMessage,
+} from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
 import { api } from '@/api'
 import { useAppStore } from '@/stores/app'
 import { buildTransactionColumns } from '@/components/transactionColumns'
-import type { Transaction } from '@/types'
+import { formatAmount, type Transaction, type TransactionSearchFilter } from '@/types'
+import { yuanToCents } from '@/utils/money'
 
 const store = useAppStore()
 const message = useMessage()
 
 const keyword = ref('')
+// 金额筛选：用户以「元」输入（支持小数），内部转分后传后端
+const amountMinYuan = ref('')
+const amountMaxYuan = ref('')
+// 日期筛选：NDatePicker value-format 直接绑定 YYYY-MM-DD 字符串
+const dateFrom = ref<string | null>(null)
+const dateTo = ref<string | null>(null)
 const results = ref<Transaction[]>([])
 const total = ref(0)
 const page = ref(1)
@@ -23,11 +39,58 @@ let debounceTimer: ReturnType<typeof setTimeout> | undefined
 // 请求序号：丢弃过期响应，防快速输入/清空下的竞态
 let searchSeq = 0
 
+const amountMinCents = computed(() => yuanToCents(amountMinYuan.value))
+const amountMaxCents = computed(() => yuanToCents(amountMaxYuan.value))
+
+/** 是否有激活的筛选条件（金额任一边或日期任一端非空） */
+const filtersActive = computed(
+  () =>
+    amountMinCents.value !== null ||
+    amountMaxCents.value !== null ||
+    !!dateFrom.value ||
+    !!dateTo.value,
+)
+
+/** 是否具备查询条件：关键字非空或筛选激活（仅筛选也可出结果） */
+const hasQuery = computed(() => keyword.value.trim() !== '' || filtersActive.value)
+
+/** 当前筛选条件的可读描述（供「已应用筛选」展示） */
+const activeFilterDescriptions = computed(() => {
+  const parts: string[] = []
+  const currency = store.currencyMap.get('CNY')
+  const min = amountMinCents.value
+  const max = amountMaxCents.value
+  if (min !== null && max !== null) {
+    parts.push(`金额 ${formatAmount(min, currency)} ~ ${formatAmount(max, currency)}`)
+  } else if (min !== null) {
+    parts.push(`最低 ${formatAmount(min, currency)}`)
+  } else if (max !== null) {
+    parts.push(`最高 ${formatAmount(max, currency)}`)
+  }
+  if (dateFrom.value) parts.push(`起始 ${dateFrom.value}`)
+  if (dateTo.value) parts.push(`结束 ${dateTo.value}`)
+  return parts
+})
+
+function buildFilter(): TransactionSearchFilter {
+  return {
+    amountMinCents: amountMinCents.value,
+    amountMaxCents: amountMaxCents.value,
+    dateFrom: dateFrom.value || null,
+    dateTo: dateTo.value || null,
+  }
+}
+
 async function runSearch() {
   const seq = ++searchSeq
   loading.value = true
   try {
-    const res = await api.searchTransactions(keyword.value.trim(), page.value, pageSize)
+    const res = await api.searchTransactions(
+      keyword.value.trim(),
+      page.value,
+      pageSize,
+      buildFilter(),
+    )
     if (seq !== searchSeq) return
     results.value = res.items
     total.value = res.total
@@ -58,21 +121,37 @@ function resetResults() {
   loading.value = false
 }
 
-// 空输入只显示占位提示，不触发查询
-watch(keyword, (value) => {
-  if (!value.trim()) {
+// 关键字变化：空输入且无筛选 → 占位；否则防抖查询
+watch(keyword, () => {
+  if (!hasQuery.value) {
     resetResults()
     return
   }
   scheduleSearch()
 })
 
-// 回车立即搜索（不等防抖）
+// 筛选变化：与关键字同样防抖（~300ms）触发查询
+watch([amountMinYuan, amountMaxYuan, dateFrom, dateTo], () => {
+  if (!hasQuery.value) {
+    resetResults()
+    return
+  }
+  scheduleSearch()
+})
+
+// 回车立即搜索（不等防抖），关键字或筛选任一存在即可
 function onEnter() {
-  if (!keyword.value.trim()) return
+  if (!hasQuery.value) return
   clearTimeout(debounceTimer)
   page.value = 1
   runSearch()
+}
+
+function clearFilters() {
+  amountMinYuan.value = ''
+  amountMaxYuan.value = ''
+  dateFrom.value = null
+  dateTo.value = null
 }
 
 // 复用交易列表列配置（日期/类型/分类/账户/备注/金额），结果只读
@@ -102,6 +181,44 @@ onMounted(async () => {
       clearable
       @keyup.enter="onEnter"
     />
+    <NSpace :size="8" align="center" :wrap="true">
+      <NInput
+        v-model:value="amountMinYuan"
+        placeholder="最低金额（元）"
+        clearable
+        style="width: 130px"
+        @keyup.enter="onEnter"
+      />
+      <NInput
+        v-model:value="amountMaxYuan"
+        placeholder="最高金额（元）"
+        clearable
+        style="width: 130px"
+        @keyup.enter="onEnter"
+      />
+      <NDatePicker
+        v-model:formatted-value="dateFrom"
+        type="date"
+        value-format="yyyy-MM-dd"
+        placeholder="起始日期"
+        clearable
+        style="width: 140px"
+      />
+      <NDatePicker
+        v-model:formatted-value="dateTo"
+        type="date"
+        value-format="yyyy-MM-dd"
+        placeholder="结束日期"
+        clearable
+        style="width: 140px"
+      />
+      <template v-if="filtersActive">
+        <NText depth="3">已应用筛选：{{ activeFilterDescriptions.join('、') }}</NText>
+        <NButton size="tiny" quaternary type="primary" @click="clearFilters">
+          清除筛选
+        </NButton>
+      </template>
+    </NSpace>
     <template v-if="searched">
       <NText depth="3">命中 {{ total }} 条</NText>
       <NEmpty v-if="total === 0" description="无匹配结果" />
@@ -116,6 +233,6 @@ onMounted(async () => {
         :pagination="pagination"
       />
     </template>
-    <NEmpty v-else description="输入关键字开始搜索" />
+    <NEmpty v-else description="输入关键字或设置筛选开始搜索" />
   </NSpace>
 </template>
