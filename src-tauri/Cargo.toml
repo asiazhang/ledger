@@ -39,6 +39,7 @@ tower-http = { version = "0.7", features = ["trace"] }
 sha2 = "0.11"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 utoipa = { version = "5", features = ["axum_extras"] }
+pinyin = "0.11"
 
 [dev-dependencies]
 cucumber = "0.23"

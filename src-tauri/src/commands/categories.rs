@@ -123,6 +123,8 @@ pub fn update_category(
         "UPDATE categories SET name=?1, icon=?2, parent_id=?3, updated_at=?4, version=version+1, device_id=?5 WHERE id=?6",
         rusqlite::params![name, icon, parent_id, now, did, id],
     )?;
+    // 分类改名后消费搜索重建队列：受影响交易的索引文档用新分类名重建
+    crate::commands::search::process_reindex_queue(&conn)?;
     Ok(())
 }
 

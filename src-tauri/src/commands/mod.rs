@@ -8,6 +8,7 @@ pub mod fx;
 pub mod investment;
 pub mod reports;
 pub mod scheduled;
+pub mod search;
 pub mod sync;
 pub mod transactions;
 
@@ -20,5 +21,6 @@ pub use currencies::*;
 pub use investment::*;
 pub use reports::*;
 pub use scheduled::*;
+pub use search::*;
 pub use sync::*;
 pub use transactions::*;

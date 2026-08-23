@@ -6,7 +6,9 @@ use cucumber::World;
 use rusqlite::Connection;
 
 use tauri_app_lib::db::{init_db, open_in_memory};
-use tauri_app_lib::models::{CreateTransactionResult, Transaction, TransactionInput};
+use tauri_app_lib::models::{
+    CreateTransactionResult, Transaction, TransactionInput, TransactionSearchResult,
+};
 
 /// 批量导入的一行（重跑导入时据此重建 `TransactionInput`）。
 /// 记录账户/转入账户的**名称**而非 ID，保证重跑时重新解析（与真实导入流程一致）。
@@ -52,6 +54,8 @@ pub struct LedgerWorld {
     pub conn: Connection,
     /// 账户名称到 ID 的映射（Given 步骤插入账户后注册，含种子黑洞账户）
     pub account_name_to_id: HashMap<String, String>,
+    /// 分类名称到 ID 的映射（Given 步骤插入分类后注册）
+    pub category_name_to_id: HashMap<String, String>,
     /// 最新创建的交易 ID（用于关联操作如退款）
     pub last_transaction_id: Option<String>,
     /// 最近一次操作错误（检查失败场景）
@@ -68,6 +72,8 @@ pub struct LedgerWorld {
     pub last_backup_path: Option<PathBuf>,
     /// 最近一次恢复出的临时数据库路径
     pub restored_db_path: Option<PathBuf>,
+    /// 最近一次交易搜索结果快照（搜索场景断言用）
+    pub last_search: Option<TransactionSearchResult>,
 }
 
 impl fmt::Debug for LedgerWorld {
@@ -79,6 +85,7 @@ impl fmt::Debug for LedgerWorld {
             .field("transactions_count", &self.transactions_list.len())
             .field("balances_count", &self.balances.len())
             .field("last_backup", &self.last_backup_path)
+            .field("last_search_total", &self.last_search.as_ref().map(|s| s.total))
             .finish()
     }
 }
@@ -90,6 +97,7 @@ impl LedgerWorld {
         let mut world = Self {
             conn,
             account_name_to_id: HashMap::new(),
+            category_name_to_id: HashMap::new(),
             last_transaction_id: None,
             last_error: None,
             transactions_list: Vec::new(),
@@ -98,6 +106,7 @@ impl LedgerWorld {
             balances: HashMap::new(),
             last_backup_path: None,
             restored_db_path: None,
+            last_search: None,
         };
         // 注册种子黑洞账户（V004 预置 无(CNY)/无(HKD)），供迁移场景按名称引用。
         let hidden: Vec<(String, String)> = {
@@ -122,5 +131,13 @@ impl LedgerWorld {
             .get(name)
             .cloned()
             .unwrap_or_else(|| panic!("账户 '{}' 不存在", name))
+    }
+
+    /// 获取分类 ID，按名称查找
+    pub fn category_id(&self, name: &str) -> String {
+        self.category_name_to_id
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| panic!("分类 '{}' 不存在", name))
     }
 }

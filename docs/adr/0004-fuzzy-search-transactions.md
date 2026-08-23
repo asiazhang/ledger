@@ -113,6 +113,10 @@ LIMIT ?;
 9. **tokenizer**：明确使用默认 `unicode61`（不引入 trigram）。中文按连续汉字整词 token 匹配；查询时对每个词条附加前缀通配（如「吃」→ `吃*`），覆盖「记得词首」场景；「记得词中任意片段」不支持，由拼音首字母前缀兜底。
 10. **触发器修正**：原设计"调用应用层注册的同步函数（Tauri 命令）"不可行——SQLite 触发器无法调用 Rust 代码。改为触发器纯 SQL 向 `search_reindex_queue` 插入 `transaction_id`，由应用层异步消费重建，与第 6/7 条 queue 设计一致。
 11. **服务端分页**：搜索命令带 `LIMIT/OFFSET` 并返回命中总数，供前端分页与"命中 N 条"展示；排序按 `rank` 优先、`date` 倒序次之。
+12. **contentful 修正**：原决策 #2 的 contentless（`content=''`）在实现中确认与需求冲突，改为 contentful 表（`CREATE VIRTUAL TABLE ... USING fts5(content, transaction_id UNINDEXED)`）：
+    - contentless 表删除文档必须携带原文列值（`'delete'` 特殊命令），而 contentless 无法回读已存内容，仅按 rowid 删除会残留索引词条、rowid 复用后旧词条复活（实测确认）；
+    - contentless 表无法使用 `rank`/`bm25` 排序（与决策 #11 冲突）；
+    - contentful 表支持普通 `DELETE`/`UPDATE`/`INSERT OR REPLACE`，词条随操作干净增删，`rank` 排序可用；代价是重复存储 content（备注+账户名+分类名+拼音首字母，单条数百字节，几十万条规模约百 MB 级），对桌面应用可接受。
 
 ## 模型补充：搜索重建队列
 

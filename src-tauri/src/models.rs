@@ -200,6 +200,15 @@ pub struct Transaction {
     pub is_deleted: bool,
 }
 
+/// 交易搜索分页结果（服务端分页）。
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
+pub struct TransactionSearchResult {
+    /// 匹配交易（当前页）。
+    pub items: Vec<Transaction>,
+    /// 命中总数（供「命中 N 条」与分页）。
+    pub total: i64,
+}
+
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct TransactionInput {
     pub kind: String,

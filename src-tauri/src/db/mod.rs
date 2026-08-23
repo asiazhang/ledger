@@ -25,6 +25,7 @@ fn migrations() -> &'static Migrations<'static> {
                 "../../migrations/V003__scheduled_transactions.sql"
             )),
             M::up(include_str!("../../migrations/V004__seed_defaults.sql")),
+            M::up(include_str!("../../migrations/V005__search_index.sql")),
         ])
     })
 }
@@ -85,6 +86,9 @@ pub fn open_db(app: &tauri::AppHandle) -> Result<DbState> {
     tracing::info!(db_path = %db_path.display(), "打开数据库");
     let mut conn = open_connection(db_path)?;
     init_db(&mut conn)?;
+    // 启动对账：FTS 文档数 ≠ 未删除交易数 → 全量重建（覆盖 V005 迁移前的存量数据）；
+    // 一致则消费重建队列（账户/分类改名、绕过应用层的写入产生的待办）。
+    crate::commands::search::reconcile_search_index(&conn)?;
     Ok(DbState {
         conn: Arc::new(Mutex::new(conn)),
     })

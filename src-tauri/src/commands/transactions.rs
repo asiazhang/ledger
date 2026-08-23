@@ -33,72 +33,73 @@ pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<
         return Err(AppError::Invalid("转账必须指定目标账户".into()));
     }
 
-    if input.kind == "buy" {
-        return crate::commands::investment::create_buy_transaction(conn, input);
-    }
-
-    if input.kind == "sell" {
-        return crate::commands::investment::create_sell_transaction(conn, input);
-    }
-
-    if input.amount_cents <= 0 {
-        return Err(AppError::Invalid("金额必须大于 0".into()));
-    }
-
-    let (category_id, account_id, currency_code, refund_of_id) = if input.kind == "refund" {
-        let ref_id = input
-            .refund_of_transaction_id
-            .ok_or_else(|| AppError::Invalid("退款必须关联原支出交易".into()))?;
-        let (cat, acc, cur, okind): (Option<String>, String, String, String) = conn.query_row(
-            "SELECT category_id, account_id, currency_code, kind \
-             FROM transactions WHERE id=?1 AND is_deleted=0",
-            rusqlite::params![ref_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-        )?;
-        if okind != "expense" {
-            return Err(AppError::Invalid("退款只能关联支出交易".into()));
+    let id = if input.kind == "buy" {
+        crate::commands::investment::create_buy_transaction(conn, input)?
+    } else if input.kind == "sell" {
+        crate::commands::investment::create_sell_transaction(conn, input)?
+    } else {
+        if input.amount_cents <= 0 {
+            return Err(AppError::Invalid("金额必须大于 0".into()));
         }
-        (cat, acc, cur, Some(ref_id))
-    } else {
-        (
-            input.category_id,
-            input.account_id,
-            input.currency_code,
-            None,
-        )
-    };
 
-    let native = convert_to_native(conn, input.amount_cents, &currency_code, &account_id)?;
-    let to_account_id = if input.kind == "transfer" {
-        input.to_account_id
-    } else {
-        None
+        let (category_id, account_id, currency_code, refund_of_id) = if input.kind == "refund" {
+            let ref_id = input
+                .refund_of_transaction_id
+                .ok_or_else(|| AppError::Invalid("退款必须关联原支出交易".into()))?;
+            let (cat, acc, cur, okind): (Option<String>, String, String, String) = conn.query_row(
+                "SELECT category_id, account_id, currency_code, kind \
+                 FROM transactions WHERE id=?1 AND is_deleted=0",
+                rusqlite::params![ref_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )?;
+            if okind != "expense" {
+                return Err(AppError::Invalid("退款只能关联支出交易".into()));
+            }
+            (cat, acc, cur, Some(ref_id))
+        } else {
+            (
+                input.category_id,
+                input.account_id,
+                input.currency_code,
+                None,
+            )
+        };
+
+        let native = convert_to_native(conn, input.amount_cents, &currency_code, &account_id)?;
+        let to_account_id = if input.kind == "transfer" {
+            input.to_account_id
+        } else {
+            None
+        };
+        let id = new_uuid();
+        let now = now_iso();
+        conn.execute(
+            "INSERT INTO transactions \
+             (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
+             category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,0)",
+            rusqlite::params![
+                id,
+                input.kind,
+                input.amount_cents,
+                currency_code,
+                native,
+                account_id,
+                to_account_id,
+                category_id,
+                refund_of_id,
+                input.note,
+                input.date,
+                now,
+                now,
+                1,
+                device_id()
+            ],
+        )?;
+        id
     };
-    let id = new_uuid();
-    let now = now_iso();
-    conn.execute(
-        "INSERT INTO transactions \
-         (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
-         category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,0)",
-        rusqlite::params![
-            id,
-            input.kind,
-            input.amount_cents,
-            currency_code,
-            native,
-            account_id,
-            to_account_id,
-            category_id,
-            refund_of_id,
-            input.note,
-            input.date,
-            now,
-            now,
-            1,
-            device_id()
-        ],
-    )?;
+    // 新建交易后即时更新搜索索引（含 buy/sell 路径；触发器入队由队列消费兜底）
+    crate::commands::search::reindex_transaction(conn, &id)?;
     Ok(id)
 }
 
@@ -284,6 +285,8 @@ pub fn delete_transaction_internal(conn: &Connection, id: &str) -> Result<()> {
         "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id()],
     )?;
+    // 软删除后即时从搜索索引移除文档
+    crate::commands::search::delete_index_document(conn, id)?;
     Ok(())
 }
 

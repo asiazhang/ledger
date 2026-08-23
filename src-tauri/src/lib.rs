@@ -96,6 +96,7 @@ pub fn run() {
             commands::create_transaction,
             commands::create_transactions,
             commands::delete_transaction,
+            commands::search_transactions,
             commands::list_exchange_rates,
             commands::create_exchange_rate,
             commands::list_market_prices,
