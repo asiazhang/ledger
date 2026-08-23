@@ -232,6 +232,51 @@ pub struct TransactionInput {
     pub idempotency_key: Option<String>,
 }
 
+/// 交易修改请求体（`PUT /api/v1/transactions/{id}`）。
+///
+/// 与 `TransactionInput` 的唯一差异是不含 `idempotency_key`：幂等键不可编辑，只在导入时落定，
+/// 编辑不改变导入身份（修改后重跑同批导入仍按同键去重、不产生重复）。
+/// buy/sell 仍需 `instrument_id`/`quantity`/`price_cents`/`fee_cents`。
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct UpdateTransactionInput {
+    pub kind: String,
+    pub amount_cents: i64,
+    pub currency_code: String,
+    pub account_id: String,
+    pub to_account_id: Option<String>,
+    pub category_id: Option<String>,
+    pub refund_of_transaction_id: Option<String>,
+    pub note: Option<String>,
+    pub date: String,
+    pub instrument_id: Option<String>,
+    pub quantity: Option<f64>,
+    pub price_cents: Option<i64>,
+    pub fee_cents: Option<i64>,
+}
+
+impl From<UpdateTransactionInput> for TransactionInput {
+    fn from(u: UpdateTransactionInput) -> Self {
+        // 幂等键不作为可编辑字段：修改路径忽略请求中的该字段（保留既有行的幂等键），
+        // 此处统一置 None 表达"不写入新幂等键"。
+        TransactionInput {
+            kind: u.kind,
+            amount_cents: u.amount_cents,
+            currency_code: u.currency_code,
+            account_id: u.account_id,
+            to_account_id: u.to_account_id,
+            category_id: u.category_id,
+            refund_of_transaction_id: u.refund_of_transaction_id,
+            note: u.note,
+            date: u.date,
+            instrument_id: u.instrument_id,
+            quantity: u.quantity,
+            price_cents: u.price_cents,
+            fee_cents: u.fee_cents,
+            idempotency_key: None,
+        }
+    }
+}
+
 /// 按 kind 校验并归一化后的一笔交易行字段（供创建与修改共用）。
 ///
 /// 创建路径据此 INSERT、修改路径据此 UPDATE —— 校验与字段解析只做一次。

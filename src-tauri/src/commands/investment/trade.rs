@@ -227,6 +227,16 @@ fn write_sell(conn: &Connection, plan: &SellPlan) -> Result<String> {
             device_id()
         ],
     )?;
+    write_sell_side_effects(conn, &id, plan)?;
+    Ok(id)
+}
+
+/// 卖出交易的持仓/卖出关联副作用（创建与修改共用）。
+///
+/// 只写 `security_transactions` 记录、`security_lot_sales` 匹配与持仓扣减，不写交易行——
+/// 修改路径先 `reverse_sell` 清空旧卖出再由本函数按新输入重建，创建路径在插入交易行后复用。
+pub(crate) fn write_sell_side_effects(conn: &Connection, id: &str, plan: &SellPlan) -> Result<()> {
+    let now = now_iso();
     conn.execute(
         "INSERT INTO security_transactions (transaction_id,instrument_id,action,quantity,price_cents,fee_cents) \
          VALUES (?1,?2,'sell',?3,?4,?5)",
@@ -275,7 +285,102 @@ fn write_sell(conn: &Connection, plan: &SellPlan) -> Result<String> {
         )?;
     }
 
-    Ok(id)
+    Ok(())
+}
+
+/// 按 id 替换一笔买入交易：先清旧持仓关联，再按新输入重建（创建与修改共用校验）。
+///
+/// 由 `update_transaction_internal` 在事务内调用：若该买入已有部分卖出，其持仓不可安全替换
+/// （会破坏对应卖出的已实现盈亏），返回 `Invalid`。
+pub(crate) fn apply_buy(conn: &Connection, id: &str, input: &TransactionInput) -> Result<()> {
+    let plan = prepare_buy(conn, input)?;
+    crate::commands::transactions::update_transaction_row(conn, id, &plan.normalized)?;
+    create_buy_lot(
+        conn,
+        id,
+        &plan.normalized.account_id,
+        &plan.instrument_id,
+        plan.quantity,
+        plan.price_cents,
+        plan.fee_cents,
+        &plan.normalized.currency_code,
+    )?;
+    Ok(())
+}
+
+/// 清理一笔买入交易的持仓关联（软删除与按 id 修改共用的守卫 + 清理）。
+///
+/// 若该买入已有部分卖出（`remaining_quantity < initial_quantity`）则拒绝清理——避免破坏
+/// 对应卖出的已实现盈亏。`partially_sold_msg` 用于区分「删除」/「修改」场景的错误措辞。
+pub(crate) fn cleanup_buy_side_effects(
+    conn: &Connection,
+    id: &str,
+    partially_sold_msg: &str,
+) -> Result<()> {
+    let partially_sold: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM security_lots \
+         WHERE buy_transaction_id=?1 AND remaining_quantity < initial_quantity",
+        rusqlite::params![id],
+        |r| r.get(0),
+    )?;
+    if partially_sold > 0 {
+        return Err(AppError::Invalid(partially_sold_msg.into()));
+    }
+    conn.execute(
+        "DELETE FROM security_lots WHERE buy_transaction_id=?1",
+        rusqlite::params![id],
+    )?;
+    conn.execute(
+        "DELETE FROM security_transactions WHERE transaction_id=?1 AND action='buy'",
+        rusqlite::params![id],
+    )?;
+    Ok(())
+}
+
+/// 按 id 修改买入时的持仓清理，复用 `cleanup_buy_side_effects` 的守卫与清理。
+pub(crate) fn cleanup_buy(conn: &Connection, id: &str) -> Result<()> {
+    cleanup_buy_side_effects(conn, id, "该买入交易已有部分卖出，无法修改")
+}
+
+/// 按 id 替换一笔卖出交易：先回补旧卖出的持仓扣减，再按新输入重新匹配。
+///
+/// 由 `update_transaction_internal` 在事务内调用：回补后使修改可从当前持仓状态重新校验，
+/// 校验或匹配失败时由外层回滚整体还原。
+pub(crate) fn apply_sell(conn: &Connection, id: &str, input: &TransactionInput) -> Result<()> {
+    let plan = prepare_sell(conn, input)?;
+    crate::commands::transactions::update_transaction_row(conn, id, &plan.normalized)?;
+    write_sell_side_effects(conn, id, &plan)?;
+    Ok(())
+}
+
+/// 回补一笔卖出交易曾扣减的持仓并按新输入重建的逆向操作：把每笔 `security_lot_sales` 的数量
+/// 加回对应 lot，再清空该卖出的 `security_lot_sales` 与 `security_transactions` 记录。
+pub(crate) fn reverse_sell(conn: &Connection, id: &str) -> Result<()> {
+    let now = now_iso();
+    let mut stmt = conn
+        .prepare("SELECT lot_id, quantity FROM security_lot_sales WHERE sell_transaction_id=?1")?;
+    let sales: Vec<(String, f64)> = stmt
+        .query_map(rusqlite::params![id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
+        })?
+        .collect::<std::result::Result<_, _>>()?;
+    drop(stmt);
+    for (lot_id, quantity) in sales {
+        conn.execute(
+            "UPDATE security_lots SET remaining_quantity=remaining_quantity+?1, \
+             updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
+            rusqlite::params![quantity, now, device_id(), lot_id],
+        )?;
+    }
+    conn.execute(
+        "DELETE FROM security_lot_sales WHERE sell_transaction_id=?1",
+        rusqlite::params![id],
+    )?;
+    conn.execute(
+        "DELETE FROM security_transactions WHERE transaction_id=?1 AND action='sell'",
+        rusqlite::params![id],
+    )?;
+    Ok(())
 }
 
 pub(crate) struct SellPlan {

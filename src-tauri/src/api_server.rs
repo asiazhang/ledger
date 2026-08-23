@@ -4,13 +4,13 @@ use crate::error::AppError;
 use crate::models::{
     Account, AccountBalance, AccountInput, AccountType, Category, CategoryInput,
     CreateTransactionResult, Currency, Transaction, TransactionBatchInput, TransactionInput,
-    TransactionListFilter, TransactionListResult,
+    TransactionListFilter, TransactionListResult, UpdateTransactionInput,
 };
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use rusqlite::Connection;
 use tower_http::trace::TraceLayer;
@@ -64,6 +64,7 @@ struct ErrorResponse {
         list_currencies_handler,
         list_transactions_handler,
         batch_create_transactions_handler,
+        update_transaction_handler,
         delete_transaction_handler,
         import_knowledge_handler
     ),
@@ -77,6 +78,7 @@ struct ErrorResponse {
         Currency,
         Transaction,
         TransactionInput,
+        UpdateTransactionInput,
         TransactionBatchInput,
         TransactionListResult,
         CreateTransactionResult,
@@ -115,7 +117,7 @@ pub fn build_router(state: Arc<Mutex<Connection>>) -> Router {
         )
         .route(
             "/api/v1/transactions/{id}",
-            delete(delete_transaction_handler),
+            put(update_transaction_handler).delete(delete_transaction_handler),
         )
         .route("/api/v1/currencies", get(list_currencies_handler))
         .route("/api/v1/import/knowledge", get(import_knowledge_handler))
@@ -375,6 +377,37 @@ async fn batch_create_transactions_handler(
     let results =
         crate::commands::create_transactions_internal(&conn, body.transactions, body.dedup)?;
     Ok(Json(results))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/v1/transactions/{id}",
+    tag = "transactions",
+    summary = "按 id 全字段替换交易（编辑）",
+    description = "按 `id` 全字段替换一笔交易，复用与创建一致的按 kind 校验（buy/refund/transfer 的关联约束一致）。\
+                  `idempotency_key` 不作为可编辑字段（不在请求体中）：编辑不重算去重身份，修改后重跑同批导入\
+                  仍按同键去重、不产生重复。buy/sell 的持仓/卖出关联同步重建；已有部分卖出的买入拒绝修改。\
+                  不存在的 id 返回 404。成功返回 200 与更新后的完整交易。",
+    request_body = UpdateTransactionInput,
+    params(
+        ("id" = String, Path, description = "交易 ID")
+    ),
+    responses(
+        (status = 200, description = "更新后的完整交易", body = Transaction),
+        (status = 400, description = "参数错误（如转账缺目标账户、部分卖出的买入）", body = ErrorResponse),
+        (status = 404, description = "交易不存在", body = ErrorResponse),
+        (status = 500, description = "数据库错误", body = ErrorResponse)
+    )
+)]
+async fn update_transaction_handler(
+    State(conn): State<Arc<Mutex<Connection>>>,
+    Path(id): Path<String>,
+    Json(input): Json<UpdateTransactionInput>,
+) -> Result<Json<Transaction>, AppError> {
+    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    crate::commands::update_transaction_internal(&conn, &id, input.into())?;
+    let updated = crate::commands::get_transaction_internal(&conn, &id)?;
+    Ok(Json(updated))
 }
 
 #[utoipa::path(

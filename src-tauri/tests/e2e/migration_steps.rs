@@ -7,6 +7,7 @@ use tauri_app_lib::commands::accounts::{
 };
 use tauri_app_lib::commands::transactions::{
     create_transactions_internal, delete_transaction_internal, list_transactions_internal,
+    update_transaction_internal,
 };
 use tauri_app_lib::models::{AccountInput, AccountType, TransactionInput, TransactionListFilter};
 
@@ -64,6 +65,39 @@ fn reimport(world: &mut LedgerWorld) {
     let results =
         create_transactions_internal(&world.conn, inputs, true).expect("重跑批量导入失败");
     world.last_batch_results = results;
+    world.transactions_list = query_all_transactions(&world.conn);
+}
+
+/// 按幂等键找到对应交易并全字段替换（模拟 AI 读回后用 PUT 修改的纠错路径）。
+/// 修改金额/日期/备注但幂等键保持不变——编辑不改变导入身份，修改后重跑同批导入不产生重复。
+#[when(expr = "修改幂等键 {string} 的交易 金额 {int} 日期 {string} 备注 {string}")]
+fn edit_txn_by_key(world: &mut LedgerWorld, key: String, amount: i64, date: String, note: String) {
+    let (id, account_id, currency_code): (String, String, String) = world
+        .conn
+        .query_row(
+            "SELECT id, account_id, currency_code FROM transactions \
+             WHERE idempotency_key=?1 AND is_deleted=0 LIMIT 1",
+            params![key],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap_or_else(|_| panic!("未找到幂等键为 '{key}' 的交易"));
+    let input = TransactionInput {
+        kind: "income".into(),
+        amount_cents: amount,
+        currency_code,
+        account_id,
+        to_account_id: None,
+        category_id: None,
+        refund_of_transaction_id: None,
+        note: Some(note),
+        date,
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        idempotency_key: None,
+    };
+    update_transaction_internal(&world.conn, &id, input).expect("修改交易失败");
     world.transactions_list = query_all_transactions(&world.conn);
 }
 

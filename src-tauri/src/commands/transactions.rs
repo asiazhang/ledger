@@ -4,12 +4,12 @@ use sha2::{Digest, Sha256};
 use tauri::State;
 
 use crate::commands::fx::convert_to_native;
-use crate::db::query::query_all;
+use crate::db::query::{query_all, query_one};
 use crate::db::{DbState, device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{
-    CreateTransactionResult, NormalizedTransaction, TransactionInput, TransactionListFilter,
-    TransactionListResult,
+    CreateTransactionResult, NormalizedTransaction, Transaction, TransactionInput,
+    TransactionListFilter, TransactionListResult,
 };
 
 /// 计算导入去重哈希：`sha256("date|kind|amount_cents|currency_code|account_id|to_account_id")`。
@@ -298,6 +298,104 @@ pub fn create_transactions(
     create_transactions_internal(&conn, inputs, false)
 }
 
+/// 按 `id` 全字段替换一笔交易（`PUT /api/v1/transactions/{id}`）。
+///
+/// 复用 `normalize_transaction`（其 buy/sell 分支复用 `prepare_buy`/`prepare_sell`）校验并归一化
+/// 字段，关联约束与创建路径一致。幂等键（`idempotency_key`）与内容哈希（`dedup_hash`）不作为
+/// 可编辑字段——修改不重算去重身份，故修改后重跑同批导入（带幂等键）仍按同键去重、不产生重复。
+///
+/// buy/sell 的持仓/卖出关联在各自替换路径处理（先按旧 kind 清理/回补，再按新 kind 重建），
+/// 跨 kind 修改（如 expense→buy）避免孤儿持仓。整笔修改在事务内完成，校验或匹配失败回滚。
+/// 不存在或已软删除的 id 返回 `AppError::NotFound`。
+pub fn update_transaction_internal(
+    conn: &Connection,
+    id: &str,
+    input: TransactionInput,
+) -> Result<()> {
+    // 读取旧交易 kind，用于按旧 kind 清理持仓/卖出关联；不存在或已删除返回 NotFound。
+    let old_kind: String = conn
+        .query_row(
+            "SELECT kind FROM transactions WHERE id=?1 AND is_deleted=0",
+            rusqlite::params![id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .ok_or_else(|| AppError::NotFound(format!("交易不存在: {id}")))?;
+
+    conn.execute("BEGIN", [])?;
+    let res = (|| -> Result<()> {
+        // 先按旧 kind 清理/回补持仓副作用，再按新 kind 校验并应用（跨 kind 修改避免孤儿持仓）。
+        match old_kind.as_str() {
+            "buy" => crate::commands::investment::cleanup_buy(conn, id)?,
+            "sell" => crate::commands::investment::reverse_sell(conn, id)?,
+            _ => {}
+        }
+        match input.kind.as_str() {
+            "buy" => crate::commands::investment::apply_buy(conn, id, &input),
+            "sell" => crate::commands::investment::apply_sell(conn, id, &input),
+            _ => {
+                let norm = normalize_transaction(conn, &input)?;
+                update_transaction_row(conn, id, &norm)?;
+                Ok(())
+            }
+        }
+    })();
+    match res {
+        Ok(()) => {
+            conn.execute("COMMIT", [])?;
+            Ok(())
+        }
+        Err(e) => {
+            conn.execute("ROLLBACK", [])?;
+            Err(e)
+        }
+    }
+}
+
+/// 按 `id` 读取未删除交易，供修改接口返回更新后的完整交易。不存在返回 `NotFound`。
+pub fn get_transaction_internal(conn: &Connection, id: &str) -> Result<Transaction> {
+    query_one::<Transaction, _>(
+        conn,
+        "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
+         to_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,\
+         version,device_id,is_deleted FROM transactions WHERE id=?1 AND is_deleted=0",
+        rusqlite::params![id],
+    )?
+    .ok_or_else(|| AppError::NotFound(format!("交易不存在: {id}")))
+}
+
+/// 更新交易行字段（创建与修改共用的归一化字段），保留 `id`、`created_at` 与去重身份
+/// （`idempotency_key` / `dedup_hash`），版本号递增。buy/sell 同样经由本函数落交易行字段。
+pub(crate) fn update_transaction_row(
+    conn: &Connection,
+    id: &str,
+    norm: &NormalizedTransaction,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE transactions \
+         SET kind=?2, amount_cents=?3, currency_code=?4, amount_native_cents=?5, account_id=?6, \
+         to_account_id=?7, category_id=?8, refund_of_transaction_id=?9, note=?10, date=?11, \
+         updated_at=?12, version=version+1, device_id=?13 \
+         WHERE id=?1",
+        rusqlite::params![
+            id,
+            norm.kind,
+            norm.amount_cents,
+            norm.currency_code,
+            norm.amount_native_cents,
+            norm.account_id,
+            norm.to_account_id,
+            norm.category_id,
+            norm.refund_of_transaction_id,
+            norm.note,
+            norm.date,
+            now_iso(),
+            device_id(),
+        ],
+    )?;
+    Ok(())
+}
+
 /// 删除交易（软删除 `is_deleted=1`）。
 ///
 /// buy 交易同步清理关联持仓（`security_lots` / `security_transactions`）：
@@ -314,23 +412,11 @@ pub fn delete_transaction_internal(conn: &Connection, id: &str) -> Result<()> {
         .ok_or_else(|| AppError::NotFound(format!("交易不存在: {id}")))?;
 
     if is_buy {
-        let sold: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM security_lots \
-             WHERE buy_transaction_id=?1 \
-             AND remaining_quantity < initial_quantity",
-            rusqlite::params![id],
-            |r| r.get(0),
-        )?;
-        if sold > 0 {
-            return Err(AppError::Invalid("该买入交易已有部分卖出，无法删除".into()));
-        }
-        conn.execute(
-            "DELETE FROM security_lots WHERE buy_transaction_id=?1",
-            rusqlite::params![id],
-        )?;
-        conn.execute(
-            "DELETE FROM security_transactions WHERE transaction_id=?1",
-            rusqlite::params![id],
+        // 守卫（部分卖出拒绝）与持仓/卖出关联清理与按 id 修改共用（见 #50）。
+        crate::commands::investment::cleanup_buy_side_effects(
+            conn,
+            id,
+            "该买入交易已有部分卖出，无法删除",
         )?;
     }
 
@@ -1614,5 +1700,247 @@ mod tests {
             .unwrap();
         assert_eq!(kind, "refund");
         assert_eq!(refund_of, Some(expense_id));
+    }
+
+    #[test]
+    fn update_transaction_internal_replaces_fields_and_bumps_version() {
+        let conn = setup();
+        insert_account(&conn, "acc-upd", "现金", "cash", "CNY");
+        let id =
+            insert_transaction(&conn, make_input("acc-upd", "expense", 500, "2026-01-01")).unwrap();
+
+        let mut edited = make_input("acc-upd", "expense", 900, "2026-01-05");
+        edited.note = Some("改后备注".into());
+        update_transaction_internal(&conn, &id, edited).unwrap();
+
+        let t = get_transaction_internal(&conn, &id).unwrap();
+        assert_eq!(t.kind, "expense");
+        assert_eq!(t.amount_cents, 900);
+        assert_eq!(t.date, "2026-01-05");
+        assert_eq!(t.note.as_deref(), Some("改后备注"));
+        assert_eq!(t.version, 2, "修改后版本号应递增");
+    }
+
+    #[test]
+    fn update_transaction_internal_returns_not_found_for_missing_or_deleted() {
+        let conn = setup();
+        insert_account(&conn, "acc-upd", "现金", "cash", "CNY");
+        let id =
+            insert_transaction(&conn, make_input("acc-upd", "expense", 500, "2026-01-01")).unwrap();
+
+        let err = update_transaction_internal(
+            &conn,
+            "不存在的id",
+            make_input("acc-upd", "expense", 100, "2026-01-01"),
+        )
+        .unwrap_err();
+        assert!(matches!(err, AppError::NotFound(_)));
+
+        conn.execute(
+            "UPDATE transactions SET is_deleted=1 WHERE id=?1",
+            params![id],
+        )
+        .unwrap();
+        let err = update_transaction_internal(
+            &conn,
+            &id,
+            make_input("acc-upd", "expense", 100, "2026-01-01"),
+        )
+        .unwrap_err();
+        assert!(matches!(err, AppError::NotFound(_)), "已软删除应视为不存在");
+    }
+
+    #[test]
+    fn update_transaction_internal_reuses_kind_validation_transfer_needs_target() {
+        let conn = setup();
+        insert_account(&conn, "acc-upd", "现金", "cash", "CNY");
+        let id =
+            insert_transaction(&conn, make_input("acc-upd", "expense", 500, "2026-01-01")).unwrap();
+
+        let err = update_transaction_internal(
+            &conn,
+            &id,
+            make_input("acc-upd", "transfer", 1000, "2026-01-02"),
+        )
+        .unwrap_err();
+        match err {
+            AppError::Invalid(msg) => assert!(msg.contains("目标账户")),
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn update_transaction_internal_cross_kind_expense_to_transfer() {
+        let conn = setup();
+        insert_account(&conn, "acc-upd-a", "A", "cash", "CNY");
+        insert_account(&conn, "acc-upd-b", "B", "cash", "CNY");
+        let id = insert_transaction(&conn, make_input("acc-upd-a", "expense", 500, "2026-01-01"))
+            .unwrap();
+
+        let transfer = TransactionInput {
+            to_account_id: Some("acc-upd-b".into()),
+            ..make_input("acc-upd-a", "transfer", 1000, "2026-01-02")
+        };
+        update_transaction_internal(&conn, &id, transfer).unwrap();
+
+        let t = get_transaction_internal(&conn, &id).unwrap();
+        assert_eq!(t.kind, "transfer");
+        assert_eq!(t.to_account_id.as_deref(), Some("acc-upd-b"));
+    }
+
+    #[test]
+    fn update_transaction_internal_preserves_key_and_rerun_dedup() {
+        let conn = setup();
+        insert_account(&conn, "acc-key", "现金", "cash", "CNY");
+        let mut a = make_input("acc-key", "income", 1000, "2026-01-01");
+        a.idempotency_key = Some("file:1:1".into());
+        let first = create_transactions_internal(&conn, vec![a.clone()], true).unwrap();
+        let id = first[0].id.clone().unwrap();
+
+        // 编辑内容（金额/备注/日期），幂等键应保持不变。
+        let mut edited = make_input("acc-key", "income", 2000, "2026-01-03");
+        edited.note = Some("改".into());
+        update_transaction_internal(&conn, &id, edited).unwrap();
+
+        let key: Option<String> = conn
+            .query_row(
+                "SELECT idempotency_key FROM transactions WHERE id=?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(key.as_deref(), Some("file:1:1"), "编辑不应改变幂等键");
+
+        // 编辑后重跑同批导入（带同键）：仍按同键去重、返回已有 id → 不产生重复。
+        let mut rerun = make_input("acc-key", "income", 3000, "2026-02-01");
+        rerun.idempotency_key = Some("file:1:1".into());
+        let second = create_transactions_internal(&conn, vec![rerun], true).unwrap();
+        assert!(
+            second[0].success && second[0].duplicate,
+            "同键重跑应去重跳过"
+        );
+        assert_eq!(second[0].id.as_deref(), Some(id.as_str()));
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "编辑后重跑不应新增交易");
+    }
+
+    #[test]
+    fn update_transaction_internal_buy_rebuilds_lot() {
+        use crate::commands::investment::create_buy_transaction;
+        let conn = setup();
+        setup_investment_account(&conn, "acc-inv", "inst-aapl");
+        let buy_id = create_buy_transaction(
+            &conn,
+            make_buy_input("acc-inv", "inst-aapl", 10.0, 10000, 500),
+        )
+        .unwrap();
+
+        // 编辑买入：数量/单价变化，应重建 lot 与 security_transaction。
+        let edited = make_buy_input("acc-inv", "inst-aapl", 5.0, 12000, 0);
+        update_transaction_internal(&conn, &buy_id, edited).unwrap();
+
+        let t = get_transaction_internal(&conn, &buy_id).unwrap();
+        assert_eq!(t.kind, "buy");
+        assert_eq!(t.amount_cents, 5 * 12000, "买入金额 = 数量×单价+费用");
+
+        let (init, remaining): (f64, f64) = conn
+            .query_row(
+                "SELECT initial_quantity, remaining_quantity FROM security_lots \
+                 WHERE buy_transaction_id=?1",
+                params![buy_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(init, 5.0, "应重建为新的持仓数量");
+        assert_eq!(remaining, 5.0);
+        let stx: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM security_transactions WHERE transaction_id=?1",
+                params![buy_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stx, 1, "重建后应有一条 security_transaction");
+    }
+
+    #[test]
+    fn update_transaction_internal_rejects_partially_sold_buy() {
+        use crate::commands::investment::{create_buy_transaction, create_sell_transaction};
+        let conn = setup();
+        setup_investment_account(&conn, "acc-inv2", "inst-msft");
+        let buy_id = create_buy_transaction(
+            &conn,
+            make_buy_input("acc-inv2", "inst-msft", 10.0, 10000, 0),
+        )
+        .unwrap();
+
+        let mut sell = make_buy_input("acc-inv2", "inst-msft", 4.0, 11000, 0);
+        sell.kind = "sell".into();
+        sell.date = "2026-01-20".into();
+        create_sell_transaction(&conn, sell).unwrap();
+
+        let err = update_transaction_internal(
+            &conn,
+            &buy_id,
+            make_buy_input("acc-inv2", "inst-msft", 5.0, 10000, 0),
+        )
+        .unwrap_err();
+        match err {
+            AppError::Invalid(msg) => assert!(msg.contains("部分卖出")),
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn update_transaction_internal_sell_reverses_and_reapplies() {
+        use crate::commands::investment::{create_buy_transaction, create_sell_transaction};
+        let conn = setup();
+        setup_investment_account(&conn, "acc-inv3", "inst-tsla");
+        let buy_id = create_buy_transaction(
+            &conn,
+            make_buy_input("acc-inv3", "inst-tsla", 10.0, 10000, 0),
+        )
+        .unwrap();
+
+        let mut sell1 = make_buy_input("acc-inv3", "inst-tsla", 4.0, 11000, 0);
+        sell1.kind = "sell".into();
+        let sell_id = create_sell_transaction(&conn, sell1).unwrap();
+
+        // 编辑卖出：数量 4→3、单价上涨。应先回补旧扣减再按新输入重新匹配。
+        let mut sell2 = make_buy_input("acc-inv3", "inst-tsla", 3.0, 12000, 0);
+        sell2.kind = "sell".into();
+        sell2.date = "2026-02-01".into();
+        update_transaction_internal(&conn, &sell_id, sell2).unwrap();
+
+        let t = get_transaction_internal(&conn, &sell_id).unwrap();
+        assert_eq!(t.kind, "sell");
+        assert_eq!(t.amount_cents, 3 * 12000, "卖出收入 = 数量×单价");
+
+        // 修改卖出后持仓剩余 = 10 - 3 = 7。
+        let remaining: f64 = conn
+            .query_row(
+                "SELECT remaining_quantity FROM security_lots WHERE buy_transaction_id=?1",
+                params![buy_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 7.0, "修改卖出后持仓应反映新数量");
+
+        // 旧卖出关联已清空，重建为一条新的。
+        let sales: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM security_lot_sales WHERE sell_transaction_id=?1",
+                params![sell_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(sales, 1);
     }
 }

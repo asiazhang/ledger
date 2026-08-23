@@ -3,7 +3,9 @@ use std::collections::HashSet;
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::commands::transactions::{insert_transaction, list_transactions_internal};
+use tauri_app_lib::commands::transactions::{
+    insert_transaction, list_transactions_internal, update_transaction_internal,
+};
 use tauri_app_lib::db::new_uuid;
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::models::{TransactionInput, TransactionListFilter};
@@ -181,6 +183,92 @@ fn create_refund(world: &mut LedgerWorld, amount: i64, date: String) {
     assert!(result.is_ok(), "创建退款失败: {:?}", result.err());
     world.last_transaction_id = Some(result.unwrap());
     world.transactions_list = query_all_transactions(&world.conn);
+}
+
+/// 按 id 全字段替换最近一笔交易（修改场景），沿用原交易账户/币种等非编辑字段。
+#[when(expr = "修改最近交易 类型 {string} 金额 {int} 日期 {string} 备注 {string}")]
+fn update_last_txn(world: &mut LedgerWorld, kind: String, amount: i64, date: String, note: String) {
+    let id = world.last_transaction_id.clone().expect("没有可修改的交易");
+    let existing = world
+        .transactions_list
+        .iter()
+        .find(|t| t.id == id)
+        .expect("原交易不存在");
+    let input = TransactionInput {
+        kind,
+        amount_cents: amount,
+        currency_code: existing.currency_code.clone(),
+        account_id: existing.account_id.clone(),
+        to_account_id: existing.to_account_id.clone(),
+        category_id: existing.category_id.clone(),
+        refund_of_transaction_id: existing.refund_of_transaction_id.clone(),
+        note: Some(note),
+        date,
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        idempotency_key: None,
+    };
+    let result = update_transaction_internal(&world.conn, &id, input);
+    assert!(result.is_ok(), "修改交易失败: {:?}", result.err());
+    world.transactions_list = query_all_transactions(&world.conn);
+}
+
+/// 尝试把最近一笔交易改为转账（缺目标账户），应触发按 kind 校验并记录错误。
+#[when(expr = "尝试修改最近交易为转账 金额 {int} 日期 {string}")]
+fn try_update_last_to_transfer(world: &mut LedgerWorld, amount: i64, date: String) {
+    let id = world.last_transaction_id.clone().expect("没有可修改的交易");
+    let existing = world
+        .transactions_list
+        .iter()
+        .find(|t| t.id == id)
+        .expect("原交易不存在");
+    let input = TransactionInput {
+        kind: "transfer".into(),
+        amount_cents: amount,
+        currency_code: existing.currency_code.clone(),
+        account_id: existing.account_id.clone(),
+        to_account_id: None,
+        category_id: None,
+        refund_of_transaction_id: None,
+        note: None,
+        date,
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        idempotency_key: None,
+    };
+    world.last_error = match update_transaction_internal(&world.conn, &id, input) {
+        Err(AppError::Invalid(msg)) => Some(msg),
+        _ => Some("预期失败但成功了".into()),
+    };
+}
+
+/// 尝试修改一笔不存在的交易，应返回明确错误（NotFound）。
+#[when(expr = "尝试修改不存在的交易 金额 {int} 日期 {string}")]
+fn try_update_missing_txn(world: &mut LedgerWorld, amount: i64, date: String) {
+    let input = TransactionInput {
+        kind: "expense".into(),
+        amount_cents: amount,
+        currency_code: "CNY".into(),
+        account_id: "missing-acc".into(),
+        to_account_id: None,
+        category_id: None,
+        refund_of_transaction_id: None,
+        note: None,
+        date,
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        idempotency_key: None,
+    };
+    world.last_error = match update_transaction_internal(&world.conn, "nonexistent-id", input) {
+        Err(AppError::NotFound(msg)) => Some(msg),
+        _ => Some("预期失败但成功了".into()),
+    };
 }
 
 // ---------------------------------------------------------------------------
