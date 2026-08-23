@@ -26,6 +26,9 @@ fn migrations() -> &'static Migrations<'static> {
             )),
             M::up(include_str!("../../migrations/V004__seed_defaults.sql")),
             M::up(include_str!("../../migrations/V005__search_index.sql")),
+            M::up(include_str!(
+                "../../migrations/V006__transaction_amount_index.sql"
+            )),
         ])
     })
 }

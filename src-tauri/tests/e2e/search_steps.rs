@@ -47,14 +47,110 @@ fn rebuild_index(world: &mut LedgerWorld) {
 
 #[when(expr = "搜索 {string}")]
 fn search(world: &mut LedgerWorld, query: String) {
-    world.last_search =
-        Some(search_transactions_internal(&world.conn, &query, 1, 20).expect("搜索失败"));
+    world.last_search = Some(
+        search_transactions_internal(&world.conn, &query, 1, 20, None, None, None, None)
+            .expect("搜索失败"),
+    );
 }
 
 #[when(expr = "搜索 {string} 第 {int} 页 每页 {int} 条")]
 fn search_paged(world: &mut LedgerWorld, query: String, page: usize, page_size: usize) {
-    world.last_search =
-        Some(search_transactions_internal(&world.conn, &query, page, page_size).expect("搜索失败"));
+    world.last_search = Some(
+        search_transactions_internal(&world.conn, &query, page, page_size, None, None, None, None)
+            .expect("搜索失败"),
+    );
+}
+
+/// 关键字 + 金额区间（分）AND 组合。
+#[when(expr = "搜索 {string} 金额区间 {int} 至 {int} 分")]
+fn search_keyword_amount_range(world: &mut LedgerWorld, query: String, min: i64, max: i64) {
+    world.last_search = Some(
+        search_transactions_internal(&world.conn, &query, 1, 20, Some(min), Some(max), None, None)
+            .expect("搜索失败"),
+    );
+}
+
+/// 关键字 + 日期区间（含边界）AND 组合。
+#[when(expr = "搜索 {string} 日期区间 {string} 至 {string}")]
+fn search_keyword_date_range(world: &mut LedgerWorld, query: String, from: String, to: String) {
+    world.last_search = Some(
+        search_transactions_internal(
+            &world.conn,
+            &query,
+            1,
+            20,
+            None,
+            None,
+            Some(from.as_str()),
+            Some(to.as_str()),
+        )
+        .expect("搜索失败"),
+    );
+}
+
+/// 仅金额筛选（无关键字）：金额区间（分，含边界）。
+#[when(expr = "搜索金额区间 {int} 至 {int} 分")]
+fn search_amount_range(world: &mut LedgerWorld, min: i64, max: i64) {
+    world.last_search = Some(
+        search_transactions_internal(&world.conn, "", 1, 20, Some(min), Some(max), None, None)
+            .expect("搜索失败"),
+    );
+}
+
+/// 仅金额筛选（无关键字）：金额区间（元，支持小数，元→分四舍五入）。
+#[when(expr = "搜索金额区间 {float} 至 {float} 元")]
+fn search_amount_range_yuan(world: &mut LedgerWorld, min: f64, max: f64) {
+    let min_cents = (min * 100.0).round() as i64;
+    let max_cents = (max * 100.0).round() as i64;
+    world.last_search = Some(
+        search_transactions_internal(
+            &world.conn,
+            "",
+            1,
+            20,
+            Some(min_cents),
+            Some(max_cents),
+            None,
+            None,
+        )
+        .expect("搜索失败"),
+    );
+}
+
+/// 仅金额筛选（无关键字）：单边下限（分，含边界）。
+#[when(expr = "搜索金额下限 {int} 分")]
+fn search_amount_min(world: &mut LedgerWorld, min: i64) {
+    world.last_search = Some(
+        search_transactions_internal(&world.conn, "", 1, 20, Some(min), None, None, None)
+            .expect("搜索失败"),
+    );
+}
+
+/// 仅金额筛选（无关键字）：单边上限（分，含边界）。
+#[when(expr = "搜索金额上限 {int} 分")]
+fn search_amount_max(world: &mut LedgerWorld, max: i64) {
+    world.last_search = Some(
+        search_transactions_internal(&world.conn, "", 1, 20, None, Some(max), None, None)
+            .expect("搜索失败"),
+    );
+}
+
+/// 仅日期筛选（无关键字）：日期区间（含边界）。
+#[when(expr = "搜索日期区间 {string} 至 {string}")]
+fn search_date_range(world: &mut LedgerWorld, from: String, to: String) {
+    world.last_search = Some(
+        search_transactions_internal(
+            &world.conn,
+            "",
+            1,
+            20,
+            None,
+            None,
+            Some(from.as_str()),
+            Some(to.as_str()),
+        )
+        .expect("搜索失败"),
+    );
 }
 
 // ---------------------------------------------------------------------------

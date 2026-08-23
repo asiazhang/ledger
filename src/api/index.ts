@@ -35,6 +35,7 @@ import type {
   TransactionInput,
   TransactionListFilter,
   TransactionListResult,
+  TransactionSearchFilter,
   TransactionSearchResult,
   UpdateStatusInput,
 } from '@/types'
@@ -68,8 +69,21 @@ export const api = {
   deleteTransaction: (id: string) => invoke<void>('delete_transaction', { id }),
 
   // 交易搜索
-  searchTransactions: (query: string, page = 1, pageSize = 20) =>
-    invoke<TransactionSearchResult>('search_transactions', { query, page, pageSize }),
+  searchTransactions: (
+    query: string,
+    page = 1,
+    pageSize = 20,
+    filter?: TransactionSearchFilter | null,
+  ) =>
+    invoke<TransactionSearchResult>('search_transactions', {
+      query,
+      page,
+      pageSize,
+      amountMinCents: filter?.amountMinCents ?? null,
+      amountMaxCents: filter?.amountMaxCents ?? null,
+      dateFrom: filter?.dateFrom ?? null,
+      dateTo: filter?.dateTo ?? null,
+    }),
 
   // 预算
   listBudgets: () => invoke<Budget[]>('list_budgets'),

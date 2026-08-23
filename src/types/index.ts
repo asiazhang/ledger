@@ -131,6 +131,18 @@ export interface TransactionSearchResult {
   total: number
 }
 
+/** 交易搜索筛选条件（与关键字 AND 组合；全部可选、单边可用） */
+export interface TransactionSearchFilter {
+  /** 金额下限（整数分） */
+  amountMinCents?: number | null
+  /** 金额上限（整数分） */
+  amountMaxCents?: number | null
+  /** 起始日期（含），YYYY-MM-DD */
+  dateFrom?: string | null
+  /** 结束日期（含），YYYY-MM-DD */
+  dateTo?: string | null
+}
+
 export type BudgetPeriod = 'monthly' | 'yearly'
 
 export const BUDGET_PERIOD_LABELS: Record<BudgetPeriod, string> = {
