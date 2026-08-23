@@ -3,28 +3,13 @@ use rusqlite::params;
 
 use tauri_app_lib::commands::search::{rebuild_search_index, search_transactions_internal};
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
-use tauri_app_lib::models::{TransactionInput, TransactionSearchResult};
+use tauri_app_lib::models::TransactionSearchResult;
 
 use crate::world::LedgerWorld;
 
 // ---------------------------------------------------------------------------
 // Given
 // ---------------------------------------------------------------------------
-
-#[given(expr = "存在分类 {string} 类型 {string}")]
-fn create_category(world: &mut LedgerWorld, name: String, kind: String) {
-    let id = new_uuid();
-    let now = now_iso();
-    world
-        .conn
-        .execute(
-            "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES (?1,?2,?3,NULL,NULL,0,?4,?5,1,?6,0)",
-            params![id, name, kind, now, now, device_id()],
-        )
-        .unwrap();
-    world.category_name_to_id.insert(name, id);
-}
 
 /// 存量交易：直接 SQL 插入，绕过应用层索引钩子（模拟 V005 迁移前的存量数据）。
 #[given(expr = "存量交易 备注 {string} 金额 {int} 账户 {string} 日期 {string}")]
@@ -58,38 +43,6 @@ fn legacy_txn(
 #[when(expr = "重建搜索索引")]
 fn rebuild_index(world: &mut LedgerWorld) {
     rebuild_search_index(&world.conn).expect("重建搜索索引失败");
-}
-
-#[when(
-    expr = "创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string} 备注 {string} 分类 {string}"
-)]
-fn create_txn_with_category(
-    world: &mut LedgerWorld,
-    kind: String,
-    amount: i64,
-    account_name: String,
-    date: String,
-    note: String,
-    category_name: String,
-) {
-    let input = TransactionInput {
-        kind,
-        amount_cents: amount,
-        currency_code: "CNY".into(),
-        account_id: world.account_id(&account_name),
-        to_account_id: None,
-        category_id: Some(world.category_id(&category_name)),
-        refund_of_transaction_id: None,
-        note: Some(note),
-        date,
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-    };
-    let result = tauri_app_lib::commands::transactions::insert_transaction(&world.conn, input);
-    assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
-    world.last_transaction_id = Some(result.unwrap());
 }
 
 #[when(expr = "搜索 {string}")]

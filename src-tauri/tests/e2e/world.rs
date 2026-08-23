@@ -54,8 +54,6 @@ pub struct LedgerWorld {
     pub conn: Connection,
     /// 账户名称到 ID 的映射（Given 步骤插入账户后注册，含种子黑洞账户）
     pub account_name_to_id: HashMap<String, String>,
-    /// 分类名称到 ID 的映射（Given 步骤插入分类后注册）
-    pub category_name_to_id: HashMap<String, String>,
     /// 最新创建的交易 ID（用于关联操作如退款）
     pub last_transaction_id: Option<String>,
     /// 最近一次操作错误（检查失败场景）
@@ -100,7 +98,6 @@ impl LedgerWorld {
         let mut world = Self {
             conn,
             account_name_to_id: HashMap::new(),
-            category_name_to_id: HashMap::new(),
             last_transaction_id: None,
             last_error: None,
             transactions_list: Vec::new(),
@@ -134,13 +131,5 @@ impl LedgerWorld {
             .get(name)
             .cloned()
             .unwrap_or_else(|| panic!("账户 '{}' 不存在", name))
-    }
-
-    /// 获取分类 ID，按名称查找
-    pub fn category_id(&self, name: &str) -> String {
-        self.category_name_to_id
-            .get(name)
-            .cloned()
-            .unwrap_or_else(|| panic!("分类 '{}' 不存在", name))
     }
 }

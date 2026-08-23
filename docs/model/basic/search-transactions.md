@@ -1,37 +1,34 @@
 # search_transactions（交易搜索索引）
 
-交易模糊搜索的全文索引，基于 SQLite FTS5 虚拟表实现。它不是业务主表，而是 `transactions` 及其关联账户、分类名的去规范化搜索视图。
+交易模糊搜索的全文索引，基于 SQLite FTS5 虚拟表实现。它不是业务主表，而是 `transactions` 及其关联账户名的去规范化搜索视图。
 
 ## 设计原则
 
 - **离线优先**：所有搜索在本地 SQLite 完成，不依赖远程服务。
 - **与主表解耦**：FTS5 虚拟表只存可搜索文本和交易 ID 元数据，不重复存完整交易行。
 - **软删除感知**：FTS5 本身不感知 `is_deleted`，查询时通过 JOIN 主表过滤。
-- **不污染同步字段**：账户/分类名变更导致的级联重建，使用独立的 `search_reindex_queue`，不动 `transactions.updated_at`。
+- **不污染同步字段**：账户名变更导致的级联重建，使用独立的 `search_reindex_queue`，不动 `transactions.updated_at`。
 
 ## 虚拟表结构
 
 ```sql
 CREATE VIRTUAL TABLE search_transactions USING fts5(
-    content,           -- 可搜索文本
-    transaction_id,    -- UNINDEXED，用于回查主表
-    content_row='',
-    content=''
+    content,           -- 拼接后的可搜索文本（contentful：存储副本以便维护与 rank 排序）
+    transaction_id UNINDEXED  -- 回查主表用
 );
 ```
 
-> 使用 `contentless` 模式，只保留 FTS5 索引，不重复保存一份完整文档。`transaction_id` 标记为 `UNINDEXED`，避免被误用于全文匹配。
+> 使用 **contentful** 模式（非 contentless）：contentless 表删除文档必须携带原文列值、且无法使用 `rank`/`bm25` 排序，与「按相关度排序」需求冲突（ADR-0004 已确认决策 #12）。contentful 支持普通 `DELETE`/`UPDATE`/`INSERT OR REPLACE`，词条随操作干净增删；代价是重复存储 content（备注+账户名+拼音首字母，单条数百字节，几十万条规模约百 MB 级，可接受）。
 
 ## 可搜索内容生成规则
 
 对每一笔非软删除交易， Rust 层生成如下 `content`：
 
 ```text
-content = note || ' ' || account_name || ' ' || category_name || ' '
-          || account_name_pinyin_initials || ' '
-          || category_name_pinyin_initials || ' '
-          || note_pinyin_initials
+content = note || ' ' || account_name || ' ' || note_pinyin_initials || ' ' || account_name_pinyin_initials
 ```
+
+其中 `account_name` 为转出账户名（`transactions.account_id` 关联的 `accounts.name`）。
 
 示例：
 
@@ -39,22 +36,22 @@ content = note || ' ' || account_name || ' ' || category_name || ' '
 |------|--------|------------|
 | note | 吃饭 | cf |
 | account_name | 招商银行 | zsyh |
-| category_name | 餐饮 | cy |
 
 生成的 `content`：
 
 ```text
-吃饭 招商银行 餐饮 zsyh cy cf
+吃饭 招商银行 cf zsyh
 ```
 
-- 所有拼音首字母统一转小写。
-- 空字段贡献为空字符串，多个空格会被 FTS5 分词器忽略。
+- 所有拼音首字母统一转小写（`pinyin_initials`：中文字符取拼音首字母，ASCII 字母/数字小写保留，其余字符跳过）。
+- 空字段贡献为空字符串；所有字段为空时 content 为空串（仍保留文档行，便于后续补充）。
+- **不在索引中**：分类名（`categories.name`）、转入账户名（转账 `to_account_id` 关联的账户名）。转账仅转出账户名可搜。分类改名、转入账户改名不影响搜索结果。
 
 ## 索引维护
 
 ### 搜索重建队列
 
-由于 `content` 包含跨表的 `accounts.name` 和 `categories.name`，账户/分类名变更会级联影响大量交易。引入独立队列表：
+由于 `content` 包含跨表的 `accounts.name`，账户名变更会级联影响大量交易。引入独立队列表：
 
 ```sql
 CREATE TABLE search_reindex_queue (
@@ -66,21 +63,23 @@ CREATE TABLE search_reindex_queue (
 CREATE INDEX idx_search_reindex_queue_enqueued_at ON search_reindex_queue(enqueued_at);
 ```
 
-### 入队条件
+### 入队条件（由迁移 V005 中的触发器实现）
 
-- 交易新增、修改、软删除：立即入队。
-- 账户名修改：批量把该账户下所有 `is_deleted = 0` 的交易入队。
-- 分类名修改：批量把该分类下所有 `is_deleted = 0` 的交易入队。
+- 交易新增：`trg_search_enqueue_txn_insert` 立即入队。
+- 交易更新（`note` / `account_id` / `is_deleted` 变化）：`trg_search_enqueue_txn_update` 入队（OLD/NEW 双入队，覆盖 account_id 变更）。
+- 账户改名：`trg_search_enqueue_account_rename` 把该账户下所有 `is_deleted = 0` 的交易入队。
 - 重复入队使用 `INSERT OR REPLACE` 覆盖，保证一行交易只有一条待重建记录。
+- 分类改名、转账的 `to_account_id` 变更不入队（相关字段不在索引中）。
 
 ### 消费流程
 
-1. 触发条件：交易写入完成后，或账户/分类名变更后延迟几秒（如 3 秒）。
+1. 交易写入路径（`insert_transaction`）即时重建单条索引；账户改名等批量场景由队列消费（`process_reindex_queue`）重建。
 2. 消费端按 `enqueued_at` 升序取出一批 `transaction_id`。
 3. 对每个交易重新生成 `content`：
    - 如果交易已软删除，从 `search_transactions` 中删除对应行。
    - 否则执行 `INSERT OR REPLACE` 写入索引。
 4. 消费完成后从队列删除对应行。
+5. 启动对账（`reconcile_search_index`）：FTS 文档数 ≠ 未删除交易数时全量重建（`rebuild_search_index`），否则消费队列。
 
 ### 与同步机制的边界
 
@@ -89,22 +88,23 @@ CREATE INDEX idx_search_reindex_queue_enqueued_at ON search_reindex_queue(enqueu
 ## 查询模式
 
 ```sql
-SELECT t.*, a.name AS account_name, c.name AS category_name
+SELECT t.*
 FROM search_transactions s
 JOIN transactions t ON s.transaction_id = t.id
-JOIN accounts a ON t.account_id = a.id AND a.is_deleted = 0
-LEFT JOIN categories c ON t.category_id = c.id AND c.is_deleted = 0
+JOIN accounts a ON t.account_id = a.id
+LEFT JOIN categories c ON t.category_id = c.id
 WHERE search_transactions MATCH ?
   AND t.is_deleted = 0
-  AND t.amount_cents BETWEEN ? AND ?
-  AND t.date BETWEEN ? AND ?
-ORDER BY rank DESC, t.date DESC
-LIMIT ?;
+  AND a.is_deleted = 0
+  AND (c.is_deleted = 0 OR c.id IS NULL)
+ORDER BY rank DESC, t.date DESC, t.created_at DESC, t.id DESC
+LIMIT ? OFFSET ?;
 ```
 
-- `MATCH` 参数由用户输入分词后拼接。例如输入 `cf 吃饭` 会转换为 `cf OR 吃饭`，同时命中拼音首字母和原始中文。
-- 金额与日期筛选在 JOIN 回主表后完成，复用 `idx_transactions_date` 与 `idx_transactions_amount`（如金额索引不存在则需新增）。
-- 排序先用 FTS5 内置 `rank`，再按交易日期倒序。
+- `MATCH` 参数由用户输入按空白分词后拼接（`build_match_query`）：每个词条生成 `"词条" OR "词条"*`（整词 + 前缀通配）并 OR，词条间 AND。如输入 `cf 午餐` → `("cf" OR "cf"*) AND ("午餐" OR "午餐"*)`。`"` 与 `*` 剥离防注入。
+- 中文按连续汉字整词 token（unicode61 tokenizer），不支持词中片段（`商银` 搜不到「招商银行」），由拼音首字母前缀兜底。
+- 排序先用 FTS5 内置 `rank`，再按交易日期倒序、`id` 兜底。
+- 金额与日期不做文本筛选（FTS5 只负责文本匹配）；金额/日期范围过滤为 ADR-0004 预留能力，当前命令尚未实现。
 - 不返回高亮片段，结果列表只展示交易信息。
 
 ## 索引
@@ -126,4 +126,4 @@ LIMIT ?;
 
 - ADR-0004：`docs/adr/0004-fuzzy-search-transactions.md`
 - `docs/adr/glossary-fuzzy-search.md`
-- Migration：待新增（`V00X__search_transactions.sql`）
+- Migration：`src-tauri/migrations/V005__search_index.sql`

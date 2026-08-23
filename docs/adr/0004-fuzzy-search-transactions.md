@@ -116,7 +116,12 @@ LIMIT ?;
 12. **contentful 修正**：原决策 #2 的 contentless（`content=''`）在实现中确认与需求冲突，改为 contentful 表（`CREATE VIRTUAL TABLE ... USING fts5(content, transaction_id UNINDEXED)`）：
     - contentless 表删除文档必须携带原文列值（`'delete'` 特殊命令），而 contentless 无法回读已存内容，仅按 rowid 删除会残留索引词条、rowid 复用后旧词条复活（实测确认）；
     - contentless 表无法使用 `rank`/`bm25` 排序（与决策 #11 冲突）；
-    - contentful 表支持普通 `DELETE`/`UPDATE`/`INSERT OR REPLACE`，词条随操作干净增删，`rank` 排序可用；代价是重复存储 content（备注+账户名+分类名+拼音首字母，单条数百字节，几十万条规模约百 MB 级），对桌面应用可接受。
+    - contentful 表支持普通 `DELETE`/`UPDATE`/`INSERT OR REPLACE`，词条随操作干净增删，`rank` 排序可用；代价是重复存储 content（备注+账户名+拼音首字母，单条数百字节，几十万条规模约百 MB 级），对桌面应用可接受。
+13. **搜索范围收窄（V005 内直接调整，未新增迁移）**：可搜索内容从「备注 + 账户名（含转入）+ 分类名 + 拼音」收窄为「备注 + 转出账户名 + 二者拼音首字母」：
+    - 去掉分类名及其拼音：分类是结构化筛选字段（交易列表页已有分类筛选器），在全文索引中意义重叠，且分类改名触发的级联重建成本高；
+    - 去掉转入账户名及其拼音：转账仅占交易一部分，且索引 payload 对非转账恒为空串；
+    - 对应删除了分类改名触发器（`trg_search_enqueue_category_rename`）、交易更新触发器入队条件收窄为 `note/account_id/is_deleted`；账户改名触发器保留；
+    - 金额/日期仍不做 FTS 文本匹配（见决策 #5，筛选能力未实现，保持现状）。
 
 ## 模型补充：搜索重建队列
 

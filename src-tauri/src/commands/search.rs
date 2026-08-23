@@ -1,6 +1,6 @@
 //! 交易搜索（ADR-0004）：FTS5 索引维护与查询。
 //!
-//! - 可搜索内容：备注 + 账户名 + 分类名 + 三者拼音首字母（仅首字母缩写、小写）。
+//! - 可搜索内容：备注 + 账户名 + 二者拼音首字母（仅首字母缩写、小写）。
 //! - 匹配语义：整词匹配 + 拼音首字母匹配 + 前缀通配；词条间 AND、词条内原词/前缀 OR。
 //! - 索引维护：交易创建/删除后应用层即时重建；账户/分类改名由触发器入队
 //!   `search_reindex_queue`，消费后批量重建；启动时按文档数对账兜底全量重建。
@@ -52,21 +52,11 @@ pub fn pinyin_initials(text: &str) -> String {
     out
 }
 
-/// 拼接可搜索内容：`备注 转出账户名 转入账户名 分类名 备注拼音 转出账户拼音 转入账户拼音 分类拼音`。
-/// 转账同时携带转出/转入账户名；空字段跳过；所有字段为空时返回空串（仍保留文档行）。
-pub fn build_search_content(
-    note: Option<&str>,
-    account_name: &str,
-    to_account_name: &str,
-    category_name: Option<&str>,
-) -> String {
-    let mut parts: Vec<String> = Vec::with_capacity(8);
-    let text_parts = [
-        note,
-        Some(account_name),
-        Some(to_account_name),
-        category_name,
-    ];
+/// 拼接可搜索内容：`备注 账户名 备注拼音 账户名拼音`。
+/// 空字段跳过；所有字段为空时返回空串（仍保留文档行）。
+pub fn build_search_content(note: Option<&str>, account_name: &str) -> String {
+    let mut parts: Vec<String> = Vec::with_capacity(4);
+    let text_parts = [note, Some(account_name)];
     for text in text_parts.into_iter().flatten() {
         let text = text.trim();
         if !text.is_empty() {
@@ -227,40 +217,28 @@ struct IndexPayload {
 }
 
 /// 读取交易的索引载荷。交易不存在返回 None。
-/// 内容 = 备注 + 转出账户名 + 转入账户名 + 分类名 + 四者拼音首字母。
+/// 内容 = 备注 + 账户名 + 二者拼音首字母。
 fn read_index_payload(conn: &Connection, transaction_id: &str) -> Result<Option<IndexPayload>> {
     let row = conn
         .query_row(
-            "SELECT t.note, COALESCE(a.name,''), COALESCE(a2.name,''), COALESCE(c.name,''), \
-             t.is_deleted \
+            "SELECT t.note, COALESCE(a.name,''), t.is_deleted \
              FROM transactions t \
              LEFT JOIN accounts a ON t.account_id = a.id \
-             LEFT JOIN accounts a2 ON t.to_account_id = a2.id \
-             LEFT JOIN categories c ON t.category_id = c.id \
              WHERE t.id = ?1",
             [transaction_id],
             |r| {
                 Ok((
                     r.get::<_, Option<String>>(0)?,
                     r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, Option<String>>(3)?,
-                    r.get::<_, i64>(4)?,
+                    r.get::<_, i64>(2)?,
                 ))
             },
         )
         .optional()?;
-    Ok(row.map(
-        |(note, account_name, to_account_name, category_name, is_deleted)| IndexPayload {
-            content: build_search_content(
-                note.as_deref(),
-                &account_name,
-                &to_account_name,
-                category_name.as_deref(),
-            ),
-            is_deleted: is_deleted != 0,
-        },
-    ))
+    Ok(row.map(|(note, account_name, is_deleted)| IndexPayload {
+        content: build_search_content(note.as_deref(), &account_name),
+        is_deleted: is_deleted != 0,
+    }))
 }
 
 /// 删除单条交易的 FTS 文档（不存在时为空操作）。
@@ -444,25 +422,16 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn build_content_joins_note_account_category_and_initials() {
-        let content = build_search_content(Some("吃饭"), "招商银行", "", Some("餐饮"));
-        assert_eq!(content, "吃饭 招商银行 餐饮 cf zsyh cy");
-    }
-
-    #[test]
-    fn build_content_includes_transfer_to_account() {
-        let content = build_search_content(Some("转账"), "现金", "银行", None);
-        assert_eq!(content, "转账 现金 银行 zz xj yh");
+    fn build_content_joins_note_account_and_initials() {
+        let content = build_search_content(Some("吃饭"), "招商银行");
+        assert_eq!(content, "吃饭 招商银行 cf zsyh");
     }
 
     #[test]
     fn build_content_skips_empty_fields() {
-        assert_eq!(build_search_content(None, "现金", "", None), "现金 xj");
-        assert_eq!(
-            build_search_content(Some("   "), "现金", "", None),
-            "现金 xj"
-        );
-        assert_eq!(build_search_content(None, "", "", None), "");
+        assert_eq!(build_search_content(None, "现金"), "现金 xj");
+        assert_eq!(build_search_content(Some("   "), "现金"), "现金 xj");
+        assert_eq!(build_search_content(None, ""), "");
     }
 
     // -----------------------------------------------------------------------
@@ -508,13 +477,12 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn search_matches_note_account_category_and_pinyin() {
+    fn search_matches_note_account_and_pinyin() {
         let conn = setup();
         insert_account(&conn, "acc-1", "招商银行", "bank", "CNY");
         insert_account(&conn, "acc-2", "现金", "cash", "CNY");
-        insert_category(&conn, "cat-1", "餐饮", "expense");
         insert_txn(&conn, "tx-1", "acc-1", None, Some("吃饭"), "2026-02-01");
-        insert_txn(&conn, "tx-2", "acc-2", Some("cat-1"), None, "2026-02-02");
+        insert_txn(&conn, "tx-2", "acc-2", None, None, "2026-02-02");
         rebuild_search_index(&conn).unwrap();
 
         // 备注整词
@@ -538,13 +506,6 @@ mod tests {
         // 账户名拼音 zsyh
         assert_eq!(
             search_transactions_internal(&conn, "zsyh", 1, 20)
-                .unwrap()
-                .total,
-            1
-        );
-        // 分类名整词
-        assert_eq!(
-            search_transactions_internal(&conn, "餐饮", 1, 20)
                 .unwrap()
                 .total,
             1
@@ -658,7 +619,7 @@ mod tests {
     }
 
     #[test]
-    fn search_transfer_by_to_account_name() {
+    fn search_transfer_by_account_name() {
         use crate::commands::transactions::insert_transaction;
         use crate::models::TransactionInput;
         let conn = setup();
@@ -680,9 +641,15 @@ mod tests {
             fee_cents: None,
         };
         let id = insert_transaction(&conn, input).unwrap();
-        // 转出账户名、转入账户名（含拼音首字母）均可搜
+        // 转出账户名（含拼音首字母）可搜；转入账户名不在索引中
         assert_eq!(
             search_transactions_internal(&conn, "现金", 1, 20)
+                .unwrap()
+                .total,
+            1
+        );
+        assert_eq!(
+            search_transactions_internal(&conn, "xj", 1, 20)
                 .unwrap()
                 .total,
             1
@@ -691,13 +658,7 @@ mod tests {
             search_transactions_internal(&conn, "招商", 1, 20)
                 .unwrap()
                 .total,
-            1
-        );
-        assert_eq!(
-            search_transactions_internal(&conn, "zsyh", 1, 20)
-                .unwrap()
-                .total,
-            1
+            0
         );
         let _ = id;
     }
@@ -853,25 +814,13 @@ mod tests {
     }
 
     #[test]
-    fn category_rename_updates_searchable_content() {
+    fn category_rename_does_not_affect_search() {
         let conn = setup();
         insert_account(&conn, "acc-1", "现金", "cash", "CNY");
         insert_category(&conn, "cat-1", "餐饮", "expense");
         insert_txn(&conn, "tx-1", "acc-1", Some("cat-1"), None, "2026-02-01");
         rebuild_search_index(&conn).unwrap();
-        assert_eq!(
-            search_transactions_internal(&conn, "餐饮", 1, 20)
-                .unwrap()
-                .total,
-            1
-        );
-
-        conn.execute(
-            "UPDATE categories SET name='美食', updated_at='2026-02-02T00:00:00Z', version=version+1 WHERE id='cat-1'",
-            [],
-        )
-        .unwrap();
-        process_reindex_queue(&conn).unwrap();
+        // 分类名不在索引中：分类名/拼音均不可搜
         assert_eq!(
             search_transactions_internal(&conn, "餐饮", 1, 20)
                 .unwrap()
@@ -879,10 +828,24 @@ mod tests {
             0
         );
         assert_eq!(
+            search_transactions_internal(&conn, "cy", 1, 20)
+                .unwrap()
+                .total,
+            0
+        );
+
+        // 分类改名不触发重建：索引内容与结果均不变
+        conn.execute(
+            "UPDATE categories SET name='美食', updated_at='2026-02-02T00:00:00Z', version=version+1 WHERE id='cat-1'",
+            [],
+        )
+        .unwrap();
+        process_reindex_queue(&conn).unwrap();
+        assert_eq!(
             search_transactions_internal(&conn, "美食", 1, 20)
                 .unwrap()
                 .total,
-            1
+            0
         );
     }
 
