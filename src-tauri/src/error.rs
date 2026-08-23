@@ -34,4 +34,16 @@ impl From<rusqlite_migration::Error> for AppError {
     }
 }
 
+impl From<zip::result::ZipError> for AppError {
+    fn from(e: zip::result::ZipError) -> Self {
+        Self::Io(e.to_string())
+    }
+}
+
+impl From<serde_json::Error> for AppError {
+    fn from(e: serde_json::Error) -> Self {
+        Self::Parse(e.to_string())
+    }
+}
+
 pub type Result<T> = std::result::Result<T, AppError>;

@@ -77,6 +77,9 @@ pub fn run() {
         })
         .invoke_handler(logged_invoke_handler(tauri::generate_handler![
             commands::get_ai_prompt,
+            commands::create_backup,
+            commands::restore_backup,
+            commands::restart_app,
             commands::list_currencies,
             commands::list_accounts,
             commands::create_account,

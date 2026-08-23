@@ -20,6 +20,7 @@ export const useAppStore = defineStore('app', () => {
 
   const theme = ref<Theme>(loadLocal<Theme>('appearance', 'dark'))
   const defaultCurrency = ref<string>(loadLocal<string>('default_currency', 'CNY'))
+  const backupDir = ref<string>(loadLocal<string>('backup_dir', ''))
 
   const currencyMap = computed(() => {
     const m = new Map<string, Currency>()
@@ -91,6 +92,11 @@ export const useAppStore = defineStore('app', () => {
     saveLocal('default_currency', code)
   }
 
+  function setBackupDir(dir: string) {
+    backupDir.value = dir
+    saveLocal('backup_dir', dir)
+  }
+
   return {
     currencies,
     accounts,
@@ -111,7 +117,9 @@ export const useAppStore = defineStore('app', () => {
     getCurrency,
     theme,
     defaultCurrency,
+    backupDir,
     setTheme,
     setDefaultCurrency,
+    setBackupDir,
   }
 })

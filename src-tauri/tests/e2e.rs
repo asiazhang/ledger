@@ -2,6 +2,8 @@ use cucumber::World;
 
 #[path = "e2e/accounts_steps.rs"]
 mod accounts_steps;
+#[path = "e2e/backup_steps.rs"]
+mod backup_steps;
 #[path = "e2e/common.rs"]
 mod common;
 #[path = "e2e/migration_steps.rs"]

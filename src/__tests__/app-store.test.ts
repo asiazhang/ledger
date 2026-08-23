@@ -64,3 +64,31 @@ describe('useAppStore defaultCurrency', () => {
     expect(store.defaultCurrency).toBe('JPY')
   })
 })
+
+describe('useAppStore backupDir', () => {
+  it('默认值为空字符串', () => {
+    const store = useAppStore()
+    expect(store.backupDir).toBe('')
+  })
+
+  it('setBackupDir 切换并持久化', () => {
+    const store = useAppStore()
+    store.setBackupDir('/Users/me/backups')
+    expect(store.backupDir).toBe('/Users/me/backups')
+    expect(localStorage.getItem('backup_dir')).toBe('"/Users/me/backups"')
+  })
+
+  it('从 localStorage 恢复备份目录', () => {
+    localStorage.setItem('backup_dir', '"/tmp/ledger-backups"')
+    const store = useAppStore()
+    expect(store.backupDir).toBe('/tmp/ledger-backups')
+  })
+
+  it('setBackupDir 可清除', () => {
+    const store = useAppStore()
+    store.setBackupDir('/tmp/x')
+    store.setBackupDir('')
+    expect(store.backupDir).toBe('')
+    expect(localStorage.getItem('backup_dir')).toBe('""')
+  })
+})

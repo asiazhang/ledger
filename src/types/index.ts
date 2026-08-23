@@ -443,3 +443,15 @@ export interface SyncProgress {
   total_updated: number
   error: string | null
 }
+
+export interface BackupResult {
+  path: string
+  size_bytes: number
+  schema_version: number
+  created_at: string
+}
+
+export interface RestoreResult {
+  schema_version: number
+  restored_at: string
+}

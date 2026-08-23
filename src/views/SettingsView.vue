@@ -15,6 +15,7 @@ import {
 } from 'naive-ui'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { open, save, confirm } from '@tauri-apps/plugin-dialog'
 import { useAppStore } from '@/stores/app'
 import { api } from '@/api'
 import CategoryManager from '@/components/CategoryManager.vue'
@@ -88,6 +89,90 @@ async function startSync() {
     message.error(`同步启动失败: ${e}`)
   }
 }
+
+// ---------------------------------------------------------------------------
+// 备份与恢复
+// ---------------------------------------------------------------------------
+
+const backingUp = ref(false)
+const restoring = ref(false)
+const lastBackup = ref('')
+
+function defaultBackupFileName(): string {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `ledger-backup-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.db.zip`
+}
+
+async function pickBackupDir() {
+  const dir = await open({ directory: true, multiple: false, title: '选择备份目录' })
+  if (typeof dir === 'string' && dir) {
+    store.setBackupDir(dir)
+    message.success('备份目录已设置')
+  }
+}
+
+async function doBackup(target: string) {
+  backingUp.value = true
+  try {
+    const r = await api.createBackup(target)
+    lastBackup.value = `${r.path}（${(r.size_bytes / 1024).toFixed(1)} KB）`
+    message.success('备份成功')
+  } catch (e: any) {
+    message.error(`备份失败: ${e}`)
+  } finally {
+    backingUp.value = false
+  }
+}
+
+async function backupOnce() {
+  if (store.backupDir) {
+    const dir = store.backupDir.replace(/[\\/]+$/, '')
+    const sep = dir.includes('\\') ? '\\' : '/'
+    await doBackup(`${dir}${sep}${defaultBackupFileName()}`)
+  } else {
+    await backupAs()
+  }
+}
+
+async function backupAs() {
+  const path = await save({
+    title: '备份到…',
+    defaultPath: store.backupDir
+      ? `${store.backupDir}/${defaultBackupFileName()}`
+      : defaultBackupFileName(),
+    filters: [{ name: 'Ledger 备份', extensions: ['zip'] }],
+  })
+  if (typeof path === 'string' && path) await doBackup(path)
+}
+
+async function pickRestore() {
+  const path = await open({
+    title: '从备份恢复…',
+    directory: false,
+    multiple: false,
+    defaultPath: store.backupDir || undefined,
+    filters: [{ name: 'Ledger 备份', extensions: ['zip', 'db'] }],
+  })
+  if (typeof path !== 'string' || !path) return
+  const ok = await confirm(
+    '恢复将替换当前全部数据，且不可撤销。\n\n系统会在恢复前自动备份当前数据；恢复成功后应用将自动重启。\n\n确定继续吗？',
+    { title: '确认恢复', kind: 'warning' },
+  )
+  if (!ok) return
+  restoring.value = true
+  try {
+    const r = await api.restoreBackup(path)
+    message.success(`恢复成功（schema v${r.schema_version}），应用即将重启`)
+    setTimeout(() => {
+      api.restartApp()
+    }, 800)
+  } catch (e: any) {
+    message.error(`恢复失败: ${e}`)
+  } finally {
+    restoring.value = false
+  }
+}
 </script>
 
 <template>
@@ -143,6 +228,55 @@ async function startSync() {
             <NText v-if="syncResult" type="success">
               同步完成：新增 {{ syncResult.inserted }} 只，更新 {{ syncResult.updated }} 只
             </NText>
+          </NSpace>
+        </NCard>
+      </NSpace>
+    </NTabPane>
+
+    <NTabPane name="backup" tab="备份与恢复">
+      <NSpace vertical :size="16">
+        <NCard title="备份目录" size="small">
+          <NSpace vertical :size="12">
+            <NText depth="3">
+              配置默认备份目录后，“一键备份”将直接写入该目录，无需每次选择位置。
+            </NText>
+            <NSpace align="center" :size="12">
+              <NText style="word-break: break-all">
+                {{ store.backupDir || '未设置（备份时将弹出位置选择）' }}
+              </NText>
+              <NButton size="small" @click="pickBackupDir">
+                {{ store.backupDir ? '更改目录' : '选择目录' }}
+              </NButton>
+              <NButton v-if="store.backupDir" size="small" quaternary type="error" @click="store.setBackupDir('')">
+                清除
+              </NButton>
+            </NSpace>
+          </NSpace>
+        </NCard>
+
+        <NCard title="备份" size="small">
+          <NSpace vertical :size="12">
+            <NText depth="3">
+              将当前账本（账户、交易、预算、投资持仓、定时交易等全部数据）打包备份为一个文件。
+              备份不含主题、默认币种等界面偏好。
+            </NText>
+            <NSpace align="center" :size="12">
+              <NButton type="primary" :loading="backingUp" @click="backupOnce">一键备份</NButton>
+              <NButton :loading="backingUp" @click="backupAs">另存为…</NButton>
+            </NSpace>
+            <NText v-if="lastBackup" type="success" style="word-break: break-all">
+              最近备份：{{ lastBackup }}
+            </NText>
+          </NSpace>
+        </NCard>
+
+        <NCard title="恢复" size="small">
+          <NSpace vertical :size="12">
+            <NText type="warning" depth="3">
+              从备份文件恢复将<strong>替换当前全部数据</strong>（破坏性操作）。
+              恢复前系统会自动备份当前数据到应用数据目录；恢复成功后应用将自动重启。
+            </NText>
+            <NButton type="error" :loading="restoring" @click="pickRestore">从备份恢复…</NButton>
           </NSpace>
         </NCard>
       </NSpace>

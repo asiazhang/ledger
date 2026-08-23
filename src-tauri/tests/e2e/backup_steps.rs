@@ -1,0 +1,128 @@
+use std::path::PathBuf;
+
+use cucumber::{then, when};
+
+use tauri_app_lib::commands::backup::{backup_db_to, expected_schema_version, restore_db_from};
+use tauri_app_lib::db::{new_uuid, open_connection};
+
+use crate::world::LedgerWorld;
+
+fn temp_path(name: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("ledger-e2e-backup-{name}-{}.db", new_uuid()))
+}
+
+fn temp_safety_dir() -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("ledger-e2e-safety-{}", new_uuid()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+// ---------------------------------------------------------------------------
+// When
+// ---------------------------------------------------------------------------
+
+#[when(expr = "备份数据库到临时文件")]
+fn backup_to_temp(world: &mut LedgerWorld) {
+    let target = temp_path("backup.zip");
+    let result = backup_db_to(&world.conn, &target, "0.2.0");
+    assert!(result.is_ok(), "备份失败: {:?}", result.err());
+    world.last_backup_path = Some(target);
+}
+
+#[when(expr = "删除全部交易")]
+fn delete_all_txns(world: &mut LedgerWorld) {
+    world
+        .conn
+        .execute_batch("UPDATE transactions SET is_deleted=1")
+        .unwrap();
+}
+
+#[when(expr = "从备份恢复到临时数据库")]
+fn restore_to_temp(world: &mut LedgerWorld) {
+    let backup = world.last_backup_path.clone().expect("尚未备份");
+    let db_path = temp_path("restored.db");
+    let safety_dir = temp_safety_dir();
+    let expected = expected_schema_version().unwrap();
+    let result = restore_db_from(&backup, &db_path, &safety_dir, expected);
+    assert!(result.is_ok(), "恢复失败: {:?}", result.err());
+    world.restored_db_path = Some(db_path);
+    std::fs::remove_dir_all(&safety_dir).ok();
+}
+
+#[when(expr = "尝试从更高 schema 版本恢复")]
+fn try_newer_restore(world: &mut LedgerWorld) {
+    // 构造一个 schema 版本更高的库文件作为"备份"。
+    let newer = temp_path("newer.db");
+    {
+        let conn = open_connection(&newer).unwrap();
+        conn.execute_batch("PRAGMA user_version = 999").unwrap();
+    }
+    let db_path = temp_path("target.db");
+    let safety_dir = temp_safety_dir();
+    let expected = expected_schema_version().unwrap();
+    world.last_error = match restore_db_from(&newer, &db_path, &safety_dir, expected) {
+        Err(e) => Some(e.to_string()),
+        Ok(_) => Some("预期失败但成功了".into()),
+    };
+    std::fs::remove_dir_all(&safety_dir).ok();
+    std::fs::remove_file(&newer).ok();
+    std::fs::remove_file(&db_path).ok();
+}
+
+// ---------------------------------------------------------------------------
+// Then
+// ---------------------------------------------------------------------------
+
+#[then(expr = "备份文件应存在")]
+fn backup_exists(world: &mut LedgerWorld) {
+    let p = world.last_backup_path.as_ref().expect("尚未备份");
+    assert!(p.exists(), "备份文件不存在: {}", p.display());
+}
+
+#[then(expr = "备份包应包含 {string} 与 {string}")]
+fn backup_contains(world: &mut LedgerWorld, a: String, b: String) {
+    let p = world.last_backup_path.as_ref().expect("尚未备份");
+    let file = std::fs::File::open(p).unwrap();
+    let mut archive = zip::ZipArchive::new(file).unwrap();
+    let names: Vec<String> = (0..archive.len())
+        .map(|i| archive.by_index(i).unwrap().name().to_string())
+        .collect();
+    assert!(names.contains(&a), "缺少条目 {a}: {names:?}");
+    assert!(names.contains(&b), "缺少条目 {b}: {names:?}");
+}
+
+#[then(expr = "备份包内的数据库应包含 {int} 条交易")]
+fn backup_db_has_txns(world: &mut LedgerWorld, expected: i64) {
+    let p = world.last_backup_path.as_ref().expect("尚未备份");
+    let file = std::fs::File::open(p).unwrap();
+    let mut archive = zip::ZipArchive::new(file).unwrap();
+    let mut db_entry = archive.by_name("ledger.db").unwrap();
+    let out = temp_path("extract.db");
+    let mut out_f = std::fs::File::create(&out).unwrap();
+    std::io::copy(&mut db_entry, &mut out_f).unwrap();
+    drop(out_f);
+    let conn = open_connection(&out).unwrap();
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, expected, "备份包内交易数量不匹配");
+    std::fs::remove_file(&out).ok();
+}
+
+#[then(expr = "恢复的数据库应包含 {int} 条交易")]
+fn restored_has_txns(world: &mut LedgerWorld, expected: i64) {
+    let p = world.restored_db_path.as_ref().expect("尚未恢复");
+    let conn = open_connection(p).unwrap();
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, expected, "恢复出的交易数量不匹配");
+}

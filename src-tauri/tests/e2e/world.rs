@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
+use std::path::PathBuf;
 
 use cucumber::World;
 use rusqlite::Connection;
@@ -63,6 +64,10 @@ pub struct LedgerWorld {
     pub last_batch_results: Vec<CreateTransactionResult>,
     /// 最近一次查询的账户余额快照（账户名 → (余额, is_hidden)，含黑洞账户）
     pub balances: HashMap<String, (i64, bool)>,
+    /// 最近一次备份文件的路径（备份/恢复场景用）
+    pub last_backup_path: Option<PathBuf>,
+    /// 最近一次恢复出的临时数据库路径
+    pub restored_db_path: Option<PathBuf>,
 }
 
 impl fmt::Debug for LedgerWorld {
@@ -73,6 +78,7 @@ impl fmt::Debug for LedgerWorld {
             .field("last_error", &self.last_error)
             .field("transactions_count", &self.transactions_list.len())
             .field("balances_count", &self.balances.len())
+            .field("last_backup", &self.last_backup_path)
             .finish()
     }
 }
@@ -90,6 +96,8 @@ impl LedgerWorld {
             last_import_rows: Vec::new(),
             last_batch_results: Vec::new(),
             balances: HashMap::new(),
+            last_backup_path: None,
+            restored_db_path: None,
         };
         // 注册种子黑洞账户（V004 预置 无(CNY)/无(HKD)），供迁移场景按名称引用。
         let hidden: Vec<(String, String)> = {

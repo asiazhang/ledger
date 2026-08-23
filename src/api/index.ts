@@ -3,6 +3,7 @@ import type {
   Account,
   AccountBalance,
   AccountInput,
+  BackupResult,
   Budget,
   BudgetInput,
   BudgetProgress,
@@ -26,6 +27,7 @@ import type {
   MonthlySummary,
   PnlFilter,
   RealizedPnlSummary,
+  RestoreResult,
   ScheduledTransactionDetail,
   ScheduledTransactionWithExt,
   Transaction,
@@ -111,6 +113,11 @@ export const api = {
 
   // 数据同步
   syncInstruments: () => invoke<void>('sync_instruments'),
+
+  // 备份与恢复
+  createBackup: (targetPath: string) => invoke<BackupResult>('create_backup', { targetPath }),
+  restoreBackup: (backupPath: string) => invoke<RestoreResult>('restore_backup', { backupPath }),
+  restartApp: () => invoke<void>('restart_app'),
 
   // AI
   getAiPrompt: () => invoke<string>('get_ai_prompt'),
