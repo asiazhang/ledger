@@ -92,6 +92,9 @@ const columns: DataTableColumn<Transaction>[] = [
   },
 ]
 
+// 列宽总和：fixed 布局下设置 scroll-x 可阻止列被自动拉伸填满容器
+const scrollX = columns.reduce((sum, c) => sum + (typeof c.width === 'number' ? c.width : 0), 0)
+
 onMounted(async () => {
   await store.loadAll()
   await refresh()
@@ -107,7 +110,15 @@ onMounted(async () => {
       :bordered="false"
       size="small"
       remote
+      :scroll-x="scrollX"
       :pagination="pagination"
     />
   </NSpace>
 </template>
+
+<style scoped>
+/* fixed 布局 + width:100% 会把列拉伸填满容器；覆盖为 auto 让列严格按指定 width，右侧留白 */
+:deep(.n-data-table-table) {
+  width: auto;
+}
+</style>
