@@ -13,7 +13,7 @@ import {
 import type { DataTableColumn } from 'naive-ui'
 import { api } from '@/api'
 import { useAppStore } from '@/stores/app'
-import { buildTransactionColumns } from '@/components/transactionColumns'
+import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/transactionColumns'
 import { formatAmount, type Transaction, type TransactionSearchFilter } from '@/types'
 import { yuanToCents } from '@/utils/money'
 
@@ -153,8 +153,8 @@ function clearFilters() {
 // 复用交易列表列配置（日期/类型/分类/账户/备注/金额），结果只读
 const columns: DataTableColumn<Transaction>[] = buildTransactionColumns(store)
 
-// 列宽总和：fixed 布局下设置 scroll-x 可阻止列被自动拉伸填满容器
-const scrollX = columns.reduce((sum, c) => sum + (typeof c.width === 'number' ? c.width : 0), 0)
+// scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和
+const scrollX = sumFixedColumnWidths(columns)
 
 // 服务端分页：翻页时携带 page 重新搜索
 const pagination = computed(() => ({
@@ -224,6 +224,7 @@ onMounted(async () => {
         索引更新中，结果可能滞后于最近的操作
       </NText>
       <NEmpty v-if="total === 0" description="无匹配结果" />
+      <!-- 备注列为弹性列，表格铺满容器；窄窗口时备注先收缩，scroll-x（固定列宽总和）作为横向滚动下限 -->
       <NDataTable
         v-else
         :columns="columns"
@@ -239,10 +240,3 @@ onMounted(async () => {
     <NEmpty v-else description="输入关键字或设置筛选开始搜索" />
   </NSpace>
 </template>
-
-<style scoped>
-/* fixed 布局 + width:100% 会把列拉伸填满容器；覆盖为 auto 让列严格按指定 width，右侧留白 */
-:deep(.n-data-table-table) {
-  width: auto;
-}
-</style>

@@ -11,7 +11,7 @@ import {
 } from 'naive-ui'
 import { api } from '@/api'
 import { useAppStore } from '@/stores/app'
-import { buildTransactionColumns } from '@/components/transactionColumns'
+import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/transactionColumns'
 import type { Transaction } from '@/types'
 
 const store = useAppStore()
@@ -79,7 +79,7 @@ const columns: DataTableColumn<Transaction>[] = [
   {
     title: '操作',
     key: 'actions',
-    width: 100,
+    width: 80,
     render: (row) =>
       h(
         NPopconfirm,
@@ -92,8 +92,8 @@ const columns: DataTableColumn<Transaction>[] = [
   },
 ]
 
-// 列宽总和：fixed 布局下设置 scroll-x 可阻止列被自动拉伸填满容器
-const scrollX = columns.reduce((sum, c) => sum + (typeof c.width === 'number' ? c.width : 0), 0)
+// scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和
+const scrollX = sumFixedColumnWidths(columns)
 
 onMounted(async () => {
   await store.loadAll()
@@ -103,6 +103,8 @@ onMounted(async () => {
 
 <template>
   <NSpace vertical :size="12">
+    <!-- 备注列为弹性列（transactionColumns 中不设 width），表格始终铺满容器；
+         窄窗口时备注先收缩，scroll-x（固定列宽总和）作为横向滚动下限 -->
     <NDataTable
       :columns="columns"
       :data="data"
@@ -115,10 +117,3 @@ onMounted(async () => {
     />
   </NSpace>
 </template>
-
-<style scoped>
-/* fixed 布局 + width:100% 会把列拉伸填满容器；覆盖为 auto 让列严格按指定 width，右侧留白 */
-:deep(.n-data-table-table) {
-  width: auto;
-}
-</style>

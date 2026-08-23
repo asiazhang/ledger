@@ -28,14 +28,29 @@ const AMOUNT_COLOR: Record<TransactionKind, string> = {
   sell: '',
 }
 
+/** 固定列宽总和（备注为弹性列不设 `width`，不计入）。
+ * 作为 `scroll-x` 的窄窗口横向滚动下限。 */
+export function sumFixedColumnWidths(columns: DataTableColumn<Transaction>[]): number {
+  return columns.reduce(
+    (sum, col) => sum + (typeof col.width === 'number' ? col.width : 0),
+    0,
+  )
+}
+
 /** 交易基础列：日期/类型/分类/账户/备注/金额（搜索结果与交易列表共用，只读）。
  *
- * 列宽约定（Naive UI DataTable）：
- * - `ellipsis` 会使 table-layout 强制为 fixed；fixed 布局下未指定 `width` 的列会均分剩余空间，
+ * 列宽约定（Naive UI DataTable，headless Chrome 实测验证）：
+ * - `ellipsis` 令 table-layout 强制为 fixed；fixed 布局下**未指定 `width` 的列均分剩余空间**，
  *   `minWidth`/`maxWidth` 均无效（maxWidth 仅 `resizable` 时生效）。
- * - 因此所有列显式指定 `width`，并在使用方设置 `scroll-x`（列总宽）阻止自动拉伸。
- * - 宽度按实际内容估算：日期 105 / 类型 65 / 分类 150（最长路径 ≈149px）/ 账户 120（最长 ≈86px）/ 备注 240 / 金额 125。
- *   总宽 890 ≤ 窗口最小宽度 900，不会出现横向滚动。 */
+ * - 策略：除备注外所有列显式 `width`（贴合实际内容，不随窗口漂移）；**备注列不设 `width`，
+ *   作为唯一弹性列吸收剩余空间**——窗口更宽则备注更宽、更窄则备注收缩，表格始终铺满容器，
+ *   其余列不被挤压也不被拉伸。备注超长时由 `ellipsis` 省略 + 悬停全文。
+ * - 不要覆盖 table 的 `width`（改 `auto` 会让带 `ellipsis` 的列被长文本撑宽，实测分类
+ *   150→286px、备注 240→398px）。
+ * - 使用方以「所有固定列（有 `width` 的列，含金额/操作列；备注不计入）宽度总和」作为 `scroll-x`，
+ *   作为窄窗口下的横向滚动下限。备注为弹性列，窗口变窄时先由备注收缩吸收，各固定列宽保持恒定——
+ *   只有当内容区窄于固定列宽总和时才出现横向滚动（最小窗口内容区 660 > 固定列总和 645，故通常不触发）。
+ * - 宽度按实际内容估算：日期 105 / 类型 65 / 分类 150（最长路径 ≈149px）/ 账户 120（最长 ≈86px）/ 金额 125。 */
 export function buildTransactionColumns(store: AppStore): DataTableColumn<Transaction>[] {
   return [
     { title: '日期', key: 'date', width: 105 },
@@ -63,8 +78,7 @@ export function buildTransactionColumns(store: AppStore): DataTableColumn<Transa
     {
       title: '备注',
       key: 'note',
-      // 超长时省略号 + 悬停显示全文
-      width: 240,
+      // 弹性列：不设 width，由 fixed 布局均分剩余空间（超长时省略号 + 悬停显示全文）
       ellipsis: { tooltip: true },
       render: (row) => row.note ?? '-',
     },
