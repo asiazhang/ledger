@@ -9,8 +9,8 @@ use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 use tauri::State;
 
-use crate::db::query::query_all;
 use crate::db::DbState;
+use crate::db::query::query_all;
 use crate::error::Result;
 use crate::models::TransactionSearchResult;
 
@@ -54,15 +54,25 @@ pub fn pinyin_initials(text: &str) -> String {
 
 /// 拼接可搜索内容：`备注 账户名 分类名 备注拼音 账户拼音 分类拼音`。
 /// 空字段跳过；所有字段为空时返回空串（仍保留文档行，后续补充文本后可重建）。
-pub fn build_search_content(note: Option<&str>, account_name: &str, category_name: Option<&str>) -> String {
+pub fn build_search_content(
+    note: Option<&str>,
+    account_name: &str,
+    category_name: Option<&str>,
+) -> String {
     let mut parts: Vec<String> = Vec::with_capacity(6);
-    for text in [note, Some(account_name), category_name].into_iter().flatten() {
+    for text in [note, Some(account_name), category_name]
+        .into_iter()
+        .flatten()
+    {
         let text = text.trim();
         if !text.is_empty() {
             parts.push(text.to_string());
         }
     }
-    for text in [note, Some(account_name), category_name].into_iter().flatten() {
+    for text in [note, Some(account_name), category_name]
+        .into_iter()
+        .flatten()
+    {
         let initials = pinyin_initials(text);
         if !initials.is_empty() {
             parts.push(initials);
@@ -79,14 +89,18 @@ pub fn build_search_content(note: Option<&str>, account_name: &str, category_nam
 /// 引号包裹已覆盖 AND/OR/NOT/NEAR/括号/连字符/冒号/脱字符/加号等全部特殊语法）。
 /// `"` 在 FTS5 短语中无法转义（实测 `""` 双写不支持），直接剥离；
 /// `*` 剥离以避免用户手输通配符干扰（前缀通配由本函数统一附加）。
-
+///
 /// 按空白分词；每个词条生成 `"词条"` 与 `"词条"*`（前缀通配）两个变体并 OR，
 /// 词条之间 AND 连接。如 `cf 午餐` → `("cf" OR "cf"*) AND ("午餐" OR "午餐"*)`。
 /// 空查询返回空串，调用方应直接返回空结果。
 pub fn build_match_query(query: &str) -> String {
     let terms: Vec<String> = query
         .split_whitespace()
-        .map(|t| t.chars().filter(|&c| c != '"' && c != '*').collect::<String>())
+        .map(|t| {
+            t.chars()
+                .filter(|&c| c != '"' && c != '*')
+                .collect::<String>()
+        })
         .filter(|t| !t.is_empty())
         .collect();
     if terms.is_empty() {
@@ -131,11 +145,9 @@ pub fn search_transactions_internal(
                 AND a.is_deleted = 0 \
                 AND (c.is_deleted = 0 OR c.id IS NULL)";
 
-    let total: i64 = conn.query_row(
-        &format!("SELECT COUNT(*) {join}"),
-        [&match_expr],
-        |r| r.get(0),
-    )?;
+    let total: i64 = conn.query_row(&format!("SELECT COUNT(*) {join}"), [&match_expr], |r| {
+        r.get(0)
+    })?;
 
     let items = query_all(
         conn,
@@ -160,7 +172,10 @@ pub fn search_transactions(
     page: Option<usize>,
     page_size: Option<usize>,
 ) -> Result<TransactionSearchResult> {
-    let conn = db.conn.lock().map_err(|e| crate::error::AppError::Db(e.to_string()))?;
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| crate::error::AppError::Db(e.to_string()))?;
     search_transactions_internal(&conn, &query, page.unwrap_or(1), page_size.unwrap_or(20))
 }
 
@@ -237,7 +252,7 @@ pub fn rebuild_search_index(conn: &Connection) -> Result<usize> {
     };
     let mut count = 0;
     for id in &ids {
-        reindex_transaction(conn, &id)?;
+        reindex_transaction(conn, id)?;
         count += 1;
     }
     conn.execute("DELETE FROM search_reindex_queue", [])?;
@@ -247,11 +262,8 @@ pub fn rebuild_search_index(conn: &Connection) -> Result<usize> {
 /// 启动对账：FTS 文档数 ≠ 未删除交易数 → 全量重建（覆盖迁移前存量与漏建文档）；
 /// 一致 → 消费重建队列。
 pub fn reconcile_search_index(conn: &Connection) -> Result<()> {
-    let fts_count: i64 = conn.query_row(
-        "SELECT count(*) FROM search_transactions",
-        [],
-        |r| r.get(0),
-    )?;
+    let fts_count: i64 =
+        conn.query_row("SELECT count(*) FROM search_transactions", [], |r| r.get(0))?;
     let live_count: i64 = conn.query_row(
         "SELECT count(*) FROM transactions WHERE is_deleted=0",
         [],
@@ -445,17 +457,47 @@ mod tests {
         assert_eq!(r.total, 1);
         assert_eq!(r.items[0].id, "tx-1");
         // 拼音首字母 cf
-        assert_eq!(search_transactions_internal(&conn, "cf", 1, 20).unwrap().total, 1);
+        assert_eq!(
+            search_transactions_internal(&conn, "cf", 1, 20)
+                .unwrap()
+                .total,
+            1
+        );
         // 账户名整词
-        assert_eq!(search_transactions_internal(&conn, "招商", 1, 20).unwrap().total, 1);
+        assert_eq!(
+            search_transactions_internal(&conn, "招商", 1, 20)
+                .unwrap()
+                .total,
+            1
+        );
         // 账户名拼音 zsyh
-        assert_eq!(search_transactions_internal(&conn, "zsyh", 1, 20).unwrap().total, 1);
+        assert_eq!(
+            search_transactions_internal(&conn, "zsyh", 1, 20)
+                .unwrap()
+                .total,
+            1
+        );
         // 分类名整词
-        assert_eq!(search_transactions_internal(&conn, "餐饮", 1, 20).unwrap().total, 1);
+        assert_eq!(
+            search_transactions_internal(&conn, "餐饮", 1, 20)
+                .unwrap()
+                .total,
+            1
+        );
         // 前缀通配：吃 → 吃饭
-        assert_eq!(search_transactions_internal(&conn, "吃", 1, 20).unwrap().total, 1);
+        assert_eq!(
+            search_transactions_internal(&conn, "吃", 1, 20)
+                .unwrap()
+                .total,
+            1
+        );
         // 整词不命中子串
-        assert_eq!(search_transactions_internal(&conn, "商银", 1, 20).unwrap().total, 0);
+        assert_eq!(
+            search_transactions_internal(&conn, "商银", 1, 20)
+                .unwrap()
+                .total,
+            0
+        );
     }
 
     #[test]
@@ -480,7 +522,12 @@ mod tests {
         insert_account(&conn, "acc-1", "现金", "cash", "CNY");
         insert_txn(&conn, "tx-1", "acc-1", None, Some("午餐"), "2026-02-01");
         rebuild_search_index(&conn).unwrap();
-        assert_eq!(search_transactions_internal(&conn, "午餐", 1, 20).unwrap().total, 1);
+        assert_eq!(
+            search_transactions_internal(&conn, "午餐", 1, 20)
+                .unwrap()
+                .total,
+            1
+        );
 
         // 软删除后索引文档被移除，搜索结果消失
         conn.execute(
@@ -489,7 +536,12 @@ mod tests {
         )
         .unwrap();
         process_reindex_queue(&conn).unwrap();
-        assert_eq!(search_transactions_internal(&conn, "午餐", 1, 20).unwrap().total, 0);
+        assert_eq!(
+            search_transactions_internal(&conn, "午餐", 1, 20)
+                .unwrap()
+                .total,
+            0
+        );
     }
 
     #[test]
@@ -497,7 +549,14 @@ mod tests {
         let conn = setup();
         insert_account(&conn, "acc-1", "现金", "cash", "CNY");
         // tx-a：命中词条更多、相关度更高，但日期更早
-        insert_txn(&conn, "tx-a", "acc-1", None, Some("午餐 晚餐 早餐"), "2026-01-01");
+        insert_txn(
+            &conn,
+            "tx-a",
+            "acc-1",
+            None,
+            Some("午餐 晚餐 早餐"),
+            "2026-01-01",
+        );
         // tx-b：命中词条更少、相关度更低，但日期更新
         insert_txn(&conn, "tx-b", "acc-1", None, Some("午餐"), "2026-02-01");
         rebuild_search_index(&conn).unwrap();
@@ -540,8 +599,18 @@ mod tests {
         insert_txn(&conn, "tx-1", "acc-1", None, Some("午餐"), "2026-02-01");
         rebuild_search_index(&conn).unwrap();
 
-        assert_eq!(search_transactions_internal(&conn, "", 1, 20).unwrap().total, 0);
-        assert_eq!(search_transactions_internal(&conn, "   ", 1, 20).unwrap().total, 0);
+        assert_eq!(
+            search_transactions_internal(&conn, "", 1, 20)
+                .unwrap()
+                .total,
+            0
+        );
+        assert_eq!(
+            search_transactions_internal(&conn, "   ", 1, 20)
+                .unwrap()
+                .total,
+            0
+        );
         // 特殊字符不报错、不误命中
         let r = search_transactions_internal(&conn, "午餐 AND 现金 OR (NOT)", 1, 20).unwrap();
         assert_eq!(r.total, 0);
@@ -554,11 +623,20 @@ mod tests {
         let conn = setup();
         // 黑洞账户（种子 无(CNY) 已存在）：income 入黑洞账户
         let hidden_id: String = conn
-            .query_row("SELECT id FROM accounts WHERE is_hidden=1 AND currency_code='CNY'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT id FROM accounts WHERE is_hidden=1 AND currency_code='CNY'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
-        insert_txn(&conn, "tx-hidden", &hidden_id, None, Some("退款入账"), "2026-02-01");
+        insert_txn(
+            &conn,
+            "tx-hidden",
+            &hidden_id,
+            None,
+            Some("退款入账"),
+            "2026-02-01",
+        );
 
         rebuild_search_index(&conn).unwrap();
         let r = search_transactions_internal(&conn, "退款", 1, 20).unwrap();
@@ -577,7 +655,12 @@ mod tests {
         // 幂等：重复重建结果一致
         let n2 = rebuild_search_index(&conn).unwrap();
         assert_eq!(n2, 1);
-        assert_eq!(search_transactions_internal(&conn, "午餐", 1, 20).unwrap().total, 1);
+        assert_eq!(
+            search_transactions_internal(&conn, "午餐", 1, 20)
+                .unwrap()
+                .total,
+            1
+        );
     }
 
     #[test]
@@ -587,10 +670,20 @@ mod tests {
         insert_txn(&conn, "tx-1", "acc-1", None, Some("午餐"), "2026-02-01");
         // FTS 为空（存量），counts 不匹配 → 全量重建
         reconcile_search_index(&conn).unwrap();
-        assert_eq!(search_transactions_internal(&conn, "午餐", 1, 20).unwrap().total, 1);
+        assert_eq!(
+            search_transactions_internal(&conn, "午餐", 1, 20)
+                .unwrap()
+                .total,
+            1
+        );
         // 再次对账：一致 → 走队列消费，结果不变
         reconcile_search_index(&conn).unwrap();
-        assert_eq!(search_transactions_internal(&conn, "午餐", 1, 20).unwrap().total, 1);
+        assert_eq!(
+            search_transactions_internal(&conn, "午餐", 1, 20)
+                .unwrap()
+                .total,
+            1
+        );
     }
 
     #[test]
@@ -599,7 +692,12 @@ mod tests {
         insert_account(&conn, "acc-1", "招商银行", "bank", "CNY");
         insert_txn(&conn, "tx-1", "acc-1", None, None, "2026-02-01");
         rebuild_search_index(&conn).unwrap();
-        assert_eq!(search_transactions_internal(&conn, "招商", 1, 20).unwrap().total, 1);
+        assert_eq!(
+            search_transactions_internal(&conn, "招商", 1, 20)
+                .unwrap()
+                .total,
+            1
+        );
 
         // 账户改名：触发器入队，消费后新名称生效
         conn.execute(
@@ -608,9 +706,24 @@ mod tests {
         )
         .unwrap();
         process_reindex_queue(&conn).unwrap();
-        assert_eq!(search_transactions_internal(&conn, "招商", 1, 20).unwrap().total, 0);
-        assert_eq!(search_transactions_internal(&conn, "民生", 1, 20).unwrap().total, 1);
-        assert_eq!(search_transactions_internal(&conn, "msyh", 1, 20).unwrap().total, 1);
+        assert_eq!(
+            search_transactions_internal(&conn, "招商", 1, 20)
+                .unwrap()
+                .total,
+            0
+        );
+        assert_eq!(
+            search_transactions_internal(&conn, "民生", 1, 20)
+                .unwrap()
+                .total,
+            1
+        );
+        assert_eq!(
+            search_transactions_internal(&conn, "msyh", 1, 20)
+                .unwrap()
+                .total,
+            1
+        );
     }
 
     #[test]
@@ -620,7 +733,12 @@ mod tests {
         insert_category(&conn, "cat-1", "餐饮", "expense");
         insert_txn(&conn, "tx-1", "acc-1", Some("cat-1"), None, "2026-02-01");
         rebuild_search_index(&conn).unwrap();
-        assert_eq!(search_transactions_internal(&conn, "餐饮", 1, 20).unwrap().total, 1);
+        assert_eq!(
+            search_transactions_internal(&conn, "餐饮", 1, 20)
+                .unwrap()
+                .total,
+            1
+        );
 
         conn.execute(
             "UPDATE categories SET name='美食', updated_at='2026-02-02T00:00:00Z', version=version+1 WHERE id='cat-1'",
@@ -628,8 +746,18 @@ mod tests {
         )
         .unwrap();
         process_reindex_queue(&conn).unwrap();
-        assert_eq!(search_transactions_internal(&conn, "餐饮", 1, 20).unwrap().total, 0);
-        assert_eq!(search_transactions_internal(&conn, "美食", 1, 20).unwrap().total, 1);
+        assert_eq!(
+            search_transactions_internal(&conn, "餐饮", 1, 20)
+                .unwrap()
+                .total,
+            0
+        );
+        assert_eq!(
+            search_transactions_internal(&conn, "美食", 1, 20)
+                .unwrap()
+                .total,
+            1
+        );
     }
 
     #[test]
@@ -666,9 +794,16 @@ mod tests {
         };
         let id = insert_transaction(&conn, input).unwrap();
         // insert_transaction 已即时重建索引
-        assert_eq!(search_transactions_internal(&conn, "加仓", 1, 20).unwrap().total, 1);
         assert_eq!(
-            search_transactions_internal(&conn, "美股账户", 1, 20).unwrap().total,
+            search_transactions_internal(&conn, "加仓", 1, 20)
+                .unwrap()
+                .total,
+            1
+        );
+        assert_eq!(
+            search_transactions_internal(&conn, "美股账户", 1, 20)
+                .unwrap()
+                .total,
             1,
             "投资交易按账户名可搜（全部交易类型覆盖）"
         );

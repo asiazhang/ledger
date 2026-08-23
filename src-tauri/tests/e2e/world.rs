@@ -85,7 +85,10 @@ impl fmt::Debug for LedgerWorld {
             .field("transactions_count", &self.transactions_list.len())
             .field("balances_count", &self.balances.len())
             .field("last_backup", &self.last_backup_path)
-            .field("last_search_total", &self.last_search.as_ref().map(|s| s.total))
+            .field(
+                "last_search_total",
+                &self.last_search.as_ref().map(|s| s.total),
+            )
             .finish()
     }
 }

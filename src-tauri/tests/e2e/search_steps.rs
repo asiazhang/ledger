@@ -1,9 +1,7 @@
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::commands::search::{
-    rebuild_search_index, search_transactions_internal,
-};
+use tauri_app_lib::commands::search::{rebuild_search_index, search_transactions_internal};
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
 use tauri_app_lib::models::{TransactionInput, TransactionSearchResult};
 
@@ -62,7 +60,9 @@ fn rebuild_index(world: &mut LedgerWorld) {
     rebuild_search_index(&world.conn).expect("重建搜索索引失败");
 }
 
-#[when(expr = "创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string} 备注 {string} 分类 {string}")]
+#[when(
+    expr = "创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string} 备注 {string} 分类 {string}"
+)]
 fn create_txn_with_category(
     world: &mut LedgerWorld,
     kind: String,
@@ -94,16 +94,14 @@ fn create_txn_with_category(
 
 #[when(expr = "搜索 {string}")]
 fn search(world: &mut LedgerWorld, query: String) {
-    world.last_search = Some(
-        search_transactions_internal(&world.conn, &query, 1, 20).expect("搜索失败"),
-    );
+    world.last_search =
+        Some(search_transactions_internal(&world.conn, &query, 1, 20).expect("搜索失败"));
 }
 
 #[when(expr = "搜索 {string} 第 {int} 页 每页 {int} 条")]
 fn search_paged(world: &mut LedgerWorld, query: String, page: usize, page_size: usize) {
-    world.last_search = Some(
-        search_transactions_internal(&world.conn, &query, page, page_size).expect("搜索失败"),
-    );
+    world.last_search =
+        Some(search_transactions_internal(&world.conn, &query, page, page_size).expect("搜索失败"));
 }
 
 // ---------------------------------------------------------------------------
@@ -111,10 +109,7 @@ fn search_paged(world: &mut LedgerWorld, query: String, page: usize, page_size: 
 // ---------------------------------------------------------------------------
 
 fn search_snapshot(world: &LedgerWorld) -> &TransactionSearchResult {
-    world
-        .last_search
-        .as_ref()
-        .expect("尚未执行搜索")
+    world.last_search.as_ref().expect("尚未执行搜索")
 }
 
 #[then(expr = "搜索命中 {int} 条")]
@@ -160,5 +155,8 @@ fn search_nth_amount(world: &mut LedgerWorld, index: i64, expected: i64) {
         .items
         .get((index - 1) as usize)
         .unwrap_or_else(|| panic!("搜索结果不足 {} 条", index));
-    assert_eq!(item.amount_cents, expected, "第 {index} 条搜索结果金额不匹配");
+    assert_eq!(
+        item.amount_cents, expected,
+        "第 {index} 条搜索结果金额不匹配"
+    );
 }

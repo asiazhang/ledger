@@ -124,6 +124,13 @@ export interface TransactionListResult {
   total: number
 }
 
+/** 交易搜索分页结果（服务端分页） */
+export interface TransactionSearchResult {
+  items: Transaction[]
+  /** 命中总数（供「命中 N 条」与分页） */
+  total: number
+}
+
 export type BudgetPeriod = 'monthly' | 'yearly'
 
 export const BUDGET_PERIOD_LABELS: Record<BudgetPeriod, string> = {

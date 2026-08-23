@@ -35,6 +35,7 @@ import type {
   TransactionInput,
   TransactionListFilter,
   TransactionListResult,
+  TransactionSearchResult,
   UpdateStatusInput,
 } from '@/types'
 
@@ -65,6 +66,10 @@ export const api = {
   createTransactions: (inputs: TransactionInput[]) =>
     invoke<CreateTransactionResult[]>('create_transactions', { inputs }),
   deleteTransaction: (id: string) => invoke<void>('delete_transaction', { id }),
+
+  // 交易搜索
+  searchTransactions: (query: string, page = 1, pageSize = 20) =>
+    invoke<TransactionSearchResult>('search_transactions', { query, page, pageSize }),
 
   // 预算
   listBudgets: () => invoke<Budget[]>('list_budgets'),
