@@ -1,3 +1,16 @@
+import type { Currency } from '@/types/currencies'
+
+/** 分 -> 元字符串，按币种小数位格式化 */
+export function formatAmount(cents: number, currency?: Currency): string {
+  const dp = currency?.decimal_places ?? 2
+  const sign = cents < 0 ? '-' : ''
+  const abs = Math.abs(cents)
+  const value = abs / Math.pow(10, dp)
+  const fixed = value.toFixed(dp)
+  const symbol = currency?.symbol ?? ''
+  return `${sign}${symbol}${fixed}`
+}
+
 /**
  * 元（用户输入字符串，支持小数）→ 分（整数）。
  *
