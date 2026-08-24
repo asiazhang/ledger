@@ -5,9 +5,11 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
+use tracing_subscriber::layer::SubscriberExt;
 
 use tauri_app_lib::api_server::build_router;
 use tauri_app_lib::db;
+use tauri_app_lib::test_utils::{CaptureLayer, ensure_global_max_level};
 
 async fn body_to_bytes(body: Body) -> Vec<u8> {
     body.collect().await.unwrap().to_bytes().to_vec()
@@ -2051,4 +2053,71 @@ async fn test_openapi_doc_covers_delete_account_and_category_endpoints() {
         assert!(responses.contains_key("204"), "{label} 应声明 204 响应");
         assert!(responses.contains_key("404"), "{label} 应声明 404 响应");
     }
+}
+
+// ---------------------------------------------------------------------------
+// SQL 耗时归因验证（issue #44：HTTP 侧由 tower_http::trace 请求 span 归因）
+// ---------------------------------------------------------------------------
+
+/// 冒烟/回归：HTTP 导入路径的 SQL 耗时事件应归因到 `tower_http::trace` 的请求 span
+/// （默认名为 `request`）。`TraceLayer::new_for_http()` 已挂载在 `build_router` 上，
+/// handler 内基于 `conn.lock()` 的同步查询在请求 span 内执行，hook 事件应继承该 span。
+/// 采集器具（`CaptureLayer`/`ensure_global_max_level`）来自 `tauri_app_lib::test_utils`，
+/// 与单元测试 `db/tests.rs` 共用（避免重复实现）。
+#[tokio::test(flavor = "current_thread")]
+async fn test_http_sql_duration_attributed_to_request_span() {
+    ensure_global_max_level();
+    let (app, conn) = setup_app();
+
+    // 预置账户：直接写库（在捕获 guard 之前，其 SQL 不进入断言范围），
+    // 使捕获到的 SQL 只来自导入请求 span。
+    let account_id = "acc-import-001";
+    {
+        let conn = conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,'导入账户','cash','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            rusqlite::params![account_id],
+        )
+        .unwrap();
+    }
+
+    let layer = CaptureLayer::new();
+    let captured = Arc::clone(&layer.events);
+    let subscriber = tracing_subscriber::registry().with(layer);
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    // 把一次批量交易写入（导入路径）发到 `/api/v1/transactions/batch`。
+    let batch = format!(
+        r#"{{"transactions":[{{"kind":"income","amount_cents":1000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01"}}]}}"#
+    );
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/transactions/batch")
+                .header("content-type", "application/json")
+                .body(Body::from(batch))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let events = captured.lock().unwrap().clone();
+    let sql_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.fields.iter().any(|(k, _)| k == "sql"))
+        .collect();
+    assert!(
+        !sql_events.is_empty(),
+        "应捕获到导入路径的 SQL 耗时事件，实际捕获: {events:?}"
+    );
+    assert!(
+        sql_events
+            .iter()
+            .all(|e| e.current_span.as_deref() == Some("request")),
+        "SQL 事件应归因到请求 span（request），实际: {sql_events:?}"
+    );
 }

@@ -6,6 +6,8 @@ pub mod log_plugin;
 pub mod logger;
 pub mod models;
 pub mod scheduled_transactions;
+#[doc(hidden)]
+pub mod test_utils;
 
 use tauri::Manager;
 use tauri::ipc::Invoke;
@@ -132,16 +134,23 @@ fn logged_invoke_handler(
     move |invoke: Invoke<tauri::Wry>| {
         let cmd = invoke.message.command().to_string();
         let payload = invoke.message.payload();
-        match payload {
+        let id_hint = match payload {
             tauri::ipc::InvokeBody::Json(value) => {
                 let id_hint = extract_resource_id(value);
                 tracing::info!(command = %cmd, %id_hint, "IPC 调用");
                 tracing::debug!(command = %cmd, payload = %value, "IPC 参数");
+                id_hint
             }
             _ => {
                 tracing::info!(command = %cmd, "IPC 调用");
+                String::new()
             }
-        }
+        };
+        // 归因核心：用命令 span 包裹命令执行，使数据库耗时 hook 发射的 SQL 事件
+        // 自动继承调用方 span（IPC 命令均为同步函数，与 wrapper 同线程执行，归因成立；
+        // 若未来引入异步命令导致丢归因，需对热点函数手包 span 兜底）。
+        let span = tracing::info_span!("command", command = %cmd, %id_hint);
+        let _entered = span.enter();
         handler(invoke)
     }
 }

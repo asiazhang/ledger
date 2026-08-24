@@ -1,13 +1,13 @@
 use super::*;
-use std::sync::{Arc, Mutex, Once};
+use std::sync::Arc;
 use std::time::Duration;
 
 use rusqlite::Connection;
 use rusqlite::params;
-use tracing::field::{Field, Visit};
-use tracing::{Event, Level};
-use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
+use tracing::Level;
+use tracing_subscriber::layer::SubscriberExt;
 
+use crate::test_utils::{CaptureLayer, CapturedEvent, ensure_global_max_level};
 /// 校验迁移集合本身定义正确（在临时内存 DB 上从首到尾跑一遍向上迁移）。
 #[test]
 fn migrations_validate() {
@@ -505,87 +505,10 @@ fn transaction_currency_conversion() {
 // Perf trace（数据库耗时日志）测试——ADR-0009
 // ---------------------------------------------------------------------------
 
-/// 捕获 tracing 事件的测试层：把每个事件的级别与字段记录到共享 Vec。
-/// 仅用于单元测试；`timing_level` 为纯函数，独立做边界测试。
-struct CaptureLayer {
-    events: Arc<Mutex<Vec<CapturedEvent>>>,
-}
-
-impl CaptureLayer {
-    fn new() -> Self {
-        CaptureLayer {
-            events: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct CapturedEvent {
-    level: Level,
-    fields: Vec<(String, String)>,
-}
-
-/// 遍历事件字段的 Visit 实现，把字段名与值收集为字符串。
-struct FieldCapture {
-    fields: Vec<(String, String)>,
-}
-
-impl Visit for FieldCapture {
-    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-        self.fields
-            .push((field.name().to_string(), format!("{value:?}")));
-    }
-    fn record_str(&mut self, field: &Field, value: &str) {
-        self.fields
-            .push((field.name().to_string(), value.to_string()));
-    }
-    fn record_i64(&mut self, field: &Field, value: i64) {
-        self.fields
-            .push((field.name().to_string(), value.to_string()));
-    }
-    fn record_u64(&mut self, field: &Field, value: u64) {
-        self.fields
-            .push((field.name().to_string(), value.to_string()));
-    }
-    fn record_f64(&mut self, field: &Field, value: f64) {
-        self.fields
-            .push((field.name().to_string(), value.to_string()));
-    }
-    fn record_bool(&mut self, field: &Field, value: bool) {
-        self.fields
-            .push((field.name().to_string(), value.to_string()));
-    }
-}
-
-impl<S> Layer<S> for CaptureLayer
-where
-    S: tracing::Subscriber,
-{
-    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
-        let mut capture = FieldCapture { fields: Vec::new() };
-        event.record(&mut capture);
-        self.events.lock().unwrap().push(CapturedEvent {
-            level: *event.metadata().level(),
-            fields: capture.fields,
-        });
-    }
-}
-
-/// 常驻一个 no-op 全局 subscriber，把 `tracing` 的全局 `LevelFilter::current()`
-/// 稳定在 TRACE。否则并发测试线程各自注册/注销 dispatch 时，全局 MAX_LEVEL
-/// 会短暂降到 OFF，导致 `tracing::debug!`/`trace!` 宏的快路径提前过滤，
-/// 线程级 `with_default` 捕获就收不到事件（`cargo test --all` 并行时偶发）。
-/// 该全局 subscriber 不截获任何日志；仅用于稳定级别判定。
-static ENSURE_GLOBAL_MAX_LEVEL: Once = Once::new();
-
-fn ensure_global_max_level() {
-    ENSURE_GLOBAL_MAX_LEVEL.call_once(|| {
-        let _ = tracing::subscriber::set_global_default(tracing_subscriber::registry());
-    });
-}
-
 /// 在捕获 subscriber 生效期间执行 `f`（线程本地），返回捕获到的事件。
 /// SQL 执行时 `trace_v2` 回调在调用线程同步发射，故能被同一线程捕获。
+/// 捕获器具（`CaptureLayer`/`CapturedEvent`/`ensure_global_max_level`）来自
+/// `crate::test_utils`，与集成测试 `tests/api_server.rs` 共用（避免重复实现）。
 fn capture_events(f: impl FnOnce()) -> Vec<CapturedEvent> {
     ensure_global_max_level();
     let layer = CaptureLayer::new();
@@ -671,5 +594,37 @@ fn perf_trace_zero_threshold_emits_warn() {
     assert!(
         events.iter().any(|e| e.level == Level::WARN),
         "threshold=0 时正常语句也应命中 warn 分支"
+    );
+}
+
+/// 接线回归：在 `command` span 内执行 SQL，SQL 耗时事件应归因到该 span
+/// （当前 span 名为 `command`）。这验证了 IPC 侧 `logged_invoke_handler`
+/// 用 `info_span!(command, id_hint)` 包裹命令执行后，hook 事件自动继承调用方 span
+/// （同步命令与 wrapper 同线程执行，归因成立）。
+#[test]
+fn perf_trace_sql_event_inherits_command_span() {
+    let conn = open_in_memory().unwrap();
+
+    let events = capture_events(|| {
+        // 与 `logged_invoke_handler` 一致的命令 span 形状：name=command，含 command 字段。
+        let span = tracing::info_span!("command", command = "list_accounts", id_hint = "");
+        let _entered = span.enter();
+        conn.query_row("SELECT 1", [], |r| r.get::<_, i64>(0))
+            .unwrap();
+    });
+
+    let sql_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.fields.iter().any(|(k, _)| k == "sql"))
+        .collect();
+    assert!(
+        !sql_events.is_empty(),
+        "应捕获到 SQL 事件，实际捕获: {events:?}"
+    );
+    assert!(
+        sql_events
+            .iter()
+            .all(|e| e.current_span.as_deref() == Some("command")),
+        "SQL 事件应归因到 command span，实际: {sql_events:?}"
     );
 }
