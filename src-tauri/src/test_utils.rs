@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, Once};
 
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
-use tracing_subscriber::layer::{Context, Layer};
+use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
 
 /// 捕获到的 tracing 事件，含事件级别、发射时的当前（最内层）span 名与字段。
 #[derive(Clone, Debug)]
@@ -99,4 +99,18 @@ pub fn ensure_global_max_level() {
     ENSURE_GLOBAL_MAX_LEVEL.call_once(|| {
         let _ = tracing::subscriber::set_global_default(tracing_subscriber::registry());
     });
+}
+
+/// 在捕获 subscriber 生效期间执行 `f`（线程本地），返回捕获到的事件。
+///
+/// SQL 执行时 `trace_v2` 回调在调用线程同步发射，故能被同一线程捕获；
+/// 线程内 `tracing::info!`/`debug!` 等事件同样被捕获。先调用
+/// [`ensure_global_max_level`] 稳定全局级别，避免并发测试下快路径误滤。
+pub fn capture_events(f: impl FnOnce()) -> Vec<CapturedEvent> {
+    ensure_global_max_level();
+    let layer = CaptureLayer::new();
+    let captured = Arc::clone(&layer.events);
+    let subscriber = tracing_subscriber::registry().with(layer);
+    tracing::subscriber::with_default(subscriber, f);
+    captured.lock().unwrap().clone()
 }

@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 use sha2::{Digest, Sha256};
@@ -211,8 +213,12 @@ pub fn create_transactions_internal(
     inputs: Vec<TransactionInput>,
     dedup: bool,
 ) -> Result<Vec<CreateTransactionResult>> {
+    let started = Instant::now();
+    let total = inputs.len();
     conn.execute("BEGIN", [])?;
-    let mut results = Vec::with_capacity(inputs.len());
+    let mut results = Vec::with_capacity(total);
+    // 失败条数：累计到批次汇总日志（成功路径=无效行数；回滚路径含触发回滚的那条）。
+    let mut failed = 0usize;
     for input in inputs {
         let dedup_hash = compute_dedup_hash(&input);
         // 客户端幂等键：带键时作为去重身份（内容无关），无键时 None 走内容哈希兜底。
@@ -259,6 +265,8 @@ pub fn create_transactions_internal(
                     rusqlite::params![dedup_hash, idempotency_key, id],
                 ) {
                     conn.execute("ROLLBACK", [])?;
+                    failed += 1;
+                    log_batch_summary(started, total, failed, false);
                     return Err(e.into());
                 }
                 results.push(CreateTransactionResult {
@@ -268,25 +276,57 @@ pub fn create_transactions_internal(
                     error: None,
                 });
             }
-            Err(AppError::Invalid(msg)) => results.push(CreateTransactionResult {
-                success: false,
-                duplicate: false,
-                id: None,
-                error: Some(msg),
-            }),
+            Err(AppError::Invalid(msg)) => {
+                failed += 1;
+                results.push(CreateTransactionResult {
+                    success: false,
+                    duplicate: false,
+                    id: None,
+                    error: Some(msg),
+                });
+            }
             Err(e) => {
                 conn.execute("ROLLBACK", [])?;
+                failed += 1;
+                log_batch_summary(started, total, failed, false);
                 return Err(e);
             }
         }
     }
-    conn.execute("COMMIT", [])?;
+    if let Err(e) = conn.execute("COMMIT", []) {
+        // COMMIT 失败：尝试回滚清理残留（错误路径同样记录批次汇总）。
+        let _ = conn.execute("ROLLBACK", []);
+        log_batch_summary(started, total, failed, false);
+        return Err(e.into());
+    }
+    // 汇总行在 COMMIT 后立即打一条（ADR-0009 决策 #5 / issue #45）：
+    // 数据已提交，无论后续搜索重建队列成败，批次都应有一条可观测的汇总行。
+    log_batch_summary(started, total, failed, true);
     // 批量导入完成后立即消费搜索重建队列：导入是成批写入场景，
     // 一次性重建比等下一个后台刷新周期（60s）更合理；消费总成本不变，
     // 只是从「逐条即时」挪到「导入结束一次性」，且导入命令本就持锁、
     // 不额外影响界面响应（ADR-0004 决策 #14）。
     crate::commands::search::process_reindex_queue(conn)?;
     Ok(results)
+}
+
+/// 记录导入批次汇总日志（ADR-0009 决策 #5 / issue #45）。
+///
+/// 总耗时用调用方在批次开始时记下的手动 `Instant` 计算；`total` 为批次提交的
+/// 交易条数，`failed` 为失败条数，`committed` 区分成功提交与回滚（错误路径同样
+/// 记录一条 `info!`，保证回滚后汇总行仍出现）。
+fn log_batch_summary(started: Instant, total: usize, failed: usize, committed: bool) {
+    let msg = if committed {
+        "导入批次完成"
+    } else {
+        "导入批次回滚"
+    };
+    tracing::info!(
+        total,
+        failed,
+        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+        msg
+    );
 }
 
 #[tauri::command]
@@ -440,7 +480,9 @@ pub fn delete_transaction(db: State<'_, DbState>, id: String) -> Result<()> {
 mod tests {
     use super::*;
     use crate::db::{init_db, open_in_memory};
+    use crate::test_utils::{CapturedEvent, capture_events};
     use rusqlite::params;
+    use tracing::Level;
 
     fn setup() -> Connection {
         let mut conn = open_in_memory().unwrap();
@@ -1942,5 +1984,105 @@ mod tests {
             )
             .unwrap();
         assert_eq!(sales, 1);
+    }
+
+    // ---------------------------------------------------------------------------
+    // 导入批次汇总日志（ADR-0009 决策 #5 / issue #45）
+    // ---------------------------------------------------------------------------
+
+    /// 从事件字段里取同名 key 的值（无则 None）。
+    fn field_value<'a>(event: &'a CapturedEvent, key: &str) -> Option<&'a str> {
+        event
+            .fields
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// 从捕获的事件里找出批次汇总事件（唯一带 `total`+`failed` 字段的事件）。
+    fn find_batch_summary(events: &[CapturedEvent]) -> Option<&CapturedEvent> {
+        events.iter().find(|e| {
+            e.fields.iter().any(|(k, _)| k == "total")
+                && e.fields.iter().any(|(k, _)| k == "failed")
+        })
+    }
+
+    /// 成功批次：汇总行以 info 级别出现，含总耗时与条数（失败数=0）。
+    #[test]
+    fn batch_create_logs_summary_on_success() {
+        let conn = setup();
+        insert_account(&conn, "acc-log-ok", "现金", "cash", "CNY");
+
+        let inputs = vec![
+            make_input("acc-log-ok", "income", 1000, "2026-07-01"),
+            make_input("acc-log-ok", "expense", 500, "2026-07-02"),
+        ];
+        let events = capture_events(|| {
+            let r = create_transactions_internal(&conn, inputs, true).unwrap();
+            assert_eq!(r.len(), 2);
+        });
+
+        let summary = find_batch_summary(&events).expect("应有一条批次汇总日志");
+        assert_eq!(summary.level, Level::INFO, "汇总行应为 info 级（默认可见）");
+        assert_eq!(field_value(summary, "total"), Some("2"), "交易条数应为 2");
+        assert_eq!(
+            field_value(summary, "failed"),
+            Some("0"),
+            "全成功时失败数应为 0"
+        );
+        assert!(
+            field_value(summary, "elapsed_ms").is_some(),
+            "汇总行应含总耗时"
+        );
+    }
+
+    /// 批次中途回滚：汇总行仍出现，且含失败条数（触发唯一约束回滚的那条）。
+    #[test]
+    fn batch_create_logs_summary_on_rollback() {
+        let conn = setup();
+        insert_account(&conn, "acc-log-rb", "现金", "cash", "CNY");
+
+        let mut a = make_input("acc-log-rb", "income", 1000, "2026-07-01");
+        a.idempotency_key = Some("dup-rb".into());
+        let mut b = make_input("acc-log-rb", "income", 2000, "2026-07-02");
+        b.idempotency_key = Some("dup-rb".into());
+
+        let events = capture_events(|| {
+            let err = create_transactions_internal(&conn, vec![a, b], false).unwrap_err();
+            assert!(
+                err.to_string().to_lowercase().contains("unique"),
+                "同键重复应触发唯一索引约束，实际: {err:?}"
+            );
+        });
+
+        let summary = find_batch_summary(&events).expect("回滚后仍应有批次汇总日志");
+        assert_eq!(summary.level, Level::INFO);
+        assert_eq!(field_value(summary, "total"), Some("2"));
+        assert_eq!(field_value(summary, "failed"), Some("1"), "应含失败条数");
+        assert!(field_value(summary, "elapsed_ms").is_some());
+    }
+
+    /// 部分行无效但批次提交成功：汇总行含非零失败条数（有效行落库、无效行跳过）。
+    #[test]
+    fn batch_create_logs_failed_count_with_invalid_row() {
+        let conn = setup();
+        insert_account(&conn, "acc-log-part", "现金", "cash", "CNY");
+
+        // 失败行：转账未指定目标账户 → Invalid；成功行：普通收入。
+        let inputs = vec![
+            make_input("acc-log-part", "transfer", 1000, "2026-07-01"),
+            make_input("acc-log-part", "income", 1000, "2026-07-02"),
+        ];
+        let events = capture_events(|| {
+            let r = create_transactions_internal(&conn, inputs, false).unwrap();
+            assert_eq!(r.len(), 2);
+            assert!(!r[0].success, "转账未指定目标账户应失败");
+            assert!(r[1].success);
+        });
+
+        let summary = find_batch_summary(&events).expect("应有一条批次汇总日志");
+        assert_eq!(summary.level, Level::INFO);
+        assert_eq!(field_value(summary, "total"), Some("2"));
+        assert_eq!(field_value(summary, "failed"), Some("1"), "应含失败条数");
     }
 }

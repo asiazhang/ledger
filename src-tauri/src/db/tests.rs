@@ -1,13 +1,11 @@
 use super::*;
-use std::sync::Arc;
 use std::time::Duration;
 
 use rusqlite::Connection;
 use rusqlite::params;
 use tracing::Level;
-use tracing_subscriber::layer::SubscriberExt;
 
-use crate::test_utils::{CaptureLayer, CapturedEvent, ensure_global_max_level};
+use crate::test_utils::capture_events;
 /// 校验迁移集合本身定义正确（在临时内存 DB 上从首到尾跑一遍向上迁移）。
 #[test]
 fn migrations_validate() {
@@ -504,19 +502,6 @@ fn transaction_currency_conversion() {
 // ---------------------------------------------------------------------------
 // Perf trace（数据库耗时日志）测试——ADR-0009
 // ---------------------------------------------------------------------------
-
-/// 在捕获 subscriber 生效期间执行 `f`（线程本地），返回捕获到的事件。
-/// SQL 执行时 `trace_v2` 回调在调用线程同步发射，故能被同一线程捕获。
-/// 捕获器具（`CaptureLayer`/`CapturedEvent`/`ensure_global_max_level`）来自
-/// `crate::test_utils`，与集成测试 `tests/api_server.rs` 共用（避免重复实现）。
-fn capture_events(f: impl FnOnce()) -> Vec<CapturedEvent> {
-    ensure_global_max_level();
-    let layer = CaptureLayer::new();
-    let captured = Arc::clone(&layer.events);
-    let subscriber = tracing_subscriber::registry().with(layer);
-    tracing::subscriber::with_default(subscriber, f);
-    captured.lock().unwrap().clone()
-}
 
 /// 时序级别纯函数边界：0、恰好阈值、略低于/略高于阈值、阈值 0。
 #[test]
