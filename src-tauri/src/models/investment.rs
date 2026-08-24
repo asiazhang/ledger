@@ -1,0 +1,299 @@
+//! 投资领域模型：金融工具、持仓、行情价、已实现盈亏、标的列表分页。
+
+use std::fmt;
+use std::str::FromStr;
+
+use rusqlite::types::{FromSql, FromSqlError, ToSql, ToSqlOutput, ValueRef};
+use serde::{Deserialize, Serialize};
+
+use crate::db::query::FromRow;
+use crate::error::AppError;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InstrumentType {
+    Stock,
+    Fund,
+    Bond,
+    Etf,
+    Other,
+}
+
+impl fmt::Display for InstrumentType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InstrumentType::Stock => write!(f, "stock"),
+            InstrumentType::Fund => write!(f, "fund"),
+            InstrumentType::Bond => write!(f, "bond"),
+            InstrumentType::Etf => write!(f, "etf"),
+            InstrumentType::Other => write!(f, "other"),
+        }
+    }
+}
+
+impl FromStr for InstrumentType {
+    type Err = AppError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "stock" => Ok(InstrumentType::Stock),
+            "fund" => Ok(InstrumentType::Fund),
+            "bond" => Ok(InstrumentType::Bond),
+            "etf" => Ok(InstrumentType::Etf),
+            "other" => Ok(InstrumentType::Other),
+            _ => Err(AppError::Invalid(format!("未知金融工具类型: {s}"))),
+        }
+    }
+}
+
+impl ToSql for InstrumentType {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::from(self.to_string()))
+    }
+}
+
+impl FromSql for InstrumentType {
+    fn column_result(value: ValueRef<'_>) -> std::result::Result<Self, FromSqlError> {
+        value
+            .as_str()?
+            .parse()
+            .map_err(|e: AppError| FromSqlError::Other(Box::new(e)))
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Instrument {
+    pub id: String,
+    pub symbol: String,
+    #[serde(rename = "type")]
+    pub kind: InstrumentType,
+    pub name: Option<String>,
+    pub currency_code: String,
+    pub market: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub version: i64,
+    pub device_id: String,
+    /// 最新市场价格（分），同步来源；无行情时为空。
+    pub price_cents: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InstrumentInput {
+    pub symbol: String,
+    #[serde(rename = "type")]
+    pub kind: InstrumentType,
+    pub name: Option<String>,
+    pub currency_code: String,
+    pub market: Option<String>,
+}
+
+/// 标的列表查询过滤条件（服务端分页 + 搜索）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct InstrumentListFilter {
+    /// 对 symbol / name 的大小写不敏感子串匹配。
+    pub search: Option<String>,
+    /// 交易市场精确匹配（sh / sz / hk / unknown）。
+    pub market: Option<String>,
+    /// 页码，从 1 开始，默认 1。
+    pub page: Option<usize>,
+    /// 每页条数，默认 50，上限 500。
+    pub page_size: Option<usize>,
+}
+
+/// 标的列表分页结果。
+#[derive(Debug, Serialize)]
+pub struct InstrumentListResult {
+    pub items: Vec<Instrument>,
+    /// 满足过滤条件的总条数（用于分页条）。
+    pub total: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Holding {
+    pub id: String,
+    pub account_id: String,
+    pub instrument_id: String,
+    pub quantity: f64,
+    pub cost_basis_cents: i64,
+    pub cost_currency_code: String,
+    pub latest_price_cents: Option<i64>,
+    pub latest_price_currency_code: Option<String>,
+    pub market_value_cents: Option<i64>,
+    pub unrealized_pnl_cents: Option<i64>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MarketPrice {
+    pub id: String,
+    pub instrument_id: String,
+    pub price_cents: i64,
+    pub currency_code: String,
+    pub priced_at: String,
+    pub source: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub version: i64,
+    pub device_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MarketPriceInput {
+    pub instrument_id: String,
+    pub price_cents: i64,
+    pub currency_code: String,
+    pub priced_at: String,
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RealizedPnlSummary {
+    pub total_realized_pnl_cents: i64,
+    pub by_year: Vec<YearPnl>,
+    pub by_account: Vec<AccountPnl>,
+    pub by_instrument: Vec<InstrumentPnl>,
+    pub details: Vec<PnlDetail>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct YearPnl {
+    pub year: String,
+    pub realized_pnl_cents: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AccountPnl {
+    pub account_id: String,
+    pub account_name: String,
+    pub realized_pnl_cents: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InstrumentPnl {
+    pub instrument_id: String,
+    pub symbol: String,
+    pub name: Option<String>,
+    pub realized_pnl_cents: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PnlDetail {
+    pub id: String,
+    pub sell_date: String,
+    pub account_id: String,
+    pub account_name: String,
+    pub instrument_id: String,
+    pub instrument_symbol: String,
+    pub instrument_name: Option<String>,
+    pub quantity: f64,
+    pub cost_per_unit_cents: i64,
+    pub realized_pnl_cents: i64,
+    pub currency_code: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PnlFilter {
+    pub account_id: Option<String>,
+    pub instrument_id: Option<String>,
+}
+
+impl FromRow for Holding {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(Holding {
+            id: row.get(0)?,
+            account_id: row.get(1)?,
+            instrument_id: row.get(2)?,
+            quantity: row.get(3)?,
+            cost_basis_cents: row.get(4)?,
+            cost_currency_code: row.get(5)?,
+            latest_price_cents: row.get(6)?,
+            latest_price_currency_code: row.get(7)?,
+            market_value_cents: row.get(8)?,
+            unrealized_pnl_cents: row.get(9)?,
+            updated_at: row.get(10)?,
+        })
+    }
+}
+
+impl FromRow for MarketPrice {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(MarketPrice {
+            id: row.get(0)?,
+            instrument_id: row.get(1)?,
+            price_cents: row.get(2)?,
+            currency_code: row.get(3)?,
+            priced_at: row.get(4)?,
+            source: row.get(5)?,
+            created_at: row.get(6)?,
+            updated_at: row.get(7)?,
+            version: row.get(8)?,
+            device_id: row.get(9)?,
+        })
+    }
+}
+
+impl FromRow for YearPnl {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(YearPnl {
+            year: row.get(0)?,
+            realized_pnl_cents: row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+        })
+    }
+}
+
+impl FromRow for AccountPnl {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(AccountPnl {
+            account_id: row.get(0)?,
+            account_name: row.get(1)?,
+            realized_pnl_cents: row.get::<_, Option<i64>>(2)?.unwrap_or(0),
+        })
+    }
+}
+
+impl FromRow for InstrumentPnl {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(InstrumentPnl {
+            instrument_id: row.get(0)?,
+            symbol: row.get(1)?,
+            name: row.get(2)?,
+            realized_pnl_cents: row.get::<_, Option<i64>>(3)?.unwrap_or(0),
+        })
+    }
+}
+
+impl FromRow for Instrument {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(Instrument {
+            id: row.get(0)?,
+            symbol: row.get(1)?,
+            kind: row.get(2)?,
+            name: row.get(3)?,
+            currency_code: row.get(4)?,
+            market: row.get(5)?,
+            created_at: row.get(6)?,
+            updated_at: row.get(7)?,
+            version: row.get(8)?,
+            device_id: row.get(9)?,
+            price_cents: row.get(10)?,
+        })
+    }
+}
+
+impl FromRow for PnlDetail {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(PnlDetail {
+            id: row.get(0)?,
+            sell_date: row.get(1)?,
+            account_id: row.get(2)?,
+            account_name: row.get(3)?,
+            instrument_id: row.get(4)?,
+            instrument_symbol: row.get(5)?,
+            instrument_name: row.get(6)?,
+            quantity: row.get(7)?,
+            cost_per_unit_cents: row.get(8)?,
+            realized_pnl_cents: row.get(9)?,
+            currency_code: row.get(10)?,
+        })
+    }
+}

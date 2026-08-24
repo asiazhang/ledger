@@ -34,7 +34,7 @@ Ledger 是一个基于 Tauri 2 的桌面记账应用，前端 Vue 3 + TypeScript
 1. `commands.rs` 加 `#[tauri::command]` 函数；
 2. `lib.rs` 的 `generate_handler!` 注册；
 3. `src/api/index.ts` 加对应方法；
-4. 必要时在 `src/types/index.ts` 加 TS 类型（与 `src-tauri/src/models.rs` 的 serde 结构对应，注意 `#[serde(rename = "type")]` 这类字段名映射）。
+4. 必要时在 `src/types/index.ts` 加 TS 类型（与 `src-tauri/src/models/`（按领域拆分，`mod.rs` 统一重导出）的 serde 结构对应，注意 `#[serde(rename = "type")]` 这类字段名映射）。
 
 ### 金额与多币种（重要约定）
 - 所有金额以**整数分**存储，字段统一用 `_cents` 后缀（如 `amount_cents`、`initial_balance_cents`、`balance_cents`）。前端用 `src/types/index.ts` 的 `formatAmount(cents, currency)` 按币种 `decimal_places` 格式化展示。
