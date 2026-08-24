@@ -9,6 +9,7 @@ use tauri::Manager;
 use crate::error::{AppError, Result};
 
 pub mod balance;
+pub mod perf_trace;
 pub mod query;
 
 /// 迁移集合。新增 schema 变更或种子数据时，在 `src-tauri/migrations/` 下新建
@@ -61,9 +62,11 @@ pub fn device_id() -> String {
 
 /// 打开数据库连接并启用外键约束（SQLite 默认关闭，需每次连接显式开启）。
 /// 所有数据库连接都应通过此函数或其派生函数创建，以保证外键生效。
+/// 同时注册耗时 hook（`perf_trace`），覆盖所有 SQL 执行上下文。
 pub fn open_connection<P: AsRef<Path>>(path: P) -> Result<Connection> {
     let conn = Connection::open(path)?;
     conn.execute("PRAGMA foreign_keys = ON", [])?;
+    perf_trace::install_perf_trace(&conn, perf_trace::DEFAULT_SLOW_QUERY_THRESHOLD);
     Ok(conn)
 }
 
@@ -71,6 +74,7 @@ pub fn open_connection<P: AsRef<Path>>(path: P) -> Result<Connection> {
 pub fn open_in_memory() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
     conn.execute("PRAGMA foreign_keys = ON", [])?;
+    perf_trace::install_perf_trace(&conn, perf_trace::DEFAULT_SLOW_QUERY_THRESHOLD);
     Ok(conn)
 }
 

@@ -1,5 +1,12 @@
 use super::*;
+use std::sync::{Arc, Mutex, Once};
+use std::time::Duration;
+
+use rusqlite::Connection;
 use rusqlite::params;
+use tracing::field::{Field, Visit};
+use tracing::{Event, Level};
+use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
 
 /// 校验迁移集合本身定义正确（在临时内存 DB 上从首到尾跑一遍向上迁移）。
 #[test]
@@ -492,4 +499,177 @@ fn transaction_currency_conversion() {
     // 同币种无需汇率，1:1 返回。
     let native = crate::commands::fx::convert_to_native(&conn, 10000, "CNY", account_id).unwrap();
     assert_eq!(native, 10000);
+}
+
+// ---------------------------------------------------------------------------
+// Perf trace（数据库耗时日志）测试——ADR-0009
+// ---------------------------------------------------------------------------
+
+/// 捕获 tracing 事件的测试层：把每个事件的级别与字段记录到共享 Vec。
+/// 仅用于单元测试；`timing_level` 为纯函数，独立做边界测试。
+struct CaptureLayer {
+    events: Arc<Mutex<Vec<CapturedEvent>>>,
+}
+
+impl CaptureLayer {
+    fn new() -> Self {
+        CaptureLayer {
+            events: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CapturedEvent {
+    level: Level,
+    fields: Vec<(String, String)>,
+}
+
+/// 遍历事件字段的 Visit 实现，把字段名与值收集为字符串。
+struct FieldCapture {
+    fields: Vec<(String, String)>,
+}
+
+impl Visit for FieldCapture {
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        self.fields
+            .push((field.name().to_string(), format!("{value:?}")));
+    }
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.fields
+            .push((field.name().to_string(), value.to_string()));
+    }
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        self.fields
+            .push((field.name().to_string(), value.to_string()));
+    }
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.fields
+            .push((field.name().to_string(), value.to_string()));
+    }
+    fn record_f64(&mut self, field: &Field, value: f64) {
+        self.fields
+            .push((field.name().to_string(), value.to_string()));
+    }
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        self.fields
+            .push((field.name().to_string(), value.to_string()));
+    }
+}
+
+impl<S> Layer<S> for CaptureLayer
+where
+    S: tracing::Subscriber,
+{
+    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        let mut capture = FieldCapture { fields: Vec::new() };
+        event.record(&mut capture);
+        self.events.lock().unwrap().push(CapturedEvent {
+            level: *event.metadata().level(),
+            fields: capture.fields,
+        });
+    }
+}
+
+/// 常驻一个 no-op 全局 subscriber，把 `tracing` 的全局 `LevelFilter::current()`
+/// 稳定在 TRACE。否则并发测试线程各自注册/注销 dispatch 时，全局 MAX_LEVEL
+/// 会短暂降到 OFF，导致 `tracing::debug!`/`trace!` 宏的快路径提前过滤，
+/// 线程级 `with_default` 捕获就收不到事件（`cargo test --all` 并行时偶发）。
+/// 该全局 subscriber 不截获任何日志；仅用于稳定级别判定。
+static ENSURE_GLOBAL_MAX_LEVEL: Once = Once::new();
+
+fn ensure_global_max_level() {
+    ENSURE_GLOBAL_MAX_LEVEL.call_once(|| {
+        let _ = tracing::subscriber::set_global_default(tracing_subscriber::registry());
+    });
+}
+
+/// 在捕获 subscriber 生效期间执行 `f`（线程本地），返回捕获到的事件。
+/// SQL 执行时 `trace_v2` 回调在调用线程同步发射，故能被同一线程捕获。
+fn capture_events(f: impl FnOnce()) -> Vec<CapturedEvent> {
+    ensure_global_max_level();
+    let layer = CaptureLayer::new();
+    let captured = Arc::clone(&layer.events);
+    let subscriber = tracing_subscriber::registry().with(layer);
+    tracing::subscriber::with_default(subscriber, f);
+    captured.lock().unwrap().clone()
+}
+
+/// 时序级别纯函数边界：0、恰好阈值、略低于/略高于阈值、阈值 0。
+#[test]
+fn timing_level_boundaries() {
+    use perf_trace::TimingClass;
+
+    let threshold = Duration::from_millis(100);
+
+    // 0 耗时：远低于阈值 → 正常（debug 明细）。
+    assert_eq!(
+        perf_trace::timing_level(threshold, Duration::ZERO),
+        TimingClass::Normal
+    );
+    // 恰好等于阈值 → 正常（边界语义为严格大于才升级慢查询）。
+    assert_eq!(
+        perf_trace::timing_level(threshold, Duration::from_millis(100)),
+        TimingClass::Normal
+    );
+    // 略低于阈值 → 正常。
+    assert_eq!(
+        perf_trace::timing_level(threshold, Duration::from_millis(99)),
+        TimingClass::Normal
+    );
+    // 略高于阈值 → 慢查询（warn）。
+    assert_eq!(
+        perf_trace::timing_level(threshold, Duration::from_millis(101)),
+        TimingClass::Slow
+    );
+    // threshold=0 且 duration>0 → 慢查询（0 阈值下非零耗时即慢查询）。
+    assert_eq!(
+        perf_trace::timing_level(Duration::ZERO, Duration::from_nanos(1)),
+        TimingClass::Slow
+    );
+}
+
+/// 接线回归：open_in_memory 默认注册 hook，执行 SELECT 1 能捕获到含 SQL 文本的事件。
+/// 不限定具体级别——级别分类由 `timing_level` 纯函数测试覆盖；此处只验证 hook 接线生效
+/// 且事件带 SQL 原文（占位符 SQL 记录于所有级别）。
+#[test]
+fn perf_trace_factory_emits_sql_event() {
+    let conn = open_in_memory().unwrap();
+
+    let events = capture_events(|| {
+        conn.query_row("SELECT 1", [], |r| r.get::<_, i64>(0))
+            .unwrap();
+    });
+
+    assert!(
+        events.iter().any(|e| e
+            .fields
+            .iter()
+            .any(|(k, v)| k == "sql" && v.contains("SELECT 1"))),
+        "应捕获到含 SQL 文本的事件，实际捕获: {events:?}"
+    );
+}
+
+/// 接线回归：threshold=0 时无需构造慢语句，正常语句也命中 warn 分支。
+/// （SELECT 1 在内存库中耗时可能为 0ns，`0 > 0` 仍为 false；故用递归 CTE
+/// 保证一条真实耗时的语句，验证阈值注入生效。）
+#[test]
+fn perf_trace_zero_threshold_emits_warn() {
+    let conn = Connection::open_in_memory().unwrap();
+    perf_trace::install_perf_trace(&conn, Duration::ZERO);
+
+    let events = capture_events(|| {
+        conn.query_row(
+            "SELECT SUM(n) FROM (\
+             WITH RECURSIVE s(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM s WHERE n < 200000)\n             SELECT n FROM s)",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap();
+    });
+
+    assert!(
+        events.iter().any(|e| e.level == Level::WARN),
+        "threshold=0 时正常语句也应命中 warn 分支"
+    );
 }
