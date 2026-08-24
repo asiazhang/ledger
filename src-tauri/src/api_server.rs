@@ -94,7 +94,6 @@ async fn openapi_json_handler() -> impl IntoResponse {
 
 pub fn build_router(state: Arc<Mutex<Connection>>) -> Router {
     Router::new()
-        .layer(TraceLayer::new_for_http())
         .route("/api/v1/openapi.json", get(openapi_json_handler))
         .route(
             "/api/v1/accounts",
@@ -121,6 +120,11 @@ pub fn build_router(state: Arc<Mutex<Connection>>) -> Router {
         )
         .route("/api/v1/currencies", get(list_currencies_handler))
         .route("/api/v1/import/knowledge", get(import_knowledge_handler))
+        // 注意：axum 的 `Router::layer` 只包裹“当前已有的” route——若在声明任何 route
+        // 之前调用，会对空路由集合空操作（`route_layer` 则会在无 route 时 panic，强制先
+        // 声明 route 再加层）。所以 `TraceLayer` 必须放在所有 route 声明之后，否则其请求
+        // span 空转，导入路径 SQL 的归因不生效（issue #44）。
+        .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
 
