@@ -2,6 +2,7 @@ use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::AppError;
 use crate::models::Account;
+use crate::transaction::amount::{Kind, Measure, TransferSide, signed_amount};
 
 fn setup() -> rusqlite::Connection {
     let mut conn = crate::db::open_in_memory().unwrap();
@@ -204,6 +205,135 @@ fn list_account_balances_returns_all_accounts() {
     assert_eq!(balance(&conn, "acc-list-2"), 48000);
 }
 
+// 余额口径测试夹具：一行 = 一笔交易（kind 用 Amount 接缝的 Kind 枚举表述）。
+struct FlowRow {
+    id: &'static str,
+    kind: Kind,
+    amount: i64,
+    account_id: &'static str,
+    to_account_id: Option<&'static str>,
+}
+
+/// 期望余额由度量矩阵（`signed_amount` × `AccountFlow`）在 Rust 侧对夹具逐行求和得出，
+/// 断言 `compute_balance` 与 `compute_all_balances` 均与之一致——测试不复制生产 SQL。
+/// 覆盖全部 8 种 kind（含 buy/sell/dividend/split 与 transfer 双侧）。
+#[test]
+fn balance_computed_via_account_flow_measure() {
+    let conn = setup();
+    insert_account(&conn, "acc-flow-m", "现金", "cash", "CNY", 1000);
+    insert_account(&conn, "acc-flow-n", "证券", "investment", "CNY", 0);
+    let initial = |account: &str| -> i64 {
+        match account {
+            "acc-flow-m" => 1000,
+            _ => 0,
+        }
+    };
+
+    let rows = vec![
+        FlowRow {
+            id: "fm1",
+            kind: Kind::Income,
+            amount: 5000,
+            account_id: "acc-flow-m",
+            to_account_id: None,
+        },
+        FlowRow {
+            id: "fm2",
+            kind: Kind::Expense,
+            amount: 1200,
+            account_id: "acc-flow-m",
+            to_account_id: None,
+        },
+        FlowRow {
+            id: "fm3",
+            kind: Kind::Refund,
+            amount: 300,
+            account_id: "acc-flow-m",
+            to_account_id: None,
+        },
+        FlowRow {
+            id: "fm4",
+            kind: Kind::Transfer,
+            amount: 800,
+            account_id: "acc-flow-m",
+            to_account_id: Some("acc-flow-n"),
+        },
+        FlowRow {
+            id: "fm5",
+            kind: Kind::Buy,
+            amount: 2000,
+            account_id: "acc-flow-n",
+            to_account_id: None,
+        },
+        FlowRow {
+            id: "fm6",
+            kind: Kind::Sell,
+            amount: 1500,
+            account_id: "acc-flow-n",
+            to_account_id: None,
+        },
+        FlowRow {
+            id: "fm7",
+            kind: Kind::Dividend,
+            amount: 60,
+            account_id: "acc-flow-n",
+            to_account_id: None,
+        },
+        FlowRow {
+            id: "fm8",
+            kind: Kind::Split,
+            amount: 9999,
+            account_id: "acc-flow-n",
+            to_account_id: None,
+        },
+    ];
+    for r in &rows {
+        insert_tx(
+            &conn,
+            r.id,
+            r.kind.as_str(),
+            r.amount,
+            r.account_id,
+            r.to_account_id,
+        );
+    }
+
+    let expected = |account: &str| -> i64 {
+        initial(account)
+            + rows
+                .iter()
+                .filter(|r| r.account_id == account || r.to_account_id == Some(account))
+                .map(|r| {
+                    let side = if r.account_id == account {
+                        TransferSide::Out
+                    } else {
+                        TransferSide::In
+                    };
+                    signed_amount(r.kind, r.amount, Measure::AccountFlow(side))
+                })
+                .sum::<i64>()
+    };
+
+    // acc-flow-m = 1000 +5000 −1200 +300 −800 = 4300
+    assert_eq!(balance(&conn, "acc-flow-m"), 4300);
+    // acc-flow-n = +800 −2000 +1500 +60 +0 = 360
+    assert_eq!(balance(&conn, "acc-flow-n"), 360);
+
+    let all = crate::db::balance::compute_all_balances(&conn).unwrap();
+    for id in ["acc-flow-m", "acc-flow-n"] {
+        assert_eq!(
+            *all.get(id).unwrap_or(&0),
+            expected(id),
+            "批量余额与度量不一致: {id}"
+        );
+        assert_eq!(
+            balance(&conn, id),
+            expected(id),
+            "单个余额与度量不一致: {id}"
+        );
+    }
+}
+
 #[test]
 fn compute_all_balances_matches_per_account() {
     let conn = setup();
@@ -222,6 +352,7 @@ fn compute_all_balances_matches_per_account() {
         Some("acc-bulk-2"),
     );
     insert_tx(&conn, "tx-b5", "refund", 500, "acc-bulk-1", None);
+    insert_tx(&conn, "tx-b6", "dividend", 60, "acc-bulk-3", None);
 
     let all = crate::db::balance::compute_all_balances(&conn).unwrap();
 
