@@ -4,6 +4,8 @@ use rusqlite::Connection;
 use crate::db::query::{query_all, query_one};
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
+use crate::transaction::amount::Kind;
+use crate::transaction::writer;
 
 use super::models::*;
 
@@ -509,6 +511,43 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
         return Err(AppError::Invalid("关联计划未处于活跃状态".into()));
     }
 
+    let (kind, to_account_id, category_id) = match st.kind.as_str() {
+        "installment" | "subscription" => (Kind::Expense, None, st.category_id.clone()),
+        "scheduled_transfer" => {
+            let ext: ScheduledTransferPlan = query_one(
+                conn,
+                "SELECT scheduled_transaction_id,to_account_id,total_occurrences \
+                 FROM scheduled_transfer_plans WHERE scheduled_transaction_id=?1",
+                rusqlite::params![st.id],
+            )?
+            .ok_or_else(|| AppError::NotFound("定时转账扩展信息不存在".into()))?;
+            (Kind::Transfer, Some(ext.to_account_id), None)
+        }
+        _ => return Err(AppError::Invalid("未知交易类型".into())),
+    };
+
+    // 经 Writer 接缝归一化（issue #59 / spec #52）：
+    // - 本位币金额由 Amount 接缝 convert_to_native 折算，修复非默认币种定时交易
+    //   把原始金额当作 amount_native_cents 落库的 bug（故事 3/17/23）；
+    // - normalize 为只读校验+折算，放在 CAS 锁定**之前**：业务错误（如非默认币种
+    //   缺汇率）直接返回、期次保持 pending 可重试，不会滞留 processing；
+    // - id 与审计字段（created_at/updated_at/version/device_id/is_deleted）由
+    //   insert_row 生成，与手动创建/导入共用同一写入权威，列清单不在此重复。
+    let norm = writer::normalize(
+        conn,
+        &writer::Input {
+            kind,
+            amount_cents: occ.amount_cents,
+            currency_code: st.currency_code.clone(),
+            account_id: st.account_id.clone(),
+            to_account_id,
+            category_id,
+            refund_of_transaction_id: None,
+            note: st.note.clone(),
+            date: occ.scheduled_date.clone(),
+        },
+    )?;
+
     // 锁定期次: CAS update status -> processing
     let now = now_iso();
     let updated = conn.execute(
@@ -521,42 +560,7 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
         return Err(AppError::Invalid("期次已被其他设备执行".into()));
     }
 
-    let txn_id = new_uuid();
-    let (kind, to_account_id, category_id) = match st.kind.as_str() {
-        "installment" | "subscription" => ("expense", None, st.category_id.clone()),
-        "scheduled_transfer" => {
-            let ext: ScheduledTransferPlan = query_one(
-                conn,
-                "SELECT scheduled_transaction_id,to_account_id,total_occurrences \
-                 FROM scheduled_transfer_plans WHERE scheduled_transaction_id=?1",
-                rusqlite::params![st.id],
-            )?
-            .ok_or_else(|| AppError::NotFound("定时转账扩展信息不存在".into()))?;
-            ("transfer", Some(ext.to_account_id), None)
-        }
-        _ => return Err(AppError::Invalid("未知交易类型".into())),
-    };
-
-    conn.execute(
-        "INSERT INTO transactions \
-         (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
-         category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,NULL,?9,?10,?11,?11,1,?12,0)",
-        rusqlite::params![
-            txn_id,
-            kind,
-            occ.amount_cents,
-            st.currency_code,
-            occ.amount_cents,
-            st.account_id,
-            to_account_id,
-            category_id,
-            st.note,
-            occ.scheduled_date,
-            now,
-            device_id(),
-        ],
-    )?;
+    let txn_id = writer::insert_row(conn, &norm)?;
 
     // 回填 transaction_id
     conn.execute(
