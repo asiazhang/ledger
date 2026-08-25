@@ -27,15 +27,29 @@ pub fn list_accounts(db: State<'_, DbState>) -> Result<Vec<Account>> {
 }
 
 #[tauri::command]
-pub fn create_account(db: State<'_, DbState>, input: AccountInput) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    core::create_account_internal(&conn, input)
+pub fn create_account(
+    db: State<'_, DbState>,
+    app: tauri::AppHandle,
+    input: AccountInput,
+) -> Result<String> {
+    let id = {
+        let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        core::create_account_internal(&conn, input)?
+    };
+    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
+    crate::events::emit_reference_changed(&app, "create_account");
+    Ok(id)
 }
 
 #[tauri::command]
-pub fn delete_account(db: State<'_, DbState>, id: String) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    core::delete_account_internal(&conn, &id)
+pub fn delete_account(db: State<'_, DbState>, app: tauri::AppHandle, id: String) -> Result<()> {
+    {
+        let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        core::delete_account_internal(&conn, &id)?;
+    }
+    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
+    crate::events::emit_reference_changed(&app, "delete_account");
+    Ok(())
 }
 
 /// 批量查询所有账户余额，单次数据库往返完成。

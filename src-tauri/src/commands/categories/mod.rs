@@ -29,22 +29,33 @@ pub fn list_categories(db: State<'_, DbState>) -> Result<Vec<Category>> {
 }
 
 #[tauri::command]
-pub fn create_category(db: State<'_, DbState>, input: CategoryInput) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    core::create_category_internal(&conn, input)
+pub fn create_category(
+    db: State<'_, DbState>,
+    app: tauri::AppHandle,
+    input: CategoryInput,
+) -> Result<String> {
+    let id = {
+        let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        core::create_category_internal(&conn, input)?
+    };
+    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
+    crate::events::emit_reference_changed(&app, "create_category");
+    Ok(id)
 }
 
 #[tauri::command]
 pub fn update_category(
     db: State<'_, DbState>,
+    app: tauri::AppHandle,
     id: String,
     input: CategoryUpdateInput,
 ) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let now = now_iso();
-    let did = device_id();
+    {
+        let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let now = now_iso();
+        let did = device_id();
 
-    let existing: Category = query_all(
+        let existing: Category = query_all(
         &conn,
         "SELECT id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted \
          FROM categories WHERE id=?1 AND is_deleted=0",
@@ -54,13 +65,13 @@ pub fn update_category(
     .next()
     .ok_or_else(|| AppError::NotFound(format!("分类不存在: {id}")))?;
 
-    let parent_id = input.parent_id.unwrap_or(existing.parent_id);
+        let parent_id = input.parent_id.unwrap_or(existing.parent_id);
 
-    if let Some(ref pid) = parent_id {
-        if *pid == id {
-            return Err(AppError::Invalid("自身不能作为父分类".into()));
-        }
-        let parent: Category = query_all(
+        if let Some(ref pid) = parent_id {
+            if *pid == id {
+                return Err(AppError::Invalid("自身不能作为父分类".into()));
+            }
+            let parent: Category = query_all(
             &conn,
             "SELECT id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted \
              FROM categories WHERE id=?1 AND is_deleted=0",
@@ -69,38 +80,54 @@ pub fn update_category(
         .into_iter()
         .next()
         .ok_or_else(|| AppError::NotFound(format!("父分类不存在: {pid}")))?;
-        if parent.kind != existing.kind {
-            return Err(AppError::Invalid("父分类类型需一致".into()));
+            if parent.kind != existing.kind {
+                return Err(AppError::Invalid("父分类类型需一致".into()));
+            }
         }
-    }
 
-    let name = input.name.unwrap_or(existing.name);
-    let icon = input.icon.or(existing.icon);
+        let name = input.name.unwrap_or(existing.name);
+        let icon = input.icon.or(existing.icon);
 
-    conn.execute(
+        conn.execute(
         "UPDATE categories SET name=?1, icon=?2, parent_id=?3, updated_at=?4, version=version+1, device_id=?5 WHERE id=?6",
         rusqlite::params![name, icon, parent_id, now, did, id],
     )?;
-    // 分类改名不影响搜索索引（分类名不在搜索内容中，V005 收窄后无需重建）
-    Ok(())
-}
-
-#[tauri::command]
-pub fn reorder_categories(db: State<'_, DbState>, items: Vec<ReorderItem>) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let now = now_iso();
-    let did = device_id();
-    for item in &items {
-        conn.execute(
-            "UPDATE categories SET sort_order=?1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
-            rusqlite::params![item.sort_order, now, did, item.id],
-        )?;
+        // 分类改名不影响搜索索引（分类名不在搜索内容中，V005 收窄后无需重建）
     }
+    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
+    crate::events::emit_reference_changed(&app, "update_category");
     Ok(())
 }
 
 #[tauri::command]
-pub fn delete_category(db: State<'_, DbState>, id: String) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    core::delete_category_internal(&conn, &id)
+pub fn reorder_categories(
+    db: State<'_, DbState>,
+    app: tauri::AppHandle,
+    items: Vec<ReorderItem>,
+) -> Result<()> {
+    {
+        let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let now = now_iso();
+        let did = device_id();
+        for item in &items {
+            conn.execute(
+                "UPDATE categories SET sort_order=?1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
+                rusqlite::params![item.sort_order, now, did, item.id],
+            )?;
+        }
+    }
+    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
+    crate::events::emit_reference_changed(&app, "reorder_categories");
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_category(db: State<'_, DbState>, app: tauri::AppHandle, id: String) -> Result<()> {
+    {
+        let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        core::delete_category_internal(&conn, &id)?;
+    }
+    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
+    crate::events::emit_reference_changed(&app, "delete_category");
+    Ok(())
 }

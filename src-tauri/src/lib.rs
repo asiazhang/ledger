@@ -2,6 +2,7 @@ pub mod api_server;
 pub mod commands;
 pub mod db;
 pub mod error;
+pub mod events;
 pub mod log_plugin;
 pub mod logger;
 pub mod models;
@@ -75,7 +76,12 @@ pub fn run() {
                     .blocking_show();
                 std::process::exit(1);
             })?;
-            api_server::start_http_server(app.state::<db::DbState>().conn.clone());
+            // 传入 AppHandle：参考写入（HTTP 账号/分类 create/delete）成功后
+            // emit `ledger:changed`，前端 useReferenceStore 据此自动重拉参考表（issue #79）。
+            api_server::start_http_server(
+                app.handle().clone(),
+                app.state::<db::DbState>().conn.clone(),
+            );
             // 后台索引刷新线程：固定周期消费搜索重建队列（ADR-0004 决策 #14，
             // 写路径零索引工作，界面操作不受索引维护影响）。
             commands::search::start_search_refresh_thread(app.state::<db::DbState>().conn.clone());

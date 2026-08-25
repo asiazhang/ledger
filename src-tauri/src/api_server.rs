@@ -6,16 +6,40 @@ use crate::models::{
     CreateTransactionResult, Currency, Transaction, TransactionBatchInput, TransactionInput,
     TransactionListFilter, TransactionListResult, UpdateTransactionInput,
 };
-use axum::extract::{Path, Query, State};
+use axum::extract::{FromRef, Path, Query, State};
 use axum::http::StatusCode;
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use rusqlite::Connection;
+use tauri::AppHandle;
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
 use utoipa::ToSchema;
+
+/// HTTP 服务器状态：数据库连接 + 可选 `AppHandle`（参考写入成功后发 `ledger:changed`）。
+///
+/// `app` 为 `Option`：集成测试（`tests/api_server.rs`）不经真实 Tauri 运行时构建路由，
+/// 传 `None` 即跳过发射分支（后端 emit 视为薄胶，不造 AppHandle 测试桩）；
+/// 生产路径由 `start_http_server` 注入 `Some(app)`。
+#[derive(Clone)]
+pub struct ApiState {
+    pub conn: Arc<Mutex<Connection>>,
+    pub app: Option<AppHandle>,
+}
+
+impl FromRef<ApiState> for Arc<Mutex<Connection>> {
+    fn from_ref(state: &ApiState) -> Self {
+        state.conn.clone()
+    }
+}
+
+impl FromRef<ApiState> for Option<AppHandle> {
+    fn from_ref(state: &ApiState) -> Self {
+        state.app.clone()
+    }
+}
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
@@ -92,7 +116,7 @@ async fn openapi_json_handler() -> impl IntoResponse {
     Json(ApiDoc::openapi())
 }
 
-pub fn build_router(state: Arc<Mutex<Connection>>) -> Router {
+pub fn build_router(state: ApiState) -> Router {
     Router::new()
         .route("/api/v1/openapi.json", get(openapi_json_handler))
         .route(
@@ -128,11 +152,14 @@ pub fn build_router(state: Arc<Mutex<Connection>>) -> Router {
         .with_state(state)
 }
 
-pub fn start_http_server(state: Arc<Mutex<Connection>>) {
+pub fn start_http_server(app: AppHandle, state: Arc<Mutex<Connection>>) {
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("创建 Tokio 运行时失败");
         rt.block_on(async move {
-            let router = build_router(state);
+            let router = build_router(ApiState {
+                conn: state,
+                app: Some(app),
+            });
             let listener = tokio::net::TcpListener::bind("127.0.0.1:9527")
                 .await
                 .expect("绑定 9527 端口失败");
@@ -180,10 +207,15 @@ async fn list_accounts_handler(
 )]
 async fn create_account_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
+    State(app): State<Option<AppHandle>>,
     Json(input): Json<AccountInput>,
 ) -> Result<(StatusCode, Json<String>), AppError> {
-    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let id = crate::commands::create_account_idempotent_internal(&conn, input)?;
+    let id = {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        crate::commands::create_account_idempotent_internal(&conn, input)?
+    };
+    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
+    crate::events::emit_ledger_changed_if_present(&app);
     Ok((StatusCode::CREATED, Json(id)))
 }
 
@@ -205,10 +237,15 @@ async fn create_account_handler(
 )]
 async fn delete_account_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
+    State(app): State<Option<AppHandle>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    crate::commands::delete_account_internal(&conn, &id)?;
+    {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        crate::commands::delete_account_internal(&conn, &id)?;
+    }
+    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
+    crate::events::emit_ledger_changed_if_present(&app);
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -267,12 +304,17 @@ async fn list_categories_handler(
 )]
 async fn create_category_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
+    State(app): State<Option<AppHandle>>,
     body: String,
 ) -> Result<(StatusCode, Json<String>), AppError> {
     let input: CategoryInput =
         serde_json::from_str(&body).map_err(|e| AppError::Invalid(e.to_string()))?;
-    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let id = crate::commands::create_category_idempotent_internal(&conn, input)?;
+    let id = {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        crate::commands::create_category_idempotent_internal(&conn, input)?
+    };
+    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
+    crate::events::emit_ledger_changed_if_present(&app);
     Ok((StatusCode::CREATED, Json(id)))
 }
 
@@ -294,10 +336,15 @@ async fn create_category_handler(
 )]
 async fn delete_category_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
+    State(app): State<Option<AppHandle>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    crate::commands::delete_category_internal(&conn, &id)?;
+    {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        crate::commands::delete_category_internal(&conn, &id)?;
+    }
+    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
+    crate::events::emit_ledger_changed_if_present(&app);
     Ok(StatusCode::NO_CONTENT)
 }
 

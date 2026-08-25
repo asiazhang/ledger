@@ -7,7 +7,7 @@ use http_body_util::BodyExt;
 use tower::ServiceExt;
 use tracing_subscriber::layer::SubscriberExt;
 
-use tauri_app_lib::api_server::build_router;
+use tauri_app_lib::api_server::{ApiState, build_router};
 use tauri_app_lib::db;
 use tauri_app_lib::test_utils::{CaptureLayer, ensure_global_max_level};
 
@@ -19,7 +19,11 @@ fn setup_app() -> (Router, Arc<Mutex<rusqlite::Connection>>) {
     let mut conn = db::open_in_memory().unwrap();
     db::init_db(&mut conn).unwrap();
     let conn = Arc::new(Mutex::new(conn));
-    let app = build_router(conn.clone());
+    // 集成测试不经真实 Tauri 运行时，`app` 传 None（发射分支跳过，见 ApiState 注释）
+    let app = build_router(ApiState {
+        conn: conn.clone(),
+        app: None,
+    });
     (app, conn)
 }
 
