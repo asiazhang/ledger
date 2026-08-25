@@ -61,7 +61,7 @@ pub struct NormalizedRow {
 /// 只处理通用 kind（income/expense/transfer/refund）；buy/sell/dividend/split 属
 /// 投资层路径（产出归一化行后调 [`insert_row`]/[`update_row`]），收到即报错防误用。
 ///
-/// 语义（与命令层既有 `normalize_transaction` 的通用分支对齐）：
+/// 语义（与命令层通用 kind 写入路径一致，见 `commands::transactions::write`）：
 /// - 金额必须 > 0；
 /// - transfer 必须指定 `to_account_id`；
 /// - refund 必须关联**未删除**的原支出交易，且账户/币种/分类继承原支出

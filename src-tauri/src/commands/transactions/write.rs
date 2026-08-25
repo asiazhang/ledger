@@ -24,34 +24,6 @@ pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<
     Ok(id)
 }
 
-/// 校验并按 kind 归一化交易字段，产出可直接 INSERT/UPDATE 的交易行字段。
-///
-/// 命令层归一化入口：buy/sell 委托投资层 `prepare_buy`/`prepare_sell`（投资字段校验 + 归一化行产出），
-/// 通用 kind（income/expense/transfer/refund）委托 Writer 接缝 [`writer::normalize`]（issue #60）：
-/// 校验（转账目标账户/金额>0/退款继承）与本位币折算口径与落库路径统一
-/// （Amount 接缝，全局默认币种基准）。
-///
-/// 注意：创建/修改热路径已直接调用 [`writer::normalize`]（见 `insert_transaction` /
-/// `update_transaction_internal`），本函数保留 buy/sell + 通用 kind 的统一入口语义供测试锁定，
-/// 旧命令层实现（账户币种折算 + 裸 SQL）已随接线被取代，随 issue #61 删除。
-pub fn normalize_transaction(
-    conn: &Connection,
-    input: &TransactionInput,
-) -> Result<NormalizedTransaction> {
-    match input.kind.as_str() {
-        "buy" => crate::commands::investment::prepare_buy(conn, input).map(|p| p.normalized),
-        "sell" => crate::commands::investment::prepare_sell(conn, input).map(|p| p.normalized),
-        // 通用 kind（income/expense/transfer/refund）委托 Writer 接缝（issue #60）：
-        // 校验（转账目标账户/金额>0/退款继承）与本位币折算口径与落库路径统一
-        // （Amount 接缝，全局默认币种基准）。旧命令层实现（账户币种折算）已随接线
-        // 被取代，随 issue #61 删除。
-        _ => Ok(row_to_normalized(writer::normalize(
-            conn,
-            &to_writer_input(input)?,
-        )?)),
-    }
-}
-
 /// `TransactionInput` → `writer::Input`（命令层接线转换：丢弃投资与幂等字段）。
 fn to_writer_input(input: &TransactionInput) -> Result<writer::Input> {
     Ok(writer::Input {
@@ -84,22 +56,6 @@ pub(crate) fn to_writer_row(norm: &NormalizedTransaction) -> Result<writer::Norm
         note: norm.note.clone(),
         date: norm.date.clone(),
     })
-}
-
-/// `writer::NormalizedRow` → 命令层 `NormalizedTransaction`（接线转换：kind 转回字符串）。
-fn row_to_normalized(row: writer::NormalizedRow) -> NormalizedTransaction {
-    NormalizedTransaction {
-        kind: row.kind.as_str().to_string(),
-        amount_cents: row.amount_cents,
-        currency_code: row.currency_code,
-        amount_native_cents: row.amount_native_cents,
-        account_id: row.account_id,
-        to_account_id: row.to_account_id,
-        category_id: row.category_id,
-        refund_of_transaction_id: row.refund_of_transaction_id,
-        note: row.note,
-        date: row.date,
-    }
 }
 
 /// 按 `id` 全字段替换一笔交易（`PUT /api/v1/transactions/{id}`）。

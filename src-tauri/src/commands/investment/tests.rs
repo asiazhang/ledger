@@ -190,16 +190,36 @@ fn buy_transaction_creates_lot() {
     let input = make_buy_input("acc-test-buy", "inst-test-nvda", 10.0, 10000, 500);
     let txn_id = create_buy_transaction(&conn, input).unwrap();
 
-    let (kind, amount_cents, currency_code): (String, i64, String) = conn
+    let (kind, amount_cents, currency_code, amount_native, category_id, refund_of_id): (
+        String,
+        i64,
+        String,
+        i64,
+        Option<String>,
+        Option<String>,
+    ) = conn
         .query_row(
-            "SELECT kind, amount_cents, currency_code FROM transactions WHERE id=?1",
+            "SELECT kind, amount_cents, currency_code, amount_native_cents, category_id, \
+             refund_of_transaction_id FROM transactions WHERE id=?1",
             params![txn_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            },
         )
         .unwrap();
     assert_eq!(kind, "buy");
     assert_eq!(amount_cents, 100500);
     assert_eq!(currency_code, "USD");
+    assert_eq!(amount_native, amount_cents, "买入本位币与原始币种应 1:1");
+    assert_eq!(category_id, None);
+    assert_eq!(refund_of_id, None);
 
     let (action, quantity, price_cents, fee_cents): (String, f64, i64, i64) = conn
         .query_row(
@@ -241,7 +261,11 @@ fn buy_transaction_requires_investment_account() {
     insert_instrument(&conn, "inst-test-cny", "600519", "茅台", "CNY");
 
     let input = make_buy_input("acc-test-cash", "inst-test-cny", 1.0, 10000, 0);
-    assert!(create_buy_transaction(&conn, input).is_err());
+    let err = create_buy_transaction(&conn, input).unwrap_err();
+    assert!(
+        err.to_string().contains("投资账户"),
+        "非投资账户买入应报错，got: {err}"
+    );
 }
 
 #[test]

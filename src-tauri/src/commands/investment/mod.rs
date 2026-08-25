@@ -14,7 +14,7 @@ use crate::models::{
 pub(crate) use reports::query_realized_pnl_summary;
 pub(crate) use trade::{
     apply_buy, apply_sell, cleanup_buy, cleanup_buy_side_effects, create_buy_transaction,
-    create_sell_transaction, prepare_buy, prepare_sell, reverse_sell,
+    create_sell_transaction, reverse_sell,
 };
 
 #[tauri::command]

@@ -6,7 +6,8 @@
 //! `TransactionBatch::run` 断言外部行为；`transactions` 模块遗留的旧 `batch_*`
 //! 直调 `insert_transaction` 测试（全部有效落库/转账缺目标账户/零金额）已随
 //! #66 处理——零金额校验迁入本模块以 `run` 外部行为覆盖，其余被本模块既有
-//! 测试与 `transactions` 的 `normalize_transaction` 测试取代。单条写入
+//! 测试与 `transaction::writer` 模块测试共同取代（通用 kind 归一化语义已收口到
+//! Writer 接缝）。单条写入
 //! （`insert_transaction`）与删除/修改（`delete_transaction_internal`/
 //! `update_transaction_internal`）的测试仍留在 `transactions` 模块。
 
