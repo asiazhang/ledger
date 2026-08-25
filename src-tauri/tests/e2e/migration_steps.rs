@@ -5,9 +5,9 @@ use rusqlite::params;
 use tauri_app_lib::commands::accounts::{
     create_account_idempotent_internal, list_account_balances_for_api_internal,
 };
+use tauri_app_lib::commands::batch::TransactionBatch;
 use tauri_app_lib::commands::transactions::{
-    create_transactions_internal, delete_transaction_internal, list_transactions_internal,
-    update_transaction_internal,
+    delete_transaction_internal, list_transactions_internal, update_transaction_internal,
 };
 use tauri_app_lib::models::{AccountInput, AccountType, TransactionInput, TransactionListFilter};
 
@@ -48,7 +48,7 @@ fn batch_import(world: &mut LedgerWorld, #[step] step: &Step) {
         })
         .collect();
     let inputs: Vec<TransactionInput> = rows.iter().map(|r| r.to_input(world)).collect();
-    let results = create_transactions_internal(&world.conn, inputs, true).expect("批量导入失败");
+    let results = TransactionBatch::run(&world.conn, inputs, true).expect("批量导入失败");
     world.last_import_rows = rows;
     world.last_batch_results = results;
     world.transactions_list = query_all_transactions(&world.conn);
@@ -62,8 +62,7 @@ fn reimport(world: &mut LedgerWorld) {
         .iter()
         .map(|r| r.to_input(world))
         .collect();
-    let results =
-        create_transactions_internal(&world.conn, inputs, true).expect("重跑批量导入失败");
+    let results = TransactionBatch::run(&world.conn, inputs, true).expect("重跑批量导入失败");
     world.last_batch_results = results;
     world.transactions_list = query_all_transactions(&world.conn);
 }

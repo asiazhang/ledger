@@ -16,7 +16,7 @@
 //!
 //! **对外契约**：`run` 返回 `Vec<CreateTransactionResult>`，与 HTTP/IPC 响应形状一致；
 //! 本重构只做内部重组，不改响应形状、不改事务/去重语义（`create_transactions_internal`
-//! 保留为薄转发层以兼容既有调用点）。
+//! 保留为无调用方的薄转发层，按 expand–contract 计划待收缩批次移除，issue #63/#64/#65）。
 
 #[cfg(test)]
 mod tests;

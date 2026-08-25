@@ -517,8 +517,8 @@ fn batch_import_consumes_queue_immediately() {
         fee_cents: None,
         idempotency_key: None,
     };
-    // 批量导入命令内部在事务提交后立即消费队列
-    crate::commands::transactions::create_transactions_internal(&conn, vec![input], false).unwrap();
+    // 批量编排模块内部在事务提交后立即消费队列（直调 TransactionBatch::run，issue #65）
+    crate::commands::batch::TransactionBatch::run(&conn, vec![input], false).unwrap();
     assert_eq!(search(&conn, "午餐").unwrap().total, 1, "导入后立即可搜");
     assert!(!search(&conn, "午餐").unwrap().stale, "导入消费后不滞后");
 }
