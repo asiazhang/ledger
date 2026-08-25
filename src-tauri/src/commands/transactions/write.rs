@@ -26,6 +26,62 @@ pub fn compute_dedup_hash(input: &TransactionInput) -> String {
     digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// 单条导入交易的去重身份判定：新写还是命中已有（issue #62，prefactor）。
+///
+/// ADR-0010 的冻结契约被编码为类型而非散在 if 分支：命中已有时，`Existing.id`
+/// 即契约要求回传的值——幂等键命中（内容无关）为 `Some(已有 id)`；内容哈希兜底
+/// 命中为 `None`（维持冻结行为 `id: None`，不回归）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DedupIdentity {
+    /// 未命中任何未删除交易，应新写；携带已计算好的内容哈希（落库时回写 `dedup_hash` 列）。
+    New { dedup_hash: String },
+    /// 命中已有未删除交易。
+    Existing {
+        /// 按冻结契约回传给调用方的 id：幂等键命中为 Some(已有 id)，内容哈希命中为 None。
+        id: Option<String>,
+    },
+}
+
+/// 判定一条导入交易的去重身份：新写还是命中已有（issue #62）。
+///
+/// 带客户端幂等键时按键查：内容无关、命中优先走部分唯一索引
+/// `idx_transactions_idempotency_key`（非全表扫描）；无键时回退确定性内容哈希
+/// （`compute_dedup_hash`，排除 note/category）。
+pub fn dedup_identity(conn: &Connection, input: &TransactionInput) -> Result<DedupIdentity> {
+    let dedup_hash = compute_dedup_hash(input);
+    // 带客户端幂等键：按键查（内容无关、走部分唯一索引命中）；幂等键命中回传已有 id。
+    if let Some(key) = &input.idempotency_key {
+        let hit: Option<String> = conn
+            .query_row(
+                "SELECT id FROM transactions \
+                 WHERE idempotency_key=?1 AND is_deleted=0 LIMIT 1",
+                rusqlite::params![key],
+                |r| r.get(0),
+            )
+            .optional()?;
+        return Ok(match hit {
+            Some(id) => DedupIdentity::Existing {
+                // 幂等键命中（内容无关）：回传已有 id。
+                id: Some(id),
+            },
+            None => DedupIdentity::New { dedup_hash },
+        });
+    }
+    // 无键：回退确定性内容哈希兜底；命中回传 id:None（冻结契约，不回归）。
+    let hit: Option<String> = conn
+        .query_row(
+            "SELECT id FROM transactions \
+             WHERE dedup_hash=?1 AND is_deleted=0 ORDER BY created_at LIMIT 1",
+            rusqlite::params![dedup_hash],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(match hit {
+        Some(_) => DedupIdentity::Existing { id: None },
+        None => DedupIdentity::New { dedup_hash },
+    })
+}
+
 pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<String> {
     let id = if input.kind == "buy" {
         crate::commands::investment::create_buy_transaction(conn, input)?
@@ -142,44 +198,28 @@ pub fn create_transactions_internal(
     // 失败条数：累计到批次汇总日志（成功路径=无效行数；回滚路径含触发回滚的那条）。
     let mut failed = 0usize;
     for input in inputs {
-        let dedup_hash = compute_dedup_hash(&input);
         // 客户端幂等键：带键时作为去重身份（内容无关），无键时 None 走内容哈希兜底。
         let idempotency_key = input.idempotency_key.clone();
-        if dedup {
-            // `keyed` 用于区分去重身份：带键命中应回传已有 id，内容哈希命中维持既有
-            // `id: None` 的冻结行为（不回归）。查询带键时走部分唯一索引命中，非全表扫描。
-            let (existing, keyed): (Option<String>, bool) = if let Some(ref key) = idempotency_key {
-                let hit = conn
-                    .query_row(
-                        "SELECT id FROM transactions \
-                         WHERE idempotency_key=?1 AND is_deleted=0 LIMIT 1",
-                        rusqlite::params![key],
-                        |r| r.get(0),
-                    )
-                    .optional()?;
-                (hit, true)
-            } else {
-                let hit = conn
-                    .query_row(
-                        "SELECT id FROM transactions \
-                         WHERE dedup_hash=?1 AND is_deleted=0 ORDER BY created_at LIMIT 1",
-                        rusqlite::params![dedup_hash],
-                        |r| r.get(0),
-                    )
-                    .optional()?;
-                (hit, false)
-            };
-            if let Some(id) = existing {
-                results.push(CreateTransactionResult {
-                    success: true,
-                    duplicate: true,
-                    // 带键命中回传已有 id；内容哈希命中维持 `id: None`（冻结契约，不回归）。
-                    id: keyed.then_some(id),
-                    error: None,
-                });
-                continue;
+        // 去重身份判定已抽为独立函数（issue #62）：带键按键查（走部分唯一索引）、无键回退
+        // 内容哈希；ADR-0010 的契约编码在 `DedupIdentity` 类型里，不再散在 if 分支。
+        // `New` 携带内容哈希供落库回写 `dedup_hash` 列，避免重复计算。
+        let dedup_hash = if dedup {
+            match dedup_identity(conn, &input)? {
+                DedupIdentity::Existing { id } => {
+                    results.push(CreateTransactionResult {
+                        success: true,
+                        duplicate: true,
+                        // 冻结契约即类型：幂等键命中回传已有 id，内容哈希命中回传 id:None（不回归）。
+                        id,
+                        error: None,
+                    });
+                    continue;
+                }
+                DedupIdentity::New { dedup_hash } => dedup_hash,
             }
-        }
+        } else {
+            compute_dedup_hash(&input)
+        };
         match insert_transaction(conn, input) {
             Ok(id) => {
                 if let Err(e) = conn.execute(

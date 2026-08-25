@@ -362,6 +362,134 @@ fn batch_create_idempotency_key_soft_deleted_frees_slot() {
     assert_eq!(count, 1);
 }
 
+// ---- dedup_identity 判定函数直接覆盖（issue #62）----
+
+#[test]
+fn dedup_identity_key_hit_returns_existing_id() {
+    let conn = setup();
+    insert_account(&conn, "acc-ident", "现金", "cash", "CNY");
+
+    // 落库一笔带幂等键的交易。
+    let mut a = make_input("acc-ident", "income", 1000, "2026-01-01");
+    a.idempotency_key = Some("file:1:1".into());
+    let created = create_transactions_internal(&conn, vec![a.clone()], true).unwrap();
+    let existing_id = created[0].id.clone().unwrap();
+
+    // 同键但内容不同：内容无关，仍按幂等键命中并回传已有 id。
+    let mut b = make_input("acc-ident", "expense", 2000, "2026-02-01");
+    b.idempotency_key = Some("file:1:1".into());
+    match dedup_identity(&conn, &b).unwrap() {
+        DedupIdentity::Existing { id } => {
+            assert_eq!(
+                id.as_deref(),
+                Some(existing_id.as_str()),
+                "幂等键命中应回传已有 id"
+            );
+        }
+        other => panic!("同键应判定为命中已有，实际: {other:?}"),
+    }
+}
+
+#[test]
+fn dedup_identity_hash_hit_returns_none() {
+    let conn = setup();
+    insert_account(&conn, "acc-ident", "现金", "cash", "CNY");
+
+    let a = make_input("acc-ident", "income", 1000, "2026-01-01");
+    create_transactions_internal(&conn, vec![a.clone()], true).unwrap();
+
+    // 无键同内容：内容哈希兜底命中，冻结契约回传 id:None（不回归）。
+    match dedup_identity(&conn, &a).unwrap() {
+        DedupIdentity::Existing { id } => {
+            assert_eq!(id, None, "内容哈希命中应回传 id:None（冻结契约，不回归）");
+        }
+        other => panic!("同内容应判定为命中已有，实际: {other:?}"),
+    }
+}
+
+#[test]
+fn dedup_identity_new_for_fresh_row() {
+    let conn = setup();
+    insert_account(&conn, "acc-ident", "现金", "cash", "CNY");
+
+    let a = make_input("acc-ident", "income", 1000, "2026-01-01");
+    create_transactions_internal(&conn, vec![a], true).unwrap();
+
+    // 内容不同（且无键）：应判定为新写，且携带与落库回写一致的内容哈希。
+    let fresh = make_input("acc-ident", "expense", 2000, "2026-02-01");
+    match dedup_identity(&conn, &fresh).unwrap() {
+        DedupIdentity::New { dedup_hash } => {
+            assert_eq!(
+                dedup_hash,
+                compute_dedup_hash(&fresh),
+                "New 应携带与落库回写一致的内容哈希"
+            );
+        }
+        other => panic!("内容不同应判定为新写，实际: {other:?}"),
+    }
+}
+
+#[test]
+fn dedup_identity_key_takes_precedence_over_content_hash() {
+    let conn = setup();
+    insert_account(&conn, "acc-ident", "现金", "cash", "CNY");
+
+    // 两笔内容完全相同但幂等键不同的交易（内容哈希相同）：不同键都应保留。
+    let mut a = make_input("acc-ident", "income", 1000, "2026-01-01");
+    a.idempotency_key = Some("file:1:1".into());
+    let mut b = make_input("acc-ident", "income", 1000, "2026-01-01");
+    b.idempotency_key = Some("file:2:1".into());
+    let r = create_transactions_internal(&conn, vec![a.clone(), b], true).unwrap();
+    let id_a = r[0].id.clone().unwrap();
+
+    // 无键、内容与二者相同：内容哈希命中（回传 id:None，冻结契约）。
+    let keyless = make_input("acc-ident", "income", 1000, "2026-01-01");
+    match dedup_identity(&conn, &keyless).unwrap() {
+        DedupIdentity::Existing { id } => {
+            assert_eq!(id, None, "内容哈希命中应回传 id:None");
+        }
+        other => panic!("同内容无键应命中已有，实际: {other:?}"),
+    }
+
+    // 同键 file:1:1 但内容不同：幂等键命中，回传 a 的 id（内容无关）。
+    let mut c = make_input("acc-ident", "expense", 2000, "2026-02-01");
+    c.idempotency_key = Some("file:1:1".into());
+    match dedup_identity(&conn, &c).unwrap() {
+        DedupIdentity::Existing { id } => {
+            assert_eq!(
+                id.as_deref(),
+                Some(id_a.as_str()),
+                "同键命中应回传 file:1:1 那笔的 id"
+            );
+        }
+        other => panic!("同键应命中已有，实际: {other:?}"),
+    }
+}
+
+#[test]
+fn dedup_identity_ignores_soft_deleted_rows() {
+    let conn = setup();
+    insert_account(&conn, "acc-ident", "现金", "cash", "CNY");
+
+    // 带键落库后软删除：键路径与哈希路径都不应命中。
+    let mut a = make_input("acc-ident", "income", 1000, "2026-01-01");
+    a.idempotency_key = Some("file:1:1".into());
+    let created = create_transactions_internal(&conn, vec![a.clone()], true).unwrap();
+    let id = created[0].id.clone().unwrap();
+    delete_transaction_internal(&conn, &id).unwrap();
+
+    match dedup_identity(&conn, &a).unwrap() {
+        DedupIdentity::New { .. } => {}
+        other => panic!("软删除后同键应判定为新写，实际: {other:?}"),
+    }
+    // 无键路径同样忽略软删除行。
+    let keyless = make_input("acc-ident", "income", 1000, "2026-01-01");
+    match dedup_identity(&conn, &keyless).unwrap() {
+        DedupIdentity::New { .. } => {}
+        other => panic!("软删除后同内容应判定为新写，实际: {other:?}"),
+    }
+}
+
 #[test]
 fn batch_create_idempotency_key_buy_sell_different_instruments_kept() {
     let conn = setup();
