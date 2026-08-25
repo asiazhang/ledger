@@ -203,6 +203,54 @@ fn sql_exprs_match_rust_sums() {
     }
 }
 
+/// 毛支出恒等式（issue #57）：`expense_gross = expense_net + refund_gross`，
+/// SQL 片段在真实库上的聚合必须与两侧度量之和逐分一致。
+#[test]
+fn expense_gross_expr_equals_net_plus_refund_gross() {
+    let conn = setup_db();
+    insert_account(&conn, "acc", "CNY");
+    for (i, kind) in Kind::ALL.into_iter().enumerate() {
+        insert_txn(
+            &conn,
+            &format!("t-{i}"),
+            kind,
+            100 + i as i64 * 7,
+            "acc",
+            None,
+        );
+    }
+    assert_eq!(
+        sql_sum(&conn, &expense_gross_expr("t")),
+        sql_sum(&conn, &expense_net_expr("t")) + sql_sum(&conn, &refund_gross_expr("t")),
+        "毛支出恒等式在真实库上应逐分成立"
+    );
+}
+
+/// 参与度量聚合的 kind 清单由矩阵导出：仅系数非 0 的 kind 入列，
+/// 与 kind→度量矩阵单一真源保持同步（income_net 必须含 dividend）。
+#[test]
+fn contributing_kinds_follow_matrix() {
+    assert_eq!(
+        contributing_kinds(Measure::ExpenseNet),
+        vec!["expense", "refund"]
+    );
+    assert_eq!(
+        contributing_kinds(Measure::IncomeNet),
+        vec!["income", "dividend"]
+    );
+    assert_eq!(contributing_kinds(Measure::RefundGross), vec!["refund"]);
+    assert_eq!(
+        contributing_kinds(Measure::AccountFlow(TransferSide::Out)),
+        vec![
+            "income", "expense", "transfer", "refund", "buy", "sell", "dividend"
+        ]
+    );
+    assert_eq!(
+        contributing_kinds(Measure::AccountFlow(TransferSide::In)),
+        contributing_kinds(Measure::AccountFlow(TransferSide::Out))
+    );
+}
+
 /// account_flow 片段按「转出侧 join account_id / 转入侧 join to_account_id」
 /// 组合出的账户余额，与 Rust 助手按账户过滤求和一致。
 #[test]

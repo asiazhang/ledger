@@ -233,6 +233,30 @@ pub fn refund_gross_expr(alias: &str) -> String {
     kind_case_expr(alias, Measure::RefundGross)
 }
 
+/// 毛支出聚合片段 = `expense_net + refund_gross`（spec #52 净值关系恒等式：
+/// `expense_net = expense_gross − refund_gross`）。
+///
+/// 毛值不作为独立度量进入矩阵，而由两个具名度量经恒等式导出，
+/// 毛值/净值口径由同一矩阵驱动、永不漂移（月度汇总毛值三列用，见 issue #57）。
+pub fn expense_gross_expr(alias: &str) -> String {
+    format!(
+        "({} + {})",
+        expense_net_expr(alias),
+        refund_gross_expr(alias)
+    )
+}
+
+/// 对度量有贡献（系数非 0）的 kind 字符串列表，矩阵驱动。
+/// 供聚合 SQL 的 `WHERE kind IN (...)` 行过滤使用，与聚合片段出自同一矩阵，
+/// 避免手写 kind 清单漂移（如 income_net 必须含 dividend）。
+pub fn contributing_kinds(measure: Measure) -> Vec<&'static str> {
+    Kind::ALL
+        .into_iter()
+        .filter(|k| coefficient(*k, measure) != 0)
+        .map(|k| k.as_str())
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // 本位币折算
 // ---------------------------------------------------------------------------

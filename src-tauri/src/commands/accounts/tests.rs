@@ -451,17 +451,9 @@ fn hidden_account_transactions_included_in_reports() {
     insert_tx(&conn, "tx-normal", "income", 1000, "acc-normal", None);
     insert_tx(&conn, "tx-hidden", "expense", 2000, "acc-hidden", None);
 
-    let summary: crate::models::MonthlySummary = query_all(
-        &conn,
-        "SELECT substr(date,1,7) AS month, \
-         SUM(CASE WHEN kind='income' THEN amount_native_cents ELSE 0 END), \
-         SUM(CASE WHEN kind='expense' THEN amount_native_cents ELSE 0 END), \
-         SUM(CASE WHEN kind='refund' THEN amount_native_cents ELSE 0 END) \
-         FROM transactions WHERE is_deleted=0 GROUP BY month",
-        [],
-    )
-    .unwrap()
-    .remove(0);
+    let summary = crate::commands::reports::monthly_summary_rows(&conn, 2026)
+        .unwrap()
+        .remove(0);
     assert_eq!(summary.income_cents, 1000);
     assert_eq!(summary.expense_cents, 2000, "黑洞账户的支出应计入报表");
 }
