@@ -169,6 +169,18 @@
 - **边界**：MVP 阶段所有币种与默认币种汇率默认为 1:1；默认币种的选择影响 `formatAmount` 的 `decimal_places` 行为和报表的显示货币。
 - **别名**：不使用"本位币"（偏会计术语）、"主币"（偏支付）。
 
+## Reference Data（参考数据）
+
+- **定义**：`currencies / accounts / categories` 三张参考表及其全部派生映射（币种映射、账户映射、分类映射、分类树）的统称，作为 UI 字典 / 枚举的**单一来源**，描述"有哪些可选值"。与交易流水（`Transaction`，描述"发生了什么"）相对：参考数据量小、变化低频、常驻内存；交易量大、持续追加、按需分页。
+- **边界**：
+  - 前端单一来源是 `useReferenceStore`（Pinia store），持有三张参考表与全部派生映射 / 分类树逻辑（`currencyMap / accountMap / categoryMap / rootCategories / expenseCategories / incomeCategories / categoryChildren / categoryPath / treeCategoryOptions`）；`useAppStore` 的参考数据 getters 当前委托到前者，迁移完成后收缩为纯 UI 设置 store（主题 / 默认币种 / 备份设置）。
+  - 被 `Transaction` 以外键引用（账户 / 分类 / 币种）；参考数据改名、删除、新建会级联反映到所有消费它的界面（交易列表与报表里的名称、表单下拉选项、分类树、预算的分类聚合）。
+  - **运行期可被外部修改**：AI 编程助手经本地 HTTP API（见 AI API）导入 / 修改参考数据，发生在 Tauri 应用之外；应用自身的账户 / 分类管理同样修改参考数据。
+  - **失效信号（ADR-0012）**：任一参考写入成功后，后端发出通用、粗粒度、无 payload 的 `ledger:changed` 信号（已落地，见 issue #79）；前端订阅该信号自动重拉三张参考表，属 ADR-0012 设计目标、随 spec #76 各子任务落地中。交易类写入不触发（不改参考表）。
+  - **重拉语义（stale-while-revalidate，ADR-0012 设计目标）**：保留旧数据，成功后才整体替换，界面不闪空；`status`（`idle | loading | ready | error`）与 `version`（每次成功重拉自增）暴露新鲜度，消费者可显式感知数据是新鲜还是过期。
+  - 前端只持**内存态缓存**：参考数据的真源是 SQLite 数据库，前端 store 不持久化副本，也不随 Backup / Restore 迁移（那些是文件级快照与设备本地偏好，见 Backup / ViewState）。
+- **别名**：不使用"账本快照（ledger snapshot）"——那会误导读者以为缓存了全部账本数据（见 Backup / Restore 的文件级快照）；不使用"基础数据"（过于泛化，易与业务字段混淆）。
+
 ## Appearance（外观）
 
 - **定义**：用户对应用视觉呈现的选择，当前支持暗色（`dark`）和亮色（`light`）两种主题。
