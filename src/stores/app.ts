@@ -1,86 +1,64 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { api } from '@/api'
-import type { Account, Category, Currency } from '@/types'
-import {
-  rootCategories as pureRootCategories,
-  categoryChildren as pureCategoryChildren,
-  categoryPath as pureCategoryPath,
-  buildCategoryTree as pureBuildCategoryTree,
-  type CategoryTreeNode,
-} from '@/utils/category-tree'
+import { useReferenceStore } from '@/stores/reference'
+import type { Category, Currency } from '@/types'
+import type { CategoryTreeNode } from '@/utils/category-tree'
 import { loadLocal, saveLocal } from '@/utils/storage'
 
 export type Theme = 'dark' | 'light'
 
 export const useAppStore = defineStore('app', () => {
-  const currencies = ref<Currency[]>([])
-  const accounts = ref<Account[]>([])
-  const categories = ref<Category[]>([])
+  // 参考数据（currencies/accounts/categories）及全部派生映射、分类树逻辑、
+  // 加载函数已迁至 useReferenceStore（单一来源）。此处保留既有公开面，
+  // 全部委托到新 store，二者共享同一份状态；现有消费者零改动。
+  const reference = useReferenceStore()
+
+  const currencies = computed(() => reference.currencies)
+  const accounts = computed(() => reference.accounts)
+  const categories = computed(() => reference.categories)
 
   const theme = ref<Theme>(loadLocal<Theme>('appearance', 'dark'))
   const defaultCurrency = ref<string>(loadLocal<string>('default_currency', 'CNY'))
   const backupDir = ref<string>(loadLocal<string>('backup_dir', ''))
   const backupMaxCount = ref<number>(loadLocal<number>('backup_max_count', 30))
 
-  const currencyMap = computed(() => {
-    const m = new Map<string, Currency>()
-    currencies.value.forEach((c) => m.set(c.code, c))
-    return m
-  })
+  const currencyMap = computed(() => reference.currencyMap)
+  const categoryMap = computed(() => reference.categoryMap)
+  const accountMap = computed(() => reference.accountMap)
 
-  const categoryMap = computed(() => {
-    const m = new Map<string, Category>()
-    categories.value.forEach((c) => m.set(c.id, c))
-    return m
-  })
+  const rootCategories = computed(() => reference.rootCategories)
 
-  const accountMap = computed(() => {
-    const m = new Map<string, Account>()
-    accounts.value.forEach((a) => m.set(a.id, a))
-    return m
-  })
-
-  const rootCategories = computed(() => pureRootCategories(categories.value))
-
-  const expenseCategories = computed(() =>
-    categories.value.filter((c) => c.kind === 'expense'),
-  )
-  const incomeCategories = computed(() =>
-    categories.value.filter((c) => c.kind === 'income'),
-  )
+  const expenseCategories = computed(() => reference.expenseCategories)
+  const incomeCategories = computed(() => reference.incomeCategories)
 
   function categoryChildren(parentId: string): Category[] {
-    return pureCategoryChildren(categories.value, parentId)
+    return reference.categoryChildren(parentId)
   }
 
   function categoryPath(id: string | null | undefined): string {
-    return pureCategoryPath(categories.value, id)
+    return reference.categoryPath(id)
   }
 
   function treeCategoryOptions(kind: Category['kind']): CategoryTreeNode[] {
-    return pureBuildCategoryTree(categories.value, { kind })
+    return reference.treeCategoryOptions(kind)
   }
 
-  // 注意：不缓存、不幂等。账户/分类/币种可能被本地 HTTP API（AI 导入流程）
-  // 外部修改，而 store 是内存态；各视图挂载时调用本函数重新拉取，
-  // 确保界面始终反映最新数据（本地 SQLite + IPC，开销可忽略）。
   async function loadAll() {
-    await Promise.all([loadCurrencies(), loadAccounts(), loadCategories()])
+    return reference.loadAll()
   }
 
   async function loadCurrencies() {
-    currencies.value = await api.listCurrencies()
+    return reference.loadCurrencies()
   }
   async function loadAccounts() {
-    accounts.value = await api.listAccounts()
+    return reference.loadAccounts()
   }
   async function loadCategories() {
-    categories.value = await api.listCategories()
+    return reference.loadCategories()
   }
 
   function getCurrency(code: string): Currency | undefined {
-    return currencyMap.value.get(code)
+    return reference.getCurrency(code)
   }
 
   function setTheme(t: Theme) {

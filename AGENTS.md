@@ -48,7 +48,7 @@ Ledger 是一个基于 Tauri 2 的桌面记账应用，前端 Vue 3 + TypeScript
 `src-tauri/src/error.rs` 定义 `AppError`（thiserror + serde，`#[serde(tag = "kind", content = "message")]`），序列化为 `{kind, message}` 传到前端。`Result<T>` 是 `std::result::Result<T, AppError>`。已实现 `From` 转换：`rusqlite::Error`、`std::io::Error`。新增可失败命令用 `?` 即可。
 
 ### 前端状态与路由
-- 单一 Pinia store `src/stores/app.ts`（`useAppStore`）缓存 `currencies/accounts/categories`，并提供 `currencyMap/categoryMap/accountMap` 计算属性与 `expenseCategories/incomeCategories`。`loadAll()` 幂等加载，`App.vue` 在 `onMounted` 调用一次；各视图按需调用 `store.loadAccounts()` 等刷新。
+- 参考数据（`currencies/accounts/categories`）的**单一来源**是 `src/stores/reference.ts` 的 `useReferenceStore`：持有三张参考表、全部派生映射（`currencyMap/accountMap/categoryMap`）、分类树逻辑（`rootCategories/expenseCategories/incomeCategories/categoryChildren/categoryPath/treeCategoryOptions`）与加载函数（`loadAll/loadCurrencies/loadAccounts/loadCategories`）。消费端迁移分批进行中：`useAppStore`（`src/stores/app.ts`）当前仍暴露同套参考数据 getters（delegate 到 `useReferenceStore`，共享同一份状态），新消费者优先从 `useReferenceStore` 读取；迁移完成后 `useAppStore` 将收缩为纯 UI 设置 store（`theme/defaultCurrency/backupDir/backupMaxCount`）。`loadAll()` 由 `App.vue` 在 `onMounted` 调用一次；各视图按需调用 `store.loadAccounts()` 等刷新。
 - 路由用 hash 模式（`createWebHashHistory`，Tauri webview 需要），6 个视图：dashboard / transactions / accounts / reports / budget / settings。
 - `@` 别名指向 `./src`（在 `vite.config.ts` 与 `tsconfig.json` 同时配置）。
 - Naive UI 采用**按需 import**（非全局注册），`App.vue` 硬编码使用 `darkTheme` 暗色主题。
