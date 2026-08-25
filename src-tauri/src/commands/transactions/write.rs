@@ -110,9 +110,9 @@ pub fn normalize_transaction(
     }
 }
 
-/// 薄转发层（issue #63）：批量编排语义已整体迁入 `batch::TransactionBatch::run`，
-/// 本函数保留以兼容既有调用点——HTTP handler、IPC `create_transactions`、
-/// 搜索重建测试与 e2e 迁移 step——对外契约（返回形状/事务/去重语义）完全不变。
+/// 薄转发层（issue #63/#64）：批量编排语义已整体迁入 `batch::TransactionBatch::run`，
+/// HTTP handler 与 IPC `create_transactions` 已直调 `run`（迁移批次一），本函数仅保留以
+/// 兼容剩余测试调用点——搜索重建测试与 e2e 迁移 step——对外契约（返回形状/事务/去重语义）完全不变。
 pub fn create_transactions_internal(
     conn: &Connection,
     inputs: Vec<TransactionInput>,

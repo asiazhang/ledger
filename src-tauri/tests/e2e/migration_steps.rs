@@ -14,7 +14,7 @@ use tauri_app_lib::models::{AccountInput, AccountType, TransactionInput, Transac
 use crate::common::query_all_transactions;
 use crate::world::{ImportedRow, LedgerWorld};
 
-/// 批量导入：模拟 AI 迁移，走与 HTTP 批量导入一致的 `create_transactions_internal`（dedup=true）。
+/// 批量导入：模拟 AI 迁移，与 HTTP 批量导入同走 `batch::TransactionBatch::run`（dedup=true）。
 /// 表格列（按表头名解析，缺失可省略）：kind | 金额 | 币种 | 账户 | 转入账户 | 日期 [| 备注 [| 幂等键]]。
 #[when(expr = "批量导入交易")]
 fn batch_import(world: &mut LedgerWorld, #[step] step: &Step) {

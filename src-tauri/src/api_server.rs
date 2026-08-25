@@ -379,7 +379,7 @@ async fn batch_create_transactions_handler(
 ) -> Result<Json<Vec<CreateTransactionResult>>, AppError> {
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let results =
-        crate::commands::create_transactions_internal(&conn, body.transactions, body.dedup)?;
+        crate::commands::batch::TransactionBatch::run(&conn, body.transactions, body.dedup)?;
     Ok(Json(results))
 }
 

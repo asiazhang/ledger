@@ -36,7 +36,7 @@ pub fn create_transactions(
     inputs: Vec<TransactionInput>,
 ) -> Result<Vec<CreateTransactionResult>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    create_transactions_internal(&conn, inputs, false)
+    crate::commands::batch::TransactionBatch::run(&conn, inputs, false)
 }
 
 #[tauri::command]
