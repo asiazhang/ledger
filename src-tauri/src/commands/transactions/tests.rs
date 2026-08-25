@@ -38,66 +38,6 @@ fn make_input(account_id: &str, kind: &str, amount: i64, date: &str) -> Transact
 }
 
 #[test]
-fn batch_creates_all_valid_transactions() {
-    let conn = setup();
-    insert_account(&conn, "acc-batch", "现金", "cash", "CNY");
-
-    let inputs = vec![
-        make_input("acc-batch", "income", 1000, "2026-01-01"),
-        make_input("acc-batch", "expense", 500, "2026-01-02"),
-        make_input("acc-batch", "income", 2000, "2026-01-03"),
-    ];
-
-    let results = inputs
-        .into_iter()
-        .map(|i| insert_transaction(&conn, i))
-        .collect::<Result<Vec<_>>>()
-        .unwrap();
-
-    assert_eq!(results.len(), 3);
-
-    let count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(count, 3);
-}
-
-#[test]
-fn batch_rejects_transfer_without_to_account() {
-    let conn = setup();
-    insert_account(&conn, "acc-batch2", "现金", "cash", "CNY");
-
-    let result = insert_transaction(
-        &conn,
-        make_input("acc-batch2", "transfer", 1000, "2026-01-01"),
-    );
-    match result {
-        Err(AppError::Invalid(msg)) => assert!(msg.contains("目标账户")),
-        _ => panic!("expected Invalid error"),
-    }
-}
-
-#[test]
-fn batch_rejects_zero_amount() {
-    let conn = setup();
-    insert_account(&conn, "acc-batch2", "现金", "cash", "CNY");
-
-    let bad = TransactionInput {
-        amount_cents: 0,
-        ..make_input("acc-batch2", "income", 100, "2026-01-01")
-    };
-    let result = insert_transaction(&conn, bad);
-    match result {
-        Err(AppError::Invalid(msg)) => assert!(msg.contains("大于 0")),
-        _ => panic!("expected Invalid error"),
-    }
-}
-
-#[test]
 fn create_income_and_expense_transactions() {
     let conn = setup();
     insert_account(&conn, "acc-crud", "现金", "cash", "CNY");

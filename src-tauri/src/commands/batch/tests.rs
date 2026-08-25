@@ -3,10 +3,13 @@
 //! （事务 BEGIN/COMMIT 写法、SQL 字符串、去重分支结构）。
 //!
 //! 原 `commands/transactions/tests.rs` 中 `create_transactions_internal`/
-//! `compute_dedup_hash` 相关测试随重构迁入本模块（issue #53 / #63），改用
-//! `TransactionBatch::run` 断言外部行为；单条写入（`insert_transaction`）与
-//! 删除/修改（`delete_transaction_internal`/`update_transaction_internal`）的
-//! 测试仍留在 `transactions` 模块。
+//! `compute_dedup_hash` 相关测试随重构迁入本模块（issue #53 / #63 / #66），改用
+//! `TransactionBatch::run` 断言外部行为；`transactions` 模块遗留的旧 `batch_*`
+//! 直调 `insert_transaction` 测试（全部有效落库/转账缺目标账户/零金额）已随
+//! #66 处理——零金额校验迁入本模块以 `run` 外部行为覆盖，其余被本模块既有
+//! 测试与 `transactions` 的 `normalize_transaction` 测试取代。单条写入
+//! （`insert_transaction`）与删除/修改（`delete_transaction_internal`/
+//! `update_transaction_internal`）的测试仍留在 `transactions` 模块。
 
 use super::*;
 use rusqlite::Connection;
@@ -325,6 +328,16 @@ fn batch_create_idempotency_key_same_key_dedup_false_raises_constraint() {
         err.to_string().to_lowercase().contains("unique"),
         "同键重复应触发唯一索引约束，实际: {err:?}"
     );
+
+    // 提交失败整批回滚（外部可观察结果）：触发约束的行与同批已写行都不落库。
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 0, "批次失败应整批回滚，不残留任何行");
 }
 
 #[test]
@@ -746,11 +759,68 @@ fn batch_create_logs_failed_count_with_invalid_row() {
         let r = TransactionBatch::run(&conn, inputs, false).unwrap();
         assert_eq!(r.len(), 2);
         assert!(!r[0].success, "转账未指定目标账户应失败");
-        assert!(r[1].success);
+        assert!(!r[0].duplicate && r[0].id.is_none(), "失败行应无 id");
+        let msg = r[0].error.as_deref().expect("失败行应带 error");
+        assert!(
+            msg.contains("目标账户"),
+            "错误信息应说明转账约束，实际: {msg}"
+        );
+        assert!(
+            r[1].success && !r[1].duplicate && r[1].id.is_some(),
+            "同批有效行应正常落库"
+        );
     });
 
     let summary = find_batch_summary(&events).expect("应有一条批次汇总日志");
     assert_eq!(summary.level, Level::INFO);
     assert_eq!(field_value(summary, "total"), Some("2"));
     assert_eq!(field_value(summary, "failed"), Some("1"), "应含失败条数");
+
+    // 单条校验失败不影响同批（外部可观察结果）：仅有效行落库。
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 1, "无效行不落库，有效行正常落库");
+}
+
+/// 零金额行：单条校验失败（金额必须大于 0），不影响同批其他行落库（issue #66
+/// 迁自 `transactions` 模块旧 `batch_rejects_zero_amount`，改经 `run` 断言）。
+#[test]
+fn batch_create_zero_amount_row_isolated() {
+    let conn = setup();
+    insert_account(&conn, "acc-log-zero", "现金", "cash", "CNY");
+
+    let inputs = vec![
+        TransactionInput {
+            amount_cents: 0,
+            ..make_input("acc-log-zero", "income", 100, "2026-07-01")
+        },
+        make_input("acc-log-zero", "income", 1000, "2026-07-02"),
+    ];
+    let r = TransactionBatch::run(&conn, inputs, false).unwrap();
+    assert_eq!(r.len(), 2);
+    assert!(!r[0].success, "零金额应校验失败");
+    assert!(!r[0].duplicate && r[0].id.is_none(), "失败行应无 id");
+    let msg = r[0].error.as_deref().expect("失败行应带 error");
+    assert!(
+        msg.contains("大于 0"),
+        "错误信息应说明金额约束，实际: {msg}"
+    );
+    assert!(
+        r[1].success && !r[1].duplicate && r[1].id.is_some(),
+        "同批有效行应正常落库"
+    );
+
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 1, "仅有效行落库");
 }
