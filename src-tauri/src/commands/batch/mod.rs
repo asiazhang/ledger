@@ -15,8 +15,8 @@
 //! 编码在 `DedupIdentity` 类型里而非散在 if 分支）随去重逻辑一并收进本模块。
 //!
 //! **对外契约**：`run` 返回 `Vec<CreateTransactionResult>`，与 HTTP/IPC 响应形状一致；
-//! 本重构只做内部重组，不改响应形状、不改事务/去重语义（`create_transactions_internal`
-//! 保留为无调用方的薄转发层，按 expand–contract 计划待收缩批次移除，issue #63/#64/#65）。
+//! 本重构只做内部重组，不改响应形状、不改事务/去重语义（原命令模块中的转发层已随
+//! 收缩批次（issue #67）删除，`run` 是批量写入的唯一入口）。
 
 #[cfg(test)]
 mod tests;
@@ -41,7 +41,7 @@ impl TransactionBatch {
     /// 去重身份判定（T1/issue #62 的 `dedup_identity`，幂等键优先 / 内容哈希兜底）只在
     /// `dedup=true` 时生效，`dedup=false` 直接落库；单条校验失败（`AppError::Invalid`）
     /// 返回 `success:false`+`error` 且不影响同批其他交易，提交失败则整批回滚并在回滚路径
-    /// 打批次汇总日志。行为与旧 `create_transactions_internal` 完全一致。
+    /// 打批次汇总日志。
     pub fn run(
         conn: &Connection,
         inputs: Vec<TransactionInput>,

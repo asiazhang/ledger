@@ -4,7 +4,7 @@ use rusqlite::OptionalExtension;
 use crate::commands::fx::convert_to_native;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::models::{CreateTransactionResult, NormalizedTransaction, TransactionInput};
+use crate::models::{NormalizedTransaction, TransactionInput};
 
 pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<String> {
     let id = if input.kind == "buy" {
@@ -108,18 +108,6 @@ pub fn normalize_transaction(
             })
         }
     }
-}
-
-/// 薄转发层（issue #63/#64/#65）：批量编排语义已整体迁入 `batch::TransactionBatch::run`，
-/// HTTP handler、IPC `create_transactions` 与辅助/测试调用点（搜索重建测试、e2e 迁移 step）
-/// 均已直调 `run`（迁移批次一/二）。本函数现无调用方，仅按 expand–contract 计划保留至
-/// 收缩批次移除，对外契约（返回形状/事务/去重语义）完全不变。
-pub fn create_transactions_internal(
-    conn: &Connection,
-    inputs: Vec<TransactionInput>,
-    dedup: bool,
-) -> Result<Vec<CreateTransactionResult>> {
-    crate::commands::batch::TransactionBatch::run(conn, inputs, dedup)
 }
 
 /// 按 `id` 全字段替换一笔交易（`PUT /api/v1/transactions/{id}`）。

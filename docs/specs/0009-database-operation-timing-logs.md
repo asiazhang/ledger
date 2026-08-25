@@ -32,7 +32,7 @@
 - **分类规则**：纯函数 `timing_level(threshold, duration)`——耗时 > 阈值 → `warn`，否则 `debug`。这是唯一决策核心，独立成函数以便边界测试。
 - **记录字段**：耗时 + 带占位符的 SQL 原文（默认级别安全）；展开 SQL（内联参数值）仅 DEBUG 级，延续 ADR-0006 隐私约定（默认级别不落金额/备注）。
 - **归因**：IPC 侧在 `logged_invoke_handler` 用 `info_span!(command, id_hint)` 包裹命令执行，hook 事件自动继承当前 span（同步命令与 wrapper 同线程，实现时冒烟验证；若异步命令丢归因，对热点函数手包 span 兜底）；HTTP 侧由既有 `tower_http::trace` 请求 span 归因。
-- **批次汇总**：`create_transactions_internal` 在 COMMIT 后打一条 `info!`——总耗时（手动 `Instant`）+ 交易条数 + 失败条数，错误路径同样记录。
+- **批次汇总**：批量导入路径在 COMMIT 后打一条 `info!`（现为 `batch::TransactionBatch::run` 内）——总耗时（手动 `Instant`）+ 交易条数 + 失败条数，错误路径同样记录。
 - **明确不记录**：行数（rusqlite 0.40 的 `StatementStatus` 无 RowCount/RowsWritten 变体且 `StmtRef` 指针私有）、成功/失败结果码（PROFILE 事件不携带 rc；失败观测走现有 `AppError` 错误传播路径）。
 - **无 schema 变更、无前端改动、无 API 契约变更。**
 

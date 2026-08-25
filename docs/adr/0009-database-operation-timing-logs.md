@@ -10,7 +10,7 @@
 
 - 全局单连接 `Arc<Mutex<Connection>>`（`db/mod.rs`），50+ 调用点直接 `conn.execute/query_row/prepare`，`db/query.rs` 封装只覆盖其中一小部分——封装层计时无法全量覆盖；
 - 已有 `tracing` 基础设施（ADR-0006）：默认 INFO、按天滚动文件、INFO 级不落金额/备注等业务值；
-- 导入批量路径（`create_transactions_internal`）是单条 INSERT 循环，每笔交易约 4~5 条 SQL——逐条全量日志在默认级别下量级不可接受。
+- 导入批量路径（现为 `batch::TransactionBatch::run`）是单条 INSERT 循环，每笔交易约 4~5 条 SQL——逐条全量日志在默认级别下量级不可接受。
 
 ## 决策
 
@@ -18,7 +18,7 @@
 2. **记录内容**：耗时 + 带占位符的 SQL 原文 + 调用方归因（span）。**不记行数**：rusqlite 0.40 的 `StatementStatus` 无 RowCount/RowsWritten 变体且 `StmtRef` 指针私有，无法从 hook 取得；如后续需要，随 rusqlite 升级补上。**不记成功/失败**：PROFILE 事件不携带结果码，失败语句仍会被记录（仅耗时 + SQL），执行失败由现有错误传播（命令返回 `AppError`）观测。展开 SQL（内联参数值）仅 DEBUG 级，延续 ADR-0006 隐私约定（默认级别不落金额/备注）。
 3. **级别策略**：全量 `tracing::debug!`；单条耗时 > 100ms 升 `tracing::warn!`。默认 `RUST_LOG=info` 时只落慢查询，`RUST_LOG=debug` 才有全量明细。阈值后续按观测数据调整。
 4. **归因**：IPC 侧在 `logged_invoke_handler` 用 `tracing::info_span!`（command + id_hint）包裹命令执行，hook 事件自动继承 span（同步命令与 wrapper 同线程，实现时冒烟验证；若异步命令丢归因，对热点函数手包 span 兜底）；HTTP 侧由既有 `tower_http::trace` 请求 span 归因。
-5. **批次汇总**：`create_transactions_internal` 在 COMMIT 后打一条 `info!` 汇总——总耗时（手动 `Instant`）+ 交易条数 + 失败条数；逐条明细见 DEBUG 行。不在 hook 内做线程级聚合（回调是无状态 `fn` 指针，聚合需共享状态，收益低）。
+5. **批次汇总**：批量导入路径（现为 `batch::TransactionBatch::run`）在 COMMIT 后打一条 `info!` 汇总——总耗时（手动 `Instant`）+ 交易条数 + 失败条数；逐条明细见 DEBUG 行。不在 hook 内做线程级聚合（回调是无状态 `fn` 指针，聚合需共享状态，收益低）。
 
 ## 理由
 
