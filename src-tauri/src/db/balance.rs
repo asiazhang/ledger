@@ -20,20 +20,26 @@ impl FromRow for AccountBalanceEntry {
     }
 }
 
-/// 单账户侧的 `account_flow` 聚合 SQL（口径权威：Amount 接缝的 kind→度量矩阵）。
-///
-/// 语义与 `account_flow_expr` 的文档一致：转出侧按 `t.account_id` 关联、
-/// 转入侧按 `t.to_account_id` 关联，分别求和后相加。
-/// 各 kind 对余额的符号（income/refund/sell/dividend 为 +，expense/buy 为 −，
-/// transfer 双侧 −/+，split 恒 0）由矩阵单一真源决定。
-fn account_flow_sum_sql(side: TransferSide) -> String {
-    let (expr, join_col) = match side {
-        TransferSide::Out => (account_flow_expr("t", side), "t.account_id"),
-        TransferSide::In => (account_flow_expr("t", side), "t.to_account_id"),
-    };
+/// `account_flow` 对 transfer 的符号由 side 决定，而 side 决定关联列：
+/// 转出侧 join `t.account_id`、转入侧 join `t.to_account_id`。
+/// 单个与批量余额共用本映射，口径一致性由代码结构保证而非注释约定。
+fn join_column(side: TransferSide) -> &'static str {
+    match side {
+        TransferSide::Out => "t.account_id",
+        TransferSide::In => "t.to_account_id",
+    }
+}
+
+/// 对指定账户（`account_ref` 为 `?1` 参数或 `a.id` 列引用）的
+/// `account_flow` 聚合子查询。各 kind 对余额的符号
+/// （income/refund/sell/dividend 为 +，expense/buy 为 −，
+/// transfer 转出侧 −/转入侧 +，split 恒 0）由 kind→度量矩阵单一真源决定。
+fn account_flow_subquery(side: TransferSide, account_ref: &str) -> String {
     format!(
-        "SELECT COALESCE(SUM({expr}),0) FROM transactions t \
-         WHERE t.is_deleted=0 AND {join_col}=?1"
+        "(SELECT COALESCE(SUM({expr}),0) FROM transactions t \
+         WHERE t.is_deleted=0 AND {col}={account_ref})",
+        expr = account_flow_expr("t", side),
+        col = join_column(side),
     )
 }
 
@@ -45,12 +51,12 @@ pub fn compute_balance(conn: &Connection, account_id: &str) -> Result<i64> {
         |r| r.get(0),
     )?;
     let flow_out: i64 = conn.query_row(
-        &account_flow_sum_sql(TransferSide::Out),
+        &format!("SELECT {}", account_flow_subquery(TransferSide::Out, "?1")),
         rusqlite::params![account_id],
         |r| r.get(0),
     )?;
     let flow_in: i64 = conn.query_row(
-        &account_flow_sum_sql(TransferSide::In),
+        &format!("SELECT {}", account_flow_subquery(TransferSide::In, "?1")),
         rusqlite::params![account_id],
         |r| r.get(0),
     )?;
@@ -81,14 +87,12 @@ pub fn compute_all_balances_with_visibility(
     let sql = format!(
         "SELECT a.id,
                 a.initial_balance_cents
-                + COALESCE((SELECT SUM({out_expr}) FROM transactions t \
-                            WHERE t.is_deleted=0 AND t.account_id=a.id), 0)
-                + COALESCE((SELECT SUM({in_expr}) FROM transactions t \
-                            WHERE t.is_deleted=0 AND t.to_account_id=a.id), 0)
+                + COALESCE({out}, 0)
+                + COALESCE({tin}, 0)
          FROM accounts a
          WHERE a.is_deleted = 0 {hidden_clause}",
-        out_expr = account_flow_expr("t", TransferSide::Out),
-        in_expr = account_flow_expr("t", TransferSide::In),
+        out = account_flow_subquery(TransferSide::Out, "a.id"),
+        tin = account_flow_subquery(TransferSide::In, "a.id"),
     );
     let entries: Vec<AccountBalanceEntry> = query_all(conn, &sql, [])?;
 
