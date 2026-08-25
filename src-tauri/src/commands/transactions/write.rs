@@ -1,86 +1,10 @@
-use std::time::Instant;
-
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
-use sha2::{Digest, Sha256};
 
 use crate::commands::fx::convert_to_native;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{CreateTransactionResult, NormalizedTransaction, TransactionInput};
-
-/// 计算导入去重哈希：`sha256("date|kind|amount_cents|currency_code|account_id|to_account_id")`。
-/// `to_account_id` 缺省拼空串；刻意排除 note/category（AI 生成文本非确定性，会让哈希漂移）。
-pub fn compute_dedup_hash(input: &TransactionInput) -> String {
-    let to_account_id = input.to_account_id.as_deref().unwrap_or("");
-    let payload = format!(
-        "{}|{}|{}|{}|{}|{}",
-        input.date,
-        input.kind,
-        input.amount_cents,
-        input.currency_code,
-        input.account_id,
-        to_account_id
-    );
-    let digest = Sha256::digest(payload.as_bytes());
-    digest.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// 单条导入交易的去重身份判定：新写还是命中已有（issue #62，prefactor）。
-///
-/// ADR-0010 的冻结契约被编码为类型而非散在 if 分支：命中已有时，`Existing.id`
-/// 即契约要求回传的值——幂等键命中（内容无关）为 `Some(已有 id)`；内容哈希兜底
-/// 命中为 `None`（维持冻结行为 `id: None`，不回归）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DedupIdentity {
-    /// 未命中任何未删除交易，应新写；携带已计算好的内容哈希（落库时回写 `dedup_hash` 列）。
-    New { dedup_hash: String },
-    /// 命中已有未删除交易。
-    Existing {
-        /// 按冻结契约回传给调用方的 id：幂等键命中为 Some(已有 id)，内容哈希命中为 None。
-        id: Option<String>,
-    },
-}
-
-/// 判定一条导入交易的去重身份：新写还是命中已有（issue #62）。
-///
-/// 带客户端幂等键时按键查：内容无关、命中优先走部分唯一索引
-/// `idx_transactions_idempotency_key`（非全表扫描）；无键时回退确定性内容哈希
-/// （`compute_dedup_hash`，排除 note/category）。
-pub fn dedup_identity(conn: &Connection, input: &TransactionInput) -> Result<DedupIdentity> {
-    let dedup_hash = compute_dedup_hash(input);
-    // 带客户端幂等键：按键查（内容无关、走部分唯一索引命中）；幂等键命中回传已有 id。
-    if let Some(key) = &input.idempotency_key {
-        let hit: Option<String> = conn
-            .query_row(
-                "SELECT id FROM transactions \
-                 WHERE idempotency_key=?1 AND is_deleted=0 LIMIT 1",
-                rusqlite::params![key],
-                |r| r.get(0),
-            )
-            .optional()?;
-        return Ok(match hit {
-            Some(id) => DedupIdentity::Existing {
-                // 幂等键命中（内容无关）：回传已有 id。
-                id: Some(id),
-            },
-            None => DedupIdentity::New { dedup_hash },
-        });
-    }
-    // 无键：回退确定性内容哈希兜底；命中回传 id:None（冻结契约，不回归）。
-    let hit: Option<String> = conn
-        .query_row(
-            "SELECT id FROM transactions \
-             WHERE dedup_hash=?1 AND is_deleted=0 ORDER BY created_at LIMIT 1",
-            rusqlite::params![dedup_hash],
-            |r| r.get(0),
-        )
-        .optional()?;
-    Ok(match hit {
-        Some(_) => DedupIdentity::Existing { id: None },
-        None => DedupIdentity::New { dedup_hash },
-    })
-}
 
 pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<String> {
     let id = if input.kind == "buy" {
@@ -186,109 +110,15 @@ pub fn normalize_transaction(
     }
 }
 
+/// 薄转发层（issue #63）：批量编排语义已整体迁入 `batch::TransactionBatch::run`，
+/// 本函数保留以兼容既有调用点——HTTP handler、IPC `create_transactions`、
+/// 搜索重建测试与 e2e 迁移 step——对外契约（返回形状/事务/去重语义）完全不变。
 pub fn create_transactions_internal(
     conn: &Connection,
     inputs: Vec<TransactionInput>,
     dedup: bool,
 ) -> Result<Vec<CreateTransactionResult>> {
-    let started = Instant::now();
-    let total = inputs.len();
-    conn.execute("BEGIN", [])?;
-    let mut results = Vec::with_capacity(total);
-    // 失败条数：累计到批次汇总日志（成功路径=无效行数；回滚路径含触发回滚的那条）。
-    let mut failed = 0usize;
-    for input in inputs {
-        // 客户端幂等键：带键时作为去重身份（内容无关），无键时 None 走内容哈希兜底。
-        let idempotency_key = input.idempotency_key.clone();
-        // 去重身份判定已抽为独立函数（issue #62）：带键按键查（走部分唯一索引）、无键回退
-        // 内容哈希；ADR-0010 的契约编码在 `DedupIdentity` 类型里，不再散在 if 分支。
-        // `New` 携带内容哈希供落库回写 `dedup_hash` 列，避免重复计算。
-        let dedup_hash = if dedup {
-            match dedup_identity(conn, &input)? {
-                DedupIdentity::Existing { id } => {
-                    results.push(CreateTransactionResult {
-                        success: true,
-                        duplicate: true,
-                        // 冻结契约即类型：幂等键命中回传已有 id，内容哈希命中回传 id:None（不回归）。
-                        id,
-                        error: None,
-                    });
-                    continue;
-                }
-                DedupIdentity::New { dedup_hash } => dedup_hash,
-            }
-        } else {
-            compute_dedup_hash(&input)
-        };
-        match insert_transaction(conn, input) {
-            Ok(id) => {
-                if let Err(e) = conn.execute(
-                    "UPDATE transactions SET dedup_hash=?1, idempotency_key=?2 WHERE id=?3",
-                    rusqlite::params![dedup_hash, idempotency_key, id],
-                ) {
-                    conn.execute("ROLLBACK", [])?;
-                    failed += 1;
-                    log_batch_summary(started, total, failed, false);
-                    return Err(e.into());
-                }
-                results.push(CreateTransactionResult {
-                    success: true,
-                    duplicate: false,
-                    id: Some(id),
-                    error: None,
-                });
-            }
-            Err(AppError::Invalid(msg)) => {
-                failed += 1;
-                results.push(CreateTransactionResult {
-                    success: false,
-                    duplicate: false,
-                    id: None,
-                    error: Some(msg),
-                });
-            }
-            Err(e) => {
-                conn.execute("ROLLBACK", [])?;
-                failed += 1;
-                log_batch_summary(started, total, failed, false);
-                return Err(e);
-            }
-        }
-    }
-    if let Err(e) = conn.execute("COMMIT", []) {
-        // COMMIT 失败：尝试回滚清理残留（错误路径同样记录批次汇总）。
-        let _ = conn.execute("ROLLBACK", []);
-        log_batch_summary(started, total, failed, false);
-        return Err(e.into());
-    }
-    // 汇总行在 COMMIT 后立即打一条（ADR-0009 决策 #5 / issue #45）：
-    // 数据已提交，无论后续搜索重建队列成败，批次都应有一条可观测的汇总行。
-    log_batch_summary(started, total, failed, true);
-    // 批量导入完成后立即消费搜索重建队列：导入是成批写入场景，
-    // 一次性重建比等下一个后台刷新周期（60s）更合理；消费总成本不变，
-    // 只是从「逐条即时」挪到「导入结束一次性」，且导入命令本就持锁、
-    // 不额外影响界面响应（ADR-0004 决策 #14）。
-    crate::commands::search::process_reindex_queue(conn)?;
-    Ok(results)
-}
-
-/// 记录导入批次汇总日志（ADR-0009 决策 #5 / issue #45）。
-///
-/// 总耗时用调用方在批次开始时记下的手动 `Instant` 计算；`total` 为批次提交的
-/// 交易条数，`failed` 为失败条数，`committed` 区分成功提交与回滚（错误路径同样
-/// 记录一条 `info!`，保证回滚后汇总行仍出现）。
-fn log_batch_summary(started: Instant, total: usize, failed: usize, committed: bool) {
-    let msg = if committed {
-        "导入批次完成"
-    } else {
-        "导入批次回滚"
-    };
-    tracing::info!(
-        total,
-        failed,
-        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
-        msg
-    );
+    crate::commands::batch::TransactionBatch::run(conn, inputs, dedup)
 }
 
 /// 按 `id` 全字段替换一笔交易（`PUT /api/v1/transactions/{id}`）。
