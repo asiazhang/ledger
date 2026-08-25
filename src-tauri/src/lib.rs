@@ -8,6 +8,7 @@ pub mod models;
 pub mod scheduled_transactions;
 #[doc(hidden)]
 pub mod test_utils;
+pub mod transaction;
 
 use tauri::Manager;
 use tauri::ipc::Invoke;
