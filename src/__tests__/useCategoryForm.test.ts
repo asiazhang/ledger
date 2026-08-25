@@ -80,7 +80,10 @@ describe('useCategoryForm', () => {
     const form = useCategoryForm('expense')
     // 不设 accountId，submit 应返回不抛异常
     await expect(form.submit()).resolves.toBeUndefined()
-    expect(mockInvoke).not.toHaveBeenCalled()
+    // self-init 已自动加载参考数据，故按命令过滤断言无记账写入
+    expect(
+      mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction'),
+    ).toHaveLength(0)
   })
 
   it('submit 校验：金额为空时提示警告', async () => {
@@ -88,7 +91,9 @@ describe('useCategoryForm', () => {
     form.accountId.value = 'acc-1'
     form.amount.value = null
     await expect(form.submit()).resolves.toBeUndefined()
-    expect(mockInvoke).not.toHaveBeenCalled()
+    expect(
+      mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction'),
+    ).toHaveLength(0)
   })
 
   it('submit 调用 api.createTransaction', async () => {
@@ -102,7 +107,10 @@ describe('useCategoryForm', () => {
 
     await form.submit()
 
-    expect(mockInvoke).toHaveBeenCalledTimes(1)
+    // self-init 已自动加载参考数据（list_*），此处仅断言记账写入恰一次
+    expect(
+      mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction'),
+    ).toHaveLength(1)
     expect(mockInvoke).toHaveBeenCalledWith('create_transaction', {
       input: {
         kind: 'expense',
