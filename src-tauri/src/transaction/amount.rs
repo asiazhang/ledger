@@ -7,7 +7,9 @@
 //! - [`convert_to_native`]：raw → 本位币折算，基准为全局默认币种
 //!   （[`default_currency_code`]），不依赖 per-account 币种，避免跨账户漂移。
 //!
-//! 本模块为行为保持的 expand 步骤：尚无消费方接线，语义由测试锁定。
+//! 本模块为行为保持的 expand 步骤：消费方已接线（`transaction::writer::normalize`
+//! 经 `convert_to_native` 折算本位币，服务端聚合经 SQL 片段 builder，余额/报表/预算
+//! 消费矩阵口径），语义由测试锁定。
 
 use std::fmt;
 use std::fmt::Write as _;

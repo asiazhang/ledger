@@ -4,9 +4,7 @@ use rusqlite::OptionalExtension;
 use crate::db::query::{query_all, query_one};
 use crate::db::{device_id, now_iso};
 use crate::error::{AppError, Result};
-use crate::models::{
-    NormalizedTransaction, Transaction, TransactionListFilter, TransactionListResult,
-};
+use crate::models::{Transaction, TransactionListFilter, TransactionListResult};
 
 pub fn list_transactions_internal(
     conn: &Connection,
@@ -75,38 +73,6 @@ pub fn get_transaction_internal(conn: &Connection, id: &str) -> Result<Transacti
         rusqlite::params![id],
     )?
     .ok_or_else(|| AppError::NotFound(format!("交易不存在: {id}")))
-}
-
-/// 更新交易行字段（创建与修改共用的归一化字段），保留 `id`、`created_at` 与去重身份
-/// （`idempotency_key` / `dedup_hash`），版本号递增。buy/sell 同样经由本函数落交易行字段。
-pub(crate) fn update_transaction_row(
-    conn: &Connection,
-    id: &str,
-    norm: &NormalizedTransaction,
-) -> Result<()> {
-    conn.execute(
-        "UPDATE transactions \
-         SET kind=?2, amount_cents=?3, currency_code=?4, amount_native_cents=?5, account_id=?6, \
-         to_account_id=?7, category_id=?8, refund_of_transaction_id=?9, note=?10, date=?11, \
-         updated_at=?12, version=version+1, device_id=?13 \
-         WHERE id=?1",
-        rusqlite::params![
-            id,
-            norm.kind,
-            norm.amount_cents,
-            norm.currency_code,
-            norm.amount_native_cents,
-            norm.account_id,
-            norm.to_account_id,
-            norm.category_id,
-            norm.refund_of_transaction_id,
-            norm.note,
-            norm.date,
-            now_iso(),
-            device_id(),
-        ],
-    )?;
-    Ok(())
 }
 
 /// 删除交易（软删除 `is_deleted=1`）。

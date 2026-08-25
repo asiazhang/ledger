@@ -52,7 +52,9 @@ fn init_db_is_idempotent_and_seeds_defaults() {
     assert_eq!(mismatched, 0);
 }
 
-/// 汇率表每货币对仅保留一行最新；exchange_rate 按 (base_code, quote_code) 直查。
+/// 汇率表每货币对仅保留一行最新（UNIQUE(base_code, quote_code) 约束）。
+/// 正反向查表与折算语义已收口到 Amount 接缝（`transaction::amount::convert_to_native`，
+/// 见 transaction/tests.rs），此处不再重复。
 #[test]
 fn exchange_rate_single_row_per_pair() {
     let mut conn = open_in_memory().unwrap();
@@ -65,9 +67,6 @@ fn exchange_rate_single_row_per_pair() {
     )
     .unwrap();
 
-    let rate = crate::commands::fx::exchange_rate(&conn, "USD", "CNY").unwrap();
-    assert!((rate - 7.2).abs() < 0.0001);
-
     // 同货币对第二行应被 UNIQUE(base_code, quote_code) 拒绝。
     let dup = conn.execute(
         "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,source,updated_at,version,device_id) \
@@ -75,21 +74,6 @@ fn exchange_rate_single_row_per_pair() {
         params!["er-02"],
     );
     assert!(dup.is_err(), "同货币对第二行应违反唯一约束");
-
-    // 反向兌底：CNY->USD 未直接录入，但 USD->CNY 存在，应返回 1/7.2。
-    let rev = crate::commands::fx::exchange_rate(&conn, "CNY", "USD").unwrap();
-    assert!(
-        (rev - 1.0 / 7.2).abs() < 0.0001,
-        "反向汇率应为 1/7.2: {rev}"
-    );
-
-    // 正反向均未录入的货币对才返回错误。
-    assert!(crate::commands::fx::exchange_rate(&conn, "EUR", "JPY").is_err());
-
-    // 同币种直返回 1.0，无需查表。
-    assert!(
-        (crate::commands::fx::exchange_rate(&conn, "USD", "USD").unwrap() - 1.0).abs() < 0.0001
-    );
 }
 
 /// 跨币种持仓：CNY 账户持 USD 标的，市值与成本都应折算到 CNY 后再相减。
@@ -491,11 +475,11 @@ fn transaction_currency_conversion() {
     )
     .unwrap();
 
-    let native = crate::commands::fx::convert_to_native(&conn, 10000, "USD", account_id).unwrap();
+    let native = crate::transaction::amount::convert_to_native(&conn, 10000, "USD").unwrap();
     assert_eq!(native, 72000);
 
     // 同币种无需汇率，1:1 返回。
-    let native = crate::commands::fx::convert_to_native(&conn, 10000, "CNY", account_id).unwrap();
+    let native = crate::transaction::amount::convert_to_native(&conn, 10000, "CNY").unwrap();
     assert_eq!(native, 10000);
 }
 

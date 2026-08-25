@@ -119,6 +119,39 @@ fn try_transfer_without_target(
     };
 }
 
+/// 尝试创建一笔交易并捕获错误（供「应返回错误」断言）。
+/// 与 `create_txn` 的区别：不要求成功，失败信息记入 `world.last_error`。
+#[when(expr = "尝试创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string}")]
+fn try_create_txn(
+    world: &mut LedgerWorld,
+    kind: String,
+    amount: i64,
+    account_name: String,
+    date: String,
+) {
+    let input = TransactionInput {
+        kind,
+        amount_cents: amount,
+        currency_code: "CNY".into(),
+        account_id: world.account_id(&account_name),
+        to_account_id: None,
+        category_id: None,
+        refund_of_transaction_id: None,
+        note: None,
+        date,
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        idempotency_key: None,
+    };
+    let result = insert_transaction(&world.conn, input);
+    world.last_error = match result {
+        Err(AppError::Invalid(msg)) => Some(msg),
+        _ => Some("预期失败但成功了".into()),
+    };
+}
+
 #[when(expr = "创建转账 金额 {int} 从 {string} 到 {string} 日期 {string}")]
 fn create_transfer(
     world: &mut LedgerWorld,

@@ -5,6 +5,7 @@ use crate::db::query::{FromRow, query_all};
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{AccountType, NormalizedTransaction, TransactionInput};
+use crate::transaction::writer;
 
 pub(crate) struct ActiveLot {
     pub(crate) id: String,
@@ -87,39 +88,21 @@ pub(crate) fn create_buy_transaction(conn: &Connection, input: TransactionInput)
     write_buy(conn, &plan)
 }
 
+/// 落交易行字段经 Writer 接缝（issue #60 / spec #52）：id 与审计字段由
+/// [`writer::insert_row`] 统一生成，与通用 kind 创建共用同一写入权威；
+/// 持仓建仓（`security_lots` / `security_transactions`）留在命令层按 buy 身份执行。
 fn write_buy(conn: &Connection, plan: &BuyPlan) -> Result<String> {
-    let id = new_uuid();
-    let now = now_iso();
-    let norm = &plan.normalized;
-    conn.execute(
-        "INSERT INTO transactions \
-         (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
-         category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,'buy',?2,?3,?4,?5,?6,NULL,NULL,?7,?8,?9,?10,?11,?12,0)",
-        rusqlite::params![
-            id,
-            norm.amount_cents,
-            norm.currency_code,
-            norm.amount_native_cents,
-            norm.account_id,
-            norm.to_account_id,
-            norm.note,
-            norm.date,
-            now,
-            now,
-            1,
-            device_id()
-        ],
-    )?;
+    let row = crate::commands::transactions::to_writer_row(&plan.normalized)?;
+    let id = writer::insert_row(conn, &row)?;
     create_buy_lot(
         conn,
         &id,
-        &norm.account_id,
+        &plan.normalized.account_id,
         &plan.instrument_id,
         plan.quantity,
         plan.price_cents,
         plan.fee_cents,
-        &norm.currency_code,
+        &plan.normalized.currency_code,
     )?;
     Ok(id)
 }
@@ -203,30 +186,11 @@ pub(crate) fn create_sell_transaction(
     write_sell(conn, &plan)
 }
 
+/// 落交易行字段经 Writer 接缝（issue #60 / spec #52）：id 与审计字段由
+/// [`writer::insert_row`] 统一生成；卖出匹配/持仓扣减副作用留在命令层。
 fn write_sell(conn: &Connection, plan: &SellPlan) -> Result<String> {
-    let id = new_uuid();
-    let now = now_iso();
-    let norm = &plan.normalized;
-    conn.execute(
-        "INSERT INTO transactions \
-         (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
-         category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,'sell',?2,?3,?4,?5,?6,NULL,NULL,?7,?8,?9,?10,?11,?12,0)",
-        rusqlite::params![
-            id,
-            norm.amount_cents,
-            norm.currency_code,
-            norm.amount_native_cents,
-            norm.account_id,
-            norm.to_account_id,
-            norm.note,
-            norm.date,
-            now,
-            now,
-            1,
-            device_id()
-        ],
-    )?;
+    let row = crate::commands::transactions::to_writer_row(&plan.normalized)?;
+    let id = writer::insert_row(conn, &row)?;
     write_sell_side_effects(conn, &id, plan)?;
     Ok(id)
 }
@@ -294,7 +258,13 @@ pub(crate) fn write_sell_side_effects(conn: &Connection, id: &str, plan: &SellPl
 /// （会破坏对应卖出的已实现盈亏），返回 `Invalid`。
 pub(crate) fn apply_buy(conn: &Connection, id: &str, input: &TransactionInput) -> Result<()> {
     let plan = prepare_buy(conn, input)?;
-    crate::commands::transactions::update_transaction_row(conn, id, &plan.normalized)?;
+    // 交易行字段经 Writer 接缝更新（issue #60）：保留 created_at 与幂等身份，
+    // version 递增；持仓重建留在命令层。
+    writer::update_row(
+        conn,
+        id,
+        &crate::commands::transactions::to_writer_row(&plan.normalized)?,
+    )?;
     create_buy_lot(
         conn,
         id,
@@ -348,7 +318,13 @@ pub(crate) fn cleanup_buy(conn: &Connection, id: &str) -> Result<()> {
 /// 校验或匹配失败时由外层回滚整体还原。
 pub(crate) fn apply_sell(conn: &Connection, id: &str, input: &TransactionInput) -> Result<()> {
     let plan = prepare_sell(conn, input)?;
-    crate::commands::transactions::update_transaction_row(conn, id, &plan.normalized)?;
+    // 交易行字段经 Writer 接缝更新（issue #60）：保留 created_at 与幂等身份，
+    // version 递增；卖出匹配/持仓扣减重建留在命令层。
+    writer::update_row(
+        conn,
+        id,
+        &crate::commands::transactions::to_writer_row(&plan.normalized)?,
+    )?;
     write_sell_side_effects(conn, id, &plan)?;
     Ok(())
 }

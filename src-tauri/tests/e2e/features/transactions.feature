@@ -14,6 +14,11 @@ Feature: 交易管理
     When 尝试创建转账 金额 3000 从账户 "A账户" 日期 "2026-03-01"
     Then 应返回错误 "转账必须指定目标账户"
 
+  Scenario: 投资类交易（分红/拆股）不开放经通用路径创建
+    Given 存在账户 "证券账户" 类型 "investment" 币种 "CNY"
+    When 尝试创建交易 类型 "dividend" 金额 60 到账户 "证券账户" 日期 "2026-05-04"
+    Then 应返回错误 "仅处理通用交易类型"
+
   Scenario: 创建转账交易
     Given 存在账户 "A账户" 类型 "cash" 币种 "CNY"
     And 存在账户 "B账户" 类型 "cash" 币种 "CNY"

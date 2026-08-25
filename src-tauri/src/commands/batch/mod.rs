@@ -60,8 +60,9 @@ impl TransactionBatch {
             // 无键回退内容哈希；ADR-0010 的契约编码在 `DedupIdentity` 类型里，不散在 if 分支。
             // `New` 携带内容哈希供落库回写 `dedup_hash` 列，避免重复计算。
             // 单条写入（含 buy/sell 的持仓副作用路径）由 `transactions::insert_transaction`
-            // 承担——此处留注释缝：将来由候选 1 的 TransactionWriter 收口单条列映射/折算，
-            // 但不预先抽象 sink trait（当前只有一种真实写入路径）。
+            // 承担，其交易行落库已收口到 `transaction::writer` 接缝（issue #60）：
+            // 列映射与审计字段统一由 writer 生成，此处不重复；去重身份（幂等键/内容哈希）
+            // 仍在本批次编排层判定与回写，不沉入 writer。
             let dedup_hash = if dedup {
                 match dedup_identity(conn, &input)? {
                     DedupIdentity::Existing { id } => {

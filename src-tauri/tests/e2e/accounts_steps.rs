@@ -10,6 +10,33 @@ use crate::world::LedgerWorld;
 // When
 // ---------------------------------------------------------------------------
 
+/// 直接落库一笔分红交易（余额口径测试用 fixture）。
+///
+/// 分红/拆股属投资层路径，writer::normalize 显式拒绝（issue #72 计划），
+/// 行为层创建路径不开放；余额口径只关心该行存在，故直接 INSERT。
+#[when(expr = "直接写入分红交易 金额 {int} 到账户 {string} 日期 {string}")]
+fn insert_dividend_row(world: &mut LedgerWorld, amount: i64, account_name: String, date: String) {
+    let id = new_uuid();
+    let now = now_iso();
+    world
+        .conn
+        .execute(
+            "INSERT INTO transactions \
+             (id,kind,amount_cents,currency_code,amount_native_cents,account_id,date,\
+             created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,'dividend',?2,'CNY',?2,?3,?4,?5,?5,1,?6,0)",
+            params![
+                id,
+                amount,
+                world.account_id(&account_name),
+                date,
+                now,
+                device_id()
+            ],
+        )
+        .unwrap();
+}
+
 #[when(expr = "创建账户 {string} 类型 {string} 币种 {string} 初始余额 {int}")]
 fn create_account(
     world: &mut LedgerWorld,

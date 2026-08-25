@@ -68,12 +68,13 @@ pub struct NormalizedRow {
 ///   （忽略调用方填的 account_id / currency_code / category_id）；
 /// - 本位币折算走 Amount 接缝 [`amount::convert_to_native`]（基准为全局默认币种）。
 ///
-/// 与旧命令层实现的两处**刻意差异**（消费方未接线，语义由本模块测试锁定）：
+/// 与旧命令层实现的两处**刻意差异**（issue #59 定时引擎 / issue #60 创建修改与
+/// 买入卖出行已接线，语义由本模块测试锁定）：
 /// - 退款来源不存在/已软删除返回 [`AppError::NotFound`]（旧实现为 rusqlite 裸错，
 ///   语义不明）；其余错误文案（转账/金额/退款只能关联支出）逐字沿用旧文本，
-///   保证未来接线时 HTTP/BDD 断言不回退；
+///   保证接线后 HTTP/BDD 断言不回退；
 /// - 折算目标为全局默认币种（spec #52 口径权威），而非旧实现的账户币种——
-///   MVP 全 CNY 时二者 1:1 无差异，汇率生效后以本模块为准（旧实现随 issue #61 删除）。
+///   MVP 全 CNY 时二者 1:1 无差异，汇率生效后以本模块为准（旧实现已随接线删除）。
 pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
     match input.kind {
         Kind::Income | Kind::Expense | Kind::Transfer | Kind::Refund => {}
