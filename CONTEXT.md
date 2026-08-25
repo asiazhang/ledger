@@ -55,6 +55,14 @@
 ## Transaction（交易流水）
 
 - **定义**：一笔实际发生的资金变动，已存在于 V001；在定时交易语境下，它是 `ScheduledTransaction` 的某期执行产物。
+- **kind（交易类型，8 种，真源为 `transaction::amount::Kind` 枚举）**：
+  - `income`（收入）/ `expense`（支出）：日常收支。
+  - `transfer`（转账）：`account_id` 转出、`to_account_id` 转入。
+  - `refund`（退款）：关联原支出交易（`refund_of_transaction_id`），账户/币种/分类继承原支出。
+  - `buy`（买入证券）/ `sell`（卖出证券）：资本变动，关联投资持仓（见 Instrument / Holding）。
+  - `dividend`（现金分红）：计入收入。
+  - `split`（拆股/送股）：现金影响恒为 0。
+  - 每种 kind 对各金额度量的符号归属见 Transaction Kind Mapping；写入与校验收口在 `transaction::writer`（Writer 接缝）。
 - **列表呈现边界**：
   - 交易列表按 `date` 倒序呈现（最新在前）。
   - 采用服务端 offset 分页：一次只取当前页交易，并返回满足筛选条件的交易总数（"共 N 条"）。
@@ -89,6 +97,13 @@
 
 ## Amount Model（金额模型）
 
+**raw/native 分离（`transactions` 行级）**：
+- `amount_cents`：原始币种金额；`amount_native_cents`：本位币金额（折算到全局默认币种 DefaultCurrency）。
+- 折算由 `transaction::amount::convert_to_native` 统一执行：与默认币种相同 → 1:1；否则按汇率折算（正反向汇率兜底），缺汇率报错、不静默混币种。MVP 阶段多币种汇率 1:1，故二者恒等。
+- 折算基准为全局默认币种、与账户币种无关，避免跨账户汇总口径漂移。
+- 四个具名度量（`account_flow` / `expense_net` / `income_net` / `refund_gross`）对 8 种 kind 的符号归属见 Transaction Kind Mapping。
+
+**分期金额计算（ScheduledTransaction）**：
 - **MVP 决策**：每期金额固定，使用 `ScheduledTransaction` 的 `amount_cents` 字段。
 - **分期金额计算规则**：
   1. `InstallmentPlan` 记录 `total_amount_cents` 和 `total_occurrences`。
@@ -114,11 +129,29 @@
 
 ## Transaction Kind Mapping（交易类型映射）
 
-- **MVP 决策**：由 `ScheduledTransaction.kind` 固定生成对应 `Transaction.kind`，用户不可配置。
-- **映射规则**：
-  - `installment` → `expense`
-  - `subscription` → `expense`
-  - `scheduled_transfer` → `transfer`
+**ScheduledTransaction → Transaction 生成映射（用户不可配置）**：
+- `installment` → `expense`
+- `subscription` → `expense`
+- `scheduled_transfer` → `transfer`
+
+**Transaction.kind → 金额度量归属矩阵**（8 种 kind，真源为 `transaction::amount` 的系数矩阵，同时驱动 SQL 聚合片段与行级 `signed_amount`）：
+
+| kind | account_flow | expense_net | income_net | refund_gross |
+|------|------|------|------|------|
+| income | + | 0 | + | 0 |
+| expense | − | + | 0 | 0 |
+| transfer | account_id=− / to_account_id=+ | 0 | 0 | 0 |
+| refund | + | − | 0 | + |
+| buy | − | 0 | 0 | 0 |
+| sell | + | 0 | 0 | 0 |
+| dividend | + | 0 | + | 0 |
+| split | 0 | 0 | 0 | 0 |
+
+- `account_flow`（账户现金流动）：余额口径，某账户视角的现金出入；transfer 按侧取号。
+- `expense_net`（支出净额）= 毛支出 − 退款；buy/sell 属资本变动，不计入经营收支。
+- `income_net`（收入净额）= 收入 + 分红。
+- `refund_gross`（退款毛额）：独立成列，毛值/净值并存展示。
+- 净值恒等式（一处定义）：`expense_net = expense_gross − refund_gross`，月度汇总毛值由此导出。
 
 ## Category（分类）
 

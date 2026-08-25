@@ -38,11 +38,11 @@ Ledger 是一个基于 Tauri 2 的桌面记账应用，前端 Vue 3 + TypeScript
 
 ### 金额与多币种（重要约定）
 - 所有金额以**整数分**存储，字段统一用 `_cents` 后缀（如 `amount_cents`、`initial_balance_cents`、`balance_cents`）。前端用 `src/types/index.ts` 的 `formatAmount(cents, currency)` 按币种 `decimal_places` 格式化展示。
-- `transactions` 同时存 `amount_cents`（原始币种金额）和 `amount_native_cents`（本位币金额）。**当前 MVP 阶段二者始终相等（1:1）**，多币种汇率换算尚未实现，`exchange_rates` 表为此预留。改动金额相关逻辑时须保持二者相等。
-- 账户余额**不持久化**，由 `commands::account_balance` 实时计算：`初始余额 + 收入 - 支出 + 转入 - 转出`。转账（`kind='transfer'`）用 `account_id` 表示转出账户、`to_account_id` 表示转入账户。
+- 金额口径收口在 `src-tauri/src/transaction/amount.rs` 的 **Amount 接缝**（唯一权威）：`transactions` 同时存 `amount_cents`（原始币种金额）和 `amount_native_cents`（本位币金额），折算经 `convert_to_native` 以**全局默认币种**为基准（MVP 阶段多币种汇率 1:1，`exchange_rates` 表为此预留；非默认币种缺汇率时报错不静默混币种）；kind→度量系数矩阵同时驱动 SQL 聚合片段（`*_expr`）与行级 `signed_amount`，改口径只改模块内矩阵一处。**改动金额相关逻辑时须经模块接口，不要另写口径表达式。**
+- 账户余额**不持久化**，由 `commands::account_balance` 实时计算，口径 = `account_flow` 度量：`初始余额 + 收入 − 支出 + 转入 − 转出 + 退款 − 买入 + 卖出 + 分红`（split 恒 0）。转账（`kind='transfer'`）用 `account_id` 表示转出账户、`to_account_id` 表示转入账户。
 
 ### 交易类型约束
-`transactions.kind` 受数据库 CHECK 约束为 `'income' | 'expense' | 'transfer'`；`categories.kind` 为 `'income' | 'expense'`。`create_transaction` 在 Rust 侧校验金额 > 0、转账必须有 `to_account_id`。前端 `TransactionForm.vue` 同样遵循：按金额正负判定为 income/expense。
+`transactions.kind` 受数据库 CHECK 约束为 **8 种**：`'income' | 'expense' | 'transfer' | 'refund' | 'buy' | 'sell' | 'dividend' | 'split'`（真源为 `transaction::amount::Kind` 枚举）；`categories.kind` 为 `'income' | 'expense'`。校验（金额 > 0、转账必须有 `to_account_id`、退款继承原支出账户/币种/分类）与落库（含本位币折算、id 与审计字段生成）收口在 `src-tauri/src/transaction/writer.rs` 的 **Writer 接缝**（`normalize` / `insert_row` / `update_row`）：命令层 `create_transaction` / `update_transaction_internal`、买入/卖出行、定时引擎、批量导入全部经它落库，列清单不在此之外重复。前端 `TransactionForm.vue` 同样遵循：按金额正负判定为 income/expense。
 
 ### 错误处理
 `src-tauri/src/error.rs` 定义 `AppError`（thiserror + serde，`#[serde(tag = "kind", content = "message")]`），序列化为 `{kind, message}` 传到前端。`Result<T>` 是 `std::result::Result<T, AppError>`。已实现 `From` 转换：`rusqlite::Error`、`std::io::Error`。新增可失败命令用 `?` 即可。
