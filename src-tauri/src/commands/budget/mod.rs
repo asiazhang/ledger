@@ -1,21 +1,26 @@
-//! 预算（issue #91）：命令外壳 + 内嵌测试外迁。
+//! 预算（issue #91 创建，issue #58 迁移 Amount 口径）：命令外壳 + 内嵌测试外迁。
 //!
 //! 目录组织：
-//! - `tests`：原内嵌测试外迁。
+//! - `tests`：针对模块接口的测试（期望值由度量矩阵逐行求和得出，不复制生产 SQL）。
 //!
-//! 预算领域四个命令均为"命令外壳 + 内嵌 SQL"形态（主代码未超阈值，不拆核心逻辑），
-//! 整体落于模块入口。对外暴露的命令经 `commands/mod.rs` 的 `pub use budget::*`
-//! 重导出，注册路径与前端调用零改动。
+//! 金额口径由 `transaction::amount` 的 kind→度量矩阵单一真源驱动：
+//! 预算 spent = `expense_net`（毛支出 − 退款），与报表分类净值口径一致。
+//!
+//! 命令层为薄壳（锁 DbState 后调核心函数），核心函数吃 `&Connection` 可直接单测。
+//! 对外暴露的命令经 `commands/mod.rs` 的 `pub use budget::*` 重导出，
+//! 注册路径与前端调用零改动。
 
 #[cfg(test)]
 mod tests;
 
+use rusqlite::Connection;
 use tauri::State;
 
 use crate::db::query::query_all;
 use crate::db::{DbState, device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{Budget, BudgetInput, BudgetPeriod, BudgetProgress};
+use crate::transaction::amount::{Measure, contributing_kinds_sql, expense_net_expr};
 
 #[tauri::command]
 pub fn list_budgets(db: State<'_, DbState>) -> Result<Vec<Budget>> {
@@ -62,22 +67,28 @@ pub fn delete_budget(db: State<'_, DbState>, id: String) -> Result<()> {
     Ok(())
 }
 
-#[tauri::command]
-pub fn budget_progress(db: State<'_, DbState>) -> Result<Vec<BudgetProgress>> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    query_all(
-        &conn,
+/// 预算进度核心：spent = `expense_net`（毛支出 − 退款，退款冲减支出），
+/// 与报表分类净值同口径；参与 kind 由矩阵导出（不含 buy/sell 等投资类）。
+pub fn budget_progress_rows(conn: &Connection) -> Result<Vec<BudgetProgress>> {
+    let kinds = contributing_kinds_sql(Measure::ExpenseNet);
+    let sql = format!(
         "SELECT b.id,b.category_id,b.period,b.amount_cents,b.start_date,b.created_at,b.updated_at,b.version,b.device_id,b.is_deleted,c.name, \
-         COALESCE((SELECT SUM(CASE WHEN t.kind='expense' THEN t.amount_native_cents \
-                                    WHEN t.kind='refund' THEN -t.amount_native_cents \
-                                    ELSE 0 END) \
+         COALESCE((SELECT SUM({expense_net}) \
                    FROM transactions t \
                    JOIN categories tc ON tc.id=t.category_id \
                    WHERE (tc.id=b.category_id OR tc.parent_id=b.category_id) \
+                     AND t.kind IN ({kinds}) \
                      AND t.is_deleted=0 \
                      AND substr(t.date,1,7)=substr(b.start_date,1,7)),0) \
          FROM budgets b LEFT JOIN categories c ON c.id=b.category_id \
          WHERE b.is_deleted=0 ORDER BY b.created_at",
-        [],
-    )
+        expense_net = expense_net_expr("t"),
+    );
+    query_all(conn, &sql, [])
+}
+
+#[tauri::command]
+pub fn budget_progress(db: State<'_, DbState>) -> Result<Vec<BudgetProgress>> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    budget_progress_rows(&conn)
 }

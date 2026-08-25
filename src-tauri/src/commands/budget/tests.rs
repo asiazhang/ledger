@@ -1,12 +1,19 @@
-use crate::db::{device_id, now_iso};
+//! 预算测试（issue #58 迁移后）：断言预算核心函数与 Amount 接缝的度量矩阵一致，
+//! 不复制生产 SQL——期望值由 `signed_amount`（kind × measure）对夹具逐行求和得出。
 
-fn setup() -> rusqlite::Connection {
+use rusqlite::Connection;
+
+use crate::commands::budget::budget_progress_rows;
+use crate::db::{device_id, now_iso};
+use crate::transaction::amount::{Kind, Measure, signed_amount};
+
+fn setup() -> Connection {
     let mut conn = crate::db::open_in_memory().unwrap();
     crate::db::init_db(&mut conn).unwrap();
     conn
 }
 
-fn first_expense_category_id(conn: &rusqlite::Connection) -> String {
+fn first_expense_category_id(conn: &Connection) -> String {
     conn.query_row(
         "SELECT id FROM categories WHERE kind='expense' AND parent_id IS NULL ORDER BY created_at LIMIT 1",
         [],
@@ -15,7 +22,7 @@ fn first_expense_category_id(conn: &rusqlite::Connection) -> String {
     .unwrap()
 }
 
-fn first_expense_subcategory_id(conn: &rusqlite::Connection, parent_id: &str) -> String {
+fn first_expense_subcategory_id(conn: &Connection, parent_id: &str) -> String {
     conn.query_row(
         "SELECT id FROM categories WHERE parent_id=?1 ORDER BY created_at LIMIT 1",
         rusqlite::params![parent_id],
@@ -25,7 +32,7 @@ fn first_expense_subcategory_id(conn: &rusqlite::Connection, parent_id: &str) ->
 }
 
 fn insert_budget(
-    conn: &rusqlite::Connection,
+    conn: &Connection,
     id: &str,
     category_id: &str,
     amount_cents: i64,
@@ -39,25 +46,7 @@ fn insert_budget(
     ).unwrap();
 }
 
-fn insert_tx(
-    conn: &rusqlite::Connection,
-    id: &str,
-    kind: &str,
-    amount_cents: i64,
-    category_id: &str,
-    date: &str,
-) {
-    let now = now_iso();
-    conn.execute(
-        "INSERT INTO transactions \
-         (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
-         category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,'CNY',?3,'dummy',NULL,?4,NULL,NULL,?5,?6,?7,?8,?9,0)",
-        rusqlite::params![id, kind, amount_cents, category_id, date, now, now, 1, device_id()],
-    ).unwrap();
-}
-
-fn insert_dummy_account(conn: &rusqlite::Connection) {
+fn insert_dummy_account(conn: &Connection) {
     let now = now_iso();
     conn.execute(
         "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
@@ -66,42 +55,99 @@ fn insert_dummy_account(conn: &rusqlite::Connection) {
     ).unwrap();
 }
 
-fn budget_progress(conn: &rusqlite::Connection) -> Vec<(String, String, i64, i64, bool)> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT b.id,b.category_id,b.amount_cents, \
-         COALESCE((SELECT SUM(CASE WHEN t.kind='expense' THEN t.amount_native_cents \
-                                    WHEN t.kind='refund' THEN -t.amount_native_cents \
-                                    ELSE 0 END) \
-                   FROM transactions t \
-                   JOIN categories tc ON tc.id=t.category_id \
-                   WHERE (tc.id=b.category_id OR tc.parent_id=b.category_id) \
-                     AND t.is_deleted=0 \
-                     AND substr(t.date,1,7)=substr(b.start_date,1,7)),0), \
-         c.name \
-         FROM budgets b LEFT JOIN categories c ON c.id=b.category_id \
-         WHERE b.is_deleted=0 ORDER BY b.created_at",
-        )
-        .unwrap();
-    let rows = stmt
-        .query_map([], |r| {
-            let amount_cents: i64 = r.get(2)?;
-            let spent: i64 = r.get(3)?;
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                amount_cents,
-                spent,
-                spent > amount_cents,
-            ))
-        })
-        .unwrap();
-    rows.map(|r| {
-        let (id, cat_id, budget_amt, spent, over) = r.unwrap();
-        (id, cat_id, budget_amt, spent, over)
-    })
-    .collect()
+/// 夹具一行 = 一笔交易（kind 用 Amount 接缝的 Kind 枚举表述）。
+struct TxRow {
+    id: &'static str,
+    kind: Kind,
+    amount: i64,
+    category_id: String,
+    date: &'static str,
 }
+
+fn insert_tx(conn: &Connection, r: &TxRow) {
+    let now = now_iso();
+    conn.execute(
+        "INSERT INTO transactions \
+         (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
+         category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,?3,'CNY',?3,'dummy',NULL,?4,NULL,NULL,?5,?6,?7,1,?8,0)",
+        rusqlite::params![r.id, r.kind.as_str(), r.amount, r.category_id, r.date, now, now, device_id()],
+    )
+    .unwrap();
+}
+
+/// 按月对夹具逐行求 `expense_net` 度量和——期望值的唯一来源是度量矩阵，不是生产 SQL。
+fn expense_net_sum(rows: &[TxRow], month: &str) -> i64 {
+    rows.iter()
+        .filter(|r| r.date.starts_with(month))
+        .map(|r| signed_amount(r.kind, r.amount, Measure::ExpenseNet))
+        .sum()
+}
+
+/// 覆盖全部 8 种 kind 的夹具：验证预算 spent 恒等于 expense_net 口径。
+fn all_kinds_fixture(category_id: &str) -> Vec<TxRow> {
+    let category_id = category_id.to_string();
+    vec![
+        TxRow {
+            id: "k-income",
+            kind: Kind::Income,
+            amount: 5000,
+            category_id: category_id.clone(),
+            date: "2026-07-05",
+        },
+        TxRow {
+            id: "k-expense",
+            kind: Kind::Expense,
+            amount: 1200,
+            category_id: category_id.clone(),
+            date: "2026-07-06",
+        },
+        TxRow {
+            id: "k-refund",
+            kind: Kind::Refund,
+            amount: 300,
+            category_id: category_id.clone(),
+            date: "2026-07-07",
+        },
+        TxRow {
+            id: "k-transfer",
+            kind: Kind::Transfer,
+            amount: 800,
+            category_id: category_id.clone(),
+            date: "2026-07-08",
+        },
+        TxRow {
+            id: "k-buy",
+            kind: Kind::Buy,
+            amount: 2000,
+            category_id: category_id.clone(),
+            date: "2026-07-09",
+        },
+        TxRow {
+            id: "k-sell",
+            kind: Kind::Sell,
+            amount: 1500,
+            category_id: category_id.clone(),
+            date: "2026-07-10",
+        },
+        TxRow {
+            id: "k-dividend",
+            kind: Kind::Dividend,
+            amount: 60,
+            category_id: category_id.clone(),
+            date: "2026-07-11",
+        },
+        TxRow {
+            id: "k-split",
+            kind: Kind::Split,
+            amount: 9999,
+            category_id,
+            date: "2026-07-12",
+        },
+    ]
+}
+
+// ---- 预算 CRUD（薄壳 SQL 层） ----
 
 #[test]
 fn list_budgets_empty_initially() {
@@ -141,7 +187,8 @@ fn delete_budget_soft_deletes() {
     conn.execute(
         "UPDATE budgets SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params!["budget-2", now_iso(), device_id()],
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(
         conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM budgets WHERE is_deleted=0", [], |r| r
             .get(0))
@@ -150,73 +197,132 @@ fn delete_budget_soft_deletes() {
     );
 }
 
+// ---- budget_progress_rows：expense_net 口径 ----
+
 #[test]
 fn budget_progress_zero_when_no_transactions() {
     let conn = setup();
     let cat_id = first_expense_category_id(&conn);
     insert_budget(&conn, "budget-3", &cat_id, 50000, "2026-07-01");
-    let results = budget_progress(&conn);
+    let results = budget_progress_rows(&conn).unwrap();
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0].2, 50000); // budget amount
-    assert_eq!(results[0].3, 0); // spent
-    assert!(!results[0].4); // not over budget
+    assert_eq!(results[0].budget.amount_cents, 50000);
+    assert_eq!(results[0].spent_cents, 0);
+    assert!(!results[0].over_budget);
 }
 
+/// 预算 spent = `expense_net`（毛支出 − 退款）对全部 kind 一致；
+/// 投资/转账/收入/拆股类不进预算口径。
 #[test]
-fn budget_progress_counts_expense_in_same_category() {
+fn budget_progress_spent_matches_expense_net_for_all_kinds() {
     let conn = setup();
-    let cat_id = first_expense_category_id(&conn);
     insert_dummy_account(&conn);
+    let cat_id = first_expense_category_id(&conn);
     insert_budget(&conn, "budget-4", &cat_id, 50000, "2026-07-01");
-    insert_tx(&conn, "tx1", "expense", 3000, &cat_id, "2026-07-15");
-    let results = budget_progress(&conn);
-    assert_eq!(results[0].3, 3000);
-    assert!(!results[0].4);
+    let fixture = all_kinds_fixture(&cat_id);
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+    let results = budget_progress_rows(&conn).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(
+        results[0].spent_cents,
+        expense_net_sum(&fixture, "2026-07"),
+        "spent 应为 expense_net 口径"
+    );
+    assert_eq!(results[0].spent_cents, 900, "1200 − 300 退款");
+    assert!(!results[0].over_budget);
 }
 
 #[test]
 fn budget_progress_includes_child_category_transactions() {
     let conn = setup();
+    insert_dummy_account(&conn);
     let parent_id = first_expense_category_id(&conn);
     let child_id = first_expense_subcategory_id(&conn, &parent_id);
-    insert_dummy_account(&conn);
     insert_budget(&conn, "budget-5", &parent_id, 50000, "2026-07-01");
-    insert_tx(&conn, "tx2", "expense", 2000, &child_id, "2026-07-10");
-    let results = budget_progress(&conn);
-    assert_eq!(results[0].3, 2000);
-}
-
-#[test]
-fn budget_progress_refund_reduces_spent() {
-    let conn = setup();
-    let cat_id = first_expense_category_id(&conn);
-    insert_dummy_account(&conn);
-    insert_budget(&conn, "budget-6", &cat_id, 50000, "2026-07-01");
-    insert_tx(&conn, "tx3", "expense", 5000, &cat_id, "2026-07-05");
-    insert_tx(&conn, "tx4", "refund", 1000, &cat_id, "2026-07-06");
-    let results = budget_progress(&conn);
-    assert_eq!(results[0].3, 4000);
+    let fixture = vec![TxRow {
+        id: "tx2",
+        kind: Kind::Expense,
+        amount: 2000,
+        category_id: child_id,
+        date: "2026-07-10",
+    }];
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+    let results = budget_progress_rows(&conn).unwrap();
+    assert_eq!(
+        results[0].spent_cents,
+        expense_net_sum(&fixture, "2026-07"),
+        "子分类交易应计入父分类预算"
+    );
 }
 
 #[test]
 fn budget_progress_over_budget() {
     let conn = setup();
-    let cat_id = first_expense_category_id(&conn);
     insert_dummy_account(&conn);
-    insert_budget(&conn, "budget-7", &cat_id, 1000, "2026-07-01");
-    insert_tx(&conn, "tx5", "expense", 2000, &cat_id, "2026-07-10");
-    let results = budget_progress(&conn);
-    assert_eq!(results[0].3, 2000);
-    assert!(results[0].4); // over budget
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(&conn, "budget-6", &cat_id, 1000, "2026-07-01");
+    let fixture = vec![TxRow {
+        id: "tx5",
+        kind: Kind::Expense,
+        amount: 2000,
+        category_id: cat_id,
+        date: "2026-07-10",
+    }];
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+    let results = budget_progress_rows(&conn).unwrap();
+    assert_eq!(results[0].spent_cents, expense_net_sum(&fixture, "2026-07"));
+    assert!(results[0].over_budget);
 }
 
 #[test]
 fn budget_progress_only_counts_same_month() {
     let conn = setup();
-    let cat_id = first_expense_category_id(&conn);
     insert_dummy_account(&conn);
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(&conn, "budget-7", &cat_id, 50000, "2026-07-01");
+    let fixture = vec![TxRow {
+        id: "tx6",
+        kind: Kind::Expense,
+        amount: 3000,
+        category_id: cat_id,
+        date: "2026-06-30", // 上月
+    }];
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+    let results = budget_progress_rows(&conn).unwrap();
+    assert_eq!(
+        results[0].spent_cents,
+        expense_net_sum(&fixture, "2026-07"),
+        "预算月份之外的交易不计入"
+    );
+    assert_eq!(results[0].spent_cents, 0);
+}
+
+#[test]
+fn budget_progress_excludes_deleted() {
+    let conn = setup();
+    insert_dummy_account(&conn);
+    let cat_id = first_expense_category_id(&conn);
     insert_budget(&conn, "budget-8", &cat_id, 50000, "2026-07-01");
-    insert_tx(&conn, "tx6", "expense", 3000, &cat_id, "2026-06-30"); // previous month
-    let results = budget_progress(&conn);
-    assert_eq!(results[0].3, 0); // should not count
+    insert_tx(
+        &conn,
+        &TxRow {
+            id: "tx7",
+            kind: Kind::Expense,
+            amount: 3000,
+            category_id: cat_id,
+            date: "2026-07-15",
+        },
+    );
+    conn.execute("UPDATE transactions SET is_deleted=1 WHERE id='tx7'", [])
+        .unwrap();
+    let results = budget_progress_rows(&conn).unwrap();
+    assert_eq!(results[0].spent_cents, 0);
 }

@@ -24,7 +24,7 @@ use crate::db::query::query_all;
 use crate::error::{AppError, Result};
 use crate::models::{CategoryShare, MonthlySummary};
 use crate::transaction::amount::{
-    Measure, contributing_kinds, expense_gross_expr, expense_net_expr, income_net_expr,
+    Measure, contributing_kinds_sql, expense_gross_expr, expense_net_expr, income_net_expr,
     refund_gross_expr,
 };
 
@@ -57,11 +57,7 @@ pub fn category_shares_rows(
     } else {
         (Measure::IncomeNet, income_net_expr("t"))
     };
-    let kinds = contributing_kinds(measure)
-        .into_iter()
-        .map(|k| format!("'{k}'"))
-        .collect::<Vec<_>>()
-        .join(",");
+    let kinds = contributing_kinds_sql(measure);
     let mut sql = format!(
         "SELECT t.category_id, COALESCE(c.name,'未分类'), SUM({expr}) AS net \
          FROM transactions t LEFT JOIN categories c ON c.id=t.category_id \

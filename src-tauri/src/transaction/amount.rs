@@ -257,6 +257,13 @@ pub fn contributing_kinds(measure: Measure) -> Vec<&'static str> {
         .collect()
 }
 
+/// 带引号的贡献 kind 清单（如 `'expense','refund'`），可直接内插进
+/// `WHERE kind IN (...)`。供聚合 SQL 行过滤用，与 [`contributing_kinds`]
+/// 同源，消费方不再各自手拼 SQL 字面量（budget / reports 共用）。
+pub fn contributing_kinds_sql(measure: Measure) -> String {
+    quote_list(&contributing_kinds(measure))
+}
+
 // ---------------------------------------------------------------------------
 // 本位币折算
 // ---------------------------------------------------------------------------
