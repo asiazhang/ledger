@@ -30,7 +30,7 @@
 - 预算金额以「分」为单位存储
 - 预算开始日期（start_date）决定预算周期生效时间
 - 分类删除时受限（ON DELETE RESTRICT），防止有预算的分类被误删
-- 预算进度通过聚合 transactions 中对应 category_id 的 expense 金额计算
+- 预算进度通过聚合 transactions 中对应分类（含子分类）的支出净额计算：spent = `expense_net`（毛支出 − 退款），口径与报表分类净值一致（由 `transaction::amount` 的 kind→度量矩阵驱动）；时间窗口按预算 `start_date` 的月份
 
 ## 索引
 

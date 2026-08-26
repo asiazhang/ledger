@@ -19,19 +19,7 @@
 
 ## 默认种子数据
 
-| code | name | symbol | decimal_places |
-|------|------|--------|----------------|
-| CNY | 人民币 | ¥ | 2 |
-| USD | 美元 | $ | 2 |
-| EUR | 欧元 | € | 2 |
-| JPY | 日元 | ¥ | 2 |
-| GBP | 英镑 | £ | 2 |
-| HKD | 港币 | HK$ | 2 |
-| AUD | 澳元 | A$ | 2 |
-| CAD | 加元 | C$ | 2 |
-| KRW | 韩元 | ₩ | 0 |
-| SGD | 新加坡元 | S$ | 2 |
-| CHF | 瑞士法郎 | Fr. | 2 |
+11 种常用货币（CNY / USD / EUR / JPY / GBP / HKD / AUD / CAD / KRW / SGD / CHF）由 `V004__seed_defaults.sql` 定义（`INSERT OR IGNORE`），名称/symbol/decimal_places 以该迁移为唯一事实来源，此处不重复罗列。注意符号与小数位细节以迁移为准（如 JPY `decimal_places=0`）。
 
 ## 被引用关系
 

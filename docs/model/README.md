@@ -8,7 +8,7 @@ Ledger 采用 SQLite 作为本地数据库，面向**多设备同步的离线优
 
 1. **离线优先**：所有数据本地存储，支持无网络环境下正常使用
 2. **多设备同步**：通过同步字段（device_id, updated_at, version, is_deleted）支持 LWW（Last Write Wins）冲突解决
-3. **软删除**：所有主表使用 `is_deleted` 标志，不物理删除数据，保证同步一致性
+3. **软删除**：主表使用 `is_deleted` 标志，不物理删除数据，保证同步一致性
 4. **金额整数化**：所有金额以「分」为单位存储为整数，避免浮点精度问题
 5. **UUID v7 主键**：全局唯一标识符，时间有序，适合分布式场景
 
@@ -23,6 +23,7 @@ Ledger 采用 SQLite 作为本地数据库，面向**多设备同步的离线优
 - [transactions（交易）](./basic/transactions.md)
 - [budgets（预算）](./basic/budgets.md)
 - [exchange_rates（汇率）](./basic/exchange-rates.md)
+- [search_transactions（交易搜索索引）](./basic/search-transactions.md)
 
 ### 投资相关实体
 - [instruments（金融工具）](./investment/instruments.md)
@@ -31,9 +32,6 @@ Ledger 采用 SQLite 作为本地数据库，面向**多设备同步的离线优
 - [security_lot_sales（批次卖出匹配）](./investment/security-lot-sales.md)
 - [market_prices（市场价格）](./investment/market-prices.md)
 - [v_holdings（持仓视图）](./investment/holdings-view.md)
-
-### 搜索索引（设计阶段，未落地）
-- [search_transactions（交易搜索索引）](./basic/search-transactions.md)（仅 ADR-0004 设计，migration 尚未新增）
 
 ### 计划交易
 - [scheduled_transactions 模块概览](./scheduled-transactions/index.md)
@@ -219,7 +217,7 @@ erDiagram
 - **version**：版本号（每次修改 +1）
 - **is_deleted**：软删除标志（0/1）
 
-投资与汇率表（instruments, security_lots, market_prices, exchange_rates）携带 **device_id / updated_at / version**，但**无 is_deleted**（不参与软删除）；`security_lot_sales` 为审计流水表，仅 `created_at`，不参与同步。
+投资与汇率表（instruments, security_lots, market_prices, exchange_rates）携带 **device_id / updated_at / version**，但**无 is_deleted**（不参与软删除）；`security_lot_sales` 为审计流水表，仅 `created_at`，不参与同步。各表字段以 migration 为唯一事实来源（见下「从代码生成」）。
 
 ### LWW 冲突解决
 
@@ -244,9 +242,9 @@ erDiagram
 ### 多币种支持
 
 - transactions 同时存储 amount_cents（原始币种）和 amount_native_cents（本位币）
-- 当前实现中两者 1:1 相等，预留多币种换算能力
-- exchange_rates 表提供汇率数据
-- v_holdings 视图通过汇率折算计算账户币种市值
+- 折算语义收口在 `src-tauri/src/transaction/amount.rs` 的 **Amount 接缝**：以全局默认币种（当前常量 `CNY`）为基准折算，与账户币种无关；非默认币种缺汇率时报错，不静默混币种。MVP 阶段汇率 1:1 保持不变。
+- exchange_rates 表提供汇率数据（v_holdings 视图经其折算账户币种市值）
+- 改动金额相关逻辑时须经模块接口，不要另写口径表达式（详见 ADR-0011）
 
 ---
 
@@ -261,6 +259,20 @@ erDiagram
 
 ---
 
+## 从代码生成（事实来源）
+
+表结构、索引、触发器、外键与种子数据等**可枚举信息**以 migration 为唯一事实来源，文档不重复罗列：
+
+- `src-tauri/migrations/V001__initial.sql`：currencies / accounts / categories / transactions / budgets / exchange_rates 表结构、索引、CHECK 约束
+- `src-tauri/migrations/V002__investment.sql`：投资域五表 + `v_holdings` 视图
+- `src-tauri/migrations/V003__scheduled_transactions.sql`：计划交易核心 + 扩展表
+- `src-tauri/migrations/V004__seed_defaults.sql`：币种与分类种子数据（含黑洞账户）
+- `src-tauri/migrations/V005__search_index.sql`：FTS5 索引 + 重建队列 + 触发器
+- `src-tauri/migrations/V006__transaction_amount_index.sql`：金额筛选索引
+- `src-tauri/migrations/V007__transaction_idempotency_key.sql`：幂等键列 + 部分唯一索引
+
+> 迁移版本由 SQLite `user_version` 自动追踪（`src-tauri/src/db/mod.rs` 的 `migrations()` 注册）。新增 schema 变更时新建 `V00X__名称.sql` 并在 `migrations()` 追加，**不改已有迁移**（已发布版本冻结，见 AGENTS.md 发布约定）。
+
 ## 扩展性设计
 
 ### 已预留能力
@@ -268,17 +280,11 @@ erDiagram
 1. **多币种**：exchange_rates 表、transactions.amount_native_cents 字段
 2. **投资交易**：完整的证券交易、持仓批次、盈亏计算体系
 3. **分类层次**：支持两级分类，可扩展更深层级
-4. **软删除**：所有主表支持，保证同步一致性
+4. **软删除**：主表支持，保证同步一致性
 5. **版本控制**：version 字段支持乐观锁和变更追踪
 
 ### 当前未实现
 
-1. **多币种换算**：汇率表存在，但当前 MVP 阶段 transactions 的 amount_native_cents 与 amount_cents 1:1 相等，尚未根据实际汇率折算
+1. **多币种换算**：汇率表存在，但当前 MVP 阶段 transactions 的 amount_native_cents 与 amount_cents 1:1 相等（`convert_to_native` 已按全局默认币种折算，汇率生效只需改模块内一处）
 2. **分类深层级**：数据库支持两级，未实现更深层级
-3. **计划交易自动执行**：scheduled_transactions 模块 schema 完整，尚未接入定时执行逻辑
-
----
-
-## 参考
-
-- Migrations：`src-tauri/migrations/V001__initial.sql`, `V002__investment.sql`, `V003__scheduled_transactions.sql`, `V004__seed_defaults.sql`, `V005__instruments_market.sql`
+3. **计划交易自动执行**：scheduled_transactions 模块 schema 完整，但期次**不自动执行**——`execute_scheduled_occurrence` 为手动命令（用户/外部触发），尚无后台定时引擎；未来期次预生成窗口为 12 期（`scheduled_transactions/engine.rs` 的 `WINDOW_SIZE`）

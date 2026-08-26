@@ -73,13 +73,14 @@ CREATE INDEX idx_search_reindex_queue_enqueued_at ON search_reindex_queue(enqueu
 
 ### 消费流程
 
-1. 交易写入路径（`insert_transaction`）即时重建单条索引；账户改名等批量场景由队列消费（`process_reindex_queue`）重建。
-2. 消费端按 `enqueued_at` 升序取出一批 `transaction_id`。
+1. 交易写入路径**不做同步索引工作**（ADR-0004 决策 #14：写路径零索引开销，界面操作不受影响）；触发器已入队 `search_reindex_queue`。
+2. 后台刷新线程固定周期（默认 60s）检查队列，非空则按 `enqueued_at` 升序取出一批 `transaction_id` 批量消费重建；批量导入命令在事务提交后**立即消费一次**（导入是成批写入场景，一次性重建比等下一个周期更合理）。
 3. 对每个交易重新生成 `content`：
    - 如果交易已软删除，从 `search_transactions` 中删除对应行。
    - 否则执行 `INSERT OR REPLACE` 写入索引。
 4. 消费完成后从队列删除对应行。
 5. 启动对账（`reconcile_search_index`）：FTS 文档数 ≠ 未删除交易数时全量重建（`rebuild_search_index`），否则消费队列。
+6. 搜索结果附 `stale` 标志：队列非空（存在尚未消费的写入）时 `true`，前端提示索引可能滞后。写入后到下次刷新前，新建交易不可搜、软删除交易仍可搜（时效性要求低，可接受）。
 
 ### 与同步机制的边界
 
@@ -104,7 +105,7 @@ LIMIT ? OFFSET ?;
 - `MATCH` 参数由用户输入按空白分词后拼接（`build_match_query`）：每个词条生成 `"词条" OR "词条"*`（整词 + 前缀通配）并 OR，词条间 AND。如输入 `cf 午餐` → `("cf" OR "cf"*) AND ("午餐" OR "午餐"*)`。`"` 与 `*` 剥离防注入。
 - 中文按连续汉字整词 token（unicode61 tokenizer），不支持词中片段（`商银` 搜不到「招商银行」），由拼音首字母前缀兜底。
 - 排序先用 FTS5 内置 `rank`，再按交易日期倒序、`id` 兜底。
-- 金额与日期不做文本筛选（FTS5 只负责文本匹配）；金额/日期范围过滤为 ADR-0004 预留能力，当前命令尚未实现。
+- 金额与日期筛选**已实现**（issue #40/#41）：`amount_min_cents` / `amount_max_cents`（整数分，含边界，单边可用）与 `date_from` / `date_to`（`YYYY-MM-DD` 字符串比较，含边界），与关键字 AND 组合；仅筛选（无关键字）查询不 JOIN FTS 虚拟表，直接走主表 B-tree 索引（`idx_transactions_amount` V006 / `idx_transactions_date` V001）。
 - 不返回高亮片段，结果列表只展示交易信息。
 
 ## 索引

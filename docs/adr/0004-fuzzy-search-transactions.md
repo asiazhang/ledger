@@ -21,7 +21,7 @@ Ledger 当前采用 SQLite 离线优先架构，核心交易表 `transactions` �
 2. **使用 SQLite FTS5 虚拟表**：新建 `search_transactions` 作为全文搜索索引，与主表解耦。
 3. **可搜索内容去规范化**：将 `note + account_name + category_name` 拼接为单一 `content` 列，便于一次性全文匹配。
 4. **拼音首字母匹配**：在 `content` 中额外加入账户名、分类名、备注的拼音首字母串，支持输入如 `cf` 匹配「吃饭」。
-5. **金额/日期筛选走主表**：FTS5 负责文本匹配，再通过 `transaction_id` JOIN 回 `transactions` 用 B-tree 索引过滤 `amount_cents` 与 `date`。
+5. **金额/日期筛选走主表**：FTS5 负责文本匹配，再通过 `transaction_id` JOIN 回 `transactions` 用 B-tree 索引过滤 `amount_cents` 与 `date`（**已实现**，见下方已确认决策 #15）。
 6. **软删除同步过滤**：搜索结果始终 JOIN `accounts`/`categories` 并限定 `is_deleted = 0`；当交易、账户或分类被软删除时，同步从 FTS 索引中移除对应文档。
 
 ## 模型设计
@@ -50,6 +50,8 @@ content = note || ' ' || account_name || ' ' || category_name || ' '
           || note_pinyin_initials
 ```
 
+> 注：此为**原始设计**（含分类名/转入账户名）。实际实现已收窄为「备注 + 转出账户名 + 二者拼音首字母」（见下方已确认决策 #13），以 `build_search_content`（`src-tauri/src/commands/search/text.rs`）为唯一事实来源。
+
 - 拼音首字母由 Rust 层在写入索引时生成（例如「招商银行」→ `zsyh`）。
 - 所有字段为空时，`content` 为空字符串，仍保留一行以便后续补充文本。
 
@@ -57,7 +59,7 @@ content = note || ' ' || account_name || ' ' || category_name || ' '
 
 由于 `content` 包含跨表字段（账户名、分类名），无法仅通过 `transactions` 上的触发器自动维护，采用**应用层重建 + 关键触发器兜底**的混合策略：
 
-1. **事务级维护**：
+1. **事务级维护**（已由决策 #14 取代为后台定时，见下方）：
    - 新增/修改/删除交易后，应用层立即调用 `reindex_transaction(transaction_id)`。
    - 软删除交易时同步删除 FTS 文档。
 2. **级联维护**：
@@ -129,6 +131,7 @@ LIMIT ?;
     - 搜索结果附 `stale` 标志（搜索命令只读、不消费队列）：队列非空时 `stale=true`，前端在「命中 N 条」旁显示弱化提示「索引更新中，结果可能滞后于最近的操作」；
     - 语义变化：写入后到下次刷新前，新建交易不可搜、软删除交易仍可搜（时效性要求低、可接受）；issue #31 US16/US17 的「立即/数秒内」调整为「≤ 刷新周期内（默认 60 秒）」；
     - 理由：对搜索索引时效性要求低，但对界面操作响应要求高——将索引维护完全移出用户可见的关键路径。
+15. **金额/日期筛选已实现（issue #40/#41，V006）**：`search_transactions` 支持 `amount_min_cents` / `amount_max_cents`（整数分，含边界，单边可用）与 `date_from` / `date_to`（`YYYY-MM-DD` 字符串比较，含边界），与关键字 AND 组合；仅筛选（无关键字）查询不 JOIN FTS 虚拟表，直接走主表 B-tree 索引（`idx_transactions_amount` / `idx_transactions_date`），避免 FTS 无约束 JOIN 全扫。
 
 ## 模型补充：搜索重建队列
 
@@ -146,9 +149,9 @@ CREATE INDEX idx_search_reindex_queue_enqueued_at ON search_reindex_queue(enqueu
 
 ### 入队条件
 
-- 交易新增/修改/软删除：立即入队。
-- 账户名修改：批量把该账户下所有 `is_deleted = 0` 的交易入队。
-- 分类名修改：批量把该分类下所有 `is_deleted = 0` 的交易入队。
+- 交易新增/修改/软删除：立即入队（V005 触发器 `trg_search_enqueue_txn_insert` / `trg_search_enqueue_txn_update`）。
+- 账户名修改：批量把该账户下所有 `is_deleted = 0` 的交易入队（`trg_search_enqueue_account_rename`）。
+- **分类改名不入队**（决策 #13 收窄后分类名不在索引中，V005 无分类改名触发器）。
 - 重复入队时使用 `INSERT OR REPLACE` 覆盖，保证同一交易只有一行。
 
 ### 消费流程

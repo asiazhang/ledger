@@ -46,19 +46,24 @@
 
 ## 索引
 
+以 migration 为唯一事实来源（`V001__initial.sql` 6 个 + 后续迁移新增）：
+
 - `idx_transactions_date`：(date) 按日期查询
 - `idx_transactions_account`：(account_id) 按账户查询
 - `idx_transactions_category`：(category_id) 按分类查询
 - `idx_transactions_refund`：(refund_of_transaction_id) 查询退款关联
 - `idx_transactions_sync`：(updated_at, device_id) 同步查询
 - `idx_transactions_deleted`：(is_deleted, updated_at) 软删除查询
+- `idx_transactions_amount`：(amount_cents) 金额区间筛选（V006）
+- `idx_transactions_idempotency_key`：(idempotency_key) 部分唯一索引，`WHERE idempotency_key IS NOT NULL AND is_deleted=0`（V007，导入幂等键）
 
 ## 被引用关系
 
 - security_transactions.transaction_id → transactions.id（ON DELETE CASCADE）
 - scheduled_transaction_occurrences.transaction_id → transactions.id（计划期次执行完成后回填，唯一索引）
 - transactions.refund_of_transaction_id → transactions.id（ON DELETE SET NULL，自引用）
+- search_reindex_queue.transaction_id → transactions.id（ON DELETE CASCADE，搜索重建队列，V005）
 
 ## 参考
 
-- Migration：`src-tauri/migrations/V001__initial.sql`
+- Migration：`src-tauri/migrations/V001__initial.sql`（+ V005/V006/V007 的增量变更）

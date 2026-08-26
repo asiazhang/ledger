@@ -23,9 +23,9 @@
 ## 设计说明
 
 - 每笔买入交易产生一个 lot，记录独立的成本 basis
-- 支持 FIFO / LIFO / 平均成本 / 指定 lot 等卖出匹配规则
+- 卖出匹配规则：当前实现为**FIFO**（`security_lots` 按 `created_at, id` 升序取，逐 lot 匹配并记录 `security_lot_sales`）；FIFO / LIFO / 平均成本 / 指定 lot 等其余规则为设计预留，尚未实现
 - 卖出时通过 security_lot_sales 记录匹配的批次及已实现盈亏，并扣减 remaining_quantity
-- 拆股/送股等公司行为需要应用层调整所有相关 lot 的 quantity 和 cost_per_unit_cents
+- 拆股/送股（split）的公司行为调整（改 quantity / cost_per_unit_cents）为设计预留，尚无应用层实现
 - 唯一约束保证同一买入交易只产生一个批次
 - 买入交易删除时级联删除（ON DELETE CASCADE），批次跟随交易生命周期
 - 账户和工具删除时受限（ON DELETE RESTRICT），防止持仓批次孤立

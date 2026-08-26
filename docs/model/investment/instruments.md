@@ -50,4 +50,4 @@
 
 ## 参考
 
-- Migration：`src-tauri/migrations/V002__investment.sql`（基础结构）、`V005__instruments_market.sql`（新增 market 列）
+- Migration：`src-tauri/migrations/V002__investment.sql`（基础结构，含 market 列）

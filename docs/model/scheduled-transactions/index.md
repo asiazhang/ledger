@@ -95,12 +95,12 @@ active ──完成所有期次──> completed
 
 ```
 pending ──execute──> processing ──success──> completed (transaction_id 回填)
-                              └─failure──> failed
+                              └─failure──> 返回错误，状态不变（可重试）
 pending ──cancel plan──> cancelled
 ```
 
 - MVP 不支持 `skipped` 状态（单期跳过）。
-- `failed` 后由用户手动重试，重试时重新进入 `processing`。
+- `failed` 状态存在于 CHECK 约束与枚举（`OccurrenceStatus::Failed`），但当前实现中**没有写入 `status='failed'` 的路径**：执行失败（如非默认币种缺汇率、CAS 冲突、落库错误）时直接返回 `AppError`，期次保持 `pending`（或 `processing`），可再次手动执行重试。状态机文档中的 `failed` 为 schema 预留，尚未被代码使用。
 
 ## 周期规则
 
@@ -113,7 +113,7 @@ pending ──cancel plan──> cancelled
 
 ## 失败策略
 
-- MVP 阶段只支持“失败即标记为 failed，由用户手动重试”。
+- MVP 阶段实现为“执行失败即返回错误，期次状态不变，由用户手动重试”（失败不落 `failed` 状态，见上）。
 - 不自动重试、不自动跳过、不产生滞纳金。
 - 理由：离线优先场景下，自动重试容易在多设备间产生重复执行；手动重试让用户明确控制资金流出。
 
@@ -165,7 +165,7 @@ WHERE st.kind = 'installment' AND sto.status = 'pending' AND sto.scheduled_date 
 - 创建分期计划、订阅、定时转账。
 - 周期：日/周/月/年，固定间隔。
 - 整体暂停、恢复、取消计划。
-- 手动重试失败的期次。
+- 手动重试失败的期次（重试即再次执行该期次；失败不改变期次状态）。
 - 定时转账支持一次性（`total_occurrences = 1`）或无限循环。
 
 **不支持**：

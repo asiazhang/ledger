@@ -29,7 +29,7 @@
 ## 状态转换
 
 - 计划状态：`active` → `paused` / `cancelled` / `completed`（所有期次执行完毕）
-- 期次状态：`pending` → `processing` → `completed` / `failed`
+- 期次状态：`pending` → `processing` → `completed`；执行失败时返回错误、期次状态不变（`failed` 状态为 schema 预留，见 index.md）
 
 ## 生成交易规则
 
@@ -39,7 +39,7 @@
 | 期次 `amount_cents` | `amount_cents` / `amount_native_cents`（本位币，当前 1:1） |
 | `scheduled_transactions.currency_code` | `currency_code` |
 | `scheduled_transactions.category_id` | `category_id` |
-| `installment_plans.counterparty` | 复制到 `note` 或作为展示字段 |
+| `installment_plans.counterparty` | 收款方（当前不落库到交易；展示用途，见 index.md MVP 范围） |
 | 期次 `scheduled_date` | `date` |
 | 固定值 | `kind = 'expense'` |
 

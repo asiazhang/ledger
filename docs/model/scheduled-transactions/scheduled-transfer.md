@@ -21,7 +21,7 @@
 - 计划状态：`active` → `paused` / `cancelled` / `completed`（固定期数全部执行完）
 - 一次性定时转账（`total_occurrences = 1`）执行后状态变为 `completed`。
 - 无限循环的定时转账不使用 `completed` 状态。
-- 期次状态：`pending` → `processing` → `completed` / `failed`
+- 期次状态：`pending` → `processing` → `completed`；执行失败时返回错误、期次状态不变（`failed` 状态为 schema 预留，见 index.md）
 
 ## 生成交易规则
 

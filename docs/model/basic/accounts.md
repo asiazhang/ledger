@@ -16,6 +16,9 @@
 | version | INTEGER | 版本号（每次修改 +1） |
 | device_id | TEXT | 创建/最后修改设备标识 |
 | is_deleted | INTEGER | 软删除标志（0/1） |
+| is_hidden | INTEGER | 隐藏标志（0/1），黑洞账户专用（V001） |
+
+> 黑洞账户（`is_hidden=1`，如「无(CNY)」）用于承接「资金账户=无」的导入交易：交易照常写入并出现在列表/报表，但账户对用户侧列表/余额/下拉选择器隐藏（IPC `list_accounts` / `list_account_balances` 过滤 `is_hidden=0`；HTTP API 返回完整列表含 `is_hidden` 字段，供 AI 对账）。种子见 `V004__seed_defaults.sql`。
 
 ## 账户类型枚举
 
