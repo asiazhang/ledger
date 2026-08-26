@@ -2,6 +2,12 @@
 
 本文件记录 Ledger 各版本对使用者可见的变更，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)规则。
 
+## [Unreleased]
+
+### Changed
+
+- **外观**：主题定制化（Raycast 精致工具感）——强调色改为琥珀暖橙、圆角提升至 8/12px、暗色背景分层为近黑底+细边框；收入/支出/退款语义色保持不变。评估了迁移至 Shadcn Vue + Tailwind 的路线后决定留在 Naive UI，改用 `theme-overrides`（`src/theme/overrides.ts`）定制，迁移成本（约 1.5–2 周）与收益不匹配。
+
 ## [0.2.0] - 2026-08-22
 
 ### Added

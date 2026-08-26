@@ -15,6 +15,7 @@ import {
   type MenuOption,
 } from 'naive-ui'
 import { useAppStore } from '@/stores/app'
+import { darkOverrides, lightOverrides } from '@/theme/overrides'
 import { loadSidebarCollapsed, saveSidebarCollapsed } from '@/utils/viewState'
 
 const router = useRouter()
@@ -48,7 +49,10 @@ const title = () => h('div', { style: 'padding: 16px 18px; font-size: 18px; font
 </script>
 
 <template>
-  <NConfigProvider :theme="store.theme === 'dark' ? darkTheme : null">
+  <NConfigProvider
+    :theme="store.theme === 'dark' ? darkTheme : null"
+    :theme-overrides="store.theme === 'dark' ? darkOverrides : lightOverrides"
+  >
     <NMessageProvider>
       <NDialogProvider>
         <NLayout has-sider style="height: 100vh">

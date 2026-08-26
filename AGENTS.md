@@ -51,7 +51,7 @@ Ledger 是一个基于 Tauri 2 的桌面记账应用，前端 Vue 3 + TypeScript
 - 参考数据（`currencies/accounts/categories`）的**单一来源**是 `src/stores/reference.ts` 的 `useReferenceStore`：持有三张参考表、全部派生映射（`currencyMap/accountMap/categoryMap`）、分类树逻辑（`rootCategories/expenseCategories/incomeCategories/categoryChildren/categoryPath/treeCategoryOptions`）与失效信号（`status/version`）。加载为 push 生命周期：首次访问 self-init 自动拉取一次，订阅后端 `ledger:changed` 信号自动重拉（stale-while-revalidate，不闪空）；显式控制用 `refresh()`（强制重拉，在途去重）与 `ensureFresh()`（新鲜窗口内零 IPC）。`useAppStore`（`src/stores/app.ts`）已收缩为**纯 UI 设置 store**（`theme/defaultCurrency/backupDir/backupMaxCount`），不再暴露任何参考数据接口（见 issue #85）。
 - 路由用 hash 模式（`createWebHashHistory`，Tauri webview 需要），6 个视图：dashboard / transactions / accounts / reports / budget / settings。
 - `@` 别名指向 `./src`（在 `vite.config.ts` 与 `tsconfig.json` 同时配置）。
-- Naive UI 采用**按需 import**（非全局注册），`App.vue` 硬编码使用 `darkTheme` 暗色主题。
+- Naive UI 采用**按需 import**（非全局注册）；主题由 `useAppStore.theme` 持久化（默认暗色、可切换），主题定制（强调色/圆角/背景分层）集中在 `src/theme/overrides.ts`，经 `NConfigProvider` 的 `theme-overrides` 接入；收入/支出/退款的语义色独立于主题，硬编码在列表与图表处。
 
 ### 导入流程（AI 驱动）
 导入**不按文件类型解析**。唯一入口是本地 HTTP API `/api/v1`（基础地址 `http://127.0.0.1:9527`）：AI 编程助手通过 `POST /api/v1/accounts`、`POST /api/v1/categories`、`POST /api/v1/transactions/batch` 等端点幂等写库。导入约定（列映射、转账拆分、黑洞账户、币种映射、分单位、日期、dedup）由 `GET /api/v1/import/knowledge` 以纯文本返回，供 AI 直接注入；机器可读的完整端点契约由 `GET /api/v1/openapi.json` 生成式返回（utoipa）。AI 入口提示词模板见 `src-tauri/prompts/ledger-api.md`。
