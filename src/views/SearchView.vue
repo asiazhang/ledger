@@ -183,14 +183,14 @@ const pagination = computed(() => ({
         v-model:value="amountMinYuan"
         placeholder="最低金额（元）"
         clearable
-        style="width: 130px"
+        style="width: 150px"
         @keyup.enter="onEnter"
       />
       <NInput
         v-model:value="amountMaxYuan"
         placeholder="最高金额（元）"
         clearable
-        style="width: 130px"
+        style="width: 150px"
         @keyup.enter="onEnter"
       />
       <NDatePicker
