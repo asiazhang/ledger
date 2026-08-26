@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, ref } from 'vue'
+import { h, ref, type Component } from 'vue'
 import { RouterView, useRouter, useRoute } from 'vue-router'
 import {
   NConfigProvider,
@@ -9,14 +9,27 @@ import {
   NLayoutSider,
   NLayoutContent,
   NMenu,
+  NIcon,
   NSpace,
   NText,
   darkTheme,
   type MenuOption,
 } from 'naive-ui'
+import {
+  HomeOutline,
+  SwapHorizontalOutline,
+  SearchOutline,
+  WalletOutline,
+  BarChartOutline,
+  TrendingUpOutline,
+  CalculatorOutline,
+  SparklesOutline,
+  SettingsOutline,
+} from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
 import { loadSidebarCollapsed, saveSidebarCollapsed } from '@/utils/viewState'
+import { viewShortcuts, shortcutHint, useViewShortcuts } from '@/composables/useViewShortcuts'
 
 const router = useRouter()
 const route = useRoute()
@@ -29,17 +42,48 @@ function updateSidebarCollapsed(collapsed: boolean) {
 }
 const store = useAppStore()
 
-const menuOptions: MenuOption[] = [
-  { label: '概览', key: 'dashboard' },
-  { label: '交易', key: 'transactions' },
-  { label: '搜索', key: 'search' },
-  { label: '账户', key: 'accounts' },
-  { label: '报表', key: 'reports' },
-  { label: '投资', key: 'investments' },
-  { label: '预算', key: 'budget' },
-  { label: 'AI', key: 'ai' },
-  { label: '设置', key: 'settings' },
-]
+const viewLabels: Record<string, string> = {
+  dashboard: '概览',
+  transactions: '交易',
+  search: '搜索',
+  accounts: '账户',
+  reports: '报表',
+  investments: '投资',
+  budget: '预算',
+  ai: 'AI',
+  settings: '设置',
+}
+
+// 视图图标（ionicons5 Outline 风格，与分类图标一致）
+const viewIcons: Record<string, Component> = {
+  dashboard: HomeOutline,
+  transactions: SwapHorizontalOutline,
+  search: SearchOutline,
+  accounts: WalletOutline,
+  reports: BarChartOutline,
+  investments: TrendingUpOutline,
+  budget: CalculatorOutline,
+  ai: SparklesOutline,
+  settings: SettingsOutline,
+}
+
+function renderMenuIcon(name: string) {
+  return () => h(NIcon, { size: 18 }, { default: () => h(viewIcons[name]) })
+}
+
+// 菜单项与快捷键共用同一映射（顺序 = Cmd/Ctrl+1..9），label 右侧附快捷键提示
+const menuOptions: MenuOption[] = viewShortcuts.map(({ name, key }) => ({
+  key: name,
+  icon: renderMenuIcon(name),
+  label: () =>
+    h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:12px;padding-right:2px' }, [
+      h('span', viewLabels[name]),
+      h('span', { style: 'font-size:12px;opacity:.55' }, shortcutHint(key)),
+    ]),
+}))
+
+// 视图快捷键：窗口内 Cmd/Ctrl+1..9 切换视图（弹窗/确认框打开时自动抑制）
+useViewShortcuts(router)
 
 function handleSelect(key: string) {
   router.push({ name: key })
@@ -58,7 +102,7 @@ const title = () => h('div', { style: 'padding: 16px 18px; font-size: 18px; font
         <NLayout has-sider style="height: 100vh">
           <NLayoutSider
             bordered
-            :width="200"
+            :width="160"
             :collapsed="sidebarCollapsed"
             :collapsed-width="0"
             show-trigger="arrow-circle"

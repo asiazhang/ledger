@@ -48,13 +48,15 @@ onMounted(async () => {
         <NCard title="最近交易" size="small">
           <NEmpty v-if="recent.length === 0" description="暂无交易" />
           <NSpace v-else vertical :size="8">
-            <div v-for="t in recent" :key="t.id" style="display: flex; justify-content: space-between">
-              <NSpace :size="8" align="center">
-                <NText>{{ TRANSACTION_KIND_LABELS[t.kind as keyof typeof TRANSACTION_KIND_LABELS] }}</NText>
-                <NText depth="3" style="font-size: 12px">{{ t.date }}</NText>
-                <NText depth="2">{{ t.note }}</NText>
-              </NSpace>
-              <NText :type="t.kind === 'income' ? 'success' : t.kind === 'expense' ? 'error' : t.kind === 'refund' ? 'info' : 'default'">
+            <div v-for="t in recent" :key="t.id" style="display: flex; justify-content: space-between; align-items: center; gap: 12px">
+              <div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; overflow: hidden">
+                <NText style="flex-shrink: 0">{{ TRANSACTION_KIND_LABELS[t.kind as keyof typeof TRANSACTION_KIND_LABELS] }}</NText>
+                <NText depth="3" style="font-size: 12px; flex-shrink: 0">{{ t.date }}</NText>
+                <span v-if="t.note" style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
+                  <NText depth="2">{{ t.note }}</NText>
+                </span>
+              </div>
+              <NText :type="t.kind === 'income' ? 'success' : t.kind === 'expense' ? 'error' : t.kind === 'refund' ? 'info' : 'default'" style="flex-shrink: 0; white-space: nowrap">
                 {{ formatAmount(t.amount_native_cents, reference.getCurrency(t.currency_code)) }}
               </NText>
             </div>

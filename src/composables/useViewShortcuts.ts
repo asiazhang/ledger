@@ -1,0 +1,73 @@
+import { onMounted, onUnmounted } from 'vue'
+import type { Router } from 'vue-router'
+
+export interface ViewShortcut {
+  /** 路由 name（与侧边栏菜单 key 一致） */
+  name: string
+  /** 主数字键，如 '1'..'9' */
+  key: string
+}
+
+/**
+ * 视图快捷键映射：按侧边栏菜单顺序，Cmd/Ctrl+1..9（共 9 个视图）。
+ * 单一来源：keydown 分派与菜单提示共用，保证序号与视图一一对应。
+ */
+export const viewShortcuts: ViewShortcut[] = [
+  { name: 'dashboard', key: '1' },
+  { name: 'transactions', key: '2' },
+  { name: 'search', key: '3' },
+  { name: 'accounts', key: '4' },
+  { name: 'reports', key: '5' },
+  { name: 'investments', key: '6' },
+  { name: 'budget', key: '7' },
+  { name: 'ai', key: '8' },
+  { name: 'settings', key: '9' },
+]
+
+/** macOS 用 Cmd（metaKey），Windows/Linux 用 Ctrl（ctrlKey） */
+export function isMacPlatform(): boolean {
+  const nav = navigator as Navigator & { userAgentData?: { platform?: string } }
+  const platform = nav.userAgentData?.platform ?? navigator.platform
+  return /mac/i.test(platform)
+}
+
+/** 菜单提示文案：macOS 显示 ⌘1，其余显示 Ctrl+1 */
+export function shortcutHint(key: string): string {
+  return isMacPlatform() ? `⌘${key}` : `Ctrl+${key}`
+}
+
+/** 是否恰按主修饰键（不混按 Ctrl/Cmd 双键） */
+function isPrimaryModifier(e: KeyboardEvent): boolean {
+  return isMacPlatform() ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey
+}
+
+/** 纯函数：命中视图快捷键则返回路由 name，否则 null（排除 Shift/Alt/混按/非主数字键） */
+export function matchViewShortcut(e: KeyboardEvent): string | null {
+  if (e.altKey || e.shiftKey) return null
+  if (!isPrimaryModifier(e)) return null
+  return viewShortcuts.find((s) => e.key === s.key)?.name ?? null
+}
+
+/** 覆盖层（弹窗/确认框）打开时抑制快捷键，避免在编辑/确认中途跳走丢失上下文 */
+export function hasOpenOverlay(): boolean {
+  return (
+    document.querySelector('.n-modal-container') !== null ||
+    document.querySelector('.n-dialog') !== null ||
+    document.querySelector('.n-popconfirm') !== null
+  )
+}
+
+/** 注册全局 keydown 监听：命中视图快捷键时切换路由 */
+export function useViewShortcuts(router: Router) {
+  const onKeydown = (e: KeyboardEvent) => {
+    const name = matchViewShortcut(e)
+    if (!name) return
+    if (hasOpenOverlay()) return
+    e.preventDefault()
+    if (router.currentRoute.value.name !== name) {
+      router.push({ name })
+    }
+  }
+  onMounted(() => window.addEventListener('keydown', onKeydown))
+  onUnmounted(() => window.removeEventListener('keydown', onKeydown))
+}
