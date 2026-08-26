@@ -76,16 +76,18 @@ describe('AccountLink 账户名下钻（issue #97/#99）', () => {
     expect(pushMock).toHaveBeenCalledWith({ name: 'transactions', query: { account: 'acc-1' } })
   })
 
-  it('账户不在参考数据中时名称回退「无」且仍可点击跳转', async () => {
+  it('账户不在参考数据中（黑洞/隐藏账户）渲染纯文本「-」，不可点击、无跳转', async () => {
     const wrapper = mount(AccountLink, { props: { accountId: 'ghost-acc' } })
     await flushPromises()
-    const btn = wrapper.find('button')
-    expect(btn.text()).toBe('无')
-    await btn.trigger('click')
-    expect(pushMock).toHaveBeenCalledWith({
-      name: 'transactions',
-      query: { account: 'ghost-acc' },
-    })
+    // 黑洞/隐藏账户渲染为 span（非 button）：无下钻、无强调色
+    expect(wrapper.find('button').exists()).toBe(false)
+    const ph = wrapper.find('span.account-placeholder')
+    expect(ph.exists()).toBe(true)
+    expect(ph.text()).toBe('-')
+    expect(ph.attributes('title')).toBeUndefined()
+    // 纯文本点击不触发跳转
+    await ph.trigger('click')
+    expect(pushMock).not.toHaveBeenCalled()
   })
 
   it('外部传入的布局样式透传到根按钮（转账行 flex 均分依赖，issue #99）', async () => {
