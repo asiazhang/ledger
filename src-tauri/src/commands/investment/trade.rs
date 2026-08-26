@@ -5,25 +5,19 @@ use crate::db::query::{FromRow, query_all};
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{AccountType, NormalizedTransaction, TransactionInput};
-use crate::transaction::{amount, writer};
+use crate::transaction::amount;
+use crate::transaction::amount::Kind;
 
-/// 交易行落库（INSERT 侧）的统一入口：全部经 [`writer::insert_row`]。
+/// 投资交易对外出口（issue #72 / spec #69）：只暴露 `prepare / apply / revert` 三件套。
 ///
-/// 本文件内 `write_buy` / `write_sell` / `apply_buy` / `apply_sell` 均经此函数
-/// 落交易行字段，不再各自拼写 INSERT/UPDATE 列清单（issue #70：交易行写入唯一权威）；
-/// 归一化行 → writer 行的转换随 `models::NormalizedTransaction` 定义（TryFrom），
-/// investment 不再反向依赖 transactions 模块的行更新函数（双向依赖斩断）。
-fn write_txn_row(conn: &Connection, normalized: &NormalizedTransaction) -> Result<String> {
-    writer::insert_row(conn, &writer::NormalizedRow::try_from(normalized)?)
-}
-
-/// 交易行更新（UPDATE 侧）的统一入口：全部经 [`writer::update_row`]。
+/// - [`prepare`]：校验并归一化一笔 buy/sell 输入（不落库、不产生副作用），产出 [`Plan`]；
+/// - [`apply`]：应用计划的副作用（buy 建仓 / sell 卖出匹配），由编排层在行落库后调用；
+/// - [`revert`]：回退一笔已存在 buy/sell 交易的副作用（buy 守卫+清理 / sell 回补），
+///   供删除/修改前清理。
 ///
-/// 保留 `created_at` 与幂等身份，`version` 递增；持仓/卖出关联副作用由调用方另行处理。
-fn update_txn_row(conn: &Connection, id: &str, normalized: &NormalizedTransaction) -> Result<()> {
-    writer::update_row(conn, id, &writer::NormalizedRow::try_from(normalized)?)
-}
-
+/// 交易行字段的 INSERT/UPDATE 一律经 `transaction::writer` 接缝（issue #70），
+/// 本模块不再反向依赖 transactions 的行更新函数；行写入由编排层（行为层）持有，
+/// 与 lot/匹配副作用同处一个事务。
 pub(crate) struct ActiveLot {
     pub(crate) id: String,
     pub(crate) remaining_quantity: f64,
@@ -51,8 +45,8 @@ pub(crate) struct BuyPlan {
 }
 
 /// 校验并归一化一笔买入交易（不落库）。创建与修改共用；
-/// 只做校验与字段解析，持仓建仓等副作用由调用方在落库时按其身份（新增或替换）执行。
-pub(crate) fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
+/// 只做校验与字段解析，持仓建仓等副作用由 [`apply`] 在落库时按其身份（新增或替换）执行。
+fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
     let instrument_id = input
         .instrument_id
         .as_ref()
@@ -103,32 +97,9 @@ pub(crate) fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result
     })
 }
 
-pub(crate) fn create_buy_transaction(conn: &Connection, input: TransactionInput) -> Result<String> {
-    let plan = prepare_buy(conn, &input)?;
-    write_buy(conn, &plan)
-}
-
-/// 落交易行字段经 Writer 接缝（issue #60 / spec #52）：id 与审计字段由
-/// [`writer::insert_row`] 统一生成，与通用 kind 创建共用同一写入权威；
-/// 持仓建仓（`security_lots` / `security_transactions`）留在命令层按 buy 身份执行。
-fn write_buy(conn: &Connection, plan: &BuyPlan) -> Result<String> {
-    let id = write_txn_row(conn, &plan.normalized)?;
-    create_buy_lot(
-        conn,
-        &id,
-        &plan.normalized.account_id,
-        &plan.instrument_id,
-        plan.quantity,
-        plan.price_cents,
-        plan.fee_cents,
-        &plan.normalized.currency_code,
-    )?;
-    Ok(id)
-}
-
 /// 校验并归一化一笔卖出交易（不落库）。创建与修改共用；
-/// 卖出匹配持仓等副作用由调用方在落库时按其身份执行。
-pub(crate) fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan> {
+/// 卖出匹配持仓等副作用由 [`apply`] 在落库时按其身份执行。
+fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan> {
     let instrument_id = input
         .instrument_id
         .as_ref()
@@ -200,27 +171,11 @@ pub(crate) fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Resul
     })
 }
 
-pub(crate) fn create_sell_transaction(
-    conn: &Connection,
-    input: TransactionInput,
-) -> Result<String> {
-    let plan = prepare_sell(conn, &input)?;
-    write_sell(conn, &plan)
-}
-
-/// 落交易行字段经 Writer 接缝（issue #60 / spec #52）：id 与审计字段由
-/// [`writer::insert_row`] 统一生成；卖出匹配/持仓扣减副作用留在命令层。
-fn write_sell(conn: &Connection, plan: &SellPlan) -> Result<String> {
-    let id = write_txn_row(conn, &plan.normalized)?;
-    write_sell_side_effects(conn, &id, plan)?;
-    Ok(id)
-}
-
 /// 卖出交易的持仓/卖出关联副作用（创建与修改共用）。
 ///
 /// 只写 `security_transactions` 记录、`security_lot_sales` 匹配与持仓扣减，不写交易行——
-/// 修改路径先 `reverse_sell` 清空旧卖出再由本函数按新输入重建，创建路径在插入交易行后复用。
-pub(crate) fn write_sell_side_effects(conn: &Connection, id: &str, plan: &SellPlan) -> Result<()> {
+/// 修改路径先 [`revert`] 清空旧卖出再由本函数按新输入重建，创建路径在插入交易行后复用。
+fn write_sell_side_effects(conn: &Connection, id: &str, plan: &SellPlan) -> Result<()> {
     let now = now_iso();
     conn.execute(
         "INSERT INTO security_transactions (transaction_id,instrument_id,action,quantity,price_cents,fee_cents) \
@@ -273,37 +228,11 @@ pub(crate) fn write_sell_side_effects(conn: &Connection, id: &str, plan: &SellPl
     Ok(())
 }
 
-/// 按 id 替换一笔买入交易：先清旧持仓关联，再按新输入重建（创建与修改共用校验）。
-///
-/// 由 `update_transaction_internal` 在事务内调用：若该买入已有部分卖出，其持仓不可安全替换
-/// （会破坏对应卖出的已实现盈亏），返回 `Invalid`。
-pub(crate) fn apply_buy(conn: &Connection, id: &str, input: &TransactionInput) -> Result<()> {
-    let plan = prepare_buy(conn, input)?;
-    // 交易行字段经 Writer 接缝更新（issue #60）：保留 created_at 与幂等身份，
-    // version 递增；持仓重建留在命令层。
-    update_txn_row(conn, id, &plan.normalized)?;
-    create_buy_lot(
-        conn,
-        id,
-        &plan.normalized.account_id,
-        &plan.instrument_id,
-        plan.quantity,
-        plan.price_cents,
-        plan.fee_cents,
-        &plan.normalized.currency_code,
-    )?;
-    Ok(())
-}
-
 /// 清理一笔买入交易的持仓关联（软删除与按 id 修改共用的守卫 + 清理）。
 ///
 /// 若该买入已有部分卖出（`remaining_quantity < initial_quantity`）则拒绝清理——避免破坏
 /// 对应卖出的已实现盈亏。`partially_sold_msg` 用于区分「删除」/「修改」场景的错误措辞。
-pub(crate) fn cleanup_buy_side_effects(
-    conn: &Connection,
-    id: &str,
-    partially_sold_msg: &str,
-) -> Result<()> {
+fn cleanup_buy_side_effects(conn: &Connection, id: &str, partially_sold_msg: &str) -> Result<()> {
     let partially_sold: i64 = conn.query_row(
         "SELECT COUNT(*) FROM security_lots \
          WHERE buy_transaction_id=?1 AND remaining_quantity < initial_quantity",
@@ -324,27 +253,9 @@ pub(crate) fn cleanup_buy_side_effects(
     Ok(())
 }
 
-/// 按 id 修改买入时的持仓清理，复用 `cleanup_buy_side_effects` 的守卫与清理。
-pub(crate) fn cleanup_buy(conn: &Connection, id: &str) -> Result<()> {
-    cleanup_buy_side_effects(conn, id, "该买入交易已有部分卖出，无法修改")
-}
-
-/// 按 id 替换一笔卖出交易：先回补旧卖出的持仓扣减，再按新输入重新匹配。
-///
-/// 由 `update_transaction_internal` 在事务内调用：回补后使修改可从当前持仓状态重新校验，
-/// 校验或匹配失败时由外层回滚整体还原。
-pub(crate) fn apply_sell(conn: &Connection, id: &str, input: &TransactionInput) -> Result<()> {
-    let plan = prepare_sell(conn, input)?;
-    // 交易行字段经 Writer 接缝更新（issue #60）：保留 created_at 与幂等身份，
-    // version 递增；卖出匹配/持仓扣减重建留在命令层。
-    update_txn_row(conn, id, &plan.normalized)?;
-    write_sell_side_effects(conn, id, &plan)?;
-    Ok(())
-}
-
-/// 回补一笔卖出交易曾扣减的持仓并按新输入重建的逆向操作：把每笔 `security_lot_sales` 的数量
+/// 回补一笔卖出交易曾扣减的持仓并清空其卖出关联：把每笔 `security_lot_sales` 的数量
 /// 加回对应 lot，再清空该卖出的 `security_lot_sales` 与 `security_transactions` 记录。
-pub(crate) fn reverse_sell(conn: &Connection, id: &str) -> Result<()> {
+fn reverse_sell(conn: &Connection, id: &str) -> Result<()> {
     let now = now_iso();
     let mut stmt = conn
         .prepare("SELECT lot_id, quantity FROM security_lot_sales WHERE sell_transaction_id=?1")?;
@@ -381,8 +292,76 @@ pub(crate) struct SellPlan {
     pub(crate) lots: Vec<ActiveLot>,
 }
 
+/// 投资交易计划：归一化后的交易行 + kind 特有副作用数据（不落库）。
+pub(crate) enum Plan {
+    Buy(BuyPlan),
+    Sell(SellPlan),
+}
+
+impl Plan {
+    /// 归一化交易行（供行为层经 `writer::NormalizedRow::try_from` 落库）。
+    pub(crate) fn normalized(&self) -> &NormalizedTransaction {
+        match self {
+            Plan::Buy(p) => &p.normalized,
+            Plan::Sell(p) => &p.normalized,
+        }
+    }
+}
+
+/// 校验并归一化一笔 buy/sell 输入为 [`Plan`]（不落库、不产生副作用）。
+///
+/// 由行为层（`commands::transactions`）在创建/修改路径按 kind 分派调用；
+/// `kind` 为已解析的 [`Kind`]，收到非 buy/sell 的 kind 属编排错误，报错防误用。
+pub(crate) fn prepare(conn: &Connection, kind: Kind, input: &TransactionInput) -> Result<Plan> {
+    match kind {
+        Kind::Buy => Ok(Plan::Buy(prepare_buy(conn, input)?)),
+        Kind::Sell => Ok(Plan::Sell(prepare_sell(conn, input)?)),
+        other => Err(AppError::Invalid(format!(
+            "投资层仅处理 buy/sell，收到: {other}"
+        ))),
+    }
+}
+
+/// 应用计划的副作用（buy 建仓 / sell 卖出匹配）。由编排层在交易行落库后调用，
+/// 与行写入同处一个事务；`id` 为已落库的交易行 id。
+pub(crate) fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
+    match plan {
+        Plan::Buy(p) => create_buy_lot(
+            conn,
+            id,
+            &p.normalized.account_id,
+            &p.instrument_id,
+            p.quantity,
+            p.price_cents,
+            p.fee_cents,
+            &p.normalized.currency_code,
+        ),
+        Plan::Sell(p) => write_sell_side_effects(conn, id, p),
+    }
+}
+
+/// 回退一笔已存在 buy/sell 交易的副作用，供删除/修改前清理。
+///
+/// - buy：守卫（已有部分卖出则拒绝）+ 清理持仓/买入关联；
+/// - sell：回补持仓扣减并清空卖出关联。
+///
+/// `partial_sold_msg` 为 buy 守卫的错误措辞（删除/修改场景文案不同）；
+/// 非 buy/sell 的 kind 无持仓副作用，防御性返回成功。
+pub(crate) fn revert(
+    conn: &Connection,
+    id: &str,
+    kind: Kind,
+    partial_sold_msg: &str,
+) -> Result<()> {
+    match kind {
+        Kind::Buy => cleanup_buy_side_effects(conn, id, partial_sold_msg),
+        Kind::Sell => reverse_sell(conn, id),
+        _ => Ok(()),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn create_buy_lot(
+fn create_buy_lot(
     conn: &Connection,
     transaction_id: &str,
     account_id: &str,

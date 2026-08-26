@@ -62,7 +62,9 @@
   - `buy`（买入证券）/ `sell`（卖出证券）：资本变动，关联投资持仓（见 Instrument / Holding）。
   - `dividend`（现金分红）：计入收入。
   - `split`（拆股/送股）：现金影响恒为 0。
-  - 每种 kind 对各金额度量的符号归属见 Transaction Kind Mapping；写入与校验收口在 `transaction::writer`（Writer 接缝）。
+  - **每种 kind 对各金额度量的符号归属见 Transaction Kind Mapping；交易行写入与校验收口在 `transaction::writer`（Writer 接缝）。**
+  - **kind 为闭集（8 种），行为收敛分派在行为层**：每类 kind 的校验/归一化/应用副作用/回退经 `commands::transactions::behavior`（`plan → apply / revert`）单点分派——通用 kind 走 Writer 接缝，buy/sell 委托投资域（`commands::investment` 的 prepare/apply/revert），不再散落多处 `match kind`（issue #72）。
+  - **`dividend` / `split` 已声明但未实现（MVP）**：经交易接口（创建/修改）显式返回「暂不支持」错误，不落库、不静默误记。
 - **列表呈现边界**：
   - 交易列表按 `date` 倒序呈现（最新在前）。
   - 采用服务端 offset 分页：一次只取当前页交易，并返回满足筛选条件的交易总数（"共 N 条"）。
@@ -294,6 +296,15 @@
   - `latest_price_cents`、`market_value_cents`、`unrealized_pnl_cents` 由 `v_holdings` 视图实时计算（关联最新 MarketPrice 与汇率折算到账户本位币），不落库存储。
   - 市值 = quantity × latest_price_cents（按汇率折算）；未实现盈亏 = 账户币市值 - 账户币成本。
 - **别名**：不使用"仓位"（偏交易术语）、"库存"（偏实物）。
+
+## Investment（投资域）
+
+- **定义**：承载证券交易（buy/sell）背后持仓批次、卖出匹配与已实现盈亏的概念域，物理实现为 `commands::investment` 模块（lot / 匹配 / pnl 数据逻辑）。
+- **边界**：
+  - **buy/sell 首先是交易 kind**：一笔 buy/sell 先是一笔 `Transaction`（交易行落库经 Writer 接缝），Investment 是它背后的持仓/盈亏载体。
+  - 对外出口收窄为 `prepare / apply / revert` 三件套（issue #72）：prepare 校验归一化（不落库）、apply 应用副作用（buy 建仓 / sell 卖出匹配）、revert 回退副作用（buy 守卫+清理 / sell 回补）；交易行写入由交易行为层编排（经 `transaction::writer`），Investment 不再反向依赖 transactions 的行更新函数（双向依赖已斩断，issue #70）。
+  - 分派用薄而穷尽的 `match`，不引入 trait 注册表（避免过度设计）。
+- **别名**：不使用“投资账户”（那是 `AccountType::Investment` 账户）、“证券模块”（偏数据层）。
 
 ## InstrumentSync（标的全量同步）
 

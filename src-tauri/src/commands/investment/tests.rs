@@ -1,6 +1,7 @@
 use super::*;
 use rusqlite::{Connection, params};
 
+use crate::commands::transactions::insert_transaction;
 use crate::models::{PnlFilter, TransactionInput};
 
 fn setup_db() -> Connection {
@@ -210,7 +211,7 @@ fn buy_transaction_creates_lot() {
     insert_instrument(&conn, "inst-test-nvda", "NVDA", "NVIDIA", "USD");
 
     let input = make_buy_input("acc-test-buy", "inst-test-nvda", 10.0, 10000, 500);
-    let txn_id = create_buy_transaction(&conn, input).unwrap();
+    let txn_id = insert_transaction(&conn, input).unwrap();
 
     let (kind, amount_cents, currency_code, amount_native, category_id, refund_of_id): (
         String,
@@ -286,7 +287,7 @@ fn buy_native_cents_converted_via_amount_seam() {
     insert_instrument(&conn, "inst-test-conv", "NVDA", "NVIDIA", "USD");
 
     let input = make_buy_input("acc-test-conv", "inst-test-conv", 10.0, 10000, 500);
-    let txn_id = create_buy_transaction(&conn, input).unwrap();
+    let txn_id = insert_transaction(&conn, input).unwrap();
 
     let (amount_cents, amount_native_cents): (i64, i64) = conn
         .query_row(
@@ -302,8 +303,8 @@ fn buy_native_cents_converted_via_amount_seam() {
     );
 }
 
-/// 修改 buy 交易（apply_buy 的 UPDATE 侧）同样经折算：非 1:1 汇率下
-/// `amount_native_cents` 保持折算值（INSERT/UPDATE 共用 prepare_buy，防回归）。
+/// 修改 buy 交易（行为层 revert→plan→apply 的 UPDATE 侧）同样经折算：非 1:1 汇率下
+/// `amount_native_cents` 保持折算值（INSERT/UPDATE 共用 prepare，防回归）。
 #[test]
 fn buy_update_native_cents_converted_via_amount_seam() {
     use crate::commands::transactions::update_transaction_internal;
@@ -312,7 +313,7 @@ fn buy_update_native_cents_converted_via_amount_seam() {
     insert_rate(&conn, "USD", "CNY", 7.2);
     insert_instrument(&conn, "inst-test-conv-upd", "NVDA", "NVIDIA", "USD");
 
-    let txn_id = create_buy_transaction(
+    let txn_id = insert_transaction(
         &conn,
         make_buy_input("acc-test-conv-upd", "inst-test-conv-upd", 10.0, 10000, 500),
     )
@@ -343,7 +344,7 @@ fn buy_transaction_requires_investment_account() {
     insert_instrument(&conn, "inst-test-cny", "600519", "茅台", "CNY");
 
     let input = make_buy_input("acc-test-cash", "inst-test-cny", 1.0, 10000, 0);
-    let err = create_buy_transaction(&conn, input).unwrap_err();
+    let err = insert_transaction(&conn, input).unwrap_err();
     assert!(
         err.to_string().contains("投资账户"),
         "非投资账户买入应报错，got: {err}"
@@ -357,12 +358,12 @@ fn sell_transaction_matches_multiple_lots_fifo() {
     insert_rate_1_1(&conn, "USD");
     insert_instrument(&conn, "inst-test-sell", "TSLA", "Tesla", "USD");
 
-    let lot1_txn = create_buy_transaction(
+    let lot1_txn = insert_transaction(
         &conn,
         make_buy_input("acc-test-sell", "inst-test-sell", 10.0, 10000, 0),
     )
     .unwrap();
-    let lot2_txn = create_buy_transaction(
+    let lot2_txn = insert_transaction(
         &conn,
         make_buy_input("acc-test-sell", "inst-test-sell", 5.0, 12000, 0),
     )
@@ -379,7 +380,7 @@ fn sell_transaction_matches_multiple_lots_fifo() {
     )
     .unwrap();
 
-    let sell_txn = create_sell_transaction(
+    let sell_txn = insert_transaction(
         &conn,
         make_sell_input("acc-test-sell", "inst-test-sell", 12.0, 15000, 600),
     )
@@ -442,14 +443,14 @@ fn sell_transaction_rejects_oversell() {
     insert_rate_1_1(&conn, "USD");
     insert_instrument(&conn, "inst-test-oversell", "MSFT", "Microsoft", "USD");
 
-    create_buy_transaction(
+    insert_transaction(
         &conn,
         make_buy_input("acc-test-oversell", "inst-test-oversell", 5.0, 10000, 0),
     )
     .unwrap();
 
     let sell = make_sell_input("acc-test-oversell", "inst-test-oversell", 6.0, 12000, 0);
-    assert!(create_sell_transaction(&conn, sell).is_err());
+    assert!(insert_transaction(&conn, sell).is_err());
 }
 
 #[test]
@@ -459,12 +460,12 @@ fn sell_transaction_pnl_deducts_fee() {
     insert_rate_1_1(&conn, "USD");
     insert_instrument(&conn, "inst-test-pnl", "AAPL", "Apple", "USD");
 
-    let buy_txn = create_buy_transaction(
+    let buy_txn = insert_transaction(
         &conn,
         make_buy_input("acc-test-pnl", "inst-test-pnl", 10.0, 10000, 0),
     )
     .unwrap();
-    let sell_txn = create_sell_transaction(
+    let sell_txn = insert_transaction(
         &conn,
         make_sell_input("acc-test-pnl", "inst-test-pnl", 5.0, 12000, 200),
     )
@@ -568,7 +569,7 @@ fn list_holdings_returns_after_buy_and_market_price() {
     insert_instrument(&conn, "inst-hold", "GOOGL", "Alphabet", "USD");
 
     let buy_input = make_buy_input("acc-hold", "inst-hold", 10.0, 15000, 1000);
-    create_buy_transaction(&conn, buy_input).unwrap();
+    insert_transaction(&conn, buy_input).unwrap();
 
     let now = crate::db::now_iso();
     let price_id = crate::db::new_uuid();
@@ -617,9 +618,9 @@ fn realized_pnl_summary_aggregates_single_sale() {
     insert_rate_1_1(&conn, "USD");
     insert_instrument(&conn, "inst-pnl", "AAPL", "Apple", "USD");
 
-    let _buy = create_buy_transaction(&conn, make_buy_input("acc-pnl", "inst-pnl", 10.0, 10000, 0))
-        .unwrap();
-    let _sell = create_sell_transaction(
+    let _buy =
+        insert_transaction(&conn, make_buy_input("acc-pnl", "inst-pnl", 10.0, 10000, 0)).unwrap();
+    let _sell = insert_transaction(
         &conn,
         make_sell_input("acc-pnl", "inst-pnl", 5.0, 12000, 200),
     )
@@ -651,10 +652,10 @@ fn realized_pnl_summary_aggregates_multiple_accounts() {
     insert_rate_1_1(&conn, "USD");
     insert_instrument(&conn, "inst-xyz", "XYZ", "Test Corp", "USD");
 
-    create_buy_transaction(&conn, make_buy_input("acc-a", "inst-xyz", 10.0, 1000, 0)).unwrap();
-    create_buy_transaction(&conn, make_buy_input("acc-b", "inst-xyz", 5.0, 2000, 0)).unwrap();
-    create_sell_transaction(&conn, make_sell_input("acc-a", "inst-xyz", 4.0, 1500, 0)).unwrap();
-    create_sell_transaction(&conn, make_sell_input("acc-b", "inst-xyz", 2.0, 2500, 0)).unwrap();
+    insert_transaction(&conn, make_buy_input("acc-a", "inst-xyz", 10.0, 1000, 0)).unwrap();
+    insert_transaction(&conn, make_buy_input("acc-b", "inst-xyz", 5.0, 2000, 0)).unwrap();
+    insert_transaction(&conn, make_sell_input("acc-a", "inst-xyz", 4.0, 1500, 0)).unwrap();
+    insert_transaction(&conn, make_sell_input("acc-b", "inst-xyz", 2.0, 2500, 0)).unwrap();
 
     let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
 
@@ -675,10 +676,10 @@ fn realized_pnl_summary_filter_by_account() {
     insert_rate_1_1(&conn, "USD");
     insert_instrument(&conn, "inst-xyz", "XYZ", "Test Corp", "USD");
 
-    create_buy_transaction(&conn, make_buy_input("acc-a", "inst-xyz", 10.0, 1000, 0)).unwrap();
-    create_buy_transaction(&conn, make_buy_input("acc-b", "inst-xyz", 5.0, 2000, 0)).unwrap();
-    create_sell_transaction(&conn, make_sell_input("acc-a", "inst-xyz", 4.0, 1500, 0)).unwrap();
-    create_sell_transaction(&conn, make_sell_input("acc-b", "inst-xyz", 2.0, 2500, 0)).unwrap();
+    insert_transaction(&conn, make_buy_input("acc-a", "inst-xyz", 10.0, 1000, 0)).unwrap();
+    insert_transaction(&conn, make_buy_input("acc-b", "inst-xyz", 5.0, 2000, 0)).unwrap();
+    insert_transaction(&conn, make_sell_input("acc-a", "inst-xyz", 4.0, 1500, 0)).unwrap();
+    insert_transaction(&conn, make_sell_input("acc-b", "inst-xyz", 2.0, 2500, 0)).unwrap();
 
     let filter = PnlFilter {
         account_id: Some("acc-a".into()),
@@ -699,10 +700,10 @@ fn realized_pnl_summary_filter_by_instrument() {
     insert_instrument(&conn, "inst-a", "AAPL", "Apple", "USD");
     insert_instrument(&conn, "inst-b", "GOOGL", "Alphabet", "USD");
 
-    create_buy_transaction(&conn, make_buy_input("acc-pnl", "inst-a", 10.0, 1000, 0)).unwrap();
-    create_buy_transaction(&conn, make_buy_input("acc-pnl", "inst-b", 5.0, 2000, 0)).unwrap();
-    create_sell_transaction(&conn, make_sell_input("acc-pnl", "inst-a", 4.0, 1500, 0)).unwrap();
-    create_sell_transaction(&conn, make_sell_input("acc-pnl", "inst-b", 2.0, 2500, 0)).unwrap();
+    insert_transaction(&conn, make_buy_input("acc-pnl", "inst-a", 10.0, 1000, 0)).unwrap();
+    insert_transaction(&conn, make_buy_input("acc-pnl", "inst-b", 5.0, 2000, 0)).unwrap();
+    insert_transaction(&conn, make_sell_input("acc-pnl", "inst-a", 4.0, 1500, 0)).unwrap();
+    insert_transaction(&conn, make_sell_input("acc-pnl", "inst-b", 2.0, 2500, 0)).unwrap();
 
     let filter = PnlFilter {
         account_id: None,

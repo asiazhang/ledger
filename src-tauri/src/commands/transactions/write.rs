@@ -3,60 +3,46 @@ use rusqlite::OptionalExtension;
 
 use crate::error::{AppError, Result};
 use crate::models::TransactionInput;
-use crate::transaction::amount;
+use crate::transaction::amount::Kind;
 use crate::transaction::writer;
 
+use super::behavior;
+
+/// 创建一笔交易（`POST /api/v1/transactions/batch` 单条 / IPC `create_transaction`）。
+///
+/// 全部 kind 的行为收敛到行为层单点分派（issue #72）：`plan → insert_row → apply`。
+/// 通用 kind（income/expense/transfer/refund）经 [`behavior::plan`] → Writer 接缝
+/// [`writer::normalize`] + [`writer::insert_row`] 归一化并落库（本位币折算走 Amount
+/// 接缝、id 与审计字段统一生成，与定时引擎/批量导入共用同一写入权威，列清单不在此重复）；
+/// buy/sell 经投资域 prepare/apply 落交易行并建仓/卖出匹配；`dividend` / `split`
+/// 已声明但未实现，在此显式「暂不支持」拒绝。
 pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<String> {
-    let id = if input.kind == "buy" {
-        crate::commands::investment::create_buy_transaction(conn, input)?
-    } else if input.kind == "sell" {
-        crate::commands::investment::create_sell_transaction(conn, input)?
-    } else {
-        // 通用 kind（income/expense/transfer/refund）经 Writer 接缝归一化并落库
-        // （issue #60 / spec #52）：本位币折算走 Amount 接缝（全局默认币种基准），
-        // id 与审计字段由 writer::insert_row 统一生成，与定时引擎/批量导入共用
-        // 同一写入权威，列清单不在此重复。
-        let norm = writer::normalize(conn, &to_writer_input(&input)?)?;
-        writer::insert_row(conn, &norm)?
-    };
-    // 索引维护由后台定时刷新（ADR-0004 决策 #14）承担：触发器已入队
+    let plan = behavior::plan(conn, &input)?;
+    let row = plan.normalized_row()?;
+    let id = writer::insert_row(conn, &row)?;
+    behavior::apply(conn, &id, &plan)?;
+    // 索引维护由后台定时刷新承担（ADR-0004 决策 #14）：触发器已入队
     // `search_reindex_queue`，写路径不做任何同步索引工作（界面操作零索引开销）。
     Ok(id)
 }
 
-/// `TransactionInput` → `writer::Input`（命令层接线转换：丢弃投资与幂等字段）。
-fn to_writer_input(input: &TransactionInput) -> Result<writer::Input> {
-    Ok(writer::Input {
-        kind: amount::Kind::parse(&input.kind)?,
-        amount_cents: input.amount_cents,
-        currency_code: input.currency_code.clone(),
-        account_id: input.account_id.clone(),
-        to_account_id: input.to_account_id.clone(),
-        category_id: input.category_id.clone(),
-        refund_of_transaction_id: input.refund_of_transaction_id.clone(),
-        note: input.note.clone(),
-        date: input.date.clone(),
-    })
-}
-
 /// 按 `id` 全字段替换一笔交易（`PUT /api/v1/transactions/{id}`）。
 ///
-/// 通用 kind（income/expense/transfer/refund）经 Writer 接缝 [`writer::normalize`] +
-/// [`writer::update_row`] 校验并归一化字段（issue #60），关联约束与创建路径一致；
-/// buy/sell 复用 `prepare_buy`/`prepare_sell`（经 `apply_buy`/`apply_sell`）。
+/// 行为收敛到行为层单点分派（issue #72）：先按旧 kind 回退持仓/卖出关联副作用，
+/// 再按新 kind 校验归一化（`behavior::plan`）、经 Writer 接缝 [`writer::update_row`]
+/// 落交易行字段并应用新副作用——跨 kind 修改（如 expense→buy）避免孤儿持仓。
 /// 幂等键（`idempotency_key`）与内容哈希（`dedup_hash`）不作为
 /// 可编辑字段——修改不重算去重身份，故修改后重跑同批导入（带幂等键）仍按同键去重、不产生重复。
 ///
-/// buy/sell 的持仓/卖出关联在各自替换路径处理（先按旧 kind 清理/回补，再按新 kind 重建），
-/// 跨 kind 修改（如 expense→buy）避免孤儿持仓。整笔修改在事务内完成，校验或匹配失败回滚。
+/// 整笔修改在事务内完成，校验或匹配失败回滚。
 /// 不存在或已软删除的 id 返回 `AppError::NotFound`。
 pub fn update_transaction_internal(
     conn: &Connection,
     id: &str,
     input: TransactionInput,
 ) -> Result<()> {
-    // 读取旧交易 kind，用于按旧 kind 清理持仓/卖出关联；不存在或已删除返回 NotFound。
-    let old_kind: String = conn
+    // 读取旧交易 kind，用于按旧 kind 回退持仓/卖出关联；不存在或已删除返回 NotFound。
+    let old_kind_str: String = conn
         .query_row(
             "SELECT kind FROM transactions WHERE id=?1 AND is_deleted=0",
             rusqlite::params![id],
@@ -64,27 +50,17 @@ pub fn update_transaction_internal(
         )
         .optional()?
         .ok_or_else(|| AppError::NotFound(format!("交易不存在: {id}")))?;
+    let old_kind = Kind::parse(&old_kind_str)?;
 
     conn.execute("BEGIN", [])?;
     let res = (|| -> Result<()> {
-        // 先按旧 kind 清理/回补持仓副作用，再按新 kind 校验并应用（跨 kind 修改避免孤儿持仓）。
-        match old_kind.as_str() {
-            "buy" => crate::commands::investment::cleanup_buy(conn, id)?,
-            "sell" => crate::commands::investment::reverse_sell(conn, id)?,
-            _ => {}
-        }
-        match input.kind.as_str() {
-            "buy" => crate::commands::investment::apply_buy(conn, id, &input),
-            "sell" => crate::commands::investment::apply_sell(conn, id, &input),
-            _ => {
-                // 通用 kind 经 Writer 接缝归一化并更新（issue #60）：校验/折算口径与
-                // 创建路径统一；created_at 与幂等身份（idempotency_key/dedup_hash）由
-                // update_row 保留，version 递增。
-                let norm = writer::normalize(conn, &to_writer_input(&input)?)?;
-                writer::update_row(conn, id, &norm)?;
-                Ok(())
-            }
-        }
+        // 先按旧 kind 回退持仓/卖出关联副作用，再按新 kind 校验并应用（跨 kind 修改避免孤儿持仓）；
+        // buy 守卫（已有部分卖出拒绝）措辞为「无法修改」。
+        behavior::revert(conn, id, old_kind, "该买入交易已有部分卖出，无法修改")?;
+        let plan = behavior::plan(conn, &input)?;
+        let row = plan.normalized_row()?;
+        writer::update_row(conn, id, &row)?;
+        behavior::apply(conn, id, &plan)
     })();
     match res {
         Ok(()) => {

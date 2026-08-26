@@ -1,3 +1,4 @@
+mod behavior;
 mod read;
 #[cfg(test)]
 mod tests;

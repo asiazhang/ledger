@@ -644,6 +644,91 @@ fn count_active_transactions(conn: &rusqlite::Connection) -> i64 {
     .unwrap()
 }
 
+/// issue #72：dividend/split 已声明但未实现，经交易接口（批量创建）显式「暂不支持」拒绝，
+/// 且不落库——取代此前 writer::normalize 兜底的「仅处理通用交易类型」文案（唯一对外可观测变化）。
+#[tokio::test]
+async fn test_batch_create_dividend_and_split_rejected_with_not_supported() {
+    let (app, conn) = setup_app();
+    let account_id = create_account_via_api(&app, "证券账户").await;
+
+    let body = format!(
+        r#"{{
+            "transactions": [
+                {{"kind":"dividend","amount_cents":60,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-04"}},
+                {{"kind":"split","amount_cents":0,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-05"}}
+            ]
+        }}"#
+    );
+
+    let results = post_batch(&app, body).await;
+    assert_eq!(results.len(), 2);
+    for r in &results {
+        assert_eq!(r["success"], false, "dividend/split 应拒绝: {r}");
+        assert_eq!(r["duplicate"], false);
+        assert!(
+            r["error"].as_str().unwrap().contains("暂不支持"),
+            "应返回明确的「暂不支持」错误，实际: {r}"
+        );
+    }
+
+    let count = conn.lock().unwrap();
+    assert_eq!(
+        count_active_transactions(&count),
+        0,
+        "被拒绝的 dividend/split 不应落库"
+    );
+}
+
+/// issue #72：把一笔已有普通交易修改为 dividend/split 同样显式拒绝（行为层单点分派覆盖修改路径），
+/// 原交易保持不变。
+#[tokio::test]
+async fn test_update_transaction_to_dividend_rejected_with_not_supported() {
+    let (app, _) = setup_app();
+    let account_id = create_account_via_api(&app, "现金账户").await;
+
+    // 先创建一笔普通支出。
+    let created = post_batch(
+        &app,
+        batch_body(
+            &[&format!(
+                r#"{{"kind":"expense","amount_cents":500,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-01"}}"#
+            )],
+            None,
+        ),
+    )
+    .await;
+    let txn_id = created[0]["id"].as_str().unwrap().to_string();
+
+    let update_body = format!(
+        r#"{{"kind":"dividend","amount_cents":60,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-04"}}"#
+    );
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/transactions/{txn_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(update_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let bytes = body_to_bytes(response.into_body()).await;
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(
+        err["message"].as_str().unwrap().contains("暂不支持"),
+        "修改为 dividend 应报「暂不支持」，实际: {err}"
+    );
+
+    // 原交易保持不变（仍是 expense）。
+    let list = get_json(&app, "/api/v1/transactions").await;
+    let items = list.1["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["kind"], "expense");
+}
+
 #[tokio::test]
 async fn test_batch_same_batch_twice_marks_all_duplicates_and_keeps_row_count() {
     let (app, conn) = setup_app();

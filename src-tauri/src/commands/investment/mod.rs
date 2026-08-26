@@ -12,10 +12,10 @@ use crate::models::{
 };
 
 pub(crate) use reports::query_realized_pnl_summary;
-pub(crate) use trade::{
-    apply_buy, apply_sell, cleanup_buy, cleanup_buy_side_effects, create_buy_transaction,
-    create_sell_transaction, reverse_sell,
-};
+// 投资交易对外出口收窄为 prepare/apply/revert 三件套（issue #72 / spec #69）：
+// 校验归一化（prepare）、应用副作用（apply）、回退副作用（revert）各一个入口，
+// 不再暴露 create/update/cleanup/reverse 等散落函数；行写入经交易行为层编排。
+pub(crate) use trade::{Plan, apply, prepare, revert};
 
 #[tauri::command]
 pub fn list_holdings(db: tauri::State<'_, DbState>) -> Result<Vec<Holding>> {

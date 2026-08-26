@@ -27,7 +27,7 @@
 - **表单 composable 与组件一一对应**：组件只负责 Naive UI 绑定与布局，状态、校验、`submit()`（构造 `TransactionInput` → `api.createTransaction`）都在 composable 里。
 - **金额口径**：前端输入以「元」为单位（`NInputNumber`），提交时 `Math.round(amount * 100)` 转分；展示一律走 `formatAmount(cents, currency)`（`src/utils/money.ts`，经 `@/types` 转出），**不要手写 `/100`**。
 - **参考数据**：表单的账户/币种选项来自 `useFormShared`（包装 `useReferenceStore` 的派生映射）；`refund` 表单的账户/币种**自动继承原支出交易**（选择退款目标后填充），分类选项用 `treeCategoryOptions(kind)`。
-- **投资表单**：`InvestmentForm` 的金额为只读自动计算（买入 `数量×单价+手续费`，卖出 `数量×单价−手续费`），币种禁用（由投资账户决定）；买入/卖出提交 `amount_cents: 0` + 投资字段（`instrument_id/quantity/price_cents/fee_cents`），金额实际由后端 `prepare_buy`/`prepare_sell` 计算并校验（数量/单价 > 0、投资账户、可卖数量充足）。
+- **投资表单**：`InvestmentForm` 的金额为只读自动计算（买入 `数量×单价+手续费`，卖出 `数量×单价−手续费`），币种禁用（由投资账户决定）；买入/卖出提交 `amount_cents: 0` + 投资字段（`instrument_id/quantity/price_cents/fee_cents`），金额实际由后端投资域 `prepare`（内部 `prepare_buy`/`prepare_sell`）计算并校验（数量/单价 > 0、投资账户、可卖数量充足），经行为层单点分派（issue #72）。
 - **提交语义**：`submit()` 成功后清空表单并通过 `onCreated` 回调通知父组件（如交易列表刷新）；新建标的（`createNewInstrument`）走 `api.createInstrument` 后回查列表。
 
 ## 参考数据（单一来源）

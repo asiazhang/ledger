@@ -526,6 +526,120 @@ fn delete_transaction_internal_returns_not_found_for_already_deleted() {
     assert!(matches!(err, AppError::NotFound(_)));
 }
 
+// ---------------------------------------------------------------------------
+// issue #72：dividend / split 显式「暂不支持」拒绝
+// ---------------------------------------------------------------------------
+
+/// dividend/split 已声明但未实现：经交易创建接口显式「暂不支持」拒绝。
+/// 此前经交易接口创建 dividend/split 落入 writer::normalize 的通用兜底，返回语义不明的
+/// 「仅处理通用交易类型」；现改为明确的「暂不支持」——两者均不落库（见 spec #69）。
+#[test]
+fn insert_transaction_rejects_dividend_and_split_with_not_supported() {
+    let conn = setup();
+    insert_account(&conn, "acc-unsup", "现金", "cash", "CNY");
+
+    for (kind, amount) in [("dividend", 60), ("split", 0)] {
+        let err = insert_transaction(&conn, make_input("acc-unsup", kind, amount, "2026-05-04"))
+            .unwrap_err();
+        match err {
+            AppError::Invalid(msg) => assert!(
+                msg.contains("暂不支持"),
+                "{kind} 应报「暂不支持」，实际: {msg}"
+            ),
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+    }
+
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 0, "拒绝的交易不应落库");
+}
+
+/// 修改为 dividend/split 同样经行为层显式拒绝（单点分派覆盖创建与修改，事务回滚）。
+#[test]
+fn update_transaction_rejects_dividend_and_split_with_not_supported() {
+    let conn = setup();
+    insert_account(&conn, "acc-unsup-upd", "现金", "cash", "CNY");
+    let id = insert_transaction(
+        &conn,
+        make_input("acc-unsup-upd", "expense", 500, "2026-01-01"),
+    )
+    .unwrap();
+
+    for (kind, amount) in [("dividend", 60), ("split", 0)] {
+        let err = update_transaction_internal(
+            &conn,
+            &id,
+            make_input("acc-unsup-upd", kind, amount, "2026-05-04"),
+        )
+        .unwrap_err();
+        match err {
+            AppError::Invalid(msg) => assert!(
+                msg.contains("暂不支持"),
+                "{kind} 应报「暂不支持」，实际: {msg}"
+            ),
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+        // 修改被拒绝后原交易保持不变（事务回滚）。
+        let t = get_transaction_internal(&conn, &id).unwrap();
+        assert_eq!(t.kind, "expense");
+        assert_eq!(t.amount_cents, 500);
+    }
+}
+
+/// 跨 kind 修改经行为层原子清理并重建副作用（spec #69 故事 13）：
+/// expense→buy 建仓、buy→expense 清理，均不留孤儿持仓关联。
+#[test]
+fn update_transaction_cross_kind_rebuilds_side_effects_atomically() {
+    let conn = setup();
+    insert_account(&conn, "acc-cash-x", "现金", "cash", "CNY");
+    setup_investment_account(&conn, "acc-x", "inst-x");
+
+    // expense → buy：应建仓 lot。
+    let id = insert_transaction(
+        &conn,
+        make_input("acc-cash-x", "expense", 500, "2026-01-01"),
+    )
+    .unwrap();
+    update_transaction_internal(&conn, &id, make_buy_input("acc-x", "inst-x", 3.0, 1000, 0))
+        .unwrap();
+    let t = get_transaction_internal(&conn, &id).unwrap();
+    assert_eq!(t.kind, "buy");
+    let lots: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM security_lots WHERE buy_transaction_id=?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(lots, 1, "expense→buy 应建仓一个 lot");
+
+    // buy → expense：应清理持仓关联，无孤儿 lot / security_transaction。
+    update_transaction_internal(
+        &conn,
+        &id,
+        make_input("acc-cash-x", "expense", 700, "2026-02-01"),
+    )
+    .unwrap();
+    let t = get_transaction_internal(&conn, &id).unwrap();
+    assert_eq!(t.kind, "expense");
+    let (lots_after, stx_after): (i64, i64) = conn
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM security_lots WHERE buy_transaction_id=?1), \
+                    (SELECT COUNT(*) FROM security_transactions WHERE transaction_id=?1)",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(lots_after, 0, "buy→expense 应清理 security_lots");
+    assert_eq!(stx_after, 0, "buy→expense 应清理 security_transactions");
+}
+
 fn make_buy_input(
     account_id: &str,
     instrument_id: &str,
@@ -575,11 +689,10 @@ fn setup_investment_account(conn: &Connection, account_id: &str, instrument_id: 
 
 #[test]
 fn delete_transaction_internal_cleans_up_buy_lots() {
-    use crate::commands::investment::create_buy_transaction;
     let conn = setup();
     setup_investment_account(&conn, "acc-inv", "inst-aapl");
 
-    let buy_id = create_buy_transaction(
+    let buy_id = insert_transaction(
         &conn,
         make_buy_input("acc-inv", "inst-aapl", 10.0, 10000, 500),
     )
@@ -632,11 +745,10 @@ fn delete_transaction_internal_cleans_up_buy_lots() {
 
 #[test]
 fn delete_transaction_internal_rejects_partially_sold_buy() {
-    use crate::commands::investment::{create_buy_transaction, create_sell_transaction};
     let conn = setup();
     setup_investment_account(&conn, "acc-inv2", "inst-msft");
 
-    let buy_id = create_buy_transaction(
+    let buy_id = insert_transaction(
         &conn,
         make_buy_input("acc-inv2", "inst-msft", 10.0, 10000, 0),
     )
@@ -645,7 +757,7 @@ fn delete_transaction_internal_rejects_partially_sold_buy() {
     let mut sell = make_buy_input("acc-inv2", "inst-msft", 4.0, 11000, 0);
     sell.kind = "sell".into();
     sell.date = "2026-01-20".into();
-    create_sell_transaction(&conn, sell).unwrap();
+    insert_transaction(&conn, sell).unwrap();
 
     let err = delete_transaction_internal(&conn, &buy_id).unwrap_err();
     match err {
@@ -800,10 +912,9 @@ fn update_transaction_internal_cross_kind_expense_to_transfer() {
 
 #[test]
 fn update_transaction_internal_buy_rebuilds_lot() {
-    use crate::commands::investment::create_buy_transaction;
     let conn = setup();
     setup_investment_account(&conn, "acc-inv", "inst-aapl");
-    let buy_id = create_buy_transaction(
+    let buy_id = insert_transaction(
         &conn,
         make_buy_input("acc-inv", "inst-aapl", 10.0, 10000, 500),
     )
@@ -839,10 +950,9 @@ fn update_transaction_internal_buy_rebuilds_lot() {
 
 #[test]
 fn update_transaction_internal_rejects_partially_sold_buy() {
-    use crate::commands::investment::{create_buy_transaction, create_sell_transaction};
     let conn = setup();
     setup_investment_account(&conn, "acc-inv2", "inst-msft");
-    let buy_id = create_buy_transaction(
+    let buy_id = insert_transaction(
         &conn,
         make_buy_input("acc-inv2", "inst-msft", 10.0, 10000, 0),
     )
@@ -851,7 +961,7 @@ fn update_transaction_internal_rejects_partially_sold_buy() {
     let mut sell = make_buy_input("acc-inv2", "inst-msft", 4.0, 11000, 0);
     sell.kind = "sell".into();
     sell.date = "2026-01-20".into();
-    create_sell_transaction(&conn, sell).unwrap();
+    insert_transaction(&conn, sell).unwrap();
 
     let err = update_transaction_internal(
         &conn,
@@ -867,10 +977,9 @@ fn update_transaction_internal_rejects_partially_sold_buy() {
 
 #[test]
 fn update_transaction_internal_sell_reverses_and_reapplies() {
-    use crate::commands::investment::{create_buy_transaction, create_sell_transaction};
     let conn = setup();
     setup_investment_account(&conn, "acc-inv3", "inst-tsla");
-    let buy_id = create_buy_transaction(
+    let buy_id = insert_transaction(
         &conn,
         make_buy_input("acc-inv3", "inst-tsla", 10.0, 10000, 0),
     )
@@ -878,7 +987,7 @@ fn update_transaction_internal_sell_reverses_and_reapplies() {
 
     let mut sell1 = make_buy_input("acc-inv3", "inst-tsla", 4.0, 11000, 0);
     sell1.kind = "sell".into();
-    let sell_id = create_sell_transaction(&conn, sell1).unwrap();
+    let sell_id = insert_transaction(&conn, sell1).unwrap();
 
     // 编辑卖出：数量 4→3、单价上涨。应先回补旧扣减再按新输入重新匹配。
     let mut sell2 = make_buy_input("acc-inv3", "inst-tsla", 3.0, 12000, 0);
@@ -920,7 +1029,6 @@ fn update_transaction_internal_sell_reverses_and_reapplies() {
 /// create 路径不再散落手写 INSERT（issue #60 验收：审计字段统一生成）。
 #[test]
 fn insert_transaction_audit_fields_uniform_across_kinds() {
-    use crate::commands::investment::{create_buy_transaction, create_sell_transaction};
     let conn = setup();
     insert_account(&conn, "acc-w", "现金", "cash", "CNY");
     insert_account(&conn, "acc-w2", "银行", "bank", "CNY");
@@ -944,11 +1052,11 @@ fn insert_transaction_audit_fields_uniform_across_kinds() {
     )
     .unwrap();
     let buy_id =
-        create_buy_transaction(&conn, make_buy_input("acc-inv-w", "inst-w", 2.0, 1000, 0)).unwrap();
+        insert_transaction(&conn, make_buy_input("acc-inv-w", "inst-w", 2.0, 1000, 0)).unwrap();
     let mut sell = make_buy_input("acc-inv-w", "inst-w", 1.0, 1100, 0);
     sell.kind = "sell".into();
     sell.date = "2026-01-11".into();
-    let sell_id = create_sell_transaction(&conn, sell).unwrap();
+    let sell_id = insert_transaction(&conn, sell).unwrap();
 
     for id in [
         expense_id,
