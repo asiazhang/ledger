@@ -4,6 +4,19 @@ use rusqlite::params;
 use tauri_app_lib::db::new_uuid;
 use tauri_app_lib::models::Transaction;
 
+use crate::world::LedgerWorld;
+
+/// 断言最近一次操作记录的错误信息包含指定片段（多个 `*_steps` 模块共用的 seam 断言）。
+pub fn assert_last_error_contains(world: &LedgerWorld, needle: &str) {
+    match &world.last_error {
+        Some(msg) => assert!(
+            msg.contains(needle),
+            "错误消息不匹配: 期望包含 '{needle}', 实际 '{msg}'"
+        ),
+        None => panic!("预期错误但未发生"),
+    }
+}
+
 /// 在数据库中插入账户用于测试。
 pub fn insert_account(conn: &Connection, id: &str, name: &str, kind: &str, currency: &str) {
     conn.execute(

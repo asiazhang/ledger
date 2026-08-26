@@ -362,13 +362,7 @@ fn check_txn_kind_amount_note(
 
 #[then(expr = "应返回错误 {string}")]
 fn check_error(world: &mut LedgerWorld, expected_msg: String) {
-    match &world.last_error {
-        Some(msg) => assert!(
-            msg.contains(&expected_msg),
-            "错误消息不匹配: 期望包含 '{expected_msg}', 实际 '{msg}'"
-        ),
-        None => panic!("预期错误但未发生"),
-    }
+    crate::common::assert_last_error_contains(world, &expected_msg);
 }
 
 #[then(expr = "该转账类型应为 {string}")]

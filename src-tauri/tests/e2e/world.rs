@@ -73,6 +73,10 @@ pub struct LedgerWorld {
     pub last_backup_path: Option<PathBuf>,
     /// 最近一次恢复出的临时数据库路径
     pub restored_db_path: Option<PathBuf>,
+    /// 最近创建的定时计划 id（定时交易场景用）
+    pub last_plan_id: Option<String>,
+    /// 最近尝试执行的期次 id（失败重试场景用）
+    pub last_occurrence_id: Option<String>,
     /// 最近一次交易搜索结果快照（搜索场景断言用）
     pub last_search: Option<TransactionSearchResult>,
 }
@@ -90,6 +94,8 @@ impl fmt::Debug for LedgerWorld {
                 "last_search_total",
                 &self.last_search.as_ref().map(|s| s.total),
             )
+            .field("last_plan_id", &self.last_plan_id)
+            .field("last_occurrence_id", &self.last_occurrence_id)
             .finish()
     }
 }
@@ -109,6 +115,8 @@ impl LedgerWorld {
             balances: HashMap::new(),
             last_backup_path: None,
             restored_db_path: None,
+            last_plan_id: None,
+            last_occurrence_id: None,
             last_search: None,
         };
         // 注册种子黑洞账户（V004 预置 无(CNY)/无(HKD)），供迁移场景按名称引用。
