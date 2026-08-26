@@ -5,6 +5,7 @@ import { flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useAppStore } from '@/stores/app'
+import { useReferenceStore } from '@/stores/reference'
 import SettingsView from '@/views/SettingsView.vue'
 import CategoryManager from '@/components/CategoryManager.vue'
 import type { Currency } from '@/types'
@@ -56,8 +57,8 @@ beforeEach(async () => {
   mockSave.mockReset()
   mockConfirm.mockReset()
   localStorage.clear()
-  const store = useAppStore()
-  await store.loadAll()
+  const store = useReferenceStore()
+  await store.ensureFresh()
 })
 
 describe('SettingsView.vue', () => {

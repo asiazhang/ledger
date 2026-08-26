@@ -6,7 +6,7 @@ import { useFormShared } from '@/composables/useFormShared'
 import type { Transaction, TransactionInput } from '@/types'
 
 export function useRefundForm(options?: { onCreated?: () => void }) {
-  const { store, accountOptions, currencyOptions } = useFormShared()
+  const { reference, accountOptions, currencyOptions } = useFormShared()
   const message = useMessage()
 
   const amount = ref<number | null>(null)
@@ -24,8 +24,8 @@ export function useRefundForm(options?: { onCreated?: () => void }) {
 
   const refundTargetOptions = computed(() =>
     expenseTransactions.value.map((t) => {
-      const cat = store.categoryPath(t.category_id) || '-'
-      const cur = store.getCurrency(t.currency_code)
+      const cat = reference.categoryPath(t.category_id) || '-'
+      const cur = reference.getCurrency(t.currency_code)
       const amt = formatAmount(t.amount_native_cents, cur)
       const noteStr = t.note ? ` · ${t.note}` : ''
       return {

@@ -18,11 +18,11 @@ import {
   type DataTableColumns,
 } from 'naive-ui'
 import { api } from '@/api'
-import { useAppStore } from '@/stores/app'
+import { useReferenceStore } from '@/stores/reference'
 import { formatAmount } from '@/types'
 import type { BudgetInput, BudgetProgress } from '@/types'
 
-const store = useAppStore()
+const reference = useReferenceStore()
 const message = useMessage()
 const list = ref<BudgetProgress[]>([])
 const loading = ref(false)
@@ -32,7 +32,7 @@ const amount = ref<number | null>(null)
 const startDate = ref(Date.now())
 
 const categoryOptions = () =>
-  store.rootCategories
+  reference.rootCategories
     .filter((c) => c.kind === 'expense')
     .map((c) => ({ label: c.name, value: c.id }))
 
@@ -126,9 +126,9 @@ const columns: DataTableColumns<BudgetProgress> = [
   },
 ]
 
-onMounted(async () => {
-  await store.loadAll()
-  await refresh()
+onMounted(() => {
+  // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll
+  void refresh()
 })
 </script>
 

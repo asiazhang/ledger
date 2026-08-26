@@ -3,11 +3,11 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { NDataTable, NInput, NSelect, NSpace } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
 import { api } from '@/api'
-import { useAppStore } from '@/stores/app'
+import { useReferenceStore } from '@/stores/reference'
 import { formatAmount, INSTRUMENT_TYPE_LABELS, MARKET_TYPE_LABELS } from '@/types'
 import type { Instrument, MarketType } from '@/types'
 
-const store = useAppStore()
+const reference = useReferenceStore()
 
 // 标的浏览（服务端分页 + 搜索）
 const searchText = ref('')
@@ -71,7 +71,7 @@ const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
     width: 100,
     render(row) {
       if (row.price_cents === null || row.price_cents === undefined) return '-'
-      const ccy = store.currencyMap.get(row.currency_code)
+      const ccy = reference.currencyMap.get(row.currency_code)
       return formatAmount(row.price_cents, ccy)
     },
   },

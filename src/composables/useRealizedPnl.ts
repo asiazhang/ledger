@@ -1,20 +1,20 @@
 import { computed, onMounted, ref } from 'vue'
 import { api } from '@/api'
-import { useAppStore } from '@/stores/app'
-import type { Account, RealizedPnlSummary } from '@/types'
+import { useReferenceStore } from '@/stores/reference'
+import type { RealizedPnlSummary } from '@/types'
 
 /// 已实现盈亏概览：账户/标的筛选 + 汇总数据加载（盈亏 tab 的数据层）。
 export function useRealizedPnl() {
-  const store = useAppStore()
+  const reference = useReferenceStore()
 
   const loading = ref(false)
   const summary = ref<RealizedPnlSummary | null>(null)
-  const accounts = ref<Account[]>([])
   const selectedAccountId = ref<string | null>(null)
   const selectedInstrumentId = ref<string | null>(null)
 
+  // 账户选项读参考数据单一来源（ledger:changed 信号保持新鲜），不再单独拉取
   const accountOptions = computed(() =>
-    accounts.value.map((a) => ({ label: a.name, value: a.id })),
+    reference.accounts.map((a) => ({ label: a.name, value: a.id })),
   )
 
   // 标的筛选下拉（远程搜索，不前端全量驻留）
@@ -77,10 +77,9 @@ export function useRealizedPnl() {
 
   const totalPnl = computed(() => summary.value?.total_realized_pnl_cents ?? 0)
 
-  onMounted(async () => {
-    await store.loadAll()
-    accounts.value = await api.listAccounts()
-    await refresh()
+  onMounted(() => {
+    // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll
+    void refresh()
   })
 
   return {

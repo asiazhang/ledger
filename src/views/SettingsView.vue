@@ -1,7 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
 import { NTabs, NTabPane } from 'naive-ui'
-import { useAppStore } from '@/stores/app'
 import { useInstrumentSync } from '@/composables/useInstrumentSync'
 import CategoryManager from '@/components/CategoryManager.vue'
 import CurrencySettings from '@/components/settings/CurrencySettings.vue'
@@ -10,12 +8,7 @@ import BackupSettings from '@/components/settings/BackupSettings.vue'
 import AppearanceSettings from '@/components/settings/AppearanceSettings.vue'
 import AboutSettings from '@/components/settings/AboutSettings.vue'
 
-const store = useAppStore()
 const { syncStatus, syncProgress, syncResult, startSync } = useInstrumentSync()
-
-onMounted(async () => {
-  await store.loadAll()
-})
 </script>
 
 <template>

@@ -5,7 +5,7 @@ import { useFormShared } from '@/composables/useFormShared'
 import type { Instrument, InstrumentType, TransactionInput } from '@/types'
 
 export function useInvestmentForm(kind: 'buy' | 'sell', options?: { onCreated?: () => void }) {
-  const { store, currencyOptions } = useFormShared()
+  const { reference, currencyOptions } = useFormShared()
   const message = useMessage()
 
   const accountId = ref<string | null>(null)
@@ -26,7 +26,7 @@ export function useInvestmentForm(kind: 'buy' | 'sell', options?: { onCreated?: 
   const newInstrumentType = ref<InstrumentType>('stock')
 
   const investmentAccountOptions = computed(() =>
-    store.accounts
+    reference.accounts
       .filter((a) => a.type === 'investment')
       .map((a) => ({ label: a.name, value: a.id })),
   )

@@ -14,7 +14,7 @@ import {
 } from 'chart.js'
 import type { ChartOptions, TooltipItem } from 'chart.js'
 import { api } from '@/api'
-import { useAppStore } from '@/stores/app'
+import { useReferenceStore } from '@/stores/reference'
 import { formatAmount } from '@/types'
 import type { CategoryShare, MonthlySummary } from '@/types'
 import { categoryRoot } from '@/utils/category-tree'
@@ -26,7 +26,7 @@ import {
 
 ChartJS.register(Title, Tooltip, Legend, BarElement, ArcElement, CategoryScale, LinearScale)
 
-const store = useAppStore()
+const reference = useReferenceStore()
 const year = ref(new Date().getFullYear())
 const monthly = ref<MonthlySummary[]>([])
 const shares = ref<CategoryShare[]>([])
@@ -103,7 +103,7 @@ const pieData = computed(() => {
   const map = new Map<string, { name: string; value: number }>()
   for (const s of shares.value) {
     if (s.amount_cents === 0) continue
-    const root = categoryRoot(store.categories, s.category_id)
+    const root = categoryRoot(reference.categories, s.category_id)
     const key = root ? root.id : s.category_id
     const name = root ? root.name : s.category_name
     const exist = map.get(key)
@@ -144,9 +144,9 @@ const doughnutChartOptions: ChartOptions<'doughnut'> = {
   },
 }
 
-onMounted(async () => {
-  await store.loadAll()
-  await refresh()
+onMounted(() => {
+  // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll
+  void refresh()
 })
 </script>
 

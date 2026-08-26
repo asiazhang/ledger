@@ -13,12 +13,12 @@ import {
   NStatistic,
 } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
-import { useAppStore } from '@/stores/app'
+import { useReferenceStore } from '@/stores/reference'
 import { formatAmount } from '@/types'
 import type { PnlDetail } from '@/types'
 import { useRealizedPnl } from '@/composables/useRealizedPnl'
 
-const store = useAppStore()
+const reference = useReferenceStore()
 const {
   loading,
   summary,
@@ -44,7 +44,7 @@ const detailColumns: DataTableColumn<PnlDetail>[] = [
     key: 'cost_per_unit_cents',
     width: 100,
     render(row) {
-      const ccy = store.currencyMap.get(row.currency_code)
+      const ccy = reference.currencyMap.get(row.currency_code)
       return formatAmount(row.cost_per_unit_cents, ccy)
     },
   },
@@ -53,7 +53,7 @@ const detailColumns: DataTableColumn<PnlDetail>[] = [
     key: 'realized_pnl_cents',
     width: 120,
     render(row) {
-      const ccy = store.currencyMap.get(row.currency_code)
+      const ccy = reference.currencyMap.get(row.currency_code)
       const text = formatAmount(row.realized_pnl_cents, ccy)
       return h(
         'span',

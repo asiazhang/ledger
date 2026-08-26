@@ -2,8 +2,10 @@
 import { computed } from 'vue'
 import { NCard, NDataTable, NSelect, NSpace } from 'naive-ui'
 import { useAppStore } from '@/stores/app'
+import { useReferenceStore } from '@/stores/reference'
 
 const store = useAppStore()
+const reference = useReferenceStore()
 
 const currencyColumns = [
   { title: '代码', key: 'code', width: 80 },
@@ -13,7 +15,7 @@ const currencyColumns = [
 ]
 
 const currencyOptions = computed(() =>
-  store.currencies.map((c) => ({ label: `${c.code} - ${c.name}`, value: c.code })),
+  reference.currencies.map((c) => ({ label: `${c.code} - ${c.name}`, value: c.code })),
 )
 </script>
 
@@ -29,7 +31,7 @@ const currencyOptions = computed(() =>
     </NCard>
 
     <NCard title="支持币种" size="small">
-      <NDataTable :columns="currencyColumns" :data="store.currencies" :bordered="false" size="small" />
+      <NDataTable :columns="currencyColumns" :data="reference.currencies" :bordered="false" size="small" />
     </NCard>
   </NSpace>
 </template>
