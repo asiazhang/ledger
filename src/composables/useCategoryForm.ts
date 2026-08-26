@@ -2,11 +2,13 @@ import { computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import type { TreeSelectOption } from 'naive-ui'
 import { api } from '@/api'
+import { useReferenceStore } from '@/stores/reference'
 import { useFormShared } from '@/composables/useFormShared'
 import type { TransactionInput } from '@/types'
 
 export function useCategoryForm(kind: 'expense' | 'income', options?: { onCreated?: () => void }) {
-  const { store, accountOptions, currencyOptions } = useFormShared()
+  const { accountOptions, currencyOptions } = useFormShared()
+  const reference = useReferenceStore()
   const message = useMessage()
 
   const amount = ref<number | null>(null)
@@ -16,7 +18,7 @@ export function useCategoryForm(kind: 'expense' | 'income', options?: { onCreate
   const note = ref('')
   const date = ref(Date.now())
 
-  const treeOptions = computed<TreeSelectOption[]>(() => store.treeCategoryOptions(kind) as unknown as TreeSelectOption[])
+  const treeOptions = computed<TreeSelectOption[]>(() => reference.treeCategoryOptions(kind) as unknown as TreeSelectOption[])
 
   async function submit() {
     if (!accountId.value) {

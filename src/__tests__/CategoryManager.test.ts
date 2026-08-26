@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
-import { useAppStore } from '@/stores/app'
+import { useReferenceStore } from '@/stores/reference'
 import CategoryManager from '@/components/CategoryManager.vue'
 import type { Category } from '@/types'
 
@@ -52,8 +52,8 @@ describe('CategoryManager.vue', () => {
       if (cmd === 'reorder_categories') return Promise.resolve(undefined)
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
-    const store = useAppStore()
-    await store.loadAll()
+    const store = useReferenceStore()
+    await store.ensureFresh()
   })
 
   it('挂载并渲染分类列表（默认支出 Tab）', () => {

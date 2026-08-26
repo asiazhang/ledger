@@ -2,12 +2,12 @@
 import { computed, ref } from 'vue'
 import { NButton, NForm, NFormItem, NInput, NSelect, useMessage } from 'naive-ui'
 import { api } from '@/api'
-import { useAppStore } from '@/stores/app'
+import { useReferenceStore } from '@/stores/reference'
 import type { CategoryInput, CategoryKind } from '@/types'
 
 const props = defineProps<{ kind: CategoryKind }>()
 
-const store = useAppStore()
+const reference = useReferenceStore()
 const message = useMessage()
 
 const name = ref('')
@@ -16,7 +16,7 @@ const icon = ref('')
 
 const parentOptions = computed(() => [
   { label: '无（顶级）', value: '' },
-  ...store.rootCategories
+  ...reference.rootCategories
     .filter((c) => c.kind === props.kind)
     .map((c) => ({ label: c.name, value: c.id })),
 ])
@@ -28,7 +28,7 @@ async function addCategory() {
   }
   const parent_id: string | null = parentId.value || null
   if (parent_id != null) {
-    const parent = store.categoryMap.get(parent_id)
+    const parent = reference.categoryMap.get(parent_id)
     if (!parent) {
       message.warning('父分类不存在')
       return
@@ -54,7 +54,7 @@ async function addCategory() {
     name.value = ''
     parentId.value = ''
     icon.value = ''
-    await store.loadCategories()
+    // 参考数据由 ledger:changed 信号自动重拉，分类树随之更新
   } catch (e) {
     message.error(`添加失败: ${e}`)
   }

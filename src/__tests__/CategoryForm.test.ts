@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
-import { useAppStore } from '@/stores/app'
+import { useReferenceStore } from '@/stores/reference'
 import CategoryForm from '@/components/CategoryForm.vue'
 import type { Account, Category, Currency } from '@/types'
 
@@ -41,8 +41,8 @@ describe('CategoryForm.vue', () => {
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     // Pre-load store so components have data
-    const store = useAppStore()
-    await store.loadAll()
+    const store = useReferenceStore()
+    await store.ensureFresh()
   })
 
   it('挂载并显示提交按钮文本', () => {

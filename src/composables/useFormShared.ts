@@ -1,15 +1,16 @@
 import { computed } from 'vue'
-import { useAppStore } from '@/stores/app'
+import { useReferenceStore } from '@/stores/reference'
 
 export function useFormShared() {
-  const store = useAppStore()
+  const reference = useReferenceStore()
 
   const accountOptions = computed(() =>
-    store.accounts.map((a) => ({ label: a.name, value: a.id })),
+    reference.accounts.map((a) => ({ label: a.name, value: a.id })),
   )
   const currencyOptions = computed(() =>
-    store.currencies.map((c) => ({ label: `${c.name} (${c.code})`, value: c.code })),
+    reference.currencies.map((c) => ({ label: `${c.name} (${c.code})`, value: c.code })),
   )
 
-  return { store, accountOptions, currencyOptions }
+  // store 键为历史契约（useRefundForm/useInvestmentForm 仍在解构它），实为 reference store
+  return { store: reference, accountOptions, currencyOptions }
 }

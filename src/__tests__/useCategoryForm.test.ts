@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
-import { useAppStore } from '@/stores/app'
+import { useReferenceStore } from '@/stores/reference'
 import { useCategoryForm } from '@/composables/useCategoryForm'
 import type { Account, Category, Currency } from '@/types'
 
@@ -57,8 +57,8 @@ describe('useCategoryForm', () => {
   })
 
   it('treeOptions 根据 kind 过滤', async () => {
-    const store = useAppStore()
-    await store.loadAll()
+    const store = useReferenceStore()
+    await store.ensureFresh()
     const expenseForm = useCategoryForm('expense')
     expect(expenseForm.treeOptions.value).toHaveLength(1)
     expect(expenseForm.treeOptions.value[0].key).toBe('cat-1')
@@ -69,8 +69,8 @@ describe('useCategoryForm', () => {
   })
 
   it('accountOptions 来自 store', async () => {
-    const store = useAppStore()
-    await store.loadAll()
+    const store = useReferenceStore()
+    await store.ensureFresh()
     const form = useCategoryForm('expense')
     expect(form.accountOptions.value).toHaveLength(1)
     expect(form.accountOptions.value[0]).toEqual({ label: '现金', value: 'acc-1' })

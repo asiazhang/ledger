@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { NButton, NForm, NFormItem, NInput, NModal, NSelect, useMessage } from 'naive-ui'
 import { api } from '@/api'
-import { useAppStore } from '@/stores/app'
+import { useReferenceStore } from '@/stores/reference'
 import type { Category, CategoryUpdateInput } from '@/types'
 
 const props = defineProps<{
@@ -11,7 +11,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ 'update:show': [value: boolean] }>()
 
-const store = useAppStore()
+const reference = useReferenceStore()
 const message = useMessage()
 
 const editName = ref('')
@@ -20,7 +20,7 @@ const editParentId = ref<string>('')
 
 const editParentOptions = computed(() => [
   { label: '无（顶级）', value: '' },
-  ...store.rootCategories
+  ...reference.rootCategories
     .filter((c) => c.kind === props.category?.kind)
     .map((c) => ({ label: c.name, value: c.id })),
 ])
@@ -52,7 +52,7 @@ async function saveEdit() {
     await api.updateCategory(cat.id, input)
     message.success('已更新分类')
     emit('update:show', false)
-    await store.loadCategories()
+    // 参考数据由 ledger:changed 信号自动重拉，分类树随之更新
   } catch (e) {
     message.error(`更新失败: ${e}`)
   }

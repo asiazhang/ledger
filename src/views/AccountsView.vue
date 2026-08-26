@@ -15,11 +15,11 @@ import {
   type DataTableColumns,
 } from 'naive-ui'
 import { api } from '@/api'
-import { useAppStore } from '@/stores/app'
+import { useReferenceStore } from '@/stores/reference'
 import { ACCOUNT_TYPE_LABELS, formatAmount } from '@/types'
 import type { AccountBalance, AccountInput, AccountType } from '@/types'
 
-const store = useAppStore()
+const reference = useReferenceStore()
 const message = useMessage()
 const balances = ref<AccountBalance[]>([])
 
@@ -33,7 +33,7 @@ const typeOptions = (Object.keys(ACCOUNT_TYPE_LABELS) as AccountType[]).map((k) 
   value: k,
 }))
 const currencyOptions = () =>
-  store.currencies.map((c) => ({ label: `${c.name} (${c.code})`, value: c.code }))
+  reference.currencies.map((c) => ({ label: `${c.name} (${c.code})`, value: c.code }))
 
 async function refresh() {
   balances.value = await api.listAccountBalances()
@@ -55,7 +55,7 @@ async function create() {
     message.success('已创建账户')
     name.value = ''
     initial.value = 0
-    await store.loadAccounts()
+    // 参考数据由 ledger:changed 信号自动重拉；此处仅刷新交易派生余额
     await refresh()
   } catch (e) {
     message.error(`创建失败: ${e}`)
@@ -66,7 +66,7 @@ async function remove(id: string) {
   try {
     await api.deleteAccount(id)
     message.success('已删除')
-    await store.loadAccounts()
+    // 参考数据由 ledger:changed 信号自动重拉；此处仅刷新交易派生余额
     await refresh()
   } catch (e) {
     message.error(`删除失败: ${e}`)
@@ -84,7 +84,7 @@ const columns: DataTableColumns<AccountBalance> = [
   {
     title: '余额',
     key: 'balance_cents',
-    render: (row) => formatAmount(row.balance_cents, store.getCurrency(row.account.currency_code)),
+    render: (row) => formatAmount(row.balance_cents, reference.getCurrency(row.account.currency_code)),
   },
   {
     title: '操作',
@@ -102,9 +102,9 @@ const columns: DataTableColumns<AccountBalance> = [
   },
 ]
 
-onMounted(async () => {
-  await store.loadAll()
-  await refresh()
+onMounted(() => {
+  // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll
+  void refresh()
 })
 </script>
 

@@ -3,7 +3,7 @@ import { computed, h } from 'vue'
 import { NButton, NIcon, NPopconfirm, NSpace, NTree, useMessage } from 'naive-ui'
 import type { TreeOption, TreeDropInfo } from 'naive-ui'
 import { api } from '@/api'
-import { useAppStore } from '@/stores/app'
+import { useReferenceStore } from '@/stores/reference'
 import { getIconComponent } from '@/types/icon'
 import { buildCategoryTree } from '@/utils/category-tree'
 import type { Category, CategoryKind } from '@/types'
@@ -11,7 +11,7 @@ import type { Category, CategoryKind } from '@/types'
 const props = defineProps<{ kind: CategoryKind }>()
 const emit = defineEmits<{ edit: [cat: Category] }>()
 
-const store = useAppStore()
+const reference = useReferenceStore()
 const message = useMessage()
 
 interface TreeCategoryNode extends TreeOption {
@@ -19,7 +19,7 @@ interface TreeCategoryNode extends TreeOption {
 }
 
 const treeData = computed<TreeCategoryNode[]>(() =>
-  buildCategoryTree(store.categories, {
+  buildCategoryTree(reference.categories, {
     kind: props.kind,
     sort: true,
   }) as unknown as TreeCategoryNode[],
@@ -67,7 +67,7 @@ async function handleDrop(info: TreeDropInfo) {
   if (dragCat.parent_id !== targetCat.parent_id) return
   if (dragCat.kind !== targetCat.kind) return
 
-  const siblings = store.categories
+  const siblings = reference.categories
     .filter((c) => c.parent_id === dragCat.parent_id && c.kind === dragCat.kind)
     .sort((a, b) => a.sort_order - b.sort_order)
 
@@ -82,7 +82,7 @@ async function handleDrop(info: TreeDropInfo) {
 
   try {
     await api.reorderCategories(siblings.map((c, i) => ({ id: c.id, sort_order: i })))
-    await store.loadCategories()
+    // 参考数据由 ledger:changed 信号自动重拉，分类树随之更新
   } catch (e) {
     message.error(`排序失败: ${e}`)
   }
@@ -93,7 +93,7 @@ async function removeCategory(id: string) {
   try {
     await api.deleteCategory(id)
     message.success('已删除')
-    await store.loadCategories()
+    // 参考数据由 ledger:changed 信号自动重拉，分类树随之更新
   } catch (e) {
     message.error(`删除失败: ${e}`)
   }
