@@ -2,7 +2,7 @@ use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 
 use crate::error::{AppError, Result};
-use crate::models::{NormalizedTransaction, TransactionInput};
+use crate::models::TransactionInput;
 use crate::transaction::amount;
 use crate::transaction::writer;
 
@@ -36,25 +36,6 @@ fn to_writer_input(input: &TransactionInput) -> Result<writer::Input> {
         refund_of_transaction_id: input.refund_of_transaction_id.clone(),
         note: input.note.clone(),
         date: input.date.clone(),
-    })
-}
-
-/// `NormalizedTransaction` → `writer::NormalizedRow`（命令层接线转换）。
-///
-/// buy/sell 归一化行同样经此转换后走 [`writer::insert_row`]/[`writer::update_row`]
-/// 落交易行字段（其持仓/卖出关联副作用由投资层另行处理）。
-pub(crate) fn to_writer_row(norm: &NormalizedTransaction) -> Result<writer::NormalizedRow> {
-    Ok(writer::NormalizedRow {
-        kind: amount::Kind::parse(&norm.kind)?,
-        amount_cents: norm.amount_cents,
-        currency_code: norm.currency_code.clone(),
-        amount_native_cents: norm.amount_native_cents,
-        account_id: norm.account_id.clone(),
-        to_account_id: norm.to_account_id.clone(),
-        category_id: norm.category_id.clone(),
-        refund_of_transaction_id: norm.refund_of_transaction_id.clone(),
-        note: norm.note.clone(),
-        date: norm.date.clone(),
     })
 }
 

@@ -1266,6 +1266,101 @@ async fn test_update_transaction_preserves_idempotency_key_and_rerun_dedup() {
     assert_eq!(readback["total"], 1, "编辑后重跑不应新增交易");
 }
 
+// ---------------------------------------------------------------------------
+// issue #70：buy/sell 本位币折算经共享 writer（Amount 接缝），不再硬编码 1:1
+// ---------------------------------------------------------------------------
+
+/// buy 交易行落库：`amount_native_cents` 经 Amount 接缝折算到全局默认币种（CNY），
+/// 而非按账户币种 1:1 硬编码（issue #70：买入行走共享 writer 折算路径）。
+#[tokio::test]
+async fn test_buy_native_cents_converted_via_writer_seam() {
+    let (app, conn) = setup_app();
+    {
+        let conn = conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted)              VALUES ('acc-inv-70','美股','investment','USD',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id)              VALUES ('inst-70','AAPL','stock','Apple','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,updated_at,version,device_id)              VALUES ('er-70','USD','CNY',7.2,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+            [],
+        )
+        .unwrap();
+    }
+
+    let body = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-70","date":"2026-01-10","instrument_id":"inst-70","quantity":10.0,"price_cents":10000,"fee_cents":500}]}"#;
+    let results = post_batch(&app, body.to_string()).await;
+    assert_eq!(results[0]["success"], true, "buy 应成功: {:?}", results[0]);
+
+    let (amount_cents, amount_native_cents): (i64, i64) = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT amount_cents, amount_native_cents FROM transactions WHERE kind='buy' AND is_deleted=0",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(amount_cents, 100500, "原始币种金额 = 数量×单价+手续费");
+    assert_eq!(
+        amount_native_cents, 723600,
+        "本位币金额应经 Amount 接缝折算（100500 × 7.2）"
+    );
+}
+
+/// sell 交易行落库：本位币金额同样经 Amount 接缝折算（issue #70）。
+#[tokio::test]
+async fn test_sell_native_cents_converted_via_writer_seam() {
+    let (app, conn) = setup_app();
+    {
+        let conn = conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted)              VALUES ('acc-inv-70s','美股','investment','USD',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id)              VALUES ('inst-70s','MSFT','stock','Msft','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,updated_at,version,device_id)              VALUES ('er-70s','USD','CNY',7.2,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+            [],
+        )
+        .unwrap();
+    }
+
+    // 先买 10 股（10000/股，0 费），再卖 4 股（11000/股，0 费）→ 净额 44000。
+    let buy = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-70s","date":"2026-01-10","instrument_id":"inst-70s","quantity":10.0,"price_cents":10000,"fee_cents":0}]}"#;
+    let r1 = post_batch(&app, buy.to_string()).await;
+    assert_eq!(r1[0]["success"], true);
+    let sell = r#"{"transactions":[{"kind":"sell","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-70s","date":"2026-01-20","instrument_id":"inst-70s","quantity":4.0,"price_cents":11000,"fee_cents":0}]}"#;
+    let r2 = post_batch(&app, sell.to_string()).await;
+    assert_eq!(r2[0]["success"], true, "卖出应成功: {:?}", r2[0]);
+
+    let (amount_cents, amount_native_cents): (i64, i64) = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT amount_cents, amount_native_cents FROM transactions WHERE kind='sell' AND is_deleted=0",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(amount_cents, 44000, "卖出入账 = 数量×单价−手续费");
+    assert_eq!(
+        amount_native_cents, 316800,
+        "本位币金额应经 Amount 接缝折算（44000 × 7.2）"
+    );
+}
+
 #[tokio::test]
 async fn test_delete_buy_transaction_cleans_up_security_lots() {
     use tauri_app_lib::commands::insert_transaction;
@@ -1283,6 +1378,13 @@ async fn test_delete_buy_transaction_cleans_up_security_lots() {
         conn.execute(
             "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
              VALUES ('inst-del','DEL','stock','Delete','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+            [],
+        )
+        .unwrap();
+        // buy 本位币折算走 Amount 接缝（issue #70）：补一条 USD→CNY 汇率，1:1 不改变本测试意图。
+        conn.execute(
+            "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,updated_at,version,device_id) \
+             VALUES ('er-del','USD','CNY',1.0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
             [],
         )
         .unwrap();

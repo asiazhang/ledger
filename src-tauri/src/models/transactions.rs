@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::db::query::FromRow;
+use crate::error::{AppError, Result};
+use crate::transaction::{amount, writer};
 
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct Transaction {
@@ -118,6 +120,31 @@ pub struct NormalizedTransaction {
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
+}
+
+/// `NormalizedTransaction` → `writer::NormalizedRow`（交易行写入唯一权威，issue #70）。
+///
+/// 转换随模型定义，消费方（通用 kind 归一化后的行、buy/sell 投资层的归一化行）
+/// 直接产出 [`writer::NormalizedRow`] 交给 [`writer::insert_row`]/[`writer::update_row`] 落库；
+/// investment 不再反向 import transactions 模块的行更新函数（双向依赖斩断）。
+/// kind 为非法字符串时返回 `Invalid`（与 [`writer::normalize`] 的解析语义一致），不 panic。
+impl TryFrom<&NormalizedTransaction> for writer::NormalizedRow {
+    type Error = AppError;
+
+    fn try_from(norm: &NormalizedTransaction) -> Result<Self> {
+        Ok(writer::NormalizedRow {
+            kind: amount::Kind::parse(&norm.kind)?,
+            amount_cents: norm.amount_cents,
+            currency_code: norm.currency_code.clone(),
+            amount_native_cents: norm.amount_native_cents,
+            account_id: norm.account_id.clone(),
+            to_account_id: norm.to_account_id.clone(),
+            category_id: norm.category_id.clone(),
+            refund_of_transaction_id: norm.refund_of_transaction_id.clone(),
+            note: norm.note.clone(),
+            date: norm.date.clone(),
+        })
+    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]

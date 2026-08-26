@@ -678,6 +678,13 @@ fn buy_transaction_indexed_with_account_name() {
         [],
     )
     .unwrap();
+    // buy 本位币折算走 Amount 接缝（issue #70）：补 1:1 汇率。
+    conn.execute(
+        "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,updated_at,version,device_id) \
+         VALUES ('er-search','USD','CNY',1.0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+        [],
+    )
+    .unwrap();
     let input = TransactionInput {
         kind: "buy".into(),
         amount_cents: 0,

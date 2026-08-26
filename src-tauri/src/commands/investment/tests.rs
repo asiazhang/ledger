@@ -25,6 +25,27 @@ fn insert_instrument(conn: &Connection, id: &str, symbol: &str, name: &str, curr
     ).unwrap();
 }
 
+/// buy/sell 本位币折算走 Amount 接缝（issue #70）：测试库补 1:1 汇率，
+/// 非默认币种（USD）账户的交易折算不报缺汇率。
+fn insert_rate_1_1(conn: &Connection, base: &str) {
+    conn.execute(
+        "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,updated_at,version,device_id) \
+         VALUES ('er-1-1',?1,'CNY',1.0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+        params![base],
+    )
+    .unwrap();
+}
+
+/// 补一条指定汇率（供非 1:1 折算断言用，如 7.2）。
+fn insert_rate(conn: &Connection, base: &str, quote: &str, rate: f64) {
+    conn.execute(
+        "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,updated_at,version,device_id) \
+         VALUES ('er-rate',?1,?2,?3,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+        params![base, quote, rate],
+    )
+    .unwrap();
+}
+
 fn insert_instrument_with_market(
     conn: &Connection,
     id: &str,
@@ -185,6 +206,7 @@ fn list_instruments_pagination_and_search() {
 fn buy_transaction_creates_lot() {
     let conn = setup_db();
     insert_account(&conn, "acc-test-buy", "美股", "investment", "USD");
+    insert_rate_1_1(&conn, "USD");
     insert_instrument(&conn, "inst-test-nvda", "NVDA", "NVIDIA", "USD");
 
     let input = make_buy_input("acc-test-buy", "inst-test-nvda", 10.0, 10000, 500);
@@ -254,6 +276,66 @@ fn buy_transaction_creates_lot() {
     assert_eq!(cost_basis, 100500);
 }
 
+/// buy 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：非 1:1 汇率下
+/// 落库的 `amount_native_cents` 为折算值而非原始金额（旧行为硬编码 1:1）。
+#[test]
+fn buy_native_cents_converted_via_amount_seam() {
+    let conn = setup_db();
+    insert_account(&conn, "acc-test-conv", "美股", "investment", "USD");
+    insert_rate(&conn, "USD", "CNY", 7.2);
+    insert_instrument(&conn, "inst-test-conv", "NVDA", "NVIDIA", "USD");
+
+    let input = make_buy_input("acc-test-conv", "inst-test-conv", 10.0, 10000, 500);
+    let txn_id = create_buy_transaction(&conn, input).unwrap();
+
+    let (amount_cents, amount_native_cents): (i64, i64) = conn
+        .query_row(
+            "SELECT amount_cents, amount_native_cents FROM transactions WHERE id=?1",
+            params![txn_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(amount_cents, 100500, "原始币种金额 = 数量×单价+手续费");
+    assert_eq!(
+        amount_native_cents, 723600,
+        "本位币金额应经 convert_to_native 折算（100500 × 7.2）"
+    );
+}
+
+/// 修改 buy 交易（apply_buy 的 UPDATE 侧）同样经折算：非 1:1 汇率下
+/// `amount_native_cents` 保持折算值（INSERT/UPDATE 共用 prepare_buy，防回归）。
+#[test]
+fn buy_update_native_cents_converted_via_amount_seam() {
+    use crate::commands::transactions::update_transaction_internal;
+    let conn = setup_db();
+    insert_account(&conn, "acc-test-conv-upd", "美股", "investment", "USD");
+    insert_rate(&conn, "USD", "CNY", 7.2);
+    insert_instrument(&conn, "inst-test-conv-upd", "NVDA", "NVIDIA", "USD");
+
+    let txn_id = create_buy_transaction(
+        &conn,
+        make_buy_input("acc-test-conv-upd", "inst-test-conv-upd", 10.0, 10000, 500),
+    )
+    .unwrap();
+
+    let mut edited = make_buy_input("acc-test-conv-upd", "inst-test-conv-upd", 5.0, 12000, 0);
+    edited.date = "2026-02-01".into();
+    update_transaction_internal(&conn, &txn_id, edited).unwrap();
+
+    let (amount_cents, amount_native_cents): (i64, i64) = conn
+        .query_row(
+            "SELECT amount_cents, amount_native_cents FROM transactions WHERE id=?1",
+            params![txn_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(amount_cents, 60000, "修改后金额 = 5×12000");
+    assert_eq!(
+        amount_native_cents, 432000,
+        "修改后本位币金额应经 convert_to_native 折算（60000 × 7.2）"
+    );
+}
+
 #[test]
 fn buy_transaction_requires_investment_account() {
     let conn = setup_db();
@@ -272,6 +354,7 @@ fn buy_transaction_requires_investment_account() {
 fn sell_transaction_matches_multiple_lots_fifo() {
     let conn = setup_db();
     insert_account(&conn, "acc-test-sell", "美股", "investment", "USD");
+    insert_rate_1_1(&conn, "USD");
     insert_instrument(&conn, "inst-test-sell", "TSLA", "Tesla", "USD");
 
     let lot1_txn = create_buy_transaction(
@@ -356,6 +439,7 @@ fn sell_transaction_matches_multiple_lots_fifo() {
 fn sell_transaction_rejects_oversell() {
     let conn = setup_db();
     insert_account(&conn, "acc-test-oversell", "美股", "investment", "USD");
+    insert_rate_1_1(&conn, "USD");
     insert_instrument(&conn, "inst-test-oversell", "MSFT", "Microsoft", "USD");
 
     create_buy_transaction(
@@ -372,6 +456,7 @@ fn sell_transaction_rejects_oversell() {
 fn sell_transaction_pnl_deducts_fee() {
     let conn = setup_db();
     insert_account(&conn, "acc-test-pnl", "美股", "investment", "USD");
+    insert_rate_1_1(&conn, "USD");
     insert_instrument(&conn, "inst-test-pnl", "AAPL", "Apple", "USD");
 
     let buy_txn = create_buy_transaction(
@@ -479,6 +564,7 @@ fn create_instrument_is_idempotent() {
 fn list_holdings_returns_after_buy_and_market_price() {
     let conn = setup_db();
     insert_account(&conn, "acc-hold", "投资账户", "investment", "USD");
+    insert_rate_1_1(&conn, "USD");
     insert_instrument(&conn, "inst-hold", "GOOGL", "Alphabet", "USD");
 
     let buy_input = make_buy_input("acc-hold", "inst-hold", 10.0, 15000, 1000);
@@ -528,6 +614,7 @@ fn realized_pnl_summary_empty_when_no_sales() {
 fn realized_pnl_summary_aggregates_single_sale() {
     let conn = setup_db();
     insert_account(&conn, "acc-pnl", "美股账户", "investment", "USD");
+    insert_rate_1_1(&conn, "USD");
     insert_instrument(&conn, "inst-pnl", "AAPL", "Apple", "USD");
 
     let _buy = create_buy_transaction(&conn, make_buy_input("acc-pnl", "inst-pnl", 10.0, 10000, 0))
@@ -561,6 +648,7 @@ fn realized_pnl_summary_aggregates_multiple_accounts() {
     let conn = setup_db();
     insert_account(&conn, "acc-a", "账户A", "investment", "USD");
     insert_account(&conn, "acc-b", "账户B", "investment", "USD");
+    insert_rate_1_1(&conn, "USD");
     insert_instrument(&conn, "inst-xyz", "XYZ", "Test Corp", "USD");
 
     create_buy_transaction(&conn, make_buy_input("acc-a", "inst-xyz", 10.0, 1000, 0)).unwrap();
@@ -584,6 +672,7 @@ fn realized_pnl_summary_filter_by_account() {
     let conn = setup_db();
     insert_account(&conn, "acc-a", "账户A", "investment", "USD");
     insert_account(&conn, "acc-b", "账户B", "investment", "USD");
+    insert_rate_1_1(&conn, "USD");
     insert_instrument(&conn, "inst-xyz", "XYZ", "Test Corp", "USD");
 
     create_buy_transaction(&conn, make_buy_input("acc-a", "inst-xyz", 10.0, 1000, 0)).unwrap();
@@ -606,6 +695,7 @@ fn realized_pnl_summary_filter_by_account() {
 fn realized_pnl_summary_filter_by_instrument() {
     let conn = setup_db();
     insert_account(&conn, "acc-pnl", "美股", "investment", "USD");
+    insert_rate_1_1(&conn, "USD");
     insert_instrument(&conn, "inst-a", "AAPL", "Apple", "USD");
     insert_instrument(&conn, "inst-b", "GOOGL", "Alphabet", "USD");
 

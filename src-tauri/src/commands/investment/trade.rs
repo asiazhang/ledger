@@ -5,7 +5,24 @@ use crate::db::query::{FromRow, query_all};
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{AccountType, NormalizedTransaction, TransactionInput};
-use crate::transaction::writer;
+use crate::transaction::{amount, writer};
+
+/// 交易行落库（INSERT 侧）的统一入口：全部经 [`writer::insert_row`]。
+///
+/// 本文件内 `write_buy` / `write_sell` / `apply_buy` / `apply_sell` 均经此函数
+/// 落交易行字段，不再各自拼写 INSERT/UPDATE 列清单（issue #70：交易行写入唯一权威）；
+/// 归一化行 → writer 行的转换随 `models::NormalizedTransaction` 定义（TryFrom），
+/// investment 不再反向依赖 transactions 模块的行更新函数（双向依赖斩断）。
+fn write_txn_row(conn: &Connection, normalized: &NormalizedTransaction) -> Result<String> {
+    writer::insert_row(conn, &writer::NormalizedRow::try_from(normalized)?)
+}
+
+/// 交易行更新（UPDATE 侧）的统一入口：全部经 [`writer::update_row`]。
+///
+/// 保留 `created_at` 与幂等身份，`version` 递增；持仓/卖出关联副作用由调用方另行处理。
+fn update_txn_row(conn: &Connection, id: &str, normalized: &NormalizedTransaction) -> Result<()> {
+    writer::update_row(conn, id, &writer::NormalizedRow::try_from(normalized)?)
+}
 
 pub(crate) struct ActiveLot {
     pub(crate) id: String,
@@ -62,13 +79,16 @@ pub(crate) fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result
     }
     let account_currency = account_currency_code(conn, &input.account_id)?;
     let amount_cents = (quantity * price_cents as f64).round() as i64 + fee_cents;
+    // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：不再硬编码 1:1，
+    // 与通用 kind / 定时引擎共用同一折算路径（convert_to_native，基准为默认币种）。
+    let amount_native_cents = amount::convert_to_native(conn, amount_cents, &account_currency)?;
 
     Ok(BuyPlan {
         normalized: NormalizedTransaction {
             kind: "buy".into(),
             amount_cents,
             currency_code: account_currency,
-            amount_native_cents: amount_cents,
+            amount_native_cents,
             account_id: input.account_id.clone(),
             to_account_id: input.to_account_id.clone(),
             category_id: None,
@@ -92,8 +112,7 @@ pub(crate) fn create_buy_transaction(conn: &Connection, input: TransactionInput)
 /// [`writer::insert_row`] 统一生成，与通用 kind 创建共用同一写入权威；
 /// 持仓建仓（`security_lots` / `security_transactions`）留在命令层按 buy 身份执行。
 fn write_buy(conn: &Connection, plan: &BuyPlan) -> Result<String> {
-    let row = crate::commands::transactions::to_writer_row(&plan.normalized)?;
-    let id = writer::insert_row(conn, &row)?;
+    let id = write_txn_row(conn, &plan.normalized)?;
     create_buy_lot(
         conn,
         &id,
@@ -140,6 +159,9 @@ pub(crate) fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Resul
         return Err(AppError::Invalid("卖出手续费不能超过卖出收入".into()));
     }
     let amount_cents = gross_proceeds - fee_cents;
+    // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：不再硬编码 1:1，
+    // 与通用 kind / 定时引擎共用同一折算路径（convert_to_native，基准为默认币种）。
+    let amount_native_cents = amount::convert_to_native(conn, amount_cents, &account_currency)?;
 
     let lots: Vec<ActiveLot> = query_all(
         conn,
@@ -162,7 +184,7 @@ pub(crate) fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Resul
             kind: "sell".into(),
             amount_cents,
             currency_code: account_currency,
-            amount_native_cents: amount_cents,
+            amount_native_cents,
             account_id: input.account_id.clone(),
             to_account_id: input.to_account_id.clone(),
             category_id: None,
@@ -189,8 +211,7 @@ pub(crate) fn create_sell_transaction(
 /// 落交易行字段经 Writer 接缝（issue #60 / spec #52）：id 与审计字段由
 /// [`writer::insert_row`] 统一生成；卖出匹配/持仓扣减副作用留在命令层。
 fn write_sell(conn: &Connection, plan: &SellPlan) -> Result<String> {
-    let row = crate::commands::transactions::to_writer_row(&plan.normalized)?;
-    let id = writer::insert_row(conn, &row)?;
+    let id = write_txn_row(conn, &plan.normalized)?;
     write_sell_side_effects(conn, &id, plan)?;
     Ok(id)
 }
@@ -260,11 +281,7 @@ pub(crate) fn apply_buy(conn: &Connection, id: &str, input: &TransactionInput) -
     let plan = prepare_buy(conn, input)?;
     // 交易行字段经 Writer 接缝更新（issue #60）：保留 created_at 与幂等身份，
     // version 递增；持仓重建留在命令层。
-    writer::update_row(
-        conn,
-        id,
-        &crate::commands::transactions::to_writer_row(&plan.normalized)?,
-    )?;
+    update_txn_row(conn, id, &plan.normalized)?;
     create_buy_lot(
         conn,
         id,
@@ -320,11 +337,7 @@ pub(crate) fn apply_sell(conn: &Connection, id: &str, input: &TransactionInput) 
     let plan = prepare_sell(conn, input)?;
     // 交易行字段经 Writer 接缝更新（issue #60）：保留 created_at 与幂等身份，
     // version 递增；卖出匹配/持仓扣减重建留在命令层。
-    writer::update_row(
-        conn,
-        id,
-        &crate::commands::transactions::to_writer_row(&plan.normalized)?,
-    )?;
+    update_txn_row(conn, id, &plan.normalized)?;
     write_sell_side_effects(conn, id, &plan)?;
     Ok(())
 }
