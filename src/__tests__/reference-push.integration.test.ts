@@ -13,9 +13,11 @@ import type { Account, Category, Currency, Transaction } from '@/types'
 
 // TransactionsView 经 useRoute 读取 URL query（?account=<id> 只读入口，issue #97）；
 // 本文件挂载该视图但无路由上下文，mock 为空 query（无账户过滤，不影响既有断言）。
+// AccountLink（账户列渲染）经 useRouter 跳转（issue #99），同样 mock 为 no-op。
 const routeMock = reactive<{ query: Record<string, string | string[] | null> }>({ query: {} })
 vi.mock('vue-router', () => ({
   useRoute: () => routeMock,
+  useRouter: () => ({ push: () => {} }),
 }))
 
 // issue #86：端到端整合验证 + 组件层反应性测试。

@@ -2,11 +2,12 @@
 // 交易列表与搜索视图复用同一列配置（日期/类型/分类/账户/备注/金额）。
 // 渲染函数在运行时读取 store 的响应式数据，构建一次即可，无需 computed 包裹。
 
-import { h } from 'vue'
+import { h, type VNode } from 'vue'
 import { NTag, type DataTableColumn } from 'naive-ui'
 import { formatAmount, TRANSACTION_KIND_LABELS } from '@/types'
 import type { Transaction, TransactionKind } from '@/types'
 import type { useReferenceStore } from '@/stores/reference'
+import AccountLink from '@/components/AccountLink.vue'
 
 export type ReferenceStore = ReturnType<typeof useReferenceStore>
 
@@ -49,8 +50,9 @@ export function sumFixedColumnWidths(columns: DataTableColumn<Transaction>[]): n
  *   150→286px、备注 240→398px）。
  * - 使用方以「所有固定列（有 `width` 的列，含金额/操作列；备注不计入）宽度总和」作为 `scroll-x`，
  *   作为窄窗口下的横向滚动下限。备注为弹性列，窗口变窄时先由备注收缩吸收，各固定列宽保持恒定——
- *   只有当内容区窄于固定列宽总和时才出现横向滚动（最小窗口内容区 660 > 固定列总和 645，故通常不触发）。
- * - 宽度按实际内容估算：日期 105 / 类型 65 / 分类 150（最长路径 ≈149px）/ 账户 120（最长 ≈86px）/ 金额 125。 */
+ *   只有当内容区窄于固定列宽总和时才出现横向滚动（账户列 180 后固定列总和 705，窄窗口可能触发，
+ *   由 scroll-x 提供横向滚动底线）。
+ * - 宽度按实际内容估算：日期 105 / 类型 65 / 分类 150（最长路径 ≈149px）/ 账户 180（转账行需容纳「转出 → 转入」两个账户名 + 箭头，长名由链接自身省略号兜底）/ 金额 125。 */
 export function buildTransactionColumns(reference: ReferenceStore): DataTableColumn<Transaction>[] {
   return [
     { title: '日期', key: 'date', width: 105 },
@@ -71,9 +73,8 @@ export function buildTransactionColumns(reference: ReferenceStore): DataTableCol
     {
       title: '账户',
       key: 'account_id',
-      width: 120,
-      ellipsis: { tooltip: true },
-      render: (row) => reference.accountMap.get(row.account_id)?.name ?? '无',
+      width: 180,
+      render: (row) => renderAccountCell(row),
     },
     {
       title: '备注',
@@ -94,4 +95,34 @@ export function buildTransactionColumns(reference: ReferenceStore): DataTableCol
         ),
     },
   ]
+}
+
+/** 转账单元格内账户链接的布局样式：flex 均分剩余宽度 + 允许收缩省略（长名各自省略号）。
+ * 经 attrs 透传到 AccountLink 根按钮，与组件内部强调色样式合并。 */
+const ACCOUNT_CELL_LINK_STYLE = 'flex: 1 1 0%; min-width: 0;'
+
+/** 账户单元格渲染（issue #99）：
+ * - 转账行显示「转出 → 转入」双向账户名（to_account_id 存在时），两个名字各自可点击、
+ *   各自下钻到对应账户的过滤视图；
+ * - 其余交易类型仍显示主账户名（可点击下钻，issue #97）。
+ *
+ * 布局：转账行用 inline-flex 容器，两个链接 flex 均分剩余宽度、箭头固定宽度；
+ * 链接自身 ellipsis（见 AccountLink），长账户名省略号兜底。
+ * 注意：该列不再设置列级 ellipsis（fixed 布局由备注列的 ellipsis 维持），
+ * 否则 NEllipsis 会把两个按钮包装成整体省略，破坏各自可点击语义。 */
+function renderAccountCell(row: Transaction): VNode {
+  if (row.kind === 'transfer' && row.to_account_id) {
+    return h(
+      'div',
+      {
+        style: 'display: inline-flex; align-items: center; gap: 4px; width: 100%; max-width: 100%;',
+      },
+      [
+        h(AccountLink, { accountId: row.account_id, style: ACCOUNT_CELL_LINK_STYLE }),
+        h('span', { style: 'flex: none; opacity: 0.5;' }, '→'),
+        h(AccountLink, { accountId: row.to_account_id, style: ACCOUNT_CELL_LINK_STYLE }),
+      ],
+    )
+  }
+  return h(AccountLink, { accountId: row.account_id })
 }

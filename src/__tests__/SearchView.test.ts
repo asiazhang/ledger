@@ -6,12 +6,19 @@ import { invoke } from '@tauri-apps/api/core'
 import { NDatePicker } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import SearchView from '@/views/SearchView.vue'
+import AccountLink from '@/components/AccountLink.vue'
 import type { Account, Category, Currency, Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
 // 索引滞后标志：测试 stale 提示时置 true（后台定时刷新，写入后可能未消费）
 let mockStale = false
+
+// AccountLink 经 useRouter 跳转（pushMock 断言导航目标，issue #99）
+const pushMock = vi.fn()
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: pushMock }),
+}))
 
 const mockCurrencies: Currency[] = [
   { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
@@ -22,6 +29,19 @@ const mockAccounts: Account[] = [
     id: 'acc-cash',
     name: '现金',
     type: 'cash',
+    currency_code: 'CNY',
+    initial_balance_cents: 0,
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: false,
+    is_hidden: false,
+  },
+  {
+    id: 'acc-bank',
+    name: '银行',
+    type: 'bank',
     currency_code: 'CNY',
     initial_balance_cents: 0,
     created_at: '2026-01-01T00:00:00Z',
@@ -49,7 +69,13 @@ const mockCategories: Category[] = [
   },
 ]
 
-function makeTransaction(id: string, note: string, date: string, amountCents: number): Transaction {
+function makeTransaction(
+  id: string,
+  note: string,
+  date: string,
+  amountCents: number,
+  overrides: Partial<Transaction> = {},
+): Transaction {
   return {
     id,
     kind: 'expense',
@@ -67,19 +93,27 @@ function makeTransaction(id: string, note: string, date: string, amountCents: nu
     version: 1,
     device_id: 'test',
     is_deleted: false,
+    ...overrides,
   }
 }
 
 // 25 条：前 23 条备注「午餐」、后 2 条备注「报销」（跨 2 页，pageSize=20）。
 // 金额随索引递增（1000 + i*100 分），日期逐日递增（2026-02-01 ~ 2026-02-25），供金额/日期筛选测试。
-const mockTransactions: Transaction[] = Array.from({ length: 25 }, (_, i) =>
-  makeTransaction(
-    `tx-${i + 1}`,
-    i < 23 ? '午餐' : '报销',
-    `2026-02-${String(i + 1).padStart(2, '0')}`,
-    1000 + i * 100,
+const mockTransactions: Transaction[] = [
+  ...Array.from({ length: 25 }, (_, i) =>
+    makeTransaction(
+      `tx-${i + 1}`,
+      i < 23 ? '午餐' : '报销',
+      `2026-02-${String(i + 1).padStart(2, '0')}`,
+      1000 + i * 100,
+    ),
   ),
-)
+  // 转账交易（issue #99 双向账户名断言）：acc-cash → acc-bank（金额低于既有筛选测试阈值，避免影响命中数）
+  makeTransaction('tx-tr', '转账', '2026-02-26', 1500, {
+    kind: 'transfer',
+    to_account_id: 'acc-bank',
+  }),
+]
 
 function searchCalls() {
   return mockInvoke.mock.calls.filter(([cmd]) => cmd === 'search_transactions')
@@ -141,6 +175,7 @@ async function applyFilters(wrapper: VueWrapper, delay = 300) {
 beforeEach(async () => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
+  pushMock.mockReset()
   mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
@@ -442,6 +477,51 @@ describe('SearchView.vue', () => {
       await applyFilters(wrapper)
       expect(searchCalls().length).toBe(0)
       expect(wrapper.text()).toContain('输入关键字或设置筛选开始搜索')
+    })
+  })
+})
+
+describe('SearchView 转账行双向账户名（issue #99）', () => {
+  it('搜索结果转账行显示「转出 → 转入」双向账户名，两个名字各自可点击、各自跳转对应账户', async () => {
+    vi.useFakeTimers()
+    const wrapper = mount(SearchView)
+    await nextTick()
+    await typeAndSearch(wrapper, '转账')
+    expect(wrapper.text()).toContain('命中 1 条')
+    // 双向展示：转出（现金）→ 转入（银行）两个可点击账户名 + 箭头
+    const links = wrapper.findAllComponents(AccountLink)
+    expect(links.length).toBe(2)
+    expect(links.map((l) => l.text())).toEqual(['现金', '银行'])
+    expect(wrapper.text()).toContain('→')
+    expect(links[0].attributes('title')).toBe('查看该账户的交易')
+    expect(links[1].attributes('title')).toBe('查看该账户的交易')
+    // 转出账户点击 → 跳转其过滤视图
+    await links[0].find('button').trigger('click')
+    expect(pushMock).toHaveBeenLastCalledWith({
+      name: 'transactions',
+      query: { account: 'acc-cash' },
+    })
+    // 转入账户点击 → 跳转其过滤视图
+    await links[1].find('button').trigger('click')
+    expect(pushMock).toHaveBeenLastCalledWith({
+      name: 'transactions',
+      query: { account: 'acc-bank' },
+    })
+  })
+
+  it('搜索结果非转账行仍显示单个主账户名（可点击）', async () => {
+    vi.useFakeTimers()
+    const wrapper = mount(SearchView)
+    await nextTick()
+    await typeAndSearch(wrapper, '报销')
+    // 2 条报销 expense 行，各渲染单个账户链接
+    const links = wrapper.findAllComponents(AccountLink)
+    expect(links.length).toBe(2)
+    expect(links.map((l) => l.text())).toEqual(['现金', '现金'])
+    await links[0].find('button').trigger('click')
+    expect(pushMock).toHaveBeenLastCalledWith({
+      name: 'transactions',
+      query: { account: 'acc-cash' },
     })
   })
 })
