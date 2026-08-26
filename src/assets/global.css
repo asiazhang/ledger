@@ -1,0 +1,24 @@
+/*
+ * 全局样式（global styles）
+ *
+ * 禁用 overscroll 橡皮筋（scroll chaining → WKWebView rubber banding）：
+ * 内部滚动容器滚到边界后，滚动链传播到 document 层，触发 macOS WKWebView 的
+ * 橡皮筋滚动——整个界面（含侧边栏）随之移动，露出 html/body 的白色背景条。
+ * 在 html/body 与 naive-ui 滚动容器上统一设置 overscroll-behavior: none，
+ * 实现「滚到边界即拖不动、无白条」。
+ *
+ * 兜底：窗口背景色（tauri.conf.json 的 backgroundColor = #101014）与暗色主题
+ * 背景（naive-ui bodyColor）一致，即使有残余 overscroll 也不露白。
+ */
+html,
+body {
+  height: 100%;
+  /* 阻止 document 层 overscroll（橡皮筋），并吞掉内部滚动容器的滚动链传播 */
+  overscroll-behavior: none;
+}
+
+/* naive-ui 滚动容器：NLayout 的 scroll-container 与 NScrollbar 的 container */
+.n-layout-scroll-container,
+.n-scrollbar-container {
+  overscroll-behavior: none;
+}
