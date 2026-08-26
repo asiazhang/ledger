@@ -493,6 +493,30 @@ fn check_page_account(
     );
 }
 
+#[then(expr = "分页查询 涉及账户 {string} page {int} page_size {int} 应返回 {int} 条 total {int}")]
+fn check_page_involving_account(
+    world: &mut LedgerWorld,
+    account_name: String,
+    page: i64,
+    page_size: i64,
+    expected_count: i64,
+    expected_total: i64,
+) {
+    let account_id = world.account_id(&account_name);
+    assert_paged(
+        world,
+        TransactionListFilter {
+            involving_account_id: Some(account_id),
+            page: Some(page as usize),
+            page_size: Some(page_size as usize),
+            ..Default::default()
+        },
+        expected_count,
+        expected_total,
+        &format!("涉及账户 '{account_name}' page={page}"),
+    );
+}
+
 #[then(expr = "分页查询 kind {string} page {int} page_size {int} 应返回 {int} 条 total {int}")]
 fn check_page_kind(
     world: &mut LedgerWorld,

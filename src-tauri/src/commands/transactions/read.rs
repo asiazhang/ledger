@@ -28,6 +28,11 @@ pub fn list_transactions_internal(
         where_clause.push_str(" AND account_id = ?");
         params.push(account_id.to_string());
     }
+    if let Some(account_id) = filter.involving_account_id.as_deref() {
+        where_clause.push_str(" AND (account_id = ? OR to_account_id = ?)");
+        params.push(account_id.to_string());
+        params.push(account_id.to_string());
+    }
     if let Some(kind) = filter.kind {
         where_clause.push_str(" AND kind = ?");
         params.push(kind.as_str().to_string());

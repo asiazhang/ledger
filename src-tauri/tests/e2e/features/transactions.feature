@@ -106,6 +106,17 @@ Feature: 交易管理
     And 分页查询 kind "expense" page 1 page_size 3 应返回 3 条 total 7
     And 分页查询 日期 "2026-02-02" 至 "2026-02-06" page 1 page_size 2 应返回 2 条 total 5
 
+  Scenario: 涉及账户过滤命中普通交易与转账两侧
+    Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
+    And 存在账户 "银行" 类型 "bank" 币种 "CNY"
+    And 存在账户 "支付宝" 类型 "cash" 币种 "CNY"
+    When 创建交易 类型 "expense" 金额 100 到账户 "现金" 日期 "2026-03-01"
+    And 创建转账 金额 3000 从 "现金" 到 "银行" 日期 "2026-03-02"
+    And 创建转账 金额 500 从 "银行" 到 "现金" 日期 "2026-03-03"
+    And 创建交易 类型 "expense" 金额 700 到账户 "支付宝" 日期 "2026-03-04"
+    Then 分页查询 涉及账户 "现金" page 1 page_size 10 应返回 3 条 total 3
+    And 分页查询 涉及账户 "支付宝" page 1 page_size 10 应返回 1 条 total 1
+
   Scenario: 同日期同时间戳批量导入翻页无重复无遗漏
     Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
     When 批量导入 25 笔同日交易 日期 "2026-03-01" 到账户 "现金"

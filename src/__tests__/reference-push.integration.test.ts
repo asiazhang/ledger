@@ -4,11 +4,19 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { NSelect, NTreeSelect } from 'naive-ui'
+import { reactive } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
 import CategoryManager from '@/components/CategoryManager.vue'
 import CategoryForm from '@/components/CategoryForm.vue'
 import TransactionsView from '@/views/TransactionsView.vue'
 import type { Account, Category, Currency, Transaction } from '@/types'
+
+// TransactionsView 经 useRoute 读取 URL query（?account=<id> 只读入口，issue #97）；
+// 本文件挂载该视图但无路由上下文，mock 为空 query（无账户过滤，不影响既有断言）。
+const routeMock = reactive<{ query: Record<string, string | string[] | null> }>({ query: {} })
+vi.mock('vue-router', () => ({
+  useRoute: () => routeMock,
+}))
 
 // issue #86：端到端整合验证 + 组件层反应性测试。
 // 场景骨架：外部 AI 经本地 HTTP API 写入参考数据（账户/分类）→ 后端成功 emit `ledger:changed`

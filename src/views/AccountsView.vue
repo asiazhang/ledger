@@ -16,6 +16,7 @@ import {
 } from 'naive-ui'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
+import AccountLink from '@/components/AccountLink.vue'
 import { ACCOUNT_TYPE_LABELS, formatAmount } from '@/types'
 import type { AccountBalance, AccountInput, AccountType } from '@/types'
 
@@ -74,7 +75,12 @@ async function remove(id: string) {
 }
 
 const columns: DataTableColumns<AccountBalance> = [
-  { title: '名称', key: 'account.name' },
+  {
+    title: '名称',
+    key: 'account.name',
+    // 账户名下钻：点击跳转交易页并按涉及账户过滤（issue #97）
+    render: (row) => h(AccountLink, { accountId: row.account.id }),
+  },
   {
     title: '类型',
     key: 'account.type',

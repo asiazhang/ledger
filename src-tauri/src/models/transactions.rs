@@ -184,6 +184,10 @@ pub struct TransactionListFilter {
     pub to: Option<String>,
     /// 按转出账户过滤。
     pub account_id: Option<String>,
+    /// 涉及账户过滤（v0.2.0 之后新增扩展字段）：`account_id = X OR to_account_id = X`，
+    /// 命中普通交易与转账的转出/转入两侧（含转入的转账）。
+    /// 已发布字段 `account_id`（仅转出账户）语义保持不变，遵守发布冻结约定。
+    pub involving_account_id: Option<String>,
     /// 交易类型过滤（income / expense / transfer / buy / sell / refund）。
     /// 枚举反序列化对未知值报参数错误（400），不再静默传字符串给 SQL。
     pub kind: Option<TransactionKind>,

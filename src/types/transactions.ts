@@ -43,6 +43,8 @@ export interface TransactionListFilter {
   to?: string | null
   /** 按转出账户过滤 */
   account_id?: string | null
+  /** 涉及账户过滤（account_id 或 to_account_id 命中即算，含转入的转账） */
+  involving_account_id?: string | null
   /** income / expense / transfer / buy / sell / refund */
   kind?: TransactionKind | null
   /** 取前 N 条（仪表盘"最近 N 条"场景），与分页互斥：传 page_size 时分页路径生效 */

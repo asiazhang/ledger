@@ -305,6 +305,135 @@ fn list_transactions_pagination_total_respects_filters() {
 }
 
 #[test]
+fn list_transactions_involving_account_filter() {
+    let conn = setup();
+    insert_account(&conn, "acc-inv-1", "现金", "cash", "CNY");
+    insert_account(&conn, "acc-inv-2", "银行", "bank", "CNY");
+    insert_account(&conn, "acc-inv-3", "支付宝", "cash", "CNY");
+
+    // 普通交易：现金支出（account_id 命中）
+    insert_transaction(
+        &conn,
+        make_input("acc-inv-1", TransactionKind::Expense, 100, "2026-03-01"),
+    )
+    .unwrap();
+    // 转出：现金 → 银行（account_id 命中）
+    insert_transaction(
+        &conn,
+        TransactionInput {
+            kind: TransactionKind::Transfer,
+            amount_cents: 3000,
+            account_id: "acc-inv-1".into(),
+            to_account_id: Some("acc-inv-2".into()),
+            date: "2026-03-02".into(),
+            ..make_input("acc-inv-1", TransactionKind::Expense, 1, "2026-03-02")
+        },
+    )
+    .unwrap();
+    // 转入：银行 → 现金（to_account_id 命中）
+    insert_transaction(
+        &conn,
+        TransactionInput {
+            kind: TransactionKind::Transfer,
+            amount_cents: 500,
+            account_id: "acc-inv-2".into(),
+            to_account_id: Some("acc-inv-1".into()),
+            date: "2026-03-03".into(),
+            ..make_input("acc-inv-1", TransactionKind::Expense, 1, "2026-03-03")
+        },
+    )
+    .unwrap();
+    // 无关账户：支付宝支出（不命中）
+    insert_transaction(
+        &conn,
+        make_input("acc-inv-3", TransactionKind::Expense, 700, "2026-03-04"),
+    )
+    .unwrap();
+
+    // 涉及现金：普通支出 + 转出 + 转入 = 3 条
+    let involving = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            involving_account_id: Some("acc-inv-1".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        involving.items.len(),
+        3,
+        "涉及账户应命中普通交易与转账两侧（转出 + 转入）"
+    );
+    assert_eq!(involving.total, 3, "total 应为涉及账户过滤后总数");
+
+    // 无关账户：只有自身交易，不含现金侧交易
+    let unrelated = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            involving_account_id: Some("acc-inv-3".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(unrelated.total, 1, "无关账户不应命中其他账户交易");
+    assert_eq!(unrelated.items[0].account_id, "acc-inv-3");
+
+    // 与 kind 组合：涉及现金 + 仅 transfer = 2 条（转出 + 转入）
+    let kind_combo = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            involving_account_id: Some("acc-inv-1".into()),
+            kind: Some(TransactionKind::Transfer),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(kind_combo.total, 2, "涉及账户与类型过滤应 AND 组合");
+
+    // 与日期组合：涉及现金 + 日期区间 [03-02, 03-03] = 2 条（转出 + 转入）
+    let date_combo = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            involving_account_id: Some("acc-inv-1".into()),
+            from: Some("2026-03-02".into()),
+            to: Some("2026-03-03".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(date_combo.total, 2, "涉及账户与日期过滤应 AND 组合");
+
+    // 与分页组合：涉及现金 page_size=2 → 当前页 2 条，total 仍为过滤后总数
+    let paged = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            involving_account_id: Some("acc-inv-1".into()),
+            page: Some(1),
+            page_size: Some(2),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(paged.items.len(), 2);
+    assert_eq!(paged.total, 3, "分页时 total 恒为过滤后总数");
+
+    // 已发布字段 account_id（仅转出账户）语义不变：
+    // 现金 = 普通支出 + 转出（account_id 侧），不含转入（银行 → 现金）。
+    let legacy = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            account_id: Some("acc-inv-1".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        legacy.total, 2,
+        "account_id 仅按转出账户过滤，语义不变（不命中转入侧）"
+    );
+}
+
+#[test]
 fn list_transactions_deterministic_order_by_id_when_same_timestamp() {
     let conn = setup();
     insert_account(&conn, "acc-same", "现金", "cash", "CNY");
