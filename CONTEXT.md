@@ -55,7 +55,7 @@
 ## Transaction（交易流水）
 
 - **定义**：一笔实际发生的资金变动，已存在于 V001；在定时交易语境下，它是 `ScheduledTransaction` 的某期执行产物。
-- **kind（交易类型，8 种，真源为 `transaction::amount::Kind` 枚举）**：
+- **kind（交易类型，8 种，真源为 `transaction::amount::TransactionKind` 枚举）**：
   - `income`（收入）/ `expense`（支出）：日常收支。
   - `transfer`（转账）：`account_id` 转出、`to_account_id` 转入。
   - `refund`（退款）：关联原支出交易（`refund_of_transaction_id`），账户/币种/分类继承原支出。

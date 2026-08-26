@@ -6,7 +6,7 @@ use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{AccountType, NormalizedTransaction, TransactionInput};
 use crate::transaction::amount;
-use crate::transaction::amount::Kind;
+use crate::transaction::amount::TransactionKind;
 
 /// 投资交易对外出口（issue #72 / spec #69）：只暴露 `prepare / apply / revert` 三件套。
 ///
@@ -311,11 +311,15 @@ impl Plan {
 /// 校验并归一化一笔 buy/sell 输入为 [`Plan`]（不落库、不产生副作用）。
 ///
 /// 由行为层（`commands::transactions`）在创建/修改路径按 kind 分派调用；
-/// `kind` 为已解析的 [`Kind`]，收到非 buy/sell 的 kind 属编排错误，报错防误用。
-pub(crate) fn prepare(conn: &Connection, kind: Kind, input: &TransactionInput) -> Result<Plan> {
+/// `kind` 为已解析的 [`TransactionKind`]，收到非 buy/sell 的 kind 属编排错误，报错防误用。
+pub(crate) fn prepare(
+    conn: &Connection,
+    kind: TransactionKind,
+    input: &TransactionInput,
+) -> Result<Plan> {
     match kind {
-        Kind::Buy => Ok(Plan::Buy(prepare_buy(conn, input)?)),
-        Kind::Sell => Ok(Plan::Sell(prepare_sell(conn, input)?)),
+        TransactionKind::Buy => Ok(Plan::Buy(prepare_buy(conn, input)?)),
+        TransactionKind::Sell => Ok(Plan::Sell(prepare_sell(conn, input)?)),
         other => Err(AppError::Invalid(format!(
             "投资层仅处理 buy/sell，收到: {other}"
         ))),
@@ -350,12 +354,12 @@ pub(crate) fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
 pub(crate) fn revert(
     conn: &Connection,
     id: &str,
-    kind: Kind,
+    kind: TransactionKind,
     partial_sold_msg: &str,
 ) -> Result<()> {
     match kind {
-        Kind::Buy => cleanup_buy_side_effects(conn, id, partial_sold_msg),
-        Kind::Sell => reverse_sell(conn, id),
+        TransactionKind::Buy => cleanup_buy_side_effects(conn, id, partial_sold_msg),
+        TransactionKind::Sell => reverse_sell(conn, id),
         _ => Ok(()),
     }
 }

@@ -26,7 +26,7 @@ fn insert_account(conn: &Connection, id: &str, currency: &str) {
 fn insert_txn(
     conn: &Connection,
     id: &str,
-    kind: Kind,
+    kind: TransactionKind,
     amount_native_cents: i64,
     account_id: &str,
     to_account_id: Option<&str>,
@@ -50,24 +50,38 @@ fn insert_rate(conn: &Connection, base: &str, quote: &str, rate: f64) {
 }
 
 // ---------------------------------------------------------------------------
-// Kind 枚举
+// TransactionKind 枚举
 // ---------------------------------------------------------------------------
 
 /// 全部 8 种 kind 与字符串互转严格往返。
 #[test]
 fn kind_string_roundtrip() {
-    assert_eq!(Kind::ALL.len(), 8);
-    for kind in Kind::ALL {
-        assert_eq!(Kind::parse(kind.as_str()).unwrap(), kind);
+    assert_eq!(TransactionKind::ALL.len(), 8);
+    for kind in TransactionKind::ALL {
+        assert_eq!(TransactionKind::parse(kind.as_str()).unwrap(), kind);
         assert_eq!(kind.to_string(), kind.as_str());
     }
+}
+
+/// serde 以小写字符串序列化（wire 兼容：与裸 String 同形），反序列化严格往返；
+/// 未知值报错且文案与 parse 一致（中文）。
+#[test]
+fn kind_serde_roundtrip() {
+    for kind in TransactionKind::ALL {
+        let json = serde_json::to_string(&kind).unwrap();
+        assert_eq!(json, format!("\"{}\"", kind.as_str()));
+        let back: TransactionKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, kind);
+    }
+    let err = serde_json::from_str::<TransactionKind>("\"bonus\"").unwrap_err();
+    assert!(err.to_string().contains("未知交易类型"), "实际: {err}");
 }
 
 /// 未知 kind 字符串应报错。
 #[test]
 fn kind_parse_rejects_unknown() {
-    assert!(Kind::parse("bonus").is_err());
-    assert!(Kind::parse("").is_err());
+    assert!(TransactionKind::parse("bonus").is_err());
+    assert!(TransactionKind::parse("").is_err());
 }
 
 // ---------------------------------------------------------------------------
@@ -78,9 +92,9 @@ fn kind_parse_rejects_unknown() {
 /// 表值即 spec #52 的 kind→measure 矩阵，锁定语义不被悄悄改动。
 #[test]
 fn matrix_signed_amount_all_cells() {
-    use Kind::*;
     use Measure::*;
-    let cells: &[(Kind, Measure, i64)] = &[
+    use TransactionKind::*;
+    let cells: &[(TransactionKind, Measure, i64)] = &[
         // account_flow（转出账户侧）
         (Income, AccountFlow(TransferSide::Out), 1),
         (Expense, AccountFlow(TransferSide::Out), -1),
@@ -160,7 +174,7 @@ fn rust_sum(conn: &Connection, measure: Measure) -> i64 {
         .map(|r| r.unwrap())
         .collect();
     rows.into_iter()
-        .map(|(k, amt)| signed_amount(Kind::parse(&k).unwrap(), amt, measure))
+        .map(|(k, amt)| signed_amount(TransactionKind::parse(&k).unwrap(), amt, measure))
         .sum()
 }
 
@@ -170,7 +184,7 @@ fn rust_sum(conn: &Connection, measure: Measure) -> i64 {
 fn sql_exprs_match_rust_sums() {
     let conn = setup_db();
     insert_account(&conn, "acc", "CNY");
-    for (i, kind) in Kind::ALL.into_iter().enumerate() {
+    for (i, kind) in TransactionKind::ALL.into_iter().enumerate() {
         insert_txn(
             &conn,
             &format!("t-{i}"),
@@ -209,7 +223,7 @@ fn sql_exprs_match_rust_sums() {
 fn expense_gross_expr_equals_net_plus_refund_gross() {
     let conn = setup_db();
     insert_account(&conn, "acc", "CNY");
-    for (i, kind) in Kind::ALL.into_iter().enumerate() {
+    for (i, kind) in TransactionKind::ALL.into_iter().enumerate() {
         insert_txn(
             &conn,
             &format!("t-{i}"),
@@ -260,14 +274,21 @@ fn account_flow_expr_balances_match_rust() {
     insert_account(&conn, "acc-b", "CNY");
 
     // acc-a：收入 5000、支出 1200、退款 300、买入 2000、拆股 0、转出 800 到 acc-b
-    insert_txn(&conn, "t1", Kind::Income, 5000, "acc-a", None);
-    insert_txn(&conn, "t2", Kind::Expense, 1200, "acc-a", None);
-    insert_txn(&conn, "t3", Kind::Refund, 300, "acc-a", None);
-    insert_txn(&conn, "t4", Kind::Buy, 2000, "acc-a", None);
-    insert_txn(&conn, "t5", Kind::Split, 9999, "acc-a", None);
-    insert_txn(&conn, "t6", Kind::Transfer, 800, "acc-a", Some("acc-b"));
+    insert_txn(&conn, "t1", TransactionKind::Income, 5000, "acc-a", None);
+    insert_txn(&conn, "t2", TransactionKind::Expense, 1200, "acc-a", None);
+    insert_txn(&conn, "t3", TransactionKind::Refund, 300, "acc-a", None);
+    insert_txn(&conn, "t4", TransactionKind::Buy, 2000, "acc-a", None);
+    insert_txn(&conn, "t5", TransactionKind::Split, 9999, "acc-a", None);
+    insert_txn(
+        &conn,
+        "t6",
+        TransactionKind::Transfer,
+        800,
+        "acc-a",
+        Some("acc-b"),
+    );
     // acc-b：分红 60
-    insert_txn(&conn, "t7", Kind::Dividend, 60, "acc-b", None);
+    insert_txn(&conn, "t7", TransactionKind::Dividend, 60, "acc-b", None);
 
     let balance_sql = |account: &str| -> i64 {
         let out: i64 = conn
@@ -312,7 +333,7 @@ fn account_flow_expr_balances_match_rust() {
                 acc == account || (to.is_some() && to.as_deref() == Some(account))
             })
             .map(|(k, amt, acc, _to)| {
-                let kind = Kind::parse(&k).unwrap();
+                let kind = TransactionKind::parse(&k).unwrap();
                 let side = if acc == account {
                     TransferSide::Out
                 } else {

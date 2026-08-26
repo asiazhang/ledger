@@ -5,7 +5,7 @@ use crate::db::query::{query_all, query_one};
 use crate::db::{device_id, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{Transaction, TransactionListFilter, TransactionListResult};
-use crate::transaction::amount::Kind;
+use crate::transaction::amount::TransactionKind;
 
 use super::behavior;
 
@@ -92,9 +92,9 @@ pub fn delete_transaction_internal(conn: &Connection, id: &str) -> Result<()> {
         )
         .optional()?
         .ok_or_else(|| AppError::NotFound(format!("交易不存在: {id}")))?;
-    let kind = Kind::parse(&kind_str)?;
+    let kind = TransactionKind::parse(&kind_str)?;
 
-    if kind == Kind::Buy {
+    if kind == TransactionKind::Buy {
         // 守卫（部分卖出拒绝）与持仓关联清理经行为层 revert（与按 id 修改共用，见 #50 / issue #72）。
         // sell 删除不清理持仓关联（既有行为保持不变，本重构不改变）。
         behavior::revert(conn, id, kind, "该买入交易已有部分卖出，无法删除")?;

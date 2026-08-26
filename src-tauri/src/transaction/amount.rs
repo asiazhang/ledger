@@ -1,7 +1,8 @@
 //! Amount 接缝（issue #54 / spec #52）：交易金额口径的单一权威。
 //!
 //! 三块职责：
-//! - [`Kind`] 枚举：8 种交易类型的模块内真源（字符串 ↔ 枚举互转）。
+//! - [`TransactionKind`] 枚举：8 种交易类型的模块内真源（字符串 ↔ 枚举互转，
+//!   serde 以小写字符串序列化，与裸 String 的 wire 格式一致）。
 //! - kind→度量矩阵：[`signed_amount`]（行级/展示）与四个 SQL 片段 builder
 //!   （服务端聚合）由同一 [`coefficient`] 矩阵驱动，二者口径恒一致。
 //! - [`convert_to_native`]：raw → 本位币折算，基准为全局默认币种
@@ -15,27 +16,32 @@ use std::fmt;
 use std::fmt::Write as _;
 
 use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, Result};
 
 // ---------------------------------------------------------------------------
-// Kind 枚举
+// TransactionKind 枚举
 // ---------------------------------------------------------------------------
 
-/// 交易类型真源。与 `transactions.kind` 的 CHECK 约束（V001）一一对应：
+/// 交易类型真源（issue #73）。与 `transactions.kind` 的 CHECK 约束（V001）一一对应：
 ///
 /// | kind | 含义 |
 /// |------|------|
-/// | [`Kind::Income`] | 收入 |
-/// | [`Kind::Expense`] | 支出 |
-/// | [`Kind::Transfer`] | 转账（`account_id` 转出、`to_account_id` 转入） |
-/// | [`Kind::Refund`] | 退款（关联原支出交易） |
-/// | [`Kind::Buy`] | 买入证券（减少现金，扩展表记持仓） |
-/// | [`Kind::Sell`] | 卖出证券（增加现金） |
-/// | [`Kind::Dividend`] | 现金分红 |
-/// | [`Kind::Split`] | 拆股/送股（现金影响恒为 0） |
+/// | [`TransactionKind::Income`] | 收入 |
+/// | [`TransactionKind::Expense`] | 支出 |
+/// | [`TransactionKind::Transfer`] | 转账（`account_id` 转出、`to_account_id` 转入） |
+/// | [`TransactionKind::Refund`] | 退款（关联原支出交易） |
+/// | [`TransactionKind::Buy`] | 买入证券（减少现金，扩展表记持仓） |
+/// | [`TransactionKind::Sell`] | 卖出证券（增加现金） |
+/// | [`TransactionKind::Dividend`] | 现金分红 |
+/// | [`TransactionKind::Split`] | 拆股/送股（现金影响恒为 0） |
+///
+/// serde 以**小写字符串**序列化（`"income"` 等，与裸 String 的 wire 格式一致）；
+/// 反序列化复用 [`TransactionKind::parse`]，未知值报错文案与 parse 同源
+/// （serde 包装后附加位置信息）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Kind {
+pub enum TransactionKind {
     Income,
     Expense,
     Transfer,
@@ -46,44 +52,44 @@ pub enum Kind {
     Split,
 }
 
-impl Kind {
+impl TransactionKind {
     /// 全部 kind，矩阵断言与 SQL 片段生成按此遍历。
-    pub const ALL: [Kind; 8] = [
-        Kind::Income,
-        Kind::Expense,
-        Kind::Transfer,
-        Kind::Refund,
-        Kind::Buy,
-        Kind::Sell,
-        Kind::Dividend,
-        Kind::Split,
+    pub const ALL: [TransactionKind; 8] = [
+        TransactionKind::Income,
+        TransactionKind::Expense,
+        TransactionKind::Transfer,
+        TransactionKind::Refund,
+        TransactionKind::Buy,
+        TransactionKind::Sell,
+        TransactionKind::Dividend,
+        TransactionKind::Split,
     ];
 
-    /// 数据库存储的 kind 字符串。
+    /// 数据库存储的 kind 字符串（与 serde 序列化同形）。
     pub const fn as_str(self) -> &'static str {
         match self {
-            Kind::Income => "income",
-            Kind::Expense => "expense",
-            Kind::Transfer => "transfer",
-            Kind::Refund => "refund",
-            Kind::Buy => "buy",
-            Kind::Sell => "sell",
-            Kind::Dividend => "dividend",
-            Kind::Split => "split",
+            TransactionKind::Income => "income",
+            TransactionKind::Expense => "expense",
+            TransactionKind::Transfer => "transfer",
+            TransactionKind::Refund => "refund",
+            TransactionKind::Buy => "buy",
+            TransactionKind::Sell => "sell",
+            TransactionKind::Dividend => "dividend",
+            TransactionKind::Split => "split",
         }
     }
 
     /// 从 kind 字符串解析；未知值报参数错误。
-    pub fn parse(s: &str) -> Result<Kind> {
+    pub fn parse(s: &str) -> Result<TransactionKind> {
         let kind = match s {
-            "income" => Kind::Income,
-            "expense" => Kind::Expense,
-            "transfer" => Kind::Transfer,
-            "refund" => Kind::Refund,
-            "buy" => Kind::Buy,
-            "sell" => Kind::Sell,
-            "dividend" => Kind::Dividend,
-            "split" => Kind::Split,
+            "income" => TransactionKind::Income,
+            "expense" => TransactionKind::Expense,
+            "transfer" => TransactionKind::Transfer,
+            "refund" => TransactionKind::Refund,
+            "buy" => TransactionKind::Buy,
+            "sell" => TransactionKind::Sell,
+            "dividend" => TransactionKind::Dividend,
+            "split" => TransactionKind::Split,
             other => {
                 return Err(AppError::Invalid(format!(
                     "未知交易类型: {other}（合法值: income/expense/transfer/refund/buy/sell/dividend/split）"
@@ -94,9 +100,30 @@ impl Kind {
     }
 }
 
-impl fmt::Display for Kind {
+impl fmt::Display for TransactionKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+// serde：以小写字符串序列化（wire 兼容，与裸 String 同形）；
+// 反序列化复用 [`TransactionKind::parse`]，未知值报错文案与 parse 同源（serde 包装后附位置信息）。
+impl Serialize for TransactionKind {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for TransactionKind {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        TransactionKind::parse(&s).map_err(serde::de::Error::custom)
     }
 }
 
@@ -132,28 +159,31 @@ pub enum Measure {
 ///
 /// Rust 助手 [`signed_amount`] 与 SQL 片段 builder 均由此驱动；
 /// 修改任何口径只改这里，两侧行为同步变化。
-fn coefficient(kind: Kind, measure: Measure) -> i64 {
+fn coefficient(kind: TransactionKind, measure: Measure) -> i64 {
     match measure {
         Measure::AccountFlow(side) => match kind {
-            Kind::Income | Kind::Refund | Kind::Sell | Kind::Dividend => 1,
-            Kind::Expense | Kind::Buy => -1,
-            Kind::Transfer => match side {
+            TransactionKind::Income
+            | TransactionKind::Refund
+            | TransactionKind::Sell
+            | TransactionKind::Dividend => 1,
+            TransactionKind::Expense | TransactionKind::Buy => -1,
+            TransactionKind::Transfer => match side {
                 TransferSide::Out => -1,
                 TransferSide::In => 1,
             },
-            Kind::Split => 0,
+            TransactionKind::Split => 0,
         },
         Measure::ExpenseNet => match kind {
-            Kind::Expense => 1,
-            Kind::Refund => -1,
+            TransactionKind::Expense => 1,
+            TransactionKind::Refund => -1,
             _ => 0,
         },
         Measure::IncomeNet => match kind {
-            Kind::Income | Kind::Dividend => 1,
+            TransactionKind::Income | TransactionKind::Dividend => 1,
             _ => 0,
         },
         Measure::RefundGross => match kind {
-            Kind::Refund => 1,
+            TransactionKind::Refund => 1,
             _ => 0,
         },
     }
@@ -163,7 +193,7 @@ fn coefficient(kind: Kind, measure: Measure) -> i64 {
 ///
 /// 输入应为本位币金额（`amount_native_cents`）；
 /// `split` 对现金度量恒为 0，buy/sell 不进 expense_net/income_net。
-pub fn signed_amount(kind: Kind, amount_native_cents: i64, measure: Measure) -> i64 {
+pub fn signed_amount(kind: TransactionKind, amount_native_cents: i64, measure: Measure) -> i64 {
     coefficient(kind, measure) * amount_native_cents
 }
 
@@ -180,7 +210,7 @@ fn kind_case_expr(alias: &str, measure: Measure) -> String {
     let kind_col = format!("{alias}.kind");
     let mut pos: Vec<&'static str> = Vec::new();
     let mut neg: Vec<&'static str> = Vec::new();
-    for kind in Kind::ALL {
+    for kind in TransactionKind::ALL {
         match coefficient(kind, measure) {
             1 => pos.push(kind.as_str()),
             -1 => neg.push(kind.as_str()),
@@ -252,7 +282,7 @@ pub fn expense_gross_expr(alias: &str) -> String {
 /// 供聚合 SQL 的 `WHERE kind IN (...)` 行过滤使用，与聚合片段出自同一矩阵，
 /// 避免手写 kind 清单漂移（如 income_net 必须含 dividend）。
 pub fn contributing_kinds(measure: Measure) -> Vec<&'static str> {
-    Kind::ALL
+    TransactionKind::ALL
         .into_iter()
         .filter(|k| coefficient(*k, measure) != 0)
         .map(|k| k.as_str())

@@ -21,7 +21,7 @@ use rusqlite::Connection;
 use crate::commands::investment;
 use crate::error::{AppError, Result};
 use crate::models::TransactionInput;
-use crate::transaction::amount::Kind;
+use crate::transaction::amount::TransactionKind;
 use crate::transaction::writer;
 
 /// 计划：归一化后的交易行 + kind 特有副作用数据（不落库）。
@@ -50,9 +50,12 @@ impl Plan {
 /// `dividend` / `split` 已声明但未实现，显式「暂不支持」报错——取代此前
 /// [`writer::normalize`] 兜底的「仅处理通用交易类型」文案（唯一对外可观测变化）。
 pub(crate) fn plan(conn: &Connection, input: &TransactionInput) -> Result<Plan> {
-    let kind = Kind::parse(&input.kind)?;
+    let kind = TransactionKind::parse(&input.kind)?;
     match kind {
-        Kind::Income | Kind::Expense | Kind::Transfer | Kind::Refund => {
+        TransactionKind::Income
+        | TransactionKind::Expense
+        | TransactionKind::Transfer
+        | TransactionKind::Refund => {
             let norm = writer::normalize(
                 conn,
                 &writer::Input {
@@ -69,8 +72,10 @@ pub(crate) fn plan(conn: &Connection, input: &TransactionInput) -> Result<Plan> 
             )?;
             Ok(Plan::Common(norm))
         }
-        Kind::Buy | Kind::Sell => Ok(Plan::Investment(investment::prepare(conn, kind, input)?)),
-        Kind::Dividend | Kind::Split => Err(AppError::Invalid(format!(
+        TransactionKind::Buy | TransactionKind::Sell => {
+            Ok(Plan::Investment(investment::prepare(conn, kind, input)?))
+        }
+        TransactionKind::Dividend | TransactionKind::Split => Err(AppError::Invalid(format!(
             "交易类型 {kind} 暂不支持（MVP 未实现）"
         ))),
     }
@@ -92,11 +97,13 @@ pub(crate) fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
 pub(crate) fn revert(
     conn: &Connection,
     id: &str,
-    kind: Kind,
+    kind: TransactionKind,
     partial_sold_msg: &str,
 ) -> Result<()> {
     match kind {
-        Kind::Buy | Kind::Sell => investment::revert(conn, id, kind, partial_sold_msg),
+        TransactionKind::Buy | TransactionKind::Sell => {
+            investment::revert(conn, id, kind, partial_sold_msg)
+        }
         _ => Ok(()),
     }
 }

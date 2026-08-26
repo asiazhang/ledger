@@ -4,7 +4,7 @@ use rusqlite::Connection;
 use crate::db::query::{query_all, query_one};
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::transaction::amount::Kind;
+use crate::transaction::amount::TransactionKind;
 use crate::transaction::writer;
 
 use super::models::*;
@@ -512,7 +512,7 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
     }
 
     let (kind, to_account_id, category_id) = match st.kind.as_str() {
-        "installment" | "subscription" => (Kind::Expense, None, st.category_id.clone()),
+        "installment" | "subscription" => (TransactionKind::Expense, None, st.category_id.clone()),
         "scheduled_transfer" => {
             let ext: ScheduledTransferPlan = query_one(
                 conn,
@@ -521,7 +521,7 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
                 rusqlite::params![st.id],
             )?
             .ok_or_else(|| AppError::NotFound("定时转账扩展信息不存在".into()))?;
-            (Kind::Transfer, Some(ext.to_account_id), None)
+            (TransactionKind::Transfer, Some(ext.to_account_id), None)
         }
         _ => return Err(AppError::Invalid("未知交易类型".into())),
     };

@@ -3,7 +3,7 @@ use rusqlite::OptionalExtension;
 
 use crate::error::{AppError, Result};
 use crate::models::TransactionInput;
-use crate::transaction::amount::Kind;
+use crate::transaction::amount::TransactionKind;
 use crate::transaction::writer;
 
 use super::behavior;
@@ -50,7 +50,7 @@ pub fn update_transaction_internal(
         )
         .optional()?
         .ok_or_else(|| AppError::NotFound(format!("交易不存在: {id}")))?;
-    let old_kind = Kind::parse(&old_kind_str)?;
+    let old_kind = TransactionKind::parse(&old_kind_str)?;
 
     conn.execute("BEGIN", [])?;
     let res = (|| -> Result<()> {

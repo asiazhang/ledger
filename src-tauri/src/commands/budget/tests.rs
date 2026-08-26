@@ -5,7 +5,7 @@ use rusqlite::Connection;
 
 use crate::commands::budget::budget_progress_rows;
 use crate::db::{device_id, now_iso};
-use crate::transaction::amount::{Kind, Measure, signed_amount};
+use crate::transaction::amount::{Measure, TransactionKind, signed_amount};
 
 fn setup() -> Connection {
     let mut conn = crate::db::open_in_memory().unwrap();
@@ -55,10 +55,10 @@ fn insert_dummy_account(conn: &Connection) {
     ).unwrap();
 }
 
-/// 夹具一行 = 一笔交易（kind 用 Amount 接缝的 Kind 枚举表述）。
+/// 夹具一行 = 一笔交易（kind 用 Amount 接缝的 TransactionKind 枚举表述）。
 struct TxRow {
     id: &'static str,
-    kind: Kind,
+    kind: TransactionKind,
     amount: i64,
     category_id: String,
     date: &'static str,
@@ -90,56 +90,56 @@ fn all_kinds_fixture(category_id: &str) -> Vec<TxRow> {
     vec![
         TxRow {
             id: "k-income",
-            kind: Kind::Income,
+            kind: TransactionKind::Income,
             amount: 5000,
             category_id: category_id.clone(),
             date: "2026-07-05",
         },
         TxRow {
             id: "k-expense",
-            kind: Kind::Expense,
+            kind: TransactionKind::Expense,
             amount: 1200,
             category_id: category_id.clone(),
             date: "2026-07-06",
         },
         TxRow {
             id: "k-refund",
-            kind: Kind::Refund,
+            kind: TransactionKind::Refund,
             amount: 300,
             category_id: category_id.clone(),
             date: "2026-07-07",
         },
         TxRow {
             id: "k-transfer",
-            kind: Kind::Transfer,
+            kind: TransactionKind::Transfer,
             amount: 800,
             category_id: category_id.clone(),
             date: "2026-07-08",
         },
         TxRow {
             id: "k-buy",
-            kind: Kind::Buy,
+            kind: TransactionKind::Buy,
             amount: 2000,
             category_id: category_id.clone(),
             date: "2026-07-09",
         },
         TxRow {
             id: "k-sell",
-            kind: Kind::Sell,
+            kind: TransactionKind::Sell,
             amount: 1500,
             category_id: category_id.clone(),
             date: "2026-07-10",
         },
         TxRow {
             id: "k-dividend",
-            kind: Kind::Dividend,
+            kind: TransactionKind::Dividend,
             amount: 60,
             category_id: category_id.clone(),
             date: "2026-07-11",
         },
         TxRow {
             id: "k-split",
-            kind: Kind::Split,
+            kind: TransactionKind::Split,
             amount: 9999,
             category_id,
             date: "2026-07-12",
@@ -243,7 +243,7 @@ fn budget_progress_includes_child_category_transactions() {
     insert_budget(&conn, "budget-5", &parent_id, 50000, "2026-07-01");
     let fixture = vec![TxRow {
         id: "tx2",
-        kind: Kind::Expense,
+        kind: TransactionKind::Expense,
         amount: 2000,
         category_id: child_id,
         date: "2026-07-10",
@@ -267,7 +267,7 @@ fn budget_progress_over_budget() {
     insert_budget(&conn, "budget-6", &cat_id, 1000, "2026-07-01");
     let fixture = vec![TxRow {
         id: "tx5",
-        kind: Kind::Expense,
+        kind: TransactionKind::Expense,
         amount: 2000,
         category_id: cat_id,
         date: "2026-07-10",
@@ -288,7 +288,7 @@ fn budget_progress_only_counts_same_month() {
     insert_budget(&conn, "budget-7", &cat_id, 50000, "2026-07-01");
     let fixture = vec![TxRow {
         id: "tx6",
-        kind: Kind::Expense,
+        kind: TransactionKind::Expense,
         amount: 3000,
         category_id: cat_id,
         date: "2026-06-30", // 上月
@@ -315,7 +315,7 @@ fn budget_progress_excludes_deleted() {
         &conn,
         &TxRow {
             id: "tx7",
-            kind: Kind::Expense,
+            kind: TransactionKind::Expense,
             amount: 3000,
             category_id: cat_id,
             date: "2026-07-15",

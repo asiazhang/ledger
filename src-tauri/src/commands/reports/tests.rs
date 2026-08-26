@@ -5,7 +5,7 @@ use rusqlite::Connection;
 
 use crate::commands::reports::{category_shares_rows, monthly_summary_rows};
 use crate::db::{device_id, now_iso};
-use crate::transaction::amount::{Kind, Measure, signed_amount};
+use crate::transaction::amount::{Measure, TransactionKind, signed_amount};
 
 fn setup() -> Connection {
     let mut conn = crate::db::open_in_memory().unwrap();
@@ -22,10 +22,10 @@ fn insert_account(conn: &Connection, id: &str) {
     ).unwrap();
 }
 
-/// 夹具一行 = 一笔交易（kind 用 Amount 接缝的 Kind 枚举表述）。
+/// 夹具一行 = 一笔交易（kind 用 Amount 接缝的 TransactionKind 枚举表述）。
 struct TxRow {
     id: &'static str,
-    kind: Kind,
+    kind: TransactionKind,
     amount: i64,
     category_id: Option<String>,
     date: &'static str,
@@ -57,56 +57,56 @@ fn all_kinds_fixture(category_id: Option<&str>) -> Vec<TxRow> {
     vec![
         TxRow {
             id: "k-income",
-            kind: Kind::Income,
+            kind: TransactionKind::Income,
             amount: 5000,
             category_id: category_id.clone(),
             date: "2026-01-05",
         },
         TxRow {
             id: "k-expense",
-            kind: Kind::Expense,
+            kind: TransactionKind::Expense,
             amount: 1200,
             category_id: category_id.clone(),
             date: "2026-01-06",
         },
         TxRow {
             id: "k-refund",
-            kind: Kind::Refund,
+            kind: TransactionKind::Refund,
             amount: 300,
             category_id: category_id.clone(),
             date: "2026-01-07",
         },
         TxRow {
             id: "k-transfer",
-            kind: Kind::Transfer,
+            kind: TransactionKind::Transfer,
             amount: 800,
             category_id: category_id.clone(),
             date: "2026-01-08",
         },
         TxRow {
             id: "k-buy",
-            kind: Kind::Buy,
+            kind: TransactionKind::Buy,
             amount: 2000,
             category_id: category_id.clone(),
             date: "2026-01-09",
         },
         TxRow {
             id: "k-sell",
-            kind: Kind::Sell,
+            kind: TransactionKind::Sell,
             amount: 1500,
             category_id: category_id.clone(),
             date: "2026-01-10",
         },
         TxRow {
             id: "k-dividend",
-            kind: Kind::Dividend,
+            kind: TransactionKind::Dividend,
             amount: 60,
             category_id: category_id.clone(),
             date: "2026-01-11",
         },
         TxRow {
             id: "k-split",
-            kind: Kind::Split,
+            kind: TransactionKind::Split,
             amount: 9999,
             category_id,
             date: "2026-01-12",
@@ -167,21 +167,21 @@ fn monthly_summary_groups_by_month_and_filters_by_year() {
     let fixture = vec![
         TxRow {
             id: "t1",
-            kind: Kind::Income,
+            kind: TransactionKind::Income,
             amount: 1000,
             category_id: None,
             date: "2025-12-31",
         },
         TxRow {
             id: "t2",
-            kind: Kind::Expense,
+            kind: TransactionKind::Expense,
             amount: 500,
             category_id: None,
             date: "2026-01-20",
         },
         TxRow {
             id: "t3",
-            kind: Kind::Income,
+            kind: TransactionKind::Income,
             amount: 2000,
             category_id: None,
             date: "2026-02-10",
@@ -210,7 +210,7 @@ fn monthly_summary_excludes_deleted() {
         &conn,
         &TxRow {
             id: "t1",
-            kind: Kind::Income,
+            kind: TransactionKind::Income,
             amount: 1000,
             category_id: None,
             date: "2026-01-15",
@@ -280,14 +280,14 @@ fn category_shares_filters_by_month() {
     let fixture = vec![
         TxRow {
             id: "t1",
-            kind: Kind::Expense,
+            kind: TransactionKind::Expense,
             amount: 1000,
             category_id: Some(cat_id.clone()),
             date: "2026-01-15",
         },
         TxRow {
             id: "t2",
-            kind: Kind::Expense,
+            kind: TransactionKind::Expense,
             amount: 2000,
             category_id: Some(cat_id.clone()),
             date: "2026-02-10",
@@ -309,7 +309,7 @@ fn category_shares_unclassified_shows_default_name() {
         &conn,
         &TxRow {
             id: "t1",
-            kind: Kind::Expense,
+            kind: TransactionKind::Expense,
             amount: 500,
             category_id: None,
             date: "2026-01-15",

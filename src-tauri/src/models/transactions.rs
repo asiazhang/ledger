@@ -133,7 +133,7 @@ impl TryFrom<&NormalizedTransaction> for writer::NormalizedRow {
 
     fn try_from(norm: &NormalizedTransaction) -> Result<Self> {
         Ok(writer::NormalizedRow {
-            kind: amount::Kind::parse(&norm.kind)?,
+            kind: amount::TransactionKind::parse(&norm.kind)?,
             amount_cents: norm.amount_cents,
             currency_code: norm.currency_code.clone(),
             amount_native_cents: norm.amount_native_cents,

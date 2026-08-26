@@ -2,7 +2,7 @@ use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::AppError;
 use crate::models::Account;
-use crate::transaction::amount::{Kind, Measure, TransferSide, signed_amount};
+use crate::transaction::amount::{Measure, TransactionKind, TransferSide, signed_amount};
 
 fn setup() -> rusqlite::Connection {
     let mut conn = crate::db::open_in_memory().unwrap();
@@ -205,10 +205,10 @@ fn list_account_balances_returns_all_accounts() {
     assert_eq!(balance(&conn, "acc-list-2"), 48000);
 }
 
-// 余额口径测试夹具：一行 = 一笔交易（kind 用 Amount 接缝的 Kind 枚举表述）。
+// 余额口径测试夹具：一行 = 一笔交易（kind 用 Amount 接缝的 TransactionKind 枚举表述）。
 struct FlowRow {
     id: &'static str,
-    kind: Kind,
+    kind: TransactionKind,
     amount: i64,
     account_id: &'static str,
     to_account_id: Option<&'static str>,
@@ -232,56 +232,56 @@ fn balance_computed_via_account_flow_measure() {
     let rows = vec![
         FlowRow {
             id: "fm1",
-            kind: Kind::Income,
+            kind: TransactionKind::Income,
             amount: 5000,
             account_id: "acc-flow-m",
             to_account_id: None,
         },
         FlowRow {
             id: "fm2",
-            kind: Kind::Expense,
+            kind: TransactionKind::Expense,
             amount: 1200,
             account_id: "acc-flow-m",
             to_account_id: None,
         },
         FlowRow {
             id: "fm3",
-            kind: Kind::Refund,
+            kind: TransactionKind::Refund,
             amount: 300,
             account_id: "acc-flow-m",
             to_account_id: None,
         },
         FlowRow {
             id: "fm4",
-            kind: Kind::Transfer,
+            kind: TransactionKind::Transfer,
             amount: 800,
             account_id: "acc-flow-m",
             to_account_id: Some("acc-flow-n"),
         },
         FlowRow {
             id: "fm5",
-            kind: Kind::Buy,
+            kind: TransactionKind::Buy,
             amount: 2000,
             account_id: "acc-flow-n",
             to_account_id: None,
         },
         FlowRow {
             id: "fm6",
-            kind: Kind::Sell,
+            kind: TransactionKind::Sell,
             amount: 1500,
             account_id: "acc-flow-n",
             to_account_id: None,
         },
         FlowRow {
             id: "fm7",
-            kind: Kind::Dividend,
+            kind: TransactionKind::Dividend,
             amount: 60,
             account_id: "acc-flow-n",
             to_account_id: None,
         },
         FlowRow {
             id: "fm8",
-            kind: Kind::Split,
+            kind: TransactionKind::Split,
             amount: 9999,
             account_id: "acc-flow-n",
             to_account_id: None,

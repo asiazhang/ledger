@@ -42,7 +42,7 @@ fn insert_rate(conn: &Connection, base: &str, quote: &str, rate: f64) {
 }
 
 /// 通用入参构造器。
-fn input(kind: Kind, amount_cents: i64, account_id: &str) -> Input {
+fn input(kind: TransactionKind, amount_cents: i64, account_id: &str) -> Input {
     Input {
         kind,
         amount_cents,
@@ -82,7 +82,7 @@ fn read_row(conn: &Connection, id: &str) -> NormalizedRow {
         )
         .unwrap();
     NormalizedRow {
-        kind: Kind::parse(&row.kind).unwrap(),
+        kind: TransactionKind::parse(&row.kind).unwrap(),
         amount_cents: row.amount_cents,
         currency_code: row.currency_code,
         amount_native_cents: row.amount_native_cents,
@@ -114,12 +114,12 @@ fn insert_source_expense(conn: &Connection, account_id: &str, category_id: Optio
     let norm = normalize(
         conn,
         &Input {
-            kind: Kind::Expense,
+            kind: TransactionKind::Expense,
             amount_cents: 1000,
             currency_code: "CNY".into(),
             account_id: account_id.into(),
             category_id: category_id.map(String::from),
-            ..input(Kind::Expense, 1000, account_id)
+            ..input(TransactionKind::Expense, 1000, account_id)
         },
     )
     .unwrap();
@@ -139,11 +139,11 @@ fn normalize_income_passthrough() {
         &conn,
         &Input {
             note: Some("工资".into()),
-            ..input(Kind::Income, 5000, "acc")
+            ..input(TransactionKind::Income, 5000, "acc")
         },
     )
     .unwrap();
-    assert_eq!(norm.kind, Kind::Income);
+    assert_eq!(norm.kind, TransactionKind::Income);
     assert_eq!(norm.amount_cents, 5000);
     assert_eq!(norm.currency_code, "CNY");
     assert_eq!(norm.amount_native_cents, 5000, "本位币与原始币种应 1:1");
@@ -165,7 +165,7 @@ fn normalize_expense_passes_optional_fields() {
         &Input {
             category_id: Some("cat-food".into()),
             note: Some("午餐".into()),
-            ..input(Kind::Expense, 1500, "acc")
+            ..input(TransactionKind::Expense, 1500, "acc")
         },
     )
     .unwrap();
@@ -183,7 +183,7 @@ fn normalize_rejects_non_positive_amount() {
     let conn = setup_db();
     insert_account(&conn, "acc", "CNY");
     for bad in [0, -1, -500] {
-        let err = normalize(&conn, &input(Kind::Expense, bad, "acc")).unwrap_err();
+        let err = normalize(&conn, &input(TransactionKind::Expense, bad, "acc")).unwrap_err();
         assert_eq!(err.to_string(), "参数错误: 金额必须大于 0", "金额 {bad}");
     }
 }
@@ -197,7 +197,7 @@ fn normalize_rejects_non_positive_amount() {
 fn normalize_transfer_requires_to_account() {
     let conn = setup_db();
     insert_account(&conn, "acc-a", "CNY");
-    let err = normalize(&conn, &input(Kind::Transfer, 3000, "acc-a")).unwrap_err();
+    let err = normalize(&conn, &input(TransactionKind::Transfer, 3000, "acc-a")).unwrap_err();
     assert_eq!(err.to_string(), "参数错误: 转账必须指定目标账户");
 }
 
@@ -211,7 +211,7 @@ fn normalize_transfer_passes_to_account() {
         &conn,
         &Input {
             to_account_id: Some("acc-b".into()),
-            ..input(Kind::Transfer, 3000, "acc-a")
+            ..input(TransactionKind::Transfer, 3000, "acc-a")
         },
     )
     .unwrap();
@@ -229,7 +229,12 @@ fn normalize_transfer_passes_to_account() {
 fn normalize_rejects_non_generic_kinds() {
     let conn = setup_db();
     insert_account(&conn, "acc", "CNY");
-    for kind in [Kind::Buy, Kind::Sell, Kind::Dividend, Kind::Split] {
+    for kind in [
+        TransactionKind::Buy,
+        TransactionKind::Sell,
+        TransactionKind::Dividend,
+        TransactionKind::Split,
+    ] {
         let err = normalize(&conn, &input(kind, 1000, "acc")).unwrap_err();
         assert!(
             err.to_string().contains("仅处理通用交易类型"),
@@ -247,7 +252,7 @@ fn normalize_rejects_non_generic_kinds() {
 fn normalize_refund_requires_source_id() {
     let conn = setup_db();
     insert_account(&conn, "acc", "CNY");
-    let err = normalize(&conn, &input(Kind::Refund, 200, "acc")).unwrap_err();
+    let err = normalize(&conn, &input(TransactionKind::Refund, 200, "acc")).unwrap_err();
     assert_eq!(err.to_string(), "参数错误: 退款必须关联原支出交易");
 }
 
@@ -263,13 +268,13 @@ fn normalize_refund_inherits_source_fields() {
     let norm = normalize(
         &conn,
         &Input {
-            kind: Kind::Refund,
+            kind: TransactionKind::Refund,
             amount_cents: 200,
             currency_code: "USD".into(),
             account_id: "acc-other".into(),
             category_id: Some("cat-other".into()),
             refund_of_transaction_id: Some(source_id.clone()),
-            ..input(Kind::Refund, 200, "acc-other")
+            ..input(TransactionKind::Refund, 200, "acc-other")
         },
     )
     .unwrap();
@@ -291,14 +296,14 @@ fn normalize_refund_inherits_source_fields() {
 fn normalize_refund_rejects_non_expense_source() {
     let conn = setup_db();
     insert_account(&conn, "acc", "CNY");
-    let income_norm = normalize(&conn, &input(Kind::Income, 1000, "acc")).unwrap();
+    let income_norm = normalize(&conn, &input(TransactionKind::Income, 1000, "acc")).unwrap();
     let income_id = insert_row(&conn, &income_norm).unwrap();
 
     let err = normalize(
         &conn,
         &Input {
             refund_of_transaction_id: Some(income_id),
-            ..input(Kind::Refund, 200, "acc")
+            ..input(TransactionKind::Refund, 200, "acc")
         },
     )
     .unwrap_err();
@@ -314,7 +319,7 @@ fn normalize_refund_source_not_found() {
         &conn,
         &Input {
             refund_of_transaction_id: Some("no-such-id".into()),
-            ..input(Kind::Refund, 200, "acc")
+            ..input(TransactionKind::Refund, 200, "acc")
         },
     )
     .unwrap_err();
@@ -340,7 +345,7 @@ fn normalize_refund_source_soft_deleted_is_not_found() {
         &conn,
         &Input {
             refund_of_transaction_id: Some(source_id),
-            ..input(Kind::Refund, 200, "acc")
+            ..input(TransactionKind::Refund, 200, "acc")
         },
     )
     .unwrap_err();
@@ -361,7 +366,7 @@ fn normalize_converts_via_amount_seam_to_default_currency() {
         &conn,
         &Input {
             currency_code: "USD".into(),
-            ..input(Kind::Expense, 10000, "acc-usd")
+            ..input(TransactionKind::Expense, 10000, "acc-usd")
         },
     )
     .unwrap();
@@ -380,7 +385,7 @@ fn normalize_errors_without_rate_for_non_default_currency() {
         &conn,
         &Input {
             currency_code: "JPY".into(),
-            ..input(Kind::Expense, 10000, "acc-jpy")
+            ..input(TransactionKind::Expense, 10000, "acc-jpy")
         },
     )
     .unwrap_err();
@@ -401,7 +406,7 @@ fn insert_row_writes_full_row_and_generates_audit_fields() {
         &conn,
         &Input {
             note: Some("备注".into()),
-            ..input(Kind::Expense, 1234, "acc")
+            ..input(TransactionKind::Expense, 1234, "acc")
         },
     )
     .unwrap();
@@ -434,7 +439,7 @@ fn insert_row_writes_full_row_and_generates_audit_fields() {
 fn insert_row_generates_distinct_ids() {
     let conn = setup_db();
     insert_account(&conn, "acc", "CNY");
-    let norm = normalize(&conn, &input(Kind::Income, 100, "acc")).unwrap();
+    let norm = normalize(&conn, &input(TransactionKind::Income, 100, "acc")).unwrap();
     let id1 = insert_row(&conn, &norm).unwrap();
     let id2 = insert_row(&conn, &norm).unwrap();
     assert_ne!(id1, id2);
@@ -454,7 +459,7 @@ fn update_row_overwrites_fields_and_bumps_version() {
         &conn,
         &Input {
             note: Some("旧备注".into()),
-            ..input(Kind::Expense, 500, "acc-a")
+            ..input(TransactionKind::Expense, 500, "acc-a")
         },
     )
     .unwrap();
@@ -468,7 +473,7 @@ fn update_row_overwrites_fields_and_bumps_version() {
         .unwrap();
 
     let updated = NormalizedRow {
-        kind: Kind::Transfer,
+        kind: TransactionKind::Transfer,
         amount_cents: 3000,
         currency_code: "CNY".into(),
         amount_native_cents: 3000,
@@ -499,7 +504,7 @@ fn update_row_overwrites_fields_and_bumps_version() {
 fn update_row_preserves_idempotent_identity() {
     let conn = setup_db();
     insert_account(&conn, "acc", "CNY");
-    let norm = normalize(&conn, &input(Kind::Expense, 500, "acc")).unwrap();
+    let norm = normalize(&conn, &input(TransactionKind::Expense, 500, "acc")).unwrap();
     let id = insert_row(&conn, &norm).unwrap();
     // 模拟批量导入回写幂等身份（与 batch 模块落库后 UPDATE 同构）
     conn.execute(
@@ -546,7 +551,7 @@ fn normalize_insert_update_roundtrip() {
         &Input {
             category_id: Some("cat-food".into()),
             note: Some("午餐".into()),
-            ..input(Kind::Expense, 1500, "acc")
+            ..input(TransactionKind::Expense, 1500, "acc")
         },
     )
     .unwrap();

@@ -21,7 +21,7 @@ use rusqlite::params;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 
-use super::amount::{self, Kind};
+use super::amount::{self, TransactionKind};
 
 /// 通用 kind 的写入入参（income / expense / transfer / refund）。
 ///
@@ -30,7 +30,7 @@ use super::amount::{self, Kind};
 /// 命令层在落库后另行回写，不属本模块职责。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Input {
-    pub kind: Kind,
+    pub kind: TransactionKind,
     pub amount_cents: i64,
     pub currency_code: String,
     pub account_id: String,
@@ -44,7 +44,7 @@ pub struct Input {
 /// 归一化后的交易行字段（供 [`insert_row`] / [`update_row`] 落库）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NormalizedRow {
-    pub kind: Kind,
+    pub kind: TransactionKind,
     pub amount_cents: i64,
     pub currency_code: String,
     pub amount_native_cents: i64,
@@ -77,20 +77,25 @@ pub struct NormalizedRow {
 ///   MVP 全 CNY 时二者 1:1 无差异，汇率生效后以本模块为准（旧实现已随接线删除）。
 pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
     match input.kind {
-        Kind::Income | Kind::Expense | Kind::Transfer | Kind::Refund => {}
+        TransactionKind::Income
+        | TransactionKind::Expense
+        | TransactionKind::Transfer
+        | TransactionKind::Refund => {}
         other => {
             return Err(AppError::Invalid(format!(
                 "writer::normalize 仅处理通用交易类型（income/expense/transfer/refund），收到: {other}"
             )));
         }
     }
-    if input.kind == Kind::Transfer && input.to_account_id.is_none() {
+    if input.kind == TransactionKind::Transfer && input.to_account_id.is_none() {
         return Err(AppError::Invalid("转账必须指定目标账户".into()));
     }
     if input.amount_cents <= 0 {
         return Err(AppError::Invalid("金额必须大于 0".into()));
     }
-    let (category_id, account_id, currency_code, refund_of_id) = if input.kind == Kind::Refund {
+    let (category_id, account_id, currency_code, refund_of_id) = if input.kind
+        == TransactionKind::Refund
+    {
         let ref_id = input
             .refund_of_transaction_id
             .clone()
@@ -119,7 +124,7 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
         )
     };
     let native = amount::convert_to_native(conn, input.amount_cents, &currency_code)?;
-    let to_account_id = if input.kind == Kind::Transfer {
+    let to_account_id = if input.kind == TransactionKind::Transfer {
         input.to_account_id.clone()
     } else {
         None
