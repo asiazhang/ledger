@@ -71,6 +71,16 @@
   - 翻页浏览期间新增交易会使列表整体前移，后续页可能看到条目重复或遗漏——这是已知行为，不是数据错误；重新进入列表即恢复一致。
   - 筛选条件变化时总数随之变化，分页始终基于筛选后的结果。
 
+## InvolvingAccount（涉及账户）
+
+- **定义**：一笔 `Transaction` 与某个账户的关系视角——`account_id`（转出账户）或 `to_account_id`（转入账户）任一命中即算该交易涉及该账户。是交易列表按账户过滤、AI 读回按账户对账的统一口径。
+- **边界**：
+  - 过滤语义：`account_id = X OR to_account_id = X`；普通收支只命中一端（`account_id`），转账两端（转出 + 转入）都命中。
+  - 与"转出账户"对照：转出账户特指 `account_id` 指向的账户（支出/转账的扣款侧、收入的收款侧）；涉及账户更宽，覆盖交易两端——转账的转入侧只在涉及账户语义下可按账户检索到（`to_account_id` 仅转账使用）。
+  - 用途：交易页账户过滤（账户名下钻 `?account=<id>` 与手动下拉共用同一语义，issues #97–#99）、AI API `GET /api/v1/transactions` 的 `involving_account_id` 查询参数、AI 读回对账按账户核对（见 AIReadbackVerification）。
+  - 是既有 `account_id`（仅转出账户）过滤之外**新增**的维度，不改旧字段语义（发布冻结只增不改）。
+- **别名**：不使用"相关账户"（含糊）、"关联账户"（易与数据库外键"关联"混淆）。
+
 ## Plan Lifecycle（计划生命周期）
 
 - **MVP 决策**：`ScheduledTransaction` 支持以下状态变更：
@@ -197,17 +207,17 @@
   - URL 前缀 `/api/v1`，JSON 请求/响应。
   - 错误格式复用 `{kind, message}`。
   - **场景**：主要场景是数据迁移（从第三方 APP 的 CSV/Excel 导入），亦可直接录入记账（账户/分类幂等创建、批量写交易）；迁移完成后支持读回验证与纠错（删除/修改，见 AIReadbackVerification / AICleanupDeletion / AICleanupModify）。
-  - **暴露的接口**（13 个端点）：`openapi.json`、`accounts`（list/create/delete）、`accounts/balances`（含黑洞账户）、`categories`（list/create/delete）、`transactions`（list，可按日期/账户/类型过滤）、`transactions/batch`、`transactions/{id}`（delete/update）、`currencies`（list）、`import/knowledge`。
+  - **暴露的接口**（13 个端点）：`openapi.json`、`accounts`（list/create/delete）、`accounts/balances`（含黑洞账户）、`categories`（list/create/delete）、`transactions`（list，可按日期/转出账户/涉及账户/类型过滤）、`transactions/batch`、`transactions/{id}`（delete/update）、`currencies`（list）、`import/knowledge`。
   - `accounts` / `categories` 的 create 按自然键幂等（同名复用已有记录）；`transactions/batch` 支持 `dedup` 参数（默认开启）与客户端 `idempotency_key`（见 ImportDedup / IdempotencyKey）。
   - `import/knowledge` 返回精简的导入约定文本（Pixiu 列映射、转账拆分、黑洞账户、币种映射、分单位、日期、dedup），供 AI 直接注入系统提示词。
 - **别名**：不使用"本地 API"（过于泛化）、"后端 API"（与 Tauri IPC 混淆）。
 
 ## AIReadbackVerification（AI 读回验证）
 
-- **定义**：AI 编程助手完成批量导入后，通过读回接口核对迁移结果是否完整的环节——用 `GET /api/v1/transactions` 按日期区间/账户/类型过滤读回交易，核对源文件各行是否全部落库、金额合计是否一致；再用 `GET /api/v1/accounts/balances` 拿到各账户（**含黑洞账户**）实时余额，核对期末余额与源数据吻合。
+- **定义**：AI 编程助手完成批量导入后，通过读回接口核对迁移结果是否完整的环节——用 `GET /api/v1/transactions` 按日期区间/转出账户/涉及账户/类型过滤读回交易，核对源文件各行是否全部落库、金额合计是否一致；再用 `GET /api/v1/accounts/balances` 拿到各账户（**含黑洞账户**）实时余额，核对期末余额与源数据吻合。
 - **边界**：
   - 读回是查询能力：`transactions` 返回未删除交易（按 `date DESC` 排序），`balances` 口径 = 初始余额 + 收入 − 支出 + 转入 − 转出 + 退款，实时计算不持久化。
-  - 对账要点：余额清单包含黑洞账户，可识别误挂到 `无` 的交易；转账按转出账户对账（MVP 不按转入账户过滤）。
+  - 对账要点：余额清单包含黑洞账户，可识别误挂到 `无` 的交易；转账按转出账户对账，需核对转入侧时改用涉及账户过滤读回（`involving_account_id`，`account_id` 或 `to_account_id` 命中即算，见 InvolvingAccount）。
   - 与手工记账共用同一套查询实现，无独立数据视图。
 - **别名**：不使用"审计"（偏外部合规）、"校验导入"（含糊）。
 
