@@ -138,6 +138,7 @@ fn list_instruments_pagination_and_search() {
     let filter = InstrumentListFilter {
         search: None,
         market: None,
+        only_invested: None,
         page: None,
         page_size: Some(2),
     };
@@ -151,6 +152,7 @@ fn list_instruments_pagination_and_search() {
     let filter = InstrumentListFilter {
         search: None,
         market: None,
+        only_invested: None,
         page: Some(2),
         page_size: Some(2),
     };
@@ -162,6 +164,7 @@ fn list_instruments_pagination_and_search() {
     let filter = InstrumentListFilter {
         search: Some("sym1".into()),
         market: None,
+        only_invested: None,
         page: None,
         page_size: None,
     };
@@ -173,6 +176,7 @@ fn list_instruments_pagination_and_search() {
     let filter = InstrumentListFilter {
         search: Some("名称3".into()),
         market: None,
+        only_invested: None,
         page: None,
         page_size: None,
     };
@@ -184,6 +188,7 @@ fn list_instruments_pagination_and_search() {
     let filter = InstrumentListFilter {
         search: None,
         market: Some("sh".into()),
+        only_invested: None,
         page: None,
         page_size: None,
     };
@@ -195,6 +200,7 @@ fn list_instruments_pagination_and_search() {
     let filter = InstrumentListFilter {
         search: Some("SYM".into()),
         market: Some("sz".into()),
+        only_invested: None,
         page: Some(2),
         page_size: Some(1),
     };
@@ -202,6 +208,169 @@ fn list_instruments_pagination_and_search() {
     assert_eq!(result.total, 2);
     assert_eq!(result.items.len(), 1);
     assert_eq!(result.items[0].symbol, "SYM3");
+}
+
+/// invested 派生字段：持仓中为 true，未投资 / 已清仓为 false（issue #102）。
+#[test]
+fn list_instruments_invested_flag() {
+    let conn = setup_db();
+    insert_account(&conn, "acc-inv", "美股", "investment", "USD");
+    insert_rate_1_1(&conn, "USD");
+    // 持仓中：买入 10 股，未卖出
+    insert_instrument_with_market(&conn, "inst-held", "HELD", "持仓标的", "USD", "sh");
+    // 已清仓：买入 10 股后全部卖出
+    insert_instrument_with_market(&conn, "inst-closed", "CLOSED", "已清仓标的", "USD", "sz");
+    // 未投资：从未交易
+    insert_instrument_with_market(&conn, "inst-never", "NEVER", "未投资标的", "USD", "hk");
+
+    insert_transaction(
+        &conn,
+        make_buy_input("acc-inv", "inst-held", 10.0, 10000, 0),
+    )
+    .unwrap();
+    insert_transaction(
+        &conn,
+        make_buy_input("acc-inv", "inst-closed", 10.0, 10000, 0),
+    )
+    .unwrap();
+    insert_transaction(
+        &conn,
+        make_sell_input("acc-inv", "inst-closed", 10.0, 12000, 0),
+    )
+    .unwrap();
+
+    let filter = InstrumentListFilter::default();
+    let result = super::crud::list_instruments(&conn, &filter).unwrap();
+    assert_eq!(result.total, 3);
+    let invested_by_symbol: Vec<(&str, bool)> = result
+        .items
+        .iter()
+        .map(|i| (i.symbol.as_str(), i.invested))
+        .collect();
+    assert_eq!(
+        invested_by_symbol,
+        vec![("CLOSED", false), ("HELD", true), ("NEVER", false)],
+        "持仓中为 true，已清仓/未投资为 false"
+    );
+}
+
+/// only_invested 过滤：与搜索、市场过滤、分页组合正确（issue #102）。
+#[test]
+fn list_instruments_only_invested_filter() {
+    let conn = setup_db();
+    insert_account(&conn, "acc-inv", "美股", "investment", "USD");
+    insert_rate_1_1(&conn, "USD");
+    insert_instrument_with_market(&conn, "inst-held", "HELD", "持仓标的", "USD", "sh");
+    insert_instrument_with_market(&conn, "inst-closed", "CLOSED", "已清仓标的", "USD", "sz");
+    insert_instrument_with_market(&conn, "inst-never", "NEVER", "未投资标的", "USD", "hk");
+
+    insert_transaction(
+        &conn,
+        make_buy_input("acc-inv", "inst-held", 10.0, 10000, 0),
+    )
+    .unwrap();
+    insert_transaction(
+        &conn,
+        make_buy_input("acc-inv", "inst-closed", 10.0, 10000, 0),
+    )
+    .unwrap();
+    insert_transaction(
+        &conn,
+        make_sell_input("acc-inv", "inst-closed", 10.0, 12000, 0),
+    )
+    .unwrap();
+
+    // 只看持仓：仅返回持仓中标的
+    let filter = InstrumentListFilter {
+        search: None,
+        market: None,
+        only_invested: Some(true),
+        page: None,
+        page_size: None,
+    };
+    let result = super::crud::list_instruments(&conn, &filter).unwrap();
+    assert_eq!(result.total, 1);
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].symbol, "HELD");
+    assert!(result.items[0].invested);
+
+    // 与搜索组合：命中已清仓标的时结果为空
+    let filter = InstrumentListFilter {
+        search: Some("CLOSED".into()),
+        market: None,
+        only_invested: Some(true),
+        page: None,
+        page_size: None,
+    };
+    let result = super::crud::list_instruments(&conn, &filter).unwrap();
+    assert_eq!(result.total, 0);
+    assert!(result.items.is_empty());
+
+    // 与市场过滤组合：只保留市场命中且持仓中的标的
+    let filter = InstrumentListFilter {
+        search: None,
+        market: Some("sh".into()),
+        only_invested: Some(true),
+        page: None,
+        page_size: None,
+    };
+    let result = super::crud::list_instruments(&conn, &filter).unwrap();
+    assert_eq!(result.total, 1);
+    assert_eq!(result.items[0].symbol, "HELD");
+
+    // 与分页组合：total 按过滤后全量计数，越界页返回空
+    let filter = InstrumentListFilter {
+        search: None,
+        market: None,
+        only_invested: Some(true),
+        page: Some(2),
+        page_size: Some(1),
+    };
+    let result = super::crud::list_instruments(&conn, &filter).unwrap();
+    assert_eq!(result.total, 1);
+    assert!(result.items.is_empty());
+
+    // only_invested 为 false 或缺省时行为一致：不过滤
+    let filter = InstrumentListFilter {
+        search: None,
+        market: None,
+        only_invested: Some(false),
+        page: None,
+        page_size: None,
+    };
+    let result = super::crud::list_instruments(&conn, &filter).unwrap();
+    assert_eq!(result.total, 3);
+    let filter = InstrumentListFilter::default();
+    let result = super::crud::list_instruments(&conn, &filter).unwrap();
+    assert_eq!(result.total, 3);
+}
+
+/// 软删除账户的持仓批次不计入 invested（口径与 v_holdings 一致，issue #102）。
+#[test]
+fn list_instruments_invested_excludes_soft_deleted_accounts() {
+    let conn = setup_db();
+    insert_account(&conn, "acc-del", "已删账户", "investment", "USD");
+    insert_rate_1_1(&conn, "USD");
+    insert_instrument_with_market(&conn, "inst-del", "DELHOLD", "删除账户持仓", "USD", "sh");
+
+    insert_transaction(&conn, make_buy_input("acc-del", "inst-del", 10.0, 10000, 0)).unwrap();
+    conn.execute("UPDATE accounts SET is_deleted=1 WHERE id='acc-del'", [])
+        .unwrap();
+
+    let filter = InstrumentListFilter::default();
+    let result = super::crud::list_instruments(&conn, &filter).unwrap();
+    let item = result.items.iter().find(|i| i.symbol == "DELHOLD").unwrap();
+    assert!(!item.invested, "软删除账户的持仓不应计入 invested");
+
+    let filter = InstrumentListFilter {
+        search: None,
+        market: None,
+        only_invested: Some(true),
+        page: None,
+        page_size: None,
+    };
+    let result = super::crud::list_instruments(&conn, &filter).unwrap();
+    assert_eq!(result.total, 0);
 }
 
 #[test]

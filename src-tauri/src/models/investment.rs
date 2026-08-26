@@ -75,6 +75,8 @@ pub struct Instrument {
     pub device_id: String,
     /// 最新市场价格（分），同步来源；无行情时为空。
     pub price_cents: Option<i64>,
+    /// 是否持有该标的（有当前持仓批次 remaining_quantity > 0，派生自 security_lots）。
+    pub invested: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -94,6 +96,8 @@ pub struct InstrumentListFilter {
     pub search: Option<String>,
     /// 交易市场精确匹配（sh / sz / hk / unknown）。
     pub market: Option<String>,
+    /// 只看持仓标的：仅返回有当前持仓（remaining_quantity > 0）的标的。
+    pub only_invested: Option<bool>,
     /// 页码，从 1 开始，默认 1。
     pub page: Option<usize>,
     /// 每页条数，默认 50，上限 500。
@@ -276,6 +280,7 @@ impl FromRow for Instrument {
             version: row.get(8)?,
             device_id: row.get(9)?,
             price_cents: row.get(10)?,
+            invested: row.get(11)?,
         })
     }
 }

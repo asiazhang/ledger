@@ -28,6 +28,8 @@ export interface Instrument extends Syncable {
   market: MarketType
   created_at: string
   price_cents: number | null
+  /** 是否持有该标的（有当前持仓，派生自 security_lots） */
+  invested: boolean
 }
 
 export interface InstrumentInput {
@@ -44,6 +46,8 @@ export interface InstrumentListFilter {
   search?: string | null
   /** 交易市场精确匹配（sh / sz / hk / unknown） */
   market?: MarketType | null
+  /** 只看持仓标的：仅返回有当前持仓的标的 */
+  only_invested?: boolean | null
   /** 页码，从 1 开始，默认 1 */
   page?: number
   /** 每页条数，默认 50，上限 500 */

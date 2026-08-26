@@ -108,6 +108,12 @@ pub(crate) fn create_market_price(conn: &Connection, input: MarketPriceInput) ->
     Ok(id)
 }
 
+/// 有当前持仓的判定谓词（口径与 v_holdings 一致：remaining_quantity > 0 且排除软删除账户），
+/// 同时用于 SELECT 的 invested 派生列与 only_invested 过滤条件，改动只改这一处。
+const INVESTED_EXISTS: &str = "EXISTS (SELECT 1 FROM security_lots l WHERE l.instrument_id=i.id \
+     AND l.remaining_quantity > 0 \
+     AND l.account_id IN (SELECT id FROM accounts WHERE is_deleted = 0))";
+
 pub(crate) fn list_instruments(
     conn: &Connection,
     filter: &InstrumentListFilter,
@@ -132,6 +138,11 @@ pub(crate) fn list_instruments(
         params.push(Box::new(market.to_string()));
         conditions.push(format!("i.market=?{}", params.len()));
     }
+    // 只看持仓：有当前持仓（security_lots.remaining_quantity > 0）的标的，口径与 v_holdings
+    // 一致——排除软删除账户的批次。
+    if filter.only_invested == Some(true) {
+        conditions.push(INVESTED_EXISTS.to_string());
+    }
     let where_clause = if conditions.is_empty() {
         String::new()
     } else {
@@ -152,7 +163,7 @@ pub(crate) fn list_instruments(
     params.push(Box::new(offset as i64));
 
     let sql = format!(
-        "SELECT i.id,i.symbol,i.instrument_type,i.name,i.currency_code,i.market,i.created_at,i.updated_at,i.version,i.device_id,p.price_cents \
+        "SELECT i.id,i.symbol,i.instrument_type,i.name,i.currency_code,i.market,i.created_at,i.updated_at,i.version,i.device_id,p.price_cents,\n         CASE WHEN {INVESTED_EXISTS} THEN 1 ELSE 0 END AS invested \
          FROM instruments i \
          LEFT JOIN market_prices p ON p.instrument_id = i.id \
          {where_clause} ORDER BY i.symbol LIMIT ?{} OFFSET ?{}",
