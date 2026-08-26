@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   NButton,
   NDataTable,
@@ -13,11 +13,13 @@ import {
 import type { DataTableColumn } from 'naive-ui'
 import { api } from '@/api'
 import { useAppStore } from '@/stores/app'
+import { useReferenceStore } from '@/stores/reference'
 import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/transactionColumns'
 import { formatAmount, type Transaction, type TransactionSearchFilter } from '@/types'
 import { yuanToCents } from '@/utils/money'
 
 const store = useAppStore()
+const reference = useReferenceStore()
 const message = useMessage()
 
 const keyword = ref('')
@@ -60,7 +62,7 @@ const hasQuery = computed(() => keyword.value.trim() !== '' || filtersActive.val
 const activeFilterDescriptions = computed(() => {
   const parts: string[] = []
   // 按用户默认币种展示符号（设置页可改），避免硬编码 CNY
-  const currency = store.getCurrency(store.defaultCurrency)
+  const currency = reference.getCurrency(store.defaultCurrency)
   const min = amountMinCents.value
   const max = amountMaxCents.value
   if (min !== null && max !== null) {
@@ -151,7 +153,7 @@ function clearFilters() {
 }
 
 // 复用交易列表列配置（日期/类型/分类/账户/备注/金额），结果只读
-const columns: DataTableColumn<Transaction>[] = buildTransactionColumns(store)
+const columns: DataTableColumn<Transaction>[] = buildTransactionColumns(reference)
 
 // scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和
 const scrollX = sumFixedColumnWidths(columns)
@@ -166,10 +168,6 @@ const pagination = computed(() => ({
     runSearch()
   },
 }))
-
-onMounted(async () => {
-  await store.loadAll()
-})
 </script>
 
 <template>

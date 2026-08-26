@@ -12,12 +12,12 @@ import {
 } from 'naive-ui'
 import { useRefundForm } from '@/composables/useRefundForm'
 import { formatAmount } from '@/types'
-import { useAppStore } from '@/stores/app'
+import { useReferenceStore } from '@/stores/reference'
 
 const emit = defineEmits<{ created: [] }>()
 
 const ctx = useRefundForm({ onCreated: () => emit('created') })
-const store = useAppStore()
+const reference = useReferenceStore()
 </script>
 
 <template>
@@ -35,9 +35,9 @@ const store = useAppStore()
 
       <NFormItem v-if="ctx.refundTarget.value" label="原交易">
         <NText depth="3" style="font-size: 12px">
-          {{ formatAmount(ctx.refundTarget.value.amount_native_cents, store.getCurrency(ctx.refundTarget.value.currency_code)) }}
-          · {{ store.categoryPath(ctx.refundTarget.value.category_id) || '-' }}
-          · {{ store.accountMap.get(ctx.refundTarget.value.account_id)?.name ?? '-' }}
+          {{ formatAmount(ctx.refundTarget.value.amount_native_cents, reference.getCurrency(ctx.refundTarget.value.currency_code)) }}
+          · {{ reference.categoryPath(ctx.refundTarget.value.category_id) || '-' }}
+          · {{ reference.accountMap.get(ctx.refundTarget.value.account_id)?.name ?? '-' }}
         </NText>
       </NFormItem>
 

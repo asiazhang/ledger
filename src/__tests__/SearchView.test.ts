@@ -4,7 +4,7 @@ import { nextTick } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { NDatePicker } from 'naive-ui'
-import { useAppStore } from '@/stores/app'
+import { useReferenceStore } from '@/stores/reference'
 import SearchView from '@/views/SearchView.vue'
 import type { Account, Category, Currency, Transaction } from '@/types'
 
@@ -184,8 +184,8 @@ beforeEach(async () => {
   })
   localStorage.clear()
   mockStale = false
-  const store = useAppStore()
-  await store.loadAll()
+  const store = useReferenceStore()
+  await store.ensureFresh()
 })
 
 afterEach(() => {

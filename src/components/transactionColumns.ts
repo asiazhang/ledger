@@ -6,9 +6,9 @@ import { h } from 'vue'
 import { NTag, type DataTableColumn } from 'naive-ui'
 import { formatAmount, TRANSACTION_KIND_LABELS } from '@/types'
 import type { Transaction, TransactionKind } from '@/types'
-import type { useAppStore } from '@/stores/app'
+import type { useReferenceStore } from '@/stores/reference'
 
-export type AppStore = ReturnType<typeof useAppStore>
+export type ReferenceStore = ReturnType<typeof useReferenceStore>
 
 const KIND_TAG_TYPE: Record<TransactionKind, 'success' | 'warning' | 'info' | 'default'> = {
   income: 'success',
@@ -51,7 +51,7 @@ export function sumFixedColumnWidths(columns: DataTableColumn<Transaction>[]): n
  *   作为窄窗口下的横向滚动下限。备注为弹性列，窗口变窄时先由备注收缩吸收，各固定列宽保持恒定——
  *   只有当内容区窄于固定列宽总和时才出现横向滚动（最小窗口内容区 660 > 固定列总和 645，故通常不触发）。
  * - 宽度按实际内容估算：日期 105 / 类型 65 / 分类 150（最长路径 ≈149px）/ 账户 120（最长 ≈86px）/ 金额 125。 */
-export function buildTransactionColumns(store: AppStore): DataTableColumn<Transaction>[] {
+export function buildTransactionColumns(reference: ReferenceStore): DataTableColumn<Transaction>[] {
   return [
     { title: '日期', key: 'date', width: 105 },
     {
@@ -66,14 +66,14 @@ export function buildTransactionColumns(store: AppStore): DataTableColumn<Transa
       key: 'category_id',
       width: 150,
       ellipsis: { tooltip: true },
-      render: (row) => (row.category_id ? store.categoryPath(row.category_id) || '-' : '-'),
+      render: (row) => (row.category_id ? reference.categoryPath(row.category_id) || '-' : '-'),
     },
     {
       title: '账户',
       key: 'account_id',
       width: 120,
       ellipsis: { tooltip: true },
-      render: (row) => store.accountMap.get(row.account_id)?.name ?? '无',
+      render: (row) => reference.accountMap.get(row.account_id)?.name ?? '无',
     },
     {
       title: '备注',
@@ -90,7 +90,7 @@ export function buildTransactionColumns(store: AppStore): DataTableColumn<Transa
         h(
           'span',
           { style: AMOUNT_COLOR[row.kind] ? `color: ${AMOUNT_COLOR[row.kind]}` : '' },
-          formatAmount(row.amount_native_cents, store.getCurrency(row.currency_code)),
+          formatAmount(row.amount_native_cents, reference.getCurrency(row.currency_code)),
         ),
     },
   ]

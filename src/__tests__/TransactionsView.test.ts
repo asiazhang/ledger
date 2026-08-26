@@ -3,7 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { NDataTable, NPopconfirm } from 'naive-ui'
-import { useAppStore } from '@/stores/app'
+import { useReferenceStore } from '@/stores/reference'
 import TransactionsView from '@/views/TransactionsView.vue'
 import type { Account, Currency, Transaction } from '@/types'
 
@@ -78,8 +78,8 @@ beforeEach(async () => {
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
   localStorage.clear()
-  const store = useAppStore()
-  await store.loadAll()
+  const store = useReferenceStore()
+  await store.ensureFresh()
 })
 
 async function mountView() {
@@ -189,7 +189,7 @@ describe('TransactionsView 服务端分页', () => {
     })
     const wrapper = mount(TransactionsView)
     await flushPromises()
-    // loadAll 已结束，list_transactions 挂起中 → loading 应为 true
+    // 参考数据已就绪（self-init），list_transactions 挂起中 → loading 应为 true
     expect(wrapper.findComponent(NDataTable).props('loading')).toBe(true)
     resolveList({ items: [], total: 0 })
     await flushPromises()

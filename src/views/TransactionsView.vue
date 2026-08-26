@@ -10,11 +10,11 @@ import {
   type PaginationProps,
 } from 'naive-ui'
 import { api } from '@/api'
-import { useAppStore } from '@/stores/app'
+import { useReferenceStore } from '@/stores/reference'
 import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/transactionColumns'
 import type { Transaction } from '@/types'
 
-const store = useAppStore()
+const reference = useReferenceStore()
 const message = useMessage()
 const data = ref<Transaction[]>([])
 const total = ref(0)
@@ -75,7 +75,7 @@ const pagination = computed<PaginationProps>(() => ({
 }))
 
 const columns: DataTableColumn<Transaction>[] = [
-  ...buildTransactionColumns(store),
+  ...buildTransactionColumns(reference),
   {
     title: '操作',
     key: 'actions',
@@ -95,9 +95,9 @@ const columns: DataTableColumn<Transaction>[] = [
 // scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和
 const scrollX = sumFixedColumnWidths(columns)
 
-onMounted(async () => {
-  await store.loadAll()
-  await refresh()
+onMounted(() => {
+  // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll
+  void refresh()
 })
 </script>
 
