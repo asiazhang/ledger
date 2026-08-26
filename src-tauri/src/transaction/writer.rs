@@ -81,9 +81,13 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
         | TransactionKind::Expense
         | TransactionKind::Transfer
         | TransactionKind::Refund => {}
-        other => {
+        TransactionKind::Buy
+        | TransactionKind::Sell
+        | TransactionKind::Dividend
+        | TransactionKind::Split => {
             return Err(AppError::Invalid(format!(
-                "writer::normalize 仅处理通用交易类型（income/expense/transfer/refund），收到: {other}"
+                "writer::normalize 仅处理通用交易类型（income/expense/transfer/refund），收到: {}",
+                input.kind
             )));
         }
     }

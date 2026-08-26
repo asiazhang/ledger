@@ -9,6 +9,7 @@ use tauri_app_lib::db::{init_db, open_in_memory};
 use tauri_app_lib::models::{
     CreateTransactionResult, Transaction, TransactionInput, TransactionSearchResult,
 };
+use tauri_app_lib::transaction::amount::TransactionKind;
 
 /// 批量导入的一行（重跑导入时据此重建 `TransactionInput`）。
 /// 记录账户/转入账户的**名称**而非 ID，保证重跑时重新解析（与真实导入流程一致）。
@@ -28,9 +29,7 @@ pub struct ImportedRow {
 impl ImportedRow {
     pub fn to_input(&self, world: &LedgerWorld) -> TransactionInput {
         TransactionInput {
-            kind: self
-                .kind
-                .parse()
+            kind: TransactionKind::parse(&self.kind)
                 .unwrap_or_else(|e| panic!("非法 kind: {}（{e}）", self.kind)),
             amount_cents: self.amount_cents,
             currency_code: self.currency_code.clone(),

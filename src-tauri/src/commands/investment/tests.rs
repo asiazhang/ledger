@@ -387,14 +387,14 @@ fn sell_transaction_matches_multiple_lots_fifo() {
     )
     .unwrap();
 
-    let (kind, amount_cents): (String, i64) = conn
+    let (kind, amount_cents): (TransactionKind, i64) = conn
         .query_row(
             "SELECT kind, amount_cents FROM transactions WHERE id=?1",
             params![sell_txn],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
-    assert_eq!(kind, "sell");
+    assert_eq!(kind, TransactionKind::Sell);
     assert_eq!(amount_cents, 179400);
 
     let rem1: f64 = conn

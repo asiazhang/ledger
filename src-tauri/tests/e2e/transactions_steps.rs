@@ -38,9 +38,7 @@ fn create_txn(
     date: String,
 ) {
     let input = TransactionInput {
-        kind: kind
-            .parse()
-            .unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
+        kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: "CNY".into(),
         account_id: world.account_id(&account_name),
@@ -71,9 +69,7 @@ fn create_txn_with_note(
     note: String,
 ) {
     let input = TransactionInput {
-        kind: kind
-            .parse()
-            .unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
+        kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: "CNY".into(),
         account_id: world.account_id(&account_name),
@@ -135,9 +131,7 @@ fn try_create_txn(
     date: String,
 ) {
     let input = TransactionInput {
-        kind: kind
-            .parse()
-            .unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
+        kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: "CNY".into(),
         account_id: world.account_id(&account_name),
@@ -235,9 +229,7 @@ fn update_last_txn(world: &mut LedgerWorld, kind: String, amount: i64, date: Str
         .find(|t| t.id == id)
         .expect("原交易不存在");
     let input = TransactionInput {
-        kind: kind
-            .parse()
-            .unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
+        kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: existing.currency_code.clone(),
         account_id: existing.account_id.clone(),
@@ -514,7 +506,7 @@ fn check_page_kind(
         world,
         TransactionListFilter {
             kind: Some(
-                kind.parse()
+                TransactionKind::parse(&kind)
                     .unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
             ),
             page: Some(page as usize),

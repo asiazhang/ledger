@@ -19,9 +19,14 @@ fn insert_account(conn: &Connection, id: &str, name: &str, kind: &str, currency:
     ).unwrap();
 }
 
-fn make_input(account_id: &str, kind: &str, amount: i64, date: &str) -> TransactionInput {
+fn make_input(
+    account_id: &str,
+    kind: TransactionKind,
+    amount: i64,
+    date: &str,
+) -> TransactionInput {
     TransactionInput {
-        kind: TransactionKind::parse(kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
+        kind,
         amount_cents: amount,
         currency_code: "CNY".into(),
         account_id: account_id.into(),
@@ -43,27 +48,30 @@ fn create_income_and_expense_transactions() {
     let conn = setup();
     insert_account(&conn, "acc-crud", "现金", "cash", "CNY");
 
-    let id1 =
-        insert_transaction(&conn, make_input("acc-crud", "income", 5000, "2026-02-01")).unwrap();
+    let id1 = insert_transaction(
+        &conn,
+        make_input("acc-crud", TransactionKind::Income, 5000, "2026-02-01"),
+    )
+    .unwrap();
     let id2 = insert_transaction(
         &conn,
         TransactionInput {
             amount_cents: 1500,
             note: Some("午餐".into()),
             category_id: None,
-            ..make_input("acc-crud", "expense", 100, "2026-02-02")
+            ..make_input("acc-crud", TransactionKind::Expense, 100, "2026-02-02")
         },
     )
     .unwrap();
     assert_ne!(id1, id2);
-    let row1: (String, String, i64, Option<String>) = conn
+    let row1: (TransactionKind, String, i64, Option<String>) = conn
         .query_row(
             "SELECT kind, account_id, amount_cents, note FROM transactions WHERE id=?1",
             params![id1],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .unwrap();
-    assert_eq!(row1.0, "income");
+    assert_eq!(row1.0, TransactionKind::Income);
     assert_eq!(row1.2, 5000);
 }
 
@@ -93,14 +101,14 @@ fn create_transfer_with_to_account() {
         },
     )
     .unwrap();
-    let (kind, from, to): (String, String, Option<String>) = conn
+    let (kind, from, to): (TransactionKind, String, Option<String>) = conn
         .query_row(
             "SELECT kind, account_id, to_account_id FROM transactions WHERE id=?1",
             params![id],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .unwrap();
-    assert_eq!(kind, "transfer");
+    assert_eq!(kind, TransactionKind::Transfer);
     assert_eq!(from, "acc-from");
     assert_eq!(to.as_deref(), Some("acc-to"));
 }
@@ -110,9 +118,21 @@ fn list_transactions_ordered_by_date_desc() {
     let conn = setup();
     insert_account(&conn, "acc-list", "现金", "cash", "CNY");
 
-    insert_transaction(&conn, make_input("acc-list", "income", 100, "2026-01-03")).unwrap();
-    insert_transaction(&conn, make_input("acc-list", "income", 200, "2026-01-01")).unwrap();
-    insert_transaction(&conn, make_input("acc-list", "income", 300, "2026-01-02")).unwrap();
+    insert_transaction(
+        &conn,
+        make_input("acc-list", TransactionKind::Income, 100, "2026-01-03"),
+    )
+    .unwrap();
+    insert_transaction(
+        &conn,
+        make_input("acc-list", TransactionKind::Income, 200, "2026-01-01"),
+    )
+    .unwrap();
+    insert_transaction(
+        &conn,
+        make_input("acc-list", TransactionKind::Income, 300, "2026-01-02"),
+    )
+    .unwrap();
 
     let rows: Vec<(String, i64)> = conn
         .prepare(
@@ -135,9 +155,21 @@ fn list_transactions_limit() {
     let conn = setup();
     insert_account(&conn, "acc-limit", "现金", "cash", "CNY");
 
-    insert_transaction(&conn, make_input("acc-limit", "income", 100, "2026-01-01")).unwrap();
-    insert_transaction(&conn, make_input("acc-limit", "income", 200, "2026-01-02")).unwrap();
-    insert_transaction(&conn, make_input("acc-limit", "income", 300, "2026-01-03")).unwrap();
+    insert_transaction(
+        &conn,
+        make_input("acc-limit", TransactionKind::Income, 100, "2026-01-01"),
+    )
+    .unwrap();
+    insert_transaction(
+        &conn,
+        make_input("acc-limit", TransactionKind::Income, 200, "2026-01-02"),
+    )
+    .unwrap();
+    insert_transaction(
+        &conn,
+        make_input("acc-limit", TransactionKind::Income, 300, "2026-01-03"),
+    )
+    .unwrap();
 
     let rows: Vec<i64> = conn
         .prepare(
@@ -169,7 +201,12 @@ fn list_transactions_pagination_returns_page_and_total() {
     for i in 1..=25 {
         insert_transaction(
             &conn,
-            make_input("acc-page", "expense", i * 100, &format!("2026-01-{:02}", i)),
+            make_input(
+                "acc-page",
+                TransactionKind::Expense,
+                i * 100,
+                &format!("2026-01-{:02}", i),
+            ),
         )
         .unwrap();
     }
@@ -208,12 +245,25 @@ fn list_transactions_pagination_total_respects_filters() {
     for i in 1..=8 {
         insert_transaction(
             &conn,
-            make_input("acc-f1", "expense", i * 100, &format!("2026-02-{:02}", i)),
+            make_input(
+                "acc-f1",
+                TransactionKind::Expense,
+                i * 100,
+                &format!("2026-02-{:02}", i),
+            ),
         )
         .unwrap();
     }
-    insert_transaction(&conn, make_input("acc-f2", "income", 9000, "2026-02-09")).unwrap();
-    insert_transaction(&conn, make_input("acc-f1", "income", 1000, "2026-02-10")).unwrap();
+    insert_transaction(
+        &conn,
+        make_input("acc-f2", TransactionKind::Income, 9000, "2026-02-09"),
+    )
+    .unwrap();
+    insert_transaction(
+        &conn,
+        make_input("acc-f1", TransactionKind::Income, 1000, "2026-02-10"),
+    )
+    .unwrap();
 
     let by_account = list_transactions_internal(
         &conn,
@@ -263,7 +313,7 @@ fn list_transactions_deterministic_order_by_id_when_same_timestamp() {
     for i in 1..=5 {
         let id = insert_transaction(
             &conn,
-            make_input("acc-same", "expense", i * 100, "2026-03-01"),
+            make_input("acc-same", TransactionKind::Expense, i * 100, "2026-03-01"),
         )
         .unwrap();
         ids.push(id);
@@ -304,7 +354,12 @@ fn list_transactions_default_returns_all_with_total() {
     for i in 1..=5 {
         insert_transaction(
             &conn,
-            make_input("acc-all", "expense", i * 100, &format!("2026-04-{:02}", i)),
+            make_input(
+                "acc-all",
+                TransactionKind::Expense,
+                i * 100,
+                &format!("2026-04-{:02}", i),
+            ),
         )
         .unwrap();
     }
@@ -320,7 +375,12 @@ fn list_transactions_limit_path_unchanged() {
     for i in 1..=5 {
         insert_transaction(
             &conn,
-            make_input("acc-lim", "expense", i * 100, &format!("2026-05-{:02}", i)),
+            make_input(
+                "acc-lim",
+                TransactionKind::Expense,
+                i * 100,
+                &format!("2026-05-{:02}", i),
+            ),
         )
         .unwrap();
     }
@@ -371,7 +431,12 @@ fn list_transactions_out_of_range_page_and_empty_result() {
     for i in 1..=3 {
         insert_transaction(
             &conn,
-            make_input("acc-bnd", "expense", i * 100, &format!("2026-06-{:02}", i)),
+            make_input(
+                "acc-bnd",
+                TransactionKind::Expense,
+                i * 100,
+                &format!("2026-06-{:02}", i),
+            ),
         )
         .unwrap();
     }
@@ -424,7 +489,12 @@ fn list_transactions_degenerate_inputs_do_not_panic() {
     for i in 1..=5 {
         insert_transaction(
             &conn,
-            make_input("acc-deg", "expense", i * 100, &format!("2026-07-{:02}", i)),
+            make_input(
+                "acc-deg",
+                TransactionKind::Expense,
+                i * 100,
+                &format!("2026-07-{:02}", i),
+            ),
         )
         .unwrap();
     }
@@ -473,8 +543,11 @@ fn delete_transaction_soft_deletes() {
     let conn = setup();
     insert_account(&conn, "acc-del", "现金", "cash", "CNY");
 
-    let id =
-        insert_transaction(&conn, make_input("acc-del", "income", 1000, "2026-01-01")).unwrap();
+    let id = insert_transaction(
+        &conn,
+        make_input("acc-del", TransactionKind::Income, 1000, "2026-01-01"),
+    )
+    .unwrap();
     let count_before: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
@@ -515,8 +588,11 @@ fn delete_transaction_internal_returns_not_found_for_missing_id() {
 fn delete_transaction_internal_returns_not_found_for_already_deleted() {
     let conn = setup();
     insert_account(&conn, "acc-gone", "现金", "cash", "CNY");
-    let id =
-        insert_transaction(&conn, make_input("acc-gone", "income", 1000, "2026-01-01")).unwrap();
+    let id = insert_transaction(
+        &conn,
+        make_input("acc-gone", TransactionKind::Income, 1000, "2026-01-01"),
+    )
+    .unwrap();
     conn.execute(
         "UPDATE transactions SET is_deleted=1 WHERE id=?1",
         params![id],
@@ -539,7 +615,7 @@ fn insert_transaction_rejects_dividend_and_split_with_not_supported() {
     let conn = setup();
     insert_account(&conn, "acc-unsup", "现金", "cash", "CNY");
 
-    for (kind, amount) in [("dividend", 60), ("split", 0)] {
+    for (kind, amount) in [(TransactionKind::Dividend, 60), (TransactionKind::Split, 0)] {
         let err = insert_transaction(&conn, make_input("acc-unsup", kind, amount, "2026-05-04"))
             .unwrap_err();
         match err {
@@ -568,11 +644,11 @@ fn update_transaction_rejects_dividend_and_split_with_not_supported() {
     insert_account(&conn, "acc-unsup-upd", "现金", "cash", "CNY");
     let id = insert_transaction(
         &conn,
-        make_input("acc-unsup-upd", "expense", 500, "2026-01-01"),
+        make_input("acc-unsup-upd", TransactionKind::Expense, 500, "2026-01-01"),
     )
     .unwrap();
 
-    for (kind, amount) in [("dividend", 60), ("split", 0)] {
+    for (kind, amount) in [(TransactionKind::Dividend, 60), (TransactionKind::Split, 0)] {
         let err = update_transaction_internal(
             &conn,
             &id,
@@ -604,7 +680,7 @@ fn update_transaction_cross_kind_rebuilds_side_effects_atomically() {
     // expense → buy：应建仓 lot。
     let id = insert_transaction(
         &conn,
-        make_input("acc-cash-x", "expense", 500, "2026-01-01"),
+        make_input("acc-cash-x", TransactionKind::Expense, 500, "2026-01-01"),
     )
     .unwrap();
     update_transaction_internal(&conn, &id, make_buy_input("acc-x", "inst-x", 3.0, 1000, 0))
@@ -624,7 +700,7 @@ fn update_transaction_cross_kind_rebuilds_side_effects_atomically() {
     update_transaction_internal(
         &conn,
         &id,
-        make_input("acc-cash-x", "expense", 700, "2026-02-01"),
+        make_input("acc-cash-x", TransactionKind::Expense, 700, "2026-02-01"),
     )
     .unwrap();
     let t = get_transaction_internal(&conn, &id).unwrap();
@@ -814,14 +890,14 @@ fn create_refund_linked_to_expense() {
     )
     .unwrap();
 
-    let (kind, refund_of): (String, Option<String>) = conn
+    let (kind, refund_of): (TransactionKind, Option<String>) = conn
         .query_row(
             "SELECT kind, refund_of_transaction_id FROM transactions WHERE id=?1",
             params![refund_id],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
-    assert_eq!(kind, "refund");
+    assert_eq!(kind, TransactionKind::Refund);
     assert_eq!(refund_of, Some(expense_id));
 }
 
@@ -829,10 +905,13 @@ fn create_refund_linked_to_expense() {
 fn update_transaction_internal_replaces_fields_and_bumps_version() {
     let conn = setup();
     insert_account(&conn, "acc-upd", "现金", "cash", "CNY");
-    let id =
-        insert_transaction(&conn, make_input("acc-upd", "expense", 500, "2026-01-01")).unwrap();
+    let id = insert_transaction(
+        &conn,
+        make_input("acc-upd", TransactionKind::Expense, 500, "2026-01-01"),
+    )
+    .unwrap();
 
-    let mut edited = make_input("acc-upd", "expense", 900, "2026-01-05");
+    let mut edited = make_input("acc-upd", TransactionKind::Expense, 900, "2026-01-05");
     edited.note = Some("改后备注".into());
     update_transaction_internal(&conn, &id, edited).unwrap();
 
@@ -848,13 +927,16 @@ fn update_transaction_internal_replaces_fields_and_bumps_version() {
 fn update_transaction_internal_returns_not_found_for_missing_or_deleted() {
     let conn = setup();
     insert_account(&conn, "acc-upd", "现金", "cash", "CNY");
-    let id =
-        insert_transaction(&conn, make_input("acc-upd", "expense", 500, "2026-01-01")).unwrap();
+    let id = insert_transaction(
+        &conn,
+        make_input("acc-upd", TransactionKind::Expense, 500, "2026-01-01"),
+    )
+    .unwrap();
 
     let err = update_transaction_internal(
         &conn,
         "不存在的id",
-        make_input("acc-upd", "expense", 100, "2026-01-01"),
+        make_input("acc-upd", TransactionKind::Expense, 100, "2026-01-01"),
     )
     .unwrap_err();
     assert!(matches!(err, AppError::NotFound(_)));
@@ -867,7 +949,7 @@ fn update_transaction_internal_returns_not_found_for_missing_or_deleted() {
     let err = update_transaction_internal(
         &conn,
         &id,
-        make_input("acc-upd", "expense", 100, "2026-01-01"),
+        make_input("acc-upd", TransactionKind::Expense, 100, "2026-01-01"),
     )
     .unwrap_err();
     assert!(matches!(err, AppError::NotFound(_)), "已软删除应视为不存在");
@@ -877,13 +959,16 @@ fn update_transaction_internal_returns_not_found_for_missing_or_deleted() {
 fn update_transaction_internal_reuses_kind_validation_transfer_needs_target() {
     let conn = setup();
     insert_account(&conn, "acc-upd", "现金", "cash", "CNY");
-    let id =
-        insert_transaction(&conn, make_input("acc-upd", "expense", 500, "2026-01-01")).unwrap();
+    let id = insert_transaction(
+        &conn,
+        make_input("acc-upd", TransactionKind::Expense, 500, "2026-01-01"),
+    )
+    .unwrap();
 
     let err = update_transaction_internal(
         &conn,
         &id,
-        make_input("acc-upd", "transfer", 1000, "2026-01-02"),
+        make_input("acc-upd", TransactionKind::Transfer, 1000, "2026-01-02"),
     )
     .unwrap_err();
     match err {
@@ -897,12 +982,15 @@ fn update_transaction_internal_cross_kind_expense_to_transfer() {
     let conn = setup();
     insert_account(&conn, "acc-upd-a", "A", "cash", "CNY");
     insert_account(&conn, "acc-upd-b", "B", "cash", "CNY");
-    let id =
-        insert_transaction(&conn, make_input("acc-upd-a", "expense", 500, "2026-01-01")).unwrap();
+    let id = insert_transaction(
+        &conn,
+        make_input("acc-upd-a", TransactionKind::Expense, 500, "2026-01-01"),
+    )
+    .unwrap();
 
     let transfer = TransactionInput {
         to_account_id: Some("acc-upd-b".into()),
-        ..make_input("acc-upd-a", "transfer", 1000, "2026-01-02")
+        ..make_input("acc-upd-a", TransactionKind::Transfer, 1000, "2026-01-02")
     };
     update_transaction_internal(&conn, &id, transfer).unwrap();
 
@@ -1035,11 +1123,17 @@ fn insert_transaction_audit_fields_uniform_across_kinds() {
     insert_account(&conn, "acc-w2", "银行", "bank", "CNY");
     setup_investment_account(&conn, "acc-inv-w", "inst-w");
 
-    let expense_id =
-        insert_transaction(&conn, make_input("acc-w", "expense", 500, "2026-01-01")).unwrap();
-    let income_id =
-        insert_transaction(&conn, make_input("acc-w", "income", 900, "2026-01-02")).unwrap();
-    let mut transfer = make_input("acc-w", "transfer", 300, "2026-01-03");
+    let expense_id = insert_transaction(
+        &conn,
+        make_input("acc-w", TransactionKind::Expense, 500, "2026-01-01"),
+    )
+    .unwrap();
+    let income_id = insert_transaction(
+        &conn,
+        make_input("acc-w", TransactionKind::Income, 900, "2026-01-02"),
+    )
+    .unwrap();
+    let mut transfer = make_input("acc-w", TransactionKind::Transfer, 300, "2026-01-03");
     transfer.to_account_id = Some("acc-w2".into());
     let transfer_id = insert_transaction(&conn, transfer).unwrap();
     let refund_id = insert_transaction(
@@ -1048,7 +1142,7 @@ fn insert_transaction_audit_fields_uniform_across_kinds() {
             kind: TransactionKind::Refund,
             amount_cents: 200,
             refund_of_transaction_id: Some(expense_id.clone()),
-            ..make_input("acc-w", "refund", 100, "2026-01-04")
+            ..make_input("acc-w", TransactionKind::Refund, 100, "2026-01-04")
         },
     )
     .unwrap();
@@ -1101,8 +1195,11 @@ fn insert_transaction_audit_fields_uniform_across_kinds() {
 fn update_transaction_internal_preserves_created_at_and_refreshes_audit() {
     let conn = setup();
     insert_account(&conn, "acc-upd", "现金", "cash", "CNY");
-    let id =
-        insert_transaction(&conn, make_input("acc-upd", "expense", 500, "2026-01-01")).unwrap();
+    let id = insert_transaction(
+        &conn,
+        make_input("acc-upd", TransactionKind::Expense, 500, "2026-01-01"),
+    )
+    .unwrap();
     let created_at: String = conn
         .query_row(
             "SELECT created_at FROM transactions WHERE id=?1",
@@ -1111,7 +1208,7 @@ fn update_transaction_internal_preserves_created_at_and_refreshes_audit() {
         )
         .unwrap();
 
-    let mut edited = make_input("acc-upd", "expense", 900, "2026-01-05");
+    let mut edited = make_input("acc-upd", TransactionKind::Expense, 900, "2026-01-05");
     edited.note = Some("改后备注".into());
     update_transaction_internal(&conn, &id, edited).unwrap();
 
@@ -1144,7 +1241,7 @@ fn insert_transaction_generic_converts_native_via_amount_seam() {
         &conn,
         TransactionInput {
             currency_code: "USD".into(),
-            ..make_input("acc-usd", "expense", 10000, "2026-01-01")
+            ..make_input("acc-usd", TransactionKind::Expense, 10000, "2026-01-01")
         },
     )
     .unwrap();

@@ -104,6 +104,12 @@ pub(crate) fn revert(
         TransactionKind::Buy | TransactionKind::Sell => {
             investment::revert(conn, id, kind, partial_sold_msg)
         }
-        _ => Ok(()),
+        // 普通 kind 与未实现的 dividend/split 无持仓副作用，为 no-op。
+        TransactionKind::Income
+        | TransactionKind::Expense
+        | TransactionKind::Transfer
+        | TransactionKind::Refund
+        | TransactionKind::Dividend
+        | TransactionKind::Split => Ok(()),
     }
 }

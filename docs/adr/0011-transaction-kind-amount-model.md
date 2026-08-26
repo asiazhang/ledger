@@ -18,7 +18,7 @@
 
 1. **`transaction` 领域模块为唯一真源，含两个接缝：**
    - **Writer 接缝**（`src-tauri/src/transaction/writer.rs`）：列映射 + 字段归一化 + 本位币折算 + INSERT/UPDATE。`normalize`（通用 kind：金额>0、transfer 必须有 `to_account_id`、refund 继承原支出账户/币种/分类）+ `insert_row`（模块内生成 id 与审计字段）+ `update_row`（保留 created_at 与幂等身份，version 递增）。所有写入路径（创建/修改、买入/卖出行、定时引擎、批量导入）都经它落库；幂等/去重、事务边界、buy/sell 持仓副作用留在命令层编排。
-   - **Amount 接缝**（`src-tauri/src/transaction/amount.rs`）：`TransactionKind` 枚举（8 种，字符串↔枚举互转，serde 小写字符串序列化）+ kind→度量系数矩阵 + `convert_to_native` 本位币折算。
+   - **Amount 接缝**（`src-tauri/src/transaction/amount.rs`）：`TransactionKind` 枚举（8 种，唯一表示；DB/wire 边界的小写字符串映射经 `as_str`/`parse` 收口，serde 小写字符串序列化）+ kind→度量系数矩阵 + `convert_to_native` 本位币折算。
 2. **kind 真源为 8 种**，与 `transactions.kind` 的 CHECK 约束（V001）一一对应：
    `income` / `expense` / `transfer` / `refund` / `buy` / `sell` / `dividend` / `split`。
 3. **raw/native 分离语义唯一。** `amount_cents`（原始币种金额）与 `amount_native_cents`（本位币金额）在模块内语义唯一；`convert_to_native` 以**全局默认币种**（当前常量 `CNY`，未来读用户设置）为折算基准，**与账户币种无关**（避免跨账户漂移），正反向汇率兜底、缺汇率报错不静默混币种。MVP 阶段多币种汇率 1:1 保持不变。

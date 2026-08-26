@@ -1,8 +1,8 @@
 //! Amount 接缝（issue #54 / spec #52）：交易金额口径的单一权威。
 //!
 //! 三块职责：
-//! - [`TransactionKind`] 枚举：8 种交易类型的模块内真源（字符串 ↔ 枚举互转，
-//!   serde 以小写字符串序列化，与裸 String 的 wire 格式一致）。
+//! - [`TransactionKind`] 枚举：8 种交易类型的模块内真源（DB/wire 边界的小写字符串
+//!   映射经 `as_str` / `parse` 收口，serde 以小写字符串序列化，wire 格式不变）。
 //! - kind→度量矩阵：[`signed_amount`]（行级/展示）与四个 SQL 片段 builder
 //!   （服务端聚合）由同一 [`coefficient`] 矩阵驱动，二者口径恒一致。
 //! - [`convert_to_native`]：raw → 本位币折算，基准为全局默认币种
@@ -108,18 +108,8 @@ impl fmt::Display for TransactionKind {
     }
 }
 
-// 与 `parse` 同语义的 `FromStr`（与 ScheduledKind 等 kind 枚举先例一致，
-// 供 `"income".parse()` 等使用点直接解析）。
-impl std::str::FromStr for TransactionKind {
-    type Err = AppError;
-
-    fn from_str(s: &str) -> Result<Self> {
-        TransactionKind::parse(s)
-    }
-}
-
-// rusqlite：从 `transactions.kind` 列直接读为枚举（DB 边界，String 兼容层仍在：
-// 需要裸 String 时先 `as_str()` 或先读 String 再 parse）。
+// rusqlite：从 `transactions.kind` 列直接读为枚举（DB 边界：TEXT 列经 [`TransactionKind::parse`]
+// 严格映射，未知值即 FromSql 错误——DB CHECK 约束（V001）保证正常数据不可达）。
 impl rusqlite::types::FromSql for TransactionKind {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
         TransactionKind::parse(value.as_str()?)
@@ -146,8 +136,9 @@ impl PartialSchema for TransactionKind {
 
 impl ToSchema for TransactionKind {}
 
-// serde：以小写字符串序列化（wire 兼容，与裸 String 同形）；
-// 反序列化复用 [`TransactionKind::parse`]，未知值报错文案与 parse 同源（serde 包装后附位置信息）。
+// serde：以与 `transactions.kind` 同形的小写字符串序列化（wire 格式即小写字符串，
+// 与裸 String 时代的 JSON 形状一致）；反序列化复用 [`TransactionKind::parse`]，
+// 未知值报错文案与 parse 同源（serde 包装后附位置信息）。
 impl Serialize for TransactionKind {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
@@ -216,15 +207,31 @@ fn coefficient(kind: TransactionKind, measure: Measure) -> i64 {
         Measure::ExpenseNet => match kind {
             TransactionKind::Expense => 1,
             TransactionKind::Refund => -1,
-            _ => 0,
+            TransactionKind::Income
+            | TransactionKind::Transfer
+            | TransactionKind::Buy
+            | TransactionKind::Sell
+            | TransactionKind::Dividend
+            | TransactionKind::Split => 0,
         },
         Measure::IncomeNet => match kind {
             TransactionKind::Income | TransactionKind::Dividend => 1,
-            _ => 0,
+            TransactionKind::Expense
+            | TransactionKind::Transfer
+            | TransactionKind::Refund
+            | TransactionKind::Buy
+            | TransactionKind::Sell
+            | TransactionKind::Split => 0,
         },
         Measure::RefundGross => match kind {
             TransactionKind::Refund => 1,
-            _ => 0,
+            TransactionKind::Income
+            | TransactionKind::Expense
+            | TransactionKind::Transfer
+            | TransactionKind::Buy
+            | TransactionKind::Sell
+            | TransactionKind::Dividend
+            | TransactionKind::Split => 0,
         },
     }
 }

@@ -1,7 +1,8 @@
 //! `transaction::amount` 接缝的单元测试（issue #54 / spec #52）。
 //!
-//! 断言模块外部行为：kind 字符串互转、kind→度量矩阵、SQL 片段在真实内存库上
-//! 与 Rust 助手聚合一致、本位币折算（基准为全局默认币种，独立于账户币种）。
+//! 断言模块外部行为：kind 与 DB/wire 字符串边界的严格互转、kind→度量矩阵、
+//! SQL 片段在真实内存库上与 Rust 助手聚合一致、本位币折算（基准为全局默认币种，
+//! 独立于账户币种）。
 
 use rusqlite::Connection;
 use rusqlite::params;
@@ -165,16 +166,17 @@ fn sql_sum(conn: &Connection, expr: &str) -> i64 {
 
 fn rust_sum(conn: &Connection, measure: Measure) -> i64 {
     // 与 insert_txn 的 kind/amount 布局耦合：按写入顺序读回全部行。
+    // kind 列经 FromSql 直读为枚举（DB 边界映射，与生产路径一致）。
     let mut stmt = conn
         .prepare("SELECT kind, amount_native_cents FROM transactions WHERE is_deleted=0")
         .unwrap();
-    let rows: Vec<(String, i64)> = stmt
+    let rows: Vec<(TransactionKind, i64)> = stmt
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
         .unwrap()
         .map(|r| r.unwrap())
         .collect();
     rows.into_iter()
-        .map(|(k, amt)| signed_amount(TransactionKind::parse(&k).unwrap(), amt, measure))
+        .map(|(k, amt)| signed_amount(k, amt, measure))
         .sum()
 }
 
@@ -323,7 +325,7 @@ fn account_flow_expr_balances_match_rust() {
                  FROM transactions WHERE is_deleted=0",
             )
             .unwrap();
-        let rows: Vec<(String, i64, String, Option<String>)> = stmt
+        let rows: Vec<(TransactionKind, i64, String, Option<String>)> = stmt
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
             .unwrap()
             .map(|r| r.unwrap())
@@ -332,8 +334,7 @@ fn account_flow_expr_balances_match_rust() {
             .filter(|(_, _, acc, to)| {
                 acc == account || (to.is_some() && to.as_deref() == Some(account))
             })
-            .map(|(k, amt, acc, _to)| {
-                let kind = TransactionKind::parse(&k).unwrap();
+            .map(|(kind, amt, acc, _to)| {
                 let side = if acc == account {
                     TransferSide::Out
                 } else {

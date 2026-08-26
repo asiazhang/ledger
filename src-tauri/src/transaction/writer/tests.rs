@@ -82,7 +82,7 @@ fn read_row(conn: &Connection, id: &str) -> NormalizedRow {
         )
         .unwrap();
     NormalizedRow {
-        kind: TransactionKind::parse(&row.kind).unwrap(),
+        kind: row.kind,
         amount_cents: row.amount_cents,
         currency_code: row.currency_code,
         amount_native_cents: row.amount_native_cents,
@@ -97,7 +97,7 @@ fn read_row(conn: &Connection, id: &str) -> NormalizedRow {
 
 /// `read_row` 的中间读回结构（命名字段避免长元组）。
 struct RowFields {
-    kind: String,
+    kind: TransactionKind,
     amount_cents: i64,
     currency_code: String,
     amount_native_cents: i64,

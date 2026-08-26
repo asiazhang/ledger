@@ -205,7 +205,7 @@ fn readback_kind_amount(
         &world.conn,
         &TransactionListFilter {
             kind: Some(
-                kind.parse()
+                TransactionKind::parse(&kind)
                     .unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
             ),
             ..Default::default()
