@@ -28,9 +28,9 @@ pub fn list_transactions_internal(
         where_clause.push_str(" AND account_id = ?");
         params.push(account_id.to_string());
     }
-    if let Some(kind) = filter.kind.as_deref() {
+    if let Some(kind) = filter.kind {
         where_clause.push_str(" AND kind = ?");
-        params.push(kind.to_string());
+        params.push(kind.as_str().to_string());
     }
 
     let total: i64 = conn.query_row(
@@ -84,7 +84,7 @@ pub fn get_transaction_internal(conn: &Connection, id: &str) -> Result<Transacti
 /// 若该买入已有部分卖出（`remaining_quantity < initial_quantity`）则拒绝删除。
 /// 不存在的 id 返回 `AppError::NotFound`（HTTP 侧映射 404）。IPC 与 HTTP 端点共用本函数。
 pub fn delete_transaction_internal(conn: &Connection, id: &str) -> Result<()> {
-    let kind_str: String = conn
+    let kind: TransactionKind = conn
         .query_row(
             "SELECT kind FROM transactions WHERE id=?1 AND is_deleted=0",
             rusqlite::params![id],
@@ -92,7 +92,6 @@ pub fn delete_transaction_internal(conn: &Connection, id: &str) -> Result<()> {
         )
         .optional()?
         .ok_or_else(|| AppError::NotFound(format!("交易不存在: {id}")))?;
-    let kind = TransactionKind::parse(&kind_str)?;
 
     if kind == TransactionKind::Buy {
         // 守卫（部分卖出拒绝）与持仓关联清理经行为层 revert（与按 id 修改共用，见 #50 / issue #72）。

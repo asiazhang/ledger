@@ -2,6 +2,7 @@ use super::*;
 use rusqlite::Connection;
 
 use crate::db::{device_id, init_db, now_iso, open_in_memory};
+use crate::transaction::amount::TransactionKind;
 use rusqlite::params;
 
 fn setup() -> Connection {
@@ -20,7 +21,7 @@ fn insert_account(conn: &Connection, id: &str, name: &str, kind: &str, currency:
 
 fn make_input(account_id: &str, kind: &str, amount: i64, date: &str) -> TransactionInput {
     TransactionInput {
-        kind: kind.into(),
+        kind: TransactionKind::parse(kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: "CNY".into(),
         account_id: account_id.into(),
@@ -75,7 +76,7 @@ fn create_transfer_with_to_account() {
     let id = insert_transaction(
         &conn,
         TransactionInput {
-            kind: "transfer".into(),
+            kind: TransactionKind::Transfer,
             amount_cents: 3000,
             currency_code: "CNY".into(),
             account_id: "acc-from".into(),
@@ -230,7 +231,7 @@ fn list_transactions_pagination_total_respects_filters() {
     let by_kind = list_transactions_internal(
         &conn,
         &TransactionListFilter {
-            kind: Some("income".into()),
+            kind: Some(TransactionKind::Income),
             page: Some(1),
             page_size: Some(1),
             ..Default::default()
@@ -405,7 +406,7 @@ fn list_transactions_out_of_range_page_and_empty_result() {
     let none = list_transactions_internal(
         &conn,
         &TransactionListFilter {
-            kind: Some("income".into()),
+            kind: Some(TransactionKind::Income),
             page: Some(1),
             page_size: Some(10),
             ..Default::default()
@@ -587,7 +588,7 @@ fn update_transaction_rejects_dividend_and_split_with_not_supported() {
         }
         // 修改被拒绝后原交易保持不变（事务回滚）。
         let t = get_transaction_internal(&conn, &id).unwrap();
-        assert_eq!(t.kind, "expense");
+        assert_eq!(t.kind, TransactionKind::Expense);
         assert_eq!(t.amount_cents, 500);
     }
 }
@@ -609,7 +610,7 @@ fn update_transaction_cross_kind_rebuilds_side_effects_atomically() {
     update_transaction_internal(&conn, &id, make_buy_input("acc-x", "inst-x", 3.0, 1000, 0))
         .unwrap();
     let t = get_transaction_internal(&conn, &id).unwrap();
-    assert_eq!(t.kind, "buy");
+    assert_eq!(t.kind, TransactionKind::Buy);
     let lots: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM security_lots WHERE buy_transaction_id=?1",
@@ -627,7 +628,7 @@ fn update_transaction_cross_kind_rebuilds_side_effects_atomically() {
     )
     .unwrap();
     let t = get_transaction_internal(&conn, &id).unwrap();
-    assert_eq!(t.kind, "expense");
+    assert_eq!(t.kind, TransactionKind::Expense);
     let (lots_after, stx_after): (i64, i64) = conn
         .query_row(
             "SELECT (SELECT COUNT(*) FROM security_lots WHERE buy_transaction_id=?1), \
@@ -648,7 +649,7 @@ fn make_buy_input(
     fee: i64,
 ) -> TransactionInput {
     TransactionInput {
-        kind: "buy".into(),
+        kind: TransactionKind::Buy,
         amount_cents: 0,
         currency_code: "USD".into(),
         account_id: account_id.into(),
@@ -755,7 +756,7 @@ fn delete_transaction_internal_rejects_partially_sold_buy() {
     .unwrap();
 
     let mut sell = make_buy_input("acc-inv2", "inst-msft", 4.0, 11000, 0);
-    sell.kind = "sell".into();
+    sell.kind = TransactionKind::Sell;
     sell.date = "2026-01-20".into();
     insert_transaction(&conn, sell).unwrap();
 
@@ -774,7 +775,7 @@ fn create_refund_linked_to_expense() {
     let expense_id = insert_transaction(
         &conn,
         TransactionInput {
-            kind: "expense".into(),
+            kind: TransactionKind::Expense,
             amount_cents: 1000,
             currency_code: "CNY".into(),
             account_id: "acc-ref".into(),
@@ -795,7 +796,7 @@ fn create_refund_linked_to_expense() {
     let refund_id = insert_transaction(
         &conn,
         TransactionInput {
-            kind: "refund".into(),
+            kind: TransactionKind::Refund,
             amount_cents: 200,
             currency_code: "CNY".into(),
             account_id: "acc-ref".into(),
@@ -836,7 +837,7 @@ fn update_transaction_internal_replaces_fields_and_bumps_version() {
     update_transaction_internal(&conn, &id, edited).unwrap();
 
     let t = get_transaction_internal(&conn, &id).unwrap();
-    assert_eq!(t.kind, "expense");
+    assert_eq!(t.kind, TransactionKind::Expense);
     assert_eq!(t.amount_cents, 900);
     assert_eq!(t.date, "2026-01-05");
     assert_eq!(t.note.as_deref(), Some("改后备注"));
@@ -906,7 +907,7 @@ fn update_transaction_internal_cross_kind_expense_to_transfer() {
     update_transaction_internal(&conn, &id, transfer).unwrap();
 
     let t = get_transaction_internal(&conn, &id).unwrap();
-    assert_eq!(t.kind, "transfer");
+    assert_eq!(t.kind, TransactionKind::Transfer);
     assert_eq!(t.to_account_id.as_deref(), Some("acc-upd-b"));
 }
 
@@ -925,7 +926,7 @@ fn update_transaction_internal_buy_rebuilds_lot() {
     update_transaction_internal(&conn, &buy_id, edited).unwrap();
 
     let t = get_transaction_internal(&conn, &buy_id).unwrap();
-    assert_eq!(t.kind, "buy");
+    assert_eq!(t.kind, TransactionKind::Buy);
     assert_eq!(t.amount_cents, 5 * 12000, "买入金额 = 数量×单价+费用");
 
     let (init, remaining): (f64, f64) = conn
@@ -959,7 +960,7 @@ fn update_transaction_internal_rejects_partially_sold_buy() {
     .unwrap();
 
     let mut sell = make_buy_input("acc-inv2", "inst-msft", 4.0, 11000, 0);
-    sell.kind = "sell".into();
+    sell.kind = TransactionKind::Sell;
     sell.date = "2026-01-20".into();
     insert_transaction(&conn, sell).unwrap();
 
@@ -986,17 +987,17 @@ fn update_transaction_internal_sell_reverses_and_reapplies() {
     .unwrap();
 
     let mut sell1 = make_buy_input("acc-inv3", "inst-tsla", 4.0, 11000, 0);
-    sell1.kind = "sell".into();
+    sell1.kind = TransactionKind::Sell;
     let sell_id = insert_transaction(&conn, sell1).unwrap();
 
     // 编辑卖出：数量 4→3、单价上涨。应先回补旧扣减再按新输入重新匹配。
     let mut sell2 = make_buy_input("acc-inv3", "inst-tsla", 3.0, 12000, 0);
-    sell2.kind = "sell".into();
+    sell2.kind = TransactionKind::Sell;
     sell2.date = "2026-02-01".into();
     update_transaction_internal(&conn, &sell_id, sell2).unwrap();
 
     let t = get_transaction_internal(&conn, &sell_id).unwrap();
-    assert_eq!(t.kind, "sell");
+    assert_eq!(t.kind, TransactionKind::Sell);
     assert_eq!(t.amount_cents, 3 * 12000, "卖出收入 = 数量×单价");
 
     // 修改卖出后持仓剩余 = 10 - 3 = 7。
@@ -1044,7 +1045,7 @@ fn insert_transaction_audit_fields_uniform_across_kinds() {
     let refund_id = insert_transaction(
         &conn,
         TransactionInput {
-            kind: "refund".into(),
+            kind: TransactionKind::Refund,
             amount_cents: 200,
             refund_of_transaction_id: Some(expense_id.clone()),
             ..make_input("acc-w", "refund", 100, "2026-01-04")
@@ -1054,7 +1055,7 @@ fn insert_transaction_audit_fields_uniform_across_kinds() {
     let buy_id =
         insert_transaction(&conn, make_buy_input("acc-inv-w", "inst-w", 2.0, 1000, 0)).unwrap();
     let mut sell = make_buy_input("acc-inv-w", "inst-w", 1.0, 1100, 0);
-    sell.kind = "sell".into();
+    sell.kind = TransactionKind::Sell;
     sell.date = "2026-01-11".into();
     let sell_id = insert_transaction(&conn, sell).unwrap();
 

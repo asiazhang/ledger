@@ -102,7 +102,7 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
             .ok_or_else(|| AppError::Invalid("退款必须关联原支出交易".into()))?;
         // 只认未删除的原支出交易；不存在或已软删除均视为无效来源（NotFound），
         // 其余数据库错误（锁/损坏等）原样上抛。
-        let (cat, acc, cur, okind): (Option<String>, String, String, String) = conn
+        let (cat, acc, cur, okind): (Option<String>, String, String, TransactionKind) = conn
             .query_row(
                 "SELECT category_id, account_id, currency_code, kind \
                  FROM transactions WHERE id=?1 AND is_deleted=0",
@@ -111,7 +111,7 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
             )
             .optional()?
             .ok_or_else(|| AppError::NotFound(format!("退款关联的原支出交易不存在: {ref_id}")))?;
-        if okind != "expense" {
+        if okind != TransactionKind::Expense {
             return Err(AppError::Invalid("退款只能关联支出交易".into()));
         }
         (cat, acc, cur, Some(ref_id))

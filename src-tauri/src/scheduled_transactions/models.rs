@@ -39,6 +39,15 @@ impl std::str::FromStr for ScheduledKind {
     }
 }
 
+// rusqlite：从 `scheduled_transactions.kind` 列直接读为枚举（DB 边界）。
+impl rusqlite::types::FromSql for ScheduledKind {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        let s = value.as_str()?;
+        s.parse()
+            .map_err(|e: crate::error::AppError| rusqlite::types::FromSqlError::Other(Box::new(e)))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScheduledStatus {
@@ -155,7 +164,8 @@ impl std::str::FromStr for OccurrenceStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduledTransaction {
     pub id: String,
-    pub kind: String,
+    /// 定时交易类型枚举（serde 小写字符串序列化，wire 与裸 String 一致）。
+    pub kind: ScheduledKind,
     pub status: String,
     pub account_id: String,
     pub category_id: Option<String>,

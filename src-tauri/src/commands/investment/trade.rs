@@ -79,7 +79,7 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
 
     Ok(BuyPlan {
         normalized: NormalizedTransaction {
-            kind: "buy".into(),
+            kind: TransactionKind::Buy,
             amount_cents,
             currency_code: account_currency,
             amount_native_cents,
@@ -152,7 +152,7 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
 
     Ok(SellPlan {
         normalized: NormalizedTransaction {
-            kind: "sell".into(),
+            kind: TransactionKind::Sell,
             amount_cents,
             currency_code: account_currency,
             amount_native_cents,

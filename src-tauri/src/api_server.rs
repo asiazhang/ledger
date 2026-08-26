@@ -6,6 +6,7 @@ use crate::models::{
     CreateTransactionResult, Currency, Transaction, TransactionBatchInput, TransactionInput,
     TransactionListFilter, TransactionListResult, UpdateTransactionInput,
 };
+use crate::transaction::amount::TransactionKind;
 use axum::extract::{FromRef, Path, Query, State};
 use axum::http::StatusCode;
 use axum::http::header;
@@ -106,6 +107,7 @@ struct ErrorResponse {
         TransactionBatchInput,
         TransactionListResult,
         CreateTransactionResult,
+        TransactionKind,
         ErrorResponse
     ))
 )]
@@ -377,13 +379,13 @@ async fn list_currencies_handler(
     description = "返回 `{items, total}`：`items` 为当前页未删除交易，`total` 恒为满足过滤条件的未删除交易总数。\
                   默认按 `date DESC, created_at DESC, id DESC` 确定性排序（同日期同时间戳时按 id 稳定，翻页无重复无遗漏）。\
                   查询参数均为可选：`from`/`to`（YYYY-MM-DD 闭区间）、`account_id`（转出账户）、\
-                  `kind`（income/expense/transfer/buy/sell/refund）、`page`（从 1 起，默认 1）、\
+                  `kind`（income/expense/transfer/buy/sell/refund，闭集枚举，非法值返回 4xx）、`page`（从 1 起，默认 1）、\
                   `page_size`（每页条数，缺省返回全部）、`limit`（取前 N 条，与分页互斥：传 `page_size` 时分页生效）。",
     params(
         ("from" = Option<String>, Query, description = "起始日期（含），YYYY-MM-DD"),
         ("to" = Option<String>, Query, description = "结束日期（含），YYYY-MM-DD"),
         ("account_id" = Option<String>, Query, description = "按转出账户过滤"),
-        ("kind" = Option<String>, Query, description = "income / expense / transfer / buy / sell / refund"),
+        ("kind" = Option<TransactionKind>, Query, description = "income / expense / transfer / buy / sell / refund（闭集枚举，非法值 4xx）"),
         ("limit" = Option<i64>, Query, description = "取前 N 条，缺省返回全部；传 page_size 时分页路径生效"),
         ("page" = Option<usize>, Query, description = "页码，从 1 开始，默认 1"),
         ("page_size" = Option<usize>, Query, description = "每页条数，缺省返回全部（total 恒返回）")
@@ -412,7 +414,8 @@ async fn list_transactions_handler(
                   跳过、同键但本轮内容不同仍跳过；不同键但内容完全相同则都保留），命中已存在（`is_deleted=0`）\
                   交易返回 `{success: true, duplicate: true, id: <已有 id>}`；命中查询走部分唯一索引，非全表扫描。\
                   不带幂等键的行回退到确定性内容哈希 `sha256(date|kind|amount_cents|currency_code|account_id|to_account_id)`\
-                  去重（冻结契约，命中返回 `id: null`）。单条校验失败返回 `success: false` 并附带 `error`，不影响其他交易。",
+                  去重（冻结契约，命中返回 `id: null`）。单条业务校验失败（金额/转账/退款等）返回 `success: false` 并附带 `error`，不影响其他交易；\
+                  `kind` 为闭集枚举（income/expense/transfer/refund/buy/sell/dividend/split），非法 kind 属请求体格式错误，整批返回 4xx。",
     request_body = TransactionBatchInput,
     responses(
         (status = 200, description = "逐条创建结果（含 duplicate 标记）", body = [CreateTransactionResult]),

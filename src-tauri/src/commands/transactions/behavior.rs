@@ -50,7 +50,7 @@ impl Plan {
 /// `dividend` / `split` 已声明但未实现，显式「暂不支持」报错——取代此前
 /// [`writer::normalize`] 兜底的「仅处理通用交易类型」文案（唯一对外可观测变化）。
 pub(crate) fn plan(conn: &Connection, input: &TransactionInput) -> Result<Plan> {
-    let kind = TransactionKind::parse(&input.kind)?;
+    let kind = input.kind;
     match kind {
         TransactionKind::Income
         | TransactionKind::Expense

@@ -9,6 +9,7 @@ use tauri_app_lib::commands::transactions::{
 use tauri_app_lib::db::new_uuid;
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::models::{TransactionInput, TransactionListFilter};
+use tauri_app_lib::transaction::amount::TransactionKind;
 
 use crate::common::{insert_account, new_account_id, query_all_transactions};
 use crate::world::LedgerWorld;
@@ -37,7 +38,9 @@ fn create_txn(
     date: String,
 ) {
     let input = TransactionInput {
-        kind,
+        kind: kind
+            .parse()
+            .unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: "CNY".into(),
         account_id: world.account_id(&account_name),
@@ -68,7 +71,9 @@ fn create_txn_with_note(
     note: String,
 ) {
     let input = TransactionInput {
-        kind,
+        kind: kind
+            .parse()
+            .unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: "CNY".into(),
         account_id: world.account_id(&account_name),
@@ -97,7 +102,7 @@ fn try_transfer_without_target(
     date: String,
 ) {
     let input = TransactionInput {
-        kind: "transfer".into(),
+        kind: TransactionKind::Transfer,
         amount_cents: amount,
         currency_code: "CNY".into(),
         account_id: world.account_id(&account_name),
@@ -130,7 +135,9 @@ fn try_create_txn(
     date: String,
 ) {
     let input = TransactionInput {
-        kind,
+        kind: kind
+            .parse()
+            .unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: "CNY".into(),
         account_id: world.account_id(&account_name),
@@ -161,7 +168,7 @@ fn create_transfer(
     date: String,
 ) {
     let input = TransactionInput {
-        kind: "transfer".into(),
+        kind: TransactionKind::Transfer,
         amount_cents: amount,
         currency_code: "CNY".into(),
         account_id: world.account_id(&from_name),
@@ -189,7 +196,7 @@ fn create_refund(world: &mut LedgerWorld, amount: i64, date: String) {
         .clone()
         .expect("没有上一笔交易可关联");
     let input = TransactionInput {
-        kind: "refund".into(),
+        kind: TransactionKind::Refund,
         amount_cents: amount,
         currency_code: "CNY".into(),
         account_id: {
@@ -228,7 +235,9 @@ fn update_last_txn(world: &mut LedgerWorld, kind: String, amount: i64, date: Str
         .find(|t| t.id == id)
         .expect("原交易不存在");
     let input = TransactionInput {
-        kind,
+        kind: kind
+            .parse()
+            .unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: existing.currency_code.clone(),
         account_id: existing.account_id.clone(),
@@ -258,7 +267,7 @@ fn try_update_last_to_transfer(world: &mut LedgerWorld, amount: i64, date: Strin
         .find(|t| t.id == id)
         .expect("原交易不存在");
     let input = TransactionInput {
-        kind: "transfer".into(),
+        kind: TransactionKind::Transfer,
         amount_cents: amount,
         currency_code: existing.currency_code.clone(),
         account_id: existing.account_id.clone(),
@@ -283,7 +292,7 @@ fn try_update_last_to_transfer(world: &mut LedgerWorld, amount: i64, date: Strin
 #[when(expr = "尝试修改不存在的交易 金额 {int} 日期 {string}")]
 fn try_update_missing_txn(world: &mut LedgerWorld, amount: i64, date: String) {
     let input = TransactionInput {
-        kind: "expense".into(),
+        kind: TransactionKind::Expense,
         amount_cents: amount,
         currency_code: "CNY".into(),
         account_id: "missing-acc".into(),
@@ -332,7 +341,7 @@ fn check_txn_kind_amount(
         world.transactions_list.len()
     );
     let txn = &world.transactions_list[idx];
-    assert_eq!(txn.kind, expected_kind, "交易类型不匹配");
+    assert_eq!(txn.kind.as_str(), expected_kind, "交易类型不匹配");
     assert_eq!(txn.amount_cents, expected_amount, "交易金额不匹配");
 }
 
@@ -351,7 +360,7 @@ fn check_txn_kind_amount_note(
         world.transactions_list.len()
     );
     let txn = &world.transactions_list[idx];
-    assert_eq!(txn.kind, expected_kind, "交易类型不匹配");
+    assert_eq!(txn.kind.as_str(), expected_kind, "交易类型不匹配");
     assert_eq!(txn.amount_cents, expected_amount, "交易金额不匹配");
     assert_eq!(
         txn.note.as_deref(),
@@ -368,7 +377,7 @@ fn check_error(world: &mut LedgerWorld, expected_msg: String) {
 #[then(expr = "该转账类型应为 {string}")]
 fn check_transfer_kind(world: &mut LedgerWorld, expected_kind: String) {
     let txn = world.transactions_list.last().expect("交易列表为空");
-    assert_eq!(txn.kind, expected_kind);
+    assert_eq!(txn.kind.as_str(), expected_kind);
 }
 
 #[then(expr = "该转账 account_id 应匹配账户 {string}")]
@@ -393,8 +402,8 @@ fn check_refund_linked(world: &mut LedgerWorld) {
     // 按 date DESC: refund (04-05) 在前，expense (04-01) 在后
     let refund = &world.transactions_list[0];
     let expense = &world.transactions_list[1];
-    assert_eq!(refund.kind, "refund", "第一条应为退款");
-    assert_eq!(expense.kind, "expense", "第二条应为原支出");
+    assert_eq!(refund.kind, TransactionKind::Refund, "第一条应为退款");
+    assert_eq!(expense.kind, TransactionKind::Expense, "第二条应为原支出");
     assert_eq!(
         refund.refund_of_transaction_id.as_deref(),
         Some(expense.id.as_str()),
@@ -504,7 +513,10 @@ fn check_page_kind(
     assert_paged(
         world,
         TransactionListFilter {
-            kind: Some(kind),
+            kind: Some(
+                kind.parse()
+                    .unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
+            ),
             page: Some(page as usize),
             page_size: Some(page_size as usize),
             ..Default::default()

@@ -17,6 +17,7 @@ use rusqlite::Connection;
 use crate::commands::transactions::{delete_transaction_internal, update_transaction_internal};
 use crate::db::{device_id, init_db, now_iso, open_in_memory};
 use crate::test_utils::{CapturedEvent, capture_events};
+use crate::transaction::amount::TransactionKind;
 use rusqlite::params;
 use tracing::Level;
 
@@ -36,7 +37,7 @@ fn insert_account(conn: &Connection, id: &str, name: &str, kind: &str, currency:
 
 fn make_input(account_id: &str, kind: &str, amount: i64, date: &str) -> TransactionInput {
     TransactionInput {
-        kind: kind.into(),
+        kind: TransactionKind::parse(kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: "CNY".into(),
         account_id: account_id.into(),
@@ -594,7 +595,7 @@ fn make_buy_input(
     fee: i64,
 ) -> TransactionInput {
     TransactionInput {
-        kind: "buy".into(),
+        kind: TransactionKind::Buy,
         amount_cents: 0,
         currency_code: "USD".into(),
         account_id: account_id.into(),

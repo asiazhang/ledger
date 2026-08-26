@@ -5,12 +5,14 @@ use utoipa::ToSchema;
 
 use crate::db::query::FromRow;
 use crate::error::{AppError, Result};
-use crate::transaction::{amount, writer};
+use crate::transaction::amount::TransactionKind;
+use crate::transaction::writer;
 
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct Transaction {
     pub id: String,
-    pub kind: String,
+    /// 交易类型枚举（serde 小写字符串序列化，wire 与裸 String 一致）。
+    pub kind: TransactionKind,
     pub amount_cents: i64,
     pub currency_code: String,
     pub amount_native_cents: i64,
@@ -41,7 +43,9 @@ pub struct TransactionSearchResult {
 
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct TransactionInput {
-    pub kind: String,
+    /// 交易类型枚举（serde 小写字符串反序列化）。非法 kind 在反序列化阶段报 400
+    /// （请求体格式错误，见 batch 端点描述）；合法值 wire 与裸 String 一致。
+    pub kind: TransactionKind,
     pub amount_cents: i64,
     pub currency_code: String,
     pub account_id: String,
@@ -66,7 +70,7 @@ pub struct TransactionInput {
 /// buy/sell 仍需 `instrument_id`/`quantity`/`price_cents`/`fee_cents`。
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct UpdateTransactionInput {
-    pub kind: String,
+    pub kind: TransactionKind,
     pub amount_cents: i64,
     pub currency_code: String,
     pub account_id: String,
@@ -110,7 +114,7 @@ impl From<UpdateTransactionInput> for TransactionInput {
 /// buy/sell 的持仓/卖出关联等副作用由调用方在落库时按其身份（新增或替换）另行执行。
 #[derive(Debug, Clone)]
 pub struct NormalizedTransaction {
-    pub kind: String,
+    pub kind: TransactionKind,
     pub amount_cents: i64,
     pub currency_code: String,
     pub amount_native_cents: i64,
@@ -127,13 +131,14 @@ pub struct NormalizedTransaction {
 /// 转换随模型定义，消费方（通用 kind 归一化后的行、buy/sell 投资层的归一化行）
 /// 直接产出 [`writer::NormalizedRow`] 交给 [`writer::insert_row`]/[`writer::update_row`] 落库；
 /// investment 不再反向 import transactions 模块的行更新函数（双向依赖斩断）。
-/// kind 为非法字符串时返回 `Invalid`（与 [`writer::normalize`] 的解析语义一致），不 panic。
+/// kind 已为 [`TransactionKind`] 枚举直赋（issue #74），转换不可失败；保留 `Result` 签名
+/// 以维持消费方 `?` 传播的既有形状（无多余分支）。
 impl TryFrom<&NormalizedTransaction> for writer::NormalizedRow {
     type Error = AppError;
 
     fn try_from(norm: &NormalizedTransaction) -> Result<Self> {
         Ok(writer::NormalizedRow {
-            kind: amount::TransactionKind::parse(&norm.kind)?,
+            kind: norm.kind,
             amount_cents: norm.amount_cents,
             currency_code: norm.currency_code.clone(),
             amount_native_cents: norm.amount_native_cents,
@@ -180,7 +185,8 @@ pub struct TransactionListFilter {
     /// 按转出账户过滤。
     pub account_id: Option<String>,
     /// 交易类型过滤（income / expense / transfer / buy / sell / refund）。
-    pub kind: Option<String>,
+    /// 枚举反序列化对未知值报参数错误（400），不再静默传字符串给 SQL。
+    pub kind: Option<TransactionKind>,
     /// 取前 N 条（仪表盘"最近 N 条"场景），与分页互斥：传 `page_size` 时分页路径生效。
     /// 沿用 SQLite 原生语义：`limit=0` 返回空，负值无上限。
     pub limit: Option<i64>,

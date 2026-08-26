@@ -140,7 +140,7 @@ pub fn compute_dedup_hash(input: &TransactionInput) -> String {
     let payload = format!(
         "{}|{}|{}|{}|{}|{}",
         input.date,
-        input.kind,
+        input.kind.as_str(),
         input.amount_cents,
         input.currency_code,
         input.account_id,

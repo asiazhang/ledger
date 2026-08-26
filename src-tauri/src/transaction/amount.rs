@@ -17,6 +17,8 @@ use std::fmt::Write as _;
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use utoipa::openapi::{ObjectBuilder, RefOr, Schema, Type};
+use utoipa::{PartialSchema, ToSchema};
 
 use crate::error::{AppError, Result};
 
@@ -105,6 +107,44 @@ impl fmt::Display for TransactionKind {
         f.write_str(self.as_str())
     }
 }
+
+// 与 `parse` 同语义的 `FromStr`（与 ScheduledKind 等 kind 枚举先例一致，
+// 供 `"income".parse()` 等使用点直接解析）。
+impl std::str::FromStr for TransactionKind {
+    type Err = AppError;
+
+    fn from_str(s: &str) -> Result<Self> {
+        TransactionKind::parse(s)
+    }
+}
+
+// rusqlite：从 `transactions.kind` 列直接读为枚举（DB 边界，String 兼容层仍在：
+// 需要裸 String 时先 `as_str()` 或先读 String 再 parse）。
+impl rusqlite::types::FromSql for TransactionKind {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        TransactionKind::parse(value.as_str()?)
+            .map_err(|e| rusqlite::types::FromSqlError::Other(Box::new(e)))
+    }
+}
+
+// OpenAPI（utoipa）：闭集枚举以小写字符串枚举值入文档，与 wire 格式一致
+// （income/expense/transfer/refund/buy/sell/dividend/split）。内联 schema，
+// 消费方（如 `models::Transaction`）字段直接嵌入、无需注册组件。
+impl PartialSchema for TransactionKind {
+    fn schema() -> RefOr<Schema> {
+        RefOr::T(Schema::Object(
+            ObjectBuilder::new()
+                .schema_type(Type::String)
+                .enum_values(Some(TransactionKind::ALL.map(|k| k.as_str().to_string())))
+                .description(Some(
+                    "交易类型（闭集，小写字符串，与 transactions.kind 的 CHECK 约束一致）",
+                ))
+                .build(),
+        ))
+    }
+}
+
+impl ToSchema for TransactionKind {}
 
 // serde：以小写字符串序列化（wire 兼容，与裸 String 同形）；
 // 反序列化复用 [`TransactionKind::parse`]，未知值报错文案与 parse 同源（serde 包装后附位置信息）。

@@ -10,6 +10,7 @@ use tauri_app_lib::commands::transactions::{
     delete_transaction_internal, list_transactions_internal, update_transaction_internal,
 };
 use tauri_app_lib::models::{AccountInput, AccountType, TransactionInput, TransactionListFilter};
+use tauri_app_lib::transaction::amount::TransactionKind;
 
 use crate::common::query_all_transactions;
 use crate::world::{ImportedRow, LedgerWorld};
@@ -81,7 +82,7 @@ fn edit_txn_by_key(world: &mut LedgerWorld, key: String, amount: i64, date: Stri
         )
         .unwrap_or_else(|_| panic!("未找到幂等键为 '{key}' 的交易"));
     let input = TransactionInput {
-        kind: "income".into(),
+        kind: TransactionKind::Income,
         amount_cents: amount,
         currency_code,
         account_id,
@@ -203,7 +204,10 @@ fn readback_kind_amount(
     let result = list_transactions_internal(
         &world.conn,
         &TransactionListFilter {
-            kind: Some(kind.clone()),
+            kind: Some(
+                kind.parse()
+                    .unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
+            ),
             ..Default::default()
         },
     )

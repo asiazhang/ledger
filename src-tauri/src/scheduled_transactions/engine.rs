@@ -155,8 +155,8 @@ pub fn get_plan_detail(conn: &Connection, id: &str) -> Result<ScheduledTransacti
     )?
     .ok_or_else(|| AppError::NotFound("定时计划不存在".into()))?;
 
-    let extension = match core.kind.as_str() {
-        "installment" => {
+    let extension = match core.kind {
+        ScheduledKind::Installment => {
             let ext: InstallmentPlan = query_one(
                 conn,
                 "SELECT scheduled_transaction_id,counterparty,total_amount_cents,total_occurrences \
@@ -166,7 +166,7 @@ pub fn get_plan_detail(conn: &Connection, id: &str) -> Result<ScheduledTransacti
             .ok_or_else(|| AppError::NotFound("分期扩展信息不存在".into()))?;
             serde_json::to_value(ext).unwrap_or_default()
         }
-        "subscription" => {
+        ScheduledKind::Subscription => {
             let ext: SubscriptionPlan = query_one(
                 conn,
                 "SELECT scheduled_transaction_id,counterparty \
@@ -176,7 +176,7 @@ pub fn get_plan_detail(conn: &Connection, id: &str) -> Result<ScheduledTransacti
             .ok_or_else(|| AppError::NotFound("订阅扩展信息不存在".into()))?;
             serde_json::to_value(ext).unwrap_or_default()
         }
-        "scheduled_transfer" => {
+        ScheduledKind::ScheduledTransfer => {
             let ext: ScheduledTransferPlan = query_one(
                 conn,
                 "SELECT scheduled_transaction_id,to_account_id,total_occurrences \
@@ -186,7 +186,6 @@ pub fn get_plan_detail(conn: &Connection, id: &str) -> Result<ScheduledTransacti
             .ok_or_else(|| AppError::NotFound("定时转账扩展信息不存在".into()))?;
             serde_json::to_value(ext).unwrap_or_default()
         }
-        _ => serde_json::Value::Null,
     };
 
     let pending_occurrences: Vec<ScheduledTransactionOccurrence> = query_all(
@@ -227,11 +226,8 @@ pub fn list_plans(conn: &Connection) -> Result<Vec<ScheduledTransactionWithExt>>
 
     let mut results = Vec::with_capacity(cores.len());
     for core in cores {
-        let (counterparty, total_amount_cents, total_occurrences, to_account_id) = match core
-            .kind
-            .as_str()
-        {
-            "installment" => {
+        let (counterparty, total_amount_cents, total_occurrences, to_account_id) = match core.kind {
+            ScheduledKind::Installment => {
                 let ext: InstallmentPlan = query_one(
                         conn,
                         "SELECT scheduled_transaction_id,counterparty,total_amount_cents,total_occurrences \
@@ -251,7 +247,7 @@ pub fn list_plans(conn: &Connection) -> Result<Vec<ScheduledTransactionWithExt>>
                     None,
                 )
             }
-            "subscription" => {
+            ScheduledKind::Subscription => {
                 let ext: SubscriptionPlan = query_one(
                     conn,
                     "SELECT scheduled_transaction_id,counterparty \
@@ -264,7 +260,7 @@ pub fn list_plans(conn: &Connection) -> Result<Vec<ScheduledTransactionWithExt>>
                 });
                 (ext.counterparty, None, None, None)
             }
-            "scheduled_transfer" => {
+            ScheduledKind::ScheduledTransfer => {
                 let ext: ScheduledTransferPlan = query_one(
                     conn,
                     "SELECT scheduled_transaction_id,to_account_id,total_occurrences \
@@ -278,7 +274,6 @@ pub fn list_plans(conn: &Connection) -> Result<Vec<ScheduledTransactionWithExt>>
                 });
                 (None, None, ext.total_occurrences, Some(ext.to_account_id))
             }
-            _ => (None, None, None, None),
         };
         results.push(ScheduledTransactionWithExt {
             core,
@@ -312,8 +307,8 @@ pub fn expand_occurrences(conn: &Connection, st_id: &str) -> Result<Vec<String>>
         return Ok(vec![]);
     }
 
-    let (total_occurrences, is_installment) = match st.kind.as_str() {
-        "installment" => {
+    let (total_occurrences, is_installment) = match st.kind {
+        ScheduledKind::Installment => {
             let ext: InstallmentPlan = query_one(
                 conn,
                 "SELECT scheduled_transaction_id,counterparty,total_amount_cents,total_occurrences \
@@ -323,7 +318,7 @@ pub fn expand_occurrences(conn: &Connection, st_id: &str) -> Result<Vec<String>>
             .ok_or_else(|| AppError::NotFound("分期扩展信息不存在".into()))?;
             (Some(ext.total_occurrences), true)
         }
-        "scheduled_transfer" => {
+        ScheduledKind::ScheduledTransfer => {
             let ext: ScheduledTransferPlan = query_one(
                 conn,
                 "SELECT scheduled_transaction_id,to_account_id,total_occurrences \
@@ -333,7 +328,7 @@ pub fn expand_occurrences(conn: &Connection, st_id: &str) -> Result<Vec<String>>
             .ok_or_else(|| AppError::NotFound("定时转账扩展信息不存在".into()))?;
             (ext.total_occurrences, false)
         }
-        _ => (None, false),
+        ScheduledKind::Subscription => (None, false),
     };
 
     let existing_count: i64 = conn.query_row(
@@ -511,9 +506,11 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
         return Err(AppError::Invalid("关联计划未处于活跃状态".into()));
     }
 
-    let (kind, to_account_id, category_id) = match st.kind.as_str() {
-        "installment" | "subscription" => (TransactionKind::Expense, None, st.category_id.clone()),
-        "scheduled_transfer" => {
+    let (kind, to_account_id, category_id) = match st.kind {
+        ScheduledKind::Installment | ScheduledKind::Subscription => {
+            (TransactionKind::Expense, None, st.category_id.clone())
+        }
+        ScheduledKind::ScheduledTransfer => {
             let ext: ScheduledTransferPlan = query_one(
                 conn,
                 "SELECT scheduled_transaction_id,to_account_id,total_occurrences \
@@ -523,7 +520,6 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
             .ok_or_else(|| AppError::NotFound("定时转账扩展信息不存在".into()))?;
             (TransactionKind::Transfer, Some(ext.to_account_id), None)
         }
-        _ => return Err(AppError::Invalid("未知交易类型".into())),
     };
 
     // 经 Writer 接缝归一化（issue #59 / spec #52）：
@@ -578,24 +574,24 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
 
 /// 检查计划是否所有期次已完成，如果是则标记为 completed。
 fn check_and_complete_plan(conn: &Connection, st_id: &str) -> Result<()> {
-    let kind: String = conn.query_row(
+    let kind: ScheduledKind = conn.query_row(
         "SELECT kind FROM scheduled_transactions WHERE id=?1",
         rusqlite::params![st_id],
         |r| r.get(0),
     )?;
 
-    let total_occurrences: Option<i64> = match kind.as_str() {
-        "installment" => Some(conn.query_row(
+    let total_occurrences: Option<i64> = match kind {
+        ScheduledKind::Installment => Some(conn.query_row(
             "SELECT total_occurrences FROM installment_plans WHERE scheduled_transaction_id=?1",
             rusqlite::params![st_id],
             |r| r.get(0),
         )?),
-        "scheduled_transfer" => conn.query_row(
+        ScheduledKind::ScheduledTransfer => conn.query_row(
             "SELECT total_occurrences FROM scheduled_transfer_plans WHERE scheduled_transaction_id=?1",
             rusqlite::params![st_id],
             |r| r.get(0),
         )?,
-        _ => None,
+        ScheduledKind::Subscription => None,
     };
 
     if let Some(total) = total_occurrences {

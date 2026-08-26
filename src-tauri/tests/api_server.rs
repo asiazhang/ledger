@@ -609,6 +609,56 @@ async fn test_batch_create_transactions_invalid_json_returns_400() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
+/// 非法 kind 在 API 边界即被拒绝（issue #74：kind 为闭集枚举，反序列化阶段校验）：
+/// - batch 请求体任一条 kind 非法 → 整批 4xx（请求体格式错误，axum Json rejection 为 422），
+///   不是逐条 success:false；
+/// - list 查询参数 kind 非法 → 4xx（400）。
+/// 合法 kind 的成功路径不变（由其余测试覆盖）；断言只要求 4xx（用户传递参数错误），
+/// 不绑定具体状态码。
+#[tokio::test]
+async fn test_kind_enum_rejects_unknown_at_api_boundary() {
+    let (app, _) = setup_app();
+
+    // batch：非法 kind → 整批 4xx
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/transactions/batch")
+                .header("content-type", "application/json")
+                .body(Body::from(batch_body(
+                    &[r#"{"kind":"bonus","amount_cents":100,"currency_code":"CNY","account_id":"a","date":"2026-01-01"}"#],
+                    Some(true),
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_client_error(),
+        "非法 kind 应整批 4xx，实际: {}",
+        response.status()
+    );
+
+    // list：非法 kind 查询参数 → 4xx（Query rejection 响应体为纯文本，不走 get_json）
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/transactions?kind=bonus")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_client_error(),
+        "非法 kind 过滤参数应 4xx，实际: {}",
+        response.status()
+    );
+}
+
 async fn post_batch(app: &Router, body: String) -> Vec<serde_json::Value> {
     let response = app
         .clone()
@@ -1450,6 +1500,7 @@ async fn test_sell_native_cents_converted_via_writer_seam() {
 async fn test_delete_buy_transaction_cleans_up_security_lots() {
     use tauri_app_lib::commands::insert_transaction;
     use tauri_app_lib::models::TransactionInput;
+    use tauri_app_lib::transaction::amount::TransactionKind;
 
     let (app, conn) = setup_app();
     {
@@ -1474,7 +1525,7 @@ async fn test_delete_buy_transaction_cleans_up_security_lots() {
         )
         .unwrap();
         let buy = TransactionInput {
-            kind: "buy".into(),
+            kind: TransactionKind::Buy,
             amount_cents: 0,
             currency_code: "USD".into(),
             account_id: "acc-inv-del".into(),
@@ -1685,6 +1736,41 @@ async fn test_openapi_update_transaction_input_omits_idempotency_key() {
     assert!(
         !props.contains_key("idempotency_key"),
         "修改请求体不应含 idempotency_key（幂等键不可编辑）"
+    );
+}
+
+/// kind 迁移为闭集枚举后，OpenAPI 契约锁：`Transaction.kind` 引用
+/// `#/components/schemas/TransactionKind` 组件，组件为小写字符串枚举（与 wire 一致），
+/// 而非 PascalCase 变体名或裸 string（issue #74 迁移锁）。
+#[tokio::test]
+async fn test_openapi_transaction_kind_is_lowercase_enum() {
+    let (app, _) = setup_app();
+    let (_, doc) = get_json(&app, "/api/v1/openapi.json").await;
+    let schemas = doc["components"]["schemas"].as_object().unwrap();
+
+    let tx = &schemas["Transaction"];
+    let kind_ref = &tx["properties"]["kind"];
+    assert_eq!(
+        kind_ref["$ref"], "#/components/schemas/TransactionKind",
+        "Transaction.kind 应为 TransactionKind 组件引用"
+    );
+    let kind_schema = &schemas["TransactionKind"];
+    assert_eq!(
+        kind_schema["type"], "string",
+        "TransactionKind schema 应为 string"
+    );
+    let enum_values: Vec<&str> = kind_schema["enum"]
+        .as_array()
+        .expect("TransactionKind schema 应含 enum")
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        enum_values,
+        vec![
+            "income", "expense", "transfer", "refund", "buy", "sell", "dividend", "split"
+        ],
+        "kind 枚举值应为闭集的 8 个小写字符串"
     );
 }
 

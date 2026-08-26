@@ -3,6 +3,7 @@ use rusqlite::{Connection, params};
 
 use crate::commands::transactions::insert_transaction;
 use crate::models::{PnlFilter, TransactionInput};
+use crate::transaction::amount::TransactionKind;
 
 fn setup_db() -> Connection {
     let mut conn = crate::db::open_in_memory().unwrap();
@@ -70,7 +71,7 @@ fn make_buy_input(
     fee: i64,
 ) -> TransactionInput {
     TransactionInput {
-        kind: "buy".into(),
+        kind: TransactionKind::Buy,
         amount_cents: 0,
         currency_code: "USD".into(),
         account_id: account_id.into(),
@@ -95,7 +96,7 @@ fn make_sell_input(
     fee: i64,
 ) -> TransactionInput {
     TransactionInput {
-        kind: "sell".into(),
+        kind: TransactionKind::Sell,
         amount_cents: 0,
         currency_code: "USD".into(),
         account_id: account_id.into(),

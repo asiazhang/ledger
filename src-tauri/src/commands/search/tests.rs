@@ -9,6 +9,7 @@ use super::text::{build_match_query, build_search_content, pinyin_initials};
 use crate::db::{init_db, open_in_memory};
 use crate::error::Result;
 use crate::models::TransactionSearchResult;
+use crate::transaction::amount::TransactionKind;
 
 fn setup() -> Connection {
     let mut conn = open_in_memory().unwrap();
@@ -287,7 +288,7 @@ fn search_transfer_by_account_name() {
     insert_account(&conn, "acc-1", "现金", "cash", "CNY");
     insert_account(&conn, "acc-2", "招商银行", "bank", "CNY");
     let input = TransactionInput {
-        kind: "transfer".into(),
+        kind: TransactionKind::Transfer,
         amount_cents: 3000,
         currency_code: "CNY".into(),
         account_id: "acc-1".into(),
@@ -502,7 +503,7 @@ fn batch_import_consumes_queue_immediately() {
     let conn = setup();
     insert_account(&conn, "acc-1", "现金", "cash", "CNY");
     let input = crate::models::TransactionInput {
-        kind: "expense".into(),
+        kind: TransactionKind::Expense,
         amount_cents: 1000,
         currency_code: "CNY".into(),
         account_id: "acc-1".into(),
@@ -686,7 +687,7 @@ fn buy_transaction_indexed_with_account_name() {
     )
     .unwrap();
     let input = TransactionInput {
-        kind: "buy".into(),
+        kind: TransactionKind::Buy,
         amount_cents: 0,
         currency_code: "USD".into(),
         account_id: "acc-inv".into(),

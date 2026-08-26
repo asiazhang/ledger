@@ -42,7 +42,7 @@ pub fn update_transaction_internal(
     input: TransactionInput,
 ) -> Result<()> {
     // 读取旧交易 kind，用于按旧 kind 回退持仓/卖出关联；不存在或已删除返回 NotFound。
-    let old_kind_str: String = conn
+    let old_kind: TransactionKind = conn
         .query_row(
             "SELECT kind FROM transactions WHERE id=?1 AND is_deleted=0",
             rusqlite::params![id],
@@ -50,7 +50,6 @@ pub fn update_transaction_internal(
         )
         .optional()?
         .ok_or_else(|| AppError::NotFound(format!("交易不存在: {id}")))?;
-    let old_kind = TransactionKind::parse(&old_kind_str)?;
 
     conn.execute("BEGIN", [])?;
     let res = (|| -> Result<()> {
