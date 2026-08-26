@@ -67,14 +67,14 @@ describe('CategoryForm.vue', () => {
     const btn = wrapper.find('button')
     expect(btn.exists()).toBe(true)
     await btn.trigger('click')
-    // 无账户时只提示不调用后端（mockInvoke 已在 store.loadAll 中被调用清除后应无新调用）
+    // 无账户时只提示不调用后端（mockInvoke 已清除，此处不应再出现 create_transaction 调用）
     const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction')
     expect(calls).toHaveLength(0)
   })
 
   it('在 store 加载前挂载不应崩溃', () => {
     setActivePinia(createPinia())
-    // 不调用 store.loadAll() — 模拟未加载状态
+    // 不预加载参考数据 — 验证挂载不依赖已加载状态
     const wrapper = mount(CategoryForm, {
       props: { kind: 'expense', submitLabel: '记支出' },
     })

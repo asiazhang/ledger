@@ -184,7 +184,7 @@ src/
 - `resetForm()` — 重置所有表单字段
 
 **副作用**：
-- `onMounted` 时调用 `store.loadAll()` + `loadTransactions()` + `loadInstruments()`
+- 参考数据由 `useReferenceStore` self-init + `ledger:changed` 信号兜底（不再手工 `loadAll`）；交易列表 / 标的数据按需加载
 - `watch(kind)` — 切换类型时重置相关字段
 - `watch(accountId)` — buy/sell 时自动更新币种为账户币种
 - `watch(refundTargetId)` — 自动填充账户和币种
@@ -195,21 +195,21 @@ src/
 
 ### `src/stores/app.ts` — `useAppStore`
 
-单一 Pinia store，缓存 `currencies / accounts / categories`。
+纯 UI 设置 store（本地持久化）：主题 / 默认币种 / 备份设置。参考数据（`currencies / accounts / categories`）及全部派生映射已迁至 `useReferenceStore`（见 `src/stores/reference.ts`），本 store 不再暴露参考数据接口（issue #85）。
 
 | 名称 | 类型 | 说明 |
 |------|------|------|
-| `currencies` | `ref<Currency[]>` | 币种列表 |
-| `accounts` | `ref<Account[]>` | 账户列表 |
-| `categories` | `ref<Category[]>` | 分类列表 |
-| `currencyMap` | `computed<Map>` | code → Currency 映射 |
-| `categoryMap` | `computed<Map>` | id → Category 映射 |
-| `accountMap` | `computed<Map>` | id → Account 映射 |
-| `rootCategories` | `computed` | 顶级分类（parent_id 为空） |
-| `expenseCategories` | `computed` | 支出分类 |
-| `incomeCategories` | `computed` | 收入分类 |
-| `categoryPath(id)` | `function` | 返回 `"父 > 子"` 格式的分类路径 |
-| `treeCategoryOptions(kind)` | `function` | 构造 NTreeSelect 树形选项 |
-| `loadAll()` | `async` | 幂等加载所有基础数据 |
+| `theme` | `ref<'dark' \| 'light'>` | 主题（默认 `dark`） |
+| `defaultCurrency` | `ref<string>` | 默认币种代码（默认 `CNY`） |
+| `backupDir` | `ref<string>` | 备份目录（默认空） |
+| `backupMaxCount` | `ref<number>` | 受管备份保留上限（默认 30） |
+| `setTheme(t)` | `function` | 切换主题并持久化到 localStorage |
+| `setDefaultCurrency(code)` | `function` | 设置默认币种并持久化 |
+| `setBackupDir(dir)` | `function` | 设置备份目录并持久化 |
+| `setBackupMaxCount(n)` | `function` | 设置保留上限并持久化 |
 
-**初始化**：`App.vue` 的 `onMounted` 调用一次 `loadAll()`。
+**初始化**：值从 localStorage 恢复；参考数据由 `useReferenceStore` 首次访问 self-init 自动加载，无需本 store 参与。
+
+### `src/stores/reference.ts` — `useReferenceStore`
+
+参考数据（Reference Data）单一来源 store：持有 `currencies / accounts / categories` 三张参考表与全部派生映射（`currencyMap / accountMap / categoryMap`）、分类树逻辑（`rootCategories / expenseCategories / incomeCategories / categoryChildren / categoryPath / treeCategoryOptions`）与失效信号（`status / version`）。加载为 push 生命周期：首次访问 self-init 自动拉取，订阅后端 `ledger:changed` 信号自动重拉（stale-while-revalidate，不闪空）；显式控制用 `refresh()`（强制重拉，在途去重）与 `ensureFresh()`（新鲜窗口内零 IPC）。

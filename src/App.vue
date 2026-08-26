@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, onMounted, ref } from 'vue'
+import { h, ref } from 'vue'
 import { RouterView, useRouter, useRoute } from 'vue-router'
 import {
   NConfigProvider,
@@ -43,10 +43,6 @@ const menuOptions: MenuOption[] = [
 function handleSelect(key: string) {
   router.push({ name: key })
 }
-
-onMounted(() => {
-  store.loadAll()
-})
 
 const title = () => h('div', { style: 'padding: 16px 18px; font-size: 18px; font-weight: 600' }, '📒 Ledger')
 </script>

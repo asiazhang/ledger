@@ -48,7 +48,7 @@ Ledger 是一个基于 Tauri 2 的桌面记账应用，前端 Vue 3 + TypeScript
 `src-tauri/src/error.rs` 定义 `AppError`（thiserror + serde，`#[serde(tag = "kind", content = "message")]`），序列化为 `{kind, message}` 传到前端。`Result<T>` 是 `std::result::Result<T, AppError>`。已实现 `From` 转换：`rusqlite::Error`、`std::io::Error`。新增可失败命令用 `?` 即可。
 
 ### 前端状态与路由
-- 参考数据（`currencies/accounts/categories`）的**单一来源**是 `src/stores/reference.ts` 的 `useReferenceStore`：持有三张参考表、全部派生映射（`currencyMap/accountMap/categoryMap`）、分类树逻辑（`rootCategories/expenseCategories/incomeCategories/categoryChildren/categoryPath/treeCategoryOptions`）与加载函数（`loadAll/loadCurrencies/loadAccounts/loadCategories`）。消费端迁移分批进行中：`useAppStore`（`src/stores/app.ts`）当前仍暴露同套参考数据 getters（delegate 到 `useReferenceStore`，共享同一份状态），新消费者优先从 `useReferenceStore` 读取；迁移完成后 `useAppStore` 将收缩为纯 UI 设置 store（`theme/defaultCurrency/backupDir/backupMaxCount`）。`loadAll()` 由 `App.vue` 在 `onMounted` 调用一次；各视图按需调用 `store.loadAccounts()` 等刷新。
+- 参考数据（`currencies/accounts/categories`）的**单一来源**是 `src/stores/reference.ts` 的 `useReferenceStore`：持有三张参考表、全部派生映射（`currencyMap/accountMap/categoryMap`）、分类树逻辑（`rootCategories/expenseCategories/incomeCategories/categoryChildren/categoryPath/treeCategoryOptions`）与失效信号（`status/version`）。加载为 push 生命周期：首次访问 self-init 自动拉取一次，订阅后端 `ledger:changed` 信号自动重拉（stale-while-revalidate，不闪空）；显式控制用 `refresh()`（强制重拉，在途去重）与 `ensureFresh()`（新鲜窗口内零 IPC）。`useAppStore`（`src/stores/app.ts`）已收缩为**纯 UI 设置 store**（`theme/defaultCurrency/backupDir/backupMaxCount`），不再暴露任何参考数据接口（见 issue #85）。
 - 路由用 hash 模式（`createWebHashHistory`，Tauri webview 需要），6 个视图：dashboard / transactions / accounts / reports / budget / settings。
 - `@` 别名指向 `./src`（在 `vite.config.ts` 与 `tsconfig.json` 同时配置）。
 - Naive UI 采用**按需 import**（非全局注册），`App.vue` 硬编码使用 `darkTheme` 暗色主题。

@@ -53,10 +53,10 @@ Ledger 桌面应用运行期间，AI 编程助手经常经本地 HTTP API（`htt
 - **已完成（分批落地）**：
   - #78：抽出 `useReferenceStore` 作为参考数据单一来源；`useAppStore` 参考数据 getters 全部委托到新 store（共享同一份状态），现有消费者零改动。
   - #79：后端 `ledger:changed` 信号（`src-tauri/src/events.rs`：事件名常量 + `REFERENCE_WRITE_COMMANDS` 清单 + `is_reference_write` 纯函数 + emit 薄胶入口）；`AppHandle` 传入 HTTP 服务器；参考写入端点（账号 / 分类 create/delete）与参考写入 IPC 命令（账号 create/delete，分类 create/update/reorder/delete）成功后 emit；交易类写入不 emit。
-- **待完成（spec #76 后续子任务）**：
   - #81：`useReferenceStore` 内建失效信号（`status` / `version`）+ push 生命周期（订阅 `ledger:changed` → 重拉）+ `refresh()` / `ensureFresh()`。
   - #82–#84：消费端迁移批次（账户 / 分类管理流、交易 / 搜索流、报表 / 预算 / 投资 / 设置流）改为从 `useReferenceStore` 读取并依赖信号刷新。
-  - #85：移除 `useAppStore` 参考数据 getters / load 函数，收缩为纯 UI 设置 store。
+  - #85：移除 `useAppStore` 参考数据 getters / load 函数（含参考 store 的遗留 `loadAll` / 单表 load），收缩为纯 UI 设置 store（主题 / 默认币种 / 备份设置）。
+- **待完成（spec #76 后续子任务）**：
   - #86：端到端整合验证 + 组件反应性测试 + 测试迁移。
 - **文档**：本 ADR + `CONTEXT.md` 术语表新增「参考数据 Reference Data」条目（issue #80）。
 - 无 schema 变更、无迁移。

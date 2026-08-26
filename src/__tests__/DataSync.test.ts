@@ -4,7 +4,7 @@ import { nextTick } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { useAppStore } from '@/stores/app'
+import { useReferenceStore } from '@/stores/reference'
 import SettingsView from '@/views/SettingsView.vue'
 import CategoryManager from '@/components/CategoryManager.vue'
 import type { Currency } from '@/types'
@@ -29,8 +29,8 @@ beforeEach(async () => {
   })
   mockListen.mockReturnValue(Promise.resolve(vi.fn()))
   localStorage.clear()
-  const store = useAppStore()
-  await store.loadAll()
+  const store = useReferenceStore()
+  await store.ensureFresh()
 })
 
 describe('SettingsView 数据管理 tab', () => {

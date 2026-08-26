@@ -26,8 +26,8 @@ export const REFERENCE_FRESH_MS = 60_000
  * 参考数据（Reference Data）单一来源 store。
  *
  * 承载 `currencies / accounts / categories` 三张参考表及全部派生映射
- * （账户/分类/币种映射）与分类树逻辑。`useAppStore` 的参考数据 getters
- * 均委托到本 store，二者共享同一份状态。
+ * （账户/分类/币种映射）与分类树逻辑，作为参考数据（Reference Data）的
+ * 单一来源，消费端一律从本 store 读取。
  *
  * 生命周期（push-first）：
  * - 首次访问 self-init：store 首次被创建时自动触发一次加载；
@@ -157,23 +157,6 @@ export const useReferenceStore = defineStore('reference', () => {
     /* 监听注册失败不阻塞 store（本地事件，极少发生） */
   })
 
-  // —— 遗留加载函数（消费端迁移完成后删除，见 #85） ——
-  // loadAll 保持「总是拉取」语义（委托 refresh，在途自动合并去重，self-init 不重复）。
-  async function loadAll() {
-    return refresh()
-  }
-
-  // 单表加载保持「立即替换」语义；不更新 status/version（遗留行为，仅 #85 前过渡用）。
-  async function loadCurrencies() {
-    currencies.value = await api.listCurrencies()
-  }
-  async function loadAccounts() {
-    accounts.value = await api.listAccounts()
-  }
-  async function loadCategories() {
-    categories.value = await api.listCategories()
-  }
-
   function getCurrency(code: string): Currency | undefined {
     return currencyMap.value.get(code)
   }
@@ -195,10 +178,6 @@ export const useReferenceStore = defineStore('reference', () => {
     treeCategoryOptions,
     refresh,
     ensureFresh,
-    loadAll,
-    loadCurrencies,
-    loadAccounts,
-    loadCategories,
     getCurrency,
   }
 })

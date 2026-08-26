@@ -3,11 +3,11 @@ import { onMounted, ref } from 'vue'
 import { NCard, NGrid, NGridItem, NSpace, NText, NEmpty } from 'naive-ui'
 import TransactionForm from '@/components/TransactionForm.vue'
 import { api } from '@/api'
-import { useAppStore } from '@/stores/app'
+import { useReferenceStore } from '@/stores/reference'
 import { formatAmount, TRANSACTION_KIND_LABELS } from '@/types'
 import type { AccountBalance, Transaction } from '@/types'
 
-const store = useAppStore()
+const reference = useReferenceStore()
 const balances = ref<AccountBalance[]>([])
 const recent = ref<Transaction[]>([])
 
@@ -17,7 +17,6 @@ async function refresh() {
 }
 
 onMounted(async () => {
-  await store.loadAll()
   await refresh()
 })
 </script>
@@ -32,7 +31,7 @@ onMounted(async () => {
               {{ b.account.name }}
             </NText>
             <NText strong style="font-size: 22px">
-              {{ formatAmount(b.balance_cents, store.getCurrency(b.account.currency_code)) }}
+              {{ formatAmount(b.balance_cents, reference.getCurrency(b.account.currency_code)) }}
             </NText>
           </NSpace>
         </NCard>
@@ -56,7 +55,7 @@ onMounted(async () => {
                 <NText depth="2">{{ t.note }}</NText>
               </NSpace>
               <NText :type="t.kind === 'income' ? 'success' : t.kind === 'expense' ? 'error' : t.kind === 'refund' ? 'info' : 'default'">
-                {{ formatAmount(t.amount_native_cents, store.getCurrency(t.currency_code)) }}
+                {{ formatAmount(t.amount_native_cents, reference.getCurrency(t.currency_code)) }}
               </NText>
             </div>
           </NSpace>
