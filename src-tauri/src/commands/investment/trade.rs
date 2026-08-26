@@ -320,8 +320,15 @@ pub(crate) fn prepare(
     match kind {
         TransactionKind::Buy => Ok(Plan::Buy(prepare_buy(conn, input)?)),
         TransactionKind::Sell => Ok(Plan::Sell(prepare_sell(conn, input)?)),
-        other => Err(AppError::Invalid(format!(
-            "投资层仅处理 buy/sell，收到: {other}"
+        // 行为层穷尽分派保证仅转发 buy/sell；其余 kind 属编排错误，显式拒绝防误用
+        // （显式枚举保证新增 kind 时此处编译报错，而非落入兜底）。
+        TransactionKind::Income
+        | TransactionKind::Expense
+        | TransactionKind::Transfer
+        | TransactionKind::Refund
+        | TransactionKind::Dividend
+        | TransactionKind::Split => Err(AppError::Invalid(format!(
+            "投资层仅处理 buy/sell，收到: {kind}"
         ))),
     }
 }
@@ -360,7 +367,14 @@ pub(crate) fn revert(
     match kind {
         TransactionKind::Buy => cleanup_buy_side_effects(conn, id, partial_sold_msg),
         TransactionKind::Sell => reverse_sell(conn, id),
-        _ => Ok(()),
+        // 行为层仅对 buy/sell 调用本函数；其余 kind 无持仓副作用，no-op
+        // （显式枚举保证新增 kind 时此处编译报错，而非落入兜底）。
+        TransactionKind::Income
+        | TransactionKind::Expense
+        | TransactionKind::Transfer
+        | TransactionKind::Refund
+        | TransactionKind::Dividend
+        | TransactionKind::Split => Ok(()),
     }
 }
 
