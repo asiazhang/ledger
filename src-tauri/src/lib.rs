@@ -4,6 +4,7 @@ pub mod commands;
 pub mod db;
 pub mod error;
 pub mod events;
+pub mod item;
 pub mod log_plugin;
 pub mod logger;
 pub mod models;

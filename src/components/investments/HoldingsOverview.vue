@@ -17,8 +17,8 @@ import { useReferenceStore } from '@/stores/reference'
 import { formatAmount, formatQuantity } from '@/types'
 import { useHoldingPriceSync } from '@/composables/useHoldingPriceSync'
 import {
+  formatCurrencyGroups,
   usePortfolioOverview,
-  type CurrencyAmountGroup,
   type PortfolioRow,
 } from '@/composables/usePortfolioOverview'
 
@@ -33,14 +33,6 @@ const { syncing, resultMessage, status, sync } = useHoldingPriceSync()
 async function onSync() {
   await sync()
   if (status.value === 'success') void refresh()
-}
-
-/** 多币种账户的市值/盈亏无法合并成单一数字，按币种逐组格式化 */
-function groupsText(groups: CurrencyAmountGroup[]): string {
-  if (groups.length === 0) return '-'
-  return groups
-    .map((g) => formatAmount(g.cents, reference.currencyMap.get(g.currencyCode)))
-    .join(' / ')
 }
 
 function pnlColor(cents: number): string {
@@ -118,12 +110,12 @@ const overviewColumns: DataTableColumn<PortfolioRow>[] = [
           <NGrid :x-gap="16" cols="1 s:2">
             <NGi>
               <NStatistic label="总市值" data-testid="total-market-value">
-                {{ groupsText(totalMarketValueGroups) }}
+                {{ formatCurrencyGroups(totalMarketValueGroups, reference.currencyMap) }}
               </NStatistic>
             </NGi>
             <NGi>
               <NStatistic label="未实现盈亏合计" data-testid="total-unrealized-pnl">
-                {{ groupsText(totalUnrealizedPnlGroups) }}
+                {{ formatCurrencyGroups(totalUnrealizedPnlGroups, reference.currencyMap) }}
               </NStatistic>
             </NGi>
           </NGrid>

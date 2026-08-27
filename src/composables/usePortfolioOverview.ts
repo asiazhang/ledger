@@ -1,7 +1,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
-import type { Holding } from '@/types'
+import { formatAmount } from '@/types'
+import type { Currency, Holding } from '@/types'
 
 /** 当前持仓概览的一行：Holding 行叠加标的字典与账户的展示信息。 */
 export interface PortfolioRow {
@@ -47,6 +48,20 @@ export function sumByCurrency(
   return [...acc.entries()]
     .map(([code, cents]) => ({ currencyCode: code, cents }))
     .sort((a, b) => a.currencyCode.localeCompare(b.currencyCode))
+}
+
+/**
+ * 按币种分组的合计 → 展示文本：逐组格式化后以「 / 」连接；空分组（全部无行情）降级为「-」。
+ * 首页投资概览卡与盈亏页持仓概览共用此实现，避免第二份分组展示逻辑。
+ */
+export function formatCurrencyGroups(
+  groups: CurrencyAmountGroup[],
+  currencyMap: Map<string, Currency>,
+): string {
+  if (groups.length === 0) return '-'
+  return groups
+    .map((g) => formatAmount(g.cents, currencyMap.get(g.currencyCode)))
+    .join(' / ')
 }
 
 /** 一次拉全「持仓标的」字典的每页条数上限（list_instruments 单页上限） */

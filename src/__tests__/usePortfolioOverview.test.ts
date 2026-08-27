@@ -3,6 +3,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import {
+  formatCurrencyGroups,
   sumByCurrency,
   usePortfolioOverview,
 } from '@/composables/usePortfolioOverview'
@@ -57,6 +58,30 @@ describe('sumByCurrency 按币种汇总金额', () => {
 
   it('全部为空值时返回空数组', () => {
     expect(sumByCurrency([{ currencyCode: 'CNY', cents: null }])).toEqual([])
+  })
+})
+
+describe('formatCurrencyGroups 分组合计展示文本（issue #145 首页复用）', () => {
+  it('逐组格式化后以「 / 」连接', () => {
+    const currencyMap = new Map(
+      [
+        ...mockCurrencies,
+        { code: 'USD', name: '美元', symbol: '$', decimal_places: 2 },
+      ].map((c) => [c.code, c]),
+    )
+    expect(
+      formatCurrencyGroups(
+        [
+          { currencyCode: 'CNY', cents: 300 },
+          { currencyCode: 'USD', cents: -500 },
+        ],
+        currencyMap,
+      ),
+    ).toBe('¥3 / -$5')
+  })
+
+  it('空分组降级为 -', () => {
+    expect(formatCurrencyGroups([], new Map())).toBe('-')
   })
 })
 
