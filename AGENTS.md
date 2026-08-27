@@ -37,7 +37,7 @@ Ledger：Tauri 2 桌面记账应用。前端 Vue 3 + TypeScript + Vite（Naive U
 - 参考数据（currencies/accounts/categories）单一来源是 `src/stores/reference.ts` 的 `useReferenceStore`（三张参考表 + 派生映射 + 分类树 + `status/version` 失效信号；`refresh()` 强制重拉、`ensureFresh()` 新鲜窗口内零 IPC，订阅 `ledger:changed` 信号自动重拉）。
 - `useAppStore`（`src/stores/app.ts`）是**纯 UI 设置 store**（`theme / defaultCurrency / backupDir / backupMaxCount`），不暴露参考数据接口。
 - 路由 hash 模式（Tauri webview 需要），视图与路由在 `src/router/`（以代码为准，README/CONTEXT 若不同步以代码为准并修正文档）。
-- **应用配置归口（ADR-0017）**：前端独享消费的设备偏好存 localStorage；后端消费或随 Backup/Restore 迁移的配置与运行时状态统一存 `app_settings` KV 表（读写经 `src-tauri/src/settings.rs` 枚举收口，key 规范 `<feature>.<name>`），不建单行状态专表；对外 IPC 保持领域命令形状，不做通用 get/set_setting。
+- **应用配置归口（ADR-0017）**：前端独享消费的设备偏好存 localStorage；后端消费或随 Backup/Restore 迁移的配置与运行时状态统一存 `app_settings` KV 表（读写经 `src-tauri/src/settings.rs` 枚举收口，key 规范 `<feature>.<name>`），不建单行状态专表；对外 IPC 保持领域命令形状，不做通用 get/set_setting。**唯一例外**是 DataLocation 引导指针文件（ADR-0018）：它必须在建连前读到，进不了库内，除它之外不得再往库外配置文件里加内容。
 
 ## AI 导入流程
 
