@@ -1,9 +1,14 @@
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useMessage } from "naive-ui";
 import { open, save, confirm } from "@tauri-apps/plugin-dialog";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useAppStore } from "@/stores/app";
 import { api } from "@/api";
-import type { AutoBackupState, BackupFileInfo } from "@/types";
+import type {
+  AutoBackupState,
+  BackupFileInfo,
+  BackupKind,
+} from "@/types";
 import {
   defaultBackupFileName,
   isManagedBackupPath,
@@ -12,6 +17,10 @@ import {
 
 // 备份文件列表与滚动清理。命名规则与后端受管备份规则保持一致
 // （前缀集合与受管判定收口在 `src/utils/backup-name.ts`，issue #127）。
+// 后端在自动备份完成 / 备份清理成功后发出 `ledger:backups-changed`
+// 无 payload 信号（issue #129，与 `ledger:changed` 平行），本模块订阅后
+// 自动刷新备份列表与自动备份状态，无需手动刷新。
+const BACKUPS_CHANGED_EVENT = "ledger:backups-changed";
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -21,6 +30,11 @@ function formatSize(bytes: number): string {
 
 function formatBackupTime(iso: string): string {
   return iso.slice(0, 16).replace("T", " ");
+}
+
+/** 来源展示文案：自动 / 手动；旧数据缺字段按手动（与后端回落一致）。 */
+function sourceText(kind: BackupKind): string {
+  return kind === "auto" ? "自动" : "手动";
 }
 
 export function useBackup() {
@@ -68,6 +82,7 @@ export function useBackup() {
       ...b,
       size_text: formatSize(b.size_bytes),
       created_at: formatBackupTime(b.created_at),
+      source_text: sourceText(b.kind),
     })),
   );
 
@@ -221,9 +236,26 @@ export function useBackup() {
     }
   }
 
-  onMounted(() => {
+  let unlistenBackupsChanged: UnlistenFn | null = null;
+
+  onMounted(async () => {
     void refreshBackups();
     void refreshAutoBackupState();
+    // 订阅备份产物变更信号（issue #129）：自动备份完成 / 清理后列表自动刷新。
+    try {
+      unlistenBackupsChanged = await listen(BACKUPS_CHANGED_EVENT, () => {
+        void refreshBackups();
+        void refreshAutoBackupState();
+      });
+    } catch (e) {
+      // 订阅失败不影响手动操作路径：列表仍可经按钮刷新。
+      console.warn("订阅 ledger:backups-changed 失败", e);
+    }
+  });
+
+  onUnmounted(() => {
+    unlistenBackupsChanged?.();
+    unlistenBackupsChanged = null;
   });
 
   return {

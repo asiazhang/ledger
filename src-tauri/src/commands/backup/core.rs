@@ -69,6 +69,9 @@ pub struct BackupFileInfo {
     pub path: String,
     pub size_bytes: u64,
     pub created_at: String,
+    /// 备份触发来源（issue #129，列表展示用）：元数据 `kind` 为权威来源，
+    /// 读取失败（非 zip / 元数据损坏的残缺包）按文件名前缀回落。
+    pub kind: BackupKind,
 }
 
 /// 备份滚动清理结果。
@@ -152,14 +155,24 @@ pub fn list_managed_backups(dir: &Path) -> Result<Vec<BackupFileInfo>> {
         .into_iter()
         .map(|(ts, path)| {
             let size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            let file_name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            // 来源优先读产物元数据；残缺包按前缀回落（自动前缀即 auto，否则 manual）。
+            let kind = read_backup_kind(&path).unwrap_or_else(|_| {
+                if file_name.starts_with(crate::auto_backup::AUTO_BACKUP_PREFIX) {
+                    BackupKind::Auto
+                } else {
+                    BackupKind::Manual
+                }
+            });
             Ok(BackupFileInfo {
-                file_name: path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
+                file_name,
                 path: path.to_string_lossy().into_owned(),
                 size_bytes,
                 created_at: ts.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                kind,
             })
         })
         .collect()

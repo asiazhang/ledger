@@ -277,6 +277,8 @@ fn legacy_backup_restores_and_lists_without_error() {
         read_backup_kind(Path::new(&list[0].path)).unwrap(),
         BackupKind::Manual
     );
+    // 列表项自带来源字段（issue #129）：旧格式缺 kind 按手动展示。
+    assert_eq!(list[0].kind, BackupKind::Manual);
 
     // 恢复：旧格式包完整还原数据。
     let db_path = temp_file("legacy-restore-db");
@@ -324,7 +326,10 @@ fn list_and_prune_managed_backups() {
         "auto 前缀同样受管且按时间排序"
     );
     assert_eq!(list[0].created_at, "2026-02-01T01:01:01Z");
+    // stub 文件读不出元数据：按文件名前缀回落（issue #129 展示用）。
+    assert_eq!(list[0].kind, BackupKind::Auto);
     assert_eq!(list[3].file_name, "ledger-backup-20260101-010101.db.zip");
+    assert_eq!(list[3].kind, BackupKind::Manual);
 
     // 修剪到 2：删除最旧的手动 2 个；不匹配文件与目录不受影响。
     let r = prune_managed_backups(&dir, 2).unwrap();

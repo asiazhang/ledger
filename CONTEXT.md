@@ -485,6 +485,7 @@
   - BackupDirectory 未配置时自动备份静默不执行，设置页提示引导配置。
   - 自动备份的开关与调度状态（DirtyMarker、下次到期时间、上次备份时间）存于 `ledger.db` 的 AppSettings 表（后端权威，ADR-0016/0017），随 Backup/Restore 迁移；`backupDir`/`backupMaxCount` 仍属设备本地偏好。
   - 失败不重试（保留 DirtyMarker，下个周期重试），成功不通知用户；产物同为 ManagedBackup，参与滚动清理。
+  - 备份产物变更（自动备份完成 / 受管备份清理）成功后发出无 payload 的 `ledger:backups-changed` 信号（issue #129，与参考失效信号 `ledger:changed` 平行）；前端设置页订阅该信号自动刷新备份列表与自动备份状态。
 - **别名**：不使用"定时备份"（偏计划任务语义）、"自动定时备份"（啰嗦，正式术语"自动备份"）。
 
 ## DirtyMarker（脏标记）

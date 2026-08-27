@@ -240,11 +240,14 @@ fn gate(conn: &Connection, dir: Option<&str>) -> Result<(AutoBackupState, String
     Ok((state, dir.to_string()))
 }
 
-/// 把执行结果归一化为 [`AttemptOutcome`] 并打日志（失败 warn，成功 info）。
+/// 把执行结果归一化为 [`AttemptOutcome`] 并打日志（失败 warn，成功 info）。成功
+/// 产物改变备份列表，一并发出 `ledger:backups-changed` 信号（issue #129），
+/// 前端设置页据此自动刷新列表；发射失败静默忽略。
 fn classify_result(trigger: &str, performed: crate::error::Result<String>) -> AttemptOutcome {
     match performed {
         Ok(path) => {
             tracing::info!(trigger, path = %path, "自动备份完成");
+            crate::events::emit_backups_changed_current();
             AttemptOutcome::Performed { path }
         }
         Err(e) => {

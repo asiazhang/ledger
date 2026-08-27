@@ -1,19 +1,51 @@
-//! 事件发射（issue #79）：参考写入成功后的 `ledger:changed` 失效信号。
+//! 事件发射：写入/产物变更后的粗粒度失效信号。
 //!
-//! `ledger:changed` 是**通用、粗粒度、无 payload** 的信号：参考数据
-//! （`currencies / accounts / categories`）任一写入成功后由调用方 emit，
-//! 前端 `useReferenceStore` 订阅后自动重拉三张参考表。交易类写入本期**不触发**
-//! （不改参考表），日后需要交易视图实时刷新时再补 emitter，不重设计信号。
-//!
-//! 「是否为参考写入」的判定收敛在本模块：IPC 命令清单见
-//! [`REFERENCE_WRITE_COMMANDS`]，纯函数 [`is_reference_write`] 承载判定，
-//! 命令层统一经 [`emit_reference_changed`] 走该判定；HTTP 端点（账号/分类
-//! create/delete）结构上即参考写入，直接经 [`emit_ledger_changed`] 发射。
+//! - `ledger:changed`（issue #79）：参考数据（`currencies / accounts / categories`）
+//!   任一写入成功后由调用方 emit，前端 `useReferenceStore` 订阅后自动重拉三张参考表。
+//!   「是否为参考写入」的判定收敛在本模块：IPC 命令清单见 [`REFERENCE_WRITE_COMMANDS`]，
+//!   纯函数 [`is_reference_write`] 承载判定，命令层统一经 [`emit_reference_changed`] 走该
+//!   判定；HTTP 端点（账号/分类 create/delete）结构上即参考写入，直接经
+//!   [`emit_ledger_changed`] 发射。交易类写入不触发。
+//! - `ledger:backups-changed`（issue #129）：自动备份完成 / 受管备份清理成功后 emit，
+//!   与前者平行、同样无 payload；前端设置页订阅后自动刷新备份列表与自动备份状态。
+//!   深路径执行点拿不到 `AppHandle`，经 [`init_event_app`] 注入的镜像句柄发射。
+
+use std::sync::OnceLock;
 
 use tauri::{AppHandle, Emitter};
 
 /// 通用参考数据失效信号事件名（前端订阅；无 payload）。
 pub const LEDGER_CHANGED: &str = "ledger:changed";
+
+/// 备份产物变更信号事件名（issue #129；无 payload，与 [`LEDGER_CHANGED`] 平行）。
+/// 自动备份完成、受管备份清理等改变备份列表的动作成功后由后端发出，
+/// 前端设置页据此自动刷新备份列表与自动备份状态。
+pub const BACKUPS_CHANGED: &str = "ledger:backups-changed";
+
+/// 进程级应用句柄镜像：自动备份的深路径执行点（如写时顺带检查
+/// [`crate::auto_backup::on_write`]）只持有 `&Connection`，拿不到 Tauri 的
+/// `AppHandle`——启动时经 [`init_event_app`] 注入一次，深层执行点经
+/// [`emit_backups_changed_current`] 发射；未注入（单测环境）时静默跳过。
+static EVENT_APP: OnceLock<AppHandle> = OnceLock::new();
+
+/// 启动时注入应用句柄（仅 setup 调用一次；重复调用以首次为准）。
+pub fn init_event_app(app: &AppHandle) {
+    let _ = EVENT_APP.set(app.clone());
+}
+
+/// 发出 `ledger:backups-changed` 信号（无 payload）。事件发射失败不影响写入结果，静默忽略。
+pub fn emit_backups_changed(app: &AppHandle) {
+    let _ = app.emit(BACKUPS_CHANGED, ());
+}
+
+/// 深路径发射入口：经进程级镜像句柄发出 [`BACKUPS_CHANGED`] 信号，
+/// 句柄未注入时静默跳过。供拿不到 `AppHandle` 的深层执行点使用；
+/// 命令层持有真实句柄时应直接走 [`emit_backups_changed`]。
+pub fn emit_backups_changed_current() {
+    if let Some(app) = EVENT_APP.get() {
+        emit_backups_changed(app);
+    }
+}
 
 /// 参考写入 IPC 命令清单：命中即改动参考表，成功后应 emit `ledger:changed`。
 /// 新增参考写入命令时同步扩充本清单，并由 [`is_reference_write`] 单测锁定。
@@ -84,5 +116,21 @@ mod tests {
     #[test]
     fn event_name_is_generic() {
         assert_eq!(LEDGER_CHANGED, "ledger:changed");
+    }
+
+    #[test]
+    fn backups_changed_event_name() {
+        // 与 ledger:changed 平行：同一命名空间、无 payload 的粗粒度信号（issue #129）。
+        assert_eq!(BACKUPS_CHANGED, "ledger:backups-changed");
+        assert!(BACKUPS_CHANGED.starts_with("ledger:"));
+    }
+
+    /// 未注入句柄时深路径发射静默跳过，不 panic。
+    #[test]
+    fn emit_backups_changed_current_without_handle_is_silent() {
+        // OnceLock 进程内单次注入；在未初始化的测试环境无句柄可用即可重复调用。
+        if EVENT_APP.get().is_none() {
+            emit_backups_changed_current();
+        }
     }
 }
