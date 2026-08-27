@@ -3,10 +3,11 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { reactive } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { NDataTable, NPopconfirm, NSelect, NDatePicker, NButton } from 'naive-ui'
+import { NDataTable, NPopconfirm, NSelect, NDatePicker, NButton, NModal, NInputNumber } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import TransactionsView from '@/views/TransactionsView.vue'
 import AccountLink from '@/components/AccountLink.vue'
+import TransactionForm from '@/components/TransactionForm.vue'
 import type { Account, Currency, Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
@@ -563,5 +564,88 @@ describe('TransactionsView 转账行双向账户名（issue #99）', () => {
       name: 'transactions',
       query: { account: 'acc-1' },
     })
+  })
+})
+
+describe('TransactionsView 记一笔 Modal（issue #141）', () => {
+  /** 打开「记一笔」弹窗（点击工具栏按钮后等弹窗挂载）。 */
+  async function openCreateModal(wrapper: ReturnType<typeof mount>) {
+    const btn = wrapper.findAll('button').find((b) => b.text().includes('记一笔'))!
+    await btn.trigger('click')
+    await flushPromises()
+  }
+
+  it('点击「记一笔」打开 Modal，内嵌现有交易表单组件', async () => {
+    const wrapper = await mountView()
+    // 初始关闭：无 Modal、无表单
+    expect(wrapper.findComponent(NModal).props('show')).toBe(false)
+    expect(wrapper.findComponent(TransactionForm).exists()).toBe(false)
+    await openCreateModal(wrapper)
+    expect(wrapper.findComponent(NModal).props('show')).toBe(true)
+    // 弹窗内嵌的是现有 TransactionForm（含 6 种 kind 切换）
+    const form = wrapper.findComponent(TransactionForm)
+    expect(form.exists()).toBe(true)
+  })
+
+  it('提交成功后弹窗关闭、回到第 1 页并立即刷新（新记录可见）', async () => {
+    const wrapper = await mountView()
+    // 先翻到第 2 页再记一笔：成功后应回到第 1 页，确保新记录可见
+    tablePagination(wrapper).onChange(2)
+    await flushPromises()
+    await openCreateModal(wrapper)
+    const before = listCalls().length
+    // 表单提交成功 → created 事件
+    wrapper.findComponent(TransactionForm).vm.$emit('created')
+    await flushPromises()
+    // 弹窗关闭（naive-ui Modal 关闭后内容保留在 DOM 仅隐藏，与 CategoryEditModal 同模式）
+    expect(wrapper.findComponent(NModal).props('show')).toBe(false)
+    // 立即以第 1 页重新查询（筛选条件保留）
+    expect(listCalls().length).toBe(before + 1)
+    expect(lastListFilter()).toMatchObject({ page: 1 })
+  })
+
+  it('真实提交链路：弹窗内填表提交 → create_transaction → 弹窗关闭并刷新', async () => {
+    const wrapper = await mountView()
+    await openCreateModal(wrapper)
+    // 默认 kind=expense → CategoryForm；弹窗表单在 TransactionForm 子树内定位
+    const form = wrapper.findComponent(TransactionForm)
+    // 金额（NInputNumber）与账户（CategoryForm 内第 2 个 NSelect，第 1 个是币种）
+    form.getComponent(NInputNumber).vm.$emit('update:value', 12.5)
+    form.findAllComponents(NSelect)[1].vm.$emit('update:value', 'acc-1')
+    await flushPromises()
+    mockInvoke.mockImplementationOnce((cmd: string) => {
+      if (cmd === 'create_transaction') return Promise.resolve('new-id')
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    // 点击提交按钮「记支出」
+    const submitBtn = form
+      .findAllComponents(NButton)
+      .find((b) => b.text().includes('记支出'))!
+    await submitBtn.trigger('click')
+    await flushPromises()
+    // 后端收到正确账目
+    const createCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction')
+    expect(createCalls).toHaveLength(1)
+    const [, args] = createCalls[0] as [string, { input: Record<string, unknown> }]
+    expect(args.input).toMatchObject({
+      kind: 'expense',
+      amount_cents: 1250,
+      currency_code: 'CNY',
+      account_id: 'acc-1',
+    })
+    // 弹窗关闭且列表刷新（回到第 1 页）
+    expect(wrapper.findComponent(NModal).props('show')).toBe(false)
+    expect(lastListFilter()).toMatchObject({ page: 1 })
+  })
+
+  it('仅关闭弹窗（不提交）不触发列表刷新', async () => {
+    const wrapper = await mountView()
+    await openCreateModal(wrapper)
+    const before = listCalls().length
+    // 用户点遮罩/关闭 → update:show=false
+    wrapper.findComponent(NModal).vm.$emit('update:show', false)
+    await flushPromises()
+    expect(wrapper.findComponent(NModal).props('show')).toBe(false)
+    expect(listCalls().length).toBe(before)
   })
 })
