@@ -205,15 +205,7 @@ async function selectRowMenu(wrapper: ReturnType<typeof mount>, key: string) {
   await flushPromises()
 }
 
-/** 确认/取消删除对话框。useDialog 的对话框经 NModal teleport 到 body，
- * 需从 document 查询；同一 modal 容器在 jsdom 中 leave 过渡不会结束会残留，
- * 只取无 display:none 祖先（v-show 内联样式）的可见节点。 */
-function visibleDialogButtons() {
-  return [...document.querySelectorAll('.n-dialog button')].filter(
-    (el) => !hasHiddenAncestor(el),
-  )
-}
-
+/** 过滤 v-show 隐藏容器（jsdom 中 leave 过渡不会结束会残留旧内容），只取可见节点。 */
 function hasHiddenAncestor(el: Element): boolean {
   let node: Element | null = el
   while (node && node !== document.body) {
@@ -223,9 +215,25 @@ function hasHiddenAncestor(el: Element): boolean {
   return false
 }
 
+function visibleNodes(selector: string): Element[] {
+  return [...document.querySelectorAll(selector)].filter((el) => !hasHiddenAncestor(el))
+}
+
+/** 确认/取消删除对话框。useDialog 的对话框经 NModal teleport 到 body，
+ * 需从 document 查询；同一 modal 容器在 jsdom 中会残留，只取可见节点。 */
+function visibleDialogButtons() {
+  return visibleNodes('.n-dialog button')
+}
+
 function dialogText(): string {
-  return [...document.querySelectorAll('.n-dialog')]
-    .filter((el) => !hasHiddenAncestor(el))
+  return visibleNodes('.n-dialog')
+    .map((el) => el.textContent ?? '')
+    .join('')
+}
+
+/** 弹窗内容文本：NModal teleport 到 body 且组件根为占位符，需从 document 查卡片。 */
+function visibleModalText(): string {
+  return visibleNodes('.n-card')
     .map((el) => el.textContent ?? '')
     .join('')
 }
@@ -793,15 +801,6 @@ describe('TransactionsView 行右键菜单（issue #151）', () => {
     return wrapper
       .findAllComponents(NModal)
       .find((m) => m.props('title') === '退款')!
-  }
-
-  /** 弹窗内容文本：NModal teleport 到 body 且组件根为占位符，需从 document 查卡片；
-   * 过滤 v-show 隐藏容器（jsdom 中 leave 过渡不结束会残留旧弹窗）。 */
-  function visibleModalText(): string {
-    return [...document.querySelectorAll('.n-card')]
-      .filter((el) => !hasHiddenAncestor(el))
-      .map((el) => el.textContent ?? '')
-      .join('')
   }
 
   it('右键退款：无需选择原交易，展示只读信息并锁定账户/币种，金额默认原交易金额', async () => {

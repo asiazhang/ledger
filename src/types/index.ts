@@ -15,4 +15,4 @@ export * from './scheduled'
 export * from './sync'
 export * from './transactions'
 
-export { formatAmount, formatQuantity } from '@/utils/money'
+export { formatAmount, formatQuantity, centsToYuan } from '@/utils/money'

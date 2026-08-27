@@ -1,15 +1,17 @@
 import { computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { api } from '@/api'
-import { formatAmount } from '@/types'
+import { centsToYuan, formatAmount } from '@/types'
 import { useFormShared } from '@/composables/useFormShared'
 import type { Transaction, TransactionInput } from '@/types'
 
 export function useRefundForm(options?: {
   onCreated?: () => void
-  /** 行内退款（issue #151）：原交易由调用方所在行固定给定（getter 保持响应式），
-   * 不经搜索选择。打开即锁定继承的账户/币种展示，金额默认原交易金额（原始币种）；
-   * 提交跳过全量交易重载（列表刷新由 onCreated 回调承担）。 */
+  /** 行内退款（issue #151）：原交易由调用方所在行固定给定。注意：getter 仅在
+   * composable 创建时读取一次做初始化、提交时重读一次，并非响应式依赖——
+   * 换目标交易必须由父层强制重建组件实例（如 TransactionsView 的 :key="refundSeq"），
+   * 否则展示/提交仍指向旧交易。打开即锁定继承的账户/币种展示，金额默认原交易金额
+   * （原始币种）；提交跳过全量交易重载（列表刷新由 onCreated 回调承担）。 */
   fixedTarget?: () => Transaction | null
 }) {
   const { reference, accountOptions, currencyOptions } = useFormShared()
@@ -27,7 +29,7 @@ export function useRefundForm(options?: {
   const fixedTarget = options?.fixedTarget
   const fixedTx = fixedTarget?.() ?? null
   if (fixedTx) {
-    amount.value = fixedTx.amount_cents / 100
+    amount.value = centsToYuan(fixedTx.amount_cents, reference.getCurrency(fixedTx.currency_code))
     currencyCode.value = fixedTx.currency_code
     accountId.value = fixedTx.account_id
   }
