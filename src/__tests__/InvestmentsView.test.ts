@@ -64,6 +64,8 @@ beforeEach(async () => {
     if (cmd === 'list_instruments')
       return Promise.resolve({ items: mockInstruments, total: mockInstruments.length })
     if (cmd === 'list_categories') return Promise.resolve([])
+    // 持仓概览（issue #110）：盈亏 tab 顶部会拉取当前持仓
+    if (cmd === 'list_holdings') return Promise.resolve([])
     if (cmd === 'realized_pnl_summary')
       return Promise.resolve({
         total_realized_pnl_cents: 0,

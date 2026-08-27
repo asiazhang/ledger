@@ -1,0 +1,135 @@
+import { computed, onMounted, ref } from 'vue'
+import { api } from '@/api'
+import { useReferenceStore } from '@/stores/reference'
+import type { Holding } from '@/types'
+
+/** 当前持仓概览的一行：Holding 行叠加标的字典与账户的展示信息。 */
+export interface PortfolioRow {
+  holdingId: string
+  accountId: string
+  /** 账户名称（参考数据缺失时为 null，展示降级为「-」） */
+  accountName: string | null
+  instrumentId: string
+  symbol: string | null
+  instrumentName: string | null
+  quantity: number
+  costBasisCents: number
+  costCurrencyCode: string
+  latestPriceCents: number | null
+  latestPriceCurrencyCode: string | null
+  /** 账户本位币市值（v_holdings 实时计算；无行情时为 null） */
+  marketValueCents: number | null
+  /** 账户本位币未实现盈亏（v_holdings 实时计算；无行情/汇率缺失时为 null） */
+  unrealizedPnlCents: number | null
+  /** 市值/未实现盈亏的折算币种 = 账户币（账户缺失时回退成本币种） */
+  valueCurrencyCode: string
+}
+
+/** 按币种分组的金额小计 */
+export interface CurrencyAmountGroup {
+  currencyCode: string
+  cents: number
+}
+
+/**
+ * 把一组 (币种, 可空金额) 按币种累加。
+ * 市值/未实现盈亏经 v_holdings 折算到**各账户本位币**，多币种账户无法安全合并成单一数字，
+ * 因此按币种分组返回，由展示层逐组格式化。
+ */
+export function sumByCurrency(
+  values: { currencyCode: string; cents: number | null }[],
+): CurrencyAmountGroup[] {
+  const acc = new Map<string, number>()
+  for (const { currencyCode, cents } of values) {
+    if (cents === null) continue
+    acc.set(currencyCode, (acc.get(currencyCode) ?? 0) + cents)
+  }
+  return [...acc.entries()]
+    .map(([code, cents]) => ({ currencyCode: code, cents }))
+    .sort((a, b) => a.currencyCode.localeCompare(b.currencyCode))
+}
+
+/** 一次拉全「持仓标的」字典的每页条数上限（list_instruments 单页上限） */
+const INVESTED_INSTRUMENT_FETCH_LIMIT = 500
+
+/**
+ * 盈亏页持仓概览数据层（issue #110 / T6）：
+ * 从 `list_holdings`（v_holdings 视图）取当前持仓行，并与「持仓标的」字典
+ * （only_invested=true，与增量同步同口径）及账户信息拼装出可展示的明细与汇总。
+ */
+export function usePortfolioOverview() {
+  const reference = useReferenceStore()
+
+  const loading = ref(false)
+  const rows = ref<PortfolioRow[]>([])
+
+  async function refresh() {
+    loading.value = true
+    try {
+      const [holdings, invested] = await Promise.all([
+        api.listHoldings(),
+        // 「持仓标的」字典：有当前持仓批次（remaining_quantity > 0），与增量同步同口径
+        api.listInstruments({
+          only_invested: true,
+          // 持仓标的一般远少于标的总数；list_instruments 单页上限即此值
+          page_size: INVESTED_INSTRUMENT_FETCH_LIMIT,
+        }),
+      ])
+      // 行数通常远小于标的数，直接按 id 建 map（O(n+m)）
+      const instrumentMap = new Map(invested.items.map((i) => [i.id, i]))
+      rows.value = holdings.map((h: Holding) => toRow(h, instrumentMap, reference.accountMap))
+    } finally {
+      loading.value = false
+    }
+  }
+
+  const totalMarketValueGroups = computed(() =>
+    sumByCurrency(rows.value.map((r) => ({ currencyCode: r.valueCurrencyCode, cents: r.marketValueCents }))),
+  )
+  const totalUnrealizedPnlGroups = computed(() =>
+    sumByCurrency(rows.value.map((r) => ({ currencyCode: r.valueCurrencyCode, cents: r.unrealizedPnlCents }))),
+  )
+
+  onMounted(() => {
+    void refresh()
+  })
+
+  return { rows, loading, totalMarketValueGroups, totalUnrealizedPnlGroups, refresh }
+}
+
+interface InstrumentLike {
+  symbol: string
+  name: string | null
+}
+
+interface AccountLike {
+  name: string
+  currency_code: string
+}
+
+/** Holding 行 + 标的字典 + 账户参考数据 → 概览明细行 */
+function toRow(
+  h: Holding,
+  instrumentMap: Map<string, InstrumentLike>,
+  accountMap: Map<string, AccountLike>,
+): PortfolioRow {
+  const inst = instrumentMap.get(h.instrument_id)
+  const acct = accountMap.get(h.account_id)
+  return {
+    holdingId: h.id,
+    accountId: h.account_id,
+    accountName: acct?.name ?? null,
+    instrumentId: h.instrument_id,
+    symbol: inst?.symbol ?? null,
+    instrumentName: inst?.name ?? null,
+    quantity: h.quantity,
+    costBasisCents: h.cost_basis_cents,
+    costCurrencyCode: h.cost_currency_code,
+    latestPriceCents: h.latest_price_cents,
+    latestPriceCurrencyCode: h.latest_price_currency_code,
+    marketValueCents: h.market_value_cents,
+    unrealizedPnlCents: h.unrealized_pnl_cents,
+    // 市值/未实现盈亏由 v_holdings 折算到账户本位币；账户缺失时回退成本币种保证可展示
+    valueCurrencyCode: acct?.currency_code ?? h.cost_currency_code,
+  }
+}

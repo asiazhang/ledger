@@ -1,0 +1,103 @@
+import type { Account, Currency, Holding, Instrument } from '@/types'
+
+/**
+ * 投资域相关组件/composable 测试的共享数据工厂（issue #110 审查：消除测试文件间重复）。
+ * 各测试文件经 baseInvoke 辅助把这些对象接到对应 invoke 命令上。
+ */
+
+export const mockCurrencies: Currency[] = [
+  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
+]
+
+export function makeAccount(partial: Partial<Account> & { id: string }): Account {
+  return {
+    name: '证券账户A',
+    type: 'investment',
+    currency_code: 'CNY',
+    initial_balance_cents: 0,
+    created_at: '2026-01-01T00:00:00Z',
+    is_hidden: false,
+    updated_at: '2026-01-01T00:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: false,
+    ...partial,
+  }
+}
+
+export const mockAccounts: Account[] = [makeAccount({ id: 'acc-1' })]
+
+export function makeInstrument(partial: Partial<Instrument> & { id: string }): Instrument {
+  return {
+    symbol: '600000',
+    type: 'stock',
+    name: '浦发银行',
+    currency_code: 'CNY',
+    market: 'sh',
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: false,
+    price_cents: null,
+    invested: true,
+    ...partial,
+  }
+}
+
+export function makeHolding(partial: Partial<Holding> & { id: string; instrument_id: string }): Holding {
+  return {
+    account_id: 'acc-1',
+    quantity: 100,
+    cost_basis_cents: 120000,
+    cost_currency_code: 'CNY',
+    latest_price_cents: null,
+    latest_price_currency_code: null,
+    market_value_cents: null,
+    unrealized_pnl_cents: null,
+    updated_at: '2026-01-01T00:00:00Z',
+    ...partial,
+  }
+}
+
+/** h-1 有行情（价格/市值/未实现盈亏齐全），h-2 无行情（三项为 NULL） */
+export const mockHoldings: Holding[] = [
+  makeHolding({
+    id: 'h-1',
+    instrument_id: 'inst-1',
+    quantity: 100,
+    cost_basis_cents: 120000,
+    latest_price_cents: 1500,
+    latest_price_currency_code: 'CNY',
+    market_value_cents: 150000,
+    unrealized_pnl_cents: 30000,
+  }),
+  makeHolding({
+    id: 'h-2',
+    instrument_id: 'inst-2',
+    quantity: 10,
+    cost_basis_cents: 8000,
+  }),
+]
+
+export const mockInstruments: Instrument[] = [
+  makeInstrument({ id: 'inst-1' }),
+  makeInstrument({ id: 'inst-2', symbol: '000001', name: '平安银行', market: 'sz' }),
+]
+
+/**
+ * invoke mock 处理函数组装器：extra 优先，其次 defaults，均未命中则 reject「unexpected invoke」。
+ * extra 中函数型 handler 以参数调用；其余当固定返回值。
+ */
+export function invokeHandler(
+  defaults: Record<string, unknown>,
+  extra?: Record<string, unknown>,
+): (cmd: string) => unknown {
+  return (cmd: string) => {
+    const handler = extra && extra[cmd]
+    if (typeof handler === 'function') return (handler as () => unknown)()
+    if (handler !== undefined) return Promise.resolve(handler)
+    if (cmd in defaults) return Promise.resolve(defaults[cmd])
+    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  }
+}
