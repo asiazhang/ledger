@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db;
 use crate::error::{AppError, Result};
+use crate::fs_util::{cleanup, replace_file, temp_sibling};
 
 /// zip 包内数据库条目名。
 const ZIP_DB_ENTRY: &str = "ledger.db";
@@ -252,51 +253,6 @@ fn schema_version(conn: &Connection) -> Result<i64> {
         .map_err(AppError::from)
 }
 
-/// 校验数据库文件完整性。
-fn check_integrity(conn: &Connection) -> Result<()> {
-    let result: String = conn
-        .query_row("PRAGMA integrity_check", [], |r| r.get(0))
-        .map_err(AppError::from)?;
-    if result != "ok" {
-        return Err(AppError::Invalid(format!("数据库完整性检查失败: {result}")));
-    }
-    Ok(())
-}
-
-/// 生成与 `path` 同目录的临时文件路径（名称带唯一后缀）。
-fn temp_sibling(path: &Path, tag: &str) -> PathBuf {
-    let file_name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "backup".into());
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    parent.join(format!(
-        ".{file_name}.{tag}-{}-{}",
-        std::process::id(),
-        db::new_uuid()
-    ))
-}
-
-/// 原子替换：优先 rename（Unix 上覆盖已存在文件），失败时先删除再 rename（Windows 兼容）。
-fn replace_file(src: &Path, dst: &Path) -> Result<()> {
-    match std::fs::rename(src, dst) {
-        Ok(()) => Ok(()),
-        Err(first) => match std::fs::remove_file(dst).and_then(|_| std::fs::rename(src, dst)) {
-            Ok(()) => Ok(()),
-            Err(second) => {
-                tracing::error!(first = %first, second = %second, "替换文件失败");
-                Err(AppError::Io(format!("替换文件失败: {first}（{second}）")))
-            }
-        },
-    }
-}
-
-pub(super) fn cleanup(path: &Path) {
-    if path.exists() {
-        std::fs::remove_file(path).ok();
-    }
-}
-
 /// 将当前数据库备份为 zip 包（`ledger.db` + `backup.json`）写入 `target`。
 ///
 /// `kind` 标记产物来源（自动 / 手动），随元数据落盘供后续识别。
@@ -429,7 +385,7 @@ pub fn restore_db_from(
 /// 校验备份数据库文件：完整性检查 + schema 版本策略（旧→新允许并迁移，新→旧拒绝）。
 fn validate_backup(tmp_db: &Path, expected_schema: i64) -> Result<i64> {
     let mut conn = db::open_connection(tmp_db)?;
-    check_integrity(&conn)?;
+    db::check_integrity(&conn)?;
     let backup_schema = schema_version(&conn)?;
     if backup_schema > expected_schema {
         return Err(AppError::Invalid(format!(

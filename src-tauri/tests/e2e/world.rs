@@ -86,6 +86,16 @@ pub struct LedgerWorld {
     pub last_search: Option<TransactionSearchResult>,
     /// 最近一次净资产总览快照（首页仪表盘场景断言用）
     pub last_overview: Option<DashboardOverview>,
+    /// DataLocation 引导场景：默认应用数据目录（真临时目录）
+    pub dl_default_dir: Option<PathBuf>,
+    /// DataLocation 引导场景：指针指向的目标目录
+    pub dl_target_dir: Option<PathBuf>,
+    /// 最近一次 DataLocation 引导结果（回退信号断言用）
+    pub last_boot: Option<tauri_app_lib::db::data_location::Boot>,
+    /// DataLocation 引导/重置场景中打开的文件库连接
+    pub dl_conn: Option<tauri_app_lib::db::DbState>,
+    /// DataLocation 引导场景：默认目录库文件字节快照（原样保留断言用）
+    pub dl_default_db_bytes: Option<Vec<u8>>,
 }
 
 impl fmt::Debug for LedgerWorld {
@@ -129,6 +139,11 @@ impl LedgerWorld {
             last_occurrence_id: None,
             last_search: None,
             last_overview: None,
+            dl_default_dir: None,
+            dl_target_dir: None,
+            last_boot: None,
+            dl_conn: None,
+            dl_default_db_bytes: None,
         };
         // 注册种子黑洞账户（V004 预置 无(CNY)/无(HKD)），供迁移场景按名称引用。
         let hidden: Vec<(String, String)> = {
