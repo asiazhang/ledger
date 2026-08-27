@@ -6,6 +6,8 @@ mod accounts_steps;
 mod backup_steps;
 #[path = "e2e/common.rs"]
 mod common;
+#[path = "e2e/dashboard_steps.rs"]
+mod dashboard_steps;
 #[path = "e2e/migration_steps.rs"]
 mod migration_steps;
 #[path = "e2e/scheduled_steps.rs"]

@@ -8,7 +8,7 @@
 //! `list_account_balances` 命令与 `*_internal` 复用函数（`commands/mod.rs` 经
 //! `pub use accounts::*` 重导出，注册路径与前端/api_server/BDD 调用零改动）。
 
-mod core;
+pub(crate) mod core; // 净资产聚合（dashboard）复用余额口径，需跨命令模块可见（issue #142）
 #[cfg(test)]
 mod tests;
 

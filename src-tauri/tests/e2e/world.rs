@@ -7,7 +7,8 @@ use rusqlite::Connection;
 
 use tauri_app_lib::db::{init_db, open_in_memory};
 use tauri_app_lib::models::{
-    CreateTransactionResult, Transaction, TransactionInput, TransactionSearchResult,
+    CreateTransactionResult, DashboardOverview, Transaction, TransactionInput,
+    TransactionSearchResult,
 };
 use tauri_app_lib::transaction::amount::TransactionKind;
 
@@ -83,6 +84,8 @@ pub struct LedgerWorld {
     pub last_occurrence_id: Option<String>,
     /// 最近一次交易搜索结果快照（搜索场景断言用）
     pub last_search: Option<TransactionSearchResult>,
+    /// 最近一次净资产总览快照（首页仪表盘场景断言用）
+    pub last_overview: Option<DashboardOverview>,
 }
 
 impl fmt::Debug for LedgerWorld {
@@ -99,6 +102,7 @@ impl fmt::Debug for LedgerWorld {
                 "last_search_total",
                 &self.last_search.as_ref().map(|s| s.total),
             )
+            .field("last_overview", &self.last_overview.is_some())
             .field("last_plan_id", &self.last_plan_id)
             .field("last_occurrence_id", &self.last_occurrence_id)
             .finish()
@@ -124,6 +128,7 @@ impl LedgerWorld {
             last_plan_id: None,
             last_occurrence_id: None,
             last_search: None,
+            last_overview: None,
         };
         // 注册种子黑洞账户（V004 预置 无(CNY)/无(HKD)），供迁移场景按名称引用。
         let hidden: Vec<(String, String)> = {
