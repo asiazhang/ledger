@@ -45,6 +45,19 @@ pub struct DataLocationChangeOutcome {
     pub target_dir: Option<String>,
 }
 
+/// 聚合 DataLocation 信息（引导结果可选）：命令层与 BDD 共用同一降级逻辑——
+/// 引导结果未登记（异常时序）时按出厂行为降级：生效目录即默认目录。
+pub fn gather_info_from_boot(
+    default_dir: &Path,
+    boot: Option<&data_location::Boot>,
+) -> DataLocationInfo {
+    let (active_dir, fallback) = match boot {
+        Some(boot) => (boot.db_dir.clone(), boot.fallback_reason.clone()),
+        None => (default_dir.to_path_buf(), None),
+    };
+    gather_info(default_dir, &active_dir, fallback.as_deref())
+}
+
 /// 聚合 DataLocation 信息：生效目录 / 意图目录 / 待重启生效 / 回退警示。
 /// 命令层与 BDD 共用的内部实现；`active_dir` 与 `fallback` 来自启动期
 /// 已登记的引导结果（[`data_location::Boot`]）。
@@ -119,12 +132,10 @@ fn default_data_dir(app: &AppHandle) -> Result<PathBuf> {
 #[tauri::command]
 pub fn get_data_location_info(app: AppHandle) -> Result<DataLocationInfo> {
     let default_dir = default_data_dir(&app)?;
-    let (active_dir, fallback) = match app.try_state::<data_location::Boot>() {
-        Some(boot) => (boot.db_dir.clone(), boot.fallback_reason.clone()),
-        // 引导结果未登记（异常时序）时按出厂行为降级：生效目录即默认目录。
-        None => (default_dir.clone(), None),
-    };
-    Ok(gather_info(&default_dir, &active_dir, fallback.as_deref()))
+    let boot = app
+        .try_state::<data_location::Boot>()
+        .map(|state| state.inner().clone());
+    Ok(gather_info_from_boot(&default_dir, boot.as_ref()))
 }
 
 /// 提交更改位置意图：三步校验通过后写入指针文件，下次启动搬迁生效。

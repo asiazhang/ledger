@@ -7,7 +7,7 @@
 use cucumber::{given, then, when};
 use rusqlite::Connection;
 
-use tauri_app_lib::commands::data_location::{gather_info, validate_and_commit};
+use tauri_app_lib::commands::data_location::{gather_info_from_boot, validate_and_commit};
 use tauri_app_lib::commands::transactions::insert_transaction;
 use tauri_app_lib::db::{
     data_location, init_db, new_uuid, open_connection, open_db_in, reset_db_in,
@@ -342,6 +342,9 @@ fn bak_file_preserved(world: &mut LedgerWorld) {
 /// 提交更改意图并记录结果（成功 → outcome，失败 → last_error）。
 fn submit(world: &mut LedgerWorld, target: &std::path::Path, adopt_existing: bool) {
     let default_dir = world.dl_default_dir.clone().unwrap();
+    // 清空上次结果，避免跨 When 的时序耦合。
+    world.dl_last_outcome = None;
+    world.last_error = None;
     match validate_and_commit(&default_dir, target, adopt_existing) {
         Ok(outcome) => world.dl_last_outcome = Some(outcome),
         Err(e) => world.last_error = Some(e.to_string()),
@@ -365,6 +368,38 @@ fn submit_to_uncreatable(world: &mut LedgerWorld) {
     let target = blocker.join("child");
     world.dl_target_dir = Some(target.clone());
     submit(world, &target, false);
+}
+
+#[when(expr = "向一个只读目录提交更改意图")]
+fn submit_to_readonly_dir(world: &mut LedgerWorld) {
+    let target = std::env::temp_dir().join(format!("ledger-e2e-dl-readonly-{}", new_uuid()));
+    std::fs::create_dir_all(&target).unwrap();
+    // 目录存在但不可写（Unix 权限位；CI 仅 unix runner）。
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o555)).unwrap();
+    }
+    world.dl_target_dir = Some(target.clone());
+    submit(world, &target, false);
+    // 恢复权限，便于临时目录清理。
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
+#[when(expr = "向当前生效目录提交更改意图（不接管既有库）")]
+fn submit_to_active_dir(world: &mut LedgerWorld) {
+    let default_dir = world.dl_default_dir.clone().unwrap();
+    let active = world
+        .last_boot
+        .as_ref()
+        .map(|boot| boot.db_dir.clone())
+        .unwrap_or_else(|| default_dir.clone());
+    world.dl_target_dir = Some(active.clone());
+    submit(world, &active, false);
 }
 
 #[when(expr = "向该目标目录提交更改意图（不接管既有库）")]
@@ -395,15 +430,8 @@ fn restore_default_adopt(world: &mut LedgerWorld) {
 fn query_info(world: &mut LedgerWorld) {
     let default_dir = world.dl_default_dir.clone().unwrap();
     // 与真实命令一致：active/fallback 来自启动期已登记的引导结果。
-    let (active_dir, fallback_reason) = match world.last_boot.as_ref() {
-        Some(boot) => (boot.db_dir.clone(), boot.fallback_reason.clone()),
-        None => (default_dir.clone(), None),
-    };
-    world.dl_last_info = Some(gather_info(
-        &default_dir,
-        &active_dir,
-        fallback_reason.as_deref(),
-    ));
+    let boot = world.last_boot.clone();
+    world.dl_last_info = Some(gather_info_from_boot(&default_dir, boot.as_ref()));
 }
 
 // ---------------------------------------------------------------------------

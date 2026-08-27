@@ -99,6 +99,12 @@ Feature: DataLocation 启动引导（issue #132）
     Then 提交应被拒绝且错误信息包含 "目标目录"
     And 指针文件应保持未配置
 
+  Scenario: 目录存在但不可写时提交被拒绝，意图不落盘
+    Given 默认数据目录中已有一个含 2 条交易的库
+    When 向一个只读目录提交更改意图
+    Then 提交应被拒绝且错误信息包含 "不可写"
+    And 指针文件应保持未配置
+
   Scenario: 目标已有同名库时返回二选一信号，选择接管后意图落盘
     Given 默认数据目录中已有一个含 2 条交易的库
     And 一个已含 1 条交易库的目标目录
@@ -155,3 +161,14 @@ Feature: DataLocation 启动引导（issue #132）
     And 查询 DataLocation 信息
     Then 信息应携带回退警示包含 "指针"
     And 信息应无待重启生效状态
+
+  Scenario: 目标即当前生效目录时接管提交为幂等意图，不产生待重启状态
+    Given 默认数据目录中已有一个含 2 条交易的库
+    When 执行 DataLocation 引导并打开数据库
+    And 向当前生效目录提交更改意图（不接管既有库）
+    Then 提交结果应为需要二选一
+    When 选择接管既有库并再次提交
+    Then 提交结果应为意图已落盘
+    And 指针文件应指向默认数据目录
+    When 查询 DataLocation 信息
+    Then 信息应无待重启生效状态且无回退警示

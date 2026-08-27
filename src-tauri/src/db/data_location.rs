@@ -31,6 +31,7 @@ struct PointerFile {
 }
 
 /// 启动期 DataLocation 引导结果。
+#[derive(Clone)]
 pub struct Boot {
     /// 最终生效的库文件目录。
     pub db_dir: PathBuf,
