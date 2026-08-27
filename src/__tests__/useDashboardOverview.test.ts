@@ -3,17 +3,11 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import { useDashboardOverview } from '@/composables/useDashboardOverview'
-import type { DashboardOverview } from '@/types'
-import { invokeHandler, mockCurrencies } from './factories'
+import { invokeHandler, makeOverview, mockCurrencies } from './factories'
 
 const mockInvoke = vi.mocked(invoke)
 
-const mockOverview: DashboardOverview = {
-  native_currency: 'CNY',
-  net_worth_cents: 1234567,
-  accounts_balance_cents: 1000000,
-  holdings_market_value_cents: 234567,
-}
+const mockOverview = makeOverview({ net_worth_cents: 1234567, accounts_balance_cents: 1000000 })
 
 /** 默认 invoke mock：参考数据 + 净资产总览 */
 function baseInvoke(extra?: Record<string, unknown>) {

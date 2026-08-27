@@ -1,4 +1,4 @@
-import type { Account, Currency, Holding, Instrument } from '@/types'
+import type { Account, Currency, DashboardOverview, Holding, Instrument } from '@/types'
 
 /**
  * 投资域相关组件/composable 测试的共享数据工厂（issue #110 审查：消除测试文件间重复）。
@@ -84,6 +84,17 @@ export const mockInstruments: Instrument[] = [
   makeInstrument({ id: 'inst-1' }),
   makeInstrument({ id: 'inst-2', symbol: '000001', name: '平安银行', market: 'sz' }),
 ]
+
+/** dashboard_overview 返回值工厂（issue #143）：默认人民币本位币、净申 1234.56 元 */
+export function makeOverview(partial: Partial<DashboardOverview> = {}): DashboardOverview {
+  return {
+    native_currency: 'CNY',
+    net_worth_cents: 123456,
+    accounts_balance_cents: 100000,
+    holdings_market_value_cents: 23456,
+    ...partial,
+  }
+}
 
 /**
  * invoke mock 处理函数组装器：extra 优先，其次 defaults，均未命中则 reject「unexpected invoke」。
