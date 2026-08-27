@@ -1,11 +1,24 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { useReferenceStore } from '@/stores/reference'
 import InstrumentBrowser from '@/components/investments/InstrumentBrowser.vue'
-import type { Currency, Instrument } from '@/types'
+import type { Currency, Instrument, SyncProgress } from '@/types'
+
+const mockListen = vi.mocked(listen)
+
+// NModal 内容 teleport 到 document.body，须在每个测试后卸载 wrapper 并清空 body，
+// 否则上一个测试遗留的弹窗 DOM 会污染下一个测试（bodyQuery 拿到陈旧元素）。
+enableAutoUnmount(afterEach)
+afterEach(() => {
+  document.body.innerHTML = ''
+})
+
+// 捕获全量同步进度事件回调，便于在组件测试中模拟 sync-instruments:progress
+let syncProgressHandler: ((event: { payload: SyncProgress }) => void) | undefined
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -56,6 +69,9 @@ function baseInvoke(
     if (cmd === 'list_categories') return Promise.resolve([])
     if (cmd === 'list_instruments')
       return Promise.resolve({ items: mockInstruments, total: mockInstruments.length })
+    if (cmd === 'sync_instruments') return Promise.resolve(undefined)
+    if (cmd === 'cancel_sync_instruments')
+      return Promise.resolve({ cancelled: false, message: '当前没有正在进行的同步' })
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
 }
@@ -63,11 +79,50 @@ function baseInvoke(
 beforeEach(async () => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
+  mockListen.mockReset()
+  syncProgressHandler = undefined
+  mockListen.mockImplementation((_event, handler) => {
+    syncProgressHandler = handler as (event: { payload: SyncProgress }) => void
+    return Promise.resolve(() => {})
+  })
   baseInvoke()
   localStorage.clear()
   const store = useReferenceStore()
   await store.ensureFresh()
 })
+
+// 模拟全量同步进度事件上报（payload 与后端 SyncProgress 一致）
+function emitSyncProgress(p: Partial<SyncProgress>) {
+  syncProgressHandler?.({
+    payload: {
+      current: 0,
+      total: 0,
+      market: '',
+      done: false,
+      total_inserted: 0,
+      total_updated: 0,
+      error: null,
+      cancelled: false,
+      ...p,
+    },
+  })
+}
+
+// NModal 内容默认 teleport 到 document.body，测试需在 body 中查询/触发（wrapper.find 只能查组件根 DOM）。
+function bodyQuery(selector: string): HTMLElement | null {
+  return document.body.querySelector(selector)
+}
+
+async function clickBody(selector: string) {
+  const el = bodyQuery(selector)
+  if (!el) throw new Error(`body 中未找到: ${selector}`)
+  // 用原生事件触发，绕过 Naive UI 对 click 的包装
+  el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+  // 等响应式刷新 + 微任务 + 几个宏任务，让 NModal 退场过渡结束、内容真正卸载
+  await nextTick()
+  await flushPromises()
+  await new Promise((r) => setTimeout(r, 30))
+}
 
 describe('InstrumentBrowser 标的页工具栏', () => {
   it('工具栏包含「同步持仓价格」按钮', async () => {
@@ -173,5 +228,134 @@ describe('InstrumentBrowser 同步持仓价格按钮', () => {
     await flushPromises()
     // 失败消息应包含具体原因，而非字符串化的 [object Object]
     expect(wrapper.text()).toContain('同步失败：网络错误')
+  })
+})
+
+describe('InstrumentBrowser 全量同步（issue #109）', () => {
+  it('工具栏包含「全量同步」按钮', async () => {
+    const wrapper = mount(InstrumentBrowser)
+    await flushPromises()
+    const btn = wrapper.find('[data-testid="full-sync"]')
+    expect(btn.exists()).toBe(true)
+    expect(wrapper.text()).toContain('全量同步')
+  })
+
+  it('点击全量同步先弹确认框，未确认不调用 sync_instruments', async () => {
+    const wrapper = mount(InstrumentBrowser)
+    await flushPromises()
+    await wrapper.find('[data-testid="full-sync"]').trigger('click')
+    await nextTick()
+    await nextTick()
+    // 确认框出现（含说明 + 开始同步按钮）
+    expect(bodyQuery('[data-testid="confirm-full-sync"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('涉及数百次 API')
+    // 未确认：不调用同步命令
+    expect(mockInvoke).not.toHaveBeenCalledWith('sync_instruments')
+  })
+
+  it('点击「取消」不调用 sync_instruments（未确认不发起同步）', async () => {
+    const wrapper = mount(InstrumentBrowser)
+    await flushPromises()
+    await wrapper.find('[data-testid="full-sync"]').trigger('click')
+    await nextTick()
+    // 确认框出现
+    expect(bodyQuery('[data-testid="confirm-full-sync"]')).not.toBeNull()
+    // 点击「取消」：未确认，不发起同步（确认框关闭的 DOM 断言受过渡影响，交 composable 层覆盖）
+    await clickBody('[data-testid="cancel-confirm-full-sync"]')
+    expect(mockInvoke).not.toHaveBeenCalledWith('sync_instruments')
+  })
+
+  it('确认后调用 sync_instruments，模态框展示进度详情', async () => {
+    baseInvoke({ sync_instruments: () => Promise.resolve(undefined) })
+    const wrapper = mount(InstrumentBrowser)
+    await flushPromises()
+    await wrapper.find('[data-testid="full-sync"]').trigger('click')
+    await nextTick()
+    await clickBody('[data-testid="confirm-full-sync"]')
+    await flushPromises()
+    expect(mockInvoke).toHaveBeenCalledWith('sync_instruments')
+    // 模态进度出现：进度条 + 已处理/总数 + 累计新增/更新 + 中断按钮
+    expect(bodyQuery('[data-testid="cancel-full-sync"]')).not.toBeNull()
+    expect(document.body.querySelector('.n-progress')).not.toBeNull()
+    // 模拟进度事件：current/total/inserted/updated
+    emitSyncProgress({ current: 120, total: 300, total_inserted: 5, total_updated: 7 })
+    await nextTick()
+    expect(bodyQuery('[data-testid="full-sync-count"]')!.textContent).toContain('120')
+    expect(bodyQuery('[data-testid="full-sync-count"]')!.textContent).toContain('300')
+    expect(bodyQuery('[data-testid="full-sync-cumulative"]')!.textContent).toContain('新增 5')
+    expect(bodyQuery('[data-testid="full-sync-cumulative"]')!.textContent).toContain('更新 7')
+  })
+
+  it('同步进行中按钮呈「同步中」态，点击重开进度框而非重复同步', async () => {
+    let resolveSync!: (v: unknown) => void
+    baseInvoke({ sync_instruments: () => new Promise((res) => { resolveSync = res }) })
+    const wrapper = mount(InstrumentBrowser)
+    await flushPromises()
+    await wrapper.find('[data-testid="full-sync"]').trigger('click')
+    await nextTick()
+    await clickBody('[data-testid="confirm-full-sync"]')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="full-sync"]').text()).toContain('同步中')
+    // 同步进行中再次点击入口：不重复触发同步（防重复），而是重开进度框查看进度
+    await wrapper.find('[data-testid="full-sync"]').trigger('click')
+    await nextTick()
+    const syncCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'sync_instruments')
+    expect(syncCalls.length).toBe(1)
+    // 进度框仍在/已重开（中断按钮存在）——关闭/重开的切换由 composable 层单独覆盖
+    expect(bodyQuery('[data-testid="cancel-full-sync"]')).not.toBeNull()
+    resolveSync(undefined)
+    await flushPromises()
+  })
+
+  it('点「中断同步」立即中断，显示「已中断 + 已同步 N 只」', async () => {
+    baseInvoke({
+      sync_instruments: () => Promise.resolve(undefined),
+      cancel_sync_instruments: () =>
+        Promise.resolve({ cancelled: true, message: '已请求中断同步' }),
+    })
+    const wrapper = mount(InstrumentBrowser)
+    await flushPromises()
+    await wrapper.find('[data-testid="full-sync"]').trigger('click')
+    await nextTick()
+    await clickBody('[data-testid="confirm-full-sync"]')
+    await flushPromises()
+    // 同步进行中，点击中断
+    await clickBody('[data-testid="cancel-full-sync"]')
+    await flushPromises()
+    expect(mockInvoke).toHaveBeenCalledWith('cancel_sync_instruments')
+    // 终态回流：中断
+    emitSyncProgress({ done: true, cancelled: true, total_inserted: 3, total_updated: 2 })
+    await nextTick()
+    const resultText = bodyQuery('[data-testid="full-sync-result"]')!.textContent!
+    expect(resultText).toContain('已中断')
+    expect(resultText).toContain('已同步 3 只')
+  })
+
+  it('完成时显示新增/更新统计，失败时显示错误', async () => {
+    baseInvoke({ sync_instruments: () => Promise.resolve(undefined) })
+    const wrapper = mount(InstrumentBrowser)
+    await flushPromises()
+    await wrapper.find('[data-testid="full-sync"]').trigger('click')
+    await nextTick()
+    await clickBody('[data-testid="confirm-full-sync"]')
+    await flushPromises()
+    // 完成
+    emitSyncProgress({ done: true, cancelled: false, total_inserted: 10, total_updated: 4 })
+    await nextTick()
+    const doneText = bodyQuery('[data-testid="full-sync-result"]')!.textContent!
+    expect(doneText).toContain('同步完成')
+    expect(doneText).toContain('新增 10 只')
+    expect(doneText).toContain('更新 4 只')
+
+    // 再次启动后失败
+    await wrapper.find('[data-testid="full-sync"]').trigger('click')
+    await nextTick()
+    await clickBody('[data-testid="confirm-full-sync"]')
+    await flushPromises()
+    emitSyncProgress({ done: true, error: '请求被限流' })
+    await nextTick()
+    const errText = bodyQuery('[data-testid="full-sync-result"]')!.textContent!
+    expect(errText).toContain('同步失败')
+    expect(errText).toContain('请求被限流')
   })
 })

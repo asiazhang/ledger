@@ -1,15 +1,56 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref, watch } from 'vue'
-import { NButton, NDataTable, NInput, NSelect, NSpace, NSwitch, NTag, NText } from 'naive-ui'
+import {
+  NButton,
+  NDataTable,
+  NIcon,
+  NInput,
+  NModal,
+  NProgress,
+  NSelect,
+  NSpace,
+  NSwitch,
+  NTag,
+  NText,
+} from 'naive-ui'
+import { Refresh } from '@vicons/ionicons5'
 import type { DataTableColumn } from 'naive-ui'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useHoldingPriceSync } from '@/composables/useHoldingPriceSync'
+import { useInstrumentFullSync } from '@/composables/useInstrumentFullSync'
 import { formatAmount, INSTRUMENT_TYPE_LABELS, MARKET_TYPE_LABELS } from '@/types'
 import type { Instrument, MarketType } from '@/types'
 
 const reference = useReferenceStore()
 const { syncing, resultMessage, status, sync } = useHoldingPriceSync()
+
+// 股票标的全量同步（issue #109）：二次确认 + 模态进度 + 中断 + 终态反馈
+const {
+  syncStatus,
+  syncing: fullSyncing,
+  progress,
+  current,
+  total: syncTotal,
+  inserted,
+  updated,
+  errorMessage,
+  confirmOpen,
+  modalOpen,
+  cancelling,
+  openConfirm,
+  closeConfirm,
+  confirmSync,
+  requestCancel,
+  openModal,
+  closeModal,
+} = useInstrumentFullSync()
+
+// 全量同步按钮：同步中点击重开进度框（同步后台继续），否则弹二次确认（防重复触发同步）
+function onFullSyncClick() {
+  if (fullSyncing.value) openModal()
+  else openConfirm()
+}
 
 // 标的浏览（服务端分页 + 搜索）
 const searchText = ref('')
@@ -148,6 +189,17 @@ onMounted(load)
       >
         同步持仓价格
       </NButton>
+      <NButton
+        secondary
+        size="small"
+        data-testid="full-sync"
+        @click="onFullSyncClick"
+      >
+        <template v-if="fullSyncing" #icon>
+          <NIcon class="sync-spin"><Refresh /></NIcon>
+        </template>
+        {{ fullSyncing ? '同步中' : '全量同步' }}
+      </NButton>
     </NSpace>
     <NText v-if="resultMessage" :type="status === 'error' ? 'error' : 'info'">
       {{ resultMessage }}
@@ -161,5 +213,101 @@ onMounted(load)
       remote
       :pagination="pagination"
     />
+
+    <!-- 二次确认：未确认不发起同步（issue #109） -->
+    <NModal
+      v-model:show="confirmOpen"
+      preset="card"
+      title="全量同步股票标的"
+      style="width: 480px"
+      :bordered="false"
+    >
+      <NSpace vertical :size="12">
+        <NText depth="3">
+          将从东方财富拉取沪市、深市、港股的股票标的最新行情，涉及数百次 API
+          请求，可能需要数分钟。已存在的标的名称或市场变更会自动更新，不会删除已有数据。
+        </NText>
+        <NSpace justify="end" :size="12">
+          <NButton data-testid="cancel-confirm-full-sync" @click="closeConfirm">
+            取消
+          </NButton>
+          <NButton
+            type="primary"
+            data-testid="confirm-full-sync"
+            :loading="fullSyncing"
+            @click="confirmSync"
+          >
+            开始同步
+          </NButton>
+        </NSpace>
+      </NSpace>
+    </NModal>
+
+    <!-- 模态进度：进度条 + 已处理/总数 + 累计新增/更新 + 中断；终态明确反馈 -->
+    <NModal
+      v-model:show="modalOpen"
+      preset="card"
+      title="股票标的全量同步"
+      style="width: 480px"
+      :bordered="false"
+      @update:show="(v: boolean) => !v && closeModal()"
+    >
+      <NSpace vertical :size="12">
+        <template v-if="fullSyncing">
+          <NProgress
+            type="line"
+            :percentage="progress"
+            :show-indicator="true"
+            :indicator-placement="'inside'"
+            status="success"
+            :height="28"
+          />
+          <NText depth="3" data-testid="full-sync-count">
+            已处理 {{ current }} / 共 {{ syncTotal }} 只{{ syncTotal === 0 ? '（正在获取行情...）' : '' }}
+          </NText>
+          <NText depth="3" data-testid="full-sync-cumulative">
+            累计新增 {{ inserted }} 只 · 更新 {{ updated }} 只
+          </NText>
+          <NSpace justify="end" :size="12">
+            <NButton
+              type="error"
+              size="small"
+              :loading="cancelling"
+              data-testid="cancel-full-sync"
+              @click="requestCancel"
+            >
+              中断同步
+            </NButton>
+          </NSpace>
+        </template>
+        <template v-else-if="syncStatus === 'done'">
+          <NText type="success" data-testid="full-sync-result">
+            同步完成：新增 {{ inserted }} 只，更新 {{ updated }} 只
+          </NText>
+        </template>
+        <template v-else-if="syncStatus === 'cancelled'">
+          <NText type="warning" data-testid="full-sync-result">
+            已中断，已同步 {{ inserted }} 只，更新 {{ updated }} 只
+          </NText>
+        </template>
+        <template v-else-if="syncStatus === 'error'">
+          <NText type="error" data-testid="full-sync-result">
+            同步失败：{{ errorMessage }}
+          </NText>
+        </template>
+      </NSpace>
+    </NModal>
   </NSpace>
 </template>
+
+<style scoped>
+/* 同步中按钮的旋转装载指示：视觉呈「loading」，但按钮保持可点击以重开进度框（issue #109） */
+.sync-spin {
+  animation: sync-spin 1s linear infinite;
+}
+@keyframes sync-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+</style>
