@@ -99,23 +99,7 @@ onMounted(async () => {
       </NSpin>
     </NCard>
 
-    <!-- 投资概览卡（issue #145）：始终展示，无持仓时空态占位 -->
-    <NCard title="投资概览" size="small" data-testid="investment-overview-card">
-      <NGrid v-if="holdingRows.length > 0" :x-gap="16" cols="1 s:2">
-        <NGi>
-          <NStatistic label="总市值" data-testid="dashboard-total-market-value">
-            {{ formatCurrencyGroups(totalMarketValueGroups, reference.currencyMap) }}
-          </NStatistic>
-        </NGi>
-        <NGi>
-          <NStatistic label="未实现盈亏合计" data-testid="dashboard-total-unrealized-pnl">
-            {{ formatCurrencyGroups(totalUnrealizedPnlGroups, reference.currencyMap) }}
-          </NStatistic>
-        </NGi>
-      </NGrid>
-      <NEmpty v-else description="暂无持仓" />
-    </NCard>
-
+    <!-- 本月收支卡（issue #144）：紧随净资产之后，先看本月现金流再看投资/预算 -->
     <NCard title="本月收支" size="small">
       <NGrid :cols="3" :x-gap="16" responsive="screen">
         <NGridItem>
@@ -137,6 +121,23 @@ onMounted(async () => {
           </NSpace>
         </NGridItem>
       </NGrid>
+    </NCard>
+
+    <!-- 投资概览卡（issue #145）：始终展示，无持仓时空态占位 -->
+    <NCard title="投资概览" size="small" data-testid="investment-overview-card">
+      <NGrid v-if="holdingRows.length > 0" :x-gap="16" cols="1 s:2">
+        <NGi>
+          <NStatistic label="总市值" data-testid="dashboard-total-market-value">
+            {{ formatCurrencyGroups(totalMarketValueGroups, reference.currencyMap) }}
+          </NStatistic>
+        </NGi>
+        <NGi>
+          <NStatistic label="未实现盈亏合计" data-testid="dashboard-total-unrealized-pnl">
+            {{ formatCurrencyGroups(totalUnrealizedPnlGroups, reference.currencyMap) }}
+          </NStatistic>
+        </NGi>
+      </NGrid>
+      <NEmpty v-else description="暂无持仓" />
     </NCard>
 
     <NCard title="预算进度" size="small" data-testid="budget-progress-card">
