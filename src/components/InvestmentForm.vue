@@ -10,7 +10,6 @@ import {
   NSpace,
 } from 'naive-ui'
 import { useInvestmentForm } from '@/composables/useInvestmentForm'
-import { INSTRUMENT_TYPE_LABELS } from '@/types'
 
 const props = defineProps<{
   kind: 'buy' | 'sell'
@@ -50,51 +49,21 @@ const ctx = useInvestmentForm(props.kind, { onCreated: () => emit('created') })
       </NFormItem>
 
       <NFormItem label="标的">
-        <NSpace align="center" :size="8">
-          <NSelect
-            v-model:value="ctx.instrumentId.value"
-            :options="ctx.instrumentOptions.value"
-            placeholder="选择标的（输入代码/名称搜索）"
-            remote
-            filterable
-            clearable
-            :loading="ctx.searchingInstruments.value"
-            virtual-scroll
-            style="width: 240px"
-            @search="ctx.searchInstruments"
-          />
-          <NButton size="tiny" @click="ctx.showNewInstrument.value = !ctx.showNewInstrument.value">
-            {{ ctx.showNewInstrument.value ? '取消' : '新增标的' }}
-          </NButton>
-        </NSpace>
+        <NSelect
+          v-model:value="ctx.instrumentId.value"
+          :options="ctx.instrumentOptions.value"
+          placeholder="选择标的（输入代码/名称搜索）"
+          remote
+          filterable
+          clearable
+          :loading="ctx.searchingInstruments.value"
+          virtual-scroll
+          style="width: 240px"
+          @search="ctx.searchInstruments"
+        >
+          <template #empty>未找到标的，可通过同步或 AI 导入新增</template>
+        </NSelect>
       </NFormItem>
-
-      <NSpace v-if="ctx.showNewInstrument.value" vertical :size="8">
-        <NFormItem label="代码">
-          <NInput
-            v-model:value="ctx.newInstrumentSymbol.value"
-            placeholder="如 NVDA"
-            style="width: 120px"
-          />
-        </NFormItem>
-        <NFormItem label="名称">
-          <NInput
-            v-model:value="ctx.newInstrumentName.value"
-            placeholder="名称（可选）"
-            style="width: 180px"
-          />
-        </NFormItem>
-        <NFormItem label="类型">
-          <NSelect
-            v-model:value="ctx.newInstrumentType.value"
-            :options="Object.entries(INSTRUMENT_TYPE_LABELS).map(([value, label]) => ({ label, value }))"
-            style="width: 120px"
-          />
-        </NFormItem>
-        <NButton size="small" @click="ctx.createNewInstrument">
-          保存标的
-        </NButton>
-      </NSpace>
 
       <NFormItem label="数量">
         <NInputNumber
