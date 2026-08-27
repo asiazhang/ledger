@@ -452,7 +452,7 @@
   - 只在应用运行期间生效；系统休眠时调度暂停，唤醒后由短周期轮询在 30 分钟内补上。应用退出时若脏则兜底备份一次（不受每日约束）。
   - 首次启动若备份列表为空（不分手动/自动）则立即备份一次，保证装上当天就有一份。
   - BackupDirectory 未配置时自动备份静默不执行，设置页提示引导配置。
-  - 自动备份的开关与调度状态（DirtyMarker、下次到期时间、上次备份时间）存于 `ledger.db`（后端权威，ADR-0016），随 Backup/Restore 迁移；`backupDir`/`backupMaxCount` 仍属设备本地偏好。
+  - 自动备份的开关与调度状态（DirtyMarker、下次到期时间、上次备份时间）存于 `ledger.db` 的 AppSettings 表（后端权威，ADR-0016/0017），随 Backup/Restore 迁移；`backupDir`/`backupMaxCount` 仍属设备本地偏好。
   - 失败不重试（保留 DirtyMarker，下个周期重试），成功不通知用户；产物同为 ManagedBackup，参与滚动清理。
 - **别名**：不使用"定时备份"（偏计划任务语义）、"自动定时备份"（啰嗦，正式术语"自动备份"）。
 
@@ -464,8 +464,18 @@
   - 恢复（Restore）成功后重置：恢复本身生成了 RestoreSafetyBackup，数据刚被校验，不产生"恢复后立即备份"。
   - 调度器自身的状态写入（开关/到期时间）不置真，避免自触发。
   - 失败保留：备份失败不清真，下个周期重试（ADR-0016）。
-  - 属调度状态，存于 `ledger.db`（与 AutoBackup 同表或同区）。
+  - 属调度状态，存于 AppSettings 表（`auto_backup.dirty` 键）。
 - **别名**：不使用"脏位"（偏底层实现）、"变更标记"（含糊）。
+
+## AppSettings（应用配置 KV 表）
+
+- **定义**：后端权威的应用配置与运行时状态的唯一持久化落点：`ledger.db` 内一张通用 KV 表 `app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL)`（ADR-0017）。key 以 `<feature>.<name>` 点分命名、在 Rust 侧由 `settings.rs` 的枚举集中定义；值用 serde_json 序列化、类型由读取方声明，key 缺失或表缺失时返回默认值。
+- **边界**：
+  - 谁消费谁权威：前端独享消费的设备偏好（Appearance、BackupDirectory 等）→ localStorage；后端消费或随 Backup/Restore 迁移的配置与运行时状态 → 本表；需关系结构的实体（多行、可查询、外键）→ 才配独立表。单行状态专表不再出现。
+  - 读写收口在 `src-tauri/src/settings.rs` 的 `get<T>` / `set<T>` 接缝，禁止散落字符串字面量 SQL 与 key。
+  - 不透传给前端：对外 IPC 保持领域命令形状（聚合多个 key 返回类型化 DTO），不做通用 get/set_setting；写路径是行为不是赋值。
+  - 表随迁移创建，旧版本备份恢复后缺表即取默认值，行为免费正确。
+- **别名**：不使用"配置文件"（独立 JSON/TOML 已否决）、"单行状态表"（否决方案）。
 
 ## TransactionSearch（交易搜索）
 

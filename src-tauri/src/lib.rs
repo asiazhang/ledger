@@ -7,6 +7,7 @@ pub mod log_plugin;
 pub mod logger;
 pub mod models;
 pub mod scheduled_transactions;
+pub mod settings;
 #[doc(hidden)]
 pub mod test_utils;
 pub mod transaction;

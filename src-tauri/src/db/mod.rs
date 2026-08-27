@@ -33,6 +33,7 @@ fn migrations() -> &'static Migrations<'static> {
             M::up(include_str!(
                 "../../migrations/V007__transaction_idempotency_key.sql"
             )),
+            M::up(include_str!("../../migrations/V008__app_settings.sql")),
         ])
     })
 }
