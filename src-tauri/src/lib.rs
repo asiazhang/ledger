@@ -18,7 +18,20 @@ use tauri::ipc::Invoke;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 fn init_database(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    let db_state = db::open_db(app.handle())?;
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("获取数据目录失败：{e}"))?;
+    std::fs::create_dir_all(&dir)?;
+    // DataLocation 引导（ADR-0018）：建连前先解析库所在目录，必要时启动期搬迁。
+    let boot = db::data_location::boot(&dir);
+    if let Some(reason) = &boot.fallback_reason {
+        tracing::warn!(reason = %reason, "DataLocation 引导发生回退，已改用默认数据目录");
+    }
+    let db_dir = boot.db_dir.clone();
+    // 先登记引导结果再建连：启动失败重置兑底需要知道生效目录。
+    app.manage(boot);
+    let db_state = db::open_db_in(&db_dir)?;
     app.manage(db_state);
     tracing::info!("数据库初始化完成");
     Ok(())
@@ -43,15 +56,20 @@ fn try_init_database(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
                 ))
                 .blocking_show();
             if confirmed {
-                let dir = app
-                    .path()
-                    .app_data_dir()
-                    .map_err(|e| format!("获取数据目录失败：{e}"))?;
-                let db_path = dir.join("ledger.db");
-                let bak_path = db_path.with_extension("db.bak");
-                std::fs::rename(&db_path, &bak_path).ok();
-                tracing::info!("已备份原数据库并重置");
-                let db_state = db::open_db(app.handle())?;
+                // 重置兜底作用于 DataLocation 引导解析出的生效目录（引导结果
+                // 在建连前已登记；引导本身失败时落到默认数据目录）。
+                let db_dir = match app.try_state::<db::data_location::Boot>() {
+                    Some(boot) => boot.db_dir.clone(),
+                    None => {
+                        let dir = app
+                            .path()
+                            .app_data_dir()
+                            .map_err(|e| format!("获取数据目录失败：{e}"))?;
+                        std::fs::create_dir_all(&dir)?;
+                        dir
+                    }
+                };
+                let db_state = db::reset_db_in(&db_dir)?;
                 app.manage(db_state);
                 Ok(())
             } else {

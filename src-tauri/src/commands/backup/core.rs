@@ -253,7 +253,7 @@ fn schema_version(conn: &Connection) -> Result<i64> {
 }
 
 /// 校验数据库文件完整性。
-fn check_integrity(conn: &Connection) -> Result<()> {
+pub(crate) fn check_integrity(conn: &Connection) -> Result<()> {
     let result: String = conn
         .query_row("PRAGMA integrity_check", [], |r| r.get(0))
         .map_err(AppError::from)?;
@@ -264,7 +264,7 @@ fn check_integrity(conn: &Connection) -> Result<()> {
 }
 
 /// 生成与 `path` 同目录的临时文件路径（名称带唯一后缀）。
-fn temp_sibling(path: &Path, tag: &str) -> PathBuf {
+pub(crate) fn temp_sibling(path: &Path, tag: &str) -> PathBuf {
     let file_name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -278,7 +278,7 @@ fn temp_sibling(path: &Path, tag: &str) -> PathBuf {
 }
 
 /// 原子替换：优先 rename（Unix 上覆盖已存在文件），失败时先删除再 rename（Windows 兼容）。
-fn replace_file(src: &Path, dst: &Path) -> Result<()> {
+pub(crate) fn replace_file(src: &Path, dst: &Path) -> Result<()> {
     match std::fs::rename(src, dst) {
         Ok(()) => Ok(()),
         Err(first) => match std::fs::remove_file(dst).and_then(|_| std::fs::rename(src, dst)) {
@@ -291,7 +291,7 @@ fn replace_file(src: &Path, dst: &Path) -> Result<()> {
     }
 }
 
-pub(super) fn cleanup(path: &Path) {
+pub(crate) fn cleanup(path: &Path) {
     if path.exists() {
         std::fs::remove_file(path).ok();
     }

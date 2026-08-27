@@ -9,6 +9,7 @@ use tauri::Manager;
 use crate::error::{AppError, Result};
 
 pub mod balance;
+pub mod data_location;
 pub mod perf_trace;
 pub mod query;
 
@@ -67,6 +68,46 @@ pub fn device_id() -> String {
     String::from("device-1")
 }
 
+/// 打开数据库：先解析 DataLocation（读指针 → 定位/搬迁），再在生效目录建连。
+pub fn open_db(app: &tauri::AppHandle) -> Result<DbState> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Io(e.to_string()))?;
+    std::fs::create_dir_all(&dir)?;
+    let boot = data_location::boot(&dir);
+    if let Some(reason) = &boot.fallback_reason {
+        tracing::warn!(reason = %reason, "DataLocation 引导发生回退，已改用默认数据目录");
+    }
+    tracing::info!(db_dir = %boot.db_dir.display(), "DataLocation 引导完成");
+    open_db_in(&boot.db_dir)
+}
+
+/// 在指定目录打开库并完成迁移与搜索索引对账（DataLocation 引导之后的建连步骤）。
+/// 所有启动期建连都应经由引导（`data_location::boot`）或本函数，不自行拼路径。
+pub fn open_db_in(db_dir: &Path) -> Result<DbState> {
+    let db_path = db_dir.join(data_location::DB_FILE_NAME);
+    tracing::info!(db_path = %db_path.display(), "打开数据库");
+    let mut conn = open_connection(db_path)?;
+    init_db(&mut conn)?;
+    // 启动对账：FTS 文档数 ≠ 未删除交易数 → 全量重建（覆盖 V005 迁移前的存量数据）；
+    // 一致则消费重建队列（账户/分类改名、绕过应用层的写入产生的待办）。
+    crate::commands::search::reconcile_search_index(&conn)?;
+    Ok(DbState {
+        conn: Arc::new(Mutex::new(conn)),
+    })
+}
+
+/// 启动失败重置兜底：把当前库改名 `.bak` 保留后重新打开（新建空库）。
+/// 只作用于引导解析出的生效目录，绝不删除任何文件。
+pub fn reset_db_in(db_dir: &Path) -> Result<DbState> {
+    let db_path = db_dir.join(data_location::DB_FILE_NAME);
+    let bak_path = db_path.with_extension("db.bak");
+    std::fs::rename(&db_path, &bak_path).ok();
+    tracing::info!(bak = %bak_path.display(), "已备份原数据库并重置");
+    open_db_in(db_dir)
+}
+
 /// 打开数据库连接并启用外键约束（SQLite 默认关闭，需每次连接显式开启）。
 /// 所有数据库连接都应通过此函数或其派生函数创建，以保证外键生效。
 /// 同时注册耗时 hook（`perf_trace`），覆盖所有 SQL 执行上下文。
@@ -91,24 +132,6 @@ pub fn open_in_memory() -> Result<Connection> {
 
 pub struct DbState {
     pub conn: Arc<Mutex<Connection>>,
-}
-
-pub fn open_db(app: &tauri::AppHandle) -> Result<DbState> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(e.to_string()))?;
-    std::fs::create_dir_all(&dir)?;
-    let db_path = dir.join("ledger.db");
-    tracing::info!(db_path = %db_path.display(), "打开数据库");
-    let mut conn = open_connection(db_path)?;
-    init_db(&mut conn)?;
-    // 启动对账：FTS 文档数 ≠ 未删除交易数 → 全量重建（覆盖 V005 迁移前的存量数据）；
-    // 一致则消费重建队列（账户/分类改名、绕过应用层的写入产生的待办）。
-    crate::commands::search::reconcile_search_index(&conn)?;
-    Ok(DbState {
-        conn: Arc::new(Mutex::new(conn)),
-    })
 }
 
 #[cfg(test)]
