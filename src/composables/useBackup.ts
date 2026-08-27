@@ -37,7 +37,7 @@ export function useBackup() {
   const autoBackupEnabled = ref(true);
   const autoBackupLastAt = ref<string | null>(null);
 
-  /// 展示文案：格式化 UTC ISO 为 `YYYY-MM-DD HH:mm`，从未备份时显示「从未」。
+  /** 展示文案：格式化 UTC ISO 为 `YYYY-MM-DD HH:mm`，从未备份时显示「从未」。 */
   const autoBackupLastText = computed(() =>
     autoBackupLastAt.value ? formatBackupTime(autoBackupLastAt.value) : "从未",
   );

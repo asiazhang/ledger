@@ -103,11 +103,11 @@ pub fn set_auto_backup_dir(app: AppHandle, dir: String) -> Result<()> {
     Ok(())
 }
 
-/// 自动备份设置页状态（issue #128）：开关、脏标记与上次自动备份时间。
+/// 自动备份设置页状态（issue #128）：开关与上次自动备份时间。
+/// 设置页仅需这两项；脏标记为后端调度内部状态，不上 IPC 面。
 #[derive(Debug, Serialize)]
 pub struct AutoBackupSettingsState {
     pub enabled: bool,
-    pub dirty: bool,
     pub last_backup_at: Option<String>,
 }
 
@@ -121,7 +121,6 @@ pub fn get_auto_backup_state(app: AppHandle) -> Result<AutoBackupSettingsState> 
     let s = auto_backup::get_state(&conn)?;
     Ok(AutoBackupSettingsState {
         enabled: s.enabled,
-        dirty: s.dirty,
         last_backup_at: s.last_backup_at,
     })
 }
