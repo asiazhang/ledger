@@ -10,6 +10,7 @@ import {
   invokeHandler,
   makeAccount,
   makeHolding,
+  makeOverview,
   mockHoldings,
   mockInstruments,
 } from './factories'
@@ -42,6 +43,9 @@ const mockBalances: AccountBalance[] = [
   { account: mockAccounts[0], balance_cents: 10000 },
 ]
 
+// 净资产总览卡（issue #143）用例可按需覆写
+const mockOverview = makeOverview()
+
 // 首页新卡片用例可按需覆写；默认空集（无预算 → 预算卡隐藏、无当月行 → 三格为 0）
 let mockMonthlySummary: MonthlySummary[] = []
 let mockBudgetProgress: BudgetProgress[] = []
@@ -63,6 +67,7 @@ function baseInvoke(extra?: Record<string, unknown>) {
         list_account_balances: mockBalances,
         list_holdings: mockHoldings,
         list_instruments: { items: mockInstruments, total: mockInstruments.length },
+        dashboard_overview: mockOverview,
       },
       {
         // 函数型 handler 实时读取可变变量，#144 用例挂载前直接改写生效
@@ -90,6 +95,29 @@ async function mountView() {
   await flushPromises()
   return wrapper
 }
+
+describe('DashboardView 净资产总览卡（issue #143）', () => {
+  it('首页顶部呈现净资产总览卡：本位币单一主数字', async () => {
+    const wrapper = await mountView()
+    const card = wrapper.find('[data-testid="net-worth-card"]')
+    expect(card.exists()).toBe(true)
+    expect(card.text()).toContain('净资产')
+    // 123456 分 → ¥1234.56（本位币主数字，无各币种分项）
+    expect(card.text()).toContain('¥1234.56')
+  })
+
+  it('命令报错（如缺汇率）时卡片显示提示文案而非空数字或崩溃', async () => {
+    baseInvoke({
+      dashboard_overview: () => Promise.reject(new Error('缺少 USD→CNY 汇率，无法折算')),
+    })
+    const wrapper = await mountView()
+    const card = wrapper.find('[data-testid="net-worth-card"]')
+    expect(card.text()).toContain('净资产')
+    expect(card.text()).toContain('缺少 USD→CNY 汇率，无法折算')
+    // 不渲染空数字
+    expect(card.text()).not.toContain('¥0')
+  })
+})
 
 describe('DashboardView 投资概览卡（issue #145）', () => {
   it('有持仓时展示按币种分组的总市值与未实现盈亏合计，无行情行不以零计入', async () => {

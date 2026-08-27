@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import {
+  NAlert,
   NCard,
   NGi,
   NGrid,
@@ -8,10 +9,12 @@ import {
   NProgress,
   NSpace,
   NStatistic,
+  NSpin,
   NTag,
   NText,
 } from 'naive-ui'
 import { api } from '@/api'
+import { useDashboardOverview } from '@/composables/useDashboardOverview'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount } from '@/types'
 import type { AccountBalance, BudgetProgress, MonthlySummary } from '@/types'
@@ -20,12 +23,17 @@ import {
   usePortfolioOverview,
 } from '@/composables/usePortfolioOverview'
 
-// 首页信息卡：投资概览（issue #145）+ 逐账户余额 + 本月收支 + 预算进度（issue #144）。
+// 首页财务全貌仪表盘（issue #140）：净资产总览卡（issue #143）+ 投资概览卡（issue #145）
+// + 逐账户余额 + 本月收支与预算进度（issue #144）。
 // 快速记账已迁至交易页「记一笔」弹窗、最近交易列表已移除（issue #141）。
 const reference = useReferenceStore()
 const balances = ref<AccountBalance[]>([])
 const currentMonth = ref<MonthlySummary | null>(null)
 const budgets = ref<BudgetProgress[]>([])
+
+// 净资产总览卡（issue #143）：多币种折算与合计全部在后端 `dashboard_overview` 完成，
+// 前端只做装配渲染；缺汇率等报错显示提示文案而非空数字。
+const { overview, loading, error } = useDashboardOverview()
 
 // 本月收支口径：收入用后端净收入列（income_net）；净支出为展示层计算
 // 毛支出 − 退款（与预算消耗、分类占比的 expense_net 口径一致，退款不单列）；
@@ -72,7 +80,29 @@ onMounted(async () => {
 
 <template>
   <NSpace vertical :size="16">
-    <!-- 投资概览卡（issue #145）：置于首页顶部，无任何持仓时整卡隐藏 -->
+    <!-- 净资产总览卡（issue #143）：置顶呈现本位币单一主数字，第一眼回答「总共有多少钱」 -->
+    <NCard size="small" data-testid="net-worth-card">
+      <NSpin :show="loading">
+        <NSpace vertical :size="4">
+          <NText depth="3" style="font-size: 12px">净资产</NText>
+          <template v-if="overview">
+            <NText strong style="font-size: 28px">
+              {{
+                formatAmount(
+                  overview.net_worth_cents,
+                  reference.getCurrency(overview.native_currency),
+                )
+              }}
+            </NText>
+          </template>
+          <NAlert v-else-if="error" type="warning" :bordered="false">
+            {{ error }}
+          </NAlert>
+        </NSpace>
+      </NSpin>
+    </NCard>
+
+    <!-- 投资概览卡（issue #145）：无任何持仓时整卡隐藏 -->
     <NCard
       v-if="holdingRows.length > 0"
       title="投资概览"
