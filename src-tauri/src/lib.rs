@@ -93,6 +93,10 @@ pub fn run() {
             // 轮询调度线程与写路径 on_write 共享同一份；
             // 退出兜底挂在下方 run 事件的 RunEvent::Exit 分支。
             auto_backup::start_scheduler(app.handle());
+            // 备份产物变更信号（issue #129）：自动备份的深路径执行点
+            // （写时顺带检查 on_write）拿不到 AppHandle，启动时注入镜像句柄一次，
+            // 之后经 [`events::emit_backups_changed_current`] 发射。
+            events::init_event_app(app.handle());
             Ok(())
         })
         .invoke_handler(logged_invoke_handler(tauri::generate_handler![

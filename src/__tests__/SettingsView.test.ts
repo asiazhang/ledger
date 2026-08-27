@@ -4,6 +4,7 @@ import { nextTick } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
@@ -24,6 +25,7 @@ const mockSave = vi.mocked(save)
 const mockConfirm = vi.mocked(confirm)
 
 const mockInvoke = vi.mocked(invoke)
+const mockListen = vi.mocked(listen)
 
 const mockCurrencies: Currency[] = [
   { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
@@ -331,5 +333,83 @@ describe('SettingsView.vue', () => {
     expect(mockInvoke).toHaveBeenCalledWith('restore_backup', {
       backupPath: '/Users/me/backups/ledger-backup.db.zip',
     })
+  })
+
+  it('备份文件列表展示来源列，区分自动与手动（issue #129）', async () => {
+    const store = useAppStore()
+    store.setBackupDir('/Users/me/backups')
+    stubInvoke({
+      list_backups: () => [
+        {
+          file_name: 'ledger-auto-20260217-093000.db.zip',
+          path: '/Users/me/backups/ledger-auto-20260217-093000.db.zip',
+          size_bytes: 4096,
+          created_at: '2026-02-17T09:30:00Z',
+          kind: 'auto',
+        },
+        {
+          file_name: 'ledger-backup-20260101-010101.db.zip',
+          path: '/Users/me/backups/ledger-backup-20260101-010101.db.zip',
+          size_bytes: 1024,
+          created_at: '2026-01-01T01:01:01Z',
+          kind: 'manual',
+        },
+      ],
+    })
+    const wrapper = mount(SettingsView)
+    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
+    await backupTab.trigger('click')
+    await flushPromises()
+
+    const headers = wrapper.findAll('th').map((t) => t.text())
+    expect(headers).toContain('来源')
+    const cellTexts = wrapper.findAll('tbody td').map((t) => t.text())
+    expect(cellTexts).toContain('自动')
+    expect(cellTexts).toContain('手动')
+  })
+
+  it('ledger:backups-changed 到达后自动刷新备份列表（issue #129）', async () => {
+    useAppStore().setBackupDir('/Users/me/backups')
+    mockListen.mockReset()
+    let backupsChangedHandler: (...args: unknown[]) => void = () => {}
+    mockListen.mockImplementation((_event: string, handler: never) => {
+      backupsChangedHandler = handler
+      return Promise.resolve(vi.fn())
+    })
+    let backupList: unknown[] = []
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
+      if (cmd === 'list_accounts') return Promise.resolve([])
+      if (cmd === 'list_categories') return Promise.resolve([])
+      if (cmd === 'list_backups') return Promise.resolve(backupList)
+      if (cmd === 'get_auto_backup_state') {
+        return Promise.resolve({ enabled: true, last_backup_at: null })
+      }
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+
+    const wrapper = mount(SettingsView)
+    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
+    await backupTab.trigger('click')
+    await flushPromises()
+    expect(wrapper.html()).toContain('当前共 0 个备份，上限 30 个')
+
+    // 后端自动备份完成 → 发出无 payload 信号 → 列表自动重拉。
+    backupList = [
+      {
+        file_name: 'ledger-auto-20260217-093000.db.zip',
+        path: '/Users/me/backups/ledger-auto-20260217-093000.db.zip',
+        size_bytes: 4096,
+        created_at: '2026-02-17T09:30:00Z',
+        kind: 'auto',
+      },
+    ]
+    backupsChangedHandler()
+    await flushPromises()
+
+    expect(wrapper.html()).toContain('当前共 1 个备份，上限 30 个')
+    const cellTexts = wrapper.findAll('tbody td').map((t) => t.text())
+    expect(cellTexts).toContain('ledger-auto-20260217-093000.db.zip')
+    expect(cellTexts).toContain('自动')
   })
 })

@@ -34,6 +34,7 @@ const {
 
 const backupColumns = [
   { title: '文件名', key: 'file_name' },
+  { title: '来源', key: 'source_text', width: 70 },
   { title: '大小', key: 'size_text', width: 100 },
   { title: '备份时间', key: 'created_at', width: 160 },
 ]

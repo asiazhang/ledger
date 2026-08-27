@@ -17,9 +17,12 @@ use std::path::Path;
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
-use crate::auto_backup;
-use crate::db::DbState;
-use crate::error::{AppError, Result};
+use crate::{
+    auto_backup,
+    db::DbState,
+    error::{AppError, Result},
+    events,
+};
 
 pub use core::*;
 
@@ -69,11 +72,14 @@ pub fn list_backups(dir: String) -> Result<Vec<BackupFileInfo>> {
 }
 
 /// 将备份目录中的受管备份修剪到最多 `keep` 个（删除最旧的超出部分）。
+/// 清理成功后发出 `ledger:backups-changed` 信号（issue #129），前端列表随之自动刷新。
 #[tauri::command]
-pub fn prune_backups(dir: String, keep: i64) -> Result<PruneResult> {
+pub fn prune_backups(app: AppHandle, dir: String, keep: i64) -> Result<PruneResult> {
     let keep = usize::try_from(keep)
         .map_err(|_| AppError::Invalid(format!("备份保留上限非法: {keep}")))?;
-    core::prune_managed_backups(Path::new(&dir), keep)
+    let r = core::prune_managed_backups(Path::new(&dir), keep)?;
+    events::emit_backups_changed(&app);
+    Ok(r)
 }
 
 /// 同步设备本地备份目录到后端（自动备份调度用，ADR-0016 决策 3 的偏好镜像：

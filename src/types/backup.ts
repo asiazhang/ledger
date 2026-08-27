@@ -10,11 +10,16 @@ export interface RestoreResult {
   restored_at: string
 }
 
+/** 备份触发来源（与后端权威枚举 `commands::backup::BackupKind` 对应，issue #129）。 */
+export type BackupKind = "auto" | "manual";
+
 export interface BackupFileInfo {
   file_name: string
   path: string
   size_bytes: number
   created_at: string
+  /** 备份触发来源（issue #129）：元数据为权威，旧版本备份回落 manual。 */
+  kind: BackupKind
 }
 
 export interface PruneResult {
