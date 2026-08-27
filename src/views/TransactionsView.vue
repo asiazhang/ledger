@@ -21,6 +21,7 @@ import {
 import { ChevronDown } from '@vicons/ionicons5'
 import TransactionForm from '@/components/TransactionForm.vue'
 import RefundForm from '@/components/RefundForm.vue'
+import { useCreateShortcuts, CREATE_KIND_KEYS } from '@/composables/useCreateShortcuts'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/transaction-columns'
@@ -155,9 +156,10 @@ const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
 const createKind = ref<CreateTransactionKind | null>(null)
 
 /** 下拉选项：5 种可创建类型（refund 不在入口：退款已移出表单域，入口由交易条目
- * 右键菜单承接，独立 ticket 落地前处于过渡态）。 */
+ * 右键菜单承接，独立 ticket 落地前处于过渡态）。标签后附裸键快捷键提示（issue #153），
+ * 键位来自 CREATE_KIND_KEYS 单一来源，与 keydown 匹配共用。 */
 const createKindOptions: DropdownOption[] = CREATE_KINDS.map((k) => ({
-  label: TRANSACTION_KIND_LABELS[k],
+  label: `${TRANSACTION_KIND_LABELS[k]} ${CREATE_KIND_KEYS[k]}`,
   key: k,
 }))
 
@@ -172,6 +174,10 @@ function openCreate(k: CreateTransactionKind) {
 function onCreateShowUpdate(show: boolean) {
   if (!show) createKind.value = null
 }
+
+// 裸键快捷键（issue #153）：a/z/i/b/s 直达对应类型弹窗，与点下拉对应项同一入口；
+// 焦点在可编辑元素或弹层打开时抑制；随视图装卸，仅交易页生效
+useCreateShortcuts(openCreate)
 
 /** 提交成功：回到第 1 页再刷新（新记录按日期/时间排序最可能落在第 1 页），
  * 保留筛选条件（与手动过滤同等语义，不重置）。 */
