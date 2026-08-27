@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import {
   NAlert,
   NCard,
+  NEmpty,
   NGi,
   NGrid,
   NGridItem,
@@ -17,17 +18,18 @@ import { api } from '@/api'
 import { useDashboardOverview } from '@/composables/useDashboardOverview'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount } from '@/types'
-import type { AccountBalance, BudgetProgress, MonthlySummary } from '@/types'
+import type { BudgetProgress, MonthlySummary } from '@/types'
 import {
   formatCurrencyGroups,
   usePortfolioOverview,
 } from '@/composables/usePortfolioOverview'
 
 // 首页财务全貌仪表盘（issue #140）：净资产总览卡（issue #143）+ 投资概览卡（issue #145）
-// + 逐账户余额 + 本月收支与预算进度（issue #144）。
-// 快速记账已迁至交易页「记一笔」弹窗、最近交易列表已移除（issue #141）。
+// + 本月收支与预算进度（issue #144）。
+// 快速记账已迁至交易页「记一笔」弹窗、最近交易列表已移除（issue #141）；
+// 逐账户余额卡已移除（逐账户明细归账户页，首页只呈现聚合全貌），
+// 投资概览/预算进度两卡不再按数据隐匿，空态用 NEmpty 占位。
 const reference = useReferenceStore()
-const balances = ref<AccountBalance[]>([])
 const currentMonth = ref<MonthlySummary | null>(null)
 const budgets = ref<BudgetProgress[]>([])
 
@@ -67,12 +69,7 @@ onMounted(async () => {
   const now = new Date()
   const year = now.getFullYear()
   const monthKey = `${year}-${String(now.getMonth() + 1).padStart(2, '0')}`
-  const [bals, monthly, progress] = await Promise.all([
-    api.listAccountBalances(),
-    api.monthlySummary(year),
-    api.budgetProgress(),
-  ])
-  balances.value = bals
+  const [monthly, progress] = await Promise.all([api.monthlySummary(year), api.budgetProgress()])
   currentMonth.value = monthly.find((m) => m.month === monthKey) ?? null
   budgets.value = progress
 })
@@ -102,14 +99,9 @@ onMounted(async () => {
       </NSpin>
     </NCard>
 
-    <!-- 投资概览卡（issue #145）：无任何持仓时整卡隐藏 -->
-    <NCard
-      v-if="holdingRows.length > 0"
-      title="投资概览"
-      size="small"
-      data-testid="investment-overview-card"
-    >
-      <NGrid :x-gap="16" cols="1 s:2">
+    <!-- 投资概览卡（issue #145）：始终展示，无持仓时空态占位 -->
+    <NCard title="投资概览" size="small" data-testid="investment-overview-card">
+      <NGrid v-if="holdingRows.length > 0" :x-gap="16" cols="1 s:2">
         <NGi>
           <NStatistic label="总市值" data-testid="dashboard-total-market-value">
             {{ formatCurrencyGroups(totalMarketValueGroups, reference.currencyMap) }}
@@ -121,22 +113,8 @@ onMounted(async () => {
           </NStatistic>
         </NGi>
       </NGrid>
+      <NEmpty v-else description="暂无持仓" />
     </NCard>
-
-    <NGrid :cols="3" :x-gap="16" :y-gap="16" responsive="screen">
-      <NGridItem v-for="b in balances" :key="b.account.id">
-        <NCard size="small">
-          <NSpace vertical :size="4">
-            <NText depth="3" style="font-size: 12px">
-              {{ b.account.name }}
-            </NText>
-            <NText strong style="font-size: 22px">
-              {{ formatAmount(b.balance_cents, reference.getCurrency(b.account.currency_code)) }}
-            </NText>
-          </NSpace>
-        </NCard>
-      </NGridItem>
-    </NGrid>
 
     <NCard title="本月收支" size="small">
       <NGrid :cols="3" :x-gap="16" responsive="screen">
@@ -161,8 +139,9 @@ onMounted(async () => {
       </NGrid>
     </NCard>
 
-    <NCard v-if="budgetRows.length > 0" title="预算进度" size="small">
-      <NSpace vertical :size="12">
+    <NCard title="预算进度" size="small" data-testid="budget-progress-card">
+      <NEmpty v-if="budgetRows.length === 0" description="未设置预算" />
+      <NSpace v-else vertical :size="12">
         <div v-for="row in budgetRows" :key="row.budget.id" class="budget-row">
           <NSpace align="center" justify="space-between" style="width: 100%">
             <NText :type="row.over_budget ? 'error' : 'default'">

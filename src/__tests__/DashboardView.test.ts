@@ -14,7 +14,7 @@ import {
   mockHoldings,
   mockInstruments,
 } from './factories'
-import type { Account, AccountBalance, BudgetProgress, Currency, MonthlySummary } from '@/types'
+import type { Account, BudgetProgress, Currency, MonthlySummary } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -39,10 +39,6 @@ const mockAccounts: Account[] = [
   },
 ]
 
-const mockBalances: AccountBalance[] = [
-  { account: mockAccounts[0], balance_cents: 10000 },
-]
-
 // 净资产总览卡（issue #143）用例可按需覆写
 const mockOverview = makeOverview()
 
@@ -56,7 +52,7 @@ function setCurrentMonthSummary(summary: MonthlySummary) {
   mockMonthlySummary = [{ month: monthKey, ...summary }]
 }
 
-/** 默认 invoke mock：参考数据 + 余额 + 持仓 + 持仓标的字典 + 本月收支/预算（extra 优先覆盖） */
+/** 默认 invoke mock：参考数据 + 持仓 + 持仓标的字典 + 本月收支/预算（extra 优先覆盖） */
 function baseInvoke(extra?: Record<string, unknown>) {
   mockInvoke.mockImplementation(
     invokeHandler(
@@ -64,7 +60,6 @@ function baseInvoke(extra?: Record<string, unknown>) {
         list_currencies: mockCurrencies,
         list_accounts: mockAccounts,
         list_categories: [],
-        list_account_balances: mockBalances,
         list_holdings: mockHoldings,
         list_instruments: { items: mockInstruments, total: mockInstruments.length },
         dashboard_overview: mockOverview,
@@ -154,11 +149,14 @@ describe('DashboardView 投资概览卡（issue #145）', () => {
     expect(card.text()).toContain('¥300 / -$5')
   })
 
-  it('无任何持仓时整卡隐藏', async () => {
+  it('无任何持仓时卡片保留，空态占位而非统计数字', async () => {
     baseInvoke({ list_holdings: [], list_instruments: { items: [], total: 0 } })
     const wrapper = await mountView()
-    expect(wrapper.find('[data-testid="investment-overview-card"]').exists()).toBe(false)
-    expect(wrapper.text()).not.toContain('投资概览')
+    const card = wrapper.find('[data-testid="investment-overview-card"]')
+    expect(card.exists()).toBe(true)
+    expect(card.text()).toContain('暂无持仓')
+    // 空态不渲染分组统计
+    expect(card.text()).not.toContain('总市值')
   })
 
   it('有持仓但全部无行情时空值分支：合计统计精确降级为「总市值-」', async () => {
@@ -192,11 +190,11 @@ describe('DashboardView 快速记账与最近交易移除（issue #141）', () =
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'list_transactions')).toBe(false)
   })
 
-  it('账户余额卡片保留（仪表盘改造前的既有内容）', async () => {
+  it('不再渲染逐账户余额卡片（逐账户明细归账户页，首页只呈现聚合全貌）', async () => {
     const wrapper = await mountView()
-    expect(wrapper.text()).toContain('现金')
-    // 金额展示裁剪尾零（issue #148）：10000 分 → ¥100
-    expect(wrapper.text()).toContain('¥100')
+    expect(wrapper.text()).not.toContain('现金')
+    // 不再查询账户余额
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'list_account_balances')).toBe(false)
   })
 })
 
@@ -269,9 +267,12 @@ describe('DashboardView 预算进度卡（issue #144）', () => {
     expect(wrapper.text()).toContain('600 / 500')
   })
 
-  it('无任何预算时整卡隐藏，不出空区块', async () => {
+  it('无任何预算时卡片保留，空态占位而非逐行进度条', async () => {
     mockBudgetProgress = []
     const wrapper = await mountView()
-    expect(wrapper.text()).not.toContain('预算进度')
+    const card = wrapper.find('[data-testid="budget-progress-card"]')
+    expect(card.exists()).toBe(true)
+    expect(card.text()).toContain('未设置预算')
+    expect(wrapper.findComponent(NProgress).exists()).toBe(false)
   })
 })
