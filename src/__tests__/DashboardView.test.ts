@@ -5,9 +5,16 @@ import { invoke } from '@tauri-apps/api/core'
 import DashboardView from '@/views/DashboardView.vue'
 import TransactionForm from '@/components/TransactionForm.vue'
 import { useReferenceStore } from '@/stores/reference'
-import type { Account, AccountBalance, Currency } from '@/types'
+import type { Account, AccountBalance, Currency, DashboardOverview } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
+
+const mockOverview: DashboardOverview = {
+  native_currency: 'CNY',
+  net_worth_cents: 123456,
+  accounts_balance_cents: 100000,
+  holdings_market_value_cents: 23456,
+}
 
 const mockCurrencies: Currency[] = [
   { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
@@ -41,6 +48,7 @@ beforeEach(async () => {
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve([])
     if (cmd === 'list_account_balances') return Promise.resolve(mockBalances)
+    if (cmd === 'dashboard_overview') return Promise.resolve(mockOverview)
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
   localStorage.clear()
@@ -53,6 +61,32 @@ async function mountView() {
   await flushPromises()
   return wrapper
 }
+
+describe('DashboardView 净资产总览卡（issue #143）', () => {
+  it('首页顶部呈现净资产总览卡：本位币单一主数字', async () => {
+    const wrapper = await mountView()
+    expect(wrapper.text()).toContain('净资产')
+    // 123456 分 → ¥1234.56（本位币主数字，无各币种分项）
+    expect(wrapper.text()).toContain('¥1234.56')
+  })
+
+  it('命令报错（如缺汇率）时卡片显示提示文案而非空数字或崩溃', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
+      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
+      if (cmd === 'list_categories') return Promise.resolve([])
+      if (cmd === 'dashboard_overview')
+        return Promise.reject(new Error('缺少 USD→CNY 汇率，无法折算'))
+      if (cmd === 'list_account_balances') return Promise.resolve(mockBalances)
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const wrapper = await mountView()
+    expect(wrapper.text()).toContain('净资产')
+    expect(wrapper.text()).toContain('缺少 USD→CNY 汇率，无法折算')
+    // 不渲染空数字
+    expect(wrapper.text()).not.toContain('¥0')
+  })
+})
 
 describe('DashboardView 快速记账与最近交易移除（issue #141）', () => {
   it('不再渲染快速记账表单（TransactionForm）', async () => {
