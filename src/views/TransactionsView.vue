@@ -9,10 +9,12 @@ import {
   NSelect,
   NSpace,
   NPopconfirm,
+  NModal,
   useMessage,
   type DataTableColumn,
   type PaginationProps,
 } from 'naive-ui'
+import TransactionForm from '@/components/TransactionForm.vue'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/transaction-columns'
@@ -137,6 +139,18 @@ watch(
 
 /** 页大小选项（不持久化，遵守 ViewState 决策） */
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
+
+/** 「记一笔」弹窗开关：弹窗内嵌现有 TransactionForm，
+ * 提交成功（created）后关闭并立即刷新列表，录完马上能看到记录（issue #141）。 */
+const showCreate = ref(false)
+
+/** 提交成功：回到第 1 页再刷新（新记录按日期/时间排序最可能落在第 1 页），
+ * 保留筛选条件（与手动过滤同等语义，不重置）。 */
+function onFormCreated() {
+  showCreate.value = false
+  page.value = 1
+  void refresh()
+}
 
 async function refresh() {
   loading.value = true
@@ -305,7 +319,19 @@ onMounted(() => {
       >
         清除筛选
       </NButton>
+      <NButton type="primary" @click="showCreate = true">记一笔</NButton>
     </NSpace>
+    <!-- 快速记账弹窗：内嵌现有交易表单，提交成功关闭并刷新列表 -->
+    <NModal
+      v-model:show="showCreate"
+      title="记一笔"
+      preset="card"
+      display-directive="if"
+      style="width: 480px"
+      :bordered="false"
+    >
+      <TransactionForm @created="onFormCreated" />
+    </NModal>
     <!-- 备注列为弹性列（transaction-columns 中不设 width），表格始终铺满容器；
          窄窗口时备注先收缩，scroll-x（固定列宽总和）作为横向滚动下限 -->
     <NDataTable
