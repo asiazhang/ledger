@@ -5,7 +5,13 @@ import { formatAmount } from '@/types'
 import { useFormShared } from '@/composables/useFormShared'
 import type { Transaction, TransactionInput } from '@/types'
 
-export function useRefundForm(options?: { onCreated?: () => void }) {
+export function useRefundForm(options?: {
+  onCreated?: () => void
+  /** 行内退款（issue #151）：原交易由调用方所在行固定给定（getter 保持响应式），
+   * 不经搜索选择。打开即锁定继承的账户/币种展示，金额默认原交易金额（原始币种）；
+   * 提交跳过全量交易重载（列表刷新由 onCreated 回调承担）。 */
+  fixedTarget?: () => Transaction | null
+}) {
   const { reference, accountOptions, currencyOptions } = useFormShared()
   const message = useMessage()
 
@@ -15,6 +21,16 @@ export function useRefundForm(options?: { onCreated?: () => void }) {
   const refundTargetId = ref<string | null>(null)
   const note = ref('')
   const date = ref(Date.now())
+
+  // 行内退款模式：原交易由所在行固定，打开即按原交易初始化金额与锁定字段展示
+  // （账户/币种/分类后端强制继承原支出，此处仅为展示；amount_cents 按原币种解释）
+  const fixedTarget = options?.fixedTarget
+  const fixedTx = fixedTarget?.() ?? null
+  if (fixedTx) {
+    amount.value = fixedTx.amount_cents / 100
+    currencyCode.value = fixedTx.currency_code
+    accountId.value = fixedTx.account_id
+  }
 
   const transactions = ref<Transaction[]>([])
 
@@ -35,11 +51,13 @@ export function useRefundForm(options?: { onCreated?: () => void }) {
     }),
   )
 
-  const refundTarget = computed<Transaction | null>(() =>
-    refundTargetId.value == null
+  const refundTarget = computed<Transaction | null>(() => {
+    const fixed = fixedTarget?.()
+    if (fixed) return fixed
+    return refundTargetId.value == null
       ? null
-      : (expenseTransactions.value.find((t) => t.id === refundTargetId.value) ?? null),
-  )
+      : (expenseTransactions.value.find((t) => t.id === refundTargetId.value) ?? null)
+  })
 
   async function loadTransactions() {
     try {
@@ -50,7 +68,9 @@ export function useRefundForm(options?: { onCreated?: () => void }) {
   }
 
   async function submit() {
-    if (!refundTargetId.value) {
+    // 行内模式原交易固定；搜索模式取下拉选择
+    const targetId = fixedTarget?.()?.id ?? refundTargetId.value
+    if (!targetId) {
       message.warning('请选择要退款的原始支出交易')
       return
     }
@@ -65,14 +85,15 @@ export function useRefundForm(options?: { onCreated?: () => void }) {
       account_id: accountId.value!,
       to_account_id: null,
       category_id: null,
-      refund_of_transaction_id: refundTargetId.value,
+      refund_of_transaction_id: targetId,
       note: note.value || null,
       date: new Date(date.value).toISOString().slice(0, 10),
     }
     try {
       await api.createTransaction(input)
       message.success('已记退款')
-      await loadTransactions()
+      // 行内模式跳过全量交易重载：列表刷新由 onCreated 回调承担
+      if (!fixedTarget) await loadTransactions()
       amount.value = null
       note.value = ''
       refundTargetId.value = null

@@ -1,20 +1,22 @@
 <script setup lang="ts">
-import { computed, h, onMounted, ref, watch } from 'vue'
+import { computed, h, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   NDataTable,
   NButton,
   NDatePicker,
+  NDropdown,
   NEmpty,
   NSelect,
   NSpace,
-  NPopconfirm,
   NModal,
+  useDialog,
   useMessage,
   type DataTableColumn,
   type PaginationProps,
 } from 'naive-ui'
 import TransactionForm from '@/components/TransactionForm.vue'
+import RefundForm from '@/components/RefundForm.vue'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/transaction-columns'
@@ -27,6 +29,7 @@ import {
 
 const reference = useReferenceStore()
 const message = useMessage()
+const dialog = useDialog()
 const route = useRoute()
 const data = ref<Transaction[]>([])
 const total = ref(0)
@@ -222,6 +225,78 @@ async function remove(id: string) {
   }
 }
 
+/** 删除走 useDialog 二次确认（issue #151）：取消不删，确认后才删除。 */
+function confirmDelete(row: Transaction) {
+  dialog.warning({
+    title: '删除交易',
+    content: '确认删除该条交易？删除后不可恢复。',
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: () => remove(row.id),
+  })
+}
+
+/** 行内退款弹窗（issue #151）：原交易由右键所在行确定，不经搜索选择；
+ * 同一支出可多次发起退款（部分退款语义，不阻断）。
+ * refundSeq 作为表单 key：每次打开强制重建表单实例，
+ * 金额/币种/账户由 fixedTarget 重新初始化（不依赖弹窗内容卸载）。 */
+const showRefund = ref(false)
+const refundSource = ref<Transaction | null>(null)
+const refundSeq = ref(0)
+
+function openRefundFromRow(row: Transaction) {
+  refundSource.value = row
+  refundSeq.value += 1
+  showRefund.value = true
+}
+
+function onRefundCreated() {
+  showRefund.value = false
+  page.value = 1
+  void refresh()
+}
+
+/** 右键菜单（issue #151）：expense 行含「退款」，所有行含「删除」。 */
+const menuShow = ref(false)
+const menuX = ref(0)
+const menuY = ref(0)
+const menuRow = ref<Transaction | null>(null)
+
+const menuOptions = computed(() =>
+  menuRow.value?.kind === 'expense'
+    ? [
+        { label: '退款', key: 'refund' },
+        { type: 'divider' as const, key: 'menu-divider' },
+        { label: '删除', key: 'delete' },
+      ]
+    : [{ label: '删除', key: 'delete' }],
+)
+
+/** 行右键弹出菜单：先收起再 nextTick 展开，保证换行弹出时位置刷新。 */
+function showRowMenu(e: MouseEvent, row: Transaction) {
+  e.preventDefault()
+  menuRow.value = row
+  menuX.value = e.clientX
+  menuY.value = e.clientY
+  menuShow.value = false
+  void nextTick(() => {
+    menuShow.value = true
+  })
+}
+
+function onMenuSelect(key: string) {
+  menuShow.value = false
+  const row = menuRow.value
+  if (!row) return
+  if (key === 'refund') openRefundFromRow(row)
+  else if (key === 'delete') confirmDelete(row)
+}
+
+/** 表格行属性：绑定行右键菜单。 */
+const rowProps = (row: Transaction) => ({
+  onContextmenu: (e: MouseEvent) => showRowMenu(e, row),
+})
+
 const pagination = computed<PaginationProps>(() => ({
   page: page.value,
   pageSize: pageSize.value,
@@ -241,23 +316,7 @@ const pagination = computed<PaginationProps>(() => ({
   },
 }))
 
-const columns: DataTableColumn<Transaction>[] = [
-  ...buildTransactionColumns(reference),
-  {
-    title: '操作',
-    key: 'actions',
-    width: 80,
-    render: (row) =>
-      h(
-        NPopconfirm,
-        { onPositiveClick: () => remove(row.id) },
-        {
-          default: () => '确认删除？',
-          trigger: () => h(NButton, { size: 'tiny', type: 'error', quaternary: true }, () => '删除'),
-        },
-      ),
-  },
-]
+const columns: DataTableColumn<Transaction>[] = [...buildTransactionColumns(reference)]
 
 // scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和
 const scrollX = sumFixedColumnWidths(columns)
@@ -332,6 +391,34 @@ onMounted(() => {
     >
       <TransactionForm @created="onFormCreated" />
     </NModal>
+    <!-- 行内退款弹窗：原交易由右键所在行固定（fixed-target），账户/币种锁定继承，
+         金额默认原交易金额（可改）；提交走现有 kind=refund 写路径 -->
+    <NModal
+      v-model:show="showRefund"
+      title="退款"
+      preset="card"
+      display-directive="if"
+      style="width: 480px"
+      :bordered="false"
+    >
+      <RefundForm
+        :key="refundSeq"
+        v-if="refundSource"
+        :fixed-target="refundSource"
+        @created="onRefundCreated"
+      />
+    </NModal>
+    <!-- 行右键菜单（issue #151）：expense 行「退款」+ 所有行「删除」，手动定位弹出 -->
+    <NDropdown
+      trigger="manual"
+      placement="bottom-start"
+      :show="menuShow"
+      :x="menuX"
+      :y="menuY"
+      :options="menuOptions"
+      @select="onMenuSelect"
+      @clickoutside="menuShow = false"
+    />
     <!-- 备注列为弹性列（transaction-columns 中不设 width），表格始终铺满容器；
          窄窗口时备注先收缩，scroll-x（固定列宽总和）作为横向滚动下限 -->
     <NDataTable
@@ -341,6 +428,7 @@ onMounted(() => {
       :bordered="false"
       size="small"
       remote
+      :row-props="rowProps"
       :scroll-x="scrollX"
       :pagination="pagination"
     >
