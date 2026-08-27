@@ -15,8 +15,10 @@ const ZIP_DB_ENTRY: &str = "ledger.db";
 const ZIP_META_ENTRY: &str = "backup.json";
 
 /// 受管备份命名规则（与前端 `defaultBackupFileName` 保持一致）：
-/// `ledger-backup-YYYYMMDD-HHMMSS.db.zip`。
-const MANAGED_BACKUP_PREFIX: &str = "ledger-backup-";
+/// 手动 `ledger-backup-YYYYMMDD-HHMMSS.db.zip` + 自动
+/// `ledger-auto-YYYYMMDD-HHMMSS.db.zip`（ADR-0016，两类同等参与清理与首次兜底判定）。
+const MANAGED_BACKUP_PREFIXES: &[&str] =
+    &["ledger-backup-", crate::auto_backup::AUTO_BACKUP_PREFIX];
 const MANAGED_BACKUP_SUFFIX: &str = ".db.zip";
 
 /// 备份文件信息（用于备份文件列表展示）。
@@ -36,15 +38,24 @@ pub struct PruneResult {
     pub failed: Vec<String>,
 }
 
-/// 判断文件名是否为受管备份（自动命名 `ledger-backup-*.db.zip`）。
+/// 匹配文件名命中的受管前缀；非受管返回 None。
+fn matched_managed_prefix(name: &str) -> Option<&'static str> {
+    MANAGED_BACKUP_PREFIXES
+        .iter()
+        .copied()
+        .find(|prefix| name.starts_with(prefix))
+}
+
+/// 判断文件名是否为受管备份（自动命名 `<前缀>YYYYMMDD-HHMMSS.db.zip`）。
 fn is_managed_backup_file_name(name: &str) -> bool {
-    name.starts_with(MANAGED_BACKUP_PREFIX) && name.ends_with(MANAGED_BACKUP_SUFFIX)
+    matched_managed_prefix(name).is_some() && name.ends_with(MANAGED_BACKUP_SUFFIX)
 }
 
 /// 从受管备份文件名解析备份时间（`YYYYMMDD-HHMMSS`）；解析失败返回 None。
 fn parse_backup_timestamp(file_name: &str) -> Option<NaiveDateTime> {
+    let prefix = matched_managed_prefix(file_name)?;
     let stem = file_name
-        .strip_prefix(MANAGED_BACKUP_PREFIX)?
+        .strip_prefix(prefix)?
         .strip_suffix(MANAGED_BACKUP_SUFFIX)?;
     NaiveDateTime::parse_from_str(stem, "%Y%m%d-%H%M%S").ok()
 }

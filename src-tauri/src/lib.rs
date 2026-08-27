@@ -89,6 +89,10 @@ pub fn run() {
             commands::search::start_search_refresh_thread(app.state::<db::DbState>().conn.clone());
             // 全量同步中断状态（issue #104）：跨命令共享运行/取消标志。
             app.manage(commands::sync::SyncState::default());
+            // 自动备份（issue #125）：设备本地目录镜像 + 轮询调度线程；
+            // 退出兜底挂在下方 run 事件的 RunEvent::Exit 分支。
+            app.manage(auto_backup::PrefsState::default());
+            auto_backup::start_scheduler(app.handle());
             Ok(())
         })
         .invoke_handler(logged_invoke_handler(tauri::generate_handler![
@@ -136,9 +140,16 @@ pub fn run() {
             commands::sync_instruments,
             commands::cancel_sync_instruments,
             commands::sync_holding_prices,
+            commands::set_auto_backup_dir,
         ]))
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // 应用退出兑底（issue #125）：退出前若脏则补一次备份（不受每日约束）。
+            if let tauri::RunEvent::Exit = event {
+                auto_backup::exit_fallback(app);
+            }
+        });
 }
 
 fn logged_invoke_handler(

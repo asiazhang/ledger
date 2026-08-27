@@ -1,17 +1,29 @@
-//! 自动备份（AutoBackup）状态与到期判定（issue #124）。
+//! 自动备份（AutoBackup）状态、到期判定与调度（issue #124 / #125）。
 //!
-//! 职责边界：本模块只负责「状态存取」与「到期判定」两件事——
+//! 职责边界：
 //! - 状态经 [`crate::settings`] 收口持久化到 `app_settings` KV 表（`auto_backup.*` key），
-//!   不建专表、不暴露 IPC（后续 ticket 以领域命令形状提供）；
-//! - 到期判定为纯函数，当前时间由调用方注入，不依赖全局时钟，方便测试。
+//!   不建专表；IPC 由 `commands::backup` 的领域命令形状暴露（issue #128 接前端）；
+//! - 到期判定为纯函数 [`due_decision`]，当前时间由调用方注入，不依赖全局时钟——
+//!   **线程只做周期调用，是否备份的决策全在纯函数**（可测边界）；
+//! - 调度层（issue #125）提供三种触发入口（周期到期 / 退出兜底 / 首次兜底），
+//!   全部收敛到同一执行函数 [`perform_backup`]；轮询线程照搬
+//!   `start_search_refresh_thread` 模式（spawn + sleep），锁等待带超时，超时跳过本轮；
+//! - `backupDir` 保持前端 localStorage 单一来源（ADR-0016 决策 3），后端只维护
+//!   一份运行时镜像 [`PrefsState`]（启动时经 IPC `set_auto_backup_dir` 推送），
+//!   目录未配置时一律静默跳过。
 //!
 //! 备注：`SettingKey::AutoBackupNextDueAt` 已预留但本模块不读写——锚点模型下
-//! 「下次到期时间」可由 `last_backup_at + 间隔` 推导，不落地派生数据；
-//! 后续调度 ticket 若需直接展示/持久化该值再接入。
+//! 「下次到期时间」可由 `last_backup_at + 间隔` 推导，不落地派生数据。
+
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use rusqlite::Connection;
 
+use crate::db::DbState;
 use crate::settings::{self, SettingKey};
 
 /// 自动备份间隔：距上次备份 ≥24h 才视为到期（备份频率上限每天一次）。
@@ -125,6 +137,291 @@ pub fn mark_clean(conn: &Connection, now: &str) -> crate::error::Result<()> {
 /// 见 [`mark_clean`]：恢复成功后重置调度状态。
 pub fn reset(conn: &Connection, now: &str) -> crate::error::Result<()> {
     mark_clean(conn, now)
+}
+
+// ---------------------------------------------------------------------------
+// 调度执行（issue #125）：触发入口 → 决策（纯函数）→ 执行
+// ---------------------------------------------------------------------------
+
+/// 自动备份产物命名前缀：`ledger-auto-YYYYMMDD-HHMMSS.db.zip`。
+/// 后端受管备份判定（`commands::backup::core`）与前端命名/判定共用该语义（T3）。
+pub const AUTO_BACKUP_PREFIX: &str = "ledger-auto-";
+
+/// 轮询检查周期：每 30 分钟醒来检查一次到期判定（ADR-0016）。
+const CHECK_INTERVAL_SECS: u64 = 30 * 60;
+/// 执行备份时等待 DB 连接锁的超时；超时跳过本轮、保留脏标记，下个周期重试。
+const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// 自动备份产物文件名：`ledger-auto-YYYYMMDD-HHMMSS.db.zip`。
+pub fn auto_backup_file_name(now: DateTime<Utc>) -> String {
+    format!("{AUTO_BACKUP_PREFIX}{}.db.zip", now.format("%Y%m%d-%H%M%S"))
+}
+
+/// 解析 `last_backup_at` 存储格式（UTC ISO）。存储侧只写本模块生成的合法值，
+/// 解析失败（旧数据脏写等极端情况）按「从未备份」处理：无锚点，脏即到期。
+fn parse_iso(s: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|t| t.with_timezone(&Utc))
+}
+
+fn format_iso(now: DateTime<Utc>) -> String {
+    now.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+/// 一次备份尝试的结果。调用方据此打日志/做后续动作；测试据此断言行为。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AttemptOutcome {
+    /// 已成功创建备份并清真（记录锚点）。
+    Performed { path: String },
+    /// 静默跳过：不执行、不报错（含原因）。
+    Skipped(SkipReason),
+    /// 尝试了但失败：脏标记保留，下个周期重试（保留即重试机制，ADR-0016）。
+    Failed { reason: String },
+}
+
+/// 静默跳过的原因。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkipReason {
+    /// 自动备份开关关闭（用户显式退出保护网，三种入口统一尊重）。
+    Disabled,
+    /// 备份目录未配置：不执行、不报错，设置页负责引导（Story 7）。
+    DirMissing,
+    /// 不满足触发条件（未到期 / 无变化），按入口语义判定。
+    NotDue,
+    /// 首次兜底专属：备份列表非空（不分手动/自动），无需兜底。
+    ListNotEmpty,
+}
+
+/// 唯一执行落点：生成自动命名产物 + 成功后 [`mark_clean`]。
+/// 失败时不上抛由调用方归入 [`AttemptOutcome::Failed`]——脏标记自然保留。
+fn perform_backup(
+    conn: &Connection,
+    dir: &str,
+    app_version: &str,
+    now: DateTime<Utc>,
+) -> crate::error::Result<String> {
+    let target = Path::new(dir).join(auto_backup_file_name(now));
+    let path = crate::commands::backup::backup_db_to(conn, &target, app_version)?.path;
+    mark_clean(conn, &format_iso(now))?;
+    Ok(path)
+}
+
+/// 目录参数归一化：`None` / 空白串一律视为未配置（避免空路径把产物落到当前目录）。
+fn effective_dir(dir: Option<&str>) -> Option<&str> {
+    dir.map(str::trim).filter(|d| !d.is_empty())
+}
+
+/// 把执行结果归一化为 [`AttemptOutcome`] 并打日志（失败 warn，成功 info）。
+fn report(trigger: &str, performed: crate::error::Result<String>) -> AttemptOutcome {
+    match performed {
+        Ok(path) => {
+            tracing::info!(trigger, path = %path, "自动备份完成");
+            AttemptOutcome::Performed { path }
+        }
+        Err(e) => {
+            tracing::warn!(trigger, error = %e, "自动备份失败，保留脏标记待下周期重试");
+            AttemptOutcome::Failed {
+                reason: e.to_string(),
+            }
+        }
+    }
+}
+
+/// 触发入口一：周期到期尝试（轮询线程用；issue #126 的写时顺带检查也复用）。
+/// 读状态 → [`due_decision`] 纯函数决策 → 命中则执行。
+pub fn run_due_backup(
+    conn: &Connection,
+    dir: Option<&str>,
+    app_version: &str,
+    now: DateTime<Utc>,
+) -> AttemptOutcome {
+    let state = match get_state(conn) {
+        Ok(s) => s,
+        Err(e) => {
+            return AttemptOutcome::Failed {
+                reason: e.to_string(),
+            };
+        }
+    };
+    if !state.enabled {
+        return AttemptOutcome::Skipped(SkipReason::Disabled);
+    }
+    let Some(dir) = effective_dir(dir) else {
+        return AttemptOutcome::Skipped(SkipReason::DirMissing);
+    };
+    let last = state.last_backup_at.as_deref().and_then(parse_iso);
+    if due_decision(state.dirty, last, AUTO_BACKUP_INTERVAL, now) != BackupDecision::BackupNow {
+        return AttemptOutcome::Skipped(SkipReason::NotDue);
+    }
+    report("due", perform_backup(conn, dir, app_version, now))
+}
+
+/// 触发入口二：退出兜底——只要脏且可用就备份一次，**不受每日约束**。
+pub fn run_exit_backup(
+    conn: &Connection,
+    dir: Option<&str>,
+    app_version: &str,
+    now: DateTime<Utc>,
+) -> AttemptOutcome {
+    let state = match get_state(conn) {
+        Ok(s) => s,
+        Err(e) => {
+            return AttemptOutcome::Failed {
+                reason: e.to_string(),
+            };
+        }
+    };
+    if !state.enabled {
+        return AttemptOutcome::Skipped(SkipReason::Disabled);
+    }
+    let Some(dir) = effective_dir(dir) else {
+        return AttemptOutcome::Skipped(SkipReason::DirMissing);
+    };
+    if !state.dirty {
+        return AttemptOutcome::Skipped(SkipReason::NotDue);
+    }
+    report("exit", perform_backup(conn, dir, app_version, now))
+}
+
+/// 触发入口三：首次兜底——启动会话首次拿到目录时，若受管备份列表为空
+/// （不分手动/自动）立即备份一次，与脏标记/到期无关（Story 4）。
+pub fn run_first_backup(
+    conn: &Connection,
+    dir: Option<&str>,
+    app_version: &str,
+    now: DateTime<Utc>,
+) -> AttemptOutcome {
+    let state = match get_state(conn) {
+        Ok(s) => s,
+        Err(e) => {
+            return AttemptOutcome::Failed {
+                reason: e.to_string(),
+            };
+        }
+    };
+    if !state.enabled {
+        return AttemptOutcome::Skipped(SkipReason::Disabled);
+    }
+    let Some(dir) = effective_dir(dir) else {
+        return AttemptOutcome::Skipped(SkipReason::DirMissing);
+    };
+    match crate::commands::backup::list_managed_backups(Path::new(dir)) {
+        Ok(list) if !list.is_empty() => {
+            return AttemptOutcome::Skipped(SkipReason::ListNotEmpty);
+        }
+        // 目录尚不存在视为空列表：执行兜底时若目录确实无效，由 backup_db_to 报错收场。
+        Ok(_) => {}
+        Err(e) => {
+            return AttemptOutcome::Failed {
+                reason: e.to_string(),
+            };
+        }
+    }
+    report("first", perform_backup(conn, dir, app_version, now))
+}
+
+// ---------------------------------------------------------------------------
+// 运行时载体：偏好镜像 + 轮询线程 + 退出钩子
+// ---------------------------------------------------------------------------
+
+/// 设备本地偏好镜像：`backupDir` 保持前端 localStorage 单一来源（ADR-0016 决策 3），
+/// 启动/变更时经 IPC `set_auto_backup_dir` 推送给后端，供调度线程与退出钩子消费。
+/// `None` 表示未配置——所有触发入口一律静默跳过。
+#[derive(Default)]
+pub struct PrefsState {
+    /// 当前备份目录镜像。独立 Arc 以便线程与 IPC 两端共享同一份。
+    pub dir: Arc<Mutex<Option<String>>>,
+    /// 本会话是否已认领「首次兜底」机会（每会话至多一次）。
+    first_fallback_claimed: AtomicBool,
+}
+
+impl PrefsState {
+    fn lock_dir(&self) -> MutexGuard<'_, Option<String>> {
+        self.dir.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// 更新目录镜像；`None` 表示未配置。
+    pub fn set_dir(&self, dir: Option<String>) {
+        *self.lock_dir() = dir;
+    }
+
+    pub fn snapshot_dir(&self) -> Option<String> {
+        self.lock_dir().clone()
+    }
+
+    /// 认领本会话的首次兜底机会：返回 true 表示尚未做过、由本次认领。
+    pub fn claim_first_fallback(&self) -> bool {
+        !self.first_fallback_claimed.swap(true, Ordering::SeqCst)
+    }
+}
+
+/// 等待连接锁至超时。锁被占用超过 [`LOCK_TIMEOUT`] 或已损坏（poisoned）返回 None，
+/// 由调用方跳过本轮并保留脏标记（下个周期重试即重试机制）。
+fn lock_conn_with_timeout(conn: &Arc<Mutex<Connection>>) -> Option<MutexGuard<'_, Connection>> {
+    let deadline = Instant::now() + LOCK_TIMEOUT;
+    loop {
+        match conn.try_lock() {
+            Ok(guard) => return Some(guard),
+            Err(TryLockError::Poisoned(_)) => {
+                tracing::warn!("数据库连接锁损坏，跳过本轮自动备份");
+                return None;
+            }
+            Err(TryLockError::WouldBlock) => {
+                if Instant::now() >= deadline {
+                    tracing::warn!(
+                        timeout_ms = LOCK_TIMEOUT.as_millis() as u64,
+                        "等待数据库锁超时，跳过本轮自动备份"
+                    );
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+}
+
+/// 启动自动备份轮询线程（照搬 `start_search_refresh_thread` 模式：spawn + sleep）。
+pub fn start_scheduler(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let conn = Arc::clone(&app.state::<DbState>().conn);
+    let prefs = app.state::<PrefsState>();
+    let dir_mirror = Arc::clone(&prefs.dir);
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_secs(CHECK_INTERVAL_SECS));
+            let Some(guard) = lock_conn_with_timeout(&conn) else {
+                continue; // 拿不到锁：跳过本轮、保留脏标记。
+            };
+            let version = handle.package_info().version.to_string();
+            run_due_backup(
+                &guard,
+                dir_mirror
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .as_deref(),
+                &version,
+                Utc::now(),
+            );
+        }
+    });
+}
+
+/// 应用退出兜底入口：挂在 `RunEvent::Exit` 上，退出前若脏则补一次备份
+/// （不受每日约束）。拿锁超时只能在日志里留痕——退出后没有下一轮了。
+pub fn exit_fallback(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let conn = Arc::clone(&app.state::<DbState>().conn);
+    let Some(guard) = lock_conn_with_timeout(&conn) else {
+        return;
+    };
+    let dir = {
+        let prefs = app.state::<PrefsState>();
+        prefs.snapshot_dir()
+    };
+    let version = app.package_info().version.to_string();
+    run_exit_backup(&guard, dir.as_deref(), &version, Utc::now());
 }
 
 #[cfg(test)]
@@ -291,5 +588,262 @@ mod tests {
             state.last_backup_at,
             Some(String::from("2026-02-17T10:00:00Z"))
         );
+    }
+}
+
+/// T1 调度执行层测试：只测「给定状态 → 正确决定与产物」的外部行为，
+/// 不测线程/sleep/锁（时间驱动行为已收进纯函数，线程只做周期调用）。
+#[cfg(test)]
+mod scheduler_tests {
+    use super::*;
+    use crate::db;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn conn() -> rusqlite::Connection {
+        let mut c = db::open_in_memory().expect("打开内存库");
+        db::init_db(&mut c).expect("执行迁移");
+        c
+    }
+
+    /// 与 backup 模块测试同款：临时目录唯一命名，避免并行测试互踩。
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "ledger-auto-test-{tag}-{}-{}",
+            std::process::id(),
+            db::new_uuid()
+        ));
+        fs::create_dir_all(&dir).expect("创建临时目录");
+        dir
+    }
+
+    fn now_at(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s)
+            .expect("合法 ISO 时间")
+            .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn file_name_follows_naming_rule() {
+        assert_eq!(
+            auto_backup_file_name(now_at("2026-02-17T09:30:00Z")),
+            "ledger-auto-20260217-093000.db.zip"
+        );
+    }
+
+    /// 到期且脏 → 执行备份：产物按规则命名、脏标记清真并记锚点。
+    #[test]
+    fn due_backup_performs_and_marks_clean() {
+        let c = conn();
+        let dir = temp_dir("due-perform");
+        mark_dirty(&c).expect("置脏");
+        let outcome = run_due_backup(
+            &c,
+            Some(dir.to_str().unwrap()),
+            "0.2.0",
+            now_at("2026-02-17T12:00:00Z"),
+        );
+        match &outcome {
+            AttemptOutcome::Performed { path } => {
+                assert!(Path::new(path).is_file(), "产物文件应存在");
+                assert_eq!(
+                    Path::new(path).file_name().unwrap().to_str().unwrap(),
+                    "ledger-auto-20260217-120000.db.zip"
+                );
+            }
+            other => panic!("应执行备份，实际 {other:?}"),
+        }
+        let state = get_state(&c).expect("读状态");
+        assert!(!state.dirty, "成功后应清真");
+        assert_eq!(
+            state.last_backup_at,
+            Some(String::from("2026-02-17T12:00:00Z"))
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 未到期但脏 → 静默跳过，不产生文件、不动状态。
+    #[test]
+    fn due_backup_skips_when_fresh() {
+        let c = conn();
+        let dir = temp_dir("due-fresh");
+        set_state(
+            &c,
+            &AutoBackupState {
+                enabled: true,
+                dirty: true,
+                last_backup_at: Some(String::from("2026-02-17T00:00:00Z")),
+            },
+        )
+        .expect("写状态");
+        let outcome = run_due_backup(
+            &c,
+            Some(dir.to_str().unwrap()),
+            "0.2.0",
+            now_at("2026-02-17T12:00:00Z"),
+        );
+        assert_eq!(outcome, AttemptOutcome::Skipped(SkipReason::NotDue));
+        assert!(
+            fs::read_dir(&dir).expect("列目录").next().is_none(),
+            "不应产生文件"
+        );
+        assert!(get_state(&c).unwrap().dirty, "跳过不影响状态");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 目录未配置 → 静默跳过（不执行、不报错），脏标记保留等配置后再补。
+    #[test]
+    fn due_backup_silent_skip_without_dir() {
+        let c = conn();
+        mark_dirty(&c).expect("置脏");
+        for dir in [None, Some(""), Some("   ")] {
+            let outcome = run_due_backup(&c, dir, "0.2.0", now_at("2026-02-17T12:00:00Z"));
+            assert_eq!(outcome, AttemptOutcome::Skipped(SkipReason::DirMissing));
+        }
+        let state = get_state(&c).unwrap();
+        assert!(
+            state.dirty && state.last_backup_at.is_none(),
+            "静默跳过不改状态"
+        );
+    }
+
+    /// 开关关闭 → 无论多「该备份」都不产生自动备份。
+    #[test]
+    fn disabled_means_skip_everywhere() {
+        let c = conn();
+        let dir = temp_dir("disabled");
+        mark_dirty(&c).expect("置脏");
+        settings::set(&c, SettingKey::AutoBackupEnabled, &false).expect("关开关");
+        assert_eq!(
+            run_due_backup(
+                &c,
+                Some(dir.to_str().unwrap()),
+                "0.2.0",
+                now_at("2026-02-17T12:00:00Z")
+            ),
+            AttemptOutcome::Skipped(SkipReason::Disabled)
+        );
+        assert_eq!(
+            run_exit_backup(
+                &c,
+                Some(dir.to_str().unwrap()),
+                "0.2.0",
+                now_at("2026-02-17T12:00:00Z")
+            ),
+            AttemptOutcome::Skipped(SkipReason::Disabled)
+        );
+        assert_eq!(
+            run_first_backup(
+                &c,
+                Some(dir.to_str().unwrap()),
+                "0.2.0",
+                now_at("2026-02-17T12:00:00Z")
+            ),
+            AttemptOutcome::Skipped(SkipReason::Disabled)
+        );
+        assert!(fs::read_dir(&dir).expect("列目录").next().is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 目录已配置但路径无效 → 备份失败归入 Failed 且**保留脏标记**（下周期重试）。
+    #[test]
+    fn failure_keeps_dirty() {
+        let c = conn();
+        // 配置了目录镜像但目录本身不存在（父目录也不存在，backup_db_to 必失败）。
+        let missing = std::env::temp_dir()
+            .join(format!("ledger-auto-missing-{}", db::new_uuid()))
+            .join("nested");
+        mark_dirty(&c).expect("置脏");
+        let outcome = run_due_backup(
+            &c,
+            Some(missing.to_str().unwrap()),
+            "0.2.0",
+            now_at("2026-02-17T12:00:00Z"),
+        );
+        assert!(
+            matches!(outcome, AttemptOutcome::Failed { .. }),
+            "实际 {outcome:?}"
+        );
+        let state = get_state(&c).unwrap();
+        assert!(state.dirty, "失败必须保留脏标记");
+        assert_eq!(state.last_backup_at, None);
+    }
+
+    /// 退出兜底不受每日约束：刚备份过 1 分钟但数据又变脏也立即备份。
+    #[test]
+    fn exit_backup_ignores_interval() {
+        let c = conn();
+        let dir = temp_dir("exit-fresh");
+        set_state(
+            &c,
+            &AutoBackupState {
+                enabled: true,
+                dirty: true,
+                last_backup_at: Some(String::from("2026-02-17T11:59:00Z")),
+            },
+        )
+        .expect("写状态");
+        let outcome = run_exit_backup(
+            &c,
+            Some(dir.to_str().unwrap()),
+            "0.2.0",
+            now_at("2026-02-17T12:00:00Z"),
+        );
+        assert!(matches!(outcome, AttemptOutcome::Performed { .. }));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 退出兜底：不脏则不备份。
+    #[test]
+    fn exit_backup_skips_when_clean() {
+        let c = conn();
+        let dir = temp_dir("exit-clean");
+        let outcome = run_exit_backup(
+            &c,
+            Some(dir.to_str().unwrap()),
+            "0.2.0",
+            now_at("2026-02-17T12:00:00Z"),
+        );
+        assert_eq!(outcome, AttemptOutcome::Skipped(SkipReason::NotDue));
+        assert!(fs::read_dir(&dir).expect("列目录").next().is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 首次兜底：列表为空时即便不脏、从未备份过也立即备份一次；此后列表非空不再兜底
+    /// （同时验证 ledger-auto 前缀的产物被受管判定识别）。
+    #[test]
+    fn first_fallback_only_once_while_list_empty() {
+        let c = conn();
+        let dir = temp_dir("first-fallback");
+        let d = dir.to_str().unwrap();
+        let first = run_first_backup(&c, Some(d), "0.2.0", now_at("2026-02-17T08:00:00Z"));
+        assert!(
+            matches!(first, AttemptOutcome::Performed { .. }),
+            "首次应兜底，实际 {first:?}"
+        );
+        let again = run_first_backup(&c, Some(d), "0.2.0", now_at("2026-02-17T09:00:00Z"));
+        assert_eq!(again, AttemptOutcome::Skipped(SkipReason::ListNotEmpty));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 首次兜底把手动备份也算进「列表非空」：已有手动产物就不再兜底。
+    #[test]
+    fn first_fallback_counts_manual_backups() {
+        let c = conn();
+        let dir = temp_dir("first-manual");
+        fs::write(dir.join("ledger-backup-20260101-000000.db.zip"), b"stub")
+            .expect("造手动备份占位");
+        let outcome = run_first_backup(
+            &c,
+            Some(dir.to_str().unwrap()),
+            "0.2.0",
+            now_at("2026-02-17T08:00:00Z"),
+        );
+        assert_eq!(outcome, AttemptOutcome::Skipped(SkipReason::ListNotEmpty));
+        assert!(
+            fs::read_dir(&dir).expect("列目录").count() == 1,
+            "不应新增文件"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 }

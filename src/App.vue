@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, ref, type Component } from 'vue'
+import { h, ref, watch, type Component } from 'vue'
 import { RouterView, useRouter, useRoute } from 'vue-router'
 import {
   NConfigProvider,
@@ -27,6 +27,7 @@ import {
   SettingsOutline,
 } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
+import { api } from '@/api'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
 import { loadSidebarCollapsed, saveSidebarCollapsed } from '@/utils/viewState'
 import { viewShortcuts, shortcutHint, useViewShortcuts } from '@/composables/useViewShortcuts'
@@ -41,6 +42,16 @@ function updateSidebarCollapsed(collapsed: boolean) {
   saveSidebarCollapsed(collapsed)
 }
 const store = useAppStore()
+
+// 自动备份（issue #125）：备份目录保持前端 localStorage 单一来源（ADR-0016），
+// 启动/变更时把镜像推给后端供调度线程与退出兑底消费；未配置传空串即静默跳过。
+watch(
+  () => store.backupDir,
+  (dir) => {
+    void api.setAutoBackupDir(dir)
+  },
+  { immediate: true },
+)
 
 const viewLabels: Record<string, string> = {
   dashboard: '概览',

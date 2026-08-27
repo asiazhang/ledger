@@ -16,6 +16,7 @@ use std::path::Path;
 
 use tauri::{AppHandle, Manager};
 
+use crate::auto_backup::{self, PrefsState};
 use crate::db::DbState;
 use crate::error::{AppError, Result};
 
@@ -66,4 +67,27 @@ pub fn prune_backups(dir: String, keep: i64) -> Result<PruneResult> {
     let keep = usize::try_from(keep)
         .map_err(|_| AppError::Invalid(format!("备份保留上限非法: {keep}")))?;
     core::prune_managed_backups(Path::new(&dir), keep)
+}
+
+/// 同步设备本地备份目录到后端（自动备份调度用，ADR-0016 决策 3 的偏好镜像：
+/// `backupDir` 保持前端 localStorage 单一来源，启动/变更时推送给后端消费）。
+/// 空串视为未配置，自动备份一律静默跳过。
+///
+/// 本会话首次提供有效目录时，若受管备份列表为空且开关开启，立即执行一次
+/// 「首次兜底」备份（issue #125；每会话至多一次，结果只记日志不上抛）。
+#[tauri::command]
+pub fn set_auto_backup_dir(app: AppHandle, dir: String) -> Result<()> {
+    let trimmed = dir.trim();
+    let normalized = (!trimmed.is_empty()).then(|| trimmed.to_string());
+    let prefs = app.state::<PrefsState>();
+    prefs.set_dir(normalized.clone());
+    if normalized.is_none() || !prefs.claim_first_fallback() {
+        return Ok(());
+    }
+    let state = app.state::<DbState>();
+    let conn = state.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let version = app.package_info().version.to_string();
+    let _ =
+        auto_backup::run_first_backup(&conn, normalized.as_deref(), &version, chrono::Utc::now());
+    Ok(())
 }
