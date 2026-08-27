@@ -35,7 +35,7 @@
 - 参考写入（账户/分类的 create/delete/update/reorder）成功后，后端发通用、粗粒度、无 payload 的 `ledger:changed` 事件；前端 `useReferenceStore` 订阅并自动重拉三张参考表（stale-while-revalidate）。
 - **交易类写入不 emit**（不改参考表）；判定收口在 `src-tauri/src/events.rs` 的 `REFERENCE_WRITE_COMMANDS` 清单，新增参考写入命令须同步扩充（由单测锁定）。
 - HTTP（AI 导入）写入与 IPC 写入走同一套失效信号：HTTP 端点结构上即参考写入，直接 emit（`AppHandle` 为 `Option`，测试传 `None` 跳过发射）。
-- 行情同步进度经 `sync-instruments:progress` 事件推送（`done=true` 携带新增/更新计数或错误），前端 `useInstrumentSync` 监听。
+- 行情同步进度经 `sync-instruments:progress` 事件推送（`done=true` 携带新增/更新计数或错误），前端 `useInstrumentFullSync`（标的页）监听。
 
 ### 错误与审计约定
 

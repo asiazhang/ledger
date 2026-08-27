@@ -41,7 +41,7 @@
 
 | composable | 职责 |
 |------------|------|
-| `useInstrumentSync` | 股票标的全量同步：调用 `api.syncInstruments`（后台线程执行），监听 `sync-instruments:progress` 事件更新进度/结果（视图挂载时注册，切换 tab 不丢事件） |
+| `useInstrumentFullSync` | 股票标的全量同步（标的页）：二次确认 → 调用 `api.syncInstruments`（后台线程执行）→ 模态进度（进度/页数/累计新增更新）→ 中断（`cancel_sync_instruments`）；监听 `sync-instruments:progress` 事件（视图挂载时注册，切换 tab 不丢事件） |
 | `useRealizedPnl` | 已实现盈亏汇总面板：筛选（账户/标的远程搜索，服务端分页）→ `api.realizedPnlSummary` |
 | `useBackup` | 备份/恢复：创建 zip 备份、列出受管备份、恢复后 `restart_app` 重启 |
 | `useCategoryForm` / `useTransferForm` / `useRefundForm` / `useInvestmentForm` | 见上文交易表单 |

@@ -62,22 +62,22 @@ beforeEach(async () => {
 })
 
 describe('SettingsView.vue', () => {
-  it('渲染 6 个 TabPane', () => {
+  it('渲染 5 个 TabPane', () => {
     const wrapper = mount(SettingsView)
     const tabs = wrapper.findAll('.n-tabs-tab')
     const settingsTabs = tabs.filter((t) =>
-      ['分类', '币种', '数据管理', '备份与恢复', '外观', '关于'].includes(t.text()),
+      ['分类', '币种', '备份与恢复', '外观', '关于'].includes(t.text()),
     )
-    expect(settingsTabs.length).toBe(6)
+    expect(settingsTabs.length).toBe(5)
   })
 
   it('Tab 标签文本正确', () => {
     const wrapper = mount(SettingsView)
     const tabs = wrapper.findAll('.n-tabs-tab')
     const labels = tabs.map((t) => t.text())
+    expect(labels).not.toContain('数据管理')
     expect(labels).toContain('分类')
     expect(labels).toContain('币种')
-    expect(labels).toContain('数据管理')
     expect(labels).toContain('备份与恢复')
     expect(labels).toContain('外观')
     expect(labels).toContain('关于')
@@ -98,7 +98,7 @@ describe('SettingsView.vue', () => {
 
   it('外观 Tab 包含主题切换开关', async () => {
     const wrapper = mount(SettingsView)
-    const appearanceTab = wrapper.findAll('.n-tabs-tab')[4]
+    const appearanceTab = wrapper.findAll('.n-tabs-tab')[3]
     await appearanceTab.trigger('click')
     await nextTick()
     expect(wrapper.html()).toContain('深色模式')
@@ -106,7 +106,7 @@ describe('SettingsView.vue', () => {
 
   it('关于 Tab 显示版本号', async () => {
     const wrapper = mount(SettingsView)
-    const aboutTab = wrapper.findAll('.n-tabs-tab')[5]
+    const aboutTab = wrapper.findAll('.n-tabs-tab')[4]
     await aboutTab.trigger('click')
     await nextTick()
     expect(wrapper.html()).toContain('版本号')
@@ -114,7 +114,7 @@ describe('SettingsView.vue', () => {
 
   it('备份与恢复 Tab 包含备份/恢复操作与备份目录配置', async () => {
     const wrapper = mount(SettingsView)
-    const backupTab = wrapper.findAll('.n-tabs-tab')[3]
+    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
     await backupTab.trigger('click')
     await nextTick()
     const html = wrapper.html()
@@ -127,7 +127,7 @@ describe('SettingsView.vue', () => {
   it('备份目录可配置并持久化到 localStorage', async () => {
     mockOpen.mockResolvedValue('/Users/me/ledger-backups')
     const wrapper = mount(SettingsView)
-    const backupTab = wrapper.findAll('.n-tabs-tab')[3]
+    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
     await backupTab.trigger('click')
     await nextTick()
     await wrapper.find('.n-button').trigger('click')
@@ -140,7 +140,7 @@ describe('SettingsView.vue', () => {
     const store = useAppStore()
     store.setBackupDir('/Users/me/backups')
     const wrapper = mount(SettingsView)
-    const backupTab = wrapper.findAll('.n-tabs-tab')[3]
+    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
     await backupTab.trigger('click')
     await nextTick()
     const buttons = wrapper.findAll('button')
@@ -173,7 +173,7 @@ describe('SettingsView.vue', () => {
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const wrapper = mount(SettingsView)
-    const backupTab = wrapper.findAll('.n-tabs-tab')[3]
+    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
     await backupTab.trigger('click')
     await nextTick()
     const backupBtn = wrapper.findAll('button').find((b) => b.text().includes('一键备份'))!
@@ -213,7 +213,7 @@ describe('SettingsView.vue', () => {
     })
     mockConfirm.mockResolvedValueOnce(true)
     const wrapper = mount(SettingsView)
-    const backupTab = wrapper.findAll('.n-tabs-tab')[3]
+    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
     await backupTab.trigger('click')
     await nextTick()
     await flushPromises()
@@ -228,7 +228,7 @@ describe('SettingsView.vue', () => {
   it('备份保留上限可配置并持久化', async () => {
     const store = useAppStore()
     const wrapper = mount(SettingsView)
-    const backupTab = wrapper.findAll('.n-tabs-tab')[3]
+    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
     await backupTab.trigger('click')
     await nextTick()
     const input = wrapper.find('.n-input-number input')
@@ -242,7 +242,7 @@ describe('SettingsView.vue', () => {
     mockOpen.mockResolvedValueOnce('/Users/me/backups/ledger-backup.db.zip')
     mockConfirm.mockResolvedValueOnce(true)
     const wrapper = mount(SettingsView)
-    const backupTab = wrapper.findAll('.n-tabs-tab')[3]
+    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
     await backupTab.trigger('click')
     await nextTick()
     const buttons = wrapper.findAll('button')

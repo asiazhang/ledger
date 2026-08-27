@@ -11,8 +11,7 @@ export type FullSyncStatus = 'idle' | 'syncing' | 'done' | 'cancelled' | 'error'
 /**
  * 股票标的全量同步（issue #109）：封装「二次确认 → 启动 → 进度 → 中断 → 终态」全流程。
  *
- * - 状态为组件实例内局部（per-instance），经 onMounted/onUnmounted 注册/注销进度监听，
- *   与 `useInstrumentSync`（设置页数据管理）同构。
+ * - 状态为组件实例内局部（per-instance），经 onMounted/onUnmounted 注册/注销进度监听。
  * - 同步在后台线程执行，关闭进度对话框不影响同步；重开对话框可继续查看进度/终态。
  * - 启动前须经二次确认（`openConfirm` → `confirmSync`），未确认不调用同步命令。
  * - 中断经 `requestCancel` 置位取消标志，终态（cancelled=true）由进度事件回流。
