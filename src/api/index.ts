@@ -17,6 +17,7 @@ import type {
   CreateScheduledInput,
   CreateTransactionResult,
   Currency,
+  DashboardOverview,
   ExchangeRate,
   ExchangeRateInput,
   ExecuteOccurrenceInput,
@@ -92,6 +93,9 @@ export const api = {
   listBudgets: () => invoke<Budget[]>('list_budgets'),
   createBudget: (input: BudgetInput) => invoke<string>('create_budget', { input }),
   deleteBudget: (id: string) => invoke<void>('delete_budget', { id }),
+
+  // 首页财务全貌
+  dashboardOverview: () => invoke<DashboardOverview>('dashboard_overview'),
 
   // 报表
   monthlySummary: (year: number) => invoke<MonthlySummary[]>('monthly_summary', { year }),

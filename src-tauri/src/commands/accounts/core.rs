@@ -104,7 +104,9 @@ pub fn delete_account_internal(conn: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn list_account_balances_with_visibility(
+/// 账户余额清单（conn 级）：`include_hidden` 为 true 时含黑洞账户。
+/// `pub(crate)` 供 dashboard 净资产聚合复用同一口径（issue #142）。
+pub(crate) fn list_account_balances_with_visibility(
     conn: &Connection,
     include_hidden: bool,
 ) -> Result<Vec<AccountBalance>> {
