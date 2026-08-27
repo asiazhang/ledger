@@ -83,6 +83,8 @@ export interface TransactionSearchFilter {
   dateTo?: string | null
 }
 
+export type CreateTransactionKind = Exclude<TransactionKind, 'refund'>
+
 export const TRANSACTION_KIND_LABELS: Record<TransactionKind, string> = {
   income: '收入',
   expense: '支出',
@@ -91,6 +93,20 @@ export const TRANSACTION_KIND_LABELS: Record<TransactionKind, string> = {
   buy: '买入',
   sell: '卖出',
 }
+
+/** 「记一笔」分裂按钮可创建的类型：枚举对象以 Record<CreateTransactionKind, true> 表达，
+ * 新增 kind 而未更新此表时编译报错（穷尽性由类型系统保证，下拉不会静默漏项）。 */
+const CREATE_KIND_MAP = {
+  expense: true,
+  income: true,
+  transfer: true,
+  buy: true,
+  sell: true,
+} satisfies Record<CreateTransactionKind, true>
+
+/** 「记一笔」入口可选类型（不含 refund：退款已移出表单域，入口由交易条目
+ * 右键菜单承接，独立 ticket 落地前处于过渡态）。 */
+export const CREATE_KINDS = Object.keys(CREATE_KIND_MAP) as CreateTransactionKind[]
 
 export interface CreateTransactionResult {
   success: boolean
