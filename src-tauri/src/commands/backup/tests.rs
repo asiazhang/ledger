@@ -1,7 +1,7 @@
 //! 备份/恢复测试（issue #91 外迁）：zip 打包/恢复往返/新旧 schema 策略/受管备份列表与修剪。
 
 use std::fs::File;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 use rusqlite::params;
@@ -57,7 +57,7 @@ fn backup_creates_zip_with_db_and_meta() {
     seed(&conn);
 
     let target = temp_file("zip");
-    let result = backup_db_to(&conn, &target, "0.2.0").unwrap();
+    let result = backup_db_to(&conn, &target, "0.2.0", BackupKind::Manual).unwrap();
 
     assert!(target.exists());
     assert!(result.size_bytes > 0);
@@ -92,7 +92,7 @@ fn restore_roundtrip_preserves_data() {
     seed(&conn);
 
     let backup = temp_file("rt-backup");
-    backup_db_to(&conn, &backup, "0.2.0").unwrap();
+    backup_db_to(&conn, &backup, "0.2.0", BackupKind::Manual).unwrap();
 
     // 目标库先建好，含一条多余交易；恢复后应只剩备份里的数据。
     let db_path = temp_file("rt-db");
@@ -177,6 +177,127 @@ fn restore_supports_bare_db() {
 }
 
 #[test]
+fn backup_meta_records_kind_for_auto_and_manual() {
+    let conn = open_in_memory().unwrap();
+    // 手动产物：kind 落盘为 manual。
+    let manual = temp_file("meta-manual");
+    backup_db_to(&conn, &manual, "0.2.0", BackupKind::Manual).unwrap();
+    assert_eq!(read_backup_kind(&manual).unwrap(), BackupKind::Manual);
+    super::core::cleanup(&manual);
+
+    // 自动产物：kind 落盘为 auto。
+    let auto = temp_file("meta-auto");
+    backup_db_to(&conn, &auto, "0.2.0", BackupKind::Auto).unwrap();
+    assert_eq!(read_backup_kind(&auto).unwrap(), BackupKind::Auto);
+    super::core::cleanup(&auto);
+}
+
+/// 旧版本备份的 backup.json 缺 kind 字段：读取不报错且视为 manual。
+#[test]
+fn legacy_meta_without_kind_reads_as_manual() {
+    let path = temp_file("legacy-meta");
+    {
+        let file = File::create(&path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("ledger.db", options).unwrap();
+        std::io::Write::write_all(&mut zip, b"stub").unwrap();
+        zip.start_file("backup.json", options).unwrap();
+        std::io::Write::write_all(
+            &mut zip,
+            br#"{"created_at":"2025-01-01T00:00:00Z","app_version":"0.1.0","schema_version":4}"#,
+        )
+        .unwrap();
+        zip.finish().unwrap();
+    }
+    assert_eq!(read_backup_kind(&path).unwrap(), BackupKind::Manual);
+    super::core::cleanup(&path);
+}
+
+/// 元数据里出现未知/非法的 kind 值：宽容回落 manual 而非解析失败（兼容优先）。
+#[test]
+fn meta_with_unknown_kind_reads_as_manual() {
+    let path = temp_file("unknown-kind");
+    {
+        let file = File::create(&path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("ledger.db", options).unwrap();
+        std::io::Write::write_all(&mut zip, b"stub").unwrap();
+        zip.start_file("backup.json", options).unwrap();
+        std::io::Write::write_all(
+            &mut zip,
+            br#"{"created_at":"2025-01-01T00:00:00Z","app_version":"0.1.0","schema_version":4,"kind":"AutoMated"}"#,
+        )
+        .unwrap();
+        zip.finish().unwrap();
+    }
+    assert_eq!(read_backup_kind(&path).unwrap(), BackupKind::Manual);
+    super::core::cleanup(&path);
+}
+
+/// 旧版本备份（元数据无 kind 字段）：恢复不报错、列表正常出现，视为 manual。
+#[test]
+fn legacy_backup_restores_and_lists_without_error() {
+    let mut conn = open_in_memory().unwrap();
+    init_db(&mut conn).unwrap();
+    seed(&conn);
+
+    // 用 VACUUM INTO 造一份裸库，再打包成元数据缺 kind 的旧格式 zip。
+    let raw = temp_file("legacy-raw");
+    conn.execute("VACUUM INTO ?1", params![raw.to_string_lossy()])
+        .unwrap();
+    let dir = std::env::temp_dir().join(format!(
+        "ledger-backup-legacy-dir-{}-{}",
+        std::process::id(),
+        db::new_uuid()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let legacy = dir.join("ledger-backup-20260101-000000.db.zip");
+    {
+        let file = File::create(&legacy).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("ledger.db", options).unwrap();
+        std::io::copy(&mut File::open(&raw).unwrap(), &mut zip).unwrap();
+        zip.start_file("backup.json", options).unwrap();
+        std::io::Write::write_all(
+            &mut zip,
+            br#"{"created_at":"2025-01-01T00:00:00Z","app_version":"0.1.0","schema_version":4}"#,
+        )
+        .unwrap();
+        zip.finish().unwrap();
+    }
+    super::core::cleanup(&raw);
+
+    // 列表：旧格式文件按命名规则正常被识别，来源按 manual 处理。
+    let list = list_managed_backups(&dir).unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(
+        read_backup_kind(Path::new(&list[0].path)).unwrap(),
+        BackupKind::Manual
+    );
+
+    // 恢复：旧格式包完整还原数据。
+    let db_path = temp_file("legacy-restore-db");
+    let safety_dir = temp_safety_dir();
+    let result = restore_db_from(
+        &legacy,
+        &db_path,
+        &safety_dir,
+        expected_schema_version().unwrap(),
+    );
+    assert!(result.is_ok(), "旧格式备份恢复失败: {:?}", result.err());
+    let c = open_connection(&db_path).unwrap();
+    assert_eq!(count_transactions(&c), 1);
+
+    super::core::cleanup(&legacy);
+    super::core::cleanup(&db_path);
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&safety_dir);
+}
+
+#[test]
 fn list_and_prune_managed_backups() {
     let dir = std::env::temp_dir().join(format!(
         "ledger-backup-managed-{}-{}",
@@ -184,11 +305,12 @@ fn list_and_prune_managed_backups() {
         db::new_uuid()
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    // 3 个自动命名文件 + 1 个不匹配命名 + 1 个名字匹配但为目录。
+    // 3 个手动自动命名文件 + 1 个自动备份命名文件 + 1 个不匹配命名 + 1 个名字匹配但为目录。
     for (name, size) in [
         ("ledger-backup-20260101-010101.db.zip", 10u64),
         ("ledger-backup-20260102-010101.db.zip", 20),
         ("ledger-backup-20260103-010101.db.zip", 30),
+        ("ledger-auto-20260201-010101.db.zip", 40),
     ] {
         std::fs::write(dir.join(name), vec![0u8; size as usize]).unwrap();
     }
@@ -196,24 +318,34 @@ fn list_and_prune_managed_backups() {
     std::fs::create_dir(dir.join("ledger-backup-20260104-010101.db.zip")).unwrap();
 
     let list = list_managed_backups(&dir).unwrap();
-    assert_eq!(list.len(), 3);
-    assert_eq!(list[0].file_name, "ledger-backup-20260103-010101.db.zip");
-    assert_eq!(list[0].created_at, "2026-01-03T01:01:01Z");
-    assert_eq!(list[2].file_name, "ledger-backup-20260101-010101.db.zip");
+    assert_eq!(list.len(), 4);
+    assert_eq!(
+        list[0].file_name, "ledger-auto-20260201-010101.db.zip",
+        "auto 前缀同样受管且按时间排序"
+    );
+    assert_eq!(list[0].created_at, "2026-02-01T01:01:01Z");
+    assert_eq!(list[3].file_name, "ledger-backup-20260101-010101.db.zip");
 
-    // 修剪到 2：删除最旧 1 个；不匹配文件与目录不受影响。
+    // 修剪到 2：删除最旧的手动 2 个；不匹配文件与目录不受影响。
     let r = prune_managed_backups(&dir, 2).unwrap();
-    assert_eq!(r.deleted, vec!["ledger-backup-20260101-010101.db.zip"]);
+    assert_eq!(
+        r.deleted,
+        vec![
+            "ledger-backup-20260101-010101.db.zip",
+            "ledger-backup-20260102-010101.db.zip"
+        ]
+    );
     assert!(r.failed.is_empty());
     assert_eq!(r.kept, 2);
     assert!(dir.join("notes.zip").exists());
     assert!(dir.join("ledger-backup-20260104-010101.db.zip").is_dir());
+    assert!(dir.join("ledger-auto-20260201-010101.db.zip").exists());
 
     // 继续修剪到 1。
     let r2 = prune_managed_backups(&dir, 1).unwrap();
-    assert_eq!(r2.deleted, vec!["ledger-backup-20260102-010101.db.zip"]);
+    assert_eq!(r2.deleted, vec!["ledger-backup-20260103-010101.db.zip"]);
     assert_eq!(r2.kept, 1);
-    assert!(dir.join("ledger-backup-20260103-010101.db.zip").exists());
+    assert!(dir.join("ledger-auto-20260201-010101.db.zip").exists());
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -251,7 +383,7 @@ fn backup_fails_when_target_dir_missing() {
         db::new_uuid()
     ));
     let target = missing.join("x.zip");
-    let err = backup_db_to(&conn, &target, "0.2.0")
+    let err = backup_db_to(&conn, &target, "0.2.0", BackupKind::Manual)
         .unwrap_err()
         .to_string();
     assert!(err.contains("备份目标目录不存在"));

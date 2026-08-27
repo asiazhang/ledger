@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 use cucumber::{then, when};
 
-use tauri_app_lib::commands::backup::{backup_db_to, expected_schema_version, restore_db_from};
+use tauri_app_lib::auto_backup::AttemptOutcome;
+use tauri_app_lib::commands::backup::{
+    BackupKind, backup_db_to, expected_schema_version, read_backup_kind, restore_db_from,
+};
 use tauri_app_lib::db::{new_uuid, open_connection};
 
 use crate::world::LedgerWorld;
@@ -24,9 +27,29 @@ fn temp_safety_dir() -> PathBuf {
 #[when(expr = "备份数据库到临时文件")]
 fn backup_to_temp(world: &mut LedgerWorld) {
     let target = temp_path("backup.zip");
-    let result = backup_db_to(&world.conn, &target, "0.2.0");
+    let result = backup_db_to(&world.conn, &target, "0.2.0", BackupKind::Manual);
     assert!(result.is_ok(), "备份失败: {:?}", result.err());
     world.last_backup_path = Some(target);
+}
+
+/// 真实走自动备份触发入口（前置业务写已置脏、开关默认开启），产物落到独立临时目录。
+#[when(expr = "自动备份数据库到临时目录")]
+fn auto_backup_to_temp(world: &mut LedgerWorld) {
+    let dir = std::env::temp_dir().join(format!("ledger-e2e-auto-backup-{}", new_uuid()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let outcome = tauri_app_lib::auto_backup::run_due_backup(
+        &world.conn,
+        Some(dir.to_str().unwrap()),
+        "0.2.0",
+        chrono::Utc::now(),
+    );
+    assert!(
+        matches!(outcome, AttemptOutcome::Performed { .. }),
+        "自动备份应执行，实际 {outcome:?}"
+    );
+    if let AttemptOutcome::Performed { path } = outcome {
+        world.last_auto_backup_path = Some(PathBuf::from(path));
+    }
 }
 
 #[when(expr = "删除全部交易")]
@@ -125,6 +148,30 @@ fn restored_has_txns(world: &mut LedgerWorld, expected: i64) {
         )
         .unwrap();
     assert_eq!(count, expected, "恢复出的交易数量不匹配");
+}
+
+// ---------------------------------------------------------------------------
+// 备份产物来源标记（issue #127）
+// ---------------------------------------------------------------------------
+
+#[then(expr = "备份元数据来源应为 {string}")]
+fn backup_meta_kind_manual(world: &mut LedgerWorld, expected: String) {
+    let p = world.last_backup_path.as_ref().expect("尚未手动备份");
+    assert_eq!(
+        read_backup_kind(p).unwrap().to_string(),
+        expected,
+        "手动备份元数据来源不匹配"
+    );
+}
+
+#[then(expr = "自动备份元数据来源应为 {string}")]
+fn backup_meta_kind_auto(world: &mut LedgerWorld, expected: String) {
+    let p = world.last_auto_backup_path.as_ref().expect("尚未自动备份");
+    assert_eq!(
+        read_backup_kind(p).unwrap().to_string(),
+        expected,
+        "自动备份元数据来源不匹配"
+    );
 }
 
 // ---------------------------------------------------------------------------

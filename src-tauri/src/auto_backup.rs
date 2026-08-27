@@ -205,7 +205,13 @@ fn perform_backup(
     now: DateTime<Utc>,
 ) -> crate::error::Result<String> {
     let target = Path::new(dir).join(auto_backup_file_name(now));
-    let path = crate::commands::backup::backup_db_to(conn, &target, app_version)?.path;
+    let path = crate::commands::backup::backup_db_to(
+        conn,
+        &target,
+        app_version,
+        crate::commands::backup::BackupKind::Auto,
+    )?
+    .path;
     mark_clean(conn, &db::iso_at(now))?;
     Ok(path)
 }
@@ -685,6 +691,11 @@ mod scheduler_tests {
                 assert_eq!(
                     Path::new(path).file_name().unwrap().to_str().unwrap(),
                     "ledger-auto-20260217-120000.db.zip"
+                );
+                // 产物元数据带 auto 来源标记（issue #127）。
+                assert_eq!(
+                    crate::commands::backup::read_backup_kind(Path::new(path)).unwrap(),
+                    crate::commands::backup::BackupKind::Auto
                 );
             }
             other => panic!("应执行备份，实际 {other:?}"),

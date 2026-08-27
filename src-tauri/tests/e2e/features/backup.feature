@@ -17,6 +17,14 @@ Feature: 备份与恢复
     And 从备份恢复到临时数据库
     Then 恢复的数据库应包含 1 条交易
 
+  Scenario: 备份产物标记来源（issue #127）
+    Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
+    When 创建交易 类型 "expense" 金额 1500 到账户 "现金" 日期 "2026-02-01" 备注 "午餐"
+    And 备份数据库到临时文件
+    Then 备份元数据来源应为 "manual"
+    When 自动备份数据库到临时目录
+    Then 自动备份元数据来源应为 "auto"
+
   Scenario: 拒绝恢复更高 schema 版本的备份
     Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
     When 尝试从更高 schema 版本恢复

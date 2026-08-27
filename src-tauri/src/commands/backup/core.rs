@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::NaiveDateTime;
@@ -20,6 +20,47 @@ const ZIP_META_ENTRY: &str = "backup.json";
 const MANAGED_BACKUP_PREFIXES: &[&str] =
     &["ledger-backup-", crate::auto_backup::AUTO_BACKUP_PREFIX];
 const MANAGED_BACKUP_SUFFIX: &str = ".db.zip";
+
+/// 备份来源标记（issue #127）：写入 zip 包内 `backup.json` 的 `kind` 字段，
+/// 自动与手动产物除文件名前缀外再以元数据显式区分。
+/// 旧版本备份缺该字段（serde `#[serde(default)]`）或值非法时均回落为
+/// [`BackupKind::Manual`]，列表与恢复按手动处理（向后兼容）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+pub enum BackupKind {
+    /// 自动备份引擎产物（调度入口统一写入）。
+    #[serde(rename = "auto")]
+    Auto,
+    /// 手动触发（一键备份 / 另存为）产物，也是缺省语义。
+    #[default]
+    #[serde(rename = "manual")]
+    Manual,
+}
+
+impl std::fmt::Display for BackupKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Auto => f.write_str("auto"),
+            Self::Manual => f.write_str("manual"),
+        }
+    }
+}
+
+// 反序列化手写而非用 `rename_all` 派生：旧备份来源兼容优先于严格校验——
+// 序列化只写 auto/manual 两态，读侧未知/非法值一律按 [`BackupKind::Manual`]
+// 落地而不是让整个元数据解析失败。
+impl<'de> Deserialize<'de> for BackupKind {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        if s == "auto" {
+            Ok(Self::Auto)
+        } else {
+            Ok(Self::Manual)
+        }
+    }
+}
 
 /// 备份文件信息（用于备份文件列表展示）。
 #[derive(Debug, Serialize)]
@@ -49,6 +90,25 @@ fn matched_managed_prefix(name: &str) -> Option<&'static str> {
 /// 判断文件名是否为受管备份（自动命名 `<前缀>YYYYMMDD-HHMMSS.db.zip`）。
 fn is_managed_backup_file_name(name: &str) -> bool {
     matched_managed_prefix(name).is_some() && name.ends_with(MANAGED_BACKUP_SUFFIX)
+}
+
+/// 读取备份包元数据中的来源标记（issue #127）。
+///
+/// 旧版本备份的 `backup.json` 缺 `kind` 字段时由 serde 默认值回落为
+/// [`BackupKind::Manual`]；非 zip 包或条目缺失视为无效备份而非静默降级——
+/// 裸 `.db` 文件本就不携带元数据，恢复路径自行处理其合法性。
+pub fn read_backup_kind(backup_path: &Path) -> Result<BackupKind> {
+    let file = File::open(backup_path)?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| AppError::Invalid(format!("不是有效的 Ledger 备份包: {e}")))?;
+    let mut entry = archive
+        .by_name(ZIP_META_ENTRY)
+        .map_err(|_| AppError::Invalid(format!("备份包内未找到 {} 元数据", ZIP_META_ENTRY)))?;
+    let mut buf = Vec::new();
+    entry.read_to_end(&mut buf)?;
+    serde_json::from_slice::<BackupMeta>(&buf)
+        .map(|meta| meta.kind)
+        .map_err(|e| AppError::Invalid(format!("备份元数据解析失败: {e}")))
 }
 
 /// 从受管备份文件名解析备份时间（`YYYYMMDD-HHMMSS`）；解析失败返回 None。
@@ -140,12 +200,15 @@ pub fn prune_managed_backups(dir: &Path, keep: usize) -> Result<PruneResult> {
     })
 }
 
-/// 备份元数据，写入 zip 包内 `backup.json`。
+/// 备份元数据，写入 zip 包内 `backup.json`。`kind` 为旧版本备份可能缺失的字段。
 #[derive(Debug, Serialize, Deserialize)]
 struct BackupMeta {
     created_at: String,
     app_version: String,
     schema_version: i64,
+    /// 来源标记（issue #127）；缺省回落 manual（向后兼容）。
+    #[serde(default)]
+    kind: BackupKind,
 }
 
 #[derive(Debug, Serialize)]
@@ -223,8 +286,14 @@ pub(super) fn cleanup(path: &Path) {
 
 /// 将当前数据库备份为 zip 包（`ledger.db` + `backup.json`）写入 `target`。
 ///
+/// `kind` 标记产物来源（自动 / 手动），随元数据落盘供后续识别。
 /// 通过 `VACUUM INTO` 生成一致的库文件快照，不影响正在进行的写入；打包完成后原子替换目标文件。
-pub fn backup_db_to(conn: &Connection, target: &Path, app_version: &str) -> Result<BackupResult> {
+pub fn backup_db_to(
+    conn: &Connection,
+    target: &Path,
+    app_version: &str,
+    kind: BackupKind,
+) -> Result<BackupResult> {
     let parent = match target.parent() {
         Some(p) if !p.as_os_str().is_empty() => p,
         _ => Path::new("."),
@@ -250,6 +319,7 @@ pub fn backup_db_to(conn: &Connection, target: &Path, app_version: &str) -> Resu
         created_at: db::now_iso(),
         app_version: app_version.to_string(),
         schema_version: schema_version(conn)?,
+        kind,
     };
     let zip_result = (|| -> Result<()> {
         let file = File::create(&tmp_zip)?;
