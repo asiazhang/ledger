@@ -1,6 +1,37 @@
 import type { Currency } from '@/types/currencies'
 
-/** 分 -> 元字符串，按币种小数位格式化 */
+/**
+ * 纯数字字符串按万分位切组：从右向左每 4 位一组、半角逗号分隔。
+ * 输入为不含符号与小数点的纯数字串。
+ */
+function joinGroups(digits: string): string {
+  const groups: string[] = []
+  for (let i = digits.length; i > 0; i -= 4) groups.unshift(digits.slice(Math.max(0, i - 4), i))
+  return groups.join(',')
+}
+
+/**
+ * 数字字符串展示分组核心助手：整数部分从右向左每 4 位一组、半角逗号分隔；
+ * 小数部分连续输出不插入分隔符；负号保留在最前不受分组影响。
+ * formatAmount 与 formatQuantity 共享同一口径（见 CONTEXT.md「万分位分组」）。
+ */
+function groupNumberString(numStr: string): string {
+  const sign = numStr.startsWith('-') ? '-' : ''
+  const body = sign ? numStr.slice(1) : numStr
+  const dot = body.indexOf('.')
+  if (dot === -1) return `${sign}${joinGroups(body)}`
+  return `${sign}${joinGroups(body.slice(0, dot))}${body.slice(dot)}`
+}
+
+/**
+ * 数量格式化（股数/份额列）：整数部分按万分位分组，小数部分原样保留
+ * （份额为 f64，可能带小数）。与 formatAmount 共享同一分组口径。
+ */
+export function formatQuantity(quantity: number): string {
+  return groupNumberString(String(quantity))
+}
+
+/** 分 -> 元字符串，按币种小数位格式化；整数部分走万分位分组（展示层全局口径） */
 export function formatAmount(cents: number, currency?: Currency): string {
   const dp = currency?.decimal_places ?? 2
   const sign = cents < 0 ? '-' : ''
@@ -8,7 +39,7 @@ export function formatAmount(cents: number, currency?: Currency): string {
   const value = abs / Math.pow(10, dp)
   const fixed = value.toFixed(dp)
   const symbol = currency?.symbol ?? ''
-  return `${sign}${symbol}${fixed}`
+  return `${sign}${symbol}${groupNumberString(fixed)}`
 }
 
 /**

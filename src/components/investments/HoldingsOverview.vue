@@ -14,7 +14,7 @@ import {
 import type { DataTableColumn } from 'naive-ui'
 import { h } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
-import { formatAmount } from '@/types'
+import { formatAmount, formatQuantity } from '@/types'
 import { useHoldingPriceSync } from '@/composables/useHoldingPriceSync'
 import {
   usePortfolioOverview,
@@ -51,7 +51,7 @@ const overviewColumns: DataTableColumn<PortfolioRow>[] = [
   { title: '标的', key: 'symbol', width: 100, render: (r) => r.symbol ?? '-' },
   { title: '名称', key: 'instrumentName', width: 160, render: (r) => r.instrumentName ?? '-' },
   { title: '账户', key: 'accountName', width: 120, render: (r) => r.accountName ?? '-' },
-  { title: '数量', key: 'quantity', width: 80 },
+  { title: '数量', key: 'quantity', width: 80, render: (r) => formatQuantity(r.quantity) },
   {
     title: '成本',
     key: 'cost_basis',

@@ -14,7 +14,7 @@ import {
 } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
-import { formatAmount } from '@/types'
+import { formatAmount, formatQuantity } from '@/types'
 import type { PnlDetail } from '@/types'
 import { useRealizedPnl } from '@/composables/useRealizedPnl'
 import HoldingsOverview from '@/components/investments/HoldingsOverview.vue'
@@ -39,7 +39,7 @@ const detailColumns: DataTableColumn<PnlDetail>[] = [
   { title: '账户', key: 'account_name', width: 120 },
   { title: '标的', key: 'instrument_symbol', width: 100 },
   { title: '名称', key: 'instrument_name', width: 140 },
-  { title: '数量', key: 'quantity', width: 80 },
+  { title: '数量', key: 'quantity', width: 80, render: (row) => formatQuantity(row.quantity) },
   {
     title: '成本单价',
     key: 'cost_per_unit_cents',
