@@ -328,6 +328,8 @@
   - 执行方式：一次性全量同步、分页拉取，无并发限制、无失败重试。
   - 去重：按 `symbol` 匹配已有标的，名称或市场变更则更新，不存在则插入，并同步 upsert 该标的最新价到 `market_prices`。
   - 进度反馈：通过 `sync-instruments:progress` 事件向前端汇报当前页数/总数与累计新增、更新数量。
+  - **中断机制（issue #104）**：分页循环每页检查共享取消标志（`AtomicBool`），经 `cancel_sync_instruments` 命令置位后即提前返回并推送中断态事件；已落库数据保留（upsert 幂等）、下次重跑自动续上。进度事件终态以 `cancelled` 字段区分完成（`done=true, cancelled=false`）与中断（`done=true, cancelled=true`）。
+  - 无同步进行时调用 `cancel_sync_instruments` 无副作用，返回明确提示。
 - **别名**：不使用"同步价格"（偏持续同步）、"更新行情"（偏实时）。
 
 ## WindowState（窗口状态）

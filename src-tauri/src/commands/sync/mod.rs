@@ -17,13 +17,83 @@ mod persist;
 #[cfg(test)]
 mod tests;
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 use tauri::{AppHandle, Emitter, State};
 
 use crate::db::DbState;
 use crate::error::{AppError, Result};
-use crate::models::{SyncHoldingPricesResult, SyncProgress};
+use crate::models::{CancelSyncResult, SyncHoldingPricesResult, SyncProgress};
+
+/// 全量同步中断状态（issue #104）：跨命令共享的运行标志与取消标志（`Arc<AtomicBool>`）。
+/// - `running`：当前是否有全量同步在跑（供取消命令判断无同步时的明确行为）。
+/// - `cancel_requested`：由取消命令置位，`sync_instruments` 启动时清零；分页循环每页检查。
+///
+/// 用 `Arc` 以便把标志克隆进后台线程（`sync_instruments` 经 `thread::spawn` 执行）。
+pub struct SyncState {
+    running: Arc<AtomicBool>,
+    cancel_requested: Arc<AtomicBool>,
+}
+
+impl Default for SyncState {
+    fn default() -> Self {
+        Self {
+            running: Arc::new(AtomicBool::new(false)),
+            cancel_requested: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+impl SyncState {
+    /// 原子地接管一次新同步：仅当无同步在跑（`running` 由 false→true）时才成功，并清除取消标志。
+    /// 用 `compare_exchange` 做「单同步在跑」守卫，防止二次启动清掉上一次取消标志或旧线程误清
+    /// `running`（issue #104 并发/重入）。返回是否成功接管。
+    fn try_start(&self) -> bool {
+        if self
+            .running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            self.cancel_requested.store(false, Ordering::SeqCst);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+
+    /// 取消标志是否被置位：仅测试据此观察中断切换（生产经分页循环读取原始 `Arc`）。
+    #[cfg(test)]
+    fn is_cancel_requested(&self) -> bool {
+        self.cancel_requested.load(Ordering::SeqCst)
+    }
+
+    fn request_cancel(&self) {
+        self.cancel_requested.store(true, Ordering::SeqCst);
+    }
+
+    /// 请求中断：有同步在跑则置位取消并返回 `cancelled=true`，否则无副作用、返回明确提示。
+    /// 供 `cancel_sync_instruments` 命令调用；抽出以便测试直接驱动（避免依赖 Tauri State）。
+    fn cancel(&self) -> CancelSyncResult {
+        if self.is_running() {
+            self.request_cancel();
+            CancelSyncResult {
+                cancelled: true,
+                message: "已请求中断同步".into(),
+            }
+        } else {
+            CancelSyncResult {
+                cancelled: false,
+                message: "当前没有正在进行的同步".into(),
+            }
+        }
+    }
+}
 
 /// 推送同步失败进度事件（done=true + error），供命令外壳与编排共用。
 fn emit_error_progress(app: &AppHandle, error: String) {
@@ -37,6 +107,7 @@ fn emit_error_progress(app: &AppHandle, error: String) {
             total_inserted: 0,
             total_updated: 0,
             error: Some(error),
+            cancelled: false,
         },
     );
 }
@@ -59,25 +130,52 @@ pub async fn sync_holding_prices(db: State<'_, DbState>) -> Result<SyncHoldingPr
 }
 
 /// IPC 命令：全量同步股票行情。后台线程执行（不阻塞界面），进度经
-/// `sync-instruments:progress` 事件推送，完成/失败时 `done=true` 并携带结果或错误。
+/// `sync-instruments:progress` 事件推送，完成/失败/中断时 `done=true` 并携带结果、错误或中断标记。
+/// 启动时清除取消标志并标记运行中；分页循环每页检查取消标志（issue #104）。
 #[tauri::command]
-pub fn sync_instruments(db: State<'_, DbState>, app: tauri::AppHandle) -> Result<()> {
+pub fn sync_instruments(
+    db: State<'_, DbState>,
+    sync_state: State<'_, SyncState>,
+    app: tauri::AppHandle,
+) -> Result<()> {
     let conn = db.conn.clone();
+
+    // 原子接管起点：仅当无同步在跑才启动；防止二次启动清掉已被置位的取消标志（issue #104）。
+    if !sync_state.try_start() {
+        return Err(AppError::Invalid(
+            "已有全量同步正在进行，请先中断或等待完成".into(),
+        ));
+    }
+
+    let cancel = sync_state.cancel_requested.clone();
+    let running = sync_state.running.clone();
 
     thread::spawn(move || {
         let conn_guard = match conn.lock() {
             Ok(g) => g,
             Err(e) => {
                 emit_error_progress(&app, format!("数据库锁定失败: {e}"));
+                running.store(false, Ordering::SeqCst);
                 return;
             }
         };
 
-        if let Err(e) = orchestrate::do_sync(&conn_guard, &app) {
+        let result = orchestrate::do_sync(&conn_guard, &app, &cancel);
+        running.store(false, Ordering::SeqCst);
+
+        if let Err(e) = result {
             tracing::error!(error = %e, "股票同步失败");
             emit_error_progress(&app, e.to_string());
         }
     });
 
     Ok(())
+}
+
+/// IPC 命令：请求中断正在进行的全量同步（issue #104）。置位取消标志，分页循环下一页命中
+/// 即提前返回并推送中断态事件；已落库数据保留，下次重跑自动续上。无同步进行时无副作用。
+/// 返回 [`CancelSyncResult`]，供前端据此提示是否真的中断了同步。
+#[tauri::command]
+pub fn cancel_sync_instruments(sync_state: State<'_, SyncState>) -> CancelSyncResult {
+    sync_state.cancel()
 }

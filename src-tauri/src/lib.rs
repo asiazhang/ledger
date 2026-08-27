@@ -85,6 +85,8 @@ pub fn run() {
             // 后台索引刷新线程：固定周期消费搜索重建队列（ADR-0004 决策 #14，
             // 写路径零索引工作，界面操作不受索引维护影响）。
             commands::search::start_search_refresh_thread(app.state::<db::DbState>().conn.clone());
+            // 全量同步中断状态（issue #104）：跨命令共享运行/取消标志。
+            app.manage(commands::sync::SyncState::default());
             Ok(())
         })
         .invoke_handler(logged_invoke_handler(tauri::generate_handler![
@@ -130,6 +132,7 @@ pub fn run() {
             commands::expand_scheduled_occurrences,
             commands::realized_pnl_summary,
             commands::sync_instruments,
+            commands::cancel_sync_instruments,
             commands::sync_holding_prices,
         ]))
         .run(tauri::generate_context!())

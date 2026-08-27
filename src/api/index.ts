@@ -32,6 +32,7 @@ import type {
   RestoreResult,
   ScheduledTransactionDetail,
   ScheduledTransactionWithExt,
+  CancelSyncResult,
   SyncHoldingPricesResult,
   TransactionInput,
   TransactionListFilter,
@@ -136,6 +137,8 @@ export const api = {
 
   // 数据同步
   syncInstruments: () => invoke<void>('sync_instruments'),
+  // 请求中断进行中的全量同步（issue #104）：返回是否确实中断 + 提示文案
+  cancelSyncInstruments: () => invoke<CancelSyncResult>('cancel_sync_instruments'),
   // 同步持仓价格（增量同步）：仅刷新当前持仓股票的最新价，返回同步/跳过统计
   syncHoldingPrices: () => invoke<SyncHoldingPricesResult>('sync_holding_prices'),
 

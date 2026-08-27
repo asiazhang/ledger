@@ -1,19 +1,24 @@
 //! 行情同步测试（issue #89 外迁）：HTTP 重试/多主机/解析、价格换算、持久化与编排行为。
 //! HTTP 层通过本地 HTTP 服务独立测试，不依赖真实网络。
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use rusqlite::Connection;
 use rusqlite::params;
 
+use super::SyncState;
 use super::http::{
-    ClistResponse, Pacer, RetryConfig, StockItem, ULIST_BATCH_SIZE, UlistResponse, f2_to_cents,
-    request_json_from_hosts, request_json_with_retry, secid_prefix,
+    ClistResponse, MARKETS, MarketConfig, Pacer, RetryConfig, StockItem, ULIST_BATCH_SIZE,
+    UlistResponse, f2_to_cents, request_json_from_hosts, request_json_with_retry, secid_prefix,
 };
 use super::incremental::do_incremental_sync_with;
+use super::orchestrate::{SyncOutcome, run_sync_pages, terminal_progress};
 use super::persist::{apply_stock_item, build_existing_instruments, upsert_market_price};
 use crate::db::{init_db, new_uuid, now_iso, open_in_memory};
 use crate::error::{AppError, Result};
+use crate::models::SyncProgress;
 
 fn setup_db() -> Connection {
     let mut conn = open_in_memory().unwrap();
@@ -838,4 +843,202 @@ fn incremental_sync_propagates_fetch_error() {
     let mut fetch = |_: &str| Err(AppError::Io("模拟网络失败".into()));
     let err = do_incremental_sync_with(&conn, &mut fetch).unwrap_err();
     assert!(err.to_string().contains("模拟网络失败"));
+}
+
+// ---------------------------------------------------------------------------
+// 全量同步中断机制（issue #104）：分页循环每页检查取消标志、提前返回、已落库数据保留、
+// 终态区分完成/中断；SyncState 的运行/取消标志语义。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn run_sync_pages_cancelled_before_first_page_applies_nothing() {
+    let conn = setup_db();
+    // 取消标志已置位：第一页起点即命中，提前返回，任何页都不该被拉取。
+    let cancel = AtomicBool::new(true);
+    let market_totals: Vec<(usize, &'static MarketConfig)> = vec![(250usize, &MARKETS[0])];
+
+    let mut fetch_page = |_m: &MarketConfig, _p: usize| -> Result<Vec<StockItem>> {
+        panic!("取消后不应再 fetch 任何分页");
+    };
+    let mut emitted: Vec<SyncProgress> = Vec::new();
+    let outcome = run_sync_pages(
+        &conn,
+        &cancel,
+        &market_totals,
+        250,
+        &mut fetch_page,
+        &mut |p| emitted.push(p),
+    )
+    .unwrap();
+
+    assert_eq!(
+        outcome,
+        SyncOutcome::Cancelled {
+            inserted: 0,
+            updated: 0,
+        }
+    );
+    assert!(emitted.is_empty(), "未处理任何页，不推送进度事件");
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM instruments", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn run_sync_pages_cancelled_midway_keeps_processed_data() {
+    let conn = setup_db();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let market_totals: Vec<(usize, &'static MarketConfig)> = vec![(250usize, &MARKETS[0])];
+    let grand_total = 250usize;
+
+    let mut fetch_calls = 0usize;
+    let cancel_clone = cancel.clone();
+    let mut fetch_page = move |_market: &MarketConfig, _page: usize| -> Result<Vec<StockItem>> {
+        fetch_calls += 1;
+        // 第 2 次拉取后置位取消：第 2 页数据已落库，第 3 页命中取消而跳过。
+        if fetch_calls == 2 {
+            cancel_clone.store(true, Ordering::SeqCst);
+        }
+        let code = format!("{:06}", 600000 + fetch_calls);
+        Ok(vec![StockItem {
+            code: code.clone(),
+            name: format!("名称-{code}"),
+            price: Some(1000.0),
+        }])
+    };
+
+    let mut emitted: Vec<SyncProgress> = Vec::new();
+    let outcome = run_sync_pages(
+        &conn,
+        &cancel,
+        &market_totals,
+        grand_total,
+        &mut fetch_page,
+        &mut |p| emitted.push(p),
+    )
+    .unwrap();
+
+    // 中途取消：返回 Cancelled，统计 = 已处理的前 2 页（新增 2、更新 0）。
+    assert_eq!(
+        outcome,
+        SyncOutcome::Cancelled {
+            inserted: 2,
+            updated: 0,
+        }
+    );
+    // 已落库数据保留：前 2 页的标的与价格都在。
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM instruments", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 2);
+    let price_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM market_prices", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(price_count, 2);
+    // 进度事件只推前两页（无终态；终态由 do_sync 层推送，此处聚焦分页循环）。
+    assert_eq!(emitted.len(), 2);
+    assert!(emitted.iter().all(|p| !p.done && !p.cancelled));
+}
+
+#[test]
+fn run_sync_pages_completes_all_pages_when_not_cancelled() {
+    let conn = setup_db();
+    let cancel = AtomicBool::new(false);
+
+    // 150 只 → 2 页，不被取消：正常完成。
+    let market_totals: Vec<(usize, &'static MarketConfig)> = vec![(150usize, &MARKETS[0])];
+    let mut fetch_page = |_m: &MarketConfig, page: usize| -> Result<Vec<StockItem>> {
+        let code = format!("{:06}", 600000 + page);
+        Ok(vec![StockItem {
+            code: code.clone(),
+            name: format!("名称-{code}"),
+            price: Some(1000.0),
+        }])
+    };
+    let mut emitted: Vec<SyncProgress> = Vec::new();
+    let outcome = run_sync_pages(
+        &conn,
+        &cancel,
+        &market_totals,
+        150,
+        &mut fetch_page,
+        &mut |p| emitted.push(p),
+    )
+    .unwrap();
+
+    assert_eq!(
+        outcome,
+        SyncOutcome::Completed {
+            inserted: 2,
+            updated: 0,
+        }
+    );
+    assert_eq!(emitted.len(), 2);
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM instruments", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 2);
+}
+
+#[test]
+fn sync_state_try_start_guards_reentry_and_clears_cancel() {
+    let state = SyncState::default();
+    // 初始：无同步在跑 → 取消命令应表现为「无副作用」。
+    assert!(!state.is_running());
+    assert!(!state.is_cancel_requested());
+
+    // 首次启动成功：标记运行中、清除取消标志。
+    assert!(state.try_start());
+    assert!(state.is_running());
+    assert!(!state.is_cancel_requested());
+
+    // 已置位取消标志（后台线程收尾前）。
+    state.request_cancel();
+    assert!(state.is_cancel_requested());
+
+    // 再次启动被拒：guard 阻止重入，不清掉已置位的取消标志（前一次同步得以继续被中断）。
+    assert!(!state.try_start());
+    assert!(state.is_running());
+    assert!(state.is_cancel_requested());
+}
+
+#[test]
+fn sync_state_cancel_distinguishes_running_and_idle() {
+    let state = SyncState::default();
+    // 无同步在跑：无副作用、返回明确提示。
+    let idle = state.cancel();
+    assert!(!idle.cancelled);
+    assert_eq!(idle.message, "当前没有正在进行的同步");
+    assert!(!state.is_cancel_requested(), "无同步时取消不应置位取消标志");
+
+    // 有同步在跑：置位取消标志、返回中断提示。
+    assert!(state.try_start());
+    let running = state.cancel();
+    assert!(running.cancelled);
+    assert_eq!(running.message, "已请求中断同步");
+    assert!(state.is_cancel_requested());
+}
+
+#[test]
+fn terminal_progress_distinguishes_completed_and_cancelled() {
+    // 完成终态：done=true、cancelled=false、计数正确。
+    let completed = terminal_progress(&SyncOutcome::Completed {
+        inserted: 3,
+        updated: 1,
+    });
+    assert!(completed.done);
+    assert!(!completed.cancelled);
+    assert_eq!(completed.total_inserted, 3);
+    assert_eq!(completed.total_updated, 1);
+
+    // 中断终态：done=true、cancelled=true、计数为已处理部分。
+    let cancelled = terminal_progress(&SyncOutcome::Cancelled {
+        inserted: 2,
+        updated: 0,
+    });
+    assert!(cancelled.done);
+    assert!(cancelled.cancelled);
+    assert_eq!(cancelled.total_inserted, 2);
+    assert_eq!(cancelled.total_updated, 0);
 }
