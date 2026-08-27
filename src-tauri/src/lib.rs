@@ -141,6 +141,8 @@ pub fn run() {
             commands::cancel_sync_instruments,
             commands::sync_holding_prices,
             commands::set_auto_backup_dir,
+            commands::get_auto_backup_state,
+            commands::set_auto_backup_enabled,
         ]))
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

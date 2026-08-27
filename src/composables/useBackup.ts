@@ -3,7 +3,7 @@ import { useMessage } from "naive-ui";
 import { open, save, confirm } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/stores/app";
 import { api } from "@/api";
-import type { BackupFileInfo } from "@/types";
+import type { AutoBackupState, BackupFileInfo } from "@/types";
 import {
   defaultBackupFileName,
   isManagedBackupPath,
@@ -32,6 +32,36 @@ export function useBackup() {
   const lastBackup = ref("");
   const backups = ref<BackupFileInfo[]>([]);
   const pruning = ref(false);
+
+  // 自动备份设置（issue #128）：开关与上次自动备份时间存 ledger.db，经 IPC 读写。
+  const autoBackupEnabled = ref(true);
+  const autoBackupLastAt = ref<string | null>(null);
+
+  /// 展示文案：格式化 UTC ISO 为 `YYYY-MM-DD HH:mm`，从未备份时显示「从未」。
+  const autoBackupLastText = computed(() =>
+    autoBackupLastAt.value ? formatBackupTime(autoBackupLastAt.value) : "从未",
+  );
+
+  async function refreshAutoBackupState() {
+    try {
+      const s: AutoBackupState = await api.getAutoBackupState();
+      autoBackupEnabled.value = s.enabled;
+      autoBackupLastAt.value = s.last_backup_at;
+    } catch (e: any) {
+      // 状态读取失败不阻断手动备份功能：维持默认开关开启、无时间展示。
+      message.error(`读取自动备份状态失败: ${e}`);
+    }
+  }
+
+  async function toggleAutoBackup(enabled: boolean) {
+    try {
+      await api.setAutoBackupEnabled(enabled);
+      autoBackupEnabled.value = enabled;
+      message.success(enabled ? "自动备份已开启" : "自动备份已关闭");
+    } catch (e: any) {
+      message.error(`更新自动备份开关失败: ${e}`);
+    }
+  }
 
   const backupRows = computed(() =>
     backups.value.map((b) => ({
@@ -191,7 +221,10 @@ export function useBackup() {
     }
   }
 
-  onMounted(refreshBackups);
+  onMounted(() => {
+    void refreshBackups();
+    void refreshAutoBackupState();
+  });
 
   return {
     backingUp,
@@ -207,5 +240,8 @@ export function useBackup() {
     backupOnce,
     backupAs,
     pickRestore,
+    autoBackupEnabled,
+    autoBackupLastText,
+    toggleAutoBackup,
   };
 }

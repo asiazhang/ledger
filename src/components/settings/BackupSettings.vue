@@ -5,6 +5,7 @@ import {
   NDataTable,
   NInputNumber,
   NSpace,
+  NSwitch,
   NText,
 } from 'naive-ui'
 import { useAppStore } from '@/stores/app'
@@ -26,6 +27,9 @@ const {
   backupOnce,
   backupAs,
   pickRestore,
+  autoBackupEnabled,
+  autoBackupLastText,
+  toggleAutoBackup,
 } = useBackup()
 
 const backupColumns = [
@@ -65,6 +69,22 @@ const backupColumns = [
           />
           <NText depth="3">个（1–100）。超出上限的最旧备份会在备份后自动清理。</NText>
         </NSpace>
+      </NSpace>
+    </NCard>
+
+    <NCard title="自动备份" size="small">
+      <NSpace vertical :size="12">
+        <NSpace align="center" :size="12">
+          <NSwitch
+            :value="autoBackupEnabled"
+            @update:value="toggleAutoBackup"
+          />
+          <NText>开启后每 24 小时检查一次，数据有变化时自动备份</NText>
+        </NSpace>
+        <NText depth="3">上次自动备份：{{ autoBackupLastText }}</NText>
+        <NText v-if="!store.backupDir" type="warning">
+          设置备份目录后自动备份生效
+        </NText>
       </NSpace>
     </NCard>
 

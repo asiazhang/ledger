@@ -51,6 +51,10 @@ beforeEach(async () => {
     if (cmd === 'restart_app') return Promise.resolve()
     if (cmd === 'list_backups') return Promise.resolve([])
     if (cmd === 'prune_backups') return Promise.resolve({ kept: 0, deleted: [], failed: [] })
+    if (cmd === 'get_auto_backup_state') {
+      return Promise.resolve({ enabled: true, dirty: false, last_backup_at: null })
+    }
+    if (cmd === 'set_auto_backup_enabled') return Promise.resolve()
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
   mockOpen.mockReset()
@@ -236,6 +240,76 @@ describe('SettingsView.vue', () => {
     await input.trigger('blur')
     expect(store.backupMaxCount).toBe(10)
     expect(localStorage.getItem('backup_max_count')).toBe('10')
+  })
+
+  it('自动备份卡片展示开关与上次自动备份时间', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
+      if (cmd === 'list_accounts') return Promise.resolve([])
+      if (cmd === 'list_categories') return Promise.resolve([])
+      if (cmd === 'list_backups') return Promise.resolve([])
+      if (cmd === 'get_auto_backup_state') {
+        return Promise.resolve({ enabled: false, dirty: false, last_backup_at: '2026-02-17T09:30:00Z' })
+      }
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const wrapper = mount(SettingsView)
+    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
+    await backupTab.trigger('click')
+    await flushPromises()
+    await nextTick()
+    const html = wrapper.html()
+    expect(html).toContain('自动备份')
+    expect(html).toContain('上次自动备份：2026-02-17 09:30')
+    const switchEl = wrapper.find('.n-switch')
+    expect(switchEl.exists()).toBe(true)
+    expect(switchEl.classes().join(' ')).not.toContain('n-switch--active')
+  })
+
+  it('切换自动备份开关调用 set_auto_backup_enabled 并刷新展示', async () => {
+    let enabledState = true
+    mockInvoke.mockImplementation((cmd: string, args?: { enabled?: boolean }) => {
+      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
+      if (cmd === 'list_accounts') return Promise.resolve([])
+      if (cmd === 'list_categories') return Promise.resolve([])
+      if (cmd === 'list_backups') return Promise.resolve([])
+      if (cmd === 'get_auto_backup_state') {
+        return Promise.resolve({ enabled: enabledState, dirty: false, last_backup_at: null })
+      }
+      if (cmd === 'set_auto_backup_enabled') {
+        enabledState = args?.enabled ?? false
+        return Promise.resolve()
+      }
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const wrapper = mount(SettingsView)
+    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
+    await backupTab.trigger('click')
+    await flushPromises()
+    await wrapper.find('.n-switch').trigger('click')
+    await flushPromises()
+    expect(mockInvoke).toHaveBeenCalledWith('set_auto_backup_enabled', { enabled: false })
+    expect(wrapper.find('.n-switch').classes().join(' ')).not.toContain('n-switch--active')
+  })
+
+  it('未配置备份目录时提示引导，配置后提示消失', async () => {
+    const wrapper = mount(SettingsView)
+    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
+    await backupTab.trigger('click')
+    await flushPromises()
+    expect(wrapper.html()).toContain('设置备份目录后自动备份生效')
+
+    useAppStore().setBackupDir('/Users/me/backups')
+    await nextTick()
+    expect(wrapper.html()).not.toContain('设置备份目录后自动备份生效')
+  })
+
+  it('从未自动备份时显示从未占位', async () => {
+    const wrapper = mount(SettingsView)
+    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
+    await backupTab.trigger('click')
+    await flushPromises()
+    expect(wrapper.html()).toContain('上次自动备份：从未')
   })
 
   it('恢复前需要确认，确认后调用 restore_backup 与 restart_app', async () => {
