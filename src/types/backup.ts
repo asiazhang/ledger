@@ -22,3 +22,11 @@ export interface PruneResult {
   deleted: string[]
   failed: string[]
 }
+
+/** 自动备份设置页状态（issue #128）：开关与上次自动备份时间（设置页仅消费这两项）。 */
+export interface AutoBackupState {
+  /** 自动备份开关（默认开启，状态存 ledger.db）。 */
+  enabled: boolean
+  /** 上次成功自动备份时间（UTC ISO）；null 表示从未自动备份过。 */
+  last_backup_at: string | null
+}

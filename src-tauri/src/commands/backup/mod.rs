@@ -14,6 +14,7 @@ mod tests;
 
 use std::path::Path;
 
+use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
 use crate::auto_backup;
@@ -100,4 +101,39 @@ pub fn set_auto_backup_dir(app: AppHandle, dir: String) -> Result<()> {
     let _ =
         auto_backup::run_first_backup(&conn, normalized.as_deref(), &version, chrono::Utc::now());
     Ok(())
+}
+
+/// 自动备份设置页状态（issue #128）：开关与上次自动备份时间。
+/// 设置页仅需这两项；脏标记为后端调度内部状态，不上 IPC 面。
+#[derive(Debug, Serialize)]
+pub struct AutoBackupSettingsState {
+    pub enabled: bool,
+    pub last_backup_at: Option<String>,
+}
+
+/// 读取自动备份调度状态（issue #128，设置页展示）：key 缺失或恢复了旧版本备份
+/// （`app_settings` 表缺失）时由 [`auto_backup::get_state`] 落到约定默认值。
+/// 备份目录是前端 localStorage 偏好（ADR-0016），目录未配置提示由设置页自判。
+#[tauri::command]
+pub fn get_auto_backup_state(app: AppHandle) -> Result<AutoBackupSettingsState> {
+    let state = app.state::<DbState>();
+    let conn = state.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let s = auto_backup::get_state(&conn)?;
+    Ok(AutoBackupSettingsState {
+        enabled: s.enabled,
+        last_backup_at: s.last_backup_at,
+    })
+}
+
+/// 设置自动备份开关（issue #128）：写入 `ledger.db` 的 `app_settings`
+/// （经 [`crate::settings`] 收口），调度线程下次检查即刻生效；目录镜像不动。
+#[tauri::command]
+pub fn set_auto_backup_enabled(app: AppHandle, enabled: bool) -> Result<()> {
+    let state = app.state::<DbState>();
+    let conn = state.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    crate::settings::set(
+        &conn,
+        crate::settings::SettingKey::AutoBackupEnabled,
+        &enabled,
+    )
 }

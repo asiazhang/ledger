@@ -4,6 +4,7 @@ import type {
   AccountBalance,
   AccountInput,
   BackupFileInfo,
+  AutoBackupState,
   BackupResult,
   Budget,
   BudgetInput,
@@ -150,6 +151,10 @@ export const api = {
   pruneBackups: (dir: string, keep: number) => invoke<PruneResult>('prune_backups', { dir, keep }),
   // 同步备份目录镜像到后端（自动备份调度用，issue #125）：启动/变更时调用
   setAutoBackupDir: (dir: string) => invoke<void>('set_auto_backup_dir', { dir }),
+  // 自动备份设置页状态读写（issue #128）：开关与上次自动备份时间，存 ledger.db
+  getAutoBackupState: () => invoke<AutoBackupState>('get_auto_backup_state'),
+  setAutoBackupEnabled: (enabled: boolean) =>
+    invoke<void>('set_auto_backup_enabled', { enabled }),
 
   // AI
   getAiPrompt: () => invoke<string>('get_ai_prompt'),
