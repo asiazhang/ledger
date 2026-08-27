@@ -5,8 +5,14 @@ import { invoke } from '@tauri-apps/api/core'
 import DashboardView from '@/views/DashboardView.vue'
 import TransactionForm from '@/components/TransactionForm.vue'
 import { useReferenceStore } from '@/stores/reference'
-import { makeAccount, makeHolding, makeInstrument } from './factories'
-import type { Account, AccountBalance, Currency, Holding, Instrument } from '@/types'
+import {
+  invokeHandler,
+  makeAccount,
+  makeHolding,
+  mockHoldings,
+  mockInstruments,
+} from './factories'
+import type { Account, AccountBalance, Currency } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -35,39 +41,27 @@ const mockBalances: AccountBalance[] = [
   { account: mockAccounts[0], balance_cents: 10000 },
 ]
 
-const mockInstruments: Instrument[] = [
-  makeInstrument({ id: 'inst-1' }),
-  makeInstrument({ id: 'inst-2', symbol: '000001', name: '平安银行', market: 'sz' }),
-]
-
-/** 默认持仓：h-1 有行情（折算到 CNY 账户），h-2 无行情（三项 NULL，不计入合计） */
-const mockHoldings: Holding[] = [
-  makeHolding({
-    id: 'h-1',
-    instrument_id: 'inst-1',
-    quantity: 100,
-    cost_basis_cents: 120000,
-    latest_price_cents: 1500,
-    latest_price_currency_code: 'CNY',
-    market_value_cents: 150000,
-    unrealized_pnl_cents: 30000,
-  }),
-  makeHolding({ id: 'h-2', instrument_id: 'inst-2', quantity: 10, cost_basis_cents: 8000 }),
-]
+/** 默认 invoke mock：参考数据 + 余额 + 持仓 + 持仓标的字典（extra 优先覆盖） */
+function baseInvoke(extra?: Record<string, unknown>) {
+  mockInvoke.mockImplementation(
+    invokeHandler(
+      {
+        list_currencies: mockCurrencies,
+        list_accounts: mockAccounts,
+        list_categories: [],
+        list_account_balances: mockBalances,
+        list_holdings: mockHoldings,
+        list_instruments: { items: mockInstruments, total: mockInstruments.length },
+      },
+      extra,
+    ),
+  )
+}
 
 beforeEach(async () => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_account_balances') return Promise.resolve(mockBalances)
-    if (cmd === 'list_holdings') return Promise.resolve(mockHoldings)
-    if (cmd === 'list_instruments')
-      return Promise.resolve({ items: mockInstruments, total: mockInstruments.length })
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-  })
+  baseInvoke()
   localStorage.clear()
   const store = useReferenceStore()
   await store.ensureFresh()
@@ -103,15 +97,9 @@ describe('DashboardView 投资概览卡（issue #145）', () => {
       market_value_cents: 3000,
       unrealized_pnl_cents: -500,
     })
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve([mockAccounts[0]!, usdAccount])
-      if (cmd === 'list_categories') return Promise.resolve([])
-      if (cmd === 'list_account_balances') return Promise.resolve(mockBalances)
-      if (cmd === 'list_holdings') return Promise.resolve([mockHoldings[0]!, usdHolding])
-      if (cmd === 'list_instruments')
-        return Promise.resolve({ items: mockInstruments, total: mockInstruments.length })
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    baseInvoke({
+      list_holdings: [mockHoldings[0], usdHolding],
+      list_accounts: [mockAccounts[0], usdAccount],
     })
     const wrapper = await mountView()
     const card = wrapper.find('[data-testid="investment-overview-card"]')
@@ -121,36 +109,26 @@ describe('DashboardView 投资概览卡（issue #145）', () => {
   })
 
   it('无任何持仓时整卡隐藏', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-      if (cmd === 'list_categories') return Promise.resolve([])
-      if (cmd === 'list_account_balances') return Promise.resolve(mockBalances)
-      if (cmd === 'list_holdings') return Promise.resolve([])
-      if (cmd === 'list_instruments') return Promise.resolve({ items: [], total: 0 })
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    baseInvoke({ list_holdings: [], list_instruments: { items: [], total: 0 } })
     const wrapper = await mountView()
     expect(wrapper.find('[data-testid="investment-overview-card"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('投资概览')
   })
 
-  it('有持仓但全部无行情时空值分支：合计展示为 -', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-      if (cmd === 'list_categories') return Promise.resolve([])
-      if (cmd === 'list_account_balances') return Promise.resolve(mockBalances)
-      if (cmd === 'list_holdings') return Promise.resolve([mockHoldings[1]!])
-      if (cmd === 'list_instruments')
-        return Promise.resolve({ items: [mockInstruments[1]!], total: 1 })
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  it('有持仓但全部无行情时空值分支：合计统计精确降级为「总市值-」', async () => {
+    baseInvoke({
+      list_holdings: [mockHoldings[1]],
+      list_instruments: { items: [mockInstruments[1]], total: 1 },
     })
     const wrapper = await mountView()
     const card = wrapper.find('[data-testid="investment-overview-card"]')
     expect(card.exists()).toBe(true)
     expect(card.text()).toContain('总市值')
-    expect(card.text()).toContain('-')
+    // 精确锁定降级文本：NStatistic 渲染 label + value 连排
+    expect(card.find('[data-testid="dashboard-total-market-value"]').text()).toBe('总市值-')
+    expect(card.find('[data-testid="dashboard-total-unrealized-pnl"]').text()).toBe(
+      '未实现盈亏合计-',
+    )
   })
 })
 
