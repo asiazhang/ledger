@@ -1,29 +1,17 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { NRadioGroup, NRadio } from 'naive-ui'
-import type { TransactionKind } from '@/types'
+import type { CreateTransactionKind } from '@/types'
 import CategoryForm from '@/components/CategoryForm.vue'
 import TransferForm from '@/components/TransferForm.vue'
-import RefundForm from '@/components/RefundForm.vue'
 import InvestmentForm from '@/components/InvestmentForm.vue'
 
-const emit = defineEmits<{ created: [] }>()
-defineProps<{ onCreated?: () => void }>()
+// 类型选择由「记一笔」分裂按钮入口单点表达，弹窗内不再提供切换（issue #150）。
+defineProps<{ kind: CreateTransactionKind }>()
 
-const kind = ref<TransactionKind>('expense')
+const emit = defineEmits<{ created: [] }>()
 </script>
 
 <template>
   <div>
-    <NRadioGroup v-model:value="kind" style="margin-bottom: 12px">
-      <NRadio value="expense">支出</NRadio>
-      <NRadio value="income">收入</NRadio>
-      <NRadio value="transfer">转账</NRadio>
-      <NRadio value="refund">退款</NRadio>
-      <NRadio value="buy">买入</NRadio>
-      <NRadio value="sell">卖出</NRadio>
-    </NRadioGroup>
-
     <CategoryForm
       v-if="kind === 'expense'"
       kind="expense"
@@ -38,10 +26,6 @@ const kind = ref<TransactionKind>('expense')
     />
     <TransferForm
       v-if="kind === 'transfer'"
-      @created="emit('created')"
-    />
-    <RefundForm
-      v-if="kind === 'refund'"
       @created="emit('created')"
     />
     <InvestmentForm

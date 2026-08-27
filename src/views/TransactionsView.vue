@@ -4,6 +4,9 @@ import { useRoute } from 'vue-router'
 import {
   NDataTable,
   NButton,
+  NButtonGroup,
+  NDropdown,
+  NIcon,
   NDatePicker,
   NEmpty,
   NSelect,
@@ -12,14 +15,18 @@ import {
   NModal,
   useMessage,
   type DataTableColumn,
+  type DropdownOption,
   type PaginationProps,
 } from 'naive-ui'
+import { ChevronDown } from '@vicons/ionicons5'
 import TransactionForm from '@/components/TransactionForm.vue'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/transaction-columns'
 import {
+  CREATE_KINDS,
   TRANSACTION_KIND_LABELS,
+  type CreateTransactionKind,
   type Transaction,
   type TransactionKind,
   type TransactionListFilter,
@@ -140,14 +147,34 @@ watch(
 /** 页大小选项（不持久化，遵守 ViewState 决策） */
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
 
-/** 「记一笔」弹窗开关：弹窗内嵌现有 TransactionForm，
- * 提交成功（created）后关闭并立即刷新列表，录完马上能看到记录（issue #141）。 */
-const showCreate = ref(false)
+/** 「记一笔」分裂按钮（issue #150）：主体点击直接以 expense 打开弹窗（最高频路径一步直达），
+ * 右侧箭头展开 5 项菜单（不含退款）。createKind 为 null 表示弹窗关闭；
+ * 类型由入口单点表达，弹窗内不再提供切换，中途换类型 = 关闭重开。 */
+const createKind = ref<CreateTransactionKind | null>(null)
+
+/** 下拉选项：5 种可创建类型（refund 不在入口：退款已移出表单域，入口由交易条目
+ * 右键菜单承接，独立 ticket 落地前处于过渡态）。 */
+const createKindOptions: DropdownOption[] = CREATE_KINDS.map((k) => ({
+  label: TRANSACTION_KIND_LABELS[k],
+  key: k,
+}))
+
+const createTitle = computed(() =>
+  createKind.value ? `记一笔 · ${TRANSACTION_KIND_LABELS[createKind.value]}` : '记一笔',
+)
+
+function openCreate(k: CreateTransactionKind) {
+  createKind.value = k
+}
+
+function onCreateShowUpdate(show: boolean) {
+  if (!show) createKind.value = null
+}
 
 /** 提交成功：回到第 1 页再刷新（新记录按日期/时间排序最可能落在第 1 页），
  * 保留筛选条件（与手动过滤同等语义，不重置）。 */
 function onFormCreated() {
-  showCreate.value = false
+  createKind.value = null
   page.value = 1
   void refresh()
 }
@@ -319,18 +346,36 @@ onMounted(() => {
       >
         清除筛选
       </NButton>
-      <NButton type="primary" @click="showCreate = true">记一笔</NButton>
+      <!-- 分裂按钮：主体直开支出弹窗，箭头展开 5 项类型菜单（issue #150） -->
+      <NButtonGroup>
+        <NButton type="primary" @click="openCreate('expense')">记一笔</NButton>
+        <NDropdown
+          trigger="click"
+          :options="createKindOptions"
+          @select="(k: string | number) => openCreate(k as CreateTransactionKind)"
+        >
+          <NButton type="primary" aria-label="更多记账类型">
+            <NIcon><ChevronDown /></NIcon>
+          </NButton>
+        </NDropdown>
+      </NButtonGroup>
     </NSpace>
-    <!-- 快速记账弹窗：内嵌现有交易表单，提交成功关闭并刷新列表 -->
+    <!-- 快速记账弹窗：标题标明入口选定类型，内嵌收窄后的 TransactionForm（无类型单选），
+         提交成功关闭并刷新列表 -->
     <NModal
-      v-model:show="showCreate"
-      title="记一笔"
+      :show="createKind !== null"
+      :title="createTitle"
       preset="card"
       display-directive="if"
       style="width: 480px"
       :bordered="false"
+      @update:show="onCreateShowUpdate"
     >
-      <TransactionForm @created="onFormCreated" />
+      <TransactionForm
+        v-if="createKind"
+        :kind="createKind"
+        @created="onFormCreated"
+      />
     </NModal>
     <!-- 备注列为弹性列（transaction-columns 中不设 width），表格始终铺满容器；
          窄窗口时备注先收缩，scroll-x（固定列宽总和）作为横向滚动下限 -->
