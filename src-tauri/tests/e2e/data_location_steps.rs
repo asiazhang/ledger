@@ -7,6 +7,7 @@
 use cucumber::{given, then, when};
 use rusqlite::Connection;
 
+use tauri_app_lib::commands::data_location::{gather_info, validate_and_commit};
 use tauri_app_lib::commands::transactions::insert_transaction;
 use tauri_app_lib::db::{
     data_location, init_db, new_uuid, open_connection, open_db_in, reset_db_in,
@@ -332,4 +333,194 @@ fn bak_file_preserved(world: &mut LedgerWorld) {
         .join(data_location::DB_FILE_NAME)
         .with_extension("db.bak");
     assert!(bak.exists(), ".bak 文件应保留: {}", bak.display());
+}
+
+// ---------------------------------------------------------------------------
+// 领域命令层（issue #133）：直接调用命令层内部函数（与真实 IPC 命令同一实现）
+// ---------------------------------------------------------------------------
+
+/// 提交更改意图并记录结果（成功 → outcome，失败 → last_error）。
+fn submit(world: &mut LedgerWorld, target: &std::path::Path, adopt_existing: bool) {
+    let default_dir = world.dl_default_dir.clone().unwrap();
+    match validate_and_commit(&default_dir, target, adopt_existing) {
+        Ok(outcome) => world.dl_last_outcome = Some(outcome),
+        Err(e) => world.last_error = Some(e.to_string()),
+    }
+}
+
+#[when(expr = "向一个未占用的新目录提交更改意图")]
+fn submit_to_fresh_dir(world: &mut LedgerWorld) {
+    ensure_default_dir(world);
+    let target = std::env::temp_dir().join(format!("ledger-e2e-dl-new-{}", new_uuid()));
+    world.dl_target_dir = Some(target.clone());
+    submit(world, &target, false);
+}
+
+#[when(expr = "向一个无法创建的目录提交更改意图")]
+fn submit_to_uncreatable(world: &mut LedgerWorld) {
+    let default_dir = world.dl_default_dir.clone().unwrap();
+    // 目标父级是一个普通文件 → create_dir_all 必然失败（跨平台）。
+    let blocker = default_dir.join("blocker");
+    std::fs::write(&blocker, b"not a directory").unwrap();
+    let target = blocker.join("child");
+    world.dl_target_dir = Some(target.clone());
+    submit(world, &target, false);
+}
+
+#[when(expr = "向该目标目录提交更改意图（不接管既有库）")]
+fn submit_no_adopt(world: &mut LedgerWorld) {
+    let target = world.dl_target_dir.clone().unwrap();
+    submit(world, &target, false);
+}
+
+#[when(expr = "选择接管既有库并再次提交")]
+fn submit_adopt(world: &mut LedgerWorld) {
+    let target = world.dl_target_dir.clone().unwrap();
+    submit(world, &target, true);
+}
+
+#[when(expr = "提交恢复默认位置（不接管既有库）")]
+fn restore_default_no_adopt(world: &mut LedgerWorld) {
+    let default_dir = world.dl_default_dir.clone().unwrap();
+    submit(world, &default_dir, false);
+}
+
+#[when(expr = "选择接管既有库并再次提交恢复默认")]
+fn restore_default_adopt(world: &mut LedgerWorld) {
+    let default_dir = world.dl_default_dir.clone().unwrap();
+    submit(world, &default_dir, true);
+}
+
+#[when(expr = "查询 DataLocation 信息")]
+fn query_info(world: &mut LedgerWorld) {
+    let default_dir = world.dl_default_dir.clone().unwrap();
+    // 与真实命令一致：active/fallback 来自启动期已登记的引导结果。
+    let (active_dir, fallback_reason) = match world.last_boot.as_ref() {
+        Some(boot) => (boot.db_dir.clone(), boot.fallback_reason.clone()),
+        None => (default_dir.clone(), None),
+    };
+    world.dl_last_info = Some(gather_info(
+        &default_dir,
+        &active_dir,
+        fallback_reason.as_deref(),
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// Then：命令层结果断言
+// ---------------------------------------------------------------------------
+
+#[then(expr = "提交结果应为意图已落盘")]
+fn outcome_committed(world: &mut LedgerWorld) {
+    let outcome = world.dl_last_outcome.as_ref().expect("无提交结果");
+    assert!(
+        outcome.committed && !outcome.requires_choice,
+        "提交结果应为意图已落盘，实际 {outcome:?}"
+    );
+    // 意图指向是否正确由「指针文件应指向目标/默认数据目录」步骤断言。
+}
+
+#[then(expr = "提交结果应为需要二选一")]
+fn outcome_requires_choice(world: &mut LedgerWorld) {
+    let outcome = world.dl_last_outcome.as_ref().expect("无提交结果");
+    assert!(
+        outcome.requires_choice && !outcome.committed,
+        "提交结果应为需要二选一，实际 {outcome:?}"
+    );
+}
+
+#[then(expr = "提交应被拒绝且错误信息包含 {string}")]
+fn submit_rejected_with(world: &mut LedgerWorld, needle: String) {
+    assert!(world.dl_last_outcome.is_none(), "被拒绝时不应产生提交结果");
+    let error = world.last_error.as_ref().expect("应被拒绝但无错误信息");
+    assert!(
+        error.contains(&needle),
+        "错误信息不匹配: 期望包含 '{needle}', 实际 '{error}'"
+    );
+}
+
+#[then(expr = "指针文件应指向目标目录")]
+fn pointer_points_to_target(world: &mut LedgerWorld) {
+    let default_dir = world.dl_default_dir.as_ref().unwrap();
+    let target = world.dl_target_dir.as_ref().unwrap();
+    let configured = data_location::configured_intent(default_dir).expect("指针文件应已配置");
+    assert_eq!(configured, *target, "指针文件应指向目标目录");
+}
+
+#[then(expr = "指针文件应指向默认数据目录")]
+fn pointer_points_to_default(world: &mut LedgerWorld) {
+    let default_dir = world.dl_default_dir.as_ref().unwrap();
+    let configured = data_location::configured_intent(default_dir).expect("指针文件应已配置");
+    assert_eq!(configured, *default_dir, "指针文件应指向默认数据目录");
+}
+
+#[then(expr = "指针文件应保持未配置")]
+fn pointer_remains_unconfigured(world: &mut LedgerWorld) {
+    let default_dir = world.dl_default_dir.as_ref().unwrap();
+    assert!(
+        data_location::configured_intent(default_dir).is_none(),
+        "意图不应落盘（指针文件应保持未配置）"
+    );
+}
+
+#[then(expr = "信息中的生效目录应为默认数据目录")]
+fn info_active_is_default(world: &mut LedgerWorld) {
+    let info = world.dl_last_info.as_ref().expect("无信息查询结果");
+    let default_dir = world.dl_default_dir.as_ref().unwrap();
+    assert_eq!(
+        info.active_dir,
+        default_dir.to_string_lossy(),
+        "信息中的生效目录应为默认数据目录"
+    );
+}
+
+#[then(expr = "信息应无待重启生效状态且无回退警示")]
+fn info_quiescent(world: &mut LedgerWorld) {
+    let info = world.dl_last_info.as_ref().expect("无信息查询结果");
+    assert!(!info.pending_restart, "不应处于待重启生效状态");
+    assert!(
+        info.fallback_reason.is_none(),
+        "不应有回退警示，实际: {:?}",
+        info.fallback_reason
+    );
+}
+
+#[then(expr = "信息应显示已更改待重启生效，意图目录为目标目录")]
+fn info_pending(world: &mut LedgerWorld) {
+    let info = world.dl_last_info.as_ref().expect("无信息查询结果");
+    let target = world.dl_target_dir.as_ref().unwrap();
+    assert!(info.pending_restart, "应处于已更改待重启生效状态");
+    assert_eq!(
+        info.configured_dir.as_deref(),
+        Some(target.to_string_lossy().as_ref()),
+        "意图目录应为目标目录"
+    );
+}
+
+#[then(expr = "信息应携带回退警示包含 {string}")]
+fn info_fallback_contains(world: &mut LedgerWorld, needle: String) {
+    let info = world.dl_last_info.as_ref().expect("无信息查询结果");
+    let reason = info.fallback_reason.as_ref().expect("应有回退警示但为空");
+    assert!(
+        reason.contains(&needle),
+        "回退警示不匹配: 期望包含 '{needle}', 实际 '{reason}'"
+    );
+}
+
+#[then(expr = "信息应无待重启生效状态")]
+fn info_not_pending(world: &mut LedgerWorld) {
+    let info = world.dl_last_info.as_ref().expect("无信息查询结果");
+    assert!(!info.pending_restart, "不应处于待重启生效状态");
+}
+
+#[given(expr = "一个已含 {int} 条交易库的目标目录")]
+fn target_dir_with_db_no_pointer(world: &mut LedgerWorld, count: usize) {
+    ensure_default_dir(world);
+    // 不写指针：仅准备目标现场，供「二选一」场景提交时使用。
+    let target = std::env::temp_dir().join(format!("ledger-e2e-dl-adopt-{}", new_uuid()));
+    std::fs::create_dir_all(&target).unwrap();
+    let mut conn = open_connection(target.join(data_location::DB_FILE_NAME)).unwrap();
+    init_db(&mut conn).unwrap();
+    seed_db(&conn, "目标现金", count);
+    world.dl_target_dir = Some(target);
 }

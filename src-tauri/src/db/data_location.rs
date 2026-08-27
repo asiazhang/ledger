@@ -158,6 +158,16 @@ fn relocate(source_db: &Path, target_db: &Path) -> std::result::Result<(), Strin
     Ok(())
 }
 
+/// 读取当前已配置的意图目录（指针存在且可解析时返回 `Some`）。
+/// 缺失、损坏一律视同未配置（回退警示由 [`boot`] 结果另行承载）。
+/// 供命令层聚合 DataLocation 信息使用（issue #133）。
+pub fn configured_intent(default_dir: &Path) -> Option<PathBuf> {
+    match read_pointer(default_dir) {
+        PointerRead::Configured(dir) => Some(dir),
+        PointerRead::Unconfigured | PointerRead::Corrupt(_) => None,
+    }
+}
+
 /// 把「库所在目录」意图写入指针文件（原子：先写唯一临时名再替换）。
 /// 供命令层「更改位置 / 恢复默认」提交意图使用。
 pub fn write_pointer(default_dir: &Path, target: &Path) -> crate::error::Result<()> {

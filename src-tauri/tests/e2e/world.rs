@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use cucumber::World;
 use rusqlite::Connection;
 
+use tauri_app_lib::commands::data_location::{DataLocationChangeOutcome, DataLocationInfo};
 use tauri_app_lib::db::{init_db, open_in_memory};
 use tauri_app_lib::models::{
     CreateTransactionResult, DashboardOverview, Transaction, TransactionInput,
@@ -96,6 +97,10 @@ pub struct LedgerWorld {
     pub dl_conn: Option<tauri_app_lib::db::DbState>,
     /// DataLocation 引导场景：默认目录库文件字节快照（原样保留断言用）
     pub dl_default_db_bytes: Option<Vec<u8>>,
+    /// 最近一次 DataLocation 信息查询结果（#133 命令层断言用）
+    pub dl_last_info: Option<DataLocationInfo>,
+    /// 最近一次更改意图提交结果（#133 命令层断言用）
+    pub dl_last_outcome: Option<DataLocationChangeOutcome>,
 }
 
 impl fmt::Debug for LedgerWorld {
@@ -144,6 +149,8 @@ impl LedgerWorld {
             last_boot: None,
             dl_conn: None,
             dl_default_db_bytes: None,
+            dl_last_info: None,
+            dl_last_outcome: None,
         };
         // 注册种子黑洞账户（V004 预置 无(CNY)/无(HKD)），供迁移场景按名称引用。
         let hidden: Vec<(String, String)> = {
