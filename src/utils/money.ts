@@ -31,15 +31,17 @@ export function formatQuantity(quantity: number): string {
   return groupNumberString(String(quantity))
 }
 
-/** 分 -> 元字符串，按币种小数位格式化；整数部分走万分位分组（展示层全局口径） */
+/** 分 -> 元字符串，按币种小数位换算后裁剪小数尾零（98.00→98、98.50→98.5，无损去零不涉舍入）；整数部分走万分位分组（展示层全局口径） */
 export function formatAmount(cents: number, currency?: Currency): string {
   const dp = currency?.decimal_places ?? 2
   const sign = cents < 0 ? '-' : ''
   const abs = Math.abs(cents)
   const value = abs / Math.pow(10, dp)
   const fixed = value.toFixed(dp)
+  // 整数分转字符串只去零、不做舍入；小数部分全空时连小数点一起去掉
+  const trimmed = dp > 0 ? fixed.replace(/0+$/, '').replace(/\.$/, '') : fixed
   const symbol = currency?.symbol ?? ''
-  return `${sign}${symbol}${groupNumberString(fixed)}`
+  return `${sign}${symbol}${groupNumberString(trimmed)}`
 }
 
 /**

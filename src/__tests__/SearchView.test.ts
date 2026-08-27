@@ -280,7 +280,7 @@ describe('SearchView.vue', () => {
     await typeAndSearch(wrapper, '报销')
     expect(wrapper.text()).toContain('命中 2 条')
     expect(wrapper.text()).toContain('报销')
-    expect(wrapper.text()).toContain('¥33.00')
+    expect(wrapper.text()).toContain('¥33')
     expect(wrapper.text()).toContain('支出')
     expect(wrapper.text()).toContain('餐饮')
     expect(wrapper.text()).toContain('现金')
@@ -455,7 +455,7 @@ describe('SearchView.vue', () => {
       await setDate(wrapper, 0, '2026-02-05')
       await applyFilters(wrapper)
       expect(wrapper.text()).toContain('已应用筛选')
-      expect(wrapper.text()).toContain('最低 ¥15.50')
+      expect(wrapper.text()).toContain('最低 ¥15.5')
       expect(wrapper.text()).toContain('起始 2026-02-05')
 
       const clearBtn = wrapper.findAll('button').find((b) => b.text() === '清除筛选')
