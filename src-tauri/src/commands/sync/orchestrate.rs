@@ -47,7 +47,10 @@ pub(super) struct GlobalConn(pub(super) Arc<Mutex<Connection>>);
 
 impl ConnAccessor for GlobalConn {
     fn with_conn<R>(&self, f: impl FnOnce(&Connection) -> Result<R>) -> Result<R> {
-        let guard = self.0.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let guard = self
+            .0
+            .lock()
+            .map_err(|e| AppError::Db(format!("数据库锁定失败: {e}")))?;
         f(&guard)
     }
 }
