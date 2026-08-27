@@ -85,7 +85,11 @@ pub fn set_auto_backup_dir(app: AppHandle, dir: String) -> Result<()> {
         return Ok(());
     }
     let state = app.state::<DbState>();
-    let conn = state.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    // 与调度线程/退出兑底一致：拿锁带 5s 超时，拿不到则放弃本轮兑底机会。
+    let Some(conn) = auto_backup::lock_conn_with_timeout(&state.conn) else {
+        tracing::warn!("首次兑底等待数据库锁超时，放弃本轮兑底");
+        return Ok(());
+    };
     let version = app.package_info().version.to_string();
     let _ =
         auto_backup::run_first_backup(&conn, normalized.as_deref(), &version, chrono::Utc::now());

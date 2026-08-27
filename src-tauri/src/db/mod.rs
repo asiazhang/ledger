@@ -48,7 +48,13 @@ pub fn init_db(conn: &mut Connection) -> Result<()> {
 
 /// 当前 UTC 时间 ISO 字符串。
 pub fn now_iso() -> String {
-    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    iso_at(chrono::Utc::now())
+}
+
+/// 把注入的时刻格式化为与 [`now_iso`] 同格式的 UTC ISO 字符串。
+/// 供需注入时钟的调用方（如自动备份锚点）使用，保证全仓唯一格式定义。
+pub fn iso_at(now: chrono::DateTime<chrono::Utc>) -> String {
+    now.format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 /// 生成新的 UUID v7（时间有序，适合主键与同步）。

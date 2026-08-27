@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, TimeDelta, Utc};
 use rusqlite::Connection;
 
-use crate::db::DbState;
+use crate::db::{self, DbState};
 use crate::settings::{self, SettingKey};
 
 /// 自动备份间隔：距上次备份 ≥24h 才视为到期（备份频率上限每天一次）。
@@ -165,10 +165,6 @@ fn parse_iso(s: &str) -> Option<DateTime<Utc>> {
         .map(|t| t.with_timezone(&Utc))
 }
 
-fn format_iso(now: DateTime<Utc>) -> String {
-    now.format("%Y-%m-%dT%H:%M:%SZ").to_string()
-}
-
 /// 一次备份尝试的结果。调用方据此打日志/做后续动作；测试据此断言行为。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AttemptOutcome {
@@ -189,6 +185,8 @@ pub enum SkipReason {
     DirMissing,
     /// 不满足触发条件（未到期 / 无变化），按入口语义判定。
     NotDue,
+    /// 退出兜底专属：数据无变化（不脏），无事可做。
+    Clean,
     /// 首次兜底专属：备份列表非空（不分手动/自动），无需兜底。
     ListNotEmpty,
 }
@@ -203,7 +201,7 @@ fn perform_backup(
 ) -> crate::error::Result<String> {
     let target = Path::new(dir).join(auto_backup_file_name(now));
     let path = crate::commands::backup::backup_db_to(conn, &target, app_version)?.path;
-    mark_clean(conn, &format_iso(now))?;
+    mark_clean(conn, &db::iso_at(now))?;
     Ok(path)
 }
 
@@ -212,8 +210,27 @@ fn effective_dir(dir: Option<&str>) -> Option<&str> {
     dir.map(str::trim).filter(|d| !d.is_empty())
 }
 
+fn failed(reason: crate::error::AppError) -> AttemptOutcome {
+    AttemptOutcome::Failed {
+        reason: reason.to_string(),
+    }
+}
+
+/// 三种触发入口共享的前奏：读状态 + 统一门禁（开关、目录），
+/// 入口内只保留各自差异化的触发判定（到期 / 脏 / 列表空）。
+fn gate(conn: &Connection, dir: Option<&str>) -> Result<(AutoBackupState, String), AttemptOutcome> {
+    let state = get_state(conn).map_err(failed)?;
+    if !state.enabled {
+        return Err(AttemptOutcome::Skipped(SkipReason::Disabled));
+    }
+    let Some(dir) = effective_dir(dir) else {
+        return Err(AttemptOutcome::Skipped(SkipReason::DirMissing));
+    };
+    Ok((state, dir.to_string()))
+}
+
 /// 把执行结果归一化为 [`AttemptOutcome`] 并打日志（失败 warn，成功 info）。
-fn report(trigger: &str, performed: crate::error::Result<String>) -> AttemptOutcome {
+fn classify_result(trigger: &str, performed: crate::error::Result<String>) -> AttemptOutcome {
     match performed {
         Ok(path) => {
             tracing::info!(trigger, path = %path, "自动备份完成");
@@ -236,25 +253,15 @@ pub fn run_due_backup(
     app_version: &str,
     now: DateTime<Utc>,
 ) -> AttemptOutcome {
-    let state = match get_state(conn) {
-        Ok(s) => s,
-        Err(e) => {
-            return AttemptOutcome::Failed {
-                reason: e.to_string(),
-            };
-        }
-    };
-    if !state.enabled {
-        return AttemptOutcome::Skipped(SkipReason::Disabled);
-    }
-    let Some(dir) = effective_dir(dir) else {
-        return AttemptOutcome::Skipped(SkipReason::DirMissing);
+    let (state, dir) = match gate(conn, dir) {
+        Ok(v) => v,
+        Err(outcome) => return outcome,
     };
     let last = state.last_backup_at.as_deref().and_then(parse_iso);
     if due_decision(state.dirty, last, AUTO_BACKUP_INTERVAL, now) != BackupDecision::BackupNow {
         return AttemptOutcome::Skipped(SkipReason::NotDue);
     }
-    report("due", perform_backup(conn, dir, app_version, now))
+    classify_result("due", perform_backup(conn, &dir, app_version, now))
 }
 
 /// 触发入口二：退出兜底——只要脏且可用就备份一次，**不受每日约束**。
@@ -264,24 +271,15 @@ pub fn run_exit_backup(
     app_version: &str,
     now: DateTime<Utc>,
 ) -> AttemptOutcome {
-    let state = match get_state(conn) {
-        Ok(s) => s,
-        Err(e) => {
-            return AttemptOutcome::Failed {
-                reason: e.to_string(),
-            };
-        }
-    };
-    if !state.enabled {
-        return AttemptOutcome::Skipped(SkipReason::Disabled);
-    }
-    let Some(dir) = effective_dir(dir) else {
-        return AttemptOutcome::Skipped(SkipReason::DirMissing);
+    let (state, dir) = match gate(conn, dir) {
+        Ok(v) => v,
+        Err(outcome) => return outcome,
     };
     if !state.dirty {
-        return AttemptOutcome::Skipped(SkipReason::NotDue);
+        // 与「未到期」的静默语义分开表达：退出兜底只关心脏标记。
+        return AttemptOutcome::Skipped(SkipReason::Clean);
     }
-    report("exit", perform_backup(conn, dir, app_version, now))
+    classify_result("exit", perform_backup(conn, &dir, app_version, now))
 }
 
 /// 触发入口三：首次兜底——启动会话首次拿到目录时，若受管备份列表为空
@@ -292,33 +290,19 @@ pub fn run_first_backup(
     app_version: &str,
     now: DateTime<Utc>,
 ) -> AttemptOutcome {
-    let state = match get_state(conn) {
-        Ok(s) => s,
-        Err(e) => {
-            return AttemptOutcome::Failed {
-                reason: e.to_string(),
-            };
-        }
+    let (_, dir) = match gate(conn, dir) {
+        Ok(v) => v,
+        Err(outcome) => return outcome,
     };
-    if !state.enabled {
-        return AttemptOutcome::Skipped(SkipReason::Disabled);
-    }
-    let Some(dir) = effective_dir(dir) else {
-        return AttemptOutcome::Skipped(SkipReason::DirMissing);
-    };
-    match crate::commands::backup::list_managed_backups(Path::new(dir)) {
+    match crate::commands::backup::list_managed_backups(Path::new(&dir)) {
         Ok(list) if !list.is_empty() => {
             return AttemptOutcome::Skipped(SkipReason::ListNotEmpty);
         }
         // 目录尚不存在视为空列表：执行兜底时若目录确实无效，由 backup_db_to 报错收场。
         Ok(_) => {}
-        Err(e) => {
-            return AttemptOutcome::Failed {
-                reason: e.to_string(),
-            };
-        }
+        Err(e) => return failed(e),
     }
-    report("first", perform_backup(conn, dir, app_version, now))
+    classify_result("first", perform_backup(conn, &dir, app_version, now))
 }
 
 // ---------------------------------------------------------------------------
@@ -358,7 +342,9 @@ impl PrefsState {
 
 /// 等待连接锁至超时。锁被占用超过 [`LOCK_TIMEOUT`] 或已损坏（poisoned）返回 None，
 /// 由调用方跳过本轮并保留脏标记（下个周期重试即重试机制）。
-fn lock_conn_with_timeout(conn: &Arc<Mutex<Connection>>) -> Option<MutexGuard<'_, Connection>> {
+pub(crate) fn lock_conn_with_timeout(
+    conn: &Arc<Mutex<Connection>>,
+) -> Option<MutexGuard<'_, Connection>> {
     let deadline = Instant::now() + LOCK_TIMEOUT;
     loop {
         match conn.try_lock() {
@@ -804,7 +790,7 @@ mod scheduler_tests {
             "0.2.0",
             now_at("2026-02-17T12:00:00Z"),
         );
-        assert_eq!(outcome, AttemptOutcome::Skipped(SkipReason::NotDue));
+        assert_eq!(outcome, AttemptOutcome::Skipped(SkipReason::Clean));
         assert!(fs::read_dir(&dir).expect("列目录").next().is_none());
         let _ = fs::remove_dir_all(&dir);
     }

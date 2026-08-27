@@ -44,7 +44,7 @@ function updateSidebarCollapsed(collapsed: boolean) {
 const store = useAppStore()
 
 // 自动备份（issue #125）：备份目录保持前端 localStorage 单一来源（ADR-0016），
-// 启动/变更时把镜像推给后端供调度线程与退出兑底消费；未配置传空串即静默跳过。
+// 启动/变更时把镜像推给后端供调度线程与退出兜底消费；未配置传空串即静默跳过。
 watch(
   () => store.backupDir,
   (dir) => {

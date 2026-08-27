@@ -145,7 +145,7 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
-            // 应用退出兑底（issue #125）：退出前若脏则补一次备份（不受每日约束）。
+            // 应用退出兜底（issue #125）：退出前若脏则补一次备份（不受每日约束）。
             if let tauri::RunEvent::Exit = event {
                 auto_backup::exit_fallback(app);
             }
