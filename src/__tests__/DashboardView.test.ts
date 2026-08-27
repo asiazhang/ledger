@@ -71,6 +71,7 @@ describe('DashboardView 快速记账与最近交易移除（issue #141）', () =
   it('账户余额卡片保留（仪表盘改造前的既有内容）', async () => {
     const wrapper = await mountView()
     expect(wrapper.text()).toContain('现金')
-    expect(wrapper.text()).toContain('¥100.00')
+    // 金额展示裁剪尾零（issue #148）：10000 分 → ¥100
+    expect(wrapper.text()).toContain('¥100')
   })
 })
