@@ -10,6 +10,7 @@
 - **`docs/adr/`** — 决策记录（ADR-0012 参考数据失效、ADR-0013 行为层分派 + investment 接缝、ADR-0004 搜索等）。改到相关区域先读对应 ADR。
 - **`docs/agents/`** — 专项操作指引（issue-tracker 用 `gh`、triage 标签、domain 文档消费方式）。
 - **`docs/model/`、`docs/specs/`** — 数据模型与规格。
+- **`scripts/`** — 一键脚本（`check.sh` / `test.sh` / `build.sh` / `lint-fix.sh` / `db.sh` / `clean.sh` 等，含 `README` 未提及的常用操作见脚本头部注释）。
 
 ## 项目概览
 
@@ -52,5 +53,6 @@ AI 驱动的导入**不按文件类型解析**，唯一入口是本地 HTTP API 
 
 - 新增 Rust 业务逻辑：补充 BDD 场景到 `src-tauri/tests/e2e/features/` 与对应 step 定义（`src-tauri/tests/e2e/*_steps.rs`）。
 - 新增前端逻辑：补充 Vitest 测试到 `src/__tests__/`（纯函数、composables、组件均可测）。
-- 运行方式见 `package.json` scripts 与 `src-tauri/` 下的 cargo 命令；质量门槛：`vue-tsc --noEmit`、`cargo clippy --all-targets --all-features`、`cargo fmt` 无警告。
+- 运行方式见 `package.json` scripts、`src-tauri/` 下的 cargo 命令，以及 `scripts/` 一键脚本（`check.sh` 质量检查、`test.sh` Rust 单测、`build.sh` 打包）。
+- 质量门槛：`vue-tsc --noEmit`、`cargo clippy --all-targets --all-features`、`cargo fmt` 无警告——即 `./scripts/check.sh` 的覆盖范围。
 - 注意：Vite 配置已忽略对 `src-tauri/**` 的文件监听，改 Rust 代码不会触发前端热更新（Rust 热重载由 `tauri dev` 自身处理）。
