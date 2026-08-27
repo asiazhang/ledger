@@ -10,12 +10,17 @@
 //!   `start_search_refresh_thread` 模式（spawn + sleep），锁等待带超时，超时跳过本轮；
 //! - `backupDir` 保持前端 localStorage 单一来源（ADR-0016 决策 3），后端只维护
 //!   一份运行时镜像 [`PrefsState`]（启动时经 IPC `set_auto_backup_dir` 推送），
-//!   目录未配置时一律静默跳过。
+//!   目录未配置时一律静默跳过；
+//! - 业务写库成功后的统一后置入口 [`on_write`]（issue #126）：置脏 + 写时顺带检查
+//!   （到期且脏则立即备份）。各写路径（Writer 接缝 / 参考 CRUD / 市场数据写入）
+//!   均调用它，深度模块只持有 `&Connection`，不经 AppHandle 取偏好——目录镜像经
+//!   进程级单例 [`shared_prefs`] 读取，应用版本用编译期常量。
 //!
 //! 备注：`SettingKey::AutoBackupNextDueAt` 已预留但本模块不读写——锚点模型下
 //! 「下次到期时间」可由 `last_backup_at + 间隔` 推导，不落地派生数据。
 
 use std::path::Path;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::time::{Duration, Instant};
@@ -306,6 +311,44 @@ pub fn run_first_backup(
 }
 
 // ---------------------------------------------------------------------------
+// 写路径挂钩（issue #126）：所有业务写库成功后置脏 + 写时顺带检查
+// ---------------------------------------------------------------------------
+
+/// 进程级共享的偏好镜像单例：写命令深处只有 `&Connection`，拿不到 Tauri 的
+/// `State<PrefsState>`，经本单例读取目录镜像，避免把 AppHandle 一路下传到写路径。
+static SHARED_PREFS: OnceLock<Arc<PrefsState>> = OnceLock::new();
+
+/// 共享偏好镜像（lib.rs 启动即初始化一次；未显式 `set_dir` 时目录为 None——
+/// 所有触发入口静默跳过）。
+pub fn shared_prefs() -> Arc<PrefsState> {
+    SHARED_PREFS
+        .get_or_init(|| Arc::new(PrefsState::default()))
+        .clone()
+}
+
+/// 业务写库成功后的统一后置动作（issue #126）。
+///
+/// 1. 置脏：任何业务写库成功后调用（交易写入 Writer 接缝的插入/更新与软删除、
+///    参考数据 CRUD、市场数据写入）；失败仅记日志不上抛——业务写已成功，
+///    不能因调度状态写入失败回滚用户操作。
+/// 2. 写时顺带检查：若到期且脏则立即执行自动备份（决策全在 [`due_decision`]，
+///    备份频率上限每天一次；目录未配置/开关关闭等门禁由 [`run_due_backup`] 统一处理）。
+///
+/// 处于显式事务中（批量导入逐行落库）时只置脏、不做到期检查——VACUUM INTO
+/// 不能在事务内执行；提交点（如 [`crate::commands::batch::TransactionBatch::run`]）
+/// 会再调一次本函数补上检查。重复调用安全：置脏幂等，未到期检查恒为 Skip。
+pub fn on_write(conn: &Connection) {
+    if let Err(e) = mark_dirty(conn) {
+        tracing::warn!(error = %e, "写库成功但置脏失败（忽略）");
+    }
+    if !conn.is_autocommit() {
+        return;
+    }
+    let dir = shared_prefs().snapshot_dir();
+    run_due_backup(conn, dir.as_deref(), env!("CARGO_PKG_VERSION"), Utc::now());
+}
+
+// ---------------------------------------------------------------------------
 // 运行时载体：偏好镜像 + 轮询线程 + 退出钩子
 // ---------------------------------------------------------------------------
 
@@ -371,8 +414,7 @@ pub(crate) fn lock_conn_with_timeout(
 pub fn start_scheduler(app: &tauri::AppHandle) {
     use tauri::Manager;
     let conn = Arc::clone(&app.state::<DbState>().conn);
-    let prefs = app.state::<PrefsState>();
-    let dir_mirror = Arc::clone(&prefs.dir);
+    let dir_mirror = Arc::clone(&shared_prefs().dir);
     let handle = app.clone();
     std::thread::spawn(move || {
         loop {
@@ -402,10 +444,7 @@ pub fn exit_fallback(app: &tauri::AppHandle) {
     let Some(guard) = lock_conn_with_timeout(&conn) else {
         return;
     };
-    let dir = {
-        let prefs = app.state::<PrefsState>();
-        prefs.snapshot_dir()
-    };
+    let dir = shared_prefs().snapshot_dir();
     let version = app.package_info().version.to_string();
     run_exit_backup(&guard, dir.as_deref(), &version, Utc::now());
 }
@@ -574,6 +613,17 @@ mod tests {
             state.last_backup_at,
             Some(String::from("2026-02-17T10:00:00Z"))
         );
+    }
+    /// on_write（issue #126 写路径挂钩）：置脏；未配置目录时顺带检查静默跳过
+    /// （不产生文件、不动锚点）。
+    #[test]
+    fn on_write_marks_dirty_and_silently_skips_check_without_dir() {
+        let c = conn();
+        assert!(!get_state(&c).unwrap().dirty);
+        crate::auto_backup::on_write(&c);
+        let state = get_state(&c).expect("读状态");
+        assert!(state.dirty, "写库成功后应置脏");
+        assert_eq!(state.last_backup_at, None, "目录未配置不应记录备份锚点");
     }
 }
 

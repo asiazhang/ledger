@@ -178,6 +178,8 @@ pub fn insert_row(conn: &Connection, row: &NormalizedRow) -> Result<String> {
             device_id(),
         ],
     )?;
+    // 脏标记挂钩（issue #126）：落库成功即置脏，到期则写时顺带触发备份。
+    crate::auto_backup::on_write(conn);
     Ok(id)
 }
 
@@ -208,6 +210,8 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
             device_id(),
         ],
     )?;
+    // 脏标记挂钩（issue #126）：更新成功即置脏，到期则写时顺带触发备份。
+    crate::auto_backup::on_write(conn);
     Ok(())
 }
 

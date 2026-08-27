@@ -59,6 +59,8 @@ pub(crate) fn create_exchange_rate(conn: &Connection, input: ExchangeRateInput) 
             device_id()
         ],
     )?;
+    // 脏标记挂钩（issue #126）：市场数据写入成功即置脏。
+    crate::auto_backup::on_write(conn);
     Ok(id)
 }
 
@@ -105,6 +107,7 @@ pub(crate) fn create_market_price(conn: &Connection, input: MarketPriceInput) ->
             device_id()
         ],
     )?;
+    crate::auto_backup::on_write(conn);
     Ok(id)
 }
 
@@ -197,6 +200,8 @@ pub(crate) fn create_instrument(conn: &Connection, input: InstrumentInput) -> Re
                 "UPDATE instruments SET name=?1, market=?2, updated_at=?3, version=version+1 WHERE id=?4",
                 rusqlite::params![input.name, market, now, existing_id],
             )?;
+            // 脏标记挂钩（issue #126）：更新已有标的信息也算市场数据写入。
+            crate::auto_backup::on_write(conn);
         }
         return Ok(existing_id);
     }
@@ -218,5 +223,6 @@ pub(crate) fn create_instrument(conn: &Connection, input: InstrumentInput) -> Re
             device_id()
         ],
     )?;
+    crate::auto_backup::on_write(conn);
     Ok(id)
 }

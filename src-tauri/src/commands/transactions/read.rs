@@ -108,6 +108,8 @@ pub fn delete_transaction_internal(conn: &Connection, id: &str) -> Result<()> {
         "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id()],
     )?;
+    // 脏标记挂钩（issue #126）：删除成功即置脏，到期则写时顺带触发备份。
+    crate::auto_backup::on_write(conn);
     // 索引维护由后台定时刷新承担：触发器（trg_search_enqueue_txn_update）已入队
     // `search_reindex_queue`，软删除后到下次刷新前该交易仍可能被搜到（时效性要求低，
     // 可接受，见 ADR-0004 决策 #14）。

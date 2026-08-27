@@ -322,6 +322,20 @@ pub fn restore_db_from(
     replace_result?;
 
     let restored_at = db::now_iso();
+    // 恢复成功后重置自动备份调度状态（issue #126）：不置真、重新计时，避免
+    // 恢复的旧状态触发「恢复完立即备份」；旧版本备份缺 key 时落到约定默认值。
+    // 用新开连接写入：rename 替换后主连接仍指旧 inode（由前端 restart_app
+    // 重新加载），必须把重置写进已就位的新库文件才能随恢复结果生效。
+    match db::open_connection(db_path) {
+        Ok(conn) => {
+            if let Err(e) = crate::auto_backup::reset(&conn, &restored_at) {
+                tracing::warn!(error = %e, "恢复后重置自动备份状态失败");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "恢复后打开新库重置自动备份状态失败");
+        }
+    }
     tracing::info!(schema = %backup_schema, "恢复完成");
     Ok(RestoreResult {
         schema_version: backup_schema,

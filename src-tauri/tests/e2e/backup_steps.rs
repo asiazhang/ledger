@@ -126,3 +126,40 @@ fn restored_has_txns(world: &mut LedgerWorld, expected: i64) {
         .unwrap();
     assert_eq!(count, expected, "恢复出的交易数量不匹配");
 }
+
+// ---------------------------------------------------------------------------
+// 脏标记挂钩（issue #126）
+// ---------------------------------------------------------------------------
+
+use tauri_app_lib::auto_backup::get_state;
+use tauri_app_lib::commands::delete_transaction_internal;
+
+#[then(expr = "自动备份脏标记应为真")]
+fn auto_backup_dirty(world: &mut LedgerWorld) {
+    let state = get_state(&world.conn).unwrap();
+    assert!(state.dirty, "业务写库成功后脏标记应为真");
+}
+
+#[then(expr = "自动备份脏标记应为假")]
+fn auto_backup_clean(world: &mut LedgerWorld) {
+    let state = get_state(&world.conn).unwrap();
+    assert!(!state.dirty, "未发生业务写库时脏标记应为默认假");
+}
+
+#[when(expr = "删除最近创建的交易")]
+fn delete_last_transaction(world: &mut LedgerWorld) {
+    let id = world.last_transaction_id.clone().expect("没有可删除的交易");
+    delete_transaction_internal(&world.conn, &id).unwrap();
+}
+
+#[then(expr = "恢复的数据库自动备份状态应为「未脏且已重新计时」")]
+fn restored_auto_backup_state_reset(world: &mut LedgerWorld) {
+    let p = world.restored_db_path.as_ref().expect("尚未恢复");
+    let conn = open_connection(p).unwrap();
+    let state = get_state(&conn).unwrap();
+    assert!(!state.dirty, "恢复后脏标记应被重置为假");
+    assert!(
+        state.last_backup_at.is_some(),
+        "恢复后上次备份锚点应重新计时"
+    );
+}

@@ -583,3 +583,30 @@ fn normalize_insert_update_roundtrip() {
     assert_eq!(version, 2);
     assert_eq!(created_at_after, created_at, "created_at 应保留");
 }
+
+// ---------------------------------------------------------------------------
+// 脏标记挂钩（issue #126）
+// ---------------------------------------------------------------------------
+
+/// insert_row / update_row 落库成功后应置脏（Writer 接缝统一挂钩）。
+#[test]
+fn insert_and_update_mark_dirty() {
+    let conn = setup_db();
+    insert_account(&conn, "acc", "CNY");
+
+    let row = normalize(&conn, &input(TransactionKind::Expense, 1500, "acc")).unwrap();
+    assert!(
+        !crate::auto_backup::get_state(&conn).unwrap().dirty,
+        "写入前不应脏"
+    );
+    let id = insert_row(&conn, &row).unwrap();
+    assert!(crate::auto_backup::get_state(&conn).unwrap().dirty);
+
+    // 置脏是幂等标记，不做「已脏跳过」优化：更新后仍为真。
+    crate::auto_backup::mark_clean(&conn, "2026-02-17T09:00:00Z").unwrap();
+    update_row(&conn, &id, &row).unwrap();
+    assert!(
+        crate::auto_backup::get_state(&conn).unwrap().dirty,
+        "更新成功后应重新置脏"
+    );
+}

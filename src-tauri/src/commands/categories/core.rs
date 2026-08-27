@@ -33,6 +33,8 @@ pub fn create_category_internal(conn: &Connection, input: CategoryInput) -> Resu
             device_id()
         ],
     )?;
+    // 脏标记挂钩（issue #126）：IPC 与 HTTP 端点共用本函数，落库成功即置脏。
+    crate::auto_backup::on_write(conn);
     Ok(id)
 }
 
@@ -81,5 +83,6 @@ pub fn delete_category_internal(conn: &Connection, id: &str) -> Result<()> {
         "UPDATE categories SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id()],
     )?;
+    crate::auto_backup::on_write(conn);
     Ok(())
 }

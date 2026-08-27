@@ -16,7 +16,7 @@ use std::path::Path;
 
 use tauri::{AppHandle, Manager};
 
-use crate::auto_backup::{self, PrefsState};
+use crate::auto_backup;
 use crate::db::DbState;
 use crate::error::{AppError, Result};
 
@@ -79,7 +79,7 @@ pub fn prune_backups(dir: String, keep: i64) -> Result<PruneResult> {
 pub fn set_auto_backup_dir(app: AppHandle, dir: String) -> Result<()> {
     let trimmed = dir.trim();
     let normalized = (!trimmed.is_empty()).then(|| trimmed.to_string());
-    let prefs = app.state::<PrefsState>();
+    let prefs = auto_backup::shared_prefs();
     prefs.set_dir(normalized.clone());
     if normalized.is_none() || !prefs.claim_first_fallback() {
         return Ok(());

@@ -92,6 +92,8 @@ pub fn update_category(
         "UPDATE categories SET name=?1, icon=?2, parent_id=?3, updated_at=?4, version=version+1, device_id=?5 WHERE id=?6",
         rusqlite::params![name, icon, parent_id, now, did, id],
     )?;
+        // 脏标记挂钩（issue #126）：分类更新成功即置脏。
+        crate::auto_backup::on_write(&conn);
         // 分类改名不影响搜索索引（分类名不在搜索内容中，V005 收窄后无需重建）
     }
     // 参考写入成功 → 通知前端重拉参考数据（issue #79）
@@ -115,6 +117,8 @@ pub fn reorder_categories(
                 rusqlite::params![item.sort_order, now, did, item.id],
             )?;
         }
+        // 脏标记挂钩（issue #126）：排序调整成功即置脏。
+        crate::auto_backup::on_write(&conn);
     }
     // 参考写入成功 → 通知前端重拉参考数据（issue #79）
     crate::events::emit_reference_changed(&app, "reorder_categories");

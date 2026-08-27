@@ -64,6 +64,9 @@ pub fn update_transaction_internal(
     match res {
         Ok(()) => {
             conn.execute("COMMIT", [])?;
+            // 脏标记已在事务内的 update_row 挂钩置真；此处补上提交点的
+            // 写时顺带检查（issue #126）——事务中跳过的到期判定现在执行。
+            crate::auto_backup::on_write(conn);
             Ok(())
         }
         Err(e) => {
