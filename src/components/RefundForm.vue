@@ -13,17 +13,25 @@ import {
 import { useRefundForm } from '@/composables/useRefundForm'
 import { formatAmount } from '@/types'
 import { useReferenceStore } from '@/stores/reference'
+import type { Transaction } from '@/types'
 
 const emit = defineEmits<{ created: [] }>()
 
-const ctx = useRefundForm({ onCreated: () => emit('created') })
+/** 行内退款（issue #151）：传入时原交易由所在行固定，隐藏搜索下拉、
+ * 展示原交易只读信息；不传则保留搜索选择模式（记一笔弹窗）。 */
+const props = defineProps<{ fixedTarget?: Transaction | null }>()
+
+const ctx = useRefundForm({
+  onCreated: () => emit('created'),
+  fixedTarget: () => props.fixedTarget ?? null,
+})
 const reference = useReferenceStore()
 </script>
 
 <template>
   <NForm label-placement="left" :show-feedback="false" size="small">
     <NSpace vertical :size="12">
-      <NFormItem label="退款关联">
+      <NFormItem v-if="!fixedTarget" label="退款关联">
         <NSelect
           v-model:value="ctx.refundTargetId.value"
           :options="ctx.refundTargetOptions.value"
@@ -35,7 +43,8 @@ const reference = useReferenceStore()
 
       <NFormItem v-if="ctx.refundTarget.value" label="原交易">
         <NText depth="3" style="font-size: 12px">
-          {{ formatAmount(ctx.refundTarget.value.amount_native_cents, reference.getCurrency(ctx.refundTarget.value.currency_code)) }}
+          {{ ctx.refundTarget.value.date }} ·
+          {{ formatAmount(ctx.refundTarget.value.amount_cents, reference.getCurrency(ctx.refundTarget.value.currency_code)) }}
           · {{ reference.categoryPath(ctx.refundTarget.value.category_id) || '-' }}
           · {{ reference.accountMap.get(ctx.refundTarget.value.account_id)?.name ?? '-' }}
         </NText>

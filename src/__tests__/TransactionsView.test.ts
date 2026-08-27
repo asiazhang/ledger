@@ -1,14 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { reactive } from 'vue'
+import { h, reactive } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { NDataTable, NPopconfirm, NSelect, NDatePicker, NButton, NModal, NInputNumber, NRadioGroup } from 'naive-ui'
+import {
+  NDataTable,
+  NDialogProvider,
+  NDropdown,
+  NPopconfirm,
+  NSelect,
+  NDatePicker,
+  NButton,
+  NModal,
+  NInputNumber,
+  NRadioGroup,
+} from 'naive-ui'
 import CategoryForm from '@/components/CategoryForm.vue'
 import TransferForm from '@/components/TransferForm.vue'
 import InvestmentForm from '@/components/InvestmentForm.vue'
 import { useReferenceStore } from '@/stores/reference'
 import TransactionsView from '@/views/TransactionsView.vue'
+import RefundForm from '@/components/RefundForm.vue'
 import AccountLink from '@/components/AccountLink.vue'
 import TransactionForm from '@/components/TransactionForm.vue'
 import type { Account, Currency, Transaction } from '@/types'
@@ -133,9 +145,16 @@ beforeEach(async () => {
 })
 
 async function mountView() {
-  const wrapper = mount(TransactionsView)
+  const wrapper = mountViewSync()
   await flushPromises()
   return wrapper
+}
+
+/** 视图顶层调用 useDialog（issue #151 删除二次确认），与 App.vue 同构需 NDialogProvider 包裹。 */
+function mountViewSync() {
+  return mount(NDialogProvider, {
+    slots: { default: () => h(TransactionsView) },
+  })
 }
 
 function listCalls() {
@@ -160,6 +179,77 @@ function tablePagination(wrapper: ReturnType<typeof mount>) {
 
 function bodyRows(wrapper: ReturnType<typeof mount>) {
   return wrapper.findAll('.n-data-table-tbody .n-data-table-tr')
+}
+
+function deleteCalls() {
+  return mockInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_transaction')
+}
+
+function createCalls() {
+  return mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction')
+}
+
+/** 右键指定行打开上下文菜单（issue #151）。 */
+async function openMenuOnRow(wrapper: ReturnType<typeof mount>, index = 0) {
+  await bodyRows(wrapper)[index].trigger('contextmenu')
+  await flushPromises()
+}
+
+function rowMenu(wrapper: ReturnType<typeof mount>) {
+  // 视图上有多个 NDropdown（#150 记一笔分裂按钮 + #151 行右键菜单），
+  // 按菜单项含 delete key 识别行右键菜单
+  return wrapper.findAllComponents(NDropdown).find((d) =>
+    (d.props('options') as Array<{ key?: string }>).some((o) => o.key === 'delete'),
+  )!
+}
+
+function rowMenuKeys(wrapper: ReturnType<typeof mount>) {
+  return (rowMenu(wrapper).props('options') as Array<{ key: string }>).map((o) => o.key)
+}
+
+/** 菜单选择（走 NDropdown 的 onSelect 装配缝）。 */
+async function selectRowMenu(wrapper: ReturnType<typeof mount>, key: string) {
+  rowMenu(wrapper).props('onSelect')?.(key)
+  await flushPromises()
+}
+
+/** 过滤 v-show 隐藏容器（jsdom 中 leave 过渡不会结束会残留旧内容），只取可见节点。 */
+function hasHiddenAncestor(el: Element): boolean {
+  let node: Element | null = el
+  while (node && node !== document.body) {
+    if ((node as HTMLElement).style.display === 'none') return true
+    node = node.parentElement
+  }
+  return false
+}
+
+function visibleNodes(selector: string): Element[] {
+  return [...document.querySelectorAll(selector)].filter((el) => !hasHiddenAncestor(el))
+}
+
+/** 确认/取消删除对话框。useDialog 的对话框经 NModal teleport 到 body，
+ * 需从 document 查询；同一 modal 容器在 jsdom 中会残留，只取可见节点。 */
+function visibleDialogButtons() {
+  return visibleNodes('.n-dialog button')
+}
+
+function dialogText(): string {
+  return visibleNodes('.n-dialog')
+    .map((el) => el.textContent ?? '')
+    .join('')
+}
+
+/** 弹窗内容文本：NModal teleport 到 body 且组件根为占位符，需从 document 查卡片。 */
+function visibleModalText(): string {
+  return visibleNodes('.n-card')
+    .map((el) => el.textContent ?? '')
+    .join('')
+}
+
+async function clickDialogButton(text: string) {
+  const btn = visibleDialogButtons().find((el) => el.textContent?.trim() === text)!
+  await new DOMWrapper(btn).trigger('click')
+  await flushPromises()
 }
 
 describe('TransactionsView 服务端分页', () => {
@@ -196,8 +286,9 @@ describe('TransactionsView 服务端分页', () => {
     tablePagination(wrapper).onChange(2)
     await flushPromises()
     const before = listCalls().length
-    const popcons = wrapper.findAllComponents(NPopconfirm)
-    await popcons[0].props('onPositiveClick')()
+    await openMenuOnRow(wrapper, 0)
+    await selectRowMenu(wrapper, 'delete')
+    await clickDialogButton('删除')
     await flushPromises()
     // 第 2 页原本 20 条，删 1 条不触发回退，仍刷新第 2 页
     expect(listCalls().length).toBe(before + 1)
@@ -209,16 +300,18 @@ describe('TransactionsView 服务端分页', () => {
     tablePagination(wrapper).onChange(3) // 第 3 页共 5 条
     await flushPromises()
     expect(bodyRows(wrapper).length).toBe(5)
-    // 删除前 4 条（每删一条都会重新渲染，popconfirm 列表需重新获取）
+    // 删除前 4 条（每删一条都会重新渲染，行列表需重新获取）
     for (let i = 0; i < 4; i++) {
-      const popcons = wrapper.findAllComponents(NPopconfirm)
-      await popcons[0].props('onPositiveClick')()
+      await openMenuOnRow(wrapper, 0)
+      await selectRowMenu(wrapper, 'delete')
+      await clickDialogButton('删除')
       await flushPromises()
     }
     expect(bodyRows(wrapper).length).toBe(1)
     // 删除最后一条 → 自动回退到第 2 页，不出现空页
-    const popcons = wrapper.findAllComponents(NPopconfirm)
-    await popcons[0].props('onPositiveClick')()
+    await openMenuOnRow(wrapper, 0)
+    await selectRowMenu(wrapper, 'delete')
+    await clickDialogButton('删除')
     await flushPromises()
     expect(lastListFilter()).toMatchObject({ page: 2, page_size: 20 })
     expect(bodyRows(wrapper).length).toBe(20)
@@ -237,7 +330,7 @@ describe('TransactionsView 服务端分页', () => {
       }
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
-    const wrapper = mount(TransactionsView)
+    const wrapper = mountViewSync()
     await flushPromises()
     // 参考数据已就绪（self-init），list_transactions 挂起中 → loading 应为 true
     expect(wrapper.findComponent(NDataTable).props('loading')).toBe(true)
@@ -295,7 +388,7 @@ describe('TransactionsView 涉及账户 URL 过滤（issue #97）', () => {
     // 全新 pinia：参考数据尚未加载（self-init 在途），立即以带参 URL 挂载
     setActivePinia(createPinia())
     routeMock.query = { account: 'acc-1' }
-    const wrapper = mount(TransactionsView)
+    const wrapper = mountViewSync()
     await flushPromises()
     // 参考数据就绪后自动补判：过滤被应用，而非永久回退全量
     expect(lastListFilter()).toMatchObject({ involving_account_id: 'acc-1' })
@@ -721,5 +814,141 @@ describe('TransactionsView 记一笔分裂按钮（issue #150）', () => {
     await btn.trigger('click')
     await flushPromises()
     expect(wrapper.findComponent(NModal).props('title')).toBe('记一笔 · 支出')
+  })
+})
+
+describe('TransactionsView 行右键菜单（issue #151）', () => {
+  // 混合数据集：expense / income / transfer 行并存，供菜单项可见性与删除/退款断言
+  const menuDb: Transaction[] = [
+    makeTxn(1, 'acc-1', { kind: 'expense', amount_cents: 3000, note: '咖啡' }),
+    makeTxn(2, 'acc-1', { kind: 'income', amount_cents: 5000 }),
+    makeTxn(3, 'acc-2', { kind: 'transfer', to_account_id: 'acc-1' }),
+  ]
+
+  beforeEach(() => {
+    txnDb = [...menuDb]
+  })
+
+  it('expense 行右键出现「退款」菜单项，非 expense 行只有「删除」', async () => {
+    const wrapper = await mountView()
+    // expense 行：退款 + 删除
+    await openMenuOnRow(wrapper, 0)
+    expect(rowMenu(wrapper).props('show')).toBe(true)
+    expect(rowMenuKeys(wrapper)).toEqual(['refund', 'menu-divider', 'delete'])
+    // income 行：仅删除
+    await openMenuOnRow(wrapper, 1)
+    expect(rowMenuKeys(wrapper)).toEqual(['delete'])
+    // transfer 行：仅删除
+    await openMenuOnRow(wrapper, 2)
+    expect(rowMenuKeys(wrapper)).toEqual(['delete'])
+  })
+
+  it('操作列从表格移除', async () => {
+    const wrapper = await mountView()
+    const cols = wrapper.findComponent(NDataTable).props('columns') as Array<{ title?: string }>
+    expect(cols.some((c) => c.title === '操作')).toBe(false)
+    expect(wrapper.findAllComponents(NPopconfirm)).toHaveLength(0)
+  })
+
+  it('任意行右键「删除」→ 二次确认后才删除；取消不删', async () => {
+    const wrapper = await mountView()
+    // 取消：不删除
+    await openMenuOnRow(wrapper, 0)
+    await selectRowMenu(wrapper, 'delete')
+    expect(dialogText()).toContain('删除后不可恢复')
+    await clickDialogButton('取消')
+    await flushPromises()
+    expect(deleteCalls()).toHaveLength(0)
+    // 确认：删除该行并刷新
+    await openMenuOnRow(wrapper, 0)
+    await selectRowMenu(wrapper, 'delete')
+    await clickDialogButton('删除')
+    await flushPromises()
+    expect(deleteCalls()).toHaveLength(1)
+    expect(deleteCalls()[0][1]).toMatchObject({ id: 'txn-001' })
+    expect(wrapper.text()).toContain('共 2 条')
+    // 非 expense 行（income）同样可删除
+    await openMenuOnRow(wrapper, 0)
+    await selectRowMenu(wrapper, 'delete')
+    await clickDialogButton('删除')
+    await flushPromises()
+    expect(deleteCalls()).toHaveLength(2)
+  })
+
+  /** 退款弹窗：视图中存在两个 NModal（记一笔 + 退款），按 title 定位。 */
+  function refundModal(wrapper: ReturnType<typeof mount>) {
+    return wrapper
+      .findAllComponents(NModal)
+      .find((m) => m.props('title') === '退款')!
+  }
+
+  it('右键退款：无需选择原交易，展示只读信息并锁定账户/币种，金额默认原交易金额', async () => {
+    const wrapper = await mountView()
+    await openMenuOnRow(wrapper, 0)
+    await selectRowMenu(wrapper, 'refund')
+    const modal = refundModal(wrapper)
+    expect(modal.props('show')).toBe(true)
+    // 独立弹窗内嵌 RefundForm（固定模式，无搜索选择下拉）
+    const form = wrapper.findComponent(RefundForm)
+    expect(form.exists()).toBe(true)
+    // 原交易只读信息：日期 / 金额 / 账户名（teleport 到 body，从卡片查文本）
+    expect(visibleModalText()).toContain('2026-01-01')
+    expect(visibleModalText()).toContain('¥30')
+    expect(visibleModalText()).toContain('现金')
+    // 金额默认原交易金额（可改），币种/账户锁定（disabled）
+    expect(form.getComponent(NInputNumber).props('value')).toBe(30)
+    const lockedSelects = form.findAllComponents(NSelect)
+    expect(lockedSelects.length).toBe(2) // 币种 + 账户
+    expect(lockedSelects.every((s) => s.props('disabled'))).toBe(true)
+  })
+
+  it('右键退款提交：走 kind=refund 写路径并关联原交易，弹窗关闭回到第 1 页', async () => {
+    const wrapper = await mountView()
+    await openMenuOnRow(wrapper, 0)
+    await selectRowMenu(wrapper, 'refund')
+    const form = wrapper.findComponent(RefundForm)
+    // 修改退款金额为部分退款 ¥12.00
+    form.getComponent(NInputNumber).vm.$emit('update:value', 12)
+    await flushPromises()
+    mockInvoke.mockImplementationOnce((cmd: string) => {
+      if (cmd === 'create_transaction') return Promise.resolve('refund-id')
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    await form.findAll('button').find((b) => b.text().includes('记退款'))!.trigger('click')
+    await flushPromises()
+    // 载荷：kind=refund + 关联原交易；账户/币种由后端继承原支出（固定模式展示值）
+    expect(createCalls()).toHaveLength(1)
+    const [, args] = createCalls()[0] as [string, { input: Record<string, unknown> }]
+    expect(args.input).toMatchObject({
+      kind: 'refund',
+      amount_cents: 1200,
+      refund_of_transaction_id: 'txn-001',
+      currency_code: 'CNY',
+      account_id: 'acc-1',
+    })
+    // 弹窗关闭、回到第 1 页刷新
+    expect(refundModal(wrapper).props('show')).toBe(false)
+    expect(lastListFilter()).toMatchObject({ page: 1 })
+  })
+
+  it('同一 expense 可再次右键发起退款（部分退款语义，不阻断）', async () => {
+    const wrapper = await mountView()
+    for (let round = 0; round < 2; round++) {
+      await openMenuOnRow(wrapper, 0)
+      await selectRowMenu(wrapper, 'refund')
+      const form = wrapper.findComponent(RefundForm)
+      expect(form.exists()).toBe(true)
+      mockInvoke.mockImplementationOnce((cmd: string) => {
+        if (cmd === 'create_transaction') return Promise.resolve(`refund-${round}`)
+        return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      })
+      await form.findAll('button').find((b) => b.text().includes('记退款'))!.trigger('click')
+      await flushPromises()
+      expect(refundModal(wrapper).props('show')).toBe(false)
+    }
+    expect(createCalls()).toHaveLength(2)
+    for (const [, args] of createCalls() as Array<[string, { input: Record<string, unknown> }]>) {
+      expect(args.input).toMatchObject({ kind: 'refund', refund_of_transaction_id: 'txn-001' })
+    }
   })
 })

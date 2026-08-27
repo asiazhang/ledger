@@ -48,7 +48,7 @@ export function sumFixedColumnWidths(columns: DataTableColumn<Transaction>[]): n
  *   其余列不被挤压也不被拉伸。备注超长时由 `ellipsis` 省略 + 悬停全文。
  * - 不要覆盖 table 的 `width`（改 `auto` 会让带 `ellipsis` 的列被长文本撑宽，实测分类
  *   150→286px、备注 240→398px）。
- * - 使用方以「所有固定列（有 `width` 的列，含金额/操作列；备注不计入）宽度总和」作为 `scroll-x`，
+ * - 使用方以「所有固定列（有 `width` 的列，含金额列；备注不计入）宽度总和」作为 `scroll-x`，
  *   作为窄窗口下的横向滚动下限。备注为弹性列，窗口变窄时先由备注收缩吸收，各固定列宽保持恒定——
  *   只有当内容区窄于固定列宽总和时才出现横向滚动（账户列 180 后固定列总和 705，窄窗口可能触发，
  *   由 scroll-x 提供横向滚动底线）。

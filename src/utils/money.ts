@@ -45,6 +45,15 @@ export function formatAmount(cents: number, currency?: Currency): string {
 }
 
 /**
+ * 分 → 元数值（表单初值等需要数值形态的场景；展示一律用 formatAmount）。
+ * 与 formatAmount 共享同一换算口径（按币种小数位 10^dp），不要手写 /100。
+ */
+export function centsToYuan(cents: number, currency?: Currency): number {
+  const dp = currency?.decimal_places ?? 2
+  return cents / Math.pow(10, dp)
+}
+
+/**
  * 元（用户输入字符串，支持小数）→ 分（整数）。
  *
  * - 空字符串 / 纯空白 → null（表示「不筛选」）

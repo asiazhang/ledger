@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { yuanToCents, formatQuantity } from '@/utils/money'
+import { yuanToCents, centsToYuan, formatQuantity } from '@/utils/money'
 
 describe('yuanToCents（元 → 分）', () => {
   it('整数元', () => {
@@ -69,5 +69,27 @@ describe('formatQuantity（数量列万分位分组）', () => {
   it('带小数的份额：整数部分分组、小数部分原样保留', () => {
     expect(formatQuantity(12345.67)).toBe('1,2345.67')
     expect(formatQuantity(123.4507)).toBe('123.4507')
+  })
+})
+
+describe('centsToYuan（分 → 元，表单初值用数值口径）', () => {
+  it('默认 2 位小数币种', () => {
+    expect(centsToYuan(3000)).toBe(30)
+    expect(centsToYuan(1250)).toBe(12.5)
+    expect(centsToYuan(1)).toBe(0.01)
+  })
+
+  it('按币种小数位换算', () => {
+    expect(centsToYuan(12345, { code: 'JPY', name: '日元', symbol: '¥', decimal_places: 0 })).toBe(
+      12345,
+    )
+    expect(centsToYuan(150, { code: 'KWD', name: '第纳尔', symbol: 'د.ك', decimal_places: 3 })).toBe(
+      0.15,
+    )
+  })
+
+  it('负数与零', () => {
+    expect(centsToYuan(0)).toBe(0)
+    expect(centsToYuan(-99)).toBe(-0.99)
   })
 })

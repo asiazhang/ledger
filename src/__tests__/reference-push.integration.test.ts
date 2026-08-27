@@ -3,8 +3,8 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { NSelect, NTreeSelect } from 'naive-ui'
-import { reactive } from 'vue'
+import { NDialogProvider, NSelect, NTreeSelect } from 'naive-ui'
+import { h, reactive } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
 import CategoryManager from '@/components/CategoryManager.vue'
 import CategoryForm from '@/components/CategoryForm.vue'
@@ -194,7 +194,10 @@ describe('组件层反应性：mock ledger:changed 使界面/选项原地更新�
       return listImpl()(cmd)
     })
 
-    const wrapper = mount(TransactionsView)
+    // TransactionsView 顶层调用 useDialog（issue #151），需 NDialogProvider 包裹（同 App.vue）
+    const wrapper = mount(NDialogProvider, {
+      slots: { default: () => h(TransactionsView) },
+    })
     await flushPromises()
     expect(wrapper.text()).toContain('餐饮')
 
