@@ -15,7 +15,7 @@ import {
 } from 'naive-ui'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
-import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/transactionColumns'
+import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/transaction-columns'
 import {
   TRANSACTION_KIND_LABELS,
   type Transaction,
@@ -306,7 +306,7 @@ onMounted(() => {
         清除筛选
       </NButton>
     </NSpace>
-    <!-- 备注列为弹性列（transactionColumns 中不设 width），表格始终铺满容器；
+    <!-- 备注列为弹性列（transaction-columns 中不设 width），表格始终铺满容器；
          窄窗口时备注先收缩，scroll-x（固定列宽总和）作为横向滚动下限 -->
     <NDataTable
       :columns="columns"

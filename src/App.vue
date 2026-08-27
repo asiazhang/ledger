@@ -29,7 +29,7 @@ import {
 import { useAppStore } from '@/stores/app'
 import { api } from '@/api'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
-import { loadSidebarCollapsed, saveSidebarCollapsed } from '@/utils/viewState'
+import { loadSidebarCollapsed, saveSidebarCollapsed } from '@/utils/view-state'
 import { viewShortcuts, shortcutHint, useViewShortcuts } from '@/composables/useViewShortcuts'
 
 const router = useRouter()

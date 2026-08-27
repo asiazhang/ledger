@@ -3,7 +3,7 @@ import { createApp } from "vue";
 import { createPinia } from "pinia";
 import App from "./App.vue";
 import { router } from "./router";
-import { getSavedRouteName } from "@/utils/viewState";
+import { getSavedRouteName } from "@/utils/view-state";
 
 async function bootstrap() {
   const app = createApp(App);

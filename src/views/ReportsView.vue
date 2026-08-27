@@ -22,7 +22,7 @@ import {
   loadReportsGroupLevel,
   saveReportsGroupLevel,
   type ReportsGroupLevel,
-} from '@/utils/viewState'
+} from '@/utils/view-state'
 
 ChartJS.register(Title, Tooltip, Legend, BarElement, ArcElement, CategoryScale, LinearScale)
 

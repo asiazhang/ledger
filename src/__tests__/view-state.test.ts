@@ -7,13 +7,13 @@ import {
   saveSidebarCollapsed,
   loadReportsGroupLevel,
   saveReportsGroupLevel,
-} from '@/utils/viewState'
+} from '@/utils/view-state'
 
 beforeEach(() => {
   localStorage.clear()
 })
 
-describe('viewState route', () => {
+describe('view-state route', () => {
   it('无记录时返回 null', () => {
     expect(getSavedRouteName()).toBeNull()
   })
@@ -35,7 +35,7 @@ describe('viewState route', () => {
   })
 })
 
-describe('viewState sidebarCollapsed', () => {
+describe('view-state sidebarCollapsed', () => {
   it('默认展开（false）', () => {
     expect(loadSidebarCollapsed()).toBe(false)
   })
@@ -47,7 +47,7 @@ describe('viewState sidebarCollapsed', () => {
   })
 })
 
-describe('viewState reportsGroupLevel', () => {
+describe('view-state reportsGroupLevel', () => {
   it('默认二级（level2）', () => {
     expect(loadReportsGroupLevel()).toBe('level2')
   })

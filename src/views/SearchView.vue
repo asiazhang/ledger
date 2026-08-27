@@ -14,7 +14,7 @@ import type { DataTableColumn } from 'naive-ui'
 import { api } from '@/api'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
-import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/transactionColumns'
+import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/transaction-columns'
 import { formatAmount, type Transaction, type TransactionSearchFilter } from '@/types'
 import { yuanToCents } from '@/utils/money'
 

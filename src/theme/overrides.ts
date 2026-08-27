@@ -6,7 +6,7 @@ import type { GlobalThemeOverrides } from 'naive-ui'
  *
  * 约定：
  * - 强调色（品牌色）与语义色（收入绿/支出红/退款蓝）相互独立：语义色不在这里，
- *   硬编码于 `src/components/transactionColumns.ts` 与报表图表，不随主题变化。
+ *   硬编码于 `src/components/transaction-columns.ts` 与报表图表，不随主题变化。
  * - 暗色主题的按钮文字色由 Naive 自动取深色（baseColor=#000），亮琥珀直接可用；
  *   亮色主题按钮文字为白色，亮琥珀对比度不足（约 2:1），故亮色用同色相加深版
  *   （amber-700，白字约 4.4:1）保证可读性。

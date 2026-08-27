@@ -48,6 +48,7 @@ AI 驱动的导入**不按文件类型解析**，唯一入口是本地 HTTP API 
 - Rust 时间戳统一用 `db::now_iso()`（UTC ISO 字符串）。
 - Rust 字符串/错误信息使用中文（与 `AppError` 枚举、种子数据一致）。
 - 前端组件沿用 Naive UI 按需 import + `<script setup lang="ts">` 风格。
+- **文件命名约定**：前端多词 `.ts` 模块一律 kebab-case（如 `view-state.ts`）；`.vue` 组件保持 PascalCase；composables 保持 `useXxx` camelCase；Rust 侧遵循 cargo 惯例 snake_case。测试文件跟随被测文件命名（`<被测文件名>.test.ts`）。跨平台考虑：普通模块全小写，避免大小写敏感文件系统上的歧义。
 - **新增后端命令**：`commands.rs`（`src-tauri/src/commands/`）加 `#[tauri::command]` 函数 → `lib.rs` 的 `generate_handler!` 注册 → `src/api/index.ts` 加方法 → 必要时 `src/types/index.ts` 加 TS 类型（对应 `src-tauri/src/models/` serde 结构，注意 `#[serde(rename = "type")]` 字段映射）。
 
 ## 测试

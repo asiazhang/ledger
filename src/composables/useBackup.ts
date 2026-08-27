@@ -8,10 +8,10 @@ import {
   defaultBackupFileName,
   isManagedBackupPath,
   normalizeBackupDir,
-} from "@/utils/backupName";
+} from "@/utils/backup-name";
 
 // 备份文件列表与滚动清理。命名规则与后端受管备份规则保持一致
-// （前缀集合与受管判定收口在 `src/utils/backupName.ts`，issue #127）。
+// （前缀集合与受管判定收口在 `src/utils/backup-name.ts`，issue #127）。
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

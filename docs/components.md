@@ -49,10 +49,10 @@
 
 ## 其他共享模块
 
-- `src/components/transactionColumns.ts` — 交易列表与搜索视图**共用同一列配置**（日期/类型/分类/账户/备注/金额）；备注为唯一弹性列（不设 `width`），固定列宽总和作为 `scroll-x` 横向滚动下限。
+- `src/components/transaction-columns.ts` — 交易列表与搜索视图**共用同一列配置**（日期/类型/分类/账户/备注/金额）；备注为唯一弹性列（不设 `width`），固定列宽总和作为 `scroll-x` 横向滚动下限。
 - `src/components/categories/` — 分类管理 UI：`CategoryTree.vue` 用 `NTree` + 同级拖拽重排（跨级/跨 kind 拖拽被拦截，层级变更走编辑面板选父分类），`sort_order` 经 `reorder_categories` 落库。
 - `src/utils/category-tree.ts` — 分类树纯函数（`rootCategories / categoryChildren / categoryPath / buildCategoryTree`），被 reference store 复用。
-- `src/utils/viewState.ts` — 视图状态持久化（当前视图名、侧边栏折叠）跨启动恢复。
+- `src/utils/view-state.ts` — 视图状态持久化（当前视图名、侧边栏折叠）跨启动恢复。
 
 ## 视图与路由
 

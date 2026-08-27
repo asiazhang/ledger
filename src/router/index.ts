@@ -1,5 +1,5 @@
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router'
-import { saveRouteName } from '@/utils/viewState'
+import { saveRouteName } from '@/utils/view-state'
 
 const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/dashboard' },

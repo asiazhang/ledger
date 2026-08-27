@@ -5,7 +5,7 @@ import {
   defaultBackupFileName,
   isManagedBackupFileName,
   isManagedBackupPath,
-} from "@/utils/backupName";
+} from "@/utils/backup-name";
 
 describe("受管备份命名与判定（issue #127）", () => {
   it("defaultBackupFileName 生成手动前缀 + 标准后缀命名", () => {
