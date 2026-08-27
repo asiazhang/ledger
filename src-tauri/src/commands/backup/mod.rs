@@ -28,7 +28,12 @@ pub fn create_backup(app: AppHandle, target_path: String) -> Result<BackupResult
     let state = app.state::<DbState>();
     let conn = state.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let app_version = app.package_info().version.to_string();
-    core::backup_db_to(&conn, Path::new(&target_path), &app_version)
+    core::backup_db_to(
+        &conn,
+        Path::new(&target_path),
+        &app_version,
+        core::BackupKind::Manual,
+    )
 }
 
 /// 从 `backup_path`（zip 或裸 db）恢复数据库。
@@ -55,7 +60,8 @@ pub fn restart_app(app: AppHandle) {
     app.restart();
 }
 
-/// 列出备份目录中的受管备份文件（自动命名 `ledger-backup-*.db.zip`），按新→旧排序。
+/// 列出备份目录中的受管备份文件（自动命名，含手动 `ledger-backup-*` 与
+/// 自动 `ledger-auto-*` 两类前缀），按新→旧排序。
 #[tauri::command]
 pub fn list_backups(dir: String) -> Result<Vec<BackupFileInfo>> {
     core::list_managed_backups(Path::new(&dir))

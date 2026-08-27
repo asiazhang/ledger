@@ -373,13 +373,13 @@
 
 ## Backup（备份）
 
-- **定义**：账本数据库的完整文件级快照，产物为包含数据库文件与元数据（备份时间、应用版本、schema 版本）的 zip 包。触发方式分两种：用户手动触发（ManualTrigger 语境，见 BackupTrigger / ManagedBackup），或系统自动定时触发（AutoBackup）。
+- **定义**：账本数据库的完整文件级快照，产物为包含数据库文件与元数据（备份时间、应用版本、schema 版本、来源标记 `kind`）的 zip 包。触发方式分两种：用户手动触发（ManualTrigger 语境，见 BackupTrigger / ManagedBackup），或系统自动定时触发（AutoBackup）。
 - **边界**：
   - 是文件级快照，不是语义级导出：不按记录或表选择内容，恢复即整库还原。
   - 与 Import（AI 驱动的语义级写入）和行情同步（InstrumentSync 全量同步 / HoldingPriceSync 增量同步）是三条互不交叉的数据通道：恢复 ≠ 导入，备份 ≠ 同步。
   - 不含界面状态与偏好（WindowState、ViewState、Appearance、DefaultCurrency 等），那些属设备本地偏好，不随备份迁移。
   - 明文存放，由用户自行妥善保管。
-  - 产物内容与格式由手动与自动共用一套机制（VACUUM INTO 快照 + zip 打包，见 ADR-0007 / ADR-0016）；两类备份仅触发来源与命名前缀不同（见 BackupTrigger）。
+  - 产物内容与格式由手动与自动共用一套机制（VACUUM INTO 快照 + zip 打包，见 ADR-0007 / ADR-0016）；两类备份仅触发来源与命名前缀不同，并以元数据 `kind: "auto"|"manual"` 显式区分来源（issue #127）；旧版本备份缺该字段时按 "manual" 处理，列表与恢复不报错。
 - **别名**：不使用"导出"（语义级、可选择性）、"快照"（偏技术）等词。
 
 ## Restore（恢复）
@@ -428,7 +428,7 @@
   - 来源分两类：手动（一键备份 / 使用默认文件名存入备份目录的"另存为"）与自动（AutoBackup）。
   - 两类受管备份在配额与滚动清理上同等对待（共享 BackupRetentionLimit，最旧淘汰，不区分来源，ADR-0016）。
   - 改名后不属于受管备份；不受管（另存到其它位置或改名）的文件永不被自动清理。
-  - 受管判定按文件名前缀（`ledger-backup-` / `ledger-auto-`）识别，前端 `isManagedBackupPath` 与后端清理逻辑共用同一前缀集合（ADR-0016 实施）。
+  - 受管判定按文件名前缀（`ledger-backup-` / `ledger-auto-`）识别：后端 `MANAGED_BACKUP_PREFIXES` 与前端 `isManagedBackupPath` 各持一份常量并保持一致（ADR-0016 已接受该取舍）。
 - **别名**：不使用"自动备份"（那是 BackupTrigger 的自动来源，不是"受管"的同义）。
 
 ## ManualBackup（另存备份）
