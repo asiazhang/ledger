@@ -18,6 +18,8 @@ import type {
   CreateTransactionResult,
   Currency,
   DashboardOverview,
+  DataLocationChangeOutcome,
+  DataLocationInfo,
   ExchangeRate,
   ExchangeRateInput,
   ExecuteOccurrenceInput,
@@ -159,6 +161,16 @@ export const api = {
   getAutoBackupState: () => invoke<AutoBackupState>('get_auto_backup_state'),
   setAutoBackupEnabled: (enabled: boolean) =>
     invoke<void>('set_auto_backup_enabled', { enabled }),
+
+  // DataLocation（issue #133）：查询 / 更改意图 / 恢复默认，意图落盘后下次启动生效
+  getDataLocationInfo: () => invoke<DataLocationInfo>('get_data_location_info'),
+  submitDataLocationChange: (targetDir: string, adoptExisting: boolean) =>
+    invoke<DataLocationChangeOutcome>('submit_data_location_change', {
+      targetDir,
+      adoptExisting,
+    }),
+  restoreDefaultDataLocation: (adoptExisting: boolean) =>
+    invoke<DataLocationChangeOutcome>('restore_default_data_location', { adoptExisting }),
 
   // AI
   getAiPrompt: () => invoke<string>('get_ai_prompt'),

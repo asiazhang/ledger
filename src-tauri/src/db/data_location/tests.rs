@@ -55,3 +55,17 @@ fn pointer_write_is_atomic_replace() {
         other => panic!("应读回最新意图，实际 {other:?}"),
     }
 }
+
+#[test]
+fn configured_intent_maps_all_pointer_states() {
+    let dir = temp_dir("intent");
+    // 缺失 → None。
+    assert!(configured_intent(&dir).is_none());
+    // 损坏 → None（回退警示由 boot 结果承载，此处只看意图）。
+    std::fs::write(dir.join(POINTER_FILE_NAME), "{broken").unwrap();
+    assert!(configured_intent(&dir).is_none());
+    // 已配置 → Some(意图目录)。
+    let target = dir.join("elsewhere");
+    write_pointer(&dir, &target).unwrap();
+    assert_eq!(configured_intent(&dir), Some(target));
+}

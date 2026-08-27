@@ -169,6 +169,9 @@ pub fn run() {
             commands::set_auto_backup_dir,
             commands::get_auto_backup_state,
             commands::set_auto_backup_enabled,
+            commands::get_data_location_info,
+            commands::submit_data_location_change,
+            commands::restore_default_data_location,
         ]))
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

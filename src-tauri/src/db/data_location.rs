@@ -31,6 +31,7 @@ struct PointerFile {
 }
 
 /// 启动期 DataLocation 引导结果。
+#[derive(Clone)]
 pub struct Boot {
     /// 最终生效的库文件目录。
     pub db_dir: PathBuf,
@@ -156,6 +157,16 @@ fn relocate(source_db: &Path, target_db: &Path) -> std::result::Result<(), Strin
         return Err(reason);
     }
     Ok(())
+}
+
+/// 读取当前已配置的意图目录（指针存在且可解析时返回 `Some`）。
+/// 缺失、损坏一律视同未配置（回退警示由 [`boot`] 结果另行承载）。
+/// 供命令层聚合 DataLocation 信息使用（issue #133）。
+pub fn configured_intent(default_dir: &Path) -> Option<PathBuf> {
+    match read_pointer(default_dir) {
+        PointerRead::Configured(dir) => Some(dir),
+        PointerRead::Unconfigured | PointerRead::Corrupt(_) => None,
+    }
 }
 
 /// 把「库所在目录」意图写入指针文件（原子：先写唯一临时名再替换）。
