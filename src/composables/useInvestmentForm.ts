@@ -2,7 +2,7 @@ import { computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { api } from '@/api'
 import { useFormShared } from '@/composables/useFormShared'
-import type { Instrument, InstrumentType, TransactionInput } from '@/types'
+import type { Instrument, TransactionInput } from '@/types'
 
 export function useInvestmentForm(kind: 'buy' | 'sell', options?: { onCreated?: () => void }) {
   const { reference, currencyOptions } = useFormShared()
@@ -19,11 +19,7 @@ export function useInvestmentForm(kind: 'buy' | 'sell', options?: { onCreated?: 
 
   const instruments = ref<Instrument[]>([])
   const searchingInstruments = ref(false)
-  const showNewInstrument = ref(false)
   let searchTimer: ReturnType<typeof setTimeout> | undefined
-  const newInstrumentSymbol = ref('')
-  const newInstrumentName = ref('')
-  const newInstrumentType = ref<InstrumentType>('stock')
 
   const investmentAccountOptions = computed(() =>
     reference.accounts
@@ -47,29 +43,6 @@ export function useInvestmentForm(kind: 'buy' | 'sell', options?: { onCreated?: 
     return Math.round(raw * 100) / 100
   })
 
-  async function createNewInstrument() {
-    if (!newInstrumentSymbol.value.trim()) {
-      message.warning('请输入标的代码')
-      return
-    }
-    try {
-      const id = await api.createInstrument({
-        symbol: newInstrumentSymbol.value.trim(),
-        type: newInstrumentType.value,
-        name: newInstrumentName.value.trim() || null,
-        currency_code: currencyCode.value,
-      })
-      message.success('已新增标的')
-      await refreshInstrumentsAfterCreate()
-      instrumentId.value = id
-      showNewInstrument.value = false
-      newInstrumentSymbol.value = ''
-      newInstrumentName.value = ''
-    } catch (e) {
-      message.error(`新增标的失败: ${e}`)
-    }
-  }
-
   /** 远程搜索标的（防抖），不前端全量驻留 */
   function searchInstruments(query: string) {
     clearTimeout(searchTimer)
@@ -88,16 +61,6 @@ export function useInvestmentForm(kind: 'buy' | 'sell', options?: { onCreated?: 
         searchingInstruments.value = false
       }
     }, 300)
-  }
-
-  /** 新增标的成功后，按代码回查以保证选项包含新标的 */
-  async function refreshInstrumentsAfterCreate() {
-    try {
-      const res = await api.listInstruments({ search: newInstrumentSymbol.value.trim(), page_size: 50 })
-      instruments.value = res.items
-    } catch {
-      instruments.value = []
-    }
   }
 
   async function submit() {
@@ -156,14 +119,12 @@ export function useInvestmentForm(kind: 'buy' | 'sell', options?: { onCreated?: 
     note.value = ''
     date.value = Date.now()
     currencyCode.value = 'CNY'
-    showNewInstrument.value = false
   }
 
   return {
     accountId, instrumentId, quantity, price, fee, note, date, currencyCode,
     investmentAmount, investmentAccountOptions, instrumentOptions, currencyOptions,
-    showNewInstrument, newInstrumentSymbol, newInstrumentName, newInstrumentType,
     searchingInstruments,
-    submit, createNewInstrument, searchInstruments, resetForm,
+    submit, searchInstruments, resetForm,
   }
 }
