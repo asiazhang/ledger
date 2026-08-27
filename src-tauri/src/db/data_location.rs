@@ -13,7 +13,8 @@ use std::path::{Path, PathBuf};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
-use super::open_connection;
+use super::{check_integrity, open_connection};
+use crate::fs_util::{cleanup, replace_file, temp_sibling};
 
 /// 库文件名（固定，不可配置；spec：只选目录、文件名由应用固定）。
 pub const DB_FILE_NAME: &str = "ledger.db";
@@ -136,7 +137,7 @@ fn ensure_target_dir(target: &Path) -> std::result::Result<(), String> {
 fn relocate(source_db: &Path, target_db: &Path) -> std::result::Result<(), String> {
     let source = open_connection(source_db)
         .map_err(|e| format!("原库无法打开（{}）：{e}", source_db.display()))?;
-    let tmp_db = crate::commands::backup::temp_sibling(target_db, "relocate");
+    let tmp_db = temp_sibling(target_db, "relocate");
 
     let result = (|| -> std::result::Result<(), String> {
         source
@@ -144,17 +145,17 @@ fn relocate(source_db: &Path, target_db: &Path) -> std::result::Result<(), Strin
             .map_err(|e| format!("整库搬迁失败（VACUUM INTO）：{e}"))?;
         // 校验：临时库能打开且完整性检查通过，才允许替换启用。
         let check = open_connection(&tmp_db).map_err(|e| format!("搬迁临时库无法打开：{e}"))?;
-        crate::commands::backup::check_integrity(&check)
-            .map_err(|e| format!("搬迁临时库完整性检查失败：{e}"))?;
+        check_integrity(&check).map_err(|e| format!("搬迁临时库完整性检查失败：{e}"))?;
+        replace_file(&tmp_db, target_db).map_err(|e| format!("搬迁临时库替换启用失败：{e}"))?;
         Ok(())
     })();
 
     if let Err(reason) = result {
-        crate::commands::backup::cleanup(&tmp_db);
+        // 临时文件用后即清（成功时已被 rename 走，cleanup 容忍不存在）。
+        cleanup(&tmp_db);
         return Err(reason);
     }
-    crate::commands::backup::replace_file(&tmp_db, target_db)
-        .map_err(|e| format!("搬迁临时库替换启用失败：{e}"))
+    Ok(())
 }
 
 /// 把「库所在目录」意图写入指针文件（原子：先写唯一临时名再替换）。
@@ -165,12 +166,12 @@ pub fn write_pointer(default_dir: &Path, target: &Path) -> crate::error::Result<
     let content = serde_json::to_string_pretty(&PointerFile {
         data_dir: target.to_string_lossy().into_owned(),
     })?;
-    let tmp = crate::commands::backup::temp_sibling(&pointer, "pointer");
+    let tmp = temp_sibling(&pointer, "pointer");
     let result = (|| -> crate::error::Result<()> {
         std::fs::write(&tmp, content)?;
-        crate::commands::backup::replace_file(&tmp, &pointer)
+        replace_file(&tmp, &pointer)
     })();
-    crate::commands::backup::cleanup(&tmp);
+    cleanup(&tmp);
     result
 }
 

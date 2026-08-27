@@ -17,6 +17,8 @@ use tauri::Manager;
 use tauri::ipc::Invoke;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
+pub mod fs_util;
+
 fn init_database(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let dir = app
         .path()
@@ -29,7 +31,7 @@ fn init_database(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         tracing::warn!(reason = %reason, "DataLocation 引导发生回退，已改用默认数据目录");
     }
     let db_dir = boot.db_dir.clone();
-    // 先登记引导结果再建连：启动失败重置兑底需要知道生效目录。
+    // 先登记引导结果再建连：启动失败重置兜底需要知道生效目录。
     app.manage(boot);
     let db_state = db::open_db_in(&db_dir)?;
     app.manage(db_state);

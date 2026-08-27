@@ -81,8 +81,8 @@ fn backup_creates_zip_with_db_and_meta() {
     drop(out);
     let db_conn = open_connection(&extracted).unwrap();
     assert_eq!(count_transactions(&db_conn), 1);
-    super::core::cleanup(&target);
-    super::core::cleanup(&extracted);
+    crate::fs_util::cleanup(&target);
+    crate::fs_util::cleanup(&extracted);
 }
 
 #[test]
@@ -129,8 +129,8 @@ fn restore_roundtrip_preserves_data() {
         .collect();
     assert_eq!(safeties.len(), 1);
 
-    super::core::cleanup(&backup);
-    super::core::cleanup(&db_path);
+    crate::fs_util::cleanup(&backup);
+    crate::fs_util::cleanup(&db_path);
     std::fs::remove_dir_all(&safety_dir).ok();
 }
 
@@ -150,8 +150,8 @@ fn restore_rejects_newer_schema() {
         .to_string();
     assert!(err.contains("更高版本"), "错误信息: {err}");
     assert!(!db_path.exists(), "恢复应被拒绝，不产生目标库");
-    super::core::cleanup(&newer);
-    super::core::cleanup(&db_path);
+    crate::fs_util::cleanup(&newer);
+    crate::fs_util::cleanup(&db_path);
 }
 
 #[test]
@@ -171,8 +171,8 @@ fn restore_supports_bare_db() {
     restore_db_from(&bare, &db_path, &safety_dir, expected).unwrap();
     let c = open_connection(&db_path).unwrap();
     assert_eq!(count_transactions(&c), 1);
-    super::core::cleanup(&bare);
-    super::core::cleanup(&db_path);
+    crate::fs_util::cleanup(&bare);
+    crate::fs_util::cleanup(&db_path);
     std::fs::remove_dir_all(&safety_dir).ok();
 }
 
@@ -183,13 +183,13 @@ fn backup_meta_records_kind_for_auto_and_manual() {
     let manual = temp_file("meta-manual");
     backup_db_to(&conn, &manual, "0.2.0", BackupKind::Manual).unwrap();
     assert_eq!(read_backup_kind(&manual).unwrap(), BackupKind::Manual);
-    super::core::cleanup(&manual);
+    crate::fs_util::cleanup(&manual);
 
     // 自动产物：kind 落盘为 auto。
     let auto = temp_file("meta-auto");
     backup_db_to(&conn, &auto, "0.2.0", BackupKind::Auto).unwrap();
     assert_eq!(read_backup_kind(&auto).unwrap(), BackupKind::Auto);
-    super::core::cleanup(&auto);
+    crate::fs_util::cleanup(&auto);
 }
 
 /// 旧版本备份的 backup.json 缺 kind 字段：读取不报错且视为 manual。
@@ -211,7 +211,7 @@ fn legacy_meta_without_kind_reads_as_manual() {
         zip.finish().unwrap();
     }
     assert_eq!(read_backup_kind(&path).unwrap(), BackupKind::Manual);
-    super::core::cleanup(&path);
+    crate::fs_util::cleanup(&path);
 }
 
 /// 元数据里出现未知/非法的 kind 值：宽容回落 manual 而非解析失败（兼容优先）。
@@ -233,7 +233,7 @@ fn meta_with_unknown_kind_reads_as_manual() {
         zip.finish().unwrap();
     }
     assert_eq!(read_backup_kind(&path).unwrap(), BackupKind::Manual);
-    super::core::cleanup(&path);
+    crate::fs_util::cleanup(&path);
 }
 
 /// 旧版本备份（元数据无 kind 字段）：恢复不报错、列表正常出现，视为 manual。
@@ -268,7 +268,7 @@ fn legacy_backup_restores_and_lists_without_error() {
         .unwrap();
         zip.finish().unwrap();
     }
-    super::core::cleanup(&raw);
+    crate::fs_util::cleanup(&raw);
 
     // 列表：旧格式文件按命名规则正常被识别，来源按 manual 处理。
     let list = list_managed_backups(&dir).unwrap();
@@ -293,8 +293,8 @@ fn legacy_backup_restores_and_lists_without_error() {
     let c = open_connection(&db_path).unwrap();
     assert_eq!(count_transactions(&c), 1);
 
-    super::core::cleanup(&legacy);
-    super::core::cleanup(&db_path);
+    crate::fs_util::cleanup(&legacy);
+    crate::fs_util::cleanup(&db_path);
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&safety_dir);
 }

@@ -32,18 +32,19 @@ fn ensure_default_dir(world: &mut LedgerWorld) {
 /// 在指定文件库中建账户与交易（经 Writer/行为层接缝，与真实写路径一致）。
 fn seed_db(conn: &Connection, account: &str, count: usize) {
     insert_account(conn, &new_account_id(), account, "cash", "CNY");
+    let account_id: String = conn
+        .query_row(
+            "SELECT id FROM accounts WHERE name = ?1 AND is_deleted = 0",
+            [account],
+            |r| r.get(0),
+        )
+        .unwrap();
     for i in 0..count {
         let input = TransactionInput {
             kind: TransactionKind::Expense,
             amount_cents: 1000 + i as i64,
             currency_code: "CNY".into(),
-            account_id: conn
-                .query_row(
-                    "SELECT id FROM accounts WHERE name = ?1 AND is_deleted = 0",
-                    [account],
-                    |r| r.get(0),
-                )
-                .unwrap(),
+            account_id: account_id.clone(),
             to_account_id: None,
             category_id: None,
             refund_of_transaction_id: None,
@@ -67,6 +68,36 @@ fn count_transactions(db_path: &std::path::Path) -> usize {
         |r| r.get::<_, i64>(0),
     )
     .unwrap() as usize
+}
+
+/// 抽取关键表的内容快照（排序后逐行拼接），供搬迁前后一致性比对。
+fn key_table_fingerprint(db_path: &std::path::Path) -> String {
+    let conn = open_connection(db_path).unwrap();
+    let mut fingerprint = String::new();
+    for sql in [
+        "SELECT id, name, type, currency_code FROM accounts WHERE is_deleted = 0 ORDER BY id",
+        "SELECT id, name, kind FROM categories WHERE is_deleted = 0 ORDER BY id",
+        "SELECT id, kind, amount_cents, currency_code, account_id, date, note, is_deleted \
+         FROM transactions ORDER BY id",
+    ] {
+        let mut stmt = conn.prepare(sql).unwrap();
+        let column_count = stmt.column_count();
+        let mut rows = stmt.query([]).unwrap();
+        while let Some(row) = rows.next().unwrap() {
+            let cols: Vec<String> = (0..column_count)
+                .map(|i| match row.get_ref(i).unwrap() {
+                    rusqlite::types::ValueRef::Text(t) => String::from_utf8_lossy(t).into_owned(),
+                    rusqlite::types::ValueRef::Integer(n) => n.to_string(),
+                    rusqlite::types::ValueRef::Null => "∅".into(),
+                    other => format!("{other:?}"),
+                })
+                .collect();
+            fingerprint.push_str(&cols.join("\u{1}"));
+            fingerprint.push('\u{2}');
+        }
+        fingerprint.push('\u{3}');
+    }
+    fingerprint
 }
 
 // ---------------------------------------------------------------------------
@@ -96,6 +127,17 @@ fn pointer_to_target(world: &mut LedgerWorld) {
     world.dl_target_dir = Some(target);
 }
 
+#[given(expr = "指针文件指向已含 {int} 条交易库的目标目录")]
+fn pointer_to_target_with_db(world: &mut LedgerWorld, count: usize) {
+    pointer_to_target(world);
+    let target = world.dl_target_dir.clone().unwrap();
+    // 真实流程中目标目录在命令层校验时已创建（#133）；场景现场直接准备就绪。
+    std::fs::create_dir_all(&target).unwrap();
+    let mut conn = open_connection(target.join(data_location::DB_FILE_NAME)).unwrap();
+    init_db(&mut conn).unwrap();
+    seed_db(&conn, "目标现金", count);
+}
+
 #[given(expr = "指针文件内容为损坏文本 {string}")]
 fn pointer_corrupted(world: &mut LedgerWorld, raw: String) {
     let default_dir = world.dl_default_dir.clone().unwrap();
@@ -113,8 +155,8 @@ fn pointer_to_unusable_target(world: &mut LedgerWorld) {
     world.dl_target_dir = Some(target);
 }
 
-#[given(expr = "生效目录中存在一个损坏的库文件")]
-fn active_dir_with_corrupt_db(world: &mut LedgerWorld) {
+#[given(expr = "默认数据目录中存在一个损坏的库文件")]
+fn default_dir_with_corrupt_db(world: &mut LedgerWorld) {
     let dir = std::env::temp_dir().join(format!("ledger-e2e-dl-reset-{}", new_uuid()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
@@ -123,6 +165,13 @@ fn active_dir_with_corrupt_db(world: &mut LedgerWorld) {
     )
     .unwrap();
     world.dl_default_dir = Some(dir);
+}
+
+#[given(expr = "记录默认数据目录库文件的字节")]
+fn record_default_db_bytes(world: &mut LedgerWorld) {
+    let default_dir = world.dl_default_dir.clone().unwrap();
+    let bytes = std::fs::read(default_dir.join(data_location::DB_FILE_NAME)).unwrap();
+    world.dl_default_db_bytes = Some(bytes);
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +185,19 @@ fn boot_and_open(world: &mut LedgerWorld) {
     let opened = open_db_in(&boot.db_dir);
     assert!(opened.is_ok(), "引导后打开数据库失败: {:?}", opened.err());
     world.dl_conn = Some(opened.unwrap());
+    world.last_boot = Some(boot);
+}
+
+#[when(expr = "尝试执行 DataLocation 引导并打开数据库（预期打开失败）")]
+fn boot_and_open_expect_failure(world: &mut LedgerWorld) {
+    let default_dir = world.dl_default_dir.clone().unwrap();
+    let boot = data_location::boot(&default_dir);
+    let opened = open_db_in(&boot.db_dir);
+    assert!(
+        opened.is_err(),
+        "预期打开失败，实际成功（生效目录 {:?}）",
+        boot.db_dir
+    );
     world.last_boot = Some(boot);
 }
 
@@ -225,6 +287,18 @@ fn target_db_contains(world: &mut LedgerWorld, count: usize) {
     );
 }
 
+#[then(expr = "目标目录的库的关键表内容应与默认目录的库一致")]
+fn relocated_db_matches_source(world: &mut LedgerWorld) {
+    let default_dir = world.dl_default_dir.as_ref().unwrap();
+    let target = world.dl_target_dir.as_ref().unwrap();
+    let source = key_table_fingerprint(&default_dir.join(data_location::DB_FILE_NAME));
+    let relocated = key_table_fingerprint(&target.join(data_location::DB_FILE_NAME));
+    assert_eq!(
+        source, relocated,
+        "搬迁后的库关键表（accounts/categories/transactions）应与原库内容一致"
+    );
+}
+
 #[then(expr = "默认数据目录的库应原样保留且仍包含 {int} 条交易")]
 fn default_db_preserved(world: &mut LedgerWorld, count: usize) {
     let default_dir = world.dl_default_dir.as_ref().unwrap();
@@ -232,6 +306,17 @@ fn default_db_preserved(world: &mut LedgerWorld, count: usize) {
         count_transactions(&default_dir.join(data_location::DB_FILE_NAME)),
         count,
         "默认目录的旧库应原样保留"
+    );
+}
+
+#[then(expr = "默认数据目录库文件的字节应保持不变")]
+fn default_db_bytes_unchanged(world: &mut LedgerWorld) {
+    let default_dir = world.dl_default_dir.as_ref().unwrap();
+    let bytes = std::fs::read(default_dir.join(data_location::DB_FILE_NAME)).unwrap();
+    assert_eq!(
+        bytes,
+        *world.dl_default_db_bytes.as_ref().expect("未记录字节快照"),
+        "回退场景中默认目录的既有库文件不应被改动"
     );
 }
 

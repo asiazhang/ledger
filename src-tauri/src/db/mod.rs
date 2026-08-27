@@ -4,8 +4,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 use rusqlite::Connection;
 use rusqlite_migration::{M, Migrations};
 
-use tauri::Manager;
-
 use crate::error::{AppError, Result};
 
 pub mod balance;
@@ -68,23 +66,9 @@ pub fn device_id() -> String {
     String::from("device-1")
 }
 
-/// 打开数据库：先解析 DataLocation（读指针 → 定位/搬迁），再在生效目录建连。
-pub fn open_db(app: &tauri::AppHandle) -> Result<DbState> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(e.to_string()))?;
-    std::fs::create_dir_all(&dir)?;
-    let boot = data_location::boot(&dir);
-    if let Some(reason) = &boot.fallback_reason {
-        tracing::warn!(reason = %reason, "DataLocation 引导发生回退，已改用默认数据目录");
-    }
-    tracing::info!(db_dir = %boot.db_dir.display(), "DataLocation 引导完成");
-    open_db_in(&boot.db_dir)
-}
-
 /// 在指定目录打开库并完成迁移与搜索索引对账（DataLocation 引导之后的建连步骤）。
-/// 所有启动期建连都应经由引导（`data_location::boot`）或本函数，不自行拼路径。
+/// 启动期唯一入口：先经 [`data_location::boot`] 解析库所在目录，再调本函数建连
+/// （见 `lib.rs::init_database`）；不要自行拼接库路径。
 pub fn open_db_in(db_dir: &Path) -> Result<DbState> {
     let db_path = db_dir.join(data_location::DB_FILE_NAME);
     tracing::info!(db_path = %db_path.display(), "打开数据库");
@@ -106,6 +90,17 @@ pub fn reset_db_in(db_dir: &Path) -> Result<DbState> {
     std::fs::rename(&db_path, &bak_path).ok();
     tracing::info!(bak = %bak_path.display(), "已备份原数据库并重置");
     open_db_in(db_dir)
+}
+
+/// 校验数据库文件完整性（`PRAGMA integrity_check` 应返回 `ok`）。
+pub fn check_integrity(conn: &Connection) -> Result<()> {
+    let result: String = conn
+        .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+        .map_err(AppError::from)?;
+    if result != "ok" {
+        return Err(AppError::Invalid(format!("数据库完整性检查失败: {result}")));
+    }
+    Ok(())
 }
 
 /// 打开数据库连接并启用外键约束（SQLite 默认关闭，需每次连接显式开启）。
