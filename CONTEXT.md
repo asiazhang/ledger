@@ -1,6 +1,9 @@
 # 领域术语表（Ubiquitous Language）
 
 > 本文件记录 Ledger 项目中的核心领域术语。只包含业务概念，不包含实现细节。
+>
+> 本文件是架构叙述的单一来源；若与代码行为冲突，以代码为准并同步修正本文件。
+> 协作约定与文档导航见 `AGENTS.md`；决策记录见 `docs/adr/`。
 
 ## ScheduledTransaction（定时交易）
 
@@ -207,7 +210,7 @@
   - URL 前缀 `/api/v1`，JSON 请求/响应。
   - 错误格式复用 `{kind, message}`。
   - **场景**：主要场景是数据迁移（从第三方 APP 的 CSV/Excel 导入），亦可直接录入记账（账户/分类幂等创建、批量写交易）；迁移完成后支持读回验证与纠错（删除/修改，见 AIReadbackVerification / AICleanupDeletion / AICleanupModify）。
-  - **暴露的接口**（13 个端点）：`openapi.json`、`accounts`（list/create/delete）、`accounts/balances`（含黑洞账户）、`categories`（list/create/delete）、`transactions`（list，可按日期/转出账户/涉及账户/类型过滤）、`transactions/batch`、`transactions/{id}`（delete/update）、`currencies`（list）、`import/knowledge`。
+  - **暴露的接口**（11 个端点）：`openapi.json`、`accounts`（list/create/delete）、`accounts/balances`（含黑洞账户）、`categories`（list/create/delete）、`transactions`（list，可按日期/转出账户/涉及账户/类型过滤）、`transactions/batch`、`transactions/{id}`（delete/update）、`currencies`（list）、`import/knowledge`。
   - `accounts` / `categories` 的 create 按自然键幂等（同名复用已有记录）；`transactions/batch` 支持 `dedup` 参数（默认开启）与客户端 `idempotency_key`（见 ImportDedup / IdempotencyKey）。
   - `import/knowledge` 返回精简的导入约定文本（Pixiu 列映射、转账拆分、黑洞账户、币种映射、分单位、日期、dedup），供 AI 直接注入系统提示词。
 - **别名**：不使用"本地 API"（过于泛化）、"后端 API"（与 Tauri IPC 混淆）。
