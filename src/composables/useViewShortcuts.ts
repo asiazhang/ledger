@@ -48,13 +48,18 @@ export function matchViewShortcut(e: KeyboardEvent): string | null {
   return viewShortcuts.find((s) => e.key === s.key)?.name ?? null
 }
 
-/** 覆盖层（弹窗/确认框）打开时抑制快捷键，避免在编辑/确认中途跳走丢失上下文 */
+/** 弹层探测选择器：Naive UI 弹窗/确认框/下拉菜单/筛选弹层的容器类名（issue #153 扩展弹层类） */
+const OVERLAY_SELECTORS = [
+  '.n-modal-container',
+  '.n-dialog',
+  '.n-popconfirm',
+  '.n-dropdown-menu',
+  '.n-base-select-menu',
+]
+
+/** 覆盖层（弹窗/确认框/下拉菜单）打开时抑制快捷键，避免在编辑/确认/选择中途触发 */
 export function hasOpenOverlay(): boolean {
-  return (
-    document.querySelector('.n-modal-container') !== null ||
-    document.querySelector('.n-dialog') !== null ||
-    document.querySelector('.n-popconfirm') !== null
-  )
+  return OVERLAY_SELECTORS.some((sel) => document.querySelector(sel) !== null)
 }
 
 /** 注册全局 keydown 监听：命中视图快捷键时切换路由 */

@@ -108,6 +108,22 @@ describe('hasOpenOverlay', () => {
     popconfirm.remove()
     expect(hasOpenOverlay()).toBe(false)
   })
+
+  it('检测下拉菜单 / 筛选下拉弹层（issue #153 扩展）', () => {
+    const dropdown = document.createElement('div')
+    dropdown.className = 'n-dropdown-menu'
+    document.body.appendChild(dropdown)
+    expect(hasOpenOverlay()).toBe(true)
+    dropdown.remove()
+    expect(hasOpenOverlay()).toBe(false)
+
+    const selectMenu = document.createElement('div')
+    selectMenu.className = 'n-base-select-menu'
+    document.body.appendChild(selectMenu)
+    expect(hasOpenOverlay()).toBe(true)
+    selectMenu.remove()
+    expect(hasOpenOverlay()).toBe(false)
+  })
 })
 
 function makeRouter(initialName: string) {

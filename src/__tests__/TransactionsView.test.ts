@@ -690,25 +690,25 @@ describe('TransactionsView 记一笔分裂按钮（issue #150）', () => {
     await flushPromises()
   }
 
-  it('下拉菜单为 5 项：支出/收入/转账/买入/卖出，无退款', async () => {
+  it('下拉菜单为 5 项并标注快捷键：支出 a/收入 i/转账 z/买入 b/卖出 s，无退款（issue #150/#153）', async () => {
     const wrapper = await mountView()
     const labels = await openDropdown(wrapper)
-    expect(labels).toEqual(['支出', '收入', '转账', '买入', '卖出'])
+    expect(labels).toEqual(['支出 a', '收入 i', '转账 z', '买入 b', '卖出 s'])
     expect(labels).not.toContain('退款')
   })
 
   it.each([
-    ['支出', 'expense'],
-    ['收入', 'income'],
-    ['转账', 'transfer'],
-    ['买入', 'buy'],
-    ['卖出', 'sell'],
-  ] as const)('点菜单项「%s」打开对应类型弹窗（无类型单选组）', async (label, kind) => {
+    ['支出 a', '支出', 'expense'],
+    ['收入 i', '收入', 'income'],
+    ['转账 z', '转账', 'transfer'],
+    ['买入 b', '买入', 'buy'],
+    ['卖出 s', '卖出', 'sell'],
+  ] as const)('点菜单项「%s」打开对应类型弹窗（无类型单选组）', async (label, kindLabel, kind) => {
     const wrapper = await mountView()
     await openDropdown(wrapper)
     await clickDropdownItem(label)
     expect(wrapper.findComponent(NModal).props('show')).toBe(true)
-    expect(wrapper.findComponent(NModal).props('title')).toBe(`记一笔 · ${label}`)
+    expect(wrapper.findComponent(NModal).props('title')).toBe(`记一笔 · ${kindLabel}`)
     const form = wrapper.findComponent(TransactionForm)
     expect(form.props('kind')).toBe(kind)
     expect(wrapper.findComponent(NRadioGroup).exists()).toBe(false)
@@ -721,5 +721,70 @@ describe('TransactionsView 记一笔分裂按钮（issue #150）', () => {
     await btn.trigger('click')
     await flushPromises()
     expect(wrapper.findComponent(NModal).props('title')).toBe('记一笔 · 支出')
+  })
+})
+
+describe('TransactionsView 裸键快捷键（issue #153）', () => {
+  // jsdom 的 document.body 跨测试共享：清掉前序测试遗留的弹层容器，避免误抑制
+  beforeEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  function pressKey(key: string) {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+  }
+
+  it.each([
+    ['a', '支出', 'expense'],
+    ['z', '转账', 'transfer'],
+    ['i', '收入', 'income'],
+    ['b', '买入', 'buy'],
+    ['s', '卖出', 'sell'],
+  ] as const)('裸键 %s 直达「记一笔 · %s」弹窗（与下拉同一入口）', async (key, kindLabel, kind) => {
+    const wrapper = await mountView()
+    pressKey(key)
+    await flushPromises()
+    expect(wrapper.findComponent(NModal).props('show')).toBe(true)
+    expect(wrapper.findComponent(NModal).props('title')).toBe(`记一笔 · ${kindLabel}`)
+    expect(wrapper.findComponent(TransactionForm).props('kind')).toBe(kind)
+  })
+
+  it('焦点在输入框时按键不触发', async () => {
+    const wrapper = await mountView()
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }))
+    await flushPromises()
+    expect(wrapper.findComponent(NModal).props('show')).toBe(false)
+  })
+
+  it('弹层打开时按键不触发；弹窗打开后再按键不换类型', async () => {
+    const wrapper = await mountView()
+    // 先造一个弹层（与真实弹窗同容器类名）
+    const overlay = document.createElement('div')
+    overlay.className = 'n-modal-container'
+    document.body.appendChild(overlay)
+    pressKey('a')
+    await flushPromises()
+    expect(wrapper.findComponent(NModal).props('show')).toBe(false)
+    overlay.remove()
+    // 真实打开支出弹窗后再按 z：抑制触发，不切换为转账
+    pressKey('a')
+    await flushPromises()
+    expect(wrapper.findComponent(NModal).props('title')).toBe('记一笔 · 支出')
+    pressKey('z')
+    await flushPromises()
+    expect(wrapper.findComponent(NModal).props('title')).toBe('记一笔 · 支出')
+    expect(wrapper.findComponent(TransactionForm).props('kind')).toBe('expense')
+  })
+
+  it('非映射键与带修饰键不触发', async () => {
+    const wrapper = await mountView()
+    pressKey('x')
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'a', bubbles: true, metaKey: true }),
+    )
+    await flushPromises()
+    expect(wrapper.findComponent(NModal).props('show')).toBe(false)
   })
 })
