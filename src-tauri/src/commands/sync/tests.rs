@@ -1,8 +1,8 @@
 //! 行情同步测试（issue #89 外迁）：HTTP 重试/多主机/解析、价格换算、持久化与编排行为。
 //! HTTP 层通过本地 HTTP 服务独立测试，不依赖真实网络。
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rusqlite::Connection;
@@ -14,7 +14,9 @@ use super::http::{
     UlistResponse, f2_to_cents, request_json_from_hosts, request_json_with_retry, secid_prefix,
 };
 use super::incremental::do_incremental_sync_with;
-use super::orchestrate::{SyncOutcome, run_sync_pages, terminal_progress};
+use super::orchestrate::{
+    ConnAccessor, GlobalConn, SyncOutcome, run_sync_pages, terminal_progress,
+};
 use super::persist::{apply_stock_item, build_existing_instruments, upsert_market_price};
 use crate::db::{init_db, new_uuid, now_iso, open_in_memory};
 use crate::error::{AppError, Result};
@@ -848,11 +850,25 @@ fn incremental_sync_propagates_fetch_error() {
 // ---------------------------------------------------------------------------
 // 全量同步中断机制（issue #104）：分页循环每页检查取消标志、提前返回、已落库数据保留、
 // 终态区分完成/中断；SyncState 的运行/取消标志语义。
+// 锁粒度收窄（issue #147）：分页循环经连接访问器落库，拉取/推送进度不持锁。
 // ---------------------------------------------------------------------------
+
+/// 把内存库连接包进真实互斥锁，供分页循环经生产访问器驱动（与 DbState.conn 同构）。
+fn locked_conn() -> (Arc<Mutex<Connection>>, GlobalConn) {
+    let conn = Arc::new(Mutex::new(setup_db()));
+    let accessor = GlobalConn(conn.clone());
+    (conn, accessor)
+}
+
+/// 在互斥锁保护下查询一条标量（测试断言用）。
+fn locked_scalar(conn: &Mutex<Connection>, sql: &str) -> i64 {
+    let guard = conn.lock().unwrap();
+    guard.query_row(sql, [], |r| r.get(0)).unwrap()
+}
 
 #[test]
 fn run_sync_pages_cancelled_before_first_page_applies_nothing() {
-    let conn = setup_db();
+    let (conn, accessor) = locked_conn();
     // 取消标志已置位：第一页起点即命中，提前返回，任何页都不该被拉取。
     let cancel = AtomicBool::new(true);
     let market_totals: Vec<(usize, &'static MarketConfig)> = vec![(250usize, &MARKETS[0])];
@@ -862,7 +878,7 @@ fn run_sync_pages_cancelled_before_first_page_applies_nothing() {
     };
     let mut emitted: Vec<SyncProgress> = Vec::new();
     let outcome = run_sync_pages(
-        &conn,
+        &accessor,
         &cancel,
         &market_totals,
         250,
@@ -879,15 +895,13 @@ fn run_sync_pages_cancelled_before_first_page_applies_nothing() {
         }
     );
     assert!(emitted.is_empty(), "未处理任何页，不推送进度事件");
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM instruments", [], |r| r.get(0))
-        .unwrap();
+    let count = locked_scalar(&conn, "SELECT COUNT(*) FROM instruments");
     assert_eq!(count, 0);
 }
 
 #[test]
 fn run_sync_pages_cancelled_midway_keeps_processed_data() {
-    let conn = setup_db();
+    let (conn, accessor) = locked_conn();
     let cancel = Arc::new(AtomicBool::new(false));
     let market_totals: Vec<(usize, &'static MarketConfig)> = vec![(250usize, &MARKETS[0])];
     let grand_total = 250usize;
@@ -910,7 +924,7 @@ fn run_sync_pages_cancelled_midway_keeps_processed_data() {
 
     let mut emitted: Vec<SyncProgress> = Vec::new();
     let outcome = run_sync_pages(
-        &conn,
+        &accessor,
         &cancel,
         &market_totals,
         grand_total,
@@ -928,13 +942,9 @@ fn run_sync_pages_cancelled_midway_keeps_processed_data() {
         }
     );
     // 已落库数据保留：前 2 页的标的与价格都在。
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM instruments", [], |r| r.get(0))
-        .unwrap();
+    let count = locked_scalar(&conn, "SELECT COUNT(*) FROM instruments");
     assert_eq!(count, 2);
-    let price_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM market_prices", [], |r| r.get(0))
-        .unwrap();
+    let price_count = locked_scalar(&conn, "SELECT COUNT(*) FROM market_prices");
     assert_eq!(price_count, 2);
     // 进度事件只推前两页（无终态；终态由 do_sync 层推送，此处聚焦分页循环）。
     assert_eq!(emitted.len(), 2);
@@ -943,7 +953,7 @@ fn run_sync_pages_cancelled_midway_keeps_processed_data() {
 
 #[test]
 fn run_sync_pages_completes_all_pages_when_not_cancelled() {
-    let conn = setup_db();
+    let (conn, accessor) = locked_conn();
     let cancel = AtomicBool::new(false);
 
     // 150 只 → 2 页，不被取消：正常完成。
@@ -958,7 +968,7 @@ fn run_sync_pages_completes_all_pages_when_not_cancelled() {
     };
     let mut emitted: Vec<SyncProgress> = Vec::new();
     let outcome = run_sync_pages(
-        &conn,
+        &accessor,
         &cancel,
         &market_totals,
         150,
@@ -975,10 +985,93 @@ fn run_sync_pages_completes_all_pages_when_not_cancelled() {
         }
     );
     assert_eq!(emitted.len(), 2);
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM instruments", [], |r| r.get(0))
-        .unwrap();
+    let count = locked_scalar(&conn, "SELECT COUNT(*) FROM instruments");
     assert_eq!(count, 2);
+}
+
+#[test]
+fn global_conn_accessor_locks_and_releases_on_real_mutex() {
+    // 生产访问器：持真实互斥锁执行落库闭包，返回后立即释放（try_lock 可再次获取）。
+    let (conn, accessor) = locked_conn();
+    let symbols = accessor
+        .with_conn(|c| Ok(build_existing_instruments(c)?.len()))
+        .unwrap();
+    assert_eq!(symbols, 0);
+    assert!(conn.try_lock().is_ok(), "with_conn 返回后必须已释放连接锁");
+}
+
+#[test]
+fn run_sync_pages_locks_only_for_per_page_persist() {
+    // 锁时间线：拉取期间锁可用（同步不持锁）；每页只在落库时短暂加锁、释放后才推进度。
+    let (conn, accessor) = locked_conn();
+    let cancel = AtomicBool::new(false);
+
+    // 日志访问器：在真实落库前后记录加锁/释放事件。
+    struct Logging {
+        inner: GlobalConn,
+        events: Arc<Mutex<Vec<&'static str>>>,
+    }
+    let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+    let logging = Logging {
+        inner: accessor,
+        events: events.clone(),
+    };
+    impl ConnAccessor for Logging {
+        fn with_conn<R>(&self, f: impl FnOnce(&Connection) -> Result<R>) -> Result<R> {
+            self.events.lock().unwrap().push("lock");
+            let r = self.inner.with_conn(f);
+            self.events.lock().unwrap().push("unlock");
+            r
+        }
+    }
+
+    let fetch_events = events.clone();
+    let fetch_conn = conn.clone();
+    let mut fetch_page = move |_m: &MarketConfig, page: usize| -> Result<Vec<StockItem>> {
+        fetch_events.lock().unwrap().push("fetch");
+        // 拉取期间连接锁必须可用：同步任务不得在网络等待时持锁（issue #147）。
+        assert!(fetch_conn.try_lock().is_ok(), "拉取分页期间不得持有连接锁");
+        let code = format!("{:06}", 600000 + page);
+        Ok(vec![StockItem {
+            code: code.clone(),
+            name: format!("名称-{code}"),
+            price: Some(1000.0),
+        }])
+    };
+
+    let emit_events = events.clone();
+    let mut emit = move |_p: SyncProgress| {
+        emit_events.lock().unwrap().push("emit");
+    };
+
+    // 2 页：预期每页时间线 fetch → lock → unlock → emit。
+    let market_totals: Vec<(usize, &'static MarketConfig)> = vec![(150usize, &MARKETS[0])];
+    let outcome = run_sync_pages(
+        &logging,
+        &cancel,
+        &market_totals,
+        150,
+        &mut fetch_page,
+        &mut emit,
+    )
+    .unwrap();
+    assert_eq!(
+        outcome,
+        SyncOutcome::Completed {
+            inserted: 2,
+            updated: 0,
+        }
+    );
+
+    let timeline = events.lock().unwrap().clone();
+    assert_eq!(
+        timeline,
+        vec![
+            "fetch", "lock", "unlock", "emit", "fetch", "lock", "unlock", "emit"
+        ],
+        "每页：锁外拉取 → 短暂持锁落库 → 释放 → 锁外推进度"
+    );
+    assert_eq!(locked_scalar(&conn, "SELECT COUNT(*) FROM instruments"), 2);
 }
 
 #[test]
