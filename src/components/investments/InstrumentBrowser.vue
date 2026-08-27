@@ -1,17 +1,21 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { NDataTable, NInput, NSelect, NSpace } from 'naive-ui'
+import { computed, h, onMounted, ref, watch } from 'vue'
+import { NButton, NDataTable, NInput, NSelect, NSpace, NSwitch, NTag, NText } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
+import { useHoldingPriceSync } from '@/composables/useHoldingPriceSync'
 import { formatAmount, INSTRUMENT_TYPE_LABELS, MARKET_TYPE_LABELS } from '@/types'
 import type { Instrument, MarketType } from '@/types'
 
 const reference = useReferenceStore()
+const { syncing, resultMessage, status, sync } = useHoldingPriceSync()
 
 // 标的浏览（服务端分页 + 搜索）
 const searchText = ref('')
 const selectedMarket = ref<MarketType | null>(null)
+// 只看持仓标的（issue #108）：勾选后仅列出有当前持仓的标的
+const onlyInvested = ref(false)
 const instruments = ref<Instrument[]>([])
 const total = ref(0)
 const page = ref(1)
@@ -31,6 +35,8 @@ async function load() {
     const res = await api.listInstruments({
       search: searchText.value.trim() || null,
       market: selectedMarket.value,
+      // only_invested 为 false/缺省时不过滤，仅勾选时传 true
+      only_invested: onlyInvested.value ? true : null,
       page: page.value,
       page_size: pageSize,
     })
@@ -51,6 +57,7 @@ watch(searchText, () => {
   searchTimer = setTimeout(reload, 300)
 })
 watch(selectedMarket, reload)
+watch(onlyInvested, reload)
 
 const pagination = computed(() => ({
   page: page.value,
@@ -92,6 +99,19 @@ const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
     },
   },
   { title: '币种', key: 'currency_code', width: 60 },
+  {
+    title: '持仓',
+    key: 'invested',
+    width: 80,
+    render(row) {
+      if (!row.invested) return '-'
+      return h(
+        NTag,
+        { type: 'success', size: 'small', bordered: false },
+        { default: () => '持仓' },
+      )
+    },
+  },
 ]
 
 onMounted(load)
@@ -113,7 +133,25 @@ onMounted(load)
         clearable
         style="width: 140px"
       />
+      <NSwitch
+        v-model:value="onlyInvested"
+        size="small"
+        data-testid="only-invested-switch"
+      />
+      <span style="font-size: 13px">只看持仓</span>
+      <NButton
+        type="primary"
+        size="small"
+        :loading="syncing"
+        data-testid="sync-holding-prices"
+        @click="sync"
+      >
+        同步持仓价格
+      </NButton>
     </NSpace>
+    <NText v-if="resultMessage" :type="status === 'error' ? 'error' : 'info'">
+      {{ resultMessage }}
+    </NText>
     <NDataTable
       :columns="instrumentBrowseColumns"
       :data="instruments"
