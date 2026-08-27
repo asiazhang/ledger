@@ -5,13 +5,18 @@
 //! [`SyncOutcome::Cancelled`]；已落库数据保留（upsert 幂等），下次重跑自动续上。进度事件
 //! 终态以 [`SyncProgress::cancelled`] 区分完成/中断。核心分页循环 [`run_sync_pages`] 与
 //! 网络解耦（注入 fetch / emit 闭包），测试以 mock 驱动、不依赖真实网络。
+//!
+//! 锁粒度收窄（issue #147）：分页循环的落库经注入的连接访问器 [`ConnAccessor`] 进行，
+//! 每页「锁外拉取 → 短暂持锁落库 → 释放 → 锁外推进度」，网络等待期间不再独占全局连接；
+//! 既有标的映射随页重建，不跨页持有。生产实现为 [`GlobalConn`]（包装全局连接句柄）。
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use rusqlite::Connection;
 use tauri::{AppHandle, Emitter};
 
-use crate::error::Result;
+use crate::error::{AppError, Result};
 use crate::models::SyncProgress;
 
 use super::http::{MARKETS, MarketConfig, Pacer, StockItem, build_client, fetch_page, get_total};
@@ -27,10 +32,34 @@ pub(super) enum SyncOutcome {
     Cancelled { inserted: usize, updated: usize },
 }
 
+/// 连接访问器接缝（issue #147）：分页循环的落库操作经它短暂获取/释放连接，
+/// 网络拉取与进度推送不持有连接。生产实现为 [`GlobalConn`]；测试注入 mock
+/// 以观察锁时序（拉取期间锁可用、每页落库才加锁）。
+pub(super) trait ConnAccessor {
+    /// 持锁执行一次落库操作，闭包返回后立即释放。
+    fn with_conn<R>(&self, f: impl FnOnce(&Connection) -> Result<R>) -> Result<R>;
+}
+
+/// 生产连接访问器：包装全局连接句柄（`DbState.conn`），每次落库短暂加锁/释放，
+/// 单条后台同步任务不再独占连接（issue #147）。与其它命令的互斥仍由
+/// SQLite 自身写锁 + 该互斥锁保证。
+pub(super) struct GlobalConn(pub(super) Arc<Mutex<Connection>>);
+
+impl ConnAccessor for GlobalConn {
+    fn with_conn<R>(&self, f: impl FnOnce(&Connection) -> Result<R>) -> Result<R> {
+        let guard = self
+            .0
+            .lock()
+            .map_err(|e| AppError::Db(format!("数据库锁定失败: {e}")))?;
+        f(&guard)
+    }
+}
+
 /// 全量同步主流程：依次拉取各市场分页行情并落库，实时推送进度事件。
 /// `cancel` 为跨命令共享的取消标志（issue #104），每页检查；命中即返回 [`SyncOutcome::Cancelled`]。
-pub(super) fn do_sync(
-    conn: &Connection,
+/// 连接经访问器 `conn` 注入（issue #147），本函数自身不持锁等待网络。
+pub(super) fn do_sync<A: ConnAccessor>(
+    conn: &A,
     app: &AppHandle,
     cancel: &AtomicBool,
 ) -> Result<SyncOutcome> {
@@ -71,8 +100,10 @@ pub(super) fn do_sync(
 
 /// 核心分页循环：每页开头检查取消标志，命中即提前返回（该页不再拉取，已落库数据保留）。
 /// `fetch_page` / `emit` 由调用方注入（生产接 HTTP + AppHandle，测试注入 mock），本函数不触碰网络。
-pub(super) fn run_sync_pages<F, E>(
-    conn: &Connection,
+/// 连接经访问器注入（issue #147）：每页锁外拉取 → 短暂持锁落库 → 释放 → 锁外推进度，
+/// 既有标的映射随页重建，不跨页持有。
+pub(super) fn run_sync_pages<A, F, E>(
+    conn: &A,
     cancel: &AtomicBool,
     market_totals: &[(usize, &MarketConfig)],
     grand_total: usize,
@@ -80,10 +111,10 @@ pub(super) fn run_sync_pages<F, E>(
     emit: &mut E,
 ) -> Result<SyncOutcome>
 where
+    A: ConnAccessor,
     F: FnMut(&MarketConfig, usize) -> Result<Vec<StockItem>>,
     E: FnMut(SyncProgress),
 {
-    let mut existing_map = build_existing_instruments(conn)?;
     let mut total_inserted = 0usize;
     let mut total_updated = 0usize;
     let mut cumulative_processed = 0usize;
@@ -100,15 +131,16 @@ where
                 });
             }
 
+            // 锁外拉取一页：网络等待不持有连接。
             let items = fetch_page(market, page)?;
-            for item in &items {
-                let (inserted, updated) =
-                    apply_stock_item(conn, item, market.code, market.currency, &mut existing_map)?;
-                total_inserted += inserted;
-                total_updated += updated;
-            }
+
+            // 短暂持锁：重建既有标的映射并批量落库本页，闭包返回即释放。
+            let (inserted, updated) = conn.with_conn(|c| persist_page(c, &items, market))?;
+            total_inserted += inserted;
+            total_updated += updated;
             cumulative_processed += items.len();
 
+            // 锁外推送进度事件。
             emit(SyncProgress {
                 current: cumulative_processed,
                 total: grand_total,
@@ -126,6 +158,24 @@ where
         inserted: total_inserted,
         updated: total_updated,
     })
+}
+
+/// 单页落库：重建既有标的映射（每次一条 SELECT，代价可接受、不跨页持有）后逐条 upsert。
+/// 返回 `(新增数, 更新数)`。
+fn persist_page(
+    conn: &Connection,
+    items: &[StockItem],
+    market: &MarketConfig,
+) -> Result<(usize, usize)> {
+    let mut existing_map = build_existing_instruments(conn)?;
+    let mut inserted = 0usize;
+    let mut updated = 0usize;
+    for item in items {
+        let (i, u) = apply_stock_item(conn, item, market.code, market.currency, &mut existing_map)?;
+        inserted += i;
+        updated += u;
+    }
+    Ok((inserted, updated))
 }
 
 /// 构造同步终态事件（`done=true`）：以 [`SyncOutcome`] 区分完成/中断，`cancelled` 字段标记。

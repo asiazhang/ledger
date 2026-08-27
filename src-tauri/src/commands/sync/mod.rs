@@ -132,6 +132,8 @@ pub async fn sync_holding_prices(db: State<'_, DbState>) -> Result<SyncHoldingPr
 /// IPC 命令：全量同步股票行情。后台线程执行（不阻塞界面），进度经
 /// `sync-instruments:progress` 事件推送，完成/失败/中断时 `done=true` 并携带结果、错误或中断标记。
 /// 启动时清除取消标志并标记运行中；分页循环每页检查取消标志（issue #104）。
+/// 连接经访问器按页短暂获取/释放（issue #147）：网络拉取与进度推送不持锁，
+/// 同步期间其它命令可正常执行，锁失败随结果以错误事件上报。
 #[tauri::command]
 pub fn sync_instruments(
     db: State<'_, DbState>,
@@ -151,16 +153,8 @@ pub fn sync_instruments(
     let running = sync_state.running.clone();
 
     thread::spawn(move || {
-        let conn_guard = match conn.lock() {
-            Ok(g) => g,
-            Err(e) => {
-                emit_error_progress(&app, format!("数据库锁定失败: {e}"));
-                running.store(false, Ordering::SeqCst);
-                return;
-            }
-        };
-
-        let result = orchestrate::do_sync(&conn_guard, &app, &cancel);
+        let accessor = orchestrate::GlobalConn(conn);
+        let result = orchestrate::do_sync(&accessor, &app, &cancel);
         running.store(false, Ordering::SeqCst);
 
         if let Err(e) = result {
