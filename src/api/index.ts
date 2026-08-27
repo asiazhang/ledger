@@ -32,6 +32,7 @@ import type {
   RestoreResult,
   ScheduledTransactionDetail,
   ScheduledTransactionWithExt,
+  SyncHoldingPricesResult,
   TransactionInput,
   TransactionListFilter,
   TransactionListResult,
@@ -135,6 +136,8 @@ export const api = {
 
   // 数据同步
   syncInstruments: () => invoke<void>('sync_instruments'),
+  // 同步持仓价格（增量同步）：仅刷新当前持仓股票的最新价，返回同步/跳过统计
+  syncHoldingPrices: () => invoke<SyncHoldingPricesResult>('sync_holding_prices'),
 
   // 备份与恢复
   createBackup: (targetPath: string) => invoke<BackupResult>('create_backup', { targetPath }),

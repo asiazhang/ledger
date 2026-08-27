@@ -130,6 +130,7 @@ pub fn run() {
             commands::expand_scheduled_occurrences,
             commands::realized_pnl_summary,
             commands::sync_instruments,
+            commands::sync_holding_prices,
         ]))
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

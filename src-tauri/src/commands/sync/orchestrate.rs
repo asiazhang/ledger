@@ -4,10 +4,10 @@
 use rusqlite::Connection;
 use tauri::{AppHandle, Emitter};
 
-use crate::error::{AppError, Result};
+use crate::error::Result;
 use crate::models::SyncProgress;
 
-use super::http::{MARKETS, MarketConfig, Pacer, fetch_page, get_total};
+use super::http::{MARKETS, MarketConfig, Pacer, build_client, fetch_page, get_total};
 use super::persist::{apply_stock_item, build_existing_instruments};
 
 /// 全量同步主流程：依次拉取各市场分页行情并落库，实时推送进度事件。
@@ -16,10 +16,7 @@ pub(super) fn do_sync(conn: &Connection, app: &AppHandle) -> Result<(usize, usiz
     let mut total_inserted = 0usize;
     let mut total_updated = 0usize;
 
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("Mozilla/5.0")
-        .build()
-        .map_err(|e| AppError::Io(e.to_string()))?;
+    let client = build_client()?;
     let mut pacer = Pacer::default();
 
     let mut existing_map = build_existing_instruments(conn)?;

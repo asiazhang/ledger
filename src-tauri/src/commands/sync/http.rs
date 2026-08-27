@@ -11,6 +11,11 @@ use crate::error::{AppError, Result};
 
 // 行情接口路径。东财 clist 接口同一数据结构分布在多个主机，按顺序尝试，失败自动切换下一个。
 const API_PATH: &str = "/api/qt/clist/get";
+// 批量报价接口路径：按 secid 一次携带多只跨市场代码查询最新价（增量同步用，issue #103）。
+// 响应结构与 clist 一致（data.total / data.diff，条目 f12/f14/f2），复用同一套解析。
+const ULIST_PATH: &str = "/api/qt/ulist.np/get";
+// 每批最多携带的 secid 数（东财批量报价接口支持一次查多只，约 50 只/请求已足够小、避开限流）。
+pub(super) const ULIST_BATCH_SIZE: usize = 50;
 // 优先使用延迟行情主机池：push2 实时主机曾被东财对该出口 IP 触发风控（连接重置），
 // push2delay 返回相同数据结构且对批量访问更稳定；延迟行情对全量标的同步足够。
 const API_HOSTS: &[&str] = &[
@@ -153,6 +158,13 @@ pub(super) struct ClistResponse {
     pub(super) data: ClistData,
 }
 
+/// ulist 批量报价响应：`data` 可能为 null（全部代码无效时东财返回 `rc=102` 且 `data:null`），
+/// 此时应视为无行情条目而非错误，保证增量同步「停牌/无效价不中断同步」语义。
+#[derive(Debug, Deserialize)]
+pub(super) struct UlistResponse {
+    pub(super) data: Option<ClistData>,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct ClistData {
     pub(super) total: Option<u64>,
@@ -182,6 +194,24 @@ impl DiffField {
     }
 }
 
+/// 构建行情 HTTP 客户端（全量/增量同步共用，UA 保持一致）。
+pub(super) fn build_client() -> Result<reqwest::blocking::Client> {
+    reqwest::blocking::Client::builder()
+        .user_agent("Mozilla/5.0")
+        .build()
+        .map_err(|e| AppError::Io(e.to_string()))
+}
+
+/// 市场代码 → 东财 secid 前缀（沪 1 / 深 0 / 港 116）。市场未知（unknown）无法查询，返回 None。
+pub(super) fn secid_prefix(market: &str) -> Option<&'static str> {
+    match market {
+        "sh" => Some("1"),
+        "sz" => Some("0"),
+        "hk" => Some("116"),
+        _ => None,
+    }
+}
+
 /// 发送请求并解析 JSON，按序尝试多个主机，对传输错误做短退避、对限流拦截做长冷却重试。
 fn request_json(
     client: &reqwest::blocking::Client,
@@ -192,6 +222,7 @@ fn request_json(
     request_json_from_hosts(
         client,
         params,
+        API_PATH,
         API_HOSTS,
         RetryConfig::production(),
         pacer,
@@ -199,17 +230,21 @@ fn request_json(
     )
 }
 
-pub(super) fn request_json_from_hosts(
+pub(super) fn request_json_from_hosts<T>(
     client: &reqwest::blocking::Client,
     params: &[(&str, &str)],
+    path: &str,
     hosts: &[&str],
     cfg: RetryConfig,
     pacer: &mut Pacer,
     ctx: &str,
-) -> Result<ClistResponse> {
+) -> Result<T>
+where
+    T: serde::de::DeserializeOwned,
+{
     let mut failures: Vec<String> = Vec::new();
     for host in hosts {
-        let url = format!("{host}{API_PATH}");
+        let url = format!("{host}{path}");
         match request_json_with_retry(client, &url, params, pacer, ctx, cfg) {
             Ok(resp) => return Ok(resp),
             Err(e) => failures.push(format!("{host}: {e}")),
@@ -221,14 +256,17 @@ pub(super) fn request_json_from_hosts(
     )))
 }
 
-pub(super) fn request_json_with_retry(
+pub(super) fn request_json_with_retry<T>(
     client: &reqwest::blocking::Client,
     url: &str,
     params: &[(&str, &str)],
     pacer: &mut Pacer,
     ctx: &str,
     cfg: RetryConfig,
-) -> Result<ClistResponse> {
+) -> Result<T>
+where
+    T: serde::de::DeserializeOwned,
+{
     let mut transport_attempts = 0u32;
     let mut throttle_attempts = 0u32;
     loop {
@@ -282,7 +320,7 @@ pub(super) fn request_json_with_retry(
                 continue;
             }
         };
-        match serde_json::from_slice::<ClistResponse>(&bytes) {
+        match serde_json::from_slice::<T>(&bytes) {
             Ok(json) => return Ok(json),
             Err(e) => {
                 let head = String::from_utf8_lossy(&bytes[..bytes.len().min(120)]);
@@ -357,4 +395,30 @@ pub(super) fn get_total(
         .total
         .map(|t| t as usize)
         .ok_or_else(|| AppError::Parse("响应中缺少 data.total 字段".into()))
+}
+
+/// 按 secid 批量查询最新价（跨市场一次携带多只，复用 clist 同一套主机池/重试/限流与解析）。
+/// `secids` 为逗号分隔的东财 secid 串（形如 `1.600519,0.000001,116.00700`）。
+/// 响应 `data` 为 null（全部代码无效）时返回空列表，不报错。
+pub(super) fn fetch_ulist(
+    client: &reqwest::blocking::Client,
+    pacer: &mut Pacer,
+    secids: &str,
+) -> Result<Vec<StockItem>> {
+    tracing::debug!(secids, "批量报价查询");
+    let params = [("secids", secids), ("fields", "f12,f14,f2")];
+    let resp: UlistResponse = request_json_from_hosts(
+        client,
+        &params,
+        ULIST_PATH,
+        API_HOSTS,
+        RetryConfig::production(),
+        pacer,
+        "fetch_ulist",
+    )?;
+    Ok(resp
+        .data
+        .and_then(|d| d.diff)
+        .map(DiffField::into_items)
+        .unwrap_or_default())
 }
