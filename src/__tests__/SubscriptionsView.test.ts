@@ -246,6 +246,14 @@ describe('SubscriptionsView 订阅清单（issue #159）', () => {
     expect(cell.text()).not.toMatch(/\d{4}-\d{2}-\d{2}/)
   })
 
+  it('详情命令失败时显示加载失败，不与「无 pending」混淆', async () => {
+    const plan = makePlan({ id: 'a1' })
+    mockPlans = [plan]
+    // 不注册 a1 的详情：get_scheduled_transaction_detail 将 reject
+    const wrapper = await mountView()
+    expect(wrapper.find('[data-testid="next-charge-a1"]').text()).toBe('加载失败')
+  })
+
   it('金额与周期按原始币种与规则展示', async () => {
     const plan = makePlan({ id: 'a1', amount_cents: 9900, recurrence_interval: 3 })
     mockPlans = [plan]

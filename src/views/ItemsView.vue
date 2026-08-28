@@ -19,6 +19,7 @@ import {
 } from 'naive-ui'
 import { formatAmount } from '@/types'
 import { yuanToCents, centsToYuan } from '@/utils/money'
+import { todayStr } from '@/utils/date'
 import type { ItemInput, ItemWithDailyCost, Transaction } from '@/types'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
@@ -36,14 +37,6 @@ const purchaseDate = ref(todayStr())
 const costYuan = ref('')
 const currencyCode = ref('CNY')
 const note = ref('')
-
-/** 本地时区今天（YYYY-MM-DD），作为购买日期默认值。 */
-function todayStr(): string {
-  const d = new Date()
-  const month = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${d.getFullYear()}-${month}-${day}`
-}
 
 const currencyOptions = () =>
   reference.currencies.map((c) => ({ label: `${c.name} (${c.code})`, value: c.code }))

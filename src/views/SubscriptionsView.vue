@@ -20,6 +20,7 @@ import {
 } from 'naive-ui'
 import { formatAmount } from '@/types'
 import { yuanToCents } from '@/utils/money'
+import { todayStr } from '@/utils/date'
 import type {
   RecurrenceType,
   ScheduledTransactionOccurrence,
@@ -28,9 +29,11 @@ import type {
 } from '@/types'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
+import { useAppStore } from '@/stores/app'
 import { useFormShared } from '@/composables/useFormShared'
 
 const reference = useReferenceStore()
+const appStore = useAppStore()
 const { accountOptions, currencyOptions } = useFormShared()
 const message = useMessage()
 
@@ -42,17 +45,10 @@ const note = ref('')
 const accountId = ref<string | null>(null)
 const categoryId = ref<string | null>(null)
 const amountYuan = ref('')
-const currencyCode = ref('CNY')
+const currencyCode = ref(appStore.defaultCurrency)
 const recurrenceType = ref<RecurrenceType>('monthly')
 const recurrenceInterval = ref(1)
 const startDate = ref(todayStr())
-
-function todayStr(): string {
-  const d = new Date()
-  const month = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${d.getFullYear()}-${month}-${day}`
-}
 
 const recurrenceOptions = [
   { label: '每天', value: 'daily' },
@@ -107,6 +103,8 @@ async function create() {
 interface SubscriptionRow {
   plan: ScheduledTransactionWithExt
   next: ScheduledTransactionOccurrence | null
+  /** 详情命令失败：与「无 pending 期次」区分，不静默显示「—」。 */
+  nextFailed?: boolean
 }
 
 const rows = ref<SubscriptionRow[]>([])
@@ -137,7 +135,7 @@ async function load() {
             )[0] ?? null
           return { plan: p, next } satisfies SubscriptionRow
         } catch {
-          return { plan: p, next: null } satisfies SubscriptionRow
+          return { plan: p, next: null, nextFailed: true } satisfies SubscriptionRow
         }
       }),
     )
@@ -224,7 +222,9 @@ const columns: DataTableColumns<SubscriptionRow> = [
         { 'data-testid': `next-charge-${row.plan.core.id}` },
         row.next
           ? `${row.next.scheduled_date} · ${formatAmount(row.next.amount_cents, reference.getCurrency(row.plan.core.currency_code))}`
-          : '—',
+          : row.nextFailed
+            ? '加载失败'
+            : '—',
       ),
   },
   {
