@@ -9,6 +9,21 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   confirm: vi.fn(),
 }))
 
+// 覆写 setup.ts 的 useMessage mock：改用稳定实例以便断言反馈分支
+// （spec：成功→生效提示、校验失败→错误反馈）。
+const messageApi = vi.hoisted(() => ({
+  success: vi.fn(),
+  warning: vi.fn(),
+  error: vi.fn(),
+  info: vi.fn(),
+  loading: vi.fn(),
+  destroyAll: vi.fn(),
+}))
+vi.mock('naive-ui', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('naive-ui')>()
+  return { ...actual, useMessage: () => messageApi }
+})
+
 import { open, confirm } from '@tauri-apps/plugin-dialog'
 import DataLocationSettings from '@/components/settings/DataLocationSettings.vue'
 
@@ -44,6 +59,10 @@ beforeEach(() => {
   mockInvoke.mockReset()
   mockOpen.mockReset()
   mockConfirm.mockReset()
+  messageApi.success.mockClear()
+  messageApi.warning.mockClear()
+  messageApi.error.mockClear()
+  messageApi.info.mockClear()
 })
 
 function findButton(wrapper: ReturnType<typeof mount>, text: string) {
@@ -147,7 +166,10 @@ describe('DataLocationSettings.vue', () => {
     await flushPromises()
     await findButton(wrapper, '更改').trigger('click')
     await flushPromises()
-    expect(mockConfirm).toHaveBeenCalled()
+    expect(mockConfirm).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ okLabel: '接管该库', cancelLabel: '取消换位' }),
+    )
     expect(mockInvoke).toHaveBeenNthCalledWith(2, 'submit_data_location_change', {
       targetDir: '/Volumes/Sync/ledger-data',
       adoptExisting: false,
@@ -178,6 +200,7 @@ describe('DataLocationSettings.vue', () => {
     await flushPromises()
     expect(submits).toBe(1)
     expect(mockConfirm).toHaveBeenCalled()
+    expect(messageApi.info).toHaveBeenCalled()
     expect(wrapper.html()).not.toContain('待重启生效')
   })
 
@@ -194,7 +217,7 @@ describe('DataLocationSettings.vue', () => {
     )
   })
 
-  it('校验失败（命令层拒绝）：不崩溃、保持当前状态', async () => {
+  it('校验失败（命令层拒绝）：错误反馈，不崩溃、保持当前状态', async () => {
     stubInvoke({
       get_data_location_info: () => Promise.resolve(baseInfo),
       submit_data_location_change: () =>
@@ -205,13 +228,47 @@ describe('DataLocationSettings.vue', () => {
     await flushPromises()
     await findButton(wrapper, '更改').trigger('click')
     await flushPromises()
+    expect(messageApi.error).toHaveBeenCalled()
     // 状态未被假装成已提交：仍然没有待重启提示
     expect(wrapper.html()).not.toContain('待重启生效')
     expect(wrapper.html()).toContain('/Users/me/Library/Application Support/ledger')
   })
 
-  it('恢复默认走同一路径：restore_default_data_location + 二选一确认复用', async () => {
+  it('未配置自定义位置时「恢复默认」不生效；已配置时走同一路径可用', async () => {
     stubInvoke()
+    const wrapper = mount(DataLocationSettings)
+    await flushPromises()
+    // 未配置意图目录 ⇔ 处于默认位置：点击不产生任何命令调用。
+    await findButton(wrapper, '恢复默认').trigger('click')
+    await flushPromises()
+    expect(mockInvoke).not.toHaveBeenCalledWith(
+      'restore_default_data_location',
+      expect.anything(),
+    )
+
+    // 已配置自定义位置后按钮可用，走与更改相同的提交流。
+    mockOpen.mockResolvedValue('/Volumes/Sync/ledger-data')
+    nextInfo({ ...baseInfo, configured_dir: '/Volumes/Sync/ledger-data' })
+    await findButton(wrapper, '更改').trigger('click')
+    await flushPromises()
+    expect(mockInvoke).toHaveBeenCalledWith('submit_data_location_change',
+      expect.objectContaining({ targetDir: '/Volumes/Sync/ledger-data' }),
+    )
+  })
+
+  it('信息读取失败：错误文案诚实呈现，不用「读取中…」假装正常', async () => {
+    stubInvoke({
+      get_data_location_info: () => Promise.reject(new Error('IPC 失败')),
+    })
+    const wrapper = mount(DataLocationSettings)
+    await flushPromises()
+    expect(wrapper.html()).toContain('读取数据存储位置失败')
+    expect(wrapper.text()).not.toContain('读取中…')
+  })
+
+  it('恢复默认走同一路径：restore_default_data_location + 二选一确认复用', async () => {
+    // 已配置自定义位置（configured_dir 非空）时「恢复默认」才可用。
+    const current: DataLocationInfo = { ...baseInfo, configured_dir: '/Volumes/Sync/ledger-data' }
     const choice: DataLocationChangeOutcome = { requires_choice: true, committed: false, target_dir: null }
     const committed: DataLocationChangeOutcome = {
       requires_choice: false,
@@ -221,7 +278,7 @@ describe('DataLocationSettings.vue', () => {
     mockConfirm.mockResolvedValue(true)
     let submits = 0
     mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'get_data_location_info') return Promise.resolve(baseInfo)
+      if (cmd === 'get_data_location_info') return Promise.resolve(current)
       if (cmd === 'restore_default_data_location') {
         submits += 1
         return Promise.resolve(submits === 1 ? choice : committed)
@@ -249,11 +306,20 @@ describe('DataLocationSettings.vue', () => {
       target_dir: '/Volumes/Sync/ledger-data',
     }
     mockOpen.mockResolvedValue('/Volumes/Sync/ledger-data')
-    let info = baseInfo
     mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'get_data_location_info') return Promise.resolve(info)
+      if (cmd === 'get_data_location_info') return Promise.resolve(baseInfo)
       if (cmd === 'submit_data_location_change') {
-        nextInfo({ ...baseInfo, configured_dir: '/Volumes/Sync/ledger-data', pending_restart: true })
+        // 提交后下一次查询返回新意图：展示值必须来自命令返回而非本地推断。
+        mockInvoke.mockImplementation((cmd2: string) => {
+          if (cmd2 === 'get_data_location_info') {
+            return Promise.resolve({
+              ...baseInfo,
+              configured_dir: '/Volumes/Sync/ledger-data',
+              pending_restart: true,
+            })
+          }
+          return Promise.reject(new Error(`unexpected invoke: ${cmd2}`))
+        })
         return Promise.resolve(committed)
       }
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
@@ -262,8 +328,8 @@ describe('DataLocationSettings.vue', () => {
     await flushPromises()
     await findButton(wrapper, '更改').trigger('click')
     await flushPromises()
-    void info
     expect(wrapper.html()).toContain('/Volumes/Sync/ledger-data')
+    expect(messageApi.success).toHaveBeenCalled()
     expect(localStorage.getItem('data_location_dir')).toBeNull()
   })
 })

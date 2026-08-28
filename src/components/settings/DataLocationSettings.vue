@@ -14,14 +14,18 @@ const message = useMessage()
 
 const info = ref<DataLocationInfo | null>(null)
 const loading = ref(false)
+const loadError = ref('')
 const submitting = ref(false)
 
 async function refresh() {
   loading.value = true
+  loadError.value = ''
   try {
     info.value = await api.getDataLocationInfo()
   } catch (e: any) {
-    message.error(`读取数据存储位置失败: ${e}`)
+    // 读取失败诚实呈现，不用「读取中…」假装一切正常。
+    loadError.value = `读取数据存储位置失败：${e}`
+    message.error(loadError.value)
   } finally {
     loading.value = false
   }
@@ -60,9 +64,15 @@ async function submitWithChoice(
     if (outcome.requires_choice) {
       const ok = await confirm(
         '目标目录已存在同名账本库（ledger.db）。\n\n' +
-          '「确定」接管该库作为活动数据；「取消」放弃本次更改（不做任何改动）。' +
+          '接管则把该库作为活动数据；取消换位则放弃本次更改（不做任何改动）。' +
           '接管后原位置库文件仍会保留。',
-        { title: '接管已有账本库？', kind: 'warning' },
+        {
+          title: '接管已有账本库？',
+          kind: 'warning',
+          // 二选一按钮文案显式化（spec：接管该库 / 取消换位），不靠「确定/取消」猜语义。
+          okLabel: '接管该库',
+          cancelLabel: '取消换位',
+        },
       )
       if (!ok) {
         message.info('已取消更改，数据存储位置未变化')
@@ -105,7 +115,11 @@ async function submitWithChoice(
       </NAlert>
 
       <NSpin :show="loading">
-        <NSpace align="center" :size="12">
+        <NSpace v-if="loadError" align="center" :size="12">
+          <NText type="error">{{ loadError }}</NText>
+          <NButton size="small" @click="refresh">重试</NButton>
+        </NSpace>
+        <NSpace v-else align="center" :size="12">
           <NText>当前生效位置：</NText>
           <NText style="word-break: break-all">
             {{ info?.active_dir ?? '读取中…' }}
@@ -115,7 +129,11 @@ async function submitWithChoice(
 
       <NSpace align="center" :size="12">
         <NButton type="primary" :loading="submitting" @click="pickAndSubmit">更改…</NButton>
-        <NButton :disabled="submitting" @click="restoreDefault">恢复默认</NButton>
+        <!-- 未配置任何意图目录即处于默认位置，「恢复默认」无意义故禁用
+             （契约不变量：configured_dir 非空 ⇔ 存在自定义位置意图）。 -->
+        <NButton :disabled="submitting || !info?.configured_dir" @click="restoreDefault">
+          恢复默认
+        </NButton>
       </NSpace>
     </NSpace>
   </NCard>
