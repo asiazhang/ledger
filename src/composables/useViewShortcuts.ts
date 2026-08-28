@@ -18,6 +18,8 @@ export const sidebarViews: Array<{ name: string; key?: string }> = [
   { name: 'investments', key: '6' },
   // 物品（issue #116）：暂无数字快捷键（1..9 已占满），仍进侧边栏菜单
   { name: 'items' },
+  // 订阅（issue #159）：同上，无数字快捷键
+  { name: 'subscriptions' },
   { name: 'budget', key: '7' },
   { name: 'ai', key: '8' },
   { name: 'settings', key: '9' },
