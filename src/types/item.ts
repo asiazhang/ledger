@@ -45,6 +45,14 @@ export interface ItemInput {
   purchase_transaction_id?: string | null
 }
 
+/** 处置物品入参（issue #120，对应后端 `models::item::ItemDisposeInput`）。 */
+export interface ItemDisposeInput {
+  /** 处置日期（YYYY-MM-DD），必填；不得早于购买日期。 */
+  disposal_date: string
+  /** 残值（整数分，可选）：省略/null 视同无残值（分子 = 总成本）。 */
+  residual_value_cents?: number | null
+}
+
 /** 物品列表项：物品实体 + 每天使用成本快照（后端 `item::cost` 接缝计算）。 */
 export interface ItemWithDailyCost extends Item {
   /** 已用天数：购买日 → 目标日的日历天数，含起止两端（在用 = 今天，已处置 = 处置日）。 */

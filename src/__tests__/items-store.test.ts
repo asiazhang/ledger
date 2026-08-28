@@ -189,6 +189,57 @@ describe('useItemsStore', () => {
     expect(store.items[0].name).toBe('手机')
   })
 
+  it('dispose 按 id 调用 dispose_item 后立即重拉，处置信息即可见（issue #120）', async () => {
+    const before = [baseItem()]
+    const after = [
+      baseItem({
+        status: 'disposed',
+        disposal_date: '2026-01-10',
+        residual_value_cents: 20_000,
+        version: 2,
+      }),
+    ]
+    let listCalls = 0
+    const disposeInput = { disposal_date: '2026-01-10', residual_value_cents: 20_000 }
+    mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
+      if (cmd === 'list_items') {
+        listCalls++
+        return Promise.resolve(listCalls === 1 ? before : after)
+      }
+      if (cmd === 'dispose_item') {
+        expect(args).toEqual({ id: 'item-1', input: disposeInput })
+        return Promise.resolve(null)
+      }
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const store = useItemsStore()
+    await flushPromises()
+
+    await store.dispose('item-1', disposeInput)
+    expect(listCalls).toBe(2)
+    expect(store.items[0].status).toBe('disposed')
+    expect(store.items[0].disposal_date).toBe('2026-01-10')
+    expect(store.items[0].residual_value_cents).toBe(20_000)
+  })
+
+  it('dispose 失败时抛出错误且不重拉', async () => {
+    const initial = [baseItem()]
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_items') return Promise.resolve(initial)
+      if (cmd === 'dispose_item') return Promise.reject(new Error('处置日期早于购买日期'))
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const store = useItemsStore()
+    await flushPromises()
+    const versionBefore = store.version
+
+    await expect(
+      store.dispose('item-1', { disposal_date: '2024-12-31', residual_value_cents: null }),
+    ).rejects.toThrow('处置日期早于购买日期')
+    expect(store.version).toBe(versionBefore)
+    expect(store.items[0].status).toBe('in_use')
+  })
+
   it('remove 调用 delete_item 后立即重拉，已删物品从列表消失', async () => {
     const initial = [baseItem()]
     const after = [] as ItemWithDailyCost[]

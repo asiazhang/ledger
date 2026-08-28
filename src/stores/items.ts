@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { api } from '@/api'
-import type { ItemInput, ItemWithDailyCost } from '@/types'
+import type { ItemDisposeInput, ItemInput, ItemWithDailyCost } from '@/types'
 
 /** 物品加载状态：`idle` 为初始瞬态（self-init 同步置为 `loading`，外部基本观察不到）。 */
 export type ItemsStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -72,6 +72,13 @@ export const useItemsStore = defineStore('items', () => {
     await refresh()
   }
 
+  /** 处置物品（issue #120）：置 disposed 并记录处置日期（必填）与可选残值；
+   *  对已处置物品再次处置 = 修正处置信息。成功后立即重拉（同 create）。 */
+  async function dispose(id: string, input: ItemDisposeInput): Promise<void> {
+    await api.disposeItem(id, input)
+    await refresh()
+  }
+
   /** 软删除物品（后端打 is_deleted=1，不物理移除）：成功后立即重拉（同上）。 */
   async function remove(id: string): Promise<void> {
     await api.deleteItem(id)
@@ -101,6 +108,7 @@ export const useItemsStore = defineStore('items', () => {
     refresh,
     create,
     update,
+    dispose,
     remove,
   }
 })

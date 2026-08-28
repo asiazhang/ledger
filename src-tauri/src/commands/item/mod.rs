@@ -1,8 +1,8 @@
-//! 物品（Item）命令层（issue #115 / #117 / #118 / spec #113 / ADR-0014）：创建、
-//! 列出、编辑与软删除物品。
+//! 物品（Item）命令层（issue #115 / #117 / #118 / #120 / spec #113 / ADR-0014）：创建、
+//! 列出、编辑、处置与软删除物品。
 //!
 //! 组织方式镜像 `commands::categories`：命令外壳（`create_item` / `list_items` /
-//! `delete_item`）+ `*_internal` 复用函数（BDD seam，验收：BDD 场景调用本层内部函数）。
+//! `delete_item` / `dispose_item`）+ `*_internal` 复用函数（BDD seam，验收：BDD 场景调用本层内部函数）。
 //!
 //! 接缝约定：
 //! - 金额折算走 Amount 接缝（`transaction::amount::convert_to_native`），不另写口径；
@@ -21,8 +21,19 @@ use crate::db::query::{query_all, query_one};
 use crate::db::{DbState, device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::item::cost;
-use crate::models::{Item, ItemInput, ItemStatus, ItemWithDailyCost};
+use crate::models::{Item, ItemDisposeInput, ItemInput, ItemStatus, ItemWithDailyCost};
 use crate::transaction::amount::{self, TransactionKind};
+
+/// 按 `id` 读未删除物品（多命令共用的前检）：不存在（或已软删除）返回 `None`。
+fn get_item_by_id(conn: &Connection, id: &str) -> Result<Option<Item>> {
+    query_one(
+        conn,
+        "SELECT id,name,purchase_date,total_cost_cents,currency_code,cost_native_cents,status, \
+         disposal_date,residual_value_cents,purchase_transaction_id,note,created_at,updated_at,version,device_id,is_deleted \
+         FROM items WHERE id=?1 AND is_deleted=0",
+        [id],
+    )
+}
 
 /// 列出全部未删除物品，每件附「已用天数」与「每天成本」。
 ///
@@ -154,13 +165,7 @@ pub fn update_item_internal(
     input: ItemInput,
     notify: &mut dyn FnMut(),
 ) -> Result<()> {
-    let existing: Option<Item> = query_one(
-        conn,
-        "SELECT id,name,purchase_date,total_cost_cents,currency_code,cost_native_cents,status, \
-         disposal_date,residual_value_cents,purchase_transaction_id,note,created_at,updated_at,version,device_id,is_deleted \
-         FROM items WHERE id=?1 AND is_deleted=0",
-        [id],
-    )?;
+    let existing = get_item_by_id(conn, id)?;
     let Some(existing) = existing else {
         return Err(AppError::NotFound("物品不存在".into()));
     };
@@ -216,6 +221,65 @@ pub fn update_item_internal(
     // 脏标记挂钩（issue #126）：落库成功即置脏，到期则写时顺带触发备份。
     crate::auto_backup::on_write(conn);
     // 写入成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
+    notify();
+    Ok(())
+}
+
+/// 处置物品（issue #120）：置 `status='disposed'` 并记录处置日期（必填）与
+/// 可选残值。已处置物品的每天成本由 [`daily_usage`] 摊到处置日，
+/// 分子 = 总成本 − 残值（口径全部在 `item::cost` 接缝，本函数只写状态字段）。
+///
+/// 校验：物品存在且未删除；处置日期可解析、不早于购买日期且不晚于今天（否则列表读取时
+/// 成本口径报错或分母虚增，均为不可达/错误状态）；残值存在时必须 ≥ 0
+/// （残值 ≥ 成本合法，分子下限 0）。
+/// 对已处置物品再次处置 = 修正处置信息（更新日期与残值，版本递增）。
+/// 成功后调用 `notify`（生产路径发 `ledger:changed`）。
+pub fn dispose_item_internal(
+    conn: &Connection,
+    id: &str,
+    input: ItemDisposeInput,
+    notify: &mut dyn FnMut(),
+) -> Result<()> {
+    let Some(existing) = get_item_by_id(conn, id)? else {
+        return Err(AppError::NotFound(format!("物品不存在: {id}")));
+    };
+
+    let disposal_date = parse_date(&input.disposal_date)?;
+    let purchase_date = parse_date(&existing.purchase_date)?;
+    if disposal_date < purchase_date {
+        return Err(AppError::Invalid(format!(
+            "处置日期 {disposal_date} 早于购买日期 {purchase_date}，无法处置"
+        )));
+    }
+    if disposal_date > cost::today() {
+        // 「已处置」语义上当日之后才成立：未来日期按录入错误拒绝，
+        // 避免每天成本按未来处置日摊（分母虚增）。
+        return Err(AppError::Invalid(format!(
+            "处置日期 {disposal_date} 不能晚于今天"
+        )));
+    }
+    if input.residual_value_cents.is_some_and(|v| v < 0) {
+        return Err(AppError::Invalid("残值不能为负".into()));
+    }
+
+    let updated = conn.execute(
+        "UPDATE items SET status='disposed', disposal_date=?2, residual_value_cents=?3, \
+         updated_at=?4, version=version+1, device_id=?5 WHERE id=?1 AND is_deleted=0",
+        rusqlite::params![
+            id,
+            disposal_date.format("%Y-%m-%d").to_string(),
+            input.residual_value_cents,
+            now_iso(),
+            device_id(),
+        ],
+    )?;
+    debug_assert_eq!(
+        updated, 1,
+        "前置存在性检查已排除 id 不存在/软删除，单连接下不可达"
+    );
+    // 脏标记挂钩（issue #126）：处置也是写，置脏到期顺带触发备份。
+    crate::auto_backup::on_write(conn);
+    // 处置成功 → 通知调用方发出失效信号（生产为 ledger:changed）。
     notify();
     Ok(())
 }
@@ -323,6 +387,20 @@ pub fn update_item(
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     update_item_internal(&conn, &id, input, &mut || {
         // 与 create_item 同款：独立领域写入 → 通用失效信号（issue #117）。
+        crate::events::emit_ledger_changed(&app);
+    })
+}
+
+#[tauri::command]
+pub fn dispose_item(
+    db: State<'_, DbState>,
+    app: tauri::AppHandle,
+    id: String,
+    input: ItemDisposeInput,
+) -> Result<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    dispose_item_internal(&conn, &id, input, &mut || {
+        // 物品是独立领域（非参考数据，ADR-0014）：直接发通用失效信号。
         crate::events::emit_ledger_changed(&app);
     })
 }

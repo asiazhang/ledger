@@ -135,6 +135,17 @@ pub struct ItemInput {
     pub purchase_transaction_id: Option<String>,
 }
 
+/// 处置物品入参（issue #120）：生命周期流转 `in_use` → `disposed`。
+/// 处置日期必填（不得早于购买日期，否则每天成本口径不可达）；残值可选，
+/// `Some` 时必须 ≥ 0。残值 ≥ 成本合法（分子下限 0，`item::cost` 口径）。
+#[derive(Debug, Clone, Deserialize)]
+pub struct ItemDisposeInput {
+    /// 处置日期（YYYY-MM-DD），必填；每天成本分母摊到该日。
+    pub disposal_date: String,
+    /// 残值（整数分，可选）：`None` 视同无残值（分子 = 总成本）。
+    pub residual_value_cents: Option<i64>,
+}
+
 /// 物品列表项：物品实体 + 每天使用成本快照（经 `item::cost` 接缝计算，
 /// 调用方不另写口径）。`used_days` / `per_day_cents` 为查询时刻快照，不落库。
 /// 成本分解三元组（分子 `numerator_cents` ÷ 天数 `used_days` = `per_day_cents`）
