@@ -641,7 +641,9 @@ fn insert_fx_rate_history(
 
 /// 旧版本发布备份停驻的 schema 版本：发布 tag 时的迁移序列长度（现序列为 9 个，
 /// 原 V005 FTS 迁移已移除，见 ADR-0027），恢复旧备份即停在此版本，
-/// 由 init_db 补齐后续迁移。
+/// 由 init_db 补齐后续迁移。真实旧备份可能残留 FTS 对象（无害）且可能缺
+/// app_settings（位置语义重排）：读侧 settings::get 缺表返回默认值、
+/// 写侧 settings::set 就地建表自愈。
 const V030_SCHEMA_VERSION: usize = 7;
 
 /// price_history：周采样唯一约束（每标的每周至多一条，同周不同采样日也拒绝）

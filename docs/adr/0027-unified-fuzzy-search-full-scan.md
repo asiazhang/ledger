@@ -26,7 +26,7 @@ ADR-0004 以 FTS5 虚拟表实现交易模糊搜索（整词 + 右锚前缀 + �
 1. **全局搜索弃用 FTS5，改为 Rust 全量扫描**。搜索时 SQL 取候选（非删除交易的备注 + 转出账户名，金额/日期过滤仍在 SQL 层走既有 B-tree 索引），Rust 内存中按统一语义契约逐条过滤，按交易日期降序排序后分页。
 2. **子序列匹配与首字母生成收口为纯函数**（`commands::search::text`），带边界单测；前端以 pinyin-pro 各自实现同一规格，接受生僻多音字的字库级分歧，不为字面一致耦合数据形状。
 3. **连带移除整套索引机制**：`search_transactions` 虚拟表、`search_reindex_queue`、三个入队触发器、后台定时刷新线程、启动对账、搜索结果 `stale` 标志（`TransactionSearchResult.stale` 字段随模型一并删除，前端「索引更新中」提示移除）。
-4. **SQL 变更不走「追加 drop 迁移」**：明确不考虑旧库兼容，原 V005__search_index.sql 迁移文件自迁移序列整体移除（后续迁移文件名不变，序列号不回填；`user_version` 按序列位置计数）。代价：旧 schema 的现存库（user_version 大于当前序列长度）打开时将被 rusqlite_migration 拒绝（DatabaseTooFarAhead），需重置或手动校正 user_version 并清理残留 FTS 对象；旧备份恢复语义以 `db::tests` 的升级路径测试为准。
+4. **SQL 变更不走「追加 drop 迁移」**：明确不考虑旧库兼容，原 V005__search_index.sql 迁移文件自迁移序列整体移除（后续迁移文件名不变，序列号不回填；`user_version` 按序列位置计数）。代价：旧 schema 的现存库（user_version 大于当前序列长度）打开时将被 rusqlite_migration 拒绝（DatabaseTooFarAhead），需重置或手动校正 user_version 并清理残留 FTS 对象。能打开的旧备份（user_version ≤ 序列长度）位置语义重排：残留 FTS 对象无害，app_settings 建表迁移可能被跳过——读侧 `settings::get` 缺表返回默认值、写侧 `settings::set` 就地建表自愈（均有单测），升级路径以 `db::tests` 测试为准。
 5. **搜索命令对外 API 形状不变**（参数、返回结构、分页语义），仅排序语义由 bm25 相关度改为交易日期降序（对外可见的行为变更，属规格预期）；写入路径立即可搜，无任何时效性容忍。
 
 ## 理由

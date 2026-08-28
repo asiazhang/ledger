@@ -113,7 +113,8 @@ pub fn search_transactions_internal(
     )?;
 
     // Rust 层：统一语义过滤（词条之间 AND；每词条对备注/转出账户名任一命中即算）。
-    // 过滤保持 SQL 给定序（日期降序），不重排。
+    // 过滤保持 SQL 给定序（日期降序），不重排。拼音首字母按候选×词条惰性重算，
+    // 不预计算：个人账本量级实测远低于感知阈值（ADR-0027，10 万条约 90ms/次）。
     let matched: Vec<Transaction> = candidates
         .into_iter()
         .filter(|c| {
