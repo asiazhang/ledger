@@ -17,7 +17,8 @@ use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::db::query::{FromRow, query_all};
-use crate::error::{AppError, Result};
+use crate::error::Result;
+use crate::scheduled_transactions::models::RecurrenceType;
 use crate::transaction::amount;
 
 /// 逐订阅行：计划基础信息 + 该订阅本月/本年实际花费（本位币）。
@@ -108,15 +109,15 @@ impl FromRow for PlanBase {
 ///
 /// 月付 ×1、年付 ÷12、周付 ×52÷12、日付 ×30；`recurrence_interval > 1` 时
 /// 按间隔均摊（每 N 期一扣 → 系数 ÷ N，如「每 3 月 ¥300」折算月成本 ¥100）。
-fn monthly_coefficient(recurrence_type: &str, recurrence_interval: i64) -> Result<f64> {
+/// 表约束已保证 `recurrence_interval > 0`（建表 CHECK），直接除法即可。
+fn monthly_coefficient(recurrence_type: RecurrenceType, recurrence_interval: i64) -> f64 {
     let per_cycle = match recurrence_type {
-        "monthly" => 1.0,
-        "yearly" => 1.0 / 12.0,
-        "weekly" => 52.0 / 12.0,
-        "daily" => 30.0,
-        other => return Err(AppError::Invalid(format!("未知的订阅周期类型: {other}"))),
+        RecurrenceType::Monthly => 1.0,
+        RecurrenceType::Yearly => 1.0 / 12.0,
+        RecurrenceType::Weekly => 52.0 / 12.0,
+        RecurrenceType::Daily => 30.0,
     };
-    Ok(per_cycle / recurrence_interval.max(1) as f64)
+    per_cycle / recurrence_interval as f64
 }
 
 /// 推算中间行：active 订阅计划的计费参数。
@@ -141,6 +142,9 @@ impl FromRow for PlanBilling {
 /// 推算成本（issue #161，ADR-0023 决策二）：按当前 active 订阅计划参数推算的
 /// 持续烧钱速度，只算 active、不看执行情况；金额在计划币种上折算本位币
 /// （缺汇率报错上抛）。纯展示口径：不落库、不进流水与预算。
+///
+/// 舍入口径：逐计划先折算本位币再乘系数、四舍五入到分，最后求和；
+/// 折算年成本 = 折算月成本合计 × 12（不在年这一级再舍入）。
 fn query_projected_cost(conn: &Connection) -> Result<(i64, i64)> {
     let plans: Vec<PlanBilling> = query_all(
         conn,
@@ -151,8 +155,10 @@ fn query_projected_cost(conn: &Connection) -> Result<(i64, i64)> {
     )?;
     let mut projected_month = 0i64;
     for p in plans {
+        // 未知周期类型为脏数据，报错上抛，不静默跳过
+        let recurrence_type: RecurrenceType = p.recurrence_type.parse()?;
         let native_cents = amount::convert_to_native(conn, p.amount_cents, &p.currency_code)?;
-        let coefficient = monthly_coefficient(&p.recurrence_type, p.recurrence_interval)?;
+        let coefficient = monthly_coefficient(recurrence_type, p.recurrence_interval);
         projected_month += (native_cents as f64 * coefficient).round() as i64;
     }
     Ok((projected_month, projected_month * 12))
