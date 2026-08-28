@@ -3,6 +3,7 @@ import { NTabs, NTabPane } from 'naive-ui'
 import CategoryManager from '@/components/CategoryManager.vue'
 import CurrencySettings from '@/components/settings/CurrencySettings.vue'
 import BackupSettings from '@/components/settings/BackupSettings.vue'
+import DataLocationSettings from '@/components/settings/DataLocationSettings.vue'
 import AppearanceSettings from '@/components/settings/AppearanceSettings.vue'
 import AboutSettings from '@/components/settings/AboutSettings.vue'
 </script>
@@ -29,6 +30,10 @@ import AboutSettings from '@/components/settings/AboutSettings.vue'
 
     <NTabPane name="about" tab="关于">
       <AboutSettings />
+    </NTabPane>
+
+    <NTabPane name="data-location" tab="存储位置">
+      <DataLocationSettings />
     </NTabPane>
   </NTabs>
 </template>
