@@ -37,6 +37,12 @@ export const darkOverrides: GlobalThemeOverrides = {
     textColor2: '#A0A0A0',
     textColor3: '#6E6E6E',
   },
+  Dropdown: {
+    // 浮层菜单（行右键菜单、下拉菜单）背景：在 popoverColor（#1C1C1E）基础上再抬一阶。
+    // 表格/卡片底色（#161618）与之几乎同阶，菜单浮在行上会淹没；Raycast 式分层即
+    // 「浮层比底层更亮」，配合 popover 自带 boxShadow2 阴影形成清晰边界。
+    color: '#2A2A2E',
+  },
   Card: {
     borderRadius: '12px',
   },
