@@ -1222,3 +1222,53 @@ fn trend_commands_return_empty_state_without_history() {
     assert_eq!(trend.currency_code, "CNY");
     assert!(trend.points.is_empty());
 }
+
+#[test]
+fn get_transaction_trade_returns_buy_detail_with_instrument_display() {
+    let conn = setup_db();
+    insert_account(&conn, "acc-inv", "证券户", "investment", "USD");
+    insert_instrument(&conn, "inst-t", "600519", "贵州茅台", "USD");
+    insert_rate_1_1(&conn, "USD");
+    let id =
+        insert_transaction(&conn, make_buy_input("acc-inv", "inst-t", 100.0, 1500, 500)).unwrap();
+
+    let trade = trade::get_transaction_trade(&conn, &id).unwrap();
+    assert_eq!(trade.instrument_id, "inst-t");
+    assert_eq!(trade.symbol, "600519");
+    assert_eq!(trade.instrument_name.as_deref(), Some("贵州茅台"));
+    assert!((trade.quantity - 100.0).abs() < 1e-9);
+    assert_eq!(trade.price_cents, 1500);
+    assert_eq!(trade.fee_cents, Some(500));
+}
+
+#[test]
+fn get_transaction_trade_rejects_missing_or_non_trade_transaction() {
+    let conn = setup_db();
+    insert_account(&conn, "acc-cash", "现金", "cash", "CNY");
+    // 非买卖交易（expense）无买卖明细
+    let expense_id = insert_transaction(
+        &conn,
+        TransactionInput {
+            kind: TransactionKind::Expense,
+            amount_cents: 1000,
+            currency_code: "CNY".into(),
+            account_id: "acc-cash".into(),
+            to_account_id: None,
+            category_id: None,
+            refund_of_transaction_id: None,
+            note: None,
+            date: "2026-01-10".into(),
+            instrument_id: None,
+            quantity: None,
+            price_cents: None,
+            fee_cents: None,
+            idempotency_key: None,
+        },
+    )
+    .unwrap();
+    let err = trade::get_transaction_trade(&conn, &expense_id).unwrap_err();
+    assert!(err.to_string().contains("无买卖明细"), "实际: {err}");
+    // 不存在的 id 同样 NotFound
+    let err = trade::get_transaction_trade(&conn, "no-such-txn").unwrap_err();
+    assert!(err.to_string().contains("无买卖明细"), "实际: {err}");
+}

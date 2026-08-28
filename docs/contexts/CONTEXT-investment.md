@@ -86,6 +86,16 @@
   - 分派用薄而穷尽的 `match`，不引入 trait 注册表（避免过度设计）。
 - **别名**：不使用“投资账户”（那是 `AccountType::Investment` 账户）、“证券模块”（偏数据层）。
 
+## TransactionTrade（交易买卖明细）
+
+- **定义**：一笔 buy/sell 核心交易域 Transaction 在投资域扩展表中的投影——标的、数量、单价、手续费，物理实现在 `security_transactions`（按 `transaction_id` 关联交易行）。
+- **边界**：
+  - **核心交易行不含投资字段**（ADR-0003 核心表 + 扩展表）：买入/卖出编辑（issue #180）回填标的/数量/价格/费用须经只读命令 `get_transaction_trade`（IPC 域命令）读取本投影，不把投资字段塞进核心 `Transaction` 模型。
+  - 投影随读带出 `symbol`/`instrument_name`（JOIN `instruments`），供回填后标的选择框直接显示标的而非裸 id。
+  - 无明细（交易不存在/非 buy/sell）返回 `NotFound`「无买卖明细」。
+  - **回填 ≠ 可改金额**：编辑提交走行为层全字段替换权威（`update_transaction`，与 HTTP PUT 同源），金额由 `prepare` 按数量×单价±手续费重算，明细投影只读。
+- **别名**：不使用“成交记录”（易与交易所对账单混淆）、“投资交易详情”。
+
 ## InvestedInstrument（持仓标的）
 
 - **定义**：有**当前持仓**（`security_lots.remaining_quantity > 0`，即 `v_holdings` 视图有行、且排除软删除账户的批次）的 Instrument，即“已投资”标的（ADR-0015）。

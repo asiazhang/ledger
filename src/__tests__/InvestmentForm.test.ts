@@ -119,3 +119,58 @@ describe('InvestmentForm.vue 移除「新增标的」入口（issue #152）', ()
     }
   })
 })
+
+describe('InvestmentForm.vue 编辑模式（issue #180）', () => {
+  const editingTx = {
+    id: 'txn-buy-1',
+    kind: 'buy' as const,
+    amount_cents: 15500,
+    currency_code: 'CNY',
+    amount_native_cents: 15500,
+    account_id: 'acc-1',
+    to_account_id: null,
+    category_id: null,
+    refund_of_transaction_id: null,
+    note: '建仓买入',
+    date: '2026-01-10',
+    created_at: '2026-01-10T01:00:00Z',
+    updated_at: '2026-01-10T01:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: false,
+  }
+
+  const editingTrade = {
+    instrument_id: 'ins-1',
+    symbol: 'NVDA',
+    instrument_name: '英伟达',
+    quantity: 100,
+    price_cents: 15000,
+    fee_cents: 500,
+  }
+
+  it('编辑回填：标的候选直接显示 symbol · name（不依赖搜索），按钮文案「保存修改」', () => {
+    const wrapper = mount(InvestmentForm, {
+      props: { kind: 'buy', submitLabel: '记买入', editing: editingTx, trade: editingTrade },
+    })
+    const select = instrumentSelect(wrapper)
+    expect(select.props('value')).toBe('ins-1')
+    expect((select.props('options') as Array<{ label: string }>)[0].label).toBe('NVDA · 英伟达')
+    expect(wrapper.text()).toContain('保存修改')
+    expect(wrapper.text()).not.toContain('记买入')
+  })
+
+  it('编辑提交：触发 saved 事件（父层据此关窗），创建路径仍触发 created', async () => {
+    const wrapper = mount(InvestmentForm, {
+      props: { kind: 'buy', submitLabel: '记买入', editing: editingTx, trade: editingTrade },
+    })
+    mockInvoke.mockImplementationOnce((cmd: string) => {
+      if (cmd === 'update_transaction') return Promise.resolve()
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    await wrapper.findAll('button').find((b) => b.text().includes('保存修改'))!.trigger('click')
+    await flushPromises()
+    expect(wrapper.emitted('saved')).toHaveLength(1)
+    expect(wrapper.emitted('created')).toBeUndefined()
+  })
+})

@@ -112,6 +112,33 @@ pub struct InstrumentListResult {
     pub total: i64,
 }
 
+/// 交易买卖明细（issue #180）：一笔 buy/sell 交易在 `security_transactions` 扩展表
+/// 中的投影（核心 `transactions` 行不含投资字段，见 ADR-0003 核心表 + 扩展表），
+/// 供投资表单编辑模式回填标的/数量/价格/费用。`symbol`/`instrument_name` 为
+/// JOIN `instruments` 带出的展示字段，保证回填后标的选择框可直接显示标的而非裸 id。
+#[derive(Debug, Serialize, Clone)]
+pub struct TransactionTrade {
+    pub instrument_id: String,
+    pub symbol: String,
+    pub instrument_name: Option<String>,
+    pub quantity: f64,
+    pub price_cents: i64,
+    pub fee_cents: Option<i64>,
+}
+
+impl FromRow for TransactionTrade {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(TransactionTrade {
+            instrument_id: row.get(0)?,
+            symbol: row.get(1)?,
+            instrument_name: row.get(2)?,
+            quantity: row.get(3)?,
+            price_cents: row.get(4)?,
+            fee_cents: row.get(5)?,
+        })
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Holding {
     pub id: String,
