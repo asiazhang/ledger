@@ -4,6 +4,8 @@ use cucumber::World;
 mod accounts_steps;
 #[path = "e2e/backup_steps.rs"]
 mod backup_steps;
+#[path = "e2e/budget_steps.rs"]
+mod budget_steps;
 #[path = "e2e/common.rs"]
 mod common;
 #[path = "e2e/dashboard_steps.rs"]
