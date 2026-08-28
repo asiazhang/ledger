@@ -6,6 +6,7 @@ import {
   NSelect,
   NTreeSelect,
   NDatePicker,
+  NInputNumber,
   NPopconfirm,
 } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
@@ -133,6 +134,8 @@ function makeDetail(
 // —— invoke mock：可变数据源，状态操作后重载读得到最新值 ——
 let mockPlans: ScheduledTransactionWithExt[] = []
 const mockDetails = new Map<string, ScheduledTransactionDetail>()
+/** 订阅编辑失败开关（issue #162 拒绝路径测试用） */
+let failSubscriptionUpdate = false
 
 /** 订阅花费总览 fixture（issue #160）：面板挂载即拉取，默认空数据 */
 const emptySpendOverview: SubscriptionSpendOverview = {
@@ -176,8 +179,50 @@ function baseInvoke() {
       }
       return Promise.resolve()
     }
+    if (cmd === 'update_scheduled_subscription') {
+      if (failSubscriptionUpdate) {
+        return Promise.reject(new Error('订阅金额不可编辑：改价 = 取消旧计划 + 新建'))
+      }
+      const input = args?.input as {
+        id: string
+        account_id: string
+        category_id: string | null
+        note: string | null
+      }
+      mockPlans = mockPlans.map((p) =>
+        p.core.id === input.id
+          ? {
+              ...p,
+              core: {
+                ...p.core,
+                account_id: input.account_id,
+                category_id: input.category_id,
+                note: input.note,
+              },
+            }
+          : p,
+      )
+      const detail = mockDetails.get(input.id)
+      if (detail) {
+        mockDetails.set(input.id, {
+          ...detail,
+          core: {
+            ...detail.core,
+            account_id: input.account_id,
+            category_id: input.category_id,
+            note: input.note,
+          },
+        })
+      }
+      return Promise.resolve()
+    }
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   }) as typeof invoke)
+}
+
+/** 定位弹窗表单内输入框：NModal teleport 到 body，需经 findComponent 锚定。 */
+function findInput(wrapper: ReturnType<typeof mount>, testid: string) {
+  return wrapper.findComponent(`[data-testid="${testid}"]`).find('input')
 }
 
 async function mountView() {
@@ -192,6 +237,7 @@ beforeEach(async () => {
   mockPlans = []
   mockDetails.clear()
   mockSpendOverview = emptySpendOverview
+  failSubscriptionUpdate = false
   baseInvoke()
   const store = useReferenceStore()
   await store.ensureFresh()
@@ -291,11 +337,6 @@ describe('SubscriptionsView 新建订阅模态对话框（issue #158）', () => 
   async function openCreateModal(wrapper: ReturnType<typeof mount>) {
     await wrapper.find('[data-testid="sub-create-open"]').trigger('click')
     await flushPromises()
-  }
-
-  /** 定位弹窗表单内输入框：NModal teleport 到 body，需经 findComponent 锚定。 */
-  function findInput(wrapper: ReturnType<typeof mount>, testid: string) {
-    return wrapper.findComponent(`[data-testid="${testid}"]`).find('input')
   }
 
   it('初始无弹窗，点击「新建订阅」打开模态对话框', async () => {
@@ -478,5 +519,112 @@ describe('SubscriptionsView 状态操作（issue #159）', () => {
     expect(wrapper.find('[data-testid="op-pause-c1"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="op-resume-c1"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="op-cancel-c1"]').exists()).toBe(false)
+  })
+})
+
+describe('SubscriptionsView 订阅编辑——仅非金额字段（issue #162）', () => {
+  /** 按标题定位弹窗：页面有两个 NModal，findComponent 只返回第一个。 */
+  function findModal(wrapper: ReturnType<typeof mount>, title: string) {
+    const modal = wrapper
+      .findAllComponents(NModal)
+      .find((m) => m.props('title') === title)
+    expect(modal, `应存在标题为「${title}」的弹窗`).toBeDefined()
+    return modal!
+  }
+
+  /** 打开 a1 行的编辑弹窗。 */
+  async function openEditModal(wrapper: ReturnType<typeof mount>) {
+    await wrapper.find('[data-testid="op-edit-a1"]').trigger('click')
+    await flushPromises()
+  }
+
+  it('进行中/已暂停行提供编辑入口，已取消行不提供', async () => {
+    const plan = makePlan({ id: 'a1' })
+    mockPlans = [plan, makePlan({ id: 'c1', status: 'cancelled', note: '已取消订阅' })]
+    mockDetails.set('a1', makeDetail(plan, []))
+    const wrapper = await mountView()
+    expect(wrapper.find('[data-testid="op-edit-a1"]').exists()).toBe(true)
+    // 已取消行不提供编辑（列表切到已取消后无编辑按钮）
+    await wrapper.find('[data-testid="filter-cancelled"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="op-edit-c1"]').exists()).toBe(false)
+  })
+
+  it('编辑弹窗预填非金额字段且无金额输入', async () => {
+    const plan = makePlan({
+      id: 'a1',
+      note: '视频会员',
+      category_id: 'cat-1',
+      account_id: 'acc-1',
+      amount_cents: 1500,
+    })
+    mockPlans = [plan]
+    mockDetails.set('a1', makeDetail(plan, []))
+    const wrapper = await mountView()
+    await openEditModal(wrapper)
+    const modal = findModal(wrapper, '编辑订阅')
+    expect(modal.props('show')).toBe(true)
+    expect(modal.props('title')).toBe('编辑订阅')
+    // 预填备注
+    expect(findInput(wrapper, 'sub-edit-note').element.value).toBe('视频会员')
+    // 无金额输入：无金额输入框、无数字步进（周期间隔）、无日期选择
+    expect(wrapper.findComponent('[data-testid="sub-amount"]').exists()).toBe(false)
+    expect(modal.findComponent(NInputNumber).exists()).toBe(false)
+    expect(modal.findComponent(NDatePicker).exists()).toBe(false)
+    // 弹窗内不出现计划金额
+    expect(modal.text()).not.toContain('¥15')
+  })
+
+  it('未选账户时不提交编辑', async () => {
+    const plan = makePlan({ id: 'a1' })
+    mockPlans = [plan]
+    mockDetails.set('a1', makeDetail(plan, []))
+    const wrapper = await mountView()
+    await openEditModal(wrapper)
+    // 清空账户（编辑弹窗内唯一的 NSelect 是扣款账户）
+    wrapper.findComponent(NSelect).vm.$emit('update:value', null)
+    await flushPromises()
+    await wrapper.findComponent('[data-testid="sub-edit-save"]').trigger('click')
+    await flushPromises()
+    expect(
+      mockInvoke.mock.calls.some(([cmd]) => cmd === 'update_scheduled_subscription'),
+    ).toBe(false)
+  })
+
+  it('提交编辑走订阅编辑命令，参数不含金额字段，成功后关闭弹窗并刷新清单', async () => {
+    const plan = makePlan({ id: 'a1', note: '视频会员' })
+    mockPlans = [plan]
+    mockDetails.set('a1', makeDetail(plan, []))
+    const wrapper = await mountView()
+    await openEditModal(wrapper)
+    const noteInput = findInput(wrapper, 'sub-edit-note')
+    await noteInput.setValue('音乐会员')
+    await noteInput.trigger('input')
+    // 账户/分类经组件 emit（编辑弹窗打开时新建弹窗未渲染，实例唯一）
+    wrapper.findComponent(NSelect).vm.$emit('update:value', 'acc-1')
+    wrapper.findComponent(NTreeSelect).vm.$emit('update:value', 'cat-1')
+    await flushPromises()
+    await wrapper.findComponent('[data-testid="sub-edit-save"]').trigger('click')
+    await flushPromises()
+    const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'update_scheduled_subscription')
+    expect(call).toBeDefined()
+    expect(call![1]).toEqual({
+      input: { id: 'a1', account_id: 'acc-1', category_id: 'cat-1', note: '音乐会员' },
+    })
+    // 弹窗关闭且清单刷新（新备注出现在列表）
+    expect(findModal(wrapper, '编辑订阅').props('show')).toBe(false)
+    expect(wrapper.text()).toContain('音乐会员')
+  })
+
+  it('提交失败时弹窗保持打开', async () => {
+    const plan = makePlan({ id: 'a1' })
+    mockPlans = [plan]
+    mockDetails.set('a1', makeDetail(plan, []))
+    const wrapper = await mountView()
+    failSubscriptionUpdate = true
+    await openEditModal(wrapper)
+    await wrapper.findComponent('[data-testid="sub-edit-save"]').trigger('click')
+    await flushPromises()
+    expect(findModal(wrapper, '编辑订阅').props('show')).toBe(true)
   })
 })

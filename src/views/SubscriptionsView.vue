@@ -120,6 +120,48 @@ async function create() {
 }
 
 // ---------------------------------------------------------------------------
+// 编辑订阅（issue #162，ADR-0023 决策三）：仅非金额字段（备注/账户/分类），
+// 弹窗无金额输入；提交走订阅编辑命令，携带金额字段会被后端显式拒绝。
+// 编辑不改已生成的期次与交易（期次执行时从计划读取这些字段），只影响未来。
+// ---------------------------------------------------------------------------
+
+const showEditModal = ref(false)
+const editingId = ref<string | null>(null)
+const editNote = ref('')
+const editAccountId = ref<string | null>(null)
+const editCategoryId = ref<string | null>(null)
+
+function openEdit(row: SubscriptionRow) {
+  editingId.value = row.plan.core.id
+  editNote.value = row.plan.core.note ?? ''
+  editAccountId.value = row.plan.core.account_id
+  editCategoryId.value = row.plan.core.category_id
+  showEditModal.value = true
+}
+
+async function saveEdit() {
+  if (!editingId.value) return
+  if (!editAccountId.value) {
+    message.warning('请选择扣款账户')
+    return
+  }
+  try {
+    await api.updateScheduledSubscription({
+      id: editingId.value,
+      account_id: editAccountId.value,
+      category_id: editCategoryId.value,
+      note: editNote.value.trim() || null,
+    })
+    message.success('已保存')
+    showEditModal.value = false
+    await load()
+    refreshSpend()
+  } catch (e) {
+    message.error(`保存失败: ${e}`)
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 清单：list_scheduled_transactions 过滤 subscription + 状态过滤；
 // 下期扣款取 get_scheduled_transaction_detail 的最早 pending 期次（窗口外显示 —）
 // ---------------------------------------------------------------------------
@@ -259,6 +301,20 @@ const columns: DataTableColumns<SubscriptionRow> = [
     render: (row) => {
       const status = row.plan.core.status
       const buttons: VNode[] = []
+      if (status === 'active' || status === 'paused') {
+        // 编辑仅非金额字段（issue #162，ADR-0023 决策三）；已取消不提供编辑
+        buttons.push(
+          h(
+            NButton,
+            {
+              size: 'tiny',
+              'data-testid': `op-edit-${row.plan.core.id}`,
+              onClick: () => openEdit(row),
+            },
+            () => '编辑',
+          ),
+        )
+      }
       if (status === 'active') {
         buttons.push(
           h(
@@ -437,6 +493,52 @@ onMounted(() => {
           <NSpace justify="end">
             <NButton data-testid="sub-create-cancel" @click="showCreateModal = false">取消</NButton>
             <NButton type="primary" data-testid="sub-create" @click="create">创建订阅</NButton>
+          </NSpace>
+        </NSpace>
+      </NForm>
+    </NModal>
+
+    <!-- 编辑订阅弹窗（issue #162）：仅非金额字段（备注/账户/分类），无金额输入 -->
+    <NModal
+      v-model:show="showEditModal"
+      title="编辑订阅"
+      preset="card"
+      display-directive="if"
+      style="width: 480px"
+      :bordered="false"
+    >
+      <NForm label-placement="left" :show-feedback="false" size="small">
+        <NSpace vertical :size="12">
+          <NFormItem label="备注">
+            <NInput
+              v-model:value="editNote"
+              data-testid="sub-edit-note"
+              placeholder="服务名称"
+              style="width: 280px"
+            />
+          </NFormItem>
+          <NFormItem label="扣款账户">
+            <NSelect
+              v-model:value="editAccountId"
+              :options="accountOptions"
+              placeholder="选择账户"
+              style="width: 200px"
+            />
+          </NFormItem>
+          <NFormItem label="分类">
+            <NTreeSelect
+              v-model:value="editCategoryId"
+              :options="categoryTreeOptions"
+              placeholder="选择分类"
+              filterable
+              clearable
+              :consistent-menu-width="false"
+              style="width: 220px"
+            />
+          </NFormItem>
+          <NSpace justify="end">
+            <NButton data-testid="sub-edit-cancel" @click="showEditModal = false">取消</NButton>
+            <NButton type="primary" data-testid="sub-edit-save" @click="saveEdit">保存</NButton>
           </NSpace>
         </NSpace>
       </NForm>

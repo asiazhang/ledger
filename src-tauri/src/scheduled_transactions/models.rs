@@ -256,6 +256,33 @@ pub struct UpdateStatusInput {
     pub new_status: ScheduledStatus,
 }
 
+/// 金额哨兵字段反序列化（ADR-0023 决策三）：请求体中该 key 一旦出现
+/// （含显式 `null`）即记为 `true`，由领域函数显式拒绝。
+/// 不用 `Option<i64>`：显式 `null` 会被反序列化为 `None` 而漏过拒绝。
+fn de_amount_sentinel<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserializer
+        .deserialize_any(serde::de::IgnoredAny)
+        .map(|_| true)
+}
+
+/// 订阅编辑输入（issue #162，ADR-0023 决策三）：仅允许金额以外字段
+/// （备注、分类、扣款账户）。`amount_cents` / `total_amount_cents` 为兼容哨兵：
+/// 请求一旦携带即被后端显式拒绝——改价 = 取消旧计划 + 新建，不做「改价对未来生效」。
+#[derive(Debug, Deserialize)]
+pub struct UpdateSubscriptionInput {
+    pub id: String,
+    pub account_id: String,
+    pub category_id: Option<String>,
+    pub note: Option<String>,
+    #[serde(default, deserialize_with = "de_amount_sentinel")]
+    pub amount_cents: bool,
+    #[serde(default, deserialize_with = "de_amount_sentinel")]
+    pub total_amount_cents: bool,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ExecuteOccurrenceInput {
     pub occurrence_id: String,
