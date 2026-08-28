@@ -302,3 +302,53 @@ impl FromRow for PnlDetail {
         })
     }
 }
+
+// ---------------------------------------------------------------------------
+// 走势查询（issue #138 / spec #135 / ADR-0019：PortfolioValueTrend）
+// ---------------------------------------------------------------------------
+
+/// 走势查询区间：可选起止 ISO 8601 日期，`None` 表示该侧不设界。
+/// 前端预设区间（1 月 / 3 月 / 1 年 / 全部）换算成起止日期传入。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TrendRange {
+    /// 起始日期（含），ISO 8601。
+    pub start_date: Option<String>,
+    /// 截止日期（含），ISO 8601。
+    pub end_date: Option<String>,
+}
+
+/// 单标的走势采样点：周采样交易日 + 收盘价（报价币种整数分）。
+#[derive(Debug, Serialize)]
+pub struct PriceTrendPoint {
+    /// 周采样交易日（该周最后一个有报价交易日），ISO 8601 日期。
+    pub date: String,
+    /// 收盘价（分，报价币种）。
+    pub price_cents: i64,
+    /// 报价币种（港股 HKD、沪深 CNY）。
+    pub currency_code: String,
+}
+
+/// 单标的走势：区间裁剪后的周采样点序列（PriceHistory 直出，从首个有效点开始）。
+#[derive(Debug, Serialize)]
+pub struct InstrumentPriceTrend {
+    pub instrument_id: String,
+    pub points: Vec<PriceTrendPoint>,
+}
+
+/// 组合走势采样点：该周各持仓标的「持有数量 × 周线价格」折算到本位币后的合计。
+#[derive(Debug, Serialize)]
+pub struct PortfolioTrendPoint {
+    /// 所属 ISO 周的周一（周点 x 坐标，按周连续、缺口连点跨越），ISO 8601 日期。
+    pub date: String,
+    /// 该周组合总市值（分，本位币）。
+    pub market_value_cents: i64,
+}
+
+/// 投资资产走势（PortfolioValueTrend）：组合市值周点曲线。
+/// `points` 为空即无任何历史数据的空态（前端据此渲染引导文案）。
+#[derive(Debug, Serialize)]
+pub struct PortfolioValueTrend {
+    /// 折算基准（本位币）。
+    pub currency_code: String,
+    pub points: Vec<PortfolioTrendPoint>,
+}

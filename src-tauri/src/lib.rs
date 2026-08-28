@@ -149,6 +149,8 @@ pub fn run() {
             commands::list_instruments,
             commands::create_instrument,
             commands::list_holdings,
+            commands::instrument_price_trend,
+            commands::portfolio_value_trend,
             commands::list_items,
             commands::create_item,
             commands::update_item,

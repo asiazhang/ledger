@@ -140,3 +140,35 @@ export interface RealizedPnlSummary {
   by_instrument: InstrumentPnl[]
   details: PnlDetail[]
 }
+
+/** 走势查询区间：可选起止 ISO 日期，缺省表示该侧不设界（"全部"区间） */
+export interface TrendRange {
+  start_date?: string | null
+  end_date?: string | null
+}
+
+/** 单标的走势采样点：周采样交易日 + 收盘价（报价币种整数分） */
+export interface PriceTrendPoint {
+  date: string
+  price_cents: number
+  currency_code: string
+}
+
+/** 单标的走势：区间裁剪后的周采样点序列（从首个有效点开始） */
+export interface InstrumentPriceTrend {
+  instrument_id: string
+  points: PriceTrendPoint[]
+}
+
+/** 组合走势采样点：该周组合总市值（分，本位币） */
+export interface PortfolioTrendPoint {
+  date: string
+  market_value_cents: number
+}
+
+/** 投资资产走势：组合市值周点曲线；points 为空即无历史数据的空态 */
+export interface PortfolioValueTrend {
+  /** 折算基准（本位币） */
+  currency_code: string
+  points: PortfolioTrendPoint[]
+}

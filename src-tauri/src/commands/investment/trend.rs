@@ -1,0 +1,261 @@
+//! 走势查询（issue #138 / spec #135 / ADR-0019）：PortfolioValueTrend 的取数与推算。
+//!
+//! - 单标的走势：`price_history` 直出，按区间裁剪，从首个有效采样点开始。
+//! - 组合市值走势：当期持有数量由 buy/sell 交易流水逐期推算（不物化快照），
+//!   各标的市值 = 数量 × 当期周线价格；非本位币经同期 `fx_rate_history`
+//!   正反向兜底折算到 DefaultCurrency 后汇总为一条曲线。
+//! - 某周缺价格或缺汇率则该贡献被跳过（不伪造数据）；全部贡献缺失的周无点，
+//!   曲线从区间内首个有效采样点开始。
+
+use std::collections::{BTreeMap, HashMap};
+
+use chrono::NaiveDate;
+use rusqlite::Connection;
+
+use crate::error::{AppError, Result};
+use crate::models::{
+    InstrumentPriceTrend, PortfolioTrendPoint, PortfolioValueTrend, PriceTrendPoint, TrendRange,
+};
+use crate::transaction::amount::default_currency_code;
+
+/// 校验区间：日期格式合法且起点不晚于终点。返回原样起止字符串（SQL 字符串比较
+/// 对 ISO 8601 日期即时间序）。
+fn validate_range(range: &TrendRange) -> Result<()> {
+    let parse = |label: &str, raw: &Option<String>| -> Result<Option<NaiveDate>> {
+        raw.as_deref()
+            .map(|s| {
+                NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                    .map_err(|_| AppError::Invalid(format!("{label}日期格式无效: {s}")))
+            })
+            .transpose()
+    };
+    let start = parse("起始", &range.start_date)?;
+    let end = parse("截止", &range.end_date)?;
+    if let (Some(s), Some(e)) = (start, end)
+        && s > e
+    {
+        return Err(AppError::Invalid("起始日期不能晚于截止日期".into()));
+    }
+    Ok(())
+}
+
+/// 单标的走势：PriceHistory 直出，区间裁剪（含端点），按采样日升序。
+pub(crate) fn query_instrument_price_trend(
+    conn: &Connection,
+    instrument_id: &str,
+    range: &TrendRange,
+) -> Result<InstrumentPriceTrend> {
+    validate_range(range)?;
+
+    let mut conditions = vec!["instrument_id=?1".to_string()];
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(instrument_id.to_string())];
+    if let Some(start) = &range.start_date {
+        params.push(Box::new(start.clone()));
+        conditions.push(format!("trade_date>=?{}", params.len()));
+    }
+    if let Some(end) = &range.end_date {
+        params.push(Box::new(end.clone()));
+        conditions.push(format!("trade_date<=?{}", params.len()));
+    }
+    let sql = format!(
+        "SELECT trade_date, price_cents, currency_code FROM price_history \
+         WHERE {} ORDER BY trade_date",
+        conditions.join(" AND ")
+    );
+
+    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+    let mut points = Vec::new();
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(param_refs.as_slice(), |r| {
+        Ok(PriceTrendPoint {
+            date: r.get(0)?,
+            price_cents: r.get(1)?,
+            currency_code: r.get(2)?,
+        })
+    })?;
+    for row in rows {
+        points.push(row?);
+    }
+
+    Ok(InstrumentPriceTrend {
+        instrument_id: instrument_id.to_string(),
+        points,
+    })
+}
+
+/// 区间内的一条价格历史周点行。
+struct PriceRow {
+    instrument_id: String,
+    trade_date: String,
+    week_start: String,
+    price_cents: i64,
+    currency_code: String,
+}
+
+/// 组合市值走势：逐周汇总「当期持有数量 × 周线价格」（折算到本位币）。
+///
+/// 数量推算：对每条价格行，取该标的截至其采样日的 buy/sell 流水净数量；
+/// 缺价格或缺同期汇率的标的该周跳过，全周无有效贡献则该周无点。
+pub(crate) fn query_portfolio_value_trend(
+    conn: &Connection,
+    range: &TrendRange,
+) -> Result<PortfolioValueTrend> {
+    validate_range(range)?;
+    let native = default_currency_code();
+
+    // 1. 区间内价格历史周点（week_start 为 STORED 生成列，直读即为周键）。
+    let mut conditions: Vec<String> = vec!["1=1".to_string()];
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    if let Some(start) = &range.start_date {
+        params.push(Box::new(start.clone()));
+        conditions.push(format!("trade_date>=?{}", params.len()));
+    }
+    if let Some(end) = &range.end_date {
+        params.push(Box::new(end.clone()));
+        conditions.push(format!("trade_date<=?{}", params.len()));
+    }
+    let price_sql = format!(
+        "SELECT instrument_id, trade_date, week_start, price_cents, currency_code \
+         FROM price_history WHERE {} ORDER BY trade_date",
+        conditions.join(" AND ")
+    );
+    let mut price_rows: Vec<PriceRow> = Vec::new();
+    {
+        let mut stmt = conn.prepare(&price_sql)?;
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |r| {
+            Ok(PriceRow {
+                instrument_id: r.get(0)?,
+                trade_date: r.get(1)?,
+                week_start: r.get(2)?,
+                price_cents: r.get(3)?,
+                currency_code: r.get(4)?,
+            })
+        })?;
+        for row in rows {
+            price_rows.push(row?);
+        }
+    }
+
+    // 2. 同期汇率历史：数据量小（周粒度、币种对个位数），全量载入建周键索引。
+    let mut fx: HashMap<(String, String), HashMap<String, f64>> = HashMap::new();
+    {
+        let mut stmt =
+            conn.prepare("SELECT base_code, quote_code, week_start, rate FROM fx_rate_history")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, f64>(3)?,
+            ))
+        })?;
+        for row in rows {
+            let (base, quote, week, rate) = row?;
+            fx.entry((base, quote)).or_default().insert(week, rate);
+        }
+    }
+
+    // 3. buy/sell 交易流水：只按区间终点截断——起点之前的持仓靠流水累积带入，
+    //    不用起点过滤。流水查询参数独立编号（至多一个终点日期，恒为 ?1）。
+    let mut flow_sql = String::from(
+        "SELECT st.instrument_id, t.date, st.action, st.quantity \
+         FROM security_transactions st JOIN transactions t ON t.id = st.transaction_id \
+         WHERE t.is_deleted=0 AND st.action IN ('buy','sell') AND st.quantity IS NOT NULL",
+    );
+    let mut flow_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    if let Some(end) = &range.end_date {
+        flow_sql.push_str(" AND t.date<=?1");
+        flow_params.push(Box::new(end.clone()));
+    }
+    flow_sql.push_str(" ORDER BY st.instrument_id, t.date");
+    let flow_refs: Vec<&dyn rusqlite::ToSql> = flow_params.iter().map(|b| b.as_ref()).collect();
+
+    // 每标的按日期升序的带符号数量流水（buy 为正、sell 为负）。
+    let mut flows: HashMap<String, Vec<(String, f64)>> = HashMap::new();
+    {
+        let mut stmt = conn.prepare(&flow_sql)?;
+        let rows = stmt.query_map(flow_refs.as_slice(), |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, f64>(3)?,
+            ))
+        })?;
+        for row in rows {
+            let (instrument_id, date, action, quantity) = row?;
+            let signed = if action == "buy" { quantity } else { -quantity };
+            flows.entry(instrument_id).or_default().push((date, signed));
+        }
+    }
+
+    // 4. 按周聚合：某标的缺汇率则跳过该贡献；全周无有效贡献则该周无点。
+    let mut by_week: BTreeMap<String, Vec<PriceRow>> = BTreeMap::new();
+    for row in price_rows {
+        by_week.entry(row.week_start.clone()).or_default().push(row);
+    }
+
+    let mut points = Vec::new();
+    for (week, rows) in by_week {
+        let mut total = 0i64;
+        let mut contributed = false;
+        for row in rows {
+            let rate = if row.currency_code == native {
+                Some(1.0)
+            } else {
+                historical_fx_rate(&fx, &row.currency_code, native, &week)
+            };
+            let Some(rate) = rate else { continue };
+            let quantity = held_quantity(&flows, &row.instrument_id, &row.trade_date);
+            let value = (quantity * row.price_cents as f64).round() as i64;
+            total += (value as f64 * rate).round() as i64;
+            contributed = true;
+        }
+        if contributed {
+            points.push(PortfolioTrendPoint {
+                date: week,
+                market_value_cents: total,
+            });
+        }
+    }
+
+    Ok(PortfolioValueTrend {
+        currency_code: native.to_string(),
+        points,
+    })
+}
+
+/// 截至某日（含当日）的持有数量：带符号流水按日期前缀求和。
+fn held_quantity(
+    flows: &HashMap<String, Vec<(String, f64)>>,
+    instrument_id: &str,
+    as_of: &str,
+) -> f64 {
+    flows.get(instrument_id).map_or(0.0, |flow| {
+        let n = flow.partition_point(|(date, _)| date.as_str() <= as_of);
+        flow[..n].iter().map(|(_, quantity)| quantity).sum()
+    })
+}
+
+/// 查询同期历史汇率（正查失败则反查取倒数），与 Amount 接缝的正反向兜底同思路；
+/// 同期缺失返回 `None`（调用方跳过该贡献，不用当期汇率近似历史）。
+fn historical_fx_rate(
+    fx: &HashMap<(String, String), HashMap<String, f64>>,
+    base: &str,
+    quote: &str,
+    week_start: &str,
+) -> Option<f64> {
+    if base == quote {
+        return Some(1.0);
+    }
+    if let Some(rate) = fx
+        .get(&(base.to_string(), quote.to_string()))
+        .and_then(|w| w.get(week_start))
+    {
+        return Some(*rate);
+    }
+    fx.get(&(quote.to_string(), base.to_string()))
+        .and_then(|w| w.get(week_start))
+        .map(|rev| 1.0 / rev)
+}

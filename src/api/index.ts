@@ -27,12 +27,14 @@ import type {
   InstrumentInput,
   InstrumentListFilter,
   InstrumentListResult,
+  InstrumentPriceTrend,
   ItemInput,
   ItemWithDailyCost,
   MarketPrice,
   MarketPriceInput,
   MonthlySummary,
   PnlFilter,
+  PortfolioValueTrend,
   PruneResult,
   RealizedPnlSummary,
   RestoreResult,
@@ -40,6 +42,7 @@ import type {
   ScheduledTransactionWithExt,
   CancelSyncResult,
   SyncHoldingPricesResult,
+  TrendRange,
   TransactionInput,
   TransactionListFilter,
   TransactionListResult,
@@ -115,6 +118,15 @@ export const api = {
 
   // 持仓
   listHoldings: () => invoke<Holding[]>('list_holdings'),
+
+  // 走势（issue #138）：单标的周采样价格序列与组合市值周点曲线
+  instrumentPriceTrend: (instrumentId: string, filter?: TrendRange | null) =>
+    invoke<InstrumentPriceTrend>('instrument_price_trend', {
+      instrumentId,
+      filter: filter ?? null,
+    }),
+  portfolioValueTrend: (filter?: TrendRange | null) =>
+    invoke<PortfolioValueTrend>('portfolio_value_trend', { filter: filter ?? null }),
 
   // 已实现盈亏汇总
   realizedPnlSummary: (filter?: PnlFilter) =>
