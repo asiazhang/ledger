@@ -94,7 +94,7 @@ function renderMenuIcon(name: string) {
 }
 
 // 菜单项与快捷键共用同一映射（sidebarViews，顺序即菜单顺序）；
-// 有数字键的项右侧附快捷键提示，无键项不展示
+// 每项右侧附快捷键提示（数字位或设置项的 ⌘,）
 const menuOptions: MenuOption[] = sidebarViews.map(({ name, key }) => ({
   key: name,
   icon: renderMenuIcon(name),
@@ -107,7 +107,7 @@ const menuOptions: MenuOption[] = sidebarViews.map(({ name, key }) => ({
     ]),
 }))
 
-// 视图快捷键：窗口内 Cmd/Ctrl+1..9 切换视图（弹窗/确认框打开时自动抑制）
+// 视图快捷键：窗口内 Cmd/Ctrl+1..0 与 Cmd/Ctrl+, 切换视图（弹窗/确认框打开时自动抑制）
 useViewShortcuts(router)
 
 function handleSelect(key: string) {

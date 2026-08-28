@@ -4,28 +4,33 @@ import type { Router } from 'vue-router'
 export interface ViewShortcut {
   /** 路由 name（与侧边栏菜单 key 一致） */
   name: string
-  /** 主数字键，如 '1'..'9' */
+  /** 主键：数字 '1'..'0' 或 ','（设置） */
   key: string
 }
 
-/** 侧边栏视图单一来源（顺序 = 菜单顺序）；无主数字键的视图不参与 Cmd/Ctrl 快捷键。 */
+/**
+ * 侧边栏视图单一来源（顺序 = 菜单顺序 = 数字键位）。
+ * 排序原则：日常记账动线 → 资金规划 → 分析工具 → 低频/系统。
+ * 每个视图恰好一个快捷键：数字 1–0 按菜单位置对应前 10 个视图，
+ * 设置用 Cmd/Ctrl+,（macOS「设置」惯例键位，避免占用 Cmd+S 的「保存」肌肉记忆）。
+ */
 export const sidebarViews: Array<{ name: string; key?: string }> = [
   { name: 'dashboard', key: '1' },
   { name: 'transactions', key: '2' },
-  { name: 'search', key: '3' },
-  { name: 'accounts', key: '4' },
-  { name: 'reports', key: '5' },
+  { name: 'accounts', key: '3' },
+  { name: 'budget', key: '4' },
+  // 订阅（issue #159）：原无快捷键（1..9 已占满），重排后归入数字位 5
+  { name: 'subscriptions', key: '5' },
   { name: 'investments', key: '6' },
-  // 物品（issue #116）：暂无数字快捷键（1..9 已占满），仍进侧边栏菜单
-  { name: 'items' },
-  // 订阅（issue #159）：同上，无数字快捷键
-  { name: 'subscriptions' },
-  { name: 'budget', key: '7' },
-  { name: 'ai', key: '8' },
-  { name: 'settings', key: '9' },
+  { name: 'reports', key: '7' },
+  { name: 'search', key: '8' },
+  // 物品（issue #116）：重排后归入数字位 9
+  { name: 'items', key: '9' },
+  { name: 'ai', key: '0' },
+  { name: 'settings', key: ',' },
 ]
 
-/** 视图快捷键映射：按侧边栏菜单顺序，Cmd/Ctrl+1..9。 */
+/** 视图快捷键映射：按侧边栏菜单顺序，Cmd/Ctrl+1..0 与 Cmd/Ctrl+,。 */
 export const viewShortcuts: ViewShortcut[] = sidebarViews
   .filter((v): v is { name: string; key: string } => v.key !== undefined)
   .map(({ name, key }) => ({ name, key }))
@@ -47,7 +52,7 @@ function isPrimaryModifier(e: KeyboardEvent): boolean {
   return isMacPlatform() ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey
 }
 
-/** 纯函数：命中视图快捷键则返回路由 name，否则 null（排除 Shift/Alt/混按/非主数字键） */
+/** 纯函数：命中视图快捷键则返回路由 name，否则 null（排除 Shift/Alt/混按/未映射键） */
 export function matchViewShortcut(e: KeyboardEvent): string | null {
   if (e.altKey || e.shiftKey) return null
   if (!isPrimaryModifier(e)) return null
