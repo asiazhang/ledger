@@ -5,7 +5,7 @@
 ## 探索前先阅读
 
 - 仓库根目录的 **`CONTEXT-MAP.md`**（如果存在）—— 领域词汇表地图，指向各分域词汇表文件。阅读与主题相关的每一个。
-- 各分域词汇表 **`CONTEXT-*.md`**（无地图时可能是单个根 `CONTEXT.md`）。
+- 各分域词汇表 **`docs/contexts/CONTEXT-*.md`**（无地图时可能是单个根 `CONTEXT.md`）。
 - **`docs/adr/`** —— 阅读与你即将工作区域相关的 ADR。在多上下文仓库中，还要检查 `src/<context>/docs/adr/` 中的上下文级决策。
 
 如果上述文件不存在，**静默继续**。不要提示缺失；也不要建议预先创建。`/domain-modeling` 技能（通过 `/grill-with-docs` 和 `/improve-codebase-architecture` 触发）会在术语或决策真正被确定时惰性创建它们。
@@ -28,9 +28,11 @@
 ```
 /
 ├── CONTEXT-MAP.md
-├── CONTEXT-core.md          ← 分域词汇表（本仓库集中存放于根目录）
-├── CONTEXT-<domain>.md
-├── docs/adr/                ← 系统级决策
+├── docs/
+│   └── contexts/
+│       ├── CONTEXT-core.md      ← 分域词汇表（本仓库集中存放于此）
+│       └── CONTEXT-<domain>.md
+├── docs/adr/                    ← 系统级决策
 └── src/
 ```
 

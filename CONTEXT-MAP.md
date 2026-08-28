@@ -4,7 +4,7 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 
 ## 结构约定
 
-- 全部分域文件与地图**同层集中存放**（仓库根目录 `CONTEXT-*.md`），不按源码目录散布——本仓库的域与目录结构不对齐（一个域横跨前后端），按目录放会误导。
+- 全部分域文件**集中存放于 `docs/contexts/`**，不按源码目录散布——本仓库的域与目录结构不对齐（一个域横跨前后端），按目录放会误导；地图独自留在根目录，作为唯一入口。
 - **术语全库唯一**：任一术语只在一份分域文件中定义，各分域文件间不复制定义。
 - **跨域共享术语归核心交易域**：被多个域消费的概念（Transaction、Amount Model、Transaction Kind Mapping、Category、DefaultCurrency 等）只在核心交易域定义；其他域以「见核心交易域 X」引用，不复制定义。
 - **新增术语进哪份文件**：按自然域归属放入对应分域；若它是被多域消费的共享概念，进核心交易域；单列小域只接纳体量小且与既有域边界清晰的独立概念（如物品域）。
@@ -14,14 +14,14 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 
 | # | 分域 | 文件 | 条目主题 |
 |---|------|------|----------|
-| 1 | 核心交易 | [`CONTEXT-core.md`](CONTEXT-core.md) | Transaction、InvolvingAccount、Amount Model、Transaction Kind Mapping、Category、DefaultCurrency、TransactionSearch、万分位分组、耗时日志、慢查询 |
-| 2 | 定时计划 | [`CONTEXT-scheduled-plans.md`](CONTEXT-scheduled-plans.md) | ScheduledTransaction 及三种业务形态（分期/订阅/定时转账）、Occurrence、Plan Lifecycle、Timing、Counterparty、Recurrence Rule、Failure Policy |
-| 3 | 投资域 | [`CONTEXT-investment.md`](CONTEXT-investment.md) | Instrument、MarketPrice、PriceHistory、FxRateHistory、PortfolioValueTrend、Holding、NetWorth、Investment、InvestedInstrument、InstrumentSync、HoldingPriceSync |
-| 4 | AI 导入 | [`CONTEXT-ai-import.md`](CONTEXT-ai-import.md) | AI API、AIReadbackVerification、AICleanupDeletion、AICleanupModify、ImportDedup、IdempotencyKey、BlackHoleAccount、AIPrompt |
-| 5 | 参考数据与设置 | [`CONTEXT-reference-settings.md`](CONTEXT-reference-settings.md) | Reference Data、Appearance、AppSettings、轻量设置项、DataLocation |
-| 6 | 备份与数据文件 | [`CONTEXT-backup-datafiles.md`](CONTEXT-backup-datafiles.md) | Backup、Restore、RestoreSafetyBackup、BackupDirectory、BackupRetentionLimit、BackupPruning、ManagedBackup、ManualBackup、BackupTrigger、AutoBackup、DirtyMarker |
-| 7 | 界面状态与交互 | [`CONTEXT-ui-interaction.md`](CONTEXT-ui-interaction.md) | WindowState、ViewState、ViewShortcut、CreateShortcut、Overlay Suppression、ESC 键语义、原生右键菜单 |
-| 8 | 物品 | [`CONTEXT-item.md`](CONTEXT-item.md) | Item、DailyUsageCost |
+| 1 | 核心交易 | [`docs/contexts/CONTEXT-core.md`](docs/contexts/CONTEXT-core.md) | Transaction、InvolvingAccount、Amount Model、Transaction Kind Mapping、Category、DefaultCurrency、TransactionSearch、万分位分组、耗时日志、慢查询 |
+| 2 | 定时计划 | [`docs/contexts/CONTEXT-scheduled-plans.md`](docs/contexts/CONTEXT-scheduled-plans.md) | ScheduledTransaction 及三种业务形态（分期/订阅/定时转账）、Occurrence、Plan Lifecycle、Timing、Counterparty、Recurrence Rule、Failure Policy |
+| 3 | 投资域 | [`docs/contexts/CONTEXT-investment.md`](docs/contexts/CONTEXT-investment.md) | Instrument、MarketPrice、PriceHistory、FxRateHistory、PortfolioValueTrend、Holding、NetWorth、Investment、InvestedInstrument、InstrumentSync、HoldingPriceSync |
+| 4 | AI 导入 | [`docs/contexts/CONTEXT-ai-import.md`](docs/contexts/CONTEXT-ai-import.md) | AI API、AIReadbackVerification、AICleanupDeletion、AICleanupModify、ImportDedup、IdempotencyKey、BlackHoleAccount、AIPrompt |
+| 5 | 参考数据与设置 | [`docs/contexts/CONTEXT-reference-settings.md`](docs/contexts/CONTEXT-reference-settings.md) | Reference Data、Appearance、AppSettings、轻量设置项、DataLocation |
+| 6 | 备份与数据文件 | [`docs/contexts/CONTEXT-backup-datafiles.md`](docs/contexts/CONTEXT-backup-datafiles.md) | Backup、Restore、RestoreSafetyBackup、BackupDirectory、BackupRetentionLimit、BackupPruning、ManagedBackup、ManualBackup、BackupTrigger、AutoBackup、DirtyMarker |
+| 7 | 界面状态与交互 | [`docs/contexts/CONTEXT-ui-interaction.md`](docs/contexts/CONTEXT-ui-interaction.md) | WindowState、ViewState、ViewShortcut、CreateShortcut、Overlay Suppression、ESC 键语义、原生右键菜单 |
+| 8 | 物品 | [`docs/contexts/CONTEXT-item.md`](docs/contexts/CONTEXT-item.md) | Item、DailyUsageCost |
 
 ## 域间关系
 
