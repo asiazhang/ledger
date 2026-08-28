@@ -122,7 +122,7 @@ export interface SubscriptionMonthSpend {
   native_cents: number
 }
 
-/** `subscription_spend_overview` 命令返回的订阅实际花费总览（本位币口径，单位：分）。 */
+/** `subscription_spend_overview` 命令返回的订阅花费总览（本位币口径，单位：分）。 */
 export interface SubscriptionSpendOverview {
   /** 折算基准币种（全局默认币种） */
   native_currency: string
@@ -134,4 +134,8 @@ export interface SubscriptionSpendOverview {
   months: SubscriptionMonthSpend[]
   /** 逐订阅行（含已取消/暂停计划） */
   rows: SubscriptionSpendRow[]
+  /** 折算月成本合计（分）：只统计 active 计划，系数收口在后端（issue #161，ADR-0023） */
+  projected_month_native_cents: number
+  /** 折算年成本合计（分）= 折算月成本 × 12；纯展示，不落库、不进流水与预算 */
+  projected_year_native_cents: number
 }

@@ -10,9 +10,10 @@ import { useReferenceStore } from '@/stores/reference'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 import type { SubscriptionSpendOverview, SubscriptionSpendRow } from '@/types'
 
-// 订阅花费「实际口径」分析区（issue #160，ADR-0023 决策二）：
-// 本月/本年实际花费 + 过去 12 个月逐月趋势（不摊销，忠实统计期次生成的流水）。
-// 推算成本口径由后续迭代接入；数据全部来自只读聚合命令 subscription_spend_overview。
+// 订阅花费双口径分析区（issue #160/#161，ADR-0023 决策二）：
+// 实际花费——本月/本年 + 过去 12 个月逐月趋势（不摊销，忠实统计期次生成的流水）；
+// 推算成本——折算月/年成本两个数（只统计进行中订阅，系数收口在后端，纯展示）。
+// 数据全部来自只读聚合命令 subscription_spend_overview，前端零口径逻辑只渲染。
 
 const reference = useReferenceStore()
 const message = useMessage()
@@ -134,6 +135,21 @@ const rowColumns: DataTableColumns<SubscriptionSpendRow> = [
               {{ formatAmount(overview.this_year_native_cents, currency) }}
             </div>
           </div>
+        </NSpace>
+        <NSpace :size="48" align="center">
+          <div class="spend-stat">
+            <div class="spend-stat-label">折算月成本（推算）</div>
+            <div class="spend-stat-value" data-testid="spend-projected-month">
+              {{ formatAmount(overview.projected_month_native_cents, currency) }}
+            </div>
+          </div>
+          <div class="spend-stat">
+            <div class="spend-stat-label">折算年成本（推算）</div>
+            <div class="spend-stat-value" data-testid="spend-projected-year">
+              {{ formatAmount(overview.projected_year_native_cents, currency) }}
+            </div>
+          </div>
+          <span class="spend-caption">推算：只计进行中的计划</span>
         </NSpace>
         <!-- 测试锚点：趋势图数据经桩组件序列化断言（jsdom 无 canvas），桩根节点 data-testid="bar-chart" -->
         <div class="spend-chart-box">

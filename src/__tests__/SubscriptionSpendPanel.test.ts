@@ -50,6 +50,8 @@ const overview: SubscriptionSpendOverview = {
   native_currency: 'CNY',
   this_month_native_cents: 3000,
   this_year_native_cents: 64800,
+  projected_month_native_cents: 4030,
+  projected_year_native_cents: 48360,
   months: lastMonths('2026-03', 12).map((month) => ({
     month,
     // 只有 2026-01（年付扣款）与 2026-03（月付）有花费，其余补 0（不摊销口径）
@@ -102,13 +104,21 @@ function chartPayload(wrapper: ReturnType<typeof mount>): {
   return JSON.parse(el.text())
 }
 
-describe('SubscriptionSpendPanel 订阅实际花费（issue #160）', () => {
+describe('SubscriptionSpendPanel 订阅花费双口径（issue #160/#161）', () => {
   it('渲染本月/本年实际花费汇总（本位币）', async () => {
     const wrapper = mount(SubscriptionSpendPanel)
     await flushPromises()
     expect(wrapper.get('[data-testid="spend-this-month"]').text()).toBe('¥30')
     expect(wrapper.get('[data-testid="spend-this-year"]').text()).toBe('¥648')
     expect(wrapper.text()).toContain('单位：CNY（本位币）· 不摊销')
+  })
+
+  it('渲染折算月/年推算成本（只统计进行中订阅，纯展示口径）', async () => {
+    const wrapper = mount(SubscriptionSpendPanel)
+    await flushPromises()
+    expect(wrapper.get('[data-testid="spend-projected-month"]').text()).toBe('¥40.3')
+    expect(wrapper.get('[data-testid="spend-projected-year"]').text()).toBe('¥483.6')
+    expect(wrapper.text()).toContain('推算：只计进行中的计划')
   })
 
   it('趋势图渲染过去 12 个月逐月序列（含无扣款月补 0）', async () => {

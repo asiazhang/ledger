@@ -141,6 +141,8 @@ const emptySpendOverview: SubscriptionSpendOverview = {
   this_year_native_cents: 0,
   months: [],
   rows: [],
+  projected_month_native_cents: 0,
+  projected_year_native_cents: 0,
 }
 let mockSpendOverview: SubscriptionSpendOverview = emptySpendOverview
 

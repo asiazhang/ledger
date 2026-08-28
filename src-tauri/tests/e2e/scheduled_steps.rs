@@ -442,6 +442,13 @@ fn cancel_subscription_plan(world: &mut LedgerWorld) {
         .expect("取消订阅计划失败");
 }
 
+/// 暂停最近的订阅计划（走 update_plan_status 命令体）。
+#[when(expr = "暂停该订阅计划")]
+fn pause_subscription_plan(world: &mut LedgerWorld) {
+    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    update_plan_status(&world.conn, &plan_id, ScheduledStatus::Paused).expect("暂停订阅计划失败");
+}
+
 /// 以注入的固定「今日」查询订阅实际花费总览（确定性口径，不依赖真实时钟）。
 #[when(expr = "以 {string} 为今日查询订阅花费")]
 fn query_spend_with_today(world: &mut LedgerWorld, today: String) {
@@ -463,6 +470,16 @@ fn assert_spend_this_month(world: &mut LedgerWorld, expected: i64) {
 #[then(expr = "本年实际花费应为 {int}")]
 fn assert_spend_this_year(world: &mut LedgerWorld, expected: i64) {
     assert_eq!(last_spend(world).this_year_native_cents, expected);
+}
+
+#[then(expr = "折算月成本应为 {int}")]
+fn assert_projected_month(world: &mut LedgerWorld, expected: i64) {
+    assert_eq!(last_spend(world).projected_month_native_cents, expected);
+}
+
+#[then(expr = "折算年成本应为 {int}")]
+fn assert_projected_year(world: &mut LedgerWorld, expected: i64) {
+    assert_eq!(last_spend(world).projected_year_native_cents, expected);
 }
 
 #[then(expr = "近 12 个月中 {string} 实际花费应为 {int}")]
