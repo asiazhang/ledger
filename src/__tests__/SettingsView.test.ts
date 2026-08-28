@@ -137,6 +137,26 @@ describe('SettingsView.vue', () => {
     expect(wrapper.html()).toContain('版本号')
   })
 
+  it('存储位置 Tab 展示数据存储位置卡片（issue #134）', async () => {
+    stubInvoke({
+      get_data_location_info: () =>
+        Promise.resolve({
+          active_dir: '/Users/me/Library/Application Support/ledger',
+          configured_dir: null,
+          pending_restart: false,
+          fallback_reason: null,
+        }),
+    })
+    const wrapper = mount(SettingsView)
+    const tab = wrapper.findAll('.n-tabs-tab').find((t) => t.text() === '存储位置')
+    expect(tab).toBeTruthy()
+    await tab!.trigger('click')
+    await flushPromises()
+    expect(mockInvoke).toHaveBeenCalledWith('get_data_location_info')
+    expect(wrapper.html()).toContain('数据存储位置')
+    expect(wrapper.html()).toContain('/Users/me/Library/Application Support/ledger')
+  })
+
   it('备份与恢复 Tab 包含备份/恢复操作与备份目录配置', async () => {
     const wrapper = mount(SettingsView)
     const backupTab = wrapper.findAll('.n-tabs-tab')[2]
