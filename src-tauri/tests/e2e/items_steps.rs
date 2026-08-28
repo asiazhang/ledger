@@ -735,10 +735,11 @@ fn calc_item_cost_fixed_ref(world: &mut LedgerWorld, date: String) {
 /// 尝试按指定参考日计算并捕获错误（供「应返回错误」断言）。
 #[when(expr = "尝试按最近创建的物品计算每天成本 参考日 {string}")]
 fn try_calc_item_cost(world: &mut LedgerWorld, date: String) {
+    // 不存在场景传固定假 id，真实走到 query_one 落空的 NotFound 路径（同其它步骤惯例）
     let id = world
         .last_item_id
         .clone()
-        .unwrap_or_else(|| "no-such-item".into());
+        .unwrap_or_else(|| "no-such-item-id".into());
     world.last_error = match calc_item_cost(world, &id, Some(date)) {
         Err(e) => Some(e.to_string()),
         Ok(_) => Some("预期失败但成功了".into()),

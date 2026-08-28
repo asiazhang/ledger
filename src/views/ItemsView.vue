@@ -169,13 +169,12 @@ const detail = ref<ItemWithDailyCost | null>(null)
 const detailRefDate = ref<string | null>(null)
 const detailCost = ref<ItemDailyCost | null>(null)
 
-const detailDays = computed(() => detailCost.value?.used_days ?? detail.value?.used_days ?? 0)
-const detailNumeratorCents = computed(
-  () => detailCost.value?.numerator_cents ?? detail.value?.numerator_cents ?? 0,
-)
-const detailPerDayCents = computed(
-  () => detailCost.value?.per_day_cents ?? detail.value?.per_day_cents ?? 0,
-)
+/** 详情成本三元组展示值：重算结果优先，未重算/重算失败回落列表快照。 */
+const detailCostView = computed(() => ({
+  days: detailCost.value?.used_days ?? detail.value?.used_days ?? 0,
+  numeratorCents: detailCost.value?.numerator_cents ?? detail.value?.numerator_cents ?? 0,
+  perDayCents: detailCost.value?.per_day_cents ?? detail.value?.per_day_cents ?? 0,
+}))
 
 async function recalcDetail(date: string | null) {
   if (!detail.value) return
@@ -508,11 +507,11 @@ onMounted(() => {
           />
         </NDescriptionsItem>
         <NDescriptionsItem label="已用天数">
-          {{ detailDays }} 天（含购买当日）
+          {{ detailCostView.days }} 天（含购买当日）
         </NDescriptionsItem>
         <NDescriptionsItem label="每天成本分解">
-          {{ detailAmount(detailNumeratorCents) }} ÷ {{ detailDays }} 天 =
-          {{ detailAmount(detailPerDayCents) }}/天
+          {{ detailAmount(detailCostView.numeratorCents) }} ÷ {{ detailCostView.days }} 天 =
+          {{ detailAmount(detailCostView.perDayCents) }}/天
         </NDescriptionsItem>
       </NDescriptions>
     </NModal>

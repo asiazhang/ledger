@@ -64,26 +64,28 @@ pub fn list_items_internal(conn: &Connection) -> Result<Vec<ItemWithDailyCost>> 
         .collect()
 }
 
+/// 以物品自身字段（分子口径：总成本 − 残值，下限 0）向指定目标日计算，
+/// 列表缺省口径与自选参考日重算共用（口径全在 `item::cost` 接缝）。
+fn usage_to(item: &Item, target_date: chrono::NaiveDate) -> Result<cost::DailyUsageCost> {
+    cost::calculate(
+        item.total_cost_cents,
+        parse_date(&item.purchase_date)?,
+        target_date,
+        item.residual_value_cents,
+    )
+}
+
 /// 按物品生命周期状态计算每天使用成本（在用 → 今天；已处置 → 处置日），
 /// 列表与单件详情共用同一口径（`item::cost` 接缝）。
 fn daily_usage(item: &Item) -> Result<cost::DailyUsageCost> {
     match item.status {
-        ItemStatus::InUse => cost::calculate_to_today(
-            item.total_cost_cents,
-            parse_date(&item.purchase_date)?,
-            item.residual_value_cents,
-        ),
+        ItemStatus::InUse => usage_to(item, cost::today()),
         ItemStatus::Disposed => {
             let disposal_date = item
                 .disposal_date
                 .as_deref()
                 .ok_or_else(|| AppError::Invalid(format!("已处置物品缺少处置日期: {}", item.id)))?;
-            cost::calculate(
-                item.total_cost_cents,
-                parse_date(&item.purchase_date)?,
-                parse_date(disposal_date)?,
-                item.residual_value_cents,
-            )
+            usage_to(item, parse_date(disposal_date)?)
         }
     }
 }
@@ -101,12 +103,7 @@ pub fn calculate_item_cost_internal(
     let item =
         get_item_by_id(conn, id)?.ok_or_else(|| AppError::NotFound(format!("物品不存在: {id}")))?;
     let usage = match reference_date {
-        Some(date) => cost::calculate(
-            item.total_cost_cents,
-            parse_date(&item.purchase_date)?,
-            parse_date(date)?,
-            item.residual_value_cents,
-        ),
+        Some(date) => usage_to(&item, parse_date(date)?),
         None => daily_usage(&item),
     }?;
     Ok(ItemDailyCost {
