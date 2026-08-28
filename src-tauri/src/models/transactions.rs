@@ -36,9 +36,6 @@ pub struct TransactionSearchResult {
     pub items: Vec<Transaction>,
     /// 命中总数（供「命中 N 条」与分页）。
     pub total: i64,
-    /// 索引是否可能滞后：搜索重建队列非空（存在尚未消费的写入）时 true。
-    /// 搜索为只读操作，不触发消费，故该值反映查询时刻的真实状态。
-    pub stale: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, ToSchema)]

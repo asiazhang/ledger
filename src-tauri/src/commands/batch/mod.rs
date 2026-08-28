@@ -26,7 +26,6 @@ use std::time::Instant;
 use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 
-use crate::commands::search::process_reindex_queue;
 use crate::commands::transactions::insert_transaction;
 use crate::error::{AppError, Result};
 use crate::models::{CreateTransactionResult, TransactionInput};
@@ -122,16 +121,11 @@ impl TransactionBatch {
             return Err(e.into());
         }
         // 汇总行在 COMMIT 后立即打一条（ADR-0009 决策 #5 / issue #45）：
-        // 数据已提交，无论后续搜索重建队列成败，批次都应有一条可观测的汇总行。
+        // 数据已提交，无论后续置脏检查成败，批次都应有一条可观测的汇总行。
         // 批量导入提交成功（issue #126）：逐行 insert 时已置脏；此处再调一次补上
         // 提交点的「写时顺带检查」——行内检查因处于事务中而推迟到本处执行。
         crate::auto_backup::on_write(conn);
         log_batch_summary(started, total, failed, true);
-        // 批量导入完成后立即消费搜索重建队列：导入是成批写入场景，
-        // 一次性重建比等下一个后台刷新周期（60s）更合理；消费总成本不变，
-        // 只是从「逐条即时」挪到「导入结束一次性」，且导入命令本就持锁、
-        // 不额外影响界面响应（ADR-0004 决策 #14）。
-        process_reindex_queue(conn)?;
         Ok(results)
     }
 }

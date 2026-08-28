@@ -110,8 +110,6 @@ pub fn delete_transaction_internal(conn: &Connection, id: &str) -> Result<()> {
     )?;
     // 脏标记挂钩（issue #126）：删除成功即置脏，到期则写时顺带触发备份。
     crate::auto_backup::on_write(conn);
-    // 索引维护由后台定时刷新承担：触发器（trg_search_enqueue_txn_update）已入队
-    // `search_reindex_queue`，软删除后到下次刷新前该交易仍可能被搜到（时效性要求低，
-    // 可接受，见 ADR-0004 决策 #14）。
+    // 搜索无索引（issue #196 全量扫描实现）：软删除即刻生效，删除的交易不再可搜。
     Ok(())
 }

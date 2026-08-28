@@ -62,8 +62,7 @@
 - security_transactions.transaction_id → transactions.id（ON DELETE CASCADE）
 - scheduled_transaction_occurrences.transaction_id → transactions.id（计划期次执行完成后回填，唯一索引）
 - transactions.refund_of_transaction_id → transactions.id（ON DELETE SET NULL，自引用）
-- search_reindex_queue.transaction_id → transactions.id（ON DELETE CASCADE，搜索重建队列，V005）
 
 ## 参考
 
-- Migration：`src-tauri/migrations/V001__initial.sql`（+ V005/V006/V007 的增量变更）
+- Migration：`src-tauri/migrations/V001__initial.sql`（+ V006/V007 的增量变更；原 V005 FTS5 搜索索引迁移已移除，见 ADR-0027）

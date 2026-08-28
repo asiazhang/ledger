@@ -23,7 +23,6 @@ Ledger 采用 SQLite 作为本地数据库，面向**多设备同步的离线优
 - [transactions（交易）](./basic/transactions.md)
 - [budgets（预算）](./basic/budgets.md)
 - [exchange_rates（汇率）](./basic/exchange-rates.md)
-- [search_transactions（交易搜索索引）](./basic/search-transactions.md)
 
 ### 投资相关实体
 - [instruments（金融工具）](./investment/instruments.md)
@@ -267,7 +266,6 @@ erDiagram
 - `src-tauri/migrations/V002__investment.sql`：投资域五表 + `v_holdings` 视图
 - `src-tauri/migrations/V003__scheduled_transactions.sql`：计划交易核心 + 扩展表
 - `src-tauri/migrations/V004__seed_defaults.sql`：币种与分类种子数据（含黑洞账户）
-- `src-tauri/migrations/V005__search_index.sql`：FTS5 索引 + 重建队列 + 触发器
 - `src-tauri/migrations/V006__transaction_amount_index.sql`：金额筛选索引
 - `src-tauri/migrations/V007__transaction_idempotency_key.sql`：幂等键列 + 部分唯一索引
 

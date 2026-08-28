@@ -31,7 +31,7 @@
 ## 设计说明
 
 - 默认分类使用基于 name+kind 的确定性 UUID v5，保证所有设备初始化后默认分类的 ID 一致
-- 分类名不在交易搜索索引中（V005 收窄后的搜索范围），改名不触发索引重建
+- 分类名不在交易搜索范围内（ADR-0027），改名无需任何搜索侧处理
 - 交易（transactions）的 category_id 删除时置空（ON DELETE SET NULL）
 - 预算（budgets）的 category_id 删除时受限（ON DELETE RESTRICT），防止有预算的分类被误删
 - 计划交易（scheduled_transactions）的 category_id 关联分类（转账类计划通常为空）

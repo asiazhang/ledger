@@ -1,9 +1,7 @@
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::commands::search::{
-    process_reindex_queue, rebuild_search_index, search_transactions_internal,
-};
+use tauri_app_lib::commands::search::search_transactions_internal;
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
 use tauri_app_lib::models::TransactionSearchResult;
 
@@ -13,7 +11,8 @@ use crate::world::LedgerWorld;
 // Given
 // ---------------------------------------------------------------------------
 
-/// 存量交易：直接 SQL 插入，绕过应用层索引钩子（模拟 V005 迁移前的存量数据）。
+/// 存量交易：直接 SQL 插入，绕过应用层写入路径（语义与正常写入一致——
+/// 搜索无索引，两种来源的写入立即可搜）。
 #[given(expr = "存量交易 备注 {string} 金额 {int} 账户 {string} 日期 {string}")]
 fn legacy_txn(
     world: &mut LedgerWorld,
@@ -41,17 +40,6 @@ fn legacy_txn(
 // ---------------------------------------------------------------------------
 // When
 // ---------------------------------------------------------------------------
-
-#[when(expr = "重建搜索索引")]
-fn rebuild_index(world: &mut LedgerWorld) {
-    rebuild_search_index(&world.conn).expect("重建搜索索引失败");
-}
-
-/// 消费搜索重建队列（模拟后台定时刷新的单次周期，ADR-0004 决策 #14）。
-#[when(expr = "执行索引刷新")]
-fn refresh_index(world: &mut LedgerWorld) {
-    process_reindex_queue(&world.conn).expect("执行索引刷新失败");
-}
 
 #[when(expr = "搜索 {string}")]
 fn search(world: &mut LedgerWorld, query: String) {

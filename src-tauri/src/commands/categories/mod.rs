@@ -94,7 +94,7 @@ pub fn update_category(
     )?;
         // 脏标记挂钩（issue #126）：分类更新成功即置脏。
         crate::auto_backup::on_write(&conn);
-        // 分类改名不影响搜索索引（分类名不在搜索内容中，V005 收窄后无需重建）
+        // 分类名不在搜索范围内（ADR-0027），且搜索无索引，改名无需任何后续处理
     }
     // 参考写入成功 → 通知前端重拉参考数据（issue #79）
     crate::events::emit_reference_changed(&app, "update_category");

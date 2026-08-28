@@ -25,7 +25,9 @@ fn migrations() -> &'static Migrations<'static> {
                 "../../migrations/V003__scheduled_transactions.sql"
             )),
             M::up(include_str!("../../migrations/V004__seed_defaults.sql")),
-            M::up(include_str!("../../migrations/V005__search_index.sql")),
+            // 注：原 V005__search_index.sql（FTS5 搜索索引）已从序列整体移除
+            //（issue #196 / ADR-0027，不考虑旧库兼容；user_version 按序列位置计数，
+            // 序列号不回填、后续迁移文件名保持不变）。
             M::up(include_str!(
                 "../../migrations/V006__transaction_amount_index.sql"
             )),
@@ -43,7 +45,23 @@ fn migrations() -> &'static Migrations<'static> {
 pub fn init_db(conn: &mut Connection) -> Result<()> {
     tracing::info!("开始执行数据库迁移");
     migrations().to_latest(conn)?;
+    cleanup_legacy_search_objects(conn)?;
     tracing::info!("数据库迁移完成");
+    Ok(())
+}
+
+/// 清理已弃用 FTS5 搜索索引的遗留对象（issue #196 / ADR-0027）：迁移序列已整体
+/// 移除原 V005，旧库（含恢复的旧备份）可能残留虚拟表、重建队列与入队触发器，
+/// 触发器会在每次交易写入时向死表插入行。启动时一次性幂等清理
+/// （DROP IF EXISTS，新库为无操作）；不属迁移，避免旧库 user_version 语义纠缠。
+fn cleanup_legacy_search_objects(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "DROP TRIGGER IF EXISTS trg_search_enqueue_txn_insert;
+         DROP TRIGGER IF EXISTS trg_search_enqueue_txn_update;
+         DROP TRIGGER IF EXISTS trg_search_enqueue_account_rename;
+         DROP TABLE IF EXISTS search_transactions;
+         DROP TABLE IF EXISTS search_reindex_queue;",
+    )?;
     Ok(())
 }
 
@@ -68,7 +86,7 @@ pub fn device_id() -> String {
     String::from("device-1")
 }
 
-/// 在指定目录打开库并完成迁移与搜索索引对账（DataLocation 引导之后的建连步骤）。
+/// 在指定目录打开库并完成 schema 迁移（DataLocation 引导之后的建连步骤）。
 /// 启动期唯一入口：先经 [`data_location::boot`] 解析库所在目录，再调本函数建连
 /// （见 `lib.rs::init_database`）；不要自行拼接库路径。
 pub fn open_db_in(db_dir: &Path) -> Result<DbState> {
@@ -76,9 +94,6 @@ pub fn open_db_in(db_dir: &Path) -> Result<DbState> {
     tracing::info!(db_path = %db_path.display(), "打开数据库");
     let mut conn = open_connection(db_path)?;
     init_db(&mut conn)?;
-    // 启动对账：FTS 文档数 ≠ 未删除交易数 → 全量重建（覆盖 V005 迁移前的存量数据）；
-    // 一致则消费重建队列（账户/分类改名、绕过应用层的写入产生的待办）。
-    crate::commands::search::reconcile_search_index(&conn)?;
     Ok(DbState {
         conn: Arc::new(Mutex::new(conn)),
     })
