@@ -7,6 +7,15 @@ import { useReferenceStore } from '@/stores/reference'
 import InvestmentsView from '@/views/InvestmentsView.vue'
 import type { Currency, Instrument } from '@/types'
 
+// 走势图用桩组件替代：组件层测试只验证数据联动与文案渲染，不验证 canvas 绘制
+vi.mock('vue-chartjs', () => ({
+  Line: {
+    name: 'Line',
+    props: ['data', 'options'],
+    template: '<div data-testid="line-chart">{{ JSON.stringify(data) }}</div>',
+  },
+}))
+
 const mockInvoke = vi.mocked(invoke)
 
 const mockCurrencies: Currency[] = [
@@ -66,6 +75,14 @@ beforeEach(async () => {
     if (cmd === 'list_categories') return Promise.resolve([])
     // 持仓概览（issue #110）：盈亏 tab 顶部会拉取当前持仓
     if (cmd === 'list_holdings') return Promise.resolve([])
+    // 走势（issue #139）：标的列表「走势」入口切入走势 tab 时由面板拉取
+    if (cmd === 'portfolio_value_trend')
+      return Promise.resolve({ currency_code: 'CNY', points: [] })
+    if (cmd === 'instrument_price_trend')
+      return Promise.resolve({
+        instrument_id: 'inst-1',
+        points: [{ date: '2026-06-05', price_cents: 1500, currency_code: 'CNY' }],
+      })
     if (cmd === 'realized_pnl_summary')
       return Promise.resolve({
         total_realized_pnl_cents: 0,
@@ -139,5 +156,31 @@ describe('InvestmentsView 标的 tab', () => {
     expect(calls.length).toBeGreaterThan(0)
     const [, args] = calls[calls.length - 1]
     expect(args.filter).toMatchObject({ page: 1, page_size: 50 })
+  })
+
+  it('走势 tab 存在', () => {
+    const wrapper = mount(InvestmentsView)
+    const labels = wrapper.findAll('.n-tabs-tab').map((t) => t.text())
+    expect(labels).toContain('走势')
+  })
+
+  it('标的列表「走势」入口：切到走势 tab 并以单标的模式查询该标的', async () => {
+    const wrapper = mount(InvestmentsView)
+    await nextTick()
+    // 进入标的 tab
+    await wrapper.findAll('.n-tabs-tab')[1].trigger('click')
+    await nextTick()
+    await nextTick()
+    // 点第一行（600000 浦发银行）的「走势」按钮
+    const btn = wrapper.find('[data-testid="view-trend-600000"]')
+    expect(btn.exists()).toBe(true)
+    await btn.trigger('click')
+    await nextTick()
+    await nextTick()
+    // tab 已切到走势，面板以单标的模式查询该标的
+    const call = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'instrument_price_trend').at(-1)
+    expect(call).toBeTruthy()
+    expect((call![1] as { instrumentId: string }).instrumentId).toBe('inst-1')
+    expect(wrapper.get('[data-testid="line-chart"]').text()).toContain('1500')
   })
 })

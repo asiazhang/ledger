@@ -1,0 +1,160 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
+import { setActivePinia, createPinia } from 'pinia'
+import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
+import { useReferenceStore } from '@/stores/reference'
+import PortfolioTrendPanel from '@/components/investments/PortfolioTrendPanel.vue'
+import { makeInstrument } from './factories'
+import type { Instrument, PortfolioValueTrend } from '@/types'
+
+vi.mock('vue-chartjs', () => ({
+  Line: {
+    name: 'Line',
+    props: ['data', 'options'],
+    template: '<div data-testid="line-chart">{{ JSON.stringify(data) }}</div>',
+  },
+}))
+
+const mockInvoke = vi.mocked(invoke)
+const mockListen = vi.mocked(listen)
+
+enableAutoUnmount(afterEach)
+afterEach(() => {
+  document.body.innerHTML = ''
+})
+
+const portfolioTrend: PortfolioValueTrend = {
+  currency_code: 'CNY',
+  points: [
+    { date: '2026-06-05', market_value_cents: 100000 },
+    { date: '2026-06-12', market_value_cents: 110000 },
+  ],
+}
+
+const stockInstrument = makeInstrument({
+  id: 'inst-1',
+  symbol: '600000',
+  name: '浦发银行',
+  type: 'stock',
+  market: 'sh',
+})
+
+const fundInstrument = makeInstrument({
+  id: 'inst-fund',
+  symbol: '000198',
+  name: '天弘余额宝',
+  type: 'fund',
+  market: 'unknown',
+})
+
+function baseInvoke(extra?: Record<string, unknown>) {
+  mockInvoke.mockImplementation((cmd: string) => {
+    if (cmd === 'list_currencies')
+      return Promise.resolve([{ code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 }])
+    if (cmd === 'list_accounts') return Promise.resolve([])
+    if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_holdings') return Promise.resolve([])
+    if (cmd === 'list_instruments')
+      return Promise.resolve({ items: [stockInstrument, fundInstrument], total: 2 })
+    if (extra && cmd in extra) {
+      const handler = (extra as Record<string, unknown>)[cmd]
+      return typeof handler === 'function' ? (handler as () => unknown)() : Promise.resolve(handler)
+    }
+    if (cmd === 'portfolio_value_trend') return Promise.resolve(portfolioTrend)
+    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  })
+}
+
+beforeEach(async () => {
+  setActivePinia(createPinia())
+  mockInvoke.mockReset()
+  mockListen.mockReset()
+  mockListen.mockResolvedValue(() => {})
+  baseInvoke()
+  const store = useReferenceStore()
+  await store.ensureFresh()
+})
+
+function chartPayload(wrapper: ReturnType<typeof mount>): { labels: string[]; datasets: { data: number[] }[] } {
+  const el = wrapper.get('[data-testid="line-chart"]')
+  return JSON.parse(el.text())
+}
+
+describe('PortfolioTrendPanel 走势面板', () => {
+  it('默认组合模式：拉取组合市值并渲染图表序列与本位币标注', async () => {
+    const wrapper = mount(PortfolioTrendPanel)
+    await flushPromises()
+    const call = mockInvoke.mock.calls.find(([c]) => c === 'portfolio_value_trend')
+    expect(call).toBeTruthy()
+    const payload = chartPayload(wrapper)
+    expect(payload.labels).toEqual(['2026-06-05', '2026-06-12'])
+    expect(payload.datasets[0].data).toEqual([100000, 110000])
+    // 本位币口径标注
+    expect(wrapper.get('[data-testid="trend-currency"]').text()).toContain('CNY')
+    expect(wrapper.get('[data-testid="trend-currency"]').text()).toContain('本位币')
+  })
+
+  it('渲染模式切换与预设区间（1 月 / 3 月 / 1 年 / 全部）', async () => {
+    const wrapper = mount(PortfolioTrendPanel)
+    await flushPromises()
+    const text = wrapper.text()
+    for (const label of ['组合市值', '单标的', '1 月', '3 月', '1 年', '全部']) {
+      expect(text).toContain(label)
+    }
+  })
+
+  it('预设区间切换后重新查询并携带新的起始日期', async () => {
+    const wrapper = mount(PortfolioTrendPanel)
+    await flushPromises()
+    const before = mockInvoke.mock.calls.filter(([c]) => c === 'portfolio_value_trend').length
+    // 点击「1 月」预设
+    const radio = wrapper.findAll('.n-radio').find((r) => r.text() === '1 月')
+    expect(radio).toBeTruthy()
+    await radio!.find('input').setValue(true)
+    await flushPromises()
+    const after = mockInvoke.mock.calls.filter(([c]) => c === 'portfolio_value_trend').length
+    expect(after).toBeGreaterThan(before)
+    const last = mockInvoke.mock.calls.filter(([c]) => c === 'portfolio_value_trend').at(-1)!
+    expect((last[1] as { filter: { start_date: string } }).filter.start_date).toBeTruthy()
+  })
+
+  it('组合走势无数据 → 引导文案提示去「同步持仓价格」', async () => {
+    baseInvoke({ portfolio_value_trend: { currency_code: 'CNY', points: [] } })
+    const wrapper = mount(PortfolioTrendPanel)
+    await flushPromises()
+    expect(wrapper.text()).toContain('暂无历史价格数据')
+    expect(wrapper.text()).toContain('同步持仓价格')
+    expect(wrapper.find('[data-testid="line-chart"]').exists()).toBe(false)
+  })
+
+  it('标的列表带入单标的：以标的 id 查询并标注计价币种', async () => {
+    baseInvoke({
+      instrument_price_trend: {
+        instrument_id: 'inst-1',
+        points: [
+          { date: '2026-06-05', price_cents: 1500, currency_code: 'CNY' },
+        ],
+      },
+    })
+    const wrapper = mount(PortfolioTrendPanel, {
+      props: { entryInstrument: stockInstrument },
+    })
+    await flushPromises()
+    const call = mockInvoke.mock.calls.filter(([c]) => c === 'instrument_price_trend').at(-1)!
+    expect((call[1] as { instrumentId: string }).instrumentId).toBe('inst-1')
+    const payload = chartPayload(wrapper)
+    expect(payload.datasets[0].data).toEqual([1500])
+    expect(wrapper.get('[data-testid="trend-currency"]').text()).toContain('CNY')
+  })
+
+  it('非股票标的 → 「暂无行情来源」边界说明，不发起走势查询', async () => {
+    const wrapper = mount(PortfolioTrendPanel, {
+      props: { entryInstrument: fundInstrument },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('暂无行情来源')
+    expect(wrapper.find('[data-testid="line-chart"]').exists()).toBe(false)
+    expect(mockInvoke.mock.calls.some(([c]) => c === 'instrument_price_trend')).toBe(false)
+  })
+})
