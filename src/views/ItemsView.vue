@@ -99,6 +99,10 @@ async function saveEdit() {
     message.warning('请输入物品名称')
     return
   }
+  if (!editPurchaseDate.value) {
+    message.warning('请选择购买日期')
+    return
+  }
   const costCents = yuanToCents(editCostYuan.value)
   if (costCents === null || costCents <= 0) {
     message.warning('请输入大于 0 的总成本')

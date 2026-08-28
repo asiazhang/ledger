@@ -170,15 +170,17 @@ fn try_update_item(
     note: String,
 ) {
     let mut signals = 0;
-    let result = match &world.last_item_id {
-        Some(id) => update_item_internal(
-            &world.conn,
-            id,
-            with_note(build_input(&name, date, cost_cents, &currency), &note),
-            &mut || signals += 1,
-        ),
-        None => Err(AppError::NotFound("物品不存在".into())),
-    };
+    // 不存在场景传固定假 id，真实走到 query_one 落空的 NotFound 路径
+    let id = world
+        .last_item_id
+        .clone()
+        .unwrap_or_else(|| "no-such-item".into());
+    let result = update_item_internal(
+        &world.conn,
+        &id,
+        with_note(build_input(&name, date, cost_cents, &currency), &note),
+        &mut || signals += 1,
+    );
     world.item_signal_count = signals;
     world.last_error = match result {
         Err(AppError::Invalid(msg)) => Some(msg),
@@ -258,18 +260,12 @@ fn check_item_audit_fields(world: &mut LedgerWorld, n: usize) {
     assert!(!item.is_deleted);
 }
 
-#[then(expr = "创建后应发出 {int} 次失效信号")]
+#[then(expr = "写入后应发出 {int} 次失效信号")]
 fn check_item_signals(world: &mut LedgerWorld, expected: usize) {
     assert_eq!(
         world.item_signal_count, expected,
         "失效信号次数不匹配（生产路径对应 ledger:changed）"
     );
-}
-
-/// 修改成功后的失效信号断言（与创建同一 seam：notify 注入计数）。
-#[then(expr = "修改后应发出 {int} 次失效信号")]
-fn check_item_signals_after_update(world: &mut LedgerWorld, expected: usize) {
-    check_item_signals(world, expected);
 }
 
 #[then(expr = "第 {int} 件物品版本应为 {int}")]

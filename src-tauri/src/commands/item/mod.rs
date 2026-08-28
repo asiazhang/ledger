@@ -84,7 +84,7 @@ pub fn create_item_internal(
     input: ItemInput,
     notify: &mut dyn FnMut(),
 ) -> Result<String> {
-    let (name, _purchase_date, cost_native_cents) = validate_and_convert(conn, &input)?;
+    let (name, purchase_date, cost_native_cents) = validate_and_convert(conn, &input)?;
 
     let id = new_uuid();
     let now = now_iso();
@@ -96,7 +96,7 @@ pub fn create_item_internal(
         rusqlite::params![
             id,
             name,
-            input.purchase_date,
+            purchase_date,
             input.total_cost_cents,
             input.currency_code,
             cost_native_cents,
@@ -113,13 +113,10 @@ pub fn create_item_internal(
     Ok(id)
 }
 
-/// 创建/修改共用的入参校验与折算：名称非空、总成本 > 0、购买日期可解析
+/// 创建/修改共用的入参校验与归一化：名称非空、总成本 > 0、购买日期可解析
 /// （成本计算依赖日历日期）、币种可按 Amount 接缝折算本位币。
-/// 返回归一化后的名称、购买日期与本位币成本，调用方直接落库。
-fn validate_and_convert(
-    conn: &Connection,
-    input: &ItemInput,
-) -> Result<(String, chrono::NaiveDate, i64)> {
+/// 返回归一化后的名称、规范化日期串（YYYY-MM-DD）与本位币成本，调用方直接落库。
+fn validate_and_convert(conn: &Connection, input: &ItemInput) -> Result<(String, String, i64)> {
     let name = input.name.trim();
     if name.is_empty() {
         return Err(AppError::Invalid("物品名称不能为空".into()));
@@ -130,7 +127,11 @@ fn validate_and_convert(
     let purchase_date = parse_date(&input.purchase_date)?;
     let cost_native_cents =
         amount::convert_to_native(conn, input.total_cost_cents, &input.currency_code)?;
-    Ok((name.to_string(), purchase_date, cost_native_cents))
+    Ok((
+        name.to_string(),
+        purchase_date.format("%Y-%m-%d").to_string(),
+        cost_native_cents,
+    ))
 }
 
 /// 按 `id` 修改物品字段（名称/购买日期/总成本/币种/备注，issue #117）。
@@ -159,7 +160,7 @@ pub fn update_item_internal(
     };
     // 已处置物品的购买日期不得晚于处置日，否则列表/详情读取时成本口径报错（不可达状态）。
     if let Some(disposal_date) = &existing.disposal_date
-        && purchase_date > parse_date(disposal_date)?
+        && parse_date(&purchase_date)? > parse_date(disposal_date)?
     {
         return Err(AppError::Invalid(format!(
             "购买日期 {purchase_date} 晚于处置日期 {disposal_date}，请先调整处置日期"
@@ -174,7 +175,7 @@ pub fn update_item_internal(
         rusqlite::params![
             id,
             name,
-            input.purchase_date,
+            purchase_date,
             input.total_cost_cents,
             input.currency_code,
             cost_native_cents,
@@ -183,9 +184,10 @@ pub fn update_item_internal(
             device_id(),
         ],
     )?;
-    if updated == 0 {
-        return Err(AppError::NotFound("物品不存在".into()));
-    }
+    debug_assert_eq!(
+        updated, 1,
+        "前置存在性检查已排除 id 不存在/软删除，单连接下不可达"
+    );
     // 脏标记挂钩（issue #126）：落库成功即置脏，到期则写时顺带触发备份。
     crate::auto_backup::on_write(conn);
     // 写入成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
