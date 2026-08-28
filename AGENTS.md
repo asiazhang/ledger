@@ -6,7 +6,7 @@
 
 动手前先定位到对应层：
 
-- **`CONTEXT.md`** — 领域术语与架构叙述的单一来源：8 种交易 kind、Amount/Writer/行为层接缝、reference store、AI API、黑洞账户、投资域等概念的定义与边界都在这里。**与代码行为冲突时以 CONTEXT.md 为准并同步修正它。**
+- **`CONTEXT-MAP.md`** — 领域词汇表地图：领域词汇表（叙述与决策归 `docs/adr/`）按域拆分为仓库根目录集中存放的 `CONTEXT-*.md` 分域文件。动手前先读地图，再选读与改动主题相关的分域词汇表与相关 ADR；**与代码行为冲突时以代码为准并同步修正词汇表。**
 - **`docs/adr/`** — 决策记录（文件名即编号与主题，如 ADR-0012 参考数据失效、ADR-0013 行为层分派、ADR-0017 应用配置归口）。改到某区域前先读该区域的 ADR。
 - **`docs/agents/`** — 专项操作指引（issue-tracker 用 `gh`、triage 标签、domain 文档消费方式）。
 - **`docs/model/`、`docs/specs/`** — 数据模型与规格。
@@ -25,7 +25,7 @@ Ledger：Tauri 2 桌面记账应用。前端 Vue 3 + TypeScript + Vite（Naive U
 ## 金额与多币种
 
 - 金额以**整数分**存储，字段统一 `_cents` 后缀；前端展示一律走 `formatAmount(cents, currency)`（`src/types/index.ts`），**不要手写 `/100`**。
-- 金额口径收口在 `src-tauri/src/transaction/amount.rs` 的 **Amount 接缝**（唯一权威，符号归属详见 CONTEXT.md 的 Transaction Kind Mapping）：`transactions` 同时存 `amount_cents`（原始币种）与 `amount_native_cents`（本位币折算）。改动金额逻辑只改接缝内 kind→度量系数矩阵一处，矩阵同时驱动 SQL 聚合片段与行级 `signed_amount`——另写口径表达式等于造出第二个口径。
+- 金额口径收口在 `src-tauri/src/transaction/amount.rs` 的 **Amount 接缝**（唯一权威，符号归属详见核心交易域词汇表 `CONTEXT-core.md` 的 Transaction Kind Mapping）：`transactions` 同时存 `amount_cents`（原始币种）与 `amount_native_cents`（本位币折算）。改动金额逻辑只改接缝内 kind→度量系数矩阵一处，矩阵同时驱动 SQL 聚合片段与行级 `signed_amount`——另写口径表达式等于造出第二个口径。
 - 账户余额**不持久化**，实时计算：`commands::accounts::list_account_balances`，口径即 `account_flow` 度量（各 kind 符号见上面矩阵）。转账 `kind='transfer'` 用 `account_id` 转出、`to_account_id` 转入。
 
 ## 交易写入（行为层约束）
@@ -38,14 +38,14 @@ Ledger：Tauri 2 桌面记账应用。前端 Vue 3 + TypeScript + Vite（Naive U
 
 ## 前端状态
 
-- 参考数据（currencies/accounts/categories）单一来源是 `src/stores/reference.ts` 的 `useReferenceStore`（三张参考表 + 派生映射 + 分类树 + 失效信号，细节见 CONTEXT.md「参考数据」条目）：读取走 `ensureFresh()` / 强制重拉走 `refresh()`，并随 `ledger:changed` 失效信号自动重拉——绕开它会躲过失效机制。
+- 参考数据（currencies/accounts/categories）单一来源是 `src/stores/reference.ts` 的 `useReferenceStore`（三张参考表 + 派生映射 + 分类树 + 失效信号，细节见参考数据与设置域词汇表 `CONTEXT-reference-settings.md`「参考数据」条目）：读取走 `ensureFresh()` / 强制重拉走 `refresh()`，并随 `ledger:changed` 失效信号自动重拉——绕开它会躲过失效机制。
 - `useAppStore`（`src/stores/app.ts`）是**纯 UI 设置 store**（theme / defaultCurrency / backupDir / backupMaxCount）。
-- 路由 hash 模式（Tauri webview 需要），视图与路由以 `src/router/` 代码为准；README/CONTEXT 若不同步，同步修正文档。
+- 路由 hash 模式（Tauri webview 需要），视图与路由以 `src/router/` 代码为准；README/词汇表若不同步，同步修正文档。
 - **应用配置归口（ADR-0017）**：前端独享消费的设备偏好存 localStorage；后端消费或随 Backup/Restore 迁移的配置与运行时状态统一存 `app_settings` KV 表（读写经 `src-tauri/src/settings.rs` 枚举收口，key 规范 `<feature>.<name>`，对外 IPC 保持领域命令形状）。库外配置文件的**唯一例外**是 DataLocation 引导指针文件（ADR-0018）：建连前必须可读，进不了库内。
 
 ## AI 导入流程
 
-AI 驱动的导入**不按文件类型解析**，唯一入口是本地 HTTP API `/api/v1`（基础地址 `http://127.0.0.1:9527`），端点幂等写库。导入约定与端点契约分别由 `GET /api/v1/import/knowledge`（纯文本）与 `GET /api/v1/openapi.json` 生成式返回；**AI 入口提示词模板见 `src-tauri/prompts/ledger-api.md`**（新需求先读它）。术语与边界见 CONTEXT.md 的 AI API / ImportDedup / IdempotencyKey 等条目。
+AI 驱动的导入**不按文件类型解析**，唯一入口是本地 HTTP API `/api/v1`（基础地址 `http://127.0.0.1:9527`），端点幂等写库。导入约定与端点契约分别由 `GET /api/v1/import/knowledge`（纯文本）与 `GET /api/v1/openapi.json` 生成式返回；**AI 入口提示词模板见 `src-tauri/prompts/ledger-api.md`**（新需求先读它）。术语与边界见 AI 导入域词汇表 `CONTEXT-ai-import.md` 的 AI API / ImportDedup / IdempotencyKey 等条目。
 
 ## 编码约定
 

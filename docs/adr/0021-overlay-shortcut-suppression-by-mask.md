@@ -12,7 +12,7 @@
 
 ## 决策
 
-**模态类弹层（弹窗 / useDialog 确认框）改嗅探 `.n-modal-mask` 遮罩**：遮罩随 `show` 真实挂载/卸载（v-if），「遮罩存在 ⟺ 弹层打开」严格成立；气泡确认、下拉菜单、筛选下拉维持不变（它们基于 Follower + v-if，关闭即卸载，存在性本就可靠）；日历面板 `.n-date-panel` 系无遮罩弹层，且面板内按钮聚焦时不在可编辑目标，一并纳入信号集。同时把 `.n-modal-container`、`.n-dialog` 从信号集中剔除，并在代码注释与 CONTEXT.md（Overlay Suppression 词条）中写明不可用的原因。
+**模态类弹层（弹窗 / useDialog 确认框）改嗅探 `.n-modal-mask` 遮罩**：遮罩随 `show` 真实挂载/卸载（v-if），「遮罩存在 ⟺ 弹层打开」严格成立；气泡确认、下拉菜单、筛选下拉维持不变（它们基于 Follower + v-if，关闭即卸载，存在性本就可靠）；日历面板 `.n-date-panel` 系无遮罩弹层，且面板内按钮聚焦时不在可编辑目标，一并纳入信号集。同时把 `.n-modal-container`、`.n-dialog` 从信号集中剔除，并在代码注释与界面状态与交互域词汇表 CONTEXT-ui-interaction.md（Overlay Suppression 词条）中写明不可用的原因。
 
 候选方案对比：
 

@@ -38,7 +38,7 @@
 - 计划金额不可编辑；价格变化 = 取消旧计划 + 按新金额新建，列表中断为两段真实的价格历史。
 - 可编辑字段仅限金额以外的字段（备注、分类等），编辑只影响未来期次，不改已生成的交易。
 
-术语沉淀见 CONTEXT.md「SubscriptionSpend（订阅花费）」条目。
+术语沉淀见定时计划域词汇表（CONTEXT-scheduled-plans.md）「SubscriptionSpend（订阅花费）」条目。
 
 ## 理由
 
