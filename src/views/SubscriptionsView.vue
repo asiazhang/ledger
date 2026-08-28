@@ -8,6 +8,7 @@ import {
   NForm,
   NFormItem,
   NInput,
+  NModal,
   NInputNumber,
   NDatePicker,
   NSelect,
@@ -46,8 +47,11 @@ function refreshSpend() {
 }
 
 // ---------------------------------------------------------------------------
-// 新建订阅（走既有 create_scheduled_transaction，kind=subscription）
+// 新建订阅 = 模态对话框（issue #158）：不引入独立路由页面，
+// 弹窗内完成填写与校验，提交成功后关闭并刷新列表
 // ---------------------------------------------------------------------------
+
+const showCreateModal = ref(false)
 
 const note = ref('')
 const accountId = ref<string | null>(null)
@@ -69,6 +73,18 @@ const recurrenceOptions = [
 const categoryTreeOptions = computed(
   () => reference.treeCategoryOptions('expense') as unknown as TreeSelectOption[],
 )
+
+/** 重置新建表单到初始态：模态语义下每次打开应是全新表单。 */
+function resetCreateForm() {
+  note.value = ''
+  accountId.value = null
+  categoryId.value = null
+  amountYuan.value = ''
+  currencyCode.value = appStore.defaultCurrency
+  recurrenceType.value = 'monthly'
+  recurrenceInterval.value = 1
+  startDate.value = todayStr()
+}
 
 async function create() {
   if (!accountId.value) {
@@ -94,8 +110,8 @@ async function create() {
       note: note.value.trim() || null,
     })
     message.success('已创建订阅')
-    note.value = ''
-    amountYuan.value = ''
+    showCreateModal.value = false
+    resetCreateForm()
     await load()
     refreshSpend()
   } catch (e) {
@@ -307,8 +323,50 @@ onMounted(() => {
 
 <template>
   <NSpace vertical :size="16">
-    <NCard title="新建订阅" size="small">
-      <NForm label-placement="left" :show-feedback="false" inline size="small">
+    <NCard title="订阅清单" size="small">
+      <template #header-extra>
+        <NSpace :size="12">
+          <NButtonGroup size="small">
+            <NButton
+              v-for="f in filterOptions"
+              :key="f.key"
+              :type="statusFilter === f.key ? 'primary' : 'default'"
+              :data-testid="`filter-${f.key}`"
+              @click="statusFilter = f.key"
+            >
+              {{ f.label }}
+            </NButton>
+          </NButtonGroup>
+          <NButton
+            type="primary"
+            size="small"
+            data-testid="sub-create-open"
+            @click="showCreateModal = true"
+          >
+            新建订阅
+          </NButton>
+        </NSpace>
+      </template>
+      <NDataTable
+        :columns="columns"
+        :data="filteredRows"
+        :loading="loading"
+        :bordered="false"
+        size="small"
+        :row-key="(row: SubscriptionRow) => row.plan.core.id"
+      />
+    </NCard>
+
+    <!-- 新建订阅弹窗：提交成功关闭并刷新列表（与记一笔弹窗同模式） -->
+    <NModal
+      v-model:show="showCreateModal"
+      title="新建订阅"
+      preset="card"
+      display-directive="if"
+      style="width: 480px"
+      :bordered="false"
+    >
+      <NForm label-placement="left" :show-feedback="false" size="small">
         <NFormItem label="备注">
           <NInput
             v-model:value="note"
@@ -359,33 +417,12 @@ onMounted(() => {
             style="width: 140px"
           />
         </NFormItem>
-        <NButton type="primary" data-testid="sub-create" @click="create">创建订阅</NButton>
+        <NSpace justify="end">
+          <NButton data-testid="sub-create-cancel" @click="showCreateModal = false">取消</NButton>
+          <NButton type="primary" data-testid="sub-create" @click="create">创建订阅</NButton>
+        </NSpace>
       </NForm>
-    </NCard>
-
-    <NCard title="订阅清单" size="small">
-      <template #header-extra>
-        <NButtonGroup size="small">
-          <NButton
-            v-for="f in filterOptions"
-            :key="f.key"
-            :type="statusFilter === f.key ? 'primary' : 'default'"
-            :data-testid="`filter-${f.key}`"
-            @click="statusFilter = f.key"
-          >
-            {{ f.label }}
-          </NButton>
-        </NButtonGroup>
-      </template>
-      <NDataTable
-        :columns="columns"
-        :data="filteredRows"
-        :loading="loading"
-        :bordered="false"
-        size="small"
-        :row-key="(row: SubscriptionRow) => row.plan.core.id"
-      />
-    </NCard>
+    </NModal>
 
     <SubscriptionSpendPanel ref="spendPanelRef" />
   </NSpace>
