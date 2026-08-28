@@ -366,60 +366,78 @@ onMounted(() => {
       style="width: 480px"
       :bordered="false"
     >
+      <!-- 布局对齐记一笔表单（CategoryForm）：NSpace 提供行距，宽度取 160-280 档；
+           金额+币种、周期+间隔 各并一行减少行数 -->
       <NForm label-placement="left" :show-feedback="false" size="small">
-        <NFormItem label="备注">
-          <NInput
-            v-model:value="note"
-            data-testid="sub-note"
-            placeholder="服务名称，如：视频会员"
-            style="width: 160px"
-          />
-        </NFormItem>
-        <NFormItem label="扣款账户">
-          <NSelect v-model:value="accountId" :options="accountOptions" style="width: 140px" />
-        </NFormItem>
-        <NFormItem label="分类">
-          <NTreeSelect
-            v-model:value="categoryId"
-            :options="categoryTreeOptions"
-            placeholder="支出分类"
-            clearable
-            style="width: 150px"
-          />
-        </NFormItem>
-        <NFormItem label="金额">
-          <NInput
-            v-model:value="amountYuan"
-            data-testid="sub-amount"
-            placeholder="每期金额"
-            style="width: 110px"
-          />
-        </NFormItem>
-        <NFormItem label="币种">
-          <NSelect v-model:value="currencyCode" :options="currencyOptions" style="width: 120px" />
-        </NFormItem>
-        <NFormItem label="周期">
-          <NSelect v-model:value="recurrenceType" :options="recurrenceOptions" style="width: 90px" />
-        </NFormItem>
-        <NFormItem label="间隔">
-          <NInputNumber
-            v-model:value="recurrenceInterval"
-            :min="1"
-            :precision="0"
-            style="width: 80px"
-          />
-        </NFormItem>
-        <NFormItem label="开始日">
-          <NDatePicker
-            v-model:formatted-value="startDate"
-            type="date"
-            value-format="yyyy-MM-dd"
-            style="width: 140px"
-          />
-        </NFormItem>
-        <NSpace justify="end">
-          <NButton data-testid="sub-create-cancel" @click="showCreateModal = false">取消</NButton>
-          <NButton type="primary" data-testid="sub-create" @click="create">创建订阅</NButton>
+        <NSpace vertical :size="12">
+          <NFormItem label="备注">
+            <NInput
+              v-model:value="note"
+              data-testid="sub-note"
+              placeholder="服务名称，如：视频会员"
+              style="width: 280px"
+            />
+          </NFormItem>
+          <NFormItem label="扣款账户">
+            <NSelect
+              v-model:value="accountId"
+              :options="accountOptions"
+              placeholder="选择账户"
+              style="width: 200px"
+            />
+          </NFormItem>
+          <NFormItem label="分类">
+            <NTreeSelect
+              v-model:value="categoryId"
+              :options="categoryTreeOptions"
+              placeholder="选择分类"
+              filterable
+              clearable
+              :consistent-menu-width="false"
+              style="width: 220px"
+            />
+          </NFormItem>
+          <NFormItem label="金额">
+            <NInput
+              v-model:value="amountYuan"
+              data-testid="sub-amount"
+              placeholder="每期金额"
+              style="width: 160px"
+            />
+            <NSelect
+              v-model:value="currencyCode"
+              :options="currencyOptions"
+              style="width: 130px; margin-left: 8px"
+            />
+          </NFormItem>
+          <NFormItem label="重复">
+            <NSpace :size="8" align="center" :wrap="false">
+              <span>每</span>
+              <NInputNumber
+                v-model:value="recurrenceInterval"
+                :min="1"
+                :precision="0"
+                style="width: 90px"
+              />
+              <NSelect
+                v-model:value="recurrenceType"
+                :options="recurrenceOptions"
+                style="width: 100px"
+              />
+            </NSpace>
+          </NFormItem>
+          <NFormItem label="开始日">
+            <NDatePicker
+              v-model:formatted-value="startDate"
+              type="date"
+              value-format="yyyy-MM-dd"
+              style="width: 200px"
+            />
+          </NFormItem>
+          <NSpace justify="end">
+            <NButton data-testid="sub-create-cancel" @click="showCreateModal = false">取消</NButton>
+            <NButton type="primary" data-testid="sub-create" @click="create">创建订阅</NButton>
+          </NSpace>
         </NSpace>
       </NForm>
     </NModal>
