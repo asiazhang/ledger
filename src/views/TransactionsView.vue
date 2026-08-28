@@ -523,7 +523,7 @@ onMounted(() => {
       :x="menuX"
       :y="menuY"
       :options="menuOptions"
-      :width="180"
+      :min-width="140"
       @select="onMenuSelect"
       @clickoutside="menuShow = false"
     />
