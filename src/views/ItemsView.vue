@@ -19,7 +19,7 @@ import {
 } from 'naive-ui'
 import { formatAmount } from '@/types'
 import { yuanToCents, centsToYuan } from '@/utils/money'
-import type { ItemInput, ItemWithDailyCost, Transaction } from '@/types'
+import type { ItemDisposeInput, ItemInput, ItemWithDailyCost, Transaction } from '@/types'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
@@ -181,6 +181,51 @@ function detailAmount(cents: number): string {
     : ''
 }
 
+// —— 处置（issue #120）：置 disposed 并记录处置日期（必填）与可选残值；
+// 已处置物品再次处置 = 修正处置信息 ——
+const disposing = ref<ItemWithDailyCost | null>(null)
+const disposeDate = ref('')
+const disposeResidualYuan = ref('')
+
+function openDispose(row: ItemWithDailyCost) {
+  disposing.value = row
+  disposeDate.value = row.disposal_date ?? todayStr()
+  disposeResidualYuan.value =
+    row.residual_value_cents != null ? String(centsToYuan(row.residual_value_cents)) : ''
+}
+
+function closeDispose() {
+  disposing.value = null
+}
+
+async function confirmDispose() {
+  if (!disposing.value) return
+  if (!disposeDate.value) {
+    message.warning('请选择处置日期')
+    return
+  }
+  let residualCents: number | null = null
+  if (disposeResidualYuan.value.trim()) {
+    const cents = yuanToCents(disposeResidualYuan.value)
+    if (cents === null || cents < 0) {
+      message.warning('残值需为不小于 0 的金额')
+      return
+    }
+    residualCents = cents
+  }
+  const input: ItemDisposeInput = {
+    disposal_date: disposeDate.value,
+    residual_value_cents: residualCents,
+  }
+  try {
+    await itemsStore.dispose(disposing.value.id, input)
+    message.success(disposing.value.status === 'in_use' ? '已处置' : '已更新处置信息')
+    closeDispose()
+  } catch (e) {
+    message.error(`处置失败: ${e}`)
+  }
+}
+
 // —— 软删除（issue #118）：二次确认后 is_deleted=1，列表自动过滤 ——
 async function removeItem(id: string) {
   try {
@@ -195,6 +240,11 @@ async function removeItem(id: string) {
 const columns: DataTableColumns<ItemWithDailyCost> = [
   { title: '名称', key: 'name' },
   { title: '购买日期', key: 'purchase_date' },
+  {
+    title: '状态',
+    key: 'status',
+    render: (row) => (row.status === 'in_use' ? '在用' : `已处置 ${row.disposal_date ?? ''}`),
+  },
   {
     title: '总成本',
     key: 'total_cost_cents',
@@ -211,11 +261,16 @@ const columns: DataTableColumns<ItemWithDailyCost> = [
   {
     title: '操作',
     key: 'actions',
-    width: 150,
+    width: 200,
     render: (row) =>
       h(NSpace, { size: 4 }, () => [
         h(NButton, { size: 'tiny', onClick: () => openDetail(row) }, () => '详情'),
         h(NButton, { size: 'tiny', onClick: () => openEdit(row) }, () => '编辑'),
+        h(
+          NButton,
+          { size: 'tiny', onClick: () => openDispose(row) },
+          () => (row.status === 'in_use' ? '处置' : '处置信息'),
+        ),
         h(
           NPopconfirm,
           { onPositiveClick: () => removeItem(row.id) },
@@ -349,6 +404,43 @@ onMounted(() => {
       </NForm>
     </NModal>
 
+    <!-- 处置弹窗（issue #120）：处置日期必填，残值可选；已处置物品可修正处置信息 -->
+    <NModal
+      :show="disposing !== null"
+      preset="card"
+      :title="disposing?.status === 'in_use' ? '处置物品' : '处置信息'"
+      style="width: 400px"
+      data-testid="item-dispose-modal"
+      @update:show="(v: boolean) => (v ? undefined : closeDispose())"
+    >
+      <NForm v-if="disposing" label-placement="left" :show-feedback="false" size="small">
+        <NFormItem label="物品">
+          <span>{{ disposing.name }}</span>
+        </NFormItem>
+        <NFormItem label="处置日期">
+          <NDatePicker
+            v-model:formatted-value="disposeDate"
+            type="date"
+            value-format="yyyy-MM-dd"
+            style="width: 160px"
+          />
+        </NFormItem>
+        <NFormItem label="残值">
+          <NInput
+            v-model:value="disposeResidualYuan"
+            placeholder="残值（元，可选）"
+            style="width: 160px"
+          />
+        </NFormItem>
+        <NSpace justify="end">
+          <NButton @click="closeDispose">取消</NButton>
+          <NButton type="primary" data-testid="item-dispose-confirm" @click="confirmDispose">
+            {{ disposing.status === 'in_use' ? '确认处置' : '保存' }}
+          </NButton>
+        </NSpace>
+      </NForm>
+    </NModal>
+
     <!-- 详情弹窗（issue #117）：展示成本分解 = 分子 ÷ 已用天数 = 每天成本 -->
     <NModal
       :show="detail !== null"
@@ -364,6 +456,16 @@ onMounted(() => {
           {{ detail.status === 'in_use' ? '在用' : '已处置' }}
         </NDescriptionsItem>
         <NDescriptionsItem label="购买日期">{{ detail.purchase_date }}</NDescriptionsItem>
+        <NDescriptionsItem v-if="detail.status === 'disposed'" label="处置日期">
+          {{ detail.disposal_date }}
+        </NDescriptionsItem>
+        <NDescriptionsItem v-if="detail.status === 'disposed'" label="残值">
+          {{
+            detail.residual_value_cents != null
+              ? detailAmount(detail.residual_value_cents)
+              : '—'
+          }}
+        </NDescriptionsItem>
         <NDescriptionsItem label="总成本">
           {{ detailAmount(detail.total_cost_cents) }}（{{ detail.currency_code }}）
         </NDescriptionsItem>

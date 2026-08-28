@@ -133,6 +133,18 @@ function setupInvoke(expenseTxs: Transaction[] = mockExpenseTxs) {
       itemList = itemList.map((it) => (it.id === id ? { ...it, ...input } : it))
       return Promise.resolve(null)
     }
+    if (cmd === 'dispose_item') {
+      const { id, input } = args as {
+        id: string
+        input: { disposal_date: string; residual_value_cents: number | null }
+      }
+      itemList = itemList.map((it) =>
+        it.id === id
+          ? { ...it, status: 'disposed' as const, ...input, version: it.version + 1 }
+          : it,
+      )
+      return Promise.resolve()
+    }
     if (cmd === 'delete_item') {
       const { id } = args as { id: string }
       itemList = itemList.filter((i) => i.id !== id)
@@ -470,5 +482,121 @@ describe('ItemsView 关联购买交易（issue #119）', () => {
 
     const text = bodyQuery('[data-testid="item-detail-modal"]')!.textContent ?? ''
     expect(text).toContain('关联购买交易')
+  })
+})
+
+describe('ItemsView 物品处置（issue #120）', () => {
+  it('点处置打开弹窗：处置日期默认今天、残值为空，确认后 dispose_item 收到整数分入参', async () => {
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+
+    const disposeBtn = wrapper.findAll('button').find((b) => b.text() === '处置')
+    expect(disposeBtn).toBeTruthy()
+    await disposeBtn!.trigger('click')
+    await flushPromises()
+
+    const modal = bodyQuery('[data-testid="item-dispose-modal"]')
+    expect(modal).not.toBeNull()
+    // 处置日期默认今天（jsdom 下 NDatePicker 渲染的 input 值）
+    const dateInput = modal!.querySelector('input')!
+    expect(dateInput.value).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    // 残值默认为空
+    const residualInput = new DOMWrapper(
+      modal!.querySelector('input[placeholder="残值（元，可选）"]')!,
+    )
+    expect((residualInput.element as HTMLInputElement).value).toBe('')
+
+    await residualInput.setValue('200')
+    const confirmBtn = [...modal!.querySelectorAll('button')].find(
+      (b) => b.textContent === '确认处置',
+    )
+    confirmBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+
+    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'dispose_item')
+    expect(calls).toHaveLength(1)
+    const [, args] = calls[0]
+    expect(args).toEqual({
+      id: 'item-1',
+      input: { disposal_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), residual_value_cents: 20_000 },
+    })
+    // 重拉后列表展示已处置状态
+    expect(wrapper.text()).toContain('已处置')
+  })
+
+  it('已处置物品点处置信息打开弹窗并预填处置字段，可修正后保存', async () => {
+    itemList = [
+      { ...mockItems[0], status: 'disposed', disposal_date: '2026-06-01', residual_value_cents: 10_000 },
+    ]
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+
+    const editDisposeBtn = wrapper.findAll('button').find((b) => b.text() === '处置信息')
+    expect(editDisposeBtn).toBeTruthy()
+    await editDisposeBtn!.trigger('click')
+    await flushPromises()
+
+    const modal = bodyQuery('[data-testid="item-dispose-modal"]')!
+    const residualInput = new DOMWrapper(
+      modal.querySelector('input[placeholder="残值（元，可选）"]')!,
+    )
+    // 预填残值：10000 分 → 100（元）
+    expect((residualInput.element as HTMLInputElement).value).toBe('100')
+
+    await residualInput.setValue('300')
+    const saveBtn = [...modal.querySelectorAll('button')].find((b) => b.textContent === '保存')
+    saveBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+
+    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'dispose_item')
+    expect(calls).toHaveLength(1)
+    const [, args] = calls[0]
+    expect((args as { input: { residual_value_cents: number } }).input.residual_value_cents).toBe(
+      30_000,
+    )
+    expect(wrapper.text()).toContain('已处置 2026-06-01')
+  })
+
+  it('已处置物品详情展示处置日期与残值（formatAmount）', async () => {
+    itemList = [
+      { ...mockItems[0], status: 'disposed', disposal_date: '2026-06-01', residual_value_cents: 10_000 },
+    ]
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+
+    const detailBtn = wrapper.findAll('button').find((b) => b.text() === '详情')
+    await detailBtn!.trigger('click')
+    await flushPromises()
+
+    const modal = bodyQuery('[data-testid="item-detail-modal"]')
+    expect(modal).not.toBeNull()
+    expect(modal!.textContent).toContain('已处置')
+    expect(modal!.textContent).toContain('2026-06-01')
+    // 残值 10000 分 → ¥100（formatAmount）
+    expect(modal!.textContent).toContain('¥100')
+  })
+
+  it('处置日期为空时提示且不调用 dispose_item', async () => {
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+
+    const disposeBtn = wrapper.findAll('button').find((b) => b.text() === '处置')
+    await disposeBtn!.trigger('click')
+    await flushPromises()
+
+    const modal = bodyQuery('[data-testid="item-dispose-modal"]')!
+    // 清空处置日期（直接置空底层输入）
+    const dateInputEl = modal.querySelector('input') as HTMLInputElement
+    const dateInput = new DOMWrapper(dateInputEl)
+    await dateInput.setValue('')
+    const confirmBtn = [...modal.querySelectorAll('button')].find(
+      (b) => b.textContent === '确认处置',
+    )
+    confirmBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'dispose_item')).toBe(false)
+    // 弹窗仍开着
+    expect(bodyQuery('[data-testid="item-dispose-modal"]')).not.toBeNull()
   })
 })

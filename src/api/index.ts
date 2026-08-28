@@ -28,6 +28,7 @@ import type {
   InstrumentListFilter,
   InstrumentListResult,
   InstrumentPriceTrend,
+  ItemDisposeInput,
   ItemInput,
   ItemWithDailyCost,
   MarketPrice,
@@ -136,6 +137,8 @@ export const api = {
   listItems: () => invoke<ItemWithDailyCost[]>('list_items'),
   createItem: (input: ItemInput) => invoke<string>('create_item', { input }),
   updateItem: (id: string, input: ItemInput) => invoke<void>('update_item', { id, input }),
+  disposeItem: (id: string, input: ItemDisposeInput) =>
+    invoke<void>('dispose_item', { id, input }),
   deleteItem: (id: string) => invoke<void>('delete_item', { id }),
 
   // 汇率
