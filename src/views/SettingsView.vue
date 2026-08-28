@@ -1,39 +1,39 @@
 <script setup lang="ts">
-import { NTabs, NTabPane } from 'naive-ui'
+import { NSpace, NTabs, NTabPane } from 'naive-ui'
+import GeneralSettings from '@/components/settings/GeneralSettings.vue'
 import CategoryManager from '@/components/CategoryManager.vue'
 import CurrencySettings from '@/components/settings/CurrencySettings.vue'
 import BackupSettings from '@/components/settings/BackupSettings.vue'
 import DataLocationSettings from '@/components/settings/DataLocationSettings.vue'
-import AppearanceSettings from '@/components/settings/AppearanceSettings.vue'
 import AboutSettings from '@/components/settings/AboutSettings.vue'
 </script>
 
 <template>
+  <!-- Tab 分域（issue #157 / ADR-0022）：通用（轻量设备偏好）→ 分类与币种（参考数据）
+       → 数据（备份与存储位置）→ 关于（恒在末位）。
+       「数据」pane 用 display-directive='show:lazy'：首次激活挂载后保持挂载，
+       备份列表在 tab 切换间保留缓存；useBackup 的 onMounted 于首次激活时刷新。 -->
   <NTabs type="line">
-    <NTabPane name="categories" tab="分类">
-      <CategoryManager />
+    <NTabPane name="general" tab="通用">
+      <GeneralSettings />
     </NTabPane>
 
-    <NTabPane name="currencies" tab="币种">
-      <CurrencySettings />
+    <NTabPane name="categories-currencies" tab="分类与币种">
+      <NSpace vertical :size="16">
+        <CategoryManager />
+        <CurrencySettings />
+      </NSpace>
     </NTabPane>
 
-    <!-- backup pane 用 display-directive='show'：内容保持挂载，备份列表在 tab 切换间
-         保留缓存；useBackup 的 onMounted 于视图挂载时刷新，与原行为一致。 -->
-    <NTabPane name="backup" tab="备份与恢复" display-directive="show">
-      <BackupSettings />
-    </NTabPane>
-
-    <NTabPane name="appearance" tab="外观">
-      <AppearanceSettings />
+    <NTabPane name="data" tab="数据" display-directive="show:lazy">
+      <NSpace vertical :size="16">
+        <BackupSettings />
+        <DataLocationSettings />
+      </NSpace>
     </NTabPane>
 
     <NTabPane name="about" tab="关于">
       <AboutSettings />
-    </NTabPane>
-
-    <NTabPane name="data-location" tab="存储位置">
-      <DataLocationSettings />
     </NTabPane>
   </NTabs>
 </template>

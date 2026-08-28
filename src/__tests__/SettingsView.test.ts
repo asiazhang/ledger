@@ -36,6 +36,8 @@ const mockCurrencies: Currency[] = [
 /**
  * mock-invoke 桩分发（沿本文件既有模式收口样板）：默认覆盖公共桩，
  * 测试用 `overrides` 只覆写差异项，未命中走默认或 reject。
+ * 「数据」pane 用 display-directive='show:lazy'，首次激活即同时挂载
+ * BackupSettings 与 DataLocationSettings，故 get_data_location_info 进默认桩。
  */
 function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
   const defaults: Record<string, unknown> = {
@@ -43,12 +45,31 @@ function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
     list_accounts: [],
     list_categories: [],
     list_backups: [],
+    get_data_location_info: {
+      active_dir: '/Users/me/Library/Application Support/ledger',
+      configured_dir: null,
+      pending_restart: false,
+      fallback_reason: null,
+    },
   }
   mockInvoke.mockImplementation((cmd: string, args?: any) => {
     if (cmd in overrides) return overrides[cmd](args)
     if (cmd in defaults) return Promise.resolve(defaults[cmd])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
+}
+
+/** 定位标题为指定文本的卡片（Naive UI 卡片头主标题元素）。 */
+function findCardByTitle(wrapper: ReturnType<typeof mount>, title: string) {
+  return wrapper.findAll('.n-card').find((c) => c.find('.n-card-header__main').text() === title)
+}
+
+/** 按标签文本点击设置页 Tab（避免依赖不稳定的位置下标）。 */
+async function openTab(wrapper: ReturnType<typeof mount>, label: string) {
+  const tab = wrapper.findAll('.n-tabs-tab').find((t) => t.text() === label)
+  expect(tab, `设置页应存在「${label}」Tab`).toBeTruthy()
+  await tab!.trigger('click')
+  await nextTick()
 }
 
 beforeEach(async () => {
@@ -58,6 +79,14 @@ beforeEach(async () => {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve([])
     if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'get_data_location_info') {
+      return Promise.resolve({
+        active_dir: '/Users/me/Library/Application Support/ledger',
+        configured_dir: null,
+        pending_restart: false,
+        fallback_reason: null,
+      })
+    }
     if (cmd === 'create_backup') {
       return Promise.resolve({
         path: '/tmp/ledger-backup.db.zip',
@@ -86,58 +115,51 @@ beforeEach(async () => {
   await store.ensureFresh()
 })
 
-describe('SettingsView.vue', () => {
-  it('渲染 5 个 TabPane', () => {
+describe('SettingsView.vue（issue #157：Tab 分域重构 6 → 4）', () => {
+  it('Tab 格局为 通用 → 分类与币种 → 数据 → 关于，共 4 个，关于在末位', () => {
     const wrapper = mount(SettingsView)
-    const tabs = wrapper.findAll('.n-tabs-tab')
-    const settingsTabs = tabs.filter((t) =>
-      ['分类', '币种', '备份与恢复', '外观', '关于'].includes(t.text()),
-    )
-    expect(settingsTabs.length).toBe(5)
+    const labels = wrapper.findAll('.n-tabs-tab').map((t) => t.text())
+    expect(labels).toEqual(['通用', '分类与币种', '数据', '关于'])
   })
 
-  it('Tab 标签文本正确', () => {
+  it('旧 Tab（分类 / 币种 / 备份与恢复 / 外观 / 存储位置）全部消失', () => {
     const wrapper = mount(SettingsView)
-    const tabs = wrapper.findAll('.n-tabs-tab')
-    const labels = tabs.map((t) => t.text())
-    expect(labels).not.toContain('数据管理')
-    expect(labels).toContain('分类')
-    expect(labels).toContain('币种')
-    expect(labels).toContain('备份与恢复')
-    expect(labels).toContain('外观')
-    expect(labels).toContain('关于')
+    const labels = wrapper.findAll('.n-tabs-tab').map((t) => t.text())
+    expect(labels).not.toContain('分类')
+    expect(labels).not.toContain('币种')
+    expect(labels).not.toContain('备份与恢复')
+    expect(labels).not.toContain('外观')
+    expect(labels).not.toContain('存储位置')
   })
 
-  it('包含 CategoryManager 组件', () => {
+  it('「通用」默认激活，含深色模式开关与默认币种下拉，行为不变', async () => {
     const wrapper = mount(SettingsView)
+    // 通用是首个 Tab，无需点击即挂载（show:lazy 语义）。
+    const html = wrapper.html()
+    expect(html).toContain('深色模式')
+    expect(html).toContain('默认币种')
+    // 深色模式开关反映当前主题（默认暗色）。
+    expect(wrapper.find('.n-switch').attributes('aria-checked')).toBe('true')
+  })
+
+  it('「通用」内切换深色模式开关更新 app store 主题', async () => {
+    const store = useAppStore()
+    const wrapper = mount(SettingsView)
+    await wrapper.find('.n-switch').trigger('click')
+    expect(store.theme).toBe('light')
+  })
+
+  it('「分类与币种」含分类管理器与支持币种表格', async () => {
+    const wrapper = mount(SettingsView)
+    await openTab(wrapper, '分类与币种')
     expect(wrapper.findComponent(CategoryManager).exists()).toBe(true)
+    const html = wrapper.html()
+    expect(html).toContain('支持币种')
+    expect(html).toContain('人民币')
+    expect(html).not.toContain('默认币种')
   })
 
-  it('币种 Tab 包含默认币种选择器', async () => {
-    const wrapper = mount(SettingsView)
-    const currencyTab = wrapper.findAll('.n-tabs-tab')[1]
-    await currencyTab.trigger('click')
-    await nextTick()
-    expect(wrapper.html()).toContain('默认币种')
-  })
-
-  it('外观 Tab 包含主题切换开关', async () => {
-    const wrapper = mount(SettingsView)
-    const appearanceTab = wrapper.findAll('.n-tabs-tab')[3]
-    await appearanceTab.trigger('click')
-    await nextTick()
-    expect(wrapper.html()).toContain('深色模式')
-  })
-
-  it('关于 Tab 显示版本号', async () => {
-    const wrapper = mount(SettingsView)
-    const aboutTab = wrapper.findAll('.n-tabs-tab')[4]
-    await aboutTab.trigger('click')
-    await nextTick()
-    expect(wrapper.html()).toContain('版本号')
-  })
-
-  it('存储位置 Tab 展示数据存储位置卡片（issue #134）', async () => {
+  it('「数据」同时承载备份与恢复、数据存储位置两组件', async () => {
     stubInvoke({
       get_data_location_info: () =>
         Promise.resolve({
@@ -148,32 +170,51 @@ describe('SettingsView.vue', () => {
         }),
     })
     const wrapper = mount(SettingsView)
-    const tab = wrapper.findAll('.n-tabs-tab').find((t) => t.text() === '存储位置')
-    expect(tab).toBeTruthy()
-    await tab!.trigger('click')
+    await openTab(wrapper, '数据')
     await flushPromises()
     expect(mockInvoke).toHaveBeenCalledWith('get_data_location_info')
-    expect(wrapper.html()).toContain('数据存储位置')
-    expect(wrapper.html()).toContain('/Users/me/Library/Application Support/ledger')
-  })
-
-  it('备份与恢复 Tab 包含备份/恢复操作与备份目录配置', async () => {
-    const wrapper = mount(SettingsView)
-    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
-    await backupTab.trigger('click')
-    await nextTick()
     const html = wrapper.html()
     expect(html).toContain('一键备份')
-    expect(html).toContain('另存为')
     expect(html).toContain('从备份恢复')
-    expect(html).toContain('选择目录')
+    expect(html).toContain('数据存储位置')
+    expect(html).toContain('/Users/me/Library/Application Support/ledger')
   })
 
-  it('备份目录可配置并持久化到 localStorage', async () => {
+  it('「关于」在末位，显示版本号', async () => {
+    const wrapper = mount(SettingsView)
+    const tabs = wrapper.findAll('.n-tabs-tab')
+    expect(tabs[tabs.length - 1].text()).toBe('关于')
+    await openTab(wrapper, '关于')
+    expect(wrapper.html()).toContain('版本号')
+  })
+
+  it('备份列表在 Tab 切换间保留缓存，不随切换重拉', async () => {
+    useAppStore().setBackupDir('/Users/me/backups')
+    let listBackupsCalls = 0
+    stubInvoke({
+      list_backups: () => {
+        listBackupsCalls++
+        return Promise.resolve([])
+      },
+    })
+    const wrapper = mount(SettingsView)
+    await openTab(wrapper, '数据')
+    await flushPromises()
+    expect(listBackupsCalls).toBe(1)
+    expect(wrapper.html()).toContain('当前共 0 个备份，上限 30 个')
+
+    // 切走再切回：数据 pane 保持挂载（display-directive='show:lazy'），不重拉。
+    await openTab(wrapper, '通用')
+    await openTab(wrapper, '数据')
+    await flushPromises()
+    expect(listBackupsCalls).toBe(1)
+    expect(wrapper.html()).toContain('当前共 0 个备份，上限 30 个')
+  })
+
+  it('备份与恢复：目录选择持久化到 localStorage', async () => {
     mockOpen.mockResolvedValue('/Users/me/ledger-backups')
     const wrapper = mount(SettingsView)
-    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
-    await backupTab.trigger('click')
+    await openTab(wrapper, '数据')
     await nextTick()
     await wrapper.find('.n-button').trigger('click')
     await nextTick()
@@ -185,11 +226,9 @@ describe('SettingsView.vue', () => {
     const store = useAppStore()
     store.setBackupDir('/Users/me/backups')
     const wrapper = mount(SettingsView)
-    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
-    await backupTab.trigger('click')
+    await openTab(wrapper, '数据')
     await nextTick()
-    const buttons = wrapper.findAll('button')
-    const backupBtn = buttons.find((b) => b.text().includes('一键备份'))!
+    const backupBtn = wrapper.findAll('button').find((b) => b.text().includes('一键备份'))!
     await backupBtn.trigger('click')
     await flushPromises()
     expect(mockInvoke).toHaveBeenCalledWith(
@@ -202,24 +241,16 @@ describe('SettingsView.vue', () => {
   it('一键备份写入受管目录后自动滚动清理', async () => {
     const store = useAppStore()
     store.setBackupDir('/Users/me/backups')
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve([])
-      if (cmd === 'list_categories') return Promise.resolve([])
-      if (cmd === 'list_backups') return Promise.resolve([])
-      if (cmd === 'create_backup') {
-        return Promise.resolve({
-          path: '/Users/me/backups/ledger-backup-20260101-010101.db.zip',
-          size_bytes: 1024,
-          schema_version: 4,
-          created_at: '2026-01-01T01:01:01Z',
-        })
-      }
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubInvoke({
+      create_backup: () => ({
+        path: '/Users/me/backups/ledger-backup-20260101-010101.db.zip',
+        size_bytes: 1024,
+        schema_version: 4,
+        created_at: '2026-01-01T01:01:01Z',
+      }),
     })
     const wrapper = mount(SettingsView)
-    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
-    await backupTab.trigger('click')
+    await openTab(wrapper, '数据')
     await nextTick()
     const backupBtn = wrapper.findAll('button').find((b) => b.text().includes('一键备份'))!
     await backupBtn.trigger('click')
@@ -231,36 +262,26 @@ describe('SettingsView.vue', () => {
     const store = useAppStore()
     store.setBackupDir('/Users/me/backups')
     store.setBackupMaxCount(1)
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve([])
-      if (cmd === 'list_categories') return Promise.resolve([])
-      if (cmd === 'list_backups') {
-        return Promise.resolve([
-          {
-            file_name: 'ledger-backup-20260102-010101.db.zip',
-            path: '/Users/me/backups/ledger-backup-20260102-010101.db.zip',
-            size_bytes: 2048,
-            created_at: '2026-01-02T01:01:01Z',
-          },
-          {
-            file_name: 'ledger-backup-20260101-010101.db.zip',
-            path: '/Users/me/backups/ledger-backup-20260101-010101.db.zip',
-            size_bytes: 1024,
-            created_at: '2026-01-01T01:01:01Z',
-          },
-        ])
-      }
-      if (cmd === 'prune_backups') {
-        return Promise.resolve({ kept: 1, deleted: ['ledger-backup-20260101-010101.db.zip'], failed: [] })
-      }
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubInvoke({
+      list_backups: () => [
+        {
+          file_name: 'ledger-backup-20260102-010101.db.zip',
+          path: '/Users/me/backups/ledger-backup-20260102-010101.db.zip',
+          size_bytes: 2048,
+          created_at: '2026-01-02T01:01:01Z',
+        },
+        {
+          file_name: 'ledger-backup-20260101-010101.db.zip',
+          path: '/Users/me/backups/ledger-backup-20260101-010101.db.zip',
+          size_bytes: 1024,
+          created_at: '2026-01-01T01:01:01Z',
+        },
+      ],
+      prune_backups: () => ({ kept: 1, deleted: ['ledger-backup-20260101-010101.db.zip'], failed: [] }),
     })
     mockConfirm.mockResolvedValueOnce(true)
     const wrapper = mount(SettingsView)
-    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
-    await backupTab.trigger('click')
-    await nextTick()
+    await openTab(wrapper, '数据')
     await flushPromises()
     expect(wrapper.html()).toContain('当前共 2 个备份，上限 1 个')
     const pruneBtn = wrapper.findAll('button').find((b) => b.text().includes('立即清理'))!
@@ -273,8 +294,7 @@ describe('SettingsView.vue', () => {
   it('备份保留上限可配置并持久化', async () => {
     const store = useAppStore()
     const wrapper = mount(SettingsView)
-    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
-    await backupTab.trigger('click')
+    await openTab(wrapper, '数据')
     await nextTick()
     const input = wrapper.find('.n-input-number input')
     await input.setValue('10')
@@ -288,15 +308,14 @@ describe('SettingsView.vue', () => {
       get_auto_backup_state: () => ({ enabled: false, last_backup_at: '2026-02-17T09:30:00Z' }),
     })
     const wrapper = mount(SettingsView)
-    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
-    await backupTab.trigger('click')
+    await openTab(wrapper, '数据')
     await flushPromises()
-    await nextTick()
     const html = wrapper.html()
     expect(html).toContain('自动备份')
     expect(html).toContain('上次自动备份：2026-02-17 09:30')
     // 用语义属性 aria-checked 断言开关状态，不依赖内部样式类。
-    expect(wrapper.find('.n-switch').attributes('aria-checked')).toBe('false')
+    const backupSwitch = findCardByTitle(wrapper, '自动备份')!.find('.n-switch')
+    expect(backupSwitch.attributes('aria-checked')).toBe('false')
   })
 
   it('切换自动备份开关调用 set_auto_backup_enabled 并刷新展示', async () => {
@@ -309,19 +328,18 @@ describe('SettingsView.vue', () => {
       },
     })
     const wrapper = mount(SettingsView)
-    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
-    await backupTab.trigger('click')
+    await openTab(wrapper, '数据')
     await flushPromises()
-    await wrapper.find('.n-switch').trigger('click')
+    const backupSwitch = findCardByTitle(wrapper, '自动备份')!.find('.n-switch')
+    await backupSwitch.trigger('click')
     await flushPromises()
     expect(mockInvoke).toHaveBeenCalledWith('set_auto_backup_enabled', { enabled: false })
-    expect(wrapper.find('.n-switch').attributes('aria-checked')).toBe('false')
+    expect(backupSwitch.attributes('aria-checked')).toBe('false')
   })
 
   it('未配置备份目录时提示引导，配置后提示消失', async () => {
     const wrapper = mount(SettingsView)
-    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
-    await backupTab.trigger('click')
+    await openTab(wrapper, '数据')
     await flushPromises()
     expect(wrapper.html()).toContain('设置备份目录后自动备份生效')
 
@@ -332,8 +350,7 @@ describe('SettingsView.vue', () => {
 
   it('从未自动备份时显示从未占位', async () => {
     const wrapper = mount(SettingsView)
-    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
-    await backupTab.trigger('click')
+    await openTab(wrapper, '数据')
     await flushPromises()
     expect(wrapper.html()).toContain('上次自动备份：从未')
   })
@@ -342,11 +359,9 @@ describe('SettingsView.vue', () => {
     mockOpen.mockResolvedValueOnce('/Users/me/backups/ledger-backup.db.zip')
     mockConfirm.mockResolvedValueOnce(true)
     const wrapper = mount(SettingsView)
-    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
-    await backupTab.trigger('click')
+    await openTab(wrapper, '数据')
     await nextTick()
-    const buttons = wrapper.findAll('button')
-    const restoreBtn = buttons.find((b) => b.text().includes('从备份恢复'))!
+    const restoreBtn = wrapper.findAll('button').find((b) => b.text().includes('从备份恢复'))!
     await restoreBtn.trigger('click')
     await flushPromises()
     expect(mockConfirm).toHaveBeenCalled()
@@ -377,8 +392,7 @@ describe('SettingsView.vue', () => {
       ],
     })
     const wrapper = mount(SettingsView)
-    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
-    await backupTab.trigger('click')
+    await openTab(wrapper, '数据')
     await flushPromises()
 
     const headers = wrapper.findAll('th').map((t) => t.text())
@@ -397,20 +411,13 @@ describe('SettingsView.vue', () => {
       return Promise.resolve(vi.fn())
     })
     let backupList: unknown[] = []
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve([])
-      if (cmd === 'list_categories') return Promise.resolve([])
-      if (cmd === 'list_backups') return Promise.resolve(backupList)
-      if (cmd === 'get_auto_backup_state') {
-        return Promise.resolve({ enabled: true, last_backup_at: null })
-      }
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubInvoke({
+      list_backups: () => Promise.resolve(backupList),
+      get_auto_backup_state: () => ({ enabled: true, last_backup_at: null }),
     })
 
     const wrapper = mount(SettingsView)
-    const backupTab = wrapper.findAll('.n-tabs-tab')[2]
-    await backupTab.trigger('click')
+    await openTab(wrapper, '数据')
     await flushPromises()
     expect(wrapper.html()).toContain('当前共 0 个备份，上限 30 个')
 
@@ -431,5 +438,24 @@ describe('SettingsView.vue', () => {
     const cellTexts = wrapper.findAll('tbody td').map((t) => t.text())
     expect(cellTexts).toContain('ledger-auto-20260217-093000.db.zip')
     expect(cellTexts).toContain('自动')
+  })
+
+  it('存储位置异常态文案不变：待重启提示与回退告警照常展示', async () => {
+    stubInvoke({
+      get_data_location_info: () =>
+        Promise.resolve({
+          active_dir: '/Users/me/Library/Application Support/ledger',
+          configured_dir: '/Users/me/ledger-data',
+          pending_restart: true,
+          fallback_reason: null,
+        }),
+    })
+    const wrapper = mount(SettingsView)
+    await openTab(wrapper, '数据')
+    await flushPromises()
+    const html = wrapper.html()
+    expect(html).toContain('数据存储位置')
+    expect(html).toContain('/Users/me/ledger-data')
+    expect(html).toContain('下次启动')
   })
 })
