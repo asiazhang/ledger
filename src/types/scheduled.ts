@@ -94,3 +94,44 @@ export interface UpdateStatusInput {
 export interface ExecuteOccurrenceInput {
   occurrence_id: string
 }
+
+// ---------------------------------------------------------------------------
+// 订阅花费——实际花费口径（issue #160，ADR-0023 决策二）
+// ---------------------------------------------------------------------------
+
+/** 逐订阅行：计划基础信息 + 该订阅本月/本年实际花费（本位币）。 */
+export interface SubscriptionSpendRow {
+  plan_id: string
+  note: string | null
+  counterparty: string | null
+  /** 计划状态；取消/暂停不影响其历史实际花费 */
+  status: ScheduledStatus
+  /** 每期金额（计划币种，原始口径） */
+  amount_cents: number
+  currency_code: string
+  /** 该订阅本月实际花费（本位币，分） */
+  this_month_native_cents: number
+  /** 该订阅本年实际花费（本位币，分） */
+  this_year_native_cents: number
+}
+
+/** 单个日历月的订阅实际花费（本位币，分）。 */
+export interface SubscriptionMonthSpend {
+  /** 日历月，`YYYY-MM` */
+  month: string
+  native_cents: number
+}
+
+/** `subscription_spend_overview` 命令返回的订阅实际花费总览（本位币口径，单位：分）。 */
+export interface SubscriptionSpendOverview {
+  /** 折算基准币种（全局默认币种） */
+  native_currency: string
+  /** 本月实际花费合计（分） */
+  this_month_native_cents: number
+  /** 本年实际花费合计（分） */
+  this_year_native_cents: number
+  /** 过去 12 个日历月逐月实际花费（含当月，旧→新，无扣款月补 0） */
+  months: SubscriptionMonthSpend[]
+  /** 逐订阅行（含已取消/暂停计划） */
+  rows: SubscriptionSpendRow[]
+}
