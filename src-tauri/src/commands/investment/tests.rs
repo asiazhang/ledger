@@ -1061,6 +1061,52 @@ fn portfolio_trend_derives_quantity_from_buy_sell_flow() {
 }
 
 #[test]
+fn portfolio_trend_with_date_range_clips_weeks_and_does_not_lose_pre_start_flow() {
+    let conn = setup_db();
+    insert_account(&conn, "acc-rng", "区间户", "investment", "CNY");
+    insert_instrument(&conn, "inst-rng", "600036", "招商银行", "CNY");
+    insert_price_history(&conn, "ph-r1", "inst-rng", "2026-04-06", 1000, "CNY");
+    insert_price_history(&conn, "ph-r2", "inst-rng", "2026-04-13", 2000, "CNY");
+    insert_price_history(&conn, "ph-r3", "inst-rng", "2026-04-20", 4000, "CNY");
+    // 买入在区间起点之前：起点前的流水必须累积带入，起点后各周数量才非零。
+    insert_transaction(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-rng",
+            "inst-rng",
+            3.0,
+            500,
+            "2026-04-08",
+        ),
+    )
+    .unwrap();
+
+    // 回归（#138 评审）：带 start_date 的组合走势查询曾因流水查询占位符
+    // 与参数个数不匹配而运行时报错；此处同时锁定区间裁剪与起点前持仓带入。
+    let trend = trend::query_portfolio_value_trend(
+        &conn,
+        &TrendRange {
+            start_date: Some("2026-04-10".into()),
+            end_date: Some("2026-04-21".into()),
+        },
+    )
+    .unwrap();
+    let values: Vec<(String, i64)> = trend
+        .points
+        .iter()
+        .map(|p| (p.date.clone(), p.market_value_cents))
+        .collect();
+    assert_eq!(
+        values,
+        [
+            ("2026-04-13".to_string(), 6000),  // 3 × 2000（起点前买入已带入）
+            ("2026-04-20".to_string(), 12000), // 3 × 4000
+        ]
+    );
+}
+
+#[test]
 fn portfolio_trend_converts_hkd_via_same_week_fx_with_reverse_fallback() {
     let conn = setup_db();
     insert_account(&conn, "acc-hkd", "港美股户", "investment", "CNY");

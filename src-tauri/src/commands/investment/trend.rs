@@ -156,23 +156,19 @@ pub(crate) fn query_portfolio_value_trend(
         }
     }
 
-    // 3. buy/sell 交易流水（截至区间终点即可，起点之前的持仓靠流水累积带入）。
+    // 3. buy/sell 交易流水：只按区间终点截断——起点之前的持仓靠流水累积带入，
+    //    不用起点过滤。流水查询参数独立编号（至多一个终点日期，恒为 ?1）。
     let mut flow_sql = String::from(
         "SELECT st.instrument_id, t.date, st.action, st.quantity \
          FROM security_transactions st JOIN transactions t ON t.id = st.transaction_id \
          WHERE t.is_deleted=0 AND st.action IN ('buy','sell') AND st.quantity IS NOT NULL",
     );
-    if range.end_date.is_some() {
-        flow_sql.push_str(&format!(" AND t.date<={}", params.len() + 1));
-    }
-    flow_sql.push_str(" ORDER BY st.instrument_id, t.date");
     let mut flow_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-    if range.start_date.is_some() {
-        flow_params.push(Box::new(range.start_date.clone().unwrap()));
-    }
     if let Some(end) = &range.end_date {
+        flow_sql.push_str(" AND t.date<=?1");
         flow_params.push(Box::new(end.clone()));
     }
+    flow_sql.push_str(" ORDER BY st.instrument_id, t.date");
     let flow_refs: Vec<&dyn rusqlite::ToSql> = flow_params.iter().map(|b| b.as_ref()).collect();
 
     // 每标的按日期升序的带符号数量流水（buy 为正、sell 为负）。
