@@ -3,12 +3,14 @@ mod reports;
 #[cfg(test)]
 mod tests;
 mod trade;
+mod trend;
 
 use crate::db::DbState;
 use crate::error::{AppError, Result};
 use crate::models::{
     ExchangeRate, ExchangeRateInput, Holding, InstrumentInput, InstrumentListFilter,
-    InstrumentListResult, MarketPrice, MarketPriceInput, PnlFilter, RealizedPnlSummary,
+    InstrumentListResult, InstrumentPriceTrend, MarketPrice, MarketPriceInput, PnlFilter,
+    PortfolioValueTrend, RealizedPnlSummary, TrendRange,
 };
 
 pub(crate) use reports::query_realized_pnl_summary;
@@ -21,6 +23,25 @@ pub(crate) use trade::{Plan, apply, prepare, revert};
 pub fn list_holdings(db: tauri::State<'_, DbState>) -> Result<Vec<Holding>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     crud::list_holdings(&conn)
+}
+
+#[tauri::command]
+pub fn instrument_price_trend(
+    db: tauri::State<'_, DbState>,
+    instrument_id: String,
+    filter: Option<TrendRange>,
+) -> Result<InstrumentPriceTrend> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    trend::query_instrument_price_trend(&conn, &instrument_id, &filter.unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn portfolio_value_trend(
+    db: tauri::State<'_, DbState>,
+    filter: Option<TrendRange>,
+) -> Result<PortfolioValueTrend> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    trend::query_portfolio_value_trend(&conn, &filter.unwrap_or_default())
 }
 
 #[tauri::command]
