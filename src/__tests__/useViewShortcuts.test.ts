@@ -22,25 +22,28 @@ function press(key: string, mods: { metaKey?: boolean; ctrlKey?: boolean; altKey
 afterEach(() => setPlatform(''))
 
 describe('viewShortcuts 映射', () => {
-  it('按菜单顺序覆盖 9 个视图，序号 1..9 连续无空洞', () => {
-    expect(viewShortcuts.map((s) => s.key)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9'])
+  it('按菜单顺序覆盖全部视图，数字键 1..0 连续无空洞', () => {
+    expect(viewShortcuts.map((s) => s.key)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', ','])
     expect(viewShortcuts.map((s) => s.name)).toEqual([
       'dashboard',
       'transactions',
-      'search',
       'accounts',
-      'reports',
-      'investments',
       'budget',
+      'subscriptions',
+      'investments',
+      'reports',
+      'search',
+      'items',
       'ai',
       'settings',
     ])
   })
 
-  it('侧边栏含无数字键的物品视图（不参与 Cmd/Ctrl 快捷键）', () => {
-    const items = sidebarViews.find((v) => v.name === 'items')
-    expect(items).toBeDefined()
-    expect(items!.key).toBeUndefined()
+  it('每个侧栏视图都有快捷键；设置用 Cmd+,（macOS 惯例）而非数字位', () => {
+    expect(sidebarViews.every((v) => v.key !== undefined)).toBe(true)
+    expect(sidebarViews.find((v) => v.name === 'settings')!.key).toBe(',')
+    expect(sidebarViews.find((v) => v.name === 'items')!.key).toBe('9')
+    expect(sidebarViews.find((v) => v.name === 'subscriptions')!.key).toBe('5')
   })
 })
 
@@ -49,7 +52,9 @@ describe('matchViewShortcut', () => {
     setPlatform('MacIntel')
     expect(matchViewShortcut(press('1', { metaKey: true }))).toBe('dashboard')
     expect(matchViewShortcut(press('2', { metaKey: true }))).toBe('transactions')
-    expect(matchViewShortcut(press('9', { metaKey: true }))).toBe('settings')
+    expect(matchViewShortcut(press('9', { metaKey: true }))).toBe('items')
+    expect(matchViewShortcut(press('0', { metaKey: true }))).toBe('ai')
+    expect(matchViewShortcut(press(',', { metaKey: true }))).toBe('settings')
   })
 
   it('macOS 上 Ctrl+数字不命中（需要 Cmd）', () => {
@@ -60,8 +65,9 @@ describe('matchViewShortcut', () => {
   it('非 macOS 上 Ctrl+数字命中对应视图', () => {
     setPlatform('Win32')
     expect(matchViewShortcut(press('1', { ctrlKey: true }))).toBe('dashboard')
-    expect(matchViewShortcut(press('3', { ctrlKey: true }))).toBe('search')
-    expect(matchViewShortcut(press('7', { ctrlKey: true }))).toBe('budget')
+    expect(matchViewShortcut(press('3', { ctrlKey: true }))).toBe('accounts')
+    expect(matchViewShortcut(press('7', { ctrlKey: true }))).toBe('reports')
+    expect(matchViewShortcut(press(',', { ctrlKey: true }))).toBe('settings')
   })
 
   it('非 macOS 上 Cmd+数字不命中（需要 Ctrl）', () => {
@@ -69,23 +75,25 @@ describe('matchViewShortcut', () => {
     expect(matchViewShortcut(press('1', { metaKey: true }))).toBeNull()
   })
 
-  it('无修饰键 / 混按 Cmd+Ctrl / Shift / Alt / 非 1..9 键均不命中', () => {
+  it('无修饰键 / 混按 Cmd+Ctrl / Shift / Alt / 未映射键均不命中', () => {
     setPlatform('MacIntel')
     expect(matchViewShortcut(press('1'))).toBeNull()
     expect(matchViewShortcut(press('1', { metaKey: true, ctrlKey: true }))).toBeNull()
     expect(matchViewShortcut(press('1', { metaKey: true, shiftKey: true }))).toBeNull()
     expect(matchViewShortcut(press('1', { metaKey: true, altKey: true }))).toBeNull()
-    expect(matchViewShortcut(press('0', { metaKey: true }))).toBeNull()
+    expect(matchViewShortcut(press('x', { metaKey: true }))).toBeNull()
     expect(matchViewShortcut(press('a', { metaKey: true }))).toBeNull()
   })
 })
 
 describe('shortcutHint', () => {
-  it('macOS 显示 ⌘N，其余显示 Ctrl+N', () => {
+  it('macOS 显示 ⌘N，其余显示 Ctrl+N；逗号键同样适用', () => {
     setPlatform('MacIntel')
     expect(shortcutHint('1')).toBe('⌘1')
+    expect(shortcutHint(',')).toBe('⌘,')
     setPlatform('Win32')
     expect(shortcutHint('1')).toBe('Ctrl+1')
+    expect(shortcutHint(',')).toBe('Ctrl+,')
   })
 })
 
@@ -170,12 +178,12 @@ describe('useViewShortcuts', () => {
     const { router, push } = makeRouter('dashboard')
     mountHost(router)
     window.dispatchEvent(press('4', { metaKey: true }))
-    expect(push).toHaveBeenCalledWith({ name: 'accounts' })
+    expect(push).toHaveBeenCalledWith({ name: 'budget' })
   })
 
   it('已在目标路由时不重复跳转', () => {
     setPlatform('MacIntel')
-    const { router, push } = makeRouter('accounts')
+    const { router, push } = makeRouter('budget')
     mountHost(router)
     window.dispatchEvent(press('4', { metaKey: true }))
     expect(push).not.toHaveBeenCalled()
@@ -206,7 +214,7 @@ describe('useViewShortcuts', () => {
     shell.appendChild(hiddenCard)
     document.body.appendChild(shell)
     window.dispatchEvent(press('4', { metaKey: true }))
-    expect(push).toHaveBeenCalledWith({ name: 'accounts' })
+    expect(push).toHaveBeenCalledWith({ name: 'budget' })
     shell.remove()
   })
 
@@ -215,7 +223,7 @@ describe('useViewShortcuts', () => {
     const { router, push } = makeRouter('dashboard')
     mountHost(router)
     window.dispatchEvent(press('4', { ctrlKey: true }))
-    window.dispatchEvent(press('0', { metaKey: true }))
+    window.dispatchEvent(press('x', { metaKey: true }))
     expect(push).not.toHaveBeenCalled()
   })
 })
