@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
@@ -37,8 +38,13 @@ describe('SettingsView 不含同步入口（issue #111）', () => {
     expect(wrapper.html()).not.toContain('数据管理')
   })
 
-  it('包含 CategoryManager 组件', () => {
+  it('包含 CategoryManager 组件（「分类与币种」Tab 内）', async () => {
     const wrapper = mount(SettingsView)
+    // issue #157 后 CategoryManager 位于「分类与币种」pane（默认不激活、不挂载）。
+    const tab = wrapper.findAll('.n-tabs-tab').find((t) => t.text() === '分类与币种')
+    expect(tab).toBeTruthy()
+    await tab!.trigger('click')
+    await nextTick()
     expect(wrapper.findComponent(CategoryManager).exists()).toBe(true)
   })
 })
