@@ -21,7 +21,7 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 | 5 | 参考数据与设置 | [`docs/contexts/CONTEXT-reference-settings.md`](docs/contexts/CONTEXT-reference-settings.md) | Reference Data、Appearance、AppSettings、轻量设置项、DataLocation |
 | 6 | 备份与数据文件 | [`docs/contexts/CONTEXT-backup-datafiles.md`](docs/contexts/CONTEXT-backup-datafiles.md) | Backup、Restore、RestoreSafetyBackup、BackupDirectory、BackupRetentionLimit、BackupPruning、ManagedBackup、ManualBackup、BackupTrigger、AutoBackup、DirtyMarker |
 | 7 | 界面状态与交互 | [`docs/contexts/CONTEXT-ui-interaction.md`](docs/contexts/CONTEXT-ui-interaction.md) | WindowState、ViewState、ViewShortcut、CreateShortcut、Overlay Suppression、ESC 键语义、原生右键菜单 |
-| 8 | 物品 | [`docs/contexts/CONTEXT-item.md`](docs/contexts/CONTEXT-item.md) | Item、DailyUsageCost |
+| 8 | 物品 | [`docs/contexts/CONTEXT-item.md`](docs/contexts/CONTEXT-item.md) | Item、DailyUsageCost、source_transaction_id、创建语义 |
 
 ## 域间关系
 
@@ -34,4 +34,4 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 - **参考数据与设置 → 被核心交易引用、与备份相邻**：Reference Data（账户/分类/币种字典）被核心域 Transaction 以外键引用；AppSettings 是后端配置与运行时状态的权威落点，备份域的调度状态（AutoBackup / DirtyMarker）存于其中——这是它与备份域的相邻点；DataLocation 因「建连前必须可读」成为库外引导配置的唯一例外。
 - **备份与数据文件 ↔ 各域相邻而不交叉**：Backup/Restore 是文件级整库快照通道，与 AI 导入（语义级写入）、行情同步（投资域）互不交叉；备份不迁移界面状态（界面域）与设备偏好（参考设置域 / 核心域 DefaultCurrency）。
 - **界面状态与交互 → 只读消费各域**：WindowState / ViewState / 快捷键 / 弹层抑制是纯界面层概念，不持业务数据；搜索（核心域 TransactionSearch）复用交易列表信息但搜索词不持久化（与 ViewState 边界一致）。
-- **物品（单列小域）→ 可选挂靠核心交易**：Item 是与参考数据、交易流水、投资标的并列的独立领域概念，自包含总成本、不进字典；可选关联一笔核心域 Transaction 仅用于带出成本与溯源，不建立反向引用。
+- **物品（单列小域）→ 挂靠核心交易**：Item 是与参考数据、交易流水、投资标的并列的独立领域概念，自包含总成本、不进字典；创建**必须**关联一笔核心域 `expense` Transaction（`source_transaction_id` 必填、唯一，仅用于带出成本/日期与溯源），**不建立反向引用**，**无交易物品不可录入**；创建唯一入口 = 交易右键 + 确认弹窗（ADR-0025）。
