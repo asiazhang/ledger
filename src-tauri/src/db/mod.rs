@@ -34,6 +34,7 @@ fn migrations() -> &'static Migrations<'static> {
             )),
             M::up(include_str!("../../migrations/V008__app_settings.sql")),
             M::up(include_str!("../../migrations/V009__items.sql")),
+            M::up(include_str!("../../migrations/V010__price_history.sql")),
         ])
     })
 }

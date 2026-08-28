@@ -597,3 +597,127 @@ fn perf_trace_sql_event_inherits_command_span() {
         "SQL 事件应归因到 command span，实际: {sql_events:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// V010：价格历史化（issue #136 / ADR-0019）——price_history 与 fx_rate_history
+// ---------------------------------------------------------------------------
+
+/// 在测试库中创建一个可引用的金融工具（依赖 init_db 种子币种）。
+fn insert_instrument(conn: &Connection, id: &str, currency: &str) {
+    conn.execute(
+        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+         VALUES (?1,'600519.SH','stock','贵州茅台',?2,'sh','2026-06-01T00:00:00Z','2026-06-01T00:00:00Z',1,'test')",
+        params![id, currency],
+    )
+    .unwrap();
+}
+
+/// price_history：周采样唯一约束（每标的每周至多一条）+ 标的级联删除跟随。
+#[test]
+fn price_history_weekly_unique_and_cascade() {
+    let mut conn = open_in_memory().unwrap();
+    init_db(&mut conn).unwrap();
+    insert_instrument(&conn, "inst-01", "CNY");
+
+    let insert = |conn: &Connection, id: &str, date: &str| {
+        conn.execute(
+            "INSERT INTO price_history (id,instrument_id,trade_date,price_cents,currency_code,source,created_at,updated_at,version,device_id) \
+             VALUES (?1,'inst-01',?2,170000,'CNY','eastmoney','2026-06-01T00:00:00Z','2026-06-01T00:00:00Z',1,'test')",
+            params![id, date],
+        )
+    };
+
+    insert(&conn, "ph-01", "2026-05-30").unwrap();
+    // 同标的同交易日第二行应被唯一约束拒绝（整周覆盖走 upsert，不产生重复）。
+    let dup = insert(&conn, "ph-02", "2026-05-30");
+    assert!(dup.is_err(), "同标的同采样日第二行应违反唯一约束");
+    // 不同周（另一采样日）可正常写入。
+    insert(&conn, "ph-03", "2026-06-06").unwrap();
+
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM price_history", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 2);
+
+    // 标的删除 → 历史级联删除跟随。
+    conn.execute("DELETE FROM instruments WHERE id='inst-01'", [])
+        .unwrap();
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM price_history", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 0, "删除标的后价格历史应级联删除");
+}
+
+/// fx_rate_history：币种对 × 周采样日唯一（与 PriceHistory 同规则）。
+#[test]
+fn fx_rate_history_weekly_unique_per_pair() {
+    let mut conn = open_in_memory().unwrap();
+    init_db(&mut conn).unwrap();
+
+    let insert = |conn: &Connection, id: &str, date: &str| {
+        conn.execute(
+            "INSERT INTO fx_rate_history (id,base_code,quote_code,trade_date,rate,source,created_at,updated_at,version,device_id) \
+             VALUES (?1,'HKD','CNY',?2,0.92,'eastmoney','2026-06-01T00:00:00Z','2026-06-01T00:00:00Z',1,'test')",
+            params![id, date],
+        )
+    };
+
+    insert(&conn, "fx-01", "2026-05-30").unwrap();
+    // 同币种对同采样日第二行应被唯一约束拒绝。
+    let dup = insert(&conn, "fx-02", "2026-05-30");
+    assert!(dup.is_err(), "同币种对同采样日第二行应违反唯一约束");
+    // 不同周可写入；反向币种对是另一条序列，互不冲突。
+    insert(&conn, "fx-03", "2026-06-06").unwrap();
+    conn.execute(
+        "INSERT INTO fx_rate_history (id,base_code,quote_code,trade_date,rate,source,created_at,updated_at,version,device_id) \
+         VALUES ('fx-04','CNY','HKD','2026-05-30',1.087,'eastmoney','2026-06-01T00:00:00Z','2026-06-01T00:00:00Z',1,'test')",
+        [],
+    )
+    .unwrap();
+}
+
+/// v0.3.0 备份恢复后升级路径：旧库（user_version=8，V009 之前的 schema）
+/// 经 init_db 补齐后续迁移，price_history / fx_rate_history 自动创建。
+#[test]
+fn migration_upgrades_v030_backup_with_new_tables() {
+    let mut conn = open_in_memory().unwrap();
+    // 停在 v0.3.0 发布时的 schema 版本（V001–V008）。
+    migrations().to_version(&mut conn, 8).unwrap();
+    let before: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(before, 8);
+
+    // 旧库中已有数据（如一笔交易）在升级后应原样保留。
+    conn.execute(
+        "INSERT INTO accounts (id,name,type,currency_code,is_deleted,created_at,updated_at,version,device_id) \
+         VALUES ('acc-01','现金','cash','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+        [],
+    )
+    .unwrap();
+
+    init_db(&mut conn).unwrap();
+
+    // 新表存在且可直接写入（迁移不止是建表语句语法有效，约束也生效）。
+    insert_instrument(&conn, "inst-up", "CNY");
+    conn.execute(
+        "INSERT INTO price_history (id,instrument_id,trade_date,price_cents,currency_code,source,created_at,updated_at,version,device_id) \
+         VALUES ('ph-up','inst-up','2026-05-30',170000,'CNY','eastmoney','2026-06-01T00:00:00Z','2026-06-01T00:00:00Z',1,'test')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO fx_rate_history (id,base_code,quote_code,trade_date,rate,source,created_at,updated_at,version,device_id) \
+         VALUES ('fx-up','HKD','CNY','2026-05-30',0.92,'eastmoney','2026-06-01T00:00:00Z','2026-06-01T00:00:00Z',1,'test')",
+        [],
+    )
+    .unwrap();
+
+    // 旧数据未受迁移影响。
+    let acc: String = conn
+        .query_row("SELECT name FROM accounts WHERE id='acc-01'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(acc, "现金");
+}
