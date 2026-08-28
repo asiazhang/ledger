@@ -54,8 +54,8 @@ pub fn expand_scheduled_occurrences(db: State<'_, DbState>, id: String) -> Resul
     crate::scheduled_transactions::expand_occurrences(&conn, &id)
 }
 
-/// 订阅实际花费总览（issue #160，ADR-0023 实际口径）：只读聚合，
-/// 返回逐订阅行 + 本月/本年实际花费 + 过去 12 个月逐月序列（本位币）。
+/// 订阅花费总览（issue #160/#161，ADR-0023 双口径）：只读聚合，返回逐订阅行 +
+/// 本月/本年实际花费 + 过去 12 个月逐月序列 + 折算月/年推算成本（本位币）。
 #[tauri::command]
 pub fn subscription_spend_overview(db: State<'_, DbState>) -> Result<SubscriptionSpendOverview> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;

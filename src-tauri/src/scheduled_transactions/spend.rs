@@ -8,7 +8,7 @@
 //! - 不过滤计划状态：取消/暂停计划的历史实际花费如实保留；
 //! - 只读聚合（先例：`dashboard_overview`），不新增任何写路径。
 //!
-//! 推算成本口径（折算月/年成本）不在本模块（issue #161）。
+//! 推算成本口径（折算月/年成本）见 [`monthly_coefficient`]（issue #161）。
 
 use std::collections::HashMap;
 
@@ -17,7 +17,7 @@ use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::db::query::{FromRow, query_all};
-use crate::error::Result;
+use crate::error::{AppError, Result};
 use crate::transaction::amount;
 
 /// 逐订阅行：计划基础信息 + 该订阅本月/本年实际花费（本位币）。
@@ -45,7 +45,7 @@ pub struct SubscriptionMonthSpend {
     pub native_cents: i64,
 }
 
-/// `subscription_spend_overview` 命令返回的订阅实际花费总览（本位币口径，单位：分）。
+/// `subscription_spend_overview` 命令返回的订阅花费总览（本位币口径，单位：分）。
 #[derive(Debug, Clone, Serialize)]
 pub struct SubscriptionSpendOverview {
     /// 折算基准币种（全局默认币种）
@@ -58,6 +58,10 @@ pub struct SubscriptionSpendOverview {
     pub months: Vec<SubscriptionMonthSpend>,
     /// 逐订阅行（含已取消/暂停计划，其历史实际花费如实保留）
     pub rows: Vec<SubscriptionSpendRow>,
+    /// 折算月成本合计（本位币，分）：只统计 active 计划，系数见 [`monthly_coefficient`]
+    pub projected_month_native_cents: i64,
+    /// 折算年成本合计（本位币，分）= 折算月成本 × 12；纯展示，不落库、不进流水与预算
+    pub projected_year_native_cents: i64,
 }
 
 /// 聚合中间行：计划 × 日历月 → 本位币花费合计。
@@ -98,6 +102,60 @@ impl FromRow for PlanBase {
             currency_code: row.get(5)?,
         })
     }
+}
+
+/// 折算月成本系数（issue #161，ADR-0023 决策二）：后端单点收口。
+///
+/// 月付 ×1、年付 ÷12、周付 ×52÷12、日付 ×30；`recurrence_interval > 1` 时
+/// 按间隔均摊（每 N 期一扣 → 系数 ÷ N，如「每 3 月 ¥300」折算月成本 ¥100）。
+fn monthly_coefficient(recurrence_type: &str, recurrence_interval: i64) -> Result<f64> {
+    let per_cycle = match recurrence_type {
+        "monthly" => 1.0,
+        "yearly" => 1.0 / 12.0,
+        "weekly" => 52.0 / 12.0,
+        "daily" => 30.0,
+        other => return Err(AppError::Invalid(format!("未知的订阅周期类型: {other}"))),
+    };
+    Ok(per_cycle / recurrence_interval.max(1) as f64)
+}
+
+/// 推算中间行：active 订阅计划的计费参数。
+struct PlanBilling {
+    amount_cents: i64,
+    currency_code: String,
+    recurrence_type: String,
+    recurrence_interval: i64,
+}
+
+impl FromRow for PlanBilling {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(PlanBilling {
+            amount_cents: row.get(0)?,
+            currency_code: row.get(1)?,
+            recurrence_type: row.get(2)?,
+            recurrence_interval: row.get(3)?,
+        })
+    }
+}
+
+/// 推算成本（issue #161，ADR-0023 决策二）：按当前 active 订阅计划参数推算的
+/// 持续烧钱速度，只算 active、不看执行情况；金额在计划币种上折算本位币
+/// （缺汇率报错上抛）。纯展示口径：不落库、不进流水与预算。
+fn query_projected_cost(conn: &Connection) -> Result<(i64, i64)> {
+    let plans: Vec<PlanBilling> = query_all(
+        conn,
+        "SELECT amount_cents, currency_code, recurrence_type, recurrence_interval \
+         FROM scheduled_transactions \
+         WHERE kind = 'subscription' AND status = 'active' AND is_deleted = 0",
+        [],
+    )?;
+    let mut projected_month = 0i64;
+    for p in plans {
+        let native_cents = amount::convert_to_native(conn, p.amount_cents, &p.currency_code)?;
+        let coefficient = monthly_coefficient(&p.recurrence_type, p.recurrence_interval)?;
+        projected_month += (native_cents as f64 * coefficient).round() as i64;
+    }
+    Ok((projected_month, projected_month * 12))
 }
 
 /// conn 级聚合：订阅实际花费总览（只读）。`today` 由命令层注入（本地今日），
@@ -199,11 +257,15 @@ pub fn query_subscription_spend(
         })
         .collect();
 
+    let (projected_month_native_cents, projected_year_native_cents) = query_projected_cost(conn)?;
+
     Ok(SubscriptionSpendOverview {
         native_currency: amount::default_currency_code().to_string(),
         this_month_native_cents,
         this_year_native_cents,
         months,
         rows,
+        projected_month_native_cents,
+        projected_year_native_cents,
     })
 }

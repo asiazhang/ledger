@@ -44,6 +44,27 @@ fn create_subscription(
     amount_cents: i64,
     note: Option<&str>,
 ) -> String {
+    create_subscription_cycle(
+        conn,
+        account_id,
+        currency,
+        amount_cents,
+        RecurrenceType::Monthly,
+        1,
+        note,
+    )
+}
+
+/// 创建指定周期类型与间隔的订阅计划，返回计划 id。
+fn create_subscription_cycle(
+    conn: &Connection,
+    account_id: &str,
+    currency: &str,
+    amount_cents: i64,
+    recurrence_type: RecurrenceType,
+    recurrence_interval: i64,
+    note: Option<&str>,
+) -> String {
     create_plan(
         conn,
         CreateScheduledInput {
@@ -52,8 +73,8 @@ fn create_subscription(
             category_id: None,
             amount_cents,
             currency_code: currency.into(),
-            recurrence_type: RecurrenceType::Monthly,
-            recurrence_interval: 1,
+            recurrence_type,
+            recurrence_interval,
             recurrence_day: None,
             start_date: "2026-01-15".into(),
             note: note.map(String::from),
@@ -518,6 +539,110 @@ fn subscription_spend_keeps_cancelled_history_and_excludes_other_kinds() {
     assert_eq!(row.status, "cancelled");
     assert_eq!(row.this_month_native_cents, 0);
     assert_eq!(row.this_year_native_cents, 6000);
+}
+
+/// 推算成本（issue #161）：各周期系数折算正确（月 ×1、年 ÷12、周 ×52÷12、日 ×30），
+/// recurrence_interval > 1 时按间隔均摊；折算年成本 = 折算月成本 × 12。
+#[test]
+fn subscription_projected_spend_coefficients() {
+    let conn = setup_db();
+    insert_account(&conn, "acc", "CNY");
+    create_subscription_cycle(
+        &conn,
+        "acc",
+        "CNY",
+        3000,
+        RecurrenceType::Monthly,
+        1,
+        Some("月付"),
+    );
+    create_subscription_cycle(
+        &conn,
+        "acc",
+        "CNY",
+        34800,
+        RecurrenceType::Yearly,
+        1,
+        Some("年付"),
+    );
+    create_subscription_cycle(
+        &conn,
+        "acc",
+        "CNY",
+        5200,
+        RecurrenceType::Weekly,
+        1,
+        Some("周付"),
+    );
+    create_subscription_cycle(
+        &conn,
+        "acc",
+        "CNY",
+        300,
+        RecurrenceType::Daily,
+        1,
+        Some("日付"),
+    );
+    create_subscription_cycle(
+        &conn,
+        "acc",
+        "CNY",
+        3000,
+        RecurrenceType::Monthly,
+        3,
+        Some("每三月"),
+    );
+
+    let overview = query_subscription_spend(&conn, date("2026-03-20")).unwrap();
+    // 3000×1 + 34800÷12 + 5200×52÷12 + 300×30 + 3000÷3 = 3000 + 2900 + 22533 + 9000 + 1000
+    assert_eq!(overview.projected_month_native_cents, 38433);
+    assert_eq!(
+        overview.projected_year_native_cents,
+        38433 * 12,
+        "折算年成本 = 折算月成本 × 12"
+    );
+}
+
+/// 推算成本只统计 active 计划（暂停/取消不计入），且不看执行情况（未执行也计入）。
+#[test]
+fn subscription_projected_spend_counts_only_active_plans() {
+    let conn = setup_db();
+    insert_account(&conn, "acc", "CNY");
+    create_subscription(&conn, "acc", "CNY", 3000, Some("进行中"));
+    let paused = create_subscription(&conn, "acc", "CNY", 5000, Some("已暂停"));
+    update_plan_status(&conn, &paused, ScheduledStatus::Paused).unwrap();
+    let cancelled = create_subscription(&conn, "acc", "CNY", 7000, Some("已取消"));
+    update_plan_status(&conn, &cancelled, ScheduledStatus::Cancelled).unwrap();
+
+    let overview = query_subscription_spend(&conn, date("2026-03-20")).unwrap();
+    assert_eq!(
+        overview.projected_month_native_cents, 3000,
+        "暂停/取消不计入，未执行也计入"
+    );
+    assert_eq!(overview.projected_year_native_cents, 36000);
+    // 推算口径不影响实际口径：均未执行，实际花费为 0
+    assert_eq!(overview.this_month_native_cents, 0);
+    assert_eq!(overview.this_year_native_cents, 0);
+}
+
+/// 推算成本在计划币种上折算本位币；缺汇率时报错上抛，不静默混算。
+#[test]
+fn subscription_projected_spend_converts_and_requires_rate() {
+    let conn = setup_db();
+    insert_account(&conn, "acc-usd", "USD");
+    insert_rate(&conn, "USD", "CNY", 7.2);
+    create_subscription(&conn, "acc-usd", "USD", 10000, Some("国际订阅"));
+
+    let overview = query_subscription_spend(&conn, date("2026-03-20")).unwrap();
+    assert_eq!(
+        overview.projected_month_native_cents, 72000,
+        "10000 × 7.2 折算本位币"
+    );
+
+    conn.execute("DELETE FROM exchange_rates", params![])
+        .unwrap();
+    let err = query_subscription_spend(&conn, date("2026-03-20")).unwrap_err();
+    assert!(err.to_string().contains("汇率"), "缺汇率应报错上抛: {err}");
 }
 
 /// 非默认币种订阅按流水的本位币金额（落库时折算）计入，不二次折算。
