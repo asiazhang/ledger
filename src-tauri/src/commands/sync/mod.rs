@@ -1,10 +1,13 @@
 //! 行情同步（issue #89）：命令外壳 + HTTP 网络层 + 持久化 + 编排。
 //!
 //! 目录组织：
-//! - `http`：HTTP 请求（含多主机切换、重试、限流冷却）与响应解析，可独立测试；
-//! - `persist`：`instruments` / `market_prices` 持久化；
+//! - `http`：HTTP 请求（含多主机切换、重试、限流冷却）与响应解析（报价 / 日 K / 汇率 K），
+//!   可独立测试；
+//! - `persist`：`instruments` / `market_prices` 持久化 + `price_history` / `fx_rate_history`
+//!   周采样 upsert（issue #137）；
 //! - `orchestrate`：全量同步编排——市场分页遍历、进度事件推送、新增/更新汇总；
-//! - `incremental`：增量同步编排（issue #103）——从当前持仓收集股票批量刷价格；
+//! - `incremental`：增量同步编排（issue #103，#137 升级）——现价 upsert + 近两年日 K
+//!   回填周线落 `price_history` + 汇率 K 线落 `fx_rate_history`（ADR-0019）；
 //! - `tests`：原内嵌测试外迁。
 //!
 //! 对外暴露两个命令（`commands/mod.rs` 经 `pub use sync::*` 重导出）：
