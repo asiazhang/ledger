@@ -80,7 +80,7 @@ npm run tauri build
 
 - **[AGENTS.md](AGENTS.md)** — 开发者文档：技术栈、常用命令、架构与编码约定
 - **[CHANGELOG.md](CHANGELOG.md)** — 各版本对使用者可见的变更
-- **[CONTEXT-MAP.md](CONTEXT-MAP.md)** — 领域词汇表地图（分域词汇表集中存放于根目录 `CONTEXT-*.md`）
+- **[CONTEXT-MAP.md](CONTEXT-MAP.md)** — 领域词汇表地图（分域词汇表集中存放于 `docs/contexts/`）
 - **[docs/](docs/)** — 领域模型、API 契约与架构决策记录（ADR）
 
 ## License
