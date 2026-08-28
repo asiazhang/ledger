@@ -28,7 +28,7 @@ ADR-0004 以 FTS5 虚拟表实现交易模糊搜索（整词 + 右锚前缀 + �
 3. **连带移除整套索引机制**：`search_transactions` 虚拟表、`search_reindex_queue`、三个入队触发器、后台定时刷新线程、启动对账、搜索结果 `stale` 标志（`TransactionSearchResult.stale` 字段随模型一并删除，前端「索引更新中」提示移除）。
 4. **SQL 变更不走「追加 drop 迁移」**：明确不考虑旧库兼容，原 V005__search_index.sql 迁移文件自迁移序列整体移除（后续迁移文件名不变，序列号不回填；`user_version` 按序列位置计数）。旧库三种情形的处理（均不属迁移，避免 user_version 语义纠缠）：
    - **user_version 大于当前序列长度**：打开时被 rusqlite_migration 拒绝（DatabaseTooFarAhead），需重置或手动校正 user_version；
-   - **能打开的旧库/旧备份（user_version ≤ 序列长度）**：残留 FTS 对象由启动幂等清理（`db::cleanup_legacy_search_objects`，DROP IF EXISTS）——尤其入队触发器若不清理会在每次交易写入时向死表插行；app_settings 建表迁移可能被位置语义跳过，读侧 `settings::get` 缺表返回默认值、写侧 `settings::set` 就地建表自愈（均有单测），升级路径以 `db::tests` 测试为准。
+   - **能打开的旧库/旧备份（user_version ≤ 序列长度）**：残留 FTS 对象不做启动幂等清理、也不做单独 drop 迁移——issue #197 将 FTS5 机制完整移除、维持「不考虑旧库兼容」立场；app_settings 建表迁移可能被位置语义跳过，读侧 `settings::get` 缺表返回默认值、写侧 `settings::set` 就地建表自愈（均有单测），升级路径以 `db::tests` 测试为准。
 5. **搜索命令对外 API 形状不变**（参数、分页语义），仅排序语义由 bm25 相关度改为交易日期降序（对外可见的行为变更，属规格预期）；写入路径立即可搜，无任何时效性容忍。唯一例外：返回结构中的 `stale` 字段属 #195「连带移除」明列项（索引机制消失后无滞后可言），其删除优先于「返回结构保持现状」的一般性表述，前端「索引更新中」提示同步移除。
 
 ## 理由

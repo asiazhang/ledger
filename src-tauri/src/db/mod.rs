@@ -25,9 +25,8 @@ fn migrations() -> &'static Migrations<'static> {
                 "../../migrations/V003__scheduled_transactions.sql"
             )),
             M::up(include_str!("../../migrations/V004__seed_defaults.sql")),
-            // 注：原 V005__search_index.sql（FTS5 搜索索引）已从序列整体移除
-            //（issue #196 / ADR-0027，不考虑旧库兼容；user_version 按序列位置计数，
-            // 序列号不回填、后续迁移文件名保持不变）。
+            // 注：原 V005__search_index.sql（搜索索引）已从序列整体移除（见 ADR-0027），
+            // 序列号不回填，后续迁移文件名保持不变；新库不再产生搜索索引对象。
             M::up(include_str!(
                 "../../migrations/V006__transaction_amount_index.sql"
             )),
@@ -45,23 +44,7 @@ fn migrations() -> &'static Migrations<'static> {
 pub fn init_db(conn: &mut Connection) -> Result<()> {
     tracing::info!("开始执行数据库迁移");
     migrations().to_latest(conn)?;
-    cleanup_legacy_search_objects(conn)?;
     tracing::info!("数据库迁移完成");
-    Ok(())
-}
-
-/// 清理已弃用 FTS5 搜索索引的遗留对象（issue #196 / ADR-0027）：迁移序列已整体
-/// 移除原 V005，旧库（含恢复的旧备份）可能残留虚拟表、重建队列与入队触发器，
-/// 触发器会在每次交易写入时向死表插入行。启动时一次性幂等清理
-/// （DROP IF EXISTS，新库为无操作）；不属迁移，避免旧库 user_version 语义纠缠。
-fn cleanup_legacy_search_objects(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        "DROP TRIGGER IF EXISTS trg_search_enqueue_txn_insert;
-         DROP TRIGGER IF EXISTS trg_search_enqueue_txn_update;
-         DROP TRIGGER IF EXISTS trg_search_enqueue_account_rename;
-         DROP TABLE IF EXISTS search_transactions;
-         DROP TABLE IF EXISTS search_reindex_queue;",
-    )?;
     Ok(())
 }
 

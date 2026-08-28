@@ -1,12 +1,11 @@
 //! 交易批量写入模块 `TransactionBatch`（issue #53 / #63）。
 //!
 //! 承载全部「批量写入交易」的编排语义：事务 `BEGIN/COMMIT/ROLLBACK`、逐条 INSERT +
-//! 回写 `dedup_hash`/`idempotency_key`、批次汇总日志（ADR-0009 决策 #5 / issue #45）、
-//! 提交后立即消费搜索重建队列（ADR-0004 决策 #14）。
+//! 回写 `dedup_hash`/`idempotency_key`、批次汇总日志（ADR-0009 决策 #5 / issue #45）。
 //!
 //! **为何是「批量编排」而非「导入专属」模块**：`run` 同时服务 HTTP 批量导入
-//! （`POST /api/v1/transactions/batch`，`dedup=true`）、IPC 前端批量创建
-//! （`create_transactions`，`dedup=false`）与搜索重建测试——它们共享同一段编排。真正的轴是
+//! （`POST /api/v1/transactions/batch`，`dedup=true`）与 IPC 前端批量创建
+//! （`create_transactions`，`dedup=false`）——它们共享同一段编排。真正的轴是
 //! 「**批量编排 vs 单条落库**」，去重身份只是 `dedup` 注入的选项，不是「导入」概念的固有属性。
 //!
 //! **边界**：单笔落库（`transactions::insert_transaction`，含 buy/sell 持仓副作用）留在

@@ -639,9 +639,8 @@ fn insert_fx_rate_history(
     .unwrap();
 }
 
-/// 旧版本发布备份停驻的 schema 版本：发布 tag 时的迁移序列长度（现序列为 9 个，
-/// 原 V005 FTS 迁移已移除，见 ADR-0027），恢复旧备份即停在此版本，
-/// 由 init_db 补齐后续迁移。真实旧备份可能残留 FTS 对象（无害）且可能缺
+/// 旧版本发布备份停驻的 schema 版本：发布 tag 时的迁移序列长度（现序列为 9 个），
+/// 恢复旧备份即停在此版本，由 init_db 补齐后续迁移。旧备份可能缺
 /// app_settings（位置语义重排）：读侧 settings::get 缺表返回默认值、
 /// 写侧 settings::set 就地建表自愈。
 const V030_SCHEMA_VERSION: usize = 7;
@@ -750,68 +749,4 @@ fn migration_upgrades_v030_backup_with_new_tables() {
         })
         .unwrap();
     assert_eq!(acc, "现金");
-}
-
-// ---------------------------------------------------------------------------
-// V005 移除后的遗留 FTS 对象清理（issue #196 / ADR-0027）
-// ---------------------------------------------------------------------------
-
-/// 旧库（含恢复的旧备份）可能残留 FTS 虚拟表、重建队列与入队触发器；
-/// init_db 应幂等清理，且不再向重建队列写入。
-#[test]
-fn legacy_search_objects_are_cleaned_on_init() {
-    let mut conn = open_in_memory().unwrap();
-    // 模拟旧库残留：先迁移，再手工重建旧 V005 对象的最小等价物。
-    init_db(&mut conn).unwrap();
-    conn.execute_batch(
-        "CREATE VIRTUAL TABLE search_transactions USING fts5(content, transaction_id UNINDEXED);
-         CREATE TABLE search_reindex_queue (transaction_id TEXT PRIMARY KEY, enqueued_at TEXT NOT NULL);
-         CREATE TRIGGER trg_search_enqueue_txn_insert AFTER INSERT ON transactions BEGIN
-             INSERT OR REPLACE INTO search_reindex_queue(transaction_id, enqueued_at)
-             VALUES (NEW.id, '2026-01-01T00:00:00Z');
-         END;",
-    )
-    .unwrap();
-
-    init_db(&mut conn).unwrap();
-
-    let leftover: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('table','trigger') \
-             AND name IN ('search_transactions','search_reindex_queue',\
-             'trg_search_enqueue_txn_insert','trg_search_enqueue_txn_update',\
-             'trg_search_enqueue_account_rename')",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(leftover, 0, "遗留 FTS 对象应被清理");
-
-    // 清理后交易写入不再产生队列行（触发器已消失，表亦已删除）。
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,is_deleted,created_at,updated_at,version,device_id) \
-         VALUES ('acc-legacy','现金','cash','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        [],
-    )
-    .unwrap();
-    let insert = conn.execute(
-        "INSERT INTO transactions \
-         (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
-         category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES ('t-legacy','expense',100,'CNY',100,'acc-legacy',NULL,NULL,NULL,NULL,\
-         '2026-02-01','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        [],
-    );
-    // 交易插入应成功（无触发器报错），且重建队列表已不存在。
-    assert_eq!(insert.unwrap(), 1);
-    let queue_gone: bool = conn
-        .query_row("SELECT COUNT(*) FROM search_reindex_queue", [], |r| {
-            r.get::<_, i64>(0)
-        })
-        .map(|_| false)
-        .unwrap_or_else(|e| match e {
-            rusqlite::Error::SqliteFailure(_, Some(msg)) => msg.contains("no such table"),
-            _ => false,
-        });
-    assert!(queue_gone, "search_reindex_queue 应已删除");
 }
