@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
-import { NInput, NSelect, NTreeSelect, NDatePicker, NPopconfirm } from 'naive-ui'
+import {
+  NInput,
+  NModal,
+  NSelect,
+  NTreeSelect,
+  NDatePicker,
+  NPopconfirm,
+} from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
@@ -277,13 +284,63 @@ describe('SubscriptionsView 订阅清单（issue #159）', () => {
   })
 })
 
-describe('SubscriptionsView 新建订阅（issue #159）', () => {
-  it('填表创建走既有创建命令，金额转分、kind=subscription', async () => {
+describe('SubscriptionsView 新建订阅模态对话框（issue #158）', () => {
+  /** 点击「新建订阅」按钮打开模态对话框。 */
+  async function openCreateModal(wrapper: ReturnType<typeof mount>) {
+    await wrapper.find('[data-testid="sub-create-open"]').trigger('click')
+    await flushPromises()
+  }
+
+  /** 定位弹窗表单内输入框：NModal teleport 到 body，需经 findComponent 锚定。 */
+  function findInput(wrapper: ReturnType<typeof mount>, testid: string) {
+    return wrapper.findComponent(`[data-testid="${testid}"]`).find('input')
+  }
+
+  it('初始无弹窗，点击「新建订阅」打开模态对话框', async () => {
     const wrapper = await mountView()
-    const noteInput = wrapper.find('[data-testid="sub-note"] input')
+    const modal = wrapper.findComponent(NModal)
+    expect(modal.props('show')).toBe(false)
+    await openCreateModal(wrapper)
+    expect(modal.props('show')).toBe(true)
+    expect(modal.props('title')).toBe('新建订阅')
+  })
+
+  it('创建成功后重置表单，重新打开为全新表单', async () => {
+    const wrapper = await mountView()
+    await openCreateModal(wrapper)
+    const noteInput = findInput(wrapper, 'sub-note')
     await noteInput.setValue('音乐订阅')
     await noteInput.trigger('input')
-    const amountInput = wrapper.find('[data-testid="sub-amount"] input')
+    wrapper.findComponent(NSelect).vm.$emit('update:value', 'acc-1')
+    await flushPromises()
+    const amountInput = findInput(wrapper, 'sub-amount')
+    await amountInput.setValue('25')
+    await amountInput.trigger('input')
+    await wrapper.findComponent('[data-testid="sub-create"]').trigger('click')
+    await flushPromises()
+    // 重新打开：备注已清空，不带上次填写
+    await openCreateModal(wrapper)
+    expect(findInput(wrapper, 'sub-note').element.value).toBe('')
+  })
+
+  it('仅关闭弹窗（不提交）不触发创建', async () => {
+    const wrapper = await mountView()
+    await openCreateModal(wrapper)
+    wrapper.findComponent(NModal).vm.$emit('update:show', false)
+    await flushPromises()
+    expect(wrapper.findComponent(NModal).props('show')).toBe(false)
+    expect(
+      mockInvoke.mock.calls.some(([cmd]) => cmd === 'create_scheduled_transaction'),
+    ).toBe(false)
+  })
+
+  it('弹窗内填表创建走既有创建命令，金额转分、kind=subscription', async () => {
+    const wrapper = await mountView()
+    await openCreateModal(wrapper)
+    const noteInput = findInput(wrapper, 'sub-note')
+    await noteInput.setValue('音乐订阅')
+    await noteInput.trigger('input')
+    const amountInput = findInput(wrapper, 'sub-amount')
     await amountInput.setValue('25')
     await amountInput.trigger('input')
     // 账户 / 分类 / 周期：经组件 emit 设置
@@ -294,7 +351,7 @@ describe('SubscriptionsView 新建订阅（issue #159）', () => {
       .vm.$emit('update:formatted-value', '2026-02-15')
     await flushPromises()
 
-    const createBtn = wrapper.find('[data-testid="sub-create"]')
+    const createBtn = wrapper.findComponent('[data-testid="sub-create"]')
     await createBtn.trigger('click')
     await flushPromises()
 
@@ -318,28 +375,32 @@ describe('SubscriptionsView 新建订阅（issue #159）', () => {
 
   it('未选账户时不提交创建', async () => {
     const wrapper = await mountView()
-    const amountInput = wrapper.find('[data-testid="sub-amount"] input')
+    await openCreateModal(wrapper)
+    const amountInput = findInput(wrapper, 'sub-amount')
     await amountInput.setValue('25')
     await amountInput.trigger('input')
-    await wrapper.find('[data-testid="sub-create"]').trigger('click')
+    await wrapper.findComponent('[data-testid="sub-create"]').trigger('click')
     await flushPromises()
     expect(
       mockInvoke.mock.calls.some(([cmd]) => cmd === 'create_scheduled_transaction'),
     ).toBe(false)
   })
 
-  it('创建成功后刷新清单，新订阅出现在列表', async () => {
+  it('创建成功后关闭弹窗并刷新清单，新订阅出现在列表', async () => {
     const wrapper = await mountView()
-    const noteInput = wrapper.find('[data-testid="sub-note"] input')
+    await openCreateModal(wrapper)
+    const noteInput = findInput(wrapper, 'sub-note')
     await noteInput.setValue('云存储')
     await noteInput.trigger('input')
-    const amountInput = wrapper.find('[data-testid="sub-amount"] input')
+    const amountInput = findInput(wrapper, 'sub-amount')
     await amountInput.setValue('6')
     await amountInput.trigger('input')
     wrapper.findComponent(NSelect).vm.$emit('update:value', 'acc-1')
     await flushPromises()
-    await wrapper.find('[data-testid="sub-create"]').trigger('click')
+    await wrapper.findComponent('[data-testid="sub-create"]').trigger('click')
     await flushPromises()
+    // 弹窗关闭且清单刷新（新订阅出现在列表）
+    expect(wrapper.findComponent(NModal).props('show')).toBe(false)
     expect(wrapper.text()).toContain('云存储')
   })
 })
