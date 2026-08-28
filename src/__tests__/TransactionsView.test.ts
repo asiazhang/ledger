@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { DOMWrapper, mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { h, reactive } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
@@ -26,6 +26,10 @@ import TransactionForm from '@/components/TransactionForm.vue'
 import type { Account, Currency, Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
+
+// 测试挂载的视图不手动 unmount：useCreateShortcuts/useWindowGuard 会在 window/document
+// 上注册监听、仅在 unmount 时移除。不卸载会让监听跨测试累积，裸键快捷键用例互相污染。
+enableAutoUnmount(afterEach)
 
 // 路由 mock：TransactionsView 经 useRoute 读取 URL query（?account=<id> 只读入口）。
 // 测试通过改写 routeMock.query 模拟带参/不带参进入与 query 变化；

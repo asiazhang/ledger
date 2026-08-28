@@ -79,6 +79,9 @@ pub fn gather_info(
     }
 }
 
+/// 可写性探针文件名（②试写的固定路径，BDD 用同名目录预占可稳定触发拒绝分支）。
+pub const WRITE_PROBE_FILE_NAME: &str = ".ledger_write_probe";
+
 /// 对目标目录执行三步校验，通过后把更改意图写入指针文件。
 /// `adopt_existing`：目标已有同名 `ledger.db` 时是否接管（用户二选一后二次提交）。
 /// 本命令不搬迁任何文件、不解析既有库内容；真实搬迁只发生在下次启动。
@@ -92,7 +95,7 @@ pub fn validate_and_commit(
         .map_err(|e| AppError::Invalid(format!("无法创建目标目录（{}）：{e}", target.display())))?;
 
     // ② 试写小临时文件验证可写，用后即清。
-    let probe = target.join(".ledger_write_probe");
+    let probe = target.join(WRITE_PROBE_FILE_NAME);
     let probe_result = (|| -> std::io::Result<()> {
         std::fs::write(&probe, b"ok")?;
         std::fs::remove_file(&probe)
