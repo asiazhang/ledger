@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, h } from 'vue'
+import { h, onMounted, ref } from 'vue'
 import {
   NCard,
   NButton,
@@ -8,19 +8,24 @@ import {
   NFormItem,
   NInput,
   NDatePicker,
+  NModal,
   NSelect,
   NSpace,
+  NDescriptions,
+  NDescriptionsItem,
   NPopconfirm,
   useMessage,
   type DataTableColumns,
 } from 'naive-ui'
 import { formatAmount } from '@/types'
-import { yuanToCents } from '@/utils/money'
+import { yuanToCents, centsToYuan } from '@/utils/money'
 import type { ItemInput, ItemWithDailyCost } from '@/types'
 import { useReferenceStore } from '@/stores/reference'
+import { useAppStore } from '@/stores/app'
 import { useItemsStore } from '@/stores/items'
 
 const reference = useReferenceStore()
+const app = useAppStore()
 const itemsStore = useItemsStore()
 const message = useMessage()
 
@@ -70,6 +75,70 @@ async function create() {
   }
 }
 
+// —— 编辑（issue #117）：按 id 修改 名称 / 购买日期 / 总成本 / 备注；币种不可改 ——
+const editing = ref<ItemWithDailyCost | null>(null)
+const editName = ref('')
+const editPurchaseDate = ref('')
+const editCostYuan = ref('')
+const editNote = ref('')
+
+function openEdit(row: ItemWithDailyCost) {
+  editing.value = row
+  editName.value = row.name
+  editPurchaseDate.value = row.purchase_date
+  editCostYuan.value = String(centsToYuan(row.total_cost_cents))
+  editNote.value = row.note ?? ''
+}
+
+function closeEdit() {
+  editing.value = null
+}
+
+async function saveEdit() {
+  if (!editing.value) return
+  if (!editName.value.trim()) {
+    message.warning('请输入物品名称')
+    return
+  }
+  if (!editPurchaseDate.value) {
+    message.warning('请选择购买日期')
+    return
+  }
+  const costCents = yuanToCents(editCostYuan.value)
+  if (costCents === null || costCents <= 0) {
+    message.warning('请输入大于 0 的总成本')
+    return
+  }
+  const input: ItemInput = {
+    name: editName.value.trim(),
+    purchase_date: editPurchaseDate.value,
+    total_cost_cents: costCents,
+    currency_code: editing.value.currency_code,
+    note: editNote.value.trim() || null,
+  }
+  try {
+    await itemsStore.update(editing.value.id, input)
+    message.success('已保存')
+    closeEdit()
+  } catch (e) {
+    message.error(`保存失败: ${e}`)
+  }
+}
+
+// —— 详情（issue #117）：成本分解 = 分子（总成本 − 残值） ÷ 已用天数 = 每天成本 ——
+const detail = ref<ItemWithDailyCost | null>(null)
+
+function openDetail(row: ItemWithDailyCost) {
+  detail.value = row
+}
+
+function detailAmount(cents: number): string {
+  return detail.value
+    ? formatAmount(cents, reference.getCurrency(detail.value.currency_code))
+    : ''
+}
+
+// —— 软删除（issue #118）：二次确认后 is_deleted=1，列表自动过滤 ——
 async function removeItem(id: string) {
   try {
     await itemsStore.remove(id)
@@ -99,17 +168,21 @@ const columns: DataTableColumns<ItemWithDailyCost> = [
   {
     title: '操作',
     key: 'actions',
-    width: 90,
+    width: 150,
     render: (row) =>
-      h(
-        NPopconfirm,
-        { onPositiveClick: () => removeItem(row.id) },
-        {
-          default: () => '不再跟踪该物品，从列表移除？',
-          trigger: () =>
-            h(NButton, { size: 'tiny', type: 'error', quaternary: true }, () => '删除'),
-        },
-      ),
+      h(NSpace, { size: 4 }, () => [
+        h(NButton, { size: 'tiny', onClick: () => openDetail(row) }, () => '详情'),
+        h(NButton, { size: 'tiny', onClick: () => openEdit(row) }, () => '编辑'),
+        h(
+          NPopconfirm,
+          { onPositiveClick: () => removeItem(row.id) },
+          {
+            default: () => '不再跟踪该物品，从列表移除？',
+            trigger: () =>
+              h(NButton, { size: 'tiny', type: 'error', quaternary: true }, () => '删除'),
+          },
+        ),
+      ]),
   },
 ]
 
@@ -156,5 +229,75 @@ onMounted(() => {
     <NCard title="物品列表" size="small">
       <NDataTable :columns="columns" :data="itemsStore.items" :bordered="false" size="small" />
     </NCard>
+
+    <!-- 编辑弹窗（issue #117）：币种不可改，沿用行内币种 -->
+    <NModal
+      :show="editing !== null"
+      preset="card"
+      title="编辑物品"
+      style="width: 440px"
+      data-testid="item-edit-modal"
+      @update:show="(v: boolean) => (v ? undefined : closeEdit())"
+    >
+      <NForm v-if="editing" label-placement="left" :show-feedback="false" size="small">
+        <NFormItem label="名称">
+          <NInput v-model:value="editName" placeholder="物品名称" />
+        </NFormItem>
+        <NFormItem label="购买日期">
+          <NDatePicker
+            v-model:formatted-value="editPurchaseDate"
+            type="date"
+            value-format="yyyy-MM-dd"
+            style="width: 160px"
+          />
+        </NFormItem>
+        <NFormItem label="总成本">
+          <NInput v-model:value="editCostYuan" placeholder="总成本（元）" style="width: 160px" />
+        </NFormItem>
+        <NFormItem label="币种">
+          <span>{{ editing.currency_code }}（不可修改）</span>
+        </NFormItem>
+        <NFormItem label="备注">
+          <NInput v-model:value="editNote" placeholder="品牌 / 型号 / 渠道（可选）" />
+        </NFormItem>
+        <NSpace justify="end">
+          <NButton @click="closeEdit">取消</NButton>
+          <NButton type="primary" @click="saveEdit">保存</NButton>
+        </NSpace>
+      </NForm>
+    </NModal>
+
+    <!-- 详情弹窗（issue #117）：展示成本分解 = 分子 ÷ 已用天数 = 每天成本 -->
+    <NModal
+      :show="detail !== null"
+      preset="card"
+      title="物品详情"
+      style="width: 480px"
+      data-testid="item-detail-modal"
+      @update:show="(v: boolean) => (v ? undefined : (detail = null))"
+    >
+      <NDescriptions v-if="detail" :column="1" size="small" label-placement="left" bordered>
+        <NDescriptionsItem label="名称">{{ detail.name }}</NDescriptionsItem>
+        <NDescriptionsItem label="状态">
+          {{ detail.status === 'in_use' ? '在用' : '已处置' }}
+        </NDescriptionsItem>
+        <NDescriptionsItem label="购买日期">{{ detail.purchase_date }}</NDescriptionsItem>
+        <NDescriptionsItem label="总成本">
+          {{ detailAmount(detail.total_cost_cents) }}（{{ detail.currency_code }}）
+        </NDescriptionsItem>
+        <NDescriptionsItem label="本位币折算">
+          {{ formatAmount(detail.cost_native_cents, reference.getCurrency(app.defaultCurrency)) }}
+          （{{ app.defaultCurrency }}）
+        </NDescriptionsItem>
+        <NDescriptionsItem label="备注">{{ detail.note ?? '—' }}</NDescriptionsItem>
+        <NDescriptionsItem label="已用天数">
+          {{ detail.used_days }} 天（含购买当日）
+        </NDescriptionsItem>
+        <NDescriptionsItem label="每天成本分解">
+          {{ detailAmount(detail.numerator_cents) }} ÷ {{ detail.used_days }} 天 =
+          {{ detailAmount(detail.per_day_cents) }}/天
+        </NDescriptionsItem>
+      </NDescriptions>
+    </NModal>
   </NSpace>
 </template>

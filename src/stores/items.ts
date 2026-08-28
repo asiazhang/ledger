@@ -66,6 +66,12 @@ export const useItemsStore = defineStore('items', () => {
     return id
   }
 
+  /** 按 id 修改物品（名称/购买日期/总成本/备注）：成功后立即重拉（同 create）。 */
+  async function update(id: string, input: ItemInput): Promise<void> {
+    await api.updateItem(id, input)
+    await refresh()
+  }
+
   /** 软删除物品（后端打 is_deleted=1，不物理移除）：成功后立即重拉（同上）。 */
   async function remove(id: string): Promise<void> {
     await api.deleteItem(id)
@@ -94,6 +100,7 @@ export const useItemsStore = defineStore('items', () => {
     version,
     refresh,
     create,
+    update,
     remove,
   }
 })

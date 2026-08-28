@@ -123,6 +123,7 @@ export const api = {
   // 物品（issue #116）：独立领域（非参考数据），写入后由后端发 ledger:changed
   listItems: () => invoke<ItemWithDailyCost[]>('list_items'),
   createItem: (input: ItemInput) => invoke<string>('create_item', { input }),
+  updateItem: (id: string, input: ItemInput) => invoke<void>('update_item', { id, input }),
   deleteItem: (id: string) => invoke<void>('delete_item', { id }),
 
   // 汇率
