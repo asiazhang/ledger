@@ -20,7 +20,7 @@ import {
 import { formatAmount } from '@/types'
 import { yuanToCents, centsToYuan } from '@/utils/money'
 import { todayStr } from '@/utils/date'
-import type { ItemDisposeInput, ItemInput, ItemWithDailyCost, Transaction } from '@/types'
+import type { ItemDailyCost, ItemDisposeInput, ItemInput, ItemWithDailyCost, Transaction } from '@/types'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
@@ -164,8 +164,33 @@ async function saveEdit() {
 // —— 详情（issue #117）：成本分解 = 分子（总成本 − 残值） ÷ 已用天数 = 每天成本 ——
 const detail = ref<ItemWithDailyCost | null>(null)
 
+// —— 详情自选参考日重算（issue #121）：选择参考日 → 后端重算三元组覆盖展示；
+// 清空 → 回缺省目标日（在用今天/已处置处置日）。null = 未重算（展示列表快照）。 ——
+const detailRefDate = ref<string | null>(null)
+const detailCost = ref<ItemDailyCost | null>(null)
+
+/** 详情成本三元组展示值：重算结果优先，未重算/重算失败回落列表快照。 */
+const detailCostView = computed(() => ({
+  days: detailCost.value?.used_days ?? detail.value?.used_days ?? 0,
+  numeratorCents: detailCost.value?.numerator_cents ?? detail.value?.numerator_cents ?? 0,
+  perDayCents: detailCost.value?.per_day_cents ?? detail.value?.per_day_cents ?? 0,
+}))
+
+async function recalcDetail(date: string | null) {
+  if (!detail.value) return
+  detailRefDate.value = date
+  try {
+    detailCost.value = await api.calculateItemCost(detail.value.id, date)
+  } catch (e) {
+    message.error(`重算失败: ${e}`)
+  }
+}
+
 function openDetail(row: ItemWithDailyCost) {
   detail.value = row
+  // 换行重置：参考日与重算结果不跨物品残留
+  detailRefDate.value = null
+  detailCost.value = null
 }
 
 function detailAmount(cents: number): string {
@@ -470,12 +495,23 @@ onMounted(() => {
         <NDescriptionsItem label="关联购买交易">
           {{ detail.purchase_transaction_id ? '已关联（溯源）' : '—' }}
         </NDescriptionsItem>
+        <NDescriptionsItem label="参考日">
+          <NDatePicker
+            :formatted-value="detailRefDate"
+            clearable
+            type="date"
+            value-format="yyyy-MM-dd"
+            placeholder="自选参考日"
+            style="width: 160px"
+            @update:formatted-value="recalcDetail"
+          />
+        </NDescriptionsItem>
         <NDescriptionsItem label="已用天数">
-          {{ detail.used_days }} 天（含购买当日）
+          {{ detailCostView.days }} 天（含购买当日）
         </NDescriptionsItem>
         <NDescriptionsItem label="每天成本分解">
-          {{ detailAmount(detail.numerator_cents) }} ÷ {{ detail.used_days }} 天 =
-          {{ detailAmount(detail.per_day_cents) }}/天
+          {{ detailAmount(detailCostView.numeratorCents) }} ÷ {{ detailCostView.days }} 天 =
+          {{ detailAmount(detailCostView.perDayCents) }}/天
         </NDescriptionsItem>
       </NDescriptions>
     </NModal>

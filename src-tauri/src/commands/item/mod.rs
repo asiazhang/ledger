@@ -21,7 +21,9 @@ use crate::db::query::{query_all, query_one};
 use crate::db::{DbState, device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::item::cost;
-use crate::models::{Item, ItemDisposeInput, ItemInput, ItemStatus, ItemWithDailyCost};
+use crate::models::{
+    Item, ItemDailyCost, ItemDisposeInput, ItemInput, ItemStatus, ItemWithDailyCost,
+};
 use crate::transaction::amount::{self, TransactionKind};
 
 /// 按 `id` 读未删除物品（多命令共用的前检）：不存在（或已软删除）返回 `None`。
@@ -62,28 +64,53 @@ pub fn list_items_internal(conn: &Connection) -> Result<Vec<ItemWithDailyCost>> 
         .collect()
 }
 
+/// 以物品自身字段（分子口径：总成本 − 残值，下限 0）向指定目标日计算，
+/// 列表缺省口径与自选参考日重算共用（口径全在 `item::cost` 接缝）。
+fn usage_to(item: &Item, target_date: chrono::NaiveDate) -> Result<cost::DailyUsageCost> {
+    cost::calculate(
+        item.total_cost_cents,
+        parse_date(&item.purchase_date)?,
+        target_date,
+        item.residual_value_cents,
+    )
+}
+
 /// 按物品生命周期状态计算每天使用成本（在用 → 今天；已处置 → 处置日），
 /// 列表与单件详情共用同一口径（`item::cost` 接缝）。
 fn daily_usage(item: &Item) -> Result<cost::DailyUsageCost> {
     match item.status {
-        ItemStatus::InUse => cost::calculate_to_today(
-            item.total_cost_cents,
-            parse_date(&item.purchase_date)?,
-            item.residual_value_cents,
-        ),
+        ItemStatus::InUse => usage_to(item, cost::today()),
         ItemStatus::Disposed => {
             let disposal_date = item
                 .disposal_date
                 .as_deref()
                 .ok_or_else(|| AppError::Invalid(format!("已处置物品缺少处置日期: {}", item.id)))?;
-            cost::calculate(
-                item.total_cost_cents,
-                parse_date(&item.purchase_date)?,
-                parse_date(disposal_date)?,
-                item.residual_value_cents,
-            )
+            usage_to(item, parse_date(disposal_date)?)
         }
     }
+}
+
+/// 计算单件物品的每天使用成本（issue #121 自选参考日重算）：
+/// `reference_date` 缺省 → 沿用列表口径（在用 → 今天；已处置 → 处置日，见 [`daily_usage`]）；
+/// 提供参考日 → 覆盖目标日（在用/已处置均生效，分子口径不变：总成本 − 残值，下限 0），
+/// 支持未来日期（预览「用满 N 天」的摊薄）。参考日早于购买日或不可解析报错，
+/// 口径全部收敛在 `item::cost` 接缝，本函数只做读取与缺省目标日选择。
+pub fn calculate_item_cost_internal(
+    conn: &Connection,
+    id: &str,
+    reference_date: Option<&str>,
+) -> Result<ItemDailyCost> {
+    let item =
+        get_item_by_id(conn, id)?.ok_or_else(|| AppError::NotFound(format!("物品不存在: {id}")))?;
+    let usage = match reference_date {
+        Some(date) => usage_to(&item, parse_date(date)?),
+        None => daily_usage(&item),
+    }?;
+    Ok(ItemDailyCost {
+        used_days: usage.days,
+        numerator_cents: usage.numerator_cents,
+        per_day_cents: usage.per_day_cents,
+    })
 }
 
 /// 创建一件在用物品：校验 → 金额折算本位币（Amount 接缝）→ 落库（生成
@@ -358,6 +385,18 @@ fn parse_date(s: &str) -> Result<chrono::NaiveDate> {
 pub fn list_items(db: State<'_, DbState>) -> Result<Vec<ItemWithDailyCost>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     list_items_internal(&conn)
+}
+
+/// 计算单件物品的每天使用成本（issue #121，只读命令不发失效信号）：
+/// `reference_date` 缺省/为 null 时沿用列表口径（在用 → 今天；已处置 → 处置日）。
+#[tauri::command]
+pub fn calculate_item_cost(
+    db: State<'_, DbState>,
+    id: String,
+    reference_date: Option<String>,
+) -> Result<ItemDailyCost> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    calculate_item_cost_internal(&conn, &id, reference_date.as_deref())
 }
 
 #[tauri::command]

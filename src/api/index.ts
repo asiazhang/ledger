@@ -28,6 +28,7 @@ import type {
   InstrumentListFilter,
   InstrumentListResult,
   InstrumentPriceTrend,
+  ItemDailyCost,
   ItemDisposeInput,
   ItemInput,
   ItemWithDailyCost,
@@ -136,6 +137,9 @@ export const api = {
 
   // 物品（issue #116）：独立领域（非参考数据），写入后由后端发 ledger:changed
   listItems: () => invoke<ItemWithDailyCost[]>('list_items'),
+  // 自选参考日重算（issue #121）：referenceDate 省略/null → 缺省目标日（在用今天/已处置处置日）
+  calculateItemCost: (id: string, referenceDate?: string | null) =>
+    invoke<ItemDailyCost>('calculate_item_cost', { id, referenceDate: referenceDate ?? null }),
   createItem: (input: ItemInput) => invoke<string>('create_item', { input }),
   updateItem: (id: string, input: ItemInput) => invoke<void>('update_item', { id, input }),
   disposeItem: (id: string, input: ItemDisposeInput) =>

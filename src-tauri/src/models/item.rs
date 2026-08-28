@@ -161,3 +161,16 @@ pub struct ItemWithDailyCost {
     /// 每天成本（分/天，**小数**）：`item::cost` 接缝计算，仅供展示。
     pub per_day_cents: f64,
 }
+
+/// 每天使用成本计算结果（issue #121 自选参考日重算）：不带物品实体的独立形态，
+/// 供单件计算命令（`calculate_item_cost`）返回；三元组与 [`ItemWithDailyCost`]
+/// 同一口径（均经 `item::cost` 接缝），前端详情视图重算展示共用。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct ItemDailyCost {
+    /// 已用天数：购买日 → 目标日（参考日或缺省目标日）的日历天数，含起止两端。
+    pub used_days: i64,
+    /// 成本分解分子（分）：总成本 − 残值，下限 0。
+    pub numerator_cents: i64,
+    /// 每天成本（分/天，**小数**），仅供展示。
+    pub per_day_cents: f64,
+}
