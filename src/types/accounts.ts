@@ -19,6 +19,19 @@ export interface AccountInput {
   initial_balance_cents?: number
 }
 
+/** 账户编辑入参：type 不可改（参与余额符号归属）；币种仅无交易账户可改（后端拒绝）。 */
+export interface AccountUpdateInput {
+  name?: string
+  currency_code?: string
+}
+
+/** 余额调整入参：校准到目标值，后端生成一笔与黑洞账户的转账（ADR-0026）。 */
+export interface AccountBalanceAdjustInput {
+  target_balance_cents: number
+  date: string
+  note?: string
+}
+
 export interface AccountBalance {
   account: Account
   balance_cents: number

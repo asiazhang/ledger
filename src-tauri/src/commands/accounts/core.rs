@@ -3,7 +3,11 @@ use rusqlite::{Connection, OptionalExtension};
 use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::models::{Account, AccountBalance, AccountInput};
+use crate::models::{
+    Account, AccountBalance, AccountBalanceAdjustInput, AccountInput, AccountUpdateInput,
+};
+use crate::transaction::amount::TransactionKind;
+use crate::transaction::writer;
 
 fn list_accounts_with_visibility(conn: &Connection, include_hidden: bool) -> Result<Vec<Account>> {
     let where_clause = if include_hidden {
@@ -102,6 +106,180 @@ pub fn delete_account_internal(conn: &Connection, id: &str) -> Result<()> {
     )?;
     crate::auto_backup::on_write(conn);
     Ok(())
+}
+
+/// 按 `id` 读取单个未删除账户；不存在或已软删除返回 `AppError::NotFound`。
+pub fn get_account_internal(conn: &Connection, id: &str) -> Result<Account> {
+    query_all(
+        conn,
+        "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden \
+         FROM accounts WHERE id=?1 AND is_deleted=0",
+        rusqlite::params![id],
+    )?
+    .into_iter()
+    .next()
+    .ok_or_else(|| AppError::NotFound(format!("账户不存在: {id}")))
+}
+
+/// 编辑账户（`name` / `currency_code` 可选字段，未传保持原值）。
+///
+/// 边界（ADR-0026 同期决策）：
+/// - `type` 不可改（参与 kind→符号矩阵，改动会重写历史交易的余额归属）；
+/// - `currency_code` 仅无交易账户可改（有交易时改币种使历史折算口径错乱）；
+/// - `initial_balance_cents` 不在此改，归余额调整（见 ADR-0026）。
+pub fn update_account_internal(
+    conn: &Connection,
+    id: &str,
+    input: AccountUpdateInput,
+) -> Result<()> {
+    let existing = get_account_internal(conn, id)?;
+    let name = match input.name {
+        Some(ref n) => {
+            let trimmed = n.trim();
+            if trimmed.is_empty() {
+                return Err(AppError::Invalid("账户名称不能为空".into()));
+            }
+            trimmed.to_string()
+        }
+        None => existing.name.clone(),
+    };
+    let currency_code = match input.currency_code {
+        Some(ref code) if code != &existing.currency_code => {
+            let referenced: bool = conn
+                .query_row(
+                    "SELECT 1 FROM transactions WHERE (account_id=?1 OR to_account_id=?1) AND is_deleted=0 LIMIT 1",
+                    rusqlite::params![id],
+                    |_| Ok(true),
+                )
+                .optional()?
+                .is_some();
+            if referenced {
+                return Err(AppError::Invalid(
+                    "账户已有交易，不能修改币种（会使历史交易折算口径错乱）".into(),
+                ));
+            }
+            let exists: bool = conn
+                .query_row(
+                    "SELECT 1 FROM currencies WHERE code=?1",
+                    rusqlite::params![code],
+                    |_| Ok(true),
+                )
+                .optional()?
+                .is_some();
+            if !exists {
+                return Err(AppError::Invalid(format!("未知币种: {code}")));
+            }
+            code.clone()
+        }
+        _ => existing.currency_code.clone(),
+    };
+    conn.execute(
+        "UPDATE accounts SET name=?2, currency_code=?3, updated_at=?4, version=version+1, device_id=?5 WHERE id=?1",
+        rusqlite::params![id, name, currency_code, now_iso(), device_id()],
+    )?;
+    // 脏标记挂钩（issue #126）：IPC 与 HTTP 端点共用本函数，落库成功即置脏。
+    crate::auto_backup::on_write(conn);
+    Ok(())
+}
+
+/// 查找指定币种的黑洞账户（未删除且 `is_hidden=1`，取最早创建的一个）。
+fn find_black_hole_account(conn: &Connection, currency_code: &str) -> Result<Option<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT id FROM accounts WHERE is_deleted=0 AND is_hidden=1 AND currency_code=?1 \
+         ORDER BY created_at LIMIT 1",
+    )?;
+    let mut rows = stmt.query(rusqlite::params![currency_code])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(row.get(0)?)),
+        None => Ok(None),
+    }
+}
+
+/// 确保指定币种的黑洞账户存在；缺失则按种子同形创建（`无(XXX)`、type=`other`、
+/// `is_hidden=1`，见 AI 导入域 BlackHoleAccount）。返回 `(id, 是否新建)`。
+pub fn ensure_black_hole_account_internal(
+    conn: &Connection,
+    currency_code: &str,
+) -> Result<(String, bool)> {
+    if let Some(id) = find_black_hole_account(conn, currency_code)? {
+        return Ok((id, false));
+    }
+    let id = new_uuid();
+    let now = now_iso();
+    conn.execute(
+        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden) \
+         VALUES (?1,?2,'other',?3,0,?4,?5,1,?6,0,1)",
+        rusqlite::params![
+            id,
+            format!("无({currency_code})"),
+            currency_code,
+            now,
+            now,
+            device_id()
+        ],
+    )?;
+    Ok((id, true))
+}
+
+/// 余额调整（ADR-0026）：把账户余额校准到目标值，机制为生成一笔与黑洞账户
+/// 之间的转账——目标余额 − 当前实时余额 = Δ，Δ>0 从「无」转入、Δ<0 转出至「无」，
+/// 交易币种取目标账户自身币种；删除该转账即撤销调整。
+///
+/// 返回 `(新交易 id, 是否新建了黑洞账户)`：新建属参考表变更，命令层据此发
+/// `ledger:changed` 信号（交易类写入本身不触发，与既有约定一致）。
+pub fn adjust_account_balance_internal(
+    conn: &Connection,
+    id: &str,
+    input: &AccountBalanceAdjustInput,
+) -> Result<(String, bool)> {
+    let account = get_account_internal(conn, id)?;
+    if account.is_hidden {
+        return Err(AppError::Invalid("黑洞账户不支持余额调整".into()));
+    }
+    let current = crate::db::balance::compute_balance(conn, id)?;
+    let delta = input
+        .target_balance_cents
+        .checked_sub(current)
+        .ok_or_else(|| AppError::Invalid("目标余额溢出".into()))?;
+    if delta == 0 {
+        return Err(AppError::Invalid("余额已等于目标值，无需调整".into()));
+    }
+    conn.execute("BEGIN", [])?;
+    let res = (|| -> Result<(String, bool)> {
+        let (black_hole_id, created) =
+            ensure_black_hole_account_internal(conn, &account.currency_code)?;
+        let (account_id, to_account_id) = if delta > 0 {
+            (black_hole_id.clone(), id.to_string())
+        } else {
+            (id.to_string(), black_hole_id.clone())
+        };
+        let writer_input = writer::Input {
+            kind: TransactionKind::Transfer,
+            amount_cents: delta.abs(),
+            currency_code: account.currency_code.clone(),
+            account_id,
+            to_account_id: Some(to_account_id),
+            category_id: None,
+            refund_of_transaction_id: None,
+            note: Some(input.note.clone().unwrap_or_else(|| "余额调整".to_string())),
+            date: input.date.clone(),
+        };
+        let row = writer::normalize(conn, &writer_input)?;
+        let tx_id = writer::insert_row(conn, &row)?;
+        Ok((tx_id, created))
+    })();
+    match res {
+        Ok((tx_id, created)) => {
+            conn.execute("COMMIT", [])?;
+            // 脏标记挂钩（issue #126）：提交点补上写时顺带检查。
+            crate::auto_backup::on_write(conn);
+            Ok((tx_id, created))
+        }
+        Err(e) => {
+            conn.execute("ROLLBACK", [])?;
+            Err(e)
+        }
+    }
 }
 
 /// 账户余额清单（conn 级）：`include_hidden` 为 true 时含黑洞账户。

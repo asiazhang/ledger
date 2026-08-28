@@ -2398,3 +2398,77 @@ async fn test_http_sql_duration_attributed_to_request_span() {
         "SQL 事件应归因到请求 span（request），实际: {sql_events:?}"
     );
 }
+
+#[tokio::test]
+async fn test_put_account_renames_and_returns_updated_account() {
+    let (app, _) = setup_app();
+
+    // 创建账户
+    let create_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/accounts")
+                .header("content-type", "application/json")
+                .body(Body::from(create_account_json("钱包")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create_resp.status(), StatusCode::CREATED);
+    let id: String = serde_json::from_slice(&body_to_bytes(create_resp.into_body()).await).unwrap();
+
+    // PUT 改名 → 200 + 更新后的完整账户
+    let update_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/accounts/{id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"name":"零钱"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(update_resp.status(), StatusCode::OK);
+    let updated: serde_json::Value =
+        serde_json::from_slice(&body_to_bytes(update_resp.into_body()).await).unwrap();
+    assert_eq!(updated["name"], "零钱");
+    assert_eq!(updated["currency_code"], "CNY", "未传字段保持原值");
+
+    // 读回列表应包含新名
+    let list_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/accounts")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let accounts: Vec<serde_json::Value> =
+        serde_json::from_slice(&body_to_bytes(list_resp.into_body()).await).unwrap();
+    assert!(accounts.iter().any(|a| a["name"] == "零钱"));
+}
+
+#[tokio::test]
+async fn test_put_account_returns_404_for_missing_id() {
+    let (app, _) = setup_app();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/accounts/nonexistent-id")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"name":"任意"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}

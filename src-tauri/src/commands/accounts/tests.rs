@@ -480,3 +480,312 @@ fn seed_contains_black_hole_accounts_for_cny_and_hkd() {
         "种子应预置 CNY/HKD 两个黑洞账户"
     );
 }
+
+// ---------------------------------------------------------------------------
+// update_account_internal（编辑账户）
+// ---------------------------------------------------------------------------
+
+use crate::models::{AccountBalanceAdjustInput, AccountUpdateInput};
+
+fn find_black_hole(conn: &rusqlite::Connection, currency: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT id FROM accounts WHERE is_deleted=0 AND is_hidden=1 AND currency_code=?1 LIMIT 1",
+        rusqlite::params![currency],
+        |r| r.get(0),
+    )
+    .ok()
+}
+
+#[test]
+fn update_account_renames_and_bumps_version() {
+    let conn = setup();
+    insert_account(&conn, "acc-u1", "旧名", "cash", "CNY", 0);
+    super::update_account_internal(
+        &conn,
+        "acc-u1",
+        AccountUpdateInput {
+            name: Some("新名".into()),
+            currency_code: None,
+        },
+    )
+    .unwrap();
+    let account = super::get_account_internal(&conn, "acc-u1").unwrap();
+    assert_eq!(account.name, "新名");
+    assert_eq!(account.currency_code, "CNY", "未传字段保持原值");
+    assert_eq!(account.version, 2, "编辑应递增 version");
+}
+
+#[test]
+fn update_account_rejects_empty_name() {
+    let conn = setup();
+    insert_account(&conn, "acc-u2", "现金", "cash", "CNY", 0);
+    let err = super::update_account_internal(
+        &conn,
+        "acc-u2",
+        AccountUpdateInput {
+            name: Some("   ".into()),
+            currency_code: None,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err, AppError::Invalid(_)));
+    assert!(err.to_string().contains("名称不能为空"));
+}
+
+#[test]
+fn update_account_rejects_currency_change_when_has_transactions() {
+    let conn = setup();
+    insert_account(&conn, "acc-u3", "现金", "cash", "CNY", 0);
+    insert_tx(&conn, "tx-u3", "income", 1000, "acc-u3", None);
+    let err = super::update_account_internal(
+        &conn,
+        "acc-u3",
+        AccountUpdateInput {
+            name: None,
+            currency_code: Some("HKD".into()),
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err, AppError::Invalid(_)));
+    assert!(err.to_string().contains("不能修改币种"));
+    // 币种未被改动
+    assert_eq!(
+        super::get_account_internal(&conn, "acc-u3")
+            .unwrap()
+            .currency_code,
+        "CNY"
+    );
+}
+
+#[test]
+fn update_account_allows_currency_change_without_transactions() {
+    let conn = setup();
+    insert_account(&conn, "acc-u4", "现金", "cash", "CNY", 0);
+    super::update_account_internal(
+        &conn,
+        "acc-u4",
+        AccountUpdateInput {
+            name: None,
+            currency_code: Some("HKD".into()),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        super::get_account_internal(&conn, "acc-u4")
+            .unwrap()
+            .currency_code,
+        "HKD"
+    );
+}
+
+#[test]
+fn update_account_rejects_unknown_currency() {
+    let conn = setup();
+    insert_account(&conn, "acc-u5", "现金", "cash", "CNY", 0);
+    let err = super::update_account_internal(
+        &conn,
+        "acc-u5",
+        AccountUpdateInput {
+            name: None,
+            currency_code: Some("XYZ".into()),
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err, AppError::Invalid(_)));
+    assert!(err.to_string().contains("未知币种"));
+}
+
+#[test]
+fn update_account_returns_not_found_for_missing_id() {
+    let conn = setup();
+    let err = super::update_account_internal(
+        &conn,
+        "不存在的id",
+        AccountUpdateInput {
+            name: Some("任意".into()),
+            currency_code: None,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err, AppError::NotFound(_)));
+}
+
+// ---------------------------------------------------------------------------
+// adjust_account_balance_internal（余额调整，ADR-0026 黑洞转账）
+// ---------------------------------------------------------------------------
+
+fn adjust(conn: &rusqlite::Connection, id: &str, target: i64) -> Result<(String, bool), AppError> {
+    super::adjust_account_balance_internal(
+        conn,
+        id,
+        &AccountBalanceAdjustInput {
+            target_balance_cents: target,
+            date: "2026-09-15".into(),
+            note: None,
+        },
+    )
+}
+
+/// 为非本位币测试补汇率（余额调整经 Writer 接缝折算本位币，缺汇率报错）。
+fn ensure_rate(conn: &rusqlite::Connection, code: &str, rate: f64) {
+    conn.execute(
+        "INSERT OR IGNORE INTO currencies (code, name, symbol, decimal_places) VALUES (?1, ?1, '$', 2)",
+        rusqlite::params![code],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO exchange_rates (id, base_code, quote_code, rate, priced_at, source, updated_at, version, device_id) \
+         VALUES (?1, ?2, 'CNY', ?3, '2026-01-01T00:00:00Z', 'manual', ?4, 1, ?5)",
+        rusqlite::params![new_uuid(), code, rate, now_iso(), device_id()],
+    )
+    .unwrap();
+}
+
+#[test]
+fn adjust_up_creates_transfer_from_black_hole_and_reaches_target() {
+    let conn = setup();
+    insert_account(&conn, "acc-adj-1", "现金", "cash", "CNY", 0);
+    insert_tx(&conn, "tx-adj-1", "income", 5000, "acc-adj-1", None);
+    assert_eq!(balance(&conn, "acc-adj-1"), 5000);
+
+    // Δ=+2000 → 从「无(CNY)」转入；种子黑洞已存在，不新建
+    let (tx_id, created) = adjust(&conn, "acc-adj-1", 7000).unwrap();
+    assert!(!created, "种子已预置 无(CNY)，不应新建黑洞账户");
+    let black_hole = find_black_hole(&conn, "CNY").unwrap();
+    let (kind, amount, account_id, to_account_id, note): (
+        String,
+        i64,
+        String,
+        Option<String>,
+        Option<String>,
+    ) = conn
+        .query_row(
+            "SELECT kind, amount_cents, account_id, to_account_id, note FROM transactions WHERE id=?1",
+            rusqlite::params![tx_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .unwrap();
+    assert_eq!(kind, "transfer");
+    assert_eq!(amount, 2000);
+    assert_eq!(account_id, black_hole, "Δ>0 应从黑洞账户转出");
+    assert_eq!(to_account_id.as_deref(), Some("acc-adj-1"));
+    assert_eq!(note.as_deref(), Some("余额调整"), "缺省备注为「余额调整」");
+    assert_eq!(balance(&conn, "acc-adj-1"), 7000, "调整后余额应等于目标值");
+}
+
+#[test]
+fn adjust_down_creates_transfer_to_black_hole() {
+    let conn = setup();
+    insert_account(&conn, "acc-adj-2", "现金", "cash", "CNY", 5000);
+    let (tx_id, created) = adjust(&conn, "acc-adj-2", 4000).unwrap();
+    assert!(!created);
+    let black_hole = find_black_hole(&conn, "CNY").unwrap();
+    let (account_id, to_account_id, amount): (String, Option<String>, i64) = conn
+        .query_row(
+            "SELECT account_id, to_account_id, amount_cents FROM transactions WHERE id=?1",
+            rusqlite::params![tx_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(amount, 1000, "Δ<0 转账金额为差额绝对值");
+    assert_eq!(account_id, "acc-adj-2", "Δ<0 应从目标账户转出");
+    assert_eq!(to_account_id.as_deref(), Some(black_hole.as_str()));
+    assert_eq!(balance(&conn, "acc-adj-2"), 4000);
+}
+
+#[test]
+fn adjust_creates_black_hole_for_missing_currency() {
+    let conn = setup();
+    ensure_rate(&conn, "USD", 1.0); // MVP 汇率 1:1
+    insert_account(&conn, "acc-adj-3", "美元户", "cash", "USD", 0);
+    let (_tx_id, created) = adjust(&conn, "acc-adj-3", 9900).unwrap();
+    assert!(created, "缺失币种的黑洞账户应按需自动创建");
+    let black_hole = find_black_hole(&conn, "USD").unwrap();
+    let (name, kind, is_hidden): (String, String, i64) = conn
+        .query_row(
+            "SELECT name, type, is_hidden FROM accounts WHERE id=?1",
+            rusqlite::params![black_hole],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(name, "无(USD)", "自动建的黑洞账户与种子同形");
+    assert_eq!(kind, "other");
+    assert_eq!(is_hidden, 1);
+    assert_eq!(balance(&conn, "acc-adj-3"), 9900);
+}
+
+#[test]
+fn adjust_reuses_existing_black_hole_for_same_currency() {
+    let conn = setup();
+    ensure_rate(&conn, "HKD", 1.0); // MVP 汇率 1:1
+    insert_account(&conn, "acc-adj-4", "港币户", "cash", "HKD", 0);
+    let _ = adjust(&conn, "acc-adj-4", 100).unwrap();
+    let (_tx_id2, created2) = adjust(&conn, "acc-adj-4", 300).unwrap();
+    assert!(!created2, "第二次调整应复用已有黑洞账户");
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM accounts WHERE is_hidden=1 AND currency_code='HKD'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 1, "同币种黑洞账户不应重复创建");
+    assert_eq!(balance(&conn, "acc-adj-4"), 300);
+    // 两笔调整交易独立存在，均可删除撤销（普通 transfer，无特殊标记）
+    let txs: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM transactions WHERE (account_id=(\
+             SELECT id FROM accounts WHERE is_hidden=1 AND currency_code='HKD' LIMIT 1\
+             ) OR to_account_id=(\
+             SELECT id FROM accounts WHERE is_hidden=1 AND currency_code='HKD' LIMIT 1\
+             )) AND is_deleted=0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(txs >= 2);
+}
+
+#[test]
+fn adjust_zero_delta_errors_without_writing() {
+    let conn = setup();
+    insert_account(&conn, "acc-adj-5", "现金", "cash", "CNY", 12345);
+    let err = adjust(&conn, "acc-adj-5", 12345).unwrap_err();
+    assert!(matches!(err, AppError::Invalid(_)));
+    assert!(err.to_string().contains("无需调整"));
+    let tx_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(tx_count, 0, "零差额不应产生任何写入");
+}
+
+#[test]
+fn adjust_rejects_hidden_account() {
+    let conn = setup();
+    insert_hidden_account(&conn, "acc-adj-6", "无(CNY)", "CNY");
+    let err = adjust(&conn, "acc-adj-6", 100).unwrap_err();
+    assert!(matches!(err, AppError::Invalid(_)));
+    assert!(err.to_string().contains("黑洞账户不支持余额调整"));
+}
+
+#[test]
+fn adjust_returns_not_found_for_missing_account() {
+    let conn = setup();
+    let err = adjust(&conn, "不存在的id", 100).unwrap_err();
+    assert!(matches!(err, AppError::NotFound(_)));
+}
+
+#[test]
+fn adjust_deleted_adjustment_tx_reverts_balance() {
+    let conn = setup();
+    insert_account(&conn, "acc-adj-7", "现金", "cash", "CNY", 0);
+    let (tx_id, _) = adjust(&conn, "acc-adj-7", 5000).unwrap();
+    assert_eq!(balance(&conn, "acc-adj-7"), 5000);
+    // 调整产生的转账就是普通 transfer：删除即撤销调整
+    conn.execute(
+        "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
+        rusqlite::params![tx_id, now_iso(), device_id()],
+    )
+    .unwrap();
+    assert_eq!(balance(&conn, "acc-adj-7"), 0, "删除调整交易即恢复原余额");
+}

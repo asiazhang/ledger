@@ -130,6 +130,8 @@ pub fn run() {
             commands::list_currencies,
             commands::list_accounts,
             commands::create_account,
+            commands::update_account,
+            commands::adjust_account_balance,
             commands::delete_account,
             commands::list_account_balances,
             commands::list_categories,
