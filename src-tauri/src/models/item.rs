@@ -129,12 +129,16 @@ pub struct ItemInput {
 
 /// 物品列表项：物品实体 + 每天使用成本快照（经 `item::cost` 接缝计算，
 /// 调用方不另写口径）。`used_days` / `per_day_cents` 为查询时刻快照，不落库。
+/// 成本分解三元组（分子 `numerator_cents` ÷ 天数 `used_days` = `per_day_cents`）
+/// 一并返回，供物品详情视图直接展示，避免调用方反推口径。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ItemWithDailyCost {
     #[serde(flatten)]
     pub item: Item,
     /// 已用天数：购买日 → 目标日的日历天数，含起止两端（在用 = 今天，已处置 = 处置日）。
     pub used_days: i64,
+    /// 成本分解分子（分）：总成本 − 残值，下限 0（在用未填残值时即总成本）。
+    pub numerator_cents: i64,
     /// 每天成本（分/天，**小数**）：`item::cost` 接缝计算，仅供展示。
     pub per_day_cents: f64,
 }

@@ -66,6 +66,12 @@ export const useItemsStore = defineStore('items', () => {
     return id
   }
 
+  /** 按 id 修改物品（名称/购买日期/总成本/备注）：成功后立即重拉（同 create）。 */
+  async function update(id: string, input: ItemInput): Promise<void> {
+    await api.updateItem(id, input)
+    await refresh()
+  }
+
   // —— push 生命周期 ——
   // 首次访问 self-init：触发一次加载（失败静默，失败信号已由 status 承载）。
   void refresh().catch(() => {
@@ -88,5 +94,6 @@ export const useItemsStore = defineStore('items', () => {
     version,
     refresh,
     create,
+    update,
   }
 })

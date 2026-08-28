@@ -1,4 +1,4 @@
-//! 物品（Item）命令层（issue #115 / spec #113 / ADR-0014）：创建与列出在用物品。
+//! 物品（Item）命令层（issue #115 / spec #113 / ADR-0014）：创建、列出与编辑物品。
 //!
 //! 组织方式镜像 `commands::categories`：命令外壳（`create_item` / `list_items`）
 //! + `*_internal` 复用函数（BDD seam，issue #115 验收：BDD 场景调用本层内部函数）。
@@ -16,7 +16,7 @@ mod tests;
 use rusqlite::Connection;
 use tauri::State;
 
-use crate::db::query::query_all;
+use crate::db::query::{query_all, query_one};
 use crate::db::{DbState, device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::item::cost;
@@ -39,31 +39,39 @@ pub fn list_items_internal(conn: &Connection) -> Result<Vec<ItemWithDailyCost>> 
     items
         .into_iter()
         .map(|item| {
-            let usage = match item.status {
-                ItemStatus::InUse => cost::calculate_to_today(
-                    item.total_cost_cents,
-                    parse_date(&item.purchase_date)?,
-                    item.residual_value_cents,
-                )?,
-                ItemStatus::Disposed => {
-                    let disposal_date = item.disposal_date.as_deref().ok_or_else(|| {
-                        AppError::Invalid(format!("已处置物品缺少处置日期: {}", item.id))
-                    })?;
-                    cost::calculate(
-                        item.total_cost_cents,
-                        parse_date(&item.purchase_date)?,
-                        parse_date(disposal_date)?,
-                        item.residual_value_cents,
-                    )?
-                }
-            };
+            let usage = daily_usage(&item)?;
             Ok(ItemWithDailyCost {
                 item,
                 used_days: usage.days,
+                numerator_cents: usage.numerator_cents,
                 per_day_cents: usage.per_day_cents,
             })
         })
         .collect()
+}
+
+/// 按物品生命周期状态计算每天使用成本（在用 → 今天；已处置 → 处置日），
+/// 列表与单件详情共用同一口径（`item::cost` 接缝）。
+fn daily_usage(item: &Item) -> Result<cost::DailyUsageCost> {
+    match item.status {
+        ItemStatus::InUse => cost::calculate_to_today(
+            item.total_cost_cents,
+            parse_date(&item.purchase_date)?,
+            item.residual_value_cents,
+        ),
+        ItemStatus::Disposed => {
+            let disposal_date = item
+                .disposal_date
+                .as_deref()
+                .ok_or_else(|| AppError::Invalid(format!("已处置物品缺少处置日期: {}", item.id)))?;
+            cost::calculate(
+                item.total_cost_cents,
+                parse_date(&item.purchase_date)?,
+                parse_date(disposal_date)?,
+                item.residual_value_cents,
+            )
+        }
+    }
 }
 
 /// 创建一件在用物品：校验 → 金额折算本位币（Amount 接缝）→ 落库（生成
@@ -76,16 +84,7 @@ pub fn create_item_internal(
     input: ItemInput,
     notify: &mut dyn FnMut(),
 ) -> Result<String> {
-    let name = input.name.trim();
-    if name.is_empty() {
-        return Err(AppError::Invalid("物品名称不能为空".into()));
-    }
-    if input.total_cost_cents <= 0 {
-        return Err(AppError::Invalid("物品总成本必须大于 0".into()));
-    }
-    parse_date(&input.purchase_date)?; // 校验可解析性（成本计算依赖日历日期）
-    let cost_native_cents =
-        amount::convert_to_native(conn, input.total_cost_cents, &input.currency_code)?;
+    let (name, _purchase_date, cost_native_cents) = validate_and_convert(conn, &input)?;
 
     let id = new_uuid();
     let now = now_iso();
@@ -112,6 +111,86 @@ pub fn create_item_internal(
     // 写入成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
     notify();
     Ok(id)
+}
+
+/// 创建/修改共用的入参校验与折算：名称非空、总成本 > 0、购买日期可解析
+/// （成本计算依赖日历日期）、币种可按 Amount 接缝折算本位币。
+/// 返回归一化后的名称、购买日期与本位币成本，调用方直接落库。
+fn validate_and_convert(
+    conn: &Connection,
+    input: &ItemInput,
+) -> Result<(String, chrono::NaiveDate, i64)> {
+    let name = input.name.trim();
+    if name.is_empty() {
+        return Err(AppError::Invalid("物品名称不能为空".into()));
+    }
+    if input.total_cost_cents <= 0 {
+        return Err(AppError::Invalid("物品总成本必须大于 0".into()));
+    }
+    let purchase_date = parse_date(&input.purchase_date)?;
+    let cost_native_cents =
+        amount::convert_to_native(conn, input.total_cost_cents, &input.currency_code)?;
+    Ok((name.to_string(), purchase_date, cost_native_cents))
+}
+
+/// 按 `id` 修改物品字段（名称/购买日期/总成本/币种/备注，issue #117）。
+///
+/// 保留审计字段：`id` / `created_at` / `status` / 处置相关字段 / `is_deleted`
+/// 均不动；`version` 递增、`updated_at` / `device_id` 刷新（同 Writer 接缝的
+/// `update_row` 约定）。金额折算走 Amount 接缝，成功后调用 `notify`
+/// （生产路径发 `ledger:changed`）。物品不存在（或已软删除）→ [`AppError::NotFound`]。
+pub fn update_item_internal(
+    conn: &Connection,
+    id: &str,
+    input: ItemInput,
+    notify: &mut dyn FnMut(),
+) -> Result<()> {
+    let (name, purchase_date, cost_native_cents) = validate_and_convert(conn, &input)?;
+
+    let existing: Option<Item> = query_one(
+        conn,
+        "SELECT id,name,purchase_date,total_cost_cents,currency_code,cost_native_cents,status, \
+         disposal_date,residual_value_cents,note,created_at,updated_at,version,device_id,is_deleted \
+         FROM items WHERE id=?1 AND is_deleted=0",
+        [id],
+    )?;
+    let Some(existing) = existing else {
+        return Err(AppError::NotFound("物品不存在".into()));
+    };
+    // 已处置物品的购买日期不得晚于处置日，否则列表/详情读取时成本口径报错（不可达状态）。
+    if let Some(disposal_date) = &existing.disposal_date
+        && purchase_date > parse_date(disposal_date)?
+    {
+        return Err(AppError::Invalid(format!(
+            "购买日期 {purchase_date} 晚于处置日期 {disposal_date}，请先调整处置日期"
+        )));
+    }
+
+    let updated = conn.execute(
+        "UPDATE items \
+         SET name=?2, purchase_date=?3, total_cost_cents=?4, currency_code=?5, \
+         cost_native_cents=?6, note=?7, updated_at=?8, version=version+1, device_id=?9 \
+         WHERE id=?1 AND is_deleted=0",
+        rusqlite::params![
+            id,
+            name,
+            input.purchase_date,
+            input.total_cost_cents,
+            input.currency_code,
+            cost_native_cents,
+            input.note,
+            now_iso(),
+            device_id(),
+        ],
+    )?;
+    if updated == 0 {
+        return Err(AppError::NotFound("物品不存在".into()));
+    }
+    // 脏标记挂钩（issue #126）：落库成功即置脏，到期则写时顺带触发备份。
+    crate::auto_backup::on_write(conn);
+    // 写入成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
+    notify();
+    Ok(())
 }
 
 /// 解析 YYYY-MM-DD 日期字符串；非法格式报错（物品成本计算依赖日历日期）。
@@ -141,4 +220,18 @@ pub fn create_item(
         })?
     };
     Ok(id)
+}
+
+#[tauri::command]
+pub fn update_item(
+    db: State<'_, DbState>,
+    app: tauri::AppHandle,
+    id: String,
+    input: ItemInput,
+) -> Result<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    update_item_internal(&conn, &id, input, &mut || {
+        // 与 create_item 同款：独立领域写入 → 通用失效信号（issue #117）。
+        crate::events::emit_ledger_changed(&app);
+    })
 }

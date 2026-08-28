@@ -134,4 +134,58 @@ describe('useItemsStore', () => {
     expect(store.items).toHaveLength(2)
     expect(store.items.some((i) => i.id === 'item-new')).toBe(true)
   })
+
+  it('update 按 id 调用 update_item 后立即重拉，修改即可见', async () => {
+    const before = [baseItem()]
+    const after = [baseItem({ name: '手机 Pro', version: 2 })]
+    let listCalls = 0
+    const updateInput: ItemInput = {
+      name: '手机 Pro',
+      purchase_date: '2025-02-02',
+      total_cost_cents: 1_200_000,
+      currency_code: 'CNY',
+      note: '顶配',
+    }
+    mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
+      if (cmd === 'list_items') {
+        listCalls++
+        return Promise.resolve(listCalls === 1 ? before : after)
+      }
+      if (cmd === 'update_item') {
+        expect(args).toEqual({ id: 'item-1', input: updateInput })
+        return Promise.resolve(null)
+      }
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const store = useItemsStore()
+    await flushPromises()
+
+    await store.update('item-1', updateInput)
+    expect(listCalls).toBe(2)
+    expect(store.items[0].name).toBe('手机 Pro')
+    expect(store.items[0].version).toBe(2)
+  })
+
+  it('update 失败时抛出错误且不重拉', async () => {
+    const initial = [baseItem()]
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_items') return Promise.resolve(initial)
+      if (cmd === 'update_item') return Promise.reject(new Error('物品不存在'))
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const store = useItemsStore()
+    await flushPromises()
+    const versionBefore = store.version
+
+    await expect(
+      store.update('no-such', {
+        name: 'x',
+        purchase_date: '2025-01-01',
+        total_cost_cents: 100,
+        currency_code: 'CNY',
+      }),
+    ).rejects.toThrow('物品不存在')
+    expect(store.version).toBe(versionBefore)
+    expect(store.items[0].name).toBe('手机')
+  })
 })

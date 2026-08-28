@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount, flushPromises, enableAutoUnmount, DOMWrapper } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useItemsStore } from '@/stores/items'
@@ -7,6 +7,16 @@ import ItemsView from '@/views/ItemsView.vue'
 import type { Currency, ItemInput, ItemWithDailyCost } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
+
+// NModal 内容 teleport 到 document.body：测试在 body 中查询/触发（同 InstrumentBrowser 先例）。
+enableAutoUnmount(afterEach)
+afterEach(() => {
+  document.body.innerHTML = ''
+})
+
+function bodyQuery(selector: string): HTMLElement | null {
+  return document.body.querySelector(selector)
+}
 
 const mockCurrencies: Currency[] = [
   { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
@@ -66,6 +76,11 @@ function setupInvoke() {
       itemList = [...itemList, { ...mockItems[0], id: 'item-new', name: '键盘' }]
       void args
       return Promise.resolve('item-new')
+    }
+    if (cmd === 'update_item') {
+      const { id, input } = args as { id: string; input: { name: string } }
+      itemList = itemList.map((it) => (it.id === id ? { ...it, ...input } : it))
+      return Promise.resolve(null)
     }
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
@@ -143,5 +158,121 @@ describe('ItemsView 物品列表', () => {
     await createBtn!.trigger('click')
     await flushPromises()
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'create_item')).toBe(false)
+  })
+})
+
+describe('ItemsView 物品编辑（issue #117）', () => {
+  it('点编辑打开弹窗并预填当前行字段', async () => {
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+
+    const editBtn = wrapper.findAll('button').find((b) => b.text() === '编辑')
+    expect(editBtn).toBeTruthy()
+    await editBtn!.trigger('click')
+    await flushPromises()
+
+    const modal = bodyQuery('[data-testid="item-edit-modal"]')
+    expect(modal).not.toBeNull()
+    const nameInput = new DOMWrapper(modal!.querySelector('input[placeholder="物品名称"]'))
+    expect((nameInput.element as HTMLInputElement).value).toBe('手机')
+    // 总成本预填：100000 分 → 10000（元）
+    const costInput = new DOMWrapper(modal!.querySelector('input[placeholder="总成本（元）"]'))
+    expect((costInput.element as HTMLInputElement).value).toBe('10000')
+  })
+
+  it('修改后保存：update_item 收到按 id 与整数分入参，列表重拉可见新名称', async () => {
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+
+    const editBtn = wrapper.findAll('button').find((b) => b.text() === '编辑')
+    await editBtn!.trigger('click')
+    await flushPromises()
+
+    const modal = bodyQuery('[data-testid="item-edit-modal"]')!
+    await new DOMWrapper(modal.querySelector('input[placeholder="物品名称"]')).setValue('手机 Pro')
+    await new DOMWrapper(modal.querySelector('input[placeholder="总成本（元）"]')).setValue('12000')
+    await new DOMWrapper(
+      modal.querySelector('input[placeholder="品牌 / 型号 / 渠道（可选）"]'),
+    ).setValue('顶配')
+
+    const saveBtn = [...modal.querySelectorAll('button')].find((b) => b.textContent === '保存')
+    saveBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+
+    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'update_item')
+    expect(calls).toHaveLength(1)
+    const [, args] = calls[0]
+    const { id, input } = args as { id: string; input: ItemInput }
+    expect(id).toBe('item-1')
+    expect(input.name).toBe('手机 Pro')
+    expect(input.total_cost_cents).toBe(1_200_000)
+    // 币种不可改：沿用行内币种
+    expect(input.currency_code).toBe('CNY')
+    expect(input.note).toBe('顶配')
+    expect(input.purchase_date).toBe('2025-01-01')
+
+    // mock 已更新列表 → 重拉后新名称可见，弹窗关闭
+    expect(wrapper.text()).toContain('手机 Pro')
+    await new Promise((r) => setTimeout(r, 300))
+    // jsdom 不派发 transitionend：NModal 退场后仅隐藏不卸载，断言 display:none 即已关闭
+    const modalEl = bodyQuery('[data-testid="item-edit-modal"]') as HTMLElement | null
+    expect(modalEl === null || modalEl.style.display === 'none').toBe(true)
+  })
+
+  it('编辑弹窗名称清空时提示且不调用 update_item', async () => {
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+
+    const editBtn = wrapper.findAll('button').find((b) => b.text() === '编辑')
+    await editBtn!.trigger('click')
+    await flushPromises()
+
+    const modal = bodyQuery('[data-testid="item-edit-modal"]')!
+    await new DOMWrapper(modal.querySelector('input[placeholder="物品名称"]')).setValue('  ')
+    const saveBtn = [...modal.querySelectorAll('button')].find((b) => b.textContent === '保存')
+    saveBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'update_item')).toBe(false)
+    // 弹窗仍开着（未保存成功）
+    expect(bodyQuery('[data-testid="item-edit-modal"]')).not.toBeNull()
+  })
+})
+
+describe('ItemsView 物品详情（issue #117）', () => {
+  it('点详情打开弹窗并展示成本分解：分子 ÷ 天数 = 每天成本', async () => {
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+
+    const detailBtn = wrapper.findAll('button').find((b) => b.text() === '详情')
+    expect(detailBtn).toBeTruthy()
+    await detailBtn!.trigger('click')
+    await flushPromises()
+
+    const modal = bodyQuery('[data-testid="item-detail-modal"]')
+    expect(modal).not.toBeNull()
+    const text = modal!.textContent ?? ''
+    expect(text).toContain('手机')
+    // 总成本（原始币种 formatAmount：10000 元 → ¥1,0000）
+    expect(text).toContain('¥1,0000')
+    // 成本分解：分子 ¥1,0000 ÷ 1000 天 = 每天成本 ¥10
+    expect(text).toContain('1000')
+    expect(text).toContain('¥10')
+    expect(text).toContain('每天成本分解')
+  })
+
+  it('详情展示备注与购买日期', async () => {
+    itemList = [itemList[0]]
+    itemList[0] = { ...itemList[0], note: 'HHKB', purchase_date: '2025-06-01' }
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+
+    const detailBtn = wrapper.findAll('button').find((b) => b.text() === '详情')
+    await detailBtn!.trigger('click')
+    await flushPromises()
+
+    const text = bodyQuery('[data-testid="item-detail-modal"]')!.textContent ?? ''
+    expect(text).toContain('HHKB')
+    expect(text).toContain('2025-06-01')
   })
 })

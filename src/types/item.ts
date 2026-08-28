@@ -44,6 +44,8 @@ export interface ItemInput {
 export interface ItemWithDailyCost extends Item {
   /** 已用天数：购买日 → 目标日的日历天数，含起止两端（在用 = 今天，已处置 = 处置日）。 */
   used_days: number
+  /** 成本分解分子（分）：总成本 − 残值，下限 0（在用未填残值时即总成本）。 */
+  numerator_cents: number
   /** 每天成本（分/天，小数，查询时刻快照）。 */
   per_day_cents: number
 }

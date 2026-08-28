@@ -151,6 +151,7 @@ pub fn run() {
             commands::list_holdings,
             commands::list_items,
             commands::create_item,
+            commands::update_item,
             commands::list_budgets,
             commands::create_budget,
             commands::delete_budget,
