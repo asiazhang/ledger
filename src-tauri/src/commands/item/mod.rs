@@ -1,5 +1,5 @@
-//! 物品（Item）命令层（issue #115 / #117 / #118 / #120 / spec #113 / ADR-0014）：创建、
-//! 列出、编辑、处置与软删除物品。
+//! 物品（Item）命令层（issue #115 / #117 / #118 / #120 / #122 / spec #113 / ADR-0014）：创建、
+//! 列出、编辑、处置、软删除物品与「在用物品每天成本合计」聚合。
 //!
 //! 组织方式镜像 `commands::categories`：命令外壳（`create_item` / `list_items` /
 //! `delete_item` / `dispose_item`）+ `*_internal` 复用函数（BDD seam，验收：BDD 场景调用本层内部函数）。
@@ -22,7 +22,7 @@ use crate::db::{DbState, device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::item::cost;
 use crate::models::{
-    Item, ItemDailyCost, ItemDisposeInput, ItemInput, ItemStatus, ItemWithDailyCost,
+    Item, ItemDailyCost, ItemDailyTotal, ItemDisposeInput, ItemInput, ItemStatus, ItemWithDailyCost,
 };
 use crate::transaction::amount::{self, TransactionKind};
 
@@ -387,8 +387,43 @@ pub fn list_items(db: State<'_, DbState>) -> Result<Vec<ItemWithDailyCost>> {
     list_items_internal(&conn)
 }
 
+/// 全部在用物品「每天成本合计」（issue #122 dashboard 汇总卡）：conn 级聚合，
+/// 复用 [`list_items_internal`] 的逐件口径快照（分子/天数均经 `item::cost` 接缝），
+/// 本函数只做筛选（仅 `in_use`）、本位币折算（Amount 接缝）与求和，不另写口径表达式。
+///
+/// 合计口径 = Σ 各在用物品分子（折本位币）÷ 各自天数：每件物品每天都在发生的
+/// 持有开销直接相加（「每天成本合计」），**不是** Σ分子 ÷ Σ天数（那是按天数加权的均值，
+/// 不回答「每天合计花多少」）。缺汇率的币种错误上抛（与 `dashboard_overview` 同款，
+/// 不静默以零计入）；分子为 0（残值 ≥ 成本）的物品计件但不贡献金额。
+pub fn item_daily_total_internal(conn: &Connection) -> Result<ItemDailyTotal> {
+    let mut per_day_total = 0f64;
+    let mut item_count = 0u64;
+    for entry in list_items_internal(conn)? {
+        if entry.item.status != ItemStatus::InUse {
+            continue;
+        }
+        let numerator_native =
+            amount::convert_to_native(conn, entry.numerator_cents, &entry.item.currency_code)?;
+        per_day_total += numerator_native as f64 / entry.used_days as f64;
+        item_count += 1;
+    }
+    Ok(ItemDailyTotal {
+        native_currency: amount::default_currency_code().to_string(),
+        per_day_cents: per_day_total,
+        item_count,
+    })
+}
+
 /// 计算单件物品的每天使用成本（issue #121，只读命令不发失效信号）：
 /// `reference_date` 缺省/为 null 时沿用列表口径（在用 → 今天；已处置 → 处置日）。
+/// 全部在用物品每天成本合计（issue #122，只读聚合不发失效信号），
+/// 供 dashboard 汇总卡展示（默认币种）。
+#[tauri::command]
+pub fn item_daily_total(db: State<'_, DbState>) -> Result<ItemDailyTotal> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    item_daily_total_internal(&conn)
+}
+
 #[tauri::command]
 pub fn calculate_item_cost(
     db: State<'_, DbState>,

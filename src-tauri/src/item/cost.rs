@@ -27,8 +27,10 @@ pub struct DailyUsageCost {
     pub numerator_cents: i64,
     /// 每天成本（分/天，**小数**）：`numerator_cents ÷ days`。
     ///
-    /// 仅供展示（前端 `formatAmount` 折算），不参与再聚合——调用方需要合计时
-    /// 应先累加各自的 `numerator_cents` 与 `days` 再相除，勿拿 f64 反推口径。
+    /// 仅供展示（前端 `formatAmount` 折算），不参与再聚合。跨物品合计口径收敛在
+    /// `commands::item::item_daily_total_internal`（issue #122）：
+    /// Σ 各物品分子（折本位币）÷ 各自天数；勿拿本字段的 f64 反推分子，
+    /// 也勿按 Σ分子 ÷ Σ天数 混算（那是加权均值，不是「每天成本合计」）。
     pub per_day_cents: f64,
 }
 

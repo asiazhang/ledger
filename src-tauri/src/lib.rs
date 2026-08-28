@@ -152,6 +152,7 @@ pub fn run() {
             commands::instrument_price_trend,
             commands::portfolio_value_trend,
             commands::list_items,
+            commands::item_daily_total,
             commands::create_item,
             commands::calculate_item_cost,
             commands::update_item,
