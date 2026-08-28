@@ -11,8 +11,6 @@ import type { Account, Category, Currency, Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
-// 索引滞后标志：测试 stale 提示时置 true（后台定时刷新，写入后可能未消费）
-let mockStale = false
 
 // AccountLink 经 useRouter 跳转（pushMock 断言导航目标，issue #99）
 const pushMock = vi.fn()
@@ -212,13 +210,11 @@ beforeEach(async () => {
       return Promise.resolve({
         items: all.slice(start, start + pageSize),
         total: all.length,
-        stale: mockStale,
       })
     }
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
   localStorage.clear()
-  mockStale = false
   const store = useReferenceStore()
   await store.ensureFresh()
 })
@@ -335,21 +331,6 @@ describe('SearchView.vue', () => {
     await nextTick()
     await typeAndSearch(wrapper, '报销')
     expect(wrapper.text()).not.toContain('删除')
-  })
-
-  it('索引滞后时显示提示（后台定时刷新，写入后可能未消费）', async () => {
-    vi.useFakeTimers()
-    mockStale = true
-    const wrapper = mount(SearchView)
-    await nextTick()
-    await typeAndSearch(wrapper, '报销')
-    expect(wrapper.text()).toContain('索引更新中，结果可能滞后于最近的操作')
-
-    // 队列消费后 stale=false：清空重搜后提示消失
-    mockStale = false
-    await typeAndSearch(wrapper, '', 1)
-    await typeAndSearch(wrapper, '报销')
-    expect(wrapper.text()).not.toContain('索引更新中')
   })
 
   describe('金额/日期筛选（issue #41）', () => {

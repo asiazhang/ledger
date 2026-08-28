@@ -72,8 +72,6 @@ export interface TransactionSearchResult {
   items: Transaction[]
   /** 命中总数（供「命中 N 条」与分页） */
   total: number
-  /** 索引是否可能滞后：存在尚未刷新的写入时 true（后台定时刷新，周期内不立即可搜） */
-  stale: boolean
 }
 
 /** 交易搜索筛选条件（与关键字 AND 组合；全部可选、单边可用） */

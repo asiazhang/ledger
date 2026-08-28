@@ -6,8 +6,8 @@
 //! - 到期判定为纯函数 [`due_decision`]，当前时间由调用方注入，不依赖全局时钟——
 //!   **线程只做周期调用，是否备份的决策全在纯函数**（可测边界）；
 //! - 调度层（issue #125）提供三种触发入口（周期到期 / 退出兜底 / 首次兜底），
-//!   全部收敛到同一执行函数 [`perform_backup`]；轮询线程照搬
-//!   `start_search_refresh_thread` 模式（spawn + sleep），锁等待带超时，超时跳过本轮；
+//!   全部收敛到同一执行函数 [`perform_backup`]；轮询线程为标准模式
+//!   （spawn + sleep），锁等待带超时，超时跳过本轮；
 //! - `backupDir` 保持前端 localStorage 单一来源（ADR-0016 决策 3），后端只维护
 //!   一份运行时镜像 [`PrefsState`]（启动时经 IPC `set_auto_backup_dir` 推送），
 //!   目录未配置时一律静默跳过；
@@ -419,7 +419,7 @@ pub(crate) fn lock_conn_with_timeout(
     }
 }
 
-/// 启动自动备份轮询线程（照搬 `start_search_refresh_thread` 模式：spawn + sleep）。
+/// 启动自动备份轮询线程（标准轮询线程模式：spawn + sleep）。
 pub fn start_scheduler(app: &tauri::AppHandle) {
     use tauri::Manager;
     let conn = Arc::clone(&app.state::<DbState>().conn);

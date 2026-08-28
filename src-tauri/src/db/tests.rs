@@ -639,8 +639,9 @@ fn insert_fx_rate_history(
     .unwrap();
 }
 
-/// v0.3.0 发布时的 schema 版本：该 tag 只含 V001–V007 共 7 个迁移
-/// （V008 app_settings 起均为未发布迁移），恢复 v0.3.0 备份即停在此版本。
+/// 旧版本发布备份停驻的 schema 版本：发布 tag 时的迁移序列长度（现序列为 9 个，
+/// 原 V005 FTS 迁移已移除，见 ADR-0027），恢复旧备份即停在此版本，
+/// 由 init_db 补齐后续迁移。
 const V030_SCHEMA_VERSION: usize = 7;
 
 /// price_history：周采样唯一约束（每标的每周至多一条，同周不同采样日也拒绝）
@@ -712,8 +713,8 @@ fn fx_rate_history_weekly_unique_per_pair() {
     insert_fx_rate_history(&conn, "fx-04", "CNY", "HKD", "2026-05-27", 1.087);
 }
 
-/// v0.3.0 备份恢复后升级路径：旧库停在 v0.3.0 发布时的 schema 版本
-/// （V001–V007），经 init_db 补齐后续迁移，price_history / fx_rate_history 自动创建。
+/// 旧版本备份恢复后升级路径：旧库停在发布时的 schema 版本，经 init_db 补齐
+/// 后续迁移，price_history / fx_rate_history 自动创建。
 #[test]
 fn migration_upgrades_v030_backup_with_new_tables() {
     let mut conn = open_in_memory().unwrap();

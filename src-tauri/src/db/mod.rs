@@ -25,7 +25,9 @@ fn migrations() -> &'static Migrations<'static> {
                 "../../migrations/V003__scheduled_transactions.sql"
             )),
             M::up(include_str!("../../migrations/V004__seed_defaults.sql")),
-            M::up(include_str!("../../migrations/V005__search_index.sql")),
+            // 注：原 V005__search_index.sql（FTS5 搜索索引）已从序列整体移除
+            //（issue #196 / ADR-0027，不考虑旧库兼容；user_version 按序列位置计数，
+            // 序列号不回填、后续迁移文件名保持不变）。
             M::up(include_str!(
                 "../../migrations/V006__transaction_amount_index.sql"
             )),
@@ -68,7 +70,7 @@ pub fn device_id() -> String {
     String::from("device-1")
 }
 
-/// 在指定目录打开库并完成迁移与搜索索引对账（DataLocation 引导之后的建连步骤）。
+/// 在指定目录打开库并完成 schema 迁移（DataLocation 引导之后的建连步骤）。
 /// 启动期唯一入口：先经 [`data_location::boot`] 解析库所在目录，再调本函数建连
 /// （见 `lib.rs::init_database`）；不要自行拼接库路径。
 pub fn open_db_in(db_dir: &Path) -> Result<DbState> {
@@ -76,9 +78,6 @@ pub fn open_db_in(db_dir: &Path) -> Result<DbState> {
     tracing::info!(db_path = %db_path.display(), "打开数据库");
     let mut conn = open_connection(db_path)?;
     init_db(&mut conn)?;
-    // 启动对账：FTS 文档数 ≠ 未删除交易数 → 全量重建（覆盖 V005 迁移前的存量数据）；
-    // 一致则消费重建队列（账户/分类改名、绕过应用层的写入产生的待办）。
-    crate::commands::search::reconcile_search_index(&conn)?;
     Ok(DbState {
         conn: Arc::new(Mutex::new(conn)),
     })

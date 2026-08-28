@@ -11,7 +11,7 @@
 | instrument_type | TEXT | 金融工具类型（见下方枚举） |
 | name | TEXT | 名称（可选，如 "贵州茅台"） |
 | currency_code | TEXT FK | 报价币种 |
-| market | TEXT | 交易市场：`sh` / `sz` / `hk` / `unknown`（V005 新增，默认 unknown） |
+| market | TEXT | 交易市场：`sh` / `sz` / `hk` / `unknown`（V002 建表即有，默认 unknown） |
 | created_at | TEXT | 创建时间 |
 | updated_at | TEXT | 最后修改时间 |
 | version | INTEGER | 版本号 |

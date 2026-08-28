@@ -105,9 +105,6 @@ pub fn run() {
                 app.handle().clone(),
                 app.state::<db::DbState>().conn.clone(),
             );
-            // 后台索引刷新线程：固定周期消费搜索重建队列（ADR-0004 决策 #14，
-            // 写路径零索引工作，界面操作不受索引维护影响）。
-            commands::search::start_search_refresh_thread(app.state::<db::DbState>().conn.clone());
             // 全量同步中断状态（issue #104）：跨命令共享运行/取消标志。
             app.manage(commands::sync::SyncState::default());
             // 自动备份（issue #125/#126）：目录镜像为进程级单例 [`auto_backup::shared_prefs`]，

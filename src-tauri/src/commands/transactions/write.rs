@@ -21,8 +21,7 @@ pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<
     let row = plan.normalized_row()?;
     let id = writer::insert_row(conn, &row)?;
     behavior::apply(conn, &id, &plan)?;
-    // 索引维护由后台定时刷新承担（ADR-0004 决策 #14）：触发器已入队
-    // `search_reindex_queue`，写路径不做任何同步索引工作（界面操作零索引开销）。
+    // 搜索无索引（issue #196 全量扫描实现）：写入路径零额外工作，交易立即可搜。
     Ok(id)
 }
 
