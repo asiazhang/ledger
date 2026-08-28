@@ -21,9 +21,12 @@ import {
 import { ChevronDown } from '@vicons/ionicons5'
 import TransactionForm from '@/components/TransactionForm.vue'
 import RefundForm from '@/components/RefundForm.vue'
+import AddItemForm from '@/components/AddItemForm.vue'
+import { buildRowMenuOptions } from '@/components/transaction-row-menu'
 import { useCreateShortcuts, CREATE_KIND_KEYS } from '@/composables/useCreateShortcuts'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
+import { useItemsStore } from '@/stores/items'
 import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/transaction-columns'
 import {
   CREATE_KINDS,
@@ -35,6 +38,9 @@ import {
 } from '@/types'
 
 const reference = useReferenceStore()
+// 物品 store（issue #119）：仅用于右键菜单「加入物品」的置灰态判断；
+// self-init + ledger:changed 自动重拉，创建成功后菜单下次打开即为置灰态。
+const itemsStore = useItemsStore()
 const message = useMessage()
 const dialog = useDialog()
 const route = useRoute()
@@ -288,20 +294,44 @@ function onRefundCreated() {
   void refresh()
 }
 
-/** 右键菜单（issue #151）：expense 行含「退款」，所有行含「删除」。 */
+/** 「加入物品」确认弹窗（issue #119 / ADR-0025 创建唯一入口）：原交易由右键所在行固定，
+ * 日期/成本/币种只读带出，名称默认备注可微调；提交走既有物品创建命令（溯源必填）。
+ * 成功后不手动刷新交易列表（物品写入与交易列表无关），物品 store 经
+ * ledger:changed 自动重拉，菜单下次打开即为置灰态。 */
+const showAddItem = ref(false)
+const addItemSource = ref<Transaction | null>(null)
+const addItemSeq = ref(0)
+
+function openAddItemFromRow(row: Transaction) {
+  addItemSource.value = row
+  addItemSeq.value += 1
+  showAddItem.value = true
+}
+
+/** 成功与取消都只是关窗（物品列表经 ledger:changed 自动重拉，交易列表无关）。 */
+function closeAddItem() {
+  showAddItem.value = false
+}
+
+/** 右键菜单（issue #151 / #119）：expense 行含「退款」「加入物品」（已建物品置灰），
+ * 所有行含「删除」；选项组装收口在 transaction-row-menu 纯函数（可独立测试）。 */
 const menuShow = ref(false)
 const menuX = ref(0)
 const menuY = ref(0)
 const menuRow = ref<Transaction | null>(null)
 
+/** 已建物品的交易 id 集合（按物品溯源指针比对，不新增查询、不建反向引用）。 */
+const linkedTxIds = computed(
+  () =>
+    new Set(
+      itemsStore.items.map((i) => i.purchase_transaction_id).filter((id): id is string => id !== null),
+    ),
+)
+
 const menuOptions = computed(() =>
-  menuRow.value?.kind === 'expense'
-    ? [
-        { label: '退款', key: 'refund' },
-        { type: 'divider' as const, key: 'menu-divider' },
-        { label: '删除', key: 'delete' },
-      ]
-    : [{ label: '删除', key: 'delete' }],
+  menuRow.value
+    ? buildRowMenuOptions(menuRow.value, { hasItem: linkedTxIds.value.has(menuRow.value.id) })
+    : [],
 )
 
 /** 行右键弹出菜单：先收起再 nextTick 展开，保证换行弹出时位置刷新。 */
@@ -321,6 +351,7 @@ function onMenuSelect(key: string) {
   const row = menuRow.value
   if (!row) return
   if (key === 'refund') openRefundFromRow(row)
+  else if (key === 'add-item') openAddItemFromRow(row)
   else if (key === 'delete') confirmDelete(row)
 }
 
@@ -458,7 +489,24 @@ onMounted(() => {
         @created="onRefundCreated"
       />
     </NModal>
-    <!-- 行右键菜单（issue #151）：expense 行「退款」+ 所有行「删除」，手动定位弹出 -->
+    <!-- 「加入物品」确认弹窗（issue #119）：原交易由右键所在行固定，自动带出只读展示 -->
+    <NModal
+      v-model:show="showAddItem"
+      title="加入物品"
+      preset="card"
+      display-directive="if"
+      style="width: 440px"
+      :bordered="false"
+    >
+      <AddItemForm
+        :key="addItemSeq"
+        v-if="addItemSource"
+        :transaction="addItemSource"
+        @created="closeAddItem"
+        @cancel="closeAddItem"
+      />
+    </NModal>
+    <!-- 行右键菜单（issue #151 / #119）：expense 行「退款」「加入物品」+ 所有行「删除」，手动定位弹出 -->
     <NDropdown
       trigger="manual"
       placement="bottom-start"
