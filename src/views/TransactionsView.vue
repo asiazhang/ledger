@@ -36,6 +36,7 @@ import {
   type Transaction,
   type TransactionKind,
   type TransactionListFilter,
+  type TransactionTrade,
 } from '@/types'
 
 const reference = useReferenceStore()
@@ -295,17 +296,29 @@ function onRefundCreated() {
   void refresh()
 }
 
-/** 编辑弹窗（issue #178）：income/expense/transfer 行右键「编辑」，回填该笔交易
+/** 编辑弹窗（issue #178，issue #180 扩到 buy/sell）：行右键「编辑」，回填该笔交易
  * 全部业务字段，kind 锁死不可切换（跨 kind 编辑本期边界外，见 issue #176 边界）；
  * 提交走全字段更新命令（update_transaction，与 HTTP PUT 同一行为层权威）。
- * editSeq 作为表单 key：每次打开强制重建表单实例（镜像退款弹窗机制），
- * 回填/提交均指向本次右键所在行。提交失败弹窗不关、已填内容不丢
- * （错误提示与不重置均在表单 composable 内）。 */
+ * buy/sell 行另取买卖明细（get_transaction_trade，扩展表投影）回填标的/数量/价格/费用；
+ * 取明细失败不弹窗（直接报错）。editSeq 作为表单 key：每次打开强制重建表单实例
+ * （镜像退款弹窗机制），回填/提交均指向本次右键所在行。提交失败弹窗不关、
+ * 已填内容不丢（错误提示与不重置均在表单 composable 内）。 */
 const showEdit = ref(false)
 const editTarget = ref<Transaction | null>(null)
+const editTrade = ref<TransactionTrade | null>(null)
 const editSeq = ref(0)
 
-function openEditFromRow(row: Transaction) {
+async function openEditFromRow(row: Transaction) {
+  if (row.kind === 'buy' || row.kind === 'sell') {
+    try {
+      editTrade.value = await api.getTransactionTrade(row.id)
+    } catch (e) {
+      message.error(`无法编辑: ${e}`)
+      return
+    }
+  } else {
+    editTrade.value = null
+  }
   editTarget.value = row
   editSeq.value += 1
   showEdit.value = true
@@ -336,7 +349,7 @@ function closeAddItem() {
   showAddItem.value = false
 }
 
-/** 右键菜单（issue #151 / #119 / #177 / #178）：income/expense/transfer 行首项「编辑」，
+/** 行右键菜单（issue #151 / #119 / #177 / #178 / #180）：除 refund 外行首项「编辑」，
  * expense 行另有「退款」「加入物品」（已建物品置灰），所有行含「删除」；
  * 选项组装收口在 transaction-row-menu 纯函数（可独立测试），
  * 菜单项图标与删除项 error 色也由该函数统一注入。 */
@@ -553,6 +566,7 @@ onMounted(() => {
         :key="editSeq"
         v-if="editTarget"
         :editing="editTarget"
+        :trade="editTrade"
         @saved="onEditSaved"
       />
     </NModal>

@@ -10,14 +10,23 @@ import {
   NSpace,
 } from 'naive-ui'
 import { useInvestmentForm } from '@/composables/useInvestmentForm'
+import type { Transaction, TransactionTrade } from '@/types'
 
 const props = defineProps<{
   kind: 'buy' | 'sell'
   submitLabel: string
+  /** 编辑模式（issue #180）：待编辑交易与买卖明细，创建路径不传 */
+  editing?: Transaction | null
+  trade?: TransactionTrade | null
 }>()
-const emit = defineEmits<{ created: [] }>()
+const emit = defineEmits<{ created: []; saved: [] }>()
 
-const ctx = useInvestmentForm(props.kind, { onCreated: () => emit('created') })
+const ctx = useInvestmentForm(props.kind, {
+  onCreated: () => emit('created'),
+  onUpdated: () => emit('saved'),
+  editing: () => props.editing ?? null,
+  trade: () => props.trade ?? null,
+})
 </script>
 
 <template>
@@ -104,7 +113,7 @@ const ctx = useInvestmentForm(props.kind, { onCreated: () => emit('created') })
       </NFormItem>
 
       <NButton type="primary" @click="ctx.submit">
-        {{ submitLabel }}
+        {{ editing ? '保存修改' : submitLabel }}
       </NButton>
     </NSpace>
   </NForm>

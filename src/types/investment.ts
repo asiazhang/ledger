@@ -61,6 +61,18 @@ export interface InstrumentListResult {
   total: number
 }
 
+/** 交易买卖明细（issue #180）：一笔 buy/sell 交易在扩展表中的投影（核心交易行
+ * 不含投资字段），供投资表单编辑模式回填标的/数量/价格/费用。`symbol`/`instrument_name`
+ * 为 JOIN 标的表带出的展示字段，保证回填后标的选择框直接显示标的而非裸 id。 */
+export interface TransactionTrade {
+  instrument_id: string
+  symbol: string
+  instrument_name: string | null
+  quantity: number
+  price_cents: number
+  fee_cents: number | null
+}
+
 export interface Holding {
   id: string
   account_id: string

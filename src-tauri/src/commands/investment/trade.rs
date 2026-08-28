@@ -1,10 +1,10 @@
 use rusqlite::Connection;
 
 use crate::commands::fx::account_currency_code;
-use crate::db::query::{FromRow, query_all};
+use crate::db::query::{FromRow, query_all, query_one};
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::models::{AccountType, NormalizedTransaction, TransactionInput};
+use crate::models::{AccountType, NormalizedTransaction, TransactionInput, TransactionTrade};
 use crate::transaction::amount;
 use crate::transaction::amount::TransactionKind;
 
@@ -34,6 +34,24 @@ impl FromRow for ActiveLot {
             currency_code: row.get(3)?,
         })
     }
+}
+
+/// 读取一笔 buy/sell 交易的买卖明细（issue #180）：从 `security_transactions`
+/// 扩展表按交易 id 取标的/数量/价格/费用，JOIN `instruments` 带出展示字段。
+/// 供投资表单编辑模式回填；无明细（交易不存在/非 buy/sell）返回 `NotFound`。
+pub(crate) fn get_transaction_trade(
+    conn: &Connection,
+    transaction_id: &str,
+) -> Result<TransactionTrade> {
+    query_one::<TransactionTrade, _>(
+        conn,
+        "SELECT st.instrument_id, i.symbol, i.name, st.quantity, st.price_cents, st.fee_cents \
+         FROM security_transactions st \
+         JOIN instruments i ON i.id = st.instrument_id \
+         WHERE st.transaction_id = ?1",
+        rusqlite::params![transaction_id],
+    )?
+    .ok_or_else(|| AppError::NotFound(format!("交易不存在或无买卖明细: {transaction_id}")))
 }
 
 pub(crate) struct BuyPlan {

@@ -151,6 +151,7 @@ pub fn run() {
             commands::create_market_price,
             commands::list_instruments,
             commands::create_instrument,
+            commands::get_transaction_trade,
             commands::list_holdings,
             commands::instrument_price_trend,
             commands::portfolio_value_trend,

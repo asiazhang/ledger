@@ -11,13 +11,14 @@ export { renderRowMenuIcon, errorOptionProps }
  * 交易行右键菜单选项组装（issue #151 退款/删除 + issue #119 加入物品 + #177 图标化）：
  * 纯函数收口，菜单形状（项、顺序、禁用、图标、着色）可独立测试（#176 Testing Decisions）。
  *
- * 菜单形状（issue #178 增编辑项）：
- * - `income | expense | transfer` 行：编辑（CreateOutline）在最前；
+ * 菜单形状（issue #178 增编辑项，issue #180 扩到 buy/sell）：
+ * - `income | expense | transfer | buy | sell` 行：编辑（CreateOutline）在最前；
  * - `expense` 行另有：退款（CashOutline）/ 加入物品（AddCircleOutline）；
  *   （issue #177 原文 CashBackOutline 在 @vicons/ionicons5 中不存在，改用语义最贴近的 CashOutline）
- * - 其余行（refund | buy | sell）：仅删除。
- *   「编辑」仅对 income/expense/transfer 呈现（refund 破坏关联语义、buy/sell 走投资域，
- *   均为本期边界外）；「加入物品」仅对 expense 行呈现（溯源必为支出购买，ADR-0025）。
+ * - `refund` 行：仅删除。
+ *   「编辑」对除 refund 外的 kind 呈现（refund 破坏关联语义；buy/sell 经投资表单
+ *   编辑模式回填标的/数量/价格/费用，issue #180）；
+ *   「加入物品」仅对 expense 行呈现（溯源必为支出购买，ADR-0025）。
  *
  * `hasItem`：该交易已创建过物品（items store 按溯源指针比对得出，不新增查询）
  * → 「加入物品」置灰禁用（溯源唯一的界面呈现）。
@@ -30,7 +31,10 @@ export function buildRowMenuOptions(
   opts: { hasItem?: boolean; errorColor?: string } = {},
 ): DropdownOption[] {
   const options: DropdownOption[] = []
-  if (row.kind === 'income' || row.kind === 'expense' || row.kind === 'transfer') {
+  // 「编辑」显式白名单（refund 破坏关联语义不开放；其余 kind 经各自表单编辑：
+  // income/expense/transfer 走分类记账/转账表单，buy/sell 走投资表单，issue #180）。
+  if (row.kind === 'income' || row.kind === 'expense' || row.kind === 'transfer'
+    || row.kind === 'buy' || row.kind === 'sell') {
     options.push({ label: '编辑', key: 'edit', icon: renderRowMenuIcon(CreateOutline) })
   }
   if (row.kind === 'expense') {

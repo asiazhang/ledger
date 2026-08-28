@@ -1092,6 +1092,162 @@ describe('TransactionsView 行右键「编辑」（issue #178）', () => {
   })
 })
 
+describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () => {
+  const menuDb: Transaction[] = [
+    makeTxn(1, 'acc-inv', { kind: 'buy', amount_cents: 15500, note: '建仓买入', date: '2026-01-10' }),
+    makeTxn(2, 'acc-inv', { kind: 'sell', amount_cents: 9500, note: '减仓', date: '2026-01-20' }),
+    makeTxn(3, 'acc-1', { kind: 'refund', refund_of_transaction_id: 'txn-000' }),
+  ]
+
+  const buyTrade = {
+    instrument_id: 'ins-1',
+    symbol: 'NVDA',
+    instrument_name: '英伟达',
+    quantity: 100,
+    price_cents: 15000,
+    fee_cents: 500,
+  }
+
+  beforeEach(() => {
+    txnDb = [...menuDb]
+    mockInvoke.mockImplementation((cmd: string, args?: {
+      filter?: Record<string, unknown>
+      id?: string
+    }) => {
+      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
+      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
+      if (cmd === 'list_categories') return Promise.resolve([])
+      if (cmd === 'list_transactions') {
+        const filter = (args?.filter ?? {}) as Record<string, unknown>
+        const scoped = applyListFilter(filter)
+        const pageSize = (filter.page_size as number) ?? scoped.length
+        const page = (filter.page as number) ?? 1
+        const start = (page - 1) * pageSize
+        return Promise.resolve({
+          items: scoped.slice(start, start + pageSize),
+          total: scoped.length,
+        })
+      }
+      if (cmd === 'list_items') return Promise.resolve([])
+      if (cmd === 'get_transaction_trade') {
+        // sell 行返回无手续费明细，buy 行返回完整明细
+        return Promise.resolve(args?.id === 'txn-002' ? { ...buyTrade, fee_cents: null } : buyTrade)
+      }
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+  })
+
+  function updateCalls() {
+    return mockInvoke.mock.calls.filter(([cmd]) => cmd === 'update_transaction')
+  }
+
+  function editModal(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAllComponents(NModal).find((m) => m.props('title') === '编辑交易')!
+  }
+
+  async function openEditModal(wrapper: ReturnType<typeof mount>, index = 0) {
+    await openMenuOnRow(wrapper, index)
+    await selectRowMenu(wrapper, 'edit')
+  }
+
+  it('buy/sell 行右键菜单含「编辑」，refund 行仍仅「删除」', async () => {
+    const wrapper = await mountView()
+    await openMenuOnRow(wrapper, 0)
+    expect(rowMenuKeys(wrapper)).toEqual(['edit', 'menu-divider', 'delete'])
+    await openMenuOnRow(wrapper, 1)
+    expect(rowMenuKeys(wrapper)).toEqual(['edit', 'menu-divider', 'delete'])
+    await openMenuOnRow(wrapper, 2)
+    expect(rowMenuKeys(wrapper)).toEqual(['delete'])
+  })
+
+  it('buy 行编辑：先取买卖明细（get_transaction_trade），投资表单回填标的/数量/价格/费用，按钮「保存修改」', async () => {
+    const wrapper = await mountView()
+    await openEditModal(wrapper, 0)
+    const tradeCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'get_transaction_trade')
+    expect(tradeCalls).toHaveLength(1)
+    expect(tradeCalls[0][1]).toMatchObject({ id: 'txn-001' })
+    const form = wrapper.findComponent(InvestmentForm)
+    expect(form.exists()).toBe(true)
+    expect(form.props('kind')).toBe('buy')
+    expect(form.props('editing')).toMatchObject({ id: 'txn-001' })
+    expect(form.props('trade')).toMatchObject({ instrument_id: 'ins-1' })
+    // NInputNumber 顺序：金额（disabled，0）/ 数量（1）/ 单价（2）/ 手续费（3）
+    const numbers = form.findAllComponents(NInputNumber)
+    expect(numbers[0].props('disabled')).toBe(true)
+    expect(numbers[1].props('value')).toBe(100)
+    expect(numbers[2].props('value')).toBe(150)
+    expect(numbers[3].props('value')).toBe(5)
+    expect(form.text()).toContain('保存修改')
+  })
+
+  it('buy 行编辑提交：分派 update_transaction（含投资字段），成功关窗并刷新', async () => {
+    const wrapper = await mountView()
+    await openEditModal(wrapper, 0)
+    const form = wrapper.findComponent(InvestmentForm)
+    mockInvoke.mockImplementationOnce((cmd: string) => {
+      if (cmd === 'update_transaction') return Promise.resolve()
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    await form.findAll('button').find((b) => b.text().includes('保存修改'))!.trigger('click')
+    await flushPromises()
+    expect(updateCalls()).toHaveLength(1)
+    const [, { id, input }] = updateCalls()[0] as unknown as [
+      string,
+      { id: string; input: Record<string, unknown> },
+    ]
+    expect(id).toBe('txn-001')
+    expect(input).toMatchObject({
+      kind: 'buy',
+      amount_cents: 0,
+      account_id: 'acc-inv',
+      note: '建仓买入',
+      date: '2026-01-10',
+      instrument_id: 'ins-1',
+      quantity: 100,
+      price_cents: 15000,
+      fee_cents: 500,
+    })
+    expect(input.idempotency_key).toBeUndefined()
+    expect(editModal(wrapper).props('show')).toBe(false)
+    expect(listCalls().length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('sell 行编辑：明细 fee_cents 为 null 时费用回填为空', async () => {
+    const wrapper = await mountView()
+    await openEditModal(wrapper, 1)
+    const form = wrapper.findComponent(InvestmentForm)
+    expect(form.props('kind')).toBe('sell')
+    expect(form.props('trade')).toMatchObject({ instrument_id: 'ins-1', fee_cents: null })
+    const numbers = form.findAllComponents(NInputNumber)
+    expect(numbers[3].props('value')).toBeNull()
+  })
+
+  it('取买卖明细失败：弹窗不打开并提示错误', async () => {
+    const wrapper = await mountView()
+    mockInvoke.mockImplementationOnce((cmd: string) => {
+      if (cmd === 'get_transaction_trade') return Promise.reject(new Error('交易不存在或无买卖明细: txn-001'))
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    await openEditModal(wrapper, 0)
+    expect(editModal(wrapper).props('show')).toBe(false)
+    expect(wrapper.findComponent(InvestmentForm).exists()).toBe(false)
+  })
+
+  it('编辑提交失败：弹窗不关闭、已填内容不丢', async () => {
+    const wrapper = await mountView()
+    await openEditModal(wrapper, 0)
+    const form = wrapper.findComponent(InvestmentForm)
+    mockInvoke.mockImplementationOnce((cmd: string) => {
+      if (cmd === 'update_transaction') return Promise.reject(new Error('该买入交易已有部分卖出，无法修改'))
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    await form.findAll('button').find((b) => b.text().includes('保存修改'))!.trigger('click')
+    await flushPromises()
+    expect(editModal(wrapper).props('show')).toBe(true)
+    expect(form.props('trade')).toMatchObject({ instrument_id: 'ins-1' })
+  })
+})
+
 describe('TransactionsView 行右键「加入物品」（issue #119）', () => {
   const menuDb: Transaction[] = [
     makeTxn(1, 'acc-1', { kind: 'expense', amount_cents: 3000, note: '咖啡' }),

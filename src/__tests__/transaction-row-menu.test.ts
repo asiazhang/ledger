@@ -61,13 +61,22 @@ describe('buildRowMenuOptions（行右键菜单选项）', () => {
     },
   )
 
-  it.each(['refund', 'buy', 'sell'] as const)(
-    '%s 行：仅删除（编辑本期边界外，无退款/加入物品）',
-    (kind) => {
-      const options = buildRowMenuOptions({ kind })
-      expect(options.map((o) => 'key' in o && o.key)).toEqual(['delete'])
-    },
-  )
+  it('buy 行：编辑 / 分隔线 / 删除（投资表单编辑模式，issue #180）', () => {
+    const options = buildRowMenuOptions({ kind: 'buy' })
+    expect(options.map((o) => 'key' in o && o.key)).toEqual(['edit', 'menu-divider', 'delete'])
+    expect(options[0]).toMatchObject({ label: '编辑' })
+    expect(options[0].disabled).toBeFalsy()
+  })
+
+  it('sell 行：编辑 / 分隔线 / 删除（投资表单编辑模式，issue #180）', () => {
+    const options = buildRowMenuOptions({ kind: 'sell' })
+    expect(options.map((o) => 'key' in o && o.key)).toEqual(['edit', 'menu-divider', 'delete'])
+  })
+
+  it('refund 行：仅删除（编辑破坏关联语义，本期边界外）', () => {
+    const options = buildRowMenuOptions({ kind: 'refund' })
+    expect(options.map((o) => 'key' in o && o.key)).toEqual(['delete'])
+  })
 
   it('expense 行挂图标：编辑 CreateOutline、退款 CashOutline、加入物品 AddCircleOutline、删除 TrashOutline', () => {
     const options = buildRowMenuOptions({ kind: 'expense' })

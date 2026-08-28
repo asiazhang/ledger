@@ -10,7 +10,7 @@ use crate::error::{AppError, Result};
 use crate::models::{
     ExchangeRate, ExchangeRateInput, Holding, InstrumentInput, InstrumentListFilter,
     InstrumentListResult, InstrumentPriceTrend, MarketPrice, MarketPriceInput, PnlFilter,
-    PortfolioValueTrend, RealizedPnlSummary, TrendRange,
+    PortfolioValueTrend, RealizedPnlSummary, TransactionTrade, TrendRange,
 };
 
 pub(crate) use reports::query_realized_pnl_summary;
@@ -101,6 +101,15 @@ pub fn list_instruments(
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let filter = filter.unwrap_or_default();
     crud::list_instruments(&conn, &filter)
+}
+
+#[tauri::command]
+pub fn get_transaction_trade(
+    db: tauri::State<'_, DbState>,
+    id: String,
+) -> Result<TransactionTrade> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    trade::get_transaction_trade(&conn, &id)
 }
 
 #[tauri::command]
