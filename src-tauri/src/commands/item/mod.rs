@@ -416,14 +416,6 @@ pub fn item_daily_total_internal(conn: &Connection) -> Result<ItemDailyTotal> {
 
 /// 计算单件物品的每天使用成本（issue #121，只读命令不发失效信号）：
 /// `reference_date` 缺省/为 null 时沿用列表口径（在用 → 今天；已处置 → 处置日）。
-/// 全部在用物品每天成本合计（issue #122，只读聚合不发失效信号），
-/// 供 dashboard 汇总卡展示（默认币种）。
-#[tauri::command]
-pub fn item_daily_total(db: State<'_, DbState>) -> Result<ItemDailyTotal> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    item_daily_total_internal(&conn)
-}
-
 #[tauri::command]
 pub fn calculate_item_cost(
     db: State<'_, DbState>,
@@ -432,6 +424,14 @@ pub fn calculate_item_cost(
 ) -> Result<ItemDailyCost> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     calculate_item_cost_internal(&conn, &id, reference_date.as_deref())
+}
+
+/// 全部在用物品每天成本合计（issue #122，只读聚合不发失效信号），
+/// 供 dashboard 汇总卡展示（默认币种）。
+#[tauri::command]
+pub fn item_daily_total(db: State<'_, DbState>) -> Result<ItemDailyTotal> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    item_daily_total_internal(&conn)
 }
 
 #[tauri::command]
