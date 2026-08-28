@@ -8,21 +8,25 @@ export interface ViewShortcut {
   key: string
 }
 
-/**
- * 视图快捷键映射：按侧边栏菜单顺序，Cmd/Ctrl+1..9（共 9 个视图）。
- * 单一来源：keydown 分派与菜单提示共用，保证序号与视图一一对应。
- */
-export const viewShortcuts: ViewShortcut[] = [
+/** 侧边栏视图单一来源（顺序 = 菜单顺序）；无主数字键的视图不参与 Cmd/Ctrl 快捷键。 */
+export const sidebarViews: Array<{ name: string; key?: string }> = [
   { name: 'dashboard', key: '1' },
   { name: 'transactions', key: '2' },
   { name: 'search', key: '3' },
   { name: 'accounts', key: '4' },
   { name: 'reports', key: '5' },
   { name: 'investments', key: '6' },
+  // 物品（issue #116）：暂无数字快捷键（1..9 已占满），仍进侧边栏菜单
+  { name: 'items' },
   { name: 'budget', key: '7' },
   { name: 'ai', key: '8' },
   { name: 'settings', key: '9' },
 ]
+
+/** 视图快捷键映射：按侧边栏菜单顺序，Cmd/Ctrl+1..9。 */
+export const viewShortcuts: ViewShortcut[] = sidebarViews
+  .filter((v): v is { name: string; key: string } => v.key !== undefined)
+  .map(({ name, key }) => ({ name, key }))
 
 /** macOS 用 Cmd（metaKey），Windows/Linux 用 Ctrl（ctrlKey） */
 export function isMacPlatform(): boolean {

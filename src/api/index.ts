@@ -27,6 +27,8 @@ import type {
   InstrumentInput,
   InstrumentListFilter,
   InstrumentListResult,
+  ItemInput,
+  ItemWithDailyCost,
   MarketPrice,
   MarketPriceInput,
   MonthlySummary,
@@ -117,6 +119,10 @@ export const api = {
   // 已实现盈亏汇总
   realizedPnlSummary: (filter?: PnlFilter) =>
     invoke<RealizedPnlSummary>('realized_pnl_summary', { filter: filter ?? null }),
+
+  // 物品（issue #116）：独立领域（非参考数据），写入后由后端发 ledger:changed
+  listItems: () => invoke<ItemWithDailyCost[]>('list_items'),
+  createItem: (input: ItemInput) => invoke<string>('create_item', { input }),
 
   // 汇率
   listExchangeRates: () => invoke<ExchangeRate[]>('list_exchange_rates'),
