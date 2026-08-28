@@ -9,7 +9,7 @@
 - **`CONTEXT-MAP.md`** — 领域词汇表地图：领域词汇表（叙述与决策归 `docs/adr/`）按域拆分为集中存放于 `docs/contexts/` 的 `CONTEXT-*.md` 分域文件。动手前先读地图，再选读与改动主题相关的分域词汇表与相关 ADR；**与代码行为冲突时以代码为准并同步修正词汇表。**
 - **`docs/adr/`** — 决策记录（文件名即编号与主题）。改到某区域前先读该区域的 ADR。
 - **`docs/agents/`** — 专项操作指引（issue-tracker 用 `gh`、triage 标签、domain 文档消费方式）。
-- **`docs/model/`、`docs/specs/`** — 数据模型与规格。
+- **`docs/model/`** — 数据模型。
 - **`scripts/`** — 一键脚本，用法见各脚本头部注释（含 README 未提及的操作）。
 
 ## 项目概览
