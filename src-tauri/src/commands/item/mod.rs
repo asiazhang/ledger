@@ -354,8 +354,23 @@ fn apply_purchase_link(conn: &Connection, input: &ItemInput) -> Result<ItemInput
 }
 
 /// 查验关联购买交易：存在（未删除）且为 `expense`，返回
-/// （交易日期，金额分，币种）。不存在/已删除 → 参数错误；非 expense → 参数错误。
+/// （交易日期，金额分，币种）。不存在/已删除 → 参数错误；非 expense → 参数错误；
+/// 该交易已被其他未删除物品关联 → 参数错误（溯源唯一，创建与换关两条路径共用本守卫：
+/// 同一笔购买只能对应一件物品，避免每天成本被重复计算；软删除物品不占坑，可重新创建）。
 fn resolve_purchase_link(conn: &Connection, tx_id: &str) -> Result<(String, i64, String)> {
+    let taken: bool = conn
+        .query_row(
+            "SELECT 1 FROM items WHERE purchase_transaction_id=?1 AND is_deleted=0 LIMIT 1",
+            rusqlite::params![tx_id],
+            |_| Ok(true),
+        )
+        .optional()?
+        .is_some();
+    if taken {
+        return Err(AppError::Invalid(format!(
+            "该购买交易已创建过物品，不能重复创建（溯源唯一）: {tx_id}"
+        )));
+    }
     let row: Option<(String, String, i64, String)> = conn
         .query_row(
             "SELECT kind, date, amount_cents, currency_code FROM transactions \

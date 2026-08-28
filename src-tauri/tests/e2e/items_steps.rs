@@ -554,6 +554,40 @@ fn update_item_linked(
     }
 }
 
+/// 尝试修改最近创建的物品并关联记住的购买交易（捕获错误，溯源唯一拒绝路径）。
+#[when(
+    expr = "尝试修改物品名称为 {string} 购买日期 {string} 总成本 {int} 币种 {string} 关联该购买交易 备注为 {string}"
+)]
+fn try_update_item_linked(
+    world: &mut LedgerWorld,
+    name: String,
+    date: String,
+    cost_cents: i64,
+    currency: String,
+    note: String,
+) {
+    let tx_id = world
+        .remembered_purchase_transaction_id
+        .clone()
+        .unwrap_or_else(|| panic!("没有记住的关联购买交易"));
+    let mut signals = 0;
+    let id = world
+        .last_item_id
+        .clone()
+        .unwrap_or_else(|| panic!("没有已创建的物品可修改"));
+    let mut input = build_linked_input(&name, &tx_id);
+    input.purchase_date = date;
+    input.total_cost_cents = cost_cents;
+    input.currency_code = currency;
+    input.note = if note.is_empty() { None } else { Some(note) };
+    let result = update_item_internal(&world.conn, &id, input, &mut || signals += 1);
+    world.item_signal_count = signals;
+    world.last_error = match result {
+        Err(e) => Some(e.to_string()),
+        Ok(()) => Some("预期失败但成功了".into()),
+    };
+}
+
 /// 断言第 n 件物品的溯源指向记住的关联购买交易。
 #[then(expr = "第 {int} 件物品关联购买交易应为记住的交易")]
 fn check_item_linked_transaction(world: &mut LedgerWorld, n: usize) {

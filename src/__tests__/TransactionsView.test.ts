@@ -21,6 +21,7 @@ import InvestmentForm from '@/components/InvestmentForm.vue'
 import { useReferenceStore } from '@/stores/reference'
 import TransactionsView from '@/views/TransactionsView.vue'
 import RefundForm from '@/components/RefundForm.vue'
+import AddItemForm from '@/components/AddItemForm.vue'
 import AccountLink from '@/components/AccountLink.vue'
 import TransactionForm from '@/components/TransactionForm.vue'
 import type { Account, Currency, Transaction } from '@/types'
@@ -141,6 +142,8 @@ beforeEach(async () => {
       txnDb = txnDb.filter((t) => t.id !== args?.id)
       return Promise.resolve()
     }
+    // 物品 store（issue #119 右键「加入物品」置灰态）默认空列表
+    if (cmd === 'list_items') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
   localStorage.clear()
@@ -833,12 +836,12 @@ describe('TransactionsView 行右键菜单（issue #151）', () => {
     txnDb = [...menuDb]
   })
 
-  it('expense 行右键出现「退款」菜单项，非 expense 行只有「删除」', async () => {
+  it('expense 行右键出现「退款」「加入物品」菜单项，非 expense 行只有「删除」（issue #119）', async () => {
     const wrapper = await mountView()
-    // expense 行：退款 + 删除
+    // expense 行：退款 + 加入物品 + 删除
     await openMenuOnRow(wrapper, 0)
     expect(rowMenu(wrapper).props('show')).toBe(true)
-    expect(rowMenuKeys(wrapper)).toEqual(['refund', 'menu-divider', 'delete'])
+    expect(rowMenuKeys(wrapper)).toEqual(['refund', 'add-item', 'menu-divider', 'delete'])
     // income 行：仅删除
     await openMenuOnRow(wrapper, 1)
     expect(rowMenuKeys(wrapper)).toEqual(['delete'])
@@ -954,6 +957,124 @@ describe('TransactionsView 行右键菜单（issue #151）', () => {
     for (const [, args] of createCalls() as Array<[string, { input: Record<string, unknown> }]>) {
       expect(args.input).toMatchObject({ kind: 'refund', refund_of_transaction_id: 'txn-001' })
     }
+  })
+})
+
+describe('TransactionsView 行右键「加入物品」（issue #119）', () => {
+  const menuDb: Transaction[] = [
+    makeTxn(1, 'acc-1', { kind: 'expense', amount_cents: 3000, note: '咖啡' }),
+    makeTxn(2, 'acc-1', { kind: 'income', amount_cents: 5000 }),
+  ]
+
+  /** 已建物品列表（默认空；置灰用例改写为关联 txn-001）。 */
+  let itemList: unknown[] = []
+
+  beforeEach(() => {
+    txnDb = [...menuDb]
+    itemList = []
+    mockInvoke.mockImplementation((cmd: string, args?: {
+      filter?: Record<string, unknown>
+      id?: string
+    }) => {
+      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
+      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
+      if (cmd === 'list_categories') return Promise.resolve([])
+      if (cmd === 'list_transactions') {
+        const filter = (args?.filter ?? {}) as Record<string, unknown>
+        const scoped = applyListFilter(filter)
+        const pageSize = (filter.page_size as number) ?? scoped.length
+        const page = (filter.page as number) ?? 1
+        const start = (page - 1) * pageSize
+        return Promise.resolve({
+          items: scoped.slice(start, start + pageSize),
+          total: scoped.length,
+        })
+      }
+      if (cmd === 'list_items') return Promise.resolve(itemList)
+      if (cmd === 'create_item') return Promise.resolve('item-new')
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+  })
+
+  /** 右键 expense 行并选「加入物品」。 */
+  async function openAddItemModal(wrapper: ReturnType<typeof mount>) {
+    await openMenuOnRow(wrapper, 0)
+    await selectRowMenu(wrapper, 'add-item')
+  }
+
+  function addItemModal(wrapper: ReturnType<typeof mount>) {
+    return wrapper
+      .findAllComponents(NModal)
+      .find((m) => m.props('title') === '加入物品')!
+  }
+
+  it('expense 行未建物品：加入物品菜单项可用，选中后弹出确认弹窗', async () => {
+    const wrapper = await mountView()
+    await openMenuOnRow(wrapper, 0)
+    const options = rowMenu(wrapper).props('options') as Array<{
+      key?: string
+      disabled?: boolean
+    }>
+    expect(options.find((o) => o.key === 'add-item')).toMatchObject({ disabled: false })
+    await selectRowMenu(wrapper, 'add-item')
+    expect(addItemModal(wrapper).props('show')).toBe(true)
+    const form = wrapper.findComponent(AddItemForm)
+    expect(form.exists()).toBe(true)
+    expect(form.props('transaction')).toMatchObject({ id: 'txn-001' })
+    // income 行无「加入物品」项
+    await openMenuOnRow(wrapper, 1)
+    expect(rowMenuKeys(wrapper)).toEqual(['delete'])
+  })
+
+  it('该交易已建物品（溯源指针比对）：加入物品菜单项置灰', async () => {
+    itemList = [
+      { id: 'item-1', purchase_transaction_id: 'txn-001' },
+      { id: 'item-2', purchase_transaction_id: null },
+    ]
+    const wrapper = await mountView()
+    await openMenuOnRow(wrapper, 0)
+    const options = rowMenu(wrapper).props('options') as Array<{
+      key?: string
+      disabled?: boolean
+    }>
+    expect(options.find((o) => o.key === 'add-item')).toMatchObject({ disabled: true })
+  })
+
+  it('确认创建：create_item 携带溯源必填入参，弹窗关闭；物品列表经 ledger:changed 自动重拉', async () => {
+    const wrapper = await mountView()
+    await openAddItemModal(wrapper)
+    const form = wrapper.findComponent(AddItemForm)
+    // 名称默认取交易备注，可微调
+    form.find('input[placeholder="默认取交易备注，可微调"]').setValue('手冲壶')
+    await form.find('button[data-testid="add-item-confirm"]').trigger('click')
+    await flushPromises()
+    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_item')
+    expect(calls).toHaveLength(1)
+    const [, args] = calls[0] as [string, { input: Record<string, unknown> }]
+    expect(args.input).toEqual({
+      name: '手冲壶',
+      purchase_date: '2026-01-01',
+      total_cost_cents: 3000,
+      currency_code: 'CNY',
+      note: null,
+      purchase_transaction_id: 'txn-001',
+    })
+    expect(addItemModal(wrapper).props('show')).toBe(false)
+  })
+
+  it('后端校验失败（重复创建）：弹窗保持打开，错误后不 emit created', async () => {
+    const wrapper = await mountView()
+    await openAddItemModal(wrapper)
+    mockInvoke.mockImplementationOnce((cmd: string) => {
+      if (cmd === 'create_item')
+        return Promise.reject(new Error('该购买交易已创建过物品，不能重复创建（溯源唯一）: txn-001'))
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const form = wrapper.findComponent(AddItemForm)
+    await form.find('button[data-testid="add-item-confirm"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent(AddItemForm).emitted('created')).toBeUndefined()
+    expect(addItemModal(wrapper).props('show')).toBe(true)
   })
 })
 
