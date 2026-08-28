@@ -3,6 +3,7 @@ import { defineComponent, h } from 'vue'
 import { mount } from '@vue/test-utils'
 import type { Router } from 'vue-router'
 import {
+  sidebarViews,
   viewShortcuts,
   matchViewShortcut,
   shortcutHint,
@@ -34,6 +35,12 @@ describe('viewShortcuts 映射', () => {
       'ai',
       'settings',
     ])
+  })
+
+  it('侧边栏含无数字键的物品视图（不参与 Cmd/Ctrl 快捷键）', () => {
+    const items = sidebarViews.find((v) => v.name === 'items')
+    expect(items).toBeDefined()
+    expect(items!.key).toBeUndefined()
   })
 })
 

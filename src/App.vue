@@ -22,6 +22,7 @@ import {
   WalletOutline,
   BarChartOutline,
   TrendingUpOutline,
+  CubeOutline,
   CalculatorOutline,
   SparklesOutline,
   SettingsOutline,
@@ -30,7 +31,7 @@ import { useAppStore } from '@/stores/app'
 import { api } from '@/api'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
 import { loadSidebarCollapsed, saveSidebarCollapsed } from '@/utils/view-state'
-import { viewShortcuts, shortcutHint, useViewShortcuts } from '@/composables/useViewShortcuts'
+import { sidebarViews, shortcutHint, useViewShortcuts } from '@/composables/useViewShortcuts'
 import { useWindowGuard } from '@/composables/useWindowGuard'
 
 const router = useRouter()
@@ -65,6 +66,7 @@ const viewLabels: Record<string, string> = {
   accounts: '账户',
   reports: '报表',
   investments: '投资',
+  items: '物品',
   budget: '预算',
   ai: 'AI',
   settings: '设置',
@@ -78,6 +80,7 @@ const viewIcons: Record<string, Component> = {
   accounts: WalletOutline,
   reports: BarChartOutline,
   investments: TrendingUpOutline,
+  items: CubeOutline,
   budget: CalculatorOutline,
   ai: SparklesOutline,
   settings: SettingsOutline,
@@ -87,14 +90,17 @@ function renderMenuIcon(name: string) {
   return () => h(NIcon, { size: 18 }, { default: () => h(viewIcons[name]) })
 }
 
-// 菜单项与快捷键共用同一映射（顺序 = Cmd/Ctrl+1..9），label 右侧附快捷键提示
-const menuOptions: MenuOption[] = viewShortcuts.map(({ name, key }) => ({
+// 菜单项与快捷键共用同一映射（sidebarViews，顺序即菜单顺序）；
+// 有数字键的项右侧附快捷键提示，无键项不展示
+const menuOptions: MenuOption[] = sidebarViews.map(({ name, key }) => ({
   key: name,
   icon: renderMenuIcon(name),
   label: () =>
     h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:12px;padding-right:2px' }, [
       h('span', viewLabels[name]),
-      h('span', { style: 'font-size:12px;opacity:.55' }, shortcutHint(key)),
+      ...(key
+        ? [h('span', { style: 'font-size:12px;opacity:.55' }, shortcutHint(key))]
+        : []),
     ]),
 }))
 
