@@ -134,4 +134,42 @@ describe('useItemsStore', () => {
     expect(store.items).toHaveLength(2)
     expect(store.items.some((i) => i.id === 'item-new')).toBe(true)
   })
+
+  it('remove 调用 delete_item 后立即重拉，已删物品从列表消失', async () => {
+    const initial = [baseItem()]
+    const after = [] as ItemWithDailyCost[]
+    let listCalls = 0
+    mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
+      if (cmd === 'list_items') {
+        listCalls++
+        return Promise.resolve(listCalls === 1 ? initial : after)
+      }
+      if (cmd === 'delete_item') {
+        expect(args).toEqual({ id: 'item-1' })
+        return Promise.resolve()
+      }
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const store = useItemsStore()
+    await flushPromises()
+
+    await store.remove('item-1')
+    expect(listCalls).toBe(2)
+    expect(store.items).toHaveLength(0)
+    expect(store.status).toBe('ready')
+  })
+
+  it('remove 失败时抛出错误且不重拉', async () => {
+    const initial = [baseItem()]
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_items') return Promise.resolve(initial)
+      if (cmd === 'delete_item') return Promise.reject(new Error('物品不存在'))
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const store = useItemsStore()
+    await flushPromises()
+
+    await expect(store.remove('item-1')).rejects.toThrow('物品不存在')
+    expect(store.items).toEqual(initial)
+  })
 })

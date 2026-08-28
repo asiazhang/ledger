@@ -1,11 +1,13 @@
-//! 物品（Item）BDD 步骤（issue #115 / spec #113）：创建与列出在用物品。
+//! 物品（Item）BDD 步骤（issue #115 / #118 / spec #113）：创建、列出与软删除物品。
 //!
 //! 经 `commands::item` 的 `*_internal` seam 断言外部可观察行为：
 //! 创建读回、每天成本（`item::cost` 口径）、金额折算、写后发失效信号
-//! （`create_item_internal` 的 notify 注入，生产路径发 `ledger:changed`）。
+//! （notify 注入，生产路径发 `ledger:changed`）、软删除后标准列表过滤。
 
 use cucumber::{then, when};
-use tauri_app_lib::commands::item::{create_item_internal, list_items_internal};
+use tauri_app_lib::commands::item::{
+    create_item_internal, delete_item_internal, list_items_internal,
+};
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::item::cost;
 use tauri_app_lib::models::{ItemInput, ItemStatus};
@@ -185,5 +187,67 @@ fn check_no_item_signals(world: &mut LedgerWorld) {
 /// 复用交易的「应返回错误」断言（同一 seam：world.last_error 包含片段）。
 #[then(expr = "物品创建应返回错误 {string}")]
 fn check_item_error(world: &mut LedgerWorld, expected: String) {
+    assert_last_error_contains(world, &expected);
+}
+
+/// 按名称查未删除物品 id 的辅助（失败即 panic，场景数据自洽由写步骤保证）。
+fn find_item_id_by_name(conn: &rusqlite::Connection, name: &str) -> String {
+    conn.query_row(
+        "SELECT id FROM items WHERE name=?1 AND is_deleted=0",
+        rusqlite::params![name],
+        |r| r.get(0),
+    )
+    .unwrap_or_else(|e| panic!("按名称 {name} 查找未删除物品失败: {e}"))
+}
+
+/// 软删除指定名称的物品（要求成功；记录失效信号次数）。
+#[when(expr = "软删除物品 {string}")]
+fn soft_delete_item(world: &mut LedgerWorld, name: String) {
+    let id = find_item_id_by_name(&world.conn, &name);
+    let mut signals = 0;
+    let result = delete_item_internal(&world.conn, &id, &mut || signals += 1);
+    world.item_signal_count = signals;
+    if let Err(e) = result {
+        panic!("软删除物品 {name} 应成功但失败: {e}");
+    }
+}
+
+#[then(expr = "删除后应发出 {int} 次失效信号")]
+fn check_item_delete_signals(world: &mut LedgerWorld, expected: usize) {
+    assert_eq!(
+        world.item_signal_count, expected,
+        "删除失效信号次数不匹配（生产路径对应 ledger:changed）"
+    );
+}
+
+/// 直接查库断言软删除语义：行未被物理移除，仅打 `is_deleted=1` 标记。
+#[then(expr = "物品 {string} 行仍存在且 is_deleted=1")]
+fn check_item_row_soft_deleted(world: &mut LedgerWorld, name: String) {
+    let (count, is_deleted): (i64, i64) = world
+        .conn
+        .query_row(
+            "SELECT COUNT(*), MAX(is_deleted) FROM items WHERE name=?1",
+            rusqlite::params![name],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("查询物品行失败");
+    assert_eq!(count, 1, "软删除后行应保留在库（不物理移除）");
+    assert_eq!(is_deleted, 1, "软删除应打 is_deleted=1 标记");
+}
+
+/// 尝试删除不存在的物品 id（捕获错误供「应返回错误」断言）。
+#[when(expr = "尝试软删除不存在的物品")]
+fn try_delete_missing_item(world: &mut LedgerWorld) {
+    let mut signals = 0;
+    let result = delete_item_internal(&world.conn, "no-such-item-id", &mut || signals += 1);
+    world.item_signal_count = signals;
+    world.last_error = match result {
+        Err(e) => Some(e.to_string()),
+        Ok(()) => Some("预期失败但成功了".into()),
+    };
+}
+
+#[then(expr = "物品删除应返回错误 {string}")]
+fn check_item_delete_error(world: &mut LedgerWorld, expected: String) {
     assert_last_error_contains(world, &expected);
 }

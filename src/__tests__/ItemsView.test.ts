@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { NPopconfirm } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useItemsStore } from '@/stores/items'
@@ -66,6 +67,11 @@ function setupInvoke() {
       itemList = [...itemList, { ...mockItems[0], id: 'item-new', name: '键盘' }]
       void args
       return Promise.resolve('item-new')
+    }
+    if (cmd === 'delete_item') {
+      const { id } = args as { id: string }
+      itemList = itemList.filter((i) => i.id !== id)
+      return Promise.resolve()
     }
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
@@ -143,5 +149,28 @@ describe('ItemsView 物品列表', () => {
     await createBtn!.trigger('click')
     await flushPromises()
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'create_item')).toBe(false)
+  })
+
+  it('点击删除并确认：delete_item 收到对应 id，列表移除该物品', async () => {
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+
+    const deleteBtn = wrapper.findAll('button').find((b) => b.text() === '删除')
+    expect(deleteBtn).toBeTruthy()
+    await deleteBtn!.trigger('click')
+    await flushPromises()
+    // 未确认前不删除
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'delete_item')).toBe(false)
+
+    // 确认（NPopconfirm 内容 teleport 到 body，直接对其组件 emit 正向点击）
+    wrapper.findComponent(NPopconfirm).vm.$emit('positiveClick')
+    await flushPromises()
+
+    const deleteCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_item')
+    expect(deleteCalls).toHaveLength(1)
+    expect((deleteCalls[0][1] as { id: string }).id).toBe('item-1')
+    // 重拉后列表不再包含已删物品
+    expect(wrapper.text()).not.toContain('手机')
+    expect(wrapper.text()).toContain('显示器')
   })
 })
