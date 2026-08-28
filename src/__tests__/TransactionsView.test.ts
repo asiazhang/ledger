@@ -989,9 +989,9 @@ describe('TransactionsView 裸键快捷键（issue #153）', () => {
 
   it('弹层打开时按键不触发；弹窗打开后再按键不换类型', async () => {
     const wrapper = await mountView()
-    // 先造一个弹层（与真实弹窗同容器类名）
+    // 先造一个弹层（与真实弹窗打开时同样会出现的遮罩元素）
     const overlay = document.createElement('div')
-    overlay.className = 'n-modal-container'
+    overlay.className = 'n-modal-mask'
     document.body.appendChild(overlay)
     pressKey('a')
     await flushPromises()

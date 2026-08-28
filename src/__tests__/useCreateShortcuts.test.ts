@@ -143,7 +143,7 @@ describe('useCreateShortcuts', () => {
     input.remove()
   })
 
-  it.each(['n-modal-container', 'n-dropdown-menu', 'n-base-select-menu'])(
+  it.each(['n-modal-mask', 'n-dropdown-menu', 'n-base-select-menu', 'n-date-panel'])(
     '弹层（%s）打开时抑制触发',
     (cls) => {
       const { open } = mountHost()
@@ -157,6 +157,21 @@ describe('useCreateShortcuts', () => {
       expect(open).toHaveBeenCalledTimes(1)
     },
   )
+
+  it('弹窗关闭后的残留空壳（.n-modal-container）不再抑制触发（关闭弹窗后快捷键永久失效回归）', () => {
+    // naive-ui VLazyTeleport 关闭后容器永久残留 DOM，存在性嗅探不得以其为信号
+    const { open } = mountHost()
+    const shell = document.createElement('div')
+    shell.className = 'n-modal-container'
+    const hiddenCard = document.createElement('div')
+    hiddenCard.className = 'n-card'
+    hiddenCard.style.display = 'none'
+    shell.appendChild(hiddenCard)
+    document.body.appendChild(shell)
+    window.dispatchEvent(press('a'))
+    expect(open).toHaveBeenCalledTimes(1)
+    shell.remove()
+  })
 
   it('卸载后不再监听（仅交易页生效的机制基础）', () => {
     const { open, wrapper } = mountHost()
