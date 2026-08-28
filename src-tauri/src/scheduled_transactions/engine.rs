@@ -150,7 +150,7 @@ pub fn update_plan_status(conn: &Connection, id: &str, new_status: ScheduledStat
 /// 期次执行时从计划读取 account_id / category_id / note（金额取自期次行），
 /// 因此编辑天然只影响未来期次。
 pub fn update_subscription(conn: &Connection, input: UpdateSubscriptionInput) -> Result<()> {
-    if input.amount_cents.is_some() || input.total_amount_cents.is_some() {
+    if input.amount_cents || input.total_amount_cents {
         return Err(AppError::Invalid(
             "订阅金额不可编辑：改价 = 取消旧计划 + 新建（按新金额重建计划，保留两段真实价格历史）"
                 .into(),
