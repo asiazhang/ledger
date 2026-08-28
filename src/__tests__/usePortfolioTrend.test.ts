@@ -90,7 +90,7 @@ describe('toTrendRange 预设区间 → 查询区间（纯函数）', () => {
 })
 
 describe('toTrendChartSeries 点位映射 → 图表数据（纯函数）', () => {
-  it('映射为 labels + values，保持采样点顺序', () => {
+  it('连续周采样映射为 labels + values，label 用真实采样日', () => {
     expect(
       toTrendChartSeries([
         { date: '2026-06-05', value: 100000 },
@@ -99,6 +99,19 @@ describe('toTrendChartSeries 点位映射 → 图表数据（纯函数）', () =
     ).toEqual({
       labels: ['2026-06-05', '2026-06-12'],
       values: [100000, 110000],
+    })
+  })
+
+  it('x 轴按日期连续：缺周生成槽位并填 null（由 spanGaps 连点跨越）', () => {
+    expect(
+      toTrendChartSeries([
+        { date: '2026-06-05', value: 100000 },
+        { date: '2026-06-19', value: 95000 },
+      ]),
+    ).toEqual({
+      // 首末点所在周的周一之间逐周生成槽位；中间缺周 label 用周一、值为 null
+      labels: ['2026-06-05', '2026-06-08', '2026-06-19'],
+      values: [100000, null, 95000],
     })
   })
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
@@ -7,14 +7,11 @@ import { useReferenceStore } from '@/stores/reference'
 import InvestmentsView from '@/views/InvestmentsView.vue'
 import type { Currency, Instrument } from '@/types'
 
-// 走势图用桩组件替代：组件层测试只验证数据联动与文案渲染，不验证 canvas 绘制
-vi.mock('vue-chartjs', () => ({
-  Line: {
-    name: 'Line',
-    props: ['data', 'options'],
-    template: '<div data-testid="line-chart">{{ JSON.stringify(data) }}</div>',
-  },
-}))
+// 走势图用共享桩组件替代：组件层测试只验证数据联动与文案渲染，不验证 canvas 绘制
+vi.mock('vue-chartjs', async () => {
+  const { LineChartStub } = await import('./line-chart-stub')
+  return { Line: LineChartStub }
+})
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -182,5 +179,31 @@ describe('InvestmentsView 标的 tab', () => {
     expect(call).toBeTruthy()
     expect((call![1] as { instrumentId: string }).instrumentId).toBe('inst-1')
     expect(wrapper.get('[data-testid="line-chart"]').text()).toContain('1500')
+  })
+
+  it('离开走势 tab 清空入口标的：直入「走势」tab 回到默认组合曲线', async () => {
+    const wrapper = mount(InvestmentsView)
+    await nextTick()
+    // 经标的列表入口进入单标的走势
+    await wrapper.findAll('.n-tabs-tab')[1].trigger('click')
+    await nextTick()
+    await nextTick()
+    await wrapper.find('[data-testid="view-trend-600000"]').trigger('click')
+    await nextTick()
+    await nextTick()
+    const instCallsAfterEntry = mockInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'instrument_price_trend',
+    ).length
+    expect(instCallsAfterEntry).toBe(1)
+    // 切到盈亏再直入走势：入口残留已清空，回到组合模式（无新的单标的查询）
+    await wrapper.findAll('.n-tabs-tab')[0].trigger('click')
+    await nextTick()
+    await nextTick()
+    await wrapper.findAll('.n-tabs-tab')[2].trigger('click')
+    await flushPromises()
+    const instCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'instrument_price_trend')
+    expect(instCalls.length).toBe(1)
+    // 组合走势空数据 → 引导文案（而非上一标的的单标的曲线）
+    expect(wrapper.text()).toContain('暂无历史价格数据')
   })
 })

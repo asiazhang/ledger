@@ -8,13 +8,10 @@ import PortfolioTrendPanel from '@/components/investments/PortfolioTrendPanel.vu
 import { makeInstrument } from './factories'
 import type { Instrument, PortfolioValueTrend } from '@/types'
 
-vi.mock('vue-chartjs', () => ({
-  Line: {
-    name: 'Line',
-    props: ['data', 'options'],
-    template: '<div data-testid="line-chart">{{ JSON.stringify(data) }}</div>',
-  },
-}))
+vi.mock('vue-chartjs', async () => {
+  const { LineChartStub } = await import('./line-chart-stub')
+  return { Line: LineChartStub }
+})
 
 const mockInvoke = vi.mocked(invoke)
 const mockListen = vi.mocked(listen)

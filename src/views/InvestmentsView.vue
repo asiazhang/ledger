@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { NTabs, NTabPane } from 'naive-ui'
 import RealizedPnlPanel from '@/components/investments/RealizedPnlPanel.vue'
 import InstrumentBrowser from '@/components/investments/InstrumentBrowser.vue'
@@ -19,6 +19,12 @@ function onViewTrend(inst: Instrument) {
   trendEntry.value = inst
   activeTab.value = 'trend'
 }
+
+// 离开走势 tab 即清空入口标的：直入「走势」tab 回到默认组合曲线，
+// 不残留上一次从标的列表带入的单标的模式。
+watch(activeTab, (tab) => {
+  if (tab !== 'trend') trendEntry.value = null
+})
 </script>
 
 <template>

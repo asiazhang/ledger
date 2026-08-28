@@ -1,6 +1,12 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { api } from '@/api'
-import type { Instrument, InstrumentType, InstrumentPriceTrend, MarketType, PortfolioValueTrend, TrendRange } from '@/types'
+import type {
+  Instrument,
+  InstrumentType,
+  InstrumentPriceTrend,
+  PortfolioValueTrend,
+  TrendRange,
+} from '@/types'
 
 /** 走势预设区间：1 月 / 3 月 / 1 年 / 全部（ADR-0019） */
 export type TrendRangePreset = '1m' | '3m' | '1y' | 'all'
@@ -20,7 +26,7 @@ const MARKET_SOURCE_TYPES: readonly InstrumentType[] = ['stock', 'etf']
 
 /** 某标的是否走行情采集通道：股票 / ETF 且市场已知（未知市场无法构造 secid） */
 export function hasMarketSource(inst: Pick<Instrument, 'type' | 'market'>): boolean {
-  return MARKET_SOURCE_TYPES.includes(inst.type) && (inst.market as MarketType) !== 'unknown'
+  return MARKET_SOURCE_TYPES.includes(inst.type) && inst.market !== 'unknown'
 }
 
 /** 某月天数（month 1-12） */
@@ -46,17 +52,43 @@ export function toTrendRange(preset: TrendRangePreset, today: Date): TrendRange 
   return { start_date: `${year}-${pad2(month)}-${pad2(day)}`, end_date: null }
 }
 
-/** 图表序列：x 轴采样日期 + y 轴数值（分），顺序与采样点一致 */
+/** 图表序列：x 轴按周连续的日期槽位 + y 轴数值（分；缺周为 null，由 spanGaps 跨越） */
 export interface TrendChartSeries {
   labels: string[]
-  values: number[]
+  values: (number | null)[]
 }
 
-/** 采样点序列 → 图表数据（纯函数）：labels 为 ISO 日期，values 为对应数值 */
+/** 取 ISO 日期（YYYY-MM-DD）所在周的周一（本地正午构造，避开 DST 漂移） */
+function mondayOf(isoDate: string): Date {
+  const [year, month, day] = isoDate.split('-').map(Number)
+  const date = new Date(year, month - 1, day, 12)
+  date.setDate(date.getDate() - ((date.getDay() + 6) % 7))
+  return date
+}
+
+function isoOf(date: Date): string {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
+}
+
+/**
+ * 采样点序列 → 图表数据（纯函数）：x 轴按日期连续——从首点到末点逐周生成槽位，
+ * 采样点按所在周归位（label 用真实采样日），缺周填 null 由图表 spanGaps 连点跨越。
+ */
 export function toTrendChartSeries(points: { date: string; value: number }[]): TrendChartSeries {
+  if (points.length === 0) return { labels: [], values: [] }
+
+  const slots: string[] = []
+  const cursor = mondayOf(points[0].date)
+  const end = mondayOf(points[points.length - 1].date)
+  while (cursor <= end) {
+    slots.push(isoOf(cursor))
+    cursor.setDate(cursor.getDate() + 7)
+  }
+
+  const pointByWeek = new Map(points.map((p) => [mondayOf(p.date).getTime(), p]))
   return {
-    labels: points.map((p) => p.date),
-    values: points.map((p) => p.value),
+    labels: slots.map((slot) => pointByWeek.get(mondayOf(slot).getTime())?.date ?? slot),
+    values: slots.map((slot) => pointByWeek.get(mondayOf(slot).getTime())?.value ?? null),
   }
 }
 
@@ -90,11 +122,20 @@ export function usePortfolioTrend() {
 
   const range = computed(() => toTrendRange(preset.value, new Date()))
 
+  /** 上次已取数的请求键（模式 + 标的 + 区间起始）：同一键不重复请求，收敛双触发通道 */
+  let lastFetchedKey: string | null = null
+
   async function fetchTrend() {
     if (mode.value === 'instrument') {
       // 未选标的，或非股票/ETF 等无行情来源标的（ADR-0019）：不发起查询，由面板给边界说明
       if (!instrument.value || !hasMarketSource(instrument.value)) return
     }
+    const key =
+      mode.value === 'portfolio'
+        ? `portfolio|${range.value.start_date ?? 'all'}`
+        : `instrument|${instrument.value!.id}|${range.value.start_date ?? 'all'}`
+    if (key === lastFetchedKey) return
+    lastFetchedKey = key
     loading.value = true
     try {
       if (mode.value === 'portfolio') {
@@ -105,6 +146,10 @@ export function usePortfolioTrend() {
           range.value,
         )
       }
+    } catch (e) {
+      // 失败允许同键重试
+      lastFetchedKey = null
+      throw e
     } finally {
       loading.value = false
     }
@@ -132,7 +177,7 @@ export function usePortfolioTrend() {
   }
 
   watch([preset, mode, () => instrument.value?.id], () => {
-    void fetchTrend()
+    void refresh()
   })
 
   onMounted(() => {
