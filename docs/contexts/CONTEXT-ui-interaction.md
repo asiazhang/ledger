@@ -66,3 +66,13 @@
   - 交易页行级自定义右键菜单（issue #151）不受影响：拦截只 `preventDefault` 不阻断传播，行级 NDropdown 仍能读取事件坐标弹出。
   - macOS 无原生禁用 API（Windows 有），前端 `preventDefault` 是唯一跨平台手段。
 - **别名**：不使用“浏览器右键菜单”、“WebView 菜单”（正式术语为原生右键菜单）。
+
+## 拼音可搜下拉（Pinyin-Searchable Select）
+
+- **定义**：实体类下拉的拼音过滤能力——输入按空白切词、词条之间 AND，每词条命中 = 选项 label 原文连续子串（大小写不敏感）∨ 该 label 拼音首字母串的子序列（大小写不敏感）；匹配语义与全局搜索同源（统一模糊搜索规格，见 ADR-0027）。
+- **边界**：
+  - 载体是**薄封装选择器组件**（`src/components/PinyinSelect.vue`，内部包 NSelect，收口 `filterable` + 拼音 `filter`，透传 props/attrs/slots）；范围决策编码在调用点的组件选择上——枚举类下拉与币种下拉继续用裸 NSelect，不加拼音过滤。
+  - 匹配纯函数收口在 `src/utils/pinyin-filter.ts`（首字母由 pinyin-pro 生成、词组多音字消歧，如「银行」→ `yh`）；与后端 Rust 同规格实现（`src-tauri/src/commands/search/text.rs`）各自独立，接受生僻多音字的字库级分歧。
+  - **只过滤不重排**：命中项保持原顺序显示，清空输入恢复完整列表；首字母串按 label 缓存，不引入新数据量要求（选项本就全量在前端内存）。
+  - 试点（issue #198）落地转账表单转出/转入账户下拉；其余实体下拉（支出/收入/买入/卖出表单、分类、标的、关联交易）按 issue 逐批替换。
+- **别名**：不使用“模糊下拉”、“智能搜索下拉”。

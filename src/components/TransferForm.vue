@@ -9,6 +9,7 @@ import {
   NButton,
   NSpace,
 } from 'naive-ui'
+import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useTransferForm } from '@/composables/useTransferForm'
 import type { Transaction } from '@/types'
 
@@ -43,7 +44,7 @@ const ctx = useTransferForm({
       </NFormItem>
 
       <NFormItem label="转出账户">
-        <NSelect
+        <PinyinSelect
           v-model:value="ctx.accountId.value"
           :options="ctx.accountOptions.value"
           placeholder="选择转出账户"
@@ -52,7 +53,7 @@ const ctx = useTransferForm({
       </NFormItem>
 
       <NFormItem label="转入账户">
-        <NSelect
+        <PinyinSelect
           v-model:value="ctx.toAccountId.value"
           :options="ctx.accountOptions.value"
           placeholder="目标账户"
