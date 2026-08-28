@@ -1,0 +1,52 @@
+# 领域词汇表：参考数据与设置
+
+> Ledger 领域词汇表的参考数据与设置分域。全部分域与彼此关系见 `CONTEXT-MAP.md`；决策记录见 `docs/adr/`（ADR-0012 / ADR-0017 / ADR-0018 / ADR-0022 等）。
+> 跨域共享术语（Category、DefaultCurrency、Transaction、Backup/ViewState 等）见核心交易域 `CONTEXT-core.md`、备份与数据文件域 `CONTEXT-backup-datafiles.md`、界面状态与交互域 `CONTEXT-ui-interaction.md`，本文不复制定义。
+> 若与代码行为冲突，以代码为准并同步修正本文件。
+
+## Reference Data（参考数据）
+
+- **定义**：`currencies / accounts / categories` 三张参考表及其全部派生映射（币种映射、账户映射、分类映射、分类树）的统称，作为 UI 字典 / 枚举的**单一来源**，描述"有哪些可选值"。与核心交易域交易流水（`Transaction`，描述"发生了什么"）相对：参考数据量小、变化低频、常驻内存；交易量大、持续追加、按需分页。
+- **边界**：
+  - 前端单一来源是 `useReferenceStore`（Pinia store），持有三张参考表与全部派生映射 / 分类树逻辑（`currencyMap / accountMap / categoryMap / rootCategories / expenseCategories / incomeCategories / categoryChildren / categoryPath / treeCategoryOptions`）与失效信号（`status / version`）；`useAppStore` 已收缩为纯 UI 设置 store（主题 / 默认币种 / 备份设置），不再暴露参考数据接口（issue #85）。
+  - 被核心交易域 `Transaction` 以外键引用（账户 / 分类 / 币种，见核心交易域 Category / DefaultCurrency）；参考数据改名、删除、新建会级联反映到所有消费它的界面（交易列表与报表里的名称、表单下拉选项、分类树、预算的分类聚合）。
+  - **运行期可被外部修改**：AI 编程助手经本地 HTTP API（见 AI 导入域 AI API）导入 / 修改参考数据，发生在 Tauri 应用之外；应用自身的账户 / 分类管理同样修改参考数据。
+  - **失效信号（ADR-0012）**：任一参考写入成功后，后端发出通用、粗粒度、无 payload 的 `ledger:changed` 信号（已落地，见 issue #79）；前端订阅该信号自动重拉三张参考表，属 ADR-0012 设计目标、随 spec #76 各子任务落地中。交易类写入不触发（不改参考表）。
+  - **重拉语义（stale-while-revalidate，ADR-0012 设计目标）**：保留旧数据，成功后才整体替换，界面不闪空；`status`（`idle | loading | ready | error`）与 `version`（每次成功重拉自增）暴露新鲜度，消费者可显式感知数据是新鲜还是过期。
+  - 前端只持**内存态缓存**：参考数据的真源是 SQLite 数据库，前端 store 不持久化副本，也不随 Backup / Restore 迁移（那些是文件级快照与设备本地偏好，见备份与数据文件域 Backup / 界面状态与交互域 ViewState）。
+- **别名**：不使用"账本快照（ledger snapshot）"——那会误导读者以为缓存了全部账本数据（见备份与数据文件域 Backup / Restore 的文件级快照）；不使用"基础数据"（过于泛化，易与业务字段混淆）。
+
+## Appearance（外观）
+
+- **定义**：用户对应用视觉呈现的选择，当前支持暗色（`dark`）和亮色（`light`）两种主题。
+- **边界**：主题切换仅影响视觉表现层，不改变业务逻辑；MVP 阶段默认为暗色主题。**强调色（品牌色）与语义色（业务色）相互独立**：强调色为琥珀暖橙，跨暗/亮主题一致（亮色用同色相加深版以保证按钮白字对比度），标识交互与选中态；语义色（收入绿/支出红/退款蓝）表达金额的业务含义，硬编码于列表与图表，不随主题变化。
+- **别名**：不使用"皮肤"（偏自定义程度更高的概念）、"配色方案"。
+
+## AppSettings（应用配置 KV 表）
+
+- **定义**：后端权威的应用配置与运行时状态的唯一持久化落点：`ledger.db` 内一张通用 KV 表 `app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL)`（ADR-0017）。key 以 `<feature>.<name>` 点分命名、在 Rust 侧由 `settings.rs` 的枚举集中定义；值用 serde_json 序列化、类型由读取方声明，key 缺失或表缺失时返回默认值。
+- **边界**：
+  - 谁消费谁权威：前端独享消费的设备偏好（Appearance、备份与数据文件域 BackupDirectory 等）→ localStorage；后端消费或随 Backup/Restore 迁移的配置与运行时状态 → 本表；需关系结构的实体（多行、可查询、外键）→ 才配独立表。单行状态专表不再出现。
+  - 读写收口在 `src-tauri/src/settings.rs` 的 `get<T>` / `set<T>` 接缝，禁止散落字符串字面量 SQL 与 key。
+  - 不透传给前端：对外 IPC 保持领域命令形状（聚合多个 key 返回类型化 DTO），不做通用 get/set_setting；写路径是行为不是赋值。
+  - 表随迁移创建，旧版本备份恢复后缺表即取默认值，行为免费正确。
+- **别名**：不使用"配置文件"（独立 JSON/TOML 已否决，DataLocation 引导文件是唯一例外，见 ADR-0018）、"单行状态表"（否决方案）。
+
+## 轻量设置项（Lightweight Setting）
+
+- **定义**：只被前端消费、持久化在 localStorage 的设备偏好。判定标准（三条同时满足）：① 读写不需要后端命令参与；② 不随 Backup/Restore 迁移；③ 改动即时生效、只影响本设备（主题、默认币种、备份目录、备份保留上限等）。与 AppSettings（后端消费或随备份迁移，存 SQLite KV 表）互斥，两套落点不交叉（ADR-0017）。
+- **边界**：
+  - **轻量只决定可否合并，归属领域决定合到哪**（ADR-0022）：轻量是进设置页「通用」Tab 的资格线——纯设备偏好（如深色模式、默认币种）才可并入通用；若其领域归属是参考数据或数据文件管理，则留在对应领域 Tab 内（如备份目录虽轻量，但归属数据文件管理，留在「数据」Tab 的备份卡片内）。
+  - 设置页 Tab 分域（ADR-0022）：通用（轻量设备偏好）→ 分类与币种（参考数据）→ 数据（数据文件管理）→ 关于（恒在末位）。
+- **别名**：不使用"本地配置"（与 DataLocation 引导文件混淆）、"用户偏好"（过泛，未区分消费方）。
+
+## DataLocation（数据存储位置）
+
+- **定义**：ledger 主数据库文件所在目录。未配置时使用系统应用数据目录；用户可更改位置，由应用把现有数据库完整搬迁到新位置（Relocation）。同一时刻全库只此一份。
+- **边界**：
+  - 单一活动路径：不支持多套账本并存切换；只指定目录，文件名固定为 `ledger.db`。
+  - 位置的记录属**引导配置**：必须在打开 `ledger.db` 前被读取，因此不可能存入库内（进不了 AppSettings 表），也无法经前端推送（Rust 启动早于前端就绪）；它是「独立配置文件已否决」规则的**唯一例外**（ADR-0017/0018），只能位于设备本机的固定位置。
+  - 属设备本地偏好（与备份与数据文件域 BackupDirectory 同类），不随 Backup/Restore 迁移；Restore 永不恢复此项——这天然保证换机不会指向不存在的路径，失效时回退默认位置并显著提示，原库永不被静默改动或删除。
+  - 更改位置**重启后生效**：启动引导发现目标位置无库而原位置有库时，自动执行 Relocation；目标位置已有同名库须用户显式确认接管，不静默覆盖。
+- **术语区分**：Relocation（搬迁，整个库文件移至新 DataLocation）≠ schema 迁移（备份恢复后的表结构版本升级），两词不可混用。
+- **别名**：不使用"数据库路径"（口语化，且易误解为完整文件路径）、"多账本/工作区切换"（明确不是本功能）。

@@ -56,7 +56,7 @@
 
 - **节假日处理**：MVP 采用严格日期，不因为周末/节假日顺延。
 
-（日期精度、ISO 8601 日期格式与 `Transaction.date` 复用 `scheduled_date` 的口径仍见 CONTEXT.md「Timing（时间精度）」条目。）
+（日期精度、ISO 8601 日期格式与 `Transaction.date` 复用 `scheduled_date` 的口径仍见定时计划域词汇表（CONTEXT-scheduled-plans.md）「Timing（时间精度）」条目。）
 
 ### 交易对手（Counterparty）
 
@@ -81,5 +81,5 @@
 ## 相关 ADR
 
 - ADR-0001 / ADR-0003：定时交易的数据模型与核心表 + 扩展表结构。
-- ADR-0011：金额模型与交易类型映射（`ScheduledTransaction → Transaction` 的 kind 生成映射见 CONTEXT.md「Transaction Kind Mapping」）。
+- ADR-0011：金额模型与交易类型映射（`ScheduledTransaction → Transaction` 的 kind 生成映射见核心交易域词汇表（CONTEXT-core.md）「Transaction Kind Mapping」）。
 - ADR-0023：订阅花费双口径与订阅金额不可编辑（决策三）。
