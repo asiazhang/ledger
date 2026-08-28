@@ -225,7 +225,7 @@ fn split_terms_by_whitespace() {
     assert_eq!(split_terms("  多   词条  "), vec!["多", "词条"]);
     assert!(split_terms("").is_empty());
     assert!(split_terms("   ").is_empty());
-    // 特殊字符按字面保留（无 FTS 语法，无需转义）
+    // 特殊字符按字面保留（无查询语法，无需转义）
     assert_eq!(split_terms("午餐(1)"), vec!["午餐(1)"]);
 }
 
@@ -283,7 +283,7 @@ fn search_case_insensitive_and_special_chars_literal() {
     assert_eq!(res.total, 1);
     let res = search(&conn, "ATM").unwrap();
     assert_eq!(res.total, 1);
-    // 特殊字符按字面匹配，不再有 FTS 语法含义
+    // 特殊字符按字面匹配，不再有查询语法含义
     let res = search(&conn, "ATM(取款)").unwrap();
     assert_eq!(res.total, 1);
     let res = search(&conn, "午餐 AND 现金 OR (NOT)").unwrap();
@@ -498,7 +498,7 @@ fn search_includes_hidden_account_and_all_kinds() {
 
 #[test]
 fn account_rename_takes_effect_immediately() {
-    // 无索引：账户改名即时反映到搜索（原 FTS 实现需重建队列消费）
+    // 无索引：账户改名即时反映到搜索
     let conn = setup();
     insert_account(&conn, "a1", "现金", "cash", "CNY");
     insert_txn(&conn, "t1", "a1", None, Some("午餐"), "2026-02-01");
