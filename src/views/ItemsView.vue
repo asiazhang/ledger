@@ -13,6 +13,7 @@ import {
   NSpace,
   NDescriptions,
   NDescriptionsItem,
+  NPopconfirm,
   useMessage,
   type DataTableColumns,
 } from 'naive-ui'
@@ -137,6 +138,16 @@ function detailAmount(cents: number): string {
     : ''
 }
 
+// —— 软删除（issue #118）：二次确认后 is_deleted=1，列表自动过滤 ——
+async function removeItem(id: string) {
+  try {
+    await itemsStore.remove(id)
+    message.success('已删除')
+  } catch (e) {
+    message.error(`删除失败: ${e}`)
+  }
+}
+
 // —— 物品列表 ——
 const columns: DataTableColumns<ItemWithDailyCost> = [
   { title: '名称', key: 'name' },
@@ -157,10 +168,20 @@ const columns: DataTableColumns<ItemWithDailyCost> = [
   {
     title: '操作',
     key: 'actions',
+    width: 150,
     render: (row) =>
       h(NSpace, { size: 4 }, () => [
         h(NButton, { size: 'tiny', onClick: () => openDetail(row) }, () => '详情'),
         h(NButton, { size: 'tiny', onClick: () => openEdit(row) }, () => '编辑'),
+        h(
+          NPopconfirm,
+          { onPositiveClick: () => removeItem(row.id) },
+          {
+            default: () => '不再跟踪该物品，从列表移除？',
+            trigger: () =>
+              h(NButton, { size: 'tiny', type: 'error', quaternary: true }, () => '删除'),
+          },
+        ),
       ]),
   },
 ]

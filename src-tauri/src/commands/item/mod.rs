@@ -1,7 +1,8 @@
-//! 物品（Item）命令层（issue #115 / spec #113 / ADR-0014）：创建、列出与编辑物品。
+//! 物品（Item）命令层（issue #115 / #117 / #118 / spec #113 / ADR-0014）：创建、
+//! 列出、编辑与软删除物品。
 //!
-//! 组织方式镜像 `commands::categories`：命令外壳（`create_item` / `list_items`）
-//! + `*_internal` 复用函数（BDD seam，issue #115 验收：BDD 场景调用本层内部函数）。
+//! 组织方式镜像 `commands::categories`：命令外壳（`create_item` / `list_items` /
+//! `delete_item`）+ `*_internal` 复用函数（BDD seam，验收：BDD 场景调用本层内部函数）。
 //!
 //! 接缝约定：
 //! - 金额折算走 Amount 接缝（`transaction::amount::convert_to_native`），不另写口径；
@@ -13,7 +14,7 @@
 #[cfg(test)]
 mod tests;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use tauri::State;
 
 use crate::db::query::{query_all, query_one};
@@ -195,6 +196,32 @@ pub fn update_item_internal(
     Ok(())
 }
 
+/// 软删除物品（`is_deleted=1`，不物理移除）：标准列表（`WHERE is_deleted=0`）
+/// 自动过滤。不校验引用（物品当前无下游引用）。不存在（含已删除）的 id 返回
+/// `AppError::NotFound`。成功后调用 `notify`（生产路径发 `ledger:changed`）。
+pub fn delete_item_internal(conn: &Connection, id: &str, notify: &mut dyn FnMut()) -> Result<()> {
+    let exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM items WHERE id=?1 AND is_deleted=0",
+            rusqlite::params![id],
+            |_| Ok(true),
+        )
+        .optional()?
+        .is_some();
+    if !exists {
+        return Err(AppError::NotFound(format!("物品不存在: {id}")));
+    }
+    conn.execute(
+        "UPDATE items SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
+        rusqlite::params![id, now_iso(), device_id()],
+    )?;
+    // 脏标记挂钩（issue #126）：删除也是写，置脏到期顺带触发备份。
+    crate::auto_backup::on_write(conn);
+    // 删除成功 → 通知调用方发出失效信号（生产为 ledger:changed）。
+    notify();
+    Ok(())
+}
+
 /// 解析 YYYY-MM-DD 日期字符串；非法格式报错（物品成本计算依赖日历日期）。
 fn parse_date(s: &str) -> Result<chrono::NaiveDate> {
     chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
@@ -234,6 +261,15 @@ pub fn update_item(
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     update_item_internal(&conn, &id, input, &mut || {
         // 与 create_item 同款：独立领域写入 → 通用失效信号（issue #117）。
+        crate::events::emit_ledger_changed(&app);
+    })
+}
+
+#[tauri::command]
+pub fn delete_item(db: State<'_, DbState>, app: tauri::AppHandle, id: String) -> Result<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    delete_item_internal(&conn, &id, &mut || {
+        // 物品是独立领域（非参考数据，ADR-0014）：直接发通用失效信号。
         crate::events::emit_ledger_changed(&app);
     })
 }

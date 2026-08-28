@@ -72,6 +72,12 @@ export const useItemsStore = defineStore('items', () => {
     await refresh()
   }
 
+  /** 软删除物品（后端打 is_deleted=1，不物理移除）：成功后立即重拉（同上）。 */
+  async function remove(id: string): Promise<void> {
+    await api.deleteItem(id)
+    await refresh()
+  }
+
   // —— push 生命周期 ——
   // 首次访问 self-init：触发一次加载（失败静默，失败信号已由 status 承载）。
   void refresh().catch(() => {
@@ -95,5 +101,6 @@ export const useItemsStore = defineStore('items', () => {
     refresh,
     create,
     update,
+    remove,
   }
 })
