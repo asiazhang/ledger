@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, h } from 'vue'
 import {
   NCard,
   NButton,
@@ -10,6 +10,7 @@ import {
   NDatePicker,
   NSelect,
   NSpace,
+  NPopconfirm,
   useMessage,
   type DataTableColumns,
 } from 'naive-ui'
@@ -69,6 +70,15 @@ async function create() {
   }
 }
 
+async function removeItem(id: string) {
+  try {
+    await itemsStore.remove(id)
+    message.success('已删除')
+  } catch (e) {
+    message.error(`删除失败: ${e}`)
+  }
+}
+
 // —— 物品列表 ——
 const columns: DataTableColumns<ItemWithDailyCost> = [
   { title: '名称', key: 'name' },
@@ -85,6 +95,21 @@ const columns: DataTableColumns<ItemWithDailyCost> = [
     key: 'per_day_cents',
     render: (row) =>
       formatAmount(row.per_day_cents, reference.getCurrency(row.currency_code)),
+  },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 90,
+    render: (row) =>
+      h(
+        NPopconfirm,
+        { onPositiveClick: () => removeItem(row.id) },
+        {
+          default: () => '不再跟踪该物品，从列表移除？',
+          trigger: () =>
+            h(NButton, { size: 'tiny', type: 'error', quaternary: true }, () => '删除'),
+        },
+      ),
   },
 ]
 
