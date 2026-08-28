@@ -20,7 +20,7 @@
 - **定义**：在固定期数内、按固定周期偿还一笔已知总金额的 `ScheduledTransaction`。
 - **边界**：
   - 记录总金额 `total_amount_cents` 和总期数 `total_occurrences`。
-  - 每期金额由总金额和总期数计算，尾差放在最后一期。
+  - 每期金额由分期金额计算规则得出（MVP 决策见 ADR-0024）。
   - 已还金额和已还期数由 `scheduled_transaction_occurrences` 的 `completed` 状态实时汇总。
   - 每次触发时生成一条 `Transaction`（`kind = expense`）。
 - **别名**：不使用“loan”、“debt”等词，因为分期不一定是负债（例如分期购买服务）。
@@ -29,11 +29,9 @@
 
 - **定义**：按周期持续扣款，直到用户手动取消或暂停的 `ScheduledTransaction`。
 - **边界**：
-  - MVP 阶段没有结束日期，也没有最大期数限制。
-  - 只能通过 `paused` 或 `cancelled` 状态停止。
-  - 金额固定：**每一期内**金额固定；计划金额不可编辑（MVP），价格变化 = 取消旧计划 + 按新金额新建，历史在订阅列表中断为两段真实的价格历史。
-  - 可编辑字段（MVP）仅限金额以外的非核心字段（备注、分类等）；编辑只影响未来期次，不改已生成的交易。
   - 每次触发时生成一条 `Transaction`（`kind = expense`）。
+  - 生命周期 MVP 决策（无结束日期、无最大期数，仅经 `paused` / `cancelled` 停止）见 ADR-0024。
+  - 金额固定：**每一期内**金额固定；价格变更策略 MVP 决策（计划金额不可编辑，价格变化 = 取消旧计划 + 按新金额新建，历史在订阅列表中断为两段真实的价格历史；可编辑字段仅限金额以外的非核心字段，编辑只影响未来期次）见 ADR-0023 决策三。
 - **别名**：不使用“membership”、“recurring payment”等词，除非业务明确需要区分。
 
 ## SubscriptionSpend（订阅花费）
@@ -99,29 +97,20 @@
 
 ## Plan Lifecycle（计划生命周期）
 
-- **MVP 决策**：`ScheduledTransaction` 支持以下状态变更：
-  - `active`（正常执行）
-  - `paused`（暂停，不再生成新期次）
-  - `cancelled`（取消，所有未执行期次状态变为 `cancelled`）
-  - `completed`（计划自然完成，所有期次已执行）
-- **MVP 不支持**：单独取消/跳过某期、修改单期金额或日期。
-- **边界**：
-  - 取消整个计划不会删除已生成的 `Transaction`。
-  - 暂停/恢复不改变已生成的期次或交易。
+- **定义**：`ScheduledTransaction` 的计划状态集合（`active` / `paused` / `cancelled` / `completed`）与状态变更规则，决定新期次的生成与既有期次/交易的去留。
+- **MVP 决策**：状态集合、取消/暂停副作用（取消不删已生成交易、暂停不改已生成期次）与不支持项（单独取消/跳过某期、修改单期金额或日期）见 ADR-0024。
 
 ## Timing（时间精度）
 
 - **日期精度**：所有定时交易只精确到日期，不记录具体执行时间。
 - **执行日期**：`Occurrence` 的 `scheduled_date` 为 ISO 8601 日期格式（YYYY-MM-DD）。
-- **节假日处理**：MVP 采用严格日期，不因为周末/节假日顺延。
+- **节假日处理**：MVP 采用严格日期（不顺延）的决策见 ADR-0024。
 - **边界**：`Transaction.date` 直接复用 `Occurrence` 的 `scheduled_date`，两者保持一致。
 
 ## Counterparty（交易对手）
 
 - **定义**：定时交易中的收款方或付款对象，例如商家、贷款机构、订阅服务商。
-- **MVP 决策**：在 `InstallmentPlan` 和 `Subscription` 的扩展表中记录 `counterparty` 字段；生成 `Transaction` 时复制到 `Transaction.note` 或作为展示字段。
-- **MVP 不扩展**：不在 `Transaction` 表中新增通用 `counterparty` 字段，避免改动现有核心表。
-- **边界**：`ScheduledTransfer` 不使用 `counterparty`，而是使用 `to_account_id` 表示本方账户间转账。
+- **MVP 决策**：`counterparty` 字段落点（计划扩展表）、生成交易的复制方式、不在 `Transaction` 表新增通用字段及 `ScheduledTransfer` 不使用 `counterparty`（用 `to_account_id` 表示本方账户间转账）的决策与边界见 ADR-0024。
 
 ## Amount Model（金额模型）
 
@@ -131,29 +120,17 @@
 - 折算基准为全局默认币种、与账户币种无关，避免跨账户汇总口径漂移。
 - 四个具名度量（`account_flow` / `expense_net` / `income_net` / `refund_gross`）对 8 种 kind 的符号归属见 Transaction Kind Mapping。
 
-**分期金额计算（ScheduledTransaction）**：
-- **MVP 决策**：每期金额固定，使用 `ScheduledTransaction` 的 `amount_cents` 字段。
-- **分期金额计算规则**：
-  1. `InstallmentPlan` 记录 `total_amount_cents` 和 `total_occurrences`。
-  2. 每期基准金额 = `floor(total_amount_cents / total_occurrences)`。
-  3. 剩余尾差 = `total_amount_cents - base_amount_cents * total_occurrences`。
-  4. 最后一期金额 = `base_amount_cents + 剩余尾差`。
-  5. 其余每期金额 = `base_amount_cents`。
-- **边界**：MVP 不支持每期金额不同；不支持 subscription 中途涨价。
+**分期金额计算（ScheduledTransaction）**：每期金额固定的 MVP 决策与尾差计算规则见 ADR-0024「分期金额计算规则」（MVP 不支持每期金额不同、不支持 subscription 中途涨价）。
 
 ## Recurrence Rule（周期规则）
 
-- **MVP 决策**：使用显式字段表达周期，不引入 RRULE 等通用表达式。
-- **字段**：
-  - `recurrence_type`：周期类型，如 `daily`、`weekly`、`monthly`、`yearly`。
-  - `recurrence_interval`：间隔，如每 1 个月、每 2 周。
-  - `recurrence_day`：具体日期/星期，如每月 1 日、每周一。
-- **边界**：MVP 只支持常见固定周期；复杂规则（如“每月最后一个工作日”）留到后续版本。
+- **定义**：定时交易用显式字段（`recurrence_type` 周期类型 / `recurrence_interval` 间隔 / `recurrence_day` 具体日期或星期）表达的周期，如每 1 个月、每周一。
+- **MVP 决策**：显式字段而非 RRULE、仅支持常见固定周期（复杂规则留到后续版本）见 ADR-0024。
 
 ## Failure Policy（失败策略）
 
-- **MVP 决策**：MVP 阶段只支持“失败即标记为 failed，由用户手动重试”。不自动重试、不自动跳过、不产生滞纳金。
-- **理由**：离线优先场景下，自动重试容易在多设备间产生重复执行；手动重试让用户明确控制资金流出，适合个人账本。
+- **定义**：期次执行失败即标记为 `failed`、由用户手动重试的处理约定。
+- **MVP 决策**：不自动重试、不自动跳过、不产生滞纳金及其理由见 ADR-0024。
 
 ## Transaction Kind Mapping（交易类型映射）
 
