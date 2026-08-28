@@ -2,7 +2,7 @@ import { ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { api } from '@/api'
 import { centsToYuan } from '@/types'
-import { useFormShared } from '@/composables/useFormShared'
+import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
 import type { Transaction, UpdateTransactionInput } from '@/types'
 
 export function useTransferForm(options?: {
@@ -35,7 +35,7 @@ export function useTransferForm(options?: {
     accountId.value = editingTx.account_id
     toAccountId.value = editingTx.to_account_id
     note.value = editingTx.note ?? ''
-    date.value = new Date(`${editingTx.date}T00:00:00Z`).getTime()
+    date.value = utcMidnightTimestamp(editingTx.date)
   }
 
   async function submit() {

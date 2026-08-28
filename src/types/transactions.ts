@@ -38,21 +38,7 @@ export interface TransactionInput {
 /** 交易修改入参（`PUT /api/v1/transactions/{id}` 与 IPC `update_transaction` 共用，issue #178）。
  * 与 TransactionInput 的唯一差异是不含 idempotency_key：幂等键不可编辑（只在导入时落定，
  * 编辑不改变导入身份），提交时同一对象形状分派创建/更新两路。 */
-export interface UpdateTransactionInput {
-  kind: TransactionKind
-  amount_cents: number
-  currency_code: string
-  account_id: string
-  to_account_id?: string | null
-  category_id?: string | null
-  refund_of_transaction_id?: string | null
-  note?: string | null
-  date: string
-  instrument_id?: string | null
-  quantity?: number | null
-  price_cents?: number | null
-  fee_cents?: number | null
-}
+export type UpdateTransactionInput = Omit<TransactionInput, 'idempotency_key'>
 
 /** 交易列表查询过滤条件（服务端分页 + 过滤） */
 export interface TransactionListFilter {

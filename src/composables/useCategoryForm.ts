@@ -4,7 +4,7 @@ import type { TreeSelectOption } from 'naive-ui'
 import { api } from '@/api'
 import { centsToYuan } from '@/types'
 import { useReferenceStore } from '@/stores/reference'
-import { useFormShared } from '@/composables/useFormShared'
+import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
 import type { Transaction, UpdateTransactionInput } from '@/types'
 
 export function useCategoryForm(
@@ -43,7 +43,7 @@ export function useCategoryForm(
     accountId.value = editingTx.account_id
     categoryId.value = editingTx.category_id
     note.value = editingTx.note ?? ''
-    date.value = new Date(`${editingTx.date}T00:00:00Z`).getTime()
+    date.value = utcMidnightTimestamp(editingTx.date)
   }
 
   async function submit() {
