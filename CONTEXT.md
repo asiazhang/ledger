@@ -570,6 +570,24 @@
   - 弹层关闭动画期间（遮罩淡出未完）仍视为打开，属预期。
 - **别名**：不使用“弹窗检测”、“覆盖层探测”。
 
+## ESC 键语义
+
+- **定义**：ESC 是应用内部职责的按键——有弹层时由 naive-ui 默认行为关闭最上层弹层，无弹层时无操作；**永不作用于窗口层**（不退出全屏）。窗口行为守卫（issue #154）在 document 捕获阶段无条件 `preventDefault`。
+- **边界**：
+  - 拦截无条件，不区分全屏状态：JS 层检测不到 macOS 原生全屏（WKWebView 中 fullscreen DOM API 恒空），且按语义 ESC 本来就不归窗口层管。
+  - 只 `preventDefault` 不阻断传播：naive-ui 弹层（NModal closeOnEsc）依赖事件继续传播。
+  - 退出全屏只走系统手势（顶部指针 / Ctrl+Cmd+F）；全屏状态重启后由 window-state 插件恢复（见 WindowState）。
+- **别名**：不使用“ESC 退出全屏”（那是被禁止的默认行为）。
+
+## 原生右键菜单
+
+- **定义**：WKWebView/WebView 自带的默认上下文菜单（Back/Reload 等），与记账应用无关。窗口行为守卫（issue #154）默认 `preventDefault` 禁用之。
+- **边界**：
+  - 唯一例外：可编辑元素内放行，保留系统编辑菜单（剪切/拷贝/粘贴）。判定复用记一笔快捷键的 isEditableTarget（input/textarea/select/contenteditable）。
+  - 交易页行级自定义右键菜单（issue #151）不受影响：拦截只 `preventDefault` 不阻断传播，行级 NDropdown 仍能读取事件坐标弹出。
+  - macOS 无原生禁用 API（Windows 有），前端 `preventDefault` 是唯一跨平台手段。
+- **别名**：不使用“浏览器右键菜单”、“WebView 菜单”（正式术语为原生右键菜单）。
+
 ## 耗时日志（Timing Log）
 
 - **定义**：对数据库执行操作按耗时记录的日志机制，用于建立性能基线、定位慢路径。
