@@ -1,6 +1,8 @@
-//! 预算测试（issue #58 迁移后）：断言预算核心函数与 Amount 接缝的度量矩阵一致，
-//! 不复制生产 SQL——期望值由 `signed_amount`（kind × measure）对夹具逐行求和得出。
+//! 预算测试（issue #58 迁移后；issue #182 滚动窗口）：断言预算核心函数与
+//! Amount 接缝的度量矩阵一致，不复制生产 SQL——期望值由 `signed_amount`
+//! （kind × measure）对夹具逐行求和得出。窗口口径经注入 `today` 驱动。
 
+use chrono::NaiveDate;
 use rusqlite::Connection;
 
 use crate::commands::budget::budget_progress_rows;
@@ -35,15 +37,21 @@ fn insert_budget(
     conn: &Connection,
     id: &str,
     category_id: &str,
+    period: &str,
     amount_cents: i64,
     start_date: &str,
 ) {
     let now = now_iso();
     conn.execute(
         "INSERT INTO budgets (id,category_id,period,amount_cents,start_date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,'monthly',?3,?4,?5,?6,?7,?8,0)",
-        rusqlite::params![id, category_id, amount_cents, start_date, now, now, 1, device_id()],
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0)",
+        rusqlite::params![id, category_id, period, amount_cents, start_date, now, now, 1, device_id()],
     ).unwrap();
+}
+
+/// 注入的「今天」：所有窗口口径测试共用，夹具日期围绕它铺开。
+fn today() -> NaiveDate {
+    NaiveDate::from_ymd_opt(2026, 7, 15).unwrap()
 }
 
 fn insert_dummy_account(conn: &Connection) {
@@ -76,10 +84,11 @@ fn insert_tx(conn: &Connection, r: &TxRow) {
     .unwrap();
 }
 
-/// 按月对夹具逐行求 `expense_net` 度量和——期望值的唯一来源是度量矩阵，不是生产 SQL。
-fn expense_net_sum(rows: &[TxRow], month: &str) -> i64 {
+/// 按年/月前缀对夹具逐行求 `expense_net` 度量和——期望值的唯一来源是度量矩阵，不是生产 SQL。
+/// 月预算窗口传 "YYYY-MM"，年预算窗口传 "YYYY"。
+fn expense_net_sum(rows: &[TxRow], prefix: &str) -> i64 {
     rows.iter()
-        .filter(|r| r.date.starts_with(month))
+        .filter(|r| r.date.starts_with(prefix))
         .map(|r| signed_amount(r.kind, r.amount, Measure::ExpenseNet))
         .sum()
 }
@@ -164,7 +173,7 @@ fn list_budgets_empty_initially() {
 fn create_budget_and_list() {
     let conn = setup();
     let cat_id = first_expense_category_id(&conn);
-    insert_budget(&conn, "budget-1", &cat_id, 50000, "2026-07-01");
+    insert_budget(&conn, "budget-1", &cat_id, "monthly", 50000, "2026-07-01");
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM budgets WHERE is_deleted=0", [], |r| {
             r.get(0)
@@ -177,7 +186,7 @@ fn create_budget_and_list() {
 fn delete_budget_soft_deletes() {
     let conn = setup();
     let cat_id = first_expense_category_id(&conn);
-    insert_budget(&conn, "budget-2", &cat_id, 50000, "2026-07-01");
+    insert_budget(&conn, "budget-2", &cat_id, "monthly", 50000, "2026-07-01");
     assert_eq!(
         conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM budgets WHERE is_deleted=0", [], |r| r
             .get(0))
@@ -203,8 +212,8 @@ fn delete_budget_soft_deletes() {
 fn budget_progress_zero_when_no_transactions() {
     let conn = setup();
     let cat_id = first_expense_category_id(&conn);
-    insert_budget(&conn, "budget-3", &cat_id, 50000, "2026-07-01");
-    let results = budget_progress_rows(&conn).unwrap();
+    insert_budget(&conn, "budget-3", &cat_id, "monthly", 50000, "2026-07-01");
+    let results = budget_progress_rows(&conn, today()).unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].budget.amount_cents, 50000);
     assert_eq!(results[0].spent_cents, 0);
@@ -218,12 +227,12 @@ fn budget_progress_spent_matches_expense_net_for_all_kinds() {
     let conn = setup();
     insert_dummy_account(&conn);
     let cat_id = first_expense_category_id(&conn);
-    insert_budget(&conn, "budget-4", &cat_id, 50000, "2026-07-01");
+    insert_budget(&conn, "budget-4", &cat_id, "monthly", 50000, "2026-07-01");
     let fixture = all_kinds_fixture(&cat_id);
     for r in &fixture {
         insert_tx(&conn, r);
     }
-    let results = budget_progress_rows(&conn).unwrap();
+    let results = budget_progress_rows(&conn, today()).unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(
         results[0].spent_cents,
@@ -240,7 +249,14 @@ fn budget_progress_includes_child_category_transactions() {
     insert_dummy_account(&conn);
     let parent_id = first_expense_category_id(&conn);
     let child_id = first_expense_subcategory_id(&conn, &parent_id);
-    insert_budget(&conn, "budget-5", &parent_id, 50000, "2026-07-01");
+    insert_budget(
+        &conn,
+        "budget-5",
+        &parent_id,
+        "monthly",
+        50000,
+        "2026-07-01",
+    );
     let fixture = vec![TxRow {
         id: "tx2",
         kind: TransactionKind::Expense,
@@ -251,7 +267,7 @@ fn budget_progress_includes_child_category_transactions() {
     for r in &fixture {
         insert_tx(&conn, r);
     }
-    let results = budget_progress_rows(&conn).unwrap();
+    let results = budget_progress_rows(&conn, today()).unwrap();
     assert_eq!(
         results[0].spent_cents,
         expense_net_sum(&fixture, "2026-07"),
@@ -264,7 +280,7 @@ fn budget_progress_over_budget() {
     let conn = setup();
     insert_dummy_account(&conn);
     let cat_id = first_expense_category_id(&conn);
-    insert_budget(&conn, "budget-6", &cat_id, 1000, "2026-07-01");
+    insert_budget(&conn, "budget-6", &cat_id, "monthly", 1000, "2026-07-01");
     let fixture = vec![TxRow {
         id: "tx5",
         kind: TransactionKind::Expense,
@@ -275,34 +291,123 @@ fn budget_progress_over_budget() {
     for r in &fixture {
         insert_tx(&conn, r);
     }
-    let results = budget_progress_rows(&conn).unwrap();
+    let results = budget_progress_rows(&conn, today()).unwrap();
     assert_eq!(results[0].spent_cents, expense_net_sum(&fixture, "2026-07"));
     assert!(results[0].over_budget);
 }
 
+/// 月预算窗口 = 注入 today 所在自然月（与 start_date 无关）；上月不计入。
 #[test]
-fn budget_progress_only_counts_same_month() {
+fn budget_progress_only_counts_current_month() {
     let conn = setup();
     insert_dummy_account(&conn);
     let cat_id = first_expense_category_id(&conn);
-    insert_budget(&conn, "budget-7", &cat_id, 50000, "2026-07-01");
-    let fixture = vec![TxRow {
-        id: "tx6",
-        kind: TransactionKind::Expense,
-        amount: 3000,
-        category_id: cat_id,
-        date: "2026-06-30", // 上月
-    }];
+    insert_budget(&conn, "budget-7", &cat_id, "monthly", 50000, "2026-07-01");
+    let fixture = vec![
+        TxRow {
+            id: "tx6a",
+            kind: TransactionKind::Expense,
+            amount: 3000,
+            category_id: cat_id.clone(),
+            date: "2026-06-30", // 上月
+        },
+        TxRow {
+            id: "tx6b",
+            kind: TransactionKind::Expense,
+            amount: 1200,
+            category_id: cat_id,
+            date: "2026-07-02", // 当月
+        },
+    ];
     for r in &fixture {
         insert_tx(&conn, r);
     }
-    let results = budget_progress_rows(&conn).unwrap();
+    let results = budget_progress_rows(&conn, today()).unwrap();
     assert_eq!(
         results[0].spent_cents,
         expense_net_sum(&fixture, "2026-07"),
-        "预算月份之外的交易不计入"
+        "月预算只计当前自然月"
     );
-    assert_eq!(results[0].spent_cents, 0);
+    assert_eq!(results[0].spent_cents, 1200);
+}
+
+/// 历史 start_date 的存量预算行按新规则滚动生效，不受旧日期影响（issue #182）。
+#[test]
+fn budget_progress_ignores_historical_start_date() {
+    let conn = setup();
+    insert_dummy_account(&conn);
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(&conn, "budget-9", &cat_id, "monthly", 50000, "2025-01-15");
+    let fixture = vec![
+        TxRow {
+            id: "tx9a",
+            kind: TransactionKind::Expense,
+            amount: 3000,
+            category_id: cat_id.clone(),
+            date: "2025-01-20", // start_date 所在月，不得计入
+        },
+        TxRow {
+            id: "tx9b",
+            kind: TransactionKind::Expense,
+            amount: 800,
+            category_id: cat_id,
+            date: "2026-07-02", // 当前自然月
+        },
+    ];
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+    let results = budget_progress_rows(&conn, today()).unwrap();
+    assert_eq!(results[0].spent_cents, 800, "旧 start_date 不参与窗口");
+}
+
+/// 年预算窗口 = 注入 today 所在自然年全年累计（修复旧实现按月比对的口径 bug）。
+#[test]
+fn budget_progress_yearly_sums_whole_current_year() {
+    let conn = setup();
+    insert_dummy_account(&conn);
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(&conn, "budget-10", &cat_id, "yearly", 100000, "2026-03-01");
+    let fixture = vec![
+        TxRow {
+            id: "tx10a",
+            kind: TransactionKind::Expense,
+            amount: 2000,
+            category_id: cat_id.clone(),
+            date: "2026-01-10", // 年初
+        },
+        TxRow {
+            id: "tx10b",
+            kind: TransactionKind::Refund,
+            amount: 500,
+            category_id: cat_id.clone(),
+            date: "2026-03-10", // 年中退款冲减
+        },
+        TxRow {
+            id: "tx10c",
+            kind: TransactionKind::Expense,
+            amount: 1200,
+            category_id: cat_id.clone(),
+            date: "2026-07-02", // 当月
+        },
+        TxRow {
+            id: "tx10d",
+            kind: TransactionKind::Expense,
+            amount: 5000,
+            category_id: cat_id,
+            date: "2025-12-31", // 去年，不计入
+        },
+    ];
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+    let results = budget_progress_rows(&conn, today()).unwrap();
+    assert_eq!(
+        results[0].spent_cents,
+        expense_net_sum(&fixture, "2026"),
+        "年预算应为当前自然年全年累计"
+    );
+    assert_eq!(results[0].spent_cents, 2700, "2000 + 1200 − 500 退款");
 }
 
 #[test]
@@ -310,7 +415,7 @@ fn budget_progress_excludes_deleted() {
     let conn = setup();
     insert_dummy_account(&conn);
     let cat_id = first_expense_category_id(&conn);
-    insert_budget(&conn, "budget-8", &cat_id, 50000, "2026-07-01");
+    insert_budget(&conn, "budget-8", &cat_id, "monthly", 50000, "2026-07-01");
     insert_tx(
         &conn,
         &TxRow {
@@ -323,6 +428,6 @@ fn budget_progress_excludes_deleted() {
     );
     conn.execute("UPDATE transactions SET is_deleted=1 WHERE id='tx7'", [])
         .unwrap();
-    let results = budget_progress_rows(&conn).unwrap();
+    let results = budget_progress_rows(&conn, today()).unwrap();
     assert_eq!(results[0].spent_cents, 0);
 }

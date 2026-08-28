@@ -103,6 +103,10 @@ pub struct LedgerWorld {
     pub last_overview: Option<DashboardOverview>,
     /// 最近一次订阅实际花费总览快照（订阅花费场景断言用，issue #160）
     pub last_spend: Option<tauri_app_lib::scheduled_transactions::SubscriptionSpendOverview>,
+    /// 最近一次预算进度快照（预算滚动窗口场景断言用，issue #182）
+    pub last_budget_progress: Vec<tauri_app_lib::models::BudgetProgress>,
+    /// 场景冻结的本地今日（滚动窗口步骤口径一致用，issue #182）
+    pub frozen_today: Option<chrono::NaiveDate>,
     /// DataLocation 引导场景：默认应用数据目录（真临时目录）
     pub dl_default_dir: Option<PathBuf>,
     /// DataLocation 引导场景：指针指向的目标目录
@@ -161,6 +165,8 @@ impl LedgerWorld {
             last_search: None,
             last_overview: None,
             last_spend: None,
+            last_budget_progress: Vec::new(),
+            frozen_today: None,
             last_item_id: None,
             item_signal_count: 0,
             items_list: Vec::new(),

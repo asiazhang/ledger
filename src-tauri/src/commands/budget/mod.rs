@@ -1,4 +1,5 @@
-//! 预算（issue #91 创建，issue #58 迁移 Amount 口径）：命令外壳 + 内嵌测试外迁。
+//! 预算（issue #91 创建，issue #58 迁移 Amount 口径，issue #182 滚动窗口）：
+//! 命令外壳 + 内嵌测试外迁。
 //!
 //! 目录组织：
 //! - `tests`：针对模块接口的测试（期望值由度量矩阵逐行求和得出，不复制生产 SQL）。
@@ -13,6 +14,7 @@
 #[cfg(test)]
 mod tests;
 
+use chrono::{Datelike, NaiveDate};
 use rusqlite::Connection;
 use tauri::State;
 
@@ -67,10 +69,15 @@ pub fn delete_budget(db: State<'_, DbState>, id: String) -> Result<()> {
     Ok(())
 }
 
-/// 预算进度核心：spent = `expense_net`（毛支出 − 退款，退款冲减支出），
-/// 与报表分类净值同口径；参与 kind 由矩阵导出（不含 buy/sell 等投资类）。
-pub fn budget_progress_rows(conn: &Connection) -> Result<Vec<BudgetProgress>> {
+/// 预算进度核心（issue #182 永久滚动预算）：spent = `expense_net`（毛支出 − 退款，
+/// 退款冲减支出），与报表分类净值同口径；参与 kind 由矩阵导出（不含 buy/sell 等投资类）。
+/// 窗口为当前自然周期，由注入的 `today` 驱动、与存储的 start_date 无关（存量旧日期
+/// 行零迁移滚动生效）：monthly = today 所在自然月，yearly = today 所在自然年。
+/// `today` 由命令层注入（本地今日，与订阅花费口径一致），测试注入固定值。
+pub fn budget_progress_rows(conn: &Connection, today: NaiveDate) -> Result<Vec<BudgetProgress>> {
     let kinds = contributing_kinds_sql(Measure::ExpenseNet);
+    let month = format!("{:04}-{:02}", today.year(), today.month());
+    let year = format!("{:04}", today.year());
     let sql = format!(
         "SELECT b.id,b.category_id,b.period,b.amount_cents,b.start_date,b.created_at,b.updated_at,b.version,b.device_id,b.is_deleted,c.name, \
          COALESCE((SELECT SUM({expense_net}) \
@@ -79,16 +86,17 @@ pub fn budget_progress_rows(conn: &Connection) -> Result<Vec<BudgetProgress>> {
                    WHERE (tc.id=b.category_id OR tc.parent_id=b.category_id) \
                      AND t.kind IN ({kinds}) \
                      AND t.is_deleted=0 \
-                     AND substr(t.date,1,7)=substr(b.start_date,1,7)),0) \
+                     AND (CASE WHEN b.period='monthly' THEN substr(t.date,1,7)=?1 \
+                               ELSE substr(t.date,1,4)=?2 END)),0) \
          FROM budgets b LEFT JOIN categories c ON c.id=b.category_id \
          WHERE b.is_deleted=0 ORDER BY b.created_at",
         expense_net = expense_net_expr("t"),
     );
-    query_all(conn, &sql, [])
+    query_all(conn, &sql, rusqlite::params![month, year])
 }
 
 #[tauri::command]
 pub fn budget_progress(db: State<'_, DbState>) -> Result<Vec<BudgetProgress>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    budget_progress_rows(&conn)
+    budget_progress_rows(&conn, chrono::Local::now().date_naive())
 }
