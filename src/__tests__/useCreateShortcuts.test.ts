@@ -143,7 +143,7 @@ describe('useCreateShortcuts', () => {
     input.remove()
   })
 
-  it.each(['n-modal-mask', 'n-dropdown-menu', 'n-base-select-menu'])(
+  it.each(['n-modal-mask', 'n-dropdown-menu', 'n-base-select-menu', 'n-date-panel'])(
     '弹层（%s）打开时抑制触发',
     (cls) => {
       const { open } = mountHost()

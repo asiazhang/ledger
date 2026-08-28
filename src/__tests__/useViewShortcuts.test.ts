@@ -125,6 +125,13 @@ describe('hasOpenOverlay', () => {
     expect(hasOpenOverlay()).toBe(true)
     selectMenu.remove()
     expect(hasOpenOverlay()).toBe(false)
+
+    const datePanel = document.createElement('div')
+    datePanel.className = 'n-date-panel'
+    document.body.appendChild(datePanel)
+    expect(hasOpenOverlay()).toBe(true)
+    datePanel.remove()
+    expect(hasOpenOverlay()).toBe(false)
   })
 })
 

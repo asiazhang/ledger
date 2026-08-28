@@ -54,12 +54,14 @@ export function matchViewShortcut(e: KeyboardEvent): string | null {
  * 不能探测 `.n-modal-container` / `.n-dialog`——naive-ui 的 VLazyTeleport 采用
  * useFalseUntilTruthy 语义，容器首次显示后永久残留 DOM（关闭后只剩隐藏空壳），
  * 存在性嗅探会把「已关闭」误判为「打开」，导致快捷键永久失效（见 ADR-0021）。
+ * `.n-date-panel` 为无遮罩弹层（日期日历），内部按钮聚焦时不在可编辑目标，需单独纳入信号集。
  */
 const OVERLAY_SELECTORS = [
   '.n-modal-mask',
   '.n-popconfirm',
   '.n-dropdown-menu',
   '.n-base-select-menu',
+  '.n-date-panel',
 ]
 
 /** 覆盖层（弹窗/确认框/下拉菜单）打开时抑制快捷键，避免在编辑/确认/选择中途触发 */
