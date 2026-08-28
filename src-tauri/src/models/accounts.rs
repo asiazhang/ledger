@@ -96,6 +96,28 @@ pub struct AccountInput {
     pub initial_balance_cents: Option<i64>,
 }
 
+/// 账户编辑入参（IPC `update_account` / HTTP `PUT /api/v1/accounts/{id}`）。
+/// `type` 不可改：账户类型参与 kind→符号矩阵（余额方向），改动会重写历史交易
+/// 的余额归属（ADR-0026 同期决策，Q3）；`initial_balance_cents` 不在此改，
+/// 归余额调整（见参考数据与设置域 BalanceAdjustment）。
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct AccountUpdateInput {
+    pub name: Option<String>,
+    /// 仅无交易账户可改（有交易时改币种会使历史折算口径错乱，后端拒绝）。
+    pub currency_code: Option<String>,
+}
+
+/// 余额调整入参（IPC `adjust_account_balance`）：把余额校准到目标值，
+/// 机制为生成一笔与黑洞账户的转账（ADR-0026）。
+#[derive(Debug, Deserialize)]
+pub struct AccountBalanceAdjustInput {
+    pub target_balance_cents: i64,
+    /// 调整交易日期（YYYY-MM-DD，对账常补记过去日期）。
+    pub date: String,
+    /// 调整交易备注；缺省后端补「余额调整」。
+    pub note: Option<String>,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AccountBalance {
     pub account: Account,

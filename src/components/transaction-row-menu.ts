@@ -1,18 +1,11 @@
-import { h, type Component } from 'vue'
-import { NIcon, type DropdownOption } from 'naive-ui'
+import type { DropdownOption } from 'naive-ui'
 import { AddCircleOutline, CashOutline, TrashOutline } from '@vicons/ionicons5'
+import { errorOptionProps, renderRowMenuIcon } from './row-menu-common'
 import type { Transaction } from '@/types'
 
-/**
- * 行右键菜单图标渲染工厂（issue #177）：经 NIcon 包裹图标组件，尺寸随全局菜单样式统一。
- * 后续入口（编辑 CreateOutline 等）直接复用本工厂即可。
- *
- * 与 App.vue 内部同用途的 renderMenuIcon（按名查表 + 固定 18px）语义不同：
- * 行菜单靠全局菜单样式定尺寸，不传 size。命名加 Row 前缀以区分。
- */
-export function renderRowMenuIcon(icon: Component): () => ReturnType<typeof h> {
-  return () => h(NIcon, null, { default: () => h(icon) })
-}
+// 公共件（row-menu-common）原生于本模块：renderRowMenuIcon / errorOptionProps
+// 的完整注释见该文件，此处重导出保持既有 import 路径不变。
+export { renderRowMenuIcon, errorOptionProps }
 
 /**
  * 交易行右键菜单选项组装（issue #151 退款/删除 + issue #119 加入物品 + #177 图标化）：
@@ -47,22 +40,8 @@ export function buildRowMenuOptions(
   if (options.length > 0) {
     options.push({ type: 'divider', key: 'menu-divider' })
   }
-  // 删除项着色（props 合并到 n-dropdown-option-body 节点）：内联 color 覆盖文字色；
-  // 图标容器 __prefix 有独立 color: var(--n-prefix-color) 规则（不吃继承），需一并覆盖；
-  // hover/键盘 pending 态的 body 与 prefix 颜色规则同源变量，同样覆盖以保持整体 error 色。
-  const errorProps =
-    opts.errorColor !== undefined
-      ? {
-          props: {
-            style: {
-              color: opts.errorColor,
-              '--n-prefix-color': opts.errorColor,
-              '--n-option-text-color-hover': opts.errorColor,
-              '--n-option-text-color-active': opts.errorColor,
-            },
-          },
-        }
-      : {}
+  // 删除项着主题 error 色（公共件 errorOptionProps，注释见 row-menu-common.ts）。
+  const errorProps = errorOptionProps(opts.errorColor)
   options.push({
     label: '删除',
     key: 'delete',

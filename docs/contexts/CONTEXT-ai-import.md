@@ -12,7 +12,7 @@
   - URL 前缀 `/api/v1`，JSON 请求/响应。
   - 错误格式复用 `{kind, message}`。
   - **场景**：主要场景是数据迁移（从第三方 APP 的 CSV/Excel 导入），亦可直接录入记账（账户/分类幂等创建、批量写核心交易域 Transaction）；迁移完成后支持读回验证与纠错（删除/修改，见 AIReadbackVerification / AICleanupDeletion / AICleanupModify）。
-  - **暴露的接口**（11 个端点）：`openapi.json`、`accounts`（list/create/delete）、`accounts/balances`（含黑洞账户）、`categories`（list/create/delete）、`transactions`（list，可按日期/转出账户/涉及账户/类型过滤）、`transactions/batch`、`transactions/{id}`（delete/update）、`currencies`（list）、`import/knowledge`。
+  - **暴露的接口**（12 个端点）：`openapi.json`、`accounts`（list/create/update/delete）、`accounts/balances`（含黑洞账户）、`categories`（list/create/delete）、`transactions`（list，可按日期/转出账户/涉及账户/类型过滤）、`transactions/batch`、`transactions/{id}`（delete/update）、`currencies`（list）、`import/knowledge`。
   - `accounts` / `categories` 的 create 按自然键幂等（同名复用已有记录）；`transactions/batch` 支持 `dedup` 参数（默认开启）与客户端 `idempotency_key`（见 ImportDedup / IdempotencyKey）。
   - `import/knowledge` 返回精简的导入约定文本（Pixiu 列映射、转账拆分、黑洞账户、币种映射、分单位、日期、dedup），供 AI 直接注入系统提示词。
 - **别名**：不使用"本地 API"（过于泛化）、"后端 API"（与 Tauri IPC 混淆）。
@@ -68,7 +68,7 @@
 
 - **定义**：用于承接来源不明资金变动的占位账户（如第三方导出中 `资金账户=无` 的核心交易域 Transaction），作为数据修正的缓冲池。交易照常写入、参与列表与报表，但账户本身对用户隐藏。
 - **边界**：
-  - 是参考数据 `accounts` 表中的真实记录，`is_hidden=1`；按币种预置（当前为 `无(CNY)`、`无(HKD)`），由迁移种子保证存在，不依赖导入方创建。
+  - 是参考数据 `accounts` 表中的真实记录，`is_hidden=1`；按币种预置（当前为 `无(CNY)`、`无(HKD)`），由迁移种子保证存在，不依赖导入方创建；此外参考数据与设置域 BalanceAdjustment 会按需自动创建缺失币种的黑洞账户（运行时 `ensure`，与种子同形：`无(XXX)`、type=`other`、`is_hidden=1`）。
   - `is_hidden` 只过滤账户的展示与余额汇总（账户列表、下拉选择器、`compute_all_balances`）；其交易仍正常出现在交易列表与报表，便于用户改挂到真实账户后清空删除。
   - 对 AI 的 `GET /api/v1/accounts` 可见（返回 `is_hidden` 标志），以便把"无"交易映射到黑洞账户。
   - `无` 交易的 kind 照常按金额正负判定为 income/expense；`x → 无` / `无 → x` 按转账处理（`to_account_id` 指向黑洞账户）。

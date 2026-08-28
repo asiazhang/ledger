@@ -51,6 +51,7 @@ pub fn emit_backups_changed_current() {
 /// 新增参考写入命令时同步扩充本清单，并由 [`is_reference_write`] 单测锁定。
 const REFERENCE_WRITE_COMMANDS: &[&str] = &[
     "create_account",
+    "update_account",
     "delete_account",
     "create_category",
     "update_category",

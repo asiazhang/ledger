@@ -2,9 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use crate::error::AppError;
 use crate::models::{
-    Account, AccountBalance, AccountInput, AccountType, Category, CategoryInput,
-    CreateTransactionResult, Currency, Transaction, TransactionBatchInput, TransactionInput,
-    TransactionListFilter, TransactionListResult, UpdateTransactionInput,
+    Account, AccountBalance, AccountInput, AccountType, AccountUpdateInput, Category,
+    CategoryInput, CreateTransactionResult, Currency, Transaction, TransactionBatchInput,
+    TransactionInput, TransactionListFilter, TransactionListResult, UpdateTransactionInput,
 };
 use crate::transaction::amount::TransactionKind;
 use axum::extract::{FromRef, Path, Query, State};
@@ -98,6 +98,7 @@ struct ErrorResponse {
         AccountBalance,
         AccountInput,
         AccountType,
+        AccountUpdateInput,
         Category,
         CategoryInput,
         Currency,
@@ -125,7 +126,10 @@ pub fn build_router(state: ApiState) -> Router {
             "/api/v1/accounts",
             get(list_accounts_handler).post(create_account_handler),
         )
-        .route("/api/v1/accounts/{id}", delete(delete_account_handler))
+        .route(
+            "/api/v1/accounts/{id}",
+            put(update_account_handler).delete(delete_account_handler),
+        )
         .route(
             "/api/v1/accounts/balances",
             get(list_account_balances_handler),
@@ -219,6 +223,42 @@ async fn create_account_handler(
     // 参考写入成功 → 通知前端重拉参考数据（issue #79）
     crate::events::emit_ledger_changed_if_present(&app);
     Ok((StatusCode::CREATED, Json(id)))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/v1/accounts/{id}",
+    tag = "accounts",
+    summary = "编辑账户（改名/改币种）",
+    description = "按 `id` 编辑账户，可选字段未传保持原值。`type` 不可改（参与余额符号归属）；\
+                  `currency_code` 仅无交易账户可改（有交易时后端拒绝，避免历史折算口径错乱）。\
+                  余额校准不走本端点：创建一笔与黑洞账户的转账即可（余额 = 期初 + Σ 流水）。\
+                  不存在的 id 返回 404。成功返回 200 与更新后的完整账户。",
+    request_body = AccountUpdateInput,
+    params(
+        ("id" = String, Path, description = "账户 ID")
+    ),
+    responses(
+        (status = 200, description = "更新后的完整账户", body = Account),
+        (status = 400, description = "参数错误（如名称为空、有交易改币种、未知币种）", body = ErrorResponse),
+        (status = 404, description = "账户不存在", body = ErrorResponse),
+        (status = 500, description = "数据库错误", body = ErrorResponse)
+    )
+)]
+async fn update_account_handler(
+    State(conn): State<Arc<Mutex<Connection>>>,
+    State(app): State<Option<AppHandle>>,
+    Path(id): Path<String>,
+    Json(input): Json<AccountUpdateInput>,
+) -> Result<Json<Account>, AppError> {
+    let updated = {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        crate::commands::update_account_internal(&conn, &id, input)?;
+        crate::commands::get_account_internal(&conn, &id)?
+    };
+    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
+    crate::events::emit_ledger_changed_if_present(&app);
+    Ok(Json(updated))
 }
 
 #[utoipa::path(

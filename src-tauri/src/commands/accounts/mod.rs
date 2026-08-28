@@ -16,7 +16,9 @@ use tauri::State;
 
 use crate::db::DbState;
 use crate::error::{AppError, Result};
-use crate::models::{Account, AccountBalance, AccountInput};
+use crate::models::{
+    Account, AccountBalance, AccountBalanceAdjustInput, AccountInput, AccountUpdateInput,
+};
 
 pub use core::*;
 
@@ -50,6 +52,43 @@ pub fn delete_account(db: State<'_, DbState>, app: tauri::AppHandle, id: String)
     // 参考写入成功 → 通知前端重拉参考数据（issue #79）
     crate::events::emit_reference_changed(&app, "delete_account");
     Ok(())
+}
+
+#[tauri::command]
+pub fn update_account(
+    db: State<'_, DbState>,
+    app: tauri::AppHandle,
+    id: String,
+    input: AccountUpdateInput,
+) -> Result<()> {
+    {
+        let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        core::update_account_internal(&conn, &id, input)?;
+    }
+    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
+    crate::events::emit_reference_changed(&app, "update_account");
+    Ok(())
+}
+
+/// 余额调整（ADR-0026）：生成一笔与黑洞账户的转账，把余额校准到目标值。
+/// 返回新交易 id；若按需新建了黑洞账户（参考表变更），发 `ledger:changed` 信号
+/// （交易类写入本身不触发，与既有约定一致）。
+#[tauri::command]
+pub fn adjust_account_balance(
+    db: State<'_, DbState>,
+    app: tauri::AppHandle,
+    id: String,
+    input: AccountBalanceAdjustInput,
+) -> Result<String> {
+    let (tx_id, created_black_hole) = {
+        let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        core::adjust_account_balance_internal(&conn, &id, &input)?
+    };
+    if created_black_hole {
+        // 按需新建黑洞账户 = 参考表变更 → 通知前端重拉（经 is_reference_write 白名单发射）
+        crate::events::emit_reference_changed(&app, "create_account");
+    }
+    Ok(tx_id)
 }
 
 /// 批量查询所有账户余额，单次数据库往返完成。

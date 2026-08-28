@@ -1,7 +1,11 @@
-use cucumber::{then, when};
+use cucumber::{given, then, when};
 use rusqlite::params;
 
+use tauri_app_lib::commands::{
+    adjust_account_balance_internal, delete_transaction_internal, update_account_internal,
+};
 use tauri_app_lib::db::{balance::compute_balance, device_id, new_uuid, now_iso};
+use tauri_app_lib::models::{AccountBalanceAdjustInput, AccountUpdateInput};
 
 use crate::common::query_accounts_by_name;
 use crate::world::LedgerWorld;
@@ -9,6 +13,107 @@ use crate::world::LedgerWorld;
 // ---------------------------------------------------------------------------
 // When
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// When：编辑账户 / 余额调整（ADR-0026 黑洞转账）
+// ---------------------------------------------------------------------------
+
+/// 缺失币种的黑洞账户场景用：补一条 1:1 汇率（MVP 多币种汇率 1:1，本位币折算所需）。
+#[given(expr = "存在汇率 {string} 兑本位币 {float}")]
+fn ensure_exchange_rate(world: &mut LedgerWorld, code: String, rate: f64) {
+    world
+        .conn
+        .execute(
+            "INSERT INTO exchange_rates (id, base_code, quote_code, rate, priced_at, source, updated_at, version, device_id) \
+             VALUES (?1, ?2, 'CNY', ?3, '2026-01-01T00:00:00Z', 'manual', ?4, 1, ?5)",
+            params![new_uuid(), code, rate, now_iso(), device_id()],
+        )
+        .unwrap();
+}
+
+#[when(expr = "修改账户 {string} 名称为 {string}")]
+fn rename_account(world: &mut LedgerWorld, name: String, new_name: String) {
+    let id = world.account_id(&name);
+    world.last_error = update_account_internal(
+        &world.conn,
+        &id,
+        AccountUpdateInput {
+            name: Some(new_name),
+            currency_code: None,
+        },
+    )
+    .err()
+    .map(|e| e.to_string());
+}
+
+/// 币种修改失败场景用：错误记入 `world.last_error`（应返回错误步骤断言）。
+#[when(expr = "尝试修改账户 {string} 币种为 {string}")]
+fn try_change_currency(world: &mut LedgerWorld, name: String, currency: String) {
+    let id = world.account_id(&name);
+    world.last_error = update_account_internal(
+        &world.conn,
+        &id,
+        AccountUpdateInput {
+            name: None,
+            currency_code: Some(currency),
+        },
+    )
+    .err()
+    .map(|e| e.to_string());
+}
+
+#[when(expr = "调整账户 {string} 余额至 {int} 日期 {string}")]
+fn adjust_balance(world: &mut LedgerWorld, name: String, target: i64, date: String) {
+    let id = world.account_id(&name);
+    match adjust_account_balance_internal(
+        &world.conn,
+        &id,
+        &AccountBalanceAdjustInput {
+            target_balance_cents: target,
+            date,
+            note: None,
+        },
+    ) {
+        Ok((tx_id, _)) => {
+            world.last_transaction_id = Some(tx_id);
+            world.last_error = None;
+        }
+        Err(e) => world.last_error = Some(e.to_string()),
+    }
+}
+
+/// 调整产生的转账就是普通 transfer：删除即撤销调整（ADR-0026 可逆性）。
+#[when(expr = "删除上一笔交易")]
+fn delete_last_transaction(world: &mut LedgerWorld) {
+    let tx_id = world
+        .last_transaction_id
+        .clone()
+        .expect("场景中应先产生一笔交易");
+    delete_transaction_internal(&world.conn, &tx_id).expect("删除交易失败");
+}
+
+// ---------------------------------------------------------------------------
+// Then
+// ---------------------------------------------------------------------------
+
+#[then(expr = "账户列表应包含黑洞账户 {string}")]
+fn check_black_hole_exists(world: &mut LedgerWorld, name: String) {
+    let mut stmt = world
+        .conn
+        .prepare("SELECT name FROM accounts WHERE is_deleted=0 AND is_hidden=1")
+        .unwrap();
+    let names: Vec<String> = stmt
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect();
+    assert!(
+        names.contains(&name),
+        "应包含黑洞账户 '{}'，实际 {:?}",
+        name,
+        names
+    );
+}
 
 /// 直接落库一笔分红交易（余额口径测试用 fixture）。
 ///

@@ -2,7 +2,9 @@ import { invoke } from '@tauri-apps/api/core'
 import type {
   Account,
   AccountBalance,
+  AccountBalanceAdjustInput,
   AccountInput,
+  AccountUpdateInput,
   BackupFileInfo,
   AutoBackupState,
   BackupResult,
@@ -62,6 +64,10 @@ export const api = {
   // 账户
   listAccounts: () => invoke<Account[]>('list_accounts'),
   createAccount: (input: AccountInput) => invoke<string>('create_account', { input }),
+  updateAccount: (id: string, input: AccountUpdateInput) =>
+    invoke<void>('update_account', { id, input }),
+  adjustAccountBalance: (id: string, input: AccountBalanceAdjustInput) =>
+    invoke<string>('adjust_account_balance', { id, input }),
   deleteAccount: (id: string) => invoke<void>('delete_account', { id }),
   listAccountBalances: () => invoke<AccountBalance[]>('list_account_balances'),
 
