@@ -11,6 +11,56 @@ use crate::error::Result;
 
 use super::http::{StockItem, f2_to_cents};
 
+/// 按 (标的, ISO 周) 插入或覆盖一条周采样价格历史（issue #137 / ADR-0019）。
+/// 「整周覆盖」幂等由 UNIQUE(instrument_id, week_start)（week_start 为生成列）保证：
+/// 同周任一采样日写入都落在同一行上，重复回填零重复行。清仓不删历史（仅随标的删除级联）。
+pub(super) fn upsert_price_history(
+    conn: &Connection,
+    instrument_id: &str,
+    trade_date: &str,
+    price_cents: i64,
+    currency: &str,
+) -> Result<()> {
+    let now = now_iso();
+    conn.execute(
+        "INSERT INTO price_history (id,instrument_id,trade_date,price_cents,currency_code,source,created_at,updated_at,version,device_id) \
+         VALUES (?1,?2,?3,?4,?5,'eastmoney',?6,?6,1,?7) \
+         ON CONFLICT(instrument_id, week_start) DO UPDATE SET \
+         trade_date=excluded.trade_date, price_cents=excluded.price_cents, \
+         currency_code=excluded.currency_code, source=excluded.source, \
+         updated_at=excluded.updated_at, version=version+1",
+        params![new_uuid(), instrument_id, trade_date, price_cents, currency, now, device_id()],
+    )?;
+    Ok(())
+}
+
+/// 按 (币种对, ISO 周) 插入或覆盖一条周采样汇率历史，规则与 [`upsert_price_history`] 对齐
+/// （同周整周覆盖、同期采集）。`rate` 口径与 exchange_rates 一致：1 base = ? quote。
+pub(super) fn upsert_fx_rate_history(
+    conn: &Connection,
+    base_code: &str,
+    quote_code: &str,
+    trade_date: &str,
+    rate: f64,
+) -> Result<()> {
+    let now = now_iso();
+    conn.execute(
+        "INSERT INTO fx_rate_history (id,base_code,quote_code,trade_date,rate,source,created_at,updated_at,version,device_id) \
+         VALUES (?1,?2,?3,?4,?5,'eastmoney',?6,?6,1,?7) \
+         ON CONFLICT(base_code, quote_code, week_start) DO UPDATE SET \
+         trade_date=excluded.trade_date, rate=excluded.rate, source=excluded.source, \
+         updated_at=excluded.updated_at, version=version+1",
+        params![new_uuid(), base_code, quote_code, trade_date, rate, now, device_id()],
+    )?;
+    Ok(())
+}
+
+/// K 线收盘价（真实价格值）→ 整数分。A 股/港股一致 ×100，与既有 f2 换算结果相同
+/// （A 股 f2=价格×100 直接得分；港股 f2=价格×1000 ÷10 亦即 ×100）。
+pub(super) fn kline_close_to_cents(close: f64) -> i64 {
+    (close * 100.0).round() as i64
+}
+
 /// 已存在股票标的的映射值：(id, name, market)，键为 symbol。
 pub(super) type ExistingInstrument = (String, Option<String>, String);
 

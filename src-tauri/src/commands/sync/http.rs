@@ -14,6 +14,25 @@ const API_PATH: &str = "/api/qt/clist/get";
 // 批量报价接口路径：按 secid 一次携带多只跨市场代码查询最新价（增量同步用，issue #103）。
 // 响应结构与 clist 一致（data.total / data.diff，条目 f12/f14/f2），复用同一套解析。
 const ULIST_PATH: &str = "/api/qt/ulist.np/get";
+// 日 K 线接口路径：按 secid 一次返回一段日线（近两年回填用，issue #137 / ADR-0019）。
+// 注意历史 K 线仅在 push2his 主机上提供服务（push2delay 只响应当日报价、
+// 返回空 klines），因此 K 线走独立主机池，但复用同一套轮换/限流/重试泛型层。
+const KLINE_PATH: &str = "/api/qt/stock/kline/get";
+const KLINE_HOSTS: &[&str] = &[
+    "https://push2his.eastmoney.com",
+    "https://21.push2his.eastmoney.com",
+    "https://40.push2his.eastmoney.com",
+    "https://70.push2his.eastmoney.com",
+];
+// 日 K 参数：日线（klt=101）、不复权（fqt=0）；fields2=f51,f53 → 每行 "日期,收盘价"。
+// 复权方式选不复权：历史库存真实成交价，已落库数据语义恒定（前复权会随后续除权
+// 整体重算，且与 2 年窗口外的旧行产生接缝不一致）；复权展示如需可在查询层再做。
+const KLINE_FIELDS1: &str = "f1,f2,f3,f4,f5,f6";
+const KLINE_FIELDS2: &str = "f51,f53";
+const KLINE_KLT_DAILY: &str = "101";
+const KLINE_FQT_NONE: &str = "0";
+/// 日 K 区间终点（远期占位，实际覆盖由 beg 控制近两年窗口）。
+const KLINE_END: &str = "20500101";
 // 每批最多携带的 secid 数（东财批量报价接口支持一次查多只，约 50 只/请求已足够小、避开限流）。
 pub(super) const ULIST_BATCH_SIZE: usize = 50;
 // 优先使用延迟行情主机池：push2 实时主机曾被东财对该出口 IP 触发风控（连接重置），
@@ -421,4 +440,123 @@ pub(super) fn fetch_ulist(
         .and_then(|d| d.diff)
         .map(DiffField::into_items)
         .unwrap_or_default())
+}
+
+/// 日 K 线单根样本：交易日（ISO 日期）与收盘价（真实价格值，非 f2 缩放值）。
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct KlineBar {
+    pub(super) date: String,
+    pub(super) close: f64,
+}
+
+/// 日 K 接口响应：`data` 为 null（无效 secid / 无数据）时视为空序列而非错误，
+/// 保证增量同步「停牌/无效样本优雅降级不中断」语义。
+#[derive(Debug, Deserialize)]
+pub(super) struct KlineResponse {
+    pub(super) data: Option<KlineData>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct KlineData {
+    #[serde(default)]
+    pub(super) klines: Option<Vec<String>>,
+}
+
+/// 解析 klines 字符串数组（fields2=f51,f53 → 每行 "日期,收盘价"）。
+/// 无效样本（缺字段、非数值、收盘 ≤ 0，如停牌 "-"）静默跳过、不中断。
+pub(super) fn parse_klines(raw: &[String]) -> Vec<KlineBar> {
+    raw.iter()
+        .filter_map(|line| {
+            let mut parts = line.split(',');
+            let date = parts.next()?.trim();
+            if date.is_empty() {
+                return None;
+            }
+            let close: f64 = parts.next()?.trim().parse().ok()?;
+            (close > 0.0).then(|| KlineBar {
+                date: date.to_string(),
+                close,
+            })
+        })
+        .collect()
+}
+
+/// 拉取单个 secid 的日 K 线（近两年窗口由 `beg`（YYYYMMDD）控制，终点固定远期）。
+pub(super) fn fetch_kline(
+    client: &reqwest::blocking::Client,
+    pacer: &mut Pacer,
+    secid: &str,
+    beg: &str,
+) -> Result<Vec<KlineBar>> {
+    tracing::debug!(secid, beg, "日 K 线查询");
+    let params = [
+        ("secid", secid),
+        ("klt", KLINE_KLT_DAILY),
+        ("fqt", KLINE_FQT_NONE),
+        ("fields1", KLINE_FIELDS1),
+        ("fields2", KLINE_FIELDS2),
+        ("beg", beg),
+        ("end", KLINE_END),
+    ];
+    let resp: KlineResponse = request_json_from_hosts(
+        client,
+        &params,
+        KLINE_PATH,
+        KLINE_HOSTS,
+        RetryConfig::production(),
+        pacer,
+        &format!("fetch_kline:{secid}"),
+    )?;
+    let raw = resp.data.and_then(|d| d.klines).unwrap_or_default();
+    Ok(parse_klines(&raw))
+}
+
+/// 汇率 K 线 secid 候选（按序尝试）。`pair` 为 base+quote 直连串（如 "HKDCNY"）。
+/// 东财外汇 K 线市场：119 = 全球外汇，120 = 人民币外汇（在岸，形如 HKDCNYC）。
+/// 返回 (secid, 是否取倒数)：反向候选的 rate 取倒数后落库为正方向（base→quote）。
+pub(super) fn fx_secid_candidates(pair: &str) -> Vec<(String, bool)> {
+    let mut candidates = Vec::new();
+    if pair.len() != 6 {
+        return candidates;
+    }
+    let (base, quote) = pair.split_at(3);
+    // 对人民币报价优先走在岸市场（119 无 HKDCNY/CNY 直连对）。
+    if quote == "CNY" {
+        candidates.push((format!("120.{pair}C"), false));
+    }
+    candidates.push((format!("119.{pair}"), false));
+    candidates.push((format!("119.{quote}{base}"), true));
+    if base == "CNY" {
+        candidates.push((format!("120.{quote}CNYC"), true));
+    }
+    candidates
+}
+
+/// 拉取币种对（base→quote，pair 形如 "HKDCNY"）的汇率日 K 线。
+/// 按 [`fx_secid_candidates`] 顺序尝试，首个有数据的候选生效（反向取倒数）；
+/// 全部候选无数据（如东财不覆盖该币种对）返回空列表，不报错。
+pub(super) fn fetch_fx_kline(
+    client: &reqwest::blocking::Client,
+    pacer: &mut Pacer,
+    pair: &str,
+    beg: &str,
+) -> Result<Vec<KlineBar>> {
+    for (secid, invert) in fx_secid_candidates(pair) {
+        let bars = fetch_kline(client, pacer, &secid, beg)?;
+        if bars.is_empty() {
+            continue;
+        }
+        tracing::debug!(pair, secid, invert, "汇率 K 线命中候选");
+        return Ok(if invert {
+            bars.into_iter()
+                .map(|b| KlineBar {
+                    date: b.date,
+                    close: 1.0 / b.close,
+                })
+                .collect()
+        } else {
+            bars
+        });
+    }
+    Ok(Vec::new())
 }
