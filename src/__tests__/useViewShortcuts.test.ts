@@ -87,19 +87,13 @@ describe('hasOpenOverlay', () => {
     expect(hasOpenOverlay()).toBe(false)
   })
 
-  it('检测 NModal / NDialog / NPopconfirm 覆盖层', () => {
+  it('检测 NModal / NDialog 遮罩与 NPopconfirm 覆盖层', () => {
     const el = document.createElement('div')
-    el.className = 'n-modal-container'
+    el.className = 'n-modal-mask'
     document.body.appendChild(el)
     expect(hasOpenOverlay()).toBe(true)
     el.remove()
     expect(hasOpenOverlay()).toBe(false)
-
-    const dialog = document.createElement('div')
-    dialog.className = 'n-dialog'
-    document.body.appendChild(dialog)
-    expect(hasOpenOverlay()).toBe(true)
-    dialog.remove()
 
     const popconfirm = document.createElement('div')
     popconfirm.className = 'n-popconfirm'
@@ -107,6 +101,14 @@ describe('hasOpenOverlay', () => {
     expect(hasOpenOverlay()).toBe(true)
     popconfirm.remove()
     expect(hasOpenOverlay()).toBe(false)
+  })
+
+  it('弹窗容器的残留空壳（.n-modal-container）不视为打开', () => {
+    const shell = document.createElement('div')
+    shell.className = 'n-modal-container'
+    document.body.appendChild(shell)
+    expect(hasOpenOverlay()).toBe(false)
+    shell.remove()
   })
 
   it('检测下拉菜单 / 筛选下拉弹层（issue #153 扩展）', () => {
@@ -170,11 +172,28 @@ describe('useViewShortcuts', () => {
     const { router, push } = makeRouter('dashboard')
     mountHost(router)
     const overlay = document.createElement('div')
-    overlay.className = 'n-modal-container'
+    overlay.className = 'n-modal-mask'
     document.body.appendChild(overlay)
     window.dispatchEvent(press('4', { metaKey: true }))
     expect(push).not.toHaveBeenCalled()
     overlay.remove()
+  })
+
+  it('弹窗关闭后的残留空壳（.n-modal-container）不再抑制跳转（issue #153 回归：关闭弹窗后快捷键永久失效）', () => {
+    // naive-ui VLazyTeleport 关闭后容器永久残留 DOM，存在性嗅探不得以其为信号
+    setPlatform('MacIntel')
+    const { router, push } = makeRouter('dashboard')
+    mountHost(router)
+    const shell = document.createElement('div')
+    shell.className = 'n-modal-container'
+    const hiddenCard = document.createElement('div')
+    hiddenCard.className = 'n-card'
+    hiddenCard.style.display = 'none'
+    shell.appendChild(hiddenCard)
+    document.body.appendChild(shell)
+    window.dispatchEvent(press('4', { metaKey: true }))
+    expect(push).toHaveBeenCalledWith({ name: 'accounts' })
+    shell.remove()
   })
 
   it('未命中快捷键时不跳转也不报错', () => {

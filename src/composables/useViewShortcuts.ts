@@ -48,10 +48,15 @@ export function matchViewShortcut(e: KeyboardEvent): string | null {
   return viewShortcuts.find((s) => e.key === s.key)?.name ?? null
 }
 
-/** 弹层探测选择器：Naive UI 弹窗/确认框/下拉菜单/筛选弹层的容器类名（issue #153 扩展弹层类） */
+/** 弹层探测选择器：Naive UI 弹层「仅打开时存在」的元素（issue #153 扩展弹层类）。
+ *
+ * 模态类（弹窗/useDialog 确认框）一律探测 `.n-modal-mask` 遮罩：遮罩随 show 真实挂载/卸载。
+ * 不能探测 `.n-modal-container` / `.n-dialog`——naive-ui 的 VLazyTeleport 采用
+ * useFalseUntilTruthy 语义，容器首次显示后永久残留 DOM（关闭后只剩隐藏空壳），
+ * 存在性嗅探会把「已关闭」误判为「打开」，导致快捷键永久失效（见 ADR-0021）。
+ */
 const OVERLAY_SELECTORS = [
-  '.n-modal-container',
-  '.n-dialog',
+  '.n-modal-mask',
   '.n-popconfirm',
   '.n-dropdown-menu',
   '.n-base-select-menu',
