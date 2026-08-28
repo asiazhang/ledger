@@ -25,6 +25,9 @@ import type { Instrument, MarketType } from '@/types'
 const reference = useReferenceStore()
 const { syncing, resultMessage, status, sync } = useHoldingPriceSync()
 
+// 标的行「走势」入口（issue #139）：向视图层发出带标的信息的事件，由其切换到走势 tab
+const emit = defineEmits<{ 'view-trend': [instrument: Instrument] }>()
+
 // 股票标的全量同步（issue #109）：二次确认 + 模态进度 + 中断 + 终态反馈
 const {
   syncStatus,
@@ -140,6 +143,23 @@ const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
     },
   },
   { title: '币种', key: 'currency_code', width: 60 },
+  {
+    title: '走势',
+    key: 'trend',
+    width: 70,
+    render(row) {
+      return h(
+        NButton,
+        {
+          size: 'tiny',
+          secondary: true,
+          'data-testid': `view-trend-${row.symbol}`,
+          onClick: () => emit('view-trend', row),
+        },
+        { default: () => '走势' },
+      )
+    },
+  },
   {
     title: '持仓',
     key: 'invested',
