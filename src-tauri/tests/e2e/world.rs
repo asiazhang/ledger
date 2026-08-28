@@ -8,7 +8,7 @@ use rusqlite::Connection;
 use tauri_app_lib::commands::data_location::{DataLocationChangeOutcome, DataLocationInfo};
 use tauri_app_lib::db::{init_db, open_in_memory};
 use tauri_app_lib::models::{
-    CreateTransactionResult, DashboardOverview, Transaction, TransactionInput,
+    CreateTransactionResult, DashboardOverview, ItemWithDailyCost, Transaction, TransactionInput,
     TransactionSearchResult,
 };
 use tauri_app_lib::transaction::amount::TransactionKind;
@@ -85,6 +85,12 @@ pub struct LedgerWorld {
     pub last_occurrence_id: Option<String>,
     /// 最近一次交易搜索结果快照（搜索场景断言用）
     pub last_search: Option<TransactionSearchResult>,
+    /// 最近创建的物品 id（物品场景断言用）
+    pub last_item_id: Option<String>,
+    /// 最近一次物品写入发出的失效信号次数（ledger:changed 注入 seam 断言用）
+    pub item_signal_count: usize,
+    /// 物品列表快照（物品列表场景断言用）
+    pub items_list: Vec<ItemWithDailyCost>,
     /// 最近一次净资产总览快照（首页仪表盘场景断言用）
     pub last_overview: Option<DashboardOverview>,
     /// DataLocation 引导场景：默认应用数据目录（真临时目录）
@@ -144,6 +150,9 @@ impl LedgerWorld {
             last_occurrence_id: None,
             last_search: None,
             last_overview: None,
+            last_item_id: None,
+            item_signal_count: 0,
+            items_list: Vec::new(),
             dl_default_dir: None,
             dl_target_dir: None,
             last_boot: None,
