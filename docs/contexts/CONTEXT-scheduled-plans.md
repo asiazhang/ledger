@@ -77,10 +77,11 @@
 - **节假日处理**：MVP 采用严格日期（不顺延）的决策见 ADR-0024。
 - **边界**：核心交易域 `Transaction.date` 直接复用 `Occurrence` 的 `scheduled_date`，两者保持一致。
 
-## Counterparty（交易对手）
+## Counterparty（交易对手，已废弃）
 
-- **定义**：定时交易中的收款方或付款对象，例如商家、贷款机构、订阅服务商。
-- **MVP 决策**：`counterparty` 字段落点（计划扩展表）、生成交易的复制方式、不在核心交易域 `Transaction` 表新增通用字段及 `ScheduledTransfer` 不使用 `counterparty`（用 `to_account_id` 表示本方账户间转账）的决策与边界见 ADR-0024。
+- **定义**：~~定时交易中的收款方或付款对象~~ 已废弃：该概念统一为核心交易域商户（Merchant），本域不再独立定义——定义与边界见核心交易域 `CONTEXT-core.md`「Merchant」。
+- **现状**：分期（InstallmentPlan）与订阅（Subscription）可关联商户，每期生成交易时复制到流水；定时转账（ScheduledTransfer）不使用商户（用 `to_account_id` 表示本方账户间转账）的边界维持。
+- **历史**：原 MVP 决策（`counterparty` 自由文本落计划扩展表、不在核心交易域 `Transaction` 表新增通用字段）已被 ADR-0028 推翻：`counterparty` 文本列改为 `merchant_id` 引用，全库统一「商户」，不再使用「交易对手」「商家」「收款方」等词。
 
 ## Recurrence Rule（周期规则）
 

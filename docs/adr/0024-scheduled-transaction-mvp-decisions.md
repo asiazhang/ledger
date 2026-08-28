@@ -1,6 +1,6 @@
 # ADR 0024: 定时交易 MVP 行为决策（生命周期 / 分期金额 / 周期规则 / 时间精度 / 交易对手 / 失败策略）
 
-- 状态：已接受
+- 状态：已接受（决策点「交易对手（Counterparty）」已被 ADR-0028 推翻，其余维持）
 - 日期：2026-08-28
 - 作者：Ledger 项目
 
@@ -59,6 +59,8 @@
 （日期精度、ISO 8601 日期格式与 `Transaction.date` 复用 `scheduled_date` 的口径仍见定时计划域词汇表（CONTEXT-scheduled-plans.md）「Timing（时间精度）」条目。）
 
 ### 交易对手（Counterparty）
+
+> **修订（ADR-0028）**：本节「不在 `Transaction` 表中新增通用 `counterparty` 字段」的决策点已被推翻——全库统一商户（Merchant），`counterparty` 自由文本废弃，`transactions` 直接加 `merchant_id`、扩展表文本列改引用；schema 原地改、breaking change。详见 ADR-0028。
 
 - **MVP 决策**：在 `InstallmentPlan` 和 `Subscription` 的扩展表中记录 `counterparty` 字段；生成 `Transaction` 时复制到 `Transaction.note` 或作为展示字段。
 - **MVP 不扩展**：不在 `Transaction` 表中新增通用 `counterparty` 字段，避免改动现有核心表。
