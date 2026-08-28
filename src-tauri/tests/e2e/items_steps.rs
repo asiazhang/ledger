@@ -6,13 +6,15 @@
 
 use cucumber::{then, when};
 use tauri_app_lib::commands::item::{
-    create_item_internal, delete_item_internal, dispose_item_internal, list_items_internal,
-    update_item_internal,
+    calculate_item_cost_internal, create_item_internal, delete_item_internal,
+    dispose_item_internal, list_items_internal, update_item_internal,
 };
 use tauri_app_lib::commands::transactions::insert_transaction;
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::item::cost;
-use tauri_app_lib::models::{ItemDisposeInput, ItemInput, ItemStatus, TransactionInput};
+use tauri_app_lib::models::{
+    ItemDailyCost, ItemDisposeInput, ItemInput, ItemStatus, TransactionInput,
+};
 use tauri_app_lib::transaction::amount::TransactionKind;
 
 use crate::common::assert_last_error_contains;
@@ -665,5 +667,110 @@ fn check_item_disposal_no_residual(world: &mut LedgerWorld, n: usize, date: Stri
 /// 复用「应返回错误」断言（同一 seam：world.last_error 包含片段）。
 #[then(expr = "物品处置应返回错误 {string}")]
 fn check_item_dispose_error(world: &mut LedgerWorld, expected: String) {
+    assert_last_error_contains(world, &expected);
+}
+
+// ---------------------------------------------------------------------------
+// 自选参考日重算（issue #121）：计算接口接受可选参考日，缺省沿用列表口径
+// ---------------------------------------------------------------------------
+
+/// 计算最近创建的物品（`world.last_item_id`）每天使用成本的共用入口。
+fn calc_item_cost(
+    world: &mut LedgerWorld,
+    id: &str,
+    reference_date: Option<String>,
+) -> Result<ItemDailyCost, AppError> {
+    calculate_item_cost_internal(&world.conn, id, reference_date.as_deref())
+}
+
+/// 缺省参考日（不传）：在用 → 今天；已处置 → 处置日（口径与列表一致）。
+#[when(expr = "按最近创建的物品计算每天成本 不带参考日")]
+fn calc_item_cost_default(world: &mut LedgerWorld) {
+    let id = world
+        .last_item_id
+        .clone()
+        .unwrap_or_else(|| panic!("没有已创建的物品可计算"));
+    world.last_item_cost = Some(calc_item_cost(world, &id, None).expect("计算每天成本应成功"));
+}
+
+/// 自选参考日 = 今天前 N 天（相对日期，保证天数可静态断言）。
+#[when(expr = "按最近创建的物品计算每天成本 今天前 {int} 天为参考日")]
+fn calc_item_cost_days_ago(world: &mut LedgerWorld, days_ago: i64) {
+    let id = world
+        .last_item_id
+        .clone()
+        .unwrap_or_else(|| panic!("没有已创建的物品可计算"));
+    let date = (cost::today() - chrono::Duration::days(days_ago))
+        .format("%Y-%m-%d")
+        .to_string();
+    world.last_item_cost =
+        Some(calc_item_cost(world, &id, Some(date)).expect("计算每天成本应成功"));
+}
+
+/// 自选参考日 = 今天后 N 天（预览「用满 N 天」的摊薄）。
+#[when(expr = "按最近创建的物品计算每天成本 今天后 {int} 天为参考日")]
+fn calc_item_cost_days_later(world: &mut LedgerWorld, days_later: i64) {
+    let id = world
+        .last_item_id
+        .clone()
+        .unwrap_or_else(|| panic!("没有已创建的物品可计算"));
+    let date = (cost::today() + chrono::Duration::days(days_later))
+        .format("%Y-%m-%d")
+        .to_string();
+    world.last_item_cost =
+        Some(calc_item_cost(world, &id, Some(date)).expect("计算每天成本应成功"));
+}
+
+/// 自选固定参考日（YYYY-MM-DD）。
+#[when(expr = "按最近创建的物品计算每天成本 参考日 {string}")]
+fn calc_item_cost_fixed_ref(world: &mut LedgerWorld, date: String) {
+    let id = world
+        .last_item_id
+        .clone()
+        .unwrap_or_else(|| panic!("没有已创建的物品可计算"));
+    world.last_item_cost =
+        Some(calc_item_cost(world, &id, Some(date)).expect("计算每天成本应成功"));
+}
+
+/// 尝试按指定参考日计算并捕获错误（供「应返回错误」断言）。
+#[when(expr = "尝试按最近创建的物品计算每天成本 参考日 {string}")]
+fn try_calc_item_cost(world: &mut LedgerWorld, date: String) {
+    let id = world
+        .last_item_id
+        .clone()
+        .unwrap_or_else(|| "no-such-item".into());
+    world.last_error = match calc_item_cost(world, &id, Some(date)) {
+        Err(e) => Some(e.to_string()),
+        Ok(_) => Some("预期失败但成功了".into()),
+    };
+}
+
+/// 尝试计算不存在的物品 id（固定假 id 走 NotFound 报错路径）。
+#[when(expr = "尝试按不存在的物品计算每天成本")]
+fn try_calc_item_cost_missing(world: &mut LedgerWorld) {
+    world.last_error = match calc_item_cost(world, "no-such-item-id", None) {
+        Err(e) => Some(e.to_string()),
+        Ok(_) => Some("预期失败但成功了".into()),
+    };
+}
+
+/// 断言重算结果三元组：分子 ÷ 天数 = 每天成本（与详情视图展示口径一致）。
+#[then(expr = "计算结果已用天数应为 {int} 分子应为 {int} 每天成本应为 {float}")]
+fn check_calc_item_cost(world: &mut LedgerWorld, days: i64, numerator: i64, per_day: f64) {
+    let result = world
+        .last_item_cost
+        .as_ref()
+        .unwrap_or_else(|| panic!("没有计算结果（先调「按最近创建的物品计算每天成本」）"));
+    assert_eq!(result.used_days, days, "重算天数不匹配");
+    assert_eq!(result.numerator_cents, numerator, "重算分子不匹配");
+    assert!(
+        (result.per_day_cents - per_day).abs() < 1e-6,
+        "重算每天成本不匹配: 期望 {per_day}, 实际 {}",
+        result.per_day_cents
+    );
+}
+
+#[then(expr = "计算每天成本应返回错误 {string}")]
+fn check_calc_item_cost_error(world: &mut LedgerWorld, expected: String) {
     assert_last_error_contains(world, &expected);
 }

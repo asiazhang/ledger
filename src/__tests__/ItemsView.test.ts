@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises, enableAutoUnmount, DOMWrapper } from '@vue/test-utils'
-import { NPopconfirm, NSelect } from 'naive-ui'
+import { NPopconfirm, NSelect, NDatePicker } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useItemsStore } from '@/stores/items'
 import ItemsView from '@/views/ItemsView.vue'
-import type { Currency, ItemInput, ItemWithDailyCost, Transaction } from '@/types'
+import type { Currency, ItemDailyCost, ItemInput, ItemWithDailyCost, Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -69,6 +69,9 @@ const mockItems: ItemWithDailyCost[] = [
 
 let itemList: ItemWithDailyCost[]
 
+/** 自选参考日重算的 mock 返回（null = 模拟重算失败，issue #121）。 */
+let calcResponse: ItemDailyCost | null = null
+
 /** 可供关联的支出交易（后端 list_transactions kind=expense 过滤）。 */
 const mockExpenseTxs: Transaction[] = [
   {
@@ -123,6 +126,11 @@ function setupInvoke(expenseTxs: Transaction[] = mockExpenseTxs) {
       })
     }
     if (cmd === 'list_items') return Promise.resolve(itemList)
+    if (cmd === 'calculate_item_cost') {
+      void (args as { id: string; referenceDate: string | null }).id
+      if (calcResponse === null) return Promise.reject(new Error('重算失败'))
+      return Promise.resolve(calcResponse)
+    }
     if (cmd === 'create_item') {
       itemList = [...itemList, { ...mockItems[0], id: 'item-new', name: '键盘' }]
       void args
@@ -158,6 +166,7 @@ beforeEach(async () => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
   itemList = mockItems
+  calcResponse = null
   setupInvoke()
   localStorage.clear()
   // 参考数据（币种选项）与物品 store 均为 self-init，提前预热
@@ -599,4 +608,90 @@ describe('ItemsView 物品处置（issue #120）', () => {
     // 弹窗仍开着
     expect(bodyQuery('[data-testid="item-dispose-modal"]')).not.toBeNull()
   })
+})
+
+describe('ItemsView 自选参考日重算（issue #121）', () => {
+  /** 打开第 1 件物品的详情弹窗并返回弹窗元素。 */
+  async function openDetailModal(wrapper: ReturnType<typeof mount>) {
+    const detailBtn = wrapper.findAll('button').find((b) => b.text() === '详情')
+    await detailBtn!.trigger('click')
+    await flushPromises()
+    const modal = bodyQuery('[data-testid="item-detail-modal"]')
+    expect(modal).not.toBeNull()
+    return modal!
+  }
+
+  it('打开详情不自动重算；选择参考日后调用 calculate_item_cost 并展示重算结果', async () => {
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+    const modal = await openDetailModal(wrapper)
+
+    // 未选参考日：不发起重算，展示列表快照口径
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'calculate_item_cost')).toBe(false)
+    expect(modal.textContent).toContain('1000')
+
+    calcResponse = { used_days: 2000, numerator_cents: 1_000_000, per_day_cents: 500 }
+    const picker = wrapper
+      .findAllComponents(NDatePicker)
+      .find((s) => s.props('placeholder') === '自选参考日')
+    expect(picker, '详情弹窗应有「自选参考日」选择器').toBeTruthy()
+    picker!.vm.$emit('update:formatted-value', '2026-03-01')
+    await flushPromises()
+
+    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'calculate_item_cost')
+    expect(calls).toHaveLength(1)
+    expect(calls[0][1]).toEqual({ id: 'item-1', referenceDate: '2026-03-01' })
+    // 重算结果覆盖展示：2000 天；每天成本 500 分 → ¥5；分子 ¥1,0000
+    const text = modal.textContent ?? ''
+    expect(text).toContain('2000')
+    expect(text).toContain('¥5')
+    expect(text).toContain('¥1,0000')
+  })
+
+  it('清空参考日回退缺省口径（referenceDate 传 null）', async () => {
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+    await openDetailModal(wrapper)
+
+    const picker = wrapper
+      .findAllComponents(NDatePicker)
+      .find((s) => s.props('placeholder') === '自选参考日')!
+    calcResponse = { used_days: 2000, numerator_cents: 1_000_000, per_day_cents: 500 }
+    picker.vm.$emit('update:formatted-value', '2026-03-01')
+    await flushPromises()
+    expect(modalText()).toContain('2000')
+
+    // 清空 → 缺省口径（mock 返回与列表快照一致的天数）
+    calcResponse = { used_days: 1000, numerator_cents: 1_000_000, per_day_cents: 1000 }
+    picker.vm.$emit('update:formatted-value', null)
+    await flushPromises()
+
+    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'calculate_item_cost')
+    expect(calls).toHaveLength(2)
+    expect((calls[1][1] as { referenceDate: string | null }).referenceDate).toBeNull()
+    expect(modalText()).toContain('1000')
+  })
+
+  it('重算失败提示且保留原值', async () => {
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+    const modal = await openDetailModal(wrapper)
+
+    // calcResponse 保持 null → 重算 reject
+    const picker = wrapper
+      .findAllComponents(NDatePicker)
+      .find((s) => s.props('placeholder') === '自选参考日')!
+    picker.vm.$emit('update:formatted-value', '2026-03-01')
+    await flushPromises()
+
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'calculate_item_cost')).toBe(true)
+    // 原列表快照口径不变
+    const text = modal.textContent ?? ''
+    expect(text).toContain('1000')
+    expect(text).toContain('¥10')
+  })
+
+  function modalText(): string {
+    return bodyQuery('[data-testid="item-detail-modal"]')!.textContent ?? ''
+  }
 })

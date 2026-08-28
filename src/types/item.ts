@@ -62,3 +62,14 @@ export interface ItemWithDailyCost extends Item {
   /** 每天成本（分/天，小数，查询时刻快照）。 */
   per_day_cents: number
 }
+
+/** 每天使用成本计算结果（issue #121，对应后端 `models::item::ItemDailyCost`）：
+ * 与 `ItemWithDailyCost` 尾部三元组同一口径（`item::cost` 接缝），详情视图重算展示共用。 */
+export interface ItemDailyCost {
+  /** 已用天数：购买日 → 目标日（参考日或缺省目标日）的日历天数，含起止两端。 */
+  used_days: number
+  /** 成本分解分子（分）：总成本 − 残值，下限 0。 */
+  numerator_cents: number
+  /** 每天成本（分/天，小数），仅供展示。 */
+  per_day_cents: number
+}

@@ -153,6 +153,7 @@ pub fn run() {
             commands::portfolio_value_trend,
             commands::list_items,
             commands::create_item,
+            commands::calculate_item_cost,
             commands::update_item,
             commands::dispose_item,
             commands::delete_item,
