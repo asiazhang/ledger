@@ -1,27 +1,27 @@
 # AGENTS.md
 
-本文件为 AI 编程助手在本仓库中处理代码时提供指导。只讲「原则」与「去哪查」——事实层（schema、路由、命令名）由环境与文档导航提供。
+给 AI 编程助手的指导，只讲「原则」与「去哪查」；事实层（schema、路由、命令名）以环境与下列文档为准。
 
 ## 文档导航
 
 动手前先定位到对应层：
 
 - **`CONTEXT-MAP.md`** — 领域词汇表地图：领域词汇表（叙述与决策归 `docs/adr/`）按域拆分为集中存放于 `docs/contexts/` 的 `CONTEXT-*.md` 分域文件。动手前先读地图，再选读与改动主题相关的分域词汇表与相关 ADR；**与代码行为冲突时以代码为准并同步修正词汇表。**
-- **`docs/adr/`** — 决策记录（文件名即编号与主题，如 ADR-0012 参考数据失效、ADR-0013 行为层分派、ADR-0017 应用配置归口）。改到某区域前先读该区域的 ADR。
+- **`docs/adr/`** — 决策记录（文件名即编号与主题）。改到某区域前先读该区域的 ADR。
 - **`docs/agents/`** — 专项操作指引（issue-tracker 用 `gh`、triage 标签、domain 文档消费方式）。
 - **`docs/model/`、`docs/specs/`** — 数据模型与规格。
 - **`scripts/`** — 一键脚本，用法见各脚本头部注释（含 README 未提及的操作）。
 
 ## 项目概览
 
-Ledger：Tauri 2 桌面记账应用。前端 Vue 3 + TypeScript + Vite（Naive UI 按需 import），后端 Rust（命令集中在 `src-tauri/src/commands/`，前端经 `src/api/index.ts` 的 `api` 对象 invoke）。
+Ledger：Tauri 2 桌面记账应用，前端 Vue 3 + TypeScript、后端 Rust。后端命令集中在 `src-tauri/src/commands/`，前端经 `src/api/index.ts` 的 `api` 对象 invoke。
 
 > **发布约定：打 git tag 即发布。** 未发布（最新 tag 之后）的 schema、API、数据模型可自由修改；已发布（最新 tag 及更早）**冻结**：迁移只增不改（变更一律新增向前迁移），API 与数据模型只增不改。
 
 ## 工作流约定
 
 - **调用 `/implement` skill 实施任何改动必须在独立的 git worktree 中进行**：`git worktree add` 创建，完成后在工作树内提交。这样主检出目录始终保持干净，实验性改动不污染当前状态。
-- **worktree 内跑前端类型检查需先软链 node_modules**：`git worktree add` 建立的独立检出**不含 `node_modules`**，此时直接跑 `./scripts/check.sh`（或 `npx vue-tsc`）会让 npx 走缓存里与项目不匹配的 `typescript`，报 `ERR_PACKAGE_PATH_NOT_EXPORTED: Package subpath './lib/tsc' is not defined by "exports"`。解决：软链主检出的依赖即可——`ln -s <主检出绝对路径>/node_modules <worktree>/node_modules`，随后 `vue-tsc --noEmit` 与 `check.sh` 正常（node_modules 为 gitignore，软链不进提交）。
+- **worktree 内跑前端类型检查需先软链 node_modules**：`git worktree add` 建立的独立检出**不含 `node_modules`**，此时直接跑 `./scripts/check.sh`（或 `npx vue-tsc`）会让 npx 走缓存里与项目不匹配的 `typescript`，报 `ERR_PACKAGE_PATH_NOT_EXPORTED` 即此因。解决：软链主检出的依赖即可——`ln -s <主检出绝对路径>/node_modules <worktree>/node_modules`，随后 `vue-tsc --noEmit` 与 `check.sh` 正常（node_modules 为 gitignore，软链不进提交）。
 
 ## 金额与多币种
 
@@ -34,8 +34,7 @@ Ledger：Tauri 2 桌面记账应用。前端 Vue 3 + TypeScript + Vite（Naive U
 `transactions.kind` 是**闭集 8 种**：`income | expense | transfer | refund | buy | sell | dividend | split`（真源 `transaction::amount::TransactionKind`；注意 `categories.kind` 仅 `income | expense`）。
 
 - 校验与落库统一走 Writer 接缝（`src-tauri/src/transaction/writer.rs`，`normalize` / `insert_row` / `update_row`）：所有写路径（命令层、买入/卖出行、定时引擎、批量导入）都经它。
-- 每类 kind 的行为（校验/归一化/副作用/回退）收敛在 `commands::transactions::behavior` 行为层（`plan → apply / revert` 单点分派）：通用 kind 走 Writer 接缝，buy/sell 委托 `commands::investment` 的 `prepare / apply / revert`，dividend/split 显式「暂不支持」拒绝。
-- 改动交易写入行为就加在行为层分派上，让所有写路径自然走到它；改动金额口径只改 Amount 接缝内矩阵一处。
+- 每类 kind 的行为（校验/归一化/副作用/回退）收敛在 `commands::transactions::behavior` 行为层（`plan → apply / revert` 单点分派）：通用 kind 走 Writer 接缝，buy/sell 委托 `commands::investment` 的 `prepare / apply / revert`，dividend/split 显式「暂不支持」拒绝。改动写入行为就加在此分派上，所有写路径自然走到。
 
 ## 前端状态
 
