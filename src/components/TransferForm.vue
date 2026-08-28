@@ -10,10 +10,18 @@ import {
   NSpace,
 } from 'naive-ui'
 import { useTransferForm } from '@/composables/useTransferForm'
+import type { Transaction } from '@/types'
 
-const emit = defineEmits<{ created: [] }>()
+// 编辑模式（issue #178）：传入 editing 时回填既有交易并走更新命令。
+const props = defineProps<{ editing?: Transaction | null }>()
 
-const ctx = useTransferForm({ onCreated: () => emit('created') })
+const emit = defineEmits<{ created: []; saved: [] }>()
+
+const ctx = useTransferForm({
+  onCreated: () => emit('created'),
+  onUpdated: () => emit('saved'),
+  editing: () => props.editing ?? null,
+})
 </script>
 
 <template>
@@ -61,7 +69,7 @@ const ctx = useTransferForm({ onCreated: () => emit('created') })
       </NFormItem>
 
       <NButton type="primary" @click="ctx.submit">
-        记转账
+        {{ editing ? '保存修改' : '记转账' }}
       </NButton>
     </NSpace>
   </NForm>

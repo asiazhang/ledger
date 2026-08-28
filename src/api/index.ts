@@ -48,6 +48,7 @@ import type {
   SyncHoldingPricesResult,
   TrendRange,
   TransactionInput,
+  UpdateTransactionInput,
   TransactionListFilter,
   TransactionListResult,
   TransactionSearchFilter,
@@ -81,6 +82,10 @@ export const api = {
     invoke<string>('create_transaction', { input }),
   createTransactions: (inputs: TransactionInput[]) =>
     invoke<CreateTransactionResult[]>('create_transactions', { inputs }),
+  /** 全字段替换既有交易（issue #178）：与 HTTP PUT /api/v1/transactions/{id} 同一行为层权威；
+   * 幂等键/内容哈希不可编辑（入参类型不含该字段）。不存在/已删除报 NotFound。 */
+  updateTransaction: (id: string, input: UpdateTransactionInput) =>
+    invoke<void>('update_transaction', { id, input }),
   deleteTransaction: (id: string) => invoke<void>('delete_transaction', { id }),
 
   // 交易搜索
