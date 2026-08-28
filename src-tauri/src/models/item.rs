@@ -80,6 +80,9 @@ pub struct Item {
     pub disposal_date: Option<String>,
     /// 残值（仅 disposed 可填，整数分）。
     pub residual_value_cents: Option<i64>,
+    /// 关联购买交易 id（溯源，可空）：仅为自动带出日期/成本与溯源，
+    /// 不建立「交易→物品」反向引用（CONTEXT.md Item 条目）。
+    pub purchase_transaction_id: Option<String>,
     pub note: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -100,6 +103,7 @@ impl FromRow for Item {
             status: row.get("status")?,
             disposal_date: row.get("disposal_date")?,
             residual_value_cents: row.get("residual_value_cents")?,
+            purchase_transaction_id: row.get("purchase_transaction_id")?,
             note: row.get("note")?,
             created_at: row.get("created_at")?,
             updated_at: row.get("updated_at")?,
@@ -125,6 +129,10 @@ pub struct ItemInput {
     pub currency_code: String,
     /// 备注（可选）。
     pub note: Option<String>,
+    /// 可选关联的购买交易 id：创建时提供（或修改时提供与既有不同的 id）→
+    /// 校验交易存在且为 expense，并自动带出购买日期与基础成本（覆盖同名字段）；
+    /// 修改时提供与既有相同的 id 或省略（None）→ 维持现状，不重新带出。
+    pub purchase_transaction_id: Option<String>,
 }
 
 /// 物品列表项：物品实体 + 每天使用成本快照（经 `item::cost` 接缝计算，

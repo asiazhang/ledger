@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises, enableAutoUnmount, DOMWrapper } from '@vue/test-utils'
-import { NPopconfirm } from 'naive-ui'
+import { NPopconfirm, NSelect } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useItemsStore } from '@/stores/items'
 import ItemsView from '@/views/ItemsView.vue'
-import type { Currency, ItemInput, ItemWithDailyCost } from '@/types'
+import type { Currency, ItemInput, ItemWithDailyCost, Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -35,6 +35,7 @@ const mockItems: ItemWithDailyCost[] = [
     status: 'in_use',
     disposal_date: null,
     residual_value_cents: null,
+    purchase_transaction_id: null,
     note: null,
     created_at: '2025-01-01T00:00:00Z',
     updated_at: '2025-01-01T00:00:00Z',
@@ -54,6 +55,7 @@ const mockItems: ItemWithDailyCost[] = [
     status: 'in_use',
     disposal_date: null,
     residual_value_cents: null,
+    purchase_transaction_id: null,
     note: null,
     created_at: '2026-01-02T00:00:00Z',
     updated_at: '2026-01-02T00:00:00Z',
@@ -67,11 +69,59 @@ const mockItems: ItemWithDailyCost[] = [
 
 let itemList: ItemWithDailyCost[]
 
-function setupInvoke() {
+/** 可供关联的支出交易（后端 list_transactions kind=expense 过滤）。 */
+const mockExpenseTxs: Transaction[] = [
+  {
+    id: 'tx-1',
+    kind: 'expense',
+    amount_cents: 599_900,
+    currency_code: 'CNY',
+    amount_native_cents: 599_900,
+    account_id: 'acc-1',
+    to_account_id: null,
+    category_id: null,
+    refund_of_transaction_id: null,
+    note: 'iPhone 15',
+    date: '2026-01-15',
+    created_at: '2026-01-15T00:00:00Z',
+    updated_at: '2026-01-15T00:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: false,
+  },
+  {
+    id: 'tx-2',
+    kind: 'expense',
+    amount_cents: 100_000,
+    currency_code: 'CNY',
+    amount_native_cents: 100_000,
+    account_id: 'acc-1',
+    to_account_id: null,
+    category_id: null,
+    refund_of_transaction_id: null,
+    note: '显示器',
+    date: '2026-02-20',
+    created_at: '2026-02-20T00:00:00Z',
+    updated_at: '2026-02-20T00:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: false,
+  },
+]
+
+function setupInvoke(expenseTxs: Transaction[] = mockExpenseTxs) {
   mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve([])
     if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_transactions') {
+      const filter = (args as { filter?: { kind?: string } | null }).filter
+      // 物品视图只拉支出交易（关联购买交易候选）；其他 kind 返回空
+      return Promise.resolve({
+        items: filter?.kind === 'expense' ? expenseTxs : [],
+        total: filter?.kind === 'expense' ? expenseTxs.length : 0,
+      })
+    }
     if (cmd === 'list_items') return Promise.resolve(itemList)
     if (cmd === 'create_item') {
       itemList = [...itemList, { ...mockItems[0], id: 'item-new', name: '键盘' }]
@@ -303,5 +353,122 @@ describe('ItemsView 物品详情（issue #117）', () => {
     const text = bodyQuery('[data-testid="item-detail-modal"]')!.textContent ?? ''
     expect(text).toContain('HHKB')
     expect(text).toContain('2025-06-01')
+  })
+})
+
+describe('ItemsView 关联购买交易（issue #119）', () => {
+  /** 创建表单里的「关联购买交易」下拉（按 placeholder 区分于币种下拉）。 */
+  function linkSelect(wrapper: ReturnType<typeof mount>) {
+    const sel = wrapper
+      .findAllComponents(NSelect)
+      .find((s) => s.props('placeholder') === '关联购买交易')
+    expect(sel, '创建表单应有「关联购买交易」下拉').toBeTruthy()
+    return sel!
+  }
+
+  it('未关联时创建入参 purchase_transaction_id 为 null', async () => {
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+
+    await wrapper.find('input[placeholder="物品名称"]').setValue('键盘')
+    await wrapper.find('input[placeholder="总成本（元）"]').setValue('299')
+    const createBtn = wrapper.findAll('button').find((b) => b.text() === '创建')
+    await createBtn!.trigger('click')
+    await flushPromises()
+
+    const input = (mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_item')[0][1] as {
+      input: ItemInput
+    }).input
+    expect(input.purchase_transaction_id).toBeNull()
+  })
+
+  it('选择关联交易后自动带出日期与成本（禁用手改），创建入参携带溯源 id', async () => {
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+
+    // 选交易前成本/日期可编辑
+    const costInput = wrapper.find('input[placeholder="总成本（元）"]')
+    expect(costInput.attributes('disabled')).toBeUndefined()
+
+    await wrapper.find('input[placeholder="物品名称"]').setValue('iPhone')
+    linkSelect(wrapper).vm.$emit('update:value', 'tx-1')
+    await flushPromises()
+
+    // 自动带出：成本表单值被交易金额覆盖（599900 分 → 5999 元），且禁用手改
+    const costAfter = wrapper.find('input[placeholder="总成本（元）"]')
+    expect((costAfter.element as HTMLInputElement).value).toBe('5999')
+    expect(costAfter.attributes('disabled')).toBeDefined()
+
+    const createBtn = wrapper.findAll('button').find((b) => b.text() === '创建')
+    await createBtn!.trigger('click')
+    await flushPromises()
+
+    const input = (mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_item')[0][1] as {
+      input: ItemInput
+    }).input
+    expect(input.purchase_transaction_id).toBe('tx-1')
+    // 日期与成本为交易带出值（即使表单曾默认今天/被改过）
+    expect(input.purchase_date).toBe('2026-01-15')
+    expect(input.total_cost_cents).toBe(599_900)
+    expect(input.currency_code).toBe('CNY')
+  })
+
+  it('编辑弹窗预填既有关联且可手动调成本，换关后锁定并携带新溯源 id', async () => {
+    itemList = [
+      { ...itemList[0], purchase_transaction_id: 'tx-1', purchase_date: '2026-01-15', total_cost_cents: 599_900 },
+    ]
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+
+    const editBtn = wrapper.findAll('button').find((b) => b.text() === '编辑')
+    await editBtn!.trigger('click')
+    await flushPromises()
+
+    const modal = bodyQuery('[data-testid="item-edit-modal"]')!
+    // 弹窗内的关联下拉 = 同 placeholder 的第 2 个（第 1 个在创建表单）
+    const linkSelects = wrapper
+      .findAllComponents(NSelect)
+      .filter((s) => s.props('placeholder') === '关联购买交易')
+    const modalSelect = linkSelects[linkSelects.length - 1]
+    expect(modalSelect.props('value')).toBe('tx-1')
+    // 维持既有关联：成本可手动编辑（后续花费累加到总成本，用户故事 8）
+    const costInput = modal.querySelector('input[placeholder="总成本（元）"]') as HTMLInputElement
+    expect(costInput.value).toBe('5999')
+    expect(costInput.disabled).toBe(false)
+
+    // 换关到 tx-2 → 自动带出新日期与成本并锁定（后端将重新带出覆盖）
+    modalSelect.vm.$emit('update:value', 'tx-2')
+    await flushPromises()
+    const costAfterSwitch = modal.querySelector(
+      'input[placeholder="总成本（元）"]',
+    ) as HTMLInputElement
+    expect(costAfterSwitch.value).toBe('1000')
+    expect(costAfterSwitch.disabled).toBe(true)
+
+    await new DOMWrapper(modal.querySelector('input[placeholder="物品名称"]')).setValue('显示器 4K')
+    const saveBtn = [...modal.querySelectorAll('button')].find((b) => b.textContent === '保存')
+    saveBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+
+    const saved = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'update_item')[0][1] as {      id: string
+      input: ItemInput
+    }
+    expect(saved.id).toBe('item-1')
+    expect(saved.input.purchase_transaction_id).toBe('tx-2')
+    expect(saved.input.purchase_date).toBe('2026-02-20')
+    expect(saved.input.total_cost_cents).toBe(100_000)
+  })
+
+  it('详情展示关联购买交易溯源', async () => {
+    itemList = [{ ...itemList[0], purchase_transaction_id: 'tx-1' }]
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+
+    const detailBtn = wrapper.findAll('button').find((b) => b.text() === '详情')
+    await detailBtn!.trigger('click')
+    await flushPromises()
+
+    const text = bodyQuery('[data-testid="item-detail-modal"]')!.textContent ?? ''
+    expect(text).toContain('关联购买交易')
   })
 })

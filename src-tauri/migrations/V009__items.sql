@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS items (
     status              TEXT NOT NULL DEFAULT 'in_use' CHECK(status IN ('in_use','disposed')),  -- 生命周期：在用/已处置
     disposal_date       TEXT,                                        -- 处置日期（仅 disposed；YYYY-MM-DD）
     residual_value_cents INTEGER,                                    -- 残值（仅 disposed 可填，整数分；可空）
+    -- 关联购买交易（issue #119）：溯源指针，可空。仅为自动带出日期/成本与溯源；
+    -- 不建立「交易→物品」反向引用。交易硬删时置空（与 refund_of_transaction_id 同款）。
+    purchase_transaction_id TEXT REFERENCES transactions(id) ON DELETE SET NULL,
     note                TEXT,                                        -- 备注（品牌/型号/购买渠道等）
     is_deleted          INTEGER NOT NULL DEFAULT 0 CHECK(is_deleted IN (0, 1)),  -- 软删除标志
     version             INTEGER NOT NULL DEFAULT 1,                  -- 版本计数

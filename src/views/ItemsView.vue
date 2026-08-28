@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, onMounted, ref } from 'vue'
+import { h, computed, onMounted, ref } from 'vue'
 import {
   NCard,
   NButton,
@@ -19,7 +19,8 @@ import {
 } from 'naive-ui'
 import { formatAmount } from '@/types'
 import { yuanToCents, centsToYuan } from '@/utils/money'
-import type { ItemInput, ItemWithDailyCost } from '@/types'
+import type { ItemInput, ItemWithDailyCost, Transaction } from '@/types'
+import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { useItemsStore } from '@/stores/items'
@@ -47,6 +48,44 @@ function todayStr(): string {
 const currencyOptions = () =>
   reference.currencies.map((c) => ({ label: `${c.name} (${c.code})`, value: c.code }))
 
+// —— 关联购买交易（issue #119）：可选关联一笔 expense 交易，自动带出购买日期与基础成本 ——
+// 后端校验交易存在且为 expense 并以交易值覆盖落库；物品侧仅存溯源指针，无「交易→物品」反向引用。
+const expenseTxs = ref<Transaction[]>([])
+const linkTxId = ref<string | null>(null)
+const editLinkTxId = ref<string | null>(null)
+/** 编辑弹窗打开时物品的既有关联：维持原关联 → 手动编辑照常生效；换关 → 后端重新带出覆盖。 */
+const editOrigLink = ref<string | null>(null)
+
+const linkTxOptions = () =>
+  expenseTxs.value.map((t) => ({
+    label: `${t.date} · ${formatAmount(t.amount_cents, reference.getCurrency(t.currency_code))}${t.note ? ` · ${t.note}` : ''}`,
+    value: t.id,
+  }))
+
+function findLinkedTx(txId: string | null): Transaction | undefined {
+  return expenseTxs.value.find((t) => t.id === txId)
+}
+
+/** 创建表单：选中关联交易后自动带出日期/成本/币种（带出期间禁用手改，与后端口径一致）。 */
+function applyLinkedTx(txId: string | null) {
+  const tx = findLinkedTx(txId)
+  if (!tx) return
+  purchaseDate.value = tx.date
+  costYuan.value = String(centsToYuan(tx.amount_cents))
+  currencyCode.value = tx.currency_code
+}
+
+/** 编辑弹窗：换关时自动带出日期/成本；与后端约定一致，换关即重新带出覆盖。 */
+function applyLinkedTxToEdit(txId: string | null) {
+  const tx = findLinkedTx(txId)
+  if (!tx) return
+  editPurchaseDate.value = tx.date
+  editCostYuan.value = String(centsToYuan(tx.amount_cents))
+}
+
+/** 换关中（选中了与原关联不同的交易）：日期/成本将被后端带出覆盖，禁用手改。 */
+const editRelinking = computed(() => editLinkTxId.value !== editOrigLink.value)
+
 async function create() {
   if (!name.value.trim()) {
     message.warning('请输入物品名称')
@@ -63,6 +102,7 @@ async function create() {
     total_cost_cents: costCents,
     currency_code: currencyCode.value,
     note: note.value.trim() || null,
+    purchase_transaction_id: linkTxId.value,
   }
   try {
     await itemsStore.create(input)
@@ -88,6 +128,8 @@ function openEdit(row: ItemWithDailyCost) {
   editPurchaseDate.value = row.purchase_date
   editCostYuan.value = String(centsToYuan(row.total_cost_cents))
   editNote.value = row.note ?? ''
+  editLinkTxId.value = row.purchase_transaction_id
+  editOrigLink.value = row.purchase_transaction_id
 }
 
 function closeEdit() {
@@ -115,6 +157,7 @@ async function saveEdit() {
     total_cost_cents: costCents,
     currency_code: editing.value.currency_code,
     note: editNote.value.trim() || null,
+    purchase_transaction_id: editLinkTxId.value,
   }
   try {
     await itemsStore.update(editing.value.id, input)
@@ -191,6 +234,14 @@ onMounted(() => {
   void itemsStore.refresh().catch(() => {
     /* 失败信号已由 status 承载 */
   })
+  // 关联购买交易候选：支出交易，倒序取最近 100 笔（MVP 取舍：更早的交易不在
+  // 候选内；加载失败不阻塞创建，可手填日期/成本）
+  api
+    .listTransactions({ kind: 'expense', limit: 100 })
+    .then((r) => (expenseTxs.value = r.items))
+    .catch(() => {
+      /* 候选为空，创建退化为手填 */
+    })
 })
 </script>
 
@@ -204,19 +255,36 @@ onMounted(() => {
         <NFormItem label="购买日期">
           <NDatePicker
             v-model:formatted-value="purchaseDate"
+            :disabled="!!linkTxId"
             type="date"
             value-format="yyyy-MM-dd"
             style="width: 140px"
           />
         </NFormItem>
         <NFormItem label="总成本">
-          <NInput v-model:value="costYuan" placeholder="总成本（元）" style="width: 120px" />
+          <NInput
+            v-model:value="costYuan"
+            :disabled="!!linkTxId"
+            placeholder="总成本（元）"
+            style="width: 120px"
+          />
         </NFormItem>
         <NFormItem label="币种">
           <NSelect
             v-model:value="currencyCode"
             :options="currencyOptions()"
+            :disabled="!!linkTxId"
             style="width: 130px"
+          />
+        </NFormItem>
+        <NFormItem label="关联购买交易">
+          <NSelect
+            v-model:value="linkTxId"
+            :options="linkTxOptions()"
+            placeholder="关联购买交易"
+            clearable
+            style="width: 240px"
+            @update:value="applyLinkedTx"
           />
         </NFormItem>
         <NFormItem label="备注">
@@ -246,13 +314,27 @@ onMounted(() => {
         <NFormItem label="购买日期">
           <NDatePicker
             v-model:formatted-value="editPurchaseDate"
+            :disabled="editRelinking"
             type="date"
             value-format="yyyy-MM-dd"
             style="width: 160px"
           />
         </NFormItem>
         <NFormItem label="总成本">
-          <NInput v-model:value="editCostYuan" placeholder="总成本（元）" style="width: 160px" />
+          <NInput
+            v-model:value="editCostYuan"
+            :disabled="editRelinking"
+            placeholder="总成本（元）"
+            style="width: 160px"
+          />
+        </NFormItem>
+        <NFormItem label="关联购买交易">
+          <NSelect
+            v-model:value="editLinkTxId"
+            :options="linkTxOptions()"
+            placeholder="关联购买交易"
+            @update:value="applyLinkedTxToEdit"
+          />
         </NFormItem>
         <NFormItem label="币种">
           <span>{{ editing.currency_code }}（不可修改）</span>
@@ -290,6 +372,9 @@ onMounted(() => {
           （{{ app.defaultCurrency }}）
         </NDescriptionsItem>
         <NDescriptionsItem label="备注">{{ detail.note ?? '—' }}</NDescriptionsItem>
+        <NDescriptionsItem label="关联购买交易">
+          {{ detail.purchase_transaction_id ? '已关联（溯源）' : '—' }}
+        </NDescriptionsItem>
         <NDescriptionsItem label="已用天数">
           {{ detail.used_days }} 天（含购买当日）
         </NDescriptionsItem>

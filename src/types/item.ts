@@ -25,6 +25,8 @@ export interface Item extends Syncable {
   disposal_date: string | null
   /** 残值（仅 disposed 可填，整数分）。 */
   residual_value_cents: number | null
+  /** 关联购买交易 id（溯源，可空）；无「交易→物品」反向引用。 */
+  purchase_transaction_id: string | null
   note: string | null
   created_at: string
 }
@@ -38,6 +40,9 @@ export interface ItemInput {
   total_cost_cents: number
   currency_code: string
   note?: string | null
+  /** 可选关联的购买交易（expense）id：创建时提供（或修改时提供与既有不同的 id）
+   * → 后端自动带出日期与基础成本；修改时提供相同 id 或省略 → 维持现状不重新带出。 */
+  purchase_transaction_id?: string | null
 }
 
 /** 物品列表项：物品实体 + 每天使用成本快照（后端 `item::cost` 接缝计算）。 */
