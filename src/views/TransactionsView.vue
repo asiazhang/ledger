@@ -14,6 +14,7 @@ import {
   NModal,
   useDialog,
   useMessage,
+  useThemeVars,
   type DataTableColumn,
   type DropdownOption,
   type PaginationProps,
@@ -313,8 +314,9 @@ function closeAddItem() {
   showAddItem.value = false
 }
 
-/** 右键菜单（issue #151 / #119）：expense 行含「退款」「加入物品」（已建物品置灰），
- * 所有行含「删除」；选项组装收口在 transaction-row-menu 纯函数（可独立测试）。 */
+/** 右键菜单（issue #151 / #119 / #177）：expense 行含「退款」「加入物品」（已建物品置灰），
+ * 所有行含「删除」；选项组装收口在 transaction-row-menu 纯函数（可独立测试），
+ * 菜单项图标与删除项 error 色也由该函数统一注入。 */
 const menuShow = ref(false)
 const menuX = ref(0)
 const menuY = ref(0)
@@ -328,9 +330,16 @@ const linkedTxIds = computed(
     ),
 )
 
+// 主题 error 色（issue #177）：删除项经 DropdownOption props 着色，不硬编码色值，
+// 暗色模式自动适配（useThemeVars 随当前主题响应式取值）。
+const themeVars = useThemeVars()
+
 const menuOptions = computed(() =>
   menuRow.value
-    ? buildRowMenuOptions(menuRow.value, { hasItem: linkedTxIds.value.has(menuRow.value.id) })
+    ? buildRowMenuOptions(menuRow.value, {
+        hasItem: linkedTxIds.value.has(menuRow.value.id),
+        errorColor: themeVars.value.errorColor,
+      })
     : [],
 )
 
