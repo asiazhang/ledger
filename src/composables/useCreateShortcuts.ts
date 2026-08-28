@@ -30,9 +30,10 @@ export function matchCreateShortcut(e: KeyboardEvent): CreateTransactionKind | n
 
 /**
  * 纯函数：事件焦点是否位于可编辑元素（input/textarea/select/contenteditable）。
- * 命中时抑制快捷键，避免用户在输入/筛选时误开弹窗。
+ * 命中时抑制快捷键，避免用户在输入/筛选时误开弹窗；
+ * 同时是窗口行为守卫的右键放行判定（issue #154，保留系统编辑菜单）。
  */
-export function isEditableTarget(e: KeyboardEvent): boolean {
+export function isEditableTarget(e: Event): boolean {
   const el = e.target
   if (!(el instanceof HTMLElement)) return false
   if (el.isContentEditable) return true

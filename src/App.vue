@@ -31,9 +31,14 @@ import { api } from '@/api'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
 import { loadSidebarCollapsed, saveSidebarCollapsed } from '@/utils/view-state'
 import { viewShortcuts, shortcutHint, useViewShortcuts } from '@/composables/useViewShortcuts'
+import { useWindowGuard } from '@/composables/useWindowGuard'
 
 const router = useRouter()
 const route = useRoute()
+
+// 窗口行为守卫（issue #154）：ESC 不作用于窗口层 + 禁用原生右键菜单（可编辑元素例外），
+// 根组件挂载一次，详见 composables/useWindowGuard.ts。
+useWindowGuard()
 
 // ViewState：侧边栏折叠状态跨启动保持。
 const sidebarCollapsed = ref(loadSidebarCollapsed())
