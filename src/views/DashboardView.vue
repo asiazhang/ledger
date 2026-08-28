@@ -16,6 +16,7 @@ import {
 } from 'naive-ui'
 import { api } from '@/api'
 import { useDashboardOverview } from '@/composables/useDashboardOverview'
+import { useItemDailyTotal } from '@/composables/useItemDailyTotal'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount } from '@/types'
 import type { BudgetProgress, MonthlySummary } from '@/types'
@@ -64,6 +65,14 @@ const {
   totalMarketValueGroups,
   totalUnrealizedPnlGroups,
 } = usePortfolioOverview()
+
+// 物品使用成本卡（issue #122）：全部在用物品每天成本合计，后端 `item_daily_total`
+// 聚合（折算与求和全在后端），失效复用物品 store 的重拉节奏（监听 version）。
+const {
+  total: itemDailyTotal,
+  loading: itemDailyTotalLoading,
+  error: itemDailyTotalError,
+} = useItemDailyTotal()
 
 onMounted(async () => {
   const now = new Date()
@@ -138,6 +147,34 @@ onMounted(async () => {
         </NGi>
       </NGrid>
       <NEmpty v-else description="暂无持仓" />
+    </NCard>
+
+    <!-- 物品使用成本卡（issue #122）：全部在用物品每天成本合计（默认币种，后端聚合），
+         无在用物品时空态占位，缺汇率等报错显示提示文案 -->
+    <NCard title="物品使用成本" size="small" data-testid="item-daily-cost-card">
+      <NSpin :show="itemDailyTotalLoading">
+        <NAlert v-if="itemDailyTotalError" type="warning" :bordered="false">
+          {{ itemDailyTotalError }}
+        </NAlert>
+        <NEmpty
+          v-else-if="itemDailyTotal && itemDailyTotal.item_count === 0"
+          description="暂无在用物品"
+        />
+        <NSpace v-else-if="itemDailyTotal" vertical :size="4">
+          <NText depth="3" style="font-size: 12px">全部在用物品每天成本合计</NText>
+          <NText strong style="font-size: 20px">
+            {{
+              formatAmount(
+                itemDailyTotal.per_day_cents,
+                reference.getCurrency(itemDailyTotal.native_currency),
+              )
+            }}/天
+          </NText>
+          <NText depth="3" style="font-size: 12px">
+            共 {{ itemDailyTotal.item_count }} 件在用物品
+          </NText>
+        </NSpace>
+      </NSpin>
     </NCard>
 
     <NCard title="预算进度" size="small" data-testid="budget-progress-card">

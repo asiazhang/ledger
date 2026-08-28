@@ -174,3 +174,15 @@ pub struct ItemDailyCost {
     /// 每天成本（分/天，**小数**），仅供展示。
     pub per_day_cents: f64,
 }
+
+/// 全部在用物品「每天成本合计」聚合结果（issue #122 dashboard 汇总卡）：
+/// 合计口径收敛在 `commands::item::item_daily_total_internal`，本结构只是其返回形状。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ItemDailyTotal {
+    /// 默认币种代码（合计折算目标，`default_currency_code`）。
+    pub native_currency: String,
+    /// 每天成本合计（本位币分/天，**小数**）：Σ 各在用物品分子（折本位币）÷ 各自天数。
+    pub per_day_cents: f64,
+    /// 计入合计的在用物品件数（含分子为 0 的物品；已处置/已删除不计入）。
+    pub item_count: u64,
+}

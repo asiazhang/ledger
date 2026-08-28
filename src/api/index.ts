@@ -29,6 +29,7 @@ import type {
   InstrumentListResult,
   InstrumentPriceTrend,
   ItemDailyCost,
+  ItemDailyTotal,
   ItemDisposeInput,
   ItemInput,
   ItemWithDailyCost,
@@ -137,6 +138,8 @@ export const api = {
 
   // 物品（issue #116）：独立领域（非参考数据），写入后由后端发 ledger:changed
   listItems: () => invoke<ItemWithDailyCost[]>('list_items'),
+  // 全部在用物品每天成本合计（issue #122）：后端聚合（默认币种），dashboard 汇总卡消费
+  itemDailyTotal: () => invoke<ItemDailyTotal>('item_daily_total'),
   // 自选参考日重算（issue #121）：referenceDate 省略/null → 缺省目标日（在用今天/已处置处置日）
   calculateItemCost: (id: string, referenceDate?: string | null) =>
     invoke<ItemDailyCost>('calculate_item_cost', { id, referenceDate: referenceDate ?? null }),

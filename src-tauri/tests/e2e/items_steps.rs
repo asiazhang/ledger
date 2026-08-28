@@ -5,9 +5,10 @@
 //! （notify 注入，生产路径发 `ledger:changed`）、软删除后标准列表过滤。
 
 use cucumber::{then, when};
+use rusqlite::params;
 use tauri_app_lib::commands::item::{
     calculate_item_cost_internal, create_item_internal, delete_item_internal,
-    dispose_item_internal, list_items_internal, update_item_internal,
+    dispose_item_internal, item_daily_total_internal, list_items_internal, update_item_internal,
 };
 use tauri_app_lib::commands::transactions::insert_transaction;
 use tauri_app_lib::error::AppError;
@@ -774,4 +775,52 @@ fn check_calc_item_cost(world: &mut LedgerWorld, days: i64, numerator: i64, per_
 #[then(expr = "计算每天成本应返回错误 {string}")]
 fn check_calc_item_cost_error(world: &mut LedgerWorld, expected: String) {
     assert_last_error_contains(world, &expected);
+}
+
+// ---------------------------------------------------------------------------
+// dashboard 汇总卡聚合（issue #122）：全部在用物品每天成本合计（本位币）
+// ---------------------------------------------------------------------------
+
+/// 查询全部在用物品每天成本合计（错误路径记入 last_error，供「应返回错误」断言）。
+#[when(expr = "查询在用物品每天成本合计")]
+fn query_item_daily_total(world: &mut LedgerWorld) {
+    match item_daily_total_internal(&world.conn) {
+        Ok(total) => {
+            world.last_item_daily_total = Some(total);
+            world.last_error = None;
+        }
+        Err(e) => {
+            world.last_error = Some(e.to_string());
+            world.last_item_daily_total = None;
+        }
+    }
+}
+
+/// 断言合计三元组：每天成本合计（本位币分/天）+ 默认币种代码 + 计入件数。
+#[then(expr = "在用物品每天成本合计应为 {float} 本位币应为 {string} 件数应为 {int}")]
+fn check_item_daily_total(world: &mut LedgerWorld, per_day: f64, currency: String, count: usize) {
+    let total = world
+        .last_item_daily_total
+        .as_ref()
+        .expect("未查询到合计（先调「查询在用物品每天成本合计」）");
+    assert!(
+        (total.per_day_cents - per_day).abs() < 1e-6,
+        "每天成本合计不匹配: 期望 {per_day}, 实际 {}",
+        total.per_day_cents
+    );
+    assert_eq!(total.native_currency, currency, "合计币种应为默认币种");
+    assert_eq!(total.item_count, count as u64, "计入合计的件数不匹配");
+}
+
+/// 移除汇率行（测试脚手架，与 scheduled_steps 的「存在汇率」对偶）：
+/// 构造「物品落库时有汇率、聚合时缺汇率」的环境，断言错误上抛而非以零计入。
+#[when(expr = "移除汇率 {string} 兑 {string}")]
+fn remove_exchange_rate(world: &mut LedgerWorld, base: String, quote: String) {
+    world
+        .conn
+        .execute(
+            "DELETE FROM exchange_rates WHERE base_code=?1 AND quote_code=?2",
+            params![base, quote],
+        )
+        .unwrap();
 }

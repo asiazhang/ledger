@@ -8,8 +8,8 @@ use rusqlite::Connection;
 use tauri_app_lib::commands::data_location::{DataLocationChangeOutcome, DataLocationInfo};
 use tauri_app_lib::db::{init_db, open_in_memory};
 use tauri_app_lib::models::{
-    CreateTransactionResult, DashboardOverview, ItemDailyCost, ItemWithDailyCost, Transaction,
-    TransactionInput, TransactionSearchResult,
+    CreateTransactionResult, DashboardOverview, ItemDailyCost, ItemDailyTotal, ItemWithDailyCost,
+    Transaction, TransactionInput, TransactionSearchResult,
 };
 use tauri_app_lib::transaction::amount::TransactionKind;
 
@@ -97,6 +97,8 @@ pub struct LedgerWorld {
     pub remembered_purchase_transaction_id: Option<String>,
     /// 最近一次自选参考日重算的结果快照（issue #121 断言用）
     pub last_item_cost: Option<ItemDailyCost>,
+    /// 最近一次在用物品每天成本合计快照（issue #122 dashboard 汇总卡断言用）
+    pub last_item_daily_total: Option<ItemDailyTotal>,
     /// 最近一次净资产总览快照（首页仪表盘场景断言用）
     pub last_overview: Option<DashboardOverview>,
     /// 最近一次订阅实际花费总览快照（订阅花费场景断言用，issue #160）
@@ -165,6 +167,7 @@ impl LedgerWorld {
             remembered_item_created_at: None,
             remembered_purchase_transaction_id: None,
             last_item_cost: None,
+            last_item_daily_total: None,
             dl_default_dir: None,
             dl_target_dir: None,
             last_boot: None,
