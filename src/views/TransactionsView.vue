@@ -295,6 +295,28 @@ function onRefundCreated() {
   void refresh()
 }
 
+/** 编辑弹窗（issue #178）：income/expense/transfer 行右键「编辑」，回填该笔交易
+ * 全部业务字段，kind 锁死不可切换（跨 kind 编辑本期边界外，见 issue #176 边界）；
+ * 提交走全字段更新命令（update_transaction，与 HTTP PUT 同一行为层权威）。
+ * editSeq 作为表单 key：每次打开强制重建表单实例（镜像退款弹窗机制），
+ * 回填/提交均指向本次右键所在行。提交失败弹窗不关、已填内容不丢
+ * （错误提示与不重置均在表单 composable 内）。 */
+const showEdit = ref(false)
+const editTarget = ref<Transaction | null>(null)
+const editSeq = ref(0)
+
+function openEditFromRow(row: Transaction) {
+  editTarget.value = row
+  editSeq.value += 1
+  showEdit.value = true
+}
+
+/** 编辑成功：关窗并刷新列表（保持当前页与筛选，不重置 page）。 */
+function onEditSaved() {
+  showEdit.value = false
+  void refresh()
+}
+
 /** 「加入物品」确认弹窗（issue #119 / ADR-0025 创建唯一入口）：原交易由右键所在行固定，
  * 日期/成本/币种只读带出，名称默认备注可微调；提交走既有物品创建命令（溯源必填）。
  * 成功后不手动刷新交易列表（物品写入与交易列表无关），物品 store 经
@@ -314,8 +336,9 @@ function closeAddItem() {
   showAddItem.value = false
 }
 
-/** 右键菜单（issue #151 / #119 / #177）：expense 行含「退款」「加入物品」（已建物品置灰），
- * 所有行含「删除」；选项组装收口在 transaction-row-menu 纯函数（可独立测试），
+/** 右键菜单（issue #151 / #119 / #177 / #178）：income/expense/transfer 行首项「编辑」，
+ * expense 行另有「退款」「加入物品」（已建物品置灰），所有行含「删除」；
+ * 选项组装收口在 transaction-row-menu 纯函数（可独立测试），
  * 菜单项图标与删除项 error 色也由该函数统一注入。 */
 const menuShow = ref(false)
 const menuX = ref(0)
@@ -359,7 +382,8 @@ function onMenuSelect(key: string) {
   menuShow.value = false
   const row = menuRow.value
   if (!row) return
-  if (key === 'refund') openRefundFromRow(row)
+  if (key === 'edit') openEditFromRow(row)
+  else if (key === 'refund') openRefundFromRow(row)
   else if (key === 'add-item') openAddItemFromRow(row)
   else if (key === 'delete') confirmDelete(row)
 }
@@ -513,6 +537,23 @@ onMounted(() => {
         :transaction="addItemSource"
         @created="closeAddItem"
         @cancel="closeAddItem"
+      />
+    </NModal>
+    <!-- 编辑弹窗（issue #178）：回填既有交易全部业务字段，kind 锁死；
+         提交走全字段更新命令，成功关窗并刷新列表（保持当前页与筛选） -->
+    <NModal
+      v-model:show="showEdit"
+      title="编辑交易"
+      preset="card"
+      display-directive="if"
+      style="width: 480px"
+      :bordered="false"
+    >
+      <TransactionForm
+        :key="editSeq"
+        v-if="editTarget"
+        :editing="editTarget"
+        @saved="onEditSaved"
       />
     </NModal>
     <!-- 行右键菜单（issue #151 / #119）：expense 行「退款」「加入物品」+ 所有行「删除」，手动定位弹出 -->

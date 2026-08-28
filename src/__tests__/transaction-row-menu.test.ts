@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { NIcon } from 'naive-ui'
 import type { DropdownOption } from 'naive-ui'
 import type { VNode } from 'vue'
-import { AddCircleOutline, CashOutline, TrashOutline } from '@vicons/ionicons5'
+import { AddCircleOutline, CashOutline, CreateOutline, TrashOutline } from '@vicons/ionicons5'
 import { buildRowMenuOptions, renderRowMenuIcon } from '@/components/transaction-row-menu'
 
 /** 渲染 DropdownOption.icon 工厂，取出其中的图标组件（用于断言挂了哪个图标）。 */
@@ -24,9 +24,10 @@ describe('renderRowMenuIcon（行菜单图标渲染工厂）', () => {
 })
 
 describe('buildRowMenuOptions（行右键菜单选项）', () => {
-  it('expense 行：退款 / 加入物品 / 分隔线 / 删除，加入物品默认可用', () => {
+  it('expense 行：编辑 / 退款 / 加入物品 / 分隔线 / 删除，加入物品默认可用', () => {
     const options = buildRowMenuOptions({ kind: 'expense' })
     expect(options.map((o) => 'key' in o && o.key)).toEqual([
+      'edit',
       'refund',
       'add-item',
       'menu-divider',
@@ -42,6 +43,7 @@ describe('buildRowMenuOptions（行右键菜单选项）', () => {
     expect(addItem).toMatchObject({ disabled: true })
     // 其余项不受影响
     expect(options.map((o) => 'key' in o && o.key)).toEqual([
+      'edit',
       'refund',
       'add-item',
       'menu-divider',
@@ -49,17 +51,28 @@ describe('buildRowMenuOptions（行右键菜单选项）', () => {
     ])
   })
 
-  it.each(['income', 'transfer', 'refund', 'buy', 'sell'] as const)(
-    '%s 行：仅删除（无退款/加入物品）',
+  it.each(['income', 'transfer'] as const)(
+    '%s 行：编辑 / 分隔线 / 删除（无退款/加入物品）',
+    (kind) => {
+      const options = buildRowMenuOptions({ kind })
+      expect(options.map((o) => 'key' in o && o.key)).toEqual(['edit', 'menu-divider', 'delete'])
+      expect(options[0]).toMatchObject({ label: '编辑' })
+      expect(options[0].disabled).toBeFalsy()
+    },
+  )
+
+  it.each(['refund', 'buy', 'sell'] as const)(
+    '%s 行：仅删除（编辑本期边界外，无退款/加入物品）',
     (kind) => {
       const options = buildRowMenuOptions({ kind })
       expect(options.map((o) => 'key' in o && o.key)).toEqual(['delete'])
     },
   )
 
-  it('expense 行挂图标：退款 CashOutline、加入物品 AddCircleOutline、删除 TrashOutline', () => {
+  it('expense 行挂图标：编辑 CreateOutline、退款 CashOutline、加入物品 AddCircleOutline、删除 TrashOutline', () => {
     const options = buildRowMenuOptions({ kind: 'expense' })
     const byKey = (key: string) => options.find((o) => 'key' in o && o.key === key)!
+    expect(iconComponentOf(byKey('edit'))).toBe(CreateOutline)
     expect(iconComponentOf(byKey('refund'))).toBe(CashOutline)
     expect(iconComponentOf(byKey('add-item'))).toBe(AddCircleOutline)
     expect(iconComponentOf(byKey('delete'))).toBe(TrashOutline)
@@ -81,11 +94,12 @@ describe('buildRowMenuOptions（行右键菜单选项）', () => {
       },
     })
     // 其余项不着色
+    expect(byKey('edit').props).toBeUndefined()
     expect(byKey('refund').props).toBeUndefined()
     expect(byKey('add-item').props).toBeUndefined()
     // 非 expense 行的删除项同样着色
     const only = buildRowMenuOptions({ kind: 'income' }, { errorColor })
-    expect(only[0].props).toMatchObject({
+    expect(only[only.length - 1].props).toMatchObject({
       style: { color: errorColor, '--n-prefix-color': errorColor },
     })
   })

@@ -35,6 +35,11 @@ export interface TransactionInput {
   idempotency_key?: string | null
 }
 
+/** 交易修改入参（`PUT /api/v1/transactions/{id}` 与 IPC `update_transaction` 共用，issue #178）。
+ * 与 TransactionInput 的唯一差异是不含 idempotency_key：幂等键不可编辑（只在导入时落定，
+ * 编辑不改变导入身份），提交时同一对象形状分派创建/更新两路。 */
+export type UpdateTransactionInput = Omit<TransactionInput, 'idempotency_key'>
+
 /** 交易列表查询过滤条件（服务端分页 + 过滤） */
 export interface TransactionListFilter {
   /** 起始日期（含），YYYY-MM-DD */

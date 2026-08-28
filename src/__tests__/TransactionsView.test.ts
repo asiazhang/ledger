@@ -12,6 +12,7 @@ import {
   NDatePicker,
   NButton,
   NModal,
+  NInput,
   NInputNumber,
   NRadioGroup,
 } from 'naive-ui'
@@ -836,17 +837,24 @@ describe('TransactionsView 行右键菜单（issue #151）', () => {
     txnDb = [...menuDb]
   })
 
-  it('expense 行右键出现「退款」「加入物品」菜单项，非 expense 行只有「删除」（issue #119）', async () => {
+  it('expense 行右键出现「编辑」「退款」「加入物品」菜单项，非 expense 可编辑行首项「编辑」（issue #178）', async () => {
     const wrapper = await mountView()
-    // expense 行：退款 + 加入物品 + 删除
+    // expense 行：编辑 + 退款 + 加入物品 + 删除
     await openMenuOnRow(wrapper, 0)
     expect(rowMenu(wrapper).props('show')).toBe(true)
-    expect(rowMenuKeys(wrapper)).toEqual(['refund', 'add-item', 'menu-divider', 'delete'])
-    // income 行：仅删除
+    expect(rowMenuKeys(wrapper)).toEqual(['edit', 'refund', 'add-item', 'menu-divider', 'delete'])
+    // income 行：编辑 + 删除
     await openMenuOnRow(wrapper, 1)
-    expect(rowMenuKeys(wrapper)).toEqual(['delete'])
-    // transfer 行：仅删除
+    expect(rowMenuKeys(wrapper)).toEqual(['edit', 'menu-divider', 'delete'])
+    // transfer 行：编辑 + 删除
     await openMenuOnRow(wrapper, 2)
+    expect(rowMenuKeys(wrapper)).toEqual(['edit', 'menu-divider', 'delete'])
+  })
+
+  it('refund 行右键仅「删除」（编辑本期边界外，issue #178）', async () => {
+    txnDb = [makeTxn(1, 'acc-1', { kind: 'refund', refund_of_transaction_id: 'txn-000' })]
+    const wrapper = await mountView()
+    await openMenuOnRow(wrapper, 0)
     expect(rowMenuKeys(wrapper)).toEqual(['delete'])
   })
 
@@ -960,6 +968,130 @@ describe('TransactionsView 行右键菜单（issue #151）', () => {
   })
 })
 
+describe('TransactionsView 行右键「编辑」（issue #178）', () => {
+  // 混合数据集：expense / income / transfer 行并存，回填与提交分派断言
+  const menuDb: Transaction[] = [
+    makeTxn(1, 'acc-1', { kind: 'expense', amount_cents: 3000, note: '咖啡', date: '2026-01-05' }),
+    makeTxn(2, 'acc-1', { kind: 'income', amount_cents: 5000, note: '工资', date: '2026-01-06' }),
+    makeTxn(3, 'acc-2', { kind: 'transfer', amount_cents: 8800, to_account_id: 'acc-1', note: '转账备注' }),
+  ]
+
+  beforeEach(() => {
+    txnDb = [...menuDb]
+  })
+
+  function updateCalls() {
+    return mockInvoke.mock.calls.filter(([cmd]) => cmd === 'update_transaction')
+  }
+
+  /** 编辑弹窗：按 title 定位。 */
+  function editModal(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAllComponents(NModal).find((m) => m.props('title') === '编辑交易')!
+  }
+
+  /** 右键指定行并选「编辑」。 */
+  async function openEditModal(wrapper: ReturnType<typeof mount>, index = 0) {
+    await openMenuOnRow(wrapper, index)
+    await selectRowMenu(wrapper, 'edit')
+  }
+
+  it('右键编辑：弹窗打开，表单回填全部业务字段，按钮文案为「保存修改」', async () => {
+    const wrapper = await mountView()
+    await openEditModal(wrapper, 0)
+    expect(editModal(wrapper).props('show')).toBe(true)
+    // expense 行分派到分类记账表单（kind 锁死，无类型切换）
+    const form = wrapper.findComponent(CategoryForm)
+    expect(form.props('kind')).toBe('expense')
+    expect(form.props('editing')).toMatchObject({ id: 'txn-001' })
+    expect(form.getComponent(NInputNumber).props('value')).toBe(30)
+    expect(form.text()).toContain('保存修改')
+    // 回填备注（NInput 的 value，非文本节点；NInputNumber 内部也含 NInput，取最后一个）
+    const inputs = form.findAllComponents(NInput)
+    expect(inputs[inputs.length - 1].props('value')).toBe('咖啡')
+    // 编辑弹窗内无另一个分类表单（kind 锁死不可切换）
+    expect(wrapper.findAllComponents(CategoryForm)).toHaveLength(1)
+    expect(wrapper.findAllComponents(TransferForm)).toHaveLength(0)
+  })
+
+  it.each([
+    ['income', CategoryForm, 'txn-002'],
+    ['transfer', TransferForm, 'txn-003'],
+  ] as const)('%s 行编辑：按 kind 分派到对应表单', async (kind, formComponent, expectedId) => {
+    const wrapper = await mountView()
+    await openEditModal(wrapper, kind === 'income' ? 1 : 2)
+    const form = wrapper.findComponent(formComponent)
+    expect(form.exists()).toBe(true)
+    expect(form.props('editing')).toMatchObject({ id: expectedId })
+  })
+
+  it('编辑提交：走 update_transaction（id + 全字段载荷），弹窗关闭且刷新保持当前页', async () => {
+    const wrapper = await mountView()
+    await openEditModal(wrapper, 0)
+    const form = wrapper.findComponent(CategoryForm)
+    form.getComponent(NInputNumber).vm.$emit('update:value', 45)
+    await flushPromises()
+    mockInvoke.mockImplementationOnce((cmd: string) => {
+      if (cmd === 'update_transaction') return Promise.resolve()
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    await form.findAll('button').find((b) => b.text().includes('保存修改'))!.trigger('click')
+    await flushPromises()
+    expect(updateCalls()).toHaveLength(1)
+    const [, { id, input }] = updateCalls()[0] as unknown as [
+      string,
+      { id: string; input: Record<string, unknown> },
+    ]
+    expect(id).toBe('txn-001')
+    expect(input).toMatchObject({
+      kind: 'expense',
+      amount_cents: 4500,
+      currency_code: 'CNY',
+      account_id: 'acc-1',
+      note: '咖啡',
+      date: '2026-01-05',
+    })
+    // 幂等键不可编辑：载荷不含 idempotency_key
+    expect(input.idempotency_key).toBeUndefined()
+    // 弹窗关闭、列表刷新且保持当前页（不重置到第 1 页）
+    expect(editModal(wrapper).props('show')).toBe(false)
+    // 列表共 3 条单页，此处仅验证刷新发生（list_transactions 再次调用）
+    expect(listCalls().length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('编辑提交失败：弹窗不关闭（明确错误由表单提示）', async () => {
+    const wrapper = await mountView()
+    await openEditModal(wrapper, 0)
+    const form = wrapper.findComponent(CategoryForm)
+    mockInvoke.mockImplementationOnce((cmd: string) => {
+      if (cmd === 'update_transaction') return Promise.reject(new Error('账户不存在'))
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    await form.findAll('button').find((b) => b.text().includes('保存修改'))!.trigger('click')
+    await flushPromises()
+    expect(editModal(wrapper).props('show')).toBe(true)
+    expect(updateCalls()).toHaveLength(1)
+  })
+
+  it('编辑提交成功后刷新保持当前页与筛选（不重置回第 1 页）', async () => {
+    txnDb = Array.from({ length: 45 }, (_, i) =>
+      makeTxn(i + 1, i % 2 === 0 ? 'acc-2' : 'acc-1'),
+    )
+    const wrapper = await mountView()
+    // 翻到第 2 页再编辑
+    tablePagination(wrapper).onChange(2)
+    await flushPromises()
+    await openEditModal(wrapper, 0)
+    const form = wrapper.findComponent(CategoryForm)
+    mockInvoke.mockImplementationOnce((cmd: string) => {
+      if (cmd === 'update_transaction') return Promise.resolve()
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    await form.findAll('button').find((b) => b.text().includes('保存修改'))!.trigger('click')
+    await flushPromises()
+    expect(lastListFilter()).toMatchObject({ page: 2 })
+  })
+})
+
 describe('TransactionsView 行右键「加入物品」（issue #119）', () => {
   const menuDb: Transaction[] = [
     makeTxn(1, 'acc-1', { kind: 'expense', amount_cents: 3000, note: '咖啡' }),
@@ -1021,9 +1153,9 @@ describe('TransactionsView 行右键「加入物品」（issue #119）', () => {
     const form = wrapper.findComponent(AddItemForm)
     expect(form.exists()).toBe(true)
     expect(form.props('transaction')).toMatchObject({ id: 'txn-001' })
-    // income 行无「加入物品」项
+    // income 行无「加入物品」项（但有编辑项，issue #178）
     await openMenuOnRow(wrapper, 1)
-    expect(rowMenuKeys(wrapper)).toEqual(['delete'])
+    expect(rowMenuKeys(wrapper)).toEqual(['edit', 'menu-divider', 'delete'])
   })
 
   it('该交易已建物品（溯源指针比对）：加入物品菜单项置灰', async () => {

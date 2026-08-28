@@ -11,14 +11,22 @@ import {
   NSpace,
 } from 'naive-ui'
 import { useCategoryForm } from '@/composables/useCategoryForm'
+import type { Transaction } from '@/types'
 
+// 编辑模式（issue #178）：传入 editing 时回填既有交易并走更新命令，
+// kind 由父层按 editing.kind 锁死传入，本组件内不可切换。
 const props = defineProps<{
   kind: 'expense' | 'income'
   submitLabel: string
+  editing?: Transaction | null
 }>()
-const emit = defineEmits<{ created: [] }>()
+const emit = defineEmits<{ created: []; saved: [] }>()
 
-const ctx = useCategoryForm(props.kind, { onCreated: () => emit('created') })
+const ctx = useCategoryForm(props.kind, {
+  onCreated: () => emit('created'),
+  onUpdated: () => emit('saved'),
+  editing: () => props.editing ?? null,
+})
 </script>
 
 <template>
@@ -69,7 +77,7 @@ const ctx = useCategoryForm(props.kind, { onCreated: () => emit('created') })
       </NFormItem>
 
       <NButton type="primary" @click="ctx.submit">
-        {{ submitLabel }}
+        {{ editing ? '保存修改' : submitLabel }}
       </NButton>
     </NSpace>
   </NForm>

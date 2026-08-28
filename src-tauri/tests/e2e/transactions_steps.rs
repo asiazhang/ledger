@@ -4,7 +4,8 @@ use cucumber::{given, then, when};
 use rusqlite::params;
 
 use tauri_app_lib::commands::transactions::{
-    insert_transaction, list_transactions_internal, update_transaction_internal,
+    delete_transaction_internal, insert_transaction, list_transactions_internal,
+    update_transaction_internal,
 };
 use tauri_app_lib::db::new_uuid;
 use tauri_app_lib::error::AppError;
@@ -305,6 +306,41 @@ fn try_update_missing_txn(world: &mut LedgerWorld, amount: i64, date: String) {
     };
 }
 
+/// 删除最近一笔交易（软删除，与 IPC/HTTP 删除同一行为层权威），
+/// 供「编辑已删除交易」场景铺垫。
+#[when(expr = "删除最近交易")]
+fn delete_last_txn(world: &mut LedgerWorld) {
+    let id = world.last_transaction_id.clone().expect("没有可删除的交易");
+    delete_transaction_internal(&world.conn, &id).expect("删除交易失败");
+    world.transactions_list = query_all_transactions(&world.conn);
+}
+
+/// 尝试修改一笔已删除的交易，应返回明确错误（NotFound：已删除与不存在同口径）。
+#[when(expr = "尝试修改已删除的交易 金额 {int} 日期 {string}")]
+fn try_update_deleted_txn(world: &mut LedgerWorld, amount: i64, date: String) {
+    let id = world.last_transaction_id.clone().expect("没有可修改的交易");
+    let input = TransactionInput {
+        kind: TransactionKind::Expense,
+        amount_cents: amount,
+        currency_code: "CNY".into(),
+        account_id: "acc-x".into(),
+        to_account_id: None,
+        category_id: None,
+        refund_of_transaction_id: None,
+        note: None,
+        date,
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        idempotency_key: None,
+    };
+    world.last_error = match update_transaction_internal(&world.conn, &id, input) {
+        Err(AppError::NotFound(msg)) => Some(msg),
+        _ => Some("预期失败但成功了".into()),
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Then
 // ---------------------------------------------------------------------------
@@ -358,6 +394,20 @@ fn check_txn_kind_amount_note(
         txn.note.as_deref(),
         Some(expected_note.as_str()),
         "备注不匹配"
+    );
+}
+
+#[then(expr = "第 {int} 条交易版本应为 {int}")]
+fn check_txn_version(world: &mut LedgerWorld, index: i64, expected_version: i64) {
+    let idx = (index - 1) as usize;
+    assert!(
+        idx < world.transactions_list.len(),
+        "交易列表只有 {} 条，无法访问第 {index} 条",
+        world.transactions_list.len()
+    );
+    assert_eq!(
+        world.transactions_list[idx].version, expected_version,
+        "交易版本号不匹配"
     );
 }
 
