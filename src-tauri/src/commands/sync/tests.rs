@@ -1480,3 +1480,29 @@ fn kline_response_deserializes_daily_bars_and_skips_invalid() {
     let empty: KlineResponse = serde_json::from_str(r#"{"rc":100,"data":null}"#).unwrap();
     assert!(empty.data.is_none());
 }
+
+#[test]
+fn week_key_matches_sqlite_week_start_column() {
+    // Rust 侧降采样周键（week_monday）与 V010 week_start 生成列恒等——这是
+    // 「整周覆盖幂等」的隐式契约：周键一旦漂移，ON CONFLICT 落点即错、产生重复周行。
+    // 扫描跨年/闰年边界三年，每天与 SQLite 生成表达式比对。
+    use super::incremental::week_monday;
+    use chrono::NaiveDate;
+
+    let conn = setup_db();
+    let mut d = NaiveDate::from_ymd_opt(2025, 1, 1).unwrap();
+    let end = NaiveDate::from_ymd_opt(2027, 12, 31).unwrap();
+    while d <= end {
+        let iso = d.format("%Y-%m-%d").to_string();
+        let rust_key = week_monday(d).format("%Y-%m-%d").to_string();
+        let sql_key: String = conn
+            .query_row(
+                "SELECT date(?1, '-6 days', 'weekday 1')",
+                params![iso],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rust_key, sql_key, "{iso} 的周键两侧不一致");
+        d += chrono::Duration::days(1);
+    }
+}

@@ -24,9 +24,13 @@ const KLINE_HOSTS: &[&str] = &[
     "https://40.push2his.eastmoney.com",
     "https://70.push2his.eastmoney.com",
 ];
-// 日 K 参数：日线（klt=101）、前复权（fqt=1）；fields2=f51,f53 → 每行 "日期,收盘价"。
+// 日 K 参数：日线（klt=101）、不复权（fqt=0）；fields2=f51,f53 → 每行 "日期,收盘价"。
+// 复权方式选不复权：历史库存真实成交价，已落库数据语义恒定（前复权会随后续除权
+// 整体重算，且与 2 年窗口外的旧行产生接缝不一致）；复权展示如需可在查询层再做。
 const KLINE_FIELDS1: &str = "f1,f2,f3,f4,f5,f6";
 const KLINE_FIELDS2: &str = "f51,f53";
+const KLINE_KLT_DAILY: &str = "101";
+const KLINE_FQT_NONE: &str = "0";
 /// 日 K 区间终点（远期占位，实际覆盖由 beg 控制近两年窗口）。
 const KLINE_END: &str = "20500101";
 // 每批最多携带的 secid 数（东财批量报价接口支持一次查多只，约 50 只/请求已足够小、避开限流）。
@@ -487,8 +491,8 @@ pub(super) fn fetch_kline(
     tracing::debug!(secid, beg, "日 K 线查询");
     let params = [
         ("secid", secid),
-        ("klt", "101"),
-        ("fqt", "1"),
+        ("klt", KLINE_KLT_DAILY),
+        ("fqt", KLINE_FQT_NONE),
         ("fields1", KLINE_FIELDS1),
         ("fields2", KLINE_FIELDS2),
         ("beg", beg),

@@ -199,8 +199,7 @@ fn kline_beg() -> String {
 
 /// 日线按 ISO 周降采样（ADR-0019）：每周取最后一个有报价交易日的 (日期, 收盘价)。
 /// 输入日线按日期升序排序兑底（东财本就升序）；无效收盘价（≤0）与不可解析日期跳过；
-/// 整周无有效报价则该周无点。周键 = 该日所属 ISO 周的周一，与 price_history /
-/// fx_rate_history 的 week_start 生成列（date(trade_date,'-6 days','weekday 1')）同口径。
+/// 整周无有效报价则该周无点。周键见 [`week_monday`]。
 fn downsample_weekly(bars: &[KlineBar]) -> Vec<(String, f64)> {
     let mut sorted: Vec<&KlineBar> = bars.iter().filter(|b| b.close > 0.0).collect();
     sorted.sort_by(|a, b| a.date.cmp(&b.date));
@@ -209,11 +208,18 @@ fn downsample_weekly(bars: &[KlineBar]) -> Vec<(String, f64)> {
         let Ok(d) = NaiveDate::parse_from_str(&bar.date, "%Y-%m-%d") else {
             continue;
         };
-        let monday = d - chrono::Duration::days(d.weekday().num_days_from_monday() as i64);
         // 升序遍历：后写入者即该周最后一个交易日。
-        by_week.insert(monday, (bar.date.clone(), bar.close));
+        by_week.insert(week_monday(d), (bar.date.clone(), bar.close));
     }
     by_week.into_values().collect()
+}
+
+/// 该日所属 ISO 周的周一：降采样的周键，与 price_history / fx_rate_history 的
+/// week_start 生成列（date(trade_date,'-6 days','weekday 1')）同口径。两侧恒等是
+/// 「整周覆盖幂等」的隐式契约，由 `week_key_matches_sqlite_week_start_column` 测试绑定，
+/// 防止周定义单侧调整后静默漂移。
+pub(super) fn week_monday(d: NaiveDate) -> NaiveDate {
+    d - chrono::Duration::days(d.weekday().num_days_from_monday() as i64)
 }
 
 /// 生产入口：接 HTTP 层的批量报价 / 日 K / 汇率 K 线查询（复用主机池、重试、
