@@ -57,6 +57,7 @@ import type {
   TransactionSearchFilter,
   TransactionSearchResult,
   UpdateStatusInput,
+  UpdateSubscriptionInput,
 } from '@/types'
 
 export const api = {
@@ -183,6 +184,9 @@ export const api = {
     invoke<ScheduledTransactionDetail>('get_scheduled_transaction_detail', { id }),
   updateScheduledTransactionStatus: (input: UpdateStatusInput) =>
     invoke<void>('update_scheduled_transaction_status', { input }),
+  // 订阅编辑（issue #162，ADR-0023 决策三）：仅非金额字段，携带金额被后端显式拒绝
+  updateScheduledSubscription: (input: UpdateSubscriptionInput) =>
+    invoke<void>('update_scheduled_subscription', { input }),
   executeScheduledOccurrence: (input: ExecuteOccurrenceInput) =>
     invoke<string>('execute_scheduled_occurrence', { input }),
   expandScheduledOccurrences: (id: string) =>

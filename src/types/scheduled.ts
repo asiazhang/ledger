@@ -91,6 +91,20 @@ export interface UpdateStatusInput {
   new_status: ScheduledStatus
 }
 
+/**
+ * 订阅编辑输入（issue #162，ADR-0023 决策三）：仅允许金额以外字段
+ * （备注、分类、扣款账户）。`amount_cents` / `total_amount_cents` 为兼容哨兵：
+ * 请求一旦携带即被后端显式拒绝——改价 = 取消旧计划 + 新建。
+ */
+export interface UpdateSubscriptionInput {
+  id: string
+  account_id: string
+  category_id?: string | null
+  note?: string | null
+  amount_cents?: number
+  total_amount_cents?: number
+}
+
 export interface ExecuteOccurrenceInput {
   occurrence_id: string
 }

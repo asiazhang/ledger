@@ -39,6 +39,17 @@ pub fn update_scheduled_transaction_status(
     crate::scheduled_transactions::update_plan_status(&conn, &input.id, input.new_status)
 }
 
+/// 编辑订阅计划的非金额字段（issue #162，ADR-0023 决策三）：
+/// 请求携带金额字段时后端显式拒绝并提示「改价 = 取消旧计划 + 新建」。
+#[tauri::command]
+pub fn update_scheduled_subscription(
+    db: State<'_, DbState>,
+    input: UpdateSubscriptionInput,
+) -> Result<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    crate::scheduled_transactions::update_subscription(&conn, input)
+}
+
 #[tauri::command]
 pub fn execute_scheduled_occurrence(
     db: State<'_, DbState>,

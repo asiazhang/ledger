@@ -370,7 +370,8 @@ fn occurrence_txn(world: &LedgerWorld) -> OccurrenceTxn {
 // ---------------------------------------------------------------------------
 
 use tauri_app_lib::scheduled_transactions::{
-    ScheduledStatus, SubscriptionSpendOverview, query_subscription_spend, update_plan_status,
+    ScheduledStatus, SubscriptionSpendOverview, UpdateSubscriptionInput, query_subscription_spend,
+    update_plan_status, update_subscription,
 };
 
 #[when(
@@ -517,4 +518,152 @@ fn assert_spend_row_year(world: &mut LedgerWorld, note: String, expected: i64) {
         .find(|r| r.note.as_deref() == Some(note.as_str()))
         .unwrap_or_else(|| panic!("订阅花费行应包含备注 {note}"));
     assert_eq!(row.this_year_native_cents, expected);
+}
+
+// ---------------------------------------------------------------------------
+// 订阅编辑——仅非金额字段（issue #162，ADR-0023 决策三）
+// ---------------------------------------------------------------------------
+
+/// 按名称解析支出分类 id（与 budget_steps 的夹具同一张表）。
+fn category_id_by_name(conn: &rusqlite::Connection, name: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT id FROM categories WHERE name=?1 AND kind='expense' AND is_deleted=0",
+        params![name],
+        |r| r.get::<_, String>(0),
+    )
+    .ok()
+}
+
+/// 编辑最近订阅计划的备注与分类（走 update_subscription 命令体，账户不变）。
+#[when(expr = "编辑该订阅计划 备注 {string} 分类 {string}")]
+fn edit_subscription_plan(world: &mut LedgerWorld, note: String, category: String) {
+    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let account_id: String = world
+        .conn
+        .query_row(
+            "SELECT account_id FROM scheduled_transactions WHERE id=?1",
+            params![plan_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let category_id = category_id_by_name(&world.conn, &category)
+        .unwrap_or_else(|| panic!("支出分类 '{category}' 不存在"));
+    update_subscription(
+        &world.conn,
+        UpdateSubscriptionInput {
+            id: plan_id,
+            account_id,
+            category_id: Some(category_id),
+            note: Some(note),
+            // 合法编辑请求不携带金额字段
+            amount_cents: None,
+            total_amount_cents: None,
+        },
+    )
+    .expect("编辑订阅计划失败");
+}
+
+/// 携带金额字段发出编辑请求：应被后端显式拒绝（ADR-0023 决策三）。
+#[when(expr = "携带金额 {int} 编辑该订阅计划")]
+fn edit_subscription_plan_with_amount(world: &mut LedgerWorld, amount: i64) {
+    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let (account_id, category_id, note): (String, Option<String>, Option<String>) = world
+        .conn
+        .query_row(
+            "SELECT account_id,category_id,note FROM scheduled_transactions WHERE id=?1",
+            params![plan_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    match update_subscription(
+        &world.conn,
+        UpdateSubscriptionInput {
+            id: plan_id,
+            account_id,
+            category_id,
+            note,
+            amount_cents: Some(amount),
+            total_amount_cents: None,
+        },
+    ) {
+        Ok(_) => world.last_error = None,
+        Err(e) => world.last_error = Some(e.to_string()),
+    }
+}
+
+#[then(expr = "编辑应失败并提示 {string}")]
+fn assert_edit_error(world: &mut LedgerWorld, needle: String) {
+    assert_last_error_contains(world, &needle);
+}
+
+#[then(expr = "该计划备注应为 {string}")]
+fn assert_plan_note(world: &mut LedgerWorld, expected: String) {
+    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let note: String = world
+        .conn
+        .query_row(
+            "SELECT note FROM scheduled_transactions WHERE id=?1",
+            params![plan_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(note, expected, "计划备注不符");
+}
+
+/// 最近计划生成的第 n 笔交易（1 起，按交易日期升序）的落库备注/分类。
+#[then(expr = "第 {int} 笔计划交易备注应为 {string}")]
+fn assert_plan_txn_note(world: &mut LedgerWorld, nth: usize, expected: String) {
+    let txn = plan_generated_txn(world, nth);
+    assert_eq!(
+        txn.note.as_deref(),
+        Some(expected.as_str()),
+        "第 {nth} 笔计划交易备注不符"
+    );
+}
+
+#[then(expr = "第 {int} 笔计划交易备注应为 {string} 分类应为 {string}")]
+fn assert_plan_txn_note_and_category(
+    world: &mut LedgerWorld,
+    nth: usize,
+    expected_note: String,
+    expected_category: String,
+) {
+    let txn = plan_generated_txn(world, nth);
+    assert_eq!(
+        txn.note.as_deref(),
+        Some(expected_note.as_str()),
+        "第 {nth} 笔计划交易备注不符"
+    );
+    let category_id = category_id_by_name(&world.conn, &expected_category)
+        .unwrap_or_else(|| panic!("支出分类 '{expected_category}' 不存在"));
+    assert_eq!(
+        txn.category_id.as_deref(),
+        Some(category_id.as_str()),
+        "第 {nth} 笔计划交易分类不符"
+    );
+}
+
+struct PlanTxnRow {
+    note: Option<String>,
+    category_id: Option<String>,
+}
+
+fn plan_generated_txn(world: &LedgerWorld, nth: usize) -> PlanTxnRow {
+    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    world
+        .conn
+        .query_row(
+            "SELECT t.note,t.category_id FROM transactions t \
+             JOIN scheduled_transaction_occurrences o ON o.transaction_id=t.id \
+             WHERE o.scheduled_transaction_id=?1 AND o.is_deleted=0 \
+             ORDER BY t.date ASC, t.created_at ASC LIMIT 1 OFFSET ?2",
+            params![plan_id, (nth - 1) as i64],
+            |r| {
+                Ok(PlanTxnRow {
+                    note: r.get(0)?,
+                    category_id: r.get(1)?,
+                })
+            },
+        )
+        .unwrap_or_else(|e| panic!("计划应已生成第 {nth} 笔交易: {e}"))
 }

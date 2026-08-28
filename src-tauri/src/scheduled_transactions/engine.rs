@@ -143,6 +143,50 @@ pub fn update_plan_status(conn: &Connection, id: &str, new_status: ScheduledStat
     Ok(())
 }
 
+/// 编辑订阅计划的非金额字段（issue #162，ADR-0023 决策三）。
+///
+/// 仅允许备注、分类、扣款账户；请求携带金额字段时显式拒绝并提示
+/// 「改价 = 取消旧计划 + 新建」。编辑不改任何已生成的期次与交易：
+/// 期次执行时从计划读取 account_id / category_id / note（金额取自期次行），
+/// 因此编辑天然只影响未来期次。
+pub fn update_subscription(conn: &Connection, input: UpdateSubscriptionInput) -> Result<()> {
+    if input.amount_cents.is_some() || input.total_amount_cents.is_some() {
+        return Err(AppError::Invalid(
+            "订阅金额不可编辑：改价 = 取消旧计划 + 新建（按新金额重建计划，保留两段真实价格历史）"
+                .into(),
+        ));
+    }
+
+    let st: ScheduledTransaction = query_one(
+        conn,
+        "SELECT id,kind,status,account_id,category_id,amount_cents,currency_code,\
+         recurrence_type,recurrence_interval,recurrence_day,start_date,note,\
+         created_at,updated_at,version,device_id,is_deleted \
+         FROM scheduled_transactions WHERE id=?1 AND is_deleted=0",
+        rusqlite::params![&input.id],
+    )?
+    .ok_or_else(|| AppError::NotFound("定时计划不存在".into()))?;
+
+    if st.kind != ScheduledKind::Subscription {
+        return Err(AppError::Invalid("仅订阅计划支持编辑非金额字段".into()));
+    }
+
+    conn.execute(
+        "UPDATE scheduled_transactions SET account_id=?2, category_id=?3, note=?4, \
+         updated_at=?5, version=version+1, device_id=?6 WHERE id=?1",
+        rusqlite::params![
+            &input.id,
+            &input.account_id,
+            &input.category_id,
+            &input.note,
+            now_iso(),
+            device_id(),
+        ],
+    )?;
+
+    Ok(())
+}
+
 /// 获取计划完整详情（含扩展字段和期次）。
 pub fn get_plan_detail(conn: &Connection, id: &str) -> Result<ScheduledTransactionDetail> {
     let core: ScheduledTransaction = query_one(
