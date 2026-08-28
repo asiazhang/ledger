@@ -22,7 +22,7 @@ use crate::db::{DbState, device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::item::cost;
 use crate::models::{Item, ItemInput, ItemStatus, ItemWithDailyCost};
-use crate::transaction::amount;
+use crate::transaction::amount::{self, TransactionKind};
 
 /// 列出全部未删除物品，每件附「已用天数」与「每天成本」。
 ///
@@ -33,7 +33,7 @@ pub fn list_items_internal(conn: &Connection) -> Result<Vec<ItemWithDailyCost>> 
     let items: Vec<Item> = query_all(
         conn,
         "SELECT id,name,purchase_date,total_cost_cents,currency_code,cost_native_cents,status, \
-         disposal_date,residual_value_cents,note,created_at,updated_at,version,device_id,is_deleted \
+         disposal_date,residual_value_cents,purchase_transaction_id,note,created_at,updated_at,version,device_id,is_deleted \
          FROM items WHERE is_deleted=0 ORDER BY created_at, id",
         [],
     )?;
@@ -85,22 +85,25 @@ pub fn create_item_internal(
     input: ItemInput,
     notify: &mut dyn FnMut(),
 ) -> Result<String> {
-    let (name, purchase_date, cost_native_cents) = validate_and_convert(conn, &input)?;
+    // 关联购买交易：校验存在且为 expense，自动带出日期/成本/币种（覆盖同名入参）。
+    let effective = apply_purchase_link(conn, &input)?;
+    let (name, purchase_date, cost_native_cents) = validate_and_convert(conn, &effective)?;
 
     let id = new_uuid();
     let now = now_iso();
     conn.execute(
         "INSERT INTO items \
          (id,name,purchase_date,total_cost_cents,currency_code,cost_native_cents,status, \
-         disposal_date,residual_value_cents,note,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,?5,?6,'in_use',NULL,NULL,?7,?8,?9,1,?10,0)",
+         disposal_date,residual_value_cents,purchase_transaction_id,note,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,?3,?4,?5,?6,'in_use',NULL,NULL,?7,?8,?9,?10,1,?11,0)",
         rusqlite::params![
             id,
             name,
             purchase_date,
-            input.total_cost_cents,
-            input.currency_code,
+            effective.total_cost_cents,
+            effective.currency_code,
             cost_native_cents,
+            input.purchase_transaction_id,
             input.note,
             now,
             now,
@@ -135,30 +138,49 @@ fn validate_and_convert(conn: &Connection, input: &ItemInput) -> Result<(String,
     ))
 }
 
-/// 按 `id` 修改物品字段（名称/购买日期/总成本/币种/备注，issue #117）。
+/// 按 `id` 修改物品字段（名称/购买日期/总成本/币种/备注/关联购买交易，
+/// issue #117 / #119）。
 ///
 /// 保留审计字段：`id` / `created_at` / `status` / 处置相关字段 / `is_deleted`
 /// 均不动；`version` 递增、`updated_at` / `device_id` 刷新（同 Writer 接缝的
 /// `update_row` 约定）。金额折算走 Amount 接缝，成功后调用 `notify`
 /// （生产路径发 `ledger:changed`）。物品不存在（或已软删除）→ [`AppError::NotFound`]。
+///
+/// 关联购买交易语义：入参提供新交易 → 校验并自动带出（覆盖日期/成本/币种，
+/// 替换溯源）；入参为 `None` → 保留既有溯源不动（溯源只增不减，不随编辑丢失）。
 pub fn update_item_internal(
     conn: &Connection,
     id: &str,
     input: ItemInput,
     notify: &mut dyn FnMut(),
 ) -> Result<()> {
-    let (name, purchase_date, cost_native_cents) = validate_and_convert(conn, &input)?;
-
     let existing: Option<Item> = query_one(
         conn,
         "SELECT id,name,purchase_date,total_cost_cents,currency_code,cost_native_cents,status, \
-         disposal_date,residual_value_cents,note,created_at,updated_at,version,device_id,is_deleted \
+         disposal_date,residual_value_cents,purchase_transaction_id,note,created_at,updated_at,version,device_id,is_deleted \
          FROM items WHERE id=?1 AND is_deleted=0",
         [id],
     )?;
     let Some(existing) = existing else {
         return Err(AppError::NotFound("物品不存在".into()));
     };
+
+    // 关联购买交易语义：新关联或换关（与既有指针不同）→ 校验并自动带出
+    // （覆盖日期/成本/币种）；维持既有关联或不带关联 → 不重新带出，
+    // 手动调整的成本/日期照常生效（溯源只增不减，None 不等于取消关联）。
+    let effective = match &input.purchase_transaction_id {
+        Some(tx_id) if Some(tx_id.as_str()) != existing.purchase_transaction_id.as_deref() => {
+            apply_purchase_link(conn, &input)?
+        }
+        _ => input.clone(),
+    };
+    let link = input
+        .purchase_transaction_id
+        .clone()
+        .or(existing.purchase_transaction_id);
+
+    let (name, purchase_date, cost_native_cents) = validate_and_convert(conn, &effective)?;
+
     // 已处置物品的购买日期不得晚于处置日，否则列表/详情读取时成本口径报错（不可达状态）。
     if let Some(disposal_date) = &existing.disposal_date
         && parse_date(&purchase_date)? > parse_date(disposal_date)?
@@ -171,15 +193,17 @@ pub fn update_item_internal(
     let updated = conn.execute(
         "UPDATE items \
          SET name=?2, purchase_date=?3, total_cost_cents=?4, currency_code=?5, \
-         cost_native_cents=?6, note=?7, updated_at=?8, version=version+1, device_id=?9 \
+         cost_native_cents=?6, purchase_transaction_id=?7, note=?8, updated_at=?9, \
+         version=version+1, device_id=?10 \
          WHERE id=?1 AND is_deleted=0",
         rusqlite::params![
             id,
             name,
             purchase_date,
-            input.total_cost_cents,
-            input.currency_code,
+            effective.total_cost_cents,
+            effective.currency_code,
             cost_native_cents,
+            link,
             input.note,
             now_iso(),
             device_id(),
@@ -220,6 +244,44 @@ pub fn delete_item_internal(conn: &Connection, id: &str, notify: &mut dyn FnMut(
     // 删除成功 → 通知调用方发出失效信号（生产为 ledger:changed）。
     notify();
     Ok(())
+}
+
+/// 解析关联购买交易并自动带出（issue #119）：入参带交易 id 时校验交易
+/// 存在、未删除且为 `expense`，用交易值覆盖入参的购买日期/总成本/币种
+/// （自动带出）；不带关联时原样返回。返回有效入参，调用方继续走统一校验。
+fn apply_purchase_link(conn: &Connection, input: &ItemInput) -> Result<ItemInput> {
+    let Some(tx_id) = &input.purchase_transaction_id else {
+        return Ok(input.clone());
+    };
+    let (date, cost_cents, currency) = resolve_purchase_link(conn, tx_id)?;
+    Ok(ItemInput {
+        purchase_date: date,
+        total_cost_cents: cost_cents,
+        currency_code: currency,
+        ..input.clone()
+    })
+}
+
+/// 查验关联购买交易：存在（未删除）且为 `expense`，返回
+/// （交易日期，金额分，币种）。不存在/已删除 → 参数错误；非 expense → 参数错误。
+fn resolve_purchase_link(conn: &Connection, tx_id: &str) -> Result<(String, i64, String)> {
+    let row: Option<(String, String, i64, String)> = conn
+        .query_row(
+            "SELECT kind, date, amount_cents, currency_code FROM transactions \
+             WHERE id=?1 AND is_deleted=0",
+            rusqlite::params![tx_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()?;
+    let Some((kind, date, amount_cents, currency)) = row else {
+        return Err(AppError::Invalid(format!("关联的购买交易不存在: {tx_id}")));
+    };
+    if kind != TransactionKind::Expense.as_str() {
+        return Err(AppError::Invalid(format!(
+            "关联的交易必须是支出类型（实际: {kind}）"
+        )));
+    }
+    Ok((date, amount_cents, currency))
 }
 
 /// 解析 YYYY-MM-DD 日期字符串；非法格式报错（物品成本计算依赖日历日期）。

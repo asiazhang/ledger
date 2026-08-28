@@ -93,6 +93,8 @@ pub struct LedgerWorld {
     pub items_list: Vec<ItemWithDailyCost>,
     /// 记住的物品创建时间（修改后审计字段保留断言用，issue #117）
     pub remembered_item_created_at: Option<String>,
+    /// 记住的关联购买交易 id（issue #119 自动带出/溯源断言用）
+    pub remembered_purchase_transaction_id: Option<String>,
     /// 最近一次净资产总览快照（首页仪表盘场景断言用）
     pub last_overview: Option<DashboardOverview>,
     /// DataLocation 引导场景：默认应用数据目录（真临时目录）
@@ -156,6 +158,7 @@ impl LedgerWorld {
             item_signal_count: 0,
             items_list: Vec::new(),
             remembered_item_created_at: None,
+            remembered_purchase_transaction_id: None,
             dl_default_dir: None,
             dl_target_dir: None,
             last_boot: None,

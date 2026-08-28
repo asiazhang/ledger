@@ -21,6 +21,7 @@ fn input(name: &str, date: &str, cost_cents: i64) -> ItemInput {
         total_cost_cents: cost_cents,
         currency_code: "CNY".into(),
         note: None,
+        purchase_transaction_id: None,
     }
 }
 
