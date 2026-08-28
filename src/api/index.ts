@@ -41,6 +41,7 @@ import type {
   RestoreResult,
   ScheduledTransactionDetail,
   ScheduledTransactionWithExt,
+  SubscriptionSpendOverview,
   CancelSyncResult,
   SyncHoldingPricesResult,
   TrendRange,
@@ -164,6 +165,9 @@ export const api = {
     invoke<string>('execute_scheduled_occurrence', { input }),
   expandScheduledOccurrences: (id: string) =>
     invoke<string[]>('expand_scheduled_occurrences', { id }),
+  // 订阅实际花费总览（issue #160，实际口径：忠实流水不摊销）
+  subscriptionSpendOverview: () =>
+    invoke<SubscriptionSpendOverview>('subscription_spend_overview'),
 
   // 数据同步
   syncInstruments: () => invoke<void>('sync_instruments'),

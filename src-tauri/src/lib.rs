@@ -169,6 +169,7 @@ pub fn run() {
             commands::update_scheduled_transaction_status,
             commands::execute_scheduled_occurrence,
             commands::expand_scheduled_occurrences,
+            commands::subscription_spend_overview,
             commands::realized_pnl_summary,
             commands::sync_instruments,
             commands::cancel_sync_instruments,

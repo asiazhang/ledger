@@ -31,11 +31,19 @@ import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { useFormShared } from '@/composables/useFormShared'
+import SubscriptionSpendPanel from '@/components/subscriptions/SubscriptionSpendPanel.vue'
+import { scheduledStatusLabel } from '@/utils/scheduled'
 
 const reference = useReferenceStore()
 const appStore = useAppStore()
 const { accountOptions, currencyOptions } = useFormShared()
 const message = useMessage()
+
+// 实际花费分析区（issue #160）：创建/暂停/取消后同步刷新
+const spendPanelRef = ref<InstanceType<typeof SubscriptionSpendPanel> | null>(null)
+function refreshSpend() {
+  void spendPanelRef.value?.reload()
+}
 
 // ---------------------------------------------------------------------------
 // 新建订阅（走既有 create_scheduled_transaction，kind=subscription）
@@ -89,6 +97,7 @@ async function create() {
     note.value = ''
     amountYuan.value = ''
     await load()
+    refreshSpend()
   } catch (e) {
     message.error(`创建失败: ${e}`)
   }
@@ -156,6 +165,7 @@ async function changeStatus(id: string, newStatus: UpdateStatusInput['new_status
     await api.updateScheduledTransactionStatus({ id, new_status: newStatus })
     message.success(newStatus === 'paused' ? '已暂停' : newStatus === 'active' ? '已恢复' : '已取消')
     await load()
+    refreshSpend()
   } catch (e) {
     message.error(`操作失败: ${e}`)
   }
@@ -179,7 +189,7 @@ function recurrenceLabel(row: SubscriptionRow): string {
 }
 
 function statusLabel(status: string): string {
-  return status === 'active' ? '进行中' : status === 'paused' ? '已暂停' : status === 'cancelled' ? '已取消' : status
+  return scheduledStatusLabel(status)
 }
 
 const filterOptions = [
@@ -376,5 +386,7 @@ onMounted(() => {
         :row-key="(row: SubscriptionRow) => row.plan.core.id"
       />
     </NCard>
+
+    <SubscriptionSpendPanel ref="spendPanelRef" />
   </NSpace>
 </template>

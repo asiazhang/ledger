@@ -13,6 +13,7 @@ import type {
   ScheduledTransactionDetail,
   ScheduledTransactionOccurrence,
   ScheduledTransactionWithExt,
+  SubscriptionSpendOverview,
 } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
@@ -126,11 +127,22 @@ function makeDetail(
 let mockPlans: ScheduledTransactionWithExt[] = []
 const mockDetails = new Map<string, ScheduledTransactionDetail>()
 
+/** 订阅花费总览 fixture（issue #160）：面板挂载即拉取，默认空数据 */
+const emptySpendOverview: SubscriptionSpendOverview = {
+  native_currency: 'CNY',
+  this_month_native_cents: 0,
+  this_year_native_cents: 0,
+  months: [],
+  rows: [],
+}
+let mockSpendOverview: SubscriptionSpendOverview = emptySpendOverview
+
 function baseInvoke() {
   mockInvoke.mockImplementation(((cmd: string, args?: Record<string, unknown>) => {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve(mockCategories)
+    if (cmd === 'subscription_spend_overview') return Promise.resolve(mockSpendOverview)
     if (cmd === 'list_scheduled_transactions') return Promise.resolve(mockPlans)
     if (cmd === 'get_scheduled_transaction_detail') {
       const detail = mockDetails.get(String(args?.id))
@@ -170,6 +182,7 @@ beforeEach(async () => {
   mockInvoke.mockReset()
   mockPlans = []
   mockDetails.clear()
+  mockSpendOverview = emptySpendOverview
   baseInvoke()
   const store = useReferenceStore()
   await store.ensureFresh()

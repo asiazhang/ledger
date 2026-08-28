@@ -97,6 +97,8 @@ pub struct LedgerWorld {
     pub remembered_purchase_transaction_id: Option<String>,
     /// 最近一次净资产总览快照（首页仪表盘场景断言用）
     pub last_overview: Option<DashboardOverview>,
+    /// 最近一次订阅实际花费总览快照（订阅花费场景断言用，issue #160）
+    pub last_spend: Option<tauri_app_lib::scheduled_transactions::SubscriptionSpendOverview>,
     /// DataLocation 引导场景：默认应用数据目录（真临时目录）
     pub dl_default_dir: Option<PathBuf>,
     /// DataLocation 引导场景：指针指向的目标目录
@@ -154,6 +156,7 @@ impl LedgerWorld {
             last_occurrence_id: None,
             last_search: None,
             last_overview: None,
+            last_spend: None,
             last_item_id: None,
             item_signal_count: 0,
             items_list: Vec::new(),
