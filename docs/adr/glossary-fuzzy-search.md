@@ -19,7 +19,7 @@
 
 ## Searchable Field（可搜索字段）
 
-全局搜索的匹配字段：交易备注 + 转出账户名（V005 收窄语义保持不变）；分类名、转入账户名不在范围。下拉搜索的字段为选项 label（issue #197–#200）。
+全局搜索的匹配字段：交易备注 + 转出账户名（历史收窄语义保持不变，ADR-0027）；分类名、转入账户名不在范围。下拉搜索的字段为选项 label（载体与范围见界面交互域「拼音可搜下拉」，issue #198/#199）。
 
 ## Full Scan（全量扫描）
 
@@ -33,3 +33,4 @@
 
 - ADR-0027：`docs/adr/0027-unified-fuzzy-search-full-scan.md`
 - ADR-0004（已废弃）：`docs/adr/0004-fuzzy-search-transactions.md`
+- 拼音可搜下拉（前端载体与范围）：`docs/contexts/CONTEXT-ui-interaction.md`
