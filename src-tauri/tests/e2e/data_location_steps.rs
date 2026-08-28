@@ -376,17 +376,18 @@ fn submit_to_uncreatable(world: &mut LedgerWorld) {
 fn submit_to_readonly_dir(world: &mut LedgerWorld) {
     let target = std::env::temp_dir().join(format!("ledger-e2e-dl-readonly-{}", new_uuid()));
     std::fs::create_dir_all(&target).unwrap();
-    // 目录存在但不可写，两个互补手段：
-    // ① Unix 权限位（非 root 下真实生效；root 绕过权限检查，不可依赖）；
-    // ② 用探针同名目录预占试写路径：fs::write 对目录必然报 EISDIR，
-    //    root 也绕不过，保证任何环境下都命中「目标目录不可写」拒绝分支。
+    // 目录存在但不可写，两个互补手段（顺序关键：先建探针目录再改权限，
+    // 否则非 root 环境下创建探针目录本身就会 PermissionDenied）：
+    // ① 用探针同名目录预占试写路径：fs::write 对目录必然报 EISDIR，
+    //    root 也绕不过，保证任何环境下都命中「目标目录不可写」拒绝分支；
+    // ② Unix 权限位（非 root 下真实生效；root 绕过权限检查，不可依赖）。
     //    文件名取自 WRITE_PROBE_FILE_NAME 单一来源，不硬编码实现细节。
+    std::fs::create_dir(target.join(WRITE_PROBE_FILE_NAME)).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o555)).unwrap();
     }
-    std::fs::create_dir(target.join(WRITE_PROBE_FILE_NAME)).unwrap();
     world.dl_target_dir = Some(target.clone());
     submit(world, &target, false);
     // 恢复权限，便于临时目录清理。
