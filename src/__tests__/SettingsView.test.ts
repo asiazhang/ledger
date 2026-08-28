@@ -51,6 +51,17 @@ function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
       pending_restart: false,
       fallback_reason: null,
     },
+    create_backup: {
+      path: '/tmp/ledger-backup.db.zip',
+      size_bytes: 1024,
+      schema_version: 4,
+      created_at: '2026-01-01T00:00:00Z',
+    },
+    restore_backup: { schema_version: 4, restored_at: '2026-01-01T00:00:00Z' },
+    restart_app: null,
+    prune_backups: { kept: 0, deleted: [], failed: [] },
+    get_auto_backup_state: { enabled: true, last_backup_at: null },
+    set_auto_backup_enabled: null,
   }
   mockInvoke.mockImplementation((cmd: string, args?: any) => {
     if (cmd in overrides) return overrides[cmd](args)
@@ -74,43 +85,12 @@ async function openTab(wrapper: ReturnType<typeof mount>, label: string) {
 
 beforeEach(async () => {
   setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'get_data_location_info') {
-      return Promise.resolve({
-        active_dir: '/Users/me/Library/Application Support/ledger',
-        configured_dir: null,
-        pending_restart: false,
-        fallback_reason: null,
-      })
-    }
-    if (cmd === 'create_backup') {
-      return Promise.resolve({
-        path: '/tmp/ledger-backup.db.zip',
-        size_bytes: 1024,
-        schema_version: 4,
-        created_at: '2026-01-01T00:00:00Z',
-      })
-    }
-    if (cmd === 'restore_backup') {
-      return Promise.resolve({ schema_version: 4, restored_at: '2026-01-01T00:00:00Z' })
-    }
-    if (cmd === 'restart_app') return Promise.resolve()
-    if (cmd === 'list_backups') return Promise.resolve([])
-    if (cmd === 'prune_backups') return Promise.resolve({ kept: 0, deleted: [], failed: [] })
-    if (cmd === 'get_auto_backup_state') {
-      return Promise.resolve({ enabled: true, last_backup_at: null })
-    }
-    if (cmd === 'set_auto_backup_enabled') return Promise.resolve()
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-  })
   mockOpen.mockReset()
   mockSave.mockReset()
   mockConfirm.mockReset()
   localStorage.clear()
+  // 默认桩收口到 stubInvoke（含备份全链路与 get_data_location_info）。
+  stubInvoke()
   const store = useReferenceStore()
   await store.ensureFresh()
 })
@@ -453,9 +433,26 @@ describe('SettingsView.vue（issue #157：Tab 分域重构 6 → 4）', () => {
     const wrapper = mount(SettingsView)
     await openTab(wrapper, '数据')
     await flushPromises()
-    const html = wrapper.html()
+    let html = wrapper.html()
     expect(html).toContain('数据存储位置')
     expect(html).toContain('/Users/me/ledger-data')
     expect(html).toContain('下次启动')
+
+    // 回退告警：fallback_reason 非空时展示回退提示，原路径仍可见。
+    stubInvoke({
+      get_data_location_info: () =>
+        Promise.resolve({
+          active_dir: '/Users/me/Library/Application Support/ledger',
+          configured_dir: null,
+          pending_restart: false,
+          fallback_reason: '配置的位置不可用：权限不足',
+        }),
+    })
+    const wrapper2 = mount(SettingsView)
+    await openTab(wrapper2, '数据')
+    await flushPromises()
+    html = wrapper2.html()
+    expect(html).toContain('已回退到默认位置')
+    expect(html).toContain('权限不足')
   })
 })
