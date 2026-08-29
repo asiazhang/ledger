@@ -96,9 +96,9 @@ export function makeTxn(i: number, accountId = 'acc-1', overrides: Partial<Trans
   }
 }
 
-/** 可变的交易库：删除操作会真实移除，分页返回随 total 变化。
- * 偶数序号在 acc-2、奇数序号在 acc-1，供涉及账户过滤断言。 */
-export let txnDb: Transaction[] = []
+/** 可变的交易库（模块内部态，主题测试经 setTxnDb 改写）：删除操作会真实移除，
+ * 分页返回随 total 变化。偶数序号在 acc-2、奇数序号在 acc-1，供涉及账户过滤断言。 */
+let txnDb: Transaction[] = []
 
 /** 与后端 read.rs 口径一致：涉及账户 / 商户 / 日期起止 / 类型 / 分页 AND 组合过滤。 */
 export function applyListFilter(filter: Record<string, unknown>) {
@@ -229,7 +229,7 @@ export async function selectRowMenu(wrapper: ReturnType<typeof mount>, key: stri
 }
 
 /** 过滤 v-show 隐藏容器（jsdom 中 leave 过渡不会结束会残留旧内容），只取可见节点。 */
-export function hasHiddenAncestor(el: Element): boolean {
+function hasHiddenAncestor(el: Element): boolean {
   let node: Element | null = el
   while (node && node !== document.body) {
     if ((node as HTMLElement).style.display === 'none') return true
@@ -238,13 +238,13 @@ export function hasHiddenAncestor(el: Element): boolean {
   return false
 }
 
-export function visibleNodes(selector: string): Element[] {
+function visibleNodes(selector: string): Element[] {
   return [...document.querySelectorAll(selector)].filter((el) => !hasHiddenAncestor(el))
 }
 
 /** 确认/取消删除对话框。useDialog 的对话框经 NModal teleport 到 body，
  * 需从 document 查询；同一 modal 容器在 jsdom 中会残留，只取可见节点。 */
-export function visibleDialogButtons() {
+function visibleDialogButtons() {
   return visibleNodes('.n-dialog button')
 }
 
