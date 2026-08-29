@@ -1,0 +1,283 @@
+//! 商户携带收口（issue #188 / ADR-0028）：按 kind 拒绝/放行、软删商户的历史引用。
+
+use super::super::*;
+use super::common::{insert_account, make_input, setup};
+use rusqlite::Connection;
+
+use crate::transaction::amount::TransactionKind;
+use rusqlite::params;
+
+// ---------------------------------------------------------------------------
+// 商户携带收口（issue #188 / ADR-0028）：行为层按 kind 拒绝/放行
+// ---------------------------------------------------------------------------
+fn insert_merchant(conn: &Connection, id: &str, name: &str) {
+    conn.execute(
+        "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+        params![id, name],
+    )
+    .unwrap();
+}
+
+/// expense / income / refund 可携带商户：创建成功且读回 merchant_id 正确。
+#[test]
+fn create_income_expense_refund_with_merchant() {
+    let conn = setup();
+    insert_account(&conn, "acc-m", "现金", "cash", "CNY");
+    insert_merchant(&conn, "mer-jd", "京东");
+
+    let expense_id = create_transaction_internal(
+        &conn,
+        TransactionInput {
+            merchant_id: Some("mer-jd".into()),
+            ..make_input("acc-m", TransactionKind::Expense, 1000, "2026-01-01")
+        },
+    )
+    .unwrap();
+    let income_id = create_transaction_internal(
+        &conn,
+        TransactionInput {
+            merchant_id: Some("mer-jd".into()),
+            ..make_input("acc-m", TransactionKind::Income, 500, "2026-01-02")
+        },
+    )
+    .unwrap();
+
+    // refund 可携带商户（创建时携带的商户被继承覆盖，读回为原支出商户）
+    let refund_id = create_transaction_internal(
+        &conn,
+        TransactionInput {
+            kind: TransactionKind::Refund,
+            merchant_id: Some("mer-jd".into()),
+            refund_of_transaction_id: Some(expense_id.clone()),
+            ..make_input("acc-m", TransactionKind::Refund, 100, "2026-01-03")
+        },
+    )
+    .unwrap();
+
+    for (id, expect_merchant) in [
+        (&expense_id, Some("mer-jd")),
+        (&income_id, Some("mer-jd")),
+        (&refund_id, Some("mer-jd")),
+    ] {
+        let merchant_id: Option<String> = conn
+            .query_row(
+                "SELECT merchant_id FROM transactions WHERE id=?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            merchant_id.as_deref(),
+            expect_merchant,
+            "交易 {id} 商户不符"
+        );
+    }
+}
+
+/// transfer / buy / sell / dividend / split 携带商户 → 行为层拒绝（schema 不设 kind 限制）。
+#[test]
+fn create_txn_with_merchant_rejected_for_non_merchant_kinds() {
+    let conn = setup();
+    insert_account(&conn, "acc-m", "现金", "cash", "CNY");
+    insert_account(&conn, "acc-m-to", "银行", "bank", "CNY");
+    insert_account(&conn, "acc-m-inv", "证券", "investment", "CNY");
+    insert_merchant(&conn, "mer-jd", "京东");
+
+    // transfer：转出/转入账户齐备，仅因携带商户被拒。
+    let err = create_transaction_internal(
+        &conn,
+        TransactionInput {
+            kind: TransactionKind::Transfer,
+            merchant_id: Some("mer-jd".into()),
+            to_account_id: Some("acc-m-to".into()),
+            ..make_input("acc-m", TransactionKind::Transfer, 3000, "2026-01-01")
+        },
+    )
+    .unwrap_err();
+    assert_eq!(err.to_string(), "参数错误: 交易类型 transfer 不能携带商户");
+
+    // buy / sell 携带商户：即使投资字段齐备也在行为层被拒（先于投资域 prepare）。
+    for kind in [TransactionKind::Buy, TransactionKind::Sell] {
+        let err = create_transaction_internal(
+            &conn,
+            TransactionInput {
+                kind,
+                merchant_id: Some("mer-jd".into()),
+                instrument_id: Some("inst-x".into()),
+                quantity: Some(10.0),
+                price_cents: Some(1000),
+                fee_cents: Some(0),
+                ..make_input("acc-m-inv", kind, 10000, "2026-01-01")
+            },
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("不能携带商户"),
+            "{kind} 应报「不能携带商户」，实际: {err}"
+        );
+    }
+
+    // dividend / split：携带商户时商户拒绝优先于「暂不支持」（两者均拒绝且不落库）。
+    for kind in [TransactionKind::Dividend, TransactionKind::Split] {
+        let err = create_transaction_internal(
+            &conn,
+            TransactionInput {
+                kind,
+                merchant_id: Some("mer-jd".into()),
+                ..make_input("acc-m", kind, 60, "2026-01-01")
+            },
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("不能携带商户"),
+            "{kind} 携带商户应报「不能携带商户」，实际: {err}"
+        );
+    }
+
+    // 全部被拒，无任何落库。
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 0, "拒绝的交易不应落库");
+}
+
+/// 修改路径同款收口：把既有交易改成携带商户的 transfer → 拒绝且事务回滚。
+#[test]
+fn update_txn_with_merchant_rejected_for_transfer() {
+    let conn = setup();
+    insert_account(&conn, "acc-m", "现金", "cash", "CNY");
+    insert_account(&conn, "acc-m-to", "银行", "bank", "CNY");
+    insert_merchant(&conn, "mer-jd", "京东");
+
+    let id = create_transaction_internal(
+        &conn,
+        make_input("acc-m", TransactionKind::Expense, 500, "2026-01-01"),
+    )
+    .unwrap();
+
+    let err = update_transaction_internal(
+        &conn,
+        &id,
+        TransactionInput {
+            kind: TransactionKind::Transfer,
+            merchant_id: Some("mer-jd".into()),
+            to_account_id: Some("acc-m-to".into()),
+            ..make_input("acc-m", TransactionKind::Transfer, 3000, "2026-01-02")
+        },
+    )
+    .unwrap_err();
+    assert_eq!(err.to_string(), "参数错误: 交易类型 transfer 不能携带商户");
+    // 拒绝后原交易保持不变。
+    let t = get_transaction_internal(&conn, &id).unwrap();
+    assert_eq!(t.kind, TransactionKind::Expense);
+    assert_eq!(t.merchant_id, None);
+}
+
+/// 读回（list / get / search）携带 merchant_id：软删商户的历史交易读回 merchant_id
+/// 照常保留（商户名由前端经参考表解析，改名即时生效——引用指向 id 不回刷历史行）。
+#[test]
+fn read_back_carries_merchant_id_after_merchant_soft_delete_and_rename() {
+    let conn = setup();
+    insert_account(&conn, "acc-m", "现金", "cash", "CNY");
+    insert_merchant(&conn, "mer-jd", "京东");
+
+    let id = create_transaction_internal(
+        &conn,
+        TransactionInput {
+            merchant_id: Some("mer-jd".into()),
+            note: Some("备注".into()),
+            ..make_input("acc-m", TransactionKind::Expense, 1000, "2026-01-01")
+        },
+    )
+    .unwrap();
+
+    // 软删商户 + 改名：历史交易 merchant_id 不变（指向 id）。
+    conn.execute("UPDATE merchants SET is_deleted=1 WHERE id='mer-jd'", [])
+        .unwrap();
+    conn.execute("UPDATE merchants SET name='京东商城' WHERE id='mer-jd'", [])
+        .unwrap();
+
+    let t = get_transaction_internal(&conn, &id).unwrap();
+    assert_eq!(t.merchant_id.as_deref(), Some("mer-jd"));
+
+    let listed = list_transactions_internal(&conn, &TransactionListFilter::default()).unwrap();
+    assert_eq!(listed.items[0].merchant_id.as_deref(), Some("mer-jd"));
+
+    let searched = crate::commands::search::search_transactions_internal(
+        &conn, "备注", 1, 10, None, None, None, None,
+    )
+    .unwrap();
+    assert_eq!(searched.items.len(), 1);
+    assert_eq!(searched.items[0].merchant_id.as_deref(), Some("mer-jd"));
+}
+
+/// 软删商户后，历史交易仍可修改其他字段（保持原商户=历史引用，跳过在用校验）：
+/// 与账户/分类更新语义一致——引用已软删参考数据不阻止编辑既有行。
+#[test]
+fn update_historical_txn_keeps_soft_deleted_merchant() {
+    let conn = setup();
+    insert_account(&conn, "acc-m", "现金", "cash", "CNY");
+    insert_merchant(&conn, "mer-jd", "京东");
+    let id = create_transaction_internal(
+        &conn,
+        TransactionInput {
+            merchant_id: Some("mer-jd".into()),
+            note: Some("旧备注".into()),
+            ..make_input("acc-m", TransactionKind::Expense, 1000, "2026-01-01")
+        },
+    )
+    .unwrap();
+    conn.execute("UPDATE merchants SET is_deleted=1 WHERE id='mer-jd'", [])
+        .unwrap();
+
+    // 只改备注、保持原商户（提交当前 merchant_id）→ 修改成功，商户引用保留。
+    update_transaction_internal(
+        &conn,
+        &id,
+        TransactionInput {
+            merchant_id: Some("mer-jd".into()),
+            note: Some("新备注".into()),
+            ..make_input("acc-m", TransactionKind::Expense, 1000, "2026-01-01")
+        },
+    )
+    .unwrap();
+    let t = get_transaction_internal(&conn, &id).unwrap();
+    assert_eq!(t.note.as_deref(), Some("新备注"));
+    assert_eq!(t.merchant_id.as_deref(), Some("mer-jd"), "商户引用应保留");
+
+    // 改选其他（在用）商户 → 成功。
+    insert_merchant(&conn, "mer-pdd", "拼多多");
+    update_transaction_internal(
+        &conn,
+        &id,
+        TransactionInput {
+            merchant_id: Some("mer-pdd".into()),
+            note: Some("新备注".into()),
+            ..make_input("acc-m", TransactionKind::Expense, 1000, "2026-01-01")
+        },
+    )
+    .unwrap();
+    let t = get_transaction_internal(&conn, &id).unwrap();
+    assert_eq!(t.merchant_id.as_deref(), Some("mer-pdd"));
+
+    // 改选已软删商户 → 拒绝（新选择仍须在用）。
+    let err = update_transaction_internal(
+        &conn,
+        &id,
+        TransactionInput {
+            merchant_id: Some("mer-jd".into()),
+            note: Some("新备注".into()),
+            ..make_input("acc-m", TransactionKind::Expense, 1000, "2026-01-01")
+        },
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("商户不存在或已删除"));
+    // 拒绝后原商户不变（事务回滚）。
+    let t = get_transaction_internal(&conn, &id).unwrap();
+    assert_eq!(t.merchant_id.as_deref(), Some("mer-pdd"));
+}
