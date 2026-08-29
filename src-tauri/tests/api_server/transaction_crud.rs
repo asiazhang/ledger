@@ -292,6 +292,7 @@ async fn test_delete_buy_transaction_cleans_up_security_lots() {
         )
         .unwrap();
         let buy = TransactionInput {
+            merchant_name: None,
             kind: TransactionKind::Buy,
             amount_cents: 0,
             currency_code: "USD".into(),

@@ -27,6 +27,9 @@ export interface TransactionInput {
   category_id?: string | null
   /** 商户引用（expense/refund/income 可携带；transfer/buy/sell/dividend/split 后端行为层拒绝） */
   merchant_id?: string | null
+  /** 商户名字符串（AI 导入契约，issue #194）：后端精确匹配在用商户名，命中复用、未命中即建；
+   * 与 merchant_id 互斥，与商户名归一化责任在后端 */
+  merchant_name?: string | null
   refund_of_transaction_id?: string | null
   note?: string | null
   date: string

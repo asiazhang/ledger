@@ -16,7 +16,8 @@ use crate::common::query_all_transactions;
 use crate::world::{ImportedRow, LedgerWorld};
 
 /// 批量导入：模拟 AI 迁移，与 HTTP 批量导入同走 `batch::TransactionBatch::run`（dedup=true）。
-/// 表格列（按表头名解析，缺失可省略）：kind | 金额 | 币种 | 账户 | 转入账户 | 日期 [| 备注 [| 幂等键]]。
+/// 表格列（按表头名解析，缺失可省略）：kind | 金额 | 币种 | 账户 | 转入账户 | 日期 [| 备注 [| 商户 [| 幂等键]]]。
+/// `商户` 为商户名字符串（issue #194 AI 导入契约）：后端精确匹配复用或未命中即建。
 #[when(expr = "批量导入交易")]
 fn batch_import(world: &mut LedgerWorld, #[step] step: &Step) {
     let table = step.table.as_ref().expect("批量导入步骤缺少数据表");
@@ -35,6 +36,7 @@ fn batch_import(world: &mut LedgerWorld, #[step] step: &Step) {
         .map(|row| {
             let to_account = get(row, "转入账户");
             let note = get(row, "备注");
+            let merchant = get(row, "商户");
             let key = get(row, "幂等键");
             ImportedRow {
                 kind: get(row, "kind"),
@@ -44,6 +46,7 @@ fn batch_import(world: &mut LedgerWorld, #[step] step: &Step) {
                 to_account_name: (!to_account.is_empty()).then_some(to_account),
                 note: (!note.is_empty()).then_some(note),
                 date: get(row, "日期"),
+                merchant_name: (!merchant.is_empty()).then_some(merchant),
                 idempotency_key: (!key.is_empty()).then_some(key),
             }
         })
@@ -82,6 +85,7 @@ fn edit_txn_by_key(world: &mut LedgerWorld, key: String, amount: i64, date: Stri
         )
         .unwrap_or_else(|_| panic!("未找到幂等键为 '{key}' 的交易"));
     let input = TransactionInput {
+        merchant_name: None,
         kind: TransactionKind::Income,
         amount_cents: amount,
         currency_code,

@@ -21,6 +21,7 @@ fn update_last_txn(world: &mut LedgerWorld, kind: String, amount: i64, date: Str
         .find(|t| t.id == id)
         .expect("原交易不存在");
     let input = TransactionInput {
+        merchant_name: None,
         kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: existing.currency_code.clone(),
@@ -52,6 +53,7 @@ fn try_update_last_to_transfer(world: &mut LedgerWorld, amount: i64, date: Strin
         .find(|t| t.id == id)
         .expect("原交易不存在");
     let input = TransactionInput {
+        merchant_name: None,
         kind: TransactionKind::Transfer,
         amount_cents: amount,
         currency_code: existing.currency_code.clone(),
@@ -78,6 +80,7 @@ fn try_update_last_to_transfer(world: &mut LedgerWorld, amount: i64, date: Strin
 #[when(expr = "尝试修改不存在的交易 金额 {int} 日期 {string}")]
 fn try_update_missing_txn(world: &mut LedgerWorld, amount: i64, date: String) {
     let input = TransactionInput {
+        merchant_name: None,
         kind: TransactionKind::Expense,
         amount_cents: amount,
         currency_code: "CNY".into(),
@@ -156,6 +159,7 @@ fn insert_trade_for_edit(
     let account_id = world.account_id(account_name);
     let currency_code = account_currency(&world.conn, &account_id);
     let input = TransactionInput {
+        merchant_name: None,
         kind,
         amount_cents: quantity * price_cents,
         currency_code,
@@ -239,6 +243,7 @@ fn trade_edit_input(
         .find(|t| t.id == id)
         .expect("原交易不存在");
     TransactionInput {
+        merchant_name: None,
         kind,
         amount_cents: 0,
         currency_code: existing.currency_code.clone(),
@@ -324,6 +329,7 @@ fn update_sell(
 fn try_update_deleted_txn(world: &mut LedgerWorld, amount: i64, date: String) {
     let id = world.last_transaction_id.clone().expect("没有可修改的交易");
     let input = TransactionInput {
+        merchant_name: None,
         kind: TransactionKind::Expense,
         amount_cents: amount,
         currency_code: "CNY".into(),

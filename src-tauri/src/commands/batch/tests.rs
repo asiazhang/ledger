@@ -42,6 +42,7 @@ fn make_input(
     date: &str,
 ) -> TransactionInput {
     TransactionInput {
+        merchant_name: None,
         kind,
         amount_cents: amount,
         currency_code: "CNY".into(),
@@ -626,6 +627,7 @@ fn make_buy_input(
     fee: i64,
 ) -> TransactionInput {
     TransactionInput {
+        merchant_name: None,
         kind: TransactionKind::Buy,
         amount_cents: 0,
         currency_code: "USD".into(),

@@ -24,6 +24,8 @@ pub struct ImportedRow {
     pub to_account_name: Option<String>,
     pub note: Option<String>,
     pub date: String,
+    /// 商户名字符串（AI 导入契约，issue #194）：后端精确匹配复用或即建，AI 不负责去重。
+    pub merchant_name: Option<String>,
     /// 客户端提供的导入幂等键（内容无关身份，重跑时保持不变）。
     pub idempotency_key: Option<String>,
 }
@@ -42,6 +44,7 @@ impl ImportedRow {
                 .map(|name| world.account_id(name)),
             category_id: None,
             merchant_id: None,
+            merchant_name: self.merchant_name.clone(),
             refund_of_transaction_id: None,
             note: self.note.clone(),
             date: self.date.clone(),

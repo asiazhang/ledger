@@ -77,6 +77,7 @@ fn buy_instrument(
         )
         .unwrap();
     let input = TransactionInput {
+        merchant_name: None,
         kind: TransactionKind::Buy,
         amount_cents: quantity * price_cents,
         currency_code,

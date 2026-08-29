@@ -9,6 +9,7 @@ mod balance;
 mod batch_import;
 mod common;
 mod documentation;
+mod merchant_import;
 mod reference_data;
 mod transaction_crud;
 mod transaction_list;

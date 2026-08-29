@@ -114,6 +114,47 @@ pub fn delete_merchant_internal(conn: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// 商户名归一化查找（AI 导入契约，issue #194 / ADR-0028）：按名字精确匹配在用商户
+/// （trim 归一），命中返回 id，未命中返回 `None`。空名（trim 后）返回 `None`，
+/// 由调用方决定报错时机。配合 [`create_merchant_by_name`] 使用：行为层先查、
+/// 行内校验全部通过后再即建——失败行不产生碎商户。
+pub fn find_merchant_by_name(conn: &Connection, name: &str) -> Result<Option<String>> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    let id: Option<String> = conn
+        .query_row(
+            "SELECT id FROM merchants WHERE name=?1 AND is_deleted=0",
+            rusqlite::params![name],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(id)
+}
+
+/// 按名字即建商户（trim 归一；trim 后为空 → 明确错误）。名字命中在用商户时
+/// 直接复用（find-or-create 语义，不撞唯一索引）；软删商户不算命中，同名即建新行
+/// （唯一索引只约束在用行）。归一化责任收口在后端，AI 提交商户名字符串即可，
+/// 不负责商户去重。
+pub fn create_merchant_by_name(conn: &Connection, name: &str) -> Result<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(AppError::Invalid("商户名不能为空".into()));
+    }
+    if let Some(id) = find_merchant_by_name(conn, name)? {
+        return Ok(id);
+    }
+    create_merchant_internal(
+        conn,
+        MerchantInput {
+            name: name.to_string(),
+            icon: None,
+            color: None,
+        },
+    )
+}
+
 /// 在用行（`is_deleted=0`）中是否已有同名商户；`exclude_id` 用于改名场景排除自身。
 /// 一条 SQL 覆盖两种形态：创建（无排除）与改名（排除自身）。
 fn merchant_name_taken(conn: &Connection, name: &str, exclude_id: Option<&str>) -> Result<bool> {

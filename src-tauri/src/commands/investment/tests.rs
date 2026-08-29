@@ -71,6 +71,7 @@ fn make_buy_input(
     fee: i64,
 ) -> TransactionInput {
     TransactionInput {
+        merchant_name: None,
         kind: TransactionKind::Buy,
         amount_cents: 0,
         currency_code: "USD".into(),
@@ -97,6 +98,7 @@ fn make_sell_input(
     fee: i64,
 ) -> TransactionInput {
     TransactionInput {
+        merchant_name: None,
         kind: TransactionKind::Sell,
         amount_cents: 0,
         currency_code: "USD".into(),
@@ -994,6 +996,7 @@ fn make_trade_input(
     date: &str,
 ) -> TransactionInput {
     TransactionInput {
+        merchant_name: None,
         kind,
         amount_cents: 0,
         currency_code: "CNY".into(),
@@ -1309,6 +1312,7 @@ fn get_transaction_trade_rejects_missing_or_non_trade_transaction() {
     let expense_id = insert_transaction(
         &conn,
         TransactionInput {
+            merchant_name: None,
             kind: TransactionKind::Expense,
             amount_cents: 1000,
             currency_code: "CNY".into(),

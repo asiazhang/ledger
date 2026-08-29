@@ -50,6 +50,10 @@ pub struct TransactionInput {
     pub to_account_id: Option<String>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
+    /// 商户名字符串（AI 导入契约，issue #194 / ADR-0028）：提交体不带 `merchant_id` 而
+    /// 带商户名时，后端写入路径精确匹配在用商户名——命中复用、未命中即建，归一化责任
+    /// 收口在后端，AI 不负责商户去重。与 `merchant_id` 互斥（同时提供属请求错误）。
+    pub merchant_name: Option<String>,
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
@@ -76,6 +80,9 @@ pub struct UpdateTransactionInput {
     pub to_account_id: Option<String>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
+    /// 商户名字符串（与 `TransactionInput.merchant_name` 同一契约）：修改路径同样
+    /// 由后端精确匹配复用或即建；解析出的 id 与该行当前商户相同即视为保持历史引用。
+    pub merchant_name: Option<String>,
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
@@ -97,6 +104,7 @@ impl From<UpdateTransactionInput> for TransactionInput {
             to_account_id: u.to_account_id,
             category_id: u.category_id,
             merchant_id: u.merchant_id,
+            merchant_name: u.merchant_name,
             refund_of_transaction_id: u.refund_of_transaction_id,
             note: u.note,
             date: u.date,
