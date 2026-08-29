@@ -23,8 +23,7 @@ fn batch_import_same_day(world: &mut LedgerWorld, count: i64, date: String, acco
     for i in 0..count {
         let id = new_uuid();
         let amount = (i + 1) * 100;
-        world
-            .conn()
+        world_conn!(world)
             .execute(
                 "INSERT INTO transactions \
                  (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
@@ -34,8 +33,7 @@ fn batch_import_same_day(world: &mut LedgerWorld, count: i64, date: String, acco
             )
             .unwrap();
     }
-    world.transactions_list =
-        query_all_transactions(&world.db.conn.lock().unwrap_or_else(|e| e.into_inner()));
+    world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 执行分页查询并断言当前页条数与 total，快照 items 供后续步骤使用。
@@ -47,11 +45,7 @@ fn assert_paged(
     expected_total: i64,
     label: &str,
 ) {
-    let result = list_transactions_internal(
-        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
-        &filter,
-    )
-    .expect("分页查询失败");
+    let result = list_transactions_internal(&world_conn!(world), &filter).expect("分页查询失败");
     assert_eq!(
         result.items.len() as i64,
         expected_count,
@@ -270,11 +264,8 @@ fn check_page_merchant_date(
 
 #[then(expr = "缺省查询 应返回 {int} 条 total {int}")]
 fn check_default(world: &mut LedgerWorld, expected_count: i64, expected_total: i64) {
-    let result = list_transactions_internal(
-        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
-        &TransactionListFilter::default(),
-    )
-    .expect("缺省查询失败");
+    let result = list_transactions_internal(&world_conn!(world), &TransactionListFilter::default())
+        .expect("缺省查询失败");
     assert_eq!(
         result.items.len() as i64,
         expected_count,
@@ -287,7 +278,7 @@ fn check_default(world: &mut LedgerWorld, expected_count: i64, expected_total: i
 #[then(expr = "读取 limit {int} 应返回 {int} 条")]
 fn check_limit(world: &mut LedgerWorld, limit: i64, expected: i64) {
     let result = list_transactions_internal(
-        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+        &world_conn!(world),
         &TransactionListFilter {
             limit: Some(limit),
             ..Default::default()
@@ -307,7 +298,7 @@ fn check_pages_cover_all(world: &mut LedgerWorld, page_size: i64, expected_total
     let mut page: usize = 1;
     loop {
         let result = list_transactions_internal(
-            &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+            &world_conn!(world),
             &TransactionListFilter {
                 page: Some(page),
                 page_size: Some(page_size as usize),

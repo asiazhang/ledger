@@ -1,5 +1,9 @@
 use cucumber::World;
 
+#[macro_use]
+#[path = "e2e/world.rs"]
+mod world;
+
 #[path = "e2e/accounts_steps.rs"]
 mod accounts_steps;
 #[path = "e2e/backup_steps.rs"]
@@ -42,8 +46,6 @@ mod transactions_edit_steps;
 mod transactions_query_steps;
 #[path = "e2e/transactions_write_steps.rs"]
 mod transactions_write_steps;
-#[path = "e2e/world.rs"]
-mod world;
 
 #[tokio::main]
 async fn main() {

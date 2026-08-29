@@ -780,11 +780,7 @@ fn writer_rows_do_not_mark_dirty_entry_does() {
 
     // 经写入口执行同样的落库（与 IPC 命令同形态）→ 提交点置脏，且置脏是幂等
     // 标记、不做「已脏跳过」优化。
-    let mut owned = setup_db();
-    crate::db::init_db(&mut owned).unwrap();
-    let state = crate::db::DbState {
-        conn: std::sync::Arc::new(std::sync::Mutex::new(owned)),
-    };
+    let state = crate::db::DbState::open_in_memory().unwrap();
     state
         .write(|conn| {
             insert_account(conn, "acc", "CNY");

@@ -757,11 +757,7 @@ fn migration_upgrades_v030_backup_with_new_tables() {
 
 /// 构造带 Arc<Mutex<Connection>> 的 DbState（写入口持锁形态）。
 fn write_test_state() -> DbState {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
-    DbState {
-        conn: std::sync::Arc::new(std::sync::Mutex::new(conn)),
-    }
+    DbState::open_in_memory().expect("打开内存库")
 }
 
 /// 读回自动备份调度状态（断言置脏语义用）。

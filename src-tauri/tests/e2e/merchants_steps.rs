@@ -19,11 +19,8 @@ use crate::world::LedgerWorld;
 
 #[given(expr = "存在商户 {string}")]
 fn given_merchant(world: &mut LedgerWorld, name: String) {
-    let id = create_merchant_internal(
-        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
-        MerchantInput { name: name.clone() },
-    )
-    .expect("创建商户失败");
+    let id = create_merchant_internal(&world_conn!(world), MerchantInput { name: name.clone() })
+        .expect("创建商户失败");
     world.merchant_name_to_id.insert(name, id);
 }
 
@@ -34,21 +31,15 @@ fn given_merchant(world: &mut LedgerWorld, name: String) {
 /// 创建商户并断言成功（注册名称→ID 映射，供后续步骤按名称引用）。
 #[when(expr = "创建商户 {string}")]
 fn create_merchant(world: &mut LedgerWorld, name: String) {
-    let id = create_merchant_internal(
-        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
-        MerchantInput { name: name.clone() },
-    )
-    .expect("创建商户失败");
+    let id = create_merchant_internal(&world_conn!(world), MerchantInput { name: name.clone() })
+        .expect("创建商户失败");
     world.merchant_name_to_id.insert(name, id);
 }
 
 /// 尝试创建商户并捕获错误（供「应返回错误」断言）。
 #[when(expr = "尝试创建商户 {string}")]
 fn try_create_merchant(world: &mut LedgerWorld, name: String) {
-    let result = create_merchant_internal(
-        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
-        MerchantInput { name },
-    );
+    let result = create_merchant_internal(&world_conn!(world), MerchantInput { name });
     world.last_error = match result {
         Err(AppError::Invalid(msg)) => Some(msg),
         _ => Some("预期失败但成功了".into()),
@@ -60,7 +51,7 @@ fn try_create_merchant(world: &mut LedgerWorld, name: String) {
 fn rename_merchant(world: &mut LedgerWorld, old_name: String, new_name: String) {
     let id = world.merchant_id(&old_name);
     update_merchant_internal(
-        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+        &world_conn!(world),
         &id,
         MerchantUpdateInput {
             name: Some(new_name.clone()),
@@ -76,7 +67,7 @@ fn rename_merchant(world: &mut LedgerWorld, old_name: String, new_name: String) 
 fn try_rename_merchant(world: &mut LedgerWorld, old_name: String, new_name: String) {
     let id = world.merchant_id(&old_name);
     let result = update_merchant_internal(
-        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+        &world_conn!(world),
         &id,
         MerchantUpdateInput {
             name: Some(new_name),
@@ -94,11 +85,7 @@ fn try_rename_merchant(world: &mut LedgerWorld, old_name: String, new_name: Stri
 #[when(expr = "软删商户 {string}")]
 fn delete_merchant(world: &mut LedgerWorld, name: String) {
     let id = world.merchant_id(&name);
-    delete_merchant_internal(
-        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
-        &id,
-    )
-    .expect("软删商户失败");
+    delete_merchant_internal(&world_conn!(world), &id).expect("软删商户失败");
 }
 
 /// 创建带商户的交易（expense/income/refund 可携带）。
@@ -129,14 +116,10 @@ fn create_txn_with_merchant(
         fee_cents: None,
         idempotency_key: None,
     };
-    let result = insert_transaction(
-        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
-        input,
-    );
+    let result = insert_transaction(&world_conn!(world), input);
     assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
     world.last_transaction_id = Some(result.unwrap());
-    world.transactions_list =
-        query_all_transactions(&world.db.conn.lock().unwrap_or_else(|e| e.into_inner()));
+    world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 尝试创建带商户的交易并捕获错误（供「应返回错误」断言）。
@@ -167,10 +150,7 @@ fn try_create_txn_with_merchant(
         fee_cents: None,
         idempotency_key: None,
     };
-    let result = insert_transaction(
-        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
-        input,
-    );
+    let result = insert_transaction(&world_conn!(world), input);
     world.last_error = match result {
         Err(AppError::Invalid(msg)) => Some(msg),
         _ => Some("预期失败但成功了".into()),
@@ -204,10 +184,7 @@ fn try_transfer_with_merchant(
         fee_cents: None,
         idempotency_key: None,
     };
-    let result = insert_transaction(
-        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
-        input,
-    );
+    let result = insert_transaction(&world_conn!(world), input);
     world.last_error = match result {
         Err(AppError::Invalid(msg)) => Some(msg),
         _ => Some("预期失败但成功了".into()),
@@ -221,8 +198,7 @@ fn try_transfer_with_merchant(
 #[then(expr = "商户表应存在且交易表含 merchant_id 列")]
 fn check_schema_in_place(world: &mut LedgerWorld) {
     // merchants 表存在（迁移后 schema 就位，含 soft-delete 列）。
-    let table: i64 = world
-        .conn()
+    let table: i64 = world_conn!(world)
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='merchants'",
             [],
@@ -232,8 +208,7 @@ fn check_schema_in_place(world: &mut LedgerWorld) {
     assert_eq!(table, 1, "merchants 表应存在");
 
     // transactions 表含 merchant_id 列（外键置空语义由 writer 校验兜底）。
-    let col: i64 = world
-        .conn()
+    let col: i64 = world_conn!(world)
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('transactions') WHERE name='merchant_id'",
             [],
@@ -245,11 +220,7 @@ fn check_schema_in_place(world: &mut LedgerWorld) {
 
 #[then(expr = "商户列表应包含 {int} 条记录")]
 fn check_merchant_count(world: &mut LedgerWorld, expected: i64) {
-    let merchants = list_merchants_internal(
-        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
-        false,
-    )
-    .expect("查询商户失败");
+    let merchants = list_merchants_internal(&world_conn!(world), false).expect("查询商户失败");
     assert_eq!(
         merchants.len() as i64,
         expected,
@@ -259,11 +230,7 @@ fn check_merchant_count(world: &mut LedgerWorld, expected: i64) {
 
 #[then(expr = "商户列表应包含 {string}")]
 fn check_merchant_contains(world: &mut LedgerWorld, name: String) {
-    let merchants = list_merchants_internal(
-        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
-        false,
-    )
-    .expect("查询商户失败");
+    let merchants = list_merchants_internal(&world_conn!(world), false).expect("查询商户失败");
     assert!(
         merchants.iter().any(|m| m.name == name),
         "商户列表应包含 '{name}'，实际: {:?}",
@@ -276,11 +243,7 @@ fn check_merchant_contains(world: &mut LedgerWorld, name: String) {
 
 #[then(expr = "商户列表应不包含 {string}")]
 fn check_merchant_not_contains(world: &mut LedgerWorld, name: String) {
-    let merchants = list_merchants_internal(
-        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
-        false,
-    )
-    .expect("查询商户失败");
+    let merchants = list_merchants_internal(&world_conn!(world), false).expect("查询商户失败");
     assert!(
         !merchants.iter().any(|m| m.name == name),
         "商户列表不应包含 '{name}'"
@@ -291,11 +254,7 @@ fn check_merchant_not_contains(world: &mut LedgerWorld, name: String) {
 /// （icon/color 已退役；请求侧结构体无对应字段由编译期保证）。
 #[then(expr = "商户列表响应 JSON 不含字段 {string}")]
 fn check_merchant_json_not_contain_field(world: &mut LedgerWorld, field: String) {
-    let merchants = list_merchants_internal(
-        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
-        false,
-    )
-    .expect("查询商户失败");
+    let merchants = list_merchants_internal(&world_conn!(world), false).expect("查询商户失败");
     assert!(!merchants.is_empty(), "商户列表为空，无法校验响应字段契约");
     for m in &merchants {
         let json = serde_json::to_value(m).expect("商户序列化失败");
@@ -310,21 +269,15 @@ fn check_merchant_json_not_contain_field(world: &mut LedgerWorld, field: String)
 /// 其历史交易照常可按商户过滤。
 #[then(expr = "商户含软删列表应包含 {int} 条记录")]
 fn check_merchant_all_count(world: &mut LedgerWorld, expected: i64) {
-    let merchants = list_merchants_internal(
-        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
-        true,
-    )
-    .expect("查询含软删商户列表失败");
+    let merchants =
+        list_merchants_internal(&world_conn!(world), true).expect("查询含软删商户列表失败");
     assert_eq!(merchants.len() as i64, expected, "含软删商户列表数量不匹配");
 }
 
 #[then(expr = "商户含软删列表应包含 {string}")]
 fn check_merchant_all_contains(world: &mut LedgerWorld, name: String) {
-    let merchants = list_merchants_internal(
-        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
-        true,
-    )
-    .expect("查询含软删商户列表失败");
+    let merchants =
+        list_merchants_internal(&world_conn!(world), true).expect("查询含软删商户列表失败");
     assert!(
         merchants.iter().any(|m| m.name == name),
         "含软删商户列表应包含 '{name}'"
@@ -346,8 +299,7 @@ fn check_txn_merchant(world: &mut LedgerWorld, index: i64, merchant_name: String
         .merchant_id
         .as_deref()
         .unwrap_or_else(|| panic!("第 {index} 条交易商户应为 '{merchant_name}'，实际无商户",));
-    let name: String = world
-        .conn()
+    let name: String = world_conn!(world)
         .query_row(
             "SELECT name FROM merchants WHERE id=?1",
             params![mid],

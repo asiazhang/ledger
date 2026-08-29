@@ -33,12 +33,7 @@ fn temp_safety_dir() -> PathBuf {
 #[when(expr = "备份数据库到临时文件")]
 fn backup_to_temp(world: &mut LedgerWorld) {
     let target = temp_path("backup.zip");
-    let result = backup_db_to(
-        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
-        &target,
-        "0.2.0",
-        BackupKind::Manual,
-    );
+    let result = backup_db_to(&world_conn!(world), &target, "0.2.0", BackupKind::Manual);
     assert!(result.is_ok(), "备份失败: {:?}", result.err());
     world.last_backup_path = Some(target);
 }
@@ -49,7 +44,7 @@ fn auto_backup_to_temp(world: &mut LedgerWorld) {
     let dir = std::env::temp_dir().join(format!("ledger-e2e-auto-backup-{}", new_uuid()));
     std::fs::create_dir_all(&dir).unwrap();
     let outcome = tauri_app_lib::auto_backup::run_due_backup(
-        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+        &world_conn!(world),
         Some(dir.to_str().unwrap()),
         "0.2.0",
         chrono::Utc::now(),
@@ -65,8 +60,7 @@ fn auto_backup_to_temp(world: &mut LedgerWorld) {
 
 #[when(expr = "删除全部交易")]
 fn delete_all_txns(world: &mut LedgerWorld) {
-    world
-        .conn()
+    world_conn!(world)
         .execute_batch("UPDATE transactions SET is_deleted=1")
         .unwrap();
 }
@@ -193,13 +187,13 @@ use tauri_app_lib::auto_backup::get_state;
 
 #[then(expr = "自动备份脏标记应为真")]
 fn auto_backup_dirty(world: &mut LedgerWorld) {
-    let state = get_state(&world.db.conn.lock().unwrap_or_else(|e| e.into_inner())).unwrap();
+    let state = get_state(&world_conn!(world)).unwrap();
     assert!(state.dirty, "业务写库成功后脏标记应为真");
 }
 
 #[then(expr = "自动备份脏标记应为假")]
 fn auto_backup_clean(world: &mut LedgerWorld) {
-    let state = get_state(&world.db.conn.lock().unwrap_or_else(|e| e.into_inner())).unwrap();
+    let state = get_state(&world_conn!(world)).unwrap();
     assert!(!state.dirty, "未发生业务写库时脏标记应为默认假");
 }
 
@@ -217,7 +211,7 @@ fn delete_last_transaction(world: &mut LedgerWorld) {
 /// ADR-0032 的豁免路径：不置脏。
 #[when(expr = "写入一项设置")]
 fn write_a_setting(world: &mut LedgerWorld) {
-    let conn = world.db.conn.lock().unwrap_or_else(|e| e.into_inner());
+    let conn = world_conn!(world);
     settings::set(&conn, SettingKey::AutoBackupEnabled, &false).expect("写入设置");
 }
 

@@ -159,6 +159,15 @@ pub struct DbState {
 }
 
 impl DbState {
+    /// 打开内存库并完成迁移，包成共享锁形态（单元测试与 BDD 世界用）。
+    pub fn open_in_memory() -> Result<DbState> {
+        let mut conn = open_in_memory()?;
+        init_db(&mut conn)?;
+        Ok(DbState {
+            conn: Arc::new(Mutex::new(conn)),
+        })
+    }
+
     /// 写入口的命令层便捷形态（语义见 [`write`]）：`state.write(|conn| ...)`。
     pub fn write<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
         write(&self.conn, f)

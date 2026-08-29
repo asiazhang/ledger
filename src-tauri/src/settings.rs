@@ -4,6 +4,11 @@
 //! `<feature>.<name>` 点分命名、由 [`SettingKey`] 枚举集中定义；值用
 //! serde_json 序列化、类型由读取方声明。本模块不暴露任何 IPC 命令，
 //! 对外接口由后续 ticket 以领域命令形状提供。
+//!
+//! **置脏豁免（ADR-0032）**：设置与调度状态写入不算「账本数据变化」，
+//! `app_settings` 全表写（即本模块的 [`set`]）不置脏——本模块不经连接层
+//! 统一写入口 [`crate::db::write`]，调用方持普通锁写入即可；豁免清单
+//! 集中在本模块单点，勿为绕开置脏在业务路径直写 `app_settings`。
 
 use rusqlite::Connection;
 use serde::Serialize;
