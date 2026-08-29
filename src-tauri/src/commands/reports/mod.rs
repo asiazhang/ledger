@@ -79,7 +79,7 @@ pub fn category_shares_rows(
 pub fn merchant_shares_rows(conn: &Connection, year: i64) -> Result<Vec<MerchantShare>> {
     let kinds = contributing_kinds_sql(Measure::ExpenseNet);
     let sql = format!(
-        "SELECT t.merchant_id, m.name, m.icon, m.color, SUM({expr}) AS net \
+        "SELECT t.merchant_id, m.name, SUM({expr}) AS net \
          FROM transactions t JOIN merchants m ON m.id=t.merchant_id \
          WHERE t.kind IN ({kinds}) AND t.is_deleted=0 AND substr(t.date,1,4)=?1 \
          GROUP BY t.merchant_id ORDER BY net DESC, m.name",

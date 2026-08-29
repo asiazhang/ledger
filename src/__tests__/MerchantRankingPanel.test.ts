@@ -3,10 +3,10 @@ import { mount } from '@vue/test-utils'
 import MerchantRankingPanel from '@/components/reports/MerchantRankingPanel.vue'
 import type { MerchantShare } from '@/types'
 
-/** 夹具即后端返回顺序（净额降序），面板只渲染不再排序。 */
+/** 夹具即后端返回顺序（净额降序），面板只渲染不再排序；商户已是纯名字行（issue #223）。 */
 const shares: MerchantShare[] = [
-  { merchant_id: 'm1', merchant_name: '京东', icon: '京东标', color: '#e37318', amount_cents: 170000 },
-  { merchant_id: 'm2', merchant_name: '红旗连锁', icon: null, color: null, amount_cents: 100000 },
+  { merchant_id: 'm1', merchant_name: '京东', amount_cents: 170000 },
+  { merchant_id: 'm2', merchant_name: '红旗连锁', amount_cents: 100000 },
 ]
 
 describe('MerchantRankingPanel', () => {
@@ -20,17 +20,10 @@ describe('MerchantRankingPanel', () => {
     expect(rows[1].find('[data-testid="merchant-rank-amount"]').text()).toContain('1000')
   })
 
-  it('附带 icon/color 视觉辨识：色块着色、icon 文本展示，缺省时隐藏', () => {
+  it('纯名称行：不渲染色块与图标文本（icon/color 已退役，issue #223）', () => {
     const wrapper = mount(MerchantRankingPanel, { props: { shares } })
-    const rows = wrapper.findAll('[data-testid="merchant-rank-row"]')
-    // 第一行：color 色块 + icon 文本
-    const dot0 = rows[0].find('[data-testid="merchant-rank-dot"]')
-    expect(dot0.exists()).toBe(true)
-    expect((dot0.element as HTMLElement).style.backgroundColor).toBe('rgb(227, 115, 24)')
-    expect(rows[0].find('[data-testid="merchant-rank-icon"]').text()).toBe('京东标')
-    // 第二行：无 color/icon 不渲染对应元素
-    expect(rows[1].find('[data-testid="merchant-rank-dot"]').exists()).toBe(false)
-    expect(rows[1].find('[data-testid="merchant-rank-icon"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="merchant-rank-dot"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="merchant-rank-icon"]').exists()).toBe(false)
   })
 
   it('空排行显示空态提示', () => {

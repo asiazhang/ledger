@@ -19,15 +19,8 @@ use crate::world::LedgerWorld;
 
 #[given(expr = "存在商户 {string}")]
 fn given_merchant(world: &mut LedgerWorld, name: String) {
-    let id = create_merchant_internal(
-        &world.conn,
-        MerchantInput {
-            name: name.clone(),
-            icon: None,
-            color: None,
-        },
-    )
-    .expect("创建商户失败");
+    let id = create_merchant_internal(&world.conn, MerchantInput { name: name.clone() })
+        .expect("创建商户失败");
     world.merchant_name_to_id.insert(name, id);
 }
 
@@ -38,29 +31,15 @@ fn given_merchant(world: &mut LedgerWorld, name: String) {
 /// 创建商户并断言成功（注册名称→ID 映射，供后续步骤按名称引用）。
 #[when(expr = "创建商户 {string}")]
 fn create_merchant(world: &mut LedgerWorld, name: String) {
-    let id = create_merchant_internal(
-        &world.conn,
-        MerchantInput {
-            name: name.clone(),
-            icon: None,
-            color: None,
-        },
-    )
-    .expect("创建商户失败");
+    let id = create_merchant_internal(&world.conn, MerchantInput { name: name.clone() })
+        .expect("创建商户失败");
     world.merchant_name_to_id.insert(name, id);
 }
 
 /// 尝试创建商户并捕获错误（供「应返回错误」断言）。
 #[when(expr = "尝试创建商户 {string}")]
 fn try_create_merchant(world: &mut LedgerWorld, name: String) {
-    let result = create_merchant_internal(
-        &world.conn,
-        MerchantInput {
-            name,
-            icon: None,
-            color: None,
-        },
-    );
+    let result = create_merchant_internal(&world.conn, MerchantInput { name });
     world.last_error = match result {
         Err(AppError::Invalid(msg)) => Some(msg),
         _ => Some("预期失败但成功了".into()),
@@ -76,8 +55,6 @@ fn rename_merchant(world: &mut LedgerWorld, old_name: String, new_name: String) 
         &id,
         MerchantUpdateInput {
             name: Some(new_name.clone()),
-            icon: None,
-            color: None,
         },
     )
     .expect("修改商户失败");
@@ -94,8 +71,6 @@ fn try_rename_merchant(world: &mut LedgerWorld, old_name: String, new_name: Stri
         &id,
         MerchantUpdateInput {
             name: Some(new_name),
-            icon: None,
-            color: None,
         },
     );
     world.last_error = match result {
@@ -275,6 +250,21 @@ fn check_merchant_not_contains(world: &mut LedgerWorld, name: String) {
         !merchants.iter().any(|m| m.name == name),
         "商户列表不应包含 '{name}'"
     );
+}
+
+/// 商户契约回归「名字字典」（issue #223）：列表响应序列化后不应再含指定字段
+/// （icon/color 已退役；请求侧结构体无对应字段由编译期保证）。
+#[then(expr = "商户列表响应 JSON 不含字段 {string}")]
+fn check_merchant_json_not_contain_field(world: &mut LedgerWorld, field: String) {
+    let merchants = list_merchants_internal(&world.conn, false).expect("查询商户失败");
+    assert!(!merchants.is_empty(), "商户列表为空，无法校验响应字段契约");
+    for m in &merchants {
+        let json = serde_json::to_value(m).expect("商户序列化失败");
+        assert!(
+            json.get(&field).is_none(),
+            "商户响应不应含字段 '{field}'，实际: {json}"
+        );
+    }
 }
 
 /// 含软删全量列表（交易列表筛选下拉的数据源）：软删商户仍在其列，

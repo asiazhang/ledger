@@ -52,12 +52,12 @@ const mockCategories: Category[] = [
 
 const mockMerchants: Merchant[] = [
   {
-    id: 'mch-1', name: '京东', icon: null, color: null,
+    id: 'mch-1', name: '京东',
     created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false,
   },
   {
-    id: 'mch-2', name: '红旗连锁', icon: null, color: null,
+    id: 'mch-2', name: '红旗连锁',
     created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false,
   },
@@ -85,7 +85,6 @@ const newCategories: Category[] = [
 ]
 const newMerchants: Merchant[] = [
   {
-    id: 'mch-new', name: '新商户', icon: null, color: null,
     created_at: '2026-02-01T00:00:00Z', updated_at: '2026-02-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false,
   },

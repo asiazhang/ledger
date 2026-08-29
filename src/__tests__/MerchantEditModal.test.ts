@@ -30,7 +30,7 @@ const mockInvoke = vi.mocked(invoke)
 enableAutoUnmount(afterEach)
 
 const mockMerchant: Merchant = {
-  id: 'mch-1', name: '京东', icon: null, color: '#e37318',
+  id: 'mch-1', name: '京东',
   created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
   version: 1, device_id: 'test', is_deleted: false,
 }
@@ -59,17 +59,15 @@ describe('MerchantEditModal.vue（issue #189）', () => {
     messageMock.warning.mockClear()
   })
 
-  it('打开时回填商户字段', async () => {
+  it('打开时回填商户名称（表单只含名称输入，icon/color 已退役）', async () => {
     const wrapper = mount(MerchantEditModal, {
       props: { show: true, merchant: mockMerchant },
     })
     await flushPromises()
     const nameInput = findInputByPlaceholder('商户名称')
-    const iconInput = findInputByPlaceholder('图标名')
-    const colorInput = findInputByPlaceholder('颜色')
     expect(nameInput.element.value).toBe('京东')
-    expect(iconInput.element.value).toBe('')
-    expect(colorInput.element.value).toBe('#e37318')
+    expect(document.body.querySelector('input[placeholder="图标名"]')).toBeNull()
+    expect(document.body.querySelector('input[placeholder="颜色"]')).toBeNull()
   })
 
   it('改名保存：调用 update_merchant 并关窗', async () => {
@@ -89,7 +87,7 @@ describe('MerchantEditModal.vue（issue #189）', () => {
     expect(mockInvoke.mock.calls.filter(([c]) => c === 'update_merchant')).toHaveLength(1)
     expect(mockInvoke.mock.calls.find(([c]) => c === 'update_merchant')![1]).toEqual({
       id: 'mch-1',
-      input: { name: '京东商城', icon: null, color: '#e37318' },
+      input: { name: '京东商城' },
     })
     expect(wrapper.emitted('update:show')?.[0]).toEqual([false])
   })

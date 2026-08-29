@@ -292,12 +292,12 @@ describe('TransactionsView 商户筛选（issue #191）', () => {
   // 富数据集：商户命中/未命中、软删商户历史交易并存，供筛选/组合/URL 直达断言
   const merchantDbAll: Merchant[] = [
     {
-      id: 'mch-1', name: '京东', icon: null, color: null,
+      id: 'mch-1', name: '京东',
       created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
       version: 1, device_id: 'test', is_deleted: false,
     },
     {
-      id: 'mch-2', name: '红旗连锁', icon: null, color: null,
+      id: 'mch-2', name: '红旗连锁',
       created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
       version: 1, device_id: 'test', is_deleted: true,
     },
@@ -403,7 +403,7 @@ describe('TransactionsView 商户 URL 直达（issue #191）', () => {
     setMerchantDb([
       { ...merchantDb[0] },
       {
-        id: 'mch-2', name: '红旗连锁', icon: null, color: null,
+        id: 'mch-2', name: '红旗连锁',
         created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
         version: 1, device_id: 'test', is_deleted: true,
       },

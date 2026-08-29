@@ -13,8 +13,6 @@ const emit = defineEmits<{ 'update:show': [value: boolean] }>()
 const message = useMessage()
 
 const editName = ref('')
-const editIcon = ref('')
-const editColor = ref('')
 
 // 打开弹窗时同步待编辑字段（弹窗内容在关闭后仍保留在 DOM，需在打开时回填；
 // immediate 兼容 show 初始即为 true 的挂载）
@@ -23,8 +21,6 @@ watch(
   () => {
     if (!props.show || !props.merchant) return
     editName.value = props.merchant.name
-    editIcon.value = props.merchant.icon ?? ''
-    editColor.value = props.merchant.color ?? ''
   },
   { immediate: true },
 )
@@ -37,11 +33,7 @@ async function saveEdit() {
     message.warning('请输入商户名称')
     return
   }
-  const input: MerchantUpdateInput = {
-    name,
-    icon: editIcon.value || null,
-    color: editColor.value || null,
-  }
+  const input: MerchantUpdateInput = { name }
   try {
     await api.updateMerchant(m.id, input)
     message.success('已更新商户')
@@ -66,12 +58,6 @@ async function saveEdit() {
     <NForm label-placement="left" :show-feedback="false" size="small">
       <NFormItem label="名称">
         <NInput v-model:value="editName" placeholder="商户名称" />
-      </NFormItem>
-      <NFormItem label="图标">
-        <NInput v-model:value="editIcon" placeholder="图标名" style="width: 120px" />
-      </NFormItem>
-      <NFormItem label="颜色">
-        <NInput v-model:value="editColor" placeholder="颜色" style="width: 120px" />
       </NFormItem>
       <NButton type="primary" block @click="saveEdit">保存</NButton>
     </NForm>

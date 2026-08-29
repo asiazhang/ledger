@@ -12,7 +12,7 @@
 ## 决策
 
 1. **术语统一**：全库统一「商户（Merchant）」，`Counterparty`（交易对手）术语废弃；词汇表不再使用「交易对手」「商家」「收款方」指称该概念（定时计划域 Counterparty 词条改为指向核心交易域 Merchant 的指针）。
-2. **Merchant 成为核心交易域共享概念**：新建 `merchants` 参考数据字典表（软删除 `is_deleted`、可选 `icon` / `color`、`name` 全库唯一、空表启动不 seed——商户是强个人属性，seed 通用商户是字典噪音）。它被三个域消费：核心交易（`expense` / `refund` / `income` 流水携带 `merchant_id`）、定时计划（installment / subscription 挂商户，每期生成交易时复制到流水）、AI 导入（自动识别商户、精确匹配复用或即建）。词条定义归核心交易域词汇表（CONTEXT-MAP 归属规则：跨域共享术语归核心交易域）。
+2. **Merchant 成为核心交易域共享概念**：新建 `merchants` 参考数据字典表（软删除 `is_deleted`、`name` 全库唯一、空表启动不 seed——商户是强个人属性，seed 通用商户是字典噪音）。它被三个域消费：核心交易（`expense` / `refund` / `income` 流水携带 `merchant_id`）、定时计划（installment / subscription 挂商户，每期生成交易时复制到流水）、AI 导入（自动识别商户、精确匹配复用或即建）。词条定义归核心交易域词汇表（CONTEXT-MAP 归属规则：跨域共享术语归核心交易域）。决策点原文中的「可选 `icon` / `color` 供报表与图表视觉辨识」已被实施现状推翻并退役（issue #223）：商户是高频自动增长的名字字典，视觉辨识字段只会复活低填充率噪音，与分类（数量少、用户手动维护、图标有辨识价值）对称的设计不适用于商户。
 3. **推翻 ADR-0024 的一个决策点**：ADR-0024「不在 `Transaction` 表中新增通用 `counterparty` 字段」被推翻——`transactions` 直接增加 `merchant_id` 外键（字典行硬删时 `ON DELETE SET NULL`）；`scheduled_transactions` 扩展表的 `counterparty` 文本列改为 `merchant_id` 引用。ADR-0024 其余决策（计划生命周期、分期金额、周期规则、失败策略）维持不变；`ScheduledTransfer` 不使用商户（用 `to_account_id` 表示本方账户间转账）的边界维持。
 4. **Schema 原地改，breaking change 无升级路径**：`merchants` 表并入既有初始迁移、`transactions` 直接加列，不写前向兼容迁移、不写数据搬迁脚本；发布时标注 breaking change，旧库无升级路径。
 

@@ -58,6 +58,9 @@ async fn test_get_merchants_lists_merchants_created_by_import() {
     assert_eq!(list.len(), 1);
     assert_eq!(list[0]["name"], "盒马");
     assert_eq!(list[0]["is_deleted"], false);
+    // 商户契约回归「名字字典」（issue #223）：响应不含已退役的 icon/color 字段。
+    assert!(list[0].get("icon").is_none(), "商户响应不应含 icon 字段");
+    assert!(list[0].get("color").is_none(), "商户响应不应含 color 字段");
 }
 
 /// 带商户名导入落库：交易行解析出 merchant_id，读回可按商户关联。
