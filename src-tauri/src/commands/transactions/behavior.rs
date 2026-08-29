@@ -1,10 +1,19 @@
 //! 交易类型行为层（issue #72 / spec #69 候选 2）：按 kind 收敛分派。
 //!
-//! 每类 kind 的行为——校验、归一化、应用副作用、回退——集中于此，对外暴露三个能力：
+//! 对外暴露**创建编排入口** [`create`]（issue #228 / ADR-0030：连接 + 输入进，
+//! 顺序契约与事务边界内化为实现细节），以及三个模块内协作件：
 //! - [`plan`]：校验 + 归一化（normalize→plan，交易行不落库；商户名归一化含参考数据字典的
 //!   未命中即建，见下）；
 //! - [`apply`]：应用计划的副作用（普通 kind 无副作用；buy 建仓 / sell 卖出匹配）；
 //! - [`revert`]：回退一笔已存在交易（按旧 kind）的副作用（普通 kind 无副作用）。
+//!
+//! **嵌套感知事务（「保证处于事务中」，ADR-0030 决策 #2）**：[`create`] 检测连接
+//! 事务状态——autocommit 则自持 BEGIN/COMMIT/ROLLBACK，`insert_row` 后 apply 中途
+//! 失败整体回滚、无已落库交易行与半套副作用的中间态泄漏；已在事务中（批量导入的
+//! 外层批次事务）则加入外层、失败直接返回错误，回滚归外层持有者（batch 是嵌套模式
+//! 的唯一合法使用者）。提交点副作用（备份置脏，ADR-0032）归事务持有者：自持事务由
+//! 连接层统一写入口 `db.write` 在提交点单点触发，嵌套模式由 batch 在自己 COMMIT 后
+//! 触发——本模块对备份域零感知。
 //!
 //! 分派是薄而穷尽的 `match`（不引入 trait 注册表，避免过度设计）：
 //! 普通 kind（income/expense/transfer/refund）经 Writer 接缝归一化；buy/sell 委托投资域
@@ -13,9 +22,9 @@
 //! （此前经交易接口创建 dividend/split 落入 [`writer::normalize`] 的通用兜底，返回语义不明的
 //! 「仅处理通用交易类型」；现改为明确的「暂不支持」，两者都不落库）。
 //!
-//! 依赖方向：命令层（transactions → investment → 无反向）。本模块与行为函数不内嵌事务、
-//! 只接受连接——事务边界由调用方持有（修改路径与批量路径在编排层显式 BEGIN/COMMIT），
-//! 行为层保证在这些事务内，买卖的行写入与 lot/匹配副作用同处一个事务。
+//! 依赖方向：命令层（transactions → investment → 无反向）。行为协作件只接受连接、
+//! 不内嵌事务——事务边界由编排入口（或修改/批量编排，迁移期）持有，行为层保证在这些
+//! 事务内，买卖的行写入与 lot/匹配副作用同处一个事务。
 
 use rusqlite::Connection;
 
@@ -41,6 +50,53 @@ impl Plan {
             Plan::Investment(p) => Ok(writer::NormalizedRow::try_from(p.normalized())?),
         }
     }
+}
+
+/// 创建一笔交易（IPC `create_transaction` / 批量导入批次循环，issue #228 / ADR-0030）。
+///
+/// 行为层创建编排入口：`plan → insert_row → apply` 的顺序契约在此单点可达，
+/// 调用方只传连接与输入、处理报错。
+///
+/// 事务规则是「保证处于事务中」（嵌套感知，见模块注释）：autocommit 自持事务
+/// （中途失败整体回滚）；外层事务中加入外层（失败直接返回错误，回滚归外层持有者）。
+///
+/// 可见性说明：函数本体 `pub`（供 [`super`] 以 `create_transaction_internal` 名字
+/// 公开再导出，模块本身私有故不额外扩大可见面）。
+pub fn create(conn: &Connection, input: TransactionInput) -> Result<String> {
+    // is_autocommit()=true ⇔ 连接不在事务中（rusqlite 语义），据此选分支。
+    let owns_tx = conn.is_autocommit();
+    if owns_tx {
+        conn.execute("BEGIN", [])?;
+    }
+    let result = create_within_transaction(conn, &input);
+    match (result, owns_tx) {
+        (Ok(id), false) => Ok(id),
+        (Ok(id), true) => match conn.execute("COMMIT", []) {
+            Ok(_) => Ok(id),
+            // COMMIT 失败：尽力回滚清理残留（与批量编排同款），再上抛提交错误。
+            Err(e) => {
+                let _ = conn.execute("ROLLBACK", []);
+                Err(e.into())
+            }
+        },
+        // 自持事务中途失败：整体回滚，不留已落库交易行与半套副作用。
+        (Err(e), true) => {
+            conn.execute("ROLLBACK", [])?;
+            Err(e)
+        }
+        // 嵌套模式：加入外层，失败直接返回错误——回滚归外层持有者。
+        (Err(e), false) => Err(e),
+    }
+}
+
+/// 创建协议本体：`plan → insert_row → apply`（无事务语义，由 [`create`] 嵌套感知包裹）。
+fn create_within_transaction(conn: &Connection, input: &TransactionInput) -> Result<String> {
+    let plan = plan(conn, input, None)?;
+    let row = plan.normalized_row()?;
+    let id = writer::insert_row(conn, &row)?;
+    apply(conn, &id, &plan)?;
+    // 搜索无索引（issue #196 全量扫描实现）：写入路径零额外工作，交易立即可搜。
+    Ok(id)
 }
 
 /// 校验并归一化一笔交易输入为计划（交易行不落库）。

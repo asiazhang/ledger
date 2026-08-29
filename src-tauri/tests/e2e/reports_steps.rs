@@ -2,12 +2,12 @@
 //!
 //! 排行口径由核心函数 `merchant_shares_rows`（命令层同款注入）查询：
 //! `expense_net`（毛支出 − 退款）按商户聚合、本位币口径。交易夹具走与真实
-//! 写路径一致的行为层（`insert_transaction`），复用商户/交易步骤模块的既有步骤。
+//! 写路径一致的行为层（`create_transaction_internal`），复用商户/交易步骤模块的既有步骤。
 
 use cucumber::{then, when};
 
 use tauri_app_lib::commands::reports::merchant_shares_rows;
-use tauri_app_lib::commands::transactions::insert_transaction;
+use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::models::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
 
@@ -49,7 +49,7 @@ fn create_txn_with_merchant_currency(
         fee_cents: None,
         idempotency_key: None,
     };
-    let result = insert_transaction(&world_conn!(world), input);
+    let result = create_transaction_internal(&world_conn!(world), input);
     assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
     world.last_transaction_id = Some(result.unwrap());
     world.transactions_list = query_all_transactions(&world_conn!(world));

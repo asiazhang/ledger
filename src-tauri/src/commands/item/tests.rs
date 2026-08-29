@@ -6,7 +6,7 @@ use crate::commands::item::{
     create_item_internal, delete_item_internal, dispose_item_internal, list_items_internal,
     update_item_internal,
 };
-use crate::commands::transactions::insert_transaction;
+use crate::commands::transactions::create_transaction_internal;
 use crate::db::{init_db, open_in_memory};
 use crate::models::{ItemDisposeInput, ItemInput, TransactionInput};
 use crate::transaction::amount::TransactionKind;
@@ -39,7 +39,7 @@ fn seed_purchase_tx(conn: &Connection, date: &str, cost_cents: i64, currency: &s
         [currency],
     )
     .unwrap();
-    insert_transaction(
+    create_transaction_internal(
         conn,
         TransactionInput {
             merchant_name: None,

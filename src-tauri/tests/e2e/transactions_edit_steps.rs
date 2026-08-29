@@ -2,7 +2,7 @@ use cucumber::{then, when};
 use rusqlite::params;
 
 use tauri_app_lib::commands::transactions::{
-    delete_transaction_internal, insert_transaction, update_transaction_internal,
+    create_transaction_internal, delete_transaction_internal, update_transaction_internal,
 };
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::models::TransactionInput;
@@ -175,7 +175,7 @@ fn insert_trade_for_edit(
         fee_cents: Some(0),
         idempotency_key: None,
     };
-    let id = insert_transaction(&world_conn!(world), input).expect("创建买卖交易失败");
+    let id = create_transaction_internal(&world_conn!(world), input).expect("创建买卖交易失败");
     world.last_transaction_id = Some(id);
     world.transactions_list = query_all_transactions(&world_conn!(world));
 }

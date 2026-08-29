@@ -1,6 +1,7 @@
 use cucumber::{given, then, when};
+use rusqlite::params;
 
-use tauri_app_lib::commands::transactions::insert_transaction;
+use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::models::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
@@ -50,7 +51,9 @@ fn create_txn(
         idempotency_key: None,
     };
     // 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）创建，提交点置脏/到期检查。
-    let result = world.db.write(|conn| insert_transaction(conn, input));
+    let result = world
+        .db
+        .write(|conn| create_transaction_internal(conn, input));
     assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
     world.last_transaction_id = Some(result.unwrap());
     world.transactions_list = query_all_transactions(&world_conn!(world));
@@ -84,7 +87,9 @@ fn create_txn_with_note(
         idempotency_key: None,
     };
     // 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）创建，提交点置脏/到期检查。
-    let result = world.db.write(|conn| insert_transaction(conn, input));
+    let result = world
+        .db
+        .write(|conn| create_transaction_internal(conn, input));
     assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
     world.last_transaction_id = Some(result.unwrap());
     world.transactions_list = query_all_transactions(&world_conn!(world));
@@ -115,7 +120,7 @@ fn try_transfer_without_target(
         fee_cents: None,
         idempotency_key: None,
     };
-    let result = insert_transaction(&world_conn!(world), input);
+    let result = create_transaction_internal(&world_conn!(world), input);
     world.last_error = match result {
         Err(AppError::Invalid(msg)) => Some(msg),
         _ => Some("预期失败但成功了".into()),
@@ -150,11 +155,73 @@ fn try_create_txn(
         fee_cents: None,
         idempotency_key: None,
     };
-    let result = insert_transaction(&world_conn!(world), input);
+    let result = create_transaction_internal(&world_conn!(world), input);
     world.last_error = match result {
         Err(AppError::Invalid(msg)) => Some(msg),
         _ => Some("预期失败但成功了".into()),
     };
+}
+
+/// 尝试创建一笔买入交易并捕获错误（供「应返回错误」断言，issue #228）。
+#[when(expr = "尝试买入标的 {string} 数量 {int} 单价 {int} 到投资账户 {string}")]
+fn try_create_buy(
+    world: &mut LedgerWorld,
+    symbol: String,
+    quantity: i64,
+    price_cents: i64,
+    account_name: String,
+) {
+    let instrument_id: String = world_conn!(world)
+        .query_row(
+            "SELECT id FROM instruments WHERE symbol=?1",
+            params![symbol],
+            |r| r.get(0),
+        )
+        .expect("标的不存在，先铺垫 Given 存在标的");
+    let account_id = world.account_id(&account_name);
+    let currency_code: String = world_conn!(world)
+        .query_row(
+            "SELECT currency_code FROM accounts WHERE id=?1",
+            params![account_id],
+            |r| r.get(0),
+        )
+        .expect("账户不存在");
+    let input = TransactionInput {
+        merchant_name: None,
+        kind: TransactionKind::Buy,
+        amount_cents: 0,
+        currency_code,
+        account_id,
+        to_account_id: None,
+        category_id: None,
+        merchant_id: None,
+        refund_of_transaction_id: None,
+        note: None,
+        date: "2026-01-10".into(),
+        instrument_id: Some(instrument_id),
+        quantity: Some(quantity as f64),
+        price_cents: Some(price_cents),
+        fee_cents: Some(0),
+        idempotency_key: None,
+    };
+    world.last_error = match create_transaction_internal(&world_conn!(world), input) {
+        Ok(_) => Some("预期失败但成功了".into()),
+        Err(e) => Some(e.to_string()),
+    };
+}
+
+/// 注入「建仓中途失败」：买入副作用先写 security_transactions、再写 security_lots，
+/// 触发器在第二步 RAISE(ABORT)——纯测试侧注入（spec #169 定案），检验 create
+/// 编排入口把行落库与半套副作用整体回滚（issue #228）。
+#[when(expr = "注入买入建仓中途失败触发器")]
+fn inject_buy_lot_failure_trigger(world: &mut LedgerWorld) {
+    world_conn!(world)
+        .execute(
+            "CREATE TRIGGER block_buy_lot BEFORE INSERT ON security_lots \
+             BEGIN SELECT RAISE(ABORT, '测试注入：建仓失败'); END",
+            [],
+        )
+        .expect("注入触发器失败");
 }
 
 #[when(expr = "创建转账 金额 {int} 从 {string} 到 {string} 日期 {string}")]
@@ -183,7 +250,7 @@ fn create_transfer(
         fee_cents: None,
         idempotency_key: None,
     };
-    let result = insert_transaction(&world_conn!(world), input);
+    let result = create_transaction_internal(&world_conn!(world), input);
     assert!(result.is_ok(), "创建转账失败: {:?}", result.err());
     world.last_transaction_id = Some(result.unwrap());
     world.transactions_list = query_all_transactions(&world_conn!(world));
@@ -221,7 +288,7 @@ fn create_refund(world: &mut LedgerWorld, amount: i64, date: String) {
         fee_cents: None,
         idempotency_key: None,
     };
-    let result = insert_transaction(&world_conn!(world), input);
+    let result = create_transaction_internal(&world_conn!(world), input);
     assert!(result.is_ok(), "创建退款失败: {:?}", result.err());
     world.last_transaction_id = Some(result.unwrap());
     world.transactions_list = query_all_transactions(&world_conn!(world));
@@ -286,6 +353,23 @@ fn check_txn_kind_amount_note(
 #[then(expr = "应返回错误 {string}")]
 fn check_error(world: &mut LedgerWorld, expected_msg: String) {
     crate::common::assert_last_error_contains(world, &expected_msg);
+}
+
+/// 建仓中途失败整体回滚的终态断言：持仓批次与买卖明细均无残留
+/// （交易行无残留由「交易列表应包含 0 条记录」断言，issue #228）。
+#[then(expr = "无买入持仓与买卖明细残留")]
+fn assert_no_lot_and_trade_residue(world: &mut LedgerWorld) {
+    let conn = world_conn!(world);
+    let (lots, stx): (i64, i64) = conn
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM security_lots), \
+                    (SELECT COUNT(*) FROM security_transactions)",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(lots, 0, "持仓批次不应残留");
+    assert_eq!(stx, 0, "买卖明细不应残留");
 }
 
 #[then(expr = "该转账类型应为 {string}")]

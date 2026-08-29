@@ -265,7 +265,7 @@ async fn test_sell_native_cents_converted_via_writer_seam() {
 
 #[tokio::test]
 async fn test_delete_buy_transaction_cleans_up_security_lots() {
-    use tauri_app_lib::commands::insert_transaction;
+    use tauri_app_lib::commands::create_transaction_internal;
     use tauri_app_lib::models::TransactionInput;
     use tauri_app_lib::transaction::amount::TransactionKind;
 
@@ -309,7 +309,7 @@ async fn test_delete_buy_transaction_cleans_up_security_lots() {
             fee_cents: Some(500),
             idempotency_key: None,
         };
-        insert_transaction(&conn, buy).unwrap();
+        create_transaction_internal(&conn, buy).unwrap();
     }
 
     let buy_id: String = conn

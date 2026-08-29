@@ -37,6 +37,12 @@ Feature: 备份与恢复
     And 删除最近创建的交易
     Then 自动备份脏标记应为真
 
+  Scenario: 单笔创建交易成功后置脏（issue #228，经行为层 create 编排入口）
+    Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
+    Then 自动备份脏标记应为假
+    When 创建交易 类型 "expense" 金额 1500 到账户 "现金" 日期 "2026-02-01" 备注 "午餐"
+    Then 自动备份脏标记应为真
+
   Scenario: 从备份恢复后自动备份调度状态重置（issue #126）
     Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
     When 创建交易 类型 "expense" 金额 1500 到账户 "现金" 日期 "2026-02-01" 备注 "午餐"

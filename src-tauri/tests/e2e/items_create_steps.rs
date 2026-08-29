@@ -10,7 +10,7 @@
 use cucumber::{then, when};
 
 use tauri_app_lib::commands::item::{create_item_internal, list_items_internal};
-use tauri_app_lib::commands::transactions::insert_transaction;
+use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::item::cost;
 use tauri_app_lib::models::{ItemInput, ItemStatus, TransactionInput};
@@ -22,7 +22,7 @@ use crate::world::LedgerWorld;
 
 /// 脚手架：创建一笔 expense 购买交易并返回其 id（issue #207 起物品创建必关联
 /// 购买交易，未显式 Given 交易的场景由本脚手架补齐溯源）。账户按币种惰性创建
-/// 并注册到 world（与「存在账户」Given 同款）；交易经 `insert_transaction` 接缝，
+/// 并注册到 world（与「存在账户」Given 同款）；交易经 `create_transaction_internal` 接缝，
 /// 金额/日期/汇率不合法会在此处失败，与真实写入路径一致。
 fn scaffold_purchase_tx(
     world: &mut LedgerWorld,
@@ -58,7 +58,7 @@ fn scaffold_purchase_tx(
         fee_cents: None,
         idempotency_key: None,
     };
-    insert_transaction(&world_conn!(world), input)
+    create_transaction_internal(&world_conn!(world), input)
         .unwrap_or_else(|e| panic!("脚手架购买交易应创建成功但失败: {e}"))
 }
 

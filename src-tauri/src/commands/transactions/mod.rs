@@ -16,6 +16,10 @@ use crate::models::{
 pub use read::*;
 pub use write::*;
 
+/// 行为层创建编排入口的 crate 外接缝（e2e/HTTP 同一实现，issue #228）：
+/// `plan → insert_row → apply` 与事务边界已内化在 [`behavior::create`]。
+pub use behavior::create as create_transaction_internal;
+
 #[tauri::command]
 pub fn list_transactions(
     db: State<'_, DbState>,
@@ -29,7 +33,8 @@ pub fn list_transactions(
 #[tauri::command]
 pub fn create_transaction(db: State<'_, DbState>, input: TransactionInput) -> Result<String> {
     // 连接层统一写入口（ADR-0032）：锁连接 + 提交点置脏/到期检查单点。
-    db.write(|conn| insert_transaction(conn, input))
+    // 创建编排入口（issue #228 / ADR-0030）：行为层自持事务，中途失败整体回滚。
+    db.write(|conn| behavior::create(conn, input))
 }
 
 #[tauri::command]

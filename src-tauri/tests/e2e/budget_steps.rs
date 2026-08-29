@@ -5,7 +5,7 @@
 //! 场景在任何日期运行都成立。每个场景开始时冻结一次 today
 //! （[`scenario_today`]），避免跨自然月/年边界午夜运行时各步骤口径漂移。
 //! 预算行与支出分类为夹具（直接插库），交易走与真实写路径一致的行为层
-//! （`insert_transaction`），进度经核心函数 `budget_progress_rows`（命令层同款注入）查询。
+//! （`create_transaction_internal`），进度经核心函数 `budget_progress_rows`（命令层同款注入）查询。
 
 use chrono::{Datelike, Months, NaiveDate};
 use cucumber::{given, then, when};
@@ -14,7 +14,7 @@ use rusqlite::params;
 use tauri_app_lib::commands::budget::{
     budget_progress_rows, create_budget_internal, update_budget_internal,
 };
-use tauri_app_lib::commands::transactions::insert_transaction;
+use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
 use tauri_app_lib::models::{BudgetInput, TransactionInput};
 use tauri_app_lib::transaction::amount::TransactionKind;
@@ -86,7 +86,7 @@ fn insert_budget_row(
 
 /// 经行为层落一笔带分类的支出/退款类交易，返回交易 id。
 fn create_transaction(world: &mut LedgerWorld, input: TransactionInput) -> String {
-    let result = insert_transaction(&world_conn!(world), input);
+    let result = create_transaction_internal(&world_conn!(world), input);
     let id = result.unwrap_or_else(|e| panic!("创建交易失败: {e:?}"));
     world.last_transaction_id = Some(id.clone());
     id

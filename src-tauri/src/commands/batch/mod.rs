@@ -8,8 +8,8 @@
 //! （`create_transactions`，`dedup=false`）——它们共享同一段编排。真正的轴是
 //! 「**批量编排 vs 单条落库**」，去重身份只是 `dedup` 注入的选项，不是「导入」概念的固有属性。
 //!
-//! **边界**：单笔落库（`transactions::insert_transaction`，含 buy/sell 持仓副作用）留在
-//! `transactions` 模块原处，本模块只做编排、不重复列映射/折算逻辑；去重身份判定
+//! **边界**：单笔落库（行为层创建编排入口 `transactions::behavior::create`，含 buy/sell
+//! 持仓副作用，issue #228）不在本模块重演，本模块只做编排、不重复列映射/折算逻辑；去重身份判定
 //! （T1/issue #62 的 `dedup_identity`，幂等键优先 / 内容哈希兜底，ADR-0010 冻结契约
 //! 编码在 `DedupIdentity` 类型里而非散在 if 分支）随去重逻辑一并收进本模块。
 //!
@@ -25,7 +25,7 @@ use std::time::Instant;
 use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 
-use crate::commands::transactions::insert_transaction;
+use crate::commands::transactions::create_transaction_internal;
 use crate::error::{AppError, Result};
 use crate::models::{CreateTransactionResult, TransactionInput};
 
@@ -57,10 +57,12 @@ impl TransactionBatch {
             // 去重身份判定用 T1/issue #62 的 `dedup_identity`：带键按键查（走部分唯一索引）、
             // 无键回退内容哈希；ADR-0010 的契约编码在 `DedupIdentity` 类型里，不散在 if 分支。
             // `New` 携带内容哈希供落库回写 `dedup_hash` 列，避免重复计算。
-            // 单条写入（含 buy/sell 的持仓副作用路径）由 `transactions::insert_transaction`
-            // 承担，其交易行落库已收口到 `transaction::writer` 接缝（issue #60）：
-            // 列映射与审计字段统一由 writer 生成，此处不重复；去重身份（幂等键/内容哈希）
-            // 仍在本批次编排层判定与回写，不沉入 writer。
+            // 单条写入（含 buy/sell 的持仓副作用路径）由行为层创建编排入口
+            // `behavior::create`（issue #228 / ADR-0030）承担：本函数持有外层批次事务，
+            // 入口以嵌套模式加入（失败直接返回错误、回滚归本层），其交易行落库
+            // 已收口到 `transaction::writer` 接缝（issue #60）：列映射与审计字段统一由
+            // writer 生成，此处不重复；去重身份（幂等键/内容哈希）仍在本批次编排层
+            // 判定与回写，不沉入 writer。
             let dedup_hash = if dedup {
                 match dedup_identity(conn, &input)? {
                     DedupIdentity::Existing { id } => {
@@ -78,7 +80,7 @@ impl TransactionBatch {
             } else {
                 compute_dedup_hash(&input)
             };
-            match insert_transaction(conn, input) {
+            match create_transaction_internal(conn, input) {
                 Ok(id) => {
                     if let Err(e) = conn.execute(
                         "UPDATE transactions SET dedup_hash=?1, idempotency_key=?2 WHERE id=?3",

@@ -10,7 +10,7 @@ use rusqlite::Connection;
 use tauri_app_lib::commands::data_location::{
     WRITE_PROBE_FILE_NAME, gather_info_from_boot, validate_and_commit,
 };
-use tauri_app_lib::commands::transactions::insert_transaction;
+use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::db::{
     data_location, init_db, new_uuid, open_connection, open_db_in, reset_db_in,
 };
@@ -61,7 +61,7 @@ fn seed_db(conn: &Connection, account: &str, count: usize) {
             fee_cents: None,
             idempotency_key: None,
         };
-        insert_transaction(conn, input).unwrap();
+        create_transaction_internal(conn, input).unwrap();
     }
 }
 

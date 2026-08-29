@@ -4,7 +4,7 @@ use cucumber::{given, then, when};
 use rusqlite::params;
 
 use tauri_app_lib::commands::dashboard::query_dashboard_overview;
-use tauri_app_lib::commands::transactions::insert_transaction;
+use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
 use tauri_app_lib::models::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
@@ -91,7 +91,7 @@ fn buy_instrument(
         fee_cents: Some(0),
         idempotency_key: None,
     };
-    let result = insert_transaction(&world_conn!(world), input);
+    let result = create_transaction_internal(&world_conn!(world), input);
     assert!(result.is_ok(), "创建买入交易失败: {:?}", result.err());
 }
 
