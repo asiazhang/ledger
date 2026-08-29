@@ -1,7 +1,8 @@
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router'
 import { saveRouteName } from '@/utils/view-state'
 
-const routes: RouteRecordRaw[] = [
+// 导出供测试用同构 memory router 复用，避免路由表双份漂移
+export const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/dashboard' },
   {
     path: '/dashboard',

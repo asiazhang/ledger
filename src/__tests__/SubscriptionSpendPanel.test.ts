@@ -4,7 +4,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useReferenceStore } from '@/stores/reference'
-import SubscriptionSpendPanel from '@/components/subscriptions/SubscriptionSpendPanel.vue'
+import SubscriptionSpendPanel from '@/components/scheduled/SubscriptionSpendPanel.vue'
 import type { SubscriptionSpendOverview, SubscriptionSpendRow } from '@/types'
 
 vi.mock('vue-chartjs', async () => {
