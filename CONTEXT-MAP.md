@@ -22,6 +22,7 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 | 6 | 备份与数据文件 | [`docs/contexts/CONTEXT-backup-datafiles.md`](docs/contexts/CONTEXT-backup-datafiles.md) | Backup、Restore、RestoreSafetyBackup、BackupDirectory、BackupRetentionLimit、BackupPruning、ManagedBackup、ManualBackup、BackupTrigger、AutoBackup、DirtyMarker |
 | 7 | 界面状态与交互 | [`docs/contexts/CONTEXT-ui-interaction.md`](docs/contexts/CONTEXT-ui-interaction.md) | WindowState、ViewState、ViewShortcut、CreateShortcut、Overlay Suppression、ESC 键语义、原生右键菜单、拼音可搜下拉 |
 | 8 | 物品 | [`docs/contexts/CONTEXT-item.md`](docs/contexts/CONTEXT-item.md) | Item、DailyUsageCost、source_transaction_id、创建语义 |
+| 9 | 预算 | [`docs/contexts/CONTEXT-budget.md`](docs/contexts/CONTEXT-budget.md) | Budget、BudgetPeriod、BudgetProgress（永久滚动，ADR-0029） |
 
 ## 域间关系
 
@@ -36,3 +37,4 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 - **备份与数据文件 ↔ 各域相邻而不交叉**：Backup/Restore 是文件级整库快照通道，与 AI 导入（语义级写入）、行情同步（投资域）互不交叉；备份不迁移界面状态（界面域）与设备偏好（参考设置域 / 核心域 DefaultCurrency）。
 - **界面状态与交互 → 只读消费各域**：WindowState / ViewState / 快捷键 / 弹层抑制是纯界面层概念，不持业务数据；搜索（核心域 TransactionSearch）复用交易列表信息但搜索词不持久化（与 ViewState 边界一致）；实体下拉的拼音过滤（拼音可搜下拉）与全局搜索共用统一模糊搜索语义规格（ADR-0027）。
 - **物品（单列小域）→ 挂靠核心交易**：Item 是与参考数据、交易流水、投资标的并列的独立领域概念，自包含总成本、不进字典；创建**必须**关联一笔核心域 `expense` Transaction（`source_transaction_id` 必填、唯一，仅用于带出成本/日期与溯源），**不建立反向引用**，**无交易物品不可录入**；创建唯一入口 = 交易右键 + 确认弹窗（ADR-0025）。
+- **预算（单列小域）→ 核心交易**：Budget 是对核心域支出分类（Category）的持续性支出上限，**永久滚动**——进度窗口永远是当前自然周期、随时间自动滚动，不持久化窗口状态（ADR-0029）；进度 spent 消费核心域 Amount Model 的 ExpenseNet 度量（与报表分类净值同口径），不另造第二个口径；`start_date` 为已发布 schema 的冻结残留，不参与计算。
