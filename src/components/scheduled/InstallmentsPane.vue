@@ -85,7 +85,7 @@ const merchantOptions = computed<{ label: string; value: string }[]>(() =>
  * 1. 空 → null（无商户）；
  * 2. 选中已有商户（value 为 id）→ 原样携带；
  * 3. 输入文本精确命中在用商户名 → 按名复用；
- * 4. 未命中 → `create_merchant` 即建；重名兕底（store 陈旧竞态）先强制重拉
+ * 4. 未命中 → `create_merchant` 即建；重名兜底（store 陈旧竞态）先强制重拉
  *    按名复用，仍失败才向上抛。
  * （分期无编辑表单，无编辑路径的软删兜底分支。）
  */
@@ -100,7 +100,7 @@ async function resolveMerchantId(source: Ref<string | null>): Promise<string | n
   try {
     return await api.createMerchant({ name })
   } catch (e) {
-    // 重名兕底（store 陈旧竞态）：强制重拉后按名复用；重拉失败不影响原错误上抛
+    // 重名兜底（store 陈旧竞态）：强制重拉后按名复用；重拉失败不影响原错误上抛
     try {
       await reference.refresh()
     } catch {

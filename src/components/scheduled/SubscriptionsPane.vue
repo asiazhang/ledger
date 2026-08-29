@@ -108,7 +108,7 @@ async function resolveMerchantId(
   try {
     return await api.createMerchant({ name })
   } catch (e) {
-    // 重名兕底（store 陈旧竞态）：强制重拉后按名复用；重拉失败不影响原错误上抛
+    // 重名兜底（store 陈旧竞态）：强制重拉后按名复用；重拉失败不影响原错误上抛
     try {
       await reference.refresh()
     } catch {
