@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { h, computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   NCard,
   NButton,
@@ -9,7 +10,7 @@ import {
   NInput,
   NDatePicker,
   NModal,
-  NSelect,
+  NAlert,
   NSpace,
   NDescriptions,
   NDescriptionsItem,
@@ -31,21 +32,17 @@ const reference = useReferenceStore()
 const app = useAppStore()
 const itemsStore = useItemsStore()
 const message = useMessage()
+const router = useRouter()
 
-// —— 创建表单（最小入口：名称 / 购买日期 / 总成本 / 币种 / 备注） ——
-const name = ref('')
-const purchaseDate = ref(todayStr())
-const costYuan = ref('')
-const currencyCode = ref('CNY')
-const note = ref('')
+// —— 创建唯一入口提示（issue #207，ADR-0025）：物品只能经交易右键「加入物品」创建，
+// 本页不提供手动新增表单；提示条常驻顶部并一键跳转交易页。——
+function goTransactions() {
+  router.push({ name: 'transactions' })
+}
 
-const currencyOptions = () =>
-  reference.currencies.map((c) => ({ label: `${c.name} (${c.code})`, value: c.code }))
-
-// —— 关联购买交易（issue #119）：可选关联一笔 expense 交易，自动带出购买日期与基础成本 ——
+// —— 关联购买交易候选（issue #119）：编辑弹窗换关仍需候选列表（交易右键创建入口不经此页）——
 // 后端校验交易存在且为 expense 并以交易值覆盖落库；物品侧仅存溯源指针，无「交易→物品」反向引用。
 const expenseTxs = ref<Transaction[]>([])
-const linkTxId = ref<string | null>(null)
 const editLinkTxId = ref<string | null>(null)
 /** 编辑弹窗打开时物品的既有关联：维持原关联 → 手动编辑照常生效；换关 → 后端重新带出覆盖。 */
 const editOrigLink = ref<string | null>(null)
@@ -60,15 +57,6 @@ function findLinkedTx(txId: string | null): Transaction | undefined {
   return expenseTxs.value.find((t) => t.id === txId)
 }
 
-/** 创建表单：选中关联交易后自动带出日期/成本/币种（带出期间禁用手改，与后端口径一致）。 */
-function applyLinkedTx(txId: string | null) {
-  const tx = findLinkedTx(txId)
-  if (!tx) return
-  purchaseDate.value = tx.date
-  costYuan.value = String(centsToYuan(tx.amount_cents))
-  currencyCode.value = tx.currency_code
-}
-
 /** 编辑弹窗：换关时自动带出日期/成本；与后端约定一致，换关即重新带出覆盖。 */
 function applyLinkedTxToEdit(txId: string | null) {
   const tx = findLinkedTx(txId)
@@ -79,35 +67,6 @@ function applyLinkedTxToEdit(txId: string | null) {
 
 /** 换关中（选中了与原关联不同的交易）：日期/成本将被后端带出覆盖，禁用手改。 */
 const editRelinking = computed(() => editLinkTxId.value !== editOrigLink.value)
-
-async function create() {
-  if (!name.value.trim()) {
-    message.warning('请输入物品名称')
-    return
-  }
-  const costCents = yuanToCents(costYuan.value)
-  if (costCents === null || costCents <= 0) {
-    message.warning('请输入大于 0 的总成本')
-    return
-  }
-  const input: ItemInput = {
-    name: name.value.trim(),
-    purchase_date: purchaseDate.value,
-    total_cost_cents: costCents,
-    currency_code: currencyCode.value,
-    note: note.value.trim() || null,
-    purchase_transaction_id: linkTxId.value,
-  }
-  try {
-    await itemsStore.create(input)
-    message.success('已创建物品')
-    name.value = ''
-    costYuan.value = ''
-    note.value = ''
-  } catch (e) {
-    message.error(`创建失败: ${e}`)
-  }
-}
 
 // —— 编辑（issue #117）：按 id 修改 名称 / 购买日期 / 总成本 / 备注；币种不可改 ——
 const editing = ref<ItemWithDailyCost | null>(null)
@@ -309,7 +268,7 @@ onMounted(() => {
     /* 失败信号已由 status 承载 */
   })
   // 关联购买交易候选：支出交易，倒序取最近 100 笔（MVP 取舍：更早的交易不在
-  // 候选内；加载失败不阻塞创建，可手填日期/成本）
+  // 候选内；加载失败不阻塞编辑弹窗换关）
   api
     .listTransactions({ kind: 'expense', limit: 100 })
     .then((r) => (expenseTxs.value = r.items))
@@ -321,55 +280,29 @@ onMounted(() => {
 
 <template>
   <NSpace vertical :size="16">
-    <NCard title="新增物品" size="small">
-      <NForm label-placement="left" :show-feedback="false" inline size="small">
-        <NFormItem label="名称">
-          <NInput v-model:value="name" placeholder="物品名称" style="width: 160px" />
-        </NFormItem>
-        <NFormItem label="购买日期">
-          <NDatePicker
-            v-model:formatted-value="purchaseDate"
-            :disabled="!!linkTxId"
-            type="date"
-            value-format="yyyy-MM-dd"
-            style="width: 140px"
-          />
-        </NFormItem>
-        <NFormItem label="总成本">
-          <NInput
-            v-model:value="costYuan"
-            :disabled="!!linkTxId"
-            placeholder="总成本（元）"
-            style="width: 120px"
-          />
-        </NFormItem>
-        <NFormItem label="币种">
-          <NSelect
-            v-model:value="currencyCode"
-            :options="currencyOptions()"
-            :disabled="!!linkTxId"
-            style="width: 130px"
-          />
-        </NFormItem>
-        <NFormItem label="关联购买交易">
-          <PinyinSelect
-            v-model:value="linkTxId"
-            :options="linkTxOptions()"
-            placeholder="关联购买交易"
-            clearable
-            style="width: 240px"
-            @update:value="applyLinkedTx"
-          />
-        </NFormItem>
-        <NFormItem label="备注">
-          <NInput v-model:value="note" placeholder="品牌 / 型号 / 渠道（可选）" style="width: 200px" />
-        </NFormItem>
-        <NButton type="primary" @click="create">创建</NButton>
-      </NForm>
-    </NCard>
+    <!-- 创建唯一入口提示（issue #207）：本页不提供手动新增，物品只能经交易右键「加入物品」创建 -->
+    <NAlert type="info" :show-icon="true" data-testid="item-create-hint">
+      物品不支持直接新增：请在「交易」页右键一笔支出交易，选择“加入物品”创建。
+      <NButton
+        size="tiny"
+        type="primary"
+        secondary
+        style="margin-left: 8px"
+        data-testid="item-go-transactions"
+        @click="goTransactions"
+      >
+        去交易页
+      </NButton>
+    </NAlert>
 
     <NCard title="物品列表" size="small">
-      <NDataTable :columns="columns" :data="itemsStore.items" :bordered="false" size="small" />
+      <NDataTable :columns="columns" :data="itemsStore.items" :bordered="false" size="small">
+        <template #empty>
+          <span data-testid="item-empty-guide">
+            暂无物品：请在「交易」页右键一笔支出交易，选择“加入物品”创建。
+          </span>
+        </template>
+      </NDataTable>
     </NCard>
 
     <!-- 编辑弹窗（issue #117）：币种不可改，沿用行内币种 -->

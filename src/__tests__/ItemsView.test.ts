@@ -9,6 +9,11 @@ import type { Currency, ItemDailyCost, ItemInput, ItemWithDailyCost, Transaction
 
 const mockInvoke = vi.mocked(invoke)
 
+const pushMock = vi.fn()
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: pushMock }),
+}))
+
 // NModal 内容 teleport 到 document.body：测试在 body 中查询/触发（同 InstrumentBrowser 先例）。
 enableAutoUnmount(afterEach)
 afterEach(() => {
@@ -131,11 +136,6 @@ function setupInvoke(expenseTxs: Transaction[] = mockExpenseTxs) {
       if (calcResponse === null) return Promise.reject(new Error('重算失败'))
       return Promise.resolve(calcResponse)
     }
-    if (cmd === 'create_item') {
-      itemList = [...itemList, { ...mockItems[0], id: 'item-new', name: '键盘' }]
-      void args
-      return Promise.resolve('item-new')
-    }
     if (cmd === 'update_item') {
       const { id, input } = args as { id: string; input: { name: string } }
       itemList = itemList.map((it) => (it.id === id ? { ...it, ...input } : it))
@@ -190,51 +190,38 @@ describe('ItemsView 物品列表', () => {
     expect(html).toContain('$41.15')
   })
 
-  it('含创建入口（新增物品表单）', async () => {
+  it('不含新增物品表单，顶部常驻创建唯一入口提示（issue #207）', async () => {
     const wrapper = mount(ItemsView)
     await flushPromises()
-    expect(wrapper.text()).toContain('新增物品')
+    // 手动「新增物品」表单已移除
+    expect(wrapper.text()).not.toContain('新增物品')
+    expect(wrapper.find('input[placeholder="物品名称"]').exists()).toBe(false)
+    // 提示条常驻顶部，说明创建方式
+    const hint = wrapper.find('[data-testid="item-create-hint"]')
+    expect(hint.exists()).toBe(true)
+    expect(hint.text()).toContain('物品不支持直接新增')
+    expect(hint.text()).toContain('「交易」页右键一笔支出交易')
+    expect(hint.text()).toContain('加入物品')
   })
 
-  it('填写名称与成本后创建：create_item 收到整数分入参，列表自动出现新物品', async () => {
+  it('点击提示条「去交易页」跳转交易视图（issue #207）', async () => {
     const wrapper = mount(ItemsView)
     await flushPromises()
-
-    const nameInput = wrapper.find('input[placeholder="物品名称"]')
-    expect(nameInput.exists()).toBe(true)
-    await nameInput.setValue('键盘')
-    const costInput = wrapper.find('input[placeholder="总成本（元）"]')
-    await costInput.setValue('299')
-    const noteInput = wrapper.find('input[placeholder="品牌 / 型号 / 渠道（可选）"]')
-    await noteInput.setValue('HHKB')
-
-    // 购买日期默认今天，无需交互；币种默认 CNY
-    const createBtn = wrapper.findAll('button').find((b) => b.text() === '创建')
-    expect(createBtn).toBeTruthy()
-    await createBtn!.trigger('click')
-    await flushPromises()
-
-    const createCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_item')
-    expect(createCalls).toHaveLength(1)
-    const [, args] = createCalls[0]
-    const input = (args as { input: ItemInput }).input
-    expect(input.name).toBe('键盘')
-    expect(input.total_cost_cents).toBe(29_900)
-    expect(input.currency_code).toBe('CNY')
-    expect(input.note).toBe('HHKB')
-    expect(input.purchase_date).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-
-    // 创建成功后重拉：新物品出现在列表
-    expect(wrapper.text()).toContain('键盘')
+    const btn = wrapper.find('[data-testid="item-go-transactions"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.text()).toContain('去交易页')
+    await btn.trigger('click')
+    expect(pushMock).toHaveBeenCalledWith({ name: 'transactions' })
   })
 
-  it('名称为空时提示且不调用 create_item', async () => {
+  it('列表空态显示创建引导文案（issue #207）', async () => {
+    itemList = []
     const wrapper = mount(ItemsView)
     await flushPromises()
-    const createBtn = wrapper.findAll('button').find((b) => b.text() === '创建')
-    await createBtn!.trigger('click')
-    await flushPromises()
-    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'create_item')).toBe(false)
+    const guide = wrapper.find('[data-testid="item-empty-guide"]')
+    expect(guide.exists()).toBe(true)
+    expect(guide.text()).toContain('「交易」页右键一笔支出交易')
+    expect(guide.text()).toContain('加入物品')
   })
 
   it('点击删除并确认：delete_item 收到对应 id，列表移除该物品', async () => {
@@ -377,63 +364,7 @@ describe('ItemsView 物品详情（issue #117）', () => {
   })
 })
 
-describe('ItemsView 关联购买交易（issue #119）', () => {
-  /** 创建表单里的「关联购买交易」下拉（按 placeholder 区分于币种下拉）。 */
-  function linkSelect(wrapper: ReturnType<typeof mount>) {
-    const sel = wrapper
-      .findAllComponents(NSelect)
-      .find((s) => s.props('placeholder') === '关联购买交易')
-    expect(sel, '创建表单应有「关联购买交易」下拉').toBeTruthy()
-    return sel!
-  }
-
-  it('未关联时创建入参 purchase_transaction_id 为 null', async () => {
-    const wrapper = mount(ItemsView)
-    await flushPromises()
-
-    await wrapper.find('input[placeholder="物品名称"]').setValue('键盘')
-    await wrapper.find('input[placeholder="总成本（元）"]').setValue('299')
-    const createBtn = wrapper.findAll('button').find((b) => b.text() === '创建')
-    await createBtn!.trigger('click')
-    await flushPromises()
-
-    const input = (mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_item')[0][1] as {
-      input: ItemInput
-    }).input
-    expect(input.purchase_transaction_id).toBeNull()
-  })
-
-  it('选择关联交易后自动带出日期与成本（禁用手改），创建入参携带溯源 id', async () => {
-    const wrapper = mount(ItemsView)
-    await flushPromises()
-
-    // 选交易前成本/日期可编辑
-    const costInput = wrapper.find('input[placeholder="总成本（元）"]')
-    expect(costInput.attributes('disabled')).toBeUndefined()
-
-    await wrapper.find('input[placeholder="物品名称"]').setValue('iPhone')
-    linkSelect(wrapper).vm.$emit('update:value', 'tx-1')
-    await flushPromises()
-
-    // 自动带出：成本表单值被交易金额覆盖（599900 分 → 5999 元），且禁用手改
-    const costAfter = wrapper.find('input[placeholder="总成本（元）"]')
-    expect((costAfter.element as HTMLInputElement).value).toBe('5999')
-    expect(costAfter.attributes('disabled')).toBeDefined()
-
-    const createBtn = wrapper.findAll('button').find((b) => b.text() === '创建')
-    await createBtn!.trigger('click')
-    await flushPromises()
-
-    const input = (mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_item')[0][1] as {
-      input: ItemInput
-    }).input
-    expect(input.purchase_transaction_id).toBe('tx-1')
-    // 日期与成本为交易带出值（即使表单曾默认今天/被改过）
-    expect(input.purchase_date).toBe('2026-01-15')
-    expect(input.total_cost_cents).toBe(599_900)
-    expect(input.currency_code).toBe('CNY')
-  })
-
+describe('ItemsView 关联购买交易（issue #119）：编辑弹窗换关语义', () => {
   it('编辑弹窗预填既有关联且可手动调成本，换关后锁定并携带新溯源 id', async () => {
     itemList = [
       { ...itemList[0], purchase_transaction_id: 'tx-1', purchase_date: '2026-01-15', total_cost_cents: 599_900 },
@@ -446,12 +377,12 @@ describe('ItemsView 关联购买交易（issue #119）', () => {
     await flushPromises()
 
     const modal = bodyQuery('[data-testid="item-edit-modal"]')!
-    // 弹窗内的关联下拉 = 同 placeholder 的第 2 个（第 1 个在创建表单）
-    const linkSelects = wrapper
+    // 手动新增表单已移除（#207）：弹窗内是唯一一处「关联购买交易」下拉
+    const modalSelect = wrapper
       .findAllComponents(NSelect)
-      .filter((s) => s.props('placeholder') === '关联购买交易')
-    const modalSelect = linkSelects[linkSelects.length - 1]
-    expect(modalSelect.props('value')).toBe('tx-1')
+      .find((s) => s.props('placeholder') === '关联购买交易')
+    expect(modalSelect, '编辑弹窗应有「关联购买交易」下拉').toBeTruthy()
+    expect(modalSelect!.props('value')).toBe('tx-1')
     // 维持既有关联：成本可手动编辑（后续花费累加到总成本，用户故事 8）
     const costInput = modal.querySelector('input[placeholder="总成本（元）"]') as HTMLInputElement
     expect(costInput.value).toBe('5999')

@@ -6,8 +6,10 @@ use crate::commands::item::{
     create_item_internal, delete_item_internal, dispose_item_internal, list_items_internal,
     update_item_internal,
 };
+use crate::commands::transactions::insert_transaction;
 use crate::db::{init_db, open_in_memory};
-use crate::models::{ItemDisposeInput, ItemInput};
+use crate::models::{ItemDisposeInput, ItemInput, TransactionInput};
+use crate::transaction::amount::TransactionKind;
 
 fn conn() -> Connection {
     let mut conn = open_in_memory().expect("内存库创建失败");
@@ -26,9 +28,52 @@ fn input(name: &str, date: &str, cost_cents: i64) -> ItemInput {
     }
 }
 
-/// 创建一件物品并返回其 id（默认不监听信号）。
+/// 创建脚手架账户 + expense 购买交易（issue #207 起创建必关联交易），返回交易 id。
+/// 账户行幂等插入（同 id 复用），交易入参经 Writer 接缝校验（金额>0、日期可解析、折算有汇率）。
+fn seed_purchase_tx(conn: &Connection, date: &str, cost_cents: i64, currency: &str) -> String {
+    conn.execute(
+        "INSERT OR IGNORE INTO accounts \
+         (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES ('acc-item-scaffold','物品脚手架','cash',?1,0,\
+          '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+        [currency],
+    )
+    .unwrap();
+    insert_transaction(
+        conn,
+        TransactionInput {
+            kind: TransactionKind::Expense,
+            amount_cents: cost_cents,
+            currency_code: currency.into(),
+            account_id: "acc-item-scaffold".into(),
+            to_account_id: None,
+            category_id: None,
+            merchant_id: None,
+            refund_of_transaction_id: None,
+            note: None,
+            date: date.into(),
+            instrument_id: None,
+            quantity: None,
+            price_cents: None,
+            fee_cents: None,
+            idempotency_key: None,
+        },
+    )
+    .unwrap()
+}
+
+/// 关联脚手架交易的创建入参（日期/成本/币种与交易一致，后端以交易值覆盖带出）。
+fn linked_input(name: &str, date: &str, cost_cents: i64, tx_id: &str) -> ItemInput {
+    ItemInput {
+        purchase_transaction_id: Some(tx_id.into()),
+        ..input(name, date, cost_cents)
+    }
+}
+
+/// 创建一件物品并返回其 id（默认不监听信号）：先建脚手架购买交易再关联创建。
 fn seed(conn: &Connection, name: &str, date: &str, cost_cents: i64) -> String {
-    create_item_internal(conn, input(name, date, cost_cents), &mut || {}).unwrap()
+    let tx = seed_purchase_tx(conn, date, cost_cents, "CNY");
+    create_item_internal(conn, linked_input(name, date, cost_cents, &tx), &mut || {}).unwrap()
 }
 
 #[test]
@@ -67,9 +112,7 @@ fn update_item_persists_fields_and_increments_version() {
 #[test]
 fn update_item_replaces_note_whole_field() {
     let conn = conn();
-    let mut inp = input("水杯", "2026-01-15", 5_000);
-    inp.note = Some("Starbucks 联名".into());
-    let id = create_item_internal(&conn, inp, &mut || {}).unwrap();
+    let id = seed(&conn, "水杯", "2026-01-15", 5_000);
     // update 是整体替换语义：入参不带备注（None）即清除
     update_item_internal(&conn, &id, input("水杯", "2026-01-15", 5_000), &mut || {}).unwrap();
     assert_eq!(list_items_internal(&conn).unwrap()[0].item.note, None);
@@ -174,12 +217,34 @@ fn update_item_rejects_purchase_date_after_disposal_date() {
 }
 
 #[test]
-fn create_item_persists_and_returns_id() {
+fn create_item_requires_purchase_transaction() {
     let conn = conn();
     let mut fired = 0;
-    let id = create_item_internal(&conn, input("iPhone", "2026-01-15", 599_900), &mut || {
+    let err = create_item_internal(&conn, input("水杯", "2026-01-15", 100), &mut || {
         fired += 1
     })
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("物品必须关联一笔购买交易创建"),
+        "应报溯源守卫错误: {err}"
+    );
+    assert_eq!(fired, 0, "守卫拒绝不应发出失效信号");
+    assert!(
+        list_items_internal(&conn).unwrap().is_empty(),
+        "守卫拒绝不落库"
+    );
+}
+
+#[test]
+fn create_item_persists_and_returns_id() {
+    let conn = conn();
+    let tx = seed_purchase_tx(&conn, "2026-01-15", 599_900, "CNY");
+    let mut fired = 0;
+    let id = create_item_internal(
+        &conn,
+        linked_input("iPhone", "2026-01-15", 599_900, &tx),
+        &mut || fired += 1,
+    )
     .unwrap();
     assert!(!id.is_empty());
     assert_eq!(fired, 1, "创建成功应恰好发出一次失效信号");
@@ -196,9 +261,11 @@ fn create_item_daily_cost_uses_cost_seam() {
     // 相对今天构造购买日期，断言含起止两端的日历天数（10 天前购买 → 10 天）。
     let today = crate::item::cost::today();
     let purchase = today - chrono::Duration::days(9);
+    let date = purchase.format("%Y-%m-%d").to_string();
+    let tx = seed_purchase_tx(&conn, &date, 100_000, "CNY");
     create_item_internal(
         &conn,
-        input("显示器", &purchase.format("%Y-%m-%d").to_string(), 100_000),
+        linked_input("显示器", &date, 100_000, &tx),
         &mut || {},
     )
     .unwrap();
@@ -208,33 +275,28 @@ fn create_item_daily_cost_uses_cost_seam() {
 }
 
 #[test]
-fn create_item_rejects_blank_name_and_nonpositive_cost() {
+fn create_item_rejects_blank_name() {
     let conn = conn();
+    // 创建路径的成本/日期由购买交易带出（Writer 接缝已校验），名称仍是物品侧校验；
+    // 总成本>0 与日期格式校验在创建路径被带出遮蔽，由修改路径覆盖（update_item_validates_like_create）。
+    let tx = seed_purchase_tx(&conn, "2026-01-15", 100, "CNY");
     let mut fired = 0;
-    let err = create_item_internal(&conn, input("  ", "2026-01-15", 100), &mut || fired += 1)
-        .unwrap_err();
+    let err = create_item_internal(
+        &conn,
+        linked_input("  ", "2026-01-15", 100, &tx),
+        &mut || fired += 1,
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("物品名称不能为空"));
-    let err = create_item_internal(&conn, input("水杯", "2026-01-15", 0), &mut || fired += 1)
-        .unwrap_err();
-    assert!(err.to_string().contains("物品总成本必须大于 0"));
     assert_eq!(fired, 0, "校验失败不应发出失效信号");
     assert!(list_items_internal(&conn).unwrap().is_empty());
 }
 
 #[test]
-fn create_item_rejects_bad_date() {
-    let conn = conn();
-    let err =
-        create_item_internal(&conn, input("水杯", "2026/01/15", 100), &mut || {}).unwrap_err();
-    assert!(err.to_string().contains("日期格式无效"));
-}
-
-#[test]
 fn delete_item_soft_deletes_and_filters_from_list() {
     let conn = conn();
-    let old =
-        create_item_internal(&conn, input("旧手机", "2025-06-01", 300_000), &mut || {}).unwrap();
-    create_item_internal(&conn, input("新手机", "2026-01-15", 599_900), &mut || {}).unwrap();
+    let old = seed(&conn, "旧手机", "2025-06-01", 300_000);
+    seed(&conn, "新手机", "2026-01-15", 599_900);
 
     let mut fired = 0;
     delete_item_internal(&conn, &old, &mut || fired += 1).unwrap();
@@ -266,7 +328,7 @@ fn delete_item_missing_id_errors_without_signal() {
     assert_eq!(fired, 0, "删除失败不应发出失效信号");
 
     // 已删除的物品再删一次同样报错（入口只对未删除行生效，不重复打标）
-    let id = create_item_internal(&conn, input("水杯", "2026-01-15", 100), &mut || {}).unwrap();
+    let id = seed(&conn, "水杯", "2026-01-15", 100);
     delete_item_internal(&conn, &id, &mut || {}).unwrap();
     let err = delete_item_internal(&conn, &id, &mut || fired += 1).unwrap_err();
     assert!(err.to_string().contains("物品不存在"));
@@ -274,18 +336,9 @@ fn delete_item_missing_id_errors_without_signal() {
 }
 
 #[test]
-fn create_item_rejects_currency_without_rate() {
-    let conn = conn();
-    let mut inp = input("转接头", "2026-02-01", 10_000);
-    inp.currency_code = "XYZ".into();
-    let err = create_item_internal(&conn, inp, &mut || {}).unwrap_err();
-    assert!(err.to_string().contains("汇率"));
-}
-
-#[test]
 fn list_items_excludes_soft_deleted() {
     let conn = conn();
-    create_item_internal(&conn, input("耳机", "2026-03-01", 20_000), &mut || {}).unwrap();
+    seed(&conn, "耳机", "2026-03-01", 20_000);
     conn.execute("UPDATE items SET is_deleted=1", rusqlite::params![])
         .unwrap();
     assert!(list_items_internal(&conn).unwrap().is_empty());
