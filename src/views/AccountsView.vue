@@ -84,13 +84,15 @@ async function remove(id: string) {
   }
 }
 
-/** 删除走 useDialog 二次确认（与交易行菜单同语义）：取消不删，确认后才删除。 */
+/** 删除走 useDialog 二次确认（与交易行菜单同语义）：取消不删，确认后才删除。
+ * 遮罩点击不构成关闭意图（issue #252 弹层关闭语义）：确认/取消须显式点击。 */
 function confirmDelete(row: AccountBalance) {
   dialog.warning({
     title: '删除账户',
     content: `确认删除账户「${row.account.name}」？删除后相关交易仍保留。`,
     positiveText: '删除',
     negativeText: '取消',
+    maskClosable: false,
     onPositiveClick: () => remove(row.account.id),
   })
 }

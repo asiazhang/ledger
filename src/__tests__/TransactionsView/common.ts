@@ -266,3 +266,15 @@ export async function clickDialogButton(text: string) {
   await new DOMWrapper(btn).trigger('click')
   await flushPromises()
 }
+
+/** 确认框遮罩「按下-抬起」完整事件序列：真实浏览器中按下-抬起在遮罩上合成 click
+ * 触发关闭判定，jsdom 不自动合成，手动派发三段事件等价模拟
+ * （AppModal 契约测试同款先例）。 */
+export async function pressReleaseOnDialogMask() {
+  const mask = document.body.querySelector('.n-modal-mask')
+  expect(mask, '.n-modal-mask 应存在').not.toBeNull()
+  mask!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+  mask!.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+  mask!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await flushPromises()
+}
