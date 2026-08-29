@@ -44,13 +44,33 @@ impl Plan {
 
 /// 校验并归一化一笔交易输入为计划（不落库、不产生副作用）。
 ///
+/// `existing_merchant_id`：修改路径该行当前的商户 id（创建路径传 None）——提交商户
+/// 与其相同视为保持历史引用（软删商户的历史交易仍可修改其他字段，见
+/// [`writer::normalize`] 的商户校验）；改选其他商户按新选择校验在用。
+///
 /// 单点分派全部 8 种 kind：通用 kind 经 Writer 接缝 [`writer::normalize`]（金额>0、
 /// transfer 目标账户、refund 继承原支出等校验 + 本位币折算）；buy/sell 委托投资域
 /// [`investment::prepare`]（投资账户/数量/单价/可卖数量校验 + 折算）；
 /// `dividend` / `split` 已声明但未实现，显式「暂不支持」报错——取代此前
 /// [`writer::normalize`] 兜底的「仅处理通用交易类型」文案（唯一对外可观测变化）。
-pub(crate) fn plan(conn: &Connection, input: &TransactionInput) -> Result<Plan> {
+pub(crate) fn plan(
+    conn: &Connection,
+    input: &TransactionInput,
+    existing_merchant_id: Option<&str>,
+) -> Result<Plan> {
     let kind = input.kind;
+    // 商户携带收口（issue #188 / ADR-0028）：expense / refund / income 可携带商户；
+    // transfer / buy / sell / dividend / split 行为层拒绝（schema 层 merchant_id
+    // 允许 NULL、不设 kind 限制，放开无需再改表）。refund 携带的商户在
+    // [`writer::normalize`] 里被原支出商户覆盖（继承语义），此处不拦截。
+    if input.merchant_id.is_some()
+        && !matches!(
+            kind,
+            TransactionKind::Income | TransactionKind::Expense | TransactionKind::Refund
+        )
+    {
+        return Err(AppError::Invalid(format!("交易类型 {kind} 不能携带商户")));
+    }
     match kind {
         TransactionKind::Income
         | TransactionKind::Expense
@@ -65,6 +85,8 @@ pub(crate) fn plan(conn: &Connection, input: &TransactionInput) -> Result<Plan> 
                     account_id: input.account_id.clone(),
                     to_account_id: input.to_account_id.clone(),
                     category_id: input.category_id.clone(),
+                    merchant_id: input.merchant_id.clone(),
+                    existing_merchant_id: existing_merchant_id.map(str::to_string),
                     refund_of_transaction_id: input.refund_of_transaction_id.clone(),
                     note: input.note.clone(),
                     date: input.date.clone(),

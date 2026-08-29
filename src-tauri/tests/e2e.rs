@@ -16,6 +16,8 @@ mod data_location_steps;
 mod instruments_steps;
 #[path = "e2e/items_steps.rs"]
 mod items_steps;
+#[path = "e2e/merchants_steps.rs"]
+mod merchants_steps;
 #[path = "e2e/migration_steps.rs"]
 mod migration_steps;
 #[path = "e2e/scheduled_steps.rs"]

@@ -1,7 +1,8 @@
 //! 事件发射：写入/产物变更后的粗粒度失效信号。
 //!
-//! - `ledger:changed`（issue #79）：参考数据（`currencies / accounts / categories`）
-//!   任一写入成功后由调用方 emit，前端 `useReferenceStore` 订阅后自动重拉三张参考表。
+//! - `ledger:changed`（issue #79）：参考数据（`currencies / accounts / categories / merchants`）
+//!   任一写入成功后由调用方 emit，前端 `useReferenceStore` 订阅后自动重拉参考表
+//!   （商户表的后端命令面已登记为参考写入；前端 store 接线随商户前端接入落地）。
 //!   「是否为参考写入」的判定收敛在本模块：IPC 命令清单见 [`REFERENCE_WRITE_COMMANDS`]，
 //!   纯函数 [`is_reference_write`] 承载判定，命令层统一经 [`emit_reference_changed`] 走该
 //!   判定；HTTP 端点（账号/分类 create/delete）结构上即参考写入，直接经
@@ -57,6 +58,9 @@ const REFERENCE_WRITE_COMMANDS: &[&str] = &[
     "update_category",
     "reorder_categories",
     "delete_category",
+    "create_merchant",
+    "update_merchant",
+    "delete_merchant",
 ];
 
 /// 薄胶判定：该 IPC 命令是否为参考写入（决定写入成功后是否发失效信号）。

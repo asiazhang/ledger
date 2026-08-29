@@ -260,6 +260,8 @@ pub fn adjust_account_balance_internal(
             account_id,
             to_account_id: Some(to_account_id),
             category_id: None,
+            merchant_id: None,
+            existing_merchant_id: None,
             refund_of_transaction_id: None,
             note: Some(input.note.clone().unwrap_or_else(|| "余额调整".to_string())),
             date: input.date.clone(),

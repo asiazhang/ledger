@@ -88,6 +88,7 @@ fn edit_txn_by_key(world: &mut LedgerWorld, key: String, amount: i64, date: Stri
         account_id,
         to_account_id: None,
         category_id: None,
+        merchant_id: None,
         refund_of_transaction_id: None,
         note: Some(note),
         date,

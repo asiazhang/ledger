@@ -50,6 +50,7 @@ fn seed_db(conn: &Connection, account: &str, count: usize) {
             account_id: account_id.clone(),
             to_account_id: None,
             category_id: None,
+            merchant_id: None,
             refund_of_transaction_id: None,
             note: Some(format!("种子交易 {i}")),
             date: "2026-03-01".into(),
