@@ -50,12 +50,12 @@ fn create_income_and_expense_transactions() {
     let conn = setup();
     insert_account(&conn, "acc-crud", "现金", "cash", "CNY");
 
-    let id1 = insert_transaction(
+    let id1 = create_transaction_internal(
         &conn,
         make_input("acc-crud", TransactionKind::Income, 5000, "2026-02-01"),
     )
     .unwrap();
-    let id2 = insert_transaction(
+    let id2 = create_transaction_internal(
         &conn,
         TransactionInput {
             amount_cents: 1500,
@@ -83,7 +83,7 @@ fn create_transfer_with_to_account() {
     insert_account(&conn, "acc-from", "A账户", "cash", "CNY");
     insert_account(&conn, "acc-to", "B账户", "cash", "CNY");
 
-    let id = insert_transaction(
+    let id = create_transaction_internal(
         &conn,
         TransactionInput {
             merchant_name: None,
@@ -122,17 +122,17 @@ fn list_transactions_ordered_by_date_desc() {
     let conn = setup();
     insert_account(&conn, "acc-list", "现金", "cash", "CNY");
 
-    insert_transaction(
+    create_transaction_internal(
         &conn,
         make_input("acc-list", TransactionKind::Income, 100, "2026-01-03"),
     )
     .unwrap();
-    insert_transaction(
+    create_transaction_internal(
         &conn,
         make_input("acc-list", TransactionKind::Income, 200, "2026-01-01"),
     )
     .unwrap();
-    insert_transaction(
+    create_transaction_internal(
         &conn,
         make_input("acc-list", TransactionKind::Income, 300, "2026-01-02"),
     )
@@ -159,17 +159,17 @@ fn list_transactions_limit() {
     let conn = setup();
     insert_account(&conn, "acc-limit", "现金", "cash", "CNY");
 
-    insert_transaction(
+    create_transaction_internal(
         &conn,
         make_input("acc-limit", TransactionKind::Income, 100, "2026-01-01"),
     )
     .unwrap();
-    insert_transaction(
+    create_transaction_internal(
         &conn,
         make_input("acc-limit", TransactionKind::Income, 200, "2026-01-02"),
     )
     .unwrap();
-    insert_transaction(
+    create_transaction_internal(
         &conn,
         make_input("acc-limit", TransactionKind::Income, 300, "2026-01-03"),
     )
@@ -203,7 +203,7 @@ fn list_transactions_pagination_returns_page_and_total() {
     insert_account(&conn, "acc-page", "现金", "cash", "CNY");
 
     for i in 1..=25 {
-        insert_transaction(
+        create_transaction_internal(
             &conn,
             make_input(
                 "acc-page",
@@ -247,7 +247,7 @@ fn list_transactions_pagination_total_respects_filters() {
     insert_account(&conn, "acc-f2", "银行", "bank", "CNY");
 
     for i in 1..=8 {
-        insert_transaction(
+        create_transaction_internal(
             &conn,
             make_input(
                 "acc-f1",
@@ -258,12 +258,12 @@ fn list_transactions_pagination_total_respects_filters() {
         )
         .unwrap();
     }
-    insert_transaction(
+    create_transaction_internal(
         &conn,
         make_input("acc-f2", TransactionKind::Income, 9000, "2026-02-09"),
     )
     .unwrap();
-    insert_transaction(
+    create_transaction_internal(
         &conn,
         make_input("acc-f1", TransactionKind::Income, 1000, "2026-02-10"),
     )
@@ -316,13 +316,13 @@ fn list_transactions_involving_account_filter() {
     insert_account(&conn, "acc-inv-3", "支付宝", "cash", "CNY");
 
     // 普通交易：现金支出（account_id 命中）
-    insert_transaction(
+    create_transaction_internal(
         &conn,
         make_input("acc-inv-1", TransactionKind::Expense, 100, "2026-03-01"),
     )
     .unwrap();
     // 转出：现金 → 银行（account_id 命中）
-    insert_transaction(
+    create_transaction_internal(
         &conn,
         TransactionInput {
             kind: TransactionKind::Transfer,
@@ -335,7 +335,7 @@ fn list_transactions_involving_account_filter() {
     )
     .unwrap();
     // 转入：银行 → 现金（to_account_id 命中）
-    insert_transaction(
+    create_transaction_internal(
         &conn,
         TransactionInput {
             kind: TransactionKind::Transfer,
@@ -348,7 +348,7 @@ fn list_transactions_involving_account_filter() {
     )
     .unwrap();
     // 无关账户：支付宝支出（不命中）
-    insert_transaction(
+    create_transaction_internal(
         &conn,
         make_input("acc-inv-3", TransactionKind::Expense, 700, "2026-03-04"),
     )
@@ -444,7 +444,7 @@ fn list_transactions_deterministic_order_by_id_when_same_timestamp() {
 
     let mut ids = Vec::new();
     for i in 1..=5 {
-        let id = insert_transaction(
+        let id = create_transaction_internal(
             &conn,
             make_input("acc-same", TransactionKind::Expense, i * 100, "2026-03-01"),
         )
@@ -485,7 +485,7 @@ fn list_transactions_default_returns_all_with_total() {
     let conn = setup();
     insert_account(&conn, "acc-all", "现金", "cash", "CNY");
     for i in 1..=5 {
-        insert_transaction(
+        create_transaction_internal(
             &conn,
             make_input(
                 "acc-all",
@@ -506,7 +506,7 @@ fn list_transactions_limit_path_unchanged() {
     let conn = setup();
     insert_account(&conn, "acc-lim", "现金", "cash", "CNY");
     for i in 1..=5 {
-        insert_transaction(
+        create_transaction_internal(
             &conn,
             make_input(
                 "acc-lim",
@@ -562,7 +562,7 @@ fn list_transactions_out_of_range_page_and_empty_result() {
     let conn = setup();
     insert_account(&conn, "acc-bnd", "现金", "cash", "CNY");
     for i in 1..=3 {
-        insert_transaction(
+        create_transaction_internal(
             &conn,
             make_input(
                 "acc-bnd",
@@ -620,7 +620,7 @@ fn list_transactions_degenerate_inputs_do_not_panic() {
     let conn = setup();
     insert_account(&conn, "acc-deg", "现金", "cash", "CNY");
     for i in 1..=5 {
-        insert_transaction(
+        create_transaction_internal(
             &conn,
             make_input(
                 "acc-deg",
@@ -676,7 +676,7 @@ fn delete_transaction_soft_deletes() {
     let conn = setup();
     insert_account(&conn, "acc-del", "现金", "cash", "CNY");
 
-    let id = insert_transaction(
+    let id = create_transaction_internal(
         &conn,
         make_input("acc-del", TransactionKind::Income, 1000, "2026-01-01"),
     )
@@ -721,7 +721,7 @@ fn delete_transaction_internal_returns_not_found_for_missing_id() {
 fn delete_transaction_internal_returns_not_found_for_already_deleted() {
     let conn = setup();
     insert_account(&conn, "acc-gone", "现金", "cash", "CNY");
-    let id = insert_transaction(
+    let id = create_transaction_internal(
         &conn,
         make_input("acc-gone", TransactionKind::Income, 1000, "2026-01-01"),
     )
@@ -744,13 +744,14 @@ fn delete_transaction_internal_returns_not_found_for_already_deleted() {
 /// 此前经交易接口创建 dividend/split 落入 writer::normalize 的通用兜底，返回语义不明的
 /// 「仅处理通用交易类型」；现改为明确的「暂不支持」——两者均不落库（见 spec #69）。
 #[test]
-fn insert_transaction_rejects_dividend_and_split_with_not_supported() {
+fn create_transaction_internal_rejects_dividend_and_split_with_not_supported() {
     let conn = setup();
     insert_account(&conn, "acc-unsup", "现金", "cash", "CNY");
 
     for (kind, amount) in [(TransactionKind::Dividend, 60), (TransactionKind::Split, 0)] {
-        let err = insert_transaction(&conn, make_input("acc-unsup", kind, amount, "2026-05-04"))
-            .unwrap_err();
+        let err =
+            create_transaction_internal(&conn, make_input("acc-unsup", kind, amount, "2026-05-04"))
+                .unwrap_err();
         match err {
             AppError::Invalid(msg) => assert!(
                 msg.contains("暂不支持"),
@@ -775,7 +776,7 @@ fn insert_transaction_rejects_dividend_and_split_with_not_supported() {
 fn update_transaction_rejects_dividend_and_split_with_not_supported() {
     let conn = setup();
     insert_account(&conn, "acc-unsup-upd", "现金", "cash", "CNY");
-    let id = insert_transaction(
+    let id = create_transaction_internal(
         &conn,
         make_input("acc-unsup-upd", TransactionKind::Expense, 500, "2026-01-01"),
     )
@@ -811,7 +812,7 @@ fn update_transaction_cross_kind_rebuilds_side_effects_atomically() {
     setup_investment_account(&conn, "acc-x", "inst-x");
 
     // expense → buy：应建仓 lot。
-    let id = insert_transaction(
+    let id = create_transaction_internal(
         &conn,
         make_input("acc-cash-x", TransactionKind::Expense, 500, "2026-01-01"),
     )
@@ -904,7 +905,7 @@ fn delete_transaction_internal_cleans_up_buy_lots() {
     let conn = setup();
     setup_investment_account(&conn, "acc-inv", "inst-aapl");
 
-    let buy_id = insert_transaction(
+    let buy_id = create_transaction_internal(
         &conn,
         make_buy_input("acc-inv", "inst-aapl", 10.0, 10000, 500),
     )
@@ -960,7 +961,7 @@ fn delete_transaction_internal_rejects_partially_sold_buy() {
     let conn = setup();
     setup_investment_account(&conn, "acc-inv2", "inst-msft");
 
-    let buy_id = insert_transaction(
+    let buy_id = create_transaction_internal(
         &conn,
         make_buy_input("acc-inv2", "inst-msft", 10.0, 10000, 0),
     )
@@ -969,7 +970,7 @@ fn delete_transaction_internal_rejects_partially_sold_buy() {
     let mut sell = make_buy_input("acc-inv2", "inst-msft", 4.0, 11000, 0);
     sell.kind = TransactionKind::Sell;
     sell.date = "2026-01-20".into();
-    insert_transaction(&conn, sell).unwrap();
+    create_transaction_internal(&conn, sell).unwrap();
 
     let err = delete_transaction_internal(&conn, &buy_id).unwrap_err();
     match err {
@@ -983,7 +984,7 @@ fn create_refund_linked_to_expense() {
     let conn = setup();
     insert_account(&conn, "acc-ref", "现金", "cash", "CNY");
 
-    let expense_id = insert_transaction(
+    let expense_id = create_transaction_internal(
         &conn,
         TransactionInput {
             merchant_name: None,
@@ -1006,7 +1007,7 @@ fn create_refund_linked_to_expense() {
     )
     .unwrap();
 
-    let refund_id = insert_transaction(
+    let refund_id = create_transaction_internal(
         &conn,
         TransactionInput {
             merchant_name: None,
@@ -1044,7 +1045,7 @@ fn create_refund_linked_to_expense() {
 fn update_transaction_internal_replaces_fields_and_bumps_version() {
     let conn = setup();
     insert_account(&conn, "acc-upd", "现金", "cash", "CNY");
-    let id = insert_transaction(
+    let id = create_transaction_internal(
         &conn,
         make_input("acc-upd", TransactionKind::Expense, 500, "2026-01-01"),
     )
@@ -1066,7 +1067,7 @@ fn update_transaction_internal_replaces_fields_and_bumps_version() {
 fn update_transaction_internal_returns_not_found_for_missing_or_deleted() {
     let conn = setup();
     insert_account(&conn, "acc-upd", "现金", "cash", "CNY");
-    let id = insert_transaction(
+    let id = create_transaction_internal(
         &conn,
         make_input("acc-upd", TransactionKind::Expense, 500, "2026-01-01"),
     )
@@ -1098,7 +1099,7 @@ fn update_transaction_internal_returns_not_found_for_missing_or_deleted() {
 fn update_transaction_internal_reuses_kind_validation_transfer_needs_target() {
     let conn = setup();
     insert_account(&conn, "acc-upd", "现金", "cash", "CNY");
-    let id = insert_transaction(
+    let id = create_transaction_internal(
         &conn,
         make_input("acc-upd", TransactionKind::Expense, 500, "2026-01-01"),
     )
@@ -1121,7 +1122,7 @@ fn update_transaction_internal_cross_kind_expense_to_transfer() {
     let conn = setup();
     insert_account(&conn, "acc-upd-a", "A", "cash", "CNY");
     insert_account(&conn, "acc-upd-b", "B", "cash", "CNY");
-    let id = insert_transaction(
+    let id = create_transaction_internal(
         &conn,
         make_input("acc-upd-a", TransactionKind::Expense, 500, "2026-01-01"),
     )
@@ -1142,7 +1143,7 @@ fn update_transaction_internal_cross_kind_expense_to_transfer() {
 fn update_transaction_internal_buy_rebuilds_lot() {
     let conn = setup();
     setup_investment_account(&conn, "acc-inv", "inst-aapl");
-    let buy_id = insert_transaction(
+    let buy_id = create_transaction_internal(
         &conn,
         make_buy_input("acc-inv", "inst-aapl", 10.0, 10000, 500),
     )
@@ -1180,7 +1181,7 @@ fn update_transaction_internal_buy_rebuilds_lot() {
 fn update_transaction_internal_rejects_partially_sold_buy() {
     let conn = setup();
     setup_investment_account(&conn, "acc-inv2", "inst-msft");
-    let buy_id = insert_transaction(
+    let buy_id = create_transaction_internal(
         &conn,
         make_buy_input("acc-inv2", "inst-msft", 10.0, 10000, 0),
     )
@@ -1189,7 +1190,7 @@ fn update_transaction_internal_rejects_partially_sold_buy() {
     let mut sell = make_buy_input("acc-inv2", "inst-msft", 4.0, 11000, 0);
     sell.kind = TransactionKind::Sell;
     sell.date = "2026-01-20".into();
-    insert_transaction(&conn, sell).unwrap();
+    create_transaction_internal(&conn, sell).unwrap();
 
     let err = update_transaction_internal(
         &conn,
@@ -1207,7 +1208,7 @@ fn update_transaction_internal_rejects_partially_sold_buy() {
 fn update_transaction_internal_sell_reverses_and_reapplies() {
     let conn = setup();
     setup_investment_account(&conn, "acc-inv3", "inst-tsla");
-    let buy_id = insert_transaction(
+    let buy_id = create_transaction_internal(
         &conn,
         make_buy_input("acc-inv3", "inst-tsla", 10.0, 10000, 0),
     )
@@ -1215,7 +1216,7 @@ fn update_transaction_internal_sell_reverses_and_reapplies() {
 
     let mut sell1 = make_buy_input("acc-inv3", "inst-tsla", 4.0, 11000, 0);
     sell1.kind = TransactionKind::Sell;
-    let sell_id = insert_transaction(&conn, sell1).unwrap();
+    let sell_id = create_transaction_internal(&conn, sell1).unwrap();
 
     // 编辑卖出：数量 4→3、单价上涨。应先回补旧扣减再按新输入重新匹配。
     let mut sell2 = make_buy_input("acc-inv3", "inst-tsla", 3.0, 12000, 0);
@@ -1256,26 +1257,26 @@ fn update_transaction_internal_sell_reverses_and_reapplies() {
 /// version=1 / is_deleted=0 / created_at==updated_at / device_id 一致——证明
 /// create 路径不再散落手写 INSERT（issue #60 验收：审计字段统一生成）。
 #[test]
-fn insert_transaction_audit_fields_uniform_across_kinds() {
+fn create_transaction_internal_audit_fields_uniform_across_kinds() {
     let conn = setup();
     insert_account(&conn, "acc-w", "现金", "cash", "CNY");
     insert_account(&conn, "acc-w2", "银行", "bank", "CNY");
     setup_investment_account(&conn, "acc-inv-w", "inst-w");
 
-    let expense_id = insert_transaction(
+    let expense_id = create_transaction_internal(
         &conn,
         make_input("acc-w", TransactionKind::Expense, 500, "2026-01-01"),
     )
     .unwrap();
-    let income_id = insert_transaction(
+    let income_id = create_transaction_internal(
         &conn,
         make_input("acc-w", TransactionKind::Income, 900, "2026-01-02"),
     )
     .unwrap();
     let mut transfer = make_input("acc-w", TransactionKind::Transfer, 300, "2026-01-03");
     transfer.to_account_id = Some("acc-w2".into());
-    let transfer_id = insert_transaction(&conn, transfer).unwrap();
-    let refund_id = insert_transaction(
+    let transfer_id = create_transaction_internal(&conn, transfer).unwrap();
+    let refund_id = create_transaction_internal(
         &conn,
         TransactionInput {
             kind: TransactionKind::Refund,
@@ -1287,11 +1288,12 @@ fn insert_transaction_audit_fields_uniform_across_kinds() {
     )
     .unwrap();
     let buy_id =
-        insert_transaction(&conn, make_buy_input("acc-inv-w", "inst-w", 2.0, 1000, 0)).unwrap();
+        create_transaction_internal(&conn, make_buy_input("acc-inv-w", "inst-w", 2.0, 1000, 0))
+            .unwrap();
     let mut sell = make_buy_input("acc-inv-w", "inst-w", 1.0, 1100, 0);
     sell.kind = TransactionKind::Sell;
     sell.date = "2026-01-11".into();
-    let sell_id = insert_transaction(&conn, sell).unwrap();
+    let sell_id = create_transaction_internal(&conn, sell).unwrap();
 
     for id in [
         expense_id,
@@ -1335,7 +1337,7 @@ fn insert_transaction_audit_fields_uniform_across_kinds() {
 fn update_transaction_internal_preserves_created_at_and_refreshes_audit() {
     let conn = setup();
     insert_account(&conn, "acc-upd", "现金", "cash", "CNY");
-    let id = insert_transaction(
+    let id = create_transaction_internal(
         &conn,
         make_input("acc-upd", TransactionKind::Expense, 500, "2026-01-01"),
     )
@@ -1367,7 +1369,7 @@ fn update_transaction_internal_preserves_created_at_and_refreshes_audit() {
 /// 通用 kind 的本位币折算改经 Amount 接缝（基准为全局默认币种，issue #60 / spec #52）：
 /// USD 账户 + USD 金额按汇率折算到 CNY，而非按账户币种 1:1 落库。
 #[test]
-fn insert_transaction_generic_converts_native_via_amount_seam() {
+fn create_transaction_internal_generic_converts_native_via_amount_seam() {
     let conn = setup();
     insert_account(&conn, "acc-usd", "美元", "cash", "USD");
     conn.execute(
@@ -1377,7 +1379,7 @@ fn insert_transaction_generic_converts_native_via_amount_seam() {
     )
     .unwrap();
 
-    let id = insert_transaction(
+    let id = create_transaction_internal(
         &conn,
         TransactionInput {
             currency_code: "USD".into(),
@@ -1419,7 +1421,7 @@ fn create_income_expense_refund_with_merchant() {
     insert_account(&conn, "acc-m", "现金", "cash", "CNY");
     insert_merchant(&conn, "mer-jd", "京东");
 
-    let expense_id = insert_transaction(
+    let expense_id = create_transaction_internal(
         &conn,
         TransactionInput {
             merchant_id: Some("mer-jd".into()),
@@ -1427,7 +1429,7 @@ fn create_income_expense_refund_with_merchant() {
         },
     )
     .unwrap();
-    let income_id = insert_transaction(
+    let income_id = create_transaction_internal(
         &conn,
         TransactionInput {
             merchant_id: Some("mer-jd".into()),
@@ -1437,7 +1439,7 @@ fn create_income_expense_refund_with_merchant() {
     .unwrap();
 
     // refund 可携带商户（创建时携带的商户被继承覆盖，读回为原支出商户）
-    let refund_id = insert_transaction(
+    let refund_id = create_transaction_internal(
         &conn,
         TransactionInput {
             kind: TransactionKind::Refund,
@@ -1478,7 +1480,7 @@ fn create_txn_with_merchant_rejected_for_non_merchant_kinds() {
     insert_merchant(&conn, "mer-jd", "京东");
 
     // transfer：转出/转入账户齐备，仅因携带商户被拒。
-    let err = insert_transaction(
+    let err = create_transaction_internal(
         &conn,
         TransactionInput {
             kind: TransactionKind::Transfer,
@@ -1492,7 +1494,7 @@ fn create_txn_with_merchant_rejected_for_non_merchant_kinds() {
 
     // buy / sell 携带商户：即使投资字段齐备也在行为层被拒（先于投资域 prepare）。
     for kind in [TransactionKind::Buy, TransactionKind::Sell] {
-        let err = insert_transaction(
+        let err = create_transaction_internal(
             &conn,
             TransactionInput {
                 kind,
@@ -1513,7 +1515,7 @@ fn create_txn_with_merchant_rejected_for_non_merchant_kinds() {
 
     // dividend / split：携带商户时商户拒绝优先于「暂不支持」（两者均拒绝且不落库）。
     for kind in [TransactionKind::Dividend, TransactionKind::Split] {
-        let err = insert_transaction(
+        let err = create_transaction_internal(
             &conn,
             TransactionInput {
                 kind,
@@ -1547,7 +1549,7 @@ fn update_txn_with_merchant_rejected_for_transfer() {
     insert_account(&conn, "acc-m-to", "银行", "bank", "CNY");
     insert_merchant(&conn, "mer-jd", "京东");
 
-    let id = insert_transaction(
+    let id = create_transaction_internal(
         &conn,
         make_input("acc-m", TransactionKind::Expense, 500, "2026-01-01"),
     )
@@ -1579,7 +1581,7 @@ fn read_back_carries_merchant_id_after_merchant_soft_delete_and_rename() {
     insert_account(&conn, "acc-m", "现金", "cash", "CNY");
     insert_merchant(&conn, "mer-jd", "京东");
 
-    let id = insert_transaction(
+    let id = create_transaction_internal(
         &conn,
         TransactionInput {
             merchant_id: Some("mer-jd".into()),
@@ -1609,6 +1611,102 @@ fn read_back_carries_merchant_id_after_merchant_soft_delete_and_rename() {
     assert_eq!(searched.items[0].merchant_id.as_deref(), Some("mer-jd"));
 }
 
+// ---------------------------------------------------------------------------
+// 行为层 create 编排入口（issue #228 / ADR-0030）：嵌套感知事务
+// ---------------------------------------------------------------------------
+
+/// 注入「建仓中途失败」：security_transactions 已写入、security_lots 写入时被
+/// 触发器 RAISE(ABORT) 挡下——纯测试侧手段（spec #169 定案），产品代码零 hook。
+fn inject_buy_lot_failure(conn: &Connection) {
+    conn.execute(
+        "CREATE TRIGGER block_buy_lot BEFORE INSERT ON security_lots \
+         BEGIN SELECT RAISE(ABORT, '测试注入：建仓失败'); END",
+        [],
+    )
+    .unwrap();
+}
+
+/// 断言无任何残留：交易行、买卖明细、持仓批次均为 0（数据终态，外部可观察）。
+fn assert_no_creation_residue(conn: &Connection) {
+    let (txns, stx, lots): (i64, i64, i64) = conn
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM transactions), \
+                    (SELECT COUNT(*) FROM security_transactions), \
+                    (SELECT COUNT(*) FROM security_lots)",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(txns, 0, "交易行不应残留");
+    assert_eq!(stx, 0, "买卖明细不应残留");
+    assert_eq!(lots, 0, "持仓批次不应残留");
+}
+
+/// 创建买入 apply 中途失败 → 交易行与持仓副作用均无残留，报错返回
+/// （issue #228 验收：自持事务整体回滚，修复创建路径中间态缺口）。
+#[test]
+fn create_buy_mid_apply_failure_rolls_back_all() {
+    let conn = setup();
+    setup_investment_account(&conn, "acc-rb", "inst-rb");
+    inject_buy_lot_failure(&conn);
+
+    let err =
+        create_transaction_internal(&conn, make_buy_input("acc-rb", "inst-rb", 10.0, 10000, 0))
+            .unwrap_err();
+    assert!(
+        err.to_string().contains("测试注入：建仓失败"),
+        "应上抛注入的建仓错误，实际: {err:?}"
+    );
+    assert_no_creation_residue(&conn);
+}
+
+/// 嵌套模式（外层批次事务中）：create 加入外层、失败直接返回错误，回滚归外层持有者
+/// ——Ok 不提交（外层 ROLLBACK 即消失）、Err 不回滚外层已写的行。
+#[test]
+fn create_nested_mode_leaves_rollback_ownership_to_outer_holder() {
+    let conn = setup();
+    insert_account(&conn, "acc-n1", "现金", "cash", "CNY");
+
+    // 加入外层：Ok 不自持 COMMIT——外层 ROLLBACK 仍能成功、回滚后行消失，
+    // 证明提交点归外层持有者（若 create 自作主张提交，ROLLBACK 会因无活动事务报错）。
+    conn.execute("BEGIN", []).unwrap();
+    let id = create_transaction_internal(
+        &conn,
+        make_input("acc-n1", TransactionKind::Income, 1000, "2026-01-01"),
+    )
+    .expect("嵌套模式下成功创建应直接返回 id");
+    conn.execute("ROLLBACK", []).unwrap();
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 0, "嵌套模式的提交权在外层：外层回滚后行应消失");
+    let _ = id;
+
+    // 加入外层：Err 直接返回错误、不回滚外层——外层已写的行保留，去留由外层决定。
+    conn.execute("BEGIN", []).unwrap();
+    conn.execute(
+        "INSERT INTO transactions (id,kind,amount_cents,currency_code,amount_native_cents,account_id,date,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES ('outer-row','income',1,'CNY',1,'acc-n1','2026-01-01','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+        [],
+    )
+    .unwrap();
+    let err = create_transaction_internal(
+        &conn,
+        make_input("acc-n1", TransactionKind::Expense, 0, "2026-01-02"),
+    )
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("金额必须大于 0"),
+        "嵌套模式失败应直接返回业务错误，实际: {err:?}"
+    );
+    // 外层事务仍开启且已写行仍在（若嵌套失败自行回滚外层，此计数会归零）：
+    let still_open: i64 = conn
+        .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(still_open, 1, "嵌套失败不应拖垮外层已写的行");
+    conn.execute("ROLLBACK", []).unwrap();
+}
+
 /// 软删商户后，历史交易仍可修改其他字段（保持原商户=历史引用，跳过在用校验）：
 /// 与账户/分类更新语义一致——引用已软删参考数据不阻止编辑既有行。
 #[test]
@@ -1616,7 +1714,7 @@ fn update_historical_txn_keeps_soft_deleted_merchant() {
     let conn = setup();
     insert_account(&conn, "acc-m", "现金", "cash", "CNY");
     insert_merchant(&conn, "mer-jd", "京东");
-    let id = insert_transaction(
+    let id = create_transaction_internal(
         &conn,
         TransactionInput {
             merchant_id: Some("mer-jd".into()),

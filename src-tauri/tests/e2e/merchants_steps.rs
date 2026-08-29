@@ -5,7 +5,7 @@ use tauri_app_lib::commands::merchants::{
     create_merchant_internal, delete_merchant_internal, list_merchants_internal,
     update_merchant_internal,
 };
-use tauri_app_lib::commands::transactions::insert_transaction;
+use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::models::{MerchantInput, MerchantUpdateInput, TransactionInput};
 use tauri_app_lib::transaction::amount::TransactionKind;
@@ -119,7 +119,7 @@ fn create_txn_with_merchant(
         fee_cents: None,
         idempotency_key: None,
     };
-    let result = insert_transaction(&world_conn!(world), input);
+    let result = create_transaction_internal(&world_conn!(world), input);
     assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
     world.last_transaction_id = Some(result.unwrap());
     world.transactions_list = query_all_transactions(&world_conn!(world));
@@ -153,7 +153,7 @@ fn try_create_txn_with_merchant(
         fee_cents: None,
         idempotency_key: None,
     };
-    let result = insert_transaction(&world_conn!(world), input);
+    let result = create_transaction_internal(&world_conn!(world), input);
     world.last_error = match result {
         Err(AppError::Invalid(msg)) => Some(msg),
         _ => Some("预期失败但成功了".into()),
@@ -187,7 +187,7 @@ fn try_transfer_with_merchant(
         fee_cents: None,
         idempotency_key: None,
     };
-    let result = insert_transaction(&world_conn!(world), input);
+    let result = create_transaction_internal(&world_conn!(world), input);
     world.last_error = match result {
         Err(AppError::Invalid(msg)) => Some(msg),
         _ => Some("预期失败但成功了".into()),

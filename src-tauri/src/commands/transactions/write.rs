@@ -8,23 +8,6 @@ use crate::transaction::writer;
 
 use super::behavior;
 
-/// 创建一笔交易（`POST /api/v1/transactions/batch` 单条 / IPC `create_transaction`）。
-///
-/// 全部 kind 的行为收敛到行为层单点分派（issue #72）：`plan → insert_row → apply`。
-/// 通用 kind（income/expense/transfer/refund）经 [`behavior::plan`] → Writer 接缝
-/// [`writer::normalize`] + [`writer::insert_row`] 归一化并落库（本位币折算走 Amount
-/// 接缝、id 与审计字段统一生成，与定时引擎/批量导入共用同一写入权威，列清单不在此重复）；
-/// buy/sell 经投资域 prepare/apply 落交易行并建仓/卖出匹配；`dividend` / `split`
-/// 已声明但未实现，在此显式「暂不支持」拒绝。
-pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<String> {
-    let plan = behavior::plan(conn, &input, None)?;
-    let row = plan.normalized_row()?;
-    let id = writer::insert_row(conn, &row)?;
-    behavior::apply(conn, &id, &plan)?;
-    // 搜索无索引（issue #196 全量扫描实现）：写入路径零额外工作，交易立即可搜。
-    Ok(id)
-}
-
 /// 按 `id` 全字段替换一笔交易（`PUT /api/v1/transactions/{id}`）。
 ///
 /// 行为收敛到行为层单点分派（issue #72）：先按旧 kind 回退持仓/卖出关联副作用，

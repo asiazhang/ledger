@@ -8,7 +8,7 @@
 use cucumber::{then, when};
 
 use tauri_app_lib::commands::item::{create_item_internal, update_item_internal};
-use tauri_app_lib::commands::transactions::insert_transaction;
+use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::models::{ItemInput, TransactionInput};
 use tauri_app_lib::transaction::amount::TransactionKind;
@@ -83,7 +83,7 @@ fn create_expense_txn_with_currency(
         fee_cents: None,
         idempotency_key: None,
     };
-    let result = insert_transaction(&world_conn!(world), input);
+    let result = create_transaction_internal(&world_conn!(world), input);
     let id = result.unwrap_or_else(|e| panic!("创建支出交易应成功但失败: {e}"));
     world.last_transaction_id = Some(id);
 }
