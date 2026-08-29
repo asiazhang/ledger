@@ -88,7 +88,7 @@ export const api = {
 
   // 商户（issue #188 / ADR-0028）：参考数据字典命令面，随 ledger:changed 失效信号重拉
   // includeDeleted=true 返回含软删全量（交易筛选下拉需含软删但仍有历史交易的商户，issue #191）
-  listMerchants: (opts?: { includeDeleted?: boolean } | null) =>
+  listMerchants: (opts?: { includeDeleted?: boolean }) =>
     invoke<Merchant[]>('list_merchants', { includeDeleted: opts?.includeDeleted ?? false }),
   createMerchant: (input: MerchantInput) => invoke<string>('create_merchant', { input }),
   updateMerchant: (id: string, input: MerchantUpdateInput) =>

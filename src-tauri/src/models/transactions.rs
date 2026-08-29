@@ -191,7 +191,8 @@ pub struct TransactionListFilter {
     /// 命中普通交易与转账的转出/转入两侧（含转入的转账）。
     /// 已发布字段 `account_id`（仅转出账户）语义保持不变，遵守发布冻结约定。
     pub involving_account_id: Option<String>,
-    /// 按商户过滤（issue #191）：命中该商户的全部未删除交易（含软删商户的历史交易）。
+    /// 按商户过滤（issue #191）：命中 `merchant_id = X` 的全部未删除交易
+    /// （交易行未删即命中，商户本身可已软删——软删商户的历史交易同样可过滤）。
     pub merchant_id: Option<String>,
     /// 交易类型过滤（income / expense / transfer / buy / sell / refund）。
     /// 枚举反序列化对未知值报参数错误（400），不再静默传字符串给 SQL。
