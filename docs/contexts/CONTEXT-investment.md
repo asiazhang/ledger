@@ -126,6 +126,7 @@
   - 进度反馈：通过 `sync-instruments:progress` 事件向前端汇报当前页数/总数与累计新增、更新数量。
   - **中断机制（issue #104）**：分页循环每页检查共享取消标志（`AtomicBool`），经 `cancel_sync_instruments` 命令置位后即提前返回并推送中断态事件；已落库数据保留（upsert 幂等）、下次重跑自动续上。进度事件终态以 `cancelled` 字段区分完成（`done=true, cancelled=false`）与中断（`done=true, cancelled=true`）。
   - 无同步进行时调用 `cancel_sync_instruments` 无副作用，返回明确提示。
+  - **结束即发价格失效信号（ADR-0031）**：结束时只要本次运行有落库（含用户中断——中断保留已落库价格，不发信号即失真）即 emit `ledger:prices-changed`，与增量同步共用同一信号。
 - **与增量同步的边界**：全量修字典（增删改 `instruments` + 刷价），增量刷价格并沉淀历史（见 HoldingPriceSync、ADR-0019）；日常刷新现价与走势走增量同步，全量仅在标的字典需要修补时触发（二次确认说明范围与数百次 API 请求代价）。
 - **别名**：不使用"同步价格"（偏持续同步）、"更新行情"（偏实时）。
 
@@ -138,5 +139,15 @@
   - 停牌/无效价（f2≤0）跳过、保留旧价，不中断同步；响应 data:null（全部代码无效）优雅降级为空。
   - 重复触发幂等：每标的一条 `market_prices` 覆盖更新（`source` 沿用 `eastmoney`）；PriceHistory 同周整周覆盖，均不产生重复数据。
   - 完全无持仓时返回明确提示（"无持仓标的可同步"）而非报错。
+  - **成功即发价格失效信号（ADR-0031）**：实际写入价格（`synced > 0`）时 emit `ledger:prices-changed`，各价格消费方由信号驱动重拉；接缝 `useHoldingPriceSync` 的承诺是「同步完成即通知失效」，调用方无需自行重拉，零变化（无持仓/全部跳过）不广播。
   - 复用全量同步的 HTTP 层（主机池、重试、限流 pacer）与价格换算（A 股 f2 直接得分、港股 ÷10），增量同步 API 访问量从全量数百次降到个位数（issue #103）。
 - **别名**：不使用"增量行情"（口语），正式术语为"持仓价格增量同步"；UI 文案固定为"同步持仓价格"。
+
+## 价格失效信号（PriceChangeSignal）
+
+- **定义**：价格数据（MarketPrice / PriceHistory / FxRateHistory）发生写入后，后端发出的无 payload、粗粒度的 `ledger:prices-changed` 事件信号（ADR-0031）；前端价格消费方各自订阅并重拉自身数据，替代「同步后记得手动刷新」的调用方自觉。
+- **边界**：
+  - **生产者仅两处**：HoldingPriceSync 成功且实际写入价格（`synced > 0`）时；InstrumentSync 结束且本次运行有落库时（含用户中断）。零变化（无持仓标的、全部跳过）不广播——失效信号的本义是「数据变了」。
+  - **与平行信号的关系**：与参考失效信号 `ledger:changed`（见参考数据与设置域 Reference Data）、备份信号 `ledger:backups-changed`（见备份与数据文件域 Backup）同一 `ledger:*` 命名空间、同一形状（无 payload、粗粒度），各域语义各自锚定；不复用 `ledger:changed`——其语义锚定参考写入（ADR-0012），价格同步误发会触发参考表无谓重拉而价格消费方无人响应。
+  - **消费方自选订阅**：信号可用性全局，订阅与否由消费方决定（本期为持仓概览与标的页标的列表；走势、仪表盘等留后续）；未订阅者行为不变。
+- **别名**：不使用"行情刷新事件"、"价格推送"（推送暗示带 payload 的实时行情流，本信号只是失效通知）、与 `ledger:changed` 混称"失效信号"（不区分域）。
