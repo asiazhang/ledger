@@ -20,7 +20,7 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 | 4 | AI 导入 | [`docs/contexts/CONTEXT-ai-import.md`](docs/contexts/CONTEXT-ai-import.md) | AI API、AIReadbackVerification、AICleanupDeletion、AICleanupModify、ImportDedup、IdempotencyKey、BlackHoleAccount、AIPrompt |
 | 5 | 参考数据与设置 | [`docs/contexts/CONTEXT-reference-settings.md`](docs/contexts/CONTEXT-reference-settings.md) | Reference Data、Appearance、AppSettings、轻量设置项、DataLocation |
 | 6 | 备份与数据文件 | [`docs/contexts/CONTEXT-backup-datafiles.md`](docs/contexts/CONTEXT-backup-datafiles.md) | Backup、Restore、RestoreSafetyBackup、BackupDirectory、BackupRetentionLimit、BackupPruning、ManagedBackup、ManualBackup、BackupTrigger、AutoBackup、DirtyMarker |
-| 7 | 界面状态与交互 | [`docs/contexts/CONTEXT-ui-interaction.md`](docs/contexts/CONTEXT-ui-interaction.md) | TransactionFilter、WindowState、ViewState、ViewShortcut、CreateShortcut、Overlay Suppression、弹层关闭语义、ESC 键语义、原生右键菜单、拼音可搜下拉 |
+| 7 | 界面状态与交互 | [`docs/contexts/CONTEXT-ui-interaction.md`](docs/contexts/CONTEXT-ui-interaction.md) | TransactionFilter、WindowState、ViewState、ViewShortcut、CreateShortcut、Overlay Suppression、弹层关闭语义、ESC 键语义、原生右键菜单、拼音可搜下拉、报表年份筛选 |
 | 8 | 物品 | [`docs/contexts/CONTEXT-item.md`](docs/contexts/CONTEXT-item.md) | Item、DailyUsageCost、source_transaction_id、创建语义 |
 | 9 | 预算 | [`docs/contexts/CONTEXT-budget.md`](docs/contexts/CONTEXT-budget.md) | Budget、BudgetPeriod、BudgetProgress（永久滚动，ADR-0029） |
 
