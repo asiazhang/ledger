@@ -145,8 +145,7 @@ function makeDetail(
     },
     pending_occurrences,
     completed_occurrences: 0,
-    failed_occurrences,
-    completed_occurrence_list: [],
+    occurrences: [...pending_occurrences, ...failed_occurrences],
   }
 }
 
@@ -253,15 +252,12 @@ function baseInvoke() {
       // 重试语义：failed 期次 → completed（issue #205 期次详情弹窗）
       const { occurrence_id } = (args?.input ?? {}) as { occurrence_id: string }
       for (const [id, d] of mockDetails) {
-        const failed = d.failed_occurrences.find((o) => o.id === occurrence_id)
-        if (!failed) continue
+        if (!d.occurrences.some((o) => o.id === occurrence_id && o.status === 'failed')) continue
         mockDetails.set(id, {
           ...d,
-          failed_occurrences: d.failed_occurrences.filter((o) => o.id !== occurrence_id),
-          completed_occurrence_list: [
-            ...d.completed_occurrence_list,
-            { ...failed, status: 'completed' as const },
-          ],
+          occurrences: d.occurrences.map((o) =>
+            o.id === occurrence_id ? { ...o, status: 'completed' as const } : o,
+          ),
         })
       }
       return Promise.resolve('txn-new')

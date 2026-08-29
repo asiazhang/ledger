@@ -311,11 +311,11 @@ pub struct ScheduledTransactionDetail {
     pub extension: serde_json::Value,
     pub pending_occurrences: Vec<ScheduledTransactionOccurrence>,
     pub completed_occurrences: i64,
-    /// 失败期次（issue #205）：期次详情弹窗「重试」的数据源。
-    pub failed_occurrences: Vec<ScheduledTransactionOccurrence>,
-    /// 已完成期次列表（issue #205）：期次详情弹窗展示每期执行状态；
-    /// `completed_occurrences` 计数字段为既有契约，保留不动。
-    pub completed_occurrence_list: Vec<ScheduledTransactionOccurrence>,
+    /// 全量期次列表（issue #205）：含全部状态（pending/processing/completed/failed/
+    /// cancelled），按 scheduled_date 升序——期次详情弹窗的唯一数据源，
+    /// 避免逐状态字段列举遗漏（如取消计划时 pending 批量转 cancelled）。
+    /// 既有 pending/completed 计数字段为冻结契约，保留不动。
+    pub occurrences: Vec<ScheduledTransactionOccurrence>,
 }
 
 // ---------------------------------------------------------------------------

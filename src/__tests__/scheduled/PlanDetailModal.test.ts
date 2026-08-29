@@ -102,6 +102,7 @@ interface DetailParts {
   pending?: ScheduledTransactionOccurrence[]
   failed?: ScheduledTransactionOccurrence[]
   completed?: ScheduledTransactionOccurrence[]
+  cancelled?: ScheduledTransactionOccurrence[]
   extension?: ScheduledTransactionDetail['extension']
 }
 
@@ -109,6 +110,10 @@ function makeDetail(
   core: ScheduledTransaction,
   parts: DetailParts = {},
 ): ScheduledTransactionDetail {
+  const pending = parts.pending ?? []
+  const failed = parts.failed ?? []
+  const completed = parts.completed ?? []
+  const cancelled = parts.cancelled ?? []
   return {
     core,
     extension:
@@ -116,10 +121,9 @@ function makeDetail(
         scheduled_transaction_id: core.id,
         merchant_id: null,
       },
-    pending_occurrences: parts.pending ?? [],
-    completed_occurrences: (parts.completed ?? []).length,
-    failed_occurrences: parts.failed ?? [],
-    completed_occurrence_list: parts.completed ?? [],
+    pending_occurrences: pending,
+    completed_occurrences: completed.length,
+    occurrences: [...pending, ...failed, ...completed, ...cancelled],
   }
 }
 
@@ -140,15 +144,12 @@ function baseInvoke() {
       const { occurrence_id } = (args?.input ?? {}) as { occurrence_id: string }
       // 重试语义：failed 期次 → completed
       for (const [id, d] of mockDetails) {
-        const failed = d.failed_occurrences.find((o) => o.id === occurrence_id)
-        if (!failed) continue
+        if (!d.occurrences.some((o) => o.id === occurrence_id && o.status === 'failed')) continue
         mockDetails.set(id, {
           ...d,
-          failed_occurrences: d.failed_occurrences.filter((o) => o.id !== occurrence_id),
-          completed_occurrence_list: [
-            ...d.completed_occurrence_list,
-            { ...failed, status: 'completed' as const },
-          ],
+          occurrences: d.occurrences.map((o) =>
+            o.id === occurrence_id ? { ...o, status: 'completed' as const } : o,
+          ),
         })
       }
       return Promise.resolve('txn-new')
@@ -157,7 +158,7 @@ function baseInvoke() {
       const planId = String(args?.id)
       const d = mockDetails.get(planId)
       if (!d) return Promise.reject(new Error('无此计划详情'))
-      const last = [...d.pending_occurrences].sort((a, b) =>
+      const last = [...d.occurrences].sort((a, b) =>
         b.scheduled_date.localeCompare(a.scheduled_date),
       )[0]
       const newDate = `${Number(last?.scheduled_date.slice(0, 4) ?? '2026') + 1}-01-01`
@@ -168,7 +169,7 @@ function baseInvoke() {
       })
       mockDetails.set(planId, {
         ...d,
-        pending_occurrences: [...d.pending_occurrences, occ],
+        occurrences: [...d.occurrences, occ],
       })
       return Promise.resolve([occ.id])
     }
@@ -275,6 +276,19 @@ describe('PlanDetailModal 期次列表（issue #205）', () => {
     // 重试成功后重拉详情：期次已转为已完成，重试入口消失
     expect(q('[data-testid="occ-status-f1"]')!.textContent).toBe('已完成')
     expect(exists('[data-testid="occ-retry-f1"]')).toBe(false)
+  })
+
+  it('已取消期次可见且无重试入口（取消计划的历史期次不丢失）', async () => {
+    mockDetails.set(
+      'plan-1',
+      makeDetail(makeCore({ id: 'plan-1' }), {
+        cancelled: [makeOccurrence({ id: 'x1', status: 'cancelled' })],
+      }),
+    )
+    const wrapper = await mountModal()
+    await openModal(wrapper)
+    expect(q('[data-testid="occ-status-x1"]')!.textContent).toBe('已取消')
+    expect(exists('[data-testid="occ-retry-x1"]')).toBe(false)
   })
 
   it('详情加载失败时显示加载失败占位', async () => {

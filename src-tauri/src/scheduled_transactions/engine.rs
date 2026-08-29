@@ -282,24 +282,14 @@ pub fn get_plan_detail(conn: &Connection, id: &str) -> Result<ScheduledTransacti
         |r| r.get(0),
     )?;
 
-    // issue #205：期次详情弹窗需要 failed 期次（重试数据源）与已完成期次列表
-    // （展示每期执行状态）；均为新增返回字段，不改动既有字段口径。
-    let failed_occurrences: Vec<ScheduledTransactionOccurrence> = query_all(
+    // issue #205：期次详情弹窗需要全量期次列表（含 failed 可重试、cancelled
+    // 历史等各状态）；新增返回字段，不改动既有字段口径。
+    let occurrences: Vec<ScheduledTransactionOccurrence> = query_all(
         conn,
         "SELECT id,scheduled_transaction_id,scheduled_date,status,transaction_id,amount_cents,\
          created_at,updated_at,version,device_id,is_deleted \
          FROM scheduled_transaction_occurrences \
-         WHERE scheduled_transaction_id=?1 AND is_deleted=0 AND status='failed' \
-         ORDER BY scheduled_date ASC",
-        rusqlite::params![id],
-    )?;
-
-    let completed_occurrence_list: Vec<ScheduledTransactionOccurrence> = query_all(
-        conn,
-        "SELECT id,scheduled_transaction_id,scheduled_date,status,transaction_id,amount_cents,\
-         created_at,updated_at,version,device_id,is_deleted \
-         FROM scheduled_transaction_occurrences \
-         WHERE scheduled_transaction_id=?1 AND is_deleted=0 AND status='completed' \
+         WHERE scheduled_transaction_id=?1 AND is_deleted=0 \
          ORDER BY scheduled_date ASC",
         rusqlite::params![id],
     )?;
@@ -309,8 +299,7 @@ pub fn get_plan_detail(conn: &Connection, id: &str) -> Result<ScheduledTransacti
         extension,
         pending_occurrences,
         completed_occurrences,
-        failed_occurrences,
-        completed_occurrence_list,
+        occurrences,
     })
 }
 

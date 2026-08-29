@@ -1094,32 +1094,34 @@ fn assert_detail_pending(world: &mut LedgerWorld, expected: usize) {
     );
 }
 
-#[then(expr = "详情应含 {int} 条失败期次")]
-fn assert_detail_failed(world: &mut LedgerWorld, expected: usize) {
+#[then(expr = "详情期次总数应为 {int}")]
+fn assert_detail_occurrence_total(world: &mut LedgerWorld, expected: usize) {
     assert_eq!(
-        last_detail(world).failed_occurrences.len(),
+        last_detail(world).occurrences.len(),
         expected,
-        "失败期次条数不符"
+        "期次总数不符"
     );
 }
 
-#[then(expr = "详情应含 {int} 条已完成期次")]
-fn assert_detail_completed(world: &mut LedgerWorld, expected: usize) {
-    assert_eq!(
-        last_detail(world).completed_occurrence_list.len(),
-        expected,
-        "已完成期次条数不符"
-    );
-}
-
-#[then(expr = "详情失败期次日期应为 {string}")]
-fn assert_detail_failed_date(world: &mut LedgerWorld, expected: String) {
-    let dates: Vec<String> = last_detail(world)
-        .failed_occurrences
+#[then(expr = "详情状态为 {string} 的期次应有 {int} 条")]
+fn assert_detail_status_count(world: &mut LedgerWorld, status: String, expected: usize) {
+    let n = last_detail(world)
+        .occurrences
         .iter()
+        .filter(|o| o.status == status)
+        .count();
+    assert_eq!(n, expected, "状态为 {status} 的期次条数不符");
+}
+
+#[then(expr = "详情状态为 {string} 的期次日期应为 {string}")]
+fn assert_detail_status_date(world: &mut LedgerWorld, status: String, expected: String) {
+    let dates: Vec<String> = last_detail(world)
+        .occurrences
+        .iter()
+        .filter(|o| o.status == status)
         .map(|o| o.scheduled_date.clone())
         .collect();
-    assert_eq!(dates, vec![expected], "失败期次日期不符");
+    assert_eq!(dates, vec![expected], "状态为 {status} 的期次日期不符");
 }
 
 /// 重试最近计划的 failed 期次（走 execute_occurrence 命令体，与弹窗重试同一缝）。

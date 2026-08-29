@@ -54,11 +54,11 @@ async function load() {
   }
 }
 
-/** 期次合并视图：待执行 + 失败 + 已完成，按日期升序（同日按创建时间）。 */
+/** 期次合并视图：全量期次（含 pending/processing/completed/failed/cancelled）按日期升序。 */
 const occurrenceRows = computed<ScheduledTransactionOccurrence[]>(() => {
   const d = detail.value
   if (!d) return []
-  return [...d.pending_occurrences, ...d.failed_occurrences, ...d.completed_occurrence_list].sort(
+  return [...d.occurrences].sort(
     (a, b) =>
       a.scheduled_date.localeCompare(b.scheduled_date) || a.created_at.localeCompare(b.created_at),
   )
@@ -73,7 +73,8 @@ const totalOccurrences = computed<number | null>(() => {
 
 /**
  * 「展开更多期次」门控：仅 active 计划可展开（后端同口径）；有限期数计划
- * 期次已全部生成（含历史各状态）时不再显示——避免无意义的空展开。
+ * 期次已全部生成（含历史各状态，与后端展开的 existing_count 同口径）时不再
+ * 显示——避免无意义的空展开。
  */
 const canExpand = computed(() => {
   const d = detail.value
@@ -128,11 +129,11 @@ const columns: DataTableColumns<ScheduledTransactionOccurrence> = [
   {
     title: '金额',
     key: 'amount',
-    render: (occ) =>
-      formatAmount(
-        occ.amount_cents,
-        reference.getCurrency(detail.value?.core.currency_code ?? 'CNY'),
-      ),
+    render: (occ) => {
+      // 期次不带币种，用计划的币种（amount 列仅在 detail 渲染时出现）
+      const currency = reference.getCurrency(detail.value!.core.currency_code)
+      return formatAmount(occ.amount_cents, currency)
+    },
   },
   {
     title: '状态',
