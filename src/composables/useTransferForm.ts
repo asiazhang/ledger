@@ -2,8 +2,9 @@ import { ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { api } from '@/api'
 import { centsToYuan } from '@/types'
+import { buildTransferInput } from '@/domain/transaction-input'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
-import type { Transaction, UpdateTransactionInput } from '@/types'
+import type { Transaction } from '@/types'
 import { errorMessage } from "@/utils/errors";
 
 export function useTransferForm(options?: {
@@ -27,8 +28,8 @@ export function useTransferForm(options?: {
   const date = ref(Date.now())
 
   // 编辑模式（issue #178）：打开即回填该笔交易全部业务字段。金额经 centsToYuan
-  // 按币种小数位换算（不手写 /100）；日期以 UTC 午夜回填，与提交端
-  // toISOString 切片同一口径，不改往返无损。
+  // 按币种小数位换算（不手写 /100）；日期以 UTC 午夜时间戳承载回填，提交端
+  // 日期转换收口装配器 toLocalDateISO（issue #216）。
   const editingTx = options?.editing?.() ?? null
   if (editingTx) {
     amount.value = centsToYuan(editingTx.amount_cents, reference.getCurrency(editingTx.currency_code))
@@ -56,20 +57,20 @@ export function useTransferForm(options?: {
       message.warning('请输入金额')
       return
     }
-    // 同一入参对象形状（issue #178）：创建/编辑共用 UpdateTransactionInput 形状
-    // （幂等键不可编辑，TransactionInput 的其余字段均被覆盖）
-    const input: UpdateTransactionInput = {
-      kind: 'transfer',
-      amount_cents: Math.round(amount.value * 100),
-      currency_code: currencyCode.value,
-      account_id: accountId.value,
-      to_account_id: toAccountId.value,
-      note: note.value || null,
-      date: new Date(date.value).toISOString().slice(0, 10),
-    }
     // 编辑目标提交时重读（getter 约定见 options.editing 注释）
     const editing = options?.editing?.() ?? null
     try {
+      // wire 字段拼装收口 TransactionInput 装配器（issue #216）：创建/编辑共用
+      // 同一装配结果（UpdateTransactionInput 与 TransactionInput 字段同构，
+      // 幂等键不可编辑）；金额元转分与本地日期转换均为装配器实现细节
+      const input = buildTransferInput({
+        amount: amount.value,
+        currencyCode: currencyCode.value,
+        accountId: accountId.value,
+        toAccountId: toAccountId.value,
+        note: note.value,
+        date: date.value,
+      })
       if (editing) {
         await api.updateTransaction(editing.id, input)
         message.success('已保存修改')

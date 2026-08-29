@@ -18,7 +18,8 @@ import { yuanToCents } from '@/utils/money'
  * - 非法输入 fail fast：throw 中文错误，不静默兜底。
  *
  * 四个表单 composable（useCategoryForm / useTransferForm / useRefundForm /
- * useInvestmentForm）的接入由后续 ticket 承担，本模块先行落地接缝本体。
+ * useInvestmentForm）已接入本接缝（issue #216）：表单只做语义校验与提交路由，
+ * wire 字段拼装不再散落调用方。
  */
 
 /** 支出/收入表单形态（useCategoryForm 表单状态原样；merchantId 为已解析的商户 id） */
