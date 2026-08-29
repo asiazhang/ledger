@@ -439,6 +439,31 @@ fn re_execute_occurrence(world: &mut LedgerWorld) {
     execute_occurrence_step(world, &occ_id);
 }
 
+// ---------------------------------------------------------------------------
+// 引擎事务自持：期次中间态缺口修复（issue #230 / ADR-0033 决策 #6）
+// ---------------------------------------------------------------------------
+
+/// 注入「期次落库中途失败」：期次已 CAS 置 processing 后，交易行 INSERT 被触发器
+/// RAISE(ABORT) 挡下——纯测试侧注入（spec #169 定案），产品代码零 hook。
+#[when(expr = "注入交易落库失败触发器")]
+fn inject_txn_insert_failure(world: &mut LedgerWorld) {
+    world_conn!(world)
+        .execute(
+            "CREATE TRIGGER block_txn_insert BEFORE INSERT ON transactions \
+             BEGIN SELECT RAISE(ABORT, '测试注入：期次落库失败'); END",
+            [],
+        )
+        .unwrap();
+}
+
+/// 移除注入触发器，让回滚后回原状态的期次可重试。
+#[when(expr = "移除交易落库失败触发器")]
+fn drop_txn_insert_failure_trigger(world: &mut LedgerWorld) {
+    world_conn!(world)
+        .execute("DROP TRIGGER block_txn_insert", [])
+        .unwrap();
+}
+
 /// 执行期次并记录结果：成功回填 last_transaction_id，失败记录 last_error。
 fn execute_occurrence_step(world: &mut LedgerWorld, occ_id: &str) {
     world.last_occurrence_id = Some(occ_id.to_string());

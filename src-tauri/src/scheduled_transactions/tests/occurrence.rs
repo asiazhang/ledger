@@ -7,7 +7,7 @@ use super::common::{
     create_installment, create_subscription, create_transfer_plan, first_pending_occurrence,
     insert_account, insert_rate, occurrence_status, read_txn, setup_db,
 };
-use rusqlite::params;
+use rusqlite::{Connection, params};
 
 // ---------------------------------------------------------------------------
 // 回归：非默认币种的定时交易折算（issue #59 核心 bug）
@@ -74,6 +74,54 @@ fn execute_occurrence_default_currency_stays_1_1() {
     let txn = read_txn(&conn, &txn_id);
     assert_eq!(txn.amount_cents, 6600);
     assert_eq!(txn.amount_native_cents, 6600, "默认币种应 1:1");
+}
+
+// ---------------------------------------------------------------------------
+// 引擎事务自持：期次中间态缺口修复（issue #230 / ADR-0033 决策 #6）
+// ---------------------------------------------------------------------------
+
+/// 注入「期次落库中途失败」：期次已 CAS 置 processing 后，交易行 INSERT 被触发器
+/// RAISE(ABORT) 挡下——纯测试侧手段（spec #169 定案），产品代码零 hook。
+fn inject_txn_insert_failure(conn: &Connection) {
+    conn.execute(
+        "CREATE TRIGGER block_txn_insert BEFORE INSERT ON transactions \
+         BEGIN SELECT RAISE(ABORT, '测试注入：期次落库失败'); END",
+        [],
+    )
+    .unwrap();
+}
+
+/// 期次落库中途失败 → 无交易残留、期次回原状态 pending 可重试（不滞留
+/// processing），移除注入后同一期次重试成功。
+#[test]
+fn execute_occurrence_mid_failure_rolls_back_to_pending() {
+    let conn = setup_db();
+    insert_account(&conn, "acc", "CNY");
+    let plan_id = create_subscription(&conn, "acc", "CNY", 3000, Some("回滚订阅"));
+    let occ_id = first_pending_occurrence(&conn, &plan_id);
+    inject_txn_insert_failure(&conn);
+
+    let err = execute_occurrence(&conn, &occ_id).unwrap_err();
+    assert!(
+        err.to_string().contains("测试注入"),
+        "应上抛注入的落库错误，实际: {err:?}"
+    );
+
+    // 数据终态：交易行无残留、期次回原状态、未回填交易 id。
+    let txn_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(txn_count, 0, "中途失败不应残留交易行");
+    let (status, backfilled) = occurrence_status(&conn, &occ_id);
+    assert_eq!(status, "pending", "期次应回原状态可重试，不滞留 processing");
+    assert_eq!(backfilled, None, "失败不应回填交易 id");
+
+    // 移除注入后同一期次可重试成功。
+    conn.execute("DROP TRIGGER block_txn_insert", []).unwrap();
+    let txn_id = execute_occurrence(&conn, &occ_id).unwrap();
+    let (status, backfilled) = occurrence_status(&conn, &occ_id);
+    assert_eq!(status, "completed");
+    assert_eq!(backfilled.as_deref(), Some(txn_id.as_str()));
 }
 
 // ---------------------------------------------------------------------------
