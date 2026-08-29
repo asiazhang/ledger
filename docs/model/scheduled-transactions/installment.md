@@ -13,7 +13,7 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `scheduled_transaction_id` | TEXT | 是 | 主键/外键，FK → `scheduled_transactions(id)`，且 `scheduled_transactions.kind = 'installment'` |
-| `counterparty` | TEXT | 否 | 收款方，如贷款机构、商家 |
+| `merchant_id` | TEXT | 否 | 商户引用，FK → `merchants(id)`（硬删置空；每期生成交易时复制到流水，issue #190 / ADR-0028） |
 | `total_amount_cents` | INTEGER | 是 | 分期总金额（分） |
 | `total_occurrences` | INTEGER | 是 | 分期总期数 |
 
@@ -39,7 +39,7 @@
 | 期次 `amount_cents` | `amount_cents` / `amount_native_cents`（本位币，当前 1:1） |
 | `scheduled_transactions.currency_code` | `currency_code` |
 | `scheduled_transactions.category_id` | `category_id` |
-| `installment_plans.counterparty` | 收款方（当前不落库到交易；展示用途，见 index.md MVP 范围） |
+| `installment_plans.merchant_id` | `merchant_id`（每期复制计划商户到流水，issue #190 / ADR-0028） |
 | 期次 `scheduled_date` | `date` |
 | 固定值 | `kind = 'expense'` |
 

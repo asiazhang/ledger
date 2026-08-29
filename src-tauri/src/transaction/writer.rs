@@ -143,19 +143,7 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
         if let Some(merchant_id) = &input.merchant_id {
             let unchanged = input.existing_merchant_id.as_deref() == Some(merchant_id.as_str());
             if !unchanged {
-                let active: bool = conn
-                    .query_row(
-                        "SELECT 1 FROM merchants WHERE id=?1 AND is_deleted=0",
-                        params![merchant_id],
-                        |_| Ok(true),
-                    )
-                    .optional()?
-                    .is_some();
-                if !active {
-                    return Err(AppError::Invalid(format!(
-                        "商户不存在或已删除: {merchant_id}"
-                    )));
-                }
+                validate_merchant_active(conn, Some(merchant_id))?;
             }
         }
         (
@@ -185,6 +173,27 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
         note: input.note.clone(),
         date: input.date.clone(),
     })
+}
+
+/// 校验商户存在且未软删除（ADR-0028）：软删商户不可再被**新选择**——新建交易
+/// （writer）与新建定时计划（`scheduled_transactions::engine::create_plan`）共用
+/// 同一校验与文案（e2e 断言同一错误）。历史引用（编辑保持原商户、计划期次复制
+/// 计划商户）不受此限制。
+pub fn validate_merchant_active(conn: &Connection, merchant_id: Option<&str>) -> Result<()> {
+    if let Some(id) = merchant_id {
+        let active: bool = conn
+            .query_row(
+                "SELECT 1 FROM merchants WHERE id=?1 AND is_deleted=0",
+                params![id],
+                |_| Ok(true),
+            )
+            .optional()?
+            .is_some();
+        if !active {
+            return Err(AppError::Invalid(format!("商户不存在或已删除: {id}")));
+        }
+    }
+    Ok(())
 }
 
 /// 将归一化行落库为完整交易行：生成 `id`（UUID v7）+ 审计字段

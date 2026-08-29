@@ -1,9 +1,9 @@
 //! 测试支持：捕获 tracing 事件的 Layer 与全局最大级别稳定器。
 //!
-//! 供本 crate 的单元测试（`db/tests.rs`）与集成测试（`tests/api_server.rs`）
+//! 供本 crate 的单元测试（`db/tests.rs`）与集成测试（`tests/api_server/`）
 //! 共用，避免两处重复实现采集器具（issue #44 code review：Duplicated Code）。
 //!
-//! 说明：集成测试 `tests/api_server.rs` 链接的是非 `#[cfg(test)]` 构建的 lib，
+//! 说明：集成测试 `tests/api_server/` 链接的是非 `#[cfg(test)]` 构建的 lib，
 //! 因此本模块不能仅以 `#[cfg(test)]` 编译；`#[doc(hidden)]` 使其不进入文档，
 //! 对生产二进制的影响只是一些未使用的测试辅助类型（可被编译器消除）。
 

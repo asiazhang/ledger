@@ -54,8 +54,8 @@ scheduled_transaction_occurrences (0..1) ──> (1) Transaction
 
 | 扩展表 | 关联 | 类型特有字段 |
 |---|---|---|
-| `installment_plans` | `scheduled_transaction_id` PK/FK | `counterparty`, `total_amount_cents`, `total_occurrences` |
-| `subscription_plans` | `scheduled_transaction_id` PK/FK | `counterparty` |
+| `installment_plans` | `scheduled_transaction_id` PK/FK | `merchant_id`, `total_amount_cents`, `total_occurrences` |
+| `subscription_plans` | `scheduled_transaction_id` PK/FK | `merchant_id` |
 | `scheduled_transfer_plans` | `scheduled_transaction_id` PK/FK | `to_account_id`, `total_occurrences` |
 
 详见 `installment.md` / `subscription.md` / `scheduled-transfer.md`。
@@ -173,7 +173,7 @@ WHERE st.kind = 'installment' AND sto.status = 'pending' AND sto.scheduled_date 
 - 自动重试、滞纳金、节假日顺延。
 - subscription 自动结束日期、中途涨价。
 - 复杂 RRULE 表达式。
-- 在 `Transaction` 表中新增通用 `counterparty` 或 `plan_id` 字段。
+- 在 `Transaction` 表中新增通用 `plan_id` 字段（`merchant_id` 属 ADR-0028 商户维度，与分类同款可选字段，见核心交易域词汇表）。
 
 ## 后续扩展方向
 

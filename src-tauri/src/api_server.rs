@@ -21,7 +21,7 @@ use utoipa::ToSchema;
 
 /// HTTP 服务器状态：数据库连接 + 可选 `AppHandle`（参考写入成功后发 `ledger:changed`）。
 ///
-/// `app` 为 `Option`：集成测试（`tests/api_server.rs`）不经真实 Tauri 运行时构建路由，
+/// `app` 为 `Option`：集成测试（`tests/api_server/`）不经真实 Tauri 运行时构建路由，
 /// 传 `None` 即跳过发射分支（后端 emit 视为薄胶，不造 AppHandle 测试桩）；
 /// 生产路径由 `start_http_server` 注入 `Some(app)`。
 #[derive(Clone)]

@@ -17,6 +17,7 @@ import type {
   Account,
   Category,
   Currency,
+  Merchant,
   ScheduledTransaction,
   ScheduledTransactionDetail,
   ScheduledTransactionOccurrence,
@@ -66,9 +67,24 @@ const mockCategories: Category[] = [
   },
 ]
 
-/** 订阅计划工厂：core.kind 固定 subscription，其余可覆写 */
+const mockMerchants: Merchant[] = [
+  {
+    id: 'mer-1',
+    name: '视频平台',
+    icon: null,
+    color: null,
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: false,
+  },
+]
+
+/** 订阅计划工厂：core.kind 固定 subscription，其余可覆写；merchant_id 为扩展字段。 */
 function makePlan(
   partial: Partial<ScheduledTransaction> & { id: string },
+  merchant_id: string | null = null,
 ): ScheduledTransactionWithExt {
   const core: ScheduledTransaction = {
     kind: 'subscription',
@@ -91,7 +107,7 @@ function makePlan(
   }
   return {
     core,
-    counterparty: null,
+    merchant_id,
     total_amount_cents: null,
     total_occurrences: null,
     to_account_id: null,
@@ -124,7 +140,7 @@ function makeDetail(
     core: plan.core,
     extension: {
       scheduled_transaction_id: plan.core.id,
-      counterparty: plan.counterparty,
+      merchant_id: plan.merchant_id,
     },
     pending_occurrences,
     completed_occurrences: 0,
@@ -136,6 +152,8 @@ let mockPlans: ScheduledTransactionWithExt[] = []
 const mockDetails = new Map<string, ScheduledTransactionDetail>()
 /** 订阅编辑失败开关（issue #162 拒绝路径测试用） */
 let failSubscriptionUpdate = false
+/** 商户字典 fixture（issue #190）：新建弹窗补全与列表商户列共用 */
+let mockMerchantsState: Merchant[] = mockMerchants
 
 /** 订阅花费总览 fixture（issue #160）：面板挂载即拉取，默认空数据 */
 const emptySpendOverview: SubscriptionSpendOverview = {
@@ -154,7 +172,7 @@ function baseInvoke() {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-    if (cmd === 'list_merchants') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve(mockMerchantsState)
     if (cmd === 'subscription_spend_overview') return Promise.resolve(mockSpendOverview)
     if (cmd === 'list_scheduled_transactions') return Promise.resolve(mockPlans)
     if (cmd === 'get_scheduled_transaction_detail') {
@@ -162,11 +180,19 @@ function baseInvoke() {
       return detail ? Promise.resolve(detail) : Promise.reject(new Error('无此计划详情'))
     }
     if (cmd === 'create_scheduled_transaction') {
-      const input = args?.input as { kind: string; note: string | null }
+      const input = args?.input as { kind: string; note: string | null; merchant_id: string | null }
       const id = `new-${input.kind}-${input.note ?? ''}`
-      const plan = makePlan({ id, note: input.note ?? null })
+      const plan = makePlan(
+        { id, note: input.note ?? null },
+        input.merchant_id,
+      )
       mockPlans = [...mockPlans, plan]
       mockDetails.set(id, makeDetail(plan, []))
+      return Promise.resolve(id)
+    }
+    if (cmd === 'create_merchant') {
+      const input = args?.input as { name: string }
+      const id = `mer-new-${input.name}`
       return Promise.resolve(id)
     }
     if (cmd === 'update_scheduled_transaction_status') {
@@ -188,6 +214,7 @@ function baseInvoke() {
         id: string
         account_id: string
         category_id: string | null
+        merchant_id: string | null
         note: string | null
       }
       mockPlans = mockPlans.map((p) =>
@@ -200,6 +227,7 @@ function baseInvoke() {
                 category_id: input.category_id,
                 note: input.note,
               },
+              merchant_id: input.merchant_id,
             }
           : p,
       )
@@ -213,6 +241,7 @@ function baseInvoke() {
             category_id: input.category_id,
             note: input.note,
           },
+          extension: { ...detail.extension, merchant_id: input.merchant_id },
         })
       }
       return Promise.resolve()
@@ -239,6 +268,7 @@ beforeEach(async () => {
   mockDetails.clear()
   mockSpendOverview = emptySpendOverview
   failSubscriptionUpdate = false
+  mockMerchantsState = mockMerchants
   baseInvoke()
   const store = useReferenceStore()
   await store.ensureFresh()
@@ -406,6 +436,7 @@ describe('SubscriptionsView 新建订阅模态对话框（issue #158）', () => 
         kind: 'subscription',
         account_id: 'acc-1',
         category_id: 'cat-1',
+        merchant_id: null,
         amount_cents: 2500,
         currency_code: 'CNY',
         recurrence_type: 'monthly',
@@ -446,6 +477,72 @@ describe('SubscriptionsView 新建订阅模态对话框（issue #158）', () => 
     // 弹窗关闭且清单刷新（新订阅出现在列表）
     expect(wrapper.findComponent(NModal).props('show')).toBe(false)
     expect(wrapper.text()).toContain('云存储')
+  })
+
+  it('商户下拉补全在用商户：选中后创建携带 merchant_id（issue #190）', async () => {
+    const wrapper = await mountView()
+    await openCreateModal(wrapper)
+    // 商户下拉 = 新建弹窗内 data-testid 为 sub-merchant 的 PinyinSelect（内部 NSelect 承载 options）
+    const merchantSelect = wrapper
+      .findComponent('[data-testid="sub-merchant"]')
+      .findComponent(NSelect)
+    expect(merchantSelect.exists()).toBe(true)
+    const options = merchantSelect.props('options') as { label: string; value: string }[]
+    expect(options.map((o) => o.label)).toEqual(['视频平台'])
+    merchantSelect.vm.$emit('update:value', 'mer-1')
+    const amountInput = findInput(wrapper, 'sub-amount')
+    await amountInput.setValue('25')
+    await amountInput.trigger('input')
+    wrapper.findComponent(NSelect).vm.$emit('update:value', 'acc-1')
+    await flushPromises()
+    await wrapper.findComponent('[data-testid="sub-create"]').trigger('click')
+    await flushPromises()
+    const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_scheduled_transaction')
+    expect(call![1]).toMatchObject({ input: { merchant_id: 'mer-1' } })
+    // 列表商户列显示商户名
+    expect(wrapper.text()).toContain('视频平台')
+  })
+
+  it('输入不存在的商户名保存即建：create_merchant 后按返回 id 创建计划（issue #190）', async () => {
+    const wrapper = await mountView()
+    await openCreateModal(wrapper)
+    // 输入文本「新商户」：未命中在用商户 → 保存时即建
+    wrapper.findComponent('[data-testid="sub-merchant"]').vm.$emit('update:value', '新商户')
+    const amountInput = findInput(wrapper, 'sub-amount')
+    await amountInput.setValue('25')
+    await amountInput.trigger('input')
+    wrapper.findComponent(NSelect).vm.$emit('update:value', 'acc-1')
+    await flushPromises()
+    await wrapper.findComponent('[data-testid="sub-create"]').trigger('click')
+    await flushPromises()
+    // 先即建商户，再携带返回的 id 创建计划
+    const merchantCall = mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_merchant')
+    expect(merchantCall).toBeDefined()
+    expect(merchantCall![1]).toEqual({ input: { name: '新商户' } })
+    const createCall = mockInvoke.mock.calls.find(
+      ([cmd]) => cmd === 'create_scheduled_transaction',
+    )
+    expect(createCall![1]).toMatchObject({ input: { merchant_id: 'mer-new-新商户' } })
+  })
+})
+
+describe('SubscriptionsView 商户列（issue #190）', () => {
+  it('列表显示计划商户（merchantMap 派生，改名即时生效）', async () => {
+    const plan = makePlan({ id: 'a1', note: '视频会员' }, 'mer-1')
+    mockPlans = [plan]
+    mockDetails.set('a1', makeDetail(plan, []))
+    const wrapper = await mountView()
+    expect(wrapper.text()).toContain('视频平台')
+  })
+
+  it('无商户计划显示 — 占位', async () => {
+    const plan = makePlan({ id: 'a1', note: '视频会员' })
+    mockPlans = [plan]
+    mockDetails.set('a1', makeDetail(plan, []))
+    const wrapper = await mountView()
+    expect(wrapper.text()).toContain('视频会员')
+    // 商户列占位：不出现商户名
+    expect(wrapper.text()).not.toContain('视频平台')
   })
 })
 
@@ -593,7 +690,7 @@ describe('SubscriptionsView 订阅编辑——仅非金额字段（issue #162）
   })
 
   it('提交编辑走订阅编辑命令，参数不含金额字段，成功后关闭弹窗并刷新清单', async () => {
-    const plan = makePlan({ id: 'a1', note: '视频会员' })
+    const plan = makePlan({ id: 'a1', note: '视频会员' }, 'mer-1')
     mockPlans = [plan]
     mockDetails.set('a1', makeDetail(plan, []))
     const wrapper = await mountView()
@@ -610,11 +707,56 @@ describe('SubscriptionsView 订阅编辑——仅非金额字段（issue #162）
     const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'update_scheduled_subscription')
     expect(call).toBeDefined()
     expect(call![1]).toEqual({
-      input: { id: 'a1', account_id: 'acc-1', category_id: 'cat-1', note: '音乐会员' },
+      input: {
+        id: 'a1',
+        account_id: 'acc-1',
+        category_id: 'cat-1',
+        merchant_id: 'mer-1',
+        note: '音乐会员',
+      },
     })
     // 弹窗关闭且清单刷新（新备注出现在列表）
     expect(findModal(wrapper, '编辑订阅').props('show')).toBe(false)
     expect(wrapper.text()).toContain('音乐会员')
+  })
+
+  it('编辑弹窗改商户：预填当前商户，保存携带新 merchant_id（issue #190）', async () => {
+    // 第二个在用商户：编辑目标从 mer-1 改为 mer-2
+    mockMerchantsState = [
+      ...mockMerchants,
+      {
+        id: 'mer-2',
+        name: '商户B',
+        icon: null,
+        color: null,
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+        version: 1,
+        device_id: 'test',
+        is_deleted: false,
+      },
+    ]
+    // beforeEach 已加载 store（新鲜度窗口内 ensureFresh 不会重拉），强制刷新拿新字典
+    await useReferenceStore().refresh()
+    const plan = makePlan({ id: 'a1', note: '视频会员' }, 'mer-1')
+    mockPlans = [plan]
+    mockDetails.set('a1', makeDetail(plan, []))
+    const wrapper = await mountView()
+    await openEditModal(wrapper)
+    // 商户下拉 = 编辑弹窗内 data-testid 为 sub-edit-merchant 的 PinyinSelect（内部 NSelect）
+    const merchantSelect = wrapper
+      .findComponent('[data-testid="sub-edit-merchant"]')
+      .findComponent(NSelect)
+    expect(merchantSelect.exists()).toBe(true)
+    expect(merchantSelect.props('value')).toBe('mer-1')
+    merchantSelect.vm.$emit('update:value', 'mer-2')
+    await flushPromises()
+    await wrapper.findComponent('[data-testid="sub-edit-save"]').trigger('click')
+    await flushPromises()
+    const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'update_scheduled_subscription')
+    expect(call![1]).toMatchObject({ input: { merchant_id: 'mer-2' } })
+    // 清单商户列刷新为新商户名
+    expect(wrapper.text()).toContain('商户B')
   })
 
   it('提交失败时弹窗保持打开', async () => {
