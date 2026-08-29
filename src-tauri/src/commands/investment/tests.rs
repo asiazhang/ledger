@@ -1393,7 +1393,8 @@ fn holdings_as_of_is_currency_agnostic_for_cross_currency_instrument() {
     insert_account(&conn, "acc-usd", "美股户", "investment", "USD");
     insert_instrument(&conn, "inst-usd", "AAPL", "苹果", "USD");
     insert_rate_1_1(&conn, "USD"); // 买卖落库经 Amount 接缝需要当期汇率
-    create_transaction_internal(&conn, make_buy_input("acc-usd", "inst-usd", 5.0, 10_000, 0)).unwrap();
+    create_transaction_internal(&conn, make_buy_input("acc-usd", "inst-usd", 5.0, 10_000, 0))
+        .unwrap();
     create_transaction_internal(
         &conn,
         make_sell_input("acc-usd", "inst-usd", 2.0, 11_000, 0),
@@ -1447,8 +1448,8 @@ fn holdings_as_of_without_instrument_sums_whole_portfolio() {
 /// 未来 split 落地改变数量时最先报警的哨兵。
 ///
 /// 本模块口径已排除软删除账户（issue #217 定案，与 v_holdings 一致），不变式对
-/// 软删夹具同样成立；含软删账户的组合走势断言（trend.rs 旧路径暂仍含其流水）
-/// 归 issue #217 contract 阶段接线时补，夹具此处从简不涉软删。
+/// 软删夹具同样成立；含软删账户的组合走势断言（#219 接线后走势经本接缝同口径）
+/// 归 issue #247 单测、#248 e2e，夹具此处从简不涉软删。
 #[test]
 fn holdings_as_of_today_matches_holding_quantity() {
     let conn = setup_db();
