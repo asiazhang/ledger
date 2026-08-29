@@ -1,9 +1,10 @@
-//! 持仓价格增量同步编排（issue #103，issue #137 升级）：从当前持仓收集股票类标的，
-//! 一次执行完成三件事（ADR-0019）：① 批量报价刷现价 upsert `market_prices`（原行为不变）；
-//! ② 每标的一次日 K 请求回填近两年日线，本地降采样为周线落 `price_history`；
-//! ③ 持仓非本位币币种对的汇率 K 线同期落 `fx_rate_history`。
-//! 不增删、不改标的字典（名称/市场/数量）。职责切分：全量同步修字典 /
-//! 增量同步刷价格 + 沉淀历史（issue #101、#137）。
+//! 持仓价格增量同步编排（issue #103，issue #137 升级；标的收集改走单点谓词
+//! issue #239）：单次收集全量持仓标的（口径 = InvestedInstrument，见
+//! `investment::predicates`），一次执行完成三件事（ADR-0019）：① 批量报价刷现价
+//! upsert `market_prices`；② 每标的一次日 K 请求回填近两年日线，本地降采样为周线
+//! 落 `price_history`；③ 持仓非本位币币种对的汇率 K 线同期落 `fx_rate_history`。
+//! 股票/非股票分区在 Rust 侧完成，不增删、不改标的字典（名称/市场/数量）。
+//! 职责切分：全量同步修字典 / 增量同步刷价格 + 沉淀历史（issue #101、#137）。
 //!
 //! 编排与网络解耦：核心流程 [`do_incremental_sync_with`] 接受注入的批量报价 / 日 K /
 //! 汇率 K 三个闭包（同一签名 `&str → Result<Vec<_>>`），测试以 mock 数据驱动（不依赖
@@ -16,6 +17,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use chrono::{Datelike, NaiveDate};
 use rusqlite::Connection;
 
+use crate::commands::investment::predicates::INVESTED_EXISTS;
 use crate::error::Result;
 use crate::models::SyncHoldingPricesResult;
 use crate::transaction::amount::default_currency_code;
@@ -34,54 +36,54 @@ fn quote_code(symbol: &str) -> &str {
     symbol.split('.').next().unwrap_or(symbol)
 }
 
-/// 待同步的持仓股票元信息（一个标的一条，跨账户去重）。
-struct HeldStock {
+/// 持仓标的信息（一个标的一条，全量标的集合，跨账户去重由单表驱动天然成立）。
+struct HeldInstrument {
     instrument_id: String,
     symbol: String,
     market: String,
     currency: String,
+    instrument_type: String,
 }
 
-/// 从 v_holdings 收集当前持仓的股票类标的（口径与「持仓标的」一致：有当前持仓批次、
-/// 排除软删除账户），按标的去重。非股票持仓不在此列，由 [`count_non_stock_holdings`] 另行计数。
-fn collect_held_stocks(conn: &Connection) -> Result<Vec<HeldStock>> {
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT i.id, i.symbol, i.market, i.currency_code \
-         FROM v_holdings h \
-         JOIN instruments i ON i.id = h.instrument_id \
-         WHERE i.instrument_type = 'stock' \
-         ORDER BY i.symbol",
-    )?;
+impl HeldInstrument {
+    /// 是否股票类：数据源仅对股票类标的有报价/日 K，其余计入跳过统计。
+    fn is_stock(&self) -> bool {
+        self.instrument_type == "stock"
+    }
+}
+
+/// 单次收集全量持仓标的（一条 SQL、一个谓词引用点）：口径走投资域单点谓词
+/// [`INVESTED_EXISTS`]（InvestedInstrument，ADR-0015 决策 1；别名契约
+/// i = instruments），与 invested 派生列、「只看持仓」过滤、持仓概览同源，
+/// 不再读 v_holdings 视图（视图与谓词的一致性由投资域绑定测试钉住）。
+/// 按 symbol 升序；股票/非股票分区在 Rust 侧完成（见 [`do_incremental_sync_with`]）。
+fn collect_held_instruments(conn: &Connection) -> Result<Vec<HeldInstrument>> {
+    let sql = format!(
+        "SELECT i.id, i.symbol, i.market, i.currency_code, i.instrument_type \
+         FROM instruments i \
+         WHERE {INVESTED_EXISTS} \
+         ORDER BY i.symbol"
+    );
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], |r| {
-        Ok(HeldStock {
+        Ok(HeldInstrument {
             instrument_id: r.get(0)?,
             symbol: r.get(1)?,
             market: r.get(2)?,
             currency: r.get(3)?,
+            instrument_type: r.get(4)?,
         })
     })?;
-    let mut stocks = Vec::new();
+    let mut instruments = Vec::new();
     for row in rows {
-        stocks.push(row?);
+        instruments.push(row?);
     }
-    Ok(stocks)
+    Ok(instruments)
 }
 
-/// 非股票类持仓数（基金/债券/ETF/其他），计入跳过统计（数据源不含此类行情）。
-fn count_non_stock_holdings(conn: &Connection) -> Result<usize> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(DISTINCT i.id) \
-         FROM v_holdings h \
-         JOIN instruments i ON i.id = h.instrument_id \
-         WHERE i.instrument_type != 'stock'",
-        [],
-        |r| r.get(0),
-    )?;
-    Ok(count as usize)
-}
-
-/// 增量同步核心流程：收集持仓股票 → 构造 secid → 批量报价 upsert 现价 → 逐标的
-/// 日 K 回填周线落 `price_history` → 汇率 K 线同期落 `fx_rate_history` → 结果统计。
+/// 增量同步核心流程：单次收集全量持仓标的并按类型分区 → 构造 secid → 批量报价
+/// upsert 现价 → 逐标的日 K 回填周线落 `price_history` → 汇率 K 线同期落
+/// `fx_rate_history` → 结果统计。
 /// 三个抓取函数均由调用方注入（生产接 HTTP 层，测试注入 mock），本函数不触碰网络。
 /// 返回 `(同步数, 跳过数)`，跳过数 = 非股票持仓 + 无法构造 secid（市场未知）+ 无效价/查询无果
 ///（与升级前口径一致，仅对现价而言；历史回填缺样本不中断、不计跳过）。
@@ -96,11 +98,15 @@ where
     K: FnMut(&str) -> Result<Vec<KlineBar>>,
     X: FnMut(&str) -> Result<Vec<KlineBar>>,
 {
-    let stocks = collect_held_stocks(conn)?;
-    let non_stock = count_non_stock_holdings(conn)?;
+    let held = collect_held_instruments(conn)?;
+    // 单次收集全量持仓标的（一条 SQL、一个谓词引用点），Rust 内按 instrument_type
+    // 分区：股票侧构造 secid 查报价与日 K；非股票（基金/债券/ETF/其他，数据源不含
+    // 此类行情）计入跳过统计——两个统计天然同源。
+    let stocks: Vec<&HeldInstrument> = held.iter().filter(|i| i.is_stock()).collect();
+    let non_stock = held.len() - stocks.len();
 
     // 完全无持仓：明确提示，不报错。
-    if stocks.is_empty() && non_stock == 0 {
+    if held.is_empty() {
         return Ok(SyncHoldingPricesResult {
             synced: 0,
             skipped: 0,
@@ -111,8 +117,8 @@ where
     // 构造可查询 secid 与报价代码 → 持仓股票 映射。键为报价代码（已归一化，与响应 f12 对齐）；
     // 股票内 symbol 唯一（instruments 的 UNIQUE(symbol, instrument_type)），同代码不冲突。
     // 市场未知（unknown）无法构造 secid，计入跳过。
-    let mut meta: HashMap<String, &HeldStock> = HashMap::new();
-    let mut queryable: Vec<(String, &HeldStock)> = Vec::new();
+    let mut meta: HashMap<String, &HeldInstrument> = HashMap::new();
+    let mut queryable: Vec<(String, &HeldInstrument)> = Vec::new();
     let mut skipped_unqueryable = 0usize;
     for stock in &stocks {
         if let Some(prefix) = secid_prefix(&stock.market) {
