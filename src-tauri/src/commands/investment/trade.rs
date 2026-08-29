@@ -248,10 +248,11 @@ fn write_sell_side_effects(conn: &Connection, id: &str, plan: &SellPlan) -> Resu
     Ok(())
 }
 
-/// 清理一笔买入交易的持仓关联（软删除与按 id 修改共用的守卫 + 清理）。
+/// 清理一笔买入交易的持仓关联（行为层删除/修改编排入口共用的守卫 + 清理）。
 ///
 /// 若该买入已有部分卖出（`remaining_quantity < initial_quantity`）则拒绝清理——避免破坏
-/// 对应卖出的已实现盈亏。`partially_sold_msg` 用于区分「删除」/「修改」场景的错误措辞。
+/// 对应卖出的已实现盈亏。`partially_sold_msg` 为调用入口单点定义的措辞
+/// （见 `commands::transactions::behavior` 的入口文案常量，ADR-0030 决策 #4）。
 fn cleanup_buy_side_effects(conn: &Connection, id: &str, partially_sold_msg: &str) -> Result<()> {
     let partially_sold: i64 = conn.query_row(
         "SELECT COUNT(*) FROM security_lots \
@@ -371,12 +372,13 @@ pub(crate) fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
     }
 }
 
-/// 回退一笔已存在 buy/sell 交易的副作用，供删除/修改前清理。
+/// 回退一笔已存在 buy/sell 交易的副作用，供行为层删除/修改编排入口在清理阶段调用。
 ///
 /// - buy：守卫（已有部分卖出则拒绝）+ 清理持仓/买入关联；
 /// - sell：回补持仓扣减并清空卖出关联。
 ///
-/// `partial_sold_msg` 为 buy 守卫的错误措辞（删除/修改场景文案不同）；
+/// `partial_sold_msg` 为 buy 守卫的错误措辞，由行为层各编排入口传入其单点定义的
+/// 文案（修改/删除各持自己的措辞，ADR-0030 决策 #4）——本函数不自带措辞；
 /// 非 buy/sell 的 kind 无持仓副作用，防御性返回成功。
 pub(crate) fn revert(
     conn: &Connection,

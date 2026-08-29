@@ -1,13 +1,8 @@
 use rusqlite::Connection;
-use rusqlite::OptionalExtension;
 
 use crate::db::query::{query_all, query_one};
-use crate::db::{device_id, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{Transaction, TransactionListFilter, TransactionListResult};
-use crate::transaction::amount::TransactionKind;
-
-use super::behavior;
 
 pub fn list_transactions_internal(
     conn: &Connection,
@@ -85,33 +80,4 @@ pub fn get_transaction_internal(conn: &Connection, id: &str) -> Result<Transacti
         rusqlite::params![id],
     )?
     .ok_or_else(|| AppError::NotFound(format!("交易不存在: {id}")))
-}
-
-/// 删除交易（软删除 `is_deleted=1`）。
-///
-/// buy 交易同步清理关联持仓（`security_lots` / `security_transactions`）：
-/// 若该买入已有部分卖出（`remaining_quantity < initial_quantity`）则拒绝删除。
-/// 不存在的 id 返回 `AppError::NotFound`（HTTP 侧映射 404）。IPC 与 HTTP 端点共用本函数。
-pub fn delete_transaction_internal(conn: &Connection, id: &str) -> Result<()> {
-    let kind: TransactionKind = conn
-        .query_row(
-            "SELECT kind FROM transactions WHERE id=?1 AND is_deleted=0",
-            rusqlite::params![id],
-            |r| r.get(0),
-        )
-        .optional()?
-        .ok_or_else(|| AppError::NotFound(format!("交易不存在: {id}")))?;
-
-    if kind == TransactionKind::Buy {
-        // 守卫（部分卖出拒绝）与持仓关联清理经行为层 revert（与按 id 修改共用，见 #50 / issue #72）。
-        // sell 删除不清理持仓关联（既有行为保持不变，本重构不改变）。
-        behavior::revert(conn, id, kind, "该买入交易已有部分卖出，无法删除")?;
-    }
-
-    conn.execute(
-        "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-        rusqlite::params![id, now_iso(), device_id()],
-    )?;
-    // 搜索无索引（issue #196 全量扫描实现）：软删除即刻生效，删除的交易不再可搜。
-    Ok(())
 }
