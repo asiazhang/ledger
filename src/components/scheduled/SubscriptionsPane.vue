@@ -35,6 +35,7 @@ import { useAppStore } from '@/stores/app'
 import { useFormShared } from '@/composables/useFormShared'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import SubscriptionSpendPanel from '@/components/scheduled/SubscriptionSpendPanel.vue'
+import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 
 const reference = useReferenceStore()
@@ -294,6 +295,22 @@ async function changeStatus(id: string, newStatus: UpdateStatusInput['new_status
 }
 
 // ---------------------------------------------------------------------------
+// 期次详情弹窗（issue #205）：三页签通用组件，订阅页签同享；
+// 弹窗内重试成功会发 changed，清单与花费面板随之刷新
+// ---------------------------------------------------------------------------
+
+const planDetailRef = ref<InstanceType<typeof PlanDetailModal> | null>(null)
+
+function openDetail(row: SubscriptionRow) {
+  void planDetailRef.value?.open(row.plan.core.id)
+}
+
+async function onDetailChanged() {
+  await load()
+  refreshSpend()
+}
+
+// ---------------------------------------------------------------------------
 // 展示助手
 // ---------------------------------------------------------------------------
 
@@ -374,6 +391,18 @@ const columns: DataTableColumns<SubscriptionRow> = [
     render: (row) => {
       const status = row.plan.core.status
       const buttons: VNode[] = []
+      // 期次详情（issue #205）：所有状态都可查看期次执行情况
+      buttons.push(
+        h(
+          NButton,
+          {
+            size: 'tiny',
+            'data-testid': `op-detail-${row.plan.core.id}`,
+            onClick: () => openDetail(row),
+          },
+          () => '期次',
+        ),
+      )
       if (status === 'active' || status === 'paused') {
         // 编辑仅非金额字段（issue #162，ADR-0023 决策三）；已取消不提供编辑
         buttons.push(
@@ -640,5 +669,8 @@ onMounted(() => {
     </NModal>
 
     <SubscriptionSpendPanel ref="spendPanelRef" />
+
+    <!-- 期次详情弹窗（issue #205）：三页签通用，订阅页签同享 -->
+    <PlanDetailModal ref="planDetailRef" @changed="onDetailChanged" />
   </NSpace>
 </template>

@@ -50,6 +50,10 @@ export interface ScheduledTransactionDetail {
   extension: InstallmentPlan | SubscriptionPlan | ScheduledTransferPlan
   pending_occurrences: ScheduledTransactionOccurrence[]
   completed_occurrences: number
+  /** 失败期次（issue #205）：期次详情弹窗「重试」的数据源 */
+  failed_occurrences: ScheduledTransactionOccurrence[]
+  /** 已完成期次列表（issue #205）：期次详情弹窗展示每期执行状态；计数字段为既有契约保留 */
+  completed_occurrence_list: ScheduledTransactionOccurrence[]
 }
 
 export interface InstallmentPlan {
