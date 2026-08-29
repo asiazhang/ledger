@@ -62,8 +62,11 @@ describe('TransactionsView 涉及账户 URL 过滤（issue #97）', () => {
   })
 })
 
-describe('TransactionsView 手动过滤（issue #98）', () => {
-  // 富数据集：不同账户/日期/类型，供单条件、组合、空态断言（每 describe 前置重置）。
+describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟级）', () => {
+  // 过滤意图语义（单维/组合/复位/同值不动作 → 状态终态与请求参数）已迁到模块接口测试
+  // useTransactionFilter.test.ts（ADR-0030 决策 7）；此处仅保留过滤行渲染冒烟与
+  // 「控件 → 意图 → 列表」交互路由，以及 URL 只读、分页保持等视图侧行为。
+  // 富数据集：不同账户/日期/类型，供交互路由与空态断言（每 describe 前置重置）。
   const richDb: Transaction[] = [
     makeTxn(1, 'acc-1', { kind: 'expense', date: '2026-01-05' }),
     makeTxn(2, 'acc-2', { kind: 'income', date: '2026-02-10' }),
@@ -86,16 +89,10 @@ describe('TransactionsView 手动过滤（issue #98）', () => {
     wrapper.findAllComponents(NSelect)[2]
   const datePickers = (wrapper: ReturnType<typeof mount>) =>
     wrapper.findAllComponents(NDatePicker)
-  const clearButton = (wrapper: ReturnType<typeof mount>) =>
-    wrapper.findAllComponents(NButton).find((b) => b.text().includes('清除筛选'))!
 
   /** 直接向过滤行控件 emit 变更事件（与 SearchView.test 的 setDate 模式一致）。 */
   async function setAccount(wrapper: ReturnType<typeof mount>, id: string | null) {
     accountSelect(wrapper).vm.$emit('update:value', id)
-    await flushPromises()
-  }
-  async function setMerchant(wrapper: ReturnType<typeof mount>, id: string | null) {
-    merchantSelect(wrapper).vm.$emit('update:value', id)
     await flushPromises()
   }
   async function setKind(wrapper: ReturnType<typeof mount>, k: string | null) {
@@ -104,10 +101,6 @@ describe('TransactionsView 手动过滤（issue #98）', () => {
   }
   async function setDateFrom(wrapper: ReturnType<typeof mount>, v: string | null) {
     datePickers(wrapper)[0].vm.$emit('update:formattedValue', v)
-    await flushPromises()
-  }
-  async function setDateTo(wrapper: ReturnType<typeof mount>, v: string | null) {
-    datePickers(wrapper)[1].vm.$emit('update:formattedValue', v)
     await flushPromises()
   }
 
@@ -139,10 +132,13 @@ describe('TransactionsView 手动过滤（issue #98）', () => {
       'sell',
     ])
     // 清除筛选按钮：无过滤时禁用
-    expect(clearButton(wrapper).attributes('disabled')).toBeDefined()
+    const clearButton = wrapper
+      .findAllComponents(NButton)
+      .find((b) => b.text().includes('清除筛选'))!
+    expect(clearButton.attributes('disabled')).toBeDefined()
   })
 
-  it('选择账户即重新查询：involving_account_id 正确传后端（含转账转入侧）', async () => {
+  it('选择账户即重新查询：意图经模块出口生效，involving_account_id 正确传后端（含转账转入侧）', async () => {
     const wrapper = await mountView()
     const before = listCalls().length
     await setAccount(wrapper, 'acc-2')
@@ -156,49 +152,16 @@ describe('TransactionsView 手动过滤（issue #98）', () => {
     expect(wrapper.text()).toContain('共 3 条')
   })
 
-  it('选择日期范围即重新查询：from/to 正确传后端（含边界）', async () => {
-    const wrapper = await mountView()
-    await setDateFrom(wrapper, '2026-02-01')
-    expect(lastListFilter()).toMatchObject({ from: '2026-02-01' })
-    expect(wrapper.text()).toContain('共 3 条') // txn-2 (02-10) / txn-3 (03-15) / txn-5 (02-25)
-    await setDateTo(wrapper, '2026-02-20')
-    expect(lastListFilter()).toMatchObject({ from: '2026-02-01', to: '2026-02-20' })
-    expect(wrapper.text()).toContain('共 1 条') // 边界含：仅 txn-2
-  })
-
-  it('选择类型即重新查询：kind 正确传后端', async () => {
-    const wrapper = await mountView()
-    await setKind(wrapper, 'income')
-    expect(lastListFilter()).toMatchObject({ kind: 'income' })
-    expect(wrapper.text()).toContain('共 1 条')
-  })
-
-  it('多条件组合：账户 + 日期 + 类型同时传入后端', async () => {
-    const wrapper = await mountView()
-    await setAccount(wrapper, 'acc-1')
-    await setDateFrom(wrapper, '2026-01-01')
-    await setDateTo(wrapper, '2026-03-31')
-    await setKind(wrapper, 'transfer')
-    expect(lastListFilter()).toMatchObject({
-      involving_account_id: 'acc-1',
-      from: '2026-01-01',
-      to: '2026-03-31',
-      kind: 'transfer',
-    })
-    expect(wrapper.text()).toContain('共 1 条') // 唯一同时命中：txn-3
-  })
-
-  it('清除筛选复位全部条件并回到全量列表（第 1 页）', async () => {
+  it('清除筛选按钮走 resetFilters：复位全部条件并回到全量列表（第 1 页）', async () => {
     const wrapper = await mountView()
     await setAccount(wrapper, 'acc-1')
     await setKind(wrapper, 'transfer')
     await setDateFrom(wrapper, '2026-01-01')
     expect(wrapper.text()).toContain('共 1 条')
-    // 先翻页，验证清除后回到第 1 页
-    tablePagination(wrapper).onChange(2)
-    await flushPromises()
-    expect(lastListFilter()).toMatchObject({ page: 2, involving_account_id: 'acc-1' })
-    await clearButton(wrapper).trigger('click')
+    const clearButton = wrapper
+      .findAllComponents(NButton)
+      .find((b) => b.text().includes('清除筛选'))!
+    await clearButton.trigger('click')
     await flushPromises()
     const f = lastListFilter()
     expect(f).toMatchObject({ page: 1, page_size: 20 })
@@ -281,15 +244,18 @@ describe('TransactionsView 手动过滤（issue #98）', () => {
     expect(wrapper.text()).toContain('没有符合条件的交易')
     expect(bodyRows(wrapper).length).toBe(0)
     // 空态中的「清除筛选」可一键复位到全量
-    await clearButton(wrapper).trigger('click')
+    const clearButton = wrapper
+      .findAllComponents(NButton)
+      .find((b) => b.text().includes('清除筛选'))!
+    await clearButton.trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('共 5 条')
   })
 })
 
-
-describe('TransactionsView 商户筛选（issue #191）', () => {
-  // 富数据集：商户命中/未命中、软删商户历史交易并存，供筛选/组合/URL 直达断言
+describe('TransactionsView 商户筛选（issue #191，冒烟级）', () => {
+  // 组合/复位等意图语义迁到模块接口测试；此处保留下拉选项渲染冒烟与一条交互路由
+  // （软删商户可被选中过滤的历史交易口径）。
   const merchantDbAll: Merchant[] = [
     {
       id: 'mch-1', name: '京东',
@@ -350,36 +316,6 @@ describe('TransactionsView 商户筛选（issue #191）', () => {
     // 清除下拉回全量
     await setMerchant(wrapper, null)
     expect(lastListFilter()).not.toHaveProperty('merchant_id')
-    expect(wrapper.text()).toContain('共 4 条')
-  })
-
-  it('商户与账户/类型组合筛选同时传后端', async () => {
-    const wrapper = await mountView()
-    wrapper.findAllComponents(NSelect)[0].vm.$emit('update:value', 'acc-1')
-    await flushPromises()
-    await setMerchant(wrapper, 'mch-1')
-    wrapper.findAllComponents(NSelect)[2].vm.$emit('update:value', 'expense')
-    await flushPromises()
-    expect(lastListFilter()).toMatchObject({
-      involving_account_id: 'acc-1',
-      merchant_id: 'mch-1',
-      kind: 'expense',
-    })
-    expect(wrapper.text()).toContain('共 1 条') // 仅 txn-1 同时命中
-  })
-
-  it('清除筛选复位商户条件', async () => {
-    const wrapper = await mountView()
-    await setMerchant(wrapper, 'mch-1')
-    expect(wrapper.text()).toContain('共 2 条')
-    const clearButton = wrapper
-      .findAllComponents(NButton)
-      .find((b) => b.text().includes('清除筛选'))!
-    await clearButton.trigger('click')
-    await flushPromises()
-    const f = lastListFilter()
-    expect(f).toMatchObject({ page: 1 })
-    expect(f).not.toHaveProperty('merchant_id')
     expect(wrapper.text()).toContain('共 4 条')
   })
 
