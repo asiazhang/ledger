@@ -45,5 +45,8 @@ coverage
 
 # Tauri (Rust target & generated schemas handled in src-tauri/.gitignore)
 
+# 根目录 Rust 构建产物（cargo 在仓库根运行时产生）
+/target/
+
 # Additional OS files
 Thumbs.db
