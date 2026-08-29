@@ -11,6 +11,7 @@ import {
   NSpace,
 } from 'naive-ui'
 import { useRefundForm } from '@/composables/useRefundForm'
+import PinyinSelect from '@/components/PinyinSelect.vue'
 import { formatAmount } from '@/types'
 import { useReferenceStore } from '@/stores/reference'
 import type { Transaction } from '@/types'
@@ -32,10 +33,9 @@ const reference = useReferenceStore()
   <NForm label-placement="left" :show-feedback="false" size="small">
     <NSpace vertical :size="12">
       <NFormItem v-if="!fixedTarget" label="退款关联">
-        <NSelect
+        <PinyinSelect
           v-model:value="ctx.refundTargetId.value"
           :options="ctx.refundTargetOptions.value"
-          filterable
           placeholder="选择原支出交易"
           style="width: 340px"
         />
@@ -67,7 +67,7 @@ const reference = useReferenceStore()
       </NFormItem>
 
       <NFormItem label="账户">
-        <NSelect
+        <PinyinSelect
           v-model:value="ctx.accountId.value"
           :options="ctx.accountOptions.value"
           disabled

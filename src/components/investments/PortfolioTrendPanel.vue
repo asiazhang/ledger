@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
-import { NEmpty, NRadio, NRadioGroup, NSelect, NSpace, NSpin, NText } from 'naive-ui'
+import { NEmpty, NRadio, NRadioGroup, NSpace, NSpin, NText } from 'naive-ui'
+import PinyinSelect from '@/components/PinyinSelect.vue'
 import { Line } from 'vue-chartjs'
 import { Chart as ChartJS, Tooltip, Legend, CategoryScale, LinearScale } from 'chart.js'
 import type { ChartOptions, TooltipItem } from 'chart.js'
@@ -122,12 +123,11 @@ ChartJS.register(Tooltip, Legend, CategoryScale, LinearScale)
         <NRadio value="portfolio">组合市值</NRadio>
         <NRadio value="instrument">单标的</NRadio>
       </NRadioGroup>
-      <NSelect
+      <PinyinSelect
         v-if="trend.mode.value === 'instrument'"
         v-model:value="selectedInstrumentId"
         :options="instrumentOptions"
         placeholder="选择标的..."
-        filterable
         clearable
         style="width: 260px"
         data-testid="trend-instrument-select"

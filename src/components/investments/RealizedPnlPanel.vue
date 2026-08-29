@@ -7,12 +7,12 @@ import {
   NGi,
   NGrid,
   NNumberAnimation,
-  NSelect,
   NSpace,
   NSpin,
   NStatistic,
 } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
+import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount, formatQuantity } from '@/types'
 import type { PnlDetail } from '@/types'
@@ -100,7 +100,7 @@ const instPnlColumns: DataTableColumn[] = [
       <HoldingsOverview />
 
       <NSpace align="center" :size="12">
-        <NSelect
+        <PinyinSelect
           v-model:value="selectedAccountId"
           :options="accountOptions"
           placeholder="全部账户"
@@ -108,12 +108,13 @@ const instPnlColumns: DataTableColumn[] = [
           style="width: 180px"
           @update:value="refresh"
         />
-        <NSelect
+        <!-- 远程搜索标的：拼音过滤由后端 list_instruments 统一语义（ADR-0027）
+             承担，remote 下本地 filter 不生效，仅收口 filterable 保持载体一致。 -->
+        <PinyinSelect
           v-model:value="selectedInstrumentId"
           :options="pnlInstrumentOptions"
-          placeholder="搜索标的"
+          placeholder="搜索标的（代码/名称/拼音）"
           remote
-          filterable
           clearable
           :loading="searchingInstruments"
           virtual-scroll

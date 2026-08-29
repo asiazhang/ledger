@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { NButton, NForm, NFormItem, NInput, NModal, NSelect, useMessage } from 'naive-ui'
+import { NButton, NForm, NFormItem, NInput, NModal, useMessage } from 'naive-ui'
+import PinyinSelect from '@/components/PinyinSelect.vue'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import type { Category, CategoryUpdateInput } from '@/types'
@@ -76,7 +77,7 @@ async function saveEdit() {
         <NInput v-model:value="editIcon" placeholder="图标名" style="width: 120px" />
       </NFormItem>
       <NFormItem label="父分类">
-        <NSelect
+        <PinyinSelect
           v-model:value="editParentId"
           :options="editParentOptions"
           placeholder="选择父分类"

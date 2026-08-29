@@ -7,7 +7,6 @@ import {
   NForm,
   NFormItem,
   NInputNumber,
-  NSelect,
   NDatePicker,
   NSpace,
   NPopconfirm,
@@ -18,6 +17,7 @@ import {
   type DataTableColumns,
 } from 'naive-ui'
 import { api } from '@/api'
+import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount } from '@/types'
 import type { BudgetInput, BudgetProgress } from '@/types'
@@ -138,7 +138,7 @@ onMounted(() => {
       <NCard title="新增预算" size="small">
         <NForm label-placement="left" :show-feedback="false" inline size="small">
           <NFormItem label="分类">
-            <NSelect
+            <PinyinSelect
               v-model:value="categoryId"
               :options="categoryOptions()"
               placeholder="支出分类"

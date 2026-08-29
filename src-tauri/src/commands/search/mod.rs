@@ -14,7 +14,7 @@
 mod query;
 #[cfg(test)]
 mod tests;
-mod text;
+pub(crate) mod text;
 
 use tauri::State;
 

@@ -210,6 +210,63 @@ fn list_instruments_pagination_and_search() {
     assert_eq!(result.items[0].symbol, "SYM3");
 }
 
+/// 标的搜索统一模糊语义（issue #199，ADR-0027）：子串 ∨ 拼音首字母子序列、
+/// 词条 AND、大小写不敏感，判定目标为下拉 label 等价文本「代码 · 名称」。
+#[test]
+fn list_instruments_search_pinyin_semantics() {
+    let conn = setup_db();
+    insert_instrument_with_market(&conn, "inst-zs", "600519", "招商银行", "CNY", "sh");
+    insert_instrument_with_market(&conn, "inst-wk", "000002", "万科物业", "CNY", "sz");
+    insert_instrument_with_market(&conn, "inst-abc", "ABCH", "ABC银行", "CNY", "sh");
+
+    // 拼音首字母整串命中（多音字修正：银行 → yh）
+    let result = search_all(&conn, "zsyh");
+    assert_eq!(result.total, 1);
+    assert_eq!(result.items[0].symbol, "600519");
+
+    // 首字母子序列跳字命中（不要求连续）：wy → 万科物业（wkwy）
+    let result = search_all(&conn, "wy");
+    assert_eq!(result.total, 1);
+    assert_eq!(result.items[0].symbol, "000002");
+
+    // 大小写不敏感（原文与拼音两路径均不区分大小写）
+    assert_eq!(search_all(&conn, "ZSYH").total, 1);
+    assert_eq!(search_all(&conn, "万科").total, 1);
+
+    // ASCII 首字母串的子序列命中：ac ⊂ abcyh（非子串路径）
+    let result = search_all(&conn, "ac");
+    assert_eq!(result.total, 1);
+    assert_eq!(result.items[0].symbol, "ABCH");
+
+    // 多词条 AND：词条分别命中代码与名称
+    let result = search_all(&conn, "600 zs");
+    assert_eq!(result.total, 1);
+    assert_eq!(result.items[0].symbol, "600519");
+
+    // 混合词条对混合内容（「ABC银行」）：原文子串路径命中
+    assert_eq!(search_all(&conn, "bc银").total, 1);
+
+    // 含汉字的词条对纯中文内容的 ASCII 首字母串必败、原文子串也不含 → 不命中
+    assert_eq!(search_all(&conn, "招zs").total, 0);
+
+    // 无命中
+    assert_eq!(search_all(&conn, "zsyh wy").total, 0);
+}
+
+fn search_all(conn: &Connection, search: &str) -> InstrumentListResult {
+    super::crud::list_instruments(
+        conn,
+        &InstrumentListFilter {
+            search: Some(search.into()),
+            market: None,
+            only_invested: None,
+            page: None,
+            page_size: None,
+        },
+    )
+    .unwrap()
+}
+
 /// invested 派生字段：持仓中为 true，未投资 / 已清仓为 false（issue #102）。
 #[test]
 fn list_instruments_invested_flag() {
