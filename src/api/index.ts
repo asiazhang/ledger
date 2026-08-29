@@ -38,6 +38,7 @@ import type {
   MarketPrice,
   MarketPriceInput,
   Merchant,
+  MerchantShare,
   MerchantInput,
   MerchantUpdateInput,
   MonthlySummary,
@@ -135,6 +136,7 @@ export const api = {
 
   // 报表
   monthlySummary: (year: number) => invoke<MonthlySummary[]>('monthly_summary', { year }),
+  merchantShares: (year: number) => invoke<MerchantShare[]>('merchant_shares', { year }),
   categoryShares: (kind: string, month?: string) =>
     invoke<CategoryShare[]>('category_shares', { kind, month: month ?? null }),
   budgetProgress: () => invoke<BudgetProgress[]>('budget_progress'),

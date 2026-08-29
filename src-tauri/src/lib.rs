@@ -168,6 +168,7 @@ pub fn run() {
             commands::delete_budget,
             commands::monthly_summary,
             commands::category_shares,
+            commands::merchant_shares,
             commands::dashboard_overview,
             commands::budget_progress,
             commands::create_scheduled_transaction,

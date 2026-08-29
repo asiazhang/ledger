@@ -1,0 +1,92 @@
+//! 商户消费排行 e2e 步骤定义（issue #192）。
+//!
+//! 排行口径由核心函数 `merchant_shares_rows`（命令层同款注入）查询：
+//! `expense_net`（毛支出 − 退款）按商户聚合、本位币口径。交易夹具走与真实
+//! 写路径一致的行为层（`insert_transaction`），复用商户/交易步骤模块的既有步骤。
+
+use cucumber::{then, when};
+
+use tauri_app_lib::commands::reports::merchant_shares_rows;
+use tauri_app_lib::commands::transactions::insert_transaction;
+use tauri_app_lib::models::TransactionInput;
+use tauri_app_lib::transaction::amount::TransactionKind;
+
+use crate::common::query_all_transactions;
+use crate::world::LedgerWorld;
+
+// ---------------------------------------------------------------------------
+// When
+// ---------------------------------------------------------------------------
+
+/// 创建带商户的跨币种交易（本位币折算由写路径 `convert_to_native` 完成）。
+#[when(
+    expr = "创建交易 类型 {string} 金额 {int} 币种 {string} 到账户 {string} 日期 {string} 商户 {string}"
+)]
+fn create_txn_with_merchant_currency(
+    world: &mut LedgerWorld,
+    kind: String,
+    amount: i64,
+    currency: String,
+    account_name: String,
+    date: String,
+    merchant_name: String,
+) {
+    let input = TransactionInput {
+        kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
+        amount_cents: amount,
+        currency_code: currency,
+        account_id: world.account_id(&account_name),
+        to_account_id: None,
+        category_id: None,
+        merchant_id: Some(world.merchant_id(&merchant_name)),
+        refund_of_transaction_id: None,
+        note: None,
+        date,
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        idempotency_key: None,
+    };
+    let result = insert_transaction(&world.conn, input);
+    assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
+    world.last_transaction_id = Some(result.unwrap());
+    world.transactions_list = query_all_transactions(&world.conn);
+}
+
+/// 查询指定年份的商户消费排行（命令层同款核心函数注入）。
+#[when(expr = "查询 {int} 年商户排行")]
+fn query_merchant_shares(world: &mut LedgerWorld, year: i64) {
+    world.last_merchant_shares = merchant_shares_rows(&world.conn, year).expect("查询商户排行失败");
+}
+
+// ---------------------------------------------------------------------------
+// Then
+// ---------------------------------------------------------------------------
+
+/// 排行行数断言。
+#[then(expr = "商户排行应为 {int} 行")]
+fn check_merchant_ranking_len(world: &mut LedgerWorld, n: usize) {
+    assert_eq!(
+        world.last_merchant_shares.len(),
+        n,
+        "排行行数不符：实际 {:?}",
+        world
+            .last_merchant_shares
+            .iter()
+            .map(|s| (s.merchant_name.as_str(), s.amount_cents))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// 排行第 {index} 名断言：商户名（现名，改名即时生效）+ 本位币净支出，
+/// 顺序即排行顺序（净额降序）。
+#[then(expr = "商户排行第 {int} 名应为 {string} 金额 {int}")]
+fn check_merchant_ranking_row(world: &mut LedgerWorld, index: usize, name: String, amount: i64) {
+    let share = world
+        .last_merchant_shares
+        .get(index - 1)
+        .unwrap_or_else(|| panic!("商户排行第 {index} 名不存在"));
+    assert_eq!(share.merchant_name, name, "排行第 {index} 名商户不符");
+    assert_eq!(share.amount_cents, amount, "商户 '{name}' 净支出不符");
+}

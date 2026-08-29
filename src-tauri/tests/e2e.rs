@@ -30,6 +30,8 @@ mod items_update_steps;
 mod merchants_steps;
 #[path = "e2e/migration_steps.rs"]
 mod migration_steps;
+#[path = "e2e/reports_steps.rs"]
+mod reports_steps;
 #[path = "e2e/scheduled_steps.rs"]
 mod scheduled_steps;
 #[path = "e2e/search_steps.rs"]
