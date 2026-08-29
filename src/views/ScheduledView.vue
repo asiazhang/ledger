@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NTabs, NTabPane } from 'naive-ui'
+import { NTabs, NTabPane, NIcon } from 'naive-ui'
+import {
+  CalendarOutline,
+  PulseOutline,
+  SyncOutline,
+} from '@vicons/ionicons5'
 import SubscriptionsPane from '@/components/scheduled/SubscriptionsPane.vue'
 import InstallmentsPane from '@/components/scheduled/InstallmentsPane.vue'
 import TransfersPane from '@/components/scheduled/TransfersPane.vue'
@@ -41,14 +46,27 @@ function onTabChange(key: string | number) {
 
 <template>
   <NTabs type="line" :value="activeTab" @update:value="onTabChange">
-    <NTabPane name="subscriptions" tab="订阅">
+    <NTabPane name="subscriptions">
+      <template #tab><span class="pane-tab"><NIcon :component="CalendarOutline" />订阅</span></template>
       <SubscriptionsPane />
     </NTabPane>
-    <NTabPane name="installments" tab="分期">
+    <NTabPane name="installments">
+      <template #tab><span class="pane-tab"><NIcon :component="PulseOutline" />分期</span></template>
       <InstallmentsPane />
     </NTabPane>
-    <NTabPane name="transfers" tab="定时转账">
+    <NTabPane name="transfers">
+      <template #tab><span class="pane-tab"><NIcon :component="SyncOutline" />定时转账</span></template>
       <TransfersPane />
     </NTabPane>
   </NTabs>
 </template>
+
+<style scoped>
+/* 页签图标 + 文字：gap 负责间距，文字与图标间不落空白，
+   保证测试/无障碍按文本定位页签时拿到纯标签文字 */
+.pane-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+</style>
