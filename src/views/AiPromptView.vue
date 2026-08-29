@@ -30,7 +30,7 @@ async function copyPrompt() {
 
 <template>
   <NSpace vertical :size="16">
-    <NCard title="AI 系统提示词" :bordered="false" style="max-width: 900px">
+    <NCard title="AI 系统提示词" :bordered="false">
       <template #header-extra>
         <NButton size="small" type="primary" :disabled="!prompt" @click="copyPrompt">
           复制
