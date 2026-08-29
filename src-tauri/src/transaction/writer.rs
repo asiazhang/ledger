@@ -36,6 +36,12 @@ pub struct Input {
     pub account_id: String,
     pub to_account_id: Option<String>,
     pub category_id: Option<String>,
+    pub merchant_id: Option<String>,
+    /// 修改路径该行**当前**的商户 id（创建路径为 None）。提交的 [`merchant_id`] 与其
+    /// 相同视为「保持历史引用」：软删商户的历史交易仍可修改其他字段，跳过在用校验；
+    /// 改选其他商户则按新选择校验在用。与账户/分类的更新语义一致（引用已软删的
+    /// 参考数据不阻止编辑既有行，issue #188 / ADR-0028）。
+    pub existing_merchant_id: Option<String>,
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
@@ -51,6 +57,7 @@ pub struct NormalizedRow {
     pub account_id: String,
     pub to_account_id: Option<String>,
     pub category_id: Option<String>,
+    pub merchant_id: Option<String>,
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
@@ -64,6 +71,9 @@ pub struct NormalizedRow {
 /// 语义（与命令层通用 kind 写入路径一致，见 `commands::transactions::write`）：
 /// - 金额必须 > 0；
 /// - transfer 必须指定 `to_account_id`；
+/// - 商户（merchant_id）：income/expense 携带的商户必须存在且未软删除（软删商户
+///   不可再被新交易选择，历史引用照常保留）；refund 忽略调用方填的 merchant_id，
+///   自动继承原支出商户（与账户/币种/分类同款继承语义，ADR-0028）；
 /// - refund 必须关联**未删除**的原支出交易，且账户/币种/分类继承原支出
 ///   （忽略调用方填的 account_id / currency_code / category_id）；
 /// - 本位币折算走 Amount 接缝 [`amount::convert_to_native`]（基准为全局默认币种）。
@@ -97,7 +107,7 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
     if input.amount_cents <= 0 {
         return Err(AppError::Invalid("金额必须大于 0".into()));
     }
-    let (category_id, account_id, currency_code, refund_of_id) = if input.kind
+    let (category_id, account_id, currency_code, merchant_id, refund_of_id) = if input.kind
         == TransactionKind::Refund
     {
         let ref_id = input
@@ -106,24 +116,53 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
             .ok_or_else(|| AppError::Invalid("退款必须关联原支出交易".into()))?;
         // 只认未删除的原支出交易；不存在或已软删除均视为无效来源（NotFound），
         // 其余数据库错误（锁/损坏等）原样上抛。
-        let (cat, acc, cur, okind): (Option<String>, String, String, TransactionKind) = conn
+        let (cat, acc, cur, mer, okind): (
+            Option<String>,
+            String,
+            String,
+            Option<String>,
+            TransactionKind,
+        ) = conn
             .query_row(
-                "SELECT category_id, account_id, currency_code, kind \
+                "SELECT category_id, account_id, currency_code, merchant_id, kind \
                  FROM transactions WHERE id=?1 AND is_deleted=0",
                 params![ref_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .optional()?
             .ok_or_else(|| AppError::NotFound(format!("退款关联的原支出交易不存在: {ref_id}")))?;
         if okind != TransactionKind::Expense {
             return Err(AppError::Invalid("退款只能关联支出交易".into()));
         }
-        (cat, acc, cur, Some(ref_id))
+        // 商户与账户/币种/分类同款继承语义：忽略调用方填的 merchant_id，取原支出商户。
+        (cat, acc, cur, mer, Some(ref_id))
     } else {
+        // 商户字典校验：income/expense 携带的商户必须存在且未软删除——软删商户
+        // 不可再被**新选择**（新建交易引用；历史引用照常保留）。修改路径提交值与
+        // 该行当前商户相同视为保持历史引用（`existing_merchant_id`），跳过校验。
+        if let Some(merchant_id) = &input.merchant_id {
+            let unchanged = input.existing_merchant_id.as_deref() == Some(merchant_id.as_str());
+            if !unchanged {
+                let active: bool = conn
+                    .query_row(
+                        "SELECT 1 FROM merchants WHERE id=?1 AND is_deleted=0",
+                        params![merchant_id],
+                        |_| Ok(true),
+                    )
+                    .optional()?
+                    .is_some();
+                if !active {
+                    return Err(AppError::Invalid(format!(
+                        "商户不存在或已删除: {merchant_id}"
+                    )));
+                }
+            }
+        }
         (
             input.category_id.clone(),
             input.account_id.clone(),
             input.currency_code.clone(),
+            input.merchant_id.clone(),
             None,
         )
     };
@@ -141,6 +180,7 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
         account_id,
         to_account_id,
         category_id,
+        merchant_id,
         refund_of_transaction_id: refund_of_id,
         note: input.note.clone(),
         date: input.date.clone(),
@@ -158,8 +198,8 @@ pub fn insert_row(conn: &Connection, row: &NormalizedRow) -> Result<String> {
     conn.execute(
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
-         category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,0)",
+         category_id,merchant_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,0)",
         params![
             id,
             row.kind.as_str(),
@@ -169,6 +209,7 @@ pub fn insert_row(conn: &Connection, row: &NormalizedRow) -> Result<String> {
             row.account_id,
             row.to_account_id,
             row.category_id,
+            row.merchant_id,
             row.refund_of_transaction_id,
             row.note,
             row.date,
@@ -191,8 +232,8 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
     conn.execute(
         "UPDATE transactions \
          SET kind=?2, amount_cents=?3, currency_code=?4, amount_native_cents=?5, account_id=?6, \
-         to_account_id=?7, category_id=?8, refund_of_transaction_id=?9, note=?10, date=?11, \
-         updated_at=?12, version=version+1, device_id=?13 \
+         to_account_id=?7, category_id=?8, merchant_id=?9, refund_of_transaction_id=?10, note=?11, date=?12, \
+         updated_at=?13, version=version+1, device_id=?14 \
          WHERE id=?1",
         params![
             id,
@@ -203,6 +244,7 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
             row.account_id,
             row.to_account_id,
             row.category_id,
+            row.merchant_id,
             row.refund_of_transaction_id,
             row.note,
             row.date,

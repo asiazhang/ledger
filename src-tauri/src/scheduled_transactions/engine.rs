@@ -582,6 +582,8 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
             account_id: st.account_id.clone(),
             to_account_id,
             category_id,
+            merchant_id: None,
+            existing_merchant_id: None,
             refund_of_transaction_id: None,
             note: st.note.clone(),
             date: occ.scheduled_date.clone(),

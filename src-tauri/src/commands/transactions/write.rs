@@ -17,7 +17,7 @@ use super::behavior;
 /// buy/sell 经投资域 prepare/apply 落交易行并建仓/卖出匹配；`dividend` / `split`
 /// 已声明但未实现，在此显式「暂不支持」拒绝。
 pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<String> {
-    let plan = behavior::plan(conn, &input)?;
+    let plan = behavior::plan(conn, &input, None)?;
     let row = plan.normalized_row()?;
     let id = writer::insert_row(conn, &row)?;
     behavior::apply(conn, &id, &plan)?;
@@ -40,12 +40,14 @@ pub fn update_transaction_internal(
     id: &str,
     input: TransactionInput,
 ) -> Result<()> {
-    // 读取旧交易 kind，用于按旧 kind 回退持仓/卖出关联；不存在或已删除返回 NotFound。
-    let old_kind: TransactionKind = conn
+    // 读取旧交易 kind 与当前商户（商户用于「保持历史引用」判定：提交商户与原值
+    // 相同则跳过在用校验，软删商户的历史交易仍可修改其他字段），不存在或已删除
+    // 返回 NotFound。
+    let (old_kind, old_merchant_id): (TransactionKind, Option<String>) = conn
         .query_row(
-            "SELECT kind FROM transactions WHERE id=?1 AND is_deleted=0",
+            "SELECT kind, merchant_id FROM transactions WHERE id=?1 AND is_deleted=0",
             rusqlite::params![id],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?
         .ok_or_else(|| AppError::NotFound(format!("交易不存在: {id}")))?;
@@ -55,7 +57,7 @@ pub fn update_transaction_internal(
         // 先按旧 kind 回退持仓/卖出关联副作用，再按新 kind 校验并应用（跨 kind 修改避免孤儿持仓）；
         // buy 守卫（已有部分卖出拒绝）措辞为「无法修改」。
         behavior::revert(conn, id, old_kind, "该买入交易已有部分卖出，无法修改")?;
-        let plan = behavior::plan(conn, &input)?;
+        let plan = behavior::plan(conn, &input, old_merchant_id.as_deref())?;
         let row = plan.normalized_row()?;
         writer::update_row(conn, id, &row)?;
         behavior::apply(conn, id, &plan)

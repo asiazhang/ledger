@@ -37,6 +37,9 @@ import type {
   ItemWithDailyCost,
   MarketPrice,
   MarketPriceInput,
+  Merchant,
+  MerchantInput,
+  MerchantUpdateInput,
   MonthlySummary,
   PnlFilter,
   PortfolioValueTrend,
@@ -82,6 +85,13 @@ export const api = {
   reorderCategories: (items: ReorderItem[]) =>
     invoke<void>('reorder_categories', { items }),
   deleteCategory: (id: string) => invoke<void>('delete_category', { id }),
+
+  // 商户（issue #188 / ADR-0028）：参考数据字典命令面，随 ledger:changed 失效信号重拉
+  listMerchants: () => invoke<Merchant[]>('list_merchants'),
+  createMerchant: (input: MerchantInput) => invoke<string>('create_merchant', { input }),
+  updateMerchant: (id: string, input: MerchantUpdateInput) =>
+    invoke<void>('update_merchant', { id, input }),
+  deleteMerchant: (id: string) => invoke<void>('delete_merchant', { id }),
 
   // 交易
   listTransactions: (filter?: TransactionListFilter | null) =>

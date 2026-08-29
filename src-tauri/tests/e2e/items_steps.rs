@@ -444,6 +444,7 @@ fn create_expense_txn_with_currency(
         account_id: world.account_id(&account_name),
         to_account_id: None,
         category_id: None,
+        merchant_id: None,
         refund_of_transaction_id: None,
         note: None,
         date,

@@ -41,6 +41,7 @@ impl ImportedRow {
                 .as_deref()
                 .map(|name| world.account_id(name)),
             category_id: None,
+            merchant_id: None,
             refund_of_transaction_id: None,
             note: self.note.clone(),
             date: self.date.clone(),
@@ -61,6 +62,8 @@ pub struct LedgerWorld {
     pub conn: Connection,
     /// 账户名称到 ID 的映射（Given 步骤插入账户后注册，含种子黑洞账户）
     pub account_name_to_id: HashMap<String, String>,
+    /// 商户名称到 ID 的映射（Given/When 步骤创建商户后注册）
+    pub merchant_name_to_id: HashMap<String, String>,
     /// 最新创建的交易 ID（用于关联操作如退款）
     pub last_transaction_id: Option<String>,
     /// 最近一次操作错误（检查失败场景）
@@ -151,6 +154,7 @@ impl LedgerWorld {
         let mut world = Self {
             conn,
             account_name_to_id: HashMap::new(),
+            merchant_name_to_id: HashMap::new(),
             last_transaction_id: None,
             last_error: None,
             transactions_list: Vec::new(),
@@ -205,5 +209,13 @@ impl LedgerWorld {
             .get(name)
             .cloned()
             .unwrap_or_else(|| panic!("账户 '{}' 不存在", name))
+    }
+
+    /// 获取商户 ID，按名称查找
+    pub fn merchant_id(&self, name: &str) -> String {
+        self.merchant_name_to_id
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| panic!("商户 '{}' 不存在", name))
     }
 }

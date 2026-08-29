@@ -11,6 +11,7 @@ export interface Transaction extends Syncable {
   account_id: string
   to_account_id: string | null
   category_id: string | null
+  merchant_id: string | null
   refund_of_transaction_id: string | null
   note: string | null
   date: string
@@ -24,6 +25,8 @@ export interface TransactionInput {
   account_id: string
   to_account_id?: string | null
   category_id?: string | null
+  /** 商户引用（expense/refund/income 可携带；transfer/buy/sell/dividend/split 后端行为层拒绝） */
+  merchant_id?: string | null
   refund_of_transaction_id?: string | null
   note?: string | null
   date: string

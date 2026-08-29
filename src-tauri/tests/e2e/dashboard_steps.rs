@@ -83,6 +83,7 @@ fn buy_instrument(
         account_id,
         to_account_id: None,
         category_id: None,
+        merchant_id: None,
         refund_of_transaction_id: None,
         note: None,
         date: "2026-01-10".into(),
