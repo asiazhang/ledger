@@ -292,19 +292,16 @@ describe('TransfersPane 新建定时转账（issue #203）', () => {
       'acc-cny2',
       'acc-usd',
     ])
-    // 选定 CNY 转出账户后，转入候选只剩 CNY 账户
+    // 选定 CNY 转出账户后，转入候选只剩其它 CNY 账户（排除转出账户本身）
     accountSelect(wrapper, 'transfer-from-account').vm.$emit('update:value', 'acc-cny1')
     await flushPromises()
     expect((toSelect.props('options') as { value: string }[]).map((o) => o.value)).toEqual([
-      'acc-cny1',
       'acc-cny2',
     ])
-    // 换成 USD 转出账户，候选只剩 USD 账户
+    // 换成 USD 转出账户，候选只剩 USD 账户（同样排除转出账户本身）
     accountSelect(wrapper, 'transfer-from-account').vm.$emit('update:value', 'acc-usd')
     await flushPromises()
-    expect((toSelect.props('options') as { value: string }[]).map((o) => o.value)).toEqual([
-      'acc-usd',
-    ])
+    expect((toSelect.props('options') as { value: string }[]).map((o) => o.value)).toEqual([])
   })
 
   it('切换转出账户后清空币种不再匹配的转入账户选中', async () => {

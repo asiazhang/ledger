@@ -31,20 +31,16 @@ pub fn create_plan(conn: &Connection, input: CreateScheduledInput) -> Result<Str
     if input.kind == ScheduledKind::ScheduledTransfer
         && let Some(ref to_acc) = input.to_account_id
     {
-        let from_currency: String = conn
-            .query_row(
+        let account_currency = |id: &str, missing: &str| -> Result<String> {
+            conn.query_row(
                 "SELECT currency_code FROM accounts WHERE id=?1 AND is_deleted=0",
-                rusqlite::params![&input.account_id],
+                rusqlite::params![id],
                 |r| r.get(0),
             )
-            .map_err(|_| AppError::NotFound("转出账户不存在".into()))?;
-        let to_currency: String = conn
-            .query_row(
-                "SELECT currency_code FROM accounts WHERE id=?1 AND is_deleted=0",
-                rusqlite::params![to_acc],
-                |r| r.get(0),
-            )
-            .map_err(|_| AppError::NotFound("转入账户不存在".into()))?;
+            .map_err(|_| AppError::NotFound(missing.into()))
+        };
+        let from_currency = account_currency(&input.account_id, "转出账户不存在")?;
+        let to_currency = account_currency(to_acc, "转入账户不存在")?;
         if from_currency != to_currency {
             return Err(AppError::Invalid(
                 "转出账户与转入账户币种不一致，定时转账不支持跨币种".into(),

@@ -77,13 +77,14 @@ const filterOptions = [
   { key: 'completed' as const, label: '已完成' },
 ]
 
-/** 转入账户候选（Vitest 验收 seam）：按转出账户币种过滤；未选转出账户时为全部账户。 */
+/** 转入账户候选（Vitest 验收 seam）：按转出账户币种过滤并排除转出账户本身
+ * （转出 = 转入被后端拒绝）；未选转出账户时为全部账户。 */
 const toAccountOptions = computed(() => {
   const from = fromAccountId.value ? reference.accountMap.get(fromAccountId.value) : undefined
   if (!from) return accountOptions.value
   return accountOptions.value.filter((o) => {
     const acc = reference.accountMap.get(o.value)
-    return acc && acc.currency_code === from.currency_code
+    return acc && o.value !== from.id && acc.currency_code === from.currency_code
   })
 })
 

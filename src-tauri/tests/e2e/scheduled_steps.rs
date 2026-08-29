@@ -157,6 +157,47 @@ fn create_scheduled_transfer_plan(
     world.last_plan_id = Some(id);
 }
 
+/// 创建不带期数的定时转账（无限循环，total_occurrences=None）并记录 id（issue #203）。
+#[when(expr = "创建定时转账计划 金额 {int} 从 {string} 到 {string} 起始日期 {string}")]
+fn create_scheduled_transfer_plan_infinite(
+    world: &mut LedgerWorld,
+    amount: i64,
+    from: String,
+    to: String,
+    start: String,
+) {
+    // 计划币种取转出账户实际币种（同币种校验比的是两账户，不比提交值）
+    let currency: String = world
+        .conn
+        .query_row(
+            "SELECT currency_code FROM accounts WHERE id=?1",
+            params![world.account_id(&from)],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let id = create_plan(
+        &world.conn,
+        CreateScheduledInput {
+            kind: ScheduledKind::ScheduledTransfer,
+            account_id: world.account_id(&from),
+            category_id: None,
+            amount_cents: amount,
+            currency_code: currency,
+            recurrence_type: RecurrenceType::Monthly,
+            recurrence_interval: 1,
+            recurrence_day: None,
+            start_date: start,
+            note: None,
+            merchant_id: None,
+            total_amount_cents: None,
+            total_occurrences: None,
+            to_account_id: Some(world.account_id(&to)),
+        },
+    )
+    .expect("创建定时转账计划失败");
+    world.last_plan_id = Some(id);
+}
+
 // ---------------------------------------------------------------------------
 // When：带商户的计划（issue #190 / ADR-0028：installment/subscription 可携带商户）
 // ---------------------------------------------------------------------------
@@ -280,6 +321,15 @@ fn try_create_transfer_plan(
     occurrences: i64,
     start: String,
 ) {
+    // 计划币种取转出账户实际币种：不硬编码，避免币种与账户不符的隐蔽数据
+    let currency: String = world
+        .conn
+        .query_row(
+            "SELECT currency_code FROM accounts WHERE id=?1",
+            params![world.account_id(&from)],
+            |r| r.get(0),
+        )
+        .unwrap();
     let result = create_plan(
         &world.conn,
         CreateScheduledInput {
@@ -287,7 +337,7 @@ fn try_create_transfer_plan(
             account_id: world.account_id(&from),
             category_id: None,
             amount_cents: amount,
-            currency_code: "CNY".into(),
+            currency_code: currency,
             recurrence_type: RecurrenceType::Monthly,
             recurrence_interval: 1,
             recurrence_day: None,
