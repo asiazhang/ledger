@@ -44,6 +44,7 @@ function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
     list_currencies: mockCurrencies,
     list_accounts: [],
     list_categories: [],
+    list_merchants: [],
     list_backups: [],
     get_data_location_info: {
       active_dir: '/Users/me/Library/Application Support/ledger',
@@ -96,10 +97,10 @@ beforeEach(async () => {
 })
 
 describe('SettingsView.vue（issue #157：Tab 分域重构 6 → 4）', () => {
-  it('Tab 格局为 通用 → 分类与币种 → 数据 → 关于，共 4 个，关于在末位', () => {
+  it('Tab 格局为 通用 → 分类与币种 → 商户 → 数据 → 关于，共 5 个，关于在末位（#189 新增商户 Tab）', () => {
     const wrapper = mount(SettingsView)
     const labels = wrapper.findAll('.n-tabs-tab').map((t) => t.text())
-    expect(labels).toEqual(['通用', '分类与币种', '数据', '关于'])
+    expect(labels).toEqual(['通用', '分类与币种', '商户', '数据', '关于'])
   })
 
   it('旧 Tab（分类 / 币种 / 备份与恢复 / 外观 / 存储位置）全部消失', () => {
