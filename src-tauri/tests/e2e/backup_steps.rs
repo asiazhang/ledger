@@ -8,11 +8,21 @@ use tauri_app_lib::commands::backup::{
     BackupKind, backup_db_to, expected_schema_version, read_backup_kind, restore_db_from,
 };
 use tauri_app_lib::commands::categories::{create_category_internal, delete_category_internal};
+use tauri_app_lib::commands::investment::{
+    create_exchange_rate_internal, create_instrument_internal, create_market_price_internal,
+};
+use tauri_app_lib::commands::item::{
+    create_item_internal, delete_item_internal, dispose_item_internal, update_item_internal,
+};
 use tauri_app_lib::commands::transactions::{
     delete_transaction_internal, update_transaction_internal,
 };
-use tauri_app_lib::db::{new_uuid, open_connection};
-use tauri_app_lib::models::{AccountInput, AccountType, CategoryInput, TransactionInput};
+use tauri_app_lib::db::{new_uuid, now_iso, open_connection};
+use tauri_app_lib::item::cost;
+use tauri_app_lib::models::{
+    AccountInput, AccountType, CategoryInput, ExchangeRateInput, InstrumentInput, InstrumentType,
+    ItemDisposeInput, ItemInput, MarketPriceInput, TransactionInput,
+};
 use tauri_app_lib::settings::{self, SettingKey};
 use tauri_app_lib::transaction::amount::TransactionKind;
 
@@ -313,6 +323,183 @@ fn update_last_transaction_invalid_amount(world: &mut LedgerWorld) {
         Ok(()) => Some(String::from("预期失败但成功了")),
         Err(e) => Some(e.to_string()),
     };
+}
+
+// ---------------------------------------------------------------------------
+// 物品写路径置脏（issue #244，ADR-0032 写入口接管）
+// ---------------------------------------------------------------------------
+
+/// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）创建物品并关联最近创建的
+/// 购买交易（满足溯源守卫，后端以交易值带出日期/成本/币种，入参占位值被覆盖），
+/// 成功即置脏。
+#[when(expr = "创建物品 {string} 关联最近创建的购买交易")]
+fn create_item_via_entry(world: &mut LedgerWorld, name: String) {
+    let tx_id = world
+        .last_transaction_id
+        .clone()
+        .expect("没有可关联的购买交易");
+    let input = ItemInput {
+        name,
+        purchase_date: "1970-01-01".into(), // 占位：后端以交易值覆盖带出
+        total_cost_cents: 1,
+        currency_code: "CNY".into(),
+        note: None,
+        purchase_transaction_id: Some(tx_id),
+    };
+    let id = world
+        .db
+        .write(|conn| create_item_internal(conn, input, &mut || {}))
+        .expect("创建物品失败");
+    world.last_item_id = Some(id);
+}
+
+/// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）修改最近创建的物品的备注
+/// （其余字段读现值保持不变，溯源保持；空字符串规为清除），成功即置脏。
+#[when(expr = "修改最近创建的物品备注为 {string}")]
+fn update_last_item_note_via_entry(world: &mut LedgerWorld, note: String) {
+    let id = world.last_item_id.clone().expect("没有已创建的物品");
+    // 读现值构造入参：本步骤只改备注，其余字段原样保留（不与创建场景数据耦合）。
+    let (name, purchase_date, total_cost_cents, currency_code): (String, String, i64, String) = {
+        let conn = world_conn!(world);
+        conn.query_row(
+            "SELECT name, purchase_date, total_cost_cents, currency_code FROM items \
+             WHERE id=?1 AND is_deleted=0",
+            rusqlite::params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .expect("读物品现值失败")
+    };
+    let input = ItemInput {
+        name,
+        purchase_date,
+        total_cost_cents,
+        currency_code,
+        note: if note.is_empty() { None } else { Some(note) },
+        purchase_transaction_id: None, // None = 维持既有溯源
+    };
+    world
+        .db
+        .write(|conn| update_item_internal(conn, &id, input, &mut || {}))
+        .expect("修改物品失败");
+}
+
+/// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）以今天为处置日处置最近
+/// 创建的物品（不填残值），成功即置脏。
+#[when(expr = "今天处置最近创建的物品")]
+fn dispose_last_item_today_via_entry(world: &mut LedgerWorld) {
+    let id = world.last_item_id.clone().expect("没有已创建的物品");
+    let input = ItemDisposeInput {
+        disposal_date: cost::today().format("%Y-%m-%d").to_string(),
+        residual_value_cents: None,
+    };
+    world
+        .db
+        .write(|conn| dispose_item_internal(conn, &id, input, &mut || {}))
+        .expect("处置物品失败");
+}
+
+/// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）软删除最近创建的物品，
+/// 成功即置脏。
+#[when(expr = "软删除最近创建的物品")]
+fn delete_last_item_via_entry(world: &mut LedgerWorld) {
+    let id = world.last_item_id.clone().expect("没有已创建的物品");
+    world
+        .db
+        .write(|conn| delete_item_internal(conn, &id, &mut || {}))
+        .expect("软删除物品失败");
+}
+
+// ---------------------------------------------------------------------------
+// 市场数据写路径置脏（issue #244，ADR-0032 写入口接管）
+// ---------------------------------------------------------------------------
+
+/// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）写入一条汇率，成功即置脏。
+#[when(expr = "写入汇率 {string} 兑 {string} 为 {float}")]
+fn write_exchange_rate_via_entry(world: &mut LedgerWorld, base: String, quote: String, rate: f64) {
+    let input = ExchangeRateInput {
+        base_code: base,
+        quote_code: quote,
+        rate,
+        priced_at: now_iso(),
+        source: None,
+    };
+    world
+        .db
+        .write(|conn| create_exchange_rate_internal(conn, input))
+        .expect("写入汇率失败");
+}
+
+/// 新建标的的共用实现（新增性写入与同名信息更新两条步骤同款）。
+fn create_instrument_entry(
+    world: &mut LedgerWorld,
+    symbol: String,
+    name: String,
+    currency: String,
+) {
+    let input = InstrumentInput {
+        symbol,
+        kind: InstrumentType::Stock,
+        name: Some(name),
+        currency_code: currency,
+        market: None,
+    };
+    world
+        .db
+        .write(|conn| create_instrument_internal(conn, input))
+        .expect("新建标的失败");
+}
+
+/// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）新建标的，成功即置脏。
+#[when(expr = "新建标的 {string} 名称 {string} 币种 {string}")]
+fn create_instrument_via_entry(
+    world: &mut LedgerWorld,
+    symbol: String,
+    name: String,
+    currency: String,
+) {
+    create_instrument_entry(world, symbol, name, currency);
+}
+
+/// 同名标的再建（名称有变 → 走 create_instrument 的信息更新分支），成功即置脏：
+/// 钉住「标的信息更新也算市场数据写入」。
+#[when(expr = "再次新建标的 {string} 名称 {string} 币种 {string}")]
+fn recreate_instrument_via_entry(
+    world: &mut LedgerWorld,
+    symbol: String,
+    name: String,
+    currency: String,
+) {
+    create_instrument_entry(world, symbol, name, currency);
+}
+
+/// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）写入一条标的现价，成功即置脏。
+#[when(expr = "写入标的 {string} 现价 {int} 币种 {string}")]
+fn write_market_price_via_entry(
+    world: &mut LedgerWorld,
+    symbol: String,
+    price: i64,
+    currency: String,
+) {
+    let instrument_id: String = {
+        let conn = world_conn!(world);
+        conn.query_row(
+            "SELECT id FROM instruments WHERE symbol=?1 LIMIT 1",
+            rusqlite::params![symbol],
+            |r| r.get(0),
+        )
+        .expect("标的不存在")
+    };
+    let input = MarketPriceInput {
+        instrument_id,
+        price_cents: price,
+        currency_code: currency,
+        priced_at: now_iso(),
+        source: None,
+    };
+    world
+        .db
+        .write(|conn| create_market_price_internal(conn, input))
+        .expect("写入行情失败");
 }
 
 #[then(expr = "恢复的数据库自动备份状态应为「未脏且已重新计时」")]
