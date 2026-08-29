@@ -64,16 +64,22 @@ pub fn list_exchange_rates(db: tauri::State<'_, DbState>) -> Result<Vec<Exchange
     crud::list_exchange_rates(&conn)
 }
 
+/// 测试/e2e 入口：绕过 Tauri State 直接对连接执行汇率写入（先例：
+/// [`list_instruments_internal`]，供 BDD 步骤复用同一实现）。
+pub fn create_exchange_rate_internal(
+    conn: &rusqlite::Connection,
+    input: ExchangeRateInput,
+) -> Result<String> {
+    crud::create_exchange_rate(conn, input)
+}
+
 #[tauri::command]
 pub fn create_exchange_rate(
     db: tauri::State<'_, DbState>,
     input: ExchangeRateInput,
 ) -> Result<String> {
-    if input.rate <= 0.0 {
-        return Err(AppError::Invalid("汇率必须大于 0".into()));
-    }
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    crud::create_exchange_rate(&conn, input)
+    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
+    db.write(|conn| create_exchange_rate_internal(conn, input))
 }
 
 #[tauri::command]
@@ -82,16 +88,22 @@ pub fn list_market_prices(db: tauri::State<'_, DbState>) -> Result<Vec<MarketPri
     crud::list_market_prices(&conn)
 }
 
+/// 测试/e2e 入口：绕过 Tauri State 直接对连接执行行情写入（先例：
+/// [`list_instruments_internal`]，供 BDD 步骤复用同一实现）。
+pub fn create_market_price_internal(
+    conn: &rusqlite::Connection,
+    input: MarketPriceInput,
+) -> Result<String> {
+    crud::create_market_price(conn, input)
+}
+
 #[tauri::command]
 pub fn create_market_price(
     db: tauri::State<'_, DbState>,
     input: MarketPriceInput,
 ) -> Result<String> {
-    if input.price_cents <= 0 {
-        return Err(AppError::Invalid("价格必须大于 0".into()));
-    }
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    crud::create_market_price(&conn, input)
+    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
+    db.write(|conn| create_market_price_internal(conn, input))
 }
 
 #[tauri::command]
@@ -122,11 +134,17 @@ pub fn get_transaction_trade(
     trade::get_transaction_trade(&conn, &id)
 }
 
+/// 测试/e2e 入口：绕过 Tauri State 直接对连接执行新建标的（先例：
+/// [`list_instruments_internal`]，供 BDD 步骤复用同一实现）。
+pub fn create_instrument_internal(
+    conn: &rusqlite::Connection,
+    input: InstrumentInput,
+) -> Result<String> {
+    crud::create_instrument(conn, input)
+}
+
 #[tauri::command]
 pub fn create_instrument(db: tauri::State<'_, DbState>, input: InstrumentInput) -> Result<String> {
-    if input.symbol.trim().is_empty() {
-        return Err(AppError::Invalid("标的代码不能为空".into()));
-    }
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    crud::create_instrument(&conn, input)
+    // 连接层统一写入口（ADR-0032）：成功即置脏（含同名标的信息更新的 upsert 分支）。
+    db.write(|conn| create_instrument_internal(conn, input))
 }

@@ -9,7 +9,9 @@
 //! - 每天使用成本走 `item::cost` 接缝（DailyUsageCost 单一权威），列表不重算口径；
 //! - 写入成功后经 `notify` 回调发出 `ledger:changed` 粗粒度失效信号（回调注入式，
 //!   仿 `commands::sync` 的 emit 注入先例：生产路径发 `events::LEDGER_CHANGED`，
-//!   BDD/测试注入记录闭包断言「写后发信号」这一外部可观察行为）。
+//!   BDD/测试注入记录闭包断言「写后发信号」这一外部可观察行为）；
+//! - 置脏触发已收口连接层统一写入口（`db::write`，ADR-0032）：本模块对备份域
+//!   零感知，写入成功后的置脏/到期检查由调用方所在写入口闭包在提交点单点执行。
 
 #[cfg(test)]
 mod tests;
@@ -159,8 +161,6 @@ pub fn create_item_internal(
             device_id(),
         ],
     )?;
-    // 脏标记挂钩（issue #126）：落库成功即置脏，到期则写时顺带触发备份。
-    crate::auto_backup::on_write(conn);
     // 写入成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
     notify();
     Ok(id)
@@ -256,8 +256,6 @@ pub fn update_item_internal(
         updated, 1,
         "前置存在性检查已排除 id 不存在/软删除，单连接下不可达"
     );
-    // 脏标记挂钩（issue #126）：落库成功即置脏，到期则写时顺带触发备份。
-    crate::auto_backup::on_write(conn);
     // 写入成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
     notify();
     Ok(())
@@ -315,8 +313,6 @@ pub fn dispose_item_internal(
         updated, 1,
         "前置存在性检查已排除 id 不存在/软删除，单连接下不可达"
     );
-    // 脏标记挂钩（issue #126）：处置也是写，置脏到期顺带触发备份。
-    crate::auto_backup::on_write(conn);
     // 处置成功 → 通知调用方发出失效信号（生产为 ledger:changed）。
     notify();
     Ok(())
@@ -341,8 +337,6 @@ pub fn delete_item_internal(conn: &Connection, id: &str, notify: &mut dyn FnMut(
         "UPDATE items SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id()],
     )?;
-    // 脏标记挂钩（issue #126）：删除也是写，置脏到期顺带触发备份。
-    crate::auto_backup::on_write(conn);
     // 删除成功 → 通知调用方发出失效信号（生产为 ledger:changed）。
     notify();
     Ok(())
@@ -466,15 +460,14 @@ pub fn create_item(
     app: tauri::AppHandle,
     input: ItemInput,
 ) -> Result<String> {
-    let id = {
-        let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        create_item_internal(&conn, input, &mut || {
+    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
+    db.write(|conn| {
+        create_item_internal(conn, input, &mut || {
             // 物品是独立领域（非参考数据，ADR-0014）：直接发通用失效信号，
             // 物品 store 与消费界面订阅后自动重拉。
             crate::events::emit_ledger_changed(&app);
-        })?
-    };
-    Ok(id)
+        })
+    })
 }
 
 #[tauri::command]
@@ -484,10 +477,12 @@ pub fn update_item(
     id: String,
     input: ItemInput,
 ) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    update_item_internal(&conn, &id, input, &mut || {
-        // 与 create_item 同款：独立领域写入 → 通用失效信号（issue #117）。
-        crate::events::emit_ledger_changed(&app);
+    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
+    db.write(|conn| {
+        update_item_internal(conn, &id, input, &mut || {
+            // 与 create_item 同款：独立领域写入 → 通用失效信号（issue #117）。
+            crate::events::emit_ledger_changed(&app);
+        })
     })
 }
 
@@ -498,18 +493,22 @@ pub fn dispose_item(
     id: String,
     input: ItemDisposeInput,
 ) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    dispose_item_internal(&conn, &id, input, &mut || {
-        // 物品是独立领域（非参考数据，ADR-0014）：直接发通用失效信号。
-        crate::events::emit_ledger_changed(&app);
+    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
+    db.write(|conn| {
+        dispose_item_internal(conn, &id, input, &mut || {
+            // 物品是独立领域（非参考数据，ADR-0014）：直接发通用失效信号。
+            crate::events::emit_ledger_changed(&app);
+        })
     })
 }
 
 #[tauri::command]
 pub fn delete_item(db: State<'_, DbState>, app: tauri::AppHandle, id: String) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    delete_item_internal(&conn, &id, &mut || {
-        // 物品是独立领域（非参考数据，ADR-0014）：直接发通用失效信号。
-        crate::events::emit_ledger_changed(&app);
+    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
+    db.write(|conn| {
+        delete_item_internal(conn, &id, &mut || {
+            // 物品是独立领域（非参考数据，ADR-0014）：直接发通用失效信号。
+            crate::events::emit_ledger_changed(&app);
+        })
     })
 }
