@@ -18,7 +18,7 @@ use tauri_app_lib::models::{
 };
 use tauri_app_lib::transaction::amount::TransactionKind;
 
-use crate::common::assert_last_error_contains;
+use crate::common::{assert_last_error_contains, insert_account, new_account_id};
 use crate::world::LedgerWorld;
 
 /// 填备注：空字符串规为清除（None），其余原样。
@@ -55,7 +55,51 @@ fn build_linked_input(name: &str, tx_id: &str) -> ItemInput {
     }
 }
 
+/// 脚手架：创建一笔 expense 购买交易并返回其 id（issue #207 起物品创建必关联
+/// 购买交易，未显式 Given 交易的场景由本脚手架补齐溯源）。账户按币种惰性创建
+/// 并注册到 world（与「存在账户」Given 同款）；交易经 `insert_transaction` 接缝，
+/// 金额/日期/汇率不合法会在此处失败，与真实写入路径一致。
+fn scaffold_purchase_tx(
+    world: &mut LedgerWorld,
+    date: &str,
+    cost_cents: i64,
+    currency: &str,
+) -> String {
+    let account_name = format!("物品脚手架({currency})");
+    let account_id = match world.account_name_to_id.get(&account_name) {
+        Some(id) => id.clone(),
+        None => {
+            let id = new_account_id();
+            insert_account(&world.conn, &id, &account_name, "cash", currency);
+            world.account_name_to_id.insert(account_name, id.clone());
+            id
+        }
+    };
+    let input = TransactionInput {
+        kind: TransactionKind::Expense,
+        amount_cents: cost_cents,
+        currency_code: currency.into(),
+        account_id,
+        to_account_id: None,
+        category_id: None,
+        merchant_id: None,
+        refund_of_transaction_id: None,
+        note: None,
+        date: date.into(),
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        idempotency_key: None,
+    };
+    insert_transaction(&world.conn, input)
+        .unwrap_or_else(|e| panic!("脚手架购买交易应创建成功但失败: {e}"))
+}
+
 /// 创建物品并要求成功；记录失效信号次数（写后发 `ledger:changed` 的 seam 断言）。
+///
+/// issue #207 起创建必关联购买交易（ADR-0025 唯一入口）：本步骤先脚手架一笔同额
+/// 支出交易作为溯源再关联创建，后端以交易值覆盖带出（与本步骤入参一致，既有断言不变）。
 #[when(expr = "创建物品 {string} 购买日期 {string} 总成本 {int} 币种 {string}")]
 fn create_item(
     world: &mut LedgerWorld,
@@ -64,12 +108,13 @@ fn create_item(
     cost_cents: i64,
     currency: String,
 ) {
+    let tx_id = scaffold_purchase_tx(world, &date, cost_cents, &currency);
+    let input = ItemInput {
+        purchase_transaction_id: Some(tx_id),
+        ..build_input(&name, date, cost_cents, &currency)
+    };
     let mut signals = 0;
-    let result = create_item_internal(
-        &world.conn,
-        build_input(&name, date, cost_cents, &currency),
-        &mut || signals += 1,
-    );
+    let result = create_item_internal(&world.conn, input, &mut || signals += 1);
     match result {
         Ok(id) => {
             world.last_item_id = Some(id);
@@ -108,6 +153,7 @@ fn create_item_bought_days_ago(
 }
 
 /// 尝试创建物品并捕获错误（供「应返回错误」断言，与交易场景同一 seam）。
+/// 同 `create_item`：先脚手架购买交易再关联创建（issue #207）。
 #[when(expr = "尝试创建物品 {string} 购买日期 {string} 总成本 {int} 币种 {string}")]
 fn try_create_item(
     world: &mut LedgerWorld,
@@ -116,10 +162,29 @@ fn try_create_item(
     cost_cents: i64,
     currency: String,
 ) {
+    let tx_id = scaffold_purchase_tx(world, &date, cost_cents, &currency);
+    let input = ItemInput {
+        purchase_transaction_id: Some(tx_id),
+        ..build_input(&name, date, cost_cents, &currency)
+    };
+    let mut signals = 0;
+    let result = create_item_internal(&world.conn, input, &mut || signals += 1);
+    world.item_signal_count = signals;
+    world.last_error = match result {
+        Err(AppError::Invalid(msg)) => Some(msg),
+        Err(e) => Some(e.to_string()),
+        Ok(_) => Some("预期失败但成功了".into()),
+    };
+}
+
+/// 尝试不关联购买交易创建物品并捕获错误（issue #207 溯源守卫拒绝路径：
+/// 创建请求缺溯源直接拒绝，不发失效信号、不落库）。
+#[when(expr = "尝试创建物品 {string} 不关联购买交易")]
+fn try_create_item_unlinked(world: &mut LedgerWorld, name: String) {
     let mut signals = 0;
     let result = create_item_internal(
         &world.conn,
-        build_input(&name, date, cost_cents, &currency),
+        build_input(&name, "2026-03-01".into(), 20_000, "CNY"),
         &mut || signals += 1,
     );
     world.item_signal_count = signals;

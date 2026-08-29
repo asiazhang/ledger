@@ -113,16 +113,27 @@ pub fn calculate_item_cost_internal(
     })
 }
 
-/// 创建一件在用物品：校验 → 金额折算本位币（Amount 接缝）→ 落库（生成
-/// `id` 与审计字段）→ 成功后调用 `notify`（生产路径发 `ledger:changed`）。
+/// 创建一件在用物品：溯源守卫 → 校验 → 金额折算本位币（Amount 接缝）→
+/// 落库（生成 `id` 与审计字段）→ 成功后调用 `notify`（生产路径发 `ledger:changed`）。
 ///
-/// 校验：名称非空、总成本 > 0、购买日期可解析（YYYY-MM-DD）；
+/// 溯源守卫（issue #207，ADR-0025 创建唯一入口）：不关联购买交易的创建请求
+/// 直接拒绝——物品只能经交易右键「加入物品」+ 确认弹窗创建，无溯源物品会让
+/// 每天成本口径失真；列仍可空是为修改语义（None = 保留）与外键清理保留，
+/// 必填仅约束创建时刻。
+///
+/// 其余校验：名称非空、总成本 > 0、购买日期可解析（YYYY-MM-DD）；
 /// 币种折算经 [`amount::convert_to_native`]（无汇率即报错，不静默混币种）。
 pub fn create_item_internal(
     conn: &Connection,
     input: ItemInput,
     notify: &mut dyn FnMut(),
 ) -> Result<String> {
+    // 溯源守卫：创建必须关联购买交易（修改路径不受此限，None = 保留既有溯源）。
+    if input.purchase_transaction_id.is_none() {
+        return Err(AppError::Invalid(
+            "物品必须关联一笔购买交易创建：请在交易页右键一笔支出交易，选择「加入物品」".into(),
+        ));
+    }
     // 关联购买交易：校验存在且为 expense，自动带出日期/成本/币种（覆盖同名入参）。
     let effective = apply_purchase_link(conn, &input)?;
     let (name, purchase_date, cost_native_cents) = validate_and_convert(conn, &effective)?;
