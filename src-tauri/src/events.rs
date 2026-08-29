@@ -10,6 +10,11 @@
 //! - `ledger:backups-changed`（issue #129）：自动备份完成 / 受管备份清理成功后 emit，
 //!   与前者平行、同样无 payload；前端设置页订阅后自动刷新备份列表与自动备份状态。
 //!   深路径执行点拿不到 `AppHandle`，经 [`init_event_app`] 注入的镜像句柄发射。
+//! - `ledger:prices-changed`（ADR-0031，issue #236）：行情同步命令写入价格后 emit——
+//!   增量 `sync_holding_prices` 成功且实际写入、全量 `sync_instruments` 结束且有落库
+//!   （含用户中断，中断保留已落库价格）；与前者平行、同样无 payload，前端价格消费方
+//!   各自订阅后重拉自身数据。「是否 emit」的判定收敛在同步命令侧
+//!   （`commands::sync::should_emit_prices_changed`），本模块只承载事件名与发射入口。
 
 use std::sync::OnceLock;
 
@@ -22,6 +27,12 @@ pub const LEDGER_CHANGED: &str = "ledger:changed";
 /// 自动备份完成、受管备份清理等改变备份列表的动作成功后由后端发出，
 /// 前端设置页据此自动刷新备份列表与自动备份状态。
 pub const BACKUPS_CHANGED: &str = "ledger:backups-changed";
+
+/// 价格数据变更信号事件名（ADR-0031，issue #236；无 payload，与 [`LEDGER_CHANGED`] /
+/// [`BACKUPS_CHANGED`] 平行，同一 `ledger:*` 命名空间、同一 `<domain 复数>-changed` 风格）。
+/// 语义锚「价格数据已变更」，覆盖 MarketPrice / PriceHistory / FxRateHistory；由两个
+/// 行情同步命令按判定发出，前端价格消费方各自订阅后重拉自身数据。
+pub const PRICES_CHANGED: &str = "ledger:prices-changed";
 
 /// 进程级应用句柄镜像：自动备份的深路径执行点（如写时顺带检查
 /// [`crate::auto_backup::on_write`]）只持有 `&Connection`，拿不到 Tauri 的
@@ -46,6 +57,13 @@ pub fn emit_backups_changed_current() {
     if let Some(app) = EVENT_APP.get() {
         emit_backups_changed(app);
     }
+}
+
+/// 发出 `ledger:prices-changed` 信号（无 payload）。事件发射失败不影响同步结果，静默忽略。
+/// 「是否 emit」不在本模块判定：两同步命令经 `commands::sync::should_emit_prices_changed`
+/// 统一判定后才走到这里。
+pub fn emit_prices_changed(app: &AppHandle) {
+    let _ = app.emit(PRICES_CHANGED, ());
 }
 
 /// 参考写入 IPC 命令清单：命中即改动参考表，成功后应 emit `ledger:changed`。
@@ -128,6 +146,14 @@ mod tests {
         // 与 ledger:changed 平行：同一命名空间、无 payload 的粗粒度信号（issue #129）。
         assert_eq!(BACKUPS_CHANGED, "ledger:backups-changed");
         assert!(BACKUPS_CHANGED.starts_with("ledger:"));
+    }
+
+    #[test]
+    fn prices_changed_event_name() {
+        // 与 ledger:changed / ledger:backups-changed 平行：同一命名空间、无 payload
+        // 的粗粒度信号（ADR-0031，issue #236），命名随 `<domain 复数>-changed` 风格。
+        assert_eq!(PRICES_CHANGED, "ledger:prices-changed");
+        assert!(PRICES_CHANGED.starts_with("ledger:"));
     }
 
     /// 未注入句柄时深路径发射静默跳过，不 panic。

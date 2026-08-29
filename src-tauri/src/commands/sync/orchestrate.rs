@@ -32,6 +32,17 @@ pub(super) enum SyncOutcome {
     Cancelled { inserted: usize, updated: usize },
 }
 
+impl SyncOutcome {
+    /// 本次运行落库计数（新增 + 更新），完成与中断同口径——中断保留已落库数据
+    /// （upsert 幂等）。供价格失效信号判定（ADR-0031）取用。
+    pub(super) fn written(&self) -> usize {
+        match self {
+            SyncOutcome::Completed { inserted, updated }
+            | SyncOutcome::Cancelled { inserted, updated } => inserted + updated,
+        }
+    }
+}
+
 /// 连接访问器接缝（issue #147）：分页循环的落库操作经它短暂获取/释放连接，
 /// 网络拉取与进度推送不持有连接。生产实现为 [`GlobalConn`]；测试注入 mock
 /// 以观察锁时序（拉取期间锁可用、每页落库才加锁）。

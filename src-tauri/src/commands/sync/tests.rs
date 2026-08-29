@@ -1506,3 +1506,22 @@ fn week_key_matches_sqlite_week_start_column() {
         d += chrono::Duration::days(1);
     }
 }
+
+// ---------------------------------------------------------------------------
+// 价格失效信号判定（issue #236，ADR-0031 决策 2）：两同步命令共用的纯判定，
+// 四态钉住——成功有落库 / 零更新 / 中断有落库 / 失败无落库。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn should_emit_prices_changed_pins_four_terminal_states() {
+    use super::should_emit_prices_changed;
+
+    // 成功且有落库：发。
+    assert!(should_emit_prices_changed(Some(3)));
+    // 零更新（无持仓/全部跳过，落库 0）：库内零变化，不发。
+    assert!(!should_emit_prices_changed(Some(0)));
+    // 用户中断但有落库（中断保留已落库价格，不发信号即失真）：发。
+    assert!(should_emit_prices_changed(Some(120)));
+    // 失败且无落库：不发。
+    assert!(!should_emit_prices_changed(None));
+}
