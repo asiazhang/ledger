@@ -32,6 +32,7 @@ fn create_txn(
     date: String,
 ) {
     let input = TransactionInput {
+        merchant_name: None,
         kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: "CNY".into(),
@@ -64,6 +65,7 @@ fn create_txn_with_note(
     note: String,
 ) {
     let input = TransactionInput {
+        merchant_name: None,
         kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: "CNY".into(),
@@ -94,6 +96,7 @@ fn try_transfer_without_target(
     date: String,
 ) {
     let input = TransactionInput {
+        merchant_name: None,
         kind: TransactionKind::Transfer,
         amount_cents: amount,
         currency_code: "CNY".into(),
@@ -128,6 +131,7 @@ fn try_create_txn(
     date: String,
 ) {
     let input = TransactionInput {
+        merchant_name: None,
         kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: "CNY".into(),
@@ -160,6 +164,7 @@ fn create_transfer(
     date: String,
 ) {
     let input = TransactionInput {
+        merchant_name: None,
         kind: TransactionKind::Transfer,
         amount_cents: amount,
         currency_code: "CNY".into(),
@@ -189,6 +194,7 @@ fn create_refund(world: &mut LedgerWorld, amount: i64, date: String) {
         .clone()
         .expect("没有上一笔交易可关联");
     let input = TransactionInput {
+        merchant_name: None,
         kind: TransactionKind::Refund,
         amount_cents: amount,
         currency_code: "CNY".into(),

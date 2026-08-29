@@ -32,6 +32,7 @@ fn create_txn_with_merchant_currency(
     merchant_name: String,
 ) {
     let input = TransactionInput {
+        merchant_name: None,
         kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: currency,

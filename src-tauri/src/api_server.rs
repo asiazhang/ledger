@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use crate::error::AppError;
 use crate::models::{
     Account, AccountBalance, AccountInput, AccountType, AccountUpdateInput, Category,
-    CategoryInput, CreateTransactionResult, Currency, Transaction, TransactionBatchInput,
+    CategoryInput, CreateTransactionResult, Currency, Merchant, Transaction, TransactionBatchInput,
     TransactionInput, TransactionListFilter, TransactionListResult, UpdateTransactionInput,
 };
 use crate::transaction::amount::TransactionKind;
@@ -73,9 +73,10 @@ struct ErrorResponse {
     info(
         title = "Ledger 记账 API",
         description = "Ledger 记账应用本地 API（基础地址 http://127.0.0.1:9527/api/v1），供 AI 编程助手读写记账数据\
-                      （账户/分类/交易），主要场景为数据迁移，亦可直接录入。\
+                      （账户/分类/商户/交易），主要场景为数据迁移，亦可直接录入。\
                       所有金额均以整数分（`_cents` 后缀）为单位。\
-                      账户/分类按自然键幂等创建；批量交易默认去重，命中返回 `duplicate: true`。",
+                      账户/分类按自然键幂等创建；交易可携带商户名字符串（后端精确匹配复用或即建）；\
+                      批量交易默认去重，命中返回 `duplicate: true`。",
         version = "0.1.0"
     ),
     paths(
@@ -87,6 +88,7 @@ struct ErrorResponse {
         create_category_handler,
         delete_category_handler,
         list_currencies_handler,
+        list_merchants_handler,
         list_transactions_handler,
         batch_create_transactions_handler,
         update_transaction_handler,
@@ -102,6 +104,7 @@ struct ErrorResponse {
         Category,
         CategoryInput,
         Currency,
+        Merchant,
         Transaction,
         TransactionInput,
         UpdateTransactionInput,
@@ -149,6 +152,7 @@ pub fn build_router(state: ApiState) -> Router {
             put(update_transaction_handler).delete(delete_transaction_handler),
         )
         .route("/api/v1/currencies", get(list_currencies_handler))
+        .route("/api/v1/merchants", get(list_merchants_handler))
         .route("/api/v1/import/knowledge", get(import_knowledge_handler))
         // 注意：axum 的 `Router::layer` 只包裹“当前已有的” route——若在声明任何 route
         // 之前调用，会对空路由集合空操作（`route_layer` 则会在无 route 时 panic，强制先
@@ -390,6 +394,32 @@ async fn delete_category_handler(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// 商户列表（AI 导入契约，issue #194 / ADR-0028）：供 AI 在提交交易前拉取在用商户，
+/// 按已有名字填 `merchant_name` 复用字典（避免同义名分裂商户字典）。仅返回在用行
+/// （`is_deleted=0`，与 IPC `list_merchants` 缺省一致）；软删商户不可再被新交易选择。
+#[utoipa::path(
+    get,
+    path = "/api/v1/merchants",
+    tag = "merchants",
+    summary = "列出所有在用商户",
+    description = "返回商户字典的全部在用行（`is_deleted=0`），按名称排序。\
+                  提交交易时可带 `merchant_name`（商户名字符串）：后端按名字精确匹配在用商户，\
+                  命中复用、未命中即建，AI 无需自行去重；建议先拉取本列表、按已有名字提交，\
+                  避免同义名分裂商户字典。仅 `income`/`expense` 可携带商户（refund 自动继承原支出商户）。",
+    responses(
+        (status = 200, description = "在用商户列表", body = [Merchant]),
+        (status = 500, description = "数据库错误", body = ErrorResponse)
+    )
+)]
+async fn list_merchants_handler(
+    State(conn): State<Arc<Mutex<Connection>>>,
+) -> Result<Json<Vec<Merchant>>, AppError> {
+    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    Ok(Json(crate::commands::list_merchants_internal(
+        &conn, false,
+    )?))
+}
+
 #[utoipa::path(
     get,
     path = "/api/v1/currencies",
@@ -457,7 +487,8 @@ async fn list_transactions_handler(
                   跳过、同键但本轮内容不同仍跳过；不同键但内容完全相同则都保留），命中已存在（`is_deleted=0`）\
                   交易返回 `{success: true, duplicate: true, id: <已有 id>}`；命中查询走部分唯一索引，非全表扫描。\
                   不带幂等键的行回退到确定性内容哈希 `sha256(date|kind|amount_cents|currency_code|account_id|to_account_id)`\
-                  去重（冻结契约，命中返回 `id: null`）。单条业务校验失败（金额/转账/退款等）返回 `success: false` 并附带 `error`，不影响其他交易；\
+                  去重（冻结契约，命中返回 `id: null`）。行可携带 `merchant_name`（商户名字符串，与 `merchant_id` 互斥）：\
+                  后端精确匹配在用商户名，命中复用、未命中即建；幂等重放不产生碎商户。单条业务校验失败（金额/转账/退款/商户等）返回 `success: false` 并附带 `error`，不影响其他交易；\
                   `kind` 为闭集枚举（income/expense/transfer/refund/buy/sell/dividend/split），非法 kind 属请求体格式错误，整批返回 4xx。",
     request_body = TransactionBatchInput,
     responses(
@@ -549,7 +580,7 @@ const IMPORT_KNOWLEDGE: &str = include_str!("../prompts/import-knowledge.md");
     summary = "获取 LLM 导入知识（可直接注入系统提示词）",
     description = "返回精简的导入约定文本（text/plain），供 AI 编程助手直接注入。\
                   覆盖 Pixiu 列映射与正负判定 kind、`A → B` 转账拆分、`无`/`→ 无` 映射黑洞账户、\
-                  中文币种名映射、金额分单位、日期格式、dedup 语义；文本内嵌 `/api/v1/openapi.json` 地址。",
+                  中文币种名映射、商户名携带（精确匹配复用或即建）、金额分单位、日期格式、dedup 语义；文本内嵌 `/api/v1/openapi.json` 地址。",
     responses(
         (status = 200, description = "text/plain 格式的导入知识", content_type = "text/plain", body = String)
     )

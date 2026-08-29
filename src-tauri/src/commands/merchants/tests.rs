@@ -1,8 +1,8 @@
 //! 商户字典命令核心逻辑测试（issue #188 / ADR-0028）。
 
 use crate::commands::merchants::{
-    create_merchant_internal, delete_merchant_internal, list_merchants_internal,
-    update_merchant_internal,
+    create_merchant_by_name, create_merchant_internal, delete_merchant_internal,
+    find_merchant_by_name, list_merchants_internal, update_merchant_internal,
 };
 use crate::error::AppError;
 use crate::models::{Merchant, MerchantInput, MerchantUpdateInput};
@@ -227,4 +227,71 @@ fn recreate_same_name_after_soft_delete() {
     let merchants = list_merchants(&conn);
     assert_eq!(merchants.len(), 1);
     assert_eq!(merchants[0].id, new_id);
+}
+
+/// 商户名查找（issue #194 / ADR-0028）：命中返回 id，未命中返回 None（不落库）。
+#[test]
+fn find_merchant_by_name_hits_active_exact_match() {
+    let conn = setup();
+    assert_eq!(find_merchant_by_name(&conn, "盒马").unwrap(), None);
+    let id = create_merchant_by_name(&conn, "盒马").unwrap();
+    assert_eq!(find_merchant_by_name(&conn, "盒马").unwrap(), Some(id));
+}
+
+/// 查找先 trim（AI 生成文本常带首尾空白），trim 后为空返回 None（不落库）。
+#[test]
+fn find_merchant_by_name_trims_and_blank_is_none() {
+    let conn = setup();
+    let id = create_merchant_by_name(&conn, "京东").unwrap();
+    assert_eq!(find_merchant_by_name(&conn, "  京东\t").unwrap(), Some(id));
+    assert_eq!(find_merchant_by_name(&conn, "   ").unwrap(), None);
+    assert!(list_merchants(&conn).len() == 1);
+}
+
+/// 即建：未命中创建并返回新 id，返回的商户名已 trim。
+#[test]
+fn create_merchant_by_name_creates_trimmed() {
+    let conn = setup();
+    let id = create_merchant_by_name(&conn, "  盒马 ").unwrap();
+    let merchants = list_merchants(&conn);
+    assert_eq!(merchants.len(), 1);
+    assert_eq!(merchants[0].id, id);
+    assert_eq!(merchants[0].name, "盒马");
+}
+
+/// 即建命中复用：同名在用商户直接返回已有 id，不新建（幂等重放不碎商户的前提）。
+#[test]
+fn create_merchant_by_name_reuses_exact_match() {
+    let conn = setup();
+    let first = create_merchant_by_name(&conn, "京东").unwrap();
+    let second = create_merchant_by_name(&conn, "京东").unwrap();
+    assert_eq!(first, second);
+    assert_eq!(list_merchants(&conn).len(), 1);
+}
+
+/// 即建 trim 后为空 → 明确错误，不落库。
+#[test]
+fn create_merchant_by_name_blank_is_invalid() {
+    let conn = setup();
+    let err = create_merchant_by_name(&conn, "   ").unwrap_err();
+    assert!(matches!(err, AppError::Invalid(ref msg) if msg.contains("商户名不能为空")));
+    assert!(list_merchants(&conn).is_empty());
+}
+
+/// 软删商户不算命中：同名即建新行（在用行精确匹配）。
+#[test]
+fn create_merchant_by_name_ignores_soft_deleted() {
+    let conn = setup();
+    let old_id = create_merchant_internal(
+        &conn,
+        MerchantInput {
+            name: "京东".into(),
+            icon: None,
+            color: None,
+        },
+    )
+    .unwrap();
+    delete_merchant_internal(&conn, &old_id).unwrap();
+    let new_id = create_merchant_by_name(&conn, "京东").unwrap();
+    assert_ne!(new_id, old_id);
 }

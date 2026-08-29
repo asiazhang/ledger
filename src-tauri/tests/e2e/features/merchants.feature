@@ -2,6 +2,8 @@ Feature: 商户字典与交易带商户
   商户是参考数据字典（ADR-0028）：交易以 merchant_id 引用，expense/refund/income 可携带商户，
   transfer/buy/sell/dividend/split 行为层拒绝；退款自动继承原支出商户（与账户/币种/分类同款继承语义）；
   软删商户不可再被新交易选择、历史引用照常显示，改名即时生效（引用指向 id，不回刷历史行）。
+  AI 导入提交商户名字符串（merchant_name）：后端精确匹配在用商户名，命中复用、未命中即建，
+  归一化责任收口在后端，幂等重放不产生碎商户（issue #194）。
 
   Scenario: 迁移后 schema 就位：merchants 表与 transactions.merchant_id 列存在
     Then 商户表应存在且交易表含 merchant_id 列
@@ -71,3 +73,21 @@ Feature: 商户字典与交易带商户
     And 修改商户 "京东" 名称为 "京东商城"
     Then 第 1 条交易商户应为 "京东商城"
     And 商户列表应包含 "京东商城"
+
+  Scenario: AI 导入带商户名（issue #194）：未命中即建、命中复用、幂等重放不碎
+    Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
+    And 存在商户 "永辉"
+    When 批量导入交易
+      | kind    | 金额 | 币种 | 账户 | 日期       | 商户 | 幂等键 |
+      | expense | 1000 | CNY  | 现金 | 2026-08-01 | 盒马 | row:1  |
+      | expense | 500  | CNY  | 现金 | 2026-08-02 | 永辉 | row:2  |
+      | income  | 200  | CNY  | 现金 | 2026-08-03 | 盒马 | row:3  |
+    Then 最近一次导入应有 0 条去重跳过 3 条新写入
+    And 商户列表应包含 2 条记录
+    And 商户列表应包含 "盒马"
+    And 商户列表应包含 "永辉"
+    And 第 1 条交易商户应为 "盒马"
+    When 重跑刚才的批量导入
+    Then 最近一次导入应有 3 条去重跳过 0 条新写入
+    And 商户列表应包含 2 条记录
+    And 第 1 条交易商户应为 "盒马"

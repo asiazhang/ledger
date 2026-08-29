@@ -1,7 +1,8 @@
 //! 交易类型行为层（issue #72 / spec #69 候选 2）：按 kind 收敛分派。
 //!
 //! 每类 kind 的行为——校验、归一化、应用副作用、回退——集中于此，对外暴露三个能力：
-//! - [`plan`]：校验 + 归一化（normalize→plan，不落库、不产生副作用）；
+//! - [`plan`]：校验 + 归一化（normalize→plan，交易行不落库；商户名归一化含参考数据字典的
+//!   未命中即建，见下）；
 //! - [`apply`]：应用计划的副作用（普通 kind 无副作用；buy 建仓 / sell 卖出匹配）；
 //! - [`revert`]：回退一笔已存在交易（按旧 kind）的副作用（普通 kind 无副作用）。
 //!
@@ -42,11 +43,20 @@ impl Plan {
     }
 }
 
-/// 校验并归一化一笔交易输入为计划（不落库、不产生副作用）。
+/// 校验并归一化一笔交易输入为计划（交易行不落库）。
 ///
 /// `existing_merchant_id`：修改路径该行当前的商户 id（创建路径传 None）——提交商户
 /// 与其相同视为保持历史引用（软删商户的历史交易仍可修改其他字段，见
 /// [`writer::normalize`] 的商户校验）；改选其他商户按新选择校验在用。
+///
+/// 商户名归一化（AI 导入契约，issue #194）：输入带 `merchant_name` 时在此解析为
+/// `merchant_id`——精确匹配在用商户名，命中复用、未命中即建。两段式避免碎商户：
+/// 先查（[`merchants::find_merchant_by_name`]），未命中则等行内校验全部通过后
+/// 再即建（[`merchants::create_merchant_by_name`]）——金额非法等校验失败的行
+/// 不会残留无引用的商户行。这是「无副作用」的唯一例外：商户字典即建是参考数据
+/// 归一化，收口在行为层使全部写路径（HTTP 批量导入 / IPC 单笔创建 / 按 id 修改）
+/// 自然走到；商户创建与交易落库同处调用方持有的事务，中途回滚不残留碎商户。幂等重放不产生碎商户：批量导入命中去重的行不会
+/// 走到本函数，同批内首行即建、后续行按名精确匹配复用。
 ///
 /// 单点分派全部 8 种 kind：通用 kind 经 Writer 接缝 [`writer::normalize`]（金额>0、
 /// transfer 目标账户、refund 继承原支出等校验 + 本位币折算）；buy/sell 委托投资域
@@ -59,11 +69,11 @@ pub(crate) fn plan(
     existing_merchant_id: Option<&str>,
 ) -> Result<Plan> {
     let kind = input.kind;
-    // 商户携带收口（issue #188 / ADR-0028）：expense / refund / income 可携带商户；
-    // transfer / buy / sell / dividend / split 行为层拒绝（schema 层 merchant_id
-    // 允许 NULL、不设 kind 限制，放开无需再改表）。refund 携带的商户在
-    // [`writer::normalize`] 里被原支出商户覆盖（继承语义），此处不拦截。
-    if input.merchant_id.is_some()
+    // 商户携带收口（issue #188 / ADR-0028 + #194 商户名）：expense / refund / income 可携带
+    // 商户（merchant_id 或 merchant_name）；transfer / buy / sell / dividend / split 行为层
+    // 拒绝（schema 层 merchant_id 允许 NULL、不设 kind 限制，放开无需再改表）。refund 携带
+    // 的商户在 [`writer::normalize`] 里被原支出商户覆盖（继承语义），此处不拦截。
+    if (input.merchant_id.is_some() || input.merchant_name.is_some())
         && !matches!(
             kind,
             TransactionKind::Income | TransactionKind::Expense | TransactionKind::Refund
@@ -76,7 +86,31 @@ pub(crate) fn plan(
         | TransactionKind::Expense
         | TransactionKind::Transfer
         | TransactionKind::Refund => {
-            let norm = writer::normalize(
+            // 商户名解析须在 kind 收口之后：非 income/expense/refund 的行在此前已拒绝，
+            // 不会先建商户再拒绝（避免产生字典碎片）。名字与 id 同时提供属请求错误。
+            // refund 继承原支出商户（writer::normalize 覆盖）：携带的商户（id 或名字）
+            // 一律忽略，不解析、不即建——否则即建商户必成孤儿（issue #194）。
+            let (merchant_id, pending_name) = if kind == TransactionKind::Refund {
+                (None, None)
+            } else {
+                match (&input.merchant_name, &input.merchant_id) {
+                    (Some(_), Some(_)) => {
+                        return Err(AppError::Invalid(
+                            "merchant_id 与 merchant_name 不可同时提供".into(),
+                        ));
+                    }
+                    (Some(name), None) => {
+                        match crate::commands::merchants::find_merchant_by_name(conn, name)? {
+                            // 命中复用：以已有 id 参与行内校验。
+                            Some(id) => (Some(id), None),
+                            // 未命中：先过行内校验，通过后再即建（不残留碎商户）。
+                            None => (None, Some(name.to_string())),
+                        }
+                    }
+                    (None, id) => (id.clone(), None),
+                }
+            };
+            let mut norm = writer::normalize(
                 conn,
                 &writer::Input {
                     kind,
@@ -85,13 +119,19 @@ pub(crate) fn plan(
                     account_id: input.account_id.clone(),
                     to_account_id: input.to_account_id.clone(),
                     category_id: input.category_id.clone(),
-                    merchant_id: input.merchant_id.clone(),
+                    merchant_id,
                     existing_merchant_id: existing_merchant_id.map(str::to_string),
                     refund_of_transaction_id: input.refund_of_transaction_id.clone(),
                     note: input.note.clone(),
                     date: input.date.clone(),
                 },
             )?;
+            // 行内校验全部通过后才即建商户：未命中名字在此落定（失败行不产生碎商户）。
+            if let Some(name) = pending_name {
+                norm.merchant_id = Some(crate::commands::merchants::create_merchant_by_name(
+                    conn, &name,
+                )?);
+            }
             Ok(Plan::Common(norm))
         }
         TransactionKind::Buy | TransactionKind::Sell => {

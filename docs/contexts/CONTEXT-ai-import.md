@@ -11,10 +11,10 @@
   - 仅监听 localhost，无认证，适用于单机桌面场景。
   - URL 前缀 `/api/v1`，JSON 请求/响应。
   - 错误格式复用 `{kind, message}`。
-  - **场景**：主要场景是数据迁移（从第三方 APP 的 CSV/Excel 导入），亦可直接录入记账（账户/分类幂等创建、批量写核心交易域 Transaction）；迁移完成后支持读回验证与纠错（删除/修改，见 AIReadbackVerification / AICleanupDeletion / AICleanupModify）。
-  - **暴露的接口**（12 个端点）：`openapi.json`、`accounts`（list/create/update/delete）、`accounts/balances`（含黑洞账户）、`categories`（list/create/delete）、`transactions`（list，可按日期/转出账户/涉及账户/类型过滤）、`transactions/batch`、`transactions/{id}`（delete/update）、`currencies`（list）、`import/knowledge`。
-  - `accounts` / `categories` 的 create 按自然键幂等（同名复用已有记录）；`transactions/batch` 支持 `dedup` 参数（默认开启）与客户端 `idempotency_key`（见 ImportDedup / IdempotencyKey）。
-  - `import/knowledge` 返回精简的导入约定文本（Pixiu 列映射、转账拆分、黑洞账户、币种映射、分单位、日期、dedup），供 AI 直接注入系统提示词。
+  - **场景**：主要场景是数据迁移（从第三方 APP 的 CSV/Excel 导入），亦可直接录入记账（账户/分类幂等创建、交易携带商户名字符串、批量写核心交易域 Transaction）；迁移完成后支持读回验证与纠错（删除/修改，见 AIReadbackVerification / AICleanupDeletion / AICleanupModify）。
+  - **暴露的接口**（13 个端点）：`openapi.json`、`accounts`（list/create/update/delete）、`accounts/balances`（含黑洞账户）、`categories`（list/create/delete）、`transactions`（list，可按日期/转出账户/涉及账户/商户/类型过滤）、`transactions/batch`、`transactions/{id}`（delete/update）、`currencies`（list）、`merchants`（list，在用商户字典）、`import/knowledge`。
+  - `accounts` / `categories` 的 create 按自然键幂等（同名复用已有记录）；`transactions/batch` 支持 `dedup` 参数（默认开启）与客户端 `idempotency_key`（见 ImportDedup / IdempotencyKey）；交易行可带 `merchant_name`（商户名字符串，与 `merchant_id` 互斥）：后端写入路径精确匹配在用商户名，命中复用、未命中即建——商户归一化责任收口在后端，AI 不负责商户去重，幂等重放不产生碎商户（issue #194 / ADR-0028）。
+  - `import/knowledge` 返回精简的导入约定文本（Pixiu 列映射、转账拆分、黑洞账户、币种映射、商户约定、分单位、日期、dedup），供 AI 直接注入系统提示词。
 - **别名**：不使用"本地 API"（过于泛化）、"后端 API"（与 Tauri IPC 混淆）。
 
 ## AIReadbackVerification（AI 读回验证）

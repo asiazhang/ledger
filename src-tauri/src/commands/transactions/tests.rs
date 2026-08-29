@@ -26,6 +26,7 @@ fn make_input(
     date: &str,
 ) -> TransactionInput {
     TransactionInput {
+        merchant_name: None,
         kind,
         amount_cents: amount,
         currency_code: "CNY".into(),
@@ -85,6 +86,7 @@ fn create_transfer_with_to_account() {
     let id = insert_transaction(
         &conn,
         TransactionInput {
+            merchant_name: None,
             kind: TransactionKind::Transfer,
             amount_cents: 3000,
             currency_code: "CNY".into(),
@@ -856,6 +858,7 @@ fn make_buy_input(
     fee: i64,
 ) -> TransactionInput {
     TransactionInput {
+        merchant_name: None,
         kind: TransactionKind::Buy,
         amount_cents: 0,
         currency_code: "USD".into(),
@@ -983,6 +986,7 @@ fn create_refund_linked_to_expense() {
     let expense_id = insert_transaction(
         &conn,
         TransactionInput {
+            merchant_name: None,
             kind: TransactionKind::Expense,
             amount_cents: 1000,
             currency_code: "CNY".into(),
@@ -1005,6 +1009,7 @@ fn create_refund_linked_to_expense() {
     let refund_id = insert_transaction(
         &conn,
         TransactionInput {
+            merchant_name: None,
             kind: TransactionKind::Refund,
             amount_cents: 200,
             currency_code: "CNY".into(),

@@ -66,6 +66,7 @@ fn create_expense_txn_with_currency(
     date: String,
 ) {
     let input = TransactionInput {
+        merchant_name: None,
         kind: TransactionKind::Expense,
         amount_cents: amount,
         currency_code: currency,

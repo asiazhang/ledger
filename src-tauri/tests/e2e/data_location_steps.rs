@@ -44,6 +44,7 @@ fn seed_db(conn: &Connection, account: &str, count: usize) {
         .unwrap();
     for i in 0..count {
         let input = TransactionInput {
+            merchant_name: None,
             kind: TransactionKind::Expense,
             amount_cents: 1000 + i as i64,
             currency_code: "CNY".into(),
