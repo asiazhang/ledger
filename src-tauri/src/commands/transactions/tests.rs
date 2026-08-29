@@ -973,10 +973,59 @@ fn delete_transaction_internal_rejects_partially_sold_buy() {
     create_transaction_internal(&conn, sell).unwrap();
 
     let err = delete_transaction_internal(&conn, &buy_id).unwrap_err();
+    // 守卫文案按入口内化（ADR-0030 决策 #4）：删除入口固定返回自己的措辞，
+    // 与修改入口对同一守卫各持措辞、互不漂移。
     match err {
-        AppError::Invalid(msg) => assert!(msg.contains("部分卖出")),
+        AppError::Invalid(msg) => assert_eq!(msg, "该买入交易已有部分卖出，无法删除"),
         other => panic!("expected Invalid, got {other:?}"),
     }
+}
+
+/// 注入「软删中途失败」：行为层 revert（清理持仓批次）成功后、软删 UPDATE 被
+/// 触发器 RAISE(ABORT) 挡下——纯测试侧手段（spec #169 定案），产品代码零 hook。
+fn inject_soft_delete_failure(conn: &Connection) {
+    conn.execute(
+        "CREATE TRIGGER block_soft_delete BEFORE UPDATE ON transactions \
+         BEGIN SELECT RAISE(ABORT, '测试注入：软删失败'); END",
+        [],
+    )
+    .unwrap();
+}
+
+/// 删除路径事务缺口修复（issue #229 / ADR-0030 决策 #3）：revert（清理持仓批次）
+/// 与软删 UPDATE 纳入同一事务，软删中途失败整体回滚——不再出现
+/// 「持仓已删而交易仍在」的中间态，报错返回。
+#[test]
+fn delete_transaction_internal_rolls_back_lot_cleanup_when_soft_delete_fails() {
+    let conn = setup();
+    setup_investment_account(&conn, "acc-inv-rb", "inst-rb2");
+
+    let buy_id = create_transaction_internal(
+        &conn,
+        make_buy_input("acc-inv-rb", "inst-rb2", 10.0, 10000, 0),
+    )
+    .unwrap();
+    inject_soft_delete_failure(&conn);
+
+    let err = delete_transaction_internal(&conn, &buy_id).unwrap_err();
+    assert!(
+        err.to_string().contains("测试注入：软删失败"),
+        "应上抛注入的软删错误，实际: {err:?}"
+    );
+
+    // 数据终态：交易未被软删，持仓批次与买卖明细原样保留。
+    let (deleted, lots, stx): (i64, i64, i64) = conn
+        .query_row(
+            "SELECT (SELECT is_deleted FROM transactions WHERE id=?1), \
+                    (SELECT COUNT(*) FROM security_lots WHERE buy_transaction_id=?1), \
+                    (SELECT COUNT(*) FROM security_transactions WHERE transaction_id=?1)",
+            params![buy_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(deleted, 0, "软删 UPDATE 失败，交易不应被软删除");
+    assert_eq!(lots, 1, "回滚后持仓批次不应残留删除");
+    assert_eq!(stx, 1, "回滚后买卖明细不应残留删除");
 }
 
 #[test]
@@ -1198,8 +1247,9 @@ fn update_transaction_internal_rejects_partially_sold_buy() {
         make_buy_input("acc-inv2", "inst-msft", 5.0, 10000, 0),
     )
     .unwrap_err();
+    // 守卫文案按入口内化（ADR-0030 决策 #4）：修改入口固定返回自己的措辞。
     match err {
-        AppError::Invalid(msg) => assert!(msg.contains("部分卖出")),
+        AppError::Invalid(msg) => assert_eq!(msg, "该买入交易已有部分卖出，无法修改"),
         other => panic!("expected Invalid, got {other:?}"),
     }
 }
@@ -1704,6 +1754,63 @@ fn create_nested_mode_leaves_rollback_ownership_to_outer_holder() {
         .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
         .unwrap();
     assert_eq!(still_open, 1, "嵌套失败不应拖垮外层已写的行");
+    conn.execute("ROLLBACK", []).unwrap();
+}
+
+/// 嵌套模式（外层事务中）：update 加入外层、失败直接返回错误，回滚归外层持有者
+/// ——Ok 不提交（外层 ROLLBACK 即消失）、Err 不回滚外层已写的行。
+#[test]
+fn update_nested_mode_leaves_rollback_ownership_to_outer_holder() {
+    let conn = setup();
+    insert_account(&conn, "acc-un1", "现金", "cash", "CNY");
+    let id = create_transaction_internal(
+        &conn,
+        make_input("acc-un1", TransactionKind::Income, 1000, "2026-01-01"),
+    )
+    .unwrap();
+
+    // 加入外层：Ok 不自持 COMMIT——外层 ROLLBACK 后修改消失，
+    // 证明提交点归外层持有者（若 update 自作主张提交，ROLLBACK 会因无活动事务报错）。
+    conn.execute("BEGIN", []).unwrap();
+    update_transaction_internal(
+        &conn,
+        &id,
+        make_input("acc-un1", TransactionKind::Income, 2000, "2026-01-01"),
+    )
+    .expect("嵌套模式下成功修改应直接返回");
+    conn.execute("ROLLBACK", []).unwrap();
+    let amount: i64 = conn
+        .query_row(
+            "SELECT amount_cents FROM transactions WHERE id=?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(amount, 1000, "嵌套模式的提交权在外层：外层回滚后修改应消失");
+
+    // 加入外层：Err 直接返回错误、不回滚外层——外层已写的行保留，去留由外层决定。
+    conn.execute("BEGIN", []).unwrap();
+    conn.execute(
+        "INSERT INTO transactions (id,kind,amount_cents,currency_code,amount_native_cents,account_id,date,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES ('outer-row-u','income',1,'CNY',1,'acc-un1','2026-01-01','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+        [],
+    )
+    .unwrap();
+    let err = update_transaction_internal(
+        &conn,
+        &id,
+        make_input("acc-un1", TransactionKind::Expense, 0, "2026-01-02"),
+    )
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("金额必须大于 0"),
+        "嵌套模式失败应直接返回业务错误，实际: {err:?}"
+    );
+    // 外层事务仍开启且已写行仍在（若嵌套失败自行回滚外层，此计数会归零）：
+    let still_open: i64 = conn
+        .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(still_open, 2, "嵌套失败不应拖垮外层已写的行");
     conn.execute("ROLLBACK", []).unwrap();
 }
 

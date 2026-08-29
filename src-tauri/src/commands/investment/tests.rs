@@ -1304,7 +1304,7 @@ fn holdings_as_of_sums_multiple_buys_and_sells_within_same_week() {
         (TransactionKind::Sell, 4.0, 1600, "2026-02-05"),
         (TransactionKind::Buy, 2.0, 1500, "2026-02-06"),
     ] {
-        insert_transaction(
+        create_transaction_internal(
             &conn,
             make_trade_input(kind, "acc-ao", "inst-ao", qty, price, date),
         )
@@ -1328,7 +1328,7 @@ fn holdings_as_of_replays_flow_before_query_range_start() {
     let conn = setup_db();
     insert_account(&conn, "acc-ao2", "证券户", "investment", "CNY");
     insert_instrument(&conn, "inst-ao2", "600519", "贵州茅台", "CNY");
-    insert_transaction(
+    create_transaction_internal(
         &conn,
         make_trade_input(
             TransactionKind::Buy,
@@ -1355,7 +1355,7 @@ fn holdings_as_of_supports_historical_points_after_full_exit() {
     let conn = setup_db();
     insert_account(&conn, "acc-ao3", "证券户", "investment", "CNY");
     insert_instrument(&conn, "inst-ao3", "000001", "平安银行", "CNY");
-    insert_transaction(
+    create_transaction_internal(
         &conn,
         make_trade_input(
             TransactionKind::Buy,
@@ -1367,7 +1367,7 @@ fn holdings_as_of_supports_historical_points_after_full_exit() {
         ),
     )
     .unwrap();
-    insert_transaction(
+    create_transaction_internal(
         &conn,
         make_trade_input(
             TransactionKind::Sell,
@@ -1393,8 +1393,9 @@ fn holdings_as_of_is_currency_agnostic_for_cross_currency_instrument() {
     insert_account(&conn, "acc-usd", "美股户", "investment", "USD");
     insert_instrument(&conn, "inst-usd", "AAPL", "苹果", "USD");
     insert_rate_1_1(&conn, "USD"); // 买卖落库经 Amount 接缝需要当期汇率
-    insert_transaction(&conn, make_buy_input("acc-usd", "inst-usd", 5.0, 10_000, 0)).unwrap();
-    insert_transaction(
+    create_transaction_internal(&conn, make_buy_input("acc-usd", "inst-usd", 5.0, 10_000, 0))
+        .unwrap();
+    create_transaction_internal(
         &conn,
         make_sell_input("acc-usd", "inst-usd", 2.0, 11_000, 0),
     )
@@ -1411,7 +1412,7 @@ fn holdings_as_of_without_instrument_sums_whole_portfolio() {
     insert_account(&conn, "acc-ao4", "证券户", "investment", "CNY");
     insert_instrument(&conn, "inst-a", "000001", "平安银行", "CNY");
     insert_instrument(&conn, "inst-b", "600519", "贵州茅台", "CNY");
-    insert_transaction(
+    create_transaction_internal(
         &conn,
         make_trade_input(
             TransactionKind::Buy,
@@ -1423,7 +1424,7 @@ fn holdings_as_of_without_instrument_sums_whole_portfolio() {
         ),
     )
     .unwrap();
-    insert_transaction(
+    create_transaction_internal(
         &conn,
         make_trade_input(
             TransactionKind::Buy,
@@ -1459,7 +1460,7 @@ fn holdings_as_of_today_matches_holding_quantity() {
         (TransactionKind::Buy, 5.0, 1600, "2026-01-12"),
         (TransactionKind::Sell, 8.0, 1700, "2026-01-18"),
     ] {
-        insert_transaction(
+        create_transaction_internal(
             &conn,
             make_trade_input(kind, "acc-ao5", "inst-ao5", qty, price, date),
         )
@@ -1482,7 +1483,7 @@ fn holdings_as_of_today_matches_holding_quantity() {
     );
 
     // 清仓后：v_holdings 无行，as-of「今天」归零——两侧仍然一致。
-    insert_transaction(
+    create_transaction_internal(
         &conn,
         make_trade_input(
             TransactionKind::Sell,

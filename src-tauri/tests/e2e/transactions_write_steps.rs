@@ -1,7 +1,9 @@
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::commands::transactions::create_transaction_internal;
+use tauri_app_lib::commands::transactions::{
+    create_transaction_internal, delete_transaction_internal,
+};
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::models::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
@@ -222,6 +224,30 @@ fn inject_buy_lot_failure_trigger(world: &mut LedgerWorld) {
             [],
         )
         .expect("注入触发器失败");
+}
+
+/// 注入「软删中途失败」：删除买入时行为层 revert（清理持仓批次）先成功、
+/// 软删 UPDATE 被触发器 RAISE(ABORT) 挡下——纯测试侧注入（spec #169 定案），
+/// 检验 delete 编排入口把持仓清理与软删纳入同一事务、中途失败整体回滚（issue #229）。
+#[when(expr = "注入软删失败触发器")]
+fn inject_soft_delete_failure_trigger(world: &mut LedgerWorld) {
+    world_conn!(world)
+        .execute(
+            "CREATE TRIGGER block_soft_delete BEFORE UPDATE ON transactions \
+             BEGIN SELECT RAISE(ABORT, '测试注入：软删失败'); END",
+            [],
+        )
+        .expect("注入触发器失败");
+}
+
+/// 尝试删除最近一笔交易并捕获错误（供「应返回错误」断言，issue #229）。
+#[when(expr = "尝试删除最近交易")]
+fn try_delete_last_txn(world: &mut LedgerWorld) {
+    let id = world.last_transaction_id.clone().expect("没有可删除的交易");
+    world.last_error = match delete_transaction_internal(&world_conn!(world), &id) {
+        Ok(()) => None,
+        Err(e) => Some(e.to_string()),
+    };
 }
 
 #[when(expr = "创建转账 金额 {int} 从 {string} 到 {string} 日期 {string}")]
