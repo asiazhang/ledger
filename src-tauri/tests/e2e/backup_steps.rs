@@ -2,15 +2,17 @@ use std::path::PathBuf;
 
 use cucumber::{then, when};
 
-use tauri_app_lib::auto_backup::AttemptOutcome;
+use tauri_app_lib::auto_backup::{AUTO_BACKUP_INTERVAL, AttemptOutcome, get_state, set_state};
+use tauri_app_lib::commands::accounts::create_account_internal;
 use tauri_app_lib::commands::backup::{
     BackupKind, backup_db_to, expected_schema_version, read_backup_kind, restore_db_from,
 };
+use tauri_app_lib::commands::categories::{create_category_internal, delete_category_internal};
 use tauri_app_lib::commands::transactions::{
     delete_transaction_internal, update_transaction_internal,
 };
 use tauri_app_lib::db::{new_uuid, open_connection};
-use tauri_app_lib::models::TransactionInput;
+use tauri_app_lib::models::{AccountInput, AccountType, CategoryInput, TransactionInput};
 use tauri_app_lib::settings::{self, SettingKey};
 use tauri_app_lib::transaction::amount::TransactionKind;
 
@@ -183,8 +185,6 @@ fn backup_meta_kind_auto(world: &mut LedgerWorld, expected: String) {
 // 脏标记挂钩（issue #126）
 // ---------------------------------------------------------------------------
 
-use tauri_app_lib::auto_backup::get_state;
-
 #[then(expr = "自动备份脏标记应为真")]
 fn auto_backup_dirty(world: &mut LedgerWorld) {
     let state = get_state(&world_conn!(world)).unwrap();
@@ -207,12 +207,80 @@ fn delete_last_transaction(world: &mut LedgerWorld) {
         .unwrap();
 }
 
+/// 快进到下次自动备份到期：把上次备份锚点回拨一个间隔以上，使下一次
+/// 「自动备份数据库到临时目录」必到期（链式场景逐段验证多次写入的置脏）。
+/// 经模块 `set_state` 写回，锚点格式由模块保证。
+#[when(expr = "距离上次自动备份已过一天")]
+fn fast_forward_backup_due(world: &mut LedgerWorld) {
+    let conn = world_conn!(world);
+    let mut state = get_state(&conn).unwrap();
+    if let Some(iso) = state.last_backup_at.clone() {
+        let last = chrono::DateTime::parse_from_rfc3339(&iso)
+            .expect("备份锚点格式非法")
+            .with_timezone(&chrono::Utc);
+        state.last_backup_at = Some(tauri_app_lib::db::iso_at(last - AUTO_BACKUP_INTERVAL));
+    }
+    set_state(&conn, &state).expect("回拨备份锚点");
+}
+
 /// 设置写入（`app_settings`，经 settings 模块单点收口，普通锁不走出入口）——
 /// ADR-0032 的豁免路径：不置脏。
 #[when(expr = "写入一项设置")]
 fn write_a_setting(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
     settings::set(&conn, SettingKey::AutoBackupEnabled, &false).expect("写入设置");
+}
+
+// ---------------------------------------------------------------------------
+// 参考数据写路径置脏（issue #243，ADR-0032 写入口接管）
+// ---------------------------------------------------------------------------
+
+/// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）创建账户，成功即置脏。
+#[when(expr = "创建账户 {string} 类型 {string} 币种 {string}")]
+fn create_account_via_entry(world: &mut LedgerWorld, name: String, kind: String, currency: String) {
+    let input = AccountInput {
+        name,
+        kind: kind.parse::<AccountType>().expect("非法账户类型"),
+        currency_code: currency,
+        initial_balance_cents: None,
+    };
+    world
+        .db
+        .write(|conn| create_account_internal(conn, input))
+        .expect("创建账户失败");
+}
+
+/// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）创建分类，成功即置脏。
+#[when(expr = "创建分类 {string} 类型 {string}")]
+fn create_category_via_entry(world: &mut LedgerWorld, name: String, kind: String) {
+    let input = CategoryInput {
+        name,
+        kind,
+        parent_id: None,
+        icon: None,
+    };
+    world
+        .db
+        .write(|conn| create_category_internal(conn, input))
+        .expect("创建分类失败");
+}
+
+/// 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）软删分类，成功即置脏。
+#[when(expr = "删除分类 {string}")]
+fn delete_category_via_entry(world: &mut LedgerWorld, name: String) {
+    let id: String = {
+        let conn = world_conn!(world);
+        conn.query_row(
+            "SELECT id FROM categories WHERE name=?1 AND is_deleted=0 LIMIT 1",
+            rusqlite::params![name],
+            |r| r.get(0),
+        )
+        .expect("分类不存在")
+    };
+    world
+        .db
+        .write(|conn| delete_category_internal(conn, &id))
+        .expect("删除分类失败");
 }
 
 /// 尝试把最近创建的交易改为非法金额（金额必须大于 0）：修改事务内失败回滚，

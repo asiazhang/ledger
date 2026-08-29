@@ -220,10 +220,10 @@ async fn create_account_handler(
     State(app): State<Option<AppHandle>>,
     Json(input): Json<AccountInput>,
 ) -> Result<(StatusCode, Json<String>), AppError> {
-    let id = {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        crate::commands::create_account_idempotent_internal(&conn, input)?
-    };
+    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
+    let id = crate::db::write(&conn, |conn| {
+        crate::commands::create_account_idempotent_internal(conn, input)
+    })?;
     // 参考写入成功 → 通知前端重拉参考数据（issue #79）
     crate::events::emit_ledger_changed_if_present(&app);
     Ok((StatusCode::CREATED, Json(id)))
@@ -255,11 +255,11 @@ async fn update_account_handler(
     Path(id): Path<String>,
     Json(input): Json<AccountUpdateInput>,
 ) -> Result<Json<Account>, AppError> {
-    let updated = {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        crate::commands::update_account_internal(&conn, &id, input)?;
-        crate::commands::get_account_internal(&conn, &id)?
-    };
+    // 连接层统一写入口（ADR-0032）：修改与读回同一写闭包，提交点置脏/检查单点。
+    let updated = crate::db::write(&conn, |conn| {
+        crate::commands::update_account_internal(conn, &id, input)?;
+        crate::commands::get_account_internal(conn, &id)
+    })?;
     // 参考写入成功 → 通知前端重拉参考数据（issue #79）
     crate::events::emit_ledger_changed_if_present(&app);
     Ok(Json(updated))
@@ -286,10 +286,10 @@ async fn delete_account_handler(
     State(app): State<Option<AppHandle>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        crate::commands::delete_account_internal(&conn, &id)?;
-    }
+    // 连接层统一写入口（ADR-0032）：删除成功即置脏。
+    crate::db::write(&conn, |conn| {
+        crate::commands::delete_account_internal(conn, &id)
+    })?;
     // 参考写入成功 → 通知前端重拉参考数据（issue #79）
     crate::events::emit_ledger_changed_if_present(&app);
     Ok(StatusCode::NO_CONTENT)
@@ -355,10 +355,10 @@ async fn create_category_handler(
 ) -> Result<(StatusCode, Json<String>), AppError> {
     let input: CategoryInput =
         serde_json::from_str(&body).map_err(|e| AppError::Invalid(e.to_string()))?;
-    let id = {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        crate::commands::create_category_idempotent_internal(&conn, input)?
-    };
+    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
+    let id = crate::db::write(&conn, |conn| {
+        crate::commands::create_category_idempotent_internal(conn, input)
+    })?;
     // 参考写入成功 → 通知前端重拉参考数据（issue #79）
     crate::events::emit_ledger_changed_if_present(&app);
     Ok((StatusCode::CREATED, Json(id)))
@@ -385,10 +385,10 @@ async fn delete_category_handler(
     State(app): State<Option<AppHandle>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    {
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        crate::commands::delete_category_internal(&conn, &id)?;
-    }
+    // 连接层统一写入口（ADR-0032）：删除成功即置脏。
+    crate::db::write(&conn, |conn| {
+        crate::commands::delete_category_internal(conn, &id)
+    })?;
     // 参考写入成功 → 通知前端重拉参考数据（issue #79）
     crate::events::emit_ledger_changed_if_present(&app);
     Ok(StatusCode::NO_CONTENT)

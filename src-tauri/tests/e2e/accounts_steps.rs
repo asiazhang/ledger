@@ -64,15 +64,18 @@ fn try_change_currency(world: &mut LedgerWorld, name: String, currency: String) 
 #[when(expr = "调整账户 {string} 余额至 {int} 日期 {string}")]
 fn adjust_balance(world: &mut LedgerWorld, name: String, target: i64, date: String) {
     let id = world.account_id(&name);
-    match adjust_account_balance_internal(
-        &world_conn!(world),
-        &id,
-        &AccountBalanceAdjustInput {
-            target_balance_cents: target,
-            date,
-            note: None,
-        },
-    ) {
+    // 与 IPC 命令同形态：经连接层统一写入口（ADR-0032），提交点置脏/回滚不置脏。
+    match world.db.write(|conn| {
+        adjust_account_balance_internal(
+            conn,
+            &id,
+            &AccountBalanceAdjustInput {
+                target_balance_cents: target,
+                date,
+                note: None,
+            },
+        )
+    }) {
         Ok((tx_id, _)) => {
             world.last_transaction_id = Some(tx_id);
             world.last_error = None;

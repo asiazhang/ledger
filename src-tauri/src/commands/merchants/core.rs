@@ -3,6 +3,9 @@
 //! 列表 / 创建 / 更新（改名）/ 软删除；`name` 在用行全库唯一——重名创建与改名
 //! 撞名都返回明确错误（`AppError::Invalid`）。软删商户不再出现在列表（不可再被
 //! 新交易选择），历史交易引用照常保留（交易侧校验见 `transaction::writer::normalize`）。
+//!
+//! 置脏触发已收口连接层统一写入口（`db::write`，ADR-0032）：本模块对备份域零感知，
+//! 写入成功后的置脏/到期检查由调用方所在写入口闭包在提交点单点执行。
 
 use rusqlite::{Connection, OptionalExtension};
 
@@ -43,8 +46,6 @@ pub fn create_merchant_internal(conn: &Connection, input: MerchantInput) -> Resu
          VALUES (?1,?2,?3,?4,?5,?6,0)",
         rusqlite::params![id, input.name, now, now, 1, device_id()],
     )?;
-    // 脏标记挂钩（issue #126）：落库成功即置脏，到期则写时顺带触发备份。
-    crate::auto_backup::on_write(conn);
     Ok(id)
 }
 
@@ -73,8 +74,6 @@ pub fn update_merchant_internal(
         "UPDATE merchants SET name=?1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
         rusqlite::params![name, now_iso(), device_id(), id],
     )?;
-    // 脏标记挂钩（issue #126）：更新成功即置脏。
-    crate::auto_backup::on_write(conn);
     // 改名即时生效：交易以 merchant_id 引用，不回刷历史交易行（ADR-0028）。
     Ok(())
 }
@@ -97,8 +96,6 @@ pub fn delete_merchant_internal(conn: &Connection, id: &str) -> Result<()> {
         "UPDATE merchants SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id()],
     )?;
-    // 脏标记挂钩（issue #126）：删除成功即置脏。
-    crate::auto_backup::on_write(conn);
     Ok(())
 }
 
