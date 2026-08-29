@@ -1,4 +1,5 @@
 mod crud;
+mod holdings;
 mod reports;
 #[cfg(test)]
 mod tests;
