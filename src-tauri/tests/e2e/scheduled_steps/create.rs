@@ -47,26 +47,30 @@ fn create_subscription_plan_inner(
     start: String,
     note: Option<String>,
 ) {
-    let id = create_plan(
-        &world_conn!(world),
-        CreateScheduledInput {
-            kind: ScheduledKind::Subscription,
-            account_id: world.account_id(&account),
-            category_id: None,
-            amount_cents: amount,
-            currency_code: currency,
-            recurrence_type: RecurrenceType::Monthly,
-            recurrence_interval: 1,
-            recurrence_day: None,
-            start_date: start,
-            note,
-            merchant_id: None,
-            total_amount_cents: None,
-            total_occurrences: None,
-            to_account_id: None,
-        },
-    )
-    .expect("创建订阅计划失败");
+    let id = world
+        .db
+        .write(|conn| {
+            create_plan(
+                conn,
+                CreateScheduledInput {
+                    kind: ScheduledKind::Subscription,
+                    account_id: world.account_id(&account),
+                    category_id: None,
+                    amount_cents: amount,
+                    currency_code: currency,
+                    recurrence_type: RecurrenceType::Monthly,
+                    recurrence_interval: 1,
+                    recurrence_day: None,
+                    start_date: start,
+                    note,
+                    merchant_id: None,
+                    total_amount_cents: None,
+                    total_occurrences: None,
+                    to_account_id: None,
+                },
+            )
+        })
+        .expect("创建订阅计划失败");
     world.last_plan_id = Some(id);
 }
 
@@ -78,26 +82,30 @@ fn create_installment_plan(
     account: String,
     start: String,
 ) {
-    let id = create_plan(
-        &world_conn!(world),
-        CreateScheduledInput {
-            kind: ScheduledKind::Installment,
-            account_id: world.account_id(&account),
-            category_id: None,
-            amount_cents: total / occurrences,
-            currency_code: "CNY".into(),
-            recurrence_type: RecurrenceType::Monthly,
-            recurrence_interval: 1,
-            recurrence_day: None,
-            start_date: start,
-            note: None,
-            merchant_id: None,
-            total_amount_cents: Some(total),
-            total_occurrences: Some(occurrences),
-            to_account_id: None,
-        },
-    )
-    .expect("创建分期计划失败");
+    let id = world
+        .db
+        .write(|conn| {
+            create_plan(
+                conn,
+                CreateScheduledInput {
+                    kind: ScheduledKind::Installment,
+                    account_id: world.account_id(&account),
+                    category_id: None,
+                    amount_cents: total / occurrences,
+                    currency_code: "CNY".into(),
+                    recurrence_type: RecurrenceType::Monthly,
+                    recurrence_interval: 1,
+                    recurrence_day: None,
+                    start_date: start,
+                    note: None,
+                    merchant_id: None,
+                    total_amount_cents: Some(total),
+                    total_occurrences: Some(occurrences),
+                    to_account_id: None,
+                },
+            )
+        })
+        .expect("创建分期计划失败");
     world.last_plan_id = Some(id);
 }
 
@@ -110,26 +118,30 @@ fn create_scheduled_transfer_plan(
     occurrences: i64,
     start: String,
 ) {
-    let id = create_plan(
-        &world_conn!(world),
-        CreateScheduledInput {
-            kind: ScheduledKind::ScheduledTransfer,
-            account_id: world.account_id(&from),
-            category_id: None,
-            amount_cents: amount,
-            currency_code: "CNY".into(),
-            recurrence_type: RecurrenceType::Monthly,
-            recurrence_interval: 1,
-            recurrence_day: None,
-            start_date: start,
-            note: None,
-            merchant_id: None,
-            total_amount_cents: None,
-            total_occurrences: Some(occurrences),
-            to_account_id: Some(world.account_id(&to)),
-        },
-    )
-    .expect("创建定时转账计划失败");
+    let id = world
+        .db
+        .write(|conn| {
+            create_plan(
+                conn,
+                CreateScheduledInput {
+                    kind: ScheduledKind::ScheduledTransfer,
+                    account_id: world.account_id(&from),
+                    category_id: None,
+                    amount_cents: amount,
+                    currency_code: "CNY".into(),
+                    recurrence_type: RecurrenceType::Monthly,
+                    recurrence_interval: 1,
+                    recurrence_day: None,
+                    start_date: start,
+                    note: None,
+                    merchant_id: None,
+                    total_amount_cents: None,
+                    total_occurrences: Some(occurrences),
+                    to_account_id: Some(world.account_id(&to)),
+                },
+            )
+        })
+        .expect("创建定时转账计划失败");
     world.last_plan_id = Some(id);
 }
 
@@ -150,26 +162,30 @@ fn create_scheduled_transfer_plan_infinite(
             |r| r.get(0),
         )
         .unwrap();
-    let id = create_plan(
-        &world_conn!(world),
-        CreateScheduledInput {
-            kind: ScheduledKind::ScheduledTransfer,
-            account_id: world.account_id(&from),
-            category_id: None,
-            amount_cents: amount,
-            currency_code: currency,
-            recurrence_type: RecurrenceType::Monthly,
-            recurrence_interval: 1,
-            recurrence_day: None,
-            start_date: start,
-            note: None,
-            merchant_id: None,
-            total_amount_cents: None,
-            total_occurrences: None,
-            to_account_id: Some(world.account_id(&to)),
-        },
-    )
-    .expect("创建定时转账计划失败");
+    let id = world
+        .db
+        .write(|conn| {
+            create_plan(
+                conn,
+                CreateScheduledInput {
+                    kind: ScheduledKind::ScheduledTransfer,
+                    account_id: world.account_id(&from),
+                    category_id: None,
+                    amount_cents: amount,
+                    currency_code: currency,
+                    recurrence_type: RecurrenceType::Monthly,
+                    recurrence_interval: 1,
+                    recurrence_day: None,
+                    start_date: start,
+                    note: None,
+                    merchant_id: None,
+                    total_amount_cents: None,
+                    total_occurrences: None,
+                    to_account_id: Some(world.account_id(&to)),
+                },
+            )
+        })
+        .expect("创建定时转账计划失败");
     world.last_plan_id = Some(id);
 }
 
@@ -193,25 +209,27 @@ fn try_create_transfer_plan(
             |r| r.get(0),
         )
         .unwrap();
-    let result = create_plan(
-        &world_conn!(world),
-        CreateScheduledInput {
-            kind: ScheduledKind::ScheduledTransfer,
-            account_id: world.account_id(&from),
-            category_id: None,
-            amount_cents: amount,
-            currency_code: currency,
-            recurrence_type: RecurrenceType::Monthly,
-            recurrence_interval: 1,
-            recurrence_day: None,
-            start_date: start,
-            note: None,
-            merchant_id: None,
-            total_amount_cents: None,
-            total_occurrences: Some(occurrences),
-            to_account_id: Some(world.account_id(&to)),
-        },
-    );
+    let result = world.db.write(|conn| {
+        create_plan(
+            conn,
+            CreateScheduledInput {
+                kind: ScheduledKind::ScheduledTransfer,
+                account_id: world.account_id(&from),
+                category_id: None,
+                amount_cents: amount,
+                currency_code: currency,
+                recurrence_type: RecurrenceType::Monthly,
+                recurrence_interval: 1,
+                recurrence_day: None,
+                start_date: start,
+                note: None,
+                merchant_id: None,
+                total_amount_cents: None,
+                total_occurrences: Some(occurrences),
+                to_account_id: Some(world.account_id(&to)),
+            },
+        )
+    });
     world.last_error = match result {
         Err(AppError::Invalid(msg)) => Some(msg),
         Ok(_) => None,

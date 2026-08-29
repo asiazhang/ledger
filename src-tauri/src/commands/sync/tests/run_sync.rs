@@ -171,6 +171,34 @@ fn global_conn_accessor_locks_and_releases_on_real_mutex() {
     assert!(conn.try_lock().is_ok(), "with_conn 返回后必须已释放连接锁");
 }
 
+/// 生产访问器经连接层统一写入口落库（ADR-0032，#246 审计补齐）：落库成功在提交点
+/// 置脏——行情同步写入也是账本数据变化，与其它写路径同一置脏语义。
+#[test]
+fn global_conn_with_conn_marks_dirty_via_write_entry() {
+    let (conn, accessor) = locked_conn();
+    accessor
+        .with_conn(|c| {
+            c.execute("CREATE TABLE seam_probe (x INTEGER)", [])
+                .map_err(|e| crate::error::AppError::Db(e.to_string()))?;
+            Ok(())
+        })
+        .expect("落库成功");
+    let state = crate::auto_backup::get_state(&conn.lock().unwrap()).expect("读状态");
+    assert!(state.dirty, "with_conn 落库成功应置脏");
+}
+
+/// 落库闭包失败 → 不置脏（写入口闭包失败语义），错误原样上抛。
+#[test]
+fn global_conn_with_conn_error_does_not_mark_dirty() {
+    let (conn, accessor) = locked_conn();
+    let err = accessor
+        .with_conn(|_c| Err::<(), _>(crate::error::AppError::Invalid("boom".into())))
+        .unwrap_err();
+    assert!(err.to_string().contains("boom"));
+    let state = crate::auto_backup::get_state(&conn.lock().unwrap()).expect("读状态");
+    assert!(!state.dirty, "落库失败不应置脏");
+}
+
 #[test]
 fn run_sync_pages_locks_only_for_per_page_persist() {
     // 锁时间线：拉取期间锁可用（同步不持锁）；每页只在落库时短暂加锁、释放后才推进度。

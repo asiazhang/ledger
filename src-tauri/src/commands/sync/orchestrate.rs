@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use rusqlite::Connection;
 use tauri::{AppHandle, Emitter};
 
-use crate::error::{AppError, Result};
+use crate::error::Result;
 use crate::models::SyncProgress;
 
 use super::http::{MARKETS, MarketConfig, Pacer, StockItem, build_client, fetch_page, get_total};
@@ -58,11 +58,9 @@ pub(super) struct GlobalConn(pub(super) Arc<Mutex<Connection>>);
 
 impl ConnAccessor for GlobalConn {
     fn with_conn<R>(&self, f: impl FnOnce(&Connection) -> Result<R>) -> Result<R> {
-        let guard = self
-            .0
-            .lock()
-            .map_err(|e| AppError::Db(format!("数据库锁定失败: {e}")))?;
-        f(&guard)
+        // 经连接层统一写入口（ADR-0032，#246 审计补齐）：每页落库提交点置脏 +
+        // 写时顺带到期检查，同步期间被取消时已落库页的置脏语义与其它写路径一致。
+        crate::db::write(&self.0, f)
     }
 }
 
