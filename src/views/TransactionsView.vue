@@ -27,6 +27,7 @@ import RefundForm from '@/components/RefundForm.vue'
 import AddItemForm from '@/components/AddItemForm.vue'
 import { buildRowMenuOptions } from '@/components/transaction-row-menu'
 import { useCreateShortcuts, CREATE_KIND_KEYS } from '@/composables/useCreateShortcuts'
+import { useTransactionFilter } from '@/composables/useTransactionFilter'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useItemsStore } from '@/stores/items'
@@ -50,39 +51,17 @@ const dialog = useDialog()
 const route = useRoute()
 const data = ref<Transaction[]>([])
 const total = ref(0)
-const page = ref(1)
-const pageSize = ref(20)
 const loading = ref(false)
 
-/** 涉及账户过滤（账户名下钻，issue #97；手动下拉，issue #98）。
- * 组件状态是过滤的唯一事实源：URL `?account=<id>` 仅为只读初始化入口，
- * 用户手动改动不同步回 URL；无效参数（账户不存在/已删除）回退 null（全量）；
- * 不带参数进入同样复位为 null，回到全量列表。 */
-const involvingAccountId = ref<string | null>(null)
-
-/** 商户过滤（issue #191，与涉及账户过滤同款交互）：
- * 组件状态是过滤的唯一事实源：URL `?merchant=<id>` 仅为只读初始化入口，
- * 用户手动改动不同步回 URL；无效参数（商户不存在）回退 null（全量）；
- * 不带参数进入同样复位为 null。校验走 merchantMap（含软删）：
- * 软删商户仍有历史交易，需可经 URL 直达。 */
-const merchantId = ref<string | null>(null)
-
-/** 日期起止过滤（YYYY-MM-DD，与后端 date 字典序一致，含边界）。 */
-const dateFrom = ref<string | null>(null)
-const dateTo = ref<string | null>(null)
-
-/** 交易类型过滤（income / expense / transfer / refund / buy / sell）。 */
-const kind = ref<TransactionKind | null>(null)
+// 过滤状态机（ADR-0030）：「用户意图进、列表状态出」。filters / page / pageSize / 重拉版本号
+// 归 TransactionFilter 模块所有；手动筛选变更走 setFilter、清除筛选走 resetFilters、
+// 记一笔/退款回填与页大小切换走 refresh（重拉 + 翻回第一页）——
+// 「翻页归零 + 刷新」全仓仅模块统一出口一处，视图不再持有翻页归零样板与首刷防双刷标志。
+const { filters, page, pageSize, refreshVersion, setFilter, resetFilters, refresh } =
+  useTransactionFilter()
 
 /** 是否有任一激活的过滤条件（控制清除按钮可用性与空态文案）。 */
-const filtersActive = computed(
-  () =>
-    involvingAccountId.value !== null ||
-    merchantId.value !== null ||
-    dateFrom.value !== null ||
-    dateTo.value !== null ||
-    kind.value !== null,
-)
+const filtersActive = computed(() => Object.values(filters).some((v) => v !== null))
 
 /** 账户下拉选项：来自参考数据账户映射（list_accounts 不含 is_hidden 黑洞账户，沿用既有边界）。 */
 const accountOptions = computed(() =>
@@ -103,40 +82,45 @@ const kindOptions: Array<{ label: string; value: TransactionKind }> = (
   Object.entries(TRANSACTION_KIND_LABELS) as [TransactionKind, string][]
 ).map(([value, label]) => ({ label, value }))
 
-/** 首次求值不触发刷新：immediate 与 onMounted 间不双刷（onMounted 统一承担首次加载）。 */
-let firstApply = true
+/** 列表请求（ADR-0030 决策 6：请求发起、loading、行数据归视图）：以模块当前状态装配
+ * 请求参数并发起查询。 */
+async function load() {
+  loading.value = true
+  try {
+    const filter: TransactionListFilter = {
+      page: page.value,
+      page_size: pageSize.value,
+    }
+    // 过滤参数按需携带（空值省略，与后端可选字段语义一致）
+    if (filters.dateFrom) filter.from = filters.dateFrom
+    if (filters.dateTo) filter.to = filters.dateTo
+    if (filters.involvingAccountId) filter.involving_account_id = filters.involvingAccountId
+    if (filters.merchantId) filter.merchant_id = filters.merchantId
+    if (filters.kind) filter.kind = filters.kind
+    const res = await api.listTransactions(filter)
+    data.value = res.items
+    total.value = res.total
+  } catch (e) {
+    message.error(`加载失败: ${errorMessage(e)}`)
+  } finally {
+    loading.value = false
+  }
+}
+
+// 重拉唯一触发点：模块 bump 版本号 = 需以当前模块状态重拉。首刷（onMounted 经统一出口
+// refresh）与全部意图入口共用此路径；同一同步批次内的多次 bump（如 URL 两维度同时
+// 声明意图）由 watcher 去重为一次请求，双刷被出口唯一性消灭。
+watch(refreshVersion, () => {
+  void load()
+})
 
 /** URL 账户/商户参数是否已在参考数据就绪下完成校验。
  * 冷启动深链时参考数据晚到，首次就绪补判一次后即视为已结算：
  * 后续 ledger:changed 重拉（status 再次 loading→ready）不再重放 URL 参数，
- * 避免把用户手动改动（如清除筛选）覆盖回 URL 值。 */
+ * 避免把用户手动改动（如清除筛选）覆盖回 URL 值。（两条 URL 镜像解析链暂留视图，
+ * 解析、校验、补判与让位由后续 ticket 收进模块参数表，issue #234。） */
 let urlAccountSettled = false
 let urlMerchantSettled = false
-
-/** 过滤条件变化统一出口：回到第 1 页并重新查询。
- * 首次求值（URL 初始化）由 firstApply 标记跳过，避免与 onMounted 双刷。 */
-function applyFilterChange() {
-  if (firstApply) {
-    firstApply = false
-    return
-  }
-  page.value = 1
-  void refresh()
-}
-
-/** 涉及账户过滤 setter（URL 入口与手动下拉共用）：条件实际变化才触发刷新。 */
-function setInvolvingAccount(id: string | null) {
-  if (id === involvingAccountId.value) return
-  involvingAccountId.value = id
-  applyFilterChange()
-}
-
-/** 商户过滤 setter（URL 入口与手动下拉共用）：条件实际变化才触发刷新。 */
-function setMerchant(id: string | null) {
-  if (id === merchantId.value) return
-  merchantId.value = id
-  applyFilterChange()
-}
 
 /** URL 中是否存在有效商户参数（决定账户入口是否需要复位日期/类型：
  * 商户参数在场时不得越界复位，避免另一个维度的直达参数被误清）。 */
@@ -151,7 +135,7 @@ function hasValidAccountParam(): boolean {
   return typeof p === 'string' && reference.accountMap.has(p)
 }
 
-/** 解析 URL 账户参数 → 过滤状态。
+/** 解析 URL 账户参数 → 过滤意图（setFilter）。
  * 校验依赖参考数据（accountMap）：冷启动直连深链时参考数据可能晚到，
  * 待其就绪（status → ready）后自动补判一次，避免有效参数被误判为无效而静默丢失。 */
 function applyAccountParam() {
@@ -160,53 +144,35 @@ function applyAccountParam() {
   const next = param !== null && ready && reference.accountMap.has(param) ? param : null
   // 无有效账户参数进入（侧边栏重进 / 无效参数）→ 复位日期/类型，回到全量列表（#96 决策 3）。
   // 商户参数在场时不复位（另一维度的直达参数不得被账户入口越界清除）。
-  // 先复位再走统一出口：setInvolvingAccount 触发刷新时读到的是复位后的过滤状态。
-  const resetDateKind =
+  // 先复位再声明账户意图：出口触发重拉时读到的是复位后的过滤状态；
+  // 复位与账户变更各自经统一出口，同一同步批次内被 watcher 去重为一次重拉。
+  if (
     next === null &&
     !hasValidMerchantParam() &&
-    (dateFrom.value !== null || dateTo.value !== null || kind.value !== null)
-  if (resetDateKind) {
-    dateFrom.value = null
-    dateTo.value = null
-    kind.value = null
+    (filters.dateFrom !== null || filters.dateTo !== null || filters.kind !== null)
+  ) {
+    setFilter({ dateFrom: null, dateTo: null, kind: null })
   }
-  const accountChanged = next !== involvingAccountId.value
-  setInvolvingAccount(next)
-  // 账户未变但日期/类型被复位 → setInvolvingAccount 未触发刷新，补一次（避免列表陈旧）
-  if (resetDateKind && !accountChanged) {
-    page.value = 1
-    if (!firstApply) void refresh()
-  }
+  setFilter({ involvingAccountId: next })
   // 参考数据就绪时本次校验即结算；未就绪保持未结算，待就绪后补判一次
   if (ready) urlAccountSettled = true
-  // 无论是否变化都消耗首次标记：immediate 求值承担首载前的一次初始化
-  firstApply = false
 }
 
-/** 解析 URL 商户参数 → 过滤状态（与 applyAccountParam 同款机制，维度独立：
+/** 解析 URL 商户参数 → 过滤意图（与 applyAccountParam 同款机制，维度独立：
  * 各自只复位日期/类型，不清对方维度；商户校验走 merchantMap 含软删）。 */
 function applyMerchantParam() {
   const param = typeof route.query.merchant === 'string' ? route.query.merchant : null
   const ready = reference.status === 'ready'
   const next = param !== null && ready && reference.merchantMap.has(param) ? param : null
-  const resetDateKind =
+  if (
     next === null &&
     !hasValidAccountParam() &&
-    (dateFrom.value !== null || dateTo.value !== null || kind.value !== null)
-  if (resetDateKind) {
-    dateFrom.value = null
-    dateTo.value = null
-    kind.value = null
+    (filters.dateFrom !== null || filters.dateTo !== null || filters.kind !== null)
+  ) {
+    setFilter({ dateFrom: null, dateTo: null, kind: null })
   }
-  const merchantChanged = next !== merchantId.value
-  setMerchant(next)
-  // 商户未变但日期/类型被复位 → setMerchant 未触发刷新，补一次（避免列表陈旧）
-  if (resetDateKind && !merchantChanged) {
-    page.value = 1
-    if (!firstApply) void refresh()
-  }
+  setFilter({ merchantId: next })
   if (ready) urlMerchantSettled = true
-  firstApply = false
 }
 
 // URL query 只读入口：/transactions?account=<id> 进入时自动按该账户过滤；
@@ -259,85 +225,45 @@ function onCreateShowUpdate(show: boolean) {
 // 焦点在可编辑元素或弹层打开时抑制；随视图装卸，仅交易页生效
 useCreateShortcuts(openCreate)
 
-/** 提交成功：回到第 1 页再刷新（新记录按日期/时间排序最可能落在第 1 页），
+/** 提交成功：回填意图 refresh（重拉 + 翻回第 1 页，新记录按日期/时间排序最可能落在第 1 页），
  * 保留筛选条件（与手动过滤同等语义，不重置）。 */
 function onFormCreated() {
   createKind.value = null
-  page.value = 1
-  void refresh()
+  refresh()
 }
 
-async function refresh() {
-  loading.value = true
-  try {
-    const filter: TransactionListFilter = {
-      page: page.value,
-      page_size: pageSize.value,
-    }
-    // 过滤参数按需携带（空值省略，与后端可选字段语义一致）
-    if (dateFrom.value) filter.from = dateFrom.value
-    if (dateTo.value) filter.to = dateTo.value
-    if (involvingAccountId.value) filter.involving_account_id = involvingAccountId.value
-    if (merchantId.value) filter.merchant_id = merchantId.value
-    if (kind.value) filter.kind = kind.value
-    const res = await api.listTransactions(filter)
-    data.value = res.items
-    total.value = res.total
-  } catch (e) {
-    message.error(`加载失败: ${errorMessage(e)}`)
-  } finally {
-    loading.value = false
-  }
-}
-
-/** 手动过滤处理器：任一条件变化即重新查询（回到第 1 页），不同步回 URL。 */
+/** 手动过滤处理器：声明意图即生效（翻页归零 + 重拉，同值守卫在模块 setFilter 内：
+ * 条件实际变化才动作），不同步回 URL（组件状态是唯一事实源）。 */
 function onAccountFilterChange(id: string | null) {
-  setInvolvingAccount(id)
+  setFilter({ involvingAccountId: id })
 }
 
 function onMerchantFilterChange(id: string | null) {
-  setMerchant(id)
+  setFilter({ merchantId: id })
 }
 
 function onDateFromChange(value: string | null) {
-  if (value === dateFrom.value) return
-  dateFrom.value = value
-  applyFilterChange()
+  setFilter({ dateFrom: value })
 }
 
 function onDateToChange(value: string | null) {
-  if (value === dateTo.value) return
-  dateTo.value = value
-  applyFilterChange()
+  setFilter({ dateTo: value })
 }
 
 function onKindFilterChange(value: TransactionKind | null) {
-  if (value === kind.value) return
-  kind.value = value
-  applyFilterChange()
-}
-
-/** 一键清除全部过滤条件并回到全量列表（第 1 页）。 */
-function clearFilters() {
-  if (!filtersActive.value) return
-  dateFrom.value = null
-  dateTo.value = null
-  kind.value = null
-  involvingAccountId.value = null
-  merchantId.value = null
-  page.value = 1
-  void refresh()
+  setFilter({ kind: value })
 }
 
 async function remove(id: string) {
   try {
     await api.deleteTransaction(id)
     message.success('已删除')
-    // 删除当前页最后一条 → 回退一页，避免出现空页
+    // 删除当前页最后一条 → 回退一页，避免出现空页（调用方直写页码后自行重拉，
+    // 「翻页归零」只存在于模块出口，此处是当前页码内的导航）
     if (data.value.length === 1 && page.value > 1) {
       page.value -= 1
     }
-    await refresh()
+    await load()
   } catch (e) {
     message.error(`删除失败: ${errorMessage(e)}`)
   }
@@ -370,8 +296,7 @@ function openRefundFromRow(row: Transaction) {
 
 function onRefundCreated() {
   showRefund.value = false
-  page.value = 1
-  void refresh()
+  refresh()
 }
 
 /** 编辑弹窗（issue #178，issue #180 扩到 buy/sell）：行右键「编辑」，回填该笔交易
@@ -402,10 +327,11 @@ async function openEditFromRow(row: Transaction) {
   showEdit.value = true
 }
 
-/** 编辑成功：关窗并刷新列表（保持当前页与筛选，不重置 page）。 */
+/** 编辑成功：关窗并以当前页码重拉列表（保持当前页与筛选，不重置 page → 视图侧 load，
+ * 不经模块出口）。 */
 function onEditSaved() {
   showEdit.value = false
-  void refresh()
+  void load()
 }
 
 /** 「加入物品」确认弹窗（issue #119 / ADR-0025 创建唯一入口）：原交易由右键所在行固定，
@@ -494,11 +420,11 @@ const pagination = computed<PaginationProps>(() => ({
   prefix: ({ itemCount }) => h('span', null, () => `共 ${itemCount ?? 0} 条`),
   onChange: (p: number) => {
     page.value = p
-    refresh()
+    void load()
   },
   onUpdatePageSize: (size: number) => {
+    // 页大小归模块分页所有：写入后经统一出口重拉（翻回第 1 页）
     pageSize.value = size
-    page.value = 1
     refresh()
   },
 }))
@@ -510,8 +436,9 @@ const scrollX = sumFixedColumnWidths(columns)
 
 onMounted(() => {
   // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll；
-  // 首次加载（过滤条件已由 applyAccountParam 的 immediate 求值确定）
-  void refresh()
+  // 首刷经模块统一出口（refresh 即「翻回第 1 页 + 重拉」；URL 初始化已在 setup 期
+  // 声明意图，同一同步批次内被 watcher 去重为一次首刷请求）
+  refresh()
 })
 </script>
 
@@ -522,7 +449,7 @@ onMounted(() => {
          （组件状态是唯一事实源，issue #96 决策 3/4），分页/页大小切换保持过滤条件。 -->
     <NSpace :size="8" align="center" :wrap="true">
       <PinyinSelect
-        :value="involvingAccountId"
+        :value="filters.involvingAccountId"
         :options="accountOptions"
         placeholder="账户"
         clearable
@@ -530,7 +457,7 @@ onMounted(() => {
         @update:value="onAccountFilterChange"
       />
       <PinyinSelect
-        :value="merchantId"
+        :value="filters.merchantId"
         :options="merchantOptions"
         placeholder="商户"
         clearable
@@ -538,7 +465,7 @@ onMounted(() => {
         @update:value="onMerchantFilterChange"
       />
       <NDatePicker
-        :formatted-value="dateFrom"
+        :formatted-value="filters.dateFrom"
         type="date"
         value-format="yyyy-MM-dd"
         placeholder="起始日期"
@@ -547,7 +474,7 @@ onMounted(() => {
         @update:formatted-value="onDateFromChange"
       />
       <NDatePicker
-        :formatted-value="dateTo"
+        :formatted-value="filters.dateTo"
         type="date"
         value-format="yyyy-MM-dd"
         placeholder="结束日期"
@@ -556,7 +483,7 @@ onMounted(() => {
         @update:formatted-value="onDateToChange"
       />
       <NSelect
-        :value="kind"
+        :value="filters.kind"
         :options="kindOptions"
         placeholder="类型"
         clearable
@@ -568,7 +495,7 @@ onMounted(() => {
         quaternary
         type="primary"
         :disabled="!filtersActive"
-        @click="clearFilters"
+        @click="resetFilters"
       >
         清除筛选
       </NButton>
@@ -685,7 +612,7 @@ onMounted(() => {
       <template #empty>
         <NEmpty :description="filtersActive ? '没有符合条件的交易' : '暂无数据'" size="small">
           <template v-if="filtersActive" #extra>
-            <NButton size="tiny" quaternary type="primary" @click="clearFilters">
+            <NButton size="tiny" quaternary type="primary" @click="resetFilters">
               清除筛选
             </NButton>
           </template>
