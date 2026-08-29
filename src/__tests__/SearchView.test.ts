@@ -178,6 +178,7 @@ beforeEach(async () => {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve(mockCategories)
+    if (cmd === 'list_merchants') return Promise.resolve([])
     if (cmd === 'search_transactions') {
       const {
         query,

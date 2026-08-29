@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { api } from '@/api'
-import type { Account, Category, Currency } from '@/types'
+import type { Account, Category, Currency, Merchant } from '@/types'
 import {
   rootCategories as pureRootCategories,
   categoryChildren as pureCategoryChildren,
@@ -25,13 +25,13 @@ export const REFERENCE_FRESH_MS = 60_000
 /**
  * 参考数据（Reference Data）单一来源 store。
  *
- * 承载 `currencies / accounts / categories` 三张参考表及全部派生映射
- * （账户/分类/币种映射）与分类树逻辑，作为参考数据（Reference Data）的
+ * 承载 `currencies / accounts / categories / merchants` 四张参考表及全部派生映射
+ * （账户/分类/币种/商户映射）与分类树逻辑，作为参考数据（Reference Data）的
  * 单一来源，消费端一律从本 store 读取。
  *
  * 生命周期（push-first）：
  * - 首次访问 self-init：store 首次被创建时自动触发一次加载；
- * - 订阅后端 `ledger:changed`：参考写入成功后自动重拉三表
+ * - 订阅后端 `ledger:changed`：参考写入成功后自动重拉四表
  *   （stale-while-revalidate：拉取期间保留旧数据，全部成功才整体替换，不闪空）；
  * - 派生映射为 computed，随数组自动更新。
  *
@@ -43,6 +43,16 @@ export const useReferenceStore = defineStore('reference', () => {
   const currencies = ref<Currency[]>([])
   const accounts = ref<Account[]>([])
   const categories = ref<Category[]>([])
+  const merchants = ref<Merchant[]>([])
+
+  /**
+   * 软删商户显示缓存（会话级，issue #189 / ADR-0028）：商户软删后从字典列表
+   * （`list_merchants` 仅返回 `is_deleted=0`）消失，但其历史交易仍需照常显示
+   * 商户名。每次重拉后 diff：上一版在、新版不在 → 视为软删并入本缓存。
+   * 已知边界：缓存不跨会话，重启后引用软删商户的历史交易显示为空（待读模型
+   * 携带商户名后收口）。
+   */
+  const deletedMerchants = ref(new Map<string, Merchant>())
 
   // —— 失效信号 ——
   const status = ref<ReferenceStatus>('idle')
@@ -71,6 +81,21 @@ export const useReferenceStore = defineStore('reference', () => {
     return m
   })
 
+  /** 商户显示映射：在用商户 + 软删缓存（历史交易显示用，软删商户名照常显示）。 */
+  const merchantMap = computed(() => {
+    const m = new Map<string, Merchant>()
+    deletedMerchants.value.forEach((d) => m.set(d.id, d))
+    merchants.value.forEach((m2) => m.set(m2.id, m2))
+    return m
+  })
+
+  /** 按名字查找：仅含在用商户（软删商户不可再选/不可按名复用，重名即建由后端校验）。 */
+  const merchantByName = computed(() => {
+    const m = new Map<string, Merchant>()
+    merchants.value.forEach((m2) => m.set(m2.name, m2))
+    return m
+  })
+
   const rootCategories = computed(() => pureRootCategories(categories.value))
 
   const expenseCategories = computed(() =>
@@ -94,19 +119,28 @@ export const useReferenceStore = defineStore('reference', () => {
 
   /**
    * 核心：一次完整重拉，stale-while-revalidate。
-   * 拉取期间保留旧数据；三表全部成功才整体替换（避免闪空与部分更新）。
+   * 拉取期间保留旧数据；四表全部成功才整体替换（避免闪空与部分更新）。
    */
   async function reload(): Promise<void> {
     status.value = 'loading'
     try {
-      const [cs, as, cats] = await Promise.all([
+      const [cs, as, cats, ms] = await Promise.all([
         api.listCurrencies(),
         api.listAccounts(),
         api.listCategories(),
+        api.listMerchants(),
       ])
+      // 软删 diff：上一版在、新版不在 → 视为软删并入显示缓存（合并旧缓存）
+      const nextIds = new Set(ms.map((m) => m.id))
+      const cache = new Map(deletedMerchants.value)
+      merchants.value.forEach((m) => {
+        if (!nextIds.has(m.id)) cache.set(m.id, m)
+      })
       currencies.value = cs
       accounts.value = as
       categories.value = cats
+      merchants.value = ms
+      deletedMerchants.value = cache
       version.value += 1
       lastLoadedAt = Date.now()
       status.value = 'ready'
@@ -165,11 +199,14 @@ export const useReferenceStore = defineStore('reference', () => {
     currencies,
     accounts,
     categories,
+    merchants,
     status,
     version,
     currencyMap,
     categoryMap,
     accountMap,
+    merchantMap,
+    merchantByName,
     rootCategories,
     expenseCategories,
     incomeCategories,

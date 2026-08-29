@@ -29,20 +29,71 @@ export function useCategoryForm(
   const currencyCode = ref('CNY')
   const accountId = ref<string | null>(null)
   const categoryId = ref<string | null>(null)
+  const merchantRef = ref<string | null>(null)
   const note = ref('')
   const date = ref(Date.now())
-
-  const treeOptions = computed<TreeSelectOption[]>(() => reference.treeCategoryOptions(kind) as unknown as TreeSelectOption[])
 
   // 编辑模式（issue #178）：打开即回填该笔交易全部业务字段。金额经 centsToYuan
   // 按币种小数位换算（不手写 /100）；日期以 UTC 午夜回填，与提交端
   // toISOString 切片同一口径，不改往返无损。
   const editingTx = options?.editing?.() ?? null
+
+  const treeOptions = computed<TreeSelectOption[]>(() => reference.treeCategoryOptions(kind) as unknown as TreeSelectOption[])
+
+  // 商户下拉选项（issue #189）：在用商户；编辑时若原商户已不在字典（软删且超出
+  // 会话显示缓存），追加兜底选项承载原 id——裸 uuid 不可读，提交时按「未改动」
+  // 语义原样保留（后端 existing_merchant_id unchanged 语义跳过校验）。
+  const editingMerchantId = editingTx?.merchant_id ?? null
+  const merchantOptions = computed<{ label: string; value: string }[]>(() => {
+    const base = reference.merchants.map((m) => ({ label: m.name, value: m.id }))
+    if (editingMerchantId && !reference.merchantMap.has(editingMerchantId)) {
+      base.unshift({ label: '（已删除商户）', value: editingMerchantId })
+    }
+    return base
+  })
+
+  /**
+   * 商户解析（保存时单点收口，issue #189）：「输入即建」交互——
+   * 1. 空 → null（无商户）；
+   * 2. 选中已有商户（value 为 id，含编辑回填的软删商户 id，会话缓存内可见）→ 原样携带；
+   * 3. 编辑未改动原商户（软删且超出缓存）→ 原样携带（后端 unchanged 语义跳过校验）；
+   * 4. 输入文本精确命中在用商户名 → 按名复用；
+   * 5. 未命中 → `create_merchant` 即建；重名错误（store 陈旧竞态）先强制重拉
+   *    按名复用，仍失败才向上抛。
+   */
+  async function resolveMerchantId(): Promise<string | null> {
+    const ref = merchantRef.value
+    if (!ref) return null
+    if (reference.merchantMap.has(ref)) return ref
+    if (editingMerchantId && ref === editingMerchantId) return ref
+    const name = ref.trim()
+    if (!name) return null
+    const existing = reference.merchantByName.get(name)
+    if (existing) return existing.id
+    try {
+      return await api.createMerchant({ name })
+    } catch (e) {
+      // 重名兕底（store 陈旧竞态）：强制重拉后按名复用；重拉失败不影响原错误上抛
+      try {
+        await reference.refresh()
+      } catch {
+        /* 保留原 create 错误 */
+      }
+      const retry = reference.merchantByName.get(name)
+      if (retry) return retry.id
+      throw e
+    }
+  }
+
+  // 编辑模式（issue #178）：打开即回填该笔交易全部业务字段。金额经 centsToYuan
+  // 按币种小数位换算（不手写 /100）；日期以 UTC 午夜回填，与提交端
+  // toISOString 切片同一口径，不改往返无损。
   if (editingTx) {
     amount.value = centsToYuan(editingTx.amount_cents, reference.getCurrency(editingTx.currency_code))
     currencyCode.value = editingTx.currency_code
     accountId.value = editingTx.account_id
     categoryId.value = editingTx.category_id
+    merchantRef.value = editingTx.merchant_id
     note.value = editingTx.note ?? ''
     date.value = utcMidnightTimestamp(editingTx.date)
   }
@@ -64,6 +115,7 @@ export function useCategoryForm(
       currency_code: currencyCode.value,
       account_id: accountId.value,
       category_id: categoryId.value,
+      merchant_id: await resolveMerchantId(),
       note: note.value || null,
       date: new Date(date.value).toISOString().slice(0, 10),
     }
@@ -92,13 +144,14 @@ export function useCategoryForm(
     currencyCode.value = 'CNY'
     accountId.value = null
     categoryId.value = null
+    merchantRef.value = null
     note.value = ''
     date.value = Date.now()
   }
 
   return {
-    amount, currencyCode, accountId, categoryId, note, date,
-    accountOptions, currencyOptions, treeOptions,
+    amount, currencyCode, accountId, categoryId, merchantRef, note, date,
+    accountOptions, currencyOptions, treeOptions, merchantOptions,
     submit, resetForm,
   }
 }

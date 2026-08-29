@@ -25,9 +25,18 @@ import RefundForm from '@/components/RefundForm.vue'
 import AddItemForm from '@/components/AddItemForm.vue'
 import AccountLink from '@/components/AccountLink.vue'
 import TransactionForm from '@/components/TransactionForm.vue'
-import type { Account, Currency, Transaction } from '@/types'
+import type { Account, Currency, Merchant, Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
+
+/** 商户字典（可变：软删商户显示测试会清空它模拟 list_merchants 的新返回）。 */
+let merchantDb: Merchant[] = [
+  {
+    id: 'mch-1', name: '京东', icon: null, color: null,
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    version: 1, device_id: 'test', is_deleted: false,
+  },
+]
 
 // 测试挂载的视图不手动 unmount：useCreateShortcuts/useWindowGuard 会在 window/document
 // 上注册监听、仅在 unmount 时移除。不卸载会让监听跨测试累积，裸键快捷键用例互相污染。
@@ -128,6 +137,7 @@ beforeEach(async () => {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
     if (cmd === 'list_transactions') {
       const filter = (args?.filter ?? {}) as Record<string, unknown>
       const scoped = applyListFilter(filter)
@@ -147,6 +157,13 @@ beforeEach(async () => {
     if (cmd === 'list_items') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
+  merchantDb = [
+    {
+      id: 'mch-1', name: '京东', icon: null, color: null,
+      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+      version: 1, device_id: 'test', is_deleted: false,
+    },
+  ]
   localStorage.clear()
   const store = useReferenceStore()
   await store.ensureFresh()
@@ -331,6 +348,7 @@ describe('TransactionsView 服务端分页', () => {
       if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
       if (cmd === 'list_transactions') {
         return new Promise((resolve) => {
           resolveList = resolve
@@ -865,6 +883,32 @@ describe('TransactionsView 行右键菜单（issue #151）', () => {
     expect(wrapper.findAllComponents(NPopconfirm)).toHaveLength(0)
   })
 
+  it('交易列表展示商户列：商户名来自参考数据 merchantMap（issue #189）', async () => {
+    txnDb = [makeTxn(1, 'acc-1', { merchant_id: 'mch-1' })]
+    const wrapper = await mountView()
+    const cols = wrapper.findComponent(NDataTable).props('columns') as Array<{ title?: string }>
+    expect(cols.some((c) => c.title === '商户')).toBe(true)
+    expect(bodyRows(wrapper)[0].text()).toContain('京东')
+  })
+
+  it('无商户的交易商户列不渲染商户名（issue #189）', async () => {
+    txnDb = [makeTxn(1, 'acc-1')]
+    const wrapper = await mountView()
+    expect(bodyRows(wrapper)[0].text()).not.toContain('京东')
+  })
+
+  it('软删商户后历史交易照常显示商户名（重拉 diff 显示缓存，issue #189）', async () => {
+    txnDb = [makeTxn(1, 'acc-1', { merchant_id: 'mch-1' })]
+    const wrapper = await mountView()
+    expect(bodyRows(wrapper)[0].text()).toContain('京东')
+
+    // 商户被软删：字典重拉后不再返回，但显示缓存保留
+    merchantDb = []
+    await useReferenceStore().refresh()
+    await flushPromises()
+    expect(bodyRows(wrapper)[0].text()).toContain('京东')
+  })
+
   it('任意行右键「删除」→ 二次确认后才删除；取消不删', async () => {
     const wrapper = await mountView()
     // 取消：不删除
@@ -1117,6 +1161,7 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
       if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
       if (cmd === 'list_transactions') {
         const filter = (args?.filter ?? {}) as Record<string, unknown>
         const scoped = applyListFilter(filter)
@@ -1267,6 +1312,7 @@ describe('TransactionsView 行右键「加入物品」（issue #119）', () => {
       if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
       if (cmd === 'list_transactions') {
         const filter = (args?.filter ?? {}) as Record<string, unknown>
         const scoped = applyListFilter(filter)
