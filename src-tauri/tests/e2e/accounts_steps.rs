@@ -2,7 +2,8 @@ use cucumber::{given, then, when};
 use rusqlite::params;
 
 use tauri_app_lib::commands::{
-    adjust_account_balance_internal, delete_transaction_internal, update_account_internal,
+    adjust_account_balance_internal, delete_account_internal, delete_transaction_internal,
+    update_account_internal,
 };
 use tauri_app_lib::db::{balance::compute_balance, device_id, new_uuid, now_iso};
 use tauri_app_lib::models::{AccountBalanceAdjustInput, AccountUpdateInput};
@@ -166,12 +167,8 @@ fn create_account(
 #[when(expr = "删除账户 {string}")]
 fn delete_account(world: &mut LedgerWorld, name: String) {
     let id = world.account_id(&name);
-    world_conn!(world)
-        .execute(
-            "UPDATE accounts SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-            params![id, now_iso(), device_id()],
-        )
-        .unwrap();
+    // 软删除走真实命令路径（IPC/HTTP 共用 delete_account_internal，含存在性守卫）。
+    delete_account_internal(&world_conn!(world), &id).expect("删除账户失败");
 }
 
 // ---------------------------------------------------------------------------
