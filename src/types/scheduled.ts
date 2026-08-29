@@ -38,7 +38,8 @@ export interface ScheduledTransactionOccurrence {
 
 export interface ScheduledTransactionWithExt {
   core: ScheduledTransaction
-  counterparty: string | null
+  /** 商户 id（installment/subscription 可携带；scheduled_transfer 恒为 null） */
+  merchant_id: string | null
   total_amount_cents: number | null
   total_occurrences: number | null
   to_account_id: string | null
@@ -53,14 +54,14 @@ export interface ScheduledTransactionDetail {
 
 export interface InstallmentPlan {
   scheduled_transaction_id: string
-  counterparty: string | null
+  merchant_id: string | null
   total_amount_cents: number
   total_occurrences: number
 }
 
 export interface SubscriptionPlan {
   scheduled_transaction_id: string
-  counterparty: string | null
+  merchant_id: string | null
 }
 
 export interface ScheduledTransferPlan {
@@ -80,7 +81,8 @@ export interface CreateScheduledInput {
   recurrence_day?: number | null
   start_date: string
   note?: string | null
-  counterparty?: string | null
+  /** 商户 id（installment/subscription 可携带；scheduled_transfer 后端拒绝携带） */
+  merchant_id?: string | null
   total_amount_cents?: number | null
   total_occurrences?: number | null
   to_account_id?: string | null
@@ -93,7 +95,7 @@ export interface UpdateStatusInput {
 
 /**
  * 订阅编辑输入（issue #162，ADR-0023 决策三）：仅允许金额以外字段
- * （备注、分类、扣款账户）。`amount_cents` / `total_amount_cents` 为兼容哨兵：
+ * （备注、分类、扣款账户、商户）。`amount_cents` / `total_amount_cents` 为兼容哨兵：
  * 请求一旦携带即被后端显式拒绝——改价 = 取消旧计划 + 新建。
  */
 export interface UpdateSubscriptionInput {
@@ -101,6 +103,8 @@ export interface UpdateSubscriptionInput {
   account_id: string
   category_id?: string | null
   note?: string | null
+  /** 商户 id（issue #190）：可改商户，编辑只影响未来期次 */
+  merchant_id?: string | null
   amount_cents?: number
   total_amount_cents?: number
 }
@@ -117,7 +121,8 @@ export interface ExecuteOccurrenceInput {
 export interface SubscriptionSpendRow {
   plan_id: string
   note: string | null
-  counterparty: string | null
+  /** 商户名（后端左联 merchants 现名）：改名即时生效，软删后历史计划照常显示 */
+  merchant_name: string | null
   /** 计划状态；取消/暂停不影响其历史实际花费 */
   status: ScheduledStatus
   /** 每期金额（计划币种，原始口径） */

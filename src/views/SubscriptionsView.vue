@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
-import { h, computed, onMounted, ref, type VNode } from 'vue'
+import { computed, h, onMounted, ref, type Ref, type VNode } from 'vue'
 import {
   NCard,
   NButton,
@@ -58,6 +58,7 @@ const showCreateModal = ref(false)
 const note = ref('')
 const accountId = ref<string | null>(null)
 const categoryId = ref<string | null>(null)
+const merchantRef = ref<string | null>(null)
 const amountYuan = ref('')
 const currencyCode = ref(appStore.defaultCurrency)
 const recurrenceType = ref<RecurrenceType>('monthly')
@@ -76,11 +77,54 @@ const categoryTreeOptions = computed(
   () => reference.treeCategoryOptions('expense') as unknown as TreeSelectOption[],
 )
 
+// 商户下拉选项（issue #190 / ADR-0028）：在用商户（与交易表单同款补全，未命中即建）。
+const merchantOptions = computed<{ label: string; value: string }[]>(() =>
+  reference.merchants.map((m) => ({ label: m.name, value: m.id })),
+)
+
+/**
+ * 商户解析（保存时单点收口，issue #190）：「输入即建」交互——
+ * 1. 空 → null（无商户）；
+ * 2. 选中已有商户（value 为 id）→ 原样携带；
+ * 3. 编辑未改动原商户（软删且超出会话缓存）→ 原样携带（后端保持历史引用语义）；
+ * 4. 输入文本精确命中在用商户名 → 按名复用；
+ * 5. 未命中 → `create_merchant` 即建；重名错误（store 陈旧竞态）先强制重拉
+ *    按名复用，仍失败才向上抛。
+ * `source` 为表单的商户 ref（新建/编辑弹窗各持一份）。
+ */
+async function resolveMerchantId(
+  source: Ref<string | null>,
+  editingMerchantId: string | null = null,
+): Promise<string | null> {
+  const ref = source.value
+  if (!ref) return null
+  if (reference.merchantMap.has(ref)) return ref
+  if (editingMerchantId && ref === editingMerchantId) return ref
+  const name = ref.trim()
+  if (!name) return null
+  const existing = reference.merchantByName.get(name)
+  if (existing) return existing.id
+  try {
+    return await api.createMerchant({ name })
+  } catch (e) {
+    // 重名兕底（store 陈旧竞态）：强制重拉后按名复用；重拉失败不影响原错误上抛
+    try {
+      await reference.refresh()
+    } catch {
+      /* 保留原 create 错误 */
+    }
+    const retry = reference.merchantByName.get(name)
+    if (retry) return retry.id
+    throw e
+  }
+}
+
 /** 重置新建表单到初始态：模态语义下每次打开应是全新表单。 */
 function resetCreateForm() {
   note.value = ''
   accountId.value = null
   categoryId.value = null
+  merchantRef.value = null
   amountYuan.value = ''
   currencyCode.value = appStore.defaultCurrency
   recurrenceType.value = 'monthly'
@@ -103,6 +147,7 @@ async function create() {
       kind: 'subscription',
       account_id: accountId.value,
       category_id: categoryId.value,
+      merchant_id: await resolveMerchantId(merchantRef),
       amount_cents: amountCents,
       currency_code: currencyCode.value,
       recurrence_type: recurrenceType.value,
@@ -132,12 +177,28 @@ const editingId = ref<string | null>(null)
 const editNote = ref('')
 const editAccountId = ref<string | null>(null)
 const editCategoryId = ref<string | null>(null)
+const editMerchantRef = ref<string | null>(null)
+/** 被编辑计划的当前商户 id（供 resolveMerchantId 保持历史引用判定）。 */
+const editCurrentMerchantId = ref<string | null>(null)
+
+// 编辑商户下拉（issue #190）：在用商户 + 原商户软删且超出会话缓存时追加兜底选项
+// 承载原 id——裸 uuid 不可读，提交时按「未改动」语义原样保留。
+const editMerchantOptions = computed<{ label: string; value: string }[]>(() => {
+  const base = reference.merchants.map((m) => ({ label: m.name, value: m.id }))
+  const current = editCurrentMerchantId.value
+  if (current && !reference.merchantMap.has(current)) {
+    base.unshift({ label: '（已删除商户）', value: current })
+  }
+  return base
+})
 
 function openEdit(row: SubscriptionRow) {
   editingId.value = row.plan.core.id
   editNote.value = row.plan.core.note ?? ''
   editAccountId.value = row.plan.core.account_id
   editCategoryId.value = row.plan.core.category_id
+  editCurrentMerchantId.value = row.plan.merchant_id
+  editMerchantRef.value = row.plan.merchant_id
   showEditModal.value = true
 }
 
@@ -152,6 +213,7 @@ async function saveEdit() {
       id: editingId.value,
       account_id: editAccountId.value,
       category_id: editCategoryId.value,
+      merchant_id: await resolveMerchantId(editMerchantRef, editCurrentMerchantId.value),
       note: editNote.value.trim() || null,
     })
     message.success('已保存')
@@ -263,6 +325,15 @@ const columns: DataTableColumns<SubscriptionRow> = [
     title: '备注',
     key: 'note',
     render: (row) => row.plan.core.note ?? '—',
+  },
+  {
+    title: '商户',
+    key: 'merchant',
+    // 改名即时生效（引用指向 id）：merchantMap 含软删商户会话缓存，历史计划照常显示
+    render: (row) => {
+      const m = row.plan.merchant_id ? reference.merchantMap.get(row.plan.merchant_id) : undefined
+      return m?.name ?? '—'
+    },
   },
   {
     title: '分类',
@@ -455,6 +526,17 @@ onMounted(() => {
               style="width: 220px"
             />
           </NFormItem>
+          <NFormItem label="商户">
+            <PinyinSelect
+              v-model:value="merchantRef"
+              :options="merchantOptions"
+              tag
+              clearable
+              placeholder="选择商户，可直接输入新名称"
+              style="width: 220px"
+              data-testid="sub-merchant"
+            />
+          </NFormItem>
           <NFormItem label="金额">
             <NInput
               v-model:value="amountYuan"
@@ -536,6 +618,17 @@ onMounted(() => {
               clearable
               :consistent-menu-width="false"
               style="width: 220px"
+            />
+          </NFormItem>
+          <NFormItem label="商户">
+            <PinyinSelect
+              v-model:value="editMerchantRef"
+              :options="editMerchantOptions"
+              tag
+              clearable
+              placeholder="选择商户，可直接输入新名称"
+              style="width: 220px"
+              data-testid="sub-edit-merchant"
             />
           </NFormItem>
           <NSpace justify="end">

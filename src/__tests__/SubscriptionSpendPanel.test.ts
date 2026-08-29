@@ -36,7 +36,7 @@ function lastMonths(endMonth: string, n: number): string[] {
 function makeRow(partial: Partial<SubscriptionSpendRow> & { plan_id: string }): SubscriptionSpendRow {
   return {
     note: null,
-    counterparty: null,
+    merchant_name: null,
     status: 'active',
     amount_cents: 3000,
     currency_code: 'CNY',

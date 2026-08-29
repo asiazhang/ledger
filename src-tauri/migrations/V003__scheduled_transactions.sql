@@ -37,18 +37,19 @@ CREATE TABLE IF NOT EXISTS scheduled_transaction_occurrences (
     is_deleted              INTEGER NOT NULL DEFAULT 0
 );
 
--- 分期计划扩展表
+-- 分期计划扩展表（issue #190 / ADR-0028）：counterparty 文本列改为 merchant_id 商户引用
+-- （硬删置空，与 transactions.merchant_id 同语义；每期生成交易时复制到流水）
 CREATE TABLE IF NOT EXISTS installment_plans (
     scheduled_transaction_id TEXT PRIMARY KEY REFERENCES scheduled_transactions(id),
-    counterparty            TEXT,
+    merchant_id             TEXT REFERENCES merchants(id) ON DELETE SET NULL,
     total_amount_cents      INTEGER NOT NULL CHECK (total_amount_cents > 0),
     total_occurrences       INTEGER NOT NULL CHECK (total_occurrences >= 1)
 );
 
--- 订阅扩展表
+-- 订阅扩展表（issue #190 / ADR-0028）：同 installment_plans，counterparty → merchant_id
 CREATE TABLE IF NOT EXISTS subscription_plans (
     scheduled_transaction_id TEXT PRIMARY KEY REFERENCES scheduled_transactions(id),
-    counterparty            TEXT
+    merchant_id             TEXT REFERENCES merchants(id) ON DELETE SET NULL
 );
 
 -- 定时转账扩展表

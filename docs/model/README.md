@@ -169,11 +169,11 @@ erDiagram
     }
     installment_plans {
         TEXT scheduled_transaction_id PK "FK → scheduled_transactions.id，1:1"
-        TEXT counterparty "收款方"
+        TEXT merchant_id FK "商户（硬删置空，每期复制到流水）"
     }
     subscription_plans {
         TEXT scheduled_transaction_id PK "FK → scheduled_transactions.id，1:1"
-        TEXT counterparty "订阅服务商"
+        TEXT merchant_id FK "商户（硬删置空，每期复制到流水）"
     }
     scheduled_transfer_plans {
         TEXT scheduled_transaction_id PK "FK → scheduled_transactions.id，1:1"
