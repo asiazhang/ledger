@@ -111,7 +111,8 @@
 
 - **定义**：有**当前持仓**（`security_lots.remaining_quantity > 0`，即 `v_holdings` 视图有行、且排除软删除账户的批次）的 Instrument，即“已投资”标的（ADR-0015）。
 - **边界**：
-  - 判定谓词单点定义（`commands::investment::crud` 的 `INVESTED_EXISTS`），同一口径驱动四处：`list_instruments` 的 `invested` 派生列、标的页"只看持仓"过滤（`only_invested`）、增量同步（`sync_holding_prices`）的标的集合、盈亏页持仓概览（issue #102/#103/#110）。
+  - 判定谓词单点定义（投资域薄模块 `commands::investment::predicates` 的 `INVESTED_EXISTS`，`&str` 常量，别名契约：外层查询以 `i` 作 instruments 别名；issue #239），同一口径驱动四处：`list_instruments` 的 `invested` 派生列、标的页“只看持仓”过滤（`only_invested`）、增量同步（`sync_holding_prices`）的标的收集与统计、盈亏页持仓概览（issue #102/#103/#110）。
+  - **与 `v_holdings` 视图的一致性由绑定测试钉住**：视图定义随发布冻结、是只读对账基准；两份 SQL 编码的一致性由投资域单测断言逐标的相等（先例：周键 ↔ week_start 生成列绑定测试，issue #239）。
   - **不含已清仓标的**：已清仓的得失由已实现盈亏（RealizedPnl）承载，不混入“已投资”。
 - **别名**：不使用"已投过的标的"（含已清仓）、"自选/关注标的"（那是用户主观收藏，与持仓无关）。
 
@@ -132,10 +133,10 @@
 
 ## HoldingPriceSync（持仓价格增量同步）
 
-- **定义**：用户手动触发、从当前持仓（口径同 InvestedInstrument）收集股票类标的，按 `(market, symbol)` 构造东财 secid（`1.600519` / `0.000001` / `116.00700`）批量查询最新价（`ulist.np/get`，约 50 只/请求），并按日 K 接口回填近两年周线历史：upsert `market_prices`（现价）+ 把日线降采样落 PriceHistory 与 FxRateHistory（ADR-0019）——不增删、不改 `instruments` 的名称与市场。UI 文案为"同步持仓价格"，与"全量同步"区分（ADR-0015 职责切分：全量修字典 / 增量刷价格 + 沉淀历史）。
+- **定义**：用户手动触发、单次收集全量持仓标的（口径 = InvestedInstrument 单点谓词，一条 SQL、一个谓词引用点，不再读 `v_holdings` 视图）后在 Rust 内按类型分区，股票类标的按 `(market, symbol)` 构造东财 secid（`1.600519` / `0.000001` / `116.00700`）批量查询最新价（`ulist.np/get`，约 50 只/请求），并按日 K 接口回填近两年周线历史：upsert `market_prices`（现价）+ 把日线降采样落 PriceHistory 与 FxRateHistory（ADR-0019）——不增删、不改 `instruments` 的名称与市场。UI 文案为“同步持仓价格”，与“全量同步”区分（ADR-0015 职责切分：全量修字典 / 增量刷价格 + 沉淀历史）。
 - **边界**：
   - 触发方式：手动触发（标的页"同步持仓价格"按钮与盈亏页"当前持仓"概览卡右上角按钮，两处共用同一 `useHoldingPriceSync` 接缝、行为一致），不做自动定时刷新。
-  - 只覆盖股票类持仓：非股票持仓（基金/债券等，数据源不含行情）、市场未知（无法构造 secid）的标的计入"跳过 M 只"统计提示，不报错。
+  - 只覆盖股票类持仓：非股票持仓（基金/债券等，数据源不含行情）、市场未知（无法构造 secid）的标的计入“跳过 M 只”统计提示，不报错；非股票统计与标的收集出自同一次收集（Rust 分区，天然同源，issue #239）。
   - 停牌/无效价（f2≤0）跳过、保留旧价，不中断同步；响应 data:null（全部代码无效）优雅降级为空。
   - 重复触发幂等：每标的一条 `market_prices` 覆盖更新（`source` 沿用 `eastmoney`）；PriceHistory 同周整周覆盖，均不产生重复数据。
   - 完全无持仓时返回明确提示（"无持仓标的可同步"）而非报错。

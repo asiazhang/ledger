@@ -1,5 +1,6 @@
 mod crud;
 mod holdings;
+pub(crate) mod predicates;
 mod reports;
 #[cfg(test)]
 mod tests;

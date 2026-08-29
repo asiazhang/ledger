@@ -3,6 +3,7 @@
 //!
 //! - [`common`]：建库 / 夹具插入 / 交易输入构造等共享脚手架
 //! - [`instrument_list`]：标的列表、搜索、invested 派生、CRUD 与持仓视图
+//! - [`predicates`]：「持仓标的」判定谓词 ↔ v_holdings 视图一致性绑定
 //! - [`trade`]：buy/sell 写入与买卖明细查询（命名对齐源码 trade 模块）
 //! - [`pnl`]：已实现盈亏汇总
 //! - [`trend`]：走势查询（单标的 / 组合）
@@ -12,6 +13,7 @@ mod common;
 mod holdings_as_of;
 mod instrument_list;
 mod pnl;
+mod predicates;
 mod trade;
 mod trend;
 
