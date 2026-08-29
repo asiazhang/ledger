@@ -57,7 +57,7 @@ const loading = ref(false)
 // 归 TransactionFilter 模块所有；手动筛选变更走 setFilter、清除筛选走 resetFilters、
 // 记一笔/退款回填与页大小切换走 refresh（重拉 + 翻回第一页）——
 // 「翻页归零 + 刷新」全仓仅模块统一出口一处，视图不再持有翻页归零样板与首刷防双刷标志。
-const { filters, page, pageSize, refreshVersion, setFilter, resetFilters, refresh } =
+const { filters, page, pageSize, refreshVersion, setFilter, resetFilters, refresh, syncUrlQuery } =
   useTransactionFilter()
 
 /** 是否有任一激活的过滤条件（控制清除按钮可用性与空态文案）。 */
@@ -114,84 +114,11 @@ watch(refreshVersion, () => {
   void load()
 })
 
-/** URL 账户/商户参数是否已在参考数据就绪下完成校验。
- * 冷启动深链时参考数据晚到，首次就绪补判一次后即视为已结算：
- * 后续 ledger:changed 重拉（status 再次 loading→ready）不再重放 URL 参数，
- * 避免把用户手动改动（如清除筛选）覆盖回 URL 值。（两条 URL 镜像解析链暂留视图，
- * 解析、校验、补判与让位由后续 ticket 收进模块参数表，issue #234。） */
-let urlAccountSettled = false
-let urlMerchantSettled = false
-
-/** URL 中是否存在有效商户参数（决定账户入口是否需要复位日期/类型：
- * 商户参数在场时不得越界复位，避免另一个维度的直达参数被误清）。 */
-function hasValidMerchantParam(): boolean {
-  const p = route.query.merchant
-  return typeof p === 'string' && reference.merchantMap.has(p)
-}
-
-/** URL 中是否存在有效账户参数（同上，商户入口用）。 */
-function hasValidAccountParam(): boolean {
-  const p = route.query.account
-  return typeof p === 'string' && reference.accountMap.has(p)
-}
-
-/** 解析 URL 账户参数 → 过滤意图（setFilter）。
- * 校验依赖参考数据（accountMap）：冷启动直连深链时参考数据可能晚到，
- * 待其就绪（status → ready）后自动补判一次，避免有效参数被误判为无效而静默丢失。 */
-function applyAccountParam() {
-  const param = typeof route.query.account === 'string' ? route.query.account : null
-  const ready = reference.status === 'ready'
-  const next = param !== null && ready && reference.accountMap.has(param) ? param : null
-  // 无有效账户参数进入（侧边栏重进 / 无效参数）→ 复位日期/类型，回到全量列表（#96 决策 3）。
-  // 商户参数在场时不复位（另一维度的直达参数不得被账户入口越界清除）。
-  // 先复位再声明账户意图：出口触发重拉时读到的是复位后的过滤状态；
-  // 复位与账户变更各自经统一出口，同一同步批次内被 watcher 去重为一次重拉。
-  if (
-    next === null &&
-    !hasValidMerchantParam() &&
-    (filters.dateFrom !== null || filters.dateTo !== null || filters.kind !== null)
-  ) {
-    setFilter({ dateFrom: null, dateTo: null, kind: null })
-  }
-  setFilter({ involvingAccountId: next })
-  // 参考数据就绪时本次校验即结算；未就绪保持未结算，待就绪后补判一次
-  if (ready) urlAccountSettled = true
-}
-
-/** 解析 URL 商户参数 → 过滤意图（与 applyAccountParam 同款机制，维度独立：
- * 各自只复位日期/类型，不清对方维度；商户校验走 merchantMap 含软删）。 */
-function applyMerchantParam() {
-  const param = typeof route.query.merchant === 'string' ? route.query.merchant : null
-  const ready = reference.status === 'ready'
-  const next = param !== null && ready && reference.merchantMap.has(param) ? param : null
-  if (
-    next === null &&
-    !hasValidAccountParam() &&
-    (filters.dateFrom !== null || filters.dateTo !== null || filters.kind !== null)
-  ) {
-    setFilter({ dateFrom: null, dateTo: null, kind: null })
-  }
-  setFilter({ merchantId: next })
-  if (ready) urlMerchantSettled = true
-}
-
-// URL query 只读入口：/transactions?account=<id> 进入时自动按该账户过滤；
-// /transactions?merchant=<id> 进入时自动按该商户过滤（issue #191，可组合）；
-// query 变化（含导航清除 query）时同步复位。
-watch(() => route.query.account, applyAccountParam, { immediate: true })
-watch(() => route.query.merchant, applyMerchantParam, { immediate: true })
-
-// 参考数据就绪后重判：冷启动直连深链时初始校验可能因数据未到而回退全量，
-// 数据到达后自动补判一次（仅当对应 URL 参数尚未结算；结算后不再重放，
-// 见 urlAccountSettled / urlMerchantSettled）。
-watch(
-  () => reference.status,
-  (status) => {
-    if (status !== 'ready') return
-    if (!urlAccountSettled) applyAccountParam()
-    if (!urlMerchantSettled) applyMerchantParam()
-  },
-)
+// URL 下钻只读入口（issue #234 / #96 决策 3/4）：?account= / ?merchant= 的解析与校验、
+// 复位规则（两维度均无有效参数时复位日期/类型）、参考数据就绪补判与字段级让位
+// 全部内化在 TransactionFilter 参数表；视图只监听路由并把 query 递给模块，
+// 不持任何时序标志与解析逻辑。URL 只读不写回（组件状态是唯一事实源）。
+watch(() => route.query, (query) => syncUrlQuery(query), { immediate: true })
 
 /** 页大小选项（不持久化，遵守 ViewState 决策） */
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
