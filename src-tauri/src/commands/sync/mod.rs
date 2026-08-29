@@ -28,6 +28,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::db::DbState;
 use crate::error::{AppError, Result};
+use crate::events;
 use crate::models::{CancelSyncResult, SyncHoldingPricesResult, SyncProgress};
 
 /// 全量同步中断状态（issue #104）：跨命令共享的运行标志与取消标志（`Arc<AtomicBool>`）。
@@ -115,13 +116,28 @@ fn emit_error_progress(app: &AppHandle, error: String) {
     );
 }
 
+/// 是否发价格失效信号 `ledger:prices-changed`（ADR-0031 决策 2，issue #236）：
+/// 增量/全量两同步命令共用的纯判定。`written` 为本次运行的落库计数——
+/// `Some(n)` 表示到达保留落库的终态（成功，或用户中断——中断保留已落库价格，
+/// 不发信号即失真）且落库 n 条；`None` 表示失败（emit 的终态只有成功与中断，
+/// 失败不广播）。
+/// 失效信号的本义是「数据变了」：零更新（无持仓/全部跳过）为库内零变化，不广播。
+fn should_emit_prices_changed(written: Option<usize>) -> bool {
+    written.is_some_and(|n| n > 0)
+}
+
 /// IPC 命令：同步持仓价格（增量同步，issue #103）。仅刷新当前持仓股票的最新价，
 /// 不增删、不改标的字典；无持仓返回明确提示而非报错。异步执行（后台线程池），
 /// 不阻塞主线程；返回结果统计（同步 N 只 / 跳过 M 只），前端据此轻量提示。
+/// 成功且实际写入（`synced > 0`）时发价格失效信号（ADR-0031）：零变化（无持仓/
+/// 全部跳过）为库内零变化，不广播。
 #[tauri::command]
-pub async fn sync_holding_prices(db: State<'_, DbState>) -> Result<SyncHoldingPricesResult> {
+pub async fn sync_holding_prices(
+    db: State<'_, DbState>,
+    app: AppHandle,
+) -> Result<SyncHoldingPricesResult> {
     let conn = db.conn.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         // 命令在后台线程池执行，手包 span 维持 SQL 耗时归因（lib.rs 异步命令归因约定）。
         let span = tracing::info_span!("command", command = "sync_holding_prices");
         let _entered = span.enter();
@@ -129,7 +145,12 @@ pub async fn sync_holding_prices(db: State<'_, DbState>) -> Result<SyncHoldingPr
         incremental::do_incremental_sync(&conn)
     })
     .await
-    .map_err(|e| AppError::Io(format!("同步任务执行失败: {e}")))?
+    .map_err(|e| AppError::Io(format!("同步任务执行失败: {e}")))?;
+    // 失败经 `?` 提前返回（不广播）；成功路径按判定 emit（零变化不广播）。
+    if should_emit_prices_changed(result.as_ref().ok().map(|r| r.synced)) {
+        events::emit_prices_changed(&app);
+    }
+    result
 }
 
 /// IPC 命令：全量同步股票行情。后台线程执行（不阻塞界面），进度经
@@ -160,9 +181,19 @@ pub fn sync_instruments(
         let result = orchestrate::do_sync(&accessor, &app, &cancel);
         running.store(false, Ordering::SeqCst);
 
-        if let Err(e) = result {
-            tracing::error!(error = %e, "股票同步失败");
-            emit_error_progress(&app, e.to_string());
+        match result {
+            Ok(outcome) => {
+                // 结束（成功或用户中断）且本次运行有落库即发价格失效信号（ADR-0031）：
+                // 中断保留已落库价格（upsert 幂等），不发信号即失真；零落库不广播。
+                if should_emit_prices_changed(Some(outcome.written())) {
+                    events::emit_prices_changed(&app);
+                }
+            }
+            Err(e) => {
+                // 失败不广播（ADR-0031）：emit 的终态只有成功与用户中断，失败不在其列。
+                tracing::error!(error = %e, "股票同步失败");
+                emit_error_progress(&app, e.to_string());
+            }
         }
     });
 
