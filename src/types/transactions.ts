@@ -53,6 +53,8 @@ export interface TransactionListFilter {
   account_id?: string | null
   /** 涉及账户过滤（account_id 或 to_account_id 命中即算，含转入的转账） */
   involving_account_id?: string | null
+  /** 按商户过滤（issue #191）：命中该商户全部未删除交易，软删商户同样可过滤 */
+  merchant_id?: string | null
   /** income / expense / transfer / buy / sell / refund */
   kind?: TransactionKind | null
   /** 取前 N 条（仪表盘"最近 N 条"场景），与分页互斥：传 page_size 时分页路径生效 */

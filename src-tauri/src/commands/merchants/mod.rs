@@ -22,10 +22,14 @@ use crate::models::{Merchant, MerchantInput, MerchantUpdateInput};
 
 pub use core::*;
 
+/// 商户列表：默认仅未删除；`include_deleted=true` 返回含软删全量（交易筛选下拉用）。
 #[tauri::command]
-pub fn list_merchants(db: State<'_, DbState>) -> Result<Vec<Merchant>> {
+pub fn list_merchants(
+    db: State<'_, DbState>,
+    include_deleted: Option<bool>,
+) -> Result<Vec<Merchant>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    core::list_merchants_internal(&conn)
+    core::list_merchants_internal(&conn, include_deleted.unwrap_or(false))
 }
 
 #[tauri::command]

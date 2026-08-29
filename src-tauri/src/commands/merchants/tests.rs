@@ -14,7 +14,7 @@ fn setup() -> rusqlite::Connection {
 }
 
 fn list_merchants(conn: &rusqlite::Connection) -> Vec<Merchant> {
-    list_merchants_internal(conn).unwrap()
+    list_merchants_internal(conn, false).unwrap()
 }
 
 #[test]

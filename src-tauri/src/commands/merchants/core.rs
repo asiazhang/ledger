@@ -14,12 +14,19 @@ use crate::models::{Merchant, MerchantInput, MerchantUpdateInput};
 const MERCHANT_COLUMNS: &str =
     "id,name,icon,color,created_at,updated_at,version,device_id,is_deleted";
 
-/// 列表：未删除商户，按名称排序（字典语义，改名后即按新名排序）。
-pub fn list_merchants_internal(conn: &Connection) -> Result<Vec<Merchant>> {
+/// 列表：默认仅未删除商户（字典语义，改名后即按新名排序）；
+/// `include_deleted=true` 返回含软删全量（交易列表筛选下拉数据源：
+/// 软删商户仍有历史交易，需可被选中过滤，issue #191）。
+pub fn list_merchants_internal(conn: &Connection, include_deleted: bool) -> Result<Vec<Merchant>> {
+    let where_clause = if include_deleted {
+        ""
+    } else {
+        "WHERE is_deleted=0"
+    };
     query_all(
         conn,
         &format!(
-            "SELECT {MERCHANT_COLUMNS} FROM merchants WHERE is_deleted=0 ORDER BY name, created_at"
+            "SELECT {MERCHANT_COLUMNS} FROM merchants {where_clause} ORDER BY name, created_at"
         ),
         [],
     )

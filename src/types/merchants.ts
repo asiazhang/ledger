@@ -6,6 +6,8 @@ export interface Merchant extends Syncable {
   name: string
   icon: string | null
   color: string | null
+  /** 软删标记：仅随含软删全量列表（includeDeleted=true）返回软删行为 true（issue #191） */
+  is_deleted: boolean
 }
 
 export interface MerchantInput {

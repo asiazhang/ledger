@@ -787,6 +787,90 @@ fn check_page_involving_account(
     );
 }
 
+#[then(expr = "分页查询 商户 {string} page {int} page_size {int} 应返回 {int} 条 total {int}")]
+fn check_page_merchant(
+    world: &mut LedgerWorld,
+    merchant_name: String,
+    page: i64,
+    page_size: i64,
+    expected_count: i64,
+    expected_total: i64,
+) {
+    let merchant_id = world.merchant_id(&merchant_name);
+    assert_paged(
+        world,
+        TransactionListFilter {
+            merchant_id: Some(merchant_id),
+            page: Some(page as usize),
+            page_size: Some(page_size as usize),
+            ..Default::default()
+        },
+        expected_count,
+        expected_total,
+        &format!("商户 '{merchant_name}' page={page}"),
+    );
+}
+
+#[then(
+    expr = "分页查询 商户 {string} 涉及账户 {string} page {int} page_size {int} 应返回 {int} 条 total {int}"
+)]
+fn check_page_merchant_involving_account(
+    world: &mut LedgerWorld,
+    merchant_name: String,
+    account_name: String,
+    page: i64,
+    page_size: i64,
+    expected_count: i64,
+    expected_total: i64,
+) {
+    let merchant_id = world.merchant_id(&merchant_name);
+    let account_id = world.account_id(&account_name);
+    assert_paged(
+        world,
+        TransactionListFilter {
+            merchant_id: Some(merchant_id),
+            involving_account_id: Some(account_id),
+            page: Some(page as usize),
+            page_size: Some(page_size as usize),
+            ..Default::default()
+        },
+        expected_count,
+        expected_total,
+        &format!("商户 '{merchant_name}' + 涉及账户 '{account_name}' page={page}"),
+    );
+}
+
+#[then(
+    expr = "分页查询 商户 {string} 日期 {string} 至 {string} page {int} page_size {int} 应返回 {int} 条 total {int}"
+)]
+#[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
+fn check_page_merchant_date(
+    world: &mut LedgerWorld,
+    merchant_name: String,
+    from: String,
+    to: String,
+    page: i64,
+    page_size: i64,
+    expected_count: i64,
+    expected_total: i64,
+) {
+    let merchant_id = world.merchant_id(&merchant_name);
+    assert_paged(
+        world,
+        TransactionListFilter {
+            merchant_id: Some(merchant_id),
+            from: Some(from.clone()),
+            to: Some(to.clone()),
+            page: Some(page as usize),
+            page_size: Some(page_size as usize),
+            ..Default::default()
+        },
+        expected_count,
+        expected_total,
+        &format!("商户 '{merchant_name}' 日期 {from}..{to} page={page}"),
+    );
+}
+
 #[then(expr = "分页查询 kind {string} page {int} page_size {int} 应返回 {int} 条 total {int}")]
 fn check_page_kind(
     world: &mut LedgerWorld,
