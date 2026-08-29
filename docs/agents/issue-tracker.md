@@ -43,7 +43,9 @@ GitHub 的 issue 和 PR 共享编号空间，单独的 `#42` 可能是任一类�
     --input <(echo "{\"sub_issue_id\": $CHILD_ID}")
   ```
 - 若 sub-issue 功能不可用（API 返回 404/501），回退为：子 ticket 正文顶部写 `Part of #<parent>`，并在父 spec 正文维护任务列表。
-- 同一 spec 下的多个 ticket 也互为 sub-issue 关系：存在先后依赖时，后者正文写 `Blocked by: #<n>`（或使用 GitHub 原生 issue 依赖，见下文 Wayfinding 操作的阻塞关系）。
+- 同一 spec 下的多个 ticket 也互为 sub-issue 关系。
+- **阻塞关系必须用 GitHub 原生 blocked-by**（不要只写在正文里）：存在先后依赖时，用下文 Wayfinding 操作的「阻塞关系」命令添加原生依赖。原生依赖可被 `/wayfinder` 与查询自动识别（`issue_dependencies_summary.blocked_by`），正文文本 `Blocked by: #<n>` 只在原生依赖功能不可用（API 返回 404/501）时作为回退。
+- **检查既有依赖**：`gh api graphql -f query='query{repository(owner:"<owner>",name:"<repo>"){issue(number:<n>){blockedBy(first:50){nodes{number title}} blocking(first:50){nodes{number title}}}}}' `。
 
 ## 当 skill 说“获取相关 ticket”
 
@@ -55,7 +57,7 @@ GitHub 的 issue 和 PR 共享编号空间，单独的 `#42` 可能是任一类�
 
 - **地图**: 一个带 `wayfinder:map` 标签的 issue，正文包含 Notes / Decisions-so-far / Fog。创建命令：`gh issue create --label wayfinder:map`。
 - **子 ticket**: 通过 GitHub sub-issue 关联到地图的 issue。如果不支持 sub-issue，就在地图正文中添加任务列表，并在子 issue 正文顶部加上 `Part of #<map>`。标签：`wayfinder:<type>`（`research`/`prototype`/`grilling`/`task`）。被认领后，分配给负责人。
-- **阻塞关系**: 优先使用 GitHub 原生 issue 依赖。使用 `gh api --method POST repos/<owner>/<repo>/issues/<child>/dependencies/blocked_by -F issue_id=<blocker-db-id>` 添加依赖，其中 `<blocker-db-id>` 是阻塞者的**数据库 ID**（通过 `gh api repos/<owner>/<repo>/issues/<n> --jq .id` 获取，不是 `#number` 或 `node_id`）。GitHub 通过 `issue_dependencies_summary.blocked_by` 报告（仅统计 open 的阻塞者）。若依赖功能不可用，在子 issue 正文顶部使用 `Blocked by: #<n>, #<n>` 作为回退。当所有阻塞者都关闭时，ticket 才解除阻塞。
+- **阻塞关系**: 必须使用 GitHub 原生 issue 依赖。使用 `gh api --method POST repos/<owner>/<repo>/issues/<child>/dependencies/blocked_by -F issue_id=<blocker-db-id>` 添加依赖，其中 `<blocker-db-id>` 是阻塞者的**数据库 ID**（通过 `gh api repos/<owner>/<repo>/issues/<n> --jq .id` 获取，不是 `#number` 或 `node_id`）。GitHub 通过 `issue_dependencies_summary.blocked_by` 报告（仅统计 open 的阻塞者）。若依赖功能不可用，在子 issue 正文顶部使用 `Blocked by: #<n>, #<n>` 作为回退。当所有阻塞者都关闭时，ticket 才解除阻塞。
 - **前沿查询**: 列出地图的 open 子 issue（`gh issue list --state open`，范围限定为地图的 sub-issues / 任务列表），剔除仍有 open 阻塞者（`issue_dependencies_summary.blocked_by > 0`，或 `Blocked by` 行中有 open issue）或已有负责人的项；按地图顺序取第一个。
 - **认领**: `gh issue edit <n> --add-assignee @me` —— 这是会话中的第一次写入。
 - **解决**: `gh issue comment <n> --body "<answer>"`，然后 `gh issue close <n>`，再将上下文指针（gist + 链接）追加到地图的 Decisions-so-far。
