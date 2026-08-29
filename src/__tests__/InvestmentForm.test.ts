@@ -66,7 +66,7 @@ beforeEach(async () => {
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 describe('InvestmentForm.vue 移除「新增标的」入口（issue #152）', () => {

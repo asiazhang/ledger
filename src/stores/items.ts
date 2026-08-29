@@ -19,7 +19,7 @@ export type ItemsStatus = 'idle' | 'loading' | 'ready' | 'error'
  *   （stale-while-revalidate：拉取期间保留旧数据，成功后整体替换，不闪空）。
  *
  * 每天成本随日历天数实时变化（无事件），列表展示时刻快照由后端计算；
- * 事件驱动的重拉保证写入后即刻可见，无需新鲜度窗口。
+ * 事件驱动的重拉保证写入后即刻可见。
  *
  * 失效信号：`status`（idle/loading/ready/error）与 `version`（每次成功重拉自增）。
  */

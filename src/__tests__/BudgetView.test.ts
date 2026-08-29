@@ -88,7 +88,7 @@ function withProgress(progress: BudgetProgress[]) {
   mockInvoke.mockImplementation((cmd: string) => baseInvokeImpl(cmd, progress))
 }
 
-/** 挂载视图（参考数据经 store ensureFresh 注入），flush 后就绪。
+/** 挂载视图（参考数据经 store 注入），flush 后就绪。
  *  需自定义 invoke 返回（进度行/override）时，在调用本函数前 mockImplementation。 */
 async function mountView() {
   const wrapper = mount(BudgetView)
@@ -137,7 +137,7 @@ beforeEach(async () => {
   messageApi.error.mockReset()
   mockInvoke.mockImplementation((cmd: string) => baseInvokeImpl(cmd))
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 describe('BudgetView 预算表单（issue #183）', () => {

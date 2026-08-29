@@ -3,7 +3,7 @@ import { flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { useReferenceStore, REFERENCE_FRESH_MS } from '@/stores/reference'
+import { useReferenceStore } from '@/stores/reference'
 import type { Account, Category, Currency, Merchant } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
@@ -217,16 +217,15 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
 
   afterEach(() => {
     changedHandler = null
-    vi.useRealTimers()
   })
 
   it('首次访问 self-init 自动触发一次加载（无需手动调用 load*）', async () => {
     const store = useReferenceStore()
-    // self-init 同步发起了三张参考表的拉取（恰一次）
+    // self-init 同步发起了四张参考表的拉取（恰一次）
     expect(
       mockInvoke.mock.calls.filter(([cmd]) => cmd.startsWith('list_')),
     ).toHaveLength(4)
-    await store.ensureFresh()
+    await store.refresh()
     expect(store.currencies).toEqual(mockCurrencies)
     expect(store.accounts).toEqual(mockAccounts)
     expect(store.categories).toEqual(mockCategories)
@@ -236,7 +235,7 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
     const store = useReferenceStore()
     expect(store.status).toBe('loading') // self-init 同步置位
     expect(store.version).toBe(0)
-    await store.ensureFresh()
+    await store.refresh()
     expect(store.status).toBe('ready')
     expect(store.version).toBe(1)
     await store.refresh()
@@ -254,7 +253,7 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
 
   it('ledger:changed 到达后置 loading 并保留旧数据（不闪空），完成后替换', async () => {
     const store = useReferenceStore()
-    await store.ensureFresh()
+    await store.refresh()
 
     let resolveCats!: (v: Category[]) => void
     mockInvoke.mockImplementation((cmd: string) => {
@@ -286,7 +285,7 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
 
   it('触发 ledger:changed 后四表自动更新，派生映射随之更新', async () => {
     const store = useReferenceStore()
-    await store.ensureFresh()
+    await store.refresh()
     expect(store.currencyMap.get('CNY')?.name).toBe('人民币')
 
     mockInvoke.mockImplementation((cmd: string) => {
@@ -311,27 +310,10 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
     expect(store.version).toBe(2)
   })
 
-  it('ensureFresh 在 fresh 窗口内零 IPC；refresh 强制绕过窗口重拉', async () => {
+  it('并发 refresh 合并为一次 IPC', async () => {
     const store = useReferenceStore()
-    await store.ensureFresh()
-    mockInvoke.mockClear()
-
-    await store.ensureFresh()
-    expect(mockInvoke).not.toHaveBeenCalled()
-
     await store.refresh()
-    expect(
-      mockInvoke.mock.calls.filter(([cmd]) => cmd.startsWith('list_')),
-    ).toHaveLength(4)
-  })
-
-  it('并发 ensureFresh 合并为一次 IPC', async () => {
-    vi.useFakeTimers()
-    const store = useReferenceStore()
-    await store.ensureFresh()
     mockInvoke.mockClear()
-    // 越过新鲜度窗口，使并发调用真正走重拉
-    vi.advanceTimersByTime(REFERENCE_FRESH_MS + 1)
 
     let resolveCats!: (v: Category[]) => void
     mockInvoke.mockImplementation((cmd: string) => {
@@ -346,10 +328,10 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
 
-    const p1 = store.ensureFresh()
-    const p2 = store.ensureFresh()
-    const p3 = store.ensureFresh()
-    // 三次并发调用只发起一次加载（三张表各一次 IPC）
+    const p1 = store.refresh()
+    const p2 = store.refresh()
+    const p3 = store.refresh()
+    // 三次并发调用只发起一次加载（四张表各一次 IPC）
     expect(
       mockInvoke.mock.calls.filter(([cmd]) => cmd.startsWith('list_')),
     ).toHaveLength(4)
@@ -361,7 +343,7 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
 
   it('重拉不闪空：加载期间保留旧数据，成功后才整体替换', async () => {
     const store = useReferenceStore()
-    await store.ensureFresh()
+    await store.refresh()
 
     let resolveCats!: (v: Category[]) => void
     mockInvoke.mockImplementation((cmd: string) => {
@@ -394,7 +376,7 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
 
   it('重拉失败 → status=error、保留旧数据、version 不变', async () => {
     const store = useReferenceStore()
-    await store.ensureFresh()
+    await store.refresh()
 
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_currencies') return Promise.reject(new Error('db 错误'))
@@ -410,7 +392,7 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
 
   it('失败后 refresh 可恢复：error → loading → ready，version 续增', async () => {
     const store = useReferenceStore()
-    await store.ensureFresh()
+    await store.refresh()
 
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_currencies') return Promise.reject(new Error('db 错误'))

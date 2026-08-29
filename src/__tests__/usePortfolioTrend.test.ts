@@ -46,7 +46,7 @@ beforeEach(async () => {
   mockInvoke.mockReset()
   baseInvoke()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 describe('toTrendRange 预设区间 → 查询区间（纯函数）', () => {

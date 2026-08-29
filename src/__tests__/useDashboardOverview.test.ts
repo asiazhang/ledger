@@ -31,7 +31,7 @@ beforeEach(async () => {
   baseInvoke()
   localStorage.clear()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 describe('useDashboardOverview 首页净资产数据层（issue #143）', () => {

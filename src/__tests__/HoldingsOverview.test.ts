@@ -48,7 +48,7 @@ beforeEach(async () => {
   mockListen.mockResolvedValue(() => {})
   baseInvoke()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 let wrapper: ReturnType<typeof mount> | undefined

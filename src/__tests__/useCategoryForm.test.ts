@@ -78,7 +78,7 @@ async function submitWithMerchant(
   options?: Parameters<typeof useCategoryForm>[1],
 ) {
   // 参考 store self-init 异步：先等首拉完成，保证 merchantByName/merchantMap 就绪
-  await useReferenceStore().ensureFresh()
+  await useReferenceStore().refresh()
   const form = useCategoryForm('expense', options)
   form.amount.value = 50
   form.accountId.value = 'acc-1'
@@ -174,7 +174,7 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
 
     it('原商户已被软删（不在字典）：提交保持原 id（历史引用照常保留），兜底选项可显示', async () => {
       mockBaseCommands([]) // 字典为空：mch-1 已软删
-      await useReferenceStore().ensureFresh()
+      await useReferenceStore().refresh()
       const form = useCategoryForm('expense', { editing: () => editingTx })
       // 回填时不可用 uuid 裸值展示：兜底选项以可读标签承载原 id
       expect(form.merchantOptions.value.some((o) => o.value === 'mch-1')).toBe(true)

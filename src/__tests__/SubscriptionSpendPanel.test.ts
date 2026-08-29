@@ -94,7 +94,7 @@ beforeEach(async () => {
   mockListen.mockResolvedValue(() => {})
   baseInvoke()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 function chartPayload(wrapper: ReturnType<typeof mount>): {

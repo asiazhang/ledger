@@ -93,7 +93,7 @@ beforeEach(async () => {
   // 默认桩收口到 stubInvoke（含备份全链路与 get_data_location_info）。
   stubInvoke()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 describe('SettingsView.vue（issue #157：Tab 分域重构 6 → 4）', () => {

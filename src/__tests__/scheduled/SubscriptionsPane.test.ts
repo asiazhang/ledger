@@ -287,7 +287,7 @@ beforeEach(async () => {
   mockMerchantsState = mockMerchants
   baseInvoke()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 describe('SubscriptionsPane 订阅清单（issue #159）', () => {
@@ -752,7 +752,7 @@ describe('SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
         is_deleted: false,
       },
     ]
-    // beforeEach 已加载 store（新鲜度窗口内 ensureFresh 不会重拉），强制刷新拿新字典
+    // beforeEach 已加载 store，显式 refresh 强制重拉拿新字典
     await useReferenceStore().refresh()
     const plan = makePlan({ id: 'a1', note: '视频会员' }, 'mer-1')
     mockPlans = [plan]

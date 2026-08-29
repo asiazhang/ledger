@@ -43,7 +43,7 @@ describe('CategoryForm.vue', () => {
     })
     // Pre-load store so components have data
     const store = useReferenceStore()
-    await store.ensureFresh()
+    await store.refresh()
   })
 
   it('挂载并显示提交按钮文本', () => {

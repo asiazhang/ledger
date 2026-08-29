@@ -133,7 +133,7 @@ describe('useInvestmentForm', () => {
   describe('编辑模式（issue #180）', () => {
     it('创建即回填：账户/标的/数量/价格/费用/备注/日期/币种，标的候选项含回填标的（显示 symbol · name）', async () => {
       const store = useReferenceStore()
-      await store.ensureFresh()
+      await store.refresh()
       const form = useInvestmentForm('buy', {
         editing: () => editingTx,
         trade: () => editingTrade,
@@ -154,7 +154,7 @@ describe('useInvestmentForm', () => {
 
     it('回填标的名称为空时候选 label 仅显示 symbol；用户搜索不冲掉回填标的选项', async () => {
       const store = useReferenceStore()
-      await store.ensureFresh()
+      await store.refresh()
       const form = useInvestmentForm('buy', {
         editing: () => editingTx,
         trade: () => ({ ...editingTrade, instrument_name: null }),
@@ -178,7 +178,7 @@ describe('useInvestmentForm', () => {
 
     it('submit 编辑：分派 update_transaction（同一入参形状），onUpdated 触发、onCreated 不触发、不重置表单', async () => {
       const store = useReferenceStore()
-      await store.ensureFresh()
+      await store.refresh()
       mockInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
         if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
@@ -218,7 +218,7 @@ describe('useInvestmentForm', () => {
 
     it('submit 编辑失败：错误不抛出、onUpdated 不触发、已填内容不丢', async () => {
       const store = useReferenceStore()
-      await store.ensureFresh()
+      await store.refresh()
       const onUpdated = vi.fn()
       const form = useInvestmentForm('buy', {
         onUpdated,

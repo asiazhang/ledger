@@ -312,7 +312,7 @@ describe('TransactionsView 商户筛选（issue #191）', () => {
   beforeEach(async () => {
     setMerchantDb(merchantDbAll)
     setTxnDb([...merchantTxnDb])
-    // 外层 beforeEach 已以默认字典加载并在新鲜度窗口内缓存，此处强制重拉
+    // 外层 beforeEach 已以默认字典加载，此处强制重拉
     await useReferenceStore().refresh()
   })
 

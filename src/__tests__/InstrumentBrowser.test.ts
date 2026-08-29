@@ -89,7 +89,7 @@ beforeEach(async () => {
   baseInvoke()
   localStorage.clear()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 // 模拟全量同步进度事件上报（payload 与后端 SyncProgress 一致）

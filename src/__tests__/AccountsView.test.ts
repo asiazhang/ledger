@@ -55,7 +55,7 @@ beforeEach(async () => {
   })
   localStorage.clear()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 describe('AccountsView 账户名下钻（issue #97）', () => {

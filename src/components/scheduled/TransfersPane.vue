@@ -375,8 +375,6 @@ const columns: DataTableColumns<TransferRow> = [
 ]
 
 onMounted(() => {
-  // 参考数据走单一来源 store（ensureFresh + ledger:changed 失效自动重拉）
-  void reference.ensureFresh().catch(() => {})
   void load()
 })
 </script>
