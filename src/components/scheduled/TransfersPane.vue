@@ -32,6 +32,7 @@ import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { useFormShared } from '@/composables/useFormShared'
 import PinyinSelect from '@/components/PinyinSelect.vue'
+import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 
 /**
@@ -207,6 +208,21 @@ async function load() {
 }
 
 // ---------------------------------------------------------------------------
+// 期次详情弹窗（issue #205）：三页签通用组件；弹窗内重试成功会发 changed，
+// 清单随之刷新
+// ---------------------------------------------------------------------------
+
+const planDetailRef = ref<InstanceType<typeof PlanDetailModal> | null>(null)
+
+function openDetail(row: TransferRow) {
+  void planDetailRef.value?.open(row.plan.core.id)
+}
+
+async function onDetailChanged() {
+  await load()
+}
+
+// ---------------------------------------------------------------------------
 // 状态操作：暂停 / 恢复 / 取消（走既有 update_scheduled_transaction_status）
 // ---------------------------------------------------------------------------
 
@@ -291,6 +307,18 @@ const columns: DataTableColumns<TransferRow> = [
     render: (row) => {
       const status = row.plan.core.status
       const buttons: VNode[] = []
+      // 期次详情（issue #205）：所有状态都可查看期次执行情况
+      buttons.push(
+        h(
+          NButton,
+          {
+            size: 'tiny',
+            'data-testid': `op-detail-${row.plan.core.id}`,
+            onClick: () => openDetail(row),
+          },
+          () => '期次',
+        ),
+      )
       if (status === 'active') {
         buttons.push(
           h(
@@ -485,5 +513,8 @@ onMounted(() => {
         </NSpace>
       </NForm>
     </NModal>
+
+    <!-- 期次详情弹窗（issue #205）：三页签通用 -->
+    <PlanDetailModal ref="planDetailRef" @changed="onDetailChanged" />
   </NSpace>
 </template>

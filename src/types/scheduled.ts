@@ -52,6 +52,8 @@ export interface ScheduledTransactionDetail {
   completed_occurrences: number
   /** 已完成期次金额合计（issue #204）：分期「已还金额」实时汇总，不持久化 */
   completed_amount_cents: number
+  /** 全量期次（issue #205）：含全部状态，按日期升序——期次详情弹窗唯一数据源；计数字段为既有契约保留 */
+  occurrences: ScheduledTransactionOccurrence[]
 }
 
 export interface InstallmentPlan {

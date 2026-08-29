@@ -313,6 +313,11 @@ pub struct ScheduledTransactionDetail {
     pub completed_occurrences: i64,
     /// 已完成期次金额合计（issue #204）：分期进度「已还金额」实时汇总，不持久化。
     pub completed_amount_cents: i64,
+    /// 全量期次列表（issue #205）：含全部状态（pending/processing/completed/failed/
+    /// cancelled），按 scheduled_date 升序——期次详情弹窗的唯一数据源，
+    /// 避免逐状态字段列举遗漏（如取消计划时 pending 批量转 cancelled）。
+    /// 既有 pending/completed 计数字段为冻结契约，保留不动。
+    pub occurrences: Vec<ScheduledTransactionOccurrence>,
 }
 
 // ---------------------------------------------------------------------------

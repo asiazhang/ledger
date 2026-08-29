@@ -135,6 +135,7 @@ function makeOccurrence(
 function makeDetail(
   plan: ScheduledTransactionWithExt,
   pending_occurrences: ScheduledTransactionOccurrence[],
+  failed_occurrences: ScheduledTransactionOccurrence[] = [],
 ): ScheduledTransactionDetail {
   return {
     core: plan.core,
@@ -144,6 +145,7 @@ function makeDetail(
     },
     pending_occurrences,
     completed_occurrences: 0,
+    occurrences: [...pending_occurrences, ...failed_occurrences],
   }
 }
 
@@ -245,6 +247,20 @@ function baseInvoke() {
         })
       }
       return Promise.resolve()
+    }
+    if (cmd === 'execute_scheduled_occurrence') {
+      // 重试语义：failed 期次 → completed（issue #205 期次详情弹窗）
+      const { occurrence_id } = (args?.input ?? {}) as { occurrence_id: string }
+      for (const [id, d] of mockDetails) {
+        if (!d.occurrences.some((o) => o.id === occurrence_id && o.status === 'failed')) continue
+        mockDetails.set(id, {
+          ...d,
+          occurrences: d.occurrences.map((o) =>
+            o.id === occurrence_id ? { ...o, status: 'completed' as const } : o,
+          ),
+        })
+      }
+      return Promise.resolve('txn-new')
     }
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   }) as typeof invoke)
@@ -769,5 +785,41 @@ describe('SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
     await wrapper.findComponent('[data-testid="sub-edit-save"]').trigger('click')
     await flushPromises()
     expect(findModal(wrapper, '编辑订阅').props('show')).toBe(true)
+  })
+})
+
+describe('SubscriptionsPane 期次详情弹窗入口（issue #205）', () => {
+  it('点击「期次」打开通用期次详情弹窗', async () => {
+    const plan = makePlan({ id: 'a1' })
+    mockPlans = [plan]
+    mockDetails.set('a1', makeDetail(plan, []))
+    const wrapper = await mountView()
+    await wrapper.find('[data-testid="op-detail-a1"]').trigger('click')
+    await flushPromises()
+    // 弹窗内容渲染（display-directive="if"，仅在打开时挂载；NModal teleport 到 body）
+    expect(document.body.querySelector('[data-testid="occ-plan-note"]')).not.toBeNull()
+  })
+
+  it('弹窗内重试成功后清单刷新（changed 信号联动）', async () => {
+    const plan = makePlan({ id: 'a1' })
+    mockPlans = [plan]
+    mockDetails.set(
+      'a1',
+      makeDetail(plan, [], [
+        makeOccurrence({ id: 'f1', scheduled_date: '2026-02-01', status: 'failed' }),
+      ]),
+    )
+    const wrapper = await mountView()
+    await wrapper.find('[data-testid="op-detail-a1"]').trigger('click')
+    await flushPromises()
+    const retryBtn = document.body.querySelector(
+      '[data-testid="occ-retry-f1"]',
+    ) as HTMLButtonElement
+    expect(retryBtn).not.toBeNull()
+    retryBtn.click()
+    await flushPromises()
+    // changed 信号触发清单重拉（list_scheduled_transactions 再次调用）
+    const loadCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_scheduled_transactions')
+    expect(loadCalls.length).toBeGreaterThanOrEqual(2)
   })
 })
