@@ -21,6 +21,8 @@ import { api } from '@/api'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useReferenceStore } from '@/stores/reference'
 import { errorMessage } from '@/utils/errors'
+import { yuanToCents } from '@/utils/money'
+import { todayStr } from '@/utils/date'
 import { formatAmount, centsToYuan } from '@/types'
 import { BUDGET_PERIOD_LABELS } from '@/types/budget'
 import type { BudgetInput, BudgetProgress } from '@/types'
@@ -63,9 +65,9 @@ async function create() {
   }
   const input: BudgetInput = {
     category_id: categoryId.value,
-    amount_cents: Math.round(amount.value * 100),
-    // start_date 已退化为记录字段（永久滚动预算，进度与日期无关），传创建当日即可
-    start_date: new Date().toISOString().slice(0, 10),
+    amount_cents: yuanToCents(amount.value) ?? 0,
+    // start_date 已退化为记录字段（永久滚动预算，进度与日期无关），传创建当日（本地日历日）即可
+    start_date: todayStr(),
   }
   try {
     await api.createBudget(input)
@@ -94,7 +96,7 @@ async function saveEdit() {
   }
   try {
     await api.updateBudget(editing.value.budget.id, {
-      amount_cents: Math.round(editAmount.value * 100),
+      amount_cents: yuanToCents(editAmount.value) ?? 0,
     })
     message.success('已更新预算')
     showEdit.value = false

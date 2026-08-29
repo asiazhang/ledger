@@ -50,6 +50,25 @@ describe('yuanToCents（元 → 分）', () => {
   })
 })
 
+describe('yuanToCents（元 → 分）：number 输入分支（issue #214）', () => {
+  it('number 与等值 string 结果一致（同一 toFixed(8) 口径，不另写算法）', () => {
+    for (const v of [15, 0, 15.5, 0.01, 0.1, -15.5, 12345.67]) {
+      expect(yuanToCents(v)).toBe(yuanToCents(String(v)))
+    }
+  })
+
+  it('15.505 浮点误差边界：15.505 * 100 实为 1550.4999…，仍四舍五入为 1551', () => {
+    expect(yuanToCents(15.505)).toBe(1551)
+    expect(yuanToCents(15.504)).toBe(1550)
+  })
+
+  it('非有限数值 → null', () => {
+    expect(yuanToCents(Number.NaN)).toBeNull()
+    expect(yuanToCents(Number.POSITIVE_INFINITY)).toBeNull()
+    expect(yuanToCents(Number.NEGATIVE_INFINITY)).toBeNull()
+  })
+})
+
 describe('formatQuantity（数量列万分位分组）', () => {
   it('纯整数从右向左每 4 位一组', () => {
     expect(formatQuantity(12345)).toBe('1,2345')

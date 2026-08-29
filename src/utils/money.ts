@@ -54,17 +54,18 @@ export function centsToYuan(cents: number, currency?: Currency): number {
 }
 
 /**
- * 元（用户输入字符串，支持小数）→ 分（整数）。
+ * 元（用户输入 string | number，支持小数）→ 分（整数）。
  *
- * - 空字符串 / 纯空白 → null（表示「不筛选」）
+ * - 空字符串 / 纯空白 → null（表示「不筛选」）；NaN / Infinity → null
  * - 非数字（含 1e3 这类科学计数法）→ null
  * - 合法金额四舍五入到分：15.5 → 1550
  * - 超出安全整数范围（如 1e308 乘以 100 溢出为 Infinity）→ null
  *
- * 用 toFixed(8) 消除二进制浮点误差（如 15.505 * 100 实际为 1550.4999999999998）。
+ * string 与 number 分支收敛到同一 toFixed(8) 消浮点误差口径
+ * （如 15.505 * 100 实际为 1550.4999999999998）：number 先 String() 化走同一管道，不另写算法。
  */
-export function yuanToCents(yuan: string): number | null {
-  const trimmed = yuan.trim()
+export function yuanToCents(yuan: string | number): number | null {
+  const trimmed = typeof yuan === 'number' ? String(yuan) : yuan.trim()
   if (!trimmed) return null
   // 允许 .5 这类省略整数部分的写法（'15'、'.5'、'15.5' 均可；'15.'、'abc'、'1e3' 拒绝）
   if (!/^-?\d*\.?\d+$/.test(trimmed)) return null
