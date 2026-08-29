@@ -19,6 +19,7 @@ import {
 } from 'naive-ui'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
+import { errorMessage } from '@/utils/errors'
 import { formatAmount } from '@/types'
 import type { BudgetInput, BudgetProgress } from '@/types'
 
@@ -50,6 +51,10 @@ async function create() {
     message.warning('请填写分类和金额')
     return
   }
+  if (amount.value <= 0) {
+    message.warning('预算金额必须为正数')
+    return
+  }
   const input: BudgetInput = {
     category_id: categoryId.value,
     amount_cents: Math.round(amount.value * 100),
@@ -62,7 +67,8 @@ async function create() {
     amount.value = null
     await refresh()
   } catch (e) {
-    message.error(`创建失败: ${e}`)
+    // 后端拒绝（金额非正/收入分类/同分类同周期重复）时把中文错误清晰呈现给用户
+    message.error(`创建失败: ${errorMessage(e)}`)
   }
 }
 
@@ -72,7 +78,7 @@ async function remove(id: string) {
     message.success('已删除')
     await refresh()
   } catch (e) {
-    message.error(`删除失败: ${e}`)
+    message.error(`删除失败: ${errorMessage(e)}`)
   }
 }
 
