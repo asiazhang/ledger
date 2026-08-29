@@ -141,17 +141,29 @@ describe('useReferenceStore', () => {
     expect(store.merchantByName.get('红旗连锁')?.id).toBe('mch-2')
   })
 
-  it('软删商户：重拉后从字典消失（不可再选），merchantMap 仍保留（历史引用照常显示）', async () => {
+  it('list_merchants 以含软删全量拉取（includeDeleted=true，筛选下拉数据源 issue #191）', async () => {
+    const store = useReferenceStore()
+    await store.refresh()
+    const merchantCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_merchants')
+    expect(merchantCalls.length).toBeGreaterThan(0)
+    for (const [, args] of merchantCalls) {
+      expect(args).toMatchObject({ includeDeleted: true })
+    }
+  })
+
+  it('软删商户：从字典与选择列表消失（不可再选），merchantMap 仍保留（历史引用照常显示）', async () => {
     const store = useReferenceStore()
     await store.refresh()
     expect(store.merchantMap.get('mch-1')?.name).toBe('京东')
 
-    // 京东被软删：字典列表不再返回（is_deleted=0 过滤），其余表不变
+    // 京东被软删：后端含软删列表返回 is_deleted=true 行，其余表不变
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-      if (cmd === 'list_merchants') return Promise.resolve([mockMerchants[1]])
+      if (cmd === 'list_merchants') {
+        return Promise.resolve([{ ...mockMerchants[0], is_deleted: true }, mockMerchants[1]])
+      }
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     await store.refresh()

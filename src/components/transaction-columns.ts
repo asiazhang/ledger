@@ -8,6 +8,7 @@ import { formatAmount, TRANSACTION_KIND_LABELS } from '@/types'
 import type { Transaction, TransactionKind } from '@/types'
 import type { useReferenceStore } from '@/stores/reference'
 import AccountLink from '@/components/AccountLink.vue'
+import MerchantLink from '@/components/MerchantLink.vue'
 
 export type ReferenceStore = ReturnType<typeof useReferenceStore>
 
@@ -75,8 +76,9 @@ export function buildTransactionColumns(reference: ReferenceStore): DataTableCol
       key: 'merchant_id',
       width: 120,
       ellipsis: { tooltip: true },
-      // 商户名经 merchantMap（含软删显示缓存）：历史引用照常显示，软删/未知回退 '-'
-      render: (row) => (row.merchant_id ? reference.merchantMap.get(row.merchant_id)?.name || '-' : '-'),
+      // 商户名经 merchantMap（含软删）解析并可点击下钻（issue #191）；未知/无商户回退 '-'
+      render: (row) =>
+        row.merchant_id ? h(MerchantLink, { merchantId: row.merchant_id }) : '-',
     },
     {
       title: '账户',

@@ -105,6 +105,47 @@ async fn test_get_transactions_filters_by_kind() {
 }
 
 #[tokio::test]
+async fn test_get_transactions_filters_by_merchant_id_query_param() {
+    let (app, conn) = setup_app();
+    let account_id = create_account_via_api(&app, "现金").await;
+
+    // 商户行直插（merchant 域无 HTTP 端点，T7 前临时前置）
+    {
+        let c = conn.lock().unwrap();
+        c.execute(
+            "INSERT INTO merchants (id,name,icon,color,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES ('mch-1','京东',NULL,NULL,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            [],
+        )
+        .unwrap();
+    }
+
+    let with_merchant = format!(
+        r#"{{"kind":"expense","amount_cents":100,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-01","merchant_id":"mch-1"}}"#
+    );
+    let without_merchant = format!(
+        r#"{{"kind":"expense","amount_cents":200,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-02"}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&with_merchant, &without_merchant], None)).await;
+    assert!(
+        created.iter().all(|r| r["success"] == true),
+        "写入应成功: {created:?}"
+    );
+
+    // 按商户过滤：只命中带 merchant_id 的一条，total 口径同步
+    let (status, body) = get_json(&app, "/api/v1/transactions?merchant_id=mch-1").await;
+    assert_eq!(status, StatusCode::OK);
+    let txs = items_of(&body);
+    assert_eq!(txs.len(), 1, "应只返回该商户交易: {body:?}");
+    assert_eq!(txs[0]["merchant_id"], "mch-1");
+    assert_eq!(body["total"], 1);
+
+    // 不带参数回全量
+    let (_, all) = get_json(&app, "/api/v1/transactions").await;
+    assert_eq!(all["total"], 2);
+}
+
+#[tokio::test]
 async fn test_get_transactions_limit_truncates() {
     let (app, _) = setup_app();
     seed_readback_transactions(&app).await;

@@ -244,7 +244,7 @@ fn check_schema_in_place(world: &mut LedgerWorld) {
 
 #[then(expr = "商户列表应包含 {int} 条记录")]
 fn check_merchant_count(world: &mut LedgerWorld, expected: i64) {
-    let merchants = list_merchants_internal(&world.conn).expect("查询商户失败");
+    let merchants = list_merchants_internal(&world.conn, false).expect("查询商户失败");
     assert_eq!(
         merchants.len() as i64,
         expected,
@@ -254,7 +254,7 @@ fn check_merchant_count(world: &mut LedgerWorld, expected: i64) {
 
 #[then(expr = "商户列表应包含 {string}")]
 fn check_merchant_contains(world: &mut LedgerWorld, name: String) {
-    let merchants = list_merchants_internal(&world.conn).expect("查询商户失败");
+    let merchants = list_merchants_internal(&world.conn, false).expect("查询商户失败");
     assert!(
         merchants.iter().any(|m| m.name == name),
         "商户列表应包含 '{name}'，实际: {:?}",
@@ -267,10 +267,27 @@ fn check_merchant_contains(world: &mut LedgerWorld, name: String) {
 
 #[then(expr = "商户列表应不包含 {string}")]
 fn check_merchant_not_contains(world: &mut LedgerWorld, name: String) {
-    let merchants = list_merchants_internal(&world.conn).expect("查询商户失败");
+    let merchants = list_merchants_internal(&world.conn, false).expect("查询商户失败");
     assert!(
         !merchants.iter().any(|m| m.name == name),
         "商户列表不应包含 '{name}'"
+    );
+}
+
+/// 含软删全量列表（交易列表筛选下拉的数据源）：软删商户仍在其列，
+/// 其历史交易照常可按商户过滤。
+#[then(expr = "商户含软删列表应包含 {int} 条记录")]
+fn check_merchant_all_count(world: &mut LedgerWorld, expected: i64) {
+    let merchants = list_merchants_internal(&world.conn, true).expect("查询含软删商户列表失败");
+    assert_eq!(merchants.len() as i64, expected, "含软删商户列表数量不匹配");
+}
+
+#[then(expr = "商户含软删列表应包含 {string}")]
+fn check_merchant_all_contains(world: &mut LedgerWorld, name: String) {
+    let merchants = list_merchants_internal(&world.conn, true).expect("查询含软删商户列表失败");
+    assert!(
+        merchants.iter().any(|m| m.name == name),
+        "含软删商户列表应包含 '{name}'"
     );
 }
 

@@ -33,6 +33,10 @@ pub fn list_transactions_internal(
         params.push(account_id.to_string());
         params.push(account_id.to_string());
     }
+    if let Some(merchant_id) = filter.merchant_id.as_deref() {
+        where_clause.push_str(" AND merchant_id = ?");
+        params.push(merchant_id.to_string());
+    }
     if let Some(kind) = filter.kind {
         where_clause.push_str(" AND kind = ?");
         params.push(kind.as_str().to_string());

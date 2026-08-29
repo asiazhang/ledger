@@ -24,6 +24,7 @@ import TransactionsView from '@/views/TransactionsView.vue'
 import RefundForm from '@/components/RefundForm.vue'
 import AddItemForm from '@/components/AddItemForm.vue'
 import AccountLink from '@/components/AccountLink.vue'
+import MerchantLink from '@/components/MerchantLink.vue'
 import TransactionForm from '@/components/TransactionForm.vue'
 import type { Account, Currency, Merchant, Transaction } from '@/types'
 
@@ -111,13 +112,14 @@ function makeTxn(i: number, accountId = 'acc-1', overrides: Partial<Transaction>
  * 偶数序号在 acc-2、奇数序号在 acc-1，供涉及账户过滤断言。 */
 let txnDb: Transaction[] = []
 
-/** 与后端 read.rs 口径一致：涉及账户 / 日期起止 / 类型 / 分页 AND 组合过滤。 */
+/** 与后端 read.rs 口径一致：涉及账户 / 商户 / 日期起止 / 类型 / 分页 AND 组合过滤。 */
 function applyListFilter(filter: Record<string, unknown>) {
   return txnDb.filter((t) => {
     if (filter.involving_account_id) {
       const id = filter.involving_account_id as string
       if (t.account_id !== id && t.to_account_id !== id) return false
     }
+    if (filter.merchant_id && t.merchant_id !== filter.merchant_id) return false
     if (filter.from && t.date < (filter.from as string)) return false
     if (filter.to && t.date > (filter.to as string)) return false
     if (filter.kind && t.kind !== (filter.kind as string)) return false
@@ -436,11 +438,14 @@ describe('TransactionsView 手动过滤（issue #98）', () => {
     txnDb = [...richDb]
   })
 
-  // 过滤行控件定位：账户下拉 = 第 1 个 NSelect，类型下拉 = 第 2 个
+  // 过滤行控件定位：账户下拉 = 第 1 个 NSelect（PinyinSelect 内层），
+  // 商户下拉 = 第 2 个（issue #191），类型下拉 = 第 3 个
   const accountSelect = (wrapper: ReturnType<typeof mount>) =>
     wrapper.findAllComponents(NSelect)[0]
-  const kindSelect = (wrapper: ReturnType<typeof mount>) =>
+  const merchantSelect = (wrapper: ReturnType<typeof mount>) =>
     wrapper.findAllComponents(NSelect)[1]
+  const kindSelect = (wrapper: ReturnType<typeof mount>) =>
+    wrapper.findAllComponents(NSelect)[2]
   const datePickers = (wrapper: ReturnType<typeof mount>) =>
     wrapper.findAllComponents(NDatePicker)
   const clearButton = (wrapper: ReturnType<typeof mount>) =>
@@ -449,6 +454,10 @@ describe('TransactionsView 手动过滤（issue #98）', () => {
   /** 直接向过滤行控件 emit 变更事件（与 SearchView.test 的 setDate 模式一致）。 */
   async function setAccount(wrapper: ReturnType<typeof mount>, id: string | null) {
     accountSelect(wrapper).vm.$emit('update:value', id)
+    await flushPromises()
+  }
+  async function setMerchant(wrapper: ReturnType<typeof mount>, id: string | null) {
+    merchantSelect(wrapper).vm.$emit('update:value', id)
     await flushPromises()
   }
   async function setKind(wrapper: ReturnType<typeof mount>, k: string | null) {
@@ -464,7 +473,7 @@ describe('TransactionsView 手动过滤（issue #98）', () => {
     await flushPromises()
   }
 
-  it('顶部渲染过滤行：账户/类型下拉可清除、起止日期、清除筛选按钮', async () => {
+  it('顶部渲染过滤行：账户/商户/类型下拉可清除、起止日期、清除筛选按钮', async () => {
     const wrapper = await mountView()
     // 账户下拉：可清除，选项来自参考数据账户映射
     const account = accountSelect(wrapper)
@@ -472,6 +481,12 @@ describe('TransactionsView 手动过滤（issue #98）', () => {
     expect(
       (account.props('options') as { value: string; label: string }[]).map((o) => o.value),
     ).toEqual(['acc-1', 'acc-2'])
+    // 商户下拉：可清除，选项来自参考数据商户映射（在用 + 软删，issue #191）
+    const merchant = merchantSelect(wrapper)
+    expect(merchant.props('clearable')).toBe(true)
+    expect(
+      (merchant.props('options') as { value: string }[]).map((o) => o.value),
+    ).toEqual(['mch-1'])
     // 日期起止
     expect(datePickers(wrapper).length).toBe(2)
     // 类型下拉：可清除，6 种交易类型（income/expense/transfer/refund/buy/sell）
@@ -634,6 +649,207 @@ describe('TransactionsView 手动过滤（issue #98）', () => {
   })
 })
 
+describe('TransactionsView 商户筛选（issue #191）', () => {
+  // 富数据集：商户命中/未命中、软删商户历史交易并存，供筛选/组合/URL 直达断言
+  const merchantDbAll: Merchant[] = [
+    {
+      id: 'mch-1', name: '京东', icon: null, color: null,
+      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+      version: 1, device_id: 'test', is_deleted: false,
+    },
+    {
+      id: 'mch-2', name: '红旗连锁', icon: null, color: null,
+      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+      version: 1, device_id: 'test', is_deleted: true,
+    },
+  ]
+  const merchantTxnDb: Transaction[] = [
+    makeTxn(1, 'acc-1', { merchant_id: 'mch-1', date: '2026-01-05' }),
+    makeTxn(2, 'acc-2', { merchant_id: 'mch-1', date: '2026-02-10' }),
+    makeTxn(3, 'acc-1', { merchant_id: 'mch-2', date: '2026-03-15' }),
+    makeTxn(4, 'acc-1', { merchant_id: null, date: '2026-01-20' }),
+  ]
+
+  beforeEach(async () => {
+    merchantDb = merchantDbAll
+    txnDb = [...merchantTxnDb]
+    // 外层 beforeEach 已以默认字典加载并在新鲜度窗口内缓存，此处强制重拉
+    await useReferenceStore().refresh()
+  })
+
+  const merchantSelect = (wrapper: ReturnType<typeof mount>) =>
+    wrapper.findAllComponents(NSelect)[1]
+
+  /** 直接向商户下拉 emit 变更事件。 */
+  async function setMerchant(wrapper: ReturnType<typeof mount>, id: string | null) {
+    merchantSelect(wrapper).vm.$emit('update:value', id)
+    await flushPromises()
+  }
+
+  it('下拉选项含软删商户（仍可过滤历史交易），按名称排序', async () => {
+    const wrapper = await mountView()
+    const options = merchantSelect(wrapper).props('options') as {
+      value: string
+      label: string
+    }[]
+    // zh 拼音序：红(hong) < 京(jing)
+    expect(options.map((o) => o.value)).toEqual(['mch-2', 'mch-1'])
+    expect(options.map((o) => o.label)).toEqual(['红旗连锁', '京东'])
+  })
+
+  it('选择商户即重新查询：merchant_id 正确传后端，total 随筛选变化', async () => {
+    const wrapper = await mountView()
+    const before = listCalls().length
+    await setMerchant(wrapper, 'mch-1')
+    expect(listCalls().length).toBe(before + 1)
+    expect(lastListFilter()).toMatchObject({ page: 1, page_size: 20, merchant_id: 'mch-1' })
+    expect(wrapper.text()).toContain('共 2 条')
+    // 软删商户同样可过滤（历史交易口径）
+    await setMerchant(wrapper, 'mch-2')
+    expect(lastListFilter()).toMatchObject({ merchant_id: 'mch-2' })
+    expect(wrapper.text()).toContain('共 1 条')
+    // 清除下拉回全量
+    await setMerchant(wrapper, null)
+    expect(lastListFilter()).not.toHaveProperty('merchant_id')
+    expect(wrapper.text()).toContain('共 4 条')
+  })
+
+  it('商户与账户/类型组合筛选同时传后端', async () => {
+    const wrapper = await mountView()
+    wrapper.findAllComponents(NSelect)[0].vm.$emit('update:value', 'acc-1')
+    await flushPromises()
+    await setMerchant(wrapper, 'mch-1')
+    wrapper.findAllComponents(NSelect)[2].vm.$emit('update:value', 'expense')
+    await flushPromises()
+    expect(lastListFilter()).toMatchObject({
+      involving_account_id: 'acc-1',
+      merchant_id: 'mch-1',
+      kind: 'expense',
+    })
+    expect(wrapper.text()).toContain('共 1 条') // 仅 txn-1 同时命中
+  })
+
+  it('清除筛选复位商户条件', async () => {
+    const wrapper = await mountView()
+    await setMerchant(wrapper, 'mch-1')
+    expect(wrapper.text()).toContain('共 2 条')
+    const clearButton = wrapper
+      .findAllComponents(NButton)
+      .find((b) => b.text().includes('清除筛选'))!
+    await clearButton.trigger('click')
+    await flushPromises()
+    const f = lastListFilter()
+    expect(f).toMatchObject({ page: 1 })
+    expect(f).not.toHaveProperty('merchant_id')
+    expect(wrapper.text()).toContain('共 4 条')
+  })
+
+  it('手动改动商户筛选不回写 URL（组件状态为唯一事实源）', async () => {
+    routeMock.query = { merchant: 'mch-1' }
+    const wrapper = await mountView()
+    await setMerchant(wrapper, 'mch-2')
+    expect(routeMock.query).toEqual({ merchant: 'mch-1' })
+  })
+})
+
+describe('TransactionsView 商户 URL 直达（issue #191）', () => {
+  beforeEach(async () => {
+    txnDb = [
+      makeTxn(1, 'acc-1', { merchant_id: 'mch-1', date: '2026-01-05' }),
+      makeTxn(2, 'acc-2', { merchant_id: 'mch-1', date: '2026-02-10' }),
+      makeTxn(3, 'acc-1', { merchant_id: 'mch-2', date: '2026-03-15' }),
+      makeTxn(4, 'acc-1', { merchant_id: null, date: '2026-01-20' }),
+    ]
+    // 商户筛选测试用含软删字典（外层已以默认字典加载，强制重拉）
+    merchantDb = [
+      { ...merchantDb[0] },
+      {
+        id: 'mch-2', name: '红旗连锁', icon: null, color: null,
+        created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+        version: 1, device_id: 'test', is_deleted: true,
+      },
+    ]
+    await useReferenceStore().refresh()
+  })
+
+  it('带有效 merchant 参数进入时自动按该商户过滤（软删商户也可直达）', async () => {
+    routeMock.query = { merchant: 'mch-2' }
+    const wrapper = await mountView()
+    expect(lastListFilter()).toMatchObject({ page: 1, page_size: 20, merchant_id: 'mch-2' })
+    expect(wrapper.text()).toContain('共 1 条')
+  })
+
+  it('带无效 merchant 参数（商户不存在）进入时回退全量且不报错', async () => {
+    routeMock.query = { merchant: 'missing-mch' }
+    const wrapper = await mountView()
+    expect(lastListFilter()).not.toHaveProperty('merchant_id')
+    expect(wrapper.text()).toContain('共 4 条')
+  })
+
+  it('不带 merchant 参数进入时复位为全量列表', async () => {
+    routeMock.query = {}
+    const wrapper = await mountView()
+    expect(lastListFilter()).not.toHaveProperty('merchant_id')
+    expect(wrapper.text()).toContain('共 4 条')
+  })
+
+  it('已挂载时清除 merchant 参数复位为全量并回到第 1 页', async () => {
+    routeMock.query = { merchant: 'mch-1' }
+    const wrapper = await mountView()
+    expect(lastListFilter()).toMatchObject({ merchant_id: 'mch-1', page: 1 })
+    tablePagination(wrapper).onChange(2)
+    await flushPromises()
+    expect(lastListFilter()).toMatchObject({ page: 2, merchant_id: 'mch-1' })
+    routeMock.query = {}
+    await flushPromises()
+    expect(lastListFilter()).toMatchObject({ page: 1 })
+    expect(lastListFilter()).not.toHaveProperty('merchant_id')
+    expect(wrapper.text()).toContain('共 4 条')
+  })
+
+  it('account 与 merchant 参数可组合直达（同时生效）', async () => {
+    routeMock.query = { account: 'acc-1', merchant: 'mch-1' }
+    const wrapper = await mountView()
+    expect(lastListFilter()).toMatchObject({
+      involving_account_id: 'acc-1',
+      merchant_id: 'mch-1',
+    })
+    expect(wrapper.text()).toContain('共 1 条')
+  })
+
+  it('仅 merchant 参数进入：账户维度不筛、日期/类型复位', async () => {
+    routeMock.query = { merchant: 'mch-1' }
+    const wrapper = await mountView()
+    expect(lastListFilter()).toMatchObject({ merchant_id: 'mch-1' })
+    expect(lastListFilter()).not.toHaveProperty('involving_account_id')
+    expect(wrapper.text()).toContain('共 2 条')
+  })
+
+  it('冷启动直连深链：参考数据晚到时有效 merchant 参数仍被应用（不静默丢失）', async () => {
+    setActivePinia(createPinia())
+    routeMock.query = { merchant: 'mch-1' }
+    mountViewSync()
+    await flushPromises()
+    expect(lastListFilter()).toMatchObject({ merchant_id: 'mch-1' })
+  })
+
+  it('参考数据重拉不把手动改动覆盖回 URL 值（URL 初始化仅结算一次）', async () => {
+    routeMock.query = { merchant: 'mch-1' }
+    const wrapper = await mountView()
+    await setMerchant(wrapper, 'mch-2')
+    expect(lastListFilter()).toMatchObject({ merchant_id: 'mch-2' })
+    await useReferenceStore().refresh()
+    await flushPromises()
+    expect(lastListFilter()).toMatchObject({ merchant_id: 'mch-2' })
+  })
+
+  /** 商户下拉直接 emit 变更事件（与手动过滤测试同模式）。 */
+  async function setMerchant(wrapper: ReturnType<typeof mount>, id: string | null) {
+    wrapper.findAllComponents(NSelect)[1].vm.$emit('update:value', id)
+    await flushPromises()
+  }
+})
+
 describe('TransactionsView 转账行双向账户名（issue #99）', () => {
   // 混合数据集：转账行（txn-2: acc-2 → acc-1）与普通行并存，供双向展示 / 单账户名断言
   const mixedDb: Transaction[] = [
@@ -646,9 +862,9 @@ describe('TransactionsView 转账行双向账户名（issue #99）', () => {
     txnDb = [...mixedDb]
   })
 
-  /** 类型下拉（过滤行第 2 个 NSelect）直接 emit 变更（与 issue #98 测试同模式）。 */
+  /** 类型下拉（过滤行第 3 个 NSelect，issue #191 后商户下拉插入第 2 位）直接 emit 变更（与 issue #98 测试同模式）。 */
   async function filterKind(wrapper: ReturnType<typeof mount>, k: string | null) {
-    wrapper.findAllComponents(NSelect)[1].vm.$emit('update:value', k)
+    wrapper.findAllComponents(NSelect)[2].vm.$emit('update:value', k)
     await flushPromises()
   }
 
@@ -895,18 +1111,33 @@ describe('TransactionsView 行右键菜单（issue #151）', () => {
     txnDb = [makeTxn(1, 'acc-1')]
     const wrapper = await mountView()
     expect(bodyRows(wrapper)[0].text()).not.toContain('京东')
+    expect(wrapper.findAllComponents(MerchantLink).length).toBe(0)
   })
 
-  it('软删商户后历史交易照常显示商户名（重拉 diff 显示缓存，issue #189）', async () => {
+  it('软删商户后历史交易照常显示商户名（后端含软删列表，issue #189/#191）', async () => {
     txnDb = [makeTxn(1, 'acc-1', { merchant_id: 'mch-1' })]
     const wrapper = await mountView()
     expect(bodyRows(wrapper)[0].text()).toContain('京东')
 
-    // 商户被软删：字典重拉后不再返回，但显示缓存保留
-    merchantDb = []
+    // 商户被软删：后端含软删列表返回 is_deleted=true，merchantMap（含软删）仍可解析名称
+    merchantDb = [{ ...merchantDb[0], is_deleted: true }]
     await useReferenceStore().refresh()
     await flushPromises()
     expect(bodyRows(wrapper)[0].text()).toContain('京东')
+  })
+
+  it('商户列可点击下钻：跳转 /transactions?merchant=<id>（issue #191）', async () => {
+    txnDb = [makeTxn(1, 'acc-1', { merchant_id: 'mch-1' })]
+    const wrapper = await mountView()
+    const link = wrapper.findAllComponents(MerchantLink)[0]
+    expect(link.exists()).toBe(true)
+    expect(link.text()).toBe('京东')
+    expect(link.attributes('title')).toBe('查看该商户的交易')
+    await link.find('button').trigger('click')
+    expect(pushMock).toHaveBeenLastCalledWith({
+      name: 'transactions',
+      query: { merchant: 'mch-1' },
+    })
   })
 
   it('任意行右键「删除」→ 二次确认后才删除；取消不删', async () => {

@@ -46,11 +46,9 @@ export const useReferenceStore = defineStore('reference', () => {
   const merchants = ref<Merchant[]>([])
 
   /**
-   * 软删商户显示缓存（会话级，issue #189 / ADR-0028）：商户软删后从字典列表
-   * （`list_merchants` 仅返回 `is_deleted=0`）消失，但其历史交易仍需照常显示
-   * 商户名。每次重拉后 diff：上一版在、新版不在 → 视为软删并入本缓存。
-   * 已知边界：缓存不跨会话，重启后引用软删商户的历史交易显示为空（待读模型
-   * 携带商户名后收口）。
+   * 软删商户（issue #189 / ADR-0028）：软删后不可再被选择，但历史交易引用照常显示。
+   * 数据源为后端含软删全量列表（`list_merchants({ includeDeleted: true })`，issue #191）
+   * 按 `is_deleted` 拆分而来：跨会话可用，无需 diff 缓存。
    */
   const deletedMerchants = ref(new Map<string, Merchant>())
 
@@ -81,7 +79,7 @@ export const useReferenceStore = defineStore('reference', () => {
     return m
   })
 
-  /** 商户显示映射：在用商户 + 软删缓存（历史交易显示用，软删商户名照常显示）。 */
+  /** 商户显示映射：在用商户 + 软删商户（历史交易显示与筛选下拉共用，issue #191）。 */
   const merchantMap = computed(() => {
     const m = new Map<string, Merchant>()
     deletedMerchants.value.forEach((d) => m.set(d.id, d))
@@ -124,23 +122,20 @@ export const useReferenceStore = defineStore('reference', () => {
   async function reload(): Promise<void> {
     status.value = 'loading'
     try {
-      const [cs, as, cats, ms] = await Promise.all([
+      const [cs, as, cats, msAll] = await Promise.all([
         api.listCurrencies(),
         api.listAccounts(),
         api.listCategories(),
-        api.listMerchants(),
+        // 商户拉含软删全量，按 is_deleted 拆分：在用进字典，软删进显示缓存（issue #191）
+        api.listMerchants({ includeDeleted: true }),
       ])
-      // 软删 diff：上一版在、新版不在 → 视为软删并入显示缓存（合并旧缓存）
-      const nextIds = new Set(ms.map((m) => m.id))
-      const cache = new Map(deletedMerchants.value)
-      merchants.value.forEach((m) => {
-        if (!nextIds.has(m.id)) cache.set(m.id, m)
-      })
       currencies.value = cs
       accounts.value = as
       categories.value = cats
-      merchants.value = ms
-      deletedMerchants.value = cache
+      merchants.value = msAll.filter((m) => !m.is_deleted)
+      deletedMerchants.value = new Map(
+        msAll.filter((m) => m.is_deleted).map((m) => [m.id, m]),
+      )
       version.value += 1
       lastLoadedAt = Date.now()
       status.value = 'ready'

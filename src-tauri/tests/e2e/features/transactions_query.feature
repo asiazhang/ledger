@@ -63,6 +63,34 @@ Feature: 交易管理
     Then 分页查询 涉及账户 "现金" page 1 page_size 10 应返回 3 条 total 3
     And 分页查询 涉及账户 "支付宝" page 1 page_size 10 应返回 1 条 total 1
 
+  Scenario: 按商户过滤命中该商户全部交易（分页 total 口径）
+    Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
+    And 存在商户 "京东"
+    And 存在商户 "拼多多"
+    When 创建交易 类型 "expense" 金额 100 到账户 "现金" 日期 "2026-04-01" 商户 "京东"
+    And 创建交易 类型 "expense" 金额 200 到账户 "现金" 日期 "2026-04-02" 商户 "京东"
+    And 创建交易 类型 "income" 金额 500 到账户 "现金" 日期 "2026-04-03" 商户 "拼多多"
+    And 创建交易 类型 "expense" 金额 300 到账户 "现金" 日期 "2026-04-04"
+    Then 分页查询 商户 "京东" page 1 page_size 10 应返回 2 条 total 2
+    And 分页查询 商户 "京东" page 2 page_size 1 应返回 1 条 total 2
+    And 分页查询 商户 "拼多多" page 1 page_size 1 应返回 1 条 total 1
+    And 分页查询 page 1 page_size 10 应返回 4 条 total 4
+
+  Scenario: 商户与账户/日期组合筛选；软删商户仍可过滤且出现在含软删商户列表
+    Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
+    And 存在账户 "银行" 类型 "bank" 币种 "CNY"
+    And 存在商户 "京东"
+    When 创建交易 类型 "expense" 金额 100 到账户 "现金" 日期 "2026-05-01" 商户 "京东"
+    And 创建交易 类型 "expense" 金额 200 到账户 "银行" 日期 "2026-05-02" 商户 "京东"
+    And 创建交易 类型 "expense" 金额 300 到账户 "现金" 日期 "2026-05-03" 商户 "京东"
+    Then 分页查询 商户 "京东" 涉及账户 "现金" page 1 page_size 10 应返回 2 条 total 2
+    And 分页查询 商户 "京东" 日期 "2026-05-02" 至 "2026-05-30" page 1 page_size 10 应返回 2 条 total 2
+    When 软删商户 "京东"
+    Then 分页查询 商户 "京东" page 1 page_size 10 应返回 3 条 total 3
+    And 商户列表应包含 0 条记录
+    And 商户含软删列表应包含 1 条记录
+    And 商户含软删列表应包含 "京东"
+
   Scenario: 同日期同时间戳批量导入翻页无重复无遗漏
     Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
     When 批量导入 25 笔同日交易 日期 "2026-03-01" 到账户 "现金"
