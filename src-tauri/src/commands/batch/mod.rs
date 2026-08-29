@@ -58,7 +58,7 @@ impl TransactionBatch {
             // 无键回退内容哈希；ADR-0010 的契约编码在 `DedupIdentity` 类型里，不散在 if 分支。
             // `New` 携带内容哈希供落库回写 `dedup_hash` 列，避免重复计算。
             // 单条写入（含 buy/sell 的持仓副作用路径）由行为层创建编排入口
-            // `behavior::create`（issue #228 / ADR-0030）承担：本函数持有外层批次事务，
+            // `behavior::create`（issue #228 / ADR-0033）承担：本函数持有外层批次事务，
             // 入口以嵌套模式加入（失败直接返回错误、回滚归本层），其交易行落库
             // 已收口到 `transaction::writer` 接缝（issue #60）：列映射与审计字段统一由
             // writer 生成，此处不重复；去重身份（幂等键/内容哈希）仍在本批次编排层

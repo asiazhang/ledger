@@ -252,7 +252,7 @@ fn write_sell_side_effects(conn: &Connection, id: &str, plan: &SellPlan) -> Resu
 ///
 /// 若该买入已有部分卖出（`remaining_quantity < initial_quantity`）则拒绝清理——避免破坏
 /// 对应卖出的已实现盈亏。`partially_sold_msg` 为调用入口单点定义的措辞
-/// （见 `commands::transactions::behavior` 的入口文案常量，ADR-0030 决策 #4）。
+/// （见 `commands::transactions::behavior` 的入口文案常量，ADR-0033 决策 #4）。
 fn cleanup_buy_side_effects(conn: &Connection, id: &str, partially_sold_msg: &str) -> Result<()> {
     let partially_sold: i64 = conn.query_row(
         "SELECT COUNT(*) FROM security_lots \
@@ -378,7 +378,7 @@ pub(crate) fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
 /// - sell：回补持仓扣减并清空卖出关联。
 ///
 /// `partial_sold_msg` 为 buy 守卫的错误措辞，由行为层各编排入口传入其单点定义的
-/// 文案（修改/删除各持自己的措辞，ADR-0030 决策 #4）——本函数不自带措辞；
+/// 文案（修改/删除各持自己的措辞，ADR-0033 决策 #4）——本函数不自带措辞；
 /// 非 buy/sell 的 kind 无持仓副作用，防御性返回成功。
 pub(crate) fn revert(
     conn: &Connection,

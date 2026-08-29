@@ -1,10 +1,11 @@
 #!/bin/sh
-# 文档一致性检查：地图完整性 / 术语唯一 / 导航一致
+# 文档一致性检查：地图完整性 / 术语唯一 / 导航一致 / ADR 编号唯一
 #
-# 三项校验：
+# 四项校验：
 #   ① CONTEXT-MAP.md 与 docs/contexts/CONTEXT-*.md 一一对应（地图断链、未挂地图的孤儿文件均报错）
 #   ② 术语全库唯一：分域词汇表条目标题（^## ）按括号前主干归一后比对，重复即报错
 #   ③ 导航一致：AGENTS.md 与 CONTEXT-MAP.md 引用的仓库内文件/目录必须存在（导航指向已删除文件即报错）
+#   ④ ADR 编号唯一：docs/adr/ 下文件名前缀编号不得重复（同号不同义会误导读者与 AI 助手）
 #
 # 任一校验失败即非零退出；错误信息为中文并定位到文件与术语。
 # 已挂入 scripts/check.sh 质量门槛序列，也可独立运行：scripts/check-docs.sh
@@ -90,10 +91,18 @@ check_nav() {
 check_nav AGENTS.md
 check_nav "$MAP"
 
+# ── ④ ADR 编号唯一（文件名前缀编号不得重复） ──────────────────────────────────
+adr_nums=$(ls docs/adr 2>/dev/null | grep -E '^[0-9]{4}-' | sed 's/^\([0-9]\{4\}\)-.*/\1/' || true)
+dup_nums=$(printf '%s\n' "$adr_nums" | sort | uniq -d || true)
+for num in $dup_nums; do
+  files=$(ls docs/adr | grep -E "^$num-" | sed 's|^|docs/adr/|' | paste -sd ' ' -)
+  err "ADR 编号重复：编号 $num 同时被 $files 使用"
+done
+
 # ── 结果 ────────────────────────────────────────────────────────────────
 if [ -s "$tmp" ]; then
   cat "$tmp"
   echo "❌ 文档一致性检查失败：$(wc -l <"$tmp" | tr -d ' ') 处问题（见上方 ✗ 列表）"
   exit 1
 fi
-echo "  ✓ 地图完整、术语唯一、导航一致"
+echo "  ✓ 地图完整、术语唯一、导航一致、ADR 编号唯一"

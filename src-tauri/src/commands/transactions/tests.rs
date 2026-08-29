@@ -973,7 +973,7 @@ fn delete_transaction_internal_rejects_partially_sold_buy() {
     create_transaction_internal(&conn, sell).unwrap();
 
     let err = delete_transaction_internal(&conn, &buy_id).unwrap_err();
-    // 守卫文案按入口内化（ADR-0030 决策 #4）：删除入口固定返回自己的措辞，
+    // 守卫文案按入口内化（ADR-0033 决策 #4）：删除入口固定返回自己的措辞，
     // 与修改入口对同一守卫各持措辞、互不漂移。
     match err {
         AppError::Invalid(msg) => assert_eq!(msg, "该买入交易已有部分卖出，无法删除"),
@@ -992,7 +992,7 @@ fn inject_soft_delete_failure(conn: &Connection) {
     .unwrap();
 }
 
-/// 删除路径事务缺口修复（issue #229 / ADR-0030 决策 #3）：revert（清理持仓批次）
+/// 删除路径事务缺口修复（issue #229 / ADR-0033 决策 #3）：revert（清理持仓批次）
 /// 与软删 UPDATE 纳入同一事务，软删中途失败整体回滚——不再出现
 /// 「持仓已删而交易仍在」的中间态，报错返回。
 #[test]
@@ -1247,7 +1247,7 @@ fn update_transaction_internal_rejects_partially_sold_buy() {
         make_buy_input("acc-inv2", "inst-msft", 5.0, 10000, 0),
     )
     .unwrap_err();
-    // 守卫文案按入口内化（ADR-0030 决策 #4）：修改入口固定返回自己的措辞。
+    // 守卫文案按入口内化（ADR-0033 决策 #4）：修改入口固定返回自己的措辞。
     match err {
         AppError::Invalid(msg) => assert_eq!(msg, "该买入交易已有部分卖出，无法修改"),
         other => panic!("expected Invalid, got {other:?}"),
@@ -1662,7 +1662,7 @@ fn read_back_carries_merchant_id_after_merchant_soft_delete_and_rename() {
 }
 
 // ---------------------------------------------------------------------------
-// 行为层 create 编排入口（issue #228 / ADR-0030）：嵌套感知事务
+// 行为层 create 编排入口（issue #228 / ADR-0033）：嵌套感知事务
 // ---------------------------------------------------------------------------
 
 /// 注入「建仓中途失败」：security_transactions 已写入、security_lots 写入时被

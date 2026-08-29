@@ -1,11 +1,11 @@
 //! 交易类型行为层（issue #72 / spec #69 候选 2）：按 kind 收敛分派。
 //!
 //! 对外暴露**三个编排入口** [`create`] / [`update`] / [`delete`]（issue #228 / #229 /
-//! ADR-0030：连接 + 输入进，返回终态或错误）——`revert → plan → 落库 → apply` 的顺序
+//! ADR-0033：连接 + 输入进，返回终态或错误）——`revert → plan → 落库 → apply` 的顺序
 //! 契约、事务边界、守卫文案全部内化为实现细节，调用方只传连接与输入、处理报错。
 //! 模块内协作件 [`plan`]（校验 + 归一化）与 [`apply`]（应用副作用）为私有实现细节。
 //!
-//! **嵌套感知事务（「保证处于事务中」，ADR-0030 决策 #2）**：每个入口经
+//! **嵌套感知事务（「保证处于事务中」，ADR-0033 决策 #2）**：每个入口经
 //! [`ensure_transaction`] 检测连接事务状态——autocommit 则自持 BEGIN/COMMIT/ROLLBACK
 //! （创建的 insert_row 后 apply 中途失败、删除的持仓清理后软删 UPDATE 失败均整体回滚，
 //! 无中间态泄漏）；已在事务中（批量导入的外层批次事务）则加入外层、失败直接返回错误，
@@ -13,7 +13,7 @@
 //! ADR-0032）归事务持有者：自持事务由连接层统一写入口 `db.write` 在提交点单点触发，
 //! 嵌套模式由 batch 在自己 COMMIT 后触发——本模块对备份域零感知。
 //!
-//! **守卫文案按入口内化（ADR-0030 决策 #4）**：buy 已有部分卖出的拒绝文案是各编排
+//! **守卫文案按入口内化（ADR-0033 决策 #4）**：buy 已有部分卖出的拒绝文案是各编排
 //! 入口的实现细节（`PARTIAL_SOLD_CANNOT_UPDATE` / `PARTIAL_SOLD_CANNOT_DELETE`），
 //! 单点定义、不随调用方漂移；回退分派直接委托 [`investment::revert`]（其 match 已覆盖
 //! 全部 kind，普通 kind 为 no-op），行为层不再另设 revert 转发层。
@@ -38,7 +38,7 @@ use crate::models::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::writer;
 
-/// buy 已有部分卖出的守卫文案——修改入口措辞（ADR-0030 决策 #4：按入口内化、
+/// buy 已有部分卖出的守卫文案——修改入口措辞（ADR-0033 决策 #4：按入口内化、
 /// 行为层单点定义，调用方协议面不出现文案，同一入口同一文案不漂移）。
 const PARTIAL_SOLD_CANNOT_UPDATE: &str = "该买入交易已有部分卖出，无法修改";
 /// buy 已有部分卖出的守卫文案——删除入口措辞（同上）。
@@ -62,7 +62,7 @@ impl Plan {
     }
 }
 
-/// 「保证处于事务中」（嵌套感知，ADR-0030 决策 #2）：连接 autocommit 则自持
+/// 「保证处于事务中」（嵌套感知，ADR-0033 决策 #2）：连接 autocommit 则自持
 /// BEGIN/COMMIT/ROLLBACK（`f` 中途失败整体回滚）；已在事务中（批量导入的外层批次事务）
 /// 则加入外层、失败直接返回错误——回滚归外层持有者。
 fn ensure_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
@@ -89,7 +89,7 @@ fn ensure_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Re
     }
 }
 
-/// 创建一笔交易（IPC `create_transaction` / 批量导入批次循环，issue #228 / ADR-0030）。
+/// 创建一笔交易（IPC `create_transaction` / 批量导入批次循环，issue #228 / ADR-0033）。
 ///
 /// 行为层创建编排入口：`plan → insert_row → apply` 的顺序契约在此单点可达，
 /// 调用方只传连接与输入、处理报错。事务规则见 [`ensure_transaction`]。
@@ -111,12 +111,12 @@ fn create_within_transaction(conn: &Connection, input: &TransactionInput) -> Res
 }
 
 /// 按 `id` 全字段替换一笔交易（IPC `update_transaction` / HTTP
-/// `PUT /api/v1/transactions/{id}`，issue #229 / ADR-0030）。
+/// `PUT /api/v1/transactions/{id}`，issue #229 / ADR-0033）。
 ///
 /// 行为层修改编排入口：`revert → plan → update_row → apply` 的顺序契约与守卫文案
 /// （`PARTIAL_SOLD_CANNOT_UPDATE`）在此单点可达，调用方只传连接、id 与输入、处理报错。
 /// 事务规则见 [`ensure_transaction`]；旧 kind/商户的读取在事务内完成（消除读取与
-/// BEGIN 之间的窗口，ADR-0030 决策 #5）。
+/// BEGIN 之间的窗口，ADR-0033 决策 #5）。
 ///
 /// 幂等键（`idempotency_key`）与内容哈希（`dedup_hash`）不作为
 /// 可编辑字段——修改不重算去重身份，故修改后重跑同批导入（带幂等键）仍按同键去重、不产生重复。
@@ -150,11 +150,11 @@ fn update_within_transaction(conn: &Connection, id: &str, input: &TransactionInp
 }
 
 /// 删除交易（软删除 `is_deleted=1`；IPC `delete_transaction` / HTTP
-/// `DELETE /api/v1/transactions/{id}`，issue #229 / ADR-0030）。
+/// `DELETE /api/v1/transactions/{id}`，issue #229 / ADR-0033）。
 ///
 /// 行为层删除编排入口：持仓清理与软删 UPDATE 同处一个事务——revert（buy 清理持仓批次）
 /// 成功后软删 UPDATE 中途失败整体回滚，不再出现「持仓已删而交易仍在」的中间态
-/// （删除路径事务缺口修复，ADR-0030 决策 #3）。buy 守卫（已有部分卖出拒绝）措辞为
+/// （删除路径事务缺口修复，ADR-0033 决策 #3）。buy 守卫（已有部分卖出拒绝）措辞为
 /// 删除入口单点定义的文案。sell 删除不清理持仓关联（既有行为保持不变，ADR-0013 已锁定）。
 /// 不存在的 id 返回 [`AppError::NotFound`]（HTTP 侧映射 404）。事务规则见
 /// [`ensure_transaction`]。IPC 与 HTTP 端点共用本函数。

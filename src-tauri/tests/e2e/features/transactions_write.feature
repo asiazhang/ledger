@@ -37,7 +37,7 @@ Feature: 交易管理
     Then 交易列表应包含 2 条记录
     And 退款交易的 refund_of 应指向原支出交易
 
-  # ---- 行为层 create 编排入口：嵌套感知事务（issue #228 / ADR-0030）----
+  # ---- 行为层 create 编排入口：嵌套感知事务（issue #228 / ADR-0033）----
 
   Scenario: 创建买入建仓中途失败整体回滚（无中间态泄漏）
     Given 存在账户 "证券账户" 类型 "investment" 币种 "CNY"
@@ -48,7 +48,7 @@ Feature: 交易管理
     And 交易列表应包含 0 条记录
     And 无买入持仓与买卖明细残留
 
-  # ---- 行为层 delete 编排入口：删除路径事务缺口修复（issue #229 / ADR-0030）----
+  # ---- 行为层 delete 编排入口：删除路径事务缺口修复（issue #229 / ADR-0033）----
 
   Scenario: 删除买入持仓清理与软删同事务，软删失败整体回滚
     Given 存在账户 "证券账户" 类型 "investment" 币种 "CNY"
