@@ -102,7 +102,7 @@
   - 改名即时生效：引用指向 id，不回刷历史交易行。
   - 与分类（Category）均可选、互不替代、互不联动：一笔交易可同时有分类与商户，也可都没有。
   - 可携带商户的 kind（行为层收口）：`expense` / `refund` / `income`；`transfer` / `buy` / `sell` / `dividend` / `split` 行为层拒绝。schema 层 `merchant_id` 允许 NULL、不设 kind 限制。refund 与账户/币种/分类同款继承语义：自动继承原支出商户、可修改。定时计划的分期/订阅形态每期生成交易时复制商户（见定时计划域 Counterparty 指针）。
-  - 可选 `icon` / `color` 供报表与图表视觉辨识；随参考数据失效机制自动重拉（见参考数据与设置域 Reference Data）。
+  - 名字字典：商户只有名称一个属性（icon/color 已退役，issue #223——商户高频自动增长，视觉辨识字段只会成为低填充率噪音）；随参考数据失效机制自动重拉（见参考数据与设置域 Reference Data）。
   - 建模、ADR-0024 决策点推翻与 schema 原地改（breaking change）决策见 ADR-0028。
 - **别名**：不使用"交易对手"（已废弃的 Counterparty，见定时计划域指针词条）、"商家"（口语）、"收款方"（仅描述收入侧，以偏概全）。
 

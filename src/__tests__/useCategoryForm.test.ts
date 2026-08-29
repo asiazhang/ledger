@@ -22,7 +22,7 @@ const mockAccounts: Account[] = [
 
 const mockMerchants: Merchant[] = [
   {
-    id: 'mch-1', name: '京东', icon: null, color: null,
+    id: 'mch-1', name: '京东',
     created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false,
   },
@@ -139,7 +139,7 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
           : [
               ...mockMerchants,
               {
-                id: 'mch-exist', name: '盒马', icon: null, color: null,
+                id: 'mch-exist', name: '盒马',
                 created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
                 version: 1, device_id: 'test', is_deleted: false,
               },

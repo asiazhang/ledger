@@ -91,3 +91,20 @@ fn check_merchant_ranking_row(world: &mut LedgerWorld, index: usize, name: Strin
     assert_eq!(share.merchant_name, name, "排行第 {index} 名商户不符");
     assert_eq!(share.amount_cents, amount, "商户 '{name}' 净支出不符");
 }
+
+/// 商户契约回归「名字字典」（issue #223）：排行响应序列化后不应再含指定字段
+/// （icon/color 已退役；排行行只含名称与金额）。
+#[then(expr = "商户排行响应 JSON 不含字段 {string}")]
+fn check_merchant_shares_json_not_contain_field(world: &mut LedgerWorld, field: String) {
+    assert!(
+        !world.last_merchant_shares.is_empty(),
+        "商户排行为空，无法校验响应字段契约"
+    );
+    for s in &world.last_merchant_shares {
+        let json = serde_json::to_value(s).expect("商户排行行序列化失败");
+        assert!(
+            json.get(&field).is_none(),
+            "商户排行响应不应含字段 '{field}'，实际: {json}"
+        );
+    }
+}

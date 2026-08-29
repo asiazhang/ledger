@@ -11,8 +11,7 @@ use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{Merchant, MerchantInput, MerchantUpdateInput};
 
-const MERCHANT_COLUMNS: &str =
-    "id,name,icon,color,created_at,updated_at,version,device_id,is_deleted";
+const MERCHANT_COLUMNS: &str = "id,name,created_at,updated_at,version,device_id,is_deleted";
 
 /// 列表：默认仅未删除商户（字典语义，改名后即按新名排序）；
 /// `include_deleted=true` 返回含软删全量（交易列表筛选下拉数据源：
@@ -40,25 +39,16 @@ pub fn create_merchant_internal(conn: &Connection, input: MerchantInput) -> Resu
     let id = new_uuid();
     let now = now_iso();
     conn.execute(
-        "INSERT INTO merchants (id,name,icon,color,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,0)",
-        rusqlite::params![
-            id,
-            input.name,
-            input.icon,
-            input.color,
-            now,
-            now,
-            1,
-            device_id()
-        ],
+        "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,?3,?4,?5,?6,0)",
+        rusqlite::params![id, input.name, now, now, 1, device_id()],
     )?;
     // 脏标记挂钩（issue #126）：落库成功即置脏，到期则写时顺带触发备份。
     crate::auto_backup::on_write(conn);
     Ok(id)
 }
 
-/// 更新商户（改名 / 改 icon / 改 color）：字段省略即保持原值；改名撞在用同名 → 明确错误。
+/// 更新商户（改名）：字段省略即保持原值；改名撞在用同名 → 明确错误。
 /// 不存在（或已软删除）的 id → `AppError::NotFound`。
 pub fn update_merchant_internal(
     conn: &Connection,
@@ -78,12 +68,10 @@ pub fn update_merchant_internal(
     if merchant_name_taken(conn, &name, Some(id))? {
         return Err(AppError::Invalid(format!("商户已存在: {name}")));
     }
-    let icon = input.icon.or(existing.icon);
-    let color = input.color.or(existing.color);
 
     conn.execute(
-        "UPDATE merchants SET name=?1, icon=?2, color=?3, updated_at=?4, version=version+1, device_id=?5 WHERE id=?6",
-        rusqlite::params![name, icon, color, now_iso(), device_id(), id],
+        "UPDATE merchants SET name=?1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
+        rusqlite::params![name, now_iso(), device_id(), id],
     )?;
     // 脏标记挂钩（issue #126）：更新成功即置脏。
     crate::auto_backup::on_write(conn);
@@ -149,8 +137,6 @@ pub fn create_merchant_by_name(conn: &Connection, name: &str) -> Result<String> 
         conn,
         MerchantInput {
             name: name.to_string(),
-            icon: None,
-            color: None,
         },
     )
 }

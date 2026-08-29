@@ -31,8 +31,6 @@ fn create_merchant_returns_id_and_lists_sorted_by_name() {
         &conn,
         MerchantInput {
             name: "拼多多".into(),
-            icon: None,
-            color: Some("#ff0000".into()),
         },
     )
     .unwrap();
@@ -40,8 +38,6 @@ fn create_merchant_returns_id_and_lists_sorted_by_name() {
         &conn,
         MerchantInput {
             name: "京东".into(),
-            icon: Some("cart".into()),
-            color: None,
         },
     )
     .unwrap();
@@ -52,9 +48,7 @@ fn create_merchant_returns_id_and_lists_sorted_by_name() {
     // 按名称排序（字典语义），而非创建顺序。
     assert_eq!(merchants[0].id, id_a);
     assert_eq!(merchants[0].name, "京东");
-    assert_eq!(merchants[0].icon.as_deref(), Some("cart"));
     assert_eq!(merchants[1].id, id_b);
-    assert_eq!(merchants[1].color.as_deref(), Some("#ff0000"));
     assert!(!merchants[0].is_deleted);
 }
 
@@ -65,8 +59,6 @@ fn create_merchant_duplicate_name_rejected() {
         &conn,
         MerchantInput {
             name: "京东".into(),
-            icon: None,
-            color: None,
         },
     )
     .unwrap();
@@ -74,8 +66,6 @@ fn create_merchant_duplicate_name_rejected() {
         &conn,
         MerchantInput {
             name: "京东".into(),
-            icon: None,
-            color: None,
         },
     )
     .unwrap_err();
@@ -83,25 +73,20 @@ fn create_merchant_duplicate_name_rejected() {
 }
 
 #[test]
-fn update_merchant_renames_and_keeps_other_fields() {
+fn update_merchant_renames() {
     let conn = setup();
     let id = create_merchant_internal(
         &conn,
         MerchantInput {
             name: "京东".into(),
-            icon: Some("cart".into()),
-            color: Some("#e1251b".into()),
         },
     )
     .unwrap();
-    // 只改名：icon/color 保持原值。
     update_merchant_internal(
         &conn,
         &id,
         MerchantUpdateInput {
             name: Some("京东商城".into()),
-            icon: None,
-            color: None,
         },
     )
     .unwrap();
@@ -109,8 +94,6 @@ fn update_merchant_renames_and_keeps_other_fields() {
     let merchants = list_merchants(&conn);
     assert_eq!(merchants.len(), 1);
     assert_eq!(merchants[0].name, "京东商城");
-    assert_eq!(merchants[0].icon.as_deref(), Some("cart"));
-    assert_eq!(merchants[0].color.as_deref(), Some("#e1251b"));
     // 改名即时生效：历史交易以 merchant_id 引用，不回刷交易行（本层只保证名字变更）。
 }
 
@@ -121,8 +104,6 @@ fn update_merchant_rename_to_taken_name_rejected() {
         &conn,
         MerchantInput {
             name: "京东".into(),
-            icon: None,
-            color: None,
         },
     )
     .unwrap();
@@ -130,8 +111,6 @@ fn update_merchant_rename_to_taken_name_rejected() {
         &conn,
         MerchantInput {
             name: "拼多多".into(),
-            icon: None,
-            color: None,
         },
     )
     .unwrap();
@@ -140,8 +119,6 @@ fn update_merchant_rename_to_taken_name_rejected() {
         &id,
         MerchantUpdateInput {
             name: Some("京东".into()),
-            icon: None,
-            color: None,
         },
     )
     .unwrap_err();
@@ -156,8 +133,6 @@ fn update_merchant_missing_is_not_found() {
         "no-such-id",
         MerchantUpdateInput {
             name: Some("新名".into()),
-            icon: None,
-            color: None,
         },
     )
     .unwrap_err();
@@ -171,8 +146,6 @@ fn delete_merchant_soft_deletes_and_hides_from_list() {
         &conn,
         MerchantInput {
             name: "京东".into(),
-            icon: None,
-            color: None,
         },
     )
     .unwrap();
@@ -208,8 +181,6 @@ fn recreate_same_name_after_soft_delete() {
         &conn,
         MerchantInput {
             name: "京东".into(),
-            icon: None,
-            color: None,
         },
     )
     .unwrap();
@@ -218,8 +189,6 @@ fn recreate_same_name_after_soft_delete() {
         &conn,
         MerchantInput {
             name: "京东".into(),
-            icon: None,
-            color: None,
         },
     )
     .unwrap();
@@ -286,12 +255,28 @@ fn create_merchant_by_name_ignores_soft_deleted() {
         &conn,
         MerchantInput {
             name: "京东".into(),
-            icon: None,
-            color: None,
         },
     )
     .unwrap();
     delete_merchant_internal(&conn, &old_id).unwrap();
     let new_id = create_merchant_by_name(&conn, "京东").unwrap();
     assert_ne!(new_id, old_id);
+}
+
+/// 商户契约回归「名字字典」（issue #223）：响应序列化不含 icon/color 字段——
+/// 请求侧结构体已无对应字段（多传即编译错误/反序列化忽略未知字段），此处锁定响应侧。
+#[test]
+fn merchant_json_contract_has_no_icon_or_color() {
+    let conn = setup();
+    create_merchant_internal(
+        &conn,
+        MerchantInput {
+            name: "京东".into(),
+        },
+    )
+    .unwrap();
+    let merchants = list_merchants(&conn);
+    let json = serde_json::to_value(&merchants[0]).unwrap();
+    assert!(json.get("icon").is_none(), "响应不应含 icon 字段");
+    assert!(json.get("color").is_none(), "响应不应含 color 字段");
 }

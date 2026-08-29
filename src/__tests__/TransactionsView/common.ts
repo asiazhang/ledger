@@ -21,7 +21,7 @@ export function setTxnDb(rows: Transaction[]) {
 /** 商户字典（可变：软删商户显示测试会清空它模拟 list_merchants 的新返回）。 */
 export let merchantDb: Merchant[] = [
   {
-    id: 'mch-1', name: '京东', icon: null, color: null,
+    id: 'mch-1', name: '京东',
     created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false,
   },
@@ -149,7 +149,7 @@ beforeEach(async () => {
   })
   merchantDb = [
     {
-      id: 'mch-1', name: '京东', icon: null, color: null,
+      id: 'mch-1', name: '京东',
       created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
       version: 1, device_id: 'test', is_deleted: false,
     },

@@ -113,8 +113,8 @@ async fn test_get_transactions_filters_by_merchant_id_query_param() {
     {
         let c = conn.lock().unwrap();
         c.execute(
-            "INSERT INTO merchants (id,name,icon,color,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES ('mch-1','京东',NULL,NULL,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES ('mch-1','京东','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
             [],
         )
         .unwrap();

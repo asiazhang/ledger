@@ -74,6 +74,14 @@ Feature: 商户字典与交易带商户
     Then 第 1 条交易商户应为 "京东商城"
     And 商户列表应包含 "京东商城"
 
+  Scenario: 商户契约回归「名字字典」（issue #223）：创建/更新只受名称，响应不含 icon/color
+    When 创建商户 "京东"
+    Then 商户列表响应 JSON 不含字段 "icon"
+    And 商户列表响应 JSON 不含字段 "color"
+    When 修改商户 "京东" 名称为 "京东商城"
+    Then 商户列表响应 JSON 不含字段 "icon"
+    And 商户列表响应 JSON 不含字段 "color"
+
   Scenario: AI 导入带商户名（issue #194）：未命中即建、命中复用、幂等重放不碎
     Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
     And 存在商户 "永辉"

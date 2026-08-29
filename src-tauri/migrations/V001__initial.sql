@@ -58,12 +58,11 @@ CREATE TABLE IF NOT EXISTS categories (
 -- merchants：商户字典（issue #186/#188 / ADR-0028），参考数据模式（与 categories 同款）：
 -- 软删除（is_deleted）+ 审计字段（created_at/updated_at/version/device_id）；
 -- name 全库唯一（仅在用行唯一：软删后同名可重建，软删行不占名字），以 partial unique index 落地；
--- 可选 icon/color 供报表与图表视觉辨识；空表启动不 seed（商户是强个人属性，seed 是字典噪音）。
+-- 名字字典（issue #223）：icon/color 两字段已退役——商户高频自动增长，视觉辨识字段只会
+-- 成为低填充率噪音；空表启动不 seed（商户是强个人属性，seed 是字典噪音）。
 CREATE TABLE IF NOT EXISTS merchants (
     id         TEXT PRIMARY KEY,                  -- 商户全局唯一 ID（UUID v7）
     name       TEXT NOT NULL,                                     -- 商户名称，如「京东」「红旗连锁」；在用行全库唯一
-    icon       TEXT,                                               -- 图标名称（可选）
-    color      TEXT,                                               -- 标识色（可选，报表/图表视觉辨识）
     created_at TEXT NOT NULL,                                       -- 创建时间，UTC ISO 8601 格式
     updated_at TEXT NOT NULL,                                       -- 最后修改时间，UTC ISO 8601 格式
     version    INTEGER NOT NULL DEFAULT 1,                          -- 版本计数

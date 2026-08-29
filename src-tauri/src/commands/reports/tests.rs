@@ -324,8 +324,8 @@ fn category_shares_unclassified_shows_default_name() {
 fn insert_merchant(conn: &Connection, id: &str) {
     let now = now_iso();
     conn.execute(
-        "INSERT INTO merchants (id,name,icon,color,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,NULL,NULL,?3,?4,1,?5,0)",
+        "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,?3,?4,1,?5,0)",
         rusqlite::params![id, format!("商户-{id}"), now, now, device_id()],
     )
     .unwrap();
