@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { computed, ref } from 'vue'
 import { NButton, NForm, NFormItem, NInput, useMessage } from 'naive-ui'
 import PinyinSelect from '@/components/PinyinSelect.vue'
@@ -57,7 +58,7 @@ async function addCategory() {
     icon.value = ''
     // 参考数据由 ledger:changed 信号自动重拉，分类树随之更新
   } catch (e) {
-    message.error(`添加失败: ${e}`)
+    message.error(`添加失败: ${errorMessage(e)}`)
   }
 }
 </script>

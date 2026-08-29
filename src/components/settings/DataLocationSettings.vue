@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { NAlert, NButton, NCard, NSpace, NSpin, NText, useMessage } from 'naive-ui'
 import { onMounted, ref } from 'vue'
 import { open, confirm } from '@tauri-apps/plugin-dialog'
@@ -24,7 +25,7 @@ async function refresh() {
     info.value = await api.getDataLocationInfo()
   } catch (e: any) {
     // 读取失败诚实呈现，不用「读取中…」假装一切正常。
-    loadError.value = `读取数据存储位置失败：${e}`
+    loadError.value = `读取数据存储位置失败：${errorMessage(e)}`
     message.error(loadError.value)
   } finally {
     loading.value = false
@@ -85,7 +86,7 @@ async function submitWithChoice(
     }
     await refresh()
   } catch (e: any) {
-    message.error(`更改数据存储位置失败: ${e}`)
+    message.error(`更改数据存储位置失败: ${errorMessage(e)}`)
   } finally {
     submitting.value = false
   }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { computed, h, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
@@ -212,7 +213,7 @@ async function refresh() {
     data.value = res.items
     total.value = res.total
   } catch (e) {
-    message.error(`加载失败: ${e}`)
+    message.error(`加载失败: ${errorMessage(e)}`)
   } finally {
     loading.value = false
   }
@@ -262,7 +263,7 @@ async function remove(id: string) {
     }
     await refresh()
   } catch (e) {
-    message.error(`删除失败: ${e}`)
+    message.error(`删除失败: ${errorMessage(e)}`)
   }
 }
 
@@ -314,7 +315,7 @@ async function openEditFromRow(row: Transaction) {
     try {
       editTrade.value = await api.getTransactionTrade(row.id)
     } catch (e) {
-      message.error(`无法编辑: ${e}`)
+      message.error(`无法编辑: ${errorMessage(e)}`)
       return
     }
   } else {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { computed, h, nextTick, onMounted, ref } from 'vue'
 import {
   NCard,
@@ -67,7 +68,7 @@ async function create() {
     // 参考数据由 ledger:changed 信号自动重拉；此处仅刷新交易派生余额
     await refresh()
   } catch (e) {
-    message.error(`创建失败: ${e}`)
+    message.error(`创建失败: ${errorMessage(e)}`)
   }
 }
 
@@ -78,7 +79,7 @@ async function remove(id: string) {
     // 参考数据由 ledger:changed 信号自动重拉；此处仅刷新交易派生余额
     await refresh()
   } catch (e) {
-    message.error(`删除失败: ${e}`)
+    message.error(`删除失败: ${errorMessage(e)}`)
   }
 }
 
@@ -128,7 +129,7 @@ async function submitEdit() {
     // 参考数据由 ledger:changed 信号自动重拉；此处仅刷新余额
     await refresh()
   } catch (e) {
-    message.error(`保存失败: ${e}`)
+    message.error(`保存失败: ${errorMessage(e)}`)
   }
 }
 
@@ -198,7 +199,7 @@ async function submitAdjust() {
     // 参考数据由 ledger:changed 信号自动重拉（若按需新建了黑洞账户）；此处仅刷新余额
     await refresh()
   } catch (e) {
-    message.error(`调整失败: ${e}`)
+    message.error(`调整失败: ${errorMessage(e)}`)
   }
 }
 

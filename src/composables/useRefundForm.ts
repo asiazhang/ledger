@@ -4,6 +4,7 @@ import { api } from '@/api'
 import { centsToYuan, formatAmount } from '@/types'
 import { useFormShared } from '@/composables/useFormShared'
 import type { Transaction, TransactionInput } from '@/types'
+import { errorMessage } from "@/utils/errors";
 
 export function useRefundForm(options?: {
   onCreated?: () => void
@@ -101,7 +102,7 @@ export function useRefundForm(options?: {
       refundTargetId.value = null
       options?.onCreated?.()
     } catch (e) {
-      message.error(`退款失败: ${e}`)
+      message.error(`退款失败: ${errorMessage(e)}`)
     }
   }
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { h, computed, onMounted, ref } from 'vue'
 import {
   NCard,
@@ -105,7 +106,7 @@ async function create() {
     costYuan.value = ''
     note.value = ''
   } catch (e) {
-    message.error(`创建失败: ${e}`)
+    message.error(`创建失败: ${errorMessage(e)}`)
   }
 }
 
@@ -158,7 +159,7 @@ async function saveEdit() {
     message.success('已保存')
     closeEdit()
   } catch (e) {
-    message.error(`保存失败: ${e}`)
+    message.error(`保存失败: ${errorMessage(e)}`)
   }
 }
 
@@ -183,7 +184,7 @@ async function recalcDetail(date: string | null) {
   try {
     detailCost.value = await api.calculateItemCost(detail.value.id, date)
   } catch (e) {
-    message.error(`重算失败: ${e}`)
+    message.error(`重算失败: ${errorMessage(e)}`)
   }
 }
 
@@ -241,7 +242,7 @@ async function confirmDispose() {
     message.success(disposing.value.status === 'in_use' ? '已处置' : '已更新处置信息')
     closeDispose()
   } catch (e) {
-    message.error(`处置失败: ${e}`)
+    message.error(`处置失败: ${errorMessage(e)}`)
   }
 }
 
@@ -251,7 +252,7 @@ async function removeItem(id: string) {
     await itemsStore.remove(id)
     message.success('已删除')
   } catch (e) {
-    message.error(`删除失败: ${e}`)
+    message.error(`删除失败: ${errorMessage(e)}`)
   }
 }
 

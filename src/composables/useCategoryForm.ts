@@ -6,6 +6,7 @@ import { centsToYuan } from '@/types'
 import { useReferenceStore } from '@/stores/reference'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
 import type { Transaction, UpdateTransactionInput } from '@/types'
+import { errorMessage } from "@/utils/errors";
 
 export function useCategoryForm(
   kind: 'expense' | 'income',
@@ -82,7 +83,7 @@ export function useCategoryForm(
         options?.onCreated?.()
       }
     } catch (e) {
-      message.error(editing ? `保存失败: ${e}` : `记账失败: ${e}`)
+      message.error(editing ? `保存失败: ${errorMessage(e)}` : `记账失败: ${errorMessage(e)}`)
     }
   }
 

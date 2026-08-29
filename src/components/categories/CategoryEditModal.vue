@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { computed, ref, watch } from 'vue'
 import { NButton, NForm, NFormItem, NInput, NModal, useMessage } from 'naive-ui'
 import PinyinSelect from '@/components/PinyinSelect.vue'
@@ -55,7 +56,7 @@ async function saveEdit() {
     emit('update:show', false)
     // 参考数据由 ledger:changed 信号自动重拉，分类树随之更新
   } catch (e) {
-    message.error(`更新失败: ${e}`)
+    message.error(`更新失败: ${errorMessage(e)}`)
   }
 }
 </script>

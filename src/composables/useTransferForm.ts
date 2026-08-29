@@ -4,6 +4,7 @@ import { api } from '@/api'
 import { centsToYuan } from '@/types'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
 import type { Transaction, UpdateTransactionInput } from '@/types'
+import { errorMessage } from "@/utils/errors";
 
 export function useTransferForm(options?: {
   onCreated?: () => void
@@ -82,7 +83,7 @@ export function useTransferForm(options?: {
         options?.onCreated?.()
       }
     } catch (e) {
-      message.error(editing ? `保存失败: ${e}` : `记账失败: ${e}`)
+      message.error(editing ? `保存失败: ${errorMessage(e)}` : `记账失败: ${errorMessage(e)}`)
     }
   }
 

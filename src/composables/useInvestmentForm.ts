@@ -3,6 +3,7 @@ import { useMessage } from 'naive-ui'
 import { api } from '@/api'
 import { centsToYuan } from '@/types'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
+import { errorMessage } from '@/utils/errors'
 import type {
   Instrument,
   Transaction,
@@ -172,7 +173,7 @@ export function useInvestmentForm(
         options?.onCreated?.()
       }
     } catch (e) {
-      message.error(editing ? `保存失败: ${e}` : `记账失败: ${e}`)
+      message.error(editing ? `保存失败: ${errorMessage(e)}` : `记账失败: ${errorMessage(e)}`)
     }
   }
 
