@@ -19,8 +19,8 @@ export const sidebarViews: Array<{ name: string; key?: string }> = [
   { name: 'transactions', key: '2' },
   { name: 'accounts', key: '3' },
   { name: 'budget', key: '4' },
-  // 订阅（issue #159）：原无快捷键（1..9 已占满），重排后归入数字位 5
-  { name: 'subscriptions', key: '5' },
+  // 定时（issue #202，原订阅 #159）：重排后归入数字位 5
+  { name: 'scheduled', key: '5' },
   { name: 'investments', key: '6' },
   { name: 'reports', key: '7' },
   { name: 'search', key: '8' },

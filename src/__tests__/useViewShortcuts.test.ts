@@ -29,7 +29,7 @@ describe('viewShortcuts 映射', () => {
       'transactions',
       'accounts',
       'budget',
-      'subscriptions',
+      'scheduled',
       'investments',
       'reports',
       'search',
@@ -43,7 +43,7 @@ describe('viewShortcuts 映射', () => {
     expect(sidebarViews.every((v) => v.key !== undefined)).toBe(true)
     expect(sidebarViews.find((v) => v.name === 'settings')!.key).toBe(',')
     expect(sidebarViews.find((v) => v.name === 'items')!.key).toBe('9')
-    expect(sidebarViews.find((v) => v.name === 'subscriptions')!.key).toBe('5')
+    expect(sidebarViews.find((v) => v.name === 'scheduled')!.key).toBe('5')
   })
 })
 

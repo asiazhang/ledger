@@ -12,7 +12,7 @@ import {
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
-import SubscriptionsView from '@/views/SubscriptionsView.vue'
+import SubscriptionsPane from '@/components/scheduled/SubscriptionsPane.vue'
 import type {
   Account,
   Category,
@@ -256,7 +256,7 @@ function findInput(wrapper: ReturnType<typeof mount>, testid: string) {
 }
 
 async function mountView() {
-  const wrapper = mount(SubscriptionsView)
+  const wrapper = mount(SubscriptionsPane)
   await flushPromises()
   return wrapper
 }
@@ -274,7 +274,7 @@ beforeEach(async () => {
   await store.ensureFresh()
 })
 
-describe('SubscriptionsView 订阅清单（issue #159）', () => {
+describe('SubscriptionsPane 订阅清单（issue #159）', () => {
   it('默认只显示进行中（active）的订阅', async () => {
     mockPlans = [
       makePlan({ id: 'a1', note: '进行中订阅' }),
@@ -363,7 +363,7 @@ describe('SubscriptionsView 订阅清单（issue #159）', () => {
   })
 })
 
-describe('SubscriptionsView 新建订阅模态对话框（issue #158）', () => {
+describe('SubscriptionsPane 新建订阅模态对话框（issue #158）', () => {
   /** 点击「新建订阅」按钮打开模态对话框。 */
   async function openCreateModal(wrapper: ReturnType<typeof mount>) {
     await wrapper.find('[data-testid="sub-create-open"]').trigger('click')
@@ -526,7 +526,7 @@ describe('SubscriptionsView 新建订阅模态对话框（issue #158）', () => 
   })
 })
 
-describe('SubscriptionsView 商户列（issue #190）', () => {
+describe('SubscriptionsPane 商户列（issue #190）', () => {
   it('列表显示计划商户（merchantMap 派生，改名即时生效）', async () => {
     const plan = makePlan({ id: 'a1', note: '视频会员' }, 'mer-1')
     mockPlans = [plan]
@@ -546,7 +546,7 @@ describe('SubscriptionsView 商户列（issue #190）', () => {
   })
 })
 
-describe('SubscriptionsView 状态操作（issue #159）', () => {
+describe('SubscriptionsPane 状态操作（issue #159）', () => {
   it('进行中的订阅可暂停（走既有状态命令）', async () => {
     const plan = makePlan({ id: 'a1' })
     mockPlans = [plan]
@@ -620,7 +620,7 @@ describe('SubscriptionsView 状态操作（issue #159）', () => {
   })
 })
 
-describe('SubscriptionsView 订阅编辑——仅非金额字段（issue #162）', () => {
+describe('SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）', () => {
   /** 按标题定位弹窗：页面有两个 NModal，findComponent 只返回第一个。 */
   function findModal(wrapper: ReturnType<typeof mount>, title: string) {
     const modal = wrapper
