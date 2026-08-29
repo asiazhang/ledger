@@ -18,6 +18,7 @@ import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useHoldingPriceSync } from '@/composables/useHoldingPriceSync'
 import { useInstrumentFullSync } from '@/composables/useInstrumentFullSync'
+import { usePricesChanged } from '@/composables/usePricesChanged'
 import { formatAmount, INSTRUMENT_TYPE_LABELS, MARKET_TYPE_LABELS } from '@/types'
 import AppModal from '@/components/AppModal.vue'
 import type { Instrument, MarketType } from '@/types'
@@ -102,6 +103,13 @@ watch(searchText, () => {
 })
 watch(selectedMarket, reload)
 watch(onlyInvested, reload)
+
+// 价格失效信号（ADR-0031）：增量/全量同步实际写价后原地重拉——
+// 用 load() 保留分页与搜索状态；reload() 会重置到第 1 页，
+// 抽走用户视线下的行（issue #238）。
+usePricesChanged(() => {
+  void load()
+})
 
 const pagination = computed(() => ({
   page: page.value,

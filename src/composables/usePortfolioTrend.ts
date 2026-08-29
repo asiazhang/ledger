@@ -1,5 +1,6 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { api } from '@/api'
+import { usePricesChanged } from '@/composables/usePricesChanged'
 import type {
   Instrument,
   InstrumentType,
@@ -165,6 +166,12 @@ export function usePortfolioTrend() {
     await Promise.all([fetchTrend(), instruments.value.length === 0 ? fetchInstruments() : null])
   }
 
+  /** 强制重拉：重置同键去重短路后刷新（价格失效信号：键未变但数据已变） */
+  async function forceRefresh() {
+    lastFetchedKey = null
+    await refresh()
+  }
+
   /** 切到单标的曲线（标的列表「走势」入口与面板下拉共用） */
   function showInstrument(inst: Instrument) {
     mode.value = 'instrument'
@@ -178,6 +185,12 @@ export function usePortfolioTrend() {
 
   watch([preset, mode, () => instrument.value?.id], () => {
     void refresh()
+  })
+
+  // 价格失效信号（ADR-0031）：同步实际写价后走势采样点（market_prices）
+  // 已陈旧，强制重拉——不重置去重短路则重拉被吞、留下陈旧点（issue #238）。
+  usePricesChanged(() => {
+    void forceRefresh()
   })
 
   onMounted(() => {

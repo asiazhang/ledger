@@ -6,9 +6,23 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useReferenceStore } from '@/stores/reference'
 import InstrumentBrowser from '@/components/investments/InstrumentBrowser.vue'
+import { makeInstrument } from './factories'
+import {
+  firePricesChanged,
+  resetPricesChangedHandler,
+} from './prices-changed-mock'
 import type { Currency, Instrument, SyncProgress } from '@/types'
 
 const mockListen = vi.mocked(listen)
+
+// 价格失效信号订阅基座 mock（issue #238 / ADR-0031 决策 3）：捕获订阅回调，
+// 测试中手动触发模拟后端 emit；捕获/触发辅助收在 prices-changed-mock 共享。
+vi.mock('@/composables/usePricesChanged', async () => {
+  const { capturePricesChangedHandler } = await import('./prices-changed-mock')
+  return {
+    usePricesChanged: (cb: () => void) => capturePricesChangedHandler(cb),
+  }
+})
 
 // NModal 内容 teleport 到 document.body，须在每个测试后卸载 wrapper 并清空 body，
 // 否则上一个测试遗留的弹窗 DOM 会污染下一个测试（bodyQuery 拿到陈旧元素）。
@@ -60,10 +74,10 @@ const mockInstruments: Instrument[] = [
 ]
 
 function baseInvoke(
-  extra?: Record<string, (cmd: string) => unknown>,
+  extra?: Record<string, (cmd: string, args?: unknown) => unknown>,
 ) {
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (extra?.[cmd]) return extra[cmd](cmd)
+  mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
+    if (extra?.[cmd]) return extra[cmd](cmd, args)
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve([])
     if (cmd === 'list_categories') return Promise.resolve([])
@@ -82,6 +96,7 @@ beforeEach(async () => {
   mockInvoke.mockReset()
   mockListen.mockReset()
   syncProgressHandler = undefined
+  resetPricesChangedHandler()
   mockListen.mockImplementation((_event, handler) => {
     syncProgressHandler = handler as (event: { payload: SyncProgress }) => void
     return Promise.resolve(() => {})
@@ -229,6 +244,59 @@ describe('InstrumentBrowser 同步持仓价格按钮', () => {
     await flushPromises()
     // 失败消息应包含具体原因，而非字符串化的 [object Object]
     expect(wrapper.text()).toContain('同步失败：网络错误')
+  })
+})
+
+describe('InstrumentBrowser 价格失效信号（issue #238 / ADR-0031）', () => {
+  it('信号触发后恰好重拉一次当前页查询', async () => {
+    const wrapper = mount(InstrumentBrowser)
+    await flushPromises()
+    const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
+    firePricesChanged()
+    await flushPromises()
+    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments')
+    expect(calls.length).toBe(before + 1)
+    // 查询参数与初始加载同形：原地刷新，不改变搜索/筛选状态
+    const [, args] = calls.at(-1)!
+    expect(args).toMatchObject({
+      filter: { search: null, market: null, only_invested: null, page: 1 },
+    })
+  })
+
+  it('信号触发后原地重拉，保留分页状态（不重置到第 1 页抽走视线下的行）', async () => {
+    // 60 只标的 → 两页（pageSize 50），按页切片返回不同内容
+    const pool = Array.from({ length: 60 }, (_, i) =>
+      makeInstrument({ id: `inst-${i + 1}`, symbol: String(600000 + i) }),
+    )
+    baseInvoke({
+      list_instruments: (_cmd, args?: { filter?: { page?: number } }) => {
+        const page = args?.filter?.page ?? 1
+        return Promise.resolve({
+          items: pool.slice((page - 1) * 50, page * 50),
+          total: pool.length,
+        })
+      },
+    })
+    const wrapper = mount(InstrumentBrowser)
+    await flushPromises()
+    const pageSymbols = () =>
+      wrapper.findAll('td[data-col-key="symbol"]').map((c) => c.text())
+    expect(pageSymbols()).toEqual(pool.slice(0, 50).map((i) => i.symbol))
+
+    // 翻到第 2 页（分页项为可点击 div，无内层 button）
+    const page2 = wrapper.findAll('.n-pagination-item').find((el) => el.text() === '2')
+    expect(page2).toBeTruthy()
+    await page2!.trigger('click')
+    await flushPromises()
+    expect(pageSymbols()).toEqual(pool.slice(50).map((i) => i.symbol))
+
+    // 信号触发：原地重拉第 2 页，而非 reload() 重置回第 1 页
+    firePricesChanged()
+    await flushPromises()
+    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments')
+    const [, args] = calls.at(-1)!
+    expect((args as { filter: { page: number } }).filter.page).toBe(2)
+    expect(pageSymbols()).toEqual(pool.slice(50).map((i) => i.symbol))
   })
 })
 

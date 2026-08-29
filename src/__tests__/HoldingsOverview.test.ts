@@ -13,9 +13,23 @@ import {
   mockHoldings,
   mockInstruments,
 } from './factories'
+import {
+  firePricesChanged,
+  resetPricesChangedHandler,
+} from './prices-changed-mock'
 
 const mockInvoke = vi.mocked(invoke)
 const mockListen = vi.mocked(listen)
+
+// 价格失效信号订阅基座 mock（issue #238 / ADR-0031 决策 3）：捕获订阅回调，
+// 测试中手动触发模拟后端 emit；失败/零更新路径后端不 emit，即无重拉。
+// 捕获/触发辅助收在 prices-changed-mock 共享（三个价格消费方测试同构）。
+vi.mock('@/composables/usePricesChanged', async () => {
+  const { capturePricesChangedHandler } = await import('./prices-changed-mock')
+  return {
+    usePricesChanged: (cb: () => void) => capturePricesChangedHandler(cb),
+  }
+})
 
 // NCard 内组件直接挂载在 wrapper 下，但统一沿用项目的清理约定
 enableAutoUnmount(afterEach)
@@ -46,6 +60,7 @@ beforeEach(async () => {
   mockInvoke.mockReset()
   mockListen.mockReset()
   mockListen.mockResolvedValue(() => {})
+  resetPricesChangedHandler()
   baseInvoke()
   const store = useReferenceStore()
   await store.refresh()
@@ -124,22 +139,41 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     expect(wrapper.find('.n-button--loading').exists()).toBe(false)
   })
 
-  it('同步成功后重新拉取持仓（现价/市值随最新价刷新）', async () => {
+  it('价格失效信号触发后重拉一次持仓（现价/市值随最新价刷新，issue #238）', async () => {
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    const callsBefore = mockInvoke.mock.calls.filter(([c]) => c === 'list_holdings').length
+    firePricesChanged()
+    await flushPromises()
+    const callsAfter = mockInvoke.mock.calls.filter(([c]) => c === 'list_holdings').length
+    expect(callsAfter).toBe(callsBefore + 1)
+  })
+
+  it('同步按钮只发起同步：点击不再直连重拉，重拉由信号驱动（样板移除）', async () => {
     wrapper = mount(HoldingsOverview)
     await flushPromises()
     const callsBefore = mockInvoke.mock.calls.filter(([c]) => c === 'list_holdings').length
     await wrapper.find('[data-testid="sync-holding-prices"]').trigger('click')
     await flushPromises()
-    const callsAfter = mockInvoke.mock.calls.filter(([c]) => c === 'list_holdings').length
-    expect(callsAfter).toBeGreaterThan(callsBefore)
+    // 同步命令已发出，但点击路径自身不触发重拉——
+    // 失败/零更新路径后端不 emit（ADR-0031 决策 2），即无重拉
+    expect(mockInvoke).toHaveBeenCalledWith('sync_holding_prices')
+    expect(mockInvoke.mock.calls.filter(([c]) => c === 'list_holdings').length).toBe(callsBefore)
+    // 信号到达才重拉
+    firePricesChanged()
+    await flushPromises()
+    expect(mockInvoke.mock.calls.filter(([c]) => c === 'list_holdings').length).toBe(callsBefore + 1)
   })
 
   it('同步失败显示错误消息', async () => {
     baseInvoke({ sync_holding_prices: () => Promise.reject(new Error('网络错误')) })
     wrapper = mount(HoldingsOverview)
     await flushPromises()
+    const callsBefore = mockInvoke.mock.calls.filter(([c]) => c === 'list_holdings').length
     await wrapper.find('[data-testid="sync-holding-prices"]').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('同步失败：网络错误')
+    // 失败路径后端不 emit（ADR-0031 决策 2），即无重拉
+    expect(mockInvoke.mock.calls.filter(([c]) => c === 'list_holdings').length).toBe(callsBefore)
   })
 })
