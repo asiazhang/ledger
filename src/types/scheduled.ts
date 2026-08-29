@@ -50,6 +50,8 @@ export interface ScheduledTransactionDetail {
   extension: InstallmentPlan | SubscriptionPlan | ScheduledTransferPlan
   pending_occurrences: ScheduledTransactionOccurrence[]
   completed_occurrences: number
+  /** 已完成期次金额合计（issue #204）：分期「已还金额」实时汇总，不持久化 */
+  completed_amount_cents: number
 }
 
 export interface InstallmentPlan {
