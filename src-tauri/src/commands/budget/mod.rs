@@ -15,7 +15,7 @@
 mod tests;
 
 use chrono::{Datelike, NaiveDate};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use tauri::State;
 
 use crate::db::query::query_all;
@@ -35,19 +35,58 @@ pub fn list_budgets(db: State<'_, DbState>) -> Result<Vec<Budget>> {
     )
 }
 
-#[tauri::command]
-pub fn create_budget(db: State<'_, DbState>, input: BudgetInput) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+/// 预算写入校验与落库核心（issue #183）：命令外壳与测试共用。三条底线——
+/// 1) 金额必须为正数；2) 只能挂支出分类（收入分类与不存在的分类均拒绝）；
+/// 3) 同「分类 + 周期」已有未删除预算时明确拒绝（中文提示），不静默覆盖。
+pub fn create_budget_internal(conn: &Connection, input: &BudgetInput) -> Result<String> {
+    if input.amount_cents <= 0 {
+        return Err(AppError::Invalid("预算金额必须为正数".into()));
+    }
+    let kind: Option<String> = conn
+        .query_row(
+            "SELECT kind FROM categories WHERE id=?1 AND is_deleted=0",
+            rusqlite::params![input.category_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    match kind.as_deref() {
+        None => {
+            return Err(AppError::NotFound(format!(
+                "分类不存在: {}",
+                input.category_id
+            )));
+        }
+        Some("expense") => {}
+        Some(other) => {
+            return Err(AppError::Invalid(format!(
+                "预算只能设置在支出分类上（该分类为{other}分类）"
+            )));
+        }
+    }
+    let period = input.period.unwrap_or(BudgetPeriod::Monthly);
+    let duplicate: Option<i64> = conn
+        .query_row(
+            "SELECT 1 FROM budgets WHERE category_id=?1 AND period=?2 AND is_deleted=0 LIMIT 1",
+            rusqlite::params![input.category_id, period.to_string()],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if duplicate.is_some() {
+        let label = match period {
+            BudgetPeriod::Monthly => "按月",
+            BudgetPeriod::Yearly => "按年",
+        };
+        return Err(AppError::Invalid(format!("该分类已存在{label}预算")));
+    }
     let id = new_uuid();
     let now = now_iso();
-    let period = input.period.unwrap_or(BudgetPeriod::Monthly).to_string();
     conn.execute(
         "INSERT INTO budgets (id,category_id,period,amount_cents,start_date,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0)",
         rusqlite::params![
             id,
             input.category_id,
-            period,
+            period.to_string(),
             input.amount_cents,
             input.start_date,
             now,
@@ -57,6 +96,12 @@ pub fn create_budget(db: State<'_, DbState>, input: BudgetInput) -> Result<Strin
         ],
     )?;
     Ok(id)
+}
+
+#[tauri::command]
+pub fn create_budget(db: State<'_, DbState>, input: BudgetInput) -> Result<String> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    create_budget_internal(&conn, &input)
 }
 
 #[tauri::command]

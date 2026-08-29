@@ -11,12 +11,13 @@ use chrono::{Datelike, Months, NaiveDate};
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::commands::budget::budget_progress_rows;
+use tauri_app_lib::commands::budget::{budget_progress_rows, create_budget_internal};
 use tauri_app_lib::commands::transactions::insert_transaction;
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
-use tauri_app_lib::models::TransactionInput;
+use tauri_app_lib::models::{BudgetInput, TransactionInput};
 use tauri_app_lib::transaction::amount::TransactionKind;
 
+use crate::common::assert_last_error_contains;
 use crate::world::LedgerWorld;
 
 // ---------------------------------------------------------------------------
@@ -42,6 +43,16 @@ fn category_id(conn: &rusqlite::Connection, name: &str) -> String {
         |r| r.get(0),
     )
     .unwrap_or_else(|e| panic!("支出分类 '{}' 不存在: {e}", name))
+}
+
+/// 不限 kind 的分类查找（拒绝路径场景要拿收入分类的 id）。
+fn category_id_any(conn: &rusqlite::Connection, name: &str) -> String {
+    conn.query_row(
+        "SELECT id FROM categories WHERE name=?1 AND is_deleted=0",
+        params![name],
+        |r| r.get(0),
+    )
+    .unwrap_or_else(|e| panic!("分类 '{}' 不存在: {e}", name))
 }
 
 fn insert_category(conn: &rusqlite::Connection, name: &str, parent_name: Option<&str>) {
@@ -118,6 +129,19 @@ fn create_subcategory(world: &mut LedgerWorld, name: String, parent: String) {
     insert_category(&world.conn, &name, Some(&parent));
 }
 
+#[given(expr = "存在收入分类 {string}")]
+fn create_income_category(world: &mut LedgerWorld, name: String) {
+    let now = now_iso();
+    world
+        .conn
+        .execute(
+            "INSERT INTO categories (id,name,kind,parent_id,created_at,updated_at,version,device_id) \
+             VALUES (?1,?2,'income',NULL,?3,?3,1,?4)",
+            params![new_uuid(), name, now, device_id()],
+        )
+        .unwrap();
+}
+
 #[given(expr = "为分类 {string} 创建月预算 金额 {int}")]
 fn create_monthly_budget(world: &mut LedgerWorld, name: String, amount: i64) {
     let today = scenario_today(world);
@@ -179,6 +203,30 @@ fn expense_last_year(world: &mut LedgerWorld, name: String, amount: i64, account
     let date = ymd(scenario_today(world) - Months::new(12));
     let input = expense_input(world, &account, &name, amount, date);
     create_transaction(world, input);
+}
+
+// ---------------------------------------------------------------------------
+// When：经真实写路径创建预算（issue #183 拒绝路径）
+// ---------------------------------------------------------------------------
+
+/// 经核心函数 `create_budget_internal`（命令外壳同款）创建预算：
+/// 成功清空 last_error，失败记入 last_error 供拒绝路径断言。
+#[when(expr = "通过预算命令为分类 {string} 创建 {string} 预算 金额 {int}")]
+fn create_budget_via_command(world: &mut LedgerWorld, name: String, period: String, amount: i64) {
+    let input = BudgetInput {
+        category_id: category_id_any(&world.conn, &name),
+        period: Some(
+            period
+                .parse()
+                .unwrap_or_else(|e| panic!("非法预算周期 '{period}': {e:?}")),
+        ),
+        amount_cents: amount,
+        start_date: ymd(scenario_today(world)),
+    };
+    world.last_error = match create_budget_internal(&world.conn, &input) {
+        Ok(_) => None,
+        Err(e) => Some(e.to_string()),
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -254,4 +302,52 @@ fn assert_not_over_budget(world: &mut LedgerWorld, name: String) {
         .find(|p| p.category_name == name)
         .unwrap_or_else(|| panic!("预算进度中不存在分类 '{}'", name));
     assert!(!row.over_budget, "分类 '{}' 不应超支", name);
+}
+
+#[then(expr = "创建应失败并提示 {string}")]
+fn assert_create_budget_failed(world: &mut LedgerWorld, needle: String) {
+    assert_last_error_contains(world, &needle);
+}
+
+#[then(expr = "创建应成功")]
+fn assert_create_budget_succeeded(world: &mut LedgerWorld) {
+    assert!(
+        world.last_error.is_none(),
+        "预期创建成功，实际错误: {:?}",
+        world.last_error
+    );
+}
+
+#[then(expr = "分类 {string} 的预算行数应为 {int}")]
+fn assert_budget_row_count(world: &mut LedgerWorld, name: String, expected: i64) {
+    let id = category_id_any(&world.conn, &name);
+    let count: i64 = world
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM budgets WHERE category_id=?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, expected, "分类 '{}' 的预算行数不符", name);
+}
+
+#[then(expr = "分类 {string} 的预算金额仍应为 {int}")]
+fn assert_budget_amount_unchanged(world: &mut LedgerWorld, name: String, expected: i64) {
+    let id = category_id_any(&world.conn, &name);
+    let mut stmt = world
+        .conn
+        .prepare("SELECT amount_cents FROM budgets WHERE category_id=?1 AND is_deleted=0")
+        .unwrap();
+    let amounts: Vec<i64> = stmt
+        .query_map(params![id], |r| r.get(0))
+        .unwrap()
+        .flatten()
+        .collect();
+    assert_eq!(
+        amounts,
+        vec![expected],
+        "分类 '{}' 的原预算金额应保持不变",
+        name
+    );
 }
