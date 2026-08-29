@@ -44,9 +44,9 @@ pub fn create_transactions(
     db: State<'_, DbState>,
     inputs: Vec<TransactionInput>,
 ) -> Result<Vec<CreateTransactionResult>> {
-    // 批量编排（含提交点置脏）留在 TransactionBatch::run，随 #245 迁入写入口。
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    crate::commands::batch::TransactionBatch::run(&conn, inputs, false)
+    // 连接层统一写入口（ADR-0032，issue #245）：批次事务由 run 自持，提交点置脏/
+    // 到期检查单点；整批回滚不置脏由写入口闭包失败语义保证。
+    db.write(|conn| crate::commands::batch::TransactionBatch::run(conn, inputs, false))
 }
 
 /// 按 id 全字段替换一笔交易（issue #178 薄壳 IPC 命令）。

@@ -16,6 +16,11 @@
 //! **对外契约**：`run` 返回 `Vec<CreateTransactionResult>`，与 HTTP/IPC 响应形状一致；
 //! 本重构只做内部重组，不改响应形状、不改事务/去重语义（原命令模块中的转发层已随
 //! 收缩批次（issue #67）删除，`run` 是批量写入的唯一入口）。
+//!
+//! **置脏归写入口（ADR-0032，issue #245）**：本模块对备份域零感知——调用方必须经
+//! 连接层统一写入口 `db::write` 调用 `run`（HTTP 批量导入与 IPC `create_transactions`
+//! 均已如此），提交成功置脏一次、回滚不置脏的语义由写入口结构保证，不再依赖
+//! 「COMMIT 后补调」的调用方记忆。
 
 #[cfg(test)]
 mod tests;
@@ -39,7 +44,8 @@ impl TransactionBatch {
     /// 去重身份判定（T1/issue #62 的 `dedup_identity`，幂等键优先 / 内容哈希兜底）只在
     /// `dedup=true` 时生效，`dedup=false` 直接落库；单条校验失败（`AppError::Invalid`）
     /// 返回 `success:false`+`error` 且不影响同批其他交易，提交失败则整批回滚并在回滚路径
-    /// 打批次汇总日志。
+    /// 打批次汇总日志。置脏与写时到期检查不在本函数：调用方经写入口（[`crate::db::write`]）
+    /// 调用时在提交点单点承接，回滚不置脏同由写入口保证（issue #245）。
     pub fn run(
         conn: &Connection,
         inputs: Vec<TransactionInput>,
@@ -122,10 +128,8 @@ impl TransactionBatch {
             return Err(e.into());
         }
         // 汇总行在 COMMIT 后立即打一条（ADR-0009 决策 #5 / issue #45）：
-        // 数据已提交，无论后续置脏检查成败，批次都应有一条可观测的汇总行。
-        // 批量导入提交成功（issue #126）：逐行 insert 时已置脏；此处再调一次补上
-        // 提交点的「写时顺带检查」——行内检查因处于事务中而推迟到本处执行。
-        crate::auto_backup::on_write(conn);
+        // 数据已提交，批次应有一条可观测的汇总行。置脏已随迁移收口写入口
+        // （issue #245）：调用方的 db.write 闭包在此处返回 Ok 后于提交点触发。
         log_batch_summary(started, total, failed, true);
         Ok(results)
     }

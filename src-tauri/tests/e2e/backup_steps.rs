@@ -7,6 +7,7 @@ use tauri_app_lib::commands::accounts::create_account_internal;
 use tauri_app_lib::commands::backup::{
     BackupKind, backup_db_to, expected_schema_version, read_backup_kind, restore_db_from,
 };
+use tauri_app_lib::commands::batch::TransactionBatch;
 use tauri_app_lib::commands::categories::{create_category_internal, delete_category_internal};
 use tauri_app_lib::commands::investment::{
     create_exchange_rate_internal, create_instrument_internal, create_market_price_internal,
@@ -321,6 +322,94 @@ fn update_last_transaction_invalid_amount(world: &mut LedgerWorld) {
         .write(|conn| update_transaction_internal(conn, &id, input))
     {
         Ok(()) => Some(String::from("预期失败但成功了")),
+        Err(e) => Some(e.to_string()),
+    };
+}
+
+// ---------------------------------------------------------------------------
+// 批量导入写路径置脏（issue #245，ADR-0032 写入口接管）
+// ---------------------------------------------------------------------------
+
+/// 与 HTTP 批量导入端点同形态：经连接层统一写入口（ADR-0032，issue #245）跑一次
+/// 批量导入（dedup=true，各行日期互异不撞去重身份），提交点置脏；步骤内断言整批
+/// 成功（逐条结果均 success）。
+#[when(expr = "批量导入 {int} 笔支出各 {int} 分到账户 {string}")]
+fn batch_import_expenses_via_entry(
+    world: &mut LedgerWorld,
+    count: usize,
+    cents: i64,
+    account: String,
+) {
+    let account_id = world.account_id(&account);
+    let inputs: Vec<TransactionInput> = (0..count)
+        .map(|i| TransactionInput {
+            kind: TransactionKind::Expense,
+            amount_cents: cents,
+            currency_code: "CNY".into(),
+            account_id: account_id.clone(),
+            to_account_id: None,
+            category_id: None,
+            merchant_id: None,
+            merchant_name: None,
+            refund_of_transaction_id: None,
+            note: None,
+            // 日期互异：dedup=true 时同内容行会被判重复，这里保证每行身份唯一。
+            date: format!("2026-02-{:02}", i + 1),
+            instrument_id: None,
+            quantity: None,
+            price_cents: None,
+            fee_cents: None,
+            idempotency_key: None,
+        })
+        .collect();
+    let results = world
+        .db
+        .write(|conn| TransactionBatch::run(conn, inputs, true))
+        .expect("批量导入失败");
+    assert!(
+        results.iter().all(|r| r.success),
+        "批量导入应整批成功: {results:?}"
+    );
+}
+
+/// 与 HTTP 批量导入端点同形态：批次含一行退款引用不存在的原支出交易——这是
+/// 非单行 `Invalid` 的硬错误（`AppError::NotFound`），整批回滚；写入口闭包失败
+/// 不置脏（ADR-0032）。错误记入 last_error 供「应返回错误」断言。
+#[when(expr = "批量导入两笔交易但退款行引用不存在的原支出交易")]
+fn batch_import_rollback_via_entry(world: &mut LedgerWorld) {
+    let account_id = world.account_id("现金");
+    let expense = TransactionInput {
+        kind: TransactionKind::Expense,
+        amount_cents: 1500,
+        currency_code: "CNY".into(),
+        account_id: account_id.clone(),
+        to_account_id: None,
+        category_id: None,
+        merchant_id: None,
+        merchant_name: None,
+        refund_of_transaction_id: None,
+        note: None,
+        date: "2026-02-01".into(),
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        idempotency_key: None,
+    };
+    let refund = TransactionInput {
+        kind: TransactionKind::Refund,
+        amount_cents: 500,
+        // 占位值即可：退款归一化以原支出覆盖账户/币种，但原支出不存在先行报错。
+        currency_code: "CNY".into(),
+        account_id,
+        refund_of_transaction_id: Some(String::from("tx-no-such")),
+        ..expense.clone()
+    };
+    world.last_error = match world
+        .db
+        .write(|conn| TransactionBatch::run(conn, vec![expense, refund], true))
+    {
+        Ok(_) => Some(String::from("预期失败但成功了")),
         Err(e) => Some(e.to_string()),
     };
 }

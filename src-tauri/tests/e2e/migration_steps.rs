@@ -52,7 +52,11 @@ fn batch_import(world: &mut LedgerWorld, #[step] step: &Step) {
         })
         .collect();
     let inputs: Vec<TransactionInput> = rows.iter().map(|r| r.to_input(world)).collect();
-    let results = TransactionBatch::run(&world_conn!(world), inputs, true).expect("批量导入失败");
+    // 与 HTTP 批量导入端点同形态：经连接层统一写入口（ADR-0032，issue #245）。
+    let results = world
+        .db
+        .write(|conn| TransactionBatch::run(conn, inputs, true))
+        .expect("批量导入失败");
     world.last_import_rows = rows;
     world.last_batch_results = results;
     world.transactions_list = query_all_transactions(&world_conn!(world));
@@ -66,8 +70,11 @@ fn reimport(world: &mut LedgerWorld) {
         .iter()
         .map(|r| r.to_input(world))
         .collect();
-    let results =
-        TransactionBatch::run(&world_conn!(world), inputs, true).expect("重跑批量导入失败");
+    // 与 HTTP 批量导入端点同形态：经连接层统一写入口（ADR-0032，issue #245）。
+    let results = world
+        .db
+        .write(|conn| TransactionBatch::run(conn, inputs, true))
+        .expect("重跑批量导入失败");
     world.last_batch_results = results;
     world.transactions_list = query_all_transactions(&world_conn!(world));
 }

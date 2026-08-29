@@ -12,7 +12,7 @@ use cucumber::{given, then, when};
 use rusqlite::params;
 
 use tauri_app_lib::commands::budget::{
-    budget_progress_rows, create_budget_internal, update_budget_internal,
+    budget_progress_rows, create_budget_internal, delete_budget_internal, update_budget_internal,
 };
 use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
@@ -212,7 +212,7 @@ fn expense_last_year(world: &mut LedgerWorld, name: String, amount: i64, account
 // When：经真实写路径创建预算（issue #183 拒绝路径）
 // ---------------------------------------------------------------------------
 
-/// 经核心函数 `create_budget_internal`（命令外壳同款）创建预算：
+/// 经预算命令同形态（连接层统一写入口，ADR-0032 / issue #245）创建预算：
 /// 成功清空 last_error，失败记入 last_error 供拒绝路径断言。
 #[when(expr = "通过预算命令为分类 {string} 创建 {string} 预算 金额 {int}")]
 fn create_budget_via_command(world: &mut LedgerWorld, name: String, period: String, amount: i64) {
@@ -227,7 +227,7 @@ fn create_budget_via_command(world: &mut LedgerWorld, name: String, period: Stri
         amount_cents: amount,
         start_date: ymd(scenario_today(world)),
     };
-    world.last_error = match create_budget_internal(&world_conn!(world), &input) {
+    world.last_error = match world.db.write(|conn| create_budget_internal(conn, &input)) {
         Ok(_) => None,
         Err(e) => Some(e.to_string()),
     };
@@ -237,7 +237,7 @@ fn create_budget_via_command(world: &mut LedgerWorld, name: String, period: Stri
 // When：编辑预算金额（issue #184）
 // ---------------------------------------------------------------------------
 
-/// 经核心函数 `update_budget_internal`（命令外壳同款）编辑预算金额：
+/// 经预算命令同形态（连接层统一写入口，ADR-0032 / issue #245）编辑预算金额：
 /// 成功清空 last_error，失败记入 last_error 供拒绝路径断言。
 #[when(expr = "通过预算命令编辑分类 {string} 的预算金额为 {int}")]
 fn update_budget_via_command(world: &mut LedgerWorld, name: String, amount: i64) {
@@ -249,7 +249,31 @@ fn update_budget_via_command(world: &mut LedgerWorld, name: String, amount: i64)
             |r| r.get(0),
         )
         .unwrap_or_else(|e| panic!("分类 '{}' 没有可编辑的预算: {e}", name));
-    world.last_error = match update_budget_internal(&world_conn!(world), &budget_id, amount) {
+    world.last_error = match world
+        .db
+        .write(|conn| update_budget_internal(conn, &budget_id, amount))
+    {
+        Ok(_) => None,
+        Err(e) => Some(e.to_string()),
+    };
+}
+
+/// 经预算命令同形态（连接层统一写入口，ADR-0032 / issue #245）软删除分类的预算：
+/// 成功清空 last_error，失败记入 last_error 供断言。
+#[when(expr = "删除分类 {string} 的预算")]
+fn delete_budget_via_command(world: &mut LedgerWorld, name: String) {
+    let cat_id = category_id_any(&world_conn!(world), &name);
+    let budget_id: String = world_conn!(world)
+        .query_row(
+            "SELECT id FROM budgets WHERE category_id=?1 AND is_deleted=0 LIMIT 1",
+            params![cat_id],
+            |r| r.get(0),
+        )
+        .unwrap_or_else(|e| panic!("分类 '{name}' 没有可删除的预算: {e}"));
+    world.last_error = match world
+        .db
+        .write(|conn| delete_budget_internal(conn, &budget_id))
+    {
         Ok(_) => None,
         Err(e) => Some(e.to_string()),
     };
