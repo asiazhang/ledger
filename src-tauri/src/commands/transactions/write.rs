@@ -33,7 +33,9 @@ pub fn insert_transaction(conn: &Connection, input: TransactionInput) -> Result<
 /// 幂等键（`idempotency_key`）与内容哈希（`dedup_hash`）不作为
 /// 可编辑字段——修改不重算去重身份，故修改后重跑同批导入（带幂等键）仍按同键去重、不产生重复。
 ///
-/// 整笔修改在事务内完成，校验或匹配失败回滚。
+/// 整笔修改在事务内完成，校验或匹配失败回滚。事务边界内联在本函数
+/// （裸 `BEGIN`/`COMMIT`/`ROLLBACK`），提交点的置脏与写时到期检查由连接层
+/// 统一写入口承担（调用方经 `db.write` 执行本函数，ADR-0032）。
 /// 不存在或已软删除的 id 返回 `AppError::NotFound`。
 pub fn update_transaction_internal(
     conn: &Connection,
@@ -65,9 +67,6 @@ pub fn update_transaction_internal(
     match res {
         Ok(()) => {
             conn.execute("COMMIT", [])?;
-            // 脏标记已在事务内的 update_row 挂钩置真；此处补上提交点的
-            // 写时顺带检查（issue #126）——事务中跳过的到期判定现在执行。
-            crate::auto_backup::on_write(conn);
             Ok(())
         }
         Err(e) => {

@@ -38,9 +38,9 @@ fn update_last_txn(world: &mut LedgerWorld, kind: String, amount: i64, date: Str
         fee_cents: None,
         idempotency_key: None,
     };
-    let result = update_transaction_internal(&world.conn, &id, input);
+    let result = update_transaction_internal(&world_conn!(world), &id, input);
     assert!(result.is_ok(), "修改交易失败: {:?}", result.err());
-    world.transactions_list = query_all_transactions(&world.conn);
+    world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 尝试把最近一笔交易改为转账（缺目标账户），应触发按 kind 校验并记录错误。
@@ -70,7 +70,7 @@ fn try_update_last_to_transfer(world: &mut LedgerWorld, amount: i64, date: Strin
         fee_cents: None,
         idempotency_key: None,
     };
-    world.last_error = match update_transaction_internal(&world.conn, &id, input) {
+    world.last_error = match update_transaction_internal(&world_conn!(world), &id, input) {
         Err(AppError::Invalid(msg)) => Some(msg),
         _ => Some("预期失败但成功了".into()),
     };
@@ -97,10 +97,11 @@ fn try_update_missing_txn(world: &mut LedgerWorld, amount: i64, date: String) {
         fee_cents: None,
         idempotency_key: None,
     };
-    world.last_error = match update_transaction_internal(&world.conn, "nonexistent-id", input) {
-        Err(AppError::NotFound(msg)) => Some(msg),
-        _ => Some("预期失败但成功了".into()),
-    };
+    world.last_error =
+        match update_transaction_internal(&world_conn!(world), "nonexistent-id", input) {
+            Err(AppError::NotFound(msg)) => Some(msg),
+            _ => Some("预期失败但成功了".into()),
+        };
 }
 
 /// 删除最近一笔交易（软删除，与 IPC/HTTP 删除同一行为层权威），
@@ -108,8 +109,8 @@ fn try_update_missing_txn(world: &mut LedgerWorld, amount: i64, date: String) {
 #[when(expr = "删除最近交易")]
 fn delete_last_txn(world: &mut LedgerWorld) {
     let id = world.last_transaction_id.clone().expect("没有可删除的交易");
-    delete_transaction_internal(&world.conn, &id).expect("删除交易失败");
-    world.transactions_list = query_all_transactions(&world.conn);
+    delete_transaction_internal(&world_conn!(world), &id).expect("删除交易失败");
+    world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 查询账户币种（买入/卖出以账户币种成交，与真实写路径一致）。
@@ -125,8 +126,7 @@ fn account_currency(conn: &rusqlite::Connection, account_id: &str) -> String {
 /// 按标的 + 动作（buy/sell）定位交易 id：场景内同标的多笔买卖并存，
 /// 不能依赖「最近交易」指针（买入后再卖出，最近交易已指向卖出）。
 fn trade_txn_id(world: &LedgerWorld, symbol: &str, action: &str) -> String {
-    world
-        .conn
+    world_conn!(world)
         .query_row(
             "SELECT st.transaction_id FROM security_transactions st \
              JOIN instruments i ON i.id = st.instrument_id \
@@ -148,8 +148,7 @@ fn insert_trade_for_edit(
     account_name: &str,
     date: &str,
 ) {
-    let instrument_id: String = world
-        .conn
+    let instrument_id: String = world_conn!(world)
         .query_row(
             "SELECT id FROM instruments WHERE symbol=?1",
             params![symbol],
@@ -157,7 +156,7 @@ fn insert_trade_for_edit(
         )
         .expect("标的不存在，先铺垫 Given 存在标的");
     let account_id = world.account_id(account_name);
-    let currency_code = account_currency(&world.conn, &account_id);
+    let currency_code = account_currency(&world_conn!(world), &account_id);
     let input = TransactionInput {
         merchant_name: None,
         kind,
@@ -176,9 +175,9 @@ fn insert_trade_for_edit(
         fee_cents: Some(0),
         idempotency_key: None,
     };
-    let id = insert_transaction(&world.conn, input).expect("创建买卖交易失败");
+    let id = insert_transaction(&world_conn!(world), input).expect("创建买卖交易失败");
     world.last_transaction_id = Some(id);
-    world.transactions_list = query_all_transactions(&world.conn);
+    world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 #[when(expr = "买入标的 {string} 数量 {int} 单价 {int} 到投资账户 {string}")]
@@ -229,8 +228,7 @@ fn trade_edit_input(
     price_cents: i64,
     fee_cents: i64,
 ) -> TransactionInput {
-    let instrument_id: String = world
-        .conn
+    let instrument_id: String = world_conn!(world)
         .query_row(
             "SELECT instrument_id FROM security_transactions WHERE transaction_id=?1",
             params![id],
@@ -280,9 +278,9 @@ fn update_buy(
         price_cents,
         fee_cents,
     );
-    let result = update_transaction_internal(&world.conn, &id, input);
+    let result = update_transaction_internal(&world_conn!(world), &id, input);
     assert!(result.is_ok(), "修改买入交易失败: {:?}", result.err());
-    world.transactions_list = query_all_transactions(&world.conn);
+    world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 尝试修改买入交易，应触发部分卖出守卫并记录错误（issue #180）。
@@ -295,7 +293,7 @@ fn try_update_partially_sold_buy(
 ) {
     let id = trade_txn_id(world, &symbol, "buy");
     let input = trade_edit_input(world, TransactionKind::Buy, &id, quantity, price_cents, 0);
-    world.last_error = match update_transaction_internal(&world.conn, &id, input) {
+    world.last_error = match update_transaction_internal(&world_conn!(world), &id, input) {
         Err(AppError::Invalid(msg)) => Some(msg),
         _ => Some("预期失败但成功了".into()),
     };
@@ -319,9 +317,9 @@ fn update_sell(
         price_cents,
         fee_cents,
     );
-    let result = update_transaction_internal(&world.conn, &id, input);
+    let result = update_transaction_internal(&world_conn!(world), &id, input);
     assert!(result.is_ok(), "修改卖出交易失败: {:?}", result.err());
-    world.transactions_list = query_all_transactions(&world.conn);
+    world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 尝试修改一笔已删除的交易，应返回明确错误（NotFound：已删除与不存在同口径）。
@@ -346,7 +344,7 @@ fn try_update_deleted_txn(world: &mut LedgerWorld, amount: i64, date: String) {
         fee_cents: None,
         idempotency_key: None,
     };
-    world.last_error = match update_transaction_internal(&world.conn, &id, input) {
+    world.last_error = match update_transaction_internal(&world_conn!(world), &id, input) {
         Err(AppError::NotFound(msg)) => Some(msg),
         _ => Some("预期失败但成功了".into()),
     };
@@ -369,8 +367,7 @@ fn check_txn_version(world: &mut LedgerWorld, index: i64, expected_version: i64)
 #[then(expr = "标的 {string} 持仓数量应为 {int}")]
 fn assert_holding_quantity(world: &mut LedgerWorld, symbol: String, expected: i64) {
     // 按标的定位持仓批次（场景内单账户，标的唯一确定批次）
-    let quantity: f64 = world
-        .conn
+    let quantity: f64 = world_conn!(world)
         .query_row(
             "SELECT remaining_quantity FROM security_lots \
              WHERE instrument_id = (SELECT id FROM instruments WHERE symbol=?1)",
@@ -394,8 +391,7 @@ fn assert_trade_detail_of(
     fee_cents: i64,
 ) {
     let id = trade_txn_id(world, symbol, action);
-    let expected_instrument_id: String = world
-        .conn
+    let expected_instrument_id: String = world_conn!(world)
         .query_row(
             "SELECT id FROM instruments WHERE symbol=?1",
             params![symbol],
@@ -404,16 +400,16 @@ fn assert_trade_detail_of(
         .expect("标的不存在");
     // 直接断言扩展表投影（与 IPC get_transaction_trade 同一数据源：
     // security_transactions JOIN instruments），验证编辑后回填数据正确
-    let (instrument_id, trade_quantity, trade_price, trade_fee): (String, f64, i64, i64) = world
-        .conn
-        .query_row(
-            "SELECT st.instrument_id, st.quantity, st.price_cents, st.fee_cents \
+    let (instrument_id, trade_quantity, trade_price, trade_fee): (String, f64, i64, i64) =
+        world_conn!(world)
+            .query_row(
+                "SELECT st.instrument_id, st.quantity, st.price_cents, st.fee_cents \
              FROM security_transactions st JOIN instruments i ON i.id = st.instrument_id \
              WHERE st.transaction_id=?1",
-            params![id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-        )
-        .expect("读取买卖明细失败");
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .expect("读取买卖明细失败");
     assert_eq!(instrument_id, expected_instrument_id, "标的不符");
     assert!(
         (trade_quantity - quantity as f64).abs() < 1e-9,

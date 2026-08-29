@@ -112,8 +112,6 @@ pub fn delete_transaction_internal(conn: &Connection, id: &str) -> Result<()> {
         "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id()],
     )?;
-    // 脏标记挂钩（issue #126）：删除成功即置脏，到期则写时顺带触发备份。
-    crate::auto_backup::on_write(conn);
     // 搜索无索引（issue #196 全量扫描实现）：软删除即刻生效，删除的交易不再可搜。
     Ok(())
 }

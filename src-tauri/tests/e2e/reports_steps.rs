@@ -49,16 +49,17 @@ fn create_txn_with_merchant_currency(
         fee_cents: None,
         idempotency_key: None,
     };
-    let result = insert_transaction(&world.conn, input);
+    let result = insert_transaction(&world_conn!(world), input);
     assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
     world.last_transaction_id = Some(result.unwrap());
-    world.transactions_list = query_all_transactions(&world.conn);
+    world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 查询指定年份的商户消费排行（命令层同款核心函数注入）。
 #[when(expr = "查询 {int} 年商户排行")]
 fn query_merchant_shares(world: &mut LedgerWorld, year: i64) {
-    world.last_merchant_shares = merchant_shares_rows(&world.conn, year).expect("查询商户排行失败");
+    world.last_merchant_shares =
+        merchant_shares_rows(&world_conn!(world), year).expect("查询商户排行失败");
 }
 
 // ---------------------------------------------------------------------------

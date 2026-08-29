@@ -9,6 +9,9 @@
 //! - [`update_row`]：归一化行 → 按 `id` UPDATE，保留 `created_at` 与幂等身份
 //!   （`idempotency_key` / `dedup_hash`），`version` 递增。
 //!
+//! 置脏触发已收口连接层统一写入口（`db::write`，ADR-0032）：本模块对备份域零感知，
+//! 落库后的置脏/到期检查由调用方所在写入口闭包在提交点单点执行。
+//!
 //! **边界**：kind 分派（buy/sell 持仓副作用）、幂等/去重、事务边界留在命令层编排；
 //! buy/sell 经其投资层产出归一化行后调用 [`insert_row`]/[`update_row`] 落交易行字段。
 //! 本模块不反向依赖命令层：入参/归一化行均为模块自有类型，与 `models::TransactionInput`
@@ -228,8 +231,6 @@ pub fn insert_row(conn: &Connection, row: &NormalizedRow) -> Result<String> {
             device_id(),
         ],
     )?;
-    // 脏标记挂钩（issue #126）：落库成功即置脏，到期则写时顺带触发备份。
-    crate::auto_backup::on_write(conn);
     Ok(id)
 }
 
@@ -261,8 +262,6 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
             device_id(),
         ],
     )?;
-    // 脏标记挂钩（issue #126）：更新成功即置脏，到期则写时顺带触发备份。
-    crate::auto_backup::on_write(conn);
     Ok(())
 }
 

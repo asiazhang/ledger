@@ -35,7 +35,7 @@ fn build_linked_input(name: &str, tx_id: &str) -> ItemInput {
 fn try_create_item_unlinked(world: &mut LedgerWorld, name: String) {
     let mut signals = 0;
     let result = create_item_internal(
-        &world.conn,
+        &world_conn!(world),
         build_input(&name, "2026-03-01".into(), 20_000, "CNY"),
         &mut || signals += 1,
     );
@@ -83,7 +83,7 @@ fn create_expense_txn_with_currency(
         fee_cents: None,
         idempotency_key: None,
     };
-    let result = insert_transaction(&world.conn, input);
+    let result = insert_transaction(&world_conn!(world), input);
     let id = result.unwrap_or_else(|e| panic!("创建支出交易应成功但失败: {e}"));
     world.last_transaction_id = Some(id);
 }
@@ -103,9 +103,11 @@ fn create_item_linked(world: &mut LedgerWorld, name: String) {
         .clone()
         .unwrap_or_else(|| panic!("没有记住的关联购买交易（先调「记住该交易为关联购买交易」）"));
     let mut signals = 0;
-    let result = create_item_internal(&world.conn, build_linked_input(&name, &tx_id), &mut || {
-        signals += 1
-    });
+    let result = create_item_internal(
+        &world_conn!(world),
+        build_linked_input(&name, &tx_id),
+        &mut || signals += 1,
+    );
     match result {
         Ok(id) => {
             world.last_item_id = Some(id);
@@ -123,9 +125,11 @@ fn try_create_item_linked(world: &mut LedgerWorld, name: String) {
         .clone()
         .unwrap_or_else(|| panic!("没有记住的关联购买交易（先调「记住该交易为关联购买交易」）"));
     let mut signals = 0;
-    let result = create_item_internal(&world.conn, build_linked_input(&name, &tx_id), &mut || {
-        signals += 1
-    });
+    let result = create_item_internal(
+        &world_conn!(world),
+        build_linked_input(&name, &tx_id),
+        &mut || signals += 1,
+    );
     world.item_signal_count = signals;
     world.last_error = match result {
         Err(e) => Some(e.to_string()),
@@ -138,7 +142,7 @@ fn try_create_item_linked(world: &mut LedgerWorld, name: String) {
 fn try_create_item_linked_missing(world: &mut LedgerWorld, name: String) {
     let mut signals = 0;
     let result = create_item_internal(
-        &world.conn,
+        &world_conn!(world),
         build_linked_input(&name, "no-such-transaction"),
         &mut || signals += 1,
     );
@@ -177,7 +181,7 @@ fn update_item_linked(
     input.total_cost_cents = cost_cents;
     input.currency_code = currency;
     input.note = if note.is_empty() { None } else { Some(note) };
-    let result = update_item_internal(&world.conn, &id, input, &mut || signals += 1);
+    let result = update_item_internal(&world_conn!(world), &id, input, &mut || signals += 1);
     match result {
         Ok(()) => world.item_signal_count = signals,
         Err(e) => panic!("修改物品应成功但失败: {e}"),
@@ -210,7 +214,7 @@ fn try_update_item_linked(
     input.total_cost_cents = cost_cents;
     input.currency_code = currency;
     input.note = if note.is_empty() { None } else { Some(note) };
-    let result = update_item_internal(&world.conn, &id, input, &mut || signals += 1);
+    let result = update_item_internal(&world_conn!(world), &id, input, &mut || signals += 1);
     world.item_signal_count = signals;
     world.last_error = match result {
         Err(e) => Some(e.to_string()),

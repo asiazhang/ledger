@@ -6,7 +6,13 @@ use tauri_app_lib::auto_backup::AttemptOutcome;
 use tauri_app_lib::commands::backup::{
     BackupKind, backup_db_to, expected_schema_version, read_backup_kind, restore_db_from,
 };
+use tauri_app_lib::commands::transactions::{
+    delete_transaction_internal, update_transaction_internal,
+};
 use tauri_app_lib::db::{new_uuid, open_connection};
+use tauri_app_lib::models::TransactionInput;
+use tauri_app_lib::settings::{self, SettingKey};
+use tauri_app_lib::transaction::amount::TransactionKind;
 
 use crate::world::LedgerWorld;
 
@@ -27,7 +33,7 @@ fn temp_safety_dir() -> PathBuf {
 #[when(expr = "备份数据库到临时文件")]
 fn backup_to_temp(world: &mut LedgerWorld) {
     let target = temp_path("backup.zip");
-    let result = backup_db_to(&world.conn, &target, "0.2.0", BackupKind::Manual);
+    let result = backup_db_to(&world_conn!(world), &target, "0.2.0", BackupKind::Manual);
     assert!(result.is_ok(), "备份失败: {:?}", result.err());
     world.last_backup_path = Some(target);
 }
@@ -38,7 +44,7 @@ fn auto_backup_to_temp(world: &mut LedgerWorld) {
     let dir = std::env::temp_dir().join(format!("ledger-e2e-auto-backup-{}", new_uuid()));
     std::fs::create_dir_all(&dir).unwrap();
     let outcome = tauri_app_lib::auto_backup::run_due_backup(
-        &world.conn,
+        &world_conn!(world),
         Some(dir.to_str().unwrap()),
         "0.2.0",
         chrono::Utc::now(),
@@ -54,8 +60,7 @@ fn auto_backup_to_temp(world: &mut LedgerWorld) {
 
 #[when(expr = "删除全部交易")]
 fn delete_all_txns(world: &mut LedgerWorld) {
-    world
-        .conn
+    world_conn!(world)
         .execute_batch("UPDATE transactions SET is_deleted=1")
         .unwrap();
 }
@@ -179,24 +184,67 @@ fn backup_meta_kind_auto(world: &mut LedgerWorld, expected: String) {
 // ---------------------------------------------------------------------------
 
 use tauri_app_lib::auto_backup::get_state;
-use tauri_app_lib::commands::delete_transaction_internal;
 
 #[then(expr = "自动备份脏标记应为真")]
 fn auto_backup_dirty(world: &mut LedgerWorld) {
-    let state = get_state(&world.conn).unwrap();
+    let state = get_state(&world_conn!(world)).unwrap();
     assert!(state.dirty, "业务写库成功后脏标记应为真");
 }
 
 #[then(expr = "自动备份脏标记应为假")]
 fn auto_backup_clean(world: &mut LedgerWorld) {
-    let state = get_state(&world.conn).unwrap();
+    let state = get_state(&world_conn!(world)).unwrap();
     assert!(!state.dirty, "未发生业务写库时脏标记应为默认假");
 }
 
 #[when(expr = "删除最近创建的交易")]
 fn delete_last_transaction(world: &mut LedgerWorld) {
     let id = world.last_transaction_id.clone().expect("没有可删除的交易");
-    delete_transaction_internal(&world.conn, &id).unwrap();
+    // 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）删除，成功即置脏。
+    world
+        .db
+        .write(|conn| delete_transaction_internal(conn, &id))
+        .unwrap();
+}
+
+/// 设置写入（`app_settings`，经 settings 模块单点收口，普通锁不走出入口）——
+/// ADR-0032 的豁免路径：不置脏。
+#[when(expr = "写入一项设置")]
+fn write_a_setting(world: &mut LedgerWorld) {
+    let conn = world_conn!(world);
+    settings::set(&conn, SettingKey::AutoBackupEnabled, &false).expect("写入设置");
+}
+
+/// 尝试把最近创建的交易改为非法金额（金额必须大于 0）：修改事务内失败回滚，
+/// 写入口闭包失败不置脏（ADR-0032）。错误记入 last_error 供「应返回错误」断言。
+#[when(expr = "尝试把最近创建的交易修改为非法金额")]
+fn update_last_transaction_invalid_amount(world: &mut LedgerWorld) {
+    let id = world.last_transaction_id.clone().expect("没有可修改的交易");
+    let input = TransactionInput {
+        kind: TransactionKind::Expense,
+        amount_cents: 0,
+        currency_code: "CNY".into(),
+        account_id: "acc-any".into(),
+        to_account_id: None,
+        category_id: None,
+        merchant_id: None,
+        merchant_name: None,
+        refund_of_transaction_id: None,
+        note: None,
+        date: "2026-02-01".into(),
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        idempotency_key: None,
+    };
+    world.last_error = match world
+        .db
+        .write(|conn| update_transaction_internal(conn, &id, input))
+    {
+        Ok(()) => Some(String::from("预期失败但成功了")),
+        Err(e) => Some(e.to_string()),
+    };
 }
 
 #[then(expr = "恢复的数据库自动备份状态应为「未脏且已重新计时」")]

@@ -755,28 +755,47 @@ fn normalize_insert_update_roundtrip() {
 }
 
 // ---------------------------------------------------------------------------
-// 脏标记挂钩（issue #126）
+// 置脏触发（ADR-0032：已收口连接层统一写入口）
 // ---------------------------------------------------------------------------
 
-/// insert_row / update_row 落库成功后应置脏（Writer 接缝统一挂钩）。
+/// Writer 落库本身对备份域零感知（ADR-0032）：insert_row / update_row 不再自带
+/// 置脏；同样的落库经连接层写入口 `db.write` 执行（命令层真实形态）时，
+/// 由提交点单点置脏。
 #[test]
-fn insert_and_update_mark_dirty() {
+fn writer_rows_do_not_mark_dirty_entry_does() {
     let conn = setup_db();
     insert_account(&conn, "acc", "CNY");
 
     let row = normalize(&conn, &input(TransactionKind::Expense, 1500, "acc")).unwrap();
+    let id = insert_row(&conn, &row).unwrap();
     assert!(
         !crate::auto_backup::get_state(&conn).unwrap().dirty,
-        "写入前不应脏"
+        "Writer 落库本身不置脏（触发已上移写入口）"
     );
-    let id = insert_row(&conn, &row).unwrap();
-    assert!(crate::auto_backup::get_state(&conn).unwrap().dirty);
-
-    // 置脏是幂等标记，不做「已脏跳过」优化：更新后仍为真。
-    crate::auto_backup::mark_clean(&conn, "2026-02-17T09:00:00Z").unwrap();
     update_row(&conn, &id, &row).unwrap();
     assert!(
+        !crate::auto_backup::get_state(&conn).unwrap().dirty,
+        "更新同样不置脏"
+    );
+
+    // 经写入口执行同样的落库（与 IPC 命令同形态）→ 提交点置脏，且置脏是幂等
+    // 标记、不做「已脏跳过」优化。
+    let state = crate::db::DbState::open_in_memory().unwrap();
+    state
+        .write(|conn| {
+            insert_account(conn, "acc", "CNY");
+            let row = normalize(conn, &input(TransactionKind::Expense, 1500, "acc")).unwrap();
+            let id = insert_row(conn, &row).unwrap();
+            assert!(
+                !crate::auto_backup::get_state(conn).unwrap().dirty,
+                "提交点之前（闭包内）不置脏"
+            );
+            update_row(conn, &id, &row)
+        })
+        .unwrap();
+    let conn = state.conn.lock().unwrap_or_else(|e| e.into_inner());
+    assert!(
         crate::auto_backup::get_state(&conn).unwrap().dirty,
-        "更新成功后应重新置脏"
+        "写入口提交点应置脏"
     );
 }

@@ -3,15 +3,25 @@ use std::fmt;
 use std::path::PathBuf;
 
 use cucumber::World;
-use rusqlite::Connection;
 
 use tauri_app_lib::commands::data_location::{DataLocationChangeOutcome, DataLocationInfo};
-use tauri_app_lib::db::{init_db, open_in_memory};
+use tauri_app_lib::db::DbState;
 use tauri_app_lib::models::{
     CreateTransactionResult, DashboardOverview, ItemDailyCost, ItemDailyTotal, ItemWithDailyCost,
     Transaction, TransactionInput, TransactionSearchResult,
 };
 use tauri_app_lib::transaction::amount::TransactionKind;
+
+/// 连接守卫（BDD 步骤专用宏）：取连接锁，展开为字段访问链——
+/// 借用发生在 `world.db.conn` 字段路径上而非整个 world，与步骤内对
+/// world 其他字段的赋值共存（disjoint borrow）。守卫需跨语句存活时
+/// 先绑定局部变量（`let conn = world_conn!(world);`）。迁移期过渡形态
+/// （ADR-0032）：置脏语义相关写路径应优先走 `world.db.write` 写入口。
+macro_rules! world_conn {
+    ($world:expr) => {
+        $world.db.conn.lock().unwrap_or_else(|e| e.into_inner())
+    };
+}
 
 /// 批量导入的一行（重跑导入时据此重建 `TransactionInput`）。
 /// 记录账户/转入账户的**名称**而非 ID，保证重跑时重新解析（与真实导入流程一致）。
@@ -61,8 +71,9 @@ impl ImportedRow {
 #[derive(World)]
 #[world(init = Self::new)]
 pub struct LedgerWorld {
-    /// In-memory 数据库连接（每个 scenario 独立）
-    pub conn: Connection,
+    /// 数据库连接（写入口形态，ADR-0032）：断言/读路径经 [`LedgerWorld::conn`]
+    /// 取守卫，置脏语义相关写路径经 `db.write` 走连接层统一写入口。
+    pub db: DbState,
     /// 账户名称到 ID 的映射（Given 步骤插入账户后注册，含种子黑洞账户）
     pub account_name_to_id: HashMap<String, String>,
     /// 商户名称到 ID 的映射（Given/When 步骤创建商户后注册）
@@ -158,10 +169,8 @@ impl fmt::Debug for LedgerWorld {
 
 impl LedgerWorld {
     fn new() -> Self {
-        let mut conn = open_in_memory().expect("无法创建内存数据库");
-        init_db(&mut conn).expect("数据库初始化失败");
         let mut world = Self {
-            conn,
+            db: DbState::open_in_memory().expect("数据库初始化失败"),
             account_name_to_id: HashMap::new(),
             merchant_name_to_id: HashMap::new(),
             last_transaction_id: None,
@@ -200,8 +209,8 @@ impl LedgerWorld {
         };
         // 注册种子黑洞账户（V004 预置 无(CNY)/无(HKD)），供迁移场景按名称引用。
         let hidden: Vec<(String, String)> = {
-            let mut stmt = world
-                .conn
+            let conn = world_conn!(world);
+            let mut stmt = conn
                 .prepare("SELECT id, name FROM accounts WHERE is_hidden=1")
                 .expect("查询黑洞账户失败");
             let rows = stmt

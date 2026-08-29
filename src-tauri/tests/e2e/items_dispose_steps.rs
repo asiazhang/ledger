@@ -24,9 +24,9 @@ fn find_item_id_by_name(conn: &rusqlite::Connection, name: &str) -> String {
 /// 软删除指定名称的物品（要求成功；记录失效信号次数）。
 #[when(expr = "软删除物品 {string}")]
 fn soft_delete_item(world: &mut LedgerWorld, name: String) {
-    let id = find_item_id_by_name(&world.conn, &name);
+    let id = find_item_id_by_name(&world_conn!(world), &name);
     let mut signals = 0;
-    let result = delete_item_internal(&world.conn, &id, &mut || signals += 1);
+    let result = delete_item_internal(&world_conn!(world), &id, &mut || signals += 1);
     world.item_signal_count = signals;
     if let Err(e) = result {
         panic!("软删除物品 {name} 应成功但失败: {e}");
@@ -44,8 +44,7 @@ fn check_item_delete_signals(world: &mut LedgerWorld, expected: usize) {
 /// 直接查库断言软删除语义：行未被物理移除，仅打 `is_deleted=1` 标记。
 #[then(expr = "物品 {string} 行仍存在且 is_deleted=1")]
 fn check_item_row_soft_deleted(world: &mut LedgerWorld, name: String) {
-    let (count, is_deleted): (i64, i64) = world
-        .conn
+    let (count, is_deleted): (i64, i64) = world_conn!(world)
         .query_row(
             "SELECT COUNT(*), MAX(is_deleted) FROM items WHERE name=?1",
             rusqlite::params![name],
@@ -60,7 +59,7 @@ fn check_item_row_soft_deleted(world: &mut LedgerWorld, name: String) {
 #[when(expr = "尝试软删除不存在的物品")]
 fn try_delete_missing_item(world: &mut LedgerWorld) {
     let mut signals = 0;
-    let result = delete_item_internal(&world.conn, "no-such-item-id", &mut || signals += 1);
+    let result = delete_item_internal(&world_conn!(world), "no-such-item-id", &mut || signals += 1);
     world.item_signal_count = signals;
     world.last_error = match result {
         Err(e) => Some(e.to_string()),
@@ -80,7 +79,7 @@ fn dispose_by_id(
     input: ItemDisposeInput,
 ) -> Result<(), tauri_app_lib::error::AppError> {
     let mut signals = 0;
-    let result = dispose_item_internal(&world.conn, id, input, &mut || signals += 1);
+    let result = dispose_item_internal(&world_conn!(world), id, input, &mut || signals += 1);
     world.item_signal_count = signals;
     result
 }

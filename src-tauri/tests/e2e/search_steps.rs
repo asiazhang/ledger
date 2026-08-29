@@ -23,8 +23,7 @@ fn legacy_txn(
     let account_id = world.account_id(&account_name);
     let id = new_uuid();
     let now = now_iso();
-    world
-        .conn
+    world_conn!(world)
         .execute(
             "INSERT INTO transactions \
              (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
@@ -43,7 +42,7 @@ fn legacy_txn(
 #[when(expr = "搜索 {string}")]
 fn search(world: &mut LedgerWorld, query: String) {
     world.last_search = Some(
-        search_transactions_internal(&world.conn, &query, 1, 20, None, None, None, None)
+        search_transactions_internal(&world_conn!(world), &query, 1, 20, None, None, None, None)
             .expect("搜索失败"),
     );
 }
@@ -51,8 +50,17 @@ fn search(world: &mut LedgerWorld, query: String) {
 #[when(expr = "搜索 {string} 第 {int} 页 每页 {int} 条")]
 fn search_paged(world: &mut LedgerWorld, query: String, page: usize, page_size: usize) {
     world.last_search = Some(
-        search_transactions_internal(&world.conn, &query, page, page_size, None, None, None, None)
-            .expect("搜索失败"),
+        search_transactions_internal(
+            &world_conn!(world),
+            &query,
+            page,
+            page_size,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("搜索失败"),
     );
 }
 
@@ -60,8 +68,17 @@ fn search_paged(world: &mut LedgerWorld, query: String, page: usize, page_size: 
 #[when(expr = "搜索 {string} 金额区间 {int} 至 {int} 分")]
 fn search_keyword_amount_range(world: &mut LedgerWorld, query: String, min: i64, max: i64) {
     world.last_search = Some(
-        search_transactions_internal(&world.conn, &query, 1, 20, Some(min), Some(max), None, None)
-            .expect("搜索失败"),
+        search_transactions_internal(
+            &world_conn!(world),
+            &query,
+            1,
+            20,
+            Some(min),
+            Some(max),
+            None,
+            None,
+        )
+        .expect("搜索失败"),
     );
 }
 
@@ -70,7 +87,7 @@ fn search_keyword_amount_range(world: &mut LedgerWorld, query: String, min: i64,
 fn search_keyword_date_range(world: &mut LedgerWorld, query: String, from: String, to: String) {
     world.last_search = Some(
         search_transactions_internal(
-            &world.conn,
+            &world_conn!(world),
             &query,
             1,
             20,
@@ -87,8 +104,17 @@ fn search_keyword_date_range(world: &mut LedgerWorld, query: String, from: Strin
 #[when(expr = "搜索金额区间 {int} 至 {int} 分")]
 fn search_amount_range(world: &mut LedgerWorld, min: i64, max: i64) {
     world.last_search = Some(
-        search_transactions_internal(&world.conn, "", 1, 20, Some(min), Some(max), None, None)
-            .expect("搜索失败"),
+        search_transactions_internal(
+            &world_conn!(world),
+            "",
+            1,
+            20,
+            Some(min),
+            Some(max),
+            None,
+            None,
+        )
+        .expect("搜索失败"),
     );
 }
 
@@ -99,7 +125,7 @@ fn search_amount_range_yuan(world: &mut LedgerWorld, min: f64, max: f64) {
     let max_cents = (max * 100.0).round() as i64;
     world.last_search = Some(
         search_transactions_internal(
-            &world.conn,
+            &world_conn!(world),
             "",
             1,
             20,
@@ -116,7 +142,7 @@ fn search_amount_range_yuan(world: &mut LedgerWorld, min: f64, max: f64) {
 #[when(expr = "搜索金额下限 {int} 分")]
 fn search_amount_min(world: &mut LedgerWorld, min: i64) {
     world.last_search = Some(
-        search_transactions_internal(&world.conn, "", 1, 20, Some(min), None, None, None)
+        search_transactions_internal(&world_conn!(world), "", 1, 20, Some(min), None, None, None)
             .expect("搜索失败"),
     );
 }
@@ -125,7 +151,7 @@ fn search_amount_min(world: &mut LedgerWorld, min: i64) {
 #[when(expr = "搜索金额上限 {int} 分")]
 fn search_amount_max(world: &mut LedgerWorld, max: i64) {
     world.last_search = Some(
-        search_transactions_internal(&world.conn, "", 1, 20, None, Some(max), None, None)
+        search_transactions_internal(&world_conn!(world), "", 1, 20, None, Some(max), None, None)
             .expect("搜索失败"),
     );
 }
@@ -135,7 +161,7 @@ fn search_amount_max(world: &mut LedgerWorld, max: i64) {
 fn search_date_range(world: &mut LedgerWorld, from: String, to: String) {
     world.last_search = Some(
         search_transactions_internal(
-            &world.conn,
+            &world_conn!(world),
             "",
             1,
             20,

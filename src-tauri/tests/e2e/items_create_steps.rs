@@ -35,7 +35,7 @@ fn scaffold_purchase_tx(
         Some(id) => id.clone(),
         None => {
             let id = new_account_id();
-            insert_account(&world.conn, &id, &account_name, "cash", currency);
+            insert_account(&world_conn!(world), &id, &account_name, "cash", currency);
             world.account_name_to_id.insert(account_name, id.clone());
             id
         }
@@ -58,7 +58,7 @@ fn scaffold_purchase_tx(
         fee_cents: None,
         idempotency_key: None,
     };
-    insert_transaction(&world.conn, input)
+    insert_transaction(&world_conn!(world), input)
         .unwrap_or_else(|e| panic!("脚手架购买交易应创建成功但失败: {e}"))
 }
 
@@ -80,7 +80,7 @@ fn create_item(
         ..build_input(&name, date, cost_cents, &currency)
     };
     let mut signals = 0;
-    let result = create_item_internal(&world.conn, input, &mut || signals += 1);
+    let result = create_item_internal(&world_conn!(world), input, &mut || signals += 1);
     match result {
         Ok(id) => {
             world.last_item_id = Some(id);
@@ -134,7 +134,7 @@ fn try_create_item(
         ..build_input(&name, date, cost_cents, &currency)
     };
     let mut signals = 0;
-    let result = create_item_internal(&world.conn, input, &mut || signals += 1);
+    let result = create_item_internal(&world_conn!(world), input, &mut || signals += 1);
     world.item_signal_count = signals;
     world.last_error = match result {
         Err(AppError::Invalid(msg)) => Some(msg),
@@ -146,7 +146,7 @@ fn try_create_item(
 /// 刷新物品列表快照并断言件数。
 #[then(expr = "物品列表应包含 {int} 件物品")]
 fn refresh_and_check_item_count(world: &mut LedgerWorld, expected: usize) {
-    world.items_list = list_items_internal(&world.conn).expect("列出物品失败");
+    world.items_list = list_items_internal(&world_conn!(world)).expect("列出物品失败");
     assert_eq!(
         world.items_list.len(),
         expected,

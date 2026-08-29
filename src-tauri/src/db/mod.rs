@@ -122,11 +122,56 @@ pub fn open_in_memory() -> Result<Connection> {
 }
 
 // ---------------------------------------------------------------------------
+// 连接层统一写入口（ADR-0032）
+// ---------------------------------------------------------------------------
+
+/// 连接层统一写入口：锁连接执行写闭包（ADR-0032，spec #173）。
+///
+/// 置脏触发的单点，业务写路径对备份域零感知：
+/// - 锁连接 → 执行闭包；
+/// - 闭包成功且事务已提交（`is_autocommit()`，含闭包内部自行 `BEGIN`/`COMMIT`
+///   后回到提交点）→ 单点执行置脏 + 写时顺带到期检查；
+/// - 闭包失败（事务回滚）不置脏；未提交就返回（显式事务仍打开）同样不置脏——
+///   「事务内推迟、提交后补上」由本结构保证，不再依赖调用方注释口口相传。
+///
+/// 豁免清单集中在「不经过本入口的写方」：设置与调度状态写入（`app_settings`
+/// 全表，经 [`crate::settings`] 单点收口）与恢复（Restore）路径。
+///
+/// 薄 wrapper 边界：只做「锁 + 写后置脏/检查」，不接管事务管理——闭包内保留
+/// 裸 `BEGIN`/`COMMIT`/`ROLLBACK` 写法。耗时日志等其它连接级横切机制收口时
+/// 并入本入口（单独开票）。
+pub fn write<T>(conn: &Mutex<Connection>, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let result = f(&conn);
+    if result.is_ok() && conn.is_autocommit() {
+        // 提交点单点后置动作；on_write 内部失败仅记日志，不影响已成功的业务写。
+        crate::auto_backup::on_write(&conn);
+    }
+    result
+}
+
+// ---------------------------------------------------------------------------
 // 应用状态
 // ---------------------------------------------------------------------------
 
 pub struct DbState {
     pub conn: Arc<Mutex<Connection>>,
+}
+
+impl DbState {
+    /// 打开内存库并完成迁移，包成共享锁形态（单元测试与 BDD 世界用）。
+    pub fn open_in_memory() -> Result<DbState> {
+        let mut conn = open_in_memory()?;
+        init_db(&mut conn)?;
+        Ok(DbState {
+            conn: Arc::new(Mutex::new(conn)),
+        })
+    }
+
+    /// 写入口的命令层便捷形态（语义见 [`write`]）：`state.write(|conn| ...)`。
+    pub fn write<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+        write(&self.conn, f)
+    }
 }
 
 #[cfg(test)]

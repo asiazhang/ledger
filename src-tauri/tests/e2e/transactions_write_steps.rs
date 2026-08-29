@@ -15,7 +15,7 @@ use crate::world::LedgerWorld;
 #[given(expr = "存在账户 {string} 类型 {string} 币种 {string}")]
 fn create_account(world: &mut LedgerWorld, name: String, kind: String, currency: String) {
     let id = new_account_id();
-    insert_account(&world.conn, &id, &name, &kind, &currency);
+    insert_account(&world_conn!(world), &id, &name, &kind, &currency);
     world.account_name_to_id.insert(name, id);
 }
 
@@ -49,10 +49,11 @@ fn create_txn(
         fee_cents: None,
         idempotency_key: None,
     };
-    let result = insert_transaction(&world.conn, input);
+    // 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）创建，提交点置脏/到期检查。
+    let result = world.db.write(|conn| insert_transaction(conn, input));
     assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
     world.last_transaction_id = Some(result.unwrap());
-    world.transactions_list = query_all_transactions(&world.conn);
+    world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 #[when(expr = "创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string} 备注 {string}")]
@@ -82,10 +83,11 @@ fn create_txn_with_note(
         fee_cents: None,
         idempotency_key: None,
     };
-    let result = insert_transaction(&world.conn, input);
+    // 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）创建，提交点置脏/到期检查。
+    let result = world.db.write(|conn| insert_transaction(conn, input));
     assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
     world.last_transaction_id = Some(result.unwrap());
-    world.transactions_list = query_all_transactions(&world.conn);
+    world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 #[when(expr = "尝试创建转账 金额 {int} 从账户 {string} 日期 {string}")]
@@ -113,7 +115,7 @@ fn try_transfer_without_target(
         fee_cents: None,
         idempotency_key: None,
     };
-    let result = insert_transaction(&world.conn, input);
+    let result = insert_transaction(&world_conn!(world), input);
     world.last_error = match result {
         Err(AppError::Invalid(msg)) => Some(msg),
         _ => Some("预期失败但成功了".into()),
@@ -148,7 +150,7 @@ fn try_create_txn(
         fee_cents: None,
         idempotency_key: None,
     };
-    let result = insert_transaction(&world.conn, input);
+    let result = insert_transaction(&world_conn!(world), input);
     world.last_error = match result {
         Err(AppError::Invalid(msg)) => Some(msg),
         _ => Some("预期失败但成功了".into()),
@@ -181,10 +183,10 @@ fn create_transfer(
         fee_cents: None,
         idempotency_key: None,
     };
-    let result = insert_transaction(&world.conn, input);
+    let result = insert_transaction(&world_conn!(world), input);
     assert!(result.is_ok(), "创建转账失败: {:?}", result.err());
     world.last_transaction_id = Some(result.unwrap());
-    world.transactions_list = query_all_transactions(&world.conn);
+    world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 #[when(expr = "关联上一笔交易创建退款 金额 {int} 日期 {string}")]
@@ -219,10 +221,10 @@ fn create_refund(world: &mut LedgerWorld, amount: i64, date: String) {
         fee_cents: None,
         idempotency_key: None,
     };
-    let result = insert_transaction(&world.conn, input);
+    let result = insert_transaction(&world_conn!(world), input);
     assert!(result.is_ok(), "创建退款失败: {:?}", result.err());
     world.last_transaction_id = Some(result.unwrap());
-    world.transactions_list = query_all_transactions(&world.conn);
+    world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 // ---------------------------------------------------------------------------
@@ -231,7 +233,7 @@ fn create_refund(world: &mut LedgerWorld, amount: i64, date: String) {
 
 #[then(expr = "交易列表应包含 {int} 条记录")]
 fn check_transaction_count(world: &mut LedgerWorld, expected: i64) {
-    world.transactions_list = query_all_transactions(&world.conn);
+    world.transactions_list = query_all_transactions(&world_conn!(world));
     assert_eq!(
         world.transactions_list.len() as i64,
         expected,

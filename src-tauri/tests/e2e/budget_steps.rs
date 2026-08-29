@@ -86,7 +86,7 @@ fn insert_budget_row(
 
 /// 经行为层落一笔带分类的支出/退款类交易，返回交易 id。
 fn create_transaction(world: &mut LedgerWorld, input: TransactionInput) -> String {
-    let result = insert_transaction(&world.conn, input);
+    let result = insert_transaction(&world_conn!(world), input);
     let id = result.unwrap_or_else(|e| panic!("创建交易失败: {e:?}"));
     world.last_transaction_id = Some(id.clone());
     id
@@ -106,7 +106,7 @@ fn expense_input(
         currency_code: "CNY".into(),
         account_id: world.account_id(account),
         to_account_id: None,
-        category_id: Some(category_id(&world.conn, category_name)),
+        category_id: Some(category_id(&world_conn!(world), category_name)),
         merchant_id: None,
         refund_of_transaction_id: None,
         note: None,
@@ -125,19 +125,18 @@ fn expense_input(
 
 #[given(expr = "存在支出分类 {string}")]
 fn create_category(world: &mut LedgerWorld, name: String) {
-    insert_category(&world.conn, &name, None);
+    insert_category(&world_conn!(world), &name, None);
 }
 
 #[given(expr = "存在支出分类 {string} 属于 {string}")]
 fn create_subcategory(world: &mut LedgerWorld, name: String, parent: String) {
-    insert_category(&world.conn, &name, Some(&parent));
+    insert_category(&world_conn!(world), &name, Some(&parent));
 }
 
 #[given(expr = "存在收入分类 {string}")]
 fn create_income_category(world: &mut LedgerWorld, name: String) {
     let now = now_iso();
-    world
-        .conn
+    world_conn!(world)
         .execute(
             "INSERT INTO categories (id,name,kind,parent_id,created_at,updated_at,version,device_id) \
              VALUES (?1,?2,'income',NULL,?3,?3,1,?4)",
@@ -149,15 +148,15 @@ fn create_income_category(world: &mut LedgerWorld, name: String) {
 #[given(expr = "为分类 {string} 创建月预算 金额 {int}")]
 fn create_monthly_budget(world: &mut LedgerWorld, name: String, amount: i64) {
     let today = scenario_today(world);
-    let id = category_id(&world.conn, &name);
-    insert_budget_row(&world.conn, &id, "monthly", amount, &ymd(today));
+    let id = category_id(&world_conn!(world), &name);
+    insert_budget_row(&world_conn!(world), &id, "monthly", amount, &ymd(today));
 }
 
 #[given(expr = "为分类 {string} 创建年预算 金额 {int}")]
 fn create_yearly_budget(world: &mut LedgerWorld, name: String, amount: i64) {
     let today = scenario_today(world);
-    let id = category_id(&world.conn, &name);
-    insert_budget_row(&world.conn, &id, "yearly", amount, &ymd(today));
+    let id = category_id(&world_conn!(world), &name);
+    insert_budget_row(&world_conn!(world), &id, "yearly", amount, &ymd(today));
 }
 
 /// 模拟存量行：带历史开始日期的预算（旧数据零迁移，直接按新规则滚动生效）。
@@ -173,8 +172,8 @@ fn create_legacy_budget(
         period == "monthly" || period == "yearly",
         "非法预算周期: {period}"
     );
-    let id = category_id(&world.conn, &name);
-    insert_budget_row(&world.conn, &id, &period, amount, &start_date);
+    let id = category_id(&world_conn!(world), &name);
+    insert_budget_row(&world_conn!(world), &id, &period, amount, &start_date);
 }
 
 // ---------------------------------------------------------------------------
@@ -217,8 +216,9 @@ fn expense_last_year(world: &mut LedgerWorld, name: String, amount: i64, account
 /// 成功清空 last_error，失败记入 last_error 供拒绝路径断言。
 #[when(expr = "通过预算命令为分类 {string} 创建 {string} 预算 金额 {int}")]
 fn create_budget_via_command(world: &mut LedgerWorld, name: String, period: String, amount: i64) {
+    let category = category_id_any(&world_conn!(world), &name);
     let input = BudgetInput {
-        category_id: category_id_any(&world.conn, &name),
+        category_id: category,
         period: Some(
             period
                 .parse()
@@ -227,7 +227,7 @@ fn create_budget_via_command(world: &mut LedgerWorld, name: String, period: Stri
         amount_cents: amount,
         start_date: ymd(scenario_today(world)),
     };
-    world.last_error = match create_budget_internal(&world.conn, &input) {
+    world.last_error = match create_budget_internal(&world_conn!(world), &input) {
         Ok(_) => None,
         Err(e) => Some(e.to_string()),
     };
@@ -241,16 +241,15 @@ fn create_budget_via_command(world: &mut LedgerWorld, name: String, period: Stri
 /// 成功清空 last_error，失败记入 last_error 供拒绝路径断言。
 #[when(expr = "通过预算命令编辑分类 {string} 的预算金额为 {int}")]
 fn update_budget_via_command(world: &mut LedgerWorld, name: String, amount: i64) {
-    let cat_id = category_id_any(&world.conn, &name);
-    let budget_id: String = world
-        .conn
+    let cat_id = category_id_any(&world_conn!(world), &name);
+    let budget_id: String = world_conn!(world)
         .query_row(
             "SELECT id FROM budgets WHERE category_id=?1 AND is_deleted=0 LIMIT 1",
             params![cat_id],
             |r| r.get(0),
         )
         .unwrap_or_else(|e| panic!("分类 '{}' 没有可编辑的预算: {e}", name));
-    world.last_error = match update_budget_internal(&world.conn, &budget_id, amount) {
+    world.last_error = match update_budget_internal(&world_conn!(world), &budget_id, amount) {
         Ok(_) => None,
         Err(e) => Some(e.to_string()),
     };
@@ -263,7 +262,7 @@ fn update_budget_via_command(world: &mut LedgerWorld, name: String, amount: i64)
 #[when(expr = "查询预算进度")]
 fn query_budget_progress(world: &mut LedgerWorld) {
     let today = scenario_today(world);
-    world.last_budget_progress = budget_progress_rows(&world.conn, today).unwrap();
+    world.last_budget_progress = budget_progress_rows(&world_conn!(world), today).unwrap();
 }
 
 /// 上一笔支出本月收到退款：走行为层。Writer 归一化会以原支出覆盖账户/币种/分类，
@@ -378,9 +377,8 @@ fn assert_budget_amount(world: &mut LedgerWorld, name: String, expected: i64) {
 
 #[then(expr = "分类 {string} 的预算行数应为 {int}")]
 fn assert_budget_row_count(world: &mut LedgerWorld, name: String, expected: i64) {
-    let id = category_id_any(&world.conn, &name);
-    let count: i64 = world
-        .conn
+    let id = category_id_any(&world_conn!(world), &name);
+    let count: i64 = world_conn!(world)
         .query_row(
             "SELECT COUNT(*) FROM budgets WHERE category_id=?1",
             params![id],
@@ -392,9 +390,9 @@ fn assert_budget_row_count(world: &mut LedgerWorld, name: String, expected: i64)
 
 #[then(expr = "分类 {string} 的预算金额仍应为 {int}")]
 fn assert_budget_amount_unchanged(world: &mut LedgerWorld, name: String, expected: i64) {
-    let id = category_id_any(&world.conn, &name);
-    let mut stmt = world
-        .conn
+    let id = category_id_any(&world_conn!(world), &name);
+    let conn = world_conn!(world);
+    let mut stmt = conn
         .prepare("SELECT amount_cents FROM budgets WHERE category_id=?1 AND is_deleted=0")
         .unwrap();
     let amounts: Vec<i64> = stmt
