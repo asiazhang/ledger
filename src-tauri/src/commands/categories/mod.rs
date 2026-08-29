@@ -34,10 +34,8 @@ pub fn create_category(
     app: tauri::AppHandle,
     input: CategoryInput,
 ) -> Result<String> {
-    let id = {
-        let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        core::create_category_internal(&conn, input)?
-    };
+    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
+    let id = db.write(|conn| core::create_category_internal(conn, input))?;
     // 参考写入成功 → 通知前端重拉参考数据（issue #79）
     crate::events::emit_reference_changed(&app, "create_category");
     Ok(id)
@@ -50,20 +48,20 @@ pub fn update_category(
     id: String,
     input: CategoryUpdateInput,
 ) -> Result<()> {
-    {
-        let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
+    db.write(|conn| {
         let now = now_iso();
         let did = device_id();
 
         let existing: Category = query_all(
-        &conn,
-        "SELECT id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted \
-         FROM categories WHERE id=?1 AND is_deleted=0",
-        rusqlite::params![id],
-    )?
-    .into_iter()
-    .next()
-    .ok_or_else(|| AppError::NotFound(format!("分类不存在: {id}")))?;
+            conn,
+            "SELECT id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted \
+             FROM categories WHERE id=?1 AND is_deleted=0",
+            rusqlite::params![id],
+        )?
+        .into_iter()
+        .next()
+        .ok_or_else(|| AppError::NotFound(format!("分类不存在: {id}")))?;
 
         let parent_id = input.parent_id.unwrap_or(existing.parent_id);
 
@@ -72,14 +70,14 @@ pub fn update_category(
                 return Err(AppError::Invalid("自身不能作为父分类".into()));
             }
             let parent: Category = query_all(
-            &conn,
-            "SELECT id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted \
-             FROM categories WHERE id=?1 AND is_deleted=0",
-            rusqlite::params![pid],
-        )?
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::NotFound(format!("父分类不存在: {pid}")))?;
+                conn,
+                "SELECT id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted \
+                 FROM categories WHERE id=?1 AND is_deleted=0",
+                rusqlite::params![pid],
+            )?
+            .into_iter()
+            .next()
+            .ok_or_else(|| AppError::NotFound(format!("父分类不存在: {pid}")))?;
             if parent.kind != existing.kind {
                 return Err(AppError::Invalid("父分类类型需一致".into()));
             }
@@ -89,13 +87,12 @@ pub fn update_category(
         let icon = input.icon.or(existing.icon);
 
         conn.execute(
-        "UPDATE categories SET name=?1, icon=?2, parent_id=?3, updated_at=?4, version=version+1, device_id=?5 WHERE id=?6",
-        rusqlite::params![name, icon, parent_id, now, did, id],
-    )?;
-        // 脏标记挂钩（issue #126）：分类更新成功即置脏。
-        crate::auto_backup::on_write(&conn);
+            "UPDATE categories SET name=?1, icon=?2, parent_id=?3, updated_at=?4, version=version+1, device_id=?5 WHERE id=?6",
+            rusqlite::params![name, icon, parent_id, now, did, id],
+        )?;
         // 分类名不在搜索范围内（ADR-0027），且搜索无索引，改名无需任何后续处理
-    }
+        Ok(())
+    })?;
     // 参考写入成功 → 通知前端重拉参考数据（issue #79）
     crate::events::emit_reference_changed(&app, "update_category");
     Ok(())
@@ -107,8 +104,8 @@ pub fn reorder_categories(
     app: tauri::AppHandle,
     items: Vec<ReorderItem>,
 ) -> Result<()> {
-    {
-        let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
+    db.write(|conn| {
         let now = now_iso();
         let did = device_id();
         for item in &items {
@@ -117,9 +114,8 @@ pub fn reorder_categories(
                 rusqlite::params![item.sort_order, now, did, item.id],
             )?;
         }
-        // 脏标记挂钩（issue #126）：排序调整成功即置脏。
-        crate::auto_backup::on_write(&conn);
-    }
+        Ok(())
+    })?;
     // 参考写入成功 → 通知前端重拉参考数据（issue #79）
     crate::events::emit_reference_changed(&app, "reorder_categories");
     Ok(())
@@ -127,10 +123,8 @@ pub fn reorder_categories(
 
 #[tauri::command]
 pub fn delete_category(db: State<'_, DbState>, app: tauri::AppHandle, id: String) -> Result<()> {
-    {
-        let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        core::delete_category_internal(&conn, &id)?;
-    }
+    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
+    db.write(|conn| core::delete_category_internal(conn, &id))?;
     // 参考写入成功 → 通知前端重拉参考数据（issue #79）
     crate::events::emit_reference_changed(&app, "delete_category");
     Ok(())

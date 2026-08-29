@@ -38,10 +38,8 @@ pub fn create_merchant(
     app: tauri::AppHandle,
     input: MerchantInput,
 ) -> Result<String> {
-    let id = {
-        let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        core::create_merchant_internal(&conn, input)?
-    };
+    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
+    let id = db.write(|conn| core::create_merchant_internal(conn, input))?;
     // 参考写入成功 → 通知前端重拉参考数据（issue #79 / ADR-0012）
     crate::events::emit_reference_changed(&app, "create_merchant");
     Ok(id)
@@ -54,10 +52,8 @@ pub fn update_merchant(
     id: String,
     input: MerchantUpdateInput,
 ) -> Result<()> {
-    {
-        let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        core::update_merchant_internal(&conn, &id, input)?;
-    }
+    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
+    db.write(|conn| core::update_merchant_internal(conn, &id, input))?;
     // 参考写入成功 → 通知前端重拉参考数据
     crate::events::emit_reference_changed(&app, "update_merchant");
     Ok(())
@@ -65,10 +61,8 @@ pub fn update_merchant(
 
 #[tauri::command]
 pub fn delete_merchant(db: State<'_, DbState>, app: tauri::AppHandle, id: String) -> Result<()> {
-    {
-        let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        core::delete_merchant_internal(&conn, &id)?;
-    }
+    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
+    db.write(|conn| core::delete_merchant_internal(conn, &id))?;
     // 参考写入成功 → 通知前端重拉参考数据
     crate::events::emit_reference_changed(&app, "delete_merchant");
     Ok(())

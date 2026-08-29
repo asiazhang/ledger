@@ -1,3 +1,8 @@
+//! 账户域核心逻辑（issue #91）：CRUD / 幂等创建 / 软删除 / 余额清单。
+//!
+//! 置脏触发已收口连接层统一写入口（`db::write`，ADR-0032）：本模块对备份域零感知，
+//! 写入成功后的置脏/到期检查由调用方所在写入口闭包在提交点单点执行。
+
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::db::query::query_all;
@@ -52,8 +57,6 @@ pub fn create_account_internal(conn: &Connection, input: AccountInput) -> Result
             device_id()
         ],
     )?;
-    // 脏标记挂钩（issue #126）：IPC 与 HTTP 端点共用本函数，落库成功即置脏。
-    crate::auto_backup::on_write(conn);
     Ok(id)
 }
 
@@ -104,7 +107,6 @@ pub fn delete_account_internal(conn: &Connection, id: &str) -> Result<()> {
         "UPDATE accounts SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id()],
     )?;
-    crate::auto_backup::on_write(conn);
     Ok(())
 }
 
@@ -177,8 +179,6 @@ pub fn update_account_internal(
         "UPDATE accounts SET name=?2, currency_code=?3, updated_at=?4, version=version+1, device_id=?5 WHERE id=?1",
         rusqlite::params![id, name, currency_code, now_iso(), device_id()],
     )?;
-    // 脏标记挂钩（issue #126）：IPC 与 HTTP 端点共用本函数，落库成功即置脏。
-    crate::auto_backup::on_write(conn);
     Ok(())
 }
 
@@ -227,6 +227,9 @@ pub fn ensure_black_hole_account_internal(
 ///
 /// 返回 `(新交易 id, 是否新建了黑洞账户)`：新建属参考表变更，命令层据此发
 /// `ledger:changed` 信号（交易类写入本身不触发，与既有约定一致）。
+///
+/// 事务自管（BEGIN/COMMIT/ROLLBACK，薄 wrapper 边界，ADR-0032）：置脏不在此处，
+/// 由调用方写入口在提交点（闭包 Ok 后 `is_autocommit()` 复核）单点承接。
 pub fn adjust_account_balance_internal(
     conn: &Connection,
     id: &str,
@@ -273,8 +276,6 @@ pub fn adjust_account_balance_internal(
     match res {
         Ok((tx_id, created)) => {
             conn.execute("COMMIT", [])?;
-            // 脏标记挂钩（issue #126）：提交点补上写时顺带检查。
-            crate::auto_backup::on_write(conn);
             Ok((tx_id, created))
         }
         Err(e) => {
