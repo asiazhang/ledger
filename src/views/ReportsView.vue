@@ -16,13 +16,14 @@ import type { ChartOptions, TooltipItem } from 'chart.js'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount } from '@/types'
-import type { CategoryShare, MonthlySummary } from '@/types'
+import type { CategoryShare, MerchantShare, MonthlySummary } from '@/types'
 import { categoryRoot } from '@/utils/category-tree'
 import {
   loadReportsGroupLevel,
   saveReportsGroupLevel,
   type ReportsGroupLevel,
 } from '@/utils/view-state'
+import MerchantRankingPanel from '@/components/reports/MerchantRankingPanel.vue'
 
 ChartJS.register(Title, Tooltip, Legend, BarElement, ArcElement, CategoryScale, LinearScale)
 
@@ -30,6 +31,7 @@ const reference = useReferenceStore()
 const year = ref(new Date().getFullYear())
 const monthly = ref<MonthlySummary[]>([])
 const shares = ref<CategoryShare[]>([])
+const merchantShares = ref<MerchantShare[]>([])
 const loading = ref(false)
 const groupLevel = ref<ReportsGroupLevel>(loadReportsGroupLevel())
 
@@ -39,12 +41,15 @@ watch(groupLevel, (v) => saveReportsGroupLevel(v))
 async function refresh() {
   loading.value = true
   try {
-    const [m, s] = await Promise.all([
+    const [m, s, ms] = await Promise.all([
       api.monthlySummary(year.value),
       api.categoryShares('expense'),
+      // 商户消费排行（issue #192）：随年份筛选，净额口径在后端收口
+      api.merchantShares(year.value),
     ])
     monthly.value = m
     shares.value = s
+    merchantShares.value = ms
   } finally {
     loading.value = false
   }
@@ -178,6 +183,7 @@ onMounted(() => {
           <Doughnut :data="doughnutChartData" :options="doughnutChartOptions" />
         </div>
       </NCard>
+      <MerchantRankingPanel :shares="merchantShares" />
     </NSpace>
   </NSpin>
 </template>

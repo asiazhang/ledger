@@ -8,6 +8,7 @@
 //!   expense = `expense_gross`（= expense_net + refund_gross，净值恒等式）、
 //!   refund = `refund_gross`。
 //! - 分类聚合净值：expense → `expense_net`（退款冲减）、income → `income_net`（含分红）。
+//! - 商户消费排行（issue #192）：`expense_net` 按商户聚合、本位币口径，无商户不进排行。
 //!
 //! 命令层为薄壳（锁 DbState 后调核心函数），核心函数吃 `&Connection` 可直接单测。
 //! 对外暴露的命令经 `commands/mod.rs` 的 `pub use reports::*` 重导出，
@@ -22,7 +23,7 @@ use tauri::State;
 use crate::db::DbState;
 use crate::db::query::query_all;
 use crate::error::{AppError, Result};
-use crate::models::{CategoryShare, MonthlySummary};
+use crate::models::{CategoryShare, MerchantShare, MonthlySummary};
 use crate::transaction::amount::{
     Measure, contributing_kinds_sql, expense_gross_expr, expense_net_expr, income_net_expr,
     refund_gross_expr,
@@ -72,10 +73,31 @@ pub fn category_shares_rows(
     query_all(conn, &sql, rusqlite::params_from_iter(month_params))
 }
 
+/// 商户消费排行（净额，issue #192）：`expense_net`（毛支出 − 退款）按商户聚合、
+/// 本位币口径（`amount_native_cents`），与核心交易域净值恒等式一致。
+/// 无商户关联的交易不进排行；软删商户的历史引用照常统计（JOIN 不滤 is_deleted）。
+pub fn merchant_shares_rows(conn: &Connection, year: i64) -> Result<Vec<MerchantShare>> {
+    let kinds = contributing_kinds_sql(Measure::ExpenseNet);
+    let sql = format!(
+        "SELECT t.merchant_id, m.name, m.icon, m.color, SUM({expr}) AS net \
+         FROM transactions t JOIN merchants m ON m.id=t.merchant_id \
+         WHERE t.kind IN ({kinds}) AND t.is_deleted=0 AND substr(t.date,1,4)=?1 \
+         GROUP BY t.merchant_id ORDER BY net DESC, m.name",
+        expr = expense_net_expr("t"),
+    );
+    query_all(conn, &sql, rusqlite::params![format!("{year}")])
+}
+
 #[tauri::command]
 pub fn monthly_summary(db: State<'_, DbState>, year: i64) -> Result<Vec<MonthlySummary>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     monthly_summary_rows(&conn, year)
+}
+
+#[tauri::command]
+pub fn merchant_shares(db: State<'_, DbState>, year: i64) -> Result<Vec<MerchantShare>> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    merchant_shares_rows(&conn, year)
 }
 
 #[tauri::command]
