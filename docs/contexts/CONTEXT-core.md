@@ -15,8 +15,11 @@
   - `dividend`（现金分红）：计入收入。
   - `split`（拆股/送股）：现金影响恒为 0。
   - **每种 kind 对各金额度量的符号归属见 Transaction Kind Mapping；交易行写入与校验收口在 `transaction::writer`（Writer 接缝）。**
-  - **kind 为闭集（8 种），行为收敛分派在行为层**：每类 kind 的校验/归一化/应用副作用/回退经 `commands::transactions::behavior`（`plan → apply / revert`）单点分派——通用 kind 走 Writer 接缝，buy/sell 委托投资域（`commands::investment` 的 prepare/apply/revert），不再散落多处 `match kind`（issue #72）。
+  - **kind 为闭集（8 种），行为收敛分派在行为层**：每类 kind 的校验/归一化/应用副作用/回退经 `commands::transactions::behavior` 单点分派——通用 kind 走 Writer 接缝，buy/sell 委托投资域（`commands::investment` 的 prepare/apply/revert），不再散落多处 `match kind`（issue #72）。
+  - **行为层编排入口（create / update / delete）**：行为层对外只暴露三个编排入口（连接 + 输入进，见 issue #169）——`revert → plan → 落库 → apply` 的顺序契约、事务边界、守卫文案全部内化为实现细节（`plan / apply / revert` 收为模块私有），调用方不再持有顺序与事务知识。
+  - **嵌套感知事务**：编排入口的事务规则是「保证处于事务中」——连接不在事务中则自持 BEGIN/COMMIT/ROLLBACK（中途失败整体回滚，无中间态泄漏）；已在事务中（如批量导入的外层批次事务）则加入外层、失败直接返回错误、回滚由外层持有者负责。单条协议的事务知识归行为层，批次原子性是批量编排的独立关注点、留在批量层。
   - **`dividend` / `split` 已声明但未实现（MVP）**：经交易接口（创建/修改）显式返回「暂不支持」错误，不落库、不静默误记。
+  - **买入守卫文案按入口内化**：buy 已有部分卖出的守卫拒绝文案是行为层各编排入口的实现细节（修改/删除各持自己的措辞，创建不触发守卫），不由调用方作为参数传入——同一入口同一文案、不随调用方漂移（issue #169）。
 - **列表呈现边界**：
   - 交易列表按 `date` 倒序呈现（最新在前）。
   - 采用服务端 offset 分页：一次只取当前页交易，并返回满足筛选条件的交易总数（"共 N 条"）。
