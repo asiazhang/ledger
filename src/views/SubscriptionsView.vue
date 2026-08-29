@@ -32,6 +32,7 @@ import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { useFormShared } from '@/composables/useFormShared'
+import PinyinSelect from '@/components/PinyinSelect.vue'
 import SubscriptionSpendPanel from '@/components/subscriptions/SubscriptionSpendPanel.vue'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 
@@ -435,7 +436,7 @@ onMounted(() => {
             />
           </NFormItem>
           <NFormItem label="扣款账户">
-            <NSelect
+            <PinyinSelect
               v-model:value="accountId"
               :options="accountOptions"
               placeholder="选择账户"
@@ -518,7 +519,7 @@ onMounted(() => {
             />
           </NFormItem>
           <NFormItem label="扣款账户">
-            <NSelect
+            <PinyinSelect
               v-model:value="editAccountId"
               :options="accountOptions"
               placeholder="选择账户"

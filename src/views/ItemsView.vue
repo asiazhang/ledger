@@ -22,6 +22,7 @@ import { yuanToCents, centsToYuan } from '@/utils/money'
 import { todayStr } from '@/utils/date'
 import type { ItemDailyCost, ItemDisposeInput, ItemInput, ItemWithDailyCost, Transaction } from '@/types'
 import { api } from '@/api'
+import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { useItemsStore } from '@/stores/items'
@@ -351,7 +352,7 @@ onMounted(() => {
           />
         </NFormItem>
         <NFormItem label="关联购买交易">
-          <NSelect
+          <PinyinSelect
             v-model:value="linkTxId"
             :options="linkTxOptions()"
             placeholder="关联购买交易"
@@ -402,7 +403,7 @@ onMounted(() => {
           />
         </NFormItem>
         <NFormItem label="关联购买交易">
-          <NSelect
+          <PinyinSelect
             v-model:value="editLinkTxId"
             :options="linkTxOptions()"
             placeholder="关联购买交易"

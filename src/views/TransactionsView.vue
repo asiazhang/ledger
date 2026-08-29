@@ -21,6 +21,7 @@ import {
 } from 'naive-ui'
 import { ChevronDown } from '@vicons/ionicons5'
 import TransactionForm from '@/components/TransactionForm.vue'
+import PinyinSelect from '@/components/PinyinSelect.vue'
 import RefundForm from '@/components/RefundForm.vue'
 import AddItemForm from '@/components/AddItemForm.vue'
 import { buildRowMenuOptions } from '@/components/transaction-row-menu'
@@ -443,12 +444,11 @@ onMounted(() => {
          任一条件变化即重新查询并回到第 1 页；手动改动不同步回 URL
          （组件状态是唯一事实源，issue #96 决策 3/4），分页/页大小切换保持过滤条件。 -->
     <NSpace :size="8" align="center" :wrap="true">
-      <NSelect
+      <PinyinSelect
         :value="involvingAccountId"
         :options="accountOptions"
         placeholder="账户"
         clearable
-        filterable
         style="width: 160px"
         @update:value="onAccountFilterChange"
       />
