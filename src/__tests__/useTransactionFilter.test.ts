@@ -5,20 +5,46 @@ import { createTestingPinia } from '@pinia/testing'
 import { invoke } from '@tauri-apps/api/core'
 import { useTransactionFilter } from '@/composables/useTransactionFilter'
 import type { UseTransactionFilterReturn } from '@/composables/useTransactionFilter'
-import type { TransactionListFilter } from '@/types'
+import { useReferenceStore } from '@/stores/reference'
+import type { Account, Merchant, TransactionListFilter } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
+/** URL 下钻用参考数据：两账户；商户含一软删（历史交易口径，issue #191 校验含软删）。 */
+const urlAccounts: Account[] = [
+  {
+    id: 'acc-1', name: '现金', type: 'cash', currency_code: 'CNY', initial_balance_cents: 0,
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    version: 1, device_id: 'test', is_deleted: false, is_hidden: false,
+  },
+  {
+    id: 'acc-2', name: '银行', type: 'bank', currency_code: 'CNY', initial_balance_cents: 0,
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    version: 1, device_id: 'test', is_deleted: false, is_hidden: false,
+  },
+]
+const urlMerchants: Merchant[] = [
+  {
+    id: 'mch-1', name: '京东',
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    version: 1, device_id: 'test', is_deleted: false,
+  },
+  {
+    id: 'mch-2', name: '红旗连锁',
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    version: 1, device_id: 'test', is_deleted: true,
+  },
+]
+
 beforeEach(() => {
-  // Reference Data store 以 createTestingPinia 标准 mock（ADR-0030 决策 7）：
-  // 本 ticket 模块尚未消费 store（#234 内化 URL 链路时接入），此处仅供 pinia 环境
-  // 并兜底 store self-init 的 invoke（空参考表即可）。
+  // Reference Data store 用真实动作（createTestingPinia stubActions:false，ADR-0030 决策 7）：
+  // 模块内部消费 store（#234），就绪补判走真实 status 时序，数据由 invoke mock 提供。
   mockInvoke.mockReset()
   mockInvoke.mockImplementation((cmd: string) => {
     if (cmd === 'list_currencies') return Promise.resolve([])
-    if (cmd === 'list_accounts') return Promise.resolve([])
+    if (cmd === 'list_accounts') return Promise.resolve(urlAccounts)
     if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve(urlMerchants)
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
 })
@@ -47,7 +73,9 @@ const FilterHarness = defineComponent({
 })
 
 function mountHarness() {
-  mount(FilterHarness, { global: { plugins: [createTestingPinia()] } })
+  mount(FilterHarness, {
+    global: { plugins: [createTestingPinia({ stubActions: false })] },
+  })
   return harness!
 }
 
@@ -248,5 +276,310 @@ describe('useTransactionFilter 工厂形态', () => {
     expect(tf2.filters.kind).toBeNull()
     expect(tf2.refreshVersion.value).toBe(0)
     expect(tf2.page.value).toBe(1)
+  })
+})
+
+// —— URL 下钻参数表（issue #234）：解析、校验、复位规则、就绪补判与字段级让位内化于模块 ——
+// 视图仅把 route query 变化递给模块（syncUrlQuery）；以下用例打模块接口，
+// query 以普通对象递入（与 vue-router LocationQuery 结构兼容，非字符串值视为不在场）。
+
+describe('useTransactionFilter URL 参数表·解析与校验（参考数据已就绪）', () => {
+  it('账户直达：有效 account 参数立即校验应用，走统一出口（翻页归零 + 一次重拉）', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.page.value = 3 // 已翻页背景下下钻 → 必须翻回第 1 页
+    tf.syncUrlQuery({ account: 'acc-1' })
+    await flushPromises()
+    expect(tf.filters.involvingAccountId).toBe('acc-1')
+    expect(tf.page.value).toBe(1)
+    expect(requests).toHaveLength(1)
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20, involving_account_id: 'acc-1' })
+  })
+
+  it('商户直达：在用与软删商户均有效（历史交易口径，issue #191）', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ merchant: 'mch-2' }) // mch-2 为软删商户
+    await flushPromises()
+    expect(tf.filters.merchantId).toBe('mch-2')
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20, merchant_id: 'mch-2' })
+  })
+
+  it('组合直达：account + merchant 同时生效，一次重拉', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ account: 'acc-1', merchant: 'mch-1' })
+    await flushPromises()
+    expect(tf.filters.involvingAccountId).toBe('acc-1')
+    expect(tf.filters.merchantId).toBe('mch-1')
+    expect(requests).toHaveLength(1)
+    expect(lastRequest()).toEqual({
+      page: 1,
+      page_size: 20,
+      involving_account_id: 'acc-1',
+      merchant_id: 'mch-1',
+    })
+  })
+
+  it('无效参数回退：校验失败维度清空；两维度均无有效参数时复位日期/类型（#96 决策 3）', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.setFilter({ dateFrom: '2026-01-01', kind: 'income' })
+    await flushPromises()
+    tf.syncUrlQuery({ account: 'missing-acc' })
+    await flushPromises()
+    expect(tf.filters.involvingAccountId).toBeNull()
+    expect(tf.filters.dateFrom).toBeNull()
+    expect(tf.filters.kind).toBeNull()
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20 })
+  })
+
+  it('无效参数回退·merchant 维度同规则：字典中不存在的商户同样回退并复位', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.setFilter({ dateFrom: '2026-01-01', kind: 'income' })
+    await flushPromises()
+    tf.syncUrlQuery({ merchant: 'missing-mch' })
+    await flushPromises()
+    expect(tf.filters.merchantId).toBeNull()
+    expect(tf.filters.dateFrom).toBeNull()
+    expect(tf.filters.kind).toBeNull()
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20 })
+  })
+
+  it('不带参数进入：全量默认态，不产生出口', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({})
+    await flushPromises()
+    expect(tf.filters).toEqual({
+      dateFrom: null,
+      dateTo: null,
+      involvingAccountId: null,
+      merchantId: null,
+      kind: null,
+    })
+    expect(requests).toHaveLength(0)
+  })
+
+  it('非字符串参数视为不在场：数组值不应用也不产生出口', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ account: ['acc-1'] })
+    await flushPromises()
+    expect(tf.filters.involvingAccountId).toBeNull()
+    expect(requests).toHaveLength(0)
+  })
+
+  it('参数未变化不重放：同值再递（无关导航）不产生出口、不覆盖手动改动', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ account: 'acc-1' })
+    await flushPromises()
+    tf.setFilter({ dateFrom: '2026-01-01' })
+    await flushPromises()
+    // 无关导航替换 query 对象，account 值未变 → 该维度不动作
+    tf.syncUrlQuery({ account: 'acc-1', unrelated: 'x' })
+    await flushPromises()
+    expect(tf.filters.involvingAccountId).toBe('acc-1')
+    expect(tf.filters.dateFrom).toBe('2026-01-01')
+    expect(requests).toHaveLength(2)
+  })
+
+  it('导航换参：account 参数 a → b 按新参数重新消费', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ account: 'acc-1' })
+    await flushPromises()
+    tf.syncUrlQuery({ account: 'acc-2' })
+    await flushPromises()
+    expect(tf.filters.involvingAccountId).toBe('acc-2')
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20, involving_account_id: 'acc-2' })
+  })
+})
+
+describe('useTransactionFilter URL 参数表·复位规则（#96 决策 3）', () => {
+  it('导航清除参数：对应维度同步清空 + 日期/类型复位 + 翻页归零', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ account: 'acc-1' })
+    await flushPromises()
+    tf.setFilter({ dateFrom: '2026-01-01' })
+    tf.page.value = 2
+    await flushPromises()
+    tf.syncUrlQuery({})
+    await flushPromises()
+    expect(tf.filters).toEqual({
+      dateFrom: null,
+      dateTo: null,
+      involvingAccountId: null,
+      merchantId: null,
+      kind: null,
+    })
+    expect(tf.page.value).toBe(1)
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20 })
+  })
+
+  it('另一维度参数在场：被清除维度清空，日期/类型不越界复位', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ account: 'acc-1', merchant: 'mch-1' })
+    await flushPromises()
+    tf.setFilter({ dateFrom: '2026-01-01', kind: 'income' })
+    await flushPromises()
+    // 导航清除 account 参数（merchant 仍在场）
+    tf.syncUrlQuery({ merchant: 'mch-1' })
+    await flushPromises()
+    expect(tf.filters.involvingAccountId).toBeNull()
+    expect(tf.filters.merchantId).toBe('mch-1')
+    expect(tf.filters.dateFrom).toBe('2026-01-01')
+    expect(tf.filters.kind).toBe('income')
+    expect(lastRequest()).toEqual({
+      page: 1,
+      page_size: 20,
+      merchant_id: 'mch-1',
+      from: '2026-01-01',
+      kind: 'income',
+    })
+  })
+
+  it('导航清除 merchant 参数：对应维度同步清空 + 日期/类型复位 + 翻页归零', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ merchant: 'mch-1' })
+    await flushPromises()
+    tf.setFilter({ dateFrom: '2026-01-01' })
+    tf.page.value = 2
+    await flushPromises()
+    tf.syncUrlQuery({})
+    await flushPromises()
+    expect(tf.filters.merchantId).toBeNull()
+    expect(tf.filters.dateFrom).toBeNull()
+    expect(tf.page.value).toBe(1)
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20 })
+  })
+
+  it('复位守卫对称：merchant 在场、account 无效进入时账户维度清空，日期/类型不越界复位', async () => {
+    const { tf } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ merchant: 'mch-1' })
+    await flushPromises()
+    tf.setFilter({ dateFrom: '2026-01-01', kind: 'income' })
+    await flushPromises()
+    tf.syncUrlQuery({ merchant: 'mch-1', account: 'missing-acc' })
+    await flushPromises()
+    expect(tf.filters.involvingAccountId).toBeNull()
+    expect(tf.filters.merchantId).toBe('mch-1')
+    expect(tf.filters.dateFrom).toBe('2026-01-01')
+    expect(tf.filters.kind).toBe('income')
+  })
+})
+
+/** 挂起某张参考表响应：模拟冷启动深链时该表晚到；返回放行函数。 */
+function gateReference(gatedCmd: 'list_accounts' | 'list_merchants') {
+  let release!: () => void
+  const pending = new Promise<Account[] | Merchant[]>((res) => {
+    release = () => res(gatedCmd === 'list_accounts' ? urlAccounts : urlMerchants)
+  })
+  mockInvoke.mockImplementation((cmd: string) => {
+    if (cmd === gatedCmd) return pending
+    if (cmd === 'list_currencies' || cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_accounts') return Promise.resolve(urlAccounts)
+    if (cmd === 'list_merchants') return Promise.resolve(urlMerchants)
+    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  })
+  return release
+}
+
+describe('useTransactionFilter URL 参数表·就绪补判（模块内部消费 Reference Data store）', () => {
+  it('有效参数挂起待就绪，就绪后补判应用（不静默丢失）', async () => {
+    const release = gateReference('list_accounts')
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    expect(useReferenceStore().status).toBe('loading')
+    tf.syncUrlQuery({ account: 'acc-1' })
+    await flushPromises()
+    // 挂起：不误判为无效而回退，也不误应用
+    expect(tf.filters.involvingAccountId).toBeNull()
+    expect(requests).toHaveLength(0)
+    release()
+    await flushPromises()
+    expect(tf.filters.involvingAccountId).toBe('acc-1')
+    expect(requests).toHaveLength(1)
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20, involving_account_id: 'acc-1' })
+  })
+
+  it('无效参数挂起，就绪后校验失败回退全量（不报错、无谓出口）', async () => {
+    const release = gateReference('list_accounts')
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ account: 'missing-acc' })
+    await flushPromises()
+    expect(tf.filters.involvingAccountId).toBeNull()
+    release()
+    await flushPromises()
+    expect(tf.filters.involvingAccountId).toBeNull()
+    expect(requests).toHaveLength(0)
+  })
+
+  it('merchant 维度同样挂起待就绪：软删商户参数就绪后补判应用', async () => {
+    const release = gateReference('list_merchants')
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ merchant: 'mch-2' })
+    await flushPromises()
+    expect(tf.filters.merchantId).toBeNull()
+    expect(requests).toHaveLength(0)
+    release()
+    await flushPromises()
+    expect(tf.filters.merchantId).toBe('mch-2')
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20, merchant_id: 'mch-2' })
+  })
+})
+
+describe('useTransactionFilter URL 参数表·字段级让位（issue #234 新增行为）', () => {
+  it('补判前手动改动同维度 → 让位且不再重放；其他维度补判不受牵连', async () => {
+    const release = gateReference('list_accounts')
+    const { tf } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ account: 'acc-1', merchant: 'mch-1' })
+    await flushPromises()
+    // 参考数据就绪前，用户手动改动账户维度（与 URL 参数同维度）
+    tf.setFilter({ involvingAccountId: 'acc-2' })
+    release()
+    await flushPromises()
+    // 账户维度让位：保持手动改动；商户维度照常补判应用
+    expect(tf.filters.involvingAccountId).toBe('acc-2')
+    expect(tf.filters.merchantId).toBe('mch-1')
+    // 之后参考数据重拉（status 再次 ready）不重放已让位的参数
+    await useReferenceStore().refresh()
+    await flushPromises()
+    expect(tf.filters.involvingAccountId).toBe('acc-2')
+    expect(tf.filters.merchantId).toBe('mch-1')
+  })
+
+  it('补判前 resetFilters（显式清空全部维度）→ 挂起参数让位', async () => {
+    const release = gateReference('list_accounts')
+    const { tf } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ account: 'acc-1' })
+    await flushPromises()
+    tf.setFilter({ kind: 'income' }) // 制造激活条件，使 resetFilters 实际动作
+    tf.resetFilters()
+    release()
+    await flushPromises()
+    expect(tf.filters.involvingAccountId).toBeNull()
+    expect(tf.filters.kind).toBeNull()
+  })
+
+  it('参考数据重拉不重放：已结算参数在 status 再次 ready 后不覆盖手动改动', async () => {
+    const { tf } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ account: 'acc-1' })
+    await flushPromises()
+    tf.setFilter({ involvingAccountId: 'acc-2' })
+    await useReferenceStore().refresh()
+    await flushPromises()
+    expect(tf.filters.involvingAccountId).toBe('acc-2')
   })
 })

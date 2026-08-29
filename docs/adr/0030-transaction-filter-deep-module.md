@@ -11,8 +11,8 @@
 
 ## 决策
 
-1. **新增前端 composable `useTransactionFilter`（工厂形态）**：每次调用返回独立实例，置于 `src/composables/` 层。接口收敛为 `setFilter(patch)`（声明部分过滤意图，立即生效）、`resetFilters()`（回默认态）、`refresh()`（外部数据变化：重拉 + 翻回第一页，不动筛选）+ 可观察状态（filters、page、pageSize、refresh 版本号）；无其他公开面。选工厂而非单例：未来第二个消费者（如搜索页）需要独立实例，避免分页与补判状态串扰。
-2. **URL 下钻参数收成一张参数表**：`?account=` / `?merchant=` 的解析、校验、补判、让位对每个维度同规则处理，视图不再感知下钻参数有几个；两条镜像链路消灭。URL **只读不写回**（组件状态是唯一事实源，延续 #96 决策 3/4），路由变化由视图监听后递给模块。
+1. **新增前端 composable `useTransactionFilter`（工厂形态）**：每次调用返回独立实例，置于 `src/composables/` 层。接口收敛为 `setFilter(patch)`（声明部分过滤意图，立即生效）、`resetFilters()`（回默认态）、`refresh()`（外部数据变化：重拉 + 翻回第一页，不动筛选）、`syncUrlQuery(query)`（递入最新路由 query，issue #234 内化 URL 链路时增补的第四入口）+ 可观察状态（filters、page、pageSize、refresh 版本号）；无其他公开面。选工厂而非单例：未来第二个消费者（如搜索页）需要独立实例，避免分页与补判状态串扰。
+2. **URL 下钻参数收成一张参数表**：`?account=` / `?merchant=` 的解析、校验、补判、让位对每个维度同规则处理，视图不再感知下钻参数有几个；两条镜像链路消灭。URL **只读不写回**（组件状态是唯一事实源，延续 #96 决策 3/4），路由变化由视图监听后经 `syncUrlQuery(query)` 递给模块。
 3. **字段级让位**：补判遇用户已手动改动**同一维度**则让位，其他维度的补判照常生效（改了日期不连累账户补判）。URL 参数**至多消费一次**（无论应用还是让位，标记即结算），后续参考数据重拉（`ledger:changed` → status 再次 ready）不重放。
 4. **复位契约保留现状**（#96 决策 3）：下钻进入且两个维度均无有效参数时，复位日期/类型；query 变化（含导航清除 query）时对应维度同步清空。
 5. **模块内部消费 Reference Data store**：就绪时序由模块自己 watch `reference.status`，**不**向调用方暴露 `ready(参考数据)` 通知接口——这是对 spec 原案（接口含 ready 通知）的刻意偏离。
