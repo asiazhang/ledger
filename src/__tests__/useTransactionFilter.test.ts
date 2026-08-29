@@ -244,23 +244,33 @@ describe('useTransactionFilter refresh（外部数据变化回填）', () => {
 })
 
 describe('useTransactionFilter 分页所有权', () => {
-  it('页大小切换经 refresh 出口：归零 + 以新页大小重拉', async () => {
+  it('页大小切换经 refresh 出口：归零 + 以新页大小重拉，过滤条件保持', async () => {
     const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.setFilter({ involvingAccountId: 'acc-1' })
     await flushPromises()
     tf.pageSize.value = 50
     tf.refresh()
     await flushPromises()
-    expect(lastRequest()).toEqual({ page: 1, page_size: 50 })
+    // 过滤维度归模块状态所有，页大小切换不触碰 → 请求同时携带新页大小与既有过滤
+    expect(lastRequest()).toEqual({ page: 1, page_size: 50, involving_account_id: 'acc-1' })
   })
 
-  it('翻页导航由调用方直写页码：版本号不 bump（视图自行以新页码重拉）', async () => {
+  it('翻页导航由调用方直写页码：版本号不 bump、过滤状态不被触碰（视图自行以新页码重拉）', async () => {
     const { tf, requests } = mountHarness()
     await flushPromises()
+    tf.setFilter({ involvingAccountId: 'acc-1', kind: 'income' })
+    await flushPromises()
+    const versionAfterFilter = tf.refreshVersion.value
+    const requestsAfterFilter = requests.length
     tf.page.value = 2
     await flushPromises()
     expect(tf.page.value).toBe(2)
-    expect(tf.refreshVersion.value).toBe(0)
-    expect(requests).toHaveLength(0)
+    // 组合不变量：翻页直写只动页码，过滤状态原样保留，调用方重拉即同时携带两者
+    expect(tf.filters.involvingAccountId).toBe('acc-1')
+    expect(tf.filters.kind).toBe('income')
+    expect(tf.refreshVersion.value).toBe(versionAfterFilter)
+    expect(requests.length).toBe(requestsAfterFilter)
   })
 })
 

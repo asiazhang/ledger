@@ -14,10 +14,11 @@ describe('TransactionsView URL 下钻接线（issue #97/#191，冒烟级）', ()
       makeTxn(1, 'acc-1', { merchant_id: 'mch-1', date: '2026-01-05' }),
       makeTxn(2, 'acc-2', { merchant_id: 'mch-1', date: '2026-02-10' }),
       makeTxn(3, 'acc-1', { date: '2026-01-20' }),
+      makeTxn(4, 'acc-2', { kind: 'transfer', to_account_id: 'acc-1', date: '2026-01-25' }),
     ])
   })
 
-  it('带有效 account 参数进入时自动按该账户过滤（含转入转账语义的参数）', async () => {
+  it('带有效 account 参数进入时自动按该账户过滤（涉及语义含转入侧）', async () => {
     routeMock.query = { account: 'acc-1' }
     const wrapper = await mountView()
     expect(lastListFilter()).toMatchObject({
@@ -25,8 +26,8 @@ describe('TransactionsView URL 下钻接线（issue #97/#191，冒烟级）', ()
       page_size: 20,
       involving_account_id: 'acc-1',
     })
-    // txn-1 / txn-3 在 acc-1
-    expect(wrapper.text()).toContain('共 2 条')
+    // 涉及 acc-1：txn-1 / txn-3（主账户）+ txn-4（转账转入侧）
+    expect(wrapper.text()).toContain('共 3 条')
   })
 
   it('account 与 merchant 参数可组合直达（同时生效）', async () => {
@@ -48,7 +49,7 @@ describe('TransactionsView URL 下钻接线（issue #97/#191，冒烟级）', ()
     await flushPromises()
     expect(lastListFilter()).toMatchObject({ page: 1 })
     expect(lastListFilter()).not.toHaveProperty('involving_account_id')
-    expect(wrapper.text()).toContain('共 3 条')
+    expect(wrapper.text()).toContain('共 4 条')
   })
 })
 
@@ -161,12 +162,15 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
     expect(wrapper.text()).toContain('共 5 条')
   })
 
-  it('手动改动过滤不回写 URL（组件状态为唯一事实源）', async () => {
+  it('手动改动过滤不回写 URL（组件状态为唯一事实源，与维度无关）', async () => {
     routeMock.query = { account: 'acc-1' }
     const wrapper = await mountView()
     await setAccount(wrapper, 'acc-2')
     await setKind(wrapper, 'income')
     await setDateFrom(wrapper, '2026-01-01')
+    // 商户维度同样不写回（URL 只读是整层契约，非按维度分支）
+    await merchantSelect(wrapper).vm.$emit('update:value', 'mch-1')
+    await flushPromises()
     expect(routeMock.query).toEqual({ account: 'acc-1' })
   })
 
