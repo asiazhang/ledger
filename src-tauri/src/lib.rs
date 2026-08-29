@@ -165,6 +165,7 @@ pub fn run() {
             commands::delete_item,
             commands::list_budgets,
             commands::create_budget,
+            commands::update_budget,
             commands::delete_budget,
             commands::monthly_summary,
             commands::category_shares,
