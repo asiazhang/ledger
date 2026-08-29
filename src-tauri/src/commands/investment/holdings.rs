@@ -15,9 +15,8 @@
 //!   与 Holding（`v_holdings`）/ InvestedInstrument / 净资产全局对齐——删除账户 =
 //!   从全部投资视角（含历史走势曲线）消失，账户删除/恢复（软删标志翻转）使流水
 //!   自动进出推算，无需时点存续状态。隐藏账户不是软删除，与 `v_holdings` 一致不排除。
-//! - **消费者**：PortfolioValueTrend 的组合市值（逐价格行取该标的当期数量）；
-//!   单标的走势是价格直出，不消费本模块。expand 阶段（issue #218）走势查询暂走
-//!   trend.rs 旧路径（行为零变化），本模块先以接口测试落地推算规则。
+//! - **消费者**：PortfolioValueTrend 的组合市值（逐价格行取该标的当期数量，
+//!   contract 阶段 issue #219 接线）；单标的走势是价格直出，不消费本模块。
 
 use chrono::NaiveDate;
 use rusqlite::{Connection, params};
@@ -28,10 +27,6 @@ use crate::error::{AppError, Result};
 ///
 /// 每次调用自取流水（单一函数、无预载会话变体，spec #168 定案第 3 条）：
 /// 单条索引查询亚毫秒级，真慢了再加变体是纯增量。
-///
-/// expand 阶段（issue #218）仅接口测试消费，生产消费方待 contract 阶段
-/// 接线（走势查询改委托本模块）后移除 allow。
-#[allow(dead_code)]
 pub(crate) fn holdings_as_of(
     conn: &Connection,
     instrument_id: Option<&str>,
@@ -42,8 +37,8 @@ pub(crate) fn holdings_as_of(
 
     // 口径三件事内化为一条 SQL：仅认 buy/sell（action IN + quantity 非空）、
     // sell 取负（CASE 矩阵）、交易日 ≤ as_of 前缀求和（含当日）。
-    // 软删除账户的流水不计入（issue #217 定案，见模块文档）；交易行软删
-    // （t.is_deleted）同样排除，与走势查询旧路径一致。
+    // 软删除账户的流水不计入（issue #217 定案，见模块文档，消费者走势查询
+    // 经本接缝同口径）；交易行软删（t.is_deleted）同样排除。
     let sql = "SELECT COALESCE(SUM(\
                    CASE st.action WHEN 'buy' THEN st.quantity ELSE -st.quantity END\
                ), 0.0) \

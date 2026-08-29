@@ -1,9 +1,9 @@
 //! 走势查询（issue #138 / spec #135 / ADR-0019）：PortfolioValueTrend 的取数与推算。
 //!
 //! - 单标的走势：`price_history` 直出，按区间裁剪，从首个有效采样点开始。
-//! - 组合市值走势：当期持有数量由 buy/sell 交易流水逐期推算（不物化快照），
-//!   各标的市值 = 数量 × 当期周线价格；非本位币经同期 `fx_rate_history`
-//!   正反向兜底折算到 DefaultCurrency 后汇总为一条曲线。
+//! - 组合市值走势：当期持有数量逐价格行委托时点持仓接缝推算（`holdings_as_of`，
+//!   不物化快照），各标的市值 = 数量 × 当期周线价格；非本位币经同期
+//!   `fx_rate_history` 正反向兜底折算到 DefaultCurrency 后汇总为一条曲线。
 //! - 某周缺价格或缺汇率则该贡献被跳过（不伪造数据）；全部贡献缺失的周无点，
 //!   曲线从区间内首个有效采样点开始。
 
@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, HashMap};
 use chrono::NaiveDate;
 use rusqlite::Connection;
 
+use super::holdings::holdings_as_of;
 use crate::error::{AppError, Result};
 use crate::models::{
     InstrumentPriceTrend, PortfolioTrendPoint, PortfolioValueTrend, PriceTrendPoint, TrendRange,
@@ -94,8 +95,10 @@ struct PriceRow {
 
 /// 组合市值走势：逐周汇总「当期持有数量 × 周线价格」（折算到本位币）。
 ///
-/// 数量推算：对每条价格行，取该标的截至其采样日的 buy/sell 流水净数量；
-/// 缺价格或缺同期汇率的标的该周跳过，全周无有效贡献则该周无点。
+/// 数量推算：对每条价格行，取该标的截至其采样交易日（含当日）的持有数量，
+/// 委托时点持仓接缝 [`holdings_as_of`]——buy/sell 口径单点在推算模块，本函数
+/// 只负责取数、折算与组装（数量按交易日取、汇率按周键取，双时间键契约
+/// 显式分界）；缺价格或缺同期汇率的标的该周跳过，全周无有效贡献则该周无点。
 pub(crate) fn query_portfolio_value_trend(
     conn: &Connection,
     range: &TrendRange,
@@ -156,41 +159,8 @@ pub(crate) fn query_portfolio_value_trend(
         }
     }
 
-    // 3. buy/sell 交易流水：只按区间终点截断——起点之前的持仓靠流水累积带入，
-    //    不用起点过滤。流水查询参数独立编号（至多一个终点日期，恒为 ?1）。
-    let mut flow_sql = String::from(
-        "SELECT st.instrument_id, t.date, st.action, st.quantity \
-         FROM security_transactions st JOIN transactions t ON t.id = st.transaction_id \
-         WHERE t.is_deleted=0 AND st.action IN ('buy','sell') AND st.quantity IS NOT NULL",
-    );
-    let mut flow_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-    if let Some(end) = &range.end_date {
-        flow_sql.push_str(" AND t.date<=?1");
-        flow_params.push(Box::new(end.clone()));
-    }
-    flow_sql.push_str(" ORDER BY st.instrument_id, t.date");
-    let flow_refs: Vec<&dyn rusqlite::ToSql> = flow_params.iter().map(|b| b.as_ref()).collect();
-
-    // 每标的按日期升序的带符号数量流水（buy 为正、sell 为负）。
-    let mut flows: HashMap<String, Vec<(String, f64)>> = HashMap::new();
-    {
-        let mut stmt = conn.prepare(&flow_sql)?;
-        let rows = stmt.query_map(flow_refs.as_slice(), |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, f64>(3)?,
-            ))
-        })?;
-        for row in rows {
-            let (instrument_id, date, action, quantity) = row?;
-            let signed = if action == "buy" { quantity } else { -quantity };
-            flows.entry(instrument_id).or_default().push((date, signed));
-        }
-    }
-
-    // 4. 按周聚合：某标的缺汇率则跳过该贡献；全周无有效贡献则该周无点。
+    // 3. 按周聚合：逐价格行委托时点持仓接缝推算当期数量（数量按交易日取、
+    //    汇率按周键取）；某标的缺汇率则跳过该贡献；全周无有效贡献则该周无点。
     let mut by_week: BTreeMap<String, Vec<PriceRow>> = BTreeMap::new();
     for row in price_rows {
         by_week.entry(row.week_start.clone()).or_default().push(row);
@@ -207,7 +177,7 @@ pub(crate) fn query_portfolio_value_trend(
                 historical_fx_rate(&fx, &row.currency_code, native, &week)
             };
             let Some(rate) = rate else { continue };
-            let quantity = held_quantity(&flows, &row.instrument_id, &row.trade_date);
+            let quantity = holdings_as_of(conn, Some(&row.instrument_id), &row.trade_date)?;
             let value = (quantity * row.price_cents as f64).round() as i64;
             total += (value as f64 * rate).round() as i64;
             contributed = true;
@@ -223,18 +193,6 @@ pub(crate) fn query_portfolio_value_trend(
     Ok(PortfolioValueTrend {
         currency_code: native.to_string(),
         points,
-    })
-}
-
-/// 截至某日（含当日）的持有数量：带符号流水按日期前缀求和。
-fn held_quantity(
-    flows: &HashMap<String, Vec<(String, f64)>>,
-    instrument_id: &str,
-    as_of: &str,
-) -> f64 {
-    flows.get(instrument_id).map_or(0.0, |flow| {
-        let n = flow.partition_point(|(date, _)| date.as_str() <= as_of);
-        flow[..n].iter().map(|(_, quantity)| quantity).sum()
     })
 }
 
