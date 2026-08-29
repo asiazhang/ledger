@@ -26,6 +26,27 @@ pub fn create_plan(conn: &Connection, input: CreateScheduledInput) -> Result<Str
     {
         return Err(AppError::Invalid("转出账户不能等于转入账户".into()));
     }
+    // 定时转账（issue #203，词汇表 ScheduledTransfer 边界）：核心交易域转账交易是
+    // 单金额单币种，转出与转入账户必须同币种，不一致在创建入口显式拒绝。
+    if input.kind == ScheduledKind::ScheduledTransfer
+        && let Some(ref to_acc) = input.to_account_id
+    {
+        let account_currency = |id: &str, missing: &str| -> Result<String> {
+            conn.query_row(
+                "SELECT currency_code FROM accounts WHERE id=?1 AND is_deleted=0",
+                rusqlite::params![id],
+                |r| r.get(0),
+            )
+            .map_err(|_| AppError::NotFound(missing.into()))
+        };
+        let from_currency = account_currency(&input.account_id, "转出账户不存在")?;
+        let to_currency = account_currency(to_acc, "转入账户不存在")?;
+        if from_currency != to_currency {
+            return Err(AppError::Invalid(
+                "转出账户与转入账户币种不一致，定时转账不支持跨币种".into(),
+            ));
+        }
+    }
     // 商户收口（issue #190 / ADR-0028）：installment/subscription 可携带商户，
     // 携带的商户必须存在且未软删除（软删商户不可再被新计划选择，与交易写入
     // 共用 writer 接缝的校验）；scheduled_transfer 不使用商户（用 to_account_id

@@ -84,17 +84,20 @@ describe('ScheduledView 「定时」视图三页签（issue #202）', () => {
     expect(wrapper.find('[data-testid="sub-create-open"]').exists()).toBe(false)
   })
 
-  it('点击「定时转账」页签：路由 query.tab 更新且显示建设中占位', async () => {
+  it('点击「定时转账」页签：路由 query.tab 更新且渲染定时转账内容', async () => {
     const { wrapper, router: r } = await mountView()
     await wrapper.findAll('.n-tabs-tab').find((t) => t.text() === '定时转账')!.trigger('click')
     await flushPromises()
     expect(r.currentRoute.value.query.tab).toBe('transfers')
-    expect(wrapper.text()).toContain('建设中')
+    // 定时转账页签为端到端竖切（issue #203）：显示清单卡片 + 新建入口
+    expect(wrapper.text()).toContain('定时转账清单')
+    expect(wrapper.find('[data-testid="transfer-create-open"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="sub-create-open"]').exists()).toBe(false)
   })
 
   it('tab query 直接导航到对应页签（深链）', async () => {
     const { wrapper } = await mountView('/scheduled?tab=transfers')
-    expect(wrapper.text()).toContain('建设中')
+    expect(wrapper.text()).toContain('定时转账清单')
     expect(wrapper.find('[data-testid="sub-create-open"]').exists()).toBe(false)
   })
 
