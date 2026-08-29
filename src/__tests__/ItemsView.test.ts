@@ -117,6 +117,7 @@ function setupInvoke(expenseTxs: Transaction[] = mockExpenseTxs) {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve([])
     if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve([])
     if (cmd === 'list_transactions') {
       const filter = (args as { filter?: { kind?: string } | null }).filter
       // 物品视图只拉支出交易（关联购买交易候选）；其他 kind 返回空

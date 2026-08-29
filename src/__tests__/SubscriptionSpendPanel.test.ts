@@ -79,6 +79,7 @@ function baseInvoke(spend: SubscriptionSpendOverview | Error = overview) {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve([])
     if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve([])
     if (cmd === 'subscription_spend_overview') {
       return spend instanceof Error ? Promise.reject(spend) : Promise.resolve(spend)
     }

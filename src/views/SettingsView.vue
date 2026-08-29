@@ -2,6 +2,7 @@
 import { NSpace, NTabs, NTabPane } from 'naive-ui'
 import GeneralSettings from '@/components/settings/GeneralSettings.vue'
 import CategoryManager from '@/components/CategoryManager.vue'
+import MerchantManager from '@/components/MerchantManager.vue'
 import CurrencySettings from '@/components/settings/CurrencySettings.vue'
 import BackupSettings from '@/components/settings/BackupSettings.vue'
 import DataLocationSettings from '@/components/settings/DataLocationSettings.vue'
@@ -23,6 +24,10 @@ import AboutSettings from '@/components/settings/AboutSettings.vue'
         <CategoryManager />
         <CurrencySettings />
       </NSpace>
+    </NTabPane>
+
+    <NTabPane name="merchants" tab="商户">
+      <MerchantManager />
     </NTabPane>
 
     <NTabPane name="data" tab="数据" display-directive="show:lazy">

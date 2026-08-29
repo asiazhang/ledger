@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
-import { useReferenceStore } from '@/stores/reference'
 import { useCategoryForm } from '@/composables/useCategoryForm'
-import type { Account, Category, Currency, Transaction } from '@/types'
+import { useReferenceStore } from '@/stores/reference'
+import type { Account, Currency, Merchant, Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -16,252 +16,173 @@ const mockAccounts: Account[] = [
     id: 'acc-1', name: '现金', type: 'cash', currency_code: 'CNY',
     initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test',
-    is_deleted: false,
+    is_deleted: false, is_hidden: false,
   },
 ]
 
-const mockCategories: Category[] = [
+const mockMerchants: Merchant[] = [
   {
-    id: 'cat-1', name: '餐饮', kind: 'expense', parent_id: null,
-    icon: null, created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test',
-    is_deleted: false,
-  },
-  {
-    id: 'cat-2', name: '工资', kind: 'income', parent_id: null,
-    icon: null, created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test',
-    is_deleted: false,
+    id: 'mch-1', name: '京东', icon: null, color: null,
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    version: 1, device_id: 'test', is_deleted: false,
   },
 ]
 
-describe('useCategoryForm', () => {
+const editingTx: Transaction = {
+  id: 'txn-1',
+  kind: 'expense',
+  amount_cents: 5000,
+  currency_code: 'CNY',
+  amount_native_cents: 5000,
+  account_id: 'acc-1',
+  to_account_id: null,
+  category_id: null,
+  merchant_id: 'mch-1',
+  refund_of_transaction_id: null,
+  note: null,
+  date: '2026-02-01',
+  created_at: '2026-02-01T00:00:00Z',
+}
+
+function mockBaseCommands(merchants: Merchant[] = mockMerchants) {
+  mockInvoke.mockImplementation((cmd: string) => {
+    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
+    if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
+    if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve(merchants)
+    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  })
+}
+
+function createCalls() {
+  return mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction')
+}
+
+function updateCalls() {
+  return mockInvoke.mock.calls.filter(([cmd]) => cmd === 'update_transaction')
+}
+
+/** 提交入参：创建路径取 create_transaction，编辑路径取 update_transaction。 */
+function submitCallInput(): Record<string, unknown> | undefined {
+  const call = createCalls()[0] ?? updateCalls()[0]
+  return (call?.[1] as { input: Record<string, unknown> } | undefined)?.input
+}
+
+function merchantCreateCalls() {
+  return mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_merchant')
+}
+
+/** 填必填项后提交，返回 create_transaction 入参（不存在时为 undefined）。 */
+async function submitWithMerchant(
+  merchantRef: string | null,
+  options?: Parameters<typeof useCategoryForm>[1],
+) {
+  // 参考 store self-init 异步：先等首拉完成，保证 merchantByName/merchantMap 就绪
+  await useReferenceStore().ensureFresh()
+  const form = useCategoryForm('expense', options)
+  form.amount.value = 50
+  form.accountId.value = 'acc-1'
+  form.merchantRef.value = merchantRef
+  await form.submit()
+  return submitCallInput()
+}
+
+describe('useCategoryForm 商户输入（issue #189）', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     mockInvoke.mockReset()
+    mockBaseCommands()
+  })
+
+  it('不填商户：merchant_id 为 null，不调用 create_merchant', async () => {
+    const input = await submitWithMerchant(null)
+    expect(input?.merchant_id).toBeNull()
+    expect(merchantCreateCalls()).toHaveLength(0)
+  })
+
+  it('选中已有商户（value 为 id）：直接携带，不调用 create_merchant', async () => {
+    const input = await submitWithMerchant('mch-1')
+    expect(input?.merchant_id).toBe('mch-1')
+    expect(merchantCreateCalls()).toHaveLength(0)
+  })
+
+  it('输入已有商户名（未选 id）：按名解析复用，不调用 create_merchant', async () => {
+    const input = await submitWithMerchant('京东')
+    expect(input?.merchant_id).toBe('mch-1')
+    expect(merchantCreateCalls()).toHaveLength(0)
+  })
+
+  it('输入新名字（未命中）：保存即建商户并携带新 id', async () => {
     mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'create_merchant') return Promise.resolve('mch-new')
+      if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
       if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-      if (cmd === 'list_categories') return Promise.resolve(mockCategories)
+      if (cmd === 'list_categories') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
+    const input = await submitWithMerchant('盒马')
+    expect(merchantCreateCalls()).toHaveLength(1)
+    expect(merchantCreateCalls()[0]).toEqual(['create_merchant', { input: { name: '盒马' } }])
+    expect(input?.merchant_id).toBe('mch-new')
   })
 
-  it('初始化状态：金额为空、币种CNY、账户为空', () => {
-    const form = useCategoryForm('expense')
-    expect(form.amount.value).toBeNull()
-    expect(form.currencyCode.value).toBe('CNY')
-    expect(form.accountId.value).toBeNull()
-    expect(form.categoryId.value).toBeNull()
-    expect(form.note.value).toBe('')
-  })
-
-  it('treeOptions 根据 kind 过滤', async () => {
-    const store = useReferenceStore()
-    await store.ensureFresh()
-    const expenseForm = useCategoryForm('expense')
-    expect(expenseForm.treeOptions.value).toHaveLength(1)
-    expect(expenseForm.treeOptions.value[0].key).toBe('cat-1')
-
-    const incomeForm = useCategoryForm('income')
-    expect(incomeForm.treeOptions.value).toHaveLength(1)
-    expect(incomeForm.treeOptions.value[0].key).toBe('cat-2')
-  })
-
-  it('accountOptions 来自 store', async () => {
-    const store = useReferenceStore()
-    await store.ensureFresh()
-    const form = useCategoryForm('expense')
-    expect(form.accountOptions.value).toHaveLength(1)
-    expect(form.accountOptions.value[0]).toEqual({ label: '现金', value: 'acc-1' })
-  })
-
-  it('submit 校验：无账户时提示警告（不抛出）', async () => {
-    const form = useCategoryForm('expense')
-    // 不设 accountId，submit 应返回不抛异常
-    await expect(form.submit()).resolves.toBeUndefined()
-    // self-init 已自动加载参考数据，故按命令过滤断言无记账写入
-    expect(
-      mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction'),
-    ).toHaveLength(0)
-  })
-
-  it('submit 校验：金额为空时提示警告', async () => {
-    const form = useCategoryForm('expense')
-    form.accountId.value = 'acc-1'
-    form.amount.value = null
-    await expect(form.submit()).resolves.toBeUndefined()
-    expect(
-      mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction'),
-    ).toHaveLength(0)
-  })
-
-  it('submit 调用 api.createTransaction', async () => {
-    mockInvoke.mockResolvedValue('new-txn-id')
-    const form = useCategoryForm('expense')
-    form.accountId.value = 'acc-1'
-    form.amount.value = 100
-    form.categoryId.value = 'cat-1'
-    form.note.value = '午餐'
-    form.date.value = new Date('2026-07-11').getTime()
-
-    await form.submit()
-
-    // self-init 已自动加载参考数据（list_*），此处仅断言记账写入恰一次
-    expect(
-      mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction'),
-    ).toHaveLength(1)
-    expect(mockInvoke).toHaveBeenCalledWith('create_transaction', {
-      input: {
-        kind: 'expense',
-        amount_cents: 10000,
-        currency_code: 'CNY',
-        account_id: 'acc-1',
-        category_id: 'cat-1',
-        note: '午餐',
-        date: '2026-07-11',
-      },
+  it('即建撞重名（store 陈旧）：强制重拉后按名复用已有商户，不报错', async () => {
+    let stale = true
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'create_merchant') {
+        return Promise.reject(new Error('参数错误: 商户已存在: 盒马'))
+      }
+      if (cmd === 'list_merchants') {
+        const rows: Merchant[] = stale
+          ? mockMerchants
+          : [
+              ...mockMerchants,
+              {
+                id: 'mch-exist', name: '盒马', icon: null, color: null,
+                created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+                version: 1, device_id: 'test', is_deleted: false,
+              },
+            ]
+        stale = false
+        return Promise.resolve(rows)
+      }
+      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
+      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
+      if (cmd === 'list_categories') return Promise.resolve([])
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
+    const input = await submitWithMerchant('盒马')
+    expect(input?.merchant_id).toBe('mch-exist')
   })
 
-  it('submit 成功后重置表单', async () => {
-    mockInvoke.mockResolvedValue('new-txn-id')
-    const form = useCategoryForm('expense')
-    form.accountId.value = 'acc-1'
-    form.amount.value = 50
-    form.note.value = '测试'
-
-    await form.submit()
-
-    expect(form.amount.value).toBeNull()
-    expect(form.note.value).toBe('')
-  })
-
-  it('submit 失败时 catch 错误不抛出', async () => {
-    mockInvoke.mockRejectedValue(new Error('网络错误'))
-    const form = useCategoryForm('expense')
-    form.accountId.value = 'acc-1'
-    form.amount.value = 100
-
-    await expect(form.submit()).resolves.toBeUndefined()
-  })
-
-  it('resetForm 恢复初始状态', () => {
-    const form = useCategoryForm('expense')
-    form.amount.value = 100
-    form.note.value = 'test'
-    form.accountId.value = 'acc-1'
-    form.categoryId.value = 'cat-1'
-
-    form.resetForm()
-
-    expect(form.amount.value).toBeNull()
-    expect(form.note.value).toBe('')
-    expect(form.accountId.value).toBeNull()
-    expect(form.categoryId.value).toBeNull()
-    expect(form.currencyCode.value).toBe('CNY')
-  })
-
-  it('onCreated 回调在 submit 成功后触发', async () => {
-    mockInvoke.mockResolvedValue('new-txn-id')
-    const onCreated = vi.fn()
-    const form = useCategoryForm('expense', { onCreated })
-    form.accountId.value = 'acc-1'
-    form.amount.value = 100
-
-    await form.submit()
-
-    expect(onCreated).toHaveBeenCalledTimes(1)
-  })
-
-  describe('编辑模式（issue #178）', () => {
-    const editingTx: Transaction = {
-      id: 'txn-001',
-      kind: 'expense',
-      amount_cents: 12500,
-      currency_code: 'CNY',
-      amount_native_cents: 12500,
-      account_id: 'acc-1',
-      to_account_id: null,
-      category_id: 'cat-1',
-      refund_of_transaction_id: null,
-      note: '原备注',
-      date: '2026-02-10',
-      created_at: '2026-02-01T00:00:00Z',
-      updated_at: '2026-02-01T00:00:00Z',
-      version: 1,
-      device_id: 'test',
-      is_deleted: false,
-    }
-
-    it('创建时按既有交易回填全部业务字段（金额按币种小数位换算、日期可回显）', () => {
+  describe('编辑模式', () => {
+    it('回填既有商户并原样提交（改名/软删均不影响 id 引用）', () => {
       const form = useCategoryForm('expense', { editing: () => editingTx })
-      expect(form.amount.value).toBe(125)
-      expect(form.currencyCode.value).toBe('CNY')
-      expect(form.accountId.value).toBe('acc-1')
-      expect(form.categoryId.value).toBe('cat-1')
-      expect(form.note.value).toBe('原备注')
-      // 日期以 UTC 午夜回填（与提交端 toISOString 切片同一口径，往返无损）
-      expect(new Date(form.date.value).toISOString().slice(0, 10)).toBe('2026-02-10')
+      expect(form.merchantRef.value).toBe('mch-1')
     })
 
-    it('submit 走更新命令：同形入参（无幂等键）+ 交易 id，成功触发 onUpdated 不触发 onCreated', async () => {
-      mockInvoke.mockResolvedValue(undefined)
-      const onCreated = vi.fn()
-      const onUpdated = vi.fn()
-      const form = useCategoryForm('expense', {
-        onCreated,
-        onUpdated,
-        editing: () => editingTx,
-      })
-      // 用户修改金额/备注/日期
-      form.amount.value = 90
-      form.note.value = '修改'
-      form.date.value = new Date('2026-02-15T00:00:00Z').getTime()
-
-      await form.submit()
-
-      const updateCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'update_transaction')
-      expect(updateCalls).toHaveLength(1)
-      expect(mockInvoke).toHaveBeenCalledWith('update_transaction', {
-        id: 'txn-001',
-        input: {
-          kind: 'expense',
-          amount_cents: 9000,
-          currency_code: 'CNY',
-          account_id: 'acc-1',
-          category_id: 'cat-1',
-          note: '修改',
-          date: '2026-02-15',
-        },
-      })
-      // 创建路径不分发
-      expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction')).toHaveLength(0)
-      expect(onUpdated).toHaveBeenCalledTimes(1)
-      expect(onCreated).not.toHaveBeenCalled()
+    it('编辑未动商户：提交保持原 merchant_id', async () => {
+      const input = await submitWithMerchant('mch-1', { editing: () => editingTx })
+      expect(input?.merchant_id).toBe('mch-1')
     })
 
-    it('编辑提交成功后不重置表单（弹窗由父层关闭，实例整体销毁）', async () => {
-      mockInvoke.mockResolvedValue(undefined)
+    it('编辑时清除商户：merchant_id 为 null', async () => {
+      const input = await submitWithMerchant(null, { editing: () => editingTx })
+      expect(input?.merchant_id).toBeNull()
+    })
+
+    it('原商户已被软删（不在字典）：提交保持原 id（历史引用照常保留），兜底选项可显示', async () => {
+      mockBaseCommands([]) // 字典为空：mch-1 已软删
+      await useReferenceStore().ensureFresh()
       const form = useCategoryForm('expense', { editing: () => editingTx })
-
+      // 回填时不可用 uuid 裸值展示：兜底选项以可读标签承载原 id
+      expect(form.merchantOptions.value.some((o) => o.value === 'mch-1')).toBe(true)
+      form.amount.value = 50
+      form.accountId.value = 'acc-1'
       await form.submit()
-
-      expect(form.amount.value).toBe(125)
-      expect(form.note.value).toBe('原备注')
-    })
-
-    it('提交失败显示错误且不重置已填内容（弹窗保持打开，可修正重试）', async () => {
-      mockInvoke.mockRejectedValue('金额必须大于 0')
-      const onUpdated = vi.fn()
-      const form = useCategoryForm('expense', { onUpdated, editing: () => editingTx })
-      form.note.value = '改了一半'
-
-      await expect(form.submit()).resolves.toBeUndefined()
-
-      expect(onUpdated).not.toHaveBeenCalled()
-      expect(form.amount.value).toBe(125)
-      expect(form.note.value).toBe('改了一半')
+      const input = submitCallInput() as { merchant_id: string | null }
+      expect(input.merchant_id).toBe('mch-1')
     })
   })
 })

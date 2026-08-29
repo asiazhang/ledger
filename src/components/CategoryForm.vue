@@ -69,6 +69,17 @@ const ctx = useCategoryForm(props.kind, {
         />
       </NFormItem>
 
+      <NFormItem label="商户">
+        <PinyinSelect
+          v-model:value="ctx.merchantRef.value"
+          :options="ctx.merchantOptions.value"
+          tag
+          clearable
+          placeholder="选择商户，可直接输入新名称"
+          style="width: 220px"
+        />
+      </NFormItem>
+
       <NFormItem label="日期">
         <NDatePicker v-model:value="ctx.date.value" type="date" style="width: 200px" />
       </NFormItem>

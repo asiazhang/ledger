@@ -25,6 +25,7 @@ function baseInvoke(extra?: Record<string, unknown>) {
         list_currencies: mockCurrencies,
         list_accounts: mockAccounts,
         list_categories: [],
+        list_merchants: [],
         list_holdings: mockHoldings,
         list_instruments: { items: mockInstruments, total: mockInstruments.length },
       },
