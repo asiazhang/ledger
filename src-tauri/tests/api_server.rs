@@ -1799,6 +1799,31 @@ async fn test_openapi_doc_has_currencies_endpoint() {
     assert!(schemas.contains_key("TransactionInput"));
 }
 
+/// OpenAPI 契约文档体积预算护栏：当前 12 端点 ≈ 21KB，预算 32KB 留 ~50% 增长空间；
+/// 端点继续增长触线时需人工决策（拆文档或提预算），避免契约文档无界膨胀挤占 AI 上下文。
+#[tokio::test]
+async fn test_openapi_doc_size_within_budget() {
+    let (app, _) = setup_app();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/openapi.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = body_to_bytes(response.into_body()).await;
+    assert!(
+        bytes.len() <= 32 * 1024,
+        "OpenAPI 契约文档应保持在预算内（当前 {} 字节，预算 32KB）",
+        bytes.len()
+    );
+}
+
 #[tokio::test]
 async fn test_import_knowledge_returns_ok_as_text_plain() {
     let (app, _) = setup_app();
