@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { computed, ref, watch } from 'vue'
 import {
   NButton,
@@ -100,7 +101,7 @@ async function runSearch() {
     searched.value = true
   } catch (e) {
     if (seq !== searchSeq) return
-    message.error(`搜索失败: ${e}`)
+    message.error(`搜索失败: ${errorMessage(e)}`)
   } finally {
     if (seq === searchSeq) loading.value = false
   }

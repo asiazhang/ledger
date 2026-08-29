@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { NButton, NCard, NSpace, NText, useMessage } from 'naive-ui'
 import { invoke } from '@tauri-apps/api/core'
 import pkg from '@/../package.json'
@@ -12,7 +13,7 @@ async function copyGitSha() {
     await navigator.clipboard.writeText(gitShaFull())
     message.success('已复制完整版本号')
   } catch (e: any) {
-    message.error(`复制完整版本号失败: ${e}`)
+    message.error(`复制完整版本号失败: ${errorMessage(e)}`)
   }
 }
 
@@ -20,7 +21,7 @@ async function openLogDir() {
   try {
     await invoke('plugin:log|open_log_dir')
   } catch (e: any) {
-    message.error(`打开日志目录失败: ${e}`)
+    message.error(`打开日志目录失败: ${errorMessage(e)}`)
   }
 }
 </script>

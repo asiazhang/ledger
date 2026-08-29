@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { computed, h } from 'vue'
 import { NButton, NIcon, NPopconfirm, NSpace, NTree, useMessage } from 'naive-ui'
 import type { TreeOption, TreeDropInfo } from 'naive-ui'
@@ -84,7 +85,7 @@ async function handleDrop(info: TreeDropInfo) {
     await api.reorderCategories(siblings.map((c, i) => ({ id: c.id, sort_order: i })))
     // 参考数据由 ledger:changed 信号自动重拉，分类树随之更新
   } catch (e) {
-    message.error(`排序失败: ${e}`)
+    message.error(`排序失败: ${errorMessage(e)}`)
   }
 }
 
@@ -95,7 +96,7 @@ async function removeCategory(id: string) {
     message.success('已删除')
     // 参考数据由 ledger:changed 信号自动重拉，分类树随之更新
   } catch (e) {
-    message.error(`删除失败: ${e}`)
+    message.error(`删除失败: ${errorMessage(e)}`)
   }
 }
 </script>

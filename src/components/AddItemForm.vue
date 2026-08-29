@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { computed, ref } from 'vue'
 import { NButton, NFormItem, NInput, NForm, NSpace, NText, useMessage } from 'naive-ui'
 import { formatAmount } from '@/types'
@@ -47,7 +48,7 @@ async function submit() {
     message.success('已加入物品')
     emit('created')
   } catch (e) {
-    message.error(`加入物品失败: ${e}`)
+    message.error(`加入物品失败: ${errorMessage(e)}`)
   } finally {
     submitting.value = false
   }

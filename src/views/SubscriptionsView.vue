@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { h, computed, onMounted, ref, type VNode } from 'vue'
 import {
   NCard,
@@ -116,7 +117,7 @@ async function create() {
     await load()
     refreshSpend()
   } catch (e) {
-    message.error(`创建失败: ${e}`)
+    message.error(`创建失败: ${errorMessage(e)}`)
   }
 }
 
@@ -158,7 +159,7 @@ async function saveEdit() {
     await load()
     refreshSpend()
   } catch (e) {
-    message.error(`保存失败: ${e}`)
+    message.error(`保存失败: ${errorMessage(e)}`)
   }
 }
 
@@ -209,7 +210,7 @@ async function load() {
     )
     rows.value = details
   } catch (e) {
-    message.error(`加载订阅失败: ${e}`)
+    message.error(`加载订阅失败: ${errorMessage(e)}`)
   } finally {
     loading.value = false
   }
@@ -226,7 +227,7 @@ async function changeStatus(id: string, newStatus: UpdateStatusInput['new_status
     await load()
     refreshSpend()
   } catch (e) {
-    message.error(`操作失败: ${e}`)
+    message.error(`操作失败: ${errorMessage(e)}`)
   }
 }
 

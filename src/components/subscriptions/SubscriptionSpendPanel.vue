@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { computed, onMounted, ref } from 'vue'
 import { NCard, NDataTable, NEmpty, NSpace, NSpin, useMessage, type DataTableColumns } from 'naive-ui'
 import { Bar } from 'vue-chartjs'
@@ -30,7 +31,7 @@ async function reload() {
   } catch (e) {
     // 后端缺汇率等中文错误直接上抛展示，不静默混算（ADR-0023）
     loadFailed.value = true
-    message.error(`加载订阅花费失败: ${e}`)
+    message.error(`加载订阅花费失败: ${errorMessage(e)}`)
   } finally {
     loading.value = false
   }

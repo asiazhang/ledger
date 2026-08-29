@@ -9,6 +9,7 @@ import type {
   BackupFileInfo,
   BackupKind,
 } from "@/types";
+import { errorMessage } from "@/utils/errors";
 import {
   defaultBackupFileName,
   isManagedBackupPath,
@@ -63,7 +64,7 @@ export function useBackup() {
       autoBackupLastAt.value = s.last_backup_at;
     } catch (e: any) {
       // 状态读取失败不阻断手动备份功能：维持默认开关开启、无时间展示。
-      message.error(`读取自动备份状态失败: ${e}`);
+      message.error(`读取自动备份状态失败: ${errorMessage(e)}`);
     }
   }
 
@@ -73,7 +74,7 @@ export function useBackup() {
       autoBackupEnabled.value = enabled;
       message.success(enabled ? "自动备份已开启" : "自动备份已关闭");
     } catch (e: any) {
-      message.error(`更新自动备份开关失败: ${e}`);
+      message.error(`更新自动备份开关失败: ${errorMessage(e)}`);
     }
   }
 
@@ -113,7 +114,7 @@ export function useBackup() {
       backups.value = await api.listBackups(store.backupDir);
     } catch (e: any) {
       backups.value = [];
-      message.error(`读取备份列表失败: ${e}`);
+      message.error(`读取备份列表失败: ${errorMessage(e)}`);
     }
   }
 
@@ -131,7 +132,7 @@ export function useBackup() {
         message.success(`已清理 ${r.deleted.length} 个旧备份`);
       }
     } catch (e: any) {
-      message.error(`清理备份失败: ${e}`);
+      message.error(`清理备份失败: ${errorMessage(e)}`);
     }
   }
 
@@ -182,7 +183,7 @@ export function useBackup() {
         await refreshBackups();
       }
     } catch (e: any) {
-      message.error(`备份失败: ${e}`);
+      message.error(`备份失败: ${errorMessage(e)}`);
     } finally {
       backingUp.value = false;
     }
@@ -230,7 +231,7 @@ export function useBackup() {
         api.restartApp();
       }, 800);
     } catch (e: any) {
-      message.error(`恢复失败: ${e}`);
+      message.error(`恢复失败: ${errorMessage(e)}`);
     } finally {
       restoring.value = false;
     }
