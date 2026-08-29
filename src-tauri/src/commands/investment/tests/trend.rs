@@ -313,3 +313,127 @@ fn trend_commands_return_empty_state_without_history() {
     assert_eq!(trend.currency_code, "CNY");
     assert!(trend.points.is_empty());
 }
+
+#[test]
+fn portfolio_trend_excludes_soft_deleted_account_flow_including_history() {
+    // 软删除账户口径（issue #247 / #217 定案 Q1「账户已删」）：组合走势逐期
+    // 数量推算经时点持仓接缝排除软删账户的 buy/sell 流水——「今天」与历史
+    // 周采样点全部剔除，与 v_holdings（空）对齐；删除/恢复经软删标志翻转
+    // 自动进出推算，无时点存续状态。
+    let conn = setup_db();
+    insert_account(&conn, "acc-sd", "待删户", "investment", "CNY");
+    insert_instrument(&conn, "inst-sd", "000001", "平安银行", "CNY");
+    // 周价格点：w1=1000、w2=2000、w3=3000（CNY，无需折算）。
+    insert_price_history(&conn, "ph-s1", "inst-sd", "2026-02-02", 1000, "CNY");
+    insert_price_history(&conn, "ph-s2", "inst-sd", "2026-02-09", 2000, "CNY");
+    insert_price_history(&conn, "ph-s3", "inst-sd", "2026-02-16", 3000, "CNY");
+    // 早于首条价格点买入 10 股：软删前基线 = 各周 10 × 当周价。
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-sd",
+            "inst-sd",
+            10.0,
+            1500,
+            "2026-01-20",
+        ),
+    )
+    .unwrap();
+
+    let values = |conn: &Connection| -> Vec<(String, i64)> {
+        trend::query_portfolio_value_trend(conn, &TrendRange::default())
+            .unwrap()
+            .points
+            .iter()
+            .map(|p| (p.date.clone(), p.market_value_cents))
+            .collect()
+    };
+    let baseline = values(&conn);
+    assert_eq!(
+        baseline,
+        [
+            ("2026-02-02".to_string(), 10000),
+            ("2026-02-09".to_string(), 20000),
+            ("2026-02-16".to_string(), 30000),
+        ]
+    );
+
+    // 软删除账户（只翻 is_deleted 标志）：历史周采样点同样不再含该账户贡献。
+    conn.execute("UPDATE accounts SET is_deleted=1 WHERE id='acc-sd'", [])
+        .unwrap();
+    assert_eq!(
+        values(&conn),
+        [
+            ("2026-02-02".to_string(), 0),
+            ("2026-02-09".to_string(), 0),
+            ("2026-02-16".to_string(), 0),
+        ]
+    );
+
+    // 绑定不变式（spec #168 定案第 6 条 / #217 Q4）：含软删夹具下
+    // as-of「今天」≡ Holding——Holding 侧 v_holdings 无行，as-of 侧同日推算为 0。
+    let holding_rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM v_holdings WHERE instrument_id='inst-sd'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(holding_rows, 0, "Holding 侧：软删账户批次不入 v_holdings");
+    let qty = holdings::holdings_as_of(&conn, Some("inst-sd"), "2026-06-01").unwrap();
+    assert!((qty - 0.0).abs() < 1e-9, "as-of「今天」= {qty}");
+
+    // 恢复账户（标志翻回）：流水自动回到推算，走势与基线逐点一致——口径可逆。
+    conn.execute("UPDATE accounts SET is_deleted=0 WHERE id='acc-sd'", [])
+        .unwrap();
+    assert_eq!(values(&conn), baseline);
+}
+
+#[test]
+fn portfolio_trend_keeps_hidden_account_flow() {
+    // 隐藏 ≠ 删除（#217 定案 Q2）：隐藏账户（is_hidden）不是软删除，其 buy/sell
+    // 流水照常计入逐期推算，与 v_holdings 不排隐藏账户一致。
+    let conn = setup_db();
+    insert_account(&conn, "acc-hid", "隐藏户", "investment", "CNY");
+    conn.execute("UPDATE accounts SET is_hidden=1 WHERE id='acc-hid'", [])
+        .unwrap();
+    insert_instrument(&conn, "inst-hd", "600036", "招商银行", "CNY");
+    insert_price_history(&conn, "ph-hd1", "inst-hd", "2026-02-02", 1000, "CNY");
+    insert_price_history(&conn, "ph-hd2", "inst-hd", "2026-02-09", 2000, "CNY");
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-hid",
+            "inst-hd",
+            10.0,
+            1500,
+            "2026-01-20",
+        ),
+    )
+    .unwrap();
+
+    let trend = trend::query_portfolio_value_trend(&conn, &TrendRange::default()).unwrap();
+    let values: Vec<(String, i64)> = trend
+        .points
+        .iter()
+        .map(|p| (p.date.clone(), p.market_value_cents))
+        .collect();
+    assert_eq!(
+        values,
+        [
+            ("2026-02-02".to_string(), 10000),
+            ("2026-02-09".to_string(), 20000),
+        ]
+    );
+    // Holding 侧同口径：v_holdings 不排隐藏账户，持仓行仍在。
+    let holding_rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM v_holdings WHERE instrument_id='inst-hd'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(holding_rows, 1);
+}
