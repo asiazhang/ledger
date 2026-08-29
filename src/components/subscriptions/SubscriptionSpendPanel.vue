@@ -87,7 +87,8 @@ const rowColumns: DataTableColumns<SubscriptionSpendRow> = [
   {
     title: '订阅',
     key: 'note',
-    render: (row) => row.note ?? row.counterparty ?? '—',
+    // 商户名为后端左联 merchants 现名（改名即时生效，软删后历史计划照常显示）
+    render: (row) => row.note ?? row.merchant_name ?? '—',
   },
   {
     title: '状态',

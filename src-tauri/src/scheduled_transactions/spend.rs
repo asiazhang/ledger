@@ -26,7 +26,9 @@ use crate::transaction::amount;
 pub struct SubscriptionSpendRow {
     pub plan_id: String,
     pub note: Option<String>,
-    pub counterparty: Option<String>,
+    /// 商户名（左联 merchants 现名，issue #190 / ADR-0028）：改名即时生效；
+    /// 商户软删后历史计划照常显示原名（merchants 行仍保留）。
+    pub merchant_name: Option<String>,
     /// 计划状态（active/paused/cancelled/completed），历史花费不受其影响。
     pub status: String,
     /// 每期金额（计划币种，原始口径）。
@@ -82,11 +84,11 @@ impl FromRow for PlanMonthSpend {
     }
 }
 
-/// 计划基础信息（扩展表 counterparty 左联，缺行为空）。
+/// 计划基础信息（扩展表 merchant 左联，缺行为空）。
 struct PlanBase {
     id: String,
     note: Option<String>,
-    counterparty: Option<String>,
+    merchant_name: Option<String>,
     status: String,
     amount_cents: i64,
     currency_code: String,
@@ -97,7 +99,7 @@ impl FromRow for PlanBase {
         Ok(PlanBase {
             id: row.get(0)?,
             note: row.get(1)?,
-            counterparty: row.get(2)?,
+            merchant_name: row.get(2)?,
             status: row.get(3)?,
             amount_cents: row.get(4)?,
             currency_code: row.get(5)?,
@@ -225,11 +227,13 @@ pub fn query_subscription_spend(
     }
 
     // 逐订阅行：全部订阅计划（不过滤状态），行内花费只汇总 12 个月窗口内的数据。
+    // 商户名左联 merchants 现名：改名即时生效（引用指向 id）；商户软删后历史计划照常显示。
     let bases: Vec<PlanBase> = query_all(
         conn,
-        "SELECT st.id, st.note, sp.counterparty, st.status, st.amount_cents, st.currency_code \
+        "SELECT st.id, st.note, m.name, st.status, st.amount_cents, st.currency_code \
          FROM scheduled_transactions st \
          LEFT JOIN subscription_plans sp ON sp.scheduled_transaction_id = st.id \
+         LEFT JOIN merchants m ON m.id = sp.merchant_id \
          WHERE st.kind = 'subscription' AND st.is_deleted = 0 \
          ORDER BY st.created_at DESC",
         [],
@@ -253,7 +257,7 @@ pub fn query_subscription_spend(
             SubscriptionSpendRow {
                 plan_id: b.id,
                 note: b.note,
-                counterparty: b.counterparty,
+                merchant_name: b.merchant_name,
                 status: b.status,
                 amount_cents: b.amount_cents,
                 currency_code: b.currency_code,

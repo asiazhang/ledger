@@ -209,7 +209,8 @@ pub struct ScheduledTransactionOccurrence {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstallmentPlan {
     pub scheduled_transaction_id: String,
-    pub counterparty: Option<String>,
+    /// 商户引用（issue #190 / ADR-0028）：counterparty 文本列改 merchant_id，硬删置空。
+    pub merchant_id: Option<String>,
     pub total_amount_cents: i64,
     pub total_occurrences: i64,
 }
@@ -217,7 +218,8 @@ pub struct InstallmentPlan {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubscriptionPlan {
     pub scheduled_transaction_id: String,
-    pub counterparty: Option<String>,
+    /// 商户引用（issue #190 / ADR-0028）。
+    pub merchant_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -243,8 +245,9 @@ pub struct CreateScheduledInput {
     pub recurrence_day: Option<i64>,
     pub start_date: String,
     pub note: Option<String>,
-    // Type-specific
-    pub counterparty: Option<String>,
+    // Type-specific（issue #190 / ADR-0028）：installment/subscription 携带商户；
+    // scheduled_transfer 行为层拒绝携带（见 engine::create_plan）。
+    pub merchant_id: Option<String>,
     pub total_amount_cents: Option<i64>,
     pub total_occurrences: Option<i64>,
     pub to_account_id: Option<String>,
@@ -269,14 +272,18 @@ where
 }
 
 /// 订阅编辑输入（issue #162，ADR-0023 决策三）：仅允许金额以外字段
-/// （备注、分类、扣款账户）。`amount_cents` / `total_amount_cents` 为兼容哨兵：
+/// （备注、分类、扣款账户、商户）。`amount_cents` / `total_amount_cents` 为兼容哨兵：
 /// 请求一旦携带即被后端显式拒绝——改价 = 取消旧计划 + 新建，不做「改价对未来生效」。
+/// `merchant_id` 与其他字段同款**全量替换**语义：未携带字段在调用方补齐当前值。
 #[derive(Debug, Deserialize)]
 pub struct UpdateSubscriptionInput {
     pub id: String,
     pub account_id: String,
     pub category_id: Option<String>,
     pub note: Option<String>,
+    /// 商户引用（issue #190 / ADR-0028）：可改商户，编辑只影响未来期次
+    /// （期次执行时从计划扩展表读取 merchant_id）。
+    pub merchant_id: Option<String>,
     #[serde(default, deserialize_with = "de_amount_sentinel")]
     pub amount_cents: bool,
     #[serde(default, deserialize_with = "de_amount_sentinel")]
@@ -291,7 +298,8 @@ pub struct ExecuteOccurrenceInput {
 #[derive(Debug, Serialize)]
 pub struct ScheduledTransactionWithExt {
     pub core: ScheduledTransaction,
-    pub counterparty: Option<String>,
+    /// 商户 id（installment/subscription 可携带；scheduled_transfer 恒为 None）。
+    pub merchant_id: Option<String>,
     pub total_amount_cents: Option<i64>,
     pub total_occurrences: Option<i64>,
     pub to_account_id: Option<String>,
@@ -355,7 +363,7 @@ impl FromRow for InstallmentPlan {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
         Ok(InstallmentPlan {
             scheduled_transaction_id: row.get(0)?,
-            counterparty: row.get(1)?,
+            merchant_id: row.get(1)?,
             total_amount_cents: row.get(2)?,
             total_occurrences: row.get(3)?,
         })
@@ -366,7 +374,7 @@ impl FromRow for SubscriptionPlan {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
         Ok(SubscriptionPlan {
             scheduled_transaction_id: row.get(0)?,
-            counterparty: row.get(1)?,
+            merchant_id: row.get(1)?,
         })
     }
 }
