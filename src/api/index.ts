@@ -46,6 +46,7 @@ import type {
   PnlFilter,
   PortfolioValueTrend,
   PruneResult,
+  YearRange,
   RealizedPnlSummary,
   RestoreResult,
   TransactionTrade,
@@ -138,6 +139,8 @@ export const api = {
   dashboardOverview: () => invoke<DashboardOverview>('dashboard_overview'),
 
   // 报表
+  // 年份筛选范围（issue #266）：数据驱动闭区间，前端拉一次平铺年份下拉
+  reportYearRange: () => invoke<YearRange>('report_year_range'),
   monthlySummary: (year: number) => invoke<MonthlySummary[]>('monthly_summary', { year }),
   merchantShares: (year: number) => invoke<MerchantShare[]>('merchant_shares', { year }),
   categoryShares: (kind: string, month?: string) =>

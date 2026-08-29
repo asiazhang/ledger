@@ -1,3 +1,10 @@
+/** 报表年份筛选范围（issue #266）：数据驱动的闭区间
+ *  [最早交易年份, max(当前年, 最新交易年份)]，空库回退 [当前年, 当前年]。 */
+export interface YearRange {
+  min_year: number
+  max_year: number
+}
+
 export interface MonthlySummary {
   month: string
   income_cents: number
