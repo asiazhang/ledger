@@ -118,14 +118,24 @@ const INVESTED_EXISTS: &str = "EXISTS (SELECT 1 FROM security_lots l WHERE l.ins
      AND l.remaining_quantity > 0 \
      AND l.account_id IN (SELECT id FROM accounts WHERE is_deleted = 0))";
 
+/// 标的搜索的匹配目标：「代码 · 名称」label 等价文本（与投资表单标的下拉的
+/// 选项 label 一致；无名称时退化为裸代码）。收口为具名函数，语义变更只改这里。
+fn instrument_match_label(inst: &Instrument) -> String {
+    match inst.name.as_deref().filter(|n| !n.is_empty()) {
+        Some(name) => format!("{} · {}", inst.symbol, name),
+        None => inst.symbol.clone(),
+    }
+}
+
 pub(crate) fn list_instruments(
     conn: &Connection,
     filter: &InstrumentListFilter,
 ) -> Result<InstrumentListResult> {
     // 关键字过滤走统一模糊搜索语义（ADR-0027，复用全局搜索纯函数）：词条之间
     // AND，命中 = 原文连续子串 ∨ 拼音首字母子序列（大小写不敏感）。判定目标为
-    // 下拉 label 等价文本「代码 · 名称」，与前端 PinyinSelect 过滤的 label 一致。
-    // 子序列匹配无法下推 SQL，故有搜索词时取候选后 Rust 内存过滤再内存分页。
+    // 「代码 · 名称」label 等价文本（instrument_match_label，与投资表单标的
+    // 下拉的 label 一致）。子序列匹配无法下推 SQL，故有搜索词时取候选后
+    // Rust 内存过滤再内存分页。
     let search_terms = filter
         .search
         .as_deref()
@@ -171,20 +181,13 @@ pub(crate) fn list_instruments(
         let matched: Vec<Instrument> = all
             .into_iter()
             .filter(|inst| {
-                let mut label = inst.symbol.clone();
-                if let Some(name) = inst.name.as_deref().filter(|n| !n.is_empty()) {
-                    label.push_str(" · ");
-                    label.push_str(name);
-                }
-                terms.iter().all(|t| term_matches_text(t, &label))
+                terms
+                    .iter()
+                    .all(|t| term_matches_text(t, &instrument_match_label(inst)))
             })
             .collect();
         let total = matched.len() as i64;
-        let items = matched
-            .into_iter()
-            .skip(offset as usize)
-            .take(page_size as usize)
-            .collect();
+        let items = matched.into_iter().skip(offset).take(page_size).collect();
         (total, items)
     } else {
         let total: i64 = conn.query_row(
@@ -198,7 +201,11 @@ pub(crate) fn list_instruments(
         let params_ref: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
         let items = query_all(
             conn,
-            &select_sql(&format!(" LIMIT ?{} OFFSET ?{}", params.len() - 1, params.len())),
+            &select_sql(&format!(
+                " LIMIT ?{} OFFSET ?{}",
+                params.len() - 1,
+                params.len()
+            )),
             params_ref.as_slice(),
         )?;
         (total, items)

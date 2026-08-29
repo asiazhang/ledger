@@ -43,7 +43,7 @@ export function useRealizedPnl() {
       try {
         const res = await api.listInstruments({ search: query.trim(), page_size: 50 })
         searchInstrumentOptions.value = res.items.map((i) => ({
-          label: `${i.symbol}${i.name ? ` - ${i.name}` : ''}`,
+          label: `${i.symbol}${i.name ? ` · ${i.name}` : ''}`,
           value: i.id,
         }))
       } catch {

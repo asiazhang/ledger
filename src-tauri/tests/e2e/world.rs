@@ -85,6 +85,8 @@ pub struct LedgerWorld {
     pub last_occurrence_id: Option<String>,
     /// 最近一次交易搜索结果快照（搜索场景断言用）
     pub last_search: Option<TransactionSearchResult>,
+    /// 最近一次标的搜索结果快照（标的搜索语义场景断言用，issue #199）
+    pub last_instrument_search: Option<tauri_app_lib::models::InstrumentListResult>,
     /// 最近创建的物品 id（物品场景断言用）
     pub last_item_id: Option<String>,
     /// 最近一次物品写入发出的失效信号次数（ledger:changed 注入 seam 断言用）
@@ -163,6 +165,7 @@ impl LedgerWorld {
             last_plan_id: None,
             last_occurrence_id: None,
             last_search: None,
+            last_instrument_search: None,
             last_overview: None,
             last_spend: None,
             last_budget_progress: Vec::new(),

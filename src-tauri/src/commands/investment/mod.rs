@@ -103,6 +103,15 @@ pub fn list_instruments(
     crud::list_instruments(&conn, &filter)
 }
 
+/// 测试/e2e 入口：绕过 Tauri State 直接对连接执行标的列表查询
+/// （先例：`search::search_transactions_internal`，供 BDD 步骤复用同一实现）。
+pub fn list_instruments_internal(
+    conn: &rusqlite::Connection,
+    filter: &InstrumentListFilter,
+) -> Result<InstrumentListResult> {
+    crud::list_instruments(conn, filter)
+}
+
 #[tauri::command]
 pub fn get_transaction_trade(
     db: tauri::State<'_, DbState>,
