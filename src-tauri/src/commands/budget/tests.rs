@@ -5,7 +5,9 @@
 use chrono::NaiveDate;
 use rusqlite::Connection;
 
-use crate::commands::budget::{budget_progress_rows, create_budget_internal};
+use crate::commands::budget::{
+    budget_progress_rows, create_budget_internal, update_budget_internal,
+};
 use crate::db::{device_id, now_iso};
 use crate::error::AppError;
 use crate::models::{BudgetInput, BudgetPeriod};
@@ -281,7 +283,7 @@ fn create_budget_rejects_duplicate_monthly_and_keeps_original() {
     )
     .unwrap_err();
     assert!(
-        matches!(err, AppError::Invalid(ref m) if m == "该分类已存在按月预算"),
+        matches!(err, AppError::Invalid(ref m) if m == "该分类已存在按月预算，可编辑该预算的金额"),
         "{err:?}"
     );
     let (amount, start): (i64, String) = conn
@@ -315,7 +317,7 @@ fn create_budget_rejects_duplicate_yearly() {
     )
     .unwrap_err();
     assert!(
-        matches!(err, AppError::Invalid(ref m) if m == "该分类已存在按年预算"),
+        matches!(err, AppError::Invalid(ref m) if m == "该分类已存在按年预算，可编辑该预算的金额"),
         "{err:?}"
     );
 }
@@ -368,6 +370,107 @@ fn create_budget_allows_recreate_after_soft_delete() {
     )
     .unwrap();
     assert_eq!(budget_count(&conn), 2);
+}
+
+// ---- update_budget_internal：编辑金额（issue #184） ----
+
+/// 编辑后金额生效，同步字段沿用软删除同一套机制：version +1、device_id 更新。
+#[test]
+fn update_budget_changes_amount_and_bumps_version() {
+    let conn = setup();
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(
+        &conn,
+        "budget-edit",
+        &cat_id,
+        "monthly",
+        50000,
+        "2026-07-01",
+    );
+    update_budget_internal(&conn, "budget-edit", 80000).unwrap();
+    let (amount, version): (i64, i64) = conn
+        .query_row(
+            "SELECT amount_cents,version FROM budgets WHERE id='budget-edit'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(amount, 80000);
+    assert_eq!(version, 2, "编辑应 version+1");
+    assert_eq!(budget_count(&conn), 1, "编辑不得新增行");
+}
+
+/// 编辑金额非正被拒绝（复用创建侧金额校验）。
+#[test]
+fn update_budget_rejects_non_positive_amount() {
+    let conn = setup();
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(
+        &conn,
+        "budget-edit2",
+        &cat_id,
+        "monthly",
+        50000,
+        "2026-07-01",
+    );
+    for amount in [0, -100] {
+        let err = update_budget_internal(&conn, "budget-edit2", amount).unwrap_err();
+        assert!(
+            matches!(err, AppError::Invalid(ref m) if m.contains("预算金额必须为正数")),
+            "金额 {amount} 应被拒绝: {err:?}"
+        );
+    }
+    let amount: i64 = conn
+        .query_row(
+            "SELECT amount_cents FROM budgets WHERE id='budget-edit2'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(amount, 50000, "被拒编辑不得改动原金额");
+}
+
+/// 编辑不存在的预算（含已软删）被拒绝（NotFound）。
+#[test]
+fn update_budget_rejects_missing_or_deleted_budget() {
+    let conn = setup();
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(
+        &conn,
+        "budget-gone",
+        &cat_id,
+        "monthly",
+        50000,
+        "2026-07-01",
+    );
+    conn.execute("UPDATE budgets SET is_deleted=1 WHERE id='budget-gone'", [])
+        .unwrap();
+    let err = update_budget_internal(&conn, "budget-gone", 1000).unwrap_err();
+    assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
+    let err = update_budget_internal(&conn, "no-such-budget", 1000).unwrap_err();
+    assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
+}
+
+/// 预算的分类已删除时编辑被拒（复用创建侧分类校验）。
+#[test]
+fn update_budget_rejects_when_category_deleted() {
+    let conn = setup();
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(
+        &conn,
+        "budget-orphan",
+        &cat_id,
+        "monthly",
+        50000,
+        "2026-07-01",
+    );
+    conn.execute(
+        "UPDATE categories SET is_deleted=1 WHERE id=?1",
+        rusqlite::params![cat_id],
+    )
+    .unwrap();
+    let err = update_budget_internal(&conn, "budget-orphan", 1000).unwrap_err();
+    assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
 }
 
 // ---- budget_progress_rows：expense_net 口径 ----

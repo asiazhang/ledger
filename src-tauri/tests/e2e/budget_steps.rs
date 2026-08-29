@@ -11,7 +11,9 @@ use chrono::{Datelike, Months, NaiveDate};
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::commands::budget::{budget_progress_rows, create_budget_internal};
+use tauri_app_lib::commands::budget::{
+    budget_progress_rows, create_budget_internal, update_budget_internal,
+};
 use tauri_app_lib::commands::transactions::insert_transaction;
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
 use tauri_app_lib::models::{BudgetInput, TransactionInput};
@@ -232,6 +234,29 @@ fn create_budget_via_command(world: &mut LedgerWorld, name: String, period: Stri
 }
 
 // ---------------------------------------------------------------------------
+// When：编辑预算金额（issue #184）
+// ---------------------------------------------------------------------------
+
+/// 经核心函数 `update_budget_internal`（命令外壳同款）编辑预算金额：
+/// 成功清空 last_error，失败记入 last_error 供拒绝路径断言。
+#[when(expr = "通过预算命令编辑分类 {string} 的预算金额为 {int}")]
+fn update_budget_via_command(world: &mut LedgerWorld, name: String, amount: i64) {
+    let cat_id = category_id_any(&world.conn, &name);
+    let budget_id: String = world
+        .conn
+        .query_row(
+            "SELECT id FROM budgets WHERE category_id=?1 AND is_deleted=0 LIMIT 1",
+            params![cat_id],
+            |r| r.get(0),
+        )
+        .unwrap_or_else(|e| panic!("分类 '{}' 没有可编辑的预算: {e}", name));
+    world.last_error = match update_budget_internal(&world.conn, &budget_id, amount) {
+        Ok(_) => None,
+        Err(e) => Some(e.to_string()),
+    };
+}
+
+// ---------------------------------------------------------------------------
 // When
 // ---------------------------------------------------------------------------
 
@@ -319,6 +344,35 @@ fn assert_create_budget_succeeded(world: &mut LedgerWorld) {
         world.last_error.is_none(),
         "预期创建成功，实际错误: {:?}",
         world.last_error
+    );
+}
+
+#[then(expr = "编辑预算应失败并提示 {string}")]
+fn assert_update_budget_failed(world: &mut LedgerWorld, needle: String) {
+    assert_last_error_contains(world, &needle);
+}
+
+#[then(expr = "编辑预算应成功")]
+fn assert_update_budget_succeeded(world: &mut LedgerWorld) {
+    assert!(
+        world.last_error.is_none(),
+        "预期编辑成功，实际错误: {:?}",
+        world.last_error
+    );
+}
+
+/// 经进度读路径断言编辑后的金额（保存后列表/进度即时反映新金额）。
+#[then(expr = "分类 {string} 的预算金额应为 {int}")]
+fn assert_budget_amount(world: &mut LedgerWorld, name: String, expected: i64) {
+    let row = world
+        .last_budget_progress
+        .iter()
+        .find(|p| p.category_name == name)
+        .unwrap_or_else(|| panic!("预算进度中不存在分类 '{}'", name));
+    assert_eq!(
+        row.budget.amount_cents, expected,
+        "分类 '{}' 的预算金额不符",
+        name
     );
 }
 

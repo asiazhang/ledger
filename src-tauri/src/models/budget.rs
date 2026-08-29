@@ -73,6 +73,12 @@ pub struct BudgetInput {
     pub start_date: String,
 }
 
+/// 预算编辑入参（issue #184）：仅允许修改金额，分类/周期不可改（改法为删旧建新）。
+#[derive(Debug, Deserialize)]
+pub struct BudgetUpdateInput {
+    pub amount_cents: i64,
+}
+
 #[derive(Debug, Serialize)]
 pub struct BudgetProgress {
     pub budget: Budget,

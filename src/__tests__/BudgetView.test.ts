@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
-import { NSelect, NInputNumber, NDatePicker } from 'naive-ui'
+import { NSelect, NInputNumber, NDatePicker, NModal } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import BudgetView from '@/views/BudgetView.vue'
-import type { Category, Currency } from '@/types'
+import type { BudgetProgress, Category, Currency } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -54,7 +54,41 @@ const mockCategories: Category[] = [
   },
 ]
 
-/** 挂载视图（参考数据经 store ensureFresh 注入），flush 后就绪。 */
+const mockProgress: BudgetProgress = {
+  budget: {
+    id: 'budget-1',
+    category_id: 'cat-1',
+    period: 'monthly',
+    amount_cents: 50000,
+    start_date: '2026-07-01',
+    created_at: '2026-07-01T00:00:00Z',
+    updated_at: '2026-07-01T00:00:00Z',
+    version: 1,
+    device_id: 'dev-1',
+    is_deleted: false,
+  },
+  category_name: '餐饮',
+  spent_cents: 20000,
+  over_budget: false,
+}
+
+/** 基础 invoke mock：参考数据 + 空预算进度。 */
+function baseInvokeImpl(cmd: string, progress: BudgetProgress[] = []): unknown {
+  if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
+  if (cmd === 'list_accounts') return Promise.resolve([])
+  if (cmd === 'list_categories') return Promise.resolve(mockCategories)
+  if (cmd === 'list_merchants') return Promise.resolve([])
+  if (cmd === 'budget_progress') return Promise.resolve(progress)
+  return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+}
+
+/** 挂载前注入进度行（编辑弹窗用例用）。 */
+function withProgress(progress: BudgetProgress[]) {
+  mockInvoke.mockImplementation((cmd: string) => baseInvokeImpl(cmd, progress))
+}
+
+/** 挂载视图（参考数据经 store ensureFresh 注入），flush 后就绪。
+ *  需自定义 invoke 返回（进度行/override）时，在调用本函数前 mockImplementation。 */
 async function mountView() {
   const wrapper = mount(BudgetView)
   await flushPromises()
@@ -66,14 +100,32 @@ function pickCategory(wrapper: Awaited<ReturnType<typeof mountView>>, id: string
   wrapper.findComponent(NSelect).vm.$emit('update:value', id)
 }
 
-/** 填金额与起始月并点击「添加」。起始月固定 2026-07（UTC 时间戳，toISOString 口径为 '2026-07-01'）。 */
+/** 填金额并点击「添加」。 */
 async function submitAmount(wrapper: Awaited<ReturnType<typeof mountView>>, amount: number) {
   wrapper.findComponent(NInputNumber).vm.$emit('update:value', amount)
-  wrapper.findComponent(NDatePicker).vm.$emit('update:value', Date.UTC(2026, 6, 1))
   const add = wrapper.findAll('button').find((b) => b.text() === '添加')
   expect(add, '应存在「添加」按钮').toBeDefined()
   await add!.trigger('click')
   await flushPromises()
+}
+
+/** 打开编辑弹窗：点击列表首行「编辑」按钮。 */
+async function openEditModal(wrapper: Awaited<ReturnType<typeof mountView>>) {
+  const edit = wrapper.findAll('button').find((b) => b.text() === '编辑')
+  expect(edit, '操作列应存在「编辑」按钮').toBeDefined()
+  await edit!.trigger('click')
+  await flushPromises()
+}
+
+/** 编辑弹窗内容由 NModal teleport 到 body，按钮与文案从 document.body 查询。 */
+function bodyButtons() {
+  return Array.from(document.body.querySelectorAll('button'))
+}
+
+function bodyButton(text: string, label: string) {
+  const btn = bodyButtons().find((b) => b.textContent?.trim() === text)
+  expect(btn, `应存在「${text}」按钮（${label}）`).toBeDefined()
+  return btn!
 }
 
 beforeEach(async () => {
@@ -82,14 +134,7 @@ beforeEach(async () => {
   messageApi.success.mockReset()
   messageApi.warning.mockReset()
   messageApi.error.mockReset()
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-    if (cmd === 'list_merchants') return Promise.resolve([])
-    if (cmd === 'budget_progress') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-  })
+  mockInvoke.mockImplementation((cmd: string) => baseInvokeImpl(cmd))
   const store = useReferenceStore()
   await store.ensureFresh()
 })
@@ -104,6 +149,11 @@ describe('BudgetView 预算表单（issue #183）', () => {
     expect(options).toEqual([{ label: '餐饮', value: 'cat-1' }])
   })
 
+  it('表单无日期选择器（issue #184：设置预算只剩分类与金额）', async () => {
+    const wrapper = await mountView()
+    expect(wrapper.findComponent(NDatePicker).exists()).toBe(false)
+  })
+
   it('金额非正前置拦截，不发起后端调用', async () => {
     const wrapper = await mountView()
     pickCategory(wrapper, 'cat-1')
@@ -112,15 +162,10 @@ describe('BudgetView 预算表单（issue #183）', () => {
     expect(mockInvoke).not.toHaveBeenCalledWith('create_budget', expect.anything())
   })
 
-  it('提交成功清空表单并提示', async () => {
+  it('提交成功清空表单并提示；start_date 仅作记录字段传创建当日（issue #184）', async () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'create_budget') return Promise.resolve('budget-1')
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve([])
-      if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-      if (cmd === 'list_merchants') return Promise.resolve([])
-      if (cmd === 'budget_progress') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return baseInvokeImpl(cmd)
     })
     const wrapper = await mountView()
     pickCategory(wrapper, 'cat-1')
@@ -129,27 +174,90 @@ describe('BudgetView 预算表单（issue #183）', () => {
       input: {
         category_id: 'cat-1',
         amount_cents: 50000,
-        start_date: '2026-07-01',
+        start_date: new Date().toISOString().slice(0, 10),
       },
     })
     expect(messageApi.success).toHaveBeenCalledWith('已创建预算')
   })
 
-  it('提交失败把后端中文错误清晰呈现（AppError 序列化形态）', async () => {
+  it('查重失败把后端中文错误清晰呈现，提示引导编辑已有预算（issue #184）', async () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'create_budget') {
-        return Promise.reject({ kind: 'Invalid', message: '该分类已存在按月预算' })
+        return Promise.reject({ kind: 'Invalid', message: '该分类已存在按月预算，可编辑该预算的金额' })
       }
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve([])
-      if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-      if (cmd === 'list_merchants') return Promise.resolve([])
-      if (cmd === 'budget_progress') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return baseInvokeImpl(cmd)
     })
     const wrapper = await mountView()
     pickCategory(wrapper, 'cat-1')
     await submitAmount(wrapper, 100)
-    expect(messageApi.error).toHaveBeenCalledWith('创建失败: 该分类已存在按月预算')
+    expect(messageApi.error).toHaveBeenCalledWith(
+      '创建失败: 该分类已存在按月预算，可编辑该预算的金额',
+    )
+  })
+})
+
+describe('BudgetView 编辑预算金额（issue #184）', () => {
+  it('列表操作列有「编辑」入口，弹窗仅金额可改（分类/周期只读，无日期选择器）', async () => {
+    withProgress([mockProgress])
+    const wrapper = await mountView()
+    expect(wrapper.text()).not.toContain('开始日期')
+    await openEditModal(wrapper)
+    const modal = wrapper.findComponent(NModal)
+    expect(modal.exists()).toBe(true)
+    // 弹窗内只有一个金额输入框，无分类下拉、无日期选择器
+    expect(modal.findAllComponents(NInputNumber).length).toBe(1)
+    expect(modal.findComponent(NSelect).exists()).toBe(false)
+    expect(modal.findComponent(NDatePicker).exists()).toBe(false)
+    // 分类/周期以只读文案展示（teleport 到 body）
+    expect(document.body.textContent).toContain('餐饮')
+    expect(document.body.textContent).toContain('按月')
+  })
+
+  it('弹窗回填当前金额，保存调用 update_budget 并刷新列表', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'update_budget') return Promise.resolve(null)
+      return baseInvokeImpl(cmd, [mockProgress])
+    })
+    const wrapper = await mountView()
+    await openEditModal(wrapper)
+    const modal = wrapper.findComponent(NModal)
+    const input = modal.findComponent(NInputNumber)
+    expect(input.props('value')).toBe(500) // 回填 50000 分 = 500 元
+    input.vm.$emit('update:value', 800)
+    const save = bodyButton('保存', '编辑弹窗')
+    save.click()
+    await flushPromises()
+    expect(mockInvoke).toHaveBeenCalledWith('update_budget', {
+      id: 'budget-1',
+      input: { amount_cents: 80000 },
+    })
+    expect(messageApi.success).toHaveBeenCalledWith('已更新预算')
+    expect(messageApi.error).not.toHaveBeenCalled()
+  })
+
+  it('弹窗金额非正前置拦截，不发起后端调用', async () => {
+    withProgress([mockProgress])
+    const wrapper = await mountView()
+    await openEditModal(wrapper)
+    const modal = wrapper.findComponent(NModal)
+    modal.findComponent(NInputNumber).vm.$emit('update:value', 0)
+    bodyButton('保存', '编辑弹窗').click()
+    await flushPromises()
+    expect(messageApi.warning).toHaveBeenCalledWith('预算金额必须为正数')
+    expect(mockInvoke).not.toHaveBeenCalledWith('update_budget', expect.anything())
+  })
+
+  it('保存失败把后端错误清晰呈现', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'update_budget') {
+        return Promise.reject({ kind: 'NotFound', message: '预算不存在: budget-1' })
+      }
+      return baseInvokeImpl(cmd, [mockProgress])
+    })
+    const wrapper = await mountView()
+    await openEditModal(wrapper)
+    bodyButton('保存', '编辑弹窗').click()
+    await flushPromises()
+    expect(messageApi.error).toHaveBeenCalledWith('更新失败: 预算不存在: budget-1')
   })
 })

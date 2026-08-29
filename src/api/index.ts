@@ -11,6 +11,7 @@ import type {
   Budget,
   BudgetInput,
   BudgetProgress,
+  BudgetUpdateInput,
   Category,
   CategoryInput,
   CategoryUpdateInput,
@@ -129,6 +130,8 @@ export const api = {
   // 预算
   listBudgets: () => invoke<Budget[]>('list_budgets'),
   createBudget: (input: BudgetInput) => invoke<string>('create_budget', { input }),
+  updateBudget: (id: string, input: BudgetUpdateInput) =>
+    invoke<void>('update_budget', { id, input }),
   deleteBudget: (id: string) => invoke<void>('delete_budget', { id }),
 
   // 首页财务全貌

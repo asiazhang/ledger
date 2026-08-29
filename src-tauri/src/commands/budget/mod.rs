@@ -1,4 +1,4 @@
-//! 预算（issue #91 创建，issue #58 迁移 Amount 口径，issue #182 滚动窗口）：
+//! 预算（issue #91 创建，issue #58 迁移 Amount 口径，issue #182 滚动窗口，issue #184 编辑金额）：
 //! 命令外壳 + 内嵌测试外迁。
 //!
 //! 目录组织：
@@ -21,7 +21,7 @@ use tauri::State;
 use crate::db::query::query_all;
 use crate::db::{DbState, device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::models::{Budget, BudgetInput, BudgetPeriod, BudgetProgress};
+use crate::models::{Budget, BudgetInput, BudgetPeriod, BudgetProgress, BudgetUpdateInput};
 use crate::transaction::amount::{Measure, contributing_kinds_sql, expense_net_expr};
 
 #[tauri::command]
@@ -35,34 +35,37 @@ pub fn list_budgets(db: State<'_, DbState>) -> Result<Vec<Budget>> {
     )
 }
 
-/// 预算写入校验与落库核心（issue #183）：命令外壳与测试共用。三条底线——
-/// 1) 金额必须为正数；2) 只能挂支出分类（收入分类与不存在的分类均拒绝）；
-/// 3) 同「分类 + 周期」已有未删除预算时明确拒绝（中文提示），不静默覆盖。
-pub fn create_budget_internal(conn: &Connection, input: &BudgetInput) -> Result<String> {
-    if input.amount_cents <= 0 {
+/// 金额与分类校验（issue #184 起 create 与 update 共用）：金额必须为正数；
+/// 只能挂支出分类（收入分类与不存在的分类均拒绝）。
+fn validate_amount_and_category(
+    conn: &Connection,
+    category_id: &str,
+    amount_cents: i64,
+) -> Result<()> {
+    if amount_cents <= 0 {
         return Err(AppError::Invalid("预算金额必须为正数".into()));
     }
     let kind: Option<String> = conn
         .query_row(
             "SELECT kind FROM categories WHERE id=?1 AND is_deleted=0",
-            rusqlite::params![input.category_id],
+            rusqlite::params![category_id],
             |r| r.get(0),
         )
         .optional()?;
     match kind.as_deref() {
-        None => {
-            return Err(AppError::NotFound(format!(
-                "分类不存在: {}",
-                input.category_id
-            )));
-        }
-        Some("expense") => {}
-        Some(other) => {
-            return Err(AppError::Invalid(format!(
-                "预算只能设置在支出分类上（该分类为{other}分类）"
-            )));
-        }
+        None => Err(AppError::NotFound(format!("分类不存在: {}", category_id))),
+        Some("expense") => Ok(()),
+        Some(other) => Err(AppError::Invalid(format!(
+            "预算只能设置在支出分类上（该分类为{other}分类）"
+        ))),
     }
+}
+
+/// 预算写入校验与落库核心（issue #183）：命令外壳与测试共用。三条底线——
+/// 1) 金额必须为正数；2) 只能挂支出分类（金额与分类校验经 [`validate_amount_and_category`]）；
+/// 3) 同「分类 + 周期」已有未删除预算时明确拒绝（中文提示并引导编辑），不静默覆盖。
+pub fn create_budget_internal(conn: &Connection, input: &BudgetInput) -> Result<String> {
+    validate_amount_and_category(conn, &input.category_id, input.amount_cents)?;
     let period = input.period.unwrap_or(BudgetPeriod::Monthly);
     let duplicate: Option<i64> = conn
         .query_row(
@@ -76,7 +79,9 @@ pub fn create_budget_internal(conn: &Connection, input: &BudgetInput) -> Result<
             BudgetPeriod::Monthly => "按月",
             BudgetPeriod::Yearly => "按年",
         };
-        return Err(AppError::Invalid(format!("该分类已存在{label}预算")));
+        return Err(AppError::Invalid(format!(
+            "该分类已存在{label}预算，可编辑该预算的金额"
+        )));
     }
     let id = new_uuid();
     let now = now_iso();
@@ -102,6 +107,32 @@ pub fn create_budget_internal(conn: &Connection, input: &BudgetInput) -> Result<
 pub fn create_budget(db: State<'_, DbState>, input: BudgetInput) -> Result<String> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     create_budget_internal(&conn, &input)
+}
+
+/// 预算编辑核心（issue #184）：仅修改金额，沿用软删除同一套
+/// updated_at/version/device_id 更新机制；金额与支出分类校验复用创建侧逻辑。
+/// 分类/周期不可改（改法为删旧建新）。
+pub fn update_budget_internal(conn: &Connection, id: &str, amount_cents: i64) -> Result<()> {
+    let category_id: String = conn
+        .query_row(
+            "SELECT category_id FROM budgets WHERE id=?1 AND is_deleted=0",
+            rusqlite::params![id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .ok_or_else(|| AppError::NotFound(format!("预算不存在: {id}")))?;
+    validate_amount_and_category(conn, &category_id, amount_cents)?;
+    conn.execute(
+        "UPDATE budgets SET amount_cents=?2, updated_at=?3, version=version+1, device_id=?4 WHERE id=?1",
+        rusqlite::params![id, amount_cents, now_iso(), device_id()],
+    )?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_budget(db: State<'_, DbState>, id: String, input: BudgetUpdateInput) -> Result<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    update_budget_internal(&conn, &id, input.amount_cents)
 }
 
 #[tauri::command]
