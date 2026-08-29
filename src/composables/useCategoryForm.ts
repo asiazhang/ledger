@@ -3,9 +3,10 @@ import { useMessage } from 'naive-ui'
 import type { TreeSelectOption } from 'naive-ui'
 import { api } from '@/api'
 import { centsToYuan } from '@/types'
+import { buildExpenseIncomeInput } from '@/domain/transaction-input'
 import { useReferenceStore } from '@/stores/reference'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
-import type { Transaction, UpdateTransactionInput } from '@/types'
+import type { Transaction } from '@/types'
 import { errorMessage } from "@/utils/errors";
 
 export function useCategoryForm(
@@ -35,8 +36,8 @@ export function useCategoryForm(
 
   // 编辑模式（issue #178）：打开即回填该笔交易全部业务字段（编辑态声明提前：
   // 下方的商户选项/回填均依赖 editingTx）。金额经 centsToYuan 按币种小数位
-  // 换算（不手写 /100）；日期以 UTC 午夜回填，与提交端 toISOString 切片
-  // 同一口径，不改往返无损。
+  // 换算（不手写 /100）；日期以 UTC 午夜时间戳承载回填，提交端日期转换
+  // 收口装配器 toLocalDateISO（issue #216）。
   const editingTx = options?.editing?.() ?? null
 
   const treeOptions = computed<TreeSelectOption[]>(() => reference.treeCategoryOptions(kind) as unknown as TreeSelectOption[])
@@ -105,21 +106,24 @@ export function useCategoryForm(
       message.warning('请输入金额')
       return
     }
-    // 同一入参对象形状（issue #178）：创建/编辑共用 UpdateTransactionInput 形状
-    // （幂等键不可编辑，TransactionInput 的其余字段均被覆盖）
-    const input: UpdateTransactionInput = {
-      kind,
-      amount_cents: Math.round(amount.value * 100),
-      currency_code: currencyCode.value,
-      account_id: accountId.value,
-      category_id: categoryId.value,
-      merchant_id: await resolveMerchantId(),
-      note: note.value || null,
-      date: new Date(date.value).toISOString().slice(0, 10),
-    }
+    // 商户解析留表单层（异步 + 即建/重拉副作用，issue #189）：装配器收已解析的 id
+    const merchantId = await resolveMerchantId()
     // 编辑目标提交时重读（getter 约定见 options.editing 注释）
     const editing = options?.editing?.() ?? null
     try {
+      // wire 字段拼装收口 TransactionInput 装配器（issue #216）：创建/编辑共用
+      // 同一装配结果（UpdateTransactionInput 与 TransactionInput 字段同构，
+      // 幂等键不可编辑）；金额元转分与本地日期转换均为装配器实现细节
+      const input = buildExpenseIncomeInput({
+        kind,
+        amount: amount.value,
+        currencyCode: currencyCode.value,
+        accountId: accountId.value,
+        categoryId: categoryId.value,
+        merchantId,
+        note: note.value,
+        date: date.value,
+      })
       if (editing) {
         await api.updateTransaction(editing.id, input)
         message.success('已保存修改')

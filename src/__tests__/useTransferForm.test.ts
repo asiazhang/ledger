@@ -57,16 +57,9 @@ describe('useTransferForm', () => {
 
     await form.submit()
 
+    // 提交路由：创建命令 + 正确 kind；wire 字段形状由装配器测试承担（issue #216）
     expect(mockInvoke).toHaveBeenCalledWith('create_transaction', {
-      input: {
-        kind: 'transfer',
-        amount_cents: 20000,
-        currency_code: 'CNY',
-        account_id: 'acc-1',
-        to_account_id: 'acc-2',
-        note: null,
-        date: expect.any(String),
-      },
+      input: expect.objectContaining({ kind: 'transfer' }),
     })
   })
 
@@ -112,17 +105,16 @@ describe('useTransferForm', () => {
 
       await form.submit()
 
+      // 提交路由：更新命令携带交易 id + 用户改动字段交接装配结果；
+      // 金额/日期转换与占位字段由装配器测试承担（issue #216）
       expect(mockInvoke).toHaveBeenCalledWith('update_transaction', {
         id: 'txn-100',
-        input: {
+        input: expect.objectContaining({
           kind: 'transfer',
-          amount_cents: 30000,
-          currency_code: 'CNY',
           account_id: 'acc-2',
           to_account_id: 'acc-1',
           note: '房租',
-          date: '2026-03-01',
-        },
+        }),
       })
       expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction')).toHaveLength(0)
       expect(onUpdated).toHaveBeenCalledTimes(1)

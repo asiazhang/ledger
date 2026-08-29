@@ -3,12 +3,12 @@ import { useMessage } from 'naive-ui'
 import { api } from '@/api'
 import { centsToYuan } from '@/types'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
+import { buildTradeInput } from '@/domain/transaction-input'
 import { errorMessage } from '@/utils/errors'
 import type {
   Instrument,
   Transaction,
   TransactionTrade,
-  UpdateTransactionInput,
 } from '@/types'
 
 export function useInvestmentForm(
@@ -64,8 +64,9 @@ export function useInvestmentForm(
   })
 
   // 编辑回填（issue #180）：打开即回填该笔 buy/sell 全部业务字段。价格/费用经
-  // centsToYuan 按币种小数位换算（不手写 /100）；日期以 UTC 午夜回填，与提交端
-  // toISOString 切片同一口径，不改往返无损。明细缺失时（父层未取到 trade）不回填。
+  // centsToYuan 按币种小数位换算（不手写 /100）；日期以 UTC 午夜时间戳承载回填，
+  // 提交端日期转换收口装配器 toLocalDateISO（issue #216）。明细缺失时（父层未取到
+  // trade）不回填。
   const editingTx = options?.editing?.() ?? null
   const editingTrade = options?.trade?.() ?? null
   const seededInstrumentOption = editingTrade
@@ -137,26 +138,23 @@ export function useInvestmentForm(
       return
     }
 
-    // 同一入参对象形状（issue #178/#180）：创建/编辑共用 UpdateTransactionInput 形状
-    // （幂等键不可编辑）。buy/sell 金额由后端行为层按数量×单价±手续费重算，amount_cents 恒传 0。
-    const input: UpdateTransactionInput = {
-      kind,
-      amount_cents: 0,
-      currency_code: currencyCode.value,
-      account_id: accountId.value,
-      to_account_id: null,
-      category_id: null,
-      refund_of_transaction_id: null,
-      note: note.value || null,
-      date: new Date(date.value).toISOString().slice(0, 10),
-      instrument_id: instrumentId.value,
-      quantity: quantity.value,
-      price_cents: Math.round(price.value * 100),
-      fee_cents: fee.value ? Math.round(fee.value * 100) : null,
-    }
     // 编辑目标提交时重读（getter 约定见 options.editing 注释）
     const editing = options?.editing?.() ?? null
     try {
+      // wire 字段拼装收口 TransactionInput 装配器（issue #216）：创建/编辑共用同一
+      // 装配结果（幂等键不可编辑）。buy/sell 金额占位（amount_cents 恒 0）与关联
+      // 字段 null 占位收口装配器 per-kind 矩阵；成交金额由后端行为层按数量×单价±手续费重算
+      const input = buildTradeInput({
+        kind,
+        currencyCode: currencyCode.value,
+        accountId: accountId.value,
+        instrumentId: instrumentId.value,
+        quantity: quantity.value,
+        price: price.value,
+        fee: fee.value,
+        note: note.value,
+        date: date.value,
+      })
       if (editing) {
         await api.updateTransaction(editing.id, input)
         message.success('已保存修改')

@@ -98,7 +98,7 @@ describe('useInvestmentForm', () => {
     ).toHaveLength(0)
   })
 
-  it('submit 创建：调用 create_transaction，买入金额由后端计算（amount_cents 传 0），成功后重置表单', async () => {
+  it('submit 创建：调用 create_transaction，成功后重置表单', async () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
@@ -119,22 +119,10 @@ describe('useInvestmentForm', () => {
 
     await form.submit()
 
+    // 提交路由：创建命令 + 正确 kind；wire 字段形状（含 buy 占位语义）由装配器
+    // 测试承担（issue #216）
     expect(mockInvoke).toHaveBeenCalledWith('create_transaction', {
-      input: {
-        kind: 'buy',
-        amount_cents: 0,
-        currency_code: 'CNY',
-        account_id: 'acc-inv',
-        to_account_id: null,
-        category_id: null,
-        refund_of_transaction_id: null,
-        note: '测试',
-        date: '2026-07-11',
-        instrument_id: 'ins-1',
-        quantity: 10,
-        price_cents: 1500,
-        fee_cents: 500,
-      },
+      input: expect.objectContaining({ kind: 'buy' }),
     })
     // 创建成功后重置业务字段
     expect(form.instrumentId.value).toBeNull()
@@ -210,23 +198,16 @@ describe('useInvestmentForm', () => {
 
       await form.submit()
 
+      // 提交路由：更新命令携带交易 id + 回填业务字段交接装配结果；
+      // 金额/日期转换与占位字段由装配器测试承担（issue #216）
       expect(mockInvoke).toHaveBeenCalledWith('update_transaction', {
         id: 'txn-buy-1',
-        input: {
+        input: expect.objectContaining({
           kind: 'buy',
-          amount_cents: 0,
-          currency_code: 'CNY',
-          account_id: 'acc-inv',
-          to_account_id: null,
-          category_id: null,
-          refund_of_transaction_id: null,
-          note: '建仓买入',
-          date: '2026-01-10',
           instrument_id: 'ins-1',
           quantity: 100,
-          price_cents: 15000,
-          fee_cents: 500,
-        },
+          note: '建仓买入',
+        }),
       })
       expect(onUpdated).toHaveBeenCalledTimes(1)
       expect(onCreated).not.toHaveBeenCalled()
