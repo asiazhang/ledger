@@ -112,6 +112,9 @@ fn retry_failed_occurrence(world: &mut LedgerWorld) {
 #[when(expr = "展开该计划期次")]
 fn expand_plan_occurrences(world: &mut LedgerWorld) {
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
-    let ids = expand_occurrences(&world_conn!(world), &plan_id).expect("期次展开失败");
+    let ids = world
+        .db
+        .write(|conn| expand_occurrences(conn, &plan_id))
+        .expect("期次展开失败");
     assert!(!ids.is_empty(), "active 计划展开应生成新期次");
 }

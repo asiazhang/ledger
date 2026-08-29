@@ -144,10 +144,31 @@ pub fn write<T>(conn: &Mutex<Connection>, f: impl FnOnce(&Connection) -> Result<
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     let result = f(&conn);
     if result.is_ok() && conn.is_autocommit() {
-        // 提交点单点后置动作；on_write 内部失败仅记日志，不影响已成功的业务写。
-        crate::auto_backup::on_write(&conn);
+        after_commit(&conn);
     }
     result
+}
+
+/// 提交点单点后置动作：置脏 + 写时顺带到期检查（连接层内部实现细节，ADR-0032）。
+///
+/// 仅由 [`write`] 在「闭包成功且 `is_autocommit()`」时调用；业务代码不可见也不可调用——
+/// 置脏触发不再是备份模块的公开 API（#246），而是本写入口的结构性副作用：
+/// - 置脏失败仅记日志不上抛，不影响已成功的业务写；
+/// - 到期检查命中（脏且距上次备份 ≥24h）即执行自动备份；开关关闭/目录未配置等
+///   门禁由 [`crate::auto_backup::run_due_backup`] 统一静默处理；
+/// - 闭包 Err（回滚）或未提交就返回（显式事务仍打开）不会到达本函数——
+///   「事务内推迟、提交后补上」由 [`write`] 的 `is_autocommit()` 复核结构保证。
+fn after_commit(conn: &Connection) {
+    if let Err(e) = crate::auto_backup::mark_dirty(conn) {
+        tracing::warn!(error = %e, "写库成功但置脏失败（忽略）");
+    }
+    let dir = crate::auto_backup::shared_prefs().snapshot_dir();
+    crate::auto_backup::run_due_backup(
+        conn,
+        dir.as_deref(),
+        env!("CARGO_PKG_VERSION"),
+        chrono::Utc::now(),
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -32,26 +32,30 @@ fn create_subscription_plan_with_recurrence(
     let recurrence_type: RecurrenceType = recurrence
         .parse()
         .expect("周期应为 daily/weekly/monthly/yearly");
-    let id = create_plan(
-        &world_conn!(world),
-        CreateScheduledInput {
-            kind: ScheduledKind::Subscription,
-            account_id: world.account_id(&account),
-            category_id: None,
-            amount_cents: amount,
-            currency_code: currency,
-            recurrence_type,
-            recurrence_interval: 1,
-            recurrence_day: None,
-            start_date: start,
-            note: Some(note),
-            merchant_id: None,
-            total_amount_cents: None,
-            total_occurrences: None,
-            to_account_id: None,
-        },
-    )
-    .expect("创建订阅计划失败");
+    let id = world
+        .db
+        .write(|conn| {
+            create_plan(
+                conn,
+                CreateScheduledInput {
+                    kind: ScheduledKind::Subscription,
+                    account_id: world.account_id(&account),
+                    category_id: None,
+                    amount_cents: amount,
+                    currency_code: currency,
+                    recurrence_type,
+                    recurrence_interval: 1,
+                    recurrence_day: None,
+                    start_date: start,
+                    note: Some(note),
+                    merchant_id: None,
+                    total_amount_cents: None,
+                    total_occurrences: None,
+                    to_account_id: None,
+                },
+            )
+        })
+        .expect("创建订阅计划失败");
     world.last_plan_id = Some(id);
 }
 
@@ -82,7 +86,9 @@ fn execute_first_n_occurrences(world: &mut LedgerWorld, n: usize) {
 #[when(expr = "取消该订阅计划")]
 fn cancel_subscription_plan(world: &mut LedgerWorld) {
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
-    update_plan_status(&world_conn!(world), &plan_id, ScheduledStatus::Cancelled)
+    world
+        .db
+        .write(|conn| update_plan_status(conn, &plan_id, ScheduledStatus::Cancelled))
         .expect("取消订阅计划失败");
 }
 
@@ -90,7 +96,9 @@ fn cancel_subscription_plan(world: &mut LedgerWorld) {
 #[when(expr = "暂停该订阅计划")]
 fn pause_subscription_plan(world: &mut LedgerWorld) {
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
-    update_plan_status(&world_conn!(world), &plan_id, ScheduledStatus::Paused)
+    world
+        .db
+        .write(|conn| update_plan_status(conn, &plan_id, ScheduledStatus::Paused))
         .expect("暂停订阅计划失败");
 }
 

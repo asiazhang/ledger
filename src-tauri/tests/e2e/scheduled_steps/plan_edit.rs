@@ -41,19 +41,23 @@ fn edit_subscription_plan_merchant(world: &mut LedgerWorld, merchant: String) {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .unwrap();
-    update_subscription(
-        &world_conn!(world),
-        UpdateSubscriptionInput {
-            id: plan_id,
-            account_id,
-            category_id,
-            note,
-            merchant_id: Some(world.merchant_id(&merchant)),
-            amount_cents: false,
-            total_amount_cents: false,
-        },
-    )
-    .expect("编辑订阅商户失败");
+    world
+        .db
+        .write(|conn| {
+            update_subscription(
+                conn,
+                UpdateSubscriptionInput {
+                    id: plan_id,
+                    account_id,
+                    category_id,
+                    note,
+                    merchant_id: Some(world.merchant_id(&merchant)),
+                    amount_cents: false,
+                    total_amount_cents: false,
+                },
+            )
+        })
+        .expect("编辑订阅商户失败");
 }
 
 /// 编辑最近订阅计划的备注/分类/扣款账户（改户只影响未来期次，issue #162）。
@@ -96,22 +100,26 @@ fn edit_subscription_plan_inner(
         ),
         None => current_category_id,
     };
-    update_subscription(
-        &world_conn!(world),
-        UpdateSubscriptionInput {
-            id: plan_id,
-            account_id: account
-                .map(|name| world.account_id(&name))
-                .unwrap_or(current_account_id),
-            category_id,
-            note: Some(note),
-            merchant_id: current_merchant,
-            // 合法编辑请求不携带金额字段
-            amount_cents: false,
-            total_amount_cents: false,
-        },
-    )
-    .expect("编辑订阅计划失败");
+    world
+        .db
+        .write(|conn| {
+            update_subscription(
+                conn,
+                UpdateSubscriptionInput {
+                    id: plan_id,
+                    account_id: account
+                        .map(|name| world.account_id(&name))
+                        .unwrap_or(current_account_id),
+                    category_id,
+                    note: Some(note),
+                    merchant_id: current_merchant,
+                    // 合法编辑请求不携带金额字段
+                    amount_cents: false,
+                    total_amount_cents: false,
+                },
+            )
+        })
+        .expect("编辑订阅计划失败");
 }
 
 /// 携带金额字段发出编辑请求：应被后端显式拒绝（ADR-0023 决策三）。
@@ -133,19 +141,21 @@ fn edit_subscription_plan_with_amount(world: &mut LedgerWorld, _amount: i64) {
             |r| r.get::<_, Option<String>>(0),
         )
         .unwrap();
-    match update_subscription(
-        &world_conn!(world),
-        UpdateSubscriptionInput {
-            id: plan_id,
-            account_id,
-            category_id,
-            note,
-            merchant_id,
-            // 金额哨兵置位：请求携带 amount_cents，应被领域层显式拒绝
-            amount_cents: true,
-            total_amount_cents: false,
-        },
-    ) {
+    match world.db.write(|conn| {
+        update_subscription(
+            conn,
+            UpdateSubscriptionInput {
+                id: plan_id,
+                account_id,
+                category_id,
+                note,
+                merchant_id,
+                // 金额哨兵置位：请求携带 amount_cents，应被领域层显式拒绝
+                amount_cents: true,
+                total_amount_cents: false,
+            },
+        )
+    }) {
         Ok(_) => world.last_error = None,
         Err(e) => world.last_error = Some(e.to_string()),
     }

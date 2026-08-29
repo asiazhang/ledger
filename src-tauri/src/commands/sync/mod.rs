@@ -141,8 +141,9 @@ pub async fn sync_holding_prices(
         // 命令在后台线程池执行，手包 span 维持 SQL 耗时归因（lib.rs 异步命令归因约定）。
         let span = tracing::info_span!("command", command = "sync_holding_prices");
         let _entered = span.enter();
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        incremental::do_incremental_sync(&conn)
+        // 连接层统一写入口（ADR-0032，#246 审计补齐）：行情/汇率/历史落库成功即置脏，
+        // 提交点写时顺带到期检查；锁语义与先前整段持有一致（同步期间独占连接）。
+        crate::db::write(&conn, incremental::do_incremental_sync)
     })
     .await
     .map_err(|e| AppError::Io(format!("同步任务执行失败: {e}")))?;

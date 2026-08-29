@@ -9,8 +9,8 @@ pub fn create_scheduled_transaction(
     db: State<'_, DbState>,
     input: CreateScheduledInput,
 ) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    crate::scheduled_transactions::create_plan(&conn, input)
+    // 连接层统一写入口（ADR-0032，#246 审计补齐）：计划与期次属账本数据，成功即置脏。
+    db.write(|conn| crate::scheduled_transactions::create_plan(conn, input))
 }
 
 #[tauri::command]
@@ -35,8 +35,10 @@ pub fn update_scheduled_transaction_status(
     db: State<'_, DbState>,
     input: UpdateStatusInput,
 ) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    crate::scheduled_transactions::update_plan_status(&conn, &input.id, input.new_status)
+    // 连接层统一写入口（ADR-0032，#246 审计补齐）：状态变更成功即置脏。
+    db.write(|conn| {
+        crate::scheduled_transactions::update_plan_status(conn, &input.id, input.new_status)
+    })
 }
 
 /// 编辑订阅计划的非金额字段（issue #162，ADR-0023 决策三）：
@@ -46,8 +48,8 @@ pub fn update_scheduled_subscription(
     db: State<'_, DbState>,
     input: UpdateSubscriptionInput,
 ) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    crate::scheduled_transactions::update_subscription(&conn, input)
+    // 连接层统一写入口（ADR-0032，#246 审计补齐）：订阅编辑成功即置脏。
+    db.write(|conn| crate::scheduled_transactions::update_subscription(conn, input))
 }
 
 #[tauri::command]
@@ -61,8 +63,8 @@ pub fn execute_scheduled_occurrence(
 
 #[tauri::command]
 pub fn expand_scheduled_occurrences(db: State<'_, DbState>, id: String) -> Result<Vec<String>> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    crate::scheduled_transactions::expand_occurrences(&conn, &id)
+    // 连接层统一写入口（ADR-0032，#246 审计补齐）：期次回填写入成功即置脏。
+    db.write(|conn| crate::scheduled_transactions::expand_occurrences(conn, &id))
 }
 
 /// 订阅花费总览（issue #160/#161，ADR-0023 双口径）：只读聚合，返回逐订阅行 +
