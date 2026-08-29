@@ -1,4 +1,4 @@
-//! 报表领域模型：月度汇总、分类占比、商户排行。
+//! 报表领域模型：月度汇总、分类占比、商户排行、年份筛选范围。
 
 use serde::Serialize;
 
@@ -26,6 +26,14 @@ pub struct CategoryShare {
     pub category_id: String,
     pub category_name: String,
     pub amount_cents: i64,
+}
+
+/// 报表年份筛选范围（issue #266）：数据驱动的闭区间
+/// `[最早交易年份, max(当前年, 最新交易年份)]`，空库回退 `[当前年, 当前年]`。
+#[derive(Debug, Serialize)]
+pub struct YearRange {
+    pub min_year: i64,
+    pub max_year: i64,
 }
 
 impl FromRow for MonthlySummary {
