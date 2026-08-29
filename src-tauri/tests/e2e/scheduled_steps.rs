@@ -268,6 +268,44 @@ fn try_create_transfer_plan_with_merchant(
     };
 }
 
+/// 尝试创建定时转账计划（不带商户）并捕获错误：两账户币种不一致被拒（issue #203）。
+#[when(
+    expr = "尝试创建定时转账计划 金额 {int} 从 {string} 到 {string} 期数 {int} 起始日期 {string}"
+)]
+fn try_create_transfer_plan(
+    world: &mut LedgerWorld,
+    amount: i64,
+    from: String,
+    to: String,
+    occurrences: i64,
+    start: String,
+) {
+    let result = create_plan(
+        &world.conn,
+        CreateScheduledInput {
+            kind: ScheduledKind::ScheduledTransfer,
+            account_id: world.account_id(&from),
+            category_id: None,
+            amount_cents: amount,
+            currency_code: "CNY".into(),
+            recurrence_type: RecurrenceType::Monthly,
+            recurrence_interval: 1,
+            recurrence_day: None,
+            start_date: start,
+            note: None,
+            merchant_id: None,
+            total_amount_cents: None,
+            total_occurrences: Some(occurrences),
+            to_account_id: Some(world.account_id(&to)),
+        },
+    );
+    world.last_error = match result {
+        Err(AppError::Invalid(msg)) => Some(msg),
+        Ok(_) => None,
+        Err(e) => Some(e.to_string()),
+    };
+}
+
 /// 尝试创建带商户的订阅计划并捕获错误（软删商户不可被新计划选择）。
 #[when(
     expr = "尝试创建订阅计划 金额 {int} 币种 {string} 账户 {string} 起始日期 {string} 商户 {string}"

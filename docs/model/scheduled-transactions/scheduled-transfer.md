@@ -45,6 +45,7 @@
 ## 边界与约束
 
 - `to_account_id` 不能与 `account_id` 相同（转出账户不能等于转入账户）。
+- 转出与转入账户必须同币种（词汇表 ScheduledTransfer 边界）：核心交易域转账交易是单金额单币种，创建入口行为层校验，不一致拒绝（issue #203）。
 - 如果 `total_occurrences` 为 N，则必须 >= 1。
 - 取消计划时，所有 `pending` 期次状态变为 `cancelled`，已生成 `Transaction` 不受影响。
 - 暂停只停止生成新期次，不影响已生成的期次或交易。
