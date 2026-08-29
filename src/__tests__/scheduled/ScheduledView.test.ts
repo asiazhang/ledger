@@ -74,13 +74,14 @@ describe('ScheduledView 「定时」视图三页签（issue #202）', () => {
     expect(wrapper.text()).toContain('定时转账')
   })
 
-  it('点击「分期」页签：路由 query.tab 更新且显示建设中占位', async () => {
+  it('点击「分期」页签：路由 query.tab 更新且显示分期面板（issue #204）', async () => {
     const { wrapper, router: r } = await mountView()
     await wrapper.findAll('.n-tabs-tab').find((t) => t.text() === '分期')!.trigger('click')
     await flushPromises()
     expect(r.currentRoute.value.query.tab).toBe('installments')
-    // 分期页签为占位（由后续 issue #203 填充），订阅内容不可见
-    expect(wrapper.text()).toContain('建设中')
+    // 分期页签渲染分期面板（InstallmentsPane），订阅内容不可见
+    expect(wrapper.text()).toContain('分期清单')
+    expect(wrapper.find('[data-testid="inst-create-open"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="sub-create-open"]').exists()).toBe(false)
   })
 

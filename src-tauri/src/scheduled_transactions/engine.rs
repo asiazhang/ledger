@@ -296,11 +296,11 @@ pub fn get_plan_detail(conn: &Connection, id: &str) -> Result<ScheduledTransacti
         rusqlite::params![id],
     )?;
 
-    let completed_occurrences: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM scheduled_transaction_occurrences \
+    let (completed_occurrences, completed_amount_cents): (i64, i64) = conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(amount_cents),0) FROM scheduled_transaction_occurrences \
          WHERE scheduled_transaction_id=?1 AND status='completed' AND is_deleted=0",
         rusqlite::params![id],
-        |r| r.get(0),
+        |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
 
     Ok(ScheduledTransactionDetail {
@@ -308,6 +308,7 @@ pub fn get_plan_detail(conn: &Connection, id: &str) -> Result<ScheduledTransacti
         extension,
         pending_occurrences,
         completed_occurrences,
+        completed_amount_cents,
     })
 }
 

@@ -311,6 +311,8 @@ pub struct ScheduledTransactionDetail {
     pub extension: serde_json::Value,
     pub pending_occurrences: Vec<ScheduledTransactionOccurrence>,
     pub completed_occurrences: i64,
+    /// 已完成期次金额合计（issue #204）：分期进度「已还金额」实时汇总，不持久化。
+    pub completed_amount_cents: i64,
 }
 
 // ---------------------------------------------------------------------------

@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NEmpty, NTabs, NTabPane } from 'naive-ui'
+import { NTabs, NTabPane } from 'naive-ui'
 import SubscriptionsPane from '@/components/scheduled/SubscriptionsPane.vue'
+import InstallmentsPane from '@/components/scheduled/InstallmentsPane.vue'
 import TransfersPane from '@/components/scheduled/TransfersPane.vue'
 
 /**
  * 「定时」统一视图（issue #202）：三页签壳——订阅 / 分期 / 定时转账。
  * 页签状态收敛在路由 query.tab（单字段路由状态，页签可深链/可恢复）；
  * 订阅页签内容整体迁自原 /subscriptions 视图（SubscriptionsPane），
- * 定时转账页签为端到端竖切（issue #203），分期页签为占位（issue #204）。
+ * 分期页签由 InstallmentsPane 提供（issue #204），
+ * 定时转账页签由 TransfersPane 提供（issue #203）。
  */
 
 const TABS = ['subscriptions', 'installments', 'transfers'] as const
@@ -43,8 +45,7 @@ function onTabChange(key: string | number) {
       <SubscriptionsPane />
     </NTabPane>
     <NTabPane name="installments" tab="分期">
-      <!-- 占位：分期管理由 issue #204 填充 -->
-      <NEmpty description="分期管理建设中" size="large" />
+      <InstallmentsPane />
     </NTabPane>
     <NTabPane name="transfers" tab="定时转账">
       <TransfersPane />
