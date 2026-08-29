@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, h, ref } from 'vue'
-import { NButton, NDataTable, NEmpty, NModal, NSpace, NSpin, useMessage, type DataTableColumns } from 'naive-ui'
+import { NButton, NDataTable, NEmpty, NSpace, NSpin, useMessage, type DataTableColumns } from 'naive-ui'
+import AppModal from '@/components/AppModal.vue'
 import { formatAmount } from '@/types'
 import { errorMessage } from '@/utils/errors'
 import { occurrenceStatusLabel } from '@/utils/scheduled'
@@ -171,7 +172,7 @@ defineExpose({ open })
 </script>
 
 <template>
-  <NModal
+  <AppModal
     v-model:show="show"
     title="期次详情"
     preset="card"
@@ -213,7 +214,7 @@ defineExpose({ open })
         </NSpace>
       </template>
     </NSpin>
-  </NModal>
+  </AppModal>
 </template>
 
 <style scoped>

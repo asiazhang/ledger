@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { NButton, NForm, NFormItem, NInput, NModal, useMessage } from 'naive-ui'
+import { NButton, NForm, NFormItem, NInput, useMessage } from 'naive-ui'
+import AppModal from '@/components/AppModal.vue'
 import { api } from '@/api'
 import type { Merchant, MerchantUpdateInput } from '@/types'
 
@@ -47,7 +48,7 @@ async function saveEdit() {
 </script>
 
 <template>
-  <NModal
+  <AppModal
     :show="show"
     title="编辑商户"
     preset="card"
@@ -61,5 +62,5 @@ async function saveEdit() {
       </NFormItem>
       <NButton type="primary" block @click="saveEdit">保存</NButton>
     </NForm>
-  </NModal>
+  </AppModal>
 </template>

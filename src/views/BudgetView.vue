@@ -7,7 +7,6 @@ import {
   NForm,
   NFormItem,
   NInputNumber,
-  NModal,
   NSpace,
   NPopconfirm,
   NProgress,
@@ -18,6 +17,7 @@ import {
   type DataTableColumns,
 } from 'naive-ui'
 import { api } from '@/api'
+import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useReferenceStore } from '@/stores/reference'
 import { errorMessage } from '@/utils/errors'
@@ -205,7 +205,7 @@ onMounted(() => {
     </NSpace>
 
     <!-- 编辑弹窗（issue #184）：仅金额可改，分类/周期只读 -->
-    <NModal
+    <AppModal
       v-model:show="showEdit"
       title="编辑预算"
       preset="card"
@@ -232,6 +232,6 @@ onMounted(() => {
           <NButton size="small" type="primary" @click="saveEdit">保存</NButton>
         </NSpace>
       </template>
-    </NModal>
+    </AppModal>
   </NSpin>
 </template>

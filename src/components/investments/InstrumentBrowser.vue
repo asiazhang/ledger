@@ -5,7 +5,6 @@ import {
   NDataTable,
   NIcon,
   NInput,
-  NModal,
   NProgress,
   NSelect,
   NSpace,
@@ -20,6 +19,7 @@ import { useReferenceStore } from '@/stores/reference'
 import { useHoldingPriceSync } from '@/composables/useHoldingPriceSync'
 import { useInstrumentFullSync } from '@/composables/useInstrumentFullSync'
 import { formatAmount, INSTRUMENT_TYPE_LABELS, MARKET_TYPE_LABELS } from '@/types'
+import AppModal from '@/components/AppModal.vue'
 import type { Instrument, MarketType } from '@/types'
 
 const reference = useReferenceStore()
@@ -235,7 +235,7 @@ onMounted(load)
     />
 
     <!-- 二次确认：未确认不发起同步（issue #109） -->
-    <NModal
+    <AppModal
       v-model:show="confirmOpen"
       preset="card"
       title="全量同步股票标的"
@@ -261,10 +261,10 @@ onMounted(load)
           </NButton>
         </NSpace>
       </NSpace>
-    </NModal>
+    </AppModal>
 
     <!-- 模态进度：进度条 + 已处理/总数 + 累计新增/更新 + 中断；终态明确反馈 -->
-    <NModal
+    <AppModal
       v-model:show="modalOpen"
       preset="card"
       title="股票标的全量同步"
@@ -316,7 +316,7 @@ onMounted(load)
           </NText>
         </template>
       </NSpace>
-    </NModal>
+    </AppModal>
   </NSpace>
 </template>
 

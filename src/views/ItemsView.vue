@@ -10,7 +10,6 @@ import {
   NFormItem,
   NInput,
   NDatePicker,
-  NModal,
   NAlert,
   NSpace,
   NDescriptions,
@@ -24,6 +23,7 @@ import { yuanToCents, centsToYuan } from '@/utils/money'
 import { todayStr } from '@/utils/date'
 import type { ItemDailyCost, ItemDisposeInput, ItemInput, ItemWithDailyCost, Transaction } from '@/types'
 import { api } from '@/api'
+import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
@@ -307,7 +307,7 @@ onMounted(() => {
     </NCard>
 
     <!-- 编辑弹窗（issue #117）：币种不可改，沿用行内币种 -->
-    <NModal
+    <AppModal
       :show="editing !== null"
       preset="card"
       title="编辑物品"
@@ -355,10 +355,10 @@ onMounted(() => {
           <NButton type="primary" @click="saveEdit">保存</NButton>
         </NSpace>
       </NForm>
-    </NModal>
+    </AppModal>
 
     <!-- 处置弹窗（issue #120）：处置日期必填，残值可选；已处置物品可修正处置信息 -->
-    <NModal
+    <AppModal
       :show="disposing !== null"
       preset="card"
       :title="disposing?.status === 'in_use' ? '处置物品' : '处置信息'"
@@ -392,10 +392,10 @@ onMounted(() => {
           </NButton>
         </NSpace>
       </NForm>
-    </NModal>
+    </AppModal>
 
     <!-- 详情弹窗（issue #117）：展示成本分解 = 分子 ÷ 已用天数 = 每天成本 -->
-    <NModal
+    <AppModal
       :show="detail !== null"
       preset="card"
       title="物品详情"
@@ -449,6 +449,6 @@ onMounted(() => {
           {{ detailAmount(detailCostView.perDayCents) }}/天
         </NDescriptionsItem>
       </NDescriptions>
-    </NModal>
+    </AppModal>
   </NSpace>
 </template>

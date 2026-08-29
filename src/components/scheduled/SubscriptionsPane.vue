@@ -9,7 +9,6 @@ import {
   NForm,
   NFormItem,
   NInput,
-  NModal,
   NInputNumber,
   NDatePicker,
   NSelect,
@@ -33,6 +32,7 @@ import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { useFormShared } from '@/composables/useFormShared'
+import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import SubscriptionSpendPanel from '@/components/scheduled/SubscriptionSpendPanel.vue'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
@@ -514,7 +514,7 @@ onMounted(() => {
     </NCard>
 
     <!-- 新建订阅弹窗：提交成功关闭并刷新列表（与记一笔弹窗同模式） -->
-    <NModal
+    <AppModal
       v-model:show="showCreateModal"
       title="新建订阅"
       preset="card"
@@ -607,10 +607,10 @@ onMounted(() => {
           </NSpace>
         </NSpace>
       </NForm>
-    </NModal>
+    </AppModal>
 
     <!-- 编辑订阅弹窗（issue #162）：仅非金额字段（备注/账户/分类），无金额输入 -->
-    <NModal
+    <AppModal
       v-model:show="showEditModal"
       title="编辑订阅"
       preset="card"
@@ -664,7 +664,7 @@ onMounted(() => {
           </NSpace>
         </NSpace>
       </NForm>
-    </NModal>
+    </AppModal>
 
     <SubscriptionSpendPanel ref="spendPanelRef" />
 

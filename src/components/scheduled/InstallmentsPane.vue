@@ -9,7 +9,6 @@ import {
   NForm,
   NFormItem,
   NInput,
-  NModal,
   NInputNumber,
   NDatePicker,
   NSelect,
@@ -34,6 +33,7 @@ import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { useFormShared } from '@/composables/useFormShared'
+import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
 import { scheduledStatusLabel } from '@/utils/scheduled'
@@ -477,7 +477,7 @@ onMounted(() => {
     </NCard>
 
     <!-- 新建分期弹窗：总金额 + 期数实时预览；其余字段与订阅表单同款 -->
-    <NModal
+    <AppModal
       v-model:show="showCreateModal"
       title="新建分期"
       preset="card"
@@ -582,7 +582,7 @@ onMounted(() => {
           </NSpace>
         </NSpace>
       </NForm>
-    </NModal>
+    </AppModal>
 
     <!-- 期次详情弹窗（issue #205）：三页签通用 -->
     <PlanDetailModal ref="planDetailRef" @changed="onDetailChanged" />
