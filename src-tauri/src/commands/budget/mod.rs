@@ -7,7 +7,8 @@
 //! 金额口径由 `transaction::amount` 的 kind→度量矩阵单一真源驱动：
 //! 预算 spent = `expense_net`（毛支出 − 退款），与报表分类净值口径一致。
 //!
-//! 命令层为薄壳（锁 DbState 后调核心函数），核心函数吃 `&Connection` 可直接单测。
+//! 命令层为薄壳（经连接层统一写入口 `db.write` 调核心函数，ADR-0032：写成功即置脏，
+//! issue #245 补上此前的置脏缺口），核心函数吃 `&Connection` 可直接单测。
 //! 对外暴露的命令经 `commands/mod.rs` 的 `pub use budget::*` 重导出，
 //! 注册路径与前端调用零改动。
 
@@ -105,8 +106,9 @@ pub fn create_budget_internal(conn: &Connection, input: &BudgetInput) -> Result<
 
 #[tauri::command]
 pub fn create_budget(db: State<'_, DbState>, input: BudgetInput) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    create_budget_internal(&conn, &input)
+    // 连接层统一写入口（ADR-0032）：预算写入也是账本数据变化，成功即置脏
+    // （issue #245 行为修复：此前预算写路径完全不在置脏范围）。
+    db.write(|conn| create_budget_internal(conn, &input))
 }
 
 /// 预算编辑核心（issue #184）：仅修改金额，沿用软删除同一套
@@ -131,18 +133,24 @@ pub fn update_budget_internal(conn: &Connection, id: &str, amount_cents: i64) ->
 
 #[tauri::command]
 pub fn update_budget(db: State<'_, DbState>, id: String, input: BudgetUpdateInput) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    update_budget_internal(&conn, &id, input.amount_cents)
+    // 连接层统一写入口（ADR-0032）：同创建，成功即置脏（issue #245 行为修复）。
+    db.write(|conn| update_budget_internal(conn, &id, input.amount_cents))
 }
 
-#[tauri::command]
-pub fn delete_budget(db: State<'_, DbState>, id: String) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+/// 预算删除核心：软删除 + 审计字段更新，与创建/编辑共用同一套机制
+/// （提取与 `create_budget_internal` / `update_budget_internal` 对齐，测试与 e2e 同款）。
+pub fn delete_budget_internal(conn: &Connection, id: &str) -> Result<()> {
     conn.execute(
         "UPDATE budgets SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id()],
     )?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn delete_budget(db: State<'_, DbState>, id: String) -> Result<()> {
+    // 连接层统一写入口（ADR-0032）：同创建，成功即置脏（issue #245 行为修复）。
+    db.write(|conn| delete_budget_internal(conn, &id))
 }
 
 /// 预算进度核心（issue #182 永久滚动预算）：spent = `expense_net`（毛支出 − 退款，

@@ -501,9 +501,11 @@ async fn batch_create_transactions_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
     Json(body): Json<TransactionBatchInput>,
 ) -> Result<Json<Vec<CreateTransactionResult>>, AppError> {
-    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let results =
-        crate::commands::batch::TransactionBatch::run(&conn, body.transactions, body.dedup)?;
+    // 连接层统一写入口（ADR-0032，issue #245）：批次事务由 run 自持，提交点置脏/
+    // 到期检查单点；整批回滚不置脏由写入口闭包失败语义保证。
+    let results = crate::db::write(&conn, |conn| {
+        crate::commands::batch::TransactionBatch::run(conn, body.transactions, body.dedup)
+    })?;
     Ok(Json(results))
 }
 
