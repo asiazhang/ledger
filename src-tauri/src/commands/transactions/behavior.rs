@@ -80,9 +80,10 @@ fn ensure_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Re
                 Err(e.into())
             }
         },
-        // 自持事务中途失败：整体回滚，不留已落库交易行与半套副作用。
+        // 自持事务中途失败：整体回滚，不留已落库交易行与半套副作用；
+        // ROLLBACK 自身失败不遮蔽业务错误（与 COMMIT 失败分支同款，尽力回滚后上抛原错误）。
         Err(e) => {
-            conn.execute("ROLLBACK", [])?;
+            let _ = conn.execute("ROLLBACK", []);
             Err(e)
         }
     }
