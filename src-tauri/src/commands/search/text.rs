@@ -2,7 +2,7 @@
 //!
 //! 统一语义契约（前后端共同遵守，规格以 issue #195 为唯一真源）：
 //! 输入按空白切词，词条之间 AND；每个词条对每个可搜索字段（全局搜索：备注、
-//! 转出账户名）判定——
+//! 转出账户名、商户名，商户名由 issue #193 纳入）判定——
 //! **命中 = 原文连续子串（大小写不敏感）∨ 词条是该字段拼音首字母串的子序列
 //! （大小写不敏感）**
 //!
@@ -69,10 +69,17 @@ pub fn term_matches_text(term: &str, text: &str) -> bool {
         || is_subsequence(term, &pinyin_initials(text))
 }
 
-/// 词条对一笔交易判定：任一可搜索字段（备注 ∨ 转出账户名）命中即算。
+/// 词条对一笔交易判定：任一可搜索字段（备注 ∨ 转出账户名 ∨ 商户名）命中即算。
 /// 两条路径任一命中即算，字段之间 OR、词条之间 AND（由调用方组合）。
-pub fn term_matches(term: &str, note: Option<&str>, account_name: &str) -> bool {
-    note.is_some_and(|n| term_matches_text(term, n)) || term_matches_text(term, account_name)
+pub fn term_matches(
+    term: &str,
+    note: Option<&str>,
+    account_name: &str,
+    merchant_name: Option<&str>,
+) -> bool {
+    note.is_some_and(|n| term_matches_text(term, n))
+        || term_matches_text(term, account_name)
+        || merchant_name.is_some_and(|m| term_matches_text(term, m))
 }
 
 /// 切词：按空白拆分，过滤空词条（词条之间 AND 由调用方组合）。
