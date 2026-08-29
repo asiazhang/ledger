@@ -104,6 +104,10 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
     await flushPromises()
   }
 
+  /** 清除筛选按钮（工具栏与空态各一个）。 */
+  const clearButton = (wrapper: ReturnType<typeof mount>) =>
+    wrapper.findAllComponents(NButton).find((b) => b.text().includes('清除筛选'))!
+
   it('顶部渲染过滤行：账户/商户/类型下拉可清除、起止日期、清除筛选按钮', async () => {
     const wrapper = await mountView()
     // 账户下拉：可清除，选项来自参考数据账户映射
@@ -132,10 +136,7 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
       'sell',
     ])
     // 清除筛选按钮：无过滤时禁用
-    const clearButton = wrapper
-      .findAllComponents(NButton)
-      .find((b) => b.text().includes('清除筛选'))!
-    expect(clearButton.attributes('disabled')).toBeDefined()
+    expect(clearButton(wrapper).attributes('disabled')).toBeDefined()
   })
 
   it('选择账户即重新查询：意图经模块出口生效，involving_account_id 正确传后端（含转账转入侧）', async () => {
@@ -158,10 +159,7 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
     await setKind(wrapper, 'transfer')
     await setDateFrom(wrapper, '2026-01-01')
     expect(wrapper.text()).toContain('共 1 条')
-    const clearButton = wrapper
-      .findAllComponents(NButton)
-      .find((b) => b.text().includes('清除筛选'))!
-    await clearButton.trigger('click')
+    await clearButton(wrapper).trigger('click')
     await flushPromises()
     const f = lastListFilter()
     expect(f).toMatchObject({ page: 1, page_size: 20 })
@@ -244,10 +242,7 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
     expect(wrapper.text()).toContain('没有符合条件的交易')
     expect(bodyRows(wrapper).length).toBe(0)
     // 空态中的「清除筛选」可一键复位到全量
-    const clearButton = wrapper
-      .findAllComponents(NButton)
-      .find((b) => b.text().includes('清除筛选'))!
-    await clearButton.trigger('click')
+    await clearButton(wrapper).trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('共 5 条')
   })

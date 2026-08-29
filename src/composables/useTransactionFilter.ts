@@ -40,6 +40,16 @@ export interface UseTransactionFilterReturn {
   refresh(): void
 }
 
+/** 默认过滤态（全量列表）：初始态与 resetFilters 的复位终态共用同一来源，
+ * 新增维度只需改这一处。 */
+const DEFAULT_FILTERS: TransactionFilters = {
+  dateFrom: null,
+  dateTo: null,
+  involvingAccountId: null,
+  merchantId: null,
+  kind: null,
+}
+
 /**
  * 交易列表过滤深模块（ADR-0030）：「用户意图进、列表状态出」。
  *
@@ -55,13 +65,7 @@ export interface UseTransactionFilterReturn {
  * 请求发起、loading、行数据仍归调用方。筛选与分页不持久化（ViewState 边界）。
  */
 export function useTransactionFilter(): UseTransactionFilterReturn {
-  const filters = reactive<TransactionFilters>({
-    dateFrom: null,
-    dateTo: null,
-    involvingAccountId: null,
-    merchantId: null,
-    kind: null,
-  })
+  const filters = reactive<TransactionFilters>({ ...DEFAULT_FILTERS })
   const page = ref(1)
   const pageSize = ref(20)
   const refreshVersion = ref(0)
@@ -90,11 +94,7 @@ export function useTransactionFilter(): UseTransactionFilterReturn {
   function resetFilters() {
     // 无激活条件时幂等不动作（清除按钮禁用态的双重保险，保持既有 clearFilters 语义）
     if (!Object.values(filters).some((v) => v !== null)) return
-    filters.dateFrom = null
-    filters.dateTo = null
-    filters.involvingAccountId = null
-    filters.merchantId = null
-    filters.kind = null
+    Object.assign(filters, DEFAULT_FILTERS)
     apply()
   }
 
