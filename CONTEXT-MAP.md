@@ -14,7 +14,7 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 
 | # | 分域 | 文件 | 条目主题 |
 |---|------|------|----------|
-| 1 | 核心交易 | [`docs/contexts/CONTEXT-core.md`](docs/contexts/CONTEXT-core.md) | Transaction、InvolvingAccount、Amount Model、Transaction Kind Mapping、Category、Merchant、DefaultCurrency、TransactionSearch、万分位分组、耗时日志、慢查询 |
+| 1 | 核心交易 | [`docs/contexts/CONTEXT-core.md`](docs/contexts/CONTEXT-core.md) | Transaction、TransactionInput 装配器、InvolvingAccount、Amount Model、Transaction Kind Mapping、Category、Merchant、DefaultCurrency、TransactionSearch、万分位分组、耗时日志、慢查询 |
 | 2 | 定时计划 | [`docs/contexts/CONTEXT-scheduled-plans.md`](docs/contexts/CONTEXT-scheduled-plans.md) | ScheduledTransaction 及三种业务形态（分期/订阅/定时转账）、Occurrence、Plan Lifecycle、Timing、Counterparty（废弃→Merchant 指针）、Recurrence Rule、Failure Policy |
 | 3 | 投资域 | [`docs/contexts/CONTEXT-investment.md`](docs/contexts/CONTEXT-investment.md) | Instrument、MarketPrice、PriceHistory、FxRateHistory、PortfolioValueTrend、Holding、NetWorth、Investment、InvestedInstrument、InstrumentSync、HoldingPriceSync |
 | 4 | AI 导入 | [`docs/contexts/CONTEXT-ai-import.md`](docs/contexts/CONTEXT-ai-import.md) | AI API、AIReadbackVerification、AICleanupDeletion、AICleanupModify、ImportDedup、IdempotencyKey、BlackHoleAccount、AIPrompt |
