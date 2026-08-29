@@ -49,6 +49,15 @@ fn insert_category(conn: &Connection, id: &str, name: &str, kind: &str) {
     .unwrap();
 }
 
+fn insert_merchant(conn: &Connection, id: &str, name: &str) {
+    conn.execute(
+        "INSERT INTO merchants (id,name,icon,color,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,NULL,NULL,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+        rusqlite::params![id, name],
+    )
+    .unwrap();
+}
+
 fn insert_txn(
     conn: &Connection,
     id: &str,
@@ -63,6 +72,25 @@ fn insert_txn(
          category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,'expense',1000,'CNY',1000,?2,NULL,?3,NULL,?4,?5,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
         rusqlite::params![id, account_id, category_id, note, date],
+    )
+    .unwrap();
+}
+
+/// 指定商户的交易（其余列与 `insert_txn` 一致）。
+fn insert_txn_merchant(
+    conn: &Connection,
+    id: &str,
+    account_id: &str,
+    merchant_id: Option<&str>,
+    note: Option<&str>,
+    date: &str,
+) {
+    conn.execute(
+        "INSERT INTO transactions \
+         (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
+         category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted,merchant_id) \
+         VALUES (?1,'expense',1000,'CNY',1000,?2,NULL,NULL,NULL,?3,?4,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0,?5)",
+        rusqlite::params![id, account_id, note, date, merchant_id],
     )
     .unwrap();
 }
@@ -209,14 +237,16 @@ fn term_matches_ascii_literal_preserved() {
 
 #[test]
 fn term_matches_any_field() {
-    // 备注 ∨ 转出账户名，任一命中即算
-    assert!(term_matches("zsyh", Some("吃饭"), "招商银行"));
-    assert!(term_matches("cf", Some("吃饭"), "招商银行"));
-    assert!(term_matches("xj", None, "现金"));
+    // 备注 ∨ 转出账户名 ∨ 商户名，任一命中即算
+    assert!(term_matches("zsyh", Some("吃饭"), "招商银行", Some("京东")));
+    assert!(term_matches("cf", Some("吃饭"), "招商银行", Some("京东")));
+    assert!(term_matches("xj", None, "现金", None));
+    // 商户名路径：jd 命中「京东」
+    assert!(term_matches("jd", None, "现金", Some("京东")));
     // 两字段皆不命中
-    assert!(!term_matches("wy", Some("吃饭"), "招商银行"));
-    // 备注为空时仅账户名路径
-    assert!(!term_matches("cf", None, "现金"));
+    assert!(!term_matches("wy", Some("吃饭"), "招商银行", Some("京东")));
+    // 备注为空时仅账户名/商户名路径
+    assert!(!term_matches("cf", None, "现金", None));
 }
 
 #[test]
@@ -232,6 +262,82 @@ fn split_terms_by_whitespace() {
 // -----------------------------------------------------------------------
 // 搜索行为
 // -----------------------------------------------------------------------
+
+#[test]
+fn search_matches_merchant_name_and_initials() {
+    let conn = setup();
+    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    insert_merchant(&conn, "m1", "京东");
+    insert_merchant(&conn, "m2", "万科物业");
+    insert_txn_merchant(&conn, "t1", "a1", Some("m1"), Some("购物"), "2026-02-01");
+    insert_txn_merchant(&conn, "t2", "a1", Some("m2"), None, "2026-02-02");
+    // 商户名原文子串（备注不命中）
+    let res = search(&conn, "京东").unwrap();
+    assert_eq!(res.total, 1);
+    assert_eq!(res.items[0].id, "t1");
+    // 商户名拼音首字母子序列：jd 命中「京东」，wkwy 命中「万科物业」（无索引，写入立即可搜）
+    let res = search(&conn, "jd").unwrap();
+    assert_eq!(res.total, 1);
+    assert_eq!(res.items[0].id, "t1");
+    let res = search(&conn, "wkwy").unwrap();
+    assert_eq!(res.total, 1);
+    assert_eq!(res.items[0].id, "t2");
+    // 无商户交易不受影响：备注命中
+    let res = search(&conn, "购物").unwrap();
+    assert_eq!(res.total, 1);
+    // 不存在的商户名不命中
+    let res = search(&conn, "拼多多").unwrap();
+    assert_eq!(res.total, 0);
+}
+
+#[test]
+fn search_soft_deleted_merchant_still_searchable() {
+    // 软删商户的历史交易仍按商户名可搜（与交易列表显示口径一致）
+    let conn = setup();
+    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    insert_merchant(&conn, "m1", "京东");
+    insert_txn_merchant(&conn, "t1", "a1", Some("m1"), None, "2026-02-01");
+    conn.execute("UPDATE merchants SET is_deleted=1 WHERE id='m1'", [])
+        .unwrap();
+    let res = search(&conn, "京东").unwrap();
+    assert_eq!(res.total, 1);
+    let res = search(&conn, "jd").unwrap();
+    assert_eq!(res.total, 1);
+}
+
+#[test]
+fn merchant_rename_takes_effect_immediately() {
+    // 无索引：商户改名即时反映到搜索（引用指向 id，按当前名字命中）
+    let conn = setup();
+    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    insert_merchant(&conn, "m1", "京东");
+    insert_txn_merchant(&conn, "t1", "a1", Some("m1"), None, "2026-02-01");
+    conn.execute("UPDATE merchants SET name='物美超市' WHERE id='m1'", [])
+        .unwrap();
+    // 旧名不再命中
+    let res = search(&conn, "京东").unwrap();
+    assert_eq!(res.total, 0);
+    // 新名与新名首字母即刻命中
+    let res = search(&conn, "物美超市").unwrap();
+    assert_eq!(res.total, 1);
+    let res = search(&conn, "wmcs").unwrap();
+    assert_eq!(res.total, 1);
+}
+
+#[test]
+fn search_multi_term_combines_merchant_and_note() {
+    // 词条 AND：商户名与备注分属不同词条，均命中才返回
+    let conn = setup();
+    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    insert_merchant(&conn, "m1", "京东");
+    insert_txn_merchant(&conn, "t1", "a1", Some("m1"), Some("键盘"), "2026-02-01");
+    insert_txn_merchant(&conn, "t2", "a1", Some("m1"), Some("鼠标"), "2026-02-02");
+    let res = search(&conn, "jd 键盘").unwrap();
+    assert_eq!(res.total, 1);
+    assert_eq!(res.items[0].id, "t1");
+    let res = search(&conn, "jd 显示器").unwrap();
+    assert_eq!(res.total, 0);
+}
 
 #[test]
 fn search_matches_note_substring_and_account_initials() {

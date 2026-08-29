@@ -171,7 +171,7 @@ const pagination = computed(() => ({
   <NSpace vertical :size="12">
     <NInput
       v-model:value="keyword"
-      placeholder="输入关键字开始搜索（备注、账户名、拼音首字母，支持多关键字）"
+      placeholder="输入关键字开始搜索（备注、账户名、商户名、拼音首字母，支持多关键字）"
       clearable
       @keyup.enter="onEnter"
     />

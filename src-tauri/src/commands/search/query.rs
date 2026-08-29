@@ -17,24 +17,27 @@ use super::text::{split_terms, term_matches};
 /// 每页条数上限（防呆，防止极端输入拖垮查询）。
 const MAX_PAGE_SIZE: usize = 200;
 
-/// 候选行：交易行 + 转出账户名（可搜索字段之一，搜索时即时读取，改名即刻生效）。
+/// 候选行：交易行 + 转出账户名 + 商户名（可搜索字段，搜索时即时读取，
+/// 账户/商户改名即刻生效）。商户不按软删过滤：软删商户的历史交易仍可搜。
 struct Candidate {
     txn: Transaction,
     account_name: String,
+    merchant_name: Option<String>,
 }
 
 impl FromRow for Candidate {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
         // 列 0..=16 与 `Transaction::from_row` 的列清单一致（末列为 merchant_id），
-        // 转出账户名追加在末列。
+        // 转出账户名、商户名追加在末两列。
         Ok(Candidate {
             txn: Transaction::from_row(row)?,
             account_name: row.get(17)?,
+            merchant_name: row.get(18)?,
         })
     }
 }
 
-/// 服务端分页搜索交易。词条之间 AND，每词条对备注/转出账户名按统一语义契约判定；
+/// 服务端分页搜索交易。词条之间 AND，每词条对备注/转出账户名/商户名按统一语义契约判定；
 /// 排序固定交易日期降序（created_at、id 兜底，防同秒批量写入翻页漂移）；
 /// 返回当前页与命中总数。
 ///
@@ -102,10 +105,11 @@ pub fn search_transactions_internal(
         &format!(
             "SELECT t.id,t.kind,t.amount_cents,t.currency_code,t.amount_native_cents,t.account_id,\
              t.to_account_id,t.category_id,t.refund_of_transaction_id,t.note,t.date,t.created_at,\
-             t.updated_at,t.version,t.device_id,t.is_deleted,t.merchant_id,COALESCE(a.name,'') \
+             t.updated_at,t.version,t.device_id,t.is_deleted,t.merchant_id,COALESCE(a.name,''),m.name \
              FROM transactions t \
              JOIN accounts a ON t.account_id = a.id \
              LEFT JOIN categories c ON t.category_id = c.id \
+             LEFT JOIN merchants m ON t.merchant_id = m.id \
              WHERE {} \
              ORDER BY t.date DESC, t.created_at DESC, t.id DESC",
             where_clauses.join(" AND ")
@@ -113,15 +117,20 @@ pub fn search_transactions_internal(
         rusqlite::params_from_iter(params.iter()),
     )?;
 
-    // Rust 层：统一语义过滤（词条之间 AND；每词条对备注/转出账户名任一命中即算）。
+    // Rust 层：统一语义过滤（词条之间 AND；每词条对备注/转出账户名/商户名任一命中即算）。
     // 过滤保持 SQL 给定序（日期降序），不重排。拼音首字母按候选×词条惰性重算，
     // 不预计算：个人账本量级实测远低于感知阈值（ADR-0027，10 万条约 90ms/次）。
     let matched: Vec<Transaction> = candidates
         .into_iter()
         .filter(|c| {
-            terms
-                .iter()
-                .all(|t| term_matches(t, c.txn.note.as_deref(), &c.account_name))
+            terms.iter().all(|t| {
+                term_matches(
+                    t,
+                    c.txn.note.as_deref(),
+                    &c.account_name,
+                    c.merchant_name.as_deref(),
+                )
+            })
         })
         .map(|c| c.txn)
         .collect();

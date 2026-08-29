@@ -1,11 +1,10 @@
 use cucumber::{given, then, when};
 use rusqlite::params;
 
+use crate::world::LedgerWorld;
 use tauri_app_lib::commands::search::search_transactions_internal;
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
 use tauri_app_lib::models::TransactionSearchResult;
-
-use crate::world::LedgerWorld;
 
 // ---------------------------------------------------------------------------
 // Given
@@ -203,5 +202,22 @@ fn search_nth_amount(world: &mut LedgerWorld, index: i64, expected: i64) {
     assert_eq!(
         item.amount_cents, expected,
         "第 {index} 条搜索结果金额不匹配"
+    );
+}
+
+/// 搜索结果展示商户：按名称解析为 id 与交易的 merchant_id 比对
+/// （展示名称本身由前端 merchantMap 负责交易列表信息口径，这里断言关联正确）。
+#[then(expr = "搜索结果第 {int} 条商户应为 {string}")]
+fn search_nth_merchant(world: &mut LedgerWorld, index: i64, expected: String) {
+    let snapshot = search_snapshot(world);
+    let item = snapshot
+        .items
+        .get((index - 1) as usize)
+        .unwrap_or_else(|| panic!("搜索结果不足 {} 条", index));
+    let expected_id = world.merchant_id(&expected);
+    assert_eq!(
+        item.merchant_id.as_deref(),
+        Some(expected_id.as_str()),
+        "第 {index} 条搜索结果商户不匹配"
     );
 }
