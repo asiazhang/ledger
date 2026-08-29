@@ -17,6 +17,7 @@ function baseInvoke(extra?: Record<string, unknown>) {
         list_currencies: mockCurrencies,
         list_accounts: [],
         list_categories: [],
+        list_merchants: [],
         dashboard_overview: mockOverview,
       },
       extra,
