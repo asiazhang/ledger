@@ -39,10 +39,11 @@ describe('SettingsView 不含同步入口（issue #111）', () => {
     expect(wrapper.html()).not.toContain('数据管理')
   })
 
-  it('包含 CategoryManager 组件（「分类与币种」Tab 内）', async () => {
+  it('包含 CategoryManager 组件（「分类」Tab 内）', async () => {
     const wrapper = mount(SettingsView)
-    // issue #157 后 CategoryManager 位于「分类与币种」pane（默认不激活、不挂载）。
-    const tab = wrapper.findAll('.n-tabs-tab').find((t) => t.text() === '分类与币种')
+    // issue #157 后 CategoryManager 位于分类 pane（默认不激活、不挂载）；
+    // ADR-0034 后原「分类与币种」更名「分类」。
+    const tab = wrapper.findAll('.n-tabs-tab').find((t) => t.text() === '分类')
     expect(tab).toBeTruthy()
     await tab!.trigger('click')
     await nextTick()
