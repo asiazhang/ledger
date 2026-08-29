@@ -1,10 +1,11 @@
 use rusqlite::Connection;
 
+use crate::commands::search::text::{split_terms, term_matches_text};
 use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{
-    ExchangeRate, ExchangeRateInput, Holding, InstrumentInput, InstrumentListFilter,
+    ExchangeRate, ExchangeRateInput, Holding, Instrument, InstrumentInput, InstrumentListFilter,
     InstrumentListResult, MarketPrice, MarketPriceInput,
 };
 
@@ -121,22 +122,20 @@ pub(crate) fn list_instruments(
     conn: &Connection,
     filter: &InstrumentListFilter,
 ) -> Result<InstrumentListResult> {
-    let mut conditions: Vec<String> = Vec::new();
-    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-
-    if let Some(search) = filter
+    // 关键字过滤走统一模糊搜索语义（ADR-0027，复用全局搜索纯函数）：词条之间
+    // AND，命中 = 原文连续子串 ∨ 拼音首字母子序列（大小写不敏感）。判定目标为
+    // 下拉 label 等价文本「代码 · 名称」，与前端 PinyinSelect 过滤的 label 一致。
+    // 子序列匹配无法下推 SQL，故有搜索词时取候选后 Rust 内存过滤再内存分页。
+    let search_terms = filter
         .search
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-    {
-        params.push(Box::new(format!("%{}%", search.to_lowercase())));
-        conditions.push(format!(
-            "(LOWER(i.symbol) LIKE ?{} OR LOWER(COALESCE(i.name, '')) LIKE ?{})",
-            params.len(),
-            params.len()
-        ));
-    }
+        .map(split_terms);
+
+    let mut conditions: Vec<String> = Vec::new();
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
     if let Some(market) = filter.market.as_deref().filter(|m| !m.is_empty()) {
         params.push(Box::new(market.to_string()));
         conditions.push(format!("i.market=?{}", params.len()));
@@ -153,28 +152,57 @@ pub(crate) fn list_instruments(
     };
 
     let params_ref: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
-    let total: i64 = conn.query_row(
-        &format!("SELECT COUNT(*) FROM instruments i{where_clause}"),
-        params_ref.as_slice(),
-        |r| r.get(0),
-    )?;
+    let select_sql = |limit_clause: &str| {
+        format!(
+            "SELECT i.id,i.symbol,i.instrument_type,i.name,i.currency_code,i.market,i.created_at,i.updated_at,i.version,i.device_id,p.price_cents,\n         CASE WHEN {INVESTED_EXISTS} THEN 1 ELSE 0 END AS invested \
+             FROM instruments i \
+             LEFT JOIN market_prices p ON p.instrument_id = i.id \
+             {where_clause} ORDER BY i.symbol{limit_clause}"
+        )
+    };
 
     let page = filter.page.unwrap_or(1).max(1);
     let page_size = filter.page_size.unwrap_or(50).clamp(1, 500);
     let offset = (page - 1) * page_size;
-    params.push(Box::new(page_size as i64));
-    params.push(Box::new(offset as i64));
 
-    let sql = format!(
-        "SELECT i.id,i.symbol,i.instrument_type,i.name,i.currency_code,i.market,i.created_at,i.updated_at,i.version,i.device_id,p.price_cents,\n         CASE WHEN {INVESTED_EXISTS} THEN 1 ELSE 0 END AS invested \
-         FROM instruments i \
-         LEFT JOIN market_prices p ON p.instrument_id = i.id \
-         {where_clause} ORDER BY i.symbol LIMIT ?{} OFFSET ?{}",
-        params.len() - 1,
-        params.len()
-    );
-    let params_ref: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
-    let items = query_all(conn, &sql, params_ref.as_slice())?;
+    let (total, items) = if let Some(terms) = &search_terms {
+        // 语义匹配分支：全量候选后 Rust 过滤，total = 命中数，内存分页。
+        let all: Vec<Instrument> = query_all(conn, &select_sql(""), params_ref.as_slice())?;
+        let matched: Vec<Instrument> = all
+            .into_iter()
+            .filter(|inst| {
+                let mut label = inst.symbol.clone();
+                if let Some(name) = inst.name.as_deref().filter(|n| !n.is_empty()) {
+                    label.push_str(" · ");
+                    label.push_str(name);
+                }
+                terms.iter().all(|t| term_matches_text(t, &label))
+            })
+            .collect();
+        let total = matched.len() as i64;
+        let items = matched
+            .into_iter()
+            .skip(offset as usize)
+            .take(page_size as usize)
+            .collect();
+        (total, items)
+    } else {
+        let total: i64 = conn.query_row(
+            &format!("SELECT COUNT(*) FROM instruments i{where_clause}"),
+            params_ref.as_slice(),
+            |r| r.get(0),
+        )?;
+        let mut params = params;
+        params.push(Box::new(page_size as i64));
+        params.push(Box::new(offset as i64));
+        let params_ref: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+        let items = query_all(
+            conn,
+            &select_sql(&format!(" LIMIT ?{} OFFSET ?{}", params.len() - 1, params.len())),
+            params_ref.as_slice(),
+        )?;
+        (total, items)
+    };
 
     Ok(InstrumentListResult { items, total })
 }
