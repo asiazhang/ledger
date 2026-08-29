@@ -584,7 +584,15 @@ fn days_in_month(year: i64, month: u32) -> u32 {
 // 期次执行
 // ---------------------------------------------------------------------------
 
-/// 执行一条 pending 期次：生成 Transaction 并回填。
+/// 执行一条 pending/failed 期次：生成 Transaction 并回填。
+///
+/// 事务边界（issue #230 / ADR-0033 决策 #6，引擎是登记的**事务自持唯一合法例外**，
+/// 继续直调 Writer 接缝、不经行为层编排入口）：[`writer::normalize`] 是只读校验，
+/// 保持事务外——业务错误（如非默认币种缺汇率）期次停留 pending 可重试，现状不变；
+/// 其后从 CAS 置 processing 起包到计划完成检查，任何失败整体 ROLLBACK、期次回原
+/// 状态可重试，不再出现期次滞留 processing 而交易未落库的中间态。调用方仅 IPC
+/// 命令一处（`db.write`，autocommit），无嵌套问题，自持 BEGIN/COMMIT/ROLLBACK
+/// 即可，无需行为层的嵌套感知分支。
 pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<String> {
     tracing::info!(occurrence_id = %occurrence_id, "开始执行定时交易期次");
     let occ: ScheduledTransactionOccurrence = query_one(
@@ -694,19 +702,51 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
         },
     )?;
 
-    // 锁定期次: CAS update status -> processing
+    // 事务自持：从 CAS 置 processing 起包到计划完成检查（事务边界见本函数 doc）。
     let now = now_iso();
+    conn.execute("BEGIN", [])?;
+    match execute_within_transaction(conn, occurrence_id, &occ.status, &norm, &st.id, &now) {
+        Ok(txn_id) => match conn.execute("COMMIT", []) {
+            Ok(_) => {
+                tracing::info!(occurrence_id = %occurrence_id, transaction_id = %txn_id, "定时交易期次执行成功");
+                Ok(txn_id)
+            }
+            // COMMIT 失败：尽力回滚清理残留，再上抛提交错误（与行为层编排入口同款）。
+            Err(e) => {
+                let _ = conn.execute("ROLLBACK", []);
+                Err(e.into())
+            }
+        },
+        // 中途失败：整体回滚，期次回原状态可重试；ROLLBACK 自身失败不遮蔽业务错误。
+        Err(e) => {
+            let _ = conn.execute("ROLLBACK", []);
+            Err(e)
+        }
+    }
+}
+
+/// 期次落库协议本体（无事务语义，由 [`execute_occurrence`] 自持事务包裹）：
+/// CAS 置 processing → 交易行落库 → 回填 transaction_id → 计划完成检查。
+fn execute_within_transaction(
+    conn: &Connection,
+    occurrence_id: &str,
+    expected_status: &str,
+    norm: &writer::NormalizedRow,
+    plan_id: &str,
+    now: &str,
+) -> Result<String> {
+    // 锁定期次: CAS update status -> processing
     let updated = conn.execute(
         "UPDATE scheduled_transaction_occurrences SET status='processing', updated_at=?2, version=version+1, device_id=?3 \
          WHERE id=?1 AND status=?4 AND is_deleted=0",
-        rusqlite::params![occurrence_id, now, device_id(), occ.status],
+        rusqlite::params![occurrence_id, now, device_id(), expected_status],
     )?;
     if updated == 0 {
         tracing::warn!(occurrence_id = %occurrence_id, "期次 CAS 冲突，已被其他设备执行");
         return Err(AppError::Invalid("期次已被其他设备执行".into()));
     }
 
-    let txn_id = writer::insert_row(conn, &norm)?;
+    let txn_id = writer::insert_row(conn, norm)?;
 
     // 回填 transaction_id
     conn.execute(
@@ -716,9 +756,8 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
     )?;
 
     // 检查计划是否应标记为 completed
-    check_and_complete_plan(conn, &st.id)?;
+    check_and_complete_plan(conn, plan_id)?;
 
-    tracing::info!(occurrence_id = %occurrence_id, transaction_id = %txn_id, "定时交易期次执行成功");
     Ok(txn_id)
 }
 
