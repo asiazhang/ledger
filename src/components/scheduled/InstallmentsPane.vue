@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
-import { computed, h, onMounted, ref, type VNode } from 'vue'
+import { computed, h, onMounted, ref, type Ref, type VNode } from 'vue'
 import {
   NCard,
   NButton,
@@ -46,8 +46,8 @@ const message = useMessage()
 // ---------------------------------------------------------------------------
 // 新建分期 = 模态对话框（issue #204）：录入「总金额 + 期数」，实时预览每期金额
 // 与最后一期（含尾差）。每期金额口径唯一来源是 installmentSchedule（与后端
-// expand_occurrences 的 floor 均分、尾差进最后一期一致）。暂不含商户字段
-// （商户挂接归后续 issue）；不暴露「每月几号」（与订阅表单一致）。
+// expand_occurrences 的 floor 均分、尾差进最后一期一致）。商户接入见 issue #206
+// （与订阅表单同款补全、未命中即建；不暴露「每月几号」）。
 // ---------------------------------------------------------------------------
 
 const showCreateModal = ref(false)
@@ -55,6 +55,7 @@ const showCreateModal = ref(false)
 const note = ref('')
 const accountId = ref<string | null>(null)
 const categoryId = ref<string | null>(null)
+const merchantRef = ref<string | null>(null)
 const totalYuan = ref('')
 const periods = ref<number | null>(null)
 const currencyCode = ref(appStore.defaultCurrency)
@@ -73,6 +74,43 @@ const recurrenceOptions = [
 const categoryTreeOptions = computed(
   () => reference.treeCategoryOptions('expense') as unknown as TreeSelectOption[],
 )
+
+// 商户下拉选项（issue #206 / ADR-0028）：在用商户（与订阅表单同款补全，未命中即建）。
+const merchantOptions = computed<{ label: string; value: string }[]>(() =>
+  reference.merchants.map((m) => ({ label: m.name, value: m.id })),
+)
+
+/**
+ * 商户解析（保存时单点收口，issue #206）：「输入即建」交互——
+ * 1. 空 → null（无商户）；
+ * 2. 选中已有商户（value 为 id）→ 原样携带；
+ * 3. 输入文本精确命中在用商户名 → 按名复用；
+ * 4. 未命中 → `create_merchant` 即建；重名兕底（store 陈旧竞态）先强制重拉
+ *    按名复用，仍失败才向上抛。
+ * （分期无编辑表单，无编辑路径的软删兜底分支。）
+ */
+async function resolveMerchantId(source: Ref<string | null>): Promise<string | null> {
+  const ref = source.value
+  if (!ref) return null
+  if (reference.merchantMap.has(ref)) return ref
+  const name = ref.trim()
+  if (!name) return null
+  const existing = reference.merchantByName.get(name)
+  if (existing) return existing.id
+  try {
+    return await api.createMerchant({ name })
+  } catch (e) {
+    // 重名兕底（store 陈旧竞态）：强制重拉后按名复用；重拉失败不影响原错误上抛
+    try {
+      await reference.refresh()
+    } catch {
+      /* 保留原 create 错误 */
+    }
+    const retry = reference.merchantByName.get(name)
+    if (retry) return retry.id
+    throw e
+  }
+}
 
 /** 每期金额预览：总额与期数均合法时给出每期与末期（含尾差），否则为空。 */
 const schedule = computed(() => {
@@ -100,6 +138,7 @@ function resetCreateForm() {
   note.value = ''
   accountId.value = null
   categoryId.value = null
+  merchantRef.value = null
   totalYuan.value = ''
   periods.value = null
   currencyCode.value = appStore.defaultCurrency
@@ -133,7 +172,7 @@ async function create() {
       kind: 'installment',
       account_id: accountId.value,
       category_id: categoryId.value,
-      merchant_id: null,
+      merchant_id: await resolveMerchantId(merchantRef),
       // amount_cents 存每期金额（floor 口径），与期次生成一致（见 e2e 先例）
       amount_cents: s.perPeriodCents,
       total_amount_cents: totalCents,
@@ -273,6 +312,15 @@ const columns: DataTableColumns<InstallmentRow> = [
     title: '备注',
     key: 'note',
     render: (row) => row.plan.core.note ?? '—',
+  },
+  {
+    title: '商户',
+    key: 'merchant',
+    // 改名即时生效（引用指向 id）：merchantMap 含软删商户会话缓存，历史计划照常显示
+    render: (row) => {
+      const m = row.plan.merchant_id ? reference.merchantMap.get(row.plan.merchant_id) : undefined
+      return m?.name ?? '—'
+    },
   },
   {
     title: '分类',
@@ -493,6 +541,17 @@ onMounted(() => {
               clearable
               :consistent-menu-width="false"
               style="width: 220px"
+            />
+          </NFormItem>
+          <NFormItem label="商户">
+            <PinyinSelect
+              v-model:value="merchantRef"
+              :options="merchantOptions"
+              tag
+              clearable
+              placeholder="选择商户，可直接输入新名称"
+              style="width: 220px"
+              data-testid="inst-merchant"
             />
           </NFormItem>
           <NFormItem label="重复">

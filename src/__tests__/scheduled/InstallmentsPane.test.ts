@@ -18,6 +18,7 @@ import type {
   Category,
   Currency,
   InstallmentPlan,
+  Merchant,
   ScheduledTransaction,
   ScheduledTransactionDetail,
   ScheduledTransactionOccurrence,
@@ -66,10 +67,28 @@ const mockCategories: Category[] = [
   },
 ]
 
-/** 分期计划工厂：core.kind 固定 installment；扩展字段携带总额与期数。 */
+const mockMerchants: Merchant[] = [
+  {
+    id: 'mer-1',
+    name: '京东白条',
+    icon: null,
+    color: null,
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: false,
+  },
+]
+
+/** 可变商户字典：状态操作 / 即建后重载读得到最新值。 */
+let mockMerchantsState: Merchant[] = mockMerchants
+
+/** 分期计划工厂：core.kind 固定 installment；扩展字段携带总额与期数（可选商户）。 */
 function makePlan(
   partial: Partial<ScheduledTransaction> & { id: string },
   ext: { total_amount_cents: number; total_occurrences: number },
+  merchantId: string | null = null,
 ): ScheduledTransactionWithExt {
   const core: ScheduledTransaction = {
     kind: 'installment',
@@ -92,7 +111,7 @@ function makePlan(
   }
   return {
     core,
-    merchant_id: null,
+    merchant_id: merchantId,
     total_amount_cents: ext.total_amount_cents,
     total_occurrences: ext.total_occurrences,
     to_account_id: null,
@@ -127,14 +146,37 @@ function baseInvoke() {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-    if (cmd === 'list_merchants') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve(mockMerchantsState)
+    if (cmd === 'create_merchant') {
+      const input = args?.input as { name: string }
+      const id = `mer-new-${input.name}`
+      mockMerchantsState = [
+        ...mockMerchantsState,
+        {
+          id,
+          name: input.name,
+          icon: null,
+          color: null,
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+          version: 1,
+          device_id: 'test',
+          is_deleted: false,
+        },
+      ]
+      return Promise.resolve(id)
+    }
     if (cmd === 'list_scheduled_transactions') return Promise.resolve(mockPlans)
     if (cmd === 'get_scheduled_transaction_detail') {
       const detail = mockDetails.get(String(args?.id))
       return detail ? Promise.resolve(detail) : Promise.reject(new Error('无此计划详情'))
     }
     if (cmd === 'create_scheduled_transaction') {
-      const input = args?.input as { kind: string; note: string | null }
+      const input = args?.input as {
+        kind: string
+        note: string | null
+        merchant_id: string | null
+      }
       const id = `new-${input.kind}-${input.note ?? ''}`
       const plan = makePlan(
         { id, note: input.note ?? null },
@@ -143,6 +185,7 @@ function baseInvoke() {
             (args?.input as { total_amount_cents: number }).total_amount_cents ?? 0,
           total_occurrences: (args?.input as { total_occurrences: number }).total_occurrences ?? 1,
         },
+        input.merchant_id,
       )
       mockPlans = [...mockPlans, plan]
       mockDetails.set(id, makeDetail(plan, { count: 0, amount: 0 }))
@@ -184,6 +227,7 @@ beforeEach(async () => {
   mockInvoke.mockReset()
   mockPlans = []
   mockDetails.clear()
+  mockMerchantsState = mockMerchants
   baseInvoke()
   const store = useReferenceStore()
   await store.ensureFresh()
@@ -281,11 +325,10 @@ describe('InstallmentsPane 新建分期（issue #204）', () => {
     expect(modal.props('title')).toBe('新建分期')
   })
 
-  it('弹窗不出现商户与「每月几号」字段（#204 边界）', async () => {
+  it('弹窗不出现「每月几号」字段（#204 边界，商户字段由 #206 引入）', async () => {
     const wrapper = await mountView()
     await openCreateModal(wrapper)
     const modal = wrapper.findComponent(NModal)
-    expect(modal.text()).not.toContain('商户')
     expect(modal.text()).not.toContain('几号')
   })
 
@@ -499,5 +542,98 @@ describe('InstallmentsPane 状态操作（issue #204）', () => {
     expect(wrapper.find('[data-testid="op-pause-c1"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="op-resume-c1"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="op-cancel-c1"]').exists()).toBe(false)
+  })
+})
+
+describe('InstallmentsPane 商户接入（issue #206）', () => {
+  /** 点击「新建分期」打开模态对话框。 */
+  async function openCreateModal(wrapper: ReturnType<typeof mount>) {
+    await wrapper.find('[data-testid="inst-create-open"]').trigger('click')
+    await flushPromises()
+  }
+
+  /** 填写除商户外的必填项（总额 1200 元分 12 期 + 扣款账户）。 */
+  async function fillRequired(wrapper: ReturnType<typeof mount>) {
+    await findInput(wrapper, 'inst-total').setValue('1200')
+    await findInput(wrapper, 'inst-total').trigger('input')
+    wrapper
+      .findComponent('[data-testid="inst-periods"]')
+      .vm.$emit('update:value', 12)
+    wrapper.findComponent('[data-testid="inst-account"]').vm.$emit('update:value', 'acc-1')
+    await flushPromises()
+  }
+
+  it('商户下拉补全在用商户：选中后创建携带 merchant_id', async () => {
+    const wrapper = await mountView()
+    await openCreateModal(wrapper)
+    // 商户下拉 = 新建弹窗内 data-testid 为 inst-merchant 的 PinyinSelect（内部 NSelect 承载 options）
+    const merchantSelect = wrapper
+      .findComponent('[data-testid="inst-merchant"]')
+      .findComponent(NSelect)
+    expect(merchantSelect.exists()).toBe(true)
+    const options = merchantSelect.props('options') as { label: string; value: string }[]
+    expect(options.map((o) => o.label)).toEqual(['京东白条'])
+    merchantSelect.vm.$emit('update:value', 'mer-1')
+    await fillRequired(wrapper)
+    await wrapper.findComponent('[data-testid="inst-create"]').trigger('click')
+    await flushPromises()
+    const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_scheduled_transaction')
+    expect(call![1]).toMatchObject({ input: { merchant_id: 'mer-1' } })
+    // 清单商户列显示商户名
+    expect(wrapper.text()).toContain('京东白条')
+  })
+
+  it('输入不存在的商户名保存即建：create_merchant 后按返回 id 创建计划', async () => {
+    const wrapper = await mountView()
+    await openCreateModal(wrapper)
+    // 输入文本「新商户」：未命中在用商户 → 保存时即建
+    wrapper.findComponent('[data-testid="inst-merchant"]').vm.$emit('update:value', '新商户')
+    await fillRequired(wrapper)
+    await wrapper.findComponent('[data-testid="inst-create"]').trigger('click')
+    await flushPromises()
+    // 先即建商户，再携带返回的 id 创建计划
+    const merchantCall = mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_merchant')
+    expect(merchantCall).toBeDefined()
+    expect(merchantCall![1]).toEqual({ input: { name: '新商户' } })
+    const createCall = mockInvoke.mock.calls.find(
+      ([cmd]) => cmd === 'create_scheduled_transaction',
+    )
+    expect(createCall![1]).toMatchObject({ input: { merchant_id: 'mer-new-新商户' } })
+  })
+
+  it('未选商户创建携带 null，不调用 create_merchant', async () => {
+    const wrapper = await mountView()
+    await openCreateModal(wrapper)
+    await fillRequired(wrapper)
+    await wrapper.findComponent('[data-testid="inst-create"]').trigger('click')
+    await flushPromises()
+    expect(mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_merchant')).toBeUndefined()
+    const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_scheduled_transaction')
+    expect(call![1]).toMatchObject({ input: { merchant_id: null } })
+  })
+
+  it('清单显示计划商户（merchantMap 派生，改名即时生效）', async () => {
+    const inst = makePlan(
+      { id: 'i1', note: '手机分期' },
+      { total_amount_cents: 120000, total_occurrences: 12 },
+      'mer-1',
+    )
+    mockPlans = [inst]
+    mockDetails.set('i1', makeDetail(inst, { count: 0, amount: 0 }))
+    const wrapper = await mountView()
+    expect(wrapper.text()).toContain('手机分期')
+    expect(wrapper.text()).toContain('京东白条')
+  })
+
+  it('无商户计划不显示商户名', async () => {
+    const inst = makePlan(
+      { id: 'i1', note: '手机分期' },
+      { total_amount_cents: 120000, total_occurrences: 12 },
+    )
+    mockPlans = [inst]
+    mockDetails.set('i1', makeDetail(inst, { count: 0, amount: 0 }))
+    const wrapper = await mountView()
+    expect(wrapper.text()).toContain('手机分期')
+    expect(wrapper.text()).not.toContain('京东白条')
   })
 })
