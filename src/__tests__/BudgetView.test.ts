@@ -4,6 +4,7 @@ import { NSelect, NInputNumber, NDatePicker, NModal } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
+import { todayStr } from '@/utils/date'
 import BudgetView from '@/views/BudgetView.vue'
 import type { BudgetProgress, Category, Currency } from '@/types'
 
@@ -174,7 +175,8 @@ describe('BudgetView 预算表单（issue #183）', () => {
       input: {
         category_id: 'cat-1',
         amount_cents: 50000,
-        start_date: new Date().toISOString().slice(0, 10),
+        // 本地日历日语义（issue #214）：不再用 UTC toISOString 切片
+        start_date: todayStr(),
       },
     })
     expect(messageApi.success).toHaveBeenCalledWith('已创建预算')

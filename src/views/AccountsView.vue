@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
+import { yuanToCents } from '@/utils/money'
 import { computed, h, nextTick, onMounted, ref } from 'vue'
 import {
   NCard,
@@ -58,7 +59,7 @@ async function create() {
     name: name.value,
     type: type.value,
     currency_code: currencyCode.value,
-    initial_balance_cents: Math.round((initial.value ?? 0) * 100),
+    initial_balance_cents: yuanToCents(initial.value ?? 0) ?? 0,
   }
   try {
     await api.createAccount(input)
@@ -163,9 +164,9 @@ function formatLocalDate(d: Date): string {
   return `${d.getFullYear()}-${m}-${day}`
 }
 
-/** 目标余额（分）：输入以元为单位，存储为整数分。 */
+/** 目标余额（分）：输入以元为单位，经 yuanToCents 统一口径转整数分（非法输入 → null，禁用提交）。 */
 const adjustTargetCents = computed(() =>
-  adjustTarget.value === null ? null : Math.round(adjustTarget.value * 100),
+  adjustTarget.value === null ? null : yuanToCents(adjustTarget.value),
 )
 
 /** 差额 Δ = 目标 − 当前：>0 从黑洞转入，<0 转出至黑洞，=0 无需调整。 */
