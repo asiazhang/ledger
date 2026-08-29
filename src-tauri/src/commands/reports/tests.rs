@@ -594,3 +594,124 @@ fn merchant_shares_includes_soft_deleted_merchant_history() {
     assert_eq!(rows.len(), 1, "软删商户的历史消费照常进排行");
     assert_eq!(rows[0].amount_cents, 1000);
 }
+
+// ---- query_report_year_range：年份筛选范围（issue #266）----
+
+use crate::commands::reports::query_report_year_range;
+
+/// 单测冻结的本地今日：2026-06-15（不依赖真实时钟，场景任意日期可复现）。
+fn frozen_today() -> chrono::NaiveDate {
+    chrono::NaiveDate::from_ymd_opt(2026, 6, 15).unwrap()
+}
+
+#[test]
+fn year_range_spans_earliest_to_current_year() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    for (id, date) in [
+        ("t-old", "2024-03-01"),
+        ("t-mid", "2025-08-15"),
+        ("t-new", "2026-01-20"),
+    ] {
+        insert_tx(
+            &conn,
+            &TxRow {
+                id,
+                kind: TransactionKind::Expense,
+                amount: 100,
+                category_id: None,
+                date,
+            },
+        );
+    }
+    let range = query_report_year_range(&conn, frozen_today()).unwrap();
+    assert_eq!(
+        (range.min_year, range.max_year),
+        (2024, 2026),
+        "起点为最早流水年份，终点取「数据与今天更晚者」"
+    );
+}
+
+#[test]
+fn year_range_end_expanded_by_future_data() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    for (id, date) in [("t-past", "2025-05-01"), ("t-future", "2027-11-30")] {
+        insert_tx(
+            &conn,
+            &TxRow {
+                id,
+                kind: TransactionKind::Income,
+                amount: 100,
+                category_id: None,
+                date,
+            },
+        );
+    }
+    let range = query_report_year_range(&conn, frozen_today()).unwrap();
+    assert_eq!(
+        (range.min_year, range.max_year),
+        (2025, 2027),
+        "未来日期流水把终点撑大到最新流水年份"
+    );
+}
+
+#[test]
+fn year_range_empty_db_falls_back_to_current_year() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    let range = query_report_year_range(&conn, frozen_today()).unwrap();
+    assert_eq!(
+        (range.min_year, range.max_year),
+        (2026, 2026),
+        "空库回退 [当前年, 当前年]"
+    );
+}
+
+#[test]
+fn year_range_excludes_deleted() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    insert_tx(
+        &conn,
+        &TxRow {
+            id: "t-deleted",
+            kind: TransactionKind::Expense,
+            amount: 100,
+            category_id: None,
+            date: "2020-01-01",
+        },
+    );
+    conn.execute(
+        "UPDATE transactions SET is_deleted=1 WHERE id='t-deleted'",
+        [],
+    )
+    .unwrap();
+    let range = query_report_year_range(&conn, frozen_today()).unwrap();
+    assert_eq!(
+        (range.min_year, range.max_year),
+        (2026, 2026),
+        "软删交易不参与范围"
+    );
+}
+
+#[test]
+fn year_range_counts_all_kinds_by_date() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    insert_tx(
+        &conn,
+        &TxRow {
+            id: "t-transfer",
+            kind: TransactionKind::Transfer,
+            amount: 800,
+            category_id: None,
+            date: "2023-07-01",
+        },
+    );
+    let range = query_report_year_range(&conn, frozen_today()).unwrap();
+    assert_eq!(
+        range.min_year, 2023,
+        "任何 kind 的未删交易日期都参与范围（转账也一样）"
+    );
+}

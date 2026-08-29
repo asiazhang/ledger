@@ -170,6 +170,7 @@ pub fn run() {
             commands::monthly_summary,
             commands::category_shares,
             commands::merchant_shares,
+            commands::report_year_range,
             commands::dashboard_overview,
             commands::budget_progress,
             commands::create_scheduled_transaction,
