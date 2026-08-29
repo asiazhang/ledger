@@ -196,13 +196,15 @@ async function remove(id: string) {
   }
 }
 
-/** 删除走 useDialog 二次确认（issue #151）：取消不删，确认后才删除。 */
+/** 删除走 useDialog 二次确认（issue #151）：取消不删，确认后才删除。
+ * 遮罩点击不构成关闭意图（issue #252 弹层关闭语义）：确认/取消须显式点击。 */
 function confirmDelete(row: Transaction) {
   dialog.warning({
     title: '删除交易',
     content: '确认删除该条交易？删除后不可恢复。',
     positiveText: '删除',
     negativeText: '取消',
+    maskClosable: false,
     onPositiveClick: () => remove(row.id),
   })
 }

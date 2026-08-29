@@ -1,4 +1,4 @@
-import { mockInvoke, merchantDb, mockCurrencies, mockAccounts, makeTxn, applyListFilter, mountView, listCalls, lastListFilter, tablePagination, bodyRows, deleteCalls, createCalls, openMenuOnRow, rowMenu, rowMenuKeys, selectRowMenu, dialogText, visibleModalText, clickDialogButton, setTxnDb, setMerchantDb, pushMock } from './common'
+import { mockInvoke, merchantDb, mockCurrencies, mockAccounts, makeTxn, applyListFilter, mountView, listCalls, lastListFilter, tablePagination, bodyRows, deleteCalls, createCalls, openMenuOnRow, rowMenu, rowMenuKeys, selectRowMenu, dialogText, visibleModalText, clickDialogButton, pressReleaseOnDialogMask, setTxnDb, setMerchantDb, pushMock } from './common'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NDataTable, NPopconfirm, NSelect, NModal, NInput, NInputNumber } from 'naive-ui'
@@ -90,6 +90,21 @@ describe('TransactionsView 行右键菜单（issue #151）', () => {
       name: 'transactions',
       query: { merchant: 'mch-1' },
     })
+  })
+
+  it('删除确认框点遮罩不关闭（issue #252）：确认/取消须显式点击', async () => {
+    const wrapper = await mountView()
+    await openMenuOnRow(wrapper, 0)
+    await selectRowMenu(wrapper, 'delete')
+    expect(dialogText()).toContain('删除后不可恢复')
+    // 遮罩点击不构成关闭意图：确认框保持打开，也不触发删除
+    await pressReleaseOnDialogMask()
+    expect(dialogText()).toContain('删除后不可恢复')
+    expect(deleteCalls()).toHaveLength(0)
+    // 显式动作照常工作：取消关闭且不删除
+    await clickDialogButton('取消')
+    await flushPromises()
+    expect(deleteCalls()).toHaveLength(0)
   })
 
   it('任意行右键「删除」→ 二次确认后才删除；取消不删', async () => {
