@@ -17,8 +17,8 @@
 2. **生产者 = 两个同步命令，触发条件 = 实际写入**：
    - `sync_holding_prices` 成功返回且 `synced > 0` 时 emit；`synced = 0`（无持仓标的、全部跳过）为库内零变化，不广播——失效信号的本义是「数据变了」。
    - `sync_instruments` 结束（含用户中断，只要本次运行有落库）同样 emit：全量同步也 upsert `market_prices`，且其入口恰在标的页，同步后标的列表现价列陈旧与主 bug 同形；中断保留已落库价格（upsert 幂等），不发信号即失真。
-3. **消费方自选订阅**：前端价格消费方各自 `listen` 后重拉自身数据。本期接线持仓概览（`usePortfolioOverview`）与标的页标的列表，并移除盈亏页概览卡的手动重拉样板；走势、仪表盘等信号可用性已备好，订阅留后续（spec #170 用户故事 5/7：未来第三入口与新消费方行为自动一致、零记忆负担）。
-4. **接缝承诺改写**：`useHoldingPriceSync.sync()` 返回轻量成功与否（`Promise<boolean>`，不造含「取消」态的枚举——HoldingPriceSync 无中断机制，那是全量同步的）；「同步完成 → 数据失效」由信号承载，调用方不再记忆重拉。后端同步命令因此突破 spec 成稿的「零改动」——代价为每命令一处 emit 薄胶（对齐 `emit_reference_changed` 模式）。
+3. **消费方自选订阅**：前端价格消费方各自 `listen` 后重拉自身数据。本期接线三处——持仓概览（`usePortfolioOverview`）、标的页标的列表、组合走势（`usePortfolioTrend`，走势同样吃 `market_prices`，漏接就是下一个陈旧点），并移除盈亏页概览卡的手动重拉样板；仪表盘等信号可用性已备好，订阅留后续（spec #170 用户故事 5/7：未来第三入口与新消费方行为自动一致、零记忆负担）。
+4. **接缝承诺改写**：`useHoldingPriceSync.sync()` 返回终态 `Promise<'success' | 'error'>`（即既有 `HoldingPriceSyncStatus` 的终态，与 `status` ref 同形；不造含「取消」态的枚举——HoldingPriceSync 无中断机制，那是全量同步的；无持仓/部分跳过是 success 子形态，`lastResult.synced / skipped` 供区分）；「同步完成 → 数据失效」由信号承载，调用方不再记忆重拉。后端同步命令因此突破 spec 成稿的「零改动」——代价为每命令一处 emit 薄胶（对齐 `emit_reference_changed` 模式）。
 
 ## 理由
 
