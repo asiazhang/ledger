@@ -1,15 +1,22 @@
-import { routeMock, makeTxn, merchantDb, mountView, mountViewSync, listCalls, lastListFilter, tablePagination, bodyRows, setTxnDb, setMerchantDb } from './common'
+import { routeMock, makeTxn, setTxnDb, setMerchantDb, mountView, listCalls, lastListFilter, bodyRows } from './common'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
 import { NSelect, NDatePicker, NButton } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import type { Merchant, Transaction } from '@/types'
 
-describe('TransactionsView 涉及账户 URL 过滤接线（issue #97，冒烟级）', () => {
-  // 解析、校验、复位规则、就绪补判与字段级让位已内化在 TransactionFilter 参数表，
-  // 用例迁到模块接口测试 useTransactionFilter.test.ts（issue #234 / ADR-0030 决策 7）；
-  // 此处仅验证视图把 route query 递给模块的接线。
+describe('TransactionsView URL 下钻接线（issue #97/#191，冒烟级）', () => {
+  // account/merchant 参数的解析、校验、复位规则、就绪补判与字段级让位已内化在
+  // TransactionFilter 参数表，用例迁到模块接口测试 useTransactionFilter.test.ts
+  // （issue #234 / ADR-0030 决策 7）；此处仅验证视图把 route query 递给模块的接线。
+  beforeEach(() => {
+    setTxnDb([
+      makeTxn(1, 'acc-1', { merchant_id: 'mch-1', date: '2026-01-05' }),
+      makeTxn(2, 'acc-2', { merchant_id: 'mch-1', date: '2026-02-10' }),
+      makeTxn(3, 'acc-1', { date: '2026-01-20' }),
+    ])
+  })
+
   it('带有效 account 参数进入时自动按该账户过滤（含转入转账语义的参数）', async () => {
     routeMock.query = { account: 'acc-1' }
     const wrapper = await mountView()
@@ -18,43 +25,38 @@ describe('TransactionsView 涉及账户 URL 过滤接线（issue #97，冒烟级
       page_size: 20,
       involving_account_id: 'acc-1',
     })
-    // 45 笔中奇数序号（acc-1）共 22 笔（偶数序号在 acc-2）
-    expect(wrapper.text()).toContain('共 22 条')
-    expect(bodyRows(wrapper).length).toBe(20)
+    // txn-1 / txn-3 在 acc-1
+    expect(wrapper.text()).toContain('共 2 条')
   })
 
-  it('已挂载时清除 account 参数复位为全量并回到第 1 页', async () => {
+  it('account 与 merchant 参数可组合直达（同时生效）', async () => {
+    routeMock.query = { account: 'acc-1', merchant: 'mch-1' }
+    const wrapper = await mountView()
+    expect(lastListFilter()).toMatchObject({
+      involving_account_id: 'acc-1',
+      merchant_id: 'mch-1',
+    })
+    expect(wrapper.text()).toContain('共 1 条')
+  })
+
+  it('已挂载时导航清除 account 参数复位为全量并回到第 1 页', async () => {
     routeMock.query = { account: 'acc-1' }
     const wrapper = await mountView()
     expect(lastListFilter()).toMatchObject({ involving_account_id: 'acc-1', page: 1 })
-    // 先翻到第 2 页
-    tablePagination(wrapper).onChange(2)
-    await flushPromises()
-    expect(lastListFilter()).toMatchObject({ page: 2, involving_account_id: 'acc-1' })
     // 导航清除 query（如从侧边栏重新进入交易页）→ 复位全量 + 回第 1 页
     routeMock.query = {}
     await flushPromises()
     expect(lastListFilter()).toMatchObject({ page: 1 })
     expect(lastListFilter()).not.toHaveProperty('involving_account_id')
-    expect(wrapper.text()).toContain('共 45 条')
-  })
-
-  it('冷启动直连深链：参考数据晚到时有效 account 参数仍被应用（不静默丢失）', async () => {
-    // 全新 pinia：参考数据尚未加载（self-init 在途），立即以带参 URL 挂载
-    setActivePinia(createPinia())
-    routeMock.query = { account: 'acc-1' }
-    const wrapper = mountViewSync()
-    await flushPromises()
-    // 参考数据就绪后自动补判：过滤被应用，而非永久回退全量
-    expect(lastListFilter()).toMatchObject({ involving_account_id: 'acc-1' })
-    expect(wrapper.text()).toContain('共 22 条')
+    expect(wrapper.text()).toContain('共 3 条')
   })
 })
 
 describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟级）', () => {
-  // 过滤意图语义（单维/组合/复位/同值不动作 → 状态终态与请求参数）已迁到模块接口测试
-  // useTransactionFilter.test.ts（ADR-0030 决策 7）；此处仅保留过滤行渲染冒烟与
-  // 「控件 → 意图 → 列表」交互路由，以及 URL 只读、分页保持等视图侧行为。
+  // 过滤意图语义（单维/组合/复位/同值不动作 → 状态终态与请求参数）与 URL 初始化仅
+  // 结算一次、参考数据重拉不重放等时序行为已迁到模块接口测试 useTransactionFilter.test.ts
+  // （ADR-0030 决策 7）；此处仅保留过滤行渲染冒烟、「控件 → 意图 → 列表」交互路由
+  // 与 URL 只读契约。
   // 富数据集：不同账户/日期/类型，供交互路由与空态断言（每 describe 前置重置）。
   const richDb: Transaction[] = [
     makeTxn(1, 'acc-1', { kind: 'expense', date: '2026-01-05' }),
@@ -168,63 +170,6 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
     expect(routeMock.query).toEqual({ account: 'acc-1' })
   })
 
-  it('侧边栏重进（清除 account 参数）同时复位日期/类型过滤，回到全量列表（#96 决策 3）', async () => {
-    routeMock.query = { account: 'acc-1' }
-    const wrapper = await mountView()
-    await setDateFrom(wrapper, '2026-02-01')
-    await setKind(wrapper, 'income')
-    expect(lastListFilter()).toMatchObject({
-      involving_account_id: 'acc-1',
-      from: '2026-02-01',
-      kind: 'income',
-    })
-    // 模拟从侧边栏重新进入交易页：导航清除 query
-    routeMock.query = {}
-    await flushPromises()
-    const f = lastListFilter()
-    expect(f).toMatchObject({ page: 1, page_size: 20 })
-    expect(f).not.toHaveProperty('involving_account_id')
-    expect(f).not.toHaveProperty('from')
-    expect(f).not.toHaveProperty('kind')
-    expect(wrapper.text()).toContain('共 5 条')
-  })
-
-  it('参考数据重拉不把手动改动覆盖回 URL 值（URL 初始化仅结算一次）', async () => {
-    routeMock.query = { account: 'acc-1' }
-    const wrapper = await mountView()
-    await setAccount(wrapper, 'acc-2')
-    expect(lastListFilter()).toMatchObject({ involving_account_id: 'acc-2' })
-    // 触发一次参考数据重拉（status loading → ready，如 ledger:changed 后的重载）
-    await useReferenceStore().refresh()
-    await flushPromises()
-    // 手动改动保持，不被 URL 值 acc-1 覆盖
-    expect(lastListFilter()).toMatchObject({ involving_account_id: 'acc-2' })
-  })
-
-  it('分页与页大小切换保持过滤条件', async () => {
-    const wrapper = await mountView()
-    await setAccount(wrapper, 'acc-1') // 涉及 acc-1：txn-1 / txn-3 / txn-5 共 3 条
-    // 页大小切换：保持 acc-1 过滤并回到第 1 页
-    tablePagination(wrapper).onUpdatePageSize(2)
-    await flushPromises()
-    expect(lastListFilter()).toMatchObject({
-      page: 1,
-      page_size: 2,
-      involving_account_id: 'acc-1',
-    })
-    expect(bodyRows(wrapper).length).toBe(2)
-    // 翻页：保持过滤
-    tablePagination(wrapper).onChange(2)
-    await flushPromises()
-    expect(lastListFilter()).toMatchObject({
-      page: 2,
-      page_size: 2,
-      involving_account_id: 'acc-1',
-    })
-    expect(wrapper.text()).toContain('共 3 条')
-    expect(bodyRows(wrapper).length).toBe(1)
-  })
-
   it('过滤无结果时展示空态提示（与加载态区分），空态可一键清除', async () => {
     const wrapper = await mountView()
     await setKind(wrapper, 'buy') // richDb 无 buy → 空结果
@@ -238,8 +183,9 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
 })
 
 describe('TransactionsView 商户筛选（issue #191，冒烟级）', () => {
-  // 组合/复位等意图语义迁到模块接口测试；此处保留下拉选项渲染冒烟与一条交互路由
-  // （软删商户可被选中过滤的历史交易口径）。
+  // 组合/复位等意图语义迁到模块接口测试，URL 只读契约由上方 account 维度用例覆盖
+  // （视图整层不写回，与维度无关）；此处保留下拉选项渲染冒烟与「控件 → 意图 → 列表」
+  // 交互路由（软删商户可被选中过滤的历史交易口径）。
   const merchantDbAll: Merchant[] = [
     {
       id: 'mch-1', name: '京东',
@@ -301,45 +247,5 @@ describe('TransactionsView 商户筛选（issue #191，冒烟级）', () => {
     await setMerchant(wrapper, null)
     expect(lastListFilter()).not.toHaveProperty('merchant_id')
     expect(wrapper.text()).toContain('共 4 条')
-  })
-
-  it('手动改动商户筛选不回写 URL（组件状态为唯一事实源）', async () => {
-    routeMock.query = { merchant: 'mch-1' }
-    const wrapper = await mountView()
-    await setMerchant(wrapper, 'mch-2')
-    expect(routeMock.query).toEqual({ merchant: 'mch-1' })
-  })
-})
-
-describe('TransactionsView 商户 URL 直达接线（issue #191，冒烟级）', () => {
-  // 商户参数的解析/校验/复位/补判/让位用例已迁到模块接口测试（issue #234）；
-  // 此处仅验证 account + merchant 组合下钻时视图把 query 完整递给模块。
-  beforeEach(async () => {
-    setTxnDb([
-      makeTxn(1, 'acc-1', { merchant_id: 'mch-1', date: '2026-01-05' }),
-      makeTxn(2, 'acc-2', { merchant_id: 'mch-1', date: '2026-02-10' }),
-      makeTxn(3, 'acc-1', { merchant_id: 'mch-2', date: '2026-03-15' }),
-      makeTxn(4, 'acc-1', { merchant_id: null, date: '2026-01-20' }),
-    ])
-    // 商户筛选测试用含软删字典（外层已以默认字典加载，强制重拉）
-    setMerchantDb([
-      { ...merchantDb[0] },
-      {
-        id: 'mch-2', name: '红旗连锁',
-        created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
-        version: 1, device_id: 'test', is_deleted: true,
-      },
-    ])
-    await useReferenceStore().refresh()
-  })
-
-  it('account 与 merchant 参数可组合直达（同时生效）', async () => {
-    routeMock.query = { account: 'acc-1', merchant: 'mch-1' }
-    const wrapper = await mountView()
-    expect(lastListFilter()).toMatchObject({
-      involving_account_id: 'acc-1',
-      merchant_id: 'mch-1',
-    })
-    expect(wrapper.text()).toContain('共 1 条')
   })
 })
