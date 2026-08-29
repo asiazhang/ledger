@@ -12,7 +12,6 @@ import {
   NFormItem,
   NInput,
   NInputNumber,
-  NModal,
   NSelect,
   NSpace,
   NText,
@@ -23,6 +22,7 @@ import {
 } from 'naive-ui'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
+import AppModal from '@/components/AppModal.vue'
 import AccountLink from '@/components/AccountLink.vue'
 import { buildAccountRowMenuOptions } from '@/components/account-row-menu'
 import { ACCOUNT_TYPE_LABELS, formatAmount } from '@/types'
@@ -318,7 +318,7 @@ onMounted(() => {
     </NCard>
 
     <!-- 编辑账户弹窗：type 不可改（参与余额符号归属），币种仅无交易账户可改（后端校验） -->
-    <NModal
+    <AppModal
       v-model:show="showEdit"
       title="编辑账户"
       preset="card"
@@ -347,10 +347,10 @@ onMounted(() => {
           <NButton size="small" type="primary" @click="submitEdit">保存</NButton>
         </NSpace>
       </NForm>
-    </NModal>
+    </AppModal>
 
     <!-- 调整余额弹窗：输入目标余额，实时显示差额与去向；日期默认今天可改（对账常补记） -->
-    <NModal
+    <AppModal
       v-model:show="showAdjust"
       title="调整余额"
       preset="card"
@@ -399,7 +399,7 @@ onMounted(() => {
           </NButton>
         </NSpace>
       </NForm>
-    </NModal>
+    </AppModal>
 
     <!-- 行菜单（操作列「⋯」与行右键共用）：手动定位弹出 -->
     <NDropdown

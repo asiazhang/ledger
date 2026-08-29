@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
 import { computed, ref, watch } from 'vue'
-import { NButton, NForm, NFormItem, NInput, NModal, useMessage } from 'naive-ui'
+import { NButton, NForm, NFormItem, NInput, useMessage } from 'naive-ui'
+import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
@@ -62,7 +63,7 @@ async function saveEdit() {
 </script>
 
 <template>
-  <NModal
+  <AppModal
     :show="show"
     title="编辑分类"
     preset="card"
@@ -88,5 +89,5 @@ async function saveEdit() {
       </NFormItem>
       <NButton type="primary" block @click="saveEdit">保存</NButton>
     </NForm>
-  </NModal>
+  </AppModal>
 </template>

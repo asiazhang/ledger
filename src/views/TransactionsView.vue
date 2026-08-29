@@ -12,7 +12,6 @@ import {
   NEmpty,
   NSelect,
   NSpace,
-  NModal,
   useDialog,
   useMessage,
   useThemeVars,
@@ -21,6 +20,7 @@ import {
   type PaginationProps,
 } from 'naive-ui'
 import { ChevronDown } from '@vicons/ionicons5'
+import AppModal from '@/components/AppModal.vue'
 import TransactionForm from '@/components/TransactionForm.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import RefundForm from '@/components/RefundForm.vue'
@@ -442,7 +442,7 @@ onMounted(() => {
     </NSpace>
     <!-- 快速记账弹窗：标题标明入口选定类型，内嵌收窄后的 TransactionForm（无类型单选），
          提交成功关闭并刷新列表 -->
-    <NModal
+    <AppModal
       :show="createKind !== null"
       :title="createTitle"
       preset="card"
@@ -456,10 +456,10 @@ onMounted(() => {
         :kind="createKind"
         @created="onFormCreated"
       />
-    </NModal>
+    </AppModal>
     <!-- 行内退款弹窗：原交易由右键所在行固定（fixed-target），账户/币种锁定继承，
          金额默认原交易金额（可改）；提交走现有 kind=refund 写路径 -->
-    <NModal
+    <AppModal
       v-model:show="showRefund"
       title="退款"
       preset="card"
@@ -473,9 +473,9 @@ onMounted(() => {
         :fixed-target="refundSource"
         @created="onRefundCreated"
       />
-    </NModal>
+    </AppModal>
     <!-- 「加入物品」确认弹窗（issue #119）：原交易由右键所在行固定，自动带出只读展示 -->
-    <NModal
+    <AppModal
       v-model:show="showAddItem"
       title="加入物品"
       preset="card"
@@ -490,10 +490,10 @@ onMounted(() => {
         @created="closeAddItem"
         @cancel="closeAddItem"
       />
-    </NModal>
+    </AppModal>
     <!-- 编辑弹窗（issue #178）：回填既有交易全部业务字段，kind 锁死；
          提交走全字段更新命令，成功关窗并刷新列表（保持当前页与筛选） -->
-    <NModal
+    <AppModal
       v-model:show="showEdit"
       title="编辑交易"
       preset="card"
@@ -508,7 +508,7 @@ onMounted(() => {
         :trade="editTrade"
         @saved="onEditSaved"
       />
-    </NModal>
+    </AppModal>
     <!-- 行右键菜单（issue #151 / #119）：expense 行「退款」「加入物品」+ 所有行「删除」，手动定位弹出 -->
     <NDropdown
       trigger="manual"
