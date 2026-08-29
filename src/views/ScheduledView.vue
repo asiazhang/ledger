@@ -17,17 +17,21 @@ type ScheduledTab = (typeof TABS)[number]
 const route = useRoute()
 const router = useRouter()
 
-const activeTab = computed<ScheduledTab>(() => {
-  const tab = route.query.tab
-  return typeof tab === 'string' && (TABS as readonly string[]).includes(tab)
-    ? (tab as ScheduledTab)
-    : 'subscriptions'
-})
+/** 页签合法性收窄：TS 无法从 includes 推窄，用类型守卫一处收口。 */
+function isScheduledTab(v: unknown): v is ScheduledTab {
+  return typeof v === 'string' && (TABS as readonly string[]).includes(v)
+}
 
-/** 页签切换走 replace：不产生多余历史记录，深链语义（每页签一条 URL）。 */
-function onTabChange(key: string) {
-  if (key !== activeTab.value) {
-    void router.replace({ query: { tab: key } })
+const activeTab = computed<ScheduledTab>(() =>
+  isScheduledTab(route.query.tab) ? route.query.tab : 'subscriptions',
+)
+
+/** 页签切换走 replace：不产生多余历史记录，深链语义（每页签一条 URL）；
+ *  展开既有 query——保留路由上未来可能出现的其他参数。 */
+function onTabChange(key: string | number) {
+  const tab = String(key)
+  if (isScheduledTab(tab) && tab !== activeTab.value) {
+    void router.replace({ query: { ...route.query, tab } })
   }
 }
 </script>

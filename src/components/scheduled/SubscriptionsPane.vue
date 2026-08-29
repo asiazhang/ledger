@@ -34,7 +34,7 @@ import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { useFormShared } from '@/composables/useFormShared'
 import PinyinSelect from '@/components/PinyinSelect.vue'
-import SubscriptionSpendPanel from '@/components/subscriptions/SubscriptionSpendPanel.vue'
+import SubscriptionSpendPanel from '@/components/scheduled/SubscriptionSpendPanel.vue'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 
 const reference = useReferenceStore()

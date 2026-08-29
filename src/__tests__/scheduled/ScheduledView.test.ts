@@ -4,7 +4,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import ScheduledView from '@/views/ScheduledView.vue'
-import { router } from '@/router'
+import { routes, router } from '@/router'
 import type { SubscriptionSpendOverview } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
@@ -38,24 +38,9 @@ function baseInvoke() {
   }) as typeof invoke)
 }
 
-/** 独立 memory router：与真实路由表同构（/scheduled + 旧 /subscriptions 重定向）。 */
+/** memory router：与真实路由表同构（routes 单一来源复用，避免双份漂移）。 */
 async function makeRouter(initialPath = '/scheduled') {
-  const r = createRouter({
-    history: createMemoryHistory(),
-    routes: [
-      {
-        path: '/scheduled',
-        name: 'scheduled',
-        component: ScheduledView,
-        meta: { title: '定时' },
-      },
-      {
-        path: '/subscriptions',
-        name: 'subscriptions',
-        redirect: { name: 'scheduled', query: { tab: 'subscriptions' } },
-      },
-    ],
-  })
+  const r = createRouter({ history: createMemoryHistory(), routes })
   await r.push(initialPath)
   await r.isReady()
   return r
