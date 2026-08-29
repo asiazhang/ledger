@@ -90,7 +90,7 @@ beforeEach(async () => {
   baseInvoke()
   localStorage.clear()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 async function mountView() {

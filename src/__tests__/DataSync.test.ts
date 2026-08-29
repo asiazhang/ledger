@@ -27,7 +27,7 @@ beforeEach(async () => {
   })
   localStorage.clear()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 describe('SettingsView 不含同步入口（issue #111）', () => {

@@ -231,7 +231,7 @@ beforeEach(async () => {
   })
   localStorage.clear()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 afterEach(() => {

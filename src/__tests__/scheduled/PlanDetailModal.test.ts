@@ -211,7 +211,7 @@ beforeEach(async () => {
   mockDetails = new Map()
   baseInvoke()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 describe('PlanDetailModal 期次列表（issue #205）', () => {

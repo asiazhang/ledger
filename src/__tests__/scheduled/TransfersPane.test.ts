@@ -187,7 +187,7 @@ beforeEach(async () => {
   failCreate = false
   baseInvoke()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 describe('TransfersPane 定时转账清单（issue #203）', () => {

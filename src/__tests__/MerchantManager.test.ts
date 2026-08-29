@@ -67,7 +67,7 @@ describe('MerchantManager.vue（issue #189）', () => {
     messageMock.error.mockClear()
     messageMock.warning.mockClear()
     const store = useReferenceStore()
-    await store.ensureFresh()
+    await store.refresh()
   })
 
   it('挂载并渲染商户列表', () => {

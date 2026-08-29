@@ -32,8 +32,8 @@
 
 ## 参考数据（单一来源）
 
-- `src/stores/reference.ts` — `useReferenceStore`：`currencies / accounts / categories` 三张参考表 + 派生映射（`currencyMap / accountMap / categoryMap`）+ 分类树逻辑（`rootCategories / expenseCategories / incomeCategories / categoryChildren / categoryPath / treeCategoryOptions`）+ 失效信号（`status` / `version`）。
-- 生命周期为 **push-first**：首次访问 self-init 拉取一次；订阅后端 `ledger:changed` 自动重拉（stale-while-revalidate，不闪空）；显式控制用 `refresh()`（强制，在途去重）与 `ensureFresh()`（新鲜窗口内零 IPC）。
+- `src/stores/reference.ts` — `useReferenceStore`：`currencies / accounts / categories / merchants` 四张参考表 + 派生映射（`currencyMap / accountMap / categoryMap / merchantMap`）+ 分类树逻辑（`rootCategories / expenseCategories / incomeCategories / categoryChildren / categoryPath / treeCategoryOptions`）+ 失效信号（`status` / `version`）。
+- 生命周期为 **push-first**：首次访问 self-init 拉取一次；订阅后端 `ledger:changed` 自动重拉（stale-while-revalidate，不闪空），失效机制唯一、无 pull 侧兜底；需要强制重拉时显式调 `refresh()`（在途去重）。
 - **消费约定**：所有视图/组件不再手工 `loadAll()`；账户/分类管理、交易/搜索、报表/预算/投资/设置各流一律从本 store 读取并依赖信号刷新（issue #78–#85）。派生映射为 computed，随数组自动更新。
 - `src/stores/app.ts` — `useAppStore`：**纯 UI 设置 store**（主题 / 默认币种 / 备份设置，localStorage 持久化），不暴露任何参考数据接口。
 

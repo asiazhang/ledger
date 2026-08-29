@@ -156,7 +156,7 @@ beforeEach(async () => {
   ]
   localStorage.clear()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 export async function mountView() {

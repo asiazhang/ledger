@@ -15,14 +15,6 @@ import {
 export type ReferenceStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 /**
- * `ensureFresh` 的新鲜度窗口：窗口内成功加载过即视为 fresh，命中时零 IPC。
- *
- * 参考数据只被参考写入变更（写入方均发 `ledger:changed`），事件驱动的重拉保证
- * 窗口内数据几乎总是最新；窗口仅兜底「无事件但数据陈旧」的极端场景。
- */
-export const REFERENCE_FRESH_MS = 60_000
-
-/**
  * 参考数据（Reference Data）单一来源 store。
  *
  * 承载 `currencies / accounts / categories / merchants` 四张参考表及全部派生映射
@@ -35,9 +27,9 @@ export const REFERENCE_FRESH_MS = 60_000
  *   （stale-while-revalidate：拉取期间保留旧数据，全部成功才整体替换，不闪空）；
  * - 派生映射为 computed，随数组自动更新。
  *
- * 失效信号：`status`（idle/loading/ready/error）与 `version`（每次成功重拉自增）。
- * 动作：`refresh()`（强制，绕过新鲜度窗口；在途合并去重）与 `ensureFresh()`
- * （缓存 + 在途去重 + stale 感知，fresh 时零 IPC）。
+ * 失效机制唯一：事件驱动（`ledger:changed`）是唯一的重拉触发源，无 pull 侧兜底。
+ * 失效信号：`status`（idle/loading/ready/error）与 `version`（每次成功重拉自增），
+ * 供观测加载状态与重拉次数。动作：`refresh()`（强制重拉，在途合并去重）。
  */
 export const useReferenceStore = defineStore('reference', () => {
   const currencies = ref<Currency[]>([])
@@ -56,8 +48,6 @@ export const useReferenceStore = defineStore('reference', () => {
   const status = ref<ReferenceStatus>('idle')
   const version = ref(0)
 
-  /** 最近一次成功加载时间戳（`ensureFresh` 的 freshness 判断依据）。 */
-  let lastLoadedAt = 0
   /** 在途加载 promise（并发调用合并去重）。 */
   let inFlight: Promise<void> | null = null
 
@@ -137,7 +127,6 @@ export const useReferenceStore = defineStore('reference', () => {
         msAll.filter((m) => m.is_deleted).map((m) => [m.id, m]),
       )
       version.value += 1
-      lastLoadedAt = Date.now()
       status.value = 'ready'
     } catch (e) {
       status.value = 'error'
@@ -145,7 +134,7 @@ export const useReferenceStore = defineStore('reference', () => {
     }
   }
 
-  /** 在途去重：并发调用（self-init / refresh / ensureFresh / 事件）合并为同一次加载。 */
+  /** 在途去重：并发调用（self-init / refresh / 事件）合并为同一次加载。 */
   function reloadMerged(): Promise<void> {
     if (inFlight) return inFlight
     inFlight = reload().finally(() => {
@@ -154,18 +143,8 @@ export const useReferenceStore = defineStore('reference', () => {
     return inFlight
   }
 
-  function isFresh(): boolean {
-    return status.value === 'ready' && Date.now() - lastLoadedAt < REFERENCE_FRESH_MS
-  }
-
-  /** 强制刷新：绕过新鲜度窗口（在途时合并，避免 IPC 风暴）。 */
+  /** 强制重拉（在途时合并，避免 IPC 风暴）。 */
   function refresh(): Promise<void> {
-    return reloadMerged()
-  }
-
-  /** 缓存 + 在途去重 + stale 感知：fresh 时零 IPC。 */
-  async function ensureFresh(): Promise<void> {
-    if (isFresh()) return
     return reloadMerged()
   }
 
@@ -209,7 +188,6 @@ export const useReferenceStore = defineStore('reference', () => {
     categoryPath,
     treeCategoryOptions,
     refresh,
-    ensureFresh,
     getCurrency,
   }
 })

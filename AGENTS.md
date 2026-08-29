@@ -38,7 +38,7 @@ Ledger：Tauri 2 桌面记账应用，前端 Vue 3 + TypeScript、后端 Rust。
 
 ## 前端状态
 
-- 参考数据（currencies/accounts/categories）单一来源是 `src/stores/reference.ts` 的 `useReferenceStore`（三张参考表 + 派生映射 + 分类树 + 失效信号，细节见参考数据与设置域词汇表 `docs/contexts/CONTEXT-reference-settings.md`「参考数据」条目）：读取走 `ensureFresh()` / 强制重拉走 `refresh()`，并随 `ledger:changed` 失效信号自动重拉——绕开它会躲过失效机制。
+- 参考数据（currencies/accounts/categories/merchants）单一来源是 `src/stores/reference.ts` 的 `useReferenceStore`（四张参考表 + 派生映射 + 分类树 + 失效信号，细节见参考数据与设置域词汇表 `docs/contexts/CONTEXT-reference-settings.md`「参考数据」条目）：读取 = 直接消费响应式状态（self-init + `ledger:changed` 失效信号自动重拉保证新鲜）；仅少数场景显式 `await refresh()` 强制重拉——绕开它会躲过失效机制。
 - `useAppStore`（`src/stores/app.ts`）是**纯 UI 设置 store**（theme / defaultCurrency / backupDir / backupMaxCount）。
 - 路由 hash 模式（Tauri webview 需要），视图与路由以 `src/router/` 代码为准；README/词汇表若不同步，同步修正文档。
 - **应用配置归口（ADR-0017）**：前端独享消费的设备偏好存 localStorage；后端消费或随 Backup/Restore 迁移的配置与运行时状态统一存 `app_settings` KV 表（读写经 `src-tauri/src/settings.rs` 枚举收口，key 规范 `<feature>.<name>`，对外 IPC 保持领域命令形状）。库外配置文件的**唯一例外**是 DataLocation 引导指针文件（ADR-0018）：建连前必须可读，进不了库内。

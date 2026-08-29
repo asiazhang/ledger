@@ -230,7 +230,7 @@ beforeEach(async () => {
   mockMerchantsState = mockMerchants
   baseInvoke()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 describe('InstallmentsPane 分期清单（issue #204）', () => {

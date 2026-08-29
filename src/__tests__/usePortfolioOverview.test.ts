@@ -39,7 +39,7 @@ beforeEach(async () => {
   mockInvoke.mockReset()
   baseInvoke()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 describe('sumByCurrency 按币种汇总金额', () => {

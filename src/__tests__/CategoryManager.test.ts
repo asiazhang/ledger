@@ -54,7 +54,7 @@ describe('CategoryManager.vue', () => {
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = useReferenceStore()
-    await store.ensureFresh()
+    await store.refresh()
   })
 
   it('挂载并渲染分类列表（默认支出 Tab）', () => {

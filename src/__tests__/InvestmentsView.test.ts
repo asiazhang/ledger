@@ -93,7 +93,7 @@ beforeEach(async () => {
   })
   localStorage.clear()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 describe('InvestmentsView 标的 tab', () => {

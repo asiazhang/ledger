@@ -12,7 +12,7 @@
   - 被核心交易域 `Transaction` 以外键引用（账户 / 分类 / 币种 / 商户，见核心交易域 Category / Merchant / DefaultCurrency）；参考数据改名、删除、新建会级联反映到所有消费它的界面（交易列表与报表里的名称、表单下拉选项、分类树、预算的分类聚合）。
   - **运行期可被外部修改**：AI 编程助手经本地 HTTP API（见 AI 导入域 AI API）导入 / 修改参考数据，发生在 Tauri 应用之外；应用自身的账户 / 分类管理同样修改参考数据。
   - **失效信号（ADR-0012）**：任一参考写入成功后，后端发出通用、粗粒度、无 payload 的 `ledger:changed` 信号（已落地，见 issue #79）；前端订阅该信号自动重拉参考表，属 ADR-0012 设计目标、随 spec #76 各子任务落地中。交易类写入不触发（不改参考表）。商户写入命令（create/update/delete_merchant）同样登记为参考写入，随信号重拉。备份域（`ledger:backups-changed`）与投资域（`ledger:prices-changed`，ADR-0031）另有各自锚定语义的平行信号，不复用本信号。
-  - **重拉语义（stale-while-revalidate，ADR-0012 设计目标）**：保留旧数据，成功后才整体替换，界面不闪空；`status`（`idle | loading | ready | error`）与 `version`（每次成功重拉自增）暴露新鲜度，消费者可显式感知数据是新鲜还是过期。
+  - **重拉语义（stale-while-revalidate，ADR-0012）**：保留旧数据，成功后才整体替换，界面不闪空。**失效机制唯一是领域规则**：事件驱动（`ledger:changed`）是唯一重拉触发源，无 pull 侧兜底——无新鲜度窗口、无挂载期兜底拉取；需要强制重拉时显式 `refresh()`（在途合并去重）。`status`（`idle | loading | ready | error`）与 `version`（每次成功重拉自增）为失效观测信号（加载状态与重拉次数），不承诺「数据新鲜度可显式感知」。
   - 前端只持**内存态缓存**：参考数据的真源是 SQLite 数据库，前端 store 不持久化副本，也不随 Backup / Restore 迁移（那些是文件级快照与设备本地偏好，见备份与数据文件域 Backup / 界面状态与交互域 ViewState）。
 - **别名**：不使用"账本快照（ledger snapshot）"——那会误导读者以为缓存了全部账本数据（见备份与数据文件域 Backup / Restore 的文件级快照）；不使用"基础数据"（过于泛化，易与业务字段混淆）。
 

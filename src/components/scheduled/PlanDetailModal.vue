@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, onMounted, ref } from 'vue'
+import { computed, h, ref } from 'vue'
 import { NButton, NDataTable, NEmpty, NModal, NSpace, NSpin, useMessage, type DataTableColumns } from 'naive-ui'
 import { formatAmount } from '@/types'
 import { errorMessage } from '@/utils/errors'
@@ -166,11 +166,6 @@ const columns: DataTableColumns<ScheduledTransactionOccurrence> = [
         : '—',
   },
 ]
-
-onMounted(() => {
-  // 参考数据走单一来源 store（ensureFresh + ledger:changed 失效自动重拉）
-  void reference.ensureFresh().catch(() => {})
-})
 
 defineExpose({ open })
 </script>

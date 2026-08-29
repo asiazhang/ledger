@@ -47,7 +47,7 @@ beforeEach(async () => {
   })
   localStorage.clear()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 describe('AccountLink 账户名下钻（issue #97/#99）', () => {

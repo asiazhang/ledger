@@ -128,7 +128,7 @@ beforeEach(async () => {
   localStorage.clear()
   // 先访问 store 以捕获 listen 回调（组件复用同一 store 单例），再确保数据就绪
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 afterEach(() => {
