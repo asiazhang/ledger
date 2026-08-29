@@ -52,10 +52,16 @@ fn batch_import(world: &mut LedgerWorld, #[step] step: &Step) {
         })
         .collect();
     let inputs: Vec<TransactionInput> = rows.iter().map(|r| r.to_input(world)).collect();
-    let results = TransactionBatch::run(&world.conn, inputs, true).expect("批量导入失败");
+    let results = TransactionBatch::run(
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+        inputs,
+        true,
+    )
+    .expect("批量导入失败");
     world.last_import_rows = rows;
     world.last_batch_results = results;
-    world.transactions_list = query_all_transactions(&world.conn);
+    world.transactions_list =
+        query_all_transactions(&world.db.conn.lock().unwrap_or_else(|e| e.into_inner()));
 }
 
 /// 重跑刚才的批量导入：与首次导入相同的行、相同的 dedup 语义。
@@ -66,9 +72,15 @@ fn reimport(world: &mut LedgerWorld) {
         .iter()
         .map(|r| r.to_input(world))
         .collect();
-    let results = TransactionBatch::run(&world.conn, inputs, true).expect("重跑批量导入失败");
+    let results = TransactionBatch::run(
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+        inputs,
+        true,
+    )
+    .expect("重跑批量导入失败");
     world.last_batch_results = results;
-    world.transactions_list = query_all_transactions(&world.conn);
+    world.transactions_list =
+        query_all_transactions(&world.db.conn.lock().unwrap_or_else(|e| e.into_inner()));
 }
 
 /// 按幂等键找到对应交易并全字段替换（模拟 AI 读回后用 PUT 修改的纠错路径）。
@@ -76,7 +88,7 @@ fn reimport(world: &mut LedgerWorld) {
 #[when(expr = "修改幂等键 {string} 的交易 金额 {int} 日期 {string} 备注 {string}")]
 fn edit_txn_by_key(world: &mut LedgerWorld, key: String, amount: i64, date: String, note: String) {
     let (id, account_id, currency_code): (String, String, String) = world
-        .conn
+        .conn()
         .query_row(
             "SELECT id, account_id, currency_code FROM transactions \
              WHERE idempotency_key=?1 AND is_deleted=0 LIMIT 1",
@@ -102,29 +114,43 @@ fn edit_txn_by_key(world: &mut LedgerWorld, key: String, amount: i64, date: Stri
         fee_cents: None,
         idempotency_key: None,
     };
-    update_transaction_internal(&world.conn, &id, input).expect("修改交易失败");
-    world.transactions_list = query_all_transactions(&world.conn);
+    update_transaction_internal(
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+        &id,
+        input,
+    )
+    .expect("修改交易失败");
+    world.transactions_list =
+        query_all_transactions(&world.db.conn.lock().unwrap_or_else(|e| e.into_inner()));
 }
 
 /// 删除备注为指定值的交易（软删除，与 HTTP DELETE 端点共用 `delete_transaction_internal`）。
 #[when(expr = "删除备注为 {string} 的交易")]
 fn delete_txn_by_note(world: &mut LedgerWorld, note: String) {
     let id: String = world
-        .conn
+        .conn()
         .query_row(
             "SELECT id FROM transactions WHERE note=?1 AND is_deleted=0 ORDER BY created_at DESC LIMIT 1",
             params![note],
             |r| r.get(0),
         )
         .unwrap_or_else(|_| panic!("未找到备注为 '{note}' 的交易"));
-    delete_transaction_internal(&world.conn, &id).expect("删除交易失败");
-    world.transactions_list = query_all_transactions(&world.conn);
+    delete_transaction_internal(
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+        &id,
+    )
+    .expect("删除交易失败");
+    world.transactions_list =
+        query_all_transactions(&world.db.conn.lock().unwrap_or_else(|e| e.into_inner()));
 }
 
 /// 查询全部未删除账户的实时余额（含黑洞账户），快照到 world.balances。
 #[when(expr = "查询全部账户余额")]
 fn query_balances(world: &mut LedgerWorld) {
-    let balances = list_account_balances_for_api_internal(&world.conn).expect("查询账户余额失败");
+    let balances = list_account_balances_for_api_internal(
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+    )
+    .expect("查询账户余额失败");
     world.balances = balances
         .into_iter()
         .map(|ab| (ab.account.name, (ab.balance_cents, ab.account.is_hidden)))
@@ -139,7 +165,7 @@ fn reimport_create_account(world: &mut LedgerWorld, name: String, kind: String, 
         .parse()
         .unwrap_or_else(|_| panic!("未知账户类型: {kind}"));
     let id = create_account_idempotent_internal(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         AccountInput {
             name: name.clone(),
             kind: account_kind,
@@ -157,8 +183,11 @@ fn reimport_create_account(world: &mut LedgerWorld, name: String, kind: String, 
 
 #[then(expr = "读回交易 应包含 {int} 条记录")]
 fn readback_count(world: &mut LedgerWorld, expected: i64) {
-    let result = list_transactions_internal(&world.conn, &TransactionListFilter::default())
-        .expect("读回交易失败");
+    let result = list_transactions_internal(
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+        &TransactionListFilter::default(),
+    )
+    .expect("读回交易失败");
     assert_eq!(result.items.len() as i64, expected, "读回交易数量不匹配");
     world.transactions_list = result.items;
 }
@@ -166,7 +195,7 @@ fn readback_count(world: &mut LedgerWorld, expected: i64) {
 #[then(expr = "读回 {string} 至 {string} 交易 应包含 {int} 条记录")]
 fn readback_range(world: &mut LedgerWorld, from: String, to: String, expected: i64) {
     let result = list_transactions_internal(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         &TransactionListFilter {
             from: Some(from.clone()),
             to: Some(to.clone()),
@@ -185,7 +214,7 @@ fn readback_range(world: &mut LedgerWorld, from: String, to: String, expected: i
 fn readback_account(world: &mut LedgerWorld, name: String, expected: i64) {
     let account_id = world.account_id(&name);
     let result = list_transactions_internal(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         &TransactionListFilter {
             account_id: Some(account_id),
             ..Default::default()
@@ -207,7 +236,7 @@ fn readback_kind_amount(
     expected_sum: i64,
 ) {
     let result = list_transactions_internal(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         &TransactionListFilter {
             kind: Some(
                 TransactionKind::parse(&kind)
@@ -228,7 +257,8 @@ fn readback_kind_amount(
 
 #[then(expr = "读回交易 应包含 金额 {int} 的记录")]
 fn readback_with_amount(world: &mut LedgerWorld, amount: i64) {
-    world.transactions_list = query_all_transactions(&world.conn);
+    world.transactions_list =
+        query_all_transactions(&world.db.conn.lock().unwrap_or_else(|e| e.into_inner()));
     assert!(
         world
             .transactions_list
@@ -240,7 +270,8 @@ fn readback_with_amount(world: &mut LedgerWorld, amount: i64) {
 
 #[then(expr = "读回交易 应不包含 金额 {int} 的记录")]
 fn readback_without_amount(world: &mut LedgerWorld, amount: i64) {
-    world.transactions_list = query_all_transactions(&world.conn);
+    world.transactions_list =
+        query_all_transactions(&world.db.conn.lock().unwrap_or_else(|e| e.into_inner()));
     assert!(
         !world
             .transactions_list
@@ -326,7 +357,7 @@ fn check_dup_returns_existing_id(world: &mut LedgerWorld) {
     for d in dups {
         let id = d.id.as_ref().expect("幂等键命中的去重应返回已有 id");
         let exists: i64 = world
-            .conn
+            .conn()
             .query_row(
                 "SELECT COUNT(*) FROM transactions WHERE id=?1 AND is_deleted=0",
                 params![id],

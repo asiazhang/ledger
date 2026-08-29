@@ -23,7 +23,11 @@ fn calc_item_cost(
     id: &str,
     reference_date: Option<String>,
 ) -> Result<ItemDailyCost, AppError> {
-    calculate_item_cost_internal(&world.conn, id, reference_date.as_deref())
+    calculate_item_cost_internal(
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+        id,
+        reference_date.as_deref(),
+    )
 }
 
 /// 缺省参考日（不传）：在用 → 今天；已处置 → 处置日（口径与列表一致）。
@@ -126,7 +130,7 @@ fn check_calc_item_cost_error(world: &mut LedgerWorld, expected: String) {
 /// 查询全部在用物品每天成本合计（错误路径记入 last_error，供「应返回错误」断言）。
 #[when(expr = "查询在用物品每天成本合计")]
 fn query_item_daily_total(world: &mut LedgerWorld) {
-    match item_daily_total_internal(&world.conn) {
+    match item_daily_total_internal(&world.db.conn.lock().unwrap_or_else(|e| e.into_inner())) {
         Ok(total) => {
             world.last_item_daily_total = Some(total);
             world.last_error = None;
@@ -159,7 +163,7 @@ fn check_item_daily_total(world: &mut LedgerWorld, per_day: f64, currency: Strin
 #[when(expr = "移除汇率 {string} 兑 {string}")]
 fn remove_exchange_rate(world: &mut LedgerWorld, base: String, quote: String) {
     world
-        .conn
+        .conn()
         .execute(
             "DELETE FROM exchange_rates WHERE base_code=?1 AND quote_code=?2",
             params![base, quote],

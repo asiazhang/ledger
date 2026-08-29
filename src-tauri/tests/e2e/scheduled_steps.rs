@@ -26,7 +26,7 @@ use crate::world::LedgerWorld;
 #[given(expr = "存在汇率 {string} 兑 {string} 为 {float}")]
 fn add_exchange_rate(world: &mut LedgerWorld, base: String, quote: String, rate: f64) {
     world
-        .conn
+        .conn()
         .execute(
             "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,updated_at,version,device_id) \
              VALUES ('er-' || hex(randomblob(8)), ?1, ?2, ?3, '2026-02-01T00:00:00Z','2026-02-01T00:00:00Z',1,'test')",
@@ -73,7 +73,7 @@ fn create_subscription_plan_inner(
     note: Option<String>,
 ) {
     let id = create_plan(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         CreateScheduledInput {
             kind: ScheduledKind::Subscription,
             account_id: world.account_id(&account),
@@ -104,7 +104,7 @@ fn create_installment_plan(
     start: String,
 ) {
     let id = create_plan(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         CreateScheduledInput {
             kind: ScheduledKind::Installment,
             account_id: world.account_id(&account),
@@ -136,7 +136,7 @@ fn create_scheduled_transfer_plan(
     start: String,
 ) {
     let id = create_plan(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         CreateScheduledInput {
             kind: ScheduledKind::ScheduledTransfer,
             account_id: world.account_id(&from),
@@ -169,7 +169,7 @@ fn create_scheduled_transfer_plan_infinite(
 ) {
     // 计划币种取转出账户实际币种（同币种校验比的是两账户，不比提交值）
     let currency: String = world
-        .conn
+        .conn()
         .query_row(
             "SELECT currency_code FROM accounts WHERE id=?1",
             params![world.account_id(&from)],
@@ -177,7 +177,7 @@ fn create_scheduled_transfer_plan_infinite(
         )
         .unwrap();
     let id = create_plan(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         CreateScheduledInput {
             kind: ScheduledKind::ScheduledTransfer,
             account_id: world.account_id(&from),
@@ -217,7 +217,7 @@ fn create_subscription_plan_with_merchant(
     merchant: String,
 ) {
     let id = create_plan(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         CreateScheduledInput {
             kind: ScheduledKind::Subscription,
             account_id: world.account_id(&account),
@@ -250,7 +250,7 @@ fn create_installment_plan_with_merchant(
     merchant: String,
 ) {
     let id = create_plan(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         CreateScheduledInput {
             kind: ScheduledKind::Installment,
             account_id: world.account_id(&account),
@@ -286,7 +286,7 @@ fn try_create_transfer_plan_with_merchant(
     merchant: String,
 ) {
     let result = create_plan(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         CreateScheduledInput {
             kind: ScheduledKind::ScheduledTransfer,
             account_id: world.account_id(&from),
@@ -324,7 +324,7 @@ fn try_create_transfer_plan(
 ) {
     // 计划币种取转出账户实际币种：不硬编码，避免币种与账户不符的隐蔽数据
     let currency: String = world
-        .conn
+        .conn()
         .query_row(
             "SELECT currency_code FROM accounts WHERE id=?1",
             params![world.account_id(&from)],
@@ -332,7 +332,7 @@ fn try_create_transfer_plan(
         )
         .unwrap();
     let result = create_plan(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         CreateScheduledInput {
             kind: ScheduledKind::ScheduledTransfer,
             account_id: world.account_id(&from),
@@ -370,7 +370,7 @@ fn try_create_subscription_plan_with_merchant(
     merchant: String,
 ) {
     let result = create_plan(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         CreateScheduledInput {
             kind: ScheduledKind::Subscription,
             account_id: world.account_id(&account),
@@ -419,8 +419,8 @@ fn execute_all_occurrences(world: &mut LedgerWorld) {
 /// 最近计划的 pending 期次 id（按 scheduled_date 升序；`limit` 为 None 时取全部）。
 fn pending_occurrence_ids(world: &LedgerWorld, limit: Option<i64>) -> Vec<String> {
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
-    let mut stmt = world
-        .conn
+    let conn = world.db.conn.lock().unwrap_or_else(|e| e.into_inner());
+    let mut stmt = conn
         .prepare(
             "SELECT id FROM scheduled_transaction_occurrences \
              WHERE scheduled_transaction_id=?1 AND status='pending' AND is_deleted=0 \
@@ -445,7 +445,10 @@ fn re_execute_occurrence(world: &mut LedgerWorld) {
 /// 执行期次并记录结果：成功回填 last_transaction_id，失败记录 last_error。
 fn execute_occurrence_step(world: &mut LedgerWorld, occ_id: &str) {
     world.last_occurrence_id = Some(occ_id.to_string());
-    match execute_occurrence(&world.conn, occ_id) {
+    match execute_occurrence(
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+        occ_id,
+    ) {
         Ok(txn_id) => {
             world.last_transaction_id = Some(txn_id);
             world.last_error = None;
@@ -470,7 +473,7 @@ fn assert_last_error(world: &mut LedgerWorld, needle: String) {
 fn assert_occurrence_not_backfilled(world: &mut LedgerWorld) {
     let occ_id = world.last_occurrence_id.clone().expect("尚无期次");
     let txn_id: Option<String> = world
-        .conn
+        .conn()
         .query_row(
             "SELECT transaction_id FROM scheduled_transaction_occurrences WHERE id=?1",
             params![occ_id],
@@ -484,7 +487,7 @@ fn assert_occurrence_not_backfilled(world: &mut LedgerWorld) {
 fn assert_occurrence_status(world: &mut LedgerWorld, expected: String) {
     let occ_id = world.last_occurrence_id.clone().expect("尚无期次");
     let status: String = world
-        .conn
+        .conn()
         .query_row(
             "SELECT status FROM scheduled_transaction_occurrences WHERE id=?1",
             params![occ_id],
@@ -529,7 +532,7 @@ fn assert_occurrence_txn_to_account(world: &mut LedgerWorld, account_name: Strin
 fn occurrence_txn_merchant_name(world: &LedgerWorld) -> Option<String> {
     let occ_id = world.last_occurrence_id.clone().expect("尚无期次");
     world
-        .conn
+        .conn()
         .query_row(
             "SELECT m.name FROM scheduled_transaction_occurrences o \
              JOIN transactions t ON t.id = o.transaction_id \
@@ -556,7 +559,7 @@ fn assert_occurrence_txn_merchant(world: &mut LedgerWorld, expected: String) {
 fn assert_scheduled_ext_schema(world: &mut LedgerWorld) {
     for table in ["installment_plans", "subscription_plans"] {
         let merchant: i64 = world
-            .conn
+            .conn()
             .query_row(
                 "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name='merchant_id'",
                 params![table],
@@ -565,7 +568,7 @@ fn assert_scheduled_ext_schema(world: &mut LedgerWorld) {
             .unwrap();
         assert_eq!(merchant, 1, "{table} 应含 merchant_id 列");
         let counterparty: i64 = world
-            .conn
+            .conn()
             .query_row(
                 "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name='counterparty'",
                 params![table],
@@ -581,8 +584,8 @@ fn assert_scheduled_ext_schema(world: &mut LedgerWorld) {
 fn assert_all_plan_txns_merchant(world: &mut LedgerWorld, expected: String) {
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
     let names: Vec<Option<String>> = {
-        let mut stmt = world
-            .conn
+        let conn = world.db.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = conn
             .prepare(
                 "SELECT m.name FROM transactions t \
                  JOIN scheduled_transaction_occurrences o ON o.transaction_id=t.id \
@@ -607,7 +610,7 @@ fn assert_all_plan_txns_merchant(world: &mut LedgerWorld, expected: String) {
 fn assert_plan_merchant(world: &mut LedgerWorld, expected: String) {
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
     let name: Option<String> = world
-        .conn
+        .conn()
         .query_row(
             "SELECT m.name FROM scheduled_transactions st \
              LEFT JOIN installment_plans ip ON ip.scheduled_transaction_id = st.id \
@@ -635,8 +638,8 @@ fn assert_generated_txns(world: &mut LedgerWorld, count: i64, kind: String, amou
     // 只统计最近计划的期次回填的交易（经 occurrence 关联），避免整库 kind 误计。
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
     let amounts: Vec<i64> = {
-        let mut stmt = world
-            .conn
+        let conn = world.db.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = conn
             .prepare(
                 "SELECT t.amount_cents FROM transactions t \
                  JOIN scheduled_transaction_occurrences o ON o.transaction_id=t.id \
@@ -657,7 +660,7 @@ fn assert_generated_txns(world: &mut LedgerWorld, count: i64, kind: String, amou
 fn assert_plan_status(world: &mut LedgerWorld, expected: String) {
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
     let status: String = world
-        .conn
+        .conn()
         .query_row(
             "SELECT status FROM scheduled_transactions WHERE id=?1",
             params![plan_id],
@@ -678,7 +681,7 @@ struct OccurrenceTxn {
 fn occurrence_txn(world: &LedgerWorld) -> OccurrenceTxn {
     let occ_id = world.last_occurrence_id.clone().expect("尚无期次");
     let txn_id: Option<String> = world
-        .conn
+        .conn()
         .query_row(
             "SELECT transaction_id FROM scheduled_transaction_occurrences WHERE id=?1",
             params![occ_id],
@@ -687,7 +690,7 @@ fn occurrence_txn(world: &LedgerWorld) -> OccurrenceTxn {
         .unwrap();
     let txn_id = txn_id.expect("期次尚未回填交易 id");
     world
-        .conn
+        .conn()
         .query_row(
             "SELECT kind,amount_cents,amount_native_cents,to_account_id FROM transactions WHERE id=?1",
             params![txn_id],
@@ -728,7 +731,7 @@ fn create_subscription_plan_with_recurrence(
         .parse()
         .expect("周期应为 daily/weekly/monthly/yearly");
     let id = create_plan(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         CreateScheduledInput {
             kind: ScheduledKind::Subscription,
             account_id: world.account_id(&account),
@@ -755,8 +758,8 @@ fn create_subscription_plan_with_recurrence(
 fn execute_first_n_occurrences(world: &mut LedgerWorld, n: usize) {
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
     let occ_ids: Vec<String> = {
-        let mut stmt = world
-            .conn
+        let conn = world.db.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = conn
             .prepare(
                 "SELECT id FROM scheduled_transaction_occurrences \
                  WHERE scheduled_transaction_id=?1 AND status='pending' AND is_deleted=0 \
@@ -777,15 +780,24 @@ fn execute_first_n_occurrences(world: &mut LedgerWorld, n: usize) {
 #[when(expr = "取消该订阅计划")]
 fn cancel_subscription_plan(world: &mut LedgerWorld) {
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
-    update_plan_status(&world.conn, &plan_id, ScheduledStatus::Cancelled)
-        .expect("取消订阅计划失败");
+    update_plan_status(
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+        &plan_id,
+        ScheduledStatus::Cancelled,
+    )
+    .expect("取消订阅计划失败");
 }
 
 /// 暂停最近的订阅计划（走 update_plan_status 命令体）。
 #[when(expr = "暂停该订阅计划")]
 fn pause_subscription_plan(world: &mut LedgerWorld) {
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
-    update_plan_status(&world.conn, &plan_id, ScheduledStatus::Paused).expect("暂停订阅计划失败");
+    update_plan_status(
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+        &plan_id,
+        ScheduledStatus::Paused,
+    )
+    .expect("暂停订阅计划失败");
 }
 
 /// 以注入的固定「今日」查询订阅实际花费总览（确定性口径，不依赖真实时钟）。
@@ -793,8 +805,13 @@ fn pause_subscription_plan(world: &mut LedgerWorld) {
 fn query_spend_with_today(world: &mut LedgerWorld, today: String) {
     let today =
         chrono::NaiveDate::parse_from_str(&today, "%Y-%m-%d").expect("今日日期应为 YYYY-MM-DD");
-    world.last_spend =
-        Some(query_subscription_spend(&world.conn, today).expect("查询订阅花费失败"));
+    world.last_spend = Some(
+        query_subscription_spend(
+            &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+            today,
+        )
+        .expect("查询订阅花费失败"),
+    );
 }
 
 fn last_spend(world: &LedgerWorld) -> &SubscriptionSpendOverview {
@@ -883,7 +900,7 @@ fn edit_subscription_plan(world: &mut LedgerWorld, note: String, category: Strin
 fn edit_subscription_plan_merchant(world: &mut LedgerWorld, merchant: String) {
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
     let (account_id, category_id, note): (String, Option<String>, Option<String>) = world
-        .conn
+        .conn()
         .query_row(
             "SELECT account_id,category_id,note FROM scheduled_transactions WHERE id=?1",
             params![plan_id],
@@ -891,7 +908,7 @@ fn edit_subscription_plan_merchant(world: &mut LedgerWorld, merchant: String) {
         )
         .unwrap();
     update_subscription(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         UpdateSubscriptionInput {
             id: plan_id,
             account_id,
@@ -910,7 +927,7 @@ fn edit_subscription_plan_merchant(world: &mut LedgerWorld, merchant: String) {
 fn assert_plan_txn_merchant(world: &mut LedgerWorld, nth: usize, expected: String) {
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
     let name: Option<String> = world
-        .conn
+        .conn()
         .query_row(
             "SELECT m.name FROM transactions t \
              JOIN scheduled_transaction_occurrences o ON o.transaction_id=t.id \
@@ -947,7 +964,7 @@ fn edit_subscription_plan_inner(
 ) {
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
     let (current_account_id, current_category_id): (String, Option<String>) = world
-        .conn
+        .conn()
         .query_row(
             "SELECT account_id,category_id FROM scheduled_transactions WHERE id=?1",
             params![plan_id],
@@ -956,7 +973,7 @@ fn edit_subscription_plan_inner(
         .unwrap();
     // 商户为全量替换语义：合法编辑补齐当前商户（含软删商户保持历史引用）。
     let current_merchant: Option<String> = world
-        .conn
+        .conn()
         .query_row(
             "SELECT merchant_id FROM subscription_plans WHERE scheduled_transaction_id=?1",
             params![plan_id],
@@ -965,13 +982,16 @@ fn edit_subscription_plan_inner(
         .unwrap();
     let category_id = match &category {
         Some(name) => Some(
-            category_id_by_name(&world.conn, name)
-                .unwrap_or_else(|| panic!("支出分类 '{name}' 不存在")),
+            category_id_by_name(
+                &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+                name,
+            )
+            .unwrap_or_else(|| panic!("支出分类 '{name}' 不存在")),
         ),
         None => current_category_id,
     };
     update_subscription(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         UpdateSubscriptionInput {
             id: plan_id,
             account_id: account
@@ -993,7 +1013,7 @@ fn edit_subscription_plan_inner(
 fn edit_subscription_plan_with_amount(world: &mut LedgerWorld, _amount: i64) {
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
     let (account_id, category_id, note): (String, Option<String>, Option<String>) = world
-        .conn
+        .conn()
         .query_row(
             "SELECT account_id,category_id,note FROM scheduled_transactions WHERE id=?1",
             params![plan_id],
@@ -1001,7 +1021,7 @@ fn edit_subscription_plan_with_amount(world: &mut LedgerWorld, _amount: i64) {
         )
         .unwrap();
     let merchant_id: Option<String> = world
-        .conn
+        .conn()
         .query_row(
             "SELECT merchant_id FROM subscription_plans WHERE scheduled_transaction_id=?1",
             params![plan_id],
@@ -1009,7 +1029,7 @@ fn edit_subscription_plan_with_amount(world: &mut LedgerWorld, _amount: i64) {
         )
         .unwrap();
     match update_subscription(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         UpdateSubscriptionInput {
             id: plan_id,
             account_id,
@@ -1035,7 +1055,7 @@ fn assert_edit_error(world: &mut LedgerWorld, needle: String) {
 fn assert_plan_note(world: &mut LedgerWorld, expected: String) {
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
     let note: String = world
-        .conn
+        .conn()
         .query_row(
             "SELECT note FROM scheduled_transactions WHERE id=?1",
             params![plan_id],
@@ -1069,8 +1089,11 @@ fn assert_plan_txn_note_and_category(
         Some(expected_note.as_str()),
         "第 {nth} 笔计划交易备注不符"
     );
-    let category_id = category_id_by_name(&world.conn, &expected_category)
-        .unwrap_or_else(|| panic!("支出分类 '{expected_category}' 不存在"));
+    let category_id = category_id_by_name(
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+        &expected_category,
+    )
+    .unwrap_or_else(|| panic!("支出分类 '{expected_category}' 不存在"));
     assert_eq!(
         txn.category_id.as_deref(),
         Some(category_id.as_str()),
@@ -1087,7 +1110,7 @@ struct PlanTxnRow {
 fn plan_generated_txn(world: &LedgerWorld, nth: usize) -> PlanTxnRow {
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
     world
-        .conn
+        .conn()
         .query_row(
             "SELECT t.note,t.category_id,t.account_id FROM transactions t \
              JOIN scheduled_transaction_occurrences o ON o.transaction_id=t.id \
@@ -1119,7 +1142,7 @@ fn assert_plan_txn_account(world: &mut LedgerWorld, nth: usize, expected: String
 fn assert_plan_account(world: &mut LedgerWorld, expected: String) {
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
     let account_id: String = world
-        .conn
+        .conn()
         .query_row(
             "SELECT account_id FROM scheduled_transactions WHERE id=?1",
             params![plan_id],
@@ -1142,7 +1165,7 @@ use tauri_app_lib::scheduled_transactions::ScheduledTransactionDetail;
 fn mark_first_pending_failed(world: &mut LedgerWorld) {
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
     let occ_id: String = world
-        .conn
+        .conn()
         .query_row(
             "SELECT id FROM scheduled_transaction_occurrences \
              WHERE scheduled_transaction_id=?1 AND status='pending' AND is_deleted=0 \
@@ -1152,7 +1175,7 @@ fn mark_first_pending_failed(world: &mut LedgerWorld) {
         )
         .expect("计划应已有 pending 期次");
     world
-        .conn
+        .conn()
         .execute(
             "UPDATE scheduled_transaction_occurrences SET status='failed', updated_at=?2, \
              version=version+1 WHERE id=?1",
@@ -1166,7 +1189,13 @@ fn mark_first_pending_failed(world: &mut LedgerWorld) {
 #[when(expr = "查询该计划详情")]
 fn query_plan_detail(world: &mut LedgerWorld) {
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
-    world.last_detail = Some(get_plan_detail(&world.conn, &plan_id).expect("查询计划详情失败"));
+    world.last_detail = Some(
+        get_plan_detail(
+            &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+            &plan_id,
+        )
+        .expect("查询计划详情失败"),
+    );
 }
 
 fn last_detail(world: &LedgerWorld) -> &ScheduledTransactionDetail {
@@ -1217,7 +1246,7 @@ fn assert_detail_status_date(world: &mut LedgerWorld, status: String, expected: 
 fn retry_failed_occurrence(world: &mut LedgerWorld) {
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
     let occ_id: String = world
-        .conn
+        .conn()
         .query_row(
             "SELECT id FROM scheduled_transaction_occurrences \
              WHERE scheduled_transaction_id=?1 AND status='failed' AND is_deleted=0 \
@@ -1233,6 +1262,10 @@ fn retry_failed_occurrence(world: &mut LedgerWorld) {
 #[when(expr = "展开该计划期次")]
 fn expand_plan_occurrences(world: &mut LedgerWorld) {
     let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
-    let ids = expand_occurrences(&world.conn, &plan_id).expect("期次展开失败");
+    let ids = expand_occurrences(
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+        &plan_id,
+    )
+    .expect("期次展开失败");
     assert!(!ids.is_empty(), "active 计划展开应生成新期次");
 }

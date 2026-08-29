@@ -22,7 +22,7 @@ use crate::world::LedgerWorld;
 #[given(expr = "存在汇率 {string} 兑本位币 {float}")]
 fn ensure_exchange_rate(world: &mut LedgerWorld, code: String, rate: f64) {
     world
-        .conn
+        .conn()
         .execute(
             "INSERT INTO exchange_rates (id, base_code, quote_code, rate, priced_at, source, updated_at, version, device_id) \
              VALUES (?1, ?2, 'CNY', ?3, '2026-01-01T00:00:00Z', 'manual', ?4, 1, ?5)",
@@ -35,7 +35,7 @@ fn ensure_exchange_rate(world: &mut LedgerWorld, code: String, rate: f64) {
 fn rename_account(world: &mut LedgerWorld, name: String, new_name: String) {
     let id = world.account_id(&name);
     world.last_error = update_account_internal(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         &id,
         AccountUpdateInput {
             name: Some(new_name),
@@ -51,7 +51,7 @@ fn rename_account(world: &mut LedgerWorld, name: String, new_name: String) {
 fn try_change_currency(world: &mut LedgerWorld, name: String, currency: String) {
     let id = world.account_id(&name);
     world.last_error = update_account_internal(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         &id,
         AccountUpdateInput {
             name: None,
@@ -66,7 +66,7 @@ fn try_change_currency(world: &mut LedgerWorld, name: String, currency: String) 
 fn adjust_balance(world: &mut LedgerWorld, name: String, target: i64, date: String) {
     let id = world.account_id(&name);
     match adjust_account_balance_internal(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         &id,
         &AccountBalanceAdjustInput {
             target_balance_cents: target,
@@ -89,7 +89,11 @@ fn delete_last_transaction(world: &mut LedgerWorld) {
         .last_transaction_id
         .clone()
         .expect("场景中应先产生一笔交易");
-    delete_transaction_internal(&world.conn, &tx_id).expect("删除交易失败");
+    delete_transaction_internal(
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+        &tx_id,
+    )
+    .expect("删除交易失败");
 }
 
 // ---------------------------------------------------------------------------
@@ -98,8 +102,8 @@ fn delete_last_transaction(world: &mut LedgerWorld) {
 
 #[then(expr = "账户列表应包含黑洞账户 {string}")]
 fn check_black_hole_exists(world: &mut LedgerWorld, name: String) {
-    let mut stmt = world
-        .conn
+    let conn = world.db.conn.lock().unwrap_or_else(|e| e.into_inner());
+    let mut stmt = conn
         .prepare("SELECT name FROM accounts WHERE is_deleted=0 AND is_hidden=1")
         .unwrap();
     let names: Vec<String> = stmt
@@ -124,7 +128,7 @@ fn insert_dividend_row(world: &mut LedgerWorld, amount: i64, account_name: Strin
     let id = new_uuid();
     let now = now_iso();
     world
-        .conn
+        .conn()
         .execute(
             "INSERT INTO transactions \
              (id,kind,amount_cents,currency_code,amount_native_cents,account_id,date,\
@@ -153,7 +157,7 @@ fn create_account(
     let id = new_uuid();
     let now = now_iso();
     world
-        .conn
+        .conn()
         .execute(
             "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0)",
@@ -167,7 +171,7 @@ fn create_account(
 fn delete_account(world: &mut LedgerWorld, name: String) {
     let id = world.account_id(&name);
     world
-        .conn
+        .conn()
         .execute(
             "UPDATE accounts SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
             params![id, now_iso(), device_id()],
@@ -182,7 +186,7 @@ fn delete_account(world: &mut LedgerWorld, name: String) {
 #[then(expr = "账户列表应包含 {int} 条记录")]
 fn check_account_count(world: &mut LedgerWorld, expected: i64) {
     let count: i64 = world
-        .conn
+        .conn()
         .query_row(
             "SELECT COUNT(*) FROM accounts WHERE is_deleted=0 AND is_hidden=0",
             [],
@@ -195,13 +199,17 @@ fn check_account_count(world: &mut LedgerWorld, expected: i64) {
 #[then(expr = "{string} 账户余额应为 {int}")]
 fn check_balance(world: &mut LedgerWorld, name: String, expected: i64) {
     let id = world.account_id(&name);
-    let balance = compute_balance(&world.conn, &id).unwrap();
+    let balance = compute_balance(
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+        &id,
+    )
+    .unwrap();
     assert_eq!(balance, expected, "账户 '{}' 余额不匹配", name);
 }
 
 #[then(expr = "账户列表应包含 {string}")]
 fn check_account_exists(world: &mut LedgerWorld, name: String) {
-    let accounts = query_accounts_by_name(&world.conn);
+    let accounts = query_accounts_by_name(&world.db.conn.lock().unwrap_or_else(|e| e.into_inner()));
     assert!(
         accounts.contains(&name),
         "账户列表应包含 '{}'，但实际为 {:?}",
@@ -212,7 +220,7 @@ fn check_account_exists(world: &mut LedgerWorld, name: String) {
 
 #[then(expr = "账户列表不应包含 {string}")]
 fn check_account_not_exists(world: &mut LedgerWorld, name: String) {
-    let accounts = query_accounts_by_name(&world.conn);
+    let accounts = query_accounts_by_name(&world.db.conn.lock().unwrap_or_else(|e| e.into_inner()));
     assert!(
         !accounts.contains(&name),
         "账户列表不应包含 '{}'，但实际为 {:?}",

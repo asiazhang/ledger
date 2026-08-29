@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::MutexGuard;
 
 use cucumber::World;
-use rusqlite::Connection;
 
 use tauri_app_lib::commands::data_location::{DataLocationChangeOutcome, DataLocationInfo};
-use tauri_app_lib::db::{init_db, open_in_memory};
+use tauri_app_lib::db::{DbState, init_db, open_in_memory};
 use tauri_app_lib::models::{
     CreateTransactionResult, DashboardOverview, ItemDailyCost, ItemDailyTotal, ItemWithDailyCost,
     Transaction, TransactionInput, TransactionSearchResult,
@@ -61,8 +61,9 @@ impl ImportedRow {
 #[derive(World)]
 #[world(init = Self::new)]
 pub struct LedgerWorld {
-    /// In-memory 数据库连接（每个 scenario 独立）
-    pub conn: Connection,
+    /// 数据库连接（写入口形态，ADR-0032）：断言/读路径经 [`LedgerWorld::conn`]
+    /// 取守卫，置脏语义相关写路径经 `db.write` 走连接层统一写入口。
+    pub db: DbState,
     /// 账户名称到 ID 的映射（Given 步骤插入账户后注册，含种子黑洞账户）
     pub account_name_to_id: HashMap<String, String>,
     /// 商户名称到 ID 的映射（Given/When 步骤创建商户后注册）
@@ -157,11 +158,19 @@ impl fmt::Debug for LedgerWorld {
 }
 
 impl LedgerWorld {
+    /// 连接守卫：读路径与未迁移写路径沿用 `&Connection` 形状（迁移期过渡，
+    /// ADR-0032；置脏相关写路径应优先走 `self.db.write` 写入口）。
+    pub fn conn(&self) -> MutexGuard<'_, rusqlite::Connection> {
+        self.db.conn.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn new() -> Self {
         let mut conn = open_in_memory().expect("无法创建内存数据库");
         init_db(&mut conn).expect("数据库初始化失败");
         let mut world = Self {
-            conn,
+            db: DbState {
+                conn: std::sync::Arc::new(std::sync::Mutex::new(conn)),
+            },
             account_name_to_id: HashMap::new(),
             merchant_name_to_id: HashMap::new(),
             last_transaction_id: None,
@@ -200,8 +209,8 @@ impl LedgerWorld {
         };
         // 注册种子黑洞账户（V004 预置 无(CNY)/无(HKD)），供迁移场景按名称引用。
         let hidden: Vec<(String, String)> = {
-            let mut stmt = world
-                .conn
+            let conn = world.conn();
+            let mut stmt = conn
                 .prepare("SELECT id, name FROM accounts WHERE is_hidden=1")
                 .expect("查询黑洞账户失败");
             let rows = stmt

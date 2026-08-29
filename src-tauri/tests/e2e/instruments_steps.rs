@@ -24,7 +24,7 @@ fn create_instrument_named(
 ) {
     let now = now_iso();
     world
-        .conn
+        .conn()
         .execute(
             "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
              VALUES (?1,?2,'stock',?3,?4,'unknown',?5,?5,1,?6)",
@@ -43,8 +43,13 @@ fn search_instruments(world: &mut LedgerWorld, query: String) {
         search: Some(query),
         ..Default::default()
     };
-    world.last_instrument_search =
-        Some(list_instruments_internal(&world.conn, &filter).expect("标的搜索失败"));
+    world.last_instrument_search = Some(
+        list_instruments_internal(
+            &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
+            &filter,
+        )
+        .expect("标的搜索失败"),
+    );
 }
 
 // ---------------------------------------------------------------------------

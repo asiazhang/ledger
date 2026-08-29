@@ -55,8 +55,8 @@ pub fn execute_scheduled_occurrence(
     db: State<'_, DbState>,
     input: ExecuteOccurrenceInput,
 ) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    crate::scheduled_transactions::execute_occurrence(&conn, &input.occurrence_id)
+    // 期次执行落交易行（Writer 接缝交易增），经写入口置脏（ADR-0032）。
+    db.write(|conn| crate::scheduled_transactions::execute_occurrence(conn, &input.occurrence_id))
 }
 
 #[tauri::command]

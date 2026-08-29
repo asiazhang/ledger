@@ -42,7 +42,7 @@ fn update_item(
         .clone()
         .unwrap_or_else(|| panic!("没有已创建的物品可修改"));
     let result = update_item_internal(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         &id,
         with_note(build_input(&name, date, cost_cents, &currency), &note),
         &mut || signals += 1,
@@ -90,7 +90,7 @@ fn try_update_item(
         .clone()
         .unwrap_or_else(|| "no-such-item".into());
     let result = update_item_internal(
-        &world.conn,
+        &world.db.conn.lock().unwrap_or_else(|e| e.into_inner()),
         &id,
         with_note(build_input(&name, date, cost_cents, &currency), &note),
         &mut || signals += 1,
@@ -120,7 +120,9 @@ fn check_item_note_empty(world: &mut LedgerWorld, n: usize) {
 
 #[when(expr = "记住第 {int} 件物品的创建时间")]
 fn remember_item_created_at(world: &mut LedgerWorld, n: usize) {
-    world.items_list = list_items_internal(&world.conn).expect("列出物品失败");
+    world.items_list =
+        list_items_internal(&world.db.conn.lock().unwrap_or_else(|e| e.into_inner()))
+            .expect("列出物品失败");
     world.remembered_item_created_at = Some(nth_item(world, n).item.created_at.clone());
 }
 

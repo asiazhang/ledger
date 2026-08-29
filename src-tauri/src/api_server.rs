@@ -532,9 +532,11 @@ async fn update_transaction_handler(
     Path(id): Path<String>,
     Json(input): Json<UpdateTransactionInput>,
 ) -> Result<Json<Transaction>, AppError> {
-    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    crate::commands::update_transaction_internal(&conn, &id, input.into())?;
-    let updated = crate::commands::get_transaction_internal(&conn, &id)?;
+    // 连接层统一写入口（ADR-0032）：修改与读回同一写闭包，提交点置脏/检查单点。
+    let updated = crate::db::write(&conn, |conn| {
+        crate::commands::update_transaction_internal(conn, &id, input.into())?;
+        crate::commands::get_transaction_internal(conn, &id)
+    })?;
     Ok(Json(updated))
 }
 
@@ -561,8 +563,10 @@ async fn delete_transaction_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    crate::commands::delete_transaction_internal(&conn, &id)?;
+    // 连接层统一写入口（ADR-0032）：删除成功即置脏。
+    crate::db::write(&conn, |conn| {
+        crate::commands::delete_transaction_internal(conn, &id)
+    })?;
     Ok(StatusCode::NO_CONTENT)
 }
 
