@@ -9,6 +9,7 @@ import {
   NButton,
   NSpace,
 } from 'naive-ui'
+import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useInvestmentForm } from '@/composables/useInvestmentForm'
 import type { Transaction, TransactionTrade } from '@/types'
 
@@ -49,7 +50,7 @@ const ctx = useInvestmentForm(props.kind, {
       </NFormItem>
 
       <NFormItem label="投资账户">
-        <NSelect
+        <PinyinSelect
           v-model:value="ctx.accountId.value"
           :options="ctx.investmentAccountOptions.value"
           placeholder="选择投资账户"
@@ -58,12 +59,14 @@ const ctx = useInvestmentForm(props.kind, {
       </NFormItem>
 
       <NFormItem label="标的">
-        <NSelect
+        <!-- 远程搜索标的（字典同步全市场后不可前端全量驻留）：拼音过滤由后端
+             list_instruments 以统一模糊语义（ADR-0027）完成，本组件的本地
+             filter 在 remote 下不生效，仅收口 filterable 保持实体下拉载体一致。 -->
+        <PinyinSelect
           v-model:value="ctx.instrumentId.value"
           :options="ctx.instrumentOptions.value"
-          placeholder="选择标的（输入代码/名称搜索）"
+          placeholder="选择标的（输入代码/名称/拼音搜索）"
           remote
-          filterable
           clearable
           :loading="ctx.searchingInstruments.value"
           virtual-scroll
@@ -71,7 +74,7 @@ const ctx = useInvestmentForm(props.kind, {
           @search="ctx.searchInstruments"
         >
           <template #empty>未找到标的，可通过同步或 AI 导入新增</template>
-        </NSelect>
+        </PinyinSelect>
       </NFormItem>
 
       <NFormItem label="数量">

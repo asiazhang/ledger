@@ -10,6 +10,7 @@ import {
   NButton,
   NSpace,
 } from 'naive-ui'
+import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useCategoryForm } from '@/composables/useCategoryForm'
 import type { Transaction } from '@/types'
 
@@ -48,7 +49,7 @@ const ctx = useCategoryForm(props.kind, {
       </NFormItem>
 
       <NFormItem label="账户">
-        <NSelect
+        <PinyinSelect
           v-model:value="ctx.accountId.value"
           :options="ctx.accountOptions.value"
           placeholder="选择账户"
