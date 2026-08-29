@@ -43,7 +43,16 @@ pub fn portfolio_value_trend(
     filter: Option<TrendRange>,
 ) -> Result<PortfolioValueTrend> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    trend::query_portfolio_value_trend(&conn, &filter.unwrap_or_default())
+    portfolio_value_trend_internal(&conn, &filter.unwrap_or_default())
+}
+
+/// 测试/e2e 入口：绕过 Tauri State 直接对连接执行组合走势查询（先例：
+/// [`list_instruments_internal`]，供 BDD 步骤复用与 IPC 命令同一实现）。
+pub fn portfolio_value_trend_internal(
+    conn: &rusqlite::Connection,
+    filter: &TrendRange,
+) -> Result<PortfolioValueTrend> {
+    trend::query_portfolio_value_trend(conn, filter)
 }
 
 #[tauri::command]
