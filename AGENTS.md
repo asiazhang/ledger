@@ -22,6 +22,7 @@ Ledger：Tauri 2 桌面记账应用，前端 Vue 3 + TypeScript、后端 Rust。
 
 - **调用 `/implement` skill 实施任何改动必须在独立的 git worktree 中进行**：`git worktree add` 创建，完成后在工作树内提交。这样主检出目录始终保持干净，实验性改动不污染当前状态。
 - **worktree 内跑前端类型检查需先软链 node_modules**：`git worktree add` 建立的独立检出**不含 `node_modules`**，此时直接跑 `./scripts/check.sh`（或 `npx vue-tsc`）会让 npx 走缓存里与项目不匹配的 `typescript`，报 `ERR_PACKAGE_PATH_NOT_EXPORTED` 即此因。解决：软链主检出的依赖即可——`ln -s <主检出绝对路径>/node_modules <worktree>/node_modules`，随后 `vue-tsc --noEmit` 与 `check.sh` 正常（node_modules 为 gitignore，软链不进提交）。
+- **文档守门（三层标尺）**：写分域词汇表与模型文档时，实现坐标（路径、函数名、清单、DDL、正则、公式）一律不进文档——「甲删乙留丙留」标尺见 `CONTEXT-MAP.md`「结构约定」；`scripts/check-docs.sh` 的代码坐标扫描命中即门槛失败。
 
 ## 金额与多币种
 
