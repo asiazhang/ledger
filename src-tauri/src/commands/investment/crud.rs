@@ -210,6 +210,9 @@ pub(crate) fn list_instruments(
     Ok(InstrumentListResult { items, total })
 }
 
+/// 核心创建函数（手动 IPC 命令与 AI HTTP 端点共用，ADR-0037）：新建行来源标
+/// 'manual'（非同步即手动），（代码，类型）命中既有行则复用并只更新名称/市场，
+/// 来源随行终身不变（issue #293 / ADR-0036 决策 2）。
 pub(crate) fn create_instrument(conn: &Connection, input: InstrumentInput) -> Result<String> {
     if input.symbol.trim().is_empty() {
         return Err(AppError::Invalid("标的代码不能为空".into()));
@@ -237,8 +240,8 @@ pub(crate) fn create_instrument(conn: &Connection, input: InstrumentInput) -> Re
     let id = new_uuid();
     let now = now_iso();
     conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id,source) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'manual')",
         rusqlite::params![
             id,
             input.symbol,

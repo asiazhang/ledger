@@ -138,6 +138,16 @@ fn do_sync_inserts_new_instruments_and_prices() {
     assert_eq!(name.as_deref(), Some("平安银行"));
     assert_eq!(market, "sh");
 
+    // 同步新建行来源标记为同步（issue #293 / ADR-0036 决策 2）。
+    let source: String = conn
+        .query_row(
+            "SELECT source FROM instruments WHERE symbol='000001'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(source, "eastmoney");
+
     let price_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM market_prices", [], |r| r.get(0))
         .unwrap();
@@ -180,6 +190,42 @@ fn do_sync_updates_existing_instrument_name_and_market() {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
+    assert_eq!(name.as_deref(), Some("平安银行"));
+    assert_eq!(market, "sz");
+}
+
+/// 同步更新分支不覆盖来源（issue #293「来源随行终身不变」）：既有行若是
+/// 手动/AI 通道所建的同码 stock 行（ADR-0037 决策 4，来源 'manual'），
+/// 同步按代码命中后只更新名称/市场，来源保持不变。
+#[test]
+fn do_sync_update_keeps_existing_source() {
+    let conn = setup_db();
+
+    // 手动/AI 通道所建的同码 stock 行（经同步 upsert 复用的合法并存态）。
+    let now = now_iso();
+    conn.execute(
+        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id,source) \
+         VALUES ('inst-manual','000001','stock','某某科技','CNY','unknown',?1,?1,1,'test','manual')",
+        params![now],
+    )
+    .unwrap();
+
+    let updated = vec![StockItem {
+        code: "000001".into(),
+        name: "平安银行".into(),
+        price: Some(1234.0),
+    }];
+    let (inserted, updated_count) = do_sync_with_items(&conn, "sz", "CNY", &updated).unwrap();
+    assert_eq!((inserted, updated_count), (0, 1));
+
+    let (source, name, market): (String, Option<String>, String) = conn
+        .query_row(
+            "SELECT source, name, market FROM instruments WHERE symbol='000001'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(source, "manual", "同步更新不应覆盖来源");
     assert_eq!(name.as_deref(), Some("平安银行"));
     assert_eq!(market, "sz");
 }
