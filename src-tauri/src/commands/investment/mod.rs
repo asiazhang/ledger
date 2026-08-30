@@ -13,8 +13,8 @@ use crate::error::{AppError, Result};
 use crate::events;
 use crate::models::{
     AddFundResult, ExchangeRate, ExchangeRateInput, Holding, InstrumentInput, InstrumentListFilter,
-    InstrumentListResult, InstrumentPriceTrend, MarketPrice, MarketPriceInput, PnlFilter,
-    PortfolioValueTrend, RealizedPnlSummary, TransactionTrade, TrendRange,
+    InstrumentListResult, InstrumentPriceTrend, InstrumentType, MarketPrice, MarketPriceInput,
+    PnlFilter, PortfolioValueTrend, RealizedPnlSummary, TransactionTrade, TrendRange,
 };
 
 pub(crate) use reports::query_realized_pnl_summary;
@@ -161,9 +161,46 @@ pub fn create_instrument_internal(
     crud::create_instrument(conn, input)
 }
 
+/// 手动创建入口守卫（IPC 命令入口层，ADR-0036 决策 3）：类型白名单收窄为
+/// 债券/ETF/其他三类——股票字典归全量同步修、基金唯一创建入口归按代码即拉
+/// （issue #301 / ADR-0038），白名单让手动字典与两条自动通道永不相交；名称必填
+/// （自建标的主身份是名称）。守卫属 UI 侧政策，核心创建函数
+/// [`create_instrument_internal`] 保持通用：AI HTTP 创建端点（ADR-0037）五类全开、
+/// 名称可选，不经本守卫。同一接缝供 IPC 命令与 BDD 步骤复用。
+pub fn create_instrument_manual_internal(
+    conn: &rusqlite::Connection,
+    input: InstrumentInput,
+) -> Result<String> {
+    match input.kind {
+        InstrumentType::Bond | InstrumentType::Etf | InstrumentType::Other => {}
+        InstrumentType::Stock => {
+            return Err(AppError::Invalid(
+                "股票类标的不支持手动创建：股票字典由「全量同步」从东方财富维护".into(),
+            ));
+        }
+        InstrumentType::Fund => {
+            return Err(AppError::Invalid(
+                "基金类标的不支持手动创建：请用「添加基金」输入 6 位代码自动回填".into(),
+            ));
+        }
+    }
+    if input.name.as_deref().is_none_or(|n| n.trim().is_empty()) {
+        return Err(AppError::Invalid("标的名称不能为空".into()));
+    }
+    create_instrument_internal(conn, input)
+}
+
 /// 测试/e2e 入口：按代码即拉核心接缝（注入详情获取函数，离线驱动；生产接网络
 /// 层的编排见 [`add_fund_by_code`] 命令，同一实现）。
 pub use fund::add_fund_by_code_with;
+
+/// AI 创建端点 fund 增强落库接缝（issue #304 / ADR-0039 决策 3，HTTP 层专用）：
+/// 东财命中走 `persist_fund_detail`（与按代码即拉同一落库实现），网络不可达
+/// 降级走 `create_fund_degraded`；校验与 6 位判定同出口。
+pub(crate) use fund::{
+    FundCreateOutcome, create_fund_degraded, is_six_digit_code, persist_fund_detail,
+    validate_fund_code,
+};
 
 /// IPC 命令：按 6 位基金代码即拉添加场外基金（issue #301 / ADR-0038）。东财
 /// 拉取（名称/分类/最新净值）在连接锁外的后台线程完成；落库走连接层统一写入口
@@ -201,6 +238,7 @@ pub async fn add_fund_by_code(
 
 #[tauri::command]
 pub fn create_instrument(db: tauri::State<'_, DbState>, input: InstrumentInput) -> Result<String> {
-    // 连接层统一写入口（ADR-0032）：成功即置脏（含同名标的信息更新的 upsert 分支）。
-    db.write(|conn| create_instrument_internal(conn, input))
+    // 手动创建入口守卫（类型白名单 + 名称必填，ADR-0036 决策 3）在先，写路径
+    // 经连接层统一写入口（ADR-0032）：成功即置脏（含同名标的信息更新的 upsert 分支）。
+    db.write(|conn| create_instrument_manual_internal(conn, input))
 }

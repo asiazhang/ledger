@@ -19,9 +19,10 @@ import { useHoldingPriceSync } from '@/composables/useHoldingPriceSync'
 import { useInstrumentFullSync } from '@/composables/useInstrumentFullSync'
 import { usePricesChanged } from '@/composables/usePricesChanged'
 import { errorMessage as extractErrorMessage } from '@/utils/errors'
-import { formatPrice, INSTRUMENT_TYPE_LABELS, MARKET_TYPE_LABELS } from '@/types'
+import { formatPrice, INSTRUMENT_SOURCE_LABELS, INSTRUMENT_TYPE_LABELS, MARKET_TYPE_LABELS } from '@/types'
 import AppModal from '@/components/AppModal.vue'
 import AppSelect from '@/components/AppSelect.vue'
+import CreateInstrumentModal from '@/components/investments/CreateInstrumentModal.vue'
 import type { Instrument, MarketType } from '@/types'
 
 const reference = useReferenceStore()
@@ -113,6 +114,20 @@ usePricesChanged(() => {
 })
 
 // ---------------------------------------------------------------------------
+// 新建标的（issue #290 / ADR-0036）：手动创建非股票类标的的入口，类型白名单
+// （债券/ETF/其他）与名称必填经 CreateInstrumentModal 表单约束 + 后端 IPC
+// 命令入口层守卫双重收口；（代码，类型）已存在时后端复用并更新名称（upsert）。
+// ---------------------------------------------------------------------------
+const createOpen = ref(false)
+const createMessage = ref<string | null>(null)
+
+function onInstrumentCreated(message: string) {
+  createMessage.value = message
+  // 新标的行上列表：回到第 1 页重拉（创建不落价，不发价格失效信号）
+  reload()
+}
+
+// ---------------------------------------------------------------------------
 // 添加基金（issue #301 / ADR-0038）：fund 类型唯一创建入口——输入 6 位基金代码，
 // 东财按代码即拉名称/分类/最新净值自动回填；查无此码中文报错、不产生标的行。
 // ---------------------------------------------------------------------------
@@ -177,6 +192,21 @@ const pagination = computed(() => ({
 const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
   { title: '代码', key: 'symbol', width: 100 },
   { title: '名称', key: 'name', width: 200 },
+  {
+    title: '来源',
+    key: 'source',
+    width: 70,
+    render(row) {
+      const label = INSTRUMENT_SOURCE_LABELS[row.source] ?? row.source
+      // 手动标 tag 突出（自建标的，ADR-0036），同步标为纯文本
+      if (row.source !== 'manual') return label
+      return h(
+        NTag,
+        { type: 'info', size: 'small', bordered: false, 'data-testid': 'source-manual' },
+        { default: () => label },
+      )
+    },
+  },
   {
     title: '现价',
     key: 'price_cents',
@@ -271,6 +301,14 @@ onMounted(load)
         添加基金
       </NButton>
       <NButton
+        secondary
+        size="small"
+        data-testid="create-instrument"
+        @click="createOpen = true"
+      >
+        新建标的
+      </NButton>
+      <NButton
         type="primary"
         size="small"
         :loading="syncing"
@@ -297,6 +335,9 @@ onMounted(load)
     <NText v-if="addFundMessage" type="success" data-testid="add-fund-result">
       {{ addFundMessage }}
     </NText>
+    <NText v-if="createMessage" type="success" data-testid="create-instrument-result">
+      {{ createMessage }}
+    </NText>
     <NDataTable
       :columns="instrumentBrowseColumns"
       :data="instruments"
@@ -305,6 +346,13 @@ onMounted(load)
       size="small"
       remote
       :pagination="pagination"
+    />
+
+    <!-- 新建标的（issue #290 / ADR-0036）：手动创建非股票类标的，类型白名单
+         债券/ETF/其他、名称必填、市场固定未知、币种默认人民币 -->
+    <CreateInstrumentModal
+      v-model:show="createOpen"
+      @created="onInstrumentCreated"
     />
 
     <!-- 添加基金（按代码即拉，issue #301）：6 位代码 → 东财回填名称/分类/最新净值；

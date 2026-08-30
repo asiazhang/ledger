@@ -39,6 +39,7 @@ export function makeInstrument(partial: Partial<Instrument> & { id: string }): I
     version: 1,
     device_id: 'test',
     is_deleted: false,
+    source: 'eastmoney',
     price_cents: null,
     invested: true,
     ...partial,

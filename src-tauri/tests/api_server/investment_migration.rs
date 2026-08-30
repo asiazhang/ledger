@@ -6,38 +6,21 @@
 //! 余额口径核对（投资账户现金流：buy 含费流出、sell 净额流入）。
 //! 「标的不存在」路径断言为 400（非 500，issue #295 prepare 拦截的对外形状）。
 //!
-//! 链路示例标的用非 fund 类型（stock）——fund 创建行为将由 #304 东财校验收紧，
-//! 避免跨票翻红（ADR-0037 修订记录③）。
+//! 通用链路示例标的用非 fund 类型（stock）；基金申赎迁移链路（查询→创建→
+//! 批量导入，issue #304）见本文件末尾独立测试。
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use rusqlite::params;
 use tower::ServiceExt;
 
-use crate::common::{batch_body, body_to_bytes, get_json, post_batch, setup_app};
-
-/// POST /api/v1/instruments，返回（状态码，原始响应体）。响应体不在此处反序列化：
-/// 201 为裸 id 字符串，由调用方自行解析（先例 instrument_create.rs）。
-async fn post_instrument(app: &Router, body: &str) -> (StatusCode, Vec<u8>) {
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/instruments")
-                .header("content-type", "application/json")
-                .body(Body::from(body.to_owned()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let status = response.status();
-    let bytes = body_to_bytes(response.into_body()).await;
-    (status, bytes)
-}
+use crate::common::{
+    FundStubHit, batch_body, body_to_bytes, get_json, post_batch, post_instrument, setup_app,
+    setup_app_with_fund_stub,
+};
 
 /// 直插投资账户（账户创建 API 的夹具固定 cash 类型；先例 batch_import.rs #295 测试）。
 fn seed_investment_account(conn: &Arc<Mutex<rusqlite::Connection>>) -> String {
@@ -316,4 +299,127 @@ async fn test_update_trade_to_missing_instrument_returns_400_not_500() {
         )
         .unwrap();
     assert_eq!(lot_count, 1, "原持仓批次不应被误清理");
+}
+
+// ---------------------------------------------------------------------------
+// 基金申赎迁移链路（issue #304 / ADR-0039）：查询 → 创建 → 批量导入 →
+// 幂等键去重 → 读回对账（东财经注入桩离线驱动）
+// ---------------------------------------------------------------------------
+
+/// 链路数字（净值刻度万分之一元；金额与份额全整除便于断言）：
+/// - 申购 buy：1000 份 × 1.5000（price_cents = 15000）+ 申购费 1500 分
+///   → 行金额 = 1000 × 15000 ÷ 100 + 1500 = 151500 分
+/// - 赎回 sell：400 份 × 1.6500（price_cents = 16500）− 赎回费 500 分
+///   → 行金额 = 400 × 16500 ÷ 100 − 500 = 65500 分
+/// - 余额：0 − 151500 + 65500 = −86000 分（现金流口径）
+/// - 东财最新净值 1.6500 @ 2026-06-30 → 创建后现价缓存 16500 / nav_date 2026-06-30
+#[tokio::test]
+async fn test_fund_migration_flow_lookup_create_batch_dedup_readback() {
+    let hits = HashMap::from([(
+        "012345".to_string(),
+        FundStubHit {
+            name: "华夏成长混合",
+            fund_class: "混合型-灵活",
+            nav: Some((1.65, "2026-06-30")),
+        },
+    )]);
+    let (app, conn, calls) = setup_app_with_fund_stub(hits);
+
+    // 1. 按代码查询确认识别（命中返回名称/分类/最新净值/净值日期）
+    let (status, lookup) = get_json(&app, "/api/v1/funds/012345").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(lookup["name"], "华夏成长混合");
+    assert_eq!(lookup["nav_cents"], 16500);
+    assert_eq!(lookup["nav_date"], "2026-06-30");
+
+    // 2. 以真实 6 位代码创建标的（AI 抄写名有误，后端应回填东财权威名称）
+    let create_body = r#"{"symbol":"012345","type":"fund","name":"华夏成长混合(账单抄写)"}"#;
+    let (status, bytes) = post_instrument(&app, create_body).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let instrument_id: String = serde_json::from_slice(&bytes).expect("201 应为裸 id 字符串");
+    {
+        let conn = conn.lock().unwrap();
+        let (name, price_cents, nav_date): (String, i64, String) = conn
+            .query_row(
+                "SELECT i.name, p.price_cents, p.nav_date FROM instruments i \
+                 JOIN market_prices p ON p.instrument_id = i.id WHERE i.id = ?1",
+                params![instrument_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "华夏成长混合", "创建应回填东财权威名称");
+        assert_eq!(price_cents, 16500, "创建应落最新净值现价");
+        assert_eq!(nav_date, "2026-06-30");
+    }
+
+    // 3. 批量提交申购/赎回（金额占位 0 由服务端重算；幂等键取源内稳定行号）
+    let account_id = seed_investment_account(&conn);
+    let buy = format!(
+        r#"{{"kind":"buy","amount_cents":0,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-11","instrument_id":"{instrument_id}","quantity":1000,"price_cents":15000,"fee_cents":1500,"idempotency_key":"fund-bill.csv:3:1"}}"#
+    );
+    let sell = format!(
+        r#"{{"kind":"sell","amount_cents":0,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-25","instrument_id":"{instrument_id}","quantity":400,"price_cents":16500,"fee_cents":500,"idempotency_key":"fund-bill.csv:5:1"}}"#
+    );
+    let refs = [buy.as_str(), sell.as_str()];
+    let first = post_batch(&app, batch_body(&refs, None)).await;
+    assert_eq!(first.len(), 2);
+    assert!(
+        first
+            .iter()
+            .all(|r| r["success"] == true && r["duplicate"] == false),
+        "申购/赎回应全部成功: {first:?}"
+    );
+
+    // 4. 幂等重放同一批（AI 重跑迁移）：同键去重全部跳过、不产生重复行
+    let replay = post_batch(&app, batch_body(&refs, None)).await;
+    assert_eq!(replay.len(), 2);
+    assert!(
+        replay
+            .iter()
+            .all(|r| r["success"] == true && r["duplicate"] == true),
+        "同键重跑应全部按幂等键去重: {replay:?}"
+    );
+    let total: i64 = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(total, 2, "重放后仍应只有两笔交易");
+
+    // 5. 读回对账：按日期区间读回，逐行核对金额 = 数量 × 单价 ± 手续费
+    let (status, list) = get_json(&app, "/api/v1/transactions?from=2026-05-01&to=2026-05-31").await;
+    assert_eq!(status, StatusCode::OK);
+    let items = list["items"].as_array().expect("读回应为 {items, total}");
+    assert_eq!(items.len(), 2, "两行申赎应全部落库");
+    let amounts: std::collections::BTreeSet<i64> = items
+        .iter()
+        .map(|t| t["amount_cents"].as_i64().unwrap())
+        .collect();
+    assert_eq!(
+        amounts,
+        [151500i64, 65500].into_iter().collect(),
+        "行金额应为 数量×单价±手续费（申购含费流出、赎回减费回款）"
+    );
+
+    // 6. 余额对账：投资账户现金流 = 初始 − 申购含费 + 赎回净额
+    let (_, balances) = get_json(&app, "/api/v1/accounts/balances").await;
+    let rows = balances.as_array().unwrap();
+    let securities = rows
+        .iter()
+        .find(|r| r["account"]["name"] == "证券账户")
+        .expect("余额清单应含投资账户");
+    assert_eq!(
+        securities["balance_cents"], -86000,
+        "投资账户余额应为现金流口径"
+    );
+
+    // 全链路对东财的依赖仅两次（查询 + 创建校验），批量导入零网络
+    assert_eq!(
+        *calls.lock().unwrap(),
+        vec!["012345".to_string(), "012345".to_string()]
+    );
 }

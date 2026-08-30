@@ -19,6 +19,14 @@ export const INSTRUMENT_TYPE_LABELS: Record<InstrumentType, string> = {
   other: '其他',
 }
 
+/** 字典条目来源（自建标的，ADR-0036）：与价格侧 source 同词表但语义正交，随行终身不变 */
+export type InstrumentSource = 'eastmoney' | 'manual'
+
+export const INSTRUMENT_SOURCE_LABELS: Record<InstrumentSource, string> = {
+  eastmoney: '同步',
+  manual: '手动',
+}
+
 /** 价格列刻度（ADR-0038）：投资域 price_cents 为万分之一元（元 × 10000），金额列仍是整数分 */
 export interface Instrument extends Syncable {
   id: string
@@ -28,6 +36,8 @@ export interface Instrument extends Syncable {
   currency_code: string
   market: MarketType
   created_at: string
+  /** 字典条目来源（同步/手动，ADR-0036）；存量行由 #293 迁移回填为同步 */
+  source: InstrumentSource
   price_cents: number | null
   /** 是否持有该标的（有当前持仓，派生自 security_lots） */
   invested: boolean

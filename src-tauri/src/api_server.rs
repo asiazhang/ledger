@@ -1,9 +1,14 @@
 use std::sync::{Arc, Mutex};
 
+use crate::commands::investment::{
+    FundCreateOutcome, create_fund_degraded, is_six_digit_code, persist_fund_detail,
+    validate_fund_code,
+};
+use crate::commands::sync::persist::price_value_to_cents;
 use crate::error::AppError;
 use crate::models::{
     Account, AccountBalance, AccountInput, AccountType, AccountUpdateInput, Category,
-    CategoryInput, CreateTransactionResult, Currency, Instrument, InstrumentInput,
+    CategoryInput, CreateTransactionResult, Currency, FundDetail, Instrument, InstrumentInput,
     InstrumentListFilter, InstrumentListResult, InstrumentType, Merchant, Transaction,
     TransactionBatchInput, TransactionInput, TransactionListFilter, TransactionListResult,
     UpdateTransactionInput,
@@ -22,15 +27,26 @@ use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
 use utoipa::ToSchema;
 
+/// 东财基金详情获取函数接缝（issue #304 / ADR-0039）：`基金代码 → Result<FundDetail>`，
+/// 查无此码以 `AppError::Invalid`（中文错误）上抛——与 IPC/BDD 的
+/// `add_fund_by_code_with` 注入接缝同一形状约定。生产路径为东财 FundSearchAPI
+/// （`fetch_fund_detail_production`）；HTTP 集成测试以注入桩离线驱动
+/// （`setup_app_with_fund_fetch`），全部基金端点集成测试不触真实网络。
+pub type FundDetailFetcher = Arc<dyn Fn(&str) -> Result<FundDetail, AppError> + Send + Sync>;
+
 /// HTTP 服务器状态：数据库连接 + 可选 `AppHandle`（参考写入成功后发 `ledger:changed`）。
 ///
 /// `app` 为 `Option`：集成测试（`tests/api_server/`）不经真实 Tauri 运行时构建路由，
 /// 传 `None` 即跳过发射分支（后端 emit 视为薄胶，不造 AppHandle 测试桩）；
 /// 生产路径由 `start_http_server` 注入 `Some(app)`。
+///
+/// `fund_fetch` 为东财基金详情获取接缝：`None` = 生产路径（真实东财，
+/// `spawn_blocking` 连接锁外往返）；集成测试注入桩离线驱动（issue #304）。
 #[derive(Clone)]
 pub struct ApiState {
     pub conn: Arc<Mutex<Connection>>,
     pub app: Option<AppHandle>,
+    pub fund_fetch: Option<FundDetailFetcher>,
 }
 
 impl FromRef<ApiState> for Arc<Mutex<Connection>> {
@@ -84,7 +100,9 @@ struct ErrorResponse {
                       与确认份额（`quantity`），不带 `price_cents`——服务端按金额 ∓ 手续费 ÷ 份额反算净值。\
                       账户/分类按自然键幂等创建；交易可携带商户名字符串（后端精确匹配复用或即建）；\
                       批量交易默认去重，命中返回 `duplicate: true`。\
-                      buy/sell 需携带标的 id：可先用标的搜索端点把流水中的标的描述解析为 id。",
+                      buy/sell 需携带标的 id：可先用标的搜索端点把流水中的标的描述解析为 id；\
+                      场外基金例外——先按 6 位代码查询（`GET /api/v1/funds/{code}`）确认识别，\
+                      再以真实代码创建标的（见导入知识「基金申赎」节）。",
         version = "0.1.0"
     ),
     paths(
@@ -98,6 +116,7 @@ struct ErrorResponse {
         list_currencies_handler,
         search_instruments_handler,
         create_instrument_handler,
+        lookup_fund_handler,
         list_merchants_handler,
         list_transactions_handler,
         batch_create_transactions_handler,
@@ -114,6 +133,7 @@ struct ErrorResponse {
         Category,
         CategoryInput,
         Currency,
+        FundLookup,
         Instrument,
         InstrumentCreateInput,
         InstrumentListResult,
@@ -170,6 +190,7 @@ pub fn build_router(state: ApiState) -> Router {
             "/api/v1/instruments",
             get(search_instruments_handler).post(create_instrument_handler),
         )
+        .route("/api/v1/funds/{code}", get(lookup_fund_handler))
         .route("/api/v1/merchants", get(list_merchants_handler))
         .route("/api/v1/import/knowledge", get(import_knowledge_handler))
         // 注意：axum 的 `Router::layer` 只包裹“当前已有的” route——若在声明任何 route
@@ -187,6 +208,7 @@ pub fn start_http_server(app: AppHandle, state: Arc<Mutex<Connection>>) {
             let router = build_router(ApiState {
                 conn: state,
                 app: Some(app),
+                fund_fetch: None,
             });
             let listener = tokio::net::TcpListener::bind("127.0.0.1:9527")
                 .await
@@ -555,7 +577,7 @@ fn derive_quote_currency(market: &str) -> &'static str {
     post,
     path = "/api/v1/instruments",
     tag = "instruments",
-    summary = "创建标的（按（代码，类型）幂等 find-or-create）",
+    summary = "创建标的（按（代码，类型）幂等 find-or-create，fund 类型经东财增强）",
     description = "按自然键（`symbol` + `type`）幂等创建标的：已存在同码同类型行时**静默复用**\
                   并按需更新名称/市场、返回既有 id，未命中创建新行（来源标记 = `manual`）——\
                   重复创建同一标的返回同一 id，不产生字典碎片。响应照账户/分类创建先例：\
@@ -563,7 +585,12 @@ fn derive_quote_currency(market: &str) -> &'static str {
                   入参：`symbol` 必填（源数据只有名称时以名称充当代码）；`type` 为闭集五类\
                   （stock/fund/bond/etf/other，五类全开）；`name` 可选；`market` 可选（缺省 `unknown`）；\
                   `currency_code` 可选（缺省按市场推导：沪深→CNY、港→HKD、未知→CNY，显式传参可覆盖）。\
-                  建议先搜索（GET /api/v1/instruments）无命中再创建，防同义标的碎片。",
+                  **fund 类型增强**：`symbol` 为真实 6 位代码时后端经东方财富校验并回填权威名称、\
+                  落最新净值现价；查无此码返回 400 拒绝创建；东财网络不可达时降级为提交名称 + 真实代码建行\
+                  （不阻塞导入）；非 6 位 symbol（名称充代码，仅限源数据无代码）不触发校验、不进净值通道。\
+                  fund + 6 位代码分支的字典形态收口：显式 `market` / `currency_code` 不生效（恒 unknown / 人民币）。\
+                  建议先搜索（GET /api/v1/instruments）无命中再创建，防同义标的碎片；\
+                  基金先按代码查询（GET /api/v1/funds/{code}）确认识别，必带真实 6 位代码。",
     request_body = InstrumentCreateInput,
     responses(
         (status = 201, description = "创建或命中复用，返回标的 ID", body = String),
@@ -572,29 +599,154 @@ fn derive_quote_currency(market: &str) -> &'static str {
     )
 )]
 async fn create_instrument_handler(
-    State(conn): State<Arc<Mutex<Connection>>>,
+    State(state): State<ApiState>,
     Json(input): Json<InstrumentCreateInput>,
 ) -> Result<(StatusCode, Json<String>), AppError> {
+    // fund 增强的东财往返判定（ADR-0039 决策 3）：仅 fund + 真实 6 位代码触发；
+    // 名称充代码（非 6 位，仅限源数据无代码）与其他类型不发起网络请求。
+    enum Enrichment {
+        Authoritative(FundDetail),
+        Degrade,
+    }
+    let enrichment: Option<Enrichment> =
+        if input.kind == InstrumentType::Fund && is_six_digit_code(&input.symbol) {
+            Some(
+                match fetch_fund_detail_for_api(&state, &input.symbol).await {
+                    // 东财命中：权威名称回填 + 净值落现价。
+                    Ok(detail) => Enrichment::Authoritative(detail),
+                    // 查无此码（接缝约定以 Invalid 上抛）：显式拒绝创建，AI 可提示用户或跳过该行。
+                    Err(e @ AppError::Invalid(_)) => return Err(e),
+                    // 网络不可达等临时故障：降级为 AI 提供名称 + 真实代码建行，不阻塞导入。
+                    Err(_) => Enrichment::Degrade,
+                },
+            )
+        } else {
+            None
+        };
     // 报价币种可省：缺省按市场推导（沪深→CNY、港→HKD、未知→CNY，ADR-0037 决策 2）；
     // market 缺省解析（None→unknown）由核心创建函数单点承担，此处仅按同口径推导币种。
+    // fund 增强分支不经此推导：字典形态收口为按代码即拉同款（市场 unknown、币种人民币）。
     let currency_code = input.currency_code.unwrap_or_else(|| {
         derive_quote_currency(input.market.as_deref().unwrap_or("unknown")).to_string()
     });
-    // 连接层统一写入口（ADR-0032）：find-or-create 与信息更新同一写闭包，提交点置脏单点。
-    let id = crate::db::write(&conn, |conn| {
-        crate::commands::create_instrument_internal(
-            conn,
-            InstrumentInput {
-                symbol: input.symbol,
+    // 连接层统一写入口（ADR-0032）：find-or-create 与信息更新同一写闭包，提交点置脏单点；
+    // 东财往返已在锁外完成，写闭包内零网络。泛型入参仅泛型分支消费，惰性构造。
+    let outcome: FundCreateOutcome = crate::db::write(&state.conn, |conn| match &enrichment {
+        Some(Enrichment::Authoritative(detail)) => {
+            // 东财命中：与按代码即拉同一落库接缝（权威名称回填 + 净值落现价）。
+            let r = persist_fund_detail(conn, &input.symbol, detail)?;
+            Ok(FundCreateOutcome {
+                instrument_id: r.instrument_id,
+                price_written: r.price_written,
+            })
+        }
+        Some(Enrichment::Degrade) => create_fund_degraded(conn, &input.symbol, input.name.clone()),
+        None => {
+            let generic_input = InstrumentInput {
+                symbol: input.symbol.clone(),
                 kind: input.kind,
-                name: input.name,
+                name: input.name.clone(),
                 currency_code,
-                market: input.market,
-            },
-        )
+                market: input.market.clone(),
+            };
+            Ok(FundCreateOutcome {
+                instrument_id: crate::commands::create_instrument_internal(conn, generic_input)?,
+                price_written: false,
+            })
+        }
     })?;
-    // 标的不属参考数据四表：不发 `ledger:changed` 参考失效信号（ADR-0037 决策 6）。
-    Ok((StatusCode::CREATED, Json(id)))
+    // 落现价即广播价格失效信号（ADR-0031，与按代码即拉 IPC 命令同一信号语义；
+    // 零变化不广播）。标的不属参考数据四表：不发 `ledger:changed` 参考失效信号。
+    if outcome.price_written
+        && let Some(app) = &state.app
+    {
+        crate::events::emit_prices_changed(app);
+    }
+    Ok((StatusCode::CREATED, Json(outcome.instrument_id)))
+}
+
+/// 东财基金详情获取（查询与创建两端点共用，issue #304）：测试注入桩直接同步
+/// 调用（离线驱动）；生产路径经 `spawn_blocking` 在连接锁外完成阻塞网络往返
+/// （单请求叠加限流冷却重试最长可达分钟级，先例：`add_fund_by_code` 命令的
+/// 网络拉取在锁外完成，不阻塞其它命令）。
+async fn fetch_fund_detail_for_api(state: &ApiState, code: &str) -> Result<FundDetail, AppError> {
+    match &state.fund_fetch {
+        Some(fetch) => fetch(code),
+        None => {
+            let code = code.to_string();
+            tauri::async_runtime::spawn_blocking(move || {
+                crate::commands::sync::fund::fetch_fund_detail_production(&code)
+            })
+            .await
+            .map_err(|e| AppError::Io(format!("基金详情查询任务执行失败: {e}")))?
+        }
+    }
+}
+
+/// 基金查询响应（`GET /api/v1/funds/{code}`，issue #304 / ADR-0039 决策 2）：
+/// 东财详情投影为 API 价格刻度（净值 万分之一元），AI 供校验「代码 → 名称」
+/// 映射与查最新净值。
+#[derive(Debug, serde::Serialize, ToSchema)]
+struct FundLookup {
+    /// 基金代码（6 位数字）
+    code: String,
+    /// 东财权威名称（如「华夏成长混合」）
+    name: String,
+    /// 东财基金分类（如「混合型-灵活」）
+    fund_class: String,
+    /// 最新单位净值（万分之一元，元 × 10000，ADR-0038 价格刻度）；未公布为 null
+    nav_cents: Option<i64>,
+    /// 净值日期（ISO 日期）；未公布为 null
+    nav_date: Option<String>,
+}
+
+impl From<FundDetail> for FundLookup {
+    fn from(d: FundDetail) -> Self {
+        // 净值对（值 + 日期）在东财访问层已保证成对出现（任一缺省即 nav = None）。
+        Self {
+            code: d.code,
+            name: d.name,
+            fund_class: d.fund_class,
+            nav_cents: d.nav.as_ref().map(|n| price_value_to_cents(n.nav)),
+            nav_date: d.nav.map(|n| n.nav_date),
+        }
+    }
+}
+
+/// 按代码查询场外基金（AI 导入契约，issue #304 / ADR-0039 决策 2）：只读，
+/// 实时从东方财富取名称、基金类型、最新单位净值与净值日期，供 AI 校验「代码 →
+/// 名称」映射与查净值。代码格式非法即刻拒绝不发起网络；查无此码返回中文错误，
+/// AI 可提示用户或跳过该行。
+#[utoipa::path(
+    get,
+    path = "/api/v1/funds/{code}",
+    tag = "funds",
+    summary = "按 6 位代码查询场外基金（只读，东财实时）",
+    description = "返回东财实时详情：`code` / `name`（权威名称）/ `fund_class`（东财基金分类，\
+                  如「混合型-灵活」）/ `nav_cents`（最新单位净值，万分之一元，元 × 10000）/\
+                  `nav_date`（净值日期，ISO 日期）；基金未公布净值时后两字段为 null。\
+                  `code` 必须为 6 位数字（非 6 位返回 400，不发起网络请求）；查无此码返回 400 中文错误。\
+                  本端点实时访问东方财富，网络故障返回 500。\
+                  基金申赎迁移时先按本端点确认识别，再以真实 6 位代码创建标的\
+                  （见 `POST /api/v1/instruments` 的 fund 增强与导入知识「基金申赎」节），\
+                  不走名称充代码。",
+    params(
+        ("code" = String, Path, description = "基金代码（6 位数字）")
+    ),
+    responses(
+        (status = 200, description = "基金详情（名称/分类/最新净值/净值日期）", body = FundLookup),
+        (status = 400, description = "代码格式非法（非 6 位数字）或查无此码", body = ErrorResponse),
+        (status = 500, description = "东财网络不可达等临时故障", body = ErrorResponse)
+    )
+)]
+async fn lookup_fund_handler(
+    State(state): State<ApiState>,
+    Path(code): Path<String>,
+) -> Result<Json<FundLookup>, AppError> {
+    // 格式非法即刻拒绝，不发起网络请求（与按代码即拉同一校验、同一中文错误）。
+    validate_fund_code(&code)?;
+    let detail = fetch_fund_detail_for_api(&state, &code).await?;
+    Ok(Json(FundLookup::from(detail)))
 }
 
 #[utoipa::path(
