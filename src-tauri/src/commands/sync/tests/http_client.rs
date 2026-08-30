@@ -60,6 +60,7 @@ fn request_json_retries_429_then_succeeds() {
         &mut pacer,
         "test",
         fast_cfg(3, 3),
+        None,
     )
     .unwrap();
     assert_eq!(json.data.total, Some(7));
@@ -84,6 +85,7 @@ fn request_json_retries_on_json_decode_failure() {
         &mut pacer,
         "test",
         fast_cfg(3, 3),
+        None,
     )
     .unwrap();
     assert_eq!(json.data.total, Some(9));
@@ -102,6 +104,7 @@ fn request_json_returns_error_after_429_exhausted() {
         &mut pacer,
         "test",
         fast_cfg(2, 2),
+        None,
     )
     .unwrap_err();
     assert!(err.to_string().contains("429"));
@@ -126,6 +129,7 @@ fn request_json_returns_error_when_connection_refused() {
         &mut pacer,
         "test",
         fast_cfg(2, 0),
+        None,
     )
     .unwrap_err();
     assert!(err.to_string().contains("HTTP 请求失败"));
@@ -160,6 +164,7 @@ fn request_json_falls_back_to_next_host() {
         fast_cfg(0, 0),
         &mut pacer,
         "test",
+        None,
     )
     .unwrap();
     assert_eq!(resp.data.total, Some(7));
@@ -181,6 +186,7 @@ fn request_json_returns_error_when_all_hosts_fail() {
         fast_cfg(0, 0),
         &mut pacer,
         "test",
+        None,
     )
     .unwrap_err();
     assert!(err.to_string().contains("全部行情主机请求失败"));

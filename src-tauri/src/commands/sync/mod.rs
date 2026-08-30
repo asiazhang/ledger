@@ -1,20 +1,24 @@
 //! 行情同步（issue #89）：命令外壳 + HTTP 网络层 + 持久化 + 编排。
 //!
 //! 目录组织：
-//! - `http`：HTTP 请求（含多主机切换、重试、限流冷却）与响应解析（报价 / 日 K / 汇率 K），
-//!   可独立测试；
+//! - `http`：HTTP 请求（含多主机切换、重试、限流冷却、Referer）与响应解析（报价
+//!   / 日 K / 汇率 K），可独立测试；
 //! - `fund`：东财基金详情访问（按代码即拉，issue #301 / ADR-0038）；
+//! - `fund_nav`：东财历史净值通道——lsjz 访问、报文解析、水位语义与基金分区
+//!   编排（issue #303 / ADR-0038 决策 6）；
 //! - `persist`：`instruments` / `market_prices` 持久化 + `price_history` / `fx_rate_history`
 //!   周采样 upsert（issue #137）；
 //! - `orchestrate`：全量同步编排——市场分页遍历、进度事件推送、新增/更新汇总；
-//! - `incremental`：增量同步编排（issue #103，#137 升级）——现价 upsert + 近两年日 K
-//!   回填周线落 `price_history` + 汇率 K 线落 `fx_rate_history`（ADR-0019）；
+//! - `incremental`：增量同步编排（issue #103，#137 升级，#303 基金分区）——
+//!   现价 upsert + 近两年日 K 回填周线落 `price_history` + 汇率 K 线落
+//!   `fx_rate_history`（ADR-0019）+ 基金历史净值按水位增量回填（ADR-0038 决策 6）；
 //! - `tests`：原内嵌测试外迁。
 //!
 //! 对外暴露两个命令（`commands/mod.rs` 经 `pub use sync::*` 重导出）：
 //! `sync_instruments` 全量同步（修标的字典）与 `sync_holding_prices` 增量同步（只刷价格）。
 
 pub(crate) mod fund;
+pub(crate) mod fund_nav;
 mod http;
 mod incremental;
 mod orchestrate;
@@ -119,20 +123,22 @@ fn emit_error_progress(app: &AppHandle, error: String) {
 }
 
 /// 是否发价格失效信号 `ledger:prices-changed`（ADR-0031 决策 2，issue #236）：
-/// 增量/全量两同步命令共用的纯判定。`written` 为本次运行的落库计数——
+/// 增量/全量两同步命令共用的纯判定。`written` 为本次运行的实际落库计数——
 /// `Some(n)` 表示到达保留落库的终态（成功，或用户中断——中断保留已落库价格，
-/// 不发信号即失真）且落库 n 条；`None` 表示失败（emit 的终态只有成功与中断，
+/// 不发信号即失真）且实际写入 n 条；`None` 表示失败（emit 的终态只有成功与中断，
 /// 失败不广播）。
-/// 失效信号的本义是「数据变了」：零更新（无持仓/全部跳过）为库内零变化，不广播。
+/// 失效信号的本义是「数据变了」：零写入（无持仓/全部跳过/基金全部「已是最新」）
+/// 为库内零变化，不广播。
 fn should_emit_prices_changed(written: Option<usize>) -> bool {
     written.is_some_and(|n| n > 0)
 }
 
-/// IPC 命令：同步持仓价格（增量同步，issue #103）。仅刷新当前持仓股票的最新价，
-/// 不增删、不改标的字典；无持仓返回明确提示而非报错。异步执行（后台线程池），
-/// 不阻塞主线程；返回结果统计（同步 N 只 / 跳过 M 只），前端据此轻量提示。
-/// 成功且实际写入（`synced > 0`）时发价格失效信号（ADR-0031）：零变化（无持仓/
-/// 全部跳过）为库内零变化，不广播。
+/// IPC 命令：同步持仓价格（增量同步，issue #103 / #303）。单次按类型分区刷价：
+/// 股票走行情报价/K 线通道，场外基金走历史净值通道逐只按水位增量回填
+///（ADR-0038 决策 6）；不增删、不改标的字典；无持仓返回明确提示而非报错。
+/// 异步执行（后台线程池），不阻塞主线程；返回结果统计（同步 N 只 / 跳过 M 只），
+/// 前端据此轻量提示。成功且实际写入价格（`written > 0`）时发价格失效信号
+///（ADR-0031）：零变化（无持仓/全部跳过/基金无新净值）为库内零变化，不广播。
 #[tauri::command]
 pub async fn sync_holding_prices(
     db: State<'_, DbState>,
@@ -149,8 +155,9 @@ pub async fn sync_holding_prices(
     })
     .await
     .map_err(|e| AppError::Io(format!("同步任务执行失败: {e}")))?;
-    // 失败经 `?` 提前返回（不广播）；成功路径按判定 emit（零变化不广播）。
-    if should_emit_prices_changed(result.as_ref().ok().map(|r| r.synced)) {
+    // 失败经 `?` 提前返回（不广播）；成功路径按实际写入判定 emit（零变化不广播：
+    // 基金全部「已是最新」时 written 为 0，虽有成功处理亦不广播）。
+    if should_emit_prices_changed(result.as_ref().ok().map(|r| r.written)) {
         events::emit_prices_changed(&app);
     }
     result

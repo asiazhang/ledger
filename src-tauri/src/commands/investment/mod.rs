@@ -42,7 +42,17 @@ pub fn instrument_price_trend(
     filter: Option<TrendRange>,
 ) -> Result<InstrumentPriceTrend> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    trend::query_instrument_price_trend(&conn, &instrument_id, &filter.unwrap_or_default())
+    instrument_price_trend_internal(&conn, &instrument_id, &filter.unwrap_or_default())
+}
+
+/// 测试/e2e 入口：绕过 Tauri State 直接对连接执行单标的走势查询（与
+/// [`portfolio_value_trend_internal`] 同一先例，供 BDD 步骤复用与 IPC 命令同一实现）。
+pub fn instrument_price_trend_internal(
+    conn: &rusqlite::Connection,
+    instrument_id: &str,
+    filter: &TrendRange,
+) -> Result<InstrumentPriceTrend> {
+    trend::query_instrument_price_trend(conn, instrument_id, filter)
 }
 
 #[tauri::command]

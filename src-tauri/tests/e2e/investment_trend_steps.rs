@@ -199,6 +199,40 @@ fn assert_portfolio_trend_point_count(world: &mut LedgerWorld, expected: usize) 
     );
 }
 
+/// 单标的走势：PriceHistory 直出（基金单位净值即价格，与股票同一承载线，
+/// 查询侧不感知标的类型——净值走势即此，issue #303）。
+#[when(expr = "查询标的 {string} 的走势")]
+fn query_instrument_trend(world: &mut LedgerWorld, symbol: String) {
+    let id = instrument_id(&world_conn!(world), &symbol);
+    match tauri_app_lib::commands::investment::instrument_price_trend_internal(
+        &world_conn!(world),
+        &id,
+        &TrendRange::default(),
+    ) {
+        Ok(trend) => {
+            world.last_instrument_trend = Some(trend);
+            world.last_error = None;
+        }
+        Err(e) => {
+            world.last_error = Some(e.to_string());
+            world.last_instrument_trend = None;
+        }
+    }
+}
+
+#[then(expr = "标的走势应有 {int} 个周点")]
+fn assert_instrument_trend_point_count(world: &mut LedgerWorld, expected: usize) {
+    let trend = world
+        .last_instrument_trend
+        .as_ref()
+        .expect("未查询标的走势");
+    assert_eq!(
+        trend.points.len(),
+        expected,
+        "标的走势周点数不符：{trend:?}"
+    );
+}
+
 #[then(expr = "组合走势 {string} 周市值应为 {int}")]
 fn assert_portfolio_trend_week_value(world: &mut LedgerWorld, week_start: String, expected: i64) {
     let trend = world.last_portfolio_trend.as_ref().expect("未查询组合走势");

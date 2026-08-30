@@ -22,15 +22,15 @@ use super::crud;
 const FUND_MARKET: &str = "unknown";
 const FUND_CURRENCY: &str = "CNY";
 
-/// 6 位纯数字判定（fund 增强的触发前提，ADR-0039 决策 3）：名称充代码的
-/// fund 行（源数据无代码）非 6 位，不触发东财校验、不进净值通道（ADR-0038
-/// 决策 6 的「6 位纯数字判定 + 入口收口」安全前提）。
+/// 6 位纯数字判定（入口收口的安全前提，ADR-0038 决策 6 / ADR-0039 决策 3）：
+/// 消费三方——按代码即拉的入口校验（[`validate_fund_code`]）、AI 端点 fund
+/// 增强/查询的触发前提、净值同步分区的「可拉取」判定；名称充代码的 fund 行
+///（源数据无代码）非 6 位，不触发东财校验、不进净值通道，自编 6 位代码无产生通道。
 pub(crate) fn is_six_digit_code(code: &str) -> bool {
     code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit())
 }
 
-/// 基金代码合法性校验：6 位纯数字（入口收口的安全前提之一——自建标的 UI
-/// 白名单不含 fund，fund 行只经本通道产生，ADR-0038 决策 6）。
+/// 基金代码合法性校验：同 [`is_six_digit_code`]（按代码即拉入口形态）。
 pub(crate) fn validate_fund_code(code: &str) -> Result<()> {
     if is_six_digit_code(code) {
         Ok(())

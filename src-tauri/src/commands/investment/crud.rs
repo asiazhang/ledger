@@ -19,7 +19,7 @@ pub(crate) fn list_holdings(conn: &Connection) -> Result<Vec<Holding>> {
     query_all(
         conn,
         "SELECT id,account_id,instrument_id,quantity,cost_basis_cents,cost_currency_code, \
-         latest_price_cents,latest_price_currency_code,market_value_cents,unrealized_pnl_cents,updated_at \
+         latest_price_cents,latest_price_currency_code,latest_nav_date,market_value_cents,unrealized_pnl_cents,updated_at \
          FROM v_holdings ORDER BY account_id, instrument_id",
         [],
     )
