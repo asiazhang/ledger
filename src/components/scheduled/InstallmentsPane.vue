@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
-import { computed, h, onMounted, ref, type Ref, type VNode } from 'vue'
+import { computed, h, onMounted, ref, type VNode } from 'vue'
 import {
   NCard,
   NButton,
@@ -14,7 +14,6 @@ import {
   NProgress,
   useMessage,
   type DataTableColumns,
-  type TreeSelectOption,
 } from 'naive-ui'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
@@ -22,7 +21,6 @@ import AppSelect from '@/components/AppSelect.vue'
 import AppTreeSelect from '@/components/AppTreeSelect.vue'
 import { formatAmount } from '@/types'
 import { yuanToCents } from '@/utils/money'
-import { todayStr } from '@/utils/date'
 import { installmentSchedule } from '@/utils/installment'
 import type {
   RecurrenceType,
@@ -31,37 +29,44 @@ import type {
 } from '@/types'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
-import { useAppStore } from '@/stores/app'
-import { useFormShared } from '@/composables/useFormShared'
+import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
 import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 
 const reference = useReferenceStore()
-const appStore = useAppStore()
-const { accountOptions, currencyOptions } = useFormShared()
 const message = useMessage()
 
 // ---------------------------------------------------------------------------
 // 新建分期 = 模态对话框（issue #204）：录入「总金额 + 期数」，实时预览每期金额
 // 与最后一期（含尾差）。每期金额口径唯一来源是 installmentSchedule（与后端
 // expand_occurrences 的 floor 均分、尾差进最后一期一致）。商户接入见 issue #206
-// （与订阅表单同款补全、未命中即建；不暴露「每月几号」）。
+// （输入即建，解析单点走表单接缝；不暴露「每月几号」）。
 // ---------------------------------------------------------------------------
+
+// 表单接缝（ADR-0041）：公共草稿字段、商户解析（含重名兜底竞态）与公共 payload
+// 组装全仓单点；总额/期数、校验与提交编排留本页签。
+const form = useScheduledPlanForm()
+const {
+  note,
+  accountId,
+  categoryId,
+  merchantRef,
+  currencyCode,
+  recurrenceType,
+  recurrenceInterval,
+  startDate,
+  accountOptions,
+  currencyOptions,
+  categoryTreeOptions,
+  merchantOptions,
+} = form
 
 const showCreateModal = ref(false)
 
-const note = ref('')
-const accountId = ref<string | null>(null)
-const categoryId = ref<string | null>(null)
-const merchantRef = ref<string | null>(null)
 const totalYuan = ref('')
 const periods = ref<number | null>(null)
-const currencyCode = ref(appStore.defaultCurrency)
-const recurrenceType = ref<RecurrenceType>('monthly')
-const recurrenceInterval = ref(1)
-const startDate = ref(todayStr())
 
 const recurrenceOptions = [
   { label: '每天', value: 'daily' },
@@ -69,48 +74,6 @@ const recurrenceOptions = [
   { label: '每月', value: 'monthly' },
   { label: '每年', value: 'yearly' },
 ]
-
-/** 分期扣款为支出，分类候选仅支出类（树形）。 */
-const categoryTreeOptions = computed(
-  () => reference.treeCategoryOptions('expense') as unknown as TreeSelectOption[],
-)
-
-// 商户下拉选项（issue #206 / ADR-0028）：在用商户（与订阅表单同款补全，未命中即建）。
-const merchantOptions = computed<{ label: string; value: string }[]>(() =>
-  reference.merchants.map((m) => ({ label: m.name, value: m.id })),
-)
-
-/**
- * 商户解析（保存时单点收口，issue #206）：「输入即建」交互——
- * 1. 空 → null（无商户）；
- * 2. 选中已有商户（value 为 id）→ 原样携带；
- * 3. 输入文本精确命中在用商户名 → 按名复用；
- * 4. 未命中 → `create_merchant` 即建；重名兜底（store 陈旧竞态）先强制重拉
- *    按名复用，仍失败才向上抛。
- * （分期无编辑表单，无编辑路径的软删兜底分支。）
- */
-async function resolveMerchantId(source: Ref<string | null>): Promise<string | null> {
-  const ref = source.value
-  if (!ref) return null
-  if (reference.merchantMap.has(ref)) return ref
-  const name = ref.trim()
-  if (!name) return null
-  const existing = reference.merchantByName.get(name)
-  if (existing) return existing.id
-  try {
-    return await api.createMerchant({ name })
-  } catch (e) {
-    // 重名兜底（store 陈旧竞态）：强制重拉后按名复用；重拉失败不影响原错误上抛
-    try {
-      await reference.refresh()
-    } catch {
-      /* 保留原 create 错误 */
-    }
-    const retry = reference.merchantByName.get(name)
-    if (retry) return retry.id
-    throw e
-  }
-}
 
 /** 每期金额预览：总额与期数均合法时给出每期与末期（含尾差），否则为空。 */
 const schedule = computed(() => {
@@ -133,18 +96,11 @@ const previewText = computed(() => {
   return `每期 ${per} · 末期 ${formatAmount(s.lastPeriodCents, currency)}（含尾差）`
 })
 
-/** 重置新建表单到初始态：模态语义下每次打开应是全新表单。 */
+/** 重置新建表单到初始态：公共字段走接缝 reset，总额/期数留本页签。 */
 function resetCreateForm() {
-  note.value = ''
-  accountId.value = null
-  categoryId.value = null
-  merchantRef.value = null
   totalYuan.value = ''
   periods.value = null
-  currencyCode.value = appStore.defaultCurrency
-  recurrenceType.value = 'monthly'
-  recurrenceInterval.value = 1
-  startDate.value = todayStr()
+  form.reset()
 }
 
 async function create() {
@@ -168,22 +124,16 @@ async function create() {
   }
   const s = installmentSchedule(totalCents, totalOccurrences)
   try {
-    await api.createScheduledTransaction({
-      kind: 'installment',
-      account_id: accountId.value,
-      category_id: categoryId.value,
-      merchant_id: await resolveMerchantId(merchantRef),
-      // amount_cents 存每期金额（floor 口径），与期次生成一致（见 e2e 先例）
-      amount_cents: s.perPeriodCents,
-      total_amount_cents: totalCents,
-      total_occurrences: totalOccurrences,
-      currency_code: currencyCode.value,
-      recurrence_type: recurrenceType.value,
-      recurrence_interval: recurrenceInterval.value,
-      recurrence_day: null,
-      start_date: startDate.value,
-      note: note.value.trim() || null,
-    })
+    const merchantId = await form.resolveMerchant()
+    await api.createScheduledTransaction(
+      form.buildCreateInput({
+        kind: 'installment',
+        // amount_cents 存每期金额（floor 口径），与期次生成一致（见 e2e 先例）
+        amountCents: s.perPeriodCents,
+        merchantId,
+        specific: { total_amount_cents: totalCents, total_occurrences: totalOccurrences },
+      }),
+    )
     message.success('已创建分期计划')
     showCreateModal.value = false
     resetCreateForm()

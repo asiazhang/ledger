@@ -583,18 +583,15 @@ describe('InstallmentsPane 商户接入（issue #206）', () => {
     expect(wrapper.text()).toContain('京东白条')
   })
 
-  it('输入不存在的商户名保存即建：create_merchant 后按返回 id 创建计划', async () => {
+  it('输入不存在的商户名保存即建：解析全仓单点走表单接缝，此处仅验接线（选中/即建矩阵见 useScheduledPlanForm.test.ts）', async () => {
     const wrapper = await mountView()
     await openCreateModal(wrapper)
-    // 输入文本「新商户」：未命中在用商户 → 保存时即建
+    // 输入文本「新商户」：未命中在用商户 → 保存时接缝即建
     wrapper.findComponent('[data-testid="inst-merchant"]').vm.$emit('update:value', '新商户')
     await fillRequired(wrapper)
     await wrapper.findComponent('[data-testid="inst-create"]').trigger('click')
     await flushPromises()
-    // 先即建商户，再携带返回的 id 创建计划
-    const merchantCall = mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_merchant')
-    expect(merchantCall).toBeDefined()
-    expect(merchantCall![1]).toEqual({ input: { name: '新商户' } })
+    // 提交携带解析后的商户 id（即建/重名兜底矩阵在接缝测试）
     const createCall = mockInvoke.mock.calls.find(
       ([cmd]) => cmd === 'create_scheduled_transaction',
     )

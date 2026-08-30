@@ -19,7 +19,6 @@ import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import { formatAmount } from '@/types'
 import { yuanToCents } from '@/utils/money'
-import { todayStr } from '@/utils/date'
 import type {
   RecurrenceType,
   ScheduledTransactionOccurrence,
@@ -28,8 +27,7 @@ import type {
 } from '@/types'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
-import { useAppStore } from '@/stores/app'
-import { useFormShared } from '@/composables/useFormShared'
+import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
 import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
@@ -43,26 +41,32 @@ import { scheduledStatusLabel } from '@/utils/scheduled'
  */
 
 const reference = useReferenceStore()
-const appStore = useAppStore()
-const { accountOptions, currencyOptions } = useFormShared()
 const message = useMessage()
 
 // ---------------------------------------------------------------------------
-// 新建定时转账 = 模态对话框（与订阅页签同模式）
+// 新建定时转账 = 模态对话框（与订阅页签同模式）。
+// 表单接缝（ADR-0041）：公共草稿字段与公共 payload 组装全仓单点——转出账户即
+// 接缝的「账户」字段；转入账户过滤、币种跟随与总期数语义留本页签。
 // ---------------------------------------------------------------------------
+
+const form = useScheduledPlanForm()
+const {
+  note,
+  accountId: fromAccountId,
+  currencyCode,
+  recurrenceType,
+  recurrenceInterval,
+  startDate,
+  accountOptions,
+  currencyOptions,
+} = form
 
 const showCreateModal = ref(false)
 
-const note = ref('')
-const fromAccountId = ref<string | null>(null)
 const toAccountId = ref<string | null>(null)
 const amountYuan = ref('')
-const currencyCode = ref(appStore.defaultCurrency)
-const recurrenceType = ref<RecurrenceType>('monthly')
-const recurrenceInterval = ref(1)
 /** 总期数：null = 无限循环（留空），1 = 一次性，N = 有限期数 */
 const totalOccurrences = ref<number | null>(null)
-const startDate = ref(todayStr())
 
 const recurrenceOptions = [
   { label: '天', value: 'daily' },
@@ -103,17 +107,12 @@ watch(fromAccountId, (id) => {
   }
 })
 
-/** 重置新建表单到初始态：模态语义下每次打开应是全新表单。 */
+/** 重置新建表单到初始态：公共字段走接缝 reset，转入账户/金额/总期数留本页签。 */
 function resetCreateForm() {
-  note.value = ''
-  fromAccountId.value = null
+  form.reset()
   toAccountId.value = null
   amountYuan.value = ''
-  currencyCode.value = appStore.defaultCurrency
-  recurrenceType.value = 'monthly'
-  recurrenceInterval.value = 1
   totalOccurrences.value = null
-  startDate.value = todayStr()
 }
 
 async function create() {
@@ -131,21 +130,15 @@ async function create() {
     return
   }
   try {
-    await api.createScheduledTransaction({
-      kind: 'scheduled_transfer',
-      account_id: fromAccountId.value,
-      to_account_id: toAccountId.value,
-      category_id: null,
-      merchant_id: null,
-      amount_cents: amountCents,
-      currency_code: currencyCode.value,
-      recurrence_type: recurrenceType.value,
-      recurrence_interval: recurrenceInterval.value,
-      recurrence_day: null,
-      start_date: startDate.value,
-      note: note.value.trim() || null,
-      total_occurrences: totalOccurrences.value,
-    })
+    await api.createScheduledTransaction(
+      form.buildCreateInput({
+        kind: 'scheduled_transfer',
+        amountCents,
+        // 定时转账不使用商户（无商户面，不暴露商户字段，issue #203）
+        merchantId: null,
+        specific: { to_account_id: toAccountId.value, total_occurrences: totalOccurrences.value },
+      }),
+    )
     message.success('已创建定时转账')
     showCreateModal.value = false
     resetCreateForm()
