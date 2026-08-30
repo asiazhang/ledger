@@ -1,4 +1,5 @@
 mod crud;
+mod fund;
 mod holdings;
 pub(crate) mod predicates;
 mod reports;
@@ -9,8 +10,9 @@ mod trend;
 
 use crate::db::DbState;
 use crate::error::{AppError, Result};
+use crate::events;
 use crate::models::{
-    ExchangeRate, ExchangeRateInput, Holding, InstrumentInput, InstrumentListFilter,
+    AddFundResult, ExchangeRate, ExchangeRateInput, Holding, InstrumentInput, InstrumentListFilter,
     InstrumentListResult, InstrumentPriceTrend, MarketPrice, MarketPriceInput, PnlFilter,
     PortfolioValueTrend, RealizedPnlSummary, TransactionTrade, TrendRange,
 };
@@ -157,6 +159,44 @@ pub fn create_instrument_internal(
     input: InstrumentInput,
 ) -> Result<String> {
     crud::create_instrument(conn, input)
+}
+
+/// 测试/e2e 入口：按代码即拉核心接缝（注入详情获取函数，离线驱动；生产接网络
+/// 层的编排见 [`add_fund_by_code`] 命令，同一实现）。
+pub use fund::add_fund_by_code_with;
+
+/// IPC 命令：按 6 位基金代码即拉添加场外基金（issue #301 / ADR-0038）。东财
+/// 拉取（名称/分类/最新净值）在连接锁外的后台线程完成；落库走连接层统一写入口
+/// （ADR-0032），编排经 [`add_fund_by_code_with`] 同一接缝（拉取已在线外完成，
+/// 注入闭包直接回放结果，与测试/BDD 同一套校验→拉取→落库实现）。落现价即广播
+/// 价格失效信号（ADR-0031，与两同步命令同一信号），未取到净值仅建标的、不广播
+///（零变化不广播）。
+#[tauri::command]
+pub async fn add_fund_by_code(
+    db: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    code: String,
+) -> Result<AddFundResult> {
+    // 格式非法即刻拒绝，不发起网络请求。
+    fund::validate_fund_code(&code)?;
+    let conn = db.conn.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let span = tracing::info_span!("command", command = "add_fund_by_code");
+        let _entered = span.enter();
+        // 网络拉取在锁外：单请求叠加限流冷却重试最长可达分钟级，不阻塞其它命令。
+        let detail = crate::commands::sync::fund::fetch_fund_detail_production(&code)?;
+        // 编排单点：经接缝以已拉取的详情驱动（注入闭包同值回放）。
+        let mut fetch = |_: &str| Ok(detail.clone());
+        crate::db::write(&conn, |conn| {
+            fund::add_fund_by_code_with(conn, &code, &mut fetch)
+        })
+    })
+    .await
+    .map_err(|e| AppError::Io(format!("添加基金任务执行失败: {e}")))??;
+    if result.price_written {
+        events::emit_prices_changed(&app);
+    }
+    Ok(result)
 }
 
 #[tauri::command]

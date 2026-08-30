@@ -107,6 +107,8 @@ pub struct LedgerWorld {
     pub last_search: Option<TransactionSearchResult>,
     /// 最近一次标的搜索结果快照（标的搜索语义场景断言用，issue #199）
     pub last_instrument_search: Option<tauri_app_lib::models::InstrumentListResult>,
+    /// 按代码即拉添加基金的结果快照（issue #301 场景断言用；失败经 last_error）
+    pub last_add_fund: Option<tauri_app_lib::models::AddFundResult>,
     /// 最近一次组合走势查询快照（组合走势场景断言用，issue #248）
     pub last_portfolio_trend: Option<tauri_app_lib::models::PortfolioValueTrend>,
     /// 最近创建的物品 id（物品场景断言用）
@@ -194,6 +196,7 @@ impl LedgerWorld {
             last_occurrence_id: None,
             last_search: None,
             last_instrument_search: None,
+            last_add_fund: None,
             last_portfolio_trend: None,
             last_overview: None,
             last_spend: None,

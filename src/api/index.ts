@@ -5,6 +5,7 @@ import type {
   AccountBalanceAdjustInput,
   AccountInput,
   AccountUpdateInput,
+  AddFundResult,
   BackupFileInfo,
   AutoBackupState,
   BackupResult,
@@ -155,6 +156,8 @@ export const api = {
     invoke<TransactionTrade>('get_transaction_trade', { id }),
   createInstrument: (input: InstrumentInput) =>
     invoke<string>('create_instrument', { input }),
+  // 按代码即拉添加场外基金（issue #301 / ADR-0038）：东财回填名称/分类/最新净值
+  addFundByCode: (code: string) => invoke<AddFundResult>('add_fund_by_code', { code }),
 
   // 持仓
   listHoldings: () => invoke<Holding[]>('list_holdings'),

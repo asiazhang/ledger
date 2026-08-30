@@ -55,21 +55,26 @@ pub(super) fn upsert_fx_rate_history(
     Ok(())
 }
 
-/// K 线收盘价（真实价格值）→ 万分之一元（0.0001 元，价格刻度 ADR-0038）。
-/// A 股/港股一致 ×10000。
-pub(super) fn kline_close_to_price(close: f64) -> i64 {
-    (close * 10000.0).round() as i64
+/// 真实价格值（元）→ 万分之一元（0.0001 元，价格刻度 ADR-0038）。
+/// A 股/港股 K 线收盘价与场外基金单位净值同刻度换算（基金净值 4 位小数，
+/// issue #301），统一 ×10000。
+pub(crate) fn price_value_to_cents(value: f64) -> i64 {
+    (value * 10000.0).round() as i64
 }
 
 /// 已存在股票标的的映射值：(id, name, market)，键为 symbol。
 pub(super) type ExistingInstrument = (String, Option<String>, String);
 
 /// 按 instrument_id 插入或更新一条行情价格（东财数据源）。
-pub(super) fn upsert_market_price(
+/// `priced_at` 为该价格对应的行情/净值日期；`nav_date` 仅场外基金现价携带
+/// （单位净值日期，兼任净值同步水位，ADR-0038），股票传 None（列恒 NULL）。
+pub(crate) fn upsert_market_price(
     conn: &Connection,
     instrument_id: &str,
     price_cents: i64,
     currency: &str,
+    priced_at: &str,
+    nav_date: Option<&str>,
 ) -> Result<()> {
     let existing_id: Option<String> = conn
         .query_row(
@@ -81,13 +86,24 @@ pub(super) fn upsert_market_price(
     let id = existing_id.unwrap_or_else(new_uuid);
     let now = now_iso();
     conn.execute(
-        "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,?4,?5,'eastmoney',?6,?7,?8,?9) \
+        "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,nav_date,source,created_at,updated_at,version,device_id) \
+         VALUES (?1,?2,?3,?4,?5,?6,'eastmoney',?7,?8,?9,?10) \
          ON CONFLICT(instrument_id) DO UPDATE SET \
          price_cents=excluded.price_cents, currency_code=excluded.currency_code, \
-         priced_at=excluded.priced_at, source=excluded.source, \
+         priced_at=excluded.priced_at, nav_date=excluded.nav_date, source=excluded.source, \
          updated_at=excluded.updated_at, version=version+1",
-        params![id, instrument_id, price_cents, currency, now, now, now, 1, device_id()],
+        params![
+            id,
+            instrument_id,
+            price_cents,
+            currency,
+            priced_at,
+            nav_date,
+            now,
+            now,
+            1,
+            device_id()
+        ],
     )?;
     Ok(())
 }
@@ -140,7 +156,7 @@ pub(super) fn apply_stock_item(
         }
         if let Some(raw) = item.price {
             let price = f2_to_price(raw, market_code);
-            upsert_market_price(conn, existing_id, price, currency)?;
+            upsert_market_price(conn, existing_id, price, currency, &now_iso(), None)?;
         }
         Ok((0, updated))
     } else {
@@ -163,7 +179,7 @@ pub(super) fn apply_stock_item(
         )?;
         if let Some(raw) = item.price {
             let price = f2_to_price(raw, market_code);
-            upsert_market_price(conn, &id, price, currency)?;
+            upsert_market_price(conn, &id, price, currency, &now_iso(), None)?;
         }
         existing_map.insert(
             item.code.clone(),

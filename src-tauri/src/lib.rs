@@ -148,6 +148,7 @@ pub fn run() {
             commands::create_exchange_rate,
             commands::list_market_prices,
             commands::create_market_price,
+            commands::add_fund_by_code,
             commands::list_instruments,
             commands::create_instrument,
             commands::get_transaction_trade,

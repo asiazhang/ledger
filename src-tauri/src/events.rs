@@ -30,8 +30,10 @@ pub const BACKUPS_CHANGED: &str = "ledger:backups-changed";
 
 /// 价格数据变更信号事件名（ADR-0031，issue #236；无 payload，与 [`LEDGER_CHANGED`] /
 /// [`BACKUPS_CHANGED`] 平行，同一 `ledger:*` 命名空间、同一 `<domain 复数>-changed` 风格）。
-/// 语义锚「价格数据已变更」，覆盖 MarketPrice / PriceHistory / FxRateHistory；由两个
-/// 行情同步命令按判定发出，前端价格消费方各自订阅后重拉自身数据。
+/// 语义锚「价格数据已变更」，覆盖 MarketPrice / PriceHistory / FxRateHistory；生产者：
+/// 两个行情同步命令按判定发出（增量实际写入 / 全量有落库），及场外基金按代码即拉
+/// 落现价缓存时（issue #301 / ADR-0038，未取到净值不广播）；前端价格消费方
+/// 各自订阅后重拉自身数据。
 pub const PRICES_CHANGED: &str = "ledger:prices-changed";
 
 /// 进程级应用句柄镜像：自动备份的深路径执行点（连接层写入口

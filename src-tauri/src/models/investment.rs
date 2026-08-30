@@ -147,6 +147,45 @@ pub struct InstrumentListResult {
     pub total: i64,
 }
 
+/// 按代码即拉拉取到的基金详情（issue #301 / ADR-0038 决策 1）：名称与东财分类
+/// 为透传展示信息（不落库），nav 缺省（新发基金尚未公布首期净值等）时仅建
+/// 标的、不落现价（不广播价格失效信号）。类型归 models 供编排接缝（注入获取
+/// 函数）与 BDD stub 构造跨 crate 使用。
+#[derive(Debug, Clone, PartialEq)]
+pub struct FundDetail {
+    pub code: String,
+    pub name: String,
+    /// 东财基金分类（如「混合型-灵活」），展示与 AI 确认识别用，不落库。
+    pub fund_class: String,
+    pub nav: Option<FundNav>,
+}
+
+/// 基金最新单位净值（真实价格值，元）与其净值日期（ISO 日期）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct FundNav {
+    pub nav: f64,
+    pub nav_date: String,
+}
+
+/// 按代码即拉添加基金的结果（issue #301 / ADR-0038 决策 1）：标的行落库 +
+/// 现价写入状态。名称与东财分类来自东方财富权威数据；未取到净值时仅建标的、
+/// 不落现价（`price_written=false`，IPC 层据此不广播价格失效信号）。
+#[derive(Debug, Serialize)]
+pub struct AddFundResult {
+    pub instrument_id: String,
+    pub symbol: String,
+    /// 东财权威名称（已回填标的行）。
+    pub name: String,
+    /// 东财基金分类（如「混合型-灵活」），展示透传，不落库。
+    pub fund_class: String,
+    /// 最新单位净值（万分之一元，ADR-0038 价格刻度）；未取到为 None。
+    pub nav_cents: Option<i64>,
+    /// 净值日期（ISO 日期，兼任净值同步水位）；未取到为 None。
+    pub nav_date: Option<String>,
+    /// 是否落了现价缓存（价格失效信号的广播判定依据，ADR-0031：零变化不广播）。
+    pub price_written: bool,
+}
+
 /// 交易买卖明细（issue #180）：一笔 buy/sell 交易在 `security_transactions` 扩展表
 /// 中的投影（核心 `transactions` 行不含投资字段，见 ADR-0003 核心表 + 扩展表），
 /// 供投资表单编辑模式回填标的/数量/价格/费用。`symbol`/`instrument_name` 为
@@ -196,6 +235,9 @@ pub struct MarketPrice {
     pub price_cents: i64,
     pub currency_code: String,
     pub priced_at: String,
+    /// 净值日期：场外基金现价（= 最新公布单位净值）携带，兼任净值同步水位
+    /// （ADR-0038）；股票类现价无净值语义，恒为 None。
+    pub nav_date: Option<String>,
     pub source: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -289,11 +331,12 @@ impl FromRow for MarketPrice {
             price_cents: row.get(2)?,
             currency_code: row.get(3)?,
             priced_at: row.get(4)?,
-            source: row.get(5)?,
-            created_at: row.get(6)?,
-            updated_at: row.get(7)?,
-            version: row.get(8)?,
-            device_id: row.get(9)?,
+            nav_date: row.get(5)?,
+            source: row.get(6)?,
+            created_at: row.get(7)?,
+            updated_at: row.get(8)?,
+            version: row.get(9)?,
+            device_id: row.get(10)?,
         })
     }
 }

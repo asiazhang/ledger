@@ -3,6 +3,7 @@
 //! 目录组织：
 //! - `http`：HTTP 请求（含多主机切换、重试、限流冷却）与响应解析（报价 / 日 K / 汇率 K），
 //!   可独立测试；
+//! - `fund`：东财基金详情访问（按代码即拉，issue #301 / ADR-0038）；
 //! - `persist`：`instruments` / `market_prices` 持久化 + `price_history` / `fx_rate_history`
 //!   周采样 upsert（issue #137）；
 //! - `orchestrate`：全量同步编排——市场分页遍历、进度事件推送、新增/更新汇总；
@@ -13,10 +14,11 @@
 //! 对外暴露两个命令（`commands/mod.rs` 经 `pub use sync::*` 重导出）：
 //! `sync_instruments` 全量同步（修标的字典）与 `sync_holding_prices` 增量同步（只刷价格）。
 
+pub(crate) mod fund;
 mod http;
 mod incremental;
 mod orchestrate;
-mod persist;
+pub(crate) mod persist;
 #[cfg(test)]
 mod tests;
 

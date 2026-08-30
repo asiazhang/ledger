@@ -18,6 +18,7 @@ import { useReferenceStore } from '@/stores/reference'
 import { useHoldingPriceSync } from '@/composables/useHoldingPriceSync'
 import { useInstrumentFullSync } from '@/composables/useInstrumentFullSync'
 import { usePricesChanged } from '@/composables/usePricesChanged'
+import { errorMessage as extractErrorMessage } from '@/utils/errors'
 import { formatPrice, INSTRUMENT_TYPE_LABELS, MARKET_TYPE_LABELS } from '@/types'
 import AppModal from '@/components/AppModal.vue'
 import AppSelect from '@/components/AppSelect.vue'
@@ -110,6 +111,58 @@ watch(onlyInvested, reload)
 usePricesChanged(() => {
   void load()
 })
+
+// ---------------------------------------------------------------------------
+// 添加基金（issue #301 / ADR-0038）：fund 类型唯一创建入口——输入 6 位基金代码，
+// 东财按代码即拉名称/分类/最新净值自动回填；查无此码中文报错、不产生标的行。
+// ---------------------------------------------------------------------------
+const addFundOpen = ref(false)
+const addFundCode = ref('')
+const addFundSubmitting = ref(false)
+/** 弹窗内错误提示（查无此码等）：保持弹窗打开供用户改码重试 */
+const addFundError = ref<string | null>(null)
+/** 页面级成功回执（展示东财回填的名称/分类/净值） */
+const addFundMessage = ref<string | null>(null)
+
+// 6 位纯数字才可提交（后端同样校验，前端仅提前拦截不发起无效请求）
+const addFundCodeValid = computed(() => /^\d{6}$/.test(addFundCode.value))
+
+// 输入过滤：只留数字、最长 6 位
+watch(addFundCode, () => {
+  const filtered = addFundCode.value.replace(/\D/g, '').slice(0, 6)
+  if (filtered !== addFundCode.value) addFundCode.value = filtered
+})
+
+function openAddFund() {
+  addFundError.value = null
+  addFundOpen.value = true
+}
+
+function closeAddFund() {
+  addFundOpen.value = false
+  addFundCode.value = ''
+  addFundError.value = null
+}
+
+async function submitAddFund() {
+  if (!addFundCodeValid.value || addFundSubmitting.value) return
+  addFundSubmitting.value = true
+  addFundError.value = null
+  try {
+    const res = await api.addFundByCode(addFundCode.value)
+    const navText = res.nav_cents !== null && res.nav_date !== null
+      ? `最新净值 ${formatPrice(res.nav_cents)}（${res.nav_date}）`
+      : '暂未取到净值'
+    addFundMessage.value = `已添加基金：${res.name}（${res.symbol} · ${res.fund_class}）${navText}`
+    closeAddFund()
+    // 新标的行上列表：回到第 1 页重拉（价格缓存刷新由价格失效信号驱动）
+    reload()
+  } catch (e) {
+    addFundError.value = extractErrorMessage(e)
+  } finally {
+    addFundSubmitting.value = false
+  }
+}
 
 const pagination = computed(() => ({
   page: page.value,
@@ -210,6 +263,14 @@ onMounted(load)
       />
       <span style="font-size: 13px">只看持仓</span>
       <NButton
+        secondary
+        size="small"
+        data-testid="add-fund"
+        @click="openAddFund"
+      >
+        添加基金
+      </NButton>
+      <NButton
         type="primary"
         size="small"
         :loading="syncing"
@@ -233,6 +294,9 @@ onMounted(load)
     <NText v-if="resultMessage" :type="status === 'error' ? 'error' : 'info'">
       {{ resultMessage }}
     </NText>
+    <NText v-if="addFundMessage" type="success" data-testid="add-fund-result">
+      {{ addFundMessage }}
+    </NText>
     <NDataTable
       :columns="instrumentBrowseColumns"
       :data="instruments"
@@ -242,6 +306,47 @@ onMounted(load)
       remote
       :pagination="pagination"
     />
+
+    <!-- 添加基金（按代码即拉，issue #301）：6 位代码 → 东财回填名称/分类/最新净值；
+         查无此码中文报错且不产生标的行（弹窗保持打开供改码重试） -->
+    <AppModal
+      v-model:show="addFundOpen"
+      preset="card"
+      title="添加基金"
+      style="width: 440px"
+      :bordered="false"
+    >
+      <NSpace vertical :size="12">
+        <NText depth="3">
+          输入 6 位基金代码，自动从东方财富拉取名称、类型与最新净值回填，无需手抄。
+        </NText>
+        <NInput
+          v-model:value="addFundCode"
+          placeholder="6 位基金代码，如 000001"
+          :maxlength="6"
+          :disabled="addFundSubmitting"
+          data-testid="add-fund-code"
+          @keyup.enter="submitAddFund"
+        />
+        <NText v-if="addFundError" type="error" data-testid="add-fund-error">
+          {{ addFundError }}
+        </NText>
+        <NSpace justify="end" :size="12">
+          <NButton data-testid="cancel-add-fund" @click="closeAddFund">
+            取消
+          </NButton>
+          <NButton
+            type="primary"
+            data-testid="submit-add-fund"
+            :loading="addFundSubmitting"
+            :disabled="!addFundCodeValid"
+            @click="submitAddFund"
+          >
+            添加
+          </NButton>
+        </NSpace>
+      </NSpace>
+    </AppModal>
 
     <!-- 二次确认：未确认不发起同步（issue #109） -->
     <AppModal

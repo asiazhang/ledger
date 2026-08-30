@@ -6,7 +6,9 @@
 -- / security_lots.cost_per_unit_cents / security_lot_sales.cost_per_unit_cents
 -- / market_prices.price_cents）刻度由「分」重定义为万分之一元（0.0001 元，
 -- 基金净值 4 位小数保真，ADR-0038），v_holdings 视图表达式同步换算
--- （金额分 = 数量 × 单价 ÷ 100）。列名保留、无 DDL 结构变化，就地修改只影响
+-- （金额分 = 数量 × 单价 ÷ 100）。另 market_prices 增 nav_date 列（净值日期，
+-- 场外基金现价 = 最新公布单位净值时携带，兼任净值同步水位，issue #301）。
+-- 刻度重定义列名保留、无 DDL 结构变化；nav_date 为结构增列，就地修改只影响
 -- 全新安装；存量库不在兼容范围（裁定见 CHANGELOG BREAKING 条目与 ADR-0038
 -- 决策 5），不提供一次性处置工具。
 
@@ -81,12 +83,15 @@ CREATE TABLE IF NOT EXISTS security_lot_sales (
 -- 5. market_prices（市场价格表）
 --    - 每个 instrument 仅保留最新价格，用于计算持仓市值和未实现盈亏。
 --    - priced_at 记录该价格对应的行情日期，updated_at 记录写入时间。
+--    - nav_date 记录净值日期：场外基金现价 = 最新公布单位净值时携带（ADR-0038），
+--      兼任净值同步水位；股票类现价无净值语义，恒为 NULL。
 CREATE TABLE IF NOT EXISTS market_prices (
     id              TEXT PRIMARY KEY,  -- 价格记录全局唯一 ID（UUID v7）
     instrument_id   TEXT NOT NULL REFERENCES instruments(id) ON DELETE CASCADE,  -- 关联金融工具
     price_cents     INTEGER NOT NULL,        -- 最新价（万分之一元，刻度见文件头就地修改注记）
     currency_code   TEXT NOT NULL REFERENCES currencies(code) ON DELETE RESTRICT,  -- 报价币种
     priced_at       TEXT NOT NULL,           -- 行情日期，ISO 8601 日期格式
+    nav_date        TEXT,                    -- 净值日期（场外基金现价 = 最新公布单位净值时携带，兼任净值同步水位，ADR-0038；股票恒 NULL）
     source          TEXT,                    -- 数据来源（如 yahoo、manual）
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL,

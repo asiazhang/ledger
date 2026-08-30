@@ -6,9 +6,11 @@
 //! - `instrument_sync`：全量同步与 clist 报文解析；
 //! - `holding_price_sync`：持仓价格增量同步与 ulist / 日 K 报文解析；
 //! - `run_sync`：分页编排、取消、锁、重入守卫与价格失效信号判定。
+//! - `fund_search`：东财基金搜索报文解析与命中挑选（issue #301，fixture 驱动）。
 
 mod common;
 
+mod fund_search;
 mod holding_price_sync;
 mod http_client;
 mod instrument_sync;
