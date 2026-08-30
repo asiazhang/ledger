@@ -9,6 +9,7 @@ mod balance;
 mod batch_import;
 mod common;
 mod documentation;
+mod instrument_create;
 mod instrument_search;
 mod merchant_import;
 mod reference_data;
