@@ -532,6 +532,8 @@ struct InstrumentCreateInput {
 /// 报价币种缺省推导（ADR-0037 决策 2）：沪深→人民币、港→港币、其余（含 unknown）→人民币。
 ///
 /// 依据：标的币种不参与买卖账务（持仓批次成本币种 = 账户币种），仅影响行情/市值折算展示。
+/// 与同步侧 `commands::sync::http::MARKETS` 的 market→currency 对应（该表为同步
+/// 市场闭集、模块私有，本端点按 ADR 独立定义并多担 unknown 缺省）；新增市场时两处同改。
 fn derive_quote_currency(market: &str) -> &'static str {
     match market {
         "hk" => "HKD",
