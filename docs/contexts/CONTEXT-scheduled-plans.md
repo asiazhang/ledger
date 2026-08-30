@@ -11,16 +11,16 @@
   - 每次触发时生成一条核心交易域 `Transaction`（交易流水）。
   - 生成的 `Transaction` 是普通的交易记录，参与余额计算、预算统计。
   - 目前涵盖三种业务形态：分期付款（installment）、定期订阅（subscription）、定时转账（scheduled_transfer）。
-  - 数据层面采用“核心表 + 扩展表”：通用字段在 `scheduled_transactions`，类型特有字段在 `installment_plans` / `subscription_plans` / `scheduled_transfer_plans`。
+  - 数据层面采用「核心表 + 扩展表」（ADR-0003）：通用字段在定时计划核心表，三种形态各有自己的扩展表。
 - **别名**：不使用“定时任务”（偏技术/调度）、“定时计划”（含糊）、“RecurringPayment”（不能涵盖转账）等词。
 
 ## InstallmentPlan（分期计划）
 
 - **定义**：在固定期数内、按固定周期偿还一笔已知总金额的 `ScheduledTransaction`。
 - **边界**：
-  - 记录总金额 `total_amount_cents` 和总期数 `total_occurrences`。
+  - 记录总金额与总期数。
   - 每期金额由分期金额计算规则得出（MVP 决策见 ADR-0024）。
-  - 已还金额和已还期数由 `scheduled_transaction_occurrences` 的 `completed` 状态实时汇总。
+  - 已还金额和已还期数由已完成期次实时汇总。
   - 每次触发时生成一条核心交易域 `Transaction`（`kind = expense`）。
 - **别名**：不使用“loan”、“debt”等词，因为分期不一定是负债（例如分期购买服务）。
 
@@ -73,10 +73,9 @@
 
 ## Timing（时间精度）
 
-- **日期精度**：所有定时交易只精确到日期，不记录具体执行时间。
-- **执行日期**：`Occurrence` 的 `scheduled_date` 为 ISO 8601 日期格式（YYYY-MM-DD）。
+- **日期精度**：所有定时交易只精确到日期（ISO 8601 日期，YYYY-MM-DD），不记录具体执行时间。
 - **节假日处理**：MVP 采用严格日期（不顺延）的决策见 ADR-0024。
-- **边界**：核心交易域 `Transaction.date` 直接复用 `Occurrence` 的 `scheduled_date`，两者保持一致。
+- **边界**：核心交易域 `Transaction.date` 直接复用期次执行日期，两者保持一致。
 
 ## Counterparty（交易对手，已废弃）
 
@@ -93,4 +92,4 @@
 
 - **定义**：期次执行失败即标记为 `failed`、由用户手动重试的处理约定。
 - **MVP 决策**：不自动重试、不自动跳过、不产生滞纳金及其理由见 ADR-0024。
-- **边界**：引擎单期执行的事务边界（issue #230 / ADR-0033 决策 #6）：归一化/本位币折算是只读校验、在事务外，业务错误（如非默认币种缺汇率）期次保持 `pending` 可直接重试；其后 CAS 置 `processing` 起包到计划完成检查的事务内任何失败整体回滚、期次回原状态可重试——不再产生滞留 `processing` 而交易未落库的残留。存量旧版本失败遗留的 `processing` 期次不救援（breaking change，应用内无重试入口，遇个案手动改库）。`failed` 为预留状态，若出现同样走既有单期执行命令重试。
+- **边界**：引擎单期执行的事务边界（issue #230 / ADR-0033 决策 #6）：归一化/本位币折算是只读校验、在事务外，业务错误（如非默认币种缺汇率）期次保持 `pending` 可直接重试；其后置为 `processing` 起包到计划完成检查的事务内任何失败整体回滚、期次回原状态可重试——不再产生滞留 `processing` 而交易未落库的残留。存量旧版本失败遗留的 `processing` 期次不救援（breaking change，应用内无重试入口，遇个案手动改库）。`failed` 为预留状态，若出现同样走既有单期执行命令重试。
