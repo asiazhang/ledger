@@ -1,6 +1,6 @@
-// 视图状态（ViewState）持久化：当前视图、侧边栏折叠、报表汇总层级。
+// 视图状态（ViewState）持久化：当前视图、侧边栏折叠、报表汇总层级、侧栏可排区顺序。
 // 约定：key 统一加 'view_state:' 前缀，与偏好（'appearance' 等）及业务数据（SQLite）分域。
-// 边界：只覆盖上述三样，不做"过度记忆"（筛选、滚动位置、列宽等一律不持久化）。
+// 边界：不做"过度记忆"（筛选、滚动位置、列宽等一律不持久化）。
 
 import { loadLocal, saveLocal } from '@/utils/storage'
 
@@ -8,6 +8,7 @@ export const VIEW_STATE_KEYS = {
   route: 'view_state:route',
   sidebarCollapsed: 'view_state:sidebar_collapsed',
   reportsGroupLevel: 'view_state:reports_group_level',
+  sidebarOrder: 'view_state:sidebar_order',
 } as const
 
 export type ReportsGroupLevel = 'level1' | 'level2'
@@ -28,6 +29,15 @@ export function loadSidebarCollapsed(): boolean {
 
 export function saveSidebarCollapsed(collapsed: boolean) {
   saveLocal(VIEW_STATE_KEYS.sidebarCollapsed, collapsed)
+}
+
+/**
+ * 已存侧栏可排区顺序（原始值）；无记录或数据损坏时返回 null。
+ * 非法名过滤、去重、缺失项补齐等解析防御归顺序模块 parseArrangeableOrder，此处不解析。
+ * 本票（#269）仅有读路径；写路径（右键自定义排序）由后续票落地。
+ */
+export function getSavedSidebarOrder(): unknown {
+  return loadLocal<unknown>(VIEW_STATE_KEYS.sidebarOrder, null)
 }
 
 /** 报表汇总层级；非法值一律回退 'level2'（二级）。 */
