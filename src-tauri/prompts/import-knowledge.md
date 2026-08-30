@@ -11,6 +11,7 @@
 - `资金账户` 含 ` → ` → `transfer`：`account_id`=箭头左侧（转出），`to_account_id`=箭头右侧（转入），金额任取一列。
 - `资金账户` = 无（或转账任一侧为无）→ 映射黑洞账户 `无(CNY)` / `无(HKD)`（`GET /api/v1/accounts` 返回，`is_hidden=true`）。黑洞信号只看资金账户列；`收支大类=无` 不是黑洞信号。
 - `备注` → `note`；`标签` 可忽略或并入 `note`。
+- 迁移拆行仅产生 `income` / `expense` / `transfer` 三类 kind；`dividend` / `split` 不受支持，提交会被拒绝。
 
 ## 商户（Merchant）
 
@@ -29,6 +30,13 @@
   - 不同键但内容完全相同 → 视为不同交易，都保留。
 - 不带键行回退至 `dedup_hash = sha256(date|kind|amount_cents|currency_code|account_id|to_account_id)` 兜底去重（排除 note/category；命中 `duplicate: true` 且 `id: null`）。
 - 每行拆法必须固定不变，否则哈希漂移、去重失效；键取源内稳定行号可避免内容漂移影响去重身份。
+
+## 对账完成判定
+
+迁移完成的判定，以下两项全过才算完成：
+
+- **读回核对**：`GET /api/v1/transactions` 按日期区间过滤（区间取源文件覆盖范围）核对：响应为 `{items, total}`，读回取 `.items`；不传分页参数（`page`/`page_size`）即返回满足条件的全部交易，逐行核对源文件各行是否全部落库、金额是否一致（超大账本也可用 `page`/`page_size` 分批读回，以 `total` 核对总条数）；按账户核对（含转账转入侧）时加 `involving_account_id`（涉及账户：`account_id` 或 `to_account_id` 命中即算），账户 id 取自 `GET /api/v1/accounts`（**含黑洞账户**）。
+- **余额核对**：`GET /api/v1/accounts/balances`（**含黑洞账户**）核对各账户期末余额与源数据吻合。
 
 ## 对账纠错
 

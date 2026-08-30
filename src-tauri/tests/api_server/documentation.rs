@@ -310,6 +310,7 @@ async fn test_import_knowledge_covers_key_conventions() {
         "account_id",
         "to_account_id",
         "currency_code",
+        "dividend",
     ];
     for kw in required_keywords {
         assert!(text.contains(kw), "导入知识应包含关键约定关键词 {kw:?}");
