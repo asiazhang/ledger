@@ -134,6 +134,67 @@ async fn test_update_transaction_reuses_kind_validation_returns_400() {
     assert!(err["message"].as_str().unwrap().contains("目标账户"));
 }
 
+/// issue #295：修改（全字段替换）把买入改为引用不存在的标的 → 400 Invalid 中文
+/// 错误（此前为扩展表外键违规的 500 数据库错误），原交易行与持仓批次保持不变。
+#[tokio::test]
+async fn test_update_buy_to_missing_instrument_returns_400_with_readable_error() {
+    let (app, conn) = setup_app();
+    {
+        let conn = conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES ('acc-inv-295','美股','investment','USD',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+             VALUES ('inst-295','AAPL','stock','Apple','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,updated_at,version,device_id) \
+             VALUES ('er-295','USD','CNY',1.0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+            [],
+        )
+        .unwrap();
+    }
+
+    let buy = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-295","date":"2026-01-10","instrument_id":"inst-295","quantity":10.0,"price_cents":10000,"fee_cents":0}]}"#;
+    let created = post_batch(&app, buy.to_string()).await;
+    assert_eq!(created[0]["success"], true, "铺垫买入应成功");
+    let id = created[0]["id"].as_str().unwrap().to_string();
+
+    // 改为引用不存在的标的 → 400（非 500），错误可读、携带标的 id。
+    let body = r#"{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-295","date":"2026-01-10","instrument_id":"inst-not-exist","quantity":5.0,"price_cents":12000,"fee_cents":0}"#;
+    let (status, bytes) = put_transaction_via_api(&app, &id, body).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "引用不存在标的应返回 400 而非 500"
+    );
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["kind"], "Invalid");
+    assert!(
+        err["message"].as_str().unwrap().contains("买入标的不存在"),
+        "应报买入标的不存在供回自纠: {err}"
+    );
+
+    // 原交易行与持仓批次保持原样（入口自持事务整体回滚）。
+    let conn = conn.lock().unwrap();
+    let (amount_cents, quantity): (i64, f64) = conn
+        .query_row(
+            "SELECT t.amount_cents, l.remaining_quantity FROM transactions t \
+             JOIN security_lots l ON l.buy_transaction_id = t.id WHERE t.id=?1",
+            rusqlite::params![id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(amount_cents, 100000, "原交易金额不应被修改");
+    assert!((quantity - 10.0).abs() < 1e-9, "原持仓批次不应被清理");
+}
+
 #[tokio::test]
 async fn test_update_transaction_preserves_idempotency_key_and_rerun_dedup() {
     let (app, _) = setup_app();
