@@ -119,6 +119,7 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
       cost_basis_cents: 123400,
       latest_price_cents: 12345,
       latest_price_currency_code: 'CNY',
+      latest_nav_date: null,
       market_value_cents: 123450,
       unrealized_pnl_cents: 50,
     })
@@ -136,6 +137,34 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     await flushPromises()
     // 现价 12345 万分之一元 = 1.2345 元，4 位小数无损展示
     expect(await cellText('latest_price')).toEqual(['¥1.2345'])
+  })
+
+  it('基金行现价下方展示净值日期（现价对应哪天的净值，#303），股票行不展示', async () => {
+    const fundHolding = makeHolding({
+      id: 'h-fund',
+      instrument_id: 'inst-fund',
+      latest_price_cents: 33480,
+      latest_price_currency_code: 'CNY',
+      latest_nav_date: '2026-01-30',
+      market_value_cents: 334800,
+      unrealized_pnl_cents: 50,
+    })
+    baseInvoke({
+      list_holdings: [mockHoldings[0]!, fundHolding],
+      list_instruments: {
+        items: [
+          ...mockInstruments,
+          makeInstrument({ id: 'inst-fund', symbol: '110022', name: '易方达消费行业' }),
+        ],
+        total: mockInstruments.length + 1,
+      },
+    })
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    const cells = await cellText('latest_price')
+    expect(cells[0]).toBe('¥15', '股票行（无净值日期）只有价格')
+    expect(cells[1]).toContain('¥3.348')
+    expect(cells[1]).toContain('净值 2026-01-30', '基金行现价下方展示净值日期')
   })
 
   it('右上角「同步持仓价格」按钮触发增量同步命令，反馈与标的页一致', async () => {

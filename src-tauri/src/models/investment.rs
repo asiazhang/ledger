@@ -223,6 +223,9 @@ pub struct Holding {
     pub cost_currency_code: String,
     pub latest_price_cents: Option<i64>,
     pub latest_price_currency_code: Option<String>,
+    /// 净值日期（透传 market_prices.nav_date，#303）：基金现价（= 最新公布
+    /// 单位净值）携带，持仓可见现价对应哪天的净值；股票类恒 None。
+    pub latest_nav_date: Option<String>,
     pub market_value_cents: Option<i64>,
     pub unrealized_pnl_cents: Option<i64>,
     pub updated_at: String,
@@ -316,9 +319,10 @@ impl FromRow for Holding {
             cost_currency_code: row.get(5)?,
             latest_price_cents: row.get(6)?,
             latest_price_currency_code: row.get(7)?,
-            market_value_cents: row.get(8)?,
-            unrealized_pnl_cents: row.get(9)?,
-            updated_at: row.get(10)?,
+            latest_nav_date: row.get(8)?,
+            market_value_cents: row.get(9)?,
+            unrealized_pnl_cents: row.get(10)?,
+            updated_at: row.get(11)?,
         })
     }
 }

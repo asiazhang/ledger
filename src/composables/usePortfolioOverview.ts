@@ -18,6 +18,8 @@ export interface PortfolioRow {
   costCurrencyCode: string
   latestPriceCents: number | null
   latestPriceCurrencyCode: string | null
+  /** 净值日期：基金现价（= 最新公布单位净值）携带，持仓可见现价对应哪天的净值；股票恒 null */
+  latestNavDate: string | null
   /** 账户本位币市值（v_holdings 实时计算；无行情时为 null） */
   marketValueCents: number | null
   /** 账户本位币未实现盈亏（v_holdings 实时计算；无行情/汇率缺失时为 null） */
@@ -142,6 +144,7 @@ function toRow(
     costCurrencyCode: h.cost_currency_code,
     latestPriceCents: h.latest_price_cents,
     latestPriceCurrencyCode: h.latest_price_currency_code,
+    latestNavDate: h.latest_nav_date,
     marketValueCents: h.market_value_cents,
     unrealizedPnlCents: h.unrealized_pnl_cents,
     // 市值/未实现盈亏由 v_holdings 折算到账户本位币；账户缺失时回退成本币种保证可展示

@@ -59,8 +59,8 @@ pub(crate) struct FundBaseInfo {
 }
 
 /// 数值字段兼容数字与数字字符串两种 wire 形态（DWJZ 两种都出现过）；
-/// 非数值（含 null）按缺省处理。
-fn deserialize_flexible_f64<'de, D>(d: D) -> std::result::Result<Option<f64>, D::Error>
+/// 非数值（含 null）按缺省处理。历史净值接口（fund_nav）的 DWJZ 同形态，共用。
+pub(super) fn deserialize_flexible_f64<'de, D>(d: D) -> std::result::Result<Option<f64>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -120,6 +120,7 @@ pub(super) fn fetch_fund_detail(
         RetryConfig::production(),
         pacer,
         &format!("fetch_fund_detail:{code}"),
+        None,
     )?;
     pick_fund_detail(&resp, code)
         .ok_or_else(|| AppError::Invalid(format!("查无基金代码 {code}，请核对后重试")))

@@ -53,6 +53,7 @@ export function makeHolding(partial: Partial<Holding> & { id: string; instrument
     cost_currency_code: 'CNY',
     latest_price_cents: null,
     latest_price_currency_code: null,
+    latest_nav_date: null,
     market_value_cents: null,
     unrealized_pnl_cents: null,
     updated_at: '2026-01-01T00:00:00Z',

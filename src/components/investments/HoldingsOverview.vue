@@ -55,12 +55,26 @@ const overviewColumns: DataTableColumn<PortfolioRow>[] = [
   {
     title: '现价',
     key: 'latest_price',
-    width: 110,
-    // 现价为价格列（万分之一元刻度，ADR-0038），用 formatPrice 展示
-    render: (r) =>
-      r.latestPriceCents === null
-        ? '-'
-        : formatPrice(r.latestPriceCents, reference.currencyMap.get(r.latestPriceCurrencyCode ?? '')),
+    width: 130,
+    // 现价为价格列（万分之一元刻度，ADR-0038），用 formatPrice 展示；
+    // 基金现价 = 最新公布单位净值，下方小字展示净值日期——现价对应哪天的
+    // 净值一眼可辨（#303），股票无净值日期不渲染该行。
+    render: (r) => {
+      if (r.latestPriceCents === null) return '-'
+      const price = formatPrice(
+        r.latestPriceCents,
+        reference.currencyMap.get(r.latestPriceCurrencyCode ?? ''),
+      )
+      if (r.latestNavDate === null) return price
+      return h('div', [
+        price,
+        h(
+          'div',
+          { style: 'font-size:12px;opacity:.65;line-height:1.4' },
+          `净值 ${r.latestNavDate}`,
+        ),
+      ])
+    },
   },
   {
     title: '市值',

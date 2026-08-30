@@ -247,9 +247,11 @@ fn request_json(
         RetryConfig::production(),
         pacer,
         ctx,
+        None,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn request_json_from_hosts<T>(
     client: &reqwest::blocking::Client,
     params: &[(&str, &str)],
@@ -258,6 +260,7 @@ pub(super) fn request_json_from_hosts<T>(
     cfg: RetryConfig,
     pacer: &mut Pacer,
     ctx: &str,
+    referer: Option<&str>,
 ) -> Result<T>
 where
     T: serde::de::DeserializeOwned,
@@ -265,7 +268,7 @@ where
     let mut failures: Vec<String> = Vec::new();
     for host in hosts {
         let url = format!("{host}{path}");
-        match request_json_with_retry(client, &url, params, pacer, ctx, cfg) {
+        match request_json_with_retry(client, &url, params, pacer, ctx, cfg, referer) {
             Ok(resp) => return Ok(resp),
             Err(e) => failures.push(format!("{host}: {e}")),
         }
@@ -283,6 +286,7 @@ pub(super) fn request_json_with_retry<T>(
     pacer: &mut Pacer,
     ctx: &str,
     cfg: RetryConfig,
+    referer: Option<&str>,
 ) -> Result<T>
 where
     T: serde::de::DeserializeOwned,
@@ -291,12 +295,12 @@ where
     let mut throttle_attempts = 0u32;
     loop {
         pacer.wait();
-        let resp = match client
-            .get(url)
-            .query(params)
-            .timeout(REQUEST_TIMEOUT)
-            .send()
-        {
+        // 部分东财接口（如历史净值 lsjz）要求带 Referer 头，缺省被拦截（issue #303）。
+        let mut req = client.get(url).query(params).timeout(REQUEST_TIMEOUT);
+        if let Some(referer) = referer {
+            req = req.header(reqwest::header::REFERER, referer);
+        }
+        let resp = match req.send() {
             Ok(r) => r,
             Err(e) => {
                 transport_attempts += 1;
@@ -435,6 +439,7 @@ pub(super) fn fetch_ulist(
         RetryConfig::production(),
         pacer,
         "fetch_ulist",
+        None,
     )?;
     Ok(resp
         .data
@@ -507,6 +512,7 @@ pub(super) fn fetch_kline(
         RetryConfig::production(),
         pacer,
         &format!("fetch_kline:{secid}"),
+        None,
     )?;
     let raw = resp.data.and_then(|d| d.klines).unwrap_or_default();
     Ok(parse_klines(&raw))

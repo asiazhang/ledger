@@ -112,6 +112,13 @@ describe('usePortfolioOverview 盈亏页持仓概览数据层（issue #110）', 
     expect(call![1]).toMatchObject({ filter: { only_invested: true } })
   })
 
+  it('净值日期透传到行（基金现价对应哪天的净值，#303）', async () => {
+    const { rows, refresh } = usePortfolioOverview()
+    await refresh()
+    // 默认夹具为股票行：latest_nav_date 为 null
+    expect(rows.value[0]!.latestNavDate).toBeNull()
+  })
+
   it('总市值与未实现盈亏合计：排除无行情行，按账户币种汇总', async () => {
     const { totalMarketValueGroups, totalUnrealizedPnlGroups, refresh } =
       usePortfolioOverview()

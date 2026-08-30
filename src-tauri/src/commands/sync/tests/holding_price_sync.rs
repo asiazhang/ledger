@@ -6,12 +6,13 @@ use std::cell::RefCell;
 
 use rusqlite::{Connection, params};
 
+use crate::commands::sync::fund_nav::{LsjzPage, NavPoint, NavQuery};
 use crate::commands::sync::http::{
     KlineBar, KlineResponse, StockItem, ULIST_BATCH_SIZE, UlistResponse, f2_to_price,
     fx_secid_candidates, parse_klines, secid_prefix,
 };
-use crate::commands::sync::incremental::do_incremental_sync_with;
-use crate::commands::sync::persist::upsert_market_price;
+use crate::commands::sync::incremental::{beijing_today, do_incremental_sync_with};
+use crate::commands::sync::persist::{upsert_market_price, upsert_price_history};
 use crate::error::{AppError, Result};
 
 use super::common::setup_db;
@@ -160,7 +161,9 @@ fn incremental_sync_normalizes_symbol_suffix() {
     // mock 按响应侧裸代码（f12）返回：归一化后应能匹配并写入价格。
     let prices = [("600519", Some(130280.0)), ("00700", Some(445400.0))];
     let mut fetch = mock_fetch(&prices);
-    let result = do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx).unwrap();
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
+            .unwrap();
 
     assert_eq!(result.synced, 2);
     assert_eq!(result.skipped, 0);
@@ -185,7 +188,9 @@ fn incremental_sync_all_missing_response_counts_all_skipped() {
     // 查询全部无果（如整批代码无效、响应 data:null）：不报错、全部计入跳过。
     let prices: [(&str, Option<f64>); 0] = [];
     let mut fetch = mock_fetch(&prices);
-    let result = do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx).unwrap();
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
+            .unwrap();
 
     assert_eq!(result.synced, 0);
     assert_eq!(result.skipped, 2);
@@ -197,7 +202,9 @@ fn incremental_sync_all_missing_response_counts_all_skipped() {
 fn incremental_sync_no_holdings_returns_message() {
     let conn = setup_db();
     let mut fetch = mock_fetch(&[]);
-    let result = do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx).unwrap();
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
+            .unwrap();
     assert_eq!(result.synced, 0);
     assert_eq!(result.skipped, 0);
     assert_eq!(result.message, "无持仓标的可同步");
@@ -218,7 +225,9 @@ fn incremental_sync_updates_holding_prices_only() {
         ("00700", Some(445400.0)),
     ];
     let mut fetch = mock_fetch(&prices);
-    let result = do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx).unwrap();
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
+            .unwrap();
 
     assert_eq!(result.synced, 3);
     assert_eq!(result.skipped, 0);
@@ -252,26 +261,47 @@ fn incremental_sync_updates_holding_prices_only() {
 }
 
 #[test]
-fn incremental_sync_skips_non_stock_holdings() {
+fn incremental_sync_skips_holdings_without_quote_source() {
     let conn = setup_db();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
-    insert_holding(&conn, "acc-2", "inst-fund", "110011", "fund", "CNY", "sh");
-    insert_holding(&conn, "acc-3", "inst-bond", "019547", "bond", "CNY", "sh");
+    insert_holding(
+        &conn,
+        "acc-2",
+        "inst-bond",
+        "019547",
+        "bond",
+        "CNY",
+        "unknown",
+    );
+    insert_holding(
+        &conn,
+        "acc-3",
+        "inst-other",
+        "稳稳地幸福",
+        "other",
+        "CNY",
+        "unknown",
+    );
 
     let prices = [("600519", Some(130280.0))];
     let mut fetch = mock_fetch(&prices);
-    let result = do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx).unwrap();
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
+            .unwrap();
 
     assert_eq!(result.synced, 1);
-    assert_eq!(result.skipped, 2, "基金/债券持仓应计入跳过统计");
+    assert_eq!(
+        result.skipped, 2,
+        "无行情来源类型（债券/其他）计入跳过统计（基金走净值通道另测）"
+    );
     assert_eq!(result.message, "已同步 1 只，跳过 2 只");
     assert_eq!(market_price_of(&conn, "inst-sh"), Some(13028000));
     assert_eq!(
-        market_price_of(&conn, "inst-fund"),
+        market_price_of(&conn, "inst-bond"),
         None,
-        "非股票持仓不写价格"
+        "无行情来源持仓不写价格"
     );
-    assert_eq!(market_price_of(&conn, "inst-bond"), None);
+    assert_eq!(market_price_of(&conn, "inst-other"), None);
 }
 
 #[test]
@@ -285,7 +315,9 @@ fn incremental_sync_keeps_old_price_when_suspended() {
     // 600519 正常价；000001 停牌（f2 无效 → None）
     let prices = [("600519", Some(130280.0)), ("000001", None)];
     let mut fetch = mock_fetch(&prices);
-    let result = do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx).unwrap();
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
+            .unwrap();
 
     assert_eq!(result.synced, 1);
     assert_eq!(result.skipped, 1, "停牌/无效价应计入跳过且不中断同步");
@@ -306,7 +338,9 @@ fn incremental_sync_counts_missing_response_as_skipped() {
     // mock 只返回 600001：600002 查询无果（响应缺失）→ 计入跳过
     let prices = [("600001", Some(1000.0))];
     let mut fetch = mock_fetch(&prices);
-    let result = do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx).unwrap();
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
+            .unwrap();
 
     assert_eq!(result.synced, 1);
     assert_eq!(result.skipped, 1);
@@ -325,7 +359,9 @@ fn incremental_sync_skips_unknown_market() {
 
     let prices = [("600519", Some(130280.0))];
     let mut fetch = mock_fetch(&prices);
-    let result = do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx).unwrap();
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
+            .unwrap();
 
     assert_eq!(result.synced, 1);
     assert_eq!(result.skipped, 1, "市场未知应计入跳过");
@@ -339,11 +375,14 @@ fn incremental_sync_is_idempotent() {
 
     let prices = [("600519", Some(130280.0))];
     let mut fetch = mock_fetch(&prices);
-    let first = do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx).unwrap();
+    let first = do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
+        .unwrap();
     assert_eq!(first.synced, 1);
 
     let mut fetch = mock_fetch(&prices);
-    let second = do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx).unwrap();
+    let second =
+        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
+            .unwrap();
     assert_eq!(second.synced, 1);
 
     // 重复调用不产生重复价格行（每标的一条，覆盖更新）
@@ -364,7 +403,9 @@ fn incremental_sync_dedupes_same_instrument_across_accounts() {
 
     let prices = [("600519", Some(1000.0))];
     let mut fetch = mock_fetch(&prices);
-    let result = do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx).unwrap();
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
+            .unwrap();
 
     assert_eq!(result.synced, 1);
     assert_eq!(result.skipped, 0);
@@ -409,7 +450,9 @@ fn incremental_sync_batches_by_fifty() {
             })
             .collect())
     };
-    let result = do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx).unwrap();
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
+            .unwrap();
 
     assert_eq!(result.synced, 55);
     assert_eq!(batch_sizes, vec![50, 5]);
@@ -421,7 +464,8 @@ fn incremental_sync_propagates_fetch_error() {
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
 
     let mut fetch = |_: &str| Err(AppError::Io("模拟网络失败".into()));
-    let err = do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx).unwrap_err();
+    let err = do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
+        .unwrap_err();
     assert!(err.to_string().contains("模拟网络失败"));
 }
 
@@ -461,6 +505,15 @@ fn no_kline(_: &str) -> Result<Vec<KlineBar>> {
 /// 空实现：同 [`no_kline`]，用于汇率回填。
 fn no_fx(_: &str) -> Result<Vec<KlineBar>> {
     Ok(vec![])
+}
+
+/// 空实现：既有用例只关心股票/汇率行为时注入（净值通道最小桩，首刷查无净值
+/// 形态——基金计入跳过）。
+fn no_nav(_: &NavQuery) -> Result<LsjzPage> {
+    Ok(LsjzPage {
+        points: vec![],
+        total: 0,
+    })
 }
 
 /// 模拟汇率 K 线抓取：按 base+quote 直连串（如 "HKDCNY"）返回汇率日线样本，
@@ -536,7 +589,8 @@ fn kline_backfill_downsamples_daily_to_weekly() {
     let mut fetch = mock_fetch(&prices);
     let mut kline = mock_kline(&klines);
     let mut fx = mock_fx(&[], &fx_log);
-    let result = do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx).unwrap();
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap();
 
     assert_eq!(result.synced, 1);
     assert_eq!(
@@ -571,12 +625,12 @@ fn kline_backfill_full_week_overwrite_is_idempotent() {
     let mut fetch = mock_fetch(&prices);
     let mut kline = mock_kline(&first);
     let mut fx = mock_fx(&[], &fx_log);
-    do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx).unwrap();
+    do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap();
 
     let mut fetch = mock_fetch(&prices);
     let mut kline = mock_kline(&second);
     let mut fx = mock_fx(&[], &fx_log);
-    do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx).unwrap();
+    do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap();
 
     assert_eq!(
         price_history_rows(&conn, "inst-sh"),
@@ -611,7 +665,7 @@ fn kline_backfill_keeps_history_after_position_cleared() {
     let mut fetch = mock_fetch(&prices);
     let mut kline = mock_kline(&bars);
     let mut fx = mock_fx(&[], &fx_log);
-    do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx).unwrap();
+    do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap();
     assert_eq!(price_history_rows(&conn, "inst-sh").len(), 1);
     assert_eq!(price_history_rows(&conn, "inst-sz").len(), 1);
 
@@ -625,7 +679,7 @@ fn kline_backfill_keeps_history_after_position_cleared() {
     let mut fetch = mock_fetch(&prices);
     let mut kline = mock_kline(&bars);
     let mut fx = mock_fx(&[], &fx_log);
-    do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx).unwrap();
+    do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap();
 
     assert_eq!(
         price_history_rows(&conn, "inst-sh").len(),
@@ -664,7 +718,7 @@ fn kline_backfill_writes_fx_rate_history_alongside() {
     let mut fetch = mock_fetch(&prices);
     let mut kline = mock_kline(&klines);
     let mut fx = mock_fx(&fx_bars, &fx_log);
-    do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx).unwrap();
+    do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap();
 
     // 汇率与价格同期段（同周规则）落 FxRateHistory：base=HKD、quote=本位币 CNY。
     assert_eq!(
@@ -697,7 +751,8 @@ fn kline_backfill_empty_history_keeps_quote_only() {
     // 无任何日线（全段停牌 / 新上市不足一周）：历史缺 gracefully，现价照常更新。
     let mut kline = mock_kline(&[]);
     let mut fx = mock_fx(&[], &fx_log);
-    let result = do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx).unwrap();
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap();
 
     assert_eq!(result.synced, 1, "无历史不中断同步");
     assert_eq!(market_price_of(&conn, "inst-sh"), Some(100000));
@@ -716,7 +771,8 @@ fn kline_backfill_fetch_error_propagates() {
     let mut fetch = mock_fetch(&prices);
     let mut kline = |_: &str| Err(AppError::Io("模拟日 K 请求失败".into()));
     let mut fx = mock_fx(&[], &fx_log);
-    let err = do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx).unwrap_err();
+    let err =
+        do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap_err();
     assert!(err.to_string().contains("模拟日 K 请求失败"));
 }
 
@@ -792,4 +848,364 @@ fn week_key_matches_sqlite_week_start_column() {
         assert_eq!(rust_key, sql_key, "{iso} 的周键两侧不一致");
         d += chrono::Duration::days(1);
     }
+}
+
+// ---------------------------------------------------------------------------
+// 基金分区：历史净值按水位增量回填（issue #303 / ADR-0038 决策 6）。编排经
+// 注入 mock 页抓取闭包驱动，不依赖真实网络；水位语义（首刷近两年 / 增量从
+// 水位次日起）与跨页降采样、同周整周覆盖在此端到端钉住。
+// ---------------------------------------------------------------------------
+
+/// 构造一页净值结果：total 为窗口内总条数（分页定界），points 为 (日期, 单位净值)。
+fn nav_page(total: u64, points: &[(&str, f64)]) -> LsjzPage {
+    LsjzPage {
+        total,
+        points: points
+            .iter()
+            .map(|(d, n)| NavPoint {
+                date: d.to_string(),
+                nav: *n,
+            })
+            .collect(),
+    }
+}
+
+/// 模拟历史净值页抓取：按代码返回页序列（下标 = 页码 − 1，越界页返回空），
+/// 并记录全部查询（断言水位窗口、翻页与「非可拉取行零请求」）。
+fn mock_nav<'a>(
+    pages_by_code: &'a [(&'a str, Vec<LsjzPage>)],
+    requested: &'a RefCell<Vec<NavQuery>>,
+) -> impl FnMut(&NavQuery) -> Result<LsjzPage> + 'a {
+    move |query: &NavQuery| {
+        requested.borrow_mut().push(query.clone());
+        Ok(pages_by_code
+            .iter()
+            .find(|(c, _)| *c == query.code)
+            .and_then(|(_, pages)| pages.get((query.page - 1) as usize))
+            .cloned()
+            .unwrap_or(LsjzPage {
+                points: vec![],
+                total: 0,
+            }))
+    }
+}
+
+/// 近两年首刷窗口起点（与 kline_beg / nav_window 同式，测试侧独立重算）。
+fn expected_first_sync_start() -> String {
+    beijing_today()
+        .checked_sub_months(chrono::Months::new(24))
+        .unwrap()
+        .format("%Y-%m-%d")
+        .to_string()
+}
+
+/// 基金现价缓存的 (price_cents, nav_date)（无行返回 None）。
+fn fund_price_of(conn: &Connection, instrument_id: &str) -> Option<(i64, Option<String>)> {
+    conn.query_row(
+        "SELECT price_cents, nav_date FROM market_prices WHERE instrument_id=?1",
+        params![instrument_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .ok()
+}
+
+#[test]
+fn fund_first_sync_backfills_two_years_with_cross_page_weekly() {
+    let conn = setup_db();
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+
+    // 首刷（无水位）：窗口 = 近两年。total=45 → 3 页；净值页按日期降序返回，
+    // 第 1/2 页跨页同属 ISO 周（2026-01-26 起）——攒齐后一次降采样必须取该周
+    // 最后一个净值日（01-30 周五），逐页落库会被后页的更早日期覆盖。
+    let pages = [(
+        "110022",
+        vec![
+            nav_page(45, &[("2026-01-30", 3.348), ("2026-01-28", 3.293)]),
+            nav_page(45, &[("2026-01-26", 3.25), ("2025-12-31", 3.1)]),
+            nav_page(45, &[]),
+        ],
+    )];
+    let requested = RefCell::new(Vec::new());
+    let mut fetch = mock_fetch(&[]);
+    let mut nav = mock_nav(&pages, &requested);
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut nav).unwrap();
+
+    assert_eq!(result.synced, 1);
+    assert_eq!(result.skipped, 0);
+    assert_eq!(result.written, 1);
+
+    // 翻页：首页起点 = 近两年窗口起点，共 3 页、全部同窗口。
+    let requested = requested.borrow();
+    assert_eq!(requested.len(), 3);
+    for q in requested.iter() {
+        assert_eq!(q.code, "110022");
+        assert_eq!(q.start_date, expected_first_sync_start());
+    }
+    assert_eq!(requested[0].page, 1);
+    assert_eq!(requested[1].page, 2);
+    assert_eq!(requested[2].page, 3);
+
+    // 周采样：跨页同周取最后净值日；单位净值 ×10000 得万分之一元（ADR-0038）。
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund"),
+        vec![
+            ("2025-12-31".into(), 31000, "CNY".into()),
+            ("2026-01-30".into(), 33480, "CNY".into()),
+        ],
+    );
+
+    // 现价 = 窗口内最新公布单位净值，priced_at = nav_date = 净值日期（下次水位）。
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((33480, Some("2026-01-30".into()))),
+    );
+}
+
+#[test]
+fn fund_incremental_fetches_from_watermark_and_overwrites_same_week() {
+    let conn = setup_db();
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+    // 水位 = 现价缓存的净值日期 01-28（周三），上一轮已把该周采样写到周三。
+    upsert_market_price(
+        &conn,
+        "inst-fund",
+        30000,
+        "CNY",
+        "2026-01-28",
+        Some("2026-01-28"),
+    )
+    .unwrap();
+    upsert_price_history(&conn, "inst-fund", "2026-01-28", 30000, "CNY").unwrap();
+    // 更早一周的历史点应原样保留（增量不回看）。
+    upsert_price_history(&conn, "inst-fund", "2026-01-23", 31000, "CNY").unwrap();
+
+    // 窗口 = 水位次日起，单页两行（total=2 → 1 页）：周四、周五新净值；
+    // 周五与水位同周——该周采样整周覆盖为周五。
+    let pages = [(
+        "110022",
+        vec![nav_page(2, &[("2026-01-30", 3.348), ("2026-01-29", 3.42)])],
+    )];
+    let requested = RefCell::new(Vec::new());
+    let mut fetch = mock_fetch(&[]);
+    let mut nav = mock_nav(&pages, &requested);
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut nav).unwrap();
+
+    assert_eq!(result.synced, 1);
+    assert_eq!(result.skipped, 0);
+    assert_eq!(result.written, 1);
+
+    let requested = requested.borrow();
+    assert_eq!(requested.len(), 1, "常态增量每只一页");
+    assert_eq!(requested[0].start_date, "2026-01-29", "从水位次日起");
+
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund"),
+        vec![
+            ("2026-01-23".into(), 31000, "CNY".into()),
+            ("2026-01-30".into(), 33480, "CNY".into()),
+        ],
+        "水位当日不重拉；同周新净值整周覆盖采样日"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((33480, Some("2026-01-30".into()))),
+    );
+}
+
+#[test]
+fn fund_incremental_up_to_date_counts_synced_without_write() {
+    let conn = setup_db();
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+    // 水位较新（一周内），窗口内无新净值（mock 返回空页）。
+    let watermark = beijing_today()
+        .checked_sub_days(chrono::Days::new(7))
+        .unwrap()
+        .format("%Y-%m-%d")
+        .to_string();
+    upsert_market_price(
+        &conn,
+        "inst-fund",
+        30000,
+        "CNY",
+        &watermark,
+        Some(&watermark),
+    )
+    .unwrap();
+
+    let requested = RefCell::new(Vec::new());
+    let mut fetch = mock_fetch(&[]);
+    let mut nav = mock_nav(&[], &requested);
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut nav).unwrap();
+
+    // 「已是最新」= 处理成功但不落库：synced 计入、written 为 0（零变化不广播）。
+    assert_eq!(result.synced, 1);
+    assert_eq!(result.skipped, 0);
+    assert_eq!(result.written, 0);
+    assert_eq!(result.message, "已同步 1 只，跳过 0 只");
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((30000, Some(watermark))),
+        "无新净值不动现价"
+    );
+    assert_eq!(price_history_rows(&conn, "inst-fund"), vec![]);
+}
+
+#[test]
+fn fund_first_sync_without_nav_counts_skipped() {
+    let conn = setup_db();
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+
+    let mut fetch = mock_fetch(&[]);
+    let mut nav = no_nav;
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut nav).unwrap();
+
+    // 首刷查无净值（查无此码 / 新基金未公布首期）：计入跳过，不报错不落价。
+    assert_eq!(result.synced, 0);
+    assert_eq!(result.skipped, 1);
+    assert_eq!(result.written, 0);
+    assert_eq!(fund_price_of(&conn, "inst-fund"), None);
+    assert_eq!(result.message, "已同步 0 只，跳过 1 只");
+}
+
+#[test]
+fn fund_rows_without_real_code_skip_without_fetch() {
+    let conn = setup_db();
+    // 名称充代码的基金行（无真实代码，查不到净值）与债券：计入跳过、零请求。
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-namefund",
+        "华夏成长混合",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+    insert_holding(
+        &conn,
+        "acc-2",
+        "inst-bond",
+        "019547",
+        "bond",
+        "CNY",
+        "unknown",
+    );
+
+    let requested = RefCell::new(Vec::new());
+    let mut fetch = mock_fetch(&[]);
+    let mut nav = mock_nav(&[], &requested);
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut nav).unwrap();
+
+    assert_eq!(result.synced, 0);
+    assert_eq!(result.skipped, 2);
+    assert_eq!(result.written, 0);
+    assert!(requested.borrow().is_empty(), "不可拉取行不得发起净值请求");
+}
+
+#[test]
+fn fund_nav_fetch_error_propagates() {
+    let conn = setup_db();
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+
+    let mut fetch = mock_fetch(&[]);
+    let mut nav = |_: &NavQuery| Err(AppError::Io("模拟净值请求失败".into()));
+    let err = do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut nav)
+        .unwrap_err();
+    assert!(err.to_string().contains("模拟净值请求失败"));
+}
+
+#[test]
+fn fund_and_stock_partitions_roll_up_into_one_result() {
+    let conn = setup_db();
+    insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
+    insert_holding(
+        &conn,
+        "acc-2",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+    insert_holding(
+        &conn,
+        "acc-3",
+        "inst-namefund",
+        "华夏成长混合",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+    insert_holding(
+        &conn,
+        "acc-4",
+        "inst-bond",
+        "019547",
+        "bond",
+        "CNY",
+        "unknown",
+    );
+
+    let pages = [("110022", vec![nav_page(1, &[("2026-01-30", 3.348)])])];
+    let requested = RefCell::new(Vec::new());
+    let prices = [("600519", Some(130280.0))];
+    let mut fetch = mock_fetch(&prices);
+    let mut nav = mock_nav(&pages, &requested);
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut nav).unwrap();
+
+    // synced = 股票 1 + 基金 1；skipped = 名称充代码基金 + 债券；written = 2。
+    assert_eq!(result.synced, 2);
+    assert_eq!(result.skipped, 2);
+    assert_eq!(result.written, 2);
+    assert_eq!(result.message, "已同步 2 只，跳过 2 只");
+    assert_eq!(market_price_of(&conn, "inst-sh"), Some(13028000));
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((33480, Some("2026-01-30".into())))
+    );
 }

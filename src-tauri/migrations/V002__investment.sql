@@ -7,10 +7,11 @@
 -- / market_prices.price_cents）刻度由「分」重定义为万分之一元（0.0001 元，
 -- 基金净值 4 位小数保真，ADR-0038），v_holdings 视图表达式同步换算
 -- （金额分 = 数量 × 单价 ÷ 100）。另 market_prices 增 nav_date 列（净值日期，
--- 场外基金现价 = 最新公布单位净值时携带，兼任净值同步水位，issue #301）。
--- 刻度重定义列名保留、无 DDL 结构变化；nav_date 为结构增列，就地修改只影响
--- 全新安装；存量库不在兼容范围（裁定见 CHANGELOG BREAKING 条目与 ADR-0038
--- 决策 5），不提供一次性处置工具。
+-- 场外基金现价 = 最新公布单位净值时携带，兼任净值同步水位，issue #301），
+-- v_holdings 增 latest_nav_date 列透传（持仓可见现价对应哪天的净值，issue #303）。
+-- 刻度重定义列名保留、无 DDL 结构变化；nav_date / latest_nav_date 为结构增列，
+-- 就地修改只影响全新安装；存量库不在兼容范围（裁定见 CHANGELOG BREAKING 条目
+-- 与 ADR-0038 决策 5），不提供一次性处置工具。
 
 -- 1. instruments（金融工具字典表）
 --    - 统一维护股票、基金、债券、ETF 等金融工具的基础信息。
@@ -117,6 +118,7 @@ SELECT
     h.currency_code AS cost_currency_code,
     p.price_cents AS latest_price_cents,
     p.currency_code AS latest_price_currency_code,
+    p.nav_date AS latest_nav_date,  -- 净值日期：基金现价（= 最新公布单位净值）携带，持仓可见现价对应哪天的净值（#303）；股票恒 NULL
     -- 有效汇率：优先正向 (价格币→账户币)，缺失时用反向 (账户币→价格币) 取倒数。
     -- 同币种时汇率视为 1（无需查表）。
     CASE

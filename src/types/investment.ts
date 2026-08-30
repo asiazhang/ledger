@@ -101,6 +101,8 @@ export interface Holding {
   cost_currency_code: string
   latest_price_cents: number | null
   latest_price_currency_code: string | null
+  /** 净值日期：基金现价（= 最新公布单位净值）携带，现价对应哪天的净值；股票恒 null */
+  latest_nav_date: string | null
   market_value_cents: number | null
   unrealized_pnl_cents: number | null
   updated_at: string
