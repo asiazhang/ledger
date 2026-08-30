@@ -157,6 +157,29 @@ describe('SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
     expect(wrapper.text()).toContain('商户B')
   })
 
+  it('原商户软删且不在字典：下拉兜底选项承载原 id，未改动提交仍携带原 id（接缝软删兜底分支接线）', async () => {
+    const plan = makePlan({ id: 'a1', note: '视频会员' }, 'mer-gone')
+    setMockPlans([plan])
+    mockDetails.set('a1', makeDetail(plan, []))
+    // 商户字典为空：原商户已软删且超出会话缓存
+    setMockMerchants([])
+    await useReferenceStore().refresh()
+    const wrapper = await mountView()
+    await openEditModal(wrapper)
+    const merchantSelect = wrapper
+      .findComponent('[data-testid="sub-edit-merchant"]')
+      .findComponent(NSelect)
+    expect(merchantSelect.props('value')).toBe('mer-gone')
+    // 兜底选项承载原 id（裸 uuid 不可读，以可读标签显示）
+    const options = merchantSelect.props('options') as { value: string }[]
+    expect(options.some((o) => o.value === 'mer-gone')).toBe(true)
+    await wrapper.findComponent('[data-testid="sub-edit-save"]').trigger('click')
+    await flushPromises()
+    const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'update_scheduled_subscription')
+    expect(call).toBeDefined()
+    expect(call![1]).toMatchObject({ input: { merchant_id: 'mer-gone' } })
+  })
+
   it('提交失败时弹窗保持打开', async () => {
     const plan = makePlan({ id: 'a1' })
     setMockPlans([plan])

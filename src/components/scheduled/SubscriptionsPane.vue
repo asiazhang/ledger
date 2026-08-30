@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
-import { computed, h, onMounted, ref, type Ref, type VNode } from 'vue'
+import { computed, h, onMounted, ref, type VNode } from 'vue'
 import {
   NCard,
   NButton,
@@ -13,7 +13,6 @@ import {
   NSpace,
   useMessage,
   type DataTableColumns,
-  type TreeSelectOption,
 } from 'naive-ui'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
@@ -21,7 +20,6 @@ import AppSelect from '@/components/AppSelect.vue'
 import AppTreeSelect from '@/components/AppTreeSelect.vue'
 import { formatAmount } from '@/types'
 import { yuanToCents } from '@/utils/money'
-import { todayStr } from '@/utils/date'
 import type {
   RecurrenceType,
   ScheduledTransactionOccurrence,
@@ -30,8 +28,7 @@ import type {
 } from '@/types'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
-import { useAppStore } from '@/stores/app'
-import { useFormShared } from '@/composables/useFormShared'
+import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
 import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import SubscriptionSpendPanel from '@/components/scheduled/SubscriptionSpendPanel.vue'
@@ -39,9 +36,35 @@ import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 
 const reference = useReferenceStore()
-const appStore = useAppStore()
-const { accountOptions, currencyOptions } = useFormShared()
 const message = useMessage()
+
+// ---------------------------------------------------------------------------
+// 表单接缝（ADR-0041）：新建与编辑弹窗各持一份草稿实例——公共草稿字段、商户
+// 解析（含重名兜底竞态）与公共 payload 组装全仓单点；金额、校验与提交编排留本页签。
+// ---------------------------------------------------------------------------
+
+const createForm = useScheduledPlanForm()
+const {
+  note,
+  accountId,
+  categoryId,
+  merchantRef,
+  currencyCode,
+  recurrenceType,
+  recurrenceInterval,
+  startDate,
+  accountOptions,
+  currencyOptions,
+  categoryTreeOptions,
+  merchantOptions,
+} = createForm
+const editForm = useScheduledPlanForm()
+const {
+  note: editNote,
+  accountId: editAccountId,
+  categoryId: editCategoryId,
+  merchantRef: editMerchantRef,
+} = editForm
 
 // 实际花费分析区（issue #160）：创建/暂停/取消后同步刷新
 const spendPanelRef = ref<InstanceType<typeof SubscriptionSpendPanel> | null>(null)
@@ -56,15 +79,7 @@ function refreshSpend() {
 
 const showCreateModal = ref(false)
 
-const note = ref('')
-const accountId = ref<string | null>(null)
-const categoryId = ref<string | null>(null)
-const merchantRef = ref<string | null>(null)
 const amountYuan = ref('')
-const currencyCode = ref(appStore.defaultCurrency)
-const recurrenceType = ref<RecurrenceType>('monthly')
-const recurrenceInterval = ref(1)
-const startDate = ref(todayStr())
 
 const recurrenceOptions = [
   { label: '每天', value: 'daily' },
@@ -73,64 +88,10 @@ const recurrenceOptions = [
   { label: '每年', value: 'yearly' },
 ]
 
-/** 订阅扣款为支出，分类候选仅支出类（树形）。 */
-const categoryTreeOptions = computed(
-  () => reference.treeCategoryOptions('expense') as unknown as TreeSelectOption[],
-)
-
-// 商户下拉选项（issue #190 / ADR-0028）：在用商户（与交易表单同款补全，未命中即建）。
-const merchantOptions = computed<{ label: string; value: string }[]>(() =>
-  reference.merchants.map((m) => ({ label: m.name, value: m.id })),
-)
-
-/**
- * 商户解析（保存时单点收口，issue #190）：「输入即建」交互——
- * 1. 空 → null（无商户）；
- * 2. 选中已有商户（value 为 id）→ 原样携带；
- * 3. 编辑未改动原商户（软删且超出会话缓存）→ 原样携带（后端保持历史引用语义）；
- * 4. 输入文本精确命中在用商户名 → 按名复用；
- * 5. 未命中 → `create_merchant` 即建；重名错误（store 陈旧竞态）先强制重拉
- *    按名复用，仍失败才向上抛。
- * `source` 为表单的商户 ref（新建/编辑弹窗各持一份）。
- */
-async function resolveMerchantId(
-  source: Ref<string | null>,
-  editingMerchantId: string | null = null,
-): Promise<string | null> {
-  const ref = source.value
-  if (!ref) return null
-  if (reference.merchantMap.has(ref)) return ref
-  if (editingMerchantId && ref === editingMerchantId) return ref
-  const name = ref.trim()
-  if (!name) return null
-  const existing = reference.merchantByName.get(name)
-  if (existing) return existing.id
-  try {
-    return await api.createMerchant({ name })
-  } catch (e) {
-    // 重名兜底（store 陈旧竞态）：强制重拉后按名复用；重拉失败不影响原错误上抛
-    try {
-      await reference.refresh()
-    } catch {
-      /* 保留原 create 错误 */
-    }
-    const retry = reference.merchantByName.get(name)
-    if (retry) return retry.id
-    throw e
-  }
-}
-
-/** 重置新建表单到初始态：模态语义下每次打开应是全新表单。 */
+/** 重置新建表单到初始态：公共字段走接缝 reset，金额留本页签。 */
 function resetCreateForm() {
-  note.value = ''
-  accountId.value = null
-  categoryId.value = null
-  merchantRef.value = null
+  createForm.reset()
   amountYuan.value = ''
-  currencyCode.value = appStore.defaultCurrency
-  recurrenceType.value = 'monthly'
-  recurrenceInterval.value = 1
-  startDate.value = todayStr()
 }
 
 async function create() {
@@ -144,19 +105,10 @@ async function create() {
     return
   }
   try {
-    await api.createScheduledTransaction({
-      kind: 'subscription',
-      account_id: accountId.value,
-      category_id: categoryId.value,
-      merchant_id: await resolveMerchantId(merchantRef),
-      amount_cents: amountCents,
-      currency_code: currencyCode.value,
-      recurrence_type: recurrenceType.value,
-      recurrence_interval: recurrenceInterval.value,
-      recurrence_day: null,
-      start_date: startDate.value,
-      note: note.value.trim() || null,
-    })
+    const merchantId = await createForm.resolveMerchant()
+    await api.createScheduledTransaction(
+      createForm.buildCreateInput({ kind: 'subscription', amountCents, merchantId }),
+    )
     message.success('已创建订阅')
     showCreateModal.value = false
     resetCreateForm()
@@ -171,15 +123,12 @@ async function create() {
 // 编辑订阅（issue #162，ADR-0023 决策三）：仅非金额字段（备注/账户/分类），
 // 弹窗无金额输入；提交走订阅编辑命令，携带金额字段会被后端显式拒绝。
 // 编辑不改已生成的期次与交易（期次执行时从计划读取这些字段），只影响未来。
+// 草稿字段（备注/账户/分类/商户）复用表单接缝的第二实例，打开即回填。
 // ---------------------------------------------------------------------------
 
 const showEditModal = ref(false)
 const editingId = ref<string | null>(null)
-const editNote = ref('')
-const editAccountId = ref<string | null>(null)
-const editCategoryId = ref<string | null>(null)
-const editMerchantRef = ref<string | null>(null)
-/** 被编辑计划的当前商户 id（供 resolveMerchantId 保持历史引用判定）。 */
+/** 被编辑计划的当前商户 id（供表单接缝 resolveMerchant 的软删兜底分支判定）。 */
 const editCurrentMerchantId = ref<string | null>(null)
 
 // 编辑商户下拉（issue #190）：在用商户 + 原商户软删且超出会话缓存时追加兜底选项
@@ -214,7 +163,7 @@ async function saveEdit() {
       id: editingId.value,
       account_id: editAccountId.value,
       category_id: editCategoryId.value,
-      merchant_id: await resolveMerchantId(editMerchantRef, editCurrentMerchantId.value),
+      merchant_id: await editForm.resolveMerchant(editCurrentMerchantId.value),
       note: editNote.value.trim() || null,
     })
     message.success('已保存')
