@@ -1,8 +1,9 @@
 //! 迁移、种子与 schema 约束测试：迁移集合自校验、`init_db` 幂等与默认种子、
-//! 表级唯一约束（exchange_rates 货币对唯一、V010 price/fx history 周采样唯一）
-//! 与旧版本备份升级路径。
+//! 表级唯一约束（exchange_rates 货币对唯一、V010 price/fx history 周采样唯一）、
+//! 旧版本备份升级路径、全库外键显式 ON DELETE 审计与定时交易系删除行为抽查
+//! （issue #273 / spec #271）。
 
-use rusqlite::params;
+use rusqlite::{Connection, params};
 
 use crate::db::{init_db, migrations, open_in_memory};
 
@@ -171,12 +172,7 @@ fn migration_upgrades_v030_backup_with_new_tables() {
     assert_eq!(before, V030_SCHEMA_VERSION as i64);
 
     // 旧库中已有数据（如一个账户）在升级后应原样保留。
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,is_deleted,created_at,updated_at,version,device_id) \
-         VALUES ('acc-01','现金','cash','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        [],
-    )
-    .unwrap();
+    insert_account(&conn, "acc-01");
 
     init_db(&mut conn).unwrap();
 
@@ -192,4 +188,208 @@ fn migration_upgrades_v030_backup_with_new_tables() {
         })
         .unwrap();
     assert_eq!(acc, "现金");
+}
+
+// ---------------------------------------------------------------------------
+// 全库外键显式 ON DELETE：迁移审计 + 定时交易系删除行为抽查（issue #273 / spec #271）
+// ---------------------------------------------------------------------------
+
+/// 插入一个现金账户（最小合法行，本位币 CNY，供迁移升级与行为抽查使用）。
+fn insert_account(conn: &Connection, id: &str) {
+    conn.execute(
+        "INSERT INTO accounts (id, name, type, currency_code, created_at, updated_at, version, device_id) \
+         VALUES (?1, '现金', 'cash', 'CNY', \
+                 '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1, 'test')",
+        [id],
+    )
+    .unwrap();
+}
+
+/// 插入一条定时交易（最小合法行，category_id 可空由调用方决定）。
+fn insert_scheduled_plan(conn: &Connection, id: &str, kind: &str, category_id: Option<&str>) {
+    conn.execute(
+        "INSERT INTO scheduled_transactions \
+         (id, kind, status, account_id, category_id, amount_cents, currency_code, \
+          recurrence_type, recurrence_interval, recurrence_day, start_date, note, \
+          created_at, updated_at, version, device_id, is_deleted) \
+         VALUES (?1, ?2, 'active', 'acc-01', ?3, 1500, 'CNY', \
+                 'monthly', 1, 1, '2026-06-01', NULL, \
+                 '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1, 'test', 0)",
+        rusqlite::params![id, kind, category_id],
+    )
+    .unwrap();
+}
+
+/// 插入一条期次（最小合法行，transaction_id 可空由调用方决定）。
+fn insert_occurrence(conn: &Connection, id: &str, plan_id: &str) {
+    conn.execute(
+        "INSERT INTO scheduled_transaction_occurrences \
+         (id, scheduled_transaction_id, scheduled_date, status, transaction_id, \
+          amount_cents, created_at, updated_at, version, device_id, is_deleted) \
+         VALUES (?1, ?2, '2026-06-01', 'pending', NULL, \
+                 1500, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1, 'test', 0)",
+        rusqlite::params![id, plan_id],
+    )
+    .unwrap();
+}
+
+/// 准备行为抽查的世界：迁移后的内存库 + 一个现金账户；返回连接。
+fn world_with_account() -> Connection {
+    let mut conn = open_in_memory().unwrap();
+    init_db(&mut conn).unwrap();
+    insert_account(&conn, "acc-01");
+    conn
+}
+
+/// 准备行为抽查的世界：一个账户 + 三张定时交易（每 kind 一张），
+/// 各带一条期次与对应扩展表行；返回连接。
+fn world_with_three_plans() -> Connection {
+    let conn = world_with_account();
+    insert_scheduled_plan(&conn, "st-01", "installment", None);
+    insert_scheduled_plan(&conn, "st-02", "subscription", None);
+    insert_scheduled_plan(&conn, "st-03", "scheduled_transfer", None);
+    for id in ["st-01", "st-02", "st-03"] {
+        insert_occurrence(&conn, &format!("occ-{id}"), id);
+    }
+    conn.execute(
+        "INSERT INTO installment_plans (scheduled_transaction_id, total_amount_cents, total_occurrences) \
+         VALUES ('st-01', 3000, 2)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO subscription_plans (scheduled_transaction_id) VALUES ('st-02')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO scheduled_transfer_plans (scheduled_transaction_id, to_account_id, total_occurrences) \
+         VALUES ('st-03', 'acc-01', NULL)",
+        [],
+    )
+    .unwrap();
+    conn
+}
+
+fn count(conn: &Connection, table: &str) -> i64 {
+    conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+        .unwrap()
+}
+
+/// 迁移审计不变量：跑完整迁移链后，全库每个外键都必须显式声明 ON DELETE
+/// 动作（RESTRICT / CASCADE / SET NULL），不允许 SQLite 默认的 NO ACTION，
+/// 无白名单——新增迁移漏写显式 ON DELETE 时本测试确定性失败。
+/// 经 `PRAGMA foreign_key_list` 反射观察 schema，不测实现细节。
+#[test]
+fn migration_audit_every_foreign_key_has_explicit_on_delete() {
+    let mut conn = open_in_memory().unwrap();
+    init_db(&mut conn).unwrap();
+
+    let tables: Vec<String> = conn
+        .prepare(
+            "SELECT name FROM sqlite_master \
+             WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+        )
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+
+    // PRAGMA foreign_key_list 列序固定：id, seq, table, from, to, on_update, on_delete, match。
+    const ON_DELETE: usize = 6;
+    const FROM_COLUMN: usize = 3;
+    const ALLOWED: [&str; 3] = ["RESTRICT", "CASCADE", "SET NULL"];
+
+    let mut checked = 0usize;
+    for table in &tables {
+        let fk_sql = format!(r#"PRAGMA foreign_key_list("{table}")"#);
+        let fks: Vec<(String, String)> = conn
+            .prepare(&fk_sql)
+            .unwrap()
+            .query_map([], |r| Ok((r.get(FROM_COLUMN)?, r.get(ON_DELETE)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        for (from_column, on_delete) in fks {
+            checked += 1;
+            assert!(
+                ALLOWED.contains(&on_delete.as_str()),
+                "表 {table} 列 {from_column} 的外键未显式声明 ON DELETE（落到 SQLite 默认 NO ACTION），实际动作: {on_delete}"
+            );
+        }
+    }
+    // 覆盖下界只防 PRAGMA 反射静默失效（当前全库 40 条外键，反射失效时应远小于此）；
+    // 不用精确计数，避免未来增删外键时本测试产生无关维护点。
+    assert!(
+        checked >= 30,
+        "审计应覆盖全库全部外键，实际仅反射到 {checked} 条"
+    );
+}
+
+/// 行为抽查 1：硬删分类 → 定时交易的分类引用被置空（SET NULL）、本体保留。
+#[test]
+fn hard_delete_category_nulls_scheduled_plan_category() {
+    let conn = world_with_account();
+    conn.execute(
+        "INSERT INTO categories (id, name, kind, created_at, updated_at, version, device_id) \
+         VALUES ('cat-01', '餐饮', 'expense', \
+                 '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1, 'test')",
+        [],
+    )
+    .unwrap();
+    insert_scheduled_plan(&conn, "st-01", "subscription", Some("cat-01"));
+
+    conn.execute("DELETE FROM categories WHERE id = 'cat-01'", [])
+        .unwrap();
+
+    let (category_id, n): (Option<String>, i64) = conn
+        .query_row(
+            "SELECT category_id, COUNT(*) FROM scheduled_transactions WHERE id = 'st-01'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(n, 1, "硬删分类不应连带删除定时交易");
+    assert_eq!(category_id, None, "定时交易的分类引用应被置空");
+}
+
+/// 行为抽查 2：硬删定时交易 → 期次与三个扩展表（分期/订阅/定时转账）行级联消失（CASCADE）。
+#[test]
+fn hard_delete_scheduled_plan_cascades_occurrences_and_extensions() {
+    let conn = world_with_three_plans();
+    assert_eq!(count(&conn, "scheduled_transaction_occurrences"), 3);
+
+    conn.execute("DELETE FROM scheduled_transactions", [])
+        .unwrap();
+
+    assert_eq!(
+        count(&conn, "scheduled_transaction_occurrences"),
+        0,
+        "期次应随计划级联删除"
+    );
+    assert_eq!(count(&conn, "installment_plans"), 0, "分期扩展行应级联删除");
+    assert_eq!(
+        count(&conn, "subscription_plans"),
+        0,
+        "订阅扩展行应级联删除"
+    );
+    assert_eq!(
+        count(&conn, "scheduled_transfer_plans"),
+        0,
+        "定时转账扩展行应级联删除"
+    );
+}
+
+/// 对照组：定时交易引用的账户硬删被 RESTRICT 拒绝（强依赖不可悬空）。
+#[test]
+fn hard_delete_account_with_scheduled_plan_is_restricted() {
+    let conn = world_with_three_plans();
+
+    let result = conn.execute("DELETE FROM accounts WHERE id = 'acc-01'", []);
+    assert!(
+        result.is_err(),
+        "被定时交易强引用的账户硬删应被 RESTRICT 拒绝"
+    );
+    assert_eq!(count(&conn, "scheduled_transactions"), 3, "计划应全部保留");
 }
