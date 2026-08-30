@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { h, nextTick } from 'vue'
+import { NDialogProvider } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
@@ -30,6 +31,14 @@ enableAutoUnmount(afterEach)
 afterEach(() => {
   document.body.innerHTML = ''
 })
+
+/** 组件顶层调用 useAppDialog（删除二次确认，issue #292），与 App.vue 同构需
+ * NDialogProvider 包裹（先例：AccountsView.test.ts 的 mountView）。 */
+function mountBrowser() {
+  return mount(NDialogProvider, {
+    slots: { default: () => h(InstrumentBrowser) },
+  })
+}
 
 // 捕获全量同步进度事件回调，便于在组件测试中模拟 sync-instruments:progress
 let syncProgressHandler: ((event: { payload: SyncProgress }) => void) | undefined
@@ -144,21 +153,21 @@ async function clickBody(selector: string) {
 
 describe('InstrumentBrowser 标的页工具栏', () => {
   it('工具栏包含「同步持仓价格」按钮', async () => {
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     expect(wrapper.find('[data-testid="sync-holding-prices"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('同步持仓价格')
   })
 
   it('工具栏包含「只看持仓」开关', async () => {
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     expect(wrapper.find('[data-testid="only-invested-switch"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('只看持仓')
   })
 
   it('勾选「只看持仓」后标的查询携带 only_invested=true', async () => {
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     const sw = wrapper.find('[data-testid="only-invested-switch"]')
     await sw.trigger('click')
@@ -169,7 +178,7 @@ describe('InstrumentBrowser 标的页工具栏', () => {
   })
 
   it('未勾选「只看持仓」时标的查询 only_invested 为 null', async () => {
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments')
     const [, args] = calls[calls.length - 1]
@@ -179,7 +188,7 @@ describe('InstrumentBrowser 标的页工具栏', () => {
 
 describe('InstrumentBrowser 持仓标记列', () => {
   it('持仓标的显示「持仓」标记，未持仓显示 -', async () => {
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     // 持仓标记列：持仓标的渲染「持仓」tag，未持仓标的该单元格为「-」
     const investedCells = wrapper.findAll('td[data-col-key="invested"]')
@@ -199,7 +208,7 @@ describe('InstrumentBrowser 同步持仓价格按钮', () => {
           resolveSync = res
         }),
     })
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     const btn = wrapper.find('[data-testid="sync-holding-prices"]')
     await btn.trigger('click')
@@ -216,7 +225,7 @@ describe('InstrumentBrowser 同步持仓价格按钮', () => {
       sync_holding_prices: () =>
         Promise.resolve({ synced: 2, skipped: 1, message: '已同步 2 只，跳过 1 只' }),
     })
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     await wrapper.find('[data-testid="sync-holding-prices"]').trigger('click')
     await flushPromises()
@@ -229,7 +238,7 @@ describe('InstrumentBrowser 同步持仓价格按钮', () => {
       sync_holding_prices: () =>
         Promise.resolve({ synced: 0, skipped: 0, message: '无持仓标的可同步' }),
     })
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     await wrapper.find('[data-testid="sync-holding-prices"]').trigger('click')
     await flushPromises()
@@ -240,7 +249,7 @@ describe('InstrumentBrowser 同步持仓价格按钮', () => {
     baseInvoke({
       sync_holding_prices: () => Promise.reject(new Error('网络错误')),
     })
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     await wrapper.find('[data-testid="sync-holding-prices"]').trigger('click')
     await flushPromises()
@@ -251,7 +260,7 @@ describe('InstrumentBrowser 同步持仓价格按钮', () => {
 
 describe('InstrumentBrowser 价格失效信号（issue #238 / ADR-0031）', () => {
   it('信号触发后恰好重拉一次当前页查询', async () => {
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
     firePricesChanged()
@@ -279,7 +288,7 @@ describe('InstrumentBrowser 价格失效信号（issue #238 / ADR-0031）', () =
         })
       },
     })
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     const pageSymbols = () =>
       wrapper.findAll('td[data-col-key="symbol"]').map((c) => c.text())
@@ -304,7 +313,7 @@ describe('InstrumentBrowser 价格失效信号（issue #238 / ADR-0031）', () =
 
 describe('InstrumentBrowser 全量同步（issue #109）', () => {
   it('工具栏包含「全量同步」按钮', async () => {
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     const btn = wrapper.find('[data-testid="full-sync"]')
     expect(btn.exists()).toBe(true)
@@ -312,7 +321,7 @@ describe('InstrumentBrowser 全量同步（issue #109）', () => {
   })
 
   it('点击全量同步先弹确认框，未确认不调用 sync_instruments', async () => {
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     await wrapper.find('[data-testid="full-sync"]').trigger('click')
     await nextTick()
@@ -325,7 +334,7 @@ describe('InstrumentBrowser 全量同步（issue #109）', () => {
   })
 
   it('点击「取消」不调用 sync_instruments（未确认不发起同步）', async () => {
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     await wrapper.find('[data-testid="full-sync"]').trigger('click')
     await nextTick()
@@ -338,7 +347,7 @@ describe('InstrumentBrowser 全量同步（issue #109）', () => {
 
   it('确认后调用 sync_instruments，模态框展示进度详情', async () => {
     baseInvoke({ sync_instruments: () => Promise.resolve(undefined) })
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     await wrapper.find('[data-testid="full-sync"]').trigger('click')
     await nextTick()
@@ -360,7 +369,7 @@ describe('InstrumentBrowser 全量同步（issue #109）', () => {
   it('同步进行中按钮呈「同步中」态，点击重开进度框而非重复同步', async () => {
     let resolveSync!: (v: unknown) => void
     baseInvoke({ sync_instruments: () => new Promise((res) => { resolveSync = res }) })
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     await wrapper.find('[data-testid="full-sync"]').trigger('click')
     await nextTick()
@@ -384,7 +393,7 @@ describe('InstrumentBrowser 全量同步（issue #109）', () => {
       cancel_sync_instruments: () =>
         Promise.resolve({ cancelled: true, message: '已请求中断同步' }),
     })
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     await wrapper.find('[data-testid="full-sync"]').trigger('click')
     await nextTick()
@@ -404,7 +413,7 @@ describe('InstrumentBrowser 全量同步（issue #109）', () => {
 
   it('完成时显示新增/更新统计，失败时显示错误', async () => {
     baseInvoke({ sync_instruments: () => Promise.resolve(undefined) })
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     await wrapper.find('[data-testid="full-sync"]').trigger('click')
     await nextTick()
@@ -443,7 +452,7 @@ describe('InstrumentBrowser 添加基金（issue #301 / ADR-0038）', () => {
   }
 
   async function openAddFundModal() {
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     await wrapper.find('[data-testid="add-fund"]').trigger('click')
     await nextTick()
@@ -462,7 +471,7 @@ describe('InstrumentBrowser 添加基金（issue #301 / ADR-0038）', () => {
   }
 
   it('工具栏包含「添加基金」按钮', async () => {
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     const btn = wrapper.find('[data-testid="add-fund"]')
     expect(btn.exists()).toBe(true)
@@ -574,7 +583,7 @@ describe('InstrumentBrowser 来源列与新建标的入口（issue #290 / ADR-00
           total: 3,
         }),
     })
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     const sourceCells = wrapper.findAll('td[data-col-key="source"]')
     expect(sourceCells.map((c) => c.text())).toEqual(['同步', '同步', '手动'])
@@ -583,7 +592,7 @@ describe('InstrumentBrowser 来源列与新建标的入口（issue #290 / ADR-00
   })
 
   it('「新建标的」按钮打开创建弹窗', async () => {
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     await wrapper.find('[data-testid="create-instrument"]').trigger('click')
     await nextTick()
@@ -595,7 +604,7 @@ describe('InstrumentBrowser 来源列与新建标的入口（issue #290 / ADR-00
     baseInvoke({
       create_instrument: () => Promise.resolve('inst-new'),
     })
-    const wrapper = mount(InstrumentBrowser)
+    const wrapper = mountBrowser()
     await flushPromises()
     await wrapper.find('[data-testid="create-instrument"]').trigger('click')
     await nextTick()
@@ -611,5 +620,103 @@ describe('InstrumentBrowser 来源列与新建标的入口（issue #290 / ADR-00
     expect(msg.text()).toContain('已创建标的：稳稳地幸福（稳稳地幸福）')
     const after = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
     expect(after).toBe(before + 1)
+  })
+})
+
+describe('InstrumentBrowser 自建标的删除（issue #292 / ADR-0036）', () => {
+  function manualRow() {
+    return makeInstrument({
+      id: 'inst-manual',
+      symbol: '稳稳地幸福',
+      type: 'other',
+      name: '稳稳地幸福',
+      market: 'unknown',
+      source: 'manual',
+      invested: false,
+    })
+  }
+
+  function listWith(...items: Instrument[]) {
+    baseInvoke({
+      list_instruments: () => Promise.resolve({ items, total: items.length }),
+    })
+  }
+
+  /** NDialog 渲染到 document.body，按文本定位确认/取消按钮并原生触发点击。 */
+  async function clickDialogButton(text: string) {
+    const btn = Array.from(document.body.querySelectorAll('.n-dialog button')).find(
+      (b) => b.textContent?.trim() === text,
+    )
+    if (!btn) throw new Error(`dialog 中未找到按钮: ${text}`)
+    btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    await nextTick()
+    await flushPromises()
+    await new Promise((r) => setTimeout(r, 30))
+  }
+
+  it('删除按钮仅手动标的行渲染，同步行无删除动作', async () => {
+    listWith(mockInstruments[0]!, manualRow())
+    const wrapper = mountBrowser()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="delete-instrument-稳稳地幸福"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="delete-instrument-600000"]').exists()).toBe(false)
+  })
+
+  it('点击删除弹确认框（含标的名称）；取消不调用 delete_instrument', async () => {
+    listWith(manualRow())
+    const wrapper = mountBrowser()
+    await flushPromises()
+    await wrapper.find('[data-testid="delete-instrument-稳稳地幸福"]').trigger('click')
+    await nextTick()
+    // 确认框出现，含标的名称
+    expect(document.body.querySelector('.n-dialog')).not.toBeNull()
+    expect(document.body.querySelector('.n-dialog')!.textContent).toContain('稳稳地幸福')
+    // 未确认：不调用删除命令
+    expect(mockInvoke).not.toHaveBeenCalledWith('delete_instrument', { id: 'inst-manual' })
+    await clickDialogButton('取消')
+    expect(mockInvoke).not.toHaveBeenCalledWith('delete_instrument', { id: 'inst-manual' })
+  })
+
+  it('确认后调用 delete_instrument，列表原地重拉并显示成功回执', async () => {
+    baseInvoke({
+      list_instruments: () => Promise.resolve({ items: [manualRow()], total: 1 }),
+      delete_instrument: () => Promise.resolve(),
+    })
+    const wrapper = mountBrowser()
+    await flushPromises()
+    const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
+    await wrapper.find('[data-testid="delete-instrument-稳稳地幸福"]').trigger('click')
+    await nextTick()
+    await clickDialogButton('删除')
+    expect(mockInvoke).toHaveBeenCalledWith('delete_instrument', { id: 'inst-manual' })
+    const msg = wrapper.find('[data-testid="delete-instrument-result"]')
+    expect(msg.exists()).toBe(true)
+    expect(msg.text()).toContain('已删除标的：稳稳地幸福')
+    const after = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
+    expect(after).toBe(before + 1)
+  })
+
+  it('删除失败（如已产生买卖流水）：显示后端中文错误，不重拉列表', async () => {
+    baseInvoke({
+      list_instruments: () => Promise.resolve({ items: [manualRow()], total: 1 }),
+      delete_instrument: () =>
+        Promise.reject({
+          kind: 'Invalid',
+          message: '该标的已有买卖流水，无法删除：可先删除相关交易后再试',
+        }),
+    })
+    const wrapper = mountBrowser()
+    await flushPromises()
+    const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
+    await wrapper.find('[data-testid="delete-instrument-稳稳地幸福"]').trigger('click')
+    await nextTick()
+    await clickDialogButton('删除')
+    const msg = wrapper.find('[data-testid="delete-instrument-result"]')
+    expect(msg.exists()).toBe(true)
+    expect(msg.text()).toContain('已有买卖流水')
+    expect(msg.text()).not.toContain('[object Object]')
+    // 失败不重拉列表
+    const after = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
+    expect(after).toBe(before)
   })
 })

@@ -156,6 +156,9 @@ export const api = {
     invoke<TransactionTrade>('get_transaction_trade', { id }),
   createInstrument: (input: InstrumentInput) =>
     invoke<string>('create_instrument', { input }),
+  // 自建标的删除（issue #292 / ADR-0036）：仅手动来源且无买卖流水引用可删，
+  // 守卫在后端前置检查，同步来源拒删
+  deleteInstrument: (id: string) => invoke<void>('delete_instrument', { id }),
   // 按代码即拉添加场外基金（issue #301 / ADR-0038）：东财回填名称/分类/最新净值
   addFundByCode: (code: string) => invoke<AddFundResult>('add_fund_by_code', { code }),
 

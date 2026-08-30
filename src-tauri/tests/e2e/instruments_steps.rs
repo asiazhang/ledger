@@ -8,7 +8,8 @@ use cucumber::{given, then, when};
 use rusqlite::params;
 
 use tauri_app_lib::commands::investment::{
-    add_fund_by_code_with, create_instrument_manual_internal, list_instruments_internal,
+    add_fund_by_code_with, create_instrument_manual_internal, delete_instrument_internal,
+    list_instruments_internal,
 };
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
 use tauri_app_lib::error::Result;
@@ -80,6 +81,25 @@ fn manual_create_instrument(
         market: None,
     };
     match create_instrument_manual_internal(&world_conn!(world), input) {
+        Ok(_) => world.last_error = None,
+        Err(e) => world.last_error = Some(e.to_string()),
+    }
+}
+
+/// 删除标的（issue #292 / ADR-0036 决策 5）：驱动 IPC 命令同一接缝
+/// `delete_instrument_internal`（守卫前置检查在核心函数内）。入参为标的代码：
+/// 场景内代码唯一，按（代码）取 id 驱动；结果/错误记入 world 供 Then 断言。
+/// 步骤前提是标的已存在（不存在标的的错误路径由域单测覆盖）。
+#[when(expr = "删除标的 {string}")]
+fn delete_instrument(world: &mut LedgerWorld, symbol: String) {
+    let id: String = world_conn!(world)
+        .query_row(
+            "SELECT id FROM instruments WHERE symbol=?1",
+            params![symbol],
+            |r| r.get(0),
+        )
+        .unwrap_or_else(|_| panic!("删除标的步骤：标的 {symbol} 应已存在"));
+    match delete_instrument_internal(&world_conn!(world), &id) {
         Ok(_) => world.last_error = None,
         Err(e) => world.last_error = Some(e.to_string()),
     }
@@ -180,6 +200,19 @@ fn assert_manual_create_error(world: &mut LedgerWorld, fragment: String) {
         .last_error
         .as_ref()
         .unwrap_or_else(|| panic!("手动创建标的应失败但未记录错误"));
+    assert!(
+        error.contains(&fragment),
+        "错误「{error}」应包含「{fragment}」"
+    );
+}
+
+/// 删除守卫中文错误（issue #292）：同 last_error 记录断言模式。
+#[then(expr = "删除标的应返回错误 {string}")]
+fn assert_delete_instrument_error(world: &mut LedgerWorld, fragment: String) {
+    let error = world
+        .last_error
+        .as_ref()
+        .unwrap_or_else(|| panic!("删除标的应失败但未记录错误"));
     assert!(
         error.contains(&fragment),
         "错误「{error}」应包含「{fragment}」"
