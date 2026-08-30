@@ -1,7 +1,8 @@
-//! 按代码即拉添加场外基金（issue #301 / ADR-0038 决策 1）：手动输入 6 位基金
-//! 代码 → 东财详情拉取（名称 / 分类 / 最新单位净值 + 净值日期）→ 落标的字典
-//! （类型 fund、市场恒 unknown、来源 manual）与现价缓存（净值即价格、币种人民
-//! 币、带净值日期）。查无此码返回中文错误，不产生标的行。
+//! 场外基金的东财详情落库接缝：按代码即拉添加（issue #301 / ADR-0038 决策 1）
+//! 与 AI 创建端点 fund 增强（issue #304 / ADR-0039 决策 3）共用同一套字典形态——
+//! 手动输入 / AI 提交 6 位基金代码 → 东财详情拉取（名称 / 分类 / 最新单位净值 +
+//! 净值日期）→ 落标的字典（类型 fund、市场恒 unknown、来源 manual）与现价缓存
+//! （净值即价格、币种人民币、带净值日期）。查无此码返回中文错误，不产生标的行。
 //!
 //! 编排与网络解耦：核心接缝 [`add_fund_by_code_with`] 接受注入的详情获取函数
 //! （`&str → Result<FundDetail>`），测试与 BDD 以 stub 离线驱动（不依赖真实
@@ -21,14 +22,63 @@ use super::crud;
 const FUND_MARKET: &str = "unknown";
 const FUND_CURRENCY: &str = "CNY";
 
+/// 6 位纯数字判定（fund 增强的触发前提，ADR-0039 决策 3）：名称充代码的
+/// fund 行（源数据无代码）非 6 位，不触发东财校验、不进净值通道（ADR-0038
+/// 决策 6 的「6 位纯数字判定 + 入口收口」安全前提）。
+pub(crate) fn is_six_digit_code(code: &str) -> bool {
+    code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit())
+}
+
 /// 基金代码合法性校验：6 位纯数字（入口收口的安全前提之一——自建标的 UI
 /// 白名单不含 fund，fund 行只经本通道产生，ADR-0038 决策 6）。
 pub(crate) fn validate_fund_code(code: &str) -> Result<()> {
-    if code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit()) {
+    if is_six_digit_code(code) {
         Ok(())
     } else {
         Err(AppError::Invalid("基金代码须为 6 位数字".into()))
     }
+}
+
+/// 创建端点 fund 增强的落库结果（issue #304 / ADR-0039 决策 3）：标的 id +
+/// 是否落现价（价格失效信号广播判定，语义同 `AddFundResult.price_written`）。
+pub(crate) struct FundCreateOutcome {
+    pub instrument_id: String,
+    pub price_written: bool,
+}
+
+/// AI 创建端点 fund 增强的降级落库（issue #304 / ADR-0039 决策 3）：东财网络
+/// 不可达等临时故障时，以 AI 提供的名称 + 真实代码建行（不阻塞导入，名称误差
+/// 留待人工编辑）。字典形态与按代码即拉一致（类型 fund、市场 unknown、币种
+/// 人民币）；既有行保留既有名称——降级重放不得用 AI 名称覆盖已回填的东财
+/// 权威名称（find-or-create 只在新建行时采纳 AI 名称，实现：查得既有名称原样
+/// 回传，`create_instrument` 的按需更新判定为无变化即不动）。
+pub(crate) fn create_fund_degraded(
+    conn: &Connection,
+    symbol: &str,
+    ai_name: Option<String>,
+) -> Result<FundCreateOutcome> {
+    let existing_name: Option<String> = conn
+        .query_row(
+            "SELECT name FROM instruments WHERE symbol=?1 AND instrument_type='fund'",
+            rusqlite::params![symbol],
+            |r| r.get(0),
+        )
+        .ok()
+        .flatten();
+    let instrument_id = crud::create_instrument(
+        conn,
+        InstrumentInput {
+            symbol: symbol.to_string(),
+            kind: InstrumentType::Fund,
+            name: existing_name.or(ai_name),
+            currency_code: FUND_CURRENCY.to_string(),
+            market: Some(FUND_MARKET.to_string()),
+        },
+    )?;
+    Ok(FundCreateOutcome {
+        instrument_id,
+        price_written: false,
+    })
 }
 
 /// 拉取到的基金详情落库：建标的行（复用核心创建函数的（代码，类型）幂等
