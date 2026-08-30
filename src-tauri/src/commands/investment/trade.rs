@@ -8,6 +8,26 @@ use crate::models::{AccountType, NormalizedTransaction, TransactionInput, Transa
 use crate::transaction::amount;
 use crate::transaction::amount::TransactionKind;
 
+/// 标的存在性校验（issue #295）：prepare 阶段拦截引用不存在标的的 buy/sell，
+/// 返回可读回自纠的 [`AppError::Invalid`] 中文错误（HTTP 侧 400）——否则 prepare
+/// 通过、apply 落 `security_transactions` 时才触发 `instrument_id` 外键违规的
+/// 「数据库错误」（HTTP 侧 500，批量导入路径还会整批回滚），AI 无法据此纠错。
+/// 创建与修改（全字段替换）共用 prepare，自然同时生效；`action` 为「买入/卖出」
+/// 措辞前缀，与既有「必须指定标的」等错误同风格，消息携带标的 id 供回自纠。
+fn ensure_instrument_exists(conn: &Connection, instrument_id: &str, action: &str) -> Result<()> {
+    let exists: i64 = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM instruments WHERE id=?1)",
+        rusqlite::params![instrument_id],
+        |r| r.get(0),
+    )?;
+    if exists == 0 {
+        return Err(AppError::Invalid(format!(
+            "{action}标的不存在: {instrument_id}"
+        )));
+    }
+    Ok(())
+}
+
 /// 投资交易对外出口（issue #72 / spec #69）：只暴露 `prepare / apply / revert` 三件套。
 ///
 /// - [`prepare`]：校验并归一化一笔 buy/sell 输入（不落库、不产生副作用），产出 [`Plan`]；
@@ -70,6 +90,8 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
         .as_ref()
         .ok_or_else(|| AppError::Invalid("买入必须指定标的".into()))?
         .clone();
+    // 标的存在性先于数量/单价校验：身份错了，数值对错无从谈起（issue #295）。
+    ensure_instrument_exists(conn, &instrument_id, "买入")?;
     let quantity = input.quantity.unwrap_or(0.0);
     let price_cents = input.price_cents.unwrap_or(0);
     let fee_cents = input.fee_cents.unwrap_or(0);
@@ -124,6 +146,9 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
         .as_ref()
         .ok_or_else(|| AppError::Invalid("卖出必须指定标的".into()))?
         .clone();
+    // 标的存在性先于可卖数量校验：不存在的标的不该误报「可卖出数量不足」
+    // （issue #295）。
+    ensure_instrument_exists(conn, &instrument_id, "卖出")?;
     let quantity = input.quantity.unwrap_or(0.0);
     let price_cents = input.price_cents.unwrap_or(0);
     let fee_cents = input.fee_cents.unwrap_or(0);

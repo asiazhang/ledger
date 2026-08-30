@@ -212,6 +212,86 @@ fn try_create_buy(
     };
 }
 
+/// 尝试创建一笔买入/卖出交易并捕获错误，标的按裸 id 提交（不查字典）——
+/// 供「引用不存在标的」场景使用（issue #295，prepare 标的存在性校验）。
+fn try_create_trade_with_raw_instrument_id(
+    world: &mut LedgerWorld,
+    kind: TransactionKind,
+    instrument_id: &str,
+    quantity: i64,
+    price_cents: i64,
+    account_name: &str,
+) {
+    let account_id = world.account_id(account_name);
+    let currency_code: String = world_conn!(world)
+        .query_row(
+            "SELECT currency_code FROM accounts WHERE id=?1",
+            params![account_id],
+            |r| r.get(0),
+        )
+        .expect("账户不存在");
+    let input = TransactionInput {
+        merchant_name: None,
+        kind,
+        amount_cents: 0,
+        currency_code,
+        account_id,
+        to_account_id: None,
+        category_id: None,
+        merchant_id: None,
+        refund_of_transaction_id: None,
+        note: None,
+        date: "2026-01-10".into(),
+        instrument_id: Some(instrument_id.to_string()),
+        quantity: Some(quantity as f64),
+        price_cents: Some(price_cents),
+        fee_cents: Some(0),
+        idempotency_key: None,
+    };
+    world.last_error = match create_transaction_internal(&world_conn!(world), input) {
+        Ok(_) => Some("预期失败但成功了".into()),
+        Err(e) => Some(e.to_string()),
+    };
+}
+
+/// 尝试买入不存在的标的并捕获错误（裸 id 直提，供「应返回错误」断言，issue #295）。
+#[when(expr = "尝试买入不存在标的 {string} 数量 {int} 单价 {int} 到投资账户 {string}")]
+fn try_create_buy_missing_instrument(
+    world: &mut LedgerWorld,
+    instrument_id: String,
+    quantity: i64,
+    price_cents: i64,
+    account_name: String,
+) {
+    try_create_trade_with_raw_instrument_id(
+        world,
+        TransactionKind::Buy,
+        &instrument_id,
+        quantity,
+        price_cents,
+        &account_name,
+    );
+}
+
+/// 尝试卖出不存在的标的并捕获错误（裸 id 直提，供「应返回错误」断言，issue #295）。
+#[when(expr = "尝试卖出不存在标的 {string} 数量 {int} 单价 {int} 从投资账户 {string}")]
+fn try_create_sell_missing_instrument(
+    world: &mut LedgerWorld,
+    instrument_id: String,
+    quantity: i64,
+    price_cents: i64,
+    account_name: String,
+) {
+    try_create_trade_with_raw_instrument_id(
+        world,
+        TransactionKind::Sell,
+        &instrument_id,
+        quantity,
+        price_cents,
+        &account_name,
+    );
+}
+
 /// 注入「建仓中途失败」：买入副作用先写 security_transactions、再写 security_lots，
 /// 触发器在第二步 RAISE(ABORT)——纯测试侧注入（spec #169 定案），检验 create
 /// 编排入口把行落库与半套副作用整体回滚（issue #228）。

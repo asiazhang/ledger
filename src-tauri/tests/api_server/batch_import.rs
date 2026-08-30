@@ -203,6 +203,51 @@ async fn test_batch_create_dividend_and_split_rejected_with_not_supported() {
     );
 }
 
+/// issue #295：buy/sell 引用不存在的标的在行为层 prepare 即被拦截，批量导入逐行
+/// 返回可读中文错误（`AppError::Invalid`，HTTP 侧 400 同源），不再是扩展表外键
+/// 违规的「数据库错误」；同批其余行不受影响。
+#[tokio::test]
+async fn test_batch_buy_sell_with_missing_instrument_rejected_with_readable_error() {
+    let (app, conn) = setup_app();
+    // buy/sell 需投资账户：直接插入（账户创建 API 的夹具固定 cash 类型）。
+    {
+        let conn = conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES ('acc-inv-295','证券账户','investment','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            [],
+        )
+        .unwrap();
+    }
+    let account_id = "acc-inv-295";
+
+    let body = format!(
+        r#"{{
+            "transactions": [
+                {{"kind":"buy","amount_cents":0,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-01","instrument_id":"inst-not-exist","quantity":10.0,"price_cents":1500,"fee_cents":0}},
+                {{"kind":"sell","amount_cents":0,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-02","instrument_id":"inst-not-exist","quantity":5.0,"price_cents":1600,"fee_cents":0}}
+            ]
+        }}"#
+    );
+
+    let results = post_batch(&app, body).await;
+    assert_eq!(results.len(), 2);
+    for r in &results {
+        assert_eq!(r["success"], false, "引用不存在标的应逐行失败: {r}");
+        assert_eq!(r["duplicate"], false);
+        let err = r["error"].as_str().unwrap();
+        assert!(err.contains("标的不存在"), "应报标的不存在供回自纠: {r}");
+        assert!(!err.contains("数据库错误"), "不应再报外键数据库错误: {r}");
+    }
+
+    let count = conn.lock().unwrap();
+    assert_eq!(
+        count_active_transactions(&count),
+        0,
+        "被拒的 buy/sell 不应落库"
+    );
+}
+
 /// issue #72：把一笔已有普通交易修改为 dividend/split 同样显式拒绝（行为层单点分派覆盖修改路径），
 /// 原交易保持不变。
 #[tokio::test]

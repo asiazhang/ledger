@@ -488,7 +488,7 @@ async fn list_transactions_handler(
                   交易返回 `{success: true, duplicate: true, id: <已有 id>}`；命中查询走部分唯一索引，非全表扫描。\
                   不带幂等键的行回退到确定性内容哈希 `sha256(date|kind|amount_cents|currency_code|account_id|to_account_id)`\
                   去重（冻结契约，命中返回 `id: null`）。行可携带 `merchant_name`（商户名字符串，与 `merchant_id` 互斥）：\
-                  后端精确匹配在用商户名，命中复用、未命中即建；幂等重放不产生碎商户。单条业务校验失败（金额/转账/退款/商户等）返回 `success: false` 并附带 `error`，不影响其他交易；\
+                  后端精确匹配在用商户名，命中复用、未命中即建；幂等重放不产生碎商户。单条业务校验失败（金额/转账/退款/商户/标的不存在等）返回 `success: false` 并附带 `error`，不影响其他交易；\
                   `kind` 为闭集枚举（income/expense/transfer/refund/buy/sell/dividend/split），非法 kind 属请求体格式错误，整批返回 4xx。",
     request_body = TransactionBatchInput,
     responses(
@@ -524,7 +524,7 @@ async fn batch_create_transactions_handler(
     ),
     responses(
         (status = 200, description = "更新后的完整交易", body = Transaction),
-        (status = 400, description = "参数错误（如转账缺目标账户、部分卖出的买入）", body = ErrorResponse),
+        (status = 400, description = "参数错误（如转账缺目标账户、部分卖出的买入、买卖标的不存在）", body = ErrorResponse),
         (status = 404, description = "交易不存在", body = ErrorResponse),
         (status = 500, description = "数据库错误", body = ErrorResponse)
     )
