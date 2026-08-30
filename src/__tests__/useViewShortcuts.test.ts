@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { defineComponent, h } from 'vue'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
+import { NDropdown } from 'naive-ui'
 import type { Router } from 'vue-router'
 import {
   DEFAULT_VIEW_ORDER,
@@ -15,6 +16,7 @@ import {
   hasOpenOverlay,
   useViewShortcuts,
   isArrangeableView,
+  isSidebarSortAction,
   moveArrangeable,
   buildSidebarSortMenuOptions,
 } from '@/composables/useViewShortcuts'
@@ -432,8 +434,20 @@ describe('buildSidebarSortMenuOptions（排序菜单选项构建纯函数，含�
       '上移一位', '下移一位', '移到顶部', '移到底部', 'divider', '恢复默认排序',
     ])
     expect(opts.map(row).map((o) => o.key)).toEqual([
-      'move-up', 'move-down', 'move-top', 'move-bottom', 'sort-divider', 'reset',
+      'up', 'down', 'top', 'bottom', 'sort-divider', 'reset',
     ])
+  })
+
+  it('菜单 key 与移动动作同一词表（防两套词表错位回归：菜单里的移动 key 必须全是合法 SidebarSortAction）', () => {
+    const moveKeys = buildSidebarSortMenuOptions('budget', base)
+      .map(row)
+      .map((o) => o.key!)
+      .filter((k) => k !== 'sort-divider' && k !== 'reset')
+    expect(moveKeys).toEqual(['up', 'down', 'top', 'bottom'])
+    for (const k of moveKeys) expect(isSidebarSortAction(k)).toBe(true)
+    // 每个菜单 key 直接可作为动作施加，效果与菜单语义一致（key 即 action）
+    expect(moveArrangeable(base, 'accounts', 'up')[0]).toBe('accounts')
+    expect(moveArrangeable(base, 'budget', 'bottom').at(-1)).toBe('budget')
   })
 
   it('可排区首位项：上移/移顶置灰，下移/移底可用', () => {
@@ -542,15 +556,30 @@ describe('写路径与持久化（issue #270：点选即重排、立即持久化
     expect(mod.viewShortcuts.value.map((s) => s.name)).toEqual([...mod.DEFAULT_VIEW_ORDER])
   })
 
-  it('边界移动（首位上移）不改顺序，持久化无害', async () => {
+  it('边界移动（首位上移）不改顺序且不写存储：保住「恢复默认 = 删 key」语义，出厂序调整时自动跟随', async () => {
     const mod = await fresh()
+    expect(localStorage.getItem(ORDER_KEY)).toBeNull()
     mod.applySidebarSort('transactions', 'up')
     expect(mod.sidebarOrder.value).toEqual([...mod.ARRANGEABLE_VIEWS])
+    expect(localStorage.getItem(ORDER_KEY)).toBeNull()
   })
 })
 
-describe('排序菜单打开期间视图快捷键被弹层抑制机制压制（issue #270，零新代码回归）', () => {
-  it('.n-dropdown-menu 存在时 Cmd+数字不跳转', () => {
+describe('排序菜单打开期间视图快捷键被弹层抑制机制压制（issue #270，零新代码）', () => {
+  it('真实 NDropdown 打开时渲染 .n-dropdown-menu（弹层抑制信号成立）', async () => {
+    const Host = defineComponent({
+      setup() {
+        return () =>
+          h(NDropdown, { trigger: 'manual', show: true, placement: 'bottom-start', options: [{ label: '上移一位', key: 'up' }] }, { default: () => h('div') })
+      },
+    })
+    const w = mount(Host, { attachTo: document.body })
+    await flushPromises()
+    expect(hasOpenOverlay()).toBe(true)
+    w.unmount()
+  })
+
+  it('.n-dropdown-menu 存在时 Cmd+数字不跳转（含将来换弹层形态的契约）', () => {
     setPlatform('MacIntel')
     const { router, push } = makeRouter('dashboard')
     mountHost(router)

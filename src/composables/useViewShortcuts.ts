@@ -43,13 +43,9 @@ export const ARRANGEABLE_VIEWS: readonly ViewName[] = DEFAULT_VIEW_ORDER.filter(
   (name) => name !== FIRST_VIEW && name !== PENULTIMATE_VIEW && name !== LAST_VIEW,
 )
 
-function isArrangeable(v: unknown): v is ViewName {
-  return typeof v === 'string' && (ARRANGEABLE_VIEWS as readonly string[]).includes(v)
-}
-
-/** 固定项例外判定（对外）：可排区八项为真，概览/AI/设置三固定项为假（右键无菜单）。 */
+/** 固定项例外判定：可排区八项为真，概览/AI/设置三固定项为假（右键无菜单）。 */
 export function isArrangeableView(v: unknown): v is ViewName {
-  return isArrangeable(v)
+  return typeof v === 'string' && (ARRANGEABLE_VIEWS as readonly string[]).includes(v)
 }
 
 /**
@@ -62,7 +58,7 @@ export function parseArrangeableOrder(raw: unknown): ViewName[] {
   const seen = new Set<string>()
   if (Array.isArray(raw)) {
     for (const item of raw) {
-      if (!isArrangeable(item) || seen.has(item)) continue
+      if (!isArrangeableView(item) || seen.has(item)) continue
       seen.add(item)
       kept.push(item)
     }
@@ -116,8 +112,13 @@ export function moveArrangeable(
   return next
 }
 
-/** 排序菜单 key：四种移动 + 恢复默认排序 */
-export type SidebarSortMenuKey = SidebarSortAction | 'reset'
+/**
+ * 排序菜单 key 与移动动作同一词表（key 即 action，杜绝两套词表错位）：
+ * up / down / top / bottom 四种移动 + reset 恢复默认排序。
+ */
+export function isSidebarSortAction(v: string): v is SidebarSortAction {
+  return v === 'up' || v === 'down' || v === 'top' || v === 'bottom'
+}
 
 /**
  * 排序菜单选项构建纯函数（含边界置灰）：
@@ -133,19 +134,24 @@ export function buildSidebarSortMenuOptions(
   const atTop = index <= 0
   const atBottom = index === order.length - 1
   return [
-    { label: '上移一位', key: 'move-up', disabled: atTop },
-    { label: '下移一位', key: 'move-down', disabled: atBottom },
-    { label: '移到顶部', key: 'move-top', disabled: atTop },
-    { label: '移到底部', key: 'move-bottom', disabled: atBottom },
+    { label: '上移一位', key: 'up', disabled: atTop },
+    { label: '下移一位', key: 'down', disabled: atBottom },
+    { label: '移到顶部', key: 'top', disabled: atTop },
+    { label: '移到底部', key: 'bottom', disabled: atBottom },
     { type: 'divider', key: 'sort-divider' },
     { label: '恢复默认排序', key: 'reset', disabled: false },
   ]
 }
 
-/** 点选即重排并立即持久化（写路径唯一出处；顺序变更经 viewShortcuts 自动随动）。 */
+/** 点选即重排并立即持久化（写路径唯一出处；顺序变更经 viewShortcuts 自动随动）。
+ *  边界 no-op 不写存储：保住「恢复默认 = 删除 key」语义，出厂默认序将来调整时自动跟随。 */
 export function applySidebarSort(name: ViewName, action: SidebarSortAction) {
-  arrangeableOrder.value = moveArrangeable(arrangeableOrder.value, name, action)
-  saveSidebarOrder(arrangeableOrder.value)
+  const prev = arrangeableOrder.value
+  const next = moveArrangeable(prev, name, action)
+  arrangeableOrder.value = next
+  if (prev.some((v, i) => v !== next[i])) {
+    saveSidebarOrder(next)
+  }
 }
 
 /** 恢复默认排序：清除存储回出厂序（之后可再次自定义，反复交替）。 */

@@ -38,12 +38,12 @@ import {
   shortcutHint,
   useViewShortcuts,
   isArrangeableView,
+  isSidebarSortAction,
   sidebarOrder,
   buildSidebarSortMenuOptions,
   applySidebarSort,
   resetSidebarOrder,
   type ViewName,
-  type SidebarSortAction,
 } from '@/composables/useViewShortcuts'
 import { useWindowGuard } from '@/composables/useWindowGuard'
 
@@ -167,7 +167,10 @@ function onSortMenuSelect(key: string) {
     resetSidebarOrder()
     return
   }
-  applySidebarSort(target, key as SidebarSortAction)
+  // 菜单 key 与移动动作同一词表（key 即 action），守卫收窄后零断言
+  if (isSidebarSortAction(key)) {
+    applySidebarSort(target, key)
+  }
 }
 
 // 视图快捷键：窗口内 Cmd/Ctrl+1..0 与 Cmd/Ctrl+, 切换视图（弹窗/确认框打开时自动抑制）
