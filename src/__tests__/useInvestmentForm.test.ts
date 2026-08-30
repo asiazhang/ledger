@@ -31,7 +31,7 @@ const mockInstruments: Instrument[] = [
     id: 'ins-1', symbol: 'NVDA', name: '英伟达', type: 'stock', currency_code: 'CNY',
     created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false, market: 'unknown', invested: false,
-    price_cents: null,
+    source: 'eastmoney', price_cents: null,
   },
 ]
 
