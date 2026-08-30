@@ -14,7 +14,7 @@ import {
 import type { DataTableColumn } from 'naive-ui'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useReferenceStore } from '@/stores/reference'
-import { formatAmount, formatQuantity } from '@/types'
+import { formatAmount, formatPrice, formatQuantity } from '@/types'
 import type { PnlDetail } from '@/types'
 import { useRealizedPnl } from '@/composables/useRealizedPnl'
 import HoldingsOverview from '@/components/investments/HoldingsOverview.vue'
@@ -44,9 +44,10 @@ const detailColumns: DataTableColumn<PnlDetail>[] = [
     title: '成本单价',
     key: 'cost_per_unit_cents',
     width: 100,
+    // 成本单价为价格列（万分之一元刻度，ADR-0038），用 formatPrice 展示
     render(row) {
       const ccy = reference.currencyMap.get(row.currency_code)
-      return formatAmount(row.cost_per_unit_cents, ccy)
+      return formatPrice(row.cost_per_unit_cents, ccy)
     },
   },
   {

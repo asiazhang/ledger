@@ -19,6 +19,7 @@ export const INSTRUMENT_TYPE_LABELS: Record<InstrumentType, string> = {
   other: '其他',
 }
 
+/** 价格列刻度（ADR-0038）：投资域 price_cents 为万分之一元（元 × 10000），金额列仍是整数分 */
 export interface Instrument extends Syncable {
   id: string
   symbol: string
@@ -161,7 +162,7 @@ export interface TrendRange {
   end_date?: string | null
 }
 
-/** 单标的走势采样点：周采样交易日 + 收盘价（报价币种整数分） */
+/** 单标的走势采样点：周采样交易日 + 收盘价（报价币种万分之一元，价格刻度见上） */
 export interface PriceTrendPoint {
   date: string
   price_cents: number

@@ -7,7 +7,7 @@ use std::cell::RefCell;
 use rusqlite::{Connection, params};
 
 use crate::commands::sync::http::{
-    KlineBar, KlineResponse, StockItem, ULIST_BATCH_SIZE, UlistResponse, f2_to_cents,
+    KlineBar, KlineResponse, StockItem, ULIST_BATCH_SIZE, UlistResponse, f2_to_price,
     fx_secid_candidates, parse_klines, secid_prefix,
 };
 use crate::commands::sync::incremental::do_incremental_sync_with;
@@ -136,10 +136,10 @@ fn ulist_response_deserializes_cross_market_codes() {
     let items = resp.data.unwrap().diff.unwrap().into_items();
     assert_eq!(items.len(), 3);
     assert_eq!(items[0].code, "600519");
-    // 价格换算：A 股 f2 直接得分、港股 ÷10（与全量同步一致）
-    assert_eq!(f2_to_cents(items[0].price.unwrap(), "sh"), 130280);
-    assert_eq!(f2_to_cents(items[1].price.unwrap(), "sz"), 1173);
-    assert_eq!(f2_to_cents(items[2].price.unwrap(), "hk"), 44540);
+    // 价格换算（万分之一元，ADR-0038）：A 股 f2 × 100、港股 × 10（与全量同步一致）
+    assert_eq!(f2_to_price(items[0].price.unwrap(), "sh"), 13028000);
+    assert_eq!(f2_to_price(items[1].price.unwrap(), "sz"), 117300);
+    assert_eq!(f2_to_price(items[2].price.unwrap(), "hk"), 4454000);
 }
 
 #[test]
@@ -164,8 +164,16 @@ fn incremental_sync_normalizes_symbol_suffix() {
 
     assert_eq!(result.synced, 2);
     assert_eq!(result.skipped, 0);
-    assert_eq!(market_price_of(&conn, "inst-sh"), Some(130280));
-    assert_eq!(market_price_of(&conn, "inst-hk"), Some(44540));
+    assert_eq!(
+        market_price_of(&conn, "inst-sh"),
+        Some(13028000),
+        "A 股 f2 × 100 得万分之一元"
+    );
+    assert_eq!(
+        market_price_of(&conn, "inst-hk"),
+        Some(4454000),
+        "港股 f2 × 10 得万分之一元"
+    );
 }
 
 #[test]
@@ -217,9 +225,9 @@ fn incremental_sync_updates_holding_prices_only() {
     assert_eq!(result.message, "已同步 3 只，跳过 0 只");
 
     // 价格覆盖更新：A 股直接得分、港股 ÷10
-    assert_eq!(market_price_of(&conn, "inst-sh"), Some(130280));
-    assert_eq!(market_price_of(&conn, "inst-sz"), Some(1173));
-    assert_eq!(market_price_of(&conn, "inst-hk"), Some(44540));
+    assert_eq!(market_price_of(&conn, "inst-sh"), Some(13028000));
+    assert_eq!(market_price_of(&conn, "inst-sz"), Some(117300));
+    assert_eq!(market_price_of(&conn, "inst-hk"), Some(4454000));
     // 每标的一条价格（无重复）
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM market_prices", [], |r| r.get(0))
@@ -257,7 +265,7 @@ fn incremental_sync_skips_non_stock_holdings() {
     assert_eq!(result.synced, 1);
     assert_eq!(result.skipped, 2, "基金/债券持仓应计入跳过统计");
     assert_eq!(result.message, "已同步 1 只，跳过 2 只");
-    assert_eq!(market_price_of(&conn, "inst-sh"), Some(130280));
+    assert_eq!(market_price_of(&conn, "inst-sh"), Some(13028000));
     assert_eq!(
         market_price_of(&conn, "inst-fund"),
         None,
@@ -281,7 +289,7 @@ fn incremental_sync_keeps_old_price_when_suspended() {
 
     assert_eq!(result.synced, 1);
     assert_eq!(result.skipped, 1, "停牌/无效价应计入跳过且不中断同步");
-    assert_eq!(market_price_of(&conn, "inst-sh"), Some(130280));
+    assert_eq!(market_price_of(&conn, "inst-sh"), Some(13028000));
     assert_eq!(
         market_price_of(&conn, "inst-sz"),
         Some(888),
@@ -302,7 +310,7 @@ fn incremental_sync_counts_missing_response_as_skipped() {
 
     assert_eq!(result.synced, 1);
     assert_eq!(result.skipped, 1);
-    assert_eq!(market_price_of(&conn, "inst-a"), Some(1000));
+    assert_eq!(market_price_of(&conn, "inst-a"), Some(100000));
     assert_eq!(market_price_of(&conn, "inst-b"), None);
 }
 
@@ -343,7 +351,7 @@ fn incremental_sync_is_idempotent() {
         .query_row("SELECT COUNT(*) FROM market_prices", [], |r| r.get(0))
         .unwrap();
     assert_eq!(count, 1);
-    assert_eq!(market_price_of(&conn, "inst-sh"), Some(130280));
+    assert_eq!(market_price_of(&conn, "inst-sh"), Some(13028000));
 }
 
 #[test]
@@ -360,7 +368,7 @@ fn incremental_sync_dedupes_same_instrument_across_accounts() {
 
     assert_eq!(result.synced, 1);
     assert_eq!(result.skipped, 0);
-    assert_eq!(market_price_of(&conn, "inst-sh"), Some(1000));
+    assert_eq!(market_price_of(&conn, "inst-sh"), Some(100000));
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM market_prices", [], |r| r.get(0))
         .unwrap();
@@ -534,9 +542,9 @@ fn kline_backfill_downsamples_daily_to_weekly() {
     assert_eq!(
         price_history_rows(&conn, "inst-sh"),
         vec![
-            ("2025-12-24".into(), 1000, "CNY".into()),
-            ("2025-12-31".into(), 1010, "CNY".into()),
-            ("2026-01-13".into(), 1040, "CNY".into()),
+            ("2025-12-24".into(), 100000, "CNY".into()),
+            ("2025-12-31".into(), 101000, "CNY".into()),
+            ("2026-01-13".into(), 104000, "CNY".into()),
         ],
         "每周取最后一个有报价交易日的收盘价；整周缺价该周无点"
     );
@@ -572,7 +580,7 @@ fn kline_backfill_full_week_overwrite_is_idempotent() {
 
     assert_eq!(
         price_history_rows(&conn, "inst-sh"),
-        vec![("2026-01-08".into(), 920, "CNY".into())],
+        vec![("2026-01-08".into(), 92000, "CNY".into())],
         "同周重复回填整周覆盖：采样日与价格取最新一次抓取"
     );
     let count: i64 = conn
@@ -663,12 +671,12 @@ fn kline_backfill_writes_fx_rate_history_alongside() {
         fx_rows(&conn, "HKD", "CNY"),
         vec![("2026-01-05".into(), 0.91), ("2026-01-13".into(), 0.92)],
     );
-    // 价格历史同期落库（收盘价 ×100 得分：475.00 → 47500 分，与既有 f2 换算口径一致）。
+    // 价格历史同期落库（收盘价 ×10000 得万分之一元：475.00 → 4750000，ADR-0038 刻度）。
     assert_eq!(
         price_history_rows(&conn, "inst-hk"),
         vec![
-            ("2026-01-05".into(), 47500, "HKD".into()),
-            ("2026-01-13".into(), 48000, "HKD".into()),
+            ("2026-01-05".into(), 4750000, "HKD".into()),
+            ("2026-01-13".into(), 4800000, "HKD".into()),
         ],
     );
     // 仅非本位币币种对触发汇率抓取（CNY 股票不查汇率）。
@@ -692,7 +700,7 @@ fn kline_backfill_empty_history_keeps_quote_only() {
     let result = do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx).unwrap();
 
     assert_eq!(result.synced, 1, "无历史不中断同步");
-    assert_eq!(market_price_of(&conn, "inst-sh"), Some(1000));
+    assert_eq!(market_price_of(&conn, "inst-sh"), Some(100000));
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM price_history", [], |r| r.get(0))
         .unwrap();

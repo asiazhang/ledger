@@ -138,7 +138,7 @@ pub(super) const MARKETS: &[MarketConfig] = &[
 
 /// 行情接口返回的单个股票条目（字段 f12=代码, f14=名称, f2=价格原始值）。
 /// 注意 f2 的隐含小数位因市场而异：A 股 2 位（f2=951 表示 9.51），港股 3 位（f2=475200 表示 475.200），
-/// 因此这里保留原始 f2，换算成分在 `f2_to_cents` 按市场处理。
+/// 因此这里保留原始 f2，换算在 `f2_to_price` 按市场处理。
 /// get_total 请求只带 fields=f12，响应条目可能缺 f14/f2，因此名称与价格均可缺省。
 #[derive(Debug, Deserialize)]
 pub(super) struct StockItem {
@@ -162,12 +162,13 @@ where
     Ok(raw.filter(|&p| p > 0.0))
 }
 
-/// 将原始 f2 换算为整数分：A 股 f2=价格×100（×1 即得分），港股 f2=价格×1000（÷10 得分）。
-pub(super) fn f2_to_cents(raw: f64, market_code: &str) -> i64 {
+/// 将原始 f2 换算为万分之一元（0.0001 元，价格刻度 ADR-0038）：
+/// A 股 f2=价格×100（再 ×100 得万分之一元），港股 f2=价格×1000（×10 得万分之一元）。
+pub(super) fn f2_to_price(raw: f64, market_code: &str) -> i64 {
     if market_code == "hk" {
-        (raw / 10.0).round() as i64
+        (raw * 10.0).round() as i64
     } else {
-        raw.round() as i64
+        (raw * 100.0).round() as i64
     }
 }
 

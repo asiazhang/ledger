@@ -59,7 +59,7 @@ const editingTrade: TransactionTrade = {
   symbol: 'NVDA',
   instrument_name: '英伟达',
   quantity: 100,
-  price_cents: 15000,
+  price_cents: 1500000, // 150 元（万分之一元刻度）
   fee_cents: 500,
 }
 

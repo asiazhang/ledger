@@ -346,7 +346,7 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
     symbol: 'NVDA',
     instrument_name: '英伟达',
     quantity: 100,
-    price_cents: 15000,
+    price_cents: 1500000, // 150 元（万分之一元刻度）
     fee_cents: 500,
   }
 
@@ -447,7 +447,7 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
       date: '2026-01-10',
       instrument_id: 'ins-1',
       quantity: 100,
-      price_cents: 15000,
+      price_cents: 1500000, // 150 元（万分之一元刻度）
       fee_cents: 500,
     })
     expect(input.idempotency_key).toBeUndefined()

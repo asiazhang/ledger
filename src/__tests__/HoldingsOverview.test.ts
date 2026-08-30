@@ -8,6 +8,8 @@ import { useReferenceStore } from '@/stores/reference'
 import HoldingsOverview from '@/components/investments/HoldingsOverview.vue'
 import {
   invokeHandler,
+  makeHolding,
+  makeInstrument,
   mockAccounts,
   mockCurrencies,
   mockHoldings,
@@ -107,6 +109,33 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     await flushPromises()
     expect(wrapper.find('.n-empty').exists()).toBe(true)
     expect(wrapper.text()).toContain('暂无持仓')
+  })
+
+  it('现价列展示基金净值 4 位小数（万分之一元刻度，ADR-0038）', async () => {
+    const fundHolding = makeHolding({
+      id: 'h-fund',
+      instrument_id: 'inst-fund',
+      quantity: 1000,
+      cost_basis_cents: 123400,
+      latest_price_cents: 12345,
+      latest_price_currency_code: 'CNY',
+      market_value_cents: 123450,
+      unrealized_pnl_cents: 50,
+    })
+    baseInvoke({
+      list_holdings: [fundHolding],
+      list_instruments: {
+        items: [
+          ...mockInstruments,
+          makeInstrument({ id: 'inst-fund', symbol: '000123', name: '净值保真基金' }),
+        ],
+        total: mockInstruments.length + 1,
+      },
+    })
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    // 现价 12345 万分之一元 = 1.2345 元，4 位小数无损展示
+    expect(await cellText('latest_price')).toEqual(['¥1.2345'])
   })
 
   it('右上角「同步持仓价格」按钮触发增量同步命令，反馈与标的页一致', async () => {

@@ -1,6 +1,6 @@
 import type { TransactionInput, TransactionKind } from '@/types'
 import { toLocalDateISO } from '@/utils/date'
-import { yuanToCents } from '@/utils/money'
+import { yuanToCents, yuanToPrice } from '@/utils/money'
 
 /**
  * TransactionInput 装配器（issue #215）：「记一笔」表单状态 → 完整 TransactionInput
@@ -13,7 +13,8 @@ import { yuanToCents } from '@/utils/money'
  * 边界：
  * - per-kind 字段矩阵（各 kind 填什么、留什么 null）收敛于 KIND_FIELD_MATRIX 一处，
  *   新增表单形态只改矩阵；
- * - 元转分全仓只有 yuanToCents 一处、日期只有 toLocalDateISO 一处，此处不另写算法；
+ * - 元转分全仓只有 yuanToCents 一处（单价走 yuanToPrice 万分之一元，ADR-0038）、
+ *   日期只有 toLocalDateISO 一处，此处不另写算法；
  * - 商户解析（resolveMerchantId 五分支）与语义校验（金额 > 0、转出≠转入等）留表单层；
  * - 非法输入 fail fast：throw 中文错误，不静默兜底。
  *
@@ -128,6 +129,14 @@ function requireAmountCents(amount: number | null, label: string): number {
   return cents
 }
 
+/** 元 → 万分之一元（yuanToPrice 单点口径，价格刻度见 ADR-0038）：缺失或非法数值 fail fast */
+function requirePrice(price: number | null, label: string): number {
+  if (price == null) fail(`${label}不能为空`)
+  const p = yuanToPrice(price)
+  if (p == null) fail(`${label}无效: ${price}`)
+  return p
+}
+
 /** 本地日期时间戳 → YYYY-MM-DD（toLocalDateISO 单点口径）：非法时间戳 fail fast */
 function requireDateISO(date: number): string {
   if (!Number.isFinite(date)) fail('日期无效')
@@ -216,7 +225,8 @@ export function buildTradeInput(state: TradeFormState): TransactionInput {
     }),
     instrument_id: requireNonEmpty(state.instrumentId, '标的'),
     quantity: requireQuantity(state.quantity),
-    price_cents: requireAmountCents(state.price, '单价'),
+    // 单价是价格列（万分之一元刻度，ADR-0038），与金额列（分）换算口径不同
+    price_cents: requirePrice(state.price, '单价'),
     fee_cents: state.fee == null ? null : requireAmountCents(state.fee, '手续费'),
   }
 }

@@ -47,10 +47,10 @@ fn insert_fx_rate_history(
 fn instrument_price_trend_clips_range_and_starts_at_first_point() {
     let conn = setup_db();
     insert_instrument(&conn, "inst-t1", "600519", "贵州茅台", "CNY");
-    insert_price_history(&conn, "ph-1", "inst-t1", "2026-01-05", 10000, "CNY");
-    insert_price_history(&conn, "ph-2", "inst-t1", "2026-01-12", 11000, "CNY");
-    insert_price_history(&conn, "ph-3", "inst-t1", "2026-01-19", 12000, "CNY");
-    insert_price_history(&conn, "ph-4", "inst-t1", "2026-02-02", 13000, "CNY");
+    insert_price_history(&conn, "ph-1", "inst-t1", "2026-01-05", 1_000_000, "CNY");
+    insert_price_history(&conn, "ph-2", "inst-t1", "2026-01-12", 1_100_000, "CNY");
+    insert_price_history(&conn, "ph-3", "inst-t1", "2026-01-19", 1_200_000, "CNY");
+    insert_price_history(&conn, "ph-4", "inst-t1", "2026-02-02", 1_300_000, "CNY");
 
     // 区间裁剪：只返回区间内（含端点）的周点。
     let trend = trend::query_instrument_price_trend(
@@ -64,7 +64,10 @@ fn instrument_price_trend_clips_range_and_starts_at_first_point() {
     .unwrap();
     let dates: Vec<&str> = trend.points.iter().map(|p| p.date.as_str()).collect();
     assert_eq!(dates, ["2026-01-12", "2026-01-19"]);
-    assert_eq!(trend.points[0].price_cents, 11000);
+    assert_eq!(
+        trend.points[0].price_cents, 1_100_000,
+        "价格点直出万分之一元刻度"
+    );
     assert_eq!(trend.points[0].currency_code, "CNY");
     assert_eq!(trend.instrument_id, "inst-t1");
 
@@ -102,11 +105,11 @@ fn portfolio_trend_derives_quantity_from_buy_sell_flow() {
     let conn = setup_db();
     insert_account(&conn, "acc-trd", "证券户", "investment", "CNY");
     insert_instrument(&conn, "inst-t2", "000001", "平安银行", "CNY");
-    // 周价格点：w1=1000、w2=2000、w3=3000、w4=4000（CNY，无需折算）。
-    insert_price_history(&conn, "ph-w1", "inst-t2", "2026-02-02", 1000, "CNY");
-    insert_price_history(&conn, "ph-w2", "inst-t2", "2026-02-09", 2000, "CNY");
-    insert_price_history(&conn, "ph-w3", "inst-t2", "2026-02-16", 3000, "CNY");
-    insert_price_history(&conn, "ph-w4", "inst-t2", "2026-02-23", 4000, "CNY");
+    // 周价格点（万分之一元）：w1=10 元、w2=20 元、w3=30 元、w4=40 元（CNY，无需折算）。
+    insert_price_history(&conn, "ph-w1", "inst-t2", "2026-02-02", 100_000, "CNY");
+    insert_price_history(&conn, "ph-w2", "inst-t2", "2026-02-09", 200_000, "CNY");
+    insert_price_history(&conn, "ph-w3", "inst-t2", "2026-02-16", 300_000, "CNY");
+    insert_price_history(&conn, "ph-w4", "inst-t2", "2026-02-23", 400_000, "CNY");
     // 时序：w1 未买入（数量 0）→ w2 周内（02-06）买入 10 股 → w3 持有 10 股 → 2026-02-20（w3 内）清仓 → w4 归零。
     create_transaction_internal(
         &conn,
@@ -115,7 +118,7 @@ fn portfolio_trend_derives_quantity_from_buy_sell_flow() {
             "acc-trd",
             "inst-t2",
             10.0,
-            1500,
+            150_000,
             "2026-02-06",
         ),
     )
@@ -127,7 +130,7 @@ fn portfolio_trend_derives_quantity_from_buy_sell_flow() {
             "acc-trd",
             "inst-t2",
             10.0,
-            3500,
+            350_000,
             "2026-02-20",
         ),
     )
@@ -156,9 +159,9 @@ fn portfolio_trend_with_date_range_clips_weeks_and_does_not_lose_pre_start_flow(
     let conn = setup_db();
     insert_account(&conn, "acc-rng", "区间户", "investment", "CNY");
     insert_instrument(&conn, "inst-rng", "600036", "招商银行", "CNY");
-    insert_price_history(&conn, "ph-r1", "inst-rng", "2026-04-06", 1000, "CNY");
-    insert_price_history(&conn, "ph-r2", "inst-rng", "2026-04-13", 2000, "CNY");
-    insert_price_history(&conn, "ph-r3", "inst-rng", "2026-04-20", 4000, "CNY");
+    insert_price_history(&conn, "ph-r1", "inst-rng", "2026-04-06", 100_000, "CNY");
+    insert_price_history(&conn, "ph-r2", "inst-rng", "2026-04-13", 200_000, "CNY");
+    insert_price_history(&conn, "ph-r3", "inst-rng", "2026-04-20", 400_000, "CNY");
     // 买入在区间起点之前：起点前的流水必须累积带入，起点后各周数量才非零。
     create_transaction_internal(
         &conn,
@@ -167,7 +170,7 @@ fn portfolio_trend_with_date_range_clips_weeks_and_does_not_lose_pre_start_flow(
             "acc-rng",
             "inst-rng",
             3.0,
-            500,
+            50_000,
             "2026-04-08",
         ),
     )
@@ -202,10 +205,10 @@ fn portfolio_trend_converts_hkd_via_same_week_fx_with_reverse_fallback() {
     let conn = setup_db();
     insert_account(&conn, "acc-hkd", "港美股户", "investment", "CNY");
     insert_instrument(&conn, "inst-hkd", "00700", "腾讯控股", "HKD");
-    // 港股以 HKD 计价：w1=100 HKD（10000 分）、w2=200 HKD、w3=300 HKD。
-    insert_price_history(&conn, "ph-h1", "inst-hkd", "2026-03-02", 10000, "HKD");
-    insert_price_history(&conn, "ph-h2", "inst-hkd", "2026-03-09", 20000, "HKD");
-    insert_price_history(&conn, "ph-h3", "inst-hkd", "2026-03-16", 30000, "HKD");
+    // 港股以 HKD 计价（万分之一元刻度）：w1=100 HKD、w2=200 HKD、w3=300 HKD。
+    insert_price_history(&conn, "ph-h1", "inst-hkd", "2026-03-02", 1_000_000, "HKD");
+    insert_price_history(&conn, "ph-h2", "inst-hkd", "2026-03-09", 2_000_000, "HKD");
+    insert_price_history(&conn, "ph-h3", "inst-hkd", "2026-03-16", 3_000_000, "HKD");
     // w1 有正向汇率 HKD->CNY=0.8；w2 只有反向 CNY->HKD=5.0（兜底取倒数 0.2）；w3 无任何历史汇率。
     insert_fx_rate_history(&conn, "fx-h1", "HKD", "CNY", "2026-03-03", 0.8);
     insert_fx_rate_history(&conn, "fx-h2", "CNY", "HKD", "2026-03-10", 5.0);
@@ -217,7 +220,7 @@ fn portfolio_trend_converts_hkd_via_same_week_fx_with_reverse_fallback() {
             "acc-hkd",
             "inst-hkd",
             2.0,
-            10000,
+            1_000_000,
             "2026-02-20",
         ),
     )
@@ -254,7 +257,7 @@ fn portfolio_trend_skips_weeks_missing_price_or_fx_but_keeps_other_contributors(
             "acc-mix",
             "inst-a",
             1.0,
-            1000,
+            100_000,
             "2026-02-20",
         ),
     )
@@ -266,18 +269,18 @@ fn portfolio_trend_skips_weeks_missing_price_or_fx_but_keeps_other_contributors(
             "acc-mix",
             "inst-b",
             1.0,
-            10000,
+            1_000_000,
             "2026-02-20",
         ),
     )
     .unwrap();
-    // inst-a（CNY）三周全有价：1000 分/周。
-    insert_price_history(&conn, "ph-a1", "inst-a", "2026-03-02", 1000, "CNY");
-    insert_price_history(&conn, "ph-a2", "inst-a", "2026-03-09", 1000, "CNY");
-    insert_price_history(&conn, "ph-a3", "inst-a", "2026-03-16", 1000, "CNY");
+    // inst-a（CNY）三周全有价：10 元/周。
+    insert_price_history(&conn, "ph-a1", "inst-a", "2026-03-02", 100_000, "CNY");
+    insert_price_history(&conn, "ph-a2", "inst-a", "2026-03-09", 100_000, "CNY");
+    insert_price_history(&conn, "ph-a3", "inst-a", "2026-03-16", 100_000, "CNY");
     // inst-b（HKD）w2 整周无价（停牌语义）；w3 有价但缺同期汇率。
-    insert_price_history(&conn, "ph-b1", "inst-b", "2026-03-02", 10000, "HKD");
-    insert_price_history(&conn, "ph-b3", "inst-b", "2026-03-16", 10000, "HKD");
+    insert_price_history(&conn, "ph-b1", "inst-b", "2026-03-02", 1_000_000, "HKD");
+    insert_price_history(&conn, "ph-b3", "inst-b", "2026-03-16", 1_000_000, "HKD");
     // 仅 w1 有 HKD->CNY=0.9。
     insert_fx_rate_history(&conn, "fx-m1", "HKD", "CNY", "2026-03-03", 0.9);
 
@@ -323,10 +326,10 @@ fn portfolio_trend_excludes_soft_deleted_account_flow_including_history() {
     let conn = setup_db();
     insert_account(&conn, "acc-sd", "待删户", "investment", "CNY");
     insert_instrument(&conn, "inst-sd", "000001", "平安银行", "CNY");
-    // 周价格点：w1=1000、w2=2000、w3=3000（CNY，无需折算）。
-    insert_price_history(&conn, "ph-s1", "inst-sd", "2026-02-02", 1000, "CNY");
-    insert_price_history(&conn, "ph-s2", "inst-sd", "2026-02-09", 2000, "CNY");
-    insert_price_history(&conn, "ph-s3", "inst-sd", "2026-02-16", 3000, "CNY");
+    // 周价格点（万分之一元）：w1=10 元、w2=20 元、w3=30 元（CNY，无需折算）。
+    insert_price_history(&conn, "ph-s1", "inst-sd", "2026-02-02", 100_000, "CNY");
+    insert_price_history(&conn, "ph-s2", "inst-sd", "2026-02-09", 200_000, "CNY");
+    insert_price_history(&conn, "ph-s3", "inst-sd", "2026-02-16", 300_000, "CNY");
     // 早于首条价格点买入 10 股：软删前基线 = 各周 10 × 当周价。
     create_transaction_internal(
         &conn,
@@ -335,7 +338,7 @@ fn portfolio_trend_excludes_soft_deleted_account_flow_including_history() {
             "acc-sd",
             "inst-sd",
             10.0,
-            1500,
+            150_000,
             "2026-01-20",
         ),
     )
@@ -399,8 +402,8 @@ fn portfolio_trend_keeps_hidden_account_flow() {
     conn.execute("UPDATE accounts SET is_hidden=1 WHERE id='acc-hid'", [])
         .unwrap();
     insert_instrument(&conn, "inst-hd", "600036", "招商银行", "CNY");
-    insert_price_history(&conn, "ph-hd1", "inst-hd", "2026-02-02", 1000, "CNY");
-    insert_price_history(&conn, "ph-hd2", "inst-hd", "2026-02-09", 2000, "CNY");
+    insert_price_history(&conn, "ph-hd1", "inst-hd", "2026-02-02", 100_000, "CNY");
+    insert_price_history(&conn, "ph-hd2", "inst-hd", "2026-02-09", 200_000, "CNY");
     create_transaction_internal(
         &conn,
         make_trade_input(
@@ -408,7 +411,7 @@ fn portfolio_trend_keeps_hidden_account_flow() {
             "acc-hid",
             "inst-hd",
             10.0,
-            1500,
+            150_000,
             "2026-01-20",
         ),
     )

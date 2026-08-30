@@ -1,6 +1,7 @@
 # Ledger 导入知识
 
 - 金额一律以「分」存储（字段带 `_cents`）：元 × 100 取整（45.50 元 → 4550）。
+- **价格例外**：buy/sell 的 `price_cents`（成交单价）与标的现价 `price_cents` 以**万分之一元**存储：元 × 10000 取整（1.2345 元 → 12345），保留基金净值 4 位小数；行金额 `amount_cents` 与 `fee_cents` 仍是分。
 - 中文币种名 → `currency_code`：人民币 → CNY、港币 → HKD；完整清单 `GET /api/v1/currencies`。
 - 日期严格 `YYYY-MM-DD`。
 
@@ -24,7 +25,7 @@
 ## 投资交易（buy / sell）
 
 - 标的解析三步法：① `GET /api/v1/instruments` 按源数据中的标的描述（代码/名称/拼音首字母）搜索标的；② 未命中再 `POST /api/v1/instruments` 幂等创建（重复创建返回同一 id）：`symbol` 必填，源数据只有名称时以名称充当代码；`type` 从上下文判断（stock/fund/bond/etf/other）；`name` / `market` / `currency_code` 可省；③ 用返回的标的 `id` 填 `instrument_id`。同码异类型靠搜索的 `type` 参数消歧。
-- 行字段约束：`account_id` 必须是投资账户（`GET /api/v1/accounts` 返回 `type` 可辨）；`quantity`（数量，份，可小数）与 `price_cents`（成交单价，分）必填且 > 0；`fee_cents`（手续费，分）可省，默认 0。`buy` / `sell` 不带商户。
+- 行字段约束：`account_id` 必须是投资账户（`GET /api/v1/accounts` 返回 `type` 可辨）；`quantity`（数量，份，可小数）与 `price_cents`（成交单价，万分之一元，元 × 10000）必填且 > 0；`fee_cents`（手续费，分）可省，默认 0。`buy` / `sell` 不带商户。
 - 金额服务端按固定公式重算覆盖：`buy` = 数量 × 单价 + 费用，`sell` = 数量 × 单价 − 费用（`sell` 费用不得超过卖出收入），`currency_code` 取账户币种——`amount_cents` / `currency_code` 按同式填写即可。
 - 纠错：`buy` 交易已有部分卖出后禁改禁删（提交会被拒绝，改持仓历史会破坏已实现盈亏）；`sell` 数量不得超过当前持仓；`instrument_id` 引用不存在的标的返回 400——先搜索、未命中创建拿到正确 id 后重新提交即可自纠。
 - 对账：读回核对时 `buy` / `sell` 行金额按上式核对；余额核对含投资账户现金流——`buy` 减现金、`sell` 增现金（`GET /api/v1/accounts/balances`）。

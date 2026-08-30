@@ -3,7 +3,7 @@
 
 use rusqlite::{Connection, params};
 
-use crate::commands::sync::http::{ClistResponse, StockItem, f2_to_cents};
+use crate::commands::sync::http::{ClistResponse, StockItem, f2_to_price};
 use crate::commands::sync::persist::{apply_stock_item, build_existing_instruments};
 use crate::db::{new_uuid, now_iso};
 use crate::error::Result;
@@ -38,11 +38,12 @@ fn clist_response_deserializes_array_diff() {
 }
 
 #[test]
-fn f2_to_cents_scales_by_market() {
-    assert_eq!(f2_to_cents(951.0, "sh"), 951);
-    assert_eq!(f2_to_cents(1700.0, "sz"), 1700);
-    assert_eq!(f2_to_cents(475200.0, "hk"), 47520);
-    assert_eq!(f2_to_cents(73600.0, "hk"), 7360);
+fn f2_to_price_scales_by_market() {
+    // 万分之一元刻度（ADR-0038）：f2=951（9.51 元）→ 95100；港股 f2=475200（475.200 元）→ 4752000
+    assert_eq!(f2_to_price(951.0, "sh"), 95100);
+    assert_eq!(f2_to_price(1700.0, "sz"), 170000);
+    assert_eq!(f2_to_price(475200.0, "hk"), 4752000);
+    assert_eq!(f2_to_price(73600.0, "hk"), 736000);
 }
 
 #[test]
@@ -271,7 +272,10 @@ fn do_sync_updates_market_price_on_existing_instrument() {
             Ok((r.get(0)?,))
         })
         .unwrap();
-    assert_eq!(price_cents, 2000);
+    assert_eq!(
+        price_cents, 200000,
+        "f2=2000（20.00 元）× 100 = 万分之一元刻度"
+    );
 }
 
 /// 模拟单个市场的同步落库流程（复用持久化逻辑），返回 (新增数, 更新数)。

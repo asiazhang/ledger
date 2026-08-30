@@ -63,7 +63,8 @@ pub struct TransactionInput {
     pub instrument_id: Option<String>,
     /// 成交数量（份，可含小数）：仅 buy/sell 需提供，必须 > 0。
     pub quantity: Option<f64>,
-    /// 成交单价（整数分）：仅 buy/sell 需提供，必须 > 0。
+    /// 成交单价（万分之一元，元 × 10000；价格刻度见 ADR-0038，金额列仍为整数分）：
+    /// 仅 buy/sell 需提供，必须 > 0。
     pub price_cents: Option<i64>,
     /// 手续费（整数分，可省，默认 0）：sell 不得超过卖出收入（数量 × 单价）；
     /// 服务端按 buy = 数量 × 单价 + 费用、sell = 数量 × 单价 − 费用重算行金额。
@@ -98,7 +99,7 @@ pub struct UpdateTransactionInput {
     pub instrument_id: Option<String>,
     /// 成交数量（份，可含小数）：与 `TransactionInput.quantity` 同一契约，必须 > 0。
     pub quantity: Option<f64>,
-    /// 成交单价（整数分）：与 `TransactionInput.price_cents` 同一契约，必须 > 0。
+    /// 成交单价（万分之一元）：与 `TransactionInput.price_cents` 同一契约，必须 > 0。
     pub price_cents: Option<i64>,
     /// 手续费（整数分，可省，默认 0）：与 `TransactionInput.fee_cents` 同一契约。
     pub fee_cents: Option<i64>,
