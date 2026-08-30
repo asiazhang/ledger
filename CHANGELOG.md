@@ -11,10 +11,7 @@
 
 ### BREAKING
 
-- **数据库 schema（就地修改 V002/V010，价格刻度翻转）**：全投资域价格语义列的刻度由「分」（1/100 元）就地重定义为**万分之一元**（0.0001 元，基金净值 4 位小数无损保真的地基，ADR-0038），波及四类列：现价（`market_prices.price_cents`）、价格历史（`price_history.price_cents`）、成交单价（`security_transactions.price_cents`）、每份成本（`security_lots.cost_per_unit_cents` 及 `security_lot_sales.cost_per_unit_cents` 成本快照）；`v_holdings` 视图表达式同步换算（金额分 = 数量 × 万分之一元单价 ÷ 100）。列名保留 `_cents` 历史名（就地改名会让新旧库列名分叉）、无 DDL 结构变化；**交易金额列（`amount_cents` 等）与手续费仍是整数分，不随本次翻转**。就地修改只影响全新安装（全迁移即得正确刻度）；**存量库升级后价格会显示 100 倍错乱，须执行一次性处置**：
-  1. 运行 `./scripts/migrate-price-scale.sh`（单事务原子完成：×100 修正成交单价/每份成本/卖出成本快照三列真实记录 → 清空可重建缓存现价/价格历史/汇率历史 → 重建 `v_holdings` 视图 → 落 `app_settings` 完成标记，重复执行自动拒绝）；
-  2. 启动应用，在标的页执行「全量同步」与「同步持仓价格」重新回填价格与近两年走势。
-  迁移文件头部就地修改注记见 `src-tauri/migrations/V002__investment.sql` 与 `V010__price_history.sql`。
+- **数据库 schema（就地修改 V002/V010，价格刻度翻转）**：全投资域价格语义列的刻度由「分」（1/100 元）就地重定义为**万分之一元**（0.0001 元，基金净值 4 位小数无损保真的地基，ADR-0038），波及四类列：现价（`market_prices.price_cents`）、价格历史（`price_history.price_cents`）、成交单价（`security_transactions.price_cents`）、每份成本（`security_lots.cost_per_unit_cents` 及 `security_lot_sales.cost_per_unit_cents` 成本快照）；`v_holdings` 视图表达式同步换算（金额分 = 数量 × 万分之一元单价 ÷ 100）。列名保留 `_cents` 历史名（就地改名会让新旧库列名分叉）、无 DDL 结构变化；**交易金额列（`amount_cents` 等）与手续费仍是整数分，不随本次翻转**。就地修改只影响全新安装（全迁移即得正确刻度）；**存量库不在本次兼容范围**——不提供一次性 ×100 处置工具、不做迁移版本嗅探的自动修复。存量库直接升级后价格数值将按 100 倍错读（成交单价/每份成本真实记录、现价与价格历史缓存、`v_holdings` 视图口径互不匹配），处置与否由维护者自行权衡（原则见 ADR-0038 决策 5）。迁移文件头部就地修改注记见 `src-tauri/migrations/V002__investment.sql` 与 `V010__price_history.sql`。
 
 - **数据库 schema（就地修改 V003，仅影响全新安装）**：定时交易系迁移的 9 个引用列补全显式 `ON DELETE` 动作——强依赖（账户/币种/转入账户）`RESTRICT`、溯源指针（可空分类、期次生成交易）`SET NULL`、期次与计划扩展表行（期次表、分期/订阅/定时转账三张扩展表）`CASCADE`——替代此前的 SQLite 默认 `NO ACTION`。就地修改只影响全新安装；存量库与旧备份恢复路径保持 `NO ACTION`（当前应用无硬删路径，两类 schema 行为零差异、差异不可达），未来首个依赖新 ON DELETE 语义的功能（如硬删/清理）发布时须自带收敛迁移。迁移文件头部就地修改注记见 `src-tauri/migrations/V003__scheduled_transactions.sql`。
 
