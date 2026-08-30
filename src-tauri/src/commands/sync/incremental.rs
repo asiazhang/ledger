@@ -27,7 +27,7 @@ use super::http::{
     fetch_kline, fetch_ulist, secid_prefix,
 };
 use super::persist::{
-    kline_close_to_price, upsert_fx_rate_history, upsert_market_price, upsert_price_history,
+    price_value_to_cents, upsert_fx_rate_history, upsert_market_price, upsert_price_history,
 };
 
 /// 持仓股票的报价代码：东财 secid 与响应 f12 均为裸代码（如 600519 / 00700）。
@@ -140,7 +140,14 @@ where
                 // f2≤0（停牌/无效价）经 deserialize_f2 已过滤为 None，此处跳过、保留旧价。
                 if let Some(raw) = item.price {
                     let price = f2_to_price(raw, &stock.market);
-                    upsert_market_price(conn, &stock.instrument_id, price, &stock.currency)?;
+                    upsert_market_price(
+                        conn,
+                        &stock.instrument_id,
+                        price,
+                        &stock.currency,
+                        &crate::db::now_iso(),
+                        None,
+                    )?;
                     synced_codes.insert(item.code.clone());
                 }
             }
@@ -157,7 +164,7 @@ where
                 conn,
                 &stock.instrument_id,
                 &trade_date,
-                kline_close_to_price(close),
+                price_value_to_cents(close),
                 &stock.currency,
             )?;
         }

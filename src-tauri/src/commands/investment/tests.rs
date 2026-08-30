@@ -4,6 +4,7 @@
 //! - [`common`]：建库 / 夹具插入 / 交易输入构造等共享脚手架
 //! - [`instrument_list`]：标的列表、搜索、invested 派生、CRUD 与持仓视图
 //! - [`instrument_create`]：标的创建的来源标记（同步 / 手动）与复用不覆盖
+//! - [`fund_add`]：按代码即拉添加基金（注入 stub，issue #301 / ADR-0038）
 //! - [`predicates`]：「持仓标的」判定谓词 ↔ v_holdings 视图一致性绑定
 //! - [`trade`]：buy/sell 写入与买卖明细查询（命名对齐源码 trade 模块）
 //! - [`pnl`]：已实现盈亏汇总
@@ -11,6 +12,7 @@
 //! - [`holdings_as_of`]：时点持仓推算
 
 mod common;
+mod fund_add;
 mod holdings_as_of;
 mod instrument_create;
 mod instrument_list;

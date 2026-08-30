@@ -64,6 +64,22 @@ export interface InstrumentListResult {
   total: number
 }
 
+/** 按代码即拉添加基金的结果（issue #301 / ADR-0038）：标的行落库 + 现价写入状态 */
+export interface AddFundResult {
+  instrument_id: string
+  symbol: string
+  /** 东财权威名称（已回填标的行） */
+  name: string
+  /** 东财基金分类（如「混合型-灵活」），展示透传，不落库 */
+  fund_class: string
+  /** 最新单位净值（万分之一元，ADR-0038 价格刻度）；未取到为 null */
+  nav_cents: number | null
+  /** 净值日期（ISO 日期）；未取到为 null */
+  nav_date: string | null
+  /** 是否落了现价缓存（后端据此判定是否广播价格失效信号） */
+  price_written: boolean
+}
+
 /** 交易买卖明细（issue #180）：一笔 buy/sell 交易在扩展表中的投影（核心交易行
  * 不含投资字段），供投资表单编辑模式回填标的/数量/价格/费用。`symbol`/`instrument_name`
  * 为 JOIN 标的表带出的展示字段，保证回填后标的选择框直接显示标的而非裸 id。 */

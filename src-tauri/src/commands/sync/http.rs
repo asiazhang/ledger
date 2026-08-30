@@ -66,7 +66,7 @@ pub(super) struct RetryConfig {
 }
 
 impl RetryConfig {
-    fn production() -> Self {
+    pub(super) fn production() -> Self {
         Self {
             max_retries: MAX_RETRIES,
             base_backoff: BASE_BACKOFF,

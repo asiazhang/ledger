@@ -72,7 +72,7 @@ pub(crate) fn create_exchange_rate(conn: &Connection, input: ExchangeRateInput) 
 pub(crate) fn list_market_prices(conn: &Connection) -> Result<Vec<MarketPrice>> {
     query_all(
         conn,
-        "SELECT id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id \
+        "SELECT id,instrument_id,price_cents,currency_code,priced_at,nav_date,source,created_at,updated_at,version,device_id \
          FROM market_prices ORDER BY instrument_id, priced_at DESC",
         [],
     )
@@ -92,12 +92,16 @@ pub(crate) fn create_market_price(conn: &Connection, input: MarketPriceInput) ->
         )
         .ok();
     let id = existing_id.unwrap_or(id);
+    // nav_date 随价格整行覆盖（手动落价无净值日期语义，覆盖为 NULL——与
+    // sync::persist::upsert_market_price 同规则，防基金现价被手动更新后旧净值
+    // 日期残留错配；基金现价常规通道见 fund::persist_fund_detail，#291 手动
+    // 报价重构时两处 upsert 预期收口）。
     conn.execute(
         "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) \
          ON CONFLICT(instrument_id) DO UPDATE SET \
          price_cents=excluded.price_cents, currency_code=excluded.currency_code, \
-         priced_at=excluded.priced_at, source=excluded.source, \
+         priced_at=excluded.priced_at, nav_date=NULL, source=excluded.source, \
          updated_at=excluded.updated_at, version=version+1, device_id=excluded.device_id",
         rusqlite::params![
             id,

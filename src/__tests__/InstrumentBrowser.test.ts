@@ -428,3 +428,134 @@ describe('InstrumentBrowser 全量同步（issue #109）', () => {
     expect(errText).toContain('请求被限流')
   })
 })
+
+describe('InstrumentBrowser 添加基金（issue #301 / ADR-0038）', () => {
+  const fundResult = {
+    instrument_id: 'inst-fund-1',
+    symbol: '000001',
+    name: '华夏成长混合',
+    fund_class: '混合型-灵活',
+    nav_cents: 13180,
+    nav_date: '2026-08-28',
+    price_written: true,
+  }
+
+  async function openAddFundModal() {
+    const wrapper = mount(InstrumentBrowser)
+    await flushPromises()
+    await wrapper.find('[data-testid="add-fund"]').trigger('click')
+    await nextTick()
+    return wrapper
+  }
+
+  async function setCode(code: string) {
+    // data-testid 落在 NInput 根元素上，真正受控的是内部 input 元素：
+    // 原生赋值 + 冒泡 input 事件驱动 v-model 更新。
+    const input = bodyQuery('[data-testid="add-fund-code"]')!.querySelector('input')!
+    input.value = code
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    await flushPromises()
+    await nextTick()
+  }
+
+  it('工具栏包含「添加基金」按钮', async () => {
+    const wrapper = mount(InstrumentBrowser)
+    await flushPromises()
+    const btn = wrapper.find('[data-testid="add-fund"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.text()).toContain('添加基金')
+  })
+
+  it('点击打开弹窗；非 6 位数字时提交按钮禁用、不发请求', async () => {
+    baseInvoke({ add_fund_by_code: () => Promise.resolve(fundResult) })
+    await openAddFundModal()
+    expect(bodyQuery('[data-testid="add-fund-code"]')).not.toBeNull()
+    // 空码 / 位数不足：提交禁用
+    expect(
+      (bodyQuery('[data-testid="submit-add-fund"]') as HTMLButtonElement).disabled,
+    ).toBe(true)
+    await setCode('1234')
+    expect(
+      (bodyQuery('[data-testid="submit-add-fund"]') as HTMLButtonElement).disabled,
+    ).toBe(true)
+    expect(mockInvoke).not.toHaveBeenCalledWith('add_fund_by_code', { code: '1234' })
+  })
+
+  it('输入过滤非数字字符（粘贴字母只剩数字）', async () => {
+    await openAddFundModal()
+    await setCode('12a3b4')
+    // watch 过滤后应为 1234（未满 6 位仍禁用），输满 6 位数字后可用
+    expect(
+      (bodyQuery('[data-testid="submit-add-fund"]') as HTMLButtonElement).disabled,
+    ).toBe(true)
+    await setCode('000001')
+    expect(
+      (bodyQuery('[data-testid="submit-add-fund"]') as HTMLButtonElement).disabled,
+    ).toBe(false)
+  })
+
+  // 弹窗退场过渡（NModal ~200ms）后断言 DOM 已卸载
+  async function waitForModalLeave() {
+    await new Promise((r) => setTimeout(r, 300))
+    await nextTick()
+    await flushPromises()
+  }
+
+  it('有效代码提交：调用 add_fund_by_code，成功回执展示名称/分类/净值/日期并重拉列表', async () => {
+    baseInvoke({ add_fund_by_code: () => Promise.resolve(fundResult) })
+    const wrapper = await openAddFundModal()
+    const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
+    await setCode('000001')
+    await clickBody('[data-testid="submit-add-fund"]')
+    expect(mockInvoke).toHaveBeenCalledWith('add_fund_by_code', { code: '000001' })
+    await waitForModalLeave()
+    // 成功回执（页面级）：名称、代码、分类、4 位小数净值与净值日期
+    const msg = wrapper.find('[data-testid="add-fund-result"]')
+    expect(msg.exists()).toBe(true)
+    expect(msg.text()).toContain('已添加基金：华夏成长混合（000001 · 混合型-灵活）')
+    expect(msg.text()).toContain('最新净值 1.318（2026-08-28）')
+    // 列表重拉（新标的上列表）；弹窗关闭的 DOM 断言受 NModal 退场过渡影响
+    //（jsdom 不触发 transitionend，先例：全量同步确认框测试交状态层覆盖），此处不断言。
+    const after = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
+    expect(after).toBeGreaterThan(before)
+  })
+
+  it('未取到净值：仍添加成功，回执提示暂未取到净值', async () => {
+    baseInvoke({
+      add_fund_by_code: () =>
+        Promise.resolve({
+          ...fundResult,
+          nav_cents: null,
+          nav_date: null,
+          price_written: false,
+        }),
+    })
+    const wrapper = await openAddFundModal()
+    await setCode('012345')
+    await clickBody('[data-testid="submit-add-fund"]')
+    const msg = wrapper.find('[data-testid="add-fund-result"]')
+    expect(msg.text()).toContain('暂未取到净值')
+  })
+
+  it('查无此码：弹窗内展示中文报错，不重拉列表、无成功回执', async () => {
+    baseInvoke({
+      add_fund_by_code: () =>
+        Promise.reject({ kind: 'Invalid', message: '查无基金代码 999999，请核对后重试' }),
+    })
+    const wrapper = await openAddFundModal()
+    const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
+    await setCode('999999')
+    await clickBody('[data-testid="submit-add-fund"]')
+    // 中文报错在弹窗内展示（AppError 序列化对象形态经 errorMessage 提取），
+    // 弹窗保持打开供改码重试（DOM 卸载断言受退场过渡影响，以错误区呈现为准）
+    const err = bodyQuery('[data-testid="add-fund-error"]')!
+    expect(err).not.toBeNull()
+    expect(err.textContent).toContain('查无基金代码 999999')
+    expect(err.textContent).not.toContain('[object Object]')
+    // 失败不产生标的行：无成功回执、不重拉列表
+    expect(wrapper.find('[data-testid="add-fund-result"]').exists()).toBe(false)
+    const after = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
+    expect(after).toBe(before)
+  })
+})
