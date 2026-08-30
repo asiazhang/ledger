@@ -2,6 +2,12 @@
 
 本文件记录 Ledger 各版本对使用者可见的变更，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)规则。
 
+## [Unreleased]
+
+### BREAKING
+
+- **数据库 schema（就地修改 V003，仅影响全新安装）**：定时交易系迁移的 9 个引用列补全显式 `ON DELETE` 动作——强依赖（账户/币种/转入账户）`RESTRICT`、溯源指针（可空分类、期次生成交易）`SET NULL`、期次与计划扩展表行（期次表、分期/订阅/定时转账三张扩展表）`CASCADE`——替代此前的 SQLite 默认 `NO ACTION`。就地修改只影响全新安装；存量库与旧备份恢复路径保持 `NO ACTION`（当前应用无硬删路径，两类 schema 行为零差异、差异不可达），未来首个依赖新 ON DELETE 语义的功能（如硬删/清理）发布时须自带收敛迁移。迁移文件头部就地修改注记见 `src-tauri/migrations/V003__scheduled_transactions.sql`。
+
 ## [0.3.0] - 2026-08-27
 
 ### Added
