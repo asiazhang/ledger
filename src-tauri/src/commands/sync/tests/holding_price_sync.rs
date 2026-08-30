@@ -210,7 +210,16 @@ fn incremental_sync_updates_holding_prices_only() {
     insert_holding(&conn, "acc-2", "inst-sz", "000001", "stock", "CNY", "sz");
     insert_holding(&conn, "acc-3", "inst-hk", "00700", "stock", "HKD", "hk");
     // 预先存在的旧价（应被覆盖更新，不产生新行）
-    upsert_market_price(&conn, "inst-sh", 999, "CNY", "2026-01-01T00:00:00Z", None).unwrap();
+    upsert_market_price(
+        &conn,
+        "inst-sh",
+        999,
+        "CNY",
+        "2026-01-01T00:00:00Z",
+        None,
+        Some("eastmoney"),
+    )
+    .unwrap();
 
     let prices = [
         ("600519", Some(130280.0)),
@@ -280,7 +289,16 @@ fn incremental_sync_keeps_old_price_when_suspended() {
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     insert_holding(&conn, "acc-2", "inst-sz", "000001", "stock", "CNY", "sz");
     // 停牌股已有旧价
-    upsert_market_price(&conn, "inst-sz", 888, "CNY", "2026-01-01T00:00:00Z", None).unwrap();
+    upsert_market_price(
+        &conn,
+        "inst-sz",
+        888,
+        "CNY",
+        "2026-01-01T00:00:00Z",
+        None,
+        Some("eastmoney"),
+    )
+    .unwrap();
 
     // 600519 正常价；000001 停牌（f2 无效 → None）
     let prices = [("600519", Some(130280.0)), ("000001", None)];

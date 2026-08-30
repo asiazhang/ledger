@@ -151,6 +151,7 @@ pub fn run() {
             commands::add_fund_by_code,
             commands::list_instruments,
             commands::create_instrument,
+            commands::record_manual_price,
             commands::get_transaction_trade,
             commands::list_holdings,
             commands::instrument_price_trend,

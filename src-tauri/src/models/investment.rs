@@ -257,6 +257,29 @@ pub struct MarketPriceInput {
     pub source: Option<String>,
 }
 
+/// 手动报价入参（issue #291 / ADR-0036）：标的 id + 日期（ISO YYYY-MM-DD）+ 价格
+/// （万分之一元，ADR-0038 价格刻度）。后端命令不设「同步覆盖不到」守卫——
+/// 录价入口收口在 UI 侧（ADR-0036 决策 1 修订）。
+#[derive(Debug, Deserialize)]
+pub struct ManualPriceInput {
+    pub instrument_id: String,
+    /// 报价对应的交易日（ISO YYYY-MM-DD）。
+    pub date: String,
+    /// 单价（万分之一元，价格刻度见 ADR-0038）。
+    pub price_cents: i64,
+}
+
+/// 手动报价结果（issue #291）：两个落点各自的实际写入情况。
+/// `history_written` = 价格历史周采样落库；`current_price_written` = 现价缓存
+/// upsert（报价不早于最新价格点时写入；回填旧价为 false——现价是 PriceHistory
+/// 最新一条的即时映像，回填不改变现价）。前端据此区分回执文案；信号发射判定
+/// 见 `commands::investment::manual_price::should_emit_prices_changed`。
+#[derive(Debug, Serialize)]
+pub struct ManualPriceResult {
+    pub history_written: bool,
+    pub current_price_written: bool,
+}
+
 #[derive(Debug, Serialize)]
 pub struct RealizedPnlSummary {
     pub total_realized_pnl_cents: i64,

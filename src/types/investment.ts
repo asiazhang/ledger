@@ -74,6 +74,42 @@ export interface InstrumentListResult {
   total: number
 }
 
+/**
+ * 6 位纯数字基金代码判定（后端 `is_six_digit_code` 的前端镜像，跨 IPC 无法字面
+ * 同源）：名称充代码的基金行非 6 位，不进净值通道（ADR-0038）。两端任一侧调整
+ * 判定口径必须同步另一侧，否则「录价入口」与「净值可拉分区」漂移出第二口径。
+ */
+export function isSixDigitInstrumentCode(code: string): boolean {
+  return code.length === 6 && /^\d{6}$/.test(code)
+}
+
+/**
+ * 该标的是否开放「录价」入口（手动报价，ADR-0036 决策 1 修订）：只对同步覆盖
+ * 不到的标的开放——自建标的（债券/ETF/其他）与名称充代码的基金行；真实代码
+ * 基金（净值通道）与股票（行情通道）的现价归同步，开放录价只会被下次同步冲掉。
+ * 判定口径与增量同步「净值可拉」分区同源（镜像后端谓词，见上）。
+ */
+export function canManualPrice(inst: Pick<Instrument, 'type' | 'symbol'>): boolean {
+  if (inst.type === 'stock') return false
+  if (inst.type === 'fund' && isSixDigitInstrumentCode(inst.symbol)) return false
+  return true
+}
+
+/** 手动报价入参（issue #291 / ADR-0036）：标的 id + 日期（ISO）+ 价格（万分之一元，价格刻度） */
+export interface ManualPriceInput {
+  instrument_id: string
+  /** 报价对应的交易日（ISO YYYY-MM-DD） */
+  date: string
+  /** 单价（万分之一元，ADR-0038 价格刻度） */
+  price_cents: number
+}
+
+/** 手动报价结果：两个落点各自的实际写入情况（回填旧价时 current_price_written 为 false） */
+export interface ManualPriceResult {
+  history_written: boolean
+  current_price_written: boolean
+}
+
 /** 按代码即拉添加基金的结果（issue #301 / ADR-0038）：标的行落库 + 现价写入状态 */
 export interface AddFundResult {
   instrument_id: string

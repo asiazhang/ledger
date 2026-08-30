@@ -27,7 +27,8 @@ use super::http::{
     fetch_kline, fetch_ulist, secid_prefix,
 };
 use super::persist::{
-    price_value_to_cents, upsert_fx_rate_history, upsert_market_price, upsert_price_history,
+    EASTMONEY_PRICE_SOURCE, price_value_to_cents, upsert_fx_rate_history, upsert_market_price,
+    upsert_price_history,
 };
 
 /// 持仓股票的报价代码：东财 secid 与响应 f12 均为裸代码（如 600519 / 00700）。
@@ -147,6 +148,7 @@ where
                         &stock.currency,
                         &crate::db::now_iso(),
                         None,
+                        Some(EASTMONEY_PRICE_SOURCE),
                     )?;
                     synced_codes.insert(item.code.clone());
                 }
@@ -166,6 +168,7 @@ where
                 &trade_date,
                 price_value_to_cents(close),
                 &stock.currency,
+                EASTMONEY_PRICE_SOURCE,
             )?;
         }
     }

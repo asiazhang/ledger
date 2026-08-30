@@ -82,41 +82,21 @@ pub(crate) fn create_market_price(conn: &Connection, input: MarketPriceInput) ->
     if input.price_cents <= 0 {
         return Err(AppError::Invalid("价格必须大于 0".into()));
     }
-    let id = new_uuid();
-    let now = now_iso();
-    let existing_id: Option<String> = conn
-        .query_row(
-            "SELECT id FROM market_prices WHERE instrument_id=?1",
-            rusqlite::params![input.instrument_id],
-            |r| r.get(0),
-        )
-        .ok();
-    let id = existing_id.unwrap_or(id);
-    // nav_date 随价格整行覆盖（手动落价无净值日期语义，覆盖为 NULL——与
-    // sync::persist::upsert_market_price 同规则，防基金现价被手动更新后旧净值
-    // 日期残留错配；基金现价常规通道见 fund::persist_fund_detail，#291 手动
-    // 报价重构时两处 upsert 预期收口）。
-    conn.execute(
-        "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) \
-         ON CONFLICT(instrument_id) DO UPDATE SET \
-         price_cents=excluded.price_cents, currency_code=excluded.currency_code, \
-         priced_at=excluded.priced_at, nav_date=NULL, source=excluded.source, \
-         updated_at=excluded.updated_at, version=version+1, device_id=excluded.device_id",
-        rusqlite::params![
-            id,
-            input.instrument_id,
-            input.price_cents,
-            input.currency_code,
-            input.priced_at,
-            input.source,
-            now,
-            now,
-            1,
-            device_id()
-        ],
-    )?;
-    Ok(id)
+    // 写入委托现价缓存单点 upsert（issue #291 收口：原就地 SQL 与 sync::persist
+    // 两份同形 upsert 合并为一份）；手动落价无净值日期语义，nav_date 覆盖为 NULL
+    // （防基金现价被手动更新后旧净值日期残留错配，与 sync::persist 同规则）。
+    // source 透传入参（可空，发布 API 形状不变）；手动报价正经 manual_price 模块
+    // （record_manual_price），本命令为已发布的独立写价通道（issue #291 前的半成品）。
+    // 返回落库行实际 id（upsert 单点负责既有行复用/新建）。
+    crate::commands::sync::persist::upsert_market_price(
+        conn,
+        &input.instrument_id,
+        input.price_cents,
+        &input.currency_code,
+        &input.priced_at,
+        None,
+        input.source.as_deref(),
+    )
 }
 
 /// 标的搜索的匹配目标：「代码 · 名称」label 等价文本（与投资表单标的下拉的

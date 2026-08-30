@@ -39,6 +39,8 @@ import type {
   ItemWithDailyCost,
   MarketPrice,
   MarketPriceInput,
+  ManualPriceInput,
+  ManualPriceResult,
   Merchant,
   MerchantShare,
   MerchantInput,
@@ -158,6 +160,11 @@ export const api = {
     invoke<string>('create_instrument', { input }),
   // 按代码即拉添加场外基金（issue #301 / ADR-0038）：东财回填名称/分类/最新净值
   addFundByCode: (code: string) => invoke<AddFundResult>('add_fund_by_code', { code }),
+  // 手动报价（issue #291 / ADR-0036）：无行情来源标的的「日期 + 价格」单点录入，
+  // 一条通道两个落点（现价缓存 upsert + 价格历史周采样幂等覆盖）；实际写入
+  // 任一落点后端广播价格失效信号，调用方依赖信号消费方刷新，零手动重拉
+  recordManualPrice: (input: ManualPriceInput) =>
+    invoke<ManualPriceResult>('record_manual_price', { input }),
 
   // 持仓
   listHoldings: () => invoke<Holding[]>('list_holdings'),

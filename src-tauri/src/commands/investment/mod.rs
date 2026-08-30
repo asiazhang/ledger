@@ -1,6 +1,7 @@
 mod crud;
 mod fund;
 mod holdings;
+mod manual_price;
 pub(crate) mod predicates;
 mod reports;
 #[cfg(test)]
@@ -13,8 +14,9 @@ use crate::error::{AppError, Result};
 use crate::events;
 use crate::models::{
     AddFundResult, ExchangeRate, ExchangeRateInput, Holding, InstrumentInput, InstrumentListFilter,
-    InstrumentListResult, InstrumentPriceTrend, InstrumentType, MarketPrice, MarketPriceInput,
-    PnlFilter, PortfolioValueTrend, RealizedPnlSummary, TransactionTrade, TrendRange,
+    InstrumentListResult, InstrumentPriceTrend, InstrumentType, ManualPriceInput,
+    ManualPriceResult, MarketPrice, MarketPriceInput, PnlFilter, PortfolioValueTrend,
+    RealizedPnlSummary, TransactionTrade, TrendRange,
 };
 
 pub(crate) use reports::query_realized_pnl_summary;
@@ -241,4 +243,33 @@ pub fn create_instrument(db: tauri::State<'_, DbState>, input: InstrumentInput) 
     // 手动创建入口守卫（类型白名单 + 名称必填，ADR-0036 决策 3）在先，写路径
     // 经连接层统一写入口（ADR-0032）：成功即置脏（含同名标的信息更新的 upsert 分支）。
     db.write(|conn| create_instrument_manual_internal(conn, input))
+}
+
+/// 测试/e2e 入口：绕过 Tauri State 直接对连接执行手动报价（先例：
+/// [`create_instrument_manual_internal`]，供 BDD 步骤复用同一实现）。
+pub fn record_manual_price_internal(
+    conn: &rusqlite::Connection,
+    input: &ManualPriceInput,
+) -> Result<ManualPriceResult> {
+    manual_price::record_manual_price(conn, input)
+}
+
+/// IPC 命令：手动报价（issue #291 / ADR-0036）。「日期 + 价格」单点录入，
+/// 一条通道两个落点——现价缓存 upsert + 价格历史周采样幂等覆盖；回填早于
+/// 最新价格点的旧价只沉淀历史、不动现价（最新点映像规则）。写路径经连接层
+/// 统一写入口（ADR-0032）：成功即置脏。实际写入任一落点即广播价格失效信号
+/// （生产者清单再添一处，ADR-0031 模式），下游刷新由既有信号消费方完成，零变化
+/// 不广播。录价 UI 入口只对同步覆盖不到的标的开放——判定收在 UI 侧，后端
+/// 命令不设守卫（ADR-0036 决策 1 修订）。
+#[tauri::command]
+pub fn record_manual_price(
+    db: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    input: ManualPriceInput,
+) -> Result<ManualPriceResult> {
+    let outcome = db.write(|conn| manual_price::record_manual_price(conn, &input))?;
+    if manual_price::should_emit_prices_changed(&outcome) {
+        events::emit_prices_changed(&app);
+    }
+    Ok(outcome)
 }
