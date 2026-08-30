@@ -32,6 +32,25 @@ fn create_instrument_named(
         .unwrap();
 }
 
+/// 直接插入指定类型的金融工具字典行（同码异类型消歧场景用，issue #294）。
+#[given(expr = "存在类型 {string} 的标的 {string} 名称 {string} 币种 {string}")]
+fn create_instrument_of_type(
+    world: &mut LedgerWorld,
+    kind: String,
+    symbol: String,
+    name: String,
+    currency: String,
+) {
+    let now = now_iso();
+    world_conn!(world)
+        .execute(
+            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+             VALUES (?1,?2,?3,?4,?5,'unknown',?6,?6,1,?7)",
+            params![new_uuid(), symbol, kind, name, currency, now, device_id()],
+        )
+        .unwrap();
+}
+
 // ---------------------------------------------------------------------------
 // When
 // ---------------------------------------------------------------------------
@@ -40,6 +59,18 @@ fn create_instrument_named(
 fn search_instruments(world: &mut LedgerWorld, query: String) {
     let filter = InstrumentListFilter {
         search: Some(query),
+        ..Default::default()
+    };
+    world.last_instrument_search =
+        Some(list_instruments_internal(&world_conn!(world), &filter).expect("标的搜索失败"));
+}
+
+/// 按类型过滤搜索（同码异类型消歧语义，issue #294；与 HTTP 端点的 type 参数同一接缝）。
+#[when(expr = "搜索类型 {string} 的标的 {string}")]
+fn search_instruments_of_kind(world: &mut LedgerWorld, kind: String, query: String) {
+    let filter = InstrumentListFilter {
+        search: Some(query),
+        kind: Some(kind.parse().expect("未知金融工具类型")),
         ..Default::default()
     };
     world.last_instrument_search =

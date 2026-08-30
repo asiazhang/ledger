@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex};
 use crate::error::AppError;
 use crate::models::{
     Account, AccountBalance, AccountInput, AccountType, AccountUpdateInput, Category,
-    CategoryInput, CreateTransactionResult, Currency, Merchant, Transaction, TransactionBatchInput,
+    CategoryInput, CreateTransactionResult, Currency, Instrument, InstrumentListFilter,
+    InstrumentListResult, InstrumentType, Merchant, Transaction, TransactionBatchInput,
     TransactionInput, TransactionListFilter, TransactionListResult, UpdateTransactionInput,
 };
 use crate::transaction::amount::TransactionKind;
@@ -14,6 +15,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use rusqlite::Connection;
+use serde::Deserialize;
 use tauri::AppHandle;
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
@@ -73,10 +75,11 @@ struct ErrorResponse {
     info(
         title = "Ledger 记账 API",
         description = "Ledger 记账应用本地 API（基础地址 http://127.0.0.1:9527/api/v1），供 AI 编程助手读写记账数据\
-                      （账户/分类/商户/交易），主要场景为数据迁移，亦可直接录入。\
+                      （账户/分类/商户/交易/标的），主要场景为数据迁移，亦可直接录入。\
                       所有金额均以整数分（`_cents` 后缀）为单位。\
                       账户/分类按自然键幂等创建；交易可携带商户名字符串（后端精确匹配复用或即建）；\
-                      批量交易默认去重，命中返回 `duplicate: true`。",
+                      批量交易默认去重，命中返回 `duplicate: true`。\
+                      buy/sell 需携带标的 id：可先用标的搜索端点把流水中的标的描述解析为 id。",
         version = "0.1.0"
     ),
     paths(
@@ -88,6 +91,7 @@ struct ErrorResponse {
         create_category_handler,
         delete_category_handler,
         list_currencies_handler,
+        search_instruments_handler,
         list_merchants_handler,
         list_transactions_handler,
         batch_create_transactions_handler,
@@ -104,6 +108,9 @@ struct ErrorResponse {
         Category,
         CategoryInput,
         Currency,
+        Instrument,
+        InstrumentListResult,
+        InstrumentType,
         Merchant,
         Transaction,
         TransactionInput,
@@ -152,6 +159,7 @@ pub fn build_router(state: ApiState) -> Router {
             put(update_transaction_handler).delete(delete_transaction_handler),
         )
         .route("/api/v1/currencies", get(list_currencies_handler))
+        .route("/api/v1/instruments", get(search_instruments_handler))
         .route("/api/v1/merchants", get(list_merchants_handler))
         .route("/api/v1/import/knowledge", get(import_knowledge_handler))
         // 注意：axum 的 `Router::layer` 只包裹“当前已有的” route——若在声明任何 route
@@ -417,6 +425,82 @@ async fn list_merchants_handler(
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     Ok(Json(crate::commands::list_merchants_internal(
         &conn, false,
+    )?))
+}
+
+/// 标的搜索查询参数（`GET /api/v1/instruments`，issue #294 / ADR-0037）。
+#[derive(Debug, Deserialize)]
+struct InstrumentSearchQuery {
+    /// 搜索关键词（必填；空即 400——搜索式而非全量列表）
+    query: Option<String>,
+    /// 返回条数上限：缺省 20，最大 100（超出收敛为 100，小于 1 视为 1）
+    limit: Option<i64>,
+    /// 交易市场精确过滤（sh / sz / hk / unknown）
+    market: Option<String>,
+    /// 标的类型过滤（stock/fund/bond/etf/other）：同码异类型消歧用
+    #[serde(rename = "type")]
+    kind: Option<InstrumentType>,
+}
+
+/// 标的搜索（AI 导入契约，issue #294 / ADR-0037）：供 AI 把流水中的标的描述
+/// （代码/名称/拼音首字母）解析为可用标的 id，不提供全量列表。语义复用
+/// ADR-0027 统一模糊搜索（既有标的搜索接缝 `list_instruments_internal`），
+/// 不为 AI 另造第二口径；按 symbol 排序，封顶返回 + 命中总数控制上下文预算。
+#[utoipa::path(
+    get,
+    path = "/api/v1/instruments",
+    tag = "instruments",
+    summary = "按关键词搜索标的（统一模糊搜索、封顶返回）",
+    description = "返回 `{items, total}`：`items` 为按 symbol 排序的前 `limit` 条命中标的，\
+                  `total` 恒为命中总数。`query` 必填（缺失或纯空白返回 400——本端点是搜索式而非全量列表）；\
+                  `limit` 缺省 20、上限 100（超出收敛为 100）。\
+                  命中语义为统一模糊搜索：`query` 按空白切词、词条之间 AND；每个词条对「代码 · 名称」label 判定——\
+                  原文连续子串 ∨ 拼音首字母串子序列（均大小写不敏感；无名称标的退化为裸代码），\
+                  如 `gzmt` 命中「600519 贵州茅台」。\
+                  `market` / `type` 可选精确过滤；同码异类型（如基金 000001 vs 股票 000001）\
+                  靠 `type` 消歧。返回完整 Instrument 形状（含 `price_cents` 最新行情与 `invested` 是否持仓）。",
+    params(
+        ("query" = String, Query, description = "搜索关键词（必填，空即 400）"),
+        ("limit" = Option<i64>, Query, description = "返回条数上限，缺省 20，最大 100（小于 1 视为 1）"),
+        ("market" = Option<String>, Query, description = "交易市场精确过滤（sh / sz / hk / unknown）"),
+        ("type" = InstrumentType, Query, description = "标的类型过滤（stock/fund/bond/etf/other），同码异类型消歧用")
+    ),
+    responses(
+        (status = 200, description = "命中标的 {items, total}", body = InstrumentListResult),
+        (status = 400, description = "缺 query 或 query 为纯空白；或参数非法", body = ErrorResponse),
+        (status = 500, description = "数据库错误", body = ErrorResponse)
+    )
+)]
+async fn search_instruments_handler(
+    State(conn): State<Arc<Mutex<Connection>>>,
+    Query(params): Query<InstrumentSearchQuery>,
+) -> Result<Json<InstrumentListResult>, AppError> {
+    // query 必填（trim 后为空视同缺失）：显式校验以返回统一 `{kind, message}` 中文错误。
+    // 参数格式错误（如 type 非法枚举值）由 axum extractor 拒绝、同样返回 400，
+    // 但响应体为其默认格式（与既有 list_transactions 先例一致）。
+    let query = params
+        .query
+        .as_deref()
+        .map(str::trim)
+        .filter(|q| !q.is_empty())
+        .ok_or_else(|| {
+            AppError::Invalid(
+                "query 不能为空：标的搜索为搜索式端点，请携带关键词（不做全量列表）".into(),
+            )
+        })?;
+    // 封顶返回：缺省 20、上限收敛 100，AI 上下文预算可控。
+    let limit = params.limit.unwrap_or(20).clamp(1, 100);
+    let filter = InstrumentListFilter {
+        search: Some(query.to_string()),
+        market: params.market.filter(|m| !m.is_empty()),
+        kind: params.kind,
+        only_invested: None,
+        page: Some(1),
+        page_size: Some(limit as usize),
+    };
+    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    Ok(Json(crate::commands::list_instruments_internal(
+        &conn, &filter,
     )?))
 }
 

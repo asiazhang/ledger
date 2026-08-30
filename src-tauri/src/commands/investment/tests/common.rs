@@ -62,11 +62,12 @@ pub(super) fn insert_instrument_with_market(
     name: &str,
     currency: &str,
     market: &str,
+    kind: &str,
 ) {
     conn.execute(
          "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-          VALUES (?1,?2,'stock',?3,?4,?5,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        params![id, symbol, name, currency, market],
+          VALUES (?1,?2,?6,?3,?4,?5,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+        params![id, symbol, name, currency, market, kind],
     ).unwrap();
 }
 

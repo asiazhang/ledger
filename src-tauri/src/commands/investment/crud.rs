@@ -147,6 +147,11 @@ pub(crate) fn list_instruments(
         params.push(Box::new(market.to_string()));
         conditions.push(format!("i.market=?{}", params.len()));
     }
+    // 标的类型过滤（issue #294）：同码异类型消歧（如基金 000001 vs 股票 000001）。
+    if let Some(kind) = filter.kind {
+        params.push(Box::new(kind.to_string()));
+        conditions.push(format!("i.instrument_type=?{}", params.len()));
+    }
     // 只看持仓：有当前持仓的标的，谓词单点见 predicates 模块（别名契约：i = instruments）。
     if filter.only_invested == Some(true) {
         conditions.push(INVESTED_EXISTS.to_string());

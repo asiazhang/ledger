@@ -2,6 +2,7 @@
 //! 软删除账户排除 / 建标的幂等 / 持仓视图（issue #257 纯移动归组）。
 
 use crate::commands::transactions::create_transaction_internal;
+use crate::models::InstrumentType;
 use rusqlite::{Connection, params};
 
 use super::super::*;
@@ -18,6 +19,7 @@ fn list_instruments_pagination_and_search() {
             &format!("名称{i}"),
             "USD",
             if i % 2 == 0 { "sh" } else { "sz" },
+            "stock",
         );
     }
 
@@ -32,6 +34,7 @@ fn list_instruments_pagination_and_search() {
     let filter = InstrumentListFilter {
         search: None,
         market: None,
+        kind: None,
         only_invested: None,
         page: None,
         page_size: Some(2),
@@ -46,6 +49,7 @@ fn list_instruments_pagination_and_search() {
     let filter = InstrumentListFilter {
         search: None,
         market: None,
+        kind: None,
         only_invested: None,
         page: Some(2),
         page_size: Some(2),
@@ -58,6 +62,7 @@ fn list_instruments_pagination_and_search() {
     let filter = InstrumentListFilter {
         search: Some("sym1".into()),
         market: None,
+        kind: None,
         only_invested: None,
         page: None,
         page_size: None,
@@ -70,6 +75,7 @@ fn list_instruments_pagination_and_search() {
     let filter = InstrumentListFilter {
         search: Some("名称3".into()),
         market: None,
+        kind: None,
         only_invested: None,
         page: None,
         page_size: None,
@@ -82,6 +88,7 @@ fn list_instruments_pagination_and_search() {
     let filter = InstrumentListFilter {
         search: None,
         market: Some("sh".into()),
+        kind: None,
         only_invested: None,
         page: None,
         page_size: None,
@@ -94,6 +101,7 @@ fn list_instruments_pagination_and_search() {
     let filter = InstrumentListFilter {
         search: Some("SYM".into()),
         market: Some("sz".into()),
+        kind: None,
         only_invested: None,
         page: Some(2),
         page_size: Some(1),
@@ -109,9 +117,9 @@ fn list_instruments_pagination_and_search() {
 #[test]
 fn list_instruments_search_pinyin_semantics() {
     let conn = setup_db();
-    insert_instrument_with_market(&conn, "inst-zs", "600519", "招商银行", "CNY", "sh");
-    insert_instrument_with_market(&conn, "inst-wk", "000002", "万科物业", "CNY", "sz");
-    insert_instrument_with_market(&conn, "inst-abc", "ABCH", "ABC银行", "CNY", "sh");
+    insert_instrument_with_market(&conn, "inst-zs", "600519", "招商银行", "CNY", "sh", "stock");
+    insert_instrument_with_market(&conn, "inst-wk", "000002", "万科物业", "CNY", "sz", "stock");
+    insert_instrument_with_market(&conn, "inst-abc", "ABCH", "ABC银行", "CNY", "sh", "stock");
 
     // 拼音首字母整串命中（多音字修正：银行 → yh）
     let result = search_all(&conn, "zsyh");
@@ -153,6 +161,7 @@ fn search_all(conn: &Connection, search: &str) -> InstrumentListResult {
         &InstrumentListFilter {
             search: Some(search.into()),
             market: None,
+            kind: None,
             only_invested: None,
             page: None,
             page_size: None,
@@ -168,11 +177,27 @@ fn list_instruments_invested_flag() {
     insert_account(&conn, "acc-inv", "美股", "investment", "USD");
     insert_rate_1_1(&conn, "USD");
     // 持仓中：买入 10 股，未卖出
-    insert_instrument_with_market(&conn, "inst-held", "HELD", "持仓标的", "USD", "sh");
+    insert_instrument_with_market(&conn, "inst-held", "HELD", "持仓标的", "USD", "sh", "stock");
     // 已清仓：买入 10 股后全部卖出
-    insert_instrument_with_market(&conn, "inst-closed", "CLOSED", "已清仓标的", "USD", "sz");
+    insert_instrument_with_market(
+        &conn,
+        "inst-closed",
+        "CLOSED",
+        "已清仓标的",
+        "USD",
+        "sz",
+        "stock",
+    );
     // 未投资：从未交易
-    insert_instrument_with_market(&conn, "inst-never", "NEVER", "未投资标的", "USD", "hk");
+    insert_instrument_with_market(
+        &conn,
+        "inst-never",
+        "NEVER",
+        "未投资标的",
+        "USD",
+        "hk",
+        "stock",
+    );
 
     create_transaction_internal(
         &conn,
@@ -211,9 +236,25 @@ fn list_instruments_only_invested_filter() {
     let conn = setup_db();
     insert_account(&conn, "acc-inv", "美股", "investment", "USD");
     insert_rate_1_1(&conn, "USD");
-    insert_instrument_with_market(&conn, "inst-held", "HELD", "持仓标的", "USD", "sh");
-    insert_instrument_with_market(&conn, "inst-closed", "CLOSED", "已清仓标的", "USD", "sz");
-    insert_instrument_with_market(&conn, "inst-never", "NEVER", "未投资标的", "USD", "hk");
+    insert_instrument_with_market(&conn, "inst-held", "HELD", "持仓标的", "USD", "sh", "stock");
+    insert_instrument_with_market(
+        &conn,
+        "inst-closed",
+        "CLOSED",
+        "已清仓标的",
+        "USD",
+        "sz",
+        "stock",
+    );
+    insert_instrument_with_market(
+        &conn,
+        "inst-never",
+        "NEVER",
+        "未投资标的",
+        "USD",
+        "hk",
+        "stock",
+    );
 
     create_transaction_internal(
         &conn,
@@ -235,6 +276,7 @@ fn list_instruments_only_invested_filter() {
     let filter = InstrumentListFilter {
         search: None,
         market: None,
+        kind: None,
         only_invested: Some(true),
         page: None,
         page_size: None,
@@ -249,6 +291,7 @@ fn list_instruments_only_invested_filter() {
     let filter = InstrumentListFilter {
         search: Some("CLOSED".into()),
         market: None,
+        kind: None,
         only_invested: Some(true),
         page: None,
         page_size: None,
@@ -261,6 +304,7 @@ fn list_instruments_only_invested_filter() {
     let filter = InstrumentListFilter {
         search: None,
         market: Some("sh".into()),
+        kind: None,
         only_invested: Some(true),
         page: None,
         page_size: None,
@@ -273,6 +317,7 @@ fn list_instruments_only_invested_filter() {
     let filter = InstrumentListFilter {
         search: None,
         market: None,
+        kind: None,
         only_invested: Some(true),
         page: Some(2),
         page_size: Some(1),
@@ -285,6 +330,7 @@ fn list_instruments_only_invested_filter() {
     let filter = InstrumentListFilter {
         search: None,
         market: None,
+        kind: None,
         only_invested: Some(false),
         page: None,
         page_size: None,
@@ -302,7 +348,15 @@ fn list_instruments_invested_excludes_soft_deleted_accounts() {
     let conn = setup_db();
     insert_account(&conn, "acc-del", "已删账户", "investment", "USD");
     insert_rate_1_1(&conn, "USD");
-    insert_instrument_with_market(&conn, "inst-del", "DELHOLD", "删除账户持仓", "USD", "sh");
+    insert_instrument_with_market(
+        &conn,
+        "inst-del",
+        "DELHOLD",
+        "删除账户持仓",
+        "USD",
+        "sh",
+        "stock",
+    );
 
     create_transaction_internal(&conn, make_buy_input("acc-del", "inst-del", 10.0, 10000, 0))
         .unwrap();
@@ -317,9 +371,71 @@ fn list_instruments_invested_excludes_soft_deleted_accounts() {
     let filter = InstrumentListFilter {
         search: None,
         market: None,
+        kind: None,
         only_invested: Some(true),
         page: None,
         page_size: None,
+    };
+    let result = super::crud::list_instruments(&conn, &filter).unwrap();
+    assert_eq!(result.total, 0);
+}
+
+/// 标的类型过滤（issue #294）：同码异类型消歧（如基金 000001 vs 股票 000001）。
+#[test]
+fn list_instruments_kind_filter_disambiguates_same_symbol() {
+    let conn = setup_db();
+    insert_instrument_with_market(
+        &conn,
+        "inst-fund",
+        "000001",
+        "华夏成长混合",
+        "CNY",
+        "sz",
+        "fund",
+    );
+    insert_instrument_with_market(
+        &conn,
+        "inst-stock",
+        "000001",
+        "平安银行",
+        "CNY",
+        "sz",
+        "stock",
+    );
+
+    // 不过滤：同码异类型两行并返
+    let result = super::crud::list_instruments(&conn, &InstrumentListFilter::default()).unwrap();
+    assert_eq!(result.total, 2);
+
+    // kind 过滤消歧：fund / stock 各一行
+    for (kind, expected_name) in [
+        (InstrumentType::Fund, "华夏成长混合"),
+        (InstrumentType::Stock, "平安银行"),
+    ] {
+        let filter = InstrumentListFilter {
+            kind: Some(kind),
+            ..Default::default()
+        };
+        let result = super::crud::list_instruments(&conn, &filter).unwrap();
+        assert_eq!(result.total, 1, "{kind} 应只命中一行");
+        assert_eq!(result.items[0].name.as_deref(), Some(expected_name));
+        assert_eq!(result.items[0].kind, kind);
+    }
+
+    // 与搜索组合：词条命中 label 后再按类型收敛
+    let filter = InstrumentListFilter {
+        search: Some("000001".into()),
+        kind: Some(InstrumentType::Fund),
+        ..Default::default()
+    };
+    let result = super::crud::list_instruments(&conn, &filter).unwrap();
+    assert_eq!(result.total, 1);
+    assert_eq!(result.items[0].kind, InstrumentType::Fund);
+
+    // 无该类型的同码标的：不命中
+    let filter = InstrumentListFilter {
+        kind: Some(InstrumentType::Bond),
+        ..Default::default()
     };
     let result = super::crud::list_instruments(&conn, &filter).unwrap();
     assert_eq!(result.total, 0);
