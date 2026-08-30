@@ -8,9 +8,8 @@
 -- CHANGELOG「Unreleased」BREAKING 条目）：price_history.price_cents 刻度由「分」
 -- 重定义为万分之一元（0.0001 元，ADR-0038，与 V002 同批价格刻度翻转）。
 -- fx_rate_history.rate 是汇率比值（REAL），非价格列，不受影响。列名保留、
--- 无 DDL 结构变化，就地修改只影响全新安装；存量库按 CHANGELOG 处置步骤
--- 执行一次性脚本 scripts/migrate-price-scale.sh（清空本表属可重建缓存）
--- 后重新同步价格。
+-- 无 DDL 结构变化，就地修改只影响全新安装；存量库不在兼容范围（裁定见
+-- CHANGELOG BREAKING 条目与 ADR-0038 决策 5），不提供一次性处置工具。
 -- 周采样规则：每标的（/币种对）每周至多一条，取该周最后一个有报价交易日的价格；
 -- 「整周覆盖」的幂等 upsert 由周唯一约束保证（同周任一采样日写入都落在同一周键上），
 -- 不产生重复。

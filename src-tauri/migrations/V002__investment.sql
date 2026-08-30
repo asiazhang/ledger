@@ -7,9 +7,8 @@
 -- / market_prices.price_cents）刻度由「分」重定义为万分之一元（0.0001 元，
 -- 基金净值 4 位小数保真，ADR-0038），v_holdings 视图表达式同步换算
 -- （金额分 = 数量 × 单价 ÷ 100）。列名保留、无 DDL 结构变化，就地修改只影响
--- 全新安装；存量库按 CHANGELOG 处置步骤执行一次性脚本
--- scripts/migrate-price-scale.sh（×100 修正真实记录 + 重建 v_holdings + 清空
--- 可重建缓存）后重新同步价格。
+-- 全新安装；存量库不在兼容范围（裁定见 CHANGELOG BREAKING 条目与 ADR-0038
+-- 决策 5），不提供一次性处置工具。
 
 -- 1. instruments（金融工具字典表）
 --    - 统一维护股票、基金、债券、ETF 等金融工具的基础信息。
