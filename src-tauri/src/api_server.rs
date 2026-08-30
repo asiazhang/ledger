@@ -572,9 +572,10 @@ async fn delete_transaction_handler(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// LLM 导入知识（纯文本），供 AI 编程助手直接注入系统提示词。
+/// LLM 导入知识（纯文本），导入全流程约定的单一权威（拆行、幂等去重、对账、纠错）。
 ///
 /// 本知识是导入约定的确定性权威来源，拆解方式必须固定，否则 `dedup_hash` 漂移。
+/// AI 按入口提示词指引自行获取，约定细节不进提示词。
 /// 端点契约（请求/响应结构）见 OpenAPI 文档。内容维护在
 /// `src-tauri/prompts/import-knowledge.md`，编译期嵌入（`include_str!`）。
 const IMPORT_KNOWLEDGE: &str = include_str!("../prompts/import-knowledge.md");
@@ -583,10 +584,9 @@ const IMPORT_KNOWLEDGE: &str = include_str!("../prompts/import-knowledge.md");
     get,
     path = "/api/v1/import/knowledge",
     tag = "import",
-    summary = "获取 LLM 导入知识（可直接注入系统提示词）",
-    description = "返回精简的导入约定文本（text/plain），供 AI 编程助手直接注入。\
-                  覆盖 Pixiu 列映射与正负判定 kind、`A → B` 转账拆分、`无`/`→ 无` 映射黑洞账户、\
-                  中文币种名映射、商户名携带（精确匹配复用或即建）、金额分单位、日期格式、dedup 语义；文本内嵌 `/api/v1/openapi.json` 地址。",
+    summary = "获取 LLM 导入知识",
+    description = "返回导入全流程约定文本（text/plain），单一权威：每行拆解、商户约定、幂等与去重、\
+                  对账完成判定、对账纠错。AI 按入口提示词指引自行获取；文本内嵌 `/api/v1/openapi.json` 地址。",
     responses(
         (status = 200, description = "text/plain 格式的导入知识", content_type = "text/plain", body = String)
     )

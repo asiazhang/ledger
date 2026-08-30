@@ -337,6 +337,11 @@ async fn test_openapi_doc_covers_knowledge_endpoint() {
     let paths = doc["paths"].as_object().unwrap();
     let knowledge = &paths["/api/v1/import/knowledge"]["get"];
     assert!(knowledge["summary"].is_string());
+    let description = knowledge["description"].as_str().unwrap_or_default();
+    assert!(
+        description.contains("导入全流程约定"),
+        "导入知识端点自述应以「导入全流程约定」界定范围（issue #286）"
+    );
 
     let responses = knowledge["responses"].as_object().unwrap();
     let ok = responses.get("200").expect("应包含 200 响应");
