@@ -5,7 +5,6 @@ pub mod db;
 pub mod error;
 pub mod events;
 pub mod item;
-pub mod log_plugin;
 pub mod logger;
 pub mod models;
 pub mod scheduled_transactions;
@@ -88,7 +87,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .plugin(log_plugin::init())
         .setup(|app| {
             logger::init(app.handle());
             try_init_database(app).map_err(|e| {
@@ -191,6 +189,7 @@ pub fn run() {
             commands::get_data_location_info,
             commands::submit_data_location_change,
             commands::restore_default_data_location,
+            commands::open_log_dir,
         ]))
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

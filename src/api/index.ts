@@ -247,4 +247,7 @@ export const api = {
 
   // AI
   getAiPrompt: () => invoke<string>('get_ai_prompt'),
+
+  // 日志（issue #283）：打开日志目录（系统文件管理器展示，按天滚动、保留 7 天）
+  openLogDir: () => invoke<void>('open_log_dir'),
 }

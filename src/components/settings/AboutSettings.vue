@@ -1,7 +1,7 @@
 <script setup lang="ts">
+import { api } from '@/api'
 import { errorMessage } from '@/utils/errors'
 import { NButton, NCard, NSpace, NText, useMessage } from 'naive-ui'
-import { invoke } from '@tauri-apps/api/core'
 import pkg from '@/../package.json'
 import { gitShaFull, gitVersionLabel } from '@/utils/git-info'
 
@@ -19,9 +19,10 @@ async function copyGitSha() {
 
 async function openLogDir() {
   try {
-    await invoke('plugin:log|open_log_dir')
-  } catch (e: any) {
-    message.error(`打开日志目录失败: ${errorMessage(e)}`)
+    await api.openLogDir()
+  } catch (e) {
+    // 后端错误已带「打开日志目录失败：」中文前缀，此处原样透传不叠加
+    message.error(errorMessage(e))
   }
 }
 </script>

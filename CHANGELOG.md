@@ -8,6 +8,10 @@
 
 - **数据库 schema（就地修改 V003，仅影响全新安装）**：定时交易系迁移的 9 个引用列补全显式 `ON DELETE` 动作——强依赖（账户/币种/转入账户）`RESTRICT`、溯源指针（可空分类、期次生成交易）`SET NULL`、期次与计划扩展表行（期次表、分期/订阅/定时转账三张扩展表）`CASCADE`——替代此前的 SQLite 默认 `NO ACTION`。就地修改只影响全新安装；存量库与旧备份恢复路径保持 `NO ACTION`（当前应用无硬删路径，两类 schema 行为零差异、差异不可达），未来首个依赖新 ON DELETE 语义的功能（如硬删/清理）发布时须自带收敛迁移。迁移文件头部就地修改注记见 `src-tauri/migrations/V003__scheduled_transactions.sql`。
 
+### Fixed
+
+- **日志**：修复「设置 → 关于」点击「打开日志目录」始终报错「log.open_log_dir not allowed. Plugin not found」——该命令原承载于自研内联日志插件，其 ACL 权限从未配置，调用在权限层即被拒绝、从未到达 Rust 函数，自 v0.3.0 发布以来该按钮一次都未成功过。现将「打开日志目录」改为普通 Tauri 命令（免 ACL、自动纳入统一 IPC 调用日志），前端调用收口进 api 对象，错误提示由后端中文前缀唯一承担。IPC 调用名由 `plugin:log|open_log_dir` 变为 `open_log_dir`；原调用名从未成功返回过、不存在可受影响的调用方，故不构成 BREAKING。
+
 ## [0.3.0] - 2026-08-27
 
 ### Added
