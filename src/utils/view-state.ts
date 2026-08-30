@@ -2,7 +2,8 @@
 // 约定：key 统一加 'view_state:' 前缀，与偏好（'appearance' 等）及业务数据（SQLite）分域。
 // 边界：不做"过度记忆"（筛选、滚动位置、列宽等一律不持久化）。
 
-import { loadLocal, saveLocal } from '@/utils/storage'
+import { loadLocal, saveLocal, removeLocal } from '@/utils/storage'
+import type { ViewName } from '@/composables/useViewShortcuts'
 
 export const VIEW_STATE_KEYS = {
   route: 'view_state:route',
@@ -34,10 +35,19 @@ export function saveSidebarCollapsed(collapsed: boolean) {
 /**
  * 已存侧栏可排区顺序（原始值）；无记录或数据损坏时返回 null。
  * 非法名过滤、去重、缺失项补齐等解析防御归顺序模块 parseArrangeableOrder，此处不解析。
- * 本票（#269）仅有读路径；写路径（右键自定义排序）由后续票落地。
  */
 export function getSavedSidebarOrder(): unknown {
   return loadLocal<unknown>(VIEW_STATE_KEYS.sidebarOrder, null)
+}
+
+/** 持久化自定义可排区顺序（点选即写，写路径唯一出处，issue #270）。 */
+export function saveSidebarOrder(order: readonly ViewName[]) {
+  saveLocal(VIEW_STATE_KEYS.sidebarOrder, order)
+}
+
+/** 清除自定义顺序（恢复默认排序），回退无记录态。 */
+export function clearSidebarOrder() {
+  removeLocal(VIEW_STATE_KEYS.sidebarOrder)
 }
 
 /** 报表汇总层级；非法值一律回退 'level2'（二级）。 */

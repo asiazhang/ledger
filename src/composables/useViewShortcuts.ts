@@ -1,6 +1,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { Router } from 'vue-router'
-import { getSavedSidebarOrder } from '@/utils/view-state'
+import type { DropdownOption } from 'naive-ui'
+import { getSavedSidebarOrder, saveSidebarOrder, clearSidebarOrder } from '@/utils/view-state'
 
 export interface ViewShortcut {
   /** 路由 name（与侧边栏菜单 key 一致） */
@@ -46,6 +47,11 @@ function isArrangeable(v: unknown): v is ViewName {
   return typeof v === 'string' && (ARRANGEABLE_VIEWS as readonly string[]).includes(v)
 }
 
+/** 固定项例外判定（对外）：可排区八项为真，概览/AI/设置三固定项为假（右键无菜单）。 */
+export function isArrangeableView(v: unknown): v is ViewName {
+  return isArrangeable(v)
+}
+
 /**
  * 顺序解析（纯函数）：已存可排区顺序（脏数据防御）→ 最终可排区顺序。
  * 非法视图名过滤（含三固定项名、未知名、非字符串项）→ 去重（保留首现）→
@@ -68,10 +74,85 @@ export function parseArrangeableOrder(raw: unknown): ViewName[] {
 }
 
 /**
- * 已存可排区顺序：启动读路径（issue #269 仅有读路径，读取恒为空 → 回退默认序；
- * 写路径与右键自定义排序由后续票落地，届时只需更新此 ref）。
+ * 已存可排区顺序：启动读路径（解析防御后回退默认序）。
+ * 写路径收口在 applySidebarSort / resetSidebarOrder（issue #270）：两者同步更新此 ref
+ * 与持久化，菜单顺序与键位经 viewShortcuts 自动随动。
  */
 const arrangeableOrder = ref<ViewName[]>(parseArrangeableOrder(getSavedSidebarOrder()))
+
+/** 当前可排区顺序（只读响应式）：侧栏排序菜单构建等消费；写路径不经它。 */
+export const sidebarOrder = computed<readonly ViewName[]>(() => arrangeableOrder.value)
+
+// ---------------------------------------------------------------------------
+// 自定义排序（issue #270）：可排区右键菜单 → 移动纯函数 + 菜单构建纯函数 + 写路径。
+// 顺序仍是唯一事实源（arrangeableOrder），移动只重排可排区、三固定项不动；
+// 点选即重排并立即持久化，菜单顺序与键位经 viewShortcuts 自动随动。
+// ---------------------------------------------------------------------------
+
+/** 排序动作：上移一位 / 下移一位 / 移到可排区顶部 / 移到可排区底部 */
+export type SidebarSortAction = 'up' | 'down' | 'top' | 'bottom'
+
+/**
+ * 移动纯函数：在可排区顺序内把 name 移动到目标位置，返回新数组（不改输入）。
+ * 已在对应边界（首位上移/移顶、末位下移/移底）时内容不变；
+ * name 不在序中（如固定项名）原样返回内容。
+ */
+export function moveArrangeable(
+  order: readonly ViewName[],
+  name: ViewName,
+  action: SidebarSortAction,
+): ViewName[] {
+  const index = order.indexOf(name)
+  if (index === -1) return [...order]
+  const last = order.length - 1
+  const target = action === 'up' ? index - 1
+    : action === 'down' ? index + 1
+    : action === 'top' ? 0
+    : last
+  if (target < 0 || target > last || target === index) return [...order]
+  const next = [...order]
+  next.splice(index, 1)
+  next.splice(target, 0, name)
+  return next
+}
+
+/** 排序菜单 key：四种移动 + 恢复默认排序 */
+export type SidebarSortMenuKey = SidebarSortAction | 'reset'
+
+/**
+ * 排序菜单选项构建纯函数（含边界置灰）：
+ * 上移一位 / 下移一位 / 移到顶部（可排区第 2 位）/ 移到底部（可排区末位）/
+ * 分隔线 / 恢复默认排序（恒可用）。
+ * 置灰按当前序的边界判定：首位上移、移顶置灰；末位下移、移底置灰。
+ */
+export function buildSidebarSortMenuOptions(
+  name: ViewName,
+  order: readonly ViewName[],
+): DropdownOption[] {
+  const index = order.indexOf(name)
+  const atTop = index <= 0
+  const atBottom = index === order.length - 1
+  return [
+    { label: '上移一位', key: 'move-up', disabled: atTop },
+    { label: '下移一位', key: 'move-down', disabled: atBottom },
+    { label: '移到顶部', key: 'move-top', disabled: atTop },
+    { label: '移到底部', key: 'move-bottom', disabled: atBottom },
+    { type: 'divider', key: 'sort-divider' },
+    { label: '恢复默认排序', key: 'reset', disabled: false },
+  ]
+}
+
+/** 点选即重排并立即持久化（写路径唯一出处；顺序变更经 viewShortcuts 自动随动）。 */
+export function applySidebarSort(name: ViewName, action: SidebarSortAction) {
+  arrangeableOrder.value = moveArrangeable(arrangeableOrder.value, name, action)
+  saveSidebarOrder(arrangeableOrder.value)
+}
+
+/** 恢复默认排序：清除存储回出厂序（之后可再次自定义，反复交替）。 */
+export function resetSidebarOrder() {
+  clearSidebarOrder()
+  arrangeableOrder.value = [...ARRANGEABLE_VIEWS]
+}
 
 /** 键位按最终位置推导：第 1–9 位 → '1'..'9'，第 10 位 → '0'，第 11 位（设置）→ ',' */
 const POSITION_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', ','] as const
