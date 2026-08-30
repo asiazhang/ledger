@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { defineComponent, h } from 'vue'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
+import { NDropdown } from 'naive-ui'
 import type { Router } from 'vue-router'
 import {
   DEFAULT_VIEW_ORDER,
@@ -14,7 +15,12 @@ import {
   shortcutHint,
   hasOpenOverlay,
   useViewShortcuts,
+  isArrangeableView,
+  isSidebarSortAction,
+  moveArrangeable,
+  buildSidebarSortMenuOptions,
 } from '@/composables/useViewShortcuts'
+import type { DropdownOption } from 'naive-ui'
 import { VIEW_STATE_KEYS } from '@/utils/view-state'
 
 function setPlatform(platform: string) {
@@ -356,10 +362,232 @@ describe('启动读路径（issue #269：读取已存顺序，经解析防御后
     expect(mod.viewShortcuts.value.find((s) => s.name === 'transactions')!.key).toBe('3')
   })
 
-  it('读取为空时回退默认序（本票尚无写路径，读取恒为空）', async () => {
+  it('读取为空时回退默认序（未自定义或恢复默认后存储为空）', async () => {
     vi.resetModules()
     const mod = await import('@/composables/useViewShortcuts')
     expect(mod.viewShortcuts.value.map((s) => s.name)).toEqual([...mod.DEFAULT_VIEW_ORDER])
     expect(mod.viewShortcuts.value.find((s) => s.name === 'investments')!.key).toBe('5')
+  })
+})
+
+/** 菜单选项测试取值助手：把 DropdownOption 收窄到本菜单用到的字段 */
+function row(o: DropdownOption) {
+  return o as { label?: string; key?: string; disabled?: boolean; type?: string }
+}
+
+describe('moveArrangeable（可排区移动纯函数，issue #270）', () => {
+  const base = [...ARRANGEABLE_VIEWS]
+
+  it('上移一位：与前一项交换，其余相对顺序不变', () => {
+    expect(moveArrangeable(base, 'accounts', 'up')).toEqual([
+      'accounts', 'transactions', 'budget', 'investments', 'reports', 'scheduled', 'items', 'search',
+    ])
+  })
+
+  it('下移一位：与后一项交换，其余相对顺序不变', () => {
+    expect(moveArrangeable(base, 'accounts', 'down')).toEqual([
+      'transactions', 'budget', 'accounts', 'investments', 'reports', 'scheduled', 'items', 'search',
+    ])
+  })
+
+  it('移到顶部（可排区第 2 位）', () => {
+    expect(moveArrangeable(base, 'scheduled', 'top')[0]).toBe('scheduled')
+    expect(moveArrangeable(base, 'scheduled', 'top').slice(1)).toEqual([
+      'transactions', 'accounts', 'budget', 'investments', 'reports', 'items', 'search',
+    ])
+  })
+
+  it('移到底部（可排区第 9 位）', () => {
+    const result = moveArrangeable(base, 'budget', 'bottom')
+    expect(result[result.length - 1]).toBe('budget')
+    expect(result.slice(0, -1)).toEqual([
+      'transactions', 'accounts', 'investments', 'reports', 'scheduled', 'items', 'search',
+    ])
+  })
+
+  it('边界 no-op：首位上移/移顶、末位下移/移底内容不变，且返回新数组不改输入', () => {
+    expect(moveArrangeable(base, 'transactions', 'up')).toEqual(base)
+    expect(moveArrangeable(base, 'transactions', 'top')).toEqual(base)
+    expect(moveArrangeable(base, 'search', 'down')).toEqual(base)
+    expect(moveArrangeable(base, 'search', 'bottom')).toEqual(base)
+    const upResult = moveArrangeable(base, 'transactions', 'up')
+    expect(upResult).not.toBe(base)
+    expect(base).toEqual([...ARRANGEABLE_VIEWS])
+  })
+
+  it('在自定义序上同样正确：已置顶项再上移为 no-op', () => {
+    const custom = moveArrangeable(base, 'search', 'top')
+    expect(moveArrangeable(custom, 'search', 'up')).toEqual(custom)
+  })
+
+  it('目标项不在序中（如固定项名）：原样返回内容', () => {
+    expect(moveArrangeable(base, 'ai', 'up')).toEqual(base)
+  })
+})
+
+describe('buildSidebarSortMenuOptions（排序菜单选项构建纯函数，含边界置灰，issue #270）', () => {
+  const base = [...ARRANGEABLE_VIEWS]
+
+  it('菜单形状：四种移动 + 分隔线 + 恢复默认排序，key 固定', () => {
+    const opts = buildSidebarSortMenuOptions('accounts', base)
+    expect(opts.map(row).map((o) => o.label ?? o.type)).toEqual([
+      '上移一位', '下移一位', '移到顶部', '移到底部', 'divider', '恢复默认排序',
+    ])
+    expect(opts.map(row).map((o) => o.key)).toEqual([
+      'up', 'down', 'top', 'bottom', 'sort-divider', 'reset',
+    ])
+  })
+
+  it('菜单 key 与移动动作同一词表（防两套词表错位回归：菜单里的移动 key 必须全是合法 SidebarSortAction）', () => {
+    const moveKeys = buildSidebarSortMenuOptions('budget', base)
+      .map(row)
+      .map((o) => o.key!)
+      .filter((k) => k !== 'sort-divider' && k !== 'reset')
+    expect(moveKeys).toEqual(['up', 'down', 'top', 'bottom'])
+    for (const k of moveKeys) expect(isSidebarSortAction(k)).toBe(true)
+    // 每个菜单 key 直接可作为动作施加，效果与菜单语义一致（key 即 action）
+    expect(moveArrangeable(base, 'accounts', 'up')[0]).toBe('accounts')
+    expect(moveArrangeable(base, 'budget', 'bottom').at(-1)).toBe('budget')
+  })
+
+  it('可排区首位项：上移/移顶置灰，下移/移底可用', () => {
+    const [up, down, top, bottom] = buildSidebarSortMenuOptions('transactions', base).map(row)
+    expect(up!.disabled).toBe(true)
+    expect(top!.disabled).toBe(true)
+    expect(down!.disabled).toBe(false)
+    expect(bottom!.disabled).toBe(false)
+  })
+
+  it('可排区末位项：下移/移底置灰，上移/移顶可用', () => {
+    const [up, down, top, bottom] = buildSidebarSortMenuOptions('search', base).map(row)
+    expect(down!.disabled).toBe(true)
+    expect(bottom!.disabled).toBe(true)
+    expect(up!.disabled).toBe(false)
+    expect(top!.disabled).toBe(false)
+  })
+
+  it('中间项：四种移动全部可用；恢复默认排序恒可用', () => {
+    const opts = buildSidebarSortMenuOptions('budget', base).map(row)
+    for (const o of opts) {
+      if (o.type === 'divider') continue
+      expect(o.disabled).toBe(false)
+    }
+    expect(opts[5]!.key).toBe('reset')
+    expect(opts[5]!.disabled).toBe(false)
+  })
+
+  it('自定义序下的边界按当前序判定', () => {
+    const custom = moveArrangeable(base, 'search', 'top')
+    const [up, , top] = buildSidebarSortMenuOptions('search', custom).map(row)
+    expect(up!.disabled).toBe(true)
+    expect(top!.disabled).toBe(true)
+  })
+})
+
+describe('isArrangeableView（固定项例外判定，issue #270）', () => {
+  it('可排区八项为真；概览/AI/设置三固定项为假', () => {
+    for (const name of ARRANGEABLE_VIEWS) expect(isArrangeableView(name)).toBe(true)
+    expect(isArrangeableView('dashboard')).toBe(false)
+    expect(isArrangeableView('ai')).toBe(false)
+    expect(isArrangeableView('settings')).toBe(false)
+    expect(isArrangeableView('bogus')).toBe(false)
+  })
+})
+
+describe('写路径与持久化（issue #270：点选即重排、立即持久化、重启保持、恢复默认）', () => {
+  const ORDER_KEY = VIEW_STATE_KEYS.sidebarOrder
+
+  beforeEach(() => {
+    localStorage.clear()
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    localStorage.removeItem(ORDER_KEY)
+    vi.resetModules()
+  })
+
+  async function fresh() {
+    return await import('@/composables/useViewShortcuts')
+  }
+
+  it('applySidebarSort：响应式重排 + 立即持久化', async () => {
+    const mod = await fresh()
+    mod.applySidebarSort('search', 'top')
+    expect(mod.sidebarOrder.value[0]).toBe('search')
+    expect(mod.viewShortcuts.value.map((s) => s.name)[1]).toBe('search')
+    expect(localStorage.getItem(ORDER_KEY)).toBe(JSON.stringify([...mod.sidebarOrder.value]))
+  })
+
+  it('重启（重导入）后自定义序保持，键位与侧栏序随新位置一致', async () => {
+    const mod = await fresh()
+    mod.applySidebarSort('search', 'top')
+    vi.resetModules()
+    const rebooted = await fresh()
+    expect(rebooted.viewShortcuts.value.map((s) => s.name)).toEqual([
+      'dashboard', 'search', 'transactions', 'accounts', 'budget', 'investments', 'reports', 'scheduled', 'items', 'ai', 'settings',
+    ])
+    expect(rebooted.viewShortcuts.value.find((s) => s.name === 'search')!.key).toBe('2')
+    expect(rebooted.viewShortcuts.value.find((s) => s.name === 'items')!.key).toBe('9')
+  })
+
+  it('save→load→解析往返：持久化值经 parseArrangeableOrder 防御后还原', async () => {
+    const mod = await fresh()
+    mod.applySidebarSort('items', 'top')
+    mod.applySidebarSort('search', 'up')
+    // 直接读存储做解析往返（等价启动读路径）
+    const raw = JSON.parse(localStorage.getItem(ORDER_KEY)!)
+    expect(mod.parseArrangeableOrder(raw)).toEqual([...mod.sidebarOrder.value])
+  })
+
+  it('resetSidebarOrder：清除存储回默认序，可反复「自定义 → 恢复 → 再自定义」交替', async () => {
+    const mod = await fresh()
+    mod.applySidebarSort('items', 'top')
+    expect(localStorage.getItem(ORDER_KEY)).not.toBeNull()
+    mod.resetSidebarOrder()
+    expect(localStorage.getItem(ORDER_KEY)).toBeNull()
+    expect(mod.viewShortcuts.value.map((s) => s.name)).toEqual([...mod.DEFAULT_VIEW_ORDER])
+    // 恢复后可再次自定义
+    mod.applySidebarSort('accounts', 'bottom')
+    expect(localStorage.getItem(ORDER_KEY)).not.toBeNull()
+    expect(mod.sidebarOrder.value[mod.sidebarOrder.value.length - 1]).toBe('accounts')
+    // 再恢复，仍回默认
+    mod.resetSidebarOrder()
+    expect(mod.viewShortcuts.value.map((s) => s.name)).toEqual([...mod.DEFAULT_VIEW_ORDER])
+  })
+
+  it('边界移动（首位上移）不改顺序且不写存储：保住「恢复默认 = 删 key」语义，出厂序调整时自动跟随', async () => {
+    const mod = await fresh()
+    expect(localStorage.getItem(ORDER_KEY)).toBeNull()
+    mod.applySidebarSort('transactions', 'up')
+    expect(mod.sidebarOrder.value).toEqual([...mod.ARRANGEABLE_VIEWS])
+    expect(localStorage.getItem(ORDER_KEY)).toBeNull()
+  })
+})
+
+describe('排序菜单打开期间视图快捷键被弹层抑制机制压制（issue #270，零新代码）', () => {
+  it('真实 NDropdown 打开时渲染 .n-dropdown-menu（弹层抑制信号成立）', async () => {
+    const Host = defineComponent({
+      setup() {
+        return () =>
+          h(NDropdown, { trigger: 'manual', show: true, placement: 'bottom-start', options: [{ label: '上移一位', key: 'up' }] }, { default: () => h('div') })
+      },
+    })
+    const w = mount(Host, { attachTo: document.body })
+    await flushPromises()
+    expect(hasOpenOverlay()).toBe(true)
+    w.unmount()
+  })
+
+  it('.n-dropdown-menu 存在时 Cmd+数字不跳转（含将来换弹层形态的契约）', () => {
+    setPlatform('MacIntel')
+    const { router, push } = makeRouter('dashboard')
+    mountHost(router)
+    const dropdown = document.createElement('div')
+    dropdown.className = 'n-dropdown-menu'
+    document.body.appendChild(dropdown)
+    window.dispatchEvent(press('4', { metaKey: true }))
+    expect(push).not.toHaveBeenCalled()
+    dropdown.remove()
   })
 })

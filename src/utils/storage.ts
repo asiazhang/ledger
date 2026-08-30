@@ -14,3 +14,9 @@ export function saveLocal<T>(key: string, value: T) {
     localStorage.setItem(key, JSON.stringify(value))
   } catch { /* ignore */ }
 }
+
+export function removeLocal(key: string) {
+  try {
+    localStorage.removeItem(key)
+  } catch { /* ignore */ }
+}
