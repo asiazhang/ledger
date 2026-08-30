@@ -269,7 +269,7 @@ erDiagram
 - `src-tauri/migrations/V006__transaction_amount_index.sql`：金额筛选索引
 - `src-tauri/migrations/V007__transaction_idempotency_key.sql`：幂等键列 + 部分唯一索引
 
-> 迁移版本由 SQLite `user_version` 自动追踪（`src-tauri/src/db/mod.rs` 的 `migrations()` 注册）。新增 schema 变更时新建 `V00X__名称.sql` 并在 `migrations()` 追加，**不改已有迁移**（已发布版本冻结，见 AGENTS.md 发布约定）。
+> 迁移版本由 SQLite `user_version` 自动追踪（`src-tauri/src/db/mod.rs` 的 `migrations()` 注册）。新增 schema 变更时新建 `V00X__名称.sql` 并在 `migrations()` 追加；已发布迁移的就地修改与 BREAKING 标记要求见 AGENTS.md 发布约定。
 
 ## 扩展性设计
 

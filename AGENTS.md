@@ -16,7 +16,7 @@
 
 Ledger：Tauri 2 桌面记账应用，前端 Vue 3 + TypeScript、后端 Rust。后端命令集中在 `src-tauri/src/commands/`，前端经 `src/api/index.ts` 的 `api` 对象 invoke。
 
-> **发布约定：打 git tag 即发布。** 未发布（最新 tag 之后）的 schema、API、数据模型可自由修改；已发布（最新 tag 及更早）**冻结**：迁移只增不改（变更一律新增向前迁移），API 与数据模型只增不改。
+> **发布约定：打 git tag 即发布。** 未发布（最新 tag 之后）的 schema、API、数据模型可自由修改；已发布（最新 tag 及更早）：**迁移文件可就地修改**（已执行过该迁移的存量库保持原 schema，与新装库的 schema 分叉被接受），**API 与数据模型只增不改**。凡就地修改已发布迁移，发布（打 tag）时必须以两级 BREAKING 标记承载：被改迁移文件头部加就地修改注记（指向 CHANGELOG 版本）+ CHANGELOG 对应版本下加 BREAKING 条目。
 
 ## 工作流约定
 
