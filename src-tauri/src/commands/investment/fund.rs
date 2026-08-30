@@ -11,7 +11,9 @@
 
 use rusqlite::Connection;
 
-use crate::commands::sync::persist::{price_value_to_cents, upsert_market_price};
+use crate::commands::sync::persist::{
+    EASTMONEY_PRICE_SOURCE, price_value_to_cents, upsert_market_price,
+};
 use crate::error::{AppError, Result};
 use crate::models::{AddFundResult, FundDetail, InstrumentInput, InstrumentType};
 
@@ -116,6 +118,7 @@ pub(crate) fn persist_fund_detail(
             FUND_CURRENCY,
             &nav.nav_date,
             Some(nav.nav_date.as_str()),
+            Some(EASTMONEY_PRICE_SOURCE),
         )?;
     }
     Ok(AddFundResult {

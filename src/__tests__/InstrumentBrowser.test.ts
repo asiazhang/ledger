@@ -720,3 +720,71 @@ describe('InstrumentBrowser 自建标的删除（issue #292 / ADR-0036）', () =
     expect(after).toBe(before)
   })
 })
+
+describe('InstrumentBrowser 行内录价入口（issue #291 / ADR-0036）', () => {
+  /** 五类行覆盖录价分区：股票/真实代码基金无入口；自建标的与名称充代码基金行有入口 */
+  function rowsForQuoteGating() {
+    return [
+      makeInstrument({ id: 'inst-st', symbol: '600000', type: 'stock', source: 'eastmoney' }),
+      makeInstrument({ id: 'inst-fund6', symbol: '000001', type: 'fund', source: 'manual', market: 'unknown' }),
+      makeInstrument({ id: 'inst-other', symbol: '稳稳地幸福', type: 'other', source: 'manual', market: 'unknown' }),
+      makeInstrument({ id: 'inst-bond', symbol: '019547', type: 'bond', source: 'manual', market: 'unknown' }),
+      makeInstrument({ id: 'inst-fund-name', symbol: '稳稳地幸福', type: 'fund', source: 'manual', market: 'unknown' }),
+    ]
+  }
+
+  it('录价入口只对同步覆盖不到的标的开放：股票与 6 位代码基金无入口，自建标的与名称充代码基金行有入口', async () => {
+    const rows = rowsForQuoteGating()
+    baseInvoke({
+      list_instruments: () => Promise.resolve({ items: rows, total: rows.length }),
+    })
+    const wrapper = mountBrowser()
+    await flushPromises()
+    const cells = wrapper.findAll('td[data-col-key="quote"]').map((c) => c.text())
+    expect(cells).toEqual(['-', '-', '录价', '录价', '录价'])
+    // 入口按钮带标的定位 testid（有入口的三行）
+    expect(wrapper.find('[data-testid="quote-600000"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="quote-000001"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="quote-稳稳地幸福"]').exists()).toBe(true)
+  })
+
+  it('点击行内「录价」打开报价弹窗，弹窗内展示标的代码', async () => {
+    const rows = [rowsForQuoteGating()[2]]
+    baseInvoke({
+      list_instruments: () => Promise.resolve({ items: rows, total: rows.length }),
+    })
+    const wrapper = mountBrowser()
+    await flushPromises()
+    await wrapper.find('[data-testid="quote-稳稳地幸福"]').trigger('click')
+    await nextTick()
+    expect(document.body.textContent).toContain('录价 — 稳稳地幸福')
+  })
+
+  it('录价成功：页面级回执 + 列表零手动重拉（刷新由价格失效信号驱动）', async () => {
+    baseInvoke({
+      record_manual_price: () =>
+        Promise.resolve({ history_written: true, current_price_written: true }),
+    })
+    const wrapper = mountBrowser()
+    await flushPromises()
+    // 弹窗内校验与提交流由 ManualPriceModal.test.ts 覆盖，此处经组件 emit 驱动
+    const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
+    wrapper.findComponent({ name: 'ManualPriceModal' }).vm.$emit(
+      'quoted',
+      '已录价：稳稳地幸福 现价更新为 1.318',
+    )
+    await flushPromises()
+    // 页面级回执展示
+    const msg = wrapper.find('[data-testid="manual-quote-result"]')
+    expect(msg.exists()).toBe(true)
+    expect(msg.text()).toContain('已录价：稳稳地幸福 现价更新为 1.318')
+    // 调用方零手动重拉：录价回执不触发列表查询
+    const after = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
+    expect(after).toBe(before)
+    // 列表刷新由价格失效信号驱动（后端实际写入后广播）：信号触发后恰好重拉一次
+    firePricesChanged()
+    await flushPromises()
+    const refreshed = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
+    expect(refreshed).toBe(before + 1)
+  })
+})

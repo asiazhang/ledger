@@ -20,10 +20,11 @@ import { useInstrumentFullSync } from '@/composables/useInstrumentFullSync'
 import { usePricesChanged } from '@/composables/usePricesChanged'
 import { useAppDialog } from '@/composables/useAppDialog'
 import { errorMessage as extractErrorMessage } from '@/utils/errors'
-import { formatPrice, INSTRUMENT_SOURCE_LABELS, INSTRUMENT_TYPE_LABELS, MARKET_TYPE_LABELS } from '@/types'
+import { formatPrice, INSTRUMENT_SOURCE_LABELS, INSTRUMENT_TYPE_LABELS, MARKET_TYPE_LABELS, canManualPrice } from '@/types'
 import AppModal from '@/components/AppModal.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import CreateInstrumentModal from '@/components/investments/CreateInstrumentModal.vue'
+import ManualPriceModal from '@/components/investments/ManualPriceModal.vue'
 import type { Instrument, MarketType } from '@/types'
 
 const reference = useReferenceStore()
@@ -170,6 +171,27 @@ function confirmDeleteInstrument(row: Instrument) {
 }
 
 // ---------------------------------------------------------------------------
+// 手动报价（issue #291 / ADR-0036）：行内「录价」动作只对同步覆盖不到的标的
+// 开放（自建标的与名称充代码的基金行，判定 canManualPrice 与「净值可拉」分区
+// 同源）；报价弹窗提交后后端广播价格失效信号，现价列刷新由本组件既有的
+// usePricesChanged 订阅完成，此处零手动重拉。
+// ---------------------------------------------------------------------------
+const quoteTarget = ref<Instrument | null>(null)
+const quoteOpen = ref(false)
+const quoteMessage = ref<string | null>(null)
+
+function openQuote(row: Instrument) {
+  quoteTarget.value = row
+  quoteOpen.value = true
+}
+
+function onQuoted(message: string) {
+  // 只记页面级回执：现价列刷新由价格失效信号驱动（信号在信号处理中已保留
+  // 分页/搜索状态原地重拉），调用方不手动重拉。
+  quoteMessage.value = message
+}
+
+// ---------------------------------------------------------------------------
 // 添加基金（issue #301 / ADR-0038）：fund 类型唯一创建入口——输入 6 位基金代码，
 // 东财按代码即拉名称/分类/最新净值自动回填；查无此码中文报错、不产生标的行。
 // ---------------------------------------------------------------------------
@@ -295,6 +317,26 @@ const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
     },
   },
   {
+    // 录价（issue #291 / ADR-0036）：只对同步覆盖不到的标的开放（自建标的与
+    // 名称充代码的基金行）；真实代码基金与股票的现价归同步，无录价入口。
+    title: '录价',
+    key: 'quote',
+    width: 70,
+    render(row) {
+      if (!canManualPrice(row)) return '-'
+      return h(
+        NButton,
+        {
+          size: 'tiny',
+          secondary: true,
+          'data-testid': `quote-${row.symbol}`,
+          onClick: () => openQuote(row),
+        },
+        { default: () => '录价' },
+      )
+    },
+  },
+  {
     title: '持仓',
     key: 'invested',
     width: 80,
@@ -408,6 +450,9 @@ onMounted(load)
     >
       {{ deleteMessage.text }}
     </NText>
+    <NText v-if="quoteMessage" type="success" data-testid="manual-quote-result">
+      {{ quoteMessage }}
+    </NText>
     <NDataTable
       :columns="instrumentBrowseColumns"
       :data="instruments"
@@ -423,6 +468,14 @@ onMounted(load)
     <CreateInstrumentModal
       v-model:show="createOpen"
       @created="onInstrumentCreated"
+    />
+
+    <!-- 手动报价（issue #291 / ADR-0036）：日期 + 价格弹窗；录价成功后现价列
+         经价格失效信号自动刷新（本组件顶部既有订阅），此处只记页面级回执 -->
+    <ManualPriceModal
+      v-model:show="quoteOpen"
+      :instrument="quoteTarget"
+      @quoted="onQuoted"
     />
 
     <!-- 添加基金（按代码即拉，issue #301）：6 位代码 → 东财回填名称/分类/最新净值；

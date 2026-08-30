@@ -20,7 +20,9 @@ use crate::error::Result;
 
 use super::fund::deserialize_flexible_f64;
 use super::http::{KlineBar, Pacer, RetryConfig, request_json_from_hosts};
-use super::persist::{price_value_to_cents, upsert_market_price, upsert_price_history};
+use super::persist::{
+    EASTMONEY_PRICE_SOURCE, price_value_to_cents, upsert_market_price, upsert_price_history,
+};
 
 // 历史净值接口：单主机（无公开镜像池），复用行情层的重试与限流泛型层。
 const LSJZ_HOSTS: &[&str] = &["https://api.fund.eastmoney.com"];
@@ -295,6 +297,7 @@ where
                 &trade_date,
                 price_value_to_cents(nav),
                 &fund.currency,
+                EASTMONEY_PRICE_SOURCE,
             )?;
         }
         // 现价 = 窗口内最新公布单位净值；priced_at = nav_date = 净值日期
@@ -310,6 +313,7 @@ where
             &fund.currency,
             &latest.date,
             Some(&latest.date),
+            Some(EASTMONEY_PRICE_SOURCE),
         )?;
         stats.synced += 1;
         stats.written += 1;

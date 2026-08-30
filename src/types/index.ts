@@ -25,4 +25,5 @@ export {
   centsToYuan,
   priceToYuan,
   yuanToCents,
+  yuanToPrice,
 } from '@/utils/money'

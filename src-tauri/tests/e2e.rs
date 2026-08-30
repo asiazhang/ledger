@@ -36,6 +36,8 @@ mod items_dispose_steps;
 mod items_provenance_steps;
 #[path = "e2e/items_update_steps.rs"]
 mod items_update_steps;
+#[path = "e2e/manual_quote_steps.rs"]
+mod manual_quote_steps;
 #[path = "e2e/merchants_steps.rs"]
 mod merchants_steps;
 #[path = "e2e/migration_steps.rs"]

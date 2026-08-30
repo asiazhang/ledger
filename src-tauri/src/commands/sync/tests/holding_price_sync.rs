@@ -12,7 +12,9 @@ use crate::commands::sync::http::{
     fx_secid_candidates, parse_klines, secid_prefix,
 };
 use crate::commands::sync::incremental::{beijing_today, do_incremental_sync_with};
-use crate::commands::sync::persist::{upsert_market_price, upsert_price_history};
+use crate::commands::sync::persist::{
+    EASTMONEY_PRICE_SOURCE, upsert_market_price, upsert_price_history,
+};
 use crate::error::{AppError, Result};
 
 use super::common::setup_db;
@@ -217,7 +219,16 @@ fn incremental_sync_updates_holding_prices_only() {
     insert_holding(&conn, "acc-2", "inst-sz", "000001", "stock", "CNY", "sz");
     insert_holding(&conn, "acc-3", "inst-hk", "00700", "stock", "HKD", "hk");
     // 预先存在的旧价（应被覆盖更新，不产生新行）
-    upsert_market_price(&conn, "inst-sh", 999, "CNY", "2026-01-01T00:00:00Z", None).unwrap();
+    upsert_market_price(
+        &conn,
+        "inst-sh",
+        999,
+        "CNY",
+        "2026-01-01T00:00:00Z",
+        None,
+        Some("eastmoney"),
+    )
+    .unwrap();
 
     let prices = [
         ("600519", Some(130280.0)),
@@ -310,7 +321,16 @@ fn incremental_sync_keeps_old_price_when_suspended() {
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     insert_holding(&conn, "acc-2", "inst-sz", "000001", "stock", "CNY", "sz");
     // 停牌股已有旧价
-    upsert_market_price(&conn, "inst-sz", 888, "CNY", "2026-01-01T00:00:00Z", None).unwrap();
+    upsert_market_price(
+        &conn,
+        "inst-sz",
+        888,
+        "CNY",
+        "2026-01-01T00:00:00Z",
+        None,
+        Some("eastmoney"),
+    )
+    .unwrap();
 
     // 600519 正常价；000001 停牌（f2 无效 → None）
     let prices = [("600519", Some(130280.0)), ("000001", None)];
@@ -990,11 +1010,28 @@ fn fund_incremental_fetches_from_watermark_and_overwrites_same_week() {
         "CNY",
         "2026-01-28",
         Some("2026-01-28"),
+        Some(EASTMONEY_PRICE_SOURCE),
     )
     .unwrap();
-    upsert_price_history(&conn, "inst-fund", "2026-01-28", 30000, "CNY").unwrap();
+    upsert_price_history(
+        &conn,
+        "inst-fund",
+        "2026-01-28",
+        30000,
+        "CNY",
+        EASTMONEY_PRICE_SOURCE,
+    )
+    .unwrap();
     // 更早一周的历史点应原样保留（增量不回看）。
-    upsert_price_history(&conn, "inst-fund", "2026-01-23", 31000, "CNY").unwrap();
+    upsert_price_history(
+        &conn,
+        "inst-fund",
+        "2026-01-23",
+        31000,
+        "CNY",
+        EASTMONEY_PRICE_SOURCE,
+    )
+    .unwrap();
 
     // 窗口 = 水位次日起，单页两行（total=2 → 1 页）：周四、周五新净值；
     // 周五与水位同周——该周采样整周覆盖为周五。
@@ -1055,6 +1092,7 @@ fn fund_incremental_up_to_date_counts_synced_without_write() {
         "CNY",
         &watermark,
         Some(&watermark),
+        Some(EASTMONEY_PRICE_SOURCE),
     )
     .unwrap();
 
