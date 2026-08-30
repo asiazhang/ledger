@@ -147,8 +147,8 @@ pub(super) fn apply_stock_item(
         let id = new_uuid();
         let now = now_iso();
         conn.execute(
-            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-             VALUES (?1,?2,'stock',?3,?4,?5,?6,?7,?8,?9)",
+            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id,source) \
+             VALUES (?1,?2,'stock',?3,?4,?5,?6,?7,?8,?9,'eastmoney')",
             params![
                 id,
                 item.code,

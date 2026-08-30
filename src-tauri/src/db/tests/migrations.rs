@@ -132,6 +132,71 @@ fn price_history_weekly_unique_and_cascade() {
     assert_eq!(count, 0, "删除标的后价格历史应级联删除");
 }
 
+// ---------------------------------------------------------------------------
+// V011：标的字典来源列（issue #293 / ADR-0036 决策 2、ADR-0037 决策 5）
+// ---------------------------------------------------------------------------
+
+/// V011 之前的 schema 版本：加 source 列前的迁移序列长度（V001–V004、V006–V010 共 9 个）。
+const PRE_V011_SCHEMA_VERSION: usize = 9;
+
+/// instruments.source 迁移语义：存量库升级后全部回填 'eastmoney'（UI 从无创建
+/// 入口，现存字典均出自同步）；升级后省略 source 的新写入落列默认值，显式 NULL
+/// 被 NOT NULL 拒绝。词表 'eastmoney' | 'manual' 的闭集由写入通道收口，不在
+/// 库层设 CHECK（与价格侧 source 列同款）。
+#[test]
+fn instruments_source_backfills_eastmoney_on_upgrade() {
+    let mut conn = open_in_memory().unwrap();
+    migrations()
+        .to_version(&mut conn, PRE_V011_SCHEMA_VERSION)
+        .unwrap();
+
+    // 旧 schema（无 source 列）下的存量行：同步产物。
+    conn.execute(
+        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+         VALUES ('inst-old','600000','stock','浦发银行','CNY','sh',\
+                 '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+        [],
+    )
+    .unwrap();
+
+    init_db(&mut conn).unwrap();
+
+    let source: String = conn
+        .query_row(
+            "SELECT source FROM instruments WHERE id='inst-old'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(source, "eastmoney", "存量行升级后应回填同步来源");
+
+    // 升级后省略 source 的新写入落默认值。
+    conn.execute(
+        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+         VALUES ('inst-new','000001','stock','平安银行','CNY','sz',\
+                 '2026-01-02T00:00:00Z','2026-01-02T00:00:00Z',1,'test')",
+        [],
+    )
+    .unwrap();
+    let source: String = conn
+        .query_row(
+            "SELECT source FROM instruments WHERE id='inst-new'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(source, "eastmoney");
+
+    // 显式 NULL 被 NOT NULL 拒绝。
+    let null_rejected = conn.execute(
+        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id,source) \
+         VALUES ('inst-null','000002','stock','万科A','CNY','sz',\
+                 '2026-01-02T00:00:00Z','2026-01-02T00:00:00Z',1,'test',NULL)",
+        [],
+    );
+    assert!(null_rejected.is_err(), "source 列 NOT NULL 应拒绝显式 NULL");
+}
+
 /// fx_rate_history：币种对 × 周唯一（与 PriceHistory 同规则）。
 #[test]
 fn fx_rate_history_weekly_unique_per_pair() {

@@ -1,0 +1,13 @@
+-- V011 标的字典来源列（issue #293 / ADR-0036 决策 2、ADR-0037 决策 5）：
+-- instruments 增 source 列，持久化字典条目来源，取值词表 'eastmoney' | 'manual'。
+-- 与价格侧 source（market_prices / price_history / fx_rate_history）同词表但语义
+-- 正交：本列是「字典条目从哪来」，价格列是「价格数据从哪来」——「手动字典 +
+-- 东财净值」的基金行是合法并存态。
+-- 只增合规：instruments 已随 v0.3.0 发布，本变更走新迁移，不就地改 V002。
+-- 不设 CHECK：与价格侧 source 列同款保持 TEXT，闭集由写入通道收口——
+-- 标的全量同步 INSERT 写 'eastmoney'（src-tauri/src/commands/sync/persist.rs），
+-- 手动/AI 共用核心创建函数写 'manual'（src-tauri/src/commands/investment/crud.rs）；
+-- 来源随行终身不变，两条 upsert 路径的更新分支均不覆盖本列。
+-- NOT NULL DEFAULT 使存量行就地回填 'eastmoney'（UI 从无创建入口，
+-- 现存字典均出自同步），SQLite ADD COLUMN 对既有行直接生效默认值。
+ALTER TABLE instruments ADD COLUMN source TEXT NOT NULL DEFAULT 'eastmoney';

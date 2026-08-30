@@ -133,5 +133,6 @@ erDiagram
 | `V008__app_settings.sql` | `app_settings` KV 表 |
 | `V009__items.sql` | 物品（items）表 |
 | `V010__price_history.sql` | `price_history` / `fx_rate_history` 周粒度历史表 |
+| `V011__instruments_source.sql` | 标的字典来源列（同步 / 手动标记，ADR-0036） |
 
 > 迁移版本由 SQLite `user_version` 自动追踪，新迁移在数据库模块统一注册。V005（FTS5 搜索索引）已随统一模糊搜索方案移除（ADR-0027），编号不复用。新增 schema 变更时新建 `V00X__名称.sql` 并在注册处追加；已发布迁移的就地修改与 BREAKING 标记要求见 AGENTS.md 发布约定。
