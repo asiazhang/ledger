@@ -157,6 +157,27 @@ async fn test_openapi_update_transaction_input_omits_idempotency_key() {
     );
 }
 
+/// 投资四字段契约描述锁（issue #298）：`TransactionInput` / `UpdateTransactionInput`
+/// 的 `instrument_id` / `quantity` / `price_cents` / `fee_cents` 必须带中文描述——
+/// 契约是 AI 的唯一字段语义来源，裸字段即契约缺口（buy/sell 的悬空契约曾致投资教学缺位）。
+#[tokio::test]
+async fn test_openapi_investment_fields_have_descriptions() {
+    let (app, _) = setup_app();
+    let (_, doc) = get_json(&app, "/api/v1/openapi.json").await;
+    let schemas = doc["components"]["schemas"].as_object().unwrap();
+
+    for schema_name in ["TransactionInput", "UpdateTransactionInput"] {
+        let props = &schemas[schema_name]["properties"];
+        for field in ["instrument_id", "quantity", "price_cents", "fee_cents"] {
+            let description = props[field]["description"].as_str().unwrap_or_default();
+            assert!(
+                !description.trim().is_empty(),
+                "{schema_name}.{field} 应带中文描述（契约不可为裸字段）"
+            );
+        }
+    }
+}
+
 /// kind 迁移为闭集枚举后，OpenAPI 契约锁：`Transaction.kind` 引用
 /// `#/components/schemas/TransactionKind` 组件，组件为小写字符串枚举（与 wire 一致），
 /// 而非 PascalCase 变体名或裸 string（issue #74 迁移锁）。
@@ -313,6 +334,22 @@ async fn test_import_knowledge_covers_key_conventions() {
         "to_account_id",
         "currency_code",
         "dividend",
+        // 投资交易教学关键词锁（issue #298）：锁定标的解析三步法、行字段约束、
+        // 纠错与对账四要点的确定性措辞，防后续编辑静默丢失教学能力。
+        "投资交易",
+        "buy",
+        "sell",
+        "标的",
+        "标的解析",
+        "投资账户",
+        "instrument_id",
+        "quantity",
+        "price_cents",
+        "fee_cents",
+        "GET /api/v1/instruments",
+        "POST /api/v1/instruments",
+        "重算",
+        "部分卖出",
     ];
     for kw in required_keywords {
         assert!(text.contains(kw), "导入知识应包含关键约定关键词 {kw:?}");
