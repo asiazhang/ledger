@@ -11,6 +11,7 @@ mod common;
 mod documentation;
 mod instrument_create;
 mod instrument_search;
+mod investment_migration;
 mod merchant_import;
 mod reference_data;
 mod transaction_crud;

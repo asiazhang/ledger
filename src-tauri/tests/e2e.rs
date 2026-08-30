@@ -18,6 +18,8 @@ mod dashboard_steps;
 mod data_location_steps;
 #[path = "e2e/instruments_steps.rs"]
 mod instruments_steps;
+#[path = "e2e/investment_migration_steps.rs"]
+mod investment_migration_steps;
 #[path = "e2e/investment_trend_steps.rs"]
 mod investment_trend_steps;
 #[path = "e2e/items_common.rs"]
