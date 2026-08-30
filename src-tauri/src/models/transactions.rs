@@ -57,9 +57,16 @@ pub struct TransactionInput {
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
+    /// 标的 id（仅 buy/sell 需提供）：先用标的搜索端点（`GET /api/v1/instruments`）
+    /// 把源数据中的标的描述解析为 id，未命中再按创建端点幂等新建；
+    /// 引用不存在的标的返回 400（中文错误，可读回自纠）。
     pub instrument_id: Option<String>,
+    /// 成交数量（份，可含小数）：仅 buy/sell 需提供，必须 > 0。
     pub quantity: Option<f64>,
+    /// 成交单价（整数分）：仅 buy/sell 需提供，必须 > 0。
     pub price_cents: Option<i64>,
+    /// 手续费（整数分，可省，默认 0）：sell 不得超过卖出收入（数量 × 单价）；
+    /// 服务端按 buy = 数量 × 单价 + 费用、sell = 数量 × 单价 − 费用重算行金额。
     pub fee_cents: Option<i64>,
     /// 客户端提供的、内容无关的导入幂等键（指向"该交易来自源文件哪一行"）。
     /// 带键时批量导入以其为准去重（同键跳过、内容无关）；无键时回退内容哈希兜底。
@@ -86,9 +93,14 @@ pub struct UpdateTransactionInput {
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
+    /// 标的 id（仅 buy/sell 需提供）：与 `TransactionInput.instrument_id` 同一契约；
+    /// 引用不存在的标的返回 400（中文错误，可读回自纠）。
     pub instrument_id: Option<String>,
+    /// 成交数量（份，可含小数）：与 `TransactionInput.quantity` 同一契约，必须 > 0。
     pub quantity: Option<f64>,
+    /// 成交单价（整数分）：与 `TransactionInput.price_cents` 同一契约，必须 > 0。
     pub price_cents: Option<i64>,
+    /// 手续费（整数分，可省，默认 0）：与 `TransactionInput.fee_cents` 同一契约。
     pub fee_cents: Option<i64>,
 }
 

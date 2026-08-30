@@ -11,7 +11,7 @@
 - `资金账户` 含 ` → ` → `transfer`：`account_id`=箭头左侧（转出），`to_account_id`=箭头右侧（转入），金额任取一列。
 - `资金账户` = 无（或转账任一侧为无）→ 映射黑洞账户 `无(CNY)` / `无(HKD)`（`GET /api/v1/accounts` 返回，`is_hidden=true`）。黑洞信号只看资金账户列；`收支大类=无` 不是黑洞信号。
 - `备注` → `note`；`标签` 可忽略或并入 `note`。
-- 迁移拆行仅产生 `income` / `expense` / `transfer` 三类 kind；`dividend` / `split` 不受支持，提交会被拒绝。
+- 迁移拆行仅产生 `income` / `expense` / `transfer` 三类 kind（投资流水的 `buy` / `sell` 见「投资交易」）；`dividend` / `split` 不受支持，提交会被拒绝。
 
 ## 商户（Merchant）
 
@@ -20,6 +20,14 @@
 - 仅 `income` / `expense` 可携带商户；`transfer` / `buy` / `sell` 不能带（提交会被拒绝）；退款（refund）自动继承原支出商户（携带的商户会被忽略）。
 - 商户名首尾空白由后端修剪，但名字本身原样匹配（不做同义词归一）：同一商户请始终用同一名字。
 - 同一账单重复导入（带幂等键）时整行跳过，不会重复创建商户，商户字典不产生碎片。
+
+## 投资交易（buy / sell）
+
+- 标的解析三步法：① `GET /api/v1/instruments` 按源数据中的标的描述（代码/名称/拼音首字母）搜索标的；② 未命中再 `POST /api/v1/instruments` 幂等创建（重复创建返回同一 id）：`symbol` 必填，源数据只有名称时以名称充当代码；`type` 从上下文判断（stock/fund/bond/etf/other）；`name` / `market` / `currency_code` 可省；③ 用返回的标的 `id` 填 `instrument_id`。同码异类型靠搜索的 `type` 参数消歧。
+- 行字段约束：`account_id` 必须是投资账户（`GET /api/v1/accounts` 返回 `type` 可辨）；`quantity`（数量，份，可小数）与 `price_cents`（成交单价，分）必填且 > 0；`fee_cents`（手续费，分）可省，默认 0。`buy` / `sell` 不带商户。
+- 金额服务端按固定公式重算覆盖：`buy` = 数量 × 单价 + 费用，`sell` = 数量 × 单价 − 费用（`sell` 费用不得超过卖出收入），`currency_code` 取账户币种——`amount_cents` / `currency_code` 按同式填写即可。
+- 纠错：`buy` 交易已有部分卖出后禁改禁删（提交会被拒绝，改持仓历史会破坏已实现盈亏）；`sell` 数量不得超过当前持仓；`instrument_id` 引用不存在的标的返回 400——先搜索、未命中创建拿到正确 id 后重新提交即可自纠。
+- 对账：读回核对时 `buy` / `sell` 行金额按上式核对；余额核对含投资账户现金流——`buy` 减现金、`sell` 增现金（`GET /api/v1/accounts/balances`）。
 
 ## 幂等与去重
 
