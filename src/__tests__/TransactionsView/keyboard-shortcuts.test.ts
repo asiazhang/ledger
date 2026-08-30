@@ -2,12 +2,14 @@ import { mountView } from './common'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { NModal } from 'naive-ui'
+import { createOverlayToken, resetOverlays } from '@/composables/overlayRegistry'
 import TransactionForm from '@/components/TransactionForm.vue'
 
 describe('TransactionsView 裸键快捷键（issue #153）', () => {
-  // jsdom 的 document.body 跨测试共享：清掉前序测试遗留的弹层容器，避免误抑制
+  // jsdom 的 document.body 跨测试共享；注册表是模块级状态，同样需要复位
   beforeEach(() => {
     document.body.innerHTML = ''
+    resetOverlays()
   })
 
   function pressKey(key: string) {
@@ -38,17 +40,16 @@ describe('TransactionsView 裸键快捷键（issue #153）', () => {
     expect(wrapper.findComponent(NModal).props('show')).toBe(false)
   })
 
-  it('弹层打开时按键不触发；弹窗打开后再按键不换类型', async () => {
+  it('弹层上报打开时按键不触发；弹窗打开后再按键不换类型', async () => {
     const wrapper = await mountView()
-    // 先造一个弹层（与真实弹窗打开时同样会出现的遮罩元素）
-    const overlay = document.createElement('div')
-    overlay.className = 'n-modal-mask'
-    document.body.appendChild(overlay)
+    // 先造一个打开中的弹层信号（真实场景由 AppModal/AppSelect 等封装上报）
+    const token = createOverlayToken('modal')
+    token.set(true)
     pressKey('a')
     await flushPromises()
     expect(wrapper.findComponent(NModal).props('show')).toBe(false)
-    overlay.remove()
-    // 真实打开支出弹窗后再按 z：抑制触发，不切换为转账
+    token.set(false)
+    // 真实打开支出弹窗后再按 z：AppModal 已上报打开状态，抑制触发，不切换为转账
     pressKey('a')
     await flushPromises()
     expect(wrapper.findComponent(NModal).props('title')).toBe('记一笔 · 支出')

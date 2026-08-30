@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { mount } from '@vue/test-utils'
 import {
@@ -7,6 +7,7 @@ import {
   isEditableTarget,
   useCreateShortcuts,
 } from '@/composables/useCreateShortcuts'
+import { createOverlayToken, resetOverlays } from '@/composables/overlayRegistry'
 import { CREATE_KINDS } from '@/types'
 import type { CreateTransactionKind } from '@/types'
 
@@ -119,6 +120,8 @@ function mountHost() {
 }
 
 describe('useCreateShortcuts', () => {
+  afterEach(() => resetOverlays())
+
   it('裸键命中时以对应 kind 回调 open', () => {
     const { open } = mountHost()
     window.dispatchEvent(press('a'))
@@ -143,35 +146,19 @@ describe('useCreateShortcuts', () => {
     input.remove()
   })
 
-  it.each(['n-modal-mask', 'n-dropdown-menu', 'n-base-select-menu', 'n-date-panel'])(
+  it.each(['modal', 'popconfirm', 'dropdown', 'select', 'date-picker', 'tree-select', 'dialog'])(
     '弹层（%s）打开时抑制触发',
-    (cls) => {
+    (name) => {
       const { open } = mountHost()
-      const overlay = document.createElement('div')
-      overlay.className = cls
-      document.body.appendChild(overlay)
+      const token = createOverlayToken(name)
+      token.set(true)
       window.dispatchEvent(press('a'))
       expect(open).not.toHaveBeenCalled()
-      overlay.remove()
+      token.set(false)
       window.dispatchEvent(press('a'))
       expect(open).toHaveBeenCalledTimes(1)
     },
   )
-
-  it('弹窗关闭后的残留空壳（.n-modal-container）不再抑制触发（关闭弹窗后快捷键永久失效回归）', () => {
-    // naive-ui VLazyTeleport 关闭后容器永久残留 DOM，存在性嗅探不得以其为信号
-    const { open } = mountHost()
-    const shell = document.createElement('div')
-    shell.className = 'n-modal-container'
-    const hiddenCard = document.createElement('div')
-    hiddenCard.className = 'n-card'
-    hiddenCard.style.display = 'none'
-    shell.appendChild(hiddenCard)
-    document.body.appendChild(shell)
-    window.dispatchEvent(press('a'))
-    expect(open).toHaveBeenCalledTimes(1)
-    shell.remove()
-  })
 
   it('卸载后不再监听（仅交易页生效的机制基础）', () => {
     const { open, wrapper } = mountHost()

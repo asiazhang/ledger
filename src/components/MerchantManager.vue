@@ -7,11 +7,11 @@ import {
   NForm,
   NFormItem,
   NInput,
-  NPopconfirm,
   NSpace,
   useMessage,
   type DataTableColumn,
 } from 'naive-ui'
+import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import MerchantEditModal from '@/components/merchants/MerchantEditModal.vue'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
@@ -79,7 +79,7 @@ const columns: DataTableColumn<Merchant>[] = [
           () => '编辑',
         ),
         h(
-          NPopconfirm,
+          AppPopconfirm,
           { onPositiveClick: () => removeMerchant(m.id) },
           {
             default: () => '确认删除该商户？历史交易仍会显示它的名字。',

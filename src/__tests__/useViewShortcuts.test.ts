@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
-import { NDropdown } from 'naive-ui'
 import type { Router } from 'vue-router'
+import AppDropdown from '@/components/AppDropdown.vue'
+import { createOverlayToken, openOverlayNames, resetOverlays } from '@/composables/overlayRegistry'
 import {
   DEFAULT_VIEW_ORDER,
   ARRANGEABLE_VIEWS,
@@ -201,55 +202,44 @@ describe('shortcutHint', () => {
   })
 })
 
-describe('hasOpenOverlay', () => {
-  it('无覆盖层时返回 false', () => {
+describe('hasOpenOverlay（弹层注册表，ADR-0035）', () => {
+  afterEach(() => resetOverlays())
+
+  it('无弹层上报时返回 false', () => {
     expect(hasOpenOverlay()).toBe(false)
   })
 
-  it('检测 NModal / NDialog 遮罩与 NPopconfirm 覆盖层', () => {
-    const el = document.createElement('div')
-    el.className = 'n-modal-mask'
-    document.body.appendChild(el)
-    expect(hasOpenOverlay()).toBe(true)
-    el.remove()
-    expect(hasOpenOverlay()).toBe(false)
+  it.each(['modal', 'popconfirm', 'dropdown', 'select', 'date-picker', 'tree-select', 'dialog'])(
+    '弹层 %s 上报打开后返回 true，撤销后恢复 false',
+    (name) => {
+      const token = createOverlayToken(name)
+      expect(hasOpenOverlay()).toBe(false)
+      token.set(true)
+      expect(hasOpenOverlay()).toBe(true)
+      token.set(false)
+      expect(hasOpenOverlay()).toBe(false)
+    },
+  )
 
-    const popconfirm = document.createElement('div')
-    popconfirm.className = 'n-popconfirm'
-    document.body.appendChild(popconfirm)
-    expect(hasOpenOverlay()).toBe(true)
-    popconfirm.remove()
+  it('重复上报同值不叠加（幂等）', () => {
+    const token = createOverlayToken('select')
+    token.set(true)
+    token.set(true)
+    expect(openOverlayNames()).toEqual(['select'])
+    token.set(false)
+    token.set(false)
     expect(hasOpenOverlay()).toBe(false)
   })
 
-  it('弹窗容器的残留空壳（.n-modal-container）不视为打开', () => {
-    const shell = document.createElement('div')
-    shell.className = 'n-modal-container'
-    document.body.appendChild(shell)
-    expect(hasOpenOverlay()).toBe(false)
-    shell.remove()
-  })
-
-  it('检测下拉菜单 / 筛选下拉弹层（issue #153 扩展）', () => {
-    const dropdown = document.createElement('div')
-    dropdown.className = 'n-dropdown-menu'
-    document.body.appendChild(dropdown)
+  it('同类弹层多实例各自持有 token：一个关闭不影响另一个', () => {
+    const a = createOverlayToken('select')
+    const b = createOverlayToken('select')
+    a.set(true)
+    b.set(true)
     expect(hasOpenOverlay()).toBe(true)
-    dropdown.remove()
-    expect(hasOpenOverlay()).toBe(false)
-
-    const selectMenu = document.createElement('div')
-    selectMenu.className = 'n-base-select-menu'
-    document.body.appendChild(selectMenu)
+    a.set(false)
     expect(hasOpenOverlay()).toBe(true)
-    selectMenu.remove()
-    expect(hasOpenOverlay()).toBe(false)
-
-    const datePanel = document.createElement('div')
-    datePanel.className = 'n-date-panel'
-    document.body.appendChild(datePanel)
-    expect(hasOpenOverlay()).toBe(true)
-    datePanel.remove()
+    b.set(false)
     expect(hasOpenOverlay()).toBe(false)
   })
 })
@@ -293,33 +283,18 @@ describe('useViewShortcuts', () => {
     expect(push).not.toHaveBeenCalled()
   })
 
-  it('覆盖层打开时抑制跳转', () => {
+  it('弹层上报打开时抑制跳转（注册表信号，ADR-0035）', () => {
     setPlatform('MacIntel')
     const { router, push } = makeRouter('dashboard')
     mountHost(router)
-    const overlay = document.createElement('div')
-    overlay.className = 'n-modal-mask'
-    document.body.appendChild(overlay)
+    const token = createOverlayToken('modal')
+    token.set(true)
     window.dispatchEvent(press('4', { metaKey: true }))
     expect(push).not.toHaveBeenCalled()
-    overlay.remove()
-  })
-
-  it('弹窗关闭后的残留空壳（.n-modal-container）不再抑制跳转（issue #153 回归：关闭弹窗后快捷键永久失效）', () => {
-    // naive-ui VLazyTeleport 关闭后容器永久残留 DOM，存在性嗅探不得以其为信号
-    setPlatform('MacIntel')
-    const { router, push } = makeRouter('dashboard')
-    mountHost(router)
-    const shell = document.createElement('div')
-    shell.className = 'n-modal-container'
-    const hiddenCard = document.createElement('div')
-    hiddenCard.className = 'n-card'
-    hiddenCard.style.display = 'none'
-    shell.appendChild(hiddenCard)
-    document.body.appendChild(shell)
+    token.set(false)
     window.dispatchEvent(press('4', { metaKey: true }))
     expect(push).toHaveBeenCalledWith({ name: 'budget' })
-    shell.remove()
+    resetOverlays()
   })
 
   it('未命中快捷键时不跳转也不报错', () => {
@@ -566,11 +541,13 @@ describe('写路径与持久化（issue #270：点选即重排、立即持久化
 })
 
 describe('排序菜单打开期间视图快捷键被弹层抑制机制压制（issue #270，零新代码）', () => {
-  it('真实 NDropdown 打开时渲染 .n-dropdown-menu（弹层抑制信号成立）', async () => {
+  afterEach(() => resetOverlays())
+
+  it('真实 AppDropdown（侧栏排序菜单同款）打开即上报弹层注册表', async () => {
     const Host = defineComponent({
       setup() {
         return () =>
-          h(NDropdown, { trigger: 'manual', show: true, placement: 'bottom-start', options: [{ label: '上移一位', key: 'up' }] }, { default: () => h('div') })
+          h(AppDropdown, { trigger: 'manual', show: true, placement: 'bottom-start', options: [{ label: '上移一位', key: 'up' }] }, { default: () => h('div') })
       },
     })
     const w = mount(Host, { attachTo: document.body })
@@ -579,15 +556,13 @@ describe('排序菜单打开期间视图快捷键被弹层抑制机制压制（i
     w.unmount()
   })
 
-  it('.n-dropdown-menu 存在时 Cmd+数字不跳转（含将来换弹层形态的契约）', () => {
+  it('弹层上报打开期间 Cmd+数字不跳转（含将来换弹层形态的契约）', () => {
     setPlatform('MacIntel')
     const { router, push } = makeRouter('dashboard')
     mountHost(router)
-    const dropdown = document.createElement('div')
-    dropdown.className = 'n-dropdown-menu'
-    document.body.appendChild(dropdown)
+    createOverlayToken('dropdown').set(true)
     window.dispatchEvent(press('4', { metaKey: true }))
     expect(push).not.toHaveBeenCalled()
-    dropdown.remove()
+    resetOverlays()
   })
 })

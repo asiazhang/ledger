@@ -1,5 +1,5 @@
 import { onMounted, onUnmounted } from 'vue'
-import { hasOpenOverlay } from '@/composables/useViewShortcuts'
+import { hasOpenOverlay } from '@/composables/overlayRegistry'
 import type { CreateTransactionKind } from '@/types'
 
 /**

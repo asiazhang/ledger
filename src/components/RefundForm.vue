@@ -4,12 +4,12 @@ import {
   NFormItem,
   NInput,
   NInputNumber,
-  NSelect,
-  NDatePicker,
   NButton,
   NText,
   NSpace,
 } from 'naive-ui'
+import AppSelect from '@/components/AppSelect.vue'
+import AppDatePicker from '@/components/AppDatePicker.vue'
 import { useRefundForm } from '@/composables/useRefundForm'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import { formatAmount } from '@/types'
@@ -58,7 +58,7 @@ const reference = useReferenceStore()
           placeholder="退款金额"
           style="width: 160px"
         />
-        <NSelect
+        <AppSelect
           v-model:value="ctx.currencyCode.value"
           :options="ctx.currencyOptions.value"
           disabled
@@ -77,7 +77,7 @@ const reference = useReferenceStore()
       </NFormItem>
 
       <NFormItem label="日期">
-        <NDatePicker v-model:value="ctx.date.value" type="date" style="width: 200px" />
+        <AppDatePicker v-model:value="ctx.date.value" type="date" style="width: 200px" />
       </NFormItem>
 
       <NFormItem label="备注">

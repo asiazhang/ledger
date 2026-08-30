@@ -1,6 +1,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { Router } from 'vue-router'
 import type { DropdownOption } from 'naive-ui'
+import { hasOpenOverlay } from '@/composables/overlayRegistry'
 import { getSavedSidebarOrder, saveSidebarOrder, clearSidebarOrder } from '@/utils/view-state'
 
 export interface ViewShortcut {
@@ -197,26 +198,10 @@ export function matchViewShortcut(e: KeyboardEvent): string | null {
   return viewShortcuts.value.find((s) => e.key === s.key)?.name ?? null
 }
 
-/** 弹层探测选择器：Naive UI 弹层「仅打开时存在」的元素（issue #153 扩展弹层类）。
- *
- * 模态类（弹窗/useDialog 确认框）一律探测 `.n-modal-mask` 遮罩：遮罩随 show 真实挂载/卸载。
- * 不能探测 `.n-modal-container` / `.n-dialog`——naive-ui 的 VLazyTeleport 采用
- * useFalseUntilTruthy 语义，容器首次显示后永久残留 DOM（关闭后只剩隐藏空壳），
- * 存在性嗅探会把「已关闭」误判为「打开」，导致快捷键永久失效（见 ADR-0021）。
- * `.n-date-panel` 为无遮罩弹层（日期日历），内部按钮聚焦时不在可编辑目标，需单独纳入信号集。
- */
-const OVERLAY_SELECTORS = [
-  '.n-modal-mask',
-  '.n-popconfirm',
-  '.n-dropdown-menu',
-  '.n-base-select-menu',
-  '.n-date-panel',
-]
-
-/** 覆盖层（弹窗/确认框/下拉菜单）打开时抑制快捷键，避免在编辑/确认/选择中途触发 */
-export function hasOpenOverlay(): boolean {
-  return OVERLAY_SELECTORS.some((sel) => document.querySelector(sel) !== null)
-}
+/** 覆盖层（弹窗/确认框/下拉菜单/日历面板）打开时抑制快捷键，避免在编辑/确认/选择中途触发。
+ *  状态来自弹层注册表（ADR-0035）——弹层封装组件（AppModal/AppSelect/AppDatePicker/
+ *  AppDropdown/AppPopconfirm/useAppDialog）显式上报开/关，不做 DOM 推断。 */
+export { hasOpenOverlay }
 
 /** 注册全局 keydown 监听：命中视图快捷键时切换路由 */
 export function useViewShortcuts(router: Router) {
