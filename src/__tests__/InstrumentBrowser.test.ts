@@ -53,6 +53,7 @@ const mockInstruments: Instrument[] = [
     version: 1,
     device_id: 'test',
     is_deleted: false,
+    source: 'eastmoney',
     price_cents: 1000,
     invested: true,
   },
@@ -68,6 +69,7 @@ const mockInstruments: Instrument[] = [
     version: 1,
     device_id: 'test',
     is_deleted: false,
+    source: 'eastmoney',
     price_cents: 1200,
     invested: false,
   },
@@ -557,5 +559,57 @@ describe('InstrumentBrowser 添加基金（issue #301 / ADR-0038）', () => {
     expect(wrapper.find('[data-testid="add-fund-result"]').exists()).toBe(false)
     const after = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
     expect(after).toBe(before)
+  })
+})
+
+describe('InstrumentBrowser 来源列与新建标的入口（issue #290 / ADR-0036）', () => {
+  it('来源列渲染：同步标的显示「同步」，手动标的显示「手动」标记', async () => {
+    baseInvoke({
+      list_instruments: () =>
+        Promise.resolve({
+          items: [
+            ...mockInstruments,
+            makeInstrument({ id: 'inst-3', symbol: '稳稳地幸福', type: 'other', name: '稳稳地幸福', market: 'unknown', source: 'manual' }),
+          ],
+          total: 3,
+        }),
+    })
+    const wrapper = mount(InstrumentBrowser)
+    await flushPromises()
+    const sourceCells = wrapper.findAll('td[data-col-key="source"]')
+    expect(sourceCells.map((c) => c.text())).toEqual(['同步', '同步', '手动'])
+    // 手动标的带突出标记（tag），同步标的为纯文本
+    expect(wrapper.findAll('[data-testid="source-manual"]').length).toBe(1)
+  })
+
+  it('「新建标的」按钮打开创建弹窗', async () => {
+    const wrapper = mount(InstrumentBrowser)
+    await flushPromises()
+    await wrapper.find('[data-testid="create-instrument"]').trigger('click')
+    await nextTick()
+    expect(bodyQuery('[data-testid="create-instrument-name"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('新建标的')
+  })
+
+  it('创建成功：页面级回执 + 列表重拉（回到第 1 页）', async () => {
+    baseInvoke({
+      create_instrument: () => Promise.resolve('inst-new'),
+    })
+    const wrapper = mount(InstrumentBrowser)
+    await flushPromises()
+    await wrapper.find('[data-testid="create-instrument"]').trigger('click')
+    await nextTick()
+    // 经组件 emit 驱动（弹窗内表单校验与提交流程由 CreateInstrumentModal.test.ts 覆盖）
+    const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
+    wrapper.findComponent({ name: 'CreateInstrumentModal' }).vm.$emit(
+      'created',
+      '已创建标的：稳稳地幸福（稳稳地幸福）',
+    )
+    await flushPromises()
+    const msg = wrapper.find('[data-testid="create-instrument-result"]')
+    expect(msg.exists()).toBe(true)
+    expect(msg.text()).toContain('已创建标的：稳稳地幸福（稳稳地幸福）')
+    const after = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
+    expect(after).toBe(before + 1)
   })
 })

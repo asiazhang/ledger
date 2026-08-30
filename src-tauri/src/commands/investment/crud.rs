@@ -169,7 +169,7 @@ pub(crate) fn list_instruments(
     let params_ref: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
     let select_sql = |limit_clause: &str| {
         format!(
-            "SELECT i.id,i.symbol,i.instrument_type,i.name,i.currency_code,i.market,i.created_at,i.updated_at,i.version,i.device_id,p.price_cents,\n         CASE WHEN {INVESTED_EXISTS} THEN 1 ELSE 0 END AS invested \
+            "SELECT i.id,i.symbol,i.instrument_type,i.name,i.currency_code,i.market,i.created_at,i.updated_at,i.version,i.device_id,i.source,p.price_cents,\n         CASE WHEN {INVESTED_EXISTS} THEN 1 ELSE 0 END AS invested \
              FROM instruments i \
              LEFT JOIN market_prices p ON p.instrument_id = i.id \
              {where_clause} ORDER BY i.symbol{limit_clause}"

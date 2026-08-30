@@ -7,10 +7,12 @@
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::commands::investment::{add_fund_by_code_with, list_instruments_internal};
+use tauri_app_lib::commands::investment::{
+    add_fund_by_code_with, create_instrument_manual_internal, list_instruments_internal,
+};
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
 use tauri_app_lib::error::Result;
-use tauri_app_lib::models::{FundDetail, FundNav, InstrumentListFilter};
+use tauri_app_lib::models::{FundDetail, FundNav, InstrumentInput, InstrumentListFilter};
 
 use crate::world::LedgerWorld;
 
@@ -59,6 +61,39 @@ fn create_instrument_of_type(
 // When
 // ---------------------------------------------------------------------------
 
+/// 手动创建标的（issue #290 / ADR-0036）：驱动 IPC 命令入口层守卫同一接缝
+/// `create_instrument_manual_internal`（类型白名单 + 名称必填在先，核心创建函数
+/// 通用）。市场固定未知（不传入参，缺省 unknown）；结果/错误记入 world 供 Then 断言。
+#[when(expr = "手动创建标的 {string} 类型 {string} 名称 {string} 币种 {string}")]
+fn manual_create_instrument(
+    world: &mut LedgerWorld,
+    symbol: String,
+    kind: String,
+    name: String,
+    currency: String,
+) {
+    let input = InstrumentInput {
+        symbol,
+        kind: kind.parse().expect("未知金融工具类型"),
+        name: Some(name),
+        currency_code: currency,
+        market: None,
+    };
+    match create_instrument_manual_internal(&world_conn!(world), input) {
+        Ok(_) => world.last_error = None,
+        Err(e) => world.last_error = Some(e.to_string()),
+    }
+}
+
+/// 列出全部标的（无过滤）：验证列表返回体来源字段的接缝（issue #290 验收项）。
+#[when(expr = "列出全部标的")]
+fn list_all_instruments(world: &mut LedgerWorld) {
+    world.last_instrument_search = Some(
+        list_instruments_internal(&world_conn!(world), &InstrumentListFilter::default())
+            .expect("标的列表查询失败"),
+    );
+}
+
 #[when(expr = "搜索标的 {string}")]
 fn search_instruments(world: &mut LedgerWorld, query: String) {
     let filter = InstrumentListFilter {
@@ -105,6 +140,49 @@ fn assert_instrument_first_symbol(world: &mut LedgerWorld, symbol: String) {
         result.items.first().map(|i| i.symbol.as_str()),
         Some(symbol.as_str()),
         "首个结果代码不符：{result:?}"
+    );
+}
+
+/// 标的列表返回体带来源字段（issue #290）：存量同步行回填 'eastmoney'、
+/// 手动新建行标 'manual'，列表 UI 的「来源」列由此直出。
+#[then(expr = "标的列表代码 {string} 来源应为 {string}")]
+fn assert_instrument_list_source(world: &mut LedgerWorld, symbol: String, source: String) {
+    let result = world
+        .last_instrument_search
+        .as_ref()
+        .expect("未执行标的列表查询");
+    let item = result
+        .items
+        .iter()
+        .find(|i| i.symbol == symbol)
+        .unwrap_or_else(|| panic!("标的列表应含代码 {symbol}：{:?}", result.items));
+    assert_eq!(item.source, source, "标的 {symbol} 来源不符");
+}
+
+#[then(expr = "标的列表共 {int} 条")]
+fn assert_instrument_list_total(world: &mut LedgerWorld, total: usize) {
+    let result = world
+        .last_instrument_search
+        .as_ref()
+        .expect("未执行标的列表查询");
+    assert_eq!(
+        result.items.len(),
+        total,
+        "标的列表条数不符：{:?}",
+        result.items
+    );
+    assert_eq!(result.total, total as i64, "标的列表总数不符");
+}
+
+#[then(expr = "手动创建标的应返回错误 {string}")]
+fn assert_manual_create_error(world: &mut LedgerWorld, fragment: String) {
+    let error = world
+        .last_error
+        .as_ref()
+        .unwrap_or_else(|| panic!("手动创建标的应失败但未记录错误"));
+    assert!(
+        error.contains(&fragment),
+        "错误「{error}」应包含「{fragment}」"
     );
 }
 
