@@ -321,7 +321,7 @@ async fn list_account_balances_handler(
     path = "/api/v1/categories",
     tag = "categories",
     summary = "列出所有分类",
-    description = "返回全部分类（含种子数据），`kind` 为 `income` / `expense`，支持三级分类体系（`parent_id`）。",
+    description = "返回全部分类（含种子数据），`kind` 为 `income` / `expense`，支持两级分类体系（`parent_id`）。",
     responses(
         (status = 200, description = "分类列表", body = [Category]),
         (status = 500, description = "数据库错误", body = ErrorResponse)
