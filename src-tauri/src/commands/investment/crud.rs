@@ -219,6 +219,42 @@ pub(crate) fn list_instruments(
     Ok(InstrumentListResult { items, total })
 }
 
+/// 自建标的物理删除（issue #292 / ADR-0036 决策 5）：守卫前置检查——仅来源为
+/// 手动且无任何 buy/sell 流水引用（security_transactions 无行）的自建标的可删；
+/// 有引用拒删（交易行与明细归属用户记账事实，不随字典清理）、同步来源标的拒删
+/// （填错由全量同步修正）。不引入软删——标的字典查询面不被污染。现价缓存与
+/// 价格历史随外键 CASCADE 一并消失；持仓批次表虽是 RESTRICT，但批次行的
+/// buy_transaction_id 为指向 security_transactions 的 NOT NULL 外键——批次存在
+/// 必有买入明细行，故守卫的流水 COUNT 已覆盖批次（无流水 ⟺ 无批次），
+/// DELETE 不会撞到 RESTRICT 外键错误。
+pub(crate) fn delete_instrument(conn: &Connection, id: &str) -> Result<()> {
+    let source: Option<String> = conn
+        .query_row(
+            "SELECT source FROM instruments WHERE id=?1",
+            rusqlite::params![id],
+            |r| r.get(0),
+        )
+        .ok();
+    let source = source.ok_or_else(|| AppError::NotFound(format!("标的 {id} 不存在")))?;
+    if source != "manual" {
+        return Err(AppError::Invalid(
+            "同步来源标的不支持删除：股票字典由「全量同步」维护，填错可重新同步修正".into(),
+        ));
+    }
+    let trade_refs: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM security_transactions WHERE instrument_id=?1",
+        rusqlite::params![id],
+        |r| r.get(0),
+    )?;
+    if trade_refs > 0 {
+        return Err(AppError::Invalid(
+            "该标的已有买卖流水，无法删除：可先删除相关交易后再试".into(),
+        ));
+    }
+    conn.execute("DELETE FROM instruments WHERE id=?1", rusqlite::params![id])?;
+    Ok(())
+}
+
 /// 核心创建函数（手动 IPC 命令与 AI HTTP 端点共用，ADR-0037）：新建行来源标
 /// 'manual'（非同步即手动），（代码，类型）命中既有行则复用并只更新名称/市场，
 /// 来源随行终身不变（issue #293 / ADR-0036 决策 2）。

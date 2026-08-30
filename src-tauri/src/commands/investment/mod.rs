@@ -143,6 +143,21 @@ pub fn list_instruments_internal(
     crud::list_instruments(conn, filter)
 }
 
+/// 测试/e2e 入口：绕过 Tauri State 直接对连接执行标的删除（先例：
+/// [`list_instruments_internal`]，供 BDD 步骤复用同一实现；守卫在核心函数内，
+/// 与 IPC 命令同一路径）。
+pub fn delete_instrument_internal(conn: &rusqlite::Connection, id: &str) -> Result<()> {
+    crud::delete_instrument(conn, id)
+}
+
+#[tauri::command]
+pub fn delete_instrument(db: tauri::State<'_, DbState>, id: String) -> Result<()> {
+    // 连接层统一写入口（ADR-0032）：成功即置脏。删除只动标的字典（及级联的
+    // 价格行），不发失效信号——无流水引用的标的无持仓/走势消费方，前端标的
+    // 列表本地重拉（issue #292 验收项）。
+    db.write(|conn| delete_instrument_internal(conn, &id))
+}
+
 #[tauri::command]
 pub fn get_transaction_trade(
     db: tauri::State<'_, DbState>,

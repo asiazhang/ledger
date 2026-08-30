@@ -18,6 +18,7 @@ import { useReferenceStore } from '@/stores/reference'
 import { useHoldingPriceSync } from '@/composables/useHoldingPriceSync'
 import { useInstrumentFullSync } from '@/composables/useInstrumentFullSync'
 import { usePricesChanged } from '@/composables/usePricesChanged'
+import { useAppDialog } from '@/composables/useAppDialog'
 import { errorMessage as extractErrorMessage } from '@/utils/errors'
 import { formatPrice, INSTRUMENT_SOURCE_LABELS, INSTRUMENT_TYPE_LABELS, MARKET_TYPE_LABELS } from '@/types'
 import AppModal from '@/components/AppModal.vue'
@@ -27,6 +28,9 @@ import type { Instrument, MarketType } from '@/types'
 
 const reference = useReferenceStore()
 const { syncing, resultMessage, status, sync } = useHoldingPriceSync()
+// 删除二次确认（issue #292）：与账户删除同语义（useAppDialog 命令式对话框，
+// ADR-0035 接入弹层注册表驱动快捷键抑制）
+const dialog = useAppDialog()
 
 // 标的行「走势」入口（issue #139）：向视图层发出带标的信息的事件，由其切换到走势 tab
 const emit = defineEmits<{ 'view-trend': [instrument: Instrument] }>()
@@ -125,6 +129,44 @@ function onInstrumentCreated(message: string) {
   createMessage.value = message
   // 新标的行上列表：回到第 1 页重拉（创建不落价，不发价格失效信号）
   reload()
+}
+
+// ---------------------------------------------------------------------------
+// 自建标的删除（issue #292 / ADR-0036 决策 5）：仅手动来源且无任何 buy/sell
+// 流水引用（security_transactions 无行）的标的可物理删除，守卫在后端前置检查；
+// 同步来源标的不渲染删除动作（填错由全量同步修正）。行内删除 → useAppDialog
+// 二次确认（遮罩点击不构成关闭意图）→ 确认后调 IPC 命令并本地重拉。
+// ---------------------------------------------------------------------------
+const deleteMessage = ref<{ type: 'success' | 'error'; text: string } | null>(null)
+
+async function removeInstrument(row: Instrument) {
+  const label = row.name || row.symbol
+  try {
+    await api.deleteInstrument(row.id)
+    deleteMessage.value = { type: 'success', text: `已删除标的：${label}` }
+    // 原地重拉保留搜索/分页状态；若当前页删空则回退一页
+    await load()
+    if (instruments.value.length === 0 && page.value > 1) {
+      page.value -= 1
+      await load()
+    }
+  } catch (e) {
+    // 后端守卫拒删（如确认间隙已产生买卖流水）：中文错误原样展示
+    deleteMessage.value = { type: 'error', text: `删除失败：${extractErrorMessage(e)}` }
+  }
+}
+
+/** 删除走 useAppDialog 二次确认（与账户删除同语义）：取消不删，确认后才删除。
+ * 遮罩点击不构成关闭意图（issue #252 弹层关闭语义）：确认/取消须显式点击。 */
+function confirmDeleteInstrument(row: Instrument) {
+  dialog.warning({
+    title: '删除标的',
+    content: `确认删除标的「${row.name || row.symbol}」？删除后不可恢复。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    maskClosable: false,
+    onPositiveClick: () => removeInstrument(row),
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -265,6 +307,27 @@ const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
       )
     },
   },
+  {
+    // 操作列（issue #292 / ADR-0036）：删除仅对自建标的开放；同步来源标的
+    // 一律不可删，不渲染动作（后端守卫同样拒删，双保险）
+    title: '操作',
+    key: 'actions',
+    width: 70,
+    render(row) {
+      if (row.source !== 'manual') return '-'
+      return h(
+        NButton,
+        {
+          size: 'tiny',
+          type: 'error',
+          secondary: true,
+          'data-testid': `delete-instrument-${row.symbol}`,
+          onClick: () => confirmDeleteInstrument(row),
+        },
+        { default: () => '删除' },
+      )
+    },
+  },
 ]
 
 onMounted(load)
@@ -337,6 +400,13 @@ onMounted(load)
     </NText>
     <NText v-if="createMessage" type="success" data-testid="create-instrument-result">
       {{ createMessage }}
+    </NText>
+    <NText
+      v-if="deleteMessage"
+      :type="deleteMessage.type"
+      data-testid="delete-instrument-result"
+    >
+      {{ deleteMessage.text }}
     </NText>
     <NDataTable
       :columns="instrumentBrowseColumns"
