@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { NCard, NSelect, NSpace, NSwitch, NText } from 'naive-ui'
+import { NCard, NSpace, NSwitch, NText } from 'naive-ui'
+import AppSelect from '@/components/AppSelect.vue'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
 
@@ -25,7 +26,7 @@ const currencyOptions = computed(() =>
     </NCard>
 
     <NCard title="默认币种" size="small">
-      <NSelect
+      <AppSelect
         :value="store.defaultCurrency"
         :options="currencyOptions"
         @update:value="(val: string) => store.setDefaultCurrency(val)"

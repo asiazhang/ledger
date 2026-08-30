@@ -9,12 +9,10 @@ import {
   NForm,
   NFormItem,
   NInput,
-  NDatePicker,
   NAlert,
   NSpace,
   NDescriptions,
   NDescriptionsItem,
-  NPopconfirm,
   useMessage,
   type DataTableColumns,
 } from 'naive-ui'
@@ -24,6 +22,8 @@ import { todayStr } from '@/utils/date'
 import type { ItemDailyCost, ItemDisposeInput, ItemInput, ItemWithDailyCost, Transaction } from '@/types'
 import { api } from '@/api'
 import AppModal from '@/components/AppModal.vue'
+import AppDatePicker from '@/components/AppDatePicker.vue'
+import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
@@ -251,7 +251,7 @@ const columns: DataTableColumns<ItemWithDailyCost> = [
           () => (row.status === 'in_use' ? '处置' : '处置信息'),
         ),
         h(
-          NPopconfirm,
+          AppPopconfirm,
           { onPositiveClick: () => removeItem(row.id) },
           {
             default: () => '不再跟踪该物品，从列表移除？',
@@ -320,7 +320,7 @@ onMounted(() => {
           <NInput v-model:value="editName" placeholder="物品名称" />
         </NFormItem>
         <NFormItem label="购买日期">
-          <NDatePicker
+          <AppDatePicker
             v-model:formatted-value="editPurchaseDate"
             :disabled="editRelinking"
             type="date"
@@ -371,7 +371,7 @@ onMounted(() => {
           <span>{{ disposing.name }}</span>
         </NFormItem>
         <NFormItem label="处置日期">
-          <NDatePicker
+          <AppDatePicker
             v-model:formatted-value="disposeDate"
             type="date"
             value-format="yyyy-MM-dd"
@@ -431,7 +431,7 @@ onMounted(() => {
           {{ detail.purchase_transaction_id ? '已关联（溯源）' : '—' }}
         </NDescriptionsItem>
         <NDescriptionsItem label="参考日">
-          <NDatePicker
+          <AppDatePicker
             :formatted-value="detailRefDate"
             clearable
             type="date"

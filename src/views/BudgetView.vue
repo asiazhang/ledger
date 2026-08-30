@@ -8,7 +8,6 @@ import {
   NFormItem,
   NInputNumber,
   NSpace,
-  NPopconfirm,
   NProgress,
   NTag,
   NSpin,
@@ -18,6 +17,7 @@ import {
 } from 'naive-ui'
 import { api } from '@/api'
 import AppModal from '@/components/AppModal.vue'
+import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useReferenceStore } from '@/stores/reference'
 import { errorMessage } from '@/utils/errors'
@@ -162,7 +162,7 @@ const columns: DataTableColumns<BudgetProgress> = [
           () => '编辑',
         ),
         h(
-          NPopconfirm,
+          AppPopconfirm,
           { onPositiveClick: () => remove(row.budget.id) },
           {
             default: () => '确认删除？',

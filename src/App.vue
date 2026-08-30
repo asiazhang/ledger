@@ -9,13 +9,13 @@ import {
   NLayoutSider,
   NLayoutContent,
   NMenu,
-  NDropdown,
   NIcon,
   NSpace,
   NText,
   darkTheme,
   type MenuOption,
 } from 'naive-ui'
+import AppDropdown from '@/components/AppDropdown.vue'
 import {
   HomeOutline,
   SwapHorizontalOutline,
@@ -212,7 +212,7 @@ const title = () => h('div', { style: 'padding: 16px 18px; font-size: 18px; font
               />
             </NSpace>
             <!-- 可排区右键排序菜单（issue #270）：手动定位弹出 -->
-            <NDropdown
+            <AppDropdown
               trigger="manual"
               placement="bottom-start"
               :show="sortMenuShow"

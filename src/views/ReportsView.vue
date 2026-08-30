@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { NCard, NSelect, NSpace, NEmpty, NSpin, NRadioGroup, NRadio, NText } from 'naive-ui'
+import { NCard, NSpace, NEmpty, NSpin, NRadioGroup, NRadio, NText } from 'naive-ui'
+import AppSelect from '@/components/AppSelect.vue'
 import { Bar, Doughnut } from 'vue-chartjs'
 import {
   Chart as ChartJS,
@@ -177,7 +178,7 @@ onMounted(() => {
 <template>
   <NSpin :show="loading">
     <NSpace vertical :size="16">
-      <NSelect
+      <AppSelect
         :value="year"
         :options="yearOptions"
         @update:value="(v: number) => (year = v)"

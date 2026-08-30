@@ -6,16 +6,12 @@ import {
   NCard,
   NButton,
   NDataTable,
-  NDatePicker,
-  NDropdown,
   NForm,
   NFormItem,
   NInput,
   NInputNumber,
-  NSelect,
   NSpace,
   NText,
-  useDialog,
   useMessage,
   useThemeVars,
   type DataTableColumns,
@@ -23,6 +19,10 @@ import {
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import AppModal from '@/components/AppModal.vue'
+import AppDropdown from '@/components/AppDropdown.vue'
+import AppDatePicker from '@/components/AppDatePicker.vue'
+import AppSelect from '@/components/AppSelect.vue'
+import { useAppDialog } from '@/composables/useAppDialog'
 import AccountLink from '@/components/AccountLink.vue'
 import { buildAccountRowMenuOptions } from '@/components/account-row-menu'
 import { ACCOUNT_TYPE_LABELS, formatAmount } from '@/types'
@@ -30,7 +30,7 @@ import type { AccountBalance, AccountInput, AccountType } from '@/types'
 
 const reference = useReferenceStore()
 const message = useMessage()
-const dialog = useDialog()
+const dialog = useAppDialog()
 const themeVars = useThemeVars()
 const balances = ref<AccountBalance[]>([])
 
@@ -84,7 +84,7 @@ async function remove(id: string) {
   }
 }
 
-/** 删除走 useDialog 二次确认（与交易行菜单同语义）：取消不删，确认后才删除。
+/** 删除走 useAppDialog 二次确认（与交易行菜单同语义）：取消不删，确认后才删除。
  * 遮罩点击不构成关闭意图（issue #252 弹层关闭语义）：确认/取消须显式点击。 */
 function confirmDelete(row: AccountBalance) {
   dialog.warning({
@@ -297,10 +297,10 @@ onMounted(() => {
           <NInput v-model:value="name" placeholder="账户名称" style="width: 160px" />
         </NFormItem>
         <NFormItem label="类型">
-          <NSelect v-model:value="type" :options="typeOptions" style="width: 120px" />
+          <AppSelect v-model:value="type" :options="typeOptions" style="width: 120px" />
         </NFormItem>
         <NFormItem label="币种">
-          <NSelect v-model:value="currencyCode" :options="currencyOptions()" style="width: 140px" />
+          <AppSelect v-model:value="currencyCode" :options="currencyOptions()" style="width: 140px" />
         </NFormItem>
         <NFormItem label="初始余额">
           <NInputNumber v-model:value="initial" :precision="2" style="width: 140px" />
@@ -342,7 +342,7 @@ onMounted(() => {
           <NInput :value="ACCOUNT_TYPE_LABELS[editRow.account.type]" disabled />
         </NFormItem>
         <NFormItem label="币种">
-          <NSelect v-model:value="editCurrency" :options="currencyOptions()" style="width: 100%" />
+          <AppSelect v-model:value="editCurrency" :options="currencyOptions()" style="width: 100%" />
         </NFormItem>
         <NSpace justify="end" :size="8">
           <NButton size="small" @click="showEdit = false">取消</NButton>
@@ -381,7 +381,7 @@ onMounted(() => {
           />
         </NFormItem>
         <NFormItem label="调整日期">
-          <NDatePicker v-model:value="adjustDate" type="date" style="width: 100%" />
+          <AppDatePicker v-model:value="adjustDate" type="date" style="width: 100%" />
         </NFormItem>
         <NFormItem label="差额" :show-label="adjustDeltaText === ''">
           <NText v-if="adjustDelta === 0">余额已等于目标值，无需调整</NText>
@@ -404,7 +404,7 @@ onMounted(() => {
     </AppModal>
 
     <!-- 行菜单（操作列「⋯」与行右键共用）：手动定位弹出 -->
-    <NDropdown
+    <AppDropdown
       trigger="manual"
       placement="bottom-start"
       :show="menuShow"

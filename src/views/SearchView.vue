@@ -4,7 +4,6 @@ import { computed, ref, watch } from 'vue'
 import {
   NButton,
   NDataTable,
-  NDatePicker,
   NEmpty,
   NInput,
   NSpace,
@@ -12,6 +11,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
+import AppDatePicker from '@/components/AppDatePicker.vue'
 import { api } from '@/api'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
@@ -190,7 +190,7 @@ const pagination = computed(() => ({
         style="width: 150px"
         @keyup.enter="onEnter"
       />
-      <NDatePicker
+      <AppDatePicker
         v-model:formatted-value="dateFrom"
         type="date"
         value-format="yyyy-MM-dd"
@@ -198,7 +198,7 @@ const pagination = computed(() => ({
         clearable
         style="width: 140px"
       />
-      <NDatePicker
+      <AppDatePicker
         v-model:formatted-value="dateTo"
         type="date"
         value-format="yyyy-MM-dd"

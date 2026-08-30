@@ -10,16 +10,16 @@ import {
   NFormItem,
   NInput,
   NInputNumber,
-  NDatePicker,
-  NSelect,
-  NTreeSelect,
-  NPopconfirm,
   NSpace,
   NProgress,
   useMessage,
   type DataTableColumns,
   type TreeSelectOption,
 } from 'naive-ui'
+import AppDatePicker from '@/components/AppDatePicker.vue'
+import AppPopconfirm from '@/components/AppPopconfirm.vue'
+import AppSelect from '@/components/AppSelect.vue'
+import AppTreeSelect from '@/components/AppTreeSelect.vue'
 import { formatAmount } from '@/types'
 import { yuanToCents } from '@/utils/money'
 import { todayStr } from '@/utils/date'
@@ -410,7 +410,7 @@ const columns: DataTableColumns<InstallmentRow> = [
         // 取消不删已生成交易与历史期次（后端行为，ADR-0024），二次确认防误触
         buttons.push(
           h(
-            NPopconfirm,
+            AppPopconfirm,
             { onPositiveClick: () => changeStatus(row.plan.core.id, 'cancelled') },
             {
               default: () => '取消后不再自动扣款，已生成的交易与历史期次保留。确认取消？',
@@ -494,7 +494,7 @@ onMounted(() => {
               placeholder="分期总金额"
               style="width: 160px"
             />
-            <NSelect
+            <AppSelect
               v-model:value="currencyCode"
               :options="currencyOptions"
               style="width: 130px; margin-left: 8px"
@@ -531,7 +531,7 @@ onMounted(() => {
             />
           </NFormItem>
           <NFormItem label="分类">
-            <NTreeSelect
+            <AppTreeSelect
               v-model:value="categoryId"
               :options="categoryTreeOptions"
               placeholder="选择分类"
@@ -561,7 +561,7 @@ onMounted(() => {
                 :precision="0"
                 style="width: 90px"
               />
-              <NSelect
+              <AppSelect
                 v-model:value="recurrenceType"
                 :options="recurrenceOptions"
                 style="width: 100px"
@@ -569,7 +569,7 @@ onMounted(() => {
             </NSpace>
           </NFormItem>
           <NFormItem label="开始日">
-            <NDatePicker
+            <AppDatePicker
               v-model:formatted-value="startDate"
               type="date"
               value-format="yyyy-MM-dd"

@@ -6,7 +6,6 @@ import {
   NIcon,
   NInput,
   NProgress,
-  NSelect,
   NSpace,
   NSwitch,
   NTag,
@@ -21,6 +20,7 @@ import { useInstrumentFullSync } from '@/composables/useInstrumentFullSync'
 import { usePricesChanged } from '@/composables/usePricesChanged'
 import { formatAmount, INSTRUMENT_TYPE_LABELS, MARKET_TYPE_LABELS } from '@/types'
 import AppModal from '@/components/AppModal.vue'
+import AppSelect from '@/components/AppSelect.vue'
 import type { Instrument, MarketType } from '@/types'
 
 const reference = useReferenceStore()
@@ -195,7 +195,7 @@ onMounted(load)
         clearable
         style="width: 240px"
       />
-      <NSelect
+      <AppSelect
         v-model:value="selectedMarket"
         :options="marketOptions"
         placeholder="全部市场"

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
 import { computed, h } from 'vue'
-import { NButton, NIcon, NPopconfirm, NSpace, NTree, useMessage } from 'naive-ui'
+import { NButton, NIcon, NSpace, NTree, useMessage } from 'naive-ui'
 import type { TreeOption, TreeDropInfo } from 'naive-ui'
+import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { getIconComponent } from '@/types/icon'
@@ -49,7 +50,7 @@ function renderSuffix(info: { option: TreeOption }) {
         emit('edit', cat)
       },
     }, () => '编辑'),
-    h(NPopconfirm, {
+    h(AppPopconfirm, {
       onPositiveClick: () => removeCategory(cat.id),
     }, {
       default: () => '确认删除？',

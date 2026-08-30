@@ -322,7 +322,10 @@ describe('TransfersPane 新建定时转账（issue #203）', () => {
     await openCreateModal(wrapper)
     accountSelect(wrapper, 'transfer-from-account').vm.$emit('update:value', 'acc-usd')
     await flushPromises()
-    const currencySelect = wrapper.findComponent('[data-testid="transfer-currency"]')
+    // 币种下拉现经 AppSelect 封装（接入弹层注册表），下探到内层 NSelect 取 props
+    const currencySelect = wrapper
+      .findComponent('[data-testid="transfer-currency"]')
+      .findComponent(NSelect)
     expect(currencySelect.props('value')).toBe('USD')
   })
 

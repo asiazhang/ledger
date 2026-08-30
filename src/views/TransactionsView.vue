@@ -6,13 +6,9 @@ import {
   NDataTable,
   NButton,
   NButtonGroup,
-  NDropdown,
   NIcon,
-  NDatePicker,
   NEmpty,
-  NSelect,
   NSpace,
-  useDialog,
   useMessage,
   useThemeVars,
   type DataTableColumn,
@@ -21,6 +17,10 @@ import {
 } from 'naive-ui'
 import { ChevronDown } from '@vicons/ionicons5'
 import AppModal from '@/components/AppModal.vue'
+import AppDropdown from '@/components/AppDropdown.vue'
+import AppDatePicker from '@/components/AppDatePicker.vue'
+import AppSelect from '@/components/AppSelect.vue'
+import { useAppDialog } from '@/composables/useAppDialog'
 import TransactionForm from '@/components/TransactionForm.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import RefundForm from '@/components/RefundForm.vue'
@@ -47,7 +47,7 @@ const reference = useReferenceStore()
 // self-init + ledger:changed 自动重拉，创建成功后菜单下次打开即为置灰态。
 const itemsStore = useItemsStore()
 const message = useMessage()
-const dialog = useDialog()
+const dialog = useAppDialog()
 const route = useRoute()
 const data = ref<Transaction[]>([])
 const total = ref(0)
@@ -196,7 +196,7 @@ async function remove(id: string) {
   }
 }
 
-/** 删除走 useDialog 二次确认（issue #151）：取消不删，确认后才删除。
+/** 删除走 useAppDialog 二次确认（issue #151）：取消不删，确认后才删除。
  * 遮罩点击不构成关闭意图（issue #252 弹层关闭语义）：确认/取消须显式点击。 */
 function confirmDelete(row: Transaction) {
   dialog.warning({
@@ -393,7 +393,7 @@ onMounted(() => {
         style="width: 160px"
         @update:value="onMerchantFilterChange"
       />
-      <NDatePicker
+      <AppDatePicker
         :formatted-value="filters.dateFrom"
         type="date"
         value-format="yyyy-MM-dd"
@@ -402,7 +402,7 @@ onMounted(() => {
         style="width: 140px"
         @update:formatted-value="onDateFromChange"
       />
-      <NDatePicker
+      <AppDatePicker
         :formatted-value="filters.dateTo"
         type="date"
         value-format="yyyy-MM-dd"
@@ -411,7 +411,7 @@ onMounted(() => {
         style="width: 140px"
         @update:formatted-value="onDateToChange"
       />
-      <NSelect
+      <AppSelect
         :value="filters.kind"
         :options="kindOptions"
         placeholder="类型"
@@ -431,7 +431,7 @@ onMounted(() => {
       <!-- 分裂按钮：主体直开支出弹窗，箭头展开 5 项类型菜单（issue #150） -->
       <NButtonGroup>
         <NButton type="primary" @click="openCreate('expense')">记一笔</NButton>
-        <NDropdown
+        <AppDropdown
           trigger="click"
           :options="createKindOptions"
           @select="(k: string | number) => openCreate(k as CreateTransactionKind)"
@@ -439,7 +439,7 @@ onMounted(() => {
           <NButton type="primary" aria-label="更多记账类型">
             <NIcon><ChevronDown /></NIcon>
           </NButton>
-        </NDropdown>
+        </AppDropdown>
       </NButtonGroup>
     </NSpace>
     <!-- 快速记账弹窗：标题标明入口选定类型，内嵌收窄后的 TransactionForm（无类型单选），
@@ -512,7 +512,7 @@ onMounted(() => {
       />
     </AppModal>
     <!-- 行右键菜单（issue #151 / #119）：expense 行「退款」「加入物品」+ 所有行「删除」，手动定位弹出 -->
-    <NDropdown
+    <AppDropdown
       trigger="manual"
       placement="bottom-start"
       :show="menuShow"
