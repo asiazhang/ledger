@@ -75,6 +75,7 @@ async fn test_openapi_doc_covers_all_endpoints() {
         ("/api/v1/currencies", "get"),
         ("/api/v1/instruments", "get"),
         ("/api/v1/instruments", "post"),
+        ("/api/v1/funds/{code}", "get"),
         ("/api/v1/merchants", "get"),
         ("/api/v1/transactions", "get"),
         ("/api/v1/transactions/batch", "post"),
@@ -238,8 +239,10 @@ async fn test_openapi_doc_has_currencies_endpoint() {
     assert!(schemas.contains_key("TransactionInput"));
 }
 
-/// OpenAPI 契约文档体积预算护栏：当前 12 端点 ≈ 21KB，预算 32KB 留 ~50% 增长空间；
-/// 端点继续增长触线时需人工决策（拆文档或提预算），避免契约文档无界膨胀挤占 AI 上下文。
+/// OpenAPI 契约文档体积预算护栏：当前 17 端点 ≈ 33KB，预算 40KB 留增长空间；
+/// 端点继续增长触线时需人工决策（拆文档或提预算），避免契约文档无界膨胀挤占
+/// AI 上下文（32KB 预算在基金查询端点加入时触线，issue #304 人工决策提至 40KB：
+/// 17 端点下契约是 AI 教学的唯一权威文本，拆分反而破坏「一次拉取即自足」）。
 #[tokio::test]
 async fn test_openapi_doc_size_within_budget() {
     let (app, _) = setup_app();
@@ -257,8 +260,8 @@ async fn test_openapi_doc_size_within_budget() {
 
     let bytes = body_to_bytes(response.into_body()).await;
     assert!(
-        bytes.len() <= 32 * 1024,
-        "OpenAPI 契约文档应保持在预算内（当前 {} 字节，预算 32KB）",
+        bytes.len() <= 40 * 1024,
+        "OpenAPI 契约文档应保持在预算内（当前 {} 字节，预算 40KB）",
         bytes.len()
     );
 }
@@ -350,6 +353,15 @@ async fn test_import_knowledge_covers_key_conventions() {
         "POST /api/v1/instruments",
         "重算",
         "部分卖出",
+        // 基金申赎教学关键词锁（issue #304 / ADR-0039）：行拆解、费用归属、
+        // 按代码查询优先、真实代码必带、不走名称充代码。
+        "基金申赎",
+        "申购",
+        "赎回",
+        "确认份额",
+        "6 位代码",
+        "GET /api/v1/funds",
+        "名称充代码",
     ];
     for kw in required_keywords {
         assert!(text.contains(kw), "导入知识应包含关键约定关键词 {kw:?}");

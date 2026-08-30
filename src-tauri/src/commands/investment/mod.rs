@@ -194,6 +194,14 @@ pub fn create_instrument_manual_internal(
 /// 层的编排见 [`add_fund_by_code`] 命令，同一实现）。
 pub use fund::add_fund_by_code_with;
 
+/// AI 创建端点 fund 增强落库接缝（issue #304 / ADR-0039 决策 3，HTTP 层专用）：
+/// 东财命中走 `persist_fund_detail`（与按代码即拉同一落库实现），网络不可达
+/// 降级走 `create_fund_degraded`；校验与 6 位判定同出口。
+pub(crate) use fund::{
+    FundCreateOutcome, create_fund_degraded, is_six_digit_code, persist_fund_detail,
+    validate_fund_code,
+};
+
 /// IPC 命令：按 6 位基金代码即拉添加场外基金（issue #301 / ADR-0038）。东财
 /// 拉取（名称/分类/最新净值）在连接锁外的后台线程完成；落库走连接层统一写入口
 /// （ADR-0032），编排经 [`add_fund_by_code_with`] 同一接缝（拉取已在线外完成，

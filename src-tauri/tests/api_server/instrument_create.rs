@@ -3,39 +3,17 @@
 //! 只断言外部行为：find-or-create 幂等（自然键（symbol, type），命中静默复用并按需
 //! 更新名称/市场、返回既有 id）、201 + 裸 id 响应形状（照账户/分类创建先例）、
 //! 创建行来源标记 = `'manual'`、报价币种缺省按市场推导（沪深→CNY、港→HKD、
-//! 未知→CNY，显式传参可覆盖）、类型五类全开（泛型断言以非 fund 类型为代表——
-//! fund 创建行为将由 #304 东财校验收紧，避免跨票翻红）、错误为统一错误形状中文信息、
-//! 开放 API 契约自描述。
+//! 未知→CNY，显式传参可覆盖）、类型五类全开、错误为统一错误形状中文信息、
+//! 开放 API 契约自描述。泛型断言以非 fund 类型为代表；fund 类型的东财增强
+//! （回填权威名称/净值、查无此码拒绝、不可达降级）见 instrument_create_fund.rs
+//! （issue #304 / ADR-0039）。
 
 use std::sync::{Arc, Mutex};
 
-use axum::Router;
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::StatusCode;
 use rusqlite::params;
-use tower::ServiceExt;
 
-use crate::common::{body_to_bytes, setup_app};
-
-/// POST /api/v1/instruments，返回（状态码，原始响应体）。
-/// 响应体不在此处反序列化：201 为裸 id 字符串、4xx 可能非 JSON，由各测试自行解析。
-async fn post_instrument(app: &Router, body: &str) -> (StatusCode, Vec<u8>) {
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/instruments")
-                .header("content-type", "application/json")
-                .body(Body::from(body.to_owned()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let status = response.status();
-    let bytes = body_to_bytes(response.into_body()).await;
-    (status, bytes)
-}
+use crate::common::{post_instrument, setup_app};
 
 /// 响应体应为裸 id 字符串（非 JSON 对象——`{"id": …}` 之类包装在此即解析失败）。
 fn id_of(bytes: &[u8]) -> String {
