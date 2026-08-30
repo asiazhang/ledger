@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, ref, watch, type Component } from 'vue'
+import { computed, h, ref, watch, type Component } from 'vue'
 import { RouterView, useRouter, useRoute } from 'vue-router'
 import {
   NConfigProvider,
@@ -32,7 +32,7 @@ import { useAppStore } from '@/stores/app'
 import { api } from '@/api'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
 import { loadSidebarCollapsed, saveSidebarCollapsed } from '@/utils/view-state'
-import { sidebarViews, shortcutHint, useViewShortcuts } from '@/composables/useViewShortcuts'
+import { viewShortcuts, shortcutHint, useViewShortcuts } from '@/composables/useViewShortcuts'
 import { useWindowGuard } from '@/composables/useWindowGuard'
 
 const router = useRouter()
@@ -93,19 +93,20 @@ function renderMenuIcon(name: string) {
   return () => h(NIcon, { size: 18 }, { default: () => h(viewIcons[name]) })
 }
 
-// 菜单项与快捷键共用同一映射（sidebarViews，顺序即菜单顺序）；
+// 菜单项与快捷键共用同一顺序源（viewShortcuts：由最终序按位置推导键位）；
+// 菜单由最终序响应式派生，排序变更时顺序与快捷键提示同步更新。
 // 每项右侧附快捷键提示（数字位或设置项的 ⌘,）
-const menuOptions: MenuOption[] = sidebarViews.map(({ name, key }) => ({
-  key: name,
-  icon: renderMenuIcon(name),
-  label: () =>
-    h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:12px;padding-right:2px' }, [
-      h('span', viewLabels[name]),
-      ...(key
-        ? [h('span', { style: 'font-size:12px;opacity:.55' }, shortcutHint(key))]
-        : []),
-    ]),
-}))
+const menuOptions = computed<MenuOption[]>(() =>
+  viewShortcuts.value.map(({ name, key }) => ({
+    key: name,
+    icon: renderMenuIcon(name),
+    label: () =>
+      h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:12px;padding-right:2px' }, [
+        h('span', viewLabels[name]),
+        h('span', { style: 'font-size:12px;opacity:.55' }, shortcutHint(key)),
+      ]),
+  })),
+)
 
 // 视图快捷键：窗口内 Cmd/Ctrl+1..0 与 Cmd/Ctrl+, 切换视图（弹窗/确认框打开时自动抑制）
 useViewShortcuts(router)

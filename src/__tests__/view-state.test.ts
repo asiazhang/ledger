@@ -7,6 +7,7 @@ import {
   saveSidebarCollapsed,
   loadReportsGroupLevel,
   saveReportsGroupLevel,
+  getSavedSidebarOrder,
 } from '@/utils/view-state'
 
 beforeEach(() => {
@@ -44,6 +45,27 @@ describe('view-state sidebarCollapsed', () => {
     saveSidebarCollapsed(true)
     expect(loadSidebarCollapsed()).toBe(true)
     expect(localStorage.getItem(VIEW_STATE_KEYS.sidebarCollapsed)).toBe('true')
+  })
+})
+
+describe('view-state sidebarOrder（issue #269：key 与读助手，解析归顺序模块）', () => {
+  it('无记录时返回 null', () => {
+    expect(getSavedSidebarOrder()).toBeNull()
+  })
+
+  it('返回已存原始值（数组不做解析，防御归顺序模块）', () => {
+    localStorage.setItem(VIEW_STATE_KEYS.sidebarOrder, '["reports","transactions"]')
+    expect(getSavedSidebarOrder()).toEqual(['reports', 'transactions'])
+  })
+
+  it('损坏的 JSON 回退 null', () => {
+    localStorage.setItem(VIEW_STATE_KEYS.sidebarOrder, 'not-json{')
+    expect(getSavedSidebarOrder()).toBeNull()
+  })
+
+  it('非数组原始值原样透传（由顺序解析整体回退默认序）', () => {
+    localStorage.setItem(VIEW_STATE_KEYS.sidebarOrder, '123')
+    expect(getSavedSidebarOrder()).toBe(123)
   })
 })
 

@@ -1,39 +1,90 @@
-import { onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { Router } from 'vue-router'
+import { getSavedSidebarOrder } from '@/utils/view-state'
 
 export interface ViewShortcut {
   /** 路由 name（与侧边栏菜单 key 一致） */
   name: string
-  /** 主键：数字 '1'..'0' 或 ','（设置） */
+  /** 主键：按最终位置推导的数字 '1'..'0' 或 ','（设置） */
   key: string
 }
 
 /**
- * 侧边栏视图单一来源（顺序 = 菜单顺序 = 数字键位）。
- * 排序原则：日常记账动线 → 资金规划 → 分析工具 → 低频/系统。
- * 每个视图恰好一个快捷键：数字 1–0 按菜单位置对应前 10 个视图，
- * 设置用 Cmd/Ctrl+,（macOS「设置」惯例键位，避免占用 Cmd+S 的「保存」肌肉记忆）。
+ * 顺序源模块：侧边栏视图顺序单一来源（顺序 = 菜单顺序 = 数字键位）。
+ * 默认序按使用频率物化为出厂快照（不做运行时统计）；
+ * 三固定约束与可排区边界编码为常量，键位与侧栏菜单均由最终序按位置推导。
  */
-export const sidebarViews: Array<{ name: string; key?: string }> = [
-  { name: 'dashboard', key: '1' },
-  { name: 'transactions', key: '2' },
-  { name: 'accounts', key: '3' },
-  { name: 'budget', key: '4' },
-  // 定时（issue #202，原订阅 #159）：重排后归入数字位 5
-  { name: 'scheduled', key: '5' },
-  { name: 'investments', key: '6' },
-  { name: 'reports', key: '7' },
-  { name: 'search', key: '8' },
-  // 物品（issue #116）：重排后归入数字位 9
-  { name: 'items', key: '9' },
-  { name: 'ai', key: '0' },
-  { name: 'settings', key: ',' },
-]
 
-/** 视图快捷键映射：按侧边栏菜单顺序，Cmd/Ctrl+1..0 与 Cmd/Ctrl+,。 */
-export const viewShortcuts: ViewShortcut[] = sidebarViews
-  .filter((v): v is { name: string; key: string } => v.key !== undefined)
-  .map(({ name, key }) => ({ name, key }))
+/** 默认序（按使用频率的出厂快照）：概览、交易、账户、预算、投资、报表、定时、物品、搜索、AI、设置 */
+export const DEFAULT_VIEW_ORDER = [
+  'dashboard',
+  'transactions',
+  'accounts',
+  'budget',
+  'investments',
+  'reports',
+  'scheduled',
+  'items',
+  'search',
+  'ai',
+  'settings',
+] as const
+
+export type ViewName = (typeof DEFAULT_VIEW_ORDER)[number]
+
+/** 三固定约束：概览首位（与启动落地页一致）、AI 倒数第二、设置末位 */
+export const FIRST_VIEW: ViewName = 'dashboard'
+export const PENULTIMATE_VIEW: ViewName = 'ai'
+export const LAST_VIEW: ViewName = 'settings'
+
+/** 可排区（第 2–9 位）：默认序去掉三固定项，相对顺序即默认相对顺序 */
+export const ARRANGEABLE_VIEWS: readonly ViewName[] = DEFAULT_VIEW_ORDER.filter(
+  (name) => name !== FIRST_VIEW && name !== PENULTIMATE_VIEW && name !== LAST_VIEW,
+)
+
+function isArrangeable(v: unknown): v is ViewName {
+  return typeof v === 'string' && (ARRANGEABLE_VIEWS as readonly string[]).includes(v)
+}
+
+/**
+ * 顺序解析（纯函数）：已存可排区顺序（脏数据防御）→ 最终可排区顺序。
+ * 非法视图名过滤（含三固定项名、未知名、非字符串项）→ 去重（保留首现）→
+ * 缺失项按默认序补入可排区末尾；非数组输入整体回退默认序。
+ */
+export function parseArrangeableOrder(raw: unknown): ViewName[] {
+  const kept: ViewName[] = []
+  const seen = new Set<string>()
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (!isArrangeable(item) || seen.has(item)) continue
+      seen.add(item)
+      kept.push(item)
+    }
+  }
+  for (const name of ARRANGEABLE_VIEWS) {
+    if (!seen.has(name)) kept.push(name)
+  }
+  return kept
+}
+
+/**
+ * 已存可排区顺序：启动读路径（issue #269 仅有读路径，读取恒为空 → 回退默认序；
+ * 写路径与右键自定义排序由后续票落地，届时只需更新此 ref）。
+ */
+const arrangeableOrder = ref<ViewName[]>(parseArrangeableOrder(getSavedSidebarOrder()))
+
+/** 键位按最终位置推导：第 1–9 位 → '1'..'9'，第 10 位 → '0'，第 11 位（设置）→ ',' */
+const POSITION_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', ','] as const
+
+/**
+ * 视图快捷键映射（响应式）：由最终序按位置推导，键随位置（重排侧栏即重排键位）。
+ * 每个视图恰好一个快捷键：数字 1–0 对应第 1–10 位，设置用 Cmd/Ctrl+,（macOS「设置」
+ * 惯例键位，避免占用 Cmd+S 的「保存」肌肉记忆）。
+ */
+export const viewShortcuts = computed<ViewShortcut[]>(() => {
+  const order: ViewName[] = [FIRST_VIEW, ...arrangeableOrder.value, PENULTIMATE_VIEW, LAST_VIEW]
+  return order.map((name, i) => ({ name, key: POSITION_KEYS[i] }))
+})
 
 /** macOS 用 Cmd（metaKey），Windows/Linux 用 Ctrl（ctrlKey） */
 export function isMacPlatform(): boolean {
@@ -56,7 +107,7 @@ function isPrimaryModifier(e: KeyboardEvent): boolean {
 export function matchViewShortcut(e: KeyboardEvent): string | null {
   if (e.altKey || e.shiftKey) return null
   if (!isPrimaryModifier(e)) return null
-  return viewShortcuts.find((s) => e.key === s.key)?.name ?? null
+  return viewShortcuts.value.find((s) => e.key === s.key)?.name ?? null
 }
 
 /** 弹层探测选择器：Naive UI 弹层「仅打开时存在」的元素（issue #153 扩展弹层类）。
