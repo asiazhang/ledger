@@ -73,6 +73,7 @@ async fn test_openapi_doc_covers_all_endpoints() {
         ("/api/v1/categories", "post"),
         ("/api/v1/categories/{id}", "delete"),
         ("/api/v1/currencies", "get"),
+        ("/api/v1/instruments", "get"),
         ("/api/v1/merchants", "get"),
         ("/api/v1/transactions", "get"),
         ("/api/v1/transactions/batch", "post"),

@@ -46,6 +46,8 @@ export interface InstrumentListFilter {
   search?: string | null
   /** 交易市场精确匹配（sh / sz / hk / unknown） */
   market?: MarketType | null
+  /** 标的类型过滤：同码异类型消歧用（issue #294） */
+  type?: InstrumentType | null
   /** 只看持仓标的：仅返回有当前持仓的标的 */
   only_invested?: boolean | null
   /** 页码，从 1 开始，默认 1 */

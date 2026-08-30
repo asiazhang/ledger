@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **AI 导入**：新增标的搜索本地 API 端点 `GET /api/v1/instruments`——按关键词搜索标的字典，解除 AI 投资历史迁移的标的解析阻塞。`query` 必填（空即 400，搜索式而非全量列表）；`limit` 缺省 20、上限收敛 100（封顶返回 + 命中总数 `{items, total}` 控制上下文预算）；`market` / `type` 可选精确过滤（同码异类型标的如基金 000001 vs 股票 000001 靠 `type` 消歧）。命中语义复用统一模糊搜索（词条 AND、代码/名称子串 ∨ 拼音首字母，大小写不敏感），按 symbol 排序，返回完整 Instrument 形状；端点契约随开放 API 自描述。
+
 ### BREAKING
 
 - **数据库 schema（就地修改 V003，仅影响全新安装）**：定时交易系迁移的 9 个引用列补全显式 `ON DELETE` 动作——强依赖（账户/币种/转入账户）`RESTRICT`、溯源指针（可空分类、期次生成交易）`SET NULL`、期次与计划扩展表行（期次表、分期/订阅/定时转账三张扩展表）`CASCADE`——替代此前的 SQLite 默认 `NO ACTION`。就地修改只影响全新安装；存量库与旧备份恢复路径保持 `NO ACTION`（当前应用无硬删路径，两类 schema 行为零差异、差异不可达），未来首个依赖新 ON DELETE 语义的功能（如硬删/清理）发布时须自带收敛迁移。迁移文件头部就地修改注记见 `src-tauri/migrations/V003__scheduled_transactions.sql`。

@@ -5,6 +5,8 @@ use std::str::FromStr;
 
 use rusqlite::types::{FromSql, FromSqlError, ToSql, ToSqlOutput, ValueRef};
 use serde::{Deserialize, Serialize};
+use utoipa::openapi::{ObjectBuilder, RefOr, Schema, Type};
+use utoipa::{PartialSchema, ToSchema};
 
 use crate::db::query::FromRow;
 use crate::error::AppError;
@@ -17,6 +19,17 @@ pub enum InstrumentType {
     Bond,
     Etf,
     Other,
+}
+
+impl InstrumentType {
+    /// 闭集全量清单（OpenAPI 枚举等消费；先例：`TransactionKind::ALL`）。
+    pub const ALL: [InstrumentType; 5] = [
+        InstrumentType::Stock,
+        InstrumentType::Fund,
+        InstrumentType::Bond,
+        InstrumentType::Etf,
+        InstrumentType::Other,
+    ];
 }
 
 impl fmt::Display for InstrumentType {
@@ -45,6 +58,25 @@ impl FromStr for InstrumentType {
     }
 }
 
+// OpenAPI（utoipa）：闭集枚举以小写字符串枚举值入文档，与 wire 格式一致
+// （先例：`TransactionKind`，内联 schema，消费方字段直接嵌入、无需注册组件；
+// 枚举值由 [`InstrumentType::ALL`] 驱动，变体增减单点同步）。
+impl PartialSchema for InstrumentType {
+    fn schema() -> RefOr<Schema> {
+        RefOr::T(Schema::Object(
+            ObjectBuilder::new()
+                .schema_type(Type::String)
+                .enum_values(Some(InstrumentType::ALL.map(|k| k.to_string())))
+                .description(Some(
+                    "金融工具类型（闭集，小写字符串，与 instruments.instrument_type 一致）",
+                ))
+                .build(),
+        ))
+    }
+}
+
+impl ToSchema for InstrumentType {}
+
 impl ToSql for InstrumentType {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::from(self.to_string()))
@@ -60,7 +92,7 @@ impl FromSql for InstrumentType {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct Instrument {
     pub id: String,
     pub symbol: String,
@@ -96,6 +128,9 @@ pub struct InstrumentListFilter {
     pub search: Option<String>,
     /// 交易市场精确匹配（sh / sz / hk / unknown）。
     pub market: Option<String>,
+    /// 标的类型过滤（stock/fund/bond/etf/other）：同码异类型消歧用（issue #294）。
+    #[serde(rename = "type")]
+    pub kind: Option<InstrumentType>,
     /// 只看持仓标的：仅返回有当前持仓（remaining_quantity > 0）的标的。
     pub only_invested: Option<bool>,
     /// 页码，从 1 开始，默认 1。
@@ -105,7 +140,7 @@ pub struct InstrumentListFilter {
 }
 
 /// 标的列表分页结果。
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct InstrumentListResult {
     pub items: Vec<Instrument>,
     /// 满足过滤条件的总条数（用于分页条）。
