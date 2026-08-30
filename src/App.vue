@@ -191,9 +191,7 @@ const title = () => h('div', { style: 'padding: 16px 18px; font-size: 18px; font
     <NMessageProvider>
       <NDialogProvider>
         <NLayout has-sider style="height: 100vh">
-          <!-- 侧边栏导航铬层文本不可选，语义见 CONTEXT-ui-interaction「导航铬层不可选」 -->
           <NLayoutSider
-            style="user-select: none; -webkit-user-select: none"
             bordered
             :width="160"
             :collapsed="sidebarCollapsed"

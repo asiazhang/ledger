@@ -22,3 +22,29 @@ body {
 .n-scrollbar-container {
   overscroll-behavior: none;
 }
+
+/*
+ * 界面文本不可选（issue #282，语义见 CONTEXT-ui-interaction「界面文本不可选」）：
+ * 整个界面文本一律不可选中，唯一例外是可编辑元素。规则挂文档根（html）层：
+ * user-select 的 auto 取值沿父级 used value 解析，主内容区、侧边栏、传送门到
+ * body 的弹层一体纳入，新增区域零声明自动覆盖。复制需求走显式复制通道
+ * （复制按钮 + clipboard API），不借道文本选择。
+ */
+html {
+  -webkit-user-select: none; /* WKWebView 需要 -webkit- 前缀 */
+  user-select: none;
+}
+
+/*
+ * 唯一例外：可编辑元素恢复可选——input、textarea、contenteditable。
+ * contenteditable 取值与 isEditableTarget 判定对齐（useCreateShortcuts.ts）：
+ * '' 与 'true' 为可编辑，'false' 为显式不可编辑、不恢复；弹层内表单控件
+ * 天然适用同一例外，无需逐个声明。
+ */
+input,
+textarea,
+[contenteditable="true"],
+[contenteditable=""] {
+  -webkit-user-select: text;
+  user-select: text;
+}
