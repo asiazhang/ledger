@@ -20,32 +20,63 @@ import AppSelect from '@/components/AppSelect.vue'
 import { formatAmount } from '@/types'
 import { yuanToCents } from '@/utils/money'
 import { todayStr } from '@/utils/date'
-import type {
-  RecurrenceType,
-  ScheduledTransactionOccurrence,
-  ScheduledTransactionWithExt,
-  UpdateStatusInput,
-} from '@/types'
+import type { RecurrenceType, ScheduledTransactionOccurrence } from '@/types'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { useFormShared } from '@/composables/useFormShared'
+import {
+  earliestPendingOccurrence,
+  scheduledRecurrenceLabel,
+  SCHEDULED_RECURRENCE_OPTIONS,
+  useScheduledPlanList,
+  type ScheduledPlanRow,
+} from '@/composables/useScheduledPlanList'
 import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 
 /**
- * 定时转账页签（issue #203）：定时视图三页签之一。
- * 转出 / 转入账户必须同币种（词汇表 ScheduledTransfer 边界，后端行为层强制）：
- * 转入账户候选按转出账户币种过滤，币种自动跟随转出账户；不出现商户字段。
- * 支持「总期数」三态：留空 = 无限循环、1 = 一次性、N = 有限期数。
+ * 定时转账页签 = ScheduledPlanList 计划清单模块（ADR-0041）的薄适配器：
+ * 清单加载/刷新、状态过滤、Plan Lifecycle 操作、行操作描述符与周期标签全在模块；
+ * 本组件只留转账形态真差异——同币种转入过滤、币种跟随与跨币种清空、
+ * 一次性/周期期数语义（总期数三态）、取消确认文案与列/单元格渲染。
+ * 转出 / 转入账户必须同币种（词汇表 ScheduledTransfer 边界，后端行为层强制）。
  */
 
 const reference = useReferenceStore()
 const appStore = useAppStore()
 const { accountOptions, currencyOptions } = useFormShared()
 const message = useMessage()
+
+// ---------------------------------------------------------------------------
+// 清单编排（ADR-0041）：全部经 ScheduledPlanList 模块；确认弹层在本适配器渲染
+// ---------------------------------------------------------------------------
+
+/** 下期转账扩展：最早 pending 期次（无则 null，占位「—」）。 */
+interface TransferExt {
+  next: ScheduledTransactionOccurrence | null
+}
+type TransferRow = ScheduledPlanRow<TransferExt>
+
+const planDetailRef = ref<InstanceType<typeof PlanDetailModal> | null>(null)
+
+const list = useScheduledPlanList<TransferExt>({
+  kind: 'scheduled_transfer',
+  expandDetail: (_plan, detail) => ({
+    next: detail ? earliestPendingOccurrence(detail) : null,
+  }),
+  loadErrorText: '加载定时转账失败',
+  cancelConfirmText: '取消后不再自动转账，已生成的交易与历史期次保留。确认取消？',
+  onOpenDetail: (row) => void planDetailRef.value?.open(row.plan.core.id),
+})
+const { loading, statusFilter, statusFilterOptions, filteredRows } = list
+
+/** 期次详情弹窗内重试成功会发 changed，清单随之刷新。 */
+async function onDetailChanged() {
+  await list.load()
+}
 
 // ---------------------------------------------------------------------------
 // 新建定时转账 = 模态对话框（与订阅页签同模式）
@@ -63,20 +94,6 @@ const recurrenceInterval = ref(1)
 /** 总期数：null = 无限循环（留空），1 = 一次性，N = 有限期数 */
 const totalOccurrences = ref<number | null>(null)
 const startDate = ref(todayStr())
-
-const recurrenceOptions = [
-  { label: '天', value: 'daily' },
-  { label: '周', value: 'weekly' },
-  { label: '月', value: 'monthly' },
-  { label: '年', value: 'yearly' },
-]
-
-const filterOptions = [
-  { key: 'active' as const, label: '进行中' },
-  { key: 'paused' as const, label: '已暂停' },
-  { key: 'cancelled' as const, label: '已取消' },
-  { key: 'completed' as const, label: '已完成' },
-]
 
 /** 转入账户候选（Vitest 验收 seam）：按转出账户币种过滤并排除转出账户本身
  * （转出 = 转入被后端拒绝）；未选转出账户时为全部账户。 */
@@ -149,109 +166,15 @@ async function create() {
     message.success('已创建定时转账')
     showCreateModal.value = false
     resetCreateForm()
-    await load()
+    await list.load()
   } catch (e) {
     message.error(`创建失败: ${errorMessage(e)}`)
   }
 }
 
 // ---------------------------------------------------------------------------
-// 清单：list_scheduled_transactions 过滤 scheduled_transfer + 状态过滤；
-// 下期转账取 get_scheduled_transaction_detail 的最早 pending 期次（窗口外显示 —）
+// 展示助手：参考数据名称解析与单元格渲染留适配器；周期标签走模块单源
 // ---------------------------------------------------------------------------
-
-/** 一行 = 计划 + 下期 pending 期次（无则为 null，占位「—」）。 */
-interface TransferRow {
-  plan: ScheduledTransactionWithExt
-  next: ScheduledTransactionOccurrence | null
-  /** 详情命令失败：与「无 pending 期次」区分，不静默显示「—」。 */
-  nextFailed?: boolean
-}
-
-const rows = ref<TransferRow[]>([])
-const loading = ref(false)
-/** 清单状态过滤：默认只看进行中。 */
-const statusFilter = ref<'active' | 'paused' | 'cancelled' | 'completed'>('active')
-
-const filteredRows = computed(() =>
-  rows.value.filter((r) => r.plan.core.status === statusFilter.value),
-)
-
-async function load() {
-  loading.value = true
-  try {
-    const plans = (await api.listScheduledTransactions()).filter(
-      (p) => p.core.kind === 'scheduled_transfer',
-    )
-    // 下期转账来自既有详情命令的 pending 期次（ASC 排序，取首条）；
-    // 预生成窗口之外不现场推算日期（避免第三套日期口径）
-    const details = await Promise.all(
-      plans.map(async (p) => {
-        try {
-          const d = await api.getScheduledTransactionDetail(p.core.id)
-          const next =
-            [...d.pending_occurrences].sort((a, b) =>
-              a.scheduled_date.localeCompare(b.scheduled_date),
-            )[0] ?? null
-          return { plan: p, next } satisfies TransferRow
-        } catch {
-          return { plan: p, next: null, nextFailed: true } satisfies TransferRow
-        }
-      }),
-    )
-    rows.value = details
-  } catch (e) {
-    message.error(`加载定时转账失败: ${errorMessage(e)}`)
-  } finally {
-    loading.value = false
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 期次详情弹窗（issue #205）：三页签通用组件；弹窗内重试成功会发 changed，
-// 清单随之刷新
-// ---------------------------------------------------------------------------
-
-const planDetailRef = ref<InstanceType<typeof PlanDetailModal> | null>(null)
-
-function openDetail(row: TransferRow) {
-  void planDetailRef.value?.open(row.plan.core.id)
-}
-
-async function onDetailChanged() {
-  await load()
-}
-
-// ---------------------------------------------------------------------------
-// 状态操作：暂停 / 恢复 / 取消（走既有 update_scheduled_transaction_status）
-// ---------------------------------------------------------------------------
-
-async function changeStatus(id: string, newStatus: UpdateStatusInput['new_status']) {
-  try {
-    await api.updateScheduledTransactionStatus({ id, new_status: newStatus })
-    message.success(newStatus === 'paused' ? '已暂停' : newStatus === 'active' ? '已恢复' : '已取消')
-    await load()
-  } catch (e) {
-    message.error(`操作失败: ${errorMessage(e)}`)
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 展示助手
-// ---------------------------------------------------------------------------
-
-const recurrenceUnit: Record<RecurrenceType, string> = {
-  daily: '天',
-  weekly: '周',
-  monthly: '月',
-  yearly: '年',
-}
-
-function recurrenceLabel(row: TransferRow): string {
-  const { recurrence_type, recurrence_interval } = row.plan.core
-  const unit = recurrenceUnit[recurrence_type as RecurrenceType] ?? recurrence_type
-  return recurrence_interval > 1 ? `每${recurrence_interval}${unit}` : `每${unit}`
-}
 
 function statusLabel(status: string): string {
   return scheduledStatusLabel(status)
@@ -283,7 +206,12 @@ const columns: DataTableColumns<TransferRow> = [
     render: (row) =>
       `${formatAmount(row.plan.core.amount_cents, reference.getCurrency(row.plan.core.currency_code))}${row.plan.total_occurrences != null ? ` × ${row.plan.total_occurrences}期` : ''}`,
   },
-  { title: '周期', key: 'recurrence', render: recurrenceLabel },
+  {
+    title: '周期',
+    key: 'recurrence',
+    render: (row) =>
+      scheduledRecurrenceLabel(row.plan.core.recurrence_type, row.plan.core.recurrence_interval),
+  },
   { title: '开始日', key: 'start_date', render: (row) => row.plan.core.start_date },
   { title: '状态', key: 'status', render: (row) => statusLabel(row.plan.core.status) },
   {
@@ -294,9 +222,9 @@ const columns: DataTableColumns<TransferRow> = [
       h(
         'span',
         { 'data-testid': `next-transfer-${row.plan.core.id}` },
-        row.next
-          ? `${row.next.scheduled_date} · ${formatAmount(row.next.amount_cents, reference.getCurrency(row.plan.core.currency_code))}`
-          : row.nextFailed
+        row.ext.next
+          ? `${row.ext.next.scheduled_date} · ${formatAmount(row.ext.next.amount_cents, reference.getCurrency(row.plan.core.currency_code))}`
+          : row.detailFailed
             ? '加载失败'
             : '—',
       ),
@@ -304,70 +232,42 @@ const columns: DataTableColumns<TransferRow> = [
   {
     title: '操作',
     key: 'actions',
+    // 行操作描述符（可用性矩阵/标签/run）由模块构建；此处按描述符渲染，
+    // 含 confirm 文案的动作经 AppPopconfirm 二次确认（弹层纪律 ADR-0035）
     render: (row) => {
-      const status = row.plan.core.status
-      const buttons: VNode[] = []
-      // 期次详情（issue #205）：所有状态都可查看期次执行情况
-      buttons.push(
-        h(
-          NButton,
-          {
-            size: 'tiny',
-            'data-testid': `op-detail-${row.plan.core.id}`,
-            onClick: () => openDetail(row),
-          },
-          () => '期次',
-        ),
-      )
-      if (status === 'active') {
-        buttons.push(
-          h(
-            NButton,
-            {
-              size: 'tiny',
-              'data-testid': `op-pause-${row.plan.core.id}`,
-              onClick: () => changeStatus(row.plan.core.id, 'paused'),
-            },
-            () => '暂停',
-          ),
+      const buttons: VNode[] = list
+        .rowActions(row)
+        .filter((a) => a.available)
+        .map((a) =>
+          a.confirm
+            ? h(
+                AppPopconfirm,
+                { onPositiveClick: a.run },
+                {
+                  default: () => a.confirm,
+                  trigger: () =>
+                    h(
+                      NButton,
+                      {
+                        size: 'tiny',
+                        type: 'error',
+                        quaternary: true,
+                        'data-testid': `op-${a.key}-${row.plan.core.id}`,
+                      },
+                      () => a.label,
+                    ),
+                },
+              )
+            : h(
+                NButton,
+                {
+                  size: 'tiny',
+                  'data-testid': `op-${a.key}-${row.plan.core.id}`,
+                  onClick: a.run,
+                },
+                () => a.label,
+              ),
         )
-      }
-      if (status === 'paused') {
-        buttons.push(
-          h(
-            NButton,
-            {
-              size: 'tiny',
-              'data-testid': `op-resume-${row.plan.core.id}`,
-              onClick: () => changeStatus(row.plan.core.id, 'active'),
-            },
-            () => '恢复',
-          ),
-        )
-      }
-      if (status === 'active' || status === 'paused') {
-        // 取消不删已生成交易与历史期次（后端行为），二次确认防误触
-        buttons.push(
-          h(
-            AppPopconfirm,
-            { onPositiveClick: () => changeStatus(row.plan.core.id, 'cancelled') },
-            {
-              default: () => '取消后不再自动转账，已生成的交易与历史期次保留。确认取消？',
-              trigger: () =>
-                h(
-                  NButton,
-                  {
-                    size: 'tiny',
-                    type: 'error',
-                    quaternary: true,
-                    'data-testid': `op-cancel-${row.plan.core.id}`,
-                  },
-                  () => '取消',
-                ),
-            },
-          ),
-        )
-      }
       if (buttons.length === 0) return '—'
       return h(NSpace, { size: 4 }, () => buttons)
     },
@@ -375,7 +275,7 @@ const columns: DataTableColumns<TransferRow> = [
 ]
 
 onMounted(() => {
-  void load()
+  void list.load()
 })
 </script>
 
@@ -386,11 +286,11 @@ onMounted(() => {
         <NSpace :size="12">
           <NButtonGroup size="small">
             <NButton
-              v-for="f in filterOptions"
+              v-for="f in statusFilterOptions"
               :key="f.key"
               :type="statusFilter === f.key ? 'primary' : 'default'"
               :data-testid="`filter-${f.key}`"
-              @click="statusFilter = f.key"
+              @click="list.setStatusFilter(f.key)"
             >
               {{ f.label }}
             </NButton>
@@ -477,7 +377,8 @@ onMounted(() => {
               />
               <AppSelect
                 v-model:value="recurrenceType"
-                :options="recurrenceOptions"
+                :options="[...SCHEDULED_RECURRENCE_OPTIONS]"
+                data-testid="transfer-recurrence"
                 style="width: 90px"
               />
             </NSpace>

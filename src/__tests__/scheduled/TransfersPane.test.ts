@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
-import { NModal, NSelect, NInputNumber, NDatePicker, NPopconfirm } from 'naive-ui'
+import { NModal, NSelect, NInputNumber, NPopconfirm } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import TransfersPane from '@/components/scheduled/TransfersPane.vue'
+import AppSelect from '@/components/AppSelect.vue'
 import type {
   Account,
   Currency,
@@ -13,6 +14,13 @@ import type {
   ScheduledTransactionOccurrence,
   ScheduledTransactionWithExt,
 } from '@/types'
+
+/**
+ * 定时转账页签组件测试（ADR-0041 决策 10）：清单加载/状态过滤/生命周期状态机等
+ * 时序用例已迁 ScheduledPlanList 模块接口测试（useScheduledPlanList.test.ts，
+ * 刷新版本号镜像法）；本文件收缩为渲染与交互冒烟 + 转账形态真差异（表单）。
+ * 迁移记录见对应提交信息。
+ */
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -113,6 +121,8 @@ function makeDetail(
     },
     pending_occurrences,
     completed_occurrences: 0,
+    completed_amount_cents: 0,
+    occurrences: pending_occurrences,
   }
 }
 
@@ -190,7 +200,7 @@ beforeEach(async () => {
   await store.refresh()
 })
 
-describe('TransfersPane 定时转账清单（issue #203）', () => {
+describe('TransfersPane 清单渲染冒烟（编排用例见 useScheduledPlanList.test.ts）', () => {
   it('只展示定时转账计划，订阅 / 分期不出现', async () => {
     const transfer = makeTransferPlan({ id: 't1', note: '月度储蓄' }, 'acc-cny2')
     mockPlans = [
@@ -207,7 +217,7 @@ describe('TransfersPane 定时转账清单（issue #203）', () => {
 
   it('清单展示转出→转入账户、金额、周期与下期转账日期', async () => {
     const transfer = makeTransferPlan(
-      { id: 't1', note: '月度储蓄', amount_cents: 50000, recurrence_interval: 1 },
+      { id: 't1', note: '月度储蓄', amount_cents: 50000, recurrence_interval: 2 },
       'acc-cny2',
     )
     mockPlans = [transfer]
@@ -222,13 +232,13 @@ describe('TransfersPane 定时转账清单（issue #203）', () => {
     expect(wrapper.text()).toContain('招商银行')
     expect(wrapper.text()).toContain('支付宝')
     expect(wrapper.text()).toContain('¥500')
-    expect(wrapper.text()).toContain('每月')
+    expect(wrapper.text()).toContain('每2月')
     const cell = wrapper.find('[data-testid="next-transfer-t1"]')
     expect(cell.text()).toContain('2026-03-01')
     expect(cell.text()).not.toContain('2026-04-01')
   })
 
-  it('状态过滤支持已完成（一次性转账执行后 completed）', async () => {
+  it('状态过滤按钮接线：completed 行经「已完成」过滤可见', async () => {
     const done = makeTransferPlan({ id: 'd1', note: '一次性转账', status: 'completed' }, 'acc-cny2')
     const active = makeTransferPlan({ id: 'a1', note: '循环转账' }, 'acc-cny2')
     mockPlans = [done, active]
@@ -241,28 +251,62 @@ describe('TransfersPane 定时转账清单（issue #203）', () => {
     expect(wrapper.text()).toContain('一次性转账')
     expect(wrapper.text()).not.toContain('循环转账')
   })
+})
 
-  it('已取消与已暂停行经对应过滤可见', async () => {
-    const paused = makeTransferPlan({ id: 'p1', note: '已暂停转账', status: 'paused' }, 'acc-cny2')
-    const cancelled = makeTransferPlan(
-      { id: 'c1', note: '已取消转账', status: 'cancelled' },
-      'acc-cny2',
-    )
-    mockPlans = [paused, cancelled]
-    mockDetails.set('p1', makeDetail(paused, []))
-    mockDetails.set('c1', makeDetail(cancelled, []))
+describe('TransfersPane 操作列渲染与确认交互（可用性矩阵与状态机见模块测试）', () => {
+  it('active 行点「暂停」发出状态命令（交互冒烟：描述符 → 按钮 onClick 接线）', async () => {
+    const plan = makeTransferPlan({ id: 'a1' }, 'acc-cny2')
+    mockPlans = [plan]
+    mockDetails.set('a1', makeDetail(plan, []))
     const wrapper = await mountView()
-    await wrapper.find('[data-testid="filter-paused"]').trigger('click')
+    await wrapper.find('[data-testid="op-pause-a1"]').trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('已暂停转账')
-    expect(wrapper.text()).not.toContain('已取消转账')
-    await wrapper.find('[data-testid="filter-cancelled"]').trigger('click')
+    expect(
+      mockInvoke.mock.calls.some(
+        ([cmd, args]) =>
+          cmd === 'update_scheduled_transaction_status' &&
+          (args as { input: { new_status: string } }).input.new_status === 'paused',
+      ),
+    ).toBe(true)
+  })
+
+  it('已完成 / 已取消的转账不再提供状态操作', async () => {
+    const done = makeTransferPlan({ id: 'd1', status: 'completed' }, 'acc-cny2')
+    mockPlans = [done]
+    mockDetails.set('d1', makeDetail(done, []))
+    const wrapper = await mountView()
+    await wrapper.find('[data-testid="filter-completed"]').trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('已取消转账')
+    expect(wrapper.find('[data-testid="op-pause-d1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="op-resume-d1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="op-cancel-d1"]').exists()).toBe(false)
+  })
+
+  it('取消需二次确认（AppPopconfirm），确认后走状态命令', async () => {
+    const plan = makeTransferPlan({ id: 'a1' }, 'acc-cny2')
+    mockPlans = [plan]
+    mockDetails.set('a1', makeDetail(plan, []))
+    const wrapper = await mountView()
+    await wrapper
+      .findComponent(NPopconfirm)
+      .find('[data-testid="op-cancel-a1"]')
+      .trigger('click')
+    await flushPromises()
+    const positive = document.body.querySelector('.n-popconfirm .n-button--primary-type')
+    expect(positive).not.toBeNull()
+    ;(positive as HTMLButtonElement).click()
+    await flushPromises()
+    expect(
+      mockInvoke.mock.calls.some(
+        ([cmd, args]) =>
+          cmd === 'update_scheduled_transaction_status' &&
+          (args as { input: { new_status: string } }).input.new_status === 'cancelled',
+      ),
+    ).toBe(true)
   })
 })
 
-describe('TransfersPane 新建定时转账（issue #203）', () => {
+describe('TransfersPane 新建定时转账（转账形态真差异，issue #203）', () => {
   /** 打开新建弹窗。 */
   async function openCreateModal(wrapper: ReturnType<typeof mount>) {
     await wrapper.find('[data-testid="transfer-create-open"]').trigger('click')
@@ -280,6 +324,20 @@ describe('TransfersPane 新建定时转账（issue #203）', () => {
     expect(modal.props('show')).toBe(false)
     await openCreateModal(wrapper)
     expect(modal.props('show')).toBe(true)
+  })
+
+  it('新建表单周期下拉统一为「每天/每周/每月/每年」（#309 显式可见变化，单源选项表）', async () => {
+    const wrapper = await mountView()
+    await openCreateModal(wrapper)
+    const recurrenceSelect = wrapper
+      .findComponent('[data-testid="transfer-recurrence"]')
+      .findComponent(NSelect)
+    expect(recurrenceSelect.props('options')).toEqual([
+      { label: '每天', value: 'daily' },
+      { label: '每周', value: 'weekly' },
+      { label: '每月', value: 'monthly' },
+      { label: '每年', value: 'yearly' },
+    ])
   })
 
   it('转入账户候选按转出账户币种过滤（Vitest 验收项）', async () => {
@@ -362,6 +420,7 @@ describe('TransfersPane 新建定时转账（issue #203）', () => {
     for (const n of [1, 3]) {
       mockPlans = []
       mockInvoke.mockClear()
+      baseInvoke()
       const wrapper = await mountView()
       await openCreateModal(wrapper)
       accountSelect(wrapper, 'transfer-from-account').vm.$emit('update:value', 'acc-cny1')
@@ -436,76 +495,5 @@ describe('TransfersPane 新建定时转账（issue #203）', () => {
     const wrapper = await mountView()
     await openCreateModal(wrapper)
     expect(wrapper.findComponent('[data-testid="transfer-merchant"]').exists()).toBe(false)
-  })
-})
-
-describe('TransfersPane 状态操作（issue #203）', () => {
-  it('进行中的转账可暂停（走既有状态命令）', async () => {
-    const plan = makeTransferPlan({ id: 'a1' }, 'acc-cny2')
-    mockPlans = [plan]
-    mockDetails.set('a1', makeDetail(plan, []))
-    const wrapper = await mountView()
-    await wrapper.find('[data-testid="op-pause-a1"]').trigger('click')
-    await flushPromises()
-    expect(
-      mockInvoke.mock.calls.some(
-        ([cmd, args]) =>
-          cmd === 'update_scheduled_transaction_status' &&
-          (args as { input: { new_status: string } }).input.new_status === 'paused',
-      ),
-    ).toBe(true)
-  })
-
-  it('已暂停的转账可恢复', async () => {
-    const plan = makeTransferPlan({ id: 'p1', status: 'paused' }, 'acc-cny2')
-    mockPlans = [plan]
-    mockDetails.set('p1', makeDetail(plan, []))
-    const wrapper = await mountView()
-    await wrapper.find('[data-testid="filter-paused"]').trigger('click')
-    await flushPromises()
-    await wrapper.find('[data-testid="op-resume-p1"]').trigger('click')
-    await flushPromises()
-    expect(
-      mockInvoke.mock.calls.some(
-        ([cmd, args]) =>
-          cmd === 'update_scheduled_transaction_status' &&
-          (args as { input: { new_status: string } }).input.new_status === 'active',
-      ),
-    ).toBe(true)
-  })
-
-  it('取消需二次确认（NPopconfirm），确认后走状态命令', async () => {
-    const plan = makeTransferPlan({ id: 'a1' }, 'acc-cny2')
-    mockPlans = [plan]
-    mockDetails.set('a1', makeDetail(plan, []))
-    const wrapper = await mountView()
-    await wrapper
-      .findComponent(NPopconfirm)
-      .find('[data-testid="op-cancel-a1"]')
-      .trigger('click')
-    await flushPromises()
-    const positive = document.body.querySelector('.n-popconfirm .n-button--primary-type')
-    expect(positive).not.toBeNull()
-    ;(positive as HTMLButtonElement).click()
-    await flushPromises()
-    expect(
-      mockInvoke.mock.calls.some(
-        ([cmd, args]) =>
-          cmd === 'update_scheduled_transaction_status' &&
-          (args as { input: { new_status: string } }).input.new_status === 'cancelled',
-      ),
-    ).toBe(true)
-  })
-
-  it('已完成 / 已取消的转账不再提供状态操作', async () => {
-    const done = makeTransferPlan({ id: 'd1', status: 'completed' }, 'acc-cny2')
-    mockPlans = [done]
-    mockDetails.set('d1', makeDetail(done, []))
-    const wrapper = await mountView()
-    await wrapper.find('[data-testid="filter-completed"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('[data-testid="op-pause-d1"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="op-resume-d1"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="op-cancel-d1"]').exists()).toBe(false)
   })
 })
