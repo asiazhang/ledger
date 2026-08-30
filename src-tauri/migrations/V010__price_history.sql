@@ -3,6 +3,14 @@
 -- 承载「现价」（market_prices）之外的第二条价格承载线，供投资资产走势图消费。
 -- 既有投资表（instruments / market_prices / v_holdings 等）已随 v0.3.0 发布冻结，
 -- 本迁移只增不改；恢复旧版本备份后由本迁移自动补齐新表。
+--
+-- 【就地修改注记】本文件已被就地修改（两级 BREAKING 标记之一，另一级见
+-- CHANGELOG「Unreleased」BREAKING 条目）：price_history.price_cents 刻度由「分」
+-- 重定义为万分之一元（0.0001 元，ADR-0038，与 V002 同批价格刻度翻转）。
+-- fx_rate_history.rate 是汇率比值（REAL），非价格列，不受影响。列名保留、
+-- 无 DDL 结构变化，就地修改只影响全新安装；存量库按 CHANGELOG 处置步骤
+-- 执行一次性脚本 scripts/migrate-price-scale.sh（清空本表属可重建缓存）
+-- 后重新同步价格。
 -- 周采样规则：每标的（/币种对）每周至多一条，取该周最后一个有报价交易日的价格；
 -- 「整周覆盖」的幂等 upsert 由周唯一约束保证（同周任一采样日写入都落在同一周键上），
 -- 不产生重复。
@@ -10,7 +18,8 @@
 -- 1. price_history（价格历史表）
 --    - 周粒度价格序列：仅覆盖股票类持仓标的（口径同 InvestedInstrument）。
 --    - trade_date 为周采样交易日（该周最后一个有报价交易日），ISO 8601 日期。
---    - price_cents 为整数分；currency_code 为报价币种（港股 HKD、沪深 CNY），
+--    - price_cents 为万分之一元（0.0001 元，刻度见文件头就地修改注记）；
+--      currency_code 为报价币种（港股 HKD、沪深 CNY），
 --      跨币种历史折算须配合 fx_rate_history 同期汇率，不用当前汇率近似历史。
 --    - 已清仓标的的历史保留不删，供回看过去的组合市值（清仓不触发本表删除；
 --      仅标的本身被删除时级联跟随，与 market_prices 同策略）。
@@ -22,7 +31,7 @@ CREATE TABLE IF NOT EXISTS price_history (
     instrument_id  TEXT NOT NULL REFERENCES instruments(id) ON DELETE CASCADE,  -- 关联金融工具，标的删除时历史级联删除
     trade_date     TEXT NOT NULL,     -- 周采样交易日，ISO 8601 日期（YYYY-MM-DD）
     week_start     TEXT NOT NULL GENERATED ALWAYS AS (date(trade_date, '-6 days', 'weekday 1')) STORED,  -- 所属 ISO 周的周一，由 trade_date 派生，周唯一键
-    price_cents    INTEGER NOT NULL,  -- 收盘价（分，整数分）
+    price_cents    INTEGER NOT NULL,  -- 收盘价（万分之一元，整数存储；刻度见文件头就地修改注记）
     currency_code  TEXT NOT NULL REFERENCES currencies(code) ON DELETE RESTRICT,  -- 报价币种
     source         TEXT,              -- 数据来源（如 eastmoney）
     created_at     TEXT NOT NULL,     -- 创建时间，UTC ISO 8601

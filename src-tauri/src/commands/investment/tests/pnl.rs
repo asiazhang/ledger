@@ -31,12 +31,14 @@ fn realized_pnl_summary_aggregates_single_sale() {
     insert_rate_1_1(&conn, "USD");
     insert_instrument(&conn, "inst-pnl", "AAPL", "Apple", "USD");
 
-    let _buy =
-        create_transaction_internal(&conn, make_buy_input("acc-pnl", "inst-pnl", 10.0, 10000, 0))
-            .unwrap();
+    let _buy = create_transaction_internal(
+        &conn,
+        make_buy_input("acc-pnl", "inst-pnl", 10.0, 1_000_000, 0),
+    )
+    .unwrap();
     let _sell = create_transaction_internal(
         &conn,
-        make_sell_input("acc-pnl", "inst-pnl", 5.0, 12000, 200),
+        make_sell_input("acc-pnl", "inst-pnl", 5.0, 1_200_000, 200),
     )
     .unwrap();
 
@@ -66,10 +68,14 @@ fn realized_pnl_summary_aggregates_multiple_accounts() {
     insert_rate_1_1(&conn, "USD");
     insert_instrument(&conn, "inst-xyz", "XYZ", "Test Corp", "USD");
 
-    create_transaction_internal(&conn, make_buy_input("acc-a", "inst-xyz", 10.0, 1000, 0)).unwrap();
-    create_transaction_internal(&conn, make_buy_input("acc-b", "inst-xyz", 5.0, 2000, 0)).unwrap();
-    create_transaction_internal(&conn, make_sell_input("acc-a", "inst-xyz", 4.0, 1500, 0)).unwrap();
-    create_transaction_internal(&conn, make_sell_input("acc-b", "inst-xyz", 2.0, 2500, 0)).unwrap();
+    create_transaction_internal(&conn, make_buy_input("acc-a", "inst-xyz", 10.0, 100_000, 0))
+        .unwrap();
+    create_transaction_internal(&conn, make_buy_input("acc-b", "inst-xyz", 5.0, 200_000, 0))
+        .unwrap();
+    create_transaction_internal(&conn, make_sell_input("acc-a", "inst-xyz", 4.0, 150_000, 0))
+        .unwrap();
+    create_transaction_internal(&conn, make_sell_input("acc-b", "inst-xyz", 2.0, 250_000, 0))
+        .unwrap();
 
     let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
 
@@ -90,10 +96,14 @@ fn realized_pnl_summary_filter_by_account() {
     insert_rate_1_1(&conn, "USD");
     insert_instrument(&conn, "inst-xyz", "XYZ", "Test Corp", "USD");
 
-    create_transaction_internal(&conn, make_buy_input("acc-a", "inst-xyz", 10.0, 1000, 0)).unwrap();
-    create_transaction_internal(&conn, make_buy_input("acc-b", "inst-xyz", 5.0, 2000, 0)).unwrap();
-    create_transaction_internal(&conn, make_sell_input("acc-a", "inst-xyz", 4.0, 1500, 0)).unwrap();
-    create_transaction_internal(&conn, make_sell_input("acc-b", "inst-xyz", 2.0, 2500, 0)).unwrap();
+    create_transaction_internal(&conn, make_buy_input("acc-a", "inst-xyz", 10.0, 100_000, 0))
+        .unwrap();
+    create_transaction_internal(&conn, make_buy_input("acc-b", "inst-xyz", 5.0, 200_000, 0))
+        .unwrap();
+    create_transaction_internal(&conn, make_sell_input("acc-a", "inst-xyz", 4.0, 150_000, 0))
+        .unwrap();
+    create_transaction_internal(&conn, make_sell_input("acc-b", "inst-xyz", 2.0, 250_000, 0))
+        .unwrap();
 
     let filter = PnlFilter {
         account_id: Some("acc-a".into()),
@@ -114,10 +124,14 @@ fn realized_pnl_summary_filter_by_instrument() {
     insert_instrument(&conn, "inst-a", "AAPL", "Apple", "USD");
     insert_instrument(&conn, "inst-b", "GOOGL", "Alphabet", "USD");
 
-    create_transaction_internal(&conn, make_buy_input("acc-pnl", "inst-a", 10.0, 1000, 0)).unwrap();
-    create_transaction_internal(&conn, make_buy_input("acc-pnl", "inst-b", 5.0, 2000, 0)).unwrap();
-    create_transaction_internal(&conn, make_sell_input("acc-pnl", "inst-a", 4.0, 1500, 0)).unwrap();
-    create_transaction_internal(&conn, make_sell_input("acc-pnl", "inst-b", 2.0, 2500, 0)).unwrap();
+    create_transaction_internal(&conn, make_buy_input("acc-pnl", "inst-a", 10.0, 100_000, 0))
+        .unwrap();
+    create_transaction_internal(&conn, make_buy_input("acc-pnl", "inst-b", 5.0, 200_000, 0))
+        .unwrap();
+    create_transaction_internal(&conn, make_sell_input("acc-pnl", "inst-a", 4.0, 150_000, 0))
+        .unwrap();
+    create_transaction_internal(&conn, make_sell_input("acc-pnl", "inst-b", 2.0, 250_000, 0))
+        .unwrap();
 
     let filter = PnlFilter {
         account_id: None,

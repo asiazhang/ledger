@@ -105,7 +105,7 @@ pub struct Instrument {
     pub updated_at: String,
     pub version: i64,
     pub device_id: String,
-    /// 最新市场价格（分），同步来源；无行情时为空。
+    /// 最新市场价格（万分之一元，0.0001 元，ADR-0038 价格刻度），同步来源；无行情时为空。
     pub price_cents: Option<i64>,
     /// 是否持有该标的（有当前持仓批次 remaining_quantity > 0，派生自 security_lots）。
     pub invested: bool,
@@ -379,12 +379,12 @@ pub struct TrendRange {
     pub end_date: Option<String>,
 }
 
-/// 单标的走势采样点：周采样交易日 + 收盘价（报价币种整数分）。
+/// 单标的走势采样点：周采样交易日 + 收盘价（报价币种万分之一元，ADR-0038 价格刻度）。
 #[derive(Debug, Serialize)]
 pub struct PriceTrendPoint {
     /// 周采样交易日（该周最后一个有报价交易日），ISO 8601 日期。
     pub date: String,
-    /// 收盘价（分，报价币种）。
+    /// 收盘价（万分之一元，报价币种）。
     pub price_cents: i64,
     /// 报价币种（港股 HKD、沪深 CNY）。
     pub currency_code: String,

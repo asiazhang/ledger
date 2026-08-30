@@ -9,7 +9,7 @@ use rusqlite::params;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::Result;
 
-use super::http::{StockItem, f2_to_cents};
+use super::http::{StockItem, f2_to_price};
 
 /// 按 (标的, ISO 周) 插入或覆盖一条周采样价格历史（issue #137 / ADR-0019）。
 /// 「整周覆盖」幂等由 UNIQUE(instrument_id, week_start)（week_start 为生成列）保证：
@@ -55,10 +55,10 @@ pub(super) fn upsert_fx_rate_history(
     Ok(())
 }
 
-/// K 线收盘价（真实价格值）→ 整数分。A 股/港股一致 ×100，与既有 f2 换算结果相同
-/// （A 股 f2=价格×100 直接得分；港股 f2=价格×1000 ÷10 亦即 ×100）。
-pub(super) fn kline_close_to_cents(close: f64) -> i64 {
-    (close * 100.0).round() as i64
+/// K 线收盘价（真实价格值）→ 万分之一元（0.0001 元，价格刻度 ADR-0038）。
+/// A 股/港股一致 ×10000。
+pub(super) fn kline_close_to_price(close: f64) -> i64 {
+    (close * 10000.0).round() as i64
 }
 
 /// 已存在股票标的的映射值：(id, name, market)，键为 symbol。
@@ -139,7 +139,7 @@ pub(super) fn apply_stock_item(
             updated = 1;
         }
         if let Some(raw) = item.price {
-            let price = f2_to_cents(raw, market_code);
+            let price = f2_to_price(raw, market_code);
             upsert_market_price(conn, existing_id, price, currency)?;
         }
         Ok((0, updated))
@@ -162,7 +162,7 @@ pub(super) fn apply_stock_item(
             ],
         )?;
         if let Some(raw) = item.price {
-            let price = f2_to_cents(raw, market_code);
+            let price = f2_to_price(raw, market_code);
             upsert_market_price(conn, &id, price, currency)?;
         }
         existing_map.insert(

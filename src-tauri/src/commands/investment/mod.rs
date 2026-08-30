@@ -21,6 +21,12 @@ pub(crate) use reports::query_realized_pnl_summary;
 // 不再暴露 create/update/cleanup/reverse 等散落函数；行写入经交易行为层编排。
 pub(crate) use trade::{Plan, apply, prepare, revert};
 
+/// 价格刻度换算因子（ADR-0038）：1 分 = 100 万分之一元——
+/// 金额（分）= 数量 × 单价（万分之一元）÷ 本因子；手续费分摊薄入每份成本时
+/// 乘本因子归到价格刻度。与 `v_holdings` 视图表达式（V002）同口径，视图 SQL
+/// 无法引用 Rust 常量，两侧以本词条注释互认，改其一必同步另一。
+pub(crate) const PRICE_UNITS_PER_FEN: f64 = 100.0;
+
 #[tauri::command]
 pub fn list_holdings(db: tauri::State<'_, DbState>) -> Result<Vec<Holding>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;

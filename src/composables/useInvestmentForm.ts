@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { api } from '@/api'
-import { centsToYuan } from '@/types'
+import { centsToYuan, priceToYuan } from '@/types'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
 import { buildTradeInput } from '@/domain/transaction-input'
 import { errorMessage } from '@/utils/errors'
@@ -63,10 +63,10 @@ export function useInvestmentForm(
     return opts
   })
 
-  // 编辑回填（issue #180）：打开即回填该笔 buy/sell 全部业务字段。价格/费用经
-  // centsToYuan 按币种小数位换算（不手写 /100）；日期以 UTC 午夜时间戳承载回填，
-  // 提交端日期转换收口装配器 toLocalDateISO（issue #216）。明细缺失时（父层未取到
-  // trade）不回填。
+  // 编辑回填（issue #180）：打开即回填该笔 buy/sell 全部业务字段。单价经 priceToYuan
+  // 按万分之一元刻度换算（ADR-0038，不手写 /10000）；费用为金额，经 centsToYuan
+  // 按币种小数位换算；日期以 UTC 午夜时间戳承载回填，提交端日期转换收口装配器
+  // toLocalDateISO（issue #216）。明细缺失时（父层未取到 trade）不回填。
   const editingTx = options?.editing?.() ?? null
   const editingTrade = options?.trade?.() ?? null
   const seededInstrumentOption = editingTrade
@@ -82,7 +82,7 @@ export function useInvestmentForm(
     currencyCode.value = editingTx.currency_code
     instrumentId.value = editingTrade.instrument_id
     quantity.value = editingTrade.quantity
-    price.value = centsToYuan(editingTrade.price_cents, reference.getCurrency(editingTx.currency_code))
+    price.value = priceToYuan(editingTrade.price_cents)
     fee.value =
       editingTrade.fee_cents != null
         ? centsToYuan(editingTrade.fee_cents, reference.getCurrency(editingTx.currency_code))

@@ -43,21 +43,21 @@ fn cross_currency_holding_pnl() {
     .unwrap();
     conn.execute(
         "INSERT INTO security_transactions (transaction_id,instrument_id,action,quantity,price_cents,fee_cents) \
-         VALUES (?1,?2,'buy',10,10000,0)",
+         VALUES (?1,?2,'buy',10,1000000,0)",
         params![buy_txn_id, instrument_id],
     )
     .unwrap();
     // lot 成本币种为 USD（标的币种），与账户 CNY 不同
     conn.execute(
         "INSERT INTO security_lots (id,account_id,instrument_id,buy_transaction_id,initial_quantity,remaining_quantity,cost_per_unit_cents,currency_code,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,?4,10,10,10000,'USD','2026-01-10T00:00:00Z','2026-01-10T00:00:00Z',1,'test')",
+         VALUES (?1,?2,?3,?4,10,10,1000000,'USD','2026-01-10T00:00:00Z','2026-01-10T00:00:00Z',1,'test')",
         params!["lot-cross", account_id, instrument_id, buy_txn_id],
     )
     .unwrap();
-    // 最新价 $120 USD
+    // 最新价 $120 USD（1200000 万分之一元）
     conn.execute(
         "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,12000,'USD','2026-07-07','yahoo','2026-07-07T00:00:00Z','2026-07-07T00:00:00Z',1,'test')",
+         VALUES (?1,?2,1200000,'USD','2026-07-07','yahoo','2026-07-07T00:00:00Z','2026-07-07T00:00:00Z',1,'test')",
         params!["mp-cross", instrument_id],
     )
     .unwrap();
@@ -73,9 +73,9 @@ fn cross_currency_holding_pnl() {
     // cost_basis_cents 保持原 lot 币种（USD），未折算；折算仅用于盈亏计算
     assert_eq!(cost_basis, 100000);
     assert_eq!(cost_ccy, "USD");
-    // 市值 = 10 * 12000 * 7.2 = 864000 CNY 分
+    // 市值 = 10 × 1200000 × 7.2 ÷ 100（万分之一元 → 分）= 864000 CNY 分
     assert_eq!(market_value, 864000);
-    // 盈亏 = 864000 - (100000 * 7.2 = 720000) = 144000 CNY 分
+    // 盈亏 = 864000 − (成本 10×1000000÷100 = 100000，× 7.2 = 720000) = 144000 CNY 分
     // 旧实现错误地得 864000 - 100000 = 764000（CNY 市值减 USD 成本）
     assert_eq!(unrealized_pnl, 144000);
 }
@@ -118,27 +118,27 @@ fn holding_reverse_rate_fallback() {
     .unwrap();
     conn.execute(
         "INSERT INTO security_transactions (transaction_id,instrument_id,action,quantity,price_cents,fee_cents) \
-         VALUES (?1,?2,'buy',10,8000,0)",
+         VALUES (?1,?2,'buy',10,800000,0)",
         params![buy_txn_id, instrument_id],
     )
     .unwrap();
     conn.execute(
         "INSERT INTO security_lots (id,account_id,instrument_id,buy_transaction_id,initial_quantity,remaining_quantity,cost_per_unit_cents,currency_code,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,?4,10,10,8000,'USD','2026-01-10T00:00:00Z','2026-01-10T00:00:00Z',1,'test')",
+         VALUES (?1,?2,?3,?4,10,10,800000,'USD','2026-01-10T00:00:00Z','2026-01-10T00:00:00Z',1,'test')",
         params!["lot-rev", account_id, instrument_id, buy_txn_id],
     )
     .unwrap();
-    // 最新价 $96 USD
+    // 最新价 $96 USD（960000 万分之一元）
     conn.execute(
         "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,9600,'USD','2026-07-07','yahoo','2026-07-07T00:00:00Z','2026-07-07T00:00:00Z',1,'test')",
+         VALUES (?1,?2,960000,'USD','2026-07-07','yahoo','2026-07-07T00:00:00Z','2026-07-07T00:00:00Z',1,'test')",
         params!["mp-rev", instrument_id],
     )
     .unwrap();
 
     // 正向 USD->CNY 不存在，只能走反向 CNY->USD=0.125 取倒数得 8。
-    // 市值 = 10 * 9600 / 0.125 = 768000 CNY 分
-    // 成本 = 80000 / 0.125 = 640000 CNY 分
+    // 市值 = 10 × 960000 ÷ 0.125 ÷ 100 = 768000 CNY 分
+    // 成本 = 10 × 800000 ÷ 100 ÷ 0.125 = 640000 CNY 分
     // 盈亏 = 768000 - 640000 = 128000 CNY 分
     let (market_value, unrealized_pnl): (i64, i64) = conn
         .query_row(

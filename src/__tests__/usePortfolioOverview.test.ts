@@ -98,7 +98,7 @@ describe('usePortfolioOverview 盈亏页持仓概览数据层（issue #110）', 
     expect(row1.accountName).toBe('证券账户A')
     expect(row1.quantity).toBe(100)
     expect(row1.costBasisCents).toBe(120000)
-    expect(row1.latestPriceCents).toBe(1500)
+    expect(row1.latestPriceCents).toBe(150000) // 现价为万分之一元刻度（ADR-0038）
     expect(row1.marketValueCents).toBe(150000)
     expect(row1.unrealizedPnlCents).toBe(30000)
     // 市值/未实现盈亏折算币种 = 账户币

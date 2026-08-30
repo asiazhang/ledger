@@ -18,7 +18,7 @@ import { useReferenceStore } from '@/stores/reference'
 import { useHoldingPriceSync } from '@/composables/useHoldingPriceSync'
 import { useInstrumentFullSync } from '@/composables/useInstrumentFullSync'
 import { usePricesChanged } from '@/composables/usePricesChanged'
-import { formatAmount, INSTRUMENT_TYPE_LABELS, MARKET_TYPE_LABELS } from '@/types'
+import { formatPrice, INSTRUMENT_TYPE_LABELS, MARKET_TYPE_LABELS } from '@/types'
 import AppModal from '@/components/AppModal.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import type { Instrument, MarketType } from '@/types'
@@ -130,8 +130,9 @@ const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
     width: 100,
     render(row) {
       if (row.price_cents === null || row.price_cents === undefined) return '-'
+      // 现价为价格列（万分之一元刻度，ADR-0038），用 formatPrice 展示
       const ccy = reference.currencyMap.get(row.currency_code)
-      return formatAmount(row.price_cents, ccy)
+      return formatPrice(row.price_cents, ccy)
     },
   },
   {

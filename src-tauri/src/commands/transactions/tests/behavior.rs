@@ -226,8 +226,12 @@ fn update_transaction_cross_kind_rebuilds_side_effects_atomically() {
         make_input("acc-cash-x", TransactionKind::Expense, 500, "2026-01-01"),
     )
     .unwrap();
-    update_transaction_internal(&conn, &id, make_buy_input("acc-x", "inst-x", 3.0, 1000, 0))
-        .unwrap();
+    update_transaction_internal(
+        &conn,
+        &id,
+        make_buy_input("acc-x", "inst-x", 3.0, 100000, 0),
+    )
+    .unwrap();
     let t = get_transaction_internal(&conn, &id).unwrap();
     assert_eq!(t.kind, TransactionKind::Buy);
     let lots: i64 = conn
@@ -267,7 +271,7 @@ fn delete_transaction_internal_cleans_up_buy_lots() {
 
     let buy_id = create_transaction_internal(
         &conn,
-        make_buy_input("acc-inv", "inst-aapl", 10.0, 10000, 500),
+        make_buy_input("acc-inv", "inst-aapl", 10.0, 1000000, 500),
     )
     .unwrap();
 
@@ -323,11 +327,11 @@ fn delete_transaction_internal_rejects_partially_sold_buy() {
 
     let buy_id = create_transaction_internal(
         &conn,
-        make_buy_input("acc-inv2", "inst-msft", 10.0, 10000, 0),
+        make_buy_input("acc-inv2", "inst-msft", 10.0, 1000000, 0),
     )
     .unwrap();
 
-    let mut sell = make_buy_input("acc-inv2", "inst-msft", 4.0, 11000, 0);
+    let mut sell = make_buy_input("acc-inv2", "inst-msft", 4.0, 1100000, 0);
     sell.kind = TransactionKind::Sell;
     sell.date = "2026-01-20".into();
     create_transaction_internal(&conn, sell).unwrap();
@@ -362,7 +366,7 @@ fn delete_transaction_internal_rolls_back_lot_cleanup_when_soft_delete_fails() {
 
     let buy_id = create_transaction_internal(
         &conn,
-        make_buy_input("acc-inv-rb", "inst-rb2", 10.0, 10000, 0),
+        make_buy_input("acc-inv-rb", "inst-rb2", 10.0, 1000000, 0),
     )
     .unwrap();
     inject_soft_delete_failure(&conn);
@@ -554,12 +558,12 @@ fn update_transaction_internal_buy_rebuilds_lot() {
     setup_investment_account(&conn, "acc-inv", "inst-aapl");
     let buy_id = create_transaction_internal(
         &conn,
-        make_buy_input("acc-inv", "inst-aapl", 10.0, 10000, 500),
+        make_buy_input("acc-inv", "inst-aapl", 10.0, 1000000, 500),
     )
     .unwrap();
 
     // 编辑买入：数量/单价变化，应重建 lot 与 security_transaction。
-    let edited = make_buy_input("acc-inv", "inst-aapl", 5.0, 12000, 0);
+    let edited = make_buy_input("acc-inv", "inst-aapl", 5.0, 1200000, 0);
     update_transaction_internal(&conn, &buy_id, edited).unwrap();
 
     let t = get_transaction_internal(&conn, &buy_id).unwrap();
@@ -592,11 +596,11 @@ fn update_transaction_internal_rejects_partially_sold_buy() {
     setup_investment_account(&conn, "acc-inv2", "inst-msft");
     let buy_id = create_transaction_internal(
         &conn,
-        make_buy_input("acc-inv2", "inst-msft", 10.0, 10000, 0),
+        make_buy_input("acc-inv2", "inst-msft", 10.0, 1000000, 0),
     )
     .unwrap();
 
-    let mut sell = make_buy_input("acc-inv2", "inst-msft", 4.0, 11000, 0);
+    let mut sell = make_buy_input("acc-inv2", "inst-msft", 4.0, 1100000, 0);
     sell.kind = TransactionKind::Sell;
     sell.date = "2026-01-20".into();
     create_transaction_internal(&conn, sell).unwrap();
@@ -604,7 +608,7 @@ fn update_transaction_internal_rejects_partially_sold_buy() {
     let err = update_transaction_internal(
         &conn,
         &buy_id,
-        make_buy_input("acc-inv2", "inst-msft", 5.0, 10000, 0),
+        make_buy_input("acc-inv2", "inst-msft", 5.0, 1000000, 0),
     )
     .unwrap_err();
     // 守卫文案按入口内化（ADR-0033 决策 #4）：修改入口固定返回自己的措辞。
@@ -620,16 +624,16 @@ fn update_transaction_internal_sell_reverses_and_reapplies() {
     setup_investment_account(&conn, "acc-inv3", "inst-tsla");
     let buy_id = create_transaction_internal(
         &conn,
-        make_buy_input("acc-inv3", "inst-tsla", 10.0, 10000, 0),
+        make_buy_input("acc-inv3", "inst-tsla", 10.0, 1000000, 0),
     )
     .unwrap();
 
-    let mut sell1 = make_buy_input("acc-inv3", "inst-tsla", 4.0, 11000, 0);
+    let mut sell1 = make_buy_input("acc-inv3", "inst-tsla", 4.0, 1100000, 0);
     sell1.kind = TransactionKind::Sell;
     let sell_id = create_transaction_internal(&conn, sell1).unwrap();
 
     // 编辑卖出：数量 4→3、单价上涨。应先回补旧扣减再按新输入重新匹配。
-    let mut sell2 = make_buy_input("acc-inv3", "inst-tsla", 3.0, 12000, 0);
+    let mut sell2 = make_buy_input("acc-inv3", "inst-tsla", 3.0, 1200000, 0);
     sell2.kind = TransactionKind::Sell;
     sell2.date = "2026-02-01".into();
     update_transaction_internal(&conn, &sell_id, sell2).unwrap();
@@ -698,7 +702,7 @@ fn create_buy_mid_apply_failure_rolls_back_all() {
     inject_buy_lot_failure(&conn);
 
     let err =
-        create_transaction_internal(&conn, make_buy_input("acc-rb", "inst-rb", 10.0, 10000, 0))
+        create_transaction_internal(&conn, make_buy_input("acc-rb", "inst-rb", 10.0, 1000000, 0))
             .unwrap_err();
     assert!(
         err.to_string().contains("测试注入：建仓失败"),

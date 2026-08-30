@@ -161,13 +161,13 @@ async fn test_update_buy_to_missing_instrument_returns_400_with_readable_error()
         .unwrap();
     }
 
-    let buy = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-295","date":"2026-01-10","instrument_id":"inst-295","quantity":10.0,"price_cents":10000,"fee_cents":0}]}"#;
+    let buy = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-295","date":"2026-01-10","instrument_id":"inst-295","quantity":10.0,"price_cents":1000000,"fee_cents":0}]}"#;
     let created = post_batch(&app, buy.to_string()).await;
     assert_eq!(created[0]["success"], true, "铺垫买入应成功");
     let id = created[0]["id"].as_str().unwrap().to_string();
 
     // 改为引用不存在的标的 → 400（非 500），错误可读、携带标的 id。
-    let body = r#"{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-295","date":"2026-01-10","instrument_id":"inst-not-exist","quantity":5.0,"price_cents":12000,"fee_cents":0}"#;
+    let body = r#"{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-295","date":"2026-01-10","instrument_id":"inst-not-exist","quantity":5.0,"price_cents":1200000,"fee_cents":0}"#;
     let (status, bytes) = put_transaction_via_api(&app, &id, body).await;
     assert_eq!(
         status,
@@ -257,7 +257,7 @@ async fn test_buy_native_cents_converted_via_writer_seam() {
         .unwrap();
     }
 
-    let body = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-70","date":"2026-01-10","instrument_id":"inst-70","quantity":10.0,"price_cents":10000,"fee_cents":500}]}"#;
+    let body = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-70","date":"2026-01-10","instrument_id":"inst-70","quantity":10.0,"price_cents":1000000,"fee_cents":500}]}"#;
     let results = post_batch(&app, body.to_string()).await;
     assert_eq!(results[0]["success"], true, "buy 应成功: {:?}", results[0]);
 
@@ -301,10 +301,10 @@ async fn test_sell_native_cents_converted_via_writer_seam() {
     }
 
     // 先买 10 股（10000/股，0 费），再卖 4 股（11000/股，0 费）→ 净额 44000。
-    let buy = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-70s","date":"2026-01-10","instrument_id":"inst-70s","quantity":10.0,"price_cents":10000,"fee_cents":0}]}"#;
+    let buy = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-70s","date":"2026-01-10","instrument_id":"inst-70s","quantity":10.0,"price_cents":1000000,"fee_cents":0}]}"#;
     let r1 = post_batch(&app, buy.to_string()).await;
     assert_eq!(r1[0]["success"], true);
-    let sell = r#"{"transactions":[{"kind":"sell","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-70s","date":"2026-01-20","instrument_id":"inst-70s","quantity":4.0,"price_cents":11000,"fee_cents":0}]}"#;
+    let sell = r#"{"transactions":[{"kind":"sell","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-70s","date":"2026-01-20","instrument_id":"inst-70s","quantity":4.0,"price_cents":1100000,"fee_cents":0}]}"#;
     let r2 = post_batch(&app, sell.to_string()).await;
     assert_eq!(r2[0]["success"], true, "卖出应成功: {:?}", r2[0]);
 
@@ -366,7 +366,7 @@ async fn test_delete_buy_transaction_cleans_up_security_lots() {
             date: "2026-01-10".into(),
             instrument_id: Some("inst-del".into()),
             quantity: Some(10.0),
-            price_cents: Some(10000),
+            price_cents: Some(1_000_000),
             fee_cents: Some(500),
             idempotency_key: None,
         };

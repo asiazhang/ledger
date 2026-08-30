@@ -77,9 +77,9 @@ fn trade_row(
     )
 }
 
-/// 链路数字（buy 含费建仓、sell 减费回款，全部整除便于断言）：
-/// - buy1: 100 × 1500 + 500  = 150500 → lot1 每份成本 1505
-/// - buy2: 100 × 1800 + 100  = 180100 → lot2 每份成本 1801
+/// 链路数字（buy 含费建仓、sell 减费回款，全部整除便于断言；单价为万分之一元刻度）：
+/// - buy1: 100 × 150000/100 + 500  = 150500 → lot1 每份成本 150500（15.05 元）
+/// - buy2: 100 × 180000/100 + 100  = 180100 → lot2 每份成本 180100（18.01 元）
 /// - sell: 150 × 2000 − 200  = 299800；FIFO 消耗 lot1 全部 100 + lot2 一半 50
 ///   - lot1 匹配：费用分摊 floor(200×100/150)=133，盈亏 200000−150500−133 = 49367
 ///   - lot2 匹配：费用吃余 200−133=67，盈亏 100000−90050−67 = 9883
@@ -112,7 +112,7 @@ async fn test_full_migration_flow_search_create_buy_sell_holdings_balance() {
             &account_id,
             &instrument_id,
             100.0,
-            1500,
+            150000,
             500,
             "2026-05-01",
         ),
@@ -121,7 +121,7 @@ async fn test_full_migration_flow_search_create_buy_sell_holdings_balance() {
             &account_id,
             &instrument_id,
             100.0,
-            1800,
+            180000,
             100,
             "2026-05-10",
         ),
@@ -146,7 +146,7 @@ async fn test_full_migration_flow_search_create_buy_sell_holdings_balance() {
         &account_id,
         &instrument_id,
         150.0,
-        2000,
+        200000,
         200,
         "2026-05-20",
     )];
@@ -187,8 +187,11 @@ async fn test_full_migration_flow_search_create_buy_sell_holdings_balance() {
         let (rem2, cost2) = lot_of(&buy2_id);
         assert!((rem1 - 0.0).abs() < 1e-9, "先建批次应被 FIFO 全部消耗");
         assert!((rem2 - 50.0).abs() < 1e-9, "后建批次应剩余 50 份");
-        assert_eq!(cost1, 1505, "批次每份成本 = (数量×单价+手续费)/数量");
-        assert_eq!(cost2, 1801);
+        assert_eq!(
+            cost1, 150500,
+            "批次每份成本（万分之一元）= (数量×单价+手续费×100)/数量"
+        );
+        assert_eq!(cost2, 180100);
 
         let mut sales: Vec<(f64, i64, i64)> = conn
             .prepare(
@@ -209,13 +212,13 @@ async fn test_full_migration_flow_search_create_buy_sell_holdings_balance() {
         let first_match = sales.remove(0);
         assert_eq!(
             first_match,
-            (100.0, 1505, 49367),
+            (100.0, 150500, 49367),
             "先建批次匹配行应为全量 100 份"
         );
         let second_match = sales.remove(0);
         assert_eq!(
             second_match,
-            (50.0, 1801, 9883),
+            (50.0, 180100, 9883),
             "后建批次匹配行应为余量 50 份"
         );
     }
@@ -251,7 +254,7 @@ async fn test_update_trade_to_missing_instrument_returns_400_not_500() {
         &account_id,
         &instrument_id,
         10.0,
-        2500,
+        250000,
         0,
         "2026-05-01",
     );
@@ -266,7 +269,7 @@ async fn test_update_trade_to_missing_instrument_returns_400_not_500() {
         &account_id,
         "inst-not-exist",
         10.0,
-        2500,
+        250000,
         0,
         "2026-05-01",
     );
@@ -299,7 +302,10 @@ async fn test_update_trade_to_missing_instrument_returns_400_not_500() {
     let items = list["items"].as_array().unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["id"], txn_id);
-    assert_eq!(items[0]["amount_cents"], 25000, "10 × 2500 + 0，原金额不变");
+    assert_eq!(
+        items[0]["amount_cents"], 25000,
+        "10 × 25.00 元 + 0，原金额不变"
+    );
     let lot_count: i64 = conn
         .lock()
         .unwrap()

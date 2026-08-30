@@ -13,6 +13,8 @@ use chrono::NaiveDate;
 use rusqlite::Connection;
 
 use super::holdings::holdings_as_of;
+
+use super::PRICE_UNITS_PER_FEN;
 use crate::error::{AppError, Result};
 use crate::models::{
     InstrumentPriceTrend, PortfolioTrendPoint, PortfolioValueTrend, PriceTrendPoint, TrendRange,
@@ -178,7 +180,8 @@ pub(crate) fn query_portfolio_value_trend(
             };
             let Some(rate) = rate else { continue };
             let quantity = holdings_as_of(conn, Some(&row.instrument_id), &row.trade_date)?;
-            let value = (quantity * row.price_cents as f64).round() as i64;
+            // 金额分 = 数量 × 单价（万分之一元）÷ 换算因子，再折算到本位币（ADR-0038）。
+            let value = (quantity * row.price_cents as f64 / PRICE_UNITS_PER_FEN).round() as i64;
             total += (value as f64 * rate).round() as i64;
             contributed = true;
         }

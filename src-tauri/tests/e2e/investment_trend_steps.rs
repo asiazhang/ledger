@@ -38,7 +38,7 @@ fn instrument_id(conn: &rusqlite::Connection, symbol: &str) -> String {
 
 /// 直插一条价格历史周点行（`week_start` 为 STORED 生成列，随 trade_date 派生；
 /// 同标的同周重复插入撞 UNIQUE，与「整周覆盖」的库层约束一致）。
-#[given(expr = "存在标的 {string} 的价格历史 交易日 {string} 价格 {int} 分 币种 {string}")]
+#[given(expr = "存在标的 {string} 的价格历史 交易日 {string} 价格 {int} 万分之一元 币种 {string}")]
 fn add_price_history(
     world: &mut LedgerWorld,
     symbol: String,
@@ -148,7 +148,8 @@ fn create_trade(
     let input = TransactionInput {
         merchant_name: None,
         kind,
-        amount_cents: (quantity * price_cents as f64).round() as i64,
+        // 占位金额（prepare 按「数量 × 单价（万分之一元）÷ 100 ± 手续费」重算覆盖）
+        amount_cents: (quantity * price_cents as f64 / 100.0).round() as i64,
         currency_code,
         account_id,
         to_account_id: None,

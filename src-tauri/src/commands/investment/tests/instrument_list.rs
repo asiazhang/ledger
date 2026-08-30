@@ -506,14 +506,14 @@ fn list_holdings_returns_after_buy_and_market_price() {
     insert_rate_1_1(&conn, "USD");
     insert_instrument(&conn, "inst-hold", "GOOGL", "Alphabet", "USD");
 
-    let buy_input = make_buy_input("acc-hold", "inst-hold", 10.0, 15000, 1000);
+    let buy_input = make_buy_input("acc-hold", "inst-hold", 10.0, 1_500_000, 1000);
     create_transaction_internal(&conn, buy_input).unwrap();
 
     let now = crate::db::now_iso();
     let price_id = crate::db::new_uuid();
     conn.execute(
         "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,16000,'USD',?3,NULL,?4,?5,?6,?7)",
+         VALUES (?1,?2,1600000,'USD',?3,NULL,?4,?5,?6,?7)",
         params![price_id, "inst-hold", now, now, now, 1, "test"],
     ).unwrap();
 

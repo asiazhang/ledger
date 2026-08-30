@@ -1,5 +1,15 @@
 -- V002 投资相关 schema：股票/基金/债券/ETF 等金融工具、证券交易流水、持仓批次
 -- 注意：transactions.kind 的 CHECK 约束（含 buy/sell/dividend/split）已在 V001 中定义。
+--
+-- 【就地修改注记】本文件已被就地修改（两级 BREAKING 标记之一，另一级见
+-- CHANGELOG「Unreleased」BREAKING 条目）：全部价格语义列（security_transactions.price_cents
+-- / security_lots.cost_per_unit_cents / security_lot_sales.cost_per_unit_cents
+-- / market_prices.price_cents）刻度由「分」重定义为万分之一元（0.0001 元，
+-- 基金净值 4 位小数保真，ADR-0038），v_holdings 视图表达式同步换算
+-- （金额分 = 数量 × 单价 ÷ 100）。列名保留、无 DDL 结构变化，就地修改只影响
+-- 全新安装；存量库按 CHANGELOG 处置步骤执行一次性脚本
+-- scripts/migrate-price-scale.sh（×100 修正真实记录 + 重建 v_holdings + 清空
+-- 可重建缓存）后重新同步价格。
 
 -- 1. instruments（金融工具字典表）
 --    - 统一维护股票、基金、债券、ETF 等金融工具的基础信息。
@@ -30,8 +40,8 @@ CREATE TABLE IF NOT EXISTS security_transactions (
     instrument_id    TEXT NOT NULL REFERENCES instruments(id) ON DELETE RESTRICT,  -- 关联金融工具，通过 instruments 取 symbol / type / currency
     action           TEXT NOT NULL CHECK(action IN ('buy','sell','dividend','split')),  -- 交易动作：买入/卖出/分红/拆股
     quantity         REAL,                                -- 数量变化（拆股/送股/分红可用 NULL）
-    price_cents      INTEGER,                             -- 成交单价（分），分红/拆股可为 NULL
-    fee_cents        INTEGER NOT NULL DEFAULT 0           -- 手续费/佣金（分）
+    price_cents      INTEGER,                             -- 成交单价（万分之一元，刻度见文件头就地修改注记），分红/拆股可为 NULL
+    fee_cents        INTEGER NOT NULL DEFAULT 0           -- 手续费/佣金（分，金额列仍是整数分）
 );
 
 -- 3. security_lots（持仓批次表）
@@ -46,7 +56,7 @@ CREATE TABLE IF NOT EXISTS security_lots (
     buy_transaction_id    TEXT NOT NULL REFERENCES security_transactions(transaction_id) ON DELETE CASCADE,  -- 关联买入交易
     initial_quantity      REAL NOT NULL,                     -- 买入数量
     remaining_quantity    REAL NOT NULL,                     -- 剩余数量（卖出后扣减）
-    cost_per_unit_cents   INTEGER NOT NULL,                  -- 单位成本（分），已含买入手续费摊薄
+    cost_per_unit_cents   INTEGER NOT NULL,                  -- 单位成本（万分之一元，刻度见文件头就地修改注记），已含买入手续费摊薄
     currency_code         TEXT NOT NULL REFERENCES currencies(code) ON DELETE RESTRICT,  -- 成本币种
     created_at            TEXT NOT NULL,                     -- 创建时间
     updated_at            TEXT NOT NULL,                     -- 最后更新时间
@@ -63,7 +73,7 @@ CREATE TABLE IF NOT EXISTS security_lot_sales (
     sell_transaction_id TEXT NOT NULL REFERENCES security_transactions(transaction_id) ON DELETE CASCADE,  -- 关联卖出交易
     lot_id              TEXT NOT NULL REFERENCES security_lots(id) ON DELETE CASCADE,  -- 关联被卖出的批次
     quantity            REAL NOT NULL,                     -- 卖出的该批次数量
-    cost_per_unit_cents INTEGER NOT NULL,                  -- 卖出时该批次单位成本（分）
+    cost_per_unit_cents INTEGER NOT NULL,                  -- 卖出时该批次单位成本（万分之一元，刻度见文件头就地修改注记）
     realized_pnl_cents  INTEGER NOT NULL,                  -- 该匹配项已实现盈亏（分），已扣除卖出手续费
     currency_code       TEXT NOT NULL REFERENCES currencies(code) ON DELETE RESTRICT,  -- 币种
     created_at          TEXT NOT NULL                      -- 创建时间
@@ -75,7 +85,7 @@ CREATE TABLE IF NOT EXISTS security_lot_sales (
 CREATE TABLE IF NOT EXISTS market_prices (
     id              TEXT PRIMARY KEY,  -- 价格记录全局唯一 ID（UUID v7）
     instrument_id   TEXT NOT NULL REFERENCES instruments(id) ON DELETE CASCADE,  -- 关联金融工具
-    price_cents     INTEGER NOT NULL,        -- 最新价（分）
+    price_cents     INTEGER NOT NULL,        -- 最新价（万分之一元，刻度见文件头就地修改注记）
     currency_code   TEXT NOT NULL REFERENCES currencies(code) ON DELETE RESTRICT,  -- 报价币种
     priced_at       TEXT NOT NULL,           -- 行情日期，ISO 8601 日期格式
     source          TEXT,                    -- 数据来源（如 yahoo、manual）
@@ -89,6 +99,8 @@ CREATE TABLE IF NOT EXISTS market_prices (
 -- 6. v_holdings（当前持仓视图）
 --    - 由 security_lots 实时聚合，不作为主数据存储，避免与交易流水不一致。
 --    - 关联最新 market_prices 与 exchange_rates，输出账户本位币市值和未实现盈亏。
+--    - 金额列（成本/市值/盈亏）仍为整数分：数量 × 单价（万分之一元）÷ 100 = 分；
+--      ÷ 100 换算已内联进表达式，与 trade/trend 的金额公式同口径（ADR-0038）。
 --    - 当无法取到行情或汇率时，market_value_cents / unrealized_pnl_cents 为 NULL。
 DROP VIEW IF EXISTS v_holdings;
 CREATE VIEW IF NOT EXISTS v_holdings AS
@@ -105,9 +117,9 @@ SELECT
     -- 同币种时汇率视为 1（无需查表）。
     CASE
         WHEN p.price_cents IS NULL THEN NULL
-        WHEN p.currency_code = a.currency_code THEN CAST(ROUND(h.quantity * p.price_cents) AS INTEGER)
-        WHEN er.rate IS NOT NULL THEN CAST(ROUND(h.quantity * p.price_cents * er.rate) AS INTEGER)
-        WHEN er_rev.rate IS NOT NULL THEN CAST(ROUND(h.quantity * p.price_cents / er_rev.rate) AS INTEGER)
+        WHEN p.currency_code = a.currency_code THEN CAST(ROUND(h.quantity * p.price_cents / 100.0) AS INTEGER)
+        WHEN er.rate IS NOT NULL THEN CAST(ROUND(h.quantity * p.price_cents * er.rate / 100.0) AS INTEGER)
+        WHEN er_rev.rate IS NOT NULL THEN CAST(ROUND(h.quantity * p.price_cents / er_rev.rate / 100.0) AS INTEGER)
         ELSE NULL
     END AS market_value_cents,
     -- 未实现盈亏 = 账户币市值 − 账户币成本。市值经 er/er_rev（价格币→账户币）折算，
@@ -117,9 +129,9 @@ SELECT
         WHEN p.price_cents IS NULL THEN NULL
         ELSE
             (CASE
-                WHEN p.currency_code = a.currency_code THEN CAST(ROUND(h.quantity * p.price_cents) AS INTEGER)
-                WHEN er.rate IS NOT NULL THEN CAST(ROUND(h.quantity * p.price_cents * er.rate) AS INTEGER)
-                WHEN er_rev.rate IS NOT NULL THEN CAST(ROUND(h.quantity * p.price_cents / er_rev.rate) AS INTEGER)
+                WHEN p.currency_code = a.currency_code THEN CAST(ROUND(h.quantity * p.price_cents / 100.0) AS INTEGER)
+                WHEN er.rate IS NOT NULL THEN CAST(ROUND(h.quantity * p.price_cents * er.rate / 100.0) AS INTEGER)
+                WHEN er_rev.rate IS NOT NULL THEN CAST(ROUND(h.quantity * p.price_cents / er_rev.rate / 100.0) AS INTEGER)
                 ELSE NULL
             END)
             -
@@ -139,7 +151,7 @@ FROM (
         account_id,
         instrument_id,
         SUM(remaining_quantity) AS quantity,
-        CAST(SUM(remaining_quantity * cost_per_unit_cents) AS INTEGER) AS cost_basis_cents,
+        CAST(ROUND(SUM(remaining_quantity * cost_per_unit_cents) / 100.0) AS INTEGER) AS cost_basis_cents,
         currency_code,
         MAX(updated_at) AS updated_at
     FROM security_lots

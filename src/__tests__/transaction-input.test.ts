@@ -172,7 +172,7 @@ describe('buildTradeInput', () => {
       date: '2024-06-15',
       instrument_id: 'ins-1',
       quantity: 100,
-      price_cents: 1234,
+      price_cents: 123400, // 单价为万分之一元刻度：12.34 元 → 123400（ADR-0038）
       fee_cents: 550,
     })
   })
@@ -191,7 +191,7 @@ describe('buildTradeInput', () => {
       date: '2024-06-15',
       instrument_id: 'ins-1',
       quantity: 100,
-      price_cents: 1234,
+      price_cents: 123400,
       fee_cents: 550,
     })
   })

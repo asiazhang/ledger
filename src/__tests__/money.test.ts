@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { yuanToCents, centsToYuan, formatQuantity } from '@/utils/money'
+import { yuanToCents, centsToYuan, formatQuantity, yuanToPrice, priceToYuan } from '@/utils/money'
 
 describe('yuanToCents（元 → 分）', () => {
   it('整数元', () => {
@@ -110,5 +110,39 @@ describe('centsToYuan（分 → 元，表单初值用数值口径）', () => {
   it('负数与零', () => {
     expect(centsToYuan(0)).toBe(0)
     expect(centsToYuan(-99)).toBe(-0.99)
+  })
+})
+
+describe('yuanToPrice（元 → 万分之一元，价格列刻度 ADR-0038）', () => {
+  it('基金净值 4 位小数无损表示：1.2345 → 12345', () => {
+    expect(yuanToPrice('1.2345')).toBe(12345)
+    expect(yuanToPrice(1.2345)).toBe(12345)
+  })
+
+  it('股票两位价与整数价', () => {
+    expect(yuanToPrice('12.34')).toBe(123400)
+    expect(yuanToPrice('15')).toBe(150000)
+    expect(yuanToPrice(0)).toBe(0)
+  })
+
+  it('超过四位小数四舍五入', () => {
+    expect(yuanToPrice('1.23456')).toBe(12346)
+    expect(yuanToPrice('1.23454')).toBe(12345)
+  })
+
+  it('空白 / 非法 / 非有限 → null（与 yuanToCents 同口径）', () => {
+    expect(yuanToPrice('')).toBeNull()
+    expect(yuanToPrice('  ')).toBeNull()
+    expect(yuanToPrice('1e3')).toBeNull()
+    expect(yuanToPrice(NaN)).toBeNull()
+    expect(yuanToPrice(Infinity)).toBeNull()
+  })
+})
+
+describe('priceToYuan（万分之一元 → 元数值，表单回填）', () => {
+  it('固定 ÷ 10000，不按币种小数位', () => {
+    expect(priceToYuan(12345)).toBe(1.2345)
+    expect(priceToYuan(150000)).toBe(15)
+    expect(priceToYuan(0)).toBe(0)
   })
 })

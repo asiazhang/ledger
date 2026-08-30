@@ -23,11 +23,11 @@ use crate::models::SyncHoldingPricesResult;
 use crate::transaction::amount::default_currency_code;
 
 use super::http::{
-    KlineBar, Pacer, StockItem, ULIST_BATCH_SIZE, build_client, f2_to_cents, fetch_fx_kline,
+    KlineBar, Pacer, StockItem, ULIST_BATCH_SIZE, build_client, f2_to_price, fetch_fx_kline,
     fetch_kline, fetch_ulist, secid_prefix,
 };
 use super::persist::{
-    kline_close_to_cents, upsert_fx_rate_history, upsert_market_price, upsert_price_history,
+    kline_close_to_price, upsert_fx_rate_history, upsert_market_price, upsert_price_history,
 };
 
 /// 持仓股票的报价代码：东财 secid 与响应 f12 均为裸代码（如 600519 / 00700）。
@@ -139,8 +139,8 @@ where
             if let Some(stock) = meta.get(&item.code) {
                 // f2≤0（停牌/无效价）经 deserialize_f2 已过滤为 None，此处跳过、保留旧价。
                 if let Some(raw) = item.price {
-                    let cents = f2_to_cents(raw, &stock.market);
-                    upsert_market_price(conn, &stock.instrument_id, cents, &stock.currency)?;
+                    let price = f2_to_price(raw, &stock.market);
+                    upsert_market_price(conn, &stock.instrument_id, price, &stock.currency)?;
                     synced_codes.insert(item.code.clone());
                 }
             }
@@ -157,7 +157,7 @@ where
                 conn,
                 &stock.instrument_id,
                 &trade_date,
-                kline_close_to_cents(close),
+                kline_close_to_price(close),
                 &stock.currency,
             )?;
         }

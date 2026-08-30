@@ -1,5 +1,6 @@
 use rusqlite::Connection;
 
+use super::PRICE_UNITS_PER_FEN;
 use crate::commands::fx::account_currency_code;
 use crate::db::query::{FromRow, query_all, query_one};
 use crate::db::{device_id, new_uuid, now_iso};
@@ -112,7 +113,9 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
         return Err(AppError::Invalid("买入交易必须使用投资账户".into()));
     }
     let account_currency = account_currency_code(conn, &input.account_id)?;
-    let amount_cents = (quantity * price_cents as f64).round() as i64 + fee_cents;
+    // 金额分 = 数量 × 单价（万分之一元）÷ 换算因子 + 手续费（分）；价格刻度见 ADR-0038。
+    let amount_cents =
+        (quantity * price_cents as f64 / PRICE_UNITS_PER_FEN).round() as i64 + fee_cents;
     // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：不再硬编码 1:1，
     // 与通用 kind / 定时引擎共用同一折算路径（convert_to_native，基准为默认币种）。
     let amount_native_cents = amount::convert_to_native(conn, amount_cents, &account_currency)?;
@@ -169,7 +172,8 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
         return Err(AppError::Invalid("卖出交易必须使用投资账户".into()));
     }
     let account_currency = account_currency_code(conn, &input.account_id)?;
-    let gross_proceeds = (quantity * price_cents as f64).round() as i64;
+    // 金额分 = 数量 × 单价（万分之一元）÷ 换算因子；与买入同口径（ADR-0038）。
+    let gross_proceeds = (quantity * price_cents as f64 / PRICE_UNITS_PER_FEN).round() as i64;
     if fee_cents > gross_proceeds {
         return Err(AppError::Invalid("卖出手续费不能超过卖出收入".into()));
     }
@@ -247,8 +251,12 @@ fn write_sell_side_effects(conn: &Connection, id: &str, plan: &SellPlan) -> Resu
     let match_count = matched_lots.len();
     let mut allocated_fee_total = 0i64;
     for (i, lot) in matched_lots.iter().enumerate() {
-        let lot_proceeds = (lot.remaining_quantity * plan.price_cents as f64).round() as i64;
-        let lot_cost = (lot.remaining_quantity * lot.cost_per_unit_cents as f64).round() as i64;
+        // 金额分 = 数量 × 单价（万分之一元）÷ 换算因子；已实现盈亏 = 批次收入 − 批次成本 − 分摊费用（均分）。
+        let lot_proceeds =
+            (lot.remaining_quantity * plan.price_cents as f64 / PRICE_UNITS_PER_FEN).round() as i64;
+        let lot_cost = (lot.remaining_quantity * lot.cost_per_unit_cents as f64
+            / PRICE_UNITS_PER_FEN)
+            .round() as i64;
         let allocated_fee = if i == match_count - 1 {
             plan.fee_cents - allocated_fee_total
         } else {
@@ -438,9 +446,13 @@ fn create_buy_lot(
 ) -> Result<()> {
     let lot_id = new_uuid();
     let now = now_iso();
-    let total_cost_cents = (quantity * price_cents as f64).round() as i64 + fee_cents;
+    // 每份成本（万分之一元）=（数量 × 单价 + 手续费分 × 换算因子）÷ 数量，单次舍入：
+    // 手续费是金额（分），先归一到万分之一元刻度再参与摊薄，与 v_holdings
+    // 的 cost_basis 换算同口径（ADR-0038）。
+    let total_cost_price_units =
+        quantity * price_cents as f64 + fee_cents as f64 * PRICE_UNITS_PER_FEN;
     let cost_per_unit = if quantity > 0.0 {
-        (total_cost_cents as f64 / quantity).round() as i64
+        (total_cost_price_units / quantity).round() as i64
     } else {
         0
     };

@@ -67,7 +67,7 @@ export const mockHoldings: Holding[] = [
     instrument_id: 'inst-1',
     quantity: 100,
     cost_basis_cents: 120000,
-    latest_price_cents: 1500,
+    latest_price_cents: 150000,
     latest_price_currency_code: 'CNY',
     market_value_cents: 150000,
     unrealized_pnl_cents: 30000,

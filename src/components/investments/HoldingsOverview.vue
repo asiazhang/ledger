@@ -14,7 +14,7 @@ import {
 import type { DataTableColumn } from 'naive-ui'
 import { h } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
-import { formatAmount, formatQuantity } from '@/types'
+import { formatAmount, formatPrice, formatQuantity } from '@/types'
 import { useHoldingPriceSync } from '@/composables/useHoldingPriceSync'
 import { usePricesChanged } from '@/composables/usePricesChanged'
 import {
@@ -56,10 +56,11 @@ const overviewColumns: DataTableColumn<PortfolioRow>[] = [
     title: '现价',
     key: 'latest_price',
     width: 110,
+    // 现价为价格列（万分之一元刻度，ADR-0038），用 formatPrice 展示
     render: (r) =>
       r.latestPriceCents === null
         ? '-'
-        : formatAmount(r.latestPriceCents, reference.currencyMap.get(r.latestPriceCurrencyCode ?? '')),
+        : formatPrice(r.latestPriceCents, reference.currencyMap.get(r.latestPriceCurrencyCode ?? '')),
   },
   {
     title: '市值',
