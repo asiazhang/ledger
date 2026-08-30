@@ -30,7 +30,7 @@ async function copyPrompt() {
 
 <template>
   <NSpace vertical :size="16">
-    <NCard title="AI 系统提示词" :bordered="false">
+    <NCard title="AI 提示词" :bordered="false">
       <template #header-extra>
         <NButton size="small" type="primary" :disabled="!prompt" @click="copyPrompt">
           复制
@@ -39,7 +39,7 @@ async function copyPrompt() {
       <NSpace vertical :size="8">
         <NText depth="3" style="font-size: 13px">
           将以下提示词复制给 AI 编程助手（如 Cursor、Claude Code），
-          它会据此通过本地 HTTP API（127.0.0.1:9527）读取与写入账本数据。
+          它会据此通过本地 HTTP API（127.0.0.1:9527）读取与写入账本数据；期间需保持 Ledger 运行。
         </NText>
         <pre
           class="prompt-body"
