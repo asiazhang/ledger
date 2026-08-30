@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { api } from '@/api'
-import { centsToYuan, priceToYuan } from '@/types'
+import { centsToYuan, priceToYuan, yuanToCents } from '@/types'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
 import { buildTradeInput } from '@/domain/transaction-input'
 import { errorMessage } from '@/utils/errors'
@@ -10,6 +10,11 @@ import type {
   Transaction,
   TransactionTrade,
 } from '@/types'
+
+/** 价格刻度换算因子（ADR-0038，与后端 commands::investment::PRICE_UNITS_PER_FEN 同一倍率）：
+ * 金额（分）→ 价格（万分之一元）乘 100；价格（万分之一元）→ 元展示值除 10000。 */
+const PRICE_UNITS_PER_FEN = 100
+const PRICE_UNITS_PER_YUAN = 10000
 
 export function useInvestmentForm(
   kind: 'buy' | 'sell',
@@ -33,6 +38,9 @@ export function useInvestmentForm(
 
   const accountId = ref<string | null>(null)
   const instrumentId = ref<string | null>(null)
+  /** 确认单金额（元）：基金申赎的权威输入（issue #302 / ADR-0038 金额权威）；
+   * 非基金形态恒 null（金额由后端按数量 × 单价重算，表单只展示）。 */
+  const amount = ref<number | null>(null)
   const quantity = ref<number | null>(null)
   const price = ref<number | null>(null)
   const fee = ref<number | null>(null)
@@ -67,8 +75,11 @@ export function useInvestmentForm(
   // 按万分之一元刻度换算（ADR-0038，不手写 /10000）；费用为金额，经 centsToYuan
   // 按币种小数位换算；日期以 UTC 午夜时间戳承载回填，提交端日期转换收口装配器
   // toLocalDateISO（issue #216）。明细缺失时（父层未取到 trade）不回填。
+  // 基金形态（issue #302）：回填确认单金额为权威输入，单价不回填——展示值由
+  // derivedPrice 按金额/份额/费用反算，与存储单价同一公式。
   const editingTx = options?.editing?.() ?? null
   const editingTrade = options?.trade?.() ?? null
+  const seededInstrumentIsFund = editingTrade?.instrument_type === 'fund'
   const seededInstrumentOption = editingTrade
     ? {
         label: editingTrade.instrument_name
@@ -82,7 +93,14 @@ export function useInvestmentForm(
     currencyCode.value = editingTx.currency_code
     instrumentId.value = editingTrade.instrument_id
     quantity.value = editingTrade.quantity
-    price.value = priceToYuan(editingTrade.price_cents)
+    if (seededInstrumentIsFund) {
+      amount.value = centsToYuan(
+        editingTx.amount_cents,
+        reference.getCurrency(editingTx.currency_code),
+      )
+    } else {
+      price.value = priceToYuan(editingTrade.price_cents)
+    }
     fee.value =
       editingTrade.fee_cents != null
         ? centsToYuan(editingTrade.fee_cents, reference.getCurrency(editingTx.currency_code))
@@ -90,6 +108,33 @@ export function useInvestmentForm(
     note.value = editingTx.note ?? ''
     date.value = utcMidnightTimestamp(editingTx.date)
   }
+
+  /** 选中标的是否场外基金：录入权威形态的开关（基金 = 金额 + 份额必填、单价反算）。
+   * 搜索候选按标的字典类型判定；编辑回填候选（尚未被搜索结果覆盖）按明细带出类型。 */
+  const isFundInstrument = computed(() => {
+    const id = instrumentId.value
+    if (id == null) return false
+    const found = instruments.value.find((i) => i.id === id)
+    if (found) return found.type === 'fund'
+    return id === seededInstrumentOption?.value && seededInstrumentIsFund
+  })
+
+  /** 基金反算单价（元）：与后端 prepare 同一公式——(金额 ∓ 手续费) × 100 ÷ 份额，
+   * 万分之一元单次舍入。买入减费（净投入）、卖出加费（费在收入外另收）。
+   * 非基金形态或输入不完整时为 null（表单此时展示可编辑单价输入框而非反算值）。 */
+  const derivedPrice = computed<number | null>(() => {
+    if (!isFundInstrument.value) return null
+    const qty = quantity.value
+    if (amount.value == null || qty == null || qty <= 0) return null
+    const amountCents = yuanToCents(amount.value)
+    if (amountCents == null) return null
+    const feeCents = fee.value == null ? 0 : (yuanToCents(fee.value) ?? 0)
+    const baseCents = kind === 'buy' ? amountCents - feeCents : amountCents + feeCents
+    if (baseCents <= 0) return null
+    // 换算倍率命名收口（ADR-0038 价格刻度）：金额（分）→ 价格（万分之一元）乘
+    // PRICE_UNITS_PER_FEN；价格（万分之一元）→ 元（展示值）除 PRICE_UNITS_PER_YUAN。
+    return Math.round((baseCents * PRICE_UNITS_PER_FEN) / qty) / PRICE_UNITS_PER_YUAN
+  })
 
   const investmentAmount = computed(() => {
     if (quantity.value == null || price.value == null) return 0
@@ -129,11 +174,18 @@ export function useInvestmentForm(
       message.warning('请选择标的')
       return
     }
-    if (quantity.value == null || quantity.value <= 0) {
-      message.warning(kind === 'buy' ? '请输入买入数量' : '请输入卖出数量')
+    // 录入权威按标的类型分流（issue #302 / ADR-0038）：基金 = 确认单金额 + 份额必填、
+    // 单价反算；其余 = 数量 + 单价必填。
+    const fund = isFundInstrument.value
+    if (fund && (amount.value == null || amount.value <= 0)) {
+      message.warning(kind === 'buy' ? '请输入买入金额（以确认单为准）' : '请输入卖出金额（以确认单为准）')
       return
     }
-    if (price.value == null || price.value <= 0) {
+    if (quantity.value == null || quantity.value <= 0) {
+      message.warning(fund ? '请输入确认份额' : kind === 'buy' ? '请输入买入数量' : '请输入卖出数量')
+      return
+    }
+    if (!fund && (price.value == null || price.value <= 0)) {
       message.warning(kind === 'buy' ? '请输入买入单价' : '请输入卖出单价')
       return
     }
@@ -142,15 +194,17 @@ export function useInvestmentForm(
     const editing = options?.editing?.() ?? null
     try {
       // wire 字段拼装收口 TransactionInput 装配器（issue #216）：创建/编辑共用同一
-      // 装配结果（幂等键不可编辑）。buy/sell 金额占位（amount_cents 恒 0）与关联
-      // 字段 null 占位收口装配器 per-kind 矩阵；成交金额由后端行为层按数量×单价±手续费重算
+      // 装配结果（幂等键不可编辑）。基金申赎落权威金额（amount_cents）不落单价；
+      // 其余类型金额占位（amount_cents 恒 0）与关联字段 null 占位收口装配器 per-kind
+      // 矩阵；非基金成交金额由后端行为层按数量×单价±手续费重算
       const input = buildTradeInput({
         kind,
         currencyCode: currencyCode.value,
         accountId: accountId.value,
         instrumentId: instrumentId.value,
+        amount: fund ? amount.value : null,
         quantity: quantity.value,
-        price: price.value,
+        price: fund ? null : price.value,
         fee: fee.value,
         note: note.value,
         date: date.value,
@@ -164,6 +218,7 @@ export function useInvestmentForm(
         await api.createTransaction(input)
         message.success(kind === 'buy' ? '已记买入' : '已记卖出')
         instrumentId.value = null
+        amount.value = null
         quantity.value = null
         price.value = null
         fee.value = null
@@ -178,6 +233,7 @@ export function useInvestmentForm(
   function resetForm() {
     accountId.value = null
     instrumentId.value = null
+    amount.value = null
     quantity.value = null
     price.value = null
     fee.value = null
@@ -187,8 +243,9 @@ export function useInvestmentForm(
   }
 
   return {
-    accountId, instrumentId, quantity, price, fee, note, date, currencyCode,
-    investmentAmount, investmentAccountOptions, instrumentOptions, currencyOptions,
+    accountId, instrumentId, amount, quantity, price, fee, note, date, currencyCode,
+    isFundInstrument, derivedPrice, investmentAmount,
+    investmentAccountOptions, instrumentOptions, currencyOptions,
     searchingInstruments,
     submit, searchInstruments, resetForm,
   }

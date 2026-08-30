@@ -195,6 +195,9 @@ pub struct TransactionTrade {
     pub instrument_id: String,
     pub symbol: String,
     pub instrument_name: Option<String>,
+    /// 标的类型闭集字面量（fund/stock/bond/etf/other）：前端表单据此切换录入权威
+    /// 形态（基金 = 金额 + 份额必填、单价反算；其余 = 数量 + 单价，issue #302）。
+    pub instrument_type: String,
     pub quantity: f64,
     pub price_cents: i64,
     pub fee_cents: Option<i64>,
@@ -206,9 +209,10 @@ impl FromRow for TransactionTrade {
             instrument_id: row.get(0)?,
             symbol: row.get(1)?,
             instrument_name: row.get(2)?,
-            quantity: row.get(3)?,
-            price_cents: row.get(4)?,
-            fee_cents: row.get(5)?,
+            instrument_type: row.get(3)?,
+            quantity: row.get(4)?,
+            price_cents: row.get(5)?,
+            fee_cents: row.get(6)?,
         })
     }
 }

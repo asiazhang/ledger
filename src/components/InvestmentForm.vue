@@ -34,7 +34,18 @@ const ctx = useInvestmentForm(props.kind, {
   <NForm label-placement="left" :show-feedback="false" size="small">
     <NSpace vertical :size="12">
       <NFormItem label="金额">
+        <!-- 基金申赎（issue #302 / ADR-0038 金额权威）：确认单整分金额为权威输入；
+             其余类型金额由后端按数量 × 单价 ± 手续费重算，此处只展示 -->
         <NInputNumber
+          v-if="ctx.isFundInstrument.value"
+          v-model:value="ctx.amount.value"
+          :min="0"
+          :precision="2"
+          placeholder="确认金额（以确认单为准）"
+          style="width: 160px"
+        />
+        <NInputNumber
+          v-else
           :value="ctx.investmentAmount.value"
           :disabled="true"
           :precision="2"
@@ -77,18 +88,29 @@ const ctx = useInvestmentForm(props.kind, {
         </PinyinSelect>
       </NFormItem>
 
-      <NFormItem label="数量">
+      <NFormItem :label="ctx.isFundInstrument.value ? '份额' : '数量'">
         <NInputNumber
           v-model:value="ctx.quantity.value"
           :min="0"
           :precision="4"
-          placeholder="数量"
+          :placeholder="ctx.isFundInstrument.value ? '确认份额（以确认单为准）' : '数量'"
           style="width: 160px"
         />
       </NFormItem>
 
-      <NFormItem label="单价">
+      <NFormItem :label="ctx.isFundInstrument.value ? '单价（净值）' : '单价'">
+        <!-- 基金：单价由（金额 ∓ 手续费）÷ 份额反算，只读展示 4 位小数净值（净值
+             以万分之一元刻度无损保真，ADR-0038）；其余类型单价为权威输入 -->
         <NInputNumber
+          v-if="ctx.isFundInstrument.value"
+          :value="ctx.derivedPrice.value"
+          :disabled="true"
+          :precision="4"
+          placeholder="由金额与份额反算"
+          style="width: 160px"
+        />
+        <NInputNumber
+          v-else
           v-model:value="ctx.price.value"
           :min="0"
           :precision="2"

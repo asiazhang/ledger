@@ -1,4 +1,4 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 use super::PRICE_UNITS_PER_FEN;
 use crate::commands::fx::account_currency_code;
@@ -9,24 +9,22 @@ use crate::models::{AccountType, NormalizedTransaction, TransactionInput, Transa
 use crate::transaction::amount;
 use crate::transaction::amount::TransactionKind;
 
-/// 标的存在性校验（issue #295）：prepare 阶段拦截引用不存在标的的 buy/sell，
-/// 返回可读回自纠的 [`AppError::Invalid`] 中文错误（HTTP 侧 400）——否则 prepare
-/// 通过、apply 落 `security_transactions` 时才触发 `instrument_id` 外键违规的
+/// 标的存在性校验 + 类型读取（issue #295 / #302）：prepare 阶段拦截引用不存在标的的
+/// buy/sell，返回可读回自纠的 [`AppError::Invalid`] 中文错误（HTTP 侧 400）——否则
+/// prepare 通过、apply 落 `security_transactions` 时才触发 `instrument_id` 外键违规的
 /// 「数据库错误」（HTTP 侧 500，批量导入路径还会整批回滚），AI 无法据此纠错。
 /// 创建与修改（全字段替换）共用 prepare，自然同时生效；`action` 为「买入/卖出」
 /// 措辞前缀，与既有「必须指定标的」等错误同风格，消息携带标的 id 供回自纠。
-fn ensure_instrument_exists(conn: &Connection, instrument_id: &str, action: &str) -> Result<()> {
-    let exists: i64 = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM instruments WHERE id=?1)",
-        rusqlite::params![instrument_id],
-        |r| r.get(0),
-    )?;
-    if exists == 0 {
-        return Err(AppError::Invalid(format!(
-            "{action}标的不存在: {instrument_id}"
-        )));
-    }
-    Ok(())
+/// 返回标的类型闭集字面量（`fund` 等，ADR-0038）——场外基金申赎据此切换金额权威语义。
+fn fetch_instrument_type(conn: &Connection, instrument_id: &str, action: &str) -> Result<String> {
+    let instrument_type: Option<String> = conn
+        .query_row(
+            "SELECT instrument_type FROM instruments WHERE id=?1",
+            rusqlite::params![instrument_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    instrument_type.ok_or_else(|| AppError::Invalid(format!("{action}标的不存在: {instrument_id}")))
 }
 
 /// 投资交易对外出口（issue #72 / spec #69）：只暴露 `prepare / apply / revert` 三件套。
@@ -66,7 +64,7 @@ pub(crate) fn get_transaction_trade(
 ) -> Result<TransactionTrade> {
     query_one::<TransactionTrade, _>(
         conn,
-        "SELECT st.instrument_id, i.symbol, i.name, st.quantity, st.price_cents, st.fee_cents \
+        "SELECT st.instrument_id, i.symbol, i.name, i.instrument_type, st.quantity, st.price_cents, st.fee_cents \
          FROM security_transactions st \
          JOIN instruments i ON i.id = st.instrument_id \
          WHERE st.transaction_id = ?1",
@@ -81,6 +79,9 @@ pub(crate) struct BuyPlan {
     pub(crate) quantity: f64,
     pub(crate) price_cents: i64,
     pub(crate) fee_cents: i64,
+    /// 每份成本（万分之一元，含费用摊薄）：prepare 按标的类型单次舍入算定，
+    /// apply 原样落批次——基金锚定权威金额、其余锚定成交单价（见 [`prepare_buy`]）。
+    pub(crate) cost_per_unit_cents: i64,
 }
 
 /// 校验并归一化一笔买入交易（不落库）。创建与修改共用；
@@ -91,16 +92,60 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
         .as_ref()
         .ok_or_else(|| AppError::Invalid("买入必须指定标的".into()))?
         .clone();
-    // 标的存在性先于数量/单价校验：身份错了，数值对错无从谈起（issue #295）。
-    ensure_instrument_exists(conn, &instrument_id, "买入")?;
+    // 标的存在性（兼类型读取）先于数量/单价校验：身份错了，数值对错无从谈起（issue #295）。
+    let instrument_type = fetch_instrument_type(conn, &instrument_id, "买入")?;
     let quantity = input.quantity.unwrap_or(0.0);
-    let price_cents = input.price_cents.unwrap_or(0);
     let fee_cents = input.fee_cents.unwrap_or(0);
     if quantity <= 0.0 {
         return Err(AppError::Invalid("买入数量必须大于 0".into()));
     }
-    if price_cents <= 0 {
-        return Err(AppError::Invalid("买入单价必须大于 0".into()));
+    // 录入权威按标的类型分流（issue #302 / ADR-0038 决策 2）：场外基金以确认单为权威——
+    // 整分金额 + 确认份额必填、成交单价由两者反算到万分之一元（确认单抄写即记账，
+    // 行金额不被单价舍入污染）；其余类型维持单价权威，行金额由数量 × 单价重算。
+    let is_fund = instrument_type == "fund";
+    let price_cents;
+    let amount_cents;
+    let cost_per_unit_cents;
+    if is_fund {
+        amount_cents = input.amount_cents;
+        if amount_cents <= 0 {
+            return Err(AppError::Invalid(
+                "买入金额必须大于 0（基金申赎以确认单金额为权威）".into(),
+            ));
+        }
+        // 金额权威与单价权威互斥：wire 上误传单价显式拒绝（与前端装配器同源），
+        // 不静默吞掉（非法输入 fail fast，与 dividend/split 显式拒绝同一原则）。
+        if input.price_cents.is_some() {
+            return Err(AppError::Invalid(
+                "基金申赎以确认单金额为权威，不可提供单价（由金额与份额反算）".into(),
+            ));
+        }
+        if fee_cents >= amount_cents {
+            return Err(AppError::Invalid("买入手续费不能超过买入金额".into()));
+        }
+        price_cents =
+            ((amount_cents - fee_cents) as f64 * PRICE_UNITS_PER_FEN / quantity).round() as i64;
+        if price_cents <= 0 {
+            return Err(AppError::Invalid(
+                "反算单价必须大于 0（确认金额过小或份额过大）".into(),
+            ));
+        }
+        // 每份成本锚定权威金额单次舍入（含手续费摊薄），全平仓时盈亏按权威金额闭合。
+        cost_per_unit_cents = (amount_cents as f64 * PRICE_UNITS_PER_FEN / quantity).round() as i64;
+    } else {
+        price_cents = input.price_cents.unwrap_or(0);
+        if price_cents <= 0 {
+            return Err(AppError::Invalid("买入单价必须大于 0".into()));
+        }
+        // 金额分 = 数量 × 单价（万分之一元）÷ 换算因子 + 手续费（分）；价格刻度见 ADR-0038。
+        amount_cents =
+            (quantity * price_cents as f64 / PRICE_UNITS_PER_FEN).round() as i64 + fee_cents;
+        // 每份成本（万分之一元）=（数量 × 单价 + 手续费分 × 换算因子）÷ 数量，单次舍入：
+        // 手续费是金额（分），先归一到万分之一元刻度再参与摊薄，与 v_holdings
+        // 的 cost_basis 换算同口径（ADR-0038）。
+        cost_per_unit_cents =
+            ((quantity * price_cents as f64 + fee_cents as f64 * PRICE_UNITS_PER_FEN) / quantity)
+                .round() as i64;
     }
     let account_type: AccountType = conn
         .query_row(
@@ -113,9 +158,6 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
         return Err(AppError::Invalid("买入交易必须使用投资账户".into()));
     }
     let account_currency = account_currency_code(conn, &input.account_id)?;
-    // 金额分 = 数量 × 单价（万分之一元）÷ 换算因子 + 手续费（分）；价格刻度见 ADR-0038。
-    let amount_cents =
-        (quantity * price_cents as f64 / PRICE_UNITS_PER_FEN).round() as i64 + fee_cents;
     // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：不再硬编码 1:1，
     // 与通用 kind / 定时引擎共用同一折算路径（convert_to_native，基准为默认币种）。
     let amount_native_cents = amount::convert_to_native(conn, amount_cents, &account_currency)?;
@@ -138,6 +180,7 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
         quantity,
         price_cents,
         fee_cents,
+        cost_per_unit_cents,
     })
 }
 
@@ -149,17 +192,51 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
         .as_ref()
         .ok_or_else(|| AppError::Invalid("卖出必须指定标的".into()))?
         .clone();
-    // 标的存在性先于可卖数量校验：不存在的标的不该误报「可卖出数量不足」
+    // 标的存在性（兼类型读取）先于可卖数量校验：不存在的标的不该误报「可卖出数量不足」
     // （issue #295）。
-    ensure_instrument_exists(conn, &instrument_id, "卖出")?;
+    let instrument_type = fetch_instrument_type(conn, &instrument_id, "卖出")?;
     let quantity = input.quantity.unwrap_or(0.0);
-    let price_cents = input.price_cents.unwrap_or(0);
     let fee_cents = input.fee_cents.unwrap_or(0);
     if quantity <= 0.0 {
         return Err(AppError::Invalid("卖出数量必须大于 0".into()));
     }
-    if price_cents <= 0 {
-        return Err(AppError::Invalid("卖出单价必须大于 0".into()));
+    // 录入权威按标的类型分流（与 prepare_buy 同一口径，issue #302 / ADR-0038）：
+    // 场外基金以确认单为权威——整分金额必填，毛收入 = 金额 + 手续费，单价反算。
+    let is_fund = instrument_type == "fund";
+    let price_cents;
+    let amount_cents;
+    let gross_proceeds;
+    if is_fund {
+        amount_cents = input.amount_cents;
+        if amount_cents <= 0 {
+            return Err(AppError::Invalid(
+                "卖出金额必须大于 0（基金申赎以确认单金额为权威）".into(),
+            ));
+        }
+        // 同买入：金额权威与单价权威互斥，wire 误传单价显式拒绝。
+        if input.price_cents.is_some() {
+            return Err(AppError::Invalid(
+                "基金申赎以确认单金额为权威，不可提供单价（由金额与份额反算）".into(),
+            ));
+        }
+        gross_proceeds = amount_cents + fee_cents;
+        price_cents = (gross_proceeds as f64 * PRICE_UNITS_PER_FEN / quantity).round() as i64;
+        if price_cents <= 0 {
+            return Err(AppError::Invalid(
+                "反算单价必须大于 0（确认金额过小或份额过大）".into(),
+            ));
+        }
+    } else {
+        price_cents = input.price_cents.unwrap_or(0);
+        if price_cents <= 0 {
+            return Err(AppError::Invalid("卖出单价必须大于 0".into()));
+        }
+        // 金额分 = 数量 × 单价（万分之一元）÷ 换算因子；与买入同口径（ADR-0038）。
+        gross_proceeds = (quantity * price_cents as f64 / PRICE_UNITS_PER_FEN).round() as i64;
+        if fee_cents > gross_proceeds {
+            return Err(AppError::Invalid("卖出手续费不能超过卖出收入".into()));
+        }
+        amount_cents = gross_proceeds - fee_cents;
     }
     let account_type: AccountType = conn
         .query_row(
@@ -172,12 +249,6 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
         return Err(AppError::Invalid("卖出交易必须使用投资账户".into()));
     }
     let account_currency = account_currency_code(conn, &input.account_id)?;
-    // 金额分 = 数量 × 单价（万分之一元）÷ 换算因子；与买入同口径（ADR-0038）。
-    let gross_proceeds = (quantity * price_cents as f64 / PRICE_UNITS_PER_FEN).round() as i64;
-    if fee_cents > gross_proceeds {
-        return Err(AppError::Invalid("卖出手续费不能超过卖出收入".into()));
-    }
-    let amount_cents = gross_proceeds - fee_cents;
     // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：不再硬编码 1:1，
     // 与通用 kind / 定时引擎共用同一折算路径（convert_to_native，基准为默认币种）。
     let amount_native_cents = amount::convert_to_native(conn, amount_cents, &account_currency)?;
@@ -217,6 +288,7 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
         price_cents,
         fee_cents,
         lots,
+        gross_proceeds_cents: gross_proceeds,
     })
 }
 
@@ -233,30 +305,69 @@ fn write_sell_side_effects(conn: &Connection, id: &str, plan: &SellPlan) -> Resu
     )?;
 
     let mut remaining_to_sell = plan.quantity;
-    let mut matched_lots: Vec<ActiveLot> = Vec::new();
+    // 匹配记录附带「是否耗尽该批次」标记：耗尽匹配的成本按买入行权威金额闭合（见下）。
+    struct MatchedLot {
+        lot: ActiveLot,
+        exhausts_lot: bool,
+    }
+    let mut matched_lots: Vec<MatchedLot> = Vec::new();
     for lot in &plan.lots {
         if remaining_to_sell <= 0.0 {
             break;
         }
         let matched = lot.remaining_quantity.min(remaining_to_sell);
-        matched_lots.push(ActiveLot {
-            id: lot.id.clone(),
-            remaining_quantity: matched,
-            cost_per_unit_cents: lot.cost_per_unit_cents,
-            currency_code: lot.currency_code.clone(),
+        let exhausts_lot = remaining_to_sell >= lot.remaining_quantity;
+        matched_lots.push(MatchedLot {
+            lot: ActiveLot {
+                id: lot.id.clone(),
+                remaining_quantity: matched,
+                cost_per_unit_cents: lot.cost_per_unit_cents,
+                currency_code: lot.currency_code.clone(),
+            },
+            exhausts_lot,
         });
         remaining_to_sell -= matched;
     }
 
+    // 分摊双闭合（issue #302）：①收入按匹配末位吸收余数，Σ 匹配收入 = 毛收入
+    // （基金 = 权威金额 + 手续费）精确到分；②耗尽批次的匹配把批次总成本闭合到
+    // 买入行权威金额（减去该批次此前各次匹配的 round 重建成本）——两者合起来
+    // 钉死舍入不变式：全平仓后 Σ 已实现盈亏 = Σ 卖出金额 − Σ 买入金额，精确到分。
     let match_count = matched_lots.len();
     let mut allocated_fee_total = 0i64;
-    for (i, lot) in matched_lots.iter().enumerate() {
-        // 金额分 = 数量 × 单价（万分之一元）÷ 换算因子；已实现盈亏 = 批次收入 − 批次成本 − 分摊费用（均分）。
-        let lot_proceeds =
-            (lot.remaining_quantity * plan.price_cents as f64 / PRICE_UNITS_PER_FEN).round() as i64;
-        let lot_cost = (lot.remaining_quantity * lot.cost_per_unit_cents as f64
-            / PRICE_UNITS_PER_FEN)
-            .round() as i64;
+    let mut allocated_proceeds_total = 0i64;
+    for (i, matched) in matched_lots.iter().enumerate() {
+        let lot = &matched.lot;
+        // 匹配收入：非末匹配按 round(匹配数量 × 单价 ÷ 换算因子)，末匹配 = 毛收入 − 已分摊。
+        let lot_proceeds = if i == match_count - 1 {
+            plan.gross_proceeds_cents - allocated_proceeds_total
+        } else {
+            let proceeds = (lot.remaining_quantity * plan.price_cents as f64 / PRICE_UNITS_PER_FEN)
+                .round() as i64;
+            allocated_proceeds_total += proceeds;
+            proceeds
+        };
+        // 匹配成本：耗尽批次 → 买入行权威金额 − 该批次此前匹配成本之和（闭合）；
+        // 否则 round(匹配数量 × 每份成本 ÷ 换算因子)。
+        let lot_cost = if matched.exhausts_lot {
+            let lot_total_cents: i64 = conn.query_row(
+                "SELECT t.amount_cents FROM security_lots l \n                 JOIN transactions t ON t.id = l.buy_transaction_id WHERE l.id=?1",
+                rusqlite::params![lot.id],
+                |r| r.get(0),
+            )?;
+            let prior_cost: i64 = conn
+                .prepare("SELECT quantity FROM security_lot_sales WHERE lot_id=?1")?
+                .query_map(rusqlite::params![lot.id], |r| r.get::<_, f64>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+                .iter()
+                .map(|q| (q * lot.cost_per_unit_cents as f64 / PRICE_UNITS_PER_FEN).round() as i64)
+                .sum();
+            lot_total_cents - prior_cost
+        } else {
+            (lot.remaining_quantity * lot.cost_per_unit_cents as f64 / PRICE_UNITS_PER_FEN).round()
+                as i64
+        };
+        // 费用按数量比例 floor 分摊、末匹配吸收余数（Σ 分摊 = 手续费精确到分）。
         let allocated_fee = if i == match_count - 1 {
             plan.fee_cents - allocated_fee_total
         } else {
@@ -265,6 +376,7 @@ fn write_sell_side_effects(conn: &Connection, id: &str, plan: &SellPlan) -> Resu
             allocated_fee_total += fee;
             fee
         };
+        // 已实现盈亏 = 匹配收入 − 匹配成本 − 分摊费用（均整数分）。
         let realized_pnl = lot_proceeds - lot_cost - allocated_fee;
         let sale_id = new_uuid();
         conn.execute(
@@ -344,6 +456,9 @@ pub(crate) struct SellPlan {
     pub(crate) price_cents: i64,
     pub(crate) fee_cents: i64,
     pub(crate) lots: Vec<ActiveLot>,
+    /// 毛收入（分，费前）：基金 = 权威金额 + 手续费，其余 = round(数量 × 单价 ÷ 换算因子)。
+    /// 卖出副作用的收入分摊以其为闭合基准（末匹配吸收余数，Σ 匹配收入 = 毛收入精确到分）。
+    pub(crate) gross_proceeds_cents: i64,
 }
 
 /// 投资交易计划：归一化后的交易行 + kind 特有副作用数据（不落库）。
@@ -391,16 +506,7 @@ pub(crate) fn prepare(
 /// 与行写入同处一个事务；`id` 为已落库的交易行 id。
 pub(crate) fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
     match plan {
-        Plan::Buy(p) => create_buy_lot(
-            conn,
-            id,
-            &p.normalized.account_id,
-            &p.instrument_id,
-            p.quantity,
-            p.price_cents,
-            p.fee_cents,
-            &p.normalized.currency_code,
-        ),
+        Plan::Buy(p) => create_buy_lot(conn, id, p),
         Plan::Sell(p) => write_sell_side_effects(conn, id, p),
     }
 }
@@ -433,49 +539,20 @@ pub(crate) fn revert(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn create_buy_lot(
-    conn: &Connection,
-    transaction_id: &str,
-    account_id: &str,
-    instrument_id: &str,
-    quantity: f64,
-    price_cents: i64,
-    fee_cents: i64,
-    currency_code: &str,
-) -> Result<()> {
+fn create_buy_lot(conn: &Connection, transaction_id: &str, plan: &BuyPlan) -> Result<()> {
     let lot_id = new_uuid();
     let now = now_iso();
-    // 每份成本（万分之一元）=（数量 × 单价 + 手续费分 × 换算因子）÷ 数量，单次舍入：
-    // 手续费是金额（分），先归一到万分之一元刻度再参与摊薄，与 v_holdings
-    // 的 cost_basis 换算同口径（ADR-0038）。
-    let total_cost_price_units =
-        quantity * price_cents as f64 + fee_cents as f64 * PRICE_UNITS_PER_FEN;
-    let cost_per_unit = if quantity > 0.0 {
-        (total_cost_price_units / quantity).round() as i64
-    } else {
-        0
-    };
+    // 每份成本已在 prepare 按标的类型算定（基金锚定权威金额、其余锚定成交单价 +
+    // 费用摊薄，均单次舍入），此处原样落批次——摊薄算法单一归属 prepare（issue #302）。
     conn.execute(
         "INSERT INTO security_transactions (transaction_id,instrument_id,action,quantity,price_cents,fee_cents) \
          VALUES (?1,?2,'buy',?3,?4,?5)",
-        rusqlite::params![transaction_id, instrument_id, quantity, price_cents, fee_cents],
+        rusqlite::params![transaction_id, plan.instrument_id, plan.quantity, plan.price_cents, plan.fee_cents],
     )?;
     conn.execute(
         "INSERT INTO security_lots (id,account_id,instrument_id,buy_transaction_id,initial_quantity,remaining_quantity,cost_per_unit_cents,currency_code,created_at,updated_at,version,device_id) \
          VALUES (?1,?2,?3,?4,?5,?5,?6,?7,?8,?8,?9,?10)",
-        rusqlite::params![
-            lot_id,
-            account_id,
-            instrument_id,
-            transaction_id,
-            quantity,
-            cost_per_unit,
-            currency_code,
-            now,
-            1,
-            device_id()
-        ],
+        rusqlite::params![lot_id, plan.normalized.account_id, plan.instrument_id, transaction_id, plan.quantity, plan.cost_per_unit_cents, plan.normalized.currency_code, now, 1, device_id()],
     )?;
     Ok(())
 }

@@ -151,9 +151,23 @@ describe('buildTradeInput', () => {
     currencyCode: 'CNY',
     accountId: 'inv-1',
     instrumentId: 'ins-1',
+    amount: null,
     quantity: 100,
     price: 12.34,
     fee: 5.5,
+    note: '',
+    date: localTs(2024, 6, 15),
+  }
+
+  const fundBuyState: TradeFormState = {
+    kind: 'buy',
+    currencyCode: 'CNY',
+    accountId: 'inv-1',
+    instrumentId: 'ins-fund',
+    amount: 1000,
+    quantity: 987.6543,
+    price: null,
+    fee: 1.5,
     note: '',
     date: localTs(2024, 6, 15),
   }
@@ -204,6 +218,40 @@ describe('buildTradeInput', () => {
   it('fail fast：数量/标的缺失抛中文错误', () => {
     expect(() => buildTradeInput({ ...buyState, quantity: null })).toThrow('数量不能为空')
     expect(() => buildTradeInput({ ...buyState, instrumentId: null })).toThrow('标的不能为空')
+  })
+
+  it('基金形态（issue #302）：确认单金额权威落 amount_cents、单价不落 wire（price_cents null）', () => {
+    expect(buildTradeInput(fundBuyState)).toEqual({
+      kind: 'buy',
+      amount_cents: 100000, // 确认单整分金额（1000 元），权威不被单价舍入污染
+      currency_code: 'CNY',
+      account_id: 'inv-1',
+      to_account_id: null,
+      category_id: null,
+      merchant_id: null,
+      refund_of_transaction_id: null,
+      note: null,
+      date: '2024-06-15',
+      instrument_id: 'ins-fund',
+      quantity: 987.6543,
+      price_cents: null, // 单价由后端按（金额 ∓ 费用）÷ 份额反算
+      fee_cents: 150,
+    })
+  })
+
+  it('基金形态 sell 同构：金额权威、price_cents null', () => {
+    const input = buildTradeInput({ ...fundBuyState, kind: 'sell', note: '赎回' })
+    expect(input.amount_cents).toBe(100000)
+    expect(input.price_cents).toBeNull()
+    expect(input.note).toBe('赎回')
+  })
+
+  it('fail fast：金额与单价同供（形态互斥）抛中文错误', () => {
+    expect(() => buildTradeInput({ ...fundBuyState, price: 1.01 })).toThrow('不可同时提供')
+  })
+
+  it('fail fast：非基金形态缺单价仍抛「单价不能为空」', () => {
+    expect(() => buildTradeInput({ ...fundBuyState, amount: null })).toThrow('单价不能为空')
   })
 })
 

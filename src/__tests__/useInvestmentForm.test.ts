@@ -35,6 +35,15 @@ const mockInstruments: Instrument[] = [
   },
 ]
 
+const mockFundInstruments: Instrument[] = [
+  {
+    id: 'ins-fund', symbol: '000123', name: '某混合基金', type: 'fund', currency_code: 'CNY',
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    version: 1, device_id: 'test', is_deleted: false, market: 'unknown', invested: false,
+    price_cents: null,
+  },
+]
+
 const editingTx: Transaction = {
   id: 'txn-buy-1',
   kind: 'buy',
@@ -58,9 +67,26 @@ const editingTrade: TransactionTrade = {
   instrument_id: 'ins-1',
   symbol: 'NVDA',
   instrument_name: '英伟达',
+  instrument_type: 'stock',
   quantity: 100,
   price_cents: 1500000, // 150 元（万分之一元刻度）
   fee_cents: 500,
+}
+
+const editingFundTx: Transaction = {
+  ...editingTx,
+  id: 'txn-fund-1',
+  amount_cents: 100000, // 确认单整分金额 1000 元（权威）
+}
+
+const editingFundTrade: TransactionTrade = {
+  instrument_id: 'ins-fund',
+  symbol: '000123',
+  instrument_name: '某混合基金',
+  instrument_type: 'fund',
+  quantity: 987.6543,
+  price_cents: 10110, // 反算净值 1.0110 元（万分之一元刻度）
+  fee_cents: 150,
 }
 
 describe('useInvestmentForm', () => {
@@ -128,6 +154,100 @@ describe('useInvestmentForm', () => {
     expect(form.instrumentId.value).toBeNull()
     expect(form.quantity.value).toBeNull()
     expect(onCreated).toHaveBeenCalledTimes(1)
+  })
+
+  describe('基金申赎形态（issue #302）：金额权威、单价反算', () => {
+    /** 远程搜索填充基金候选（防抖 300ms，仿本文件 fake-timer 惯例） */
+    async function searchFundCandidates(kind: 'buy' | 'sell') {
+      vi.useFakeTimers()
+      try {
+        mockInvoke.mockImplementation((cmd: string) => {
+          if (cmd === 'list_instruments') {
+            return Promise.resolve({ items: mockFundInstruments, total: 1 })
+          }
+          return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+        })
+        const form = useInvestmentForm(kind)
+        form.searchInstruments('某混合')
+        await vi.advanceTimersByTimeAsync(300)
+        return form
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+
+    it('选基金标的：isFundInstrument 打开，derivedPrice 按（金额 − 费用）× 100 ÷ 份额反算', async () => {
+      const emptyForm = useInvestmentForm('buy')
+      expect(emptyForm.isFundInstrument.value).toBe(false)
+      expect(emptyForm.derivedPrice.value).toBeNull()
+      const form = await searchFundCandidates('buy')
+      form.instrumentId.value = 'ins-fund'
+      expect(form.isFundInstrument.value).toBe(true)
+      // (100000 − 150) × 100 ÷ 987.6543 = 10109.81… → 10110 → 1.0110 元
+      form.amount.value = 1000
+      form.quantity.value = 987.6543
+      form.fee.value = 1.5
+      expect(form.derivedPrice.value).toBeCloseTo(1.011, 6)
+    })
+
+    it('缺确认金额：警告且不写入（份额/单价校验不误伤）', async () => {
+      const form = await searchFundCandidates('buy')
+      form.instrumentId.value = 'ins-fund'
+      form.accountId.value = 'acc-inv'
+      form.quantity.value = 987.6543
+      form.price.value = null
+      await form.submit()
+      expect(
+        mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction'),
+      ).toHaveLength(0)
+    })
+
+    it('submit 创建：确认单金额落 amount_cents、单价不落 wire（price_cents null）', async () => {
+      const form = await searchFundCandidates('buy')
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'create_transaction') return Promise.resolve('fund-txn')
+        return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      })
+      form.instrumentId.value = 'ins-fund'
+      form.accountId.value = 'acc-inv'
+      form.amount.value = 1000
+      form.quantity.value = 987.6543
+      form.fee.value = 1.5
+      await form.submit()
+      expect(mockInvoke).toHaveBeenCalledWith('create_transaction', {
+        input: expect.objectContaining({
+          kind: 'buy',
+          amount_cents: 100000,
+          quantity: 987.6543,
+          price_cents: null,
+          fee_cents: 150,
+        }),
+      })
+    })
+
+    it('sell 反算口径：毛收入 = 金额 + 费用，derivedPrice 随之抬高', async () => {
+      const form = await searchFundCandidates('sell')
+      form.instrumentId.value = 'ins-fund'
+      form.amount.value = 520
+      form.quantity.value = 500
+      form.fee.value = 0.52
+      // (52000 + 52) × 100 ÷ 500 = 10410.4 → 10410 → 1.0410 元
+      expect(form.derivedPrice.value).toBeCloseTo(1.041, 6)
+    })
+
+    it('编辑回填：确认单金额回填 amount，单价不回填（由反算展示）', () => {
+      const form = useInvestmentForm('buy', {
+        editing: () => editingFundTx,
+        trade: () => editingFundTrade,
+      })
+      expect(form.isFundInstrument.value).toBe(true)
+      expect(form.amount.value).toBe(1000)
+      expect(form.quantity.value).toBe(987.6543)
+      expect(form.fee.value).toBe(1.5)
+      expect(form.price.value).toBeNull()
+      // 反算展示与存储净值同一公式：(100000 − 150) × 100 ÷ 987.6543 → 1.0110 元
+      expect(form.derivedPrice.value).toBeCloseTo(1.011, 6)
+    })
   })
 
   describe('编辑模式（issue #180）', () => {
