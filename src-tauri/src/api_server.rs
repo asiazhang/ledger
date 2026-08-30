@@ -3,9 +3,10 @@ use std::sync::{Arc, Mutex};
 use crate::error::AppError;
 use crate::models::{
     Account, AccountBalance, AccountInput, AccountType, AccountUpdateInput, Category,
-    CategoryInput, CreateTransactionResult, Currency, Instrument, InstrumentListFilter,
-    InstrumentListResult, InstrumentType, Merchant, Transaction, TransactionBatchInput,
-    TransactionInput, TransactionListFilter, TransactionListResult, UpdateTransactionInput,
+    CategoryInput, CreateTransactionResult, Currency, Instrument, InstrumentInput,
+    InstrumentListFilter, InstrumentListResult, InstrumentType, Merchant, Transaction,
+    TransactionBatchInput, TransactionInput, TransactionListFilter, TransactionListResult,
+    UpdateTransactionInput,
 };
 use crate::transaction::amount::TransactionKind;
 use axum::extract::{FromRef, Path, Query, State};
@@ -92,6 +93,7 @@ struct ErrorResponse {
         delete_category_handler,
         list_currencies_handler,
         search_instruments_handler,
+        create_instrument_handler,
         list_merchants_handler,
         list_transactions_handler,
         batch_create_transactions_handler,
@@ -109,6 +111,7 @@ struct ErrorResponse {
         CategoryInput,
         Currency,
         Instrument,
+        InstrumentCreateInput,
         InstrumentListResult,
         InstrumentType,
         Merchant,
@@ -159,7 +162,10 @@ pub fn build_router(state: ApiState) -> Router {
             put(update_transaction_handler).delete(delete_transaction_handler),
         )
         .route("/api/v1/currencies", get(list_currencies_handler))
-        .route("/api/v1/instruments", get(search_instruments_handler))
+        .route(
+            "/api/v1/instruments",
+            get(search_instruments_handler).post(create_instrument_handler),
+        )
         .route("/api/v1/merchants", get(list_merchants_handler))
         .route("/api/v1/import/knowledge", get(import_knowledge_handler))
         // 注意：axum 的 `Router::layer` 只包裹“当前已有的” route——若在声明任何 route
@@ -502,6 +508,87 @@ async fn search_instruments_handler(
     Ok(Json(crate::commands::list_instruments_internal(
         &conn, &filter,
     )?))
+}
+
+/// 标的创建请求体（`POST /api/v1/instruments`，issue #296 / ADR-0037）。
+///
+/// 与 IPC 侧 `InstrumentInput` 的差异仅在报价币种可省：缺省按市场推导
+/// （沪深→CNY、港→HKD、未知→CNY），显式传参可覆盖。
+#[derive(Debug, Deserialize, ToSchema)]
+struct InstrumentCreateInput {
+    /// 标的代码（必填；源数据只有名称时以名称充当代码，ADR-0037 决策 3）
+    symbol: String,
+    /// 标的类型（闭集：stock/fund/bond/etf/other；五类全开，不经自建标的的 UI 白名单）
+    #[serde(rename = "type")]
+    kind: InstrumentType,
+    /// 标的名称（可选）
+    name: Option<String>,
+    /// 交易市场（可选，缺省 unknown；sh / sz / hk）
+    market: Option<String>,
+    /// 报价币种（可选；缺省按市场推导：沪深→CNY、港→HKD、未知→CNY）
+    currency_code: Option<String>,
+}
+
+/// 报价币种缺省推导（ADR-0037 决策 2）：沪深→人民币、港→港币、其余（含 unknown）→人民币。
+///
+/// 依据：标的币种不参与买卖账务（持仓批次成本币种 = 账户币种），仅影响行情/市值折算展示。
+fn derive_quote_currency(market: &str) -> &'static str {
+    match market {
+        "hk" => "HKD",
+        // 沪深与未知市场均落人民币
+        _ => "CNY",
+    }
+}
+
+/// 标的幂等创建（AI 导入契约，issue #296 / ADR-0037）：find-or-create 自然键
+/// （symbol, 类型），命中静默复用并按需更新名称/市场、返回既有 id，未命中创建；
+/// 重复创建同一标的返回同一 id，不产生字典碎片。核心语义复用 IPC 共用创建函数
+/// `create_instrument_internal`（不经自建标的的 UI 类型白名单，ADR-0037 决策 4），
+/// 新建行来源标记 = `'manual'`（非同步即手动）。
+#[utoipa::path(
+    post,
+    path = "/api/v1/instruments",
+    tag = "instruments",
+    summary = "创建标的（按（代码，类型）幂等 find-or-create）",
+    description = "按自然键（`symbol` + `type`）幂等创建标的：已存在同码同类型行时**静默复用**\
+                  并按需更新名称/市场、返回既有 id，未命中创建新行（来源标记 = `manual`）——\
+                  重复创建同一标的返回同一 id，不产生字典碎片。响应照账户/分类创建先例：\
+                  201 + 裸 id 字符串，无 created 标记。\
+                  入参：`symbol` 必填（源数据只有名称时以名称充当代码）；`type` 为闭集五类\
+                  （stock/fund/bond/etf/other，五类全开）；`name` 可选；`market` 可选（缺省 `unknown`）；\
+                  `currency_code` 可选（缺省按市场推导：沪深→CNY、港→HKD、未知→CNY，显式传参可覆盖）。\
+                  建议先搜索（GET /api/v1/instruments）无命中再创建，防同义标的碎片。",
+    request_body = InstrumentCreateInput,
+    responses(
+        (status = 201, description = "创建或命中复用，返回标的 ID", body = String),
+        (status = 400, description = "参数错误（如标的代码为空）", body = ErrorResponse),
+        (status = 500, description = "数据库错误", body = ErrorResponse)
+    )
+)]
+async fn create_instrument_handler(
+    State(conn): State<Arc<Mutex<Connection>>>,
+    Json(input): Json<InstrumentCreateInput>,
+) -> Result<(StatusCode, Json<String>), AppError> {
+    // 报价币种可省：缺省按市场推导（沪深→CNY、港→HKD、未知→CNY，ADR-0037 决策 2）；
+    // market 缺省解析（None→unknown）由核心创建函数单点承担，此处仅按同口径推导币种。
+    let currency_code = input.currency_code.unwrap_or_else(|| {
+        derive_quote_currency(input.market.as_deref().unwrap_or("unknown")).to_string()
+    });
+    // 连接层统一写入口（ADR-0032）：find-or-create 与信息更新同一写闭包，提交点置脏单点。
+    let id = crate::db::write(&conn, |conn| {
+        crate::commands::create_instrument_internal(
+            conn,
+            InstrumentInput {
+                symbol: input.symbol,
+                kind: input.kind,
+                name: input.name,
+                currency_code,
+                market: input.market,
+            },
+        )
+    })?;
+    // 标的不属参考数据四表：不发 `ledger:changed` 参考失效信号（ADR-0037 决策 6）。
+    Ok((StatusCode::CREATED, Json(id)))
 }
 
 #[utoipa::path(
