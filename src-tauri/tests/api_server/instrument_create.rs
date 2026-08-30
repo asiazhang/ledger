@@ -10,33 +10,10 @@
 
 use std::sync::{Arc, Mutex};
 
-use axum::Router;
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::StatusCode;
 use rusqlite::params;
-use tower::ServiceExt;
 
-use crate::common::{body_to_bytes, setup_app};
-
-/// POST /api/v1/instruments，返回（状态码，原始响应体）。
-/// 响应体不在此处反序列化：201 为裸 id 字符串、4xx 可能非 JSON，由各测试自行解析。
-async fn post_instrument(app: &Router, body: &str) -> (StatusCode, Vec<u8>) {
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/instruments")
-                .header("content-type", "application/json")
-                .body(Body::from(body.to_owned()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let status = response.status();
-    let bytes = body_to_bytes(response.into_body()).await;
-    (status, bytes)
-}
+use crate::common::{post_instrument, setup_app};
 
 /// 响应体应为裸 id 字符串（非 JSON 对象——`{"id": …}` 之类包装在此即解析失败）。
 fn id_of(bytes: &[u8]) -> String {

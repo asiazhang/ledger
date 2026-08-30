@@ -49,28 +49,32 @@ pub(crate) struct FundCreateOutcome {
 /// AI 创建端点 fund 增强的降级落库（issue #304 / ADR-0039 决策 3）：东财网络
 /// 不可达等临时故障时，以 AI 提供的名称 + 真实代码建行（不阻塞导入，名称误差
 /// 留待人工编辑）。字典形态与按代码即拉一致（类型 fund、市场 unknown、币种
-/// 人民币）；既有行保留既有名称——降级重放不得用 AI 名称覆盖已回填的东财
-/// 权威名称（find-or-create 只在新建行时采纳 AI 名称，实现：查得既有名称原样
-/// 回传，`create_instrument` 的按需更新判定为无变化即不动）。
+/// 人民币）；既有行直接复用、名称不动——降级重放不得用 AI 名称覆盖已回填的
+/// 东财权威名称。
 pub(crate) fn create_fund_degraded(
     conn: &Connection,
     symbol: &str,
     ai_name: Option<String>,
 ) -> Result<FundCreateOutcome> {
-    let existing_name: Option<String> = conn
+    let existing_id: Option<String> = conn
         .query_row(
-            "SELECT name FROM instruments WHERE symbol=?1 AND instrument_type='fund'",
+            "SELECT id FROM instruments WHERE symbol=?1 AND instrument_type='fund'",
             rusqlite::params![symbol],
             |r| r.get(0),
         )
-        .ok()
-        .flatten();
+        .ok();
+    if let Some(instrument_id) = existing_id {
+        return Ok(FundCreateOutcome {
+            instrument_id,
+            price_written: false,
+        });
+    }
     let instrument_id = crud::create_instrument(
         conn,
         InstrumentInput {
             symbol: symbol.to_string(),
             kind: InstrumentType::Fund,
-            name: existing_name.or(ai_name),
+            name: ai_name,
             currency_code: FUND_CURRENCY.to_string(),
             market: Some(FUND_MARKET.to_string()),
         },

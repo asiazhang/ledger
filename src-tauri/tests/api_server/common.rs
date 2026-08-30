@@ -218,6 +218,27 @@ pub(crate) fn count_active_transactions(conn: &rusqlite::Connection) -> i64 {
     .unwrap()
 }
 
+/// POST /api/v1/instruments，返回（状态码，原始响应体）。响应体不在此处反序列化：
+/// 201 为裸 id 字符串、4xx 为统一错误形状 JSON，由各测试自行解析（先例：
+/// instrument_create.rs 同名辅助上收共享）。
+pub(crate) async fn post_instrument(app: &Router, body: &str) -> (StatusCode, Vec<u8>) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/instruments")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_owned()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = body_to_bytes(response.into_body()).await;
+    (status, bytes)
+}
+
 pub(crate) async fn get_json(app: &Router, uri: &str) -> (StatusCode, serde_json::Value) {
     let response = app
         .clone()

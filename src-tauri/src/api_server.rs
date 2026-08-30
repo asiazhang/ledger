@@ -586,6 +586,7 @@ fn derive_quote_currency(market: &str) -> &'static str {
                   **fund 类型增强**：`symbol` 为真实 6 位代码时后端经东方财富校验并回填权威名称、\
                   落最新净值现价；查无此码返回 400 拒绝创建；东财网络不可达时降级为提交名称 + 真实代码建行\
                   （不阻塞导入）；非 6 位 symbol（名称充代码，仅限源数据无代码）不触发校验、不进净值通道。\
+                  fund + 6 位代码分支的字典形态收口：显式 `market` / `currency_code` 不生效（恒 unknown / 人民币）。\
                   建议先搜索（GET /api/v1/instruments）无命中再创建，防同义标的碎片；\
                   基金先按代码查询（GET /api/v1/funds/{code}）确认识别，必带真实 6 位代码。",
     request_body = InstrumentCreateInput,
@@ -626,15 +627,8 @@ async fn create_instrument_handler(
     let currency_code = input.currency_code.unwrap_or_else(|| {
         derive_quote_currency(input.market.as_deref().unwrap_or("unknown")).to_string()
     });
-    let generic_input = InstrumentInput {
-        symbol: input.symbol.clone(),
-        kind: input.kind,
-        name: input.name.clone(),
-        currency_code,
-        market: input.market.clone(),
-    };
     // 连接层统一写入口（ADR-0032）：find-or-create 与信息更新同一写闭包，提交点置脏单点；
-    // 东财往返已在锁外完成，写闭包内零网络。
+    // 东财往返已在锁外完成，写闭包内零网络。泛型入参仅泛型分支消费，惰性构造。
     let outcome: FundCreateOutcome = crate::db::write(&state.conn, |conn| match &enrichment {
         Some(Enrichment::Authoritative(detail)) => {
             // 东财命中：与按代码即拉同一落库接缝（权威名称回填 + 净值落现价）。
@@ -645,10 +639,19 @@ async fn create_instrument_handler(
             })
         }
         Some(Enrichment::Degrade) => create_fund_degraded(conn, &input.symbol, input.name.clone()),
-        None => Ok(FundCreateOutcome {
-            instrument_id: crate::commands::create_instrument_internal(conn, generic_input)?,
-            price_written: false,
-        }),
+        None => {
+            let generic_input = InstrumentInput {
+                symbol: input.symbol.clone(),
+                kind: input.kind,
+                name: input.name.clone(),
+                currency_code,
+                market: input.market.clone(),
+            };
+            Ok(FundCreateOutcome {
+                instrument_id: crate::commands::create_instrument_internal(conn, generic_input)?,
+                price_written: false,
+            })
+        }
     })?;
     // 落现价即广播价格失效信号（ADR-0031，与按代码即拉 IPC 命令同一信号语义；
     // 零变化不广播）。标的不属参考数据四表：不发 `ledger:changed` 参考失效信号。

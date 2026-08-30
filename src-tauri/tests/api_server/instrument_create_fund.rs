@@ -11,35 +11,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::Router;
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::StatusCode;
 use rusqlite::params;
-use tower::ServiceExt;
 
 use tauri_app_lib::api_server::FundDetailFetcher;
 use tauri_app_lib::error::AppError;
 
-use crate::common::{FundStubHit, body_to_bytes, setup_app_with_fund_stub};
-
-/// POST /api/v1/instruments，返回（状态码，原始响应体）；201 为裸 id 字符串、
-/// 4xx 为统一错误形状 JSON，由各测试自行解析（先例 instrument_create.rs）。
-async fn post_instrument(app: &Router, body: &str) -> (StatusCode, Vec<u8>) {
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/instruments")
-                .header("content-type", "application/json")
-                .body(Body::from(body.to_owned()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let status = response.status();
-    let bytes = body_to_bytes(response.into_body()).await;
-    (status, bytes)
-}
+use crate::common::{FundStubHit, post_instrument, setup_app_with_fund_stub};
 
 /// fund 标的行与现价行的断言投影：name / market / source 与可选现价
 /// （price_cents, nav_date, source）。
@@ -241,14 +219,7 @@ fn setup_app_with_toggle_stub(hits: HashMap<String, FundStubHit>) -> ToggleStubA
     let down = Arc::new(AtomicBool::new(false));
     let calls = Arc::new(Mutex::new(Vec::new()));
     let fetch = toggle_stub(hits, down.clone(), calls.clone());
-    let mut conn = tauri_app_lib::db::open_in_memory().unwrap();
-    tauri_app_lib::db::init_db(&mut conn).unwrap();
-    let conn = Arc::new(Mutex::new(conn));
-    let app = tauri_app_lib::api_server::build_router(tauri_app_lib::api_server::ApiState {
-        conn: conn.clone(),
-        app: None,
-        fund_fetch: Some(fetch),
-    });
+    let (app, conn) = crate::common::setup_app_with_fund_fetch(Some(fetch));
     (app, conn, down, calls)
 }
 
@@ -276,6 +247,24 @@ async fn test_create_fund_degrades_to_ai_name_when_network_unreachable() {
     assert_eq!(row.source, "manual");
     assert!(row.price.is_none(), "网络不可达无净值可落，不应有现价行");
     assert_eq!(*calls.lock().unwrap(), vec!["000001".to_string()]);
+}
+
+#[tokio::test]
+async fn test_create_fund_degrades_without_ai_name_creates_code_only_row() {
+    let (app, conn, down, _calls) = setup_app_with_toggle_stub(stub_hit());
+    down.store(true, Ordering::SeqCst);
+
+    // 降级 + 未提交名称：代码可用即建行（name 为 NULL），后续净值通道照常服务。
+    let (status, bytes) = post_instrument(&app, r#"{"symbol":"000001","type":"fund"}"#).await;
+    assert_eq!(status, StatusCode::CREATED, "降级不因缺名称被阻塞");
+    let _: String = serde_json::from_slice(&bytes).unwrap();
+
+    let row = fund_row(&conn, "000001");
+    assert!(
+        row.name.is_none(),
+        "降级且无 AI 名称时应产生无名称行（后续可经净值回填或人工补录）"
+    );
+    assert!(row.price.is_none());
 }
 
 #[tokio::test]
