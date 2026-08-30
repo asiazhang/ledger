@@ -88,6 +88,9 @@ pub struct LedgerWorld {
     pub last_import_rows: Vec<ImportedRow>,
     /// 最近一次批量导入的逐条结果（含 `duplicate` 标记）
     pub last_batch_results: Vec<CreateTransactionResult>,
+    /// 投资迁移链路（issue #297）：已导入 buy 交易 id 按导入先后累积
+    /// （「持仓批次按导入先后锚定顺序」步骤据此回填批次 created_at）
+    pub imported_buy_txn_ids: Vec<String>,
     /// 最近一次查询的账户余额快照（账户名 → (余额, is_hidden)，含黑洞账户）
     pub balances: HashMap<String, (i64, bool)>,
     /// 最近一次备份文件的路径（备份/恢复场景用）
@@ -182,6 +185,7 @@ impl LedgerWorld {
             transactions_list: Vec::new(),
             last_import_rows: Vec::new(),
             last_batch_results: Vec::new(),
+            imported_buy_txn_ids: Vec::new(),
             balances: HashMap::new(),
             last_backup_path: None,
             restored_db_path: None,
