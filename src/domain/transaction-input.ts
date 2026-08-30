@@ -57,14 +57,19 @@ export interface RefundFormState {
   date: number
 }
 
-/** 买入/卖出表单形态（useInvestmentForm 表单状态原样；成交金额由后端行为层按数量×单价±费用重算） */
+/** 买入/卖出表单形态（useInvestmentForm 表单状态原样）。录入权威按标的类型分流
+ * （issue #302 / ADR-0038）：场外基金 = 金额 + 确认份额必填（amount 非空、price 恒 null），
+ * 行金额以确认单整分金额为权威、单价由后端反算；其余 = 数量 + 单价（price 非空、
+ * amount 恒 null），成交金额由后端行为层按数量×单价±费用重算。 */
 export interface TradeFormState {
   kind: 'buy' | 'sell'
   currencyCode: string
   accountId: string | null
   instrumentId: string | null
+  /** 确认单金额（元，基金申赎权威口径）；非基金形态恒 null */
+  amount: number | null
   quantity: number | null
-  /** 单价（元） */
+  /** 单价（元，非基金形态）；基金形态恒 null（单价反算，不落 wire） */
   price: number | null
   /** 手续费（元）；null 表示未填 → fee_cents: null（而非 0） */
   fee: number | null
@@ -214,10 +219,21 @@ export function buildRefundInput(state: RefundFormState): TransactionInput {
   }
 }
 
-/** 买入/卖出表单状态 → TransactionInput（amount_cents 恒 0、关联字段全 null 的占位语义全在矩阵） */
+/** 买入/卖出表单状态 → TransactionInput。录入权威按形态分流：amount 非空 = 基金
+ * 申赎（amount_cents 权威、price_cents null 由后端反算）；price 非空 = 其余类型
+ * （amount_cents 恒 0 占位、单价落 wire）；两者互斥，同供属非法状态 fail fast。 */
 export function buildTradeInput(state: TradeFormState): TransactionInput {
+  const fundAmountCents =
+    state.amount == null ? null : requireAmountCents(state.amount, '金额')
+  if (fundAmountCents != null && state.price != null) {
+    fail('金额与单价不可同时提供（基金按确认金额，其余按单价）')
+  }
+  // 非基金形态：单价必填（缺失在此 fail fast，不静默落 null）；基金形态恒 null。
+  const priceCents = fundAmountCents != null ? null : requirePrice(state.price, '单价')
   return {
     ...baseInput(state.kind, {
+      // 基金：矩阵占位 0 被权威金额覆写；其余：矩阵占位 0（后端重算行金额）
+      amountCents: fundAmountCents ?? undefined,
       currencyCode: requireNonEmpty(state.currencyCode, '币种'),
       accountId: requireNonEmpty(state.accountId, '投资账户'),
       note: state.note,
@@ -225,8 +241,9 @@ export function buildTradeInput(state: TradeFormState): TransactionInput {
     }),
     instrument_id: requireNonEmpty(state.instrumentId, '标的'),
     quantity: requireQuantity(state.quantity),
-    // 单价是价格列（万分之一元刻度，ADR-0038），与金额列（分）换算口径不同
-    price_cents: requirePrice(state.price, '单价'),
+    // 单价是价格列（万分之一元刻度，ADR-0038），与金额列（分）换算口径不同；
+    // 基金形态不落单价（null → 后端按金额 ∓ 费用 ÷ 份额反算）
+    price_cents: priceCents,
     fee_cents: state.fee == null ? null : requireAmountCents(state.fee, '手续费'),
   }
 }

@@ -560,6 +560,10 @@ fn get_transaction_trade_returns_buy_detail_with_instrument_display() {
     assert_eq!(trade.instrument_id, "inst-t");
     assert_eq!(trade.symbol, "600519");
     assert_eq!(trade.instrument_name.as_deref(), Some("贵州茅台"));
+    assert_eq!(
+        trade.instrument_type, "stock",
+        "明细带出标的类型（issue #302 表单形态切换）"
+    );
     assert!((trade.quantity - 100.0).abs() < 1e-9);
     assert_eq!(trade.price_cents, 150_000, "明细单价万分之一元刻度");
     assert_eq!(trade.fee_cents, Some(500));

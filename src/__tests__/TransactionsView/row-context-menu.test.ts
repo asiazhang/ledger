@@ -345,6 +345,7 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
     instrument_id: 'ins-1',
     symbol: 'NVDA',
     instrument_name: '英伟达',
+    instrument_type: 'stock' as const,
     quantity: 100,
     price_cents: 1500000, // 150 元（万分之一元刻度）
     fee_cents: 500,

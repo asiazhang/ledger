@@ -135,8 +135,10 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     })
     wrapper = mount(HoldingsOverview)
     await flushPromises()
-    // 现价 12345 万分之一元 = 1.2345 元，4 位小数无损展示
+    // 现价 12345 万分之一元 = 1.2345 元，4 位小数无损展示；市值/未实现盈亏随行显形
     expect(await cellText('latest_price')).toEqual(['¥1.2345'])
+    expect(await cellText('market_value')).toEqual(['¥1234.5'])
+    expect(await cellText('unrealized_pnl')).toEqual(['¥0.5'])
   })
 
   it('基金行现价下方展示净值日期（现价对应哪天的净值，#303），股票行不展示', async () => {

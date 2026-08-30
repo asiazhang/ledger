@@ -306,11 +306,11 @@ async fn test_update_trade_to_missing_instrument_returns_400_not_500() {
 // 幂等键去重 → 读回对账（东财经注入桩离线驱动）
 // ---------------------------------------------------------------------------
 
-/// 链路数字（净值刻度万分之一元；金额与份额全整除便于断言）：
-/// - 申购 buy：1000 份 × 1.5000（price_cents = 15000）+ 申购费 1500 分
-///   → 行金额 = 1000 × 15000 ÷ 100 + 1500 = 151500 分
-/// - 赎回 sell：400 份 × 1.6500（price_cents = 16500）− 赎回费 500 分
-///   → 行金额 = 400 × 16500 ÷ 100 − 500 = 65500 分
+/// 链路数字（净值刻度万分之一元；金额与份额全整除便于断言；issue #302 金额权威）：
+/// - 申购 buy：1000 份、确认单整分金额 151500 分（1515.00 元）、申购费 1500 分
+///   → 服务端反算净值 = (151500 − 1500) × 100 ÷ 1000 = 15000（1.5000）
+/// - 赎回 sell：400 份、确认单金额 65500 分、赎回费 500 分
+///   → 服务端反算净值 = (65500 + 500) × 100 ÷ 400 = 16500（1.6500）
 /// - 余额：0 − 151500 + 65500 = −86000 分（现金流口径）
 /// - 东财最新净值 1.6500 @ 2026-06-30 → 创建后现价缓存 16500 / nav_date 2026-06-30
 #[tokio::test]
@@ -352,13 +352,14 @@ async fn test_fund_migration_flow_lookup_create_batch_dedup_readback() {
         assert_eq!(nav_date, "2026-06-30");
     }
 
-    // 3. 批量提交申购/赎回（金额占位 0 由服务端重算；幂等键取源内稳定行号）
+    // 3. 批量提交申购/赎回（确认单金额权威、不传单价——净值由服务端反算，
+    // issue #302 / ADR-0038；幂等键取源内稳定行号）
     let account_id = seed_investment_account(&conn);
     let buy = format!(
-        r#"{{"kind":"buy","amount_cents":0,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-11","instrument_id":"{instrument_id}","quantity":1000,"price_cents":15000,"fee_cents":1500,"idempotency_key":"fund-bill.csv:3:1"}}"#
+        r#"{{"kind":"buy","amount_cents":151500,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-11","instrument_id":"{instrument_id}","quantity":1000,"fee_cents":1500,"idempotency_key":"fund-bill.csv:3:1"}}"#
     );
     let sell = format!(
-        r#"{{"kind":"sell","amount_cents":0,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-25","instrument_id":"{instrument_id}","quantity":400,"price_cents":16500,"fee_cents":500,"idempotency_key":"fund-bill.csv:5:1"}}"#
+        r#"{{"kind":"sell","amount_cents":65500,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-25","instrument_id":"{instrument_id}","quantity":400,"fee_cents":500,"idempotency_key":"fund-bill.csv:5:1"}}"#
     );
     let refs = [buy.as_str(), sell.as_str()];
     let first = post_batch(&app, batch_body(&refs, None)).await;
@@ -402,7 +403,7 @@ async fn test_fund_migration_flow_lookup_create_batch_dedup_readback() {
     assert_eq!(
         amounts,
         [151500i64, 65500].into_iter().collect(),
-        "行金额应为 数量×单价±手续费（申购含费流出、赎回减费回款）"
+        "行金额应为确认单整分金额（权威：申购含费流出、赎回减费回款）"
     );
 
     // 6. 余额对账：投资账户现金流 = 初始 − 申购含费 + 赎回净额

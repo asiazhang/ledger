@@ -121,6 +121,74 @@ describe('InvestmentForm.vue 移除「新增标的」入口（issue #152）', ()
   })
 })
 
+describe('InvestmentForm.vue 基金申赎形态（issue #302）', () => {
+  const fundInstruments = [
+    {
+      id: 'ins-fund',
+      symbol: '000123',
+      name: '某混合基金',
+      type: 'fund' as const,
+      currency_code: 'CNY',
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+      version: 1,
+      device_id: 'test',
+      is_deleted: false,
+      market: 'unknown' as const,
+      invested: false,
+      price_cents: null,
+    },
+  ]
+
+  /** 挂载并选中基金标的（远程搜索 → 选中） */
+  async function mountWithFundSelected(kind: 'buy' | 'sell') {
+    const wrapper = mount(InvestmentForm, {
+      props: { kind, submitLabel: kind === 'buy' ? '记买入' : '记卖出' },
+    })
+    const select = instrumentSelect(wrapper)
+    vi.useFakeTimers()
+    try {
+      await select.find('input').setValue('某混合')
+      await vi.advanceTimersByTimeAsync(300)
+      await flushPromises()
+    } finally {
+      vi.useRealTimers()
+    }
+    select.vm.$emit('update:value', 'ins-fund')
+    await flushPromises()
+    return wrapper
+  }
+
+  /** 按 placeholder 找 NInputNumber 内层 input */
+  function inputByPlaceholder(wrapper: ReturnType<typeof mount>, placeholder: string) {
+    return wrapper.findAll('input').find((i) => i.attributes('placeholder') === placeholder)
+  }
+
+  it('选基金标的：金额可编辑（确认单权威）、份额标签、单价只读反算', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_instruments') return Promise.resolve({ items: fundInstruments, total: 1 })
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const wrapper = await mountWithFundSelected('buy')
+    expect(inputByPlaceholder(wrapper, '确认金额（以确认单为准）')).toBeDefined()
+    expect(inputByPlaceholder(wrapper, '确认份额（以确认单为准）')).toBeDefined()
+    const priceInput = inputByPlaceholder(wrapper, '由金额与份额反算')
+    expect(priceInput).toBeDefined()
+    expect(priceInput!.attributes('disabled')).toBeDefined()
+    // 股票形态的占位不应出现
+    expect(inputByPlaceholder(wrapper, '自动计算')).toBeUndefined()
+  })
+
+  it('未选标的时保持股票形态（金额只读展示、单价可编辑）', () => {
+    const wrapper = mount(InvestmentForm, { props: { kind: 'buy', submitLabel: '记买入' } })
+    expect(inputByPlaceholder(wrapper, '自动计算')).toBeDefined()
+    expect(inputByPlaceholder(wrapper, '确认金额（以确认单为准）')).toBeUndefined()
+    const priceInput = inputByPlaceholder(wrapper, '单价')
+    expect(priceInput).toBeDefined()
+    expect(priceInput!.attributes('disabled')).toBeUndefined()
+  })
+})
+
 describe('InvestmentForm.vue 编辑模式（issue #180）', () => {
   const editingTx = {
     id: 'txn-buy-1',
@@ -145,6 +213,7 @@ describe('InvestmentForm.vue 编辑模式（issue #180）', () => {
     instrument_id: 'ins-1',
     symbol: 'NVDA',
     instrument_name: '英伟达',
+    instrument_type: 'stock' as const,
     quantity: 100,
     price_cents: 15000,
     fee_cents: 500,
