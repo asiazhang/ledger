@@ -20,6 +20,7 @@ import { InformationCircleOutline } from '@vicons/ionicons5'
 import { NIcon } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import { api } from '@/api'
+import { t } from '@/i18n'
 import { useDashboardOverview } from '@/composables/useDashboardOverview'
 import { useFinancialFreedom } from '@/composables/useFinancialFreedom'
 import { useItemDailyTotal } from '@/composables/useItemDailyTotal'
@@ -133,7 +134,7 @@ onMounted(async () => {
     <NCard size="small" data-testid="net-worth-card">
       <NSpin :show="loading">
         <NSpace vertical :size="4">
-          <NText depth="3" style="font-size: 12px">净资产</NText>
+          <NText depth="3" style="font-size: 12px">{{ t('dashboard.netWorth.label') }}</NText>
           <template v-if="overview">
             <NText strong style="font-size: 28px">
               {{
@@ -152,23 +153,23 @@ onMounted(async () => {
     </NCard>
 
     <!-- 本月收支卡（issue #144）：紧随净资产之后，先看本月现金流再看投资/预算 -->
-    <NCard title="本月收支" size="small">
+    <NCard :title="t('dashboard.monthly.title')" size="small">
       <NGrid :cols="3" :x-gap="16" responsive="screen">
         <NGridItem>
           <NSpace vertical :size="4">
-            <NText depth="3" style="font-size: 12px">收入</NText>
+            <NText depth="3" style="font-size: 12px">{{ t('dashboard.monthly.income') }}</NText>
             <NText strong style="font-size: 20px">{{ formatAmount(netIncomeCents) }}</NText>
           </NSpace>
         </NGridItem>
         <NGridItem>
           <NSpace vertical :size="4">
-            <NText depth="3" style="font-size: 12px">净支出</NText>
+            <NText depth="3" style="font-size: 12px">{{ t('dashboard.monthly.netExpense') }}</NText>
             <NText strong style="font-size: 20px">{{ formatAmount(netExpenseCents) }}</NText>
           </NSpace>
         </NGridItem>
         <NGridItem>
           <NSpace vertical :size="4">
-            <NText depth="3" style="font-size: 12px">结余</NText>
+            <NText depth="3" style="font-size: 12px">{{ t('dashboard.monthly.net') }}</NText>
             <NText strong style="font-size: 20px">{{ formatAmount(balanceCents) }}</NText>
           </NSpace>
         </NGridItem>
@@ -176,20 +177,20 @@ onMounted(async () => {
     </NCard>
 
     <!-- 投资概览卡（issue #145）：始终展示，无持仓时空态占位 -->
-    <NCard title="投资概览" size="small" data-testid="investment-overview-card">
+    <NCard :title="t('dashboard.investment.title')" size="small" data-testid="investment-overview-card">
       <NGrid v-if="holdingRows.length > 0" :x-gap="16" cols="1 s:2">
         <NGi>
-          <NStatistic label="总市值" data-testid="dashboard-total-market-value">
+          <NStatistic :label="t('dashboard.investment.marketValue')" data-testid="dashboard-total-market-value">
             {{ formatCurrencyGroups(totalMarketValueGroups, reference.currencyMap) }}
           </NStatistic>
         </NGi>
         <NGi>
-          <NStatistic label="未实现盈亏合计" data-testid="dashboard-total-unrealized-pnl">
+          <NStatistic :label="t('dashboard.investment.unrealizedPnl')" data-testid="dashboard-total-unrealized-pnl">
             {{ formatCurrencyGroups(totalUnrealizedPnlGroups, reference.currencyMap) }}
           </NStatistic>
         </NGi>
       </NGrid>
-      <NEmpty v-else description="暂无持仓" />
+      <NEmpty v-else :description="t('dashboard.investment.empty')" />
     </NCard>
 
     <!-- 财务自由度卡（issue #344）：投资概览之后、物品使用成本之前——
@@ -257,34 +258,34 @@ onMounted(async () => {
 
     <!-- 物品使用成本卡（issue #122）：全部在用物品每天成本合计（默认币种，后端聚合），
          无在用物品时空态占位，缺汇率等报错显示提示文案 -->
-    <NCard title="物品使用成本" size="small" data-testid="item-daily-cost-card">
+    <NCard :title="t('dashboard.itemCost.title')" size="small" data-testid="item-daily-cost-card">
       <NSpin :show="itemDailyTotalLoading">
         <NAlert v-if="itemDailyTotalError" type="warning" :bordered="false">
           {{ itemDailyTotalError }}
         </NAlert>
         <NEmpty
           v-else-if="itemDailyTotal && itemDailyTotal.item_count === 0"
-          description="暂无在用物品"
+          :description="t('dashboard.itemCost.empty')"
         />
         <NSpace v-else-if="itemDailyTotal" vertical :size="4">
-          <NText depth="3" style="font-size: 12px">全部在用物品每天成本合计</NText>
+          <NText depth="3" style="font-size: 12px">{{ t('dashboard.itemCost.subtitle') }}</NText>
           <NText strong style="font-size: 20px">
             {{
               formatAmount(
                 itemDailyTotal.per_day_cents,
                 reference.getCurrency(itemDailyTotal.native_currency),
               )
-            }}/天
+            }}{{ t('dashboard.itemCost.perDay') }}
           </NText>
           <NText depth="3" style="font-size: 12px">
-            共 {{ itemDailyTotal.item_count }} 件在用物品
+            {{ t('dashboard.itemCost.count', { n: itemDailyTotal.item_count }) }}
           </NText>
         </NSpace>
       </NSpin>
     </NCard>
 
-    <NCard title="预算进度" size="small" data-testid="budget-progress-card">
-      <NEmpty v-if="budgetRows.length === 0" description="未设置预算" />
+    <NCard :title="t('dashboard.budget.title')" size="small" data-testid="budget-progress-card">
+      <NEmpty v-if="budgetRows.length === 0" :description="t('dashboard.budget.empty')" />
       <NSpace v-else vertical :size="12">
         <div v-for="row in budgetRows" :key="row.budget.id" class="budget-row">
           <NSpace align="center" justify="space-between" style="width: 100%">
@@ -295,7 +296,7 @@ onMounted(async () => {
               <NText :type="row.over_budget ? 'error' : 'default'" style="font-size: 12px">
                 {{ formatAmount(row.spent_cents) }} / {{ formatAmount(row.budget.amount_cents) }}
               </NText>
-              <NTag v-if="row.over_budget" type="error" size="small">超支</NTag>
+              <NTag v-if="row.over_budget" type="error" size="small">{{ t('dashboard.budget.over') }}</NTag>
             </NSpace>
           </NSpace>
           <NProgress

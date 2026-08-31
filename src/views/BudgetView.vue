@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, onMounted, ref } from 'vue'
+import { h, computed, onMounted, ref } from 'vue'
 import {
   NCard,
   NButton,
@@ -16,6 +16,7 @@ import {
   type DataTableColumns,
 } from 'naive-ui'
 import { api } from '@/api'
+import { t } from '@/i18n'
 import AppModal from '@/components/AppModal.vue'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
@@ -56,11 +57,11 @@ async function refresh() {
 
 async function create() {
   if (!categoryId.value || amount.value == null) {
-    message.warning('请填写分类和金额')
+    message.warning(t('budget.message.required'))
     return
   }
   if (amount.value <= 0) {
-    message.warning('预算金额必须为正数')
+    message.warning(t('budget.message.positive'))
     return
   }
   const input: BudgetInput = {
@@ -71,14 +72,14 @@ async function create() {
   }
   try {
     await api.createBudget(input)
-    message.success('已创建预算')
+    message.success(t('budget.message.created'))
     categoryId.value = null
     amount.value = null
     await refresh()
   } catch (e) {
-    // 后端拒绝（金额非正/收入分类/同分类同周期重复）时把中文错误清晰呈现给用户；
+    // 后端拒绝（金额非正/收入分类/同分类同周期重复）时把错误信息清晰呈现给用户；
     // 查重提示自带「可编辑该预算的金额」引导
-    message.error(`创建失败: ${errorMessage(e)}`)
+    message.error(t('budget.message.createFailed', { message: errorMessage(e) }))
   }
 }
 
@@ -91,46 +92,46 @@ function openEdit(row: BudgetProgress) {
 async function saveEdit() {
   if (!editing.value) return
   if (editAmount.value == null || editAmount.value <= 0) {
-    message.warning('预算金额必须为正数')
+    message.warning(t('budget.message.positive'))
     return
   }
   try {
     await api.updateBudget(editing.value.budget.id, {
       amount_cents: yuanToCents(editAmount.value) ?? 0,
     })
-    message.success('已更新预算')
+    message.success(t('budget.message.updated'))
     showEdit.value = false
     await refresh()
   } catch (e) {
-    message.error(`更新失败: ${errorMessage(e)}`)
+    message.error(t('budget.message.updateFailed', { message: errorMessage(e) }))
   }
 }
 
 async function remove(id: string) {
   try {
     await api.deleteBudget(id)
-    message.success('已删除')
+    message.success(t('budget.message.deleted'))
     await refresh()
   } catch (e) {
-    message.error(`删除失败: ${errorMessage(e)}`)
+    message.error(t('budget.message.deleteFailed', { message: errorMessage(e) }))
   }
 }
 
-const columns: DataTableColumns<BudgetProgress> = [
-  { title: '分类', key: 'category_name' },
-  { title: '周期', key: 'budget.period' },
+const columns = computed<DataTableColumns<BudgetProgress>>(() => [
+  { title: t('budget.list.colCategory'), key: 'category_name' },
+  { title: t('budget.list.colPeriod'), key: 'budget.period' },
   {
-    title: '预算',
+    title: t('budget.list.colAmount'),
     key: 'budget.amount_cents',
     render: (row) => formatAmount(row.budget.amount_cents),
   },
   {
-    title: '已支出',
+    title: t('budget.list.colSpent'),
     key: 'spent_cents',
     render: (row) => formatAmount(row.spent_cents),
   },
   {
-    title: '进度',
+    title: t('budget.list.colProgress'),
     key: 'progress',
     render: (row) => {
       const pct = row.budget.amount_cents > 0
@@ -144,14 +145,16 @@ const columns: DataTableColumns<BudgetProgress> = [
     },
   },
   {
-    title: '状态',
+    title: t('budget.list.colStatus'),
     key: 'over_budget',
     width: 80,
     render: (row) =>
-      row.over_budget ? h(NTag, { type: 'error' }, () => '超支') : h(NTag, { type: 'success' }, () => '正常'),
+      row.over_budget
+        ? h(NTag, { type: 'error' }, () => t('budget.status.over'))
+        : h(NTag, { type: 'success' }, () => t('budget.status.normal')),
   },
   {
-    title: '操作',
+    title: t('budget.list.colActions'),
     key: 'actions',
     width: 130,
     render: (row) =>
@@ -159,19 +162,19 @@ const columns: DataTableColumns<BudgetProgress> = [
         h(
           NButton,
           { size: 'tiny', type: 'primary', quaternary: true, onClick: () => openEdit(row) },
-          () => '编辑',
+          () => t('budget.actions.edit'),
         ),
         h(
           AppPopconfirm,
           { onPositiveClick: () => remove(row.budget.id) },
           {
-            default: () => '确认删除？',
-            trigger: () => h(NButton, { size: 'tiny', type: 'error', quaternary: true }, () => '删除'),
+            default: () => t('budget.actions.confirmDelete'),
+            trigger: () => h(NButton, { size: 'tiny', type: 'error', quaternary: true }, () => t('budget.actions.delete')),
           },
         ),
       ]),
   },
-]
+])
 
 onMounted(() => {
   // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll
@@ -182,24 +185,24 @@ onMounted(() => {
 <template>
   <NSpin :show="loading">
     <NSpace vertical :size="16">
-      <NCard title="新增预算" size="small">
+      <NCard :title="t('budget.create.title')" size="small">
         <NForm label-placement="left" :show-feedback="false" inline size="small">
-          <NFormItem label="分类">
+          <NFormItem :label="t('budget.create.category')">
             <PinyinSelect
               v-model:value="categoryId"
               :options="categoryOptions()"
-              placeholder="支出分类"
+              :placeholder="t('budget.create.categoryPlaceholder')"
               style="width: 160px"
             />
           </NFormItem>
-          <NFormItem label="金额">
+          <NFormItem :label="t('budget.create.amount')">
             <NInputNumber v-model:value="amount" :precision="2" style="width: 140px" />
           </NFormItem>
-          <NButton type="primary" @click="create">添加</NButton>
+          <NButton type="primary" @click="create">{{ t('budget.create.add') }}</NButton>
         </NForm>
       </NCard>
 
-      <NCard title="预算执行" size="small">
+      <NCard :title="t('budget.list.title')" size="small">
         <NDataTable :columns="columns" :data="list" :bordered="false" size="small" />
       </NCard>
     </NSpace>
@@ -207,29 +210,29 @@ onMounted(() => {
     <!-- 编辑弹窗（issue #184）：仅金额可改，分类/周期只读 -->
     <AppModal
       v-model:show="showEdit"
-      title="编辑预算"
+      :title="t('budget.edit.title')"
       preset="card"
       display-directive="if"
       style="width: 380px"
       :bordered="false"
     >
       <NForm label-placement="left" :show-feedback="false" size="small">
-        <NFormItem label="分类">
+        <NFormItem :label="t('budget.edit.category')">
           <NText>{{ editing?.category_name }}</NText>
         </NFormItem>
-        <NFormItem label="周期">
+        <NFormItem :label="t('budget.edit.period')">
           <NText>{{
             editing ? BUDGET_PERIOD_LABELS[editing.budget.period] : ''
           }}</NText>
         </NFormItem>
-        <NFormItem label="金额">
+        <NFormItem :label="t('budget.edit.amount')">
           <NInputNumber v-model:value="editAmount" :precision="2" style="width: 100%" />
         </NFormItem>
       </NForm>
       <template #footer>
         <NSpace justify="end">
-          <NButton size="small" @click="showEdit = false">取消</NButton>
-          <NButton size="small" type="primary" @click="saveEdit">保存</NButton>
+          <NButton size="small" @click="showEdit = false">{{ t('budget.edit.cancel') }}</NButton>
+          <NButton size="small" type="primary" @click="saveEdit">{{ t('budget.edit.save') }}</NButton>
         </NSpace>
       </template>
     </AppModal>

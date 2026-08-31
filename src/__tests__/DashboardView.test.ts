@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
+import { applyLocale } from '@/i18n'
 import DashboardView from '@/views/DashboardView.vue'
 import TransactionForm from '@/components/TransactionForm.vue'
 import { useReferenceStore } from '@/stores/reference'
@@ -108,6 +110,29 @@ async function mountView() {
   await flushPromises()
   return wrapper
 }
+
+describe('DashboardView 界面语言切换（issue #342 / #351）', () => {
+  it('en-US 下卡片标题与标签渲染英文文案，切回 zh-CN 恢复中文', async () => {
+    try {
+      await applyLocale('en-US')
+      await nextTick()
+      const wrapper = await mountView()
+      const text = wrapper.text()
+      expect(text).toContain('Net Worth')
+      expect(text).toContain('This Month')
+      expect(text).toContain('Income')
+      expect(text).toContain('Net Expense')
+      expect(text).toContain('Budget Progress')
+      expect(
+        wrapper.find('[data-testid="investment-overview-card"]').text(),
+      ).toContain('Total Market Value')
+    } finally {
+      // 还原默认语言，避免污染同文件后续用例（模块级单例状态）
+      await applyLocale('zh-CN')
+      await nextTick()
+    }
+  })
+})
 
 describe('DashboardView 净资产总览卡（issue #143）', () => {
   it('首页顶部呈现净资产总览卡：本位币单一主数字', async () => {

@@ -1,1 +1,29 @@
-{}
+{
+  "netWorth": {
+    "label": "净资产"
+  },
+  "monthly": {
+    "title": "本月收支",
+    "income": "收入",
+    "netExpense": "净支出",
+    "net": "结余"
+  },
+  "investment": {
+    "title": "投资概览",
+    "marketValue": "总市值",
+    "unrealizedPnl": "未实现盈亏合计",
+    "empty": "暂无持仓"
+  },
+  "itemCost": {
+    "title": "物品使用成本",
+    "empty": "暂无在用物品",
+    "subtitle": "全部在用物品每天成本合计",
+    "perDay": "/天",
+    "count": "共 {n} 件在用物品"
+  },
+  "budget": {
+    "title": "预算进度",
+    "empty": "未设置预算",
+    "over": "超支"
+  }
+}

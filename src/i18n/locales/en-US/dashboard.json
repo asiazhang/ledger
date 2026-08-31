@@ -1,1 +1,29 @@
-{}
+{
+  "netWorth": {
+    "label": "Net Worth"
+  },
+  "monthly": {
+    "title": "This Month",
+    "income": "Income",
+    "netExpense": "Net Expense",
+    "net": "Net"
+  },
+  "investment": {
+    "title": "Investment Overview",
+    "marketValue": "Total Market Value",
+    "unrealizedPnl": "Total Unrealized P&L",
+    "empty": "No holdings"
+  },
+  "itemCost": {
+    "title": "Item Daily Cost",
+    "empty": "No active items",
+    "subtitle": "Total daily cost of all active items",
+    "perDay": "/day",
+    "count": "{n} active items"
+  },
+  "budget": {
+    "title": "Budget Progress",
+    "empty": "No budgets set",
+    "over": "Over Budget"
+  }
+}

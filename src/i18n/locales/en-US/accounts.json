@@ -1,1 +1,60 @@
-{}
+{
+  "create": {
+    "title": "Add Account",
+    "name": "Name",
+    "type": "Type",
+    "currency": "Currency",
+    "initialBalance": "Initial Balance",
+    "namePlaceholder": "Account name",
+    "add": "Add"
+  },
+  "list": {
+    "title": "Accounts",
+    "colName": "Name",
+    "colType": "Type",
+    "colCurrency": "Currency",
+    "colBalance": "Balance",
+    "colActions": "Actions",
+    "moreActions": "More actions"
+  },
+  "edit": {
+    "title": "Edit Account",
+    "cancel": "Cancel",
+    "save": "Save"
+  },
+  "adjust": {
+    "title": "Adjust Balance",
+    "currentBalance": "Current Balance",
+    "targetBalance": "Target Balance",
+    "targetPlaceholder": "Balance after reconciliation",
+    "date": "Adjustment Date",
+    "delta": "Difference",
+    "deltaZero": "Balance already equals target, no adjustment needed",
+    "deltaIn": "Will transfer in {amount} from 无",
+    "deltaOut": "Will transfer out {amount} to 无",
+    "hint": "(Creates a transfer with 无; deleting that transfer undoes the adjustment)",
+    "confirm": "Confirm Adjustment"
+  },
+  "deleteDialog": {
+    "title": "Delete Account",
+    "content": "Delete account \"{name}\"? Related transactions will be kept.",
+    "positive": "Delete",
+    "negative": "Cancel"
+  },
+  "menu": {
+    "edit": "Edit",
+    "adjustBalance": "Adjust Balance",
+    "delete": "Delete"
+  },
+  "message": {
+    "nameRequired": "Please enter an account name",
+    "created": "Account created",
+    "createFailed": "Failed to create: {message}",
+    "deleted": "Deleted",
+    "deleteFailed": "Failed to delete: {message}",
+    "saved": "Saved",
+    "saveFailed": "Failed to save: {message}",
+    "adjusted": "Balance adjusted",
+    "adjustFailed": "Failed to adjust: {message}"
+  }
+}
