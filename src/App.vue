@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, nextTick, ref, watch, type Component, type HTMLAttributes } from 'vue'
+import { computed, h, nextTick, ref, type Component, type HTMLAttributes } from 'vue'
 import { RouterView, useRouter, useRoute } from 'vue-router'
 import {
   NConfigProvider,
@@ -30,8 +30,8 @@ import {
   SettingsOutline,
 } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
-import { api } from '@/api'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
+import { useDevicePreferenceSync } from '@/composables/useDevicePreferenceSync'
 import { loadSidebarCollapsed, saveSidebarCollapsed } from '@/utils/view-state'
 import {
   viewShortcuts,
@@ -62,15 +62,9 @@ function updateSidebarCollapsed(collapsed: boolean) {
 }
 const store = useAppStore()
 
-// 自动备份（issue #125）：备份目录保持前端 localStorage 单一来源（ADR-0016），
-// 启动/变更时把镜像推给后端供调度线程与退出兜底消费；未配置传空串即静默跳过。
-watch(
-  () => store.backupDir,
-  (dir) => {
-    void api.setAutoBackupDir(dir)
-  },
-  { immediate: true },
-)
+// 设备偏好镜像推送（备份目录 issue #125 / ADR-0016；自动执行开关 issue #308 / ADR-0042）：
+// 真源在前端 localStorage（应用设置 store），启动/变更时把镜像推给后端运行时消费。
+useDevicePreferenceSync()
 
 const viewLabels: Record<string, string> = {
   dashboard: '概览',

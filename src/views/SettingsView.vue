@@ -5,6 +5,7 @@ import {
   GridOutline,
   StorefrontOutline,
   ServerOutline,
+  RepeatOutline,
   InformationCircleOutline,
 } from '@vicons/ionicons5'
 import GeneralSettings from '@/components/settings/GeneralSettings.vue'
@@ -12,12 +13,14 @@ import CategoryManager from '@/components/CategoryManager.vue'
 import MerchantManager from '@/components/MerchantManager.vue'
 import BackupSettings from '@/components/settings/BackupSettings.vue'
 import DataLocationSettings from '@/components/settings/DataLocationSettings.vue'
+import ScheduledSettings from '@/components/settings/ScheduledSettings.vue'
 import AboutSettings from '@/components/settings/AboutSettings.vue'
 </script>
 
 <template>
-  <!-- Tab 分域（issue #157 / ADR-0022；ADR-0034 移除币种只读展示并更名）：
-       通用（轻量设备偏好）→ 分类（参考数据）→ 数据（备份与存储位置）→ 关于（恒在末位）。
+  <!-- Tab 分域（issue #157 / ADR-0022；ADR-0034 移除币种只读展示并更名；#308 新增定时）：
+       通用（轻量设备偏好）→ 分类（参考数据）→ 商户（参考数据）→ 数据（备份与存储位置）
+       → 定时（定时计划域设备偏好）→ 关于（恒在末位，新增 Tab 一律插在它之前）。
        「数据」pane 用 display-directive='show:lazy'：首次激活挂载后保持挂载，
        备份列表在 tab 切换间保留缓存；useBackup 的 onMounted 于首次激活时刷新。 -->
   <NTabs type="line">
@@ -42,6 +45,11 @@ import AboutSettings from '@/components/settings/AboutSettings.vue'
         <BackupSettings />
         <DataLocationSettings />
       </NSpace>
+    </NTabPane>
+
+    <NTabPane name="scheduled">
+      <template #tab><span class="pane-tab"><NIcon :component="RepeatOutline" />定时</span></template>
+      <ScheduledSettings />
     </NTabPane>
 
     <NTabPane name="about">
