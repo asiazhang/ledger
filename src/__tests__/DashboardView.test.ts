@@ -10,11 +10,18 @@ import { NProgress } from 'naive-ui'
 import {
   invokeHandler,
   makeAccount,
+  makeFinancialFreedom,
   makeHolding,
   makeOverview,
   mockHoldings,
   mockInstruments,
 } from './factories'
+
+// 财务自由度卡（issue #344）零分母占位引导跳转预算页：捕获 router.push
+const pushMock = vi.fn()
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: pushMock }),
+}))
 import type { Account, BudgetProgress, Currency, MonthlySummary } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
@@ -71,6 +78,8 @@ function baseInvoke(extra?: Record<string, unknown>) {
         // 物品使用成本卡（issue #122）挂载时会创建物品 store（self-init 拉列表）
         list_items: [],
         item_daily_total: mockItemDailyTotal,
+        // 财务自由度卡（issue #344）默认自由度 7.5%，用例可覆写
+        financial_freedom: makeFinancialFreedom(),
       },
       {
         // 函数型 handler 实时读取可变变量，#144 用例挂载前直接改写生效
@@ -85,6 +94,7 @@ function baseInvoke(extra?: Record<string, unknown>) {
 beforeEach(async () => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
+  pushMock.mockClear()
   mockMonthlySummary = []
   mockBudgetProgress = []
   baseInvoke()
@@ -181,6 +191,104 @@ describe('DashboardView 投资概览卡（issue #145）', () => {
     expect(card.find('[data-testid="dashboard-total-unrealized-pnl"]').text()).toBe(
       '未实现盈亏合计-',
     )
+  })
+})
+
+describe('DashboardView 财务自由度卡（issue #344）', () => {
+  it('卡片位于投资概览卡之后、物品使用成本卡之前', async () => {
+    const wrapper = await mountView()
+    const ids = wrapper
+      .findAll('[data-testid$="-card"]')
+      .map((w) => w.attributes('data-testid'))
+    const freedomIdx = ids.indexOf('financial-freedom-card')
+    expect(freedomIdx).toBeGreaterThan(ids.indexOf('investment-overview-card'))
+    expect(freedomIdx).toBeLessThan(ids.indexOf('item-daily-cost-card'))
+  })
+
+  it('展示大字百分比、进度条、分子/分母金额、覆盖年数与阶段标签', async () => {
+    const wrapper = await mountView()
+    const card = wrapper.find('[data-testid="financial-freedom-card"]')
+    // 7.5% 大字 + 阶段标签（<30% 积累期）
+    expect(card.find('[data-testid="financial-freedom-ratio"]').text()).toBe('7.5%')
+    expect(card.find('[data-testid="financial-freedom-stage"]').text()).toBe('积累期')
+    // 分子/分母（formatAmount 本位币）：500000 分 → ¥5000；2000000 分 → 万分位分组 ¥2,0000
+    expect(card.text()).toContain('可投资资产 ¥5000')
+    expect(card.text()).toContain('年度预算总额 ¥2,0000')
+    // 覆盖年数副文案
+    expect(card.text()).toContain('可覆盖 0.3 年')
+    // 进度条随百分比；未达 100% 非成功状态
+    const bar = card.findComponent(NProgress)
+    expect(bar.props('percentage')).toBe(7.5)
+    expect(bar.props('status')).not.toBe('success')
+  })
+
+  it('阶段标签三档边界：<30% 积累期 / 30–100% 接近自由 / ≥100% 财务自由', async () => {
+    const stageOf = async (ratio: number) => {
+      baseInvoke({ financial_freedom: makeFinancialFreedom({ ratio }) })
+      const wrapper = await mountView()
+      return wrapper.find('[data-testid="financial-freedom-stage"]').text()
+    }
+    expect(await stageOf(29.9)).toBe('积累期')
+    expect(await stageOf(30)).toBe('接近自由')
+    expect(await stageOf(99.9)).toBe('接近自由')
+    expect(await stageOf(100)).toBe('财务自由')
+  })
+
+  it('≥100% 进度条转成功状态；>100% 百分比原文呈现、进度条封顶 100', async () => {
+    baseInvoke({ financial_freedom: makeFinancialFreedom({ ratio: 150 }) })
+    const wrapper = await mountView()
+    const card = wrapper.find('[data-testid="financial-freedom-card"]')
+    expect(card.find('[data-testid="financial-freedom-ratio"]').text()).toBe('150%')
+    const bar = card.findComponent(NProgress)
+    expect(bar.props('status')).toBe('success')
+    expect(bar.props('percentage')).toBe(100)
+  })
+
+  it('零分母（未设预算）显示占位引导，点击跳转预算页；不回退实际支出', async () => {
+    baseInvoke({
+      financial_freedom: makeFinancialFreedom({
+        ratio: 0,
+        denominator_cents: 0,
+        coverage_years: 0,
+      }),
+    })
+    const wrapper = await mountView()
+    const card = wrapper.find('[data-testid="financial-freedom-card"]')
+    expect(card.text()).toContain('设置预算后解锁财务自由度')
+    // 不渲染自由度数字、金额与进度条（口径不回退实际支出）
+    expect(card.text()).not.toContain('%')
+    expect(card.text()).not.toContain('¥')
+    expect(card.findComponent(NProgress).exists()).toBe(false)
+    const btn = card.findAll('button').find((b) => b.text() === '去设置预算')
+    expect(btn).toBeTruthy()
+    await btn!.trigger('click')
+    expect(pushMock).toHaveBeenCalledWith({ name: 'budget' })
+  })
+
+  it('零资产显示 0%（起点清晰可见而非功能消失）', async () => {
+    baseInvoke({ financial_freedom: makeFinancialFreedom({ ratio: 0, numerator_cents: 0 }) })
+    const wrapper = await mountView()
+    const card = wrapper.find('[data-testid="financial-freedom-card"]')
+    expect(card.find('[data-testid="financial-freedom-ratio"]').text()).toBe('0%')
+    expect(card.find('[data-testid="financial-freedom-stage"]').text()).toBe('积累期')
+  })
+
+  it('缺汇率时卡内警告提示，可重试恢复', async () => {
+    baseInvoke({
+      financial_freedom: () => Promise.reject(new Error('缺少 USD→CNY 汇率，无法折算')),
+    })
+    const wrapper = await mountView()
+    let card = wrapper.find('[data-testid="financial-freedom-card"]')
+    expect(card.text()).toContain('缺少 USD→CNY 汇率，无法折算')
+    expect(card.text()).not.toContain('%')
+
+    baseInvoke()
+    const retry = card.findAll('button').find((b) => b.text() === '重试')
+    expect(retry).toBeTruthy()
+    await retry!.trigger('click')
+    await flushPromises()
+    card = wrapper.find('[data-testid="financial-freedom-card"]')
+    expect(card.find('[data-testid="financial-freedom-ratio"]').text()).toBe('7.5%')
   })
 })
 
@@ -314,7 +422,9 @@ describe('DashboardView 预算进度卡（issue #144）', () => {
   it('超支行红色高亮：进度条 error 状态 + 超支标记', async () => {
     mockBudgetProgress = [progress(false, 4000, 50000, '交通'), progress(true, 60000, 50000, '餐饮')]
     const wrapper = await mountView()
-    const bars = wrapper.findAllComponents(NProgress)
+    // 财务自由度卡（issue #344）也有进度条：断言收窄到预算进度卡内
+    const card = wrapper.find('[data-testid="budget-progress-card"]')
+    const bars = card.findAllComponents(NProgress)
     expect(bars).toHaveLength(2)
     expect(bars[0].props('status')).toBe('success')
     expect(bars[1].props('status')).toBe('error')
@@ -329,6 +439,7 @@ describe('DashboardView 预算进度卡（issue #144）', () => {
     const card = wrapper.find('[data-testid="budget-progress-card"]')
     expect(card.exists()).toBe(true)
     expect(card.text()).toContain('未设置预算')
-    expect(wrapper.findComponent(NProgress).exists()).toBe(false)
+    // 财务自由度卡（issue #344）也有进度条：断言收窄到预算进度卡内
+    expect(card.findComponent(NProgress).exists()).toBe(false)
   })
 })

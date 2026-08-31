@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import {
   NAlert,
+  NButton,
   NCard,
   NEmpty,
   NGi,
@@ -14,8 +15,10 @@ import {
   NTag,
   NText,
 } from 'naive-ui'
+import { useRouter } from 'vue-router'
 import { api } from '@/api'
 import { useDashboardOverview } from '@/composables/useDashboardOverview'
+import { useFinancialFreedom } from '@/composables/useFinancialFreedom'
 import { useItemDailyTotal } from '@/composables/useItemDailyTotal'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount } from '@/types'
@@ -73,6 +76,43 @@ const {
   loading: itemDailyTotalLoading,
   error: itemDailyTotalError,
 } = useItemDailyTotal()
+
+// 财务自由度卡（issue #344；口径 ADR-0048）：后端 financial_freedom 聚合
+//（分子折算、分母年化、3% 提取率），前端只做装配渲染与阶段标签派生。
+const router = useRouter()
+const {
+  data: freedom,
+  loading: freedomLoading,
+  error: freedomError,
+  refresh: refreshFreedom,
+} = useFinancialFreedom()
+
+// 折算基准币种（分子/分母同币种展示用）
+const freedomCurrency = computed(() =>
+  freedom.value ? reference.getCurrency(freedom.value.native_currency) : undefined,
+)
+
+// 阶段标签前端派生（ADR-0048 决策 5：阈值与文案归 UI，不做后端枚举）：
+// <30% 积累期 / 30–100% 接近自由 / ≥100% 财务自由
+const freedomStage = computed(() => {
+  if (!freedom.value) return null
+  if (freedom.value.ratio >= 100) return { label: '财务自由', type: 'success' as const }
+  if (freedom.value.ratio >= 30) return { label: '接近自由', type: 'info' as const }
+  return { label: '积累期', type: 'default' as const }
+})
+
+// 进度条：>100% 封顶展示，≥100% 转成功状态（达成时刻的视觉确认）
+const freedomProgress = computed(() => {
+  if (!freedom.value) return { percentage: 0, success: false }
+  return {
+    percentage: Math.min(100, freedom.value.ratio),
+    success: freedom.value.ratio >= 100,
+  }
+})
+
+function goBudget() {
+  void router.push({ name: 'budget' })
+}
 
 onMounted(async () => {
   const now = new Date()
@@ -147,6 +187,49 @@ onMounted(async () => {
         </NGi>
       </NGrid>
       <NEmpty v-else description="暂无持仓" />
+    </NCard>
+
+    <!-- 财务自由度卡（issue #344）：投资概览之后、物品使用成本之前——
+         先看资产再看「资产够不够躺」，最后才看单品与预算执行 -->
+    <NCard title="财务自由度" size="small" data-testid="financial-freedom-card">
+      <NSpin :show="freedomLoading">
+        <!-- 零分母（未设预算）：占位引导跳预算页，口径不回退实际支出；
+             按钮放 #extra——NEmpty 的 default slot 会顶掉 description -->
+        <NEmpty v-if="freedom && freedom.denominator_cents === 0" description="设置预算后解锁财务自由度">
+          <template #extra>
+            <NButton size="small" type="primary" @click="goBudget">去设置预算</NButton>
+          </template>
+        </NEmpty>
+        <!-- 缺汇率等报错：卡内警告（沿物品使用成本卡的警告先例）+ 重试
+             （重试为本卡按验收新增，先例仅警告无重试；重试即 refresh） -->
+        <NAlert v-else-if="freedomError" type="warning" :bordered="false">
+          <NSpace align="center" :size="8">
+            <span>{{ freedomError }}</span>
+            <NButton size="tiny" quaternary type="warning" @click="refreshFreedom">重试</NButton>
+          </NSpace>
+        </NAlert>
+        <NSpace v-else-if="freedom && freedomStage" vertical :size="4">
+          <NSpace align="center" justify="space-between" style="width: 100%">
+            <NText strong style="font-size: 28px" data-testid="financial-freedom-ratio">
+              {{ freedom.ratio }}%
+            </NText>
+            <NTag :type="freedomStage.type" size="small" data-testid="financial-freedom-stage">
+              {{ freedomStage.label }}
+            </NTag>
+          </NSpace>
+          <NProgress
+            type="line"
+            :percentage="freedomProgress.percentage"
+            :status="freedomProgress.success ? 'success' : undefined"
+            :show-indicator="false"
+          />
+          <NText depth="3" style="font-size: 12px">
+            可投资资产 {{ formatAmount(freedom.numerator_cents, freedomCurrency) }}
+            · 年度预算总额 {{ formatAmount(freedom.denominator_cents, freedomCurrency) }}
+          </NText>
+          <NText depth="3" style="font-size: 12px">可覆盖 {{ freedom.coverage_years }} 年</NText>
+        </NSpace>
+      </NSpin>
     </NCard>
 
     <!-- 物品使用成本卡（issue #122）：全部在用物品每天成本合计（默认币种，后端聚合），
