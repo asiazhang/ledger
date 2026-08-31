@@ -1,10 +1,14 @@
 //! 构建期命令注册生成（issue #315 / ADR-0047）：命令单一来源 = `#[tauri::command]` 注解本身。
 //!
 //! 扫描 `src/commands/**` 的裸 `#[tauri::command]` + 紧随 `pub fn` / `pub async fn`，
-//! 生成 `$(OUT_DIR)/commands_registry.rs`——按（域，命令名）字典序排列的
-//! `tauri::generate_handler![commands::<name>, ...]`，包在具名函数 `tauri_commands_handler`
-//! 里（flat 路径风格，依赖 commands 扁平 pub use 链解析）。lib.rs 经 `include!` 接入，
-//! 命令注册零手工清单。
+//! 生成两个产物（同一份扫描结果，零二次扫描）：
+//! - `$(OUT_DIR)/commands_registry.rs`——按（域，命令名）字典序排列的
+//!   `tauri::generate_handler![commands::<name>, ...]`，包在具名函数 `tauri_commands_handler`
+//!   里（flat 路径风格，依赖 commands 扁平 pub use 链解析）。lib.rs 经 `include!` 接入，
+//!   命令注册零手工清单。
+//! - `$(OUT_DIR)/commands_manifest.rs`——命令名字典序清单 `IPC_COMMAND_MANIFEST`，
+//!   信号交叉核对测试（`signals_cross_check`，ADR-0044 / #335）以之为 IPC 注册面真源，
+//!   与 IPC 壳声明表双向比对（仅测试经 `include!` 消费）。
 //!
 //! 扫描维护边界：只认裸注解 + 紧随 fn 定义。带参注解（`#[tauri::command(rename_all = …)]`）、
 //! cfg 条件命令、注解与 fn 之间的属性行均不支持——遇到不认识的形态直接 panic（fail loud，
@@ -157,4 +161,21 @@ fn write_registry(commands: &BTreeMap<(String, String), PathBuf>, out_dir: &Path
     }
     code.push_str("    ]\n}\n");
     fs::write(out_dir.join("commands_registry.rs"), code).expect("写 commands_registry.rs 失败");
+
+    // 命令名清单（同一扫描结果的第二个产物）：信号声明表交叉核对（ADR-0044 / #335）
+    // 的 IPC 注册面真源——声明表须与注册清单完全互等，新命令漏声明测试期即红。
+    // 与注册表不同，本清单按命令名字典序排列（不含域信息，与文件头自述一致）。
+    let mut names: Vec<&str> = commands.keys().map(|(_, name)| name.as_str()).collect();
+    names.sort_unstable();
+    let mut manifest = String::from(
+        "// 由 src-tauri/build.rs 生成（ADR-0047 命令单一来源的派生物）——请勿手改：\n\
+         // 全部 #[tauri::command] 命令名字典序清单，cargo build 时自动重新生成。\n\
+         pub const IPC_COMMAND_MANIFEST: &[&str] = &[\n",
+    );
+    for name in names {
+        let _ = writeln!(manifest, "    \"{name}\",");
+    }
+    manifest.push_str("];\n");
+    fs::write(out_dir.join("commands_manifest.rs"), manifest)
+        .expect("写 commands_manifest.rs 失败");
 }

@@ -19,11 +19,14 @@
 //!   句柄发射，登记为映射表特例条目 [`WriteOp::AutoBackupDeepPath`]，不做命令键——
 //!   三个 `ledger:*` 信号的生产者清单由此单点可查。
 //!
-//! 与旧机制的关系（issue #330 验收项）：`events::REFERENCE_WRITE_COMMANDS` /
-//! `is_reference_write` / `emit_reference_changed` 旧字符串白名单**暂不删除**，
-//! 新形式与旧机制并存、CI 保绿。迁移进度：三壳全部迁完——参考数据/物品/余额
-//! 调整的 IPC 壳（#332）、价格域四命令（#333）与 HTTP 壳（#334），旧机制生产
-//! 调用点已清零，待 #335 统一收缩删除。
+//! 旧机制已随 #335 收缩删除：`events::REFERENCE_WRITE_COMMANDS` /
+//! `is_reference_write` / `emit_reference_changed` 不再存在，「谁发什么」的判定
+//! 知识唯一载体是本模块。壳侧接线由交叉核对测试（`signals_cross_check`）兜底：
+//! 两壳「命令 → 写操作身份」声明表（`commands::IPC_COMMAND_WRITE_OPS` /
+//! `api_server::HTTP_ENDPOINT_WRITE_OPS`）× 注册面真源（build.rs 生成的
+//! `IPC_COMMAND_MANIFEST` / OpenAPI 端点集）双向比对，加上 [`WriteOp::ALL`]
+//! 遍历的反向核对——「新写命令忘了声明身份」「声明漂移」「映射有行但无壳接线」
+//! 均在测试期即红。
 //!
 //! 写操作边界：本闭集收录「以写为意图」的操作（DB 行写入、KV / 指针文件写入、
 //! 备份产物、进程级设置镜像推送）；纯读命令与控制类命令（`restart_app` /
@@ -37,7 +40,7 @@ use crate::events;
 ///
 /// 变体按域分组；每个变体注释标明对应的 IPC 命令与/或 HTTP 端点，以及
 /// 预期携带的结果证据（条件信号操作）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WriteOp {
     // ── 参考数据四表（ADR-0012）：写入成功发 `ledger:changed` ──
     /// 创建账户（IPC `create_account`；HTTP `POST /api/v1/accounts`）。
@@ -171,6 +174,73 @@ pub enum WriteOp {
     SubmitDataLocationChange,
     /// 恢复默认数据位置（IPC `restore_default_data_location`，同上写引导指针文件）。
     RestoreDefaultDataLocation,
+}
+
+impl WriteOp {
+    /// 全部写操作身份（闭集清单）：交叉核对测试（`signals_cross_check`，ADR-0044
+    /// 决策 3 / #335）按此遍历做「映射未声明」反向核对——除特例条目
+    /// [`WriteOp::AutoBackupDeepPath`]（登记生产者清单、刻意不做命令键）外，每个身份
+    /// 须被至少一个壳的声明表声明，否则测试期即红。
+    ///
+    /// **与 enum 本体同步维护**：新增变体漏登本清单时，反向核对对该变体失明——
+    /// 清单紧邻 enum，同步义务就地可查（同 `TransactionKind::ALL` 先例）。
+    /// 长度标注与初始化个数不符即编译错；但 enum 新增变体而本清单漏登不会报错，
+    /// 改 enum 必须同步改这里。
+    pub const ALL: [WriteOp; 44] = [
+        // 参考数据四表
+        WriteOp::CreateAccount,
+        WriteOp::UpdateAccount,
+        WriteOp::DeleteAccount,
+        WriteOp::CreateCategory,
+        WriteOp::UpdateCategory,
+        WriteOp::ReorderCategories,
+        WriteOp::DeleteCategory,
+        WriteOp::CreateMerchant,
+        WriteOp::UpdateMerchant,
+        WriteOp::DeleteMerchant,
+        // 物品域
+        WriteOp::CreateItem,
+        WriteOp::UpdateItem,
+        WriteOp::DisposeItem,
+        WriteOp::DeleteItem,
+        // 账户域
+        WriteOp::AdjustAccountBalance,
+        // 价格域
+        WriteOp::SyncHoldingPrices,
+        WriteOp::SyncInstruments,
+        WriteOp::AddFundByCode,
+        WriteOp::RecordManualPrice,
+        WriteOp::CreateInstrument,
+        WriteOp::DeleteInstrument,
+        WriteOp::CreateMarketPrice,
+        WriteOp::CreateExchangeRate,
+        // 备份域
+        WriteOp::CreateBackup,
+        WriteOp::PruneBackups,
+        WriteOp::RestoreBackup,
+        WriteOp::AutoBackupDeepPath,
+        // 交易域
+        WriteOp::CreateTransaction,
+        WriteOp::BatchCreateTransactions,
+        WriteOp::UpdateTransaction,
+        WriteOp::DeleteTransaction,
+        WriteOp::ExecuteScheduledOccurrence,
+        WriteOp::ExpandScheduledOccurrences,
+        // 预算域
+        WriteOp::CreateBudget,
+        WriteOp::UpdateBudget,
+        WriteOp::DeleteBudget,
+        // 定时计划域
+        WriteOp::CreateScheduledTransaction,
+        WriteOp::UpdateScheduledTransactionStatus,
+        WriteOp::UpdateScheduledSubscription,
+        // 设置域
+        WriteOp::SetAutoBackupEnabled,
+        WriteOp::SetAutoBackupDir,
+        WriteOp::SetAutoExecutionEnabled,
+        WriteOp::SubmitDataLocationChange,
+        WriteOp::RestoreDefaultDataLocation,
+    ];
 }
 
 /// 结果证据（ADR-0044 决策 1 / 决策 4）：写操作本次执行的**自然返回值**归一化，

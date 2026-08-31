@@ -10,6 +10,9 @@ pub mod models;
 pub mod scheduled_transactions;
 pub mod settings;
 pub mod signals;
+// 信号交叉核对测试（ADR-0044 决策 3 / #335）：声明表 × 映射表双向核对，仅测试可见。
+#[cfg(test)]
+mod signals_cross_check;
 #[doc(hidden)]
 pub mod test_utils;
 pub mod transaction;
