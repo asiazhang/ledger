@@ -40,7 +40,6 @@ import {
   type Transaction,
   type TransactionKind,
   type TransactionListFilter,
-  type TransactionTrade,
 } from '@/types'
 
 const reference = useReferenceStore()
@@ -72,8 +71,8 @@ const {
 } = useTransactionFilter()
 
 // 行操作弹窗编排（ADR-0045）：意图闭集为唯一事实源，显示开关由「意图非空」派生，
-// 回调序号随 open 递增内化（作表单 key 强制重建实例）。记一笔（#338）与退款/加入物品
-// （#339）同经本模块实例开启；编辑（#340）仍走本地 show/editTarget 过渡态，后续票接线。
+// 回调序号随 open 递增内化（作表单 key 强制重建实例）。四个行操作弹窗——记一笔（#338）、
+// 退款/加入物品（#339）、编辑（#340）——同经本模块实例开启。
 const { intent, seq, open: openModal, close: closeModal } = useTransactionModalState()
 
 /** 是否有任一激活的过滤条件（控制清除按钮可用性与空态文案）。 */
@@ -236,35 +235,18 @@ function onRefundCreated() {
 /** 编辑弹窗（issue #178，issue #180 扩到 buy/sell）：行右键「编辑」，回填该笔交易
  * 全部业务字段，kind 锁死不可切换（跨 kind 编辑本期边界外，见 issue #176 边界）；
  * 提交走全字段更新命令（update_transaction，与 HTTP PUT 同一行为层权威）。
- * buy/sell 行另取买卖明细（get_transaction_trade，扩展表投影）回填标的/数量/价格/费用；
- * 取明细失败不弹窗（直接报错）。editSeq 作为表单 key：每次打开强制重建表单实例
- * （镜像退款弹窗机制），回填/提交均指向本次右键所在行。提交失败弹窗不关、
- * 已填内容不丢（错误提示与不重置均在表单 composable 内）。 */
-const showEdit = ref(false)
-const editTarget = ref<Transaction | null>(null)
-const editTrade = ref<TransactionTrade | null>(null)
-const editSeq = ref(0)
-
-async function openEditFromRow(row: Transaction) {
-  if (row.kind === 'buy' || row.kind === 'sell') {
-    try {
-      editTrade.value = await api.getTransactionTrade(row.id)
-    } catch (e) {
-      message.error(`无法编辑: ${errorMessage(e)}`)
-      return
-    }
-  } else {
-    editTrade.value = null
-  }
-  editTarget.value = row
-  editSeq.value += 1
-  showEdit.value = true
+ * 开启/关闭编排经 TransactionModalState（ADR-0045，#340）：目标行由意图携带
+ * （fixed-target），序号作表单 key 强制重建实例（回填/提交均指向本次右键所在行）；
+ * buy/sell 的「先取买卖明细再开窗、失败不开窗」时序与慢取竞态守卫内化在模块，
+ * 取数不经视图。提交失败弹窗不关、已填内容不丢（错误提示与不重置均在表单 composable 内）。 */
+function openEditFromRow(row: Transaction) {
+  void openModal({ type: 'edit', row })
 }
 
-/** 编辑成功：关窗并以当前页码重拉列表（保持当前页与筛选，不重置 page → 视图侧 load，
- * 不经模块出口）。 */
+/** 编辑成功：关窗（编排内化关闭意图）并以当前页码重拉列表（保持当前页与筛选，
+ * 不重置 page → 视图侧 load，不经模块出口 refresh 的翻回第 1 页语义）。 */
 function onEditSaved() {
-  showEdit.value = false
+  closeModal()
   void load()
 }
 
@@ -503,21 +485,23 @@ onMounted(() => {
         @cancel="closeAddItem"
       />
     </AppModal>
-    <!-- 编辑弹窗（issue #178）：回填既有交易全部业务字段，kind 锁死；
-         提交走全字段更新命令，成功关窗并刷新列表（保持当前页与筛选） -->
+    <!-- 编辑弹窗（issue #178）：回填既有交易全部业务字段，kind 锁死；提交走全字段更新命令，
+         成功关窗并刷新列表（保持当前页与筛选）。开启/关闭经 TransactionModalState 编排
+         （目标行与买卖明细由意图携带，序号作表单 key 强制重建） -->
     <AppModal
-      v-model:show="showEdit"
+      :show="intent?.type === 'edit'"
       title="编辑交易"
       preset="card"
       display-directive="if"
       style="width: 480px"
       :bordered="false"
+      @update:show="onModalShowUpdate"
     >
       <TransactionForm
-        :key="editSeq"
-        v-if="editTarget"
-        :editing="editTarget"
-        :trade="editTrade"
+        :key="seq"
+        v-if="intent?.type === 'edit'"
+        :editing="intent.row"
+        :trade="intent.trade"
         @saved="onEditSaved"
       />
     </AppModal>
