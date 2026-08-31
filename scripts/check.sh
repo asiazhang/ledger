@@ -4,8 +4,8 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-echo "▶ 前端类型检查 (vue-tsc --noEmit)"
-npx vue-tsc --noEmit
+echo "▶ 前端类型检查 (pnpm exec vue-tsc --noEmit)"
+pnpm exec vue-tsc --noEmit
 
 echo "▶ Rust clippy (--all-targets --all-features, -D warnings)"
 ( cd src-tauri && cargo clippy --all-targets --all-features -- -D warnings )

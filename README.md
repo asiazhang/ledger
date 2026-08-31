@@ -69,8 +69,8 @@
 ```bash
 git clone git@github.com:asiazhang/ledger.git
 cd ledger
-npm install
-npm run tauri build
+pnpm install
+pnpm run tauri build
 ```
 
 构建产物输出到 `src-tauri/target/release/bundle/`。

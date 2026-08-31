@@ -3,4 +3,4 @@
 # 适用于纯 UI 调试——此时 invoke 调用会失败
 set -eu
 cd "$(dirname "$0")/.."
-exec npm run dev
+exec pnpm run dev
