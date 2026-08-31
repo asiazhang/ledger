@@ -8,10 +8,11 @@
 //! **嵌套感知事务（「保证处于事务中」，ADR-0033 决策 #2）**：每个入口经
 //! [`ensure_transaction`] 检测连接事务状态——autocommit 则自持 BEGIN/COMMIT/ROLLBACK
 //! （创建的 insert_row 后 apply 中途失败、删除的持仓清理后软删 UPDATE 失败均整体回滚，
-//! 无中间态泄漏）；已在事务中（批量导入的外层批次事务）则加入外层、失败直接返回错误，
-//! 回滚归外层持有者（batch 是嵌套模式的唯一合法使用者）。提交点副作用（备份置脏，
-//! ADR-0032，issue #245 起含嵌套模式）统一归连接层写入口：调用方的 `db.write` 闭包
-//! 返回 Ok 且已提交时单点触发——自持事务与批量嵌套同一形态，本模块对备份域零感知。
+//! 无中间态泄漏）；已在事务中则加入外层、失败直接返回错误，回滚归外层持有者
+//! （批量导入的批次事务与余额调整的外层事务壳是嵌套模式的合法使用者，issue #310）。
+//! 提交点副作用（备份置脏，ADR-0032，issue #245 起含嵌套模式）统一归连接层写入口：
+//! 调用方的 `db.write` 闭包返回 Ok 且已提交时单点触发——自持事务与批量嵌套同一形态，
+//! 本模块对备份域零感知。
 //!
 //! **守卫文案按入口内化（ADR-0033 决策 #4）**：buy 已有部分卖出的拒绝文案是各编排
 //! 入口的实现细节（`PARTIAL_SOLD_CANNOT_UPDATE` / `PARTIAL_SOLD_CANNOT_DELETE`），
@@ -63,8 +64,9 @@ impl Plan {
 }
 
 /// 「保证处于事务中」（嵌套感知，ADR-0033 决策 #2）：连接 autocommit 则自持
-/// BEGIN/COMMIT/ROLLBACK（`f` 中途失败整体回滚）；已在事务中（批量导入的外层批次事务）
-/// 则加入外层、失败直接返回错误——回滚归外层持有者。
+/// BEGIN/COMMIT/ROLLBACK（`f` 中途失败整体回滚）；已在事务中则加入外层、失败直接
+/// 返回错误——回滚归外层持有者（批量导入的批次事务与余额调整的外层事务壳，
+/// issue #310，是嵌套模式的合法使用者）。
 fn ensure_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
     // is_autocommit()=true ⇔ 连接不在事务中（rusqlite 语义），据此选分支。
     if !conn.is_autocommit() {
@@ -89,7 +91,8 @@ fn ensure_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Re
     }
 }
 
-/// 创建一笔交易（IPC `create_transaction` / 批量导入批次循环，issue #228 / ADR-0033）。
+/// 创建一笔交易（IPC `create_transaction` / 批量导入批次循环 / 余额调整的交易写入，
+/// issue #228 / #310 / ADR-0033）。
 ///
 /// 行为层创建编排入口：`plan → insert_row → apply` 的顺序契约在此单点可达，
 /// 调用方只传连接与输入、处理报错。事务规则见 [`ensure_transaction`]。
