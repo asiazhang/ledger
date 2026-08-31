@@ -89,6 +89,15 @@ function main() {
 
   const tsSet = new Set(scanTsSource(readFileSync(apiFile, 'utf8')))
 
+  // 空集 fail loud（与 build.rs 空集 panic 同界）：任一侧扫不出命令都是灾难性信号
+  // （目录指错 / 扫描器失灵），不应以「0 ↔ 0 双向全等」假绿退出。
+  if (rustByName.size === 0) {
+    problems.push('✗ 未在命令目录扫描到任何 #[tauri::command]——目录为空或路径指错，拒绝以空集假绿通过')
+  }
+  if (tsSet.size === 0) {
+    problems.push('✗ 未在 TS 调用面扫描到任何 invoke 调用——文件为空或路径指错，拒绝以空集假绿通过')
+  }
+
   const missingInTs = [...rustByName.keys()].filter((n) => !tsSet.has(n)).sort()
   const missingInRust = [...tsSet].filter((n) => !rustByName.has(n)).sort()
   if (missingInTs.length > 0) {

@@ -117,4 +117,12 @@ describe('check-commands（命令注册一致性校验）', () => {
     expect(r.output).toMatch(/重复/)
     expect(r.output).toContain('alpha_one')
   })
+
+  it('空集（两侧皆扫不到命令）→ 拒绝以「0 ↔ 0」假绿通过', () => {
+    const args = makeFixture({ 'alpha.rs': '// 无命令的文件' }, 'export const api = {}\n')
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toMatch(/未在命令目录扫描到任何/)
+    expect(r.output).toMatch(/未在 TS 调用面扫描到任何/)
+  })
 })
