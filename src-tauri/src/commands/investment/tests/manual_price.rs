@@ -1,12 +1,14 @@
 //! 手动报价（issue #291 / ADR-0036）：核心接缝 `record_manual_price` 的两落点
-//! 语义与信号发射判定谓词——现价缓存 upsert + 价格历史周采样幂等覆盖（复用
+//! 语义与信号证据归一化——现价缓存 upsert + 价格历史周采样幂等覆盖（复用
 //! 既有周键与整周覆盖语义）、回填早于最新点的旧价只沉淀历史不动现价（最新点
-//! 映像规则）、来源标记 manual、校验拦截。信号发射走 [`should_emit_prices_changed`]
-//! 纯谓词（增量同步谓词先例），模块单测锁定；端到端行为由 BDD 场景承载。
+//! 映像规则）、来源标记 manual、校验拦截。信号证据经
+//! [`ManualPriceResult::any_written`] 归一化（任一落点实际写入），「是否发」的
+//! 判定单点在 signals 映射（ADR-0044 / issue #333），模块单测锁定；端到端行为
+//! 由 BDD 场景承载。
 
 use rusqlite::params;
 
-use crate::commands::investment::manual_price::{record_manual_price, should_emit_prices_changed};
+use crate::commands::investment::manual_price::record_manual_price;
 use crate::models::{InstrumentInput, InstrumentType, ManualPriceInput, ManualPriceResult};
 
 use super::common::setup_db;
@@ -84,26 +86,45 @@ fn history_count(conn: &rusqlite::Connection, instrument_id: &str) -> i64 {
 }
 
 // ---------------------------------------------------------------------------
-// 信号发射判定谓词（生产者清单再添一处，ADR-0031 模式）
+// 信号证据归一化（生产者清单再添一处，ADR-0031 模式 → #333 判定归一化 ADR-0044）：
+// 两落点结果经 `any_written` 归一化为 PriceWritten 证据，发射判定单点在 signals 映射。
 // ---------------------------------------------------------------------------
 
 #[test]
-fn emission_predicate_pins_all_outcome_shapes() {
+fn price_written_evidence_pins_all_outcome_shapes() {
+    use crate::signals::{Signal, WriteEvidence as E, WriteOp as Op, signals_for};
+
+    fn assert_signals(actual: &[Signal], expected: &[Signal]) {
+        assert_eq!(actual, expected);
+    }
+    let signals = |r: &ManualPriceResult| {
+        signals_for(Op::RecordManualPrice, E::PriceWritten(r.any_written()))
+    };
+
     // 任一落点实际写入即发；两落点均未写入（零写入）不广播——失效信号的本义是「数据变了」。
-    assert!(should_emit_prices_changed(&ManualPriceResult {
-        history_written: true,
-        current_price_written: true,
-    }));
+    assert_signals(
+        signals(&ManualPriceResult {
+            history_written: true,
+            current_price_written: true,
+        }),
+        &[Signal::PricesChanged],
+    );
     // 回填旧价：只沉淀历史、不动现价，仍是实际写入 → 广播。
-    assert!(should_emit_prices_changed(&ManualPriceResult {
-        history_written: true,
-        current_price_written: false,
-    }));
+    assert_signals(
+        signals(&ManualPriceResult {
+            history_written: true,
+            current_price_written: false,
+        }),
+        &[Signal::PricesChanged],
+    );
     // 零写入不广播。
-    assert!(!should_emit_prices_changed(&ManualPriceResult {
-        history_written: false,
-        current_price_written: false,
-    }));
+    assert_signals(
+        signals(&ManualPriceResult {
+            history_written: false,
+            current_price_written: false,
+        }),
+        &[],
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 //! 全量同步编排（issue #104 / #147）：分页循环取消与已落库数据保留、连接锁粒度、
 //! SyncState 重入守卫与取消语义、终态进度，以及两同步命令共用的
-//! 价格失效信号判定（issue #236，ADR-0031 决策 2）。
+//! 价格失效信号四终态语义（issue #236，ADR-0031 决策 2；判定单点收进 signals
+//! 映射，ADR-0044 / issue #333）。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -336,20 +337,37 @@ fn terminal_progress_distinguishes_completed_and_cancelled() {
 }
 
 // ---------------------------------------------------------------------------
-// 价格失效信号判定（issue #236，ADR-0031 决策 2）：两同步命令共用的纯判定，
-// 四态钉住——成功有落库 / 零更新 / 中断有落库 / 失败无落库。
+// 价格失效信号（issue #236，ADR-0031 决策 2 → #333 判定归一化 ADR-0044）：
+// 「是否发」单点收进 signals 映射（signals_for），壳层只把终态归一化为证据——
+// 到达保留落库的终态（成功/用户中断）按实际写入 n>0 归一化为 PriceWritten，
+// 失败无 Ok 终态、无证据零信号。四终态语义在此钉住，语义与迁移前一致。
 // ---------------------------------------------------------------------------
 
 #[test]
-fn should_emit_prices_changed_pins_four_terminal_states() {
-    use crate::commands::sync::should_emit_prices_changed;
+fn prices_changed_signal_pins_four_terminal_states() {
+    use crate::signals::{Signal, WriteEvidence as E, WriteOp as Op, signals_for};
+
+    // 终态 → 证据归一化（两同步命令壳层同式）：Some(n) 为到达保留落库的终态
+    // （成功或用户中断）且实际写入 n 条；None 为失败，无证据。
+    fn evidence(written: Option<usize>) -> E {
+        written.map_or(E::None, |n| E::PriceWritten(n > 0))
+    }
+    fn assert_signals(actual: &[Signal], expected: &[Signal]) {
+        assert_eq!(actual, expected);
+    }
 
     // 成功且有落库：发。
-    assert!(should_emit_prices_changed(Some(3)));
+    assert_signals(
+        signals_for(Op::SyncHoldingPrices, evidence(Some(3))),
+        &[Signal::PricesChanged],
+    );
     // 零更新（无持仓/全部跳过，落库 0）：库内零变化，不发。
-    assert!(!should_emit_prices_changed(Some(0)));
-    // 用户中断但有落库（中断保留已落库价格，不发信号即失真）：发。
-    assert!(should_emit_prices_changed(Some(120)));
+    assert_signals(signals_for(Op::SyncHoldingPrices, evidence(Some(0))), &[]);
+    // 用户中断但有落库（中断保留已落库价格，不发信号即失真）：发（全量同步同一映射行）。
+    assert_signals(
+        signals_for(Op::SyncInstruments, evidence(Some(120))),
+        &[Signal::PricesChanged],
+    );
     // 失败且无落库：不发。
-    assert!(!should_emit_prices_changed(None));
+    assert_signals(signals_for(Op::SyncInstruments, evidence(None)), &[]);
 }
