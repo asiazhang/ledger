@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { t } from '@/i18n'
 import { NTabs, NTabPane, NIcon } from 'naive-ui'
 import {
   CalendarOutline,
@@ -47,15 +48,15 @@ function onTabChange(key: string | number) {
 <template>
   <NTabs type="line" :value="activeTab" @update:value="onTabChange">
     <NTabPane name="subscriptions">
-      <template #tab><span class="pane-tab"><NIcon :component="CalendarOutline" />订阅</span></template>
+      <template #tab><span class="pane-tab"><NIcon :component="CalendarOutline" />{{ t('scheduled.tab.subscriptions') }}</span></template>
       <SubscriptionsPane />
     </NTabPane>
     <NTabPane name="installments">
-      <template #tab><span class="pane-tab"><NIcon :component="PulseOutline" />分期</span></template>
+      <template #tab><span class="pane-tab"><NIcon :component="PulseOutline" />{{ t('scheduled.tab.installments') }}</span></template>
       <InstallmentsPane />
     </NTabPane>
     <NTabPane name="transfers">
-      <template #tab><span class="pane-tab"><NIcon :component="SyncOutline" />定时转账</span></template>
+      <template #tab><span class="pane-tab"><NIcon :component="SyncOutline" />{{ t('scheduled.tab.transfers') }}</span></template>
       <TransfersPane />
     </NTabPane>
   </NTabs>

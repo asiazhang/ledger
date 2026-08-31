@@ -1,1 +1,162 @@
-{}
+{
+  "tab": {
+    "subscriptions": "订阅",
+    "installments": "分期",
+    "transfers": "定时转账"
+  },
+  "status": {
+    "active": "进行中",
+    "paused": "已暂停",
+    "cancelled": "已取消",
+    "completed": "已完成"
+  },
+  "occurrenceStatus": {
+    "pending": "待执行",
+    "processing": "执行中",
+    "completed": "已完成",
+    "failed": "失败",
+    "cancelled": "已取消"
+  },
+  "recurrence": {
+    "daily": "每天",
+    "weekly": "每周",
+    "monthly": "每月",
+    "yearly": "每年",
+    "unitDaily": "天",
+    "unitWeekly": "周",
+    "unitMonthly": "月",
+    "unitYearly": "年",
+    "every": "每{unit}",
+    "everyN": "每{n}{unit}"
+  },
+  "action": {
+    "detail": "期次",
+    "pause": "暂停",
+    "resume": "恢复",
+    "cancel": "取消",
+    "edit": "编辑"
+  },
+  "column": {
+    "note": "备注",
+    "merchant": "商户",
+    "category": "分类",
+    "account": "扣款账户",
+    "fromAccount": "转出账户",
+    "toAccount": "转入账户",
+    "amount": "金额",
+    "totalAmount": "总金额",
+    "progress": "进度",
+    "recurrence": "周期",
+    "startDate": "开始日",
+    "status": "状态",
+    "nextCharge": "下期扣款",
+    "nextTransfer": "下期转账",
+    "actions": "操作",
+    "date": "日期",
+    "subscription": "订阅",
+    "occurrencesSuffix": "× {n}期"
+  },
+  "pane": {
+    "subscriptionList": "订阅清单",
+    "createSubscription": "新建订阅",
+    "createSubscriptionSubmit": "创建订阅",
+    "editSubscription": "编辑订阅",
+    "subscriptionLoadError": "加载订阅失败",
+    "subscriptionCancelConfirm": "取消后不再扣款，已生成的交易与历史期次保留。确认取消？",
+    "installmentList": "分期清单",
+    "createInstallment": "新建分期",
+    "createInstallmentSubmit": "创建分期",
+    "installmentLoadError": "加载分期失败",
+    "installmentCancelConfirm": "取消后不再自动扣款，已生成的交易与历史期次保留。确认取消？",
+    "transferList": "定时转账清单",
+    "createTransfer": "新建转账",
+    "createTransferModal": "新建定时转账",
+    "createTransferSubmit": "创建转账",
+    "transferLoadError": "加载定时转账失败",
+    "transferCancelConfirm": "取消后不再自动转账，已生成的交易与历史期次保留。确认取消？"
+  },
+  "form": {
+    "note": "备注",
+    "account": "扣款账户",
+    "fromAccount": "转出账户",
+    "toAccount": "转入账户",
+    "category": "分类",
+    "merchant": "商户",
+    "amount": "金额",
+    "recurrence": "重复",
+    "startDate": "开始日",
+    "totalAmount": "总金额",
+    "periods": "期数",
+    "perPeriod": "每期金额",
+    "totalOccurrences": "总期数",
+    "every": "每",
+    "accountPlaceholder": "选择账户",
+    "categoryPlaceholder": "选择分类",
+    "merchantPlaceholder": "选择商户，可直接输入新名称",
+    "deletedMerchant": "（已删除商户）",
+    "subscriptionNotePlaceholder": "服务名称，如：视频会员",
+    "subscriptionNoteEditPlaceholder": "服务名称",
+    "amountPerPeriodPlaceholder": "每期金额",
+    "installmentNotePlaceholder": "分期用途，如：手机分期",
+    "totalAmountPlaceholder": "分期总金额",
+    "periodsPlaceholder": "总期数",
+    "transferNotePlaceholder": "转账用途，如：月度储蓄",
+    "fromAccountPlaceholder": "选择转出账户",
+    "toAccountPlaceholder": "选择转入账户（与转出同币种）",
+    "totalOccurrencesPlaceholder": "留空为无限循环",
+    "selectAccount": "请选择扣款账户",
+    "selectFromAccount": "请选择转出账户",
+    "selectToAccount": "请选择转入账户",
+    "amountPositive": "请输入大于 0 的金额",
+    "totalPositive": "请输入大于 0 的总金额",
+    "periodsMin": "请输入不小于 1 的期数",
+    "totalBelowPeriods": "总金额不能小于期数（每期至少 1 分）",
+    "cancel": "取消",
+    "save": "保存"
+  },
+  "toast": {
+    "subscriptionCreated": "已创建订阅",
+    "installmentCreated": "已创建分期计划",
+    "transferCreated": "已创建定时转账",
+    "createFailed": "创建失败: {message}",
+    "saved": "已保存",
+    "saveFailed": "保存失败: {message}",
+    "resumed": "已恢复",
+    "operationFailed": "操作失败: {message}"
+  },
+  "list": {
+    "loadFailed": "加载失败"
+  },
+  "preview": {
+    "perPeriod": "每期 {amount}",
+    "withLast": "每期 {per} · 末期 {last}（含尾差）"
+  },
+  "progress": {
+    "repaid": "已还 {paid} / {total} · {count}/{occurrences} 期"
+  },
+  "detail": {
+    "title": "期次详情",
+    "loadFailed": "加载失败",
+    "noNote": "（无备注）",
+    "totalOccurrences": "共 {n} 期",
+    "empty": "暂无期次",
+    "expandMore": "展开更多期次",
+    "retry": "重试",
+    "retrySuccess": "重试成功，交易已入账",
+    "retryFailed": "重试失败: {message}",
+    "expandedCount": "已生成 {n} 期",
+    "noMore": "没有更多期次了",
+    "expandFailed": "展开失败: {message}"
+  },
+  "spend": {
+    "title": "实际花费",
+    "unitCaption": "单位：{currency}（本位币）· 不摊销",
+    "loadFailed": "加载失败，请重试",
+    "thisMonth": "本月实际花费",
+    "thisYear": "本年实际花费",
+    "projectedMonth": "折算月成本（推算）",
+    "projectedYear": "折算年成本（推算）",
+    "projectedNote": "推算：只计进行中的计划",
+    "loadError": "加载订阅花费失败: {message}"
+  }
+}

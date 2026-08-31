@@ -1,1 +1,162 @@
-{}
+{
+  "tab": {
+    "subscriptions": "Subscriptions",
+    "installments": "Installments",
+    "transfers": "Scheduled Transfers"
+  },
+  "status": {
+    "active": "Active",
+    "paused": "Paused",
+    "cancelled": "Cancelled",
+    "completed": "Completed"
+  },
+  "occurrenceStatus": {
+    "pending": "Pending",
+    "processing": "Running",
+    "completed": "Completed",
+    "failed": "Failed",
+    "cancelled": "Cancelled"
+  },
+  "recurrence": {
+    "daily": "Daily",
+    "weekly": "Weekly",
+    "monthly": "Monthly",
+    "yearly": "Yearly",
+    "unitDaily": "day",
+    "unitWeekly": "week",
+    "unitMonthly": "month",
+    "unitYearly": "year",
+    "every": "Every {unit}",
+    "everyN": "Every {n} {unit}s"
+  },
+  "action": {
+    "detail": "Occurrences",
+    "pause": "Pause",
+    "resume": "Resume",
+    "cancel": "Cancel",
+    "edit": "Edit"
+  },
+  "column": {
+    "note": "Note",
+    "merchant": "Merchant",
+    "category": "Category",
+    "account": "Account",
+    "fromAccount": "From Account",
+    "toAccount": "To Account",
+    "amount": "Amount",
+    "totalAmount": "Total",
+    "progress": "Progress",
+    "recurrence": "Frequency",
+    "startDate": "Start Date",
+    "status": "Status",
+    "nextCharge": "Next Charge",
+    "nextTransfer": "Next Transfer",
+    "actions": "Actions",
+    "date": "Date",
+    "subscription": "Subscription",
+    "occurrencesSuffix": "× {n} occurrences"
+  },
+  "pane": {
+    "subscriptionList": "Subscription List",
+    "createSubscription": "New Subscription",
+    "createSubscriptionSubmit": "Create Subscription",
+    "editSubscription": "Edit Subscription",
+    "subscriptionLoadError": "Failed to load subscriptions",
+    "subscriptionCancelConfirm": "No more charges after cancelling. Generated transactions and past occurrences are kept. Confirm cancel?",
+    "installmentList": "Installment List",
+    "createInstallment": "New Installment",
+    "createInstallmentSubmit": "Create Installment",
+    "installmentLoadError": "Failed to load installments",
+    "installmentCancelConfirm": "No more automatic charges after cancelling. Generated transactions and past occurrences are kept. Confirm cancel?",
+    "transferList": "Scheduled Transfer List",
+    "createTransfer": "New Transfer",
+    "createTransferModal": "New Scheduled Transfer",
+    "createTransferSubmit": "Create Transfer",
+    "transferLoadError": "Failed to load scheduled transfers",
+    "transferCancelConfirm": "No more automatic transfers after cancelling. Generated transactions and past occurrences are kept. Confirm cancel?"
+  },
+  "form": {
+    "note": "Note",
+    "account": "Account",
+    "fromAccount": "From Account",
+    "toAccount": "To Account",
+    "category": "Category",
+    "merchant": "Merchant",
+    "amount": "Amount",
+    "recurrence": "Repeat",
+    "startDate": "Start Date",
+    "totalAmount": "Total Amount",
+    "periods": "Occurrences",
+    "perPeriod": "Amount per Occurrence",
+    "totalOccurrences": "Total Occurrences",
+    "every": "Every",
+    "accountPlaceholder": "Select account",
+    "categoryPlaceholder": "Select category",
+    "merchantPlaceholder": "Select merchant, or type a new name",
+    "deletedMerchant": "(Deleted merchant)",
+    "subscriptionNotePlaceholder": "Service name, e.g. video streaming",
+    "subscriptionNoteEditPlaceholder": "Service name",
+    "amountPerPeriodPlaceholder": "Amount per occurrence",
+    "installmentNotePlaceholder": "Purpose, e.g. phone installment",
+    "totalAmountPlaceholder": "Total installment amount",
+    "periodsPlaceholder": "Total occurrences",
+    "transferNotePlaceholder": "Purpose, e.g. monthly savings",
+    "fromAccountPlaceholder": "Select source account",
+    "toAccountPlaceholder": "Select destination account (same currency as source)",
+    "totalOccurrencesPlaceholder": "Leave empty for unlimited",
+    "selectAccount": "Please select an account",
+    "selectFromAccount": "Please select the source account",
+    "selectToAccount": "Please select the destination account",
+    "amountPositive": "Amount must be greater than 0",
+    "totalPositive": "Total amount must be greater than 0",
+    "periodsMin": "Occurrences must be at least 1",
+    "totalBelowPeriods": "Total amount cannot be less than the number of occurrences (at least 0.01 per occurrence)",
+    "cancel": "Cancel",
+    "save": "Save"
+  },
+  "toast": {
+    "subscriptionCreated": "Subscription created",
+    "installmentCreated": "Installment plan created",
+    "transferCreated": "Scheduled transfer created",
+    "createFailed": "Create failed: {message}",
+    "saved": "Saved",
+    "saveFailed": "Save failed: {message}",
+    "resumed": "Resumed",
+    "operationFailed": "Operation failed: {message}"
+  },
+  "list": {
+    "loadFailed": "Load failed"
+  },
+  "preview": {
+    "perPeriod": "{amount} per occurrence",
+    "withLast": "{per} per occurrence · last one {last} (incl. rounding remainder)"
+  },
+  "progress": {
+    "repaid": "Repaid {paid} / {total} · {count}/{occurrences} occurrences"
+  },
+  "detail": {
+    "title": "Occurrence Details",
+    "loadFailed": "Load failed",
+    "noNote": "(No note)",
+    "totalOccurrences": "{n} occurrences in total",
+    "empty": "No occurrences yet",
+    "expandMore": "Expand more occurrences",
+    "retry": "Retry",
+    "retrySuccess": "Retry succeeded, transaction recorded",
+    "retryFailed": "Retry failed: {message}",
+    "expandedCount": "Generated {n} occurrences",
+    "noMore": "No more occurrences",
+    "expandFailed": "Expand failed: {message}"
+  },
+  "spend": {
+    "title": "Actual Spend",
+    "unitCaption": "Unit: {currency} (base currency) · not amortized",
+    "loadFailed": "Load failed, please retry",
+    "thisMonth": "Actual Spend This Month",
+    "thisYear": "Actual Spend This Year",
+    "projectedMonth": "Projected Monthly Cost",
+    "projectedYear": "Projected Yearly Cost",
+    "projectedNote": "Projection counts active plans only",
+    "loadError": "Failed to load subscription spend: {message}"
+  }
+}

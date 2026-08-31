@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
 import { computed, h, onMounted, ref, watch, type VNode } from 'vue'
+import { t } from '@/i18n'
 import {
   NCard,
   NButton,
@@ -25,7 +26,7 @@ import { useReferenceStore } from '@/stores/reference'
 import {
   earliestPendingOccurrence,
   scheduledRecurrenceLabel,
-  SCHEDULED_RECURRENCE_OPTIONS,
+  scheduledRecurrenceOptions,
   useScheduledPlanList,
   type ScheduledPlanRow,
 } from '@/composables/useScheduledPlanList'
@@ -63,8 +64,8 @@ const list = useScheduledPlanList<TransferExt>({
   expandDetail: (_plan, detail) => ({
     next: detail ? earliestPendingOccurrence(detail) : null,
   }),
-  loadErrorText: '加载定时转账失败',
-  cancelConfirmText: '取消后不再自动转账，已生成的交易与历史期次保留。确认取消？',
+  loadErrorText: () => t('scheduled.pane.transferLoadError'),
+  cancelConfirmText: () => t('scheduled.pane.transferCancelConfirm'),
   onOpenDetail: (row) => void planDetailRef.value?.open(row.plan.core.id),
 })
 const { loading, statusFilter, statusFilterOptions, filteredRows } = list
@@ -134,16 +135,16 @@ function resetCreateForm() {
 
 async function create() {
   if (!fromAccountId.value) {
-    message.warning('请选择转出账户')
+    message.warning(t('scheduled.form.selectFromAccount'))
     return
   }
   if (!toAccountId.value) {
-    message.warning('请选择转入账户')
+    message.warning(t('scheduled.form.selectToAccount'))
     return
   }
   const amountCents = yuanToCents(amountYuan.value)
   if (amountCents === null || amountCents <= 0) {
-    message.warning('请输入大于 0 的金额')
+    message.warning(t('scheduled.form.amountPositive'))
     return
   }
   try {
@@ -156,12 +157,12 @@ async function create() {
         specific: { to_account_id: toAccountId.value, total_occurrences: totalOccurrences.value },
       }),
     )
-    message.success('已创建定时转账')
+    message.success(t('scheduled.toast.transferCreated'))
     showCreateModal.value = false
     resetCreateForm()
     await list.load()
   } catch (e) {
-    message.error(`创建失败: ${errorMessage(e)}`)
+    message.error(t('scheduled.toast.createFailed', { message: errorMessage(e) }))
   }
 }
 
@@ -173,20 +174,23 @@ function statusLabel(status: string): string {
   return scheduledStatusLabel(status)
 }
 
-const columns: DataTableColumns<TransferRow> = [
+/** 周期下拉选项（computed 现取标签，切语言即时生效） */
+const recurrenceOptions = computed(scheduledRecurrenceOptions)
+
+const columns = computed<DataTableColumns<TransferRow>>(() => [
   {
-    title: '备注',
+    title: t('scheduled.column.note'),
     key: 'note',
     render: (row) => row.plan.core.note ?? '—',
   },
   {
-    title: '转出账户',
+    title: t('scheduled.column.fromAccount'),
     key: 'from',
     render: (row) =>
       reference.accountMap.get(row.plan.core.account_id)?.name ?? row.plan.core.account_id,
   },
   {
-    title: '转入账户',
+    title: t('scheduled.column.toAccount'),
     key: 'to',
     render: (row) => {
       const id = row.plan.to_account_id
@@ -194,21 +198,21 @@ const columns: DataTableColumns<TransferRow> = [
     },
   },
   {
-    title: '金额',
+    title: t('scheduled.column.amount'),
     key: 'amount',
     render: (row) =>
-      `${formatAmount(row.plan.core.amount_cents, reference.getCurrency(row.plan.core.currency_code))}${row.plan.total_occurrences != null ? ` × ${row.plan.total_occurrences}期` : ''}`,
+      `${formatAmount(row.plan.core.amount_cents, reference.getCurrency(row.plan.core.currency_code))}${row.plan.total_occurrences != null ? ` ${t('scheduled.column.occurrencesSuffix', { n: row.plan.total_occurrences })}` : ''}`,
   },
   {
-    title: '周期',
+    title: t('scheduled.column.recurrence'),
     key: 'recurrence',
     render: (row) =>
       scheduledRecurrenceLabel(row.plan.core.recurrence_type, row.plan.core.recurrence_interval),
   },
-  { title: '开始日', key: 'start_date', render: (row) => row.plan.core.start_date },
-  { title: '状态', key: 'status', render: (row) => statusLabel(row.plan.core.status) },
+  { title: t('scheduled.column.startDate'), key: 'start_date', render: (row) => row.plan.core.start_date },
+  { title: t('scheduled.column.status'), key: 'status', render: (row) => statusLabel(row.plan.core.status) },
   {
-    title: '下期转账',
+    title: t('scheduled.column.nextTransfer'),
     key: 'next',
     // 测试锚点：无 pending 期次（预生成窗口之外）时断言占位，不现场推算日期
     render: (row) =>
@@ -218,12 +222,12 @@ const columns: DataTableColumns<TransferRow> = [
         row.ext.next
           ? `${row.ext.next.scheduled_date} · ${formatAmount(row.ext.next.amount_cents, reference.getCurrency(row.plan.core.currency_code))}`
           : row.detailFailed
-            ? '加载失败'
+            ? t('scheduled.list.loadFailed')
             : '—',
       ),
   },
   {
-    title: '操作',
+    title: t('scheduled.column.actions'),
     key: 'actions',
     // 行操作描述符（可用性矩阵/标签/run）由模块构建；此处按描述符渲染，
     // 含 confirm 文案的动作经 AppPopconfirm 二次确认（弹层纪律 ADR-0035）
@@ -265,7 +269,7 @@ const columns: DataTableColumns<TransferRow> = [
       return h(NSpace, { size: 4 }, () => buttons)
     },
   },
-]
+])
 
 onMounted(() => {
   void list.load()
@@ -274,7 +278,7 @@ onMounted(() => {
 
 <template>
   <NSpace vertical :size="16">
-    <NCard title="定时转账清单" size="small">
+    <NCard :title="t('scheduled.pane.transferList')" size="small">
       <template #header-extra>
         <NSpace :size="12">
           <NButtonGroup size="small">
@@ -294,7 +298,7 @@ onMounted(() => {
             data-testid="transfer-create-open"
             @click="showCreateModal = true"
           >
-            新建转账
+            {{ t('scheduled.pane.createTransfer') }}
           </NButton>
         </NSpace>
       </template>
@@ -311,7 +315,7 @@ onMounted(() => {
     <!-- 新建定时转账弹窗：转入候选按转出账户币种过滤，无商户字段（issue #203） -->
     <AppModal
       v-model:show="showCreateModal"
-      title="新建定时转账"
+      :title="t('scheduled.pane.createTransferModal')"
       preset="card"
       display-directive="if"
       style="width: 480px"
@@ -319,37 +323,37 @@ onMounted(() => {
     >
       <NForm label-placement="left" :show-feedback="false" size="small">
         <NSpace vertical :size="12">
-          <NFormItem label="备注">
+          <NFormItem :label="t('scheduled.form.note')">
             <NInput
               v-model:value="note"
               data-testid="transfer-note"
-              placeholder="转账用途，如：月度储蓄"
+              :placeholder="t('scheduled.form.transferNotePlaceholder')"
               style="width: 280px"
             />
           </NFormItem>
-          <NFormItem label="转出账户">
+          <NFormItem :label="t('scheduled.form.fromAccount')">
             <PinyinSelect
               v-model:value="fromAccountId"
               :options="accountOptions"
-              placeholder="选择转出账户"
+              :placeholder="t('scheduled.form.fromAccountPlaceholder')"
               style="width: 200px"
               data-testid="transfer-from-account"
             />
           </NFormItem>
-          <NFormItem label="转入账户">
+          <NFormItem :label="t('scheduled.form.toAccount')">
             <PinyinSelect
               v-model:value="toAccountId"
               :options="toAccountOptions"
-              placeholder="选择转入账户（与转出同币种）"
+              :placeholder="t('scheduled.form.toAccountPlaceholder')"
               style="width: 200px"
               data-testid="transfer-to-account"
             />
           </NFormItem>
-          <NFormItem label="金额">
+          <NFormItem :label="t('scheduled.form.amount')">
             <NInput
               v-model:value="amountYuan"
               data-testid="transfer-amount"
-              placeholder="每期金额"
+              :placeholder="t('scheduled.form.amountPerPeriodPlaceholder')"
               style="width: 160px"
             />
             <AppSelect
@@ -359,9 +363,9 @@ onMounted(() => {
               style="width: 130px; margin-left: 8px"
             />
           </NFormItem>
-          <NFormItem label="重复">
+          <NFormItem :label="t('scheduled.form.recurrence')">
             <NSpace :size="8" align="center" :wrap="false">
-              <span>每</span>
+              <span>{{ t('scheduled.form.every') }}</span>
               <NInputNumber
                 v-model:value="recurrenceInterval"
                 :min="1"
@@ -370,23 +374,23 @@ onMounted(() => {
               />
               <AppSelect
                 v-model:value="recurrenceType"
-                :options="[...SCHEDULED_RECURRENCE_OPTIONS]"
+                :options="recurrenceOptions"
                 data-testid="transfer-recurrence"
                 style="width: 90px"
               />
             </NSpace>
           </NFormItem>
-          <NFormItem label="总期数">
+          <NFormItem :label="t('scheduled.form.totalOccurrences')">
             <NInputNumber
               v-model:value="totalOccurrences"
               :min="1"
               :precision="0"
-              placeholder="留空为无限循环"
+              :placeholder="t('scheduled.form.totalOccurrencesPlaceholder')"
               data-testid="transfer-total-occurrences"
               style="width: 200px"
             />
           </NFormItem>
-          <NFormItem label="开始日">
+          <NFormItem :label="t('scheduled.form.startDate')">
             <AppDatePicker
               v-model:formatted-value="startDate"
               type="date"
@@ -396,10 +400,10 @@ onMounted(() => {
           </NFormItem>
           <NSpace justify="end">
             <NButton data-testid="transfer-create-cancel" @click="showCreateModal = false">
-              取消
+              {{ t('scheduled.form.cancel') }}
             </NButton>
             <NButton type="primary" data-testid="transfer-create" @click="create">
-              创建转账
+              {{ t('scheduled.pane.createTransferSubmit') }}
             </NButton>
           </NSpace>
         </NSpace>
