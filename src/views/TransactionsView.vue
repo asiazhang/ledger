@@ -28,6 +28,7 @@ import AddItemForm from '@/components/AddItemForm.vue'
 import { buildRowMenuOptions } from '@/components/transaction-row-menu'
 import { useCreateShortcuts, CREATE_KIND_KEYS } from '@/composables/useCreateShortcuts'
 import { useTransactionFilter } from '@/composables/useTransactionFilter'
+import { useTransactionModalState } from '@/composables/useTransactionModalState'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useItemsStore } from '@/stores/items'
@@ -133,10 +134,12 @@ watch(() => route.query, (query) => syncUrlQuery(query), { immediate: true })
 /** 页大小选项（不持久化，遵守 ViewState 决策） */
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
 
-/** 「记一笔」分裂按钮（issue #150）：主体点击直接以 expense 打开弹窗（最高频路径一步直达），
- * 右侧箭头展开 5 项菜单（不含退款）。createKind 为 null 表示弹窗关闭；
- * 类型由入口单点表达，弹窗内不再提供切换，中途换类型 = 关闭重开。 */
-const createKind = ref<CreateTransactionKind | null>(null)
+/** 交易弹窗编排（ADR-0045）：记一笔（create）开启/关闭/意图/序号统一经模块单点，
+ * 显示开关由「意图非空且意图为 create」派生（无独立 show 布尔），视图以 `intent.type` 判别当前弹窗；
+ * 序号随 open 递增内化（作表单 key 强制重建）；
+ * 类型由入口单点表达，弹窗内不提供切换，中途换类型 = 关闭重开。
+ * 退款 / 编辑 / 加入物品三弹窗仍持本地 show/source/seq 三件套，后续票（#339 / #340）逐步迁入同一模块实例。 */
+const { intent, seq, open: openModal, close: closeModal } = useTransactionModalState()
 
 /** 下拉选项：5 种可创建类型（refund 不在入口：退款已移出表单域，入口由交易条目
  * 右键菜单承接，独立 ticket 落地前处于过渡态）。标签后附裸键快捷键提示（issue #153），
@@ -146,26 +149,24 @@ const createKindOptions: DropdownOption[] = CREATE_KINDS.map((k) => ({
   key: k,
 }))
 
-const createTitle = computed(() =>
-  createKind.value ? `记一笔 · ${TRANSACTION_KIND_LABELS[createKind.value]}` : '记一笔',
-)
+const createTitle = computed(() => {
+  const current = intent.value
+  return current?.type === 'create' ? `记一笔 · ${TRANSACTION_KIND_LABELS[current.kind]}` : '记一笔'
+})
 
+/** 记一笔三类入口（顶栏主体 / 子类型下拉 / 裸键快捷键）统一经模块开启。 */
 function openCreate(k: CreateTransactionKind) {
-  createKind.value = k
-}
-
-function onCreateShowUpdate(show: boolean) {
-  if (!show) createKind.value = null
+  void openModal({ type: 'create', kind: k })
 }
 
 // 裸键快捷键（issue #153）：a/z/i/b/s 直达对应类型弹窗，与点下拉对应项同一入口；
 // 焦点在可编辑元素或弹层打开时抑制；随视图装卸，仅交易页生效
 useCreateShortcuts(openCreate)
 
-/** 提交成功：回填意图 refresh（重拉 + 翻回第 1 页，新记录按日期/时间排序最可能落在第 1 页），
- * 保留筛选条件（与手动过滤同等语义，不重置）。 */
+/** 提交成功：关窗（模块意图清回终态），回填意图 refresh（重拉 + 翻回第 1 页，
+ * 新记录按日期/时间排序最可能落在第 1 页），保留筛选条件（与手动过滤同等语义，不重置）。 */
 function onFormCreated() {
-  createKind.value = null
+  closeModal()
   refresh()
 }
 
@@ -450,19 +451,20 @@ onMounted(() => {
       </NButtonGroup>
     </NSpace>
     <!-- 快速记账弹窗：标题标明入口选定类型，内嵌收窄后的 TransactionForm（无类型单选），
-         提交成功关闭并刷新列表 -->
+         提交成功关闭并刷新列表；显示开关由模块意图派生，序号作表单 key 强制重建（ADR-0045） -->
     <AppModal
-      :show="createKind !== null"
+      :show="intent?.type === 'create'"
       :title="createTitle"
       preset="card"
       display-directive="if"
       style="width: 480px"
       :bordered="false"
-      @update:show="onCreateShowUpdate"
+      @update:show="(show: boolean) => { if (!show) closeModal() }"
     >
       <TransactionForm
-        v-if="createKind"
-        :kind="createKind"
+        v-if="intent?.type === 'create'"
+        :key="seq"
+        :kind="intent.kind"
         @created="onFormCreated"
       />
     </AppModal>
