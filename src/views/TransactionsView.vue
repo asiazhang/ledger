@@ -71,11 +71,10 @@ const {
   syncUrlQuery,
 } = useTransactionFilter()
 
-// 行操作弹窗编排（ADR-0045）：意图闭集四为唯一事实源，显示开关由「意图非空」派生，
-// 回调序号随 open 递增内化（作表单 key 强制重建实例）。本票（#339）先接线退款与
-// 加入物品两同步弹窗；记一笔（#338）与编辑（#340）仍走各自过渡态，后续票接线。
-const { intent: modalIntent, seq: modalSeq, open: openModal, close: closeModal } =
-  useTransactionModalState()
+// 行操作弹窗编排（ADR-0045）：意图闭集为唯一事实源，显示开关由「意图非空」派生，
+// 回调序号随 open 递增内化（作表单 key 强制重建实例）。记一笔（#338）与退款/加入物品
+// （#339）同经本模块实例开启；编辑（#340）仍走本地 show/editTarget 过渡态，后续票接线。
+const { intent, seq, open: openModal, close: closeModal } = useTransactionModalState()
 
 /** 是否有任一激活的过滤条件（控制清除按钮可用性与空态文案）。 */
 const filtersActive = computed(() => Object.values(filters).some((v) => v !== null))
@@ -140,12 +139,8 @@ watch(() => route.query, (query) => syncUrlQuery(query), { immediate: true })
 /** 页大小选项（不持久化，遵守 ViewState 决策） */
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
 
-/** 交易弹窗编排（ADR-0045）：记一笔（create）开启/关闭/意图/序号统一经模块单点，
- * 显示开关由「意图非空且意图为 create」派生（无独立 show 布尔），视图以 `intent.type` 判别当前弹窗；
- * 序号随 open 递增内化（作表单 key 强制重建）；
- * 类型由入口单点表达，弹窗内不提供切换，中途换类型 = 关闭重开。
- * 退款 / 编辑 / 加入物品三弹窗仍持本地 show/source/seq 三件套，后续票（#339 / #340）逐步迁入同一模块实例。 */
-const { intent, seq, open: openModal, close: closeModal } = useTransactionModalState()
+/** 记一笔（create）经共享模块实例开启（意图/序号见上方编排声明）：
+ * 类型由入口单点表达，弹窗内不提供切换，中途换类型 = 关闭重开。 */
 
 /** 下拉选项：5 种可创建类型（refund 不在入口：退款已移出表单域，入口由交易条目
  * 右键菜单承接，独立 ticket 落地前处于过渡态）。标签后附裸键快捷键提示（issue #153），
@@ -474,7 +469,7 @@ onMounted(() => {
          金额默认原交易金额（可改）；提交走现有 kind=refund 写路径。
          开启/关闭经 TransactionModalState 编排（目标行由意图携带，序号作表单 key）。 -->
     <AppModal
-      :show="modalIntent?.type === 'refund'"
+      :show="intent?.type === 'refund'"
       title="退款"
       preset="card"
       display-directive="if"
@@ -483,16 +478,16 @@ onMounted(() => {
       @update:show="onModalShowUpdate"
     >
       <RefundForm
-        :key="modalSeq"
-        v-if="modalIntent?.type === 'refund'"
-        :fixed-target="modalIntent.row"
+        :key="seq"
+        v-if="intent?.type === 'refund'"
+        :fixed-target="intent.row"
         @created="onRefundCreated"
       />
     </AppModal>
     <!-- 「加入物品」确认弹窗（issue #119）：原交易由右键所在行固定，自动带出只读展示。
          开启/关闭经 TransactionModalState 编排（目标行由意图携带，序号作表单 key）。 -->
     <AppModal
-      :show="modalIntent?.type === 'add-item'"
+      :show="intent?.type === 'add-item'"
       title="加入物品"
       preset="card"
       display-directive="if"
@@ -501,9 +496,9 @@ onMounted(() => {
       @update:show="onModalShowUpdate"
     >
       <AddItemForm
-        :key="modalSeq"
-        v-if="modalIntent?.type === 'add-item'"
-        :transaction="modalIntent.row"
+        :key="seq"
+        v-if="intent?.type === 'add-item'"
+        :transaction="intent.row"
         @created="closeAddItem"
         @cancel="closeAddItem"
       />
