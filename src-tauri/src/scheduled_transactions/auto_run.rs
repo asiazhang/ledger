@@ -114,6 +114,9 @@ pub fn run_catch_up(conn: &Connection, enabled: bool, today: NaiveDate) -> Catch
             failed = summary.failed,
             "定时计划自动执行追补完成"
         );
+    } else {
+        // 空转/无动作轮（含开关关闭）：每 10 分钟一轮，只落 debug 避免刷屏。
+        tracing::debug!(due = summary.due, enabled, "定时计划自动执行追补本轮无动作");
     }
     summary
 }
@@ -144,4 +147,21 @@ fn mark_failed(conn: &Connection, occurrence_id: &str) -> Result<()> {
         params![occurrence_id, now_iso(), device_id()],
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 运行时镜像默认关（验收⑤：后端运行时镜像默认关）：未推送即关，
+    /// 推送命令可翻转并可复位。追补行为测试不消费镜像（开关一律注入），
+    /// 故进程级 static 在并行测试间无干扰。
+    #[test]
+    fn mirror_defaults_off_and_push_flips() {
+        assert!(!is_enabled(), "镜像默认关");
+        set_enabled(true);
+        assert!(is_enabled(), "推送开启后应翻转");
+        set_enabled(false);
+        assert!(!is_enabled(), "推送关闭后应复位");
+    }
 }
