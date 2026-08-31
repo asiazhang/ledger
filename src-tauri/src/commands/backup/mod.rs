@@ -21,7 +21,7 @@ use crate::{
     auto_backup,
     db::DbState,
     error::{AppError, Result},
-    events,
+    signals::{WriteEvidence, WriteOp, emit_for},
 };
 
 pub use core::*;
@@ -72,13 +72,14 @@ pub fn list_backups(dir: String) -> Result<Vec<BackupFileInfo>> {
 }
 
 /// 将备份目录中的受管备份修剪到最多 `keep` 个（删除最旧的超出部分）。
-/// 清理成功后发出 `ledger:backups-changed` 信号（issue #129），前端列表随之自动刷新。
+/// 清理成功后发出 `ledger:backups-changed` 信号（issue #129，经信号映射单点
+/// `signals::emit_for` 判定发射，ADR-0044），前端列表随之自动刷新。
 #[tauri::command]
 pub fn prune_backups(app: AppHandle, dir: String, keep: i64) -> Result<PruneResult> {
     let keep = usize::try_from(keep)
         .map_err(|_| AppError::Invalid(format!("备份保留上限非法: {keep}")))?;
     let r = core::prune_managed_backups(Path::new(&dir), keep)?;
-    events::emit_backups_changed(&app);
+    emit_for(&app, WriteOp::PruneBackups, WriteEvidence::None);
     Ok(r)
 }
 

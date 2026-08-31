@@ -6,14 +6,13 @@
 //!
 //! - `ledger:changed`（issue #79）：参考数据（`currencies / accounts / categories / merchants`）
 //!   任一写入成功后由调用方 emit，前端 `useReferenceStore` 订阅后自动重拉参考表。
-//!   发射判定已迁往映射单点：三壳全部迁完——参考数据四表写命令、物品写命令
-//!   （独立域复用同名事件，ADR-0014）与余额调整（黑洞即建证据）经
-//!   `signals::emit_for` 判定后发射（#332）；HTTP 壳亦已改经 `signals` 映射单点
-//!   发射，不再经本模块（#334）。交易类写入不在清单内（唯一的参考表变更例外——
-//!   交易写「即建商户」——经 `signals` 映射单点携证据发射，ADR-0044 / issue #331）。
-//!   旧字符串白名单（[`REFERENCE_WRITE_COMMANDS`] / [`is_reference_write`] /
-//!   [`emit_reference_changed`]）生产调用点已清零，按 #330 约定暂留，
-//!   待 #335 统一收缩删除。
+//!   发射判定在映射单点：两壳（IPC / HTTP）全部写命令经 `signals::emit_for`
+//!   按写操作身份 + 结果证据判定后发射（ADR-0044 / #332-#334）；交易类写入基线零信号
+//!   （唯一例外——交易写「即建商户」——同样经 `signals` 映射携证据发射，
+//!   ADR-0044 / issue #331）。旧字符串白名单机制（`REFERENCE_WRITE_COMMANDS` /
+//!   `is_reference_write` / `emit_reference_changed` / `emit_ledger_changed_if_present`）
+//!   已随 #335 收缩删除，「谁发什么」的判定知识唯一载体是 `signals` 映射单点，
+//!   壳侧接线由两壳声明表 × 映射表交叉核对兜底（`signals_cross_check`）。
 //! - `ledger:backups-changed`（issue #129）：自动备份完成 / 受管备份清理成功后 emit，
 //!   与前者平行、同样无 payload；前端设置页订阅后自动刷新备份列表与自动备份状态。
 //!   深路径执行点拿不到 `AppHandle`，经 [`init_event_app`] 注入的镜像句柄发射。
@@ -78,82 +77,15 @@ pub fn emit_prices_changed(app: &AppHandle) {
     let _ = app.emit(PRICES_CHANGED, ());
 }
 
-/// 参考写入 IPC 命令清单：命中即改动参考表，成功后应 emit `ledger:changed`。
-/// 旧机制遗留（生产调用点已清零，见下），新增写命令不再扩充本清单——
-/// 改在 `signals::WriteOp` 声明身份并入映射（ADR-0044）；本清单仅由既有单测锁定。
-const REFERENCE_WRITE_COMMANDS: &[&str] = &[
-    "create_account",
-    "update_account",
-    "delete_account",
-    "create_category",
-    "update_category",
-    "reorder_categories",
-    "delete_category",
-    "create_merchant",
-    "update_merchant",
-    "delete_merchant",
-];
-
-/// 薄胶判定：该 IPC 命令是否为参考写入（决定写入成功后是否发失效信号）。
-///
-/// **旧机制，生产调用点已清零**（#332 起 IPC 壳改走 `signals::signals_for` 映射
-/// 单点，ADR-0044）；按 #330 约定暂留，待 #335 统一收缩删除，勿在新代码中调用。
-pub fn is_reference_write(command: &str) -> bool {
-    REFERENCE_WRITE_COMMANDS.contains(&command)
-}
-
 /// 发出 `ledger:changed` 信号（无 payload）。事件发射失败不影响写入结果，静默忽略。
+/// 「发不发」不在本模块判定：壳层经 `signals` 映射单点判定（ADR-0044）后才走到这里。
 pub fn emit_ledger_changed(app: &AppHandle) {
     let _ = app.emit(LEDGER_CHANGED, ());
-}
-
-/// 旧 HTTP 壳发射入口（issue #334 后已无调用者：HTTP 壳改经 `signals` 映射单点发射，
-/// `Option` 跳过语义收口在壳层 `emit_after_write`）：`app` 为 `Option` 仅为集成测试留的缝
-/// （不经真实 Tauri 运行时构建路由，传 `None` 跳过发射）。待 #335 随旧机制统一收缩删除。
-pub fn emit_ledger_changed_if_present(app: &Option<AppHandle>) {
-    if let Some(app) = app {
-        emit_ledger_changed(app);
-    }
-}
-
-/// 参考写入 IPC 命令成功后统一入口：以命令名为证据走 [`is_reference_write`] 判定，
-/// 命中才发射。
-///
-/// **旧机制，生产调用点已清零**（#332 起 IPC 壳改走 `signals::emit_for` 映射单点，
-/// ADR-0044）；按 #330 约定暂留，待 #335 统一收缩删除，勿在新代码中调用。
-pub fn emit_reference_changed(app: &AppHandle, command: &str) {
-    if is_reference_write(command) {
-        emit_ledger_changed(app);
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn reference_write_commands_are_recognized() {
-        for cmd in REFERENCE_WRITE_COMMANDS {
-            assert!(is_reference_write(cmd), "「{cmd}」应为参考写入");
-        }
-    }
-
-    #[test]
-    fn non_reference_writes_are_rejected() {
-        // 交易类写入与只读命令不得误判为参考写入（旧清单不含交易写；「即建商户」
-        // 例外走 signals 映射单点，不经本判定，ADR-0044 / issue #331）。
-        for cmd in [
-            "create_transaction",
-            "create_transactions",
-            "delete_transaction",
-            "list_accounts",
-            "list_categories",
-            "list_transactions",
-            "create_budget",
-        ] {
-            assert!(!is_reference_write(cmd), "「{cmd}」不应视为参考写入");
-        }
-    }
 
     #[test]
     fn event_name_is_generic() {
