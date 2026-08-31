@@ -1,1 +1,206 @@
-{}
+{
+  "tabs": {
+    "general": "通用",
+    "categories": "分类",
+    "merchants": "商户",
+    "data": "数据",
+    "scheduled": "定时",
+    "about": "关于"
+  },
+  "categories": {
+    "kindExpense": "支出",
+    "kindIncome": "收入",
+    "addTitle": "新增分类",
+    "listTitle": "分类列表",
+    "form": {
+      "name": "名称",
+      "namePlaceholder": "分类名称",
+      "parent": "父分类",
+      "parentNone": "无（顶级）",
+      "parentPlaceholder": "选择父分类",
+      "icon": "图标",
+      "iconPlaceholder": "图标名",
+      "add": "添加",
+      "save": "保存"
+    },
+    "txForm": {
+      "amount": "金额",
+      "amountPlaceholder": "金额",
+      "account": "账户",
+      "accountPlaceholder": "选择账户",
+      "category": "分类",
+      "categoryPlaceholder": "选择分类",
+      "merchant": "商户",
+      "merchantPlaceholder": "选择商户，可直接输入新名称",
+      "date": "日期",
+      "note": "备注",
+      "notePlaceholder": "备注（可选）",
+      "saveEdits": "保存修改"
+    },
+    "tree": {
+      "edit": "编辑",
+      "delete": "删除",
+      "deleteConfirm": "确认删除？"
+    },
+    "editModal": {
+      "title": "编辑分类"
+    },
+    "msg": {
+      "nameRequired": "请输入分类名称",
+      "parentMissing": "父分类不存在",
+      "parentKindMismatch": "父分类类型需一致",
+      "parentMustBeRoot": "父分类必须为顶级",
+      "added": "已添加分类",
+      "addFailed": "添加失败: {msg}",
+      "updated": "已更新分类",
+      "updateFailed": "更新失败: {msg}",
+      "deleted": "已删除",
+      "deleteFailed": "删除失败: {msg}",
+      "sortFailed": "排序失败: {msg}",
+      "merchantDeleted": "（已删除商户）",
+      "accountRequired": "请选择账户",
+      "amountRequired": "请输入金额",
+      "saved": "已保存修改",
+      "expenseRecorded": "已记支出",
+      "incomeRecorded": "已记收入",
+      "saveFailed": "保存失败: {msg}",
+      "recordFailed": "记账失败: {msg}"
+    }
+  },
+  "merchants": {
+    "addTitle": "新增商户",
+    "listTitle": "商户列表",
+    "form": {
+      "name": "名称",
+      "namePlaceholder": "商户名称",
+      "add": "添加",
+      "save": "保存"
+    },
+    "columns": {
+      "name": "名称",
+      "actions": "操作"
+    },
+    "rowActions": {
+      "edit": "编辑",
+      "delete": "删除"
+    },
+    "deleteConfirm": "确认删除该商户？历史交易仍会显示它的名字。",
+    "editModal": {
+      "title": "编辑商户"
+    },
+    "msg": {
+      "nameRequired": "请输入商户名称",
+      "added": "已添加商户",
+      "addFailed": "添加失败: {msg}",
+      "updated": "已更新商户",
+      "updateFailed": "更新失败: {msg}",
+      "deleted": "已删除商户",
+      "deleteFailed": "删除失败: {msg}"
+    }
+  },
+  "data": {
+    "backup": {
+      "dirTitle": "备份目录",
+      "dirHint": "配置默认备份目录后，“一键备份”将直接写入该目录，无需每次选择位置。",
+      "dirUnset": "未设置（备份时将弹出位置选择）",
+      "changeDir": "更改目录",
+      "chooseDir": "选择目录",
+      "clear": "清除",
+      "keepLimitLabel": "备份保留上限",
+      "keepLimitSuffix": "个（1–100）。超出上限的最旧备份会在备份后自动清理。",
+      "columns": {
+        "fileName": "文件名",
+        "source": "来源",
+        "size": "大小",
+        "time": "备份时间"
+      },
+      "listTitle": "备份文件列表",
+      "count": "当前共 {n} 个备份，上限 {max} 个。",
+      "pruneNow": "立即清理",
+      "emptyWithDir": "备份目录中暂无备份文件",
+      "emptyNoDir": "未设置备份目录",
+      "restoreTitle": "恢复",
+      "restoreHintBefore": "从备份文件恢复将",
+      "restoreHintStrong": "替换当前全部数据",
+      "restoreHintAfter": "（破坏性操作）。恢复前系统会自动备份当前数据到应用数据目录；恢复成功后应用将自动重启。",
+      "restoreButton": "从备份恢复…",
+      "autoTitle": "自动备份",
+      "autoSwitchLabel": "开启后每 24 小时检查一次，数据有变化时自动备份",
+      "autoLast": "上次自动备份：",
+      "autoLastNever": "从未",
+      "autoNeedDir": "设置备份目录后自动备份生效",
+      "backupTitle": "备份",
+      "backupHint": "将当前账本（账户、交易、预算、投资持仓、定时交易等全部数据）打包备份为一个文件。备份不含主题、默认币种等界面偏好。",
+      "backupOnce": "一键备份",
+      "backupAs": "另存为…",
+      "lastBackup": "最近备份："
+    },
+    "location": {
+      "title": "数据存储位置",
+      "hint": "账本数据库所在目录。更改位置后，应用将在下次启动时自动把现有数据库完整搬迁到新位置，原位置库文件永久保留作为安全网；恢复默认走同一流程。",
+      "fallbackTitle": "已回退到默认位置",
+      "fallbackBody": "配置的位置不可用：{reason}。已自动回退到默认位置，原库仍在原地未动，可重新更改位置或保持现状。",
+      "pendingTitle": "已更改，待重启生效",
+      "pendingBody": "新位置：{dir}。将在下次启动时自动搬迁生效，在此之前数据仍写入当前位置。",
+      "activeLabel": "当前生效位置：",
+      "reading": "读取中…",
+      "retry": "重试",
+      "change": "更改…",
+      "restoreDefault": "恢复默认",
+      "pickTitle": "选择数据存储位置",
+      "adoptTitle": "接管已有账本库？",
+      "adoptBody": "目标目录已存在同名账本库（ledger.db）。\n\n接管则把该库作为活动数据；取消换位则放弃本次更改（不做任何改动）。接管后原位置库文件仍会保留。",
+      "adoptOk": "接管该库",
+      "adoptCancel": "取消换位",
+      "cancelled": "已取消更改，数据存储位置未变化",
+      "committed": "更改已保存，将在下次启动时搬迁生效"
+    },
+    "source": {
+      "auto": "自动",
+      "manual": "手动"
+    },
+    "msg": {
+      "dirPickTitle": "选择备份目录",
+      "dirSet": "备份目录已设置",
+      "autoStateFailed": "读取自动备份状态失败: {msg}",
+      "autoOn": "自动备份已开启",
+      "autoOff": "自动备份已关闭",
+      "autoToggleFailed": "更新自动备份开关失败: {msg}",
+      "listFailed": "读取备份列表失败: {msg}",
+      "prunePartial": "清理完成：已删除 {deleted} 个，{failed} 个失败",
+      "pruneDone": "已清理 {n} 个旧备份",
+      "pruneFailed": "清理备份失败: {msg}",
+      "pruneNotNeeded": "无需清理：备份数量未超过上限",
+      "pruneConfirm": "将删除最旧的 {n} 个备份，删除后不可恢复。确定继续吗？",
+      "pruneConfirmTitle": "确认清理",
+      "backupOk": "备份成功",
+      "backupFailed": "备份失败: {msg}",
+      "lastBackupPath": "{path}（{size}）",
+      "saveAsTitle": "备份到…",
+      "filterName": "Ledger 备份",
+      "restoreConfirm": "恢复将替换当前全部数据，且不可撤销。\n\n系统会在恢复前自动备份当前数据；恢复成功后应用将自动重启。\n\n确定继续吗？",
+      "restoreConfirmTitle": "确认恢复",
+      "restoreOk": "恢复成功（schema v{version}），应用即将重启",
+      "restoreFailed": "恢复失败: {msg}",
+      "loadFailed": "读取数据存储位置失败：{msg}",
+      "changeFailed": "更改数据存储位置失败: {msg}"
+    }
+  },
+  "scheduled": {
+    "title": "自动执行",
+    "switchLabel": "开启后自动落账到期期次",
+    "body1": "开启后，应用运行期间每 10 分钟检查一次，把已到期的待执行期次自动落账，交易日期忠实取期次计划日期；失败期次保持手动重试，暂停或取消的计划不会被碰。自动执行只应在一台机器开启。",
+    "body2": "开关属本机设备偏好：不随备份或恢复迁移，换新机器或恢复备份后保持默认关闭。"
+  },
+  "about": {
+    "title": "关于 Ledger",
+    "appName": "应用名称：",
+    "version": "版本号：",
+    "gitVersion": "Git 版本：",
+    "gitVersionTitle": "点击复制完整版本号",
+    "platform": "构建平台：",
+    "openLogDir": "打开日志目录",
+    "copyShaOk": "已复制完整版本号",
+    "copyShaFailed": "复制完整版本号失败: {msg}"
+  }
+}

@@ -1,1 +1,206 @@
-{}
+{
+  "tabs": {
+    "general": "General",
+    "categories": "Categories",
+    "merchants": "Merchants",
+    "data": "Data",
+    "scheduled": "Scheduled",
+    "about": "About"
+  },
+  "categories": {
+    "kindExpense": "Expense",
+    "kindIncome": "Income",
+    "addTitle": "New Category",
+    "listTitle": "Categories",
+    "form": {
+      "name": "Name",
+      "namePlaceholder": "Category name",
+      "parent": "Parent",
+      "parentNone": "None (top level)",
+      "parentPlaceholder": "Select parent category",
+      "icon": "Icon",
+      "iconPlaceholder": "Icon name",
+      "add": "Add",
+      "save": "Save"
+    },
+    "txForm": {
+      "amount": "Amount",
+      "amountPlaceholder": "Amount",
+      "account": "Account",
+      "accountPlaceholder": "Select account",
+      "category": "Category",
+      "categoryPlaceholder": "Select category",
+      "merchant": "Merchant",
+      "merchantPlaceholder": "Select merchant, or type a new name",
+      "date": "Date",
+      "note": "Note",
+      "notePlaceholder": "Note (optional)",
+      "saveEdits": "Save Changes"
+    },
+    "tree": {
+      "edit": "Edit",
+      "delete": "Delete",
+      "deleteConfirm": "Delete this category?"
+    },
+    "editModal": {
+      "title": "Edit Category"
+    },
+    "msg": {
+      "nameRequired": "Category name is required",
+      "parentMissing": "Parent category not found",
+      "parentKindMismatch": "Parent category must be of the same kind",
+      "parentMustBeRoot": "Parent must be a top-level category",
+      "added": "Category added",
+      "addFailed": "Add failed: {msg}",
+      "updated": "Category updated",
+      "updateFailed": "Update failed: {msg}",
+      "deleted": "Deleted",
+      "deleteFailed": "Delete failed: {msg}",
+      "sortFailed": "Reorder failed: {msg}",
+      "merchantDeleted": "(deleted merchant)",
+      "accountRequired": "Please select an account",
+      "amountRequired": "Please enter an amount",
+      "saved": "Changes saved",
+      "expenseRecorded": "Expense recorded",
+      "incomeRecorded": "Income recorded",
+      "saveFailed": "Save failed: {msg}",
+      "recordFailed": "Failed to record: {msg}"
+    }
+  },
+  "merchants": {
+    "addTitle": "New Merchant",
+    "listTitle": "Merchants",
+    "form": {
+      "name": "Name",
+      "namePlaceholder": "Merchant name",
+      "add": "Add",
+      "save": "Save"
+    },
+    "columns": {
+      "name": "Name",
+      "actions": "Actions"
+    },
+    "rowActions": {
+      "edit": "Edit",
+      "delete": "Delete"
+    },
+    "deleteConfirm": "Delete this merchant? Past transactions will still show its name.",
+    "editModal": {
+      "title": "Edit Merchant"
+    },
+    "msg": {
+      "nameRequired": "Merchant name is required",
+      "added": "Merchant added",
+      "addFailed": "Add failed: {msg}",
+      "updated": "Merchant updated",
+      "updateFailed": "Update failed: {msg}",
+      "deleted": "Merchant deleted",
+      "deleteFailed": "Delete failed: {msg}"
+    }
+  },
+  "data": {
+    "backup": {
+      "dirTitle": "Backup Directory",
+      "dirHint": "Once a default backup directory is set, \"One-click Backup\" writes there directly without asking for a location each time.",
+      "dirUnset": "Not set (a location picker will appear when backing up)",
+      "changeDir": "Change",
+      "chooseDir": "Choose",
+      "clear": "Clear",
+      "keepLimitLabel": "Backups to keep",
+      "keepLimitSuffix": " (1–100). The oldest backups beyond the limit are pruned automatically after each backup.",
+      "columns": {
+        "fileName": "File",
+        "source": "Source",
+        "size": "Size",
+        "time": "Backed Up At"
+      },
+      "listTitle": "Backup Files",
+      "count": "{n} backups, limit {max}.",
+      "pruneNow": "Prune Now",
+      "emptyWithDir": "No backup files in the backup directory yet",
+      "emptyNoDir": "Backup directory not set",
+      "restoreTitle": "Restore",
+      "restoreHintBefore": "Restoring from a backup file will ",
+      "restoreHintStrong": "replace all current data",
+      "restoreHintAfter": " (destructive). The current data is backed up automatically to the app data directory first; the app restarts automatically after a successful restore.",
+      "restoreButton": "Restore from Backup…",
+      "autoTitle": "Auto Backup",
+      "autoSwitchLabel": "When enabled, checks every 24 hours and backs up automatically when data has changed",
+      "autoLast": "Last auto backup: ",
+      "autoLastNever": "Never",
+      "autoNeedDir": "Auto backup takes effect once a backup directory is set",
+      "backupTitle": "Backup",
+      "backupHint": "Packs the entire ledger (accounts, transactions, budgets, investment holdings, scheduled transactions and all other data) into a single backup file. UI preferences such as theme and default currency are not included.",
+      "backupOnce": "One-click Backup",
+      "backupAs": "Save As…",
+      "lastBackup": "Last backup: "
+    },
+    "location": {
+      "title": "Data Location",
+      "hint": "Directory where the ledger database lives. After a change, the app automatically migrates the existing database to the new location on next startup; the files at the old location are kept permanently as a safety net. Restoring the default follows the same flow.",
+      "fallbackTitle": "Fallen back to default location",
+      "fallbackBody": "The configured location is unavailable: {reason}. The app has fallen back to the default location automatically; the original database is untouched where it was. You can change the location again or keep things as they are.",
+      "pendingTitle": "Changed, effective after restart",
+      "pendingBody": "New location: {dir}. The database migrates automatically on next startup; until then data keeps being written to the current location.",
+      "activeLabel": "Active location: ",
+      "reading": "Loading…",
+      "retry": "Retry",
+      "change": "Change…",
+      "restoreDefault": "Restore Default",
+      "pickTitle": "Choose Data Location",
+      "adoptTitle": "Adopt existing ledger database?",
+      "adoptBody": "A ledger database (ledger.db) already exists in the target directory.\n\nAdopting it uses that database as the active data; cancelling abandons this change (nothing is modified). The database at the original location is kept after adopting.",
+      "adoptOk": "Adopt It",
+      "adoptCancel": "Keep Separate",
+      "cancelled": "Change cancelled; data location unchanged",
+      "committed": "Change saved; the migration takes effect on next startup"
+    },
+    "source": {
+      "auto": "Auto",
+      "manual": "Manual"
+    },
+    "msg": {
+      "dirPickTitle": "Choose Backup Directory",
+      "dirSet": "Backup directory set",
+      "autoStateFailed": "Failed to load auto backup state: {msg}",
+      "autoOn": "Auto backup enabled",
+      "autoOff": "Auto backup disabled",
+      "autoToggleFailed": "Failed to update auto backup: {msg}",
+      "listFailed": "Failed to list backups: {msg}",
+      "prunePartial": "Pruned: {deleted} deleted, {failed} failed",
+      "pruneDone": "Pruned {n} old backup(s)",
+      "pruneFailed": "Failed to prune backups: {msg}",
+      "pruneNotNeeded": "Nothing to prune: backup count is within the limit",
+      "pruneConfirm": "This will delete the oldest {n} backup(s), which cannot be undone. Continue?",
+      "pruneConfirmTitle": "Confirm Prune",
+      "backupOk": "Backup created",
+      "backupFailed": "Backup failed: {msg}",
+      "lastBackupPath": "{path} ({size})",
+      "saveAsTitle": "Back Up To…",
+      "filterName": "Ledger Backup",
+      "restoreConfirm": "Restoring will replace all current data and cannot be undone.\n\nThe current data is backed up automatically before restoring; the app restarts automatically after a successful restore.\n\nContinue?",
+      "restoreConfirmTitle": "Confirm Restore",
+      "restoreOk": "Restored (schema v{version}); the app will restart shortly",
+      "restoreFailed": "Restore failed: {msg}",
+      "loadFailed": "Failed to load data location: {msg}",
+      "changeFailed": "Failed to change data location: {msg}"
+    }
+  },
+  "scheduled": {
+    "title": "Auto Execution",
+    "switchLabel": "Automatically post due installments when enabled",
+    "body1": "When enabled, the app checks every 10 minutes while running and automatically posts due installments, with transaction dates faithfully taken from the planned dates; failed installments stay manual for retry, and paused or cancelled plans are untouched. Auto execution should be enabled on one machine only.",
+    "body2": "This switch is a per-device preference: it does not migrate with backup or restore, and stays off by default on a new machine or after restoring a backup."
+  },
+  "about": {
+    "title": "About Ledger",
+    "appName": "App Name: ",
+    "version": "Version: ",
+    "gitVersion": "Git Version: ",
+    "gitVersionTitle": "Click to copy the full version",
+    "platform": "Built with: ",
+    "openLogDir": "Open Log Directory",
+    "copyShaOk": "Full version copied",
+    "copyShaFailed": "Failed to copy full version: {msg}"
+  }
+}

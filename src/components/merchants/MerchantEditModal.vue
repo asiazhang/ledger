@@ -3,6 +3,7 @@ import { ref, watch } from 'vue'
 import { NButton, NForm, NFormItem, NInput, useMessage } from 'naive-ui'
 import AppModal from '@/components/AppModal.vue'
 import { api } from '@/api'
+import { t } from '@/i18n'
 import type { Merchant, MerchantUpdateInput } from '@/types'
 
 const props = defineProps<{
@@ -31,18 +32,18 @@ async function saveEdit() {
   if (!m) return
   const name = editName.value.trim()
   if (!name) {
-    message.warning('请输入商户名称')
+    message.warning(t('settings.merchants.msg.nameRequired'))
     return
   }
   const input: MerchantUpdateInput = { name }
   try {
     await api.updateMerchant(m.id, input)
-    message.success('已更新商户')
+    message.success(t('settings.merchants.msg.updated'))
     emit('update:show', false)
     // 参考数据由 ledger:changed 信号自动重拉：历史交易即时显示新名（引用指向 id）
   } catch (e) {
     // 重名等后端校验错误原样上抛展示（如「商户已存在: 京东」），弹窗不关、内容不丢
-    message.error(`更新失败: ${e}`)
+    message.error(t('settings.merchants.msg.updateFailed', { msg: e }))
   }
 }
 </script>
@@ -50,17 +51,17 @@ async function saveEdit() {
 <template>
   <AppModal
     :show="show"
-    title="编辑商户"
+    :title="t('settings.merchants.editModal.title')"
     preset="card"
     style="width: 420px"
     :bordered="false"
     @update:show="(v: boolean) => emit('update:show', v)"
   >
     <NForm label-placement="left" :show-feedback="false" size="small">
-      <NFormItem label="名称">
-        <NInput v-model:value="editName" placeholder="商户名称" />
+      <NFormItem :label="t('settings.merchants.form.name')">
+        <NInput v-model:value="editName" :placeholder="t('settings.merchants.form.namePlaceholder')" />
       </NFormItem>
-      <NButton type="primary" block @click="saveEdit">保存</NButton>
+      <NButton type="primary" block @click="saveEdit">{{ t('settings.merchants.form.save') }}</NButton>
     </NForm>
   </AppModal>
 </template>

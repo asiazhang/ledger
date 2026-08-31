@@ -8,6 +8,7 @@ import { listen } from '@tauri-apps/api/event'
 
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
+import { applyLocale } from '@/i18n'
 import SettingsView from '@/views/SettingsView.vue'
 import CategoryManager from '@/components/CategoryManager.vue'
 import type { Currency } from '@/types'
@@ -101,6 +102,29 @@ describe('SettingsView.vue（issue #157：Tab 分域重构 6 → 4）', () => {
     const wrapper = mount(SettingsView)
     const labels = wrapper.findAll('.n-tabs-tab').map((t) => t.text())
     expect(labels).toEqual(['通用', '分类', '商户', '数据', '定时', '关于'])
+  })
+
+  it('英文界面：Tab 页签以英文渲染，切回中文后恢复（issue #352）', async () => {
+    await applyLocale('en-US')
+    let enLabels: string[] = []
+    try {
+      const wrapper = mount(SettingsView)
+      enLabels = wrapper.findAll('.n-tabs-tab').map((tab) => tab.text())
+    } finally {
+      await applyLocale('zh-CN')
+      await nextTick()
+    }
+    expect(enLabels).toEqual(['General', 'Categories', 'Merchants', 'Data', 'Scheduled', 'About'])
+    // 切回中文后新挂载的组件恢复中文页签
+    const wrapper = mount(SettingsView)
+    expect(wrapper.findAll('.n-tabs-tab').map((tab) => tab.text())).toEqual([
+      '通用',
+      '分类',
+      '商户',
+      '数据',
+      '定时',
+      '关于',
+    ])
   })
 
   it('旧 Tab（备份与恢复 / 外观 / 存储位置）全部消失', () => {

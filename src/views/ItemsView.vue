@@ -28,6 +28,7 @@ import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { useItemsStore } from '@/stores/items'
+import { t } from '@/i18n'
 
 const reference = useReferenceStore()
 const app = useAppStore()
@@ -93,16 +94,16 @@ function closeEdit() {
 async function saveEdit() {
   if (!editing.value) return
   if (!editName.value.trim()) {
-    message.warning('请输入物品名称')
+    message.warning(t('items.msg.nameRequired'))
     return
   }
   if (!editPurchaseDate.value) {
-    message.warning('请选择购买日期')
+    message.warning(t('items.msg.dateRequired'))
     return
   }
   const costCents = yuanToCents(editCostYuan.value)
   if (costCents === null || costCents <= 0) {
-    message.warning('请输入大于 0 的总成本')
+    message.warning(t('items.msg.costInvalid'))
     return
   }
   const input: ItemInput = {
@@ -115,10 +116,10 @@ async function saveEdit() {
   }
   try {
     await itemsStore.update(editing.value.id, input)
-    message.success('已保存')
+    message.success(t('items.msg.saved'))
     closeEdit()
   } catch (e) {
-    message.error(`保存失败: ${errorMessage(e)}`)
+    message.error(t('items.msg.saveFailed', { msg: errorMessage(e) }))
   }
 }
 
@@ -143,7 +144,7 @@ async function recalcDetail(date: string | null) {
   try {
     detailCost.value = await api.calculateItemCost(detail.value.id, date)
   } catch (e) {
-    message.error(`重算失败: ${errorMessage(e)}`)
+    message.error(t('items.msg.recalcFailed', { msg: errorMessage(e) }))
   }
 }
 
@@ -180,14 +181,14 @@ function closeDispose() {
 async function confirmDispose() {
   if (!disposing.value) return
   if (!disposeDate.value) {
-    message.warning('请选择处置日期')
+    message.warning(t('items.msg.disposeDateRequired'))
     return
   }
   let residualCents: number | null = null
   if (disposeResidualYuan.value.trim()) {
     const cents = yuanToCents(disposeResidualYuan.value)
     if (cents === null || cents < 0) {
-      message.warning('残值需为不小于 0 的金额')
+      message.warning(t('items.msg.residualInvalid'))
       return
     }
     residualCents = cents
@@ -198,10 +199,14 @@ async function confirmDispose() {
   }
   try {
     await itemsStore.dispose(disposing.value.id, input)
-    message.success(disposing.value.status === 'in_use' ? '已处置' : '已更新处置信息')
+    message.success(
+      disposing.value.status === 'in_use'
+        ? t('items.msg.disposed')
+        : t('items.msg.disposeUpdated'),
+    )
     closeDispose()
   } catch (e) {
-    message.error(`处置失败: ${errorMessage(e)}`)
+    message.error(t('items.msg.disposeFailed', { msg: errorMessage(e) }))
   }
 }
 
@@ -209,54 +214,62 @@ async function confirmDispose() {
 async function removeItem(id: string) {
   try {
     await itemsStore.remove(id)
-    message.success('已删除')
+    message.success(t('items.msg.deleted'))
   } catch (e) {
-    message.error(`删除失败: ${errorMessage(e)}`)
+    message.error(t('items.msg.deleteFailed', { msg: errorMessage(e) }))
   }
 }
 
 // —— 物品列表 ——
 const columns: DataTableColumns<ItemWithDailyCost> = [
-  { title: '名称', key: 'name' },
-  { title: '购买日期', key: 'purchase_date' },
+  { title: () => t('items.columns.name'), key: 'name' },
+  { title: () => t('items.columns.purchaseDate'), key: 'purchase_date' },
   {
-    title: '状态',
+    title: () => t('items.columns.status'),
     key: 'status',
-    render: (row) => (row.status === 'in_use' ? '在用' : `已处置 ${row.disposal_date ?? ''}`),
+    render: (row) =>
+      row.status === 'in_use'
+        ? t('items.status.inUse')
+        : t('items.status.disposedOn', { date: row.disposal_date ?? '' }),
   },
   {
-    title: '总成本',
+    title: () => t('items.columns.totalCost'),
     key: 'total_cost_cents',
     render: (row) =>
       formatAmount(row.total_cost_cents, reference.getCurrency(row.currency_code)),
   },
-  { title: '已用天数', key: 'used_days' },
+  { title: () => t('items.columns.usedDays'), key: 'used_days' },
   {
-    title: '每天成本',
+    title: () => t('items.columns.perDayCost'),
     key: 'per_day_cents',
     render: (row) =>
       formatAmount(row.per_day_cents, reference.getCurrency(row.currency_code)),
   },
   {
-    title: '操作',
+    title: () => t('items.columns.actions'),
     key: 'actions',
     width: 200,
     render: (row) =>
       h(NSpace, { size: 4 }, () => [
-        h(NButton, { size: 'tiny', onClick: () => openDetail(row) }, () => '详情'),
-        h(NButton, { size: 'tiny', onClick: () => openEdit(row) }, () => '编辑'),
+        h(NButton, { size: 'tiny', onClick: () => openDetail(row) }, () => t('items.rowActions.detail')),
+        h(NButton, { size: 'tiny', onClick: () => openEdit(row) }, () => t('items.rowActions.edit')),
         h(
           NButton,
           { size: 'tiny', onClick: () => openDispose(row) },
-          () => (row.status === 'in_use' ? '处置' : '处置信息'),
+          () =>
+            row.status === 'in_use'
+              ? t('items.rowActions.dispose')
+              : t('items.rowActions.disposeInfo'),
         ),
         h(
           AppPopconfirm,
           { onPositiveClick: () => removeItem(row.id) },
           {
-            default: () => '不再跟踪该物品，从列表移除？',
+            default: () => t('items.deleteConfirm'),
             trigger: () =>
-              h(NButton, { size: 'tiny', type: 'error', quaternary: true }, () => '删除'),
+              h(NButton, { size: 'tiny', type: 'error', quaternary: true }, () =>
+                t('items.rowActions.delete'),
+              ),
           },
         ),
       ]),
@@ -283,7 +296,7 @@ onMounted(() => {
   <NSpace vertical :size="16">
     <!-- 创建唯一入口提示（issue #207）：本页不提供手动新增，物品只能经交易右键「加入物品」创建 -->
     <NAlert type="info" :show-icon="true" data-testid="item-create-hint">
-      物品不支持直接新增：请在「交易」页右键一笔支出交易，选择“加入物品”创建。
+      {{ t('items.createHint') }}
       <NButton
         size="tiny"
         type="primary"
@@ -292,15 +305,15 @@ onMounted(() => {
         data-testid="item-go-transactions"
         @click="goTransactions"
       >
-        去交易页
+        {{ t('items.goTransactions') }}
       </NButton>
     </NAlert>
 
-    <NCard title="物品列表" size="small">
+    <NCard :title="t('items.listTitle')" size="small">
       <NDataTable :columns="columns" :data="itemsStore.items" :bordered="false" size="small">
         <template #empty>
           <span data-testid="item-empty-guide">
-            暂无物品：请在「交易」页右键一笔支出交易，选择“加入物品”创建。
+            {{ t('items.emptyGuide') }}
           </span>
         </template>
       </NDataTable>
@@ -310,16 +323,16 @@ onMounted(() => {
     <AppModal
       :show="editing !== null"
       preset="card"
-      title="编辑物品"
+      :title="t('items.edit.title')"
       style="width: 440px"
       data-testid="item-edit-modal"
       @update:show="(v: boolean) => (v ? undefined : closeEdit())"
     >
       <NForm v-if="editing" label-placement="left" :show-feedback="false" size="small">
-        <NFormItem label="名称">
-          <NInput v-model:value="editName" placeholder="物品名称" />
+        <NFormItem :label="t('items.edit.label.name')">
+          <NInput v-model:value="editName" :placeholder="t('items.edit.placeholder.name')" />
         </NFormItem>
-        <NFormItem label="购买日期">
+        <NFormItem :label="t('items.edit.label.purchaseDate')">
           <AppDatePicker
             v-model:formatted-value="editPurchaseDate"
             :disabled="editRelinking"
@@ -328,31 +341,31 @@ onMounted(() => {
             style="width: 160px"
           />
         </NFormItem>
-        <NFormItem label="总成本">
+        <NFormItem :label="t('items.edit.label.totalCost')">
           <NInput
             v-model:value="editCostYuan"
             :disabled="editRelinking"
-            placeholder="总成本（元）"
+            :placeholder="t('items.edit.placeholder.totalCost')"
             style="width: 160px"
           />
         </NFormItem>
-        <NFormItem label="关联购买交易">
+        <NFormItem :label="t('items.edit.label.linkedTx')">
           <PinyinSelect
             v-model:value="editLinkTxId"
             :options="linkTxOptions()"
-            placeholder="关联购买交易"
+            :placeholder="t('items.edit.placeholder.linkedTx')"
             @update:value="applyLinkedTxToEdit"
           />
         </NFormItem>
-        <NFormItem label="币种">
-          <span>{{ editing.currency_code }}（不可修改）</span>
+        <NFormItem :label="t('items.edit.label.currency')">
+          <span>{{ editing.currency_code }}{{ t('items.edit.currencyFixed') }}</span>
         </NFormItem>
-        <NFormItem label="备注">
-          <NInput v-model:value="editNote" placeholder="品牌 / 型号 / 渠道（可选）" />
+        <NFormItem :label="t('items.edit.label.note')">
+          <NInput v-model:value="editNote" :placeholder="t('items.edit.placeholder.note')" />
         </NFormItem>
         <NSpace justify="end">
-          <NButton @click="closeEdit">取消</NButton>
-          <NButton type="primary" @click="saveEdit">保存</NButton>
+          <NButton @click="closeEdit">{{ t('items.rowActions.cancel') }}</NButton>
+          <NButton type="primary" @click="saveEdit">{{ t('items.rowActions.save') }}</NButton>
         </NSpace>
       </NForm>
     </AppModal>
@@ -361,16 +374,16 @@ onMounted(() => {
     <AppModal
       :show="disposing !== null"
       preset="card"
-      :title="disposing?.status === 'in_use' ? '处置物品' : '处置信息'"
+      :title="disposing?.status === 'in_use' ? t('items.dispose.titleInUse') : t('items.dispose.titleInfo')"
       style="width: 400px"
       data-testid="item-dispose-modal"
       @update:show="(v: boolean) => (v ? undefined : closeDispose())"
     >
       <NForm v-if="disposing" label-placement="left" :show-feedback="false" size="small">
-        <NFormItem label="物品">
+        <NFormItem :label="t('items.dispose.label.item')">
           <span>{{ disposing.name }}</span>
         </NFormItem>
-        <NFormItem label="处置日期">
+        <NFormItem :label="t('items.dispose.label.date')">
           <AppDatePicker
             v-model:formatted-value="disposeDate"
             type="date"
@@ -378,17 +391,21 @@ onMounted(() => {
             style="width: 160px"
           />
         </NFormItem>
-        <NFormItem label="残值">
+        <NFormItem :label="t('items.dispose.label.residual')">
           <NInput
             v-model:value="disposeResidualYuan"
-            placeholder="残值（元，可选）"
+            :placeholder="t('items.dispose.residualPlaceholder')"
             style="width: 160px"
           />
         </NFormItem>
         <NSpace justify="end">
-          <NButton @click="closeDispose">取消</NButton>
-          <NButton type="primary" data-testid="item-dispose-confirm" @click="confirmDispose">
-            {{ disposing.status === 'in_use' ? '确认处置' : '保存' }}
+          <NButton @click="closeDispose">{{ t('items.rowActions.cancel') }}</NButton>
+          <NButton
+            type="primary"
+            data-testid="item-dispose-confirm"
+            @click="confirmDispose"
+          >
+            {{ disposing.status === 'in_use' ? t('items.dispose.confirm') : t('items.rowActions.save') }}
           </NButton>
         </NSpace>
       </NForm>
@@ -398,55 +415,59 @@ onMounted(() => {
     <AppModal
       :show="detail !== null"
       preset="card"
-      title="物品详情"
+      :title="t('items.detail.title')"
       style="width: 480px"
       data-testid="item-detail-modal"
       @update:show="(v: boolean) => (v ? undefined : (detail = null))"
     >
       <NDescriptions v-if="detail" :column="1" size="small" label-placement="left" bordered>
-        <NDescriptionsItem label="名称">{{ detail.name }}</NDescriptionsItem>
-        <NDescriptionsItem label="状态">
-          {{ detail.status === 'in_use' ? '在用' : '已处置' }}
+        <NDescriptionsItem :label="t('items.detail.label.name')">{{ detail.name }}</NDescriptionsItem>
+        <NDescriptionsItem :label="t('items.detail.label.status')">
+          {{ detail.status === 'in_use' ? t('items.status.inUse') : t('items.status.disposed') }}
         </NDescriptionsItem>
-        <NDescriptionsItem label="购买日期">{{ detail.purchase_date }}</NDescriptionsItem>
-        <NDescriptionsItem v-if="detail.status === 'disposed'" label="处置日期">
+        <NDescriptionsItem :label="t('items.detail.label.purchaseDate')">{{ detail.purchase_date }}</NDescriptionsItem>
+        <NDescriptionsItem v-if="detail.status === 'disposed'" :label="t('items.detail.label.disposalDate')">
           {{ detail.disposal_date }}
         </NDescriptionsItem>
-        <NDescriptionsItem v-if="detail.status === 'disposed'" label="残值">
+        <NDescriptionsItem v-if="detail.status === 'disposed'" :label="t('items.detail.label.residual')">
           {{
             detail.residual_value_cents != null
               ? detailAmount(detail.residual_value_cents)
               : '—'
           }}
         </NDescriptionsItem>
-        <NDescriptionsItem label="总成本">
-          {{ detailAmount(detail.total_cost_cents) }}（{{ detail.currency_code }}）
+        <NDescriptionsItem :label="t('items.detail.label.totalCost')">
+          {{ detailAmount(detail.total_cost_cents) }}{{ t('items.currencySuffix', { code: detail.currency_code }) }}
         </NDescriptionsItem>
-        <NDescriptionsItem label="本位币折算">
-          {{ formatAmount(detail.cost_native_cents, reference.getCurrency(app.defaultCurrency)) }}
-          （{{ app.defaultCurrency }}）
+        <NDescriptionsItem :label="t('items.detail.label.native')">
+          {{ formatAmount(detail.cost_native_cents, reference.getCurrency(app.defaultCurrency)) }}{{ t('items.currencySuffix', { code: app.defaultCurrency }) }}
         </NDescriptionsItem>
-        <NDescriptionsItem label="备注">{{ detail.note ?? '—' }}</NDescriptionsItem>
-        <NDescriptionsItem label="关联购买交易">
-          {{ detail.purchase_transaction_id ? '已关联（溯源）' : '—' }}
+        <NDescriptionsItem :label="t('items.detail.label.note')">{{ detail.note ?? '—' }}</NDescriptionsItem>
+        <NDescriptionsItem :label="t('items.detail.label.linkedTx')">
+          {{ detail.purchase_transaction_id ? t('items.detail.linkedYes') : '—' }}
         </NDescriptionsItem>
-        <NDescriptionsItem label="参考日">
+        <NDescriptionsItem :label="t('items.detail.label.refDate')">
           <AppDatePicker
             :formatted-value="detailRefDate"
             clearable
             type="date"
             value-format="yyyy-MM-dd"
-            placeholder="自选参考日"
+            :placeholder="t('items.detail.refDatePlaceholder')"
             style="width: 160px"
             @update:formatted-value="recalcDetail"
           />
         </NDescriptionsItem>
-        <NDescriptionsItem label="已用天数">
-          {{ detailCostView.days }} 天（含购买当日）
+        <NDescriptionsItem :label="t('items.detail.label.usedDays')">
+          {{ t('items.detail.usedDays', { n: detailCostView.days }) }}
         </NDescriptionsItem>
-        <NDescriptionsItem label="每天成本分解">
-          {{ detailAmount(detailCostView.numeratorCents) }} ÷ {{ detailCostView.days }} 天 =
-          {{ detailAmount(detailCostView.perDayCents) }}/天
+        <NDescriptionsItem :label="t('items.detail.label.perDayBreakdown')">
+          {{
+            t('items.detail.breakdown', {
+              cost: detailAmount(detailCostView.numeratorCents),
+              days: detailCostView.days,
+              perDay: detailAmount(detailCostView.perDayCents),
+            })
+          }}
         </NDescriptionsItem>
       </NDescriptions>
     </AppModal>

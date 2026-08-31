@@ -5,6 +5,7 @@ import { NButton, NFormItem, NInput, NForm, NSpace, NText, useMessage } from 'na
 import { formatAmount } from '@/types'
 import { useReferenceStore } from '@/stores/reference'
 import { useItemsStore } from '@/stores/items'
+import { t } from '@/i18n'
 import type { Transaction } from '@/types'
 
 /**
@@ -32,7 +33,7 @@ const currency = computed(() => reference.getCurrency(props.transaction.currency
 
 async function submit() {
   if (!name.value.trim()) {
-    message.warning('请输入物品名称')
+    message.warning(t('items.msg.nameRequired'))
     return
   }
   submitting.value = true
@@ -45,10 +46,10 @@ async function submit() {
       note: null,
       purchase_transaction_id: props.transaction.id,
     })
-    message.success('已加入物品')
+    message.success(t('items.msg.added'))
     emit('created')
   } catch (e) {
-    message.error(`加入物品失败: ${errorMessage(e)}`)
+    message.error(t('items.msg.addFailed', { msg: errorMessage(e) }))
   } finally {
     submitting.value = false
   }
@@ -59,26 +60,26 @@ async function submit() {
   <NForm label-placement="left" :show-feedback="false" size="small">
     <NSpace vertical :size="12">
       <!-- 自动带出（只读展示，与账本口径一致，不可手改） -->
-      <NFormItem label="购买日期">
+      <NFormItem :label="t('items.addForm.label.purchaseDate')">
         <NText>{{ transaction.date }}</NText>
       </NFormItem>
-      <NFormItem label="基础成本">
+      <NFormItem :label="t('items.addForm.label.baseCost')">
         <NText>
-          {{ formatAmount(transaction.amount_cents, currency) }}（{{ transaction.currency_code }}）
+          {{ formatAmount(transaction.amount_cents, currency) }}{{ t('items.currencySuffix', { code: transaction.currency_code }) }}
         </NText>
       </NFormItem>
-      <NFormItem label="物品名称">
+      <NFormItem :label="t('items.addForm.label.name')">
         <NInput
           v-model:value="name"
-          placeholder="默认取交易备注，可微调"
+          :placeholder="t('items.addForm.namePlaceholder')"
           style="width: 280px"
           @keyup.enter="submit"
         />
       </NFormItem>
       <NSpace justify="end">
-        <NButton :disabled="submitting" @click="emit('cancel')">取消</NButton>
+        <NButton :disabled="submitting" @click="emit('cancel')">{{ t('items.rowActions.cancel') }}</NButton>
         <NButton type="primary" :loading="submitting" data-testid="add-item-confirm" @click="submit">
-          确认创建
+          {{ t('items.addForm.confirm') }}
         </NButton>
       </NSpace>
     </NSpace>

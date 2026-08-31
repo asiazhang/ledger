@@ -4,6 +4,7 @@ import { errorMessage } from '@/utils/errors'
 import { NButton, NCard, NSpace, NText, useMessage } from 'naive-ui'
 import pkg from '@/../package.json'
 import { gitShaFull, gitVersionLabel } from '@/utils/git-info'
+import { t } from '@/i18n'
 
 const message = useMessage()
 const gitVersion = gitVersionLabel()
@@ -11,9 +12,9 @@ const gitVersion = gitVersionLabel()
 async function copyGitSha() {
   try {
     await navigator.clipboard.writeText(gitShaFull())
-    message.success('已复制完整版本号')
+    message.success(t('settings.about.copyShaOk'))
   } catch (e: any) {
-    message.error(`复制完整版本号失败: ${errorMessage(e)}`)
+    message.error(t('settings.about.copyShaFailed', { msg: errorMessage(e) }))
   }
 }
 
@@ -28,21 +29,21 @@ async function openLogDir() {
 </script>
 
 <template>
-  <NCard title="关于 Ledger" size="small">
+  <NCard :title="t('settings.about.title')" size="small">
     <NSpace vertical :size="8">
-      <NText>应用名称：Ledger</NText>
-      <NText>版本号：{{ pkg.version }}</NText>
+      <NText>{{ t('settings.about.appName') }}Ledger</NText>
+      <NText>{{ t('settings.about.version') }}{{ pkg.version }}</NText>
       <NText
         v-if="gitVersion"
         data-testid="git-version"
-        title="点击复制完整版本号"
+        :title="t('settings.about.gitVersionTitle')"
         style="cursor: pointer"
         @click="copyGitSha"
       >
-        Git 版本：{{ gitVersion }}
+        {{ t('settings.about.gitVersion') }}{{ gitVersion }}
       </NText>
-      <NText>构建平台：Tauri + Vue 3 + TypeScript</NText>
-      <NButton size="small" @click="openLogDir">打开日志目录</NButton>
+      <NText>{{ t('settings.about.platform') }}Tauri + Vue 3 + TypeScript</NText>
+      <NButton size="small" @click="openLogDir">{{ t('settings.about.openLogDir') }}</NButton>
     </NSpace>
   </NCard>
 </template>

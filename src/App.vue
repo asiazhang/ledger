@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, nextTick, ref, type Component, type HTMLAttributes } from 'vue'
+import { computed, h, nextTick, ref, watch, type Component, type HTMLAttributes } from 'vue'
 import { RouterView, useRouter, useRoute } from 'vue-router'
 import {
   NConfigProvider,
@@ -70,6 +70,20 @@ const store = useAppStore()
 
 // UI 组件库内置文案（日期选择器、分页、空态等）随应用界面语言切换（ADR-0048）：
 // 经 NConfigProvider 的 locale / date-locale 注入，语言切换即时生效。
+// 窗口标题随界面语言（原生窗口壳层文案）；非 Tauri 环境（测试/Web）静默忽略
+watch(
+  currentLocale,
+  async () => {
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window')
+      void getCurrentWindow().setTitle(t('common.window.title'))
+    } catch {
+      /* 非 Tauri 环境 */
+    }
+  },
+  { immediate: true },
+)
+
 const naiveLocale = computed(() => (currentLocale.value === 'en-US' ? enUS : zhCN))
 const naiveDateLocale = computed(() => (currentLocale.value === 'en-US' ? dateEnUS : dateZhCN))
 

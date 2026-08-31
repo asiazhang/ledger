@@ -1,1 +1,107 @@
-{}
+{
+  "createHint": "Items cannot be added directly: right-click an expense transaction on the Transactions page and choose \"Add to Items\" to create one.",
+  "goTransactions": "Go to Transactions",
+  "listTitle": "Items",
+  "emptyGuide": "No items yet: right-click an expense transaction on the Transactions page and choose \"Add to Items\" to create one.",
+  "currencySuffix": " ({code})",
+  "columns": {
+    "name": "Name",
+    "purchaseDate": "Purchase Date",
+    "status": "Status",
+    "totalCost": "Total Cost",
+    "usedDays": "Days Used",
+    "perDayCost": "Cost per Day",
+    "actions": "Actions"
+  },
+  "status": {
+    "inUse": "In use",
+    "disposed": "Disposed",
+    "disposedOn": "Disposed {date}"
+  },
+  "rowActions": {
+    "detail": "Details",
+    "edit": "Edit",
+    "dispose": "Dispose",
+    "disposeInfo": "Disposal Info",
+    "delete": "Delete",
+    "cancel": "Cancel",
+    "save": "Save"
+  },
+  "deleteConfirm": "Stop tracking this item and remove it from the list?",
+  "edit": {
+    "title": "Edit Item",
+    "label": {
+      "name": "Name",
+      "purchaseDate": "Purchase Date",
+      "totalCost": "Total Cost",
+      "linkedTx": "Linked Purchase",
+      "currency": "Currency",
+      "note": "Note"
+    },
+    "placeholder": {
+      "name": "Item name",
+      "totalCost": "Total cost",
+      "linkedTx": "Linked purchase transaction",
+      "note": "Brand / model / channel (optional)"
+    },
+    "currencyFixed": " (not editable)"
+  },
+  "dispose": {
+    "titleInUse": "Dispose Item",
+    "titleInfo": "Disposal Info",
+    "label": {
+      "item": "Item",
+      "date": "Disposal Date",
+      "residual": "Residual Value"
+    },
+    "residualPlaceholder": "Residual value (optional)",
+    "confirm": "Confirm Disposal"
+  },
+  "detail": {
+    "title": "Item Details",
+    "label": {
+      "name": "Name",
+      "status": "Status",
+      "purchaseDate": "Purchase Date",
+      "disposalDate": "Disposal Date",
+      "residual": "Residual Value",
+      "totalCost": "Total Cost",
+      "native": "Base-currency Value",
+      "note": "Note",
+      "linkedTx": "Linked Purchase",
+      "refDate": "Reference Date",
+      "usedDays": "Days Used",
+      "perDayBreakdown": "Cost per Day Breakdown"
+    },
+    "linkedYes": "Linked (traceable)",
+    "refDatePlaceholder": "Pick a reference date",
+    "usedDays": "{n} days (incl. purchase day)",
+    "breakdown": "{cost} ÷ {days} days = {perDay}/day"
+  },
+  "addForm": {
+    "label": {
+      "purchaseDate": "Purchase Date",
+      "baseCost": "Base Cost",
+      "name": "Item Name"
+    },
+    "namePlaceholder": "Defaults to the transaction note; edit as needed",
+    "confirm": "Create Item"
+  },
+  "msg": {
+    "nameRequired": "Item name is required",
+    "dateRequired": "Please select the purchase date",
+    "costInvalid": "Total cost must be greater than 0",
+    "saved": "Saved",
+    "saveFailed": "Save failed: {msg}",
+    "recalcFailed": "Recalculation failed: {msg}",
+    "disposeDateRequired": "Please select the disposal date",
+    "residualInvalid": "Residual value must not be negative",
+    "disposed": "Disposed",
+    "disposeUpdated": "Disposal info updated",
+    "disposeFailed": "Disposal failed: {msg}",
+    "deleted": "Deleted",
+    "deleteFailed": "Delete failed: {msg}",
+    "added": "Added to items",
+    "addFailed": "Failed to add item: {msg}"
+  }
+}
