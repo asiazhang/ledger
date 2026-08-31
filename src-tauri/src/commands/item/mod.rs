@@ -8,8 +8,9 @@
 //! - 金额折算走 Amount 接缝（`transaction::amount::convert_to_native`），不另写口径；
 //! - 每天使用成本走 `item::cost` 接缝（DailyUsageCost 单一权威），列表不重算口径；
 //! - 写入成功后经 `notify` 回调发出 `ledger:changed` 粗粒度失效信号（回调注入式，
-//!   仿 `commands::sync` 的 emit 注入先例：生产路径发 `events::LEDGER_CHANGED`，
-//!   BDD/测试注入记录闭包断言「写后发信号」这一外部可观察行为）；
+//!   仿 `commands::sync` 的 emit 注入先例：生产路径经信号映射单点 `signals::emit_for`
+//!   判定发射，ADR-0044 决策 8——notify 只是发射钩子不再是决策点；BDD/测试注入
+//!   记录闭包断言「写后发信号」这一外部可观察行为，seam 签名与计数注入点零改动）；
 //! - 置脏触发已收口连接层统一写入口（`db::write`，ADR-0032）：本模块对备份域
 //!   零感知，写入成功后的置脏/到期检查由调用方所在写入口闭包在提交点单点执行。
 
@@ -26,6 +27,7 @@ use crate::item::cost;
 use crate::models::{
     Item, ItemDailyCost, ItemDailyTotal, ItemDisposeInput, ItemInput, ItemStatus, ItemWithDailyCost,
 };
+use crate::signals::{WriteEvidence, WriteOp, emit_for};
 use crate::transaction::amount::{self, TransactionKind};
 
 /// 按 `id` 读未删除物品（多命令共用的前检）：不存在（或已软删除）返回 `None`。
@@ -463,9 +465,10 @@ pub fn create_item(
     // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
     db.write(|conn| {
         create_item_internal(conn, input, &mut || {
-            // 物品是独立领域（非参考数据，ADR-0014）：直接发通用失效信号，
-            // 物品 store 与消费界面订阅后自动重拉。
-            crate::events::emit_ledger_changed(&app);
+            // 物品是独立领域（非参考数据，ADR-0014），复用 `ledger:changed` 同名事件：
+            // 物品 store 与消费界面订阅后自动重拉。发不发、发哪个由映射单点判定
+            // （ADR-0044 决策 8），notify 只是发射钩子。
+            emit_for(&app, WriteOp::CreateItem, WriteEvidence::None);
         })
     })
 }
@@ -480,8 +483,8 @@ pub fn update_item(
     // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
     db.write(|conn| {
         update_item_internal(conn, &id, input, &mut || {
-            // 与 create_item 同款：独立领域写入 → 通用失效信号（issue #117）。
-            crate::events::emit_ledger_changed(&app);
+            // 与 create_item 同款：独立领域写入 → 经映射单点发通用失效信号（issue #117）。
+            emit_for(&app, WriteOp::UpdateItem, WriteEvidence::None);
         })
     })
 }
@@ -496,8 +499,8 @@ pub fn dispose_item(
     // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
     db.write(|conn| {
         dispose_item_internal(conn, &id, input, &mut || {
-            // 物品是独立领域（非参考数据，ADR-0014）：直接发通用失效信号。
-            crate::events::emit_ledger_changed(&app);
+            // 物品是独立领域（非参考数据，ADR-0014）：经映射单点发通用失效信号。
+            emit_for(&app, WriteOp::DisposeItem, WriteEvidence::None);
         })
     })
 }
@@ -507,8 +510,8 @@ pub fn delete_item(db: State<'_, DbState>, app: tauri::AppHandle, id: String) ->
     // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
     db.write(|conn| {
         delete_item_internal(conn, &id, &mut || {
-            // 物品是独立领域（非参考数据，ADR-0014）：直接发通用失效信号。
-            crate::events::emit_ledger_changed(&app);
+            // 物品是独立领域（非参考数据，ADR-0014）：经映射单点发通用失效信号。
+            emit_for(&app, WriteOp::DeleteItem, WriteEvidence::None);
         })
     })
 }
