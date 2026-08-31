@@ -5,18 +5,17 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useItemsStore } from '@/stores/items'
 import { useItemDailyTotal } from '@/composables/useItemDailyTotal'
-import { registerToastSink, type ToastSink } from '@/composables/useLoadable'
-import { invokeHandler } from './factories'
-import type { ItemDailyTotal } from '@/types'
+import { registerToastSink } from '@/composables/useLoadable'
+import {
+  invokeHandler,
+  makeFakeSink,
+  makeItemDailyTotal,
+  resetToastSink,
+} from './factories'
 
 const mockInvoke = vi.mocked(invoke)
 
-const mockTotal: ItemDailyTotal = { native_currency: 'CNY', per_day_cents: 12345, item_count: 3 }
-
-/** 假 sink：记录 error toast 调用（默认策略经 sink 弹出，断言只看 sink 面） */
-function makeFakeSink(): ToastSink & { error: ReturnType<typeof vi.fn> } {
-  return { error: vi.fn() }
-}
+const mockTotal = makeItemDailyTotal()
 
 /** 默认 invoke mock：物品列表（store self-init）+ 日成本合计 */
 function baseInvoke(extra?: Record<string, unknown>) {
@@ -45,7 +44,7 @@ beforeEach(() => {
   baseInvoke()
   localStorage.clear()
   // 每用例复位为 no-op，模拟「注册前」默认态，防模块级 sink 状态串扰
-  registerToastSink({ error: () => {} })
+  resetToastSink()
 })
 
 describe('useItemDailyTotal 物品日成本数据层（issue #122）', () => {

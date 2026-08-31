@@ -3,17 +3,18 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import { useDashboardOverview } from '@/composables/useDashboardOverview'
-import { registerToastSink, type ToastSink } from '@/composables/useLoadable'
-import { invokeHandler, makeOverview, mockCurrencies } from './factories'
+import { registerToastSink } from '@/composables/useLoadable'
+import {
+  invokeHandler,
+  makeFakeSink,
+  makeOverview,
+  mockCurrencies,
+  resetToastSink,
+} from './factories'
 
 const mockInvoke = vi.mocked(invoke)
 
 const mockOverview = makeOverview({ net_worth_cents: 1234567, accounts_balance_cents: 1000000 })
-
-/** 假 sink：记录 error toast 调用（默认策略经 sink 弹出，断言只看 sink 面） */
-function makeFakeSink(): ToastSink & { error: ReturnType<typeof vi.fn> } {
-  return { error: vi.fn() }
-}
 
 /** 默认 invoke mock：参考数据 + 净资产总览 */
 function baseInvoke(extra?: Record<string, unknown>) {
@@ -37,7 +38,7 @@ beforeEach(async () => {
   baseInvoke()
   localStorage.clear()
   // 每用例复位为 no-op，模拟「注册前」默认态，防模块级 sink 状态串扰
-  registerToastSink({ error: () => {} })
+  resetToastSink()
   const store = useReferenceStore()
   await store.refresh()
 })
