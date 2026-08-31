@@ -25,6 +25,15 @@ import type {
   ScheduledTransactionWithExt,
 } from '@/types'
 
+/**
+ * 分期页签组件测试（ADR-0041 决策 10，迁移步 3）：清单加载/按形态过滤/状态过滤/
+ * Plan Lifecycle 状态机（参数/提示/重拉时序/可用性矩阵）已由 ScheduledPlanList
+ * 模块接口测试承接（useScheduledPlanList.test.ts，刷新版本号镜像法）；商户解析
+ * 竞态矩阵已由计划表单接缝测试承接（useScheduledPlanForm.test.ts）。本文件收缩为
+ * 渲染与交互冒烟 + 分期形态真差异——期数预览（含尾差文案）、进度列（expandDetail
+ * 接线：期数/金额取自详情命令）与新建表单校验/提交编排。迁移与删除记录见对应提交信息。
+ */
+
 const mockInvoke = vi.mocked(invoke)
 
 enableAutoUnmount(afterEach)
@@ -233,8 +242,8 @@ beforeEach(async () => {
   await store.refresh()
 })
 
-describe('InstallmentsPane 分期清单（issue #204）', () => {
-  it('只展示分期计划，订阅 / 定时转账不出现', async () => {
+describe('InstallmentsPane 清单渲染冒烟（编排用例见 useScheduledPlanList.test.ts）', () => {
+  it('只展示分期计划，订阅 / 定时转账不出现（按形态过滤归模块，此处验渲染）', async () => {
     const inst = makePlan(
       { id: 'i1', note: '手机分期' },
       { total_amount_cents: 120000, total_occurrences: 12 },
@@ -257,7 +266,7 @@ describe('InstallmentsPane 分期清单（issue #204）', () => {
     expect(wrapper.text()).not.toContain('某定时转账')
   })
 
-  it('进度格显示进度条 + 已还金额/总额 · X/N 期（实时汇总）', async () => {
+  it('进度格显示进度条 + 已还金额/总额 · X/N 期（expandDetail 接线：期数与金额取自详情命令）', async () => {
     const inst = makePlan(
       { id: 'i1', note: '手机分期' },
       { total_amount_cents: 120000, total_occurrences: 12 },
@@ -287,7 +296,7 @@ describe('InstallmentsPane 分期清单（issue #204）', () => {
     expect(wrapper.find('[data-testid="inst-progress-i1"]').text()).toContain('¥1.5')
   })
 
-  it('默认只显示进行中（active）的分期，可切换过滤', async () => {
+  it('默认只显示进行中（active）的分期，可切换过滤（默认过滤归模块，此处验渲染）', async () => {
     const a1 = makePlan(
       { id: 'a1', note: '进行中分期' },
       { total_amount_cents: 1200, total_occurrences: 12 },
@@ -307,9 +316,119 @@ describe('InstallmentsPane 分期清单（issue #204）', () => {
     expect(wrapper.text()).toContain('已暂停分期')
     expect(wrapper.text()).not.toContain('进行中分期')
   })
+
+  it('状态过滤含「已完成」：completed 行经「已完成」过滤可见（#309 显式可见变化之二，迁移步 3 落地）', async () => {
+    const done = makePlan(
+      { id: 'd1', note: '已还清分期', status: 'completed' },
+      { total_amount_cents: 1200, total_occurrences: 12 },
+    )
+    const active = makePlan(
+      { id: 'a1', note: '进行中分期' },
+      { total_amount_cents: 1200, total_occurrences: 12 },
+    )
+    mockPlans = [done, active]
+    mockDetails.set('d1', makeDetail(done, { count: 12, amount: 1200 }))
+    mockDetails.set('a1', makeDetail(active, { count: 0, amount: 0 }))
+    const wrapper = await mountView()
+    // 默认「进行中」：已完成分期不出现
+    expect(wrapper.text()).not.toContain('已还清分期')
+    await wrapper.find('[data-testid="filter-completed"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('已还清分期')
+    expect(wrapper.text()).not.toContain('进行中分期')
+    // 已完成分期仅提供期次查看（可用性矩阵归模块，此处验渲染接线）
+    expect(wrapper.find('[data-testid="op-detail-d1"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="op-pause-d1"]').exists()).toBe(false)
+  })
 })
 
-describe('InstallmentsPane 新建分期（issue #204）', () => {
+describe('InstallmentsPane 操作列渲染与确认交互（可用性矩阵与状态机见模块测试）', () => {
+  it('active 行点「暂停」发出状态命令（交互冒烟：描述符 → 按钮 onClick 接线）', async () => {
+    const plan = makePlan(
+      { id: 'a1' },
+      { total_amount_cents: 1200, total_occurrences: 12 },
+    )
+    mockPlans = [plan]
+    mockDetails.set('a1', makeDetail(plan, { count: 0, amount: 0 }))
+    const wrapper = await mountView()
+    await wrapper.find('[data-testid="op-pause-a1"]').trigger('click')
+    await flushPromises()
+    expect(
+      mockInvoke.mock.calls.some(
+        ([cmd, args]) =>
+          cmd === 'update_scheduled_transaction_status' &&
+          (args as { input: { new_status: string } }).input.new_status === 'paused',
+      ),
+    ).toBe(true)
+  })
+
+  it('已暂停的分期可恢复', async () => {
+    const plan = makePlan(
+      { id: 'p1', status: 'paused' },
+      { total_amount_cents: 1200, total_occurrences: 12 },
+    )
+    mockPlans = [plan]
+    mockDetails.set('p1', makeDetail(plan, { count: 0, amount: 0 }))
+    const wrapper = await mountView()
+    await wrapper.find('[data-testid="filter-paused"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="op-resume-p1"]').trigger('click')
+    await flushPromises()
+    expect(
+      mockInvoke.mock.calls.some(
+        ([cmd, args]) =>
+          cmd === 'update_scheduled_transaction_status' &&
+          (args as { input: { new_status: string } }).input.new_status === 'active',
+      ),
+    ).toBe(true)
+  })
+
+  it('取消需二次确认（NPopconfirm），说明历史保留，确认后走状态命令', async () => {
+    const plan = makePlan(
+      { id: 'a1' },
+      { total_amount_cents: 1200, total_occurrences: 12 },
+    )
+    mockPlans = [plan]
+    mockDetails.set('a1', makeDetail(plan, { count: 0, amount: 0 }))
+    const wrapper = await mountView()
+    await wrapper
+      .findComponent(NPopconfirm)
+      .find('[data-testid="op-cancel-a1"]')
+      .trigger('click')
+    await flushPromises()
+    // 确认文案说明历史保留（ADR-0024：取消不删已生成交易）
+    expect(document.body.querySelector('.n-popconfirm')?.textContent).toContain('保留')
+    const positive = document.body.querySelector('.n-popconfirm .n-button--primary-type')
+    expect(positive).not.toBeNull()
+    ;(positive as HTMLButtonElement).click()
+    await flushPromises()
+    expect(
+      mockInvoke.mock.calls.some(
+        ([cmd, args]) =>
+          cmd === 'update_scheduled_transaction_status' &&
+          (args as { input: { new_status: string } }).input.new_status === 'cancelled',
+      ),
+    ).toBe(true)
+  })
+
+  it('已取消的分期不再提供状态操作（可用性矩阵归模块，此处验渲染接线）', async () => {
+    const plan = makePlan(
+      { id: 'c1', status: 'cancelled', note: '已取消分期' },
+      { total_amount_cents: 1200, total_occurrences: 12 },
+    )
+    mockPlans = [plan]
+    mockDetails.set('c1', makeDetail(plan, { count: 0, amount: 0 }))
+    const wrapper = await mountView()
+    await wrapper.find('[data-testid="filter-cancelled"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('已取消分期')
+    expect(wrapper.find('[data-testid="op-pause-c1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="op-resume-c1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="op-cancel-c1"]').exists()).toBe(false)
+  })
+})
+
+describe('InstallmentsPane 新建分期（分期形态真差异，issue #204）', () => {
   /** 点击「新建分期」打开模态对话框。 */
   async function openCreateModal(wrapper: ReturnType<typeof mount>) {
     await wrapper.find('[data-testid="inst-create-open"]').trigger('click')
@@ -363,7 +482,7 @@ describe('InstallmentsPane 新建分期（issue #204）', () => {
     expect(preview).not.toContain('尾差')
   })
 
-  it('提交走创建命令：amount_cents 为每期 floor 口径，携带总额与期数', async () => {
+  it('提交走创建命令：amount_cents 为每期 floor 口径，携带总额与期数（payload 走表单接缝组装）', async () => {
     const wrapper = await mountView()
     await openCreateModal(wrapper)
     await findInput(wrapper, 'inst-note').setValue('手机分期')
@@ -459,93 +578,7 @@ describe('InstallmentsPane 新建分期（issue #204）', () => {
   })
 })
 
-describe('InstallmentsPane 状态操作（issue #204）', () => {
-  it('进行中的分期可暂停（走既有状态命令）', async () => {
-    const plan = makePlan(
-      { id: 'a1' },
-      { total_amount_cents: 1200, total_occurrences: 12 },
-    )
-    mockPlans = [plan]
-    mockDetails.set('a1', makeDetail(plan, { count: 0, amount: 0 }))
-    const wrapper = await mountView()
-    await wrapper.find('[data-testid="op-pause-a1"]').trigger('click')
-    await flushPromises()
-    expect(
-      mockInvoke.mock.calls.some(
-        ([cmd, args]) =>
-          cmd === 'update_scheduled_transaction_status' &&
-          (args as { input: { new_status: string } }).input.new_status === 'paused',
-      ),
-    ).toBe(true)
-  })
-
-  it('已暂停的分期可恢复', async () => {
-    const plan = makePlan(
-      { id: 'p1', status: 'paused' },
-      { total_amount_cents: 1200, total_occurrences: 12 },
-    )
-    mockPlans = [plan]
-    mockDetails.set('p1', makeDetail(plan, { count: 0, amount: 0 }))
-    const wrapper = await mountView()
-    await wrapper.find('[data-testid="filter-paused"]').trigger('click')
-    await flushPromises()
-    await wrapper.find('[data-testid="op-resume-p1"]').trigger('click')
-    await flushPromises()
-    expect(
-      mockInvoke.mock.calls.some(
-        ([cmd, args]) =>
-          cmd === 'update_scheduled_transaction_status' &&
-          (args as { input: { new_status: string } }).input.new_status === 'active',
-      ),
-    ).toBe(true)
-  })
-
-  it('取消需二次确认（NPopconfirm），说明历史保留，确认后走状态命令', async () => {
-    const plan = makePlan(
-      { id: 'a1' },
-      { total_amount_cents: 1200, total_occurrences: 12 },
-    )
-    mockPlans = [plan]
-    mockDetails.set('a1', makeDetail(plan, { count: 0, amount: 0 }))
-    const wrapper = await mountView()
-    await wrapper
-      .findComponent(NPopconfirm)
-      .find('[data-testid="op-cancel-a1"]')
-      .trigger('click')
-    await flushPromises()
-    // 确认文案说明历史保留（ADR-0024：取消不删已生成交易）
-    expect(document.body.querySelector('.n-popconfirm')?.textContent).toContain('保留')
-    const positive = document.body.querySelector('.n-popconfirm .n-button--primary-type')
-    expect(positive).not.toBeNull()
-    ;(positive as HTMLButtonElement).click()
-    await flushPromises()
-    expect(
-      mockInvoke.mock.calls.some(
-        ([cmd, args]) =>
-          cmd === 'update_scheduled_transaction_status' &&
-          (args as { input: { new_status: string } }).input.new_status === 'cancelled',
-      ),
-    ).toBe(true)
-  })
-
-  it('已取消的分期不再提供状态操作', async () => {
-    const plan = makePlan(
-      { id: 'c1', status: 'cancelled', note: '已取消分期' },
-      { total_amount_cents: 1200, total_occurrences: 12 },
-    )
-    mockPlans = [plan]
-    mockDetails.set('c1', makeDetail(plan, { count: 0, amount: 0 }))
-    const wrapper = await mountView()
-    await wrapper.find('[data-testid="filter-cancelled"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.text()).toContain('已取消分期')
-    expect(wrapper.find('[data-testid="op-pause-c1"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="op-resume-c1"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="op-cancel-c1"]').exists()).toBe(false)
-  })
-})
-
-describe('InstallmentsPane 商户接入（issue #206）', () => {
+describe('InstallmentsPane 商户挂靠（issue #206：表单接缝接线冒烟，解析矩阵见 useScheduledPlanForm.test.ts）', () => {
   /** 点击「新建分期」打开模态对话框。 */
   async function openCreateModal(wrapper: ReturnType<typeof mount>) {
     await wrapper.find('[data-testid="inst-create-open"]').trigger('click')

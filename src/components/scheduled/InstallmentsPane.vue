@@ -22,31 +22,39 @@ import AppTreeSelect from '@/components/AppTreeSelect.vue'
 import { formatAmount } from '@/types'
 import { yuanToCents } from '@/utils/money'
 import { installmentSchedule } from '@/utils/installment'
-import type {
-  RecurrenceType,
-  ScheduledTransactionWithExt,
-  UpdateStatusInput,
-} from '@/types'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
+import {
+  scheduledRecurrenceLabel,
+  SCHEDULED_RECURRENCE_OPTIONS,
+  useScheduledPlanList,
+  type ScheduledPlanRow,
+} from '@/composables/useScheduledPlanList'
 import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 
+/**
+ * 分期页签 = ScheduledPlanList 计划清单模块（ADR-0041 迁移步 3）的薄适配器：
+ * 清单加载/刷新、状态过滤、Plan Lifecycle 操作、行操作描述符与周期标签全在模块；
+ * 状态过滤补「已完成」项（#309 显式可见变化之二在此落地：按 Plan Lifecycle 自然
+ * 完成的分期计划恢复可见可查，此前从清单消失且无入口可见）。本组件只留分期形态
+ * 真差异——期数预览（含尾差文案）与进度列（期数维度百分比 + 已还金额/总额实时
+ * 汇总，不持久化、不推算）。表单公共部分走 ScheduledPlanForm 接缝（商户挂靠保留，
+ * issue #206）；总额/期数、校验与提交编排留本页签。
+ */
+
 const reference = useReferenceStore()
 const message = useMessage()
 
 // ---------------------------------------------------------------------------
-// 新建分期 = 模态对话框（issue #204）：录入「总金额 + 期数」，实时预览每期金额
-// 与最后一期（含尾差）。每期金额口径唯一来源是 installmentSchedule（与后端
-// expand_occurrences 的 floor 均分、尾差进最后一期一致）。商户接入见 issue #206
-// （输入即建，解析单点走表单接缝；不暴露「每月几号」）。
+// 表单接缝（ADR-0041）：公共草稿字段、商户解析（含重名兜底竞态）与公共 payload
+// 组装全仓单点；总额/期数、校验与提交编排留本页签（每期金额预览口径唯一来源是
+// installmentSchedule，与后端 expand_occurrences 的 floor 均分、尾差进末期一致）。
 // ---------------------------------------------------------------------------
 
-// 表单接缝（ADR-0041）：公共草稿字段、商户解析（含重名兜底竞态）与公共 payload
-// 组装全仓单点；总额/期数、校验与提交编排留本页签。
 const form = useScheduledPlanForm()
 const {
   note,
@@ -67,13 +75,6 @@ const showCreateModal = ref(false)
 
 const totalYuan = ref('')
 const periods = ref<number | null>(null)
-
-const recurrenceOptions = [
-  { label: '每天', value: 'daily' },
-  { label: '每周', value: 'weekly' },
-  { label: '每月', value: 'monthly' },
-  { label: '每年', value: 'yearly' },
-]
 
 /** 每期金额预览：总额与期数均合法时给出每期与末期（含尾差），否则为空。 */
 const schedule = computed(() => {
@@ -137,108 +138,46 @@ async function create() {
     message.success('已创建分期计划')
     showCreateModal.value = false
     resetCreateForm()
-    await load()
+    await list.load()
   } catch (e) {
     message.error(`创建失败: ${errorMessage(e)}`)
   }
 }
 
 // ---------------------------------------------------------------------------
-// 清单：list_scheduled_transactions 过滤 installment + 状态过滤；
-// 进度来自既有详情命令的已完成期次实时汇总（金额与期数，不持久化、不推算）
+// 清单编排（ADR-0041）：全部经 ScheduledPlanList 模块；确认弹层在本适配器渲染。
+// 进度来自既有详情命令的已完成期次实时汇总（金额与期数，不持久化、不推算）。
 // ---------------------------------------------------------------------------
 
-/** 一行 = 计划 + 已完成期次汇总（期数与金额）。 */
-interface InstallmentRow {
-  plan: ScheduledTransactionWithExt
+/** 一行 = 计划 + 形态扩展器产出的已完成期次汇总（期数与金额）。 */
+interface InstallmentExt {
   completedCount: number
   completedAmountCents: number
-  /** 详情命令失败：进度格显示加载失败，不静默显示 0。 */
-  detailFailed?: boolean
 }
-
-const rows = ref<InstallmentRow[]>([])
-const loading = ref(false)
-/** 清单状态过滤：默认只看进行中（与订阅清单一致）。 */
-const statusFilter = ref<'active' | 'paused' | 'cancelled'>('active')
-
-const filteredRows = computed(() =>
-  rows.value.filter((r) => r.plan.core.status === statusFilter.value),
-)
-
-async function load() {
-  loading.value = true
-  try {
-    const plans = (await api.listScheduledTransactions()).filter(
-      (p) => p.core.kind === 'installment',
-    )
-    const details = await Promise.all(
-      plans.map(async (p): Promise<InstallmentRow> => {
-        try {
-          const d = await api.getScheduledTransactionDetail(p.core.id)
-          return {
-            plan: p,
-            completedCount: d.completed_occurrences,
-            completedAmountCents: d.completed_amount_cents,
-          }
-        } catch {
-          return { plan: p, completedCount: 0, completedAmountCents: 0, detailFailed: true }
-        }
-      }),
-    )
-    rows.value = details
-  } catch (e) {
-    message.error(`加载分期失败: ${errorMessage(e)}`)
-  } finally {
-    loading.value = false
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 期次详情弹窗（issue #205）：三页签通用组件；弹窗内重试成功会发 changed，
-// 清单随之刷新（分期进度由详情实时汇总，重拉即可）
-// ---------------------------------------------------------------------------
+type InstallmentRow = ScheduledPlanRow<InstallmentExt>
 
 const planDetailRef = ref<InstanceType<typeof PlanDetailModal> | null>(null)
 
-function openDetail(row: InstallmentRow) {
-  void planDetailRef.value?.open(row.plan.core.id)
-}
+const list = useScheduledPlanList<InstallmentExt>({
+  kind: 'installment',
+  expandDetail: (_plan, detail) => ({
+    completedCount: detail?.completed_occurrences ?? 0,
+    completedAmountCents: detail?.completed_amount_cents ?? 0,
+  }),
+  loadErrorText: '加载分期失败',
+  cancelConfirmText: '取消后不再自动扣款，已生成的交易与历史期次保留。确认取消？',
+  onOpenDetail: (row) => void planDetailRef.value?.open(row.plan.core.id),
+})
+const { loading, statusFilter, statusFilterOptions, filteredRows } = list
 
+/** 期次详情弹窗内重试成功会发 changed，清单随之刷新（进度由详情实时汇总，重拉即可）。 */
 async function onDetailChanged() {
-  await load()
+  await list.load()
 }
 
 // ---------------------------------------------------------------------------
-// 状态操作：暂停 / 恢复 / 取消（走既有 update_scheduled_transaction_status）
+// 展示助手：参考数据名称解析与单元格渲染留适配器；周期标签走模块单源
 // ---------------------------------------------------------------------------
-
-async function changeStatus(id: string, newStatus: UpdateStatusInput['new_status']) {
-  try {
-    await api.updateScheduledTransactionStatus({ id, new_status: newStatus })
-    message.success(newStatus === 'paused' ? '已暂停' : newStatus === 'active' ? '已恢复' : '已取消')
-    await load()
-  } catch (e) {
-    message.error(`操作失败: ${errorMessage(e)}`)
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 展示助手
-// ---------------------------------------------------------------------------
-
-const recurrenceUnit: Record<RecurrenceType, string> = {
-  daily: '天',
-  weekly: '周',
-  monthly: '月',
-  yearly: '年',
-}
-
-function recurrenceLabel(row: InstallmentRow): string {
-  const { recurrence_type, recurrence_interval } = row.plan.core
-  const unit = recurrenceUnit[recurrence_type as RecurrenceType] ?? recurrence_type
-  return recurrence_interval > 1 ? `每${recurrence_interval}${unit}` : `每${unit}`
-}
 
 function statusLabel(status: string): string {
   return scheduledStatusLabel(status)
@@ -248,14 +187,8 @@ function statusLabel(status: string): string {
 function progressPercentage(row: InstallmentRow): number {
   const total = row.plan.total_occurrences ?? 0
   if (total <= 0) return 0
-  return Math.min(100, (row.completedCount / total) * 100)
+  return Math.min(100, (row.ext.completedCount / total) * 100)
 }
-
-const filterOptions = [
-  { key: 'active' as const, label: '进行中' },
-  { key: 'paused' as const, label: '已暂停' },
-  { key: 'cancelled' as const, label: '已取消' },
-]
 
 const columns: DataTableColumns<InstallmentRow> = [
   {
@@ -295,7 +228,7 @@ const columns: DataTableColumns<InstallmentRow> = [
       const currency = reference.getCurrency(row.plan.core.currency_code)
       const text = row.detailFailed
         ? '加载失败'
-        : `已还 ${formatAmount(row.completedAmountCents, currency)} / ${formatAmount(row.plan.total_amount_cents ?? 0, currency)} · ${row.completedCount}/${row.plan.total_occurrences ?? 0} 期`
+        : `已还 ${formatAmount(row.ext.completedAmountCents, currency)} / ${formatAmount(row.plan.total_amount_cents ?? 0, currency)} · ${row.ext.completedCount}/${row.plan.total_occurrences ?? 0} 期`
       return h('div', { 'data-testid': `inst-progress-${row.plan.core.id}` }, [
         row.detailFailed
           ? null
@@ -309,76 +242,53 @@ const columns: DataTableColumns<InstallmentRow> = [
       ])
     },
   },
-  { title: '周期', key: 'recurrence', render: recurrenceLabel },
+  {
+    title: '周期',
+    key: 'recurrence',
+    render: (row) =>
+      scheduledRecurrenceLabel(row.plan.core.recurrence_type, row.plan.core.recurrence_interval),
+  },
   { title: '开始日', key: 'start_date', render: (row) => row.plan.core.start_date },
   { title: '状态', key: 'status', render: (row) => statusLabel(row.plan.core.status) },
   {
     title: '操作',
     key: 'actions',
+    // 行操作描述符（可用性矩阵/标签/run）由模块构建；此处按描述符渲染，
+    // 含 confirm 文案的动作经 AppPopconfirm 二次确认（弹层纪律 ADR-0035）
     render: (row) => {
-      const status = row.plan.core.status
-      const buttons: VNode[] = []
-      // 期次详情（issue #205）：所有状态都可查看期次执行情况
-      buttons.push(
-        h(
-          NButton,
-          {
-            size: 'tiny',
-            'data-testid': `op-detail-${row.plan.core.id}`,
-            onClick: () => openDetail(row),
-          },
-          () => '期次',
-        ),
-      )
-      if (status === 'active') {
-        buttons.push(
-          h(
-            NButton,
-            {
-              size: 'tiny',
-              'data-testid': `op-pause-${row.plan.core.id}`,
-              onClick: () => changeStatus(row.plan.core.id, 'paused'),
-            },
-            () => '暂停',
-          ),
+      const buttons: VNode[] = list
+        .rowActions(row)
+        .filter((a) => a.available)
+        .map((a) =>
+          a.confirm
+            ? h(
+                AppPopconfirm,
+                { onPositiveClick: a.run },
+                {
+                  default: () => a.confirm,
+                  trigger: () =>
+                    h(
+                      NButton,
+                      {
+                        size: 'tiny',
+                        type: 'error',
+                        quaternary: true,
+                        'data-testid': `op-${a.key}-${row.plan.core.id}`,
+                      },
+                      () => a.label,
+                    ),
+                },
+              )
+            : h(
+                NButton,
+                {
+                  size: 'tiny',
+                  'data-testid': `op-${a.key}-${row.plan.core.id}`,
+                  onClick: a.run,
+                },
+                () => a.label,
+              ),
         )
-      }
-      if (status === 'paused') {
-        buttons.push(
-          h(
-            NButton,
-            {
-              size: 'tiny',
-              'data-testid': `op-resume-${row.plan.core.id}`,
-              onClick: () => changeStatus(row.plan.core.id, 'active'),
-            },
-            () => '恢复',
-          ),
-        )
-      }
-      if (status === 'active' || status === 'paused') {
-        // 取消不删已生成交易与历史期次（后端行为，ADR-0024），二次确认防误触
-        buttons.push(
-          h(
-            AppPopconfirm,
-            { onPositiveClick: () => changeStatus(row.plan.core.id, 'cancelled') },
-            {
-              default: () => '取消后不再自动扣款，已生成的交易与历史期次保留。确认取消？',
-              trigger: () =>
-                h(
-                  NButton,
-                  {
-                    size: 'tiny',
-                    type: 'error',
-                    quaternary: true,
-                    'data-testid': `op-cancel-${row.plan.core.id}`,
-                  },
-                  () => '取消',
-                ),
-            },
-          ),
-        )
-      }
       if (buttons.length === 0) return '—'
       return h(NSpace, { size: 4 }, () => buttons)
     },
@@ -386,7 +296,7 @@ const columns: DataTableColumns<InstallmentRow> = [
 ]
 
 onMounted(() => {
-  void load()
+  void list.load()
 })
 </script>
 
@@ -397,11 +307,11 @@ onMounted(() => {
         <NSpace :size="12">
           <NButtonGroup size="small">
             <NButton
-              v-for="f in filterOptions"
+              v-for="f in statusFilterOptions"
               :key="f.key"
               :type="statusFilter === f.key ? 'primary' : 'default'"
               :data-testid="`filter-${f.key}`"
-              @click="statusFilter = f.key"
+              @click="list.setStatusFilter(f.key)"
             >
               {{ f.label }}
             </NButton>
@@ -513,7 +423,7 @@ onMounted(() => {
               />
               <AppSelect
                 v-model:value="recurrenceType"
-                :options="recurrenceOptions"
+                :options="[...SCHEDULED_RECURRENCE_OPTIONS]"
                 style="width: 100px"
               />
             </NSpace>

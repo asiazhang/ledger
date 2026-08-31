@@ -240,6 +240,16 @@ describe('useScheduledPlanList 初始状态', () => {
       { key: 'cancelled', label: '已取消' },
     ])
   })
+
+  it('状态过滤选项集按形态：分期含「已完成」（#309 显式可见变化之二，迁移步 3 落地：完成的分期计划恢复可见可查）', () => {
+    const { list } = mountHarness('installment')
+    expect(list.statusFilterOptions).toEqual([
+      { key: 'active', label: '进行中' },
+      { key: 'paused', label: '已暂停' },
+      { key: 'cancelled', label: '已取消' },
+      { key: 'completed', label: '已完成' },
+    ])
+  })
 })
 
 describe('useScheduledPlanList 清单加载', () => {
