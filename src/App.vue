@@ -5,6 +5,8 @@ import {
   NConfigProvider,
   NMessageProvider,
   NDialogProvider,
+  enUS,
+  dateEnUS,
   NLayout,
   NLayoutSider,
   NLayoutContent,
@@ -13,6 +15,8 @@ import {
   NSpace,
   NText,
   darkTheme,
+  zhCN,
+  dateZhCN,
   type MenuOption,
 } from 'naive-ui'
 import AppDropdown from '@/components/AppDropdown.vue'
@@ -30,6 +34,7 @@ import {
   SettingsOutline,
 } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
+import { currentLocale } from '@/i18n'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
 import { useDevicePreferenceSync } from '@/composables/useDevicePreferenceSync'
 import MessageSinkBridge from '@/components/MessageSinkBridge.vue'
@@ -62,6 +67,11 @@ function updateSidebarCollapsed(collapsed: boolean) {
   saveSidebarCollapsed(collapsed)
 }
 const store = useAppStore()
+
+// UI 组件库内置文案（日期选择器、分页、空态等）随应用界面语言切换（ADR-0048）：
+// 经 NConfigProvider 的 locale / date-locale 注入，语言切换即时生效。
+const naiveLocale = computed(() => (currentLocale.value === 'en-US' ? enUS : zhCN))
+const naiveDateLocale = computed(() => (currentLocale.value === 'en-US' ? dateEnUS : dateZhCN))
 
 // 设备偏好镜像推送（备份目录 issue #125 / ADR-0016；自动执行开关 issue #308 / ADR-0042）：
 // 真源在前端 localStorage（应用设置 store），启动/变更时把镜像推给后端运行时消费。
@@ -182,6 +192,8 @@ const title = () => h('div', { style: 'padding: 16px 18px; font-size: 18px; font
   <NConfigProvider
     :theme="store.theme === 'dark' ? darkTheme : null"
     :theme-overrides="store.theme === 'dark' ? darkOverrides : lightOverrides"
+    :locale="naiveLocale"
+    :date-locale="naiveDateLocale"
   >
     <NMessageProvider>
       <NDialogProvider>

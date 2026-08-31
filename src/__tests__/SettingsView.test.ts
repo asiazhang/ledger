@@ -131,6 +131,13 @@ describe('SettingsView.vue（issue #157：Tab 分域重构 6 → 4）', () => {
     expect(store.theme).toBe('light')
   })
 
+  it('「通用」页含界面语言选择器，默认「跟随系统」（issue #342 / ADR-0048）', () => {
+    const wrapper = mount(SettingsView)
+    const html = wrapper.html()
+    expect(html).toContain('界面语言')
+    expect(html).toContain('跟随系统')
+  })
+
   it('「分类」含分类管理器，不再展示支持币种表格（ADR-0034）', async () => {
     const wrapper = mount(SettingsView)
     await openTab(wrapper, '分类')
