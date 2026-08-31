@@ -22,24 +22,27 @@ import AboutSettings from '@/components/settings/AboutSettings.vue'
        通用（轻量设备偏好）→ 分类（参考数据）→ 商户（参考数据）→ 数据（备份与存储位置）
        → 定时（定时计划域设备偏好）→ 关于（恒在末位，新增 Tab 一律插在它之前）。
        「数据」pane 用 display-directive='show:lazy'：首次激活挂载后保持挂载，
-       备份列表在 tab 切换间保留缓存；useBackup 的 onMounted 于首次激活时刷新。 -->
+       备份列表在 tab 切换间保留缓存；useBackup 的 onMounted 于首次激活时刷新。
+       key 必填：naive-ui ≥2.45（vapor 编译产物）对无 key 的 pane 列表按 index patch，
+       混用默认 if 与 show:lazy pane 时 show:lazy pane 会在切换时被卸载重建（缓存失效），
+       显式 key 让 Vue 按 key 复用实例。 -->
   <NTabs type="line">
-    <NTabPane name="general">
+    <NTabPane name="general" key="general">
       <template #tab><span class="pane-tab"><NIcon :component="OptionsOutline" />通用</span></template>
       <GeneralSettings />
     </NTabPane>
 
-    <NTabPane name="categories">
+    <NTabPane name="categories" key="categories">
       <template #tab><span class="pane-tab"><NIcon :component="GridOutline" />分类</span></template>
       <CategoryManager />
     </NTabPane>
 
-    <NTabPane name="merchants">
+    <NTabPane name="merchants" key="merchants">
       <template #tab><span class="pane-tab"><NIcon :component="StorefrontOutline" />商户</span></template>
       <MerchantManager />
     </NTabPane>
 
-    <NTabPane name="data" display-directive="show:lazy">
+    <NTabPane name="data" key="data" display-directive="show:lazy">
       <template #tab><span class="pane-tab"><NIcon :component="ServerOutline" />数据</span></template>
       <NSpace vertical :size="16">
         <BackupSettings />
@@ -47,12 +50,12 @@ import AboutSettings from '@/components/settings/AboutSettings.vue'
       </NSpace>
     </NTabPane>
 
-    <NTabPane name="scheduled">
+    <NTabPane name="scheduled" key="scheduled">
       <template #tab><span class="pane-tab"><NIcon :component="RepeatOutline" />定时</span></template>
       <ScheduledSettings />
     </NTabPane>
 
-    <NTabPane name="about">
+    <NTabPane name="about" key="about">
       <template #tab><span class="pane-tab"><NIcon :component="InformationCircleOutline" />关于</span></template>
       <AboutSettings />
     </NTabPane>
