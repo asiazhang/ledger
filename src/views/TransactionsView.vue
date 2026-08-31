@@ -28,6 +28,7 @@ import AddItemForm from '@/components/AddItemForm.vue'
 import { buildRowMenuOptions } from '@/components/transaction-row-menu'
 import { useCreateShortcuts, CREATE_KIND_KEYS } from '@/composables/useCreateShortcuts'
 import { useTransactionFilter } from '@/composables/useTransactionFilter'
+import { useTransactionModalState } from '@/composables/useTransactionModalState'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useItemsStore } from '@/stores/items'
@@ -69,6 +70,12 @@ const {
   afterRowDelete,
   syncUrlQuery,
 } = useTransactionFilter()
+
+// 行操作弹窗编排（ADR-0045）：意图闭集四为唯一事实源，显示开关由「意图非空」派生，
+// 回调序号随 open 递增内化（作表单 key 强制重建实例）。本票（#339）先接线退款与
+// 加入物品两同步弹窗；记一笔（#338）与编辑（#340）仍走各自过渡态，后续票接线。
+const { intent: modalIntent, seq: modalSeq, open: openModal, close: closeModal } =
+  useTransactionModalState()
 
 /** 是否有任一激活的过滤条件（控制清除按钮可用性与空态文案）。 */
 const filtersActive = computed(() => Object.values(filters).some((v) => v !== null))
@@ -216,22 +223,18 @@ function confirmDelete(row: Transaction) {
   })
 }
 
-/** 行内退款弹窗（issue #151）：原交易由右键所在行确定，不经搜索选择；
- * 同一支出可多次发起退款（部分退款语义，不阻断）。
- * refundSeq 作为表单 key：每次打开强制重建表单实例，
- * 金额/币种/账户由 fixedTarget 重新初始化（不依赖弹窗内容卸载）。 */
-const showRefund = ref(false)
-const refundSource = ref<Transaction | null>(null)
-const refundSeq = ref(0)
-
+/** 行内退款弹窗（issue #151）：目标交易行由右键所在行固定（fixed-target），
+ * 序号随每次开启递增（作表单 key 强制重建实例，金额/币种/账户由 fixedTarget
+ * 重新初始化，不依赖弹窗内容卸载）。开启/关闭编排经 TransactionModalState
+ * （ADR-0045）；同一支出可多次发起退款（部分退款语义，不阻断）。 */
 function openRefundFromRow(row: Transaction) {
-  refundSource.value = row
-  refundSeq.value += 1
-  showRefund.value = true
+  void openModal({ type: 'refund', row })
 }
 
+/** 退款提交成功：关窗（编排内化关闭意图）并回填意图 refresh（重拉 + 翻回第 1 页，
+ * 新退款按日期排序最可能落在第 1 页，保留筛选条件）。 */
 function onRefundCreated() {
-  showRefund.value = false
+  closeModal()
   refresh()
 }
 
@@ -270,23 +273,23 @@ function onEditSaved() {
   void load()
 }
 
-/** 「加入物品」确认弹窗（issue #119 / ADR-0025 创建唯一入口）：原交易由右键所在行固定，
- * 日期/成本/币种只读带出，名称默认备注可微调；提交走既有物品创建命令（溯源必填）。
- * 成功后不手动刷新交易列表（物品写入与交易列表无关），物品 store 经
- * ledger:changed 自动重拉，菜单下次打开即为置灰态。 */
-const showAddItem = ref(false)
-const addItemSource = ref<Transaction | null>(null)
-const addItemSeq = ref(0)
-
+/** 「加入物品」确认弹窗（issue #119 / ADR-0025 创建唯一入口）：目标交易行由右键所在行
+ * 固定，日期/成本/币种只读带出，名称默认备注可微调；提交走既有物品创建命令
+ * （溯源必填）。开启/关闭编排经 TransactionModalState（ADR-0045）；成功与取消都
+ * 只是关窗（物品写入与交易列表无关，物品 store 经 ledger:changed 自动重拉，菜单
+ * 下次打开即为置灰态）。 */
 function openAddItemFromRow(row: Transaction) {
-  addItemSource.value = row
-  addItemSeq.value += 1
-  showAddItem.value = true
+  void openModal({ type: 'add-item', row })
 }
 
-/** 成功与取消都只是关窗（物品列表经 ledger:changed 自动重拉，交易列表无关）。 */
+/** 成功与取消都只关窗（经编排内化关闭意图；物品列表经 ledger:changed 自动重拉）。 */
 function closeAddItem() {
-  showAddItem.value = false
+  closeModal()
+}
+
+/** 退款/加入物品弹窗经 ✕ / ESC 显式关闭：走编排内化关闭（意图清回空终态）。 */
+function onModalShowUpdate(show: boolean) {
+  if (!show) closeModal()
 }
 
 /** 行右键菜单（issue #151 / #119 / #177 / #178 / #180）：除 refund 外行首项「编辑」，
@@ -467,35 +470,39 @@ onMounted(() => {
       />
     </AppModal>
     <!-- 行内退款弹窗：原交易由右键所在行固定（fixed-target），账户/币种锁定继承，
-         金额默认原交易金额（可改）；提交走现有 kind=refund 写路径 -->
+         金额默认原交易金额（可改）；提交走现有 kind=refund 写路径。
+         开启/关闭经 TransactionModalState 编排（目标行由意图携带，序号作表单 key）。 -->
     <AppModal
-      v-model:show="showRefund"
+      :show="modalIntent?.type === 'refund'"
       title="退款"
       preset="card"
       display-directive="if"
       style="width: 480px"
       :bordered="false"
+      @update:show="onModalShowUpdate"
     >
       <RefundForm
-        :key="refundSeq"
-        v-if="refundSource"
-        :fixed-target="refundSource"
+        :key="modalSeq"
+        v-if="modalIntent?.type === 'refund'"
+        :fixed-target="modalIntent.row"
         @created="onRefundCreated"
       />
     </AppModal>
-    <!-- 「加入物品」确认弹窗（issue #119）：原交易由右键所在行固定，自动带出只读展示 -->
+    <!-- 「加入物品」确认弹窗（issue #119）：原交易由右键所在行固定，自动带出只读展示。
+         开启/关闭经 TransactionModalState 编排（目标行由意图携带，序号作表单 key）。 -->
     <AppModal
-      v-model:show="showAddItem"
+      :show="modalIntent?.type === 'add-item'"
       title="加入物品"
       preset="card"
       display-directive="if"
       style="width: 440px"
       :bordered="false"
+      @update:show="onModalShowUpdate"
     >
       <AddItemForm
-        :key="addItemSeq"
-        v-if="addItemSource"
-        :transaction="addItemSource"
+        :key="modalSeq"
+        v-if="modalIntent?.type === 'add-item'"
+        :transaction="modalIntent.row"
         @created="closeAddItem"
         @cancel="closeAddItem"
       />
