@@ -62,5 +62,6 @@ AI 驱动的导入**不按文件类型解析**，唯一入口是本地 HTTP API 
 
 - 新增 Rust 业务逻辑：补充 BDD 场景到 `src-tauri/tests/e2e/features/` 与对应 step 定义（`src-tauri/tests/e2e/*_steps.rs`）。仅 HTTP 端点层的行为（经 IPC 不可达，先例 #296/#304）以 `src-tauri/tests/api_server/` 集成测试承载，不重复建 BDD 场景。
 - 新增前端逻辑：补充 Vitest 测试到 `src/__tests__/`（纯函数、composables、组件均可测）。
+- **BDD world 字段准入**（issue #316）：`LedgerWorld` 只收「先前步骤写入、后续步骤读取」的跨步骤状态；单个步骤函数内自产自销的降为局部变量，从未被后续步骤读取的状态不得入 world。
 - 质量门槛即 `./scripts/check.sh` 的覆盖范围（vue-tsc --noEmit、cargo clippy --all-targets --all-features、cargo fmt 无警告）；单测跑法见 `package.json` scripts 与脚本头部注释。
 - 注意：Vite 配置已忽略对 `src-tauri/**` 的文件监听，改 Rust 代码不会触发前端热更新（Rust 热重载由 `tauri dev` 自身处理）。
