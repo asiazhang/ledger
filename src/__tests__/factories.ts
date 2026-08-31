@@ -1,6 +1,14 @@
 import { vi } from 'vitest'
 import { registerToastSink, type ToastSink } from '@/composables/useLoadable'
-import type { Account, Currency, DashboardOverview, Holding, Instrument, ItemDailyTotal } from '@/types'
+import type {
+  Account,
+  Currency,
+  DashboardOverview,
+  Holding,
+  Instrument,
+  ItemDailyTotal,
+  RealizedPnlSummary,
+} from '@/types'
 
 /**
  * 组件/composable 测试的共享数据工厂与测试辅助（issue #110 审查：消除测试文件间重复）。
@@ -103,6 +111,20 @@ export function makeOverview(partial: Partial<DashboardOverview> = {}): Dashboar
 /** item_daily_total 返回值工厂（issue #122）：默认人民币本位币、每天成本 123.45 元、3 件在用 */
 export function makeItemDailyTotal(partial: Partial<ItemDailyTotal> = {}): ItemDailyTotal {
   return { native_currency: 'CNY', per_day_cents: 12345, item_count: 3, ...partial }
+}
+
+/** realized_pnl_summary 返回值工厂（issue #325）：默认全表汇总 300 元 */
+export function makePnlSummary(partial: Partial<RealizedPnlSummary> = {}): RealizedPnlSummary {
+  return {
+    total_realized_pnl_cents: 30000,
+    by_year: [{ year: '2026', realized_pnl_cents: 30000 }],
+    by_account: [{ account_id: 'acc-1', account_name: '证券账户A', realized_pnl_cents: 30000 }],
+    by_instrument: [
+      { instrument_id: 'inst-1', symbol: '600000', name: '浦发银行', realized_pnl_cents: 30000 },
+    ],
+    details: [],
+    ...partial,
+  }
 }
 
 /** 假 toast sink：记录 error toast 调用（Loadable 默认策略经 sink 弹出，断言只看 sink 面） */
