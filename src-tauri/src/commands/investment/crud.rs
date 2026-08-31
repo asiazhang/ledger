@@ -219,7 +219,7 @@ pub(crate) fn delete_instrument(conn: &Connection, id: &str) -> Result<()> {
         )
         .ok();
     let source = source.ok_or_else(|| {
-        AppError::coded_not_found("instrument.not-found", format!("标的 {id} 不存在"))
+        AppError::codedp_not_found("instrument.not-found", format!("标的 {id} 不存在"), &[id])
     })?;
     if source != "manual" {
         return Err(AppError::coded(

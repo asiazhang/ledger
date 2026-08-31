@@ -177,7 +177,7 @@ fn update_within_transaction(
         )
         .optional()?
         .ok_or_else(|| {
-            AppError::coded_not_found("transaction.not-found", format!("交易不存在: {id}"))
+            AppError::codedp_not_found("transaction.not-found", format!("交易不存在: {id}"), &[id])
         })?;
 
     // 先按旧 kind 回退持仓/卖出关联副作用，再按新 kind 校验并应用（跨 kind 修改避免孤儿持仓）；
@@ -219,7 +219,7 @@ fn delete_within_transaction(conn: &Connection, id: &str) -> Result<()> {
         )
         .optional()?
         .ok_or_else(|| {
-            AppError::coded_not_found("transaction.not-found", format!("交易不存在: {id}"))
+            AppError::codedp_not_found("transaction.not-found", format!("交易不存在: {id}"), &[id])
         })?;
 
     if kind == TransactionKind::Buy {

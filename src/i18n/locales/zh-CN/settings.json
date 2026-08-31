@@ -202,5 +202,10 @@
     "openLogDir": "打开日志目录",
     "copyShaOk": "已复制完整版本号",
     "copyShaFailed": "复制完整版本号失败: {msg}"
+  },
+  "appearance": {
+    "card": "主题模式",
+    "darkMode": "深色模式",
+    "defaultCurrency": "默认币种"
   }
 }

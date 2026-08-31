@@ -50,7 +50,7 @@ pub(crate) fn record_manual_price(
             rusqlite::params![input.instrument_id],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
-        .map_err(|_| AppError::coded("instrument.not-found", "标的不存在"))?;
+        .map_err(|_| AppError::coded("manual-price.instrument-not-found", "标的不存在"))?;
 
     // 落点前置事实：写入前的最新价格点（现价 = 最新一条历史的即时映像，
     // 写入前的最新点决定本次报价是否成为新的最新点）。ISO 日期字典序即时间序。

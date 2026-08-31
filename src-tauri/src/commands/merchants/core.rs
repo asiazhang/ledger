@@ -67,7 +67,9 @@ pub fn update_merchant_internal(
     )?
     .into_iter()
     .next()
-    .ok_or_else(|| AppError::coded_not_found("merchant.not-found", format!("商户不存在: {id}")))?;
+    .ok_or_else(|| {
+        AppError::codedp_not_found("merchant.not-found", format!("商户不存在: {id}"), &[id])
+    })?;
 
     let name = input.name.unwrap_or(existing.name);
     if merchant_name_taken(conn, &name, Some(id))? {
@@ -98,9 +100,10 @@ pub fn delete_merchant_internal(conn: &Connection, id: &str) -> Result<()> {
         .optional()?
         .is_some();
     if !exists {
-        return Err(AppError::coded_not_found(
+        return Err(AppError::codedp_not_found(
             "merchant.not-found",
             format!("商户不存在: {id}"),
+            &[id],
         ));
     }
     conn.execute(

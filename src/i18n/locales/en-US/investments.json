@@ -184,5 +184,22 @@
   "sync": {
     "failed": "Sync failed: {message}",
     "cancelFailed": "Failed to cancel: {message}"
+  },
+  "market": {
+    "sh": "Shanghai",
+    "sz": "Shenzhen",
+    "hk": "Hong Kong",
+    "unknown": "Unknown"
+  },
+  "source": {
+    "eastmoney": "Synced",
+    "manual": "Manual"
+  },
+  "type": {
+    "stock": "Stock",
+    "fund": "Fund",
+    "bond": "Bond",
+    "etf": "ETF",
+    "other": "Other"
   }
 }

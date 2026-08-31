@@ -12,7 +12,7 @@ async function bootstrap() {
   app.use(router);
 
   // 界面语言：按判定链（手动覆盖 > 系统语言 > zh-CN）在首帧前解析完成，
-  // 英文系统用户不闪中文；详见 @/i18n（ADR-0048）。
+  // 英文系统用户不闪中文；详见 @/i18n（ADR-0049）。
   await initAppLocale();
 
   // ViewState：启动时恢复到上次所在视图；非法/缺失回退默认路由（dashboard）。

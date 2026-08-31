@@ -155,7 +155,7 @@ describe('SettingsView.vue（issue #157：Tab 分域重构 6 → 4）', () => {
     expect(store.theme).toBe('light')
   })
 
-  it('「通用」页含界面语言选择器，默认「跟随系统」（issue #342 / ADR-0048）', () => {
+  it('「通用」页含界面语言选择器，默认「跟随系统」（issue #342 / ADR-0049）', () => {
     const wrapper = mount(SettingsView)
     const html = wrapper.html()
     expect(html).toContain('界面语言')

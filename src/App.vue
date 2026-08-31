@@ -68,7 +68,7 @@ function updateSidebarCollapsed(collapsed: boolean) {
 }
 const store = useAppStore()
 
-// UI 组件库内置文案（日期选择器、分页、空态等）随应用界面语言切换（ADR-0048）：
+// UI 组件库内置文案（日期选择器、分页、空态等）随应用界面语言切换（ADR-0049）：
 // 经 NConfigProvider 的 locale / date-locale 注入，语言切换即时生效。
 // 窗口标题随界面语言（原生窗口壳层文案）；非 Tauri 环境（测试/Web）静默忽略
 watch(

@@ -22,7 +22,7 @@ export const useAppStore = defineStore('app', () => {
   // localStorage，不随 Backup/Restore 迁移——换新机器或恢复备份后保持默认关；
   // 后端只持运行时镜像，由 useDevicePreferenceSync 启动/变更时推送。
   const autoExecutionEnabled = ref<boolean>(loadLocal<boolean>('auto_execution_enabled', false))
-  // 界面语言偏好（issue #342 / ADR-0048）：轻量设置项，'system' = 跟随系统；
+  // 界面语言偏好（issue #342 / ADR-0049）：轻量设置项，'system' = 跟随系统；
   // 存储与生效逻辑收口在 @/i18n，此处只持状态供设置页读写。
   const localeSetting = ref<LocaleSetting>(getLocaleSetting())
 

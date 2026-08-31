@@ -36,7 +36,7 @@ import { useItemsStore } from '@/stores/items'
 import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/transaction-columns'
 import {
   CREATE_KINDS,
-  TRANSACTION_KIND_LABELS,
+  TRANSACTION_KINDS,
   type CreateTransactionKind,
   type Transaction,
   type TransactionKind,
@@ -95,7 +95,7 @@ const merchantOptions = computed(() =>
 /** 类型下拉选项：前端 TransactionKind 的 6 种（income/expense/transfer/refund/buy/sell；
  * Rust 侧另有 dividend/split 未在前端类型暴露，不进过滤选项）。标签经 t() 随语言切换。 */
 const kindOptions = computed<Array<{ label: string; value: TransactionKind }>>(() =>
-  (Object.keys(TRANSACTION_KIND_LABELS) as TransactionKind[]).map((value) => ({
+  TRANSACTION_KINDS.map((value) => ({
     label: t(`transactions.kind.${value}`),
     value,
   })),

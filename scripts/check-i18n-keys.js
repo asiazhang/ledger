@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// i18n 文案 key 全等校验（issue #342 / ADR-0048）：源语言 zh-CN 与其余各 locale
+// i18n 文案 key 全等校验（issue #342 / ADR-0049）：源语言 zh-CN 与其余各 locale
 // 的 key 集合双向全等——任一方向孤儿（源语言独有 / 其他 locale 独有）即非零退出，
 // 漏翻在合入前被拦截。仿命令集双向全等校验先例（scripts/check-commands.js）：
 // 纯函数导出供单测（src/__tests__/check-i18n-keys.test.ts），CLI 入口可独立运行。

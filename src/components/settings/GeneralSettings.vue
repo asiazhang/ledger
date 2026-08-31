@@ -13,7 +13,7 @@ const currencyOptions = computed(() =>
   reference.currencies.map((c) => ({ label: `${c.code} - ${c.name}`, value: c.code })),
 )
 
-// 界面语言选项（issue #342 / ADR-0048）：具体语言用原生名（中文/English），
+// 界面语言选项（issue #342 / ADR-0049）：具体语言用原生名（中文/English），
 // 不随界面语言翻译；「跟随系统」走文案资源。
 const languageOptions = computed<{ label: string; value: LocaleSetting }[]>(() => [
   { label: t('common.language.followSystem'), value: 'system' },
@@ -24,9 +24,9 @@ const languageOptions = computed<{ label: string; value: LocaleSetting }[]>(() =
 
 <template>
   <NSpace vertical :size="16">
-    <NCard title="主题模式" size="small">
+    <NCard :title="t('settings.appearance.card')" size="small">
       <NSpace align="center" :size="12">
-        <NText>深色模式</NText>
+        <NText>{{ t('settings.appearance.darkMode') }}</NText>
         <NSwitch
           :value="store.theme === 'dark'"
           @update:value="(val: boolean) => store.setTheme(val ? 'dark' : 'light')"
@@ -34,7 +34,7 @@ const languageOptions = computed<{ label: string; value: LocaleSetting }[]>(() =
       </NSpace>
     </NCard>
 
-    <NCard title="默认币种" size="small">
+    <NCard :title="t('settings.appearance.defaultCurrency')" size="small">
       <AppSelect
         :value="store.defaultCurrency"
         :options="currencyOptions"

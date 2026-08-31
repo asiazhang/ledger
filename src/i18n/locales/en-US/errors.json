@@ -1,6 +1,6 @@
 {
   "account": {
-    "not-found": "account not found",
+    "not-found": "account does not exist: {0}",
     "name-required": "account name is required",
     "currency-locked": "account already has transactions, currency cannot be changed (it would corrupt historical conversion)",
     "currency-unknown": "unknown currency: {0}",
@@ -10,20 +10,20 @@
     "type-unknown": "unknown account type: {0}"
   },
   "category": {
-    "not-found": "category not found",
+    "not-found": "category does not exist: {0}",
     "self-parent": "a category cannot be its own parent",
-    "parent-not-found": "parent category not found",
+    "parent-not-found": "parent category does not exist: {0}",
     "parent-kind-mismatch": "parent category must have the same type"
   },
   "merchant": {
     "already-exists": "merchant already exists: {0}",
-    "not-found": "merchant not found",
+    "not-found": "merchant does not exist: {0}",
     "name-required": "merchant name is required",
     "not-active": "merchant does not exist or has been deleted: {0}"
   },
   "item": {
     "disposal-date-missing": "disposed item is missing a disposal date: {0}",
-    "not-found": "item not found",
+    "not-found": "item does not exist: {0}",
     "purchase-link-required": "an item must be created from a purchase transaction: right-click an expense transaction and choose \"add item\"",
     "name-required": "item name is required",
     "cost-positive": "item total cost must be greater than 0",
@@ -101,7 +101,7 @@
   "instrument": {
     "price-positive": "price must be greater than 0",
     "price-date-format": "date must be in YYYY-MM-DD format",
-    "not-found": "instrument not found",
+    "not-found": "instrument {0} does not exist",
     "symbol-required": "instrument symbol must not be empty",
     "sync-delete-forbidden": "sync-sourced instruments cannot be deleted: the stock dictionary is maintained by full sync, fix wrong entries by re-syncing",
     "traded-delete-forbidden": "this instrument has trade records and cannot be deleted: delete the related transactions first and try again",
@@ -151,5 +151,8 @@
     "not-executable": "occurrence status is {0}, it cannot be executed",
     "plan-not-found": "the linked scheduled plan does not exist",
     "conflict": "the occurrence has already been executed by another device"
+  },
+  "manual-price": {
+    "instrument-not-found": "instrument does not exist"
   }
 }

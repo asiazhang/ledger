@@ -107,8 +107,9 @@ pub fn calculate_item_cost_internal(
     id: &str,
     reference_date: Option<&str>,
 ) -> Result<ItemDailyCost> {
-    let item = get_item_by_id(conn, id)?
-        .ok_or_else(|| AppError::coded_not_found("item.not-found", format!("物品不存在: {id}")))?;
+    let item = get_item_by_id(conn, id)?.ok_or_else(|| {
+        AppError::codedp_not_found("item.not-found", format!("物品不存在: {id}"), &[id])
+    })?;
     let usage = match reference_date {
         Some(date) => usage_to(&item, parse_date(date)?),
         None => daily_usage(&item),
@@ -214,7 +215,11 @@ pub fn update_item_internal(
 ) -> Result<()> {
     let existing = get_item_by_id(conn, id)?;
     let Some(existing) = existing else {
-        return Err(AppError::coded_not_found("item.not-found", "物品不存在"));
+        return Err(AppError::codedp_not_found(
+            "item.not-found",
+            format!("物品不存在: {id}"),
+            &[id],
+        ));
     };
 
     // 关联购买交易语义：新关联或换关（与既有指针不同）→ 校验并自动带出

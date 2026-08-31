@@ -1,6 +1,6 @@
 {
   "account": {
-    "not-found": "账户不存在",
+    "not-found": "账户不存在: {0}",
     "name-required": "账户名称不能为空",
     "currency-locked": "账户已有交易，不能修改币种（会使历史交易折算口径错乱）",
     "currency-unknown": "未知币种: {0}",
@@ -10,20 +10,20 @@
     "type-unknown": "未知账户类型: {0}"
   },
   "category": {
-    "not-found": "分类不存在",
+    "not-found": "分类不存在: {0}",
     "self-parent": "自身不能作为父分类",
-    "parent-not-found": "父分类不存在",
+    "parent-not-found": "父分类不存在: {0}",
     "parent-kind-mismatch": "父分类类型需一致"
   },
   "merchant": {
     "already-exists": "商户已存在: {0}",
-    "not-found": "商户不存在",
+    "not-found": "商户不存在: {0}",
     "name-required": "商户名不能为空",
     "not-active": "商户不存在或已删除: {0}"
   },
   "item": {
     "disposal-date-missing": "已处置物品缺少处置日期: {0}",
-    "not-found": "物品不存在",
+    "not-found": "物品不存在: {0}",
     "purchase-link-required": "物品必须关联一笔购买交易创建：请在交易页右键一笔支出交易，选择「加入物品」",
     "name-required": "物品名称不能为空",
     "cost-positive": "物品总成本必须大于 0",
@@ -101,7 +101,7 @@
   "instrument": {
     "price-positive": "价格必须大于 0",
     "price-date-format": "日期格式须为 YYYY-MM-DD",
-    "not-found": "标的不存在",
+    "not-found": "标的 {0} 不存在",
     "symbol-required": "标的代码不能为空",
     "sync-delete-forbidden": "同步来源标的不支持删除：股票字典由「全量同步」维护，填错可重新同步修正",
     "traded-delete-forbidden": "该标的已有买卖流水，无法删除：可先删除相关交易后再试",
@@ -151,5 +151,8 @@
     "not-executable": "期次状态为 {0}，不能执行",
     "plan-not-found": "关联定时计划不存在",
     "conflict": "期次已被其他设备执行"
+  },
+  "manual-price": {
+    "instrument-not-found": "标的不存在"
   }
 }

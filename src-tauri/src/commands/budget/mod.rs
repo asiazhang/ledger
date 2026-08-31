@@ -57,9 +57,10 @@ fn validate_amount_and_category(
         )
         .optional()?;
     match kind.as_deref() {
-        None => Err(AppError::coded_not_found(
+        None => Err(AppError::codedp_not_found(
             "budget.category-not-found",
             format!("分类不存在: {category_id}"),
+            &[category_id],
         )),
         Some("expense") => Ok(()),
         Some(other) => Err(AppError::codedp(
@@ -134,7 +135,7 @@ pub fn update_budget_internal(conn: &Connection, id: &str, amount_cents: i64) ->
         )
         .optional()?
         .ok_or_else(|| {
-            AppError::coded_not_found("budget.not-found", format!("预算不存在: {id}"))
+            AppError::codedp_not_found("budget.not-found", format!("预算不存在: {id}"), &[id])
         })?;
     validate_amount_and_category(conn, &category_id, amount_cents)?;
     conn.execute(

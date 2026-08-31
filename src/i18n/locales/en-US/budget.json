@@ -42,5 +42,9 @@
     "updateFailed": "Failed to update: {message}",
     "deleted": "Deleted",
     "deleteFailed": "Failed to delete: {message}"
+  },
+  "period": {
+    "monthly": "Monthly",
+    "yearly": "Yearly"
   }
 }

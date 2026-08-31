@@ -184,5 +184,22 @@
   "sync": {
     "failed": "同步失败：{message}",
     "cancelFailed": "中断失败：{message}"
+  },
+  "market": {
+    "sh": "沪市",
+    "sz": "深市",
+    "hk": "港股",
+    "unknown": "未知"
+  },
+  "source": {
+    "eastmoney": "同步",
+    "manual": "手动"
+  },
+  "type": {
+    "stock": "股票",
+    "fund": "基金",
+    "bond": "债券",
+    "etf": "ETF",
+    "other": "其他"
   }
 }

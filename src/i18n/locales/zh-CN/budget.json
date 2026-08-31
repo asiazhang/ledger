@@ -42,5 +42,9 @@
     "updateFailed": "更新失败: {message}",
     "deleted": "已删除",
     "deleteFailed": "删除失败: {message}"
+  },
+  "period": {
+    "monthly": "按月",
+    "yearly": "按年"
   }
 }

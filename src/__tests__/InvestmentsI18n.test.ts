@@ -74,7 +74,7 @@ async function clickTab(wrapper: ReturnType<typeof mountView>, index: number) {
   await nextTick()
 }
 
-describe('InvestmentsView 英文渲染（issue #350 / ADR-0048）', () => {
+describe('InvestmentsView 英文渲染（issue #350 / ADR-0049）', () => {
   it('页签渲染英文：P&L / Instruments / Trend', async () => {
     await applyLocale('en-US')
     await nextTick()

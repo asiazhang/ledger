@@ -80,9 +80,10 @@ pub fn delete_category_internal(conn: &Connection, id: &str) -> Result<()> {
         .optional()?
         .is_some();
     if !exists {
-        return Err(AppError::coded_not_found(
+        return Err(AppError::codedp_not_found(
             "category.not-found",
             format!("分类不存在: {id}"),
+            &[id],
         ));
     }
     conn.execute(

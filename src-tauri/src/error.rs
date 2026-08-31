@@ -30,7 +30,7 @@ pub enum AppError {
     Parse(String),
     #[error("IO 错误: {0}")]
     Io(String),
-    /// 码化错误（issue #342 二期 / ADR-0049）：`code` 是稳定错误码（领域语言命名，
+    /// 码化错误（issue #342 二期 / ADR-0050）：`code` 是稳定错误码（领域语言命名，
     /// 如 `transfer.to-account-required`），`message` 中文原样保留，`params` 是前端
     /// 插值参数（按消息中占位出现顺序）。序列化在既有 `kind`/`message` 之外**只增**
     /// `code` 与可选 `params`，既有消费方与测试不受影响。
@@ -75,6 +75,17 @@ impl AppError {
         }
     }
 
+    /// 码化数据不存在 + 插值参数（HTTP 404 / kind=NotFound）：
+    /// `params` 按消息中动态值的出现顺序排列，供前端按码本地化时插值。
+    pub fn codedp_not_found(code: &str, message: impl Into<String>, params: &[&str]) -> Self {
+        AppError::Coded {
+            class: ErrClass::NotFound,
+            code: code.to_string(),
+            message: message.into(),
+            params: params.iter().map(|p| (*p).to_string()).collect(),
+        }
+    }
+
     /// 序列化parts：`(kind, message, code, params)`——code/params 为 None 时字段整体缺席。
     fn parts(&self) -> (&'static str, &str, Option<&str>, Option<&[String]>) {
         match self {
@@ -102,7 +113,7 @@ impl AppError {
     }
 }
 
-/// 手写序列化（issue #342 二期 / ADR-0049，**只增不改**契约）：
+/// 手写序列化（issue #342 二期 / ADR-0050，**只增不改**契约）：
 /// 既有字段 `kind`/`message` 的取值与顺序与 derive 时代完全一致；码化错误与
 /// Db/Parse/Io 追加 `code`，带插值参数的错误再追加 `params`。无码错误
 /// （未被码化收敛的 Invalid/NotFound）保持原两字段形态，前端降级透传原文。
@@ -113,7 +124,9 @@ impl Serialize for AppError {
     {
         use serde::ser::SerializeStruct;
         let (kind, message, code, params) = self.parts();
-        let mut s = serializer.serialize_struct("AppError", 4)?;
+        // 字段数按实际序列化内容计算（kind/message 恒在，code/params 条件性出现）
+        let field_count = 2 + usize::from(code.is_some()) + usize::from(params.is_some());
+        let mut s = serializer.serialize_struct("AppError", field_count)?;
         s.serialize_field("kind", kind)?;
         s.serialize_field("message", message)?;
         if let Some(code) = code {
@@ -205,13 +218,18 @@ mod tests {
 
     #[test]
     fn 码化不存在错误保持_not_found_kind() {
-        let err = AppError::coded_not_found("account.not-found", "账户不存在");
+        let err = AppError::codedp_not_found(
+            "account.not-found",
+            format!("账户不存在: {}", "acc-1"),
+            &["acc-1"],
+        );
         assert_eq!(
             serde_json::to_value(err).unwrap(),
             json!({
                 "kind": "NotFound",
-                "message": "账户不存在",
-                "code": "account.not-found"
+                "message": "账户不存在: acc-1",
+                "code": "account.not-found",
+                "params": ["acc-1"]
             })
         );
     }

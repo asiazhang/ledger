@@ -83,9 +83,10 @@ pub(crate) fn get_transaction_trade(
         rusqlite::params![transaction_id],
     )?
     .ok_or_else(|| {
-        AppError::coded_not_found(
+        AppError::codedp_not_found(
             "trade.detail-not-found",
             format!("交易不存在或无买卖明细: {transaction_id}"),
+            &[transaction_id],
         )
     })
 }

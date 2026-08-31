@@ -21,7 +21,7 @@ import { useInstrumentFullSync } from '@/composables/useInstrumentFullSync'
 import { usePricesChanged } from '@/composables/usePricesChanged'
 import { useAppDialog } from '@/composables/useAppDialog'
 import { errorMessage as extractErrorMessage } from '@/utils/errors'
-import { formatPrice, INSTRUMENT_SOURCE_LABELS, INSTRUMENT_TYPE_LABELS, MARKET_TYPE_LABELS, canManualPrice } from '@/types'
+import { formatPrice, INSTRUMENT_SOURCES, INSTRUMENT_TYPES, MARKET_TYPES, canManualPrice } from '@/types'
 import AppModal from '@/components/AppModal.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import CreateInstrumentModal from '@/components/investments/CreateInstrumentModal.vue'
@@ -77,10 +77,13 @@ const loading = ref(false)
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 
 const marketOptions = computed(() =>
-  (Object.entries(MARKET_TYPE_LABELS) as [MarketType, string][]).map(
-    ([value, label]) => ({ label, value }),
-  ),
+  MARKET_TYPES.map((value) => ({ label: t(`investments.market.${value}`), value })),
 )
+
+/** 枚举显示标签：闭集内经 t() 随界面语言切换；闭集外的库值原样回退（防脏数据渲染成 key） */
+function enumLabel(domain: 'source' | 'market' | 'type', closed: readonly string[], value: string): string {
+  return (closed as string[]).includes(value) ? t(`investments.${domain}.${value}`) : value
+}
 
 async function load() {
   loading.value = true
@@ -262,7 +265,7 @@ const pagination = computed(() => ({
   },
 }))
 
-const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
+const instrumentBrowseColumns = computed<DataTableColumn<Instrument>[]>(() => [
   { title: t('investments.browser.columns.symbol'), key: 'symbol', width: 100 },
   { title: t('investments.browser.columns.name'), key: 'name', width: 200 },
   {
@@ -270,7 +273,7 @@ const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
     key: 'source',
     width: 70,
     render(row) {
-      const label = INSTRUMENT_SOURCE_LABELS[row.source] ?? row.source
+      const label = enumLabel('source', INSTRUMENT_SOURCES, row.source)
       // 手动标 tag 突出（自建标的，ADR-0036），同步标为纯文本
       if (row.source !== 'manual') return label
       return h(
@@ -296,7 +299,7 @@ const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
     key: 'market',
     width: 80,
     render(row) {
-      return MARKET_TYPE_LABELS[row.market] ?? row.market
+      return enumLabel('market', MARKET_TYPES, row.market)
     },
   },
   {
@@ -304,7 +307,7 @@ const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
     key: 'type',
     width: 80,
     render(row) {
-      return INSTRUMENT_TYPE_LABELS[row.type] ?? row.type
+      return enumLabel('type', INSTRUMENT_TYPES, row.type)
     },
   },
   { title: t('investments.browser.columns.currency'), key: 'currency_code', width: 60 },
@@ -379,7 +382,7 @@ const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
       )
     },
   },
-]
+])
 
 onMounted(load)
 </script>

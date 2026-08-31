@@ -26,7 +26,7 @@ import AppSelect from '@/components/AppSelect.vue'
 import { useAppDialog } from '@/composables/useAppDialog'
 import AccountLink from '@/components/AccountLink.vue'
 import { buildAccountRowMenuOptions } from '@/components/account-row-menu'
-import { ACCOUNT_TYPE_LABELS, formatAmount } from '@/types'
+import { ACCOUNT_TYPES, formatAmount } from '@/types'
 import type { AccountBalance, AccountInput, AccountType } from '@/types'
 
 const reference = useReferenceStore()
@@ -40,10 +40,13 @@ const type = ref<AccountType>('cash')
 const currencyCode = ref('CNY')
 const initial = ref<number | null>(0)
 
-const typeOptions = (Object.keys(ACCOUNT_TYPE_LABELS) as AccountType[]).map((k) => ({
-  label: ACCOUNT_TYPE_LABELS[k],
-  value: k,
-}))
+// computed：标签经 t() 随界面语言即时切换（ADR-0049）
+const typeOptions = computed(() =>
+  ACCOUNT_TYPES.map((k) => ({
+    label: t(`accounts.type.${k}`),
+    value: k,
+  })),
+)
 const currencyOptions = () =>
   reference.currencies.map((c) => ({ label: `${c.name} (${c.code})`, value: c.code }))
 
@@ -259,7 +262,7 @@ const columns = computed<DataTableColumns<AccountBalance>>(() => [
   {
     title: t('accounts.list.colType'),
     key: 'account.type',
-    render: (row) => ACCOUNT_TYPE_LABELS[row.account.type],
+    render: (row) => t(`accounts.type.${row.account.type}`),
   },
   { title: t('accounts.list.colCurrency'), key: 'account.currency_code' },
   {
@@ -349,7 +352,7 @@ onMounted(() => {
           />
         </NFormItem>
         <NFormItem :label="t('accounts.create.type')">
-          <NInput :value="ACCOUNT_TYPE_LABELS[editRow.account.type]" disabled />
+          <NInput :value="t(`accounts.type.${editRow.account.type}`)" disabled />
         </NFormItem>
         <NFormItem :label="t('accounts.create.currency')">
           <AppSelect v-model:value="editCurrency" :options="currencyOptions()" style="width: 100%" />

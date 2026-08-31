@@ -28,7 +28,7 @@ describe('errorMessage', () => {
   })
 })
 
-describe('errorMessage 错误码本地化（issue #342 二期 / ADR-0049）', () => {
+describe('errorMessage 错误码本地化（issue #342 二期 / ADR-0050）', () => {
   beforeEach(() => {
     // 注入码表夹具（真实码表由后端清点归并进 errors.json，单测自足）
     i18n.global.mergeLocaleMessage('zh-CN', {

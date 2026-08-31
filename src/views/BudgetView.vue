@@ -25,7 +25,6 @@ import { errorMessage } from '@/utils/errors'
 import { yuanToCents } from '@/utils/money'
 import { todayStr } from '@/utils/date'
 import { formatAmount, centsToYuan } from '@/types'
-import { BUDGET_PERIOD_LABELS } from '@/types/budget'
 import type { BudgetInput, BudgetProgress } from '@/types'
 
 const reference = useReferenceStore()
@@ -222,7 +221,7 @@ onMounted(() => {
         </NFormItem>
         <NFormItem :label="t('budget.edit.period')">
           <NText>{{
-            editing ? BUDGET_PERIOD_LABELS[editing.budget.period] : ''
+            editing ? t(`budget.period.${editing.budget.period}`) : ''
           }}</NText>
         </NFormItem>
         <NFormItem :label="t('budget.edit.amount')">

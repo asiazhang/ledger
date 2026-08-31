@@ -1,4 +1,4 @@
-// 界面语言（i18n）单例与语言判定/切换（issue #342 / ADR-0048）。
+// 界面语言（i18n）单例与语言判定/切换（issue #342 / ADR-0049）。
 //
 // 选型与口径：
 // - vue-i18n Composition 模式（legacy: false）；中文 zh-CN 是源语言与回退语言，
@@ -31,7 +31,7 @@ export function resolveSystemLocale(): Locale {
   return lang && lang.toLowerCase().startsWith('en') ? 'en-US' : 'zh-CN'
 }
 
-/** 语言判定链（ADR-0048）：手动覆盖 > 系统语言 > zh-CN。'system' 即无手动覆盖。 */
+/** 语言判定链（ADR-0049）：手动覆盖 > 系统语言 > zh-CN。'system' 即无手动覆盖。 */
 export function resolveLocale(setting: LocaleSetting): Locale {
   return setting === 'system' ? resolveSystemLocale() : setting
 }

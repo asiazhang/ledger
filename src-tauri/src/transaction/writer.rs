@@ -139,9 +139,10 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
                 )
                 .optional()?
                 .ok_or_else(|| {
-                    AppError::coded_not_found(
+                    AppError::codedp_not_found(
                         "refund.source-not-found",
                         format!("退款关联的原支出交易不存在: {ref_id}"),
+                        &[ref_id.as_str()],
                     )
                 })?;
             if okind != TransactionKind::Expense {

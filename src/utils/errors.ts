@@ -1,4 +1,4 @@
-// 后端错误信息提取与按码本地化（issue #342 二期 / ADR-0049）：
+// 后端错误信息提取与按码本地化（issue #342 二期 / ADR-0050）：
 // Tauri invoke 失败时 reject 的值是后端 `AppError` 的 serde 序列化形态
 // `{"kind": "...", "message": "..."}`（对象而非 Error 实例），直接模板字符串
 // 拼接会得到 `[object Object]`。此处统一抽取 message 字段，兼容字符串、

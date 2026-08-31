@@ -202,5 +202,10 @@
     "openLogDir": "Open Log Directory",
     "copyShaOk": "Full version copied",
     "copyShaFailed": "Failed to copy full version: {msg}"
+  },
+  "appearance": {
+    "card": "Theme",
+    "darkMode": "Dark mode",
+    "defaultCurrency": "Default Currency"
   }
 }

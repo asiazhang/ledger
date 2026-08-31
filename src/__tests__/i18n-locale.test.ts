@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { mount } from '@vue/test-utils'
 
-// 语言判定/切换逻辑（issue #342 / ADR-0048）：只测外显行为——判定链优先级、
+// 语言判定/切换逻辑（issue #342 / ADR-0049）：只测外显行为——判定链优先级、
 // 覆盖持久化、切换信号传播（currentLocale 与 t() 输出）、懒加载触发、
 // 未翻译回退与 dev 缺失告警。每个用例经 vi.resetModules 取全新模块状态，
 // 避免单例 i18n 实例跨用例串扰。

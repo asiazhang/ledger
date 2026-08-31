@@ -56,5 +56,15 @@
     "saveFailed": "Failed to save: {message}",
     "adjusted": "Balance adjusted",
     "adjustFailed": "Failed to adjust: {message}"
+  },
+  "type": {
+    "cash": "Cash",
+    "bank": "Bank Card",
+    "credit": "Credit Card",
+    "ewallet": "E-wallet",
+    "investment": "Investment",
+    "debt": "Debt",
+    "receivable": "Receivable",
+    "other": "Other"
   }
 }

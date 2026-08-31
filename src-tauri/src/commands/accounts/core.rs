@@ -127,7 +127,7 @@ pub fn get_account_internal(conn: &Connection, id: &str) -> Result<Account> {
     )?
     .into_iter()
     .next()
-    .ok_or_else(|| AppError::coded_not_found("account.not-found", format!("账户不存在: {id}")))
+    .ok_or_else(|| AppError::codedp_not_found("account.not-found", format!("账户不存在: {id}"), &[id]))
 }
 
 /// 编辑账户（`name` / `currency_code` 可选字段，未传保持原值）。

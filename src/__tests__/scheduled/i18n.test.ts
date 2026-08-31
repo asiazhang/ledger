@@ -12,7 +12,7 @@ import { scheduledRecurrenceLabel, scheduledRecurrenceOptions } from '@/composab
 import type { SubscriptionSpendOverview } from '@/types'
 
 /**
- * 定时计划域 i18n 行为测试（issue #349 / ADR-0048）：
+ * 定时计划域 i18n 行为测试（issue #349 / ADR-0049）：
  * 默认语言恒为 zh-CN（测试环境不初始化），此处显式切 en-US 验证英文渲染与
  * 领域标签函数输出，用例结束还原 zh-CN，不影响其他测试文件（vitest 文件级隔离）。
  */
