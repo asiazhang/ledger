@@ -7,6 +7,7 @@ import { NDatePicker } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import SearchView from '@/views/SearchView.vue'
 import AccountLink from '@/components/AccountLink.vue'
+import { applyLocale } from '@/i18n'
 import type { Account, Category, Currency, Merchant, Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
@@ -244,6 +245,20 @@ describe('SearchView.vue', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('输入关键字或设置筛选开始搜索')
     expect(searchCalls().length).toBe(0)
+  })
+
+  it('i18n：切 en-US 后空态/占位即时切换英文，还原后中文逐字不变（issue #348）', async () => {
+    const wrapper = mount(SearchView)
+    await flushPromises()
+    expect(wrapper.text()).toContain('输入关键字或设置筛选开始搜索')
+    await applyLocale('en-US')
+    await nextTick()
+    expect(wrapper.text()).toContain('Enter a keyword or set filters to start searching')
+    expect(wrapper.find('input').attributes('placeholder')).toContain('Enter keywords to search')
+    // 还原，避免污染同文件其他用例（单例语言状态）
+    await applyLocale('zh-CN')
+    await nextTick()
+    expect(wrapper.text()).toContain('输入关键字或设置筛选开始搜索')
   })
 
   it('筛选器 UI：最低/最高金额输入与起止日期选择器位于关键字下方', async () => {

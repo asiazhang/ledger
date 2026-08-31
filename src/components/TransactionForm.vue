@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { t } from '@/i18n'
 import type { CreateTransactionKind, Transaction, TransactionTrade } from '@/types'
 import CategoryForm from '@/components/CategoryForm.vue'
 import TransferForm from '@/components/TransferForm.vue'
@@ -27,7 +28,7 @@ const effectiveKind = computed<CreateTransactionKind | null>(() =>
     <CategoryForm
       v-if="effectiveKind === 'expense'"
       kind="expense"
-      submit-label="记支出"
+      :submit-label="t('transactions.form.submitExpense')"
       :editing="editing ?? null"
       @created="emit('created')"
       @saved="emit('saved')"
@@ -35,7 +36,7 @@ const effectiveKind = computed<CreateTransactionKind | null>(() =>
     <CategoryForm
       v-if="effectiveKind === 'income'"
       kind="income"
-      submit-label="记收入"
+      :submit-label="t('transactions.form.submitIncome')"
       :editing="editing ?? null"
       @created="emit('created')"
       @saved="emit('saved')"
@@ -49,7 +50,7 @@ const effectiveKind = computed<CreateTransactionKind | null>(() =>
     <InvestmentForm
       v-if="effectiveKind === 'buy'"
       kind="buy"
-      submit-label="记买入"
+      :submit-label="t('transactions.form.submitBuy')"
       :editing="editing ?? null"
       :trade="trade ?? null"
       @created="emit('created')"
@@ -58,7 +59,7 @@ const effectiveKind = computed<CreateTransactionKind | null>(() =>
     <InvestmentForm
       v-if="effectiveKind === 'sell'"
       kind="sell"
-      submit-label="记卖出"
+      :submit-label="t('transactions.form.submitSell')"
       :editing="editing ?? null"
       :trade="trade ?? null"
       @created="emit('created')"

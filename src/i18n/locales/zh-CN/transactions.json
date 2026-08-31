@@ -1,1 +1,122 @@
-{}
+{
+  "kind": {
+    "income": "收入",
+    "expense": "支出",
+    "transfer": "转账",
+    "refund": "退款",
+    "buy": "买入",
+    "sell": "卖出"
+  },
+  "columns": {
+    "date": "日期",
+    "kind": "类型",
+    "category": "分类",
+    "merchant": "商户",
+    "account": "账户",
+    "note": "备注",
+    "amount": "金额"
+  },
+  "list": {
+    "total": "共 {n} 条",
+    "empty": "暂无数据",
+    "emptyFiltered": "没有符合条件的交易",
+    "loadFailed": "加载失败: {msg}",
+    "deleted": "已删除",
+    "deleteFailed": "删除失败: {msg}"
+  },
+  "filter": {
+    "account": "账户",
+    "merchant": "商户",
+    "dateFrom": "起始日期",
+    "dateTo": "结束日期",
+    "kind": "类型",
+    "clear": "清除筛选"
+  },
+  "create": {
+    "button": "记一笔",
+    "title": "记一笔",
+    "titleWithKind": "记一笔 · {kind}",
+    "kindWithKey": "{kind} {key}",
+    "moreTypes": "更多记账类型"
+  },
+  "edit": {
+    "title": "编辑交易"
+  },
+  "deleteDialog": {
+    "title": "删除交易",
+    "content": "确认删除该条交易？删除后不可恢复。",
+    "confirm": "删除",
+    "cancel": "取消"
+  },
+  "menu": {
+    "edit": "编辑",
+    "refund": "退款",
+    "addItem": "加入物品",
+    "delete": "删除"
+  },
+  "form": {
+    "amount": "金额",
+    "account": "账户",
+    "fromAccount": "转出账户",
+    "fromAccountPlaceholder": "选择转出账户",
+    "toAccount": "转入账户",
+    "toAccountPlaceholder": "目标账户",
+    "date": "日期",
+    "note": "备注",
+    "notePlaceholder": "备注（可选）",
+    "submitExpense": "记支出",
+    "submitIncome": "记收入",
+    "submitBuy": "记买入",
+    "submitSell": "记卖出",
+    "submitTransfer": "记转账",
+    "saveChanges": "保存修改",
+    "warnSelectFromAccount": "请选择转出账户",
+    "warnSelectToAccount": "请选择转入账户",
+    "warnSameAccount": "转出账户和转入账户不能相同",
+    "warnAmount": "请输入金额",
+    "transferCreated": "已记转账",
+    "changesSaved": "已保存修改",
+    "saveFailed": "保存失败: {msg}",
+    "createFailed": "记账失败: {msg}"
+  },
+  "refund": {
+    "title": "退款",
+    "link": "退款关联",
+    "targetPlaceholder": "选择原支出交易",
+    "original": "原交易",
+    "amount": "退款金额",
+    "accountLockedPlaceholder": "由原交易决定",
+    "submit": "记退款",
+    "warnNoTarget": "请选择要退款的原始支出交易",
+    "warnNoAmount": "请输入退款金额",
+    "created": "已记退款",
+    "failed": "退款失败: {msg}"
+  },
+  "addItem": {
+    "title": "加入物品"
+  },
+  "modal": {
+    "editFailed": "无法编辑: {msg}"
+  },
+  "field": {
+    "amount": "金额",
+    "currency": "币种",
+    "account": "账户",
+    "fromAccount": "转出账户",
+    "toAccount": "转入账户",
+    "refundAmount": "退款金额",
+    "originalExpense": "原始支出交易",
+    "investmentAccount": "投资账户",
+    "instrument": "标的",
+    "fee": "手续费",
+    "price": "单价"
+  },
+  "validation": {
+    "required": "{label}不能为空",
+    "invalid": "{label}无效: {value}",
+    "dateInvalid": "日期无效",
+    "fundAmountPriceConflict": "金额与单价不可同时提供（基金按确认金额，其余按单价）",
+    "quantityRequired": "数量不能为空",
+    "quantityInvalid": "数量无效: {value}"
+  }
+}

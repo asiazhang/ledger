@@ -1,1 +1,21 @@
-{}
+{
+  "keywordPlaceholder": "输入关键字开始搜索（备注、账户名、商户名、拼音首字母，支持多关键字）",
+  "amountMinPlaceholder": "最低金额（元）",
+  "amountMaxPlaceholder": "最高金额（元）",
+  "dateFromPlaceholder": "起始日期",
+  "dateToPlaceholder": "结束日期",
+  "appliedFilters": "已应用筛选：{filters}",
+  "filterSeparator": "、",
+  "clearFilters": "清除筛选",
+  "hitCount": "命中 {n} 条",
+  "noResults": "无匹配结果",
+  "emptyPlaceholder": "输入关键字或设置筛选开始搜索",
+  "searchFailed": "搜索失败: {msg}",
+  "filter": {
+    "amountRange": "金额 {min} ~ {max}",
+    "amountMin": "最低 {amount}",
+    "amountMax": "最高 {amount}",
+    "dateFrom": "起始 {date}",
+    "dateTo": "结束 {date}"
+  }
+}

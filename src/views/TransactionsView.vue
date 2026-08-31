@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@/i18n'
 import { errorMessage } from '@/utils/errors'
 import { computed, h, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
@@ -92,10 +93,13 @@ const merchantOptions = computed(() =>
 )
 
 /** 类型下拉选项：前端 TransactionKind 的 6 种（income/expense/transfer/refund/buy/sell；
- * Rust 侧另有 dividend/split 未在前端类型暴露，不进过滤选项）。 */
-const kindOptions: Array<{ label: string; value: TransactionKind }> = (
-  Object.entries(TRANSACTION_KIND_LABELS) as [TransactionKind, string][]
-).map(([value, label]) => ({ label, value }))
+ * Rust 侧另有 dividend/split 未在前端类型暴露，不进过滤选项）。标签经 t() 随语言切换。 */
+const kindOptions = computed<Array<{ label: string; value: TransactionKind }>>(() =>
+  (Object.keys(TRANSACTION_KIND_LABELS) as TransactionKind[]).map((value) => ({
+    label: t(`transactions.kind.${value}`),
+    value,
+  })),
+)
 
 /** 列表请求（ADR-0030 决策 6：请求发起、loading、行数据归视图）：以模块当前状态装配
  * 请求参数并发起查询。 */
@@ -116,7 +120,7 @@ async function load() {
     data.value = res.items
     total.value = res.total
   } catch (e) {
-    message.error(`加载失败: ${errorMessage(e)}`)
+    message.error(t('transactions.list.loadFailed', { msg: errorMessage(e) }))
   } finally {
     loading.value = false
   }
@@ -144,14 +148,21 @@ const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
 /** 下拉选项：5 种可创建类型（refund 不在入口：退款已移出表单域，入口由交易条目
  * 右键菜单承接，独立 ticket 落地前处于过渡态）。标签后附裸键快捷键提示（issue #153），
  * 键位来自 CREATE_KIND_KEYS 单一来源，与 keydown 匹配共用。 */
-const createKindOptions: DropdownOption[] = CREATE_KINDS.map((k) => ({
-  label: `${TRANSACTION_KIND_LABELS[k]} ${CREATE_KIND_KEYS[k]}`,
-  key: k,
-}))
+const createKindOptions = computed<DropdownOption[]>(() =>
+  CREATE_KINDS.map((k) => ({
+    label: t('transactions.create.kindWithKey', {
+      kind: t(`transactions.kind.${k}`),
+      key: CREATE_KIND_KEYS[k],
+    }),
+    key: k,
+  })),
+)
 
 const createTitle = computed(() => {
   const current = intent.value
-  return current?.type === 'create' ? `记一笔 · ${TRANSACTION_KIND_LABELS[current.kind]}` : '记一笔'
+  return current?.type === 'create'
+    ? t('transactions.create.titleWithKind', { kind: t(`transactions.kind.${current.kind}`) })
+    : t('transactions.create.title')
 })
 
 /** 记一笔三类入口（顶栏主体 / 子类型下拉 / 裸键快捷键）统一经模块开启。 */
@@ -195,12 +206,12 @@ function onKindFilterChange(value: TransactionKind | null) {
 async function remove(id: string) {
   try {
     await api.deleteTransaction(id)
-    message.success('已删除')
+    message.success(t('transactions.list.deleted'))
     // 删除成功 → 页码回退入口（ADR-0045）：声明本页删后剩 N 条，回退与重拉由模块内化，
     // 视图不再直写页码、不再自行发起请求（删前本页 1 条 ⇔ 删后超页，ADR-0008）
     afterRowDelete(data.value.length - 1)
   } catch (e) {
-    message.error(`删除失败: ${errorMessage(e)}`)
+    message.error(t('transactions.list.deleteFailed', { msg: errorMessage(e) }))
   }
 }
 
@@ -208,10 +219,10 @@ async function remove(id: string) {
  * 遮罩点击不构成关闭意图（issue #252 弹层关闭语义）：确认/取消须显式点击。 */
 function confirmDelete(row: Transaction) {
   dialog.warning({
-    title: '删除交易',
-    content: '确认删除该条交易？删除后不可恢复。',
-    positiveText: '删除',
-    negativeText: '取消',
+    title: t('transactions.deleteDialog.title'),
+    content: t('transactions.deleteDialog.content'),
+    positiveText: t('transactions.deleteDialog.confirm'),
+    negativeText: t('transactions.deleteDialog.cancel'),
     maskClosable: false,
     onPositiveClick: () => remove(row.id),
   })
@@ -333,7 +344,8 @@ const pagination = computed<PaginationProps>(() => ({
   showSizePicker: true,
   showQuickJumper: true,
   pageSizes: PAGE_SIZE_OPTIONS,
-  prefix: ({ itemCount }) => h('span', null, () => `共 ${itemCount ?? 0} 条`),
+  prefix: ({ itemCount }) =>
+    h('span', null, () => t('transactions.list.total', { n: itemCount ?? 0 })),
   onChange: (p: number) => {
     page.value = p
     void load()
@@ -345,10 +357,13 @@ const pagination = computed<PaginationProps>(() => ({
   },
 }))
 
-const columns: DataTableColumn<Transaction>[] = [...buildTransactionColumns(reference)]
+// 列经 computed 构造：列名（t()）随语言切换即时重建（列宽总和随之联动）
+const columns = computed<DataTableColumn<Transaction>[]>(() => [
+  ...buildTransactionColumns(reference),
+])
 
 // scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和
-const scrollX = sumFixedColumnWidths(columns)
+const scrollX = computed(() => sumFixedColumnWidths(columns.value))
 
 onMounted(() => {
   // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll；
@@ -367,7 +382,7 @@ onMounted(() => {
       <PinyinSelect
         :value="filters.involvingAccountId"
         :options="accountOptions"
-        placeholder="账户"
+        :placeholder="t('transactions.filter.account')"
         clearable
         style="width: 160px"
         @update:value="onAccountFilterChange"
@@ -375,7 +390,7 @@ onMounted(() => {
       <PinyinSelect
         :value="filters.merchantId"
         :options="merchantOptions"
-        placeholder="商户"
+        :placeholder="t('transactions.filter.merchant')"
         clearable
         style="width: 160px"
         @update:value="onMerchantFilterChange"
@@ -384,7 +399,7 @@ onMounted(() => {
         :formatted-value="filters.dateFrom"
         type="date"
         value-format="yyyy-MM-dd"
-        placeholder="起始日期"
+        :placeholder="t('transactions.filter.dateFrom')"
         clearable
         style="width: 140px"
         @update:formatted-value="onDateFromChange"
@@ -393,7 +408,7 @@ onMounted(() => {
         :formatted-value="filters.dateTo"
         type="date"
         value-format="yyyy-MM-dd"
-        placeholder="结束日期"
+        :placeholder="t('transactions.filter.dateTo')"
         clearable
         style="width: 140px"
         @update:formatted-value="onDateToChange"
@@ -401,7 +416,7 @@ onMounted(() => {
       <AppSelect
         :value="filters.kind"
         :options="kindOptions"
-        placeholder="类型"
+        :placeholder="t('transactions.filter.kind')"
         clearable
         style="width: 120px"
         @update:value="onKindFilterChange"
@@ -413,17 +428,17 @@ onMounted(() => {
         :disabled="!filtersActive"
         @click="resetFilters"
       >
-        清除筛选
+        {{ t('transactions.filter.clear') }}
       </NButton>
       <!-- 分裂按钮：主体直开支出弹窗，箭头展开 5 项类型菜单（issue #150） -->
       <NButtonGroup>
-        <NButton type="primary" @click="openCreate('expense')">记一笔</NButton>
+        <NButton type="primary" @click="openCreate('expense')">{{ t('transactions.create.button') }}</NButton>
         <AppDropdown
           trigger="click"
           :options="createKindOptions"
           @select="(k: string | number) => openCreate(k as CreateTransactionKind)"
         >
-          <NButton type="primary" aria-label="更多记账类型">
+          <NButton type="primary" :aria-label="t('transactions.create.moreTypes')">
             <NIcon><ChevronDown /></NIcon>
           </NButton>
         </AppDropdown>
@@ -452,7 +467,7 @@ onMounted(() => {
          开启/关闭经 TransactionModalState 编排（目标行由意图携带，序号作表单 key）。 -->
     <AppModal
       :show="intent?.type === 'refund'"
-      title="退款"
+      :title="t('transactions.refund.title')"
       preset="card"
       display-directive="if"
       style="width: 480px"
@@ -470,7 +485,7 @@ onMounted(() => {
          开启/关闭经 TransactionModalState 编排（目标行由意图携带，序号作表单 key）。 -->
     <AppModal
       :show="intent?.type === 'add-item'"
-      title="加入物品"
+      :title="t('transactions.addItem.title')"
       preset="card"
       display-directive="if"
       style="width: 440px"
@@ -490,7 +505,7 @@ onMounted(() => {
          （目标行与买卖明细由意图携带，序号作表单 key 强制重建） -->
     <AppModal
       :show="intent?.type === 'edit'"
-      title="编辑交易"
+      :title="t('transactions.edit.title')"
       preset="card"
       display-directive="if"
       style="width: 480px"
@@ -533,10 +548,13 @@ onMounted(() => {
       <!-- 空态：过滤无结果时展示明确提示（与加载态区分：loading 时空态节点隐藏）；
            无过滤时为默认「暂无数据」文案 -->
       <template #empty>
-        <NEmpty :description="filtersActive ? '没有符合条件的交易' : '暂无数据'" size="small">
+        <NEmpty
+          :description="filtersActive ? t('transactions.list.emptyFiltered') : t('transactions.list.empty')"
+          size="small"
+        >
           <template v-if="filtersActive" #extra>
             <NButton size="tiny" quaternary type="primary" @click="resetFilters">
-              清除筛选
+              {{ t('transactions.filter.clear') }}
             </NButton>
           </template>
         </NEmpty>
