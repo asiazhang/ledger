@@ -97,10 +97,10 @@ beforeEach(async () => {
 })
 
 describe('SettingsView.vue（issue #157：Tab 分域重构 6 → 4）', () => {
-  it('Tab 格局为 通用 → 分类 → 商户 → 数据 → 关于，共 5 个，关于在末位（#189 新增商户 Tab；ADR-0034 更名）', () => {
+  it('Tab 格局为 通用 → 分类 → 商户 → 数据 → 定时 → 关于，共 6 个，关于在末位（#189 商户；#308 定时，按 ADR-0022 插在关于之前）', () => {
     const wrapper = mount(SettingsView)
     const labels = wrapper.findAll('.n-tabs-tab').map((t) => t.text())
-    expect(labels).toEqual(['通用', '分类', '商户', '数据', '关于'])
+    expect(labels).toEqual(['通用', '分类', '商户', '数据', '定时', '关于'])
   })
 
   it('旧 Tab（备份与恢复 / 外观 / 存储位置）全部消失', () => {
@@ -455,5 +455,33 @@ describe('SettingsView.vue（issue #157：Tab 分域重构 6 → 4）', () => {
     html = wrapper2.html()
     expect(html).toContain('已回退到默认位置')
     expect(html).toContain('权限不足')
+  })
+})
+
+describe('SettingsView.vue 定时 Tab：设备级自动执行开关（issue #308 / ADR-0042）', () => {
+  it('「定时」内含自动执行卡片：默认关，附「只应在一台机器开启」与设备偏好说明', async () => {
+    const wrapper = mount(SettingsView)
+    await openTab(wrapper, '定时')
+    const card = findCardByTitle(wrapper, '自动执行')
+    expect(card, '「定时」Tab 应存在「自动执行」卡片').toBeTruthy()
+    const text = card!.text()
+    expect(text).toContain('自动执行只应在一台机器开启')
+    expect(text).toContain('不随备份')
+    // 默认关（ADR-0042：设备级开关默认关，换新机器或恢复备份后保持本机值）。
+    expect(card!.find('.n-switch').attributes('aria-checked')).toBe('false')
+  })
+
+  it('切换开关更新 store 并持久化 localStorage（设备偏好落点，不经后端持久化）', async () => {
+    const store = useAppStore()
+    const wrapper = mount(SettingsView)
+    await openTab(wrapper, '定时')
+    const sw = findCardByTitle(wrapper, '自动执行')!.find('.n-switch')
+    await sw.trigger('click')
+    expect(store.autoExecutionEnabled).toBe(true)
+    expect(localStorage.getItem('auto_execution_enabled')).toBe('true')
+    expect(findCardByTitle(wrapper, '自动执行')!.find('.n-switch').attributes('aria-checked')).toBe('true')
+    await sw.trigger('click')
+    expect(store.autoExecutionEnabled).toBe(false)
+    expect(localStorage.getItem('auto_execution_enabled')).toBe('false')
   })
 })

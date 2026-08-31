@@ -94,6 +94,29 @@ describe('useAppStore backupDir', () => {
   })
 })
 
+describe('useAppStore autoExecutionEnabled（issue #308：设备级「自动执行」开关）', () => {
+  it('默认值为 false（默认关，ADR-0042）', () => {
+    const store = useAppStore()
+    expect(store.autoExecutionEnabled).toBe(false)
+  })
+
+  it('setAutoExecutionEnabled 切换并持久化 localStorage', () => {
+    const store = useAppStore()
+    store.setAutoExecutionEnabled(true)
+    expect(store.autoExecutionEnabled).toBe(true)
+    expect(localStorage.getItem('auto_execution_enabled')).toBe('true')
+    store.setAutoExecutionEnabled(false)
+    expect(store.autoExecutionEnabled).toBe(false)
+    expect(localStorage.getItem('auto_execution_enabled')).toBe('false')
+  })
+
+  it('从 localStorage 恢复开关（本机值，不随备份迁移的落点）', () => {
+    localStorage.setItem('auto_execution_enabled', 'true')
+    const store = useAppStore()
+    expect(store.autoExecutionEnabled).toBe(true)
+  })
+})
+
 describe('useAppStore backupMaxCount', () => {
   it('默认值为 30', () => {
     const store = useAppStore()
