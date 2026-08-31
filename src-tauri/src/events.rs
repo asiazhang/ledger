@@ -3,11 +3,12 @@
 //! - `ledger:changed`（issue #79）：参考数据（`currencies / accounts / categories / merchants`）
 //!   任一写入成功后由调用方 emit，前端 `useReferenceStore` 订阅后自动重拉参考表
 //!   （商户表的后端命令面已登记为参考写入；前端 store 接线随商户前端接入落地）。
-//!   「是否为参考写入」的判定收敛在本模块：IPC 命令清单见 [`REFERENCE_WRITE_COMMANDS`]，
-//!   纯函数 [`is_reference_write`] 承载判定，命令层统一经 [`emit_reference_changed`] 走该
-//!   判定；HTTP 端点（账号/分类 create/delete）结构上即参考写入，直接经
-//!   [`emit_ledger_changed`] 发射。交易类写入不在本清单（唯一的参考表变更例外——
-//!   交易写「即建商户」——经 `signals` 映射单点携证据发射，ADR-0044 / issue #331）。
+//!   「是否为参考写入」的旧判定仍暂留本模块（IPC 命令清单 [`REFERENCE_WRITE_COMMANDS`] +
+//!   纯函数 [`is_reference_write`] + [`emit_reference_changed`]，IPC 壳迁移完成前保绿，
+//!   #332/#333）；HTTP 壳已改经 `signals` 映射单点发射（ADR-0044 / issue #334），不再经
+//!   本模块。交易类写入不在本清单（唯一的参考表变更例外——交易写「即建商户」——经
+//!   `signals` 映射单点携证据发射，ADR-0044 / issue #331）。两壳迁完后本清单由 #335
+//!   统一收缩删除。
 //! - `ledger:backups-changed`（issue #129）：自动备份完成 / 受管备份清理成功后 emit，
 //!   与前者平行、同样无 payload；前端设置页订阅后自动刷新备份列表与自动备份状态。
 //!   深路径执行点拿不到 `AppHandle`，经 [`init_event_app`] 注入的镜像句柄发射。
@@ -96,8 +97,9 @@ pub fn emit_ledger_changed(app: &AppHandle) {
     let _ = app.emit(LEDGER_CHANGED, ());
 }
 
-/// HTTP 端点发射入口：`app` 为 `Option` 仅为集成测试留的缝（不经真实 Tauri 运行时
-/// 构建路由，传 `None` 跳过发射）；生产路径由 `start_http_server` 注入 `Some`。
+/// 旧 HTTP 壳发射入口（issue #334 后已无调用者：HTTP 壳改经 `signals` 映射单点发射，
+/// `Option` 跳过语义收口在壳层 `emit_after_write`）：`app` 为 `Option` 仅为集成测试留的缝
+/// （不经真实 Tauri 运行时构建路由，传 `None` 跳过发射）。待 #335 随旧机制统一收缩删除。
 pub fn emit_ledger_changed_if_present(app: &Option<AppHandle>) {
     if let Some(app) = app {
         emit_ledger_changed(app);

@@ -13,6 +13,7 @@ use crate::models::{
     TransactionBatchInput, TransactionInput, TransactionListFilter, TransactionListResult,
     UpdateTransactionInput,
 };
+use crate::signals::{WriteEvidence, WriteOp, emit_for};
 use crate::transaction::amount::TransactionKind;
 use axum::extract::{FromRef, Path, Query, State};
 use axum::http::StatusCode;
@@ -34,7 +35,8 @@ use utoipa::ToSchema;
 /// （`setup_app_with_fund_fetch`），全部基金端点集成测试不触真实网络。
 pub type FundDetailFetcher = Arc<dyn Fn(&str) -> Result<FundDetail, AppError> + Send + Sync>;
 
-/// HTTP 服务器状态：数据库连接 + 可选 `AppHandle`（参考写入成功后发 `ledger:changed`）。
+/// HTTP 服务器状态：数据库连接 + 可选 `AppHandle`（写事务提交成功后经信号映射单点
+/// 发失效信号，ADR-0044）。
 ///
 /// `app` 为 `Option`：集成测试（`tests/api_server/`）不经真实 Tauri 运行时构建路由，
 /// 传 `None` 即跳过发射分支（后端 emit 视为薄胶，不造 AppHandle 测试桩）；
@@ -221,6 +223,16 @@ pub fn start_http_server(app: AppHandle, state: Arc<Mutex<Connection>>) {
     });
 }
 
+/// HTTP 壳的单点映射发射（ADR-0044）：写事务**提交成功后**按写操作身份 + 结果证据经
+/// `signals` 映射单点判定「发不发、发哪个」——壳层只转发，不持有判定知识，也不再出现
+/// 按端点手写的 emit 样板。`app` 为 `None`（集成测试不经真实 Tauri 运行时，见
+/// [`ApiState`]）跳过发射分支，语义不变；发射失败静默忽略，不影响写结果。
+fn emit_after_write(app: &Option<AppHandle>, op: WriteOp, evidence: WriteEvidence) {
+    if let Some(app) = app {
+        emit_for(app, op, evidence);
+    }
+}
+
 #[utoipa::path(
     get,
     path = "/api/v1/accounts",
@@ -264,8 +276,7 @@ async fn create_account_handler(
     let id = crate::db::write(&conn, |conn| {
         crate::commands::create_account_idempotent_internal(conn, input)
     })?;
-    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
-    crate::events::emit_ledger_changed_if_present(&app);
+    emit_after_write(&app, WriteOp::CreateAccount, WriteEvidence::None);
     Ok((StatusCode::CREATED, Json(id)))
 }
 
@@ -300,8 +311,7 @@ async fn update_account_handler(
         crate::commands::update_account_internal(conn, &id, input)?;
         crate::commands::get_account_internal(conn, &id)
     })?;
-    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
-    crate::events::emit_ledger_changed_if_present(&app);
+    emit_after_write(&app, WriteOp::UpdateAccount, WriteEvidence::None);
     Ok(Json(updated))
 }
 
@@ -330,8 +340,7 @@ async fn delete_account_handler(
     crate::db::write(&conn, |conn| {
         crate::commands::delete_account_internal(conn, &id)
     })?;
-    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
-    crate::events::emit_ledger_changed_if_present(&app);
+    emit_after_write(&app, WriteOp::DeleteAccount, WriteEvidence::None);
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -399,8 +408,7 @@ async fn create_category_handler(
     let id = crate::db::write(&conn, |conn| {
         crate::commands::create_category_idempotent_internal(conn, input)
     })?;
-    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
-    crate::events::emit_ledger_changed_if_present(&app);
+    emit_after_write(&app, WriteOp::CreateCategory, WriteEvidence::None);
     Ok((StatusCode::CREATED, Json(id)))
 }
 
@@ -429,8 +437,7 @@ async fn delete_category_handler(
     crate::db::write(&conn, |conn| {
         crate::commands::delete_category_internal(conn, &id)
     })?;
-    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
-    crate::events::emit_ledger_changed_if_present(&app);
+    emit_after_write(&app, WriteOp::DeleteCategory, WriteEvidence::None);
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -656,12 +663,12 @@ async fn create_instrument_handler(
         }
     })?;
     // 落现价即广播价格失效信号（ADR-0031，与按代码即拉 IPC 命令同一信号语义；
-    // 零变化不广播）。标的不属参考数据四表：不发 `ledger:changed` 参考失效信号。
-    if outcome.price_written
-        && let Some(app) = &state.app
-    {
-        crate::events::emit_prices_changed(app);
-    }
+    // 零变化不广播）；「发不发」经映射单点判定（ADR-0044），证据 = 基金增强分支是否落现价。
+    emit_after_write(
+        &state.app,
+        WriteOp::CreateInstrument,
+        WriteEvidence::PriceWritten(outcome.price_written),
+    );
     Ok((StatusCode::CREATED, Json(outcome.instrument_id)))
 }
 
@@ -837,15 +844,8 @@ async fn batch_create_transactions_handler(
         crate::commands::batch::TransactionBatch::run(conn, body.transactions, body.dedup)
     })?;
     // 信号在写事务提交成功后发射（映射单点判定，ADR-0044）：批内任一行即建商户才发
-    // 参考失效信号（修复 HTTP 导入即建商户后前端商户字典陈旧，issue #331）；
-    // `app: None`（集成测试）跳过发射分支，语义不变。
-    if let Some(app) = &app {
-        crate::signals::emit_for(
-            app,
-            crate::signals::WriteOp::BatchCreateTransactions,
-            outcome.evidence,
-        );
-    }
+    // 参考失效信号（修复 HTTP 导入即建商户后前端商户字典陈旧，issue #331）。
+    emit_after_write(&app, WriteOp::BatchCreateTransactions, outcome.evidence);
     Ok(Json(outcome.results))
 }
 
@@ -881,10 +881,8 @@ async fn update_transaction_handler(
         let updated = crate::commands::get_transaction_internal(conn, &id)?;
         Ok((evidence, updated))
     })?;
-    // 仅即建商户发参考失效信号（ADR-0044，issue #331）；`app: None`（集成测试）跳过。
-    if let Some(app) = &app {
-        crate::signals::emit_for(app, crate::signals::WriteOp::UpdateTransaction, evidence);
-    }
+    // 仅即建商户发参考失效信号（ADR-0044，issue #331）。
+    emit_after_write(&app, WriteOp::UpdateTransaction, evidence);
     Ok(Json(updated))
 }
 
