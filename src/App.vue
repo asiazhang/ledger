@@ -32,6 +32,7 @@ import {
 import { useAppStore } from '@/stores/app'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
 import { useDevicePreferenceSync } from '@/composables/useDevicePreferenceSync'
+import MessageSinkBridge from '@/components/MessageSinkBridge.vue'
 import { loadSidebarCollapsed, saveSidebarCollapsed } from '@/utils/view-state'
 import {
   viewShortcuts,
@@ -184,6 +185,8 @@ const title = () => h('div', { style: 'padding: 16px 18px; font-size: 18px; font
   >
     <NMessageProvider>
       <NDialogProvider>
+        <!-- Loadable toast sink 注册桥（ADR-0040）：必须在消息提供器子树内 -->
+        <MessageSinkBridge />
         <NLayout has-sider style="height: 100vh">
           <NLayoutSider
             bordered
