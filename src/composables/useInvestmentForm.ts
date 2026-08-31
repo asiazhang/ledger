@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { api } from '@/api'
+import { t } from '@/i18n'
 import { centsToYuan, priceToYuan, yuanToCents } from '@/types'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
 import { buildTradeInput } from '@/domain/transaction-input'
@@ -167,26 +168,34 @@ export function useInvestmentForm(
 
   async function submit() {
     if (!accountId.value) {
-      message.warning('请选择投资账户')
+      message.warning(t('investments.form.selectAccount'))
       return
     }
     if (!instrumentId.value) {
-      message.warning('请选择标的')
+      message.warning(t('investments.form.selectInstrument'))
       return
     }
     // 录入权威按标的类型分流（issue #302 / ADR-0038）：基金 = 确认单金额 + 份额必填、
     // 单价反算；其余 = 数量 + 单价必填。
     const fund = isFundInstrument.value
     if (fund && (amount.value == null || amount.value <= 0)) {
-      message.warning(kind === 'buy' ? '请输入买入金额（以确认单为准）' : '请输入卖出金额（以确认单为准）')
+      message.warning(
+        t(kind === 'buy' ? 'investments.form.inputBuyAmount' : 'investments.form.inputSellAmount'),
+      )
       return
     }
     if (quantity.value == null || quantity.value <= 0) {
-      message.warning(fund ? '请输入确认份额' : kind === 'buy' ? '请输入买入数量' : '请输入卖出数量')
+      message.warning(
+        fund
+          ? t('investments.form.inputShares')
+          : t(kind === 'buy' ? 'investments.form.inputBuyQuantity' : 'investments.form.inputSellQuantity'),
+      )
       return
     }
     if (!fund && (price.value == null || price.value <= 0)) {
-      message.warning(kind === 'buy' ? '请输入买入单价' : '请输入卖出单价')
+      message.warning(
+        t(kind === 'buy' ? 'investments.form.inputBuyPrice' : 'investments.form.inputSellPrice'),
+      )
       return
     }
 
@@ -211,12 +220,12 @@ export function useInvestmentForm(
       })
       if (editing) {
         await api.updateTransaction(editing.id, input)
-        message.success('已保存修改')
+        message.success(t('investments.form.saved'))
         // 编辑路径不重置表单：成功即关窗（onUpdated），实例整体销毁
         options?.onUpdated?.()
       } else {
         await api.createTransaction(input)
-        message.success(kind === 'buy' ? '已记买入' : '已记卖出')
+        message.success(t(kind === 'buy' ? 'investments.form.recordedBuy' : 'investments.form.recordedSell'))
         instrumentId.value = null
         amount.value = null
         quantity.value = null
@@ -226,7 +235,11 @@ export function useInvestmentForm(
         options?.onCreated?.()
       }
     } catch (e) {
-      message.error(editing ? `保存失败: ${errorMessage(e)}` : `记账失败: ${errorMessage(e)}`)
+      message.error(
+        t(editing ? 'investments.form.saveFailed' : 'investments.form.recordFailed', {
+          message: errorMessage(e),
+        }),
+      )
     }
   }
 

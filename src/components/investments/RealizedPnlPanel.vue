@@ -13,6 +13,7 @@ import {
 } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
 import PinyinSelect from '@/components/PinyinSelect.vue'
+import { t } from '@/i18n'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount, formatPrice, formatQuantity } from '@/types'
 import type { PnlDetail } from '@/types'
@@ -35,13 +36,13 @@ const {
 } = useRealizedPnl()
 
 const detailColumns: DataTableColumn<PnlDetail>[] = [
-  { title: '日期', key: 'sell_date', width: 120 },
-  { title: '账户', key: 'account_name', width: 120 },
-  { title: '标的', key: 'instrument_symbol', width: 100 },
-  { title: '名称', key: 'instrument_name', width: 140 },
-  { title: '数量', key: 'quantity', width: 80, render: (row) => formatQuantity(row.quantity) },
+  { title: t('investments.pnl.columns.date'), key: 'sell_date', width: 120 },
+  { title: t('investments.pnl.columns.account'), key: 'account_name', width: 120 },
+  { title: t('investments.pnl.columns.instrument'), key: 'instrument_symbol', width: 100 },
+  { title: t('investments.pnl.columns.name'), key: 'instrument_name', width: 140 },
+  { title: t('investments.pnl.columns.quantity'), key: 'quantity', width: 80, render: (row) => formatQuantity(row.quantity) },
   {
-    title: '成本单价',
+    title: t('investments.pnl.columns.costPrice'),
     key: 'cost_per_unit_cents',
     width: 100,
     // 成本单价为价格列（万分之一元刻度，ADR-0038），用 formatPrice 展示
@@ -51,7 +52,7 @@ const detailColumns: DataTableColumn<PnlDetail>[] = [
     },
   },
   {
-    title: '已实现盈亏',
+    title: t('investments.pnl.columns.realizedPnl'),
     key: 'realized_pnl_cents',
     width: 120,
     render(row) {
@@ -78,19 +79,19 @@ function realizedPnlColumn(title: string): DataTableColumn {
 }
 
 const yearColumns: DataTableColumn[] = [
-  { title: '年度', key: 'year' },
-  realizedPnlColumn('已实现盈亏'),
+  { title: t('investments.pnl.columns.year'), key: 'year' },
+  realizedPnlColumn(t('investments.pnl.columns.realizedPnl')),
 ]
 
 const accountCols: DataTableColumn[] = [
-  { title: '账户', key: 'account_name' },
-  realizedPnlColumn('已实现盈亏'),
+  { title: t('investments.pnl.columns.account'), key: 'account_name' },
+  realizedPnlColumn(t('investments.pnl.columns.realizedPnl')),
 ]
 
 const instPnlColumns: DataTableColumn[] = [
-  { title: '代码', key: 'symbol' },
-  { title: '名称', key: 'name' },
-  realizedPnlColumn('已实现盈亏'),
+  { title: t('investments.pnl.columns.symbol'), key: 'symbol' },
+  { title: t('investments.pnl.columns.name'), key: 'name' },
+  realizedPnlColumn(t('investments.pnl.columns.realizedPnl')),
 ]
 </script>
 
@@ -104,7 +105,7 @@ const instPnlColumns: DataTableColumn[] = [
         <PinyinSelect
           v-model:value="selectedAccountId"
           :options="accountOptions"
-          placeholder="全部账户"
+          :placeholder="t('investments.pnl.filterAccount')"
           clearable
           style="width: 180px"
           @update:value="refresh"
@@ -114,7 +115,7 @@ const instPnlColumns: DataTableColumn[] = [
         <PinyinSelect
           v-model:value="selectedInstrumentId"
           :options="pnlInstrumentOptions"
-          placeholder="搜索标的（代码/名称/拼音）"
+          :placeholder="t('investments.pnl.filterInstrument')"
           remote
           clearable
           :loading="searchingInstruments"
@@ -125,11 +126,11 @@ const instPnlColumns: DataTableColumn[] = [
         />
       </NSpace>
 
-      <NCard title="已实现盈亏概览" size="small">
-        <NEmpty v-if="!summary" description="暂无已实现盈亏数据" />
+      <NCard :title="t('investments.pnl.title')" size="small">
+        <NEmpty v-if="!summary" :description="t('investments.pnl.empty')" />
         <NGrid v-else :x-gap="16" :y-gap="16" cols="1 s:2 m:4">
           <NGi>
-            <NStatistic label="总已实现盈亏">
+            <NStatistic :label="t('investments.pnl.totalPnl')">
               <NNumberAnimation :from="0" :to="totalPnl" :duration="600" />
             </NStatistic>
           </NGi>
@@ -139,8 +140,8 @@ const instPnlColumns: DataTableColumn[] = [
       <template v-if="summary">
         <NGrid :x-gap="16" :y-gap="16" cols="1 s:2">
           <NGi>
-            <NCard title="按年度汇总" size="small">
-              <NEmpty v-if="summary.by_year.length === 0" description="暂无数据" />
+            <NCard :title="t('investments.pnl.byYear')" size="small">
+              <NEmpty v-if="summary.by_year.length === 0" :description="t('investments.pnl.emptyTable')" />
               <NDataTable
                 v-else
                 :columns="yearColumns"
@@ -151,8 +152,8 @@ const instPnlColumns: DataTableColumn[] = [
             </NCard>
           </NGi>
           <NGi>
-            <NCard title="按账户汇总" size="small">
-              <NEmpty v-if="summary.by_account.length === 0" description="暂无数据" />
+            <NCard :title="t('investments.pnl.byAccount')" size="small">
+              <NEmpty v-if="summary.by_account.length === 0" :description="t('investments.pnl.emptyTable')" />
               <NDataTable
                 v-else
                 :columns="accountCols"
@@ -164,8 +165,8 @@ const instPnlColumns: DataTableColumn[] = [
           </NGi>
         </NGrid>
 
-        <NCard title="按标的汇总" size="small">
-          <NEmpty v-if="summary.by_instrument.length === 0" description="暂无数据" />
+        <NCard :title="t('investments.pnl.byInstrument')" size="small">
+          <NEmpty v-if="summary.by_instrument.length === 0" :description="t('investments.pnl.emptyTable')" />
           <NDataTable
             v-else
             :columns="instPnlColumns"
@@ -175,8 +176,8 @@ const instPnlColumns: DataTableColumn[] = [
           />
         </NCard>
 
-        <NCard title="卖出明细" size="small">
-          <NEmpty v-if="summary.details.length === 0" description="暂无数据" />
+        <NCard :title="t('investments.pnl.details')" size="small">
+          <NEmpty v-if="summary.details.length === 0" :description="t('investments.pnl.emptyTable')" />
           <NDataTable
             v-else
             :columns="detailColumns"

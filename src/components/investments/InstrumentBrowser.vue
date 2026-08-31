@@ -15,6 +15,7 @@ import { Refresh } from '@vicons/ionicons5'
 import type { DataTableColumn } from 'naive-ui'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
+import { t } from '@/i18n'
 import { useHoldingPriceSync } from '@/composables/useHoldingPriceSync'
 import { useInstrumentFullSync } from '@/composables/useInstrumentFullSync'
 import { usePricesChanged } from '@/composables/usePricesChanged'
@@ -144,7 +145,7 @@ async function removeInstrument(row: Instrument) {
   const label = row.name || row.symbol
   try {
     await api.deleteInstrument(row.id)
-    deleteMessage.value = { type: 'success', text: `已删除标的：${label}` }
+    deleteMessage.value = { type: 'success', text: t('investments.browser.deleteSuccess', { name: label }) }
     // 原地重拉保留搜索/分页状态；若当前页删空则回退一页
     await load()
     if (instruments.value.length === 0 && page.value > 1) {
@@ -153,7 +154,7 @@ async function removeInstrument(row: Instrument) {
     }
   } catch (e) {
     // 后端守卫拒删（如确认间隙已产生买卖流水）：中文错误原样展示
-    deleteMessage.value = { type: 'error', text: `删除失败：${extractErrorMessage(e)}` }
+    deleteMessage.value = { type: 'error', text: t('investments.browser.deleteFailed', { message: extractErrorMessage(e) }) }
   }
 }
 
@@ -161,10 +162,10 @@ async function removeInstrument(row: Instrument) {
  * 遮罩点击不构成关闭意图（issue #252 弹层关闭语义）：确认/取消须显式点击。 */
 function confirmDeleteInstrument(row: Instrument) {
   dialog.warning({
-    title: '删除标的',
-    content: `确认删除标的「${row.name || row.symbol}」？删除后不可恢复。`,
-    positiveText: '删除',
-    negativeText: '取消',
+    title: t('investments.browser.deleteTitle'),
+    content: t('investments.browser.deleteContent', { name: row.name || row.symbol }),
+    positiveText: t('investments.browser.deleteConfirm'),
+    negativeText: t('investments.browser.deleteCancel'),
     maskClosable: false,
     onPositiveClick: () => removeInstrument(row),
   })
@@ -230,9 +231,17 @@ async function submitAddFund() {
   try {
     const res = await api.addFundByCode(addFundCode.value)
     const navText = res.nav_cents !== null && res.nav_date !== null
-      ? `最新净值 ${formatPrice(res.nav_cents)}（${res.nav_date}）`
-      : '暂未取到净值'
-    addFundMessage.value = `已添加基金：${res.name}（${res.symbol} · ${res.fund_class}）${navText}`
+      ? t('investments.browser.addFundNav', {
+          price: formatPrice(res.nav_cents),
+          date: res.nav_date,
+        })
+      : t('investments.browser.addFundNavMissing')
+    addFundMessage.value = t('investments.browser.addFundSuccess', {
+      name: res.name,
+      symbol: res.symbol,
+      fundClass: res.fund_class,
+      nav: navText,
+    })
     closeAddFund()
     // 新标的行上列表：回到第 1 页重拉（价格缓存刷新由价格失效信号驱动）
     reload()
@@ -254,10 +263,10 @@ const pagination = computed(() => ({
 }))
 
 const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
-  { title: '代码', key: 'symbol', width: 100 },
-  { title: '名称', key: 'name', width: 200 },
+  { title: t('investments.browser.columns.symbol'), key: 'symbol', width: 100 },
+  { title: t('investments.browser.columns.name'), key: 'name', width: 200 },
   {
-    title: '来源',
+    title: t('investments.browser.columns.source'),
     key: 'source',
     width: 70,
     render(row) {
@@ -272,7 +281,7 @@ const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
     },
   },
   {
-    title: '现价',
+    title: t('investments.browser.columns.price'),
     key: 'price_cents',
     width: 100,
     render(row) {
@@ -283,7 +292,7 @@ const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
     },
   },
   {
-    title: '市场',
+    title: t('investments.browser.columns.market'),
     key: 'market',
     width: 80,
     render(row) {
@@ -291,16 +300,16 @@ const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
     },
   },
   {
-    title: '类型',
+    title: t('investments.browser.columns.type'),
     key: 'type',
     width: 80,
     render(row) {
       return INSTRUMENT_TYPE_LABELS[row.type] ?? row.type
     },
   },
-  { title: '币种', key: 'currency_code', width: 60 },
+  { title: t('investments.browser.columns.currency'), key: 'currency_code', width: 60 },
   {
-    title: '走势',
+    title: t('investments.browser.columns.trend'),
     key: 'trend',
     width: 70,
     render(row) {
@@ -312,14 +321,14 @@ const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
           'data-testid': `view-trend-${row.symbol}`,
           onClick: () => emit('view-trend', row),
         },
-        { default: () => '走势' },
+        { default: () => t('investments.browser.trendAction') },
       )
     },
   },
   {
     // 录价（issue #291 / ADR-0036）：只对同步覆盖不到的标的开放（自建标的与
     // 名称充代码的基金行）；真实代码基金与股票的现价归同步，无录价入口。
-    title: '录价',
+    title: t('investments.browser.columns.quote'),
     key: 'quote',
     width: 70,
     render(row) {
@@ -332,12 +341,12 @@ const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
           'data-testid': `quote-${row.symbol}`,
           onClick: () => openQuote(row),
         },
-        { default: () => '录价' },
+        { default: () => t('investments.browser.quoteAction') },
       )
     },
   },
   {
-    title: '持仓',
+    title: t('investments.browser.columns.invested'),
     key: 'invested',
     width: 80,
     render(row) {
@@ -345,14 +354,14 @@ const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
       return h(
         NTag,
         { type: 'success', size: 'small', bordered: false },
-        { default: () => '持仓' },
+        { default: () => t('investments.browser.investedTag') },
       )
     },
   },
   {
     // 操作列（issue #292 / ADR-0036）：删除仅对自建标的开放；同步来源标的
     // 一律不可删，不渲染动作（后端守卫同样拒删，双保险）
-    title: '操作',
+    title: t('investments.browser.columns.actions'),
     key: 'actions',
     width: 70,
     render(row) {
@@ -366,7 +375,7 @@ const instrumentBrowseColumns: DataTableColumn<Instrument>[] = [
           'data-testid': `delete-instrument-${row.symbol}`,
           onClick: () => confirmDeleteInstrument(row),
         },
-        { default: () => '删除' },
+        { default: () => t('investments.browser.deleteAction') },
       )
     },
   },
@@ -380,14 +389,14 @@ onMounted(load)
     <NSpace align="center" :size="12">
       <NInput
         v-model:value="searchText"
-        placeholder="搜索代码或名称..."
+        :placeholder="t('investments.browser.searchPlaceholder')"
         clearable
         style="width: 240px"
       />
       <AppSelect
         v-model:value="selectedMarket"
         :options="marketOptions"
-        placeholder="全部市场"
+        :placeholder="t('investments.browser.allMarkets')"
         clearable
         style="width: 140px"
       />
@@ -396,14 +405,14 @@ onMounted(load)
         size="small"
         data-testid="only-invested-switch"
       />
-      <span style="font-size: 13px">只看持仓</span>
+      <span style="font-size: 13px">{{ t('investments.browser.onlyInvested') }}</span>
       <NButton
         secondary
         size="small"
         data-testid="add-fund"
         @click="openAddFund"
       >
-        添加基金
+        {{ t('investments.browser.addFund') }}
       </NButton>
       <NButton
         secondary
@@ -411,7 +420,7 @@ onMounted(load)
         data-testid="create-instrument"
         @click="createOpen = true"
       >
-        新建标的
+        {{ t('investments.browser.createInstrument') }}
       </NButton>
       <NButton
         type="primary"
@@ -420,7 +429,7 @@ onMounted(load)
         data-testid="sync-holding-prices"
         @click="sync"
       >
-        同步持仓价格
+        {{ t('investments.browser.syncHoldingPrices') }}
       </NButton>
       <NButton
         secondary
@@ -431,7 +440,7 @@ onMounted(load)
         <template v-if="fullSyncing" #icon>
           <NIcon class="sync-spin"><Refresh /></NIcon>
         </template>
-        {{ fullSyncing ? '同步中' : '全量同步' }}
+        {{ fullSyncing ? t('investments.browser.syncing') : t('investments.browser.fullSync') }}
       </NButton>
     </NSpace>
     <NText v-if="resultMessage" :type="status === 'error' ? 'error' : 'info'">
@@ -483,17 +492,17 @@ onMounted(load)
     <AppModal
       v-model:show="addFundOpen"
       preset="card"
-      title="添加基金"
+      :title="t('investments.browser.addFundTitle')"
       style="width: 440px"
       :bordered="false"
     >
       <NSpace vertical :size="12">
         <NText depth="3">
-          输入 6 位基金代码，自动从东方财富拉取名称、类型与最新净值回填，无需手抄。
+          {{ t('investments.browser.addFundIntro') }}
         </NText>
         <NInput
           v-model:value="addFundCode"
-          placeholder="6 位基金代码，如 000001"
+          :placeholder="t('investments.browser.addFundCodePlaceholder')"
           :maxlength="6"
           :disabled="addFundSubmitting"
           data-testid="add-fund-code"
@@ -504,7 +513,7 @@ onMounted(load)
         </NText>
         <NSpace justify="end" :size="12">
           <NButton data-testid="cancel-add-fund" @click="closeAddFund">
-            取消
+            {{ t('investments.browser.addFundCancel') }}
           </NButton>
           <NButton
             type="primary"
@@ -513,7 +522,7 @@ onMounted(load)
             :disabled="!addFundCodeValid"
             @click="submitAddFund"
           >
-            添加
+            {{ t('investments.browser.addFundSubmit') }}
           </NButton>
         </NSpace>
       </NSpace>
@@ -523,18 +532,17 @@ onMounted(load)
     <AppModal
       v-model:show="confirmOpen"
       preset="card"
-      title="全量同步股票标的"
+      :title="t('investments.browser.confirmTitle')"
       style="width: 480px"
       :bordered="false"
     >
       <NSpace vertical :size="12">
         <NText depth="3">
-          将从东方财富拉取沪市、深市、港股的股票标的最新行情，涉及数百次 API
-          请求，可能需要数分钟。已存在的标的名称或市场变更会自动更新，不会删除已有数据。
+          {{ t('investments.browser.confirmIntro') }}
         </NText>
         <NSpace justify="end" :size="12">
           <NButton data-testid="cancel-confirm-full-sync" @click="closeConfirm">
-            取消
+            {{ t('investments.browser.confirmCancel') }}
           </NButton>
           <NButton
             type="primary"
@@ -542,7 +550,7 @@ onMounted(load)
             :loading="fullSyncing"
             @click="confirmSync"
           >
-            开始同步
+            {{ t('investments.browser.confirmStart') }}
           </NButton>
         </NSpace>
       </NSpace>
@@ -552,7 +560,7 @@ onMounted(load)
     <AppModal
       v-model:show="modalOpen"
       preset="card"
-      title="股票标的全量同步"
+      :title="t('investments.browser.progressTitle')"
       style="width: 480px"
       :bordered="false"
       @update:show="(v: boolean) => !v && closeModal()"
@@ -568,10 +576,14 @@ onMounted(load)
             :height="28"
           />
           <NText depth="3" data-testid="full-sync-count">
-            已处理 {{ current }} / 共 {{ syncTotal }} 只{{ syncTotal === 0 ? '（正在获取行情...）' : '' }}
+            {{ t('investments.browser.progress', {
+              current,
+              total: syncTotal,
+              pending: syncTotal === 0 ? t('investments.browser.progressPending') : '',
+            }) }}
           </NText>
           <NText depth="3" data-testid="full-sync-cumulative">
-            累计新增 {{ inserted }} 只 · 更新 {{ updated }} 只
+            {{ t('investments.browser.cumulative', { inserted, updated }) }}
           </NText>
           <NSpace justify="end" :size="12">
             <NButton
@@ -581,23 +593,23 @@ onMounted(load)
               data-testid="cancel-full-sync"
               @click="requestCancel"
             >
-              中断同步
+              {{ t('investments.browser.cancelSync') }}
             </NButton>
           </NSpace>
         </template>
         <template v-else-if="syncStatus === 'done'">
           <NText type="success" data-testid="full-sync-result">
-            同步完成：新增 {{ inserted }} 只，更新 {{ updated }} 只
+            {{ t('investments.browser.done', { inserted, updated }) }}
           </NText>
         </template>
         <template v-else-if="syncStatus === 'cancelled'">
           <NText type="warning" data-testid="full-sync-result">
-            已中断，已同步 {{ inserted }} 只，更新 {{ updated }} 只
+            {{ t('investments.browser.cancelled', { inserted, updated }) }}
           </NText>
         </template>
         <template v-else-if="syncStatus === 'error'">
           <NText type="error" data-testid="full-sync-result">
-            同步失败：{{ errorMessage }}
+            {{ t('investments.browser.failed', { message: errorMessage }) }}
           </NText>
         </template>
       </NSpace>

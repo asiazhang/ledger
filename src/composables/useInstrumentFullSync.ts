@@ -1,6 +1,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { api } from '@/api'
+import { t } from '@/i18n'
 import type { CancelSyncResult, SyncProgress } from '@/types'
 
 /// 全量同步终态：完成 / 中断 / 失败 三方明确区分（issue #109）。
@@ -117,7 +118,9 @@ export function useInstrumentFullSync() {
       // 仅当确实取消了才继续等待终态回流；命令失败则报中断失败。
       if (!res.cancelled) return
     } catch (e) {
-      errorMessage.value = `中断失败：${e instanceof Error ? e.message : String(e)}`
+      errorMessage.value = t('investments.sync.cancelFailed', {
+        message: e instanceof Error ? e.message : String(e),
+      })
     } finally {
       cancelling.value = false
     }
