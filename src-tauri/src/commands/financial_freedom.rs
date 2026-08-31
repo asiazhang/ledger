@@ -17,6 +17,9 @@
 //! - 覆盖年数 = 分子 ÷ 分母；未设预算（零分母）时 ratio 与 coverage_years 均为 0，
 //!   占位引导在展示层。
 //! - 实时计算不落库；不新增任何写函数（ADR-0013）。
+//!
+//! 与净资产聚合（dashboard）的同形片段刻意未收拢：本票边界不动既有命令
+//! （spec #341 Out of Scope），提取共享持仓市值合计留待后续重构另行立项。
 
 use rusqlite::Connection;
 use tauri::State;
