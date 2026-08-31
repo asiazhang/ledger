@@ -630,3 +630,46 @@ fn category_rename_does_not_affect_search() {
     let res = search(&conn, "吃喝").unwrap();
     assert_eq!(res.total, 0);
 }
+
+// -----------------------------------------------------------------------
+// 流式分页（ADR-0043）：较大数据量下分页无重复、无遗漏、total 精确
+// -----------------------------------------------------------------------
+
+#[test]
+fn streaming_pagination_no_dup_no_gap_and_exact_total() {
+    // 流式实现（游标逐行、命中即计数、仅当前页物化）下，逐页遍历所有命中
+    // 应恰好覆盖全部命中（无重复、无遗漏），且 total 与逐页累加一致。
+    let conn = setup();
+    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    // 批量事务插入，避免逐条 autocommit 拖慢测试。
+    {
+        let tx = conn.unchecked_transaction().unwrap();
+        for i in 0..500 {
+            let date = format!("2026-{:02}-{:02}", 1 + (i / 28), 1 + (i % 28));
+            insert_txn(&tx, &format!("t{i:03}"), "a1", None, Some("午餐"), &date);
+        }
+        tx.commit().unwrap();
+    }
+    const PAGE_SIZE: usize = 47; // 非整除页大小，逼出末页不足与跨页边界。
+    let mut seen: Vec<String> = Vec::new();
+    let mut page = 1;
+    loop {
+        let res = search_paged(&conn, "午餐", page, PAGE_SIZE).unwrap();
+        for item in &res.items {
+            seen.push(item.id.clone());
+        }
+        if page * PAGE_SIZE >= res.total as usize {
+            break;
+        }
+        page += 1;
+    }
+    // 无重复、无遗漏：共 500 笔命中，且 id 集合唯一。
+    assert_eq!(seen.len(), 500);
+    let mut sorted = seen.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(sorted.len(), 500);
+    // 与单次全量 total 一致。
+    let all = search_paged(&conn, "午餐", 1, 200).unwrap();
+    assert_eq!(all.total, 500);
+}

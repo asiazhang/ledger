@@ -3,12 +3,12 @@
 //! 实现（issue #196）：子序列匹配语义与任何倒排索引都不兼容，改为全量扫描。
 //! SQL 层完成软删除口径过滤与可选金额/日期筛选并按交易日期降序预排序；Rust 层对
 //! 候选逐条按统一语义契约（`text` 模块：原文连续子串 ∨ 拼音首字母子序列）过滤，
-//! 过滤不改变顺序，随后内存分页。个人账本量级下全量扫描实测无感（10 万条约
-//! 90ms/次、MB 级内存，见 issue #195）。
+//! 过滤不改变顺序，随后流式分页（ADR-0043：游标逐行、仅当前页物化，内存 O(1)）。
+//! 个人账本量级下全量扫描实测无感（10 万条约 90ms/次，见 issue #195）。
 
 use rusqlite::Connection;
 
-use crate::db::query::{FromRow, query_all};
+use crate::db::query::FromRow;
 use crate::error::Result;
 use crate::models::{Transaction, TransactionSearchResult};
 
@@ -100,46 +100,49 @@ pub fn search_transactions_internal(
         where_clauses.push("t.date <= ?");
         params.push(to.to_string().into());
     }
-    let candidates: Vec<Candidate> = query_all(
-        conn,
-        &format!(
-            "SELECT t.id,t.kind,t.amount_cents,t.currency_code,t.amount_native_cents,t.account_id,\
-             t.to_account_id,t.category_id,t.refund_of_transaction_id,t.note,t.date,t.created_at,\
-             t.updated_at,t.version,t.device_id,t.is_deleted,t.merchant_id,COALESCE(a.name,''),m.name \
-             FROM transactions t \
-             JOIN accounts a ON t.account_id = a.id \
-             LEFT JOIN categories c ON t.category_id = c.id \
-             LEFT JOIN merchants m ON t.merchant_id = m.id \
-             WHERE {} \
-             ORDER BY t.date DESC, t.created_at DESC, t.id DESC",
-            where_clauses.join(" AND ")
-        ),
-        rusqlite::params_from_iter(params.iter()),
-    )?;
-
-    // Rust 层：统一语义过滤（词条之间 AND；每词条对备注/转出账户名/商户名任一命中即算）。
-    // 过滤保持 SQL 给定序（日期降序），不重排。拼音首字母按候选×词条惰性重算，
-    // 不预计算：个人账本量级实测远低于感知阈值（ADR-0027，10 万条约 90ms/次）。
-    let matched: Vec<Transaction> = candidates
-        .into_iter()
-        .filter(|c| {
-            terms.iter().all(|t| {
-                term_matches(
-                    t,
-                    c.txn.note.as_deref(),
-                    &c.account_name,
-                    c.merchant_name.as_deref(),
-                )
-            })
-        })
-        .map(|c| c.txn)
-        .collect();
-
-    let total = matched.len() as i64;
+    // SQL 层取候选后流式处理（ADR-0043）：游标逐行读取 → 逐行按统一语义契约过滤
+    // （词条之间 AND；每词条对备注/转出账户名/商户名任一命中即算）→ 命中计数 total
+    // → 仅当前页条目物化，候选与命中均不整体驻留（内存 O(1)）。过滤保持 SQL 给定序
+    // （日期降序），不重排。拼音首字母按候选×词条惰性重算，不预计算：个人账本量级
+    // 实测远低于感知阈值（ADR-0027，10 万条约 90ms/次）。
+    let mut stmt = conn.prepare(&format!(
+        "SELECT t.id,t.kind,t.amount_cents,t.currency_code,t.amount_native_cents,t.account_id,\
+         t.to_account_id,t.category_id,t.refund_of_transaction_id,t.note,t.date,t.created_at,\
+         t.updated_at,t.version,t.device_id,t.is_deleted,t.merchant_id,COALESCE(a.name,''),m.name \
+         FROM transactions t \
+         JOIN accounts a ON t.account_id = a.id \
+         LEFT JOIN categories c ON t.category_id = c.id \
+         LEFT JOIN merchants m ON t.merchant_id = m.id \
+         WHERE {} \
+         ORDER BY t.date DESC, t.created_at DESC, t.id DESC",
+        where_clauses.join(" AND ")
+    ))?;
     // saturating 运算防极端输入（usize::MAX）下溢/溢出 panic（与 list_transactions 先例一致）；
     // 超出命中数的页返回空页。
     let offset = page.saturating_sub(1).saturating_mul(page_size);
-    let items = matched.into_iter().skip(offset).take(page_size).collect();
+    let mut total: i64 = 0;
+    let mut items: Vec<Transaction> = Vec::with_capacity(page_size);
+    let rows = stmt.query_map(
+        rusqlite::params_from_iter(params.iter()),
+        Candidate::from_row,
+    )?;
+    for row in rows {
+        let c = row?;
+        if terms.iter().all(|t| {
+            term_matches(
+                t,
+                c.txn.note.as_deref(),
+                &c.account_name,
+                c.merchant_name.as_deref(),
+            )
+        }) {
+            total += 1;
+            // 命中序号（0 起）落在当前页区间且未满页才物化。
+            if total as usize > offset && items.len() < page_size {
+                items.push(c.txn);
+            }
+        }
+    }
 
     Ok(TransactionSearchResult { items, total })
 }
