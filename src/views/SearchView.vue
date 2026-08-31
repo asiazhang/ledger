@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@/i18n'
 import { errorMessage } from '@/utils/errors'
 import { computed, ref, watch } from 'vue'
 import {
@@ -57,7 +58,7 @@ const filtersActive = computed(
 /** 是否具备查询条件：关键字非空或筛选激活（仅筛选也可出结果） */
 const hasQuery = computed(() => keyword.value.trim() !== '' || filtersActive.value)
 
-/** 当前筛选条件的可读描述（供「已应用筛选」展示） */
+/** 当前筛选条件的可读描述（供「已应用筛选」展示，文案随语言切换）。 */
 const activeFilterDescriptions = computed(() => {
   const parts: string[] = []
   // 按用户默认币种展示符号（设置页可改），避免硬编码 CNY
@@ -65,14 +66,19 @@ const activeFilterDescriptions = computed(() => {
   const min = amountMinCents.value
   const max = amountMaxCents.value
   if (min !== null && max !== null) {
-    parts.push(`金额 ${formatAmount(min, currency)} ~ ${formatAmount(max, currency)}`)
+    parts.push(
+      t('search.filter.amountRange', {
+        min: formatAmount(min, currency),
+        max: formatAmount(max, currency),
+      }),
+    )
   } else if (min !== null) {
-    parts.push(`最低 ${formatAmount(min, currency)}`)
+    parts.push(t('search.filter.amountMin', { amount: formatAmount(min, currency) }))
   } else if (max !== null) {
-    parts.push(`最高 ${formatAmount(max, currency)}`)
+    parts.push(t('search.filter.amountMax', { amount: formatAmount(max, currency) }))
   }
-  if (dateFrom.value) parts.push(`起始 ${dateFrom.value}`)
-  if (dateTo.value) parts.push(`结束 ${dateTo.value}`)
+  if (dateFrom.value) parts.push(t('search.filter.dateFrom', { date: dateFrom.value }))
+  if (dateTo.value) parts.push(t('search.filter.dateTo', { date: dateTo.value }))
   return parts
 })
 
@@ -101,7 +107,7 @@ async function runSearch() {
     searched.value = true
   } catch (e) {
     if (seq !== searchSeq) return
-    message.error(`搜索失败: ${errorMessage(e)}`)
+    message.error(t('search.searchFailed', { msg: errorMessage(e) }))
   } finally {
     if (seq === searchSeq) loading.value = false
   }
@@ -149,11 +155,12 @@ function clearFilters() {
   dateTo.value = null
 }
 
-// 复用交易列表列配置（日期/类型/分类/账户/备注/金额），结果只读
-const columns: DataTableColumn<Transaction>[] = buildTransactionColumns(reference)
+// 复用交易列表列配置（日期/类型/分类/账户/备注/金额），结果只读；
+// 经 computed 构造：列名（t()）随语言切换即时重建
+const columns = computed<DataTableColumn<Transaction>[]>(() => buildTransactionColumns(reference))
 
 // scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和
-const scrollX = sumFixedColumnWidths(columns)
+const scrollX = computed(() => sumFixedColumnWidths(columns.value))
 
 // 服务端分页：翻页时携带 page 重新搜索
 const pagination = computed(() => ({
@@ -171,21 +178,21 @@ const pagination = computed(() => ({
   <NSpace vertical :size="12">
     <NInput
       v-model:value="keyword"
-      placeholder="输入关键字开始搜索（备注、账户名、商户名、拼音首字母，支持多关键字）"
+      :placeholder="t('search.keywordPlaceholder')"
       clearable
       @keyup.enter="onEnter"
     />
     <NSpace :size="8" align="center" :wrap="true">
       <NInput
         v-model:value="amountMinYuan"
-        placeholder="最低金额（元）"
+        :placeholder="t('search.amountMinPlaceholder')"
         clearable
         style="width: 150px"
         @keyup.enter="onEnter"
       />
       <NInput
         v-model:value="amountMaxYuan"
-        placeholder="最高金额（元）"
+        :placeholder="t('search.amountMaxPlaceholder')"
         clearable
         style="width: 150px"
         @keyup.enter="onEnter"
@@ -194,7 +201,7 @@ const pagination = computed(() => ({
         v-model:formatted-value="dateFrom"
         type="date"
         value-format="yyyy-MM-dd"
-        placeholder="起始日期"
+        :placeholder="t('search.dateFromPlaceholder')"
         clearable
         style="width: 140px"
       />
@@ -202,20 +209,22 @@ const pagination = computed(() => ({
         v-model:formatted-value="dateTo"
         type="date"
         value-format="yyyy-MM-dd"
-        placeholder="结束日期"
+        :placeholder="t('search.dateToPlaceholder')"
         clearable
         style="width: 140px"
       />
       <template v-if="filtersActive">
-        <NText depth="3">已应用筛选：{{ activeFilterDescriptions.join('、') }}</NText>
+        <NText depth="3">{{
+          t('search.appliedFilters', { filters: activeFilterDescriptions.join(t('search.filterSeparator')) })
+        }}</NText>
         <NButton size="tiny" quaternary type="primary" @click="clearFilters">
-          清除筛选
+          {{ t('search.clearFilters') }}
         </NButton>
       </template>
     </NSpace>
     <template v-if="searched">
-      <NText depth="3">命中 {{ total }} 条</NText>
-      <NEmpty v-if="total === 0" description="无匹配结果" />
+      <NText depth="3">{{ t('search.hitCount', { n: total }) }}</NText>
+      <NEmpty v-if="total === 0" :description="t('search.noResults')" />
       <!-- 备注列为弹性列，表格铺满容器；窄窗口时备注先收缩，scroll-x（固定列宽总和）作为横向滚动下限 -->
       <NDataTable
         v-else
@@ -229,6 +238,6 @@ const pagination = computed(() => ({
         :pagination="pagination"
       />
     </template>
-    <NEmpty v-else description="输入关键字或设置筛选开始搜索" />
+    <NEmpty v-else :description="t('search.emptyPlaceholder')" />
   </NSpace>
 </template>

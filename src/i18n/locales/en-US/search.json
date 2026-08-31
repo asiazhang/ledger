@@ -1,0 +1,21 @@
+{
+  "keywordPlaceholder": "Enter keywords to search (note, account, merchant, pinyin initials; multiple keywords supported)",
+  "amountMinPlaceholder": "Min amount",
+  "amountMaxPlaceholder": "Max amount",
+  "dateFromPlaceholder": "Start date",
+  "dateToPlaceholder": "End date",
+  "appliedFilters": "Applied filters: {filters}",
+  "filterSeparator": ", ",
+  "clearFilters": "Clear filters",
+  "hitCount": "{n} results",
+  "noResults": "No matching results",
+  "emptyPlaceholder": "Enter a keyword or set filters to start searching",
+  "searchFailed": "Search failed: {msg}",
+  "filter": {
+    "amountRange": "Amount {min} ~ {max}",
+    "amountMin": "Min {amount}",
+    "amountMax": "Max {amount}",
+    "dateFrom": "From {date}",
+    "dateTo": "To {date}"
+  }
+}

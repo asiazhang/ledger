@@ -36,7 +36,7 @@ pub(crate) fn list_exchange_rates(conn: &Connection) -> Result<Vec<ExchangeRate>
 
 pub(crate) fn create_exchange_rate(conn: &Connection, input: ExchangeRateInput) -> Result<String> {
     if input.rate <= 0.0 {
-        return Err(AppError::Invalid("汇率必须大于 0".into()));
+        return Err(AppError::coded("fx.rate-positive", "汇率必须大于 0"));
     }
     let id = new_uuid();
     let now = now_iso();
@@ -80,7 +80,10 @@ pub(crate) fn list_market_prices(conn: &Connection) -> Result<Vec<MarketPrice>> 
 
 pub(crate) fn create_market_price(conn: &Connection, input: MarketPriceInput) -> Result<String> {
     if input.price_cents <= 0 {
-        return Err(AppError::Invalid("价格必须大于 0".into()));
+        return Err(AppError::coded(
+            "instrument.price-positive",
+            "价格必须大于 0",
+        ));
     }
     // 写入委托现价缓存单点 upsert（issue #291 收口：原就地 SQL 与 sync::persist
     // 两份同形 upsert 合并为一份）；手动落价无净值日期语义，nav_date 覆盖为 NULL
@@ -215,10 +218,13 @@ pub(crate) fn delete_instrument(conn: &Connection, id: &str) -> Result<()> {
             |r| r.get(0),
         )
         .ok();
-    let source = source.ok_or_else(|| AppError::NotFound(format!("标的 {id} 不存在")))?;
+    let source = source.ok_or_else(|| {
+        AppError::codedp_not_found("instrument.not-found", format!("标的 {id} 不存在"), &[id])
+    })?;
     if source != "manual" {
-        return Err(AppError::Invalid(
-            "同步来源标的不支持删除：股票字典由「全量同步」维护，填错可重新同步修正".into(),
+        return Err(AppError::coded(
+            "instrument.sync-delete-forbidden",
+            "同步来源标的不支持删除：股票字典由「全量同步」维护，填错可重新同步修正",
         ));
     }
     let trade_refs: i64 = conn.query_row(
@@ -227,8 +233,9 @@ pub(crate) fn delete_instrument(conn: &Connection, id: &str) -> Result<()> {
         |r| r.get(0),
     )?;
     if trade_refs > 0 {
-        return Err(AppError::Invalid(
-            "该标的已有买卖流水，无法删除：可先删除相关交易后再试".into(),
+        return Err(AppError::coded(
+            "instrument.traded-delete-forbidden",
+            "该标的已有买卖流水，无法删除：可先删除相关交易后再试",
         ));
     }
     conn.execute("DELETE FROM instruments WHERE id=?1", rusqlite::params![id])?;
@@ -240,7 +247,10 @@ pub(crate) fn delete_instrument(conn: &Connection, id: &str) -> Result<()> {
 /// 来源随行终身不变（issue #293 / ADR-0036 决策 2）。
 pub(crate) fn create_instrument(conn: &Connection, input: InstrumentInput) -> Result<String> {
     if input.symbol.trim().is_empty() {
-        return Err(AppError::Invalid("标的代码不能为空".into()));
+        return Err(AppError::coded(
+            "instrument.symbol-required",
+            "标的代码不能为空",
+        ));
     }
     let market = input.market.as_deref().unwrap_or("unknown");
     let existing_id: Option<(String, Option<String>, String)> = conn

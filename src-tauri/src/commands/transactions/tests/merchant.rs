@@ -100,7 +100,7 @@ fn create_txn_with_merchant_rejected_for_non_merchant_kinds() {
         },
     )
     .unwrap_err();
-    assert_eq!(err.to_string(), "参数错误: 交易类型 transfer 不能携带商户");
+    assert_eq!(err.to_string(), "交易类型 transfer 不能携带商户");
 
     // buy / sell 携带商户：即使投资字段齐备也在行为层被拒（先于投资域 prepare）。
     for kind in [TransactionKind::Buy, TransactionKind::Sell] {
@@ -177,7 +177,7 @@ fn update_txn_with_merchant_rejected_for_transfer() {
         },
     )
     .unwrap_err();
-    assert_eq!(err.to_string(), "参数错误: 交易类型 transfer 不能携带商户");
+    assert_eq!(err.to_string(), "交易类型 transfer 不能携带商户");
     // 拒绝后原交易保持不变。
     let t = get_transaction_internal(&conn, &id).unwrap();
     assert_eq!(t.kind, TransactionKind::Expense);

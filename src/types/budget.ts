@@ -2,10 +2,8 @@ import type { Syncable } from './common'
 
 export type BudgetPeriod = 'monthly' | 'yearly'
 
-export const BUDGET_PERIOD_LABELS: Record<BudgetPeriod, string> = {
-  monthly: '按月',
-  yearly: '按年',
-}
+/** 预算周期闭集；显示标签在文案资源 budget.period.*（i18n，ADR-0049） */
+export const BUDGET_PERIODS: BudgetPeriod[] = ['monthly', 'yearly']
 
 export interface Budget extends Syncable {
   id: string

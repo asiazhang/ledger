@@ -17,6 +17,7 @@ import {
   type DataTableColumns,
 } from 'naive-ui'
 import { api } from '@/api'
+import { t } from '@/i18n'
 import { useReferenceStore } from '@/stores/reference'
 import AppModal from '@/components/AppModal.vue'
 import AppDropdown from '@/components/AppDropdown.vue'
@@ -25,7 +26,7 @@ import AppSelect from '@/components/AppSelect.vue'
 import { useAppDialog } from '@/composables/useAppDialog'
 import AccountLink from '@/components/AccountLink.vue'
 import { buildAccountRowMenuOptions } from '@/components/account-row-menu'
-import { ACCOUNT_TYPE_LABELS, formatAmount } from '@/types'
+import { ACCOUNT_TYPES, formatAmount } from '@/types'
 import type { AccountBalance, AccountInput, AccountType } from '@/types'
 
 const reference = useReferenceStore()
@@ -39,10 +40,13 @@ const type = ref<AccountType>('cash')
 const currencyCode = ref('CNY')
 const initial = ref<number | null>(0)
 
-const typeOptions = (Object.keys(ACCOUNT_TYPE_LABELS) as AccountType[]).map((k) => ({
-  label: ACCOUNT_TYPE_LABELS[k],
-  value: k,
-}))
+// computed：标签经 t() 随界面语言即时切换（ADR-0049）
+const typeOptions = computed(() =>
+  ACCOUNT_TYPES.map((k) => ({
+    label: t(`accounts.type.${k}`),
+    value: k,
+  })),
+)
 const currencyOptions = () =>
   reference.currencies.map((c) => ({ label: `${c.name} (${c.code})`, value: c.code }))
 
@@ -52,7 +56,7 @@ async function refresh() {
 
 async function create() {
   if (!name.value.trim()) {
-    message.warning('请输入账户名称')
+    message.warning(t('accounts.message.nameRequired'))
     return
   }
   const input: AccountInput = {
@@ -63,24 +67,24 @@ async function create() {
   }
   try {
     await api.createAccount(input)
-    message.success('已创建账户')
+    message.success(t('accounts.message.created'))
     name.value = ''
     initial.value = 0
     // 参考数据由 ledger:changed 信号自动重拉；此处仅刷新交易派生余额
     await refresh()
   } catch (e) {
-    message.error(`创建失败: ${errorMessage(e)}`)
+    message.error(t('accounts.message.createFailed', { message: errorMessage(e) }))
   }
 }
 
 async function remove(id: string) {
   try {
     await api.deleteAccount(id)
-    message.success('已删除')
+    message.success(t('accounts.message.deleted'))
     // 参考数据由 ledger:changed 信号自动重拉；此处仅刷新交易派生余额
     await refresh()
   } catch (e) {
-    message.error(`删除失败: ${errorMessage(e)}`)
+    message.error(t('accounts.message.deleteFailed', { message: errorMessage(e) }))
   }
 }
 
@@ -88,10 +92,10 @@ async function remove(id: string) {
  * 遮罩点击不构成关闭意图（issue #252 弹层关闭语义）：确认/取消须显式点击。 */
 function confirmDelete(row: AccountBalance) {
   dialog.warning({
-    title: '删除账户',
-    content: `确认删除账户「${row.account.name}」？删除后相关交易仍保留。`,
-    positiveText: '删除',
-    negativeText: '取消',
+    title: t('accounts.deleteDialog.title'),
+    content: t('accounts.deleteDialog.content', { name: row.account.name }),
+    positiveText: t('accounts.deleteDialog.positive'),
+    negativeText: t('accounts.deleteDialog.negative'),
     maskClosable: false,
     onPositiveClick: () => remove(row.account.id),
   })
@@ -119,7 +123,7 @@ function openEdit(row: AccountBalance) {
 async function submitEdit() {
   if (!editRow.value) return
   if (!editName.value.trim()) {
-    message.warning('请输入账户名称')
+    message.warning(t('accounts.message.nameRequired'))
     return
   }
   try {
@@ -127,12 +131,12 @@ async function submitEdit() {
       name: editName.value,
       currency_code: editCurrency.value,
     })
-    message.success('已保存')
+    message.success(t('accounts.message.saved'))
     showEdit.value = false
     // 参考数据由 ledger:changed 信号自动重拉；此处仅刷新余额
     await refresh()
   } catch (e) {
-    message.error(`保存失败: ${errorMessage(e)}`)
+    message.error(t('accounts.message.saveFailed', { message: errorMessage(e) }))
   }
 }
 
@@ -186,7 +190,9 @@ const adjustCurrency = computed(() =>
 const adjustDeltaText = computed(() => {
   if (adjustDelta.value === null || adjustDelta.value === 0) return ''
   const abs = formatAmount(Math.abs(adjustDelta.value), adjustCurrency.value)
-  return adjustDelta.value > 0 ? `将从「无」转入 ${abs}` : `将转出 ${abs} 至「无」`
+  return adjustDelta.value > 0
+    ? t('accounts.adjust.deltaIn', { amount: abs })
+    : t('accounts.adjust.deltaOut', { amount: abs })
 })
 
 async function submitAdjust() {
@@ -197,12 +203,12 @@ async function submitAdjust() {
       target_balance_cents: adjustTargetCents.value,
       date: adjustDate.value ? formatLocalDate(new Date(adjustDate.value)) : todayIso(),
     })
-    message.success('余额已调整')
+    message.success(t('accounts.message.adjusted'))
     showAdjust.value = false
     // 参考数据由 ledger:changed 信号自动重拉（若按需新建了黑洞账户）；此处仅刷新余额
     await refresh()
   } catch (e) {
-    message.error(`调整失败: ${errorMessage(e)}`)
+    message.error(t('accounts.message.adjustFailed', { message: errorMessage(e) }))
   }
 }
 
@@ -246,26 +252,26 @@ const rowProps = (row: AccountBalance) => ({
   onContextmenu: (e: MouseEvent) => showRowMenu(e, row),
 })
 
-const columns: DataTableColumns<AccountBalance> = [
+const columns = computed<DataTableColumns<AccountBalance>>(() => [
   {
-    title: '名称',
+    title: t('accounts.list.colName'),
     key: 'account.name',
     // 账户名下钻：点击跳转交易页并按涉及账户过滤（issue #97）
     render: (row) => h(AccountLink, { accountId: row.account.id }),
   },
   {
-    title: '类型',
+    title: t('accounts.list.colType'),
     key: 'account.type',
-    render: (row) => ACCOUNT_TYPE_LABELS[row.account.type],
+    render: (row) => t(`accounts.type.${row.account.type}`),
   },
-  { title: '币种', key: 'account.currency_code' },
+  { title: t('accounts.list.colCurrency'), key: 'account.currency_code' },
   {
-    title: '余额',
+    title: t('accounts.list.colBalance'),
     key: 'balance_cents',
     render: (row) => formatAmount(row.balance_cents, reference.getCurrency(row.account.currency_code)),
   },
   {
-    title: '操作',
+    title: t('accounts.list.colActions'),
     key: 'actions',
     width: 64,
     // 「⋯」按钮与行右键共用同一手动定位菜单（showRowMenu 以点击坐标弹出）
@@ -275,13 +281,13 @@ const columns: DataTableColumns<AccountBalance> = [
         {
           size: 'tiny',
           quaternary: true,
-          'aria-label': '更多操作',
+          'aria-label': t('accounts.list.moreActions'),
           onClick: (e: MouseEvent) => showRowMenu(e, row),
         },
         () => '⋯',
       ),
   },
-]
+])
 
 onMounted(() => {
   // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll
@@ -291,25 +297,29 @@ onMounted(() => {
 
 <template>
   <NSpace vertical :size="16">
-    <NCard title="新增账户" size="small">
+    <NCard :title="t('accounts.create.title')" size="small">
       <NForm label-placement="left" :show-feedback="false" inline size="small">
-        <NFormItem label="名称">
-          <NInput v-model:value="name" placeholder="账户名称" style="width: 160px" />
+        <NFormItem :label="t('accounts.create.name')">
+          <NInput
+            v-model:value="name"
+            :placeholder="t('accounts.create.namePlaceholder')"
+            style="width: 160px"
+          />
         </NFormItem>
-        <NFormItem label="类型">
+        <NFormItem :label="t('accounts.create.type')">
           <AppSelect v-model:value="type" :options="typeOptions" style="width: 120px" />
         </NFormItem>
-        <NFormItem label="币种">
+        <NFormItem :label="t('accounts.create.currency')">
           <AppSelect v-model:value="currencyCode" :options="currencyOptions()" style="width: 140px" />
         </NFormItem>
-        <NFormItem label="初始余额">
+        <NFormItem :label="t('accounts.create.initialBalance')">
           <NInputNumber v-model:value="initial" :precision="2" style="width: 140px" />
         </NFormItem>
-        <NButton type="primary" @click="create">添加</NButton>
+        <NButton type="primary" @click="create">{{ t('accounts.create.add') }}</NButton>
       </NForm>
     </NCard>
 
-    <NCard title="账户列表" size="small">
+    <NCard :title="t('accounts.list.title')" size="small">
       <NDataTable
         :columns="columns"
         :data="balances"
@@ -322,7 +332,7 @@ onMounted(() => {
     <!-- 编辑账户弹窗：type 不可改（参与余额符号归属），币种仅无交易账户可改（后端校验） -->
     <AppModal
       v-model:show="showEdit"
-      title="编辑账户"
+      :title="t('accounts.edit.title')"
       preset="card"
       display-directive="if"
       style="width: 420px"
@@ -335,18 +345,21 @@ onMounted(() => {
         :show-feedback="false"
         size="small"
       >
-        <NFormItem label="名称">
-          <NInput v-model:value="editName" placeholder="账户名称" />
+        <NFormItem :label="t('accounts.create.name')">
+          <NInput
+            v-model:value="editName"
+            :placeholder="t('accounts.create.namePlaceholder')"
+          />
         </NFormItem>
-        <NFormItem label="类型">
-          <NInput :value="ACCOUNT_TYPE_LABELS[editRow.account.type]" disabled />
+        <NFormItem :label="t('accounts.create.type')">
+          <NInput :value="t(`accounts.type.${editRow.account.type}`)" disabled />
         </NFormItem>
-        <NFormItem label="币种">
+        <NFormItem :label="t('accounts.create.currency')">
           <AppSelect v-model:value="editCurrency" :options="currencyOptions()" style="width: 100%" />
         </NFormItem>
         <NSpace justify="end" :size="8">
-          <NButton size="small" @click="showEdit = false">取消</NButton>
-          <NButton size="small" type="primary" @click="submitEdit">保存</NButton>
+          <NButton size="small" @click="showEdit = false">{{ t('accounts.edit.cancel') }}</NButton>
+          <NButton size="small" type="primary" @click="submitEdit">{{ t('accounts.edit.save') }}</NButton>
         </NSpace>
       </NForm>
     </AppModal>
@@ -354,7 +367,7 @@ onMounted(() => {
     <!-- 调整余额弹窗：输入目标余额，实时显示差额与去向；日期默认今天可改（对账常补记） -->
     <AppModal
       v-model:show="showAdjust"
-      title="调整余额"
+      :title="t('accounts.adjust.title')"
       preset="card"
       display-directive="if"
       style="width: 420px"
@@ -367,37 +380,37 @@ onMounted(() => {
         :show-feedback="false"
         size="small"
       >
-        <NFormItem label="当前余额">
+        <NFormItem :label="t('accounts.adjust.currentBalance')">
           <NText>{{
             formatAmount(adjustRow.balance_cents, adjustCurrency)
           }}</NText>
         </NFormItem>
-        <NFormItem label="目标余额">
+        <NFormItem :label="t('accounts.adjust.targetBalance')">
           <NInputNumber
             v-model:value="adjustTarget"
             :precision="2"
-            placeholder="对账后应有的余额"
+            :placeholder="t('accounts.adjust.targetPlaceholder')"
             style="width: 100%"
           />
         </NFormItem>
-        <NFormItem label="调整日期">
+        <NFormItem :label="t('accounts.adjust.date')">
           <AppDatePicker v-model:value="adjustDate" type="date" style="width: 100%" />
         </NFormItem>
-        <NFormItem label="差额" :show-label="adjustDeltaText === ''">
-          <NText v-if="adjustDelta === 0">余额已等于目标值，无需调整</NText>
+        <NFormItem :label="t('accounts.adjust.delta')" :show-label="adjustDeltaText === ''">
+          <NText v-if="adjustDelta === 0">{{ t('accounts.adjust.deltaZero') }}</NText>
           <NText v-else-if="adjustDeltaText" :type="adjustDelta! > 0 ? 'success' : 'warning'">
-            {{ adjustDeltaText }}（生成一笔与「无」的转账，删除该转账即撤销调整）
+            {{ adjustDeltaText }}{{ t('accounts.adjust.hint') }}
           </NText>
         </NFormItem>
         <NSpace justify="end" :size="8">
-          <NButton size="small" @click="showAdjust = false">取消</NButton>
+          <NButton size="small" @click="showAdjust = false">{{ t('accounts.edit.cancel') }}</NButton>
           <NButton
             size="small"
             type="primary"
             :disabled="adjustTargetCents === null || adjustDelta === 0"
             @click="submitAdjust"
           >
-            确认调整
+            {{ t('accounts.adjust.confirm') }}
           </NButton>
         </NSpace>
       </NForm>

@@ -275,5 +275,5 @@ fn execute_occurrence_rejects_paused_plan() {
     let occ_id = first_pending_occurrence(&conn, &plan_id);
 
     let err = execute_occurrence(&conn, &occ_id).unwrap_err();
-    assert_eq!(err.to_string(), "参数错误: 关联计划未处于活跃状态");
+    assert_eq!(err.to_string(), "关联计划未处于活跃状态");
 }

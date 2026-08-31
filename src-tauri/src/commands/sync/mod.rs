@@ -176,8 +176,9 @@ pub fn sync_instruments(
 
     // 原子接管起点：仅当无同步在跑才启动；防止二次启动清掉已被置位的取消标志（issue #104）。
     if !sync_state.try_start() {
-        return Err(AppError::Invalid(
-            "已有全量同步正在进行，请先中断或等待完成".into(),
+        return Err(AppError::coded(
+            "sync.already-running",
+            "已有全量同步正在进行，请先中断或等待完成",
         ));
     }
 

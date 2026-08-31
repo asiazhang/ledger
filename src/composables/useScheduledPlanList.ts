@@ -3,6 +3,7 @@ import type { ComputedRef, Ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { api } from '@/api'
 import { errorMessage } from '@/utils/errors'
+import { t } from '@/i18n'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 import type {
   RecurrenceType,
@@ -24,32 +25,45 @@ import type {
  * 有无「已完成」项）；形态特化计算体（期数预览、币种跟随、转入账户过滤）一律留适配器。
  * 弹层纯度（ADR-0035）：不引用任何组件、不接弹层注册表；行操作描述符由适配器渲染，
  * 确认弹层按弹层封装纪律留在适配器。
+ *
+ * 文案（ADR-0049）：标签/提示一律渲染或调用时经 t() 现取（选项表为工厂函数、
+ * 注入文案为 getter），不在模块加载/工厂调用时定格，语言切换即时生效。
  */
 
 // ---------------------------------------------------------------------------
 // 周期选项表与周期标签（全仓单源）
 // ---------------------------------------------------------------------------
 
-/**
- * 单源周期选项表：三个页签新建表单下拉共用。
- * 「定时」转账页签下拉原为「天/周/月/年」，本单源落地即 #309 显式可见变化之一：
- * 统一为「每天/每周/每月/每年」（列表列口径三页签本就一致，不受影响）。
- */
-export const SCHEDULED_RECURRENCE_OPTIONS: ReadonlyArray<{
+/** 周期选项（标签现取）：三个页签新建表单下拉共用。 */
+export interface ScheduledRecurrenceOption {
   label: string
   value: RecurrenceType
-}> = [
-  { label: '每天', value: 'daily' },
-  { label: '每周', value: 'weekly' },
-  { label: '每月', value: 'monthly' },
-  { label: '每年', value: 'yearly' },
-]
+}
 
-const RECURRENCE_UNIT: Record<RecurrenceType, string> = {
-  daily: '天',
-  weekly: '周',
-  monthly: '月',
-  yearly: '年',
+/**
+ * 单源周期选项表工厂：三个页签新建表单下拉共用。
+ * 「定时」转账页签下拉原为「天/周/月/年」，本单源落地即 #309 显式可见变化之一：
+ * 统一为「每天/每周/每月/每年」（列表列口径三页签本就一致，不受影响）。
+ * 每次调用现取标签（t()），随界面语言即时切换。
+ */
+export function scheduledRecurrenceOptions(): ScheduledRecurrenceOption[] {
+  const labelKeys: Record<RecurrenceType, string> = {
+    daily: 'scheduled.recurrence.daily',
+    weekly: 'scheduled.recurrence.weekly',
+    monthly: 'scheduled.recurrence.monthly',
+    yearly: 'scheduled.recurrence.yearly',
+  }
+  return (Object.keys(labelKeys) as RecurrenceType[]).map((value) => ({
+    value,
+    label: t(labelKeys[value]),
+  }))
+}
+
+const RECURRENCE_UNIT_KEY: Record<RecurrenceType, string> = {
+  daily: 'scheduled.recurrence.unitDaily',
+  weekly: 'scheduled.recurrence.unitWeekly',
+  monthly: 'scheduled.recurrence.unitMonthly',
+  yearly: 'scheduled.recurrence.unitYearly',
 }
 
 /**
@@ -60,8 +74,11 @@ export function scheduledRecurrenceLabel(
   recurrenceType: RecurrenceType | string,
   interval: number,
 ): string {
-  const unit = RECURRENCE_UNIT[recurrenceType as RecurrenceType] ?? recurrenceType
-  return interval > 1 ? `每${interval}${unit}` : `每${unit}`
+  const unitKey = RECURRENCE_UNIT_KEY[recurrenceType as RecurrenceType]
+  const unit = unitKey ? t(unitKey) : recurrenceType
+  return interval > 1
+    ? t('scheduled.recurrence.everyN', { n: interval, unit })
+    : t('scheduled.recurrence.every', { unit })
 }
 
 // ---------------------------------------------------------------------------
@@ -96,23 +113,18 @@ export interface ScheduledPlanStatusOption {
 }
 
 /**
- * 按形态的状态过滤选项集（能力有无）：定时转账支持「已完成」（一次性转账执行后
+ * 按形态的状态过滤选项键集（能力有无）：定时转账支持「已完成」（一次性转账执行后
  * completed，issue 历史），订阅/分期暂无——维持各页签现状，不在此越权补齐。
  * 标签经全仓单源的 scheduledStatusLabel 生成，不另造第二处映射（ADR-0041 决策 4）。
  */
-const STATUS_FILTER_OPTIONS: Record<ScheduledKind, ReadonlyArray<ScheduledPlanStatusOption>> = {
-  scheduled_transfer: (['active', 'paused', 'cancelled', 'completed'] as const).map((key) => ({
-    key,
-    label: scheduledStatusLabel(key),
-  })),
-  subscription: (['active', 'paused', 'cancelled'] as const).map((key) => ({
-    key,
-    label: scheduledStatusLabel(key),
-  })),
-  installment: (['active', 'paused', 'cancelled'] as const).map((key) => ({
-    key,
-    label: scheduledStatusLabel(key),
-  })),
+const STATUS_FILTER_KEYS: Record<ScheduledKind, ReadonlyArray<ScheduledStatus>> = {
+  scheduled_transfer: ['active', 'paused', 'cancelled', 'completed'],
+  subscription: ['active', 'paused', 'cancelled'],
+  installment: ['active', 'paused', 'cancelled'],
+}
+
+function buildStatusFilterOptions(kind: ScheduledKind): ScheduledPlanStatusOption[] {
+  return STATUS_FILTER_KEYS[kind].map((key) => ({ key, label: scheduledStatusLabel(key) }))
 }
 
 // ---------------------------------------------------------------------------
@@ -130,10 +142,10 @@ export interface UseScheduledPlanListOptions<E> {
     plan: ScheduledTransactionWithExt,
     detail: ScheduledTransactionDetail | null,
   ): E
-  /** 清单加载失败的提示文案（形态命名，如「加载定时转账失败」）。 */
-  loadErrorText: string
-  /** 取消确认文案（三形态措辞各异，注入而非写死；确认弹层由适配器渲染）。 */
-  cancelConfirmText: string
+  /** 清单加载失败的提示文案 getter（形态命名，如「加载定时转账失败」；getter 保证切语言即时生效）。 */
+  loadErrorText(): string
+  /** 取消确认文案 getter（三形态措辞各异，注入而非写死；确认弹层由适配器渲染）。 */
+  cancelConfirmText(): string
   /** 生命周期变更（暂停/恢复/取消）成功并重拉后的回调（订阅注入花费面板刷新）。 */
   onStatusChanged?(): void
   /** 行详情动作（打开计划详情弹窗；弹窗组件留适配器）。 */
@@ -151,8 +163,8 @@ export interface UseScheduledPlanListReturn<E> {
   readonly refreshVersion: Readonly<Ref<number>>
   /** 状态过滤后的行（纯前端过滤，不产生请求）。 */
   readonly filteredRows: ComputedRef<ScheduledPlanRow<E>[]>
-  /** 按形态的状态过滤选项集。 */
-  readonly statusFilterOptions: ReadonlyArray<ScheduledPlanStatusOption>
+  /** 按形态的状态过滤选项集（computed：标签随界面语言即时切换）。 */
+  readonly statusFilterOptions: ComputedRef<ReadonlyArray<ScheduledPlanStatusOption>>
   /** 清单加载/刷新：按形态拉取计划 + 逐行详情扩展；成功完成 bump refreshVersion。 */
   load(): Promise<void>
   /** 状态过滤意图入口。 */
@@ -184,6 +196,8 @@ export function useScheduledPlanList<E>(
     rows.value.filter((r) => r.plan.core.status === statusFilter.value),
   )
 
+  const statusFilterOptions = computed(() => buildStatusFilterOptions(kind))
+
   /**
    * 清单加载（唯一写 rows 的路径）：列表命令按形态过滤后，逐行取详情扩展；
    * 单行详情失败标记 detailFailed 不拖垮整单；列表命令失败提示形态文案、行保持旧值。
@@ -206,7 +220,7 @@ export function useScheduledPlanList<E>(
       rows.value = details
       refreshVersion.value += 1
     } catch (e) {
-      message.error(`${loadErrorText}: ${errorMessage(e)}`)
+      message.error(`${loadErrorText()}: ${errorMessage(e)}`)
     } finally {
       loading.value = false
     }
@@ -220,12 +234,16 @@ export function useScheduledPlanList<E>(
     try {
       await api.updateScheduledTransactionStatus({ id, new_status: newStatus })
       message.success(
-        newStatus === 'paused' ? '已暂停' : newStatus === 'active' ? '已恢复' : '已取消',
+        newStatus === 'paused'
+          ? t('scheduled.status.paused')
+          : newStatus === 'active'
+            ? t('scheduled.toast.resumed')
+            : t('scheduled.status.cancelled'),
       )
       await load()
       onStatusChanged?.()
     } catch (e) {
-      message.error(`操作失败: ${errorMessage(e)}`)
+      message.error(t('scheduled.toast.operationFailed', { message: errorMessage(e) }))
     }
   }
 
@@ -233,31 +251,38 @@ export function useScheduledPlanList<E>(
    * 行操作描述符（按 Plan Lifecycle 状态的可用性矩阵）：期次详情全状态可用；
    * 暂停限 active、恢复限 paused、取消限 active/paused（不删已生成交易与历史期次）。
    * run 经 void 触发，避免浮 promise；确认弹层由适配器按 confirm 文案渲染。
+   * 标签与确认文案调用时经 t() 现取（适配器在渲染中调用本函数，切语言即时生效）。
    */
   function rowActions(row: ScheduledPlanRow<E>): ScheduledPlanRowAction[] {
     const id = row.plan.core.id
     const status = row.plan.core.status
     return [
-      { key: 'detail', label: '期次', available: true, confirm: null, run: () => onOpenDetail(row) },
+      {
+        key: 'detail',
+        label: t('scheduled.action.detail'),
+        available: true,
+        confirm: null,
+        run: () => onOpenDetail(row),
+      },
       {
         key: 'pause',
-        label: '暂停',
+        label: t('scheduled.action.pause'),
         available: status === 'active',
         confirm: null,
         run: () => void changeStatus(id, 'paused'),
       },
       {
         key: 'resume',
-        label: '恢复',
+        label: t('scheduled.action.resume'),
         available: status === 'paused',
         confirm: null,
         run: () => void changeStatus(id, 'active'),
       },
       {
         key: 'cancel',
-        label: '取消',
+        label: t('scheduled.action.cancel'),
         available: status === 'active' || status === 'paused',
-        confirm: cancelConfirmText,
+        confirm: cancelConfirmText(),
         run: () => void changeStatus(id, 'cancelled'),
       },
     ]
@@ -269,7 +294,7 @@ export function useScheduledPlanList<E>(
     statusFilter: readonly(statusFilter) as Readonly<Ref<ScheduledStatus>>,
     refreshVersion: readonly(refreshVersion) as Readonly<Ref<number>>,
     filteredRows,
-    statusFilterOptions: STATUS_FILTER_OPTIONS[kind],
+    statusFilterOptions,
     load,
     setStatusFilter,
     changeStatus,

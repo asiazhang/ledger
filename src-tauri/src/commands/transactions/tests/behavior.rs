@@ -3,6 +3,7 @@
 
 use super::super::*;
 use super::common::{insert_account, make_buy_input, make_input, setup, setup_investment_account};
+use crate::error::ErrClass;
 use rusqlite::Connection;
 
 use crate::db::{device_id, now_iso};
@@ -126,7 +127,7 @@ fn delete_transaction_internal_returns_not_found_for_missing_id() {
 
     let err = delete_transaction_internal(&conn, "不存在的id").unwrap_err();
     match err {
-        AppError::NotFound(msg) => assert!(msg.contains("交易不存在")),
+        AppError::Coded { message, .. } => assert!(message.contains("交易不存在")),
         other => panic!("expected NotFound, got {other:?}"),
     }
 }
@@ -148,7 +149,13 @@ fn delete_transaction_internal_returns_not_found_for_already_deleted() {
     .unwrap();
 
     let err = delete_transaction_internal(&conn, &id).unwrap_err();
-    assert!(matches!(err, AppError::NotFound(_)));
+    assert!(matches!(
+        err,
+        AppError::Coded {
+            class: ErrClass::NotFound,
+            ..
+        }
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -167,11 +174,11 @@ fn create_transaction_internal_rejects_dividend_and_split_with_not_supported() {
             create_transaction_internal(&conn, make_input("acc-unsup", kind, amount, "2026-05-04"))
                 .unwrap_err();
         match err {
-            AppError::Invalid(msg) => assert!(
-                msg.contains("暂不支持"),
-                "{kind} 应报「暂不支持」，实际: {msg}"
+            AppError::Coded { message, .. } => assert!(
+                message.contains("暂不支持"),
+                "{kind} 应报「暂不支持」，实际: {message}"
             ),
-            other => panic!("expected Invalid, got {other:?}"),
+            other => panic!("expected Coded, got {other:?}"),
         }
     }
 
@@ -205,11 +212,11 @@ fn update_transaction_rejects_dividend_and_split_with_not_supported() {
         )
         .unwrap_err();
         match err {
-            AppError::Invalid(msg) => assert!(
-                msg.contains("暂不支持"),
-                "{kind} 应报「暂不支持」，实际: {msg}"
+            AppError::Coded { message, .. } => assert!(
+                message.contains("暂不支持"),
+                "{kind} 应报「暂不支持」，实际: {message}"
             ),
-            other => panic!("expected Invalid, got {other:?}"),
+            other => panic!("expected Coded, got {other:?}"),
         }
         // 修改被拒绝后原交易保持不变（事务回滚）。
         let t = get_transaction_internal(&conn, &id).unwrap();
@@ -349,8 +356,8 @@ fn delete_transaction_internal_rejects_partially_sold_buy() {
     // 守卫文案按入口内化（ADR-0033 决策 #4）：删除入口固定返回自己的措辞，
     // 与修改入口对同一守卫各持措辞、互不漂移。
     match err {
-        AppError::Invalid(msg) => assert_eq!(msg, "该买入交易已有部分卖出，无法删除"),
-        other => panic!("expected Invalid, got {other:?}"),
+        AppError::Coded { message, .. } => assert_eq!(message, "该买入交易已有部分卖出，无法删除"),
+        other => panic!("expected Coded, got {other:?}"),
     }
 }
 
@@ -506,7 +513,13 @@ fn update_transaction_internal_returns_not_found_for_missing_or_deleted() {
         make_input("acc-upd", TransactionKind::Expense, 100, "2026-01-01"),
     )
     .unwrap_err();
-    assert!(matches!(err, AppError::NotFound(_)));
+    assert!(matches!(
+        err,
+        AppError::Coded {
+            class: ErrClass::NotFound,
+            ..
+        }
+    ));
 
     conn.execute(
         "UPDATE transactions SET is_deleted=1 WHERE id=?1",
@@ -519,7 +532,16 @@ fn update_transaction_internal_returns_not_found_for_missing_or_deleted() {
         make_input("acc-upd", TransactionKind::Expense, 100, "2026-01-01"),
     )
     .unwrap_err();
-    assert!(matches!(err, AppError::NotFound(_)), "已软删除应视为不存在");
+    assert!(
+        matches!(
+            err,
+            AppError::Coded {
+                class: ErrClass::NotFound,
+                ..
+            }
+        ),
+        "已软删除应视为不存在"
+    );
 }
 
 #[test]
@@ -540,8 +562,8 @@ fn update_transaction_internal_reuses_kind_validation_transfer_needs_target() {
     )
     .unwrap_err();
     match err {
-        AppError::Invalid(msg) => assert!(msg.contains("目标账户")),
-        other => panic!("expected Invalid, got {other:?}"),
+        AppError::Coded { message, .. } => assert!(message.contains("目标账户")),
+        other => panic!("expected Coded, got {other:?}"),
     }
 }
 
@@ -631,8 +653,8 @@ fn update_transaction_internal_rejects_partially_sold_buy() {
     .unwrap_err();
     // 守卫文案按入口内化（ADR-0033 决策 #4）：修改入口固定返回自己的措辞。
     match err {
-        AppError::Invalid(msg) => assert_eq!(msg, "该买入交易已有部分卖出，无法修改"),
-        other => panic!("expected Invalid, got {other:?}"),
+        AppError::Coded { message, .. } => assert_eq!(message, "该买入交易已有部分卖出，无法修改"),
+        other => panic!("expected Coded, got {other:?}"),
     }
 }
 

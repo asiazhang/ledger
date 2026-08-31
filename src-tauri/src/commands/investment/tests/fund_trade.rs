@@ -201,11 +201,11 @@ fn fund_buy_requires_positive_authoritative_amount() {
     )
     .unwrap_err();
     match err {
-        AppError::Invalid(msg) => assert!(
-            msg.contains("金额"),
-            "基金申购缺金额应报中文错误，got: {msg}"
+        AppError::Coded { message, .. } => assert!(
+            message.contains("金额"),
+            "基金申购缺金额应报中文错误，got: {message}"
         ),
-        other => panic!("应返回 Invalid（400），got: {other:?}"),
+        other => panic!("应返回 Coded（400），got: {other:?}"),
     }
     // 不落库残留
     let txns: i64 = conn
@@ -227,11 +227,11 @@ fn fund_buy_fee_must_not_exceed_amount() {
     )
     .unwrap_err();
     match err {
-        AppError::Invalid(msg) => assert!(
-            msg.contains("手续费"),
-            "基金申购手续费 ≥ 金额应报中文错误，got: {msg}"
+        AppError::Coded { message, .. } => assert!(
+            message.contains("手续费"),
+            "基金申购手续费 ≥ 金额应报中文错误，got: {message}"
         ),
-        other => panic!("应返回 Invalid（400），got: {other:?}"),
+        other => panic!("应返回 Coded（400），got: {other:?}"),
     }
 }
 
@@ -403,11 +403,11 @@ fn fund_buy_rejects_price_cents_alongside_authoritative_amount() {
     input.price_cents = Some(1000);
     let err = create_transaction_internal(&conn, input).unwrap_err();
     match err {
-        AppError::Invalid(msg) => assert!(
-            msg.contains("不可提供单价"),
-            "基金申购同供金额与单价应被显式拒绝，got: {msg}"
+        AppError::Coded { message, .. } => assert!(
+            message.contains("不可提供单价"),
+            "基金申购同供金额与单价应被显式拒绝，got: {message}"
         ),
-        other => panic!("应返回 Invalid（400），got: {other:?}"),
+        other => panic!("应返回 Coded（400），got: {other:?}"),
     }
 }
 

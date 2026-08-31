@@ -84,7 +84,7 @@ pub struct NormalizedRow {
 ///
 /// 与旧命令层实现的两处**刻意差异**（issue #59 定时引擎 / issue #60 创建修改与
 /// 买入卖出行已接线，语义由本模块测试锁定）：
-/// - 退款来源不存在/已软删除返回 [`AppError::NotFound`]（旧实现为 rusqlite 裸错，
+/// - 退款来源不存在/已软删除返回码化 [`AppError::Coded`]（class NotFound，旧实现为 rusqlite 裸错，
 ///   语义不明）；其余错误文案（转账/金额/退款只能关联支出）逐字沿用旧文本，
 ///   保证接线后 HTTP/BDD 断言不回退；
 /// - 折算目标为全局默认币种（spec #52 口径权威），而非旧实现的账户币种——
@@ -106,58 +106,71 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
         }
     }
     if input.kind == TransactionKind::Transfer && input.to_account_id.is_none() {
-        return Err(AppError::Invalid("转账必须指定目标账户".into()));
+        return Err(AppError::coded(
+            "transfer.to-account-required",
+            "转账必须指定目标账户",
+        ));
     }
     if input.amount_cents <= 0 {
-        return Err(AppError::Invalid("金额必须大于 0".into()));
+        return Err(AppError::coded(
+            "transaction.amount-positive",
+            "金额必须大于 0",
+        ));
     }
-    let (category_id, account_id, currency_code, merchant_id, refund_of_id) = if input.kind
-        == TransactionKind::Refund
-    {
-        let ref_id = input
-            .refund_of_transaction_id
-            .clone()
-            .ok_or_else(|| AppError::Invalid("退款必须关联原支出交易".into()))?;
-        // 只认未删除的原支出交易；不存在或已软删除均视为无效来源（NotFound），
-        // 其余数据库错误（锁/损坏等）原样上抛。
-        let (cat, acc, cur, mer, okind): (
-            Option<String>,
-            String,
-            String,
-            Option<String>,
-            TransactionKind,
-        ) = conn
-            .query_row(
-                "SELECT category_id, account_id, currency_code, merchant_id, kind \
+    let (category_id, account_id, currency_code, merchant_id, refund_of_id) =
+        if input.kind == TransactionKind::Refund {
+            let ref_id = input.refund_of_transaction_id.clone().ok_or_else(|| {
+                AppError::coded("refund.source-required", "退款必须关联原支出交易")
+            })?;
+            // 只认未删除的原支出交易；不存在或已软删除均视为无效来源（NotFound），
+            // 其余数据库错误（锁/损坏等）原样上抛。
+            let (cat, acc, cur, mer, okind): (
+                Option<String>,
+                String,
+                String,
+                Option<String>,
+                TransactionKind,
+            ) = conn
+                .query_row(
+                    "SELECT category_id, account_id, currency_code, merchant_id, kind \
                  FROM transactions WHERE id=?1 AND is_deleted=0",
-                params![ref_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-            )
-            .optional()?
-            .ok_or_else(|| AppError::NotFound(format!("退款关联的原支出交易不存在: {ref_id}")))?;
-        if okind != TransactionKind::Expense {
-            return Err(AppError::Invalid("退款只能关联支出交易".into()));
-        }
-        // 商户与账户/币种/分类同款继承语义：忽略调用方填的 merchant_id，取原支出商户。
-        (cat, acc, cur, mer, Some(ref_id))
-    } else {
-        // 商户字典校验：income/expense 携带的商户必须存在且未软删除——软删商户
-        // 不可再被**新选择**（新建交易引用；历史引用照常保留）。修改路径提交值与
-        // 该行当前商户相同视为保持历史引用（`existing_merchant_id`），跳过校验。
-        if let Some(merchant_id) = &input.merchant_id {
-            let unchanged = input.existing_merchant_id.as_deref() == Some(merchant_id.as_str());
-            if !unchanged {
-                validate_merchant_active(conn, Some(merchant_id))?;
+                    params![ref_id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                )
+                .optional()?
+                .ok_or_else(|| {
+                    AppError::codedp_not_found(
+                        "refund.source-not-found",
+                        format!("退款关联的原支出交易不存在: {ref_id}"),
+                        &[ref_id.as_str()],
+                    )
+                })?;
+            if okind != TransactionKind::Expense {
+                return Err(AppError::coded(
+                    "refund.source-not-expense",
+                    "退款只能关联支出交易",
+                ));
             }
-        }
-        (
-            input.category_id.clone(),
-            input.account_id.clone(),
-            input.currency_code.clone(),
-            input.merchant_id.clone(),
-            None,
-        )
-    };
+            // 商户与账户/币种/分类同款继承语义：忽略调用方填的 merchant_id，取原支出商户。
+            (cat, acc, cur, mer, Some(ref_id))
+        } else {
+            // 商户字典校验：income/expense 携带的商户必须存在且未软删除——软删商户
+            // 不可再被**新选择**（新建交易引用；历史引用照常保留）。修改路径提交值与
+            // 该行当前商户相同视为保持历史引用（`existing_merchant_id`），跳过校验。
+            if let Some(merchant_id) = &input.merchant_id {
+                let unchanged = input.existing_merchant_id.as_deref() == Some(merchant_id.as_str());
+                if !unchanged {
+                    validate_merchant_active(conn, Some(merchant_id))?;
+                }
+            }
+            (
+                input.category_id.clone(),
+                input.account_id.clone(),
+                input.currency_code.clone(),
+                input.merchant_id.clone(),
+                None,
+            )
+        };
     let native = amount::convert_to_native(conn, input.amount_cents, &currency_code)?;
     let to_account_id = if input.kind == TransactionKind::Transfer {
         input.to_account_id.clone()
@@ -194,7 +207,11 @@ pub fn validate_merchant_active(conn: &Connection, merchant_id: Option<&str>) ->
             .optional()?
             .is_some();
         if !active {
-            return Err(AppError::Invalid(format!("商户不存在或已删除: {id}")));
+            return Err(AppError::codedp(
+                "merchant.not-active",
+                format!("商户不存在或已删除: {id}"),
+                &[id],
+            ));
         }
     }
     Ok(())

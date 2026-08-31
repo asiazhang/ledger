@@ -3,6 +3,7 @@ import { computed, h, ref } from 'vue'
 import { NButton, NDataTable, NEmpty, NSpace, NSpin, useMessage, type DataTableColumns } from 'naive-ui'
 import AppModal from '@/components/AppModal.vue'
 import { formatAmount } from '@/types'
+import { t } from '@/i18n'
 import { errorMessage } from '@/utils/errors'
 import { occurrenceStatusLabel } from '@/utils/scheduled'
 import { api } from '@/api'
@@ -95,11 +96,11 @@ async function retry(occ: ScheduledTransactionOccurrence) {
   retryingId.value = occ.id
   try {
     await api.executeScheduledOccurrence({ occurrence_id: occ.id })
-    message.success('重试成功，交易已入账')
+    message.success(t('scheduled.detail.retrySuccess'))
     await load()
     emit('changed')
   } catch (e) {
-    message.error(`重试失败: ${errorMessage(e)}`)
+    message.error(t('scheduled.detail.retryFailed', { message: errorMessage(e) }))
   } finally {
     retryingId.value = null
   }
@@ -112,23 +113,27 @@ async function expand() {
   try {
     const ids = await api.expandScheduledOccurrences(d.core.id)
     await load()
-    message.success(ids.length > 0 ? `已生成 ${ids.length} 期` : '没有更多期次了')
+    message.success(
+      ids.length > 0
+        ? t('scheduled.detail.expandedCount', { n: ids.length })
+        : t('scheduled.detail.noMore'),
+    )
   } catch (e) {
-    message.error(`展开失败: ${errorMessage(e)}`)
+    message.error(t('scheduled.detail.expandFailed', { message: errorMessage(e) }))
   } finally {
     expanding.value = false
   }
 }
 
-const columns: DataTableColumns<ScheduledTransactionOccurrence> = [
+const columns = computed<DataTableColumns<ScheduledTransactionOccurrence>>(() => [
   {
-    title: '日期',
+    title: t('scheduled.column.date'),
     key: 'scheduled_date',
     render: (occ) =>
       h('span', { 'data-testid': `occ-date-${occ.id}` }, occ.scheduled_date),
   },
   {
-    title: '金额',
+    title: t('scheduled.column.amount'),
     key: 'amount',
     render: (occ) => {
       // 期次不带币种，用计划的币种（amount 列仅在 detail 渲染时出现）
@@ -137,7 +142,7 @@ const columns: DataTableColumns<ScheduledTransactionOccurrence> = [
     },
   },
   {
-    title: '状态',
+    title: t('scheduled.column.status'),
     key: 'status',
     render: (occ) =>
       h(
@@ -147,7 +152,7 @@ const columns: DataTableColumns<ScheduledTransactionOccurrence> = [
       ),
   },
   {
-    title: '操作',
+    title: t('scheduled.column.actions'),
     key: 'actions',
     // 重试按钮状态门控：仅 failed 期次渲染重试入口
     render: (occ) =>
@@ -162,11 +167,11 @@ const columns: DataTableColumns<ScheduledTransactionOccurrence> = [
               'data-testid': `occ-retry-${occ.id}`,
               onClick: () => retry(occ),
             },
-            () => '重试',
+            () => t('scheduled.detail.retry'),
           )
         : '—',
   },
-]
+])
 
 defineExpose({ open })
 </script>
@@ -174,19 +179,19 @@ defineExpose({ open })
 <template>
   <AppModal
     v-model:show="show"
-    title="期次详情"
+    :title="t('scheduled.detail.title')"
     preset="card"
     display-directive="if"
     style="width: 560px"
     :bordered="false"
   >
     <NSpin :show="loading">
-      <div v-if="loadFailed" data-testid="occ-load-failed">加载失败</div>
+      <div v-if="loadFailed" data-testid="occ-load-failed">{{ t('scheduled.detail.loadFailed') }}</div>
       <template v-else-if="detail">
         <NSpace vertical :size="8" class="plan-summary">
-          <span data-testid="occ-plan-note">{{ detail.core.note ?? '（无备注）' }}</span>
+          <span data-testid="occ-plan-note">{{ detail.core.note ?? t('scheduled.detail.noNote') }}</span>
           <span v-if="totalOccurrences !== null" class="plan-total">
-            共 {{ totalOccurrences }} 期
+            {{ t('scheduled.detail.totalOccurrences', { n: totalOccurrences }) }}
           </span>
         </NSpace>
         <NDataTable
@@ -199,7 +204,7 @@ defineExpose({ open })
         />
         <NEmpty
           v-if="occurrenceRows.length === 0"
-          description="暂无期次"
+          :description="t('scheduled.detail.empty')"
           data-testid="occ-empty"
         />
         <NSpace v-if="canExpand" justify="center" :size="8" style="margin-top: 12px">
@@ -209,7 +214,7 @@ defineExpose({ open })
             data-testid="occ-expand"
             @click="expand"
           >
-            展开更多期次
+            {{ t('scheduled.detail.expandMore') }}
           </NButton>
         </NSpace>
       </template>

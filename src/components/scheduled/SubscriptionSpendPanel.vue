@@ -7,6 +7,7 @@ import { BarElement, CategoryScale, Chart as ChartJS, LinearScale, Tooltip } fro
 import type { ChartOptions, TooltipItem } from 'chart.js'
 import { api } from '@/api'
 import { formatAmount } from '@/types'
+import { t } from '@/i18n'
 import { useReferenceStore } from '@/stores/reference'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 import type { SubscriptionSpendOverview, SubscriptionSpendRow } from '@/types'
@@ -31,7 +32,7 @@ async function reload() {
   } catch (e) {
     // 后端缺汇率等中文错误直接上抛展示，不静默混算（ADR-0023）
     loadFailed.value = true
-    message.error(`加载订阅花费失败: ${errorMessage(e)}`)
+    message.error(t('scheduled.spend.loadError', { message: errorMessage(e) }))
   } finally {
     loading.value = false
   }
@@ -48,7 +49,7 @@ const chartData = computed(() => ({
   labels: overview.value?.months.map((m) => m.month) ?? [],
   datasets: [
     {
-      label: '实际花费',
+      label: t('scheduled.spend.title'),
       data: overview.value?.months.map((m) => m.native_cents) ?? [],
       backgroundColor: 'rgba(32, 128, 240, 0.55)',
       borderRadius: 4,
@@ -83,56 +84,56 @@ ChartJS.register(BarElement, CategoryScale, LinearScale, Tooltip)
 /** 逐订阅行（含已取消/暂停计划，历史花费如实保留） */
 const rows = computed(() => overview.value?.rows ?? [])
 
-const rowColumns: DataTableColumns<SubscriptionSpendRow> = [
+const rowColumns = computed<DataTableColumns<SubscriptionSpendRow>>(() => [
   {
-    title: '订阅',
+    title: t('scheduled.column.subscription'),
     key: 'note',
     // 商户名为后端左联 merchants 现名（改名即时生效，软删后历史计划照常显示）
     render: (row) => row.note ?? row.merchant_name ?? '—',
   },
   {
-    title: '状态',
+    title: t('scheduled.column.status'),
     key: 'status',
     render: (row) => scheduledStatusLabel(row.status),
   },
   {
-    title: '本月实际花费',
+    title: t('scheduled.spend.thisMonth'),
     key: 'this_month',
     align: 'right',
     render: (row) => formatAmount(row.this_month_native_cents, currency.value),
   },
   {
-    title: '本年实际花费',
+    title: t('scheduled.spend.thisYear'),
     key: 'this_year',
     align: 'right',
     render: (row) => formatAmount(row.this_year_native_cents, currency.value),
   },
-]
+])
 </script>
 
 <template>
-  <NCard title="实际花费" size="small">
+  <NCard :title="t('scheduled.spend.title')" size="small">
     <template #header-extra>
       <span class="spend-caption">
-        {{ overview ? `单位：${overview.native_currency}（本位币）· 不摊销` : '' }}
+        {{ overview ? t('scheduled.spend.unitCaption', { currency: overview.native_currency }) : '' }}
       </span>
     </template>
     <NSpin :show="loading">
       <NEmpty
         v-if="loadFailed"
-        description="加载失败，请重试"
+        :description="t('scheduled.spend.loadFailed')"
         data-testid="spend-failed"
       />
       <NSpace v-else-if="overview" vertical :size="12">
         <NSpace :size="48" align="center">
           <div class="spend-stat">
-            <div class="spend-stat-label">本月实际花费</div>
+            <div class="spend-stat-label">{{ t('scheduled.spend.thisMonth') }}</div>
             <div class="spend-stat-value" data-testid="spend-this-month">
               {{ formatAmount(overview.this_month_native_cents, currency) }}
             </div>
           </div>
           <div class="spend-stat">
-            <div class="spend-stat-label">本年实际花费</div>
+            <div class="spend-stat-label">{{ t('scheduled.spend.thisYear') }}</div>
             <div class="spend-stat-value" data-testid="spend-this-year">
               {{ formatAmount(overview.this_year_native_cents, currency) }}
             </div>
@@ -140,18 +141,18 @@ const rowColumns: DataTableColumns<SubscriptionSpendRow> = [
         </NSpace>
         <NSpace :size="48" align="center">
           <div class="spend-stat">
-            <div class="spend-stat-label">折算月成本（推算）</div>
+            <div class="spend-stat-label">{{ t('scheduled.spend.projectedMonth') }}</div>
             <div class="spend-stat-value" data-testid="spend-projected-month">
               {{ formatAmount(overview.projected_month_native_cents, currency) }}
             </div>
           </div>
           <div class="spend-stat">
-            <div class="spend-stat-label">折算年成本（推算）</div>
+            <div class="spend-stat-label">{{ t('scheduled.spend.projectedYear') }}</div>
             <div class="spend-stat-value" data-testid="spend-projected-year">
               {{ formatAmount(overview.projected_year_native_cents, currency) }}
             </div>
           </div>
-          <span class="spend-caption">推算：只计进行中的计划</span>
+          <span class="spend-caption">{{ t('scheduled.spend.projectedNote') }}</span>
         </NSpace>
         <!-- 测试锚点：趋势图数据经桩组件序列化断言（jsdom 无 canvas），桩根节点 data-testid="bar-chart" -->
         <div class="spend-chart-box">

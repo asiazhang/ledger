@@ -1,0 +1,50 @@
+{
+  "create": {
+    "title": "Add Budget",
+    "category": "Category",
+    "amount": "Amount",
+    "categoryPlaceholder": "Expense category",
+    "add": "Add"
+  },
+  "list": {
+    "title": "Budgets",
+    "colCategory": "Category",
+    "colPeriod": "Period",
+    "colAmount": "Budget",
+    "colSpent": "Spent",
+    "colProgress": "Progress",
+    "colStatus": "Status",
+    "colActions": "Actions"
+  },
+  "status": {
+    "over": "Over Budget",
+    "normal": "On Track"
+  },
+  "actions": {
+    "edit": "Edit",
+    "confirmDelete": "Confirm deletion?",
+    "delete": "Delete"
+  },
+  "edit": {
+    "title": "Edit Budget",
+    "category": "Category",
+    "period": "Period",
+    "amount": "Amount",
+    "cancel": "Cancel",
+    "save": "Save"
+  },
+  "message": {
+    "required": "Please select a category and enter an amount",
+    "positive": "Budget amount must be positive",
+    "created": "Budget created",
+    "createFailed": "Failed to create: {message}",
+    "updated": "Budget updated",
+    "updateFailed": "Failed to update: {message}",
+    "deleted": "Deleted",
+    "deleteFailed": "Failed to delete: {message}"
+  },
+  "period": {
+    "monthly": "Monthly",
+    "yearly": "Yearly"
+  }
+}

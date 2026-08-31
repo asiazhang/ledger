@@ -1,0 +1,50 @@
+{
+  "create": {
+    "title": "新增预算",
+    "category": "分类",
+    "amount": "金额",
+    "categoryPlaceholder": "支出分类",
+    "add": "添加"
+  },
+  "list": {
+    "title": "预算执行",
+    "colCategory": "分类",
+    "colPeriod": "周期",
+    "colAmount": "预算",
+    "colSpent": "已支出",
+    "colProgress": "进度",
+    "colStatus": "状态",
+    "colActions": "操作"
+  },
+  "status": {
+    "over": "超支",
+    "normal": "正常"
+  },
+  "actions": {
+    "edit": "编辑",
+    "confirmDelete": "确认删除？",
+    "delete": "删除"
+  },
+  "edit": {
+    "title": "编辑预算",
+    "category": "分类",
+    "period": "周期",
+    "amount": "金额",
+    "cancel": "取消",
+    "save": "保存"
+  },
+  "message": {
+    "required": "请填写分类和金额",
+    "positive": "预算金额必须为正数",
+    "created": "已创建预算",
+    "createFailed": "创建失败: {message}",
+    "updated": "已更新预算",
+    "updateFailed": "更新失败: {message}",
+    "deleted": "已删除",
+    "deleteFailed": "删除失败: {message}"
+  },
+  "period": {
+    "monthly": "按月",
+    "yearly": "按年"
+  }
+}

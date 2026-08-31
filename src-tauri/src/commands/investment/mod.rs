@@ -201,18 +201,23 @@ pub fn create_instrument_manual_internal(
     match input.kind {
         InstrumentType::Bond | InstrumentType::Etf | InstrumentType::Other => {}
         InstrumentType::Stock => {
-            return Err(AppError::Invalid(
-                "股票类标的不支持手动创建：股票字典由「全量同步」从东方财富维护".into(),
+            return Err(AppError::coded(
+                "instrument.stock-manual-forbidden",
+                "股票类标的不支持手动创建：股票字典由「全量同步」从东方财富维护",
             ));
         }
         InstrumentType::Fund => {
-            return Err(AppError::Invalid(
-                "基金类标的不支持手动创建：请用「添加基金」输入 6 位代码自动回填".into(),
+            return Err(AppError::coded(
+                "instrument.fund-manual-forbidden",
+                "基金类标的不支持手动创建：请用「添加基金」输入 6 位代码自动回填",
             ));
         }
     }
     if input.name.as_deref().is_none_or(|n| n.trim().is_empty()) {
-        return Err(AppError::Invalid("标的名称不能为空".into()));
+        return Err(AppError::coded(
+            "instrument.name-required",
+            "标的名称不能为空",
+        ));
     }
     create_instrument_internal(conn, input)
 }

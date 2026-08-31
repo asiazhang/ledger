@@ -14,6 +14,7 @@ import {
 import type { DataTableColumn } from 'naive-ui'
 import { h } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
+import { t } from '@/i18n'
 import { formatAmount, formatPrice, formatQuantity } from '@/types'
 import { useHoldingPriceSync } from '@/composables/useHoldingPriceSync'
 import { usePricesChanged } from '@/composables/usePricesChanged'
@@ -42,18 +43,18 @@ function pnlColor(cents: number): string {
 }
 
 const overviewColumns: DataTableColumn<PortfolioRow>[] = [
-  { title: '标的', key: 'symbol', width: 100, render: (r) => r.symbol ?? '-' },
-  { title: '名称', key: 'instrumentName', width: 160, render: (r) => r.instrumentName ?? '-' },
-  { title: '账户', key: 'accountName', width: 120, render: (r) => r.accountName ?? '-' },
-  { title: '数量', key: 'quantity', width: 80, render: (r) => formatQuantity(r.quantity) },
+  { title: t('investments.holdings.columns.symbol'), key: 'symbol', width: 100, render: (r) => r.symbol ?? '-' },
+  { title: t('investments.holdings.columns.name'), key: 'instrumentName', width: 160, render: (r) => r.instrumentName ?? '-' },
+  { title: t('investments.holdings.columns.account'), key: 'accountName', width: 120, render: (r) => r.accountName ?? '-' },
+  { title: t('investments.holdings.columns.quantity'), key: 'quantity', width: 80, render: (r) => formatQuantity(r.quantity) },
   {
-    title: '成本',
+    title: t('investments.holdings.columns.cost'),
     key: 'cost_basis',
     width: 110,
     render: (r) => formatAmount(r.costBasisCents, reference.currencyMap.get(r.costCurrencyCode)),
   },
   {
-    title: '现价',
+    title: t('investments.holdings.columns.price'),
     key: 'latest_price',
     width: 130,
     // 现价为价格列（万分之一元刻度，ADR-0038），用 formatPrice 展示；
@@ -71,13 +72,13 @@ const overviewColumns: DataTableColumn<PortfolioRow>[] = [
         h(
           'div',
           { style: 'font-size:12px;opacity:.65;line-height:1.4' },
-          `净值 ${r.latestNavDate}`,
+          t('investments.holdings.navDate', { date: r.latestNavDate }),
         ),
       ])
     },
   },
   {
-    title: '市值',
+    title: t('investments.holdings.columns.marketValue'),
     key: 'market_value',
     width: 110,
     render: (r) =>
@@ -86,7 +87,7 @@ const overviewColumns: DataTableColumn<PortfolioRow>[] = [
         : formatAmount(r.marketValueCents, reference.currencyMap.get(r.valueCurrencyCode)),
   },
   {
-    title: '未实现盈亏',
+    title: t('investments.holdings.columns.unrealizedPnl'),
     key: 'unrealized_pnl',
     width: 130,
     render: (r) => {
@@ -102,7 +103,7 @@ const overviewColumns: DataTableColumn<PortfolioRow>[] = [
 </script>
 
 <template>
-  <NCard title="当前持仓" size="small">
+  <NCard :title="t('investments.holdings.title')" size="small">
     <template #header-extra>
       <NButton
         type="primary"
@@ -111,7 +112,7 @@ const overviewColumns: DataTableColumn<PortfolioRow>[] = [
         data-testid="sync-holding-prices"
         @click="sync"
       >
-        同步持仓价格
+        {{ t('investments.holdings.sync') }}
       </NButton>
     </template>
 
@@ -122,16 +123,16 @@ const overviewColumns: DataTableColumn<PortfolioRow>[] = [
           {{ resultMessage }}
         </NText>
 
-        <NEmpty v-if="rows.length === 0 && !loading" description="暂无持仓" />
+        <NEmpty v-if="rows.length === 0 && !loading" :description="t('investments.holdings.empty')" />
         <template v-else-if="rows.length > 0">
           <NGrid :x-gap="16" cols="1 s:2">
             <NGi>
-              <NStatistic label="总市值" data-testid="total-market-value">
+              <NStatistic :label="t('investments.holdings.totalMarketValue')" data-testid="total-market-value">
                 {{ formatCurrencyGroups(totalMarketValueGroups, reference.currencyMap) }}
               </NStatistic>
             </NGi>
             <NGi>
-              <NStatistic label="未实现盈亏合计" data-testid="total-unrealized-pnl">
+              <NStatistic :label="t('investments.holdings.totalUnrealizedPnl')" data-testid="total-unrealized-pnl">
                 {{ formatCurrencyGroups(totalUnrealizedPnlGroups, reference.currencyMap) }}
               </NStatistic>
             </NGi>

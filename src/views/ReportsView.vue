@@ -15,6 +15,7 @@ import {
 } from 'chart.js'
 import type { ChartOptions, TooltipItem } from 'chart.js'
 import { api } from '@/api'
+import { t } from '@/i18n'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount } from '@/types'
 import type { CategoryShare, MerchantShare, MonthlySummary, YearRange } from '@/types'
@@ -73,10 +74,12 @@ watch(year, refresh)
 
 const barChartData = computed(() => ({
   labels: monthly.value.map((m) => m.month),
+  // dataset 顺序固定：0=收入、1=支出、2=退款；tooltip 回调按 datasetIndex 取值，
+  // 不依赖 label 字符串（label 已随界面语言迁移，不能再当判断依据）。
   datasets: [
-    { label: '收入', data: monthly.value.map((m) => m.income_cents), backgroundColor: '#18a058' },
-    { label: '支出', data: monthly.value.map((m) => m.expense_cents), backgroundColor: '#d03050' },
-    { label: '退款', data: monthly.value.map((m) => m.refund_cents), backgroundColor: '#2080f0' },
+    { label: t('reports.monthly.income'), data: monthly.value.map((m) => m.income_cents), backgroundColor: '#18a058' },
+    { label: t('reports.monthly.expense'), data: monthly.value.map((m) => m.expense_cents), backgroundColor: '#d03050' },
+    { label: t('reports.monthly.refund'), data: monthly.value.map((m) => m.refund_cents), backgroundColor: '#2080f0' },
   ],
 }))
 
@@ -94,12 +97,12 @@ const barChartOptions: ChartOptions<'bar'> = {
           let expense = 0
           let refund = 0
           for (const item of items) {
-            if (item.dataset.label === '收入') income = item.raw as number
-            if (item.dataset.label === '支出') expense = item.raw as number
-            if (item.dataset.label === '退款') refund = item.raw as number
+            if (item.datasetIndex === 0) income = item.raw as number
+            if (item.datasetIndex === 1) expense = item.raw as number
+            if (item.datasetIndex === 2) refund = item.raw as number
           }
           const net = income - expense + refund
-          return `净额: ${formatAmount(net)}`
+          return t('reports.monthly.net', { amount: formatAmount(net) })
         },
       },
     },
@@ -184,21 +187,21 @@ onMounted(() => {
         @update:value="(v: number) => (year = v)"
         style="width: 140px"
       />
-      <NCard title="月度收支" size="small">
-        <NEmpty v-if="monthly.length === 0" description="本年暂无数据" />
+      <NCard :title="t('reports.monthly.title')" size="small">
+        <NEmpty v-if="monthly.length === 0" :description="t('reports.monthly.empty')" />
         <div v-else style="height: 320px">
           <Bar :data="barChartData" :options="barChartOptions" />
         </div>
       </NCard>
-      <NCard title="支出分类占比" size="small">
+      <NCard :title="t('reports.category.title')" size="small">
         <NSpace v-if="shares.length > 0" align="center" :size="12" style="margin-bottom: 8px">
-          <NText depth="3" style="font-size: 12px">汇总层级</NText>
+          <NText depth="3" style="font-size: 12px">{{ t('reports.category.groupLevel') }}</NText>
           <NRadioGroup v-model:value="groupLevel" size="small">
-            <NRadio value="level2">二级</NRadio>
-            <NRadio value="level1">一级</NRadio>
+            <NRadio value="level2">{{ t('reports.category.level2') }}</NRadio>
+            <NRadio value="level1">{{ t('reports.category.level1') }}</NRadio>
           </NRadioGroup>
         </NSpace>
-        <NEmpty v-if="shares.length === 0" description="暂无支出数据" />
+        <NEmpty v-if="shares.length === 0" :description="t('reports.category.empty')" />
         <div v-else style="height: 320px">
           <Doughnut :data="doughnutChartData" :options="doughnutChartOptions" />
         </div>

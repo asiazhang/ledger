@@ -124,7 +124,7 @@ fn try_transfer_without_target(
     };
     let result = create_transaction_internal(&world_conn!(world), input);
     world.last_error = match result {
-        Err(AppError::Invalid(msg)) => Some(msg),
+        Err(AppError::Coded { message, .. }) => Some(message),
         _ => Some("预期失败但成功了".into()),
     };
 }
@@ -159,7 +159,7 @@ fn try_create_txn(
     };
     let result = create_transaction_internal(&world_conn!(world), input);
     world.last_error = match result {
-        Err(AppError::Invalid(msg)) => Some(msg),
+        Err(AppError::Coded { message, .. }) => Some(message),
         _ => Some("预期失败但成功了".into()),
     };
 }

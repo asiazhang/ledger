@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { NCard, NEmpty } from 'naive-ui'
+import { t } from '@/i18n'
 import { formatAmount } from '@/types'
 import type { MerchantShare } from '@/types'
 
@@ -10,10 +11,10 @@ defineProps<{ shares: MerchantShare[] }>()
 </script>
 
 <template>
-  <NCard title="商户消费排行" size="small">
+  <NCard :title="t('reports.merchant.title')" size="small">
     <NEmpty
       v-if="shares.length === 0"
-      description="本期暂无商户消费"
+      :description="t('reports.merchant.empty')"
       data-testid="merchant-empty"
     />
     <div v-else class="rank-list">

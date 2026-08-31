@@ -4,7 +4,7 @@ use crate::commands::merchants::{
     create_merchant_by_name, create_merchant_internal, delete_merchant_internal,
     find_merchant_by_name, list_merchants_internal, update_merchant_internal,
 };
-use crate::error::AppError;
+use crate::error::{AppError, ErrClass};
 use crate::models::{Merchant, MerchantInput, MerchantUpdateInput};
 
 fn setup() -> rusqlite::Connection {
@@ -69,7 +69,7 @@ fn create_merchant_duplicate_name_rejected() {
         },
     )
     .unwrap_err();
-    assert_eq!(err.to_string(), "参数错误: 商户已存在: 京东");
+    assert_eq!(err.to_string(), "商户已存在: 京东");
 }
 
 #[test]
@@ -122,7 +122,7 @@ fn update_merchant_rename_to_taken_name_rejected() {
         },
     )
     .unwrap_err();
-    assert_eq!(err.to_string(), "参数错误: 商户已存在: 京东");
+    assert_eq!(err.to_string(), "商户已存在: 京东");
 }
 
 #[test]
@@ -136,7 +136,13 @@ fn update_merchant_missing_is_not_found() {
         },
     )
     .unwrap_err();
-    assert!(matches!(err, AppError::NotFound(_)));
+    assert!(matches!(
+        err,
+        AppError::Coded {
+            class: ErrClass::NotFound,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -169,7 +175,13 @@ fn delete_merchant_soft_deletes_and_hides_from_list() {
 fn delete_merchant_missing_is_not_found() {
     let conn = setup();
     let err = delete_merchant_internal(&conn, "no-such-id").unwrap_err();
-    assert!(matches!(err, AppError::NotFound(_)));
+    assert!(matches!(
+        err,
+        AppError::Coded {
+            class: ErrClass::NotFound,
+            ..
+        }
+    ));
 }
 
 /// 软删后同名可重建：在用行唯一（partial unique index），软删行不占名字
@@ -243,7 +255,9 @@ fn create_merchant_by_name_reuses_exact_match() {
 fn create_merchant_by_name_blank_is_invalid() {
     let conn = setup();
     let err = create_merchant_by_name(&conn, "   ").unwrap_err();
-    assert!(matches!(err, AppError::Invalid(ref msg) if msg.contains("商户名不能为空")));
+    assert!(
+        matches!(err, AppError::Coded { ref message, .. } if message.contains("商户名不能为空"))
+    );
     assert!(list_merchants(&conn).is_empty());
 }
 

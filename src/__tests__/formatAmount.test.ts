@@ -114,3 +114,37 @@ describe('formatAmount', () => {
     expect(formatAmount(1000000, cny)).toBe('¥1,0000')
   })
 })
+
+describe('formatAmount 数字分组随界面语言（#346，词汇表「数字分组」）', () => {
+  it('英文界面整数部分每 3 位一组', () => {
+    expect(formatAmount(123456789, cny, 'en-US')).toBe('¥1,234,567.89')
+    expect(formatAmount(100000000, cny, 'en-US')).toBe('¥1,000,000')
+  })
+
+  it('中文界面每 4 位一组（与既有现状逐字符一致）', () => {
+    expect(formatAmount(123456789, cny, 'zh-CN')).toBe('¥123,4567.89')
+    expect(formatAmount(100000000, cny, 'zh-CN')).toBe('¥100,0000')
+  })
+
+  it('小数尾零去除、负号位置两种语言一致（仅分组不同）', () => {
+    expect(formatAmount(-500000, cny, 'en-US')).toBe('-¥5,000')
+    expect(formatAmount(-500000, cny, 'zh-CN')).toBe('-¥5000')
+    expect(formatAmount(985000, usd, 'en-US')).toBe('$9,850')
+    expect(formatAmount(985000, usd, 'zh-CN')).toBe('$9850')
+  })
+
+  it('零小数位币种（JPY）同样仅整数分组随语言', () => {
+    expect(formatAmount(123456789, jpy, 'en-US')).toBe('¥123,456,789')
+    expect(formatAmount(123456789, jpy, 'zh-CN')).toBe('¥1,2345,6789')
+  })
+
+  it('小数位数多于分组位数的币种（KWD）：仅整数部分分组、小数连续', () => {
+    expect(formatAmount(123456789, kwd, 'en-US')).toBe('KD123,456.789')
+    expect(formatAmount(123456789, kwd, 'zh-CN')).toBe('KD12,3456.789')
+  })
+
+  it('≤分组位数的整数不受语言影响', () => {
+    expect(formatAmount(1234, cny, 'en-US')).toBe('¥12.34')
+    expect(formatAmount(1234, cny, 'zh-CN')).toBe('¥12.34')
+  })
+})

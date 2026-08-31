@@ -12,11 +12,11 @@ import type {
 /** 走势预设区间：1 月 / 3 月 / 1 年 / 全部（ADR-0019） */
 export type TrendRangePreset = '1m' | '3m' | '1y' | 'all'
 
-export const TREND_RANGE_PRESETS: { value: TrendRangePreset; label: string }[] = [
-  { value: '1m', label: '1 月' },
-  { value: '3m', label: '3 月' },
-  { value: '1y', label: '1 年' },
-  { value: 'all', label: '全部' },
+export const TREND_RANGE_PRESETS: { value: TrendRangePreset; labelKey: string }[] = [
+  { value: '1m', labelKey: 'investments.trend.range1m' },
+  { value: '3m', labelKey: 'investments.trend.range3m' },
+  { value: '1y', labelKey: 'investments.trend.range1y' },
+  { value: 'all', labelKey: 'investments.trend.rangeAll' },
 ]
 
 /** 走势视图模式：组合市值曲线 ↔ 单标的曲线同视图切换 */

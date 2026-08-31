@@ -3,6 +3,7 @@ import type { Ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { api } from '@/api'
 import { errorMessage } from '@/utils/errors'
+import { t } from '@/i18n'
 import type { CreateTransactionKind, Transaction, TransactionTrade } from '@/types'
 
 /**
@@ -106,7 +107,7 @@ export function useTransactionModalState(): UseTransactionModalStateReturn {
       settle(gen, { type: 'edit', row, trade })
     } catch (e) {
       if (gen !== generation) return // 迟到的失败整体丢弃
-      message.error(`无法编辑: ${errorMessage(e)}`)
+      message.error(t('transactions.modal.editFailed', { msg: errorMessage(e) }))
     }
   }
 

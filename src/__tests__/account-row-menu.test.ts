@@ -3,6 +3,7 @@ import { NIcon } from 'naive-ui'
 import type { DropdownOption } from 'naive-ui'
 import type { VNode } from 'vue'
 import { CreateOutline, SwapHorizontalOutline, TrashOutline } from '@vicons/ionicons5'
+import { applyLocale } from '@/i18n'
 import { buildAccountRowMenuOptions } from '@/components/account-row-menu'
 import { renderRowMenuIcon } from '@/components/transaction-row-menu'
 
@@ -60,6 +61,20 @@ describe('buildAccountRowMenuOptions（账户行菜单选项）', () => {
     const options = buildAccountRowMenuOptions()
     const del = options.find((o) => 'key' in o && o.key === 'delete')!
     expect(del.props).toBeUndefined()
+  })
+
+  it('en-US 下菜单标签渲染英文文案，切回 zh-CN 恢复中文（issue #351）', async () => {
+    try {
+      await applyLocale('en-US')
+      const options = buildAccountRowMenuOptions()
+      const byKey = (key: string) => options.find((o) => 'key' in o && o.key === key)!
+      expect(byKey('edit').label).toBe('Edit')
+      expect(byKey('adjust-balance').label).toBe('Adjust Balance')
+      expect(byKey('delete').label).toBe('Delete')
+    } finally {
+      // 还原默认语言，避免污染同文件后续用例（模块级单例状态）
+      await applyLocale('zh-CN')
+    }
   })
 
   it('图标渲染工厂与交易行菜单共用同一公共件（renderRowMenuIcon 来自 row-menu-common）', () => {

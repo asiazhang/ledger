@@ -4,6 +4,7 @@ import { NButton, NForm, NFormItem, NInput, NSpace, NText } from 'naive-ui'
 import AppModal from '@/components/AppModal.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import { api } from '@/api'
+import { t } from '@/i18n'
 import { useReferenceStore } from '@/stores/reference'
 import { errorMessage as extractErrorMessage } from '@/utils/errors'
 import type { InstrumentInput, InstrumentType } from '@/types'
@@ -22,11 +23,11 @@ const reference = useReferenceStore()
 
 // 类型三选（白名单在 UI 侧再收一道；后端 IPC 命令入口层同款守卫兜底）。
 // 故意不选股票（同步管）与基金（按代码即拉管），与后端白名单同源。
-const TYPE_OPTIONS: { label: string; value: InstrumentType }[] = [
-  { label: '债券', value: 'bond' },
-  { label: 'ETF', value: 'etf' },
-  { label: '其他', value: 'other' },
-]
+const TYPE_OPTIONS = computed(() => [
+  { label: t('investments.create.typeBond'), value: 'bond' as InstrumentType },
+  { label: t('investments.create.typeEtf'), value: 'etf' as InstrumentType },
+  { label: t('investments.create.typeOther'), value: 'other' as InstrumentType },
+])
 
 const form = ref({
   kind: null as InstrumentType | null,
@@ -82,7 +83,7 @@ async function submit() {
     }
     const symbol = input.symbol
     await api.createInstrument(input)
-    emit('created', `已创建标的：${input.name}（${symbol}）`)
+    emit('created', t('investments.create.success', { name: input.name, symbol }))
     close()
   } catch (e) {
     error.value = extractErrorMessage(e)
@@ -96,46 +97,45 @@ async function submit() {
   <AppModal
     :show="show"
     preset="card"
-    title="新建标的"
+    :title="t('investments.create.title')"
     style="width: 440px"
     :bordered="false"
     @update:show="(v: boolean) => emit('update:show', v)"
   >
     <NSpace vertical :size="12">
       <NText depth="3">
-        手动创建无行情来源的标的（如投顾组合、虚拟股），将标记为「手动」来源、市场为未知。
-        股票由「全量同步」维护，基金请用「添加基金」按代码即拉。
+        {{ t('investments.create.intro') }}
       </NText>
       <NForm label-placement="left" :show-feedback="false" size="small">
-        <NFormItem label="类型" required>
+        <NFormItem :label="t('investments.create.typeLabel')" required>
           <AppSelect
             v-model:value="form.kind"
             :options="TYPE_OPTIONS"
-            placeholder="请选择类型"
+            :placeholder="t('investments.create.typePlaceholder')"
             data-testid="create-instrument-type"
             style="width: 100%"
           />
         </NFormItem>
-        <NFormItem label="代码" required>
+        <NFormItem :label="t('investments.create.symbolLabel')" required>
           <NInput
             v-model:value="form.symbol"
-            placeholder="自由填写（平台代码或自编代码）"
+            :placeholder="t('investments.create.symbolPlaceholder')"
             :maxlength="32"
             :disabled="submitting"
             data-testid="create-instrument-symbol"
           />
         </NFormItem>
-        <NFormItem label="名称" required>
+        <NFormItem :label="t('investments.create.nameLabel')" required>
           <NInput
             v-model:value="form.name"
-            placeholder="必填，如：稳稳地幸福"
+            :placeholder="t('investments.create.namePlaceholder')"
             :maxlength="64"
             :disabled="submitting"
             data-testid="create-instrument-name"
             @keyup.enter="submit"
           />
         </NFormItem>
-        <NFormItem label="币种">
+        <NFormItem :label="t('investments.create.currencyLabel')">
           <AppSelect
             v-model:value="form.currencyCode"
             :options="currencyOptions"
@@ -150,7 +150,7 @@ async function submit() {
       </NText>
       <NSpace justify="end" :size="12">
         <NButton data-testid="cancel-create-instrument" :disabled="submitting" @click="close">
-          取消
+          {{ t('investments.create.cancel') }}
         </NButton>
         <NButton
           type="primary"
@@ -159,7 +159,7 @@ async function submit() {
           :disabled="!canSubmit"
           @click="submit"
         >
-          创建
+          {{ t('investments.create.submit') }}
         </NButton>
       </NSpace>
     </NSpace>

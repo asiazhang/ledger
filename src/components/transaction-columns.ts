@@ -4,9 +4,10 @@
 
 import { h, type VNode } from 'vue'
 import { NTag, type DataTableColumn } from 'naive-ui'
-import { formatAmount, TRANSACTION_KIND_LABELS } from '@/types'
+import { formatAmount } from '@/types'
 import type { Transaction, TransactionKind } from '@/types'
 import type { useReferenceStore } from '@/stores/reference'
+import { t } from '@/i18n'
 import AccountLink from '@/components/AccountLink.vue'
 import MerchantLink from '@/components/MerchantLink.vue'
 
@@ -40,6 +41,8 @@ export function sumFixedColumnWidths(columns: DataTableColumn<Transaction>[]): n
 }
 
 /** 交易基础列：日期/类型/分类/账户/备注/金额（搜索结果与交易列表共用，只读）。
+ * 列名经 t() 取当前语言：使用方以 computed 构造列数组（TransactionsView/SearchView），
+ * 语言切换时重建列，表头即时更新。
  *
  * 列宽约定（Naive UI DataTable，headless Chrome 实测验证）：
  * - `ellipsis` 令 table-layout 强制为 fixed；fixed 布局下**未指定 `width` 的列均分剩余空间**，
@@ -56,23 +59,23 @@ export function sumFixedColumnWidths(columns: DataTableColumn<Transaction>[]): n
  * - 宽度按实际内容估算：日期 105 / 类型 65 / 分类 150（最长路径 ≈149px）/ 商户 120 / 账户 180（转账行需容纳「转出 → 转入」两个账户名 + 箭头，长名由链接自身省略号兜底）/ 金额 125。 */
 export function buildTransactionColumns(reference: ReferenceStore): DataTableColumn<Transaction>[] {
   return [
-    { title: '日期', key: 'date', width: 105 },
+    { title: t('transactions.columns.date'), key: 'date', width: 105 },
     {
-      title: '类型',
+      title: t('transactions.columns.kind'),
       key: 'kind',
       width: 65,
       render: (row) =>
-        h(NTag, { type: KIND_TAG_TYPE[row.kind] }, () => TRANSACTION_KIND_LABELS[row.kind]),
+        h(NTag, { type: KIND_TAG_TYPE[row.kind] }, () => t(`transactions.kind.${row.kind}`)),
     },
     {
-      title: '分类',
+      title: t('transactions.columns.category'),
       key: 'category_id',
       width: 150,
       ellipsis: { tooltip: true },
       render: (row) => (row.category_id ? reference.categoryPath(row.category_id) || '-' : '-'),
     },
     {
-      title: '商户',
+      title: t('transactions.columns.merchant'),
       key: 'merchant_id',
       width: 120,
       ellipsis: { tooltip: true },
@@ -81,20 +84,20 @@ export function buildTransactionColumns(reference: ReferenceStore): DataTableCol
         row.merchant_id ? h(MerchantLink, { merchantId: row.merchant_id }) : '-',
     },
     {
-      title: '账户',
+      title: t('transactions.columns.account'),
       key: 'account_id',
       width: 180,
       render: (row) => renderAccountCell(row),
     },
     {
-      title: '备注',
+      title: t('transactions.columns.note'),
       key: 'note',
       // 弹性列：不设 width，由 fixed 布局均分剩余空间（超长时省略号 + 悬停显示全文）
       ellipsis: { tooltip: true },
       render: (row) => row.note ?? '-',
     },
     {
-      title: '金额',
+      title: t('transactions.columns.amount'),
       key: 'amount_native_cents',
       width: 125,
       render: (row) =>

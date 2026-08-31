@@ -1,0 +1,35 @@
+{
+  "language": {
+    "label": "Language",
+    "followSystem": "Follow System",
+    "zh": "中文",
+    "en": "English"
+  },
+  "nav": {
+    "dashboard": "Overview",
+    "transactions": "Transactions",
+    "search": "Search",
+    "accounts": "Accounts",
+    "reports": "Reports",
+    "investments": "Investments",
+    "items": "Items",
+    "scheduled": "Scheduled",
+    "budget": "Budget",
+    "ai": "AI",
+    "settings": "Settings"
+  },
+  "sidebarSort": {
+    "up": "Move Up",
+    "down": "Move Down",
+    "top": "Move to Top",
+    "bottom": "Move to Bottom",
+    "reset": "Reset Default Order"
+  },
+  "link": {
+    "viewMerchant": "View transactions with this merchant",
+    "viewAccount": "View transactions with this account"
+  },
+  "window": {
+    "title": "Ledger"
+  }
+}

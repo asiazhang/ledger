@@ -8,6 +8,7 @@ import { listen } from '@tauri-apps/api/event'
 
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
+import { applyLocale } from '@/i18n'
 import SettingsView from '@/views/SettingsView.vue'
 import CategoryManager from '@/components/CategoryManager.vue'
 import type { Currency } from '@/types'
@@ -103,6 +104,29 @@ describe('SettingsView.vue（issue #157：Tab 分域重构 6 → 4）', () => {
     expect(labels).toEqual(['通用', '分类', '商户', '数据', '定时', '关于'])
   })
 
+  it('英文界面：Tab 页签以英文渲染，切回中文后恢复（issue #352）', async () => {
+    await applyLocale('en-US')
+    let enLabels: string[] = []
+    try {
+      const wrapper = mount(SettingsView)
+      enLabels = wrapper.findAll('.n-tabs-tab').map((tab) => tab.text())
+    } finally {
+      await applyLocale('zh-CN')
+      await nextTick()
+    }
+    expect(enLabels).toEqual(['General', 'Categories', 'Merchants', 'Data', 'Scheduled', 'About'])
+    // 切回中文后新挂载的组件恢复中文页签
+    const wrapper = mount(SettingsView)
+    expect(wrapper.findAll('.n-tabs-tab').map((tab) => tab.text())).toEqual([
+      '通用',
+      '分类',
+      '商户',
+      '数据',
+      '定时',
+      '关于',
+    ])
+  })
+
   it('旧 Tab（备份与恢复 / 外观 / 存储位置）全部消失', () => {
     // 「分类」「币种」不再列入：ADR-0034 后「分类」是现役 Tab 名（原「分类与币种」更名），
     // 币种只读展示已移除，不再有独立币种 Tab。
@@ -129,6 +153,13 @@ describe('SettingsView.vue（issue #157：Tab 分域重构 6 → 4）', () => {
     const wrapper = mount(SettingsView)
     await wrapper.find('.n-switch').trigger('click')
     expect(store.theme).toBe('light')
+  })
+
+  it('「通用」页含界面语言选择器，默认「跟随系统」（issue #342 / ADR-0049）', () => {
+    const wrapper = mount(SettingsView)
+    const html = wrapper.html()
+    expect(html).toContain('界面语言')
+    expect(html).toContain('跟随系统')
   })
 
   it('「分类」含分类管理器，不再展示支持币种表格（ADR-0034）', async () => {

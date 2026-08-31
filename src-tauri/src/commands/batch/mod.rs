@@ -34,7 +34,7 @@ use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 
 use crate::commands::transactions::create_transaction_internal;
-use crate::error::{AppError, Result};
+use crate::error::{AppError, ErrClass, Result};
 use crate::models::{CreateTransactionResult, TransactionInput};
 use crate::signals::WriteEvidence;
 
@@ -57,7 +57,8 @@ impl TransactionBatch {
     /// 批量写入一笔或多笔交易（事务 / 去重 / 汇总日志 / 索引消费）。
     ///
     /// 去重身份判定（T1/issue #62 的 `dedup_identity`，幂等键优先 / 内容哈希兜底）只在
-    /// `dedup=true` 时生效，`dedup=false` 直接落库；单条校验失败（`AppError::Invalid`）
+    /// `dedup=true` 时生效，`dedup=false` 直接落库；单条校验失败（Invalid 类：既有
+    /// `AppError::Invalid` 与码化 `AppError::Coded`（class=Invalid））
     /// 返回 `success:false`+`error` 且不影响同批其他交易，提交失败则整批回滚并在回滚路径
     /// 打批次汇总日志。置脏与写时到期检查不在本函数：调用方经写入口（[`crate::db::write`]）
     /// 调用时在提交点单点承接，回滚不置脏同由写入口保证（issue #245）。
@@ -130,6 +131,21 @@ impl TransactionBatch {
                         duplicate: false,
                         id: None,
                         error: Some(msg),
+                    });
+                }
+                // 码化 Invalid（issue #342 二期）：行为层校验失败码化后同归「单行失败」，
+                // 不改变「单行校验失败不回滚整批」的编排语义。
+                Err(AppError::Coded {
+                    class: ErrClass::Invalid,
+                    message,
+                    ..
+                }) => {
+                    failed += 1;
+                    results.push(CreateTransactionResult {
+                        success: false,
+                        duplicate: false,
+                        id: None,
+                        error: Some(message),
                     });
                 }
                 Err(e) => {

@@ -4,28 +4,17 @@ export type InstrumentType = 'stock' | 'fund' | 'bond' | 'etf' | 'other'
 
 export type MarketType = 'sh' | 'sz' | 'hk' | 'unknown'
 
-export const MARKET_TYPE_LABELS: Record<MarketType, string> = {
-  sh: '沪市',
-  sz: '深市',
-  hk: '港股',
-  unknown: '未知',
-}
+/** 市场闭集；显示标签在文案资源 investments.market.*（i18n，ADR-0049） */
+export const MARKET_TYPES: MarketType[] = ['sh', 'sz', 'hk', 'unknown']
 
-export const INSTRUMENT_TYPE_LABELS: Record<InstrumentType, string> = {
-  stock: '股票',
-  fund: '基金',
-  bond: '债券',
-  etf: 'ETF',
-  other: '其他',
-}
+/** 标的类型闭集；显示标签在文案资源 investments.type.*（i18n，ADR-0049） */
+export const INSTRUMENT_TYPES: InstrumentType[] = ['stock', 'fund', 'bond', 'etf', 'other']
 
 /** 字典条目来源（自建标的，ADR-0036）：与价格侧 source 同词表但语义正交，随行终身不变 */
 export type InstrumentSource = 'eastmoney' | 'manual'
 
-export const INSTRUMENT_SOURCE_LABELS: Record<InstrumentSource, string> = {
-  eastmoney: '同步',
-  manual: '手动',
-}
+/** 字典来源闭集；显示标签在文案资源 investments.source.*（i18n，ADR-0049） */
+export const INSTRUMENT_SOURCES: InstrumentSource[] = ['eastmoney', 'manual']
 
 /** 价格列刻度（ADR-0038）：投资域 price_cents 为万分之一元（元 × 10000），金额列仍是整数分 */
 export interface Instrument extends Syncable {

@@ -3,6 +3,7 @@ import { errorMessage } from '@/utils/errors'
 import { onMounted, ref } from 'vue'
 import { NCard, NButton, NSpace, NText, useMessage } from 'naive-ui'
 import { api } from '@/api'
+import { t } from '@/i18n'
 
 const message = useMessage()
 const prompt = ref('')
@@ -12,7 +13,7 @@ onMounted(async () => {
   try {
     prompt.value = await api.getAiPrompt()
   } catch (e) {
-    message.error(`获取提示词失败: ${errorMessage(e)}`)
+    message.error(t('ai.msg.loadFailed', { msg: errorMessage(e) }))
   } finally {
     loading.value = false
   }
@@ -21,30 +22,29 @@ onMounted(async () => {
 async function copyPrompt() {
   try {
     await navigator.clipboard.writeText(prompt.value)
-    message.success('已复制到剪贴板')
+    message.success(t('ai.msg.copied'))
   } catch (e) {
-    message.error(`复制失败: ${errorMessage(e)}`)
+    message.error(t('ai.msg.copyFailed', { msg: errorMessage(e) }))
   }
 }
 </script>
 
 <template>
   <NSpace vertical :size="16">
-    <NCard title="AI 提示词" :bordered="false">
+    <NCard :title="t('ai.title')" :bordered="false">
       <template #header-extra>
         <NButton size="small" type="primary" :disabled="!prompt" @click="copyPrompt">
-          复制
+          {{ t('ai.copy') }}
         </NButton>
       </template>
       <NSpace vertical :size="8">
         <NText depth="3" style="font-size: 13px">
-          将以下提示词复制给 AI 编程助手（如 Cursor、Claude Code），
-          它会据此通过本地 HTTP API（127.0.0.1:9527）读取与写入账本数据；期间需保持 Ledger 运行。
+          {{ t('ai.description') }}
         </NText>
         <pre
           class="prompt-body"
           data-testid="prompt-body"
-        >{{ prompt || (loading ? '加载中…' : '获取失败') }}</pre>
+        >{{ prompt || (loading ? t('ai.loading') : t('ai.loadFailed')) }}</pre>
       </NSpace>
     </NCard>
   </NSpace>

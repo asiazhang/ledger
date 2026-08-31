@@ -8,6 +8,7 @@ import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { getIconComponent } from '@/types/icon'
 import { buildCategoryTree } from '@/utils/category-tree'
+import { t } from '@/i18n'
 import type { Category, CategoryKind } from '@/types'
 
 const props = defineProps<{ kind: CategoryKind }>()
@@ -49,12 +50,12 @@ function renderSuffix(info: { option: TreeOption }) {
         e.stopPropagation()
         emit('edit', cat)
       },
-    }, () => '编辑'),
+    }, () => t('settings.categories.tree.edit')),
     h(AppPopconfirm, {
       onPositiveClick: () => removeCategory(cat.id),
     }, {
-      default: () => '确认删除？',
-      trigger: () => h(NButton, { size: 'tiny', type: 'error', quaternary: true, onClick: (e: MouseEvent) => e.stopPropagation() }, () => '删除'),
+      default: () => t('settings.categories.tree.deleteConfirm'),
+      trigger: () => h(NButton, { size: 'tiny', type: 'error', quaternary: true, onClick: (e: MouseEvent) => e.stopPropagation() }, () => t('settings.categories.tree.delete')),
     }),
   ])
 }
@@ -86,7 +87,7 @@ async function handleDrop(info: TreeDropInfo) {
     await api.reorderCategories(siblings.map((c, i) => ({ id: c.id, sort_order: i })))
     // 参考数据由 ledger:changed 信号自动重拉，分类树随之更新
   } catch (e) {
-    message.error(`排序失败: ${errorMessage(e)}`)
+    message.error(t('settings.categories.msg.sortFailed', { msg: errorMessage(e) }))
   }
 }
 
@@ -94,10 +95,10 @@ async function handleDrop(info: TreeDropInfo) {
 async function removeCategory(id: string) {
   try {
     await api.deleteCategory(id)
-    message.success('已删除')
+    message.success(t('settings.categories.msg.deleted'))
     // 参考数据由 ledger:changed 信号自动重拉，分类树随之更新
   } catch (e) {
-    message.error(`删除失败: ${errorMessage(e)}`)
+    message.error(t('settings.categories.msg.deleteFailed', { msg: errorMessage(e) }))
   }
 }
 </script>

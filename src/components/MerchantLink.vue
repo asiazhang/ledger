@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
+import { t } from '@/i18n'
 
 /**
  * 可点击商户名（商户下钻，issue #191）。视觉与交互同 AccountLink（账户下钻）：
@@ -46,7 +47,7 @@ function go() {
     v-if="isLink"
     type="button"
     class="merchant-link"
-    :title="'查看该商户的交易'"
+    :title="t('common.link.viewMerchant')"
     :style="{ color: accent.base, '--accent-hover': accent.hover }"
     @click="go"
   >

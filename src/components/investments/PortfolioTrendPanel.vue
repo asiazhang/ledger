@@ -7,6 +7,7 @@ import { Chart as ChartJS, Tooltip, Legend, CategoryScale, LinearScale } from 'c
 import type { ChartOptions, TooltipItem } from 'chart.js'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount, formatPrice } from '@/types'
+import { t } from '@/i18n'
 import {
   hasMarketSource,
   TREND_RANGE_PRESETS,
@@ -58,8 +59,8 @@ const currency = computed(() =>
 const currencyCaption = computed(() => {
   if (!trend.currencyCode.value) return ''
   return trend.mode.value === 'portfolio'
-    ? `单位：${trend.currencyCode.value}（本位币）`
-    : `计价币种：${trend.currencyCode.value}`
+    ? t('investments.trend.captionPortfolio', { currency: trend.currencyCode.value })
+    : t('investments.trend.captionInstrument', { currency: trend.currencyCode.value })
 })
 
 /**
@@ -74,9 +75,9 @@ function formatTrendValue(value: number): string {
 }
 
 const datasetLabel = computed(() => {
-  if (trend.mode.value === 'portfolio') return '组合市值'
+  if (trend.mode.value === 'portfolio') return t('investments.trend.modePortfolio')
   const inst = trend.instrument.value
-  return inst ? `${inst.symbol} ${inst.name ?? ''}`.trim() : '标的'
+  return inst ? `${inst.symbol} ${inst.name ?? ''}`.trim() : t('investments.trend.instrumentFallback')
 })
 
 const chartData = computed(() => ({
@@ -131,14 +132,14 @@ ChartJS.register(Tooltip, Legend, CategoryScale, LinearScale)
         size="small"
         data-testid="trend-mode"
       >
-        <NRadio value="portfolio">组合市值</NRadio>
-        <NRadio value="instrument">单标的</NRadio>
+        <NRadio value="portfolio">{{ t('investments.trend.modePortfolio') }}</NRadio>
+        <NRadio value="instrument">{{ t('investments.trend.modeInstrument') }}</NRadio>
       </NRadioGroup>
       <PinyinSelect
         v-if="trend.mode.value === 'instrument'"
         v-model:value="selectedInstrumentId"
         :options="instrumentOptions"
-        placeholder="选择标的..."
+        :placeholder="t('investments.trend.instrumentPlaceholder')"
         clearable
         style="width: 260px"
         data-testid="trend-instrument-select"
@@ -149,7 +150,7 @@ ChartJS.register(Tooltip, Legend, CategoryScale, LinearScale)
         data-testid="trend-range"
       >
         <NRadio v-for="p in TREND_RANGE_PRESETS" :key="p.value" :value="p.value">
-          {{ p.label }}
+          {{ t(p.labelKey) }}
         </NRadio>
       </NRadioGroup>
       <NText v-if="currencyCaption" depth="3" data-testid="trend-currency">
@@ -162,12 +163,12 @@ ChartJS.register(Tooltip, Legend, CategoryScale, LinearScale)
       <NEmpty
         v-if="noMarketSource"
         data-testid="trend-no-source"
-        description="暂无行情来源"
+        :description="t('investments.trend.noSource')"
         size="large"
       >
         <template #extra>
           <NText depth="3">
-            该标的类型暂不参与行情采集（仅股票 / ETF 支持），不提供走势图。
+            {{ t('investments.trend.noSourceExtra') }}
           </NText>
         </template>
       </NEmpty>
@@ -176,12 +177,12 @@ ChartJS.register(Tooltip, Legend, CategoryScale, LinearScale)
       <NEmpty
         v-else-if="trend.isEmpty.value"
         data-testid="trend-empty"
-        description="暂无历史价格数据"
+        :description="t('investments.trend.empty')"
         size="large"
       >
         <template #extra>
           <NText depth="3">
-            点击标的列表的「同步持仓价格」回填近两年行情后，即可查看走势。
+            {{ t('investments.trend.emptyExtra') }}
           </NText>
         </template>
       </NEmpty>

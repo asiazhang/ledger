@@ -4,6 +4,7 @@ import { api } from '@/api'
 import { centsToYuan, formatAmount } from '@/types'
 import { buildRefundInput } from '@/domain/transaction-input'
 import { useFormShared } from '@/composables/useFormShared'
+import { t } from '@/i18n'
 import type { Transaction } from '@/types'
 import { errorMessage } from "@/utils/errors";
 
@@ -75,11 +76,11 @@ export function useRefundForm(options?: {
     // 行内模式原交易固定；搜索模式取下拉选择
     const targetId = fixedTarget?.()?.id ?? refundTargetId.value
     if (!targetId) {
-      message.warning('请选择要退款的原始支出交易')
+      message.warning(t('transactions.refund.warnNoTarget'))
       return
     }
     if (amount.value == null || amount.value <= 0) {
-      message.warning('请输入退款金额')
+      message.warning(t('transactions.refund.warnNoAmount'))
       return
     }
     try {
@@ -95,7 +96,7 @@ export function useRefundForm(options?: {
         date: date.value,
       })
       await api.createTransaction(input)
-      message.success('已记退款')
+      message.success(t('transactions.refund.created'))
       // 行内模式跳过全量交易重载：列表刷新由 onCreated 回调承担
       if (!fixedTarget) await loadTransactions()
       amount.value = null
@@ -103,7 +104,7 @@ export function useRefundForm(options?: {
       refundTargetId.value = null
       options?.onCreated?.()
     } catch (e) {
-      message.error(`退款失败: ${errorMessage(e)}`)
+      message.error(t('transactions.refund.failed', { msg: errorMessage(e) }))
     }
   }
 

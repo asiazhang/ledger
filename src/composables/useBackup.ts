@@ -10,6 +10,7 @@ import type {
   BackupKind,
 } from "@/types";
 import { errorMessage } from "@/utils/errors";
+import { t } from "@/i18n";
 import {
   defaultBackupFileName,
   isManagedBackupPath,
@@ -35,7 +36,7 @@ function formatBackupTime(iso: string): string {
 
 /** 来源展示文案：自动 / 手动；旧数据缺字段按手动（与后端回落一致）。 */
 function sourceText(kind: BackupKind): string {
-  return kind === "auto" ? "自动" : "手动";
+  return kind === "auto" ? t("settings.data.source.auto") : t("settings.data.source.manual");
 }
 
 export function useBackup() {
@@ -54,7 +55,9 @@ export function useBackup() {
 
   /** 展示文案：格式化 UTC ISO 为 `YYYY-MM-DD HH:mm`，从未备份时显示「从未」。 */
   const autoBackupLastText = computed(() =>
-    autoBackupLastAt.value ? formatBackupTime(autoBackupLastAt.value) : "从未",
+    autoBackupLastAt.value
+      ? formatBackupTime(autoBackupLastAt.value)
+      : t("settings.data.backup.autoLastNever"),
   );
 
   async function refreshAutoBackupState() {
@@ -64,7 +67,7 @@ export function useBackup() {
       autoBackupLastAt.value = s.last_backup_at;
     } catch (e: any) {
       // 状态读取失败不阻断手动备份功能：维持默认开关开启、无时间展示。
-      message.error(`读取自动备份状态失败: ${errorMessage(e)}`);
+      message.error(t("settings.data.msg.autoStateFailed", { msg: errorMessage(e) }));
     }
   }
 
@@ -72,9 +75,11 @@ export function useBackup() {
     try {
       await api.setAutoBackupEnabled(enabled);
       autoBackupEnabled.value = enabled;
-      message.success(enabled ? "自动备份已开启" : "自动备份已关闭");
+      message.success(
+        enabled ? t("settings.data.msg.autoOn") : t("settings.data.msg.autoOff"),
+      );
     } catch (e: any) {
-      message.error(`更新自动备份开关失败: ${errorMessage(e)}`);
+      message.error(t("settings.data.msg.autoToggleFailed", { msg: errorMessage(e) }));
     }
   }
 
@@ -91,11 +96,11 @@ export function useBackup() {
     const dir = await open({
       directory: true,
       multiple: false,
-      title: "选择备份目录",
+      title: t("settings.data.msg.dirPickTitle"),
     });
     if (typeof dir === "string" && dir) {
       store.setBackupDir(dir);
-      message.success("备份目录已设置");
+      message.success(t("settings.data.msg.dirSet"));
       await refreshBackups();
     }
   }
@@ -114,7 +119,7 @@ export function useBackup() {
       backups.value = await api.listBackups(store.backupDir);
     } catch (e: any) {
       backups.value = [];
-      message.error(`读取备份列表失败: ${errorMessage(e)}`);
+      message.error(t("settings.data.msg.listFailed", { msg: errorMessage(e) }));
     }
   }
 
@@ -126,13 +131,16 @@ export function useBackup() {
       await refreshBackups();
       if (r.failed.length > 0) {
         message.warning(
-          `清理完成：已删除 ${r.deleted.length} 个，${r.failed.length} 个失败`,
+          t("settings.data.msg.prunePartial", {
+            deleted: r.deleted.length,
+            failed: r.failed.length,
+          }),
         );
       } else if (r.deleted.length > 0) {
-        message.success(`已清理 ${r.deleted.length} 个旧备份`);
+        message.success(t("settings.data.msg.pruneDone", { n: r.deleted.length }));
       }
     } catch (e: any) {
-      message.error(`清理备份失败: ${errorMessage(e)}`);
+      message.error(t("settings.data.msg.pruneFailed", { msg: errorMessage(e) }));
     }
   }
 
@@ -151,16 +159,13 @@ export function useBackup() {
     if (!store.backupDir) return;
     const excess = Math.max(0, backups.value.length - store.backupMaxCount);
     if (excess === 0) {
-      message.info("无需清理：备份数量未超过上限");
+      message.info(t("settings.data.msg.pruneNotNeeded"));
       return;
     }
-    const ok = await confirm(
-      `将删除最旧的 ${excess} 个备份，删除后不可恢复。确定继续吗？`,
-      {
-        title: "确认清理",
-        kind: "warning",
-      },
-    );
+    const ok = await confirm(t("settings.data.msg.pruneConfirm", { n: excess }), {
+      title: t("settings.data.msg.pruneConfirmTitle"),
+      kind: "warning",
+    });
     if (!ok) return;
     pruning.value = true;
     try {
@@ -174,8 +179,11 @@ export function useBackup() {
     backingUp.value = true;
     try {
       const r = await api.createBackup(target);
-      lastBackup.value = `${r.path}（${(r.size_bytes / 1024).toFixed(1)} KB）`;
-      message.success("备份成功");
+      lastBackup.value = t("settings.data.msg.lastBackupPath", {
+        path: r.path,
+        size: `${(r.size_bytes / 1024).toFixed(1)} KB`,
+      });
+      message.success(t("settings.data.msg.backupOk"));
       if (isManagedBackupPath(target, store.backupDir)) {
         // 受管备份写入后立即滚动清理（一键备份/另存为同规则）。
         await pruneToLimit(store.backupMaxCount);
@@ -183,7 +191,7 @@ export function useBackup() {
         await refreshBackups();
       }
     } catch (e: any) {
-      message.error(`备份失败: ${errorMessage(e)}`);
+      message.error(t("settings.data.msg.backupFailed", { msg: errorMessage(e) }));
     } finally {
       backingUp.value = false;
     }
@@ -200,38 +208,40 @@ export function useBackup() {
 
   async function backupAs() {
     const path = await save({
-      title: "备份到…",
+      title: t("settings.data.msg.saveAsTitle"),
       defaultPath: store.backupDir
         ? `${store.backupDir}/${defaultBackupFileName()}`
         : defaultBackupFileName(),
-      filters: [{ name: "Ledger 备份", extensions: ["zip"] }],
+      filters: [{ name: t("settings.data.msg.filterName"), extensions: ["zip"] }],
     });
     if (typeof path === "string" && path) await doBackup(path);
   }
 
   async function pickRestore() {
     const path = await open({
-      title: "从备份恢复…",
+      title: t("settings.data.backup.restoreButton"),
       directory: false,
       multiple: false,
       defaultPath: store.backupDir || undefined,
-      filters: [{ name: "Ledger 备份", extensions: ["zip", "db"] }],
+      filters: [{ name: t("settings.data.msg.filterName"), extensions: ["zip", "db"] }],
     });
     if (typeof path !== "string" || !path) return;
-    const ok = await confirm(
-      "恢复将替换当前全部数据，且不可撤销。\n\n系统会在恢复前自动备份当前数据；恢复成功后应用将自动重启。\n\n确定继续吗？",
-      { title: "确认恢复", kind: "warning" },
-    );
+    const ok = await confirm(t("settings.data.msg.restoreConfirm"), {
+      title: t("settings.data.msg.restoreConfirmTitle"),
+      kind: "warning",
+    });
     if (!ok) return;
     restoring.value = true;
     try {
       const r = await api.restoreBackup(path);
-      message.success(`恢复成功（schema v${r.schema_version}），应用即将重启`);
+      message.success(
+        t("settings.data.msg.restoreOk", { version: r.schema_version }),
+      );
       setTimeout(() => {
         api.restartApp();
       }, 800);
     } catch (e: any) {
-      message.error(`恢复失败: ${errorMessage(e)}`);
+      message.error(t("settings.data.msg.restoreFailed", { msg: errorMessage(e) }));
     } finally {
       restoring.value = false;
     }

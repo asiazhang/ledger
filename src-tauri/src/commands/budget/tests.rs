@@ -9,7 +9,7 @@ use crate::commands::budget::{
     budget_progress_rows, create_budget_internal, update_budget_internal,
 };
 use crate::db::{device_id, now_iso};
-use crate::error::AppError;
+use crate::error::{AppError, ErrClass};
 use crate::models::{BudgetInput, BudgetPeriod};
 use crate::transaction::amount::{Measure, TransactionKind, signed_amount};
 
@@ -243,7 +243,7 @@ fn create_budget_rejects_non_positive_amount() {
     for amount in [0, -100] {
         let err = create_budget_internal(&conn, &budget_input(&cat_id, None, amount)).unwrap_err();
         assert!(
-            matches!(err, AppError::Invalid(ref m) if m.contains("预算金额必须为正数")),
+            matches!(err, AppError::Coded { ref message, .. } if message.contains("预算金额必须为正数")),
             "金额 {amount} 应被拒绝: {err:?}"
         );
     }
@@ -257,7 +257,7 @@ fn create_budget_rejects_income_category() {
     let cat_id = first_income_category_id(&conn);
     let err = create_budget_internal(&conn, &budget_input(&cat_id, None, 1000)).unwrap_err();
     assert!(
-        matches!(err, AppError::Invalid(ref m) if m.contains("预算只能设置在支出分类上")),
+        matches!(err, AppError::Coded { ref message, .. } if message.contains("预算只能设置在支出分类上")),
         "{err:?}"
     );
     assert_eq!(budget_count(&conn), 0);
@@ -268,7 +268,16 @@ fn create_budget_rejects_income_category() {
 fn create_budget_rejects_missing_category() {
     let conn = setup();
     let err = create_budget_internal(&conn, &budget_input("no-such-cat", None, 1000)).unwrap_err();
-    assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
+    assert!(
+        matches!(
+            err,
+            AppError::Coded {
+                class: ErrClass::NotFound,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
 }
 
 /// 底线三：同分类同周期重复创建明确拒绝，且原预算数据不受影响。
@@ -283,7 +292,7 @@ fn create_budget_rejects_duplicate_monthly_and_keeps_original() {
     )
     .unwrap_err();
     assert!(
-        matches!(err, AppError::Invalid(ref m) if m == "该分类已存在按月预算，可编辑该预算的金额"),
+        matches!(err, AppError::Coded { ref message, .. } if message == "该分类已存在按月预算，可编辑该预算的金额"),
         "{err:?}"
     );
     let (amount, start): (i64, String) = conn
@@ -317,7 +326,7 @@ fn create_budget_rejects_duplicate_yearly() {
     )
     .unwrap_err();
     assert!(
-        matches!(err, AppError::Invalid(ref m) if m == "该分类已存在按年预算，可编辑该预算的金额"),
+        matches!(err, AppError::Coded { ref message, .. } if message == "该分类已存在按年预算，可编辑该预算的金额"),
         "{err:?}"
     );
 }
@@ -416,7 +425,7 @@ fn update_budget_rejects_non_positive_amount() {
     for amount in [0, -100] {
         let err = update_budget_internal(&conn, "budget-edit2", amount).unwrap_err();
         assert!(
-            matches!(err, AppError::Invalid(ref m) if m.contains("预算金额必须为正数")),
+            matches!(err, AppError::Coded { ref message, .. } if message.contains("预算金额必须为正数")),
             "金额 {amount} 应被拒绝: {err:?}"
         );
     }
@@ -446,9 +455,27 @@ fn update_budget_rejects_missing_or_deleted_budget() {
     conn.execute("UPDATE budgets SET is_deleted=1 WHERE id='budget-gone'", [])
         .unwrap();
     let err = update_budget_internal(&conn, "budget-gone", 1000).unwrap_err();
-    assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
+    assert!(
+        matches!(
+            err,
+            AppError::Coded {
+                class: ErrClass::NotFound,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
     let err = update_budget_internal(&conn, "no-such-budget", 1000).unwrap_err();
-    assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
+    assert!(
+        matches!(
+            err,
+            AppError::Coded {
+                class: ErrClass::NotFound,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
 }
 
 /// 预算的分类已删除时编辑被拒（复用创建侧分类校验）。
@@ -470,7 +497,16 @@ fn update_budget_rejects_when_category_deleted() {
     )
     .unwrap();
     let err = update_budget_internal(&conn, "budget-orphan", 1000).unwrap_err();
-    assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
+    assert!(
+        matches!(
+            err,
+            AppError::Coded {
+                class: ErrClass::NotFound,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
 }
 
 // ---- budget_progress_rows：expense_net 口径 ----

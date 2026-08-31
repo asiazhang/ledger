@@ -37,7 +37,10 @@ pub(crate) fn validate_fund_code(code: &str) -> Result<()> {
     if is_six_digit_code(code) {
         Ok(())
     } else {
-        Err(AppError::Invalid("基金代码须为 6 位数字".into()))
+        Err(AppError::coded(
+            "fund.code-invalid",
+            "基金代码须为 6 位数字",
+        ))
     }
 }
 

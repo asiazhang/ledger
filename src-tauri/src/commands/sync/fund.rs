@@ -123,8 +123,13 @@ pub(super) fn fetch_fund_detail(
         &format!("fetch_fund_detail:{code}"),
         None,
     )?;
-    pick_fund_detail(&resp, code)
-        .ok_or_else(|| AppError::Invalid(format!("查无基金代码 {code}，请核对后重试")))
+    pick_fund_detail(&resp, code).ok_or_else(|| {
+        AppError::codedp(
+            "sync.fund-not-found",
+            format!("查无基金代码 {code}，请核对后重试"),
+            &[code],
+        )
+    })
 }
 
 /// 生产拉取入口：构建客户端与限流器后执行单次详情查询（不经数据库连接，

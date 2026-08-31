@@ -1,6 +1,7 @@
 import type { DropdownOption } from 'naive-ui'
 import { AddCircleOutline, CashOutline, CreateOutline, TrashOutline } from '@vicons/ionicons5'
 import { errorOptionProps, renderRowMenuIcon } from './row-menu-common'
+import { t } from '@/i18n'
 import type { Transaction } from '@/types'
 
 // 公共件（row-menu-common）原生于本模块：renderRowMenuIcon / errorOptionProps
@@ -35,12 +36,12 @@ export function buildRowMenuOptions(
   // income/expense/transfer 走分类记账/转账表单，buy/sell 走投资表单，issue #180）。
   if (row.kind === 'income' || row.kind === 'expense' || row.kind === 'transfer'
     || row.kind === 'buy' || row.kind === 'sell') {
-    options.push({ label: '编辑', key: 'edit', icon: renderRowMenuIcon(CreateOutline) })
+    options.push({ label: t('transactions.menu.edit'), key: 'edit', icon: renderRowMenuIcon(CreateOutline) })
   }
   if (row.kind === 'expense') {
-    options.push({ label: '退款', key: 'refund', icon: renderRowMenuIcon(CashOutline) })
+    options.push({ label: t('transactions.menu.refund'), key: 'refund', icon: renderRowMenuIcon(CashOutline) })
     options.push({
-      label: '加入物品',
+      label: t('transactions.menu.addItem'),
       key: 'add-item',
       disabled: opts.hasItem === true,
       icon: renderRowMenuIcon(AddCircleOutline),
@@ -52,7 +53,7 @@ export function buildRowMenuOptions(
   // 删除项着主题 error 色（公共件 errorOptionProps，注释见 row-menu-common.ts）。
   const errorProps = errorOptionProps(opts.errorColor)
   options.push({
-    label: '删除',
+    label: t('transactions.menu.delete'),
     key: 'delete',
     icon: renderRowMenuIcon(TrashOutline),
     ...errorProps,

@@ -1,0 +1,70 @@
+{
+  "create": {
+    "title": "新增账户",
+    "name": "名称",
+    "type": "类型",
+    "currency": "币种",
+    "initialBalance": "初始余额",
+    "namePlaceholder": "账户名称",
+    "add": "添加"
+  },
+  "list": {
+    "title": "账户列表",
+    "colName": "名称",
+    "colType": "类型",
+    "colCurrency": "币种",
+    "colBalance": "余额",
+    "colActions": "操作",
+    "moreActions": "更多操作"
+  },
+  "edit": {
+    "title": "编辑账户",
+    "cancel": "取消",
+    "save": "保存"
+  },
+  "adjust": {
+    "title": "调整余额",
+    "currentBalance": "当前余额",
+    "targetBalance": "目标余额",
+    "targetPlaceholder": "对账后应有的余额",
+    "date": "调整日期",
+    "delta": "差额",
+    "deltaZero": "余额已等于目标值，无需调整",
+    "deltaIn": "将从「无」转入 {amount}",
+    "deltaOut": "将转出 {amount} 至「无」",
+    "hint": "（生成一笔与「无」的转账，删除该转账即撤销调整）",
+    "confirm": "确认调整"
+  },
+  "deleteDialog": {
+    "title": "删除账户",
+    "content": "确认删除账户「{name}」？删除后相关交易仍保留。",
+    "positive": "删除",
+    "negative": "取消"
+  },
+  "menu": {
+    "edit": "编辑",
+    "adjustBalance": "调整余额",
+    "delete": "删除"
+  },
+  "message": {
+    "nameRequired": "请输入账户名称",
+    "created": "已创建账户",
+    "createFailed": "创建失败: {message}",
+    "deleted": "已删除",
+    "deleteFailed": "删除失败: {message}",
+    "saved": "已保存",
+    "saveFailed": "保存失败: {message}",
+    "adjusted": "余额已调整",
+    "adjustFailed": "调整失败: {message}"
+  },
+  "type": {
+    "cash": "现金",
+    "bank": "银行卡",
+    "credit": "信用卡",
+    "ewallet": "电子钱包",
+    "investment": "投资账户",
+    "debt": "负债",
+    "receivable": "借出款",
+    "other": "其他"
+  }
+}

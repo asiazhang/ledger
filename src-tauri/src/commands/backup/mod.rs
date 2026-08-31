@@ -76,8 +76,13 @@ pub fn list_backups(dir: String) -> Result<Vec<BackupFileInfo>> {
 /// `signals::emit_for` 判定发射，ADR-0044），前端列表随之自动刷新。
 #[tauri::command]
 pub fn prune_backups(app: AppHandle, dir: String, keep: i64) -> Result<PruneResult> {
-    let keep = usize::try_from(keep)
-        .map_err(|_| AppError::Invalid(format!("备份保留上限非法: {keep}")))?;
+    let keep = usize::try_from(keep).map_err(|_| {
+        AppError::codedp(
+            "backup.keep-invalid",
+            format!("备份保留上限非法: {keep}"),
+            &[&keep.to_string()],
+        )
+    })?;
     let r = core::prune_managed_backups(Path::new(&dir), keep)?;
     emit_for(&app, WriteOp::PruneBackups, WriteEvidence::None);
     Ok(r)

@@ -1,0 +1,107 @@
+{
+  "createHint": "物品不支持直接新增：请在「交易」页右键一笔支出交易，选择“加入物品”创建。",
+  "goTransactions": "去交易页",
+  "listTitle": "物品列表",
+  "emptyGuide": "暂无物品：请在「交易」页右键一笔支出交易，选择“加入物品”创建。",
+  "currencySuffix": "（{code}）",
+  "columns": {
+    "name": "名称",
+    "purchaseDate": "购买日期",
+    "status": "状态",
+    "totalCost": "总成本",
+    "usedDays": "已用天数",
+    "perDayCost": "每天成本",
+    "actions": "操作"
+  },
+  "status": {
+    "inUse": "在用",
+    "disposed": "已处置",
+    "disposedOn": "已处置 {date}"
+  },
+  "rowActions": {
+    "detail": "详情",
+    "edit": "编辑",
+    "dispose": "处置",
+    "disposeInfo": "处置信息",
+    "delete": "删除",
+    "cancel": "取消",
+    "save": "保存"
+  },
+  "deleteConfirm": "不再跟踪该物品，从列表移除？",
+  "edit": {
+    "title": "编辑物品",
+    "label": {
+      "name": "名称",
+      "purchaseDate": "购买日期",
+      "totalCost": "总成本",
+      "linkedTx": "关联购买交易",
+      "currency": "币种",
+      "note": "备注"
+    },
+    "placeholder": {
+      "name": "物品名称",
+      "totalCost": "总成本（元）",
+      "linkedTx": "关联购买交易",
+      "note": "品牌 / 型号 / 渠道（可选）"
+    },
+    "currencyFixed": "（不可修改）"
+  },
+  "dispose": {
+    "titleInUse": "处置物品",
+    "titleInfo": "处置信息",
+    "label": {
+      "item": "物品",
+      "date": "处置日期",
+      "residual": "残值"
+    },
+    "residualPlaceholder": "残值（元，可选）",
+    "confirm": "确认处置"
+  },
+  "detail": {
+    "title": "物品详情",
+    "label": {
+      "name": "名称",
+      "status": "状态",
+      "purchaseDate": "购买日期",
+      "disposalDate": "处置日期",
+      "residual": "残值",
+      "totalCost": "总成本",
+      "native": "本位币折算",
+      "note": "备注",
+      "linkedTx": "关联购买交易",
+      "refDate": "参考日",
+      "usedDays": "已用天数",
+      "perDayBreakdown": "每天成本分解"
+    },
+    "linkedYes": "已关联（溯源）",
+    "refDatePlaceholder": "自选参考日",
+    "usedDays": "{n} 天（含购买当日）",
+    "breakdown": "{cost} ÷ {days} 天 = {perDay}/天"
+  },
+  "addForm": {
+    "label": {
+      "purchaseDate": "购买日期",
+      "baseCost": "基础成本",
+      "name": "物品名称"
+    },
+    "namePlaceholder": "默认取交易备注，可微调",
+    "confirm": "确认创建"
+  },
+  "msg": {
+    "nameRequired": "请输入物品名称",
+    "dateRequired": "请选择购买日期",
+    "costInvalid": "请输入大于 0 的总成本",
+    "saved": "已保存",
+    "saveFailed": "保存失败: {msg}",
+    "recalcFailed": "重算失败: {msg}",
+    "disposeDateRequired": "请选择处置日期",
+    "residualInvalid": "残值需为不小于 0 的金额",
+    "disposed": "已处置",
+    "disposeUpdated": "已更新处置信息",
+    "disposeFailed": "处置失败: {msg}",
+    "deleted": "已删除",
+    "deleteFailed": "删除失败: {msg}",
+    "added": "已加入物品",
+    "addFailed": "加入物品失败: {msg}"
+  }
+}

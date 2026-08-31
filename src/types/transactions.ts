@@ -96,14 +96,17 @@ export interface TransactionSearchFilter {
 
 export type CreateTransactionKind = Exclude<TransactionKind, 'refund'>
 
-export const TRANSACTION_KIND_LABELS: Record<TransactionKind, string> = {
-  income: '收入',
-  expense: '支出',
-  transfer: '转账',
-  refund: '退款',
-  buy: '买入',
-  sell: '卖出',
-}
+/** 前端交易类型闭集（穷尽表驱动）；显示标签在文案资源 transactions.kind.*（i18n，ADR-0049） */
+const TRANSACTION_KIND_PRESENCE = {
+  income: true,
+  expense: true,
+  transfer: true,
+  refund: true,
+  buy: true,
+  sell: true,
+} satisfies Record<TransactionKind, boolean>
+
+export const TRANSACTION_KINDS = Object.keys(TRANSACTION_KIND_PRESENCE) as TransactionKind[]
 
 /** 「记一笔」分裂按钮可创建的类型：枚举对象以 Record<CreateTransactionKind, true> 表达，
  * 新增 kind 而未更新此表时编译报错（穷尽性由类型系统保证，下拉不会静默漏项）。 */

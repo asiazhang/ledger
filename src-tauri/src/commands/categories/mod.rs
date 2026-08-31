@@ -64,13 +64,13 @@ pub fn update_category(
         )?
         .into_iter()
         .next()
-        .ok_or_else(|| AppError::NotFound(format!("分类不存在: {id}")))?;
+        .ok_or_else(|| AppError::codedp_not_found("category.not-found", format!("分类不存在: {id}"), &[&id]))?;
 
         let parent_id = input.parent_id.unwrap_or(existing.parent_id);
 
         if let Some(ref pid) = parent_id {
             if *pid == id {
-                return Err(AppError::Invalid("自身不能作为父分类".into()));
+                return Err(AppError::coded("category.self-parent", "自身不能作为父分类"));
             }
             let parent: Category = query_all(
                 conn,
@@ -80,9 +80,11 @@ pub fn update_category(
             )?
             .into_iter()
             .next()
-            .ok_or_else(|| AppError::NotFound(format!("父分类不存在: {pid}")))?;
+            .ok_or_else(|| {
+                AppError::codedp_not_found("category.parent-not-found", format!("父分类不存在: {pid}"), &[pid])
+            })?;
             if parent.kind != existing.kind {
-                return Err(AppError::Invalid("父分类类型需一致".into()));
+                return Err(AppError::coded("category.parent-kind-mismatch", "父分类类型需一致"));
             }
         }
 

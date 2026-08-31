@@ -1,0 +1,21 @@
+{
+  "monthly": {
+    "title": "Monthly Income & Expense",
+    "income": "Income",
+    "expense": "Expense",
+    "refund": "Refund",
+    "net": "Net: {amount}",
+    "empty": "No data for this year"
+  },
+  "category": {
+    "title": "Expense by Category",
+    "groupLevel": "Group Level",
+    "level2": "Level 2",
+    "level1": "Level 1",
+    "empty": "No expense data"
+  },
+  "merchant": {
+    "title": "Merchant Ranking",
+    "empty": "No merchant spending this period"
+  }
+}

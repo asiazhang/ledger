@@ -71,7 +71,7 @@ fn try_update_last_to_transfer(world: &mut LedgerWorld, amount: i64, date: Strin
         idempotency_key: None,
     };
     world.last_error = match update_transaction_internal(&world_conn!(world), &id, input) {
-        Err(AppError::Invalid(msg)) => Some(msg),
+        Err(AppError::Coded { message, .. }) => Some(message),
         _ => Some("预期失败但成功了".into()),
     };
 }
@@ -99,7 +99,7 @@ fn try_update_missing_txn(world: &mut LedgerWorld, amount: i64, date: String) {
     };
     world.last_error =
         match update_transaction_internal(&world_conn!(world), "nonexistent-id", input) {
-            Err(AppError::NotFound(msg)) => Some(msg),
+            Err(AppError::Coded { message, .. }) => Some(message),
             _ => Some("预期失败但成功了".into()),
         };
 }
@@ -294,7 +294,7 @@ fn try_update_partially_sold_buy(
     let id = trade_txn_id(world, &symbol, "buy");
     let input = trade_edit_input(world, TransactionKind::Buy, &id, quantity, price_cents, 0);
     world.last_error = match update_transaction_internal(&world_conn!(world), &id, input) {
-        Err(AppError::Invalid(msg)) => Some(msg),
+        Err(AppError::Coded { message, .. }) => Some(message),
         _ => Some("预期失败但成功了".into()),
     };
 }
@@ -345,7 +345,7 @@ fn try_update_deleted_txn(world: &mut LedgerWorld, amount: i64, date: String) {
         idempotency_key: None,
     };
     world.last_error = match update_transaction_internal(&world_conn!(world), &id, input) {
-        Err(AppError::NotFound(msg)) => Some(msg),
+        Err(AppError::Coded { message, .. }) => Some(message),
         _ => Some("预期失败但成功了".into()),
     };
 }

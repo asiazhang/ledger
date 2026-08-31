@@ -32,12 +32,15 @@ pub(crate) fn record_manual_price(
     input: &ManualPriceInput,
 ) -> Result<ManualPriceResult> {
     if input.price_cents <= 0 {
-        return Err(AppError::Invalid("价格必须大于 0".into()));
+        return Err(AppError::coded(
+            "instrument.price-positive",
+            "价格必须大于 0",
+        ));
     }
     // 日期先解析再规范化为 canonical ISO（如 2026-8-8 → 2026-08-08）：week_start
     // 生成列（date(trade_date,…)) 对非 canonical 串返回 NULL，必须保证落库形状。
     let trade_date = NaiveDate::parse_from_str(input.date.trim(), "%Y-%m-%d")
-        .map_err(|_| AppError::Invalid("日期格式须为 YYYY-MM-DD".into()))?
+        .map_err(|_| AppError::coded("instrument.price-date-format", "日期格式须为 YYYY-MM-DD"))?
         .format("%Y-%m-%d")
         .to_string();
     // 标的必须存在；价格币种随标的字典（自建标的币种在创建时已定）。
@@ -47,7 +50,7 @@ pub(crate) fn record_manual_price(
             rusqlite::params![input.instrument_id],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
-        .map_err(|_| AppError::Invalid("标的不存在".into()))?;
+        .map_err(|_| AppError::coded("manual-price.instrument-not-found", "标的不存在"))?;
 
     // 落点前置事实：写入前的最新价格点（现价 = 最新一条历史的即时映像，
     // 写入前的最新点决定本次报价是否成为新的最新点）。ISO 日期字典序即时间序。

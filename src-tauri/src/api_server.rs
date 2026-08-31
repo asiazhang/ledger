@@ -5,7 +5,7 @@ use crate::commands::investment::{
     validate_fund_code,
 };
 use crate::commands::sync::persist::price_value_to_cents;
-use crate::error::AppError;
+use crate::error::{AppError, ErrClass};
 use crate::models::{
     Account, AccountBalance, AccountInput, AccountType, AccountUpdateInput, Category,
     CategoryInput, CreateTransactionResult, Currency, FundDetail, Instrument, InstrumentInput,
@@ -71,12 +71,18 @@ impl IntoResponse for AppError {
             AppError::Invalid(_) => StatusCode::BAD_REQUEST,
             AppError::Parse(_) => StatusCode::BAD_REQUEST,
             AppError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            // 码化错误按归类取状态（ADR-0050）：Invalid→400、NotFound→404
+            AppError::Coded { class, .. } => match class {
+                ErrClass::Invalid => StatusCode::BAD_REQUEST,
+                ErrClass::NotFound => StatusCode::NOT_FOUND,
+            },
         };
         (status, Json(self)).into_response()
     }
 }
 
-/// 统一错误响应格式：`{ "kind": "<ErrorKind>", "message": "<中文描述>" }`。
+/// 统一错误响应格式：`{ "kind": "<ErrorKind>", "message": "<中文描述>" }`；
+/// 码化错误额外携带稳定 `code` 与可选 `params`（issue #342 二期 / ADR-0050，只增不改）。
 #[derive(ToSchema)]
 #[allow(dead_code)]
 struct ErrorResponse {
@@ -84,6 +90,10 @@ struct ErrorResponse {
     kind: String,
     /// 中文错误描述
     message: String,
+    /// 稳定错误码（可选，仅码化错误与系统类错误携带），领域语言命名如 `transfer.to-account-required`
+    code: Option<String>,
+    /// 插值参数（可选，按消息中动态值出现顺序）
+    params: Option<Vec<String>>,
 }
 
 /// Ledger 记账 API 的 OpenAPI 契约文档。

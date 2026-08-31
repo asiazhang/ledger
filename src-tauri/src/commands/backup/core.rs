@@ -103,16 +103,30 @@ fn is_managed_backup_file_name(name: &str) -> bool {
 /// 裸 `.db` 文件本就不携带元数据，恢复路径自行处理其合法性。
 pub fn read_backup_kind(backup_path: &Path) -> Result<BackupKind> {
     let file = File::open(backup_path)?;
-    let mut archive = zip::ZipArchive::new(file)
-        .map_err(|e| AppError::Invalid(format!("不是有效的 Ledger 备份包: {e}")))?;
-    let mut entry = archive
-        .by_name(ZIP_META_ENTRY)
-        .map_err(|_| AppError::Invalid(format!("备份包内未找到 {} 元数据", ZIP_META_ENTRY)))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| {
+        AppError::codedp(
+            "backup.invalid-archive",
+            format!("不是有效的 Ledger 备份包: {e}"),
+            &[&e.to_string()],
+        )
+    })?;
+    let mut entry = archive.by_name(ZIP_META_ENTRY).map_err(|_| {
+        AppError::coded(
+            "backup.meta-missing",
+            format!("备份包内未找到 {} 元数据", ZIP_META_ENTRY),
+        )
+    })?;
     let mut buf = Vec::new();
     entry.read_to_end(&mut buf)?;
     serde_json::from_slice::<BackupMeta>(&buf)
         .map(|meta| meta.kind)
-        .map_err(|e| AppError::Invalid(format!("备份元数据解析失败: {e}")))
+        .map_err(|e| {
+            AppError::codedp(
+                "backup.meta-parse-failed",
+                format!("备份元数据解析失败: {e}"),
+                &[&e.to_string()],
+            )
+        })
 }
 
 /// 从受管备份文件名解析备份时间（`YYYYMMDD-HHMMSS`）；解析失败返回 None。
@@ -268,10 +282,11 @@ pub fn backup_db_to(
         _ => Path::new("."),
     };
     if !parent.is_dir() {
-        return Err(AppError::Invalid(format!(
-            "备份目标目录不存在: {}",
-            parent.display()
-        )));
+        return Err(AppError::codedp(
+            "backup.target-dir-missing",
+            format!("备份目标目录不存在: {}", parent.display()),
+            &[&parent.display().to_string()],
+        ));
     }
 
     let tmp_db = temp_sibling(target, "db");
@@ -388,9 +403,13 @@ fn validate_backup(tmp_db: &Path, expected_schema: i64) -> Result<i64> {
     db::check_integrity(&conn)?;
     let backup_schema = schema_version(&conn)?;
     if backup_schema > expected_schema {
-        return Err(AppError::Invalid(format!(
-            "备份来自更高版本的应用（备份 schema v{backup_schema} > 当前 v{expected_schema}），请升级应用后再恢复"
-        )));
+        return Err(AppError::codedp(
+            "backup.schema-newer",
+            format!(
+                "备份来自更高版本的应用（备份 schema v{backup_schema} > 当前 v{expected_schema}），请升级应用后再恢复"
+            ),
+            &[&backup_schema.to_string(), &expected_schema.to_string()],
+        ));
     }
     if backup_schema < expected_schema {
         tracing::info!(
@@ -426,10 +445,10 @@ fn extract_db_file(backup_path: &Path, out: &Path) -> Result<()> {
         }
     }
     if !found {
-        return Err(AppError::Invalid(format!(
-            "备份包内未找到 {}，不是有效的 Ledger 备份",
-            ZIP_DB_ENTRY
-        )));
+        return Err(AppError::coded(
+            "backup.db-entry-missing",
+            format!("备份包内未找到 {}，不是有效的 Ledger 备份", ZIP_DB_ENTRY),
+        ));
     }
     Ok(())
 }
