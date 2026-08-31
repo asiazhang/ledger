@@ -402,7 +402,11 @@ pub(crate) fn lock_conn_with_timeout(
     }
 }
 
-/// 启动自动备份轮询线程（标准轮询线程模式：spawn + sleep）。
+/// 启动调度轮询线程（标准轮询线程模式：spawn + sleep）。
+///
+/// 单一 tick 双判定（issue #307 / ADR-0042）：每轮先做自动备份到期判定，再做
+/// 定时计划追补判定；线程只做周期调用——备份决策全在纯函数到期判定，追补决策
+/// 全在参数注入（连接、开关状态、今天日期）的追补入口（开关从运行时镜像读出）。
 pub fn start_scheduler(app: &tauri::AppHandle) {
     use tauri::Manager;
     let conn = Arc::clone(&app.state::<DbState>().conn);
@@ -423,6 +427,13 @@ pub fn start_scheduler(app: &tauri::AppHandle) {
                     .as_deref(),
                 &version,
                 Utc::now(),
+            );
+            // 追补判定（issue #307 / ADR-0042）：开关从镜像读出后注入追补入口，
+            // 今天取本地时区日期（与订阅花费总览同款口径）；镜像默认关，未推送即空转。
+            crate::scheduled_transactions::run_catch_up(
+                &guard,
+                crate::scheduled_transactions::auto_run::is_enabled(),
+                chrono::Local::now().date_naive(),
             );
         }
     });

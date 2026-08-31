@@ -182,6 +182,7 @@ pub fn run() {
             commands::execute_scheduled_occurrence,
             commands::expand_scheduled_occurrences,
             commands::subscription_spend_overview,
+            commands::set_auto_execution_enabled,
             commands::realized_pnl_summary,
             commands::sync_instruments,
             commands::cancel_sync_instruments,

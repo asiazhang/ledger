@@ -227,6 +227,10 @@ export const api = {
   // 订阅实际花费总览（issue #160，实际口径：忠实流水不摊销）
   subscriptionSpendOverview: () =>
     invoke<SubscriptionSpendOverview>('subscription_spend_overview'),
+  // 推送设备级「自动执行」开关到后端运行时镜像（issue #307 / ADR-0042）：
+  // 真源在本机 localStorage 设备偏好，应用启动与变更时调用
+  setAutoExecutionEnabled: (enabled: boolean) =>
+    invoke<void>('set_auto_execution_enabled', { enabled }),
 
   // 数据同步
   syncInstruments: () => invoke<void>('sync_instruments'),
