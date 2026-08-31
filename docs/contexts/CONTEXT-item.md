@@ -16,7 +16,7 @@
   - 只存溯源指针（`source_transaction_id` → 购买交易），**不建立"交易→物品"的反向引用**；同一交易不可重复创建物品（溯源唯一）。
   - 生命周期：`in_use`（在用）/ `disposed`（已处置，记录处置日期 + 可选残值）。
   - 币种/金额复用核心交易域 Amount 接缝（整数分 + raw/native 折算到默认币种）。
-  - 属独立领域（独立领域状态），不属于参考数据（那不是"可选值字典"）；写入后发 `ledger:changed`（粗粒度失效）。
+  - 属独立领域（独立领域状态），不属于参考数据（那不是"可选值字典"）；写入后发 `ledger:changed`（粗粒度失效）——**复用同名事件的独立域订阅者**（ADR-0014，不另立信号；`ledger:changed` 语义锚定参考数据变更，见参考数据与设置域 Reference Data，物品 store 与参考 store 各订同一事件名，ADR-0044 决策 4）。
 - **别名**：不使用 "Asset / 资产"（偏会计/金融，且与投资域混淆）、"Good"、"Instrument"（那是金融标的，见 Instrument）。
 
 ## source_transaction_id（溯源购买交易）

@@ -1,10 +1,4 @@
 {
   "defaultProvider": "zai-coding-cn",
-  "defaultModel": "glm-5.3-flash",
-  "enabledModels": [
-    "zai-coding-cn/glm-5.3-flash",
-    "zai-coding-cn/glm-5.3",
-    "deepseek/deepseek-v4-flash-vision-exp",
-    "deepseek/deepseek-v4-flash"
-  ]
+  "defaultModel": "glm-5.3-flash"
 }
