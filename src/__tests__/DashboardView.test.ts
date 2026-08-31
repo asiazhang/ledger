@@ -126,6 +126,16 @@ describe('DashboardView 界面语言切换（issue #342 / #351）', () => {
       expect(
         wrapper.find('[data-testid="investment-overview-card"]').text(),
       ).toContain('Total Market Value')
+      // 财务自由度卡（issue #344）同样双语：标题与阶段标签随语言切换
+      expect(
+        wrapper.find('[data-testid="financial-freedom-card"]').text(),
+      ).toContain('Financial Freedom')
+      expect(
+        wrapper.find('[data-testid="financial-freedom-stage"]').text(),
+      ).toContain('Accumulating')
+      expect(
+        wrapper.find('[data-testid="financial-freedom-card"]').text(),
+      ).not.toContain('积累期')
     } finally {
       // 还原默认语言，避免污染同文件后续用例（模块级单例状态）
       await applyLocale('zh-CN')

@@ -14,6 +14,23 @@
     "unrealizedPnl": "未实现盈亏合计",
     "empty": "暂无持仓"
   },
+  "freedom": {
+    "title": "财务自由度",
+    "stageAccumulation": "积累期",
+    "stageApproaching": "接近自由",
+    "stageFree": "财务自由",
+    "tooltipAria": "计算口径说明",
+    "formula": "自由度 = 可投资资产 × 3% ÷ 年度预算总额",
+    "numeratorBreakdown": "分子 = 持仓市值 + 投资账户余额（折算为本位币，生活现金与负债不计入）",
+    "denominatorBreakdown": "分母 = 月度预算 × 12 + 年度预算（按计划节奏年化，不回退实际支出）",
+    "extractionRate": "3% 为保守安全提取率，≥100% 即财务自由",
+    "zeroDenominator": "设置预算后解锁财务自由度",
+    "goSetupBudget": "去设置预算",
+    "retry": "重试",
+    "numeratorLabel": "可投资资产 {amount}",
+    "denominatorLabel": "年度预算总额 {amount}",
+    "coverageYears": "可覆盖 {years} 年"
+  },
   "itemCost": {
     "title": "物品使用成本",
     "empty": "暂无在用物品",

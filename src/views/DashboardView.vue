@@ -97,12 +97,14 @@ const freedomCurrency = computed(() =>
 )
 
 // 阶段标签前端派生（ADR-0048 决策 5：阈值与文案归 UI，不做后端枚举）：
-// <30% 积累期 / 30–100% 接近自由 / ≥100% 财务自由
+// <30% 积累期 / 30–100% 接近自由 / ≥100% 财务自由；文案走 i18n（ADR-0049）
 const freedomStage = computed(() => {
   if (!freedom.value) return null
-  if (freedom.value.ratio >= 100) return { label: '财务自由', type: 'success' as const }
-  if (freedom.value.ratio >= 30) return { label: '接近自由', type: 'info' as const }
-  return { label: '积累期', type: 'default' as const }
+  if (freedom.value.ratio >= 100)
+    return { label: t('dashboard.freedom.stageFree'), type: 'success' as const }
+  if (freedom.value.ratio >= 30)
+    return { label: t('dashboard.freedom.stageApproaching'), type: 'info' as const }
+  return { label: t('dashboard.freedom.stageAccumulation'), type: 'default' as const }
 })
 
 // 进度条：>100% 封顶展示，≥100% 转成功状态（达成时刻的视觉确认）
@@ -195,33 +197,38 @@ onMounted(async () => {
 
     <!-- 财务自由度卡（issue #344）：投资概览之后、物品使用成本之前——
          先看资产再看「资产够不够躺」，最后才看单品与预算执行 -->
-    <NCard title="财务自由度" size="small" data-testid="financial-freedom-card">
+    <NCard :title="t('dashboard.freedom.title')" size="small" data-testid="financial-freedom-card">
       <template #header-extra>
         <!-- 计算口径悬停提示：3% 乘数使百分比无法从已展示的分子/分母直接推出，
              不解释会被当成算错（ADR-0048）。悬停即现、移开即关、不拦交互，
              不在 ADR-0035 弹层注册表枚举内，用裸 NTooltip -->
         <NTooltip placement="top" :style="{ maxWidth: '320px' }">
           <template #trigger>
-            <NButton text aria-label="计算口径说明" data-testid="financial-freedom-info">
+            <NButton text :aria-label="t('dashboard.freedom.tooltipAria')" data-testid="financial-freedom-info">
               <NIcon :size="14" color="var(--n-title-text-color, #999)">
                 <InformationCircleOutline />
               </NIcon>
             </NButton>
           </template>
           <NSpace vertical :size="2">
-            <span>自由度 = 可投资资产 × 3% ÷ 年度预算总额</span>
-            <span>分子 = 持仓市值 + 投资账户余额（折算为本位币，生活现金与负债不计入）</span>
-            <span>分母 = 月度预算 × 12 + 年度预算（按计划节奏年化，不回退实际支出）</span>
-            <span>3% 为保守安全提取率，≥100% 即财务自由</span>
+            <span>{{ t('dashboard.freedom.formula') }}</span>
+            <span>{{ t('dashboard.freedom.numeratorBreakdown') }}</span>
+            <span>{{ t('dashboard.freedom.denominatorBreakdown') }}</span>
+            <span>{{ t('dashboard.freedom.extractionRate') }}</span>
           </NSpace>
         </NTooltip>
       </template>
       <NSpin :show="freedomLoading">
         <!-- 零分母（未设预算）：占位引导跳预算页，口径不回退实际支出；
              按钮放 #extra——NEmpty 的 default slot 会顶掉 description -->
-        <NEmpty v-if="freedom && freedom.denominator_cents === 0" description="设置预算后解锁财务自由度">
+        <NEmpty
+          v-if="freedom && freedom.denominator_cents === 0"
+          :description="t('dashboard.freedom.zeroDenominator')"
+        >
           <template #extra>
-            <NButton size="small" type="primary" @click="goBudget">去设置预算</NButton>
+            <NButton size="small" type="primary" @click="goBudget">
+              {{ t('dashboard.freedom.goSetupBudget') }}
+            </NButton>
           </template>
         </NEmpty>
         <!-- 缺汇率等报错：卡内警告（沿物品使用成本卡的警告先例）+ 重试
@@ -229,7 +236,9 @@ onMounted(async () => {
         <NAlert v-else-if="freedomError" type="warning" :bordered="false">
           <NSpace align="center" :size="8">
             <span>{{ freedomError }}</span>
-            <NButton size="tiny" quaternary type="warning" @click="refreshFreedom">重试</NButton>
+            <NButton size="tiny" quaternary type="warning" @click="refreshFreedom">
+              {{ t('dashboard.freedom.retry') }}
+            </NButton>
           </NSpace>
         </NAlert>
         <NSpace v-else-if="freedom && freedomStage" vertical :size="4">
@@ -248,10 +257,20 @@ onMounted(async () => {
             :show-indicator="false"
           />
           <NText depth="3" style="font-size: 12px">
-            可投资资产 {{ formatAmount(freedom.numerator_cents, freedomCurrency) }}
-            · 年度预算总额 {{ formatAmount(freedom.denominator_cents, freedomCurrency) }}
+            {{
+              t('dashboard.freedom.numeratorLabel', {
+                amount: formatAmount(freedom.numerator_cents, freedomCurrency),
+              })
+            }}
+            · {{
+              t('dashboard.freedom.denominatorLabel', {
+                amount: formatAmount(freedom.denominator_cents, freedomCurrency),
+              })
+            }}
           </NText>
-          <NText depth="3" style="font-size: 12px">可覆盖 {{ freedom.coverage_years }} 年</NText>
+          <NText depth="3" style="font-size: 12px">
+            {{ t('dashboard.freedom.coverageYears', { years: freedom.coverage_years }) }}
+          </NText>
         </NSpace>
       </NSpin>
     </NCard>
