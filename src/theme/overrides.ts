@@ -10,7 +10,7 @@ import type { GlobalThemeOverrides } from 'naive-ui'
  * - 暗色主题的按钮文字色由 Naive 自动取深色（baseColor=#000），亮琥珀直接可用；
  *   亮色主题按钮文字为白色，亮琥珀对比度不足（约 2:1），故亮色用同色相加深版
  *   （amber-700，白字约 4.4:1）保证可读性。
- * - 改动后跑 `npx vue-tsc --noEmit`，`GlobalThemeOverrides` 会校验变量名。
+ * - 改动后跑 `pnpm exec vue-tsc --noEmit`，`GlobalThemeOverrides` 会校验变量名。
  */
 
 // 暗色（默认主题，主战场）

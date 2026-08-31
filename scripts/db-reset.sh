@@ -19,4 +19,4 @@ else
 fi
 
 echo "▶ 启动开发环境"
-exec npm run tauri dev
+exec pnpm run tauri dev
