@@ -42,3 +42,5 @@
 - **trait-object 注册表**（`trait TransactionBehavior { fn plan/apply/revert }` + 注册表）：动态分派 + 注册仪式，8 种静态闭集 kind 下无扩展收益，且测试更难直接断言穷尽性，放弃。
 - **在 `transaction` 领域模块内做行为分派**：行为层需反向依赖命令层（investment），破坏「命令层 → transaction」的依赖方向，放弃。
 - **保留 investment 的 9 个出口、仅收拢调用点**：散落分支虽集中但耦合面不变，验收标准「investment 对外仅暴露 prepare/apply/revert」不满足，放弃。
+
+> 注（ADR-0033，issue #169）：本 ADR 已被**部分修订**——决策 #1 的「对外暴露 plan/apply/revert 三个能力」与决策 #3 的「行为函数不内嵌事务、事务边界由调用方持有」由 ADR-0033（行为层编排协议内化）承接：行为层对外接口收窄为 create / update / delete 三个编排入口，事务所有权转移至行为层（嵌套感知「保证处于事务中」）；其余决策（薄 match、investment 出口三件套、dividend/split 显式拒绝）维持不变。

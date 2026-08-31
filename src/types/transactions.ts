@@ -11,6 +11,7 @@ export interface Transaction extends Syncable {
   account_id: string
   to_account_id: string | null
   category_id: string | null
+  merchant_id: string | null
   refund_of_transaction_id: string | null
   note: string | null
   date: string
@@ -24,6 +25,11 @@ export interface TransactionInput {
   account_id: string
   to_account_id?: string | null
   category_id?: string | null
+  /** 商户引用（expense/refund/income 可携带；transfer/buy/sell/dividend/split 后端行为层拒绝） */
+  merchant_id?: string | null
+  /** 商户名字符串（AI 导入契约，issue #194）：后端精确匹配在用商户名，命中复用、未命中即建；
+   * 与 merchant_id 互斥，与商户名归一化责任在后端 */
+  merchant_name?: string | null
   refund_of_transaction_id?: string | null
   note?: string | null
   date: string
@@ -35,6 +41,11 @@ export interface TransactionInput {
   idempotency_key?: string | null
 }
 
+/** 交易修改入参（`PUT /api/v1/transactions/{id}` 与 IPC `update_transaction` 共用，issue #178）。
+ * 与 TransactionInput 的唯一差异是不含 idempotency_key：幂等键不可编辑（只在导入时落定，
+ * 编辑不改变导入身份），提交时同一对象形状分派创建/更新两路。 */
+export type UpdateTransactionInput = Omit<TransactionInput, 'idempotency_key'>
+
 /** 交易列表查询过滤条件（服务端分页 + 过滤） */
 export interface TransactionListFilter {
   /** 起始日期（含），YYYY-MM-DD */
@@ -45,6 +56,8 @@ export interface TransactionListFilter {
   account_id?: string | null
   /** 涉及账户过滤（account_id 或 to_account_id 命中即算，含转入的转账） */
   involving_account_id?: string | null
+  /** 按商户过滤（issue #191）：命中该商户全部未删除交易，软删商户同样可过滤 */
+  merchant_id?: string | null
   /** income / expense / transfer / buy / sell / refund */
   kind?: TransactionKind | null
   /** 取前 N 条（仪表盘"最近 N 条"场景），与分页互斥：传 page_size 时分页路径生效 */
@@ -67,8 +80,6 @@ export interface TransactionSearchResult {
   items: Transaction[]
   /** 命中总数（供「命中 N 条」与分页） */
   total: number
-  /** 索引是否可能滞后：存在尚未刷新的写入时 true（后台定时刷新，周期内不立即可搜） */
-  stale: boolean
 }
 
 /** 交易搜索筛选条件（与关键字 AND 组合；全部可选、单边可用） */

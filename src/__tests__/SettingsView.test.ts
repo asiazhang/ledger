@@ -44,6 +44,7 @@ function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
     list_currencies: mockCurrencies,
     list_accounts: [],
     list_categories: [],
+    list_merchants: [],
     list_backups: [],
     get_data_location_info: {
       active_dir: '/Users/me/Library/Application Support/ledger',
@@ -92,20 +93,21 @@ beforeEach(async () => {
   // 默认桩收口到 stubInvoke（含备份全链路与 get_data_location_info）。
   stubInvoke()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 describe('SettingsView.vue（issue #157：Tab 分域重构 6 → 4）', () => {
-  it('Tab 格局为 通用 → 分类与币种 → 数据 → 关于，共 4 个，关于在末位', () => {
+  it('Tab 格局为 通用 → 分类 → 商户 → 数据 → 关于，共 5 个，关于在末位（#189 新增商户 Tab；ADR-0034 更名）', () => {
     const wrapper = mount(SettingsView)
     const labels = wrapper.findAll('.n-tabs-tab').map((t) => t.text())
-    expect(labels).toEqual(['通用', '分类与币种', '数据', '关于'])
+    expect(labels).toEqual(['通用', '分类', '商户', '数据', '关于'])
   })
 
-  it('旧 Tab（分类 / 币种 / 备份与恢复 / 外观 / 存储位置）全部消失', () => {
+  it('旧 Tab（备份与恢复 / 外观 / 存储位置）全部消失', () => {
+    // 「分类」「币种」不再列入：ADR-0034 后「分类」是现役 Tab 名（原「分类与币种」更名），
+    // 币种只读展示已移除，不再有独立币种 Tab。
     const wrapper = mount(SettingsView)
     const labels = wrapper.findAll('.n-tabs-tab').map((t) => t.text())
-    expect(labels).not.toContain('分类')
     expect(labels).not.toContain('币种')
     expect(labels).not.toContain('备份与恢复')
     expect(labels).not.toContain('外观')
@@ -129,13 +131,12 @@ describe('SettingsView.vue（issue #157：Tab 分域重构 6 → 4）', () => {
     expect(store.theme).toBe('light')
   })
 
-  it('「分类与币种」含分类管理器与支持币种表格', async () => {
+  it('「分类」含分类管理器，不再展示支持币种表格（ADR-0034）', async () => {
     const wrapper = mount(SettingsView)
-    await openTab(wrapper, '分类与币种')
+    await openTab(wrapper, '分类')
     expect(wrapper.findComponent(CategoryManager).exists()).toBe(true)
     const html = wrapper.html()
-    expect(html).toContain('支持币种')
-    expect(html).toContain('人民币')
+    expect(html).not.toContain('支持币种')
     expect(html).not.toContain('默认币种')
   })
 

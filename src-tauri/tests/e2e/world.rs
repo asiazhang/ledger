@@ -3,15 +3,25 @@ use std::fmt;
 use std::path::PathBuf;
 
 use cucumber::World;
-use rusqlite::Connection;
 
 use tauri_app_lib::commands::data_location::{DataLocationChangeOutcome, DataLocationInfo};
-use tauri_app_lib::db::{init_db, open_in_memory};
+use tauri_app_lib::db::DbState;
 use tauri_app_lib::models::{
-    CreateTransactionResult, DashboardOverview, ItemWithDailyCost, Transaction, TransactionInput,
-    TransactionSearchResult,
+    CreateTransactionResult, DashboardOverview, ItemDailyCost, ItemDailyTotal, ItemWithDailyCost,
+    Transaction, TransactionInput, TransactionSearchResult,
 };
 use tauri_app_lib::transaction::amount::TransactionKind;
+
+/// 连接守卫（BDD 步骤专用宏）：取连接锁，展开为字段访问链——
+/// 借用发生在 `world.db.conn` 字段路径上而非整个 world，与步骤内对
+/// world 其他字段的赋值共存（disjoint borrow）。守卫需跨语句存活时
+/// 先绑定局部变量（`let conn = world_conn!(world);`）。迁移期过渡形态
+/// （ADR-0032）：置脏语义相关写路径应优先走 `world.db.write` 写入口。
+macro_rules! world_conn {
+    ($world:expr) => {
+        $world.db.conn.lock().unwrap_or_else(|e| e.into_inner())
+    };
+}
 
 /// 批量导入的一行（重跑导入时据此重建 `TransactionInput`）。
 /// 记录账户/转入账户的**名称**而非 ID，保证重跑时重新解析（与真实导入流程一致）。
@@ -24,6 +34,8 @@ pub struct ImportedRow {
     pub to_account_name: Option<String>,
     pub note: Option<String>,
     pub date: String,
+    /// 商户名字符串（AI 导入契约，issue #194）：后端精确匹配复用或即建，AI 不负责去重。
+    pub merchant_name: Option<String>,
     /// 客户端提供的导入幂等键（内容无关身份，重跑时保持不变）。
     pub idempotency_key: Option<String>,
 }
@@ -41,6 +53,8 @@ impl ImportedRow {
                 .as_deref()
                 .map(|name| world.account_id(name)),
             category_id: None,
+            merchant_id: None,
+            merchant_name: self.merchant_name.clone(),
             refund_of_transaction_id: None,
             note: self.note.clone(),
             date: self.date.clone(),
@@ -57,10 +71,13 @@ impl ImportedRow {
 #[derive(World)]
 #[world(init = Self::new)]
 pub struct LedgerWorld {
-    /// In-memory 数据库连接（每个 scenario 独立）
-    pub conn: Connection,
+    /// 数据库连接（写入口形态，ADR-0032）：断言/读路径经 [`LedgerWorld::conn`]
+    /// 取守卫，置脏语义相关写路径经 `db.write` 走连接层统一写入口。
+    pub db: DbState,
     /// 账户名称到 ID 的映射（Given 步骤插入账户后注册，含种子黑洞账户）
     pub account_name_to_id: HashMap<String, String>,
+    /// 商户名称到 ID 的映射（Given/When 步骤创建商户后注册）
+    pub merchant_name_to_id: HashMap<String, String>,
     /// 最新创建的交易 ID（用于关联操作如退款）
     pub last_transaction_id: Option<String>,
     /// 最近一次操作错误（检查失败场景）
@@ -71,6 +88,9 @@ pub struct LedgerWorld {
     pub last_import_rows: Vec<ImportedRow>,
     /// 最近一次批量导入的逐条结果（含 `duplicate` 标记）
     pub last_batch_results: Vec<CreateTransactionResult>,
+    /// 投资迁移链路（issue #297）：已导入 buy 交易 id 按导入先后累积
+    /// （「持仓批次按导入先后锚定顺序」步骤据此回填批次 created_at）
+    pub imported_buy_txn_ids: Vec<String>,
     /// 最近一次查询的账户余额快照（账户名 → (余额, is_hidden)，含黑洞账户）
     pub balances: HashMap<String, (i64, bool)>,
     /// 最近一次备份文件的路径（备份/恢复场景用）
@@ -85,6 +105,14 @@ pub struct LedgerWorld {
     pub last_occurrence_id: Option<String>,
     /// 最近一次交易搜索结果快照（搜索场景断言用）
     pub last_search: Option<TransactionSearchResult>,
+    /// 最近一次标的搜索结果快照（标的搜索语义场景断言用，issue #199）
+    pub last_instrument_search: Option<tauri_app_lib::models::InstrumentListResult>,
+    /// 按代码即拉添加基金的结果快照（issue #301 场景断言用；失败经 last_error）
+    pub last_add_fund: Option<tauri_app_lib::models::AddFundResult>,
+    /// 最近一次组合走势查询快照（组合走势场景断言用，issue #248）
+    pub last_portfolio_trend: Option<tauri_app_lib::models::PortfolioValueTrend>,
+    /// 最近一次单标的走势查询快照（基金净值走势场景断言用，issue #303）
+    pub last_instrument_trend: Option<tauri_app_lib::models::InstrumentPriceTrend>,
     /// 最近创建的物品 id（物品场景断言用）
     pub last_item_id: Option<String>,
     /// 最近一次物品写入发出的失效信号次数（ledger:changed 注入 seam 断言用）
@@ -95,8 +123,24 @@ pub struct LedgerWorld {
     pub remembered_item_created_at: Option<String>,
     /// 记住的关联购买交易 id（issue #119 自动带出/溯源断言用）
     pub remembered_purchase_transaction_id: Option<String>,
+    /// 最近一次自选参考日重算的结果快照（issue #121 断言用）
+    pub last_item_cost: Option<ItemDailyCost>,
+    /// 最近一次在用物品每天成本合计快照（issue #122 dashboard 汇总卡断言用）
+    pub last_item_daily_total: Option<ItemDailyTotal>,
     /// 最近一次净资产总览快照（首页仪表盘场景断言用）
     pub last_overview: Option<DashboardOverview>,
+    /// 最近一次订阅实际花费总览快照（订阅花费场景断言用，issue #160）
+    pub last_spend: Option<tauri_app_lib::scheduled_transactions::SubscriptionSpendOverview>,
+    /// 最近一次预算进度快照（预算滚动窗口场景断言用，issue #182）
+    pub last_budget_progress: Vec<tauri_app_lib::models::BudgetProgress>,
+    /// 最近一次商户消费排行快照（报表商户排行场景断言用，issue #192）
+    pub last_merchant_shares: Vec<tauri_app_lib::models::MerchantShare>,
+    /// 最近一次报表年份筛选范围快照（报表年份范围场景断言用，issue #266）
+    pub last_year_range: Option<tauri_app_lib::models::YearRange>,
+    /// 最近一次定时计划详情快照（期次详情弹窗场景断言用，issue #205）
+    pub last_detail: Option<tauri_app_lib::scheduled_transactions::ScheduledTransactionDetail>,
+    /// 场景冻结的本地今日（滚动窗口步骤口径一致用，issue #182）
+    pub frozen_today: Option<chrono::NaiveDate>,
     /// DataLocation 引导场景：默认应用数据目录（真临时目录）
     pub dl_default_dir: Option<PathBuf>,
     /// DataLocation 引导场景：指针指向的目标目录
@@ -136,16 +180,16 @@ impl fmt::Debug for LedgerWorld {
 
 impl LedgerWorld {
     fn new() -> Self {
-        let mut conn = open_in_memory().expect("无法创建内存数据库");
-        init_db(&mut conn).expect("数据库初始化失败");
         let mut world = Self {
-            conn,
+            db: DbState::open_in_memory().expect("数据库初始化失败"),
             account_name_to_id: HashMap::new(),
+            merchant_name_to_id: HashMap::new(),
             last_transaction_id: None,
             last_error: None,
             transactions_list: Vec::new(),
             last_import_rows: Vec::new(),
             last_batch_results: Vec::new(),
+            imported_buy_txn_ids: Vec::new(),
             balances: HashMap::new(),
             last_backup_path: None,
             restored_db_path: None,
@@ -153,12 +197,24 @@ impl LedgerWorld {
             last_plan_id: None,
             last_occurrence_id: None,
             last_search: None,
+            last_instrument_search: None,
+            last_add_fund: None,
+            last_portfolio_trend: None,
+            last_instrument_trend: None,
             last_overview: None,
+            last_spend: None,
+            last_budget_progress: Vec::new(),
+            last_merchant_shares: Vec::new(),
+            last_year_range: None,
+            last_detail: None,
+            frozen_today: None,
             last_item_id: None,
             item_signal_count: 0,
             items_list: Vec::new(),
             remembered_item_created_at: None,
             remembered_purchase_transaction_id: None,
+            last_item_cost: None,
+            last_item_daily_total: None,
             dl_default_dir: None,
             dl_target_dir: None,
             last_boot: None,
@@ -169,8 +225,8 @@ impl LedgerWorld {
         };
         // 注册种子黑洞账户（V004 预置 无(CNY)/无(HKD)），供迁移场景按名称引用。
         let hidden: Vec<(String, String)> = {
-            let mut stmt = world
-                .conn
+            let conn = world_conn!(world);
+            let mut stmt = conn
                 .prepare("SELECT id, name FROM accounts WHERE is_hidden=1")
                 .expect("查询黑洞账户失败");
             let rows = stmt
@@ -190,5 +246,13 @@ impl LedgerWorld {
             .get(name)
             .cloned()
             .unwrap_or_else(|| panic!("账户 '{}' 不存在", name))
+    }
+
+    /// 获取商户 ID，按名称查找
+    pub fn merchant_id(&self, name: &str) -> String {
+        self.merchant_name_to_id
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| panic!("商户 '{}' 不存在", name))
     }
 }

@@ -1,3 +1,8 @@
+//! 分类域核心逻辑（issue #91）：CRUD / 幂等创建 / 软删除。
+//!
+//! 置脏触发已收口连接层统一写入口（`db::write`，ADR-0032）：本模块对备份域零感知，
+//! 写入成功后的置脏/到期检查由调用方所在写入口闭包在提交点单点执行。
+
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::db::query::query_all;
@@ -33,8 +38,6 @@ pub fn create_category_internal(conn: &Connection, input: CategoryInput) -> Resu
             device_id()
         ],
     )?;
-    // 脏标记挂钩（issue #126）：IPC 与 HTTP 端点共用本函数，落库成功即置脏。
-    crate::auto_backup::on_write(conn);
     Ok(id)
 }
 
@@ -83,6 +86,5 @@ pub fn delete_category_internal(conn: &Connection, id: &str) -> Result<()> {
         "UPDATE categories SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id()],
     )?;
-    crate::auto_backup::on_write(conn);
     Ok(())
 }

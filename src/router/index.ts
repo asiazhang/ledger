@@ -1,7 +1,8 @@
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router'
 import { saveRouteName } from '@/utils/view-state'
 
-const routes: RouteRecordRaw[] = [
+// 导出供测试用同构 memory router 复用，避免路由表双份漂移
+export const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/dashboard' },
   {
     path: '/dashboard',
@@ -38,6 +39,19 @@ const routes: RouteRecordRaw[] = [
     name: 'investments',
     component: () => import('@/views/InvestmentsView.vue'),
     meta: { title: '投资' },
+  },
+  {
+    path: '/scheduled',
+    name: 'scheduled',
+    component: () => import('@/views/ScheduledView.vue'),
+    meta: { title: '定时' },
+  },
+  {
+    // 旧订阅入口（issue #202）：重定向到定时视图订阅页签，用户无感知；
+    // 保留 name 供 ViewState 兼容——旧记录 'subscriptions' 仍可解析并落到订阅页签
+    path: '/subscriptions',
+    name: 'subscriptions',
+    redirect: { name: 'scheduled', query: { tab: 'subscriptions' } },
   },
   {
     path: '/items',

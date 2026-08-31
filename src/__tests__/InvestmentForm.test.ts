@@ -61,11 +61,12 @@ beforeEach(async () => {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve([])
     if (cmd === 'list_instruments') return Promise.resolve({ items: [], total: 0 })
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 describe('InvestmentForm.vue 移除「新增标的」入口（issue #152）', () => {
@@ -117,5 +118,129 @@ describe('InvestmentForm.vue 移除「新增标的」入口（issue #152）', ()
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('InvestmentForm.vue 基金申赎形态（issue #302）', () => {
+  const fundInstruments = [
+    {
+      id: 'ins-fund',
+      symbol: '000123',
+      name: '某混合基金',
+      type: 'fund' as const,
+      currency_code: 'CNY',
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+      version: 1,
+      device_id: 'test',
+      is_deleted: false,
+      market: 'unknown' as const,
+      invested: false,
+      price_cents: null,
+    },
+  ]
+
+  /** 挂载并选中基金标的（远程搜索 → 选中） */
+  async function mountWithFundSelected(kind: 'buy' | 'sell') {
+    const wrapper = mount(InvestmentForm, {
+      props: { kind, submitLabel: kind === 'buy' ? '记买入' : '记卖出' },
+    })
+    const select = instrumentSelect(wrapper)
+    vi.useFakeTimers()
+    try {
+      await select.find('input').setValue('某混合')
+      await vi.advanceTimersByTimeAsync(300)
+      await flushPromises()
+    } finally {
+      vi.useRealTimers()
+    }
+    select.vm.$emit('update:value', 'ins-fund')
+    await flushPromises()
+    return wrapper
+  }
+
+  /** 按 placeholder 找 NInputNumber 内层 input */
+  function inputByPlaceholder(wrapper: ReturnType<typeof mount>, placeholder: string) {
+    return wrapper.findAll('input').find((i) => i.attributes('placeholder') === placeholder)
+  }
+
+  it('选基金标的：金额可编辑（确认单权威）、份额标签、单价只读反算', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_instruments') return Promise.resolve({ items: fundInstruments, total: 1 })
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const wrapper = await mountWithFundSelected('buy')
+    expect(inputByPlaceholder(wrapper, '确认金额（以确认单为准）')).toBeDefined()
+    expect(inputByPlaceholder(wrapper, '确认份额（以确认单为准）')).toBeDefined()
+    const priceInput = inputByPlaceholder(wrapper, '由金额与份额反算')
+    expect(priceInput).toBeDefined()
+    expect(priceInput!.attributes('disabled')).toBeDefined()
+    // 股票形态的占位不应出现
+    expect(inputByPlaceholder(wrapper, '自动计算')).toBeUndefined()
+  })
+
+  it('未选标的时保持股票形态（金额只读展示、单价可编辑）', () => {
+    const wrapper = mount(InvestmentForm, { props: { kind: 'buy', submitLabel: '记买入' } })
+    expect(inputByPlaceholder(wrapper, '自动计算')).toBeDefined()
+    expect(inputByPlaceholder(wrapper, '确认金额（以确认单为准）')).toBeUndefined()
+    const priceInput = inputByPlaceholder(wrapper, '单价')
+    expect(priceInput).toBeDefined()
+    expect(priceInput!.attributes('disabled')).toBeUndefined()
+  })
+})
+
+describe('InvestmentForm.vue 编辑模式（issue #180）', () => {
+  const editingTx = {
+    id: 'txn-buy-1',
+    kind: 'buy' as const,
+    amount_cents: 15500,
+    currency_code: 'CNY',
+    amount_native_cents: 15500,
+    account_id: 'acc-1',
+    to_account_id: null,
+    category_id: null,
+    refund_of_transaction_id: null,
+    note: '建仓买入',
+    date: '2026-01-10',
+    created_at: '2026-01-10T01:00:00Z',
+    updated_at: '2026-01-10T01:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: false,
+  }
+
+  const editingTrade = {
+    instrument_id: 'ins-1',
+    symbol: 'NVDA',
+    instrument_name: '英伟达',
+    instrument_type: 'stock' as const,
+    quantity: 100,
+    price_cents: 15000,
+    fee_cents: 500,
+  }
+
+  it('编辑回填：标的候选直接显示 symbol · name（不依赖搜索），按钮文案「保存修改」', () => {
+    const wrapper = mount(InvestmentForm, {
+      props: { kind: 'buy', submitLabel: '记买入', editing: editingTx, trade: editingTrade },
+    })
+    const select = instrumentSelect(wrapper)
+    expect(select.props('value')).toBe('ins-1')
+    expect((select.props('options') as Array<{ label: string }>)[0].label).toBe('NVDA · 英伟达')
+    expect(wrapper.text()).toContain('保存修改')
+    expect(wrapper.text()).not.toContain('记买入')
+  })
+
+  it('编辑提交：触发 saved 事件（父层据此关窗），创建路径仍触发 created', async () => {
+    const wrapper = mount(InvestmentForm, {
+      props: { kind: 'buy', submitLabel: '记买入', editing: editingTx, trade: editingTrade },
+    })
+    mockInvoke.mockImplementationOnce((cmd: string) => {
+      if (cmd === 'update_transaction') return Promise.resolve()
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    await wrapper.findAll('button').find((b) => b.text().includes('保存修改'))!.trigger('click')
+    await flushPromises()
+    expect(wrapper.emitted('saved')).toHaveLength(1)
+    expect(wrapper.emitted('created')).toBeUndefined()
   })
 })

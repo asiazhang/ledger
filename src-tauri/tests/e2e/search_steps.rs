@@ -1,19 +1,17 @@
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::commands::search::{
-    process_reindex_queue, rebuild_search_index, search_transactions_internal,
-};
+use crate::world::LedgerWorld;
+use tauri_app_lib::commands::search::search_transactions_internal;
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
 use tauri_app_lib::models::TransactionSearchResult;
-
-use crate::world::LedgerWorld;
 
 // ---------------------------------------------------------------------------
 // Given
 // ---------------------------------------------------------------------------
 
-/// 存量交易：直接 SQL 插入，绕过应用层索引钩子（模拟 V005 迁移前的存量数据）。
+/// 存量交易：直接 SQL 插入，绕过应用层写入路径（语义与正常写入一致——
+/// 搜索无索引，两种来源的写入立即可搜）。
 #[given(expr = "存量交易 备注 {string} 金额 {int} 账户 {string} 日期 {string}")]
 fn legacy_txn(
     world: &mut LedgerWorld,
@@ -25,8 +23,7 @@ fn legacy_txn(
     let account_id = world.account_id(&account_name);
     let id = new_uuid();
     let now = now_iso();
-    world
-        .conn
+    world_conn!(world)
         .execute(
             "INSERT INTO transactions \
              (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
@@ -42,21 +39,10 @@ fn legacy_txn(
 // When
 // ---------------------------------------------------------------------------
 
-#[when(expr = "重建搜索索引")]
-fn rebuild_index(world: &mut LedgerWorld) {
-    rebuild_search_index(&world.conn).expect("重建搜索索引失败");
-}
-
-/// 消费搜索重建队列（模拟后台定时刷新的单次周期，ADR-0004 决策 #14）。
-#[when(expr = "执行索引刷新")]
-fn refresh_index(world: &mut LedgerWorld) {
-    process_reindex_queue(&world.conn).expect("执行索引刷新失败");
-}
-
 #[when(expr = "搜索 {string}")]
 fn search(world: &mut LedgerWorld, query: String) {
     world.last_search = Some(
-        search_transactions_internal(&world.conn, &query, 1, 20, None, None, None, None)
+        search_transactions_internal(&world_conn!(world), &query, 1, 20, None, None, None, None)
             .expect("搜索失败"),
     );
 }
@@ -64,8 +50,17 @@ fn search(world: &mut LedgerWorld, query: String) {
 #[when(expr = "搜索 {string} 第 {int} 页 每页 {int} 条")]
 fn search_paged(world: &mut LedgerWorld, query: String, page: usize, page_size: usize) {
     world.last_search = Some(
-        search_transactions_internal(&world.conn, &query, page, page_size, None, None, None, None)
-            .expect("搜索失败"),
+        search_transactions_internal(
+            &world_conn!(world),
+            &query,
+            page,
+            page_size,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("搜索失败"),
     );
 }
 
@@ -73,8 +68,17 @@ fn search_paged(world: &mut LedgerWorld, query: String, page: usize, page_size: 
 #[when(expr = "搜索 {string} 金额区间 {int} 至 {int} 分")]
 fn search_keyword_amount_range(world: &mut LedgerWorld, query: String, min: i64, max: i64) {
     world.last_search = Some(
-        search_transactions_internal(&world.conn, &query, 1, 20, Some(min), Some(max), None, None)
-            .expect("搜索失败"),
+        search_transactions_internal(
+            &world_conn!(world),
+            &query,
+            1,
+            20,
+            Some(min),
+            Some(max),
+            None,
+            None,
+        )
+        .expect("搜索失败"),
     );
 }
 
@@ -83,7 +87,7 @@ fn search_keyword_amount_range(world: &mut LedgerWorld, query: String, min: i64,
 fn search_keyword_date_range(world: &mut LedgerWorld, query: String, from: String, to: String) {
     world.last_search = Some(
         search_transactions_internal(
-            &world.conn,
+            &world_conn!(world),
             &query,
             1,
             20,
@@ -100,8 +104,17 @@ fn search_keyword_date_range(world: &mut LedgerWorld, query: String, from: Strin
 #[when(expr = "搜索金额区间 {int} 至 {int} 分")]
 fn search_amount_range(world: &mut LedgerWorld, min: i64, max: i64) {
     world.last_search = Some(
-        search_transactions_internal(&world.conn, "", 1, 20, Some(min), Some(max), None, None)
-            .expect("搜索失败"),
+        search_transactions_internal(
+            &world_conn!(world),
+            "",
+            1,
+            20,
+            Some(min),
+            Some(max),
+            None,
+            None,
+        )
+        .expect("搜索失败"),
     );
 }
 
@@ -112,7 +125,7 @@ fn search_amount_range_yuan(world: &mut LedgerWorld, min: f64, max: f64) {
     let max_cents = (max * 100.0).round() as i64;
     world.last_search = Some(
         search_transactions_internal(
-            &world.conn,
+            &world_conn!(world),
             "",
             1,
             20,
@@ -129,7 +142,7 @@ fn search_amount_range_yuan(world: &mut LedgerWorld, min: f64, max: f64) {
 #[when(expr = "搜索金额下限 {int} 分")]
 fn search_amount_min(world: &mut LedgerWorld, min: i64) {
     world.last_search = Some(
-        search_transactions_internal(&world.conn, "", 1, 20, Some(min), None, None, None)
+        search_transactions_internal(&world_conn!(world), "", 1, 20, Some(min), None, None, None)
             .expect("搜索失败"),
     );
 }
@@ -138,7 +151,7 @@ fn search_amount_min(world: &mut LedgerWorld, min: i64) {
 #[when(expr = "搜索金额上限 {int} 分")]
 fn search_amount_max(world: &mut LedgerWorld, max: i64) {
     world.last_search = Some(
-        search_transactions_internal(&world.conn, "", 1, 20, None, Some(max), None, None)
+        search_transactions_internal(&world_conn!(world), "", 1, 20, None, Some(max), None, None)
             .expect("搜索失败"),
     );
 }
@@ -148,7 +161,7 @@ fn search_amount_max(world: &mut LedgerWorld, max: i64) {
 fn search_date_range(world: &mut LedgerWorld, from: String, to: String) {
     world.last_search = Some(
         search_transactions_internal(
-            &world.conn,
+            &world_conn!(world),
             "",
             1,
             20,
@@ -215,5 +228,22 @@ fn search_nth_amount(world: &mut LedgerWorld, index: i64, expected: i64) {
     assert_eq!(
         item.amount_cents, expected,
         "第 {index} 条搜索结果金额不匹配"
+    );
+}
+
+/// 搜索结果展示商户：按名称解析为 id 与交易的 merchant_id 比对
+/// （展示名称本身由前端 merchantMap 负责交易列表信息口径，这里断言关联正确）。
+#[then(expr = "搜索结果第 {int} 条商户应为 {string}")]
+fn search_nth_merchant(world: &mut LedgerWorld, index: i64, expected: String) {
+    let snapshot = search_snapshot(world);
+    let item = snapshot
+        .items
+        .get((index - 1) as usize)
+        .unwrap_or_else(|| panic!("搜索结果不足 {} 条", index));
+    let expected_id = world.merchant_id(&expected);
+    assert_eq!(
+        item.merchant_id.as_deref(),
+        Some(expected_id.as_str()),
+        "第 {index} 条搜索结果商户不匹配"
     );
 }

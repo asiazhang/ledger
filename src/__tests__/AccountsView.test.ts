@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { NDialogProvider } from 'naive-ui'
+import { h } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
@@ -47,17 +49,18 @@ beforeEach(async () => {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve(mockBalances.map((b) => b.account))
     if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve([])
     if (cmd === 'list_account_balances') return Promise.resolve(mockBalances)
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
   localStorage.clear()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 describe('AccountsView 账户名下钻（issue #97）', () => {
   it('账户名称渲染为可点击组件（标题提示查看该账户的交易）', async () => {
-    const wrapper = mount(AccountsView)
+    const wrapper = mountView()
     await flushPromises()
     const links = wrapper.findAllComponents(AccountLink)
     expect(links.length).toBe(2)
@@ -66,7 +69,7 @@ describe('AccountsView 账户名下钻（issue #97）', () => {
   })
 
   it('点击账户名称跳转交易页并携带该账户过滤参数', async () => {
-    const wrapper = mount(AccountsView)
+    const wrapper = mountView()
     await flushPromises()
     const links = wrapper.findAllComponents(AccountLink)
     await links[1].find('button').trigger('click')
@@ -75,4 +78,11 @@ describe('AccountsView 账户名下钻（issue #97）', () => {
       query: { account: 'acc-2' },
     })
   })
+
+  /** 视图顶层调用 useDialog（删除二次确认），与 App.vue 同构需 NDialogProvider 包裹。 */
+  function mountView() {
+    return mount(NDialogProvider, {
+      slots: { default: () => h(AccountsView) },
+    })
+  }
 })

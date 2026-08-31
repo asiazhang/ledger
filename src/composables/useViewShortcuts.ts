@@ -1,32 +1,178 @@
-import { onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { Router } from 'vue-router'
+import type { DropdownOption } from 'naive-ui'
+import { hasOpenOverlay } from '@/composables/overlayRegistry'
+import { getSavedSidebarOrder, saveSidebarOrder, clearSidebarOrder } from '@/utils/view-state'
 
 export interface ViewShortcut {
   /** 路由 name（与侧边栏菜单 key 一致） */
   name: string
-  /** 主数字键，如 '1'..'9' */
+  /** 主键：按最终位置推导的数字 '1'..'0' 或 ','（设置） */
   key: string
 }
 
-/** 侧边栏视图单一来源（顺序 = 菜单顺序）；无主数字键的视图不参与 Cmd/Ctrl 快捷键。 */
-export const sidebarViews: Array<{ name: string; key?: string }> = [
-  { name: 'dashboard', key: '1' },
-  { name: 'transactions', key: '2' },
-  { name: 'search', key: '3' },
-  { name: 'accounts', key: '4' },
-  { name: 'reports', key: '5' },
-  { name: 'investments', key: '6' },
-  // 物品（issue #116）：暂无数字快捷键（1..9 已占满），仍进侧边栏菜单
-  { name: 'items' },
-  { name: 'budget', key: '7' },
-  { name: 'ai', key: '8' },
-  { name: 'settings', key: '9' },
-]
+/**
+ * 顺序源模块：侧边栏视图顺序单一来源（顺序 = 菜单顺序 = 数字键位）。
+ * 默认序按使用频率物化为出厂快照（不做运行时统计）；
+ * 三固定约束与可排区边界编码为常量，键位与侧栏菜单均由最终序按位置推导。
+ */
 
-/** 视图快捷键映射：按侧边栏菜单顺序，Cmd/Ctrl+1..9。 */
-export const viewShortcuts: ViewShortcut[] = sidebarViews
-  .filter((v): v is { name: string; key: string } => v.key !== undefined)
-  .map(({ name, key }) => ({ name, key }))
+/** 默认序（按使用频率的出厂快照）：概览、交易、账户、预算、投资、报表、定时、物品、搜索、AI、设置 */
+export const DEFAULT_VIEW_ORDER = [
+  'dashboard',
+  'transactions',
+  'accounts',
+  'budget',
+  'investments',
+  'reports',
+  'scheduled',
+  'items',
+  'search',
+  'ai',
+  'settings',
+] as const
+
+export type ViewName = (typeof DEFAULT_VIEW_ORDER)[number]
+
+/** 三固定约束：概览首位（与启动落地页一致）、AI 倒数第二、设置末位 */
+export const FIRST_VIEW: ViewName = 'dashboard'
+export const PENULTIMATE_VIEW: ViewName = 'ai'
+export const LAST_VIEW: ViewName = 'settings'
+
+/** 可排区（第 2–9 位）：默认序去掉三固定项，相对顺序即默认相对顺序 */
+export const ARRANGEABLE_VIEWS: readonly ViewName[] = DEFAULT_VIEW_ORDER.filter(
+  (name) => name !== FIRST_VIEW && name !== PENULTIMATE_VIEW && name !== LAST_VIEW,
+)
+
+/** 固定项例外判定：可排区八项为真，概览/AI/设置三固定项为假（右键无菜单）。 */
+export function isArrangeableView(v: unknown): v is ViewName {
+  return typeof v === 'string' && (ARRANGEABLE_VIEWS as readonly string[]).includes(v)
+}
+
+/**
+ * 顺序解析（纯函数）：已存可排区顺序（脏数据防御）→ 最终可排区顺序。
+ * 非法视图名过滤（含三固定项名、未知名、非字符串项）→ 去重（保留首现）→
+ * 缺失项按默认序补入可排区末尾；非数组输入整体回退默认序。
+ */
+export function parseArrangeableOrder(raw: unknown): ViewName[] {
+  const kept: ViewName[] = []
+  const seen = new Set<string>()
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (!isArrangeableView(item) || seen.has(item)) continue
+      seen.add(item)
+      kept.push(item)
+    }
+  }
+  for (const name of ARRANGEABLE_VIEWS) {
+    if (!seen.has(name)) kept.push(name)
+  }
+  return kept
+}
+
+/**
+ * 已存可排区顺序：启动读路径（解析防御后回退默认序）。
+ * 写路径收口在 applySidebarSort / resetSidebarOrder（issue #270）：两者同步更新此 ref
+ * 与持久化，菜单顺序与键位经 viewShortcuts 自动随动。
+ */
+const arrangeableOrder = ref<ViewName[]>(parseArrangeableOrder(getSavedSidebarOrder()))
+
+/** 当前可排区顺序（只读响应式）：侧栏排序菜单构建等消费；写路径不经它。 */
+export const sidebarOrder = computed<readonly ViewName[]>(() => arrangeableOrder.value)
+
+// ---------------------------------------------------------------------------
+// 自定义排序（issue #270）：可排区右键菜单 → 移动纯函数 + 菜单构建纯函数 + 写路径。
+// 顺序仍是唯一事实源（arrangeableOrder），移动只重排可排区、三固定项不动；
+// 点选即重排并立即持久化，菜单顺序与键位经 viewShortcuts 自动随动。
+// ---------------------------------------------------------------------------
+
+/** 排序动作：上移一位 / 下移一位 / 移到可排区顶部 / 移到可排区底部 */
+export type SidebarSortAction = 'up' | 'down' | 'top' | 'bottom'
+
+/**
+ * 移动纯函数：在可排区顺序内把 name 移动到目标位置，返回新数组（不改输入）。
+ * 已在对应边界（首位上移/移顶、末位下移/移底）时内容不变；
+ * name 不在序中（如固定项名）原样返回内容。
+ */
+export function moveArrangeable(
+  order: readonly ViewName[],
+  name: ViewName,
+  action: SidebarSortAction,
+): ViewName[] {
+  const index = order.indexOf(name)
+  if (index === -1) return [...order]
+  const last = order.length - 1
+  const target = action === 'up' ? index - 1
+    : action === 'down' ? index + 1
+    : action === 'top' ? 0
+    : last
+  if (target < 0 || target > last || target === index) return [...order]
+  const next = [...order]
+  next.splice(index, 1)
+  next.splice(target, 0, name)
+  return next
+}
+
+/**
+ * 排序菜单 key 与移动动作同一词表（key 即 action，杜绝两套词表错位）：
+ * up / down / top / bottom 四种移动 + reset 恢复默认排序。
+ */
+export function isSidebarSortAction(v: string): v is SidebarSortAction {
+  return v === 'up' || v === 'down' || v === 'top' || v === 'bottom'
+}
+
+/**
+ * 排序菜单选项构建纯函数（含边界置灰）：
+ * 上移一位 / 下移一位 / 移到顶部（可排区第 2 位）/ 移到底部（可排区末位）/
+ * 分隔线 / 恢复默认排序（恒可用）。
+ * 置灰按当前序的边界判定：首位上移、移顶置灰；末位下移、移底置灰。
+ */
+export function buildSidebarSortMenuOptions(
+  name: ViewName,
+  order: readonly ViewName[],
+): DropdownOption[] {
+  const index = order.indexOf(name)
+  const atTop = index <= 0
+  const atBottom = index === order.length - 1
+  return [
+    { label: '上移一位', key: 'up', disabled: atTop },
+    { label: '下移一位', key: 'down', disabled: atBottom },
+    { label: '移到顶部', key: 'top', disabled: atTop },
+    { label: '移到底部', key: 'bottom', disabled: atBottom },
+    { type: 'divider', key: 'sort-divider' },
+    { label: '恢复默认排序', key: 'reset', disabled: false },
+  ]
+}
+
+/** 点选即重排并立即持久化（写路径唯一出处；顺序变更经 viewShortcuts 自动随动）。
+ *  边界 no-op 不写存储：保住「恢复默认 = 删除 key」语义，出厂默认序将来调整时自动跟随。 */
+export function applySidebarSort(name: ViewName, action: SidebarSortAction) {
+  const prev = arrangeableOrder.value
+  const next = moveArrangeable(prev, name, action)
+  arrangeableOrder.value = next
+  if (prev.some((v, i) => v !== next[i])) {
+    saveSidebarOrder(next)
+  }
+}
+
+/** 恢复默认排序：清除存储回出厂序（之后可再次自定义，反复交替）。 */
+export function resetSidebarOrder() {
+  clearSidebarOrder()
+  arrangeableOrder.value = [...ARRANGEABLE_VIEWS]
+}
+
+/** 键位按最终位置推导：第 1–9 位 → '1'..'9'，第 10 位 → '0'，第 11 位（设置）→ ',' */
+const POSITION_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', ','] as const
+
+/**
+ * 视图快捷键映射（响应式）：由最终序按位置推导，键随位置（重排侧栏即重排键位）。
+ * 每个视图恰好一个快捷键：数字 1–0 对应第 1–10 位，设置用 Cmd/Ctrl+,（macOS「设置」
+ * 惯例键位，避免占用 Cmd+S 的「保存」肌肉记忆）。
+ */
+export const viewShortcuts = computed<ViewShortcut[]>(() => {
+  const order: ViewName[] = [FIRST_VIEW, ...arrangeableOrder.value, PENULTIMATE_VIEW, LAST_VIEW]
+  return order.map((name, i) => ({ name, key: POSITION_KEYS[i] }))
+})
 
 /** macOS 用 Cmd（metaKey），Windows/Linux 用 Ctrl（ctrlKey） */
 export function isMacPlatform(): boolean {
@@ -45,33 +191,17 @@ function isPrimaryModifier(e: KeyboardEvent): boolean {
   return isMacPlatform() ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey
 }
 
-/** 纯函数：命中视图快捷键则返回路由 name，否则 null（排除 Shift/Alt/混按/非主数字键） */
+/** 纯函数：命中视图快捷键则返回路由 name，否则 null（排除 Shift/Alt/混按/未映射键） */
 export function matchViewShortcut(e: KeyboardEvent): string | null {
   if (e.altKey || e.shiftKey) return null
   if (!isPrimaryModifier(e)) return null
-  return viewShortcuts.find((s) => e.key === s.key)?.name ?? null
+  return viewShortcuts.value.find((s) => e.key === s.key)?.name ?? null
 }
 
-/** 弹层探测选择器：Naive UI 弹层「仅打开时存在」的元素（issue #153 扩展弹层类）。
- *
- * 模态类（弹窗/useDialog 确认框）一律探测 `.n-modal-mask` 遮罩：遮罩随 show 真实挂载/卸载。
- * 不能探测 `.n-modal-container` / `.n-dialog`——naive-ui 的 VLazyTeleport 采用
- * useFalseUntilTruthy 语义，容器首次显示后永久残留 DOM（关闭后只剩隐藏空壳），
- * 存在性嗅探会把「已关闭」误判为「打开」，导致快捷键永久失效（见 ADR-0021）。
- * `.n-date-panel` 为无遮罩弹层（日期日历），内部按钮聚焦时不在可编辑目标，需单独纳入信号集。
- */
-const OVERLAY_SELECTORS = [
-  '.n-modal-mask',
-  '.n-popconfirm',
-  '.n-dropdown-menu',
-  '.n-base-select-menu',
-  '.n-date-panel',
-]
-
-/** 覆盖层（弹窗/确认框/下拉菜单）打开时抑制快捷键，避免在编辑/确认/选择中途触发 */
-export function hasOpenOverlay(): boolean {
-  return OVERLAY_SELECTORS.some((sel) => document.querySelector(sel) !== null)
-}
+/** 覆盖层（弹窗/确认框/下拉菜单/日历面板）打开时抑制快捷键，避免在编辑/确认/选择中途触发。
+ *  状态来自弹层注册表（ADR-0035）——弹层封装组件（AppModal/AppSelect/AppDatePicker/
+ *  AppDropdown/AppPopconfirm/useAppDialog）显式上报开/关，不做 DOM 推断。 */
+export { hasOpenOverlay }
 
 /** 注册全局 keydown 监听：命中视图快捷键时切换路由 */
 export function useViewShortcuts(router: Router) {

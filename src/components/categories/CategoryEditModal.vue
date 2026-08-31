@@ -1,6 +1,9 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { computed, ref, watch } from 'vue'
-import { NButton, NForm, NFormItem, NInput, NModal, NSelect, useMessage } from 'naive-ui'
+import { NButton, NForm, NFormItem, NInput, useMessage } from 'naive-ui'
+import AppModal from '@/components/AppModal.vue'
+import PinyinSelect from '@/components/PinyinSelect.vue'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import type { Category, CategoryUpdateInput } from '@/types'
@@ -54,13 +57,13 @@ async function saveEdit() {
     emit('update:show', false)
     // 参考数据由 ledger:changed 信号自动重拉，分类树随之更新
   } catch (e) {
-    message.error(`更新失败: ${e}`)
+    message.error(`更新失败: ${errorMessage(e)}`)
   }
 }
 </script>
 
 <template>
-  <NModal
+  <AppModal
     :show="show"
     title="编辑分类"
     preset="card"
@@ -76,7 +79,7 @@ async function saveEdit() {
         <NInput v-model:value="editIcon" placeholder="图标名" style="width: 120px" />
       </NFormItem>
       <NFormItem label="父分类">
-        <NSelect
+        <PinyinSelect
           v-model:value="editParentId"
           :options="editParentOptions"
           placeholder="选择父分类"
@@ -86,5 +89,5 @@ async function saveEdit() {
       </NFormItem>
       <NButton type="primary" block @click="saveEdit">保存</NButton>
     </NForm>
-  </NModal>
+  </AppModal>
 </template>

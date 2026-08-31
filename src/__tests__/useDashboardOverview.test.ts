@@ -17,6 +17,7 @@ function baseInvoke(extra?: Record<string, unknown>) {
         list_currencies: mockCurrencies,
         list_accounts: [],
         list_categories: [],
+        list_merchants: [],
         dashboard_overview: mockOverview,
       },
       extra,
@@ -30,7 +31,7 @@ beforeEach(async () => {
   baseInvoke()
   localStorage.clear()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 describe('useDashboardOverview 首页净资产数据层（issue #143）', () => {

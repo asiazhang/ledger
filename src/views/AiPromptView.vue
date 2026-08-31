@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { onMounted, ref } from 'vue'
 import { NCard, NButton, NSpace, NText, useMessage } from 'naive-ui'
 import { api } from '@/api'
@@ -11,7 +12,7 @@ onMounted(async () => {
   try {
     prompt.value = await api.getAiPrompt()
   } catch (e) {
-    message.error(`获取提示词失败: ${e}`)
+    message.error(`获取提示词失败: ${errorMessage(e)}`)
   } finally {
     loading.value = false
   }
@@ -22,14 +23,14 @@ async function copyPrompt() {
     await navigator.clipboard.writeText(prompt.value)
     message.success('已复制到剪贴板')
   } catch (e) {
-    message.error(`复制失败: ${e}`)
+    message.error(`复制失败: ${errorMessage(e)}`)
   }
 }
 </script>
 
 <template>
   <NSpace vertical :size="16">
-    <NCard title="AI 系统提示词" :bordered="false" style="max-width: 900px">
+    <NCard title="AI 提示词" :bordered="false">
       <template #header-extra>
         <NButton size="small" type="primary" :disabled="!prompt" @click="copyPrompt">
           复制
@@ -38,7 +39,7 @@ async function copyPrompt() {
       <NSpace vertical :size="8">
         <NText depth="3" style="font-size: 13px">
           将以下提示词复制给 AI 编程助手（如 Cursor、Claude Code），
-          它会据此通过本地 HTTP API（127.0.0.1:9527）读取与写入账本数据。
+          它会据此通过本地 HTTP API（127.0.0.1:9527）读取与写入账本数据；期间需保持 Ledger 运行。
         </NText>
         <pre
           class="prompt-body"

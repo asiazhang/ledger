@@ -7,14 +7,14 @@ import {
   NGi,
   NGrid,
   NNumberAnimation,
-  NSelect,
   NSpace,
   NSpin,
   NStatistic,
 } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
+import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useReferenceStore } from '@/stores/reference'
-import { formatAmount, formatQuantity } from '@/types'
+import { formatAmount, formatPrice, formatQuantity } from '@/types'
 import type { PnlDetail } from '@/types'
 import { useRealizedPnl } from '@/composables/useRealizedPnl'
 import HoldingsOverview from '@/components/investments/HoldingsOverview.vue'
@@ -44,9 +44,10 @@ const detailColumns: DataTableColumn<PnlDetail>[] = [
     title: '成本单价',
     key: 'cost_per_unit_cents',
     width: 100,
+    // 成本单价为价格列（万分之一元刻度，ADR-0038），用 formatPrice 展示
     render(row) {
       const ccy = reference.currencyMap.get(row.currency_code)
-      return formatAmount(row.cost_per_unit_cents, ccy)
+      return formatPrice(row.cost_per_unit_cents, ccy)
     },
   },
   {
@@ -100,7 +101,7 @@ const instPnlColumns: DataTableColumn[] = [
       <HoldingsOverview />
 
       <NSpace align="center" :size="12">
-        <NSelect
+        <PinyinSelect
           v-model:value="selectedAccountId"
           :options="accountOptions"
           placeholder="全部账户"
@@ -108,12 +109,13 @@ const instPnlColumns: DataTableColumn[] = [
           style="width: 180px"
           @update:value="refresh"
         />
-        <NSelect
+        <!-- 远程搜索标的：拼音过滤由后端 list_instruments 统一语义（ADR-0027）
+             承担，remote 下本地 filter 不生效，仅收口 filterable 保持载体一致。 -->
+        <PinyinSelect
           v-model:value="selectedInstrumentId"
           :options="pnlInstrumentOptions"
-          placeholder="搜索标的"
+          placeholder="搜索标的（代码/名称/拼音）"
           remote
-          filterable
           clearable
           :loading="searchingInstruments"
           virtual-scroll

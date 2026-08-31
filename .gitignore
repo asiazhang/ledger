@@ -40,7 +40,13 @@ coverage
 .vite
 .eslintcache
 
+# 本地 git worktree 脚手架目录（git worktree add 的容器，不入库）
+.worktrees/
+
 # Tauri (Rust target & generated schemas handled in src-tauri/.gitignore)
+
+# 根目录 Rust 构建产物（cargo 在仓库根运行时产生）
+/target/
 
 # Additional OS files
 Thumbs.db

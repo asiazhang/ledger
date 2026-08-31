@@ -1,13 +1,8 @@
 use rusqlite::Connection;
-use rusqlite::OptionalExtension;
 
 use crate::db::query::{query_all, query_one};
-use crate::db::{device_id, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{Transaction, TransactionListFilter, TransactionListResult};
-use crate::transaction::amount::TransactionKind;
-
-use super::behavior;
 
 pub fn list_transactions_internal(
     conn: &Connection,
@@ -33,6 +28,10 @@ pub fn list_transactions_internal(
         params.push(account_id.to_string());
         params.push(account_id.to_string());
     }
+    if let Some(merchant_id) = filter.merchant_id.as_deref() {
+        where_clause.push_str(" AND merchant_id = ?");
+        params.push(merchant_id.to_string());
+    }
     if let Some(kind) = filter.kind {
         where_clause.push_str(" AND kind = ?");
         params.push(kind.as_str().to_string());
@@ -49,7 +48,7 @@ pub fn list_transactions_internal(
     // 不加 id 翻页会漂移（重复/遗漏）。
     let mut sql = format!(
         "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
-         to_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted \
+         to_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted,merchant_id \
          FROM transactions {where_clause} ORDER BY date DESC, created_at DESC, id DESC"
     );
     // 分页路径优先：传 page_size 时按 offset 页码取当前页（小于 1 按 1 处理，
@@ -77,41 +76,8 @@ pub fn get_transaction_internal(conn: &Connection, id: &str) -> Result<Transacti
         conn,
         "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
          to_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,\
-         version,device_id,is_deleted FROM transactions WHERE id=?1 AND is_deleted=0",
+         version,device_id,is_deleted,merchant_id FROM transactions WHERE id=?1 AND is_deleted=0",
         rusqlite::params![id],
     )?
     .ok_or_else(|| AppError::NotFound(format!("交易不存在: {id}")))
-}
-
-/// 删除交易（软删除 `is_deleted=1`）。
-///
-/// buy 交易同步清理关联持仓（`security_lots` / `security_transactions`）：
-/// 若该买入已有部分卖出（`remaining_quantity < initial_quantity`）则拒绝删除。
-/// 不存在的 id 返回 `AppError::NotFound`（HTTP 侧映射 404）。IPC 与 HTTP 端点共用本函数。
-pub fn delete_transaction_internal(conn: &Connection, id: &str) -> Result<()> {
-    let kind: TransactionKind = conn
-        .query_row(
-            "SELECT kind FROM transactions WHERE id=?1 AND is_deleted=0",
-            rusqlite::params![id],
-            |r| r.get(0),
-        )
-        .optional()?
-        .ok_or_else(|| AppError::NotFound(format!("交易不存在: {id}")))?;
-
-    if kind == TransactionKind::Buy {
-        // 守卫（部分卖出拒绝）与持仓关联清理经行为层 revert（与按 id 修改共用，见 #50 / issue #72）。
-        // sell 删除不清理持仓关联（既有行为保持不变，本重构不改变）。
-        behavior::revert(conn, id, kind, "该买入交易已有部分卖出，无法删除")?;
-    }
-
-    conn.execute(
-        "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-        rusqlite::params![id, now_iso(), device_id()],
-    )?;
-    // 脏标记挂钩（issue #126）：删除成功即置脏，到期则写时顺带触发备份。
-    crate::auto_backup::on_write(conn);
-    // 索引维护由后台定时刷新承担：触发器（trg_search_enqueue_txn_update）已入队
-    // `search_reindex_queue`，软删除后到下次刷新前该交易仍可能被搜到（时效性要求低，
-    // 可接受，见 ADR-0004 决策 #14）。
-    Ok(())
 }

@@ -6,6 +6,10 @@ import { listen } from '@tauri-apps/api/event'
 import { useReferenceStore } from '@/stores/reference'
 import PortfolioTrendPanel from '@/components/investments/PortfolioTrendPanel.vue'
 import { makeInstrument } from './factories'
+import {
+  firePricesChanged,
+  resetPricesChangedHandler,
+} from './prices-changed-mock'
 import type { Instrument, PortfolioValueTrend } from '@/types'
 
 vi.mock('vue-chartjs', async () => {
@@ -15,6 +19,15 @@ vi.mock('vue-chartjs', async () => {
 
 const mockInvoke = vi.mocked(invoke)
 const mockListen = vi.mocked(listen)
+
+// 价格失效信号订阅基座 mock（issue #238 / ADR-0031 决策 3）：捕获订阅回调，
+// 测试中手动触发模拟后端 emit；捕获/触发辅助收在 prices-changed-mock 共享。
+vi.mock('@/composables/usePricesChanged', async () => {
+  const { capturePricesChangedHandler } = await import('./prices-changed-mock')
+  return {
+    usePricesChanged: (cb: () => void) => capturePricesChangedHandler(cb),
+  }
+})
 
 enableAutoUnmount(afterEach)
 afterEach(() => {
@@ -51,6 +64,7 @@ function baseInvoke(extra?: Record<string, unknown>) {
       return Promise.resolve([{ code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 }])
     if (cmd === 'list_accounts') return Promise.resolve([])
     if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve([])
     if (cmd === 'list_holdings') return Promise.resolve([])
     if (cmd === 'list_instruments')
       return Promise.resolve({ items: [stockInstrument, fundInstrument], total: 2 })
@@ -68,9 +82,10 @@ beforeEach(async () => {
   mockInvoke.mockReset()
   mockListen.mockReset()
   mockListen.mockResolvedValue(() => {})
+  resetPricesChangedHandler()
   baseInvoke()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 function chartPayload(wrapper: ReturnType<typeof mount>): { labels: string[]; datasets: { data: number[] }[] } {
@@ -153,5 +168,18 @@ describe('PortfolioTrendPanel 走势面板', () => {
     expect(wrapper.text()).toContain('暂无行情来源')
     expect(wrapper.find('[data-testid="line-chart"]').exists()).toBe(false)
     expect(mockInvoke.mock.calls.some(([c]) => c === 'instrument_price_trend')).toBe(false)
+  })
+
+  it('价格失效信号触发后重拉走势：键（模式+区间）未变也强制重取（issue #238）', async () => {
+    const wrapper = mount(PortfolioTrendPanel)
+    await flushPromises()
+    const before = mockInvoke.mock.calls.filter(([c]) => c === 'portfolio_value_trend').length
+    firePricesChanged()
+    await flushPromises()
+    // 同步写价后键未变，但同键去重短路必须让位于信号重拉，否则走势留陈旧点
+    const calls = mockInvoke.mock.calls.filter(([c]) => c === 'portfolio_value_trend')
+    expect(calls.length).toBe(before + 1)
+    // 图表序列随重拉结果刷新
+    expect(chartPayload(wrapper).datasets[0].data).toEqual([100000, 110000])
   })
 })

@@ -49,11 +49,12 @@ describe('CategoryManager.vue', () => {
       if (cmd === 'list_currencies') return Promise.resolve([])
       if (cmd === 'list_accounts') return Promise.resolve([])
       if (cmd === 'list_categories') return Promise.resolve(mockCategories)
+      if (cmd === 'list_merchants') return Promise.resolve([])
       if (cmd === 'reorder_categories') return Promise.resolve(undefined)
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = useReferenceStore()
-    await store.ensureFresh()
+    await store.refresh()
   })
 
   it('挂载并渲染分类列表（默认支出 Tab）', () => {
@@ -110,6 +111,7 @@ describe('CategoryManager.vue', () => {
       if (cmd === 'list_currencies') return Promise.resolve([])
       if (cmd === 'list_accounts') return Promise.resolve([])
       if (cmd === 'list_categories') return Promise.resolve(mockCategories)
+      if (cmd === 'list_merchants') return Promise.resolve([])
       if (cmd === 'reorder_categories') return Promise.resolve(undefined)
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })

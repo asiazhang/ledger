@@ -1,0 +1,47 @@
+# ADR 0031: 价格失效信号——同步写价后事件驱动刷新（ledger:prices-changed）
+
+- 状态：已接受
+- 日期：2026-08-29
+- 作者：Ledger 项目
+- 关联：issue #170（spec）
+
+## 背景
+
+「同步持仓价格」（HoldingPriceSync）的前端接缝 `useHoldingPriceSync` 只封装 loading 与消息状态，「同步成功后本地数据已陈旧、需自行重拉」这条约定活在调用方的自觉里，行为已经分叉：盈亏页持仓概览卡记得手动重拉，标的页同步按钮同步完成后现价列保持旧值（issue #170 主 bug）。此外投资页盈亏 tab 以 `display-directive="show"` 常驻挂载，在标的页同步完成后该隐藏 tab 持续显示旧市值，切回也不自愈——陈旧面比 spec 成稿时认定的更宽。
+
+价格是全局数据：`market_prices`（连同 PriceHistory / FxRateHistory）被持仓概览、标的列表、走势、净资产等多个视图消费，而写入它的命令有两个——增量同步 `sync_holding_prices` 与全量同步 `sync_instruments`（字典修补顺手刷价，ADR-0015 职责切分下的附带写入）。本决策确定「价格写入完成后如何通知前端失效」的通道。
+
+## 决策
+
+1. **新增价格失效信号 `ledger:prices-changed`**：后端事件、无 payload、粗粒度，与参考失效信号 `ledger:changed`（ADR-0012）、备份信号 `ledger:backups-changed`（issue #129）平行，同一 `ledger:*` 命名空间与命名风格（`<domain 复数>-changed`）。语义锚「价格数据已变更」，覆盖 MarketPrice / PriceHistory / FxRateHistory 三者（增量同步一次写全三样，信号宽度与写入面对齐）。
+2. **生产者 = 两个同步命令，触发条件 = 实际写入**：
+   - `sync_holding_prices` 成功返回且 `synced > 0` 时 emit；`synced = 0`（无持仓标的、全部跳过）为库内零变化，不广播——失效信号的本义是「数据变了」。
+   - `sync_instruments` 结束（含用户中断，只要本次运行有落库）同样 emit：全量同步也 upsert `market_prices`，且其入口恰在标的页，同步后标的列表现价列陈旧与主 bug 同形；中断保留已落库价格（upsert 幂等），不发信号即失真。
+3. **消费方自选订阅**：前端价格消费方各自 `listen` 后重拉自身数据。本期接线三处——持仓概览（`usePortfolioOverview`）、标的页标的列表、组合走势（`usePortfolioTrend`，走势同样吃 `market_prices`，漏接就是下一个陈旧点），并移除盈亏页概览卡的手动重拉样板；仪表盘等信号可用性已备好，订阅留后续（spec #170 用户故事 5/7：未来第三入口与新消费方行为自动一致、零记忆负担）。
+4. **接缝承诺改写**：`useHoldingPriceSync.sync()` 返回终态 `Promise<'success' | 'error'>`（即既有 `HoldingPriceSyncStatus` 的终态，与 `status` ref 同形；不造含「取消」态的枚举——HoldingPriceSync 无中断机制，那是全量同步的；无持仓/部分跳过是 success 子形态，`lastResult.synced / skipped` 供区分）；「同步完成 → 数据失效」由信号承载，调用方不再记忆重拉。后端同步命令因此突破 spec 成稿的「零改动」——代价为每命令一处 emit 薄胶（对齐 `emit_reference_changed` 模式）。
+
+## 理由
+
+1. **事件驱动而非调用方自觉**：与 ADR-0012 的 push-first 哲学一致——全局数据变更 → 后端事件广播，任何已挂载消费方（含隐藏 tab）即时刷新；「记得刷新」的约定从接口外收进机制内。
+2. **否决复用 `ledger:changed`**：其语义锚定参考写入（ADR-0012 决策 2/3），价格同步误发会让参考 store / items store 无谓重拉参考表，而真正陈旧的持仓/标的列表反而无人响应——加了信号却解决不了问题。
+3. **否决接缝内本地回调**：广播半径 = 持有该接缝实例的组件树，隐藏盈亏 tab（无标的页的实例）与未来仪表盘消费方覆盖不到；用户故事 5/7 只有全局信号能兑现。
+4. **命名从先例**：`ledger:backups-changed` 已确立第二域信号的形状（平行、无 payload、kebab），价格信号照此办理即可，不为它发明新通道形状。
+
+## 代价
+
+1. **信号粒度粗**：一次增量同步会让所有订阅者重拉自身数据，无按标的的细粒度。同步低频（手动触发）且各消费方重拉为本地 SQLite + IPC，开销可忽略——同 ADR-0012 对粗粒度的取舍。
+2. **生产者清单耦合**：未来新增写价格的命令须记得 emit，漏发则消费方陈旧；由 e2e 场景（同步后消费方刷新）钉住行为。
+3. **两处后端改动**：同步命令从纯查询+写入变为带事件发射，AppHandle 需注入命令层——既有模式（HTTP 服务器 / 参考写入命令已如此），非新形状。
+
+## 替代方案
+
+- **复用 `ledger:changed`**：见理由 2，语义污染 + 重拉错向，否决。
+- **接缝内显式回调 / `invalidated` 版本号**：改动面最小、零后端改动，但隐藏 tab 与跨视图消费方覆盖不到，问题域收窄为「同步入口自身」，否决。
+- **消费方切回可见时刷新（refresh-on-visible）**：可治隐藏 tab 陈旧，但属轮询式兜底，与 push-first 方向相反，且新增「何时算可见」的判定面，否决。
+
+## 影响
+
+- spec #170 据此实施：两个同步命令 emit、接缝返回值、两处消费方接线与样板移除、组件级测试（成功后重拉、失败/零更新不重拉）。
+- 词汇表：投资域新增「价格失效信号（PriceChangeSignal）」词条，HoldingPriceSync / InstrumentSync 边界补信号承诺；参考数据与设置域失效信号条目加平行信号指针。
+- ADR-0012 / 0015 / 0019 不变：本信号与参考失效信号平行，不改参考写入判定与同步职责切分。
+- 无 schema 变更、无迁移。

@@ -4,7 +4,7 @@ use cucumber::{given, then, when};
 use rusqlite::params;
 
 use tauri_app_lib::commands::dashboard::query_dashboard_overview;
-use tauri_app_lib::commands::transactions::insert_transaction;
+use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
 use tauri_app_lib::models::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
@@ -29,8 +29,7 @@ fn instrument_id(conn: &rusqlite::Connection, symbol: &str) -> String {
 #[given(expr = "存在标的 {string} 币种 {string}")]
 fn create_instrument(world: &mut LedgerWorld, symbol: String, currency: String) {
     let now = now_iso();
-    world
-        .conn
+    world_conn!(world)
         .execute(
             "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
              VALUES (?1,?2,'stock',?2,?3,'unknown',?4,?4,1,?5)",
@@ -42,10 +41,9 @@ fn create_instrument(world: &mut LedgerWorld, symbol: String, currency: String) 
 /// 插入标的市场现价（market_prices 每标的仅保留最新一行）。
 #[given(expr = "标的 {string} 现价 {int} 币种 {string}")]
 fn set_market_price(world: &mut LedgerWorld, symbol: String, price: i64, currency: String) {
-    let instrument_id = instrument_id(&world.conn, &symbol);
+    let instrument_id = instrument_id(&world_conn!(world), &symbol);
     let now = now_iso();
-    world
-        .conn
+    world_conn!(world)
         .execute(
             "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,created_at,updated_at,version,device_id) \
              VALUES (?1,?2,?3,?4,'2026-01-01',?5,?5,1,?6)",
@@ -65,11 +63,10 @@ fn buy_instrument(
     price_cents: i64,
     account_name: String,
 ) {
-    let instrument_id = instrument_id(&world.conn, &symbol);
+    let instrument_id = instrument_id(&world_conn!(world), &symbol);
     let account_id = world.account_id(&account_name);
     // 买入交易以账户币种成交：fixture 入参与真实写路径一致，不依赖 prepare 兕底覆盖。
-    let currency_code: String = world
-        .conn
+    let currency_code: String = world_conn!(world)
         .query_row(
             "SELECT currency_code FROM accounts WHERE id=?1",
             params![account_id],
@@ -77,12 +74,14 @@ fn buy_instrument(
         )
         .unwrap();
     let input = TransactionInput {
+        merchant_name: None,
         kind: TransactionKind::Buy,
         amount_cents: quantity * price_cents,
         currency_code,
         account_id,
         to_account_id: None,
         category_id: None,
+        merchant_id: None,
         refund_of_transaction_id: None,
         note: None,
         date: "2026-01-10".into(),
@@ -92,7 +91,7 @@ fn buy_instrument(
         fee_cents: Some(0),
         idempotency_key: None,
     };
-    let result = insert_transaction(&world.conn, input);
+    let result = create_transaction_internal(&world_conn!(world), input);
     assert!(result.is_ok(), "创建买入交易失败: {:?}", result.err());
 }
 
@@ -102,7 +101,7 @@ fn buy_instrument(
 
 #[when(expr = "查询净资产总览")]
 fn query_net_worth(world: &mut LedgerWorld) {
-    match query_dashboard_overview(&world.conn) {
+    match query_dashboard_overview(&world_conn!(world)) {
         Ok(overview) => {
             world.last_overview = Some(overview);
             world.last_error = None;

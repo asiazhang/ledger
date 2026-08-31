@@ -7,7 +7,7 @@ import AiPromptView from '@/views/AiPromptView.vue'
 const mockInvoke = vi.mocked(invoke)
 const writeText = vi.fn().mockResolvedValue(undefined)
 
-const SAMPLE_PROMPT = `# Ledger API 系统提示词
+const SAMPLE_PROMPT = `# Ledger API 入口提示词
 
 Ledger 在本地 http://127.0.0.1:9527 提供 HTTP API。
 
@@ -30,7 +30,7 @@ describe('AiPromptView.vue', () => {
     const wrapper = mount(AiPromptView)
     await flushPromises()
     const body = wrapper.find('[data-testid="prompt-body"]')
-    expect(body.text()).toContain('# Ledger API 系统提示词')
+    expect(body.text()).toContain('# Ledger API 入口提示词')
     expect(body.text()).toContain('/api/v1/import/knowledge')
   })
 
@@ -46,6 +46,12 @@ describe('AiPromptView.vue', () => {
     const wrapper = mount(AiPromptView)
     await flushPromises()
     expect(wrapper.find('button').attributes('disabled')).toBeDefined()
+  })
+
+  it('页面说明包含「需保持 Ledger 运行」', async () => {
+    const wrapper = mount(AiPromptView)
+    await flushPromises()
+    expect(wrapper.text()).toContain('需保持 Ledger 运行')
   })
 
   it('获取失败时展示错误提示', async () => {

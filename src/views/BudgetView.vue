@@ -7,19 +7,24 @@ import {
   NForm,
   NFormItem,
   NInputNumber,
-  NSelect,
-  NDatePicker,
   NSpace,
-  NPopconfirm,
   NProgress,
   NTag,
   NSpin,
+  NText,
   useMessage,
   type DataTableColumns,
 } from 'naive-ui'
 import { api } from '@/api'
+import AppModal from '@/components/AppModal.vue'
+import AppPopconfirm from '@/components/AppPopconfirm.vue'
+import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useReferenceStore } from '@/stores/reference'
-import { formatAmount } from '@/types'
+import { errorMessage } from '@/utils/errors'
+import { yuanToCents } from '@/utils/money'
+import { todayStr } from '@/utils/date'
+import { formatAmount, centsToYuan } from '@/types'
+import { BUDGET_PERIOD_LABELS } from '@/types/budget'
 import type { BudgetInput, BudgetProgress } from '@/types'
 
 const reference = useReferenceStore()
@@ -29,7 +34,11 @@ const loading = ref(false)
 
 const categoryId = ref<string | null>(null)
 const amount = ref<number | null>(null)
-const startDate = ref(Date.now())
+
+// 编辑弹窗（issue #184）：仅金额可改，分类/周期不可改（改法为删旧建新）
+const showEdit = ref(false)
+const editing = ref<BudgetProgress | null>(null)
+const editAmount = ref<number | null>(null)
 
 const categoryOptions = () =>
   reference.rootCategories
@@ -50,10 +59,15 @@ async function create() {
     message.warning('请填写分类和金额')
     return
   }
+  if (amount.value <= 0) {
+    message.warning('预算金额必须为正数')
+    return
+  }
   const input: BudgetInput = {
     category_id: categoryId.value,
-    amount_cents: Math.round(amount.value * 100),
-    start_date: new Date(startDate.value).toISOString().slice(0, 7) + '-01',
+    amount_cents: yuanToCents(amount.value) ?? 0,
+    // start_date 已退化为记录字段（永久滚动预算，进度与日期无关），传创建当日（本地日历日）即可
+    start_date: todayStr(),
   }
   try {
     await api.createBudget(input)
@@ -62,7 +76,33 @@ async function create() {
     amount.value = null
     await refresh()
   } catch (e) {
-    message.error(`创建失败: ${e}`)
+    // 后端拒绝（金额非正/收入分类/同分类同周期重复）时把中文错误清晰呈现给用户；
+    // 查重提示自带「可编辑该预算的金额」引导
+    message.error(`创建失败: ${errorMessage(e)}`)
+  }
+}
+
+function openEdit(row: BudgetProgress) {
+  editing.value = row
+  editAmount.value = centsToYuan(row.budget.amount_cents)
+  showEdit.value = true
+}
+
+async function saveEdit() {
+  if (!editing.value) return
+  if (editAmount.value == null || editAmount.value <= 0) {
+    message.warning('预算金额必须为正数')
+    return
+  }
+  try {
+    await api.updateBudget(editing.value.budget.id, {
+      amount_cents: yuanToCents(editAmount.value) ?? 0,
+    })
+    message.success('已更新预算')
+    showEdit.value = false
+    await refresh()
+  } catch (e) {
+    message.error(`更新失败: ${errorMessage(e)}`)
   }
 }
 
@@ -72,7 +112,7 @@ async function remove(id: string) {
     message.success('已删除')
     await refresh()
   } catch (e) {
-    message.error(`删除失败: ${e}`)
+    message.error(`删除失败: ${errorMessage(e)}`)
   }
 }
 
@@ -113,16 +153,23 @@ const columns: DataTableColumns<BudgetProgress> = [
   {
     title: '操作',
     key: 'actions',
-    width: 80,
+    width: 130,
     render: (row) =>
-      h(
-        NPopconfirm,
-        { onPositiveClick: () => remove(row.budget.id) },
-        {
-          default: () => '确认删除？',
-          trigger: () => h(NButton, { size: 'tiny', type: 'error', quaternary: true }, () => '删除'),
-        },
-      ),
+      h(NSpace, { size: 4, wrap: false }, () => [
+        h(
+          NButton,
+          { size: 'tiny', type: 'primary', quaternary: true, onClick: () => openEdit(row) },
+          () => '编辑',
+        ),
+        h(
+          AppPopconfirm,
+          { onPositiveClick: () => remove(row.budget.id) },
+          {
+            default: () => '确认删除？',
+            trigger: () => h(NButton, { size: 'tiny', type: 'error', quaternary: true }, () => '删除'),
+          },
+        ),
+      ]),
   },
 ]
 
@@ -138,7 +185,7 @@ onMounted(() => {
       <NCard title="新增预算" size="small">
         <NForm label-placement="left" :show-feedback="false" inline size="small">
           <NFormItem label="分类">
-            <NSelect
+            <PinyinSelect
               v-model:value="categoryId"
               :options="categoryOptions()"
               placeholder="支出分类"
@@ -148,9 +195,6 @@ onMounted(() => {
           <NFormItem label="金额">
             <NInputNumber v-model:value="amount" :precision="2" style="width: 140px" />
           </NFormItem>
-          <NFormItem label="起始">
-            <NDatePicker v-model:value="startDate" type="month" style="width: 160px" />
-          </NFormItem>
           <NButton type="primary" @click="create">添加</NButton>
         </NForm>
       </NCard>
@@ -159,5 +203,35 @@ onMounted(() => {
         <NDataTable :columns="columns" :data="list" :bordered="false" size="small" />
       </NCard>
     </NSpace>
+
+    <!-- 编辑弹窗（issue #184）：仅金额可改，分类/周期只读 -->
+    <AppModal
+      v-model:show="showEdit"
+      title="编辑预算"
+      preset="card"
+      display-directive="if"
+      style="width: 380px"
+      :bordered="false"
+    >
+      <NForm label-placement="left" :show-feedback="false" size="small">
+        <NFormItem label="分类">
+          <NText>{{ editing?.category_name }}</NText>
+        </NFormItem>
+        <NFormItem label="周期">
+          <NText>{{
+            editing ? BUDGET_PERIOD_LABELS[editing.budget.period] : ''
+          }}</NText>
+        </NFormItem>
+        <NFormItem label="金额">
+          <NInputNumber v-model:value="editAmount" :precision="2" style="width: 100%" />
+        </NFormItem>
+      </NForm>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton size="small" @click="showEdit = false">取消</NButton>
+          <NButton size="small" type="primary" @click="saveEdit">保存</NButton>
+        </NSpace>
+      </template>
+    </AppModal>
   </NSpin>
 </template>

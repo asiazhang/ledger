@@ -1,7 +1,16 @@
-//! 纯文本逻辑：拼音首字母、可搜索内容组装、FTS 查询构建（与数据库无关）。
+//! 纯文本逻辑：统一模糊搜索语义（issue #195 规格，issue #196 全局搜索侧实现）。
+//!
+//! 统一语义契约（前后端共同遵守，规格以 issue #195 为唯一真源）：
+//! 输入按空白切词，词条之间 AND；每个词条对每个可搜索字段（全局搜索：备注、
+//! 转出账户名、商户名，商户名由 issue #193 纳入）判定——
+//! **命中 = 原文连续子串（大小写不敏感）∨ 词条是该字段拼音首字母串的子序列
+//! （大小写不敏感）**
+//!
+//! 混合输入（如「招zsyh」）无需特判：含汉字的词条对纯 ASCII 首字母串的子序列
+//! 匹配必然失败，自然落到原文子串路径，两条路径任一命中即算。
 
 // ---------------------------------------------------------------------------
-// 拼音首字母与可搜索内容
+// 拼音首字母
 // ---------------------------------------------------------------------------
 
 /// 常见多音字在记账语境下的读音修正（前字 + 当前字 → 拼音首字母）。
@@ -38,54 +47,42 @@ pub fn pinyin_initials(text: &str) -> String {
     out
 }
 
-/// 拼接可搜索内容：`备注 账户名 备注拼音 账户名拼音`。
-/// 空字段跳过；所有字段为空时返回空串（仍保留文档行）。
-pub fn build_search_content(note: Option<&str>, account_name: &str) -> String {
-    let mut parts: Vec<String> = Vec::with_capacity(4);
-    let text_parts = [note, Some(account_name)];
-    for text in text_parts.into_iter().flatten() {
-        let text = text.trim();
-        if !text.is_empty() {
-            parts.push(text.to_string());
-        }
-    }
-    for text in text_parts.into_iter().flatten() {
-        let initials = pinyin_initials(text);
-        if !initials.is_empty() {
-            parts.push(initials);
-        }
-    }
-    parts.join(" ")
+// ---------------------------------------------------------------------------
+// 统一语义匹配
+// ---------------------------------------------------------------------------
+
+/// 大小写不敏感的子序列判定：`pattern` 的每个字符按原顺序出现在 `target` 中
+/// （允许跳字，间隔不限）。空 pattern 恒命中（`all` 对空迭代器为 true）。
+pub fn is_subsequence(pattern: &str, target: &str) -> bool {
+    let target_lower = target.to_lowercase();
+    let mut target_chars = target_lower.chars();
+    pattern
+        .to_lowercase()
+        .chars()
+        .all(|p| target_chars.any(|t| t == p))
 }
 
-// ---------------------------------------------------------------------------
-// 查询构建
-// ---------------------------------------------------------------------------
+/// 词条对单个可搜索字段判定（统一语义契约）：
+/// 原文连续子串（大小写不敏感）∨ 该字段拼音首字母串的子序列（大小写不敏感）。
+pub fn term_matches_text(term: &str, text: &str) -> bool {
+    text.to_lowercase().contains(&term.to_lowercase())
+        || is_subsequence(term, &pinyin_initials(text))
+}
 
-/// FTS5 查询中需引号包裹才视为字面量的字符（除 `"` 与 `*` 另有处理外，
-/// 引号包裹已覆盖 AND/OR/NOT/NEAR/括号/连字符/冒号/脱字符/加号等全部特殊语法）。
-/// `"` 在 FTS5 短语中无法转义（实测 `""` 双写不支持），直接剥离；
-/// `*` 剥离以避免用户手输通配符干扰（前缀通配由本函数统一附加）。
-///
-/// 按空白分词；每个词条生成 `"词条"` 与 `"词条"*`（前缀通配）两个变体并 OR，
-/// 词条之间 AND 连接。如 `cf 午餐` → `("cf" OR "cf"*) AND ("午餐" OR "午餐"*)`。
-/// 空查询返回空串，调用方应直接返回空结果。
-pub fn build_match_query(query: &str) -> String {
-    let terms: Vec<String> = query
-        .split_whitespace()
-        .map(|t| {
-            t.chars()
-                .filter(|&c| c != '"' && c != '*')
-                .collect::<String>()
-        })
-        .filter(|t| !t.is_empty())
-        .collect();
-    if terms.is_empty() {
-        return String::new();
-    }
-    terms
-        .iter()
-        .map(|t| format!("(\"{t}\" OR \"{t}\"*)"))
-        .collect::<Vec<_>>()
-        .join(" AND ")
+/// 词条对一笔交易判定：任一可搜索字段（备注 ∨ 转出账户名 ∨ 商户名）命中即算。
+/// 两条路径任一命中即算，字段之间 OR、词条之间 AND（由调用方组合）。
+pub fn term_matches(
+    term: &str,
+    note: Option<&str>,
+    account_name: &str,
+    merchant_name: Option<&str>,
+) -> bool {
+    note.is_some_and(|n| term_matches_text(term, n))
+        || term_matches_text(term, account_name)
+        || merchant_name.is_some_and(|m| term_matches_text(term, m))
+}
+
+/// 切词：按空白拆分，过滤空词条（词条之间 AND 由调用方组合）。
+pub fn split_terms(query: &str) -> Vec<String> {
+    query.split_whitespace().map(str::to_string).collect()
 }

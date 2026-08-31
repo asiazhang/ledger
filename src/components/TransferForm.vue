@@ -4,16 +4,25 @@ import {
   NFormItem,
   NInput,
   NInputNumber,
-  NSelect,
-  NDatePicker,
   NButton,
   NSpace,
 } from 'naive-ui'
+import AppSelect from '@/components/AppSelect.vue'
+import AppDatePicker from '@/components/AppDatePicker.vue'
+import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useTransferForm } from '@/composables/useTransferForm'
+import type { Transaction } from '@/types'
 
-const emit = defineEmits<{ created: [] }>()
+// 编辑模式（issue #178）：传入 editing 时回填既有交易并走更新命令。
+const props = defineProps<{ editing?: Transaction | null }>()
 
-const ctx = useTransferForm({ onCreated: () => emit('created') })
+const emit = defineEmits<{ created: []; saved: [] }>()
+
+const ctx = useTransferForm({
+  onCreated: () => emit('created'),
+  onUpdated: () => emit('saved'),
+  editing: () => props.editing ?? null,
+})
 </script>
 
 <template>
@@ -27,7 +36,7 @@ const ctx = useTransferForm({ onCreated: () => emit('created') })
           placeholder="金额"
           style="width: 160px"
         />
-        <NSelect
+        <AppSelect
           v-model:value="ctx.currencyCode.value"
           :options="ctx.currencyOptions.value"
           style="width: 130px; margin-left: 8px"
@@ -35,7 +44,7 @@ const ctx = useTransferForm({ onCreated: () => emit('created') })
       </NFormItem>
 
       <NFormItem label="转出账户">
-        <NSelect
+        <PinyinSelect
           v-model:value="ctx.accountId.value"
           :options="ctx.accountOptions.value"
           placeholder="选择转出账户"
@@ -44,7 +53,7 @@ const ctx = useTransferForm({ onCreated: () => emit('created') })
       </NFormItem>
 
       <NFormItem label="转入账户">
-        <NSelect
+        <PinyinSelect
           v-model:value="ctx.toAccountId.value"
           :options="ctx.accountOptions.value"
           placeholder="目标账户"
@@ -53,7 +62,7 @@ const ctx = useTransferForm({ onCreated: () => emit('created') })
       </NFormItem>
 
       <NFormItem label="日期">
-        <NDatePicker v-model:value="ctx.date.value" type="date" style="width: 200px" />
+        <AppDatePicker v-model:value="ctx.date.value" type="date" style="width: 200px" />
       </NFormItem>
 
       <NFormItem label="备注">
@@ -61,7 +70,7 @@ const ctx = useTransferForm({ onCreated: () => emit('created') })
       </NFormItem>
 
       <NButton type="primary" @click="ctx.submit">
-        记转账
+        {{ editing ? '保存修改' : '记转账' }}
       </NButton>
     </NSpace>
   </NForm>

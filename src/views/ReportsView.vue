@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { NCard, NSelect, NSpace, NEmpty, NSpin, NRadioGroup, NRadio, NText } from 'naive-ui'
+import { NCard, NSpace, NEmpty, NSpin, NRadioGroup, NRadio, NText } from 'naive-ui'
+import AppSelect from '@/components/AppSelect.vue'
 import { Bar, Doughnut } from 'vue-chartjs'
 import {
   Chart as ChartJS,
@@ -16,20 +17,35 @@ import type { ChartOptions, TooltipItem } from 'chart.js'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount } from '@/types'
-import type { CategoryShare, MonthlySummary } from '@/types'
+import type { CategoryShare, MerchantShare, MonthlySummary, YearRange } from '@/types'
 import { categoryRoot } from '@/utils/category-tree'
 import {
   loadReportsGroupLevel,
   saveReportsGroupLevel,
   type ReportsGroupLevel,
 } from '@/utils/view-state'
+import MerchantRankingPanel from '@/components/reports/MerchantRankingPanel.vue'
 
 ChartJS.register(Title, Tooltip, Legend, BarElement, ArcElement, CategoryScale, LinearScale)
 
 const reference = useReferenceStore()
 const year = ref(new Date().getFullYear())
+// 报表年份筛选（issue #267）：可选范围为后端数据驱动的闭区间
+// [最早交易年份, max(当前年, 最新交易年份)]，空库回退 [当前年, 当前年]；
+// 范围内年份升序平铺直选，任何年份一击直达（取代围绕已选年份 ±2 的滑动窗口）。
+const yearRange = ref<YearRange | null>(null)
+const yearOptions = computed(() => {
+  const range = yearRange.value
+  if (!range) return []
+  const options: { label: string; value: number }[] = []
+  for (let y = range.min_year; y <= range.max_year; y++) {
+    options.push({ label: String(y), value: y })
+  }
+  return options
+})
 const monthly = ref<MonthlySummary[]>([])
 const shares = ref<CategoryShare[]>([])
+const merchantShares = ref<MerchantShare[]>([])
 const loading = ref(false)
 const groupLevel = ref<ReportsGroupLevel>(loadReportsGroupLevel())
 
@@ -39,12 +55,15 @@ watch(groupLevel, (v) => saveReportsGroupLevel(v))
 async function refresh() {
   loading.value = true
   try {
-    const [m, s] = await Promise.all([
+    const [m, s, ms] = await Promise.all([
       api.monthlySummary(year.value),
       api.categoryShares('expense'),
+      // 商户消费排行（issue #192）：随年份筛选，净额口径在后端收口
+      api.merchantShares(year.value),
     ])
     monthly.value = m
     shares.value = s
+    merchantShares.value = ms
   } finally {
     loading.value = false
   }
@@ -144,8 +163,14 @@ const doughnutChartOptions: ChartOptions<'doughnut'> = {
   },
 }
 
+// 范围挂载时拉取一次（不接失效信号：进视图即新鲜，跨会话自然生效）
+async function loadYearRange() {
+  yearRange.value = await api.reportYearRange()
+}
+
 onMounted(() => {
   // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll
+  void loadYearRange()
   void refresh()
 })
 </script>
@@ -153,9 +178,9 @@ onMounted(() => {
 <template>
   <NSpin :show="loading">
     <NSpace vertical :size="16">
-      <NSelect
+      <AppSelect
         :value="year"
-        :options="[year - 2, year - 1, year, year + 1].map((y) => ({ label: String(y), value: y }))"
+        :options="yearOptions"
         @update:value="(v: number) => (year = v)"
         style="width: 140px"
       />
@@ -178,6 +203,7 @@ onMounted(() => {
           <Doughnut :data="doughnutChartData" :options="doughnutChartOptions" />
         </div>
       </NCard>
+      <MerchantRankingPanel :shares="merchantShares" />
     </NSpace>
   </NSpin>
 </template>

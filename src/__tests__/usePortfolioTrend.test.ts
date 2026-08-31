@@ -30,6 +30,7 @@ function baseInvoke(extra?: Record<string, unknown>) {
       return Promise.resolve([{ code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 }])
     if (cmd === 'list_accounts') return Promise.resolve([])
     if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve([])
     if (extra && cmd in extra) {
       const handler = (extra as Record<string, unknown>)[cmd]
       return typeof handler === 'function' ? (handler as () => unknown)() : Promise.resolve(handler)
@@ -45,7 +46,7 @@ beforeEach(async () => {
   mockInvoke.mockReset()
   baseInvoke()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 describe('toTrendRange 预设区间 → 查询区间（纯函数）', () => {

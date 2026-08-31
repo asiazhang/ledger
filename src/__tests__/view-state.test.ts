@@ -7,6 +7,9 @@ import {
   saveSidebarCollapsed,
   loadReportsGroupLevel,
   saveReportsGroupLevel,
+  getSavedSidebarOrder,
+  saveSidebarOrder,
+  clearSidebarOrder,
 } from '@/utils/view-state'
 
 beforeEach(() => {
@@ -44,6 +47,46 @@ describe('view-state sidebarCollapsed', () => {
     saveSidebarCollapsed(true)
     expect(loadSidebarCollapsed()).toBe(true)
     expect(localStorage.getItem(VIEW_STATE_KEYS.sidebarCollapsed)).toBe('true')
+  })
+})
+
+describe('view-state sidebarOrder（issue #269：key 与读助手，解析归顺序模块）', () => {
+  it('无记录时返回 null', () => {
+    expect(getSavedSidebarOrder()).toBeNull()
+  })
+
+  it('返回已存原始值（数组不做解析，防御归顺序模块）', () => {
+    localStorage.setItem(VIEW_STATE_KEYS.sidebarOrder, '["reports","transactions"]')
+    expect(getSavedSidebarOrder()).toEqual(['reports', 'transactions'])
+  })
+
+  it('损坏的 JSON 回退 null', () => {
+    localStorage.setItem(VIEW_STATE_KEYS.sidebarOrder, 'not-json{')
+    expect(getSavedSidebarOrder()).toBeNull()
+  })
+
+  it('非数组原始值原样透传（由顺序解析整体回退默认序）', () => {
+    localStorage.setItem(VIEW_STATE_KEYS.sidebarOrder, '123')
+    expect(getSavedSidebarOrder()).toBe(123)
+  })
+})
+
+describe('view-state sidebarOrder 写路径（issue #270）', () => {
+  it('saveSidebarOrder 写入 JSON 数组，getSavedSidebarOrder 读回原始值', () => {
+    saveSidebarOrder(['reports', 'transactions'])
+    expect(localStorage.getItem(VIEW_STATE_KEYS.sidebarOrder)).toBe('["reports","transactions"]')
+    expect(getSavedSidebarOrder()).toEqual(['reports', 'transactions'])
+  })
+
+  it('clearSidebarOrder 移除 key，回退无记录态', () => {
+    saveSidebarOrder(['reports'])
+    clearSidebarOrder()
+    expect(localStorage.getItem(VIEW_STATE_KEYS.sidebarOrder)).toBeNull()
+    expect(getSavedSidebarOrder()).toBeNull()
+  })
+
+  it('clearSidebarOrder 对不存在的 key 不报错', () => {
+    expect(() => clearSidebarOrder()).not.toThrow()
   })
 })
 

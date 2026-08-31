@@ -16,7 +16,8 @@ use crate::common::query_all_transactions;
 use crate::world::{ImportedRow, LedgerWorld};
 
 /// 批量导入：模拟 AI 迁移，与 HTTP 批量导入同走 `batch::TransactionBatch::run`（dedup=true）。
-/// 表格列（按表头名解析，缺失可省略）：kind | 金额 | 币种 | 账户 | 转入账户 | 日期 [| 备注 [| 幂等键]]。
+/// 表格列（按表头名解析，缺失可省略）：kind | 金额 | 币种 | 账户 | 转入账户 | 日期 [| 备注 [| 商户 [| 幂等键]]]。
+/// `商户` 为商户名字符串（issue #194 AI 导入契约）：后端精确匹配复用或未命中即建。
 #[when(expr = "批量导入交易")]
 fn batch_import(world: &mut LedgerWorld, #[step] step: &Step) {
     let table = step.table.as_ref().expect("批量导入步骤缺少数据表");
@@ -35,6 +36,7 @@ fn batch_import(world: &mut LedgerWorld, #[step] step: &Step) {
         .map(|row| {
             let to_account = get(row, "转入账户");
             let note = get(row, "备注");
+            let merchant = get(row, "商户");
             let key = get(row, "幂等键");
             ImportedRow {
                 kind: get(row, "kind"),
@@ -44,15 +46,20 @@ fn batch_import(world: &mut LedgerWorld, #[step] step: &Step) {
                 to_account_name: (!to_account.is_empty()).then_some(to_account),
                 note: (!note.is_empty()).then_some(note),
                 date: get(row, "日期"),
+                merchant_name: (!merchant.is_empty()).then_some(merchant),
                 idempotency_key: (!key.is_empty()).then_some(key),
             }
         })
         .collect();
     let inputs: Vec<TransactionInput> = rows.iter().map(|r| r.to_input(world)).collect();
-    let results = TransactionBatch::run(&world.conn, inputs, true).expect("批量导入失败");
+    // 与 HTTP 批量导入端点同形态：经连接层统一写入口（ADR-0032，issue #245）。
+    let results = world
+        .db
+        .write(|conn| TransactionBatch::run(conn, inputs, true))
+        .expect("批量导入失败");
     world.last_import_rows = rows;
     world.last_batch_results = results;
-    world.transactions_list = query_all_transactions(&world.conn);
+    world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 重跑刚才的批量导入：与首次导入相同的行、相同的 dedup 语义。
@@ -63,17 +70,20 @@ fn reimport(world: &mut LedgerWorld) {
         .iter()
         .map(|r| r.to_input(world))
         .collect();
-    let results = TransactionBatch::run(&world.conn, inputs, true).expect("重跑批量导入失败");
+    // 与 HTTP 批量导入端点同形态：经连接层统一写入口（ADR-0032，issue #245）。
+    let results = world
+        .db
+        .write(|conn| TransactionBatch::run(conn, inputs, true))
+        .expect("重跑批量导入失败");
     world.last_batch_results = results;
-    world.transactions_list = query_all_transactions(&world.conn);
+    world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 按幂等键找到对应交易并全字段替换（模拟 AI 读回后用 PUT 修改的纠错路径）。
 /// 修改金额/日期/备注但幂等键保持不变——编辑不改变导入身份，修改后重跑同批导入不产生重复。
 #[when(expr = "修改幂等键 {string} 的交易 金额 {int} 日期 {string} 备注 {string}")]
 fn edit_txn_by_key(world: &mut LedgerWorld, key: String, amount: i64, date: String, note: String) {
-    let (id, account_id, currency_code): (String, String, String) = world
-        .conn
+    let (id, account_id, currency_code): (String, String, String) = world_conn!(world)
         .query_row(
             "SELECT id, account_id, currency_code FROM transactions \
              WHERE idempotency_key=?1 AND is_deleted=0 LIMIT 1",
@@ -82,12 +92,14 @@ fn edit_txn_by_key(world: &mut LedgerWorld, key: String, amount: i64, date: Stri
         )
         .unwrap_or_else(|_| panic!("未找到幂等键为 '{key}' 的交易"));
     let input = TransactionInput {
+        merchant_name: None,
         kind: TransactionKind::Income,
         amount_cents: amount,
         currency_code,
         account_id,
         to_account_id: None,
         category_id: None,
+        merchant_id: None,
         refund_of_transaction_id: None,
         note: Some(note),
         date,
@@ -97,29 +109,29 @@ fn edit_txn_by_key(world: &mut LedgerWorld, key: String, amount: i64, date: Stri
         fee_cents: None,
         idempotency_key: None,
     };
-    update_transaction_internal(&world.conn, &id, input).expect("修改交易失败");
-    world.transactions_list = query_all_transactions(&world.conn);
+    update_transaction_internal(&world_conn!(world), &id, input).expect("修改交易失败");
+    world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 删除备注为指定值的交易（软删除，与 HTTP DELETE 端点共用 `delete_transaction_internal`）。
 #[when(expr = "删除备注为 {string} 的交易")]
 fn delete_txn_by_note(world: &mut LedgerWorld, note: String) {
-    let id: String = world
-        .conn
+    let id: String = world_conn!(world)
         .query_row(
             "SELECT id FROM transactions WHERE note=?1 AND is_deleted=0 ORDER BY created_at DESC LIMIT 1",
             params![note],
             |r| r.get(0),
         )
         .unwrap_or_else(|_| panic!("未找到备注为 '{note}' 的交易"));
-    delete_transaction_internal(&world.conn, &id).expect("删除交易失败");
-    world.transactions_list = query_all_transactions(&world.conn);
+    delete_transaction_internal(&world_conn!(world), &id).expect("删除交易失败");
+    world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 查询全部未删除账户的实时余额（含黑洞账户），快照到 world.balances。
 #[when(expr = "查询全部账户余额")]
 fn query_balances(world: &mut LedgerWorld) {
-    let balances = list_account_balances_for_api_internal(&world.conn).expect("查询账户余额失败");
+    let balances =
+        list_account_balances_for_api_internal(&world_conn!(world)).expect("查询账户余额失败");
     world.balances = balances
         .into_iter()
         .map(|ab| (ab.account.name, (ab.balance_cents, ab.account.is_hidden)))
@@ -134,7 +146,7 @@ fn reimport_create_account(world: &mut LedgerWorld, name: String, kind: String, 
         .parse()
         .unwrap_or_else(|_| panic!("未知账户类型: {kind}"));
     let id = create_account_idempotent_internal(
-        &world.conn,
+        &world_conn!(world),
         AccountInput {
             name: name.clone(),
             kind: account_kind,
@@ -152,7 +164,7 @@ fn reimport_create_account(world: &mut LedgerWorld, name: String, kind: String, 
 
 #[then(expr = "读回交易 应包含 {int} 条记录")]
 fn readback_count(world: &mut LedgerWorld, expected: i64) {
-    let result = list_transactions_internal(&world.conn, &TransactionListFilter::default())
+    let result = list_transactions_internal(&world_conn!(world), &TransactionListFilter::default())
         .expect("读回交易失败");
     assert_eq!(result.items.len() as i64, expected, "读回交易数量不匹配");
     world.transactions_list = result.items;
@@ -161,7 +173,7 @@ fn readback_count(world: &mut LedgerWorld, expected: i64) {
 #[then(expr = "读回 {string} 至 {string} 交易 应包含 {int} 条记录")]
 fn readback_range(world: &mut LedgerWorld, from: String, to: String, expected: i64) {
     let result = list_transactions_internal(
-        &world.conn,
+        &world_conn!(world),
         &TransactionListFilter {
             from: Some(from.clone()),
             to: Some(to.clone()),
@@ -180,7 +192,7 @@ fn readback_range(world: &mut LedgerWorld, from: String, to: String, expected: i
 fn readback_account(world: &mut LedgerWorld, name: String, expected: i64) {
     let account_id = world.account_id(&name);
     let result = list_transactions_internal(
-        &world.conn,
+        &world_conn!(world),
         &TransactionListFilter {
             account_id: Some(account_id),
             ..Default::default()
@@ -202,7 +214,7 @@ fn readback_kind_amount(
     expected_sum: i64,
 ) {
     let result = list_transactions_internal(
-        &world.conn,
+        &world_conn!(world),
         &TransactionListFilter {
             kind: Some(
                 TransactionKind::parse(&kind)
@@ -223,7 +235,7 @@ fn readback_kind_amount(
 
 #[then(expr = "读回交易 应包含 金额 {int} 的记录")]
 fn readback_with_amount(world: &mut LedgerWorld, amount: i64) {
-    world.transactions_list = query_all_transactions(&world.conn);
+    world.transactions_list = query_all_transactions(&world_conn!(world));
     assert!(
         world
             .transactions_list
@@ -235,7 +247,7 @@ fn readback_with_amount(world: &mut LedgerWorld, amount: i64) {
 
 #[then(expr = "读回交易 应不包含 金额 {int} 的记录")]
 fn readback_without_amount(world: &mut LedgerWorld, amount: i64) {
-    world.transactions_list = query_all_transactions(&world.conn);
+    world.transactions_list = query_all_transactions(&world_conn!(world));
     assert!(
         !world
             .transactions_list
@@ -320,8 +332,7 @@ fn check_dup_returns_existing_id(world: &mut LedgerWorld) {
     assert!(!dups.is_empty(), "应存在去重结果以校验返回已有 id");
     for d in dups {
         let id = d.id.as_ref().expect("幂等键命中的去重应返回已有 id");
-        let exists: i64 = world
-            .conn
+        let exists: i64 = world_conn!(world)
             .query_row(
                 "SELECT COUNT(*) FROM transactions WHERE id=?1 AND is_deleted=0",
                 params![id],

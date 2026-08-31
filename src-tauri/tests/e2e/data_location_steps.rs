@@ -10,7 +10,7 @@ use rusqlite::Connection;
 use tauri_app_lib::commands::data_location::{
     WRITE_PROBE_FILE_NAME, gather_info_from_boot, validate_and_commit,
 };
-use tauri_app_lib::commands::transactions::insert_transaction;
+use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::db::{
     data_location, init_db, new_uuid, open_connection, open_db_in, reset_db_in,
 };
@@ -44,12 +44,14 @@ fn seed_db(conn: &Connection, account: &str, count: usize) {
         .unwrap();
     for i in 0..count {
         let input = TransactionInput {
+            merchant_name: None,
             kind: TransactionKind::Expense,
             amount_cents: 1000 + i as i64,
             currency_code: "CNY".into(),
             account_id: account_id.clone(),
             to_account_id: None,
             category_id: None,
+            merchant_id: None,
             refund_of_transaction_id: None,
             note: Some(format!("种子交易 {i}")),
             date: "2026-03-01".into(),
@@ -59,7 +61,7 @@ fn seed_db(conn: &Connection, account: &str, count: usize) {
             fee_cents: None,
             idempotency_key: None,
         };
-        insert_transaction(conn, input).unwrap();
+        create_transaction_internal(conn, input).unwrap();
     }
 }
 

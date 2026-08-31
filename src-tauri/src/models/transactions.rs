@@ -19,6 +19,7 @@ pub struct Transaction {
     pub account_id: String,
     pub to_account_id: Option<String>,
     pub category_id: Option<String>,
+    pub merchant_id: Option<String>,
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
@@ -36,9 +37,6 @@ pub struct TransactionSearchResult {
     pub items: Vec<Transaction>,
     /// 命中总数（供「命中 N 条」与分页）。
     pub total: i64,
-    /// 索引是否可能滞后：搜索重建队列非空（存在尚未消费的写入）时 true。
-    /// 搜索为只读操作，不触发消费，故该值反映查询时刻的真实状态。
-    pub stale: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, ToSchema)]
@@ -51,12 +49,27 @@ pub struct TransactionInput {
     pub account_id: String,
     pub to_account_id: Option<String>,
     pub category_id: Option<String>,
+    pub merchant_id: Option<String>,
+    /// 商户名字符串（AI 导入契约，issue #194 / ADR-0028）：提交体不带 `merchant_id` 而
+    /// 带商户名时，后端写入路径精确匹配在用商户名——命中复用、未命中即建，归一化责任
+    /// 收口在后端，AI 不负责商户去重。与 `merchant_id` 互斥（同时提供属请求错误）。
+    pub merchant_name: Option<String>,
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
+    /// 标的 id（仅 buy/sell 需提供）：先用标的搜索端点（`GET /api/v1/instruments`）
+    /// 把源数据中的标的描述解析为 id，未命中再按创建端点幂等新建；
+    /// 引用不存在的标的返回 400（中文错误，可读回自纠）。
     pub instrument_id: Option<String>,
+    /// 成交数量（份，可含小数）：仅 buy/sell 需提供，必须 > 0。
     pub quantity: Option<f64>,
+    /// 成交单价（万分之一元，元 × 10000；价格刻度见 ADR-0038，金额列仍为整数分）：
+    /// 非基金标的必填且必须 > 0；场外基金（issue #302 / ADR-0038 金额权威）不提供，
+    /// 由后端按（行金额 ∓ 手续费）÷ 数量反算到万分之一元。
     pub price_cents: Option<i64>,
+    /// 手续费（整数分，可省，默认 0）：sell 不得超过卖出收入（数量 × 单价，非基金）；
+    /// 服务端行金额：非基金按 buy = 数量 × 单价 + 费用、sell = 数量 × 单价 − 费用重算；
+    /// 场外基金以 `amount_cents`（确认单整分金额）为权威，行金额原样采用。
     pub fee_cents: Option<i64>,
     /// 客户端提供的、内容无关的导入幂等键（指向"该交易来自源文件哪一行"）。
     /// 带键时批量导入以其为准去重（同键跳过、内容无关）；无键时回退内容哈希兜底。
@@ -76,12 +89,21 @@ pub struct UpdateTransactionInput {
     pub account_id: String,
     pub to_account_id: Option<String>,
     pub category_id: Option<String>,
+    pub merchant_id: Option<String>,
+    /// 商户名字符串（与 `TransactionInput.merchant_name` 同一契约）：修改路径同样
+    /// 由后端精确匹配复用或即建；解析出的 id 与该行当前商户相同即视为保持历史引用。
+    pub merchant_name: Option<String>,
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
+    /// 标的 id（仅 buy/sell 需提供）：与 `TransactionInput.instrument_id` 同一契约；
+    /// 引用不存在的标的返回 400（中文错误，可读回自纠）。
     pub instrument_id: Option<String>,
+    /// 成交数量（份，可含小数）：与 `TransactionInput.quantity` 同一契约，必须 > 0。
     pub quantity: Option<f64>,
+    /// 成交单价（万分之一元）：与 `TransactionInput.price_cents` 同一契约，必须 > 0。
     pub price_cents: Option<i64>,
+    /// 手续费（整数分，可省，默认 0）：与 `TransactionInput.fee_cents` 同一契约。
     pub fee_cents: Option<i64>,
 }
 
@@ -96,6 +118,8 @@ impl From<UpdateTransactionInput> for TransactionInput {
             account_id: u.account_id,
             to_account_id: u.to_account_id,
             category_id: u.category_id,
+            merchant_id: u.merchant_id,
+            merchant_name: u.merchant_name,
             refund_of_transaction_id: u.refund_of_transaction_id,
             note: u.note,
             date: u.date,
@@ -121,6 +145,7 @@ pub struct NormalizedTransaction {
     pub account_id: String,
     pub to_account_id: Option<String>,
     pub category_id: Option<String>,
+    pub merchant_id: Option<String>,
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
@@ -145,6 +170,7 @@ impl TryFrom<&NormalizedTransaction> for writer::NormalizedRow {
             account_id: norm.account_id.clone(),
             to_account_id: norm.to_account_id.clone(),
             category_id: norm.category_id.clone(),
+            merchant_id: norm.merchant_id.clone(),
             refund_of_transaction_id: norm.refund_of_transaction_id.clone(),
             note: norm.note.clone(),
             date: norm.date.clone(),
@@ -188,6 +214,9 @@ pub struct TransactionListFilter {
     /// 命中普通交易与转账的转出/转入两侧（含转入的转账）。
     /// 已发布字段 `account_id`（仅转出账户）语义保持不变，遵守发布冻结约定。
     pub involving_account_id: Option<String>,
+    /// 按商户过滤（issue #191）：命中 `merchant_id = X` 的全部未删除交易
+    /// （交易行未删即命中，商户本身可已软删——软删商户的历史交易同样可过滤）。
+    pub merchant_id: Option<String>,
     /// 交易类型过滤（income / expense / transfer / buy / sell / refund）。
     /// 枚举反序列化对未知值报参数错误（400），不再静默传字符串给 SQL。
     pub kind: Option<TransactionKind>,
@@ -227,6 +256,7 @@ impl FromRow for Transaction {
             version: row.get(13)?,
             device_id: row.get(14)?,
             is_deleted: row.get::<_, i64>(15)? != 0,
+            merchant_id: row.get(16)?,
         })
     }
 }

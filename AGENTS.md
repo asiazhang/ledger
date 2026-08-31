@@ -1,26 +1,28 @@
 # AGENTS.md
 
-本文件为 AI 编程助手在本仓库中处理代码时提供指导。只讲「原则」与「去哪查」——事实层（schema、路由、命令名）由环境与文档导航提供。
+给 AI 编程助手的指导，只讲「原则」与「去哪查」；事实层（schema、路由、命令名）以环境与下列文档为准。
 
 ## 文档导航
 
 动手前先定位到对应层：
 
 - **`CONTEXT-MAP.md`** — 领域词汇表地图：领域词汇表（叙述与决策归 `docs/adr/`）按域拆分为集中存放于 `docs/contexts/` 的 `CONTEXT-*.md` 分域文件。动手前先读地图，再选读与改动主题相关的分域词汇表与相关 ADR；**与代码行为冲突时以代码为准并同步修正词汇表。**
-- **`docs/adr/`** — 决策记录（文件名即编号与主题，如 ADR-0012 参考数据失效、ADR-0013 行为层分派、ADR-0017 应用配置归口）。改到某区域前先读该区域的 ADR。
+- **`docs/adr/`** — 决策记录（文件名即编号与主题）。改到某区域前先读该区域的 ADR。
 - **`docs/agents/`** — 专项操作指引（issue-tracker 用 `gh`、triage 标签、domain 文档消费方式）。
-- **`docs/model/`、`docs/specs/`** — 数据模型与规格。
+- **`docs/model/`** — 数据模型。
 - **`scripts/`** — 一键脚本，用法见各脚本头部注释（含 README 未提及的操作）。
 
 ## 项目概览
 
-Ledger：Tauri 2 桌面记账应用。前端 Vue 3 + TypeScript + Vite（Naive UI 按需 import），后端 Rust（命令集中在 `src-tauri/src/commands/`，前端经 `src/api/index.ts` 的 `api` 对象 invoke）。
+Ledger：Tauri 2 桌面记账应用，前端 Vue 3 + TypeScript、后端 Rust。后端命令集中在 `src-tauri/src/commands/`，前端经 `src/api/index.ts` 的 `api` 对象 invoke。
 
-> **发布约定：打 git tag 即发布。** 未发布（最新 tag 之后）的 schema、API、数据模型可自由修改；已发布（最新 tag 及更早）**冻结**：迁移只增不改（变更一律新增向前迁移），API 与数据模型只增不改。
+> **发布约定：打 git tag 即发布。** 未发布（最新 tag 之后）的 schema、API、数据模型可自由修改；已发布（最新 tag 及更早）：**迁移文件可就地修改**（已执行过该迁移的存量库保持原 schema，与新装库的 schema 分叉被接受），**API 与数据模型只增不改**。凡就地修改已发布迁移，发布（打 tag）时必须以两级 BREAKING 标记承载：被改迁移文件头部加就地修改注记（指向 CHANGELOG 版本）+ CHANGELOG 对应版本下加 BREAKING 条目。
 
 ## 工作流约定
 
 - **调用 `/implement` skill 实施任何改动必须在独立的 git worktree 中进行**：`git worktree add` 创建，完成后在工作树内提交。这样主检出目录始终保持干净，实验性改动不污染当前状态。
+- **worktree 内跑前端类型检查需先软链 node_modules**：`git worktree add` 建立的独立检出**不含 `node_modules`**，此时直接跑 `./scripts/check.sh`（或 `npx vue-tsc`）会让 npx 走缓存里与项目不匹配的 `typescript`，报 `ERR_PACKAGE_PATH_NOT_EXPORTED` 即此因。解决：软链主检出的依赖即可——`ln -s <主检出绝对路径>/node_modules <worktree>/node_modules`，随后 `vue-tsc --noEmit` 与 `check.sh` 正常（node_modules 为 gitignore，软链不进提交）。
+- **文档守门（三层标尺）**：写分域词汇表与模型文档时，实现坐标（路径、函数名、清单、DDL、正则、公式）一律不进文档——「甲删乙留丙留」标尺见 `CONTEXT-MAP.md`「结构约定」；`scripts/check-docs.sh` 的代码坐标扫描命中即门槛失败。
 
 ## 金额与多币种
 
@@ -33,12 +35,11 @@ Ledger：Tauri 2 桌面记账应用。前端 Vue 3 + TypeScript + Vite（Naive U
 `transactions.kind` 是**闭集 8 种**：`income | expense | transfer | refund | buy | sell | dividend | split`（真源 `transaction::amount::TransactionKind`；注意 `categories.kind` 仅 `income | expense`）。
 
 - 校验与落库统一走 Writer 接缝（`src-tauri/src/transaction/writer.rs`，`normalize` / `insert_row` / `update_row`）：所有写路径（命令层、买入/卖出行、定时引擎、批量导入）都经它。
-- 每类 kind 的行为（校验/归一化/副作用/回退）收敛在 `commands::transactions::behavior` 行为层（`plan → apply / revert` 单点分派）：通用 kind 走 Writer 接缝，buy/sell 委托 `commands::investment` 的 `prepare / apply / revert`，dividend/split 显式「暂不支持」拒绝。
-- 改动交易写入行为就加在行为层分派上，让所有写路径自然走到它；改动金额口径只改 Amount 接缝内矩阵一处。
+- 每类 kind 的行为（校验/归一化/副作用/回退）收敛在 `commands::transactions::behavior` 行为层（`plan → apply / revert` 单点分派）：通用 kind 走 Writer 接缝，buy/sell 委托 `commands::investment` 的 `prepare / apply / revert`，dividend/split 显式「暂不支持」拒绝。改动写入行为就加在此分派上，所有写路径自然走到。
 
 ## 前端状态
 
-- 参考数据（currencies/accounts/categories）单一来源是 `src/stores/reference.ts` 的 `useReferenceStore`（三张参考表 + 派生映射 + 分类树 + 失效信号，细节见参考数据与设置域词汇表 `docs/contexts/CONTEXT-reference-settings.md`「参考数据」条目）：读取走 `ensureFresh()` / 强制重拉走 `refresh()`，并随 `ledger:changed` 失效信号自动重拉——绕开它会躲过失效机制。
+- 参考数据（currencies/accounts/categories/merchants）单一来源是 `src/stores/reference.ts` 的 `useReferenceStore`（四张参考表 + 派生映射 + 分类树 + 失效信号，细节见参考数据与设置域词汇表 `docs/contexts/CONTEXT-reference-settings.md`「参考数据」条目）：读取 = 直接消费响应式状态（self-init + `ledger:changed` 失效信号自动重拉保证新鲜）；仅少数场景显式 `await refresh()` 强制重拉——绕开它会躲过失效机制。
 - `useAppStore`（`src/stores/app.ts`）是**纯 UI 设置 store**（theme / defaultCurrency / backupDir / backupMaxCount）。
 - 路由 hash 模式（Tauri webview 需要），视图与路由以 `src/router/` 代码为准；README/词汇表若不同步，同步修正文档。
 - **应用配置归口（ADR-0017）**：前端独享消费的设备偏好存 localStorage；后端消费或随 Backup/Restore 迁移的配置与运行时状态统一存 `app_settings` KV 表（读写经 `src-tauri/src/settings.rs` 枚举收口，key 规范 `<feature>.<name>`，对外 IPC 保持领域命令形状）。库外配置文件的**唯一例外**是 DataLocation 引导指针文件（ADR-0018）：建连前必须可读，进不了库内。
@@ -52,12 +53,14 @@ AI 驱动的导入**不按文件类型解析**，唯一入口是本地 HTTP API 
 - Rust 时间戳统一用 `db::now_iso()`（UTC ISO 字符串）。
 - Rust 字符串/错误信息使用中文（与 `AppError` 枚举、种子数据一致）。
 - 前端组件沿用 Naive UI 按需 import + `<script setup lang="ts">` 风格。
-- **文件命名约定**：前端多词 `.ts` 模块一律 kebab-case（如 `view-state.ts`）；`.vue` 组件保持 PascalCase；composables 保持 `useXxx` camelCase；Rust 侧遵循 cargo 惯例 snake_case。测试文件跟随被测文件命名（`<被测文件名>.test.ts`）。跨平台考虑：普通模块全小写，避免大小写敏感文件系统上的歧义。
+- **弹层关闭语义**：新弹窗一律用 `AppModal`（`src/components/AppModal.vue`，默认遮罩点击不关）不直接用 NModal；useDialog 调用点改用 `useAppDialog` 并显式传 `maskClosable: false`（语义详见界面状态与交互域词汇表 `docs/contexts/CONTEXT-ui-interaction.md`「弹层关闭语义」）。
+- **弹层封装与快捷键抑制（ADR-0035）**：应用内一切弹层（NSelect/NTreeSelect/NDatePicker/NDropdown/NPopconfirm/NModal/useDialog）一律经 `src/components/App*.vue` 封装或 `useAppDialog` 使用——封装接入弹层注册表（显式上报开/关）驱动快捷键抑制，绕过封装会脱离抑制。封装刻意不声明 `show` prop（Vue 对可选 Boolean prop 的缺席转型会把非受控用法变成受控关闭），`:show`/`@update:show` 走 attrs 透传；新增弹层形态时在对应 App* 封装内接线，不回全局 DOM 嗓探。
+- **文件命名约定**：前端多词 `.ts` 模块一律 kebab-case（如 `view-state.ts`）；`.vue` 组件保持 PascalCase；composables 保持 `useXxx` camelCase；Rust 侧遵循 cargo 惯例 snake_case。测试文件命名：默认 `<被测文件名>.test.ts`；单文件超约 800 行时允许拆为以被测文件命名的目录、内部按主题命名（先例 `src/__tests__/TransactionsView/`：`pagination.test.ts`、`filtering.test.ts`、`transfer-row.test.ts` 等，目录名沿用被测文件名大小写，共享辅助收进目录内 `common.ts`）。跨平台考虑：普通模块全小写，避免大小写敏感文件系统上的歧义。
 - **新增后端命令**：`commands.rs`（`src-tauri/src/commands/`）加 `#[tauri::command]` 函数 → `lib.rs` 的 `generate_handler!` 注册 → `src/api/index.ts` 加方法 → 必要时 `src/types/index.ts` 加 TS 类型（对应 `src-tauri/src/models/` serde 结构，注意 `#[serde(rename = "type")]` 字段映射）。
 
 ## 测试
 
-- 新增 Rust 业务逻辑：补充 BDD 场景到 `src-tauri/tests/e2e/features/` 与对应 step 定义（`src-tauri/tests/e2e/*_steps.rs`）。
+- 新增 Rust 业务逻辑：补充 BDD 场景到 `src-tauri/tests/e2e/features/` 与对应 step 定义（`src-tauri/tests/e2e/*_steps.rs`）。仅 HTTP 端点层的行为（经 IPC 不可达，先例 #296/#304）以 `src-tauri/tests/api_server/` 集成测试承载，不重复建 BDD 场景。
 - 新增前端逻辑：补充 Vitest 测试到 `src/__tests__/`（纯函数、composables、组件均可测）。
 - 质量门槛即 `./scripts/check.sh` 的覆盖范围（vue-tsc --noEmit、cargo clippy --all-targets --all-features、cargo fmt 无警告）；单测跑法见 `package.json` scripts 与脚本头部注释。
 - 注意：Vite 配置已忽略对 `src-tauri/**` 的文件监听，改 Rust 代码不会触发前端热更新（Rust 热重载由 `tauri dev` 自身处理）。

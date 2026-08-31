@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import DashboardView from '@/views/DashboardView.vue'
 import TransactionForm from '@/components/TransactionForm.vue'
 import { useReferenceStore } from '@/stores/reference'
+import { useItemsStore } from '@/stores/items'
 import { NProgress } from 'naive-ui'
 import {
   invokeHandler,
@@ -52,6 +53,9 @@ function setCurrentMonthSummary(summary: MonthlySummary) {
   mockMonthlySummary = [{ month: monthKey, ...summary }]
 }
 
+/** 在用物品每天成本合计（issue #122）用例可按需覆写 */
+const mockItemDailyTotal = { native_currency: 'CNY', per_day_cents: 12345, item_count: 3 }
+
 /** 默认 invoke mock：参考数据 + 持仓 + 持仓标的字典 + 本月收支/预算（extra 优先覆盖） */
 function baseInvoke(extra?: Record<string, unknown>) {
   mockInvoke.mockImplementation(
@@ -60,9 +64,13 @@ function baseInvoke(extra?: Record<string, unknown>) {
         list_currencies: mockCurrencies,
         list_accounts: mockAccounts,
         list_categories: [],
+        list_merchants: [],
         list_holdings: mockHoldings,
         list_instruments: { items: mockInstruments, total: mockInstruments.length },
         dashboard_overview: mockOverview,
+        // 物品使用成本卡（issue #122）挂载时会创建物品 store（self-init 拉列表）
+        list_items: [],
+        item_daily_total: mockItemDailyTotal,
       },
       {
         // 函数型 handler 实时读取可变变量，#144 用例挂载前直接改写生效
@@ -82,7 +90,7 @@ beforeEach(async () => {
   baseInvoke()
   localStorage.clear()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 async function mountView() {
@@ -221,6 +229,54 @@ describe('DashboardView 本月收支卡（issue #144）', () => {
     mockMonthlySummary = [{ month: '1999-01', income_cents: 999, expense_cents: 888, refund_cents: 7 }]
     const wrapper = await mountView()
     expect(wrapper.text()).toContain('本月收支收入0净支出0结余0')
+  })
+})
+
+describe('DashboardView 物品使用成本卡（issue #122）', () => {
+  it('展示全部在用物品每天成本合计（默认币种）与在用件数', async () => {
+    const wrapper = await mountView()
+    const card = wrapper.find('[data-testid="item-daily-cost-card"]')
+    expect(card.exists()).toBe(true)
+    expect(card.text()).toContain('全部在用物品每天成本合计')
+    // 12345 分 → ¥123.45（默认币种，后端聚合结果直接展示）
+    expect(card.text()).toContain('¥123.45/天')
+    expect(card.text()).toContain('共 3 件在用物品')
+  })
+
+  it('无在用物品时空态占位而非 0 数字', async () => {
+    baseInvoke({ item_daily_total: { native_currency: 'CNY', per_day_cents: 0, item_count: 0 } })
+    const wrapper = await mountView()
+    const card = wrapper.find('[data-testid="item-daily-cost-card"]')
+    expect(card.text()).toContain('暂无在用物品')
+    expect(card.text()).not.toContain('/天')
+  })
+
+  it('聚合命令报错（如缺汇率）时显示提示文案而非空数字', async () => {
+    baseInvoke({
+      item_daily_total: () => Promise.reject(new Error('缺少 JPY→CNY 汇率，无法折算')),
+    })
+    const wrapper = await mountView()
+    const card = wrapper.find('[data-testid="item-daily-cost-card"]')
+    expect(card.text()).toContain('缺少 JPY→CNY 汇率，无法折算')
+    // 不渲染空数字或合计
+    expect(card.text()).not.toContain('¥')
+  })
+
+  it('物品写入失效（store version 变化）后自动重拉合计', async () => {
+    let total = { native_currency: 'CNY', per_day_cents: 10000, item_count: 1 }
+    baseInvoke({
+      item_daily_total: () => Promise.resolve(total),
+      list_items: [],
+    })
+    const wrapper = await mountView()
+    expect(wrapper.find('[data-testid="item-daily-cost-card"]').text()).toContain('¥100/天')
+    // 物品写入 → 物品 store 重拉（模拟 ledger:changed 路径）→ version 自增 → 合计跟随重拉
+    total = { native_currency: 'CNY', per_day_cents: 30000, item_count: 2 }
+    await useItemsStore().refresh()
+    await flushPromises()
+    const card = wrapper.find('[data-testid="item-daily-cost-card"]')
+    expect(card.text()).toContain('¥300/天')
+    expect(card.text()).toContain('共 2 件在用物品')
   })
 })
 

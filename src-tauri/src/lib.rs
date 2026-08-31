@@ -5,7 +5,6 @@ pub mod db;
 pub mod error;
 pub mod events;
 pub mod item;
-pub mod log_plugin;
 pub mod logger;
 pub mod models;
 pub mod scheduled_transactions;
@@ -88,7 +87,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .plugin(log_plugin::init())
         .setup(|app| {
             logger::init(app.handle());
             try_init_database(app).map_err(|e| {
@@ -105,17 +103,14 @@ pub fn run() {
                 app.handle().clone(),
                 app.state::<db::DbState>().conn.clone(),
             );
-            // 后台索引刷新线程：固定周期消费搜索重建队列（ADR-0004 决策 #14，
-            // 写路径零索引工作，界面操作不受索引维护影响）。
-            commands::search::start_search_refresh_thread(app.state::<db::DbState>().conn.clone());
             // 全量同步中断状态（issue #104）：跨命令共享运行/取消标志。
             app.manage(commands::sync::SyncState::default());
             // 自动备份（issue #125/#126）：目录镜像为进程级单例 [`auto_backup::shared_prefs`]，
-            // 轮询调度线程与写路径 on_write 共享同一份；
+            // 轮询调度线程与连接层写入口提交点检查（ADR-0032）共享同一份；
             // 退出兜底挂在下方 run 事件的 RunEvent::Exit 分支。
             auto_backup::start_scheduler(app.handle());
             // 备份产物变更信号（issue #129）：自动备份的深路径执行点
-            // （写时顺带检查 on_write）拿不到 AppHandle，启动时注入镜像句柄一次，
+            // （连接层写入口提交点的写时顺带检查）拿不到 AppHandle，启动时注入镜像句柄一次，
             // 之后经 [`events::emit_backups_changed_current`] 发射。
             events::init_event_app(app.handle());
             Ok(())
@@ -130,6 +125,8 @@ pub fn run() {
             commands::list_currencies,
             commands::list_accounts,
             commands::create_account,
+            commands::update_account,
+            commands::adjust_account_balance,
             commands::delete_account,
             commands::list_account_balances,
             commands::list_categories,
@@ -137,37 +134,54 @@ pub fn run() {
             commands::update_category,
             commands::reorder_categories,
             commands::delete_category,
+            commands::list_merchants,
+            commands::create_merchant,
+            commands::update_merchant,
+            commands::delete_merchant,
             commands::list_transactions,
             commands::create_transaction,
             commands::create_transactions,
+            commands::update_transaction,
             commands::delete_transaction,
             commands::search_transactions,
             commands::list_exchange_rates,
             commands::create_exchange_rate,
             commands::list_market_prices,
             commands::create_market_price,
+            commands::add_fund_by_code,
             commands::list_instruments,
             commands::create_instrument,
+            commands::record_manual_price,
+            commands::delete_instrument,
+            commands::get_transaction_trade,
             commands::list_holdings,
             commands::instrument_price_trend,
             commands::portfolio_value_trend,
             commands::list_items,
+            commands::item_daily_total,
             commands::create_item,
+            commands::calculate_item_cost,
             commands::update_item,
+            commands::dispose_item,
             commands::delete_item,
             commands::list_budgets,
             commands::create_budget,
+            commands::update_budget,
             commands::delete_budget,
             commands::monthly_summary,
             commands::category_shares,
+            commands::merchant_shares,
+            commands::report_year_range,
             commands::dashboard_overview,
             commands::budget_progress,
             commands::create_scheduled_transaction,
             commands::list_scheduled_transactions,
             commands::get_scheduled_transaction_detail,
             commands::update_scheduled_transaction_status,
+            commands::update_scheduled_subscription,
             commands::execute_scheduled_occurrence,
             commands::expand_scheduled_occurrences,
+            commands::subscription_spend_overview,
             commands::realized_pnl_summary,
             commands::sync_instruments,
             commands::cancel_sync_instruments,
@@ -178,6 +192,7 @@ pub fn run() {
             commands::get_data_location_info,
             commands::submit_data_location_change,
             commands::restore_default_data_location,
+            commands::open_log_dir,
         ]))
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

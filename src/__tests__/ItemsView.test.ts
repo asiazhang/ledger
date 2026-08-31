@@ -1,13 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises, enableAutoUnmount, DOMWrapper } from '@vue/test-utils'
-import { NPopconfirm, NSelect } from 'naive-ui'
+import { NPopconfirm, NSelect, NDatePicker } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useItemsStore } from '@/stores/items'
 import ItemsView from '@/views/ItemsView.vue'
-import type { Currency, ItemInput, ItemWithDailyCost, Transaction } from '@/types'
+import type { Currency, ItemDailyCost, ItemInput, ItemWithDailyCost, Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
+
+const pushMock = vi.fn()
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: pushMock }),
+}))
 
 // NModal 内容 teleport 到 document.body：测试在 body 中查询/触发（同 InstrumentBrowser 先例）。
 enableAutoUnmount(afterEach)
@@ -69,6 +74,9 @@ const mockItems: ItemWithDailyCost[] = [
 
 let itemList: ItemWithDailyCost[]
 
+/** 自选参考日重算的 mock 返回（null = 模拟重算失败，issue #121）。 */
+let calcResponse: ItemDailyCost | null = null
+
 /** 可供关联的支出交易（后端 list_transactions kind=expense 过滤）。 */
 const mockExpenseTxs: Transaction[] = [
   {
@@ -114,6 +122,7 @@ function setupInvoke(expenseTxs: Transaction[] = mockExpenseTxs) {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve([])
     if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve([])
     if (cmd === 'list_transactions') {
       const filter = (args as { filter?: { kind?: string } | null }).filter
       // 物品视图只拉支出交易（关联购买交易候选）；其他 kind 返回空
@@ -123,15 +132,27 @@ function setupInvoke(expenseTxs: Transaction[] = mockExpenseTxs) {
       })
     }
     if (cmd === 'list_items') return Promise.resolve(itemList)
-    if (cmd === 'create_item') {
-      itemList = [...itemList, { ...mockItems[0], id: 'item-new', name: '键盘' }]
-      void args
-      return Promise.resolve('item-new')
+    if (cmd === 'calculate_item_cost') {
+      void (args as { id: string; referenceDate: string | null }).id
+      if (calcResponse === null) return Promise.reject(new Error('重算失败'))
+      return Promise.resolve(calcResponse)
     }
     if (cmd === 'update_item') {
       const { id, input } = args as { id: string; input: { name: string } }
       itemList = itemList.map((it) => (it.id === id ? { ...it, ...input } : it))
       return Promise.resolve(null)
+    }
+    if (cmd === 'dispose_item') {
+      const { id, input } = args as {
+        id: string
+        input: { disposal_date: string; residual_value_cents: number | null }
+      }
+      itemList = itemList.map((it) =>
+        it.id === id
+          ? { ...it, status: 'disposed' as const, ...input, version: it.version + 1 }
+          : it,
+      )
+      return Promise.resolve()
     }
     if (cmd === 'delete_item') {
       const { id } = args as { id: string }
@@ -146,6 +167,7 @@ beforeEach(async () => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
   itemList = mockItems
+  calcResponse = null
   setupInvoke()
   localStorage.clear()
   // 参考数据（币种选项）与物品 store 均为 self-init，提前预热
@@ -169,51 +191,38 @@ describe('ItemsView 物品列表', () => {
     expect(html).toContain('$41.15')
   })
 
-  it('含创建入口（新增物品表单）', async () => {
+  it('不含新增物品表单，顶部常驻创建唯一入口提示（issue #207）', async () => {
     const wrapper = mount(ItemsView)
     await flushPromises()
-    expect(wrapper.text()).toContain('新增物品')
+    // 手动「新增物品」表单已移除
+    expect(wrapper.text()).not.toContain('新增物品')
+    expect(wrapper.find('input[placeholder="物品名称"]').exists()).toBe(false)
+    // 提示条常驻顶部，说明创建方式
+    const hint = wrapper.find('[data-testid="item-create-hint"]')
+    expect(hint.exists()).toBe(true)
+    expect(hint.text()).toContain('物品不支持直接新增')
+    expect(hint.text()).toContain('「交易」页右键一笔支出交易')
+    expect(hint.text()).toContain('加入物品')
   })
 
-  it('填写名称与成本后创建：create_item 收到整数分入参，列表自动出现新物品', async () => {
+  it('点击提示条「去交易页」跳转交易视图（issue #207）', async () => {
     const wrapper = mount(ItemsView)
     await flushPromises()
-
-    const nameInput = wrapper.find('input[placeholder="物品名称"]')
-    expect(nameInput.exists()).toBe(true)
-    await nameInput.setValue('键盘')
-    const costInput = wrapper.find('input[placeholder="总成本（元）"]')
-    await costInput.setValue('299')
-    const noteInput = wrapper.find('input[placeholder="品牌 / 型号 / 渠道（可选）"]')
-    await noteInput.setValue('HHKB')
-
-    // 购买日期默认今天，无需交互；币种默认 CNY
-    const createBtn = wrapper.findAll('button').find((b) => b.text() === '创建')
-    expect(createBtn).toBeTruthy()
-    await createBtn!.trigger('click')
-    await flushPromises()
-
-    const createCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_item')
-    expect(createCalls).toHaveLength(1)
-    const [, args] = createCalls[0]
-    const input = (args as { input: ItemInput }).input
-    expect(input.name).toBe('键盘')
-    expect(input.total_cost_cents).toBe(29_900)
-    expect(input.currency_code).toBe('CNY')
-    expect(input.note).toBe('HHKB')
-    expect(input.purchase_date).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-
-    // 创建成功后重拉：新物品出现在列表
-    expect(wrapper.text()).toContain('键盘')
+    const btn = wrapper.find('[data-testid="item-go-transactions"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.text()).toContain('去交易页')
+    await btn.trigger('click')
+    expect(pushMock).toHaveBeenCalledWith({ name: 'transactions' })
   })
 
-  it('名称为空时提示且不调用 create_item', async () => {
+  it('列表空态显示创建引导文案（issue #207）', async () => {
+    itemList = []
     const wrapper = mount(ItemsView)
     await flushPromises()
-    const createBtn = wrapper.findAll('button').find((b) => b.text() === '创建')
-    await createBtn!.trigger('click')
-    await flushPromises()
-    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'create_item')).toBe(false)
+    const guide = wrapper.find('[data-testid="item-empty-guide"]')
+    expect(guide.exists()).toBe(true)
+    expect(guide.text()).toContain('「交易」页右键一笔支出交易')
+    expect(guide.text()).toContain('加入物品')
   })
 
   it('点击删除并确认：delete_item 收到对应 id，列表移除该物品', async () => {
@@ -356,63 +365,7 @@ describe('ItemsView 物品详情（issue #117）', () => {
   })
 })
 
-describe('ItemsView 关联购买交易（issue #119）', () => {
-  /** 创建表单里的「关联购买交易」下拉（按 placeholder 区分于币种下拉）。 */
-  function linkSelect(wrapper: ReturnType<typeof mount>) {
-    const sel = wrapper
-      .findAllComponents(NSelect)
-      .find((s) => s.props('placeholder') === '关联购买交易')
-    expect(sel, '创建表单应有「关联购买交易」下拉').toBeTruthy()
-    return sel!
-  }
-
-  it('未关联时创建入参 purchase_transaction_id 为 null', async () => {
-    const wrapper = mount(ItemsView)
-    await flushPromises()
-
-    await wrapper.find('input[placeholder="物品名称"]').setValue('键盘')
-    await wrapper.find('input[placeholder="总成本（元）"]').setValue('299')
-    const createBtn = wrapper.findAll('button').find((b) => b.text() === '创建')
-    await createBtn!.trigger('click')
-    await flushPromises()
-
-    const input = (mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_item')[0][1] as {
-      input: ItemInput
-    }).input
-    expect(input.purchase_transaction_id).toBeNull()
-  })
-
-  it('选择关联交易后自动带出日期与成本（禁用手改），创建入参携带溯源 id', async () => {
-    const wrapper = mount(ItemsView)
-    await flushPromises()
-
-    // 选交易前成本/日期可编辑
-    const costInput = wrapper.find('input[placeholder="总成本（元）"]')
-    expect(costInput.attributes('disabled')).toBeUndefined()
-
-    await wrapper.find('input[placeholder="物品名称"]').setValue('iPhone')
-    linkSelect(wrapper).vm.$emit('update:value', 'tx-1')
-    await flushPromises()
-
-    // 自动带出：成本表单值被交易金额覆盖（599900 分 → 5999 元），且禁用手改
-    const costAfter = wrapper.find('input[placeholder="总成本（元）"]')
-    expect((costAfter.element as HTMLInputElement).value).toBe('5999')
-    expect(costAfter.attributes('disabled')).toBeDefined()
-
-    const createBtn = wrapper.findAll('button').find((b) => b.text() === '创建')
-    await createBtn!.trigger('click')
-    await flushPromises()
-
-    const input = (mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_item')[0][1] as {
-      input: ItemInput
-    }).input
-    expect(input.purchase_transaction_id).toBe('tx-1')
-    // 日期与成本为交易带出值（即使表单曾默认今天/被改过）
-    expect(input.purchase_date).toBe('2026-01-15')
-    expect(input.total_cost_cents).toBe(599_900)
-    expect(input.currency_code).toBe('CNY')
-  })
-
+describe('ItemsView 关联购买交易（issue #119）：编辑弹窗换关语义', () => {
   it('编辑弹窗预填既有关联且可手动调成本，换关后锁定并携带新溯源 id', async () => {
     itemList = [
       { ...itemList[0], purchase_transaction_id: 'tx-1', purchase_date: '2026-01-15', total_cost_cents: 599_900 },
@@ -425,12 +378,12 @@ describe('ItemsView 关联购买交易（issue #119）', () => {
     await flushPromises()
 
     const modal = bodyQuery('[data-testid="item-edit-modal"]')!
-    // 弹窗内的关联下拉 = 同 placeholder 的第 2 个（第 1 个在创建表单）
-    const linkSelects = wrapper
+    // 手动新增表单已移除（#207）：弹窗内是唯一一处「关联购买交易」下拉
+    const modalSelect = wrapper
       .findAllComponents(NSelect)
-      .filter((s) => s.props('placeholder') === '关联购买交易')
-    const modalSelect = linkSelects[linkSelects.length - 1]
-    expect(modalSelect.props('value')).toBe('tx-1')
+      .find((s) => s.props('placeholder') === '关联购买交易')
+    expect(modalSelect, '编辑弹窗应有「关联购买交易」下拉').toBeTruthy()
+    expect(modalSelect!.props('value')).toBe('tx-1')
     // 维持既有关联：成本可手动编辑（后续花费累加到总成本，用户故事 8）
     const costInput = modal.querySelector('input[placeholder="总成本（元）"]') as HTMLInputElement
     expect(costInput.value).toBe('5999')
@@ -471,4 +424,206 @@ describe('ItemsView 关联购买交易（issue #119）', () => {
     const text = bodyQuery('[data-testid="item-detail-modal"]')!.textContent ?? ''
     expect(text).toContain('关联购买交易')
   })
+})
+
+describe('ItemsView 物品处置（issue #120）', () => {
+  it('点处置打开弹窗：处置日期默认今天、残值为空，确认后 dispose_item 收到整数分入参', async () => {
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+
+    const disposeBtn = wrapper.findAll('button').find((b) => b.text() === '处置')
+    expect(disposeBtn).toBeTruthy()
+    await disposeBtn!.trigger('click')
+    await flushPromises()
+
+    const modal = bodyQuery('[data-testid="item-dispose-modal"]')
+    expect(modal).not.toBeNull()
+    // 处置日期默认今天（jsdom 下 NDatePicker 渲染的 input 值）
+    const dateInput = modal!.querySelector('input')!
+    expect(dateInput.value).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    // 残值默认为空
+    const residualInput = new DOMWrapper(
+      modal!.querySelector('input[placeholder="残值（元，可选）"]')!,
+    )
+    expect((residualInput.element as HTMLInputElement).value).toBe('')
+
+    await residualInput.setValue('200')
+    const confirmBtn = [...modal!.querySelectorAll('button')].find(
+      (b) => b.textContent === '确认处置',
+    )
+    confirmBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+
+    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'dispose_item')
+    expect(calls).toHaveLength(1)
+    const [, args] = calls[0]
+    expect(args).toEqual({
+      id: 'item-1',
+      input: { disposal_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), residual_value_cents: 20_000 },
+    })
+    // 重拉后列表展示已处置状态
+    expect(wrapper.text()).toContain('已处置')
+  })
+
+  it('已处置物品点处置信息打开弹窗并预填处置字段，可修正后保存', async () => {
+    itemList = [
+      { ...mockItems[0], status: 'disposed', disposal_date: '2026-06-01', residual_value_cents: 10_000 },
+    ]
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+
+    const editDisposeBtn = wrapper.findAll('button').find((b) => b.text() === '处置信息')
+    expect(editDisposeBtn).toBeTruthy()
+    await editDisposeBtn!.trigger('click')
+    await flushPromises()
+
+    const modal = bodyQuery('[data-testid="item-dispose-modal"]')!
+    const residualInput = new DOMWrapper(
+      modal.querySelector('input[placeholder="残值（元，可选）"]')!,
+    )
+    // 预填残值：10000 分 → 100（元）
+    expect((residualInput.element as HTMLInputElement).value).toBe('100')
+
+    await residualInput.setValue('300')
+    const saveBtn = [...modal.querySelectorAll('button')].find((b) => b.textContent === '保存')
+    saveBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+
+    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'dispose_item')
+    expect(calls).toHaveLength(1)
+    const [, args] = calls[0]
+    expect((args as { input: { residual_value_cents: number } }).input.residual_value_cents).toBe(
+      30_000,
+    )
+    expect(wrapper.text()).toContain('已处置 2026-06-01')
+  })
+
+  it('已处置物品详情展示处置日期与残值（formatAmount）', async () => {
+    itemList = [
+      { ...mockItems[0], status: 'disposed', disposal_date: '2026-06-01', residual_value_cents: 10_000 },
+    ]
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+
+    const detailBtn = wrapper.findAll('button').find((b) => b.text() === '详情')
+    await detailBtn!.trigger('click')
+    await flushPromises()
+
+    const modal = bodyQuery('[data-testid="item-detail-modal"]')
+    expect(modal).not.toBeNull()
+    expect(modal!.textContent).toContain('已处置')
+    expect(modal!.textContent).toContain('2026-06-01')
+    // 残值 10000 分 → ¥100（formatAmount）
+    expect(modal!.textContent).toContain('¥100')
+  })
+
+  it('处置日期为空时提示且不调用 dispose_item', async () => {
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+
+    const disposeBtn = wrapper.findAll('button').find((b) => b.text() === '处置')
+    await disposeBtn!.trigger('click')
+    await flushPromises()
+
+    const modal = bodyQuery('[data-testid="item-dispose-modal"]')!
+    // 清空处置日期（直接置空底层输入）
+    const dateInputEl = modal.querySelector('input') as HTMLInputElement
+    const dateInput = new DOMWrapper(dateInputEl)
+    await dateInput.setValue('')
+    const confirmBtn = [...modal.querySelectorAll('button')].find(
+      (b) => b.textContent === '确认处置',
+    )
+    confirmBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'dispose_item')).toBe(false)
+    // 弹窗仍开着
+    expect(bodyQuery('[data-testid="item-dispose-modal"]')).not.toBeNull()
+  })
+})
+
+describe('ItemsView 自选参考日重算（issue #121）', () => {
+  /** 打开第 1 件物品的详情弹窗并返回弹窗元素。 */
+  async function openDetailModal(wrapper: ReturnType<typeof mount>) {
+    const detailBtn = wrapper.findAll('button').find((b) => b.text() === '详情')
+    await detailBtn!.trigger('click')
+    await flushPromises()
+    const modal = bodyQuery('[data-testid="item-detail-modal"]')
+    expect(modal).not.toBeNull()
+    return modal!
+  }
+
+  it('打开详情不自动重算；选择参考日后调用 calculate_item_cost 并展示重算结果', async () => {
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+    const modal = await openDetailModal(wrapper)
+
+    // 未选参考日：不发起重算，展示列表快照口径
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'calculate_item_cost')).toBe(false)
+    expect(modal.textContent).toContain('1000')
+
+    calcResponse = { used_days: 2000, numerator_cents: 1_000_000, per_day_cents: 500 }
+    const picker = wrapper
+      .findAllComponents(NDatePicker)
+      .find((s) => s.props('placeholder') === '自选参考日')
+    expect(picker, '详情弹窗应有「自选参考日」选择器').toBeTruthy()
+    picker!.vm.$emit('update:formatted-value', '2026-03-01')
+    await flushPromises()
+
+    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'calculate_item_cost')
+    expect(calls).toHaveLength(1)
+    expect(calls[0][1]).toEqual({ id: 'item-1', referenceDate: '2026-03-01' })
+    // 重算结果覆盖展示：2000 天；每天成本 500 分 → ¥5；分子 ¥1,0000
+    const text = modal.textContent ?? ''
+    expect(text).toContain('2000')
+    expect(text).toContain('¥5')
+    expect(text).toContain('¥1,0000')
+  })
+
+  it('清空参考日回退缺省口径（referenceDate 传 null）', async () => {
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+    await openDetailModal(wrapper)
+
+    const picker = wrapper
+      .findAllComponents(NDatePicker)
+      .find((s) => s.props('placeholder') === '自选参考日')!
+    calcResponse = { used_days: 2000, numerator_cents: 1_000_000, per_day_cents: 500 }
+    picker.vm.$emit('update:formatted-value', '2026-03-01')
+    await flushPromises()
+    expect(modalText()).toContain('2000')
+
+    // 清空 → 缺省口径（mock 返回与列表快照一致的天数）
+    calcResponse = { used_days: 1000, numerator_cents: 1_000_000, per_day_cents: 1000 }
+    picker.vm.$emit('update:formatted-value', null)
+    await flushPromises()
+
+    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'calculate_item_cost')
+    expect(calls).toHaveLength(2)
+    expect((calls[1][1] as { referenceDate: string | null }).referenceDate).toBeNull()
+    expect(modalText()).toContain('1000')
+  })
+
+  it('重算失败提示且保留原值', async () => {
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+    const modal = await openDetailModal(wrapper)
+
+    // calcResponse 保持 null → 重算 reject
+    const picker = wrapper
+      .findAllComponents(NDatePicker)
+      .find((s) => s.props('placeholder') === '自选参考日')!
+    picker.vm.$emit('update:formatted-value', '2026-03-01')
+    await flushPromises()
+
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'calculate_item_cost')).toBe(true)
+    // 原列表快照口径不变
+    const text = modal.textContent ?? ''
+    expect(text).toContain('1000')
+    expect(text).toContain('¥10')
+  })
+
+  function modalText(): string {
+    return bodyQuery('[data-testid="item-detail-modal"]')!.textContent ?? ''
+  }
 })

@@ -4,13 +4,14 @@ import {
   NFormItem,
   NInput,
   NInputNumber,
-  NSelect,
-  NDatePicker,
   NButton,
   NText,
   NSpace,
 } from 'naive-ui'
+import AppSelect from '@/components/AppSelect.vue'
+import AppDatePicker from '@/components/AppDatePicker.vue'
 import { useRefundForm } from '@/composables/useRefundForm'
+import PinyinSelect from '@/components/PinyinSelect.vue'
 import { formatAmount } from '@/types'
 import { useReferenceStore } from '@/stores/reference'
 import type { Transaction } from '@/types'
@@ -32,10 +33,9 @@ const reference = useReferenceStore()
   <NForm label-placement="left" :show-feedback="false" size="small">
     <NSpace vertical :size="12">
       <NFormItem v-if="!fixedTarget" label="退款关联">
-        <NSelect
+        <PinyinSelect
           v-model:value="ctx.refundTargetId.value"
           :options="ctx.refundTargetOptions.value"
-          filterable
           placeholder="选择原支出交易"
           style="width: 340px"
         />
@@ -58,7 +58,7 @@ const reference = useReferenceStore()
           placeholder="退款金额"
           style="width: 160px"
         />
-        <NSelect
+        <AppSelect
           v-model:value="ctx.currencyCode.value"
           :options="ctx.currencyOptions.value"
           disabled
@@ -67,7 +67,7 @@ const reference = useReferenceStore()
       </NFormItem>
 
       <NFormItem label="账户">
-        <NSelect
+        <PinyinSelect
           v-model:value="ctx.accountId.value"
           :options="ctx.accountOptions.value"
           disabled
@@ -77,7 +77,7 @@ const reference = useReferenceStore()
       </NFormItem>
 
       <NFormItem label="日期">
-        <NDatePicker v-model:value="ctx.date.value" type="date" style="width: 200px" />
+        <AppDatePicker v-model:value="ctx.date.value" type="date" style="width: 200px" />
       </NFormItem>
 
       <NFormItem label="备注">

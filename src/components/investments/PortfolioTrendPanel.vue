@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
-import { NEmpty, NRadio, NRadioGroup, NSelect, NSpace, NSpin, NText } from 'naive-ui'
+import { NEmpty, NRadio, NRadioGroup, NSpace, NSpin, NText } from 'naive-ui'
+import PinyinSelect from '@/components/PinyinSelect.vue'
 import { Line } from 'vue-chartjs'
 import { Chart as ChartJS, Tooltip, Legend, CategoryScale, LinearScale } from 'chart.js'
 import type { ChartOptions, TooltipItem } from 'chart.js'
 import { useReferenceStore } from '@/stores/reference'
-import { formatAmount } from '@/types'
+import { formatAmount, formatPrice } from '@/types'
 import {
   hasMarketSource,
   TREND_RANGE_PRESETS,
@@ -61,6 +62,17 @@ const currencyCaption = computed(() => {
     : `计价币种：${trend.currencyCode.value}`
 })
 
+/**
+ * 曲线值格式化（双刻度）：组合走势值为金额（分）走 formatAmount；单标的走势值为
+ * 价格（万分之一元，ADR-0038 价格刻度）走 formatPrice。
+ */
+function formatTrendValue(value: number): string {
+  const ccy = currency.value
+  return trend.mode.value === 'portfolio'
+    ? formatAmount(value, ccy)
+    : formatPrice(value, ccy)
+}
+
 const datasetLabel = computed(() => {
   if (trend.mode.value === 'portfolio') return '组合市值'
   const inst = trend.instrument.value
@@ -92,7 +104,7 @@ const chartOptions: ChartOptions<'line'> = {
     tooltip: {
       callbacks: {
         label: (context: TooltipItem<'line'>) =>
-          `${context.dataset.label}: ${formatAmount(context.raw as number, currency.value)}`,
+          `${context.dataset.label}: ${formatTrendValue(context.raw as number)}`,
       },
     },
   },
@@ -102,7 +114,7 @@ const chartOptions: ChartOptions<'line'> = {
     },
     y: {
       ticks: {
-        callback: (value: number | string) => formatAmount(Number(value), currency.value),
+        callback: (value: number | string) => formatTrendValue(Number(value)),
       },
     },
   },
@@ -122,12 +134,11 @@ ChartJS.register(Tooltip, Legend, CategoryScale, LinearScale)
         <NRadio value="portfolio">组合市值</NRadio>
         <NRadio value="instrument">单标的</NRadio>
       </NRadioGroup>
-      <NSelect
+      <PinyinSelect
         v-if="trend.mode.value === 'instrument'"
         v-model:value="selectedInstrumentId"
         :options="instrumentOptions"
         placeholder="选择标的..."
-        filterable
         clearable
         style="width: 260px"
         data-testid="trend-instrument-select"

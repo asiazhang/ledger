@@ -1,10 +1,16 @@
-//! 预算测试（issue #58 迁移后）：断言预算核心函数与 Amount 接缝的度量矩阵一致，
-//! 不复制生产 SQL——期望值由 `signed_amount`（kind × measure）对夹具逐行求和得出。
+//! 预算测试（issue #58 迁移后；issue #182 滚动窗口）：断言预算核心函数与
+//! Amount 接缝的度量矩阵一致，不复制生产 SQL——期望值由 `signed_amount`
+//! （kind × measure）对夹具逐行求和得出。窗口口径经注入 `today` 驱动。
 
+use chrono::NaiveDate;
 use rusqlite::Connection;
 
-use crate::commands::budget::budget_progress_rows;
+use crate::commands::budget::{
+    budget_progress_rows, create_budget_internal, update_budget_internal,
+};
 use crate::db::{device_id, now_iso};
+use crate::error::AppError;
+use crate::models::{BudgetInput, BudgetPeriod};
 use crate::transaction::amount::{Measure, TransactionKind, signed_amount};
 
 fn setup() -> Connection {
@@ -35,15 +41,21 @@ fn insert_budget(
     conn: &Connection,
     id: &str,
     category_id: &str,
+    period: &str,
     amount_cents: i64,
     start_date: &str,
 ) {
     let now = now_iso();
     conn.execute(
         "INSERT INTO budgets (id,category_id,period,amount_cents,start_date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,'monthly',?3,?4,?5,?6,?7,?8,0)",
-        rusqlite::params![id, category_id, amount_cents, start_date, now, now, 1, device_id()],
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0)",
+        rusqlite::params![id, category_id, period, amount_cents, start_date, now, now, 1, device_id()],
     ).unwrap();
+}
+
+/// 注入的「今天」：所有窗口口径测试共用，夹具日期围绕它铺开。
+fn today() -> NaiveDate {
+    NaiveDate::from_ymd_opt(2026, 7, 15).unwrap()
 }
 
 fn insert_dummy_account(conn: &Connection) {
@@ -76,10 +88,11 @@ fn insert_tx(conn: &Connection, r: &TxRow) {
     .unwrap();
 }
 
-/// 按月对夹具逐行求 `expense_net` 度量和——期望值的唯一来源是度量矩阵，不是生产 SQL。
-fn expense_net_sum(rows: &[TxRow], month: &str) -> i64 {
+/// 按年/月前缀对夹具逐行求 `expense_net` 度量和——期望值的唯一来源是度量矩阵，不是生产 SQL。
+/// 月预算窗口传 "YYYY-MM"，年预算窗口传 "YYYY"。
+fn expense_net_sum(rows: &[TxRow], prefix: &str) -> i64 {
     rows.iter()
-        .filter(|r| r.date.starts_with(month))
+        .filter(|r| r.date.starts_with(prefix))
         .map(|r| signed_amount(r.kind, r.amount, Measure::ExpenseNet))
         .sum()
 }
@@ -164,7 +177,7 @@ fn list_budgets_empty_initially() {
 fn create_budget_and_list() {
     let conn = setup();
     let cat_id = first_expense_category_id(&conn);
-    insert_budget(&conn, "budget-1", &cat_id, 50000, "2026-07-01");
+    insert_budget(&conn, "budget-1", &cat_id, "monthly", 50000, "2026-07-01");
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM budgets WHERE is_deleted=0", [], |r| {
             r.get(0)
@@ -177,7 +190,7 @@ fn create_budget_and_list() {
 fn delete_budget_soft_deletes() {
     let conn = setup();
     let cat_id = first_expense_category_id(&conn);
-    insert_budget(&conn, "budget-2", &cat_id, 50000, "2026-07-01");
+    insert_budget(&conn, "budget-2", &cat_id, "monthly", 50000, "2026-07-01");
     assert_eq!(
         conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM budgets WHERE is_deleted=0", [], |r| r
             .get(0))
@@ -197,14 +210,277 @@ fn delete_budget_soft_deletes() {
     );
 }
 
+// ---- create_budget_internal：写入校验与同分类同周期查重（issue #183） ----
+
+fn budget_input(category_id: &str, period: Option<BudgetPeriod>, amount_cents: i64) -> BudgetInput {
+    BudgetInput {
+        category_id: category_id.into(),
+        period,
+        amount_cents,
+        start_date: "2026-07-01".into(),
+    }
+}
+
+fn first_income_category_id(conn: &Connection) -> String {
+    conn.query_row(
+        "SELECT id FROM categories WHERE kind='income' AND parent_id IS NULL ORDER BY created_at LIMIT 1",
+        [],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+fn budget_count(conn: &Connection) -> i64 {
+    conn.query_row("SELECT COUNT(*) FROM budgets", [], |r| r.get(0))
+        .unwrap()
+}
+
+/// 底线一：预算金额必须为正数，0 与负数均拒绝，不落库。
+#[test]
+fn create_budget_rejects_non_positive_amount() {
+    let conn = setup();
+    let cat_id = first_expense_category_id(&conn);
+    for amount in [0, -100] {
+        let err = create_budget_internal(&conn, &budget_input(&cat_id, None, amount)).unwrap_err();
+        assert!(
+            matches!(err, AppError::Invalid(ref m) if m.contains("预算金额必须为正数")),
+            "金额 {amount} 应被拒绝: {err:?}"
+        );
+    }
+    assert_eq!(budget_count(&conn), 0);
+}
+
+/// 底线二：收入分类不可设预算。
+#[test]
+fn create_budget_rejects_income_category() {
+    let conn = setup();
+    let cat_id = first_income_category_id(&conn);
+    let err = create_budget_internal(&conn, &budget_input(&cat_id, None, 1000)).unwrap_err();
+    assert!(
+        matches!(err, AppError::Invalid(ref m) if m.contains("预算只能设置在支出分类上")),
+        "{err:?}"
+    );
+    assert_eq!(budget_count(&conn), 0);
+}
+
+/// 不存在的分类同样拒绝（NotFound）。
+#[test]
+fn create_budget_rejects_missing_category() {
+    let conn = setup();
+    let err = create_budget_internal(&conn, &budget_input("no-such-cat", None, 1000)).unwrap_err();
+    assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
+}
+
+/// 底线三：同分类同周期重复创建明确拒绝，且原预算数据不受影响。
+#[test]
+fn create_budget_rejects_duplicate_monthly_and_keeps_original() {
+    let conn = setup();
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(&conn, "budget-dup", &cat_id, "monthly", 50000, "2026-07-01");
+    let err = create_budget_internal(
+        &conn,
+        &budget_input(&cat_id, Some(BudgetPeriod::Monthly), 1000),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, AppError::Invalid(ref m) if m == "该分类已存在按月预算，可编辑该预算的金额"),
+        "{err:?}"
+    );
+    let (amount, start): (i64, String) = conn
+        .query_row(
+            "SELECT amount_cents,start_date FROM budgets WHERE id='budget-dup'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(amount, 50000, "原预算金额不得被覆盖");
+    assert_eq!(start, "2026-07-01", "原预算开始日期不得被改");
+    assert_eq!(budget_count(&conn), 1, "不得插入第二行");
+}
+
+/// 同分类同周期查重对年预算同样生效，提示「按年」。
+#[test]
+fn create_budget_rejects_duplicate_yearly() {
+    let conn = setup();
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(
+        &conn,
+        "budget-dup-y",
+        &cat_id,
+        "yearly",
+        100000,
+        "2026-01-01",
+    );
+    let err = create_budget_internal(
+        &conn,
+        &budget_input(&cat_id, Some(BudgetPeriod::Yearly), 1000),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, AppError::Invalid(ref m) if m == "该分类已存在按年预算，可编辑该预算的金额"),
+        "{err:?}"
+    );
+}
+
+/// 同分类不同周期共存（月预算 + 年预算互不冲突）。
+#[test]
+fn create_budget_allows_same_category_different_period() {
+    let conn = setup();
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(&conn, "budget-m", &cat_id, "monthly", 50000, "2026-07-01");
+    let id = create_budget_internal(
+        &conn,
+        &budget_input(&cat_id, Some(BudgetPeriod::Yearly), 100000),
+    )
+    .unwrap();
+    assert_eq!(budget_count(&conn), 2);
+    let period: String = conn
+        .query_row("SELECT period FROM budgets WHERE id=?1", [&id], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(period, "yearly");
+}
+
+/// 周期缺省为月度。
+#[test]
+fn create_budget_defaults_to_monthly() {
+    let conn = setup();
+    let cat_id = first_expense_category_id(&conn);
+    let id = create_budget_internal(&conn, &budget_input(&cat_id, None, 1000)).unwrap();
+    let period: String = conn
+        .query_row("SELECT period FROM budgets WHERE id=?1", [&id], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(period, "monthly");
+}
+
+/// 软删后同分类同周期可重新创建（查重只看未删除行）。
+#[test]
+fn create_budget_allows_recreate_after_soft_delete() {
+    let conn = setup();
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(&conn, "budget-old", &cat_id, "monthly", 50000, "2026-07-01");
+    conn.execute("UPDATE budgets SET is_deleted=1 WHERE id='budget-old'", [])
+        .unwrap();
+    create_budget_internal(
+        &conn,
+        &budget_input(&cat_id, Some(BudgetPeriod::Monthly), 1000),
+    )
+    .unwrap();
+    assert_eq!(budget_count(&conn), 2);
+}
+
+// ---- update_budget_internal：编辑金额（issue #184） ----
+
+/// 编辑后金额生效，同步字段沿用软删除同一套机制：version +1、device_id 更新。
+#[test]
+fn update_budget_changes_amount_and_bumps_version() {
+    let conn = setup();
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(
+        &conn,
+        "budget-edit",
+        &cat_id,
+        "monthly",
+        50000,
+        "2026-07-01",
+    );
+    update_budget_internal(&conn, "budget-edit", 80000).unwrap();
+    let (amount, version): (i64, i64) = conn
+        .query_row(
+            "SELECT amount_cents,version FROM budgets WHERE id='budget-edit'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(amount, 80000);
+    assert_eq!(version, 2, "编辑应 version+1");
+    assert_eq!(budget_count(&conn), 1, "编辑不得新增行");
+}
+
+/// 编辑金额非正被拒绝（复用创建侧金额校验）。
+#[test]
+fn update_budget_rejects_non_positive_amount() {
+    let conn = setup();
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(
+        &conn,
+        "budget-edit2",
+        &cat_id,
+        "monthly",
+        50000,
+        "2026-07-01",
+    );
+    for amount in [0, -100] {
+        let err = update_budget_internal(&conn, "budget-edit2", amount).unwrap_err();
+        assert!(
+            matches!(err, AppError::Invalid(ref m) if m.contains("预算金额必须为正数")),
+            "金额 {amount} 应被拒绝: {err:?}"
+        );
+    }
+    let amount: i64 = conn
+        .query_row(
+            "SELECT amount_cents FROM budgets WHERE id='budget-edit2'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(amount, 50000, "被拒编辑不得改动原金额");
+}
+
+/// 编辑不存在的预算（含已软删）被拒绝（NotFound）。
+#[test]
+fn update_budget_rejects_missing_or_deleted_budget() {
+    let conn = setup();
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(
+        &conn,
+        "budget-gone",
+        &cat_id,
+        "monthly",
+        50000,
+        "2026-07-01",
+    );
+    conn.execute("UPDATE budgets SET is_deleted=1 WHERE id='budget-gone'", [])
+        .unwrap();
+    let err = update_budget_internal(&conn, "budget-gone", 1000).unwrap_err();
+    assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
+    let err = update_budget_internal(&conn, "no-such-budget", 1000).unwrap_err();
+    assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
+}
+
+/// 预算的分类已删除时编辑被拒（复用创建侧分类校验）。
+#[test]
+fn update_budget_rejects_when_category_deleted() {
+    let conn = setup();
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(
+        &conn,
+        "budget-orphan",
+        &cat_id,
+        "monthly",
+        50000,
+        "2026-07-01",
+    );
+    conn.execute(
+        "UPDATE categories SET is_deleted=1 WHERE id=?1",
+        rusqlite::params![cat_id],
+    )
+    .unwrap();
+    let err = update_budget_internal(&conn, "budget-orphan", 1000).unwrap_err();
+    assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
+}
+
 // ---- budget_progress_rows：expense_net 口径 ----
 
 #[test]
 fn budget_progress_zero_when_no_transactions() {
     let conn = setup();
     let cat_id = first_expense_category_id(&conn);
-    insert_budget(&conn, "budget-3", &cat_id, 50000, "2026-07-01");
-    let results = budget_progress_rows(&conn).unwrap();
+    insert_budget(&conn, "budget-3", &cat_id, "monthly", 50000, "2026-07-01");
+    let results = budget_progress_rows(&conn, today()).unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].budget.amount_cents, 50000);
     assert_eq!(results[0].spent_cents, 0);
@@ -218,12 +494,12 @@ fn budget_progress_spent_matches_expense_net_for_all_kinds() {
     let conn = setup();
     insert_dummy_account(&conn);
     let cat_id = first_expense_category_id(&conn);
-    insert_budget(&conn, "budget-4", &cat_id, 50000, "2026-07-01");
+    insert_budget(&conn, "budget-4", &cat_id, "monthly", 50000, "2026-07-01");
     let fixture = all_kinds_fixture(&cat_id);
     for r in &fixture {
         insert_tx(&conn, r);
     }
-    let results = budget_progress_rows(&conn).unwrap();
+    let results = budget_progress_rows(&conn, today()).unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(
         results[0].spent_cents,
@@ -240,7 +516,14 @@ fn budget_progress_includes_child_category_transactions() {
     insert_dummy_account(&conn);
     let parent_id = first_expense_category_id(&conn);
     let child_id = first_expense_subcategory_id(&conn, &parent_id);
-    insert_budget(&conn, "budget-5", &parent_id, 50000, "2026-07-01");
+    insert_budget(
+        &conn,
+        "budget-5",
+        &parent_id,
+        "monthly",
+        50000,
+        "2026-07-01",
+    );
     let fixture = vec![TxRow {
         id: "tx2",
         kind: TransactionKind::Expense,
@@ -251,7 +534,7 @@ fn budget_progress_includes_child_category_transactions() {
     for r in &fixture {
         insert_tx(&conn, r);
     }
-    let results = budget_progress_rows(&conn).unwrap();
+    let results = budget_progress_rows(&conn, today()).unwrap();
     assert_eq!(
         results[0].spent_cents,
         expense_net_sum(&fixture, "2026-07"),
@@ -264,7 +547,7 @@ fn budget_progress_over_budget() {
     let conn = setup();
     insert_dummy_account(&conn);
     let cat_id = first_expense_category_id(&conn);
-    insert_budget(&conn, "budget-6", &cat_id, 1000, "2026-07-01");
+    insert_budget(&conn, "budget-6", &cat_id, "monthly", 1000, "2026-07-01");
     let fixture = vec![TxRow {
         id: "tx5",
         kind: TransactionKind::Expense,
@@ -275,34 +558,123 @@ fn budget_progress_over_budget() {
     for r in &fixture {
         insert_tx(&conn, r);
     }
-    let results = budget_progress_rows(&conn).unwrap();
+    let results = budget_progress_rows(&conn, today()).unwrap();
     assert_eq!(results[0].spent_cents, expense_net_sum(&fixture, "2026-07"));
     assert!(results[0].over_budget);
 }
 
+/// 月预算窗口 = 注入 today 所在自然月（与 start_date 无关）；上月不计入。
 #[test]
-fn budget_progress_only_counts_same_month() {
+fn budget_progress_only_counts_current_month() {
     let conn = setup();
     insert_dummy_account(&conn);
     let cat_id = first_expense_category_id(&conn);
-    insert_budget(&conn, "budget-7", &cat_id, 50000, "2026-07-01");
-    let fixture = vec![TxRow {
-        id: "tx6",
-        kind: TransactionKind::Expense,
-        amount: 3000,
-        category_id: cat_id,
-        date: "2026-06-30", // 上月
-    }];
+    insert_budget(&conn, "budget-7", &cat_id, "monthly", 50000, "2026-07-01");
+    let fixture = vec![
+        TxRow {
+            id: "tx6a",
+            kind: TransactionKind::Expense,
+            amount: 3000,
+            category_id: cat_id.clone(),
+            date: "2026-06-30", // 上月
+        },
+        TxRow {
+            id: "tx6b",
+            kind: TransactionKind::Expense,
+            amount: 1200,
+            category_id: cat_id,
+            date: "2026-07-02", // 当月
+        },
+    ];
     for r in &fixture {
         insert_tx(&conn, r);
     }
-    let results = budget_progress_rows(&conn).unwrap();
+    let results = budget_progress_rows(&conn, today()).unwrap();
     assert_eq!(
         results[0].spent_cents,
         expense_net_sum(&fixture, "2026-07"),
-        "预算月份之外的交易不计入"
+        "月预算只计当前自然月"
     );
-    assert_eq!(results[0].spent_cents, 0);
+    assert_eq!(results[0].spent_cents, 1200);
+}
+
+/// 历史 start_date 的存量预算行按新规则滚动生效，不受旧日期影响（issue #182）。
+#[test]
+fn budget_progress_ignores_historical_start_date() {
+    let conn = setup();
+    insert_dummy_account(&conn);
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(&conn, "budget-9", &cat_id, "monthly", 50000, "2025-01-15");
+    let fixture = vec![
+        TxRow {
+            id: "tx9a",
+            kind: TransactionKind::Expense,
+            amount: 3000,
+            category_id: cat_id.clone(),
+            date: "2025-01-20", // start_date 所在月，不得计入
+        },
+        TxRow {
+            id: "tx9b",
+            kind: TransactionKind::Expense,
+            amount: 800,
+            category_id: cat_id,
+            date: "2026-07-02", // 当前自然月
+        },
+    ];
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+    let results = budget_progress_rows(&conn, today()).unwrap();
+    assert_eq!(results[0].spent_cents, 800, "旧 start_date 不参与窗口");
+}
+
+/// 年预算窗口 = 注入 today 所在自然年全年累计（修复旧实现按月比对的口径 bug）。
+#[test]
+fn budget_progress_yearly_sums_whole_current_year() {
+    let conn = setup();
+    insert_dummy_account(&conn);
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(&conn, "budget-10", &cat_id, "yearly", 100000, "2026-03-01");
+    let fixture = vec![
+        TxRow {
+            id: "tx10a",
+            kind: TransactionKind::Expense,
+            amount: 2000,
+            category_id: cat_id.clone(),
+            date: "2026-01-10", // 年初
+        },
+        TxRow {
+            id: "tx10b",
+            kind: TransactionKind::Refund,
+            amount: 500,
+            category_id: cat_id.clone(),
+            date: "2026-03-10", // 年中退款冲减
+        },
+        TxRow {
+            id: "tx10c",
+            kind: TransactionKind::Expense,
+            amount: 1200,
+            category_id: cat_id.clone(),
+            date: "2026-07-02", // 当月
+        },
+        TxRow {
+            id: "tx10d",
+            kind: TransactionKind::Expense,
+            amount: 5000,
+            category_id: cat_id,
+            date: "2025-12-31", // 去年，不计入
+        },
+    ];
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+    let results = budget_progress_rows(&conn, today()).unwrap();
+    assert_eq!(
+        results[0].spent_cents,
+        expense_net_sum(&fixture, "2026"),
+        "年预算应为当前自然年全年累计"
+    );
+    assert_eq!(results[0].spent_cents, 2700, "2000 + 1200 − 500 退款");
 }
 
 #[test]
@@ -310,7 +682,7 @@ fn budget_progress_excludes_deleted() {
     let conn = setup();
     insert_dummy_account(&conn);
     let cat_id = first_expense_category_id(&conn);
-    insert_budget(&conn, "budget-8", &cat_id, 50000, "2026-07-01");
+    insert_budget(&conn, "budget-8", &cat_id, "monthly", 50000, "2026-07-01");
     insert_tx(
         &conn,
         &TxRow {
@@ -323,6 +695,6 @@ fn budget_progress_excludes_deleted() {
     );
     conn.execute("UPDATE transactions SET is_deleted=1 WHERE id='tx7'", [])
         .unwrap();
-    let results = budget_progress_rows(&conn).unwrap();
+    let results = budget_progress_rows(&conn, today()).unwrap();
     assert_eq!(results[0].spent_cents, 0);
 }

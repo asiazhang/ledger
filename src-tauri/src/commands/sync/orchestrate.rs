@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use rusqlite::Connection;
 use tauri::{AppHandle, Emitter};
 
-use crate::error::{AppError, Result};
+use crate::error::Result;
 use crate::models::SyncProgress;
 
 use super::http::{MARKETS, MarketConfig, Pacer, StockItem, build_client, fetch_page, get_total};
@@ -30,6 +30,17 @@ pub(super) enum SyncOutcome {
     Completed { inserted: usize, updated: usize },
     /// 分页循环中发现取消标志被置位，提前返回；已落库数据保留。
     Cancelled { inserted: usize, updated: usize },
+}
+
+impl SyncOutcome {
+    /// 本次运行落库计数（新增 + 更新），完成与中断同口径——中断保留已落库数据
+    /// （upsert 幂等）。供价格失效信号判定（ADR-0031）取用。
+    pub(super) fn written(&self) -> usize {
+        match self {
+            SyncOutcome::Completed { inserted, updated }
+            | SyncOutcome::Cancelled { inserted, updated } => inserted + updated,
+        }
+    }
 }
 
 /// 连接访问器接缝（issue #147）：分页循环的落库操作经它短暂获取/释放连接，
@@ -47,11 +58,9 @@ pub(super) struct GlobalConn(pub(super) Arc<Mutex<Connection>>);
 
 impl ConnAccessor for GlobalConn {
     fn with_conn<R>(&self, f: impl FnOnce(&Connection) -> Result<R>) -> Result<R> {
-        let guard = self
-            .0
-            .lock()
-            .map_err(|e| AppError::Db(format!("数据库锁定失败: {e}")))?;
-        f(&guard)
+        // 经连接层统一写入口（ADR-0032，#246 审计补齐）：每页落库提交点置脏 +
+        // 写时顺带到期检查，同步期间被取消时已落库页的置脏语义与其它写路径一致。
+        crate::db::write(&self.0, f)
     }
 }
 

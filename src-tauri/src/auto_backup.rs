@@ -6,15 +6,17 @@
 //! - 到期判定为纯函数 [`due_decision`]，当前时间由调用方注入，不依赖全局时钟——
 //!   **线程只做周期调用，是否备份的决策全在纯函数**（可测边界）；
 //! - 调度层（issue #125）提供三种触发入口（周期到期 / 退出兜底 / 首次兜底），
-//!   全部收敛到同一执行函数 [`perform_backup`]；轮询线程照搬
-//!   `start_search_refresh_thread` 模式（spawn + sleep），锁等待带超时，超时跳过本轮；
+//!   全部收敛到同一执行函数 [`perform_backup`]；轮询线程为标准模式
+//!   （spawn + sleep），锁等待带超时，超时跳过本轮；
 //! - `backupDir` 保持前端 localStorage 单一来源（ADR-0016 决策 3），后端只维护
 //!   一份运行时镜像 [`PrefsState`]（启动时经 IPC `set_auto_backup_dir` 推送），
 //!   目录未配置时一律静默跳过；
-//! - 业务写库成功后的统一后置入口 [`on_write`]（issue #126）：置脏 + 写时顺带检查
-//!   （到期且脏则立即备份）。各写路径（Writer 接缝 / 参考 CRUD / 市场数据写入）
-//!   均调用它，深度模块只持有 `&Connection`，不经 AppHandle 取偏好——目录镜像经
-//!   进程级单例 [`shared_prefs`] 读取，应用版本用编译期常量。
+//! - 置脏触发（issue #126 的「写时顺带检查」）已整体迁入连接层统一写入口
+//!   [`crate::db::write`]（ADR-0032，#246 收口）：本模块不再暴露写路径挂钩，
+//!   只保留域原语 [`mark_dirty`]（`pub(crate)`）与触发入口 [`run_due_backup`]
+//!   （BackupTrigger 接口面，运行时仅调度线程与连接层提交点调用）供连接层
+//!   提交点组合；深度模块只持有 `&Connection`，不经 AppHandle 取偏好——
+//!   目录镜像经进程级单例 [`shared_prefs`] 读取，应用版本用编译期常量。
 //!
 //! 备注：`SettingKey::AutoBackupNextDueAt` 已预留但本模块不读写——锚点模型下
 //! 「下次到期时间」可由 `last_backup_at + 间隔` 推导，不落地派生数据。
@@ -119,8 +121,10 @@ pub fn set_state(conn: &Connection, state: &AutoBackupState) -> crate::error::Re
     Ok(())
 }
 
-/// 置脏：任何业务写库成功后由写路径调用（Writer 接缝 / 参考 CRUD 等，后续 ticket 接线）。
-pub fn mark_dirty(conn: &Connection) -> crate::error::Result<()> {
+/// 置脏：业务写库成功后由连接层统一写入口在提交点调用（ADR-0032）。
+/// `pub(crate)` 表示它不是业务代码的调用点——业务写经 [`crate::db::write`]，
+/// 置脏是其结构性副作用，业务路径无法也无需直接置脏。
+pub(crate) fn mark_dirty(conn: &Connection) -> crate::error::Result<()> {
     settings::set(conn, SettingKey::AutoBackupDirty, &true)
 }
 
@@ -259,8 +263,9 @@ fn classify_result(trigger: &str, performed: crate::error::Result<String>) -> At
     }
 }
 
-/// 触发入口一：周期到期尝试（轮询线程用；issue #126 的写时顺带检查也复用）。
-/// 读状态 → [`due_decision`] 纯函数决策 → 命中则执行。
+/// 触发入口一：周期到期尝试。运行时调用方仅两处：轮询调度线程与连接层写入口
+/// 提交点的写时顺带检查（ADR-0032）；对外保留 `pub` 供 e2e 测试驱动触发（BackupTrigger
+/// 接口面，ADR-0016）。读状态 → [`due_decision`] 纯函数决策 → 命中则执行。
 pub fn run_due_backup(
     conn: &Connection,
     dir: Option<&str>,
@@ -320,7 +325,7 @@ pub fn run_first_backup(
 }
 
 // ---------------------------------------------------------------------------
-// 写路径挂钩（issue #126）：所有业务写库成功后置脏 + 写时顺带检查
+// 进程级偏好镜像：连接层写入口提交点检查与轮询线程共享（ADR-0032）
 // ---------------------------------------------------------------------------
 
 /// 进程级共享的偏好镜像单例：写命令深处只有 `&Connection`，拿不到 Tauri 的
@@ -333,28 +338,6 @@ pub fn shared_prefs() -> Arc<PrefsState> {
     SHARED_PREFS
         .get_or_init(|| Arc::new(PrefsState::default()))
         .clone()
-}
-
-/// 业务写库成功后的统一后置动作（issue #126）。
-///
-/// 1. 置脏：任何业务写库成功后调用（交易写入 Writer 接缝的插入/更新与软删除、
-///    参考数据 CRUD、市场数据写入）；失败仅记日志不上抛——业务写已成功，
-///    不能因调度状态写入失败回滚用户操作。
-/// 2. 写时顺带检查：若到期且脏则立即执行自动备份（决策全在 [`due_decision`]，
-///    备份频率上限每天一次；目录未配置/开关关闭等门禁由 [`run_due_backup`] 统一处理）。
-///
-/// 处于显式事务中（批量导入逐行落库）时只置脏、不做到期检查——VACUUM INTO
-/// 不能在事务内执行；提交点（如 [`crate::commands::batch::TransactionBatch::run`]）
-/// 会再调一次本函数补上检查。重复调用安全：置脏幂等，未到期检查恒为 Skip。
-pub fn on_write(conn: &Connection) {
-    if let Err(e) = mark_dirty(conn) {
-        tracing::warn!(error = %e, "写库成功但置脏失败（忽略）");
-    }
-    if !conn.is_autocommit() {
-        return;
-    }
-    let dir = shared_prefs().snapshot_dir();
-    run_due_backup(conn, dir.as_deref(), env!("CARGO_PKG_VERSION"), Utc::now());
 }
 
 // ---------------------------------------------------------------------------
@@ -419,7 +402,7 @@ pub(crate) fn lock_conn_with_timeout(
     }
 }
 
-/// 启动自动备份轮询线程（照搬 `start_search_refresh_thread` 模式：spawn + sleep）。
+/// 启动自动备份轮询线程（标准轮询线程模式：spawn + sleep）。
 pub fn start_scheduler(app: &tauri::AppHandle) {
     use tauri::Manager;
     let conn = Arc::clone(&app.state::<DbState>().conn);
@@ -623,17 +606,8 @@ mod tests {
             Some(String::from("2026-02-17T10:00:00Z"))
         );
     }
-    /// on_write（issue #126 写路径挂钩）：置脏；未配置目录时顺带检查静默跳过
-    /// （不产生文件、不动锚点）。
-    #[test]
-    fn on_write_marks_dirty_and_silently_skips_check_without_dir() {
-        let c = conn();
-        assert!(!get_state(&c).unwrap().dirty);
-        crate::auto_backup::on_write(&c);
-        let state = get_state(&c).expect("读状态");
-        assert!(state.dirty, "写库成功后应置脏");
-        assert_eq!(state.last_backup_at, None, "目录未配置不应记录备份锚点");
-    }
+    // 原写路径挂钩行为（置脏 + 目录未配置静默跳过不记锚点）已随 ADR-0032 迁入
+    // 连接层写入口，由 db::tests::dirty_marker::write_ok_marks_dirty 在写入口层面钉住。
 }
 
 /// T1 调度执行层测试：只测「给定状态 → 正确决定与产物」的外部行为，

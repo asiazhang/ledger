@@ -2,13 +2,17 @@ import { invoke } from '@tauri-apps/api/core'
 import type {
   Account,
   AccountBalance,
+  AccountBalanceAdjustInput,
   AccountInput,
+  AccountUpdateInput,
+  AddFundResult,
   BackupFileInfo,
   AutoBackupState,
   BackupResult,
   Budget,
   BudgetInput,
   BudgetProgress,
+  BudgetUpdateInput,
   Category,
   CategoryInput,
   CategoryUpdateInput,
@@ -28,27 +32,41 @@ import type {
   InstrumentListFilter,
   InstrumentListResult,
   InstrumentPriceTrend,
+  ItemDailyCost,
+  ItemDailyTotal,
+  ItemDisposeInput,
   ItemInput,
   ItemWithDailyCost,
   MarketPrice,
   MarketPriceInput,
+  ManualPriceInput,
+  ManualPriceResult,
+  Merchant,
+  MerchantShare,
+  MerchantInput,
+  MerchantUpdateInput,
   MonthlySummary,
   PnlFilter,
   PortfolioValueTrend,
   PruneResult,
+  YearRange,
   RealizedPnlSummary,
   RestoreResult,
+  TransactionTrade,
   ScheduledTransactionDetail,
   ScheduledTransactionWithExt,
+  SubscriptionSpendOverview,
   CancelSyncResult,
   SyncHoldingPricesResult,
   TrendRange,
   TransactionInput,
+  UpdateTransactionInput,
   TransactionListFilter,
   TransactionListResult,
   TransactionSearchFilter,
   TransactionSearchResult,
   UpdateStatusInput,
+  UpdateSubscriptionInput,
 } from '@/types'
 
 export const api = {
@@ -58,6 +76,10 @@ export const api = {
   // 账户
   listAccounts: () => invoke<Account[]>('list_accounts'),
   createAccount: (input: AccountInput) => invoke<string>('create_account', { input }),
+  updateAccount: (id: string, input: AccountUpdateInput) =>
+    invoke<void>('update_account', { id, input }),
+  adjustAccountBalance: (id: string, input: AccountBalanceAdjustInput) =>
+    invoke<string>('adjust_account_balance', { id, input }),
   deleteAccount: (id: string) => invoke<void>('delete_account', { id }),
   listAccountBalances: () => invoke<AccountBalance[]>('list_account_balances'),
 
@@ -70,6 +92,15 @@ export const api = {
     invoke<void>('reorder_categories', { items }),
   deleteCategory: (id: string) => invoke<void>('delete_category', { id }),
 
+  // 商户（issue #188 / ADR-0028）：参考数据字典命令面，随 ledger:changed 失效信号重拉
+  // includeDeleted=true 返回含软删全量（交易筛选下拉需含软删但仍有历史交易的商户，issue #191）
+  listMerchants: (opts?: { includeDeleted?: boolean }) =>
+    invoke<Merchant[]>('list_merchants', { includeDeleted: opts?.includeDeleted ?? false }),
+  createMerchant: (input: MerchantInput) => invoke<string>('create_merchant', { input }),
+  updateMerchant: (id: string, input: MerchantUpdateInput) =>
+    invoke<void>('update_merchant', { id, input }),
+  deleteMerchant: (id: string) => invoke<void>('delete_merchant', { id }),
+
   // 交易
   listTransactions: (filter?: TransactionListFilter | null) =>
     invoke<TransactionListResult>('list_transactions', { filter: filter ?? null }),
@@ -77,6 +108,10 @@ export const api = {
     invoke<string>('create_transaction', { input }),
   createTransactions: (inputs: TransactionInput[]) =>
     invoke<CreateTransactionResult[]>('create_transactions', { inputs }),
+  /** 全字段替换既有交易（issue #178）：与 HTTP PUT /api/v1/transactions/{id} 同一行为层权威；
+   * 幂等键/内容哈希不可编辑（入参类型不含该字段）。不存在/已删除报 NotFound。 */
+  updateTransaction: (id: string, input: UpdateTransactionInput) =>
+    invoke<void>('update_transaction', { id, input }),
   deleteTransaction: (id: string) => invoke<void>('delete_transaction', { id }),
 
   // 交易搜索
@@ -99,13 +134,18 @@ export const api = {
   // 预算
   listBudgets: () => invoke<Budget[]>('list_budgets'),
   createBudget: (input: BudgetInput) => invoke<string>('create_budget', { input }),
+  updateBudget: (id: string, input: BudgetUpdateInput) =>
+    invoke<void>('update_budget', { id, input }),
   deleteBudget: (id: string) => invoke<void>('delete_budget', { id }),
 
   // 首页财务全貌
   dashboardOverview: () => invoke<DashboardOverview>('dashboard_overview'),
 
   // 报表
+  // 年份筛选范围（issue #266）：数据驱动闭区间，前端拉一次平铺年份下拉
+  reportYearRange: () => invoke<YearRange>('report_year_range'),
   monthlySummary: (year: number) => invoke<MonthlySummary[]>('monthly_summary', { year }),
+  merchantShares: (year: number) => invoke<MerchantShare[]>('merchant_shares', { year }),
   categoryShares: (kind: string, month?: string) =>
     invoke<CategoryShare[]>('category_shares', { kind, month: month ?? null }),
   budgetProgress: () => invoke<BudgetProgress[]>('budget_progress'),
@@ -113,8 +153,21 @@ export const api = {
   // 金融工具
   listInstruments: (filter?: InstrumentListFilter | null) =>
     invoke<InstrumentListResult>('list_instruments', { filter: filter ?? null }),
+  // 交易买卖明细（issue #180）：buy/sell 交易编辑回填数据源（扩展表投影，非买卖交易 NotFound）
+  getTransactionTrade: (id: string) =>
+    invoke<TransactionTrade>('get_transaction_trade', { id }),
   createInstrument: (input: InstrumentInput) =>
     invoke<string>('create_instrument', { input }),
+  // 自建标的删除（issue #292 / ADR-0036）：仅手动来源且无买卖流水引用可删，
+  // 守卫在后端前置检查，同步来源拒删
+  deleteInstrument: (id: string) => invoke<void>('delete_instrument', { id }),
+  // 按代码即拉添加场外基金（issue #301 / ADR-0038）：东财回填名称/分类/最新净值
+  addFundByCode: (code: string) => invoke<AddFundResult>('add_fund_by_code', { code }),
+  // 手动报价（issue #291 / ADR-0036）：无行情来源标的的「日期 + 价格」单点录入，
+  // 一条通道两个落点（现价缓存 upsert + 价格历史周采样幂等覆盖）；实际写入
+  // 任一落点后端广播价格失效信号，调用方依赖信号消费方刷新，零手动重拉
+  recordManualPrice: (input: ManualPriceInput) =>
+    invoke<ManualPriceResult>('record_manual_price', { input }),
 
   // 持仓
   listHoldings: () => invoke<Holding[]>('list_holdings'),
@@ -134,8 +187,15 @@ export const api = {
 
   // 物品（issue #116）：独立领域（非参考数据），写入后由后端发 ledger:changed
   listItems: () => invoke<ItemWithDailyCost[]>('list_items'),
+  // 全部在用物品每天成本合计（issue #122）：后端聚合（默认币种），dashboard 汇总卡消费
+  itemDailyTotal: () => invoke<ItemDailyTotal>('item_daily_total'),
+  // 自选参考日重算（issue #121）：referenceDate 省略/null → 缺省目标日（在用今天/已处置处置日）
+  calculateItemCost: (id: string, referenceDate?: string | null) =>
+    invoke<ItemDailyCost>('calculate_item_cost', { id, referenceDate: referenceDate ?? null }),
   createItem: (input: ItemInput) => invoke<string>('create_item', { input }),
   updateItem: (id: string, input: ItemInput) => invoke<void>('update_item', { id, input }),
+  disposeItem: (id: string, input: ItemDisposeInput) =>
+    invoke<void>('dispose_item', { id, input }),
   deleteItem: (id: string) => invoke<void>('delete_item', { id }),
 
   // 汇率
@@ -157,10 +217,16 @@ export const api = {
     invoke<ScheduledTransactionDetail>('get_scheduled_transaction_detail', { id }),
   updateScheduledTransactionStatus: (input: UpdateStatusInput) =>
     invoke<void>('update_scheduled_transaction_status', { input }),
+  // 订阅编辑（issue #162，ADR-0023 决策三）：仅非金额字段，携带金额被后端显式拒绝
+  updateScheduledSubscription: (input: UpdateSubscriptionInput) =>
+    invoke<void>('update_scheduled_subscription', { input }),
   executeScheduledOccurrence: (input: ExecuteOccurrenceInput) =>
     invoke<string>('execute_scheduled_occurrence', { input }),
   expandScheduledOccurrences: (id: string) =>
     invoke<string[]>('expand_scheduled_occurrences', { id }),
+  // 订阅实际花费总览（issue #160，实际口径：忠实流水不摊销）
+  subscriptionSpendOverview: () =>
+    invoke<SubscriptionSpendOverview>('subscription_spend_overview'),
 
   // 数据同步
   syncInstruments: () => invoke<void>('sync_instruments'),
@@ -194,4 +260,7 @@ export const api = {
 
   // AI
   getAiPrompt: () => invoke<string>('get_ai_prompt'),
+
+  // 日志（issue #283）：打开日志目录（系统文件管理器展示，按天滚动、保留 7 天）
+  openLogDir: () => invoke<void>('open_log_dir'),
 }

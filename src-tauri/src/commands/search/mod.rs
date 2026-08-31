@@ -1,27 +1,20 @@
-//! 交易搜索（ADR-0004）：FTS5 索引维护与查询。
+//! 交易搜索（issue #196，修订 ADR-0004）：Rust 全量扫描 + 统一模糊搜索语义。
 //!
-//! - 可搜索内容：备注 + 账户名 + 二者拼音首字母（仅首字母缩写、小写）。
-//! - 匹配语义：整词匹配 + 拼音首字母匹配 + 前缀通配；词条间 AND、词条内原词/前缀 OR。
-//! - 索引维护（ADR-0004 决策 #14 刷新策略）：**后台定时刷新**——交易写入路径不做任何
-//!   同步索引工作（界面操作零索引开销），由触发器纯 SQL 入队 `search_reindex_queue`，
-//!   后台线程固定周期（默认 60s）消费队列批量重建；批量导入完成后在命令内立即消费一次；
-//!   启动时按文档数对账兜底全量重建。
-//! - 搜索结果附 `stale` 标志：队列非空（存在未消费写入）时 true，供前端提示索引可能滞后。
+//! - 匹配语义（统一模糊搜索规格，issue #195 / ADR-0027）：输入按空白切词，
+//!   词条之间 AND；每词条对可搜索字段（备注、转出账户名）判定——
+//!   命中 = 原文连续子串（大小写不敏感）∨ 该字段拼音首字母串的子序列（大小写不敏感）。
+//! - 实现：SQL 取候选（非删除交易的备注 + 转出账户名，金额/日期过滤仍在 SQL）→
+//!   Rust 逐条按语义契约过滤 → 交易日期降序分页返回。无任何索引，写入立即可搜。
+//! - 结果不附 `stale` 标志：搜索为同步全量匹配，无任何索引滞后可言。
 //!
-//! 目录组织（issue #88）：
-//! - `text`：纯文本逻辑——拼音首字母/可搜索内容组装/FTS 查询构建；
-//! - `query`：查询执行——服务端分页搜索内部实现；
-//! - `index`：索引维护——队列消费/全量重建/启动对账/后台刷新线程；
-//! - `tests`：原内嵌测试外迁。
-//!
-//! 依赖方经 `pub use` 重导出保持 `commands::search::*` 路径稳定（启动对账、
-//! 导入即时消费、后台刷新线程与 BDD step 均零改动）。
+//! 目录组织：
+//! - `text`：纯文本逻辑——拼音首字母/子序列判定/统一语义匹配（与数据库无关）；
+//! - `query`：查询执行——SQL 候选 + Rust 过滤 + 内存分页。
 
-mod index;
 mod query;
 #[cfg(test)]
 mod tests;
-mod text;
+pub(crate) mod text;
 
 use tauri::State;
 
@@ -29,12 +22,7 @@ use crate::db::DbState;
 use crate::error::{AppError, Result};
 use crate::models::TransactionSearchResult;
 
-pub use index::{
-    delete_index_document, process_reindex_queue, rebuild_search_index, reconcile_search_index,
-    reindex_transaction, start_search_refresh_thread,
-};
 pub use query::search_transactions_internal;
-pub use text::{build_match_query, build_search_content, pinyin_initials};
 
 /// IPC 命令：搜索交易（可选金额/日期筛选与关键字 AND 组合）。
 /// 四个筛选参数与内部函数一一对应（issue #40），作为独立命令参数暴露，

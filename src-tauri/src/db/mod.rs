@@ -25,7 +25,8 @@ fn migrations() -> &'static Migrations<'static> {
                 "../../migrations/V003__scheduled_transactions.sql"
             )),
             M::up(include_str!("../../migrations/V004__seed_defaults.sql")),
-            M::up(include_str!("../../migrations/V005__search_index.sql")),
+            // 注：原 V005__search_index.sql（搜索索引）已从序列整体移除（见 ADR-0027），
+            // 序列号不回填，后续迁移文件名保持不变；新库不再产生搜索索引对象。
             M::up(include_str!(
                 "../../migrations/V006__transaction_amount_index.sql"
             )),
@@ -35,6 +36,9 @@ fn migrations() -> &'static Migrations<'static> {
             M::up(include_str!("../../migrations/V008__app_settings.sql")),
             M::up(include_str!("../../migrations/V009__items.sql")),
             M::up(include_str!("../../migrations/V010__price_history.sql")),
+            M::up(include_str!(
+                "../../migrations/V011__instruments_source.sql"
+            )),
         ])
     })
 }
@@ -68,7 +72,7 @@ pub fn device_id() -> String {
     String::from("device-1")
 }
 
-/// 在指定目录打开库并完成迁移与搜索索引对账（DataLocation 引导之后的建连步骤）。
+/// 在指定目录打开库并完成 schema 迁移（DataLocation 引导之后的建连步骤）。
 /// 启动期唯一入口：先经 [`data_location::boot`] 解析库所在目录，再调本函数建连
 /// （见 `lib.rs::init_database`）；不要自行拼接库路径。
 pub fn open_db_in(db_dir: &Path) -> Result<DbState> {
@@ -76,9 +80,6 @@ pub fn open_db_in(db_dir: &Path) -> Result<DbState> {
     tracing::info!(db_path = %db_path.display(), "打开数据库");
     let mut conn = open_connection(db_path)?;
     init_db(&mut conn)?;
-    // 启动对账：FTS 文档数 ≠ 未删除交易数 → 全量重建（覆盖 V005 迁移前的存量数据）；
-    // 一致则消费重建队列（账户/分类改名、绕过应用层的写入产生的待办）。
-    crate::commands::search::reconcile_search_index(&conn)?;
     Ok(DbState {
         conn: Arc::new(Mutex::new(conn)),
     })
@@ -124,11 +125,77 @@ pub fn open_in_memory() -> Result<Connection> {
 }
 
 // ---------------------------------------------------------------------------
+// 连接层统一写入口（ADR-0032）
+// ---------------------------------------------------------------------------
+
+/// 连接层统一写入口：锁连接执行写闭包（ADR-0032，spec #173）。
+///
+/// 置脏触发的单点，业务写路径对备份域零感知：
+/// - 锁连接 → 执行闭包；
+/// - 闭包成功且事务已提交（`is_autocommit()`，含闭包内部自行 `BEGIN`/`COMMIT`
+///   后回到提交点）→ 单点执行置脏 + 写时顺带到期检查；
+/// - 闭包失败（事务回滚）不置脏；未提交就返回（显式事务仍打开）同样不置脏——
+///   「事务内推迟、提交后补上」由本结构保证，不再依赖调用方注释口口相传。
+///
+/// 豁免清单集中在「不经过本入口的写方」：设置与调度状态写入（`app_settings`
+/// 全表，经 [`crate::settings`] 单点收口）与恢复（Restore）路径。
+///
+/// 薄 wrapper 边界：只做「锁 + 写后置脏/检查」，不接管事务管理——闭包内保留
+/// 裸 `BEGIN`/`COMMIT`/`ROLLBACK` 写法。耗时日志等其它连接级横切机制收口时
+/// 并入本入口（单独开票）。
+pub fn write<T>(conn: &Mutex<Connection>, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let result = f(&conn);
+    if result.is_ok() && conn.is_autocommit() {
+        after_commit(&conn);
+    }
+    result
+}
+
+/// 提交点单点后置动作：置脏 + 写时顺带到期检查（连接层内部实现细节，ADR-0032）。
+///
+/// 仅由 [`write`] 在「闭包成功且 `is_autocommit()`」时调用；业务代码不可见也不可调用——
+/// 置脏触发不再是备份模块的公开 API（#246），而是本写入口的结构性副作用：
+/// - 置脏失败仅记日志不上抛，不影响已成功的业务写；
+/// - 到期检查命中（脏且距上次备份 ≥24h）即执行自动备份；开关关闭/目录未配置等
+///   门禁由 [`crate::auto_backup::run_due_backup`] 统一静默处理；
+/// - 闭包 Err（回滚）或未提交就返回（显式事务仍打开）不会到达本函数——
+///   「事务内推迟、提交后补上」由 [`write`] 的 `is_autocommit()` 复核结构保证。
+fn after_commit(conn: &Connection) {
+    if let Err(e) = crate::auto_backup::mark_dirty(conn) {
+        tracing::warn!(error = %e, "写库成功但置脏失败（忽略）");
+    }
+    let dir = crate::auto_backup::shared_prefs().snapshot_dir();
+    crate::auto_backup::run_due_backup(
+        conn,
+        dir.as_deref(),
+        env!("CARGO_PKG_VERSION"),
+        chrono::Utc::now(),
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 应用状态
 // ---------------------------------------------------------------------------
 
 pub struct DbState {
     pub conn: Arc<Mutex<Connection>>,
+}
+
+impl DbState {
+    /// 打开内存库并完成迁移，包成共享锁形态（单元测试与 BDD 世界用）。
+    pub fn open_in_memory() -> Result<DbState> {
+        let mut conn = open_in_memory()?;
+        init_db(&mut conn)?;
+        Ok(DbState {
+            conn: Arc::new(Mutex::new(conn)),
+        })
+    }
+
+    /// 写入口的命令层便捷形态（语义见 [`write`]）：`state.write(|conn| ...)`。
+    pub fn write<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+        write(&self.conn, f)
+    }
 }
 
 #[cfg(test)]

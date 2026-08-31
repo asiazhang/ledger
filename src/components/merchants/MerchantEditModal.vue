@@ -1,0 +1,66 @@
+<script setup lang="ts">
+import { ref, watch } from 'vue'
+import { NButton, NForm, NFormItem, NInput, useMessage } from 'naive-ui'
+import AppModal from '@/components/AppModal.vue'
+import { api } from '@/api'
+import type { Merchant, MerchantUpdateInput } from '@/types'
+
+const props = defineProps<{
+  show: boolean
+  merchant: Merchant | null
+}>()
+const emit = defineEmits<{ 'update:show': [value: boolean] }>()
+
+const message = useMessage()
+
+const editName = ref('')
+
+// 打开弹窗时同步待编辑字段（弹窗内容在关闭后仍保留在 DOM，需在打开时回填；
+// immediate 兼容 show 初始即为 true 的挂载）
+watch(
+  () => [props.show, props.merchant],
+  () => {
+    if (!props.show || !props.merchant) return
+    editName.value = props.merchant.name
+  },
+  { immediate: true },
+)
+
+async function saveEdit() {
+  const m = props.merchant
+  if (!m) return
+  const name = editName.value.trim()
+  if (!name) {
+    message.warning('请输入商户名称')
+    return
+  }
+  const input: MerchantUpdateInput = { name }
+  try {
+    await api.updateMerchant(m.id, input)
+    message.success('已更新商户')
+    emit('update:show', false)
+    // 参考数据由 ledger:changed 信号自动重拉：历史交易即时显示新名（引用指向 id）
+  } catch (e) {
+    // 重名等后端校验错误原样上抛展示（如「商户已存在: 京东」），弹窗不关、内容不丢
+    message.error(`更新失败: ${e}`)
+  }
+}
+</script>
+
+<template>
+  <AppModal
+    :show="show"
+    title="编辑商户"
+    preset="card"
+    style="width: 420px"
+    :bordered="false"
+    @update:show="(v: boolean) => emit('update:show', v)"
+  >
+    <NForm label-placement="left" :show-feedback="false" size="small">
+      <NFormItem label="名称">
+        <NInput v-model:value="editName" placeholder="商户名称" />
+      </NFormItem>
+      <NButton type="primary" block @click="saveEdit">保存</NButton>
+    </NForm>
+  </AppModal>
+</template>

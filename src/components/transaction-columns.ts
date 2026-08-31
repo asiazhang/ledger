@@ -8,6 +8,7 @@ import { formatAmount, TRANSACTION_KIND_LABELS } from '@/types'
 import type { Transaction, TransactionKind } from '@/types'
 import type { useReferenceStore } from '@/stores/reference'
 import AccountLink from '@/components/AccountLink.vue'
+import MerchantLink from '@/components/MerchantLink.vue'
 
 export type ReferenceStore = ReturnType<typeof useReferenceStore>
 
@@ -50,9 +51,9 @@ export function sumFixedColumnWidths(columns: DataTableColumn<Transaction>[]): n
  *   150→286px、备注 240→398px）。
  * - 使用方以「所有固定列（有 `width` 的列，含金额列；备注不计入）宽度总和」作为 `scroll-x`，
  *   作为窄窗口下的横向滚动下限。备注为弹性列，窗口变窄时先由备注收缩吸收，各固定列宽保持恒定——
- *   只有当内容区窄于固定列宽总和时才出现横向滚动（账户列 180 后固定列总和 705，窄窗口可能触发，
+ *   只有当内容区窄于固定列宽总和时才出现横向滚动（账户列 180、商户列 120 后固定列总和 825，窄窗口可能触发，
  *   由 scroll-x 提供横向滚动底线）。
- * - 宽度按实际内容估算：日期 105 / 类型 65 / 分类 150（最长路径 ≈149px）/ 账户 180（转账行需容纳「转出 → 转入」两个账户名 + 箭头，长名由链接自身省略号兜底）/ 金额 125。 */
+ * - 宽度按实际内容估算：日期 105 / 类型 65 / 分类 150（最长路径 ≈149px）/ 商户 120 / 账户 180（转账行需容纳「转出 → 转入」两个账户名 + 箭头，长名由链接自身省略号兜底）/ 金额 125。 */
 export function buildTransactionColumns(reference: ReferenceStore): DataTableColumn<Transaction>[] {
   return [
     { title: '日期', key: 'date', width: 105 },
@@ -69,6 +70,15 @@ export function buildTransactionColumns(reference: ReferenceStore): DataTableCol
       width: 150,
       ellipsis: { tooltip: true },
       render: (row) => (row.category_id ? reference.categoryPath(row.category_id) || '-' : '-'),
+    },
+    {
+      title: '商户',
+      key: 'merchant_id',
+      width: 120,
+      ellipsis: { tooltip: true },
+      // 商户名经 merchantMap（含软删）解析并可点击下钻（issue #191）；未知/无商户回退 '-'
+      render: (row) =>
+        row.merchant_id ? h(MerchantLink, { merchantId: row.merchant_id }) : '-',
     },
     {
       title: '账户',

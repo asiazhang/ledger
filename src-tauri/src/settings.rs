@@ -4,10 +4,19 @@
 //! `<feature>.<name>` 点分命名、由 [`SettingKey`] 枚举集中定义；值用
 //! serde_json 序列化、类型由读取方声明。本模块不暴露任何 IPC 命令，
 //! 对外接口由后续 ticket 以领域命令形状提供。
+//!
+//! **置脏豁免（ADR-0032）**：设置与调度状态写入不算「账本数据变化」，
+//! `app_settings` 全表写（即本模块的 [`set`]）不置脏——本模块不经连接层
+//! 统一写入口 [`crate::db::write`]，调用方持普通锁写入即可；豁免清单
+//! 集中在本模块单点，勿为绕开置脏在业务路径直写 `app_settings`。
 
 use rusqlite::Connection;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+
+/// app_settings 建表语句（与迁移 V008 同源，CREATE TABLE IF NOT EXISTS 幂等），
+/// 供「表缺失自愈」兑底复用。
+const APP_SETTINGS_SQL: &str = include_str!("../migrations/V008__app_settings.sql");
 
 /// 配置键枚举：唯一合法的 `app_settings.key` 来源，杜绝字符串字面量散落。
 /// 命名规范 `<feature>.<name>`。新增配置项的成本是加一个变体 + 默认值约定。
@@ -61,18 +70,32 @@ pub fn get<T: DeserializeOwned>(
 }
 
 /// 写入（upsert）配置值。value 为 serde_json 序列化结果。
+/// 表不存在时（旧版本备份恢复后建表迁移被序列重排跳过等）就地建表后重试一次。
 pub fn set<T: Serialize>(
     conn: &Connection,
     key: SettingKey,
     value: &T,
 ) -> crate::error::Result<()> {
     let json = serde_json::to_string(value)?;
-    conn.execute(
+    match conn.execute(
         "INSERT INTO app_settings(key, value) VALUES(?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         rusqlite::params![key.as_str(), json],
-    )?;
-    Ok(())
+    ) {
+        Ok(_) => Ok(()),
+        // 表不存在 → 就地建表（幂等）后重试一次，与 get 的缺表兑底对齐。
+        Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("no such table") => {
+            tracing::warn!(key = %key.as_str(), "app_settings 表不存在，就地创建后重试写入");
+            conn.execute_batch(APP_SETTINGS_SQL)?;
+            conn.execute(
+                "INSERT INTO app_settings(key, value) VALUES(?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                rusqlite::params![key.as_str(), json],
+            )?;
+            Ok(())
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 #[cfg(test)]
@@ -89,10 +112,19 @@ mod tests {
     /// 迁移可重复执行幂等（CREATE TABLE IF NOT EXISTS）。
     #[test]
     fn migration_is_idempotent() {
-        let sql = include_str!("../migrations/V008__app_settings.sql");
         let mut c = db::open_in_memory().expect("打开内存库");
         db::init_db(&mut c).expect("首次迁移");
-        c.execute_batch(sql).expect("重复执行同一迁移脚本");
+        c.execute_batch(APP_SETTINGS_SQL)
+            .expect("重复执行同一建表语句");
+    }
+
+    /// 表缺失时写入自愈：就地建表后写入成功，随后可读回。
+    #[test]
+    fn set_creates_table_when_missing() {
+        let c = db::open_in_memory().expect("未迁移的内存库");
+        set(&c, SettingKey::AutoBackupDirty, &true).expect("缺表写入应自愈");
+        let dirty: bool = get(&c, SettingKey::AutoBackupDirty, false).expect("读回");
+        assert!(dirty);
     }
 
     /// 表尚未创建（旧版本备份缺表）时 get 返回默认值而非报错。

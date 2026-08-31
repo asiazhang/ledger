@@ -7,12 +7,10 @@ import { NDatePicker } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import SearchView from '@/views/SearchView.vue'
 import AccountLink from '@/components/AccountLink.vue'
-import type { Account, Category, Currency, Transaction } from '@/types'
+import type { Account, Category, Currency, Merchant, Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
-// 索引滞后标志：测试 stale 提示时置 true（后台定时刷新，写入后可能未消费）
-let mockStale = false
 
 // AccountLink 经 useRouter 跳转（pushMock 断言导航目标，issue #99）
 const pushMock = vi.fn()
@@ -69,6 +67,18 @@ const mockCategories: Category[] = [
   },
 ]
 
+const mockMerchants: Merchant[] = [
+  {
+    id: 'mer-jd',
+    name: '京东',
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: false,
+  },
+]
+
 function makeTransaction(
   id: string,
   note: string,
@@ -113,6 +123,8 @@ const mockTransactions: Transaction[] = [
     kind: 'transfer',
     to_account_id: 'acc-bank',
   }),
+  // 带商户交易（issue #193 搜索结果展示商户）：备注唯一、日期/金额避开既有筛选测试口径
+  makeTransaction('tx-mer', '家电采购', '2026-03-01', 100, { merchant_id: 'mer-jd' }),
 ]
 
 function searchCalls() {
@@ -180,6 +192,7 @@ beforeEach(async () => {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve(mockCategories)
+    if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
     if (cmd === 'search_transactions') {
       const {
         query,
@@ -212,15 +225,13 @@ beforeEach(async () => {
       return Promise.resolve({
         items: all.slice(start, start + pageSize),
         total: all.length,
-        stale: mockStale,
       })
     }
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
   localStorage.clear()
-  mockStale = false
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 afterEach(() => {
@@ -286,6 +297,17 @@ describe('SearchView.vue', () => {
     expect(wrapper.text()).toContain('现金')
   })
 
+  it('搜索结果展示商户（复用交易列表信息口径的商户列）', async () => {
+    vi.useFakeTimers()
+    const wrapper = mount(SearchView)
+    await nextTick()
+    await typeAndSearch(wrapper, '家电采购')
+    expect(wrapper.text()).toContain('命中 1 条')
+    // 商户列头与商户名（merchantMap 解析）均渲染
+    expect(wrapper.text()).toContain('商户')
+    expect(wrapper.text()).toContain('京东')
+  })
+
   it('invoke(search_transactions) 参数正确（query/page/pageSize）', async () => {
     vi.useFakeTimers()
     const wrapper = mount(SearchView)
@@ -335,21 +357,6 @@ describe('SearchView.vue', () => {
     await nextTick()
     await typeAndSearch(wrapper, '报销')
     expect(wrapper.text()).not.toContain('删除')
-  })
-
-  it('索引滞后时显示提示（后台定时刷新，写入后可能未消费）', async () => {
-    vi.useFakeTimers()
-    mockStale = true
-    const wrapper = mount(SearchView)
-    await nextTick()
-    await typeAndSearch(wrapper, '报销')
-    expect(wrapper.text()).toContain('索引更新中，结果可能滞后于最近的操作')
-
-    // 队列消费后 stale=false：清空重搜后提示消失
-    mockStale = false
-    await typeAndSearch(wrapper, '', 1)
-    await typeAndSearch(wrapper, '报销')
-    expect(wrapper.text()).not.toContain('索引更新中')
   })
 
   describe('金额/日期筛选（issue #41）', () => {

@@ -1,9 +1,9 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { computed, ref, watch } from 'vue'
 import {
   NButton,
   NDataTable,
-  NDatePicker,
   NEmpty,
   NInput,
   NSpace,
@@ -11,6 +11,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
+import AppDatePicker from '@/components/AppDatePicker.vue'
 import { api } from '@/api'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
@@ -31,8 +32,6 @@ const dateFrom = ref<string | null>(null)
 const dateTo = ref<string | null>(null)
 const results = ref<Transaction[]>([])
 const total = ref(0)
-// 索引是否可能滞后（存在尚未刷新的写入）：显示弱化提示
-const stale = ref(false)
 const page = ref(1)
 const pageSize = 20
 const loading = ref(false)
@@ -99,11 +98,10 @@ async function runSearch() {
     if (seq !== searchSeq) return
     results.value = res.items
     total.value = res.total
-    stale.value = res.stale
     searched.value = true
   } catch (e) {
     if (seq !== searchSeq) return
-    message.error(`搜索失败: ${e}`)
+    message.error(`搜索失败: ${errorMessage(e)}`)
   } finally {
     if (seq === searchSeq) loading.value = false
   }
@@ -122,7 +120,6 @@ function resetResults() {
   searchSeq++ // 使在途请求过期
   results.value = []
   total.value = 0
-  stale.value = false
   page.value = 1
   searched.value = false
   loading.value = false
@@ -174,7 +171,7 @@ const pagination = computed(() => ({
   <NSpace vertical :size="12">
     <NInput
       v-model:value="keyword"
-      placeholder="输入关键字开始搜索（备注、账户名、拼音首字母，支持多关键字）"
+      placeholder="输入关键字开始搜索（备注、账户名、商户名、拼音首字母，支持多关键字）"
       clearable
       @keyup.enter="onEnter"
     />
@@ -193,7 +190,7 @@ const pagination = computed(() => ({
         style="width: 150px"
         @keyup.enter="onEnter"
       />
-      <NDatePicker
+      <AppDatePicker
         v-model:formatted-value="dateFrom"
         type="date"
         value-format="yyyy-MM-dd"
@@ -201,7 +198,7 @@ const pagination = computed(() => ({
         clearable
         style="width: 140px"
       />
-      <NDatePicker
+      <AppDatePicker
         v-model:formatted-value="dateTo"
         type="date"
         value-format="yyyy-MM-dd"
@@ -218,9 +215,6 @@ const pagination = computed(() => ({
     </NSpace>
     <template v-if="searched">
       <NText depth="3">命中 {{ total }} 条</NText>
-      <NText v-if="stale" depth="3" style="font-size: 12px">
-        索引更新中，结果可能滞后于最近的操作
-      </NText>
       <NEmpty v-if="total === 0" description="无匹配结果" />
       <!-- 备注列为弹性列，表格铺满容器；窄窗口时备注先收缩，scroll-x（固定列宽总和）作为横向滚动下限 -->
       <NDataTable

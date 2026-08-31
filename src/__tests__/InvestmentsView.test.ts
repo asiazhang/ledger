@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { h, nextTick } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
+import { NDialogProvider } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import InvestmentsView from '@/views/InvestmentsView.vue'
 import type { Currency, Instrument } from '@/types'
@@ -70,6 +71,7 @@ beforeEach(async () => {
     if (cmd === 'list_instruments')
       return Promise.resolve({ items: mockInstruments, total: mockInstruments.length })
     if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve([])
     // 持仓概览（issue #110）：盈亏 tab 顶部会拉取当前持仓
     if (cmd === 'list_holdings') return Promise.resolve([])
     // 走势（issue #139）：标的列表「走势」入口切入走势 tab 时由面板拉取
@@ -92,12 +94,20 @@ beforeEach(async () => {
   })
   localStorage.clear()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 describe('InvestmentsView 标的 tab', () => {
+  /** 标的页 InstrumentBrowser 顶层调用 useAppDialog（删除二次确认，issue #292），
+   * 与 App.vue 同构需 NDialogProvider 包裹（先例：AccountsView.test.ts 的 mountView）。 */
+  function mountView() {
+    return mount(NDialogProvider, {
+      slots: { default: () => h(InvestmentsView) },
+    })
+  }
+
   it('盈亏 tab 存在', async () => {
-    const wrapper = mount(InvestmentsView)
+    const wrapper = mountView()
     await nextTick()
     const tabs = wrapper.findAll('.n-tabs-tab')
     const labels = tabs.map((t) => t.text())
@@ -105,14 +115,14 @@ describe('InvestmentsView 标的 tab', () => {
   })
 
   it('标的 tab 存在', () => {
-    const wrapper = mount(InvestmentsView)
+    const wrapper = mountView()
     const tabs = wrapper.findAll('.n-tabs-tab')
     const labels = tabs.map((t) => t.text())
     expect(labels).toContain('标的')
   })
 
   it('标的 tab 显示标的搜索框', async () => {
-    const wrapper = mount(InvestmentsView)
+    const wrapper = mountView()
     await nextTick()
     await nextTick()
     const instTab = wrapper.findAll('.n-tabs-tab')[1]
@@ -123,7 +133,7 @@ describe('InvestmentsView 标的 tab', () => {
   })
 
   it('标的 tab 支持搜索', async () => {
-    const wrapper = mount(InvestmentsView)
+    const wrapper = mountView()
     await nextTick()
     const instTab = wrapper.findAll('.n-tabs-tab')[1]
     await instTab.trigger('click')
@@ -133,7 +143,7 @@ describe('InvestmentsView 标的 tab', () => {
   })
 
   it('标的 tab 包含市场筛选', async () => {
-    const wrapper = mount(InvestmentsView)
+    const wrapper = mountView()
     await nextTick()
     const instTab = wrapper.findAll('.n-tabs-tab')[1]
     await instTab.trigger('click')
@@ -143,7 +153,7 @@ describe('InvestmentsView 标的 tab', () => {
   })
 
   it('标的 tab 分页请求携带 page/page_size', async () => {
-    const wrapper = mount(InvestmentsView)
+    const wrapper = mountView()
     await nextTick()
     const instTab = wrapper.findAll('.n-tabs-tab')[1]
     await instTab.trigger('click')
@@ -156,13 +166,13 @@ describe('InvestmentsView 标的 tab', () => {
   })
 
   it('走势 tab 存在', () => {
-    const wrapper = mount(InvestmentsView)
+    const wrapper = mountView()
     const labels = wrapper.findAll('.n-tabs-tab').map((t) => t.text())
     expect(labels).toContain('走势')
   })
 
   it('标的列表「走势」入口：切到走势 tab 并以单标的模式查询该标的', async () => {
-    const wrapper = mount(InvestmentsView)
+    const wrapper = mountView()
     await nextTick()
     // 进入标的 tab
     await wrapper.findAll('.n-tabs-tab')[1].trigger('click')
@@ -182,7 +192,7 @@ describe('InvestmentsView 标的 tab', () => {
   })
 
   it('离开走势 tab 清空入口标的：直入「走势」tab 回到默认组合曲线', async () => {
-    const wrapper = mount(InvestmentsView)
+    const wrapper = mountView()
     await nextTick()
     // 经标的列表入口进入单标的走势
     await wrapper.findAll('.n-tabs-tab')[1].trigger('click')

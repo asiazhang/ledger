@@ -135,6 +135,17 @@ pub struct ItemInput {
     pub purchase_transaction_id: Option<String>,
 }
 
+/// 处置物品入参（issue #120）：生命周期流转 `in_use` → `disposed`。
+/// 处置日期必填（不得早于购买日期，否则每天成本口径不可达）；残值可选，
+/// `Some` 时必须 ≥ 0。残值 ≥ 成本合法（分子下限 0，`item::cost` 口径）。
+#[derive(Debug, Clone, Deserialize)]
+pub struct ItemDisposeInput {
+    /// 处置日期（YYYY-MM-DD），必填；每天成本分母摊到该日。
+    pub disposal_date: String,
+    /// 残值（整数分，可选）：`None` 视同无残值（分子 = 总成本）。
+    pub residual_value_cents: Option<i64>,
+}
+
 /// 物品列表项：物品实体 + 每天使用成本快照（经 `item::cost` 接缝计算，
 /// 调用方不另写口径）。`used_days` / `per_day_cents` 为查询时刻快照，不落库。
 /// 成本分解三元组（分子 `numerator_cents` ÷ 天数 `used_days` = `per_day_cents`）
@@ -149,4 +160,29 @@ pub struct ItemWithDailyCost {
     pub numerator_cents: i64,
     /// 每天成本（分/天，**小数**）：`item::cost` 接缝计算，仅供展示。
     pub per_day_cents: f64,
+}
+
+/// 每天使用成本计算结果（issue #121 自选参考日重算）：不带物品实体的独立形态，
+/// 供单件计算命令（`calculate_item_cost`）返回；三元组与 [`ItemWithDailyCost`]
+/// 同一口径（均经 `item::cost` 接缝），前端详情视图重算展示共用。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct ItemDailyCost {
+    /// 已用天数：购买日 → 目标日（参考日或缺省目标日）的日历天数，含起止两端。
+    pub used_days: i64,
+    /// 成本分解分子（分）：总成本 − 残值，下限 0。
+    pub numerator_cents: i64,
+    /// 每天成本（分/天，**小数**），仅供展示。
+    pub per_day_cents: f64,
+}
+
+/// 全部在用物品「每天成本合计」聚合结果（issue #122 dashboard 汇总卡）：
+/// 合计口径收敛在 `commands::item::item_daily_total_internal`，本结构只是其返回形状。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ItemDailyTotal {
+    /// 默认币种代码（合计折算目标，`default_currency_code`）。
+    pub native_currency: String,
+    /// 每天成本合计（本位币分/天，**小数**）：Σ 各在用物品分子（折本位币）÷ 各自天数。
+    pub per_day_cents: f64,
+    /// 计入合计的在用物品件数（含分子为 0 的物品；已处置/已删除不计入）。
+    pub item_count: u64,
 }

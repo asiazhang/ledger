@@ -14,8 +14,9 @@ import {
 import type { DataTableColumn } from 'naive-ui'
 import { h } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
-import { formatAmount, formatQuantity } from '@/types'
+import { formatAmount, formatPrice, formatQuantity } from '@/types'
 import { useHoldingPriceSync } from '@/composables/useHoldingPriceSync'
+import { usePricesChanged } from '@/composables/usePricesChanged'
 import {
   formatCurrencyGroups,
   usePortfolioOverview,
@@ -27,13 +28,14 @@ const { rows, loading, totalMarketValueGroups, totalUnrealizedPnlGroups, refresh
   usePortfolioOverview()
 
 // 同步按钮复用 T4 的增量同步接缝（useHoldingPriceSync），两处行为一致：
-// 按钮 loading + 轻量消息反馈。同步成功后价格已更新，重拉持仓刷新现价/市值。
+// 按钮 loading + 轻量消息反馈。同步后重拉不绑在调用方自觉里：后端实际
+// 写价后 emit 价格失效信号（ADR-0031），此处订阅重拉现价/市值（含本卡
+// 所在隐藏 tab 常驻挂载的场景）；失败/零更新后端不 emit，无谓重拉也不发生。
 const { syncing, resultMessage, status, sync } = useHoldingPriceSync()
 
-async function onSync() {
-  await sync()
-  if (status.value === 'success') void refresh()
-}
+usePricesChanged(() => {
+  void refresh()
+})
 
 function pnlColor(cents: number): string {
   return cents >= 0 ? '#18a058' : '#d03050'
@@ -53,11 +55,26 @@ const overviewColumns: DataTableColumn<PortfolioRow>[] = [
   {
     title: '现价',
     key: 'latest_price',
-    width: 110,
-    render: (r) =>
-      r.latestPriceCents === null
-        ? '-'
-        : formatAmount(r.latestPriceCents, reference.currencyMap.get(r.latestPriceCurrencyCode ?? '')),
+    width: 130,
+    // 现价为价格列（万分之一元刻度，ADR-0038），用 formatPrice 展示；
+    // 基金现价 = 最新公布单位净值，下方小字展示净值日期——现价对应哪天的
+    // 净值一眼可辨（#303），股票无净值日期不渲染该行。
+    render: (r) => {
+      if (r.latestPriceCents === null) return '-'
+      const price = formatPrice(
+        r.latestPriceCents,
+        reference.currencyMap.get(r.latestPriceCurrencyCode ?? ''),
+      )
+      if (r.latestNavDate === null) return price
+      return h('div', [
+        price,
+        h(
+          'div',
+          { style: 'font-size:12px;opacity:.65;line-height:1.4' },
+          `净值 ${r.latestNavDate}`,
+        ),
+      ])
+    },
   },
   {
     title: '市值',
@@ -92,7 +109,7 @@ const overviewColumns: DataTableColumn<PortfolioRow>[] = [
         size="small"
         :loading="syncing"
         data-testid="sync-holding-prices"
-        @click="onSync"
+        @click="sync"
       >
         同步持仓价格
       </NButton>

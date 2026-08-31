@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, ref, watch, type Component } from 'vue'
+import { computed, h, nextTick, ref, watch, type Component, type HTMLAttributes } from 'vue'
 import { RouterView, useRouter, useRoute } from 'vue-router'
 import {
   NConfigProvider,
@@ -15,6 +15,7 @@ import {
   darkTheme,
   type MenuOption,
 } from 'naive-ui'
+import AppDropdown from '@/components/AppDropdown.vue'
 import {
   HomeOutline,
   SwapHorizontalOutline,
@@ -23,6 +24,7 @@ import {
   BarChartOutline,
   TrendingUpOutline,
   CubeOutline,
+  RepeatOutline,
   CalculatorOutline,
   SparklesOutline,
   SettingsOutline,
@@ -31,7 +33,18 @@ import { useAppStore } from '@/stores/app'
 import { api } from '@/api'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
 import { loadSidebarCollapsed, saveSidebarCollapsed } from '@/utils/view-state'
-import { sidebarViews, shortcutHint, useViewShortcuts } from '@/composables/useViewShortcuts'
+import {
+  viewShortcuts,
+  shortcutHint,
+  useViewShortcuts,
+  isArrangeableView,
+  isSidebarSortAction,
+  sidebarOrder,
+  buildSidebarSortMenuOptions,
+  applySidebarSort,
+  resetSidebarOrder,
+  type ViewName,
+} from '@/composables/useViewShortcuts'
 import { useWindowGuard } from '@/composables/useWindowGuard'
 
 const router = useRouter()
@@ -67,6 +80,7 @@ const viewLabels: Record<string, string> = {
   reports: '报表',
   investments: '投资',
   items: '物品',
+  scheduled: '定时',
   budget: '预算',
   ai: 'AI',
   settings: '设置',
@@ -81,6 +95,7 @@ const viewIcons: Record<string, Component> = {
   reports: BarChartOutline,
   investments: TrendingUpOutline,
   items: CubeOutline,
+  scheduled: RepeatOutline,
   budget: CalculatorOutline,
   ai: SparklesOutline,
   settings: SettingsOutline,
@@ -90,21 +105,75 @@ function renderMenuIcon(name: string) {
   return () => h(NIcon, { size: 18 }, { default: () => h(viewIcons[name]) })
 }
 
-// 菜单项与快捷键共用同一映射（sidebarViews，顺序即菜单顺序）；
-// 有数字键的项右侧附快捷键提示，无键项不展示
-const menuOptions: MenuOption[] = sidebarViews.map(({ name, key }) => ({
-  key: name,
-  icon: renderMenuIcon(name),
-  label: () =>
-    h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:12px;padding-right:2px' }, [
-      h('span', viewLabels[name]),
-      ...(key
-        ? [h('span', { style: 'font-size:12px;opacity:.55' }, shortcutHint(key))]
-        : []),
-    ]),
-}))
+// 菜单项与快捷键共用同一顺序源（viewShortcuts：由最终序按位置推导键位）；
+// 菜单由最终序响应式派生，排序变更时顺序与快捷键提示同步更新。
+// 每项右侧附快捷键提示（数字位或设置项的 ⌘,）；
+// 可排区八项经 nodeProps 附右键排序菜单（issue #270），三固定项不附（右键无任何菜单，
+// 原生菜单由窗口守卫抑制）。注：NMenu 不支持选项级 props 字段，必须走菜单级 nodeProps。
+const menuOptions = computed<MenuOption[]>(() =>
+  viewShortcuts.value.map(({ name, key }) => ({
+    key: name,
+    icon: renderMenuIcon(name),
+    label: () =>
+      h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:12px;padding-right:2px' }, [
+        h('span', viewLabels[name]),
+        h('span', { style: 'font-size:12px;opacity:.55' }, shortcutHint(key)),
+      ]),
+  })),
+)
 
-// 视图快捷键：窗口内 Cmd/Ctrl+1..9 切换视图（弹窗/确认框打开时自动抑制）
+/** 菜单级 nodeProps：仅可排区项附右键事件（固定项无任何右键菜单）。
+ *  naive-ui 的 nodeProps 返回类型把索引签名限成 string|number，事件函数过不去
+ *  （类型仅对 data-* 友好），运行时照常铺到节点上，故此处断言放宽。 */
+function nodeProps(option: MenuOption) {
+  const name = option.key as string
+  if (!isArrangeableView(name)) return {}
+  return {
+    onContextmenu: (e: MouseEvent) => showSortMenu(e, name),
+  } as unknown as HTMLAttributes & Record<string, string | number | undefined>
+}
+
+// ---------------------------------------------------------------------------
+// 侧栏右键排序菜单（issue #270）：可排区八项右键弹出（上移/下移/移顶/移底/恢复默认），
+// 手动定位弹出，与行级右键菜单同一模式；点选即重排并立即持久化，
+// 菜单打开期间视图快捷键由既有弹层抑制机制压制（零新代码）。
+// ---------------------------------------------------------------------------
+
+const sortMenuShow = ref(false)
+const sortMenuX = ref(0)
+const sortMenuY = ref(0)
+const sortTarget = ref<ViewName | null>(null)
+
+const sortMenuOptions = computed(() =>
+  sortTarget.value ? buildSidebarSortMenuOptions(sortTarget.value, sidebarOrder.value) : [],
+)
+
+/** 右键可排区项弹出排序菜单：先收起再 nextTick 展开，保证连续弹出时位置刷新。 */
+function showSortMenu(e: MouseEvent, name: ViewName) {
+  sortTarget.value = name
+  sortMenuX.value = e.clientX
+  sortMenuY.value = e.clientY
+  sortMenuShow.value = false
+  void nextTick(() => {
+    sortMenuShow.value = true
+  })
+}
+
+function onSortMenuSelect(key: string) {
+  sortMenuShow.value = false
+  const target = sortTarget.value
+  if (!target) return
+  if (key === 'reset') {
+    resetSidebarOrder()
+    return
+  }
+  // 菜单 key 与移动动作同一词表（key 即 action），守卫收窄后零断言
+  if (isSidebarSortAction(key)) {
+    applySidebarSort(target, key)
+  }
+}
+
+// 视图快捷键：窗口内 Cmd/Ctrl+1..0 与 Cmd/Ctrl+, 切换视图（弹窗/确认框打开时自动抑制）
 useViewShortcuts(router)
 
 function handleSelect(key: string) {
@@ -136,9 +205,22 @@ const title = () => h('div', { style: 'padding: 16px 18px; font-size: 18px; font
               <NMenu
                 :options="menuOptions"
                 :value="route.name as string"
+                :node-props="nodeProps"
                 @update:value="handleSelect"
               />
             </NSpace>
+            <!-- 可排区右键排序菜单（issue #270）：手动定位弹出 -->
+            <AppDropdown
+              trigger="manual"
+              placement="bottom-start"
+              :show="sortMenuShow"
+              :x="sortMenuX"
+              :y="sortMenuY"
+              :options="sortMenuOptions"
+              :min-width="140"
+              @select="onSortMenuSelect"
+              @clickoutside="sortMenuShow = false"
+            />
           </NLayoutSider>
           <NLayout>
             <NLayoutContent content-style="padding: 20px;" :native-scrollbar="false">

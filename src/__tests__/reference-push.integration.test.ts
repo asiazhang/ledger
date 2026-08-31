@@ -99,7 +99,7 @@ const importedCategory: Category = {
   is_deleted: false,
 }
 
-let changedHandler: ((...args: unknown[]) => void) | null = null
+let changedHandlers: Array<(...args: unknown[]) => void> = []
 
 /** 参考数据 list_* 命令的默认 mock 实现；overrides 可替换为写后数据库状态。 */
 function listImpl(overrides: {
@@ -110,6 +110,7 @@ function listImpl(overrides: {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve(overrides.accounts ?? mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve(overrides.categories ?? mockCategories)
+    if (cmd === 'list_merchants') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   }
 }
@@ -120,17 +121,18 @@ beforeEach(async () => {
   mockListen.mockReset()
   mockInvoke.mockImplementation(listImpl())
   mockListen.mockImplementation((_event: string, handler: (...args: unknown[]) => void) => {
-    changedHandler = handler
+    // 多个 store（reference / items 等）各自订阅同一信号，全部捕获、全部触发
+    changedHandlers.push(handler)
     return Promise.resolve(vi.fn())
   })
   localStorage.clear()
   // 先访问 store 以捕获 listen 回调（组件复用同一 store 单例），再确保数据就绪
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 afterEach(() => {
-  changedHandler = null
+  changedHandlers = []
 })
 
 /**
@@ -144,7 +146,7 @@ async function simulateExternalWrite(patch: {
   categories?: Category[]
 }) {
   mockInvoke.mockImplementation(listImpl(patch))
-  changedHandler?.({ payload: undefined })
+  changedHandlers.forEach((h) => h({ payload: undefined }))
   await flushPromises()
 }
 
@@ -227,7 +229,7 @@ describe('组件层反应性：mock ledger:changed 使界面/选项原地更新�
     })
 
     // 触发 push：重拉挂起期间，已打开的分类树不闪空（旧数据原样保留）
-    changedHandler?.({ payload: undefined })
+    changedHandlers.forEach((h) => h({ payload: undefined }))
     await flushPromises()
     expect(wrapper.text()).toContain('餐饮')
     expect(wrapper.text()).not.toContain('AI 导入分类')

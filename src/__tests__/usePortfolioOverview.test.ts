@@ -25,6 +25,7 @@ function baseInvoke(extra?: Record<string, unknown>) {
         list_currencies: mockCurrencies,
         list_accounts: mockAccounts,
         list_categories: [],
+        list_merchants: [],
         list_holdings: mockHoldings,
         list_instruments: { items: mockInstruments, total: mockInstruments.length },
       },
@@ -38,7 +39,7 @@ beforeEach(async () => {
   mockInvoke.mockReset()
   baseInvoke()
   const store = useReferenceStore()
-  await store.ensureFresh()
+  await store.refresh()
 })
 
 describe('sumByCurrency 按币种汇总金额', () => {
@@ -97,7 +98,7 @@ describe('usePortfolioOverview 盈亏页持仓概览数据层（issue #110）', 
     expect(row1.accountName).toBe('证券账户A')
     expect(row1.quantity).toBe(100)
     expect(row1.costBasisCents).toBe(120000)
-    expect(row1.latestPriceCents).toBe(1500)
+    expect(row1.latestPriceCents).toBe(150000) // 现价为万分之一元刻度（ADR-0038）
     expect(row1.marketValueCents).toBe(150000)
     expect(row1.unrealizedPnlCents).toBe(30000)
     // 市值/未实现盈亏折算币种 = 账户币
@@ -109,6 +110,13 @@ describe('usePortfolioOverview 盈亏页持仓概览数据层（issue #110）', 
     await refresh()
     const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'list_instruments')
     expect(call![1]).toMatchObject({ filter: { only_invested: true } })
+  })
+
+  it('净值日期透传到行（基金现价对应哪天的净值，#303）', async () => {
+    const { rows, refresh } = usePortfolioOverview()
+    await refresh()
+    // 默认夹具为股票行：latest_nav_date 为 null
+    expect(rows.value[0]!.latestNavDate).toBeNull()
   })
 
   it('总市值与未实现盈亏合计：排除无行情行，按账户币种汇总', async () => {

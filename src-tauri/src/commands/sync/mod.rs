@@ -1,22 +1,28 @@
 //! 行情同步（issue #89）：命令外壳 + HTTP 网络层 + 持久化 + 编排。
 //!
 //! 目录组织：
-//! - `http`：HTTP 请求（含多主机切换、重试、限流冷却）与响应解析（报价 / 日 K / 汇率 K），
-//!   可独立测试；
+//! - `http`：HTTP 请求（含多主机切换、重试、限流冷却、Referer）与响应解析（报价
+//!   / 日 K / 汇率 K），可独立测试；
+//! - `fund`：东财基金详情访问（按代码即拉，issue #301 / ADR-0038）；
+//! - `fund_nav`：东财历史净值通道——lsjz 访问、报文解析、水位语义与基金分区
+//!   编排（issue #303 / ADR-0038 决策 6）；
 //! - `persist`：`instruments` / `market_prices` 持久化 + `price_history` / `fx_rate_history`
 //!   周采样 upsert（issue #137）；
 //! - `orchestrate`：全量同步编排——市场分页遍历、进度事件推送、新增/更新汇总；
-//! - `incremental`：增量同步编排（issue #103，#137 升级）——现价 upsert + 近两年日 K
-//!   回填周线落 `price_history` + 汇率 K 线落 `fx_rate_history`（ADR-0019）；
+//! - `incremental`：增量同步编排（issue #103，#137 升级，#303 基金分区）——
+//!   现价 upsert + 近两年日 K 回填周线落 `price_history` + 汇率 K 线落
+//!   `fx_rate_history`（ADR-0019）+ 基金历史净值按水位增量回填（ADR-0038 决策 6）；
 //! - `tests`：原内嵌测试外迁。
 //!
 //! 对外暴露两个命令（`commands/mod.rs` 经 `pub use sync::*` 重导出）：
 //! `sync_instruments` 全量同步（修标的字典）与 `sync_holding_prices` 增量同步（只刷价格）。
 
+pub(crate) mod fund;
+pub(crate) mod fund_nav;
 mod http;
 mod incremental;
 mod orchestrate;
-mod persist;
+pub(crate) mod persist;
 #[cfg(test)]
 mod tests;
 
@@ -28,6 +34,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::db::DbState;
 use crate::error::{AppError, Result};
+use crate::events;
 use crate::models::{CancelSyncResult, SyncHoldingPricesResult, SyncProgress};
 
 /// 全量同步中断状态（issue #104）：跨命令共享的运行标志与取消标志（`Arc<AtomicBool>`）。
@@ -115,21 +122,45 @@ fn emit_error_progress(app: &AppHandle, error: String) {
     );
 }
 
-/// IPC 命令：同步持仓价格（增量同步，issue #103）。仅刷新当前持仓股票的最新价，
-/// 不增删、不改标的字典；无持仓返回明确提示而非报错。异步执行（后台线程池），
-/// 不阻塞主线程；返回结果统计（同步 N 只 / 跳过 M 只），前端据此轻量提示。
+/// 是否发价格失效信号 `ledger:prices-changed`（ADR-0031 决策 2，issue #236）：
+/// 增量/全量两同步命令共用的纯判定。`written` 为本次运行的实际落库计数——
+/// `Some(n)` 表示到达保留落库的终态（成功，或用户中断——中断保留已落库价格，
+/// 不发信号即失真）且实际写入 n 条；`None` 表示失败（emit 的终态只有成功与中断，
+/// 失败不广播）。
+/// 失效信号的本义是「数据变了」：零写入（无持仓/全部跳过/基金全部「已是最新」）
+/// 为库内零变化，不广播。
+fn should_emit_prices_changed(written: Option<usize>) -> bool {
+    written.is_some_and(|n| n > 0)
+}
+
+/// IPC 命令：同步持仓价格（增量同步，issue #103 / #303）。单次按类型分区刷价：
+/// 股票走行情报价/K 线通道，场外基金走历史净值通道逐只按水位增量回填
+///（ADR-0038 决策 6）；不增删、不改标的字典；无持仓返回明确提示而非报错。
+/// 异步执行（后台线程池），不阻塞主线程；返回结果统计（同步 N 只 / 跳过 M 只），
+/// 前端据此轻量提示。成功且实际写入价格（`written > 0`）时发价格失效信号
+///（ADR-0031）：零变化（无持仓/全部跳过/基金无新净值）为库内零变化，不广播。
 #[tauri::command]
-pub async fn sync_holding_prices(db: State<'_, DbState>) -> Result<SyncHoldingPricesResult> {
+pub async fn sync_holding_prices(
+    db: State<'_, DbState>,
+    app: AppHandle,
+) -> Result<SyncHoldingPricesResult> {
     let conn = db.conn.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         // 命令在后台线程池执行，手包 span 维持 SQL 耗时归因（lib.rs 异步命令归因约定）。
         let span = tracing::info_span!("command", command = "sync_holding_prices");
         let _entered = span.enter();
-        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        incremental::do_incremental_sync(&conn)
+        // 连接层统一写入口（ADR-0032，#246 审计补齐）：行情/汇率/历史落库成功即置脏，
+        // 提交点写时顺带到期检查；锁语义与先前整段持有一致（同步期间独占连接）。
+        crate::db::write(&conn, incremental::do_incremental_sync)
     })
     .await
-    .map_err(|e| AppError::Io(format!("同步任务执行失败: {e}")))?
+    .map_err(|e| AppError::Io(format!("同步任务执行失败: {e}")))?;
+    // 失败经 `?` 提前返回（不广播）；成功路径按实际写入判定 emit（零变化不广播：
+    // 基金全部「已是最新」时 written 为 0，虽有成功处理亦不广播）。
+    if should_emit_prices_changed(result.as_ref().ok().map(|r| r.written)) {
+        events::emit_prices_changed(&app);
+    }
+    result
 }
 
 /// IPC 命令：全量同步股票行情。后台线程执行（不阻塞界面），进度经
@@ -160,9 +191,19 @@ pub fn sync_instruments(
         let result = orchestrate::do_sync(&accessor, &app, &cancel);
         running.store(false, Ordering::SeqCst);
 
-        if let Err(e) = result {
-            tracing::error!(error = %e, "股票同步失败");
-            emit_error_progress(&app, e.to_string());
+        match result {
+            Ok(outcome) => {
+                // 结束（成功或用户中断）且本次运行有落库即发价格失效信号（ADR-0031）：
+                // 中断保留已落库价格（upsert 幂等），不发信号即失真；零落库不广播。
+                if should_emit_prices_changed(Some(outcome.written())) {
+                    events::emit_prices_changed(&app);
+                }
+            }
+            Err(e) => {
+                // 失败不广播（ADR-0031）：emit 的终态只有成功与用户中断，失败不在其列。
+                tracing::error!(error = %e, "股票同步失败");
+                emit_error_progress(&app, e.to_string());
+            }
         }
     });
 

@@ -18,6 +18,7 @@
    - 锚点是"距上次备份"而非固定时刻；备份频率上限是每天一次，不做小时级/自定义间隔。
    - 应用退出前若脏则兜底备份一次（不受每日约束）。
 2. **"数据有变化" = 任何业务写库成功**。置脏挂钩点：交易写入（经 Writer 接缝：增删改、批量导入、定时交易执行、buy/sell 交易行）、参考数据 CRUD（账号/分类，IPC + HTTP 端点）、市场数据写入（`create_exchange_rate` / `create_market_price` / `create_instrument`）。恢复操作不置脏；调度器自身状态写入不置脏（避免自触发）。
+   > 注（ADR-0032）：挂钩点逐点手动调用的触发协议已修订为连接层统一写入口默认置脏 + 集中豁免（`app_settings` 全表 + 恢复路径）；本条的排除项与语义由 ADR-0032 承接，触发模型本身不变。
 3. **开关与调度状态存 `ledger.db`（后端权威），`backupDir`/`backupMaxCount` 保持前端 localStorage**。原因：调度器跑在后端 Rust，消费的开关必须后端可见；前端 localStorage 后端读不到，双存储会产生同步不一致。`backupDir`/`backupMaxCount` 只在备份/清理时经 IPC 参数传入，无此问题，维持现状（设备本地偏好语义）。
 4. **产物复用现有手动备份机制**（VACUUM INTO 快照 + zip 打包，ADR-0007），仅命名与元数据区分来源：`ledger-auto-YYYYMMDD-HHMMSS.db.zip` 前缀 + zip 内 `backup.json` 加 `kind: "auto"|"manual"` 字段。
 5. **清理语义：自动与手动受管备份同等对待**。共享 `backupMaxCount` 上限，最旧淘汰，不区分来源（沿用现有 `pruneToLimit` 逻辑，仅受管前缀集合扩展为 `ledger-backup-` + `ledger-auto-`）。手动"另存为"到备份目录外的文件仍不受约束。

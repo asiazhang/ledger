@@ -9,8 +9,8 @@ pub fn create_scheduled_transaction(
     db: State<'_, DbState>,
     input: CreateScheduledInput,
 ) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    crate::scheduled_transactions::create_plan(&conn, input)
+    // 连接层统一写入口（ADR-0032，#246 审计补齐）：计划与期次属账本数据，成功即置脏。
+    db.write(|conn| crate::scheduled_transactions::create_plan(conn, input))
 }
 
 #[tauri::command]
@@ -35,8 +35,21 @@ pub fn update_scheduled_transaction_status(
     db: State<'_, DbState>,
     input: UpdateStatusInput,
 ) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    crate::scheduled_transactions::update_plan_status(&conn, &input.id, input.new_status)
+    // 连接层统一写入口（ADR-0032，#246 审计补齐）：状态变更成功即置脏。
+    db.write(|conn| {
+        crate::scheduled_transactions::update_plan_status(conn, &input.id, input.new_status)
+    })
+}
+
+/// 编辑订阅计划的非金额字段（issue #162，ADR-0023 决策三）：
+/// 请求携带金额字段时后端显式拒绝并提示「改价 = 取消旧计划 + 新建」。
+#[tauri::command]
+pub fn update_scheduled_subscription(
+    db: State<'_, DbState>,
+    input: UpdateSubscriptionInput,
+) -> Result<()> {
+    // 连接层统一写入口（ADR-0032，#246 审计补齐）：订阅编辑成功即置脏。
+    db.write(|conn| crate::scheduled_transactions::update_subscription(conn, input))
 }
 
 #[tauri::command]
@@ -44,12 +57,23 @@ pub fn execute_scheduled_occurrence(
     db: State<'_, DbState>,
     input: ExecuteOccurrenceInput,
 ) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    crate::scheduled_transactions::execute_occurrence(&conn, &input.occurrence_id)
+    // 期次执行落交易行（Writer 接缝交易增），经写入口置脏（ADR-0032）。
+    db.write(|conn| crate::scheduled_transactions::execute_occurrence(conn, &input.occurrence_id))
 }
 
 #[tauri::command]
 pub fn expand_scheduled_occurrences(db: State<'_, DbState>, id: String) -> Result<Vec<String>> {
+    // 连接层统一写入口（ADR-0032，#246 审计补齐）：期次回填写入成功即置脏。
+    db.write(|conn| crate::scheduled_transactions::expand_occurrences(conn, &id))
+}
+
+/// 订阅花费总览（issue #160/#161，ADR-0023 双口径）：只读聚合，返回逐订阅行 +
+/// 本月/本年实际花费 + 过去 12 个月逐月序列 + 折算月/年推算成本（本位币）。
+#[tauri::command]
+pub fn subscription_spend_overview(db: State<'_, DbState>) -> Result<SubscriptionSpendOverview> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    crate::scheduled_transactions::expand_occurrences(&conn, &id)
+    crate::scheduled_transactions::query_subscription_spend(
+        &conn,
+        chrono::Local::now().date_naive(),
+    )
 }

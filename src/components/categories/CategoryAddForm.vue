@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { computed, ref } from 'vue'
-import { NButton, NForm, NFormItem, NInput, NSelect, useMessage } from 'naive-ui'
+import { NButton, NForm, NFormItem, NInput, useMessage } from 'naive-ui'
+import PinyinSelect from '@/components/PinyinSelect.vue'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import type { CategoryInput, CategoryKind } from '@/types'
@@ -56,7 +58,7 @@ async function addCategory() {
     icon.value = ''
     // 参考数据由 ledger:changed 信号自动重拉，分类树随之更新
   } catch (e) {
-    message.error(`添加失败: ${e}`)
+    message.error(`添加失败: ${errorMessage(e)}`)
   }
 }
 </script>
@@ -67,7 +69,7 @@ async function addCategory() {
       <NInput v-model:value="name" placeholder="分类名称" style="width: 140px" />
     </NFormItem>
     <NFormItem label="父分类">
-      <NSelect v-model:value="parentId" :options="parentOptions" style="width: 140px" />
+      <PinyinSelect v-model:value="parentId" :options="parentOptions" style="width: 140px" />
     </NFormItem>
     <NFormItem label="图标">
       <NInput v-model:value="icon" placeholder="图标名" style="width: 140px" />

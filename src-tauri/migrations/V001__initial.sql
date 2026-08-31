@@ -55,6 +55,23 @@ CREATE TABLE IF NOT EXISTS categories (
     is_deleted INTEGER NOT NULL DEFAULT 0 CHECK(is_deleted IN (0, 1))  -- 软删除标志
 );
 
+-- merchants：商户字典（issue #186/#188 / ADR-0028），参考数据模式（与 categories 同款）：
+-- 软删除（is_deleted）+ 审计字段（created_at/updated_at/version/device_id）；
+-- name 全库唯一（仅在用行唯一：软删后同名可重建，软删行不占名字），以 partial unique index 落地；
+-- 名字字典（issue #223）：icon/color 两字段已退役——商户高频自动增长，视觉辨识字段只会
+-- 成为低填充率噪音；空表启动不 seed（商户是强个人属性，seed 是字典噪音）。
+CREATE TABLE IF NOT EXISTS merchants (
+    id         TEXT PRIMARY KEY,                  -- 商户全局唯一 ID（UUID v7）
+    name       TEXT NOT NULL,                                     -- 商户名称，如「京东」「红旗连锁」；在用行全库唯一
+    created_at TEXT NOT NULL,                                       -- 创建时间，UTC ISO 8601 格式
+    updated_at TEXT NOT NULL,                                       -- 最后修改时间，UTC ISO 8601 格式
+    version    INTEGER NOT NULL DEFAULT 1,                          -- 版本计数
+    device_id  TEXT NOT NULL,                                       -- 创建设备/最后修改设备标识
+    is_deleted INTEGER NOT NULL DEFAULT 0 CHECK(is_deleted IN (0, 1))  -- 软删除标志
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_merchants_name_active ON merchants(name) WHERE is_deleted = 0;
+
 CREATE TABLE IF NOT EXISTS transactions (
     id                        TEXT PRIMARY KEY,                        -- 交易全局唯一 ID（UUID v7）
     -- kind 取值说明：
@@ -73,6 +90,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     account_id                TEXT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,  -- 关联账户 ID；支出/收入/转出账户
     to_account_id             TEXT REFERENCES accounts(id) ON DELETE SET NULL,    -- 转入账户 ID，仅转账（transfer）时必填；账户硬删时置空
     category_id               TEXT REFERENCES categories(id) ON DELETE SET NULL,   -- 关联分类 ID，转账通常为空；分类硬删时置空
+    merchant_id               TEXT REFERENCES merchants(id) ON DELETE SET NULL,   -- 关联商户 ID（expense/refund/income 可携带）；商户硬删时置空
     refund_of_transaction_id  TEXT REFERENCES transactions(id) ON DELETE SET NULL,  -- 退款关联的原始支出交易 ID；原交易硬删时置空
     note                      TEXT,                                                    -- 交易备注（可选）
     -- dedup_hash：导入去重哈希，可空（应用层行为，不建唯一索引）。
@@ -118,6 +136,7 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
 CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_merchant ON transactions(merchant_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_refund ON transactions(refund_of_transaction_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_sync ON transactions(updated_at, device_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_deleted ON transactions(is_deleted, updated_at);

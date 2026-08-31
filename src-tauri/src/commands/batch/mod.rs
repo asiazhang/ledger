@@ -1,22 +1,26 @@
 //! 交易批量写入模块 `TransactionBatch`（issue #53 / #63）。
 //!
 //! 承载全部「批量写入交易」的编排语义：事务 `BEGIN/COMMIT/ROLLBACK`、逐条 INSERT +
-//! 回写 `dedup_hash`/`idempotency_key`、批次汇总日志（ADR-0009 决策 #5 / issue #45）、
-//! 提交后立即消费搜索重建队列（ADR-0004 决策 #14）。
+//! 回写 `dedup_hash`/`idempotency_key`、批次汇总日志（ADR-0009 决策 #5 / issue #45）。
 //!
 //! **为何是「批量编排」而非「导入专属」模块**：`run` 同时服务 HTTP 批量导入
-//! （`POST /api/v1/transactions/batch`，`dedup=true`）、IPC 前端批量创建
-//! （`create_transactions`，`dedup=false`）与搜索重建测试——它们共享同一段编排。真正的轴是
+//! （`POST /api/v1/transactions/batch`，`dedup=true`）与 IPC 前端批量创建
+//! （`create_transactions`，`dedup=false`）——它们共享同一段编排。真正的轴是
 //! 「**批量编排 vs 单条落库**」，去重身份只是 `dedup` 注入的选项，不是「导入」概念的固有属性。
 //!
-//! **边界**：单笔落库（`transactions::insert_transaction`，含 buy/sell 持仓副作用）留在
-//! `transactions` 模块原处，本模块只做编排、不重复列映射/折算逻辑；去重身份判定
+//! **边界**：单笔落库（行为层创建编排入口 `transactions::behavior::create`，含 buy/sell
+//! 持仓副作用，issue #228）不在本模块重演，本模块只做编排、不重复列映射/折算逻辑；去重身份判定
 //! （T1/issue #62 的 `dedup_identity`，幂等键优先 / 内容哈希兜底，ADR-0010 冻结契约
 //! 编码在 `DedupIdentity` 类型里而非散在 if 分支）随去重逻辑一并收进本模块。
 //!
 //! **对外契约**：`run` 返回 `Vec<CreateTransactionResult>`，与 HTTP/IPC 响应形状一致；
 //! 本重构只做内部重组，不改响应形状、不改事务/去重语义（原命令模块中的转发层已随
 //! 收缩批次（issue #67）删除，`run` 是批量写入的唯一入口）。
+//!
+//! **置脏归写入口（ADR-0032，issue #245）**：本模块对备份域零感知——调用方必须经
+//! 连接层统一写入口 `db::write` 调用 `run`（HTTP 批量导入与 IPC `create_transactions`
+//! 均已如此），提交成功置脏一次、回滚不置脏的语义由写入口结构保证，不再依赖
+//! 「COMMIT 后补调」的调用方记忆。
 
 #[cfg(test)]
 mod tests;
@@ -26,8 +30,7 @@ use std::time::Instant;
 use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 
-use crate::commands::search::process_reindex_queue;
-use crate::commands::transactions::insert_transaction;
+use crate::commands::transactions::create_transaction_internal;
 use crate::error::{AppError, Result};
 use crate::models::{CreateTransactionResult, TransactionInput};
 
@@ -41,7 +44,8 @@ impl TransactionBatch {
     /// 去重身份判定（T1/issue #62 的 `dedup_identity`，幂等键优先 / 内容哈希兜底）只在
     /// `dedup=true` 时生效，`dedup=false` 直接落库；单条校验失败（`AppError::Invalid`）
     /// 返回 `success:false`+`error` 且不影响同批其他交易，提交失败则整批回滚并在回滚路径
-    /// 打批次汇总日志。
+    /// 打批次汇总日志。置脏与写时到期检查不在本函数：调用方经写入口（[`crate::db::write`]）
+    /// 调用时在提交点单点承接，回滚不置脏同由写入口保证（issue #245）。
     pub fn run(
         conn: &Connection,
         inputs: Vec<TransactionInput>,
@@ -59,10 +63,12 @@ impl TransactionBatch {
             // 去重身份判定用 T1/issue #62 的 `dedup_identity`：带键按键查（走部分唯一索引）、
             // 无键回退内容哈希；ADR-0010 的契约编码在 `DedupIdentity` 类型里，不散在 if 分支。
             // `New` 携带内容哈希供落库回写 `dedup_hash` 列，避免重复计算。
-            // 单条写入（含 buy/sell 的持仓副作用路径）由 `transactions::insert_transaction`
-            // 承担，其交易行落库已收口到 `transaction::writer` 接缝（issue #60）：
-            // 列映射与审计字段统一由 writer 生成，此处不重复；去重身份（幂等键/内容哈希）
-            // 仍在本批次编排层判定与回写，不沉入 writer。
+            // 单条写入（含 buy/sell 的持仓副作用路径）由行为层创建编排入口
+            // `behavior::create`（issue #228 / ADR-0033）承担：本函数持有外层批次事务，
+            // 入口以嵌套模式加入（失败直接返回错误、回滚归本层），其交易行落库
+            // 已收口到 `transaction::writer` 接缝（issue #60）：列映射与审计字段统一由
+            // writer 生成，此处不重复；去重身份（幂等键/内容哈希）仍在本批次编排层
+            // 判定与回写，不沉入 writer。
             let dedup_hash = if dedup {
                 match dedup_identity(conn, &input)? {
                     DedupIdentity::Existing { id } => {
@@ -80,7 +86,7 @@ impl TransactionBatch {
             } else {
                 compute_dedup_hash(&input)
             };
-            match insert_transaction(conn, input) {
+            match create_transaction_internal(conn, input) {
                 Ok(id) => {
                     if let Err(e) = conn.execute(
                         "UPDATE transactions SET dedup_hash=?1, idempotency_key=?2 WHERE id=?3",
@@ -122,16 +128,9 @@ impl TransactionBatch {
             return Err(e.into());
         }
         // 汇总行在 COMMIT 后立即打一条（ADR-0009 决策 #5 / issue #45）：
-        // 数据已提交，无论后续搜索重建队列成败，批次都应有一条可观测的汇总行。
-        // 批量导入提交成功（issue #126）：逐行 insert 时已置脏；此处再调一次补上
-        // 提交点的「写时顺带检查」——行内检查因处于事务中而推迟到本处执行。
-        crate::auto_backup::on_write(conn);
+        // 数据已提交，批次应有一条可观测的汇总行。置脏已随迁移收口写入口
+        // （issue #245）：调用方的 db.write 闭包在此处返回 Ok 后于提交点触发。
         log_batch_summary(started, total, failed, true);
-        // 批量导入完成后立即消费搜索重建队列：导入是成批写入场景，
-        // 一次性重建比等下一个后台刷新周期（60s）更合理；消费总成本不变，
-        // 只是从「逐条即时」挪到「导入结束一次性」，且导入命令本就持锁、
-        // 不额外影响界面响应（ADR-0004 决策 #14）。
-        process_reindex_queue(conn)?;
         Ok(results)
     }
 }

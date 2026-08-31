@@ -2,8 +2,10 @@ import { computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { api } from '@/api'
 import { centsToYuan, formatAmount } from '@/types'
+import { buildRefundInput } from '@/domain/transaction-input'
 import { useFormShared } from '@/composables/useFormShared'
-import type { Transaction, TransactionInput } from '@/types'
+import type { Transaction } from '@/types'
+import { errorMessage } from "@/utils/errors";
 
 export function useRefundForm(options?: {
   onCreated?: () => void
@@ -80,18 +82,18 @@ export function useRefundForm(options?: {
       message.warning('请输入退款金额')
       return
     }
-    const input: TransactionInput = {
-      kind: 'refund',
-      amount_cents: Math.round(amount.value * 100),
-      currency_code: currencyCode.value,
-      account_id: accountId.value!,
-      to_account_id: null,
-      category_id: null,
-      refund_of_transaction_id: targetId,
-      note: note.value || null,
-      date: new Date(date.value).toISOString().slice(0, 10),
-    }
     try {
+      // wire 字段拼装收口 TransactionInput 装配器（issue #216）。账户随原交易：
+      // 后端强制继承原支出账户/币种，行内模式打开即回填账户，搜索模式取所选
+      // 原交易的账户（表单账户 ref 无独立录入入口）；装配器对缺失 fail fast 兜底
+      const input = buildRefundInput({
+        amount: amount.value,
+        currencyCode: currencyCode.value,
+        accountId: refundTarget.value?.account_id ?? accountId.value,
+        refundOfTransactionId: targetId,
+        note: note.value,
+        date: date.value,
+      })
       await api.createTransaction(input)
       message.success('已记退款')
       // 行内模式跳过全量交易重载：列表刷新由 onCreated 回调承担
@@ -101,7 +103,7 @@ export function useRefundForm(options?: {
       refundTargetId.value = null
       options?.onCreated?.()
     } catch (e) {
-      message.error(`退款失败: ${e}`)
+      message.error(`退款失败: ${errorMessage(e)}`)
     }
   }
 

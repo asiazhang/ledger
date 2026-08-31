@@ -5,6 +5,8 @@ use std::str::FromStr;
 
 use rusqlite::types::{FromSql, FromSqlError, ToSql, ToSqlOutput, ValueRef};
 use serde::{Deserialize, Serialize};
+use utoipa::openapi::{ObjectBuilder, RefOr, Schema, Type};
+use utoipa::{PartialSchema, ToSchema};
 
 use crate::db::query::FromRow;
 use crate::error::AppError;
@@ -17,6 +19,17 @@ pub enum InstrumentType {
     Bond,
     Etf,
     Other,
+}
+
+impl InstrumentType {
+    /// 闭集全量清单（OpenAPI 枚举等消费；先例：`TransactionKind::ALL`）。
+    pub const ALL: [InstrumentType; 5] = [
+        InstrumentType::Stock,
+        InstrumentType::Fund,
+        InstrumentType::Bond,
+        InstrumentType::Etf,
+        InstrumentType::Other,
+    ];
 }
 
 impl fmt::Display for InstrumentType {
@@ -45,6 +58,25 @@ impl FromStr for InstrumentType {
     }
 }
 
+// OpenAPI（utoipa）：闭集枚举以小写字符串枚举值入文档，与 wire 格式一致
+// （先例：`TransactionKind`，内联 schema，消费方字段直接嵌入、无需注册组件；
+// 枚举值由 [`InstrumentType::ALL`] 驱动，变体增减单点同步）。
+impl PartialSchema for InstrumentType {
+    fn schema() -> RefOr<Schema> {
+        RefOr::T(Schema::Object(
+            ObjectBuilder::new()
+                .schema_type(Type::String)
+                .enum_values(Some(InstrumentType::ALL.map(|k| k.to_string())))
+                .description(Some(
+                    "金融工具类型（闭集，小写字符串，与 instruments.instrument_type 一致）",
+                ))
+                .build(),
+        ))
+    }
+}
+
+impl ToSchema for InstrumentType {}
+
 impl ToSql for InstrumentType {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::from(self.to_string()))
@@ -60,7 +92,7 @@ impl FromSql for InstrumentType {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct Instrument {
     pub id: String,
     pub symbol: String,
@@ -73,7 +105,10 @@ pub struct Instrument {
     pub updated_at: String,
     pub version: i64,
     pub device_id: String,
-    /// 最新市场价格（分），同步来源；无行情时为空。
+    /// 字典条目来源（自建标的，ADR-0036 决策 2）：'eastmoney' 同步 | 'manual' 手动，
+    /// 与价格侧 source 同词表但语义正交；来源随行终身不变（upsert/同步均不改写）。
+    pub source: String,
+    /// 最新市场价格（万分之一元，0.0001 元，ADR-0038 价格刻度），同步来源；无行情时为空。
     pub price_cents: Option<i64>,
     /// 是否持有该标的（有当前持仓批次 remaining_quantity > 0，派生自 security_lots）。
     pub invested: bool,
@@ -96,6 +131,9 @@ pub struct InstrumentListFilter {
     pub search: Option<String>,
     /// 交易市场精确匹配（sh / sz / hk / unknown）。
     pub market: Option<String>,
+    /// 标的类型过滤（stock/fund/bond/etf/other）：同码异类型消歧用（issue #294）。
+    #[serde(rename = "type")]
+    pub kind: Option<InstrumentType>,
     /// 只看持仓标的：仅返回有当前持仓（remaining_quantity > 0）的标的。
     pub only_invested: Option<bool>,
     /// 页码，从 1 开始，默认 1。
@@ -105,11 +143,81 @@ pub struct InstrumentListFilter {
 }
 
 /// 标的列表分页结果。
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct InstrumentListResult {
     pub items: Vec<Instrument>,
     /// 满足过滤条件的总条数（用于分页条）。
     pub total: i64,
+}
+
+/// 按代码即拉拉取到的基金详情（issue #301 / ADR-0038 决策 1）：名称与东财分类
+/// 为透传展示信息（不落库），nav 缺省（新发基金尚未公布首期净值等）时仅建
+/// 标的、不落现价（不广播价格失效信号）。类型归 models 供编排接缝（注入获取
+/// 函数）与 BDD stub 构造跨 crate 使用。
+#[derive(Debug, Clone, PartialEq)]
+pub struct FundDetail {
+    pub code: String,
+    pub name: String,
+    /// 东财基金分类（如「混合型-灵活」），展示与 AI 确认识别用，不落库。
+    pub fund_class: String,
+    pub nav: Option<FundNav>,
+}
+
+/// 基金最新单位净值（真实价格值，元）与其净值日期（ISO 日期）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct FundNav {
+    pub nav: f64,
+    pub nav_date: String,
+}
+
+/// 按代码即拉添加基金的结果（issue #301 / ADR-0038 决策 1）：标的行落库 +
+/// 现价写入状态。名称与东财分类来自东方财富权威数据；未取到净值时仅建标的、
+/// 不落现价（`price_written=false`，IPC 层据此不广播价格失效信号）。
+#[derive(Debug, Serialize)]
+pub struct AddFundResult {
+    pub instrument_id: String,
+    pub symbol: String,
+    /// 东财权威名称（已回填标的行）。
+    pub name: String,
+    /// 东财基金分类（如「混合型-灵活」），展示透传，不落库。
+    pub fund_class: String,
+    /// 最新单位净值（万分之一元，ADR-0038 价格刻度）；未取到为 None。
+    pub nav_cents: Option<i64>,
+    /// 净值日期（ISO 日期，兼任净值同步水位）；未取到为 None。
+    pub nav_date: Option<String>,
+    /// 是否落了现价缓存（价格失效信号的广播判定依据，ADR-0031：零变化不广播）。
+    pub price_written: bool,
+}
+
+/// 交易买卖明细（issue #180）：一笔 buy/sell 交易在 `security_transactions` 扩展表
+/// 中的投影（核心 `transactions` 行不含投资字段，见 ADR-0003 核心表 + 扩展表），
+/// 供投资表单编辑模式回填标的/数量/价格/费用。`symbol`/`instrument_name` 为
+/// JOIN `instruments` 带出的展示字段，保证回填后标的选择框可直接显示标的而非裸 id。
+#[derive(Debug, Serialize, Clone)]
+pub struct TransactionTrade {
+    pub instrument_id: String,
+    pub symbol: String,
+    pub instrument_name: Option<String>,
+    /// 标的类型闭集字面量（fund/stock/bond/etf/other）：前端表单据此切换录入权威
+    /// 形态（基金 = 金额 + 份额必填、单价反算；其余 = 数量 + 单价，issue #302）。
+    pub instrument_type: String,
+    pub quantity: f64,
+    pub price_cents: i64,
+    pub fee_cents: Option<i64>,
+}
+
+impl FromRow for TransactionTrade {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(TransactionTrade {
+            instrument_id: row.get(0)?,
+            symbol: row.get(1)?,
+            instrument_name: row.get(2)?,
+            instrument_type: row.get(3)?,
+            quantity: row.get(4)?,
+            price_cents: row.get(5)?,
+            fee_cents: row.get(6)?,
+        })
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -122,6 +230,9 @@ pub struct Holding {
     pub cost_currency_code: String,
     pub latest_price_cents: Option<i64>,
     pub latest_price_currency_code: Option<String>,
+    /// 净值日期（透传 market_prices.nav_date，#303）：基金现价（= 最新公布
+    /// 单位净值）携带，持仓可见现价对应哪天的净值；股票类恒 None。
+    pub latest_nav_date: Option<String>,
     pub market_value_cents: Option<i64>,
     pub unrealized_pnl_cents: Option<i64>,
     pub updated_at: String,
@@ -134,6 +245,9 @@ pub struct MarketPrice {
     pub price_cents: i64,
     pub currency_code: String,
     pub priced_at: String,
+    /// 净值日期：场外基金现价（= 最新公布单位净值）携带，兼任净值同步水位
+    /// （ADR-0038）；股票类现价无净值语义，恒为 None。
+    pub nav_date: Option<String>,
     pub source: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -148,6 +262,29 @@ pub struct MarketPriceInput {
     pub currency_code: String,
     pub priced_at: String,
     pub source: Option<String>,
+}
+
+/// 手动报价入参（issue #291 / ADR-0036）：标的 id + 日期（ISO YYYY-MM-DD）+ 价格
+/// （万分之一元，ADR-0038 价格刻度）。后端命令不设「同步覆盖不到」守卫——
+/// 录价入口收口在 UI 侧（ADR-0036 决策 1 修订）。
+#[derive(Debug, Deserialize)]
+pub struct ManualPriceInput {
+    pub instrument_id: String,
+    /// 报价对应的交易日（ISO YYYY-MM-DD）。
+    pub date: String,
+    /// 单价（万分之一元，价格刻度见 ADR-0038）。
+    pub price_cents: i64,
+}
+
+/// 手动报价结果（issue #291）：两个落点各自的实际写入情况。
+/// `history_written` = 价格历史周采样落库；`current_price_written` = 现价缓存
+/// upsert（报价不早于最新价格点时写入；回填旧价为 false——现价是 PriceHistory
+/// 最新一条的即时映像，回填不改变现价）。前端据此区分回执文案；信号发射判定
+/// 见 `commands::investment::manual_price::should_emit_prices_changed`。
+#[derive(Debug, Serialize)]
+pub struct ManualPriceResult {
+    pub history_written: bool,
+    pub current_price_written: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -212,9 +349,10 @@ impl FromRow for Holding {
             cost_currency_code: row.get(5)?,
             latest_price_cents: row.get(6)?,
             latest_price_currency_code: row.get(7)?,
-            market_value_cents: row.get(8)?,
-            unrealized_pnl_cents: row.get(9)?,
-            updated_at: row.get(10)?,
+            latest_nav_date: row.get(8)?,
+            market_value_cents: row.get(9)?,
+            unrealized_pnl_cents: row.get(10)?,
+            updated_at: row.get(11)?,
         })
     }
 }
@@ -227,11 +365,12 @@ impl FromRow for MarketPrice {
             price_cents: row.get(2)?,
             currency_code: row.get(3)?,
             priced_at: row.get(4)?,
-            source: row.get(5)?,
-            created_at: row.get(6)?,
-            updated_at: row.get(7)?,
-            version: row.get(8)?,
-            device_id: row.get(9)?,
+            nav_date: row.get(5)?,
+            source: row.get(6)?,
+            created_at: row.get(7)?,
+            updated_at: row.get(8)?,
+            version: row.get(9)?,
+            device_id: row.get(10)?,
         })
     }
 }
@@ -279,8 +418,9 @@ impl FromRow for Instrument {
             updated_at: row.get(7)?,
             version: row.get(8)?,
             device_id: row.get(9)?,
-            price_cents: row.get(10)?,
-            invested: row.get(11)?,
+            source: row.get(10)?,
+            price_cents: row.get(11)?,
+            invested: row.get(12)?,
         })
     }
 }
@@ -317,12 +457,12 @@ pub struct TrendRange {
     pub end_date: Option<String>,
 }
 
-/// 单标的走势采样点：周采样交易日 + 收盘价（报价币种整数分）。
+/// 单标的走势采样点：周采样交易日 + 收盘价（报价币种万分之一元，ADR-0038 价格刻度）。
 #[derive(Debug, Serialize)]
 pub struct PriceTrendPoint {
     /// 周采样交易日（该周最后一个有报价交易日），ISO 8601 日期。
     pub date: String,
-    /// 收盘价（分，报价币种）。
+    /// 收盘价（万分之一元，报价币种）。
     pub price_cents: i64,
     /// 报价币种（港股 HKD、沪深 CNY）。
     pub currency_code: String,

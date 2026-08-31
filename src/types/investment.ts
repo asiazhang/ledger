@@ -19,6 +19,15 @@ export const INSTRUMENT_TYPE_LABELS: Record<InstrumentType, string> = {
   other: '其他',
 }
 
+/** 字典条目来源（自建标的，ADR-0036）：与价格侧 source 同词表但语义正交，随行终身不变 */
+export type InstrumentSource = 'eastmoney' | 'manual'
+
+export const INSTRUMENT_SOURCE_LABELS: Record<InstrumentSource, string> = {
+  eastmoney: '同步',
+  manual: '手动',
+}
+
+/** 价格列刻度（ADR-0038）：投资域 price_cents 为万分之一元（元 × 10000），金额列仍是整数分 */
 export interface Instrument extends Syncable {
   id: string
   symbol: string
@@ -27,6 +36,8 @@ export interface Instrument extends Syncable {
   currency_code: string
   market: MarketType
   created_at: string
+  /** 字典条目来源（同步/手动，ADR-0036）；存量行由 #293 迁移回填为同步 */
+  source: InstrumentSource
   price_cents: number | null
   /** 是否持有该标的（有当前持仓，派生自 security_lots） */
   invested: boolean
@@ -46,6 +57,8 @@ export interface InstrumentListFilter {
   search?: string | null
   /** 交易市场精确匹配（sh / sz / hk / unknown） */
   market?: MarketType | null
+  /** 标的类型过滤：同码异类型消歧用（issue #294） */
+  type?: InstrumentType | null
   /** 只看持仓标的：仅返回有当前持仓的标的 */
   only_invested?: boolean | null
   /** 页码，从 1 开始，默认 1 */
@@ -61,6 +74,72 @@ export interface InstrumentListResult {
   total: number
 }
 
+/**
+ * 6 位纯数字基金代码判定（后端 `is_six_digit_code` 的前端镜像，跨 IPC 无法字面
+ * 同源）：名称充代码的基金行非 6 位，不进净值通道（ADR-0038）。两端任一侧调整
+ * 判定口径必须同步另一侧，否则「录价入口」与「净值可拉分区」漂移出第二口径。
+ */
+export function isSixDigitInstrumentCode(code: string): boolean {
+  return code.length === 6 && /^\d{6}$/.test(code)
+}
+
+/**
+ * 该标的是否开放「录价」入口（手动报价，ADR-0036 决策 1 修订）：只对同步覆盖
+ * 不到的标的开放——自建标的（债券/ETF/其他）与名称充代码的基金行；真实代码
+ * 基金（净值通道）与股票（行情通道）的现价归同步，开放录价只会被下次同步冲掉。
+ * 判定口径与增量同步「净值可拉」分区同源（镜像后端谓词，见上）。
+ */
+export function canManualPrice(inst: Pick<Instrument, 'type' | 'symbol'>): boolean {
+  if (inst.type === 'stock') return false
+  if (inst.type === 'fund' && isSixDigitInstrumentCode(inst.symbol)) return false
+  return true
+}
+
+/** 手动报价入参（issue #291 / ADR-0036）：标的 id + 日期（ISO）+ 价格（万分之一元，价格刻度） */
+export interface ManualPriceInput {
+  instrument_id: string
+  /** 报价对应的交易日（ISO YYYY-MM-DD） */
+  date: string
+  /** 单价（万分之一元，ADR-0038 价格刻度） */
+  price_cents: number
+}
+
+/** 手动报价结果：两个落点各自的实际写入情况（回填旧价时 current_price_written 为 false） */
+export interface ManualPriceResult {
+  history_written: boolean
+  current_price_written: boolean
+}
+
+/** 按代码即拉添加基金的结果（issue #301 / ADR-0038）：标的行落库 + 现价写入状态 */
+export interface AddFundResult {
+  instrument_id: string
+  symbol: string
+  /** 东财权威名称（已回填标的行） */
+  name: string
+  /** 东财基金分类（如「混合型-灵活」），展示透传，不落库 */
+  fund_class: string
+  /** 最新单位净值（万分之一元，ADR-0038 价格刻度）；未取到为 null */
+  nav_cents: number | null
+  /** 净值日期（ISO 日期）；未取到为 null */
+  nav_date: string | null
+  /** 是否落了现价缓存（后端据此判定是否广播价格失效信号） */
+  price_written: boolean
+}
+
+/** 交易买卖明细（issue #180）：一笔 buy/sell 交易在扩展表中的投影（核心交易行
+ * 不含投资字段），供投资表单编辑模式回填标的/数量/价格/费用。`symbol`/`instrument_name`
+ * 为 JOIN 标的表带出的展示字段，保证回填后标的选择框直接显示标的而非裸 id；
+ * `instrument_type` 驱动表单录入形态切换（基金 = 金额 + 份额必填、单价反算，issue #302）。 */
+export interface TransactionTrade {
+  instrument_id: string
+  symbol: string
+  instrument_name: string | null
+  instrument_type: InstrumentType
+  quantity: number
+  price_cents: number
+  fee_cents: number | null
+}
+
 export interface Holding {
   id: string
   account_id: string
@@ -70,6 +149,8 @@ export interface Holding {
   cost_currency_code: string
   latest_price_cents: number | null
   latest_price_currency_code: string | null
+  /** 净值日期：基金现价（= 最新公布单位净值）携带，现价对应哪天的净值；股票恒 null */
+  latest_nav_date: string | null
   market_value_cents: number | null
   unrealized_pnl_cents: number | null
   updated_at: string
@@ -147,7 +228,7 @@ export interface TrendRange {
   end_date?: string | null
 }
 
-/** 单标的走势采样点：周采样交易日 + 收盘价（报价币种整数分） */
+/** 单标的走势采样点：周采样交易日 + 收盘价（报价币种万分之一元，价格刻度见上） */
 export interface PriceTrendPoint {
   date: string
   price_cents: number
