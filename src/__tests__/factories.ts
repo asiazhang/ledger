@@ -8,6 +8,7 @@ import type {
   Instrument,
   ItemDailyTotal,
   RealizedPnlSummary,
+  Transaction,
 } from '@/types'
 
 /**
@@ -104,6 +105,29 @@ export function makeOverview(partial: Partial<DashboardOverview> = {}): Dashboar
     net_worth_cents: 123456,
     accounts_balance_cents: 100000,
     holdings_market_value_cents: 23456,
+    ...partial,
+  }
+}
+
+/** 交易行工厂：默认一笔 100 元人民币支出，覆写见 partial（id 必填）。 */
+export function makeTransaction(partial: Partial<Transaction> & { id: string }): Transaction {
+  return {
+    kind: 'expense',
+    amount_cents: 10000,
+    currency_code: 'CNY',
+    amount_native_cents: 10000,
+    account_id: 'acc-1',
+    to_account_id: null,
+    category_id: null,
+    merchant_id: null,
+    refund_of_transaction_id: null,
+    note: null,
+    date: '2026-01-01',
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: false,
     ...partial,
   }
 }
