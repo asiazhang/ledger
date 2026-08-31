@@ -14,8 +14,9 @@
 //! - `ledger:prices-changed`（ADR-0031，issue #236）：行情同步命令写入价格后 emit——
 //!   增量 `sync_holding_prices` 成功且实际写入、全量 `sync_instruments` 结束且有落库
 //!   （含用户中断，中断保留已落库价格）；与前者平行、同样无 payload，前端价格消费方
-//!   各自订阅后重拉自身数据。「是否 emit」的判定收敛在同步命令侧
-//!   （`commands::sync::should_emit_prices_changed`），本模块只承载事件名与发射入口。
+//!   各自订阅后重拉自身数据。「是否 emit」的判定单点在 `signals` 映射
+//!   （ADR-0044，#333 起价格域四命令壳层经 `emit_for` 归一化证据后发射），
+//!   本模块只承载事件名与发射入口。
 
 use std::sync::OnceLock;
 
@@ -34,8 +35,8 @@ pub const BACKUPS_CHANGED: &str = "ledger:backups-changed";
 /// 语义锚「价格数据已变更」，覆盖 MarketPrice / PriceHistory / FxRateHistory；生产者：
 /// 两个行情同步命令按判定发出（增量实际写入 / 全量有落库）、场外基金按代码即拉
 /// 落现价缓存时（issue #301 / ADR-0038，未取到净值不广播）与手动报价实际写入
-/// 任一落点时（issue #291 / ADR-0036，生产者清单再添一处；判定见
-/// `commands::investment::manual_price::should_emit_prices_changed`）；前端价格消费方
+/// 任一落点时（issue #291 / ADR-0036，生产者清单再添一处；证据归一化与「是否发」
+/// 判定单点见 `signals` 映射，ADR-0044 / issue #333）；前端价格消费方
 /// 各自订阅后重拉自身数据。
 pub const PRICES_CHANGED: &str = "ledger:prices-changed";
 
@@ -65,8 +66,8 @@ pub fn emit_backups_changed_current() {
 }
 
 /// 发出 `ledger:prices-changed` 信号（无 payload）。事件发射失败不影响同步结果，静默忽略。
-/// 「是否 emit」不在本模块判定：两同步命令经 `commands::sync::should_emit_prices_changed`
-/// 统一判定后才走到这里。
+/// 「是否 emit」不在本模块判定：壳层经 `signals` 映射单点判定（ADR-0044 / issue #333）
+/// 后才走到这里。
 pub fn emit_prices_changed(app: &AppHandle) {
     let _ = app.emit(PRICES_CHANGED, ());
 }

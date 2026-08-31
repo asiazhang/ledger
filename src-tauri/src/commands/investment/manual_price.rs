@@ -9,8 +9,9 @@
 //!    的即时映像」——报价不早于该标的最新价格点时 upsert 现价；回填早于最新
 //!    点的旧价只沉淀历史、不改变现价（该规则是既有定义的推论，非新发明）。
 //!
-//! 实际写入任一落点即发价格失效信号（生产者清单再添一处，ADR-0031 模式扩展，
-//! 见 [`should_emit_prices_changed`]）；零写入不广播。录价 UI 入口只对同步
+//! 实际写入任一落点即发价格失效信号（生产者清单再添一处，ADR-0031 模式扩展；
+//! 证据经 `ManualPriceResult::any_written` 归一化、「是否发」判定单点在 signals
+//! 映射，ADR-0044 / issue #333）；零写入不广播。录价 UI 入口只对同步
 //! 覆盖不到的标的开放（自建标的与名称充代码的基金行），判定口径与净值可拉
 //! 分区同源——守卫收在 UI 侧，后端命令不设（ADR-0036 决策 1 修订）。
 
@@ -86,17 +87,10 @@ pub(crate) fn record_manual_price(
 
     Ok(ManualPriceResult {
         // 历史落点 upsert 在 Ok 路径必写一行（同值重复报价也整周覆盖 version+1），
-        // 「零写入」仅在 Err 即失败路径出现，失败本就不广播——谓词仍保留两落点
-        // 形状：与增量同步谓词同构，发射语义「任一落点实际写入即发」不被实现细节
-        // 预先折迭，测试可演练全部组合。
+        // 「零写入」仅在 Err 即失败路径出现，失败本就不广播——结果仍保留两落点
+        // 形状：与增量同步证据同构，发射语义「任一落点实际写入即发」（经
+        // `any_written` 归一化）不被实现细节预先折迭，测试可演练全部组合。
         history_written: true,
         current_price_written,
     })
-}
-
-/// 是否发价格失效信号 `ledger:prices-changed`（ADR-0031 模式，生产者清单再添一处）：
-/// 实际写入任一落点即发。失效信号的本义是「数据变了」——两落点均未写入
-/// （零写入）不广播。纯函数，判定由模块单测锁定（增量同步谓词先例）。
-pub(crate) fn should_emit_prices_changed(outcome: &ManualPriceResult) -> bool {
-    outcome.history_written || outcome.current_price_written
 }

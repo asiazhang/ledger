@@ -279,12 +279,23 @@ pub struct ManualPriceInput {
 /// 手动报价结果（issue #291）：两个落点各自的实际写入情况。
 /// `history_written` = 价格历史周采样落库；`current_price_written` = 现价缓存
 /// upsert（报价不早于最新价格点时写入；回填旧价为 false——现价是 PriceHistory
-/// 最新一条的即时映像，回填不改变现价）。前端据此区分回执文案；信号发射判定
-/// 见 `commands::investment::manual_price::should_emit_prices_changed`。
+/// 最新一条的即时映像，回填不改变现价）。前端据此区分回执文案；价格失效信号
+/// 证据经 [`ManualPriceResult::any_written`] 归一化，发射判定单点在 `signals`
+/// 映射（ADR-0044 / issue #333）。
 #[derive(Debug, Serialize)]
 pub struct ManualPriceResult {
     pub history_written: bool,
     pub current_price_written: bool,
+}
+
+impl ManualPriceResult {
+    /// 「实际写入任一落点」：价格失效信号证据（`WriteEvidence::PriceWritten`
+    /// 载荷，ADR-0044）的域内归一化——任一落点实际写入即价格数据已变更。
+    /// 「是否发信号」的判定单点在 `signals_for` 映射行，本方法只做结果 →
+    /// 证据的形状翻译（`SyncOutcome::written` 同款先例）。
+    pub fn any_written(&self) -> bool {
+        self.history_written || self.current_price_written
+    }
 }
 
 #[derive(Debug, Serialize)]
