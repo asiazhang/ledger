@@ -4,6 +4,7 @@ import type {
   Account,
   Currency,
   DashboardOverview,
+  FinancialFreedomOverview,
   Holding,
   Instrument,
   ItemDailyTotal,
@@ -135,6 +136,21 @@ export function makeTransaction(partial: Partial<Transaction> & { id: string }):
 /** item_daily_total 返回值工厂（issue #122）：默认人民币本位币、每天成本 123.45 元、3 件在用 */
 export function makeItemDailyTotal(partial: Partial<ItemDailyTotal> = {}): ItemDailyTotal {
   return { native_currency: 'CNY', per_day_cents: 12345, item_count: 3, ...partial }
+}
+
+/** financial_freedom 返回值工厂（issue #344）：默认人民币本位币、自由度 7.5%
+ * （可投资资产 5000 元 × 3% ÷ 年度预算 2 万）、覆盖 0.3 年 */
+export function makeFinancialFreedom(
+  partial: Partial<FinancialFreedomOverview> = {},
+): FinancialFreedomOverview {
+  return {
+    ratio: 7.5,
+    numerator_cents: 500000,
+    denominator_cents: 2000000,
+    coverage_years: 0.3,
+    native_currency: 'CNY',
+    ...partial,
+  }
 }
 
 /** realized_pnl_summary 返回值工厂（issue #325）：默认全表汇总 300 元 */
