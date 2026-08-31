@@ -10,13 +10,19 @@ use crate::transaction::amount;
 use crate::transaction::amount::TransactionKind;
 
 /// 标的存在性校验 + 类型读取（issue #295 / #302）：prepare 阶段拦截引用不存在标的的
-/// buy/sell，返回可读回自纠的 [`AppError::Invalid`] 中文错误（HTTP 侧 400）——否则
+/// buy/sell，返回可读回自纠的码化 [`AppError::Coded`] 中文错误（HTTP 侧 400）——否则
 /// prepare 通过、apply 落 `security_transactions` 时才触发 `instrument_id` 外键违规的
 /// 「数据库错误」（HTTP 侧 500，批量导入路径还会整批回滚），AI 无法据此纠错。
 /// 创建与修改（全字段替换）共用 prepare，自然同时生效；`action` 为「买入/卖出」
-/// 措辞前缀，与既有「必须指定标的」等错误同风格，消息携带标的 id 供回自纠。
+/// 措辞前缀，与既有「必须指定标的」等错误同风格，消息携带标的 id 供回自纠；
+/// `code` 由调用方按入口传入（`trade.buy-instrument-not-found` / `trade.sell-instrument-not-found`）。
 /// 返回标的类型闭集字面量（`fund` 等，ADR-0038）——场外基金申赎据此切换金额权威语义。
-fn fetch_instrument_type(conn: &Connection, instrument_id: &str, action: &str) -> Result<String> {
+fn fetch_instrument_type(
+    conn: &Connection,
+    instrument_id: &str,
+    action: &str,
+    code: &str,
+) -> Result<String> {
     let instrument_type: Option<String> = conn
         .query_row(
             "SELECT instrument_type FROM instruments WHERE id=?1",
@@ -24,7 +30,13 @@ fn fetch_instrument_type(conn: &Connection, instrument_id: &str, action: &str) -
             |r| r.get(0),
         )
         .optional()?;
-    instrument_type.ok_or_else(|| AppError::Invalid(format!("{action}标的不存在: {instrument_id}")))
+    instrument_type.ok_or_else(|| {
+        AppError::codedp(
+            code,
+            format!("{action}标的不存在: {instrument_id}"),
+            &[instrument_id],
+        )
+    })
 }
 
 /// 投资交易对外出口（issue #72 / spec #69）：只暴露 `prepare / apply / revert` 三件套。
@@ -70,7 +82,12 @@ pub(crate) fn get_transaction_trade(
          WHERE st.transaction_id = ?1",
         rusqlite::params![transaction_id],
     )?
-    .ok_or_else(|| AppError::NotFound(format!("交易不存在或无买卖明细: {transaction_id}")))
+    .ok_or_else(|| {
+        AppError::coded_not_found(
+            "trade.detail-not-found",
+            format!("交易不存在或无买卖明细: {transaction_id}"),
+        )
+    })
 }
 
 pub(crate) struct BuyPlan {
@@ -90,14 +107,22 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
     let instrument_id = input
         .instrument_id
         .as_ref()
-        .ok_or_else(|| AppError::Invalid("买入必须指定标的".into()))?
+        .ok_or_else(|| AppError::coded("trade.buy-instrument-required", "买入必须指定标的"))?
         .clone();
     // 标的存在性（兼类型读取）先于数量/单价校验：身份错了，数值对错无从谈起（issue #295）。
-    let instrument_type = fetch_instrument_type(conn, &instrument_id, "买入")?;
+    let instrument_type = fetch_instrument_type(
+        conn,
+        &instrument_id,
+        "买入",
+        "trade.buy-instrument-not-found",
+    )?;
     let quantity = input.quantity.unwrap_or(0.0);
     let fee_cents = input.fee_cents.unwrap_or(0);
     if quantity <= 0.0 {
-        return Err(AppError::Invalid("买入数量必须大于 0".into()));
+        return Err(AppError::coded(
+            "trade.buy-quantity-positive",
+            "买入数量必须大于 0",
+        ));
     }
     // 录入权威按标的类型分流（issue #302 / ADR-0038 决策 2）：场外基金以确认单为权威——
     // 整分金额 + 确认份额必填、成交单价由两者反算到万分之一元（确认单抄写即记账，
@@ -109,25 +134,31 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
     if is_fund {
         amount_cents = input.amount_cents;
         if amount_cents <= 0 {
-            return Err(AppError::Invalid(
-                "买入金额必须大于 0（基金申赎以确认单金额为权威）".into(),
+            return Err(AppError::coded(
+                "trade.buy-amount-positive",
+                "买入金额必须大于 0（基金申赎以确认单金额为权威）",
             ));
         }
         // 金额权威与单价权威互斥：wire 上误传单价显式拒绝（与前端装配器同源），
         // 不静默吞掉（非法输入 fail fast，与 dividend/split 显式拒绝同一原则）。
         if input.price_cents.is_some() {
-            return Err(AppError::Invalid(
-                "基金申赎以确认单金额为权威，不可提供单价（由金额与份额反算）".into(),
+            return Err(AppError::coded(
+                "trade.fund-price-forbidden",
+                "基金申赎以确认单金额为权威，不可提供单价（由金额与份额反算）",
             ));
         }
         if fee_cents >= amount_cents {
-            return Err(AppError::Invalid("买入手续费不能超过买入金额".into()));
+            return Err(AppError::coded(
+                "trade.buy-fee-exceeds-amount",
+                "买入手续费不能超过买入金额",
+            ));
         }
         price_cents =
             ((amount_cents - fee_cents) as f64 * PRICE_UNITS_PER_FEN / quantity).round() as i64;
         if price_cents <= 0 {
-            return Err(AppError::Invalid(
-                "反算单价必须大于 0（确认金额过小或份额过大）".into(),
+            return Err(AppError::coded(
+                "trade.derived-price-positive",
+                "反算单价必须大于 0（确认金额过小或份额过大）",
             ));
         }
         // 每份成本锚定权威金额单次舍入（含手续费摊薄），全平仓时盈亏按权威金额闭合。
@@ -135,7 +166,10 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
     } else {
         price_cents = input.price_cents.unwrap_or(0);
         if price_cents <= 0 {
-            return Err(AppError::Invalid("买入单价必须大于 0".into()));
+            return Err(AppError::coded(
+                "trade.buy-price-positive",
+                "买入单价必须大于 0",
+            ));
         }
         // 金额分 = 数量 × 单价（万分之一元）÷ 换算因子 + 手续费（分）；价格刻度见 ADR-0038。
         amount_cents =
@@ -155,7 +189,10 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
         )?
         .parse()?;
     if account_type != AccountType::Investment {
-        return Err(AppError::Invalid("买入交易必须使用投资账户".into()));
+        return Err(AppError::coded(
+            "trade.buy-account-not-investment",
+            "买入交易必须使用投资账户",
+        ));
     }
     let account_currency = account_currency_code(conn, &input.account_id)?;
     // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：不再硬编码 1:1，
@@ -190,15 +227,23 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
     let instrument_id = input
         .instrument_id
         .as_ref()
-        .ok_or_else(|| AppError::Invalid("卖出必须指定标的".into()))?
+        .ok_or_else(|| AppError::coded("trade.sell-instrument-required", "卖出必须指定标的"))?
         .clone();
     // 标的存在性（兼类型读取）先于可卖数量校验：不存在的标的不该误报「可卖出数量不足」
     // （issue #295）。
-    let instrument_type = fetch_instrument_type(conn, &instrument_id, "卖出")?;
+    let instrument_type = fetch_instrument_type(
+        conn,
+        &instrument_id,
+        "卖出",
+        "trade.sell-instrument-not-found",
+    )?;
     let quantity = input.quantity.unwrap_or(0.0);
     let fee_cents = input.fee_cents.unwrap_or(0);
     if quantity <= 0.0 {
-        return Err(AppError::Invalid("卖出数量必须大于 0".into()));
+        return Err(AppError::coded(
+            "trade.sell-quantity-positive",
+            "卖出数量必须大于 0",
+        ));
     }
     // 录入权威按标的类型分流（与 prepare_buy 同一口径，issue #302 / ADR-0038）：
     // 场外基金以确认单为权威——整分金额必填，毛收入 = 金额 + 手续费，单价反算。
@@ -209,32 +254,41 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
     if is_fund {
         amount_cents = input.amount_cents;
         if amount_cents <= 0 {
-            return Err(AppError::Invalid(
-                "卖出金额必须大于 0（基金申赎以确认单金额为权威）".into(),
+            return Err(AppError::coded(
+                "trade.sell-amount-positive",
+                "卖出金额必须大于 0（基金申赎以确认单金额为权威）",
             ));
         }
         // 同买入：金额权威与单价权威互斥，wire 误传单价显式拒绝。
         if input.price_cents.is_some() {
-            return Err(AppError::Invalid(
-                "基金申赎以确认单金额为权威，不可提供单价（由金额与份额反算）".into(),
+            return Err(AppError::coded(
+                "trade.fund-price-forbidden",
+                "基金申赎以确认单金额为权威，不可提供单价（由金额与份额反算）",
             ));
         }
         gross_proceeds = amount_cents + fee_cents;
         price_cents = (gross_proceeds as f64 * PRICE_UNITS_PER_FEN / quantity).round() as i64;
         if price_cents <= 0 {
-            return Err(AppError::Invalid(
-                "反算单价必须大于 0（确认金额过小或份额过大）".into(),
+            return Err(AppError::coded(
+                "trade.derived-price-positive",
+                "反算单价必须大于 0（确认金额过小或份额过大）",
             ));
         }
     } else {
         price_cents = input.price_cents.unwrap_or(0);
         if price_cents <= 0 {
-            return Err(AppError::Invalid("卖出单价必须大于 0".into()));
+            return Err(AppError::coded(
+                "trade.sell-price-positive",
+                "卖出单价必须大于 0",
+            ));
         }
         // 金额分 = 数量 × 单价（万分之一元）÷ 换算因子；与买入同口径（ADR-0038）。
         gross_proceeds = (quantity * price_cents as f64 / PRICE_UNITS_PER_FEN).round() as i64;
         if fee_cents > gross_proceeds {
-            return Err(AppError::Invalid("卖出手续费不能超过卖出收入".into()));
+            return Err(AppError::coded(
+                "trade.sell-fee-exceeds-proceeds",
+                "卖出手续费不能超过卖出收入",
+            ));
         }
         amount_cents = gross_proceeds - fee_cents;
     }
@@ -246,7 +300,10 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
         )?
         .parse()?;
     if account_type != AccountType::Investment {
-        return Err(AppError::Invalid("卖出交易必须使用投资账户".into()));
+        return Err(AppError::coded(
+            "trade.sell-account-not-investment",
+            "卖出交易必须使用投资账户",
+        ));
     }
     let account_currency = account_currency_code(conn, &input.account_id)?;
     // 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：不再硬编码 1:1，
@@ -263,10 +320,13 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
     )?;
     let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
     if total_available < quantity {
-        return Err(AppError::Invalid(format!(
-            "可卖出数量不足，当前持有 {}，尝试卖出 {}",
-            total_available, quantity
-        )));
+        let avail = total_available.to_string();
+        let qty = quantity.to_string();
+        return Err(AppError::codedp(
+            "trade.insufficient-holding",
+            format!("可卖出数量不足，当前持有 {total_available}，尝试卖出 {quantity}"),
+            &[&avail, &qty],
+        ));
     }
 
     Ok(SellPlan {
@@ -398,7 +458,12 @@ fn write_sell_side_effects(conn: &Connection, id: &str, plan: &SellPlan) -> Resu
 /// 若该买入已有部分卖出（`remaining_quantity < initial_quantity`）则拒绝清理——避免破坏
 /// 对应卖出的已实现盈亏。`partially_sold_msg` 为调用入口单点定义的措辞
 /// （见 `commands::transactions::behavior` 的入口文案常量，ADR-0033 决策 #4）。
-fn cleanup_buy_side_effects(conn: &Connection, id: &str, partially_sold_msg: &str) -> Result<()> {
+fn cleanup_buy_side_effects(
+    conn: &Connection,
+    id: &str,
+    partially_sold_code: &str,
+    partially_sold_msg: &str,
+) -> Result<()> {
     let partially_sold: i64 = conn.query_row(
         "SELECT COUNT(*) FROM security_lots \
          WHERE buy_transaction_id=?1 AND remaining_quantity < initial_quantity",
@@ -406,7 +471,7 @@ fn cleanup_buy_side_effects(conn: &Connection, id: &str, partially_sold_msg: &st
         |r| r.get(0),
     )?;
     if partially_sold > 0 {
-        return Err(AppError::Invalid(partially_sold_msg.into()));
+        return Err(AppError::coded(partially_sold_code, partially_sold_msg));
     }
     conn.execute(
         "DELETE FROM security_lots WHERE buy_transaction_id=?1",
@@ -516,17 +581,20 @@ pub(crate) fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
 /// - buy：守卫（已有部分卖出则拒绝）+ 清理持仓/买入关联；
 /// - sell：回补持仓扣减并清空卖出关联。
 ///
-/// `partial_sold_msg` 为 buy 守卫的错误措辞，由行为层各编排入口传入其单点定义的
+/// `partial_sold_code` / `partial_sold_msg` 为 buy 守卫的错误码与措辞，由行为层各编排入口传入其单点定义的
 /// 文案（修改/删除各持自己的措辞，ADR-0033 决策 #4）——本函数不自带措辞；
 /// 非 buy/sell 的 kind 无持仓副作用，防御性返回成功。
 pub(crate) fn revert(
     conn: &Connection,
     id: &str,
     kind: TransactionKind,
+    partial_sold_code: &str,
     partial_sold_msg: &str,
 ) -> Result<()> {
     match kind {
-        TransactionKind::Buy => cleanup_buy_side_effects(conn, id, partial_sold_msg),
+        TransactionKind::Buy => {
+            cleanup_buy_side_effects(conn, id, partial_sold_code, partial_sold_msg)
+        }
         TransactionKind::Sell => reverse_sell(conn, id),
         // 行为层仅对 buy/sell 调用本函数；其余 kind 无持仓副作用，no-op
         // （显式枚举保证新增 kind 时此处编译报错，而非落入兜底）。

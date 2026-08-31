@@ -85,10 +85,13 @@ fn daily_usage(item: &Item) -> Result<cost::DailyUsageCost> {
     match item.status {
         ItemStatus::InUse => usage_to(item, cost::today()),
         ItemStatus::Disposed => {
-            let disposal_date = item
-                .disposal_date
-                .as_deref()
-                .ok_or_else(|| AppError::Invalid(format!("已处置物品缺少处置日期: {}", item.id)))?;
+            let disposal_date = item.disposal_date.as_deref().ok_or_else(|| {
+                AppError::codedp(
+                    "item.disposal-date-missing",
+                    format!("已处置物品缺少处置日期: {}", item.id),
+                    &[&item.id],
+                )
+            })?;
             usage_to(item, parse_date(disposal_date)?)
         }
     }
@@ -104,8 +107,8 @@ pub fn calculate_item_cost_internal(
     id: &str,
     reference_date: Option<&str>,
 ) -> Result<ItemDailyCost> {
-    let item =
-        get_item_by_id(conn, id)?.ok_or_else(|| AppError::NotFound(format!("物品不存在: {id}")))?;
+    let item = get_item_by_id(conn, id)?
+        .ok_or_else(|| AppError::coded_not_found("item.not-found", format!("物品不存在: {id}")))?;
     let usage = match reference_date {
         Some(date) => usage_to(&item, parse_date(date)?),
         None => daily_usage(&item),
@@ -134,8 +137,9 @@ pub fn create_item_internal(
 ) -> Result<String> {
     // 溯源守卫：创建必须关联购买交易（修改路径不受此限，None = 保留既有溯源）。
     if input.purchase_transaction_id.is_none() {
-        return Err(AppError::Invalid(
-            "物品必须关联一笔购买交易创建：请在交易页右键一笔支出交易，选择「加入物品」".into(),
+        return Err(AppError::coded(
+            "item.purchase-link-required",
+            "物品必须关联一笔购买交易创建：请在交易页右键一笔支出交易，选择「加入物品」",
         ));
     }
     // 关联购买交易：校验存在且为 expense，自动带出日期/成本/币种（覆盖同名入参）。
@@ -174,10 +178,13 @@ pub fn create_item_internal(
 fn validate_and_convert(conn: &Connection, input: &ItemInput) -> Result<(String, String, i64)> {
     let name = input.name.trim();
     if name.is_empty() {
-        return Err(AppError::Invalid("物品名称不能为空".into()));
+        return Err(AppError::coded("item.name-required", "物品名称不能为空"));
     }
     if input.total_cost_cents <= 0 {
-        return Err(AppError::Invalid("物品总成本必须大于 0".into()));
+        return Err(AppError::coded(
+            "item.cost-positive",
+            "物品总成本必须大于 0",
+        ));
     }
     let purchase_date = parse_date(&input.purchase_date)?;
     let cost_native_cents =
@@ -207,7 +214,7 @@ pub fn update_item_internal(
 ) -> Result<()> {
     let existing = get_item_by_id(conn, id)?;
     let Some(existing) = existing else {
-        return Err(AppError::NotFound("物品不存在".into()));
+        return Err(AppError::coded_not_found("item.not-found", "物品不存在"));
     };
 
     // 关联购买交易语义：新关联或换关（与既有指针不同）→ 校验并自动带出
@@ -230,9 +237,11 @@ pub fn update_item_internal(
     if let Some(disposal_date) = &existing.disposal_date
         && parse_date(&purchase_date)? > parse_date(disposal_date)?
     {
-        return Err(AppError::Invalid(format!(
-            "购买日期 {purchase_date} 晚于处置日期 {disposal_date}，请先调整处置日期"
-        )));
+        return Err(AppError::codedp(
+            "item.purchase-after-disposal",
+            format!("购买日期 {purchase_date} 晚于处置日期 {disposal_date}，请先调整处置日期"),
+            &[&purchase_date, disposal_date],
+        ));
     }
 
     let updated = conn.execute(
@@ -279,25 +288,32 @@ pub fn dispose_item_internal(
     notify: &mut dyn FnMut(),
 ) -> Result<()> {
     let Some(existing) = get_item_by_id(conn, id)? else {
-        return Err(AppError::NotFound(format!("物品不存在: {id}")));
+        return Err(AppError::coded_not_found(
+            "item.not-found",
+            format!("物品不存在: {id}"),
+        ));
     };
 
     let disposal_date = parse_date(&input.disposal_date)?;
     let purchase_date = parse_date(&existing.purchase_date)?;
     if disposal_date < purchase_date {
-        return Err(AppError::Invalid(format!(
-            "处置日期 {disposal_date} 早于购买日期 {purchase_date}，无法处置"
-        )));
+        return Err(AppError::codedp(
+            "item.disposal-before-purchase",
+            format!("处置日期 {disposal_date} 早于购买日期 {purchase_date}，无法处置"),
+            &[&disposal_date.to_string(), &purchase_date.to_string()],
+        ));
     }
     if disposal_date > cost::today() {
         // 「已处置」语义上当日之后才成立：未来日期按录入错误拒绝，
         // 避免每天成本按未来处置日摊（分母虚增）。
-        return Err(AppError::Invalid(format!(
-            "处置日期 {disposal_date} 不能晚于今天"
-        )));
+        return Err(AppError::codedp(
+            "item.disposal-in-future",
+            format!("处置日期 {disposal_date} 不能晚于今天"),
+            &[&disposal_date.to_string()],
+        ));
     }
     if input.residual_value_cents.is_some_and(|v| v < 0) {
-        return Err(AppError::Invalid("残值不能为负".into()));
+        return Err(AppError::coded("item.residual-negative", "残值不能为负"));
     }
 
     let updated = conn.execute(
@@ -333,7 +349,10 @@ pub fn delete_item_internal(conn: &Connection, id: &str, notify: &mut dyn FnMut(
         .optional()?
         .is_some();
     if !exists {
-        return Err(AppError::NotFound(format!("物品不存在: {id}")));
+        return Err(AppError::coded_not_found(
+            "item.not-found",
+            format!("物品不存在: {id}"),
+        ));
     }
     conn.execute(
         "UPDATE items SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
@@ -374,9 +393,11 @@ fn resolve_purchase_link(conn: &Connection, tx_id: &str) -> Result<(String, i64,
         .optional()?
         .is_some();
     if taken {
-        return Err(AppError::Invalid(format!(
-            "该购买交易已创建过物品，不能重复创建（溯源唯一）: {tx_id}"
-        )));
+        return Err(AppError::codedp(
+            "item.purchase-link-taken",
+            format!("该购买交易已创建过物品，不能重复创建（溯源唯一）: {tx_id}"),
+            &[tx_id],
+        ));
     }
     let row: Option<(String, String, i64, String)> = conn
         .query_row(
@@ -387,20 +408,31 @@ fn resolve_purchase_link(conn: &Connection, tx_id: &str) -> Result<(String, i64,
         )
         .optional()?;
     let Some((kind, date, amount_cents, currency)) = row else {
-        return Err(AppError::Invalid(format!("关联的购买交易不存在: {tx_id}")));
+        return Err(AppError::codedp(
+            "item.purchase-tx-not-found",
+            format!("关联的购买交易不存在: {tx_id}"),
+            &[tx_id],
+        ));
     };
     if kind != TransactionKind::Expense.as_str() {
-        return Err(AppError::Invalid(format!(
-            "关联的交易必须是支出类型（实际: {kind}）"
-        )));
+        return Err(AppError::codedp(
+            "item.purchase-tx-not-expense",
+            format!("关联的交易必须是支出类型（实际: {kind}）"),
+            &[&kind],
+        ));
     }
     Ok((date, amount_cents, currency))
 }
 
 /// 解析 YYYY-MM-DD 日期字符串；非法格式报错（物品成本计算依赖日历日期）。
 fn parse_date(s: &str) -> Result<chrono::NaiveDate> {
-    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-        .map_err(|_| AppError::Invalid(format!("日期格式无效，应为 YYYY-MM-DD: {s}")))
+    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| {
+        AppError::codedp(
+            "item.date-invalid",
+            format!("日期格式无效，应为 YYYY-MM-DD: {s}"),
+            &[s],
+        )
+    })
 }
 
 #[tauri::command]

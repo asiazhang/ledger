@@ -91,8 +91,13 @@ pub fn validate_and_commit(
     adopt_existing: bool,
 ) -> Result<DataLocationChangeOutcome> {
     // ① 目录不存在则自动创建。
-    std::fs::create_dir_all(target)
-        .map_err(|e| AppError::Invalid(format!("无法创建目标目录（{}）：{e}", target.display())))?;
+    std::fs::create_dir_all(target).map_err(|e| {
+        AppError::codedp(
+            "data-location.mkdir-failed",
+            format!("无法创建目标目录（{}）：{e}", target.display()),
+            &[&target.display().to_string(), &e.to_string()],
+        )
+    })?;
 
     // ② 试写小临时文件验证可写，用后即清。
     let probe = target.join(WRITE_PROBE_FILE_NAME);
@@ -100,8 +105,13 @@ pub fn validate_and_commit(
         std::fs::write(&probe, b"ok")?;
         std::fs::remove_file(&probe)
     })();
-    probe_result
-        .map_err(|e| AppError::Invalid(format!("目标目录不可写（{}）：{e}", target.display())))?;
+    probe_result.map_err(|e| {
+        AppError::codedp(
+            "data-location.dir-not-writable",
+            format!("目标目录不可写（{}）：{e}", target.display()),
+            &[&target.display().to_string(), &e.to_string()],
+        )
+    })?;
 
     // ③ 目标已有同名库 → 返回二选一信号，不静默覆盖、不解析库内容。
     let target_db = target.join(data_location::DB_FILE_NAME);
@@ -151,7 +161,10 @@ pub fn submit_data_location_change(
     let default_dir = default_data_dir(&app)?;
     let trimmed = target_dir.trim();
     if trimmed.is_empty() {
-        return Err(AppError::Invalid("目标目录不能为空".into()));
+        return Err(AppError::coded(
+            "data-location.dir-required",
+            "目标目录不能为空",
+        ));
     }
     validate_and_commit(&default_dir, Path::new(trimmed), adopt_existing)
 }

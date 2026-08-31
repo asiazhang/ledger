@@ -83,8 +83,11 @@ export async function initAppLocale(): Promise<void> {
 
 /**
  * 翻译函数：全项目统一消费入口。绑定全局 Composer，在渲染/计算属性等响应式
- * 上下文中调用时自动追踪 locale 变化（切换语言即时重渲染）。named 为插值参数。
+ * 上下文中调用时自动追踪 locale 变化（切换语言即时重渲染）。
+ * 第二参可传命名插值对象（`{n}` 消费 `{n}`）或位置插值数组（消息消费 `{0} {1}`）。
  */
-export function t(key: string, named?: Record<string, unknown>): string {
-  return named === undefined ? i18n.global.t(key) : i18n.global.t(key, named)
+export function t(key: string, params?: Record<string, unknown> | unknown[]): string {
+  if (params === undefined) return i18n.global.t(key)
+  if (Array.isArray(params)) return i18n.global.t(key, params)
+  return i18n.global.t(key, params)
 }

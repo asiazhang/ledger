@@ -37,7 +37,11 @@ pub fn list_merchants_internal(conn: &Connection, include_deleted: bool) -> Resu
 /// 创建商户，返回新商户 id。在用行同名（含改名目标）→ 明确错误。
 pub fn create_merchant_internal(conn: &Connection, input: MerchantInput) -> Result<String> {
     if merchant_name_taken(conn, &input.name, None)? {
-        return Err(AppError::Invalid(format!("商户已存在: {}", input.name)));
+        return Err(AppError::codedp(
+            "merchant.already-exists",
+            format!("商户已存在: {}", input.name),
+            &[&input.name],
+        ));
     }
     let id = new_uuid();
     let now = now_iso();
@@ -63,11 +67,15 @@ pub fn update_merchant_internal(
     )?
     .into_iter()
     .next()
-    .ok_or_else(|| AppError::NotFound(format!("商户不存在: {id}")))?;
+    .ok_or_else(|| AppError::coded_not_found("merchant.not-found", format!("商户不存在: {id}")))?;
 
     let name = input.name.unwrap_or(existing.name);
     if merchant_name_taken(conn, &name, Some(id))? {
-        return Err(AppError::Invalid(format!("商户已存在: {name}")));
+        return Err(AppError::codedp(
+            "merchant.already-exists",
+            format!("商户已存在: {name}"),
+            &[&name],
+        ));
     }
 
     conn.execute(
@@ -90,7 +98,10 @@ pub fn delete_merchant_internal(conn: &Connection, id: &str) -> Result<()> {
         .optional()?
         .is_some();
     if !exists {
-        return Err(AppError::NotFound(format!("商户不存在: {id}")));
+        return Err(AppError::coded_not_found(
+            "merchant.not-found",
+            format!("商户不存在: {id}"),
+        ));
     }
     conn.execute(
         "UPDATE merchants SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
@@ -125,7 +136,7 @@ pub fn find_merchant_by_name(conn: &Connection, name: &str) -> Result<Option<Str
 pub fn create_merchant_by_name(conn: &Connection, name: &str) -> Result<String> {
     let name = name.trim();
     if name.is_empty() {
-        return Err(AppError::Invalid("商户名不能为空".into()));
+        return Err(AppError::coded("merchant.name-required", "商户名不能为空"));
     }
     if let Some(id) = find_merchant_by_name(conn, name)? {
         return Ok(id);

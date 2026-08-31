@@ -1,1 +1,155 @@
-{}
+{
+  "account": {
+    "not-found": "账户不存在",
+    "name-required": "账户名称不能为空",
+    "currency-locked": "账户已有交易，不能修改币种（会使历史交易折算口径错乱）",
+    "currency-unknown": "未知币种: {0}",
+    "black-hole-adjust-unsupported": "黑洞账户不支持余额调整",
+    "balance-overflow": "目标余额溢出",
+    "balance-no-change": "余额已等于目标值，无需调整",
+    "type-unknown": "未知账户类型: {0}"
+  },
+  "category": {
+    "not-found": "分类不存在",
+    "self-parent": "自身不能作为父分类",
+    "parent-not-found": "父分类不存在",
+    "parent-kind-mismatch": "父分类类型需一致"
+  },
+  "merchant": {
+    "already-exists": "商户已存在: {0}",
+    "not-found": "商户不存在",
+    "name-required": "商户名不能为空",
+    "not-active": "商户不存在或已删除: {0}"
+  },
+  "item": {
+    "disposal-date-missing": "已处置物品缺少处置日期: {0}",
+    "not-found": "物品不存在",
+    "purchase-link-required": "物品必须关联一笔购买交易创建：请在交易页右键一笔支出交易，选择「加入物品」",
+    "name-required": "物品名称不能为空",
+    "cost-positive": "物品总成本必须大于 0",
+    "purchase-after-disposal": "购买日期 {0} 晚于处置日期 {1}，请先调整处置日期",
+    "disposal-before-purchase": "处置日期 {0} 早于购买日期 {1}，无法处置",
+    "disposal-in-future": "处置日期 {0} 不能晚于今天",
+    "residual-negative": "残值不能为负",
+    "purchase-link-taken": "该购买交易已创建过物品，不能重复创建（溯源唯一）: {0}",
+    "purchase-tx-not-found": "关联的购买交易不存在: {0}",
+    "purchase-tx-not-expense": "关联的交易必须是支出类型（实际: {0}）",
+    "date-invalid": "日期格式无效，应为 YYYY-MM-DD: {0}",
+    "target-before-purchase": "目标日期 {0} 早于购买日期 {1}，无法计算每天使用成本"
+  },
+  "backup": {
+    "keep-invalid": "备份保留上限非法: {0}",
+    "invalid-archive": "不是有效的 Ledger 备份包: {0}",
+    "meta-missing": "备份包内未找到 backup.json 元数据",
+    "meta-parse-failed": "备份元数据解析失败: {0}",
+    "target-dir-missing": "备份目标目录不存在: {0}",
+    "schema-newer": "备份来自更高版本的应用（备份 schema v{0} > 当前 v{1}），请升级应用后再恢复",
+    "db-entry-missing": "备份包内未找到 ledger.db，不是有效的 Ledger 备份"
+  },
+  "sync": {
+    "already-running": "已有全量同步正在进行，请先中断或等待完成",
+    "fund-not-found": "查无基金代码 {0}，请核对后重试"
+  },
+  "data-location": {
+    "mkdir-failed": "无法创建目标目录（{0}）：{1}",
+    "dir-not-writable": "目标目录不可写（{0}）：{1}",
+    "dir-required": "目标目录不能为空"
+  },
+  "transfer": {
+    "to-account-required": "转账必须指定目标账户"
+  },
+  "transaction": {
+    "amount-positive": "金额必须大于 0",
+    "not-found": "交易不存在: {0}",
+    "merchant-unsupported": "交易类型 {0} 不能携带商户",
+    "merchant-id-and-name-conflict": "merchant_id 与 merchant_name 不可同时提供",
+    "kind-unsupported": "交易类型 {0} 暂不支持（MVP 未实现）"
+  },
+  "refund": {
+    "source-required": "退款必须关联原支出交易",
+    "source-not-found": "退款关联的原支出交易不存在: {0}",
+    "source-not-expense": "退款只能关联支出交易"
+  },
+  "trade": {
+    "partially-sold-update": "该买入交易已有部分卖出，无法修改",
+    "partially-sold-delete": "该买入交易已有部分卖出，无法删除",
+    "buy-instrument-required": "买入必须指定标的",
+    "buy-instrument-not-found": "买入标的不存在: {0}",
+    "sell-instrument-required": "卖出必须指定标的",
+    "sell-instrument-not-found": "卖出标的不存在: {0}",
+    "detail-not-found": "交易不存在或无买卖明细: {0}",
+    "buy-quantity-positive": "买入数量必须大于 0",
+    "sell-quantity-positive": "卖出数量必须大于 0",
+    "buy-amount-positive": "买入金额必须大于 0（基金申赎以确认单金额为权威）",
+    "sell-amount-positive": "卖出金额必须大于 0（基金申赎以确认单金额为权威）",
+    "fund-price-forbidden": "基金申赎以确认单金额为权威，不可提供单价（由金额与份额反算）",
+    "buy-fee-exceeds-amount": "买入手续费不能超过买入金额",
+    "sell-fee-exceeds-proceeds": "卖出手续费不能超过卖出收入",
+    "derived-price-positive": "反算单价必须大于 0（确认金额过小或份额过大）",
+    "buy-price-positive": "买入单价必须大于 0",
+    "sell-price-positive": "卖出单价必须大于 0",
+    "buy-account-not-investment": "买入交易必须使用投资账户",
+    "sell-account-not-investment": "卖出交易必须使用投资账户",
+    "insufficient-holding": "可卖出数量不足，当前持有 {0}，尝试卖出 {1}"
+  },
+  "fx": {
+    "rate-positive": "汇率必须大于 0",
+    "rate-non-positive": "汇率 {0}->{1} 非正: {2}",
+    "reverse-rate-non-positive": "反向汇率 {0}->{1} 非正: {2}",
+    "rate-missing": "未找到 {0} -> {1} 的汇率（正反向均无）"
+  },
+  "instrument": {
+    "price-positive": "价格必须大于 0",
+    "price-date-format": "日期格式须为 YYYY-MM-DD",
+    "not-found": "标的不存在",
+    "symbol-required": "标的代码不能为空",
+    "sync-delete-forbidden": "同步来源标的不支持删除：股票字典由「全量同步」维护，填错可重新同步修正",
+    "traded-delete-forbidden": "该标的已有买卖流水，无法删除：可先删除相关交易后再试",
+    "stock-manual-forbidden": "股票类标的不支持手动创建：股票字典由「全量同步」从东方财富维护",
+    "fund-manual-forbidden": "基金类标的不支持手动创建：请用「添加基金」输入 6 位代码自动回填",
+    "name-required": "标的名称不能为空",
+    "as-of-date-invalid": "as-of 交易日格式无效: {0}",
+    "trend-start-date-invalid": "起始日期格式无效: {0}",
+    "trend-end-date-invalid": "截止日期格式无效: {0}",
+    "trend-range-invalid": "起始日期不能晚于截止日期"
+  },
+  "fund": {
+    "code-invalid": "基金代码须为 6 位数字"
+  },
+  "budget": {
+    "amount-positive": "预算金额必须为正数",
+    "category-not-found": "分类不存在: {0}",
+    "category-not-expense": "预算只能设置在支出分类上（该分类为{0}分类）",
+    "duplicate-monthly": "该分类已存在按月预算，可编辑该预算的金额",
+    "duplicate-yearly": "该分类已存在按年预算，可编辑该预算的金额",
+    "not-found": "预算不存在: {0}"
+  },
+  "scheduled-plan": {
+    "amount-positive": "金额必须大于 0",
+    "same-account": "转出账户不能等于转入账户",
+    "from-account-not-found": "转出账户不存在",
+    "to-account-not-found": "转入账户不存在",
+    "currency-mismatch": "转出账户与转入账户币种不一致，定时转账不支持跨币种",
+    "transfer-merchant-forbidden": "定时转账不能携带商户",
+    "installment-total-required": "分期计划必须指定总金额",
+    "installment-occurrences-required": "分期计划必须指定总期数",
+    "installment-total-too-small": "总金额不能小于期数",
+    "to-account-required": "定时转账必须指定目标账户",
+    "not-found": "定时计划不存在",
+    "manual-complete-forbidden": "不能手动将计划设为 completed",
+    "status-transition-forbidden": "不允许从 {0} 转换到 {1}",
+    "edit-amount-forbidden": "订阅金额不可编辑：改价 = 取消旧计划 + 新建（按新金额重建计划，保留两段真实价格历史）",
+    "edit-subscription-only": "仅订阅计划支持编辑非金额字段",
+    "installment-ext-not-found": "分期扩展信息不存在",
+    "subscription-ext-not-found": "订阅扩展信息不存在",
+    "transfer-ext-not-found": "定时转账扩展信息不存在",
+    "date-invalid": "日期格式错误 {0}: {1}",
+    "not-active": "关联计划未处于活跃状态"
+  },
+  "scheduled-occurrence": {
+    "not-found": "期次不存在",
+    "not-executable": "期次状态为 {0}，不能执行",
+    "plan-not-found": "关联定时计划不存在",
+    "conflict": "期次已被其他设备执行"
+  }
+}

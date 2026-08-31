@@ -87,7 +87,7 @@ fn instrument_price_trend_clips_range_and_starts_at_first_point() {
         },
     )
     .unwrap_err();
-    assert!(matches!(err, AppError::Invalid(_)));
+    assert!(matches!(err, AppError::Coded { .. }));
     let err = trend::query_instrument_price_trend(
         &conn,
         "inst-t1",
@@ -97,7 +97,7 @@ fn instrument_price_trend_clips_range_and_starts_at_first_point() {
         },
     )
     .unwrap_err();
-    assert!(matches!(err, AppError::Invalid(_)));
+    assert!(matches!(err, AppError::Coded { .. }));
 }
 
 #[test]

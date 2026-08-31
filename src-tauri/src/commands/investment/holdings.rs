@@ -32,8 +32,13 @@ pub(crate) fn holdings_as_of(
     instrument_id: Option<&str>,
     as_of_date: &str,
 ) -> Result<f64> {
-    NaiveDate::parse_from_str(as_of_date, "%Y-%m-%d")
-        .map_err(|_| AppError::Invalid(format!("as-of 交易日格式无效: {as_of_date}")))?;
+    NaiveDate::parse_from_str(as_of_date, "%Y-%m-%d").map_err(|_| {
+        AppError::codedp(
+            "instrument.as-of-date-invalid",
+            format!("as-of 交易日格式无效: {as_of_date}"),
+            &[as_of_date],
+        )
+    })?;
 
     // 口径三件事内化为一条 SQL：仅认 buy/sell（action IN + quantity 非空）、
     // sell 取负（CASE 矩阵）、交易日 ≤ as_of 前缀求和（含当日）。

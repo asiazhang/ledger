@@ -49,8 +49,12 @@ use crate::transaction::writer;
 /// buy 已有部分卖出的守卫文案——修改入口措辞（ADR-0033 决策 #4：按入口内化、
 /// 行为层单点定义，调用方协议面不出现文案，同一入口同一文案不漂移）。
 const PARTIAL_SOLD_CANNOT_UPDATE: &str = "该买入交易已有部分卖出，无法修改";
+/// 上迹守卫的稳定错误码（issue #342 二期）：与文案同源单点，经 revert 下传。
+const PARTIAL_SOLD_CANNOT_UPDATE_CODE: &str = "trade.partially-sold-update";
 /// buy 已有部分卖出的守卫文案——删除入口措辞（同上）。
 const PARTIAL_SOLD_CANNOT_DELETE: &str = "该买入交易已有部分卖出，无法删除";
+/// 上迹守卫的稳定错误码（同上）。
+const PARTIAL_SOLD_CANNOT_DELETE_CODE: &str = "trade.partially-sold-delete";
 
 /// 计划：归一化后的交易行 + kind 特有副作用数据（不落库）。
 enum Plan {
@@ -149,7 +153,7 @@ fn create_within_transaction(
 ///
 /// 幂等键（`idempotency_key`）与内容哈希（`dedup_hash`）不作为
 /// 可编辑字段——修改不重算去重身份，故修改后重跑同批导入（带幂等键）仍按同键去重、不产生重复。
-/// 不存在或已软删除的 id 返回 [`AppError::NotFound`]。
+/// 不存在或已软删除的 id 返回码化 NotFound（`transaction.not-found`）。
 /// 返回「是否即建商户」证据（[`WriteEvidence::MerchantCreated`]，issue #331）。
 pub fn update(conn: &Connection, id: &str, input: TransactionInput) -> Result<WriteEvidence> {
     ensure_transaction(conn, || update_within_transaction(conn, id, &input))
@@ -172,11 +176,19 @@ fn update_within_transaction(
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?
-        .ok_or_else(|| AppError::NotFound(format!("交易不存在: {id}")))?;
+        .ok_or_else(|| {
+            AppError::coded_not_found("transaction.not-found", format!("交易不存在: {id}"))
+        })?;
 
     // 先按旧 kind 回退持仓/卖出关联副作用，再按新 kind 校验并应用（跨 kind 修改避免孤儿持仓）；
-    // buy 守卫（已有部分卖出拒绝）措辞为修改入口单点定义的文案。
-    investment::revert(conn, id, old_kind, PARTIAL_SOLD_CANNOT_UPDATE)?;
+    // buy 守卫（已有部分卖出拒绝）措辞与错误码为修改入口单点定义的文案。
+    investment::revert(
+        conn,
+        id,
+        old_kind,
+        PARTIAL_SOLD_CANNOT_UPDATE_CODE,
+        PARTIAL_SOLD_CANNOT_UPDATE,
+    )?;
     let (plan, merchant_created) = plan(conn, input, old_merchant_id.as_deref())?;
     let row = plan.normalized_row()?;
     writer::update_row(conn, id, &row)?;
@@ -191,7 +203,7 @@ fn update_within_transaction(
 /// 成功后软删 UPDATE 中途失败整体回滚，不再出现「持仓已删而交易仍在」的中间态
 /// （删除路径事务缺口修复，ADR-0033 决策 #3）。buy 守卫（已有部分卖出拒绝）措辞为
 /// 删除入口单点定义的文案。sell 删除不清理持仓关联（既有行为保持不变，ADR-0013 已锁定）。
-/// 不存在的 id 返回 [`AppError::NotFound`]（HTTP 侧映射 404）。事务规则见
+/// 不存在的 id 返回码化 NotFound（HTTP 侧映射 404）。事务规则见
 /// [`ensure_transaction`]。IPC 与 HTTP 端点共用本函数。
 pub fn delete(conn: &Connection, id: &str) -> Result<()> {
     ensure_transaction(conn, || delete_within_transaction(conn, id))
@@ -206,12 +218,20 @@ fn delete_within_transaction(conn: &Connection, id: &str) -> Result<()> {
             |r| r.get(0),
         )
         .optional()?
-        .ok_or_else(|| AppError::NotFound(format!("交易不存在: {id}")))?;
+        .ok_or_else(|| {
+            AppError::coded_not_found("transaction.not-found", format!("交易不存在: {id}"))
+        })?;
 
     if kind == TransactionKind::Buy {
         // 守卫（部分卖出拒绝）与持仓关联清理经投资域 revert。
         // sell 删除不清理持仓关联（既有行为保持不变，本重构不改变）。
-        investment::revert(conn, id, kind, PARTIAL_SOLD_CANNOT_DELETE)?;
+        investment::revert(
+            conn,
+            id,
+            kind,
+            PARTIAL_SOLD_CANNOT_DELETE_CODE,
+            PARTIAL_SOLD_CANNOT_DELETE,
+        )?;
     }
 
     conn.execute(
@@ -261,7 +281,11 @@ fn plan(
             TransactionKind::Income | TransactionKind::Expense | TransactionKind::Refund
         )
     {
-        return Err(AppError::Invalid(format!("交易类型 {kind} 不能携带商户")));
+        return Err(AppError::codedp(
+            "transaction.merchant-unsupported",
+            format!("交易类型 {kind} 不能携带商户"),
+            &[&kind.to_string()],
+        ));
     }
     match kind {
         TransactionKind::Income
@@ -277,8 +301,9 @@ fn plan(
             } else {
                 match (&input.merchant_name, &input.merchant_id) {
                     (Some(_), Some(_)) => {
-                        return Err(AppError::Invalid(
-                            "merchant_id 与 merchant_name 不可同时提供".into(),
+                        return Err(AppError::coded(
+                            "transaction.merchant-id-and-name-conflict",
+                            "merchant_id 与 merchant_name 不可同时提供",
                         ));
                     }
                     (Some(name), None) => {
@@ -327,9 +352,11 @@ fn plan(
                 false,
             ))
         }
-        TransactionKind::Dividend | TransactionKind::Split => Err(AppError::Invalid(format!(
-            "交易类型 {kind} 暂不支持（MVP 未实现）"
-        ))),
+        TransactionKind::Dividend | TransactionKind::Split => Err(AppError::codedp(
+            "transaction.kind-unsupported",
+            format!("交易类型 {kind} 暂不支持（MVP 未实现）"),
+            &[&kind.to_string()],
+        )),
     }
 }
 

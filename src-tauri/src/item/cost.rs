@@ -71,9 +71,11 @@ pub fn calculate(
     residual_value_cents: Option<i64>,
 ) -> Result<DailyUsageCost> {
     if target_date < purchase_date {
-        return Err(AppError::Invalid(format!(
-            "目标日期 {target_date} 早于购买日期 {purchase_date}，无法计算每天使用成本"
-        )));
+        return Err(AppError::codedp(
+            "item.target-before-purchase",
+            format!("目标日期 {target_date} 早于购买日期 {purchase_date}，无法计算每天使用成本"),
+            &[&target_date.to_string(), &purchase_date.to_string()],
+        ));
     }
     let days = (target_date - purchase_date).num_days() + 1;
     let numerator_cents = (total_cost_cents - residual_value_cents.unwrap_or(0)).max(0);

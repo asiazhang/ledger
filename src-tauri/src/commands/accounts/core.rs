@@ -105,7 +105,10 @@ pub fn delete_account_internal(conn: &Connection, id: &str) -> Result<()> {
         .optional()?
         .is_some();
     if !exists {
-        return Err(AppError::NotFound(format!("账户不存在: {id}")));
+        return Err(AppError::coded_not_found(
+            "account.not-found",
+            format!("账户不存在: {id}"),
+        ));
     }
     conn.execute(
         "UPDATE accounts SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
@@ -124,7 +127,7 @@ pub fn get_account_internal(conn: &Connection, id: &str) -> Result<Account> {
     )?
     .into_iter()
     .next()
-    .ok_or_else(|| AppError::NotFound(format!("账户不存在: {id}")))
+    .ok_or_else(|| AppError::coded_not_found("account.not-found", format!("账户不存在: {id}")))
 }
 
 /// 编辑账户（`name` / `currency_code` 可选字段，未传保持原值）。
@@ -143,7 +146,7 @@ pub fn update_account_internal(
         Some(ref n) => {
             let trimmed = n.trim();
             if trimmed.is_empty() {
-                return Err(AppError::Invalid("账户名称不能为空".into()));
+                return Err(AppError::coded("account.name-required", "账户名称不能为空"));
             }
             trimmed.to_string()
         }
@@ -160,8 +163,9 @@ pub fn update_account_internal(
                 .optional()?
                 .is_some();
             if referenced {
-                return Err(AppError::Invalid(
-                    "账户已有交易，不能修改币种（会使历史交易折算口径错乱）".into(),
+                return Err(AppError::coded(
+                    "account.currency-locked",
+                    "账户已有交易，不能修改币种（会使历史交易折算口径错乱）",
                 ));
             }
             let exists: bool = conn
@@ -173,7 +177,11 @@ pub fn update_account_internal(
                 .optional()?
                 .is_some();
             if !exists {
-                return Err(AppError::Invalid(format!("未知币种: {code}")));
+                return Err(AppError::codedp(
+                    "account.currency-unknown",
+                    format!("未知币种: {code}"),
+                    &[code.as_str()],
+                ));
             }
             code.clone()
         }
@@ -246,15 +254,21 @@ pub fn adjust_account_balance_internal(
 ) -> Result<(String, bool)> {
     let account = get_account_internal(conn, id)?;
     if account.is_hidden {
-        return Err(AppError::Invalid("黑洞账户不支持余额调整".into()));
+        return Err(AppError::coded(
+            "account.black-hole-adjust-unsupported",
+            "黑洞账户不支持余额调整",
+        ));
     }
     let current = crate::db::balance::compute_balance(conn, id)?;
     let delta = input
         .target_balance_cents
         .checked_sub(current)
-        .ok_or_else(|| AppError::Invalid("目标余额溢出".into()))?;
+        .ok_or_else(|| AppError::coded("account.balance-overflow", "目标余额溢出"))?;
     if delta == 0 {
-        return Err(AppError::Invalid("余额已等于目标值，无需调整".into()));
+        return Err(AppError::coded(
+            "account.balance-no-change",
+            "余额已等于目标值，无需调整",
+        ));
     }
     conn.execute("BEGIN", [])?;
     let res = (|| -> Result<(String, bool)> {

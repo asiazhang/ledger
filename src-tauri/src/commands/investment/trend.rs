@@ -24,20 +24,27 @@ use crate::transaction::amount::default_currency_code;
 /// 校验区间：日期格式合法且起点不晚于终点。返回原样起止字符串（SQL 字符串比较
 /// 对 ISO 8601 日期即时间序）。
 fn validate_range(range: &TrendRange) -> Result<()> {
-    let parse = |label: &str, raw: &Option<String>| -> Result<Option<NaiveDate>> {
+    let parse = |label: &str, code: &str, raw: &Option<String>| -> Result<Option<NaiveDate>> {
         raw.as_deref()
             .map(|s| {
                 NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                    .map_err(|_| AppError::Invalid(format!("{label}日期格式无效: {s}")))
+                    .map_err(|_| AppError::codedp(code, format!("{label}日期格式无效: {s}"), &[s]))
             })
             .transpose()
     };
-    let start = parse("起始", &range.start_date)?;
-    let end = parse("截止", &range.end_date)?;
+    let start = parse(
+        "起始",
+        "instrument.trend-start-date-invalid",
+        &range.start_date,
+    )?;
+    let end = parse("截止", "instrument.trend-end-date-invalid", &range.end_date)?;
     if let (Some(s), Some(e)) = (start, end)
         && s > e
     {
-        return Err(AppError::Invalid("起始日期不能晚于截止日期".into()));
+        return Err(AppError::coded(
+            "instrument.trend-range-invalid",
+            "起始日期不能晚于截止日期",
+        ));
     }
     Ok(())
 }

@@ -50,7 +50,11 @@ impl FromStr for AccountType {
             "debt" => Ok(AccountType::Debt),
             "receivable" => Ok(AccountType::Receivable),
             "other" => Ok(AccountType::Other),
-            _ => Err(AppError::Invalid(format!("未知账户类型: {s}"))),
+            _ => Err(AppError::codedp(
+                "account.type-unknown",
+                format!("未知账户类型: {s}"),
+                &[s],
+            )),
         }
     }
 }

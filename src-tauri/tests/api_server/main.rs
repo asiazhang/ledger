@@ -9,6 +9,7 @@ mod balance;
 mod batch_import;
 mod common;
 mod documentation;
+mod error_codes;
 mod fund_lookup;
 mod instrument_create;
 mod instrument_create_fund;

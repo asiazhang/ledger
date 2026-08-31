@@ -51,10 +51,7 @@ fn normalize_merchant_not_found_is_rejected() {
         },
     )
     .unwrap_err();
-    assert_eq!(
-        err.to_string(),
-        "参数错误: 商户不存在或已删除: no-such-merchant"
-    );
+    assert_eq!(err.to_string(), "商户不存在或已删除: no-such-merchant");
 }
 
 /// 携带已软删除的商户 → 明确错误（软删商户不可再被新交易选择）。

@@ -127,7 +127,7 @@ fn try_create_transfer_plan_with_merchant(
         )
     });
     world.last_error = match result {
-        Err(AppError::Invalid(msg)) => Some(msg),
+        Err(AppError::Coded { message, .. }) => Some(message),
         _ => Some("预期失败但成功了".into()),
     };
 }
@@ -166,7 +166,7 @@ fn try_create_subscription_plan_with_merchant(
         )
     });
     world.last_error = match result {
-        Err(AppError::Invalid(msg)) => Some(msg),
+        Err(AppError::Coded { message, .. }) => Some(message),
         _ => Some("预期失败但成功了".into()),
     };
 }

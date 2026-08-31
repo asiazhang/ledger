@@ -369,9 +369,11 @@ fn lookup_exchange_rate(conn: &Connection, base_code: &str, quote_code: &str) ->
         |r| r.get::<_, f64>(0),
     ) {
         if rate <= 0.0 {
-            return Err(AppError::Invalid(format!(
-                "汇率 {base_code}->{quote_code} 非正: {rate}"
-            )));
+            return Err(AppError::codedp(
+                "fx.rate-non-positive",
+                format!("汇率 {base_code}->{quote_code} 非正: {rate}"),
+                &[base_code, quote_code, &rate.to_string()],
+            ));
         }
         return Ok(rate);
     }
@@ -381,15 +383,19 @@ fn lookup_exchange_rate(conn: &Connection, base_code: &str, quote_code: &str) ->
         |r| r.get::<_, f64>(0),
     ) {
         if rev <= 0.0 {
-            return Err(AppError::Invalid(format!(
-                "反向汇率 {quote_code}->{base_code} 非正: {rev}"
-            )));
+            return Err(AppError::codedp(
+                "fx.reverse-rate-non-positive",
+                format!("反向汇率 {quote_code}->{base_code} 非正: {rev}"),
+                &[quote_code, base_code, &rev.to_string()],
+            ));
         }
         return Ok(1.0 / rev);
     }
-    Err(AppError::Invalid(format!(
-        "未找到 {base_code} -> {quote_code} 的汇率（正反向均无）"
-    )))
+    Err(AppError::codedp(
+        "fx.rate-missing",
+        format!("未找到 {base_code} -> {quote_code} 的汇率（正反向均无）"),
+        &[base_code, quote_code],
+    ))
 }
 
 /// 将原始币种金额折算为**全局默认币种**金额（四舍五入到分）。

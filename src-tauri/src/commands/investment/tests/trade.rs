@@ -280,7 +280,7 @@ fn buy_transaction_requires_investment_account() {
     );
 }
 
-/// buy 引用不存在的标的：prepare 校验段拦截为 [`AppError::Invalid`]（HTTP 侧 400）
+/// buy 引用不存在的标的：prepare 校验段拦截为码化 [`AppError::Coded`]（HTTP 侧 400）
 /// 中文错误，不再等到 apply 落 `security_transactions` 才触发外键违规的
 /// 「数据库错误」500，AI 可读错误回自纠（issue #295）。错误携带标的 id。
 #[test]
@@ -292,17 +292,17 @@ fn buy_with_missing_instrument_rejected_as_invalid_in_prepare() {
     let input = make_buy_input("acc-test-missing", "inst-not-exist", 10.0, 10000, 0);
     let err = create_transaction_internal(&conn, input).unwrap_err();
     match err {
-        AppError::Invalid(msg) => {
+        AppError::Coded { message, .. } => {
             assert!(
-                msg.contains("买入标的不存在"),
-                "应报买入标的不存在，got: {msg}"
+                message.contains("买入标的不存在"),
+                "应报买入标的不存在，got: {message}"
             );
             assert!(
-                msg.contains("inst-not-exist"),
-                "错误应携带标的 id 供回自纠，got: {msg}"
+                message.contains("inst-not-exist"),
+                "错误应携带标的 id 供回自纠，got: {message}"
             );
         }
-        other => panic!("应返回 Invalid（400），got: {other:?}"),
+        other => panic!("应返回 Coded（400），got: {other:?}"),
     }
     // prepare 拦截：交易行与持仓/明细均无落库残留。
     let txns: i64 = conn
@@ -315,7 +315,7 @@ fn buy_with_missing_instrument_rejected_as_invalid_in_prepare() {
     assert_eq!(lots, 0, "被拒的买入不应有持仓批次");
 }
 
-/// sell 引用不存在的标的：同样在 prepare 拦截为 Invalid——且必须先于可卖数量
+/// sell 引用不存在的标的：同样在 prepare 拦截为码化 Coded——且必须先于可卖数量
 /// 校验（否则会误报「可卖出数量不足，当前持有 0」，语义不明，issue #295）。
 #[test]
 fn sell_with_missing_instrument_rejected_as_invalid_in_prepare() {
@@ -326,17 +326,17 @@ fn sell_with_missing_instrument_rejected_as_invalid_in_prepare() {
     let input = make_sell_input("acc-test-sell-miss", "inst-not-exist", 5.0, 12000, 0);
     let err = create_transaction_internal(&conn, input).unwrap_err();
     match err {
-        AppError::Invalid(msg) => {
+        AppError::Coded { message, .. } => {
             assert!(
-                msg.contains("卖出标的不存在"),
-                "应报卖出标的不存在，got: {msg}"
+                message.contains("卖出标的不存在"),
+                "应报卖出标的不存在，got: {message}"
             );
             assert!(
-                msg.contains("inst-not-exist"),
-                "错误应携带标的 id 供回自纠，got: {msg}"
+                message.contains("inst-not-exist"),
+                "错误应携带标的 id 供回自纠，got: {message}"
             );
         }
-        other => panic!("应返回 Invalid（400），got: {other:?}"),
+        other => panic!("应返回 Coded（400），got: {other:?}"),
     }
 }
 
@@ -366,13 +366,13 @@ fn update_buy_to_missing_instrument_rejected_and_keeps_original() {
     let edited = make_buy_input("acc-test-upd-miss", "inst-not-exist", 5.0, 1_200_000, 0);
     let err = update_transaction_internal(&conn, &txn_id, edited).unwrap_err();
     match err {
-        AppError::Invalid(msg) => {
+        AppError::Coded { message, .. } => {
             assert!(
-                msg.contains("买入标的不存在"),
-                "应报买入标的不存在，got: {msg}"
+                message.contains("买入标的不存在"),
+                "应报买入标的不存在，got: {message}"
             );
         }
-        other => panic!("应返回 Invalid（400），got: {other:?}"),
+        other => panic!("应返回 Coded（400），got: {other:?}"),
     }
 
     // 原交易行与持仓批次保持原样（revert→plan 中途失败整体回滚）。

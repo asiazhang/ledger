@@ -79,5 +79,5 @@ pub fn get_transaction_internal(conn: &Connection, id: &str) -> Result<Transacti
          version,device_id,is_deleted,merchant_id FROM transactions WHERE id=?1 AND is_deleted=0",
         rusqlite::params![id],
     )?
-    .ok_or_else(|| AppError::NotFound(format!("交易不存在: {id}")))
+    .ok_or_else(|| AppError::coded_not_found("transaction.not-found", format!("交易不存在: {id}")))
 }

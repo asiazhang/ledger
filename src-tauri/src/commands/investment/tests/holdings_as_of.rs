@@ -36,7 +36,7 @@ fn holdings_as_of_sums_multiple_buys_and_sells_within_same_week() {
 
     // as_of 键为交易日（ISO YYYY-MM-DD），格式非法时显式报错（时间键契约显式化）。
     let err = holdings::holdings_as_of(&conn, Some("inst-ao"), "2026/02/08").unwrap_err();
-    assert!(matches!(err, AppError::Invalid(_)));
+    assert!(matches!(err, AppError::Coded { .. }));
 }
 
 #[test]

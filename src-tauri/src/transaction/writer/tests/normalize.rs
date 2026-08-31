@@ -75,7 +75,7 @@ fn normalize_rejects_non_positive_amount() {
     insert_account(&conn, "acc", "CNY");
     for bad in [0, -1, -500] {
         let err = normalize(&conn, &input(TransactionKind::Expense, bad, "acc")).unwrap_err();
-        assert_eq!(err.to_string(), "参数错误: 金额必须大于 0", "金额 {bad}");
+        assert_eq!(err.to_string(), "金额必须大于 0", "金额 {bad}");
     }
 }
 
@@ -89,7 +89,7 @@ fn normalize_transfer_requires_to_account() {
     let conn = setup_db();
     insert_account(&conn, "acc-a", "CNY");
     let err = normalize(&conn, &input(TransactionKind::Transfer, 3000, "acc-a")).unwrap_err();
-    assert_eq!(err.to_string(), "参数错误: 转账必须指定目标账户");
+    assert_eq!(err.to_string(), "转账必须指定目标账户");
 }
 
 /// transfer 带 `to_account_id` 时归一化成功，目标账户透传。
