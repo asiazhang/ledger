@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
@@ -289,6 +289,37 @@ describe('DashboardView 财务自由度卡（issue #344）', () => {
     await flushPromises()
     card = wrapper.find('[data-testid="financial-freedom-card"]')
     expect(card.find('[data-testid="financial-freedom-ratio"]').text()).toBe('7.5%')
+  })
+})
+
+describe('DashboardView 财务自由度卡计算口径提示（tooltip）', () => {
+  afterEach(() => {
+    // NTooltip 内容 teleport 到 document.body：清防串扰（同 InstrumentBrowser 先例）
+    document.body.innerHTML = ''
+  })
+
+  it('标题旁信息图标悬停展示计算口径：公式、分子/分母构成与 3% 提取率', async () => {
+    const wrapper = await mountView()
+    const card = wrapper.find('[data-testid="financial-freedom-card"]')
+    const trigger = card.find('[data-testid="financial-freedom-info"]')
+    expect(trigger.exists()).toBe(true)
+    // 悬停前口径说明不在页面上
+    expect(document.body.textContent).not.toContain('安全提取率')
+
+    await trigger.trigger('mouseenter')
+    // NTooltip delay 默认 100ms（防误触），jsdom 等真实时钟而非 flushPromises
+    await new Promise((r) => setTimeout(r, 200))
+    await flushPromises()
+    const tip = document.body.querySelector('.n-popover')
+    expect(tip).not.toBeNull()
+    const text = tip!.textContent ?? ''
+    // 公式：3% 乘数是百分比无法从分子/分母直接推出的原因，必须写明
+    expect(text).toContain('可投资资产 × 3% ÷ 年度预算总额')
+    // 分子构成与不口径：不含生活现金与负债
+    expect(text).toContain('持仓市值 + 投资账户余额')
+    // 分母构成与年化节奏
+    expect(text).toContain('月度预算 × 12 + 年度预算')
+    expect(text).toContain('安全提取率')
   })
 })
 
