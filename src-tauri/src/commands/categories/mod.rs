@@ -6,6 +6,8 @@
 //!
 //! `update_category` / `reorder_categories` 逻辑内嵌于命令本身（主代码未超阈值，
 //! 不拆核心逻辑），随命令外壳一并落在本模块入口。
+//! 参考写命令成功后的失效信号经信号映射单点（`signals::emit_for`，ADR-0044）
+//! 判定发射，壳层不持有「谁发什么」的判定知识。
 //! 对外暴露的命令与 `*_internal` 复用函数经 `commands/mod.rs` 的 `pub use categories::*`
 //! 重导出，注册路径与前端/api_server 调用零改动。
 
@@ -19,6 +21,7 @@ use crate::db::query::query_all;
 use crate::db::{DbState, device_id, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{Category, CategoryInput, CategoryUpdateInput, ReorderItem};
+use crate::signals::{WriteEvidence, WriteOp, emit_for};
 
 pub use core::*;
 
@@ -36,8 +39,8 @@ pub fn create_category(
 ) -> Result<String> {
     // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
     let id = db.write(|conn| core::create_category_internal(conn, input))?;
-    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
-    crate::events::emit_reference_changed(&app, "create_category");
+    // 参考写入成功 → 参考失效信号（映射单点判定，ADR-0044；issue #79）
+    emit_for(&app, WriteOp::CreateCategory, WriteEvidence::None);
     Ok(id)
 }
 
@@ -93,8 +96,8 @@ pub fn update_category(
         // 分类名不在搜索范围内（ADR-0027），且搜索无索引，改名无需任何后续处理
         Ok(())
     })?;
-    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
-    crate::events::emit_reference_changed(&app, "update_category");
+    // 参考写入成功 → 参考失效信号（映射单点判定，ADR-0044；issue #79）
+    emit_for(&app, WriteOp::UpdateCategory, WriteEvidence::None);
     Ok(())
 }
 
@@ -116,8 +119,8 @@ pub fn reorder_categories(
         }
         Ok(())
     })?;
-    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
-    crate::events::emit_reference_changed(&app, "reorder_categories");
+    // 参考写入成功 → 参考失效信号（映射单点判定，ADR-0044；issue #79）
+    emit_for(&app, WriteOp::ReorderCategories, WriteEvidence::None);
     Ok(())
 }
 
@@ -125,7 +128,7 @@ pub fn reorder_categories(
 pub fn delete_category(db: State<'_, DbState>, app: tauri::AppHandle, id: String) -> Result<()> {
     // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
     db.write(|conn| core::delete_category_internal(conn, &id))?;
-    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
-    crate::events::emit_reference_changed(&app, "delete_category");
+    // 参考写入成功 → 参考失效信号（映射单点判定，ADR-0044；issue #79）
+    emit_for(&app, WriteOp::DeleteCategory, WriteEvidence::None);
     Ok(())
 }

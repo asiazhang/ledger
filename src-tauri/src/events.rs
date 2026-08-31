@@ -1,13 +1,18 @@
 //! 事件发射：写入/产物变更后的粗粒度失效信号。
 //!
+//! 本模块只承载**机制**（事件名常量 + `emit_*` 发射入口 + `EVENT_APP` 镜像句柄）；
+//! 「哪个写操作发哪个信号」的**知识**已收拢到信号映射单点 `signals::signals_for`
+//! （ADR-0044）：壳层经 `signals::emit_for` 判定后走到这里发射。
+//!
 //! - `ledger:changed`（issue #79）：参考数据（`currencies / accounts / categories / merchants`）
-//!   任一写入成功后由调用方 emit，前端 `useReferenceStore` 订阅后自动重拉参考表
-//!   （商户表的后端命令面已登记为参考写入；前端 store 接线随商户前端接入落地）。
-//!   「是否为参考写入」的判定收敛在本模块：IPC 命令清单见 [`REFERENCE_WRITE_COMMANDS`]，
-//!   纯函数 [`is_reference_write`] 承载判定，命令层统一经 [`emit_reference_changed`] 走该
-//!   判定；HTTP 端点（账号/分类 create/delete）结构上即参考写入，直接经
-//!   [`emit_ledger_changed`] 发射。交易类写入不在本清单（唯一的参考表变更例外——
-//!   交易写「即建商户」——经 `signals` 映射单点携证据发射，ADR-0044 / issue #331）。
+//!   任一写入成功后由调用方 emit，前端 `useReferenceStore` 订阅后自动重拉参考表。
+//!   发射判定已迁往映射单点：IPC 参考写命令、物品写命令（独立域复用同名事件，
+//!   ADR-0014）与余额调整（黑洞即建证据）均经 `signals::emit_for` 判定后发射；
+//!   HTTP 端点（账号/分类 create/delete）直接经 [`emit_ledger_changed`] 发射
+//!   （判定归拢待 #334）。交易写「即建商户」经映射单点携证据发射（ADR-0044 / #331）。
+//!   旧字符串白名单（[`REFERENCE_WRITE_COMMANDS`] / [`is_reference_write`] /
+//!   [`emit_reference_changed`]）IPC 生产调用点已清零，按 #330 约定暂留，
+//!   待 #335 统一收缩删除。
 //! - `ledger:backups-changed`（issue #129）：自动备份完成 / 受管备份清理成功后 emit，
 //!   与前者平行、同样无 payload；前端设置页订阅后自动刷新备份列表与自动备份状态。
 //!   深路径执行点拿不到 `AppHandle`，经 [`init_event_app`] 注入的镜像句柄发射。
@@ -15,7 +20,8 @@
 //!   增量 `sync_holding_prices` 成功且实际写入、全量 `sync_instruments` 结束且有落库
 //!   （含用户中断，中断保留已落库价格）；与前者平行、同样无 payload，前端价格消费方
 //!   各自订阅后重拉自身数据。「是否 emit」的判定收敛在同步命令侧
-//!   （`commands::sync::should_emit_prices_changed`），本模块只承载事件名与发射入口。
+//!   （`commands::sync::should_emit_prices_changed`），本模块只承载事件名与发射入口
+//!   （判定归拢映射单点待 #333）。
 
 use std::sync::OnceLock;
 
@@ -72,7 +78,8 @@ pub fn emit_prices_changed(app: &AppHandle) {
 }
 
 /// 参考写入 IPC 命令清单：命中即改动参考表，成功后应 emit `ledger:changed`。
-/// 新增参考写入命令时同步扩充本清单，并由 [`is_reference_write`] 单测锁定。
+/// 旧机制遗留（生产调用点已清零，见下），新增写命令不再扩充本清单——
+/// 改在 `signals::WriteOp` 声明身份并入映射（ADR-0044）；本清单仅由既有单测锁定。
 const REFERENCE_WRITE_COMMANDS: &[&str] = &[
     "create_account",
     "update_account",
@@ -87,6 +94,9 @@ const REFERENCE_WRITE_COMMANDS: &[&str] = &[
 ];
 
 /// 薄胶判定：该 IPC 命令是否为参考写入（决定写入成功后是否发失效信号）。
+///
+/// **旧机制，生产调用点已清零**（#332 起 IPC 壳改走 `signals::signals_for` 映射
+/// 单点，ADR-0044）；按 #330 约定暂留，待 #335 统一收缩删除，勿在新代码中调用。
 pub fn is_reference_write(command: &str) -> bool {
     REFERENCE_WRITE_COMMANDS.contains(&command)
 }
@@ -105,9 +115,10 @@ pub fn emit_ledger_changed_if_present(app: &Option<AppHandle>) {
 }
 
 /// 参考写入 IPC 命令成功后统一入口：以命令名为证据走 [`is_reference_write`] 判定，
-/// 命中才发射。判定清单集中在本模块（新增参考写入命令须同步进入
-/// [`REFERENCE_WRITE_COMMANDS`]，由单测锁定映射）；交易类命令误接入此处时会被
-/// 判定拦下（不 emit）。
+/// 命中才发射。
+///
+/// **旧机制，生产调用点已清零**（#332 起 IPC 壳改走 `signals::emit_for` 映射单点，
+/// ADR-0044）；按 #330 约定暂留，待 #335 统一收缩删除，勿在新代码中调用。
 pub fn emit_reference_changed(app: &AppHandle, command: &str) {
     if is_reference_write(command) {
         emit_ledger_changed(app);
