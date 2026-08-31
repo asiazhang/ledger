@@ -14,7 +14,10 @@ import {
   NSpin,
   NTag,
   NText,
+  NTooltip,
 } from 'naive-ui'
+import { InformationCircleOutline } from '@vicons/ionicons5'
+import { NIcon } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import { api } from '@/api'
 import { useDashboardOverview } from '@/composables/useDashboardOverview'
@@ -192,6 +195,26 @@ onMounted(async () => {
     <!-- 财务自由度卡（issue #344）：投资概览之后、物品使用成本之前——
          先看资产再看「资产够不够躺」，最后才看单品与预算执行 -->
     <NCard title="财务自由度" size="small" data-testid="financial-freedom-card">
+      <template #header-extra>
+        <!-- 计算口径悬停提示：3% 乘数使百分比无法从已展示的分子/分母直接推出，
+             不解释会被当成算错（ADR-0048）。悬停即现、移开即关、不拦交互，
+             不在 ADR-0035 弹层注册表枚举内，用裸 NTooltip -->
+        <NTooltip placement="top" :style="{ maxWidth: '320px' }">
+          <template #trigger>
+            <NButton text aria-label="计算口径说明" data-testid="financial-freedom-info">
+              <NIcon :size="14" color="var(--n-title-text-color, #999)">
+                <InformationCircleOutline />
+              </NIcon>
+            </NButton>
+          </template>
+          <NSpace vertical :size="2">
+            <span>自由度 = 可投资资产 × 3% ÷ 年度预算总额</span>
+            <span>分子 = 持仓市值 + 投资账户余额（折算为本位币，生活现金与负债不计入）</span>
+            <span>分母 = 月度预算 × 12 + 年度预算（按计划节奏年化，不回退实际支出）</span>
+            <span>3% 为保守安全提取率，≥100% 即财务自由</span>
+          </NSpace>
+        </NTooltip>
+      </template>
       <NSpin :show="freedomLoading">
         <!-- 零分母（未设预算）：占位引导跳预算页，口径不回退实际支出；
              按钮放 #extra——NEmpty 的 default slot 会顶掉 description -->
