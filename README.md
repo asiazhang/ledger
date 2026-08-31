@@ -75,7 +75,7 @@ pnpm run tauri build
 
 构建产物输出到 `src-tauri/target/release/bundle/`。
 
-> 需要本机装有 Rust 工具链与 Node.js。更多技术细节、开发命令与架构约定，请见 [AGENTS.md](AGENTS.md) 与 [docs/](docs/) 开发文档。
+> 需要本机装有 Rust 工具链、Node.js 与 pnpm（版本由 `package.json` 的 `packageManager` 字段锁定，可用 corepack 启用对应版本）。更多技术细节、开发命令与架构约定，请见 [AGENTS.md](AGENTS.md) 与 [docs/](docs/) 开发文档。
 
 ## 文档
 
