@@ -1,0 +1,6 @@
+# 仓库根即 workspace root。
+# allowBuilds：显式放行唯一带安装脚本的依赖——fsevents（macOS 可选依赖，Vite 文件监听所需）。
+# pnpm 默认拒绝执行未放行的依赖构建脚本（strictDepBuilds，未放行时 ERR_PNPM_IGNORED_BUILDS）。
+# 此配置使 macOS 上 dev 文件监听不失效；Linux/CI 不安装 fsevents，不受影响。
+allowBuilds:
+  fsevents: true
