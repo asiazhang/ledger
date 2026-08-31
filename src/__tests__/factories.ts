@@ -1,7 +1,9 @@
-import type { Account, Currency, DashboardOverview, Holding, Instrument } from '@/types'
+import { vi } from 'vitest'
+import { registerToastSink, type ToastSink } from '@/composables/useLoadable'
+import type { Account, Currency, DashboardOverview, Holding, Instrument, ItemDailyTotal } from '@/types'
 
 /**
- * 投资域相关组件/composable 测试的共享数据工厂（issue #110 审查：消除测试文件间重复）。
+ * 组件/composable 测试的共享数据工厂与测试辅助（issue #110 审查：消除测试文件间重复）。
  * 各测试文件经 baseInvoke 辅助把这些对象接到对应 invoke 命令上。
  */
 
@@ -96,6 +98,21 @@ export function makeOverview(partial: Partial<DashboardOverview> = {}): Dashboar
     holdings_market_value_cents: 23456,
     ...partial,
   }
+}
+
+/** item_daily_total 返回值工厂（issue #122）：默认人民币本位币、每天成本 123.45 元、3 件在用 */
+export function makeItemDailyTotal(partial: Partial<ItemDailyTotal> = {}): ItemDailyTotal {
+  return { native_currency: 'CNY', per_day_cents: 12345, item_count: 3, ...partial }
+}
+
+/** 假 toast sink：记录 error toast 调用（Loadable 默认策略经 sink 弹出，断言只看 sink 面） */
+export function makeFakeSink(): ToastSink & { error: ReturnType<typeof vi.fn> } {
+  return { error: vi.fn() }
+}
+
+/** 每用例复位 sink 为 no-op，模拟「注册前」默认态，防模块级 sink 状态串扰 */
+export function resetToastSink(): void {
+  registerToastSink({ error: () => {} })
 }
 
 /**

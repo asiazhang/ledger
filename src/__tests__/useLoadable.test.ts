@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { useLoadable, registerToastSink, type ToastSink } from '@/composables/useLoadable'
+import { useLoadable, registerToastSink } from '@/composables/useLoadable'
+import { makeFakeSink, resetToastSink } from './factories'
 
 /** 手动完结的延迟 Promise：控制任务完结时机以构造竞态 */
 function deferred<T>() {
@@ -12,14 +13,9 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-/** 假 sink：记录 error toast 调用（策略与 sink 正交，断言只看 sink 面） */
-function makeFakeSink(): ToastSink & { error: ReturnType<typeof vi.fn> } {
-  return { error: vi.fn() }
-}
-
 beforeEach(() => {
   // 每用例复位为 no-op，模拟「注册前」默认态，防模块级 sink 状态串扰
-  registerToastSink({ error: () => {} })
+  resetToastSink()
 })
 
 describe('useLoadable 异步任务模块（ADR-0040 / issue #320）', () => {
