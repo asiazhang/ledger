@@ -35,12 +35,14 @@ fn realized_pnl_summary_aggregates_single_sale() {
         &conn,
         make_buy_input("acc-pnl", "inst-pnl", 10.0, 1_000_000, 0),
     )
-    .unwrap();
+    .unwrap()
+    .id;
     let _sell = create_transaction_internal(
         &conn,
         make_sell_input("acc-pnl", "inst-pnl", 5.0, 1_200_000, 200),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
 

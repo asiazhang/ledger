@@ -828,14 +828,25 @@ async fn list_transactions_handler(
 )]
 async fn batch_create_transactions_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
+    State(app): State<Option<AppHandle>>,
     Json(body): Json<TransactionBatchInput>,
 ) -> Result<Json<Vec<CreateTransactionResult>>, AppError> {
     // 连接层统一写入口（ADR-0032，issue #245）：批次事务由 run 自持，提交点置脏/
     // 到期检查单点；整批回滚不置脏由写入口闭包失败语义保证。
-    let results = crate::db::write(&conn, |conn| {
+    let outcome = crate::db::write(&conn, |conn| {
         crate::commands::batch::TransactionBatch::run(conn, body.transactions, body.dedup)
     })?;
-    Ok(Json(results))
+    // 信号在写事务提交成功后发射（映射单点判定，ADR-0044）：批内任一行即建商户才发
+    // 参考失效信号（修复 HTTP 导入即建商户后前端商户字典陈旧，issue #331）；
+    // `app: None`（集成测试）跳过发射分支，语义不变。
+    if let Some(app) = &app {
+        crate::signals::emit_for(
+            app,
+            crate::signals::WriteOp::BatchCreateTransactions,
+            outcome.evidence,
+        );
+    }
+    Ok(Json(outcome.results))
 }
 
 #[utoipa::path(
@@ -860,14 +871,20 @@ async fn batch_create_transactions_handler(
 )]
 async fn update_transaction_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
+    State(app): State<Option<AppHandle>>,
     Path(id): Path<String>,
     Json(input): Json<UpdateTransactionInput>,
 ) -> Result<Json<Transaction>, AppError> {
     // 连接层统一写入口（ADR-0032）：修改与读回同一写闭包，提交点置脏/检查单点。
-    let updated = crate::db::write(&conn, |conn| {
-        crate::commands::update_transaction_internal(conn, &id, input.into())?;
-        crate::commands::get_transaction_internal(conn, &id)
+    let (evidence, updated) = crate::db::write(&conn, |conn| {
+        let evidence = crate::commands::update_transaction_internal(conn, &id, input.into())?;
+        let updated = crate::commands::get_transaction_internal(conn, &id)?;
+        Ok((evidence, updated))
     })?;
+    // 仅即建商户发参考失效信号（ADR-0044，issue #331）；`app: None`（集成测试）跳过。
+    if let Some(app) = &app {
+        crate::signals::emit_for(app, crate::signals::WriteOp::UpdateTransaction, evidence);
+    }
     Ok(Json(updated))
 }
 

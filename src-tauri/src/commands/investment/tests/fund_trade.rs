@@ -105,7 +105,8 @@ fn fund_buy_amount_is_authoritative_and_price_derived() {
         &conn,
         make_fund_buy_input("acc-fund", "inst-fund", 987.6543, 100_000, 150),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let (amount_cents, quantity, price_cents, fee_cents) = trade_row(&conn, &buy_id);
     assert_eq!(
@@ -149,7 +150,8 @@ fn fund_lot_cost_anchors_to_authoritative_amount_and_pnl_closes_exactly() {
         &conn,
         make_fund_buy_input("acc-cost", "inst-cost", 10_000.0, 1_234_567, 0),
     )
-    .unwrap();
+    .unwrap()
+    .id;
     let cpu: i64 = conn
         .query_row(
             "SELECT cost_per_unit_cents FROM security_lots WHERE buy_transaction_id=?1",
@@ -169,7 +171,8 @@ fn fund_lot_cost_anchors_to_authoritative_amount_and_pnl_closes_exactly() {
         &conn,
         make_fund_sell_input("acc-cost", "inst-cost", 10_000.0, 1_300_000, 1_300),
     )
-    .unwrap();
+    .unwrap()
+    .id;
     let (sell_amount, pnl): (i64, i64) = conn
         .query_row(
             "SELECT t.amount_cents, sls.realized_pnl_cents FROM transactions t \
@@ -247,12 +250,14 @@ fn fund_sell_amount_is_authoritative_price_derived_and_fifo_pnl_exact() {
         &conn,
         make_fund_buy_input("acc-sell", "inst-sell", 500.0, 50_000, 0),
     )
-    .unwrap();
+    .unwrap()
+    .id;
     let sell_id = create_transaction_internal(
         &conn,
         make_fund_sell_input("acc-sell", "inst-sell", 500.0, 52_000, 52),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let (amount_cents, _, price_cents, fee_cents) = trade_row(&conn, &sell_id);
     assert_eq!(amount_cents, 52_000, "行金额 = 确认单整分金额（权威）");
@@ -312,12 +317,14 @@ fn fund_closed_position_realized_pnl_equals_sell_amounts_minus_buy_amounts() {
         &conn,
         make_fund_buy_input("acc-close", "inst-close", 987.6543, 100_000, 150),
     )
-    .unwrap();
+    .unwrap()
+    .id;
     let buy2 = create_transaction_internal(
         &conn,
         make_fund_buy_input("acc-close", "inst-close", 500.0, 50_000, 0),
     )
-    .unwrap();
+    .unwrap()
+    .id;
     // 错开批次 created_at 保证 FIFO 顺序明确（同日亦可，但显式化不依赖落库时序）。
     conn.execute(
         "UPDATE security_lots SET created_at='2026-01-10T00:00:00Z' WHERE buy_transaction_id=?1",
@@ -334,12 +341,14 @@ fn fund_closed_position_realized_pnl_equals_sell_amounts_minus_buy_amounts() {
         &conn,
         make_fund_sell_input("acc-close", "inst-close", 300.0, 31_500, 31),
     )
-    .unwrap();
+    .unwrap()
+    .id;
     let sell2 = create_transaction_internal(
         &conn,
         make_fund_sell_input("acc-close", "inst-close", 1187.6543, 125_000, 125),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let pnl1: i64 = conn
         .query_row(
@@ -412,7 +421,7 @@ fn stock_buy_keeps_price_authoritative_and_ignores_amount_field() {
 
     let mut input = make_buy_input("acc-stock", "inst-stock", 3.0, 12_345, 100);
     input.amount_cents = 999_999; // 非基金：金额字段不具权威语义，应被忽略
-    let id = create_transaction_internal(&conn, input).unwrap();
+    let id = create_transaction_internal(&conn, input).unwrap().id;
 
     let (amount_cents, _, price_cents, fee_cents) = trade_row(&conn, &id);
     assert_eq!(
@@ -435,7 +444,8 @@ fn fund_buy_edit_replaces_fields_and_reanchors_lot_cost() {
         &conn,
         make_fund_buy_input("acc-edit", "inst-edit", 500.0, 50_000, 0),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let mut edited = make_fund_buy_input("acc-edit", "inst-edit", 600.0, 66_000, 66);
     edited.date = "2026-01-12".into();
@@ -478,12 +488,14 @@ fn fund_sell_edit_rebuilds_matches_and_closed_invariant_still_holds() {
         &conn,
         make_fund_buy_input("acc-sell-edit", "inst-sell-edit", 500.0, 50_000, 0),
     )
-    .unwrap();
+    .unwrap()
+    .id;
     let sell_id = create_transaction_internal(
         &conn,
         make_fund_sell_input("acc-sell-edit", "inst-sell-edit", 500.0, 52_000, 52),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let edited = make_fund_sell_input("acc-sell-edit", "inst-sell-edit", 400.0, 41_000, 41);
     update_transaction_internal(&conn, &sell_id, edited).unwrap();

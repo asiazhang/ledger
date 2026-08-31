@@ -338,7 +338,8 @@ fn list_transactions_deterministic_order_by_id_when_same_timestamp() {
             &conn,
             make_input("acc-same", TransactionKind::Expense, i * 100, "2026-03-01"),
         )
-        .unwrap();
+        .unwrap()
+        .id;
         ids.push(id);
     }
     // 同一批导入：所有行 created_at 相同（每批一个时间戳）

@@ -121,7 +121,7 @@ fn create_txn_with_merchant(
     };
     let result = create_transaction_internal(&world_conn!(world), input);
     assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
-    world.last_transaction_id = Some(result.unwrap());
+    world.last_transaction_id = Some(result.unwrap().id);
     world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 

@@ -5,6 +5,7 @@ use rusqlite::{Connection, params};
 
 use crate::commands::batch::TransactionBatch;
 use crate::models::TransactionInput;
+use crate::signals::WriteEvidence;
 use crate::test_utils::{CapturedEvent, capture_events};
 use crate::transaction::amount::TransactionKind;
 use tracing::Level;
@@ -20,7 +21,9 @@ fn batch_create_marks_duplicates_and_keeps_rows() {
         make_input("acc-dedup", TransactionKind::Income, 1000, "2026-07-01"),
         make_input("acc-dedup", TransactionKind::Expense, 500, "2026-07-02"),
     ];
-    let first = TransactionBatch::run(&conn, inputs.clone(), true).unwrap();
+    let first = TransactionBatch::run(&conn, inputs.clone(), true)
+        .unwrap()
+        .results;
     assert_eq!(first.len(), 2);
     assert!(
         first
@@ -28,7 +31,7 @@ fn batch_create_marks_duplicates_and_keeps_rows() {
             .all(|r| r.success && !r.duplicate && r.id.is_some())
     );
 
-    let second = TransactionBatch::run(&conn, inputs, true).unwrap();
+    let second = TransactionBatch::run(&conn, inputs, true).unwrap().results;
     assert_eq!(second.len(), 2);
     assert!(
         second
@@ -58,7 +61,7 @@ fn batch_create_with_dedup_false_writes_duplicates() {
         "2026-07-01",
     )];
     TransactionBatch::run(&conn, inputs.clone(), true).unwrap();
-    let second = TransactionBatch::run(&conn, inputs, false).unwrap();
+    let second = TransactionBatch::run(&conn, inputs, false).unwrap().results;
     assert_eq!(second.len(), 1);
     assert!(second[0].success && !second[0].duplicate && second[0].id.is_some());
 
@@ -83,12 +86,14 @@ fn batch_create_idempotency_key_rerun_skips_and_returns_id() {
 
     let mut a = make_input("acc-key", TransactionKind::Income, 1000, "2026-01-01");
     a.idempotency_key = Some("file:1:1".into());
-    let first = TransactionBatch::run(&conn, vec![a.clone()], true).unwrap();
+    let first = TransactionBatch::run(&conn, vec![a.clone()], true)
+        .unwrap()
+        .results;
     assert_eq!(first.len(), 1);
     assert!(first[0].success && !first[0].duplicate, "首次导入应新写入");
     let id1 = first[0].id.clone().unwrap();
 
-    let second = TransactionBatch::run(&conn, vec![a], true).unwrap();
+    let second = TransactionBatch::run(&conn, vec![a], true).unwrap().results;
     assert_eq!(second.len(), 1);
     assert!(
         second[0].success && second[0].duplicate,
@@ -122,7 +127,7 @@ fn batch_create_idempotency_key_content_agnostic() {
     // 同一幂等键、本轮内容不同：仍应按同一条跳过（内容无关）。
     let mut b = make_input("acc-key", TransactionKind::Expense, 2000, "2026-02-01");
     b.idempotency_key = Some("file:1:1".into());
-    let second = TransactionBatch::run(&conn, vec![b], true).unwrap();
+    let second = TransactionBatch::run(&conn, vec![b], true).unwrap().results;
     assert!(
         second[0].success && second[0].duplicate,
         "同键不同内容仍应去重跳过"
@@ -147,7 +152,9 @@ fn batch_create_idempotency_key_different_keys_same_content_keeps_both() {
     a.idempotency_key = Some("file:1:1".into());
     let mut b = make_input("acc-key", TransactionKind::Income, 1000, "2026-01-01");
     b.idempotency_key = Some("file:2:1".into());
-    let r = TransactionBatch::run(&conn, vec![a, b], true).unwrap();
+    let r = TransactionBatch::run(&conn, vec![a, b], true)
+        .unwrap()
+        .results;
     assert_eq!(r.len(), 2);
     assert!(
         r.iter().all(|x| x.success && !x.duplicate),
@@ -287,7 +294,9 @@ fn batch_create_idempotency_key_buy_sell_different_instruments_kept() {
     let mut buy2 = make_buy_input("acc-inv-key", "inst-msft", 5.0, 20000, 300);
     buy2.idempotency_key = Some("file:1:2".into());
 
-    let r = TransactionBatch::run(&conn, vec![buy1, buy2], true).unwrap();
+    let r = TransactionBatch::run(&conn, vec![buy1, buy2], true)
+        .unwrap()
+        .results;
     assert_eq!(r.len(), 2);
     assert!(
         r.iter().all(|x| x.success && !x.duplicate),
@@ -335,7 +344,7 @@ fn batch_create_logs_summary_on_success() {
         make_input("acc-log-ok", TransactionKind::Expense, 500, "2026-07-02"),
     ];
     let events = capture_events(|| {
-        let r = TransactionBatch::run(&conn, inputs, true).unwrap();
+        let r = TransactionBatch::run(&conn, inputs, true).unwrap().results;
         assert_eq!(r.len(), 2);
     });
 
@@ -396,7 +405,7 @@ fn batch_create_logs_failed_count_with_invalid_row() {
         make_input("acc-log-part", TransactionKind::Income, 1000, "2026-07-02"),
     ];
     let events = capture_events(|| {
-        let r = TransactionBatch::run(&conn, inputs, false).unwrap();
+        let r = TransactionBatch::run(&conn, inputs, false).unwrap().results;
         assert_eq!(r.len(), 2);
         assert!(!r[0].success, "转账未指定目标账户应失败");
         assert!(!r[0].duplicate && r[0].id.is_none(), "失败行应无 id");
@@ -441,7 +450,7 @@ fn batch_create_zero_amount_row_isolated() {
         },
         make_input("acc-log-zero", TransactionKind::Income, 1000, "2026-07-02"),
     ];
-    let r = TransactionBatch::run(&conn, inputs, false).unwrap();
+    let r = TransactionBatch::run(&conn, inputs, false).unwrap().results;
     assert_eq!(r.len(), 2);
     assert!(!r[0].success, "零金额应校验失败");
     assert!(!r[0].duplicate && r[0].id.is_none(), "失败行应无 id");
@@ -463,4 +472,134 @@ fn batch_create_zero_amount_row_isolated() {
         )
         .unwrap();
     assert_eq!(count, 1, "仅有效行落库");
+}
+
+// ---------------------------------------------------------------------------
+// 批量聚合「本批是否任一即建商户」（issue #331 / ADR-0044 决策 4）：run 随逐条结果
+// 一并返回聚合证据，壳层据此经信号映射单点判定发射（任一即建 → `ledger:changed`）。
+// ---------------------------------------------------------------------------
+
+/// 在用商户行数。
+fn active_merchant_count(conn: &Connection) -> i64 {
+    conn.query_row(
+        "SELECT COUNT(*) FROM merchants WHERE is_deleted=0",
+        [],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+/// 一行携带商户名的支出。
+fn expense_named(account: &str, date: &str, name: &str) -> TransactionInput {
+    TransactionInput {
+        merchant_name: Some(name.into()),
+        ..make_input(account, TransactionKind::Expense, 1000, date)
+    }
+}
+
+/// 任一行新名字即建 → 聚合证据真；全复用 / 无商户 / 去重重放 → 假。
+#[test]
+fn run_aggregates_merchant_created_evidence() {
+    let conn = setup();
+    insert_account(&conn, "acc-agg", "现金", "cash", "CNY");
+
+    // 全无商户：假。
+    let outcome = TransactionBatch::run(
+        &conn,
+        vec![
+            make_input("acc-agg", TransactionKind::Expense, 100, "2026-07-01"),
+            make_input("acc-agg", TransactionKind::Income, 200, "2026-07-02"),
+        ],
+        true,
+    )
+    .unwrap();
+    assert_eq!(outcome.evidence, WriteEvidence::MerchantCreated(false));
+
+    // 混批：一行新名字 + 一行不带商户 → 聚合真（任一即建即真）。
+    let outcome = TransactionBatch::run(
+        &conn,
+        vec![
+            expense_named("acc-agg", "2026-07-03", "盒马"),
+            make_input("acc-agg", TransactionKind::Expense, 300, "2026-07-04"),
+        ],
+        true,
+    )
+    .unwrap();
+    assert_eq!(
+        outcome.evidence,
+        WriteEvidence::MerchantCreated(true),
+        "任一行即建聚合即为真"
+    );
+    assert_eq!(active_merchant_count(&conn), 1);
+}
+
+/// 全部行命中复用（名字命中 / 直接带商户 id）→ 聚合证据假。
+#[test]
+fn run_with_reused_merchants_aggregates_false() {
+    let conn = setup();
+    insert_account(&conn, "acc-agg", "现金", "cash", "CNY");
+    // 预置既有商户「京东」，并先落一行建立 id 复用目标。
+    conn.execute(
+        "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES ('mer-jd','京东','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+        [],
+    )
+    .unwrap();
+
+    let outcome = TransactionBatch::run(
+        &conn,
+        vec![
+            expense_named("acc-agg", "2026-07-01", "京东"),
+            TransactionInput {
+                merchant_id: Some("mer-jd".into()),
+                ..make_input("acc-agg", TransactionKind::Expense, 500, "2026-07-02")
+            },
+        ],
+        true,
+    )
+    .unwrap();
+    assert_eq!(outcome.evidence, WriteEvidence::MerchantCreated(false));
+    assert_eq!(active_merchant_count(&conn), 1, "复用不新建");
+}
+
+/// 幂等重放：首跑即建商户，重跑整批命中去重 → 不产生碎商户、聚合证据假。
+#[test]
+fn run_dedup_replay_carries_no_merchant_evidence() {
+    let conn = setup();
+    insert_account(&conn, "acc-agg", "现金", "cash", "CNY");
+    let mut input = expense_named("acc-agg", "2026-07-01", "盒马");
+    input.idempotency_key = Some("file:1".into());
+
+    let first = TransactionBatch::run(&conn, vec![input.clone()], true).unwrap();
+    assert_eq!(first.evidence, WriteEvidence::MerchantCreated(true));
+
+    let replay = TransactionBatch::run(&conn, vec![input], true).unwrap();
+    assert_eq!(replay.evidence, WriteEvidence::MerchantCreated(false));
+    assert_eq!(active_merchant_count(&conn), 1, "重放不产生碎商户");
+    assert!(replay.results[0].duplicate, "重放应命中去重");
+}
+
+/// Invalid 行（金额非法）即使携带新商户名也不即建、不携证据（碎商户防线随
+/// 两段式归一化保持不变）；同批有效行聚合不受污染。
+#[test]
+fn run_invalid_row_with_new_name_creates_no_merchant() {
+    let conn = setup();
+    insert_account(&conn, "acc-agg", "现金", "cash", "CNY");
+
+    let bad = TransactionInput {
+        amount_cents: 0,
+        ..expense_named("acc-agg", "2026-07-01", "不存在的新商户")
+    };
+    let outcome = TransactionBatch::run(
+        &conn,
+        vec![
+            bad,
+            make_input("acc-agg", TransactionKind::Expense, 300, "2026-07-02"),
+        ],
+        true,
+    )
+    .unwrap();
+    assert_eq!(outcome.evidence, WriteEvidence::MerchantCreated(false));
+    assert!(!outcome.results[0].success, "无效行应失败");
+    assert_eq!(active_merchant_count(&conn), 0, "失败行不残留碎商户");
 }

@@ -290,7 +290,8 @@ pub fn adjust_account_balance_internal(
                 fee_cents: None,
                 idempotency_key: None,
             },
-        )?;
+        )?
+        .id;
         Ok((tx_id, created))
     })();
     match res {

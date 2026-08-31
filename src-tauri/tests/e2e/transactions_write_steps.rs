@@ -57,7 +57,7 @@ fn create_txn(
         .db
         .write(|conn| create_transaction_internal(conn, input));
     assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
-    world.last_transaction_id = Some(result.unwrap());
+    world.last_transaction_id = Some(result.unwrap().id);
     world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
@@ -93,7 +93,7 @@ fn create_txn_with_note(
         .db
         .write(|conn| create_transaction_internal(conn, input));
     assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
-    world.last_transaction_id = Some(result.unwrap());
+    world.last_transaction_id = Some(result.unwrap().id);
     world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
@@ -358,7 +358,7 @@ fn create_transfer(
     };
     let result = create_transaction_internal(&world_conn!(world), input);
     assert!(result.is_ok(), "创建转账失败: {:?}", result.err());
-    world.last_transaction_id = Some(result.unwrap());
+    world.last_transaction_id = Some(result.unwrap().id);
     world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
@@ -396,7 +396,7 @@ fn create_refund(world: &mut LedgerWorld, amount: i64, date: String) {
     };
     let result = create_transaction_internal(&world_conn!(world), input);
     assert!(result.is_ok(), "创建退款失败: {:?}", result.err());
-    world.last_transaction_id = Some(result.unwrap());
+    world.last_transaction_id = Some(result.unwrap().id);
     world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 

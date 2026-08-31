@@ -130,7 +130,8 @@ fn batch_import_trades(world: &mut LedgerWorld, #[step] step: &Step) {
     let results = world
         .db
         .write(|conn| TransactionBatch::run(conn, inputs, true))
-        .expect("批量导入投资交易失败");
+        .expect("批量导入投资交易失败")
+        .results;
     assert_eq!(results.len(), count, "导入结果行数应与提交行数一致");
 
     // buy 行交易 id 按导入先后累积（「持仓批次按导入先后锚定顺序」步骤的输入）。

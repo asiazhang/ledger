@@ -23,15 +23,17 @@ fn create_transaction_internal_audit_fields_uniform_across_kinds() {
         &conn,
         make_input("acc-w", TransactionKind::Expense, 500, "2026-01-01"),
     )
-    .unwrap();
+    .unwrap()
+    .id;
     let income_id = create_transaction_internal(
         &conn,
         make_input("acc-w", TransactionKind::Income, 900, "2026-01-02"),
     )
-    .unwrap();
+    .unwrap()
+    .id;
     let mut transfer = make_input("acc-w", TransactionKind::Transfer, 300, "2026-01-03");
     transfer.to_account_id = Some("acc-w2".into());
-    let transfer_id = create_transaction_internal(&conn, transfer).unwrap();
+    let transfer_id = create_transaction_internal(&conn, transfer).unwrap().id;
     let refund_id = create_transaction_internal(
         &conn,
         TransactionInput {
@@ -42,14 +44,16 @@ fn create_transaction_internal_audit_fields_uniform_across_kinds() {
             ..make_input("acc-w", TransactionKind::Refund, 100, "2026-01-04")
         },
     )
-    .unwrap();
+    .unwrap()
+    .id;
     let buy_id =
         create_transaction_internal(&conn, make_buy_input("acc-inv-w", "inst-w", 2.0, 1000, 0))
-            .unwrap();
+            .unwrap()
+            .id;
     let mut sell = make_buy_input("acc-inv-w", "inst-w", 1.0, 1100, 0);
     sell.kind = TransactionKind::Sell;
     sell.date = "2026-01-11".into();
-    let sell_id = create_transaction_internal(&conn, sell).unwrap();
+    let sell_id = create_transaction_internal(&conn, sell).unwrap().id;
 
     for id in [
         expense_id,
@@ -97,7 +101,8 @@ fn update_transaction_internal_preserves_created_at_and_refreshes_audit() {
         &conn,
         make_input("acc-upd", TransactionKind::Expense, 500, "2026-01-01"),
     )
-    .unwrap();
+    .unwrap()
+    .id;
     let created_at: String = conn
         .query_row(
             "SELECT created_at FROM transactions WHERE id=?1",
@@ -142,7 +147,8 @@ fn create_transaction_internal_generic_converts_native_via_amount_seam() {
             ..make_input("acc-usd", TransactionKind::Expense, 10000, "2026-01-01")
         },
     )
-    .unwrap();
+    .unwrap()
+    .id;
     let (amount_native_cents, currency_code): (i64, String) = conn
         .query_row(
             "SELECT amount_native_cents, currency_code FROM transactions WHERE id=?1",

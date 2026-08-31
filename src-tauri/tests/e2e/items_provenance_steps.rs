@@ -84,8 +84,8 @@ fn create_expense_txn_with_currency(
         idempotency_key: None,
     };
     let result = create_transaction_internal(&world_conn!(world), input);
-    let id = result.unwrap_or_else(|e| panic!("创建支出交易应成功但失败: {e}"));
-    world.last_transaction_id = Some(id);
+    let write = result.unwrap_or_else(|e| panic!("创建支出交易应成功但失败: {e}"));
+    world.last_transaction_id = Some(write.id);
 }
 
 /// 记住最近创建的交易为关联购买交易（后续「关联该购买交易」步骤引用它）。

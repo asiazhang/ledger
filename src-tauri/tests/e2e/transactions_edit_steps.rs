@@ -175,8 +175,8 @@ fn insert_trade_for_edit(
         fee_cents: Some(0),
         idempotency_key: None,
     };
-    let id = create_transaction_internal(&world_conn!(world), input).expect("创建买卖交易失败");
-    world.last_transaction_id = Some(id);
+    let write = create_transaction_internal(&world_conn!(world), input).expect("创建买卖交易失败");
+    world.last_transaction_id = Some(write.id);
     world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 

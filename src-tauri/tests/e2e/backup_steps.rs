@@ -321,7 +321,7 @@ fn update_last_transaction_invalid_amount(world: &mut LedgerWorld) {
         .db
         .write(|conn| update_transaction_internal(conn, &id, input))
     {
-        Ok(()) => Some(String::from("预期失败但成功了")),
+        Ok(_) => Some(String::from("预期失败但成功了")),
         Err(e) => Some(e.to_string()),
     };
 }
@@ -365,7 +365,8 @@ fn batch_import_expenses_via_entry(
     let results = world
         .db
         .write(|conn| TransactionBatch::run(conn, inputs, true))
-        .expect("批量导入失败");
+        .expect("批量导入失败")
+        .results;
     assert!(
         results.iter().all(|r| r.success),
         "批量导入应整批成功: {results:?}"

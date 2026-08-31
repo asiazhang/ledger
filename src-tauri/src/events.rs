@@ -6,7 +6,8 @@
 //!   「是否为参考写入」的判定收敛在本模块：IPC 命令清单见 [`REFERENCE_WRITE_COMMANDS`]，
 //!   纯函数 [`is_reference_write`] 承载判定，命令层统一经 [`emit_reference_changed`] 走该
 //!   判定；HTTP 端点（账号/分类 create/delete）结构上即参考写入，直接经
-//!   [`emit_ledger_changed`] 发射。交易类写入不触发。
+//!   [`emit_ledger_changed`] 发射。交易类写入不在本清单（唯一的参考表变更例外——
+//!   交易写「即建商户」——经 `signals` 映射单点携证据发射，ADR-0044 / issue #331）。
 //! - `ledger:backups-changed`（issue #129）：自动备份完成 / 受管备份清理成功后 emit，
 //!   与前者平行、同样无 payload；前端设置页订阅后自动刷新备份列表与自动备份状态。
 //!   深路径执行点拿不到 `AppHandle`，经 [`init_event_app`] 注入的镜像句柄发射。
@@ -126,7 +127,8 @@ mod tests {
 
     #[test]
     fn non_reference_writes_are_rejected() {
-        // 交易类写入与只读命令不得误判为参考写入（交易写入本期不 emit）。
+        // 交易类写入与只读命令不得误判为参考写入（旧清单不含交易写；「即建商户」
+        // 例外走 signals 映射单点，不经本判定，ADR-0044 / issue #331）。
         for cmd in [
             "create_transaction",
             "create_transactions",

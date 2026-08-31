@@ -13,9 +13,12 @@
 //! （T1/issue #62 的 `dedup_identity`，幂等键优先 / 内容哈希兜底，ADR-0010 冻结契约
 //! 编码在 `DedupIdentity` 类型里而非散在 if 分支）随去重逻辑一并收进本模块。
 //!
-//! **对外契约**：`run` 返回 `Vec<CreateTransactionResult>`，与 HTTP/IPC 响应形状一致；
-//! 本重构只做内部重组，不改响应形状、不改事务/去重语义（原命令模块中的转发层已随
-//! 收缩批次（issue #67）删除，`run` 是批量写入的唯一入口）。
+//! **对外契约**：`run` 返回 [`BatchOutcome`]（逐条结果 + 聚合证据）；本重构只做内部重组，
+//! 不改逐条响应形状、不改事务/去重语义（原命令模块中的转发层已随
+//! 收缩批次（issue #67）删除，`run` 是批量写入的唯一入口）。聚合证据
+//! （「本批是否任一行即建商户」，ADR-0044 决策 4 / issue #331）随结果一并返回，
+//! 壳层据此判定发 `ledger:changed`；命中去重的行不进创建入口，幂等重放不产生碎商户、
+//! 不误携证据。
 //!
 //! **置脏归写入口（ADR-0032，issue #245）**：本模块对备份域零感知——调用方必须经
 //! 连接层统一写入口 `db::write` 调用 `run`（HTTP 批量导入与 IPC `create_transactions`
@@ -33,6 +36,18 @@ use sha2::{Digest, Sha256};
 use crate::commands::transactions::create_transaction_internal;
 use crate::error::{AppError, Result};
 use crate::models::{CreateTransactionResult, TransactionInput};
+use crate::signals::WriteEvidence;
+
+/// 批量写入结果：逐条创建结果（与 HTTP/IPC 响应形状一致）+ 聚合证据。
+/// `evidence` = 「本批任一实际落库的行即建了商户」（[`WriteEvidence::MerchantCreated`]）
+/// ——去重命中行不进创建入口不携证据；壳层据此经 `signals_for` 判定发参考失效信号。
+#[derive(Debug)]
+pub struct BatchOutcome {
+    /// 逐条创建结果（顺序与入参一致）。
+    pub results: Vec<CreateTransactionResult>,
+    /// 聚合证据：本批是否任一行即建商户。
+    pub evidence: WriteEvidence,
+}
 
 /// 批量写入交易的深度模块：向调用方暴露一个稳定入口 `run`，承载全部批量编排语义。
 #[derive(Debug, Clone, Copy, Default)]
@@ -50,11 +65,13 @@ impl TransactionBatch {
         conn: &Connection,
         inputs: Vec<TransactionInput>,
         dedup: bool,
-    ) -> Result<Vec<CreateTransactionResult>> {
+    ) -> Result<BatchOutcome> {
         let started = Instant::now();
         let total = inputs.len();
         conn.execute("BEGIN", [])?;
         let mut results = Vec::with_capacity(total);
+        // 聚合证据：任一实际落库的行即建商户即为真（ADR-0044 决策 4，issue #331）。
+        let mut any_merchant_created = false;
         // 失败条数：累计到批次汇总日志（成功路径=无效行数；回滚路径含触发回滚的那条）。
         let mut failed = 0usize;
         for input in inputs {
@@ -87,10 +104,12 @@ impl TransactionBatch {
                 compute_dedup_hash(&input)
             };
             match create_transaction_internal(conn, input) {
-                Ok(id) => {
+                Ok(write) => {
+                    // 聚合复用证据自身的形状判定（与映射单点同一份，不自写 matches!）。
+                    any_merchant_created |= write.evidence.merchant_created();
                     if let Err(e) = conn.execute(
                         "UPDATE transactions SET dedup_hash=?1, idempotency_key=?2 WHERE id=?3",
-                        rusqlite::params![dedup_hash, idempotency_key, id],
+                        rusqlite::params![dedup_hash, idempotency_key, write.id],
                     ) {
                         conn.execute("ROLLBACK", [])?;
                         failed += 1;
@@ -100,7 +119,7 @@ impl TransactionBatch {
                     results.push(CreateTransactionResult {
                         success: true,
                         duplicate: false,
-                        id: Some(id),
+                        id: Some(write.id),
                         error: None,
                     });
                 }
@@ -131,7 +150,10 @@ impl TransactionBatch {
         // 数据已提交，批次应有一条可观测的汇总行。置脏已随迁移收口写入口
         // （issue #245）：调用方的 db.write 闭包在此处返回 Ok 后于提交点触发。
         log_batch_summary(started, total, failed, true);
-        Ok(results)
+        Ok(BatchOutcome {
+            results,
+            evidence: WriteEvidence::MerchantCreated(any_merchant_created),
+        })
     }
 }
 
