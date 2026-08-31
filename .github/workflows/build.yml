@@ -33,6 +33,12 @@ jobs:
 
       - run: pnpm test
 
+      - name: 命令注册一致性检查
+        run: node scripts/check-commands.js
+
+      - name: 文档一致性检查
+        run: ./scripts/check-docs.sh
+
   backend:
     name: 后端检查（Rust 单测 + e2e）
     if: "!startsWith(github.ref, 'refs/tags/')"
