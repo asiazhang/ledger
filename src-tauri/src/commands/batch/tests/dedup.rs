@@ -134,7 +134,9 @@ fn dedup_identity_key_hit_returns_existing_id() {
     // 落库一笔带幂等键的交易。
     let mut a = make_input("acc-ident", TransactionKind::Income, 1000, "2026-01-01");
     a.idempotency_key = Some("file:1:1".into());
-    let created = TransactionBatch::run(&conn, vec![a.clone()], true).unwrap();
+    let created = TransactionBatch::run(&conn, vec![a.clone()], true)
+        .unwrap()
+        .results;
     let existing_id = created[0].id.clone().unwrap();
 
     // 同键但内容不同：内容无关，仍按幂等键命中并回传已有 id。
@@ -201,7 +203,9 @@ fn dedup_identity_key_takes_precedence_over_content_hash() {
     a.idempotency_key = Some("file:1:1".into());
     let mut b = make_input("acc-ident", TransactionKind::Income, 1000, "2026-01-01");
     b.idempotency_key = Some("file:2:1".into());
-    let r = TransactionBatch::run(&conn, vec![a.clone(), b], true).unwrap();
+    let r = TransactionBatch::run(&conn, vec![a.clone(), b], true)
+        .unwrap()
+        .results;
     let id_a = r[0].id.clone().unwrap();
 
     // 无键、内容与二者相同：内容哈希命中（回传 id:None，冻结契约）。
@@ -236,7 +240,9 @@ fn dedup_identity_ignores_soft_deleted_rows() {
     // 带键落库后软删除：键路径与哈希路径都不应命中。
     let mut a = make_input("acc-ident", TransactionKind::Income, 1000, "2026-01-01");
     a.idempotency_key = Some("file:1:1".into());
-    let created = TransactionBatch::run(&conn, vec![a.clone()], true).unwrap();
+    let created = TransactionBatch::run(&conn, vec![a.clone()], true)
+        .unwrap()
+        .results;
     let id = created[0].id.clone().unwrap();
     delete_transaction_internal(&conn, &id).unwrap();
 
@@ -262,7 +268,9 @@ fn dedup_ignores_soft_deleted_transactions() {
     insert_account(&conn, "acc-dedup", "现金", "cash", "CNY");
 
     let input = make_input("acc-dedup", TransactionKind::Income, 1000, "2026-07-01");
-    let first = TransactionBatch::run(&conn, vec![input.clone()], true).unwrap();
+    let first = TransactionBatch::run(&conn, vec![input.clone()], true)
+        .unwrap()
+        .results;
     let id = first[0].id.clone().unwrap();
 
     conn.execute(
@@ -270,7 +278,9 @@ fn dedup_ignores_soft_deleted_transactions() {
         params![id, now_iso(), device_id()],
     ).unwrap();
 
-    let second = TransactionBatch::run(&conn, vec![input], true).unwrap();
+    let second = TransactionBatch::run(&conn, vec![input], true)
+        .unwrap()
+        .results;
     assert!(second[0].success && !second[0].duplicate && second[0].id.is_some());
 
     let count: i64 = conn
@@ -290,12 +300,14 @@ fn batch_create_idempotency_key_soft_deleted_frees_slot() {
 
     let mut a = make_input("acc-key", TransactionKind::Income, 1000, "2026-01-01");
     a.idempotency_key = Some("file:1:1".into());
-    let first = TransactionBatch::run(&conn, vec![a.clone()], true).unwrap();
+    let first = TransactionBatch::run(&conn, vec![a.clone()], true)
+        .unwrap()
+        .results;
     let id = first[0].id.clone().unwrap();
     delete_transaction_internal(&conn, &id).unwrap();
 
     // 软删除后同键重跑：部分唯一索引只约束未删除交易，应重新写入。
-    let second = TransactionBatch::run(&conn, vec![a], true).unwrap();
+    let second = TransactionBatch::run(&conn, vec![a], true).unwrap().results;
     assert!(
         second[0].success && !second[0].duplicate && second[0].id.is_some(),
         "软删除后同键应重新写入"
@@ -317,12 +329,16 @@ fn delete_transaction_internal_frees_dedup_slot_for_reimport() {
     insert_account(&conn, "acc-reimport", "现金", "cash", "CNY");
 
     let input = make_input("acc-reimport", TransactionKind::Income, 1000, "2026-07-01");
-    let first = TransactionBatch::run(&conn, vec![input.clone()], true).unwrap();
+    let first = TransactionBatch::run(&conn, vec![input.clone()], true)
+        .unwrap()
+        .results;
     let id = first[0].id.clone().unwrap();
 
     delete_transaction_internal(&conn, &id).unwrap();
 
-    let second = TransactionBatch::run(&conn, vec![input], true).unwrap();
+    let second = TransactionBatch::run(&conn, vec![input], true)
+        .unwrap()
+        .results;
     assert!(
         second[0].success && !second[0].duplicate && second[0].id.is_some(),
         "删除后重跑应重新写入（duplicate=false）"
@@ -344,7 +360,9 @@ fn update_transaction_internal_preserves_key_and_rerun_dedup() {
     insert_account(&conn, "acc-key", "现金", "cash", "CNY");
     let mut a = make_input("acc-key", TransactionKind::Income, 1000, "2026-01-01");
     a.idempotency_key = Some("file:1:1".into());
-    let first = TransactionBatch::run(&conn, vec![a.clone()], true).unwrap();
+    let first = TransactionBatch::run(&conn, vec![a.clone()], true)
+        .unwrap()
+        .results;
     let id = first[0].id.clone().unwrap();
 
     // 编辑内容（金额/备注/日期），幂等键应保持不变。
@@ -364,7 +382,9 @@ fn update_transaction_internal_preserves_key_and_rerun_dedup() {
     // 编辑后重跑同批导入（带同键）：仍按同键去重、返回已有 id → 不产生重复。
     let mut rerun = make_input("acc-key", TransactionKind::Income, 3000, "2026-02-01");
     rerun.idempotency_key = Some("file:1:1".into());
-    let second = TransactionBatch::run(&conn, vec![rerun], true).unwrap();
+    let second = TransactionBatch::run(&conn, vec![rerun], true)
+        .unwrap()
+        .results;
     assert!(
         second[0].success && second[0].duplicate,
         "同键重跑应去重跳过"

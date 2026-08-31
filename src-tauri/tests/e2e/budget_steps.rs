@@ -87,9 +87,9 @@ fn insert_budget_row(
 /// 经行为层落一笔带分类的支出/退款类交易，返回交易 id。
 fn create_transaction(world: &mut LedgerWorld, input: TransactionInput) -> String {
     let result = create_transaction_internal(&world_conn!(world), input);
-    let id = result.unwrap_or_else(|e| panic!("创建交易失败: {e:?}"));
-    world.last_transaction_id = Some(id.clone());
-    id
+    let write = result.unwrap_or_else(|e| panic!("创建交易失败: {e:?}"));
+    world.last_transaction_id = Some(write.id.clone());
+    write.id
 }
 
 fn expense_input(

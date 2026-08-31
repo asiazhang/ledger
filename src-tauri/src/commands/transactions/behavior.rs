@@ -28,6 +28,12 @@
 //!
 //! 依赖方向：命令层（transactions → investment → 无反向）。行为层保证行写入与 lot/匹配
 //! 副作用同处一个事务（入口自持，或加入调用方外层事务）。
+//!
+//! **结果证据外传（ADR-0044 决策 4，issue #331）**：[`plan`] 在入参带 `merchant_name`
+//! 且未命中时即建商户（写 `merchants` 表，第四张参考表），「是否即建」作为
+//! [`WriteEvidence::MerchantCreated`] 随创建/修改入口的自然返回值外传——壳层据此经
+//! `signals_for` 判定发 `ledger:changed`（仅命中复用为零信号）；批量导入在批次层聚合
+//! 「任一行即建」。可变容器与行为层直接发信号（拿不到 `AppHandle`）均已否决。
 
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
@@ -36,6 +42,7 @@ use crate::commands::investment;
 use crate::db::{device_id, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::TransactionInput;
+use crate::signals::WriteEvidence;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::writer;
 
@@ -91,26 +98,45 @@ fn ensure_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Re
     }
 }
 
+/// 交易创建的终态与结果证据（ADR-0044 决策 4）：`id` 供调用方回传 / 回写去重身份，
+/// `evidence` 随写操作自然外传（非可变状态、不穿透 `db.write` 闭包）——壳层据此经
+/// `signals_for` 判定发射。证据恒为 [`WriteEvidence::MerchantCreated`]（交易域唯一的
+/// 条件信号），未涉商户的写（transfer/buy/sell 等）证据恒假、零信号。
+#[derive(Debug)]
+pub struct TransactionWrite {
+    /// 新交易 id。
+    pub id: String,
+    /// 本次写入证据：入参带 `merchant_name` 且未命中即建为真，仅命中复用为假。
+    pub evidence: WriteEvidence,
+}
+
 /// 创建一笔交易（IPC `create_transaction` / 批量导入批次循环 / 余额调整的交易写入，
 /// issue #228 / #310 / ADR-0033）。
 ///
 /// 行为层创建编排入口：`plan → insert_row → apply` 的顺序契约在此单点可达，
 /// 调用方只传连接与输入、处理报错。事务规则见 [`ensure_transaction`]。
+/// 返回值携带终态 id 与「是否即建商户」证据（ADR-0044 决策 4，issue #331）。
 ///
 /// 可见性说明：三个入口函数本体 `pub`（供 [`super`] 以 `*_transaction_internal`
 /// 名字公开再导出，模块本身私有故不额外扩大可见面）。
-pub fn create(conn: &Connection, input: TransactionInput) -> Result<String> {
+pub fn create(conn: &Connection, input: TransactionInput) -> Result<TransactionWrite> {
     ensure_transaction(conn, || create_within_transaction(conn, &input))
 }
 
 /// 创建协议本体：`plan → insert_row → apply`（无事务语义，由 [`ensure_transaction`] 包裹）。
-fn create_within_transaction(conn: &Connection, input: &TransactionInput) -> Result<String> {
-    let plan = plan(conn, input, None)?;
+fn create_within_transaction(
+    conn: &Connection,
+    input: &TransactionInput,
+) -> Result<TransactionWrite> {
+    let (plan, merchant_created) = plan(conn, input, None)?;
     let row = plan.normalized_row()?;
     let id = writer::insert_row(conn, &row)?;
     apply(conn, &id, &plan)?;
     // 搜索无索引（issue #196 全量扫描实现）：写入路径零额外工作，交易立即可搜。
-    Ok(id)
+    Ok(TransactionWrite {
+        id,
+        evidence: WriteEvidence::MerchantCreated(merchant_created),
+    })
 }
 
 /// 按 `id` 全字段替换一笔交易（IPC `update_transaction` / HTTP
@@ -124,13 +150,18 @@ fn create_within_transaction(conn: &Connection, input: &TransactionInput) -> Res
 /// 幂等键（`idempotency_key`）与内容哈希（`dedup_hash`）不作为
 /// 可编辑字段——修改不重算去重身份，故修改后重跑同批导入（带幂等键）仍按同键去重、不产生重复。
 /// 不存在或已软删除的 id 返回 [`AppError::NotFound`]。
-pub fn update(conn: &Connection, id: &str, input: TransactionInput) -> Result<()> {
+/// 返回「是否即建商户」证据（[`WriteEvidence::MerchantCreated`]，issue #331）。
+pub fn update(conn: &Connection, id: &str, input: TransactionInput) -> Result<WriteEvidence> {
     ensure_transaction(conn, || update_within_transaction(conn, id, &input))
 }
 
 /// 修改协议本体：`revert → plan → update_row → apply`
 /// （无事务语义，由 [`ensure_transaction`] 包裹）。
-fn update_within_transaction(conn: &Connection, id: &str, input: &TransactionInput) -> Result<()> {
+fn update_within_transaction(
+    conn: &Connection,
+    id: &str,
+    input: &TransactionInput,
+) -> Result<WriteEvidence> {
     // 读取旧交易 kind 与当前商户（商户用于「保持历史引用」判定：提交商户与原值
     // 相同则跳过在用校验，软删商户的历史交易仍可修改其他字段），不存在或已删除
     // 返回 NotFound。读取在事务内（入口已保证处于事务中）。
@@ -146,10 +177,11 @@ fn update_within_transaction(conn: &Connection, id: &str, input: &TransactionInp
     // 先按旧 kind 回退持仓/卖出关联副作用，再按新 kind 校验并应用（跨 kind 修改避免孤儿持仓）；
     // buy 守卫（已有部分卖出拒绝）措辞为修改入口单点定义的文案。
     investment::revert(conn, id, old_kind, PARTIAL_SOLD_CANNOT_UPDATE)?;
-    let plan = plan(conn, input, old_merchant_id.as_deref())?;
+    let (plan, merchant_created) = plan(conn, input, old_merchant_id.as_deref())?;
     let row = plan.normalized_row()?;
     writer::update_row(conn, id, &row)?;
-    apply(conn, id, &plan)
+    apply(conn, id, &plan)?;
+    Ok(WriteEvidence::MerchantCreated(merchant_created))
 }
 
 /// 删除交易（软删除 `is_deleted=1`；IPC `delete_transaction` / HTTP
@@ -210,11 +242,14 @@ fn delete_within_transaction(conn: &Connection, id: &str) -> Result<()> {
 /// [`investment::prepare`]（投资账户/数量/单价/可卖数量校验 + 折算）；
 /// `dividend` / `split` 已声明但未实现，显式「暂不支持」报错——取代此前
 /// [`writer::normalize`] 兜底的「仅处理通用交易类型」文案（唯一对外可观测变化）。
+/// 返回 `(计划, 是否即建商户)`：后者即 [`WriteEvidence::MerchantCreated`] 的载荷——
+/// 仅「入参带 `merchant_name` 且未命中、行内校验通过后落定即建」为真；命中复用、
+/// 直接带 `merchant_id`、refund 继承忽略、不涉商户的 kind 一律为假。
 fn plan(
     conn: &Connection,
     input: &TransactionInput,
     existing_merchant_id: Option<&str>,
-) -> Result<Plan> {
+) -> Result<(Plan, bool)> {
     let kind = input.kind;
     // 商户携带收口（issue #188 / ADR-0028 + #194 商户名）：expense / refund / income 可携带
     // 商户（merchant_id 或 merchant_name）；transfer / buy / sell / dividend / split 行为层
@@ -273,16 +308,24 @@ fn plan(
                     date: input.date.clone(),
                 },
             )?;
-            // 行内校验全部通过后才即建商户：未命中名字在此落定（失败行不产生碎商户）。
-            if let Some(name) = pending_name {
+            // 行内校验全部通过后才即建商户：未命中名字在此落定（失败行不产生碎商户）；
+            // 「即建」事实作为证据外传（ADR-0044 决策 4，壳层据此发参考失效信号）。
+            let merchant_created = if let Some(name) = pending_name {
                 norm.merchant_id = Some(crate::commands::merchants::create_merchant_by_name(
                     conn, &name,
                 )?);
-            }
-            Ok(Plan::Common(norm))
+                true
+            } else {
+                false
+            };
+            Ok((Plan::Common(norm), merchant_created))
         }
         TransactionKind::Buy | TransactionKind::Sell => {
-            Ok(Plan::Investment(investment::prepare(conn, kind, input)?))
+            // 投资 kind 不涉商户（行为层 kind 收口已拒绝携带），证据恒假。
+            Ok((
+                Plan::Investment(investment::prepare(conn, kind, input)?),
+                false,
+            ))
         }
         TransactionKind::Dividend | TransactionKind::Split => Err(AppError::Invalid(format!(
             "交易类型 {kind} 暂不支持（MVP 未实现）"

@@ -26,7 +26,8 @@ fn price_scale_invariant_unit_price_is_ten_thousandths_of_yuan() {
         &conn,
         make_buy_input("acc-fund", "inst-fund-abc", 3.0, 12345, 100),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let (amount_cents, price_cents): (i64, i64) = conn
         .query_row(
@@ -62,7 +63,8 @@ fn price_scale_invariant_unit_price_is_ten_thousandths_of_yuan() {
         &conn,
         make_sell_input("acc-fund", "inst-fund-abc", 3.0, 13000, 0),
     )
-    .unwrap();
+    .unwrap()
+    .id;
     let (sell_amount, realized_pnl): (i64, i64) = conn
         .query_row(
             "SELECT t.amount_cents, sls.realized_pnl_cents FROM transactions t \
@@ -88,7 +90,8 @@ fn price_scale_invariant_v_holdings_market_value() {
         &conn,
         make_buy_input("acc-scale", "inst-scale", 100.0, 1234, 0),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let now = crate::db::now_iso();
     conn.execute(
@@ -124,7 +127,7 @@ fn buy_transaction_creates_lot() {
     insert_instrument(&conn, "inst-test-nvda", "NVDA", "NVIDIA", "USD");
 
     let input = make_buy_input("acc-test-buy", "inst-test-nvda", 10.0, 1_000_000, 500);
-    let txn_id = create_transaction_internal(&conn, input).unwrap();
+    let txn_id = create_transaction_internal(&conn, input).unwrap().id;
 
     let (kind, amount_cents, currency_code, amount_native, category_id, refund_of_id): (
         String,
@@ -206,7 +209,7 @@ fn buy_native_cents_converted_via_amount_seam() {
     insert_instrument(&conn, "inst-test-conv", "NVDA", "NVIDIA", "USD");
 
     let input = make_buy_input("acc-test-conv", "inst-test-conv", 10.0, 1_000_000, 500);
-    let txn_id = create_transaction_internal(&conn, input).unwrap();
+    let txn_id = create_transaction_internal(&conn, input).unwrap().id;
 
     let (amount_cents, amount_native_cents): (i64, i64) = conn
         .query_row(
@@ -242,7 +245,8 @@ fn buy_update_native_cents_converted_via_amount_seam() {
             500,
         ),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let mut edited = make_buy_input("acc-test-conv-upd", "inst-test-conv-upd", 5.0, 1_200_000, 0);
     edited.date = "2026-02-01".into();
@@ -356,7 +360,8 @@ fn update_buy_to_missing_instrument_rejected_and_keeps_original() {
             0,
         ),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let edited = make_buy_input("acc-test-upd-miss", "inst-not-exist", 5.0, 1_200_000, 0);
     let err = update_transaction_internal(&conn, &txn_id, edited).unwrap_err();
@@ -400,12 +405,14 @@ fn sell_transaction_matches_multiple_lots_fifo() {
         &conn,
         make_buy_input("acc-test-sell", "inst-test-sell", 10.0, 1_000_000, 0),
     )
-    .unwrap();
+    .unwrap()
+    .id;
     let lot2_txn = create_transaction_internal(
         &conn,
         make_buy_input("acc-test-sell", "inst-test-sell", 5.0, 1_200_000, 0),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     conn.execute(
         "UPDATE security_lots SET created_at='2026-01-10T00:00:00Z' WHERE buy_transaction_id=?1",
@@ -422,7 +429,8 @@ fn sell_transaction_matches_multiple_lots_fifo() {
         &conn,
         make_sell_input("acc-test-sell", "inst-test-sell", 12.0, 1_500_000, 600),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let (kind, amount_cents): (TransactionKind, i64) = conn
         .query_row(
@@ -505,12 +513,14 @@ fn sell_transaction_pnl_deducts_fee() {
         &conn,
         make_buy_input("acc-test-pnl", "inst-test-pnl", 10.0, 1_000_000, 0),
     )
-    .unwrap();
+    .unwrap()
+    .id;
     let sell_txn = create_transaction_internal(
         &conn,
         make_sell_input("acc-test-pnl", "inst-test-pnl", 5.0, 1_200_000, 200),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let rem: f64 = conn
         .query_row(
@@ -554,7 +564,8 @@ fn get_transaction_trade_returns_buy_detail_with_instrument_display() {
         &conn,
         make_buy_input("acc-inv", "inst-t", 100.0, 150_000, 500),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let trade = trade::get_transaction_trade(&conn, &id).unwrap();
     assert_eq!(trade.instrument_id, "inst-t");
@@ -595,7 +606,8 @@ fn get_transaction_trade_rejects_missing_or_non_trade_transaction() {
             idempotency_key: None,
         },
     )
-    .unwrap();
+    .unwrap()
+    .id;
     let err = trade::get_transaction_trade(&conn, &expense_id).unwrap_err();
     assert!(err.to_string().contains("无买卖明细"), "实际: {err}");
     // 不存在的 id 同样 NotFound

@@ -203,8 +203,8 @@ impl WriteEvidence {
         matches!(self, WriteEvidence::BlackHoleCreated(true))
     }
 
-    /// 商户即建证据为真。
-    fn merchant_created(&self) -> bool {
+    /// 商户即建证据为真（映射判定与批量聚合共享这一份形状判定）。
+    pub(crate) fn merchant_created(&self) -> bool {
         matches!(self, WriteEvidence::MerchantCreated(true))
     }
 }
