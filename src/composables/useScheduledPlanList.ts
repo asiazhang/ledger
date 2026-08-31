@@ -96,20 +96,27 @@ export interface ScheduledPlanStatusOption {
 }
 
 /**
- * 按形态的状态过滤选项集（能力有无）：定时转账支持「已完成」（一次性转账执行后
- * completed，issue 历史），订阅/分期暂无——维持各页签现状，不在此越权补齐。
+ * 按形态的状态过滤选项集（能力有无）：定时转账与分期支持「已完成」（转账为一次性
+ * 执行后 completed，issue 历史；分期的「已完成」过滤为 #309 显式可见变化之二，
+ * 迁移步 3 落地——此前完成的分期计划从清单消失且无入口可见）；订阅暂无——维持
+ * 订阅页签现状，不在此越权补齐。
  * 标签经全仓单源的 scheduledStatusLabel 生成，不另造第二处映射（ADR-0041 决策 4）。
+ * 键集以共享常量表达能力有无：转账/分期同含「已完成」，订阅不含——同集共用同一
+ * 常量，避免复制漂移（与 #309 所治的「修一处漏一处」同源）。
  */
+const WITH_COMPLETED: readonly ScheduledStatus[] = ['active', 'paused', 'cancelled', 'completed']
+const WITHOUT_COMPLETED: readonly ScheduledStatus[] = ['active', 'paused', 'cancelled']
+
 const STATUS_FILTER_OPTIONS: Record<ScheduledKind, ReadonlyArray<ScheduledPlanStatusOption>> = {
-  scheduled_transfer: (['active', 'paused', 'cancelled', 'completed'] as const).map((key) => ({
+  scheduled_transfer: WITH_COMPLETED.map((key) => ({
     key,
     label: scheduledStatusLabel(key),
   })),
-  subscription: (['active', 'paused', 'cancelled'] as const).map((key) => ({
+  subscription: WITHOUT_COMPLETED.map((key) => ({
     key,
     label: scheduledStatusLabel(key),
   })),
-  installment: (['active', 'paused', 'cancelled'] as const).map((key) => ({
+  installment: WITH_COMPLETED.map((key) => ({
     key,
     label: scheduledStatusLabel(key),
   })),
