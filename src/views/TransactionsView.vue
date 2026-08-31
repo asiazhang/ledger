@@ -55,10 +55,20 @@ const loading = ref(false)
 
 // 过滤状态机（ADR-0030）：「用户意图进、列表状态出」。filters / page / pageSize / 重拉版本号
 // 归 TransactionFilter 模块所有；手动筛选变更走 setFilter、清除筛选走 resetFilters、
-// 记一笔/退款回填与页大小切换走 refresh（重拉 + 翻回第一页）——
-// 「翻页归零 + 刷新」全仓仅模块统一出口一处，视图不再持有翻页归零样板与首刷防双刷标志。
-const { filters, page, pageSize, refreshVersion, setFilter, resetFilters, refresh, syncUrlQuery } =
-  useTransactionFilter()
+// 记一笔/退款回填与页大小切换走 refresh（重拉 + 翻回第一页）、删除成功走 afterRowDelete
+// （页码回退入口，ADR-0045）——「翻页归零 + 刷新」全仓仅模块统一出口一处，视图不再持有
+// 翻页归零样板与首刷防双刷标志，也不直写页码回退。
+const {
+  filters,
+  page,
+  pageSize,
+  refreshVersion,
+  setFilter,
+  resetFilters,
+  refresh,
+  afterRowDelete,
+  syncUrlQuery,
+} = useTransactionFilter()
 
 /** 是否有任一激活的过滤条件（控制清除按钮可用性与空态文案）。 */
 const filtersActive = computed(() => Object.values(filters).some((v) => v !== null))
@@ -185,12 +195,9 @@ async function remove(id: string) {
   try {
     await api.deleteTransaction(id)
     message.success('已删除')
-    // 删除当前页最后一条 → 回退一页，避免出现空页（调用方直写页码后自行重拉，
-    // 「翻页归零」只存在于模块出口，此处是当前页码内的导航）
-    if (data.value.length === 1 && page.value > 1) {
-      page.value -= 1
-    }
-    await load()
+    // 删除成功 → 页码回退入口（ADR-0045）：声明本页删后剩 N 条，回退与重拉由模块内化，
+    // 视图不再直写页码、不再自行发起请求（删前本页 1 条 ⇔ 删后超页，ADR-0008）
+    afterRowDelete(data.value.length - 1)
   } catch (e) {
     message.error(`删除失败: ${errorMessage(e)}`)
   }

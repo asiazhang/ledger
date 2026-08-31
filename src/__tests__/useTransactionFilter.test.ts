@@ -274,6 +274,45 @@ describe('useTransactionFilter 分页所有权', () => {
   })
 })
 
+// —— 页码回退入口（ADR-0045，删除路径）：声明「删除当前页一行后本页剩 N 条」——
+// N 为 0 且非第一页时减一页，然后一律版本 bump；不走 refresh 的「翻回第一页」语义。
+
+describe('useTransactionFilter 页码回退入口（删除路径）', () => {
+  it('本页删后剩 0 条且非第一页：回退一页 + 一次重拉（请求以回退后页码与既有筛选发起）', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.setFilter({ involvingAccountId: 'acc-1' })
+    await flushPromises()
+    tf.page.value = 3
+    tf.afterRowDelete(0)
+    await flushPromises()
+    expect(tf.page.value).toBe(2)
+    expect(requests).toHaveLength(2) // setFilter 一次 + 回退入口一次
+    expect(lastRequest()).toEqual({ page: 2, page_size: 20, involving_account_id: 'acc-1' })
+  })
+
+  it('本页删后剩 ≥1 条：页码不变 + 一次重拉（不回退、也不翻回第一页）', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.page.value = 3
+    tf.afterRowDelete(19)
+    await flushPromises()
+    expect(tf.page.value).toBe(3)
+    expect(requests).toHaveLength(1)
+    expect(lastRequest()).toEqual({ page: 3, page_size: 20 })
+  })
+
+  it('第一页删除（page=1 且剩 0 条）：页码保持 1 + 一次重拉', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.afterRowDelete(0)
+    await flushPromises()
+    expect(tf.page.value).toBe(1)
+    expect(requests).toHaveLength(1)
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20 })
+  })
+})
+
 describe('useTransactionFilter 工厂形态', () => {
   it('每次调用返回独立实例：状态与版本号互不串扰', async () => {
     const { tf: tf1 } = mountHarness()
