@@ -1,3 +1,10 @@
+/**
+ * 订阅清单渲染冒烟（ADR-0041 迁移步 2 收缩）：清单加载/按形态过滤/状态过滤/
+ * 详情扩展时序用例已由 ScheduledPlanList 模块接口测试承接
+ * （useScheduledPlanList.test.ts，刷新版本号镜像法）；本文件只验适配器的
+ * 列渲染接线（含 expandDetail 接线：下期扣款日期/占位/加载失败三态与商户列）。
+ * 迁移与删除记录见对应提交信息。
+ */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import {
@@ -12,8 +19,8 @@ import {
 
 beforeEach(setup)
 
-describe('SubscriptionsPane 订阅清单（issue #159）', () => {
-  it('默认只显示进行中（active）的订阅', async () => {
+describe('SubscriptionsPane 订阅清单渲染冒烟（编排用例见 useScheduledPlanList.test.ts）', () => {
+  it('默认只显示进行中（active）的订阅（默认过滤归模块，此处验渲染）', async () => {
     setMockPlans([
       makePlan({ id: 'a1', note: '进行中订阅' }),
       makePlan({ id: 'p1', note: '已暂停订阅', status: 'paused' }),
@@ -43,7 +50,7 @@ describe('SubscriptionsPane 订阅清单（issue #159）', () => {
     expect(wrapper.text()).not.toContain('已暂停订阅')
   })
 
-  it('只展示订阅计划，分期 / 定时转账不出现', async () => {
+  it('只展示订阅计划，分期 / 定时转账不出现（按形态过滤归模块，此处验渲染）', async () => {
     const plans = [
       makePlan({ id: 'a1', note: '视频会员' }),
       makePlan({ id: 'i1', note: '某分期', kind: 'installment' }),
@@ -57,7 +64,7 @@ describe('SubscriptionsPane 订阅清单（issue #159）', () => {
     expect(wrapper.text()).not.toContain('某定时转账')
   })
 
-  it('每行显示下期扣款日与金额（取最早 pending 期次）', async () => {
+  it('每行显示下期扣款日与金额（expandDetail 接线：取最早 pending 期次，选取逻辑归模块）', async () => {
     const plan = makePlan({ id: 'a1', amount_cents: 1500 })
     setMockPlans([plan])
     mockDetails.set(
