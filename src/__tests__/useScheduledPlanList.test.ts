@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { defineComponent, watch } from 'vue'
+import { defineComponent, watch, type PropType } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { invoke } from '@tauri-apps/api/core'
 import {
@@ -11,6 +11,7 @@ import {
   type UseScheduledPlanListReturn,
 } from '@/composables/useScheduledPlanList'
 import type {
+  ScheduledKind,
   ScheduledTransactionDetail,
   ScheduledTransactionOccurrence,
   ScheduledTransactionWithExt,
@@ -162,11 +163,14 @@ let harness: {
 } | null = null
 
 const Harness = defineComponent({
-  setup() {
+  props: {
+    kind: { type: String as PropType<ScheduledKind>, default: 'scheduled_transfer' },
+  },
+  setup(props) {
     const detailOpened: string[] = []
     const counters = { statusChanged: 0 }
     const list = useScheduledPlanList<TransferExt>({
-      kind: 'scheduled_transfer',
+      kind: props.kind,
       expandDetail: (_plan, detail) => ({
         next: detail ? earliestPendingOccurrence(detail) : null,
       }),
@@ -188,8 +192,8 @@ const Harness = defineComponent({
   },
 })
 
-function mountHarness() {
-  mount(Harness)
+function mountHarness(kind: ScheduledKind = 'scheduled_transfer') {
+  mount(Harness, { props: { kind } })
   return harness!
 }
 
@@ -225,6 +229,15 @@ describe('useScheduledPlanList 初始状态', () => {
       { key: 'paused', label: '已暂停' },
       { key: 'cancelled', label: '已取消' },
       { key: 'completed', label: '已完成' },
+    ])
+  })
+
+  it('状态过滤选项集按形态：订阅无「已完成」（迁移步 2：本页签过滤项零变化）', () => {
+    const { list } = mountHarness('subscription')
+    expect(list.statusFilterOptions).toEqual([
+      { key: 'active', label: '进行中' },
+      { key: 'paused', label: '已暂停' },
+      { key: 'cancelled', label: '已取消' },
     ])
   })
 })

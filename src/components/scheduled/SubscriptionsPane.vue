@@ -20,20 +20,31 @@ import AppSelect from '@/components/AppSelect.vue'
 import AppTreeSelect from '@/components/AppTreeSelect.vue'
 import { formatAmount } from '@/types'
 import { yuanToCents } from '@/utils/money'
-import type {
-  RecurrenceType,
-  ScheduledTransactionOccurrence,
-  ScheduledTransactionWithExt,
-  UpdateStatusInput,
-} from '@/types'
+import type { ScheduledTransactionOccurrence } from '@/types'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
+import {
+  earliestPendingOccurrence,
+  scheduledRecurrenceLabel,
+  SCHEDULED_RECURRENCE_OPTIONS,
+  useScheduledPlanList,
+  type ScheduledPlanRow,
+} from '@/composables/useScheduledPlanList'
 import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import SubscriptionSpendPanel from '@/components/scheduled/SubscriptionSpendPanel.vue'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
 import { scheduledStatusLabel } from '@/utils/scheduled'
+
+/**
+ * 订阅页签 = ScheduledPlanList 计划清单模块（ADR-0041 迁移步 2）的薄适配器：
+ * 清单加载/刷新、状态过滤、Plan Lifecycle 操作、行操作描述符与周期标签全在模块，
+ * 生命周期变更（暂停/恢复/取消）后经 onStatusChanged 回调钩子刷新订阅花费面板；
+ * 本组件只留订阅形态真差异——商户挂靠、编辑弹窗（仅金额以外字段可编辑，
+ * ADR-0023 决策三，商户解析走表单接缝编辑分支）、花费面板与列/单元格渲染。
+ * 本页签无 #309 显式可见变化项：列、操作、表单、提示、排序零变化。
+ */
 
 const reference = useReferenceStore()
 const message = useMessage()
@@ -66,11 +77,38 @@ const {
   merchantRef: editMerchantRef,
 } = editForm
 
-// 实际花费分析区（issue #160）：创建/暂停/取消后同步刷新
+// 实际花费分析区（issue #160）：创建/编辑/生命周期变更/期次变更后同步刷新；
+// 生命周期变更的刷新经清单模块 onStatusChanged 钩子进入此函数（订阅真差异）
 const spendPanelRef = ref<InstanceType<typeof SubscriptionSpendPanel> | null>(null)
 function refreshSpend() {
   void spendPanelRef.value?.reload()
 }
+
+// ---------------------------------------------------------------------------
+// 清单编排（ADR-0041）：全部经 ScheduledPlanList 模块；确认弹层在本适配器渲染。
+// 下期扣款 = 最早 pending 期次（模块公共扩展器，仅选取、不现场推算日期）；
+// 清单加载失败/生命周期成功失败提示与重拉时序全部内化在模块。
+// ---------------------------------------------------------------------------
+
+/** 下期扣款扩展：最早 pending 期次（无则 null，占位「—」）。 */
+interface SubscriptionExt {
+  next: ScheduledTransactionOccurrence | null
+}
+type SubscriptionRow = ScheduledPlanRow<SubscriptionExt>
+
+const planDetailRef = ref<InstanceType<typeof PlanDetailModal> | null>(null)
+
+const list = useScheduledPlanList<SubscriptionExt>({
+  kind: 'subscription',
+  expandDetail: (_plan, detail) => ({
+    next: detail ? earliestPendingOccurrence(detail) : null,
+  }),
+  loadErrorText: '加载订阅失败',
+  cancelConfirmText: '取消后不再扣款，已生成的交易与历史期次保留。确认取消？',
+  onStatusChanged: refreshSpend,
+  onOpenDetail: (row) => void planDetailRef.value?.open(row.plan.core.id),
+})
+const { loading, statusFilter, statusFilterOptions, filteredRows } = list
 
 // ---------------------------------------------------------------------------
 // 新建订阅 = 模态对话框（issue #158）：不引入独立路由页面，
@@ -80,13 +118,6 @@ function refreshSpend() {
 const showCreateModal = ref(false)
 
 const amountYuan = ref('')
-
-const recurrenceOptions = [
-  { label: '每天', value: 'daily' },
-  { label: '每周', value: 'weekly' },
-  { label: '每月', value: 'monthly' },
-  { label: '每年', value: 'yearly' },
-]
 
 /** 重置新建表单到初始态：公共字段走接缝 reset，金额留本页签。 */
 function resetCreateForm() {
@@ -112,7 +143,7 @@ async function create() {
     message.success('已创建订阅')
     showCreateModal.value = false
     resetCreateForm()
-    await load()
+    await list.load()
     refreshSpend()
   } catch (e) {
     message.error(`创建失败: ${errorMessage(e)}`)
@@ -168,78 +199,10 @@ async function saveEdit() {
     })
     message.success('已保存')
     showEditModal.value = false
-    await load()
+    await list.load()
     refreshSpend()
   } catch (e) {
     message.error(`保存失败: ${errorMessage(e)}`)
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 清单：list_scheduled_transactions 过滤 subscription + 状态过滤；
-// 下期扣款取 get_scheduled_transaction_detail 的最早 pending 期次（窗口外显示 —）
-// ---------------------------------------------------------------------------
-
-/** 一行 = 计划 + 下期 pending 期次（无则为 null，占位「—」）。 */
-interface SubscriptionRow {
-  plan: ScheduledTransactionWithExt
-  next: ScheduledTransactionOccurrence | null
-  /** 详情命令失败：与「无 pending 期次」区分，不静默显示「—」。 */
-  nextFailed?: boolean
-}
-
-const rows = ref<SubscriptionRow[]>([])
-const loading = ref(false)
-/** 清单状态过滤：默认只看进行中（issue #159 验收）。 */
-const statusFilter = ref<'active' | 'paused' | 'cancelled'>('active')
-
-const filteredRows = computed(() =>
-  rows.value.filter((r) => r.plan.core.status === statusFilter.value),
-)
-
-async function load() {
-  loading.value = true
-  try {
-    const plans = (await api.listScheduledTransactions()).filter(
-      (p) => p.core.kind === 'subscription',
-    )
-    // 下期扣款来自既有详情命令的 pending 期次（ASC 排序，取首条）；
-    // 预生成窗口之外不现场推算日期（避免第三套日期口径）
-    const details = await Promise.all(
-      plans.map(async (p) => {
-        try {
-          const d = await api.getScheduledTransactionDetail(p.core.id)
-          // 后端按 scheduled_date ASC 返回；这里再取最早一条作为「下期」（仅选取，不推算）
-          const next =
-            [...d.pending_occurrences].sort((a, b) =>
-              a.scheduled_date.localeCompare(b.scheduled_date),
-            )[0] ?? null
-          return { plan: p, next } satisfies SubscriptionRow
-        } catch {
-          return { plan: p, next: null, nextFailed: true } satisfies SubscriptionRow
-        }
-      }),
-    )
-    rows.value = details
-  } catch (e) {
-    message.error(`加载订阅失败: ${errorMessage(e)}`)
-  } finally {
-    loading.value = false
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 状态操作：暂停 / 恢复 / 取消（走既有 update_scheduled_transaction_status）
-// ---------------------------------------------------------------------------
-
-async function changeStatus(id: string, newStatus: UpdateStatusInput['new_status']) {
-  try {
-    await api.updateScheduledTransactionStatus({ id, new_status: newStatus })
-    message.success(newStatus === 'paused' ? '已暂停' : newStatus === 'active' ? '已恢复' : '已取消')
-    await load()
-    refreshSpend()
-  } catch (e) {
-    message.error(`操作失败: ${errorMessage(e)}`)
   }
 }
 
@@ -248,43 +211,18 @@ async function changeStatus(id: string, newStatus: UpdateStatusInput['new_status
 // 弹窗内重试成功会发 changed，清单与花费面板随之刷新
 // ---------------------------------------------------------------------------
 
-const planDetailRef = ref<InstanceType<typeof PlanDetailModal> | null>(null)
-
-function openDetail(row: SubscriptionRow) {
-  void planDetailRef.value?.open(row.plan.core.id)
-}
-
 async function onDetailChanged() {
-  await load()
+  await list.load()
   refreshSpend()
 }
 
 // ---------------------------------------------------------------------------
-// 展示助手
+// 展示助手：参考数据名称解析与单元格渲染留适配器；周期标签走模块单源
 // ---------------------------------------------------------------------------
-
-const recurrenceUnit: Record<RecurrenceType, string> = {
-  daily: '天',
-  weekly: '周',
-  monthly: '月',
-  yearly: '年',
-}
-
-function recurrenceLabel(row: SubscriptionRow): string {
-  const { recurrence_type, recurrence_interval } = row.plan.core
-  const unit = recurrenceUnit[recurrence_type as RecurrenceType] ?? recurrence_type
-  return recurrence_interval > 1 ? `每${recurrence_interval}${unit}` : `每${unit}`
-}
 
 function statusLabel(status: string): string {
   return scheduledStatusLabel(status)
 }
-
-const filterOptions = [
-  { key: 'active' as const, label: '进行中' },
-  { key: 'paused' as const, label: '已暂停' },
-  { key: 'cancelled' as const, label: '已取消' },
-]
 
 const columns: DataTableColumns<SubscriptionRow> = [
   {
@@ -316,7 +254,12 @@ const columns: DataTableColumns<SubscriptionRow> = [
     key: 'amount',
     render: (row) => formatAmount(row.plan.core.amount_cents, reference.getCurrency(row.plan.core.currency_code)),
   },
-  { title: '周期', key: 'recurrence', render: recurrenceLabel },
+  {
+    title: '周期',
+    key: 'recurrence',
+    render: (row) =>
+      scheduledRecurrenceLabel(row.plan.core.recurrence_type, row.plan.core.recurrence_interval),
+  },
   { title: '开始日', key: 'start_date', render: (row) => row.plan.core.start_date },
   { title: '状态', key: 'status', render: (row) => statusLabel(row.plan.core.status) },
   {
@@ -327,9 +270,9 @@ const columns: DataTableColumns<SubscriptionRow> = [
       h(
         'span',
         { 'data-testid': `next-charge-${row.plan.core.id}` },
-        row.next
-          ? `${row.next.scheduled_date} · ${formatAmount(row.next.amount_cents, reference.getCurrency(row.plan.core.currency_code))}`
-          : row.nextFailed
+        row.ext.next
+          ? `${row.ext.next.scheduled_date} · ${formatAmount(row.ext.next.amount_cents, reference.getCurrency(row.plan.core.currency_code))}`
+          : row.detailFailed
             ? '加载失败'
             : '—',
       ),
@@ -337,83 +280,62 @@ const columns: DataTableColumns<SubscriptionRow> = [
   {
     title: '操作',
     key: 'actions',
+    // 行操作描述符（可用性矩阵/标签/run）由模块构建；此处按描述符渲染，
+    // 含 confirm 文案的动作经 AppPopconfirm 二次确认（弹层纪律 ADR-0035）。
+    // 订阅真差异「编辑」（仅非金额字段，ADR-0023 决策三）插在期次之后：
+    // active/paused 可编辑、已取消不提供——模块描述符不含编辑，留本适配器。
     render: (row) => {
       const status = row.plan.core.status
       const buttons: VNode[] = []
-      // 期次详情（issue #205）：所有状态都可查看期次执行情况
-      buttons.push(
-        h(
-          NButton,
-          {
-            size: 'tiny',
-            'data-testid': `op-detail-${row.plan.core.id}`,
-            onClick: () => openDetail(row),
-          },
-          () => '期次',
-        ),
-      )
-      if (status === 'active' || status === 'paused') {
-        // 编辑仅非金额字段（issue #162，ADR-0023 决策三）；已取消不提供编辑
-        buttons.push(
-          h(
-            NButton,
-            {
-              size: 'tiny',
-              'data-testid': `op-edit-${row.plan.core.id}`,
-              onClick: () => openEdit(row),
-            },
-            () => '编辑',
-          ),
-        )
-      }
-      if (status === 'active') {
-        buttons.push(
-          h(
-            NButton,
-            {
-              size: 'tiny',
-              'data-testid': `op-pause-${row.plan.core.id}`,
-              onClick: () => changeStatus(row.plan.core.id, 'paused'),
-            },
-            () => '暂停',
-          ),
-        )
-      }
-      if (status === 'paused') {
-        buttons.push(
-          h(
-            NButton,
-            {
-              size: 'tiny',
-              'data-testid': `op-resume-${row.plan.core.id}`,
-              onClick: () => changeStatus(row.plan.core.id, 'active'),
-            },
-            () => '恢复',
-          ),
-        )
-      }
-      if (status === 'active' || status === 'paused') {
-        // 取消不删已生成交易与历史期次（后端行为），二次确认防误触
-        buttons.push(
-          h(
-            AppPopconfirm,
-            { onPositiveClick: () => changeStatus(row.plan.core.id, 'cancelled') },
-            {
-              default: () => '取消后不再扣款，已生成的交易与历史期次保留。确认取消？',
-              trigger: () =>
-                h(
-                  NButton,
-                  {
-                    size: 'tiny',
-                    type: 'error',
-                    quaternary: true,
-                    'data-testid': `op-cancel-${row.plan.core.id}`,
-                  },
-                  () => '取消',
-                ),
-            },
-          ),
-        )
+      for (const action of list.rowActions(row)) {
+        if (!action.available) continue
+        if (action.confirm) {
+          buttons.push(
+            h(
+              AppPopconfirm,
+              { onPositiveClick: action.run },
+              {
+                default: () => action.confirm,
+                trigger: () =>
+                  h(
+                    NButton,
+                    {
+                      size: 'tiny',
+                      type: 'error',
+                      quaternary: true,
+                      'data-testid': `op-${action.key}-${row.plan.core.id}`,
+                    },
+                    () => action.label,
+                  ),
+              },
+            ),
+          )
+        } else {
+          buttons.push(
+            h(
+              NButton,
+              {
+                size: 'tiny',
+                'data-testid': `op-${action.key}-${row.plan.core.id}`,
+                onClick: action.run,
+              },
+              () => action.label,
+            ),
+          )
+        }
+        if (action.key === 'detail' && (status === 'active' || status === 'paused')) {
+          buttons.push(
+            h(
+              NButton,
+              {
+                size: 'tiny',
+                'data-testid': `op-edit-${row.plan.core.id}`,
+                onClick: () => openEdit(row),
+              },
+              () => '编辑',
+            ),
+          )
+        }
       }
       if (buttons.length === 0) return '—'
       return h(NSpace, { size: 4 }, () => buttons)
@@ -422,7 +344,7 @@ const columns: DataTableColumns<SubscriptionRow> = [
 ]
 
 onMounted(() => {
-  void load()
+  void list.load()
 })
 </script>
 
@@ -433,11 +355,11 @@ onMounted(() => {
         <NSpace :size="12">
           <NButtonGroup size="small">
             <NButton
-              v-for="f in filterOptions"
+              v-for="f in statusFilterOptions"
               :key="f.key"
               :type="statusFilter === f.key ? 'primary' : 'default'"
               :data-testid="`filter-${f.key}`"
-              @click="statusFilter = f.key"
+              @click="list.setStatusFilter(f.key)"
             >
               {{ f.label }}
             </NButton>
@@ -537,7 +459,7 @@ onMounted(() => {
               />
               <AppSelect
                 v-model:value="recurrenceType"
-                :options="recurrenceOptions"
+                :options="[...SCHEDULED_RECURRENCE_OPTIONS]"
                 style="width: 100px"
               />
             </NSpace>
