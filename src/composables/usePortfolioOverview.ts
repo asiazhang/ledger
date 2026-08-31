@@ -1,5 +1,6 @@
 import { computed, onMounted, ref } from 'vue'
 import { api } from '@/api'
+import { useLoadable } from '@/composables/useLoadable'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount } from '@/types'
 import type { Currency, Holding } from '@/types'
@@ -70,34 +71,41 @@ export function formatCurrencyGroups(
 const INVESTED_INSTRUMENT_FETCH_LIMIT = 500
 
 /**
- * 盈亏页持仓概览数据层（issue #110 / T6）：
+ * 盈亏页持仓概览数据层（issue #110 / T6；issue #324 起为 Loadable 之上的薄壳，ADR-0040）：
  * 从 `list_holdings`（v_holdings 视图）取当前持仓行，并与「持仓标的」字典
  * （only_invested=true，与增量同步同口径）及账户信息拼装出可展示的明细与汇总。
+ *
+ * loading 置收、错误捕获与文案归一、错误展示（默认 toast + error 双通道）、
+ * 竞态裁决全部内化进 Loadable；本薄壳只持任务结果（rows）与首跑时序，
+ * Promise.all 双请求与行映射逻辑留在发起闭包内。失败不向上抛（首刷/刷新不再
+ * 产生未处理 rejection，spec 治愈清单①）：error 置位 + 默认 toast，rows 保持
+ * 原值不清空成空态。
  */
 export function usePortfolioOverview() {
   const reference = useReferenceStore()
 
-  const loading = ref(false)
   const rows = ref<PortfolioRow[]>([])
 
+  const { loading, error, run } = useLoadable(async () => {
+    const [holdings, invested] = await Promise.all([
+      api.listHoldings(),
+      // 「持仓标的」字典：有当前持仓批次（remaining_quantity > 0），与增量同步同口径
+      api.listInstruments({
+        only_invested: true,
+        // 持仓标的一般远少于标的总数；list_instruments 单页上限即此值
+        page_size: INVESTED_INSTRUMENT_FETCH_LIMIT,
+      }),
+    ])
+    // 行数通常远小于标的数，直接按 id 建 map（O(n+m)）
+    const instrumentMap = new Map(invested.items.map((i) => [i.id, i]))
+    return holdings.map((h: Holding) => toRow(h, instrumentMap, reference.accountMap))
+  })
+
   async function refresh() {
-    loading.value = true
-    try {
-      const [holdings, invested] = await Promise.all([
-        api.listHoldings(),
-        // 「持仓标的」字典：有当前持仓批次（remaining_quantity > 0），与增量同步同口径
-        api.listInstruments({
-          only_invested: true,
-          // 持仓标的一般远少于标的总数；list_instruments 单页上限即此值
-          page_size: INVESTED_INSTRUMENT_FETCH_LIMIT,
-        }),
-      ])
-      // 行数通常远小于标的数，直接按 id 建 map（O(n+m)）
-      const instrumentMap = new Map(invested.items.map((i) => [i.id, i]))
-      rows.value = holdings.map((h: Holding) => toRow(h, instrumentMap, reference.accountMap))
-    } finally {
-      loading.value = false
-    }
+    const result = await run()
+    // 失败回空（error 已置位）：rows 保持原值不清空；迟到前发结果已被 Loadable
+    // 竞态裁决作废为空，不会覆写终态
+    if (result !== null) rows.value = result
   }
 
   const totalMarketValueGroups = computed(() =>
@@ -111,7 +119,7 @@ export function usePortfolioOverview() {
     void refresh()
   })
 
-  return { rows, loading, totalMarketValueGroups, totalUnrealizedPnlGroups, refresh }
+  return { rows, loading, error, totalMarketValueGroups, totalUnrealizedPnlGroups, refresh }
 }
 
 interface InstrumentLike {
