@@ -13,6 +13,7 @@
 //! - `spend`：订阅实际花费口径（issue #160，ADR-0023 决策二）
 //! - `plan_edit`：订阅编辑仅非金额字段（issue #162，ADR-0023 决策三）
 //! - `plan_detail`：期次详情 / 重试 / 展开（issue #205）
+//! - `auto_run`：自动执行（追补）入口（issue #307 / ADR-0042，步骤直调入口注入日期）
 //!
 //! 跨主题私有 helper 收在 `common`（`execute_occurrence_step`， occurrence /
 //! spend / plan_detail 共用）。
@@ -20,6 +21,8 @@
 //! 本文件经 `e2e.rs` 的 `#[path]` 载入：`#[path]` 模块的子模块默认平铺在文件
 //! 所在目录，故各 `mod` 显式 `#[path]` 指入同名子目录 `scheduled_steps/`。
 
+#[path = "scheduled_steps/auto_run.rs"]
+mod auto_run;
 #[path = "scheduled_steps/common.rs"]
 mod common;
 #[path = "scheduled_steps/create.rs"]

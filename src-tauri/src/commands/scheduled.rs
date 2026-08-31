@@ -77,3 +77,14 @@ pub fn subscription_spend_overview(db: State<'_, DbState>) -> Result<Subscriptio
         chrono::Local::now().date_naive(),
     )
 }
+
+/// 推送设备级「自动执行」开关到后端运行时镜像（issue #307 / ADR-0042）：
+/// 开关真源在前端 localStorage 设备偏好，应用启动与变更时经本命令推送
+/// （备份目录镜像推送先例）；后端镜像默认关，调度线程每轮从镜像读出后注入
+/// 追补入口。刻意不入 `app_settings`——该表随 Backup/Restore 迁移，
+/// 表达不了「这台执行、那台不执行」的设备级语义，也会把自动化意外迁移到新设备。
+#[tauri::command]
+pub fn set_auto_execution_enabled(enabled: bool) -> Result<()> {
+    crate::scheduled_transactions::auto_run::set_enabled(enabled);
+    Ok(())
+}

@@ -28,3 +28,7 @@ AutoBackup（issue #123 / ADR-0016）最初规划为单行表 `auto_backup_state
 
 - 约定入 AGENTS.md 口径：前端独享消费 → localStorage；后端消费或参与 Backup/Restore 语义 → `app_settings`；有关系结构需求 → 才配独立表。单行状态表此后不再出现。
 - value 无 schema 约束，键名拼写错误只能在读取时暴露——由枚举集中定义缓解（枚举外的 key 视为 bug）。
+
+## 修订记录
+
+- **2026-08-31（issue #307 / ADR-0042）：设备级开关例外。** 定时计划「自动执行」开关虽由后端调度线程消费，但刻意**不进** `app_settings`：该表随 Backup/Restore 迁移，存进去就成了全账本单值，表达不了「这台执行、那台不执行」，也会把自动化意外迁移到新设备。它按 ADR-0042 落为设备偏好（前端 localStorage 单一来源 + 后端运行时镜像推送，备份目录镜像先例），是「后端消费 → `app_settings`」约定的一条显式例外：判据从「谁消费」让位给「是否应随账本迁移」。
