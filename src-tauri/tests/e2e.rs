@@ -16,6 +16,8 @@ mod common;
 mod dashboard_steps;
 #[path = "e2e/data_location_steps.rs"]
 mod data_location_steps;
+#[path = "e2e/financial_freedom_steps.rs"]
+mod financial_freedom_steps;
 #[path = "e2e/fund_trade_steps.rs"]
 mod fund_trade_steps;
 #[path = "e2e/instruments_steps.rs"]

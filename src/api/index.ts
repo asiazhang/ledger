@@ -27,6 +27,7 @@ import type {
   ExchangeRate,
   ExchangeRateInput,
   ExecuteOccurrenceInput,
+  FinancialFreedomOverview,
   Holding,
   InstrumentInput,
   InstrumentListFilter,
@@ -140,6 +141,8 @@ export const api = {
 
   // 首页财务全貌
   dashboardOverview: () => invoke<DashboardOverview>('dashboard_overview'),
+  // 财务自由度（issue #343）：可投资资产 × 3% ÷ 年度预算总额，只读实时聚合
+  financialFreedom: () => invoke<FinancialFreedomOverview>('financial_freedom'),
 
   // 报表
   // 年份筛选范围（issue #266）：数据驱动闭区间，前端拉一次平铺年份下拉

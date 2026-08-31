@@ -13,6 +13,7 @@ pub mod categories;
 pub mod currencies;
 pub mod dashboard;
 pub mod data_location;
+pub mod financial_freedom;
 pub mod fx;
 pub mod investment;
 pub mod item;
@@ -33,6 +34,7 @@ pub use categories::*;
 pub use currencies::*;
 pub use dashboard::*;
 pub use data_location::*;
+pub use financial_freedom::*;
 pub use investment::*;
 pub use item::*;
 pub use logs::*;
@@ -96,6 +98,8 @@ pub const IPC_COMMAND_WRITE_OPS: &[(&str, Option<WriteOp>)] = &[
     ("list_currencies", None),
     // ── 仪表盘 ──
     ("dashboard_overview", None),
+    // ── 财务自由度（只读聚合，issue #343）──
+    ("financial_freedom", None),
     // ── 数据位置 ──
     (
         "submit_data_location_change",
