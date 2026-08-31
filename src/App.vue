@@ -34,7 +34,7 @@ import {
   SettingsOutline,
 } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
-import { currentLocale } from '@/i18n'
+import { currentLocale, t } from '@/i18n'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
 import { useDevicePreferenceSync } from '@/composables/useDevicePreferenceSync'
 import MessageSinkBridge from '@/components/MessageSinkBridge.vue'
@@ -77,19 +77,9 @@ const naiveDateLocale = computed(() => (currentLocale.value === 'en-US' ? dateEn
 // 真源在前端 localStorage（应用设置 store），启动/变更时把镜像推给后端运行时消费。
 useDevicePreferenceSync()
 
-const viewLabels: Record<string, string> = {
-  dashboard: '概览',
-  transactions: '交易',
-  search: '搜索',
-  accounts: '账户',
-  reports: '报表',
-  investments: '投资',
-  items: '物品',
-  scheduled: '定时',
-  budget: '预算',
-  ai: 'AI',
-  settings: '设置',
-}
+// 视图名称走文案资源（nav.<路由 name>，issue #342）：侧栏菜单与内容区标题同源，
+// 随界面语言即时切换；路由 meta.title 已删除（避免第二份单语清单漂移）。
+const viewLabel = (name: string) => t(`nav.${name}`)
 
 // 视图图标（ionicons5 Outline 风格，与分类图标一致）
 const viewIcons: Record<string, Component> = {
@@ -121,7 +111,7 @@ const menuOptions = computed<MenuOption[]>(() =>
     icon: renderMenuIcon(name),
     label: () =>
       h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:12px;padding-right:2px' }, [
-        h('span', viewLabels[name]),
+        h('span', viewLabel(name)),
         h('span', { style: 'font-size:12px;opacity:.55' }, shortcutHint(key)),
       ]),
   })),
@@ -186,6 +176,8 @@ function handleSelect(key: string) {
 }
 
 const title = () => h('div', { style: 'padding: 16px 18px; font-size: 18px; font-weight: 600' }, '📒 Ledger')
+
+const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(route.name) : ''))
 </script>
 
 <template>
@@ -235,7 +227,7 @@ const title = () => h('div', { style: 'padding: 16px 18px; font-size: 18px; font
             <NLayoutContent content-style="padding: 20px;" :native-scrollbar="false">
               <NSpace vertical :size="16">
                 <NText strong style="font-size: 20px">
-                  {{ (route.meta.title as string) ?? '' }}
+                  {{ pageTitle }}
                 </NText>
                 <RouterView />
               </NSpace>

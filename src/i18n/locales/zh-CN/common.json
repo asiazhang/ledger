@@ -4,5 +4,29 @@
     "followSystem": "跟随系统",
     "zh": "中文",
     "en": "English"
+  },
+  "nav": {
+    "dashboard": "概览",
+    "transactions": "交易",
+    "search": "搜索",
+    "accounts": "账户",
+    "reports": "报表",
+    "investments": "投资",
+    "items": "物品",
+    "scheduled": "定时",
+    "budget": "预算",
+    "ai": "AI",
+    "settings": "设置"
+  },
+  "sidebarSort": {
+    "up": "上移一位",
+    "down": "下移一位",
+    "top": "移到顶部",
+    "bottom": "移到底部",
+    "reset": "恢复默认排序"
+  },
+  "link": {
+    "viewMerchant": "查看该商户的交易",
+    "viewAccount": "查看该账户的交易"
   }
 }
