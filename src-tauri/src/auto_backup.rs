@@ -152,8 +152,8 @@ pub fn reset(conn: &Connection, now: &str) -> crate::error::Result<()> {
 /// 后端受管备份判定（`commands::backup::core`）与前端命名/判定共用该语义（T3）。
 pub const AUTO_BACKUP_PREFIX: &str = "ledger-auto-";
 
-/// 轮询检查周期：每 30 分钟醒来检查一次到期判定（ADR-0016）。
-const CHECK_INTERVAL_SECS: u64 = 30 * 60;
+/// 轮询检查周期：每 10 分钟醒来检查一次到期判定（ADR-0016 及其修订注记：原 30 分钟）。
+const CHECK_INTERVAL_SECS: u64 = 10 * 60;
 /// 执行备份时等待 DB 连接锁的超时；超时跳过本轮、保留脏标记，下个周期重试。
 const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
