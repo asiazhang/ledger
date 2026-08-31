@@ -56,7 +56,7 @@ AI 驱动的导入**不按文件类型解析**，唯一入口是本地 HTTP API 
 - **弹层关闭语义**：新弹窗一律用 `AppModal`（`src/components/AppModal.vue`，默认遮罩点击不关）不直接用 NModal；useDialog 调用点改用 `useAppDialog` 并显式传 `maskClosable: false`（语义详见界面状态与交互域词汇表 `docs/contexts/CONTEXT-ui-interaction.md`「弹层关闭语义」）。
 - **弹层封装与快捷键抑制（ADR-0035）**：应用内一切弹层（NSelect/NTreeSelect/NDatePicker/NDropdown/NPopconfirm/NModal/useDialog）一律经 `src/components/App*.vue` 封装或 `useAppDialog` 使用——封装接入弹层注册表（显式上报开/关）驱动快捷键抑制，绕过封装会脱离抑制。封装刻意不声明 `show` prop（Vue 对可选 Boolean prop 的缺席转型会把非受控用法变成受控关闭），`:show`/`@update:show` 走 attrs 透传；新增弹层形态时在对应 App* 封装内接线，不回全局 DOM 嗓探。
 - **文件命名约定**：前端多词 `.ts` 模块一律 kebab-case（如 `view-state.ts`）；`.vue` 组件保持 PascalCase；composables 保持 `useXxx` camelCase；Rust 侧遵循 cargo 惯例 snake_case。测试文件命名：默认 `<被测文件名>.test.ts`；单文件超约 800 行时允许拆为以被测文件命名的目录、内部按主题命名（先例 `src/__tests__/TransactionsView/`：`pagination.test.ts`、`filtering.test.ts`、`transfer-row.test.ts` 等，目录名沿用被测文件名大小写，共享辅助收进目录内 `common.ts`）。跨平台考虑：普通模块全小写，避免大小写敏感文件系统上的歧义。
-- **新增后端命令**：`commands.rs`（`src-tauri/src/commands/`）加 `#[tauri::command]` 函数 → `lib.rs` 的 `generate_handler!` 注册 → `src/api/index.ts` 加方法 → 必要时 `src/types/index.ts` 加 TS 类型（对应 `src-tauri/src/models/` serde 结构，注意 `#[serde(rename = "type")]` 字段映射）。
+- **新增后端命令**：`src-tauri/src/commands/` 域内加 `#[tauri::command]` 函数即完成注册（build.rs 扫描注解生成清单，ADR-0047，lib.rs 零改动；只认裸注解 + 紧随 pub fn / pub async fn，其他形态构建报错）→ `src/api/index.ts` 加方法 → 必要时 `src/types/index.ts` 加 TS 类型（对应 `src-tauri/src/models/` serde 结构，注意 `#[serde(rename = "type")]` 字段映射）。Rust 命令集与 TS 调用面的双向全等由 `node scripts/check-commands.js` 拦截（挂 check.sh 与 CI，双向孤儿非零退出）。
 
 ## 测试
 
