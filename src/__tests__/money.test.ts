@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { yuanToCents, centsToYuan, formatQuantity, yuanToPrice, priceToYuan } from '@/utils/money'
+import type { Currency } from '@/types'
+import { yuanToCents, centsToYuan, formatQuantity, formatPrice, yuanToPrice, priceToYuan } from '@/utils/money'
 
 describe('yuanToCents（元 → 分）', () => {
   it('整数元', () => {
@@ -144,5 +145,30 @@ describe('priceToYuan（万分之一元 → 元数值，表单回填）', () => 
     expect(priceToYuan(12345)).toBe(1.2345)
     expect(priceToYuan(150000)).toBe(15)
     expect(priceToYuan(0)).toBe(0)
+  })
+})
+
+describe('formatQuantity / formatPrice 分组随界面语言（#346，词汇表「数字分组」）', () => {
+  const usd: Currency = { code: 'USD', name: '美元', symbol: '$', decimal_places: 2 }
+
+  it('数量列：英文每 3 位一组、中文每 4 位', () => {
+    expect(formatQuantity(1234567, 'en-US')).toBe('1,234,567')
+    expect(formatQuantity(1234567, 'zh-CN')).toBe('123,4567')
+  })
+
+  it('带小数的份额仅整数部分分组，小数部分原样保留（两种语言一致）', () => {
+    expect(formatQuantity(1234.5678, 'en-US')).toBe('1,234.5678')
+    expect(formatQuantity(1234.5678, 'zh-CN')).toBe('1234.5678')
+  })
+
+  it('价格列（ADR-0038 刻度）：去尾零不随语言、整数分组随语言', () => {
+    expect(formatPrice(1234567890, usd, 'en-US')).toBe('$123,456.789')
+    expect(formatPrice(1234567890, usd, 'zh-CN')).toBe('$12,3456.789')
+    expect(formatPrice(1500000, usd, 'en-US')).toBe('$150')
+  })
+
+  it('负号恒在最前，两种语言一致', () => {
+    expect(formatQuantity(-1234567, 'en-US')).toBe('-1,234,567')
+    expect(formatPrice(-1234567890, usd, 'zh-CN')).toBe('-$12,3456.789')
   })
 })
