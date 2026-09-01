@@ -68,8 +68,11 @@ fn find_category_by_natural_key(
     }
 }
 
-/// 软删除分类（`is_deleted=1`）。不校验引用（与 UI 行为一致）。不存在的 id
-/// 返回 `AppError::NotFound`（HTTP 侧映射 404）。IPC 与 HTTP 端点共用本函数。
+/// 软删除分类（`is_deleted=1`）。删除守卫（issue #355）：分类自身名下存在未删除预算时拒绝，
+/// 中文文案引导先删对应预算；只查分类自身（删父分类不检查其子分类名下预算，
+/// 与「删除只影响该分类自身」一致）；仅剩软删除预算不阻拦。不存在的 id
+/// 返回 `AppError::NotFound`（HTTP 侧映射 404）。IPC 与 HTTP 端点共用本函数，
+/// 守卫一处生效。
 pub fn delete_category_internal(conn: &Connection, id: &str) -> Result<()> {
     let exists: bool = conn
         .query_row(
@@ -84,6 +87,21 @@ pub fn delete_category_internal(conn: &Connection, id: &str) -> Result<()> {
             "category.not-found",
             format!("分类不存在: {id}"),
             &[id],
+        ));
+    }
+    // 预算删除守卫（issue #355）：防止误删分类留下孤儿预算。
+    let has_budget: bool = conn
+        .query_row(
+            "SELECT 1 FROM budgets WHERE category_id=?1 AND is_deleted=0 LIMIT 1",
+            rusqlite::params![id],
+            |_| Ok(true),
+        )
+        .optional()?
+        .is_some();
+    if has_budget {
+        return Err(AppError::coded(
+            "category.has-budget",
+            "该分类名下存在预算，请先删除对应预算后再删除分类",
         ));
     }
     conn.execute(

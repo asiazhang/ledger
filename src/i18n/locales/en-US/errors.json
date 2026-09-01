@@ -13,7 +13,8 @@
     "not-found": "category does not exist: {0}",
     "self-parent": "a category cannot be its own parent",
     "parent-not-found": "parent category does not exist: {0}",
-    "parent-kind-mismatch": "parent category must have the same type"
+    "parent-kind-mismatch": "parent category must have the same type",
+    "has-budget": "this category has budgets, delete them before deleting the category"
   },
   "merchant": {
     "already-exists": "merchant already exists: {0}",
