@@ -1,0 +1,12 @@
+-- V014: 订阅计划扩展表新增可选保单引用（issue #362 / spec #358 / ADR-0051 决策 2
+-- 「缴费复用订阅形态，不另造引擎」）。保单缴费协议 = 订阅形态（Subscription）
+-- 持保单引用（方向：协议 → 保单），1 张保单可对应历史多段协议（费率变更 =
+-- 取消旧协议 + 按新金额重建的价格分段真相）；期次生成流水时把该引用复制到
+-- transactions.policy_id（与商户复制同机制，V013 列）。
+-- 引用可选：普通订阅（不挂保单）行为与现状完全一致。schema 层不设 kind 限制
+-- （与 merchant_id 列同款）；「只有订阅形态可挂保单」的准入收口在引擎
+-- create_plan 行为层（分期/定时转账携带即在命令入口显式拒绝）。
+-- 删除语义（ADR-0051 决策 5）：保单是档案非字典——软删保单的历史引用保留不置空
+-- （软删保单不可被新协议选择，但既有协议期次照常复制引用；外键动作声明 RESTRICT
+-- 表达档案语义，与商户字典 ON DELETE SET NULL 的先例刻意不同）。
+ALTER TABLE subscription_plans ADD COLUMN policy_id TEXT REFERENCES policies(id) ON DELETE RESTRICT;

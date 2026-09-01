@@ -156,6 +156,7 @@ fn today_boundary_is_due() {
             start_date: "2026-03-20".into(),
             note: None,
             merchant_id: None,
+            policy_id: None,
             total_amount_cents: None,
             total_occurrences: None,
             to_account_id: None,

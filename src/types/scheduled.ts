@@ -40,6 +40,8 @@ export interface ScheduledTransactionWithExt {
   core: ScheduledTransaction
   /** 商户 id（installment/subscription 可携带；scheduled_transfer 恒为 null） */
   merchant_id: string | null
+  /** 保单 id（仅订阅形态可携带，issue #362 保费协议；其余形态恒为 null） */
+  policy_id: string | null
   total_amount_cents: number | null
   total_occurrences: number | null
   to_account_id: string | null
@@ -66,6 +68,8 @@ export interface InstallmentPlan {
 export interface SubscriptionPlan {
   scheduled_transaction_id: string
   merchant_id: string | null
+  /** 保单引用（issue #362）：保费协议持保单引用，1 张保单可对应历史多段协议；普通订阅恒 null */
+  policy_id: string | null
 }
 
 export interface ScheduledTransferPlan {
@@ -87,6 +91,8 @@ export interface CreateScheduledInput {
   note?: string | null
   /** 商户 id（installment/subscription 可携带；scheduled_transfer 后端拒绝携带） */
   merchant_id?: string | null
+  /** 保单 id（仅订阅可携带，issue #362；分期/定时转账后端拒绝携带；软删保单不可被新协议选择） */
+  policy_id?: string | null
   total_amount_cents?: number | null
   total_occurrences?: number | null
   to_account_id?: string | null

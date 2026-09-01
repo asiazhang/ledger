@@ -24,6 +24,37 @@
     "delete": "Delete"
   },
   "deleteConfirm": "The policy will be hidden from this list while its history is preserved. Delete it?",
+  "agreement": {
+    "sectionTitle": "Payment Agreement",
+    "toggleHint": "Optional: also create a subscription-style agreement; each period auto-generates a premium transaction linked to this policy",
+    "amount": "Amount per Period",
+    "amountPlaceholder": "Premium per period",
+    "recurrence": "Frequency",
+    "account": "Payment Account",
+    "accountPlaceholder": "Select account",
+    "startDate": "Start Date",
+    "add": "Add Agreement",
+    "rebuild": "Change Price",
+    "rebuildConfirm": "Cancel Old & Rebuild",
+    "rebuildHint": "Change price = cancel the old agreement and rebuild with the new amount: the new agreement starts from the next charge date, splitting price history into two segments.",
+    "cancel": "Cancel",
+    "create": "Create",
+    "column": {
+      "amount": "Amount",
+      "recurrence": "Cycle",
+      "startDate": "Start",
+      "status": "Status"
+    },
+    "msg": {
+      "accountRequired": "Please select a payment account",
+      "amountInvalid": "Premium per period must be greater than 0",
+      "startRequired": "Please select a start date",
+      "created": "Payment agreement created",
+      "rebuilt": "Old agreement cancelled and rebuilt with the new amount",
+      "failed": "Operation failed: {msg}",
+      "loadFailed": "Failed to load agreement history: {msg}"
+    }
+  },
   "msg": {
     "created": "Policy created",
     "saved": "Policy saved",
