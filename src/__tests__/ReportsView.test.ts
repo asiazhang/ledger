@@ -76,6 +76,15 @@ describe('ReportsView 年份筛选（issue #267）', () => {
     expect(wrapper.findComponent(NSelect).props('value')).toBe(currentYear)
   })
 
+  it('分类份额随年份联动（issue #376）：初始加载携带当前年', async () => {
+    await mountReports()
+    expect(mockInvoke).toHaveBeenCalledWith('category_shares', {
+      kind: 'expense',
+      month: null,
+      year: currentYear,
+    })
+  })
+
   it('切换年份触发三个报表查询且年份参数正确（联动刷新），范围不重复拉取', async () => {
     const wrapper = await mountReports()
     mockInvoke.mockClear()
@@ -83,7 +92,12 @@ describe('ReportsView 年份筛选（issue #267）', () => {
     await flushPromises()
     expect(mockInvoke).toHaveBeenCalledWith('monthly_summary', { year: currentYear - 6 })
     expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', { year: currentYear - 6 })
-    expect(mockInvoke).toHaveBeenCalledWith('category_shares', { kind: 'expense', month: null })
+    // 分类份额随年份联动（issue #376）：口径修复，不再全时段
+    expect(mockInvoke).toHaveBeenCalledWith('category_shares', {
+      kind: 'expense',
+      month: null,
+      year: currentYear - 6,
+    })
     const rangeCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'report_year_range')
     expect(rangeCalls).toHaveLength(0)
   })

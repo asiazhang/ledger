@@ -152,8 +152,14 @@ export const api = {
   reportYearRange: () => invoke<YearRange>('report_year_range'),
   monthlySummary: (year: number) => invoke<MonthlySummary[]>('monthly_summary', { year }),
   merchantShares: (year: number) => invoke<MerchantShare[]>('merchant_shares', { year }),
-  categoryShares: (kind: string, month?: string) =>
-    invoke<CategoryShare[]>('category_shares', { kind, month: month ?? null }),
+  // 分类份额（issue #376 年份联动）：可选 month/year 过滤参数只增不改，缺省全时段；
+  // 报表视图随年份选择器联动传参
+  categoryShares: (kind: string, filter?: { month?: string; year?: number }) =>
+    invoke<CategoryShare[]>('category_shares', {
+      kind,
+      month: filter?.month ?? null,
+      year: filter?.year ?? null,
+    }),
   budgetProgress: () => invoke<BudgetProgress[]>('budget_progress'),
 
   // 金融工具

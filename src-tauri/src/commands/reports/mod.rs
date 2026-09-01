@@ -8,6 +8,7 @@
 //!   expense = `expense_gross`（= expense_net + refund_gross，净值恒等式）、
 //!   refund = `refund_gross`。
 //! - 分类聚合净值：expense → `expense_net`（退款冲减）、income → `income_net`（含分红）。
+//!   可选年份参数（issue #376）：随报表年份筛选联动，缺省全时段口径不变（API 只增不改）。
 //! - 商户消费排行（issue #192）：`expense_net` 按商户聚合、本位币口径，无商户不进排行。
 //! - 年份筛选范围（issue #266）：`[最早交易年份, max(当前年, 最新交易年份)]`，空库回退单当前年。
 //!
@@ -50,10 +51,15 @@ pub fn monthly_summary_rows(conn: &Connection, year: i64) -> Result<Vec<MonthlyS
 
 /// 分类聚合（净值）：`kind == "expense"` 用 `expense_net`（退款冲减支出），
 /// 其余（income）用 `income_net`（收入+分红）；参与 kind 由矩阵导出。
+/// 年份过滤（issue #376）：可选，传年份则按交易日期年份过滤（与月度汇总、
+/// 商户排行同款 `substr(date,1,4)` 口径），退款以自身日期参与过滤；
+/// 缺省（None）保持全时段口径不变（已发布 API 只增不改）。month/year 可叠加，
+/// 占位符按条件追加顺序编号，与参数列表一一对齐。
 pub fn category_shares_rows(
     conn: &Connection,
     kind: &str,
     month: Option<&str>,
+    year: Option<i64>,
 ) -> Result<Vec<CategoryShare>> {
     let (measure, expr) = if kind == "expense" {
         (Measure::ExpenseNet, expense_net_expr("t"))
@@ -66,13 +72,17 @@ pub fn category_shares_rows(
          FROM transactions t LEFT JOIN categories c ON c.id=t.category_id \
          WHERE t.kind IN ({kinds}) AND t.is_deleted=0"
     );
-    if month.is_some() {
-        sql.push_str(" AND substr(t.date,1,7)=?1");
+    let mut params: Vec<String> = Vec::new();
+    if let Some(m) = month {
+        params.push(m.to_string());
+        sql.push_str(&format!(" AND substr(t.date,1,7)=?{}", params.len()));
+    }
+    if let Some(y) = year {
+        params.push(y.to_string());
+        sql.push_str(&format!(" AND substr(t.date,1,4)=?{}", params.len()));
     }
     sql.push_str(" GROUP BY t.category_id ORDER BY net DESC");
-    // month 为 None 时参数列表为空，与无占位符的 SQL 对齐。
-    let month_params: Vec<&str> = month.into_iter().collect();
-    query_all(conn, &sql, rusqlite::params_from_iter(month_params))
+    query_all(conn, &sql, rusqlite::params_from_iter(params))
 }
 
 /// 商户消费排行（净额，issue #192）：`expense_net`（毛支出 − 退款）按商户聚合、
@@ -139,12 +149,15 @@ pub fn report_year_range(db: State<'_, DbState>) -> Result<YearRange> {
     query_report_year_range(&conn, chrono::Local::now().date_naive())
 }
 
+/// 分类份额（issue #376 年份联动）：可选年份参数只增不改，
+/// 缺省全时段；前端报表视图随年份选择器联动传参。
 #[tauri::command]
 pub fn category_shares(
     db: State<'_, DbState>,
     kind: String,
     month: Option<String>,
+    year: Option<i64>,
 ) -> Result<Vec<CategoryShare>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    category_shares_rows(&conn, &kind, month.as_deref())
+    category_shares_rows(&conn, &kind, month.as_deref(), year)
 }

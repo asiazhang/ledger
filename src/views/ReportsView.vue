@@ -58,7 +58,9 @@ async function refresh() {
   try {
     const [m, s, ms] = await Promise.all([
       api.monthlySummary(year.value),
-      api.categoryShares('expense'),
+      // 分类份额随年份筛选联动（issue #376）：三张报表口径一致，
+      // 净值口径在后端收口
+      api.categoryShares('expense', { year: year.value }),
       // 商户消费排行（issue #192）：随年份筛选，净额口径在后端收口
       api.merchantShares(year.value),
     ])
