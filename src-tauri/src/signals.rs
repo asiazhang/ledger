@@ -411,8 +411,9 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
 
 /// 发射助手（ADR-0044 决策 1，机制侧收口）：遍历信号集逐个把事件名投递给发射器。
 /// 发射器即机制接缝（`events::SignalEmitter`，spec #366）：生产路径传 `&AppHandle`
-/// （主线程非阻塞投递，ADR-0054，trait 自动转型），测试注入可阻塞假发射器断言
-/// 「发射不阻塞写路径」（`emit_blocking_tests`，spec #366）。本函数只做一次非阻塞
+/// （主线程非阻塞投递，ADR-0054，trait 自动转型），测试注入闸门式假发射器
+///（`test_utils::GatedEmitter`）断言「发射不阻塞写路径」（`emit_blocking_tests`，
+/// spec #366）。本函数只做一次非阻塞
 /// 投递即返回，不等发射完成；投递 / 发射失败静默忽略，不影响写事务结果。
 /// 壳层约定形态：`emit_for(&app, WriteOp::X, evidence)`，或先取
 /// [`signals_for`] 再 [`emit_all`]（需要先记日志 / 断言信号集时用后者）。
@@ -876,7 +877,8 @@ mod tests {
     }
 }
 
-/// 「发射不阻塞写路径」回归测试（spec #366）：机制层注入可阻塞假发射器，
+/// 「发射不阻塞写路径」回归测试（spec #366）：机制层注入闸门式假发射器
+///（`test_utils::GatedEmitter`，与 HTTP 壳整链验证 spec #367 共用同一桩），
 /// 钉死 ADR-0054 的外部行为——发射器阻塞期间写路径仍及时返回，放行后信号
 /// 最终到达。与上方映射测试（知识层，谁发什么）并存，各守一个维度。
 #[cfg(test)]

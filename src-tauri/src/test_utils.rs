@@ -1,13 +1,19 @@
-//! 测试支持：捕获 tracing 事件的 Layer 与全局最大级别稳定器。
+//! 测试支持：捕获 tracing 事件的 Layer、全局最大级别稳定器与闸门式假发射器。
 //!
-//! 供本 crate 的单元测试（`db/tests.rs`）与集成测试（`tests/api_server/`）
-//! 共用，避免两处重复实现采集器具（issue #44 code review：Duplicated Code）。
+//! 供本 crate 的单元测试（`db/tests.rs`、`signals/emit_blocking_tests.rs`）与
+//! 集成测试（`tests/api_server/`）共用，避免两处重复实现采集器具
+//!（issue #44 code review：Duplicated Code）与假发射器（spec #367 code review：
+//! 同一坏味道在测试桩上重演）。
 //!
 //! 说明：集成测试 `tests/api_server/` 链接的是非 `#[cfg(test)]` 构建的 lib，
 //! 因此本模块不能仅以 `#[cfg(test)]` 编译；`#[doc(hidden)]` 使其不进入文档，
 //! 对生产二进制的影响只是一些未使用的测试辅助类型（可被编译器消除）。
 
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Condvar, Mutex, Once};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use crate::events::SignalEmitter;
 
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
@@ -113,4 +119,116 @@ pub fn capture_events(f: impl FnOnce()) -> Vec<CapturedEvent> {
     let subscriber = tracing_subscriber::registry().with(layer);
     tracing::subscriber::with_default(subscriber, f);
     captured.lock().unwrap().clone()
+}
+
+/// 单次等待的超时上界：正常路径微秒/毫秒级即过；仅当被钉死的外部行为真的
+/// 发生回归（发射阻塞写路径 / 信号永久丢失）时才耗满并失败。
+pub const GATED_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// 闸门式假发射器的共享态：`posted` = 已交接（`post` 已调用、待送达）；
+/// `delivered` = 假主线程已送达；`gate_open` = 闸门放行。
+#[derive(Clone, Default)]
+struct GatedShared {
+    posted: Vec<&'static str>,
+    delivered: Vec<&'static str>,
+    gate_open: bool,
+}
+
+/// 闸门式假发射器（spec #364 测试哲学的共享测试桩）：`post` 只把事件
+/// **交接**给内部「假主线程」即返回（与生产 `AppHandle` 实现的非阻塞投递
+/// 约定同形）；假主线程在闸门放行前一直阻塞——模拟「发射迟迟未完成 /
+/// 信号延迟」（真实事故中即主线程被 `webviews_lock` 卡住、emit 永不返回）。
+/// 放行后把已交接事件按入队顺序依次标记为已送达并退出（测试生命周期内
+/// 单次放行）。可克隆，写线程与测试各持一份。
+///
+/// 两个验证靶共用本桩（spec #366 / #367）：机制接缝层
+///（`signals::emit_blocking_tests`，断言发射器阻塞期间写路径仍及时返回）
+/// 与 HTTP 壳整链（`tests/api_server/signal_delivery.rs`，断言写请求返回后
+/// 信号最终到达）。所有等待都带超时上界——回归发生时测试超时失败，而非
+/// 永久挂起；刻意不复现真实死锁时序（跨线程时序问题易 flaky）。
+#[derive(Clone)]
+pub struct GatedEmitter {
+    shared: Arc<(Mutex<GatedShared>, Condvar)>,
+}
+
+impl GatedEmitter {
+    /// 新建闸门关闭（发射延迟中）的假发射器，并启动假主线程。
+    pub fn gated() -> Self {
+        let emitter = Self {
+            shared: Arc::new((Mutex::new(GatedShared::default()), Condvar::new())),
+        };
+        let worker = emitter.clone();
+        thread::spawn(move || worker.run_fake_main_thread());
+        emitter
+    }
+
+    /// 假主线程：模拟「主线程事件循环里执行 emit」。放行前阻塞等待；
+    /// 放行后把已交接事件按入队顺序依次「送达」并退出。
+    fn run_fake_main_thread(&self) {
+        let (lock, cv) = &*self.shared;
+        let mut state = lock.lock().unwrap();
+        while !state.gate_open {
+            state = cv.wait(state).unwrap();
+        }
+        let pending = std::mem::take(&mut state.posted);
+        state.delivered.extend(pending);
+        cv.notify_all();
+    }
+
+    /// 开闸放行（模拟主线程恢复，队首待送达的信号得以执行）。
+    pub fn open_gate(&self) {
+        let (lock, cv) = &*self.shared;
+        let mut state = lock.lock().unwrap();
+        state.gate_open = true;
+        cv.notify_all();
+    }
+
+    /// 已交接事件快照（不等待）。
+    pub fn posted(&self) -> Vec<&'static str> {
+        self.shared.0.lock().unwrap().posted.clone()
+    }
+
+    /// 已送达事件快照（不等待）。
+    pub fn delivered(&self) -> Vec<&'static str> {
+        self.shared.0.lock().unwrap().delivered.clone()
+    }
+
+    /// 等到有交接（带超时），返回快照——证明写路径确实把事件交给了发射器。
+    pub fn wait_posted(&self) -> Vec<&'static str> {
+        self.wait_until(|s| !s.posted.is_empty(), "发射器交接")
+            .posted
+            .clone()
+    }
+
+    /// 等到有「送达完成」（带超时），返回快照——断言「信号最终到达、不丢失」。
+    pub fn wait_delivered(&self) -> Vec<&'static str> {
+        self.wait_until(|s| !s.delivered.is_empty(), "信号最终到达")
+            .delivered
+            .clone()
+    }
+
+    /// 谓词等待（带超时上界）：条件满足即返回共享态快照，超时即 panic。
+    fn wait_until(&self, pred: impl Fn(&GatedShared) -> bool, what: &str) -> GatedShared {
+        let (lock, cv) = &*self.shared;
+        let deadline = Instant::now() + GATED_TIMEOUT;
+        let mut state = lock.lock().unwrap();
+        while !pred(&state) {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "等待{what}超时（{GATED_TIMEOUT:?}）");
+            let (guard, _) = cv.wait_timeout(state, remaining).unwrap();
+            state = guard;
+        }
+        state.clone()
+    }
+}
+
+impl SignalEmitter for GatedEmitter {
+    /// 非阻塞交接：记录事件并唤醒假主线程后**立即返回**，不等送达完成
+    ///（与生产 `AppHandle` 实现同一约定——这正是本桩帮各测试钉死的契约）。
+    fn post(&self, event: &'static str) {
+        let (lock, cv) = &*self.shared;
+        let mut state = lock.lock().unwrap();
+        state.posted.push(event);
+        cv.notify_all();
+    }
 }
