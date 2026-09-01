@@ -8,11 +8,18 @@
 //! 年份筛选范围（issue #266）：范围由核心函数 `query_report_year_range`
 //! （命令层同款注入）查询；「今年/去年/前年/明年」等相对年份记号以场景冻结的
 //! 本地今日推算（同预算步骤先例），场景在任何日期运行都成立。
+//!
+//! 分类份额年份联动（issue #376）：口径由核心函数 `category_shares_rows`
+//! （命令层同款注入）查询：`expense_net` 净值、本位币口径，可选年份过滤；
+//! 带分类交易夹具走与真实写路径一致的行为层，退款复用既有步骤（继承原分类）。
 
 use chrono::{Datelike, Months, NaiveDate};
 use cucumber::{given, then, when};
+use rusqlite::params;
 
-use tauri_app_lib::commands::reports::{merchant_shares_rows, query_report_year_range};
+use tauri_app_lib::commands::reports::{
+    category_shares_rows, merchant_shares_rows, query_report_year_range,
+};
 use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::models::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
@@ -230,4 +237,95 @@ fn check_report_year_range(world: &mut LedgerWorld, min_token: String, max_token
         "报表年份范围不符：期望 {min_token}({}) 到 {max_token}({})",
         expected.0, expected.1
     );
+}
+
+// ---------------------------------------------------------------------------
+// 分类份额年份联动（issue #376）
+// ---------------------------------------------------------------------------
+
+/// 支出分类名 → id（夹具由既有步骤「存在支出分类」插入，同预算步骤的查找方式）。
+fn expense_category_id(conn: &rusqlite::Connection, name: &str) -> String {
+    conn.query_row(
+        "SELECT id FROM categories WHERE name=?1 AND kind='expense' AND is_deleted=0",
+        params![name],
+        |r| r.get(0),
+    )
+    .unwrap_or_else(|e| panic!("支出分类 '{name}' 不存在: {e}"))
+}
+
+/// 创建带分类的交易（行为层落库，与真实写路径一致；退款继承原分类由 Writer 保证）。
+#[when(expr = "创建交易 类型 {string} 金额 {int} 分类 {string} 到账户 {string} 日期 {string}")]
+fn create_txn_with_category(
+    world: &mut LedgerWorld,
+    kind: String,
+    amount: i64,
+    category_name: String,
+    account_name: String,
+    date: String,
+) {
+    let input = TransactionInput {
+        merchant_name: None,
+        policy_id: None,
+        kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
+        amount_cents: amount,
+        currency_code: "CNY".into(),
+        account_id: world.account_id(&account_name),
+        to_account_id: None,
+        category_id: Some(expense_category_id(&world_conn!(world), &category_name)),
+        merchant_id: None,
+        refund_of_transaction_id: None,
+        note: None,
+        date,
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        idempotency_key: None,
+    };
+    let result = create_transaction_internal(&world_conn!(world), input);
+    assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
+    world.last_transaction_id = Some(result.unwrap().id);
+    world.transactions_list = query_all_transactions(&world_conn!(world));
+}
+
+/// 查询指定年份的支出分类份额（命令层同款核心函数注入，年份联动口径）。
+#[when(expr = "查询 {int} 年分类份额")]
+fn query_category_shares(world: &mut LedgerWorld, year: i64) {
+    world.last_category_shares =
+        category_shares_rows(&world_conn!(world), "expense", None, Some(year))
+            .expect("查询分类份额失败");
+}
+
+/// 缺省年份查询（全时段口径）：既有调用方不回归的回归锁定。
+#[when(expr = "查询分类份额 全时段")]
+fn query_category_shares_all_time(world: &mut LedgerWorld) {
+    world.last_category_shares =
+        category_shares_rows(&world_conn!(world), "expense", None, None).expect("查询分类份额失败");
+}
+
+/// 分类份额行数断言。
+#[then(expr = "分类份额应为 {int} 行")]
+fn check_category_shares_len(world: &mut LedgerWorld, n: usize) {
+    assert_eq!(
+        world.last_category_shares.len(),
+        n,
+        "分类份额行数不符：实际 {:?}",
+        world
+            .last_category_shares
+            .iter()
+            .map(|s| (s.category_name.as_str(), s.amount_cents))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// 分类份额第 {index} 名断言：分类名（现名，未分类行为「未分类」）+ 本位币净额，
+/// 顺序即净额降序。
+#[then(expr = "分类份额第 {int} 名应为 {string} 金额 {int}")]
+fn check_category_shares_row(world: &mut LedgerWorld, index: usize, name: String, amount: i64) {
+    let share = world
+        .last_category_shares
+        .get(index - 1)
+        .unwrap_or_else(|| panic!("分类份额第 {index} 名不存在"));
+    assert_eq!(share.category_name, name, "分类份额第 {index} 名分类不符");
+    assert_eq!(share.amount_cents, amount, "分类 '{name}' 净额不符");
 }

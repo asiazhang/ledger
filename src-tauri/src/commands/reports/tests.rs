@@ -242,7 +242,7 @@ fn category_shares_expense_net_subtracts_refund() {
     for r in &fixture {
         insert_tx(&conn, r);
     }
-    let rows = category_shares_rows(&conn, "expense", None).unwrap();
+    let rows = category_shares_rows(&conn, "expense", None, None).unwrap();
     assert_eq!(rows.len(), 1, "只有 expense/refund 计入净值口径");
     let expected = measure_sum(&fixture, "2026-01", Measure::ExpenseNet);
     assert_eq!(
@@ -262,7 +262,7 @@ fn category_shares_income_net_includes_dividend() {
     for r in &fixture {
         insert_tx(&conn, r);
     }
-    let rows = category_shares_rows(&conn, "income", None).unwrap();
+    let rows = category_shares_rows(&conn, "income", None, None).unwrap();
     assert_eq!(rows.len(), 1, "只有 income/dividend 计入净值口径");
     let expected = measure_sum(&fixture, "2026-01", Measure::IncomeNet);
     assert_eq!(
@@ -296,9 +296,190 @@ fn category_shares_filters_by_month() {
     for r in &fixture {
         insert_tx(&conn, r);
     }
-    let rows_jan = category_shares_rows(&conn, "expense", Some("2026-01")).unwrap();
+    let rows_jan = category_shares_rows(&conn, "expense", Some("2026-01"), None).unwrap();
     assert_eq!(rows_jan.len(), 1);
     assert_eq!(rows_jan[0].amount_cents, 1000);
+}
+
+/// 年份过滤（issue #376）：传年份只统计所选年份的支出净值，他年不计入。
+#[test]
+fn category_shares_filters_by_year() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    let cat_id = first_category_id(&conn, "expense");
+    let fixture = vec![
+        TxRow {
+            id: "t-old",
+            kind: TransactionKind::Expense,
+            amount: 800,
+            category_id: Some(cat_id.clone()),
+            date: "2025-12-31",
+        },
+        TxRow {
+            id: "t-new",
+            kind: TransactionKind::Expense,
+            amount: 1000,
+            category_id: Some(cat_id.clone()),
+            date: "2026-01-20",
+        },
+    ];
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+    let rows = category_shares_rows(&conn, "expense", None, Some(2026)).unwrap();
+    assert_eq!(rows.len(), 1, "他年支出不计入所选年");
+    assert_eq!(rows[0].amount_cents, 1000);
+}
+
+/// 退款冲减按所选年口径（issue #376）：退款以自身日期参与年份过滤，
+/// 所选年内的退款冲减该年净额，他年退款不冲减所选年。
+#[test]
+fn category_shares_refund_offsets_within_selected_year_only() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    let cat_id = first_category_id(&conn, "expense");
+    let fixture = vec![
+        TxRow {
+            id: "t-expense-2026",
+            kind: TransactionKind::Expense,
+            amount: 1000,
+            category_id: Some(cat_id.clone()),
+            date: "2026-03-05",
+        },
+        TxRow {
+            id: "t-refund-2026",
+            kind: TransactionKind::Refund,
+            amount: 300,
+            category_id: Some(cat_id.clone()),
+            date: "2026-03-08",
+        },
+        TxRow {
+            id: "t-expense-2025",
+            kind: TransactionKind::Expense,
+            amount: 500,
+            category_id: Some(cat_id.clone()),
+            date: "2025-06-10",
+        },
+        TxRow {
+            id: "t-refund-2025",
+            kind: TransactionKind::Refund,
+            amount: 150,
+            category_id: Some(cat_id),
+            date: "2025-08-01",
+        },
+    ];
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+    let rows_2026 = category_shares_rows(&conn, "expense", None, Some(2026)).unwrap();
+    assert_eq!(rows_2026.len(), 1);
+    assert_eq!(
+        rows_2026[0].amount_cents, 700,
+        "2026 净额 = 1000 − 300，2025 退款不冲减"
+    );
+    let rows_2025 = category_shares_rows(&conn, "expense", None, Some(2025)).unwrap();
+    assert_eq!(rows_2025.len(), 1);
+    assert_eq!(
+        rows_2025[0].amount_cents, 350,
+        "2025 净额 = 500 − 150，2026 退款不冲减"
+    );
+}
+
+/// 缺省年份（None）保持全时段口径（issue #376：已发布 API 只增不改，既有调用方不回归）。
+#[test]
+fn category_shares_default_spans_all_years() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    let cat_id = first_category_id(&conn, "expense");
+    let fixture = vec![
+        TxRow {
+            id: "t-old",
+            kind: TransactionKind::Expense,
+            amount: 800,
+            category_id: Some(cat_id.clone()),
+            date: "2025-12-31",
+        },
+        TxRow {
+            id: "t-new",
+            kind: TransactionKind::Expense,
+            amount: 1000,
+            category_id: Some(cat_id.clone()),
+            date: "2026-01-20",
+        },
+    ];
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+    let rows = category_shares_rows(&conn, "expense", None, None).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].amount_cents, 1800, "缺省不传年份 = 全时段合计");
+}
+
+/// income 分支（`income_net` 口径）的年份过滤与 expense 同款 SQL 路径（issue #376）。
+#[test]
+fn category_shares_income_filters_by_year() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    let cat_id = first_category_id(&conn, "income");
+    let fixture = vec![
+        TxRow {
+            id: "t-old",
+            kind: TransactionKind::Income,
+            amount: 2000,
+            category_id: Some(cat_id.clone()),
+            date: "2025-05-01",
+        },
+        TxRow {
+            id: "t-new",
+            kind: TransactionKind::Income,
+            amount: 1000,
+            category_id: Some(cat_id.clone()),
+            date: "2026-02-20",
+        },
+    ];
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+    let rows = category_shares_rows(&conn, "income", None, Some(2026)).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].amount_cents, 1000);
+}
+
+/// month 与 year 过滤条件可叠加：占位符按条件追加顺序编号，参数一一对齐。
+#[test]
+fn category_shares_month_and_year_combine() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    let cat_id = first_category_id(&conn, "expense");
+    let fixture = vec![
+        TxRow {
+            id: "t-jan",
+            kind: TransactionKind::Expense,
+            amount: 1000,
+            category_id: Some(cat_id.clone()),
+            date: "2026-01-15",
+        },
+        TxRow {
+            id: "t-feb",
+            kind: TransactionKind::Expense,
+            amount: 2000,
+            category_id: Some(cat_id.clone()),
+            date: "2026-02-10",
+        },
+        TxRow {
+            id: "t-last-year-jan",
+            kind: TransactionKind::Expense,
+            amount: 4000,
+            category_id: Some(cat_id),
+            date: "2025-01-15",
+        },
+    ];
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+    let rows = category_shares_rows(&conn, "expense", Some("2026-01"), Some(2026)).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].amount_cents, 1000, "同年同月才计入");
 }
 
 #[test]
@@ -315,7 +496,7 @@ fn category_shares_unclassified_shows_default_name() {
             date: "2026-01-15",
         },
     );
-    let rows = category_shares_rows(&conn, "expense", None).unwrap();
+    let rows = category_shares_rows(&conn, "expense", None, None).unwrap();
     assert_eq!(rows[0].category_name, "未分类");
 }
 
