@@ -18,6 +18,11 @@
     "ai": "AI",
     "settings": "Settings"
   },
+  "sidebarGroup": {
+    "bookkeeping": "Bookkeeping",
+    "assets": "Assets",
+    "insights": "Insights"
+  },
   "sidebarSort": {
     "up": "Move Up",
     "down": "Move Down",

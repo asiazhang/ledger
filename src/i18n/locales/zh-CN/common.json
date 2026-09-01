@@ -18,6 +18,11 @@
     "ai": "AI",
     "settings": "设置"
   },
+  "sidebarGroup": {
+    "bookkeeping": "记账",
+    "assets": "资产",
+    "insights": "洞察"
+  },
   "sidebarSort": {
     "up": "上移一位",
     "down": "下移一位",
