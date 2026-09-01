@@ -42,11 +42,11 @@ function press(key: string, mods: { metaKey?: boolean; ctrlKey?: boolean; altKey
 afterEach(() => setPlatform(''))
 
 describe('侧栏分组常量（issue #359 / ADR-0051）', () => {
-  it('三组锁定：记账 = 交易、账户、预算、定时；资产 = 投资、物品（保单空位就绪）；洞察 = 报表、搜索', () => {
+  it('三组锁定：记账 = 交易、账户、预算、定时；资产 = 投资、物品、保单；洞察 = 报表、搜索', () => {
     expect(SIDEBAR_GROUPS.map((g) => g.id)).toEqual(['bookkeeping', 'assets', 'insights'])
     expect(SIDEBAR_GROUPS.map((g) => [...g.views])).toEqual([
       ['transactions', 'accounts', 'budget', 'scheduled'],
-      ['investments', 'items'],
+      ['investments', 'items', 'policies'],
       ['reports', 'search'],
     ])
   })
@@ -60,6 +60,7 @@ describe('侧栏分组常量（issue #359 / ADR-0051）', () => {
       'scheduled',
       'investments',
       'items',
+      'policies',
       'reports',
       'search',
       'ai',
@@ -84,16 +85,18 @@ describe('侧栏分组常量（issue #359 / ADR-0051）', () => {
       'scheduled',
       'investments',
       'items',
+      'policies',
       'reports',
       'search',
     ])
   })
 
-  it('groupOfView：可排区八项各有其组；概览/AI/设置与未知名不在任何组', () => {
+  it('groupOfView：可排区九项各有其组；概览/AI/设置与未知名不在任何组', () => {
     expect(groupOfView('transactions')).toBe('bookkeeping')
     expect(groupOfView('scheduled')).toBe('bookkeeping')
     expect(groupOfView('investments')).toBe('assets')
     expect(groupOfView('items')).toBe('assets')
+    expect(groupOfView('policies')).toBe('assets')
     expect(groupOfView('reports')).toBe('insights')
     expect(groupOfView('search')).toBe('insights')
     expect(groupOfView('dashboard')).toBeNull()
@@ -103,20 +106,11 @@ describe('侧栏分组常量（issue #359 / ADR-0051）', () => {
   })
 })
 
-/** 默认组内序（= SIDEBAR_GROUPS 成员展开）：解析/持久化断言复用 */
+/** 默认组内序（= SIDEBAR_GROUPS 成员展开，保单为资产组末位）：解析/持久化断言复用 */
 const DEFAULT_ORDERS: SidebarGroupOrders = {
   bookkeeping: ['transactions', 'accounts', 'budget', 'scheduled'],
-  assets: ['investments', 'items'],
+  assets: ['investments', 'items', 'policies'],
   insights: ['reports', 'search'],
-}
-
-/** 保单空位就绪的假想组内序：资产组末位挂第 9 个可排区视图，可排区扩为九项 */
-function withPolicyOrders(): SidebarGroupOrders {
-  return {
-    bookkeeping: ['transactions', 'accounts', 'budget', 'scheduled'],
-    assets: ['investments', 'items', 'policies' as ViewName],
-    insights: ['reports', 'search'],
-  }
 }
 
 describe('parseGroupOrders（组内序解析纯函数）', () => {
@@ -140,7 +134,7 @@ describe('parseGroupOrders（组内序解析纯函数）', () => {
       insights: 'junk',
     })).toEqual({
       bookkeeping: ['budget', 'transactions', 'accounts', 'scheduled'],
-      assets: ['items', 'investments'],
+      assets: ['items', 'investments', 'policies'],
       insights: ['reports', 'search'],
     })
   })
@@ -163,12 +157,14 @@ describe('parseGroupOrders（组内序解析纯函数）', () => {
 })
 
 describe('viewShortcuts 派生（键位按线性位置推导，issue #359）', () => {
-  it('默认序下数字键 1..0 连续无空洞，设置为逗号键', () => {
-    expect(viewShortcuts.value.map((s) => s.key)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', ','])
+  it('数字键 1..9 连续无空洞、第 9 个可排项无键位、AI=0、设置为逗号键', () => {
+    expect(viewShortcuts.value.map((s) => s.key)).toEqual([
+      '1', '2', '3', '4', '5', '6', '7', '8', '9', null, '0', ',',
+    ])
     expect(viewShortcuts.value.map((s) => s.name)).toEqual([...DEFAULT_VIEW_ORDER])
   })
 
-  it('每个侧栏视图恰一条记录；分组形态下键位随组序：定时=5、投资=6、物品=7、报表=8、搜索=9、AI=0', () => {
+  it('每个侧栏视图恰一条记录；分组形态下键位随组序：定时=5、投资=6、物品=7、保单=8、报表=9、搜索无键位、AI=0', () => {
     const names = viewShortcuts.value.map((s) => s.name)
     expect(new Set(names).size).toBe(names.length)
     expect(new Set(names)).toEqual(new Set(DEFAULT_VIEW_ORDER))
@@ -176,37 +172,38 @@ describe('viewShortcuts 派生（键位按线性位置推导，issue #359）', (
     expect(viewShortcuts.value.find((v) => v.name === 'scheduled')!.key).toBe('5')
     expect(viewShortcuts.value.find((v) => v.name === 'investments')!.key).toBe('6')
     expect(viewShortcuts.value.find((v) => v.name === 'items')!.key).toBe('7')
-    expect(viewShortcuts.value.find((v) => v.name === 'reports')!.key).toBe('8')
-    expect(viewShortcuts.value.find((v) => v.name === 'search')!.key).toBe('9')
+    expect(viewShortcuts.value.find((v) => v.name === 'policies')!.key).toBe('8')
+    expect(viewShortcuts.value.find((v) => v.name === 'reports')!.key).toBe('9')
+    expect(viewShortcuts.value.find((v) => v.name === 'search')!.key).toBeNull()
     expect(viewShortcuts.value.find((v) => v.name === 'ai')!.key).toBe('0')
   })
 
-  it('deriveViewShortcuts：可排区第 9 项落在键位带之外——末位无键位（key: null）', () => {
-    // 保单空位就绪：资产组末位挂第 9 个可排区视图，可排区扩为九项——
-    // 线性序第 7 位（保单）得 ⌘8、第 8 位（报表）得 ⌘9，第 9 位（洞察组末位）无键位
-    const shortcuts = deriveViewShortcuts(withPolicyOrders())
-    expect(shortcuts.find((s) => s.name === 'search')!.key).toBeNull()
+  it('deriveViewShortcuts：可排区第 9 项落在键位带之外——末位无键位（key: null，默认序即搜索）', () => {
+    // 保单已接入（issue #360）：默认序第 7 位（保单）得 ⌘8、第 8 位（报表）得 ⌘9，
+    // 第 9 位（洞察组末位 = 搜索）无键位
+    const shortcuts = deriveViewShortcuts(DEFAULT_ORDERS)
     expect(shortcuts.find((s) => s.name === 'policies')!.key).toBe('8')
     expect(shortcuts.find((s) => s.name === 'reports')!.key).toBe('9')
+    expect(shortcuts.find((s) => s.name === 'search')!.key).toBeNull()
     expect(shortcuts.find((s) => s.name === 'ai')!.key).toBe('0')
   })
 
   it('无键位视图不可经键盘触发：数字键位恰 10 条非空记录；重排即换谁无键位', () => {
-    const shortcuts = deriveViewShortcuts(withPolicyOrders())
+    const shortcuts = deriveViewShortcuts(DEFAULT_ORDERS)
     const numberKeyed = shortcuts.filter((s) => s.key !== null && s.key !== ',')
     expect(numberKeyed).toHaveLength(10) // 概览 + 可排区前八项 + AI：数字键物理上限
     expect(numberKeyed.map((s) => s.name)).not.toContain('search')
     // 组内重排把搜索上移一位后，报表落到末位、变成无键位的那个
-    const reordered = deriveViewShortcuts({ ...withPolicyOrders(), insights: ['search', 'reports'] })
+    const reordered = deriveViewShortcuts({ ...DEFAULT_ORDERS, insights: ['search', 'reports'] })
     expect(reordered.find((s) => s.name === 'search')!.key).toBe('9')
     expect(reordered.find((s) => s.name === 'reports')!.key).toBeNull()
   })
 
   it('组内重排即重排键位（键随线性位置）', () => {
-    const reordered: SidebarGroupOrders = { ...DEFAULT_ORDERS, insights: ['search', 'reports'] }
+    const reordered: SidebarGroupOrders = { ...DEFAULT_ORDERS, bookkeeping: ['budget', 'transactions', 'accounts', 'scheduled'] }
     const shortcuts = deriveViewShortcuts(reordered)
-    expect(shortcuts.find((s) => s.name === 'search')!.key).toBe('8')
-    expect(shortcuts.find((s) => s.name === 'reports')!.key).toBe('9')
+    expect(shortcuts.find((s) => s.name === 'budget')!.key).toBe('2')
+    expect(shortcuts.find((s) => s.name === 'scheduled')!.key).toBe('5')
   })
 })
 
@@ -220,10 +217,16 @@ describe('matchViewShortcut', () => {
     expect(matchViewShortcut(press('5', { metaKey: true }))).toBe('scheduled')
     expect(matchViewShortcut(press('6', { metaKey: true }))).toBe('investments')
     expect(matchViewShortcut(press('7', { metaKey: true }))).toBe('items')
-    expect(matchViewShortcut(press('8', { metaKey: true }))).toBe('reports')
-    expect(matchViewShortcut(press('9', { metaKey: true }))).toBe('search')
+    expect(matchViewShortcut(press('8', { metaKey: true }))).toBe('policies')
+    expect(matchViewShortcut(press('9', { metaKey: true }))).toBe('reports')
     expect(matchViewShortcut(press('0', { metaKey: true }))).toBe('ai')
     expect(matchViewShortcut(press(',', { metaKey: true }))).toBe('settings')
+  })
+
+  it('无键位视图（可排区末位）不可经键盘触发', () => {
+    setPlatform('MacIntel')
+    // 默认序末位 = 搜索：不出提示、按键不命中（右键重排可换谁无键位）
+    expect(matchViewShortcut(press('9', { metaKey: true }))).not.toBe('search')
   })
 
   it('macOS 上 Ctrl+数字不命中（需要 Cmd）', () => {
@@ -392,6 +395,7 @@ describe('启动读路径（issue #269/#359：读取已存组内序，经解析�
       'budget',
       'investments',
       'items',
+      'policies',
       'search',
       'reports',
       'ai',
@@ -399,8 +403,9 @@ describe('启动读路径（issue #269/#359：读取已存组内序，经解析�
     ])
     expect(mod.viewShortcuts.value.find((s) => s.name === 'scheduled')!.key).toBe('2')
     expect(mod.viewShortcuts.value.find((s) => s.name === 'transactions')!.key).toBe('3')
-    expect(mod.viewShortcuts.value.find((s) => s.name === 'search')!.key).toBe('8')
-    expect(mod.viewShortcuts.value.find((s) => s.name === 'reports')!.key).toBe('9')
+    expect(mod.viewShortcuts.value.find((s) => s.name === 'policies')!.key).toBe('8')
+    expect(mod.viewShortcuts.value.find((s) => s.name === 'search')!.key).toBe('9')
+    expect(mod.viewShortcuts.value.find((s) => s.name === 'reports')!.key).toBeNull()
   })
 
   it('已存旧平铺排序数据（issue #270 形态）启动不异常、回退默认序', async () => {
@@ -535,7 +540,7 @@ describe('buildSidebarSortMenuOptions（排序菜单选项构建纯函数，含�
 })
 
 describe('isArrangeableView（固定项例外判定，issue #270/#359）', () => {
-  it('可排区八项为真；概览/AI/设置三固定项为假', () => {
+  it('可排区九项为真；概览/AI/设置三固定项为假', () => {
     for (const name of ARRANGEABLE_VIEWS) expect(isArrangeableView(name)).toBe(true)
     expect(isArrangeableView('dashboard')).toBe(false)
     expect(isArrangeableView('ai')).toBe(false)
@@ -565,11 +570,11 @@ describe('写路径与持久化（issue #270/#359：组内点选即重排、立�
     const mod = await fresh()
     mod.applySidebarSort('search', 'top')
     expect(mod.sidebarGroupOrders.value.insights[0]).toBe('search')
-    expect(mod.viewShortcuts.value.find((s) => s.name === 'search')!.key).toBe('8')
+    expect(mod.viewShortcuts.value.find((s) => s.name === 'search')!.key).toBe('9')
     const stored = JSON.parse(localStorage.getItem(ORDER_KEY)!)
     expect(stored).toEqual({
       bookkeeping: ['transactions', 'accounts', 'budget', 'scheduled'],
-      assets: ['investments', 'items'],
+      assets: ['investments', 'items', 'policies'],
       insights: ['search', 'reports'],
     })
   })
@@ -579,13 +584,14 @@ describe('写路径与持久化（issue #270/#359：组内点选即重排、立�
     mod.applySidebarSort('search', 'top')
     // 他组顺序原样
     expect(mod.sidebarGroupOrders.value.bookkeeping).toEqual(['transactions', 'accounts', 'budget', 'scheduled'])
-    expect(mod.sidebarGroupOrders.value.assets).toEqual(['investments', 'items'])
-    // 他组键位原样（键位带按组连续：记账 2-5、资产 6-7、洞察 8-9）
+    expect(mod.sidebarGroupOrders.value.assets).toEqual(['investments', 'items', 'policies'])
+    // 他组键位原样（键位带按组连续：记账 2-5、资产 6-8、洞察 9 + 末位无键位）
     expect(mod.viewShortcuts.value.find((s) => s.name === 'transactions')!.key).toBe('2')
     expect(mod.viewShortcuts.value.find((s) => s.name === 'scheduled')!.key).toBe('5')
     expect(mod.viewShortcuts.value.find((s) => s.name === 'investments')!.key).toBe('6')
-    // 本组内键位随动
-    expect(mod.viewShortcuts.value.find((s) => s.name === 'reports')!.key).toBe('9')
+    expect(mod.viewShortcuts.value.find((s) => s.name === 'policies')!.key).toBe('8')
+    // 本组内键位随动：搜索上移得 9，报表落到可排区末位无键位
+    expect(mod.viewShortcuts.value.find((s) => s.name === 'reports')!.key).toBeNull()
   })
 
   it('固定项不参与排序（applySidebarSort 对固定项为 no-op，不写存储）', async () => {
@@ -603,10 +609,10 @@ describe('写路径与持久化（issue #270/#359：组内点选即重排、立�
     vi.resetModules()
     const rebooted = await fresh()
     expect(rebooted.viewShortcuts.value.map((s) => s.name)).toEqual([
-      'dashboard', 'transactions', 'accounts', 'budget', 'scheduled', 'investments', 'items', 'search', 'reports', 'ai', 'settings',
+      'dashboard', 'transactions', 'accounts', 'budget', 'scheduled', 'investments', 'items', 'policies', 'search', 'reports', 'ai', 'settings',
     ])
-    expect(rebooted.viewShortcuts.value.find((s) => s.name === 'search')!.key).toBe('8')
-    expect(rebooted.viewShortcuts.value.find((s) => s.name === 'reports')!.key).toBe('9')
+    expect(rebooted.viewShortcuts.value.find((s) => s.name === 'search')!.key).toBe('9')
+    expect(rebooted.viewShortcuts.value.find((s) => s.name === 'reports')!.key).toBeNull()
   })
 
   it('save→load→解析往返：持久化值经 parseGroupOrders 防御后还原', async () => {

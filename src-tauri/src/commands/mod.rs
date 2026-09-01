@@ -19,6 +19,7 @@ pub mod investment;
 pub mod item;
 pub mod logs;
 pub mod merchants;
+pub mod policy;
 pub mod reports;
 pub mod scheduled;
 pub mod search;
@@ -39,6 +40,7 @@ pub use investment::*;
 pub use item::*;
 pub use logs::*;
 pub use merchants::*;
+pub use policy::*;
 pub use reports::*;
 pub use scheduled::*;
 pub use search::*;
@@ -135,6 +137,11 @@ pub const IPC_COMMAND_WRITE_OPS: &[(&str, Option<WriteOp>)] = &[
     ("item_daily_total", None),
     // ── 日志 ──
     ("open_log_dir", None), // 控制类：打开日志目录
+    // ── 保单域（静态档案，issue #360 / ADR-0051）──
+    ("create_policy", Some(WriteOp::CreatePolicy)),
+    ("update_policy", Some(WriteOp::UpdatePolicy)),
+    ("delete_policy", Some(WriteOp::DeletePolicy)),
+    ("list_policies", None),
     // ── 商户域 ──
     ("create_merchant", Some(WriteOp::CreateMerchant)),
     ("update_merchant", Some(WriteOp::UpdateMerchant)),

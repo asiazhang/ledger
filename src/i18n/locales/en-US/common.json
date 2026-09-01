@@ -16,7 +16,8 @@
     "scheduled": "Scheduled",
     "budget": "Budget",
     "ai": "AI",
-    "settings": "Settings"
+    "settings": "Settings",
+    "policies": "Policies"
   },
   "sidebarGroup": {
     "bookkeeping": "Bookkeeping",

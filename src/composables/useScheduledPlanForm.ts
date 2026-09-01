@@ -1,9 +1,9 @@
 import { computed, ref } from 'vue'
 import type { TreeSelectOption } from 'naive-ui'
-import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { useFormShared } from '@/composables/useFormShared'
+import { resolveMerchantRef } from '@/composables/resolve-merchant'
 import { todayStr } from '@/utils/date'
 import type { CreateScheduledInput, RecurrenceType, ScheduledKind } from '@/types'
 
@@ -84,37 +84,12 @@ export function useScheduledPlanForm() {
   )
 
   /**
-   * 商户解析（保存时单点收口，issue #190/#206）：「输入即建」交互——
-   * 1. 空 → null（无商户）；
-   * 2. 选中已有商户（value 为 id）→ 原样携带；
-   * 3. 编辑未改动原商户（软删且超出会话缓存）→ 原样携带（后端保持历史引用语义），
-   *    仅当 `editingMerchantId` 传入时生效（订阅编辑路径专用）；
-   * 4. 输入文本精确命中在用商户名 → 按名复用；
-   * 5. 未命中 → `create_merchant` 即建；重名错误（store 陈旧竞态）先强制重拉
-   *    按名复用，仍失败才向上抛。
+   * 商户解析（保存时单点收口，issue #190/#206）：「输入即建 + 重名兜底」交互
+   * 收口在共享接缝 `resolveMerchantRef`（保单表单同款消费，issue #360）——
+   * 本地仅读草稿字段，解析细则见该接缝注释。
    */
   async function resolveMerchant(editingMerchantId: string | null = null): Promise<string | null> {
-    const selected = merchantRef.value
-    if (!selected) return null
-    if (reference.merchantMap.has(selected)) return selected
-    if (editingMerchantId && selected === editingMerchantId) return selected
-    const name = selected.trim()
-    if (!name) return null
-    const existing = reference.merchantByName.get(name)
-    if (existing) return existing.id
-    try {
-      return await api.createMerchant({ name })
-    } catch (e) {
-      // 重名兜底（store 陈旧竞态）：强制重拉后按名复用；重拉失败不影响原错误上抛
-      try {
-        await reference.refresh()
-      } catch {
-        /* 保留原 create 错误 */
-      }
-      const retry = reference.merchantByName.get(name)
-      if (retry) return retry.id
-      throw e
-    }
+    return resolveMerchantRef(merchantRef.value, editingMerchantId)
   }
 
   /**
