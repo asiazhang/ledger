@@ -46,10 +46,15 @@ import {
   useViewShortcuts,
   isArrangeableView,
   isSidebarSortAction,
-  sidebarOrder,
+  sidebarGroups,
+  sidebarGroupOrders,
+  groupOfView,
   buildSidebarSortMenuOptions,
   applySidebarSort,
   resetSidebarOrder,
+  FIRST_VIEW,
+  PENULTIMATE_VIEW,
+  LAST_VIEW,
   type ViewName,
 } from '@/composables/useViewShortcuts'
 import { useWindowGuard } from '@/composables/useWindowGuard'
@@ -114,22 +119,42 @@ function renderMenuIcon(name: string) {
   return () => h(NIcon, { size: 18 }, { default: () => h(viewIcons[name]) })
 }
 
-// 菜单项与快捷键共用同一顺序源（viewShortcuts：由最终序按位置推导键位）；
-// 菜单由最终序响应式派生，排序变更时顺序与快捷键提示同步更新。
-// 每项右侧附快捷键提示（数字位或设置项的 ⌘,）；
-// 可排区八项经 nodeProps 附右键排序菜单（issue #270），三固定项不附（右键无任何菜单，
-// 原生菜单由窗口守卫抑制）。注：NMenu 不支持选项级 props 字段，必须走菜单级 nodeProps。
-const menuOptions = computed<MenuOption[]>(() =>
-  viewShortcuts.value.map(({ name, key }) => ({
+// 菜单形态（issue #359 侧栏分组）：概览（固定）+ 记账/资产/洞察三组 + AI、设置（固定）。
+// 菜单项与快捷键共用同一顺序源（viewShortcuts：由组内序按线性位置推导键位），
+// 分组标题不占键位、不参与排序与计数（NMenu group 选项天然不可选）；
+// 菜单响应式派生，组内排序变更时顺序与快捷键提示同步更新。
+// 每项右侧附快捷键提示（数字位或设置项的 ⌘,）；可排区末位无键位的视图不出提示。
+// 可排区八项经 nodeProps 附右键组内排序菜单（issue #270/#359），固定项与分组标题不附
+// （右键无任何菜单，原生菜单由窗口守卫抑制）。注：NMenu 不支持选项级 props 字段，必须走菜单级 nodeProps。
+function renderItem(name: ViewName, key: string | null): MenuOption {
+  return {
     key: name,
     icon: renderMenuIcon(name),
     label: () =>
       h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:12px;padding-right:2px' }, [
         h('span', viewLabel(name)),
-        h('span', { style: 'font-size:12px;opacity:.55' }, shortcutHint(key)),
+        key === null ? null : h('span', { style: 'font-size:12px;opacity:.55' }, shortcutHint(key)),
       ]),
-  })),
-)
+  }
+}
+
+const menuOptions = computed<MenuOption[]>(() => {
+  const keyOf = new Map(viewShortcuts.value.map((s) => [s.name, s.key]))
+  const item = (name: ViewName) => renderItem(name, keyOf.get(name) ?? null)
+  return [
+    item(FIRST_VIEW),
+    ...sidebarGroups.value.map(
+      (g): MenuOption => ({
+        type: 'group',
+        key: `sidebar-group:${g.id}`,
+        label: t(`common.sidebarGroup.${g.id}`),
+        children: g.views.map((name) => item(name)),
+      }),
+    ),
+    item(PENULTIMATE_VIEW),
+    item(LAST_VIEW),
+  ]
+})
 
 /** 菜单级 nodeProps：仅可排区项附右键事件（固定项无任何右键菜单）。
  *  naive-ui 的 nodeProps 返回类型把索引签名限成 string|number，事件函数过不去
@@ -143,9 +168,9 @@ function nodeProps(option: MenuOption) {
 }
 
 // ---------------------------------------------------------------------------
-// 侧栏右键排序菜单（issue #270）：可排区八项右键弹出（上移/下移/移顶/移底/恢复默认），
-// 手动定位弹出，与行级右键菜单同一模式；点选即重排并立即持久化，
-// 菜单打开期间视图快捷键由既有弹层抑制机制压制（零新代码）。
+// 侧栏右键排序菜单（issue #270，#359 收窄为组内）：可排区八项右键弹出组内排序菜单
+// （上移/下移/移顶/移底/恢复默认），手动定位弹出，与行级右键菜单同一模式；
+// 点选即重排并立即持久化，菜单打开期间视图快捷键由既有弹层抑制机制压制（零新代码）。
 // ---------------------------------------------------------------------------
 
 const sortMenuShow = ref(false)
@@ -153,9 +178,12 @@ const sortMenuX = ref(0)
 const sortMenuY = ref(0)
 const sortTarget = ref<ViewName | null>(null)
 
-const sortMenuOptions = computed(() =>
-  sortTarget.value ? buildSidebarSortMenuOptions(sortTarget.value, sidebarOrder.value) : [],
-)
+const sortMenuOptions = computed(() => {
+  const target = sortTarget.value
+  const gid = target ? groupOfView(target) : null
+  if (!target || !gid) return []
+  return buildSidebarSortMenuOptions(target, sidebarGroupOrders.value[gid])
+})
 
 /** 右键可排区项弹出排序菜单：先收起再 nextTick 展开，保证连续弹出时位置刷新。 */
 function showSortMenu(e: MouseEvent, name: ViewName) {
@@ -224,7 +252,7 @@ const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(rou
                 @update:value="handleSelect"
               />
             </NSpace>
-            <!-- 可排区右键排序菜单（issue #270）：手动定位弹出 -->
+            <!-- 可排区右键组内排序菜单（issue #270/#359）：手动定位弹出 -->
             <AppDropdown
               trigger="manual"
               placement="bottom-start"

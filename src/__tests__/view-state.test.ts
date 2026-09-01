@@ -8,7 +8,7 @@ import {
   loadReportsGroupLevel,
   saveReportsGroupLevel,
   getSavedSidebarOrder,
-  saveSidebarOrder,
+  saveSidebarOrders,
   clearSidebarOrder,
 } from '@/utils/view-state'
 
@@ -50,12 +50,18 @@ describe('view-state sidebarCollapsed', () => {
   })
 })
 
-describe('view-state sidebarOrder（issue #269：key 与读助手，解析归顺序模块）', () => {
+describe('view-state sidebarOrder（issue #269/#359：key 与读助手，解析归顺序模块）', () => {
   it('无记录时返回 null', () => {
     expect(getSavedSidebarOrder()).toBeNull()
   })
 
-  it('返回已存原始值（数组不做解析，防御归顺序模块）', () => {
+  it('返回已存原始值（组内序对象不做解析，防御归顺序模块）', () => {
+    const grouped = { bookkeeping: ['transactions'], insights: [] }
+    localStorage.setItem(VIEW_STATE_KEYS.sidebarOrder, JSON.stringify(grouped))
+    expect(getSavedSidebarOrder()).toEqual(grouped)
+  })
+
+  it('旧平铺数组原样透传（由顺序解析整体回退默认序，issue #359）', () => {
     localStorage.setItem(VIEW_STATE_KEYS.sidebarOrder, '["reports","transactions"]')
     expect(getSavedSidebarOrder()).toEqual(['reports', 'transactions'])
   })
@@ -65,21 +71,26 @@ describe('view-state sidebarOrder（issue #269：key 与读助手，解析归顺
     expect(getSavedSidebarOrder()).toBeNull()
   })
 
-  it('非数组原始值原样透传（由顺序解析整体回退默认序）', () => {
+  it('非对象原始值原样透传（由顺序解析整体回退默认序）', () => {
     localStorage.setItem(VIEW_STATE_KEYS.sidebarOrder, '123')
     expect(getSavedSidebarOrder()).toBe(123)
   })
 })
 
-describe('view-state sidebarOrder 写路径（issue #270）', () => {
-  it('saveSidebarOrder 写入 JSON 数组，getSavedSidebarOrder 读回原始值', () => {
-    saveSidebarOrder(['reports', 'transactions'])
-    expect(localStorage.getItem(VIEW_STATE_KEYS.sidebarOrder)).toBe('["reports","transactions"]')
-    expect(getSavedSidebarOrder()).toEqual(['reports', 'transactions'])
+describe('view-state sidebarOrder 写路径（issue #270/#359）', () => {
+  it('saveSidebarOrders 写入组内序对象 JSON，getSavedSidebarOrder 读回原始值', () => {
+    const orders = {
+      bookkeeping: ['transactions', 'accounts', 'budget', 'scheduled'],
+      assets: ['investments', 'items'],
+      insights: ['search', 'reports'],
+    } as const
+    saveSidebarOrders(orders)
+    expect(localStorage.getItem(VIEW_STATE_KEYS.sidebarOrder)).toBe(JSON.stringify(orders))
+    expect(getSavedSidebarOrder()).toEqual(orders)
   })
 
   it('clearSidebarOrder 移除 key，回退无记录态', () => {
-    saveSidebarOrder(['reports'])
+    saveSidebarOrders({ bookkeeping: ['transactions'], assets: [], insights: [] })
     clearSidebarOrder()
     expect(localStorage.getItem(VIEW_STATE_KEYS.sidebarOrder)).toBeNull()
     expect(getSavedSidebarOrder()).toBeNull()

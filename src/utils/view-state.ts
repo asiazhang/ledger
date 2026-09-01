@@ -1,9 +1,9 @@
-// 视图状态（ViewState）持久化：当前视图、侧边栏折叠、报表汇总层级、侧栏可排区顺序。
+// 视图状态（ViewState）持久化：当前视图、侧边栏折叠、报表汇总层级、侧栏组内顺序（issue #359）。
 // 约定：key 统一加 'view_state:' 前缀，与偏好（'appearance' 等）及业务数据（SQLite）分域。
 // 边界：不做"过度记忆"（筛选、滚动位置、列宽等一律不持久化）。
 
 import { loadLocal, saveLocal, removeLocal } from '@/utils/storage'
-import type { ViewName } from '@/composables/useViewShortcuts'
+import type { SidebarGroupOrders } from '@/composables/useViewShortcuts'
 
 export const VIEW_STATE_KEYS = {
   route: 'view_state:route',
@@ -33,16 +33,17 @@ export function saveSidebarCollapsed(collapsed: boolean) {
 }
 
 /**
- * 已存侧栏可排区顺序（原始值）；无记录或数据损坏时返回 null。
- * 非法名过滤、去重、缺失项补齐等解析防御归顺序模块 parseArrangeableOrder，此处不解析。
+ * 已存侧栏组内序（原始值）；无记录或数据损坏时返回 null。
+ * 旧平铺数组（issue #270 形态）等脏形状的整体回退、组内非法名过滤、去重、缺失项补齐等
+ * 解析防御归顺序模块 parseGroupOrders，此处不解析。
  */
 export function getSavedSidebarOrder(): unknown {
   return loadLocal<unknown>(VIEW_STATE_KEYS.sidebarOrder, null)
 }
 
-/** 持久化自定义可排区顺序（点选即写，写路径唯一出处，issue #270）。 */
-export function saveSidebarOrder(order: readonly ViewName[]) {
-  saveLocal(VIEW_STATE_KEYS.sidebarOrder, order)
+/** 持久化组内序（点选即写，写路径唯一出处，issue #270/#359）：对象形状「组 id → 视图名数组」。 */
+export function saveSidebarOrders(orders: SidebarGroupOrders) {
+  saveLocal(VIEW_STATE_KEYS.sidebarOrder, orders)
 }
 
 /** 清除自定义顺序（恢复默认排序），回退无记录态。 */
