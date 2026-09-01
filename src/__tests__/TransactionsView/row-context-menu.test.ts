@@ -361,6 +361,7 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
+      if (cmd === 'list_policies') return Promise.resolve([])
       if (cmd === 'list_transactions') {
         const filter = (args?.filter ?? {}) as Record<string, unknown>
         const scoped = applyListFilter(filter)
@@ -512,6 +513,7 @@ describe('TransactionsView 行右键「加入物品」（issue #119）', () => {
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
+      if (cmd === 'list_policies') return Promise.resolve([])
       if (cmd === 'list_transactions') {
         const filter = (args?.filter ?? {}) as Record<string, unknown>
         const scoped = applyListFilter(filter)

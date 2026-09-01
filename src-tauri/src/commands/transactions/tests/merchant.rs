@@ -31,6 +31,7 @@ fn create_income_expense_refund_with_merchant() {
     let expense_id = create_transaction_internal(
         &conn,
         TransactionInput {
+            policy_id: None,
             merchant_id: Some("mer-jd".into()),
             ..make_input("acc-m", TransactionKind::Expense, 1000, "2026-01-01")
         },
@@ -40,6 +41,7 @@ fn create_income_expense_refund_with_merchant() {
     let income_id = create_transaction_internal(
         &conn,
         TransactionInput {
+            policy_id: None,
             merchant_id: Some("mer-jd".into()),
             ..make_input("acc-m", TransactionKind::Income, 500, "2026-01-02")
         },
@@ -51,6 +53,7 @@ fn create_income_expense_refund_with_merchant() {
     let refund_id = create_transaction_internal(
         &conn,
         TransactionInput {
+            policy_id: None,
             kind: TransactionKind::Refund,
             merchant_id: Some("mer-jd".into()),
             refund_of_transaction_id: Some(expense_id.clone()),
@@ -93,6 +96,7 @@ fn create_txn_with_merchant_rejected_for_non_merchant_kinds() {
     let err = create_transaction_internal(
         &conn,
         TransactionInput {
+            policy_id: None,
             kind: TransactionKind::Transfer,
             merchant_id: Some("mer-jd".into()),
             to_account_id: Some("acc-m-to".into()),
@@ -107,6 +111,7 @@ fn create_txn_with_merchant_rejected_for_non_merchant_kinds() {
         let err = create_transaction_internal(
             &conn,
             TransactionInput {
+                policy_id: None,
                 kind,
                 merchant_id: Some("mer-jd".into()),
                 instrument_id: Some("inst-x".into()),
@@ -128,6 +133,7 @@ fn create_txn_with_merchant_rejected_for_non_merchant_kinds() {
         let err = create_transaction_internal(
             &conn,
             TransactionInput {
+                policy_id: None,
                 kind,
                 merchant_id: Some("mer-jd".into()),
                 ..make_input("acc-m", kind, 60, "2026-01-01")
@@ -170,6 +176,7 @@ fn update_txn_with_merchant_rejected_for_transfer() {
         &conn,
         &id,
         TransactionInput {
+            policy_id: None,
             kind: TransactionKind::Transfer,
             merchant_id: Some("mer-jd".into()),
             to_account_id: Some("acc-m-to".into()),
@@ -195,6 +202,7 @@ fn read_back_carries_merchant_id_after_merchant_soft_delete_and_rename() {
     let id = create_transaction_internal(
         &conn,
         TransactionInput {
+            policy_id: None,
             merchant_id: Some("mer-jd".into()),
             note: Some("备注".into()),
             ..make_input("acc-m", TransactionKind::Expense, 1000, "2026-01-01")
@@ -233,6 +241,7 @@ fn update_historical_txn_keeps_soft_deleted_merchant() {
     let id = create_transaction_internal(
         &conn,
         TransactionInput {
+            policy_id: None,
             merchant_id: Some("mer-jd".into()),
             note: Some("旧备注".into()),
             ..make_input("acc-m", TransactionKind::Expense, 1000, "2026-01-01")
@@ -248,6 +257,7 @@ fn update_historical_txn_keeps_soft_deleted_merchant() {
         &conn,
         &id,
         TransactionInput {
+            policy_id: None,
             merchant_id: Some("mer-jd".into()),
             note: Some("新备注".into()),
             ..make_input("acc-m", TransactionKind::Expense, 1000, "2026-01-01")
@@ -264,6 +274,7 @@ fn update_historical_txn_keeps_soft_deleted_merchant() {
         &conn,
         &id,
         TransactionInput {
+            policy_id: None,
             merchant_id: Some("mer-pdd".into()),
             note: Some("新备注".into()),
             ..make_input("acc-m", TransactionKind::Expense, 1000, "2026-01-01")
@@ -278,6 +289,7 @@ fn update_historical_txn_keeps_soft_deleted_merchant() {
         &conn,
         &id,
         TransactionInput {
+            policy_id: None,
             merchant_id: Some("mer-jd".into()),
             note: Some("新备注".into()),
             ..make_input("acc-m", TransactionKind::Expense, 1000, "2026-01-01")
@@ -328,6 +340,7 @@ fn create_with_new_merchant_name_reports_merchant_created() {
         &conn,
         TransactionInput {
             merchant_name: Some("盒马".into()),
+            policy_id: None,
             ..make_input("acc-ev", TransactionKind::Expense, 1000, "2026-01-01")
         },
     )
@@ -367,6 +380,7 @@ fn create_with_hit_merchant_name_reports_reuse_and_zero_signal() {
         &conn,
         TransactionInput {
             merchant_name: Some("京东".into()),
+            policy_id: None,
             ..make_input("acc-ev", TransactionKind::Expense, 1000, "2026-01-01")
         },
     )
@@ -388,6 +402,7 @@ fn create_without_new_name_reports_false_evidence() {
     let with_id = create_transaction_internal(
         &conn,
         TransactionInput {
+            policy_id: None,
             merchant_id: Some("mer-jd".into()),
             ..make_input("acc-ev", TransactionKind::Expense, 1000, "2026-01-01")
         },
@@ -422,6 +437,7 @@ fn create_refund_ignores_merchant_name_and_reports_false() {
         &conn,
         TransactionInput {
             merchant_name: Some("京东".into()),
+            policy_id: None,
             ..make_input("acc-ev", TransactionKind::Expense, 1000, "2026-01-01")
         },
     )
@@ -432,6 +448,7 @@ fn create_refund_ignores_merchant_name_and_reports_false() {
         &conn,
         TransactionInput {
             merchant_name: Some("不存在的商户".into()),
+            policy_id: None,
             refund_of_transaction_id: Some(expense_id),
             ..make_input("acc-ev", TransactionKind::Refund, 100, "2026-01-02")
         },
@@ -463,6 +480,7 @@ fn update_to_new_merchant_name_reports_merchant_created() {
         &id,
         TransactionInput {
             merchant_name: Some("物美".into()),
+            policy_id: None,
             ..make_input("acc-ev", TransactionKind::Expense, 1000, "2026-01-01")
         },
     )
@@ -495,6 +513,7 @@ fn update_reusing_merchant_reports_false_and_zero_signal() {
         &id,
         TransactionInput {
             merchant_name: Some("京东".into()),
+            policy_id: None,
             ..make_input("acc-ev", TransactionKind::Expense, 1000, "2026-01-01")
         },
     )
@@ -507,6 +526,7 @@ fn update_reusing_merchant_reports_false_and_zero_signal() {
         &conn,
         &id,
         TransactionInput {
+            policy_id: None,
             merchant_id: Some("mer-jd".into()),
             note: Some("只改备注".into()),
             ..make_input("acc-ev", TransactionKind::Expense, 1000, "2026-01-01")

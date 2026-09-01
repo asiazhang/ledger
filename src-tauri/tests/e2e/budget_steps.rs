@@ -102,6 +102,7 @@ fn expense_input(
 ) -> TransactionInput {
     TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::Expense,
         amount_cents: amount,
         currency_code: "CNY".into(),
@@ -350,6 +351,7 @@ fn refund_last_expense(world: &mut LedgerWorld, amount: i64) {
         .expect("场景中没有可退款的前序支出");
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::Refund,
         amount_cents: amount,
         currency_code: "CNY".into(),

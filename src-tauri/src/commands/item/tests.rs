@@ -43,6 +43,7 @@ fn seed_purchase_tx(conn: &Connection, date: &str, cost_cents: i64, currency: &s
         conn,
         TransactionInput {
             merchant_name: None,
+            policy_id: None,
             kind: TransactionKind::Expense,
             amount_cents: cost_cents,
             currency_code: currency.into(),

@@ -236,6 +236,7 @@ fn make_buy_input(
 ) -> TransactionInput {
     TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::Buy,
         amount_cents: 0,
         currency_code: "USD".into(),
@@ -445,6 +446,7 @@ fn batch_create_zero_amount_row_isolated() {
 
     let inputs = vec![
         TransactionInput {
+            policy_id: None,
             amount_cents: 0,
             ..make_input("acc-log-zero", TransactionKind::Income, 100, "2026-07-01")
         },
@@ -493,6 +495,7 @@ fn active_merchant_count(conn: &Connection) -> i64 {
 fn expense_named(account: &str, date: &str, name: &str) -> TransactionInput {
     TransactionInput {
         merchant_name: Some(name.into()),
+        policy_id: None,
         ..make_input(account, TransactionKind::Expense, 1000, date)
     }
 }
@@ -551,6 +554,7 @@ fn run_with_reused_merchants_aggregates_false() {
         vec![
             expense_named("acc-agg", "2026-07-01", "京东"),
             TransactionInput {
+                policy_id: None,
                 merchant_id: Some("mer-jd".into()),
                 ..make_input("acc-agg", TransactionKind::Expense, 500, "2026-07-02")
             },
@@ -587,6 +591,7 @@ fn run_invalid_row_with_new_name_creates_no_merchant() {
     insert_account(&conn, "acc-agg", "现金", "cash", "CNY");
 
     let bad = TransactionInput {
+        policy_id: None,
         amount_cents: 0,
         ..expense_named("acc-agg", "2026-07-01", "不存在的新商户")
     };

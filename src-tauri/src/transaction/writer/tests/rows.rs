@@ -15,7 +15,7 @@ fn read_row(conn: &Connection, id: &str) -> NormalizedRow {
     let row: RowFields = conn
         .query_row(
             "SELECT kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
-             category_id,merchant_id,refund_of_transaction_id,note,date \
+             category_id,merchant_id,policy_id,refund_of_transaction_id,note,date \
              FROM transactions WHERE id=?1",
             params![id],
             |r| {
@@ -28,9 +28,10 @@ fn read_row(conn: &Connection, id: &str) -> NormalizedRow {
                     to_account_id: r.get(5)?,
                     category_id: r.get(6)?,
                     merchant_id: r.get(7)?,
-                    refund_of_transaction_id: r.get(8)?,
-                    note: r.get(9)?,
-                    date: r.get(10)?,
+                    policy_id: r.get(8)?,
+                    refund_of_transaction_id: r.get(9)?,
+                    note: r.get(10)?,
+                    date: r.get(11)?,
                 })
             },
         )
@@ -43,6 +44,7 @@ fn read_row(conn: &Connection, id: &str) -> NormalizedRow {
         account_id: row.account_id,
         to_account_id: row.to_account_id,
         category_id: row.category_id,
+        policy_id: row.policy_id,
         merchant_id: row.merchant_id,
         refund_of_transaction_id: row.refund_of_transaction_id,
         note: row.note,
@@ -60,6 +62,7 @@ struct RowFields {
     to_account_id: Option<String>,
     category_id: Option<String>,
     merchant_id: Option<String>,
+    policy_id: Option<String>,
     refund_of_transaction_id: Option<String>,
     note: Option<String>,
     date: String,
@@ -154,6 +157,7 @@ fn update_row_overwrites_fields_and_bumps_version() {
         to_account_id: Some("acc-b".into()),
         category_id: None,
         merchant_id: None,
+        policy_id: None,
         refund_of_transaction_id: None,
         note: Some("改后".into()),
         date: "2026-02-10".into(),

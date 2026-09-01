@@ -57,6 +57,7 @@ fn fund_trade(
         .expect("账户不存在");
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind,
         amount_cents,
         currency_code,

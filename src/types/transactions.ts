@@ -12,6 +12,8 @@ export interface Transaction extends Syncable {
   to_account_id: string | null
   category_id: string | null
   merchant_id: string | null
+  /** 可选保单引用（issue #361 / ADR-0051）：仅 expense/income 可挂，后端行为层准入 */
+  policy_id: string | null
   refund_of_transaction_id: string | null
   note: string | null
   date: string
@@ -30,6 +32,9 @@ export interface TransactionInput {
   /** 商户名字符串（AI 导入契约，issue #194）：后端精确匹配在用商户名，命中复用、未命中即建；
    * 与 merchant_id 互斥，与商户名归一化责任在后端 */
   merchant_name?: string | null
+  /** 可选保单引用（issue #361 / ADR-0051 决策 3）：仅 expense/income 可携带，其余 kind 后端行为层拒绝；
+   * 引用不存在的保单返回错误（中文，可读回自纠） */
+  policy_id?: string | null
   refund_of_transaction_id?: string | null
   note?: string | null
   date: string

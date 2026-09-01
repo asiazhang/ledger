@@ -38,7 +38,7 @@ pub fn query_all_transactions(conn: &Connection) -> Vec<Transaction> {
         .prepare(
             "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
              to_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,\
-             version,device_id,is_deleted,merchant_id \
+             version,device_id,is_deleted,merchant_id,policy_id \
              FROM transactions WHERE is_deleted=0 ORDER BY date DESC, created_at DESC, id DESC",
         )
         .unwrap();
@@ -61,6 +61,7 @@ pub fn query_all_transactions(conn: &Connection) -> Vec<Transaction> {
             device_id: r.get(14)?,
             is_deleted: r.get::<_, i64>(15)? != 0,
             merchant_id: r.get(16)?,
+            policy_id: r.get(17)?,
         })
     })
     .unwrap()

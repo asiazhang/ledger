@@ -29,6 +29,7 @@ pub(crate) fn make_input(
 ) -> TransactionInput {
     TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind,
         amount_cents: amount,
         currency_code: "CNY".into(),
@@ -56,6 +57,7 @@ pub(crate) fn make_buy_input(
 ) -> TransactionInput {
     TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::Buy,
         amount_cents: 0,
         currency_code: "USD".into(),

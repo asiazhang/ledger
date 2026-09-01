@@ -5,10 +5,16 @@ import { api } from '@/api'
 import { centsToYuan } from '@/types'
 import { buildExpenseIncomeInput } from '@/domain/transaction-input'
 import { useReferenceStore } from '@/stores/reference'
+import { usePoliciesStore } from '@/stores/policies'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
 import { t } from '@/i18n'
-import type { Transaction } from '@/types'
+import type { Transaction, Policy } from '@/types'
 import { errorMessage } from "@/utils/errors";
+
+/** 保单选项展示标签：保单号为主、险种辅佐（保单号是用户认单的自然键）。 */
+function policyLabel(p: Policy): string {
+  return p.policy_number
+}
 
 export function useCategoryForm(
   kind: 'expense' | 'income',
@@ -32,6 +38,10 @@ export function useCategoryForm(
   const accountId = ref<string | null>(null)
   const categoryId = ref<string | null>(null)
   const merchantRef = ref<string | null>(null)
+  // 可选保单引用（issue #361）：支出（保费）与收入（保单现金流入）可挂一张保单；
+  // 选项来自保单 store（只含未删除保单，软删不可再被新选择）。
+  const policiesStore = usePoliciesStore()
+  const policyId = ref<string | null>(null)
   const note = ref('')
   const date = ref(Date.now())
 
@@ -88,12 +98,34 @@ export function useCategoryForm(
     }
   }
 
+  // 保单下拉选项（issue #361）：未删除保单；编辑时若原挂保单已软删（超出列表），
+  // 追加兜底选项承载原 id——裸 uuid 不可读，提交时按「未改动」语义原样保留
+  // （后端 existing_policy_id unchanged 语义跳过校验），与软删商户兜底同款。
+  const editingPolicyId = editingTx?.policy_id ?? null
+  const policyOptions = computed<{ label: string; value: string }[]>(() => {
+    const base = policiesStore.policies.map((p) => ({
+      label: `${policyLabel(p)}（${p.product_name}）`,
+      value: p.id,
+    }))
+    if (
+      editingPolicyId &&
+      !policiesStore.policies.some((p) => p.id === editingPolicyId)
+    ) {
+      base.unshift({
+        label: t('transactions.form.policyDeleted'),
+        value: editingPolicyId,
+      })
+    }
+    return base
+  })
+
   if (editingTx) {
     amount.value = centsToYuan(editingTx.amount_cents, reference.getCurrency(editingTx.currency_code))
     currencyCode.value = editingTx.currency_code
     accountId.value = editingTx.account_id
     categoryId.value = editingTx.category_id
     merchantRef.value = editingTx.merchant_id
+    policyId.value = editingTx.policy_id
     note.value = editingTx.note ?? ''
     date.value = utcMidnightTimestamp(editingTx.date)
   }
@@ -122,6 +154,7 @@ export function useCategoryForm(
         accountId: accountId.value,
         categoryId: categoryId.value,
         merchantId,
+        policyId: policyId.value,
         note: note.value,
         date: date.value,
       })
@@ -156,13 +189,14 @@ export function useCategoryForm(
     accountId.value = null
     categoryId.value = null
     merchantRef.value = null
+    policyId.value = null
     note.value = ''
     date.value = Date.now()
   }
 
   return {
-    amount, currencyCode, accountId, categoryId, merchantRef, note, date,
-    accountOptions, currencyOptions, treeOptions, merchantOptions,
+    amount, currencyCode, accountId, categoryId, merchantRef, policyId, note, date,
+    accountOptions, currencyOptions, treeOptions, merchantOptions, policyOptions,
     submit, resetForm,
   }
 }

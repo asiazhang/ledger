@@ -37,6 +37,7 @@ fn create_transaction_internal_audit_fields_uniform_across_kinds() {
     let refund_id = create_transaction_internal(
         &conn,
         TransactionInput {
+            policy_id: None,
             kind: TransactionKind::Refund,
             amount_cents: 200,
             merchant_id: None,
@@ -143,6 +144,7 @@ fn create_transaction_internal_generic_converts_native_via_amount_seam() {
     let id = create_transaction_internal(
         &conn,
         TransactionInput {
+            policy_id: None,
             currency_code: "USD".into(),
             ..make_input("acc-usd", TransactionKind::Expense, 10000, "2026-01-01")
         },

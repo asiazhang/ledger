@@ -589,6 +589,7 @@ fn get_transaction_trade_rejects_missing_or_non_trade_transaction() {
         &conn,
         TransactionInput {
             merchant_name: None,
+            policy_id: None,
             kind: TransactionKind::Expense,
             amount_cents: 1000,
             currency_code: "CNY".into(),

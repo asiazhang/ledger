@@ -77,7 +77,10 @@
     "transferCreated": "已记转账",
     "changesSaved": "已保存修改",
     "saveFailed": "保存失败: {msg}",
-    "createFailed": "记账失败: {msg}"
+    "createFailed": "记账失败: {msg}",
+    "policy": "保单",
+    "policyPlaceholder": "选择保单（可选）",
+    "policyDeleted": "（已删除保单）"
   },
   "refund": {
     "title": "退款",

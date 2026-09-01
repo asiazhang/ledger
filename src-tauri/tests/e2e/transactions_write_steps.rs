@@ -36,6 +36,7 @@ fn create_txn(
 ) {
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: "CNY".into(),
@@ -72,6 +73,7 @@ fn create_txn_with_note(
 ) {
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: "CNY".into(),
@@ -106,6 +108,7 @@ fn try_transfer_without_target(
 ) {
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::Transfer,
         amount_cents: amount,
         currency_code: "CNY".into(),
@@ -141,6 +144,7 @@ fn try_create_txn(
 ) {
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: "CNY".into(),
@@ -190,6 +194,7 @@ fn try_create_buy(
         .expect("账户不存在");
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::Buy,
         amount_cents: 0,
         currency_code,
@@ -232,6 +237,7 @@ fn try_create_trade_with_raw_instrument_id(
         .expect("账户不存在");
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind,
         amount_cents: 0,
         currency_code,
@@ -340,6 +346,7 @@ fn create_transfer(
 ) {
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::Transfer,
         amount_cents: amount,
         currency_code: "CNY".into(),
@@ -370,6 +377,7 @@ fn create_refund(world: &mut LedgerWorld, amount: i64, date: String) {
         .expect("没有上一笔交易可关联");
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::Refund,
         amount_cents: amount,
         currency_code: "CNY".into(),

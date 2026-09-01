@@ -24,6 +24,7 @@ const expenseState: ExpenseIncomeFormState = {
   accountId: 'acc-1',
   categoryId: 'cat-1',
   merchantId: 'm-1',
+  policyId: null,
   note: '午餐',
   date: localTs(2024, 6, 15),
 }
@@ -38,6 +39,11 @@ const transferState: TransferFormState = {
 }
 
 describe('buildExpenseIncomeInput', () => {
+  it('可选保单引用（issue #361）：policyId 原样透传到 policy_id', () => {
+    const input = buildExpenseIncomeInput({ ...expenseState, policyId: 'pol-1' })
+    expect(input.policy_id).toBe('pol-1')
+  })
+
   it('expense 完整 wire 形状（含占位字段）', () => {
     expect(buildExpenseIncomeInput(expenseState)).toEqual({
       kind: 'expense',
@@ -47,6 +53,7 @@ describe('buildExpenseIncomeInput', () => {
       to_account_id: null,
       category_id: 'cat-1',
       merchant_id: 'm-1',
+      policy_id: null,
       refund_of_transaction_id: null,
       note: '午餐',
       date: '2024-06-15',
@@ -62,6 +69,7 @@ describe('buildExpenseIncomeInput', () => {
         accountId: 'acc-2',
         categoryId: null,
         merchantId: null,
+        policyId: null,
         note: '',
         date: localTs(2024, 6, 15),
       }),
@@ -73,6 +81,7 @@ describe('buildExpenseIncomeInput', () => {
       to_account_id: null,
       category_id: null,
       merchant_id: null,
+      policy_id: null,
       refund_of_transaction_id: null,
       note: null,
       date: '2024-06-15',
@@ -95,6 +104,7 @@ describe('buildTransferInput', () => {
       to_account_id: 'acc-2',
       category_id: null,
       merchant_id: null,
+      policy_id: null,
       refund_of_transaction_id: null,
       note: '房租分摊',
       date: '2024-06-15',
@@ -132,6 +142,7 @@ describe('buildRefundInput', () => {
       to_account_id: null,
       category_id: null,
       merchant_id: null,
+      policy_id: null,
       refund_of_transaction_id: 'tx-origin',
       note: '部分退款',
       date: '2024-06-16',
@@ -181,6 +192,7 @@ describe('buildTradeInput', () => {
       to_account_id: null,
       category_id: null,
       merchant_id: null,
+      policy_id: null,
       refund_of_transaction_id: null,
       note: null,
       date: '2024-06-15',
@@ -200,6 +212,7 @@ describe('buildTradeInput', () => {
       to_account_id: null,
       category_id: null,
       merchant_id: null,
+      policy_id: null,
       refund_of_transaction_id: null,
       note: '止盈',
       date: '2024-06-15',
@@ -229,6 +242,7 @@ describe('buildTradeInput', () => {
       to_account_id: null,
       category_id: null,
       merchant_id: null,
+      policy_id: null,
       refund_of_transaction_id: null,
       note: null,
       date: '2024-06-15',

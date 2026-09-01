@@ -42,6 +42,7 @@ fn scaffold_purchase_tx(
     };
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::Expense,
         amount_cents: cost_cents,
         currency_code: currency.into(),

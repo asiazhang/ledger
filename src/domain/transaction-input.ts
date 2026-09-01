@@ -33,6 +33,8 @@ export interface ExpenseIncomeFormState {
   accountId: string | null
   categoryId: string | null
   merchantId: string | null
+  /** 已选保单 id（可选；null = 不挂单）；其他字段原样透传 */
+  policyId: string | null
   note: string
   /** 本地日期时间戳（日期选择器值） */
   date: number
@@ -88,6 +90,8 @@ interface KindMatrixRow {
   to_account_id: null
   category_id: null
   merchant_id: null
+  /** 可选保单引用（issue #361）：仅 expense/income 由表单承载，其余 kind 不承载（行为层准入拒绝） */
+  policy_id: null
   refund_of_transaction_id: null
 }
 
@@ -96,15 +100,16 @@ interface KindMatrixRow {
  * 由各入口在装配结果上覆写。新增表单形态只改此矩阵。
  */
 const KIND_FIELD_MATRIX: Record<TransactionKind, KindMatrixRow> = {
-  income: { to_account_id: null, category_id: null, merchant_id: null, refund_of_transaction_id: null },
-  expense: { to_account_id: null, category_id: null, merchant_id: null, refund_of_transaction_id: null },
-  transfer: { to_account_id: null, category_id: null, merchant_id: null, refund_of_transaction_id: null },
-  refund: { to_account_id: null, category_id: null, merchant_id: null, refund_of_transaction_id: null },
+  income: { to_account_id: null, category_id: null, merchant_id: null, policy_id: null, refund_of_transaction_id: null },
+  expense: { to_account_id: null, category_id: null, merchant_id: null, policy_id: null, refund_of_transaction_id: null },
+  transfer: { to_account_id: null, category_id: null, merchant_id: null, policy_id: null, refund_of_transaction_id: null },
+  refund: { to_account_id: null, category_id: null, merchant_id: null, policy_id: null, refund_of_transaction_id: null },
   buy: {
     amount_cents: 0,
     to_account_id: null,
     category_id: null,
     merchant_id: null,
+    policy_id: null,
     refund_of_transaction_id: null,
   },
   sell: {
@@ -112,6 +117,7 @@ const KIND_FIELD_MATRIX: Record<TransactionKind, KindMatrixRow> = {
     to_account_id: null,
     category_id: null,
     merchant_id: null,
+    policy_id: null,
     refund_of_transaction_id: null,
   },
 }
@@ -169,6 +175,7 @@ function baseInput(
     to_account_id: row.to_account_id,
     category_id: row.category_id,
     merchant_id: row.merchant_id,
+    policy_id: row.policy_id,
     refund_of_transaction_id: row.refund_of_transaction_id,
     currency_code: fields.currencyCode,
     account_id: fields.accountId,
@@ -189,6 +196,8 @@ export function buildExpenseIncomeInput(state: ExpenseIncomeFormState): Transact
     }),
     category_id: state.categoryId,
     merchant_id: state.merchantId,
+    // 可选保单引用（issue #361）：表单状态原样透传（null = 不挂，行为层准入已限定本形态）
+    policy_id: state.policyId,
   }
 }
 

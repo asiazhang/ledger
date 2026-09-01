@@ -64,7 +64,8 @@
     "not-found": "交易不存在: {0}",
     "merchant-unsupported": "交易类型 {0} 不能携带商户",
     "merchant-id-and-name-conflict": "merchant_id 与 merchant_name 不可同时提供",
-    "kind-unsupported": "交易类型 {0} 暂不支持（MVP 未实现）"
+    "kind-unsupported": "交易类型 {0} 暂不支持（MVP 未实现）",
+    "policy-unsupported": "交易类型 {0} 不能挂保单"
   },
   "refund": {
     "source-required": "退款必须关联原支出交易",
@@ -165,6 +166,7 @@
     "end-before-start": "保障期间止日 {0} 早于起日 {1}",
     "amount-positive": "保额必须大于 0",
     "currency-required": "填写保额时必须选择保额币种",
-    "currency-not-found": "未知币种: {0}"
+    "currency-not-found": "未知币种: {0}",
+    "not-active": "保单不存在或已删除: {0}"
   }
 }

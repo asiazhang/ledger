@@ -3,7 +3,8 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useCategoryForm } from '@/composables/useCategoryForm'
 import { useReferenceStore } from '@/stores/reference'
-import type { Account, Currency, Merchant, Transaction } from '@/types'
+import { usePoliciesStore } from '@/stores/policies'
+import type { Account, Currency, Merchant, Policy, Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -25,6 +26,16 @@ const mockMerchants: Merchant[] = [
     id: 'mch-1', name: '京东',
     created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false,
+  },
+]
+
+const mockPolicies: Policy[] = [
+  {
+    id: 'pol-1', merchant_id: 'mch-1', policy_number: 'P2026-001',
+    product_name: '重疾险', start_date: '2026-01-01', end_date: '2036-01-01',
+    coverage_amount_cents: null, coverage_currency_code: null,
+    note: null, is_deleted: false, created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test',
   },
 ]
 
@@ -50,6 +61,7 @@ function mockBaseCommands(merchants: Merchant[] = mockMerchants) {
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve(merchants)
+    if (cmd === 'list_policies') return Promise.resolve(mockPolicies)
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
 }
@@ -79,6 +91,7 @@ async function submitWithMerchant(
 ) {
   // 参考 store self-init 异步：先等首拉完成，保证 merchantByName/merchantMap 就绪
   await useReferenceStore().refresh()
+  await usePoliciesStore().refresh()
   const form = useCategoryForm('expense', options)
   form.amount.value = 50
   form.accountId.value = 'acc-1'
@@ -119,6 +132,7 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
       if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve([])
+      if (cmd === 'list_policies') return Promise.resolve(mockPolicies)
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const input = await submitWithMerchant('盒马')
@@ -150,6 +164,7 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
       if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve([])
+      if (cmd === 'list_policies') return Promise.resolve(mockPolicies)
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const input = await submitWithMerchant('盒马')
@@ -183,6 +198,60 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
       await form.submit()
       const input = submitCallInput() as { merchant_id: string | null }
       expect(input.merchant_id).toBe('mch-1')
+    })
+  })
+
+  describe('保单选择器（issue #361）', () => {
+    /** 填必填项 + 保单后提交，返回 create_transaction 入参。 */
+    async function submitWithPolicy(policyId: string | null) {
+      await useReferenceStore().refresh()
+      await usePoliciesStore().refresh()
+      const form = useCategoryForm('expense')
+      form.amount.value = 50
+      form.accountId.value = 'acc-1'
+      form.policyId.value = policyId
+      await form.submit()
+      return submitCallInput()
+    }
+
+    it('不选保单：policy_id 为 null（不挂单与现状一致）', async () => {
+      const input = await submitWithPolicy(null)
+      expect(input?.policy_id).toBeNull()
+    })
+
+    it('选中已有保单：policy_id 原样携带', async () => {
+      const input = await submitWithPolicy('pol-1')
+      expect(input?.policy_id).toBe('pol-1')
+    })
+
+    it('选项含未删除保单（保单号标签）', async () => {
+      await usePoliciesStore().refresh()
+      const form = useCategoryForm('expense')
+      expect(form.policyOptions.value).toEqual([
+        { label: 'P2026-001（重疾险）', value: 'pol-1' },
+      ])
+    })
+
+    it('编辑回填原挂保单；原保单已软删（不在列表）时提交保持原 id（历史引用不置空），兜底选项可显示', async () => {
+      const editingWithPolicy: Transaction = { ...editingTx, policy_id: 'pol-1' }
+      const form = useCategoryForm('expense', { editing: () => editingWithPolicy })
+      expect(form.policyId.value).toBe('pol-1')
+      // 模拟原保单已软删：重拉后 store 列表不含 pol-1
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_policies') return Promise.resolve([])
+        if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
+        if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
+        if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
+        if (cmd === 'list_categories') return Promise.resolve([])
+        return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      })
+      await usePoliciesStore().refresh()
+      expect(form.policyOptions.value.some((o) => o.value === 'pol-1')).toBe(true)
+      form.amount.value = 50
+      form.accountId.value = 'acc-1'
+      await form.submit()
+      const input = submitCallInput() as { policy_id: string | null }
+      expect(input.policy_id).toBe('pol-1')
     })
   })
 })

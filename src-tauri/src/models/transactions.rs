@@ -20,6 +20,8 @@ pub struct Transaction {
     pub to_account_id: Option<String>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
+    /// 可选保单引用（issue #361 / ADR-0051 决策 3）：仅 expense/income 可挂（行为层准入）。
+    pub policy_id: Option<String>,
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
@@ -54,6 +56,9 @@ pub struct TransactionInput {
     /// 带商户名时，后端写入路径精确匹配在用商户名——命中复用、未命中即建，归一化责任
     /// 收口在后端，AI 不负责商户去重。与 `merchant_id` 互斥（同时提供属请求错误）。
     pub merchant_name: Option<String>,
+    /// 可选保单引用（issue #361 / ADR-0051 决策 3）：仅 expense/income 可携带，
+    /// 其余 kind 行为层拒绝；引用不存在的保单返回 400（中文错误，可读回自纠）。
+    pub policy_id: Option<String>,
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
@@ -93,6 +98,9 @@ pub struct UpdateTransactionInput {
     /// 商户名字符串（与 `TransactionInput.merchant_name` 同一契约）：修改路径同样
     /// 由后端精确匹配复用或即建；解析出的 id 与该行当前商户相同即视为保持历史引用。
     pub merchant_name: Option<String>,
+    /// 可选保单引用（与 `TransactionInput.policy_id` 同一契约）：修改路径提交值与
+    /// 该行当前保单相同视为保持历史引用（已软删保单的历史交易仍可改其他字段）。
+    pub policy_id: Option<String>,
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
@@ -120,6 +128,7 @@ impl From<UpdateTransactionInput> for TransactionInput {
             category_id: u.category_id,
             merchant_id: u.merchant_id,
             merchant_name: u.merchant_name,
+            policy_id: u.policy_id,
             refund_of_transaction_id: u.refund_of_transaction_id,
             note: u.note,
             date: u.date,
@@ -146,6 +155,7 @@ pub struct NormalizedTransaction {
     pub to_account_id: Option<String>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
+    pub policy_id: Option<String>,
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
@@ -171,6 +181,7 @@ impl TryFrom<&NormalizedTransaction> for writer::NormalizedRow {
             to_account_id: norm.to_account_id.clone(),
             category_id: norm.category_id.clone(),
             merchant_id: norm.merchant_id.clone(),
+            policy_id: norm.policy_id.clone(),
             refund_of_transaction_id: norm.refund_of_transaction_id.clone(),
             note: norm.note.clone(),
             date: norm.date.clone(),
@@ -257,6 +268,7 @@ impl FromRow for Transaction {
             device_id: row.get(14)?,
             is_deleted: row.get::<_, i64>(15)? != 0,
             merchant_id: row.get(16)?,
+            policy_id: row.get(17)?,
         })
     }
 }

@@ -39,6 +39,7 @@ describe('CategoryForm.vue', () => {
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve(mockCategories)
       if (cmd === 'list_merchants') return Promise.resolve([])
+      if (cmd === 'list_policies') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     // Pre-load store so components have data
@@ -96,7 +97,10 @@ describe('CategoryForm.vue', () => {
 
   it('设置 valid 表单数据后提交会调用 create_transaction', async () => {
     mockInvoke.mockClear()
-    mockInvoke.mockResolvedValue('new-id')
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_policies') return Promise.resolve([])
+      return Promise.resolve('new-id')
+    })
     const wrapper = mount(CategoryForm, {
       props: { kind: 'expense', submitLabel: '记支出' },
     })

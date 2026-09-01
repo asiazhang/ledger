@@ -215,6 +215,7 @@ fn list_transactions_involving_account_filter() {
     create_transaction_internal(
         &conn,
         TransactionInput {
+            policy_id: None,
             kind: TransactionKind::Transfer,
             amount_cents: 3000,
             account_id: "acc-inv-1".into(),
@@ -228,6 +229,7 @@ fn list_transactions_involving_account_filter() {
     create_transaction_internal(
         &conn,
         TransactionInput {
+            policy_id: None,
             kind: TransactionKind::Transfer,
             amount_cents: 500,
             account_id: "acc-inv-2".into(),

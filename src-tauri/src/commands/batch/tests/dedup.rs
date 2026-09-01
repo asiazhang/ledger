@@ -31,10 +31,12 @@ fn dedup_hash_excludes_note_and_category() {
     insert_account(&conn, "acc-dedup", "现金", "cash", "CNY");
     let base = make_input("acc-dedup", TransactionKind::Expense, 500, "2026-07-02");
     let with_note = TransactionInput {
+        policy_id: None,
         note: Some("备注".into()),
         ..base.clone()
     };
     let with_category = TransactionInput {
+        policy_id: None,
         category_id: Some("cat-1".into()),
         ..base.clone()
     };
@@ -93,6 +95,7 @@ fn dedup_hash_pins_empty_to_account_id_as_empty_string() {
     insert_account(&conn, "acc-dedup", "现金", "cash", "CNY");
     let no_to = make_input("acc-dedup", TransactionKind::Transfer, 3000, "2026-07-03");
     let empty_to = TransactionInput {
+        policy_id: None,
         to_account_id: Some("".into()),
         ..no_to.clone()
     };
@@ -102,6 +105,7 @@ fn dedup_hash_pins_empty_to_account_id_as_empty_string() {
         "缺省 to_account_id 应等同空串"
     );
     let with_to = TransactionInput {
+        policy_id: None,
         to_account_id: Some("acc-to".into()),
         ..no_to.clone()
     };
