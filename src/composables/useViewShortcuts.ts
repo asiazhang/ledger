@@ -8,9 +8,12 @@ import { t } from '@/i18n'
 export interface ViewShortcut {
   /** 路由 name（与侧边栏菜单 key 一致） */
   name: string
-  /** 主键：按线性位置推导的 '1'..'9'、'0'（AI）或 ','（设置）；null = 无键位（可排区末位） */
+  /** 主键：按线性位置推导的 '1'..'9'、'0'（AI）或 ','（设置）；null = 无键位 */
   key: string | null
 }
+
+/** 固定项 4：「更多」聚合视图（issue #372）——洞察组之后、AI 之前的第四固定项。 */
+export const EXTRA_VIEW = 'more'
 
 /**
  * 顺序源模块：侧边栏视图顺序单一来源（顺序 = 菜单顺序 = 数字键位）。
@@ -21,42 +24,48 @@ export interface ViewShortcut {
 
 /**
  * 三组（域职责分组，组 id 即 i18n key `common.sidebarGroup.<id>`）。
- * 组与组序固定、成员闭集；「资产」组 = 投资（金融资产）、物品（实物资产）、
- * 保单（合同权益，issue #360 接入组内末位）——可排区九项，默认序末位（第 9 项）
- * 无键位，右键重排即换谁无键位（ADR-0051 决策 8）。
+ * 组与组序固定、成员闭集；「资产」组 = 投资（金融资产）、物品（实物资产）——
+ * 低频的保单已迁入「更多」聚合视图（issue #371/#372），可排区收窄为八项，
+ * 数字键位恰好十键十视图全占、无死角。
  */
 export const SIDEBAR_GROUPS = [
   { id: 'bookkeeping', views: ['transactions', 'accounts', 'budget', 'scheduled'] },
-  { id: 'assets', views: ['investments', 'items', 'policies'] },
+  { id: 'assets', views: ['investments', 'items'] },
   { id: 'insights', views: ['reports', 'search'] },
 ] as const
 
 export type SidebarGroupId = (typeof SIDEBAR_GROUPS)[number]['id']
 
-/** 三固定项：概览首位（与启动落地页一致）、AI 倒数第二、设置末位 */
+/**
+ * 固定项词表：概览首位（与启动落地页一致）、「更多」（洞察组之后、AI 之前，
+ * 不参与组内排序、不占数字键位）、AI 倒数第二、设置末位。
+ */
 export const FIRST_VIEW = 'dashboard'
 export const PENULTIMATE_VIEW = 'ai'
 export const LAST_VIEW = 'settings'
 
-/** 线性默认序（出厂快照）：概览 + 各组按组序展开 + AI + 设置 */
+/** 线性默认序（出厂快照）：概览 + 各组按组序展开 + 更多 + AI + 设置 */
 export const DEFAULT_VIEW_ORDER = [
   FIRST_VIEW,
   ...SIDEBAR_GROUPS.flatMap((g) => g.views),
+  EXTRA_VIEW,
   PENULTIMATE_VIEW,
   LAST_VIEW,
 ] as const
 
 export type ViewName = (typeof DEFAULT_VIEW_ORDER)[number]
 
-/** 可排区（组内）：各组成员按组序展开，相对顺序即默认相对顺序 */
+/** 可排区（组内）：各组成员按组序展开，相对顺序即默认相对顺序。
+ *  容量八项 = 数字键位带 2..9 恰好覆盖（issue #372：十键十视图全占，
+ *  「可排区末位无键位」wart 消除）。 */
 export const ARRANGEABLE_VIEWS: readonly ViewName[] = SIDEBAR_GROUPS.flatMap((g) => [...g.views])
 
-/** 固定项例外判定：可排区九项为真，概览/AI/设置三固定项为假（右键无菜单）。 */
+/** 固定项例外判定：可排区八项为真，概览/更多/AI/设置四固定项为假（右键无菜单）。 */
 export function isArrangeableView(v: unknown): v is ViewName {
   return typeof v === 'string' && (ARRANGEABLE_VIEWS as readonly string[]).includes(v)
 }
 
-/** 视图 → 所属组（可排区九项各有其组；概览/AI/设置与未知名不在任何组，返回 null）。 */
+/** 视图 → 所属组（可排区八项各有其组；概览/更多/AI/设置与未知名不在任何组，返回 null）。 */
 export function groupOfView(name: ViewName): SidebarGroupId | null {
   for (const g of SIDEBAR_GROUPS) {
     if ((g.views as readonly string[]).includes(name)) return g.id
@@ -202,10 +211,11 @@ export function resetSidebarOrder() {
 }
 
 // ---------------------------------------------------------------------------
-// 键位按线性位置推导（issue #359 / ADR-0051）：数字键位覆盖前 10 个视图——数字键
-// 物理上限的诚实处理。概览恒 '1'；可排区第 1–8 项按线性位置得 '2'..'9'；AI 恒 '0'
-// （第 10 位）；设置为唯一例外用 ','。可排区容量九项（保单已随 issue #360 接入）：
-// 第 9 项落在键位带之外——末位无键位，不出提示、键盘不可跳转，右键重排即换谁无键位。
+// 键位按线性位置推导（issue #359 / ADR-0051；#372 键位收紧）：数字键位覆盖前 10 个
+// 视图——数字键物理上限。概览恒 '1'；可排区 8 项按线性位置得 '2'..'9'（十键十视图
+// 全占，「可排区末位无键位」wart 消除）；「更多」为第四固定项，不占键位（null）；
+// AI 恒 '0'（第 10 位）；设置为唯一例外用 ','。组内重排键位随动、无死角（10 个数字
+// 键恰好映射 10 个带键位视图）。
 // ---------------------------------------------------------------------------
 
 const LEAD_KEY = '1'
@@ -215,7 +225,7 @@ const LAST_KEY = ','
 
 /**
  * 键位推导纯函数：由组内序按线性位置派生全部视图快捷键（键随位置，重排即重排键位）。
- * 可排区超出 8 项时（第 9 项起）无键位（key: null）。
+ * 可排区恰 8 项时数字键位带 2..9 全占；「更多」不占键位（key: null）。
  */
 export function deriveViewShortcuts(orders: SidebarGroupOrders): ViewShortcut[] {
   const shortcuts: ViewShortcut[] = [{ name: FIRST_VIEW, key: LEAD_KEY }]
@@ -226,6 +236,7 @@ export function deriveViewShortcuts(orders: SidebarGroupOrders): ViewShortcut[] 
       i++
     }
   }
+  shortcuts.push({ name: EXTRA_VIEW, key: null })
   shortcuts.push({ name: PENULTIMATE_VIEW, key: PENULTIMATE_KEY })
   shortcuts.push({ name: LAST_VIEW, key: LAST_KEY })
   return shortcuts

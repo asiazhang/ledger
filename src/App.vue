@@ -31,6 +31,7 @@ import {
   ShieldCheckmarkOutline,
   RepeatOutline,
   CalculatorOutline,
+  EllipsisHorizontalOutline,
   SparklesOutline,
   SettingsOutline,
 } from '@vicons/ionicons5'
@@ -56,6 +57,7 @@ import {
   FIRST_VIEW,
   PENULTIMATE_VIEW,
   LAST_VIEW,
+  EXTRA_VIEW,
   type ViewName,
 } from '@/composables/useViewShortcuts'
 import { useWindowGuard } from '@/composables/useWindowGuard'
@@ -112,6 +114,7 @@ const viewIcons: Record<string, Component> = {
   items: CubeOutline,
   policies: ShieldCheckmarkOutline,
   scheduled: RepeatOutline,
+  more: EllipsisHorizontalOutline,
   budget: CalculatorOutline,
   ai: SparklesOutline,
   settings: SettingsOutline,
@@ -121,12 +124,12 @@ function renderMenuIcon(name: string) {
   return () => h(NIcon, { size: 18 }, { default: () => h(viewIcons[name]) })
 }
 
-// 菜单形态（issue #359 侧栏分组）：概览（固定）+ 记账/资产/洞察三组 + AI、设置（固定）。
-// 菜单项与快捷键共用同一顺序源（viewShortcuts：由组内序按线性位置推导键位），
-// 分组标题不占键位、不参与排序与计数（NMenu group 选项天然不可选）；
-// 菜单响应式派生，组内排序变更时顺序与快捷键提示同步更新。
-// 每项右侧附快捷键提示（数字位或设置项的 ⌘,）；可排区末位无键位的视图不出提示。
-// 可排区九项（含保单，issue #360）经 nodeProps 附右键组内排序菜单（issue #270/#359），固定项与分组标题不附
+// 菜单形态（issue #359 侧栏分组；#372 增「更多」第四固定项）：概览（固定）+
+// 记账/资产/洞察三组 + 更多、AI、设置（三固定项）。菜单项与快捷键共用同一顺序源
+// （viewShortcuts：由组内序按线性位置推导键位），分组标题不占键位、不参与排序与计数
+// （NMenu group 选项天然不可选）；菜单响应式派生，组内排序变更时顺序与快捷键提示同步更新。
+// 每项右侧附快捷键提示（数字位或设置项的 ⌘,）；「更多」与概览/AI/设置同属固定项，无键位不出提示。
+// 可排区八项经 nodeProps 附右键组内排序菜单（issue #270/#359），固定项与分组标题不附
 // （右键无任何菜单，原生菜单由窗口守卫抑制）。注：NMenu 不支持选项级 props 字段，必须走菜单级 nodeProps。
 function renderItem(name: ViewName, key: string | null): MenuOption {
   return {
@@ -153,6 +156,7 @@ const menuOptions = computed<MenuOption[]>(() => {
         children: g.views.map((name) => item(name)),
       }),
     ),
+    item(EXTRA_VIEW),
     item(PENULTIMATE_VIEW),
     item(LAST_VIEW),
   ]
@@ -170,7 +174,7 @@ function nodeProps(option: MenuOption) {
 }
 
 // ---------------------------------------------------------------------------
-// 侧栏右键排序菜单（issue #270，#359 收窄为组内）：可排区九项右键弹出组内排序菜单
+// 侧栏右键排序菜单（issue #270，#359 收窄为组内）：可排区八项右键弹出组内排序菜单
 // （上移/下移/移顶/移底/恢复默认），手动定位弹出，与行级右键菜单同一模式；
 // 点选即重排并立即持久化，菜单打开期间视图快捷键由既有弹层抑制机制压制（零新代码）。
 // ---------------------------------------------------------------------------
