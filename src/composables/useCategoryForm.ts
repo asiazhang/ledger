@@ -8,13 +8,8 @@ import { useReferenceStore } from '@/stores/reference'
 import { usePoliciesStore } from '@/stores/policies'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
 import { t } from '@/i18n'
-import type { Transaction, Policy } from '@/types'
+import type { Transaction } from '@/types'
 import { errorMessage } from "@/utils/errors";
-
-/** 保单选项展示标签：保单号为主、险种辅佐（保单号是用户认单的自然键）。 */
-function policyLabel(p: Policy): string {
-  return p.policy_number
-}
 
 export function useCategoryForm(
   kind: 'expense' | 'income',
@@ -104,7 +99,8 @@ export function useCategoryForm(
   const editingPolicyId = editingTx?.policy_id ?? null
   const policyOptions = computed<{ label: string; value: string }[]>(() => {
     const base = policiesStore.policies.map((p) => ({
-      label: `${policyLabel(p)}（${p.product_name}）`,
+      // 保单号为主、险种辅佐（保单号是用户认单的自然键）
+      label: `${p.policy_number}（${p.product_name}）`,
       value: p.id,
     }))
     if (

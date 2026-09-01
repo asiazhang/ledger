@@ -3,9 +3,10 @@
 -- 可挂一张保单，使「这张单累计缴了多少、赔了多少」可逐笔对账；归属的唯一事实是
 -- 流水直挂（「协议 → 期次 → 流水」推导链在手动补记场景断裂，不作归属依据）。
 -- 引用可选：不挂保单的流水行为与现状完全一致。
--- kind 准入（仅 expense/income/refund 可携带，refund 由 writer 继承原支出覆盖）
--- 收口在交易行为层（commands::transactions::behavior 的 plan 单点分派），
--- schema 层不设 kind 限制（与 merchant_id 列同款，放开无需再改表）。
+-- kind 准入（仅 expense/income 可携带；refund 不在准入集——保单现金流入记 income
+-- 挂单而非 refund，ADR-0051 决策 4）收口在交易行为层
+-- （commands::transactions::behavior 的 plan 单点分派），schema 层不设 kind 限制
+-- （与 merchant_id 列同款，放开无需再改表）。
 -- 删除语义（ADR-0051 决策 5）：保单是档案非字典——软删保单的历史流水引用
 -- 保留不置空（保单域删除本就是软删，无物理删除路径；外键动作声明 RESTRICT
 -- 表达档案语义，与商户字典 ON DELETE SET NULL 的先例刻意不同）。
