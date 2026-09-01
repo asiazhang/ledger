@@ -4,7 +4,8 @@
 //! - 状态经 [`crate::settings`] 收口持久化到 `app_settings` KV 表（`auto_backup.*` key），
 //!   不建专表；IPC 由 `commands::backup` 的领域命令形状暴露（issue #128 接前端）；
 //! - 到期判定为纯函数 [`due_decision`]，当前时间由调用方注入，不依赖全局时钟——
-//!   **线程只做周期调用，是否备份的决策全在纯函数**（可测边界）；
+//!   **线程只做周期调用，是否备份的决策全在纯函数**（可测边界）；「今天」由注入
+//!   时刻换算本地时区日期，备份频率上限为本地自然日每天最多一次（issue #386）；
 //! - 调度层（issue #125）提供三种触发入口（周期到期 / 退出兜底 / 首次兜底），
 //!   全部收敛到同一执行函数 [`perform_backup`]；轮询线程为标准模式
 //!   （spawn + sleep），锁等待带超时，超时跳过本轮；
@@ -18,8 +19,8 @@
 //!   提交点组合；深度模块只持有 `&Connection`，不经 AppHandle 取偏好——
 //!   目录镜像经进程级单例 [`shared_prefs`] 读取，应用版本用编译期常量。
 //!
-//! 备注：`SettingKey::AutoBackupNextDueAt` 已预留但本模块不读写——锚点模型下
-//! 「下次到期时间」可由 `last_backup_at + 间隔` 推导，不落地派生数据。
+//! 备注：`SettingKey::AutoBackupNextDueAt` 已预留但本模块不读写——日界模型下
+//! 「下次到期时间」由本地日期比较即时得出，不落地派生数据。
 
 use std::path::Path;
 use std::sync::OnceLock;
@@ -27,22 +28,21 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, Local, TimeDelta, TimeZone, Utc};
+use chrono::{DateTime, Local, Offset, TimeZone, Utc};
 use rusqlite::Connection;
 
 use crate::db::{self, DbState};
 use crate::settings::{self, SettingKey};
-
-/// 自动备份间隔：距上次备份 ≥24h 才视为到期（备份频率上限每天一次）。
-pub const AUTO_BACKUP_INTERVAL: TimeDelta = TimeDelta::hours(24);
 
 /// 到期判定结果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackupDecision {
     /// 到期，应立即执行自动备份。
     BackupNow,
-    /// 未到期或无需备份，本轮跳过。
-    Skip,
+    /// 数据无变化（不脏），无需备份。
+    Clean,
+    /// 今天（本地自然日）已自动备份过——含时钟回拨（锚点日期晚于今天）的安全侧。
+    AlreadyBackedUpToday,
 }
 
 /// 自动备份调度状态快照（对应 `auto_backup.*` 三个 KV key）。
@@ -68,30 +68,61 @@ impl Default for AutoBackupState {
 
 /// 到期判定纯函数。
 ///
-/// 语义：脏 且（从未备份 或 距上次备份 ≥ `interval`）→ [`BackupDecision::BackupNow`]。
-/// 当前时间 `now` 由调用方注入；未到期时即使脏也跳过，保证每天最多一次。
+/// 语义（ADR-0016 修订，issue #386）：脏 且（从未备份 或 上次自动备份的本地日期
+/// 早于今天）→ [`BackupDecision::BackupNow`]；不脏 → [`BackupDecision::Clean`]；
+/// 脏但今天已备过 → [`BackupDecision::AlreadyBackedUpToday`]。备份频率上限为
+/// 本地自然日每天最多一次；「今天」取 `now_local`（调用方注入时刻的本地时区视角）
+/// 的日期，与定时追补、订阅花费总览同口径；锚点沿用「上次自动备份时刻」
+/// （UTC 存储、值格式不变），判定时换算本地日期，不新增设置键、不迁移数据。
+/// 当前时刻由调用方注入，不依赖全局时钟——**线程只做周期调用，是否备份的决策全在纯函数**。
 ///
 /// 边界约定：
-/// - 首次兜底（备份列表为空即备份一次）不属于本判定——它与脏标记无关，
-///   由后续调度 ticket 在启动时检查备份列表自行处理；
-/// - `last_backup_at` 晚于 `now`（时钟回拨/换设备导入）时差值为负、恒未到期，
-///   即视为「刚备份过」安全侧处理，随时间推移自然恢复。
-pub fn due_decision(
+/// - 首次兜底（备份列表为空即备份一次）与脏标记无关，其日界门直接用 [`backed_up_today`]；
+/// - 锚点的本地日期晚于今天（时钟回拨）按「今天已备过」安全侧跳过，随时间推移自然恢复。
+pub fn due_decision<Tz: TimeZone>(
     dirty: bool,
     last_backup_at: Option<DateTime<Utc>>,
-    interval: TimeDelta,
-    now: DateTime<Utc>,
+    now_local: DateTime<Tz>,
 ) -> BackupDecision {
-    let due = match last_backup_at {
-        // 从未备份过：无锚点，只要脏即视为到期（下一次检查机会就备份）。
-        None => true,
-        Some(last) => now.signed_duration_since(last) >= interval,
-    };
-    if dirty && due {
-        BackupDecision::BackupNow
-    } else {
-        BackupDecision::Skip
+    if !dirty {
+        return BackupDecision::Clean;
     }
+    if backed_up_today(last_backup_at, now_local) {
+        BackupDecision::AlreadyBackedUpToday
+    } else {
+        BackupDecision::BackupNow
+    }
+}
+
+/// 日界门原语（三入口统一）：上次自动备份时刻换算本地日期是否不早于「今天」。
+/// 从未备份（`None`）视为今天还没备过；锚点日期晚于今天（时钟回拨）按已备安全侧。
+///
+/// 换算用「今天」的时区偏移（非锚点时刻的历史偏移）：保证判定表单测与进程时区
+/// 无关（唯一注入点是 `now_local`）。已知取舍：夏令时时区在时制切换日，锚点
+/// 换算日期与真实本地日期可能有 ±1 小时级的边界偏差（回拨日极端情况下同日
+/// 可重复一次，提前日则多跳过一天）；中国主时区无夏令时不受影响，偏差次日自愈。
+fn backed_up_today<Tz: TimeZone>(
+    last_backup_at: Option<DateTime<Utc>>,
+    now_local: DateTime<Tz>,
+) -> bool {
+    match last_backup_at {
+        None => false,
+        // 锚点按「今天」的时区偏移换算本地日期（fix() 取固定偏移量，比较只看日期）。
+        Some(last) => {
+            let offset = now_local.offset().fix();
+            last.with_timezone(&offset).date_naive() >= now_local.date_naive()
+        }
+    }
+}
+
+/// 解析调度状态里的备份锚点（UTC ISO → UTC 时刻）；解析失败按「从未备份」处理。
+fn anchor_of(state: &AutoBackupState) -> Option<DateTime<Utc>> {
+    state.last_backup_at.as_deref().and_then(parse_iso)
+}
+
+/// 调用方注入的 UTC 时刻换算本地时区视角（日界判定用，「今天」的唯一换算点）。
+fn to_local(now: DateTime<Utc>) -> DateTime<Local> {
+    now.with_timezone(&Local)
 }
 
 /// 读取自动备份调度状态。key 缺失、甚至 `app_settings` 表缺失
@@ -199,8 +230,11 @@ pub enum SkipReason {
     Disabled,
     /// 备份目录未配置：不执行、不报错，设置页负责引导（Story 7）。
     DirMissing,
-    /// 不满足触发条件（未到期 / 无变化），按入口语义判定。
+    /// 数据无变化（不脏），不满足到期入口的触发条件。
     NotDue,
+    /// 今天（本地自然日）已自动备份过：先到先触发的日界门，三入口统一（issue #386；
+    /// 含时钟回拨锚点日期晚于今天的安全侧）。
+    AlreadyBackedUpToday,
     /// 退出兜底专属：数据无变化（不脏），无事可做。
     Clean,
     /// 首次兜底专属：备份列表非空（不分手动/自动），无需兜底。
@@ -285,14 +319,23 @@ pub fn run_due_backup(
         Ok(v) => v,
         Err(outcome) => return outcome,
     };
-    let last = state.last_backup_at.as_deref().and_then(parse_iso);
-    if due_decision(state.dirty, last, AUTO_BACKUP_INTERVAL, now) != BackupDecision::BackupNow {
-        return AttemptOutcome::Skipped(SkipReason::NotDue);
+    let last = anchor_of(&state);
+    match due_decision(state.dirty, last, to_local(now)) {
+        BackupDecision::BackupNow => {}
+        BackupDecision::Clean => return AttemptOutcome::Skipped(SkipReason::NotDue),
+        BackupDecision::AlreadyBackedUpToday => {
+            tracing::debug!(
+                trigger = "due",
+                "今天已自动备份，日界门静默跳过（先到先触发）"
+            );
+            return AttemptOutcome::Skipped(SkipReason::AlreadyBackedUpToday);
+        }
     }
     classify_result("due", perform_backup(conn, &dir, app_version, now))
 }
 
-/// 触发入口二：退出兜底——只要脏且可用就备份一次，**不受每日约束**。
+/// 触发入口二：退出兜底——脏且当天尚未自动备份过才补一次，与到期入口同受
+/// 统一日界门约束（issue #386：原「不受每日约束」的豁免已取消）。
 pub fn run_exit_backup(
     conn: &Connection,
     dir: Option<&str>,
@@ -303,22 +346,29 @@ pub fn run_exit_backup(
         Ok(v) => v,
         Err(outcome) => return outcome,
     };
-    if !state.dirty {
-        // 与「未到期」的静默语义分开表达：退出兜底只关心脏标记。
-        return AttemptOutcome::Skipped(SkipReason::Clean);
+    let last = anchor_of(&state);
+    match due_decision(state.dirty, last, to_local(now)) {
+        BackupDecision::BackupNow => {}
+        // 与到期入口的「未到期」分开表达：退出兜底只关心脏标记。
+        BackupDecision::Clean => return AttemptOutcome::Skipped(SkipReason::Clean),
+        BackupDecision::AlreadyBackedUpToday => {
+            tracing::debug!(trigger = "exit", "今天已自动备份，日界门静默跳过");
+            return AttemptOutcome::Skipped(SkipReason::AlreadyBackedUpToday);
+        }
     }
     classify_result("exit", perform_backup(conn, &dir, app_version, now))
 }
 
 /// 触发入口三：首次兜底——启动会话首次拿到目录时，若受管备份列表为空
-/// （不分手动/自动）立即备份一次，与脏标记/到期无关（Story 4）。
+/// （不分手动/自动）立即备份一次，与脏标记无关，但同受日界门约束
+/// （Story 4 / issue #386：当天已备过就不再重复）。
 pub fn run_first_backup(
     conn: &Connection,
     dir: Option<&str>,
     app_version: &str,
     now: DateTime<Utc>,
 ) -> AttemptOutcome {
-    let (_, dir) = match gate(conn, dir) {
+    let (state, dir) = match gate(conn, dir) {
         Ok(v) => v,
         Err(outcome) => return outcome,
     };
@@ -329,6 +379,11 @@ pub fn run_first_backup(
         // 目录尚不存在视为空列表：执行兜底时若目录确实无效，由 backup_db_to 报错收场。
         Ok(_) => {}
         Err(e) => return failed(e),
+    }
+    let last = anchor_of(&state);
+    if backed_up_today(last, to_local(now)) {
+        tracing::debug!(trigger = "first", "今天已自动备份，日界门静默跳过首次兜底");
+        return AttemptOutcome::Skipped(SkipReason::AlreadyBackedUpToday);
     }
     classify_result("first", perform_backup(conn, &dir, app_version, now))
 }
@@ -448,8 +503,9 @@ pub fn start_scheduler(app: &tauri::AppHandle) {
     });
 }
 
-/// 应用退出兜底入口：挂在 `RunEvent::Exit` 上，退出前若脏则补一次备份
-/// （不受每日约束）。拿锁超时只能在日志里留痕——退出后没有下一轮了。
+/// 应用退出兜底入口：挂在 `RunEvent::Exit` 上，退出前若脏且当天尚未自动备份过
+/// 则补一次备份（与到期入口同受日界门约束，issue #386）。拿锁超时只能在日志里留痕
+/// ——退出后没有下一轮了。
 pub fn exit_fallback(app: &tauri::AppHandle) {
     use tauri::Manager;
     let conn = Arc::clone(&app.state::<DbState>().conn);
@@ -478,78 +534,76 @@ mod tests {
             .with_timezone(&chrono::Utc)
     }
 
-    /// 到期且脏 → BackupNow。
-    #[test]
-    fn due_and_dirty_means_backup_now() {
-        let now = ts("2026-02-17T12:00:00Z");
-        assert_eq!(
-            due_decision(
-                true,
-                Some(ts("2026-02-16T11:00:00Z")),
-                AUTO_BACKUP_INTERVAL,
-                now
-            ),
-            BackupDecision::BackupNow
-        );
-    }
+    /// 判定表（issue #386）：固定东八区作为「本地时区」注入，判定表与进程时区无关、
+    /// 覆盖首次 / 未脏 / 当天已备 / 昨日已备 / 时钟回拨五类。各用例经 `local_at`
+    /// 构造带偏移的时刻，锚点用 UTC 存储形态。
+    mod decision_table {
+        use super::*;
+        use chrono::FixedOffset;
 
-    /// 恰好满 24h 也算到期（≥ 间隔）。
-    #[test]
-    fn exactly_interval_is_due() {
-        let now = ts("2026-02-17T12:00:00Z");
-        assert_eq!(
-            due_decision(
-                true,
-                Some(ts("2026-02-16T12:00:00Z")),
-                AUTO_BACKUP_INTERVAL,
-                now
-            ),
-            BackupDecision::BackupNow
-        );
-    }
+        fn local_at(s: &str) -> DateTime<FixedOffset> {
+            DateTime::parse_from_rfc3339(s).expect("合法 ISO 时间")
+        }
 
-    /// 到期但不脏 → Skip（无变化不重复备份）。
-    #[test]
-    fn due_but_clean_means_skip() {
-        let now = ts("2026-02-17T12:00:00Z");
-        assert_eq!(
-            due_decision(
-                false,
-                Some(ts("2026-02-15T00:00:00Z")),
-                AUTO_BACKUP_INTERVAL,
-                now
-            ),
-            BackupDecision::Skip
-        );
-    }
+        /// 首次：脏 + 从未备份 → BackupNow（首次有变化即保护）；不脏 → Clean。
+        #[test]
+        fn first_backup_when_never_backed_up() {
+            let now = local_at("2026-02-17T10:00:00+08:00");
+            assert_eq!(due_decision(true, None, now), BackupDecision::BackupNow);
+            assert_eq!(due_decision(false, None, now), BackupDecision::Clean);
+        }
 
-    /// 未到期但脏 → Skip（备份频率上限每天一次）。
-    #[test]
-    fn fresh_but_dirty_means_skip() {
-        let now = ts("2026-02-17T12:00:00Z");
-        assert_eq!(
-            due_decision(
-                true,
-                Some(ts("2026-02-17T00:00:00Z")),
-                AUTO_BACKUP_INTERVAL,
-                now
-            ),
-            BackupDecision::Skip
-        );
-    }
+        /// 未脏：数据无变化，无论锚点多旧都不备份。
+        #[test]
+        fn clean_means_no_backup() {
+            let now = local_at("2026-02-17T10:00:00+08:00");
+            assert_eq!(
+                due_decision(false, Some(ts("2026-02-15T00:00:00Z")), now),
+                BackupDecision::Clean
+            );
+        }
 
-    /// 从未备份且脏 → BackupNow（首次有变化即保护）；从未备份也不脏 → Skip。
-    #[test]
-    fn never_backed_up() {
-        let now = ts("2026-02-17T12:00:00Z");
-        assert_eq!(
-            due_decision(true, None, AUTO_BACKUP_INTERVAL, now),
-            BackupDecision::BackupNow
-        );
-        assert_eq!(
-            due_decision(false, None, AUTO_BACKUP_INTERVAL, now),
-            BackupDecision::Skip
-        );
+        /// 当天已备：锚点本地日期 == 今天 → AlreadyBackedUpToday（先到先触发，
+        /// 当天不再第二次；含本地清晨备份、深夜再触发的跨 UTC 日情况与恰同时刻边界）。
+        #[test]
+        fn already_backed_up_today_skips() {
+            let now = local_at("2026-02-17T23:45:00+08:00");
+            // 本地 17 日 00:15 备份（UTC 16 日 16:15），同一本地日深夜再触发。
+            let anchor = ts("2026-02-16T16:15:00Z");
+            assert_eq!(
+                due_decision(true, Some(anchor), now),
+                BackupDecision::AlreadyBackedUpToday
+            );
+            // 边界：锚点恰为「现在」同样视为已备。
+            assert_eq!(
+                due_decision(true, Some(now.with_timezone(&Utc)), now),
+                BackupDecision::AlreadyBackedUpToday
+            );
+        }
+
+        /// 昨日已备：锚点本地日期早于今天 → BackupNow（跨本地日恢复备份）。
+        #[test]
+        fn backed_up_yesterday_is_due_again() {
+            let now = local_at("2026-02-18T00:30:00+08:00");
+            // 本地 17 日 23:30 备份（UTC 15:30），跨过本地午夜 1 小时后即恢复。
+            let anchor = ts("2026-02-17T15:30:00Z");
+            assert_eq!(
+                due_decision(true, Some(anchor), now),
+                BackupDecision::BackupNow
+            );
+        }
+
+        /// 时钟回拨：锚点本地日期晚于今天按「刚备份过」安全侧跳过。
+        #[test]
+        fn clock_rollback_is_safe_side_skip() {
+            let now = local_at("2026-02-17T10:00:00+08:00");
+            // 锚点为本地 18 日 10:00（UTC 02:00）——晚于「今天」。
+            let anchor = ts("2026-02-18T02:00:00Z");
+            assert_eq!(
+                due_decision(true, Some(anchor), now),
+                BackupDecision::AlreadyBackedUpToday
+            );
+        }
     }
 
     /// 状态读写默认值：key 缺失时取约定默认（enabled=true、dirty=false、未备份）。
@@ -662,6 +716,29 @@ mod scheduler_tests {
             .with_timezone(&Utc)
     }
 
+    /// 以进程本地时区构造墙上时刻再换 UTC：与触发入口内部的本地换算同一坐标系，
+    /// 「同本地日 / 跨本地日」的相对语义与进程时区无关地成立。
+    fn local_utc(y: i32, m: u32, d: u32, hh: u32, mm: u32) -> DateTime<Utc> {
+        use chrono::TimeZone;
+        Local
+            .with_ymd_and_hms(y, m, d, hh, mm, 0)
+            .single()
+            .expect("无歧义本地时刻")
+            .with_timezone(&Utc)
+    }
+
+    /// 以进程本地时区构造「days_ago 天前」的本地正午再换 UTC（正午不落时制切换
+    /// 窗口，跨本地日测试用；days_ago=0 即今天正午）。
+    fn local_noon_days_ago_utc(days_ago: u64) -> DateTime<Utc> {
+        use chrono::TimeZone;
+        let date = Local::now().date_naive() - chrono::Days::new(days_ago);
+        Local
+            .from_local_datetime(&date.and_hms_opt(12, 0, 0).unwrap())
+            .earliest()
+            .expect("本地正午可解析")
+            .with_timezone(&Utc)
+    }
+
     /// 命名时间戳取注入时刻的**本地时间**（ADR-0016 修订：原 UTC）。
     /// 以固定偏移（UTC+8）注入断言，不依赖运行机器时区，CI 与本地不漂移。
     #[test]
@@ -722,17 +799,18 @@ mod scheduler_tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// 未到期但脏 → 静默跳过，不产生文件、不动状态。
+    /// 同一本地日已自动备份过（本地 08:00 锚点、20:00 再触发）→ 静默跳过且原因可辨：
+    /// 不产生文件、不前移锚点、脏标记保留（当天改动次日第一个触发点补上）。
     #[test]
-    fn due_backup_skips_when_fresh() {
+    fn due_backup_skips_when_already_backed_up_today() {
         let c = conn();
-        let dir = temp_dir("due-fresh");
+        let dir = temp_dir("due-same-day");
         set_state(
             &c,
             &AutoBackupState {
                 enabled: true,
                 dirty: true,
-                last_backup_at: Some(String::from("2026-02-17T00:00:00Z")),
+                last_backup_at: Some(db::iso_at(local_utc(2026, 2, 17, 8, 0))),
             },
         )
         .expect("写状态");
@@ -740,14 +818,82 @@ mod scheduler_tests {
             &c,
             Some(dir.to_str().unwrap()),
             "0.2.0",
-            now_at("2026-02-17T12:00:00Z"),
+            local_utc(2026, 2, 17, 20, 0),
         );
-        assert_eq!(outcome, AttemptOutcome::Skipped(SkipReason::NotDue));
+        assert_eq!(
+            outcome,
+            AttemptOutcome::Skipped(SkipReason::AlreadyBackedUpToday)
+        );
         assert!(
             fs::read_dir(&dir).expect("列目录").next().is_none(),
             "不应产生文件"
         );
-        assert!(get_state(&c).unwrap().dirty, "跳过不影响状态");
+        let state = get_state(&c).expect("读状态");
+        assert!(state.dirty, "跳过不清脏，次日补上");
+        assert_eq!(
+            state.last_backup_at,
+            Some(db::iso_at(local_utc(2026, 2, 17, 8, 0))),
+            "跳过不前移锚点"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 跨本地日恢复备份：锚点拨到本地昨天、今天脏 → 再次执行并前移锚点。
+    #[test]
+    fn due_backup_recovers_next_local_day() {
+        let c = conn();
+        let dir = temp_dir("due-next-day");
+        set_state(
+            &c,
+            &AutoBackupState {
+                enabled: true,
+                dirty: true,
+                last_backup_at: Some(db::iso_at(local_noon_days_ago_utc(1))),
+            },
+        )
+        .expect("写状态");
+        let now = local_noon_days_ago_utc(0);
+        let outcome = run_due_backup(&c, Some(dir.to_str().unwrap()), "0.2.0", now);
+        assert!(
+            matches!(outcome, AttemptOutcome::Performed { .. }),
+            "跨本地日后有变动应恢复备份，实际 {outcome:?}"
+        );
+        let state = get_state(&c).expect("读状态");
+        assert_eq!(
+            state.last_backup_at,
+            Some(db::iso_at(now)),
+            "成功后锚点前移到本次备份时刻"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 备份失败保留脏标记后，同日下个触发点重试仍然可行（锚点未记 → 日界门放行）。
+    #[test]
+    fn failure_retry_same_day_succeeds() {
+        let c = conn();
+        let dir = temp_dir("failure-retry");
+        mark_dirty(&c).expect("置脏");
+        // 第一次：目录无效（父目录也不存在）→ Failed，脏保留、锚点不记。
+        let missing = std::env::temp_dir()
+            .join(format!("ledger-auto-missing-{}", db::new_uuid()))
+            .join("nested");
+        let first = run_due_backup(&c, Some(missing.to_str().unwrap()), "0.2.0", Utc::now());
+        assert!(
+            matches!(first, AttemptOutcome::Failed { .. }),
+            "实际 {first:?}"
+        );
+        assert!(get_state(&c).unwrap().dirty, "失败必须保留脏标记");
+        // 第二次（同日，锚点未记）：换有效目录 → 重试成功。
+        let second = run_due_backup(&c, Some(dir.to_str().unwrap()), "0.2.0", Utc::now());
+        assert!(
+            matches!(second, AttemptOutcome::Performed { .. }),
+            "同日重试应可行，实际 {second:?}"
+        );
+        let state = get_state(&c).expect("读状态");
+        assert!(
+            !state.dirty && state.last_backup_at.is_some(),
+            "重试成功后清真并记锚点"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -829,17 +975,18 @@ mod scheduler_tests {
         assert_eq!(state.last_backup_at, None);
     }
 
-    /// 退出兜底不受每日约束：刚备份过 1 分钟但数据又变脏也立即备份。
+    /// 退出兜底同受日界门（issue #386，原「不受每日约束」豁免取消）：
+    /// 当天已自动备份过，退出时即使脏也静默跳过。
     #[test]
-    fn exit_backup_ignores_interval() {
+    fn exit_backup_skips_when_already_backed_up_today() {
         let c = conn();
-        let dir = temp_dir("exit-fresh");
+        let dir = temp_dir("exit-same-day");
         set_state(
             &c,
             &AutoBackupState {
                 enabled: true,
                 dirty: true,
-                last_backup_at: Some(String::from("2026-02-17T11:59:00Z")),
+                last_backup_at: Some(db::iso_at(local_utc(2026, 2, 17, 8, 0))),
             },
         )
         .expect("写状态");
@@ -847,8 +994,31 @@ mod scheduler_tests {
             &c,
             Some(dir.to_str().unwrap()),
             "0.2.0",
-            now_at("2026-02-17T12:00:00Z"),
+            local_utc(2026, 2, 17, 20, 0),
         );
+        assert_eq!(
+            outcome,
+            AttemptOutcome::Skipped(SkipReason::AlreadyBackedUpToday)
+        );
+        assert!(fs::read_dir(&dir).expect("列目录").next().is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 退出兜底：当天尚未备份且脏 → 备份（晚间记账后退出不裸奔过夜）。
+    #[test]
+    fn exit_backup_performs_when_today_not_backed_up() {
+        let c = conn();
+        let dir = temp_dir("exit-next-day");
+        set_state(
+            &c,
+            &AutoBackupState {
+                enabled: true,
+                dirty: true,
+                last_backup_at: Some(db::iso_at(local_noon_days_ago_utc(1))),
+            },
+        )
+        .expect("写状态");
+        let outcome = run_exit_backup(&c, Some(dir.to_str().unwrap()), "0.2.0", Utc::now());
         assert!(matches!(outcome, AttemptOutcome::Performed { .. }));
         let _ = fs::remove_dir_all(&dir);
     }
@@ -883,6 +1053,35 @@ mod scheduler_tests {
         );
         let again = run_first_backup(&c, Some(d), "0.2.0", now_at("2026-02-17T09:00:00Z"));
         assert_eq!(again, AttemptOutcome::Skipped(SkipReason::ListNotEmpty));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 首次兜底同受日界门（issue #386）：列表为空但当天已自动备份过（目录被清空）
+    /// → 静默跳过、不产生文件，「每天一个」不被首次兜底绕过。
+    #[test]
+    fn first_fallback_skips_when_already_backed_up_today() {
+        let c = conn();
+        let dir = temp_dir("first-same-day");
+        set_state(
+            &c,
+            &AutoBackupState {
+                enabled: true,
+                dirty: false,
+                last_backup_at: Some(db::iso_at(local_utc(2026, 2, 17, 8, 0))),
+            },
+        )
+        .expect("写状态");
+        let outcome = run_first_backup(
+            &c,
+            Some(dir.to_str().unwrap()),
+            "0.2.0",
+            local_utc(2026, 2, 17, 20, 0),
+        );
+        assert_eq!(
+            outcome,
+            AttemptOutcome::Skipped(SkipReason::AlreadyBackedUpToday)
+        );
+        assert!(fs::read_dir(&dir).expect("列目录").next().is_none());
         let _ = fs::remove_dir_all(&dir);
     }
 
