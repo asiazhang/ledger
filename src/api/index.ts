@@ -42,6 +42,8 @@ import type {
   MarketPriceInput,
   ManualPriceInput,
   ManualPriceResult,
+  Policy,
+  PolicyInput,
   Merchant,
   MerchantShare,
   MerchantInput,
@@ -200,6 +202,12 @@ export const api = {
   disposeItem: (id: string, input: ItemDisposeInput) =>
     invoke<void>('dispose_item', { id, input }),
   deleteItem: (id: string) => invoke<void>('delete_item', { id }),
+
+  // 保单（issue #360 / ADR-0051）：独立领域（静态档案），写入后由后端发 ledger:changed
+  listPolicies: () => invoke<Policy[]>('list_policies'),
+  createPolicy: (input: PolicyInput) => invoke<string>('create_policy', { input }),
+  updatePolicy: (id: string, input: PolicyInput) => invoke<void>('update_policy', { id, input }),
+  deletePolicy: (id: string) => invoke<void>('delete_policy', { id }),
 
   // 汇率
   listExchangeRates: () => invoke<ExchangeRate[]>('list_exchange_rates'),

@@ -9,6 +9,7 @@ import accounts from './accounts.json'
 import reports from './reports.json'
 import investments from './investments.json'
 import items from './items.json'
+import policies from './policies.json'
 import scheduled from './scheduled.json'
 import budget from './budget.json'
 import ai from './ai.json'
@@ -24,6 +25,7 @@ export default {
   reports,
   investments,
   items,
+  policies,
   scheduled,
   budget,
   ai,

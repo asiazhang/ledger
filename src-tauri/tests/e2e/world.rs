@@ -117,6 +117,14 @@ pub struct LedgerWorld {
     pub item_signal_count: usize,
     /// 物品列表快照（物品列表场景断言用）
     pub items_list: Vec<ItemWithDailyCost>,
+    /// 最近创建的保单 id（保单场景断言用，issue #360）
+    pub last_policy_id: Option<String>,
+    /// 最近一次保单写入发出的失效信号次数（ledger:changed 注入 seam 断言用）
+    pub policy_signal_count: usize,
+    /// 保单列表快照（保单列表场景断言用）
+    pub policies_list: Vec<tauri_app_lib::models::Policy>,
+    /// 记住的保单创建时间（编辑后审计字段保留断言用，issue #360）
+    pub remembered_policy_created_at: Option<String>,
     /// 记住的物品创建时间（修改后审计字段保留断言用，issue #117）
     pub remembered_item_created_at: Option<String>,
     /// 记住的关联购买交易 id（issue #119 自动带出/溯源断言用）
@@ -214,6 +222,10 @@ impl LedgerWorld {
             last_item_id: None,
             item_signal_count: 0,
             items_list: Vec::new(),
+            last_policy_id: None,
+            policy_signal_count: 0,
+            policies_list: Vec::new(),
+            remembered_policy_created_at: None,
             remembered_item_created_at: None,
             remembered_purchase_transaction_id: None,
             last_item_cost: None,

@@ -1,0 +1,68 @@
+{
+  "newButton": "New Policy",
+  "listTitle": "Policies",
+  "emptyGuide": "No policies yet: click \"New Policy\" to create your first contract archive.",
+  "columns": {
+    "merchant": "Insurer",
+    "productName": "Product",
+    "policyNumber": "Policy No.",
+    "period": "Coverage Period",
+    "expiry": "Status",
+    "coverage": "Coverage Amount",
+    "actions": "Actions"
+  },
+  "period": {
+    "range": "{start} ~ {end}",
+    "lifetime": "{start} ~ Lifetime"
+  },
+  "expiry": {
+    "active": "Active",
+    "expired": "Expired"
+  },
+  "rowActions": {
+    "edit": "Edit",
+    "delete": "Delete"
+  },
+  "deleteConfirm": "The policy will be hidden from this list while its history is preserved. Delete it?",
+  "msg": {
+    "created": "Policy created",
+    "saved": "Policy saved",
+    "deleted": "Policy deleted",
+    "saveFailed": "Save failed: {msg}",
+    "deleteFailed": "Delete failed: {msg}"
+  },
+  "form": {
+    "titleCreate": "New Policy",
+    "titleEdit": "Edit Policy",
+    "label": {
+      "merchant": "Insurer",
+      "policyNumber": "Policy No.",
+      "productName": "Product Name",
+      "period": "Coverage Period",
+      "coverage": "Coverage Amount",
+      "note": "Note"
+    },
+    "placeholder": {
+      "merchant": "Pick an insurer or type a new name",
+      "policyNumber": "Policy number",
+      "productName": "e.g. Critical Illness Insurance",
+      "startDate": "Start date",
+      "endDate": "End date (empty = lifetime)",
+      "coverage": "Coverage amount (optional)",
+      "coverageCurrency": "Currency",
+      "note": "Note (optional)"
+    },
+    "msg": {
+      "merchantRequired": "Pick or enter an insurance company",
+      "numberRequired": "Policy number is required",
+      "productRequired": "Product name is required",
+      "startRequired": "Pick the coverage start date",
+      "endBeforeStart": "Coverage end date cannot be earlier than start date",
+      "amountInvalid": "Coverage amount must be greater than 0",
+      "currencyRequired": "Currency is required when coverage amount is filled",
+      "merchantFailed": "Failed to resolve insurer: {msg}"
+    },
+    "cancel": "Cancel",
+    "save": "Save"
+  }
+}

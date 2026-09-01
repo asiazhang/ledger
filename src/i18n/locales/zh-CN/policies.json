@@ -1,0 +1,68 @@
+{
+  "newButton": "新建保单",
+  "listTitle": "保单列表",
+  "emptyGuide": "暂无保单：点击「新建保单」建立第一份合同档案。",
+  "columns": {
+    "merchant": "保险公司",
+    "productName": "险种名称",
+    "policyNumber": "保单号",
+    "period": "保障期间",
+    "expiry": "状态",
+    "coverage": "保额",
+    "actions": "操作"
+  },
+  "period": {
+    "range": "{start} ~ {end}",
+    "lifetime": "{start} ~ 长期"
+  },
+  "expiry": {
+    "active": "保障中",
+    "expired": "已到期"
+  },
+  "rowActions": {
+    "edit": "编辑",
+    "delete": "删除"
+  },
+  "deleteConfirm": "删除后不再显示在列表，历史记录保留。确认删除该保单？",
+  "msg": {
+    "created": "保单已创建",
+    "saved": "保单已保存",
+    "deleted": "保单已删除",
+    "saveFailed": "保存失败：{msg}",
+    "deleteFailed": "删除失败：{msg}"
+  },
+  "form": {
+    "titleCreate": "新建保单",
+    "titleEdit": "编辑保单",
+    "label": {
+      "merchant": "保险公司",
+      "policyNumber": "保单号",
+      "productName": "险种名称",
+      "period": "保障期间",
+      "coverage": "保额",
+      "note": "备注"
+    },
+    "placeholder": {
+      "merchant": "选择保司或输入新名称",
+      "policyNumber": "保单号",
+      "productName": "如：重大疾病保险",
+      "startDate": "起日",
+      "endDate": "止日（空 = 长期）",
+      "coverage": "保额（元，可选）",
+      "coverageCurrency": "币种",
+      "note": "备注（可选）"
+    },
+    "msg": {
+      "merchantRequired": "请选择或输入保险公司",
+      "numberRequired": "保单号不能为空",
+      "productRequired": "险种名称不能为空",
+      "startRequired": "请选择保障期间起日",
+      "endBeforeStart": "保障期间止日不能早于起日",
+      "amountInvalid": "保额必须大于 0",
+      "currencyRequired": "填写保额时必须选择保额币种",
+      "merchantFailed": "保司解析失败：{msg}"
+    },
+    "cancel": "取消",
+    "save": "保存"
+  }
+}

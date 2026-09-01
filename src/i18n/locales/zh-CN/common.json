@@ -16,7 +16,8 @@
     "scheduled": "定时",
     "budget": "预算",
     "ai": "AI",
-    "settings": "设置"
+    "settings": "设置",
+    "policies": "保单"
   },
   "sidebarGroup": {
     "bookkeeping": "记账",

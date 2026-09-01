@@ -52,6 +52,12 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('@/views/ItemsView.vue'),
   },
   {
+    // 保单（issue #360 / ADR-0051）：消费型保险合同的静态档案，侧栏「资产」组
+    path: '/policies',
+    name: 'policies',
+    component: () => import('@/views/PoliciesView.vue'),
+  },
+  {
     path: '/budget',
     name: 'budget',
     component: () => import('@/views/BudgetView.vue'),

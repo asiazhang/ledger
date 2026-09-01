@@ -21,12 +21,13 @@ export interface ViewShortcut {
 
 /**
  * 三组（域职责分组，组 id 即 i18n key `common.sidebarGroup.<id>`）。
- * 组与组序固定、成员闭集；「资产」组的保单空位就绪（随保单建档票接入为组内末位）——
- * 接入后可排区扩为九项，键位带末位（第 9 位）无键位，右键重排即换谁无键位。
+ * 组与组序固定、成员闭集；「资产」组 = 投资（金融资产）、物品（实物资产）、
+ * 保单（合同权益，issue #360 接入组内末位）——可排区九项，默认序末位（第 9 项）
+ * 无键位，右键重排即换谁无键位（ADR-0051 决策 8）。
  */
 export const SIDEBAR_GROUPS = [
   { id: 'bookkeeping', views: ['transactions', 'accounts', 'budget', 'scheduled'] },
-  { id: 'assets', views: ['investments', 'items'] },
+  { id: 'assets', views: ['investments', 'items', 'policies'] },
   { id: 'insights', views: ['reports', 'search'] },
 ] as const
 
@@ -50,12 +51,12 @@ export type ViewName = (typeof DEFAULT_VIEW_ORDER)[number]
 /** 可排区（组内）：各组成员按组序展开，相对顺序即默认相对顺序 */
 export const ARRANGEABLE_VIEWS: readonly ViewName[] = SIDEBAR_GROUPS.flatMap((g) => [...g.views])
 
-/** 固定项例外判定：可排区八项为真，概览/AI/设置三固定项为假（右键无菜单）。 */
+/** 固定项例外判定：可排区九项为真，概览/AI/设置三固定项为假（右键无菜单）。 */
 export function isArrangeableView(v: unknown): v is ViewName {
   return typeof v === 'string' && (ARRANGEABLE_VIEWS as readonly string[]).includes(v)
 }
 
-/** 视图 → 所属组（可排区八项各有其组；概览/AI/设置与未知名不在任何组，返回 null）。 */
+/** 视图 → 所属组（可排区九项各有其组；概览/AI/设置与未知名不在任何组，返回 null）。 */
 export function groupOfView(name: ViewName): SidebarGroupId | null {
   for (const g of SIDEBAR_GROUPS) {
     if ((g.views as readonly string[]).includes(name)) return g.id
@@ -203,7 +204,7 @@ export function resetSidebarOrder() {
 // ---------------------------------------------------------------------------
 // 键位按线性位置推导（issue #359 / ADR-0051）：数字键位覆盖前 10 个视图——数字键
 // 物理上限的诚实处理。概览恒 '1'；可排区第 1–8 项按线性位置得 '2'..'9'；AI 恒 '0'
-// （第 10 位）；设置为唯一例外用 ','。可排区容量九项（「资产」组保单空位就绪）：
+// （第 10 位）；设置为唯一例外用 ','。可排区容量九项（保单已随 issue #360 接入）：
 // 第 9 项落在键位带之外——末位无键位，不出提示、键盘不可跳转，右键重排即换谁无键位。
 // ---------------------------------------------------------------------------
 
