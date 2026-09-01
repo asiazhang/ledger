@@ -45,10 +45,28 @@ const mockCategories: Category[] = [
     created_at: '2026-01-01T00:00:00Z',
   },
   {
+    id: 'cat-1-sub',
+    name: '早餐',
+    kind: 'expense',
+    parent_id: 'cat-1',
+    icon: null,
+    sort_order: 0,
+    created_at: '2026-01-01T00:00:00Z',
+  },
+  {
     id: 'cat-2',
     name: '工资',
     kind: 'income',
     parent_id: null,
+    icon: null,
+    sort_order: 0,
+    created_at: '2026-01-01T00:00:00Z',
+  },
+  {
+    id: 'cat-2-sub',
+    name: '理财收益',
+    kind: 'income',
+    parent_id: 'cat-2',
     icon: null,
     sort_order: 0,
     created_at: '2026-01-01T00:00:00Z',
@@ -70,6 +88,22 @@ const mockProgress: BudgetProgress = {
   },
   category_name: '餐饮',
   spent_cents: 20000,
+  over_budget: false,
+}
+
+/** 子分类预算行（issue #356）：后端 category_name 只返回子分类自身名。 */
+const subProgress: BudgetProgress = {
+  budget: { ...mockProgress.budget, id: 'budget-sub', category_id: 'cat-1-sub' },
+  category_name: '早餐',
+  spent_cents: 12000,
+  over_budget: false,
+}
+
+/** 孤儿预算行（issue #356）：分类已删，后端回退「未分类」。 */
+const orphanProgress: BudgetProgress = {
+  budget: { ...mockProgress.budget, id: 'budget-orphan', category_id: 'cat-gone' },
+  category_name: '未分类',
+  spent_cents: 3000,
   over_budget: false,
 }
 
@@ -141,13 +175,34 @@ beforeEach(async () => {
 })
 
 describe('BudgetView 预算表单（issue #183）', () => {
-  it('分类下拉只提供支出分类（收入分类不可选）', async () => {
+  it('分类下拉提供全部支出分类（顶级+子分类），子分类 label 为「父 > 子」路径名；收入分类（无论层级）不可选（issue #356）', async () => {
     const wrapper = await mountView()
     const options = wrapper.findComponent(NSelect).props('options') as {
       label: string
       value: string
     }[]
-    expect(options).toEqual([{ label: '餐饮', value: 'cat-1' }])
+    expect(options).toEqual([
+      { label: '餐饮', value: 'cat-1' },
+      { label: '餐饮 > 早餐', value: 'cat-1-sub' },
+    ])
+  })
+
+  it('子分类选项：输入父名或子名的拼音均可命中（issue #356）', async () => {
+    const wrapper = await mountView()
+    // 对下拉实际提供的选项（label 为路径名）走 PinyinSelect 收口的拼音过滤：
+    // 用户输入父名或子名拼音，该选项保持可见
+    const select = wrapper.findComponent(NSelect)
+    const filter = select.props('filter') as (
+      pattern: string,
+      option: { label: string },
+    ) => boolean
+    const sub = (select.props('options') as { label: string; value: string }[]).find(
+      (o) => o.value === 'cat-1-sub',
+    )
+    expect(sub, '下拉应包含子分类选项').toBeDefined()
+    expect(filter('cy', sub!)).toBe(true) // 父名「餐饮」拼音首字母
+    expect(filter('zc', sub!)).toBe(true) // 子名「早餐」拼音首字母
+    expect(filter('早餐', sub!)).toBe(true) // 子名原文子串
   })
 
   it('表单无日期选择器（issue #184：设置预算只剩分类与金额）', async () => {
@@ -195,6 +250,37 @@ describe('BudgetView 预算表单（issue #183）', () => {
     expect(messageApi.error).toHaveBeenCalledWith(
       '创建失败: 该分类已存在按月预算，可编辑该预算的金额',
     )
+  })
+})
+
+describe('BudgetView 子分类预算路径名呈现与孤儿回退（issue #356）', () => {
+  it('预算执行列表对子分类预算显示「父 > 子」路径名', async () => {
+    withProgress([subProgress])
+    const wrapper = await mountView()
+    expect(wrapper.text()).toContain('餐饮 > 早餐')
+  })
+
+  it('编辑弹窗分类只读行显示路径名', async () => {
+    withProgress([subProgress])
+    const wrapper = await mountView()
+    await openEditModal(wrapper)
+    expect(document.body.textContent).toContain('餐饮 > 早餐')
+  })
+
+  it('孤儿预算（分类已删）回退显示「未分类」，列表与编辑弹窗均不报错', async () => {
+    withProgress([orphanProgress])
+    const wrapper = await mountView()
+    expect(wrapper.text()).toContain('未分类')
+    await openEditModal(wrapper)
+    expect(document.body.textContent).toContain('未分类')
+  })
+
+  it('路径名呈现与孤儿回退在同一列表共存（父预算 + 子预算 + 孤儿）', async () => {
+    withProgress([mockProgress, subProgress, orphanProgress])
+    const wrapper = await mountView()
+    expect(wrapper.text()).toContain('餐饮')
+    expect(wrapper.text()).toContain('餐饮 > 早餐')
+    expect(wrapper.text()).toContain('未分类')
   })
 })
 

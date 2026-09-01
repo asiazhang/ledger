@@ -40,10 +40,31 @@ const showEdit = ref(false)
 const editing = ref<BudgetProgress | null>(null)
 const editAmount = ref<number | null>(null)
 
+// 创建预算分类选项（issue #356）：从仅顶级支出分类放开到全部支出分类
+//（顶级 + 子分类，按 kind 过滤即可——子分类与父分类类型一致），按分类树排序
+//（子分类紧跟父分类），子分类 label 用「父 > 子」路径名；拼音可搜由 PinyinSelect
+// 对 label 整体匹配，父名/子名拼音均可命中。收入分类（无论层级）被 kind 过滤排除。
 const categoryOptions = () =>
-  reference.rootCategories
-    .filter((c) => c.kind === 'expense')
-    .map((c) => ({ label: c.name, value: c.id }))
+  reference
+    .treeCategoryOptions('expense')
+    .flatMap((root) => [
+      { label: reference.categoryDisplayName(root.key, root.category.name), value: root.key },
+      ...(root.children ?? []).map((child) => ({
+        label: reference.categoryDisplayName(child.key, child.category.name),
+        value: child.key,
+      })),
+    ])
+
+// 子分类预算统一以路径名呈现（列表/编辑弹窗同源，issue #356）；
+// 解析不到（守卫生效前的历史孤儿预算）回退后端返回的分类名（「未分类」）。
+const displayCategoryName = (row: BudgetProgress) =>
+  reference.categoryDisplayName(row.budget.category_id, row.category_name)
+
+const editingCategoryName = computed(() =>
+  editing.value
+    ? reference.categoryDisplayName(editing.value.budget.category_id, editing.value.category_name)
+    : '',
+)
 
 async function refresh() {
   loading.value = true
@@ -117,7 +138,11 @@ async function remove(id: string) {
 }
 
 const columns = computed<DataTableColumns<BudgetProgress>>(() => [
-  { title: t('budget.list.colCategory'), key: 'category_name' },
+  {
+    title: t('budget.list.colCategory'),
+    key: 'category_name',
+    render: (row) => displayCategoryName(row),
+  },
   { title: t('budget.list.colPeriod'), key: 'budget.period' },
   {
     title: t('budget.list.colAmount'),
@@ -217,7 +242,7 @@ onMounted(() => {
     >
       <NForm label-placement="left" :show-feedback="false" size="small">
         <NFormItem :label="t('budget.edit.category')">
-          <NText>{{ editing?.category_name }}</NText>
+          <NText>{{ editingCategoryName }}</NText>
         </NFormItem>
         <NFormItem :label="t('budget.edit.period')">
           <NText>{{
