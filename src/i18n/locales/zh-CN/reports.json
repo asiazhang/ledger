@@ -8,10 +8,7 @@
     "empty": "本年暂无数据"
   },
   "category": {
-    "title": "支出分类占比",
-    "groupLevel": "汇总层级",
-    "level2": "二级",
-    "level1": "一级",
+    "title": "支出分类构成",
     "empty": "暂无支出数据"
   },
   "merchant": {

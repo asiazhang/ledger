@@ -1,33 +1,27 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { NCard, NSpace, NEmpty, NSpin, NRadioGroup, NRadio, NText } from 'naive-ui'
+import { NCard, NSpace, NEmpty, NSpin } from 'naive-ui'
 import AppSelect from '@/components/AppSelect.vue'
-import { Bar, Doughnut } from 'vue-chartjs'
+import { Bar } from 'vue-chartjs'
 import {
   Chart as ChartJS,
   Title,
   Tooltip,
   Legend,
   BarElement,
-  ArcElement,
   CategoryScale,
   LinearScale,
 } from 'chart.js'
-import type { ChartOptions, TooltipItem } from 'chart.js'
+import type { Chart, ChartOptions, TooltipItem } from 'chart.js'
 import { api } from '@/api'
 import { t } from '@/i18n'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount } from '@/types'
 import type { CategoryShare, MerchantShare, MonthlySummary, YearRange } from '@/types'
-import { categoryRoot } from '@/utils/category-tree'
-import {
-  loadReportsGroupLevel,
-  saveReportsGroupLevel,
-  type ReportsGroupLevel,
-} from '@/utils/view-state'
+import { barEndLabel, categoryBarTotal, categoryBars } from '@/utils/category-chart'
 import MerchantRankingPanel from '@/components/reports/MerchantRankingPanel.vue'
 
-ChartJS.register(Title, Tooltip, Legend, BarElement, ArcElement, CategoryScale, LinearScale)
+ChartJS.register(Title, Tooltip, Legend, BarElement, CategoryScale, LinearScale)
 
 const reference = useReferenceStore()
 const year = ref(new Date().getFullYear())
@@ -48,10 +42,6 @@ const monthly = ref<MonthlySummary[]>([])
 const shares = ref<CategoryShare[]>([])
 const merchantShares = ref<MerchantShare[]>([])
 const loading = ref(false)
-const groupLevel = ref<ReportsGroupLevel>(loadReportsGroupLevel())
-
-// ViewState：汇总层级跨启动保持。
-watch(groupLevel, (v) => saveReportsGroupLevel(v))
 
 async function refresh() {
   loading.value = true
@@ -118,52 +108,78 @@ const barChartOptions: ChartOptions<'bar'> = {
   },
 }
 
-const pieData = computed(() => {
-  if (groupLevel.value === 'level2') {
-    return shares.value
-      .filter((s) => s.amount_cents !== 0)
-      .map((s) => ({ name: s.category_name, value: s.amount_cents }))
-  }
-  const map = new Map<string, { name: string; value: number }>()
-  for (const s of shares.value) {
-    if (s.amount_cents === 0) continue
-    const root = categoryRoot(reference.categories, s.category_id)
-    const key = root ? root.id : s.category_id
-    const name = root ? root.name : s.category_name
-    const exist = map.get(key)
-    if (exist) exist.value += s.amount_cents
-    else map.set(key, { name, value: s.amount_cents })
-  }
-  return Array.from(map.values())
-})
+// 支出分类构成（issue #378）：横向柱状图基础态。一级归并 + 未分类柱、净额降序、
+// 按 id 稳定配色、未分类灰——数据形态收口在 category-chart 纯函数，此处只消费。
+const categoryBarsData = computed(() => categoryBars(shares.value, reference.categories))
 
-const PALETTE = [
-  '#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272',
-  '#fc8452', '#9a60b4', '#ea7ccc', '#18a058', '#d03050', '#2080f0',
-]
-
-const doughnutChartData = computed(() => ({
-  labels: pieData.value.map((d) => d.name),
+const categoryChartData = computed(() => ({
+  labels: categoryBarsData.value.map((b) => b.name),
   datasets: [
     {
-      data: pieData.value.map((d) => d.value),
-      backgroundColor: pieData.value.map((_, i) => PALETTE[i % PALETTE.length]),
-      hoverOffset: 4,
+      data: categoryBarsData.value.map((b) => b.value),
+      backgroundColor: categoryBarsData.value.map((b) => b.color),
+      barThickness: 20,
     },
   ],
 }))
 
-const doughnutChartOptions: ChartOptions<'doughnut'> = {
+// 平铺滚动：图高随行数增长（全部分类不截断），卡片内限高滚动。
+const CATEGORY_ROW_HEIGHT = 32
+const CATEGORY_MIN_ROWS = 6
+const categoryChartHeight = computed(() => {
+  const rows = Math.max(CATEGORY_MIN_ROWS, categoryBarsData.value.length)
+  return rows * CATEGORY_ROW_HEIGHT
+})
+
+// 柱尾「金额 · 占比%」标签：占比分母 = 全部一级柱合计（图行净额代数和，负柱如实冲减）。
+const barEndLabelPlugin = {
+  id: 'barEndLabels',
+  afterDatasetsDraw(chart: Chart<'bar'>) {
+    const data = chart.data.datasets[0]?.data as number[] | undefined
+    if (!data?.length) return
+    const total = categoryBarTotal(categoryBarsData.value)
+    const ctx = chart.ctx
+    ctx.save()
+    ctx.fillStyle = typeof chart.options.color === 'string' ? chart.options.color : '#666'
+    const f = ChartJS.defaults.font
+    ctx.font = `${f.size ?? 12}px ${f.family ?? 'sans-serif'}`
+    ctx.textBaseline = 'middle'
+    chart.getDatasetMeta(0).data.forEach((el, i) => {
+      const value = data[i]
+      const { x, y } = el.getProps(['x', 'y'], true)
+      // 正值柱标在柱尾右侧，负值柱标在柱尾左侧（0 轴如实渲染）
+      ctx.textAlign = value >= 0 ? 'left' : 'right'
+      ctx.fillText(barEndLabel(value, total), value >= 0 ? x + 6 : x - 6, y)
+    })
+    ctx.restore()
+  },
+}
+
+const categoryChartOptions: ChartOptions<'bar'> = {
+  indexAxis: 'y',
   responsive: true,
   maintainAspectRatio: false,
-  cutout: '40%',
+  // 两端留白容柱尾标签（x 轴 grace 把最大/最小值两端各拓 30%）
+  layout: { padding: { left: 4, right: 8 } },
   plugins: {
-    legend: { position: 'right' },
+    legend: { display: false },
     tooltip: {
       callbacks: {
-        label: (context: TooltipItem<'doughnut'>) =>
-          `${context.label}: ${formatAmount(context.raw as number)}`,
+        label: (context: TooltipItem<'bar'>) => formatAmount(context.raw as number),
       },
+    },
+  },
+  scales: {
+    x: {
+      type: 'linear',
+      grace: '30%',
+      ticks: {
+        callback: (value: number | string) => formatAmount(Number(value)),
+      },
+    },
+    y: {
+      // 平铺不截断：全部类目标签都画，行多时容器滚动
+      ticks: { autoSkip: false },
     },
   },
 }
@@ -196,16 +212,23 @@ onMounted(() => {
         </div>
       </NCard>
       <NCard :title="t('reports.category.title')" size="small">
-        <NSpace v-if="shares.length > 0" align="center" :size="12" style="margin-bottom: 8px">
-          <NText depth="3" style="font-size: 12px">{{ t('reports.category.groupLevel') }}</NText>
-          <NRadioGroup v-model:value="groupLevel" size="small">
-            <NRadio value="level2">{{ t('reports.category.level2') }}</NRadio>
-            <NRadio value="level1">{{ t('reports.category.level1') }}</NRadio>
-          </NRadioGroup>
-        </NSpace>
-        <NEmpty v-if="shares.length === 0" :description="t('reports.category.empty')" />
-        <div v-else style="height: 320px">
-          <Doughnut :data="doughnutChartData" :options="doughnutChartOptions" />
+        <NEmpty v-if="categoryBarsData.length === 0" :description="t('reports.category.empty')" />
+        <div
+          v-else
+          data-testid="category-chart-scroll"
+          style="max-height: 320px; overflow-y: auto"
+        >
+          <div
+            data-testid="category-chart-canvas"
+            :style="{ height: `${categoryChartHeight}px`, position: 'relative' }"
+          >
+            <Bar
+              class="category-chart"
+              :data="categoryChartData"
+              :options="categoryChartOptions"
+              :plugins="[barEndLabelPlugin]"
+            />
+          </div>
         </div>
       </NCard>
       <MerchantRankingPanel :shares="merchantShares" />

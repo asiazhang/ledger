@@ -9,9 +9,6 @@
   },
   "category": {
     "title": "Expense by Category",
-    "groupLevel": "Group Level",
-    "level2": "Level 2",
-    "level1": "Level 1",
     "empty": "No expense data"
   },
   "merchant": {
