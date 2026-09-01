@@ -7,6 +7,15 @@
     "buy": "买入",
     "sell": "卖出"
   },
+  "lending": {
+    "direction": "方向",
+    "lend": "借出",
+    "collect": "收回",
+    "borrow": "借入",
+    "repay": "还款",
+    "submit": "记{dir}",
+    "created": "已{dir}"
+  },
   "columns": {
     "date": "日期",
     "kind": "类型",

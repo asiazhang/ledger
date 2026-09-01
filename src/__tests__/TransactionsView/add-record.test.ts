@@ -4,6 +4,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect, NButton, NModal, NInputNumber, NRadioGroup } from 'naive-ui'
 import CategoryForm from '@/components/CategoryForm.vue'
 import TransferForm from '@/components/TransferForm.vue'
+import LendingForm from '@/components/LendingForm.vue'
 import InvestmentForm from '@/components/InvestmentForm.vue'
 import TransactionForm from '@/components/TransactionForm.vue'
 
@@ -127,10 +128,10 @@ describe('TransactionsView 记一笔分裂按钮（issue #150）', () => {
     await flushPromises()
   }
 
-  it('下拉菜单为 5 项并标注快捷键：支出 a/收入 i/转账 z/买入 b/卖出 s，无退款（issue #150/#153）', async () => {
+  it('下拉菜单为 7 项：5 个 kind 项标注快捷键（支出 a/收入 i/转账 z/买入 b/卖出 s），分隔线后借贷两项（借出/借入），无退款（issue #150/#153/#374）', async () => {
     const wrapper = await mountView()
     const labels = await openDropdown(wrapper)
-    expect(labels).toEqual(['支出 a', '收入 i', '转账 z', '买入 b', '卖出 s'])
+    expect(labels).toEqual(['支出 a', '收入 i', '转账 z', '买入 b', '卖出 s', '借出', '借入'])
     expect(labels).not.toContain('退款')
   })
 
@@ -149,6 +150,22 @@ describe('TransactionsView 记一笔分裂按钮（issue #150）', () => {
     const form = wrapper.findComponent(TransactionForm)
     expect(form.props('kind')).toBe(kind)
     expect(wrapper.findComponent(NRadioGroup).exists()).toBe(false)
+  })
+
+  it.each([
+    ['借出', 'lend'],
+    ['借入', 'borrow'],
+  ] as const)('点借贷菜单项「%s」打开借贷变体弹窗（issue #374：kind=lend/borrow 预置方向，不新增交易类型）', async (label, kind) => {
+    const wrapper = await mountView()
+    await openDropdown(wrapper)
+    await clickDropdownItem(label)
+    expect(wrapper.findComponent(NModal).props('show')).toBe(true)
+    expect(wrapper.findComponent(NModal).props('title')).toBe(`记一笔 · ${label}`)
+    const form = wrapper.findComponent(TransactionForm)
+    expect(form.props('kind')).toBe(kind)
+    // 借贷变体经 LendingForm 呈现（转账表单的借贷变体，非新 kind 表单）
+    expect(form.findComponent(LendingForm).exists()).toBe(true)
+    expect(form.findComponent(TransferForm).exists()).toBe(false)
   })
 
   it('下拉展开后再点主体，仍直接打开支出弹窗（两击区互不干扰）', async () => {

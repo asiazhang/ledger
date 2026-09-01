@@ -127,6 +127,14 @@ const CREATE_KIND_MAP = {
  * 右键菜单承接，独立 ticket 落地前处于过渡态）。 */
 export const CREATE_KINDS = Object.keys(CREATE_KIND_MAP) as CreateTransactionKind[]
 
+/** 「记一笔」表单形态闭集：可创建 kind + 借贷两个呈现变体（issue #374 / ADR-0053：
+ * lend/borrow 不新增交易 kind，落账仍为 transfer + receivable/debt 账户）。 */
+export type CreateFormKind = CreateTransactionKind | 'lend' | 'borrow'
+
+/** 「记一笔」借贷变体入口（issue #374）：两项各预设一个方向（反向方向经表单内
+ * 方向切换到达），不占快捷键键位。 */
+export const LENDING_CREATE_DIRECTIONS = ['lend', 'borrow'] as const
+
 export interface CreateTransactionResult {
   success: boolean
   duplicate: boolean

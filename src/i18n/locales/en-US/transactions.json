@@ -7,6 +7,15 @@
     "buy": "Buy",
     "sell": "Sell"
   },
+  "lending": {
+    "direction": "Direction",
+    "lend": "Lend out",
+    "collect": "Collect",
+    "borrow": "Borrow",
+    "repay": "Repay",
+    "submit": "{dir}",
+    "created": "{dir} recorded"
+  },
   "columns": {
     "date": "Date",
     "kind": "Type",

@@ -17,6 +17,10 @@ export function setMerchantDb(rows: Merchant[]) {
 export function setTxnDb(rows: Transaction[]) {
   txnDb = rows
 }
+/** 账户库可变：借贷呈现测试注入 receivable/debt 账户（issue #374）。 */
+export function setAccountDb(rows: Account[]) {
+  mockAccounts = rows
+}
 
 /** 商户字典（可变：软删商户显示测试会清空它模拟 list_merchants 的新返回）。 */
 export let merchantDb: Merchant[] = [
@@ -45,7 +49,8 @@ export const mockCurrencies: Currency[] = [
   { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
 ]
 
-export const mockAccounts: Account[] = [
+/** 账户库（可变，issue #374 借贷呈现测试经 setAccountDb 注入 receivable/debt 账户）。 */
+export let mockAccounts: Account[] = [
   {
     id: 'acc-1',
     name: '现金',
