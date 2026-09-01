@@ -261,7 +261,7 @@ describe('resolveLendingDirection（编辑形态识别，S1 消费点）', () =>
     )).toBe('repay')
   })
 
-  it('普通转账 / 非 transfer / 未知账户 → null（按普通转账呈现）', () => {
+  it('普通转账 / 非 transfer → null（按普通转账呈现）；借贷侧 + 缺失对端 → 仍派借贷（issue #374 修订）', () => {
     expect(resolveLendingDirection(
       { kind: 'transfer', account_id: 'acc-cash', to_account_id: 'acc-bank' },
       typeOf,
@@ -270,9 +270,11 @@ describe('resolveLendingDirection（编辑形态识别，S1 消费点）', () =>
       { kind: 'expense', account_id: 'acc-cash', to_account_id: null },
       typeOf,
     )).toBeNull()
+    // 借贷侧 + 对端账户取不到类型（黑洞 is_hidden / 已删 / 不可查）→ 仍按借贷方向派生：
+    // 未知转出 → receivable = 借出，不因对端缺失退回普通转账。
     expect(resolveLendingDirection(
       { kind: 'transfer', account_id: 'acc-gone', to_account_id: 'acc-recv-zhang' },
       typeOf,
-    )).toBeNull()
+    )).toBe('lend')
   })
 })
