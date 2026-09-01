@@ -1,8 +1,8 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { api } from '@/api'
-import type { Policy, PolicyInput } from '@/types'
+import type { Policy, PolicyInput, PolicyStats } from '@/types'
 
 /** 保单加载状态：`idle` 为初始瞬态（self-init 同步置为 `loading`，外部基本观察不到）。 */
 export type PoliciesStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -19,21 +19,31 @@ export type PoliciesStatus = 'idle' | 'loading' | 'ready' | 'error'
  *
  * 列表只含未删除保单（软删不进列表）；到期状态不在此持久化或推导，
  * 展示层由保障期间即时推导（可推导的状态不落库）。
+ *
+ * 逐保单视角统计（issue #363）：与列表同生命周期重拉（同一批 IPC 写入都触发
+ * `ledger:changed`），`statsById` 供视图按保单 id 取统计行——实时推导不落库，
+ * 前端不做二次聚合。
  */
 export const usePoliciesStore = defineStore('policies', () => {
   const policies = ref<Policy[]>([])
+  const stats = ref<PolicyStats[]>([])
   const status = ref<PoliciesStatus>('idle')
   const version = ref(0)
+
+  /** 保单 id → 统计行（视图按行取统计的单点查法）。 */
+  const statsById = computed(() => new Map(stats.value.map((s) => [s.policy_id, s])))
 
   /** 在途加载 promise（并发调用合并去重）。 */
   let inFlight: Promise<void> | null = null
 
-  /** 一次完整重拉：拉取期间保留旧数据，成功后整体替换（避免闪空与部分更新）。 */
+  /** 一次完整重拉：列表与统计同批刷新，拉取期间保留旧数据，成功后整体替换
+   * （避免闪空与部分更新；任一失败则整体失败，失败信号由 status 承载）。 */
   async function reload(): Promise<void> {
     status.value = 'loading'
     try {
-      const list = await api.listPolicies()
+      const [list, statsList] = await Promise.all([api.listPolicies(), api.listPolicyStats()])
       policies.value = list
+      stats.value = statsList
       version.value += 1
       status.value = 'ready'
     } catch (e) {
@@ -92,6 +102,8 @@ export const usePoliciesStore = defineStore('policies', () => {
 
   return {
     policies,
+    stats,
+    statsById,
     status,
     version,
     refresh,

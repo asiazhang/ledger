@@ -267,3 +267,166 @@ fn 软删商户不可再被新档案选择() {
     let err = create_policy_internal(&conn, input(&merchant_id), &mut || {}).unwrap_err();
     assert!(err.to_string().contains("保险公司不存在或已删除"));
 }
+
+// ---------------------------------------------------------------------------
+// 保单视角统计（issue #363）：实时推导、不落库（BDD 场景外的快速反馈；
+// 含协议期次的下期扣款日推导由 BDD `policy_stats.feature` 验收）
+// ---------------------------------------------------------------------------
+
+use crate::commands::policy::policy_stats_internal;
+use crate::commands::transactions::create_transaction_internal;
+use crate::models::TransactionInput;
+use crate::transaction::amount::TransactionKind;
+
+fn insert_account(conn: &Connection, id: &str) {
+    conn.execute(
+        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id) \
+         VALUES (?1,?2,'cash','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
+        rusqlite::params![id, id],
+    )
+    .unwrap();
+}
+
+fn linked_input(
+    account: &str,
+    kind: TransactionKind,
+    amount: i64,
+    date: &str,
+    policy_id: &str,
+) -> TransactionInput {
+    TransactionInput {
+        kind,
+        amount_cents: amount,
+        currency_code: "CNY".into(),
+        account_id: account.into(),
+        to_account_id: None,
+        category_id: None,
+        merchant_id: None,
+        merchant_name: None,
+        policy_id: Some(policy_id.into()),
+        refund_of_transaction_id: None,
+        note: None,
+        date: date.into(),
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        idempotency_key: None,
+    }
+}
+
+fn today(y: i32, m: u32, d: u32) -> chrono::NaiveDate {
+    chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap()
+}
+
+#[test]
+fn 统计_挂单保费与流入实时合计且软删流水不计入() {
+    let conn = conn();
+    let merchant_id = seed_merchant(&conn, "平安保险");
+    insert_account(&conn, "acc-stat");
+    let policy_id = create_ok(&conn, input(&merchant_id));
+
+    let tx = |kind, amount, date| linked_input("acc-stat", kind, amount, date, &policy_id);
+    // 三笔保费（其中一笔后软删）+ 一笔理赔款 + 一笔不挂单支出（不得串入）
+    let removed =
+        create_transaction_internal(&conn, tx(TransactionKind::Expense, 100, "2026-01-01"))
+            .unwrap()
+            .id;
+    create_transaction_internal(&conn, tx(TransactionKind::Expense, 300, "2026-02-01")).unwrap();
+    create_transaction_internal(&conn, tx(TransactionKind::Income, 50, "2026-03-01")).unwrap();
+    create_transaction_internal(&conn, {
+        let mut i = tx(TransactionKind::Expense, 999, "2026-04-01");
+        i.policy_id = None;
+        i
+    })
+    .unwrap();
+    crate::commands::transactions::delete_transaction_internal(&conn, &removed).unwrap();
+
+    let stats = policy_stats_internal(&conn, today(2026, 6, 1)).unwrap();
+    assert_eq!(stats.len(), 1);
+    let s = &stats[0];
+    assert_eq!(s.policy_id, policy_id);
+    // 逐笔可对账：软删的 100 不计入，余 300；流入 50
+    assert_eq!(s.total_paid_native_cents, 300);
+    assert_eq!(s.total_inflow_native_cents, 50);
+    assert_eq!(s.native_currency, "CNY");
+    assert_eq!(s.next_charge_date, None, "无协议不显示下期扣款日");
+    assert!(!s.is_expired);
+}
+
+#[test]
+fn 统计_到期态由止日与today推导() {
+    let conn = conn();
+    let merchant_id = seed_merchant(&conn, "平安保险");
+
+    let build = |number: &str, start: &str, end: Option<&str>| {
+        let mut i = input(&merchant_id);
+        i.policy_number = number.into();
+        i.start_date = start.into();
+        i.end_date = end.map(String::from);
+        i
+    };
+    create_ok(&conn, build("P-EXPIRED", "2019-01-01", Some("2020-01-01")));
+    create_ok(&conn, build("P-FUTURE", "2026-01-01", Some("2999-01-01")));
+    create_ok(&conn, build("P-LIFETIME", "2026-01-01", None));
+
+    let stats = policy_stats_internal(&conn, today(2026, 6, 1)).unwrap();
+    let by_number = |number: &str| {
+        let id: String = conn
+            .query_row(
+                "SELECT id FROM policies WHERE policy_number=?1",
+                [number],
+                |r| r.get(0),
+            )
+            .unwrap();
+        stats.iter().find(|s| s.policy_id == id).unwrap()
+    };
+    assert!(by_number("P-EXPIRED").is_expired, "止日已过 → 已到期");
+    assert!(!by_number("P-FUTURE").is_expired, "止日未到 → 保障中");
+    assert!(
+        !by_number("P-LIFETIME").is_expired,
+        "止日空 = 长期/终身，永不判到期"
+    );
+}
+
+#[test]
+fn 统计_软删保单不产生统计行且不串其他保单() {
+    let conn = conn();
+    let merchant_id = seed_merchant(&conn, "平安保险");
+    insert_account(&conn, "acc-stat");
+    let kept = create_ok(&conn, input(&merchant_id));
+    let removed = {
+        let mut i = input(&merchant_id);
+        i.policy_number = "P-DELETED".into();
+        create_ok(&conn, i)
+    };
+    // 已删保单的挂单流水保留原引用（不置空），但不得串入其他保单统计
+    create_transaction_internal(
+        &conn,
+        linked_input(
+            "acc-stat",
+            TransactionKind::Expense,
+            777,
+            "2026-01-01",
+            &removed,
+        ),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        linked_input(
+            "acc-stat",
+            TransactionKind::Expense,
+            111,
+            "2026-01-02",
+            &kept,
+        ),
+    )
+    .unwrap();
+    delete_policy_internal(&conn, &removed, &mut || {}).unwrap();
+
+    let stats = policy_stats_internal(&conn, today(2026, 6, 1)).unwrap();
+    assert_eq!(stats.len(), 1, "软删保单不产生统计行");
+    assert_eq!(stats[0].policy_id, kept);
+    assert_eq!(stats[0].total_paid_native_cents, 111, "已删保单流水不串入");
+}

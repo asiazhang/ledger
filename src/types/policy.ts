@@ -44,3 +44,18 @@ export interface PolicyInput {
   coverage_currency_code?: string | null
   note?: string | null
 }
+
+/** 逐保单视角统计行（对应后端 `models::policy::PolicyStats`，issue #363 / ADR-0051 决策 5/6）。 */
+export interface PolicyStats {
+  policy_id: string
+  /** 折算基准币种（全局默认币种）：下列两个合计均为本位币口径。 */
+  native_currency: string
+  /** 累计已缴保费（本位币，分）：挂单保费流水忠实合计，不摊销、不落库。 */
+  total_paid_native_cents: number
+  /** 累计现金流入（本位币，分）：挂单现金流入流水忠实合计。 */
+  total_inflow_native_cents: number
+  /** 下期扣款日（YYYY-MM-DD）；null = 无活跃协议/无 pending 期次（界面不显示）。 */
+  next_charge_date: string | null
+  /** 到期态（实时推导，不持久化）：止日非空且早于今天 → 已到期；止日空 = 长期/终身。 */
+  is_expired: boolean
+}

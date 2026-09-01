@@ -184,6 +184,14 @@ pub enum Measure {
     IncomeNet,
     /// 退款毛额：独立成列可看，供毛值/净值并存展示。
     RefundGross,
+    /// 保单已缴保费（挂单 `expense` 之和）：保单视角统计口径（issue #363 /
+    /// ADR-0051 决策 6）。挂单准入（行为层，issue #361）保证只有 expense/income
+    /// 可携带 policy_id，故本度量恒不含退款冲减——保单现金流入记 income 挂单
+    /// 而非 refund（ADR-0051 决策 4），保费口径不被冲小。
+    PolicyPremium,
+    /// 保单现金流入（挂单 `income` 之和）：理赔/退保/满期返还统一记 income 挂单
+    /// （ADR-0051 决策 4），三者记账语义无差别。
+    PolicyInflow,
 }
 
 /// kind→度量系数矩阵（单一真源）：-1 / 0 / +1。
@@ -228,6 +236,26 @@ fn coefficient(kind: TransactionKind, measure: Measure) -> i64 {
             TransactionKind::Income
             | TransactionKind::Expense
             | TransactionKind::Transfer
+            | TransactionKind::Buy
+            | TransactionKind::Sell
+            | TransactionKind::Dividend
+            | TransactionKind::Split => 0,
+        },
+        Measure::PolicyPremium => match kind {
+            TransactionKind::Expense => 1,
+            TransactionKind::Income
+            | TransactionKind::Transfer
+            | TransactionKind::Refund
+            | TransactionKind::Buy
+            | TransactionKind::Sell
+            | TransactionKind::Dividend
+            | TransactionKind::Split => 0,
+        },
+        Measure::PolicyInflow => match kind {
+            TransactionKind::Income => 1,
+            TransactionKind::Expense
+            | TransactionKind::Transfer
+            | TransactionKind::Refund
             | TransactionKind::Buy
             | TransactionKind::Sell
             | TransactionKind::Dividend
@@ -310,6 +338,16 @@ pub fn income_net_expr(alias: &str) -> String {
 /// `refund_gross` 聚合片段（退款毛额）。
 pub fn refund_gross_expr(alias: &str) -> String {
     kind_case_expr(alias, Measure::RefundGross)
+}
+
+/// `policy_premium` 聚合片段（保单已缴保费，issue #363）：挂单 `expense` 之和。
+pub fn policy_premium_expr(alias: &str) -> String {
+    kind_case_expr(alias, Measure::PolicyPremium)
+}
+
+/// `policy_inflow` 聚合片段（保单现金流入，issue #363）：挂单 `income` 之和。
+pub fn policy_inflow_expr(alias: &str) -> String {
+    kind_case_expr(alias, Measure::PolicyInflow)
 }
 
 /// 毛支出聚合片段 = `expense_net + refund_gross`（spec #52 净值关系恒等式：

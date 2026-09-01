@@ -4,14 +4,18 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { usePoliciesStore } from '@/stores/policies'
-import { makePolicy } from './factories'
-import type { Policy, PolicyInput } from '@/types'
+import { makePolicy, makePolicyStats } from './factories'
+import type { Policy, PolicyInput, PolicyStats } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 const mockListen = vi.mocked(listen)
 
 function basePolicy(over: Partial<Policy> = {}): Policy {
   return makePolicy({ id: 'policy-1', ...over })
+}
+
+function baseStats(over: Partial<PolicyStats> = {}): PolicyStats {
+  return makePolicyStats(over)
 }
 
 const createInput: PolicyInput = {
@@ -43,6 +47,7 @@ describe('usePoliciesStore', () => {
   it('首次访问自动加载（self-init），加载后 status=ready、version=1', async () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_policies') return Promise.resolve([basePolicy()])
+      if (cmd === 'list_policy_stats') return Promise.resolve([baseStats()])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = usePoliciesStore()
@@ -56,6 +61,7 @@ describe('usePoliciesStore', () => {
   it('加载失败时 status=error，不抛出（self-init 静默）', async () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_policies') return Promise.reject(new Error('boom'))
+      if (cmd === 'list_policy_stats') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = usePoliciesStore()
@@ -70,6 +76,7 @@ describe('usePoliciesStore', () => {
     let resolveSecond: (items: Policy[]) => void = () => {}
     let listCalls = 0
     mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_policy_stats') return Promise.resolve([baseStats()])
       if (cmd !== 'list_policies') return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
       listCalls++
       if (listCalls === 1) return Promise.resolve(initial)
@@ -94,6 +101,7 @@ describe('usePoliciesStore', () => {
   it('create 成功后立即重拉并返回 id', async () => {
     let listCalls = 0
     mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
+      if (cmd === 'list_policy_stats') return Promise.resolve([])
       if (cmd === 'list_policies') {
         listCalls++
         return Promise.resolve(listCalls > 1 ? [basePolicy({ id: 'new-1', ...createInput })] : [])
@@ -115,6 +123,7 @@ describe('usePoliciesStore', () => {
   it('update / remove 成功后立即重拉', async () => {
     const current = [basePolicy()]
     mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
+      if (cmd === 'list_policy_stats') return Promise.resolve([])
       if (cmd === 'list_policies') {
         return Promise.resolve(current.filter((p) => !p.is_deleted))
       }
@@ -141,9 +150,40 @@ describe('usePoliciesStore', () => {
     expect(store.policies).toHaveLength(0)
   })
 
+  it('统计与列表同批重拉，statsById 按保单 id 索引（issue #363）', async () => {
+    const stats = [
+      baseStats({ policy_id: 'policy-1', total_paid_native_cents: 600_000, next_charge_date: '2027-01-01' }),
+    ]
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_policies') return Promise.resolve([basePolicy()])
+      if (cmd === 'list_policy_stats') return Promise.resolve(stats)
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const store = usePoliciesStore()
+    await flushPromises()
+    expect(store.status).toBe('ready')
+    expect(store.stats).toEqual(stats)
+    expect(store.statsById.get('policy-1')?.total_paid_native_cents).toBe(600_000)
+    expect(store.statsById.get('missing')).toBeUndefined()
+  })
+
+  it('统计拉取失败与列表失败同语义：status=error（整体失败，不部分更新）', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_policies') return Promise.resolve([basePolicy()])
+      if (cmd === 'list_policy_stats') return Promise.reject(new Error('stats boom'))
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const store = usePoliciesStore()
+    await flushPromises()
+    expect(store.status).toBe('error')
+    expect(store.policies).toEqual([])
+    expect(store.stats).toEqual([])
+  })
+
   it('create 失败向上抛（调用方展示错误，弹窗不关）', async () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_policies') return Promise.resolve([])
+      if (cmd === 'list_policy_stats') return Promise.resolve([])
       if (cmd === 'create_policy') return Promise.reject(new Error('保单号不能为空'))
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })

@@ -46,6 +46,7 @@ function setupInvoke() {
     if (cmd === 'list_categories') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
     if (cmd === 'list_policies') return Promise.resolve([])
+    if (cmd === 'list_policy_stats') return Promise.resolve([])
     if (cmd === 'create_policy') {
       const { input } = args as { input: { policy_number: string } }
       return Promise.resolve(`policy-new-${input.policy_number}`)

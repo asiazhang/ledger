@@ -12,7 +12,7 @@ import {
 } from 'naive-ui'
 import { formatAmount } from '@/types'
 import { todayStr } from '@/utils/date'
-import type { Policy } from '@/types'
+import type { Policy, PolicyStats } from '@/types'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import MerchantLink from '@/components/MerchantLink.vue'
 import PolicyFormModal from '@/components/PolicyFormModal.vue'
@@ -54,10 +54,15 @@ async function removePolicy(id: string) {
 }
 
 // —— 展示层到期推导（不持久化，可推导的状态不落库）：
-// 止日非空且早于今天 → 已到期；止日为空 = 长期/终身，永不判到期。
+// 优先消费统计命令的同源推导（issue #363，与 BDD 口径一致）；统计行未加载时
+// 回落本地推导（同一规则：止日非空且早于今天 → 已到期；止日空 = 长期/终身）。
 // 「今天」在行渲染时即时取（无日历事件源，写入触发的重拉顺带刷新快照）——
 function isExpired(row: Policy): boolean {
   return row.end_date !== null && row.end_date < todayStr()
+}
+
+function expiredState(row: Policy): boolean {
+  return policiesStore.statsById.get(row.id)?.is_expired ?? isExpired(row)
 }
 
 function periodText(row: Policy): string {
@@ -71,6 +76,14 @@ function coverageText(row: Policy): string {
   // 保额纯展示：按自带币种原样格式化，不折算、不进任何金额口径（ADR-0051）
   const currency = reference.getCurrency(row.coverage_currency_code)
   return formatAmount(row.coverage_amount_cents, currency)
+}
+
+// —— 保单视角统计（issue #363）：实时推导，按行取 store 同源快照；
+// 统计行未加载时显示占位，不做本地二次聚合 ——
+function statsAmountText(row: Policy, pick: (s: PolicyStats) => number): string {
+  const stats = policiesStore.statsById.get(row.id)
+  if (!stats) return '—'
+  return formatAmount(pick(stats), reference.getCurrency(stats.native_currency))
 }
 
 const columns: DataTableColumns<Policy> = [
@@ -89,14 +102,32 @@ const columns: DataTableColumns<Policy> = [
     render: (row) =>
       h(
         NTag,
-        { size: 'small', type: isExpired(row) ? 'warning' : 'success', bordered: false },
-        () => (isExpired(row) ? t('policies.expiry.expired') : t('policies.expiry.active')),
+        { size: 'small', type: expiredState(row) ? 'warning' : 'success', bordered: false },
+        () => (expiredState(row) ? t('policies.expiry.expired') : t('policies.expiry.active')),
       ),
   },
   {
     title: () => t('policies.columns.coverage'),
     key: 'coverage_amount_cents',
     render: (row) => coverageText(row),
+  },
+  {
+    title: () => t('policies.columns.paid'),
+    key: 'total_paid_native_cents',
+    width: 110,
+    render: (row) => statsAmountText(row, (s) => s.total_paid_native_cents),
+  },
+  {
+    title: () => t('policies.columns.inflow'),
+    key: 'total_inflow_native_cents',
+    width: 110,
+    render: (row) => statsAmountText(row, (s) => s.total_inflow_native_cents),
+  },
+  {
+    title: () => t('policies.columns.nextCharge'),
+    key: 'next_charge_date',
+    width: 110,
+    render: (row) => policiesStore.statsById.get(row.id)?.next_charge_date ?? '—',
   },
   {
     title: () => t('policies.columns.actions'),

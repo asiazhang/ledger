@@ -16,6 +16,7 @@ import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
 import { usePoliciesStore } from '@/stores/policies'
 import { api } from '@/api'
+import { formatAmount } from '@/types'
 import type { Policy, PolicyInput } from '@/types'
 
 /**
@@ -65,6 +66,25 @@ const merchantOptions = computed(() =>
 
 /** 保额录入中：币种选择仅在填了保额时有意义（与后端「成对」校验同形）。 */
 const coverageFilled = computed(() => coverageYuan.value.trim() !== '')
+
+// —— 保单视角统计（issue #363，编辑模式 = 详情）：消费 store 同源快照，
+// 实时推导不落库；列表与弹窗共用同一份数据，不做本地二次聚合 ——
+const statsSummary = computed(() => {
+  if (!props.editing) return null
+  return policiesStore.statsById.get(props.editing.id) ?? null
+})
+
+const paidText = computed(() => {
+  const s = statsSummary.value
+  if (!s) return '—'
+  return formatAmount(s.total_paid_native_cents, reference.getCurrency(s.native_currency))
+})
+
+const inflowText = computed(() => {
+  const s = statsSummary.value
+  if (!s) return '—'
+  return formatAmount(s.total_inflow_native_cents, reference.getCurrency(s.native_currency))
+})
 
 // 清空保额即清币种（成对原子，不产生只有币种的半挂状态）
 watch(coverageFilled, (filled) => {
@@ -295,6 +315,20 @@ defineExpose({ save })
       </template>
 
       <!-- 编辑模式：协议历史 + 添加/改价（1 张保单 → 多段协议可展示） -->
+      <!-- 编辑模式：保单视角统计（实时推导，issue #363）+ 协议历史与添加/改价 -->
+      <div
+        v-if="editing"
+        data-testid="policy-stats-summary"
+        style="display: flex; gap: 16px; margin-bottom: 12px; font-size: 13px"
+      >
+        <span>{{ t('policies.stats.paid') }}：<strong>{{ paidText }}</strong></span>
+        <span>{{ t('policies.stats.inflow') }}：<strong>{{ inflowText }}</strong></span>
+        <span>
+          {{ t('policies.stats.nextCharge') }}：<strong>{{
+            statsSummary?.next_charge_date ?? '—'
+          }}</strong>
+        </span>
+      </div>
       <NFormItem
         v-if="editing"
         :label="t('policies.agreement.sectionTitle')"

@@ -77,3 +77,27 @@ pub struct PolicyInput {
     /// 备注（可选）。
     pub note: Option<String>,
 }
+
+/// 逐保单视角统计行（issue #363 / ADR-0051 决策 5/6）：全部字段实时推导，
+/// **不落库、不摊销**（与 SubscriptionSpend 实际花费口径同纪律）——
+/// 每个数字可逐笔对账到挂单流水。
+#[derive(Debug, Clone, Serialize)]
+pub struct PolicyStats {
+    /// 保单 id（与 [`Policy::id`] 对应；只含未删除保单）。
+    pub policy_id: String,
+    /// 折算基准币种（`default_currency_code`，全局默认币种）：下列两个合计
+    /// 均为流水的 `amount_native_cents` 忠实合计（读取期不二次折算）。
+    pub native_currency: String,
+    /// 累计已缴保费（本位币，分）：挂单保费（`expense`）流水合计。
+    pub total_paid_native_cents: i64,
+    /// 累计现金流入（本位币，分）：挂单现金流入（`income`）流水合计
+    /// （理赔/退保/满期返还，ADR-0051 决策 4）。
+    pub total_inflow_native_cents: i64,
+    /// 下期扣款日（YYYY-MM-DD）：该保单**活跃**缴费协议（订阅形态，含多段历史中
+    /// 的 active 段）的最早 pending 期次；无活跃协议或无 pending 期次 = `None`
+    /// （界面不显示该字段，可推导的状态不落库）。
+    pub next_charge_date: Option<String>,
+    /// 到期态（实时推导，不持久化，ADR-0051 决策 5）：保障期间止日非空且早于
+    /// today → 已到期；止日为空 = 长期/终身 → 恒 `false`。
+    pub is_expired: bool,
+}

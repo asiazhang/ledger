@@ -141,6 +141,24 @@ fn matrix_signed_amount_all_cells() {
         (Sell, RefundGross, 0),
         (Dividend, RefundGross, 0),
         (Split, RefundGross, 0),
+        // policy_premium：仅挂单保费（expense），无退款冲减（ADR-0051 决策 4）
+        (Income, PolicyPremium, 0),
+        (Expense, PolicyPremium, 1),
+        (Transfer, PolicyPremium, 0),
+        (Refund, PolicyPremium, 0),
+        (Buy, PolicyPremium, 0),
+        (Sell, PolicyPremium, 0),
+        (Dividend, PolicyPremium, 0),
+        (Split, PolicyPremium, 0),
+        // policy_inflow：仅挂单现金流入（income）
+        (Income, PolicyInflow, 1),
+        (Expense, PolicyInflow, 0),
+        (Transfer, PolicyInflow, 0),
+        (Refund, PolicyInflow, 0),
+        (Buy, PolicyInflow, 0),
+        (Sell, PolicyInflow, 0),
+        (Dividend, PolicyInflow, 0),
+        (Split, PolicyInflow, 0),
     ];
     for &(kind, measure, expect_sign) in cells {
         assert_eq!(
@@ -203,6 +221,8 @@ fn sql_exprs_match_rust_sums() {
         Measure::ExpenseNet,
         Measure::IncomeNet,
         Measure::RefundGross,
+        Measure::PolicyPremium,
+        Measure::PolicyInflow,
     ];
     for measure in measures {
         let expr = match measure {
@@ -210,6 +230,8 @@ fn sql_exprs_match_rust_sums() {
             Measure::ExpenseNet => expense_net_expr("t"),
             Measure::IncomeNet => income_net_expr("t"),
             Measure::RefundGross => refund_gross_expr("t"),
+            Measure::PolicyPremium => policy_premium_expr("t"),
+            Measure::PolicyInflow => policy_inflow_expr("t"),
         };
         assert_eq!(
             sql_sum(&conn, &expr),
@@ -255,6 +277,8 @@ fn contributing_kinds_follow_matrix() {
         vec!["income", "dividend"]
     );
     assert_eq!(contributing_kinds(Measure::RefundGross), vec!["refund"]);
+    assert_eq!(contributing_kinds(Measure::PolicyPremium), vec!["expense"]);
+    assert_eq!(contributing_kinds(Measure::PolicyInflow), vec!["income"]);
     assert_eq!(
         contributing_kinds(Measure::AccountFlow(TransferSide::Out)),
         vec![
