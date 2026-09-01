@@ -7,7 +7,7 @@ import { ShieldCheckmarkOutline } from '@vicons/ionicons5'
 import PoliciesView from '@/views/PoliciesView.vue'
 
 /**
- * 「更多」聚合视图（issue #371）：低频视图的单一收容器（ADR-0055）。
+ * 「更多」聚合视图（issue #371）：低频视图的单一收容器（ADR 由 T3 落地）。
  * 页签容器形态（先例：定时页三页签），低频视图组件整体作为页签装载，容器零业务逻辑；
  * 本轮唯一页签 = 保单。页签状态收敛在路由 query.tab（单字段路由状态，可深链/可恢复），
  * 切页签 replace 写回（定时页既有约定）；页签合法性守卫，无/非法 tab 回默认页签。

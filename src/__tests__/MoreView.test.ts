@@ -5,8 +5,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import MoreView from '@/views/MoreView.vue'
 import { routes, router } from '@/router'
-import { makePolicy } from '../factories'
-import type { Currency, Merchant, Policy } from '@/types'
+import type { Currency, Merchant } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -80,9 +79,9 @@ describe('MoreView 「更多」聚合视图页签容器（issue #371）', () => 
   })
 })
 
-// 注：切页签 replace 写回路径与定时页共用同一实现（定时页测试已覆盖）。
-// naive-ui Tab 对与当前激活值相同的点击不发 update:value，本轮唯一页签下
-// 「切换」不可达，不重复建不可达用例（新页签接入时随定时页模式补）。
+// 注：切页签 replace 写回用例本轮不可建——naive-ui Tab 对与当前激活值相同的
+// 点击不发 update:value，唯一页签下无「切换」可触发（与定时页同一实现形状，
+// 非共享抽象）；新页签接入时随定时页测试模式补齐。
 
 describe('旧保单路由迁移（issue #371，#202 先例）', () => {
   it('真实路由表：/policies 重定向到「更多」并携带 tab: policies', async () => {
