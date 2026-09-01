@@ -146,7 +146,8 @@
     "subscription-ext-not-found": "subscription extension info does not exist",
     "transfer-ext-not-found": "scheduled transfer extension info does not exist",
     "date-invalid": "invalid date {0}: {1}",
-    "not-active": "the linked plan is not active"
+    "not-active": "the linked plan is not active",
+    "policy-subscription-only": "only subscription agreements can reference a policy"
   },
   "scheduled-occurrence": {
     "not-found": "occurrence does not exist",
