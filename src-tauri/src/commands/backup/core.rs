@@ -186,7 +186,9 @@ pub fn list_managed_backups(dir: &Path) -> Result<Vec<BackupFileInfo>> {
                 file_name,
                 path: path.to_string_lossy().into_owned(),
                 size_bytes,
-                created_at: ts.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                // 文件名时间戳为本地时间（ADR-0016 修订：原 UTC），mtime 回退也是
+                // 非权威口径：均非 UTC 时刻，不带字面 Z 假标记，避免未来被按 UTC 解析双重换算。
+                created_at: ts.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 kind,
             })
         })
