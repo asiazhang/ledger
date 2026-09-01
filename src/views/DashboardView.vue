@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import {
   NAlert,
+  NButton,
   NCard,
   NEmpty,
   NGi,
@@ -13,9 +14,15 @@ import {
   NSpin,
   NTag,
   NText,
+  NTooltip,
 } from 'naive-ui'
+import { InformationCircleOutline } from '@vicons/ionicons5'
+import { NIcon } from 'naive-ui'
+import { useRouter } from 'vue-router'
 import { api } from '@/api'
+import { t } from '@/i18n'
 import { useDashboardOverview } from '@/composables/useDashboardOverview'
+import { useFinancialFreedom } from '@/composables/useFinancialFreedom'
 import { useItemDailyTotal } from '@/composables/useItemDailyTotal'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount } from '@/types'
@@ -74,6 +81,45 @@ const {
   error: itemDailyTotalError,
 } = useItemDailyTotal()
 
+// 财务自由度卡（issue #344；口径 ADR-0048）：后端 financial_freedom 聚合
+//（分子折算、分母年化、3% 提取率），前端只做装配渲染与阶段标签派生。
+const router = useRouter()
+const {
+  data: freedom,
+  loading: freedomLoading,
+  error: freedomError,
+  refresh: refreshFreedom,
+} = useFinancialFreedom()
+
+// 折算基准币种（分子/分母同币种展示用）
+const freedomCurrency = computed(() =>
+  freedom.value ? reference.getCurrency(freedom.value.native_currency) : undefined,
+)
+
+// 阶段标签前端派生（ADR-0048 决策 5：阈值与文案归 UI，不做后端枚举）：
+// <30% 积累期 / 30–100% 接近自由 / ≥100% 财务自由；文案走 i18n（ADR-0049）
+const freedomStage = computed(() => {
+  if (!freedom.value) return null
+  if (freedom.value.ratio >= 100)
+    return { label: t('dashboard.freedom.stageFree'), type: 'success' as const }
+  if (freedom.value.ratio >= 30)
+    return { label: t('dashboard.freedom.stageApproaching'), type: 'info' as const }
+  return { label: t('dashboard.freedom.stageAccumulation'), type: 'default' as const }
+})
+
+// 进度条：>100% 封顶展示，≥100% 转成功状态（达成时刻的视觉确认）
+const freedomProgress = computed(() => {
+  if (!freedom.value) return { percentage: 0, success: false }
+  return {
+    percentage: Math.min(100, freedom.value.ratio),
+    success: freedom.value.ratio >= 100,
+  }
+})
+
+function goBudget() {
+  void router.push({ name: 'budget' })
+}
+
 onMounted(async () => {
   const now = new Date()
   const year = now.getFullYear()
@@ -90,7 +136,7 @@ onMounted(async () => {
     <NCard size="small" data-testid="net-worth-card">
       <NSpin :show="loading">
         <NSpace vertical :size="4">
-          <NText depth="3" style="font-size: 12px">净资产</NText>
+          <NText depth="3" style="font-size: 12px">{{ t('dashboard.netWorth.label') }}</NText>
           <template v-if="overview">
             <NText strong style="font-size: 28px">
               {{
@@ -109,23 +155,23 @@ onMounted(async () => {
     </NCard>
 
     <!-- 本月收支卡（issue #144）：紧随净资产之后，先看本月现金流再看投资/预算 -->
-    <NCard title="本月收支" size="small">
+    <NCard :title="t('dashboard.monthly.title')" size="small">
       <NGrid :cols="3" :x-gap="16" responsive="screen">
         <NGridItem>
           <NSpace vertical :size="4">
-            <NText depth="3" style="font-size: 12px">收入</NText>
+            <NText depth="3" style="font-size: 12px">{{ t('dashboard.monthly.income') }}</NText>
             <NText strong style="font-size: 20px">{{ formatAmount(netIncomeCents) }}</NText>
           </NSpace>
         </NGridItem>
         <NGridItem>
           <NSpace vertical :size="4">
-            <NText depth="3" style="font-size: 12px">净支出</NText>
+            <NText depth="3" style="font-size: 12px">{{ t('dashboard.monthly.netExpense') }}</NText>
             <NText strong style="font-size: 20px">{{ formatAmount(netExpenseCents) }}</NText>
           </NSpace>
         </NGridItem>
         <NGridItem>
           <NSpace vertical :size="4">
-            <NText depth="3" style="font-size: 12px">结余</NText>
+            <NText depth="3" style="font-size: 12px">{{ t('dashboard.monthly.net') }}</NText>
             <NText strong style="font-size: 20px">{{ formatAmount(balanceCents) }}</NText>
           </NSpace>
         </NGridItem>
@@ -133,52 +179,132 @@ onMounted(async () => {
     </NCard>
 
     <!-- 投资概览卡（issue #145）：始终展示，无持仓时空态占位 -->
-    <NCard title="投资概览" size="small" data-testid="investment-overview-card">
+    <NCard :title="t('dashboard.investment.title')" size="small" data-testid="investment-overview-card">
       <NGrid v-if="holdingRows.length > 0" :x-gap="16" cols="1 s:2">
         <NGi>
-          <NStatistic label="总市值" data-testid="dashboard-total-market-value">
+          <NStatistic :label="t('dashboard.investment.marketValue')" data-testid="dashboard-total-market-value">
             {{ formatCurrencyGroups(totalMarketValueGroups, reference.currencyMap) }}
           </NStatistic>
         </NGi>
         <NGi>
-          <NStatistic label="未实现盈亏合计" data-testid="dashboard-total-unrealized-pnl">
+          <NStatistic :label="t('dashboard.investment.unrealizedPnl')" data-testid="dashboard-total-unrealized-pnl">
             {{ formatCurrencyGroups(totalUnrealizedPnlGroups, reference.currencyMap) }}
           </NStatistic>
         </NGi>
       </NGrid>
-      <NEmpty v-else description="暂无持仓" />
+      <NEmpty v-else :description="t('dashboard.investment.empty')" />
+    </NCard>
+
+    <!-- 财务自由度卡（issue #344）：投资概览之后、物品使用成本之前——
+         先看资产再看「资产够不够躺」，最后才看单品与预算执行 -->
+    <NCard :title="t('dashboard.freedom.title')" size="small" data-testid="financial-freedom-card">
+      <template #header-extra>
+        <!-- 计算口径悬停提示：3% 乘数使百分比无法从已展示的分子/分母直接推出，
+             不解释会被当成算错（ADR-0048）。悬停即现、移开即关、不拦交互，
+             不在 ADR-0035 弹层注册表枚举内，用裸 NTooltip -->
+        <NTooltip placement="top" :style="{ maxWidth: '320px' }">
+          <template #trigger>
+            <NButton text :aria-label="t('dashboard.freedom.tooltipAria')" data-testid="financial-freedom-info">
+              <NIcon :size="14" color="var(--n-title-text-color, #999)">
+                <InformationCircleOutline />
+              </NIcon>
+            </NButton>
+          </template>
+          <NSpace vertical :size="2">
+            <span>{{ t('dashboard.freedom.formula') }}</span>
+            <span>{{ t('dashboard.freedom.numeratorBreakdown') }}</span>
+            <span>{{ t('dashboard.freedom.denominatorBreakdown') }}</span>
+            <span>{{ t('dashboard.freedom.extractionRate') }}</span>
+          </NSpace>
+        </NTooltip>
+      </template>
+      <NSpin :show="freedomLoading">
+        <!-- 零分母（未设预算）：占位引导跳预算页，口径不回退实际支出；
+             按钮放 #extra——NEmpty 的 default slot 会顶掉 description -->
+        <NEmpty
+          v-if="freedom && freedom.denominator_cents === 0"
+          :description="t('dashboard.freedom.zeroDenominator')"
+        >
+          <template #extra>
+            <NButton size="small" type="primary" @click="goBudget">
+              {{ t('dashboard.freedom.goSetupBudget') }}
+            </NButton>
+          </template>
+        </NEmpty>
+        <!-- 缺汇率等报错：卡内警告（沿物品使用成本卡的警告先例）+ 重试
+             （重试为本卡按验收新增，先例仅警告无重试；重试即 refresh） -->
+        <NAlert v-else-if="freedomError" type="warning" :bordered="false">
+          <NSpace align="center" :size="8">
+            <span>{{ freedomError }}</span>
+            <NButton size="tiny" quaternary type="warning" @click="refreshFreedom">
+              {{ t('dashboard.freedom.retry') }}
+            </NButton>
+          </NSpace>
+        </NAlert>
+        <NSpace v-else-if="freedom && freedomStage" vertical :size="4">
+          <NSpace align="center" justify="space-between" style="width: 100%">
+            <NText strong style="font-size: 28px" data-testid="financial-freedom-ratio">
+              {{ freedom.ratio }}%
+            </NText>
+            <NTag :type="freedomStage.type" size="small" data-testid="financial-freedom-stage">
+              {{ freedomStage.label }}
+            </NTag>
+          </NSpace>
+          <NProgress
+            type="line"
+            :percentage="freedomProgress.percentage"
+            :status="freedomProgress.success ? 'success' : undefined"
+            :show-indicator="false"
+          />
+          <NText depth="3" style="font-size: 12px">
+            {{
+              t('dashboard.freedom.numeratorLabel', {
+                amount: formatAmount(freedom.numerator_cents, freedomCurrency),
+              })
+            }}
+            · {{
+              t('dashboard.freedom.denominatorLabel', {
+                amount: formatAmount(freedom.denominator_cents, freedomCurrency),
+              })
+            }}
+          </NText>
+          <NText depth="3" style="font-size: 12px">
+            {{ t('dashboard.freedom.coverageYears', { years: freedom.coverage_years }) }}
+          </NText>
+        </NSpace>
+      </NSpin>
     </NCard>
 
     <!-- 物品使用成本卡（issue #122）：全部在用物品每天成本合计（默认币种，后端聚合），
          无在用物品时空态占位，缺汇率等报错显示提示文案 -->
-    <NCard title="物品使用成本" size="small" data-testid="item-daily-cost-card">
+    <NCard :title="t('dashboard.itemCost.title')" size="small" data-testid="item-daily-cost-card">
       <NSpin :show="itemDailyTotalLoading">
         <NAlert v-if="itemDailyTotalError" type="warning" :bordered="false">
           {{ itemDailyTotalError }}
         </NAlert>
         <NEmpty
           v-else-if="itemDailyTotal && itemDailyTotal.item_count === 0"
-          description="暂无在用物品"
+          :description="t('dashboard.itemCost.empty')"
         />
         <NSpace v-else-if="itemDailyTotal" vertical :size="4">
-          <NText depth="3" style="font-size: 12px">全部在用物品每天成本合计</NText>
+          <NText depth="3" style="font-size: 12px">{{ t('dashboard.itemCost.subtitle') }}</NText>
           <NText strong style="font-size: 20px">
             {{
               formatAmount(
                 itemDailyTotal.per_day_cents,
                 reference.getCurrency(itemDailyTotal.native_currency),
               )
-            }}/天
+            }}{{ t('dashboard.itemCost.perDay') }}
           </NText>
           <NText depth="3" style="font-size: 12px">
-            共 {{ itemDailyTotal.item_count }} 件在用物品
+            {{ t('dashboard.itemCost.count', { n: itemDailyTotal.item_count }) }}
           </NText>
         </NSpace>
       </NSpin>
     </NCard>
 
-    <NCard title="预算进度" size="small" data-testid="budget-progress-card">
-      <NEmpty v-if="budgetRows.length === 0" description="未设置预算" />
+    <NCard :title="t('dashboard.budget.title')" size="small" data-testid="budget-progress-card">
+      <NEmpty v-if="budgetRows.length === 0" :description="t('dashboard.budget.empty')" />
       <NSpace v-else vertical :size="12">
         <div v-for="row in budgetRows" :key="row.budget.id" class="budget-row">
           <NSpace align="center" justify="space-between" style="width: 100%">
@@ -189,7 +315,7 @@ onMounted(async () => {
               <NText :type="row.over_budget ? 'error' : 'default'" style="font-size: 12px">
                 {{ formatAmount(row.spent_cents) }} / {{ formatAmount(row.budget.amount_cents) }}
               </NText>
-              <NTag v-if="row.over_budget" type="error" size="small">超支</NTag>
+              <NTag v-if="row.over_budget" type="error" size="small">{{ t('dashboard.budget.over') }}</NTag>
             </NSpace>
           </NSpace>
           <NProgress

@@ -56,7 +56,8 @@ fn batch_import(world: &mut LedgerWorld, #[step] step: &Step) {
     let results = world
         .db
         .write(|conn| TransactionBatch::run(conn, inputs, true))
-        .expect("批量导入失败");
+        .expect("批量导入失败")
+        .results;
     world.last_import_rows = rows;
     world.last_batch_results = results;
     world.transactions_list = query_all_transactions(&world_conn!(world));
@@ -74,7 +75,8 @@ fn reimport(world: &mut LedgerWorld) {
     let results = world
         .db
         .write(|conn| TransactionBatch::run(conn, inputs, true))
-        .expect("重跑批量导入失败");
+        .expect("重跑批量导入失败")
+        .results;
     world.last_batch_results = results;
     world.transactions_list = query_all_transactions(&world_conn!(world));
 }

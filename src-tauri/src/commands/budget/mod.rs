@@ -44,7 +44,10 @@ fn validate_amount_and_category(
     amount_cents: i64,
 ) -> Result<()> {
     if amount_cents <= 0 {
-        return Err(AppError::Invalid("预算金额必须为正数".into()));
+        return Err(AppError::coded(
+            "budget.amount-positive",
+            "预算金额必须为正数",
+        ));
     }
     let kind: Option<String> = conn
         .query_row(
@@ -54,11 +57,17 @@ fn validate_amount_and_category(
         )
         .optional()?;
     match kind.as_deref() {
-        None => Err(AppError::NotFound(format!("分类不存在: {}", category_id))),
+        None => Err(AppError::codedp_not_found(
+            "budget.category-not-found",
+            format!("分类不存在: {category_id}"),
+            &[category_id],
+        )),
         Some("expense") => Ok(()),
-        Some(other) => Err(AppError::Invalid(format!(
-            "预算只能设置在支出分类上（该分类为{other}分类）"
-        ))),
+        Some(other) => Err(AppError::codedp(
+            "budget.category-not-expense",
+            format!("预算只能设置在支出分类上（该分类为{other}分类）"),
+            &[other],
+        )),
     }
 }
 
@@ -76,13 +85,16 @@ pub fn create_budget_internal(conn: &Connection, input: &BudgetInput) -> Result<
         )
         .optional()?;
     if duplicate.is_some() {
-        let label = match period {
-            BudgetPeriod::Monthly => "按月",
-            BudgetPeriod::Yearly => "按年",
-        };
-        return Err(AppError::Invalid(format!(
-            "该分类已存在{label}预算，可编辑该预算的金额"
-        )));
+        return Err(match period {
+            BudgetPeriod::Monthly => AppError::coded(
+                "budget.duplicate-monthly",
+                "该分类已存在按月预算，可编辑该预算的金额",
+            ),
+            BudgetPeriod::Yearly => AppError::coded(
+                "budget.duplicate-yearly",
+                "该分类已存在按年预算，可编辑该预算的金额",
+            ),
+        });
     }
     let id = new_uuid();
     let now = now_iso();
@@ -122,7 +134,9 @@ pub fn update_budget_internal(conn: &Connection, id: &str, amount_cents: i64) ->
             |r| r.get(0),
         )
         .optional()?
-        .ok_or_else(|| AppError::NotFound(format!("预算不存在: {id}")))?;
+        .ok_or_else(|| {
+            AppError::codedp_not_found("budget.not-found", format!("预算不存在: {id}"), &[id])
+        })?;
     validate_amount_and_category(conn, &category_id, amount_cents)?;
     conn.execute(
         "UPDATE budgets SET amount_cents=?2, updated_at=?3, version=version+1, device_id=?4 WHERE id=?1",

@@ -6,6 +6,7 @@ import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
+import { t } from '@/i18n'
 import type { Category, CategoryUpdateInput } from '@/types'
 
 const props = defineProps<{
@@ -22,7 +23,7 @@ const editIcon = ref('')
 const editParentId = ref<string>('')
 
 const editParentOptions = computed(() => [
-  { label: '无（顶级）', value: '' },
+  { label: t('settings.categories.form.parentNone'), value: '' },
   ...reference.rootCategories
     .filter((c) => c.kind === props.category?.kind)
     .map((c) => ({ label: c.name, value: c.id })),
@@ -43,7 +44,7 @@ async function saveEdit() {
   const cat = props.category
   if (!cat) return
   if (!editName.value.trim()) {
-    message.warning('请输入分类名称')
+    message.warning(t('settings.categories.msg.nameRequired'))
     return
   }
   const input: CategoryUpdateInput = {
@@ -53,11 +54,11 @@ async function saveEdit() {
   }
   try {
     await api.updateCategory(cat.id, input)
-    message.success('已更新分类')
+    message.success(t('settings.categories.msg.updated'))
     emit('update:show', false)
     // 参考数据由 ledger:changed 信号自动重拉，分类树随之更新
   } catch (e) {
-    message.error(`更新失败: ${errorMessage(e)}`)
+    message.error(t('settings.categories.msg.updateFailed', { msg: errorMessage(e) }))
   }
 }
 </script>
@@ -65,29 +66,29 @@ async function saveEdit() {
 <template>
   <AppModal
     :show="show"
-    title="编辑分类"
+    :title="t('settings.categories.editModal.title')"
     preset="card"
     style="width: 420px"
     :bordered="false"
     @update:show="(v: boolean) => emit('update:show', v)"
   >
     <NForm label-placement="left" :show-feedback="false" size="small">
-      <NFormItem label="名称">
-        <NInput v-model:value="editName" placeholder="分类名称" />
+      <NFormItem :label="t('settings.categories.form.name')">
+        <NInput v-model:value="editName" :placeholder="t('settings.categories.form.namePlaceholder')" />
       </NFormItem>
-      <NFormItem label="图标">
-        <NInput v-model:value="editIcon" placeholder="图标名" style="width: 120px" />
+      <NFormItem :label="t('settings.categories.form.icon')">
+        <NInput v-model:value="editIcon" :placeholder="t('settings.categories.form.iconPlaceholder')" style="width: 120px" />
       </NFormItem>
-      <NFormItem label="父分类">
+      <NFormItem :label="t('settings.categories.form.parent')">
         <PinyinSelect
           v-model:value="editParentId"
           :options="editParentOptions"
-          placeholder="选择父分类"
+          :placeholder="t('settings.categories.form.parentPlaceholder')"
           clearable
           style="width: 200px"
         />
       </NFormItem>
-      <NButton type="primary" block @click="saveEdit">保存</NButton>
+      <NButton type="primary" block @click="saveEdit">{{ t('settings.categories.form.save') }}</NButton>
     </NForm>
   </AppModal>
 </template>

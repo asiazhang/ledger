@@ -80,7 +80,11 @@ pub fn delete_category_internal(conn: &Connection, id: &str) -> Result<()> {
         .optional()?
         .is_some();
     if !exists {
-        return Err(AppError::NotFound(format!("分类不存在: {id}")));
+        return Err(AppError::codedp_not_found(
+            "category.not-found",
+            format!("分类不存在: {id}"),
+            &[id],
+        ));
     }
     conn.execute(
         "UPDATE categories SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",

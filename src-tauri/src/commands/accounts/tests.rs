@@ -1,6 +1,6 @@
 use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
-use crate::error::AppError;
+use crate::error::{AppError, ErrClass};
 use crate::models::Account;
 use crate::transaction::amount::{Measure, TransactionKind, TransferSide, signed_amount};
 
@@ -121,7 +121,13 @@ fn delete_account_internal_soft_deletes_and_excludes_from_readback() {
 fn delete_account_internal_returns_not_found_for_missing_id() {
     let conn = setup();
     let err = super::delete_account_internal(&conn, "不存在的id").unwrap_err();
-    assert!(matches!(err, AppError::NotFound(_)));
+    assert!(matches!(
+        err,
+        AppError::Coded {
+            class: ErrClass::NotFound,
+            ..
+        }
+    ));
     assert!(err.to_string().contains("账户不存在"));
 }
 
@@ -132,7 +138,13 @@ fn delete_account_internal_returns_not_found_for_already_deleted() {
     super::delete_account_internal(&conn, "acc-del-2").unwrap();
     let err = super::delete_account_internal(&conn, "acc-del-2").unwrap_err();
     assert!(
-        matches!(err, AppError::NotFound(_)),
+        matches!(
+            err,
+            AppError::Coded {
+                class: ErrClass::NotFound,
+                ..
+            }
+        ),
         "已删除账户应再次返回 404"
     );
 }
@@ -528,7 +540,7 @@ fn update_account_rejects_empty_name() {
         },
     )
     .unwrap_err();
-    assert!(matches!(err, AppError::Invalid(_)));
+    assert!(matches!(err, AppError::Coded { .. }));
     assert!(err.to_string().contains("名称不能为空"));
 }
 
@@ -546,7 +558,7 @@ fn update_account_rejects_currency_change_when_has_transactions() {
         },
     )
     .unwrap_err();
-    assert!(matches!(err, AppError::Invalid(_)));
+    assert!(matches!(err, AppError::Coded { .. }));
     assert!(err.to_string().contains("不能修改币种"));
     // 币种未被改动
     assert_eq!(
@@ -591,7 +603,7 @@ fn update_account_rejects_unknown_currency() {
         },
     )
     .unwrap_err();
-    assert!(matches!(err, AppError::Invalid(_)));
+    assert!(matches!(err, AppError::Coded { .. }));
     assert!(err.to_string().contains("未知币种"));
 }
 
@@ -607,7 +619,13 @@ fn update_account_returns_not_found_for_missing_id() {
         },
     )
     .unwrap_err();
-    assert!(matches!(err, AppError::NotFound(_)));
+    assert!(matches!(
+        err,
+        AppError::Coded {
+            class: ErrClass::NotFound,
+            ..
+        }
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -751,7 +769,7 @@ fn adjust_zero_delta_errors_without_writing() {
     let conn = setup();
     insert_account(&conn, "acc-adj-5", "现金", "cash", "CNY", 12345);
     let err = adjust(&conn, "acc-adj-5", 12345).unwrap_err();
-    assert!(matches!(err, AppError::Invalid(_)));
+    assert!(matches!(err, AppError::Coded { .. }));
     assert!(err.to_string().contains("无需调整"));
     let tx_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
@@ -764,7 +782,7 @@ fn adjust_rejects_hidden_account() {
     let conn = setup();
     insert_hidden_account(&conn, "acc-adj-6", "无(CNY)", "CNY");
     let err = adjust(&conn, "acc-adj-6", 100).unwrap_err();
-    assert!(matches!(err, AppError::Invalid(_)));
+    assert!(matches!(err, AppError::Coded { .. }));
     assert!(err.to_string().contains("黑洞账户不支持余额调整"));
 }
 
@@ -772,7 +790,13 @@ fn adjust_rejects_hidden_account() {
 fn adjust_returns_not_found_for_missing_account() {
     let conn = setup();
     let err = adjust(&conn, "不存在的id", 100).unwrap_err();
-    assert!(matches!(err, AppError::NotFound(_)));
+    assert!(matches!(
+        err,
+        AppError::Coded {
+            class: ErrClass::NotFound,
+            ..
+        }
+    ));
 }
 
 #[test]

@@ -2,17 +2,21 @@
 //!
 //! 置脏触发已收口连接层统一写入口（`db::write`，ADR-0032）：本模块对备份域零感知，
 //! 写入成功后的置脏/到期检查由调用方所在写入口闭包在提交点单点执行。
+//!
+//! 余额调整的交易写入经行为层创建编排入口（issue #310，ADR-0033）：本模块只
+//! 持有外层事务壳与领域组装（方向/差额/缺省备注），不直调 Writer 接缝。
 
 use rusqlite::{Connection, OptionalExtension};
 
+use crate::commands::transactions::create_transaction_internal;
 use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{
     Account, AccountBalance, AccountBalanceAdjustInput, AccountInput, AccountUpdateInput,
+    TransactionInput,
 };
 use crate::transaction::amount::TransactionKind;
-use crate::transaction::writer;
 
 fn list_accounts_with_visibility(conn: &Connection, include_hidden: bool) -> Result<Vec<Account>> {
     let where_clause = if include_hidden {
@@ -101,7 +105,10 @@ pub fn delete_account_internal(conn: &Connection, id: &str) -> Result<()> {
         .optional()?
         .is_some();
     if !exists {
-        return Err(AppError::NotFound(format!("账户不存在: {id}")));
+        return Err(AppError::coded_not_found(
+            "account.not-found",
+            format!("账户不存在: {id}"),
+        ));
     }
     conn.execute(
         "UPDATE accounts SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
@@ -120,7 +127,7 @@ pub fn get_account_internal(conn: &Connection, id: &str) -> Result<Account> {
     )?
     .into_iter()
     .next()
-    .ok_or_else(|| AppError::NotFound(format!("账户不存在: {id}")))
+    .ok_or_else(|| AppError::codedp_not_found("account.not-found", format!("账户不存在: {id}"), &[id]))
 }
 
 /// 编辑账户（`name` / `currency_code` 可选字段，未传保持原值）。
@@ -139,7 +146,7 @@ pub fn update_account_internal(
         Some(ref n) => {
             let trimmed = n.trim();
             if trimmed.is_empty() {
-                return Err(AppError::Invalid("账户名称不能为空".into()));
+                return Err(AppError::coded("account.name-required", "账户名称不能为空"));
             }
             trimmed.to_string()
         }
@@ -156,8 +163,9 @@ pub fn update_account_internal(
                 .optional()?
                 .is_some();
             if referenced {
-                return Err(AppError::Invalid(
-                    "账户已有交易，不能修改币种（会使历史交易折算口径错乱）".into(),
+                return Err(AppError::coded(
+                    "account.currency-locked",
+                    "账户已有交易，不能修改币种（会使历史交易折算口径错乱）",
                 ));
             }
             let exists: bool = conn
@@ -169,7 +177,11 @@ pub fn update_account_internal(
                 .optional()?
                 .is_some();
             if !exists {
-                return Err(AppError::Invalid(format!("未知币种: {code}")));
+                return Err(AppError::codedp(
+                    "account.currency-unknown",
+                    format!("未知币种: {code}"),
+                    &[code.as_str()],
+                ));
             }
             code.clone()
         }
@@ -230,6 +242,11 @@ pub fn ensure_black_hole_account_internal(
 ///
 /// 事务自管（BEGIN/COMMIT/ROLLBACK，薄 wrapper 边界，ADR-0032）：置脏不在此处，
 /// 由调用方写入口在提交点（闭包 Ok 后 `is_autocommit()` 复核）单点承接。
+///
+/// 写入路径（issue #310）：交易落库经行为层创建编排入口——本函数持有外层事务
+/// （黑洞账户 ensure 与交易写入必须同事务），入口嵌套感知检测到已在事务中则加入、
+/// 不自持提交，失败直接返回错误、回滚归本函数的外层事务壳。不直调 Writer 接缝，
+/// 「写一笔交易」的事务协议只在行为层三入口（及 ADR-0033 登记的引擎例外）可达。
 pub fn adjust_account_balance_internal(
     conn: &Connection,
     id: &str,
@@ -237,15 +254,21 @@ pub fn adjust_account_balance_internal(
 ) -> Result<(String, bool)> {
     let account = get_account_internal(conn, id)?;
     if account.is_hidden {
-        return Err(AppError::Invalid("黑洞账户不支持余额调整".into()));
+        return Err(AppError::coded(
+            "account.black-hole-adjust-unsupported",
+            "黑洞账户不支持余额调整",
+        ));
     }
     let current = crate::db::balance::compute_balance(conn, id)?;
     let delta = input
         .target_balance_cents
         .checked_sub(current)
-        .ok_or_else(|| AppError::Invalid("目标余额溢出".into()))?;
+        .ok_or_else(|| AppError::coded("account.balance-overflow", "目标余额溢出"))?;
     if delta == 0 {
-        return Err(AppError::Invalid("余额已等于目标值，无需调整".into()));
+        return Err(AppError::coded(
+            "account.balance-no-change",
+            "余额已等于目标值，无需调整",
+        ));
     }
     conn.execute("BEGIN", [])?;
     let res = (|| -> Result<(String, bool)> {
@@ -256,21 +279,33 @@ pub fn adjust_account_balance_internal(
         } else {
             (id.to_string(), black_hole_id.clone())
         };
-        let writer_input = writer::Input {
-            kind: TransactionKind::Transfer,
-            amount_cents: delta.abs(),
-            currency_code: account.currency_code.clone(),
-            account_id,
-            to_account_id: Some(to_account_id),
-            category_id: None,
-            merchant_id: None,
-            existing_merchant_id: None,
-            refund_of_transaction_id: None,
-            note: Some(input.note.clone().unwrap_or_else(|| "余额调整".to_string())),
-            date: input.date.clone(),
-        };
-        let row = writer::normalize(conn, &writer_input)?;
-        let tx_id = writer::insert_row(conn, &row)?;
+        // 方向（delta 正负定转出/转入）、差额绝对值与缺省备注是余额调整自身的
+        // 领域知识，在此组装为「半空」`TransactionInput`（与场景无关的可选字段
+        // 一律 None，行为层对其有明确的跳过/拒绝语义）；写入协议（校验/归一化/
+        // 落库顺序/事务边界）交行为层创建编排入口（issue #310）：外层事务已在，
+        // 嵌套感知加入、不自持提交，黑洞账户与交易同事务由本函数事务壳保证。
+        let tx_id = create_transaction_internal(
+            conn,
+            TransactionInput {
+                kind: TransactionKind::Transfer,
+                amount_cents: delta.abs(),
+                currency_code: account.currency_code.clone(),
+                account_id,
+                to_account_id: Some(to_account_id),
+                category_id: None,
+                merchant_id: None,
+                merchant_name: None,
+                refund_of_transaction_id: None,
+                note: Some(input.note.clone().unwrap_or_else(|| "余额调整".to_string())),
+                date: input.date.clone(),
+                instrument_id: None,
+                quantity: None,
+                price_cents: None,
+                fee_cents: None,
+                idempotency_key: None,
+            },
+        )?
+        .id;
         Ok((tx_id, created))
     })();
     match res {

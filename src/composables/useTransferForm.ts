@@ -4,6 +4,7 @@ import { api } from '@/api'
 import { centsToYuan } from '@/types'
 import { buildTransferInput } from '@/domain/transaction-input'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
+import { t } from '@/i18n'
 import type { Transaction } from '@/types'
 import { errorMessage } from "@/utils/errors";
 
@@ -42,19 +43,19 @@ export function useTransferForm(options?: {
 
   async function submit() {
     if (!accountId.value) {
-      message.warning('请选择转出账户')
+      message.warning(t('transactions.form.warnSelectFromAccount'))
       return
     }
     if (!toAccountId.value) {
-      message.warning('请选择转入账户')
+      message.warning(t('transactions.form.warnSelectToAccount'))
       return
     }
     if (accountId.value === toAccountId.value) {
-      message.warning('转出账户和转入账户不能相同')
+      message.warning(t('transactions.form.warnSameAccount'))
       return
     }
     if (amount.value == null || amount.value <= 0) {
-      message.warning('请输入金额')
+      message.warning(t('transactions.form.warnAmount'))
       return
     }
     // 编辑目标提交时重读（getter 约定见 options.editing 注释）
@@ -73,18 +74,22 @@ export function useTransferForm(options?: {
       })
       if (editing) {
         await api.updateTransaction(editing.id, input)
-        message.success('已保存修改')
+        message.success(t('transactions.form.changesSaved'))
         // 编辑路径不重置表单：成功即关窗（onUpdated），实例整体销毁
         options?.onUpdated?.()
       } else {
         await api.createTransaction(input)
-        message.success('已记转账')
+        message.success(t('transactions.form.transferCreated'))
         amount.value = null
         note.value = ''
         options?.onCreated?.()
       }
     } catch (e) {
-      message.error(editing ? `保存失败: ${errorMessage(e)}` : `记账失败: ${errorMessage(e)}`)
+      message.error(
+        editing
+          ? t('transactions.form.saveFailed', { msg: errorMessage(e) })
+          : t('transactions.form.createFailed', { msg: errorMessage(e) }),
+      )
     }
   }
 

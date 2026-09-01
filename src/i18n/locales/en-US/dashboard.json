@@ -1,0 +1,46 @@
+{
+  "netWorth": {
+    "label": "Net Worth"
+  },
+  "monthly": {
+    "title": "This Month",
+    "income": "Income",
+    "netExpense": "Net Expense",
+    "net": "Net"
+  },
+  "investment": {
+    "title": "Investment Overview",
+    "marketValue": "Total Market Value",
+    "unrealizedPnl": "Total Unrealized P&L",
+    "empty": "No holdings"
+  },
+  "freedom": {
+    "title": "Financial Freedom",
+    "stageAccumulation": "Accumulating",
+    "stageApproaching": "Approaching Freedom",
+    "stageFree": "Financially Free",
+    "tooltipAria": "How this is calculated",
+    "formula": "Freedom = investable assets × 3% ÷ annual budget total",
+    "numeratorBreakdown": "Numerator = market value + investment account balance (converted to native currency; living cash and liabilities excluded)",
+    "denominatorBreakdown": "Denominator = monthly budget × 12 + annual budget (annualized at planned pace; does not fall back to actual spending)",
+    "extractionRate": "3% is the conservative safe withdrawal rate; ≥100% means financially free",
+    "zeroDenominator": "Set a budget to unlock Financial Freedom",
+    "goSetupBudget": "Set up budget",
+    "retry": "Retry",
+    "numeratorLabel": "Investable assets {amount}",
+    "denominatorLabel": "Annual budget total {amount}",
+    "coverageYears": "Covers {years} years"
+  },
+  "itemCost": {
+    "title": "Item Daily Cost",
+    "empty": "No active items",
+    "subtitle": "Total daily cost of all active items",
+    "perDay": "/day",
+    "count": "{n} active items"
+  },
+  "budget": {
+    "title": "Budget Progress",
+    "empty": "No budgets set",
+    "over": "Over Budget"
+  }
+}

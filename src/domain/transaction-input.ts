@@ -1,6 +1,7 @@
 import type { TransactionInput, TransactionKind } from '@/types'
 import { toLocalDateISO } from '@/utils/date'
 import { yuanToCents, yuanToPrice } from '@/utils/money'
+import { t } from '@/i18n'
 
 /**
  * TransactionInput 装配器（issue #215）：「记一笔」表单状态 → 完整 TransactionInput
@@ -122,29 +123,29 @@ function fail(message: string): never {
 
 /** 必填短文本（id、币种代码等）：null 或空白视为非法 */
 function requireNonEmpty(value: string | null, label: string): string {
-  if (value == null || !value.trim()) fail(`${label}不能为空`)
+  if (value == null || !value.trim()) fail(t('transactions.validation.required', { label }))
   return value
 }
 
 /** 元 → 分（yuanToCents 单点口径）：缺失或非法数值 fail fast */
 function requireAmountCents(amount: number | null, label: string): number {
-  if (amount == null) fail(`${label}不能为空`)
+  if (amount == null) fail(t('transactions.validation.required', { label }))
   const cents = yuanToCents(amount)
-  if (cents == null) fail(`${label}无效: ${amount}`)
+  if (cents == null) fail(t('transactions.validation.invalid', { label, value: amount }))
   return cents
 }
 
 /** 元 → 万分之一元（yuanToPrice 单点口径，价格刻度见 ADR-0038）：缺失或非法数值 fail fast */
 function requirePrice(price: number | null, label: string): number {
-  if (price == null) fail(`${label}不能为空`)
+  if (price == null) fail(t('transactions.validation.required', { label }))
   const p = yuanToPrice(price)
-  if (p == null) fail(`${label}无效: ${price}`)
+  if (p == null) fail(t('transactions.validation.invalid', { label, value: price }))
   return p
 }
 
 /** 本地日期时间戳 → YYYY-MM-DD（toLocalDateISO 单点口径）：非法时间戳 fail fast */
 function requireDateISO(date: number): string {
-  if (!Number.isFinite(date)) fail('日期无效')
+  if (!Number.isFinite(date)) fail(t('transactions.validation.dateInvalid'))
   return toLocalDateISO(date)
 }
 
@@ -180,9 +181,9 @@ function baseInput(
 export function buildExpenseIncomeInput(state: ExpenseIncomeFormState): TransactionInput {
   return {
     ...baseInput(state.kind, {
-      amountCents: requireAmountCents(state.amount, '金额'),
-      currencyCode: requireNonEmpty(state.currencyCode, '币种'),
-      accountId: requireNonEmpty(state.accountId, '账户'),
+      amountCents: requireAmountCents(state.amount, t('transactions.field.amount')),
+      currencyCode: requireNonEmpty(state.currencyCode, t('transactions.field.currency')),
+      accountId: requireNonEmpty(state.accountId, t('transactions.field.account')),
       note: state.note,
       date: requireDateISO(state.date),
     }),
@@ -195,13 +196,13 @@ export function buildExpenseIncomeInput(state: ExpenseIncomeFormState): Transact
 export function buildTransferInput(state: TransferFormState): TransactionInput {
   return {
     ...baseInput('transfer', {
-      amountCents: requireAmountCents(state.amount, '金额'),
-      currencyCode: requireNonEmpty(state.currencyCode, '币种'),
-      accountId: requireNonEmpty(state.accountId, '转出账户'),
+      amountCents: requireAmountCents(state.amount, t('transactions.field.amount')),
+      currencyCode: requireNonEmpty(state.currencyCode, t('transactions.field.currency')),
+      accountId: requireNonEmpty(state.accountId, t('transactions.field.fromAccount')),
       note: state.note,
       date: requireDateISO(state.date),
     }),
-    to_account_id: requireNonEmpty(state.toAccountId, '转入账户'),
+    to_account_id: requireNonEmpty(state.toAccountId, t('transactions.field.toAccount')),
   }
 }
 
@@ -209,13 +210,13 @@ export function buildTransferInput(state: TransferFormState): TransactionInput {
 export function buildRefundInput(state: RefundFormState): TransactionInput {
   return {
     ...baseInput('refund', {
-      amountCents: requireAmountCents(state.amount, '退款金额'),
-      currencyCode: requireNonEmpty(state.currencyCode, '币种'),
-      accountId: requireNonEmpty(state.accountId, '账户'),
+      amountCents: requireAmountCents(state.amount, t('transactions.field.refundAmount')),
+      currencyCode: requireNonEmpty(state.currencyCode, t('transactions.field.currency')),
+      accountId: requireNonEmpty(state.accountId, t('transactions.field.account')),
       note: state.note,
       date: requireDateISO(state.date),
     }),
-    refund_of_transaction_id: requireNonEmpty(state.refundOfTransactionId, '原始支出交易'),
+    refund_of_transaction_id: requireNonEmpty(state.refundOfTransactionId, t('transactions.field.originalExpense')),
   }
 }
 
@@ -224,33 +225,33 @@ export function buildRefundInput(state: RefundFormState): TransactionInput {
  * （amount_cents 恒 0 占位、单价落 wire）；两者互斥，同供属非法状态 fail fast。 */
 export function buildTradeInput(state: TradeFormState): TransactionInput {
   const fundAmountCents =
-    state.amount == null ? null : requireAmountCents(state.amount, '金额')
+    state.amount == null ? null : requireAmountCents(state.amount, t('transactions.field.amount'))
   if (fundAmountCents != null && state.price != null) {
-    fail('金额与单价不可同时提供（基金按确认金额，其余按单价）')
+    fail(t('transactions.validation.fundAmountPriceConflict'))
   }
   // 非基金形态：单价必填（缺失在此 fail fast，不静默落 null）；基金形态恒 null。
-  const priceCents = fundAmountCents != null ? null : requirePrice(state.price, '单价')
+  const priceCents = fundAmountCents != null ? null : requirePrice(state.price, t('transactions.field.price'))
   return {
     ...baseInput(state.kind, {
       // 基金：矩阵占位 0 被权威金额覆写；其余：矩阵占位 0（后端重算行金额）
       amountCents: fundAmountCents ?? undefined,
-      currencyCode: requireNonEmpty(state.currencyCode, '币种'),
-      accountId: requireNonEmpty(state.accountId, '投资账户'),
+      currencyCode: requireNonEmpty(state.currencyCode, t('transactions.field.currency')),
+      accountId: requireNonEmpty(state.accountId, t('transactions.field.investmentAccount')),
       note: state.note,
       date: requireDateISO(state.date),
     }),
-    instrument_id: requireNonEmpty(state.instrumentId, '标的'),
+    instrument_id: requireNonEmpty(state.instrumentId, t('transactions.field.instrument')),
     quantity: requireQuantity(state.quantity),
     // 单价是价格列（万分之一元刻度，ADR-0038），与金额列（分）换算口径不同；
     // 基金形态不落单价（null → 后端按金额 ∓ 费用 ÷ 份额反算）
     price_cents: priceCents,
-    fee_cents: state.fee == null ? null : requireAmountCents(state.fee, '手续费'),
+    fee_cents: state.fee == null ? null : requireAmountCents(state.fee, t('transactions.field.fee')),
   }
 }
 
 /** 交易数量：可为小数（股数/份额），仅要求有限数值 */
 function requireQuantity(quantity: number | null): number {
-  if (quantity == null) fail('数量不能为空')
-  if (!Number.isFinite(quantity)) fail(`数量无效: ${quantity}`)
+  if (quantity == null) fail(t('transactions.validation.quantityRequired'))
+  if (!Number.isFinite(quantity)) fail(t('transactions.validation.quantityInvalid', { value: quantity }))
   return quantity
 }

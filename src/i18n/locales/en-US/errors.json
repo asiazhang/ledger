@@ -1,0 +1,158 @@
+{
+  "account": {
+    "not-found": "account does not exist: {0}",
+    "name-required": "account name is required",
+    "currency-locked": "account already has transactions, currency cannot be changed (it would corrupt historical conversion)",
+    "currency-unknown": "unknown currency: {0}",
+    "black-hole-adjust-unsupported": "balance adjustment is not supported for black hole accounts",
+    "balance-overflow": "target balance overflows",
+    "balance-no-change": "balance already equals target, no adjustment needed",
+    "type-unknown": "unknown account type: {0}"
+  },
+  "category": {
+    "not-found": "category does not exist: {0}",
+    "self-parent": "a category cannot be its own parent",
+    "parent-not-found": "parent category does not exist: {0}",
+    "parent-kind-mismatch": "parent category must have the same type"
+  },
+  "merchant": {
+    "already-exists": "merchant already exists: {0}",
+    "not-found": "merchant does not exist: {0}",
+    "name-required": "merchant name is required",
+    "not-active": "merchant does not exist or has been deleted: {0}"
+  },
+  "item": {
+    "disposal-date-missing": "disposed item is missing a disposal date: {0}",
+    "not-found": "item does not exist: {0}",
+    "purchase-link-required": "an item must be created from a purchase transaction: right-click an expense transaction and choose \"add item\"",
+    "name-required": "item name is required",
+    "cost-positive": "item total cost must be greater than 0",
+    "purchase-after-disposal": "purchase date {0} is after disposal date {1}, adjust the disposal date first",
+    "disposal-before-purchase": "disposal date {0} is before purchase date {1}, cannot dispose",
+    "disposal-in-future": "disposal date {0} cannot be later than today",
+    "residual-negative": "residual value cannot be negative",
+    "purchase-link-taken": "an item already exists for this purchase transaction (provenance is unique): {0}",
+    "purchase-tx-not-found": "linked purchase transaction not found: {0}",
+    "purchase-tx-not-expense": "linked transaction must be an expense (got {0})",
+    "date-invalid": "invalid date, expected YYYY-MM-DD: {0}",
+    "target-before-purchase": "target date {0} is before purchase date {1}, cannot compute daily usage cost"
+  },
+  "backup": {
+    "keep-invalid": "invalid backup retention limit: {0}",
+    "invalid-archive": "not a valid ledger backup archive: {0}",
+    "meta-missing": "backup.json metadata not found in the archive",
+    "meta-parse-failed": "failed to parse backup metadata: {0}",
+    "target-dir-missing": "backup target directory does not exist: {0}",
+    "schema-newer": "backup is from a newer app version (backup schema v{0} > current v{1}), upgrade the app before restoring",
+    "db-entry-missing": "ledger.db not found in the archive, not a valid ledger backup"
+  },
+  "sync": {
+    "already-running": "a full sync is already running, cancel it or wait for it to finish",
+    "fund-not-found": "fund code {0} not found, please verify and retry"
+  },
+  "data-location": {
+    "mkdir-failed": "cannot create target directory ({0}): {1}",
+    "dir-not-writable": "target directory is not writable ({0}): {1}",
+    "dir-required": "target directory is required"
+  },
+  "transfer": {
+    "to-account-required": "transfer requires a target account"
+  },
+  "transaction": {
+    "amount-positive": "amount must be greater than 0",
+    "not-found": "transaction {0} not found",
+    "merchant-unsupported": "transaction type {0} cannot carry a merchant",
+    "merchant-id-and-name-conflict": "merchant_id and merchant_name cannot both be provided",
+    "kind-unsupported": "transaction type {0} is not supported yet (not implemented in MVP)"
+  },
+  "refund": {
+    "source-required": "refund must reference the original expense transaction",
+    "source-not-found": "the original expense transaction referenced by the refund does not exist: {0}",
+    "source-not-expense": "a refund can only reference an expense transaction"
+  },
+  "trade": {
+    "partially-sold-update": "this buy transaction has been partially sold and cannot be modified",
+    "partially-sold-delete": "this buy transaction has been partially sold and cannot be deleted",
+    "buy-instrument-required": "buy requires an instrument",
+    "buy-instrument-not-found": "buy instrument does not exist: {0}",
+    "sell-instrument-required": "sell requires an instrument",
+    "sell-instrument-not-found": "sell instrument does not exist: {0}",
+    "detail-not-found": "transaction not found or has no buy/sell detail: {0}",
+    "buy-quantity-positive": "buy quantity must be greater than 0",
+    "sell-quantity-positive": "sell quantity must be greater than 0",
+    "buy-amount-positive": "buy amount must be greater than 0 (fund subscription uses the confirmation amount as the source of truth)",
+    "sell-amount-positive": "sell amount must be greater than 0 (fund redemption uses the confirmation amount as the source of truth)",
+    "fund-price-forbidden": "fund subscription/redemption uses the confirmation amount as the source of truth, unit price must not be provided (it is derived from amount and shares)",
+    "buy-fee-exceeds-amount": "buy fee cannot exceed the buy amount",
+    "sell-fee-exceeds-proceeds": "sell fee cannot exceed the sell proceeds",
+    "derived-price-positive": "derived unit price must be greater than 0 (confirmation amount too small or shares too large)",
+    "buy-price-positive": "buy unit price must be greater than 0",
+    "sell-price-positive": "sell unit price must be greater than 0",
+    "buy-account-not-investment": "buy transactions must use an investment account",
+    "sell-account-not-investment": "sell transactions must use an investment account",
+    "insufficient-holding": "insufficient holding to sell: currently holding {0}, trying to sell {1}"
+  },
+  "fx": {
+    "rate-positive": "exchange rate must be greater than 0",
+    "rate-non-positive": "exchange rate {0}->{1} is not positive: {2}",
+    "reverse-rate-non-positive": "reverse exchange rate {0}->{1} is not positive: {2}",
+    "rate-missing": "no exchange rate found for {0} -> {1} (neither direction)"
+  },
+  "instrument": {
+    "price-positive": "price must be greater than 0",
+    "price-date-format": "date must be in YYYY-MM-DD format",
+    "not-found": "instrument {0} does not exist",
+    "symbol-required": "instrument symbol must not be empty",
+    "sync-delete-forbidden": "sync-sourced instruments cannot be deleted: the stock dictionary is maintained by full sync, fix wrong entries by re-syncing",
+    "traded-delete-forbidden": "this instrument has trade records and cannot be deleted: delete the related transactions first and try again",
+    "stock-manual-forbidden": "stock instruments cannot be created manually: the stock dictionary is maintained from Eastmoney by full sync",
+    "fund-manual-forbidden": "fund instruments cannot be created manually: use add fund with a 6-digit code to auto-fill",
+    "name-required": "instrument name must not be empty",
+    "as-of-date-invalid": "invalid as-of trading date: {0}",
+    "trend-start-date-invalid": "invalid start date: {0}",
+    "trend-end-date-invalid": "invalid end date: {0}",
+    "trend-range-invalid": "start date cannot be later than end date"
+  },
+  "fund": {
+    "code-invalid": "fund code must be 6 digits"
+  },
+  "budget": {
+    "amount-positive": "budget amount must be positive",
+    "category-not-found": "category does not exist: {0}",
+    "category-not-expense": "budgets can only be set on expense categories (this category is {0})",
+    "duplicate-monthly": "this category already has a monthly budget, edit that budget's amount instead",
+    "duplicate-yearly": "this category already has a yearly budget, edit that budget's amount instead",
+    "not-found": "budget does not exist: {0}"
+  },
+  "scheduled-plan": {
+    "amount-positive": "amount must be greater than 0",
+    "same-account": "the source account cannot be the same as the destination account",
+    "from-account-not-found": "source account does not exist",
+    "to-account-not-found": "destination account does not exist",
+    "currency-mismatch": "source and destination accounts have different currencies, scheduled transfers do not support cross-currency",
+    "transfer-merchant-forbidden": "scheduled transfers cannot carry a merchant",
+    "installment-total-required": "installment plans require a total amount",
+    "installment-occurrences-required": "installment plans require a total number of installments",
+    "installment-total-too-small": "total amount cannot be less than the number of installments",
+    "to-account-required": "scheduled transfers require a target account",
+    "not-found": "scheduled plan does not exist",
+    "manual-complete-forbidden": "plans cannot be set to completed manually",
+    "status-transition-forbidden": "transition from {0} to {1} is not allowed",
+    "edit-amount-forbidden": "subscription amount cannot be edited: to change the price, cancel the old plan and create a new one (rebuild the plan with the new amount, keeping both real price histories)",
+    "edit-subscription-only": "only subscription plans support editing non-amount fields",
+    "installment-ext-not-found": "installment extension info does not exist",
+    "subscription-ext-not-found": "subscription extension info does not exist",
+    "transfer-ext-not-found": "scheduled transfer extension info does not exist",
+    "date-invalid": "invalid date {0}: {1}",
+    "not-active": "the linked plan is not active"
+  },
+  "scheduled-occurrence": {
+    "not-found": "occurrence does not exist",
+    "not-executable": "occurrence status is {0}, it cannot be executed",
+    "plan-not-found": "the linked scheduled plan does not exist",
+    "conflict": "the occurrence has already been executed by another device"
+  },
+  "manual-price": {
+    "instrument-not-found": "instrument does not exist"
+  }
+}

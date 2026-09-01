@@ -6,6 +6,7 @@ import {
   ListOutline,
   TrendingUpOutline,
 } from '@vicons/ionicons5'
+import { t } from '@/i18n'
 import RealizedPnlPanel from '@/components/investments/RealizedPnlPanel.vue'
 import InstrumentBrowser from '@/components/investments/InstrumentBrowser.vue'
 import PortfolioTrendPanel from '@/components/investments/PortfolioTrendPanel.vue'
@@ -38,17 +39,17 @@ watch(activeTab, (tab) => {
          筛选/汇总状态在 tab 切换间保留，与原视图顶层 ref 行为一致。
          标的/走势 tab 保持默认 'if'，切回时重新挂载加载，与原 watch(activeTab) 刷新一致。 -->
     <NTabPane name="pnl" display-directive="show">
-      <template #tab><span class="pane-tab"><NIcon :component="StatsChartOutline" />盈亏</span></template>
+      <template #tab><span class="pane-tab"><NIcon :component="StatsChartOutline" />{{ t('investments.tabs.pnl') }}</span></template>
       <RealizedPnlPanel />
     </NTabPane>
 
     <NTabPane name="instruments">
-      <template #tab><span class="pane-tab"><NIcon :component="ListOutline" />标的</span></template>
+      <template #tab><span class="pane-tab"><NIcon :component="ListOutline" />{{ t('investments.tabs.instruments') }}</span></template>
       <InstrumentBrowser @view-trend="onViewTrend" />
     </NTabPane>
 
     <NTabPane name="trend">
-      <template #tab><span class="pane-tab"><NIcon :component="TrendingUpOutline" />走势</span></template>
+      <template #tab><span class="pane-tab"><NIcon :component="TrendingUpOutline" />{{ t('investments.tabs.trend') }}</span></template>
       <PortfolioTrendPanel :entry-instrument="trendEntry" />
     </NTabPane>
   </NTabs>

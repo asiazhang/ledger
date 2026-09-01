@@ -1,5 +1,6 @@
 import { CreateOutline, SwapHorizontalOutline, TrashOutline } from '@vicons/ionicons5'
 import type { DropdownOption } from 'naive-ui'
+import { t } from '@/i18n'
 import { errorOptionProps, renderRowMenuIcon } from './row-menu-common'
 
 /**
@@ -15,15 +16,15 @@ export function buildAccountRowMenuOptions(
   opts: { errorColor?: string } = {},
 ): DropdownOption[] {
   return [
-    { label: '编辑', key: 'edit', icon: renderRowMenuIcon(CreateOutline) },
+    { label: t('accounts.menu.edit'), key: 'edit', icon: renderRowMenuIcon(CreateOutline) },
     {
-      label: '调整余额',
+      label: t('accounts.menu.adjustBalance'),
       key: 'adjust-balance',
       icon: renderRowMenuIcon(SwapHorizontalOutline),
     },
     { type: 'divider', key: 'menu-divider' },
     {
-      label: '删除',
+      label: t('accounts.menu.delete'),
       key: 'delete',
       icon: renderRowMenuIcon(TrashOutline),
       ...errorOptionProps(opts.errorColor),

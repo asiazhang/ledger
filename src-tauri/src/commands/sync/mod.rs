@@ -34,8 +34,8 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::db::DbState;
 use crate::error::{AppError, Result};
-use crate::events;
 use crate::models::{CancelSyncResult, SyncHoldingPricesResult, SyncProgress};
+use crate::signals::{WriteEvidence, WriteOp, emit_for};
 
 /// 全量同步中断状态（issue #104）：跨命令共享的运行标志与取消标志（`Arc<AtomicBool>`）。
 /// - `running`：当前是否有全量同步在跑（供取消命令判断无同步时的明确行为）。
@@ -122,23 +122,16 @@ fn emit_error_progress(app: &AppHandle, error: String) {
     );
 }
 
-/// 是否发价格失效信号 `ledger:prices-changed`（ADR-0031 决策 2，issue #236）：
-/// 增量/全量两同步命令共用的纯判定。`written` 为本次运行的实际落库计数——
-/// `Some(n)` 表示到达保留落库的终态（成功，或用户中断——中断保留已落库价格，
-/// 不发信号即失真）且实际写入 n 条；`None` 表示失败（emit 的终态只有成功与中断，
-/// 失败不广播）。
-/// 失效信号的本义是「数据变了」：零写入（无持仓/全部跳过/基金全部「已是最新」）
-/// 为库内零变化，不广播。
-fn should_emit_prices_changed(written: Option<usize>) -> bool {
-    written.is_some_and(|n| n > 0)
-}
-
 /// IPC 命令：同步持仓价格（增量同步，issue #103 / #303）。单次按类型分区刷价：
 /// 股票走行情报价/K 线通道，场外基金走历史净值通道逐只按水位增量回填
 ///（ADR-0038 决策 6）；不增删、不改标的字典；无持仓返回明确提示而非报错。
 /// 异步执行（后台线程池），不阻塞主线程；返回结果统计（同步 N 只 / 跳过 M 只），
 /// 前端据此轻量提示。成功且实际写入价格（`written > 0`）时发价格失效信号
 ///（ADR-0031）：零变化（无持仓/全部跳过/基金无新净值）为库内零变化，不广播。
+///
+/// 「是否发」判定已于 #333 归一化进 signals 映射单点（`signals_for` +
+/// [`WriteEvidence::PriceWritten`]，ADR-0044）：壳层只把终态归一化为证据——
+/// 到达保留落库的终态（成功或用户中断）按实际写入 n>0，失败无证据零信号。
 #[tauri::command]
 pub async fn sync_holding_prices(
     db: State<'_, DbState>,
@@ -155,10 +148,15 @@ pub async fn sync_holding_prices(
     })
     .await
     .map_err(|e| AppError::Io(format!("同步任务执行失败: {e}")))?;
-    // 失败经 `?` 提前返回（不广播）；成功路径按实际写入判定 emit（零变化不广播：
-    // 基金全部「已是最新」时 written 为 0，虽有成功处理亦不广播）。
-    if should_emit_prices_changed(result.as_ref().ok().map(|r| r.written)) {
-        events::emit_prices_changed(&app);
+    // 失败（Err）无证据零信号不广播；成功路径把实际写入归一化为证据（零变化
+    // 不广播：基金全部「已是最新」时 written 为 0，虽有成功处理亦不广播），
+    // 「是否发」单点在 signals 映射（ADR-0044，#333），壳层只归一化证据并转发。
+    if let Ok(r) = &result {
+        emit_for(
+            &app,
+            WriteOp::SyncHoldingPrices,
+            WriteEvidence::PriceWritten(r.written > 0),
+        );
     }
     result
 }
@@ -178,8 +176,9 @@ pub fn sync_instruments(
 
     // 原子接管起点：仅当无同步在跑才启动；防止二次启动清掉已被置位的取消标志（issue #104）。
     if !sync_state.try_start() {
-        return Err(AppError::Invalid(
-            "已有全量同步正在进行，请先中断或等待完成".into(),
+        return Err(AppError::coded(
+            "sync.already-running",
+            "已有全量同步正在进行，请先中断或等待完成",
         ));
     }
 
@@ -195,9 +194,12 @@ pub fn sync_instruments(
             Ok(outcome) => {
                 // 结束（成功或用户中断）且本次运行有落库即发价格失效信号（ADR-0031）：
                 // 中断保留已落库价格（upsert 幂等），不发信号即失真；零落库不广播。
-                if should_emit_prices_changed(Some(outcome.written())) {
-                    events::emit_prices_changed(&app);
-                }
+                // 「是否发」单点在 signals 映射（ADR-0044，#333），壳层只归一化证据。
+                emit_for(
+                    &app,
+                    WriteOp::SyncInstruments,
+                    WriteEvidence::PriceWritten(outcome.written() > 0),
+                );
             }
             Err(e) => {
                 // 失败不广播（ADR-0031）：emit 的终态只有成功与用户中断，失败不在其列。

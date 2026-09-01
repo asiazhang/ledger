@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, h, nextTick, ref, type Component, type HTMLAttributes } from 'vue'
+import { computed, h, nextTick, ref, watch, type Component, type HTMLAttributes } from 'vue'
 import { RouterView, useRouter, useRoute } from 'vue-router'
 import {
   NConfigProvider,
   NMessageProvider,
   NDialogProvider,
+  enUS,
+  dateEnUS,
   NLayout,
   NLayoutSider,
   NLayoutContent,
@@ -13,6 +15,8 @@ import {
   NSpace,
   NText,
   darkTheme,
+  zhCN,
+  dateZhCN,
   type MenuOption,
 } from 'naive-ui'
 import AppDropdown from '@/components/AppDropdown.vue'
@@ -30,8 +34,11 @@ import {
   SettingsOutline,
 } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
+import { currentLocale, t } from '@/i18n'
+import { viewLabel } from '@/i18n/view-label'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
 import { useDevicePreferenceSync } from '@/composables/useDevicePreferenceSync'
+import MessageSinkBridge from '@/components/MessageSinkBridge.vue'
 import { loadSidebarCollapsed, saveSidebarCollapsed } from '@/utils/view-state'
 import {
   viewShortcuts,
@@ -62,23 +69,31 @@ function updateSidebarCollapsed(collapsed: boolean) {
 }
 const store = useAppStore()
 
+// UI 组件库内置文案（日期选择器、分页、空态等）随应用界面语言切换（ADR-0049）：
+// 经 NConfigProvider 的 locale / date-locale 注入，语言切换即时生效。
+// 窗口标题随界面语言（原生窗口壳层文案）；非 Tauri 环境（测试/Web）静默忽略
+watch(
+  currentLocale,
+  async () => {
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window')
+      void getCurrentWindow().setTitle(t('common.window.title'))
+    } catch {
+      /* 非 Tauri 环境 */
+    }
+  },
+  { immediate: true },
+)
+
+const naiveLocale = computed(() => (currentLocale.value === 'en-US' ? enUS : zhCN))
+const naiveDateLocale = computed(() => (currentLocale.value === 'en-US' ? dateEnUS : dateZhCN))
+
 // 设备偏好镜像推送（备份目录 issue #125 / ADR-0016；自动执行开关 issue #308 / ADR-0042）：
 // 真源在前端 localStorage（应用设置 store），启动/变更时把镜像推给后端运行时消费。
 useDevicePreferenceSync()
 
-const viewLabels: Record<string, string> = {
-  dashboard: '概览',
-  transactions: '交易',
-  search: '搜索',
-  accounts: '账户',
-  reports: '报表',
-  investments: '投资',
-  items: '物品',
-  scheduled: '定时',
-  budget: '预算',
-  ai: 'AI',
-  settings: '设置',
-}
+// 视图名称走文案资源（issue #342）：侧栏菜单与内容区标题同源，随界面语言即时切换；
+// key 构造收口在 i18n/view-label（key 契约有单测，漏域名前缀会原样渲染 key 代号）。
 
 // 视图图标（ionicons5 Outline 风格，与分类图标一致）
 const viewIcons: Record<string, Component> = {
@@ -110,7 +125,7 @@ const menuOptions = computed<MenuOption[]>(() =>
     icon: renderMenuIcon(name),
     label: () =>
       h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:12px;padding-right:2px' }, [
-        h('span', viewLabels[name]),
+        h('span', viewLabel(name)),
         h('span', { style: 'font-size:12px;opacity:.55' }, shortcutHint(key)),
       ]),
   })),
@@ -175,15 +190,21 @@ function handleSelect(key: string) {
 }
 
 const title = () => h('div', { style: 'padding: 16px 18px; font-size: 18px; font-weight: 600' }, '📒 Ledger')
+
+const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(route.name) : ''))
 </script>
 
 <template>
   <NConfigProvider
     :theme="store.theme === 'dark' ? darkTheme : null"
     :theme-overrides="store.theme === 'dark' ? darkOverrides : lightOverrides"
+    :locale="naiveLocale"
+    :date-locale="naiveDateLocale"
   >
     <NMessageProvider>
       <NDialogProvider>
+        <!-- Loadable toast sink 注册桥（ADR-0040）：必须在消息提供器子树内 -->
+        <MessageSinkBridge />
         <NLayout has-sider style="height: 100vh">
           <NLayoutSider
             bordered
@@ -220,7 +241,7 @@ const title = () => h('div', { style: 'padding: 16px 18px; font-size: 18px; font
             <NLayoutContent content-style="padding: 20px;" :native-scrollbar="false">
               <NSpace vertical :size="16">
                 <NText strong style="font-size: 20px">
-                  {{ (route.meta.title as string) ?? '' }}
+                  {{ pageTitle }}
                 </NText>
                 <RouterView />
               </NSpace>

@@ -134,7 +134,7 @@ fn invalid_code_rejected_before_fetch() {
         };
         let err = add_fund_by_code_with(&conn, bad, &mut fetch).unwrap_err();
         assert!(
-            matches!(err, AppError::Invalid(ref msg) if msg.contains("6 位数字")),
+            matches!(err, AppError::Coded { ref message, .. } if message.contains("6 位数字")),
             "「{bad}」应拒绝"
         );
         assert_eq!(called, 0, "非法代码不应发起网络拉取");

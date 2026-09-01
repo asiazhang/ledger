@@ -5,7 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import {
   earliestPendingOccurrence,
   scheduledRecurrenceLabel,
-  SCHEDULED_RECURRENCE_OPTIONS,
+  scheduledRecurrenceOptions,
   useScheduledPlanList,
   type ScheduledPlanRow,
   type UseScheduledPlanListReturn,
@@ -174,8 +174,8 @@ const Harness = defineComponent({
       expandDetail: (_plan, detail) => ({
         next: detail ? earliestPendingOccurrence(detail) : null,
       }),
-      loadErrorText: '加载定时转账失败',
-      cancelConfirmText: '取消后不再自动转账，已生成的交易与历史期次保留。确认取消？',
+      loadErrorText: () => '加载定时转账失败',
+      cancelConfirmText: () => '取消后不再自动转账，已生成的交易与历史期次保留。确认取消？',
       onStatusChanged: () => {
         counters.statusChanged += 1
       },
@@ -224,7 +224,7 @@ describe('useScheduledPlanList 初始状态', () => {
 
   it('状态过滤选项集按形态：转账含「已完成」（能力有无，不重定义状态语义）', () => {
     const { list } = mountHarness()
-    expect(list.statusFilterOptions).toEqual([
+    expect(list.statusFilterOptions.value).toEqual([
       { key: 'active', label: '进行中' },
       { key: 'paused', label: '已暂停' },
       { key: 'cancelled', label: '已取消' },
@@ -234,7 +234,7 @@ describe('useScheduledPlanList 初始状态', () => {
 
   it('状态过滤选项集按形态：订阅无「已完成」（迁移步 2：本页签过滤项零变化）', () => {
     const { list } = mountHarness('subscription')
-    expect(list.statusFilterOptions).toEqual([
+    expect(list.statusFilterOptions.value).toEqual([
       { key: 'active', label: '进行中' },
       { key: 'paused', label: '已暂停' },
       { key: 'cancelled', label: '已取消' },
@@ -243,7 +243,7 @@ describe('useScheduledPlanList 初始状态', () => {
 
   it('状态过滤选项集按形态：分期含「已完成」（#309 显式可见变化之二，迁移步 3 落地：完成的分期计划恢复可见可查）', () => {
     const { list } = mountHarness('installment')
-    expect(list.statusFilterOptions).toEqual([
+    expect(list.statusFilterOptions.value).toEqual([
       { key: 'active', label: '进行中' },
       { key: 'paused', label: '已暂停' },
       { key: 'cancelled', label: '已取消' },
@@ -507,7 +507,7 @@ describe('useScheduledPlanList 工厂形态', () => {
 
 describe('周期选项与周期标签单源（#309 显式可见变化：转账下拉统一为「每天/每周/每月/每年」）', () => {
   it('周期选项表单源：四项与 RecurrenceType 一一对应', () => {
-    expect(SCHEDULED_RECURRENCE_OPTIONS).toEqual([
+    expect(scheduledRecurrenceOptions()).toEqual([
       { label: '每天', value: 'daily' },
       { label: '每周', value: 'weekly' },
       { label: '每月', value: 'monthly' },

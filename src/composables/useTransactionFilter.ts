@@ -31,7 +31,8 @@ export type TransactionUrlQuery = Readonly<Record<string, unknown>>
 export interface UseTransactionFilterReturn {
   /** 过滤状态（只读）：改动只能经意图入口，视图与测试均只读消费。 */
   readonly filters: Readonly<TransactionFilters>
-  /** 页码（分页归模块所有）：翻页导航由调用方直写并自行重拉，「翻页归零」只发生在模块出口。 */
+  /** 页码（分页归模块所有）：翻页导航由调用方直写并自行重拉，「翻页归零」只发生在模块出口，
+   * 「删除后超页回退」只发生在 afterRowDelete 入口（ADR-0045）。 */
   readonly page: Ref<number>
   /** 页大小（分页归模块所有）：切换后调用方经 refresh() 走统一出口。 */
   readonly pageSize: Ref<number>
@@ -43,6 +44,10 @@ export interface UseTransactionFilterReturn {
   resetFilters(): void
   /** 外部数据变化（记一笔/退款回填等）：重拉 + 翻回第一页，不动筛选。 */
   refresh(): void
+  /** 页码回退入口（ADR-0045，删除路径专用）：声明「删除当前页一行后本页剩 N 条」——
+   * N 为 0 且当前页非第一页时减一页（回退），然后一律版本 bump 重拉（不回退时保持当前页，
+   * 不走 refresh 的「翻回第一页」语义）；筛选不动。 */
+  afterRowDelete(remainingOnPage: number): void
   /** 递入最新路由 query（URL 下钻只读入口，issue #234）：模块按参数表逐维度解析、校验、
    * 复位与就绪补判；URL 只读不写回（#96 决策 3/4），视图只负责监听路由并转发。 */
   syncUrlQuery(query: TransactionUrlQuery): void
@@ -105,8 +110,9 @@ const URL_PARAM_TABLE: ReadonlyArray<UrlParamDef> = [
  * 交易列表过滤深模块（ADR-0030）：「用户意图进、列表状态出」。
  *
  * 工厂形态：每次调用返回独立实例（未来第二个消费者如搜索页需要独立状态，
- * 避免分页与补判串扰）。接口收敛为 setFilter / resetFilters / refresh / syncUrlQuery
- * 四个意图入口 + 可观察状态（filters、page、pageSize、refreshVersion），无其他公开面。
+ * 避免分页与补判串扰）。接口收敛为 setFilter / resetFilters / refresh / afterRowDelete /
+ * syncUrlQuery 五个意图入口 + 可观察状态（filters、page、pageSize、refreshVersion），
+ * 无其他公开面。
  *
  * URL 下钻参数表（issue #234）：视图只把 route query 变化递给 syncUrlQuery，解析与校验
  * （依赖参考数据映射）、复位规则（两维度均无有效参数时复位日期/类型，#96 决策 3）、
@@ -188,6 +194,18 @@ export function useTransactionFilter(): UseTransactionFilterReturn {
     apply()
   }
 
+  /** 页码回退入口（ADR-0045）：声明「删除当前页一行后本页剩 N 条」。回退判定用
+   * 「删前本页仅 1 条」（N === 0 ⇔ 删后超页：offset 分页单条删除下严格等价，ADR-0008），
+   * 免去回退前的第二次请求；并发新增导致的漂移沿用 ADR-0008 已知边界。
+   * 「翻页归零」仍只在统一出口；本入口只回退不归零，是 ADR-0030 代价 3 预留的
+   * 「不翻页的静默重拉」接口扩展，而非复用 refresh 语义。 */
+  function afterRowDelete(remainingOnPage: number) {
+    if (remainingOnPage === 0 && page.value > 1) {
+      page.value -= 1
+    }
+    refreshVersion.value += 1
+  }
+
   /** 条目校验所依赖的参考数据映射（按参数表行的 mapKey 取，无逐维度判别）。 */
   function paramMap(entry: UrlParamEntry) {
     return reference[entry.mapKey]
@@ -263,6 +281,7 @@ export function useTransactionFilter(): UseTransactionFilterReturn {
     setFilter,
     resetFilters,
     refresh,
+    afterRowDelete,
     syncUrlQuery,
   }
 }

@@ -6,6 +6,7 @@ import { centsToYuan } from '@/types'
 import { buildExpenseIncomeInput } from '@/domain/transaction-input'
 import { useReferenceStore } from '@/stores/reference'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
+import { t } from '@/i18n'
 import type { Transaction } from '@/types'
 import { errorMessage } from "@/utils/errors";
 
@@ -49,7 +50,7 @@ export function useCategoryForm(
   const merchantOptions = computed<{ label: string; value: string }[]>(() => {
     const base = reference.merchants.map((m) => ({ label: m.name, value: m.id }))
     if (editingMerchantId && !reference.merchantMap.has(editingMerchantId)) {
-      base.unshift({ label: '（已删除商户）', value: editingMerchantId })
+      base.unshift({ label: t('settings.categories.msg.merchantDeleted'), value: editingMerchantId })
     }
     return base
   })
@@ -99,11 +100,11 @@ export function useCategoryForm(
 
   async function submit() {
     if (!accountId.value) {
-      message.warning('请选择账户')
+      message.warning(t('settings.categories.msg.accountRequired'))
       return
     }
     if (amount.value == null || amount.value <= 0) {
-      message.warning('请输入金额')
+      message.warning(t('settings.categories.msg.amountRequired'))
       return
     }
     // 商户解析留表单层（异步 + 即建/重拉副作用，issue #189）：装配器收已解析的 id
@@ -126,18 +127,26 @@ export function useCategoryForm(
       })
       if (editing) {
         await api.updateTransaction(editing.id, input)
-        message.success('已保存修改')
+        message.success(t('settings.categories.msg.saved'))
         // 编辑路径不重置表单：成功即关窗（onUpdated），实例整体销毁
         options?.onUpdated?.()
       } else {
         await api.createTransaction(input)
-        message.success(kind === 'expense' ? '已记支出' : '已记收入')
+        message.success(
+          kind === 'expense'
+            ? t('settings.categories.msg.expenseRecorded')
+            : t('settings.categories.msg.incomeRecorded'),
+        )
         amount.value = null
         note.value = ''
         options?.onCreated?.()
       }
     } catch (e) {
-      message.error(editing ? `保存失败: ${errorMessage(e)}` : `记账失败: ${errorMessage(e)}`)
+      message.error(
+        editing
+          ? t('settings.categories.msg.saveFailed', { msg: errorMessage(e) })
+          : t('settings.categories.msg.recordFailed', { msg: errorMessage(e) }),
+      )
     }
   }
 

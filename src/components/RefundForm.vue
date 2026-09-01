@@ -8,6 +8,7 @@ import {
   NText,
   NSpace,
 } from 'naive-ui'
+import { t } from '@/i18n'
 import AppSelect from '@/components/AppSelect.vue'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import { useRefundForm } from '@/composables/useRefundForm'
@@ -32,16 +33,16 @@ const reference = useReferenceStore()
 <template>
   <NForm label-placement="left" :show-feedback="false" size="small">
     <NSpace vertical :size="12">
-      <NFormItem v-if="!fixedTarget" label="退款关联">
+      <NFormItem v-if="!fixedTarget" :label="t('transactions.refund.link')">
         <PinyinSelect
           v-model:value="ctx.refundTargetId.value"
           :options="ctx.refundTargetOptions.value"
-          placeholder="选择原支出交易"
+          :placeholder="t('transactions.refund.targetPlaceholder')"
           style="width: 340px"
         />
       </NFormItem>
 
-      <NFormItem v-if="ctx.refundTarget.value" label="原交易">
+      <NFormItem v-if="ctx.refundTarget.value" :label="t('transactions.refund.original')">
         <NText depth="3" style="font-size: 12px">
           {{ ctx.refundTarget.value.date }} ·
           {{ formatAmount(ctx.refundTarget.value.amount_cents, reference.getCurrency(ctx.refundTarget.value.currency_code)) }}
@@ -50,12 +51,12 @@ const reference = useReferenceStore()
         </NText>
       </NFormItem>
 
-      <NFormItem label="退款金额">
+      <NFormItem :label="t('transactions.refund.amount')">
         <NInputNumber
           v-model:value="ctx.amount.value"
           :min="0"
           :precision="2"
-          placeholder="退款金额"
+          :placeholder="t('transactions.refund.amount')"
           style="width: 160px"
         />
         <AppSelect
@@ -66,26 +67,30 @@ const reference = useReferenceStore()
         />
       </NFormItem>
 
-      <NFormItem label="账户">
+      <NFormItem :label="t('transactions.form.account')">
         <PinyinSelect
           v-model:value="ctx.accountId.value"
           :options="ctx.accountOptions.value"
           disabled
-          placeholder="由原交易决定"
+          :placeholder="t('transactions.refund.accountLockedPlaceholder')"
           style="width: 200px"
         />
       </NFormItem>
 
-      <NFormItem label="日期">
+      <NFormItem :label="t('transactions.form.date')">
         <AppDatePicker v-model:value="ctx.date.value" type="date" style="width: 200px" />
       </NFormItem>
 
-      <NFormItem label="备注">
-        <NInput v-model:value="ctx.note.value" placeholder="备注（可选）" style="width: 280px" />
+      <NFormItem :label="t('transactions.form.note')">
+        <NInput
+          v-model:value="ctx.note.value"
+          :placeholder="t('transactions.form.notePlaceholder')"
+          style="width: 280px"
+        />
       </NFormItem>
 
       <NButton type="primary" @click="ctx.submit">
-        记退款
+        {{ t('transactions.refund.submit') }}
       </NButton>
     </NSpace>
   </NForm>

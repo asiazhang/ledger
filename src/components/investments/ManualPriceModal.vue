@@ -4,6 +4,7 @@ import { NButton, NForm, NFormItem, NInputNumber, NSpace, NText } from 'naive-ui
 import AppModal from '@/components/AppModal.vue'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import { api } from '@/api'
+import { t } from '@/i18n'
 import { errorMessage as extractErrorMessage } from '@/utils/errors'
 import { formatPrice, yuanToPrice } from '@/types'
 import { todayStr } from '@/utils/date'
@@ -53,7 +54,7 @@ async function submit() {
   if (!canSubmit.value || !props.instrument) return
   const priceCents = yuanToPrice(price.value!)
   if (priceCents === null || priceCents <= 0) {
-    error.value = '价格必须大于 0'
+    error.value = t('investments.manualPrice.priceMustBePositive')
     return
   }
   submitting.value = true
@@ -66,8 +67,11 @@ async function submit() {
     })
     // 回执按落点结果区分：回填旧价只沉淀历史、不动现价（最新点映像规则）
     const message = result.current_price_written
-      ? `已录价：${props.instrument.symbol} 现价更新为 ${formatPrice(priceCents)}`
-      : `已沉淀历史价格（早于最新价格点，${props.instrument.symbol} 现价保持不变）`
+      ? t('investments.manualPrice.success', {
+          symbol: props.instrument.symbol,
+          price: formatPrice(priceCents),
+        })
+      : t('investments.manualPrice.historyOnly', { symbol: props.instrument.symbol })
     emit('quoted', message)
     close()
   } catch (e) {
@@ -82,18 +86,17 @@ async function submit() {
   <AppModal
     :show="show"
     preset="card"
-    :title="`录价 — ${instrument?.symbol ?? ''}`"
+    :title="t('investments.manualPrice.title', { symbol: instrument?.symbol ?? '' })"
     style="width: 440px"
     :bordered="false"
     @update:show="(v: boolean) => emit('update:show', v)"
   >
     <NSpace vertical :size="12">
       <NText depth="3">
-        录入「日期 + 价格」报价点：当日及更新报价即时生效为现价，回填旧价只沉淀历史、
-        不改变现价；同一周内重复录入按后写覆盖。
+        {{ t('investments.manualPrice.intro') }}
       </NText>
       <NForm label-placement="left" :show-feedback="false" size="small">
-        <NFormItem label="日期" required>
+        <NFormItem :label="t('investments.manualPrice.dateLabel')" required>
           <AppDatePicker
             v-model:formatted-value="date"
             type="date"
@@ -103,12 +106,12 @@ async function submit() {
             data-testid="manual-quote-date"
           />
         </NFormItem>
-        <NFormItem label="价格" required>
+        <NFormItem :label="t('investments.manualPrice.priceLabel')" required>
           <NInputNumber
             v-model:value="price"
             :min="0"
             :precision="4"
-            placeholder="单价（元，如 1.3180）"
+            :placeholder="t('investments.manualPrice.pricePlaceholder')"
             :disabled="submitting"
             style="width: 200px"
             data-testid="manual-quote-price"
@@ -120,7 +123,7 @@ async function submit() {
       </NText>
       <NSpace justify="end" :size="12">
         <NButton data-testid="cancel-manual-quote" :disabled="submitting" @click="close">
-          取消
+          {{ t('investments.manualPrice.cancel') }}
         </NButton>
         <NButton
           type="primary"
@@ -129,7 +132,7 @@ async function submit() {
           :disabled="!canSubmit"
           @click="submit"
         >
-          录价
+          {{ t('investments.manualPrice.submit') }}
         </NButton>
       </NSpace>
     </NSpace>

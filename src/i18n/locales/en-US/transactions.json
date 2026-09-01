@@ -1,0 +1,122 @@
+{
+  "kind": {
+    "income": "Income",
+    "expense": "Expense",
+    "transfer": "Transfer",
+    "refund": "Refund",
+    "buy": "Buy",
+    "sell": "Sell"
+  },
+  "columns": {
+    "date": "Date",
+    "kind": "Type",
+    "category": "Category",
+    "merchant": "Merchant",
+    "account": "Account",
+    "note": "Note",
+    "amount": "Amount"
+  },
+  "list": {
+    "total": "Total {n}",
+    "empty": "No data",
+    "emptyFiltered": "No matching transactions",
+    "loadFailed": "Failed to load: {msg}",
+    "deleted": "Deleted",
+    "deleteFailed": "Failed to delete: {msg}"
+  },
+  "filter": {
+    "account": "Account",
+    "merchant": "Merchant",
+    "dateFrom": "Start date",
+    "dateTo": "End date",
+    "kind": "Type",
+    "clear": "Clear filters"
+  },
+  "create": {
+    "button": "New",
+    "title": "New Transaction",
+    "titleWithKind": "New Transaction · {kind}",
+    "kindWithKey": "{kind} {key}",
+    "moreTypes": "More transaction types"
+  },
+  "edit": {
+    "title": "Edit Transaction"
+  },
+  "deleteDialog": {
+    "title": "Delete Transaction",
+    "content": "Delete this transaction? This action cannot be undone.",
+    "confirm": "Delete",
+    "cancel": "Cancel"
+  },
+  "menu": {
+    "edit": "Edit",
+    "refund": "Refund",
+    "addItem": "Add Item",
+    "delete": "Delete"
+  },
+  "form": {
+    "amount": "Amount",
+    "account": "Account",
+    "fromAccount": "From Account",
+    "fromAccountPlaceholder": "Select source account",
+    "toAccount": "To Account",
+    "toAccountPlaceholder": "Target account",
+    "date": "Date",
+    "note": "Note",
+    "notePlaceholder": "Note (optional)",
+    "submitExpense": "Record Expense",
+    "submitIncome": "Record Income",
+    "submitBuy": "Record Buy",
+    "submitSell": "Record Sell",
+    "submitTransfer": "Record Transfer",
+    "saveChanges": "Save Changes",
+    "warnSelectFromAccount": "Please select the source account",
+    "warnSelectToAccount": "Please select the target account",
+    "warnSameAccount": "Source and target accounts must be different",
+    "warnAmount": "Please enter an amount",
+    "transferCreated": "Transfer recorded",
+    "changesSaved": "Changes saved",
+    "saveFailed": "Failed to save: {msg}",
+    "createFailed": "Failed to record: {msg}"
+  },
+  "refund": {
+    "title": "Refund",
+    "link": "Refund Target",
+    "targetPlaceholder": "Select original expense",
+    "original": "Original Transaction",
+    "amount": "Refund Amount",
+    "accountLockedPlaceholder": "Set by original transaction",
+    "submit": "Record Refund",
+    "warnNoTarget": "Please select the original expense to refund",
+    "warnNoAmount": "Please enter the refund amount",
+    "created": "Refund recorded",
+    "failed": "Refund failed: {msg}"
+  },
+  "addItem": {
+    "title": "Add Item"
+  },
+  "modal": {
+    "editFailed": "Cannot edit: {msg}"
+  },
+  "field": {
+    "amount": "Amount",
+    "currency": "Currency",
+    "account": "Account",
+    "fromAccount": "From account",
+    "toAccount": "To account",
+    "refundAmount": "Refund amount",
+    "originalExpense": "Original expense",
+    "investmentAccount": "Investment account",
+    "instrument": "Instrument",
+    "fee": "Fee",
+    "price": "Price"
+  },
+  "validation": {
+    "required": "{label} is required",
+    "invalid": "{label} is invalid: {value}",
+    "dateInvalid": "Invalid date",
+    "fundAmountPriceConflict": "Amount and price cannot both be provided (funds use confirmed amount, others use price)",
+    "quantityRequired": "Quantity is required",
+    "quantityInvalid": "Invalid quantity: {value}"
+  }
+}

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { loadLocal, saveLocal } from '@/utils/storage'
+import { getLocaleSetting, setLocaleSetting, type LocaleSetting } from '@/i18n'
 
 export type Theme = 'dark' | 'light'
 
@@ -21,6 +22,9 @@ export const useAppStore = defineStore('app', () => {
   // localStorage，不随 Backup/Restore 迁移——换新机器或恢复备份后保持默认关；
   // 后端只持运行时镜像，由 useDevicePreferenceSync 启动/变更时推送。
   const autoExecutionEnabled = ref<boolean>(loadLocal<boolean>('auto_execution_enabled', false))
+  // 界面语言偏好（issue #342 / ADR-0049）：轻量设置项，'system' = 跟随系统；
+  // 存储与生效逻辑收口在 @/i18n，此处只持状态供设置页读写。
+  const localeSetting = ref<LocaleSetting>(getLocaleSetting())
 
   function setTheme(t: Theme) {
     theme.value = t
@@ -47,16 +51,23 @@ export const useAppStore = defineStore('app', () => {
     saveLocal('auto_execution_enabled', enabled)
   }
 
+  async function setLocale(value: LocaleSetting) {
+    localeSetting.value = value
+    await setLocaleSetting(value)
+  }
+
   return {
     theme,
     defaultCurrency,
     backupDir,
     backupMaxCount,
     autoExecutionEnabled,
+    localeSetting,
     setTheme,
     setDefaultCurrency,
     setBackupDir,
     setBackupMaxCount,
     setAutoExecutionEnabled,
+    setLocale,
   }
 })

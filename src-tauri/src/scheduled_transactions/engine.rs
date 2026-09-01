@@ -19,31 +19,46 @@ const WINDOW_SIZE: i64 = 12;
 /// 创建定时交易计划（核心 + 扩展表 + 预生成期次）。
 pub fn create_plan(conn: &Connection, input: CreateScheduledInput) -> Result<String> {
     if input.amount_cents <= 0 {
-        return Err(AppError::Invalid("金额必须大于 0".into()));
+        return Err(AppError::coded(
+            "scheduled-plan.amount-positive",
+            "金额必须大于 0",
+        ));
     }
     if let Some(ref to_acc) = input.to_account_id
         && to_acc == &input.account_id
     {
-        return Err(AppError::Invalid("转出账户不能等于转入账户".into()));
+        return Err(AppError::coded(
+            "scheduled-plan.same-account",
+            "转出账户不能等于转入账户",
+        ));
     }
     // 定时转账（issue #203，词汇表 ScheduledTransfer 边界）：核心交易域转账交易是
     // 单金额单币种，转出与转入账户必须同币种，不一致在创建入口显式拒绝。
     if input.kind == ScheduledKind::ScheduledTransfer
         && let Some(ref to_acc) = input.to_account_id
     {
-        let account_currency = |id: &str, missing: &str| -> Result<String> {
+        let account_currency = |id: &str, code: &str, missing: &str| -> Result<String> {
             conn.query_row(
                 "SELECT currency_code FROM accounts WHERE id=?1 AND is_deleted=0",
                 rusqlite::params![id],
                 |r| r.get(0),
             )
-            .map_err(|_| AppError::NotFound(missing.into()))
+            .map_err(|_| AppError::coded_not_found(code, missing))
         };
-        let from_currency = account_currency(&input.account_id, "转出账户不存在")?;
-        let to_currency = account_currency(to_acc, "转入账户不存在")?;
+        let from_currency = account_currency(
+            &input.account_id,
+            "scheduled-plan.from-account-not-found",
+            "转出账户不存在",
+        )?;
+        let to_currency = account_currency(
+            to_acc,
+            "scheduled-plan.to-account-not-found",
+            "转入账户不存在",
+        )?;
         if from_currency != to_currency {
-            return Err(AppError::Invalid(
-                "转出账户与转入账户币种不一致，定时转账不支持跨币种".into(),
+            return Err(AppError::coded(
+                "scheduled-plan.currency-mismatch",
+                "转出账户与转入账户币种不一致，定时转账不支持跨币种",
             ));
         }
     }
@@ -54,7 +69,10 @@ pub fn create_plan(conn: &Connection, input: CreateScheduledInput) -> Result<Str
     match input.kind {
         ScheduledKind::ScheduledTransfer => {
             if input.merchant_id.is_some() {
-                return Err(AppError::Invalid("定时转账不能携带商户".into()));
+                return Err(AppError::coded(
+                    "scheduled-plan.transfer-merchant-forbidden",
+                    "定时转账不能携带商户",
+                ));
             }
         }
         ScheduledKind::Installment | ScheduledKind::Subscription => {
@@ -92,14 +110,23 @@ pub fn create_plan(conn: &Connection, input: CreateScheduledInput) -> Result<Str
 
     match input.kind {
         ScheduledKind::Installment => {
-            let total = input
-                .total_amount_cents
-                .ok_or_else(|| AppError::Invalid("分期计划必须指定总金额".into()))?;
-            let total_occ = input
-                .total_occurrences
-                .ok_or_else(|| AppError::Invalid("分期计划必须指定总期数".into()))?;
+            let total = input.total_amount_cents.ok_or_else(|| {
+                AppError::coded(
+                    "scheduled-plan.installment-total-required",
+                    "分期计划必须指定总金额",
+                )
+            })?;
+            let total_occ = input.total_occurrences.ok_or_else(|| {
+                AppError::coded(
+                    "scheduled-plan.installment-occurrences-required",
+                    "分期计划必须指定总期数",
+                )
+            })?;
             if total < total_occ {
-                return Err(AppError::Invalid("总金额不能小于期数".into()));
+                return Err(AppError::coded(
+                    "scheduled-plan.installment-total-too-small",
+                    "总金额不能小于期数",
+                ));
             }
             conn.execute(
                 "INSERT INTO installment_plans (scheduled_transaction_id,merchant_id,total_amount_cents,total_occurrences) \
@@ -114,9 +141,12 @@ pub fn create_plan(conn: &Connection, input: CreateScheduledInput) -> Result<Str
             )?;
         }
         ScheduledKind::ScheduledTransfer => {
-            let to_acc = input
-                .to_account_id
-                .ok_or_else(|| AppError::Invalid("定时转账必须指定目标账户".into()))?;
+            let to_acc = input.to_account_id.ok_or_else(|| {
+                AppError::coded(
+                    "scheduled-plan.to-account-required",
+                    "定时转账必须指定目标账户",
+                )
+            })?;
             conn.execute(
                 "INSERT INTO scheduled_transfer_plans (scheduled_transaction_id,to_account_id,total_occurrences) \
                  VALUES (?1,?2,?3)",
@@ -140,7 +170,7 @@ pub fn update_plan_status(conn: &Connection, id: &str, new_status: ScheduledStat
          FROM scheduled_transactions WHERE id=?1 AND is_deleted=0",
         rusqlite::params![id],
     )?
-    .ok_or_else(|| AppError::NotFound("定时计划不存在".into()))?;
+    .ok_or_else(|| AppError::coded_not_found("scheduled-plan.not-found", "定时计划不存在"))?;
 
     let current: ScheduledStatus = st.status.parse()?;
     match (current, new_status) {
@@ -149,13 +179,19 @@ pub fn update_plan_status(conn: &Connection, id: &str, new_status: ScheduledStat
         | (ScheduledStatus::Active, ScheduledStatus::Cancelled)
         | (ScheduledStatus::Paused, ScheduledStatus::Cancelled) => {}
         (_, ScheduledStatus::Completed) => {
-            return Err(AppError::Invalid("不能手动将计划设为 completed".into()));
+            return Err(AppError::coded(
+                "scheduled-plan.manual-complete-forbidden",
+                "不能手动将计划设为 completed",
+            ));
         }
         _ => {
-            return Err(AppError::Invalid(format!(
-                "不允许从 {:?} 转换到 {:?}",
-                current, new_status
-            )));
+            let from = format!("{current:?}");
+            let to = format!("{new_status:?}");
+            return Err(AppError::codedp(
+                "scheduled-plan.status-transition-forbidden",
+                format!("不允许从 {from} 转换到 {to}"),
+                &[&from, &to],
+            ));
         }
     }
 
@@ -187,9 +223,9 @@ pub fn update_plan_status(conn: &Connection, id: &str, new_status: ScheduledStat
 /// 相同视为保持历史引用（软删商户照常保留），变更时校验新商户在用。
 pub fn update_subscription(conn: &Connection, input: UpdateSubscriptionInput) -> Result<()> {
     if input.amount_cents || input.total_amount_cents {
-        return Err(AppError::Invalid(
-            "订阅金额不可编辑：改价 = 取消旧计划 + 新建（按新金额重建计划，保留两段真实价格历史）"
-                .into(),
+        return Err(AppError::coded(
+            "scheduled-plan.edit-amount-forbidden",
+            "订阅金额不可编辑：改价 = 取消旧计划 + 新建（按新金额重建计划，保留两段真实价格历史）",
         ));
     }
 
@@ -201,10 +237,13 @@ pub fn update_subscription(conn: &Connection, input: UpdateSubscriptionInput) ->
          FROM scheduled_transactions WHERE id=?1 AND is_deleted=0",
         rusqlite::params![&input.id],
     )?
-    .ok_or_else(|| AppError::NotFound("定时计划不存在".into()))?;
+    .ok_or_else(|| AppError::coded_not_found("scheduled-plan.not-found", "定时计划不存在"))?;
 
     if st.kind != ScheduledKind::Subscription {
-        return Err(AppError::Invalid("仅订阅计划支持编辑非金额字段".into()));
+        return Err(AppError::coded(
+            "scheduled-plan.edit-subscription-only",
+            "仅订阅计划支持编辑非金额字段",
+        ));
     }
 
     // 商户（issue #190）：与 writer 编辑路径同语义——提交值与当前引用相同视为
@@ -251,7 +290,7 @@ pub fn get_plan_detail(conn: &Connection, id: &str) -> Result<ScheduledTransacti
          FROM scheduled_transactions WHERE id=?1 AND is_deleted=0",
         rusqlite::params![id],
     )?
-    .ok_or_else(|| AppError::NotFound("定时计划不存在".into()))?;
+    .ok_or_else(|| AppError::coded_not_found("scheduled-plan.not-found", "定时计划不存在"))?;
 
     let extension = match core.kind {
         ScheduledKind::Installment => {
@@ -261,7 +300,12 @@ pub fn get_plan_detail(conn: &Connection, id: &str) -> Result<ScheduledTransacti
                  FROM installment_plans WHERE scheduled_transaction_id=?1",
                 rusqlite::params![id],
             )?
-            .ok_or_else(|| AppError::NotFound("分期扩展信息不存在".into()))?;
+            .ok_or_else(|| {
+                AppError::coded_not_found(
+                    "scheduled-plan.installment-ext-not-found",
+                    "分期扩展信息不存在",
+                )
+            })?;
             serde_json::to_value(ext).unwrap_or_default()
         }
         ScheduledKind::Subscription => {
@@ -271,7 +315,12 @@ pub fn get_plan_detail(conn: &Connection, id: &str) -> Result<ScheduledTransacti
                  FROM subscription_plans WHERE scheduled_transaction_id=?1",
                 rusqlite::params![id],
             )?
-            .ok_or_else(|| AppError::NotFound("订阅扩展信息不存在".into()))?;
+            .ok_or_else(|| {
+                AppError::coded_not_found(
+                    "scheduled-plan.subscription-ext-not-found",
+                    "订阅扩展信息不存在",
+                )
+            })?;
             serde_json::to_value(ext).unwrap_or_default()
         }
         ScheduledKind::ScheduledTransfer => {
@@ -281,7 +330,12 @@ pub fn get_plan_detail(conn: &Connection, id: &str) -> Result<ScheduledTransacti
                  FROM scheduled_transfer_plans WHERE scheduled_transaction_id=?1",
                 rusqlite::params![id],
             )?
-            .ok_or_else(|| AppError::NotFound("定时转账扩展信息不存在".into()))?;
+            .ok_or_else(|| {
+                AppError::coded_not_found(
+                    "scheduled-plan.transfer-ext-not-found",
+                    "定时转账扩展信息不存在",
+                )
+            })?;
             serde_json::to_value(ext).unwrap_or_default()
         }
     };
@@ -413,7 +467,7 @@ pub fn expand_occurrences(conn: &Connection, st_id: &str) -> Result<Vec<String>>
          FROM scheduled_transactions WHERE id=?1 AND is_deleted=0",
         rusqlite::params![st_id],
     )?
-    .ok_or_else(|| AppError::NotFound("定时计划不存在".into()))?;
+    .ok_or_else(|| AppError::coded_not_found("scheduled-plan.not-found", "定时计划不存在"))?;
 
     if st.status != "active" {
         return Ok(vec![]);
@@ -427,7 +481,12 @@ pub fn expand_occurrences(conn: &Connection, st_id: &str) -> Result<Vec<String>>
                  FROM installment_plans WHERE scheduled_transaction_id=?1",
                 rusqlite::params![st_id],
             )?
-            .ok_or_else(|| AppError::NotFound("分期扩展信息不存在".into()))?;
+            .ok_or_else(|| {
+                AppError::coded_not_found(
+                    "scheduled-plan.installment-ext-not-found",
+                    "分期扩展信息不存在",
+                )
+            })?;
             (Some(ext.total_occurrences), true)
         }
         ScheduledKind::ScheduledTransfer => {
@@ -437,7 +496,12 @@ pub fn expand_occurrences(conn: &Connection, st_id: &str) -> Result<Vec<String>>
                  FROM scheduled_transfer_plans WHERE scheduled_transaction_id=?1",
                 rusqlite::params![st_id],
             )?
-            .ok_or_else(|| AppError::NotFound("定时转账扩展信息不存在".into()))?;
+            .ok_or_else(|| {
+                AppError::coded_not_found(
+                    "scheduled-plan.transfer-ext-not-found",
+                    "定时转账扩展信息不存在",
+                )
+            })?;
             (ext.total_occurrences, false)
         }
         ScheduledKind::Subscription => (None, false),
@@ -491,7 +555,12 @@ pub fn expand_occurrences(conn: &Connection, st_id: &str) -> Result<Vec<String>>
              FROM installment_plans WHERE scheduled_transaction_id=?1",
             rusqlite::params![st_id],
         )?
-        .ok_or_else(|| AppError::NotFound("分期扩展信息不存在".into()))?;
+        .ok_or_else(|| {
+            AppError::coded_not_found(
+                "scheduled-plan.installment-ext-not-found",
+                "分期扩展信息不存在",
+            )
+        })?;
 
         let base = ext.total_amount_cents / ext.total_occurrences;
         let tail = ext.total_amount_cents - base * ext.total_occurrences;
@@ -531,8 +600,13 @@ pub fn expand_occurrences(conn: &Connection, st_id: &str) -> Result<Vec<String>>
 
 /// 计算日期加上 offset 期次后的日期。
 fn advance_date(st: &ScheduledTransaction, from: &str, offset: i64) -> Result<String> {
-    let date = chrono::NaiveDate::parse_from_str(from, "%Y-%m-%d")
-        .map_err(|e| AppError::Invalid(format!("日期格式错误 {from}: {e}")))?;
+    let date = chrono::NaiveDate::parse_from_str(from, "%Y-%m-%d").map_err(|e| {
+        AppError::codedp(
+            "scheduled-plan.date-invalid",
+            format!("日期格式错误 {from}: {e}"),
+            &[from, &e.to_string()],
+        )
+    })?;
 
     let interval = st.recurrence_interval.max(1);
     let result = match st.recurrence_type.as_str() {
@@ -602,14 +676,15 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
          FROM scheduled_transaction_occurrences WHERE id=?1 AND is_deleted=0",
         rusqlite::params![occurrence_id],
     )?
-    .ok_or_else(|| AppError::NotFound("期次不存在".into()))?;
+    .ok_or_else(|| AppError::coded_not_found("scheduled-occurrence.not-found", "期次不存在"))?;
 
     if occ.status != "pending" && occ.status != "failed" {
         tracing::warn!(occurrence_id = %occurrence_id, status = %occ.status, "期次不能执行，状态不匹配");
-        return Err(AppError::Invalid(format!(
-            "期次状态为 {}，不能执行",
-            occ.status
-        )));
+        return Err(AppError::codedp(
+            "scheduled-occurrence.not-executable",
+            format!("期次状态为 {}，不能执行", occ.status),
+            &[&occ.status],
+        ));
     }
 
     let st: ScheduledTransaction = query_one(
@@ -620,10 +695,15 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
          FROM scheduled_transactions WHERE id=?1 AND is_deleted=0",
         rusqlite::params![occ.scheduled_transaction_id],
     )?
-    .ok_or_else(|| AppError::NotFound("关联定时计划不存在".into()))?;
+    .ok_or_else(|| {
+        AppError::coded_not_found("scheduled-occurrence.plan-not-found", "关联定时计划不存在")
+    })?;
 
     if st.status != "active" {
-        return Err(AppError::Invalid("关联计划未处于活跃状态".into()));
+        return Err(AppError::coded(
+            "scheduled-plan.not-active",
+            "关联计划未处于活跃状态",
+        ));
     }
 
     let (kind, to_account_id, category_id, merchant_id) = match st.kind {
@@ -637,7 +717,12 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
                      FROM installment_plans WHERE scheduled_transaction_id=?1",
                     rusqlite::params![st.id],
                 )?
-                .ok_or_else(|| AppError::NotFound("分期扩展信息不存在".into()))?
+                .ok_or_else(|| {
+                    AppError::coded_not_found(
+                        "scheduled-plan.installment-ext-not-found",
+                        "分期扩展信息不存在",
+                    )
+                })?
                 .merchant_id,
                 ScheduledKind::Subscription => query_one::<SubscriptionPlan, _>(
                     conn,
@@ -645,7 +730,12 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
                      FROM subscription_plans WHERE scheduled_transaction_id=?1",
                     rusqlite::params![st.id],
                 )?
-                .ok_or_else(|| AppError::NotFound("订阅扩展信息不存在".into()))?
+                .ok_or_else(|| {
+                    AppError::coded_not_found(
+                        "scheduled-plan.subscription-ext-not-found",
+                        "订阅扩展信息不存在",
+                    )
+                })?
                 .merchant_id,
                 ScheduledKind::ScheduledTransfer => unreachable!(),
             };
@@ -663,7 +753,12 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
                  FROM scheduled_transfer_plans WHERE scheduled_transaction_id=?1",
                 rusqlite::params![st.id],
             )?
-            .ok_or_else(|| AppError::NotFound("定时转账扩展信息不存在".into()))?;
+            .ok_or_else(|| {
+                AppError::coded_not_found(
+                    "scheduled-plan.transfer-ext-not-found",
+                    "定时转账扩展信息不存在",
+                )
+            })?;
             (
                 TransactionKind::Transfer,
                 Some(ext.to_account_id),
@@ -743,7 +838,10 @@ fn execute_within_transaction(
     )?;
     if updated == 0 {
         tracing::warn!(occurrence_id = %occurrence_id, "期次 CAS 冲突，已被其他设备执行");
-        return Err(AppError::Invalid("期次已被其他设备执行".into()));
+        return Err(AppError::coded(
+            "scheduled-occurrence.conflict",
+            "期次已被其他设备执行",
+        ));
     }
 
     let txn_id = writer::insert_row(conn, norm)?;

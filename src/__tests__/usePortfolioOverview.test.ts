@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
+import { defineComponent } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
+import { registerToastSink } from '@/composables/useLoadable'
 import {
   formatCurrencyGroups,
   sumByCurrency,
@@ -9,10 +12,12 @@ import {
 } from '@/composables/usePortfolioOverview'
 import {
   invokeHandler,
+  makeFakeSink,
   mockAccounts,
   mockCurrencies,
   mockHoldings,
   mockInstruments,
+  resetToastSink,
 } from './factories'
 
 const mockInvoke = vi.mocked(invoke)
@@ -34,10 +39,20 @@ function baseInvoke(extra?: Record<string, unknown>) {
   )
 }
 
+/** 宿主组件：模拟盈亏页/首页在 setup 内使用 composable（onMounted 自动首刷时序留在薄壳内） */
+const Host = defineComponent({
+  setup() {
+    return { shell: usePortfolioOverview() }
+  },
+  template: '<div />',
+})
+
 beforeEach(async () => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
   baseInvoke()
+  // 每用例复位为 no-op，模拟「注册前」默认态，防模块级 sink 状态串扰
+  resetToastSink()
   const store = useReferenceStore()
   await store.refresh()
 })
@@ -137,5 +152,60 @@ describe('usePortfolioOverview 盈亏页持仓概览数据层（issue #110）', 
     expect(totalMarketValueGroups.value).toEqual([])
     expect(totalUnrealizedPnlGroups.value).toEqual([])
     expect(loading.value).toBe(false)
+  })
+})
+
+describe('usePortfolioOverview 失败治愈（issue #324 Loadable 薄壳化）', () => {
+  it('刷新失败不向调用方抛出：error 置位、loading 收尾、rows 保持原值不清空', async () => {
+    const { rows, loading, error, refresh } = usePortfolioOverview()
+    await refresh()
+    expect(rows.value.length).toBe(2)
+
+    baseInvoke({ list_holdings: () => Promise.reject(new Error('数据库文件已锁定')) })
+    await expect(refresh()).resolves.not.toThrow()
+    expect(loading.value).toBe(false)
+    expect(error.value).toBe('数据库文件已锁定')
+    expect(rows.value.length).toBe(2)
+  })
+
+  it('失败弹默认 toast（serde 对象错误归一取 message），成功不弹——error 状态与 toast 双通道共存', async () => {
+    const sink = makeFakeSink()
+    registerToastSink(sink)
+    baseInvoke({
+      list_holdings: () => Promise.reject({ kind: 'db', message: '持仓查询失败' }),
+    })
+    const { error, refresh } = usePortfolioOverview()
+    await refresh()
+    expect(error.value).toBe('持仓查询失败')
+    expect(sink.error).toHaveBeenCalledTimes(1)
+    expect(sink.error).toHaveBeenCalledWith('持仓查询失败')
+
+    baseInvoke()
+    await refresh()
+    expect(sink.error).toHaveBeenCalledTimes(1)
+  })
+
+  it('失败后重试成功：error 清零、rows 重新装配（error 是唯一成败判据）', async () => {
+    baseInvoke({ list_holdings: () => Promise.reject('首刷失败') })
+    const { rows, error, refresh } = usePortfolioOverview()
+    await refresh()
+    expect(error.value).toBe('首刷失败')
+    expect(rows.value).toEqual([])
+
+    baseInvoke()
+    await refresh()
+    expect(error.value).toBeNull()
+    expect(rows.value.length).toBe(2)
+  })
+
+  it('挂载首刷失败（onMounted 自动首刷）：不再产生未处理 rejection，进入 error 终态并弹 toast', async () => {
+    baseInvoke({ list_holdings: () => Promise.reject(new Error('首刷失败')) })
+    const sink = makeFakeSink()
+    registerToastSink(sink)
+    const wrapper = mount(Host)
+    await flushPromises()
+    expect(wrapper.vm.shell.error.value).toBe('首刷失败')
+    expect(wrapper.vm.shell.rows.value).toEqual([])
+    expect(sink.error).toHaveBeenCalledWith('首刷失败')
   })
 })

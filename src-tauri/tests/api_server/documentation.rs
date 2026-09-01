@@ -67,6 +67,7 @@ async fn test_openapi_doc_covers_all_endpoints() {
     let expected: &[(&str, &str)] = &[
         ("/api/v1/accounts", "get"),
         ("/api/v1/accounts", "post"),
+        ("/api/v1/accounts/{id}", "put"),
         ("/api/v1/accounts/{id}", "delete"),
         ("/api/v1/accounts/balances", "get"),
         ("/api/v1/categories", "get"),

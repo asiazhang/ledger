@@ -37,13 +37,17 @@ export interface AccountBalance {
   balance_cents: number
 }
 
-export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
-  cash: '现金',
-  bank: '银行卡',
-  credit: '信用卡',
-  ewallet: '电子钱包',
-  investment: '投资账户',
-  debt: '负债',
-  receivable: '借出款',
-  other: '其他',
-}
+/** 账户类型闭集（穷尽表驱动：新增 AccountType 变体未列出即编译报错）；
+ * 显示标签在文案资源 accounts.type.*（i18n，ADR-0049），不再硬编码。 */
+const ACCOUNT_TYPE_PRESENCE = {
+  cash: true,
+  bank: true,
+  credit: true,
+  ewallet: true,
+  investment: true,
+  debt: true,
+  receivable: true,
+  other: true,
+} satisfies Record<AccountType, boolean>
+
+export const ACCOUNT_TYPES = Object.keys(ACCOUNT_TYPE_PRESENCE) as AccountType[]

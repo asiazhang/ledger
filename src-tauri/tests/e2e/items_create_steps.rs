@@ -60,6 +60,7 @@ fn scaffold_purchase_tx(
     };
     create_transaction_internal(&world_conn!(world), input)
         .unwrap_or_else(|e| panic!("脚手架购买交易应创建成功但失败: {e}"))
+        .id
 }
 
 /// 创建物品并要求成功；记录失效信号次数（写后发 `ledger:changed` 的 seam 断言）。

@@ -1,0 +1,12 @@
+{
+  "title": "AI Prompt",
+  "copy": "Copy",
+  "description": "Copy the prompt below to your AI coding assistant (e.g. Cursor, Claude Code). It will read and write ledger data through the local HTTP API (127.0.0.1:9527); keep Ledger running while it works.",
+  "loading": "Loading…",
+  "loadFailed": "Failed to load",
+  "msg": {
+    "loadFailed": "Failed to load prompt: {msg}",
+    "copied": "Copied to clipboard",
+    "copyFailed": "Copy failed: {msg}"
+  }
+}

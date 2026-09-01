@@ -4,6 +4,7 @@ import { api } from '@/api'
 import { centsToYuan, formatAmount } from '@/types'
 import { buildRefundInput } from '@/domain/transaction-input'
 import { useFormShared } from '@/composables/useFormShared'
+import { t } from '@/i18n'
 import type { Transaction } from '@/types'
 import { errorMessage } from "@/utils/errors";
 
@@ -11,8 +12,8 @@ export function useRefundForm(options?: {
   onCreated?: () => void
   /** 行内退款（issue #151）：原交易由调用方所在行固定给定。注意：getter 仅在
    * composable 创建时读取一次做初始化、提交时重读一次，并非响应式依赖——
-   * 换目标交易必须由父层强制重建组件实例（如 TransactionsView 的 :key="refundSeq"），
-   * 否则展示/提交仍指向旧交易。打开即锁定继承的账户/币种展示，金额默认原交易金额
+   * 换目标交易必须由父层强制重建组件实例（如 TransactionsView 经 TransactionModalState
+   * 的回调序号作 :key="modalSeq"），否则展示/提交仍指向旧交易。打开即锁定继承的账户/币种展示，金额默认原交易金额
    * （原始币种）；提交跳过全量交易重载（列表刷新由 onCreated 回调承担）。 */
   fixedTarget?: () => Transaction | null
 }) {
@@ -75,11 +76,11 @@ export function useRefundForm(options?: {
     // 行内模式原交易固定；搜索模式取下拉选择
     const targetId = fixedTarget?.()?.id ?? refundTargetId.value
     if (!targetId) {
-      message.warning('请选择要退款的原始支出交易')
+      message.warning(t('transactions.refund.warnNoTarget'))
       return
     }
     if (amount.value == null || amount.value <= 0) {
-      message.warning('请输入退款金额')
+      message.warning(t('transactions.refund.warnNoAmount'))
       return
     }
     try {
@@ -95,7 +96,7 @@ export function useRefundForm(options?: {
         date: date.value,
       })
       await api.createTransaction(input)
-      message.success('已记退款')
+      message.success(t('transactions.refund.created'))
       // 行内模式跳过全量交易重载：列表刷新由 onCreated 回调承担
       if (!fixedTarget) await loadTransactions()
       amount.value = null
@@ -103,7 +104,7 @@ export function useRefundForm(options?: {
       refundTargetId.value = null
       options?.onCreated?.()
     } catch (e) {
-      message.error(`退款失败: ${errorMessage(e)}`)
+      message.error(t('transactions.refund.failed', { msg: errorMessage(e) }))
     }
   }
 

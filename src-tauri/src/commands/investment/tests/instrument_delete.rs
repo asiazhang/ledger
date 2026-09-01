@@ -100,13 +100,13 @@ fn delete_sync_source_instrument_rejected() {
     );
 }
 
-/// 不存在的标的 id：数据不存在（NotFound），中文错误。
+/// 不存在的标的 id：码化 NotFound（`instrument.not-found`），中文错误。
 #[test]
 fn delete_missing_instrument_not_found() {
     let conn = setup_db();
     let err = delete_instrument_internal(&conn, "不存在的id").unwrap_err();
     assert!(
-        err.to_string().contains("数据不存在"),
+        err.to_string().contains("标的 不存在的id 不存在"),
         "删除不存在的标的应报 NotFound：{err}"
     );
 }

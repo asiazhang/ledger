@@ -3,7 +3,7 @@
 
 use rusqlite::params;
 
-use crate::error::AppError;
+use crate::error::{AppError, ErrClass};
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::writer::{Input, insert_row, normalize};
 
@@ -19,7 +19,7 @@ fn normalize_refund_requires_source_id() {
     let conn = setup_db();
     insert_account(&conn, "acc", "CNY");
     let err = normalize(&conn, &input(TransactionKind::Refund, 200, "acc")).unwrap_err();
-    assert_eq!(err.to_string(), "参数错误: 退款必须关联原支出交易");
+    assert_eq!(err.to_string(), "退款必须关联原支出交易");
 }
 
 /// 退款继承原支出的账户/币种/分类，忽略调用方填写的 account_id/currency_code/category_id。
@@ -73,7 +73,7 @@ fn normalize_refund_rejects_non_expense_source() {
         },
     )
     .unwrap_err();
-    assert_eq!(err.to_string(), "参数错误: 退款只能关联支出交易");
+    assert_eq!(err.to_string(), "退款只能关联支出交易");
 }
 
 /// 关联的原支出不存在 → NotFound。
@@ -90,7 +90,13 @@ fn normalize_refund_source_not_found() {
     )
     .unwrap_err();
     assert!(
-        matches!(err, AppError::NotFound(_)),
+        matches!(
+            err,
+            AppError::Coded {
+                class: ErrClass::NotFound,
+                ..
+            }
+        ),
         "应返回 NotFound，实际: {err:?}"
     );
 }
@@ -115,5 +121,11 @@ fn normalize_refund_source_soft_deleted_is_not_found() {
         },
     )
     .unwrap_err();
-    assert!(matches!(err, AppError::NotFound(_)));
+    assert!(matches!(
+        err,
+        AppError::Coded {
+            class: ErrClass::NotFound,
+            ..
+        }
+    ));
 }

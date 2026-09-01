@@ -1,7 +1,19 @@
-import type { Account, Currency, DashboardOverview, Holding, Instrument } from '@/types'
+import { vi } from 'vitest'
+import { registerToastSink, type ToastSink } from '@/composables/useLoadable'
+import type {
+  Account,
+  Currency,
+  DashboardOverview,
+  FinancialFreedomOverview,
+  Holding,
+  Instrument,
+  ItemDailyTotal,
+  RealizedPnlSummary,
+  Transaction,
+} from '@/types'
 
 /**
- * 投资域相关组件/composable 测试的共享数据工厂（issue #110 审查：消除测试文件间重复）。
+ * 组件/composable 测试的共享数据工厂与测试辅助（issue #110 审查：消除测试文件间重复）。
  * 各测试文件经 baseInvoke 辅助把这些对象接到对应 invoke 命令上。
  */
 
@@ -96,6 +108,73 @@ export function makeOverview(partial: Partial<DashboardOverview> = {}): Dashboar
     holdings_market_value_cents: 23456,
     ...partial,
   }
+}
+
+/** 交易行工厂：默认一笔 100 元人民币支出，覆写见 partial（id 必填）。 */
+export function makeTransaction(partial: Partial<Transaction> & { id: string }): Transaction {
+  return {
+    kind: 'expense',
+    amount_cents: 10000,
+    currency_code: 'CNY',
+    amount_native_cents: 10000,
+    account_id: 'acc-1',
+    to_account_id: null,
+    category_id: null,
+    merchant_id: null,
+    refund_of_transaction_id: null,
+    note: null,
+    date: '2026-01-01',
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: false,
+    ...partial,
+  }
+}
+
+/** item_daily_total 返回值工厂（issue #122）：默认人民币本位币、每天成本 123.45 元、3 件在用 */
+export function makeItemDailyTotal(partial: Partial<ItemDailyTotal> = {}): ItemDailyTotal {
+  return { native_currency: 'CNY', per_day_cents: 12345, item_count: 3, ...partial }
+}
+
+/** financial_freedom 返回值工厂（issue #344）：默认人民币本位币、自由度 7.5%
+ * （可投资资产 5000 元 × 3% ÷ 年度预算 2 万）、覆盖 0.3 年 */
+export function makeFinancialFreedom(
+  partial: Partial<FinancialFreedomOverview> = {},
+): FinancialFreedomOverview {
+  return {
+    ratio: 7.5,
+    numerator_cents: 500000,
+    denominator_cents: 2000000,
+    coverage_years: 0.3,
+    native_currency: 'CNY',
+    ...partial,
+  }
+}
+
+/** realized_pnl_summary 返回值工厂（issue #325）：默认全表汇总 300 元 */
+export function makePnlSummary(partial: Partial<RealizedPnlSummary> = {}): RealizedPnlSummary {
+  return {
+    total_realized_pnl_cents: 30000,
+    by_year: [{ year: '2026', realized_pnl_cents: 30000 }],
+    by_account: [{ account_id: 'acc-1', account_name: '证券账户A', realized_pnl_cents: 30000 }],
+    by_instrument: [
+      { instrument_id: 'inst-1', symbol: '600000', name: '浦发银行', realized_pnl_cents: 30000 },
+    ],
+    details: [],
+    ...partial,
+  }
+}
+
+/** 假 toast sink：记录 error toast 调用（Loadable 默认策略经 sink 弹出，断言只看 sink 面） */
+export function makeFakeSink(): ToastSink & { error: ReturnType<typeof vi.fn> } {
+  return { error: vi.fn() }
+}
+
+/** 每用例复位 sink 为 no-op，模拟「注册前」默认态，防模块级 sink 状态串扰 */
+export function resetToastSink(): void {
+  registerToastSink({ error: () => {} })
 }
 
 /**

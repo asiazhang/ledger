@@ -3,6 +3,7 @@
 
 use super::super::*;
 use super::common::{insert_account, make_buy_input, make_input, setup, setup_investment_account};
+use crate::error::ErrClass;
 use rusqlite::Connection;
 
 use crate::db::{device_id, now_iso};
@@ -18,7 +19,8 @@ fn create_income_and_expense_transactions() {
         &conn,
         make_input("acc-crud", TransactionKind::Income, 5000, "2026-02-01"),
     )
-    .unwrap();
+    .unwrap()
+    .id;
     let id2 = create_transaction_internal(
         &conn,
         TransactionInput {
@@ -28,7 +30,8 @@ fn create_income_and_expense_transactions() {
             ..make_input("acc-crud", TransactionKind::Expense, 100, "2026-02-02")
         },
     )
-    .unwrap();
+    .unwrap()
+    .id;
     assert_ne!(id1, id2);
     let row1: (TransactionKind, String, i64, Option<String>) = conn
         .query_row(
@@ -68,7 +71,8 @@ fn create_transfer_with_to_account() {
             idempotency_key: None,
         },
     )
-    .unwrap();
+    .unwrap()
+    .id;
     let (kind, from, to): (TransactionKind, String, Option<String>) = conn
         .query_row(
             "SELECT kind, account_id, to_account_id FROM transactions WHERE id=?1",
@@ -90,7 +94,8 @@ fn delete_transaction_soft_deletes() {
         &conn,
         make_input("acc-del", TransactionKind::Income, 1000, "2026-01-01"),
     )
-    .unwrap();
+    .unwrap()
+    .id;
     let count_before: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
@@ -122,7 +127,7 @@ fn delete_transaction_internal_returns_not_found_for_missing_id() {
 
     let err = delete_transaction_internal(&conn, "不存在的id").unwrap_err();
     match err {
-        AppError::NotFound(msg) => assert!(msg.contains("交易不存在")),
+        AppError::Coded { message, .. } => assert!(message.contains("交易不存在")),
         other => panic!("expected NotFound, got {other:?}"),
     }
 }
@@ -135,7 +140,8 @@ fn delete_transaction_internal_returns_not_found_for_already_deleted() {
         &conn,
         make_input("acc-gone", TransactionKind::Income, 1000, "2026-01-01"),
     )
-    .unwrap();
+    .unwrap()
+    .id;
     conn.execute(
         "UPDATE transactions SET is_deleted=1 WHERE id=?1",
         params![id],
@@ -143,7 +149,13 @@ fn delete_transaction_internal_returns_not_found_for_already_deleted() {
     .unwrap();
 
     let err = delete_transaction_internal(&conn, &id).unwrap_err();
-    assert!(matches!(err, AppError::NotFound(_)));
+    assert!(matches!(
+        err,
+        AppError::Coded {
+            class: ErrClass::NotFound,
+            ..
+        }
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -162,11 +174,11 @@ fn create_transaction_internal_rejects_dividend_and_split_with_not_supported() {
             create_transaction_internal(&conn, make_input("acc-unsup", kind, amount, "2026-05-04"))
                 .unwrap_err();
         match err {
-            AppError::Invalid(msg) => assert!(
-                msg.contains("暂不支持"),
-                "{kind} 应报「暂不支持」，实际: {msg}"
+            AppError::Coded { message, .. } => assert!(
+                message.contains("暂不支持"),
+                "{kind} 应报「暂不支持」，实际: {message}"
             ),
-            other => panic!("expected Invalid, got {other:?}"),
+            other => panic!("expected Coded, got {other:?}"),
         }
     }
 
@@ -189,7 +201,8 @@ fn update_transaction_rejects_dividend_and_split_with_not_supported() {
         &conn,
         make_input("acc-unsup-upd", TransactionKind::Expense, 500, "2026-01-01"),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     for (kind, amount) in [(TransactionKind::Dividend, 60), (TransactionKind::Split, 0)] {
         let err = update_transaction_internal(
@@ -199,11 +212,11 @@ fn update_transaction_rejects_dividend_and_split_with_not_supported() {
         )
         .unwrap_err();
         match err {
-            AppError::Invalid(msg) => assert!(
-                msg.contains("暂不支持"),
-                "{kind} 应报「暂不支持」，实际: {msg}"
+            AppError::Coded { message, .. } => assert!(
+                message.contains("暂不支持"),
+                "{kind} 应报「暂不支持」，实际: {message}"
             ),
-            other => panic!("expected Invalid, got {other:?}"),
+            other => panic!("expected Coded, got {other:?}"),
         }
         // 修改被拒绝后原交易保持不变（事务回滚）。
         let t = get_transaction_internal(&conn, &id).unwrap();
@@ -225,7 +238,8 @@ fn update_transaction_cross_kind_rebuilds_side_effects_atomically() {
         &conn,
         make_input("acc-cash-x", TransactionKind::Expense, 500, "2026-01-01"),
     )
-    .unwrap();
+    .unwrap()
+    .id;
     update_transaction_internal(
         &conn,
         &id,
@@ -273,7 +287,8 @@ fn delete_transaction_internal_cleans_up_buy_lots() {
         &conn,
         make_buy_input("acc-inv", "inst-aapl", 10.0, 1000000, 500),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let lots: i64 = conn
         .query_row(
@@ -329,7 +344,8 @@ fn delete_transaction_internal_rejects_partially_sold_buy() {
         &conn,
         make_buy_input("acc-inv2", "inst-msft", 10.0, 1000000, 0),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let mut sell = make_buy_input("acc-inv2", "inst-msft", 4.0, 1100000, 0);
     sell.kind = TransactionKind::Sell;
@@ -340,8 +356,8 @@ fn delete_transaction_internal_rejects_partially_sold_buy() {
     // 守卫文案按入口内化（ADR-0033 决策 #4）：删除入口固定返回自己的措辞，
     // 与修改入口对同一守卫各持措辞、互不漂移。
     match err {
-        AppError::Invalid(msg) => assert_eq!(msg, "该买入交易已有部分卖出，无法删除"),
-        other => panic!("expected Invalid, got {other:?}"),
+        AppError::Coded { message, .. } => assert_eq!(message, "该买入交易已有部分卖出，无法删除"),
+        other => panic!("expected Coded, got {other:?}"),
     }
 }
 
@@ -368,7 +384,8 @@ fn delete_transaction_internal_rolls_back_lot_cleanup_when_soft_delete_fails() {
         &conn,
         make_buy_input("acc-inv-rb", "inst-rb2", 10.0, 1000000, 0),
     )
-    .unwrap();
+    .unwrap()
+    .id;
     inject_soft_delete_failure(&conn);
 
     let err = delete_transaction_internal(&conn, &buy_id).unwrap_err();
@@ -418,7 +435,8 @@ fn create_refund_linked_to_expense() {
             idempotency_key: None,
         },
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let refund_id = create_transaction_internal(
         &conn,
@@ -441,7 +459,8 @@ fn create_refund_linked_to_expense() {
             idempotency_key: None,
         },
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let (kind, refund_of): (TransactionKind, Option<String>) = conn
         .query_row(
@@ -462,7 +481,8 @@ fn update_transaction_internal_replaces_fields_and_bumps_version() {
         &conn,
         make_input("acc-upd", TransactionKind::Expense, 500, "2026-01-01"),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let mut edited = make_input("acc-upd", TransactionKind::Expense, 900, "2026-01-05");
     edited.note = Some("改后备注".into());
@@ -484,7 +504,8 @@ fn update_transaction_internal_returns_not_found_for_missing_or_deleted() {
         &conn,
         make_input("acc-upd", TransactionKind::Expense, 500, "2026-01-01"),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let err = update_transaction_internal(
         &conn,
@@ -492,7 +513,13 @@ fn update_transaction_internal_returns_not_found_for_missing_or_deleted() {
         make_input("acc-upd", TransactionKind::Expense, 100, "2026-01-01"),
     )
     .unwrap_err();
-    assert!(matches!(err, AppError::NotFound(_)));
+    assert!(matches!(
+        err,
+        AppError::Coded {
+            class: ErrClass::NotFound,
+            ..
+        }
+    ));
 
     conn.execute(
         "UPDATE transactions SET is_deleted=1 WHERE id=?1",
@@ -505,7 +532,16 @@ fn update_transaction_internal_returns_not_found_for_missing_or_deleted() {
         make_input("acc-upd", TransactionKind::Expense, 100, "2026-01-01"),
     )
     .unwrap_err();
-    assert!(matches!(err, AppError::NotFound(_)), "已软删除应视为不存在");
+    assert!(
+        matches!(
+            err,
+            AppError::Coded {
+                class: ErrClass::NotFound,
+                ..
+            }
+        ),
+        "已软删除应视为不存在"
+    );
 }
 
 #[test]
@@ -516,7 +552,8 @@ fn update_transaction_internal_reuses_kind_validation_transfer_needs_target() {
         &conn,
         make_input("acc-upd", TransactionKind::Expense, 500, "2026-01-01"),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let err = update_transaction_internal(
         &conn,
@@ -525,8 +562,8 @@ fn update_transaction_internal_reuses_kind_validation_transfer_needs_target() {
     )
     .unwrap_err();
     match err {
-        AppError::Invalid(msg) => assert!(msg.contains("目标账户")),
-        other => panic!("expected Invalid, got {other:?}"),
+        AppError::Coded { message, .. } => assert!(message.contains("目标账户")),
+        other => panic!("expected Coded, got {other:?}"),
     }
 }
 
@@ -539,7 +576,8 @@ fn update_transaction_internal_cross_kind_expense_to_transfer() {
         &conn,
         make_input("acc-upd-a", TransactionKind::Expense, 500, "2026-01-01"),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let transfer = TransactionInput {
         to_account_id: Some("acc-upd-b".into()),
@@ -560,7 +598,8 @@ fn update_transaction_internal_buy_rebuilds_lot() {
         &conn,
         make_buy_input("acc-inv", "inst-aapl", 10.0, 1000000, 500),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     // 编辑买入：数量/单价变化，应重建 lot 与 security_transaction。
     let edited = make_buy_input("acc-inv", "inst-aapl", 5.0, 1200000, 0);
@@ -598,7 +637,8 @@ fn update_transaction_internal_rejects_partially_sold_buy() {
         &conn,
         make_buy_input("acc-inv2", "inst-msft", 10.0, 1000000, 0),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let mut sell = make_buy_input("acc-inv2", "inst-msft", 4.0, 1100000, 0);
     sell.kind = TransactionKind::Sell;
@@ -613,8 +653,8 @@ fn update_transaction_internal_rejects_partially_sold_buy() {
     .unwrap_err();
     // 守卫文案按入口内化（ADR-0033 决策 #4）：修改入口固定返回自己的措辞。
     match err {
-        AppError::Invalid(msg) => assert_eq!(msg, "该买入交易已有部分卖出，无法修改"),
-        other => panic!("expected Invalid, got {other:?}"),
+        AppError::Coded { message, .. } => assert_eq!(message, "该买入交易已有部分卖出，无法修改"),
+        other => panic!("expected Coded, got {other:?}"),
     }
 }
 
@@ -626,11 +666,12 @@ fn update_transaction_internal_sell_reverses_and_reapplies() {
         &conn,
         make_buy_input("acc-inv3", "inst-tsla", 10.0, 1000000, 0),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     let mut sell1 = make_buy_input("acc-inv3", "inst-tsla", 4.0, 1100000, 0);
     sell1.kind = TransactionKind::Sell;
-    let sell_id = create_transaction_internal(&conn, sell1).unwrap();
+    let sell_id = create_transaction_internal(&conn, sell1).unwrap().id;
 
     // 编辑卖出：数量 4→3、单价上涨。应先回补旧扣减再按新输入重新匹配。
     let mut sell2 = make_buy_input("acc-inv3", "inst-tsla", 3.0, 1200000, 0);
@@ -768,7 +809,8 @@ fn update_nested_mode_leaves_rollback_ownership_to_outer_holder() {
         &conn,
         make_input("acc-un1", TransactionKind::Income, 1000, "2026-01-01"),
     )
-    .unwrap();
+    .unwrap()
+    .id;
 
     // 加入外层：Ok 不自持 COMMIT——外层 ROLLBACK 后修改消失，
     // 证明提交点归外层持有者（若 update 自作主张提交，ROLLBACK 会因无活动事务报错）。

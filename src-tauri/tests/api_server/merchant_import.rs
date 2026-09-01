@@ -10,7 +10,7 @@ use tower::ServiceExt;
 
 use crate::common::{
     batch_body, body_to_bytes, count_active_transactions, count_rows, create_account_via_api,
-    get_json, post_batch, setup_app,
+    get_json, post_batch, put_transaction_via_api, setup_app,
 };
 
 /// 批量导入一行带商户名的支出。
@@ -439,4 +439,45 @@ async fn test_update_transaction_with_merchant_name() {
         .find(|m| m["id"] == updated["merchant_id"])
         .expect("修改后的交易应指向解析出的商户");
     assert_eq!(hit["name"], "永辉");
+}
+
+/// 更新端点同走商户名归一化（行为层同一入口）：改携带新商户名 → 200 且商户即建并
+/// 进列表；再改命中名字 → 复用（商户数不变）。`app: None`（集成测试）跳过信号发射
+/// 分支，写路径语义不变（issue #331 两壳接线，ADR-0044）。
+#[tokio::test]
+async fn test_update_transaction_with_merchant_name_creates_then_reuses() {
+    let (app, _) = setup_app();
+    let account_id = create_account_via_api(&app, "现金账户").await;
+    let tx = format!(
+        r#"{{"kind":"expense","amount_cents":500,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01"}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&tx], None)).await;
+    let id = created[0]["id"].as_str().unwrap();
+
+    // 改为携带新商户名：200，交易引用即建的商户，商户列表出现该行。
+    let body = format!(
+        r#"{{"kind":"expense","amount_cents":900,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-10","merchant_name":"盒马"}}"#
+    );
+    let (status, bytes) = put_transaction_via_api(&app, id, &body).await;
+    assert_eq!(status, StatusCode::OK, "PUT 即建商户应成功");
+    let updated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let merchant_id = updated["merchant_id"].as_str().expect("应携带商户引用");
+
+    let (_, merchants) = get_json(&app, "/api/v1/merchants").await;
+    let list = merchants.as_array().unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0]["id"], merchant_id);
+    assert_eq!(list[0]["name"], "盒马");
+
+    // 再改为命中名字「盒马」：复用既有商户，列表仍一行。
+    let body = format!(
+        r#"{{"kind":"expense","amount_cents":900,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-11","merchant_name":"盒马"}}"#
+    );
+    let (status, bytes) = put_transaction_via_api(&app, id, &body).await;
+    assert_eq!(status, StatusCode::OK);
+    let updated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(updated["merchant_id"], merchant_id, "命中复用同一商户");
+
+    let (_, merchants) = get_json(&app, "/api/v1/merchants").await;
+    assert_eq!(merchants.as_array().unwrap().len(), 1, "复用不新建");
 }

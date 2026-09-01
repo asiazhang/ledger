@@ -107,8 +107,6 @@ pub struct LedgerWorld {
     pub last_search: Option<TransactionSearchResult>,
     /// 最近一次标的搜索结果快照（标的搜索语义场景断言用，issue #199）
     pub last_instrument_search: Option<tauri_app_lib::models::InstrumentListResult>,
-    /// 按代码即拉添加基金的结果快照（issue #301 场景断言用；失败经 last_error）
-    pub last_add_fund: Option<tauri_app_lib::models::AddFundResult>,
     /// 最近一次组合走势查询快照（组合走势场景断言用，issue #248）
     pub last_portfolio_trend: Option<tauri_app_lib::models::PortfolioValueTrend>,
     /// 最近一次单标的走势查询快照（基金净值走势场景断言用，issue #303）
@@ -129,6 +127,8 @@ pub struct LedgerWorld {
     pub last_item_daily_total: Option<ItemDailyTotal>,
     /// 最近一次净资产总览快照（首页仪表盘场景断言用）
     pub last_overview: Option<DashboardOverview>,
+    /// 最近一次财务自由度总览快照（自由度口径场景断言用，issue #343）
+    pub last_financial_freedom: Option<tauri_app_lib::models::FinancialFreedomOverview>,
     /// 最近一次订阅实际花费总览快照（订阅花费场景断言用，issue #160）
     pub last_spend: Option<tauri_app_lib::scheduled_transactions::SubscriptionSpendOverview>,
     /// 最近一次预算进度快照（预算滚动窗口场景断言用，issue #182）
@@ -200,10 +200,10 @@ impl LedgerWorld {
             last_occurrence_id: None,
             last_search: None,
             last_instrument_search: None,
-            last_add_fund: None,
             last_portfolio_trend: None,
             last_instrument_trend: None,
             last_overview: None,
+            last_financial_freedom: None,
             last_spend: None,
             last_budget_progress: Vec::new(),
             last_merchant_shares: Vec::new(),

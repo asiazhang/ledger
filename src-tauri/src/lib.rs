@@ -9,6 +9,10 @@ pub mod logger;
 pub mod models;
 pub mod scheduled_transactions;
 pub mod settings;
+pub mod signals;
+// 信号交叉核对测试（ADR-0044 决策 3 / #335）：声明表 × 映射表双向核对，仅测试可见。
+#[cfg(test)]
+mod signals_cross_check;
 #[doc(hidden)]
 pub mod test_utils;
 pub mod transaction;
@@ -18,6 +22,10 @@ use tauri::ipc::Invoke;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 pub mod fs_util;
+
+// 命令注册单一来源（ADR-0047）：由 build.rs 扫描 #[tauri::command] 注解生成、
+// include! 进本 crate；命令注册零手工清单，新增/删除命令只改命令域文件本身。
+include!(concat!(env!("OUT_DIR"), "/commands_registry.rs"));
 
 fn init_database(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let dir = app
@@ -115,86 +123,7 @@ pub fn run() {
             events::init_event_app(app.handle());
             Ok(())
         })
-        .invoke_handler(logged_invoke_handler(tauri::generate_handler![
-            commands::get_ai_prompt,
-            commands::create_backup,
-            commands::restore_backup,
-            commands::restart_app,
-            commands::list_backups,
-            commands::prune_backups,
-            commands::list_currencies,
-            commands::list_accounts,
-            commands::create_account,
-            commands::update_account,
-            commands::adjust_account_balance,
-            commands::delete_account,
-            commands::list_account_balances,
-            commands::list_categories,
-            commands::create_category,
-            commands::update_category,
-            commands::reorder_categories,
-            commands::delete_category,
-            commands::list_merchants,
-            commands::create_merchant,
-            commands::update_merchant,
-            commands::delete_merchant,
-            commands::list_transactions,
-            commands::create_transaction,
-            commands::create_transactions,
-            commands::update_transaction,
-            commands::delete_transaction,
-            commands::search_transactions,
-            commands::list_exchange_rates,
-            commands::create_exchange_rate,
-            commands::list_market_prices,
-            commands::create_market_price,
-            commands::add_fund_by_code,
-            commands::list_instruments,
-            commands::create_instrument,
-            commands::record_manual_price,
-            commands::delete_instrument,
-            commands::get_transaction_trade,
-            commands::list_holdings,
-            commands::instrument_price_trend,
-            commands::portfolio_value_trend,
-            commands::list_items,
-            commands::item_daily_total,
-            commands::create_item,
-            commands::calculate_item_cost,
-            commands::update_item,
-            commands::dispose_item,
-            commands::delete_item,
-            commands::list_budgets,
-            commands::create_budget,
-            commands::update_budget,
-            commands::delete_budget,
-            commands::monthly_summary,
-            commands::category_shares,
-            commands::merchant_shares,
-            commands::report_year_range,
-            commands::dashboard_overview,
-            commands::budget_progress,
-            commands::create_scheduled_transaction,
-            commands::list_scheduled_transactions,
-            commands::get_scheduled_transaction_detail,
-            commands::update_scheduled_transaction_status,
-            commands::update_scheduled_subscription,
-            commands::execute_scheduled_occurrence,
-            commands::expand_scheduled_occurrences,
-            commands::subscription_spend_overview,
-            commands::set_auto_execution_enabled,
-            commands::realized_pnl_summary,
-            commands::sync_instruments,
-            commands::cancel_sync_instruments,
-            commands::sync_holding_prices,
-            commands::set_auto_backup_dir,
-            commands::get_auto_backup_state,
-            commands::set_auto_backup_enabled,
-            commands::get_data_location_info,
-            commands::submit_data_location_change,
-            commands::restore_default_data_location,
-            commands::open_log_dir,
-        ]))
+        .invoke_handler(logged_invoke_handler(tauri_commands_handler()))
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {

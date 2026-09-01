@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@/i18n'
 import { errorMessage } from '@/utils/errors'
 import { computed, h, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
@@ -28,18 +29,18 @@ import AddItemForm from '@/components/AddItemForm.vue'
 import { buildRowMenuOptions } from '@/components/transaction-row-menu'
 import { useCreateShortcuts, CREATE_KIND_KEYS } from '@/composables/useCreateShortcuts'
 import { useTransactionFilter } from '@/composables/useTransactionFilter'
+import { useTransactionModalState } from '@/composables/useTransactionModalState'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useItemsStore } from '@/stores/items'
 import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/transaction-columns'
 import {
   CREATE_KINDS,
-  TRANSACTION_KIND_LABELS,
+  TRANSACTION_KINDS,
   type CreateTransactionKind,
   type Transaction,
   type TransactionKind,
   type TransactionListFilter,
-  type TransactionTrade,
 } from '@/types'
 
 const reference = useReferenceStore()
@@ -55,10 +56,25 @@ const loading = ref(false)
 
 // 过滤状态机（ADR-0030）：「用户意图进、列表状态出」。filters / page / pageSize / 重拉版本号
 // 归 TransactionFilter 模块所有；手动筛选变更走 setFilter、清除筛选走 resetFilters、
-// 记一笔/退款回填与页大小切换走 refresh（重拉 + 翻回第一页）——
-// 「翻页归零 + 刷新」全仓仅模块统一出口一处，视图不再持有翻页归零样板与首刷防双刷标志。
-const { filters, page, pageSize, refreshVersion, setFilter, resetFilters, refresh, syncUrlQuery } =
-  useTransactionFilter()
+// 记一笔/退款回填与页大小切换走 refresh（重拉 + 翻回第一页）、删除成功走 afterRowDelete
+// （页码回退入口，ADR-0045）——「翻页归零 + 刷新」全仓仅模块统一出口一处，视图不再持有
+// 翻页归零样板与首刷防双刷标志，也不直写页码回退。
+const {
+  filters,
+  page,
+  pageSize,
+  refreshVersion,
+  setFilter,
+  resetFilters,
+  refresh,
+  afterRowDelete,
+  syncUrlQuery,
+} = useTransactionFilter()
+
+// 行操作弹窗编排（ADR-0045）：意图闭集为唯一事实源，显示开关由「意图非空」派生，
+// 回调序号随 open 递增内化（作表单 key 强制重建实例）。四个行操作弹窗——记一笔（#338）、
+// 退款/加入物品（#339）、编辑（#340）——同经本模块实例开启。
+const { intent, seq, open: openModal, close: closeModal } = useTransactionModalState()
 
 /** 是否有任一激活的过滤条件（控制清除按钮可用性与空态文案）。 */
 const filtersActive = computed(() => Object.values(filters).some((v) => v !== null))
@@ -77,10 +93,13 @@ const merchantOptions = computed(() =>
 )
 
 /** 类型下拉选项：前端 TransactionKind 的 6 种（income/expense/transfer/refund/buy/sell；
- * Rust 侧另有 dividend/split 未在前端类型暴露，不进过滤选项）。 */
-const kindOptions: Array<{ label: string; value: TransactionKind }> = (
-  Object.entries(TRANSACTION_KIND_LABELS) as [TransactionKind, string][]
-).map(([value, label]) => ({ label, value }))
+ * Rust 侧另有 dividend/split 未在前端类型暴露，不进过滤选项）。标签经 t() 随语言切换。 */
+const kindOptions = computed<Array<{ label: string; value: TransactionKind }>>(() =>
+  TRANSACTION_KINDS.map((value) => ({
+    label: t(`transactions.kind.${value}`),
+    value,
+  })),
+)
 
 /** 列表请求（ADR-0030 决策 6：请求发起、loading、行数据归视图）：以模块当前状态装配
  * 请求参数并发起查询。 */
@@ -101,7 +120,7 @@ async function load() {
     data.value = res.items
     total.value = res.total
   } catch (e) {
-    message.error(`加载失败: ${errorMessage(e)}`)
+    message.error(t('transactions.list.loadFailed', { msg: errorMessage(e) }))
   } finally {
     loading.value = false
   }
@@ -123,39 +142,42 @@ watch(() => route.query, (query) => syncUrlQuery(query), { immediate: true })
 /** 页大小选项（不持久化，遵守 ViewState 决策） */
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
 
-/** 「记一笔」分裂按钮（issue #150）：主体点击直接以 expense 打开弹窗（最高频路径一步直达），
- * 右侧箭头展开 5 项菜单（不含退款）。createKind 为 null 表示弹窗关闭；
- * 类型由入口单点表达，弹窗内不再提供切换，中途换类型 = 关闭重开。 */
-const createKind = ref<CreateTransactionKind | null>(null)
+/** 记一笔（create）经共享模块实例开启（意图/序号见上方编排声明）：
+ * 类型由入口单点表达，弹窗内不提供切换，中途换类型 = 关闭重开。 */
 
 /** 下拉选项：5 种可创建类型（refund 不在入口：退款已移出表单域，入口由交易条目
  * 右键菜单承接，独立 ticket 落地前处于过渡态）。标签后附裸键快捷键提示（issue #153），
  * 键位来自 CREATE_KIND_KEYS 单一来源，与 keydown 匹配共用。 */
-const createKindOptions: DropdownOption[] = CREATE_KINDS.map((k) => ({
-  label: `${TRANSACTION_KIND_LABELS[k]} ${CREATE_KIND_KEYS[k]}`,
-  key: k,
-}))
-
-const createTitle = computed(() =>
-  createKind.value ? `记一笔 · ${TRANSACTION_KIND_LABELS[createKind.value]}` : '记一笔',
+const createKindOptions = computed<DropdownOption[]>(() =>
+  CREATE_KINDS.map((k) => ({
+    label: t('transactions.create.kindWithKey', {
+      kind: t(`transactions.kind.${k}`),
+      key: CREATE_KIND_KEYS[k],
+    }),
+    key: k,
+  })),
 )
 
-function openCreate(k: CreateTransactionKind) {
-  createKind.value = k
-}
+const createTitle = computed(() => {
+  const current = intent.value
+  return current?.type === 'create'
+    ? t('transactions.create.titleWithKind', { kind: t(`transactions.kind.${current.kind}`) })
+    : t('transactions.create.title')
+})
 
-function onCreateShowUpdate(show: boolean) {
-  if (!show) createKind.value = null
+/** 记一笔三类入口（顶栏主体 / 子类型下拉 / 裸键快捷键）统一经模块开启。 */
+function openCreate(k: CreateTransactionKind) {
+  void openModal({ type: 'create', kind: k })
 }
 
 // 裸键快捷键（issue #153）：a/z/i/b/s 直达对应类型弹窗，与点下拉对应项同一入口；
 // 焦点在可编辑元素或弹层打开时抑制；随视图装卸，仅交易页生效
 useCreateShortcuts(openCreate)
 
-/** 提交成功：回填意图 refresh（重拉 + 翻回第 1 页，新记录按日期/时间排序最可能落在第 1 页），
- * 保留筛选条件（与手动过滤同等语义，不重置）。 */
+/** 提交成功：关窗（模块意图清回终态），回填意图 refresh（重拉 + 翻回第 1 页，
+ * 新记录按日期/时间排序最可能落在第 1 页），保留筛选条件（与手动过滤同等语义，不重置）。 */
 function onFormCreated() {
-  createKind.value = null
+  closeModal()
   refresh()
 }
 
@@ -184,15 +206,12 @@ function onKindFilterChange(value: TransactionKind | null) {
 async function remove(id: string) {
   try {
     await api.deleteTransaction(id)
-    message.success('已删除')
-    // 删除当前页最后一条 → 回退一页，避免出现空页（调用方直写页码后自行重拉，
-    // 「翻页归零」只存在于模块出口，此处是当前页码内的导航）
-    if (data.value.length === 1 && page.value > 1) {
-      page.value -= 1
-    }
-    await load()
+    message.success(t('transactions.list.deleted'))
+    // 删除成功 → 页码回退入口（ADR-0045）：声明本页删后剩 N 条，回退与重拉由模块内化，
+    // 视图不再直写页码、不再自行发起请求（删前本页 1 条 ⇔ 删后超页，ADR-0008）
+    afterRowDelete(data.value.length - 1)
   } catch (e) {
-    message.error(`删除失败: ${errorMessage(e)}`)
+    message.error(t('transactions.list.deleteFailed', { msg: errorMessage(e) }))
   }
 }
 
@@ -200,86 +219,65 @@ async function remove(id: string) {
  * 遮罩点击不构成关闭意图（issue #252 弹层关闭语义）：确认/取消须显式点击。 */
 function confirmDelete(row: Transaction) {
   dialog.warning({
-    title: '删除交易',
-    content: '确认删除该条交易？删除后不可恢复。',
-    positiveText: '删除',
-    negativeText: '取消',
+    title: t('transactions.deleteDialog.title'),
+    content: t('transactions.deleteDialog.content'),
+    positiveText: t('transactions.deleteDialog.confirm'),
+    negativeText: t('transactions.deleteDialog.cancel'),
     maskClosable: false,
     onPositiveClick: () => remove(row.id),
   })
 }
 
-/** 行内退款弹窗（issue #151）：原交易由右键所在行确定，不经搜索选择；
- * 同一支出可多次发起退款（部分退款语义，不阻断）。
- * refundSeq 作为表单 key：每次打开强制重建表单实例，
- * 金额/币种/账户由 fixedTarget 重新初始化（不依赖弹窗内容卸载）。 */
-const showRefund = ref(false)
-const refundSource = ref<Transaction | null>(null)
-const refundSeq = ref(0)
-
+/** 行内退款弹窗（issue #151）：目标交易行由右键所在行固定（fixed-target），
+ * 序号随每次开启递增（作表单 key 强制重建实例，金额/币种/账户由 fixedTarget
+ * 重新初始化，不依赖弹窗内容卸载）。开启/关闭编排经 TransactionModalState
+ * （ADR-0045）；同一支出可多次发起退款（部分退款语义，不阻断）。 */
 function openRefundFromRow(row: Transaction) {
-  refundSource.value = row
-  refundSeq.value += 1
-  showRefund.value = true
+  void openModal({ type: 'refund', row })
 }
 
+/** 退款提交成功：关窗（编排内化关闭意图）并回填意图 refresh（重拉 + 翻回第 1 页，
+ * 新退款按日期排序最可能落在第 1 页，保留筛选条件）。 */
 function onRefundCreated() {
-  showRefund.value = false
+  closeModal()
   refresh()
 }
 
 /** 编辑弹窗（issue #178，issue #180 扩到 buy/sell）：行右键「编辑」，回填该笔交易
  * 全部业务字段，kind 锁死不可切换（跨 kind 编辑本期边界外，见 issue #176 边界）；
  * 提交走全字段更新命令（update_transaction，与 HTTP PUT 同一行为层权威）。
- * buy/sell 行另取买卖明细（get_transaction_trade，扩展表投影）回填标的/数量/价格/费用；
- * 取明细失败不弹窗（直接报错）。editSeq 作为表单 key：每次打开强制重建表单实例
- * （镜像退款弹窗机制），回填/提交均指向本次右键所在行。提交失败弹窗不关、
- * 已填内容不丢（错误提示与不重置均在表单 composable 内）。 */
-const showEdit = ref(false)
-const editTarget = ref<Transaction | null>(null)
-const editTrade = ref<TransactionTrade | null>(null)
-const editSeq = ref(0)
-
-async function openEditFromRow(row: Transaction) {
-  if (row.kind === 'buy' || row.kind === 'sell') {
-    try {
-      editTrade.value = await api.getTransactionTrade(row.id)
-    } catch (e) {
-      message.error(`无法编辑: ${errorMessage(e)}`)
-      return
-    }
-  } else {
-    editTrade.value = null
-  }
-  editTarget.value = row
-  editSeq.value += 1
-  showEdit.value = true
+ * 开启/关闭编排经 TransactionModalState（ADR-0045，#340）：目标行由意图携带
+ * （fixed-target），序号作表单 key 强制重建实例（回填/提交均指向本次右键所在行）；
+ * buy/sell 的「先取买卖明细再开窗、失败不开窗」时序与慢取竞态守卫内化在模块，
+ * 取数不经视图。提交失败弹窗不关、已填内容不丢（错误提示与不重置均在表单 composable 内）。 */
+function openEditFromRow(row: Transaction) {
+  void openModal({ type: 'edit', row })
 }
 
-/** 编辑成功：关窗并以当前页码重拉列表（保持当前页与筛选，不重置 page → 视图侧 load，
- * 不经模块出口）。 */
+/** 编辑成功：关窗（编排内化关闭意图）并以当前页码重拉列表（保持当前页与筛选，
+ * 不重置 page → 视图侧 load，不经模块出口 refresh 的翻回第 1 页语义）。 */
 function onEditSaved() {
-  showEdit.value = false
+  closeModal()
   void load()
 }
 
-/** 「加入物品」确认弹窗（issue #119 / ADR-0025 创建唯一入口）：原交易由右键所在行固定，
- * 日期/成本/币种只读带出，名称默认备注可微调；提交走既有物品创建命令（溯源必填）。
- * 成功后不手动刷新交易列表（物品写入与交易列表无关），物品 store 经
- * ledger:changed 自动重拉，菜单下次打开即为置灰态。 */
-const showAddItem = ref(false)
-const addItemSource = ref<Transaction | null>(null)
-const addItemSeq = ref(0)
-
+/** 「加入物品」确认弹窗（issue #119 / ADR-0025 创建唯一入口）：目标交易行由右键所在行
+ * 固定，日期/成本/币种只读带出，名称默认备注可微调；提交走既有物品创建命令
+ * （溯源必填）。开启/关闭编排经 TransactionModalState（ADR-0045）；成功与取消都
+ * 只是关窗（物品写入与交易列表无关，物品 store 经 ledger:changed 自动重拉，菜单
+ * 下次打开即为置灰态）。 */
 function openAddItemFromRow(row: Transaction) {
-  addItemSource.value = row
-  addItemSeq.value += 1
-  showAddItem.value = true
+  void openModal({ type: 'add-item', row })
 }
 
-/** 成功与取消都只是关窗（物品列表经 ledger:changed 自动重拉，交易列表无关）。 */
+/** 成功与取消都只关窗（经编排内化关闭意图；物品列表经 ledger:changed 自动重拉）。 */
 function closeAddItem() {
-  showAddItem.value = false
+  closeModal()
+}
+
+/** 退款/加入物品弹窗经 ✕ / ESC 显式关闭：走编排内化关闭（意图清回空终态）。 */
+function onModalShowUpdate(show: boolean) {
+  if (!show) closeModal()
 }
 
 /** 行右键菜单（issue #151 / #119 / #177 / #178 / #180）：除 refund 外行首项「编辑」，
@@ -346,7 +344,8 @@ const pagination = computed<PaginationProps>(() => ({
   showSizePicker: true,
   showQuickJumper: true,
   pageSizes: PAGE_SIZE_OPTIONS,
-  prefix: ({ itemCount }) => h('span', null, () => `共 ${itemCount ?? 0} 条`),
+  prefix: ({ itemCount }) =>
+    h('span', null, () => t('transactions.list.total', { n: itemCount ?? 0 })),
   onChange: (p: number) => {
     page.value = p
     void load()
@@ -358,10 +357,13 @@ const pagination = computed<PaginationProps>(() => ({
   },
 }))
 
-const columns: DataTableColumn<Transaction>[] = [...buildTransactionColumns(reference)]
+// 列经 computed 构造：列名（t()）随语言切换即时重建（列宽总和随之联动）
+const columns = computed<DataTableColumn<Transaction>[]>(() => [
+  ...buildTransactionColumns(reference),
+])
 
 // scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和
-const scrollX = sumFixedColumnWidths(columns)
+const scrollX = computed(() => sumFixedColumnWidths(columns.value))
 
 onMounted(() => {
   // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll；
@@ -380,7 +382,7 @@ onMounted(() => {
       <PinyinSelect
         :value="filters.involvingAccountId"
         :options="accountOptions"
-        placeholder="账户"
+        :placeholder="t('transactions.filter.account')"
         clearable
         style="width: 160px"
         @update:value="onAccountFilterChange"
@@ -388,7 +390,7 @@ onMounted(() => {
       <PinyinSelect
         :value="filters.merchantId"
         :options="merchantOptions"
-        placeholder="商户"
+        :placeholder="t('transactions.filter.merchant')"
         clearable
         style="width: 160px"
         @update:value="onMerchantFilterChange"
@@ -397,7 +399,7 @@ onMounted(() => {
         :formatted-value="filters.dateFrom"
         type="date"
         value-format="yyyy-MM-dd"
-        placeholder="起始日期"
+        :placeholder="t('transactions.filter.dateFrom')"
         clearable
         style="width: 140px"
         @update:formatted-value="onDateFromChange"
@@ -406,7 +408,7 @@ onMounted(() => {
         :formatted-value="filters.dateTo"
         type="date"
         value-format="yyyy-MM-dd"
-        placeholder="结束日期"
+        :placeholder="t('transactions.filter.dateTo')"
         clearable
         style="width: 140px"
         @update:formatted-value="onDateToChange"
@@ -414,7 +416,7 @@ onMounted(() => {
       <AppSelect
         :value="filters.kind"
         :options="kindOptions"
-        placeholder="类型"
+        :placeholder="t('transactions.filter.kind')"
         clearable
         style="width: 120px"
         @update:value="onKindFilterChange"
@@ -426,88 +428,95 @@ onMounted(() => {
         :disabled="!filtersActive"
         @click="resetFilters"
       >
-        清除筛选
+        {{ t('transactions.filter.clear') }}
       </NButton>
       <!-- 分裂按钮：主体直开支出弹窗，箭头展开 5 项类型菜单（issue #150） -->
       <NButtonGroup>
-        <NButton type="primary" @click="openCreate('expense')">记一笔</NButton>
+        <NButton type="primary" @click="openCreate('expense')">{{ t('transactions.create.button') }}</NButton>
         <AppDropdown
           trigger="click"
           :options="createKindOptions"
           @select="(k: string | number) => openCreate(k as CreateTransactionKind)"
         >
-          <NButton type="primary" aria-label="更多记账类型">
+          <NButton type="primary" :aria-label="t('transactions.create.moreTypes')">
             <NIcon><ChevronDown /></NIcon>
           </NButton>
         </AppDropdown>
       </NButtonGroup>
     </NSpace>
     <!-- 快速记账弹窗：标题标明入口选定类型，内嵌收窄后的 TransactionForm（无类型单选），
-         提交成功关闭并刷新列表 -->
+         提交成功关闭并刷新列表；显示开关由模块意图派生，序号作表单 key 强制重建（ADR-0045） -->
     <AppModal
-      :show="createKind !== null"
+      :show="intent?.type === 'create'"
       :title="createTitle"
       preset="card"
       display-directive="if"
       style="width: 480px"
       :bordered="false"
-      @update:show="onCreateShowUpdate"
+      @update:show="(show: boolean) => { if (!show) closeModal() }"
     >
       <TransactionForm
-        v-if="createKind"
-        :kind="createKind"
+        v-if="intent?.type === 'create'"
+        :key="seq"
+        :kind="intent.kind"
         @created="onFormCreated"
       />
     </AppModal>
     <!-- 行内退款弹窗：原交易由右键所在行固定（fixed-target），账户/币种锁定继承，
-         金额默认原交易金额（可改）；提交走现有 kind=refund 写路径 -->
+         金额默认原交易金额（可改）；提交走现有 kind=refund 写路径。
+         开启/关闭经 TransactionModalState 编排（目标行由意图携带，序号作表单 key）。 -->
     <AppModal
-      v-model:show="showRefund"
-      title="退款"
+      :show="intent?.type === 'refund'"
+      :title="t('transactions.refund.title')"
       preset="card"
       display-directive="if"
       style="width: 480px"
       :bordered="false"
+      @update:show="onModalShowUpdate"
     >
       <RefundForm
-        :key="refundSeq"
-        v-if="refundSource"
-        :fixed-target="refundSource"
+        :key="seq"
+        v-if="intent?.type === 'refund'"
+        :fixed-target="intent.row"
         @created="onRefundCreated"
       />
     </AppModal>
-    <!-- 「加入物品」确认弹窗（issue #119）：原交易由右键所在行固定，自动带出只读展示 -->
+    <!-- 「加入物品」确认弹窗（issue #119）：原交易由右键所在行固定，自动带出只读展示。
+         开启/关闭经 TransactionModalState 编排（目标行由意图携带，序号作表单 key）。 -->
     <AppModal
-      v-model:show="showAddItem"
-      title="加入物品"
+      :show="intent?.type === 'add-item'"
+      :title="t('transactions.addItem.title')"
       preset="card"
       display-directive="if"
       style="width: 440px"
       :bordered="false"
+      @update:show="onModalShowUpdate"
     >
       <AddItemForm
-        :key="addItemSeq"
-        v-if="addItemSource"
-        :transaction="addItemSource"
+        :key="seq"
+        v-if="intent?.type === 'add-item'"
+        :transaction="intent.row"
         @created="closeAddItem"
         @cancel="closeAddItem"
       />
     </AppModal>
-    <!-- 编辑弹窗（issue #178）：回填既有交易全部业务字段，kind 锁死；
-         提交走全字段更新命令，成功关窗并刷新列表（保持当前页与筛选） -->
+    <!-- 编辑弹窗（issue #178）：回填既有交易全部业务字段，kind 锁死；提交走全字段更新命令，
+         成功关窗并刷新列表（保持当前页与筛选）。开启/关闭经 TransactionModalState 编排
+         （目标行与买卖明细由意图携带，序号作表单 key 强制重建） -->
     <AppModal
-      v-model:show="showEdit"
-      title="编辑交易"
+      :show="intent?.type === 'edit'"
+      :title="t('transactions.edit.title')"
       preset="card"
       display-directive="if"
       style="width: 480px"
       :bordered="false"
+      @update:show="onModalShowUpdate"
     >
       <TransactionForm
-        :key="editSeq"
-        v-if="editTarget"
-        :editing="editTarget"
-        :trade="editTrade"
+        :key="seq"
+        v-if="intent?.type === 'edit'"
+        :editing="intent.row"
+        :trade="intent.trade"
         @saved="onEditSaved"
       />
     </AppModal>
@@ -539,10 +548,13 @@ onMounted(() => {
       <!-- 空态：过滤无结果时展示明确提示（与加载态区分：loading 时空态节点隐藏）；
            无过滤时为默认「暂无数据」文案 -->
       <template #empty>
-        <NEmpty :description="filtersActive ? '没有符合条件的交易' : '暂无数据'" size="small">
+        <NEmpty
+          :description="filtersActive ? t('transactions.list.emptyFiltered') : t('transactions.list.empty')"
+          size="small"
+        >
           <template v-if="filtersActive" #extra>
             <NButton size="tiny" quaternary type="primary" @click="resetFilters">
-              清除筛选
+              {{ t('transactions.filter.clear') }}
             </NButton>
           </template>
         </NEmpty>

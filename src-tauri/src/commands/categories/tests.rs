@@ -109,7 +109,13 @@ fn delete_category_internal_soft_deletes_and_excludes_from_readback() {
 fn delete_category_internal_returns_not_found_for_missing_id() {
     let conn = setup();
     let err = super::delete_category_internal(&conn, "不存在的id").unwrap_err();
-    assert!(matches!(err, crate::error::AppError::NotFound(_)));
+    assert!(matches!(
+        err,
+        crate::error::AppError::Coded {
+            class: crate::error::ErrClass::NotFound,
+            ..
+        }
+    ));
     assert!(err.to_string().contains("分类不存在"));
 }
 
@@ -127,7 +133,13 @@ fn delete_category_internal_returns_not_found_for_already_deleted() {
     super::delete_category_internal(&conn, &id).unwrap();
     let err = super::delete_category_internal(&conn, &id).unwrap_err();
     assert!(
-        matches!(err, crate::error::AppError::NotFound(_)),
+        matches!(
+            err,
+            crate::error::AppError::Coded {
+                class: crate::error::ErrClass::NotFound,
+                ..
+            }
+        ),
         "已删除分类应再次返回 404"
     );
 }

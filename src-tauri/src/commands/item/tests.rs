@@ -61,6 +61,7 @@ fn seed_purchase_tx(conn: &Connection, date: &str, cost_cents: i64, currency: &s
         },
     )
     .unwrap()
+    .id
 }
 
 /// 关联脚手架交易的创建入参（日期/成本/币种与交易一致，后端以交易值覆盖带出）。

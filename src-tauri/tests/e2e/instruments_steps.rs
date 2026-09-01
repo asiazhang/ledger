@@ -223,7 +223,7 @@ fn assert_delete_instrument_error(world: &mut LedgerWorld, fragment: String) {
 // 按代码即拉添加基金（issue #301 / ADR-0038）：When 注入桩驱动编排接缝
 // ---------------------------------------------------------------------------
 
-/// 驱动添加基金编排接缝并把结果/错误记入 world（供 Then 断言）。
+/// 驱动添加基金编排接缝并把错误记入 world（供 Then 断言；成功经重列标的/现价缓存断言）。
 /// 获取函数收到请求代码时须全等（桩只对目标代码返回详情）。
 fn run_add_fund<F>(world: &mut LedgerWorld, code: String, fetch: F)
 where
@@ -232,14 +232,8 @@ where
     let mut fetch = fetch;
     let outcome = add_fund_by_code_with(&world_conn!(world), &code, &mut fetch);
     match outcome {
-        Ok(result) => {
-            world.last_add_fund = Some(result);
-            world.last_error = None;
-        }
-        Err(e) => {
-            world.last_add_fund = None;
-            world.last_error = Some(e.to_string());
-        }
+        Ok(_) => world.last_error = None,
+        Err(e) => world.last_error = Some(e.to_string()),
     }
 }
 
@@ -295,10 +289,7 @@ fn add_fund_with_stub_not_found(world: &mut LedgerWorld, code: String) {
     let outcome = add_fund_by_code_with(&world_conn!(world), &code, &mut fetch);
     match outcome {
         Ok(_) => panic!("查无此码应报错而非成功"),
-        Err(e) => {
-            world.last_add_fund = None;
-            world.last_error = Some(e.to_string());
-        }
+        Err(e) => world.last_error = Some(e.to_string()),
     }
 }
 

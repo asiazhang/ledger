@@ -56,11 +56,14 @@ AI 驱动的导入**不按文件类型解析**，唯一入口是本地 HTTP API 
 - **弹层关闭语义**：新弹窗一律用 `AppModal`（`src/components/AppModal.vue`，默认遮罩点击不关）不直接用 NModal；useDialog 调用点改用 `useAppDialog` 并显式传 `maskClosable: false`（语义详见界面状态与交互域词汇表 `docs/contexts/CONTEXT-ui-interaction.md`「弹层关闭语义」）。
 - **弹层封装与快捷键抑制（ADR-0035）**：应用内一切弹层（NSelect/NTreeSelect/NDatePicker/NDropdown/NPopconfirm/NModal/useDialog）一律经 `src/components/App*.vue` 封装或 `useAppDialog` 使用——封装接入弹层注册表（显式上报开/关）驱动快捷键抑制，绕过封装会脱离抑制。封装刻意不声明 `show` prop（Vue 对可选 Boolean prop 的缺席转型会把非受控用法变成受控关闭），`:show`/`@update:show` 走 attrs 透传；新增弹层形态时在对应 App* 封装内接线，不回全局 DOM 嗓探。
 - **文件命名约定**：前端多词 `.ts` 模块一律 kebab-case（如 `view-state.ts`）；`.vue` 组件保持 PascalCase；composables 保持 `useXxx` camelCase；Rust 侧遵循 cargo 惯例 snake_case。测试文件命名：默认 `<被测文件名>.test.ts`；单文件超约 800 行时允许拆为以被测文件命名的目录、内部按主题命名（先例 `src/__tests__/TransactionsView/`：`pagination.test.ts`、`filtering.test.ts`、`transfer-row.test.ts` 等，目录名沿用被测文件名大小写，共享辅助收进目录内 `common.ts`）。跨平台考虑：普通模块全小写，避免大小写敏感文件系统上的歧义。
-- **新增后端命令**：`commands.rs`（`src-tauri/src/commands/`）加 `#[tauri::command]` 函数 → `lib.rs` 的 `generate_handler!` 注册 → `src/api/index.ts` 加方法 → 必要时 `src/types/index.ts` 加 TS 类型（对应 `src-tauri/src/models/` serde 结构，注意 `#[serde(rename = "type")]` 字段映射）。
+- **新增后端命令**：`src-tauri/src/commands/` 域内加 `#[tauri::command]` 函数即完成注册（build.rs 扫描注解生成清单，ADR-0047，lib.rs 零改动；只认裸注解 + 紧随 pub fn / pub async fn，其他形态构建报错）→ `src/api/index.ts` 加方法 → 必要时 `src/types/index.ts` 加 TS 类型（对应 `src-tauri/src/models/` serde 结构，注意 `#[serde(rename = "type")]` 字段映射）。Rust 命令集与 TS 调用面的双向全等由 `node scripts/check-commands.js` 拦截（挂 check.sh 与 CI，双向孤儿非零退出）。
+- **界面文案与 i18n（ADR-0049）**：新增用户可见文案一律写入 `src/i18n/locales/<locale>/<域>.json` 并经 `@/i18n` 的 `t()` 引用，不再新增硬编码文案；语言判定链与切换收口在 `src/i18n/`，偏好为轻量设置项；各 locale key 集合全等由 `node scripts/check-i18n-keys.js` 拦截（挂 check.sh 与 CI，双向孤儿非零退出）。刻意不随语言：拼音排序/搜索、周起始日（周一）、ISO 日期格式、输入解析、导出/备份内容。
+- **错误码（ADR-0050）**：新增用户可见错误条件用码化构造器（`AppError::coded` / `codedp` / `coded_not_found`，码 `<域>.<条件>` kebab-case 全仓唯一），中文 message 原样保留；码的 zh/en 模板同步补进 `src/i18n/locales/{zh-CN,en-US}/errors.json`（前端按码插值、无码透传），漏翻由 key 全等门槛拦截。序列化只增不改：不手写错误 JSON 拼接、不改 `kind`/`message` 形态。
 
 ## 测试
 
 - 新增 Rust 业务逻辑：补充 BDD 场景到 `src-tauri/tests/e2e/features/` 与对应 step 定义（`src-tauri/tests/e2e/*_steps.rs`）。仅 HTTP 端点层的行为（经 IPC 不可达，先例 #296/#304）以 `src-tauri/tests/api_server/` 集成测试承载，不重复建 BDD 场景。
 - 新增前端逻辑：补充 Vitest 测试到 `src/__tests__/`（纯函数、composables、组件均可测）。
+- **BDD world 字段准入**（issue #316）：`LedgerWorld` 只收「先前步骤写入、后续步骤读取」的跨步骤状态；单个步骤函数内自产自销的降为局部变量，从未被后续步骤读取的状态不得入 world。
 - 质量门槛即 `./scripts/check.sh` 的覆盖范围（vue-tsc --noEmit、cargo clippy --all-targets --all-features、cargo fmt 无警告）；单测跑法见 `package.json` scripts 与脚本头部注释。
 - 注意：Vite 配置已忽略对 `src-tauri/**` 的文件监听，改 Rust 代码不会触发前端热更新（Rust 热重载由 `tauri dev` 自身处理）。

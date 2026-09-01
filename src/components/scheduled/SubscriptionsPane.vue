@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
 import { computed, h, onMounted, ref, type VNode } from 'vue'
+import { t } from '@/i18n'
 import {
   NCard,
   NButton,
@@ -27,7 +28,7 @@ import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
 import {
   earliestPendingOccurrence,
   scheduledRecurrenceLabel,
-  SCHEDULED_RECURRENCE_OPTIONS,
+  scheduledRecurrenceOptions,
   useScheduledPlanList,
   type ScheduledPlanRow,
 } from '@/composables/useScheduledPlanList'
@@ -103,8 +104,8 @@ const list = useScheduledPlanList<SubscriptionExt>({
   expandDetail: (_plan, detail) => ({
     next: detail ? earliestPendingOccurrence(detail) : null,
   }),
-  loadErrorText: '加载订阅失败',
-  cancelConfirmText: '取消后不再扣款，已生成的交易与历史期次保留。确认取消？',
+  loadErrorText: () => t('scheduled.pane.subscriptionLoadError'),
+  cancelConfirmText: () => t('scheduled.pane.subscriptionCancelConfirm'),
   onStatusChanged: refreshSpend,
   onOpenDetail: (row) => void planDetailRef.value?.open(row.plan.core.id),
 })
@@ -127,12 +128,12 @@ function resetCreateForm() {
 
 async function create() {
   if (!accountId.value) {
-    message.warning('请选择扣款账户')
+    message.warning(t('scheduled.form.selectAccount'))
     return
   }
   const amountCents = yuanToCents(amountYuan.value)
   if (amountCents === null || amountCents <= 0) {
-    message.warning('请输入大于 0 的金额')
+    message.warning(t('scheduled.form.amountPositive'))
     return
   }
   try {
@@ -140,13 +141,13 @@ async function create() {
     await api.createScheduledTransaction(
       createForm.buildCreateInput({ kind: 'subscription', amountCents, merchantId }),
     )
-    message.success('已创建订阅')
+    message.success(t('scheduled.toast.subscriptionCreated'))
     showCreateModal.value = false
     resetCreateForm()
     await list.load()
     refreshSpend()
   } catch (e) {
-    message.error(`创建失败: ${errorMessage(e)}`)
+    message.error(t('scheduled.toast.createFailed', { message: errorMessage(e) }))
   }
 }
 
@@ -168,7 +169,7 @@ const editMerchantOptions = computed<{ label: string; value: string }[]>(() => {
   const base = reference.merchants.map((m) => ({ label: m.name, value: m.id }))
   const current = editCurrentMerchantId.value
   if (current && !reference.merchantMap.has(current)) {
-    base.unshift({ label: '（已删除商户）', value: current })
+    base.unshift({ label: t('scheduled.form.deletedMerchant'), value: current })
   }
   return base
 })
@@ -186,7 +187,7 @@ function openEdit(row: SubscriptionRow) {
 async function saveEdit() {
   if (!editingId.value) return
   if (!editAccountId.value) {
-    message.warning('请选择扣款账户')
+    message.warning(t('scheduled.form.selectAccount'))
     return
   }
   try {
@@ -197,12 +198,12 @@ async function saveEdit() {
       merchant_id: await editForm.resolveMerchant(editCurrentMerchantId.value),
       note: editNote.value.trim() || null,
     })
-    message.success('已保存')
+    message.success(t('scheduled.toast.saved'))
     showEditModal.value = false
     await list.load()
     refreshSpend()
   } catch (e) {
-    message.error(`保存失败: ${errorMessage(e)}`)
+    message.error(t('scheduled.toast.saveFailed', { message: errorMessage(e) }))
   }
 }
 
@@ -224,14 +225,17 @@ function statusLabel(status: string): string {
   return scheduledStatusLabel(status)
 }
 
-const columns: DataTableColumns<SubscriptionRow> = [
+/** 周期下拉选项（computed 现取标签，切语言即时生效） */
+const recurrenceOptions = computed(scheduledRecurrenceOptions)
+
+const columns = computed<DataTableColumns<SubscriptionRow>>(() => [
   {
-    title: '备注',
+    title: t('scheduled.column.note'),
     key: 'note',
     render: (row) => row.plan.core.note ?? '—',
   },
   {
-    title: '商户',
+    title: t('scheduled.column.merchant'),
     key: 'merchant',
     // 改名即时生效（引用指向 id）：merchantMap 含软删商户会话缓存，历史计划照常显示
     render: (row) => {
@@ -240,30 +244,30 @@ const columns: DataTableColumns<SubscriptionRow> = [
     },
   },
   {
-    title: '分类',
+    title: t('scheduled.column.category'),
     key: 'category',
     render: (row) => reference.categoryPath(row.plan.core.category_id) || '—',
   },
   {
-    title: '扣款账户',
+    title: t('scheduled.column.account'),
     key: 'account',
     render: (row) => reference.accountMap.get(row.plan.core.account_id)?.name ?? row.plan.core.account_id,
   },
   {
-    title: '金额',
+    title: t('scheduled.column.amount'),
     key: 'amount',
     render: (row) => formatAmount(row.plan.core.amount_cents, reference.getCurrency(row.plan.core.currency_code)),
   },
   {
-    title: '周期',
+    title: t('scheduled.column.recurrence'),
     key: 'recurrence',
     render: (row) =>
       scheduledRecurrenceLabel(row.plan.core.recurrence_type, row.plan.core.recurrence_interval),
   },
-  { title: '开始日', key: 'start_date', render: (row) => row.plan.core.start_date },
-  { title: '状态', key: 'status', render: (row) => statusLabel(row.plan.core.status) },
+  { title: t('scheduled.column.startDate'), key: 'start_date', render: (row) => row.plan.core.start_date },
+  { title: t('scheduled.column.status'), key: 'status', render: (row) => statusLabel(row.plan.core.status) },
   {
-    title: '下期扣款',
+    title: t('scheduled.column.nextCharge'),
     key: 'next',
     // 测试锚点：无 pending 期次（预生成窗口之外）时断言占位，不现场推算日期
     render: (row) =>
@@ -273,12 +277,12 @@ const columns: DataTableColumns<SubscriptionRow> = [
         row.ext.next
           ? `${row.ext.next.scheduled_date} · ${formatAmount(row.ext.next.amount_cents, reference.getCurrency(row.plan.core.currency_code))}`
           : row.detailFailed
-            ? '加载失败'
+            ? t('scheduled.list.loadFailed')
             : '—',
       ),
   },
   {
-    title: '操作',
+    title: t('scheduled.column.actions'),
     key: 'actions',
     // 行操作描述符（可用性矩阵/标签/run）由模块构建；此处按描述符渲染，
     // 含 confirm 文案的动作经 AppPopconfirm 二次确认（弹层纪律 ADR-0035）。
@@ -332,7 +336,7 @@ const columns: DataTableColumns<SubscriptionRow> = [
                 'data-testid': `op-edit-${row.plan.core.id}`,
                 onClick: () => openEdit(row),
               },
-              () => '编辑',
+              () => t('scheduled.action.edit'),
             ),
           )
         }
@@ -341,7 +345,7 @@ const columns: DataTableColumns<SubscriptionRow> = [
       return h(NSpace, { size: 4 }, () => buttons)
     },
   },
-]
+])
 
 onMounted(() => {
   void list.load()
@@ -350,7 +354,7 @@ onMounted(() => {
 
 <template>
   <NSpace vertical :size="16">
-    <NCard title="订阅清单" size="small">
+    <NCard :title="t('scheduled.pane.subscriptionList')" size="small">
       <template #header-extra>
         <NSpace :size="12">
           <NButtonGroup size="small">
@@ -370,7 +374,7 @@ onMounted(() => {
             data-testid="sub-create-open"
             @click="showCreateModal = true"
           >
-            新建订阅
+            {{ t('scheduled.pane.createSubscription') }}
           </NButton>
         </NSpace>
       </template>
@@ -387,7 +391,7 @@ onMounted(() => {
     <!-- 新建订阅弹窗：提交成功关闭并刷新列表（与记一笔弹窗同模式） -->
     <AppModal
       v-model:show="showCreateModal"
-      title="新建订阅"
+      :title="t('scheduled.pane.createSubscription')"
       preset="card"
       display-directive="if"
       style="width: 480px"
@@ -397,49 +401,49 @@ onMounted(() => {
            金额+币种、周期+间隔 各并一行减少行数 -->
       <NForm label-placement="left" :show-feedback="false" size="small">
         <NSpace vertical :size="12">
-          <NFormItem label="备注">
+          <NFormItem :label="t('scheduled.form.note')">
             <NInput
               v-model:value="note"
               data-testid="sub-note"
-              placeholder="服务名称，如：视频会员"
+              :placeholder="t('scheduled.form.subscriptionNotePlaceholder')"
               style="width: 280px"
             />
           </NFormItem>
-          <NFormItem label="扣款账户">
+          <NFormItem :label="t('scheduled.form.account')">
             <PinyinSelect
               v-model:value="accountId"
               :options="accountOptions"
-              placeholder="选择账户"
+              :placeholder="t('scheduled.form.accountPlaceholder')"
               style="width: 200px"
             />
           </NFormItem>
-          <NFormItem label="分类">
+          <NFormItem :label="t('scheduled.form.category')">
             <AppTreeSelect
               v-model:value="categoryId"
               :options="categoryTreeOptions"
-              placeholder="选择分类"
+              :placeholder="t('scheduled.form.categoryPlaceholder')"
               filterable
               clearable
               :consistent-menu-width="false"
               style="width: 220px"
             />
           </NFormItem>
-          <NFormItem label="商户">
+          <NFormItem :label="t('scheduled.form.merchant')">
             <PinyinSelect
               v-model:value="merchantRef"
               :options="merchantOptions"
               tag
               clearable
-              placeholder="选择商户，可直接输入新名称"
+              :placeholder="t('scheduled.form.merchantPlaceholder')"
               style="width: 220px"
               data-testid="sub-merchant"
             />
           </NFormItem>
-          <NFormItem label="金额">
+          <NFormItem :label="t('scheduled.form.amount')">
             <NInput
               v-model:value="amountYuan"
               data-testid="sub-amount"
-              placeholder="每期金额"
+              :placeholder="t('scheduled.form.amountPerPeriodPlaceholder')"
               style="width: 160px"
             />
             <AppSelect
@@ -448,9 +452,9 @@ onMounted(() => {
               style="width: 130px; margin-left: 8px"
             />
           </NFormItem>
-          <NFormItem label="重复">
+          <NFormItem :label="t('scheduled.form.recurrence')">
             <NSpace :size="8" align="center" :wrap="false">
-              <span>每</span>
+              <span>{{ t('scheduled.form.every') }}</span>
               <NInputNumber
                 v-model:value="recurrenceInterval"
                 :min="1"
@@ -459,12 +463,12 @@ onMounted(() => {
               />
               <AppSelect
                 v-model:value="recurrenceType"
-                :options="[...SCHEDULED_RECURRENCE_OPTIONS]"
+                :options="recurrenceOptions"
                 style="width: 100px"
               />
             </NSpace>
           </NFormItem>
-          <NFormItem label="开始日">
+          <NFormItem :label="t('scheduled.form.startDate')">
             <AppDatePicker
               v-model:formatted-value="startDate"
               type="date"
@@ -473,8 +477,8 @@ onMounted(() => {
             />
           </NFormItem>
           <NSpace justify="end">
-            <NButton data-testid="sub-create-cancel" @click="showCreateModal = false">取消</NButton>
-            <NButton type="primary" data-testid="sub-create" @click="create">创建订阅</NButton>
+            <NButton data-testid="sub-create-cancel" @click="showCreateModal = false">{{ t('scheduled.form.cancel') }}</NButton>
+            <NButton type="primary" data-testid="sub-create" @click="create">{{ t('scheduled.pane.createSubscriptionSubmit') }}</NButton>
           </NSpace>
         </NSpace>
       </NForm>
@@ -483,7 +487,7 @@ onMounted(() => {
     <!-- 编辑订阅弹窗（issue #162）：仅非金额字段（备注/账户/分类），无金额输入 -->
     <AppModal
       v-model:show="showEditModal"
-      title="编辑订阅"
+      :title="t('scheduled.pane.editSubscription')"
       preset="card"
       display-directive="if"
       style="width: 480px"
@@ -491,47 +495,47 @@ onMounted(() => {
     >
       <NForm label-placement="left" :show-feedback="false" size="small">
         <NSpace vertical :size="12">
-          <NFormItem label="备注">
+          <NFormItem :label="t('scheduled.form.note')">
             <NInput
               v-model:value="editNote"
               data-testid="sub-edit-note"
-              placeholder="服务名称"
+              :placeholder="t('scheduled.form.subscriptionNoteEditPlaceholder')"
               style="width: 280px"
             />
           </NFormItem>
-          <NFormItem label="扣款账户">
+          <NFormItem :label="t('scheduled.form.account')">
             <PinyinSelect
               v-model:value="editAccountId"
               :options="accountOptions"
-              placeholder="选择账户"
+              :placeholder="t('scheduled.form.accountPlaceholder')"
               style="width: 200px"
             />
           </NFormItem>
-          <NFormItem label="分类">
+          <NFormItem :label="t('scheduled.form.category')">
             <AppTreeSelect
               v-model:value="editCategoryId"
               :options="categoryTreeOptions"
-              placeholder="选择分类"
+              :placeholder="t('scheduled.form.categoryPlaceholder')"
               filterable
               clearable
               :consistent-menu-width="false"
               style="width: 220px"
             />
           </NFormItem>
-          <NFormItem label="商户">
+          <NFormItem :label="t('scheduled.form.merchant')">
             <PinyinSelect
               v-model:value="editMerchantRef"
               :options="editMerchantOptions"
               tag
               clearable
-              placeholder="选择商户，可直接输入新名称"
+              :placeholder="t('scheduled.form.merchantPlaceholder')"
               style="width: 220px"
               data-testid="sub-edit-merchant"
             />
           </NFormItem>
           <NSpace justify="end">
-            <NButton data-testid="sub-edit-cancel" @click="showEditModal = false">取消</NButton>
-            <NButton type="primary" data-testid="sub-edit-save" @click="saveEdit">保存</NButton>
+            <NButton data-testid="sub-edit-cancel" @click="showEditModal = false">{{ t('scheduled.form.cancel') }}</NButton>
+            <NButton type="primary" data-testid="sub-edit-save" @click="saveEdit">{{ t('scheduled.form.save') }}</NButton>
           </NSpace>
         </NSpace>
       </NForm>

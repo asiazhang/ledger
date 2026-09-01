@@ -2,8 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises, enableAutoUnmount, DOMWrapper } from '@vue/test-utils'
 import { NPopconfirm, NSelect, NDatePicker } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
+import { nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useItemsStore } from '@/stores/items'
+import { applyLocale } from '@/i18n'
 import ItemsView from '@/views/ItemsView.vue'
 import type { Currency, ItemDailyCost, ItemInput, ItemWithDailyCost, Transaction } from '@/types'
 
@@ -223,6 +225,24 @@ describe('ItemsView 物品列表', () => {
     expect(guide.exists()).toBe(true)
     expect(guide.text()).toContain('「交易」页右键一笔支出交易')
     expect(guide.text()).toContain('加入物品')
+  })
+
+  it('英文界面：列表卡片与创建提示以英文渲染（issue #352）', async () => {
+    await applyLocale('en-US')
+    let text = ''
+    let hintText = ''
+    try {
+      const wrapper = mount(ItemsView)
+      await flushPromises()
+      text = wrapper.text()
+      hintText = wrapper.find('[data-testid="item-create-hint"]').text()
+    } finally {
+      await applyLocale('zh-CN')
+      await nextTick()
+    }
+    expect(text).toContain('Items')
+    expect(hintText).toContain('Items cannot be added directly')
+    expect(text).toContain('Go to Transactions')
   })
 
   it('点击删除并确认：delete_item 收到对应 id，列表移除该物品', async () => {

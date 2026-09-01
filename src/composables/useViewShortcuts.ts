@@ -3,6 +3,7 @@ import type { Router } from 'vue-router'
 import type { DropdownOption } from 'naive-ui'
 import { hasOpenOverlay } from '@/composables/overlayRegistry'
 import { getSavedSidebarOrder, saveSidebarOrder, clearSidebarOrder } from '@/utils/view-state'
+import { t } from '@/i18n'
 
 export interface ViewShortcut {
   /** 路由 name（与侧边栏菜单 key 一致） */
@@ -135,12 +136,12 @@ export function buildSidebarSortMenuOptions(
   const atTop = index <= 0
   const atBottom = index === order.length - 1
   return [
-    { label: '上移一位', key: 'up', disabled: atTop },
-    { label: '下移一位', key: 'down', disabled: atBottom },
-    { label: '移到顶部', key: 'top', disabled: atTop },
-    { label: '移到底部', key: 'bottom', disabled: atBottom },
+    { label: t('common.sidebarSort.up'), key: 'up', disabled: atTop },
+    { label: t('common.sidebarSort.down'), key: 'down', disabled: atBottom },
+    { label: t('common.sidebarSort.top'), key: 'top', disabled: atTop },
+    { label: t('common.sidebarSort.bottom'), key: 'bottom', disabled: atBottom },
     { type: 'divider', key: 'sort-divider' },
-    { label: '恢复默认排序', key: 'reset', disabled: false },
+    { label: t('common.sidebarSort.reset'), key: 'reset', disabled: false },
   ]
 }
 

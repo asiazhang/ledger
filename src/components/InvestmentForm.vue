@@ -10,6 +10,7 @@ import {
 import AppSelect from '@/components/AppSelect.vue'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
+import { t } from '@/i18n'
 import { useInvestmentForm } from '@/composables/useInvestmentForm'
 import type { Transaction, TransactionTrade } from '@/types'
 
@@ -33,7 +34,7 @@ const ctx = useInvestmentForm(props.kind, {
 <template>
   <NForm label-placement="left" :show-feedback="false" size="small">
     <NSpace vertical :size="12">
-      <NFormItem label="金额">
+      <NFormItem :label="t('investments.form.amount')">
         <!-- 基金申赎（issue #302 / ADR-0038 金额权威）：确认单整分金额为权威输入；
              其余类型金额由后端按数量 × 单价 ± 手续费重算，此处只展示 -->
         <NInputNumber
@@ -41,7 +42,7 @@ const ctx = useInvestmentForm(props.kind, {
           v-model:value="ctx.amount.value"
           :min="0"
           :precision="2"
-          placeholder="确认金额（以确认单为准）"
+          :placeholder="t('investments.form.amountPlaceholder')"
           style="width: 160px"
         />
         <NInputNumber
@@ -49,7 +50,7 @@ const ctx = useInvestmentForm(props.kind, {
           :value="ctx.investmentAmount.value"
           :disabled="true"
           :precision="2"
-          placeholder="自动计算"
+          :placeholder="t('investments.form.amountAuto')"
           style="width: 160px"
         />
         <AppSelect
@@ -60,23 +61,23 @@ const ctx = useInvestmentForm(props.kind, {
         />
       </NFormItem>
 
-      <NFormItem label="投资账户">
+      <NFormItem :label="t('investments.form.account')">
         <PinyinSelect
           v-model:value="ctx.accountId.value"
           :options="ctx.investmentAccountOptions.value"
-          placeholder="选择投资账户"
+          :placeholder="t('investments.form.accountPlaceholder')"
           style="width: 200px"
         />
       </NFormItem>
 
-      <NFormItem label="标的">
+      <NFormItem :label="t('investments.form.instrument')">
         <!-- 远程搜索标的（字典同步全市场后不可前端全量驻留）：拼音过滤由后端
              list_instruments 以统一模糊语义（ADR-0027）完成，本组件的本地
              filter 在 remote 下不生效，仅收口 filterable 保持实体下拉载体一致。 -->
         <PinyinSelect
           v-model:value="ctx.instrumentId.value"
           :options="ctx.instrumentOptions.value"
-          placeholder="选择标的（输入代码/名称/拼音搜索）"
+          :placeholder="t('investments.form.instrumentPlaceholder')"
           remote
           clearable
           :loading="ctx.searchingInstruments.value"
@@ -84,21 +85,21 @@ const ctx = useInvestmentForm(props.kind, {
           style="width: 240px"
           @search="ctx.searchInstruments"
         >
-          <template #empty>未找到标的，可通过同步或 AI 导入新增</template>
+          <template #empty>{{ t('investments.form.instrumentEmpty') }}</template>
         </PinyinSelect>
       </NFormItem>
 
-      <NFormItem :label="ctx.isFundInstrument.value ? '份额' : '数量'">
+      <NFormItem :label="ctx.isFundInstrument.value ? t('investments.form.shares') : t('investments.form.quantity')">
         <NInputNumber
           v-model:value="ctx.quantity.value"
           :min="0"
           :precision="4"
-          :placeholder="ctx.isFundInstrument.value ? '确认份额（以确认单为准）' : '数量'"
+          :placeholder="ctx.isFundInstrument.value ? t('investments.form.sharesPlaceholder') : t('investments.form.quantityPlaceholder')"
           style="width: 160px"
         />
       </NFormItem>
 
-      <NFormItem :label="ctx.isFundInstrument.value ? '单价（净值）' : '单价'">
+      <NFormItem :label="ctx.isFundInstrument.value ? t('investments.form.unitPriceNav') : t('investments.form.unitPrice')">
         <!-- 基金：单价由（金额 ∓ 手续费）÷ 份额反算，只读展示 4 位小数净值（净值
              以万分之一元刻度无损保真，ADR-0038）；其余类型单价为权威输入 -->
         <NInputNumber
@@ -106,7 +107,7 @@ const ctx = useInvestmentForm(props.kind, {
           :value="ctx.derivedPrice.value"
           :disabled="true"
           :precision="4"
-          placeholder="由金额与份额反算"
+          :placeholder="t('investments.form.derivedPricePlaceholder')"
           style="width: 160px"
         />
         <NInputNumber
@@ -114,31 +115,31 @@ const ctx = useInvestmentForm(props.kind, {
           v-model:value="ctx.price.value"
           :min="0"
           :precision="2"
-          placeholder="单价"
+          :placeholder="t('investments.form.unitPricePlaceholder')"
           style="width: 160px"
         />
       </NFormItem>
 
-      <NFormItem label="手续费">
+      <NFormItem :label="t('investments.form.fee')">
         <NInputNumber
           v-model:value="ctx.fee.value"
           :min="0"
           :precision="2"
-          placeholder="手续费"
+          :placeholder="t('investments.form.feePlaceholder')"
           style="width: 160px"
         />
       </NFormItem>
 
-      <NFormItem label="日期">
+      <NFormItem :label="t('investments.form.date')">
         <AppDatePicker v-model:value="ctx.date.value" type="date" style="width: 200px" />
       </NFormItem>
 
-      <NFormItem label="备注">
-        <NInput v-model:value="ctx.note.value" placeholder="备注（可选）" style="width: 280px" />
+      <NFormItem :label="t('investments.form.note')">
+        <NInput v-model:value="ctx.note.value" :placeholder="t('investments.form.notePlaceholder')" style="width: 280px" />
       </NFormItem>
 
       <NButton type="primary" @click="ctx.submit">
-        {{ editing ? '保存修改' : submitLabel }}
+        {{ editing ? t('investments.form.saveEdit') : submitLabel }}
       </NButton>
     </NSpace>
   </NForm>

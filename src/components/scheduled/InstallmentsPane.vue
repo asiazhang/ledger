@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
 import { computed, h, onMounted, ref, type VNode } from 'vue'
+import { t } from '@/i18n'
 import {
   NCard,
   NButton,
@@ -27,7 +28,7 @@ import { useReferenceStore } from '@/stores/reference'
 import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
 import {
   scheduledRecurrenceLabel,
-  SCHEDULED_RECURRENCE_OPTIONS,
+  scheduledRecurrenceOptions,
   useScheduledPlanList,
   type ScheduledPlanRow,
 } from '@/composables/useScheduledPlanList'
@@ -76,6 +77,9 @@ const showCreateModal = ref(false)
 const totalYuan = ref('')
 const periods = ref<number | null>(null)
 
+/** 周期下拉选项（与另两页签同单源；computed 现取标签，切语言即时生效） */
+const recurrenceOptions = computed(scheduledRecurrenceOptions)
+
 /** 每期金额预览：总额与期数均合法时给出每期与末期（含尾差），否则为空。 */
 const schedule = computed(() => {
   const totalCents = yuanToCents(totalYuan.value)
@@ -93,8 +97,11 @@ const previewText = computed(() => {
   if (!s) return ''
   const currency = reference.getCurrency(currencyCode.value)
   const per = formatAmount(s.perPeriodCents, currency)
-  if (s.lastPeriodCents === s.perPeriodCents) return `每期 ${per}`
-  return `每期 ${per} · 末期 ${formatAmount(s.lastPeriodCents, currency)}（含尾差）`
+  if (s.lastPeriodCents === s.perPeriodCents) return t('scheduled.preview.perPeriod', { amount: per })
+  return t('scheduled.preview.withLast', {
+    per,
+    last: formatAmount(s.lastPeriodCents, currency),
+  })
 })
 
 /** 重置新建表单到初始态：公共字段走接缝 reset，总额/期数留本页签。 */
@@ -106,21 +113,21 @@ function resetCreateForm() {
 
 async function create() {
   if (!accountId.value) {
-    message.warning('请选择扣款账户')
+    message.warning(t('scheduled.form.selectAccount'))
     return
   }
   const totalCents = yuanToCents(totalYuan.value)
   if (totalCents === null || totalCents <= 0) {
-    message.warning('请输入大于 0 的总金额')
+    message.warning(t('scheduled.form.totalPositive'))
     return
   }
   const totalOccurrences = periods.value
   if (totalOccurrences === null || totalOccurrences < 1) {
-    message.warning('请输入不小于 1 的期数')
+    message.warning(t('scheduled.form.periodsMin'))
     return
   }
   if (totalCents < totalOccurrences) {
-    message.warning('总金额不能小于期数（每期至少 1 分）')
+    message.warning(t('scheduled.form.totalBelowPeriods'))
     return
   }
   const s = installmentSchedule(totalCents, totalOccurrences)
@@ -135,12 +142,12 @@ async function create() {
         specific: { total_amount_cents: totalCents, total_occurrences: totalOccurrences },
       }),
     )
-    message.success('已创建分期计划')
+    message.success(t('scheduled.toast.installmentCreated'))
     showCreateModal.value = false
     resetCreateForm()
     await list.load()
   } catch (e) {
-    message.error(`创建失败: ${errorMessage(e)}`)
+    message.error(t('scheduled.toast.createFailed', { message: errorMessage(e) }))
   }
 }
 
@@ -164,8 +171,8 @@ const list = useScheduledPlanList<InstallmentExt>({
     completedCount: detail?.completed_occurrences ?? 0,
     completedAmountCents: detail?.completed_amount_cents ?? 0,
   }),
-  loadErrorText: '加载分期失败',
-  cancelConfirmText: '取消后不再自动扣款，已生成的交易与历史期次保留。确认取消？',
+  loadErrorText: () => t('scheduled.pane.installmentLoadError'),
+  cancelConfirmText: () => t('scheduled.pane.installmentCancelConfirm'),
   onOpenDetail: (row) => void planDetailRef.value?.open(row.plan.core.id),
 })
 const { loading, statusFilter, statusFilterOptions, filteredRows } = list
@@ -190,14 +197,14 @@ function progressPercentage(row: InstallmentRow): number {
   return Math.min(100, (row.ext.completedCount / total) * 100)
 }
 
-const columns: DataTableColumns<InstallmentRow> = [
+const columns = computed<DataTableColumns<InstallmentRow>>(() => [
   {
-    title: '备注',
+    title: t('scheduled.column.note'),
     key: 'note',
     render: (row) => row.plan.core.note ?? '—',
   },
   {
-    title: '商户',
+    title: t('scheduled.column.merchant'),
     key: 'merchant',
     // 改名即时生效（引用指向 id）：merchantMap 含软删商户会话缓存，历史计划照常显示
     render: (row) => {
@@ -206,29 +213,34 @@ const columns: DataTableColumns<InstallmentRow> = [
     },
   },
   {
-    title: '分类',
+    title: t('scheduled.column.category'),
     key: 'category',
     render: (row) => reference.categoryPath(row.plan.core.category_id) || '—',
   },
   {
-    title: '扣款账户',
+    title: t('scheduled.column.account'),
     key: 'account',
     render: (row) => reference.accountMap.get(row.plan.core.account_id)?.name ?? row.plan.core.account_id,
   },
   {
-    title: '总金额',
+    title: t('scheduled.column.totalAmount'),
     key: 'total',
     render: (row) =>
       formatAmount(row.plan.total_amount_cents ?? 0, reference.getCurrency(row.plan.core.currency_code)),
   },
   {
-    title: '进度',
+    title: t('scheduled.column.progress'),
     key: 'progress',
     render: (row) => {
       const currency = reference.getCurrency(row.plan.core.currency_code)
       const text = row.detailFailed
-        ? '加载失败'
-        : `已还 ${formatAmount(row.ext.completedAmountCents, currency)} / ${formatAmount(row.plan.total_amount_cents ?? 0, currency)} · ${row.ext.completedCount}/${row.plan.total_occurrences ?? 0} 期`
+        ? t('scheduled.list.loadFailed')
+        : t('scheduled.progress.repaid', {
+            paid: formatAmount(row.ext.completedAmountCents, currency),
+            total: formatAmount(row.plan.total_amount_cents ?? 0, currency),
+            count: row.ext.completedCount,
+            occurrences: row.plan.total_occurrences ?? 0,
+          })
       return h('div', { 'data-testid': `inst-progress-${row.plan.core.id}` }, [
         row.detailFailed
           ? null
@@ -242,16 +254,17 @@ const columns: DataTableColumns<InstallmentRow> = [
       ])
     },
   },
+
   {
-    title: '周期',
+    title: t('scheduled.column.recurrence'),
     key: 'recurrence',
     render: (row) =>
       scheduledRecurrenceLabel(row.plan.core.recurrence_type, row.plan.core.recurrence_interval),
   },
-  { title: '开始日', key: 'start_date', render: (row) => row.plan.core.start_date },
-  { title: '状态', key: 'status', render: (row) => statusLabel(row.plan.core.status) },
+  { title: t('scheduled.column.startDate'), key: 'start_date', render: (row) => row.plan.core.start_date },
+  { title: t('scheduled.column.status'), key: 'status', render: (row) => statusLabel(row.plan.core.status) },
   {
-    title: '操作',
+    title: t('scheduled.column.actions'),
     key: 'actions',
     // 行操作描述符（可用性矩阵/标签/run）由模块构建；此处按描述符渲染，
     // 含 confirm 文案的动作经 AppPopconfirm 二次确认（弹层纪律 ADR-0035）
@@ -293,7 +306,7 @@ const columns: DataTableColumns<InstallmentRow> = [
       return h(NSpace, { size: 4 }, () => buttons)
     },
   },
-]
+])
 
 onMounted(() => {
   void list.load()
@@ -302,7 +315,7 @@ onMounted(() => {
 
 <template>
   <NSpace vertical :size="16">
-    <NCard title="分期清单" size="small">
+    <NCard :title="t('scheduled.pane.installmentList')" size="small">
       <template #header-extra>
         <NSpace :size="12">
           <NButtonGroup size="small">
@@ -322,7 +335,7 @@ onMounted(() => {
             data-testid="inst-create-open"
             @click="showCreateModal = true"
           >
-            新建分期
+            {{ t('scheduled.pane.createInstallment') }}
           </NButton>
         </NSpace>
       </template>
@@ -339,7 +352,7 @@ onMounted(() => {
     <!-- 新建分期弹窗：总金额 + 期数实时预览；其余字段与订阅表单同款 -->
     <AppModal
       v-model:show="showCreateModal"
-      title="新建分期"
+      :title="t('scheduled.pane.createInstallment')"
       preset="card"
       display-directive="if"
       style="width: 480px"
@@ -347,11 +360,11 @@ onMounted(() => {
     >
       <NForm label-placement="left" :show-feedback="false" size="small">
         <NSpace vertical :size="12">
-          <NFormItem label="总金额">
+          <NFormItem :label="t('scheduled.form.totalAmount')">
             <NInput
               v-model:value="totalYuan"
               data-testid="inst-total"
-              placeholder="分期总金额"
+              :placeholder="t('scheduled.form.totalAmountPlaceholder')"
               style="width: 160px"
             />
             <AppSelect
@@ -360,61 +373,61 @@ onMounted(() => {
               style="width: 130px; margin-left: 8px"
             />
           </NFormItem>
-          <NFormItem label="期数">
+          <NFormItem :label="t('scheduled.form.periods')">
             <NInputNumber
               v-model:value="periods"
               data-testid="inst-periods"
               :min="1"
               :precision="0"
-              placeholder="总期数"
+              :placeholder="t('scheduled.form.periodsPlaceholder')"
               style="width: 160px"
             />
           </NFormItem>
-          <NFormItem label="每期金额">
+          <NFormItem :label="t('scheduled.form.perPeriod')">
             <span data-testid="inst-preview">{{ previewText }}</span>
           </NFormItem>
-          <NFormItem label="备注">
+          <NFormItem :label="t('scheduled.form.note')">
             <NInput
               v-model:value="note"
               data-testid="inst-note"
-              placeholder="分期用途，如：手机分期"
+              :placeholder="t('scheduled.form.installmentNotePlaceholder')"
               style="width: 280px"
             />
           </NFormItem>
-          <NFormItem label="扣款账户">
+          <NFormItem :label="t('scheduled.form.account')">
             <PinyinSelect
               v-model:value="accountId"
               :options="accountOptions"
-              placeholder="选择账户"
+              :placeholder="t('scheduled.form.accountPlaceholder')"
               style="width: 200px"
               data-testid="inst-account"
             />
           </NFormItem>
-          <NFormItem label="分类">
+          <NFormItem :label="t('scheduled.form.category')">
             <AppTreeSelect
               v-model:value="categoryId"
               :options="categoryTreeOptions"
-              placeholder="选择分类"
+              :placeholder="t('scheduled.form.categoryPlaceholder')"
               filterable
               clearable
               :consistent-menu-width="false"
               style="width: 220px"
             />
           </NFormItem>
-          <NFormItem label="商户">
+          <NFormItem :label="t('scheduled.form.merchant')">
             <PinyinSelect
               v-model:value="merchantRef"
               :options="merchantOptions"
               tag
               clearable
-              placeholder="选择商户，可直接输入新名称"
+              :placeholder="t('scheduled.form.merchantPlaceholder')"
               style="width: 220px"
               data-testid="inst-merchant"
             />
           </NFormItem>
-          <NFormItem label="重复">
+          <NFormItem :label="t('scheduled.form.recurrence')">
             <NSpace :size="8" align="center" :wrap="false">
-              <span>每</span>
+              <span>{{ t('scheduled.form.every') }}</span>
               <NInputNumber
                 v-model:value="recurrenceInterval"
                 :min="1"
@@ -423,12 +436,12 @@ onMounted(() => {
               />
               <AppSelect
                 v-model:value="recurrenceType"
-                :options="[...SCHEDULED_RECURRENCE_OPTIONS]"
+                :options="recurrenceOptions"
                 style="width: 100px"
               />
             </NSpace>
           </NFormItem>
-          <NFormItem label="开始日">
+          <NFormItem :label="t('scheduled.form.startDate')">
             <AppDatePicker
               v-model:formatted-value="startDate"
               type="date"
@@ -437,8 +450,8 @@ onMounted(() => {
             />
           </NFormItem>
           <NSpace justify="end">
-            <NButton data-testid="inst-create-cancel" @click="showCreateModal = false">取消</NButton>
-            <NButton type="primary" data-testid="inst-create" @click="create">创建分期</NButton>
+            <NButton data-testid="inst-create-cancel" @click="showCreateModal = false">{{ t('scheduled.form.cancel') }}</NButton>
+            <NButton type="primary" data-testid="inst-create" @click="create">{{ t('scheduled.pane.createInstallmentSubmit') }}</NButton>
           </NSpace>
         </NSpace>
       </NForm>

@@ -1,20 +1,27 @@
 //! 事件发射：写入/产物变更后的粗粒度失效信号。
 //!
+//! 本模块只承载**机制**（事件名常量 + `emit_*` 发射入口 + `EVENT_APP` 镜像句柄）；
+//! 「哪个写操作发哪个信号」的**知识**已收拢到信号映射单点 `signals::signals_for`
+//! （ADR-0044）：壳层经 `signals::emit_for` 判定后走到这里发射。
+//!
 //! - `ledger:changed`（issue #79）：参考数据（`currencies / accounts / categories / merchants`）
-//!   任一写入成功后由调用方 emit，前端 `useReferenceStore` 订阅后自动重拉参考表
-//!   （商户表的后端命令面已登记为参考写入；前端 store 接线随商户前端接入落地）。
-//!   「是否为参考写入」的判定收敛在本模块：IPC 命令清单见 [`REFERENCE_WRITE_COMMANDS`]，
-//!   纯函数 [`is_reference_write`] 承载判定，命令层统一经 [`emit_reference_changed`] 走该
-//!   判定；HTTP 端点（账号/分类 create/delete）结构上即参考写入，直接经
-//!   [`emit_ledger_changed`] 发射。交易类写入不触发。
+//!   任一写入成功后由调用方 emit，前端 `useReferenceStore` 订阅后自动重拉参考表。
+//!   发射判定在映射单点：两壳（IPC / HTTP）全部写命令经 `signals::emit_for`
+//!   按写操作身份 + 结果证据判定后发射（ADR-0044 / #332-#334）；交易类写入基线零信号
+//!   （唯一例外——交易写「即建商户」——同样经 `signals` 映射携证据发射，
+//!   ADR-0044 / issue #331）。旧字符串白名单机制（`REFERENCE_WRITE_COMMANDS` /
+//!   `is_reference_write` / `emit_reference_changed` / `emit_ledger_changed_if_present`）
+//!   已随 #335 收缩删除，「谁发什么」的判定知识唯一载体是 `signals` 映射单点，
+//!   壳侧接线由两壳声明表 × 映射表交叉核对兜底（`signals_cross_check`）。
 //! - `ledger:backups-changed`（issue #129）：自动备份完成 / 受管备份清理成功后 emit，
 //!   与前者平行、同样无 payload；前端设置页订阅后自动刷新备份列表与自动备份状态。
 //!   深路径执行点拿不到 `AppHandle`，经 [`init_event_app`] 注入的镜像句柄发射。
 //! - `ledger:prices-changed`（ADR-0031，issue #236）：行情同步命令写入价格后 emit——
 //!   增量 `sync_holding_prices` 成功且实际写入、全量 `sync_instruments` 结束且有落库
 //!   （含用户中断，中断保留已落库价格）；与前者平行、同样无 payload，前端价格消费方
-//!   各自订阅后重拉自身数据。「是否 emit」的判定收敛在同步命令侧
-//!   （`commands::sync::should_emit_prices_changed`），本模块只承载事件名与发射入口。
+//!   各自订阅后重拉自身数据。「是否 emit」的判定单点在 `signals` 映射
+//!   （ADR-0044，#333 起价格域四命令壳层经 `emit_for` 归一化证据后发射），
+//!   本模块只承载事件名与发射入口。
 
 use std::sync::OnceLock;
 
@@ -33,8 +40,8 @@ pub const BACKUPS_CHANGED: &str = "ledger:backups-changed";
 /// 语义锚「价格数据已变更」，覆盖 MarketPrice / PriceHistory / FxRateHistory；生产者：
 /// 两个行情同步命令按判定发出（增量实际写入 / 全量有落库）、场外基金按代码即拉
 /// 落现价缓存时（issue #301 / ADR-0038，未取到净值不广播）与手动报价实际写入
-/// 任一落点时（issue #291 / ADR-0036，生产者清单再添一处；判定见
-/// `commands::investment::manual_price::should_emit_prices_changed`）；前端价格消费方
+/// 任一落点时（issue #291 / ADR-0036，生产者清单再添一处；证据归一化与「是否发」
+/// 判定单点见 `signals` 映射，ADR-0044 / issue #333）；前端价格消费方
 /// 各自订阅后重拉自身数据。
 pub const PRICES_CHANGED: &str = "ledger:prices-changed";
 
@@ -64,81 +71,21 @@ pub fn emit_backups_changed_current() {
 }
 
 /// 发出 `ledger:prices-changed` 信号（无 payload）。事件发射失败不影响同步结果，静默忽略。
-/// 「是否 emit」不在本模块判定：两同步命令经 `commands::sync::should_emit_prices_changed`
-/// 统一判定后才走到这里。
+/// 「是否 emit」不在本模块判定：壳层经 `signals` 映射单点判定（ADR-0044 / issue #333）
+/// 后才走到这里。
 pub fn emit_prices_changed(app: &AppHandle) {
     let _ = app.emit(PRICES_CHANGED, ());
 }
 
-/// 参考写入 IPC 命令清单：命中即改动参考表，成功后应 emit `ledger:changed`。
-/// 新增参考写入命令时同步扩充本清单，并由 [`is_reference_write`] 单测锁定。
-const REFERENCE_WRITE_COMMANDS: &[&str] = &[
-    "create_account",
-    "update_account",
-    "delete_account",
-    "create_category",
-    "update_category",
-    "reorder_categories",
-    "delete_category",
-    "create_merchant",
-    "update_merchant",
-    "delete_merchant",
-];
-
-/// 薄胶判定：该 IPC 命令是否为参考写入（决定写入成功后是否发失效信号）。
-pub fn is_reference_write(command: &str) -> bool {
-    REFERENCE_WRITE_COMMANDS.contains(&command)
-}
-
 /// 发出 `ledger:changed` 信号（无 payload）。事件发射失败不影响写入结果，静默忽略。
+/// 「发不发」不在本模块判定：壳层经 `signals` 映射单点判定（ADR-0044）后才走到这里。
 pub fn emit_ledger_changed(app: &AppHandle) {
     let _ = app.emit(LEDGER_CHANGED, ());
-}
-
-/// HTTP 端点发射入口：`app` 为 `Option` 仅为集成测试留的缝（不经真实 Tauri 运行时
-/// 构建路由，传 `None` 跳过发射）；生产路径由 `start_http_server` 注入 `Some`。
-pub fn emit_ledger_changed_if_present(app: &Option<AppHandle>) {
-    if let Some(app) = app {
-        emit_ledger_changed(app);
-    }
-}
-
-/// 参考写入 IPC 命令成功后统一入口：以命令名为证据走 [`is_reference_write`] 判定，
-/// 命中才发射。判定清单集中在本模块（新增参考写入命令须同步进入
-/// [`REFERENCE_WRITE_COMMANDS`]，由单测锁定映射）；交易类命令误接入此处时会被
-/// 判定拦下（不 emit）。
-pub fn emit_reference_changed(app: &AppHandle, command: &str) {
-    if is_reference_write(command) {
-        emit_ledger_changed(app);
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn reference_write_commands_are_recognized() {
-        for cmd in REFERENCE_WRITE_COMMANDS {
-            assert!(is_reference_write(cmd), "「{cmd}」应为参考写入");
-        }
-    }
-
-    #[test]
-    fn non_reference_writes_are_rejected() {
-        // 交易类写入与只读命令不得误判为参考写入（交易写入本期不 emit）。
-        for cmd in [
-            "create_transaction",
-            "create_transactions",
-            "delete_transaction",
-            "list_accounts",
-            "list_categories",
-            "list_transactions",
-            "create_budget",
-        ] {
-            assert!(!is_reference_write(cmd), "「{cmd}」不应视为参考写入");
-        }
-    }
 
     #[test]
     fn event_name_is_generic() {

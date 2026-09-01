@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
+import { t } from '@/i18n'
 
 /**
  * 可点击账户名（账户名下钻，issue #96/#97）。
@@ -54,7 +55,7 @@ function go() {
     v-if="isLink"
     type="button"
     class="account-link"
-    :title="'查看该账户的交易'"
+    :title="t('common.link.viewAccount')"
     :style="{ color: accent.base, '--accent-hover': accent.hover }"
     @click="go"
   >

@@ -5,7 +5,7 @@ use crate::commands::investment::{
     validate_fund_code,
 };
 use crate::commands::sync::persist::price_value_to_cents;
-use crate::error::AppError;
+use crate::error::{AppError, ErrClass};
 use crate::models::{
     Account, AccountBalance, AccountInput, AccountType, AccountUpdateInput, Category,
     CategoryInput, CreateTransactionResult, Currency, FundDetail, Instrument, InstrumentInput,
@@ -13,6 +13,7 @@ use crate::models::{
     TransactionBatchInput, TransactionInput, TransactionListFilter, TransactionListResult,
     UpdateTransactionInput,
 };
+use crate::signals::{WriteEvidence, WriteOp, emit_for};
 use crate::transaction::amount::TransactionKind;
 use axum::extract::{FromRef, Path, Query, State};
 use axum::http::StatusCode;
@@ -34,7 +35,8 @@ use utoipa::ToSchema;
 /// （`setup_app_with_fund_fetch`），全部基金端点集成测试不触真实网络。
 pub type FundDetailFetcher = Arc<dyn Fn(&str) -> Result<FundDetail, AppError> + Send + Sync>;
 
-/// HTTP 服务器状态：数据库连接 + 可选 `AppHandle`（参考写入成功后发 `ledger:changed`）。
+/// HTTP 服务器状态：数据库连接 + 可选 `AppHandle`（写事务提交成功后经信号映射单点
+/// 发失效信号，ADR-0044）。
 ///
 /// `app` 为 `Option`：集成测试（`tests/api_server/`）不经真实 Tauri 运行时构建路由，
 /// 传 `None` 即跳过发射分支（后端 emit 视为薄胶，不造 AppHandle 测试桩）；
@@ -69,12 +71,18 @@ impl IntoResponse for AppError {
             AppError::Invalid(_) => StatusCode::BAD_REQUEST,
             AppError::Parse(_) => StatusCode::BAD_REQUEST,
             AppError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            // 码化错误按归类取状态（ADR-0050）：Invalid→400、NotFound→404
+            AppError::Coded { class, .. } => match class {
+                ErrClass::Invalid => StatusCode::BAD_REQUEST,
+                ErrClass::NotFound => StatusCode::NOT_FOUND,
+            },
         };
         (status, Json(self)).into_response()
     }
 }
 
-/// 统一错误响应格式：`{ "kind": "<ErrorKind>", "message": "<中文描述>" }`。
+/// 统一错误响应格式：`{ "kind": "<ErrorKind>", "message": "<中文描述>" }`；
+/// 码化错误额外携带稳定 `code` 与可选 `params`（issue #342 二期 / ADR-0050，只增不改）。
 #[derive(ToSchema)]
 #[allow(dead_code)]
 struct ErrorResponse {
@@ -82,6 +90,10 @@ struct ErrorResponse {
     kind: String,
     /// 中文错误描述
     message: String,
+    /// 稳定错误码（可选，仅码化错误与系统类错误携带），领域语言命名如 `transfer.to-account-required`
+    code: Option<String>,
+    /// 插值参数（可选，按消息中动态值出现顺序）
+    params: Option<Vec<String>>,
 }
 
 /// Ledger 记账 API 的 OpenAPI 契约文档。
@@ -108,6 +120,7 @@ struct ErrorResponse {
     paths(
         list_accounts_handler,
         create_account_handler,
+        update_account_handler,
         delete_account_handler,
         list_account_balances_handler,
         list_categories_handler,
@@ -149,7 +162,7 @@ struct ErrorResponse {
         ErrorResponse
     ))
 )]
-struct ApiDoc;
+pub(crate) struct ApiDoc;
 
 /// 生成式返回 OpenAPI 文档（机器可读契约，供 AI 查询端点结构）。
 async fn openapi_json_handler() -> impl IntoResponse {
@@ -221,6 +234,60 @@ pub fn start_http_server(app: AppHandle, state: Arc<Mutex<Connection>>) {
     });
 }
 
+/// HTTP 壳「端点 → 写操作身份」声明表（ADR-0044 决策 3 / #335）：本壳数据面
+/// （OpenAPI 契约自描述枚举的 method + path 端点集，与 `#[utoipa::path]` 注解同源）
+/// 的逐一身份声明——写端点声明其 [`WriteOp`]（与 handler 内 `emit_after_write` 的
+/// 判定键同源），读端点显式 [`None`]（刻意无写身份，是决策而非遗漏）。
+///
+/// 交叉核对测试（`signals_cross_check`）以 [`ApiDoc::openapi`] 枚举的端点集与本表
+/// 双向比对：「新写端点忘了声明身份」「表键漂移」「契约漏记端点」测试期即红；
+/// `Some` 身份再经 `signals_for` 的编译期穷尽 match 保证映射不缺行。
+/// `GET /api/v1/openapi.json` 是契约自举端点（文档自身不入契约），不持数据身份、不入表。
+///
+/// **新增 / 删除 / 改动端点必须同步本表**——漏声明不是「不发信号」的合法形态。
+pub const HTTP_ENDPOINT_WRITE_OPS: &[(&str, Option<WriteOp>)] = &[
+    ("POST /api/v1/accounts", Some(WriteOp::CreateAccount)),
+    ("PUT /api/v1/accounts/{id}", Some(WriteOp::UpdateAccount)),
+    ("DELETE /api/v1/accounts/{id}", Some(WriteOp::DeleteAccount)),
+    ("GET /api/v1/accounts", None),
+    ("GET /api/v1/accounts/balances", None),
+    ("GET /api/v1/categories", None),
+    ("POST /api/v1/categories", Some(WriteOp::CreateCategory)),
+    (
+        "DELETE /api/v1/categories/{id}",
+        Some(WriteOp::DeleteCategory),
+    ),
+    ("GET /api/v1/currencies", None),
+    ("GET /api/v1/transactions", None),
+    (
+        "POST /api/v1/transactions/batch",
+        Some(WriteOp::BatchCreateTransactions),
+    ),
+    (
+        "PUT /api/v1/transactions/{id}",
+        Some(WriteOp::UpdateTransaction),
+    ),
+    (
+        "DELETE /api/v1/transactions/{id}",
+        Some(WriteOp::DeleteTransaction),
+    ),
+    ("GET /api/v1/instruments", None),
+    ("POST /api/v1/instruments", Some(WriteOp::CreateInstrument)),
+    ("GET /api/v1/funds/{code}", None),
+    ("GET /api/v1/merchants", None),
+    ("GET /api/v1/import/knowledge", None),
+];
+
+/// HTTP 壳的单点映射发射（ADR-0044）：写事务**提交成功后**按写操作身份 + 结果证据经
+/// `signals` 映射单点判定「发不发、发哪个」——壳层只转发，不持有判定知识，也不再出现
+/// 按端点手写的 emit 样板。`app` 为 `None`（集成测试不经真实 Tauri 运行时，见
+/// [`ApiState`]）跳过发射分支，语义不变；发射失败静默忽略，不影响写结果。
+fn emit_after_write(app: &Option<AppHandle>, op: WriteOp, evidence: WriteEvidence) {
+    if let Some(app) = app {
+        emit_for(app, op, evidence);
+    }
+}
+
 #[utoipa::path(
     get,
     path = "/api/v1/accounts",
@@ -264,8 +331,7 @@ async fn create_account_handler(
     let id = crate::db::write(&conn, |conn| {
         crate::commands::create_account_idempotent_internal(conn, input)
     })?;
-    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
-    crate::events::emit_ledger_changed_if_present(&app);
+    emit_after_write(&app, WriteOp::CreateAccount, WriteEvidence::None);
     Ok((StatusCode::CREATED, Json(id)))
 }
 
@@ -300,8 +366,7 @@ async fn update_account_handler(
         crate::commands::update_account_internal(conn, &id, input)?;
         crate::commands::get_account_internal(conn, &id)
     })?;
-    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
-    crate::events::emit_ledger_changed_if_present(&app);
+    emit_after_write(&app, WriteOp::UpdateAccount, WriteEvidence::None);
     Ok(Json(updated))
 }
 
@@ -330,8 +395,7 @@ async fn delete_account_handler(
     crate::db::write(&conn, |conn| {
         crate::commands::delete_account_internal(conn, &id)
     })?;
-    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
-    crate::events::emit_ledger_changed_if_present(&app);
+    emit_after_write(&app, WriteOp::DeleteAccount, WriteEvidence::None);
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -399,8 +463,7 @@ async fn create_category_handler(
     let id = crate::db::write(&conn, |conn| {
         crate::commands::create_category_idempotent_internal(conn, input)
     })?;
-    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
-    crate::events::emit_ledger_changed_if_present(&app);
+    emit_after_write(&app, WriteOp::CreateCategory, WriteEvidence::None);
     Ok((StatusCode::CREATED, Json(id)))
 }
 
@@ -429,8 +492,7 @@ async fn delete_category_handler(
     crate::db::write(&conn, |conn| {
         crate::commands::delete_category_internal(conn, &id)
     })?;
-    // 参考写入成功 → 通知前端重拉参考数据（issue #79）
-    crate::events::emit_ledger_changed_if_present(&app);
+    emit_after_write(&app, WriteOp::DeleteCategory, WriteEvidence::None);
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -656,12 +718,12 @@ async fn create_instrument_handler(
         }
     })?;
     // 落现价即广播价格失效信号（ADR-0031，与按代码即拉 IPC 命令同一信号语义；
-    // 零变化不广播）。标的不属参考数据四表：不发 `ledger:changed` 参考失效信号。
-    if outcome.price_written
-        && let Some(app) = &state.app
-    {
-        crate::events::emit_prices_changed(app);
-    }
+    // 零变化不广播）；「发不发」经映射单点判定（ADR-0044），证据 = 基金增强分支是否落现价。
+    emit_after_write(
+        &state.app,
+        WriteOp::CreateInstrument,
+        WriteEvidence::PriceWritten(outcome.price_written),
+    );
     Ok((StatusCode::CREATED, Json(outcome.instrument_id)))
 }
 
@@ -828,14 +890,18 @@ async fn list_transactions_handler(
 )]
 async fn batch_create_transactions_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
+    State(app): State<Option<AppHandle>>,
     Json(body): Json<TransactionBatchInput>,
 ) -> Result<Json<Vec<CreateTransactionResult>>, AppError> {
     // 连接层统一写入口（ADR-0032，issue #245）：批次事务由 run 自持，提交点置脏/
     // 到期检查单点；整批回滚不置脏由写入口闭包失败语义保证。
-    let results = crate::db::write(&conn, |conn| {
+    let outcome = crate::db::write(&conn, |conn| {
         crate::commands::batch::TransactionBatch::run(conn, body.transactions, body.dedup)
     })?;
-    Ok(Json(results))
+    // 信号在写事务提交成功后发射（映射单点判定，ADR-0044）：批内任一行即建商户才发
+    // 参考失效信号（修复 HTTP 导入即建商户后前端商户字典陈旧，issue #331）。
+    emit_after_write(&app, WriteOp::BatchCreateTransactions, outcome.evidence);
+    Ok(Json(outcome.results))
 }
 
 #[utoipa::path(
@@ -860,14 +926,18 @@ async fn batch_create_transactions_handler(
 )]
 async fn update_transaction_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
+    State(app): State<Option<AppHandle>>,
     Path(id): Path<String>,
     Json(input): Json<UpdateTransactionInput>,
 ) -> Result<Json<Transaction>, AppError> {
     // 连接层统一写入口（ADR-0032）：修改与读回同一写闭包，提交点置脏/检查单点。
-    let updated = crate::db::write(&conn, |conn| {
-        crate::commands::update_transaction_internal(conn, &id, input.into())?;
-        crate::commands::get_transaction_internal(conn, &id)
+    let (evidence, updated) = crate::db::write(&conn, |conn| {
+        let evidence = crate::commands::update_transaction_internal(conn, &id, input.into())?;
+        let updated = crate::commands::get_transaction_internal(conn, &id)?;
+        Ok((evidence, updated))
     })?;
+    // 仅即建商户发参考失效信号（ADR-0044，issue #331）。
+    emit_after_write(&app, WriteOp::UpdateTransaction, evidence);
     Ok(Json(updated))
 }
 

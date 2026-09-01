@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { api } from '@/api'
+import { t } from '@/i18n'
 import type { SyncHoldingPricesResult } from '@/types'
 
 export type HoldingPriceSyncStatus = 'idle' | 'success' | 'error'
@@ -44,7 +45,7 @@ export function useHoldingPriceSync() {
         return 'success'
       } catch (e: any) {
         const detail = e instanceof Error ? e.message : String(e)
-        resultMessage.value = `同步失败：${detail}`
+        resultMessage.value = t('investments.sync.failed', { message: detail })
         status.value = 'error'
         return 'error'
       } finally {

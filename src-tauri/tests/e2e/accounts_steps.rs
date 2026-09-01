@@ -12,12 +12,62 @@ use crate::common::query_accounts_by_name;
 use crate::world::LedgerWorld;
 
 // ---------------------------------------------------------------------------
+// 共享辅助（步骤函数体共用的落库/查询形状）
+// ---------------------------------------------------------------------------
+
+/// 直插一个账户行并注册名称→id 映射（「创建账户…初始余额」与「存在账户…初始余额」
+/// 两个步骤共用同一落库形状）。
+fn insert_account_and_register(
+    world: &mut LedgerWorld,
+    name: String,
+    kind: String,
+    currency: String,
+    initial_balance: i64,
+) {
+    let id = new_uuid();
+    let now = now_iso();
+    world_conn!(world)
+        .execute(
+            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0)",
+            params![id, name, kind, currency, initial_balance, now, now, 1, device_id()],
+        )
+        .unwrap();
+    world.account_name_to_id.insert(name, id);
+}
+
+/// 未删除的隐藏账户（黑洞账户）名单（存在/不残留两个对称断言共用同一查询）。
+fn hidden_account_names(world: &LedgerWorld) -> Vec<String> {
+    let conn = world_conn!(world);
+    let mut stmt = conn
+        .prepare("SELECT name FROM accounts WHERE is_deleted=0 AND is_hidden=1")
+        .unwrap();
+    stmt.query_map([], |r| r.get(0))
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
 // When
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // When：编辑账户 / 余额调整（ADR-0026 黑洞转账）
 // ---------------------------------------------------------------------------
+
+/// 带初始余额的账户前置（余额调整场景用）：仅为「创建账户…初始余额」的 Given 语义别名
+/// （cucumber 不跨 given/when 匹配，缺失本步骤时场景整体被静默跳过）。
+#[given(expr = "存在账户 {string} 类型 {string} 币种 {string} 初始余额 {int}")]
+fn create_account_with_initial_balance(
+    world: &mut LedgerWorld,
+    name: String,
+    kind: String,
+    currency: String,
+    initial_balance: i64,
+) {
+    insert_account_and_register(world, name, kind, currency, initial_balance);
+}
 
 /// 缺失币种的黑洞账户场景用：补一条 1:1 汇率（MVP 多币种汇率 1:1，本位币折算所需）。
 #[given(expr = "存在汇率 {string} 兑本位币 {float}")]
@@ -95,24 +145,44 @@ fn delete_last_transaction(world: &mut LedgerWorld) {
     delete_transaction_internal(&world_conn!(world), &tx_id).expect("删除交易失败");
 }
 
+/// 注入「余额调整中途失败」：调整的交易写入（行为层创建入口 → Writer 落库）
+/// 被 BEFORE INSERT 触发器 RAISE(ABORT) 挡下，而黑洞账户 ensure 在其之前已插入——
+/// 纯测试侧注入（spec #169 / #310 定案同款），检验外层事务壳持有回滚、
+/// 同事务即建的黑洞账户不残留（issue #310）。
+#[when(expr = "注入余额调整交易写入失败触发器")]
+fn inject_adjust_tx_failure_trigger(world: &mut LedgerWorld) {
+    world_conn!(world)
+        .execute(
+            "CREATE TRIGGER block_adjust_tx BEFORE INSERT ON transactions \
+             BEGIN SELECT RAISE(ABORT, '测试注入：余额调整写入失败'); END",
+            [],
+        )
+        .expect("注入触发器失败");
+}
+
 // ---------------------------------------------------------------------------
 // Then
 // ---------------------------------------------------------------------------
 
 #[then(expr = "账户列表应包含黑洞账户 {string}")]
 fn check_black_hole_exists(world: &mut LedgerWorld, name: String) {
-    let conn = world_conn!(world);
-    let mut stmt = conn
-        .prepare("SELECT name FROM accounts WHERE is_deleted=0 AND is_hidden=1")
-        .unwrap();
-    let names: Vec<String> = stmt
-        .query_map([], |r| r.get(0))
-        .unwrap()
-        .filter_map(|r| r.ok())
-        .collect();
+    let names = hidden_account_names(world);
     assert!(
         names.contains(&name),
         "应包含黑洞账户 '{}'，实际 {:?}",
+        name,
+        names
+    );
+}
+
+/// 黑洞账户不残留断言（issue #310 回滚场景用）：按币种指名的黑洞账户不应存在——
+/// 调整失败整体回滚后，同事务即建的黑洞账户不得残留（种子预置的 CNY/HKD 不受影响）。
+#[then(expr = "账户列表不应包含黑洞账户 {string}")]
+fn check_black_hole_absent(world: &mut LedgerWorld, name: String) {
+    let names = hidden_account_names(world);
+    assert!(
+        !names.contains(&name),
+        "不应存在黑洞账户 '{}'，实际 {:?}",
         name,
         names
     );
@@ -152,16 +222,7 @@ fn create_account(
     currency: String,
     initial_balance: i64,
 ) {
-    let id = new_uuid();
-    let now = now_iso();
-    world_conn!(world)
-        .execute(
-            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0)",
-            params![id, name, kind, currency, initial_balance, now, now, 1, device_id()],
-        )
-        .unwrap();
-    world.account_name_to_id.insert(name, id);
+    insert_account_and_register(world, name, kind, currency, initial_balance);
 }
 
 #[when(expr = "删除账户 {string}")]
