@@ -16,7 +16,7 @@ import {
   type DropdownOption,
   type PaginationProps,
 } from 'naive-ui'
-import { ChevronDown } from '@vicons/ionicons5'
+import { ChevronBack, ChevronDown, ChevronForward } from '@vicons/ionicons5'
 import AppModal from '@/components/AppModal.vue'
 import AppDropdown from '@/components/AppDropdown.vue'
 import AppSelect from '@/components/AppSelect.vue'
@@ -36,8 +36,12 @@ import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/tran
 import { isLendingEntryKind } from '@/domain/lending'
 import {
   TIME_PERIOD_PRESETS,
+  formatPeriodLabel,
   matchPreset,
+  periodRange,
   presetRange,
+  rangeToPeriod,
+  stepPeriod,
   type TimePeriodPreset,
 } from '@/utils/time-period'
 import {
@@ -86,15 +90,38 @@ const { intent, seq, open: openModal, close: closeModal } = useTransactionModalS
 /** 是否有任一激活的过滤条件（控制清除按钮可用性与空态文案）。 */
 const filtersActive = computed(() => Object.values(filters).some((v) => v !== null))
 
-// 时间维度行（issue #381/#382）：预设芯片是过滤模块「部分修改过滤维度」入口的触发方式，
+// 时间维度行（issue #381/#382/#383）：预设芯片是过滤模块「部分修改过滤维度」入口的触发方式，
 // 点选即把含边界日期快照写入 dateFrom/dateTo（TransactionFilter 零改动，翻页归零与
 // 自动刷新免费继承）。「全部」= 无日期过滤 = 默认态；高亮纯派生（matchPreset）——
 // 当前区间恰为某预设定义（相对今天）时点亮，跨月/季/年后自动熄灭，列表快照不漂移。
 // 今天以分钟级 tick 保持响应式（视图长驻跨期场景下预设定义随之翻转）；不持久化，
 // 清除筛选与 URL 下钻复位把日期维度清空后自然回「全部」。
+// 期间步进器（#383）在同一行尾部：游标不落状态——步进前从当前区间唯一反推
+//（单位，期间），±1 后换算回区间写回快照；「全部」（无可反推区间）时置灰；
+// 不钳制未来期间（空列表是诚实行为）。快照语义保持：步进后的高亮仍纯派生，
+// 步到恰为某预设的历史周期时该芯片自然点亮（如当年 < 一步落到去年）。
 const nowTick = ref(Date.now())
 let nowTicker: ReturnType<typeof setInterval> | undefined
 const activePreset = computed(() => matchPreset(filters.dateFrom, filters.dateTo, nowTick.value))
+
+/** 当前可步进游标：从日期区间唯一反推的自然周期；「全部」/任意区间为 null（置灰）。 */
+const currentPeriod = computed(() => rangeToPeriod(filters.dateFrom, filters.dateTo))
+
+/** 期间标签随步进实时更新（常驻行尾）；无游标时展示占位符。 */
+const periodLabelText = computed(() =>
+  currentPeriod.value
+    ? formatPeriodLabel(currentPeriod.value)
+    : t('transactions.filter.periodLabel.none'),
+)
+
+/** 步进：< / > 按当前区间单位步进到上一个/下一个自然周期并写回快照
+ *（同值守卫在模块内；步进必然变更区间，不触发守卫）。 */
+function onStepPeriod(delta: 1 | -1) {
+  const p = currentPeriod.value
+  if (!p) return
+  const range = periodRange(stepPeriod(p, delta))
+  setFilter({ dateFrom: range.from, dateTo: range.to })
+}
 
 /** 点芯片：换算含边界日期快照并写入过滤模块（同值守卫在模块内，重复点同芯片不重刷）。 */
 function onPresetSelect(preset: TimePeriodPreset) {
@@ -417,6 +444,19 @@ onBeforeUnmount(() => {
 })
 </script>
 
+<style scoped>
+/* 期间标签：常驻步进器中央，min-width 抑制不同期间文案宽度抖动 */
+.period-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 96px;
+  padding: 0 8px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+</style>
+
 <template>
   <NSpace vertical :size="12">
     <!-- 过滤行（第一行）：账户（涉及账户语义，可清除）+ 商户（可清除，issue #191）+ 类型（可清除）+ 清除筛选。
@@ -471,8 +511,9 @@ onBeforeUnmount(() => {
         </AppDropdown>
       </NButtonGroup>
     </NSpace>
-    <!-- 时间维度行（第二行，issue #381/#382）：单选分段芯片「全部 | 当月 | 当季 | 当年 | 去年」。
-         点芯片写入日期快照（翻页归零 + 重拉免费继承）；点亮纯派生；「全部」= 默认态。
+    <!-- 时间维度行（第二行，issue #381/#382/#383）：单选分段芯片「全部 | 当月 | 当季 | 当年 | 去年」
+         ＋尾部常驻期间步进器「< 期间标签 >」。点芯片/步进写入日期快照（翻页归零 + 重拉免费继承）；
+         点亮纯派生；「全部」= 默认态；「全部」时步进置灰，不钳制未来期间。
          分段控件非弹层（#381），不涉弹层注册表与快捷键抑制。 -->
     <NSpace :size="8" align="center" :wrap="true">
       <NButtonGroup size="small">
@@ -486,6 +527,27 @@ onBeforeUnmount(() => {
           @click="onPresetSelect(p)"
         >
           {{ presetLabel(p) }}
+        </NButton>
+      </NButtonGroup>
+      <NButtonGroup size="small">
+        <NButton
+          size="small"
+          quaternary
+          :disabled="!currentPeriod"
+          :aria-label="t('transactions.filter.period.prev')"
+          @click="onStepPeriod(-1)"
+        >
+          <NIcon><ChevronBack /></NIcon>
+        </NButton>
+        <span class="period-label">{{ periodLabelText }}</span>
+        <NButton
+          size="small"
+          quaternary
+          :disabled="!currentPeriod"
+          :aria-label="t('transactions.filter.period.next')"
+          @click="onStepPeriod(1)"
+        >
+          <NIcon><ChevronForward /></NIcon>
         </NButton>
       </NButtonGroup>
     </NSpace>
