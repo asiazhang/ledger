@@ -9,6 +9,7 @@ use tower::ServiceExt;
 use tauri_app_lib::api_server::{ApiState, FundDetailFetcher, build_router};
 use tauri_app_lib::db;
 use tauri_app_lib::error::AppError;
+use tauri_app_lib::events::SignalEmitter;
 use tauri_app_lib::models::{FundDetail, FundNav};
 
 pub(crate) async fn body_to_bytes(body: Body) -> Vec<u8> {
@@ -27,11 +28,28 @@ pub(crate) fn setup_app_with_fund_fetch(
     let mut conn = db::open_in_memory().unwrap();
     db::init_db(&mut conn).unwrap();
     let conn = Arc::new(Mutex::new(conn));
-    // 集成测试不经真实 Tauri 运行时，`app` 传 None（发射分支跳过，见 ApiState 注释）
+    // 集成测试不经真实 Tauri 运行时，发射槽传 None（发射分支跳过，见 ApiState 注释）
     let app = build_router(ApiState {
         conn: conn.clone(),
-        app: None,
+        emitter: None,
         fund_fetch,
+    });
+    (app, conn)
+}
+
+/// 装配带受控发射器的应用（spec #367）：发射槽接到外部提供的发射器上，
+/// 供「写请求返回后信号最终到达」的集成断言观察事件交接与送达
+///（先例：`setup_app_with_fund_fetch` 的东财桩注入，同一「真端点 + 受控接缝」形状）。
+pub(crate) fn setup_app_with_emitter(
+    emitter: Arc<dyn SignalEmitter>,
+) -> (Router, Arc<Mutex<rusqlite::Connection>>) {
+    let mut conn = db::open_in_memory().unwrap();
+    db::init_db(&mut conn).unwrap();
+    let conn = Arc::new(Mutex::new(conn));
+    let app = build_router(ApiState {
+        conn: conn.clone(),
+        emitter: Some(emitter),
+        fund_fetch: None,
     });
     (app, conn)
 }

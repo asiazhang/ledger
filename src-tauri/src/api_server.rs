@@ -6,6 +6,7 @@ use crate::commands::investment::{
 };
 use crate::commands::sync::persist::price_value_to_cents;
 use crate::error::{AppError, ErrClass};
+use crate::events::SignalEmitter;
 use crate::models::{
     Account, AccountBalance, AccountInput, AccountType, AccountUpdateInput, Category,
     CategoryInput, CreateTransactionResult, Currency, FundDetail, Instrument, InstrumentInput,
@@ -35,19 +36,27 @@ use utoipa::ToSchema;
 /// （`setup_app_with_fund_fetch`），全部基金端点集成测试不触真实网络。
 pub type FundDetailFetcher = Arc<dyn Fn(&str) -> Result<FundDetail, AppError> + Send + Sync>;
 
-/// HTTP 服务器状态：数据库连接 + 可选 `AppHandle`（写事务提交成功后经信号映射单点
-/// 发失效信号，ADR-0044）。
+/// 失效信号发射槽（壳层 handler 的提取形状，ADR-0054 #367 修订）：写事务提交
+/// 成功后经信号映射单点发射失效信号的机制槽位，收口于发射器接缝
+/// `events::SignalEmitter`（spec #366 固化）。`None` = 集成测试跳过发射分支；
+/// 生产注入 `AppHandle`（主线程非阻塞投递实现）经未尺寸化强转装入。
+pub type EmitterSlot = Option<Arc<dyn SignalEmitter>>;
+
+/// HTTP 服务器状态：数据库连接 + 失效信号发射槽 + 可选东财基金详情接缝。
 ///
-/// `app` 为 `Option`：集成测试（`tests/api_server/`）不经真实 Tauri 运行时构建路由，
-/// 传 `None` 即跳过发射分支（后端 emit 视为薄胶，不造 AppHandle 测试桩）；
-/// 生产路径由 `start_http_server` 注入 `Some(app)`。
+/// `emitter`（发射槽，ADR-0044 / ADR-0054）：`Some` 时写事务提交成功后经信号
+/// 映射单点发射失效信号。生产路径由 `start_http_server` 注入
+/// `Some(Arc::new(app))`——同一 `AppHandle` 发射器实现，行为与泛化前零变化；
+/// 集成测试（`tests/api_server/`）不经真实 Tauri 运行时构建路由，传 `None`
+/// 跳过发射分支，或注入受控发射器观察「写请求返回后信号最终到达」的
+/// 外部行为（spec #367，`signal_delivery.rs`）。
 ///
 /// `fund_fetch` 为东财基金详情获取接缝：`None` = 生产路径（真实东财，
 /// `spawn_blocking` 连接锁外往返）；集成测试注入桩离线驱动（issue #304）。
 #[derive(Clone)]
 pub struct ApiState {
     pub conn: Arc<Mutex<Connection>>,
-    pub app: Option<AppHandle>,
+    pub emitter: EmitterSlot,
     pub fund_fetch: Option<FundDetailFetcher>,
 }
 
@@ -57,9 +66,9 @@ impl FromRef<ApiState> for Arc<Mutex<Connection>> {
     }
 }
 
-impl FromRef<ApiState> for Option<AppHandle> {
+impl FromRef<ApiState> for EmitterSlot {
     fn from_ref(state: &ApiState) -> Self {
-        state.app.clone()
+        state.emitter.clone()
     }
 }
 
@@ -220,7 +229,7 @@ pub fn start_http_server(app: AppHandle, state: Arc<Mutex<Connection>>) {
         rt.block_on(async move {
             let router = build_router(ApiState {
                 conn: state,
-                app: Some(app),
+                emitter: Some(Arc::new(app)),
                 fund_fetch: None,
             });
             let listener = tokio::net::TcpListener::bind("127.0.0.1:9527")
@@ -280,11 +289,11 @@ pub const HTTP_ENDPOINT_WRITE_OPS: &[(&str, Option<WriteOp>)] = &[
 
 /// HTTP 壳的单点映射发射（ADR-0044）：写事务**提交成功后**按写操作身份 + 结果证据经
 /// `signals` 映射单点判定「发不发、发哪个」——壳层只转发，不持有判定知识，也不再出现
-/// 按端点手写的 emit 样板。`app` 为 `None`（集成测试不经真实 Tauri 运行时，见
+/// 按端点手写的 emit 样板。发射槽为 `None`（集成测试不经真实 Tauri 运行时，见
 /// [`ApiState`]）跳过发射分支，语义不变；发射失败静默忽略，不影响写结果。
-fn emit_after_write(app: &Option<AppHandle>, op: WriteOp, evidence: WriteEvidence) {
-    if let Some(app) = app {
-        emit_for(app, op, evidence);
+fn emit_after_write(emitter: &EmitterSlot, op: WriteOp, evidence: WriteEvidence) {
+    if let Some(emitter) = emitter {
+        emit_for(emitter.as_ref(), op, evidence);
     }
 }
 
@@ -324,14 +333,14 @@ async fn list_accounts_handler(
 )]
 async fn create_account_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
-    State(app): State<Option<AppHandle>>,
+    State(emitter): State<EmitterSlot>,
     Json(input): Json<AccountInput>,
 ) -> Result<(StatusCode, Json<String>), AppError> {
     // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
     let id = crate::db::write(&conn, |conn| {
         crate::commands::create_account_idempotent_internal(conn, input)
     })?;
-    emit_after_write(&app, WriteOp::CreateAccount, WriteEvidence::None);
+    emit_after_write(&emitter, WriteOp::CreateAccount, WriteEvidence::None);
     Ok((StatusCode::CREATED, Json(id)))
 }
 
@@ -357,7 +366,7 @@ async fn create_account_handler(
 )]
 async fn update_account_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
-    State(app): State<Option<AppHandle>>,
+    State(emitter): State<EmitterSlot>,
     Path(id): Path<String>,
     Json(input): Json<AccountUpdateInput>,
 ) -> Result<Json<Account>, AppError> {
@@ -366,7 +375,7 @@ async fn update_account_handler(
         crate::commands::update_account_internal(conn, &id, input)?;
         crate::commands::get_account_internal(conn, &id)
     })?;
-    emit_after_write(&app, WriteOp::UpdateAccount, WriteEvidence::None);
+    emit_after_write(&emitter, WriteOp::UpdateAccount, WriteEvidence::None);
     Ok(Json(updated))
 }
 
@@ -388,14 +397,14 @@ async fn update_account_handler(
 )]
 async fn delete_account_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
-    State(app): State<Option<AppHandle>>,
+    State(emitter): State<EmitterSlot>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
     // 连接层统一写入口（ADR-0032）：删除成功即置脏。
     crate::db::write(&conn, |conn| {
         crate::commands::delete_account_internal(conn, &id)
     })?;
-    emit_after_write(&app, WriteOp::DeleteAccount, WriteEvidence::None);
+    emit_after_write(&emitter, WriteOp::DeleteAccount, WriteEvidence::None);
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -454,7 +463,7 @@ async fn list_categories_handler(
 )]
 async fn create_category_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
-    State(app): State<Option<AppHandle>>,
+    State(emitter): State<EmitterSlot>,
     body: String,
 ) -> Result<(StatusCode, Json<String>), AppError> {
     let input: CategoryInput =
@@ -463,7 +472,7 @@ async fn create_category_handler(
     let id = crate::db::write(&conn, |conn| {
         crate::commands::create_category_idempotent_internal(conn, input)
     })?;
-    emit_after_write(&app, WriteOp::CreateCategory, WriteEvidence::None);
+    emit_after_write(&emitter, WriteOp::CreateCategory, WriteEvidence::None);
     Ok((StatusCode::CREATED, Json(id)))
 }
 
@@ -485,14 +494,14 @@ async fn create_category_handler(
 )]
 async fn delete_category_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
-    State(app): State<Option<AppHandle>>,
+    State(emitter): State<EmitterSlot>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
     // 连接层统一写入口（ADR-0032）：删除成功即置脏。
     crate::db::write(&conn, |conn| {
         crate::commands::delete_category_internal(conn, &id)
     })?;
-    emit_after_write(&app, WriteOp::DeleteCategory, WriteEvidence::None);
+    emit_after_write(&emitter, WriteOp::DeleteCategory, WriteEvidence::None);
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -720,7 +729,7 @@ async fn create_instrument_handler(
     // 落现价即广播价格失效信号（ADR-0031，与按代码即拉 IPC 命令同一信号语义；
     // 零变化不广播）；「发不发」经映射单点判定（ADR-0044），证据 = 基金增强分支是否落现价。
     emit_after_write(
-        &state.app,
+        &state.emitter,
         WriteOp::CreateInstrument,
         WriteEvidence::PriceWritten(outcome.price_written),
     );
@@ -890,7 +899,7 @@ async fn list_transactions_handler(
 )]
 async fn batch_create_transactions_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
-    State(app): State<Option<AppHandle>>,
+    State(emitter): State<EmitterSlot>,
     Json(body): Json<TransactionBatchInput>,
 ) -> Result<Json<Vec<CreateTransactionResult>>, AppError> {
     // 连接层统一写入口（ADR-0032，issue #245）：批次事务由 run 自持，提交点置脏/
@@ -900,7 +909,7 @@ async fn batch_create_transactions_handler(
     })?;
     // 信号在写事务提交成功后发射（映射单点判定，ADR-0044）：批内任一行即建商户才发
     // 参考失效信号（修复 HTTP 导入即建商户后前端商户字典陈旧，issue #331）。
-    emit_after_write(&app, WriteOp::BatchCreateTransactions, outcome.evidence);
+    emit_after_write(&emitter, WriteOp::BatchCreateTransactions, outcome.evidence);
     Ok(Json(outcome.results))
 }
 
@@ -926,7 +935,7 @@ async fn batch_create_transactions_handler(
 )]
 async fn update_transaction_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
-    State(app): State<Option<AppHandle>>,
+    State(emitter): State<EmitterSlot>,
     Path(id): Path<String>,
     Json(input): Json<UpdateTransactionInput>,
 ) -> Result<Json<Transaction>, AppError> {
@@ -937,7 +946,7 @@ async fn update_transaction_handler(
         Ok((evidence, updated))
     })?;
     // 仅即建商户发参考失效信号（ADR-0044，issue #331）。
-    emit_after_write(&app, WriteOp::UpdateTransaction, evidence);
+    emit_after_write(&emitter, WriteOp::UpdateTransaction, evidence);
     Ok(Json(updated))
 }
 

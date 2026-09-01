@@ -17,5 +17,6 @@ mod instrument_search;
 mod investment_migration;
 mod merchant_import;
 mod reference_data;
+mod signal_delivery;
 mod transaction_crud;
 mod transaction_list;
