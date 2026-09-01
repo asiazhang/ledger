@@ -196,6 +196,16 @@ describe('useReferenceStore', () => {
     expect(store.treeCategoryOptions('income').map((n) => n.key)).toEqual(['cat-income'])
   })
 
+  it('categoryDisplayName：子分类路径名、顶级自身名，解析不到回退兜底名（issue #356）', async () => {
+    const store = useReferenceStore()
+    await store.refresh()
+    expect(store.categoryDisplayName('cat-child', '未分类')).toBe('餐饮 > 外卖')
+    expect(store.categoryDisplayName('cat-root', '未分类')).toBe('餐饮')
+    // 孤儿引用（分类已删）与空 id：回退调用方提供的后端兜底名，不抛错
+    expect(store.categoryDisplayName('cat-gone', '未分类')).toBe('未分类')
+    expect(store.categoryDisplayName(null, '未分类')).toBe('未分类')
+  })
+
   it('getCurrency 按 code 返回币种', async () => {
     const store = useReferenceStore()
     await store.refresh()

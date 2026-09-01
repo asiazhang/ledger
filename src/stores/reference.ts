@@ -101,6 +101,13 @@ export const useReferenceStore = defineStore('reference', () => {
     return pureCategoryPath(categories.value, id)
   }
 
+  /** 分类显示名（issue #356）：顶级为自身名，子分类为「父 > 子」路径名；
+   * id 解析不到（孤儿引用，如守卫生效前的历史预算）时回退调用方提供的
+   * 后端兜底名（「未分类」），不抛错。 */
+  function categoryDisplayName(id: string | null | undefined, fallback: string): string {
+    return categoryPath(id) || fallback
+  }
+
   function treeCategoryOptions(kind: Category['kind']): CategoryTreeNode[] {
     return pureBuildCategoryTree(categories.value, { kind })
   }
@@ -186,6 +193,7 @@ export const useReferenceStore = defineStore('reference', () => {
     incomeCategories,
     categoryChildren,
     categoryPath,
+    categoryDisplayName,
     treeCategoryOptions,
     refresh,
     getCurrency,

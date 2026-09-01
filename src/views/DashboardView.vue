@@ -55,9 +55,11 @@ const netExpenseCents = computed(
 const balanceCents = computed(() => netIncomeCents.value - netExpenseCents.value)
 
 // 预算进度复用 budget_progress 命令现行统计窗口行为，前端只做展示；无预算时整卡隐藏。
+// 子分类预算统一以路径名呈现（issue #356）；孤儿预算回退后端返回的分类名（「未分类」）。
 const budgetRows = computed(() =>
   budgets.value.map((b) => ({
     ...b,
+    displayName: reference.categoryDisplayName(b.budget.category_id, b.category_name),
     percentage:
       b.budget.amount_cents > 0
         ? Math.min(100, Math.round((b.spent_cents / b.budget.amount_cents) * 100))
@@ -309,7 +311,7 @@ onMounted(async () => {
         <div v-for="row in budgetRows" :key="row.budget.id" class="budget-row">
           <NSpace align="center" justify="space-between" style="width: 100%">
             <NText :type="row.over_budget ? 'error' : 'default'">
-              {{ row.category_name }}
+              {{ row.displayName }}
             </NText>
             <NSpace align="center" :size="8">
               <NText :type="row.over_budget ? 'error' : 'default'" style="font-size: 12px">

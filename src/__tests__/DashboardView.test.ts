@@ -24,7 +24,7 @@ const pushMock = vi.fn()
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: pushMock }),
 }))
-import type { Account, BudgetProgress, Currency, MonthlySummary } from '@/types'
+import type { Account, BudgetProgress, Category, Currency, MonthlySummary } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -455,10 +455,16 @@ describe('DashboardView 物品使用成本卡（issue #122）', () => {
 })
 
 describe('DashboardView 预算进度卡（issue #144）', () => {
-  const progress = (over: boolean, spent: number, amount: number, name?: string): BudgetProgress => ({
+  const progress = (
+    over: boolean,
+    spent: number,
+    amount: number,
+    name?: string,
+    categoryId = 'cat-1',
+  ): BudgetProgress => ({
     budget: {
       id: `b-${over ? 'over' : 'ok'}`,
-      category_id: 'cat-1',
+      category_id: categoryId,
       period: 'monthly',
       amount_cents: amount,
       start_date: '2026-07-01',
@@ -507,5 +513,49 @@ describe('DashboardView 预算进度卡（issue #144）', () => {
     expect(card.text()).toContain('未设置预算')
     // 财务自由度卡（issue #344）也有进度条：断言收窄到预算进度卡内
     expect(card.findComponent(NProgress).exists()).toBe(false)
+  })
+
+  it('子分类预算显示「父 > 子」路径名；孤儿预算回退「未分类」（issue #356）', async () => {
+    // 参考数据注入父+子分类；孤儿预算的 category_id 不在任何参考表中
+    const dashCategories: Category[] = [
+      {
+        id: 'cat-1',
+        name: '餐饮',
+        kind: 'expense',
+        parent_id: null,
+        icon: null,
+        sort_order: 0,
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+        version: 1,
+        device_id: 'test',
+        is_deleted: false,
+      },
+      {
+        id: 'cat-1-sub',
+        name: '早餐',
+        kind: 'expense',
+        parent_id: 'cat-1',
+        icon: null,
+        sort_order: 0,
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+        version: 1,
+        device_id: 'test',
+        is_deleted: false,
+      },
+    ]
+    baseInvoke({
+      list_categories: dashCategories,
+      budget_progress: () => [
+        progress(false, 4000, 50000, '早餐', 'cat-1-sub'),
+        progress(false, 1000, 20000, '未分类', 'cat-gone'),
+      ],
+    })
+    await useReferenceStore().refresh()
+    const wrapper = await mountView()
+    const card = wrapper.find('[data-testid="budget-progress-card"]')
+    expect(card.text()).toContain('餐饮 > 早餐')
+    expect(card.text()).toContain('未分类')
   })
 })
