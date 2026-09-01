@@ -17,6 +17,9 @@ export function useTransferForm(options?: {
    * composable 创建时读一次做回填、提交时重读一次定目标，换目标交易必须由
    * 父层强制重建组件实例（:key 序号重建），否则回填/提交仍指向旧交易。 */
   editing?: () => Transaction | null
+  /** 创建成功提示（可选 getter，缺省用转账通用文案）：借贷变体按提交时的当前
+   * 方向给专属文案（issue #374），故取 getter 而非静态串。 */
+  createdMessage?: () => string
 }) {
   const { reference, accountOptions, currencyOptions } = useFormShared()
   const message = useMessage()
@@ -79,7 +82,7 @@ export function useTransferForm(options?: {
         options?.onUpdated?.()
       } else {
         await api.createTransaction(input)
-        message.success(t('transactions.form.transferCreated'))
+        message.success(options?.createdMessage?.() ?? t('transactions.form.transferCreated'))
         amount.value = null
         note.value = ''
         options?.onCreated?.()

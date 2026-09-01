@@ -34,10 +34,12 @@ import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useItemsStore } from '@/stores/items'
 import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/transaction-columns'
+import { isLendingEntryKind } from '@/domain/lending'
 import {
   CREATE_KINDS,
+  LENDING_CREATE_DIRECTIONS,
   TRANSACTION_KINDS,
-  type CreateTransactionKind,
+  type CreateFormKind,
   type Transaction,
   type TransactionKind,
   type TransactionListFilter,
@@ -145,28 +147,41 @@ const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
 /** 记一笔（create）经共享模块实例开启（意图/序号见上方编排声明）：
  * 类型由入口单点表达，弹窗内不提供切换，中途换类型 = 关闭重开。 */
 
+/** 创建形态标签：借贷变体入口取借贷文案，交易 kind 取 transactions.kind.*（issue #374）。 */
+function createKindLabel(kind: CreateFormKind): string {
+  return isLendingEntryKind(kind)
+    ? t(`transactions.lending.${kind}`)
+    : t(`transactions.kind.${kind}`)
+}
+
 /** 下拉选项：5 种可创建类型（refund 不在入口：退款已移出表单域，入口由交易条目
- * 右键菜单承接，独立 ticket 落地前处于过渡态）。标签后附裸键快捷键提示（issue #153），
+ * 右键菜单承接，独立 ticket 落地前处于过渡态）+ 借贷变体「借出」「借入」两项
+ * （issue #374，分隔线分组；不占快捷键键位）。kind 项标签后附裸键快捷键提示（issue #153），
  * 键位来自 CREATE_KIND_KEYS 单一来源，与 keydown 匹配共用。 */
-const createKindOptions = computed<DropdownOption[]>(() =>
-  CREATE_KINDS.map((k) => ({
+const createKindOptions = computed<DropdownOption[]>(() => [
+  ...CREATE_KINDS.map((k) => ({
     label: t('transactions.create.kindWithKey', {
       kind: t(`transactions.kind.${k}`),
       key: CREATE_KIND_KEYS[k],
     }),
     key: k,
   })),
-)
+  { type: 'divider', key: 'create-lending-divider' },
+  ...LENDING_CREATE_DIRECTIONS.map((d) => ({
+    label: t(`transactions.lending.${d}`),
+    key: d,
+  })),
+])
 
 const createTitle = computed(() => {
   const current = intent.value
   return current?.type === 'create'
-    ? t('transactions.create.titleWithKind', { kind: t(`transactions.kind.${current.kind}`) })
+    ? t('transactions.create.titleWithKind', { kind: createKindLabel(current.kind) })
     : t('transactions.create.title')
 })
 
-/** 记一笔三类入口（顶栏主体 / 子类型下拉 / 裸键快捷键）统一经模块开启。 */
-function openCreate(k: CreateTransactionKind) {
+/** 记一笔各入口（顶栏主体 / 子类型下拉 / 裸键快捷键）统一经模块开启。 */
+function openCreate(k: CreateFormKind) {
   void openModal({ type: 'create', kind: k })
 }
 
@@ -436,7 +451,7 @@ onMounted(() => {
         <AppDropdown
           trigger="click"
           :options="createKindOptions"
-          @select="(k: string | number) => openCreate(k as CreateTransactionKind)"
+          @select="(k: string | number) => openCreate(k as CreateFormKind)"
         >
           <NButton type="primary" :aria-label="t('transactions.create.moreTypes')">
             <NIcon><ChevronDown /></NIcon>

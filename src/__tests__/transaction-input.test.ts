@@ -121,6 +121,36 @@ describe('buildTransferInput', () => {
       '转入账户不能为空',
     )
   })
+
+  // 借贷四方向（issue #374）：借贷录入是转账表单的变体，装配产物与同形状转账完全
+  // 同构——方向 toggle 只影响双账户填法（转出/转入各属哪侧），kind 恒为 transfer、
+  // 装配器无任何借贷分支（方向派生收口 domain 层借贷模块，不在此接缝）。
+  it.each([
+    ['lend', 'acc-fund', 'acc-recv'],
+    ['collect', 'acc-recv', 'acc-fund'],
+    ['borrow', 'acc-debt', 'acc-fund'],
+    ['repay', 'acc-fund', 'acc-debt'],
+  ] as const)('借贷方向 %s：装配产物与同形状转账一致（方向即 account_id/to_account_id 填法）', (direction, fromId, toId) => {
+    const input = buildTransferInput({
+      ...transferState,
+      accountId: fromId,
+      toAccountId: toId,
+      note: `借贷·${direction}`,
+    })
+    expect(input).toEqual({
+      kind: 'transfer',
+      amount_cents: 50000,
+      currency_code: 'CNY',
+      account_id: fromId,
+      to_account_id: toId,
+      category_id: null,
+      merchant_id: null,
+      policy_id: null,
+      refund_of_transaction_id: null,
+      note: `借贷·${direction}`,
+      date: '2024-06-15',
+    })
+  })
 })
 
 describe('buildRefundInput', () => {

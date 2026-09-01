@@ -4,7 +4,7 @@ import { useMessage } from 'naive-ui'
 import { api } from '@/api'
 import { errorMessage } from '@/utils/errors'
 import { t } from '@/i18n'
-import type { CreateTransactionKind, Transaction, TransactionTrade } from '@/types'
+import type { CreateFormKind, Transaction, TransactionTrade } from '@/types'
 
 /**
  * TransactionModalState 交易弹窗编排深模块（ADR-0045，词汇表「TransactionModalState（交易弹窗编排）」）：
@@ -25,13 +25,14 @@ import type { CreateTransactionKind, Transaction, TransactionTrade } from '@/typ
 
 /**
  * 意图状态（单一判别联合，弹窗编排的唯一事实源）：
- * - create：无目标行，携带可创建类型子类型（refund 不在可创建集，入口由交易条目右键承接）；
+ * - create：无目标行，携带表单形态子类型（issue #374 起 CreateFormKind：可创建 kind +
+ *   借贷两个呈现变体；refund 不在可创建集，入口由交易条目右键承接）；
  * - refund / add-item：携带目标交易行；
  * - edit：另携带买卖明细（非买卖行为 null；buy/sell 的明细由模块先取再开窗，调用方不经手）。
  * 视图以 `intent?.type` 判别渲染，payload 在各分支内被类型系统收窄。
  */
 export type TransactionModalIntent =
-  | { type: 'create'; kind: CreateTransactionKind }
+  | { type: 'create'; kind: CreateFormKind }
   | { type: 'refund'; row: Transaction }
   | { type: 'edit'; row: Transaction; trade: TransactionTrade | null }
   | { type: 'add-item'; row: Transaction }
@@ -41,7 +42,7 @@ export type TransactionModalIntent =
  * 不出现在调用方面上。
  */
 export type TransactionModalOpenRequest =
-  | { type: 'create'; kind: CreateTransactionKind }
+  | { type: 'create'; kind: CreateFormKind }
   | { type: 'refund'; row: Transaction }
   | { type: 'edit'; row: Transaction }
   | { type: 'add-item'; row: Transaction }

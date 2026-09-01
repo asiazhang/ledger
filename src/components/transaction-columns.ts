@@ -10,6 +10,7 @@ import type { useReferenceStore } from '@/stores/reference'
 import { t } from '@/i18n'
 import AccountLink from '@/components/AccountLink.vue'
 import MerchantLink from '@/components/MerchantLink.vue'
+import { lendingLabelKey, resolveLendingDirection } from '@/domain/lending'
 
 export type ReferenceStore = ReturnType<typeof useReferenceStore>
 
@@ -57,6 +58,17 @@ export function sumFixedColumnWidths(columns: DataTableColumn<Transaction>[]): n
  *   只有当内容区窄于固定列宽总和时才出现横向滚动（账户列 180、商户列 120 后固定列总和 825，窄窗口可能触发，
  *   由 scroll-x 提供横向滚动底线）。
  * - 宽度按实际内容估算：日期 105 / 类型 65 / 分类 150（最长路径 ≈149px）/ 商户 120 / 账户 180（转账行需容纳「转出 → 转入」两个账户名 + 箭头，长名由链接自身省略号兜底）/ 金额 125。 */
+/** 类型标签（issue #374）：借贷是 transfer 的派生视角——两端账户类型构成借贷
+ * （receivable/debt）的转账显示借出/收回/借入/还款专属文案，普通转账仍显示「转账」；
+ * 非 transfer kind 不参与派生、按自身 kind 标签。历史数据实时派生、无数据迁移。
+ * 方向识别收口 domain 层借贷模块（与表单分派/回填共用同一函数），
+ * 标签随账户映射响应式更新（同 categoryPath 的响应式纪律）。 */
+function kindLabel(reference: ReferenceStore, row: Transaction): string {
+  if (row.kind !== 'transfer') return t(`transactions.kind.${row.kind}`)
+  const direction = resolveLendingDirection(row, (id) => reference.accountMap.get(id)?.type)
+  return t(lendingLabelKey(direction ?? 'none'))
+}
+
 export function buildTransactionColumns(reference: ReferenceStore): DataTableColumn<Transaction>[] {
   return [
     { title: t('transactions.columns.date'), key: 'date', width: 105 },
@@ -65,7 +77,7 @@ export function buildTransactionColumns(reference: ReferenceStore): DataTableCol
       key: 'kind',
       width: 65,
       render: (row) =>
-        h(NTag, { type: KIND_TAG_TYPE[row.kind] }, () => t(`transactions.kind.${row.kind}`)),
+        h(NTag, { type: KIND_TAG_TYPE[row.kind] }, () => kindLabel(reference, row)),
     },
     {
       title: t('transactions.columns.category'),
