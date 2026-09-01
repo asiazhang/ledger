@@ -1,7 +1,7 @@
 import { routeMock, makeTxn, setTxnDb, setMerchantDb, mountView, listCalls, lastListFilter, bodyRows } from './common'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { NSelect, NDatePicker, NButton } from 'naive-ui'
+import { NSelect, NButton } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import type { Merchant, Transaction } from '@/types'
 
@@ -72,27 +72,18 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
   })
 
   // 过滤行控件定位：账户下拉 = 第 1 个 NSelect（PinyinSelect 内层），
-  // 商户下拉 = 第 2 个（issue #191），类型下拉 = 第 3 个
+  // 商户下拉 = 第 2 个（issue #191），类型下拉 = 第 3 个；
+  // 时间维度行（issue #382）的行为测试见 time-chips.test.ts
   const accountSelect = (wrapper: ReturnType<typeof mount>) =>
     wrapper.findAllComponents(NSelect)[0]
   const merchantSelect = (wrapper: ReturnType<typeof mount>) =>
     wrapper.findAllComponents(NSelect)[1]
   const kindSelect = (wrapper: ReturnType<typeof mount>) =>
     wrapper.findAllComponents(NSelect)[2]
-  const datePickers = (wrapper: ReturnType<typeof mount>) =>
-    wrapper.findAllComponents(NDatePicker)
 
   /** 直接向过滤行控件 emit 变更事件（与 SearchView.test 的 setDate 模式一致）。 */
   async function setAccount(wrapper: ReturnType<typeof mount>, id: string | null) {
     accountSelect(wrapper).vm.$emit('update:value', id)
-    await flushPromises()
-  }
-  async function setKind(wrapper: ReturnType<typeof mount>, k: string | null) {
-    kindSelect(wrapper).vm.$emit('update:value', k)
-    await flushPromises()
-  }
-  async function setDateFrom(wrapper: ReturnType<typeof mount>, v: string | null) {
-    datePickers(wrapper)[0].vm.$emit('update:formattedValue', v)
     await flushPromises()
   }
 
@@ -100,7 +91,7 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
   const clearButton = (wrapper: ReturnType<typeof mount>) =>
     wrapper.findAllComponents(NButton).find((b) => b.text().includes('清除筛选'))!
 
-  it('顶部渲染过滤行：账户/商户/类型下拉可清除、起止日期、清除筛选按钮', async () => {
+  it('顶部渲染过滤行：账户/商户/类型下拉可清除、清除筛选按钮（日期起止控件已移除，issue #382）', async () => {
     const wrapper = await mountView()
     // 账户下拉：可清除，选项来自参考数据账户映射
     const account = accountSelect(wrapper)
@@ -114,8 +105,6 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
     expect(
       (merchant.props('options') as { value: string }[]).map((o) => o.value),
     ).toEqual(['mch-1'])
-    // 日期起止
-    expect(datePickers(wrapper).length).toBe(2)
     // 类型下拉：可清除，6 种交易类型（income/expense/transfer/refund/buy/sell）
     const kind = kindSelect(wrapper)
     expect(kind.props('clearable')).toBe(true)
@@ -130,6 +119,11 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
     // 清除筛选按钮：无过滤时禁用
     expect(clearButton(wrapper).attributes('disabled')).toBeDefined()
   })
+
+  async function setKind(wrapper: ReturnType<typeof mount>, k: string | null) {
+    kindSelect(wrapper).vm.$emit('update:value', k)
+    await flushPromises()
+  }
 
   it('选择账户即重新查询：意图经模块出口生效，involving_account_id 正确传后端（含转账转入侧）', async () => {
     const wrapper = await mountView()
@@ -149,7 +143,6 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
     const wrapper = await mountView()
     await setAccount(wrapper, 'acc-1')
     await setKind(wrapper, 'transfer')
-    await setDateFrom(wrapper, '2026-01-01')
     expect(wrapper.text()).toContain('共 1 条')
     await clearButton(wrapper).trigger('click')
     await flushPromises()
@@ -167,7 +160,6 @@ describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
     const wrapper = await mountView()
     await setAccount(wrapper, 'acc-2')
     await setKind(wrapper, 'income')
-    await setDateFrom(wrapper, '2026-01-01')
     // 商户维度同样不写回（URL 只读是整层契约，非按维度分支）
     await merchantSelect(wrapper).vm.$emit('update:value', 'mch-1')
     await flushPromises()

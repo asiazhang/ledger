@@ -36,10 +36,15 @@
   "filter": {
     "account": "账户",
     "merchant": "商户",
-    "dateFrom": "起始日期",
-    "dateTo": "结束日期",
     "kind": "类型",
-    "clear": "清除筛选"
+    "clear": "清除筛选",
+    "period": {
+      "all": "全部",
+      "month": "当月",
+      "quarter": "当季",
+      "year": "当年",
+      "lastYear": "去年"
+    }
   },
   "create": {
     "button": "记一笔",

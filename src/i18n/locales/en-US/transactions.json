@@ -36,10 +36,15 @@
   "filter": {
     "account": "Account",
     "merchant": "Merchant",
-    "dateFrom": "Start date",
-    "dateTo": "End date",
     "kind": "Type",
-    "clear": "Clear filters"
+    "clear": "Clear filters",
+    "period": {
+      "all": "All",
+      "month": "This month",
+      "quarter": "This quarter",
+      "year": "This year",
+      "lastYear": "Last year"
+    }
   },
   "create": {
     "button": "New",

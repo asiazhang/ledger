@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { t } from '@/i18n'
 import { errorMessage } from '@/utils/errors'
-import { computed, h, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   NDataTable,
@@ -19,7 +19,6 @@ import {
 import { ChevronDown } from '@vicons/ionicons5'
 import AppModal from '@/components/AppModal.vue'
 import AppDropdown from '@/components/AppDropdown.vue'
-import AppDatePicker from '@/components/AppDatePicker.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import { useAppDialog } from '@/composables/useAppDialog'
 import TransactionForm from '@/components/TransactionForm.vue'
@@ -35,6 +34,12 @@ import { useReferenceStore } from '@/stores/reference'
 import { useItemsStore } from '@/stores/items'
 import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/transaction-columns'
 import { isLendingEntryKind } from '@/domain/lending'
+import {
+  TIME_PERIOD_PRESETS,
+  matchPreset,
+  presetRange,
+  type TimePeriodPreset,
+} from '@/utils/time-period'
 import {
   CREATE_KINDS,
   LENDING_CREATE_DIRECTIONS,
@@ -80,6 +85,31 @@ const { intent, seq, open: openModal, close: closeModal } = useTransactionModalS
 
 /** 是否有任一激活的过滤条件（控制清除按钮可用性与空态文案）。 */
 const filtersActive = computed(() => Object.values(filters).some((v) => v !== null))
+
+// 时间维度行（issue #381/#382）：预设芯片是过滤模块「部分修改过滤维度」入口的触发方式，
+// 点选即把含边界日期快照写入 dateFrom/dateTo（TransactionFilter 零改动，翻页归零与
+// 自动刷新免费继承）。「全部」= 无日期过滤 = 默认态；高亮纯派生（matchPreset）——
+// 当前区间恰为某预设定义（相对今天）时点亮，跨月/季/年后自动熄灭，列表快照不漂移。
+// 今天以分钟级 tick 保持响应式（视图长驻跨期场景下预设定义随之翻转）；不持久化，
+// 清除筛选与 URL 下钻复位把日期维度清空后自然回「全部」。
+const nowTick = ref(Date.now())
+let nowTicker: ReturnType<typeof setInterval> | undefined
+const activePreset = computed(() => matchPreset(filters.dateFrom, filters.dateTo, nowTick.value))
+
+/** 点芯片：换算含边界日期快照并写入过滤模块（同值守卫在模块内，重复点同芯片不重刷）。 */
+function onPresetSelect(preset: TimePeriodPreset) {
+  if (preset === 'all') {
+    setFilter({ dateFrom: null, dateTo: null })
+    return
+  }
+  const range = presetRange(preset, nowTick.value)
+  setFilter({ dateFrom: range.from, dateTo: range.to })
+}
+
+/** 芯片文案 key：闭集枚举 → i18n（transactions.filter.period.*）。 */
+function presetLabel(preset: TimePeriodPreset): string {
+  return t(`transactions.filter.period.${preset}`)
+}
 
 /** 账户下拉选项：来自参考数据账户映射（list_accounts 不含 is_hidden 黑洞账户，沿用既有边界）。 */
 const accountOptions = computed(() =>
@@ -204,14 +234,6 @@ function onAccountFilterChange(id: string | null) {
 
 function onMerchantFilterChange(id: string | null) {
   setFilter({ merchantId: id })
-}
-
-function onDateFromChange(value: string | null) {
-  setFilter({ dateFrom: value })
-}
-
-function onDateToChange(value: string | null) {
-  setFilter({ dateTo: value })
 }
 
 function onKindFilterChange(value: TransactionKind | null) {
@@ -385,12 +407,20 @@ onMounted(() => {
   // 首刷经模块统一出口（refresh 即「翻回第 1 页 + 重拉」；URL 初始化已在 setup 期
   // 声明意图，同一同步批次内被 watcher 去重为一次首刷请求）
   refresh()
+  // 今天 tick：分钟级刷新响应式「今天」，驱动预设定义与高亮派生跨期翻转
+  nowTicker = setInterval(() => {
+    nowTick.value = Date.now()
+  }, 60_000)
+})
+onBeforeUnmount(() => {
+  if (nowTicker !== undefined) clearInterval(nowTicker)
 })
 </script>
 
 <template>
   <NSpace vertical :size="12">
-    <!-- 过滤行：账户（涉及账户语义，可清除）+ 商户（可清除，issue #191）+ 日期起止 + 类型（可清除）+ 清除筛选。
+    <!-- 过滤行（第一行）：账户（涉及账户语义，可清除）+ 商户（可清除，issue #191）+ 类型（可清除）+ 清除筛选。
+         任意起止日期筛选已自交易页移除（搜索页保留，issue #381）；
          任一条件变化即重新查询并回到第 1 页；手动改动不同步回 URL
          （组件状态是唯一事实源，issue #96 决策 3/4），分页/页大小切换保持过滤条件。 -->
     <NSpace :size="8" align="center" :wrap="true">
@@ -409,24 +439,6 @@ onMounted(() => {
         clearable
         style="width: 160px"
         @update:value="onMerchantFilterChange"
-      />
-      <AppDatePicker
-        :formatted-value="filters.dateFrom"
-        type="date"
-        value-format="yyyy-MM-dd"
-        :placeholder="t('transactions.filter.dateFrom')"
-        clearable
-        style="width: 140px"
-        @update:formatted-value="onDateFromChange"
-      />
-      <AppDatePicker
-        :formatted-value="filters.dateTo"
-        type="date"
-        value-format="yyyy-MM-dd"
-        :placeholder="t('transactions.filter.dateTo')"
-        clearable
-        style="width: 140px"
-        @update:formatted-value="onDateToChange"
       />
       <AppSelect
         :value="filters.kind"
@@ -457,6 +469,24 @@ onMounted(() => {
             <NIcon><ChevronDown /></NIcon>
           </NButton>
         </AppDropdown>
+      </NButtonGroup>
+    </NSpace>
+    <!-- 时间维度行（第二行，issue #381/#382）：单选分段芯片「全部 | 当月 | 当季 | 当年 | 去年」。
+         点芯片写入日期快照（翻页归零 + 重拉免费继承）；点亮纯派生；「全部」= 默认态。
+         分段控件非弹层（#381），不涉弹层注册表与快捷键抑制。 -->
+    <NSpace :size="8" align="center" :wrap="true">
+      <NButtonGroup size="small">
+        <NButton
+          v-for="p in TIME_PERIOD_PRESETS"
+          :key="p"
+          size="small"
+          :type="activePreset === p ? 'primary' : 'default'"
+          :quaternary="activePreset !== p"
+          :aria-pressed="activePreset === p"
+          @click="onPresetSelect(p)"
+        >
+          {{ presetLabel(p) }}
+        </NButton>
       </NButtonGroup>
     </NSpace>
     <!-- 快速记账弹窗：标题标明入口选定类型，内嵌收窄后的 TransactionForm（无类型单选），
