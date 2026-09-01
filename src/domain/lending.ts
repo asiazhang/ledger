@@ -64,9 +64,20 @@ for (const [direction, sides] of Object.entries(LENDING_DIRECTION_SIDES) as [
   DIRECTION_BY_SIDE_PAIR[sides.from][sides.to] = direction
 }
 
+/** 方向派生的侧别归一（issue #374 修订）：借贷语义由借贷侧（debt/receivable）唯一决定，
+ * 对端类型缺失（黑洞 is_hidden 占位 / 已删 / 不可查）时归一为资金侧参与判定，
+ * 不因此退回普通转账。只作用于方向派生；[`lendingAccountSide`] 本身与
+ * [`accountMatchesSide`] 的表单过滤语义保持原样（unknown 不命中任何侧）。
+ * 两端均非借贷侧时缺失依旧无借贷语义（资金互转、两端缺失 → none）。 */
+function directionalSide(type: AccountType | null | undefined): LendingAccountSide {
+  const side = lendingAccountSide(type)
+  return side === 'unknown' ? 'fund' : side
+}
+
 /**
  * 借贷方向派生（全仓唯一点）：kind + 转出账户类型 + 转入账户类型 → 五态。
- * 非 transfer kind、任一端类型缺失、借贷账户互转、资金账户互转 → 普通转账（none）。
+ * 非 transfer kind、借贷账户互转、资金账户互转 → 普通转账（none）；
+ * 借贷侧（debt/receivable）对端类型缺失（黑洞/已删/不可查）时仍按借贷侧方向派生。
  */
 export function deriveLendingDirection(
   kind: TransactionKind,
@@ -75,7 +86,7 @@ export function deriveLendingDirection(
 ): LendingDirection {
   if (kind !== 'transfer') return 'none'
   return (
-    DIRECTION_BY_SIDE_PAIR[lendingAccountSide(fromType)][lendingAccountSide(toType)] ?? 'none'
+    DIRECTION_BY_SIDE_PAIR[directionalSide(fromType)][directionalSide(toType)] ?? 'none'
   )
 }
 

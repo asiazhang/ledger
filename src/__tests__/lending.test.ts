@@ -51,9 +51,21 @@ describe('deriveLendingDirection（借贷方向派生，issue #374 S1）', () =>
     }
   })
 
-  it('边界：任一端账户类型缺失（未知账户）→ 普通转账', () => {
-    expect(deriveLendingDirection('transfer', null, 'receivable')).toBe('none')
+  it('边界：借贷端对端为未知/黑洞账户（账户类型缺失）→ 仍按借贷方向派生（issue #374 修订）', () => {
+    // 借贷方向由借贷侧（debt/receivable）唯一决定，对端账户类型缺失
+    // （黑洞 is_hidden 占位 / 已删 / 不可查）不改变借贷语义：
+    // debt 转出 = 借入、负债方转入 = 还款、receivable 转出 = 收回、receivable 转入 = 借出。
+    expect(deriveLendingDirection('transfer', 'debt', null)).toBe('borrow')
+    expect(deriveLendingDirection('transfer', 'debt', undefined)).toBe('borrow')
+    expect(deriveLendingDirection('transfer', null, 'debt')).toBe('repay')
+    expect(deriveLendingDirection('transfer', 'receivable', null)).toBe('collect')
+    expect(deriveLendingDirection('transfer', undefined, 'receivable')).toBe('lend')
+  })
+
+  it('边界：资金端对端缺失 / 两端均缺失（无任何借贷侧）→ 普通转账', () => {
+    // 非借贷侧（资金账户）对端缺失，或两端都缺失：无借贷语义，仍是普通转账。
     expect(deriveLendingDirection('transfer', 'cash', null)).toBe('none')
+    expect(deriveLendingDirection('transfer', null, 'bank')).toBe('none')
     expect(deriveLendingDirection('transfer', undefined, undefined)).toBe('none')
   })
 
