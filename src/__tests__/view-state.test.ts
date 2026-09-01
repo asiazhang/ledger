@@ -5,8 +5,6 @@ import {
   saveRouteName,
   loadSidebarCollapsed,
   saveSidebarCollapsed,
-  loadReportsGroupLevel,
-  saveReportsGroupLevel,
   getSavedSidebarOrder,
   saveSidebarOrders,
   clearSidebarOrder,
@@ -98,22 +96,5 @@ describe('view-state sidebarOrder 写路径（issue #270/#359）', () => {
 
   it('clearSidebarOrder 对不存在的 key 不报错', () => {
     expect(() => clearSidebarOrder()).not.toThrow()
-  })
-})
-
-describe('view-state reportsGroupLevel', () => {
-  it('默认二级（level2）', () => {
-    expect(loadReportsGroupLevel()).toBe('level2')
-  })
-
-  it('保存一级后读回', () => {
-    saveReportsGroupLevel('level1')
-    expect(loadReportsGroupLevel()).toBe('level1')
-    expect(localStorage.getItem(VIEW_STATE_KEYS.reportsGroupLevel)).toBe('"level1"')
-  })
-
-  it('非法值回退 level2（防脏数据）', () => {
-    localStorage.setItem(VIEW_STATE_KEYS.reportsGroupLevel, '"level3"')
-    expect(loadReportsGroupLevel()).toBe('level2')
   })
 })
