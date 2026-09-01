@@ -4,7 +4,8 @@
 //! 职责分界（ADR-0044 决策 7）：本模块承载**知识**（谁发什么）——强类型写操作身份
 //! [`WriteOp`]、结果证据 [`WriteEvidence`]、信号 [`Signal`] 与纯函数 [`signals_for`]；
 //! **机制**（怎么发）留在 `events.rs`（事件名常量 + `emit_*` 入口 + `EVENT_APP`
-//! 镜像句柄），本模块经 [`emit_all`] / [`emit_for`] 遍历信号集委托发射。
+//! 镜像句柄 + 主线程非阻塞投递，spec #364），本模块经 [`emit_all`] / [`emit_for`]
+//! 遍历信号集委托发射。
 //!
 //! - **键是强类型写操作身份**，不沿用命令名字符串（ADR-0044 决策 2）：HTTP handler
 //!   无命令名（axum），且两壳命令面不对称，字符串键必然漂移；IPC 命令与 HTTP 端点
@@ -394,9 +395,10 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
     }
 }
 
-/// 发射助手（ADR-0044 决策 1，机制侧收口）：遍历信号集逐个发射。信号是写后
-/// 通知——发射失败静默忽略（`events::emit_*` 内部吞错），不影响写事务结果。
-/// 壳层约定形态：`emit_for(&app, WriteOp::X, evidence)`，或先取
+/// 发射助手（ADR-0044 决策 1，机制侧收口）：遍历信号集逐个发射。发射经
+/// `events::emit_*` 投递主线程非阻塞执行（spec #364 / ADR-0053）——本函数只做
+/// 一次非阻塞入队即返回，不等发射完成；投递 / 发射失败静默忽略，不影响写事务
+/// 结果。壳层约定形态：`emit_for(&app, WriteOp::X, evidence)`，或先取
 /// [`signals_for`] 再 [`emit_all`]（需要先记日志 / 断言信号集时用后者）。
 pub fn emit_all(app: &AppHandle, signals: &[Signal]) {
     for signal in signals {
