@@ -371,3 +371,14 @@ fn prices_changed_signal_pins_four_terminal_states() {
     // 失败且无落库：不发。
     assert_signals(signals_for(Op::SyncInstruments, evidence(None)), &[]);
 }
+
+/// 进度事件名钉死前后端契约：前端 `useInstrumentFullSync` 以字符串字面量订阅，
+/// 后端单侧改名即静默失联——此断言迫使双侧同步改名。发射点全部经
+/// `emit_progress` 投递主线程（issue #369）后，事件名唯一载体即该常量。
+#[test]
+fn sync_progress_event_name_pins_frontend_contract() {
+    assert_eq!(
+        crate::commands::sync::SYNC_INSTRUMENTS_PROGRESS,
+        "sync-instruments:progress"
+    );
+}

@@ -1,11 +1,15 @@
-//! 事件发射：写入/产物变更后的粗粒度失效信号。
+//! 事件发射：写入/产物变更后的粗粒度失效信号 + 非信号的带 payload 事件发射。
 //!
-//! 本模块只承载**机制**（事件名常量 + `emit_*` 发射入口 + `EVENT_APP` 镜像句柄 +
-//! 主线程非阻塞投递 [`post_emit`]）；「哪个写操作发哪个信号」的**知识**已收拢到
+//! 失效信号的事件名常量、`emit_*` 发射入口、`EVENT_APP` 镜像句柄与主线程非阻塞
+//! 投递 [`post_emit_with`] 机制收口于本模块；「哪个写操作发哪个信号」的**知识**已收拢到
 //! 信号映射单点 `signals::signals_for`（ADR-0044）：壳层经 `signals::emit_for`
-//! 判定后走到这里发射。发射一律经 [`post_emit`] **投递到主线程事件循环队尾**
-//! 非阻塞执行（机理与死锁背景见其文档，spec #364 / ADR-0053）：IPC 壳、HTTP 壳
-//! 与深路径镜像句柄三条发射路径共用这一处投递机制，一处改动全壳生效。
+//! 判定后走到这里发射。发射一律经 [`post_emit_with`] **投递到主线程事件循环队尾**
+//! 非阻塞执行（机理与死锁背景见其文档，spec #364 / ADR-0054）：IPC 壳、HTTP 壳
+//! 与深路径镜像句柄三条失效信号发射路径共用这一处投递机制，一处改动全壳生效。
+//! 不经失效信号映射的带 payload 事件（行情同步进度 `sync-instruments:progress`，
+//! issue #369）只共用 [`post_emit_with`] 投递机制——其事件名常量与发射入口归
+//! 领域侧（`commands::sync` 的 `emit_progress`），本模块不承载其知识，
+//! 投递机制不另起第二套。
 //!
 //! - `ledger:changed`（issue #79）：参考数据（`currencies / accounts / categories / merchants`）
 //!   任一写入成功后由调用方 emit，前端 `useReferenceStore` 订阅后自动重拉参考表。
@@ -59,25 +63,34 @@ pub fn init_event_app(app: &AppHandle) {
     let _ = EVENT_APP.set(app.clone());
 }
 
-/// 机制收口单点（spec #364 / ADR-0053）：把「emit 指定事件」的动作投递到
+/// 机制收口单点（spec #364 / ADR-0054）：把「发射动作」闭包投递到
 /// **主线程事件循环队尾**执行——`AppHandle::run_on_main_thread` 非阻塞入队
 /// （tauri `send_user_message` 只投递不等回执），调用即返回、不等发射完成。
+/// 泛化为收任意发射动作闭包（issue #369）：无 payload 信号经 [`post_emit`]
+/// 构造闭包走同一机制；带 payload 的事件（如行情同步进度，不经失效信号映射
+/// ADR-0044）由领域侧在此构造 `emit` 闭包，不另起第二套投递机制。
 ///
 /// 为什么必须投递而不就地发射：tauri 的 `app.emit`（`tracing` feature 下走
 /// `eval_script` 的 `rx.recv()` 回执路径）内部会**同步等待主线程**执行 JS 注入，
 /// 并在等待期间持有 `webviews_lock`；写线程（IPC 命令线程 / HTTP tokio worker /
-/// 深路径执行点）就地发射时，若主线程恰在处理 WebKit URL scheme 回调并抢同一把
-/// 锁，即成「主线程等锁、写线程等回执」的跨线程死锁（spec #364 事故）。投递后
-/// emit 在主线程自己的事件循环里执行（自身线程上 `run_on_main_thread` 语义为
-/// 内联顺序执行，单线程无锁竞争、无自等待），死锁闭环从机制上消除；写请求
-/// 只承担一次非阻塞入队的成本，及时返回。
+/// 深路径执行点 / 行情同步后台线程）就地发射时，若主线程恰在处理 WebKit URL
+/// scheme 回调并抢同一把锁，即成「主线程等锁、写线程等回执」的跨线程死锁
+///（spec #364 事故）。投递后 emit 在主线程自己的事件循环里执行（自身线程上
+/// `run_on_main_thread` 语义为内联顺序执行，单线程无锁竞争、无自等待），死锁
+/// 闭环从机制上消除；调用线程只承担一次非阻塞入队的成本，及时返回。
 ///
 /// 投递失败（应用退出中事件循环已关）与发射本身失败一样静默忽略，不影响写
-/// 事务结果（ADR-0044「发射失败静默」语义）。同一写操作多条信号按入队顺序
-/// 在主线程依次执行，信号间无乱序。
+/// 事务 / 同步结果（ADR-0044「发射失败静默」语义）。同一线程先后入队的动作
+/// 按入队顺序在主线程依次执行，事件间无乱序。
+pub(crate) fn post_emit_with(app: &AppHandle, action: impl FnOnce() + Send + 'static) {
+    let _ = app.run_on_main_thread(action);
+}
+
+/// 无 payload 信号的投递入口：构造「emit 指定事件」闭包交 [`post_emit_with`]
+/// 投递主线程（spec #364 / ADR-0054）。失效信号 `emit_*` 入口全部汇聚于此。
 fn post_emit(app: &AppHandle, event: &'static str) {
     let handle = app.clone();
-    let _ = app.run_on_main_thread(move || {
+    post_emit_with(app, move || {
         let _ = handle.emit(event, ());
     });
 }
