@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rusqlite::Connection;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use crate::error::Result;
 use crate::models::SyncProgress;
@@ -91,9 +91,9 @@ pub(super) fn do_sync<A: ConnAccessor>(
 
     let mut fetch_page =
         |market: &MarketConfig, page: usize| fetch_page(&client, &mut pacer, market, page);
-    let mut emit = |p: SyncProgress| {
-        let _ = app.emit("sync-instruments:progress", p);
-    };
+    // 每页进度投递主线程非阻塞执行（issue #369）：同步线程入队即返回，不持
+    // `webviews_lock` 等回执。
+    let mut emit = |p: SyncProgress| super::emit_progress(app, p);
 
     let outcome = run_sync_pages(
         conn,
@@ -103,7 +103,9 @@ pub(super) fn do_sync<A: ConnAccessor>(
         &mut fetch_page,
         &mut emit,
     )?;
-    let _ = app.emit("sync-instruments:progress", terminal_progress(&outcome));
+    // 终端进度（完成/中断）同样投递主线程（issue #369）；与每页进度同线程
+    // 顺序入队，主线程按序执行、无乱序。
+    super::emit_progress(app, terminal_progress(&outcome));
     Ok(outcome)
 }
 

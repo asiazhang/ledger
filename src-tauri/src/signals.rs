@@ -396,7 +396,7 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
 }
 
 /// 发射助手（ADR-0044 决策 1，机制侧收口）：遍历信号集逐个发射。发射经
-/// `events::emit_*` 投递主线程非阻塞执行（spec #364 / ADR-0053）——本函数只做
+/// `events::emit_*` 投递主线程非阻塞执行（spec #364 / ADR-0054）——本函数只做
 /// 一次非阻塞入队即返回，不等发射完成；投递 / 发射失败静默忽略，不影响写事务
 /// 结果。壳层约定形态：`emit_for(&app, WriteOp::X, evidence)`，或先取
 /// [`signals_for`] 再 [`emit_all`]（需要先记日志 / 断言信号集时用后者）。
