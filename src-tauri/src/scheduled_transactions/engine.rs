@@ -407,71 +407,71 @@ pub fn list_plans(conn: &Connection) -> Result<Vec<ScheduledTransactionWithExt>>
 
     let mut results = Vec::with_capacity(cores.len());
     for core in cores {
-        let (merchant_id, policy_id, total_amount_cents, total_occurrences, to_account_id) =
-            match core.kind {
-                ScheduledKind::Installment => {
-                    let ext: InstallmentPlan = query_one(
-                        conn,
-                        "SELECT scheduled_transaction_id,merchant_id,total_amount_cents,total_occurrences \
-                         FROM installment_plans WHERE scheduled_transaction_id=?1",
-                        rusqlite::params![core.id],
-                    )?
-                    .unwrap_or(InstallmentPlan {
-                        scheduled_transaction_id: core.id.clone(),
-                        merchant_id: None,
-                        total_amount_cents: 0,
-                        total_occurrences: 0,
-                    });
-                    (
-                        ext.merchant_id,
-                        None,
-                        Some(ext.total_amount_cents),
-                        Some(ext.total_occurrences),
-                        None,
-                    )
+        let ext = match core.kind {
+            ScheduledKind::Installment => {
+                let plan: InstallmentPlan = query_one(
+                    conn,
+                    "SELECT scheduled_transaction_id,merchant_id,total_amount_cents,total_occurrences \
+                     FROM installment_plans WHERE scheduled_transaction_id=?1",
+                    rusqlite::params![core.id],
+                )?
+                .unwrap_or(InstallmentPlan {
+                    scheduled_transaction_id: core.id.clone(),
+                    merchant_id: None,
+                    total_amount_cents: 0,
+                    total_occurrences: 0,
+                });
+                PlanExtProjection {
+                    merchant_id: plan.merchant_id,
+                    total_amount_cents: Some(plan.total_amount_cents),
+                    total_occurrences: Some(plan.total_occurrences),
+                    ..Default::default()
                 }
-                ScheduledKind::Subscription => {
-                    let ext: SubscriptionPlan = query_one(
-                        conn,
-                        "SELECT scheduled_transaction_id,merchant_id,policy_id \
-                         FROM subscription_plans WHERE scheduled_transaction_id=?1",
-                        rusqlite::params![core.id],
-                    )?
-                    .unwrap_or(SubscriptionPlan {
-                        scheduled_transaction_id: core.id.clone(),
-                        merchant_id: None,
-                        policy_id: None,
-                    });
-                    (ext.merchant_id, ext.policy_id, None, None, None)
+            }
+            ScheduledKind::Subscription => {
+                let plan: SubscriptionPlan = query_one(
+                    conn,
+                    "SELECT scheduled_transaction_id,merchant_id,policy_id \
+                     FROM subscription_plans WHERE scheduled_transaction_id=?1",
+                    rusqlite::params![core.id],
+                )?
+                .unwrap_or(SubscriptionPlan {
+                    scheduled_transaction_id: core.id.clone(),
+                    merchant_id: None,
+                    policy_id: None,
+                });
+                PlanExtProjection {
+                    merchant_id: plan.merchant_id,
+                    policy_id: plan.policy_id,
+                    ..Default::default()
                 }
-                ScheduledKind::ScheduledTransfer => {
-                    let ext: ScheduledTransferPlan = query_one(
-                        conn,
-                        "SELECT scheduled_transaction_id,to_account_id,total_occurrences \
-                         FROM scheduled_transfer_plans WHERE scheduled_transaction_id=?1",
-                        rusqlite::params![core.id],
-                    )?
-                    .unwrap_or(ScheduledTransferPlan {
-                        scheduled_transaction_id: core.id.clone(),
-                        to_account_id: String::new(),
-                        total_occurrences: None,
-                    });
-                    (
-                        None,
-                        None,
-                        None,
-                        ext.total_occurrences,
-                        Some(ext.to_account_id),
-                    )
+            }
+            ScheduledKind::ScheduledTransfer => {
+                let plan: ScheduledTransferPlan = query_one(
+                    conn,
+                    "SELECT scheduled_transaction_id,to_account_id,total_occurrences \
+                     FROM scheduled_transfer_plans WHERE scheduled_transaction_id=?1",
+                    rusqlite::params![core.id],
+                )?
+                .unwrap_or(ScheduledTransferPlan {
+                    scheduled_transaction_id: core.id.clone(),
+                    to_account_id: String::new(),
+                    total_occurrences: None,
+                });
+                PlanExtProjection {
+                    to_account_id: Some(plan.to_account_id),
+                    total_occurrences: plan.total_occurrences,
+                    ..Default::default()
                 }
-            };
+            }
+        };
         results.push(ScheduledTransactionWithExt {
             core,
-            merchant_id,
-            policy_id,
-            total_amount_cents,
-            total_occurrences,
-            to_account_id,
+            merchant_id: ext.merchant_id,
+            policy_id: ext.policy_id,
+            total_amount_cents: ext.total_amount_cents,
+            total_occurrences: ext.total_occurrences,
+            to_account_id: ext.to_account_id,
         });
     }
     Ok(results)
@@ -731,7 +731,7 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
         ));
     }
 
-    let (kind, to_account_id, category_id, merchant_id, policy_id) = match st.kind {
+    let (kind, category_id, ext) = match st.kind {
         ScheduledKind::Installment | ScheduledKind::Subscription => {
             // 复制计划的商户到流水（issue #190 / ADR-0028）：installment/subscription
             // 每期生成的交易带上计划扩展表的 merchant_id（沿用原 counterparty 复制语义）；
@@ -740,9 +740,9 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
             // 是历史引用（创建时已校验在用），保单随后被软删时照常复制（与商户
             // 「保持历史引用」同一语义），而不是让期次执行失败。分期不持保单引用
             // （准入守卫在 create_plan），恒 None。
-            let (merchant_id, policy_id) = match st.kind {
-                ScheduledKind::Installment => (
-                    query_one::<InstallmentPlan, _>(
+            let ext = match st.kind {
+                ScheduledKind::Installment => {
+                    let plan = query_one::<InstallmentPlan, _>(
                         conn,
                         "SELECT scheduled_transaction_id,merchant_id,total_amount_cents,total_occurrences \
                          FROM installment_plans WHERE scheduled_transaction_id=?1",
@@ -753,26 +753,26 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
                             "scheduled-plan.installment-ext-not-found",
                             "分期扩展信息不存在",
                         )
-                    })?
-                    .merchant_id,
-                    None,
-                ),
+                    })?;
+                    PlanExtProjection {
+                        merchant_id: plan.merchant_id,
+                        ..Default::default()
+                    }
+                }
                 ScheduledKind::Subscription => {
                     let ext = subscription_ext(conn, &st.id)?;
-                    (ext.merchant_id, ext.policy_id)
+                    PlanExtProjection {
+                        merchant_id: ext.merchant_id,
+                        policy_id: ext.policy_id,
+                        ..Default::default()
+                    }
                 }
                 ScheduledKind::ScheduledTransfer => unreachable!(),
             };
-            (
-                TransactionKind::Expense,
-                None,
-                st.category_id.clone(),
-                merchant_id,
-                policy_id,
-            )
+            (TransactionKind::Expense, st.category_id.clone(), ext)
         }
         ScheduledKind::ScheduledTransfer => {
-            let ext: ScheduledTransferPlan = query_one(
+            let plan: ScheduledTransferPlan = query_one(
                 conn,
                 "SELECT scheduled_transaction_id,to_account_id,total_occurrences \
                  FROM scheduled_transfer_plans WHERE scheduled_transaction_id=?1",
@@ -786,10 +786,12 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
             })?;
             (
                 TransactionKind::Transfer,
-                Some(ext.to_account_id),
                 None,
-                None,
-                None,
+                PlanExtProjection {
+                    to_account_id: Some(plan.to_account_id),
+                    total_occurrences: plan.total_occurrences,
+                    ..Default::default()
+                },
             )
         }
     };
@@ -813,15 +815,15 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
             amount_cents: occ.amount_cents,
             currency_code: st.currency_code.clone(),
             account_id: st.account_id.clone(),
-            to_account_id,
+            to_account_id: ext.to_account_id,
             category_id,
-            merchant_id: merchant_id.clone(),
-            existing_merchant_id: merchant_id,
+            merchant_id: ext.merchant_id.clone(),
+            existing_merchant_id: ext.merchant_id,
             // 保单引用复制（issue #362 / ADR-0051 决策 2）：保费协议每期生成交易
             // 携带扩展表 policy_id；`existing_policy_id` 传同值——协议对保单的引用
             // 是历史引用（创建时已校验在用），保单随后被软删时照常复制、期次不失败。
-            policy_id: policy_id.clone(),
-            existing_policy_id: policy_id,
+            policy_id: ext.policy_id.clone(),
+            existing_policy_id: ext.policy_id,
             refund_of_transaction_id: None,
             note: st.note.clone(),
             date: occ.scheduled_date.clone(),
@@ -866,6 +868,18 @@ fn subscription_ext(conn: &Connection, st_id: &str) -> Result<SubscriptionPlan> 
             "订阅扩展信息不存在",
         )
     })
+}
+
+/// 计划形态扩展的读取投影（`list_plans` / [`execute_occurrence`] 共用视图）：
+/// 按 kind 从各扩展表读出的可外携字段，互斥字段用 `None` 占位——命名结构体
+/// 承载，避免多形态字段并作位置元组后在形态间错位（评审修正）。
+#[derive(Default)]
+struct PlanExtProjection {
+    merchant_id: Option<String>,
+    policy_id: Option<String>,
+    total_amount_cents: Option<i64>,
+    total_occurrences: Option<i64>,
+    to_account_id: Option<String>,
 }
 
 /// 期次落库协议本体（无事务语义，由 [`execute_occurrence`] 自持事务包裹）：
