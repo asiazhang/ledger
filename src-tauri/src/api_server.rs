@@ -444,7 +444,9 @@ async fn list_categories_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
 ) -> Result<Json<Vec<crate::models::Category>>, AppError> {
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    Ok(Json(crate::commands::list_categories_internal(&conn)?))
+    Ok(Json(crate::commands::list_categories_internal(
+        &conn, false,
+    )?))
 }
 
 #[utoipa::path(
@@ -851,13 +853,16 @@ async fn list_currencies_handler(
                   查询参数均为可选：`from`/`to`（YYYY-MM-DD 闭区间）、`account_id`（转出账户）、\
                   `involving_account_id`（涉及账户：`account_id` 或 `to_account_id` 命中即算，含转入的转账）、\
                   `merchant_id`（按商户过滤，含软删商户的历史交易）、`kind`（income/expense/transfer/buy/sell/refund，闭集枚举，非法值返回 4xx）、`page`（从 1 起，默认 1）、\
-                  `page_size`（每页条数，缺省返回全部）、`limit`（取前 N 条，与分页互斥：传 `page_size` 时分页生效）。",
+                  `page_size`（每页条数，缺省返回全部）、`limit`（取前 N 条，与分页互斥：传 `page_size` 时分页生效）、\
+                  `category_id`（按分类精确过滤，不含子分类，含软删分类的历史交易）、`uncategorized_only`（`true` 时仅返回无分类交易；与 `category_id` 同时携带时按 AND 组合，恒为空集）。",
     params(
         ("from" = Option<String>, Query, description = "起始日期（含），YYYY-MM-DD"),
         ("to" = Option<String>, Query, description = "结束日期（含），YYYY-MM-DD"),
         ("account_id" = Option<String>, Query, description = "按转出账户过滤"),
         ("involving_account_id" = Option<String>, Query, description = "涉及账户过滤（account_id 或 to_account_id 命中即算，含转入的转账）"),
         ("merchant_id" = Option<String>, Query, description = "按商户过滤（含软删商户的历史交易）"),
+        ("category_id" = Option<String>, Query, description = "按分类精确过滤（不含子分类，含软删分类的历史交易）"),
+        ("uncategorized_only" = Option<bool>, Query, description = "true 时仅返回无分类交易；与 category_id 同携按 AND 组合"),
         ("kind" = Option<TransactionKind>, Query, description = "income / expense / transfer / buy / sell / refund（闭集枚举，非法值 4xx）"),
         ("limit" = Option<i64>, Query, description = "取前 N 条，缺省返回全部；传 page_size 时分页路径生效"),
         ("page" = Option<usize>, Query, description = "页码，从 1 开始，默认 1"),

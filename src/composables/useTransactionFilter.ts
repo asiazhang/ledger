@@ -3,6 +3,11 @@ import type { Ref } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
 import type { TransactionKind } from '@/types'
 
+/** 「仅无分类」哨兵值（issue #377）：分类过滤维度三态之一（不过滤 null / 精确 id / 哨兵）。
+ * 同时是 URL ?category= 的保留参数值；分类 id 为 UUID，与哨兵串不可能撞值。
+ * 视图装配时哨兵映射为后端 `uncategorized_only`。 */
+export const UNCATEGORIZED_ONLY = 'none'
+
 /**
  * 交易列表过滤维度（组件状态是过滤的唯一事实源，URL 仅只读初始化入口、不写回）。
  * 字段与 `TransactionListFilter` 请求参数一一对应（见视图 load 装配）。
@@ -15,6 +20,9 @@ export interface TransactionFilters {
   involvingAccountId: string | null
   /** 商户过滤（含软删商户，历史交易口径；issue #191） */
   merchantId: string | null
+  /** 分类过滤维度（issue #377，三态）：分类 id = 精确过滤（不含子分类，含软删分类）；
+   * UNCATEGORIZED_ONLY 哨兵 = 仅无分类；null = 不过滤。URL 下钻只读入口，无手动控件。 */
+  categoryId: string | null
   /** 交易类型过滤（前端 6 种：income/expense/transfer/refund/buy/sell） */
   kind: TransactionKind | null
 }
@@ -60,6 +68,7 @@ const DEFAULT_FILTERS: TransactionFilters = {
   dateTo: null,
   involvingAccountId: null,
   merchantId: null,
+  categoryId: null,
   kind: null,
 }
 
@@ -70,12 +79,15 @@ const DEFAULT_FILTERS: TransactionFilters = {
  * 新增下钻维度只需在此表加一条。
  */
 interface UrlParamDef {
-  /** URL query 键（?account= / ?merchant=） */
-  readonly queryKey: 'account' | 'merchant'
+  /** URL query 键（?account= / ?merchant= / ?category=） */
+  readonly queryKey: 'account' | 'merchant' | 'category'
   /** 接管的过滤维度字段 */
   readonly field: keyof TransactionFilters
-  /** 校验所用的 Reference Data 映射（商户含软删，历史交易口径 issue #191） */
-  readonly mapKey: 'accountMap' | 'merchantMap'
+  /** 校验所用的 Reference Data 映射（商户/分类含软删，历史交易口径 issue #191/#377） */
+  readonly mapKey: 'accountMap' | 'merchantMap' | 'categoryMap'
+  /** 保留参数值集合（issue #377）：命中即有效（不查映射），原样作为过滤字段值；
+   * 分类维度的保留值 none → 仅无分类哨兵。无保留值的维度省略。 */
+  readonly reservedValues?: ReadonlyArray<string>
   /** 校验结果 → 过滤补丁 */
   readonly toPatch: (value: string | null) => TransactionFilterPatch
 }
@@ -104,6 +116,13 @@ const URL_PARAM_TABLE: ReadonlyArray<UrlParamDef> = [
     mapKey: 'merchantMap',
     toPatch: (value) => ({ merchantId: value }),
   },
+  {
+    queryKey: 'category',
+    field: 'categoryId',
+    mapKey: 'categoryMap',
+    reservedValues: [UNCATEGORIZED_ONLY],
+    toPatch: (value) => ({ categoryId: value }),
+  },
 ]
 
 /**
@@ -115,7 +134,7 @@ const URL_PARAM_TABLE: ReadonlyArray<UrlParamDef> = [
  * 无其他公开面。
  *
  * URL 下钻参数表（issue #234）：视图只把 route query 变化递给 syncUrlQuery，解析与校验
- * （依赖参考数据映射）、复位规则（两维度均无有效参数时复位日期/类型，#96 决策 3）、
+ * （依赖参考数据映射与保留值表）、复位规则（所有下钻维度均无有效参数时复位日期/类型，#96 决策 3）、
  * 就绪补判（模块内部消费 Reference Data store，不向调用方暴露就绪通知）与字段级让位
  * （补判遇用户手动改动同维度则让位；参数至多消费一次、不重放）全部内化。
  *
@@ -211,9 +230,17 @@ export function useTransactionFilter(): UseTransactionFilterReturn {
     return reference[entry.mapKey]
   }
 
-  /** 条目原始参数是否为参考数据中的有效实体。 */
+  /** 条目原始参数解析为过滤字段值：保留值命中 → 原样（哨兵即字段值）；
+   * 映射命中 → 原样（分类 id 校验含软删，历史交易口径）；其余（不在场/未知）→ null。 */
+  function resolveValue(entry: UrlParamEntry): string | null {
+    if (entry.raw === null) return null
+    if (entry.reservedValues?.includes(entry.raw)) return entry.raw
+    return paramMap(entry).has(entry.raw) ? entry.raw : null
+  }
+
+  /** 条目原始参数是否有效（保留值或参考数据映射命中）。 */
   function isValidRaw(entry: UrlParamEntry): boolean {
-    return entry.raw !== null && paramMap(entry).has(entry.raw)
+    return resolveValue(entry) !== null
   }
 
   /** 另一维度是否存在有效 URL 参数（复位守卫）：另一维度的直达参数在场时，
@@ -235,7 +262,7 @@ export function useTransactionFilter(): UseTransactionFilterReturn {
     if (entry.raw !== null && reference.status !== 'ready') return // 挂起，待就绪补判
     entry.consumed = true
     if (entry.manualTouched) return
-    const next = isValidRaw(entry) ? entry.raw : null
+    const next = resolveValue(entry)
     if (
       next === null &&
       !otherHasValidParam(entry) &&

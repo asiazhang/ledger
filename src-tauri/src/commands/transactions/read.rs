@@ -32,6 +32,15 @@ pub fn list_transactions_internal(
         where_clause.push_str(" AND merchant_id = ?");
         params.push(merchant_id.to_string());
     }
+    // 分类下钻两字段（issue #377）：精确匹配不含子分类；仅无分类命中 category_id IS NULL。
+    // 与其他维度同规：AND 组合，互不隐含。
+    if let Some(category_id) = filter.category_id.as_deref() {
+        where_clause.push_str(" AND category_id = ?");
+        params.push(category_id.to_string());
+    }
+    if filter.uncategorized_only == Some(true) {
+        where_clause.push_str(" AND category_id IS NULL");
+    }
     if let Some(kind) = filter.kind {
         where_clause.push_str(" AND kind = ?");
         params.push(kind.as_str().to_string());

@@ -88,7 +88,9 @@ export const api = {
   listAccountBalances: () => invoke<AccountBalance[]>('list_account_balances'),
 
   // 分类
-  listCategories: () => invoke<Category[]>('list_categories'),
+  // includeDeleted=true 返回含软删全量（URL 下钻校验映射需含软删但仍有历史交易的分类，issue #377）
+  listCategories: (opts?: { includeDeleted?: boolean }) =>
+    invoke<Category[]>('list_categories', { includeDeleted: opts?.includeDeleted ?? false }),
   createCategory: (input: CategoryInput) => invoke<string>('create_category', { input }),
   updateCategory: (id: string, input: CategoryUpdateInput) =>
     invoke<void>('update_category', { id, input }),
