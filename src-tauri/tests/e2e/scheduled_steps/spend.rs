@@ -49,6 +49,7 @@ fn create_subscription_plan_with_recurrence(
                     start_date: start,
                     note: Some(note),
                     merchant_id: None,
+                    policy_id: None,
                     total_amount_cents: None,
                     total_occurrences: None,
                     to_account_id: None,

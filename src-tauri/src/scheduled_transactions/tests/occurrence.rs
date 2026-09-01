@@ -175,6 +175,7 @@ fn execute_subscription_inherits_category() {
             start_date: "2026-01-15".into(),
             note: None,
             merchant_id: None,
+            policy_id: None,
             total_amount_cents: None,
             total_occurrences: None,
             to_account_id: None,

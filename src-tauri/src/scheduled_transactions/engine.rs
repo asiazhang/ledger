@@ -79,6 +79,18 @@ pub fn create_plan(conn: &Connection, input: CreateScheduledInput) -> Result<Str
             writer::validate_merchant_active(conn, input.merchant_id.as_deref())?;
         }
     }
+    // 保单引用准入（issue #362 / ADR-0051 决策 2）：保费协议 = 订阅形态，只有
+    // 订阅可携带保单引用，分期/定时转账携带即在行为层显式拒绝；携带的保单必须
+    // 存在且未软删除（软删保单不可被新协议选择，共用 Writer 接缝的保单校验）。
+    if input.policy_id.is_some() {
+        if input.kind != ScheduledKind::Subscription {
+            return Err(AppError::coded(
+                "scheduled-plan.policy-subscription-only",
+                "只有订阅形态协议可挂保单",
+            ));
+        }
+        writer::validate_policy_active(conn, input.policy_id.as_deref())?;
+    }
 
     let id = new_uuid();
     let now = now_iso();
@@ -136,8 +148,8 @@ pub fn create_plan(conn: &Connection, input: CreateScheduledInput) -> Result<Str
         }
         ScheduledKind::Subscription => {
             conn.execute(
-                "INSERT INTO subscription_plans (scheduled_transaction_id,merchant_id) VALUES (?1,?2)",
-                rusqlite::params![id, input.merchant_id],
+                "INSERT INTO subscription_plans (scheduled_transaction_id,merchant_id,policy_id) VALUES (?1,?2,?3)",
+                rusqlite::params![id, input.merchant_id, input.policy_id],
             )?;
         }
         ScheduledKind::ScheduledTransfer => {
@@ -277,6 +289,9 @@ pub fn update_subscription(conn: &Connection, input: UpdateSubscriptionInput) ->
         rusqlite::params![&input.id, input.merchant_id],
     )?;
 
+    // 保单引用不在编辑面（issue #362）：订阅编辑只影响未来期次的非核心字段，
+    // 「这段协议属于哪张保单」是身份要素、创建后不可改（改挂保单无业务场景；
+    // 价变重建走「取消旧协议 + 按新金额重建」，新段携带引用）。
     Ok(())
 }
 
@@ -311,7 +326,7 @@ pub fn get_plan_detail(conn: &Connection, id: &str) -> Result<ScheduledTransacti
         ScheduledKind::Subscription => {
             let ext: SubscriptionPlan = query_one(
                 conn,
-                "SELECT scheduled_transaction_id,merchant_id \
+                "SELECT scheduled_transaction_id,merchant_id,policy_id \
                  FROM subscription_plans WHERE scheduled_transaction_id=?1",
                 rusqlite::params![id],
             )?
@@ -392,9 +407,10 @@ pub fn list_plans(conn: &Connection) -> Result<Vec<ScheduledTransactionWithExt>>
 
     let mut results = Vec::with_capacity(cores.len());
     for core in cores {
-        let (merchant_id, total_amount_cents, total_occurrences, to_account_id) = match core.kind {
-            ScheduledKind::Installment => {
-                let ext: InstallmentPlan = query_one(
+        let (merchant_id, policy_id, total_amount_cents, total_occurrences, to_account_id) =
+            match core.kind {
+                ScheduledKind::Installment => {
+                    let ext: InstallmentPlan = query_one(
                         conn,
                         "SELECT scheduled_transaction_id,merchant_id,total_amount_cents,total_occurrences \
                          FROM installment_plans WHERE scheduled_transaction_id=?1",
@@ -406,44 +422,53 @@ pub fn list_plans(conn: &Connection) -> Result<Vec<ScheduledTransactionWithExt>>
                         total_amount_cents: 0,
                         total_occurrences: 0,
                     });
-                (
-                    ext.merchant_id,
-                    Some(ext.total_amount_cents),
-                    Some(ext.total_occurrences),
-                    None,
-                )
-            }
-            ScheduledKind::Subscription => {
-                let ext: SubscriptionPlan = query_one(
-                    conn,
-                    "SELECT scheduled_transaction_id,merchant_id \
+                    (
+                        ext.merchant_id,
+                        None,
+                        Some(ext.total_amount_cents),
+                        Some(ext.total_occurrences),
+                        None,
+                    )
+                }
+                ScheduledKind::Subscription => {
+                    let ext: SubscriptionPlan = query_one(
+                        conn,
+                        "SELECT scheduled_transaction_id,merchant_id,policy_id \
                          FROM subscription_plans WHERE scheduled_transaction_id=?1",
-                    rusqlite::params![core.id],
-                )?
-                .unwrap_or(SubscriptionPlan {
-                    scheduled_transaction_id: core.id.clone(),
-                    merchant_id: None,
-                });
-                (ext.merchant_id, None, None, None)
-            }
-            ScheduledKind::ScheduledTransfer => {
-                let ext: ScheduledTransferPlan = query_one(
-                    conn,
-                    "SELECT scheduled_transaction_id,to_account_id,total_occurrences \
+                        rusqlite::params![core.id],
+                    )?
+                    .unwrap_or(SubscriptionPlan {
+                        scheduled_transaction_id: core.id.clone(),
+                        merchant_id: None,
+                        policy_id: None,
+                    });
+                    (ext.merchant_id, ext.policy_id, None, None, None)
+                }
+                ScheduledKind::ScheduledTransfer => {
+                    let ext: ScheduledTransferPlan = query_one(
+                        conn,
+                        "SELECT scheduled_transaction_id,to_account_id,total_occurrences \
                          FROM scheduled_transfer_plans WHERE scheduled_transaction_id=?1",
-                    rusqlite::params![core.id],
-                )?
-                .unwrap_or(ScheduledTransferPlan {
-                    scheduled_transaction_id: core.id.clone(),
-                    to_account_id: String::new(),
-                    total_occurrences: None,
-                });
-                (None, None, ext.total_occurrences, Some(ext.to_account_id))
-            }
-        };
+                        rusqlite::params![core.id],
+                    )?
+                    .unwrap_or(ScheduledTransferPlan {
+                        scheduled_transaction_id: core.id.clone(),
+                        to_account_id: String::new(),
+                        total_occurrences: None,
+                    });
+                    (
+                        None,
+                        None,
+                        None,
+                        ext.total_occurrences,
+                        Some(ext.to_account_id),
+                    )
+                }
+            };
         results.push(ScheduledTransactionWithExt {
             core,
             merchant_id,
+            policy_id,
             total_amount_cents,
             total_occurrences,
             to_account_id,
@@ -706,37 +731,36 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
         ));
     }
 
-    let (kind, to_account_id, category_id, merchant_id) = match st.kind {
+    let (kind, to_account_id, category_id, merchant_id, policy_id) = match st.kind {
         ScheduledKind::Installment | ScheduledKind::Subscription => {
             // 复制计划的商户到流水（issue #190 / ADR-0028）：installment/subscription
-            // 每期生成的交易带上计划扩展表的 merchant_id（沿用原 counterparty 复制语义）。
-            let merchant_id = match st.kind {
-                ScheduledKind::Installment => query_one::<InstallmentPlan, _>(
-                    conn,
-                    "SELECT scheduled_transaction_id,merchant_id,total_amount_cents,total_occurrences \
-                     FROM installment_plans WHERE scheduled_transaction_id=?1",
-                    rusqlite::params![st.id],
-                )?
-                .ok_or_else(|| {
-                    AppError::coded_not_found(
-                        "scheduled-plan.installment-ext-not-found",
-                        "分期扩展信息不存在",
-                    )
-                })?
-                .merchant_id,
-                ScheduledKind::Subscription => query_one::<SubscriptionPlan, _>(
-                    conn,
-                    "SELECT scheduled_transaction_id,merchant_id \
-                     FROM subscription_plans WHERE scheduled_transaction_id=?1",
-                    rusqlite::params![st.id],
-                )?
-                .ok_or_else(|| {
-                    AppError::coded_not_found(
-                        "scheduled-plan.subscription-ext-not-found",
-                        "订阅扩展信息不存在",
-                    )
-                })?
-                .merchant_id,
+            // 每期生成的交易带上计划扩展表的 merchant_id（沿用原 counterparty 复制语义）；
+            // 同时复制保单引用（issue #362 / ADR-0051 决策 2，同机制）：保费协议
+            // （订阅形态）每期生成的交易携带扩展表的 policy_id——协议对保单的引用
+            // 是历史引用（创建时已校验在用），保单随后被软删时照常复制（与商户
+            // 「保持历史引用」同一语义），而不是让期次执行失败。分期不持保单引用
+            // （准入守卫在 create_plan），恒 None。
+            let (merchant_id, policy_id) = match st.kind {
+                ScheduledKind::Installment => (
+                    query_one::<InstallmentPlan, _>(
+                        conn,
+                        "SELECT scheduled_transaction_id,merchant_id,total_amount_cents,total_occurrences \
+                         FROM installment_plans WHERE scheduled_transaction_id=?1",
+                        rusqlite::params![st.id],
+                    )?
+                    .ok_or_else(|| {
+                        AppError::coded_not_found(
+                            "scheduled-plan.installment-ext-not-found",
+                            "分期扩展信息不存在",
+                        )
+                    })?
+                    .merchant_id,
+                    None,
+                ),
+                ScheduledKind::Subscription => {
+                    let ext = subscription_ext(conn, &st.id)?;
+                    (ext.merchant_id, ext.policy_id)
+                }
                 ScheduledKind::ScheduledTransfer => unreachable!(),
             };
             (
@@ -744,6 +768,7 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
                 None,
                 st.category_id.clone(),
                 merchant_id,
+                policy_id,
             )
         }
         ScheduledKind::ScheduledTransfer => {
@@ -762,6 +787,7 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
             (
                 TransactionKind::Transfer,
                 Some(ext.to_account_id),
+                None,
                 None,
                 None,
             )
@@ -791,10 +817,11 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
             category_id,
             merchant_id: merchant_id.clone(),
             existing_merchant_id: merchant_id,
-            // 定时计划不持保单引用（本期不挂，issue #361：协议持保单引用是后续票）；
-            // 恒 None，期次生成流水不涉保单。
-            policy_id: None,
-            existing_policy_id: None,
+            // 保单引用复制（issue #362 / ADR-0051 决策 2）：保费协议每期生成交易
+            // 携带扩展表 policy_id；`existing_policy_id` 传同值——协议对保单的引用
+            // 是历史引用（创建时已校验在用），保单随后被软删时照常复制、期次不失败。
+            policy_id: policy_id.clone(),
+            existing_policy_id: policy_id,
             refund_of_transaction_id: None,
             note: st.note.clone(),
             date: occ.scheduled_date.clone(),
@@ -822,6 +849,23 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
             Err(e)
         }
     }
+}
+
+/// 读取订阅计划扩展行（期次执行引用复制用）；缺失即错（核心行存在而扩展行
+/// 缺失属数据损坏）。
+fn subscription_ext(conn: &Connection, st_id: &str) -> Result<SubscriptionPlan> {
+    query_one::<SubscriptionPlan, _>(
+        conn,
+        "SELECT scheduled_transaction_id,merchant_id,policy_id \
+         FROM subscription_plans WHERE scheduled_transaction_id=?1",
+        rusqlite::params![st_id],
+    )?
+    .ok_or_else(|| {
+        AppError::coded_not_found(
+            "scheduled-plan.subscription-ext-not-found",
+            "订阅扩展信息不存在",
+        )
+    })
 }
 
 /// 期次落库协议本体（无事务语义，由 [`execute_occurrence`] 自持事务包裹）：
