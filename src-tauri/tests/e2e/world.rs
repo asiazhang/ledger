@@ -100,6 +100,8 @@ pub struct LedgerWorld {
     pub restored_db_path: Option<PathBuf>,
     /// 最近一次自动备份产物的路径（来源标记场景用）
     pub last_auto_backup_path: Option<PathBuf>,
+    /// 本场景自动备份产物所在目录（日界门场景复用同一目录：同日/跨日产物计数）
+    pub auto_backup_dir: Option<PathBuf>,
     /// 最近创建的定时计划 id（定时交易场景用）
     pub last_plan_id: Option<String>,
     /// 最近尝试执行的期次 id（失败重试场景用）
@@ -180,6 +182,7 @@ impl fmt::Debug for LedgerWorld {
             .field("balances_count", &self.balances.len())
             .field("last_backup", &self.last_backup_path)
             .field("last_auto_backup", &self.last_auto_backup_path)
+            .field("auto_backup_dir", &self.auto_backup_dir)
             .field(
                 "last_search_total",
                 &self.last_search.as_ref().map(|s| s.total),
@@ -207,6 +210,7 @@ impl LedgerWorld {
             last_backup_path: None,
             restored_db_path: None,
             last_auto_backup_path: None,
+            auto_backup_dir: None,
             last_plan_id: None,
             last_occurrence_id: None,
             last_search: None,

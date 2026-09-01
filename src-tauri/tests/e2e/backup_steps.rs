@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use cucumber::{then, when};
 
-use tauri_app_lib::auto_backup::{AUTO_BACKUP_INTERVAL, AttemptOutcome, get_state, set_state};
+use tauri_app_lib::auto_backup::{
+    AUTO_BACKUP_PREFIX, AttemptOutcome, SkipReason, get_state, set_state,
+};
 use tauri_app_lib::commands::accounts::create_account_internal;
 use tauri_app_lib::commands::backup::{
     BackupKind, backup_db_to, expected_schema_version, read_backup_kind, restore_db_from,
@@ -51,11 +53,16 @@ fn backup_to_temp(world: &mut LedgerWorld) {
     world.last_backup_path = Some(target);
 }
 
-/// 真实走自动备份触发入口（前置业务写已置脏、开关默认开启），产物落到独立临时目录。
+/// 真实走自动备份触发入口（前置业务写已置脏、开关默认开启），产物落到本场景
+/// 独立临时目录并复用（日界门场景据同目录产物计数区分「跳过/新增」）。
 #[when(expr = "自动备份数据库到临时目录")]
 fn auto_backup_to_temp(world: &mut LedgerWorld) {
-    let dir = std::env::temp_dir().join(format!("ledger-e2e-auto-backup-{}", new_uuid()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = world.auto_backup_dir.clone().unwrap_or_else(|| {
+        let dir = std::env::temp_dir().join(format!("ledger-e2e-auto-backup-{}", new_uuid()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    });
+    world.auto_backup_dir = Some(dir.clone());
     let outcome = tauri_app_lib::auto_backup::run_due_backup(
         &world_conn!(world),
         Some(dir.to_str().unwrap()),
@@ -218,20 +225,165 @@ fn delete_last_transaction(world: &mut LedgerWorld) {
         .unwrap();
 }
 
-/// 快进到下次自动备份到期：把上次备份锚点回拨一个间隔以上，使下一次
-/// 「自动备份数据库到临时目录」必到期（链式场景逐段验证多次写入的置脏）。
-/// 经模块 `set_state` 写回，锚点格式由模块保证。
+/// 快进跨过本地日界（issue #386）：把上次备份锚点拨到昨天（本地日期，取本地昨天
+/// 正午换算 UTC 以避开时制切换窗口），使下一次「自动备份数据库到临时目录」必到期
+/// （既有链式场景逐段验证多次写入的置脏）。经模块 `set_state` 写回，锚点格式由模块保证。
 #[when(expr = "距离上次自动备份已过一天")]
 fn fast_forward_backup_due(world: &mut LedgerWorld) {
+    use chrono::TimeZone;
     let conn = world_conn!(world);
     let mut state = get_state(&conn).unwrap();
-    if let Some(iso) = state.last_backup_at.clone() {
-        let last = chrono::DateTime::parse_from_rfc3339(&iso)
-            .expect("备份锚点格式非法")
-            .with_timezone(&chrono::Utc);
-        state.last_backup_at = Some(tauri_app_lib::db::iso_at(last - AUTO_BACKUP_INTERVAL));
+    if state.last_backup_at.is_some() {
+        let yesterday_noon = chrono::Local
+            .from_local_datetime(
+                &(chrono::Local::now().date_naive() - chrono::Days::new(1))
+                    .and_hms_opt(12, 0, 0)
+                    .expect("合法时刻"),
+            )
+            .earliest()
+            .expect("本地昨天正午应可解析");
+        state.last_backup_at = Some(tauri_app_lib::db::iso_at(
+            yesterday_noon.with_timezone(&chrono::Utc),
+        ));
+        set_state(&conn, &state).expect("回拨备份锚点");
     }
-    set_state(&conn, &state).expect("回拨备份锚点");
+}
+
+// ---------------------------------------------------------------------------
+// 自动备份日界门：本地自然日每天最多一次，三入口统一（issue #386）
+// ---------------------------------------------------------------------------
+
+/// 同日已自动备份后再次到期触发：断言静默跳过（原因可辨）且锚点不前移。
+#[when(expr = "再次到期触发自动备份因日界门静默跳过")]
+fn due_trigger_skipped_by_day_gate(world: &mut LedgerWorld) {
+    let anchor_before = get_state(&world_conn!(world)).unwrap().last_backup_at;
+    let outcome = tauri_app_lib::auto_backup::run_due_backup(
+        &world_conn!(world),
+        Some(
+            world
+                .auto_backup_dir
+                .as_ref()
+                .expect("尚未自动备份")
+                .to_str()
+                .unwrap(),
+        ),
+        "0.2.0",
+        chrono::Utc::now(),
+    );
+    assert_eq!(
+        outcome,
+        AttemptOutcome::Skipped(SkipReason::AlreadyBackedUpToday),
+        "同日二次到期触发应静默跳过"
+    );
+    assert_eq!(
+        get_state(&world_conn!(world)).unwrap().last_backup_at,
+        anchor_before,
+        "跳过不应前移锚点"
+    );
+}
+
+/// 同日已自动备份后退出兜底：断言静默跳过且锚点不前移（原「不受每日约束」豁免取消）。
+#[when(expr = "退出兜底因日界门静默跳过")]
+fn exit_fallback_skipped_by_day_gate(world: &mut LedgerWorld) {
+    let anchor_before = get_state(&world_conn!(world)).unwrap().last_backup_at;
+    let outcome = tauri_app_lib::auto_backup::run_exit_backup(
+        &world_conn!(world),
+        Some(
+            world
+                .auto_backup_dir
+                .as_ref()
+                .expect("尚未自动备份")
+                .to_str()
+                .unwrap(),
+        ),
+        "0.2.0",
+        chrono::Utc::now(),
+    );
+    assert_eq!(
+        outcome,
+        AttemptOutcome::Skipped(SkipReason::AlreadyBackedUpToday),
+        "同日退出兜底应静默跳过"
+    );
+    assert_eq!(
+        get_state(&world_conn!(world)).unwrap().last_backup_at,
+        anchor_before,
+        "跳过不应前移锚点"
+    );
+}
+
+/// 模拟跨本地日后的到期触发（时间注入，BackupTrigger 接口面，与调度线程同构）：
+/// 注入时刻取「现在 + 1 天」——锚点仍是今天，判定为跨日恢复备份；产物文件名
+/// 时间戳随注入时刻自然不同，同目录产物计数可区分两次备份（避开秒级同妙覆盖）。
+#[when(expr = "跨日后触发自动备份数据库到临时目录")]
+fn auto_backup_next_day_to_temp(world: &mut LedgerWorld) {
+    let dir = world.auto_backup_dir.clone().expect("尚未自动备份");
+    let outcome = tauri_app_lib::auto_backup::run_due_backup(
+        &world_conn!(world),
+        Some(dir.to_str().unwrap()),
+        "0.2.0",
+        chrono::Utc::now() + chrono::Duration::days(1),
+    );
+    assert!(
+        matches!(outcome, AttemptOutcome::Performed { .. }),
+        "跨本地日后有变动应恢复备份，实际 {outcome:?}"
+    );
+    if let AttemptOutcome::Performed { path } = outcome {
+        world.last_auto_backup_path = Some(PathBuf::from(path));
+    }
+}
+
+/// 同日已自动备份且列表为空（目录被清空）后首次兜底：断言静默跳过且锚点不前移。
+#[when(expr = "首次兜底因日界门静默跳过")]
+fn first_fallback_skipped_by_day_gate(world: &mut LedgerWorld) {
+    let anchor_before = get_state(&world_conn!(world)).unwrap().last_backup_at;
+    let outcome = tauri_app_lib::auto_backup::run_first_backup(
+        &world_conn!(world),
+        Some(
+            world
+                .auto_backup_dir
+                .as_ref()
+                .expect("尚未自动备份")
+                .to_str()
+                .unwrap(),
+        ),
+        "0.2.0",
+        chrono::Utc::now(),
+    );
+    assert_eq!(
+        outcome,
+        AttemptOutcome::Skipped(SkipReason::AlreadyBackedUpToday),
+        "同日首次兜底应静默跳过"
+    );
+    assert_eq!(
+        get_state(&world_conn!(world)).unwrap().last_backup_at,
+        anchor_before,
+        "跳过不应前移锚点"
+    );
+}
+
+/// 清空自动备份目录内的产物（模拟用户删光备份），目录本身保留。
+#[when(expr = "清空自动备份目录")]
+fn clear_auto_backup_dir(world: &mut LedgerWorld) {
+    let dir = world.auto_backup_dir.as_ref().expect("尚未自动备份");
+    for entry in std::fs::read_dir(dir).expect("列目录") {
+        std::fs::remove_file(entry.expect("读目录项").path()).expect("删除产物");
+    }
+}
+
+/// 统计本场景自动备份目录内的自动产物数量（受管前缀识别，混入手动文件不计数）。
+#[then(expr = "备份目录内自动备份产物数量应为 {int}")]
+fn auto_backup_product_count(world: &mut LedgerWorld, expected: i64) {
+    let dir = world.auto_backup_dir.as_ref().expect("尚未自动备份");
+    let count = std::fs::read_dir(dir)
+        .expect("列目录")
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with(AUTO_BACKUP_PREFIX)
+        })
+        .count() as i64;
+    assert_eq!(count, expected, "自动备份产物数量不匹配");
 }
 
 /// 设置写入（`app_settings`，经 settings 模块单点收口，普通锁不走出入口）——
