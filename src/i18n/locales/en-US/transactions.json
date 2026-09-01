@@ -43,7 +43,35 @@
       "month": "This month",
       "quarter": "This quarter",
       "year": "This year",
-      "lastYear": "Last year"
+      "lastYear": "Last year",
+      "prev": "Previous period",
+      "next": "Next period"
+    },
+    "periodLabel": {
+      "month": "{name} {year}",
+      "quarter": "{name} {year}",
+      "year": "{year}",
+      "none": "—",
+      "monthNames": {
+        "1": "Jan",
+        "2": "Feb",
+        "3": "Mar",
+        "4": "Apr",
+        "5": "May",
+        "6": "Jun",
+        "7": "Jul",
+        "8": "Aug",
+        "9": "Sep",
+        "10": "Oct",
+        "11": "Nov",
+        "12": "Dec"
+      },
+      "quarterNames": {
+        "1": "Q1",
+        "2": "Q2",
+        "3": "Q3",
+        "4": "Q4"
+      }
     }
   },
   "create": {
