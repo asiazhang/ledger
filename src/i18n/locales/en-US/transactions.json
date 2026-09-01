@@ -77,7 +77,10 @@
     "transferCreated": "Transfer recorded",
     "changesSaved": "Changes saved",
     "saveFailed": "Failed to save: {msg}",
-    "createFailed": "Failed to record: {msg}"
+    "createFailed": "Failed to record: {msg}",
+    "policy": "Policy",
+    "policyPlaceholder": "Select policy (optional)",
+    "policyDeleted": "(deleted policy)"
   },
   "refund": {
     "title": "Refund",

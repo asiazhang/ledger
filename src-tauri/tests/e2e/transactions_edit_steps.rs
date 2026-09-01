@@ -22,6 +22,7 @@ fn update_last_txn(world: &mut LedgerWorld, kind: String, amount: i64, date: Str
         .expect("原交易不存在");
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: existing.currency_code.clone(),
@@ -54,6 +55,7 @@ fn try_update_last_to_transfer(world: &mut LedgerWorld, amount: i64, date: Strin
         .expect("原交易不存在");
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::Transfer,
         amount_cents: amount,
         currency_code: existing.currency_code.clone(),
@@ -81,6 +83,7 @@ fn try_update_last_to_transfer(world: &mut LedgerWorld, amount: i64, date: Strin
 fn try_update_missing_txn(world: &mut LedgerWorld, amount: i64, date: String) {
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::Expense,
         amount_cents: amount,
         currency_code: "CNY".into(),
@@ -159,6 +162,7 @@ fn insert_trade_for_edit(
     let currency_code = account_currency(&world_conn!(world), &account_id);
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind,
         amount_cents: quantity * price_cents,
         currency_code,
@@ -242,6 +246,7 @@ fn trade_edit_input(
         .expect("原交易不存在");
     TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind,
         amount_cents: 0,
         currency_code: existing.currency_code.clone(),
@@ -328,6 +333,7 @@ fn try_update_deleted_txn(world: &mut LedgerWorld, amount: i64, date: String) {
     let id = world.last_transaction_id.clone().expect("没有可修改的交易");
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::Expense,
         amount_cents: amount,
         currency_code: "CNY".into(),

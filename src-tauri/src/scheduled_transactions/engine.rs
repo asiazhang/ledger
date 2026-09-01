@@ -791,6 +791,10 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
             category_id,
             merchant_id: merchant_id.clone(),
             existing_merchant_id: merchant_id,
+            // 定时计划不持保单引用（本期不挂，issue #361：协议持保单引用是后续票）；
+            // 恒 None，期次生成流水不涉保单。
+            policy_id: None,
+            existing_policy_id: None,
             refund_of_transaction_id: None,
             note: st.note.clone(),
             date: occ.scheduled_date.clone(),

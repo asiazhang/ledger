@@ -27,12 +27,12 @@ struct Candidate {
 
 impl FromRow for Candidate {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
-        // 列 0..=16 与 `Transaction::from_row` 的列清单一致（末列为 merchant_id），
+        // 列 0..=17 与 `Transaction::from_row` 的列清单一致（末列为 policy_id），
         // 转出账户名、商户名追加在末两列。
         Ok(Candidate {
             txn: Transaction::from_row(row)?,
-            account_name: row.get(17)?,
-            merchant_name: row.get(18)?,
+            account_name: row.get(18)?,
+            merchant_name: row.get(19)?,
         })
     }
 }
@@ -108,7 +108,7 @@ pub fn search_transactions_internal(
     let mut stmt = conn.prepare(&format!(
         "SELECT t.id,t.kind,t.amount_cents,t.currency_code,t.amount_native_cents,t.account_id,\
          t.to_account_id,t.category_id,t.refund_of_transaction_id,t.note,t.date,t.created_at,\
-         t.updated_at,t.version,t.device_id,t.is_deleted,t.merchant_id,COALESCE(a.name,''),m.name \
+         t.updated_at,t.version,t.device_id,t.is_deleted,t.merchant_id,t.policy_id,COALESCE(a.name,''),m.name \
          FROM transactions t \
          JOIN accounts a ON t.account_id = a.id \
          LEFT JOIN categories c ON t.category_id = c.id \

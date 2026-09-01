@@ -81,6 +81,18 @@ const ctx = useCategoryForm(props.kind, {
         />
       </NFormItem>
 
+      <!-- 可选保单选择器（issue #361 / ADR-0051 决策 3）：支出（保费）与收入
+           （保单现金流入）可挂一张保单；其余类型（转账/买入/卖出）不出现本项。 -->
+      <NFormItem :label="t('transactions.form.policy')">
+        <AppSelect
+          v-model:value="ctx.policyId.value"
+          :options="ctx.policyOptions.value"
+          clearable
+          :placeholder="t('transactions.form.policyPlaceholder')"
+          style="width: 220px"
+        />
+      </NFormItem>
+
       <NFormItem :label="t('settings.categories.txForm.date')">
         <AppDatePicker v-model:value="ctx.date.value" type="date" style="width: 200px" />
       </NFormItem>

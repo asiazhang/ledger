@@ -210,6 +210,8 @@ fn prepare_buy(conn: &Connection, input: &TransactionInput) -> Result<BuyPlan> {
             to_account_id: input.to_account_id.clone(),
             category_id: None,
             merchant_id: None,
+            // 投资 kind 不涉保单（行为层准入已拒绝携带，issue #361）：恒 None。
+            policy_id: None,
             refund_of_transaction_id: None,
             note: input.note.clone(),
             date: input.date.clone(),
@@ -340,6 +342,8 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
             to_account_id: input.to_account_id.clone(),
             category_id: None,
             merchant_id: None,
+            // 投资 kind 不涉保单（行为层准入已拒绝携带，issue #361）：恒 None。
+            policy_id: None,
             refund_of_transaction_id: None,
             note: input.note.clone(),
             date: input.date.clone(),

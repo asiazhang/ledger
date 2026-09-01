@@ -24,6 +24,7 @@ fn create_income_and_expense_transactions() {
     let id2 = create_transaction_internal(
         &conn,
         TransactionInput {
+            policy_id: None,
             amount_cents: 1500,
             note: Some("午餐".into()),
             category_id: None,
@@ -54,6 +55,7 @@ fn create_transfer_with_to_account() {
         &conn,
         TransactionInput {
             merchant_name: None,
+            policy_id: None,
             kind: TransactionKind::Transfer,
             amount_cents: 3000,
             currency_code: "CNY".into(),
@@ -418,6 +420,7 @@ fn create_refund_linked_to_expense() {
         &conn,
         TransactionInput {
             merchant_name: None,
+            policy_id: None,
             kind: TransactionKind::Expense,
             amount_cents: 1000,
             currency_code: "CNY".into(),
@@ -442,6 +445,7 @@ fn create_refund_linked_to_expense() {
         &conn,
         TransactionInput {
             merchant_name: None,
+            policy_id: None,
             kind: TransactionKind::Refund,
             amount_cents: 200,
             currency_code: "CNY".into(),
@@ -580,6 +584,7 @@ fn update_transaction_internal_cross_kind_expense_to_transfer() {
     .id;
 
     let transfer = TransactionInput {
+        policy_id: None,
         to_account_id: Some("acc-upd-b".into()),
         ..make_input("acc-upd-a", TransactionKind::Transfer, 1000, "2026-01-02")
     };

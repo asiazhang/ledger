@@ -54,6 +54,8 @@ mod scheduled_steps;
 mod search_steps;
 #[path = "e2e/transactions_edit_steps.rs"]
 mod transactions_edit_steps;
+#[path = "e2e/transactions_policy_steps.rs"]
+mod transactions_policy_steps;
 #[path = "e2e/transactions_query_steps.rs"]
 mod transactions_query_steps;
 #[path = "e2e/transactions_write_steps.rs"]

@@ -55,6 +55,7 @@ impl ImportedRow {
             category_id: None,
             merchant_id: None,
             merchant_name: self.merchant_name.clone(),
+            policy_id: None,
             refund_of_transaction_id: None,
             note: self.note.clone(),
             date: self.date.clone(),

@@ -147,6 +147,7 @@ fn create_trade(
     };
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind,
         // 占位金额（prepare 按「数量 × 单价（万分之一元）÷ 100 ± 手续费」重算覆盖）
         amount_cents: (quantity * price_cents as f64 / 100.0).round() as i64,

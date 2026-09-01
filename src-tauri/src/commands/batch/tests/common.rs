@@ -28,6 +28,7 @@ pub(super) fn make_input(
 ) -> TransactionInput {
     TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind,
         amount_cents: amount,
         currency_code: "CNY".into(),

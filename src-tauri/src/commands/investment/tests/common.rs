@@ -80,6 +80,7 @@ pub(super) fn make_buy_input(
 ) -> TransactionInput {
     TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::Buy,
         amount_cents: 0,
         currency_code: "USD".into(),
@@ -107,6 +108,7 @@ pub(super) fn make_sell_input(
 ) -> TransactionInput {
     TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::Sell,
         amount_cents: 0,
         currency_code: "USD".into(),
@@ -136,6 +138,7 @@ pub(super) fn make_trade_input(
 ) -> TransactionInput {
     TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind,
         amount_cents: 0,
         currency_code: "CNY".into(),

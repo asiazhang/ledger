@@ -64,7 +64,8 @@
     "not-found": "transaction {0} not found",
     "merchant-unsupported": "transaction type {0} cannot carry a merchant",
     "merchant-id-and-name-conflict": "merchant_id and merchant_name cannot both be provided",
-    "kind-unsupported": "transaction type {0} is not supported yet (not implemented in MVP)"
+    "kind-unsupported": "transaction type {0} is not supported yet (not implemented in MVP)",
+    "policy-unsupported": "Transaction kind {0} cannot carry a policy"
   },
   "refund": {
     "source-required": "refund must reference the original expense transaction",
@@ -165,6 +166,7 @@
     "end-before-start": "coverage end date {0} is before start date {1}",
     "amount-positive": "coverage amount must be greater than 0",
     "currency-required": "currency is required when coverage amount is filled",
-    "currency-not-found": "unknown currency: {0}"
+    "currency-not-found": "unknown currency: {0}",
+    "not-active": "Policy not found or deleted: {0}"
   }
 }

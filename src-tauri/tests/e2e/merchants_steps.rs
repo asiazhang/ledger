@@ -113,6 +113,7 @@ fn create_txn_with_merchant(
 ) {
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: "CNY".into(),
@@ -147,6 +148,7 @@ fn try_create_txn_with_merchant(
 ) {
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: "CNY".into(),
@@ -181,6 +183,7 @@ fn try_transfer_with_merchant(
 ) {
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::Transfer,
         amount_cents: amount,
         currency_code: "CNY".into(),

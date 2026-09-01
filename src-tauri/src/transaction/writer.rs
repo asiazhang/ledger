@@ -46,6 +46,15 @@ pub struct Input {
     /// 改选其他商户则按新选择校验在用。与账户/分类的更新语义一致（引用已软删的
     /// 参考数据不阻止编辑既有行，issue #188 / ADR-0028）。
     pub existing_merchant_id: Option<String>,
+    /// 可选保单引用（issue #361 / ADR-0051 决策 3）：保费（expense）与保单现金流入
+    /// （income）可挂一张保单。kind 准入（哪些 kind 可携带）收口在行为层
+    /// [`commands::transactions::behavior`]，本模块只做引用有效性校验。
+    /// 修改路径该行**当前**的保单 id（创建路径为 None）由行为层并入
+    /// [`existing_policy_id`]：提交值与其相同视为「保持历史引用」——已软删保单的
+    /// 历史交易仍可修改其他字段，跳过在用校验（与 [`existing_merchant_id`] 同款语义，
+    /// 引用已软删的参考数据不阻止编辑既有行，issue #188 / ADR-0028）。
+    pub policy_id: Option<String>,
+    pub existing_policy_id: Option<String>,
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
@@ -62,6 +71,8 @@ pub struct NormalizedRow {
     pub to_account_id: Option<String>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
+    /// 可选保单引用（issue #361 / ADR-0051 决策 3），随 [`Input::policy_id`] 归一化。
+    pub policy_id: Option<String>,
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
@@ -78,6 +89,11 @@ pub struct NormalizedRow {
 /// - 商户（merchant_id）：income/expense 携带的商户必须存在且未软删除（软删商户
 ///   不可再被新交易选择，历史引用照常保留）；refund 忽略调用方填的 merchant_id，
 ///   自动继承原支出商户（与账户/币种/分类同款继承语义，ADR-0028）；
+/// - 保单（policy_id，issue #361）：携带的保单必须存在且未软删除（软删保单不可
+///   再被新选择，历史引用照常保留——保单是档案非字典，ADR-0051 决策 5）；
+///   修改路径提交值与该行当前保单相同视为保持历史引用（`existing_policy_id`）。
+///   kind 准入在行为层收口，本模块不重复判 kind；refund 不继承保单（现金流入
+///   记 income 挂单，非 refund，ADR-0051 决策 4），调用方传什么校验什么。
 /// - refund 必须关联**未删除**的原支出交易，且账户/币种/分类继承原支出
 ///   （忽略调用方填的 account_id / currency_code / category_id）；
 /// - 本位币折算走 Amount 接缝 [`amount::convert_to_native`]（基准为全局默认币种）。
@@ -163,6 +179,13 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
                     validate_merchant_active(conn, Some(merchant_id))?;
                 }
             }
+            // 保单引用校验（issue #361）：kind 准入在行为层，此处只校验引用有效性。
+            if let Some(policy_id) = &input.policy_id {
+                let unchanged = input.existing_policy_id.as_deref() == Some(policy_id.as_str());
+                if !unchanged {
+                    validate_policy_active(conn, Some(policy_id))?;
+                }
+            }
             (
                 input.category_id.clone(),
                 input.account_id.clone(),
@@ -172,6 +195,7 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
             )
         };
     let native = amount::convert_to_native(conn, input.amount_cents, &currency_code)?;
+    let policy_id = input.policy_id.clone();
     let to_account_id = if input.kind == TransactionKind::Transfer {
         input.to_account_id.clone()
     } else {
@@ -186,6 +210,7 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
         to_account_id,
         category_id,
         merchant_id,
+        policy_id,
         refund_of_transaction_id: refund_of_id,
         note: input.note.clone(),
         date: input.date.clone(),
@@ -217,6 +242,30 @@ pub fn validate_merchant_active(conn: &Connection, merchant_id: Option<&str>) ->
     Ok(())
 }
 
+/// 校验保单存在且未软删除（issue #361 / ADR-0051 决策 5）：软删保单不可再被
+/// **新选择**——新建交易引用；历史引用（编辑保持原保单）不受此限制，
+/// 与 [`validate_merchant_active`] 同款语义与文案风格。
+pub fn validate_policy_active(conn: &Connection, policy_id: Option<&str>) -> Result<()> {
+    if let Some(id) = policy_id {
+        let active: bool = conn
+            .query_row(
+                "SELECT 1 FROM policies WHERE id=?1 AND is_deleted=0",
+                params![id],
+                |_| Ok(true),
+            )
+            .optional()?
+            .is_some();
+        if !active {
+            return Err(AppError::codedp(
+                "policy.not-active",
+                format!("保单不存在或已删除: {id}"),
+                &[id],
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// 将归一化行落库为完整交易行：生成 `id`（UUID v7）+ 审计字段
 /// （created_at / updated_at / version=1 / device_id / is_deleted=0），返回新交易 `id`。
 ///
@@ -228,8 +277,8 @@ pub fn insert_row(conn: &Connection, row: &NormalizedRow) -> Result<String> {
     conn.execute(
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
-         category_id,merchant_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,0)",
+         category_id,merchant_id,policy_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,0)",
         params![
             id,
             row.kind.as_str(),
@@ -240,6 +289,7 @@ pub fn insert_row(conn: &Connection, row: &NormalizedRow) -> Result<String> {
             row.to_account_id,
             row.category_id,
             row.merchant_id,
+            row.policy_id,
             row.refund_of_transaction_id,
             row.note,
             row.date,
@@ -260,8 +310,8 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
     conn.execute(
         "UPDATE transactions \
          SET kind=?2, amount_cents=?3, currency_code=?4, amount_native_cents=?5, account_id=?6, \
-         to_account_id=?7, category_id=?8, merchant_id=?9, refund_of_transaction_id=?10, note=?11, date=?12, \
-         updated_at=?13, version=version+1, device_id=?14 \
+         to_account_id=?7, category_id=?8, merchant_id=?9, policy_id=?10, refund_of_transaction_id=?11, note=?12, date=?13, \
+         updated_at=?14, version=version+1, device_id=?15 \
          WHERE id=?1",
         params![
             id,
@@ -273,6 +323,7 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
             row.to_account_id,
             row.category_id,
             row.merchant_id,
+            row.policy_id,
             row.refund_of_transaction_id,
             row.note,
             row.date,

@@ -308,6 +308,7 @@ fn update_last_transaction_invalid_amount(world: &mut LedgerWorld) {
         category_id: None,
         merchant_id: None,
         merchant_name: None,
+        policy_id: None,
         refund_of_transaction_id: None,
         note: None,
         date: "2026-02-01".into(),
@@ -351,6 +352,7 @@ fn batch_import_expenses_via_entry(
             category_id: None,
             merchant_id: None,
             merchant_name: None,
+            policy_id: None,
             refund_of_transaction_id: None,
             note: None,
             // 日期互异：dedup=true 时同内容行会被判重复，这里保证每行身份唯一。
@@ -388,6 +390,7 @@ fn batch_import_rollback_via_entry(world: &mut LedgerWorld) {
         category_id: None,
         merchant_id: None,
         merchant_name: None,
+        policy_id: None,
         refund_of_transaction_id: None,
         note: None,
         date: "2026-02-01".into(),
@@ -398,6 +401,7 @@ fn batch_import_rollback_via_entry(world: &mut LedgerWorld) {
         idempotency_key: None,
     };
     let refund = TransactionInput {
+        policy_id: None,
         kind: TransactionKind::Refund,
         amount_cents: 500,
         // 占位值即可：退款归一化以原支出覆盖账户/币种，但原支出不存在先行报错。

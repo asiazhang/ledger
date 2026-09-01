@@ -166,14 +166,18 @@ fn update_within_transaction(
     id: &str,
     input: &TransactionInput,
 ) -> Result<WriteEvidence> {
-    // 读取旧交易 kind 与当前商户（商户用于「保持历史引用」判定：提交商户与原值
-    // 相同则跳过在用校验，软删商户的历史交易仍可修改其他字段），不存在或已删除
-    // 返回 NotFound。读取在事务内（入口已保证处于事务中）。
-    let (old_kind, old_merchant_id): (TransactionKind, Option<String>) = conn
+    // 读取旧交易 kind 与当前商户、当前保单（商户/保单用于「保持历史引用」判定：提交值
+    // 与原值相同则跳过在用校验，已软删商户/保单的历史交易仍可修改其他字段），
+    // 不存在或已删除返回 NotFound。读取在事务内（入口已保证处于事务中）。
+    let (old_kind, old_merchant_id, old_policy_id): (
+        TransactionKind,
+        Option<String>,
+        Option<String>,
+    ) = conn
         .query_row(
-            "SELECT kind, merchant_id FROM transactions WHERE id=?1 AND is_deleted=0",
+            "SELECT kind, merchant_id, policy_id FROM transactions WHERE id=?1 AND is_deleted=0",
             rusqlite::params![id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?
         .ok_or_else(|| {
@@ -189,7 +193,12 @@ fn update_within_transaction(
         PARTIAL_SOLD_CANNOT_UPDATE_CODE,
         PARTIAL_SOLD_CANNOT_UPDATE,
     )?;
-    let (plan, merchant_created) = plan(conn, input, old_merchant_id.as_deref())?;
+    let (plan, merchant_created) = plan_with_existing_refs(
+        conn,
+        input,
+        old_merchant_id.as_deref(),
+        old_policy_id.as_deref(),
+    )?;
     let row = plan.normalized_row()?;
     writer::update_row(conn, id, &row)?;
     apply(conn, id, &plan)?;
@@ -270,6 +279,17 @@ fn plan(
     input: &TransactionInput,
     existing_merchant_id: Option<&str>,
 ) -> Result<(Plan, bool)> {
+    plan_with_existing_refs(conn, input, existing_merchant_id, None)
+}
+
+/// [`plan`] 的全量形态：修改路径额外传该行当前的保单 id（保单「保持历史引用」判定，
+/// 与商户同款语义）。创建路径传 None。
+fn plan_with_existing_refs(
+    conn: &Connection,
+    input: &TransactionInput,
+    existing_merchant_id: Option<&str>,
+    existing_policy_id: Option<&str>,
+) -> Result<(Plan, bool)> {
     let kind = input.kind;
     // 商户携带收口（issue #188 / ADR-0028 + #194 商户名）：expense / refund / income 可携带
     // 商户（merchant_id 或 merchant_name）；transfer / buy / sell / dividend / split 行为层
@@ -284,6 +304,19 @@ fn plan(
         return Err(AppError::codedp(
             "transaction.merchant-unsupported",
             format!("交易类型 {kind} 不能携带商户"),
+            &[&kind.to_string()],
+        ));
+    }
+    // 保单携带准入（issue #361 / ADR-0051 决策 3）：仅 income / expense 可携带可选保单
+    // 引用；transfer / buy / sell / dividend / split 行为层拒绝（保单口径不被资本变动
+    // 污染）。refund 不在准入集：保单现金流入记 income 挂单而非 refund（ADR-0051 决策 4），
+    // 且 refund 继承原支出字段，携带保单无意义，拒绝保持准入集最小。
+    if input.policy_id.is_some()
+        && !matches!(kind, TransactionKind::Income | TransactionKind::Expense)
+    {
+        return Err(AppError::codedp(
+            "transaction.policy-unsupported",
+            format!("交易类型 {kind} 不能挂保单"),
             &[&kind.to_string()],
         ));
     }
@@ -328,6 +361,8 @@ fn plan(
                     category_id: input.category_id.clone(),
                     merchant_id,
                     existing_merchant_id: existing_merchant_id.map(str::to_string),
+                    policy_id: input.policy_id.clone(),
+                    existing_policy_id: existing_policy_id.map(str::to_string),
                     refund_of_transaction_id: input.refund_of_transaction_id.clone(),
                     note: input.note.clone(),
                     date: input.date.clone(),

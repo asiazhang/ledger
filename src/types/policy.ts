@@ -25,6 +25,7 @@ export interface Policy extends Syncable {
   /** 保额币种（与保额成对：保额存在时必填）。 */
   coverage_currency_code: string | null
   note: string | null
+  is_deleted: boolean
   created_at: string
 }
 

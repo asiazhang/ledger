@@ -32,6 +32,7 @@ fn make_fund_buy_input(
 ) -> TransactionInput {
     TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::Buy,
         amount_cents,
         currency_code: "CNY".into(),
@@ -60,6 +61,7 @@ fn make_fund_sell_input(
 ) -> TransactionInput {
     TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::Sell,
         amount_cents,
         currency_code: "CNY".into(),

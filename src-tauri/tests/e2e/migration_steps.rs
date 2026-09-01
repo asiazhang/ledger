@@ -95,6 +95,7 @@ fn edit_txn_by_key(world: &mut LedgerWorld, key: String, amount: i64, date: Stri
         .unwrap_or_else(|_| panic!("未找到幂等键为 '{key}' 的交易"));
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::Income,
         amount_cents: amount,
         currency_code,

@@ -75,6 +75,7 @@ fn create_expense_in_relative_year(
     let year = resolve_year_token(&year_token, scenario_today(world));
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::Expense,
         amount_cents: amount,
         currency_code: "CNY".into(),
@@ -123,6 +124,7 @@ fn create_txn_with_merchant_currency(
 ) {
     let input = TransactionInput {
         merchant_name: None,
+        policy_id: None,
         kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
         amount_cents: amount,
         currency_code: currency,

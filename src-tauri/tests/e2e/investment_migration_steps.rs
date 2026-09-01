@@ -114,6 +114,7 @@ fn batch_import_trades(world: &mut LedgerWorld, #[step] step: &Step) {
             category_id: None,
             merchant_id: None,
             merchant_name: None,
+            policy_id: None,
             refund_of_transaction_id: None,
             note: None,
             date: get(row, "日期"),
