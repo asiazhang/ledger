@@ -52,10 +52,18 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('@/views/ItemsView.vue'),
   },
   {
-    // 保单（issue #360 / ADR-0051）：消费型保险合同的静态档案，侧栏「资产」组
+    // 保单（issue #360 / ADR-0051）：消费型保险合同的静态档案，已迁入「更多」页保单页签
+    // （issue #371，ADR 由 T3 落地）。旧路由保留 name 供 ViewState 兼容——存量记录
+    // 'policies' 仍可解析并落到「更多·保单」；路由监听持久化的视图名恒为 more。
     path: '/policies',
     name: 'policies',
-    component: () => import('@/views/PoliciesView.vue'),
+    redirect: { name: 'more', query: { tab: 'policies' } },
+  },
+  {
+    // 「更多」聚合视图（issue #371）：低频视图的单一收容器，页签态在 query.tab
+    path: '/more',
+    name: 'more',
+    component: () => import('@/views/MoreView.vue'),
   },
   {
     path: '/budget',
