@@ -19,6 +19,8 @@ AI 批量导入（HTTP 壳写端点）期间整个应用界面永久卡死（spe
 4. **知识层零改动**：`signals` 映射（WriteOp / Signal 闭集、`signals_for` 判定、WriteEvidence 归一化）、事件名常量、两壳声明表与 `signals_cross_check` 交叉核对全部不动——本次只改「怎么发」，不改「谁发什么」。
 5. **不改 tauri 内部与依赖**：不 patch `app.emit` / `eval`，不换 WebKit 消息通道，不动 Cargo 依赖（tauri 2 保持 `tracing` feature）。
 
+- **修订（#366，2026-09-01）**：机制接缝由内部函数固化为发射器抽象 `events::SignalEmitter`（唯一约定：`post` 非阻塞交接即返回、失败静默），`AppHandle` 实现构造 emit 闭包走 `post_emit_with` 同一机制（原无 payload 薄封装 `post_emit` 随之并入实现），`signals::emit_all` / `emit_for` 改收发射器（生产传 `&AppHandle` 自动转型，壳层调用面零改动）；决策 1–5 语义不变，正文保留原貌，本注记为准。同时代价 3 的「机制层回归保护有限」得以缓解：新增可阻塞假发射器回归测试（`signals::emit_blocking_tests`）钉死「发射器阻塞期间写路径仍及时返回、放行后信号最终到达」的外部行为，不依赖死锁时序复现。
+
 ## 理由
 
 - **为什么投递而不是就地发射**：死锁前提「写线程持锁等回执」被整体移除——写线程只做一次非阻塞入队，不再接触 `webviews_lock`；主线程在自己的循环里执行 emit，自身线程上 `run_on_main_thread` 语义为内联顺序执行，无自等待。这是对死锁成因的机制级消除，而非对单个调用点的规避。

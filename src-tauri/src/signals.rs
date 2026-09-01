@@ -3,9 +3,9 @@
 //!
 //! 职责分界（ADR-0044 决策 7）：本模块承载**知识**（谁发什么）——强类型写操作身份
 //! [`WriteOp`]、结果证据 [`WriteEvidence`]、信号 [`Signal`] 与纯函数 [`signals_for`]；
-//! **机制**（怎么发）留在 `events.rs`（事件名常量 + `emit_*` 入口 + `EVENT_APP`
-//! 镜像句柄 + 主线程非阻塞投递，spec #364），本模块经 [`emit_all`] / [`emit_for`]
-//! 遍历信号集委托发射。
+//! **机制**（怎么发）留在 `events.rs`（事件名常量 + 发射器接缝 `SignalEmitter` +
+//! `EVENT_APP` 镜像句柄 + 主线程非阻塞投递，spec #364/#366），本模块经 [`emit_all`] /
+//! [`emit_for`] 遍历信号集把事件名投递给发射器。
 //!
 //! - **键是强类型写操作身份**，不沿用命令名字符串（ADR-0044 决策 2）：HTTP handler
 //!   无命令名（axum），且两壳命令面不对称，字符串键必然漂移；IPC 命令与 HTTP 端点
@@ -32,8 +32,6 @@
 //! 写操作边界：本闭集收录「以写为意图」的操作（DB 行写入、KV / 指针文件写入、
 //! 备份产物、进程级设置镜像推送）；纯读命令与控制类命令（`restart_app` /
 //! `cancel_sync_instruments` / `open_log_dir`）不是写操作，不入集。
-
-use tauri::AppHandle;
 
 use crate::events;
 
@@ -395,24 +393,26 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
     }
 }
 
-/// 发射助手（ADR-0044 决策 1，机制侧收口）：遍历信号集逐个发射。发射经
-/// `events::emit_*` 投递主线程非阻塞执行（spec #364 / ADR-0054）——本函数只做
-/// 一次非阻塞入队即返回，不等发射完成；投递 / 发射失败静默忽略，不影响写事务
-/// 结果。壳层约定形态：`emit_for(&app, WriteOp::X, evidence)`，或先取
+/// 发射助手（ADR-0044 决策 1，机制侧收口）：遍历信号集逐个把事件名投递给发射器。
+/// 发射器即机制接缝（`events::SignalEmitter`，spec #366）：生产路径传 `&AppHandle`
+/// （主线程非阻塞投递，ADR-0054，trait 自动转型），测试注入可阻塞假发射器断言
+/// 「发射不阻塞写路径」（`emit_blocking_tests`，spec #366）。本函数只做一次非阻塞
+/// 投递即返回，不等发射完成；投递 / 发射失败静默忽略，不影响写事务结果。
+/// 壳层约定形态：`emit_for(&app, WriteOp::X, evidence)`，或先取
 /// [`signals_for`] 再 [`emit_all`]（需要先记日志 / 断言信号集时用后者）。
-pub fn emit_all(app: &AppHandle, signals: &[Signal]) {
+pub fn emit_all(emitter: &dyn events::SignalEmitter, signals: &[Signal]) {
     for signal in signals {
         match signal {
-            Signal::LedgerChanged => events::emit_ledger_changed(app),
-            Signal::PricesChanged => events::emit_prices_changed(app),
-            Signal::BackupsChanged => events::emit_backups_changed(app),
+            Signal::LedgerChanged => emitter.post(events::LEDGER_CHANGED),
+            Signal::PricesChanged => emitter.post(events::PRICES_CHANGED),
+            Signal::BackupsChanged => emitter.post(events::BACKUPS_CHANGED),
         }
     }
 }
 
 /// 组合助手：取 [`signals_for`] 判定并立即发射（壳层单行形态）。
-pub fn emit_for(app: &AppHandle, op: WriteOp, evidence: WriteEvidence) {
-    emit_all(app, signals_for(op, evidence));
+pub fn emit_for(emitter: &dyn events::SignalEmitter, op: WriteOp, evidence: WriteEvidence) {
+    emit_all(emitter, signals_for(op, evidence));
 }
 
 #[cfg(test)]
@@ -833,3 +833,9 @@ mod tests {
         );
     }
 }
+
+/// 「发射不阻塞写路径」回归测试（spec #366）：机制层注入可阻塞假发射器，
+/// 钉死 ADR-0054 的外部行为——发射器阻塞期间写路径仍及时返回，放行后信号
+/// 最终到达。与上方映射测试（知识层，谁发什么）并存，各守一个维度。
+#[cfg(test)]
+mod emit_blocking_tests;
