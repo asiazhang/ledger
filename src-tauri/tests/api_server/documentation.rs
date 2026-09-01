@@ -363,6 +363,25 @@ async fn test_import_knowledge_covers_key_conventions() {
         "6 位代码",
         "GET /api/v1/funds",
         "名称充代码",
+        // 个人间借贷教学关键词锁（issue #368 / ADR-0053）：落账映射方向
+        // （借出=自资金账户转入 receivable、借入经 debt、还款反向转账、
+        // 勿记成 expense 的示例句）、一人一账户命名约定、不带商户、利息
+        // 才进收支、既有借贷经期初余额表达、AI 不代做核销（否定语义短语）。
+        // 各词均属借贷节独有措辞，整节被误删或方向/否定语义被改时逐词报红。
+        "个人间借贷",
+        "receivable",
+        "debt",
+        "自资金账户转入",
+        "借出·张三",
+        "借入·李四",
+        "反向转账",
+        "部分还款即多笔",
+        "张三借了我",
+        "借贷行不带商户",
+        "利息",
+        "initial_balance_cents",
+        "余额调整",
+        "不自行清零余额",
     ];
     for kw in required_keywords {
         assert!(text.contains(kw), "导入知识应包含关键约定关键词 {kw:?}");
