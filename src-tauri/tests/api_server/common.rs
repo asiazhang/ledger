@@ -6,7 +6,7 @@ use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-use tauri_app_lib::api_server::{ApiState, FundDetailFetcher, build_router};
+use tauri_app_lib::api_server::{ApiState, EmitterSlot, FundDetailFetcher, build_router};
 use tauri_app_lib::db;
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::events::SignalEmitter;
@@ -25,13 +25,22 @@ pub(crate) fn setup_app() -> (Router, Arc<Mutex<rusqlite::Connection>>) {
 pub(crate) fn setup_app_with_fund_fetch(
     fund_fetch: Option<FundDetailFetcher>,
 ) -> (Router, Arc<Mutex<rusqlite::Connection>>) {
+    // 集成测试不经真实 Tauri 运行时，发射槽传 None（发射分支跳过，见 ApiState 注释）
+    build_test_app(fund_fetch, None)
+}
+
+/// 共享装配：内存库初始化 + 注入东财接缝与发射槽（spec #367 code review 去重：
+/// 各 setup 变体只差注入项，装配序列单一承载）。
+fn build_test_app(
+    fund_fetch: Option<FundDetailFetcher>,
+    emitter: EmitterSlot,
+) -> (Router, Arc<Mutex<rusqlite::Connection>>) {
     let mut conn = db::open_in_memory().unwrap();
     db::init_db(&mut conn).unwrap();
     let conn = Arc::new(Mutex::new(conn));
-    // 集成测试不经真实 Tauri 运行时，发射槽传 None（发射分支跳过，见 ApiState 注释）
     let app = build_router(ApiState {
         conn: conn.clone(),
-        emitter: None,
+        emitter,
         fund_fetch,
     });
     (app, conn)
@@ -43,15 +52,7 @@ pub(crate) fn setup_app_with_fund_fetch(
 pub(crate) fn setup_app_with_emitter(
     emitter: Arc<dyn SignalEmitter>,
 ) -> (Router, Arc<Mutex<rusqlite::Connection>>) {
-    let mut conn = db::open_in_memory().unwrap();
-    db::init_db(&mut conn).unwrap();
-    let conn = Arc::new(Mutex::new(conn));
-    let app = build_router(ApiState {
-        conn: conn.clone(),
-        emitter: Some(emitter),
-        fund_fetch: None,
-    });
-    (app, conn)
+    build_test_app(None, Some(emitter))
 }
 
 /// 东财基金详情桩的返回形态（命中）：名称 / 东财分类 / 可选（净值，净值日期）。

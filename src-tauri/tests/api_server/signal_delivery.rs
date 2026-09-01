@@ -1,9 +1,9 @@
 //! 「写请求返回后失效信号最终到达」HTTP 壳集成验证（spec #367，ADR-0054 对外行为防线）。
 //!
 //! #366 的机制层回归（`signals::emit_blocking_tests`，源码内单测）钉住「发射步骤
-//! 不阻塞写路径」；本模块补 **HTTP 壳整链**维度：把受控假发射器装进真端点的发射槽
-//!（`ApiState.emitter`，ADR-0054 #367 修订泛化为发射器接缝），经真实写端点断言
-//! 外部行为——
+//! 不阻塞写路径」；本模块补 **HTTP 壳整链**维度：把闸门式假发射器装进真端点的
+//! 发射槽（`ApiState.emitter`，ADR-0054 #367 修订泛化为发射器接缝），经真实写端点
+//! 断言外部行为——
 //!
 //! - **延迟可接受**：写请求先于信号送达而返回（信号已交接、尚未送达，响应已 2xx）；
 //! - **不允许永久丢失**：信号最终到达（等待带超时上界，丢失即超时失败而非挂起）。
@@ -13,113 +13,19 @@
 //! 即建商户才发参考失效信号，issue #331 接线，整链「写 → 证据 → 信号」首次可见）。
 //!
 //! 刻意**不复现真实死锁时序**（跨线程时序问题易 flaky，与 #366 同一测试哲学）：
-//! 假发射器的 `post` 本身非阻塞交接（与生产 `AppHandle` 实现同一约定），只构造
-//! 「发射被闸门延迟」这一外部条件。若壳层把发射槽退化回「同步等发射完成」或
-//! 投递丢失，测试在超时上界后红，而不是挂起测试进程。
+//! 假发射器（共享测试桩 `test_utils::GatedEmitter`，与机制层回归共用）的 `post`
+//! 本身非阻塞交接（与生产 `AppHandle` 实现同一约定），只构造「发射被闸门延迟」
+//! 这一外部条件。若壳层把发射槽退化回「同步等发射完成」或投递丢失，测试在
+//! 超时上界后红，而不是挂起测试进程。
 
-use std::sync::{Arc, Condvar, Mutex};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::sync::Arc;
 
-use tauri_app_lib::events::{self, SignalEmitter};
+use tauri_app_lib::events;
+use tauri_app_lib::test_utils::GatedEmitter;
 
 use crate::common::{
     batch_body, create_account_via_api, delete_account_via_api, post_batch, setup_app_with_emitter,
 };
-
-/// 单次等待的超时上界：正常路径毫秒级即过；仅当信号真的丢失（回归发生）时才
-/// 耗满并失败。
-const TIMEOUT: Duration = Duration::from_secs(5);
-
-/// 假发射器共享态：`posted` = 已交接（`post` 已调用、待送达）；
-/// `delivered` = 假主线程已送达；`gate_open` = 闸门放行。
-#[derive(Default)]
-struct Shared {
-    posted: Vec<&'static str>,
-    delivered: Vec<&'static str>,
-    gate_open: bool,
-}
-
-/// 受控假发射器（spec #367 测试桩）：`post` 只把事件**交接**进共享态即返回
-/// （与生产 `AppHandle` 实现的非阻塞投递约定同形）；假主线程在闸门放行前一直
-/// 阻塞——模拟「信号延迟」（真实事故中即主线程被占、emit 迟迟不执行）。
-/// 放行后把已交接事件按入队顺序依次送达并退出（测试生命周期内单次放行）。
-#[derive(Clone)]
-struct GatedEmitter {
-    shared: Arc<(Mutex<Shared>, Condvar)>,
-}
-
-impl GatedEmitter {
-    /// 新建闸门关闭（信号延迟中）的假发射器，并启动假主线程。
-    fn gated() -> Self {
-        let emitter = Self {
-            shared: Arc::new((Mutex::new(Shared::default()), Condvar::new())),
-        };
-        let worker = emitter.clone();
-        thread::spawn(move || worker.run_fake_main_thread());
-        emitter
-    }
-
-    /// 假主线程：模拟「主线程事件循环里执行 emit」。放行前阻塞等待；放行后把
-    /// 已交接事件按入队顺序依次「送达」并退出。
-    fn run_fake_main_thread(&self) {
-        let (lock, cv) = &*self.shared;
-        let mut state = lock.lock().unwrap();
-        while !state.gate_open {
-            state = cv.wait(state).unwrap();
-        }
-        let pending = std::mem::take(&mut state.posted);
-        state.delivered.extend(pending);
-        cv.notify_all();
-    }
-
-    /// 开闸放行（模拟主线程恢复，队首待送达的信号得以执行）。
-    fn open_gate(&self) {
-        let (lock, cv) = &*self.shared;
-        let mut state = lock.lock().unwrap();
-        state.gate_open = true;
-        cv.notify_all();
-    }
-
-    /// 已交接事件快照（不等待）。
-    fn posted(&self) -> Vec<&'static str> {
-        self.shared.0.lock().unwrap().posted.clone()
-    }
-
-    /// 已送达事件快照（不等待）。
-    fn delivered(&self) -> Vec<&'static str> {
-        self.shared.0.lock().unwrap().delivered.clone()
-    }
-
-    /// 等到有「送达」（带超时上界），返回快照——信号丢失（回归发生）时超时失败
-    /// 而非永久挂起，正是「不允许永久丢失」的断言形态。
-    fn wait_delivered(&self) -> Vec<&'static str> {
-        let (lock, cv) = &*self.shared;
-        let deadline = Instant::now() + TIMEOUT;
-        let mut state = lock.lock().unwrap();
-        while state.delivered.is_empty() {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            assert!(
-                !remaining.is_zero(),
-                "等待信号送达超时（{TIMEOUT:?}）：写请求返回后信号不得永久丢失"
-            );
-            let (guard, _) = cv.wait_timeout(state, remaining).unwrap();
-            state = guard;
-        }
-        state.delivered.clone()
-    }
-}
-
-impl SignalEmitter for GatedEmitter {
-    /// 非阻塞交接：记录事件并唤醒假主线程后**立即返回**，不等送达完成
-    ///（与生产 `AppHandle` 实现同一约定）。
-    fn post(&self, event: &'static str) {
-        let (lock, cv) = &*self.shared;
-        let mut state = lock.lock().unwrap();
-        state.posted.push(event);
-        cv.notify_all();
-    }
-}
 
 /// 核心验收（spec #367）：`POST /api/v1/accounts` 写请求返回时信号已交接、
 /// 尚未送达（延迟可接受）；放行后信号最终到达、事件名正确、不丢失。
