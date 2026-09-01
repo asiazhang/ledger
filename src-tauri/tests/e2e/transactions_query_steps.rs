@@ -3,13 +3,55 @@ use std::collections::HashSet;
 use cucumber::{then, when};
 use rusqlite::params;
 
-use tauri_app_lib::commands::transactions::list_transactions_internal;
+use tauri_app_lib::commands::transactions::{
+    create_transaction_internal, list_transactions_internal,
+};
 use tauri_app_lib::db::new_uuid;
-use tauri_app_lib::models::TransactionListFilter;
+use tauri_app_lib::models::{TransactionInput, TransactionListFilter};
 use tauri_app_lib::transaction::amount::TransactionKind;
 
 use crate::common::query_all_transactions;
 use crate::world::LedgerWorld;
+
+// ---------------------------------------------------------------------------
+// When：创建带分类引用的交易（issue #377 分类下钻场景用）
+// ---------------------------------------------------------------------------
+
+#[when(expr = "创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string} 分类 {string}")]
+fn create_txn_with_category(
+    world: &mut LedgerWorld,
+    kind: String,
+    amount: i64,
+    account_name: String,
+    date: String,
+    category_name: String,
+) {
+    let input = TransactionInput {
+        merchant_name: None,
+        policy_id: None,
+        kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
+        amount_cents: amount,
+        currency_code: "CNY".into(),
+        account_id: world.account_id(&account_name),
+        to_account_id: None,
+        category_id: Some(world.category_id(&category_name)),
+        merchant_id: None,
+        refund_of_transaction_id: None,
+        note: None,
+        date,
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        idempotency_key: None,
+    };
+    // 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）创建，提交点置脏/到期检查。
+    let result = world
+        .db
+        .write(|conn| create_transaction_internal(conn, input));
+    assert!(result.is_ok(), "创建带分类交易失败: {:?}", result.err());
+    world.transactions_list = query_all_transactions(&world_conn!(world));
+}
 
 // ---------------------------------------------------------------------------
 // 服务端分页（issue-32：items + total，offset 页码模式）
@@ -259,6 +301,52 @@ fn check_page_merchant_date(
         expected_count,
         expected_total,
         &format!("商户 '{merchant_name}' 日期 {from}..{to} page={page}"),
+    );
+}
+
+#[then(expr = "分页查询 分类 {string} page {int} page_size {int} 应返回 {int} 条 total {int}")]
+fn check_page_category(
+    world: &mut LedgerWorld,
+    category_name: String,
+    page: i64,
+    page_size: i64,
+    expected_count: i64,
+    expected_total: i64,
+) {
+    let category_id = world.category_id(&category_name);
+    assert_paged(
+        world,
+        TransactionListFilter {
+            category_id: Some(category_id),
+            page: Some(page as usize),
+            page_size: Some(page_size as usize),
+            ..Default::default()
+        },
+        expected_count,
+        expected_total,
+        &format!("分类 '{category_name}' page={page}"),
+    );
+}
+
+#[then(expr = "分页查询 仅无分类 page {int} page_size {int} 应返回 {int} 条 total {int}")]
+fn check_page_uncategorized(
+    world: &mut LedgerWorld,
+    page: i64,
+    page_size: i64,
+    expected_count: i64,
+    expected_total: i64,
+) {
+    assert_paged(
+        world,
+        TransactionListFilter {
+            uncategorized_only: Some(true),
+            page: Some(page as usize),
+            page_size: Some(page_size as usize),
+            ..Default::default()
+        },
+        expected_count,
+        expected_total,
+        &format!("仅无分类 page={page}"),
     );
 }
 

@@ -228,6 +228,15 @@ pub struct TransactionListFilter {
     /// 按商户过滤（issue #191）：命中 `merchant_id = X` 的全部未删除交易
     /// （交易行未删即命中，商户本身可已软删——软删商户的历史交易同样可过滤）。
     pub merchant_id: Option<String>,
+    /// 按分类精确过滤（issue #377）：命中 `category_id = X` 的未删除交易。
+    /// 精确匹配，不含子分类（子分类需自身 id 直查）；分类本身可已软删——
+    /// 软删分类的历史交易同样可过滤（历史交易口径，先例商户）。
+    pub category_id: Option<String>,
+    /// 仅无分类（issue #377）：命中 `category_id IS NULL` 的未删除交易；
+    /// `false` 视为未携带（不过滤）。与 `category_id` 同时携带时按 SQL AND 组合
+    /// （两条件矛盾，恒为空集）；前端分类维度为单选三态（不过滤/精确/仅无分类），
+    /// 不会同时携带两者。
+    pub uncategorized_only: Option<bool>,
     /// 交易类型过滤（income / expense / transfer / buy / sell / refund）。
     /// 枚举反序列化对未知值报参数错误（400），不再静默传字符串给 SQL。
     pub kind: Option<TransactionKind>,

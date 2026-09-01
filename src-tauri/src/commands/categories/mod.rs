@@ -25,10 +25,14 @@ use crate::signals::{WriteEvidence, WriteOp, emit_for};
 
 pub use core::*;
 
+/// 分类列表：默认仅未删除；`include_deleted=true` 返回含软删全量（issue #377，先例商户）。
 #[tauri::command]
-pub fn list_categories(db: State<'_, DbState>) -> Result<Vec<Category>> {
+pub fn list_categories(
+    db: State<'_, DbState>,
+    include_deleted: Option<bool>,
+) -> Result<Vec<Category>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    core::list_categories_internal(&conn)
+    core::list_categories_internal(&conn, include_deleted.unwrap_or(false))
 }
 
 #[tauri::command]

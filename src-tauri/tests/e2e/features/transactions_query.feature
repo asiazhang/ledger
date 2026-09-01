@@ -91,6 +91,28 @@ Feature: 交易管理
     And 商户含软删列表应包含 1 条记录
     And 商户含软删列表应包含 "京东"
 
+  Scenario: 按分类精确过滤命中该分类交易且不含子分类；仅无分类命中未挂分类交易
+    Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
+    And 存在分类 "餐饮" 类型 "expense"
+    And 存在二级分类 "下馆子" 父分类 "餐饮" 类型 "expense"
+    When 创建交易 类型 "expense" 金额 100 到账户 "现金" 日期 "2026-08-01" 分类 "餐饮"
+    And 创建交易 类型 "expense" 金额 200 到账户 "现金" 日期 "2026-08-02" 分类 "下馆子"
+    And 创建交易 类型 "expense" 金额 300 到账户 "现金" 日期 "2026-08-03"
+    Then 分页查询 分类 "餐饮" page 1 page_size 10 应返回 1 条 total 1
+    And 分页查询 分类 "下馆子" page 1 page_size 10 应返回 1 条 total 1
+    And 分页查询 仅无分类 page 1 page_size 10 应返回 1 条 total 1
+    And 分页查询 page 1 page_size 10 应返回 3 条 total 3
+
+  Scenario: 软删分类的历史交易仍可按分类过滤；分类含软删列表含软删分类（历史交易口径，先例商户）
+    Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
+    And 存在分类 "下钻专线" 类型 "expense"
+    When 创建交易 类型 "expense" 金额 100 到账户 "现金" 日期 "2026-09-01" 分类 "下钻专线"
+    And 创建交易 类型 "expense" 金额 200 到账户 "现金" 日期 "2026-09-02" 分类 "下钻专线"
+    When 软删分类 "下钻专线"
+    Then 分页查询 分类 "下钻专线" page 1 page_size 10 应返回 2 条 total 2
+    And 分类列表不应包含 "下钻专线"
+    And 分类含软删列表应包含 "下钻专线"
+
   Scenario: 同日期同时间戳批量导入翻页无重复无遗漏
     Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
     When 批量导入 25 笔同日交易 日期 "2026-03-01" 到账户 "现金"

@@ -3,14 +3,14 @@ import { defineComponent, watch } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import { invoke } from '@tauri-apps/api/core'
-import { useTransactionFilter } from '@/composables/useTransactionFilter'
+import { useTransactionFilter, UNCATEGORIZED_ONLY } from '@/composables/useTransactionFilter'
 import type { UseTransactionFilterReturn } from '@/composables/useTransactionFilter'
 import { useReferenceStore } from '@/stores/reference'
-import type { Account, Merchant, TransactionListFilter } from '@/types'
+import type { Account, Category, Merchant, TransactionListFilter } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
-/** URL 下钻用参考数据：两账户；商户含一软删（历史交易口径，issue #191 校验含软删）。 */
+/** URL 下钻用参考数据：两账户；商户含一软删、分类含一软删（历史交易口径，issue #191/#377 校验含软删）。 */
 const urlAccounts: Account[] = [
   {
     id: 'acc-1', name: '现金', type: 'cash', currency_code: 'CNY', initial_balance_cents: 0,
@@ -35,6 +35,18 @@ const urlMerchants: Merchant[] = [
     version: 1, device_id: 'test', is_deleted: true,
   },
 ]
+const urlCategories: Category[] = [
+  {
+    id: 'cat-1', name: '餐饮', kind: 'expense', parent_id: null, icon: null, sort_order: 0,
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    version: 1, device_id: 'test', is_deleted: false,
+  },
+  {
+    id: 'cat-2', name: '下钻专线', kind: 'expense', parent_id: null, icon: null, sort_order: 1,
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    version: 1, device_id: 'test', is_deleted: true,
+  },
+]
 
 beforeEach(() => {
   // Reference Data store 用真实动作（createTestingPinia stubActions:false，ADR-0030 决策 7）：
@@ -43,7 +55,7 @@ beforeEach(() => {
   mockInvoke.mockImplementation((cmd: string) => {
     if (cmd === 'list_currencies') return Promise.resolve([])
     if (cmd === 'list_accounts') return Promise.resolve(urlAccounts)
-    if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_categories') return Promise.resolve(urlCategories)
     if (cmd === 'list_merchants') return Promise.resolve(urlMerchants)
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
@@ -64,6 +76,9 @@ const FilterHarness = defineComponent({
       if (tf.filters.dateTo) f.to = tf.filters.dateTo
       if (tf.filters.involvingAccountId) f.involving_account_id = tf.filters.involvingAccountId
       if (tf.filters.merchantId) f.merchant_id = tf.filters.merchantId
+      // 分类维度三态装配（issue #377，与视图 load 同构）：哨兵 → 仅无分类，其余非空值 → 精确 id
+      if (tf.filters.categoryId === UNCATEGORIZED_ONLY) f.uncategorized_only = true
+      else if (tf.filters.categoryId) f.category_id = tf.filters.categoryId
       if (tf.filters.kind) f.kind = tf.filters.kind
       requests.push(f)
     })
@@ -93,6 +108,7 @@ describe('useTransactionFilter 初始状态', () => {
       dateTo: null,
       involvingAccountId: null,
       merchantId: null,
+      categoryId: null,
       kind: null,
     })
     expect(tf.page.value).toBe(1)
@@ -166,12 +182,14 @@ describe('useTransactionFilter setFilter（手动过滤意图）', () => {
     tf.setFilter({ dateTo: '2026-03-31' })
     tf.setFilter({ kind: 'transfer' })
     tf.setFilter({ merchantId: 'mch-1' })
+    tf.setFilter({ categoryId: 'cat-1' })
     await flushPromises()
     expect(tf.filters).toEqual({
       dateFrom: '2026-01-01',
       dateTo: '2026-03-31',
       involvingAccountId: 'acc-1',
       merchantId: 'mch-1',
+      categoryId: 'cat-1',
       kind: 'transfer',
     })
     // 同一同步批次内的多次 bump 被 watcher 去重，最终以完整过滤状态重拉一次
@@ -183,6 +201,7 @@ describe('useTransactionFilter setFilter（手动过滤意图）', () => {
       to: '2026-03-31',
       involving_account_id: 'acc-1',
       merchant_id: 'mch-1',
+      category_id: 'cat-1',
       kind: 'transfer',
     })
   })
@@ -202,6 +221,7 @@ describe('useTransactionFilter resetFilters（清除筛选）', () => {
       dateTo: null,
       involvingAccountId: null,
       merchantId: null,
+      categoryId: null,
       kind: null,
     })
     expect(tf.page.value).toBe(1)
@@ -406,6 +426,7 @@ describe('useTransactionFilter URL 参数表·解析与校验（参考数据已�
       dateTo: null,
       involvingAccountId: null,
       merchantId: null,
+      categoryId: null,
       kind: null,
     })
     expect(requests).toHaveLength(0)
@@ -463,6 +484,7 @@ describe('useTransactionFilter URL 参数表·复位规则（#96 决策 3）', (
       dateTo: null,
       involvingAccountId: null,
       merchantId: null,
+      categoryId: null,
       kind: null,
     })
     expect(tf.page.value).toBe(1)
@@ -524,16 +546,179 @@ describe('useTransactionFilter URL 参数表·复位规则（#96 决策 3）', (
   })
 })
 
+// —— 分类维度（issue #377）：URL ?category= 下钻，合法 id 精确过滤、保留值表示仅无分类、
+// 非法/未知回退不过滤；校验映射含软删分类（历史交易口径，先例商户）；
+// 挂起补判/让位/导航清除与账户/商户维度同规则。
+
+describe('useTransactionFilter URL 参数表·分类维度（issue #377）', () => {
+  it('合法分类 id：精确过滤应用（请求携带 category_id，翻页归零 + 一次重拉）', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.page.value = 3
+    tf.syncUrlQuery({ category: 'cat-1' })
+    await flushPromises()
+    expect(tf.filters.categoryId).toBe('cat-1')
+    expect(tf.page.value).toBe(1)
+    expect(requests).toHaveLength(1)
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20, category_id: 'cat-1' })
+  })
+
+  it('保留值 none：仅无分类（哨兵态，请求携带 uncategorized_only: true）', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ category: UNCATEGORIZED_ONLY })
+    await flushPromises()
+    expect(tf.filters.categoryId).toBe(UNCATEGORIZED_ONLY)
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20, uncategorized_only: true })
+  })
+
+  it('软删分类 id 有效（历史交易口径）：校验应用不回退', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ category: 'cat-2' }) // cat-2 为软删分类
+    await flushPromises()
+    expect(tf.filters.categoryId).toBe('cat-2')
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20, category_id: 'cat-2' })
+  })
+
+  it('未知分类 id：回退不过滤；另一维度（账户）有效在场时不误清其他维度、不越界复位', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ account: 'acc-1' })
+    await flushPromises()
+    tf.setFilter({ dateFrom: '2026-01-01', kind: 'income' })
+    await flushPromises()
+    tf.syncUrlQuery({ account: 'acc-1', category: 'missing-cat' })
+    await flushPromises()
+    expect(tf.filters.categoryId).toBeNull()
+    expect(tf.filters.involvingAccountId).toBe('acc-1')
+    expect(tf.filters.dateFrom).toBe('2026-01-01')
+    expect(tf.filters.kind).toBe('income')
+    expect(lastRequest()).toEqual({
+      page: 1,
+      page_size: 20,
+      involving_account_id: 'acc-1',
+      from: '2026-01-01',
+      kind: 'income',
+    })
+  })
+
+  it('组合直达：account + category 同时生效，一次重拉', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ account: 'acc-1', category: 'cat-1' })
+    await flushPromises()
+    expect(tf.filters.involvingAccountId).toBe('acc-1')
+    expect(tf.filters.categoryId).toBe('cat-1')
+    expect(requests).toHaveLength(1)
+    expect(lastRequest()).toEqual({
+      page: 1,
+      page_size: 20,
+      involving_account_id: 'acc-1',
+      category_id: 'cat-1',
+    })
+  })
+
+  it('导航清除 category 参数：对应维度同步清空 + 日期/类型复位 + 翻页归零', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ category: 'cat-1' })
+    await flushPromises()
+    tf.setFilter({ dateFrom: '2026-01-01' })
+    tf.page.value = 2
+    await flushPromises()
+    tf.syncUrlQuery({})
+    await flushPromises()
+    expect(tf.filters.categoryId).toBeNull()
+    expect(tf.filters.dateFrom).toBeNull()
+    expect(tf.page.value).toBe(1)
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20 })
+  })
+
+  it('复位守卫对称：category=none 有效在场时 account 无效进入，账户维度清空但日期/类型不越界复位', async () => {
+    const { tf } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ category: UNCATEGORIZED_ONLY })
+    await flushPromises()
+    tf.setFilter({ dateFrom: '2026-01-01', kind: 'income' })
+    await flushPromises()
+    tf.syncUrlQuery({ category: UNCATEGORIZED_ONLY, account: 'missing-acc' })
+    await flushPromises()
+    expect(tf.filters.involvingAccountId).toBeNull()
+    expect(tf.filters.categoryId).toBe(UNCATEGORIZED_ONLY)
+    expect(tf.filters.dateFrom).toBe('2026-01-01')
+    expect(tf.filters.kind).toBe('income')
+  })
+
+  it('导航换参：category 参数 id → 保留值，按新参数重新消费', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ category: 'cat-1' })
+    await flushPromises()
+    tf.syncUrlQuery({ category: UNCATEGORIZED_ONLY })
+    await flushPromises()
+    expect(tf.filters.categoryId).toBe(UNCATEGORIZED_ONLY)
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20, uncategorized_only: true })
+  })
+
+  it('有效分类参数挂起待就绪，就绪后补判应用；保留值同规则挂起', async () => {
+    const release = gateReference('list_categories')
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ category: UNCATEGORIZED_ONLY, account: 'acc-1' })
+    await flushPromises()
+    // 分类表未就绪 → status 未 ready → 全部维度统一挂起（不误判为无效）
+    expect(tf.filters.categoryId).toBeNull()
+    expect(tf.filters.involvingAccountId).toBeNull()
+    expect(requests).toHaveLength(0)
+    release()
+    await flushPromises()
+    expect(tf.filters.categoryId).toBe(UNCATEGORIZED_ONLY)
+    expect(tf.filters.involvingAccountId).toBe('acc-1')
+    expect(lastRequest()).toEqual({
+      page: 1,
+      page_size: 20,
+      involving_account_id: 'acc-1',
+      uncategorized_only: true,
+    })
+  })
+
+  it('补判前手动改动同维度（无手动控件，setFilter 直写即手动意图）→ 让位且不再重放', async () => {
+    const release = gateReference('list_categories')
+    const { tf } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ category: 'cat-1' })
+    await flushPromises()
+    // 参考数据就绪前，用户手动改动分类维度（与 URL 参数同维度）
+    tf.setFilter({ categoryId: UNCATEGORIZED_ONLY })
+    release()
+    await flushPromises()
+    // 分类维度让位：保持手动改动；之后参考数据重拉不重放
+    expect(tf.filters.categoryId).toBe(UNCATEGORIZED_ONLY)
+    await useReferenceStore().refresh()
+    await flushPromises()
+    expect(tf.filters.categoryId).toBe(UNCATEGORIZED_ONLY)
+  })
+})
+
 /** 挂起某张参考表响应：模拟冷启动深链时该表晚到；返回放行函数。 */
-function gateReference(gatedCmd: 'list_accounts' | 'list_merchants') {
+function gateReference(gatedCmd: 'list_accounts' | 'list_merchants' | 'list_categories') {
   let release!: () => void
-  const pending = new Promise<Account[] | Merchant[]>((res) => {
-    release = () => res(gatedCmd === 'list_accounts' ? urlAccounts : urlMerchants)
+  const pending = new Promise<Account[] | Merchant[] | Category[]>((res) => {
+    release = () =>
+      res(
+        gatedCmd === 'list_accounts'
+          ? urlAccounts
+          : gatedCmd === 'list_merchants'
+            ? urlMerchants
+            : urlCategories,
+      )
   })
   mockInvoke.mockImplementation((cmd: string) => {
     if (cmd === gatedCmd) return pending
-    if (cmd === 'list_currencies' || cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_currencies') return Promise.resolve([])
     if (cmd === 'list_accounts') return Promise.resolve(urlAccounts)
+    if (cmd === 'list_categories') return Promise.resolve(urlCategories)
     if (cmd === 'list_merchants') return Promise.resolve(urlMerchants)
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })

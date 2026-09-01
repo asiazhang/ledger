@@ -63,6 +63,10 @@ export interface TransactionListFilter {
   involving_account_id?: string | null
   /** 按商户过滤（issue #191）：命中该商户全部未删除交易，软删商户同样可过滤 */
   merchant_id?: string | null
+  /** 按分类精确过滤（issue #377）：精确匹配不含子分类，软删分类的历史交易同样可过滤 */
+  category_id?: string | null
+  /** 仅无分类（issue #377）：true 时仅返回无分类交易；与 category_id 同携按 AND 组合 */
+  uncategorized_only?: boolean | null
   /** income / expense / transfer / buy / sell / refund */
   kind?: TransactionKind | null
   /** 取前 N 条（仪表盘"最近 N 条"场景），与分页互斥：传 page_size 时分页路径生效 */

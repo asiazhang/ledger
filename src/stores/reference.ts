@@ -44,6 +44,12 @@ export const useReferenceStore = defineStore('reference', () => {
    */
   const deletedMerchants = ref(new Map<string, Merchant>())
 
+  /**
+   * 软删分类（issue #377）：软删后不可再被选择，但历史交易引用照常存在。
+   * 数据源与拆分方式同商户先例（issue #191）：含软删全量列表按 `is_deleted` 拆分。
+   */
+  const deletedCategories = ref(new Map<string, Category>())
+
   // —— 失效信号 ——
   const status = ref<ReferenceStatus>('idle')
   const version = ref(0)
@@ -57,8 +63,10 @@ export const useReferenceStore = defineStore('reference', () => {
     return m
   })
 
+  /** 分类显示/下钻校验映射：在用 + 软删（历史交易口径，URL 下钻校验共用，issue #377；先例商户）。 */
   const categoryMap = computed(() => {
     const m = new Map<string, Category>()
+    deletedCategories.value.forEach((d) => m.set(d.id, d))
     categories.value.forEach((c) => m.set(c.id, c))
     return m
   })
@@ -119,16 +127,21 @@ export const useReferenceStore = defineStore('reference', () => {
   async function reload(): Promise<void> {
     status.value = 'loading'
     try {
-      const [cs, as, cats, msAll] = await Promise.all([
+      const [cs, as, catsAll, msAll] = await Promise.all([
         api.listCurrencies(),
         api.listAccounts(),
-        api.listCategories(),
+        // 分类拉含软删全量，按 is_deleted 拆分：在用进字典，软删进显示/校验缓存
+        // （历史交易口径，issue #377，先例商户 issue #191）
+        api.listCategories({ includeDeleted: true }),
         // 商户拉含软删全量，按 is_deleted 拆分：在用进字典，软删进显示缓存（issue #191）
         api.listMerchants({ includeDeleted: true }),
       ])
       currencies.value = cs
       accounts.value = as
-      categories.value = cats
+      categories.value = catsAll.filter((c) => !c.is_deleted)
+      deletedCategories.value = new Map(
+        catsAll.filter((c) => c.is_deleted).map((c) => [c.id, c]),
+      )
       merchants.value = msAll.filter((m) => !m.is_deleted)
       deletedMerchants.value = new Map(
         msAll.filter((m) => m.is_deleted).map((m) => [m.id, m]),

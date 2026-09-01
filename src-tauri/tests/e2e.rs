@@ -10,6 +10,8 @@ mod accounts_steps;
 mod backup_steps;
 #[path = "e2e/budget_steps.rs"]
 mod budget_steps;
+#[path = "e2e/categories_steps.rs"]
+mod categories_steps;
 #[path = "e2e/common.rs"]
 mod common;
 #[path = "e2e/dashboard_steps.rs"]

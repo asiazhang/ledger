@@ -313,7 +313,7 @@ fn assert_delete_category_failed(world: &mut LedgerWorld, needle: String) {
 /// 命令层可见结果：分类在读回列表中（与真实读路径同款）。
 #[then(expr = "分类 {string} 仍应存在")]
 fn assert_category_still_exists(world: &mut LedgerWorld, name: String) {
-    let cats = list_categories_internal(&world_conn!(world)).unwrap();
+    let cats = list_categories_internal(&world_conn!(world), false).unwrap();
     assert!(
         cats.iter().any(|c| c.name == name),
         "分类 '{}' 应仍存在于读回结果中",
@@ -323,7 +323,7 @@ fn assert_category_still_exists(world: &mut LedgerWorld, name: String) {
 
 #[then(expr = "分类 {string} 不应存在")]
 fn assert_category_gone(world: &mut LedgerWorld, name: String) {
-    let cats = list_categories_internal(&world_conn!(world)).unwrap();
+    let cats = list_categories_internal(&world_conn!(world), false).unwrap();
     assert!(
         !cats.iter().any(|c| c.name == name),
         "分类 '{}' 不应再出现在读回结果中",

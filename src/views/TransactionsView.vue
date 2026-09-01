@@ -27,7 +27,7 @@ import RefundForm from '@/components/RefundForm.vue'
 import AddItemForm from '@/components/AddItemForm.vue'
 import { buildRowMenuOptions } from '@/components/transaction-row-menu'
 import { useCreateShortcuts, CREATE_KIND_KEYS } from '@/composables/useCreateShortcuts'
-import { useTransactionFilter } from '@/composables/useTransactionFilter'
+import { useTransactionFilter, UNCATEGORIZED_ONLY } from '@/composables/useTransactionFilter'
 import { useTransactionModalState } from '@/composables/useTransactionModalState'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
@@ -169,11 +169,13 @@ async function load() {
       page: page.value,
       page_size: pageSize.value,
     }
-    // 过滤参数按需携带（空值省略，与后端可选字段语义一致）
+    // 过滤参数按需携带（空值省略，与后端可选字段语义一致）；分类维度三态装配（issue #377）
     if (filters.dateFrom) filter.from = filters.dateFrom
     if (filters.dateTo) filter.to = filters.dateTo
     if (filters.involvingAccountId) filter.involving_account_id = filters.involvingAccountId
     if (filters.merchantId) filter.merchant_id = filters.merchantId
+    if (filters.categoryId === UNCATEGORIZED_ONLY) filter.uncategorized_only = true
+    else if (filters.categoryId) filter.category_id = filters.categoryId
     if (filters.kind) filter.kind = filters.kind
     const res = await api.listTransactions(filter)
     data.value = res.items
@@ -186,16 +188,16 @@ async function load() {
 }
 
 // 重拉唯一触发点：模块 bump 版本号 = 需以当前模块状态重拉。首刷（onMounted 经统一出口
-// refresh）与全部意图入口共用此路径；同一同步批次内的多次 bump（如 URL 两维度同时
+// refresh）与全部意图入口共用此路径；同一同步批次内的多次 bump（如 URL 多维度同时
 // 声明意图）由 watcher 去重为一次请求，双刷被出口唯一性消灭。
 watch(refreshVersion, () => {
   void load()
 })
 
-// URL 下钻只读入口（issue #234 / #96 决策 3/4）：?account= / ?merchant= 的解析与校验、
-// 复位规则（两维度均无有效参数时复位日期/类型）、参考数据就绪补判与字段级让位
-// 全部内化在 TransactionFilter 参数表；视图只监听路由并把 query 递给模块，
-// 不持任何时序标志与解析逻辑。URL 只读不写回（组件状态是唯一事实源）。
+// URL 下钻只读入口（issue #234 / #96 决策 3/4）：?account= / ?merchant= / ?category=（issue #377）
+// 的解析与校验、复位规则、参考数据就绪补判与字段级让位全部内化在 TransactionFilter 参数表；
+// 视图只监听路由并把 query 递给模块，不持任何时序标志与解析逻辑。
+// URL 只读不写回（组件状态是唯一事实源）。
 watch(() => route.query, (query) => syncUrlQuery(query), { immediate: true })
 
 /** 页大小选项（不持久化，遵守 ViewState 决策） */

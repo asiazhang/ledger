@@ -10,11 +10,21 @@ use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{Category, CategoryInput};
 
-pub fn list_categories_internal(conn: &Connection) -> Result<Vec<Category>> {
+/// 分类列表：默认仅未删除；`include_deleted=true` 返回含软删全量（issue #377）。
+/// 软删分类不可再被选择，但历史交易引用照常存在——含软删列表供前端下钻校验映射
+/// 与历史显示拆分在用/软删（先例商户 issue #191）。
+pub fn list_categories_internal(conn: &Connection, include_deleted: bool) -> Result<Vec<Category>> {
+    let where_clause = if include_deleted {
+        ""
+    } else {
+        "WHERE is_deleted=0"
+    };
     query_all(
         conn,
-        "SELECT id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted \
-         FROM categories WHERE is_deleted=0 ORDER BY kind, sort_order, created_at",
+        &format!(
+            "SELECT id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted \
+             FROM categories {where_clause} ORDER BY kind, sort_order, created_at"
+        ),
         [],
     )
 }
