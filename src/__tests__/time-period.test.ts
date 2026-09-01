@@ -236,15 +236,21 @@ describe('formatPeriodLabel：期间标签本地化格式化（issue #383）', (
   })
 
   it('en-US：月份缩写在前、Q+序数季度、裸年（fresh 模块隔离，不污染其他用例）', async () => {
+    const originalLang = Object.getOwnPropertyDescriptor(window.navigator, 'language')
     vi.resetModules()
     Object.defineProperty(window.navigator, 'language', { value: 'en-US', configurable: true })
-    const { initAppLocale } = await import('@/i18n')
-    await initAppLocale()
-    const { formatPeriodLabel: fmt } = await import('@/utils/time-period')
-    expect(fmt({ unit: 'month', year: 2026, index: 1 })).toBe('Feb 2026')
-    expect(fmt({ unit: 'month', year: 2026, index: 11 })).toBe('Dec 2026')
-    expect(fmt({ unit: 'quarter', year: 2026, index: 0 })).toBe('Q1 2026')
-    expect(fmt({ unit: 'quarter', year: 2026, index: 3 })).toBe('Q4 2026')
-    expect(fmt({ unit: 'year', year: 2025, index: 0 })).toBe('2025')
+    try {
+      const { initAppLocale } = await import('@/i18n')
+      await initAppLocale()
+      const { formatPeriodLabel: fmt } = await import('@/utils/time-period')
+      expect(fmt({ unit: 'month', year: 2026, index: 1 })).toBe('Feb 2026')
+      expect(fmt({ unit: 'month', year: 2026, index: 11 })).toBe('Dec 2026')
+      expect(fmt({ unit: 'quarter', year: 2026, index: 0 })).toBe('Q1 2026')
+      expect(fmt({ unit: 'quarter', year: 2026, index: 3 })).toBe('Q4 2026')
+      expect(fmt({ unit: 'year', year: 2025, index: 0 })).toBe('2025')
+    } finally {
+      // 恢复 navigator.language 描述符，避免污染同文件后续用例
+      if (originalLang) Object.defineProperty(window.navigator, 'language', originalLang)
+    }
   })
 })
