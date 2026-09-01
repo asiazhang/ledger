@@ -9,6 +9,7 @@ import PolicyAgreementFields from '@/components/PolicyAgreementFields.vue'
 import { t } from '@/i18n'
 import { errorMessage } from '@/utils/errors'
 import { todayStr } from '@/utils/date'
+import { policyStatAmountText } from '@/utils/policy-stats'
 import { yuanToCents, centsToYuan } from '@/utils/money'
 import { useFormShared } from '@/composables/useFormShared'
 import { resolveMerchantRef } from '@/composables/resolve-merchant'
@@ -16,7 +17,6 @@ import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
 import { usePoliciesStore } from '@/stores/policies'
 import { api } from '@/api'
-import { formatAmount } from '@/types'
 import type { Policy, PolicyInput } from '@/types'
 
 /**
@@ -68,22 +68,28 @@ const merchantOptions = computed(() =>
 const coverageFilled = computed(() => coverageYuan.value.trim() !== '')
 
 // —— 保单视角统计（issue #363，编辑模式 = 详情）：消费 store 同源快照，
-// 实时推导不落库；列表与弹窗共用同一份数据，不做本地二次聚合 ——
+// 实时推导不落库；列表与弹窗共用同一份数据，合计展示经共享辅助同口径 ——
 const statsSummary = computed(() => {
   if (!props.editing) return null
   return policiesStore.statsById.get(props.editing.id) ?? null
 })
 
-const paidText = computed(() => {
-  const s = statsSummary.value
-  if (!s) return '—'
-  return formatAmount(s.total_paid_native_cents, reference.getCurrency(s.native_currency))
-})
+const paidText = computed(() =>
+  policyStatAmountText(statsSummary.value, (s) => s.total_paid_native_cents),
+)
 
-const inflowText = computed(() => {
-  const s = statsSummary.value
-  if (!s) return '—'
-  return formatAmount(s.total_inflow_native_cents, reference.getCurrency(s.native_currency))
+const inflowText = computed(() =>
+  policyStatAmountText(statsSummary.value, (s) => s.total_inflow_native_cents),
+)
+
+// 到期态摘要（与列表徽标同一推导口径）：止日空 = 长期/终身（永不判到期）；
+// 止日非空时消费统计同源 is_expired，统计行未加载时回落本地推导。
+const expiryText = computed(() => {
+  const p = props.editing
+  if (!p) return '—'
+  if (p.end_date === null) return t('policies.expiry.lifetime')
+  const expired = statsSummary.value?.is_expired ?? p.end_date < todayStr()
+  return expired ? t('policies.expiry.expired') : t('policies.expiry.active')
 })
 
 // 清空保额即清币种（成对原子，不产生只有币种的半挂状态）
@@ -328,6 +334,7 @@ defineExpose({ save })
             statsSummary?.next_charge_date ?? '—'
           }}</strong>
         </span>
+        <span>{{ t('policies.stats.expiry') }}：<strong>{{ expiryText }}</strong></span>
       </div>
       <NFormItem
         v-if="editing"

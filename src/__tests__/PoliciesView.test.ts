@@ -358,6 +358,20 @@ describe('PoliciesView 编辑保单', () => {
     expect(summary.textContent).toContain('¥6000')
     expect(summary.textContent).toContain('¥500')
     expect(summary.textContent).toContain('2027-01-01')
+    // 到期态摘要：止日 2036 未到（统计行 is_expired=false）→ 保障中
+    expect(summary.textContent).toContain('到期状态')
+    expect(summary.textContent).toContain('保障中')
+  })
+
+  it('编辑弹窗到期态摘要：止日为空显示长期/终身（永不判到期）', async () => {
+    policies = [basePolicy({ id: 'p-1', end_date: null })]
+    policyStats = [makePolicyStats({ policy_id: 'p-1', is_expired: false })]
+    const wrapper = mount(PoliciesView)
+    await flushPromises()
+    await wrapper.find('[data-testid="policy-edit-p-1"]').trigger('click')
+    await flushPromises()
+    const summary = bodyQuery('[data-testid="policy-stats-summary"]')!
+    expect(summary.textContent).toContain('长期/终身')
   })
 
   it('点编辑打开弹窗并预填当前行字段，保存走 update_policy 且携带 id 与保司', async () => {

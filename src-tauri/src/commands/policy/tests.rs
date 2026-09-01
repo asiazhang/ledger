@@ -369,6 +369,7 @@ fn 统计_到期态由止日与today推导() {
     create_ok(&conn, build("P-EXPIRED", "2019-01-01", Some("2020-01-01")));
     create_ok(&conn, build("P-FUTURE", "2026-01-01", Some("2999-01-01")));
     create_ok(&conn, build("P-LIFETIME", "2026-01-01", None));
+    create_ok(&conn, build("P-TODAY", "2019-01-01", Some("2026-06-01")));
 
     let stats = policy_stats_internal(&conn, today(2026, 6, 1)).unwrap();
     let by_number = |number: &str| {
@@ -387,6 +388,8 @@ fn 统计_到期态由止日与today推导() {
         !by_number("P-LIFETIME").is_expired,
         "止日空 = 长期/终身，永不判到期"
     );
+    // 边界：止日 == today 按「早于今天」严格判定 → 保障中
+    assert!(!by_number("P-TODAY").is_expired, "止日为 today 不算已到期");
 }
 
 #[test]

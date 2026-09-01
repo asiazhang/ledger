@@ -20,7 +20,8 @@
   },
   "expiry": {
     "active": "Active",
-    "expired": "Expired"
+    "expired": "Expired",
+    "lifetime": "Lifetime"
   },
   "rowActions": {
     "edit": "Edit",
@@ -61,7 +62,8 @@
   "stats": {
     "paid": "Total Paid",
     "inflow": "Total Inflow",
-    "nextCharge": "Next Charge"
+    "nextCharge": "Next Charge",
+    "expiry": "Expiry"
   },
   "msg": {
     "created": "Policy created",

@@ -220,6 +220,28 @@ impl crate::db::query::FromRow for PolicyNextChargeRow {
     }
 }
 
+/// 挂单流水逐保单合计：对给定度量表达式（与贡献 kind 过滤同出矩阵）按
+/// `policy_id` 求本位币合计，只认未删除流水且保单未删除。
+fn sum_by_policy(
+    conn: &Connection,
+    measure_expr: &str,
+    kinds_sql: &str,
+) -> Result<HashMap<String, i64>> {
+    Ok(query_all::<PolicySumRow, _>(
+        conn,
+        &format!(
+            "SELECT t.policy_id, SUM({measure_expr}) AS native_cents \
+                 FROM transactions t JOIN policies p ON p.id = t.policy_id \
+                 WHERE t.is_deleted=0 AND t.kind IN ({kinds_sql}) AND p.is_deleted=0 \
+                 GROUP BY t.policy_id",
+        ),
+        [],
+    )?
+    .into_iter()
+    .map(|r| (r.policy_id, r.native_cents))
+    .collect())
+}
+
 /// conn 级聚合：逐保单视角统计（只读，实时推导不落库，issue #363）。
 /// `today` 由命令层注入（本地今日），BDD 可传固定日期获得确定性到期口径。
 ///
@@ -241,39 +263,18 @@ pub fn policy_stats_internal(conn: &Connection, today: NaiveDate) -> Result<Vec<
         [],
     )?;
 
-    // 挂单保费合计：度量经 Amount 接缝 kind→度量矩阵驱动（与行级口径同源）。
-    let paid: HashMap<String, i64> = query_all::<PolicySumRow, _>(
+    // 挂单保费/流入合计：度量经 Amount 接缝 kind→度量矩阵驱动（与行级口径同源），
+    // 两侧仅度量不同，聚合收口在同一辅助。
+    let paid = sum_by_policy(
         conn,
-        &format!(
-            "SELECT t.policy_id, SUM({expr}) AS native_cents \
-             FROM transactions t JOIN policies p ON p.id = t.policy_id \
-             WHERE t.is_deleted=0 AND t.kind IN ({kinds}) AND p.is_deleted=0 \
-             GROUP BY t.policy_id",
-            expr = policy_premium_expr("t"),
-            kinds = contributing_kinds_sql(Measure::PolicyPremium)
-        ),
-        [],
-    )?
-    .into_iter()
-    .map(|r| (r.policy_id, r.native_cents))
-    .collect();
-
-    // 挂单现金流入合计：同上，income 侧度量。
-    let inflow: HashMap<String, i64> = query_all::<PolicySumRow, _>(
+        &policy_premium_expr("t"),
+        &contributing_kinds_sql(Measure::PolicyPremium),
+    )?;
+    let inflow = sum_by_policy(
         conn,
-        &format!(
-            "SELECT t.policy_id, SUM({expr}) AS native_cents \
-             FROM transactions t JOIN policies p ON p.id = t.policy_id \
-             WHERE t.is_deleted=0 AND t.kind IN ({kinds}) AND p.is_deleted=0 \
-             GROUP BY t.policy_id",
-            expr = policy_inflow_expr("t"),
-            kinds = contributing_kinds_sql(Measure::PolicyInflow)
-        ),
-        [],
-    )?
-    .into_iter()
-    .map(|r| (r.policy_id, r.native_cents))
-    .collect();
+        &policy_inflow_expr("t"),
+        &contributing_kinds_sql(Measure::PolicyInflow),
+    )?;
 
     // 下期扣款日：活跃订阅形态协议的最早 pending 期次（日期列 YYYY-MM-DD，
     // 字典序即时间序）；已取消协议的 pending 期次在取消时已批量转 cancelled，

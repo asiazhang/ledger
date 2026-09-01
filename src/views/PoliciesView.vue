@@ -12,6 +12,7 @@ import {
 } from 'naive-ui'
 import { formatAmount } from '@/types'
 import { todayStr } from '@/utils/date'
+import { policyStatAmountText } from '@/utils/policy-stats'
 import type { Policy, PolicyStats } from '@/types'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import MerchantLink from '@/components/MerchantLink.vue'
@@ -79,11 +80,9 @@ function coverageText(row: Policy): string {
 }
 
 // —— 保单视角统计（issue #363）：实时推导，按行取 store 同源快照；
-// 统计行未加载时显示占位，不做本地二次聚合 ——
+// 合计展示经共享辅助（与详情摘要同口径），统计行未加载时显示占位 ——
 function statsAmountText(row: Policy, pick: (s: PolicyStats) => number): string {
-  const stats = policiesStore.statsById.get(row.id)
-  if (!stats) return '—'
-  return formatAmount(pick(stats), reference.getCurrency(stats.native_currency))
+  return policyStatAmountText(policiesStore.statsById.get(row.id), pick)
 }
 
 const columns: DataTableColumns<Policy> = [
