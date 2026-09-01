@@ -54,11 +54,10 @@ async function removePolicy(id: string) {
 }
 
 // —— 展示层到期推导（不持久化，可推导的状态不落库）：
-// 止日非空且早于今天 → 已到期；止日为空 = 长期/终身，永不判到期 ——
-const today = todayStr()
-
+// 止日非空且早于今天 → 已到期；止日为空 = 长期/终身，永不判到期。
+// 「今天」在行渲染时即时取（无日历事件源，写入触发的重拉顺带刷新快照）——
 function isExpired(row: Policy): boolean {
-  return row.end_date !== null && row.end_date < today
+  return row.end_date !== null && row.end_date < todayStr()
 }
 
 function periodText(row: Policy): string {

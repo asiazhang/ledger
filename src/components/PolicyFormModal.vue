@@ -5,12 +5,12 @@ import AppModal from '@/components/AppModal.vue'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
-import { api } from '@/api'
 import { t } from '@/i18n'
 import { errorMessage } from '@/utils/errors'
 import { todayStr } from '@/utils/date'
 import { yuanToCents, centsToYuan } from '@/utils/money'
 import { useFormShared } from '@/composables/useFormShared'
+import { resolveMerchantRef } from '@/composables/resolve-merchant'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
 import { usePoliciesStore } from '@/stores/policies'
@@ -84,31 +84,12 @@ function close() {
 }
 
 /**
- * 商户解析（保存时单点收口，同计划表单的「输入即建」交互）：
- * 1. 选中既有商户（value 为 id，merchantMap 含软删显示映射）→ 原样携带；
- * 2. 输入文本精确命中在用商户名 → 按名复用；
- * 3. 未命中 → `create_merchant` 即建；重名错误（store 陈旧竞态）先强制重拉
- *    按名复用，仍失败才向上抛。
+ * 商户解析（保存时单点收口）：「输入即建 + 重名兜底」交互收口在共享接缝
+ * `resolveMerchantRef`（计划表单同款消费）——选中 id 原样携带（编辑维持历史
+ * 引用）、输入名精确命中在用商户复用、未命中即建。
  */
 async function resolveMerchant(): Promise<string> {
-  const selected = merchantRef.value?.trim() ?? ''
-  if (!selected) return ''
-  if (reference.merchantMap.has(selected)) return selected
-  const existing = reference.merchantByName.get(selected)
-  if (existing) return existing.id
-  try {
-    return await api.createMerchant({ name: selected })
-  } catch (e) {
-    // 重名兜底（store 陈旧竞态）：强制重拉后按名复用；重拉失败不影响原错误上抛
-    try {
-      await reference.refresh()
-    } catch {
-      /* 保留原 create 错误 */
-    }
-    const retry = reference.merchantByName.get(selected)
-    if (retry) return retry.id
-    throw e
-  }
+  return (await resolveMerchantRef(merchantRef.value)) ?? ''
 }
 
 async function save() {

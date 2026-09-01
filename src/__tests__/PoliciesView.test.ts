@@ -5,6 +5,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import PoliciesView from '@/views/PoliciesView.vue'
 import PolicyFormModal from '@/components/PolicyFormModal.vue'
+import { makePolicy } from './factories'
 import type { Currency, Merchant, Policy } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
@@ -30,23 +31,7 @@ const mockMerchants: Merchant[] = [
 ]
 
 function basePolicy(over: Partial<Policy> = {}): Policy {
-  return {
-    id: 'policy-1',
-    merchant_id: 'mer-1',
-    policy_number: 'P2026-001',
-    product_name: '重疾险',
-    start_date: '2024-01-01',
-    end_date: '2036-01-01',
-    coverage_amount_cents: 30_000_000,
-    coverage_currency_code: 'CNY',
-    note: null,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    ...over,
-  }
+  return makePolicy({ id: 'policy-1', ...over })
 }
 
 let policies: Policy[]
@@ -237,6 +222,29 @@ describe('PoliciesView 新建保单', () => {
     expect((merchantCall![1] as { input: { name: string } }).input.name).toBe('人保健康')
     const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_policy')
     expect(call![1]).toMatchObject({ input: { merchant_id: 'mer-new-人保健康' } })
+  })
+
+  it('保司输入文本精确命中在用商户名：按名复用既有 id，不即建（全库同名一致）', async () => {
+    const wrapper = mount(PoliciesView)
+    await flushPromises()
+    await wrapper.find('[data-testid="policy-new"]').trigger('click')
+    await flushPromises()
+
+    wrapper
+      .findComponent('[data-testid="policy-merchant"]')
+      .vm.$emit('update:value', '平安保险')
+    await flushPromises()
+    await formInput('policy-number').setValue('P2026-400')
+    await formInput('policy-product').setValue('重疾险')
+    setDate(wrapper, 'policy-start-date', '2026-06-01')
+
+    await saveButton().trigger('click')
+    await flushPromises()
+
+    // 未发起 create_merchant，创建携带既有商户 id
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'create_merchant')).toBe(false)
+    const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_policy')
+    expect(call![1]).toMatchObject({ input: { merchant_id: 'mer-1' } })
   })
 
   it('止日留空保存为 null（长期/终身）；保额缺省币种一并存空', async () => {

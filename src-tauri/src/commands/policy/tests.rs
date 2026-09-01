@@ -157,6 +157,30 @@ fn 已删保单再编辑再删均报不存在() {
 }
 
 #[test]
+fn 编辑时保司未变_软删保司维持历史引用可继续编辑() {
+    let conn = conn();
+    let merchant_id = seed_merchant(&conn, "平安保险");
+    let id = create_ok(&conn, input(&merchant_id));
+    // 建档后保司被软删：未换保司的编辑 = 维持历史引用（同 Writer 接缝语义）
+    crate::commands::merchants::delete_merchant_internal(&conn, &merchant_id).unwrap();
+    let mut keep_input = input(&merchant_id);
+    keep_input.product_name = "医疗险".into();
+    update_policy_internal(&conn, &id, keep_input, &mut || {}).unwrap();
+    assert_eq!(
+        list_policies_internal(&conn).unwrap()[0].product_name,
+        "医疗险"
+    );
+
+    // 换成另一个软删商户 = 新档案选择，仍被拒
+    let merchant2 = seed_merchant(&conn, "已退保保司");
+    crate::commands::merchants::delete_merchant_internal(&conn, &merchant2).unwrap();
+    let mut switch_input = input(&merchant2);
+    switch_input.product_name = "医疗险".into();
+    let err = update_policy_internal(&conn, &id, switch_input, &mut || {}).unwrap_err();
+    assert!(err.to_string().contains("保险公司不存在或已删除"));
+}
+
+#[test]
 fn 建档校验各分支() {
     let conn = conn();
     let merchant_id = seed_merchant(&conn, "平安保险");

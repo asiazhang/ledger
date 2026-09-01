@@ -4,29 +4,14 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { usePoliciesStore } from '@/stores/policies'
+import { makePolicy } from './factories'
 import type { Policy, PolicyInput } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 const mockListen = vi.mocked(listen)
 
 function basePolicy(over: Partial<Policy> = {}): Policy {
-  return {
-    id: 'policy-1',
-    merchant_id: 'm-1',
-    policy_number: 'P2026-001',
-    product_name: '重疾险',
-    start_date: '2026-01-01',
-    end_date: '2036-01-01',
-    coverage_amount_cents: 30_000_000,
-    coverage_currency_code: 'CNY',
-    note: null,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    ...over,
-  }
+  return makePolicy({ id: 'policy-1', ...over })
 }
 
 const createInput: PolicyInput = {

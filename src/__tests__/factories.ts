@@ -8,6 +8,7 @@ import type {
   Holding,
   Instrument,
   ItemDailyTotal,
+  Policy,
   RealizedPnlSummary,
   Transaction,
 } from '@/types'
@@ -100,6 +101,26 @@ export const mockInstruments: Instrument[] = [
 ]
 
 /** dashboard_overview 返回值工厂（issue #143）：默认人民币本位币、净申 1234.56 元 */
+/** 保单实体工厂（issue #360）：保单 store 与视图测试共用（消除本地复制）。 */
+export function makePolicy(partial: Partial<Policy> & { id: string }): Policy {
+  return {
+    merchant_id: 'mer-1',
+    policy_number: 'P2026-001',
+    product_name: '重疾险',
+    start_date: '2024-01-01',
+    end_date: '2036-01-01',
+    coverage_amount_cents: 30_000_000,
+    coverage_currency_code: 'CNY',
+    note: null,
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: false,
+    ...partial,
+  }
+}
+
 export function makeOverview(partial: Partial<DashboardOverview> = {}): DashboardOverview {
   return {
     native_currency: 'CNY',

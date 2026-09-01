@@ -61,7 +61,7 @@ pub fn create_policy_internal(
     input: PolicyInput,
     notify: &mut dyn FnMut(),
 ) -> Result<String> {
-    let normalized = validate_input(conn, &input)?;
+    let normalized = validate_input(conn, &input, false)?;
 
     let id = new_uuid();
     let now = now_iso();
@@ -93,17 +93,22 @@ pub fn create_policy_internal(
 /// `is_deleted`），`version` 递增、`updated_at` / `device_id` 刷新（同 Writer
 /// 接缝的 `update_row` 约定）。不存在（或已软删除）→ [`AppError::NotFound`]。
 /// 成功后调用 `notify`（生产路径发 `ledger:changed`）。
+///
+/// 保司校验语义与 Writer 接缝一致（`existing_merchant_id` 先例）：提交的保司与
+/// 既有行相同 = 维持历史引用（保司后被软删的历史保单仍可编辑其他要素），
+/// 换成新保司才校验在用（软删商户不可被新档案选择，ADR-0051 决策 7）。
 pub fn update_policy_internal(
     conn: &Connection,
     id: &str,
     input: PolicyInput,
     notify: &mut dyn FnMut(),
 ) -> Result<()> {
-    get_policy_by_id(conn, id)?.ok_or_else(|| {
+    let existing = get_policy_by_id(conn, id)?.ok_or_else(|| {
         AppError::codedp_not_found("policy.not-found", format!("保单不存在: {id}"), &[id])
     })?;
 
-    let normalized = validate_input(conn, &input)?;
+    let merchant_unchanged = existing.merchant_id == input.merchant_id;
+    let normalized = validate_input(conn, &input, merchant_unchanged)?;
 
     let updated = conn.execute(
         "UPDATE policies SET merchant_id=?2, policy_number=?3, product_name=?4, start_date=?5, \
@@ -176,27 +181,35 @@ struct NormalizedInput {
 
 /// 创建/编辑共用的入参校验与归一化：
 /// - 保司必须为在用商户（软删商户不可再被新档案选择，历史引用不受影响）；
+///   `merchant_unchanged`（编辑路径保司未变）= 维持历史引用，跳过在用校验
+///   （同 Writer 接缝 `existing_merchant_id` 语义）；
 /// - 保单号/险种名称 trim 非空；
 /// - 起止日可解析（YYYY-MM-DD），止日存在时不得早于起日（止日可空 = 长期/终身）；
 /// - 保额与币种成对：保额存在时必须 > 0 且币种必填、须存在于币种表；
 ///   保额缺省时币种忽略存空（两者原子，不产生半挂状态）；
 /// - 备注 trim，空串归 `None`。
-fn validate_input(conn: &Connection, input: &PolicyInput) -> Result<NormalizedInput> {
-    // 保司：在用商户（ADR-0028 软删语义 + ADR-0051 决策 7）。
-    let merchant_active: bool = conn
-        .query_row(
-            "SELECT 1 FROM merchants WHERE id=?1 AND is_deleted=0",
-            rusqlite::params![input.merchant_id],
-            |_| Ok(true),
-        )
-        .optional()?
-        .is_some();
-    if !merchant_active {
-        return Err(AppError::codedp(
-            "policy.merchant-not-found",
-            format!("保险公司不存在或已删除: {}", input.merchant_id),
-            &[&input.merchant_id],
-        ));
+fn validate_input(
+    conn: &Connection,
+    input: &PolicyInput,
+    merchant_unchanged: bool,
+) -> Result<NormalizedInput> {
+    // 保司：在用商户（ADR-0028 软删语义 + ADR-0051 决策 7）；未换保司 = 保持历史引用。
+    if !merchant_unchanged {
+        let merchant_active: bool = conn
+            .query_row(
+                "SELECT 1 FROM merchants WHERE id=?1 AND is_deleted=0",
+                rusqlite::params![input.merchant_id],
+                |_| Ok(true),
+            )
+            .optional()?
+            .is_some();
+        if !merchant_active {
+            return Err(AppError::codedp(
+                "policy.merchant-not-found",
+                format!("保险公司不存在或已删除: {}", input.merchant_id),
+                &[&input.merchant_id],
+            ));
+        }
     }
 
     let policy_number = input.policy_number.trim();
