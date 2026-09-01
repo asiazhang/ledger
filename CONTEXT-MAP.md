@@ -21,9 +21,10 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 | 4 | AI 导入 | [`docs/contexts/CONTEXT-ai-import.md`](docs/contexts/CONTEXT-ai-import.md) | AI API、AIReadbackVerification、AICleanupDeletion、AICleanupModify、ImportDedup、IdempotencyKey、BlackHoleAccount、AIPrompt |
 | 5 | 参考数据与设置 | [`docs/contexts/CONTEXT-reference-settings.md`](docs/contexts/CONTEXT-reference-settings.md) | Reference Data、BalanceAdjustment、Appearance、界面语言、AppSettings、轻量设置项、DataLocation |
 | 6 | 备份与数据文件 | [`docs/contexts/CONTEXT-backup-datafiles.md`](docs/contexts/CONTEXT-backup-datafiles.md) | Backup、Restore、RestoreSafetyBackup、BackupDirectory、BackupRetentionLimit、BackupPruning、ManagedBackup、ManualBackup、BackupTrigger、AutoBackup、DirtyMarker |
-| 7 | 界面状态与交互 | [`docs/contexts/CONTEXT-ui-interaction.md`](docs/contexts/CONTEXT-ui-interaction.md) | TransactionFilter、TransactionModalState（交易弹窗编排）、Loadable（异步任务）、ScheduledPlanList（计划清单）、WindowState、ViewState、ViewShortcut、CreateShortcut、Overlay Suppression、弹层关闭语义、ESC 键语义、原生右键菜单、界面文本不可选、拼音可搜下拉、报表年份筛选 |
+| 7 | 界面状态与交互 | [`docs/contexts/CONTEXT-ui-interaction.md`](docs/contexts/CONTEXT-ui-interaction.md) | TransactionFilter、TransactionModalState（交易弹窗编排）、Loadable（异步任务）、ScheduledPlanList（计划清单）、WindowState、ViewState、ViewShortcut、侧栏分组、CreateShortcut、Overlay Suppression、弹层关闭语义、ESC 键语义、原生右键菜单、界面文本不可选、拼音可搜下拉、报表年份筛选 |
 | 8 | 物品 | [`docs/contexts/CONTEXT-item.md`](docs/contexts/CONTEXT-item.md) | Item、DailyUsageCost、source_transaction_id、创建语义 |
 | 9 | 预算 | [`docs/contexts/CONTEXT-budget.md`](docs/contexts/CONTEXT-budget.md) | Budget、BudgetPeriod、BudgetProgress（永久滚动，ADR-0029）、AnnualBudgetTotal |
+| 10 | 保险 | [`docs/contexts/CONTEXT-insurance.md`](docs/contexts/CONTEXT-insurance.md) | Policy（保单）、Premium（保费）、PolicyInflow（保单现金流入）、PolicyReference（保单引用）、保单视角统计（ADR-0051） |
 
 ## 域间关系
 
@@ -39,3 +40,4 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 - **界面状态与交互 → 只读消费各域**：WindowState / ViewState / 快捷键 / 弹层抑制 / 弹层关闭语义是纯界面层概念，不持业务数据；TransactionFilter（交易列表过滤模块）消费参考数据就绪状态（参考设置域 Reference Data）与 URL 下钻参数，筛选不持久化（与 ViewState 边界一致，ADR-0030）；ScheduledPlanList（计划清单）把定时计划域 ScheduledTransaction 三形态的清单编排收为深模块、与计划表单接缝构成计划域前端双接缝，生命周期变更仍走定时计划域命令（ADR-0041）；搜索（核心域 TransactionSearch）复用交易列表信息但搜索词不持久化（与 ViewState 边界一致）；实体下拉的拼音过滤（拼音可搜下拉）与交易搜索共用统一模糊搜索语义规格（唯一定义点见核心域 TransactionSearch 词条，ADR-0027）。
 - **物品（单列小域）→ 挂靠核心交易**：Item 是与参考数据、交易流水、投资标的并列的独立领域概念，自包含总成本、不进字典；创建**必须**关联一笔核心域 `expense` Transaction（`source_transaction_id` 必填、唯一，仅用于带出成本/日期与溯源），**不建立反向引用**，**无交易物品不可录入**；创建唯一入口 = 交易右键 + 确认弹窗（ADR-0025）。
 - **预算（单列小域）→ 核心交易**：Budget 是对核心域支出分类（Category）的持续性支出上限，**永久滚动**——进度窗口永远是当前自然周期、随时间自动滚动，不持久化窗口状态（ADR-0029）；进度 spent 消费核心域 Amount Model 的 ExpenseNet 度量（与报表分类净值同口径），不另造第二个口径；`start_date` 为已发布 schema 的冻结残留，不参与计算。年度预算总额（AnnualBudgetTotal）是预算口径的跨域派生聚合（无窗口年化），供投资域财务自由度作分母，不改变 BudgetProgress 的输出边界。
+- **保险（单列小域）→ 核心交易 + 定时计划 + 参考数据**：Policy 是消费型保险合同的静态档案，保险公司复用核心交易域商户（Merchant）字典；缴费协议复用定时计划域订阅形态（Subscription）生成核心域 `expense` 保费流水，理赔款记核心域 `income`（非 refund，保住保费支出口径不失真）；保费/现金流入流水经 PolicyReference 可选直挂保单，保单可无协议独立建档、软删后引用保留，保单视角统计按流水忠实推导、不落库；AI 导入（AI 导入域 AI API）不识别保单（MVP 边界）；储蓄型现金价值资产化缓行、不在本域范围。
