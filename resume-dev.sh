@@ -2,9 +2,11 @@
 # resume-dev.sh —— 恢复开发：仓库专属 rift 持久工作会话
 #
 # 会话名 = 仓库路径的稳定哈希，同一仓库永远回到同一会话（跨断线、跨重连）。
+# 第一个参数为会话名后缀（可选），可并发启动多个互不干扰的会话。
 # 用法：
-#   ./resume-dev.sh               进入/恢复仓库会话（有则 attach，无则创建）
-#   ./resume-dev.sh <cmd> [args]  在会话里跑一次性命令，不进入交互
+#   ./resume-dev.sh               进入/恢复主会话（dev-xxx，有则 attach，无则创建）
+#   ./resume-dev.sh <会话名>      进入/恢复指定会话 dev-xxx.<会话名>（如 1、2、ai）
+#   ./resume-dev.sh <会话名> <cmd> [args]  在指定会话里跑一次性命令
 #   ./resume-dev.sh list          列出本机所有 rift 会话
 #
 # 依赖：rift（https://github.com/jrf/rift）
@@ -20,11 +22,18 @@ INIT_CMD="pi"
 # ---------------------------
 
 # 会话名：仓库绝对路径的确定性哈希（规避特殊字符 + 撞名）
-SESSION="dev-$(printf '%s' "$PWD" | cksum | cut -d' ' -f1)"
+BASE_SESSION="dev-$(printf '%s' "$PWD" | cksum | cut -d' ' -f1)"
+SESSION="$BASE_SESSION"
 
 # list 子命令：列出所有会话
 if [[ "${1:-}" == "list" ]]; then
     exec rift list
+fi
+
+# 第一个参数作为会话名后缀（dev-xxx.<会话名>），消费掉后剩余参数照旧透传
+if [[ $# -gt 0 ]]; then
+    SESSION="${BASE_SESSION}.${1}"
+    shift
 fi
 
 # 判断会话是否活跃（存在且未结束）。rift list 输出含 ended= 表示已结束。
