@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{DateTime, Local, TimeDelta, TimeZone, Utc};
 use rusqlite::Connection;
 
 use crate::db::{self, DbState};
@@ -152,7 +152,9 @@ pub fn reset(conn: &Connection, now: &str) -> crate::error::Result<()> {
 // 调度执行（issue #125）：触发入口 → 决策（纯函数）→ 执行
 // ---------------------------------------------------------------------------
 
-/// 自动备份产物命名前缀：`ledger-auto-YYYYMMDD-HHMMSS.db.zip`。
+/// 自动备份产物命名前缀：`ledger-auto-YYYYMMDD-HHMMSS.db.zip`，
+/// 时间戳取本地时间（ADR-0016 修订：原 UTC，与手动备份命名拉齐；
+/// 存量 UTC 命名产物不迁移，随滚动清理自然淘汰）。
 /// 后端受管备份判定（`commands::backup::core`）与前端命名/判定共用该语义（T3）。
 pub const AUTO_BACKUP_PREFIX: &str = "ledger-auto-";
 
@@ -162,7 +164,12 @@ const CHECK_INTERVAL_SECS: u64 = 10 * 60;
 const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 自动备份产物文件名：`ledger-auto-YYYYMMDD-HHMMSS.db.zip`。
-pub fn auto_backup_file_name(now: DateTime<Utc>) -> String {
+/// 时间戳按 `now` 自身时区渲染，纯函数不做任何时区换算——运行时传注入时刻的
+/// 本地时间（ADR-0016 修订：原 UTC），测试以固定偏移注入即可对运行机器时区稳定。
+pub fn auto_backup_file_name<Tz: TimeZone>(now: DateTime<Tz>) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
     format!("{AUTO_BACKUP_PREFIX}{}.db.zip", now.format("%Y%m%d-%H%M%S"))
 }
 
@@ -208,7 +215,9 @@ fn perform_backup(
     app_version: &str,
     now: DateTime<Utc>,
 ) -> crate::error::Result<String> {
-    let target = Path::new(dir).join(auto_backup_file_name(now));
+    // 产物命名取注入时刻的本地时间（ADR-0016 修订：原 UTC，与手动备份拉齐）；
+    // 锚点仍记 UTC 时刻（[`db::iso_at`]），值格式不变。
+    let target = Path::new(dir).join(auto_backup_file_name(now.with_timezone(&Local)));
     let path = crate::commands::backup::backup_db_to(
         conn,
         &target,
@@ -653,11 +662,20 @@ mod scheduler_tests {
             .with_timezone(&Utc)
     }
 
+    /// 命名时间戳取注入时刻的**本地时间**（ADR-0016 修订：原 UTC）。
+    /// 以固定偏移（UTC+8）注入断言，不依赖运行机器时区，CI 与本地不漂移。
     #[test]
-    fn file_name_follows_naming_rule() {
+    fn file_name_uses_local_time_of_injected_instant() {
+        let tz = chrono::FixedOffset::east_opt(8 * 3600).expect("固定偏移");
+        // UTC 09:30 → 本地当天 17:30：同一时刻的文件名时间戳应为本地渲染。
         assert_eq!(
-            auto_backup_file_name(now_at("2026-02-17T09:30:00Z")),
-            "ledger-auto-20260217-093000.db.zip"
+            auto_backup_file_name(now_at("2026-02-17T09:30:00Z").with_timezone(&tz)),
+            "ledger-auto-20260217-173000.db.zip"
+        );
+        // 跨日边界：UTC 16:30 → 本地次日 00:30，本地日期进位。
+        assert_eq!(
+            auto_backup_file_name(now_at("2026-02-17T16:30:00Z").with_timezone(&tz)),
+            "ledger-auto-20260218-003000.db.zip"
         );
     }
 
@@ -676,9 +694,16 @@ mod scheduler_tests {
         match &outcome {
             AttemptOutcome::Performed { path } => {
                 assert!(Path::new(path).is_file(), "产物文件应存在");
+                // 产物文件名时间戳 = 注入时刻的本地时间渲染（ADR-0016 修订：原 UTC）；
+                // 断言用 Local 反推期望值，对运行机器时区稳定。
                 assert_eq!(
                     Path::new(path).file_name().unwrap().to_str().unwrap(),
-                    "ledger-auto-20260217-120000.db.zip"
+                    format!(
+                        "ledger-auto-{}.db.zip",
+                        now_at("2026-02-17T12:00:00Z")
+                            .with_timezone(&Local)
+                            .format("%Y%m%d-%H%M%S")
+                    )
                 );
                 // 产物元数据带 auto 来源标记（issue #127）。
                 assert_eq!(

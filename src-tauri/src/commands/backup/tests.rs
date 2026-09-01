@@ -325,7 +325,7 @@ fn list_and_prune_managed_backups() {
         list[0].file_name, "ledger-auto-20260201-010101.db.zip",
         "auto 前缀同样受管且按时间排序"
     );
-    assert_eq!(list[0].created_at, "2026-02-01T01:01:01Z");
+    assert_eq!(list[0].created_at, "2026-02-01T01:01:01");
     // stub 文件读不出元数据：按文件名前缀回落（issue #129 展示用）。
     assert_eq!(list[0].kind, BackupKind::Auto);
     assert_eq!(list[3].file_name, "ledger-backup-20260101-010101.db.zip");
