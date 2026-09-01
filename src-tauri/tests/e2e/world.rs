@@ -124,6 +124,8 @@ pub struct LedgerWorld {
     pub policy_signal_count: usize,
     /// 保单列表快照（保单列表场景断言用）
     pub policies_list: Vec<tauri_app_lib::models::Policy>,
+    /// 最近一次逐保单统计快照（保单视角统计场景断言用，issue #363）
+    pub policy_stats_list: Vec<tauri_app_lib::models::PolicyStats>,
     /// 记住的保单创建时间（编辑后审计字段保留断言用，issue #360）
     pub remembered_policy_created_at: Option<String>,
     /// 记住的物品创建时间（修改后审计字段保留断言用，issue #117）
@@ -226,6 +228,7 @@ impl LedgerWorld {
             last_policy_id: None,
             policy_signal_count: 0,
             policies_list: Vec::new(),
+            policy_stats_list: Vec::new(),
             remembered_policy_created_at: None,
             remembered_item_created_at: None,
             remembered_purchase_transaction_id: None,

@@ -9,6 +9,9 @@
     "period": "保障期间",
     "expiry": "状态",
     "coverage": "保额",
+    "paid": "累计已缴",
+    "inflow": "累计流入",
+    "nextCharge": "下期扣款日",
     "actions": "操作"
   },
   "period": {
@@ -17,7 +20,8 @@
   },
   "expiry": {
     "active": "保障中",
-    "expired": "已到期"
+    "expired": "已到期",
+    "lifetime": "长期/终身"
   },
   "rowActions": {
     "edit": "编辑",
@@ -54,6 +58,12 @@
       "failed": "操作失败：{msg}",
       "loadFailed": "协议历史加载失败：{msg}"
     }
+  },
+  "stats": {
+    "paid": "累计已缴保费",
+    "inflow": "累计现金流入",
+    "nextCharge": "下期扣款日",
+    "expiry": "到期状态"
   },
   "msg": {
     "created": "保单已创建",

@@ -9,6 +9,9 @@
     "period": "Coverage Period",
     "expiry": "Status",
     "coverage": "Coverage Amount",
+    "paid": "Total Paid",
+    "inflow": "Total Inflow",
+    "nextCharge": "Next Charge",
     "actions": "Actions"
   },
   "period": {
@@ -17,7 +20,8 @@
   },
   "expiry": {
     "active": "Active",
-    "expired": "Expired"
+    "expired": "Expired",
+    "lifetime": "Lifetime"
   },
   "rowActions": {
     "edit": "Edit",
@@ -54,6 +58,12 @@
       "failed": "Operation failed: {msg}",
       "loadFailed": "Failed to load agreement history: {msg}"
     }
+  },
+  "stats": {
+    "paid": "Total Paid",
+    "inflow": "Total Inflow",
+    "nextCharge": "Next Charge",
+    "expiry": "Expiry"
   },
   "msg": {
     "created": "Policy created",

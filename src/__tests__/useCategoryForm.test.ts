@@ -62,6 +62,7 @@ function mockBaseCommands(merchants: Merchant[] = mockMerchants) {
     if (cmd === 'list_categories') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve(merchants)
     if (cmd === 'list_policies') return Promise.resolve(mockPolicies)
+    if (cmd === 'list_policy_stats') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
 }
@@ -133,6 +134,7 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve([])
       if (cmd === 'list_policies') return Promise.resolve(mockPolicies)
+      if (cmd === 'list_policy_stats') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const input = await submitWithMerchant('盒马')
@@ -165,6 +167,7 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve([])
       if (cmd === 'list_policies') return Promise.resolve(mockPolicies)
+      if (cmd === 'list_policy_stats') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const input = await submitWithMerchant('盒马')

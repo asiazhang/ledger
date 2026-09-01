@@ -9,6 +9,7 @@ import type {
   Instrument,
   ItemDailyTotal,
   Policy,
+  PolicyStats,
   RealizedPnlSummary,
   Transaction,
 } from '@/types'
@@ -117,6 +118,18 @@ export function makePolicy(partial: Partial<Policy> & { id: string }): Policy {
     version: 1,
     device_id: 'test',
     is_deleted: false,
+    ...partial,
+  }
+}
+
+export function makePolicyStats(partial: Partial<PolicyStats> = {}): PolicyStats {
+  return {
+    policy_id: 'policy-1',
+    native_currency: 'CNY',
+    total_paid_native_cents: 600_000,
+    total_inflow_native_cents: 50_000,
+    next_charge_date: null,
+    is_expired: false,
     ...partial,
   }
 }

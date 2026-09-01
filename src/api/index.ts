@@ -44,6 +44,7 @@ import type {
   ManualPriceResult,
   Policy,
   PolicyInput,
+  PolicyStats,
   Merchant,
   MerchantShare,
   MerchantInput,
@@ -205,6 +206,8 @@ export const api = {
 
   // 保单（issue #360 / ADR-0051）：独立领域（静态档案），写入后由后端发 ledger:changed
   listPolicies: () => invoke<Policy[]>('list_policies'),
+  // 保单视角统计（issue #363）：只读聚合，实时推导不落库
+  listPolicyStats: () => invoke<PolicyStats[]>('list_policy_stats'),
   createPolicy: (input: PolicyInput) => invoke<string>('create_policy', { input }),
   updatePolicy: (id: string, input: PolicyInput) => invoke<void>('update_policy', { id, input }),
   deletePolicy: (id: string) => invoke<void>('delete_policy', { id }),

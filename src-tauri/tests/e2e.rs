@@ -48,6 +48,8 @@ mod migration_steps;
 mod policies_steps;
 #[path = "e2e/policy_agreement_steps.rs"]
 mod policy_agreement_steps;
+#[path = "e2e/policy_stats_steps.rs"]
+mod policy_stats_steps;
 #[path = "e2e/reports_steps.rs"]
 mod reports_steps;
 #[path = "e2e/scheduled_steps.rs"]

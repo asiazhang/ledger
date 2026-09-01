@@ -9,6 +9,7 @@ import PolicyAgreementFields from '@/components/PolicyAgreementFields.vue'
 import { t } from '@/i18n'
 import { errorMessage } from '@/utils/errors'
 import { todayStr } from '@/utils/date'
+import { policyStatAmountText } from '@/utils/policy-stats'
 import { yuanToCents, centsToYuan } from '@/utils/money'
 import { useFormShared } from '@/composables/useFormShared'
 import { resolveMerchantRef } from '@/composables/resolve-merchant'
@@ -65,6 +66,31 @@ const merchantOptions = computed(() =>
 
 /** 保额录入中：币种选择仅在填了保额时有意义（与后端「成对」校验同形）。 */
 const coverageFilled = computed(() => coverageYuan.value.trim() !== '')
+
+// —— 保单视角统计（issue #363，编辑模式 = 详情）：消费 store 同源快照，
+// 实时推导不落库；列表与弹窗共用同一份数据，合计展示经共享辅助同口径 ——
+const statsSummary = computed(() => {
+  if (!props.editing) return null
+  return policiesStore.statsById.get(props.editing.id) ?? null
+})
+
+const paidText = computed(() =>
+  policyStatAmountText(statsSummary.value, (s) => s.total_paid_native_cents),
+)
+
+const inflowText = computed(() =>
+  policyStatAmountText(statsSummary.value, (s) => s.total_inflow_native_cents),
+)
+
+// 到期态摘要（与列表徽标同一推导口径）：止日空 = 长期/终身（永不判到期）；
+// 止日非空时消费统计同源 is_expired，统计行未加载时回落本地推导。
+const expiryText = computed(() => {
+  const p = props.editing
+  if (!p) return '—'
+  if (p.end_date === null) return t('policies.expiry.lifetime')
+  const expired = statsSummary.value?.is_expired ?? p.end_date < todayStr()
+  return expired ? t('policies.expiry.expired') : t('policies.expiry.active')
+})
 
 // 清空保额即清币种（成对原子，不产生只有币种的半挂状态）
 watch(coverageFilled, (filled) => {
@@ -295,6 +321,21 @@ defineExpose({ save })
       </template>
 
       <!-- 编辑模式：协议历史 + 添加/改价（1 张保单 → 多段协议可展示） -->
+      <!-- 编辑模式：保单视角统计（实时推导，issue #363）+ 协议历史与添加/改价 -->
+      <div
+        v-if="editing"
+        data-testid="policy-stats-summary"
+        style="display: flex; gap: 16px; margin-bottom: 12px; font-size: 13px"
+      >
+        <span>{{ t('policies.stats.paid') }}：<strong>{{ paidText }}</strong></span>
+        <span>{{ t('policies.stats.inflow') }}：<strong>{{ inflowText }}</strong></span>
+        <span>
+          {{ t('policies.stats.nextCharge') }}：<strong>{{
+            statsSummary?.next_charge_date ?? '—'
+          }}</strong>
+        </span>
+        <span>{{ t('policies.stats.expiry') }}：<strong>{{ expiryText }}</strong></span>
+      </div>
       <NFormItem
         v-if="editing"
         :label="t('policies.agreement.sectionTitle')"

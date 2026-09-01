@@ -5,8 +5,8 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import PoliciesView from '@/views/PoliciesView.vue'
 import PolicyFormModal from '@/components/PolicyFormModal.vue'
-import { makePolicy } from './factories'
-import type { Currency, Merchant, Policy } from '@/types'
+import { makePolicy, makePolicyStats } from './factories'
+import type { Currency, Merchant, Policy, PolicyStats } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -35,6 +35,17 @@ function basePolicy(over: Partial<Policy> = {}): Policy {
 }
 
 let policies: Policy[]
+let policyStats: PolicyStats[]
+
+function baseStats(policy: Policy): PolicyStats {
+  return makePolicyStats({
+    policy_id: policy.id,
+    total_paid_native_cents: 600_000,
+    total_inflow_native_cents: 50_000,
+    next_charge_date: '2027-01-01',
+    is_expired: policy.end_date !== null && policy.end_date < '2026-06-01',
+  })
+}
 
 function setupInvoke() {
   mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
@@ -44,6 +55,9 @@ function setupInvoke() {
     if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
     if (cmd === 'list_policies') {
       return Promise.resolve(policies.filter((p) => !p.is_deleted))
+    }
+    if (cmd === 'list_policy_stats') {
+      return Promise.resolve(policyStats.filter((s) => policies.some((p) => p.id === s.policy_id && !p.is_deleted)))
     }
     if (cmd === 'create_policy') {
       const { input } = args as { input: { policy_number: string; merchant_id: string } }
@@ -78,6 +92,7 @@ beforeEach(async () => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
   policies = [basePolicy()]
+  policyStats = [baseStats(policies[0])]
   setupInvoke()
   localStorage.clear()
   // 参考数据（商户/币种选项）与保单 store 均为 self-init，提前预热
@@ -291,7 +306,74 @@ describe('PoliciesView 新建保单', () => {
   })
 })
 
+describe('PoliciesView 保单视角统计（issue #363）', () => {
+  it('列表展示实时推导统计：累计已缴/累计流入/下期扣款日（本位币同源快照）', async () => {
+    const wrapper = mount(PoliciesView)
+    await flushPromises()
+    const text = wrapper.text()
+    // 600_000 分 → ¥6000；50_000 分 → ¥500（统计本位币口径，经 formatAmount；
+    // 中文分组万位制，千位无分隔——与列表保额列同款断言先例）
+    expect(text).toContain('累计已缴')
+    expect(text).toContain('¥6000')
+    expect(text).toContain('¥500')
+    expect(text).toContain('2027-01-01')
+  })
+
+  it('无活跃协议（下期扣款日 null）显示占位，不显示日期', async () => {
+    policyStats = [baseStats(policies[0]!)]
+    policyStats[0] = { ...policyStats[0]!, next_charge_date: null }
+    const wrapper = mount(PoliciesView)
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('2027-01-01')
+  })
+
+  it('到期徽标消费统计同源推导（is_expired=true → 已到期，止日未到也生效）', async () => {
+    // 止日在远未来（本地推导永不判到期），徽标状态完全由统计行 is_expired 驱动
+    policies = [basePolicy({ id: 'p-1', end_date: '2999-01-01' })]
+    policyStats = [makePolicyStats({ policy_id: 'p-1', is_expired: true })]
+    const wrapper = mount(PoliciesView)
+    await flushPromises()
+    expect(wrapper.text()).toContain('已到期')
+  })
+
+  it('统计行缺失（加载窗口）回落本地到期推导，统计列显示占位', async () => {
+    policies = [basePolicy({ id: 'p-1', end_date: '2020-01-01' })]
+    policyStats = []
+    const wrapper = mount(PoliciesView)
+    await flushPromises()
+    expect(wrapper.text()).toContain('已到期') // 本地推导兜底
+    expect(wrapper.text()).toContain('—') // 统计列占位
+  })
+})
+
 describe('PoliciesView 编辑保单', () => {
+  it('编辑弹窗（详情）展示保单视角统计摘要：已缴/流入/下期扣款（issue #363）', async () => {
+    const wrapper = mount(PoliciesView)
+    await flushPromises()
+
+    await wrapper.find('[data-testid="policy-edit-policy-1"]').trigger('click')
+    await flushPromises()
+    const summary = bodyQuery('[data-testid="policy-stats-summary"]')!
+    expect(summary.textContent).toContain('累计已缴保费')
+    expect(summary.textContent).toContain('¥6000')
+    expect(summary.textContent).toContain('¥500')
+    expect(summary.textContent).toContain('2027-01-01')
+    // 到期态摘要：止日 2036 未到（统计行 is_expired=false）→ 保障中
+    expect(summary.textContent).toContain('到期状态')
+    expect(summary.textContent).toContain('保障中')
+  })
+
+  it('编辑弹窗到期态摘要：止日为空显示长期/终身（永不判到期）', async () => {
+    policies = [basePolicy({ id: 'p-1', end_date: null })]
+    policyStats = [makePolicyStats({ policy_id: 'p-1', is_expired: false })]
+    const wrapper = mount(PoliciesView)
+    await flushPromises()
+    await wrapper.find('[data-testid="policy-edit-p-1"]').trigger('click')
+    await flushPromises()
+    const summary = bodyQuery('[data-testid="policy-stats-summary"]')!
+    expect(summary.textContent).toContain('长期/终身')
+  })
+
   it('点编辑打开弹窗并预填当前行字段，保存走 update_policy 且携带 id 与保司', async () => {
     const wrapper = mount(PoliciesView)
     await flushPromises()

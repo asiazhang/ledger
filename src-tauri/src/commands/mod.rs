@@ -142,6 +142,8 @@ pub const IPC_COMMAND_WRITE_OPS: &[(&str, Option<WriteOp>)] = &[
     ("update_policy", Some(WriteOp::UpdatePolicy)),
     ("delete_policy", Some(WriteOp::DeletePolicy)),
     ("list_policies", None),
+    // 保单视角统计（issue #363，只读聚合）
+    ("list_policy_stats", None),
     // ── 商户域 ──
     ("create_merchant", Some(WriteOp::CreateMerchant)),
     ("update_merchant", Some(WriteOp::UpdateMerchant)),
