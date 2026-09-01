@@ -91,16 +91,19 @@ describe('AccountLink 账户名下钻（issue #97/#99）', () => {
     expect(pushMock).not.toHaveBeenCalled()
   })
 
-  it('外部传入的布局样式透传到根按钮（转账行 flex 均分依赖，issue #99）', async () => {
+  it('外部传入的布局样式透传到根按钮（转账行内容宽度/左对齐依赖，issue #99）', async () => {
     const wrapper = mount(AccountLink, {
       props: { accountId: 'acc-1' },
-      attrs: { style: 'flex: 1 1 0%; min-width: 0;' },
+      attrs: { style: 'flex: 0 1 auto; min-width: 0; text-align: left;' },
     })
     await flushPromises()
     const btn = wrapper.find('button')
     const style = (btn.element as HTMLElement).style
-    expect(style.flexGrow).toBe('1')
+    // 内容宽度不增长（flex-grow:0），可收缩省略（flex-shrink:1），文本左对齐顶列左缘
+    expect(style.flexGrow).toBe('0')
+    expect(style.flexShrink).toBe('1')
     expect(style.minWidth).toBe('0px')
+    expect(style.textAlign).toBe('left')
     // 组件内部强调色与外部布局样式合并，互不覆盖（暗色琥珀归一化为 rgb）
     expect(btn.attributes('style')).toContain('rgb(245, 158, 11)')
   })

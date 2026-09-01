@@ -122,25 +122,30 @@ export function buildTransactionColumns(reference: ReferenceStore): DataTableCol
   ]
 }
 
-/** 转账单元格内账户链接的布局样式：flex 均分剩余宽度 + 允许收缩省略（长名各自省略号）。
- * 经 attrs 透传到 AccountLink 根按钮，与组件内部强调色样式合并。 */
-const ACCOUNT_CELL_LINK_STYLE = 'flex: 1 1 0%; min-width: 0;'
+/** 转账单元格内账户链接的布局样式：内容宽度 + 允许收缩省略 + 文本左对齐。
+ * 经 attrs 透传到 AccountLink 根按钮，与组件内部强调色样式合并。
+ * 用内容宽度（flex-grow:0）而非均分剩余宽度：单账户行「花呗」是内容宽度、自然靠左，
+ * 转账行首账户名若也均分半宽会因 <button> 默认 text-align:center 被水平居中、顶不到列左缘
+ * （与上方单账户行错位）。内容宽度让首名紧贴列左缘、与单账户行对齐；
+ * 收缩项仍由 min-width:0 允许收缩（长名省略号兜底、不溢出）。 */
+const ACCOUNT_CELL_LINK_STYLE = 'flex: 0 1 auto; min-width: 0; text-align: left;'
 
 /** 账户单元格渲染（issue #99）：
  * - 转账行显示「转出 → 转入」双向账户名（to_account_id 存在时），两个名字各自可点击、
  *   各自下钻到对应账户的过滤视图；
  * - 其余交易类型仍显示主账户名（可点击下钻，issue #97）。
  *
- * 布局：转账行用 inline-flex 容器，两个链接 flex 均分剩余宽度、箭头固定宽度；
- * 链接自身 ellipsis（见 AccountLink），长账户名省略号兜底。
- * 注意：该列不再设置列级 ellipsis（fixed 布局由备注列的 ellipsis 维持），
- * 否则 NEllipsis 会把两个按钮包装成整体省略，破坏各自可点击语义。 */
+ * 布局：转账行用 inline-flex 容器，两个链接内容宽度、箭头固定宽度，整组 justify-content:flex-start
+ * 靠左；长账户名由链接自身 ellipsis（见 AccountLink）省略号兜底、不溢出（列宽 180 时收缩省略）。
+ * 首账户名因此与单账户行（如「花呗」）左侧对齐；不设列级 ellipsis（fixed 布局由备注列的
+ * ellipsis 维持），否则 NEllipsis 会把两个按钮包装成整体省略，破坏各自可点击语义。 */
 function renderAccountCell(row: Transaction): VNode {
   if (row.kind === 'transfer' && row.to_account_id) {
     return h(
       'div',
       {
-        style: 'display: inline-flex; align-items: center; gap: 4px; width: 100%; max-width: 100%;',
+        style:
+          'display: inline-flex; align-items: center; justify-content: flex-start; gap: 4px; width: 100%; max-width: 100%;',
       },
       [
         h(AccountLink, { accountId: row.account_id, style: ACCOUNT_CELL_LINK_STYLE }),
