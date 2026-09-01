@@ -13,7 +13,8 @@
     "not-found": "分类不存在: {0}",
     "self-parent": "自身不能作为父分类",
     "parent-not-found": "父分类不存在: {0}",
-    "parent-kind-mismatch": "父分类类型需一致"
+    "parent-kind-mismatch": "父分类类型需一致",
+    "has-budget": "该分类名下存在预算，请先删除对应预算后再删除分类"
   },
   "merchant": {
     "already-exists": "商户已存在: {0}",

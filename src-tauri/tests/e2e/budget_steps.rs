@@ -14,6 +14,7 @@ use rusqlite::params;
 use tauri_app_lib::commands::budget::{
     budget_progress_rows, create_budget_internal, delete_budget_internal, update_budget_internal,
 };
+use tauri_app_lib::commands::categories::{delete_category_internal, list_categories_internal};
 use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
 use tauri_app_lib::models::{BudgetInput, TransactionInput};
@@ -277,6 +278,56 @@ fn delete_budget_via_command(world: &mut LedgerWorld, name: String) {
         Ok(_) => None,
         Err(e) => Some(e.to_string()),
     };
+}
+
+// ---------------------------------------------------------------------------
+// When：删除分类（预算删除守卫，issue #355）
+// ---------------------------------------------------------------------------
+
+/// 经分类命令同形态（连接层统一写入口，ADR-0032）删除分类：
+/// 成功清空 last_error，失败记入 last_error 供拒绝路径断言（守卫拒绝不 panic，走真实命令路径）。
+#[when(expr = "尝试删除分类 {string}")]
+fn delete_category_via_command(world: &mut LedgerWorld, name: String) {
+    let id = category_id_any(&world_conn!(world), &name);
+    world.last_error = match world.db.write(|conn| delete_category_internal(conn, &id)) {
+        Ok(_) => None,
+        Err(e) => Some(e.to_string()),
+    };
+}
+
+#[then(expr = "删除应成功")]
+fn assert_delete_category_succeeded(world: &mut LedgerWorld) {
+    assert!(
+        world.last_error.is_none(),
+        "预期删除成功，实际错误: {:?}",
+        world.last_error
+    );
+}
+
+#[then(expr = "删除应失败并提示 {string}")]
+fn assert_delete_category_failed(world: &mut LedgerWorld, needle: String) {
+    assert_last_error_contains(world, &needle);
+}
+
+/// 命令层可见结果：分类在读回列表中（与真实读路径同款）。
+#[then(expr = "分类 {string} 仍应存在")]
+fn assert_category_still_exists(world: &mut LedgerWorld, name: String) {
+    let cats = list_categories_internal(&world_conn!(world)).unwrap();
+    assert!(
+        cats.iter().any(|c| c.name == name),
+        "分类 '{}' 应仍存在于读回结果中",
+        name
+    );
+}
+
+#[then(expr = "分类 {string} 不应存在")]
+fn assert_category_gone(world: &mut LedgerWorld, name: String) {
+    let cats = list_categories_internal(&world_conn!(world)).unwrap();
+    assert!(
+        !cats.iter().any(|c| c.name == name),
+        "分类 '{}' 不应再出现在读回结果中",
+        name
+    );
 }
 
 // ---------------------------------------------------------------------------

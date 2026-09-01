@@ -144,6 +144,84 @@ fn delete_category_internal_returns_not_found_for_already_deleted() {
     );
 }
 
+// ----- 预算删除守卫（issue #355）-----
+
+fn insert_expense_category_row(
+    conn: &rusqlite::Connection,
+    name: &str,
+    parent_id: Option<&str>,
+) -> String {
+    let id = new_uuid();
+    let now = now_iso();
+    conn.execute(
+        "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,'expense',?3,NULL,0,?4,?5,?6,?7,0)",
+        rusqlite::params![id, name, parent_id, now, now, 1, device_id()],
+    )
+    .unwrap();
+    id
+}
+
+fn insert_budget_row(conn: &rusqlite::Connection, category_id: &str, is_deleted: i64) {
+    conn.execute(
+        "INSERT INTO budgets (id,category_id,period,amount_cents,start_date,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,'monthly',50000,'2026-01-01',?3,?3,1,?4,?5)",
+        rusqlite::params![new_uuid(), category_id, now_iso(), device_id(), is_deleted],
+    )
+    .unwrap();
+}
+
+#[test]
+fn delete_category_internal_rejects_when_undeleted_budget_exists() {
+    let conn = setup();
+    let id = insert_expense_category_row(&conn, "带预算分类", None);
+    insert_budget_row(&conn, &id, 0);
+    let err = super::delete_category_internal(&conn, &id).unwrap_err();
+    match err {
+        crate::error::AppError::Coded { code, message, .. } => {
+            assert_eq!(code, "category.has-budget");
+            assert!(
+                message.contains("请先删除对应预算"),
+                "应引导先删预算: {message}"
+            );
+        }
+        other => panic!("应为码化错误，实际 {other:?}"),
+    }
+    assert!(
+        list_categories(&conn).iter().any(|c| c.id == id),
+        "被拒后分类不应被删除"
+    );
+}
+
+#[test]
+fn delete_category_internal_allows_when_only_soft_deleted_budgets() {
+    let conn = setup();
+    let id = insert_expense_category_row(&conn, "软删预算分类", None);
+    insert_budget_row(&conn, &id, 1);
+    super::delete_category_internal(&conn, &id).unwrap();
+    assert!(
+        !list_categories(&conn).iter().any(|c| c.id == id),
+        "仅剩软删除预算时分类应可正常删除"
+    );
+}
+
+#[test]
+fn delete_category_internal_ignores_budgets_of_subcategories() {
+    let conn = setup();
+    let parent = insert_expense_category_row(&conn, "预算父分类", None);
+    let child = insert_expense_category_row(&conn, "预算子分类", Some(&parent));
+    insert_budget_row(&conn, &child, 0);
+    super::delete_category_internal(&conn, &parent).unwrap();
+    assert!(
+        !list_categories(&conn).iter().any(|c| c.id == parent),
+        "父分类应被删除"
+    );
+    assert!(
+        list_categories(&conn).iter().any(|c| c.id == child),
+        "子分类不应受牵连"
+    );
+}
+
 #[test]
 fn update_category_updates_fields() {
     use crate::models::CategoryUpdateInput;
