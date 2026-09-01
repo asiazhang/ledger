@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { NButton, NForm, NFormItem, NInput, NSpace, useMessage } from 'naive-ui'
+import { computed, ref, watch, nextTick } from 'vue'
+import { NButton, NForm, NFormItem, NInput, NSpace, NSwitch, useMessage } from 'naive-ui'
 import AppModal from '@/components/AppModal.vue'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
+import PolicyAgreementFields from '@/components/PolicyAgreementFields.vue'
 import { t } from '@/i18n'
 import { errorMessage } from '@/utils/errors'
 import { todayStr } from '@/utils/date'
@@ -14,16 +15,22 @@ import { resolveMerchantRef } from '@/composables/resolve-merchant'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
 import { usePoliciesStore } from '@/stores/policies'
+import { api } from '@/api'
 import type { Policy, PolicyInput } from '@/types'
 
 /**
  * 保单新建/编辑弹窗（issue #360 / ADR-0051）：静态合同要素录入。
  *
- * 保司复用商户字典（ADR-0051 决策 7）：PinyinSelect tag 模式「选择或输入即建」，
+ * 保司复用商户字典（ADR-0051 决策 7）：PinyinSelect tag 模式「选择或输入即建」,
  * 保存时单点解析——选中 id 原样携带、输入文本精确命中按名复用、未命中
  * `create_merchant` 即建（重名竞态先强制重拉按名复用，同计划表单收口）。
  * 保障期间止日可空 = 长期/终身；保额可选纯展示，与币种成对（清金额即清币种）。
  * 编辑模式全量替换；保存成功后关弹窗，列表经 store 重拉刷新。
+ *
+ * 缴费协议区（issue #362 / ADR-0051 决策 2，新建模式）：可折叠可选——开关
+ * 默认关（趸交/缴清纯档案）；开启后填频率/金额/扣款账户/起始日，保存时先建档
+ * 再创建订阅形态协议（携带保单引用，保司/险种名随协议组装），期次自动生成
+ * 带引用的保费流水。编辑模式的协议历史与添加/改价见 PolicyAgreementSection。
  */
 const props = defineProps<{
   show: boolean
@@ -47,6 +54,10 @@ const endDate = ref<string | null>(null)
 const coverageYuan = ref('')
 const coverageCurrency = ref<string | null>(null)
 const note = ref('')
+
+// —— 缴费协议区（新建模式，issue #362）：可折叠可选，默认关 = 趸交/缴清纯档案 ——
+const withAgreement = ref(false)
+const agreementFields = ref<InstanceType<typeof PolicyAgreementFields> | null>(null)
 
 const merchantOptions = computed(() =>
   reference.merchants.map((m) => ({ label: m.name, value: m.id })),
@@ -75,6 +86,10 @@ watch(
       p?.coverage_amount_cents != null ? String(centsToYuan(p.coverage_amount_cents)) : ''
     coverageCurrency.value = p?.coverage_currency_code ?? app.defaultCurrency
     note.value = p?.note ?? ''
+    // 协议区随弹窗复位：开关默认关；字段组复位（起始日预填保障期间起日），
+    // nextTick 等字段组随弹窗内容挂载/更新后可取 ref。
+    withAgreement.value = false
+    void nextTick(() => agreementFields.value?.reset({ startDate: startDate.value }))
   },
   { immediate: true },
 )
@@ -140,6 +155,15 @@ async function save() {
     return
   }
 
+  // 协议区字段校验前置（先于建档，避免半建档状态）：校验失败不提交任何请求。
+  if (withAgreement.value) {
+    const agreementErr = agreementFields.value?.validate()
+    if (agreementErr) {
+      message.warning(agreementErr)
+      return
+    }
+  }
+
   const input: PolicyInput = {
     merchant_id: merchantId,
     policy_number: policyNumber.value.trim(),
@@ -156,7 +180,14 @@ async function save() {
       await policiesStore.update(props.editing.id, input)
       message.success(t('policies.msg.saved'))
     } else {
-      await policiesStore.create(input)
+      const policyId = await policiesStore.create(input)
+      // 同时创建缴费协议（issue #362 / ADR-0051 决策 2）：订阅形态 + 保单引用；
+      // 保司与险种名随字段组组装（保险公司即保费流水的付款对象，备注带险种可读）。
+      if (withAgreement.value && agreementFields.value) {
+        await api.createScheduledTransaction(
+          agreementFields.value.build(policyId, merchantId, input.product_name),
+        )
+      }
       message.success(t('policies.msg.created'))
     }
     close()
@@ -249,6 +280,33 @@ defineExpose({ save })
           data-testid="policy-note"
         />
       </NFormItem>
+
+      <!-- 新建模式：缴费协议折叠开关（默认关 = 趸交/缴清纯档案）+ 字段组 -->
+      <template v-if="!editing">
+        <NFormItem :label="t('policies.agreement.sectionTitle')">
+          <NSpace :size="8" align="center">
+            <NSwitch v-model:value="withAgreement" data-testid="policy-agreement-toggle" />
+            <span style="opacity: 0.6; font-size: 12px">{{ t('policies.agreement.toggleHint') }}</span>
+          </NSpace>
+        </NFormItem>
+        <div v-show="withAgreement" data-testid="policy-agreement-fields">
+          <PolicyAgreementFields ref="agreementFields" />
+        </div>
+      </template>
+
+      <!-- 编辑模式：协议历史 + 添加/改价（1 张保单 → 多段协议可展示） -->
+      <NFormItem
+        v-if="editing"
+        :label="t('policies.agreement.sectionTitle')"
+        :show-feedback="false"
+      >
+        <PolicyAgreementSection
+          :policy="editing"
+          style="width: 100%"
+          data-testid="policy-agreement-section"
+        />
+      </NFormItem>
+
       <NSpace justify="end">
         <NButton @click="close">{{ t('policies.form.cancel') }}</NButton>
         <NButton type="primary" data-testid="policy-save" @click="save">

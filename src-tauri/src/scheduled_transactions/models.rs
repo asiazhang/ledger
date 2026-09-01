@@ -220,6 +220,10 @@ pub struct SubscriptionPlan {
     pub scheduled_transaction_id: String,
     /// 商户引用（issue #190 / ADR-0028）。
     pub merchant_id: Option<String>,
+    /// 保单引用（issue #362 / ADR-0051 决策 2）：保费协议 = 订阅形态持保单引用，
+    /// 1 张保单可对应历史多段协议（价变重建分段）；期次生成流水时复制到
+    /// transactions.policy_id（与商户复制同机制）。可选：普通订阅恒 None。
+    pub policy_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,6 +252,10 @@ pub struct CreateScheduledInput {
     // Type-specific（issue #190 / ADR-0028）：installment/subscription 携带商户；
     // scheduled_transfer 行为层拒绝携带（见 engine::create_plan）。
     pub merchant_id: Option<String>,
+    /// 保单引用（issue #362 / ADR-0051 决策 2）：仅订阅形态可携带（保费协议），
+    /// 分期/定时转账携带即在行为层显式拒绝（见 engine::create_plan）；
+    /// 携带的保单必须存在且未软删除（软删保单不可被新协议选择）。
+    pub policy_id: Option<String>,
     pub total_amount_cents: Option<i64>,
     pub total_occurrences: Option<i64>,
     pub to_account_id: Option<String>,
@@ -300,6 +308,8 @@ pub struct ScheduledTransactionWithExt {
     pub core: ScheduledTransaction,
     /// 商户 id（installment/subscription 可携带；scheduled_transfer 恒为 None）。
     pub merchant_id: Option<String>,
+    /// 保单 id（仅订阅形态可携带，issue #362；其余形态恒为 None）。
+    pub policy_id: Option<String>,
     pub total_amount_cents: Option<i64>,
     pub total_occurrences: Option<i64>,
     pub to_account_id: Option<String>,
@@ -382,6 +392,7 @@ impl FromRow for SubscriptionPlan {
         Ok(SubscriptionPlan {
             scheduled_transaction_id: row.get(0)?,
             merchant_id: row.get(1)?,
+            policy_id: row.get(2)?,
         })
     }
 }

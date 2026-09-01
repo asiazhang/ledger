@@ -83,6 +83,7 @@ fn subscription_spend_yearly_not_amortized() {
             start_date: "2026-01-10".into(),
             note: Some("云存储年费".into()),
             merchant_id: None,
+            policy_id: None,
             total_amount_cents: None,
             total_occurrences: None,
             to_account_id: None,

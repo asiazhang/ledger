@@ -43,6 +43,9 @@ fn migrations() -> &'static Migrations<'static> {
             M::up(include_str!(
                 "../../migrations/V013__transaction_policy_id.sql"
             )),
+            M::up(include_str!(
+                "../../migrations/V014__subscription_plan_policy_id.sql"
+            )),
         ])
     })
 }

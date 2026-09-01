@@ -146,7 +146,8 @@
     "subscription-ext-not-found": "订阅扩展信息不存在",
     "transfer-ext-not-found": "定时转账扩展信息不存在",
     "date-invalid": "日期格式错误 {0}: {1}",
-    "not-active": "关联计划未处于活跃状态"
+    "not-active": "关联计划未处于活跃状态",
+    "policy-subscription-only": "只有订阅形态协议可挂保单"
   },
   "scheduled-occurrence": {
     "not-found": "期次不存在",

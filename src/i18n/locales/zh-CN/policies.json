@@ -24,6 +24,37 @@
     "delete": "删除"
   },
   "deleteConfirm": "删除后不再显示在列表，历史记录保留。确认删除该保单？",
+  "agreement": {
+    "sectionTitle": "缴费协议",
+    "toggleHint": "可选：同时创建订阅形态缴费协议，每期自动生成带本保单引用的保费流水",
+    "amount": "每期金额",
+    "amountPlaceholder": "每期保费（元）",
+    "recurrence": "扣款频率",
+    "account": "扣款账户",
+    "accountPlaceholder": "选择扣款账户",
+    "startDate": "起始日",
+    "add": "添加缴费协议",
+    "rebuild": "改价",
+    "rebuildConfirm": "取消旧协议并重建",
+    "rebuildHint": "改价 = 取消旧协议 + 按新金额重建：新协议自下期扣款日起生效，价格历史分为两段。",
+    "cancel": "取消",
+    "create": "创建",
+    "column": {
+      "amount": "每期金额",
+      "recurrence": "周期",
+      "startDate": "起始日",
+      "status": "状态"
+    },
+    "msg": {
+      "accountRequired": "请选择扣款账户",
+      "amountInvalid": "每期保费必须大于 0",
+      "startRequired": "请选择起始日",
+      "created": "缴费协议已创建",
+      "rebuilt": "已取消旧协议并按新金额重建",
+      "failed": "操作失败：{msg}",
+      "loadFailed": "协议历史加载失败：{msg}"
+    }
+  },
   "msg": {
     "created": "保单已创建",
     "saved": "保单已保存",
