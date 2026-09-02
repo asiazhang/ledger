@@ -1,7 +1,7 @@
 //! 东财基金搜索报文解析与命中挑选（issue #301）：fixture 驱动，不依赖真实网络。
 //! 夹具取自 FundSearchAPI.ashx 真实响应（截取形态保持字段拼读不变）。
 
-use crate::commands::sync::fund::{FundSearchResponse, pick_fund_detail};
+use crate::sync::fund::{FundSearchResponse, pick_fund_detail};
 
 /// 真实响应形态：同一关键词命中基金（FundBaseInfo 非空）与股票（null）混排。
 const MIXED_RESPONSE: &str = r#"{

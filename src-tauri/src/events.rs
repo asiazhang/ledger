@@ -9,7 +9,7 @@
 //! 与深路径镜像句柄三条失效信号发射路径共用这一处投递机制，一处改动全壳生效。
 //! 不经失效信号映射的带 payload 事件（行情同步进度 `sync-instruments:progress`，
 //! issue #369）只共用 [`post_emit_with`] 投递机制——其事件名常量与发射入口归
-//! 领域侧（`commands::sync` 的 `emit_progress`），本模块不承载其知识，
+//! 领域侧（`sync` 域的 `emit_progress`），本模块不承载其知识，
 //! 投递机制不另起第二套。发射器接缝（[`SignalEmitter`]，spec #366）是
 //! 「非阻塞」约定的类型化载体与回归测试注入点。
 //!

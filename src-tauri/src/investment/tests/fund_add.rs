@@ -8,7 +8,7 @@ use rusqlite::Connection;
 use crate::error::{AppError, Result};
 use crate::investment::add_fund_by_code_with;
 use crate::investment::fund::validate_fund_code;
-use crate::models::{FundDetail, FundNav};
+use crate::sync::{FundDetail, FundNav};
 
 use super::common::setup_db;
 

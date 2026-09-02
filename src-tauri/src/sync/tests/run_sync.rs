@@ -8,14 +8,14 @@ use std::sync::{Arc, Mutex};
 
 use rusqlite::Connection;
 
-use crate::commands::sync::SyncState;
-use crate::commands::sync::http::{MARKETS, MarketConfig, StockItem};
-use crate::commands::sync::orchestrate::{
+use crate::error::Result;
+use crate::sync::SyncProgress;
+use crate::sync::SyncState;
+use crate::sync::http::{MARKETS, MarketConfig, StockItem};
+use crate::sync::orchestrate::{
     ConnAccessor, GlobalConn, SyncOutcome, run_sync_pages, terminal_progress,
 };
-use crate::commands::sync::persist::build_existing_instruments;
-use crate::error::Result;
-use crate::models::SyncProgress;
+use crate::sync::persist::build_existing_instruments;
 
 use super::common::setup_db;
 
@@ -378,7 +378,7 @@ fn prices_changed_signal_pins_four_terminal_states() {
 #[test]
 fn sync_progress_event_name_pins_frontend_contract() {
     assert_eq!(
-        crate::commands::sync::SYNC_INSTRUMENTS_PROGRESS,
+        crate::sync::progress::SYNC_INSTRUMENTS_PROGRESS,
         "sync-instruments:progress"
     );
 }

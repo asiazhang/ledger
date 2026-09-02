@@ -150,26 +150,6 @@ pub struct InstrumentListResult {
     pub total: i64,
 }
 
-/// 按代码即拉拉取到的基金详情（issue #301 / ADR-0038 决策 1）：名称与东财分类
-/// 为透传展示信息（不落库），nav 缺省（新发基金尚未公布首期净值等）时仅建
-/// 标的、不落现价（不广播价格失效信号）。类型归 models 供编排接缝（注入获取
-/// 函数）与 BDD stub 构造跨 crate 使用。
-#[derive(Debug, Clone, PartialEq)]
-pub struct FundDetail {
-    pub code: String,
-    pub name: String,
-    /// 东财基金分类（如「混合型-灵活」），展示与 AI 确认识别用，不落库。
-    pub fund_class: String,
-    pub nav: Option<FundNav>,
-}
-
-/// 基金最新单位净值（真实价格值，元）与其净值日期（ISO 日期）。
-#[derive(Debug, Clone, PartialEq)]
-pub struct FundNav {
-    pub nav: f64,
-    pub nav_date: String,
-}
-
 /// 按代码即拉添加基金的结果（issue #301 / ADR-0038 决策 1）：标的行落库 +
 /// 现价写入状态。名称与东财分类来自东方财富权威数据；未取到净值时仅建标的、
 /// 不落现价（`price_written=false`，IPC 层据此不广播价格失效信号）。

@@ -3,10 +3,10 @@
 
 use rusqlite::{Connection, params};
 
-use crate::commands::sync::http::{ClistResponse, StockItem, f2_to_price};
-use crate::commands::sync::persist::{apply_stock_item, build_existing_instruments};
 use crate::db::{new_uuid, now_iso};
 use crate::error::Result;
+use crate::sync::http::{ClistResponse, StockItem, f2_to_price};
+use crate::sync::persist::{apply_stock_item, build_existing_instruments};
 
 use super::common::setup_db;
 
