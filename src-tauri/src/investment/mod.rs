@@ -5,11 +5,14 @@
 //! 买入/卖出协议（prepare/apply/revert 三件套，issue #72）、时点持仓推算、
 //! 走势与盈亏查询、手动报价、场外基金接入（按代码即拉 / AI fund 增强）、
 //! 「持仓标的」判定谓词与价格写入单点（现价缓存 upsert / 价格历史周采样
-//! upsert，自 `sync::persist` 随域归位迁入）。
+//! upsert，自 `sync::persist` 随域归位迁入）、财务自由度口径（#405 自命令壳层
+//! 迁入）。
 //!
 //! 接缝（域语言短名经本入口再导出，调用面用 `investment::` 前缀）：
 //! - [`crud`]：标的字典 / 汇率 / 现价列表与写入、标的搜索（含统一模糊搜索语义）、
 //!   手动创建守卫与自建标的删除守卫；
+//! - [`financial_freedom`]：财务自由度口径——可投资资产 × 3% 安全提取率对
+//!   年度预算总额的覆盖比例（只读，ADR-0048）；
 //! - [`fund`]：场外基金接入——6 位代码校验、详情落库、AI 降级建行、
 //!   按代码即拉注入接缝（`add_fund_by_code_with`）；
 //! - [`holdings`]：时点持仓（AsOfHolding）推算单点；
@@ -32,6 +35,7 @@
 //! 留在投资命令壳层（`commands::investment`）。
 
 pub mod crud;
+pub mod financial_freedom;
 pub mod fund;
 pub mod holdings;
 pub mod manual_price;
@@ -49,6 +53,7 @@ pub use crud::{
     create_exchange_rate, create_instrument, create_instrument_manual, create_market_price,
     delete_instrument, list_exchange_rates, list_holdings, list_instruments, list_market_prices,
 };
+pub use financial_freedom::query_financial_freedom;
 pub use fund::{
     FundCreateOutcome, add_fund_by_code_with, create_fund_degraded, is_six_digit_code,
     persist_fund_detail, validate_fund_code,

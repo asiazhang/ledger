@@ -52,6 +52,9 @@
   - 预算 `budget/`（阶段 3 #399 归位：CRUD / 进度分主题模块，壳层压平为单文件 `commands/budget.rs`）
   - 商户 `merchants/`（阶段 4 #400 归位：字典 CRUD 与按名查找/即建，壳层压平为单文件 `commands/merchants.rs`）
   - 投资 `investment/`（阶段 5 #401 归位：买卖协议三件套 / 持仓 / 走势 / 行情与汇率录入 / 基金接入分主题模块，价格写入单点自 `sync::persist` 迁入 `investment::prices`，统一模糊搜索语义纯函数迁入 `transaction::search_text`；壳层压平为单文件 `commands/investment.rs`）
+  - 报表 `reports/`（#405 归位：月度汇总/分类/商户/日期极值聚合读模型，消费 `transaction::amount` 矩阵，壳层压平为单文件 `commands/reports.rs`）
+  - 仪表盘 `dashboard/`（#405 归位：全仓净资产跨币种折算聚合，壳层退化为单文件薄壳 `commands/dashboard.rs`）
+  - 财务自由度随投资域归位（#405：自由度计算口径迁入 `investment/financial_freedom.rs`，经 `investment::` 接缝再导出，壳层退化为薄壳 `commands/financial_freedom.rs`；其依赖的账户余额清单读模型先行下沉基础设施 `db::balance`，账户域归位 #404 时随迁）
   - 基础设施五处（`db/`、`signals.rs`、`models/`、`error.rs`、`settings.rs`）已入守门白名单。
 
 ### 剩余内容逐项 Triage 判定表（无未判定项）
@@ -64,9 +67,9 @@
 | **账户** | `commands/accounts/` (`core.rs`) | 迁移 | `src-tauri/src/accounts/` | 账户 CRUD、自然键幂等创建、币种锁定守卫、黑洞账户创建与余额调整交易编排等独立领域规则 | #404 |
 | **分类** | `commands/categories/` (`core.rs`) | 迁移 | `src-tauri/src/categories/` | 分类 CRUD、自然键幂等创建、两级分类校验、预算删除守卫与排序重排等独立领域规则 | #404 |
 | **币种** | `commands/currencies/` (`mod.rs`) | 迁移 | `src-tauri/src/currencies/` | 参考数据币种列表查询实现，独立建立顶层微域目录，壳层压平为单文件 | #404 |
-| **报表** | `commands/reports/` (`mod.rs`) | 迁移 | `src-tauri/src/reports/` | 月度汇总、分类下钻、商户排行与日期极值聚合读模型，消费 `transaction::amount` 矩阵 | #405 |
-| **仪表盘** | `commands/dashboard.rs` | 迁移 | `src-tauri/src/dashboard/` | `query_dashboard_overview` 全仓净资产跨币种折算聚合逻辑下沉域目录，壳层退化为薄壳 | #405 |
-| **财务自由度** | `commands/financial_freedom.rs` | 迁移 | `src-tauri/src/investment/` | `query_financial_freedom` 自由度计算口径（投资域 InvestableAssets 词条），下沉投资域 | #405 |
+| **报表** | `src-tauri/src/reports/` | 已归位 | `src-tauri/src/reports/` | 月度汇总、分类下钻、商户排行与日期极值聚合读模型，消费 `transaction::amount` 矩阵 | #405 |
+| **仪表盘** | `src-tauri/src/dashboard/` | 已归位 | `src-tauri/src/dashboard/` | `query_dashboard_overview` 全仓净资产跨币种折算聚合逻辑下沉域目录，壳层退化为薄壳 | #405 |
+| **财务自由度** | `src-tauri/src/investment/` | 已归位 | `src-tauri/src/investment/` | `query_financial_freedom` 自由度计算口径（投资域 InvestableAssets 词条），下沉投资域 | #405 |
 | **备份与自动备份** | `commands/backup/core.rs` + `src-tauri/src/auto_backup.rs` | 迁移 | `src-tauri/src/backup/` | 备份/恢复/受管备份清理核心引擎与自动备份调度、到期判定纯函数、本地日界门整合归入顶层 backup 域 | #406 |
 | **行情同步** | `commands/sync/` | 迁移 | `src-tauri/src/sync/` | HTTP 网络客户端、东财基金净值爬取、增全量同步编排独立建顶层域目录，壳层压平 | #407 |
 | **数据位置** | `commands/data_location.rs` | 迁移 | `src-tauri/src/db/data_location/` | `validate_and_commit` / `gather_info` 数据库引导与位置切换三步校验下沉 db 基础设施，壳层压平 | #408 |
