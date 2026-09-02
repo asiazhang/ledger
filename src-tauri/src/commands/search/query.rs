@@ -42,8 +42,8 @@ impl FromRow for Candidate {
 /// 返回当前页与命中总数。
 ///
 /// 支持可选筛选（与关键字 AND 组合，全部可省略、单边可用）：
-/// - `amount_min_cents` / `amount_max_cents`：金额区间（整数分，含边界；按原始
-///   币种分值过滤，MVP 阶段与 `amount_native_cents` 1:1）；
+/// - `amount_min_cents` / `amount_max_cents`：金额区间（整数分，含边界；按本位币分
+///   `amount_native_cents` 过滤，与全仓聚合口径同源，多币种下跨币种不再混滤）；
 /// - `date_from` / `date_to`：日期区间（`YYYY-MM-DD` 字符串比较，含边界）。
 ///
 /// 空查询（无关键字）时：有筛选 → 执行仅筛选查询；无筛选 → 维持返回空结果。
@@ -85,11 +85,12 @@ pub fn search_transactions_internal(
     ];
     let mut params: Vec<rusqlite::types::Value> = Vec::new();
     if let Some(min) = amount_min_cents {
-        where_clauses.push("t.amount_cents >= ?");
+        // 本位币分口径（issue #395）：与全仓聚合一致，多币种下跨币种不再混滤。
+        where_clauses.push("t.amount_native_cents >= ?");
         params.push(min.into());
     }
     if let Some(max) = amount_max_cents {
-        where_clauses.push("t.amount_cents <= ?");
+        where_clauses.push("t.amount_native_cents <= ?");
         params.push(max.into());
     }
     if let Some(from) = date_from {

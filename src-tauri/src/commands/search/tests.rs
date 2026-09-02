@@ -512,6 +512,40 @@ fn search_amount_filter_one_sided() {
     assert_eq!(res.total, 2);
 }
 
+/// 金额区间过滤按本位币分（issue #395）：原始币种分与本位币分分叉时（外币 +
+/// 汇率折算），过滤落在本位币列，与全仓聚合口径对齐，多币种下跨币种不再混滤
+/// （此前按原始币种分过滤）。
+#[test]
+fn search_amount_range_filters_on_native_cents() {
+    let conn = setup();
+    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    // 外币交易：USD 100 元 = 本位币 720 元（amount_cents 与 amount_native_cents 分叉）
+    conn.execute(
+        "INSERT INTO transactions \
+         (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
+         category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES ('t1','expense',10000,'USD',72000,'a1',NULL,NULL,NULL,'美元订阅','2026-02-01',\
+         '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+        [],
+    )
+    .unwrap();
+    insert_txn_amount(&conn, "t2", "a1", Some("午餐"), "2026-02-02", 1500);
+    // 本位币区间命中：72000 分落 [70000, 74000]（原始币种分 10000 不在此区间）
+    let res = search_transactions_internal(&conn, "", 1, 20, Some(70000), Some(74000), None, None)
+        .unwrap();
+    assert_eq!(res.total, 1);
+    assert_eq!(res.items[0].id, "t1");
+    // 原始币种分区间（10000 ±）不命中：过滤不再看原始币种列
+    let res = search_transactions_internal(&conn, "", 1, 20, Some(9000), Some(11000), None, None)
+        .unwrap();
+    assert_eq!(res.total, 0);
+    // 本位币交易不受影响：1500 分命中 [1500, 1500]
+    let res =
+        search_transactions_internal(&conn, "", 1, 20, Some(1500), Some(1500), None, None).unwrap();
+    assert_eq!(res.total, 1);
+    assert_eq!(res.items[0].id, "t2");
+}
+
 #[test]
 fn search_date_range_inclusive_bounds() {
     let conn = setup();
