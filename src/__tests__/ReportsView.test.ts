@@ -388,7 +388,7 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
     })
   })
 
-  it('跳转载荷年份边界随所选期间所在年（期间化载荷由 #412 泛化）', async () => {
+  it('跳转载荷 = 所选期间首尾日期（#412 期间化）：「去年」芯片后未分类柱带去年年界', async () => {
     baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
     const wrapper = await mountReports()
     await clickChip(wrapper, '去年')
@@ -399,6 +399,38 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
         category: UNCATEGORIZED_ONLY,
         dateFrom: `${Y - 1}-01-01`,
         dateTo: `${Y - 1}-12-31`,
+      },
+    })
+  })
+
+  it('跳转载荷随月期间（#412）：「当月」芯片后未分类柱带当月月界', async () => {
+    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    const wrapper = await mountReports()
+    await clickChip(wrapper, '当月')
+    await clickBar(wrapper, 2) // 未分类柱
+    expect(pushMock).toHaveBeenCalledWith({
+      name: 'transactions',
+      query: {
+        category: UNCATEGORIZED_ONLY,
+        dateFrom: `${Y}-01-01`,
+        dateTo: `${Y}-01-31`,
+      },
+    })
+  })
+
+  it('跳转载荷随季期间（#412）：「当季」芯片后下钻二级行带当季季界', async () => {
+    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    const wrapper = await mountReports()
+    await clickChip(wrapper, '当季')
+    await clickBar(wrapper, 0) // 图内下钻餐饮
+    pushMock.mockClear()
+    await clickBar(wrapper, 1) // 零食（二级）行
+    expect(pushMock).toHaveBeenCalledWith({
+      name: 'transactions',
+      query: {
+        category: 'food-snack',
+        dateFrom: `${Y}-01-01`,
+        dateTo: `${Y}-03-31`,
       },
     })
   })

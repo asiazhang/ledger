@@ -30,7 +30,6 @@ import { UNCATEGORIZED_ONLY } from '@/composables/useTransactionFilter'
 import {
   DATED_TIME_PERIOD_PRESETS,
   presetRange,
-  yearRange,
   type DateRange,
   type NullableDateRange,
 } from '@/utils/time-period'
@@ -163,19 +162,18 @@ const categoryBarsData = computed(() => {
   return categoryBars(shares.value, reference.categories)
 })
 
-/** 跳转下钻（issue #380）：直达按该分类过滤的交易列表。
- * 载荷 = 分类（保留值 none = 仅无分类）+ 当前期间所在年份的首尾日期（自然年边界经
- * 期间数学单点 yearRange 派生），刻意不带交易类型参数——退款继承原分类，列表净额与
- * 图中柱值一致（分类下钻词条「跳转载荷与图所见同口径」）；载荷随期间化泛化为
- * 所选期间首尾日期由 issue #412 承接，此处维持年份边界。 */
+/** 跳转下钻（issue #380，载荷期间化 issue #412）：直达按该分类过滤的交易列表。
+ * 载荷 = 分类（保留值 none = 仅无分类）+ 所选期间首尾日期——period 本就是共享受控
+ * 组件经时间周期纯函数（presetRange / periodRange）写回的精确自然周期快照，
+ * 月/季/年各档边界同源复用、不在视图另搓第二份年界数学；刻意不带交易类型参数——
+ * 退款继承原分类，列表净额与图中柱值一致（分类下钻词条「跳转载荷与图所见同口径」）。 */
 function goCategoryTransactions(categoryId: string) {
-  const range = yearRange(Number(period.value.from.slice(0, 4)))
   router.push({
     name: 'transactions',
     query: {
       category: categoryId,
-      dateFrom: range.from,
-      dateTo: range.to,
+      dateFrom: period.value.from,
+      dateTo: period.value.to,
     },
   })
 }
