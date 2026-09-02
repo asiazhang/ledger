@@ -1,4 +1,5 @@
-//! 账户域核心逻辑（issue #91）：CRUD / 幂等创建 / 软删除 / 余额清单。
+//! 账户域核心逻辑（issue #91 域内收口，#404 自命令壳层迁入）：CRUD / 幂等创建 /
+//! 软删除 / 余额清单 / 黑洞账户与余额调整编排。
 //!
 //! 置脏触发已收口连接层统一写入口（`db::write`，ADR-0032）：本模块对备份域零感知，
 //! 写入成功后的置脏/到期检查由调用方所在写入口闭包在提交点单点执行。
@@ -18,16 +19,16 @@ use crate::models::{
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::create_transaction_internal;
 
-pub fn list_accounts_internal(conn: &Connection) -> Result<Vec<Account>> {
+pub fn list_accounts(conn: &Connection) -> Result<Vec<Account>> {
     crate::db::balance::list_accounts_with_visibility(conn, false)
 }
 
 /// AI 侧完整账户列表：不过滤 `is_hidden`，返回含 `is_hidden` 字段的完整列表。
-pub fn list_accounts_for_api_internal(conn: &Connection) -> Result<Vec<Account>> {
+pub fn list_accounts_for_api(conn: &Connection) -> Result<Vec<Account>> {
     crate::db::balance::list_accounts_with_visibility(conn, true)
 }
 
-pub fn create_account_internal(conn: &Connection, input: AccountInput) -> Result<String> {
+pub fn create_account(conn: &Connection, input: AccountInput) -> Result<String> {
     let id = new_uuid();
     let now = now_iso();
     conn.execute(
@@ -50,14 +51,11 @@ pub fn create_account_internal(conn: &Connection, input: AccountInput) -> Result
 
 /// 按自然键（name + type + currency_code）幂等创建账户：已存在（未删除）时返回已有 id，
 /// 不重复插入、不报错。供 HTTP 导入 API 使用。
-pub fn create_account_idempotent_internal(
-    conn: &Connection,
-    input: AccountInput,
-) -> Result<String> {
+pub fn create_account_idempotent(conn: &Connection, input: AccountInput) -> Result<String> {
     if let Some(id) = find_account_by_natural_key(conn, &input)? {
         return Ok(id);
     }
-    create_account_internal(conn, input)
+    create_account(conn, input)
 }
 
 fn find_account_by_natural_key(conn: &Connection, input: &AccountInput) -> Result<Option<String>> {
@@ -79,7 +77,7 @@ fn find_account_by_natural_key(conn: &Connection, input: &AccountInput) -> Resul
 /// 软删除账户（`is_deleted=1`）。不校验引用（与 UI 行为一致：删除有交易的账户后
 /// 历史交易仍保留）。不存在的 id 返回 `AppError::NotFound`（HTTP 侧映射 404）。
 /// IPC 与 HTTP 端点共用本函数。
-pub fn delete_account_internal(conn: &Connection, id: &str) -> Result<()> {
+pub fn delete_account(conn: &Connection, id: &str) -> Result<()> {
     let exists: bool = conn
         .query_row(
             "SELECT 1 FROM accounts WHERE id=?1 AND is_deleted=0",
@@ -102,7 +100,7 @@ pub fn delete_account_internal(conn: &Connection, id: &str) -> Result<()> {
 }
 
 /// 按 `id` 读取单个未删除账户；不存在或已软删除返回 `AppError::NotFound`。
-pub fn get_account_internal(conn: &Connection, id: &str) -> Result<Account> {
+pub fn get_account(conn: &Connection, id: &str) -> Result<Account> {
     query_all(
         conn,
         "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden \
@@ -120,12 +118,8 @@ pub fn get_account_internal(conn: &Connection, id: &str) -> Result<Account> {
 /// - `type` 不可改（参与 kind→符号矩阵，改动会重写历史交易的余额归属）；
 /// - `currency_code` 仅无交易账户可改（有交易时改币种使历史折算口径错乱）；
 /// - `initial_balance_cents` 不在此改，归余额调整（见 ADR-0026）。
-pub fn update_account_internal(
-    conn: &Connection,
-    id: &str,
-    input: AccountUpdateInput,
-) -> Result<()> {
-    let existing = get_account_internal(conn, id)?;
+pub fn update_account(conn: &Connection, id: &str, input: AccountUpdateInput) -> Result<()> {
+    let existing = get_account(conn, id)?;
     let name = match input.name {
         Some(ref n) => {
             let trimmed = n.trim();
@@ -193,10 +187,7 @@ fn find_black_hole_account(conn: &Connection, currency_code: &str) -> Result<Opt
 
 /// 确保指定币种的黑洞账户存在；缺失则按种子同形创建（`无(XXX)`、type=`other`、
 /// `is_hidden=1`，见 AI 导入域 BlackHoleAccount）。返回 `(id, 是否新建)`。
-pub fn ensure_black_hole_account_internal(
-    conn: &Connection,
-    currency_code: &str,
-) -> Result<(String, bool)> {
+pub fn ensure_black_hole_account(conn: &Connection, currency_code: &str) -> Result<(String, bool)> {
     if let Some(id) = find_black_hole_account(conn, currency_code)? {
         return Ok((id, false));
     }
@@ -231,12 +222,12 @@ pub fn ensure_black_hole_account_internal(
 /// （黑洞账户 ensure 与交易写入必须同事务），入口嵌套感知检测到已在事务中则加入、
 /// 不自持提交，失败直接返回错误、回滚归本函数的外层事务壳。不直调 Writer 接缝，
 /// 「写一笔交易」的事务协议只在行为层三入口（及 ADR-0033 登记的引擎例外）可达。
-pub fn adjust_account_balance_internal(
+pub fn adjust_account_balance(
     conn: &Connection,
     id: &str,
     input: &AccountBalanceAdjustInput,
 ) -> Result<(String, bool)> {
-    let account = get_account_internal(conn, id)?;
+    let account = get_account(conn, id)?;
     if account.is_hidden {
         return Err(AppError::coded(
             "account.black-hole-adjust-unsupported",
@@ -256,8 +247,7 @@ pub fn adjust_account_balance_internal(
     }
     conn.execute("BEGIN", [])?;
     let res = (|| -> Result<(String, bool)> {
-        let (black_hole_id, created) =
-            ensure_black_hole_account_internal(conn, &account.currency_code)?;
+        let (black_hole_id, created) = ensure_black_hole_account(conn, &account.currency_code)?;
         let (account_id, to_account_id) = if delta > 0 {
             (black_hole_id.clone(), id.to_string())
         } else {
@@ -305,7 +295,16 @@ pub fn adjust_account_balance_internal(
     }
 }
 
+/// 账户余额清单（conn 级）：`include_hidden` 为 true 时含黑洞账户。
+/// 余额读模型 SQL 收口在基础设施 [`crate::db::balance`]（#405 先行下沉，#404 归位时随迁）。
+pub fn list_account_balances_with_visibility(
+    conn: &Connection,
+    include_hidden: bool,
+) -> Result<Vec<AccountBalance>> {
+    crate::db::balance::list_account_balances_with_visibility(conn, include_hidden)
+}
+
 /// AI 侧余额清单：含黑洞账户。
-pub fn list_account_balances_for_api_internal(conn: &Connection) -> Result<Vec<AccountBalance>> {
+pub fn list_account_balances_for_api(conn: &Connection) -> Result<Vec<AccountBalance>> {
     crate::db::balance::list_account_balances_with_visibility(conn, true)
 }

@@ -88,7 +88,7 @@ fn delete_category_soft_deletes() {
 }
 
 #[test]
-fn delete_category_internal_soft_deletes_and_excludes_from_readback() {
+fn delete_category_soft_deletes_and_excludes_from_readback() {
     let conn = setup();
     let id = new_uuid();
     let now = now_iso();
@@ -98,7 +98,7 @@ fn delete_category_internal_soft_deletes_and_excludes_from_readback() {
         rusqlite::params![id, "临时分类", now, now, 1, device_id()],
     )
     .unwrap();
-    super::delete_category_internal(&conn, &id).unwrap();
+    super::delete_category(&conn, &id).unwrap();
     assert!(
         !list_categories(&conn).iter().any(|c| c.id == id),
         "删除后不应出现在读回结果中"
@@ -106,9 +106,9 @@ fn delete_category_internal_soft_deletes_and_excludes_from_readback() {
 }
 
 #[test]
-fn delete_category_internal_returns_not_found_for_missing_id() {
+fn delete_category_returns_not_found_for_missing_id() {
     let conn = setup();
-    let err = super::delete_category_internal(&conn, "不存在的id").unwrap_err();
+    let err = super::delete_category(&conn, "不存在的id").unwrap_err();
     assert!(matches!(
         err,
         crate::error::AppError::Coded {
@@ -120,7 +120,7 @@ fn delete_category_internal_returns_not_found_for_missing_id() {
 }
 
 #[test]
-fn delete_category_internal_returns_not_found_for_already_deleted() {
+fn delete_category_returns_not_found_for_already_deleted() {
     let conn = setup();
     let id = new_uuid();
     let now = now_iso();
@@ -130,8 +130,8 @@ fn delete_category_internal_returns_not_found_for_already_deleted() {
         rusqlite::params![id, "临时分类", now, now, 1, device_id()],
     )
     .unwrap();
-    super::delete_category_internal(&conn, &id).unwrap();
-    let err = super::delete_category_internal(&conn, &id).unwrap_err();
+    super::delete_category(&conn, &id).unwrap();
+    let err = super::delete_category(&conn, &id).unwrap_err();
     assert!(
         matches!(
             err,
@@ -172,11 +172,11 @@ fn insert_budget_row(conn: &rusqlite::Connection, category_id: &str, is_deleted:
 }
 
 #[test]
-fn delete_category_internal_rejects_when_undeleted_budget_exists() {
+fn delete_category_rejects_when_undeleted_budget_exists() {
     let conn = setup();
     let id = insert_expense_category_row(&conn, "带预算分类", None);
     insert_budget_row(&conn, &id, 0);
-    let err = super::delete_category_internal(&conn, &id).unwrap_err();
+    let err = super::delete_category(&conn, &id).unwrap_err();
     match err {
         crate::error::AppError::Coded { code, message, .. } => {
             assert_eq!(code, "category.has-budget");
@@ -194,11 +194,11 @@ fn delete_category_internal_rejects_when_undeleted_budget_exists() {
 }
 
 #[test]
-fn delete_category_internal_allows_when_only_soft_deleted_budgets() {
+fn delete_category_allows_when_only_soft_deleted_budgets() {
     let conn = setup();
     let id = insert_expense_category_row(&conn, "软删预算分类", None);
     insert_budget_row(&conn, &id, 1);
-    super::delete_category_internal(&conn, &id).unwrap();
+    super::delete_category(&conn, &id).unwrap();
     assert!(
         !list_categories(&conn).iter().any(|c| c.id == id),
         "仅剩软删除预算时分类应可正常删除"
@@ -206,12 +206,12 @@ fn delete_category_internal_allows_when_only_soft_deleted_budgets() {
 }
 
 #[test]
-fn delete_category_internal_ignores_budgets_of_subcategories() {
+fn delete_category_ignores_budgets_of_subcategories() {
     let conn = setup();
     let parent = insert_expense_category_row(&conn, "预算父分类", None);
     let child = insert_expense_category_row(&conn, "预算子分类", Some(&parent));
     insert_budget_row(&conn, &child, 0);
-    super::delete_category_internal(&conn, &parent).unwrap();
+    super::delete_category(&conn, &parent).unwrap();
     assert!(
         !list_categories(&conn).iter().any(|c| c.id == parent),
         "父分类应被删除"

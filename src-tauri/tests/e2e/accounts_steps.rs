@@ -1,8 +1,8 @@
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::commands::{
-    adjust_account_balance_internal, delete_account_internal, update_account_internal,
+use tauri_app_lib::accounts::{
+    adjust_account_balance, delete_account as delete_account_domain, update_account,
 };
 use tauri_app_lib::db::{balance::compute_balance, device_id, new_uuid, now_iso};
 use tauri_app_lib::models::{AccountBalanceAdjustInput, AccountUpdateInput};
@@ -84,7 +84,7 @@ fn ensure_exchange_rate(world: &mut LedgerWorld, code: String, rate: f64) {
 #[when(expr = "修改账户 {string} 名称为 {string}")]
 fn rename_account(world: &mut LedgerWorld, name: String, new_name: String) {
     let id = world.account_id(&name);
-    world.last_error = update_account_internal(
+    world.last_error = update_account(
         &world_conn!(world),
         &id,
         AccountUpdateInput {
@@ -100,7 +100,7 @@ fn rename_account(world: &mut LedgerWorld, name: String, new_name: String) {
 #[when(expr = "尝试修改账户 {string} 币种为 {string}")]
 fn try_change_currency(world: &mut LedgerWorld, name: String, currency: String) {
     let id = world.account_id(&name);
-    world.last_error = update_account_internal(
+    world.last_error = update_account(
         &world_conn!(world),
         &id,
         AccountUpdateInput {
@@ -117,7 +117,7 @@ fn adjust_balance(world: &mut LedgerWorld, name: String, target: i64, date: Stri
     let id = world.account_id(&name);
     // 与 IPC 命令同形态：经连接层统一写入口（ADR-0032），提交点置脏/回滚不置脏。
     match world.db.write(|conn| {
-        adjust_account_balance_internal(
+        adjust_account_balance(
             conn,
             &id,
             &AccountBalanceAdjustInput {
@@ -228,8 +228,8 @@ fn create_account(
 #[when(expr = "删除账户 {string}")]
 fn delete_account(world: &mut LedgerWorld, name: String) {
     let id = world.account_id(&name);
-    // 软删除走真实命令路径（IPC/HTTP 共用 delete_account_internal，含存在性守卫）。
-    delete_account_internal(&world_conn!(world), &id).expect("删除账户失败");
+    // 软删除走真实领域路径（IPC/HTTP 共用 accounts::delete_account，含存在性守卫）。
+    delete_account_domain(&world_conn!(world), &id).expect("删除账户失败");
 }
 
 // ---------------------------------------------------------------------------

@@ -56,16 +56,16 @@ function makeFixture(overrides: Record<string, string> = {}): string[] {
   return [src]
 }
 
-// 夹具用现存的壳层引用形态（账户壳层 `*_internal`）：核心交易域 #403 归位后原
-// `commands::transactions::create_transaction_internal` 已下沉域目录，夹具文本取现存壳层形式与实际结构保持一致。
-const shellUse = 'use crate::commands::accounts::create_account_internal;\npub fn x() {}\n'
+// 夹具用现存的壳层引用形态（商户壳层命令）：参考数据三域 #404 归位后账户壳层已无
+// `*_internal` 下沉函数，夹具文本取现存壳层命令与实际结构保持一致。
+const shellUse = 'use crate::commands::merchants::list_merchants;\npub fn x() {}\n'
 
 describe('check-structure（结构守门）', () => {
   it('真实仓库默认通过：白名单对壳层零依赖', () => {
     const r = run([])
     expect(r.status).toBe(0)
     expect(r.output).toContain('零依赖')
-    expect(r.output).toContain('域目录 7')
+    expect(r.output).toContain('域目录 12')
   })
 
   it('夹具全部为干净桩时通过', () => {
