@@ -828,9 +828,7 @@ async fn list_currencies_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
 ) -> Result<Json<Vec<Currency>>, AppError> {
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    Ok(Json(crate::commands::currencies::list_currencies_internal(
-        &conn,
-    )?))
+    Ok(Json(crate::currencies::list_currencies(&conn)?))
 }
 
 #[utoipa::path(

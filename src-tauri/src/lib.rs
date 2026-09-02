@@ -4,6 +4,7 @@ pub mod auto_backup;
 pub mod budget;
 pub mod categories;
 pub mod commands;
+pub mod currencies;
 pub mod db;
 pub mod error;
 pub mod events;
