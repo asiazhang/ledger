@@ -7,9 +7,9 @@
 
 use cucumber::{then, when};
 
-use tauri_app_lib::commands::item::{create_item_internal, update_item_internal};
 use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::error::AppError;
+use tauri_app_lib::item::domain::{create_item, update_item};
 use tauri_app_lib::models::{ItemInput, TransactionInput};
 use tauri_app_lib::transaction::amount::TransactionKind;
 
@@ -34,7 +34,7 @@ fn build_linked_input(name: &str, tx_id: &str) -> ItemInput {
 #[when(expr = "尝试创建物品 {string} 不关联购买交易")]
 fn try_create_item_unlinked(world: &mut LedgerWorld, name: String) {
     let mut signals = 0;
-    let result = create_item_internal(
+    let result = create_item(
         &world_conn!(world),
         build_input(&name, "2026-03-01".into(), 20_000, "CNY"),
         &mut || signals += 1,
@@ -104,7 +104,7 @@ fn create_item_linked(world: &mut LedgerWorld, name: String) {
         .clone()
         .unwrap_or_else(|| panic!("没有记住的关联购买交易（先调「记住该交易为关联购买交易」）"));
     let mut signals = 0;
-    let result = create_item_internal(
+    let result = create_item(
         &world_conn!(world),
         build_linked_input(&name, &tx_id),
         &mut || signals += 1,
@@ -126,7 +126,7 @@ fn try_create_item_linked(world: &mut LedgerWorld, name: String) {
         .clone()
         .unwrap_or_else(|| panic!("没有记住的关联购买交易（先调「记住该交易为关联购买交易」）"));
     let mut signals = 0;
-    let result = create_item_internal(
+    let result = create_item(
         &world_conn!(world),
         build_linked_input(&name, &tx_id),
         &mut || signals += 1,
@@ -142,7 +142,7 @@ fn try_create_item_linked(world: &mut LedgerWorld, name: String) {
 #[when(expr = "尝试创建物品 {string} 关联不存在的购买交易")]
 fn try_create_item_linked_missing(world: &mut LedgerWorld, name: String) {
     let mut signals = 0;
-    let result = create_item_internal(
+    let result = create_item(
         &world_conn!(world),
         build_linked_input(&name, "no-such-transaction"),
         &mut || signals += 1,
@@ -182,7 +182,7 @@ fn update_item_linked(
     input.total_cost_cents = cost_cents;
     input.currency_code = currency;
     input.note = if note.is_empty() { None } else { Some(note) };
-    let result = update_item_internal(&world_conn!(world), &id, input, &mut || signals += 1);
+    let result = update_item(&world_conn!(world), &id, input, &mut || signals += 1);
     match result {
         Ok(()) => world.item_signal_count = signals,
         Err(e) => panic!("修改物品应成功但失败: {e}"),
@@ -215,7 +215,7 @@ fn try_update_item_linked(
     input.total_cost_cents = cost_cents;
     input.currency_code = currency;
     input.note = if note.is_empty() { None } else { Some(note) };
-    let result = update_item_internal(&world_conn!(world), &id, input, &mut || signals += 1);
+    let result = update_item(&world_conn!(world), &id, input, &mut || signals += 1);
     world.item_signal_count = signals;
     world.last_error = match result {
         Err(e) => Some(e.to_string()),

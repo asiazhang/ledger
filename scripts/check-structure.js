@@ -20,12 +20,12 @@ import { pathToFileURL, fileURLToPath } from 'node:url'
 
 /**
  * 守门白名单（ADR-0056 决策 4）：路径相对 src-tauri/src。
- * 首批 = 三个已归位域目录 + 全部基础设施；每迁一域在此追加一行。
+ * 首批 = 已归位域目录 + 全部基础设施；每迁一域在此追加一行。
  */
 export const WHITELIST = [
   { path: 'transaction', layer: '域目录', note: '核心交易域' },
   { path: 'scheduled_transactions', layer: '域目录', note: '定时计划域' },
-  { path: 'item', layer: '域目录', note: '物品域' },
+  { path: 'item', layer: '域目录', note: '物品域（#397 阶段 1 归位，主体自 commands/item 随迁）' },
   { path: 'db', layer: '基础设施', note: '数据库连接' },
   { path: 'signals.rs', layer: '基础设施', note: '信号映射（ADR-0044）' },
   { path: 'models', layer: '基础设施', note: '模型' },

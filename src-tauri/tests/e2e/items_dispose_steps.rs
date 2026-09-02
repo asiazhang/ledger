@@ -4,7 +4,7 @@
 
 use cucumber::{then, when};
 
-use tauri_app_lib::commands::item::{delete_item_internal, dispose_item_internal};
+use tauri_app_lib::item::domain::{delete_item, dispose_item};
 use tauri_app_lib::models::ItemDisposeInput;
 
 use crate::common::assert_last_error_contains;
@@ -26,7 +26,7 @@ fn find_item_id_by_name(conn: &rusqlite::Connection, name: &str) -> String {
 fn soft_delete_item(world: &mut LedgerWorld, name: String) {
     let id = find_item_id_by_name(&world_conn!(world), &name);
     let mut signals = 0;
-    let result = delete_item_internal(&world_conn!(world), &id, &mut || signals += 1);
+    let result = delete_item(&world_conn!(world), &id, &mut || signals += 1);
     world.item_signal_count = signals;
     if let Err(e) = result {
         panic!("软删除物品 {name} 应成功但失败: {e}");
@@ -59,7 +59,7 @@ fn check_item_row_soft_deleted(world: &mut LedgerWorld, name: String) {
 #[when(expr = "尝试软删除不存在的物品")]
 fn try_delete_missing_item(world: &mut LedgerWorld) {
     let mut signals = 0;
-    let result = delete_item_internal(&world_conn!(world), "no-such-item-id", &mut || signals += 1);
+    let result = delete_item(&world_conn!(world), "no-such-item-id", &mut || signals += 1);
     world.item_signal_count = signals;
     world.last_error = match result {
         Err(e) => Some(e.to_string()),
@@ -79,7 +79,7 @@ fn dispose_by_id(
     input: ItemDisposeInput,
 ) -> Result<(), tauri_app_lib::error::AppError> {
     let mut signals = 0;
-    let result = dispose_item_internal(&world_conn!(world), id, input, &mut || signals += 1);
+    let result = dispose_item(&world_conn!(world), id, input, &mut || signals += 1);
     world.item_signal_count = signals;
     result
 }

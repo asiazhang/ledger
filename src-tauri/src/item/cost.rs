@@ -10,8 +10,8 @@
 //! （MVP 在默认币种内计算）。调用方（命令层、dashboard 聚合）一律经本模块取值，
 //! 不另写口径表达式。
 //!
-//! 消费方接线说明：本模块随 issue #114 先行落地，`commands::item`（issue #115+）
-//! 接入后语义由 BDD 场景二次锁定；边界行为由本模块单元测试锁定。
+//! 消费方为物品域 API（`item::domain`，issue #115+ 落地），语义由 BDD 场景
+//! 二次锁定；边界行为由本模块单元测试锁定。
 
 use chrono::NaiveDate;
 
@@ -28,7 +28,7 @@ pub struct DailyUsageCost {
     /// 每天成本（分/天，**小数**）：`numerator_cents ÷ days`。
     ///
     /// 仅供展示（前端 `formatAmount` 折算），不参与再聚合。跨物品合计口径收敛在
-    /// `commands::item::item_daily_total_internal`（issue #122）：
+    /// `item::domain::item_daily_total`（issue #122）：
     /// Σ 各物品分子（折本位币）÷ 各自天数；勿拿本字段的 f64 反推分子，
     /// 也勿按 Σ分子 ÷ Σ天数 混算（那是加权均值，不是「每天成本合计」）。
     pub per_day_cents: f64,

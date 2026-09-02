@@ -14,14 +14,12 @@ use tauri_app_lib::commands::categories::{create_category_internal, delete_categ
 use tauri_app_lib::commands::investment::{
     create_exchange_rate_internal, create_instrument_internal, create_market_price_internal,
 };
-use tauri_app_lib::commands::item::{
-    create_item_internal, delete_item_internal, dispose_item_internal, update_item_internal,
-};
 use tauri_app_lib::commands::transactions::{
     delete_transaction_internal, update_transaction_internal,
 };
 use tauri_app_lib::db::{new_uuid, now_iso, open_connection};
 use tauri_app_lib::item::cost;
+use tauri_app_lib::item::domain::{create_item, delete_item, dispose_item, update_item};
 use tauri_app_lib::models::{
     AccountInput, AccountType, CategoryInput, ExchangeRateInput, InstrumentInput, InstrumentType,
     ItemDisposeInput, ItemInput, MarketPriceInput, TransactionInput,
@@ -594,7 +592,7 @@ fn create_item_via_entry(world: &mut LedgerWorld, name: String) {
     };
     let id = world
         .db
-        .write(|conn| create_item_internal(conn, input, &mut || {}))
+        .write(|conn| create_item(conn, input, &mut || {}))
         .expect("创建物品失败");
     world.last_item_id = Some(id);
 }
@@ -625,7 +623,7 @@ fn update_last_item_note_via_entry(world: &mut LedgerWorld, note: String) {
     };
     world
         .db
-        .write(|conn| update_item_internal(conn, &id, input, &mut || {}))
+        .write(|conn| update_item(conn, &id, input, &mut || {}))
         .expect("修改物品失败");
 }
 
@@ -640,7 +638,7 @@ fn dispose_last_item_today_via_entry(world: &mut LedgerWorld) {
     };
     world
         .db
-        .write(|conn| dispose_item_internal(conn, &id, input, &mut || {}))
+        .write(|conn| dispose_item(conn, &id, input, &mut || {}))
         .expect("处置物品失败");
 }
 
@@ -651,7 +649,7 @@ fn delete_last_item_via_entry(world: &mut LedgerWorld) {
     let id = world.last_item_id.clone().expect("没有已创建的物品");
     world
         .db
-        .write(|conn| delete_item_internal(conn, &id, &mut || {}))
+        .write(|conn| delete_item(conn, &id, &mut || {}))
         .expect("软删除物品失败");
 }
 

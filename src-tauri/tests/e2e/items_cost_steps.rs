@@ -5,9 +5,9 @@
 use cucumber::{then, when};
 use rusqlite::params;
 
-use tauri_app_lib::commands::item::{calculate_item_cost_internal, item_daily_total_internal};
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::item::cost;
+use tauri_app_lib::item::domain::{calculate_item_cost, item_daily_total};
 use tauri_app_lib::models::ItemDailyCost;
 
 use crate::common::assert_last_error_contains;
@@ -23,7 +23,7 @@ fn calc_item_cost(
     id: &str,
     reference_date: Option<String>,
 ) -> Result<ItemDailyCost, AppError> {
-    calculate_item_cost_internal(&world_conn!(world), id, reference_date.as_deref())
+    calculate_item_cost(&world_conn!(world), id, reference_date.as_deref())
 }
 
 /// 缺省参考日（不传）：在用 → 今天；已处置 → 处置日（口径与列表一致）。
@@ -126,7 +126,7 @@ fn check_calc_item_cost_error(world: &mut LedgerWorld, expected: String) {
 /// 查询全部在用物品每天成本合计（错误路径记入 last_error，供「应返回错误」断言）。
 #[when(expr = "查询在用物品每天成本合计")]
 fn query_item_daily_total(world: &mut LedgerWorld) {
-    match item_daily_total_internal(&world_conn!(world)) {
+    match item_daily_total(&world_conn!(world)) {
         Ok(total) => {
             world.last_item_daily_total = Some(total);
             world.last_error = None;
