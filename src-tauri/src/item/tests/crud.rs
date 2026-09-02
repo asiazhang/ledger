@@ -1,13 +1,11 @@
-//! `commands::item` 单元测试：内部函数校验语义与失效信号回调（BDD 场景外的快速反馈）。
+//! `item::domain` 域 API 单元测试：校验语义与失效信号回调（BDD 场景外的快速反馈）。
+//! 域目录化随迁自 `commands::item/tests.rs`（#397，纯移动 + import 路径更新）。
 
 use rusqlite::Connection;
 
-use crate::commands::item::{
-    create_item_internal, delete_item_internal, dispose_item_internal, list_items_internal,
-    update_item_internal,
-};
 use crate::commands::transactions::create_transaction_internal;
 use crate::db::{init_db, open_in_memory};
+use crate::item::domain::{create_item, delete_item, dispose_item, list_items, update_item};
 use crate::models::{ItemDisposeInput, ItemInput, TransactionInput};
 use crate::transaction::amount::TransactionKind;
 
@@ -76,18 +74,18 @@ fn linked_input(name: &str, date: &str, cost_cents: i64, tx_id: &str) -> ItemInp
 /// 创建一件物品并返回其 id（默认不监听信号）：先建脚手架购买交易再关联创建。
 fn seed(conn: &Connection, name: &str, date: &str, cost_cents: i64) -> String {
     let tx = seed_purchase_tx(conn, date, cost_cents, "CNY");
-    create_item_internal(conn, linked_input(name, date, cost_cents, &tx), &mut || {}).unwrap()
+    create_item(conn, linked_input(name, date, cost_cents, &tx), &mut || {}).unwrap()
 }
 
 #[test]
 fn update_item_persists_fields_and_increments_version() {
     let conn = conn();
     let id = seed(&conn, "iPhone", "2026-01-15", 599_900);
-    let before = &list_items_internal(&conn).unwrap()[0].item;
+    let before = &list_items(&conn).unwrap()[0].item;
     let created_at = before.created_at.clone();
 
     let mut fired = 0;
-    update_item_internal(
+    update_item(
         &conn,
         &id,
         input("iPhone 15", "2026-01-20", 800_000),
@@ -96,7 +94,7 @@ fn update_item_persists_fields_and_increments_version() {
     .unwrap();
     assert_eq!(fired, 1, "修改成功应恰好发出一次失效信号");
 
-    let items = list_items_internal(&conn).unwrap();
+    let items = list_items(&conn).unwrap();
     let item = &items[0].item;
     assert_eq!(item.id, id, "id 不变");
     assert_eq!(item.name, "iPhone 15");
@@ -117,13 +115,13 @@ fn update_item_replaces_note_whole_field() {
     let conn = conn();
     let id = seed(&conn, "水杯", "2026-01-15", 5_000);
     // update 是整体替换语义：入参不带备注（None）即清除
-    update_item_internal(&conn, &id, input("水杯", "2026-01-15", 5_000), &mut || {}).unwrap();
-    assert_eq!(list_items_internal(&conn).unwrap()[0].item.note, None);
+    update_item(&conn, &id, input("水杯", "2026-01-15", 5_000), &mut || {}).unwrap();
+    assert_eq!(list_items(&conn).unwrap()[0].item.note, None);
     let mut inp2 = input("水杯", "2026-01-15", 5_000);
     inp2.note = Some("陶瓷".into());
-    update_item_internal(&conn, &id, inp2, &mut || {}).unwrap();
+    update_item(&conn, &id, inp2, &mut || {}).unwrap();
     assert_eq!(
-        list_items_internal(&conn).unwrap()[0].item.note.as_deref(),
+        list_items(&conn).unwrap()[0].item.note.as_deref(),
         Some("陶瓷")
     );
 }
@@ -136,14 +134,14 @@ fn update_item_recalculates_daily_cost() {
         .format("%Y-%m-%d")
         .to_string();
     let id = seed(&conn, "显示器", &purchase, 100_000);
-    update_item_internal(
+    update_item(
         &conn,
         &id,
         input("显示器 4K", &purchase, 200_000),
         &mut || {},
     )
     .unwrap();
-    let entry = &list_items_internal(&conn).unwrap()[0];
+    let entry = &list_items(&conn).unwrap()[0];
     assert_eq!(entry.used_days, 10);
     assert_eq!(entry.numerator_cents, 200_000);
     assert!((entry.per_day_cents - 20_000.0).abs() < 1e-9);
@@ -153,7 +151,7 @@ fn update_item_recalculates_daily_cost() {
 fn update_item_rejects_missing_id() {
     let conn = conn();
     let mut fired = 0;
-    let err = update_item_internal(
+    let err = update_item(
         &conn,
         "no-such-id",
         input("幽灵", "2026-01-15", 100),
@@ -169,8 +167,7 @@ fn update_item_rejects_soft_deleted_id() {
     let conn = conn();
     let id = seed(&conn, "耳机", "2026-03-01", 20_000);
     conn.execute("UPDATE items SET is_deleted=1", []).unwrap();
-    let err = update_item_internal(&conn, &id, input("耳机", "2026-03-01", 20_000), &mut || {})
-        .unwrap_err();
+    let err = update_item(&conn, &id, input("耳机", "2026-03-01", 20_000), &mut || {}).unwrap_err();
     assert!(err.to_string().contains("物品不存在"));
 }
 
@@ -183,7 +180,7 @@ fn update_item_validates_like_create() {
         input("耳机", "2026-03-01", 0),
         input("耳机", "2026/03/01", 20_000),
     ] {
-        let err = update_item_internal(&conn, &id, bad, &mut || {}).unwrap_err();
+        let err = update_item(&conn, &id, bad, &mut || {}).unwrap_err();
         assert!(
             err.to_string().contains("不能为空")
                 || err.to_string().contains("必须大于 0")
@@ -194,7 +191,7 @@ fn update_item_validates_like_create() {
     // 币种无汇率 → Amount 接缝报错
     let mut inp = input("耳机", "2026-03-01", 20_000);
     inp.currency_code = "XYZ".into();
-    let err = update_item_internal(&conn, &id, inp, &mut || {}).unwrap_err();
+    let err = update_item(&conn, &id, inp, &mut || {}).unwrap_err();
     assert!(err.to_string().contains("汇率"));
 }
 
@@ -207,7 +204,7 @@ fn update_item_rejects_purchase_date_after_disposal_date() {
         [&id],
     )
     .unwrap();
-    let err = update_item_internal(
+    let err = update_item(
         &conn,
         &id,
         input("旧手机", "2025-06-02", 300_000),
@@ -216,14 +213,14 @@ fn update_item_rejects_purchase_date_after_disposal_date() {
     .unwrap_err();
     assert!(err.to_string().contains("晚于处置日期"));
     // 未落库：version 不变
-    assert_eq!(list_items_internal(&conn).unwrap()[0].item.version, 1);
+    assert_eq!(list_items(&conn).unwrap()[0].item.version, 1);
 }
 
 #[test]
 fn create_item_requires_purchase_transaction() {
     let conn = conn();
     let mut fired = 0;
-    let err = create_item_internal(&conn, input("水杯", "2026-01-15", 100), &mut || {
+    let err = create_item(&conn, input("水杯", "2026-01-15", 100), &mut || {
         fired += 1
     })
     .unwrap_err();
@@ -232,10 +229,7 @@ fn create_item_requires_purchase_transaction() {
         "应报溯源守卫错误: {err}"
     );
     assert_eq!(fired, 0, "守卫拒绝不应发出失效信号");
-    assert!(
-        list_items_internal(&conn).unwrap().is_empty(),
-        "守卫拒绝不落库"
-    );
+    assert!(list_items(&conn).unwrap().is_empty(), "守卫拒绝不落库");
 }
 
 #[test]
@@ -243,7 +237,7 @@ fn create_item_persists_and_returns_id() {
     let conn = conn();
     let tx = seed_purchase_tx(&conn, "2026-01-15", 599_900, "CNY");
     let mut fired = 0;
-    let id = create_item_internal(
+    let id = create_item(
         &conn,
         linked_input("iPhone", "2026-01-15", 599_900, &tx),
         &mut || fired += 1,
@@ -251,7 +245,7 @@ fn create_item_persists_and_returns_id() {
     .unwrap();
     assert!(!id.is_empty());
     assert_eq!(fired, 1, "创建成功应恰好发出一次失效信号");
-    let items = list_items_internal(&conn).unwrap();
+    let items = list_items(&conn).unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].item.id, id);
     assert_eq!(items[0].item.status, crate::models::ItemStatus::InUse);
@@ -266,13 +260,13 @@ fn create_item_daily_cost_uses_cost_seam() {
     let purchase = today - chrono::Duration::days(9);
     let date = purchase.format("%Y-%m-%d").to_string();
     let tx = seed_purchase_tx(&conn, &date, 100_000, "CNY");
-    create_item_internal(
+    create_item(
         &conn,
         linked_input("显示器", &date, 100_000, &tx),
         &mut || {},
     )
     .unwrap();
-    let items = list_items_internal(&conn).unwrap();
+    let items = list_items(&conn).unwrap();
     assert_eq!(items[0].used_days, 10);
     assert!((items[0].per_day_cents - 10_000.0).abs() < 1e-9);
 }
@@ -284,7 +278,7 @@ fn create_item_rejects_blank_name() {
     // 总成本>0 与日期格式校验在创建路径被带出遮蔽，由修改路径覆盖（update_item_validates_like_create）。
     let tx = seed_purchase_tx(&conn, "2026-01-15", 100, "CNY");
     let mut fired = 0;
-    let err = create_item_internal(
+    let err = create_item(
         &conn,
         linked_input("  ", "2026-01-15", 100, &tx),
         &mut || fired += 1,
@@ -292,7 +286,7 @@ fn create_item_rejects_blank_name() {
     .unwrap_err();
     assert!(err.to_string().contains("物品名称不能为空"));
     assert_eq!(fired, 0, "校验失败不应发出失效信号");
-    assert!(list_items_internal(&conn).unwrap().is_empty());
+    assert!(list_items(&conn).unwrap().is_empty());
 }
 
 #[test]
@@ -302,11 +296,11 @@ fn delete_item_soft_deletes_and_filters_from_list() {
     seed(&conn, "新手机", "2026-01-15", 599_900);
 
     let mut fired = 0;
-    delete_item_internal(&conn, &old, &mut || fired += 1).unwrap();
+    delete_item(&conn, &old, &mut || fired += 1).unwrap();
     assert_eq!(fired, 1, "删除成功应恰好发出一次失效信号");
 
     // 标准列表过滤已删除物品
-    let items = list_items_internal(&conn).unwrap();
+    let items = list_items(&conn).unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].item.name, "新手机");
 
@@ -326,14 +320,14 @@ fn delete_item_soft_deletes_and_filters_from_list() {
 fn delete_item_missing_id_errors_without_signal() {
     let conn = conn();
     let mut fired = 0;
-    let err = delete_item_internal(&conn, "no-such-id", &mut || fired += 1).unwrap_err();
+    let err = delete_item(&conn, "no-such-id", &mut || fired += 1).unwrap_err();
     assert!(err.to_string().contains("物品不存在"));
     assert_eq!(fired, 0, "删除失败不应发出失效信号");
 
     // 已删除的物品再删一次同样报错（入口只对未删除行生效，不重复打标）
     let id = seed(&conn, "水杯", "2026-01-15", 100);
-    delete_item_internal(&conn, &id, &mut || {}).unwrap();
-    let err = delete_item_internal(&conn, &id, &mut || fired += 1).unwrap_err();
+    delete_item(&conn, &id, &mut || {}).unwrap();
+    let err = delete_item(&conn, &id, &mut || fired += 1).unwrap_err();
     assert!(err.to_string().contains("物品不存在"));
     assert_eq!(fired, 0);
 }
@@ -344,7 +338,7 @@ fn list_items_excludes_soft_deleted() {
     seed(&conn, "耳机", "2026-03-01", 20_000);
     conn.execute("UPDATE items SET is_deleted=1", rusqlite::params![])
         .unwrap();
-    assert!(list_items_internal(&conn).unwrap().is_empty());
+    assert!(list_items(&conn).unwrap().is_empty());
 }
 
 // —— 处置（issue #120）：处置日期必填、残值可选，写状态字段，版本递增 ——
@@ -361,7 +355,7 @@ fn dispose_item_persists_disposal_fields_and_increments_version() {
     let conn = conn();
     let id = seed(&conn, "手机", "2026-01-01", 100_000);
     let mut fired = 0;
-    dispose_item_internal(
+    dispose_item(
         &conn,
         &id,
         dispose_input("2026-01-10", Some(20_000)),
@@ -370,7 +364,7 @@ fn dispose_item_persists_disposal_fields_and_increments_version() {
     .unwrap();
     assert_eq!(fired, 1, "处置成功应恰好发出一次失效信号");
 
-    let entry = &list_items_internal(&conn).unwrap()[0];
+    let entry = &list_items(&conn).unwrap()[0];
     assert_eq!(entry.item.status, crate::models::ItemStatus::Disposed);
     assert_eq!(entry.item.disposal_date.as_deref(), Some("2026-01-10"));
     assert_eq!(entry.item.residual_value_cents, Some(20_000));
@@ -384,15 +378,15 @@ fn dispose_item_persists_disposal_fields_and_increments_version() {
 fn dispose_item_updates_disposal_info_on_redispose() {
     let conn = conn();
     let id = seed(&conn, "相机", "2026-02-01", 50_000);
-    dispose_item_internal(
+    dispose_item(
         &conn,
         &id,
         dispose_input("2026-02-10", Some(10_000)),
         &mut || {},
     )
     .unwrap();
-    dispose_item_internal(&conn, &id, dispose_input("2026-02-20", Some(0)), &mut || {}).unwrap();
-    let item = &list_items_internal(&conn).unwrap()[0].item;
+    dispose_item(&conn, &id, dispose_input("2026-02-20", Some(0)), &mut || {}).unwrap();
+    let item = &list_items(&conn).unwrap()[0].item;
     assert_eq!(item.disposal_date.as_deref(), Some("2026-02-20"));
     assert_eq!(item.residual_value_cents, Some(0));
     assert_eq!(item.version, 3);
@@ -405,7 +399,7 @@ fn dispose_item_rejects_missing_and_soft_deleted() {
     conn.execute("UPDATE items SET is_deleted=1", []).unwrap();
     for id in ["no-such-id", id.as_str()] {
         let mut fired = 0;
-        let err = dispose_item_internal(&conn, id, dispose_input("2026-03-05", None), &mut || {
+        let err = dispose_item(&conn, id, dispose_input("2026-03-05", None), &mut || {
             fired += 1
         })
         .unwrap_err();
@@ -424,14 +418,14 @@ fn dispose_item_validates_date_and_residual() {
         (dispose_input("2099-12-31", None), "不能晚于今天"),
         (dispose_input("2026-01-10", Some(-1)), "残值不能为负"),
     ] {
-        let err = dispose_item_internal(&conn, &id, bad, &mut || {}).unwrap_err();
+        let err = dispose_item(&conn, &id, bad, &mut || {}).unwrap_err();
         assert!(
             err.to_string().contains(fragment),
             "应含「{fragment}」: {err}"
         );
     }
     // 校验失败不落库：状态/版本均不动
-    let item = &list_items_internal(&conn).unwrap()[0].item;
+    let item = &list_items(&conn).unwrap()[0].item;
     assert_eq!(item.status, crate::models::ItemStatus::InUse);
     assert_eq!(item.version, 1);
 }
@@ -440,14 +434,14 @@ fn dispose_item_validates_date_and_residual() {
 fn dispose_item_numerator_floors_at_zero_when_residual_ge_cost() {
     let conn = conn();
     let id = seed(&conn, "水杯", "2026-03-01", 10_000);
-    dispose_item_internal(
+    dispose_item(
         &conn,
         &id,
         dispose_input("2026-03-10", Some(99_999)),
         &mut || {},
     )
     .unwrap();
-    let entry = &list_items_internal(&conn).unwrap()[0];
+    let entry = &list_items(&conn).unwrap()[0];
     assert_eq!(entry.numerator_cents, 0, "残值 ≥ 成本时分子下限 0");
     assert_eq!(entry.used_days, 10);
     assert_eq!(entry.per_day_cents, 0.0);
@@ -457,15 +451,10 @@ fn dispose_item_numerator_floors_at_zero_when_residual_ge_cost() {
 fn dispose_item_rejects_future_disposal_date() {
     let conn = conn();
     let id = seed(&conn, "手机", "2026-01-01", 100_000);
-    let err = dispose_item_internal(&conn, &id, dispose_input("2099-12-31", None), &mut || {})
-        .unwrap_err();
+    let err = dispose_item(&conn, &id, dispose_input("2099-12-31", None), &mut || {}).unwrap_err();
     assert!(
         err.to_string().contains("不能晚于今天"),
         "应报未来日期: {err}"
     );
-    assert_eq!(
-        list_items_internal(&conn).unwrap()[0].item.version,
-        1,
-        "未落库"
-    );
+    assert_eq!(list_items(&conn).unwrap()[0].item.version, 1, "未落库");
 }

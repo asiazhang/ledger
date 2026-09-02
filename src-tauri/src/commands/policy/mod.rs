@@ -2,7 +2,7 @@
 //! 软删除保单（静态档案 CRUD）+ 保单视角统计（issue #363，实时推导不落库）。
 //! 缴费协议写路径由订阅计划域承接（issue #362，协议 = 订阅形态 + 保单引用）。
 //!
-//! 组织方式镜像 `commands::item`：命令外壳（`create_policy` / `list_policies` /
+//! 组织方式镜像 `commands::categories`：命令外壳（`create_policy` / `list_policies` /
 //! `update_policy` / `delete_policy`）+ `*_internal` 复用函数（BDD seam，
 //! 验收：BDD 场景调用本层内部函数）。
 //!

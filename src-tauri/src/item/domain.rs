@@ -1,34 +1,36 @@
-//! 物品（Item）命令层（issue #115 / #117 / #118 / #120 / #122 / spec #113 / ADR-0014）：创建、
-//! 列出、编辑、处置、软删除物品与「在用物品每天成本合计」聚合。
+//! 物品（Item）域 API（issue #115 / #117 / #118 / #120 / #121 / #122 / spec #113 /
+//! ADR-0014）：创建、修改、处置、删除、列表、单件每天成本与「在用物品每天
+//! 成本合计」聚合的单一权威——写路径的校验与归一化、读路径的口径接线。
 //!
-//! 组织方式镜像 `commands::categories`：命令外壳（`create_item` / `list_items` /
-//! `delete_item` / `dispose_item`）+ `*_internal` 复用函数（BDD seam，验收：BDD 场景调用本层内部函数）。
+//! 组织方式（阶段 1 域目录化，#397 / ADR-0056）：原 `commands::item` 的
+//! `*_internal` 复用函数整体归位，接口正名为域语言短名（`create_item` /
+//! `list_items` / `update_item` / `dispose_item` / `delete_item` /
+//! `calculate_item_cost` / `item_daily_total`）；IPC 壳层（`commands::item`）
+//! 只做参数解包、统一写入口与信号发射，转调本模块。
 //!
 //! 接缝约定：
 //! - 金额折算走 Amount 接缝（`transaction::amount::convert_to_native`），不另写口径；
 //! - 每天使用成本走 `item::cost` 接缝（DailyUsageCost 单一权威），列表不重算口径；
+//! - 溯源守卫（创建唯一入口的准入接缝）独立在 [`guard`]：
+//!   创建/换关路径经其解析关联购买交易并自动带出；
 //! - 写入成功后经 `notify` 回调发出 `ledger:changed` 粗粒度失效信号（回调注入式，
 //!   仿 `commands::sync` 的 emit 注入先例：生产路径经信号映射单点 `signals::emit_for`
 //!   判定发射，ADR-0044 决策 8——notify 只是发射钩子不再是决策点；BDD/测试注入
-//!   记录闭包断言「写后发信号」这一外部可观察行为，seam 签名与计数注入点零改动）；
+//!   记录闭包断言「写后发信号」这一外部可观察行为）；
 //! - 置脏触发已收口连接层统一写入口（`db::write`，ADR-0032）：本模块对备份域
 //!   零感知，写入成功后的置脏/到期检查由调用方所在写入口闭包在提交点单点执行。
 
-#[cfg(test)]
-mod tests;
-
 use rusqlite::{Connection, OptionalExtension};
-use tauri::State;
 
+use super::cost;
+use super::guard::apply_purchase_link;
 use crate::db::query::{query_all, query_one};
-use crate::db::{DbState, device_id, new_uuid, now_iso};
+use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::item::cost;
 use crate::models::{
     Item, ItemDailyCost, ItemDailyTotal, ItemDisposeInput, ItemInput, ItemStatus, ItemWithDailyCost,
 };
-use crate::signals::{WriteEvidence, WriteOp, emit_for};
-use crate::transaction::amount::{self, TransactionKind};
+use crate::transaction::amount;
 
 /// 按 `id` 读未删除物品（多命令共用的前检）：不存在（或已软删除）返回 `None`。
 fn get_item_by_id(conn: &Connection, id: &str) -> Result<Option<Item>> {
@@ -46,7 +48,7 @@ fn get_item_by_id(conn: &Connection, id: &str) -> Result<Option<Item>> {
 /// 目标日按状态取：在用 → 今天（本地时区日历日）；已处置 → 处置日
 /// （T1 骨架尚无处置入口，#120 接线后可达，此处口径先行对齐 `item::cost`）。
 /// 排序按创建先后（created_at 升序），保证列表稳定。
-pub fn list_items_internal(conn: &Connection) -> Result<Vec<ItemWithDailyCost>> {
+pub fn list_items(conn: &Connection) -> Result<Vec<ItemWithDailyCost>> {
     let items: Vec<Item> = query_all(
         conn,
         "SELECT id,name,purchase_date,total_cost_cents,currency_code,cost_native_cents,status, \
@@ -102,7 +104,7 @@ fn daily_usage(item: &Item) -> Result<cost::DailyUsageCost> {
 /// 提供参考日 → 覆盖目标日（在用/已处置均生效，分子口径不变：总成本 − 残值，下限 0），
 /// 支持未来日期（预览「用满 N 天」的摊薄）。参考日早于购买日或不可解析报错，
 /// 口径全部收敛在 `item::cost` 接缝，本函数只做读取与缺省目标日选择。
-pub fn calculate_item_cost_internal(
+pub fn calculate_item_cost(
     conn: &Connection,
     id: &str,
     reference_date: Option<&str>,
@@ -131,7 +133,7 @@ pub fn calculate_item_cost_internal(
 ///
 /// 其余校验：名称非空、总成本 > 0、购买日期可解析（YYYY-MM-DD）；
 /// 币种折算经 [`amount::convert_to_native`]（无汇率即报错，不静默混币种）。
-pub fn create_item_internal(
+pub fn create_item(
     conn: &Connection,
     input: ItemInput,
     notify: &mut dyn FnMut(),
@@ -207,7 +209,7 @@ fn validate_and_convert(conn: &Connection, input: &ItemInput) -> Result<(String,
 ///
 /// 关联购买交易语义：入参提供新交易 → 校验并自动带出（覆盖日期/成本/币种，
 /// 替换溯源）；入参为 `None` → 保留既有溯源不动（溯源只增不减，不随编辑丢失）。
-pub fn update_item_internal(
+pub fn update_item(
     conn: &Connection,
     id: &str,
     input: ItemInput,
@@ -286,7 +288,7 @@ pub fn update_item_internal(
 /// （残值 ≥ 成本合法，分子下限 0）。
 /// 对已处置物品再次处置 = 修正处置信息（更新日期与残值，版本递增）。
 /// 成功后调用 `notify`（生产路径发 `ledger:changed`）。
-pub fn dispose_item_internal(
+pub fn dispose_item(
     conn: &Connection,
     id: &str,
     input: ItemDisposeInput,
@@ -344,7 +346,7 @@ pub fn dispose_item_internal(
 /// 软删除物品（`is_deleted=1`，不物理移除）：标准列表（`WHERE is_deleted=0`）
 /// 自动过滤。不校验引用（物品当前无下游引用）。不存在（含已删除）的 id 返回
 /// `AppError::NotFound`。成功后调用 `notify`（生产路径发 `ledger:changed`）。
-pub fn delete_item_internal(conn: &Connection, id: &str, notify: &mut dyn FnMut()) -> Result<()> {
+pub fn delete_item(conn: &Connection, id: &str, notify: &mut dyn FnMut()) -> Result<()> {
     let exists: bool = conn
         .query_row(
             "SELECT 1 FROM items WHERE id=?1 AND is_deleted=0",
@@ -368,67 +370,6 @@ pub fn delete_item_internal(conn: &Connection, id: &str, notify: &mut dyn FnMut(
     Ok(())
 }
 
-/// 解析关联购买交易并自动带出（issue #119）：入参带交易 id 时校验交易
-/// 存在、未删除且为 `expense`，用交易值覆盖入参的购买日期/总成本/币种
-/// （自动带出）；不带关联时原样返回。返回有效入参，调用方继续走统一校验。
-fn apply_purchase_link(conn: &Connection, input: &ItemInput) -> Result<ItemInput> {
-    let Some(tx_id) = &input.purchase_transaction_id else {
-        return Ok(input.clone());
-    };
-    let (date, cost_cents, currency) = resolve_purchase_link(conn, tx_id)?;
-    Ok(ItemInput {
-        purchase_date: date,
-        total_cost_cents: cost_cents,
-        currency_code: currency,
-        ..input.clone()
-    })
-}
-
-/// 查验关联购买交易：存在（未删除）且为 `expense`，返回
-/// （交易日期，金额分，币种）。不存在/已删除 → 参数错误；非 expense → 参数错误；
-/// 该交易已被其他未删除物品关联 → 参数错误（溯源唯一，创建与换关两条路径共用本守卫：
-/// 同一笔购买只能对应一件物品，避免每天成本被重复计算；软删除物品不占坑，可重新创建）。
-fn resolve_purchase_link(conn: &Connection, tx_id: &str) -> Result<(String, i64, String)> {
-    let taken: bool = conn
-        .query_row(
-            "SELECT 1 FROM items WHERE purchase_transaction_id=?1 AND is_deleted=0 LIMIT 1",
-            rusqlite::params![tx_id],
-            |_| Ok(true),
-        )
-        .optional()?
-        .is_some();
-    if taken {
-        return Err(AppError::codedp(
-            "item.purchase-link-taken",
-            format!("该购买交易已创建过物品，不能重复创建（溯源唯一）: {tx_id}"),
-            &[tx_id],
-        ));
-    }
-    let row: Option<(String, String, i64, String)> = conn
-        .query_row(
-            "SELECT kind, date, amount_cents, currency_code FROM transactions \
-             WHERE id=?1 AND is_deleted=0",
-            rusqlite::params![tx_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-        )
-        .optional()?;
-    let Some((kind, date, amount_cents, currency)) = row else {
-        return Err(AppError::codedp(
-            "item.purchase-tx-not-found",
-            format!("关联的购买交易不存在: {tx_id}"),
-            &[tx_id],
-        ));
-    };
-    if kind != TransactionKind::Expense.as_str() {
-        return Err(AppError::codedp(
-            "item.purchase-tx-not-expense",
-            format!("关联的交易必须是支出类型（实际: {kind}）"),
-            &[&kind],
-        ));
-    }
-    Ok((date, amount_cents, currency))
-}
-
 /// 解析 YYYY-MM-DD 日期字符串；非法格式报错（物品成本计算依赖日历日期）。
 fn parse_date(s: &str) -> Result<chrono::NaiveDate> {
     chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| {
@@ -440,24 +381,18 @@ fn parse_date(s: &str) -> Result<chrono::NaiveDate> {
     })
 }
 
-#[tauri::command]
-pub fn list_items(db: State<'_, DbState>) -> Result<Vec<ItemWithDailyCost>> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    list_items_internal(&conn)
-}
-
 /// 全部在用物品「每天成本合计」（issue #122 dashboard 汇总卡）：conn 级聚合，
-/// 复用 [`list_items_internal`] 的逐件口径快照（分子/天数均经 `item::cost` 接缝），
+/// 复用 [`list_items`] 的逐件口径快照（分子/天数均经 `item::cost` 接缝），
 /// 本函数只做筛选（仅 `in_use`）、本位币折算（Amount 接缝）与求和，不另写口径表达式。
 ///
 /// 合计口径 = Σ 各在用物品分子（折本位币）÷ 各自天数：每件物品每天都在发生的
 /// 持有开销直接相加（「每天成本合计」），**不是** Σ分子 ÷ Σ天数（那是按天数加权的均值，
 /// 不回答「每天合计花多少」）。缺汇率的币种错误上抛（与 `dashboard_overview` 同款，
 /// 不静默以零计入）；分子为 0（残值 ≥ 成本）的物品计件但不贡献金额。
-pub fn item_daily_total_internal(conn: &Connection) -> Result<ItemDailyTotal> {
+pub fn item_daily_total(conn: &Connection) -> Result<ItemDailyTotal> {
     let mut per_day_total = 0f64;
     let mut item_count = 0u64;
-    for entry in list_items_internal(conn)? {
+    for entry in list_items(conn)? {
         if entry.item.status != ItemStatus::InUse {
             continue;
         }
@@ -470,85 +405,5 @@ pub fn item_daily_total_internal(conn: &Connection) -> Result<ItemDailyTotal> {
         native_currency: amount::default_currency_code().to_string(),
         per_day_cents: per_day_total,
         item_count,
-    })
-}
-
-/// 计算单件物品的每天使用成本（issue #121，只读命令不发失效信号）：
-/// `reference_date` 缺省/为 null 时沿用列表口径（在用 → 今天；已处置 → 处置日）。
-#[tauri::command]
-pub fn calculate_item_cost(
-    db: State<'_, DbState>,
-    id: String,
-    reference_date: Option<String>,
-) -> Result<ItemDailyCost> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    calculate_item_cost_internal(&conn, &id, reference_date.as_deref())
-}
-
-/// 全部在用物品每天成本合计（issue #122，只读聚合不发失效信号），
-/// 供 dashboard 汇总卡展示（默认币种）。
-#[tauri::command]
-pub fn item_daily_total(db: State<'_, DbState>) -> Result<ItemDailyTotal> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    item_daily_total_internal(&conn)
-}
-
-#[tauri::command]
-pub fn create_item(
-    db: State<'_, DbState>,
-    app: tauri::AppHandle,
-    input: ItemInput,
-) -> Result<String> {
-    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
-    db.write(|conn| {
-        create_item_internal(conn, input, &mut || {
-            // 物品是独立领域（非参考数据，ADR-0014），复用 `ledger:changed` 同名事件：
-            // 物品 store 与消费界面订阅后自动重拉。发不发、发哪个由映射单点判定
-            // （ADR-0044 决策 8），notify 只是发射钩子。
-            emit_for(&app, WriteOp::CreateItem, WriteEvidence::None);
-        })
-    })
-}
-
-#[tauri::command]
-pub fn update_item(
-    db: State<'_, DbState>,
-    app: tauri::AppHandle,
-    id: String,
-    input: ItemInput,
-) -> Result<()> {
-    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
-    db.write(|conn| {
-        update_item_internal(conn, &id, input, &mut || {
-            // 与 create_item 同款：独立领域写入 → 经映射单点发通用失效信号（issue #117）。
-            emit_for(&app, WriteOp::UpdateItem, WriteEvidence::None);
-        })
-    })
-}
-
-#[tauri::command]
-pub fn dispose_item(
-    db: State<'_, DbState>,
-    app: tauri::AppHandle,
-    id: String,
-    input: ItemDisposeInput,
-) -> Result<()> {
-    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
-    db.write(|conn| {
-        dispose_item_internal(conn, &id, input, &mut || {
-            // 物品是独立领域（非参考数据，ADR-0014）：经映射单点发通用失效信号。
-            emit_for(&app, WriteOp::DisposeItem, WriteEvidence::None);
-        })
-    })
-}
-
-#[tauri::command]
-pub fn delete_item(db: State<'_, DbState>, app: tauri::AppHandle, id: String) -> Result<()> {
-    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
-    db.write(|conn| {
-        delete_item_internal(conn, &id, &mut || {
-            // 物品是独立领域（非参考数据，ADR-0014）：经映射单点发通用失效信号。
-            emit_for(&app, WriteOp::DeleteItem, WriteEvidence::None);
-        })
     })
 }

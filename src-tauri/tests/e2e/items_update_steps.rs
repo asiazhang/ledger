@@ -5,9 +5,9 @@
 
 use cucumber::{then, when};
 
-use tauri_app_lib::commands::item::{list_items_internal, update_item_internal};
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::item::cost;
+use tauri_app_lib::item::domain;
 use tauri_app_lib::models::ItemInput;
 
 use crate::common::assert_last_error_contains;
@@ -41,7 +41,7 @@ fn update_item(
         .last_item_id
         .clone()
         .unwrap_or_else(|| panic!("没有已创建的物品可修改"));
-    let result = update_item_internal(
+    let result = domain::update_item(
         &world_conn!(world),
         &id,
         with_note(build_input(&name, date, cost_cents, &currency), &note),
@@ -89,7 +89,7 @@ fn try_update_item(
         .last_item_id
         .clone()
         .unwrap_or_else(|| "no-such-item".into());
-    let result = update_item_internal(
+    let result = domain::update_item(
         &world_conn!(world),
         &id,
         with_note(build_input(&name, date, cost_cents, &currency), &note),
@@ -120,7 +120,7 @@ fn check_item_note_empty(world: &mut LedgerWorld, n: usize) {
 
 #[when(expr = "记住第 {int} 件物品的创建时间")]
 fn remember_item_created_at(world: &mut LedgerWorld, n: usize) {
-    world.items_list = list_items_internal(&world_conn!(world)).expect("列出物品失败");
+    world.items_list = domain::list_items(&world_conn!(world)).expect("列出物品失败");
     world.remembered_item_created_at = Some(nth_item(world, n).item.created_at.clone());
 }
 

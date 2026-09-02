@@ -176,7 +176,7 @@ pub struct ItemDailyCost {
 }
 
 /// 全部在用物品「每天成本合计」聚合结果（issue #122 dashboard 汇总卡）：
-/// 合计口径收敛在 `commands::item::item_daily_total_internal`，本结构只是其返回形状。
+/// 合计口径收敛在 `item::domain::item_daily_total`，本结构只是其返回形状。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ItemDailyTotal {
     /// 默认币种代码（合计折算目标，`default_currency_code`）。

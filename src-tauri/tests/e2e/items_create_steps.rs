@@ -1,6 +1,7 @@
 //! 物品（Item）BDD 步骤 · 创建主题（issue #115 / spec #113）：创建与读回。
 //!
-//! 经 `commands::item` 的 `*_internal` seam 断言外部可观察行为：
+//! 经物品域入口 `item::domain`（域目录化前为 `commands::item` 的 `*_internal` seam）
+//! 断言外部可观察行为：
 //! 创建读回、每天成本（`item::cost` 口径，含起止两端的日历天数）、金额折算、
 //! 写后发失效信号（notify 注入，生产路径发 `ledger:changed`）。
 //! 通用列表/字段断言（物品列表应包含 N 件、第 N 件名称/金额/状态/已用天数、
@@ -9,10 +10,10 @@
 
 use cucumber::{then, when};
 
-use tauri_app_lib::commands::item::{create_item_internal, list_items_internal};
 use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::item::cost;
+use tauri_app_lib::item::domain;
 use tauri_app_lib::models::{ItemInput, ItemStatus, TransactionInput};
 use tauri_app_lib::transaction::amount::TransactionKind;
 
@@ -82,7 +83,7 @@ fn create_item(
         ..build_input(&name, date, cost_cents, &currency)
     };
     let mut signals = 0;
-    let result = create_item_internal(&world_conn!(world), input, &mut || signals += 1);
+    let result = domain::create_item(&world_conn!(world), input, &mut || signals += 1);
     match result {
         Ok(id) => {
             world.last_item_id = Some(id);
@@ -136,7 +137,7 @@ fn try_create_item(
         ..build_input(&name, date, cost_cents, &currency)
     };
     let mut signals = 0;
-    let result = create_item_internal(&world_conn!(world), input, &mut || signals += 1);
+    let result = domain::create_item(&world_conn!(world), input, &mut || signals += 1);
     world.item_signal_count = signals;
     world.last_error = match result {
         Err(AppError::Invalid(msg)) => Some(msg),
@@ -148,7 +149,7 @@ fn try_create_item(
 /// 刷新物品列表快照并断言件数。
 #[then(expr = "物品列表应包含 {int} 件物品")]
 fn refresh_and_check_item_count(world: &mut LedgerWorld, expected: usize) {
-    world.items_list = list_items_internal(&world_conn!(world)).expect("列出物品失败");
+    world.items_list = domain::list_items(&world_conn!(world)).expect("列出物品失败");
     assert_eq!(
         world.items_list.len(),
         expected,
