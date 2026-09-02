@@ -5,7 +5,7 @@
     "expense": "支出",
     "refund": "退款",
     "net": "净额: {amount}",
-    "empty": "本年暂无数据"
+    "empty": "本期暂无数据"
   },
   "category": {
     "title": "支出分类构成",

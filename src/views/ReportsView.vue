@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { NCard, NSpace, NEmpty, NSpin, NBreadcrumb, NBreadcrumbItem } from 'naive-ui'
-import AppSelect from '@/components/AppSelect.vue'
+import QuickTimeRange from '@/components/QuickTimeRange.vue'
 import { Bar } from 'vue-chartjs'
 import {
   Chart as ChartJS,
@@ -18,7 +18,7 @@ import { api } from '@/api'
 import { t } from '@/i18n'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount } from '@/types'
-import type { CategoryShare, MerchantShare, MonthlySummary, ReportDateRange } from '@/types'
+import type { CategoryShare, MerchantShare, MonthlySummary } from '@/types'
 import {
   barEndLabel,
   categoryBarTotal,
@@ -27,45 +27,59 @@ import {
 } from '@/utils/category-chart'
 import { categoryRoot } from '@/utils/category-tree'
 import { UNCATEGORIZED_ONLY } from '@/composables/useTransactionFilter'
-import { derivePeriodBoundary, yearRange } from '@/utils/time-period'
+import {
+  DATED_TIME_PERIOD_PRESETS,
+  presetRange,
+  yearRange,
+  type DateRange,
+  type NullableDateRange,
+} from '@/utils/time-period'
 import MerchantRankingPanel from '@/components/reports/MerchantRankingPanel.vue'
 
 ChartJS.register(Title, Tooltip, Legend, BarElement, CategoryScale, LinearScale)
 
 const reference = useReferenceStore()
 const router = useRouter()
-const year = ref(new Date().getFullYear())
-// 报表年份筛选（issue #267 / #389）：可选范围由前端期间数学单点派生年档闭区间
-// [最早交易年份, max(当前年, 最新交易年份)]，空库回退单当前年；
-// 范围内年份升序平铺直选，任何年份一击直达（取代围绕已选年份 ±2 的滑动窗口）。
-const dateRange = ref<ReportDateRange | null>(null)
-const yearOptions = computed(() => {
-  if (!dateRange.value) return []
-  const bounds = derivePeriodBoundary('year', dateRange.value, new Date())
-  const options: { label: string; value: number }[] = []
-  for (let y = bounds.earliest.year; y <= bounds.latest.year; y++) {
-    options.push({ label: String(y), value: y })
-  }
-  return options
+
+// 报表期间（issue #411 / ADR-0057 消费形态二）：视图自持快照起止日期，不进
+// TransactionFilter（其消费方边界维持交易列表专属）；进入默认「当年」快照；
+// 期间选择不持久化（ViewState「不做过度记忆」边界），重启回到默认当年。
+const period = ref<DateRange>(presetRange('year', new Date()))
+
+// 报表页日期闭集（ADR-0057）：仅四枚日期芯片、无「全部」——期间必有界。
+const REPORT_PRESETS = DATED_TIME_PERIOD_PRESETS
+
+// 共享受控组件受控桥接（issue #410）：快照区间进出，组件不持状态源，
+// 视图是唯一事实源。四枚芯片与步进/面板只产出双端有界的自然周期快照，
+// 单端缺失（NullableDateRange 契约允许的过渡态）不采纳、期间保持有界；
+// 同值快照不动作（重复点同一芯片不重拉、不复位下钻，与交易页同值守卫同规）。
+const quickRange = computed<NullableDateRange>({
+  get: () => ({ from: period.value.from, to: period.value.to }),
+  set: (range) => {
+    if (range.from !== null && range.to !== null) {
+      if (range.from !== period.value.from || range.to !== period.value.to) {
+        period.value = { from: range.from, to: range.to }
+      }
+    }
+  },
 })
+
 const monthly = ref<MonthlySummary[]>([])
 const shares = ref<CategoryShare[]>([])
 const merchantShares = ref<MerchantShare[]>([])
 const loading = ref(false)
 // 图内下钻态（issue #379）：当前下钻的一级分类 id，null = 基础态；
-// 视图内瞬时状态，不持久化（与 ViewState 边界一致），年份切换复位。
+// 视图内瞬时状态，不持久化（与 ViewState 边界一致），期间切换复位。
 const drilledRootId = ref<string | null>(null)
 
 async function refresh() {
   loading.value = true
   try {
     const [m, s, ms] = await Promise.all([
-      api.monthlySummary(year.value),
-      // 分类份额随年份筛选联动（issue #376）：三张报表口径一致，
-      // 净值口径在后端收口
-      api.categoryShares('expense', { year: year.value }),
-      // 商户消费排行（issue #192）：随年份筛选，净额口径在后端收口
-      api.merchantShares(year.value),
+      // 三张卡随所选期间重算（issue #411）：期间口径一致，聚合在后端收口
+      api.monthlySummary({ from: period.value.from, to: period.value.to }),
+      api.categoryShares('expense', { from: period.value.from, to: period.value.to }),
+      api.merchantShares({ from: period.value.from, to: period.value.to }),
     ])
     monthly.value = m
     shares.value = s
@@ -75,9 +89,9 @@ async function refresh() {
   }
 }
 
-watch(year, () => {
-  // 年份切换复位下钻（issue #379）：下钻是视图内瞬时状态，
-  // 停留在新年份无数据的悬停下钻态只会迷惑，回基础态重看全貌
+watch(period, () => {
+  // 期间切换复位下钻（issue #379 裁决随期间化延续）：下钻是视图内瞬时状态，
+  // 停留在新区间无数据的悬停下钻态只会迷惑，回基础态重看全貌
   drilledRootId.value = null
   refresh()
 })
@@ -150,11 +164,12 @@ const categoryBarsData = computed(() => {
 })
 
 /** 跳转下钻（issue #380）：直达按该分类过滤的交易列表。
- * 载荷 = 分类（保留值 none = 仅无分类）+ 所选年份首尾日期（自然年边界经期间数学单点
- * yearRange 派生），刻意不带交易类型参数——退款继承原分类，列表净额与图中柱值一致
- *（分类下钻词条「跳转载荷与图所见同口径」）。 */
+ * 载荷 = 分类（保留值 none = 仅无分类）+ 当前期间所在年份的首尾日期（自然年边界经
+ * 期间数学单点 yearRange 派生），刻意不带交易类型参数——退款继承原分类，列表净额与
+ * 图中柱值一致（分类下钻词条「跳转载荷与图所见同口径」）；载荷随期间化泛化为
+ * 所选期间首尾日期由 issue #412 承接，此处维持年份边界。 */
 function goCategoryTransactions(categoryId: string) {
-  const range = yearRange(year.value)
+  const range = yearRange(Number(period.value.from.slice(0, 4)))
   router.push({
     name: 'transactions',
     query: {
@@ -260,14 +275,9 @@ const categoryChartOptions: ChartOptions<'bar'> = {
   },
 }
 
-// 范围挂载时拉取一次（不接失效信号：进视图即新鲜，跨会话自然生效）
-async function loadDateRange() {
-  dateRange.value = await api.reportDateRange()
-}
-
 onMounted(() => {
-  // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll
-  void loadDateRange()
+  // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll；
+  // 数据期间边界由 QuickTimeRange 组件内化（issue #410），视图不再自拉
   void refresh()
 })
 </script>
@@ -275,12 +285,9 @@ onMounted(() => {
 <template>
   <NSpin :show="loading">
     <NSpace vertical :size="16">
-      <AppSelect
-        :value="year"
-        :options="yearOptions"
-        @update:value="(v: number) => (year = v)"
-        style="width: 140px"
-      />
+      <!-- 报表页唯一时间控件（issue #411）：四枚日期芯片（无「全部」）＋期间步进器＋
+           期间直达面板，钳制与「今天」时钟由组件内化；年份下拉已退役（ADR-0057） -->
+      <QuickTimeRange v-model="quickRange" :presets="REPORT_PRESETS" />
       <NCard :title="t('reports.monthly.title')" size="small">
         <NEmpty v-if="monthly.length === 0" :description="t('reports.monthly.empty')" />
         <div v-else style="height: 320px">

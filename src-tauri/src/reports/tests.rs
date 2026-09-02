@@ -120,7 +120,7 @@ fn all_kinds_fixture(category_id: Option<&str>) -> Vec<TxRow> {
 fn monthly_summary_empty_when_no_transactions() {
     let conn = setup();
     insert_account(&conn, "acc");
-    let rows = monthly_summary_rows(&conn, 2026).unwrap();
+    let rows = monthly_summary_rows(&conn, 2026, None, None).unwrap();
     assert!(rows.is_empty());
 }
 
@@ -136,7 +136,7 @@ fn monthly_summary_columns_match_measures_for_all_kinds() {
     for r in &fixture {
         insert_tx(&conn, r);
     }
-    let rows = monthly_summary_rows(&conn, 2026).unwrap();
+    let rows = monthly_summary_rows(&conn, 2026, None, None).unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].month, "2026-01");
     assert_eq!(
@@ -190,11 +190,11 @@ fn monthly_summary_groups_by_month_and_filters_by_year() {
     for r in &fixture {
         insert_tx(&conn, r);
     }
-    let rows_2025 = monthly_summary_rows(&conn, 2025).unwrap();
+    let rows_2025 = monthly_summary_rows(&conn, 2025, None, None).unwrap();
     assert_eq!(rows_2025.len(), 1);
     assert_eq!(rows_2025[0].income_cents, 1000);
 
-    let rows_2026 = monthly_summary_rows(&conn, 2026).unwrap();
+    let rows_2026 = monthly_summary_rows(&conn, 2026, None, None).unwrap();
     assert_eq!(rows_2026.len(), 2);
     assert_eq!(rows_2026[0].month, "2026-01");
     assert_eq!(rows_2026[0].expense_cents, 500);
@@ -218,7 +218,176 @@ fn monthly_summary_excludes_deleted() {
     );
     conn.execute("UPDATE transactions SET is_deleted=1 WHERE id='t1'", [])
         .unwrap();
-    assert!(monthly_summary_rows(&conn, 2026).unwrap().is_empty());
+    assert!(
+        monthly_summary_rows(&conn, 2026, None, None)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+// ---- 期间过滤（issue #411）：from/to 含边界，任一端存在即期间口径 ----
+
+/// 年期间：按月分布（分组按月不变），年界外不计入。
+/// 遗留 `year` 在期间口径下不参与，传 0 占位（下同）。
+#[test]
+fn monthly_summary_period_filters_by_range() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    let fixture = vec![
+        TxRow {
+            id: "t-last-year",
+            kind: TransactionKind::Income,
+            amount: 800,
+            category_id: None,
+            date: "2025-12-31",
+        },
+        TxRow {
+            id: "t-jan",
+            kind: TransactionKind::Income,
+            amount: 1000,
+            category_id: None,
+            date: "2026-01-20",
+        },
+        TxRow {
+            id: "t-mar",
+            kind: TransactionKind::Expense,
+            amount: 500,
+            category_id: None,
+            date: "2026-03-05",
+        },
+    ];
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+    let rows = monthly_summary_rows(&conn, 0, Some("2026-01-01"), Some("2026-12-31")).unwrap();
+    assert_eq!(rows.len(), 2, "年期间内仅有流水的月份成行，年界外不计入");
+    assert_eq!(rows[0].month, "2026-01");
+    assert_eq!(rows[0].income_cents, 1000);
+    assert_eq!(rows[1].month, "2026-03");
+    assert_eq!(rows[1].expense_cents, 500);
+}
+
+/// 季期间：季度三个月界内成行、季外不计入（季 = 3 个月行）。
+#[test]
+fn monthly_summary_period_quarter_bounds() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    let fixture = vec![
+        TxRow {
+            id: "t-q1-jan",
+            kind: TransactionKind::Expense,
+            amount: 300,
+            category_id: None,
+            date: "2026-01-10",
+        },
+        TxRow {
+            id: "t-q1-end",
+            kind: TransactionKind::Expense,
+            amount: 400,
+            category_id: None,
+            date: "2026-03-31",
+        },
+        TxRow {
+            id: "t-q2",
+            kind: TransactionKind::Expense,
+            amount: 500,
+            category_id: None,
+            date: "2026-04-01",
+        },
+    ];
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+    let rows = monthly_summary_rows(&conn, 0, Some("2026-01-01"), Some("2026-03-31")).unwrap();
+    assert_eq!(rows.len(), 2, "季界外（四季度首日）不计入");
+    assert_eq!(rows[0].month, "2026-01");
+    assert_eq!(rows[0].expense_cents, 300);
+    assert_eq!(rows[1].month, "2026-03");
+    assert_eq!(rows[1].expense_cents, 400);
+}
+
+/// 月期间：单行如实汇总（不切日粒度），起止边界日双双计入。
+#[test]
+fn monthly_summary_period_month_single_group_with_inclusive_bounds() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    let fixture = vec![
+        TxRow {
+            id: "t-jan-last",
+            kind: TransactionKind::Expense,
+            amount: 800,
+            category_id: None,
+            date: "2026-01-31",
+        },
+        TxRow {
+            id: "t-from",
+            kind: TransactionKind::Expense,
+            amount: 100,
+            category_id: None,
+            date: "2026-02-01",
+        },
+        TxRow {
+            id: "t-mid",
+            kind: TransactionKind::Expense,
+            amount: 200,
+            category_id: None,
+            date: "2026-02-15",
+        },
+        TxRow {
+            id: "t-to",
+            kind: TransactionKind::Expense,
+            amount: 400,
+            category_id: None,
+            date: "2026-02-28",
+        },
+        TxRow {
+            id: "t-mar-first",
+            kind: TransactionKind::Expense,
+            amount: 1600,
+            category_id: None,
+            date: "2026-03-01",
+        },
+    ];
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+    let rows = monthly_summary_rows(&conn, 0, Some("2026-02-01"), Some("2026-02-28")).unwrap();
+    assert_eq!(rows.len(), 1, "月期间单行如实汇总（月期间不切日粒度）");
+    assert_eq!(rows[0].month, "2026-02");
+    assert_eq!(
+        rows[0].expense_cents, 700,
+        "起止边界日（02-01/02-28）双双计入"
+    );
+}
+
+/// 期间口径优先：from/to 存在时遗留 year 不参与（他年流水不因 year 混入）。
+#[test]
+fn monthly_summary_period_overrides_legacy_year() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    let fixture = vec![
+        TxRow {
+            id: "t-last-year",
+            kind: TransactionKind::Expense,
+            amount: 800,
+            category_id: None,
+            date: "2025-12-31",
+        },
+        TxRow {
+            id: "t-jan",
+            kind: TransactionKind::Expense,
+            amount: 500,
+            category_id: None,
+            date: "2026-01-20",
+        },
+    ];
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+    let rows = monthly_summary_rows(&conn, 2025, Some("2026-01-01"), Some("2026-12-31")).unwrap();
+    assert_eq!(rows.len(), 1, "期间优先于遗留 year，2025 年流水不计入");
+    assert_eq!(rows[0].month, "2026-01");
+    assert_eq!(rows[0].expense_cents, 500);
 }
 
 // ---- category_shares_rows：净值口径 ----
@@ -242,7 +411,7 @@ fn category_shares_expense_net_subtracts_refund() {
     for r in &fixture {
         insert_tx(&conn, r);
     }
-    let rows = category_shares_rows(&conn, "expense", None, None).unwrap();
+    let rows = category_shares_rows(&conn, "expense", None, None, None, None).unwrap();
     assert_eq!(rows.len(), 1, "只有 expense/refund 计入净值口径");
     let expected = measure_sum(&fixture, "2026-01", Measure::ExpenseNet);
     assert_eq!(
@@ -262,7 +431,7 @@ fn category_shares_income_net_includes_dividend() {
     for r in &fixture {
         insert_tx(&conn, r);
     }
-    let rows = category_shares_rows(&conn, "income", None, None).unwrap();
+    let rows = category_shares_rows(&conn, "income", None, None, None, None).unwrap();
     assert_eq!(rows.len(), 1, "只有 income/dividend 计入净值口径");
     let expected = measure_sum(&fixture, "2026-01", Measure::IncomeNet);
     assert_eq!(
@@ -296,7 +465,8 @@ fn category_shares_filters_by_month() {
     for r in &fixture {
         insert_tx(&conn, r);
     }
-    let rows_jan = category_shares_rows(&conn, "expense", Some("2026-01"), None).unwrap();
+    let rows_jan =
+        category_shares_rows(&conn, "expense", Some("2026-01"), None, None, None).unwrap();
     assert_eq!(rows_jan.len(), 1);
     assert_eq!(rows_jan[0].amount_cents, 1000);
 }
@@ -326,7 +496,7 @@ fn category_shares_filters_by_year() {
     for r in &fixture {
         insert_tx(&conn, r);
     }
-    let rows = category_shares_rows(&conn, "expense", None, Some(2026)).unwrap();
+    let rows = category_shares_rows(&conn, "expense", None, Some(2026), None, None).unwrap();
     assert_eq!(rows.len(), 1, "他年支出不计入所选年");
     assert_eq!(rows[0].amount_cents, 1000);
 }
@@ -371,13 +541,13 @@ fn category_shares_refund_offsets_within_selected_year_only() {
     for r in &fixture {
         insert_tx(&conn, r);
     }
-    let rows_2026 = category_shares_rows(&conn, "expense", None, Some(2026)).unwrap();
+    let rows_2026 = category_shares_rows(&conn, "expense", None, Some(2026), None, None).unwrap();
     assert_eq!(rows_2026.len(), 1);
     assert_eq!(
         rows_2026[0].amount_cents, 700,
         "2026 净额 = 1000 − 300，2025 退款不冲减"
     );
-    let rows_2025 = category_shares_rows(&conn, "expense", None, Some(2025)).unwrap();
+    let rows_2025 = category_shares_rows(&conn, "expense", None, Some(2025), None, None).unwrap();
     assert_eq!(rows_2025.len(), 1);
     assert_eq!(
         rows_2025[0].amount_cents, 350,
@@ -410,7 +580,7 @@ fn category_shares_default_spans_all_years() {
     for r in &fixture {
         insert_tx(&conn, r);
     }
-    let rows = category_shares_rows(&conn, "expense", None, None).unwrap();
+    let rows = category_shares_rows(&conn, "expense", None, None, None, None).unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].amount_cents, 1800, "缺省不传年份 = 全时段合计");
 }
@@ -440,7 +610,7 @@ fn category_shares_income_filters_by_year() {
     for r in &fixture {
         insert_tx(&conn, r);
     }
-    let rows = category_shares_rows(&conn, "income", None, Some(2026)).unwrap();
+    let rows = category_shares_rows(&conn, "income", None, Some(2026), None, None).unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].amount_cents, 1000);
 }
@@ -477,9 +647,132 @@ fn category_shares_month_and_year_combine() {
     for r in &fixture {
         insert_tx(&conn, r);
     }
-    let rows = category_shares_rows(&conn, "expense", Some("2026-01"), Some(2026)).unwrap();
+    let rows =
+        category_shares_rows(&conn, "expense", Some("2026-01"), Some(2026), None, None).unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].amount_cents, 1000, "同年同月才计入");
+}
+
+/// 期间过滤（issue #411）：界内净值成行，界外不计入；退款以自身日期参与期间过滤
+///（界内退款冲减该期间净额，界外退款不冲减）。
+#[test]
+fn category_shares_filters_by_period_range() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    let cat_id = first_category_id(&conn, "expense");
+    let fixture = vec![
+        TxRow {
+            id: "t-in-range",
+            kind: TransactionKind::Expense,
+            amount: 1000,
+            category_id: Some(cat_id.clone()),
+            date: "2026-01-15",
+        },
+        TxRow {
+            id: "t-refund-in-range",
+            kind: TransactionKind::Refund,
+            amount: 300,
+            category_id: Some(cat_id.clone()),
+            date: "2026-06-01",
+        },
+        TxRow {
+            id: "t-out-of-range",
+            kind: TransactionKind::Expense,
+            amount: 800,
+            category_id: Some(cat_id),
+            date: "2025-12-31",
+        },
+    ];
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+    let rows = category_shares_rows(
+        &conn,
+        "expense",
+        None,
+        None,
+        Some("2026-01-01"),
+        Some("2026-12-31"),
+    )
+    .unwrap();
+    assert_eq!(rows.len(), 1, "界外（2025-12-31）支出不计入");
+    assert_eq!(rows[0].amount_cents, 700, "1000 − 300，界内退款冲减");
+}
+
+/// 期间口径优先：from/to 存在时遗留 month/year 不参与。
+#[test]
+fn category_shares_period_overrides_legacy_month_year() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    let cat_id = first_category_id(&conn, "expense");
+    let fixture = vec![
+        TxRow {
+            id: "t-jan",
+            kind: TransactionKind::Expense,
+            amount: 1000,
+            category_id: Some(cat_id.clone()),
+            date: "2026-01-15",
+        },
+        TxRow {
+            id: "t-feb",
+            kind: TransactionKind::Expense,
+            amount: 2000,
+            category_id: Some(cat_id),
+            date: "2026-02-10",
+        },
+    ];
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+    let rows = category_shares_rows(
+        &conn,
+        "expense",
+        Some("2026-01"),
+        Some(2025),
+        Some("2026-02-01"),
+        Some("2026-02-28"),
+    )
+    .unwrap();
+    assert_eq!(rows.len(), 1, "期间优先于遗留 month/year");
+    assert_eq!(rows[0].amount_cents, 2000, "只计期间内（二月）支出");
+}
+
+/// income 分支（`income_net` 口径）与 expense 同款期间 SQL 路径（issue #411）。
+#[test]
+fn category_shares_income_filters_by_period_range() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    let cat_id = first_category_id(&conn, "income");
+    let fixture = vec![
+        TxRow {
+            id: "t-old",
+            kind: TransactionKind::Income,
+            amount: 2000,
+            category_id: Some(cat_id.clone()),
+            date: "2025-05-01",
+        },
+        TxRow {
+            id: "t-new",
+            kind: TransactionKind::Income,
+            amount: 1000,
+            category_id: Some(cat_id),
+            date: "2026-02-20",
+        },
+    ];
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+    let rows = category_shares_rows(
+        &conn,
+        "income",
+        None,
+        None,
+        Some("2026-01-01"),
+        Some("2026-12-31"),
+    )
+    .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].amount_cents, 1000);
 }
 
 #[test]
@@ -496,7 +789,7 @@ fn category_shares_unclassified_shows_default_name() {
             date: "2026-01-15",
         },
     );
-    let rows = category_shares_rows(&conn, "expense", None, None).unwrap();
+    let rows = category_shares_rows(&conn, "expense", None, None, None, None).unwrap();
     assert_eq!(rows[0].category_name, "未分类");
 }
 
@@ -566,7 +859,7 @@ fn merchant_shares_expense_net_subtracts_refund() {
     for r in &fixture {
         insert_merchant_tx(&conn, r);
     }
-    let rows = merchant_shares_rows(&conn, 2026).unwrap();
+    let rows = merchant_shares_rows(&conn, 2026, None, None).unwrap();
     assert_eq!(rows.len(), 1, "退款归属同一商户，不新增行");
     let expected = merchant_measure_sum(&fixture, "2026-03", Measure::ExpenseNet);
     assert_eq!(
@@ -643,7 +936,7 @@ fn merchant_shares_only_expense_kinds_contribute() {
     for r in &fixture {
         insert_merchant_tx(&conn, r);
     }
-    let rows = merchant_shares_rows(&conn, 2026).unwrap();
+    let rows = merchant_shares_rows(&conn, 2026, None, None).unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(
         rows[0].amount_cents,
@@ -680,7 +973,7 @@ fn merchant_shares_excludes_unmerchant_transactions() {
             date: "2026-03-06",
         },
     );
-    let rows = merchant_shares_rows(&conn, 2026).unwrap();
+    let rows = merchant_shares_rows(&conn, 2026, None, None).unwrap();
     assert!(rows.is_empty(), "无商户支出与带商户收入都不进消费排行");
 }
 
@@ -718,7 +1011,7 @@ fn merchant_shares_orders_desc() {
     for r in &fixture {
         insert_merchant_tx(&conn, r);
     }
-    let rows = merchant_shares_rows(&conn, 2026).unwrap();
+    let rows = merchant_shares_rows(&conn, 2026, None, None).unwrap();
     let names: Vec<&str> = rows.iter().map(|r| r.merchant_id.as_str()).collect();
     assert_eq!(names, vec!["m-b", "m-c", "m-a"], "应按净额降序");
 }
@@ -748,9 +1041,50 @@ fn merchant_shares_filters_by_year() {
     for r in &fixture {
         insert_merchant_tx(&conn, r);
     }
-    let rows = merchant_shares_rows(&conn, 2026).unwrap();
+    let rows = merchant_shares_rows(&conn, 2026, None, None).unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].amount_cents, 700);
+}
+
+/// 期间过滤（issue #411）：界内净支出进排行，界外不计入。
+#[test]
+fn merchant_shares_filters_by_period() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    insert_merchant(&conn, "m-jd");
+    insert_merchant(&conn, "m-tt");
+    let fixture = vec![
+        MerchantTxRow {
+            id: "t-old",
+            kind: TransactionKind::Expense,
+            amount: 800,
+            merchant_id: "m-jd",
+            date: "2025-12-31",
+        },
+        MerchantTxRow {
+            id: "t-jan",
+            kind: TransactionKind::Expense,
+            amount: 1000,
+            merchant_id: "m-jd",
+            date: "2026-01-05",
+        },
+        MerchantTxRow {
+            id: "t-feb",
+            kind: TransactionKind::Expense,
+            amount: 700,
+            merchant_id: "m-tt",
+            date: "2026-02-10",
+        },
+    ];
+    for r in &fixture {
+        insert_merchant_tx(&conn, r);
+    }
+    let rows = merchant_shares_rows(&conn, 0, Some("2026-01-01"), Some("2026-12-31")).unwrap();
+    assert_eq!(rows.len(), 2, "界外（2025-12-31）支出不计入");
+    assert_eq!(rows[0].merchant_id, "m-jd");
+    assert_eq!(rows[0].amount_cents, 1000);
+    assert_eq!(rows[1].merchant_id, "m-tt");
+    assert_eq!(rows[1].amount_cents, 700);
 }
 
 /// 软删商户的历史引用照常统计显示（ADR-0028：历史引用保留，改名/软删不回刷历史行）。
@@ -771,7 +1105,7 @@ fn merchant_shares_includes_soft_deleted_merchant_history() {
     );
     conn.execute("UPDATE merchants SET is_deleted=1 WHERE id='m-jd'", [])
         .unwrap();
-    let rows = merchant_shares_rows(&conn, 2026).unwrap();
+    let rows = merchant_shares_rows(&conn, 2026, None, None).unwrap();
     assert_eq!(rows.len(), 1, "软删商户的历史消费照常进排行");
     assert_eq!(rows[0].amount_cents, 1000);
 }

@@ -12,13 +12,19 @@
 //! 分类份额年份联动（issue #376）：口径由核心函数 `category_shares_rows`
 //! （命令层同款注入）查询：`expense_net` 净值、本位币口径，可选年份过滤；
 //! 带分类交易夹具走与真实写路径一致的行为层，退款复用既有步骤（继承原分类）。
+//!
+//! 期间过滤（issue #411）：月度汇总/分类份额/商户排行的 `from`/`to`（YYYY-MM-DD
+//! 含边界）期间口径由核心函数同款注入查询；月度汇总另有遗留年份口径回归锁定
+//!（缺省回退旧口径，已发布 API 只增不改）。
 
 use chrono::{Datelike, Months, NaiveDate};
 use cucumber::{given, then, when};
 use rusqlite::params;
 
 use tauri_app_lib::models::TransactionInput;
-use tauri_app_lib::reports::{category_shares_rows, merchant_shares_rows, query_report_date_range};
+use tauri_app_lib::reports::{
+    category_shares_rows, merchant_shares_rows, monthly_summary_rows, query_report_date_range,
+};
 use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::create_transaction_internal;
 
@@ -170,11 +176,20 @@ fn create_txn_with_merchant_currency(
     world.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
-/// 查询指定年份的商户消费排行（命令层同款核心函数注入）。
+/// 查询指定年份的商户消费排行（命令层同款核心函数注入，遗留年份口径）。
 #[when(expr = "查询 {int} 年商户排行")]
 fn query_merchant_shares(world: &mut LedgerWorld, year: i64) {
     world.last_merchant_shares =
-        merchant_shares_rows(&world_conn!(world), year).expect("查询商户排行失败");
+        merchant_shares_rows(&world_conn!(world), year, None, None).expect("查询商户排行失败");
+}
+
+/// 查询指定期间（YYYY-MM-DD 含边界）的商户消费排行（命令层同款核心函数注入，
+/// issue #411 期间口径）。遗留 `year` 在期间口径下不参与，传 0 占位（下同）。
+#[when(expr = "查询商户排行 期间 {string} 到 {string}")]
+fn query_merchant_shares_period(world: &mut LedgerWorld, from: String, to: String) {
+    world.last_merchant_shares =
+        merchant_shares_rows(&world_conn!(world), 0, Some(&from), Some(&to))
+            .expect("查询商户排行失败");
 }
 
 // ---------------------------------------------------------------------------
@@ -316,7 +331,7 @@ fn create_txn_with_category(
 #[when(expr = "查询 {int} 年分类份额")]
 fn query_category_shares(world: &mut LedgerWorld, year: i64) {
     world.last_category_shares =
-        category_shares_rows(&world_conn!(world), "expense", None, Some(year))
+        category_shares_rows(&world_conn!(world), "expense", None, Some(year), None, None)
             .expect("查询分类份额失败");
 }
 
@@ -324,7 +339,74 @@ fn query_category_shares(world: &mut LedgerWorld, year: i64) {
 #[when(expr = "查询分类份额 全时段")]
 fn query_category_shares_all_time(world: &mut LedgerWorld) {
     world.last_category_shares =
-        category_shares_rows(&world_conn!(world), "expense", None, None).expect("查询分类份额失败");
+        category_shares_rows(&world_conn!(world), "expense", None, None, None, None)
+            .expect("查询分类份额失败");
+}
+
+/// 查询指定期间（YYYY-MM-DD 含边界）的支出分类份额（issue #411 期间口径）。
+#[when(expr = "查询分类份额 期间 {string} 到 {string}")]
+fn query_category_shares_period(world: &mut LedgerWorld, from: String, to: String) {
+    world.last_category_shares = category_shares_rows(
+        &world_conn!(world),
+        "expense",
+        None,
+        None,
+        Some(&from),
+        Some(&to),
+    )
+    .expect("查询分类份额失败");
+}
+
+// ---------------------------------------------------------------------------
+// 月度汇总期间过滤（issue #411）
+// ---------------------------------------------------------------------------
+
+/// 查询指定期间（YYYY-MM-DD 含边界）的月度汇总（命令层同款核心函数注入）。
+#[when(expr = "查询月度汇总 期间 {string} 到 {string}")]
+fn query_monthly_summary_period(world: &mut LedgerWorld, from: String, to: String) {
+    world.last_monthly_summary =
+        monthly_summary_rows(&world_conn!(world), 0, Some(&from), Some(&to))
+            .expect("查询月度汇总失败");
+}
+
+/// 查询指定年份的月度汇总（遗留年份口径）：缺省期间回退旧口径的回归锁定。
+#[when(expr = "查询 {int} 年月度汇总")]
+fn query_monthly_summary_year(world: &mut LedgerWorld, year: i64) {
+    world.last_monthly_summary =
+        monthly_summary_rows(&world_conn!(world), year, None, None).expect("查询月度汇总失败");
+}
+
+/// 月度汇总行数断言（仅期间内有流水的月份成行）。
+#[then(expr = "月度汇总应为 {int} 行")]
+fn check_monthly_summary_len(world: &mut LedgerWorld, n: usize) {
+    assert_eq!(
+        world.last_monthly_summary.len(),
+        n,
+        "月度汇总行数不符：实际 {:?}",
+        world.last_monthly_summary
+    );
+}
+
+/// 月度汇总第 {index} 行断言：月份（YYYY-MM）+ 毛值三列（收入/支出/退款）。
+#[then(expr = "月度汇总第 {int} 行应为月份 {string} 收入 {int} 支出 {int} 退款 {int}")]
+fn check_monthly_summary_row(
+    world: &mut LedgerWorld,
+    index: usize,
+    month: String,
+    income: i64,
+    expense: i64,
+    refund: i64,
+) {
+    let row = world
+        .last_monthly_summary
+        .get(index - 1)
+        .unwrap_or_else(|| panic!("月度汇总第 {index} 行不存在"));
+    assert_eq!(row.month, month, "月度汇总第 {index} 行月份不符");
+    assert_eq!(
+        (row.income_cents, row.expense_cents, row.refund_cents),
+        (income, expense, refund),
+        "月度汇总 '{month}' 毛值三列不符"
+    );
 }
 
 /// 分类份额行数断言。

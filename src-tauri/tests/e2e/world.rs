@@ -150,6 +150,8 @@ pub struct LedgerWorld {
     pub last_budget_progress: Vec<tauri_app_lib::models::BudgetProgress>,
     /// 最近一次商户消费排行快照（报表商户排行场景断言用，issue #192）
     pub last_merchant_shares: Vec<tauri_app_lib::models::MerchantShare>,
+    /// 最近一次月度汇总快照（报表期间过滤场景断言用，issue #411）
+    pub last_monthly_summary: Vec<tauri_app_lib::models::MonthlySummary>,
     /// 最近一次分类份额快照（报表分类份额年份联动场景断言用，issue #376）
     pub last_category_shares: Vec<tauri_app_lib::models::CategoryShare>,
     /// 最近一次报表日期筛选范围快照（报表日期范围场景断言用，issue #266 / #389）
@@ -227,6 +229,7 @@ impl LedgerWorld {
             last_spend: None,
             last_budget_progress: Vec::new(),
             last_merchant_shares: Vec::new(),
+            last_monthly_summary: Vec::new(),
             last_category_shares: Vec::new(),
             last_date_range: None,
             last_catch_up: None,

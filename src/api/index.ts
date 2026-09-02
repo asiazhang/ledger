@@ -54,6 +54,7 @@ import type {
   PortfolioValueTrend,
   PruneResult,
   ReportDateRange,
+  ReportPeriodRange,
   RealizedPnlSummary,
   RestoreResult,
   TransactionTrade,
@@ -72,6 +73,11 @@ import type {
   UpdateStatusInput,
   UpdateSubscriptionInput,
 } from '@/types'
+
+/** 期间起始年（issue #411）：月度汇总/商户排行的遗留 `year` 是已发布命令的必传参数，
+ *  期间口径下后端不消费，传期间起始年占位——推导收口一处，不在调用点重复。 */
+const periodPlaceholderYear = (period: ReportPeriodRange): number =>
+  Number(period.from.slice(0, 4))
 
 export const api = {
   // 币种
@@ -150,17 +156,33 @@ export const api = {
   financialFreedom: () => invoke<FinancialFreedomOverview>('financial_freedom'),
 
   // 报表
-  // 日期筛选范围（issue #266 / #389）：数据驱动极值日期对，前端拉一次派生年份下拉
+  // 日期筛选范围（issue #266 / #389）：数据驱动极值日期对，QuickTimeRange 钳制输入
   reportDateRange: () => invoke<ReportDateRange>('report_date_range'),
-  monthlySummary: (year: number) => invoke<MonthlySummary[]>('monthly_summary', { year }),
-  merchantShares: (year: number) => invoke<MerchantShare[]>('merchant_shares', { year }),
-  // 分类份额（issue #376 年份联动）：可选 month/year 过滤参数只增不改，缺省全时段；
-  // 报表视图随年份选择器联动传参
-  categoryShares: (kind: string, filter?: { month?: string; year?: number }) =>
+  // 月度汇总（issue #411 期间化）：报表页传 { from, to }（YYYY-MM-DD 含边界）走期间口径；
+  // 概览页年度趋势仍传年份数字走遗留口径（遗留 year 参数已冻结保留，待概览页另票接入）
+  monthlySummary: (period: ReportPeriodRange | number) =>
+    typeof period === 'number'
+      ? invoke<MonthlySummary[]>('monthly_summary', { year: period, from: null, to: null })
+      : invoke<MonthlySummary[]>('monthly_summary', {
+          year: periodPlaceholderYear(period),
+          from: period.from,
+          to: period.to,
+        }),
+  // 商户消费排行（issue #411 期间化）：报表页按期间查询（遗留 year 冻结不再使用）
+  merchantShares: (period: ReportPeriodRange) =>
+    invoke<MerchantShare[]>('merchant_shares', {
+      year: periodPlaceholderYear(period),
+      from: period.from,
+      to: period.to,
+    }),
+  // 分类份额（issue #411 期间化）：报表页按期间查询（遗留 month/year 冻结不再使用）
+  categoryShares: (kind: string, period: ReportPeriodRange) =>
     invoke<CategoryShare[]>('category_shares', {
       kind,
-      month: filter?.month ?? null,
-      year: filter?.year ?? null,
+      month: null,
+      year: null,
+      from: period.from,
+      to: period.to,
     }),
   budgetProgress: () => invoke<BudgetProgress[]>('budget_progress'),
 

@@ -4,6 +4,14 @@ export interface ReportDateRange {
   max_date: string | null
 }
 
+/** 报表期间过滤（issue #411 / ADR-0057）：YYYY-MM-DD 含边界闭区间。
+ *  三张报表命令的现役 from/to 参数形状；遗留参数（月度汇总/商户排行的 year、
+ *  分类份额的 month+year）已发布冻结保留，前端不再使用。 */
+export interface ReportPeriodRange {
+  from: string
+  to: string
+}
+
 export interface MonthlySummary {
   month: string
   income_cents: number
