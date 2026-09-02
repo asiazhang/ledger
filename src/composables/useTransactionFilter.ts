@@ -8,6 +8,12 @@ import type { TransactionKind } from '@/types'
  * 视图装配时哨兵映射为后端 `uncategorized_only`。 */
 export const UNCATEGORIZED_ONLY = 'none'
 
+/** URL 日期参数格式（issue #380）：YYYY-MM-DD，月/日限定在可能范围内（01-12 / 01-31）；
+ * 非法格式视为参数不在场（回退不过滤）。不校验日历真实性（如 02-30 可通过）：后端按
+ * 字典序比较，此类手工构造的畸形参数得到的是平移的边界而非报错——应用内跳转载荷
+ * 恒为合法自然年边界，该形态仅手工构造 URL 可达。 */
+const DATE_PARAM_PATTERN = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/
+
 /**
  * 交易列表过滤维度（组件状态是过滤的唯一事实源，URL 仅只读初始化入口、不写回）。
  * 字段与 `TransactionListFilter` 请求参数一一对应（见视图 load 装配）。
@@ -78,16 +84,32 @@ const DEFAULT_FILTERS: TransactionFilters = {
  * 让位对每条同规则处理，视图不再感知下钻参数有几个（两条镜像解析链随之消灭），
  * 新增下钻维度只需在此表加一条。
  */
+/** 条目校验规则（判别联合，issue #380）：两类校验互斥，「既无映射又无格式」的非法
+ * 组合在类型层不可表示——「新增下钻维度只需在此表加一条」由类型结构背书。 */
+type UrlParamCheck =
+  /** 参考数据映射校验（商户/分类含软删，历史交易口径 issue #191/#377）：
+   * 保留参数值命中即有效（不查映射，issue #377，分类保留值 none → 仅无分类哨兵）；
+   * 无保留值的维度省略。 */
+  | {
+      readonly mapKey: 'accountMap' | 'merchantMap' | 'categoryMap'
+      readonly reservedValues?: ReadonlyArray<string>
+    }
+  /** 格式校验（issue #380，无参考数据映射的维度）：命中即有效，原样作为过滤字段值；
+   * 不命中回退 null（参数视为不在场）。 */
+  | { readonly pattern: RegExp }
+
+/** URL 下钻参数表条目（issue #234 / ADR-0030 决策 2）：一个维度一条，
+ * query 键 → 过滤字段/校验规则/补丁构造的映射与消费状态。解析、校验、复位、补判、
+ * 让位对每条同规则处理，视图不再感知下钻参数有几个（两条镜像解析链随之消灭），
+ * 新增下钻维度只需在此表加一条。
+ */
 interface UrlParamDef {
-  /** URL query 键（?account= / ?merchant= / ?category=） */
-  readonly queryKey: 'account' | 'merchant' | 'category'
+  /** URL query 键（?account= / ?merchant= / ?category= / ?dateFrom= / ?dateTo=，issue #380） */
+  readonly queryKey: 'account' | 'merchant' | 'category' | 'dateFrom' | 'dateTo'
   /** 接管的过滤维度字段 */
   readonly field: keyof TransactionFilters
-  /** 校验所用的 Reference Data 映射（商户/分类含软删，历史交易口径 issue #191/#377） */
-  readonly mapKey: 'accountMap' | 'merchantMap' | 'categoryMap'
-  /** 保留参数值集合（issue #377）：命中即有效（不查映射），原样作为过滤字段值；
-   * 分类维度的保留值 none → 仅无分类哨兵。无保留值的维度省略。 */
-  readonly reservedValues?: ReadonlyArray<string>
+  /** 校验规则（映射查 id 或格式校验，判别联合） */
+  readonly check: UrlParamCheck
   /** 校验结果 → 过滤补丁 */
   readonly toPatch: (value: string | null) => TransactionFilterPatch
 }
@@ -107,21 +129,34 @@ const URL_PARAM_TABLE: ReadonlyArray<UrlParamDef> = [
   {
     queryKey: 'account',
     field: 'involvingAccountId',
-    mapKey: 'accountMap',
+    check: { mapKey: 'accountMap' },
     toPatch: (value) => ({ involvingAccountId: value }),
   },
   {
     queryKey: 'merchant',
     field: 'merchantId',
-    mapKey: 'merchantMap',
+    check: { mapKey: 'merchantMap' },
     toPatch: (value) => ({ merchantId: value }),
   },
   {
     queryKey: 'category',
     field: 'categoryId',
-    mapKey: 'categoryMap',
-    reservedValues: [UNCATEGORIZED_ONLY],
+    check: { mapKey: 'categoryMap', reservedValues: [UNCATEGORIZED_ONLY] },
     toPatch: (value) => ({ categoryId: value }),
+  },
+  {
+    // 日期边界维度（issue #380）：报表分类下钻跳转载荷「分类 + 所选年份首尾日期」的
+    // 日期部分。无参考数据映射，按格式校验；挂起补判/让位/复位守卫对每条同规则处理。
+    queryKey: 'dateFrom',
+    field: 'dateFrom',
+    check: { pattern: DATE_PARAM_PATTERN },
+    toPatch: (value) => ({ dateFrom: value }),
+  },
+  {
+    queryKey: 'dateTo',
+    field: 'dateTo',
+    check: { pattern: DATE_PARAM_PATTERN },
+    toPatch: (value) => ({ dateTo: value }),
   },
 ]
 
@@ -225,17 +260,17 @@ export function useTransactionFilter(): UseTransactionFilterReturn {
     refreshVersion.value += 1
   }
 
-  /** 条目校验所依赖的参考数据映射（按参数表行的 mapKey 取，无逐维度判别）。 */
-  function paramMap(entry: UrlParamEntry) {
-    return reference[entry.mapKey]
-  }
-
   /** 条目原始参数解析为过滤字段值：保留值命中 → 原样（哨兵即字段值）；
-   * 映射命中 → 原样（分类 id 校验含软删，历史交易口径）；其余（不在场/未知）→ null。 */
+   * 格式校验命中 → 原样（issue #380 日期维度）；映射命中 → 原样（分类 id 校验含软删，
+   * 历史交易口径）；其余（不在场/未知/格式非法）→ null。 */
   function resolveValue(entry: UrlParamEntry): string | null {
     if (entry.raw === null) return null
-    if (entry.reservedValues?.includes(entry.raw)) return entry.raw
-    return paramMap(entry).has(entry.raw) ? entry.raw : null
+    const check = entry.check
+    if ('mapKey' in check) {
+      if (check.reservedValues?.includes(entry.raw)) return entry.raw
+      return reference[check.mapKey].has(entry.raw) ? entry.raw : null
+    }
+    return check.pattern.test(entry.raw) ? entry.raw : null
   }
 
   /** 条目原始参数是否有效（保留值或参考数据映射命中）。 */

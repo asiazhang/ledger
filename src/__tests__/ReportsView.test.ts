@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { NSelect } from 'naive-ui'
 import ReportsView from '@/views/ReportsView.vue'
 import { categoryColor } from '@/utils/category-chart'
+import { UNCATEGORIZED_ONLY } from '@/composables/useTransactionFilter'
 import { invokeHandler, makeCategory } from './factories'
 import type { ReportDateRange } from '@/types'
 
@@ -14,6 +15,10 @@ vi.mock('vue-chartjs', async () => {
   const { BarChartStubWithOptions } = await import('./line-chart-stub')
   return { Bar: BarChartStubWithOptions }
 })
+
+// 跳转下钻（issue #380）：视图经 router.push 跳交易列表，mock 后断言跳转载荷
+const pushMock = vi.fn()
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: pushMock }) }))
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -64,6 +69,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
   baseInvoke()
+  pushMock.mockReset()
 })
 
 async function mountReports() {
@@ -226,7 +232,7 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
     return wrapper.find('[data-testid="category-breadcrumb"]')
   }
 
-  it('点一级柱图内下钻：行集合 = 直挂行 + 二级子分类行，合计 = 父柱金额', async () => {
+  it('点一级柱图内下钻：行集合 = 直挂行 + 二级子分类行，合计 = 父柱金额（不触发跳转）', async () => {
     baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
     const wrapper = await mountReports()
     await clickBar(wrapper, 0) // 餐饮柱（6000 = 直挂 5000 + 零食 1000）
@@ -234,6 +240,8 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
     expect(data.labels).toEqual(['餐饮（直挂）', '零食'])
     expect(data.datasets[0].data).toEqual([5000, 1000])
     expect(data.datasets[0].data.reduce((a: number, b: number) => a + b, 0)).toBe(6000)
+    // 一级柱是图内下钻不是跳转下钻（issue #380 两段式的第一段）
+    expect(pushMock).not.toHaveBeenCalled()
   })
 
   it('下钻态配色沿用同一稳定映射：直挂行同父柱色，二级行同分类色', async () => {
@@ -261,22 +269,70 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
     expect(categoryChartProp('data', wrapper).labels).toEqual(['餐饮', '交通', '未分类'])
   })
 
-  it('未分类柱本票不触发图内下钻（跳转接线归后续票）', async () => {
+  it('未分类柱不进图内下钻，直达「仅无分类」列表：载荷 = 保留值 + 当年首尾日期，无类型字段', async () => {
     baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
     const wrapper = await mountReports()
     await clickBar(wrapper, 2) // 未分类柱
+    expect(pushMock).toHaveBeenCalledTimes(1)
+    expect(pushMock).toHaveBeenCalledWith({
+      name: 'transactions',
+      query: {
+        category: UNCATEGORIZED_ONLY,
+        dateFrom: `${currentYear}-01-01`,
+        dateTo: `${currentYear}-12-31`,
+      },
+    })
+    // 未分类是柱不是层级：图仍在基础态（面包屑不出现）
     expect(breadcrumbOf(wrapper).exists()).toBe(false)
     expect(categoryChartProp('data', wrapper).labels).toEqual(['餐饮', '交通', '未分类'])
   })
 
-  it('下钻态再点柱不变态：二级/直挂行的跳转接线归后续票', async () => {
+  it('下钻态点二级子分类行：跳转该分类精确过滤，载荷带当年首尾日期', async () => {
     baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
     const wrapper = await mountReports()
-    await clickBar(wrapper, 0)
-    const drilled = categoryChartProp('data', wrapper)
+    await clickBar(wrapper, 0) // 下钻餐饮
+    pushMock.mockClear()
     await clickBar(wrapper, 1) // 零食（二级）行
-    expect(categoryChartProp('data', wrapper)).toEqual(drilled)
-    expect(breadcrumbOf(wrapper).exists()).toBe(true)
+    expect(pushMock).toHaveBeenCalledWith({
+      name: 'transactions',
+      query: {
+        category: 'food-snack',
+        dateFrom: `${currentYear}-01-01`,
+        dateTo: `${currentYear}-12-31`,
+      },
+    })
+  })
+
+  it('下钻态点父直挂行：按父分类精确过滤（载荷 category = 父分类 id）', async () => {
+    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    const wrapper = await mountReports()
+    await clickBar(wrapper, 0) // 下钻餐饮
+    pushMock.mockClear()
+    await clickBar(wrapper, 0) // 餐饮（直挂）行
+    expect(pushMock).toHaveBeenCalledWith({
+      name: 'transactions',
+      query: {
+        category: 'food',
+        dateFrom: `${currentYear}-01-01`,
+        dateTo: `${currentYear}-12-31`,
+      },
+    })
+  })
+
+  it('跳转载荷日期边界随所选年份（issue #375 口径联动）', async () => {
+    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    const wrapper = await mountReports()
+    wrapper.findComponent(NSelect).vm.$emit('update:value', currentYear - 6)
+    await flushPromises()
+    await clickBar(wrapper, 2) // 未分类柱
+    expect(pushMock).toHaveBeenCalledWith({
+      name: 'transactions',
+      query: {
+        category: UNCATEGORIZED_ONLY,
+        dateFrom: `${currentYear - 6}-01-01`,
+        dateTo: `${currentYear - 6}-12-31`,
+      },
+    })
   })
 
   it('切换年份复位基础态；下钻态不持久化（localStorage 零写入）', async () => {

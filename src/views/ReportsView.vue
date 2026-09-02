@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { NCard, NSpace, NEmpty, NSpin, NBreadcrumb, NBreadcrumbItem } from 'naive-ui'
 import AppSelect from '@/components/AppSelect.vue'
 import { Bar } from 'vue-chartjs'
@@ -25,12 +26,14 @@ import {
   categoryDrilldownBars,
 } from '@/utils/category-chart'
 import { categoryRoot } from '@/utils/category-tree'
-import { derivePeriodBoundary } from '@/utils/time-period'
+import { UNCATEGORIZED_ONLY } from '@/composables/useTransactionFilter'
+import { derivePeriodBoundary, yearRange } from '@/utils/time-period'
 import MerchantRankingPanel from '@/components/reports/MerchantRankingPanel.vue'
 
 ChartJS.register(Title, Tooltip, Legend, BarElement, CategoryScale, LinearScale)
 
 const reference = useReferenceStore()
+const router = useRouter()
 const year = ref(new Date().getFullYear())
 // 报表年份筛选（issue #267 / #389）：可选范围由前端期间数学单点派生年档闭区间
 // [最早交易年份, max(当前年, 最新交易年份)]，空库回退单当前年；
@@ -146,15 +149,42 @@ const categoryBarsData = computed(() => {
   return categoryBars(shares.value, reference.categories)
 })
 
-/** 点柱下钻分派（issue #379）：仅基础态下、参考数据可解析的一级分类触发；
- *  未分类柱本票不响应（跳转接线归后续票），下钻态内点击不变态。
- *  守卫读已解析的 drilledRoot：下钻分类中途被删时自然回基础态、点击不卡死。 */
+/** 跳转下钻（issue #380）：直达按该分类过滤的交易列表。
+ * 载荷 = 分类（保留值 none = 仅无分类）+ 所选年份首尾日期（自然年边界经期间数学单点
+ * yearRange 派生），刻意不带交易类型参数——退款继承原分类，列表净额与图中柱值一致
+ *（分类下钻词条「跳转载荷与图所见同口径」）。 */
+function goCategoryTransactions(categoryId: string) {
+  const range = yearRange(year.value)
+  router.push({
+    name: 'transactions',
+    query: {
+      category: categoryId,
+      dateFrom: range.from,
+      dateTo: range.to,
+    },
+  })
+}
+
+/** 点柱分派（issue #379 图内下钻 + #380 跳转下钻）：两段式的完整接线。
+ * 基础态：一级分类 → 图内下钻（参考数据可解析守卫：下钻分类中途被删时点击不卡死）；
+ * 未分类柱（id 为 null）→ 直达「仅无分类」列表（未分类无子结构，是柱不是层级）。
+ * 下钻态：二级子分类行与父直挂行都直达该分类列表——直挂行 id 即父分类 id，
+ * 同一载荷构造天然覆盖「按父分类精确过滤」。 */
 function handleCategoryBarClick(_event: unknown, elements: ActiveElement[]) {
-  if (drilledRoot.value) return
   const bar = categoryBarsData.value[elements[0]?.index ?? -1]
-  if (!bar?.id) return
-  if (!categoryRoot(reference.categories, bar.id)) return
-  drilledRootId.value = bar.id
+  if (!bar) return
+  if (!drilledRoot.value) {
+    if (!bar.id) {
+      goCategoryTransactions(UNCATEGORIZED_ONLY)
+      return
+    }
+    if (!categoryRoot(reference.categories, bar.id)) return
+    drilledRootId.value = bar.id
+    return
+  }
+  // 下钻行 id 非空由下钻纯函数保证（CategoryBar.id 类型联合故此处收窄）
+  if (!bar.id) return
+  goCategoryTransactions(bar.id)
 }
 
 const categoryChartData = computed(() => ({
