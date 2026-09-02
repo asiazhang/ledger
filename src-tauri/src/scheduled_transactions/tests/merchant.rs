@@ -22,9 +22,9 @@ fn insert_merchant(conn: &Connection, name: &str) -> String {
     id
 }
 
-/// 软删商户（走 delete_merchant_internal 命令体）。
+/// 软删商户（走商户域接缝）。
 fn soft_delete_merchant(conn: &Connection, id: &str) {
-    crate::commands::merchants::delete_merchant_internal(conn, id).unwrap();
+    crate::merchants::delete_merchant(conn, id).unwrap();
 }
 
 /// 创建带商户的订阅计划，返回计划 id。

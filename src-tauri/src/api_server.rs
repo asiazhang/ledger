@@ -528,9 +528,7 @@ async fn list_merchants_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
 ) -> Result<Json<Vec<Merchant>>, AppError> {
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    Ok(Json(crate::commands::list_merchants_internal(
-        &conn, false,
-    )?))
+    Ok(Json(crate::merchants::list_merchants(&conn, false)?))
 }
 
 /// 标的搜索查询参数（`GET /api/v1/instruments`，issue #294 / ADR-0037）。

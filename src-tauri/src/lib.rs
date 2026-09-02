@@ -7,6 +7,7 @@ pub mod error;
 pub mod events;
 pub mod item;
 pub mod logger;
+pub mod merchants;
 pub mod models;
 pub mod policy;
 pub mod scheduled_transactions;

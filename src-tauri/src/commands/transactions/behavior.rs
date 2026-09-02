@@ -340,7 +340,7 @@ fn plan_with_existing_refs(
                         ));
                     }
                     (Some(name), None) => {
-                        match crate::commands::merchants::find_merchant_by_name(conn, name)? {
+                        match crate::merchants::find_merchant_by_name(conn, name)? {
                             // 命中复用：以已有 id 参与行内校验。
                             Some(id) => (Some(id), None),
                             // 未命中：先过行内校验，通过后再即建（不残留碎商户）。
@@ -371,9 +371,7 @@ fn plan_with_existing_refs(
             // 行内校验全部通过后才即建商户：未命中名字在此落定（失败行不产生碎商户）；
             // 「即建」事实作为证据外传（ADR-0044 决策 4，壳层据此发参考失效信号）。
             let merchant_created = if let Some(name) = pending_name {
-                norm.merchant_id = Some(crate::commands::merchants::create_merchant_by_name(
-                    conn, &name,
-                )?);
+                norm.merchant_id = Some(crate::merchants::create_merchant_by_name(conn, &name)?);
                 true
             } else {
                 false

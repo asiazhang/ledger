@@ -2,7 +2,7 @@
 //!
 //! 商户是参考数据字典（与分类/账户同款模式）：`name` 在用行全库唯一、
 //! 软删除；交易以 `merchant_id` 引用（见核心交易域 Transaction），
-//! 改名/软删经命令面收敛（见 `commands::merchants`）。
+//! 改名/软删经商户域收敛（见 `crate::merchants`）。
 //! 商户回归「名字字典」：`icon` / `color` 已退役（issue #223）。
 
 use serde::{Deserialize, Serialize};

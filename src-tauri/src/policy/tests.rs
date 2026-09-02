@@ -3,8 +3,8 @@
 
 use rusqlite::Connection;
 
-use crate::commands::merchants::create_merchant_internal;
 use crate::db::{init_db, open_in_memory};
+use crate::merchants::create_merchant;
 use crate::models::{MerchantInput, PolicyInput};
 use crate::policy::{create_policy, delete_policy, list_policies, update_policy};
 
@@ -28,7 +28,7 @@ fn input(merchant_id: &str) -> PolicyInput {
 }
 
 fn seed_merchant(conn: &Connection, name: &str) -> String {
-    create_merchant_internal(conn, MerchantInput { name: name.into() }).expect("创建商户失败")
+    create_merchant(conn, MerchantInput { name: name.into() }).expect("创建商户失败")
 }
 
 fn create_ok(conn: &Connection, input: PolicyInput) -> String {
@@ -160,7 +160,7 @@ fn 编辑时保司未变_软删保司维持历史引用可继续编辑() {
     let merchant_id = seed_merchant(&conn, "平安保险");
     let id = create_ok(&conn, input(&merchant_id));
     // 建档后保司被软删：未换保司的编辑 = 维持历史引用（同 Writer 接缝语义）
-    crate::commands::merchants::delete_merchant_internal(&conn, &merchant_id).unwrap();
+    crate::merchants::delete_merchant(&conn, &merchant_id).unwrap();
     let mut keep_input = input(&merchant_id);
     keep_input.product_name = "医疗险".into();
     update_policy(&conn, &id, keep_input, &mut || {}).unwrap();
@@ -168,7 +168,7 @@ fn 编辑时保司未变_软删保司维持历史引用可继续编辑() {
 
     // 换成另一个软删商户 = 新档案选择，仍被拒
     let merchant2 = seed_merchant(&conn, "已退保保司");
-    crate::commands::merchants::delete_merchant_internal(&conn, &merchant2).unwrap();
+    crate::merchants::delete_merchant(&conn, &merchant2).unwrap();
     let mut switch_input = input(&merchant2);
     switch_input.product_name = "医疗险".into();
     let err = update_policy(&conn, &id, switch_input, &mut || {}).unwrap_err();
@@ -255,7 +255,7 @@ fn 建档校验各分支() {
 fn 软删商户不可再被新档案选择() {
     let conn = conn();
     let merchant_id = seed_merchant(&conn, "已退保保司");
-    crate::commands::merchants::delete_merchant_internal(&conn, &merchant_id).unwrap();
+    crate::merchants::delete_merchant(&conn, &merchant_id).unwrap();
     let err = create_policy(&conn, input(&merchant_id), &mut || {}).unwrap_err();
     assert!(err.to_string().contains("保险公司不存在或已删除"));
 }

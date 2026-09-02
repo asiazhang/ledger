@@ -1,10 +1,10 @@
-//! 商户字典命令核心逻辑测试（issue #188 / ADR-0028）。
+//! 商户字典域测试（issue #188 / ADR-0028）。
 
-use crate::commands::merchants::{
-    create_merchant_by_name, create_merchant_internal, delete_merchant_internal,
-    find_merchant_by_name, list_merchants_internal, update_merchant_internal,
-};
 use crate::error::{AppError, ErrClass};
+use crate::merchants::{
+    create_merchant, create_merchant_by_name, delete_merchant, find_merchant_by_name,
+    list_merchants as list_merchants_domain, update_merchant,
+};
 use crate::models::{Merchant, MerchantInput, MerchantUpdateInput};
 
 fn setup() -> rusqlite::Connection {
@@ -14,7 +14,7 @@ fn setup() -> rusqlite::Connection {
 }
 
 fn list_merchants(conn: &rusqlite::Connection) -> Vec<Merchant> {
-    list_merchants_internal(conn, false).unwrap()
+    list_merchants_domain(conn, false).unwrap()
 }
 
 #[test]
@@ -27,14 +27,14 @@ fn list_merchants_starts_empty() {
 #[test]
 fn create_merchant_returns_id_and_lists_sorted_by_name() {
     let conn = setup();
-    let id_b = create_merchant_internal(
+    let id_b = create_merchant(
         &conn,
         MerchantInput {
             name: "拼多多".into(),
         },
     )
     .unwrap();
-    let id_a = create_merchant_internal(
+    let id_a = create_merchant(
         &conn,
         MerchantInput {
             name: "京东".into(),
@@ -55,14 +55,14 @@ fn create_merchant_returns_id_and_lists_sorted_by_name() {
 #[test]
 fn create_merchant_duplicate_name_rejected() {
     let conn = setup();
-    create_merchant_internal(
+    create_merchant(
         &conn,
         MerchantInput {
             name: "京东".into(),
         },
     )
     .unwrap();
-    let err = create_merchant_internal(
+    let err = create_merchant(
         &conn,
         MerchantInput {
             name: "京东".into(),
@@ -75,14 +75,14 @@ fn create_merchant_duplicate_name_rejected() {
 #[test]
 fn update_merchant_renames() {
     let conn = setup();
-    let id = create_merchant_internal(
+    let id = create_merchant(
         &conn,
         MerchantInput {
             name: "京东".into(),
         },
     )
     .unwrap();
-    update_merchant_internal(
+    update_merchant(
         &conn,
         &id,
         MerchantUpdateInput {
@@ -100,21 +100,21 @@ fn update_merchant_renames() {
 #[test]
 fn update_merchant_rename_to_taken_name_rejected() {
     let conn = setup();
-    create_merchant_internal(
+    create_merchant(
         &conn,
         MerchantInput {
             name: "京东".into(),
         },
     )
     .unwrap();
-    let id = create_merchant_internal(
+    let id = create_merchant(
         &conn,
         MerchantInput {
             name: "拼多多".into(),
         },
     )
     .unwrap();
-    let err = update_merchant_internal(
+    let err = update_merchant(
         &conn,
         &id,
         MerchantUpdateInput {
@@ -128,7 +128,7 @@ fn update_merchant_rename_to_taken_name_rejected() {
 #[test]
 fn update_merchant_missing_is_not_found() {
     let conn = setup();
-    let err = update_merchant_internal(
+    let err = update_merchant(
         &conn,
         "no-such-id",
         MerchantUpdateInput {
@@ -148,14 +148,14 @@ fn update_merchant_missing_is_not_found() {
 #[test]
 fn delete_merchant_soft_deletes_and_hides_from_list() {
     let conn = setup();
-    let id = create_merchant_internal(
+    let id = create_merchant(
         &conn,
         MerchantInput {
             name: "京东".into(),
         },
     )
     .unwrap();
-    delete_merchant_internal(&conn, &id).unwrap();
+    delete_merchant(&conn, &id).unwrap();
     // 列表不再包含（软删商户不可再被新交易选择）。
     assert!(list_merchants(&conn).is_empty());
 
@@ -174,7 +174,7 @@ fn delete_merchant_soft_deletes_and_hides_from_list() {
 #[test]
 fn delete_merchant_missing_is_not_found() {
     let conn = setup();
-    let err = delete_merchant_internal(&conn, "no-such-id").unwrap_err();
+    let err = delete_merchant(&conn, "no-such-id").unwrap_err();
     assert!(matches!(
         err,
         AppError::Coded {
@@ -189,15 +189,15 @@ fn delete_merchant_missing_is_not_found() {
 #[test]
 fn recreate_same_name_after_soft_delete() {
     let conn = setup();
-    let id = create_merchant_internal(
+    let id = create_merchant(
         &conn,
         MerchantInput {
             name: "京东".into(),
         },
     )
     .unwrap();
-    delete_merchant_internal(&conn, &id).unwrap();
-    let new_id = create_merchant_internal(
+    delete_merchant(&conn, &id).unwrap();
+    let new_id = create_merchant(
         &conn,
         MerchantInput {
             name: "京东".into(),
@@ -265,14 +265,14 @@ fn create_merchant_by_name_blank_is_invalid() {
 #[test]
 fn create_merchant_by_name_ignores_soft_deleted() {
     let conn = setup();
-    let old_id = create_merchant_internal(
+    let old_id = create_merchant(
         &conn,
         MerchantInput {
             name: "京东".into(),
         },
     )
     .unwrap();
-    delete_merchant_internal(&conn, &old_id).unwrap();
+    delete_merchant(&conn, &old_id).unwrap();
     let new_id = create_merchant_by_name(&conn, "京东").unwrap();
     assert_ne!(new_id, old_id);
 }
@@ -282,7 +282,7 @@ fn create_merchant_by_name_ignores_soft_deleted() {
 #[test]
 fn merchant_json_contract_has_no_icon_or_color() {
     let conn = setup();
-    create_merchant_internal(
+    create_merchant(
         &conn,
         MerchantInput {
             name: "京东".into(),

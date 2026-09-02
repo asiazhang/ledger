@@ -1,12 +1,12 @@
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::commands::merchants::{
-    create_merchant_internal, delete_merchant_internal, list_merchants_internal,
-    update_merchant_internal,
-};
 use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::error::{AppError, ErrClass};
+use tauri_app_lib::merchants::{
+    create_merchant as create_merchant_domain, delete_merchant as delete_merchant_domain,
+    list_merchants as list_merchants_domain, update_merchant as update_merchant_domain,
+};
 use tauri_app_lib::models::{MerchantInput, MerchantUpdateInput, TransactionInput};
 use tauri_app_lib::transaction::amount::TransactionKind;
 
@@ -19,7 +19,7 @@ use crate::world::LedgerWorld;
 
 #[given(expr = "存在商户 {string}")]
 fn given_merchant(world: &mut LedgerWorld, name: String) {
-    let id = create_merchant_internal(&world_conn!(world), MerchantInput { name: name.clone() })
+    let id = create_merchant_domain(&world_conn!(world), MerchantInput { name: name.clone() })
         .expect("创建商户失败");
     world.merchant_name_to_id.insert(name, id);
 }
@@ -34,7 +34,7 @@ fn given_merchant(world: &mut LedgerWorld, name: String) {
 fn create_merchant(world: &mut LedgerWorld, name: String) {
     let id = world
         .db
-        .write(|conn| create_merchant_internal(conn, MerchantInput { name: name.clone() }))
+        .write(|conn| create_merchant_domain(conn, MerchantInput { name: name.clone() }))
         .expect("创建商户失败");
     world.merchant_name_to_id.insert(name, id);
 }
@@ -42,7 +42,7 @@ fn create_merchant(world: &mut LedgerWorld, name: String) {
 /// 尝试创建商户并捕获错误（供「应返回错误」断言）。
 #[when(expr = "尝试创建商户 {string}")]
 fn try_create_merchant(world: &mut LedgerWorld, name: String) {
-    let result = create_merchant_internal(&world_conn!(world), MerchantInput { name });
+    let result = create_merchant_domain(&world_conn!(world), MerchantInput { name });
     world.last_error = match result {
         Err(AppError::Coded {
             class: ErrClass::Invalid,
@@ -58,7 +58,7 @@ fn try_create_merchant(world: &mut LedgerWorld, name: String) {
 #[when(expr = "修改商户 {string} 名称为 {string}")]
 fn rename_merchant(world: &mut LedgerWorld, old_name: String, new_name: String) {
     let id = world.merchant_id(&old_name);
-    update_merchant_internal(
+    update_merchant_domain(
         &world_conn!(world),
         &id,
         MerchantUpdateInput {
@@ -74,7 +74,7 @@ fn rename_merchant(world: &mut LedgerWorld, old_name: String, new_name: String) 
 #[when(expr = "尝试修改商户 {string} 名称为 {string}")]
 fn try_rename_merchant(world: &mut LedgerWorld, old_name: String, new_name: String) {
     let id = world.merchant_id(&old_name);
-    let result = update_merchant_internal(
+    let result = update_merchant_domain(
         &world_conn!(world),
         &id,
         MerchantUpdateInput {
@@ -98,7 +98,7 @@ fn try_rename_merchant(world: &mut LedgerWorld, old_name: String, new_name: Stri
 #[when(expr = "软删商户 {string}")]
 fn delete_merchant(world: &mut LedgerWorld, name: String) {
     let id = world.merchant_id(&name);
-    delete_merchant_internal(&world_conn!(world), &id).expect("软删商户失败");
+    delete_merchant_domain(&world_conn!(world), &id).expect("软删商户失败");
 }
 
 /// 创建带商户的交易（expense/income/refund 可携带）。
@@ -236,7 +236,7 @@ fn check_schema_in_place(world: &mut LedgerWorld) {
 
 #[then(expr = "商户列表应包含 {int} 条记录")]
 fn check_merchant_count(world: &mut LedgerWorld, expected: i64) {
-    let merchants = list_merchants_internal(&world_conn!(world), false).expect("查询商户失败");
+    let merchants = list_merchants_domain(&world_conn!(world), false).expect("查询商户失败");
     assert_eq!(
         merchants.len() as i64,
         expected,
@@ -246,7 +246,7 @@ fn check_merchant_count(world: &mut LedgerWorld, expected: i64) {
 
 #[then(expr = "商户列表应包含 {string}")]
 fn check_merchant_contains(world: &mut LedgerWorld, name: String) {
-    let merchants = list_merchants_internal(&world_conn!(world), false).expect("查询商户失败");
+    let merchants = list_merchants_domain(&world_conn!(world), false).expect("查询商户失败");
     assert!(
         merchants.iter().any(|m| m.name == name),
         "商户列表应包含 '{name}'，实际: {:?}",
@@ -259,7 +259,7 @@ fn check_merchant_contains(world: &mut LedgerWorld, name: String) {
 
 #[then(expr = "商户列表应不包含 {string}")]
 fn check_merchant_not_contains(world: &mut LedgerWorld, name: String) {
-    let merchants = list_merchants_internal(&world_conn!(world), false).expect("查询商户失败");
+    let merchants = list_merchants_domain(&world_conn!(world), false).expect("查询商户失败");
     assert!(
         !merchants.iter().any(|m| m.name == name),
         "商户列表不应包含 '{name}'"
@@ -270,7 +270,7 @@ fn check_merchant_not_contains(world: &mut LedgerWorld, name: String) {
 /// （icon/color 已退役；请求侧结构体无对应字段由编译期保证）。
 #[then(expr = "商户列表响应 JSON 不含字段 {string}")]
 fn check_merchant_json_not_contain_field(world: &mut LedgerWorld, field: String) {
-    let merchants = list_merchants_internal(&world_conn!(world), false).expect("查询商户失败");
+    let merchants = list_merchants_domain(&world_conn!(world), false).expect("查询商户失败");
     assert!(!merchants.is_empty(), "商户列表为空，无法校验响应字段契约");
     for m in &merchants {
         let json = serde_json::to_value(m).expect("商户序列化失败");
@@ -286,14 +286,14 @@ fn check_merchant_json_not_contain_field(world: &mut LedgerWorld, field: String)
 #[then(expr = "商户含软删列表应包含 {int} 条记录")]
 fn check_merchant_all_count(world: &mut LedgerWorld, expected: i64) {
     let merchants =
-        list_merchants_internal(&world_conn!(world), true).expect("查询含软删商户列表失败");
+        list_merchants_domain(&world_conn!(world), true).expect("查询含软删商户列表失败");
     assert_eq!(merchants.len() as i64, expected, "含软删商户列表数量不匹配");
 }
 
 #[then(expr = "商户含软删列表应包含 {string}")]
 fn check_merchant_all_contains(world: &mut LedgerWorld, name: String) {
     let merchants =
-        list_merchants_internal(&world_conn!(world), true).expect("查询含软删商户列表失败");
+        list_merchants_domain(&world_conn!(world), true).expect("查询含软删商户列表失败");
     assert!(
         merchants.iter().any(|m| m.name == name),
         "含软删商户列表应包含 '{name}'"
