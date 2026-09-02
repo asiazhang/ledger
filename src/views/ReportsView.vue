@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { NCard, NSpace, NEmpty, NSpin } from 'naive-ui'
+import { NCard, NSpace, NEmpty, NSpin, NBreadcrumb, NBreadcrumbItem } from 'naive-ui'
 import AppSelect from '@/components/AppSelect.vue'
 import { Bar } from 'vue-chartjs'
 import {
@@ -12,13 +12,19 @@ import {
   CategoryScale,
   LinearScale,
 } from 'chart.js'
-import type { Chart, ChartOptions, TooltipItem } from 'chart.js'
+import type { ActiveElement, Chart, ChartOptions, TooltipItem } from 'chart.js'
 import { api } from '@/api'
 import { t } from '@/i18n'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount } from '@/types'
 import type { CategoryShare, MerchantShare, MonthlySummary, ReportDateRange } from '@/types'
-import { barEndLabel, categoryBarTotal, categoryBars } from '@/utils/category-chart'
+import {
+  barEndLabel,
+  categoryBarTotal,
+  categoryBars,
+  categoryDrilldownBars,
+} from '@/utils/category-chart'
+import { categoryRoot } from '@/utils/category-tree'
 import { derivePeriodBoundary } from '@/utils/time-period'
 import MerchantRankingPanel from '@/components/reports/MerchantRankingPanel.vue'
 
@@ -43,6 +49,9 @@ const monthly = ref<MonthlySummary[]>([])
 const shares = ref<CategoryShare[]>([])
 const merchantShares = ref<MerchantShare[]>([])
 const loading = ref(false)
+// 图内下钻态（issue #379）：当前下钻的一级分类 id，null = 基础态；
+// 视图内瞬时状态，不持久化（与 ViewState 边界一致），年份切换复位。
+const drilledRootId = ref<string | null>(null)
 
 async function refresh() {
   loading.value = true
@@ -63,7 +72,12 @@ async function refresh() {
   }
 }
 
-watch(year, refresh)
+watch(year, () => {
+  // 年份切换复位下钻（issue #379）：下钻是视图内瞬时状态，
+  // 停留在新年份无数据的悬停下钻态只会迷惑，回基础态重看全貌
+  drilledRootId.value = null
+  refresh()
+})
 
 const barChartData = computed(() => ({
   labels: monthly.value.map((m) => m.month),
@@ -109,9 +123,39 @@ const barChartOptions: ChartOptions<'bar'> = {
   },
 }
 
-// 支出分类构成（issue #378）：横向柱状图基础态。一级归并 + 未分类柱、净额降序、
+// 支出分类构成（issue #378）：横向柱状图。一级归并 + 未分类柱、净额降序、
 // 按 id 稳定配色、未分类灰——数据形态收口在 category-chart 纯函数，此处只消费。
-const categoryBarsData = computed(() => categoryBars(shares.value, reference.categories))
+// 图内下钻（issue #379）：点一级柱（未分类除外）切到该分类的二级构成
+// （二级子分类 + 直挂行）。
+const drilledRoot = computed(() =>
+  drilledRootId.value
+    ? (reference.categories.find((c) => c.id === drilledRootId.value) ?? null)
+    : null,
+)
+
+const categoryBarsData = computed(() => {
+  const root = drilledRoot.value
+  if (root) {
+    return categoryDrilldownBars(
+      shares.value,
+      reference.categories,
+      root.id,
+      t('reports.category.direct', { name: root.name }),
+    )
+  }
+  return categoryBars(shares.value, reference.categories)
+})
+
+/** 点柱下钻分派（issue #379）：仅基础态下、参考数据可解析的一级分类触发；
+ *  未分类柱本票不响应（跳转接线归后续票），下钻态内点击不变态。
+ *  守卫读已解析的 drilledRoot：下钻分类中途被删时自然回基础态、点击不卡死。 */
+function handleCategoryBarClick(_event: unknown, elements: ActiveElement[]) {
+  if (drilledRoot.value) return
+  const bar = categoryBarsData.value[elements[0]?.index ?? -1]
+  if (!bar?.id) return
+  if (!categoryRoot(reference.categories, bar.id)) return
+  drilledRootId.value = bar.id
+}
 
 const categoryChartData = computed(() => ({
   labels: categoryBarsData.value.map((b) => b.name),
@@ -162,6 +206,7 @@ const categoryChartOptions: ChartOptions<'bar'> = {
   maintainAspectRatio: false,
   // 两端留白容柱尾标签（x 轴 grace 把最大/最小值两端各拓 30%）
   layout: { padding: { left: 4, right: 8 } },
+  onClick: handleCategoryBarClick,
   plugins: {
     legend: { display: false },
     tooltip: {
@@ -212,7 +257,21 @@ onMounted(() => {
           <Bar :data="barChartData" :options="barChartOptions" />
         </div>
       </NCard>
-      <NCard :title="t('reports.category.title')" size="small">
+      <NCard size="small">
+        <template #header>
+          <div class="category-card-header">
+            <span>{{ t('reports.category.title') }}</span>
+            <!-- 面包屑（issue #379）：下钻态显示当前位置，点根返回基础态 -->
+            <NBreadcrumb v-if="drilledRoot" data-testid="category-breadcrumb" separator="›">
+              <NBreadcrumbItem @click="drilledRootId = null">
+                <span data-testid="breadcrumb-root">{{ t('reports.category.all') }}</span>
+              </NBreadcrumbItem>
+              <NBreadcrumbItem>
+                <span data-testid="breadcrumb-current">{{ drilledRoot.name }}</span>
+              </NBreadcrumbItem>
+            </NBreadcrumb>
+          </div>
+        </template>
         <NEmpty v-if="categoryBarsData.length === 0" :description="t('reports.category.empty')" />
         <div
           v-else
@@ -236,3 +295,12 @@ onMounted(() => {
     </NSpace>
   </NSpin>
 </template>
+
+<style scoped>
+/* 分类卡头部：标题与下钻面包屑同行（issue #379） */
+.category-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+</style>

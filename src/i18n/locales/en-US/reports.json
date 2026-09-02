@@ -9,7 +9,9 @@
   },
   "category": {
     "title": "Expense by Category",
-    "empty": "No expense data"
+    "empty": "No expense data",
+    "all": "All Categories",
+    "direct": "{name} (direct)"
   },
   "merchant": {
     "title": "Merchant Ranking",

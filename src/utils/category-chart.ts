@@ -39,6 +39,15 @@ export interface CategoryBar {
   color: string
 }
 
+/** 归并结果收口：净额降序（负值沉底）+ 按 id 配色（未分类固定灰） */
+function toBars(
+  entries: Iterable<{ id: string | null; name: string; value: number }>,
+): CategoryBar[] {
+  return Array.from(entries)
+    .sort((a, b) => b.value - a.value)
+    .map((e) => ({ ...e, color: e.id === null ? UNCATEGORIZED_COLOR : categoryColor(e.id) }))
+}
+
 /**
  * 图行构建（基础态）：叶子份额按 `categoryRoot` 归并到一级根分类、未分类单列一柱；
  * 净额降序（负值沉底，同额保持后端序）；净额 0 的分类不进图。
@@ -55,9 +64,35 @@ export function categoryBars(shares: CategoryShare[], categories: Category[]): C
     if (exist) exist.value += s.amount_cents
     else merged.set(id, { id, name, value: s.amount_cents })
   }
-  return Array.from(merged.values())
-    .sort((a, b) => b.value - a.value)
-    .map((e) => ({ ...e, color: e.id === null ? UNCATEGORIZED_COLOR : categoryColor(e.id) }))
+  return toBars(merged.values())
+}
+
+/**
+ * 图行构建（图内下钻态，issue #379）：某一级分类的二级构成——
+ * 二级子分类行 + 该一级自身直挂行（交易表单不限定叶子，直挂行补齐口径），
+ * 各柱合计恒等于父柱金额；净额降序（负值沉底）、净额 0 的行不进图。
+ * 直挂行沿用父分类 id（配色同父柱，同分类同色），名称由调用方传入
+ * （本地化「直挂」标记，纯函数不接 i18n）；参考数据根链断裂的行不进任何下钻。
+ */
+export function categoryDrilldownBars(
+  shares: CategoryShare[],
+  categories: Category[],
+  rootId: string,
+  directName: string,
+): CategoryBar[] {
+  const merged = new Map<string, { id: string; name: string; value: number }>()
+  for (const s of shares) {
+    if (s.amount_cents === 0) continue
+    const root = s.category_id ? categoryRoot(categories, s.category_id) : undefined
+    if (root?.id !== rootId) continue
+    const direct = s.category_id === rootId
+    const id = direct ? rootId : (s.category_id as string)
+    const name = direct ? directName : (categories.find((c) => c.id === id)?.name ?? s.category_name)
+    const exist = merged.get(id)
+    if (exist) exist.value += s.amount_cents
+    else merged.set(id, { id, name, value: s.amount_cents })
+  }
+  return toBars(merged.values())
 }
 
 /** 全部一级柱净额合计（柱尾占比的分母）：代数和，负柱如实冲减 */
