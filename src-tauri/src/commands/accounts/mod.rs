@@ -98,5 +98,5 @@ pub fn adjust_account_balance(
 #[tauri::command]
 pub fn list_account_balances(db: State<'_, DbState>) -> Result<Vec<AccountBalance>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    core::list_account_balances_with_visibility(&conn, false)
+    crate::db::balance::list_account_balances_with_visibility(&conn, false)
 }

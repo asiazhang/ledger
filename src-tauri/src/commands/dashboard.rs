@@ -43,7 +43,7 @@ impl FromRow for HoldingValue {
 pub fn query_dashboard_overview(conn: &Connection) -> Result<DashboardOverview> {
     // 非投资账户余额合计：余额口径与账户列表一致（account_flow，排除隐藏/黑洞）。
     let mut accounts_sum = 0i64;
-    for ab in crate::commands::accounts::core::list_account_balances_with_visibility(conn, false)? {
+    for ab in crate::db::balance::list_account_balances_with_visibility(conn, false)? {
         if ab.account.kind == AccountType::Investment {
             continue;
         }

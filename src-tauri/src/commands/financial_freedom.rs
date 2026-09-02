@@ -54,7 +54,7 @@ pub fn query_financial_freedom(conn: &Connection) -> Result<FinancialFreedomOver
     // 分子·投资账户现金：余额口径与账户列表一致（account_flow，排除隐藏/黑洞），
     // 仅取投资账户——未投入的现金不被持仓市值体现，漏算会低估可投资资产。
     let mut cash_sum = 0i64;
-    for ab in crate::commands::accounts::core::list_account_balances_with_visibility(conn, false)? {
+    for ab in crate::db::balance::list_account_balances_with_visibility(conn, false)? {
         if ab.account.kind == AccountType::Investment {
             cash_sum +=
                 amount::convert_to_native(conn, ab.balance_cents, &ab.account.currency_code)?;

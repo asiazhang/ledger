@@ -18,29 +18,13 @@ use crate::models::{
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::create_transaction_internal;
 
-fn list_accounts_with_visibility(conn: &Connection, include_hidden: bool) -> Result<Vec<Account>> {
-    let where_clause = if include_hidden {
-        "is_deleted=0"
-    } else {
-        "is_deleted=0 AND is_hidden=0"
-    };
-    query_all(
-        conn,
-        &format!(
-            "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden \
-             FROM accounts WHERE {where_clause} ORDER BY created_at"
-        ),
-        [],
-    )
-}
-
 pub fn list_accounts_internal(conn: &Connection) -> Result<Vec<Account>> {
-    list_accounts_with_visibility(conn, false)
+    crate::db::balance::list_accounts_with_visibility(conn, false)
 }
 
 /// AI 侧完整账户列表：不过滤 `is_hidden`，返回含 `is_hidden` 字段的完整列表。
 pub fn list_accounts_for_api_internal(conn: &Connection) -> Result<Vec<Account>> {
-    list_accounts_with_visibility(conn, true)
+    crate::db::balance::list_accounts_with_visibility(conn, true)
 }
 
 pub fn create_account_internal(conn: &Connection, input: AccountInput) -> Result<String> {
@@ -321,27 +305,7 @@ pub fn adjust_account_balance_internal(
     }
 }
 
-/// 账户余额清单（conn 级）：`include_hidden` 为 true 时含黑洞账户。
-/// `pub(crate)` 供 dashboard 净资产聚合复用同一口径（issue #142）。
-pub(crate) fn list_account_balances_with_visibility(
-    conn: &Connection,
-    include_hidden: bool,
-) -> Result<Vec<AccountBalance>> {
-    let accounts = list_accounts_with_visibility(conn, include_hidden)?;
-    let balances = crate::db::balance::compute_all_balances_with_visibility(conn, include_hidden)?;
-    Ok(accounts
-        .into_iter()
-        .map(|a| {
-            let balance_cents = balances.get(&a.id).copied().unwrap_or(0);
-            AccountBalance {
-                balance_cents,
-                account: a,
-            }
-        })
-        .collect())
-}
-
 /// AI 侧余额清单：含黑洞账户。
 pub fn list_account_balances_for_api_internal(conn: &Connection) -> Result<Vec<AccountBalance>> {
-    list_account_balances_with_visibility(conn, true)
+    crate::db::balance::list_account_balances_with_visibility(conn, true)
 }
