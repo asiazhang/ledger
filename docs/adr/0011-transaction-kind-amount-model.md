@@ -64,7 +64,7 @@
 ## 影响
 
 - `transaction` 领域模块：`src-tauri/src/transaction/{mod,amount,writer}.rs`（+ 各自测试）。
-- 消费方接线：余额（`db/balance.rs` 走 `account_flow_expr`）、报表（`commands/reports` 走毛值三列 + `expense_net`/`income_net`）、预算（`commands/budget` 走 `expense_net`）、定时引擎（`scheduled_transactions/engine` 改经 `writer::normalize` 落库）、批量导入（`commands/batch` 编排 + writer 落库）、创建/修改/买入卖出行（`commands/transactions`/`commands/investment`）。
+- 消费方接线：余额（`db/balance.rs` 走 `account_flow_expr`）、报表（`commands/reports` 走毛值三列 + `expense_net`/`income_net`）、预算（`budget` 域走 `expense_net`）、定时引擎（`scheduled_transactions/engine` 改经 `writer::normalize` 落库）、批量导入（`commands/batch` 编排 + writer 落库）、创建/修改/买入卖出行（`commands/transactions`/`commands/investment`）。
 - 删除：命令层旧 `normalize_transaction`/`row_to_normalized`（#61）、`commands::fx::exchange_rate`/`convert_to_native`（#60）、`read.rs::update_transaction_row`（#60）。
 - 文档同步：`AGENTS.md` 修正 `transactions.kind` 为 8 种并指向模块接缝；`CONTEXT.md` 补充 Transaction Kind Mapping（8 种 + 度量矩阵）与 Amount Model（raw/native + 四度量）。
 - 无 schema 变更、无迁移（V001 的 CHECK 约束本就含 8 种 kind）。

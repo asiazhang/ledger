@@ -5,9 +5,7 @@
 use chrono::NaiveDate;
 use rusqlite::Connection;
 
-use crate::commands::budget::{
-    budget_progress_rows, create_budget_internal, update_budget_internal,
-};
+use crate::budget::{budget_progress_rows, create_budget, list_budgets, update_budget};
 use crate::db::{device_id, now_iso};
 use crate::error::{AppError, ErrClass};
 use crate::models::{BudgetInput, BudgetPeriod};
@@ -165,12 +163,7 @@ fn all_kinds_fixture(category_id: &str) -> Vec<TxRow> {
 #[test]
 fn list_budgets_empty_initially() {
     let conn = setup();
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM budgets WHERE is_deleted=0", [], |r| {
-            r.get(0)
-        })
-        .unwrap();
-    assert_eq!(count, 0);
+    assert!(list_budgets(&conn).unwrap().is_empty());
 }
 
 #[test]
@@ -178,12 +171,9 @@ fn create_budget_and_list() {
     let conn = setup();
     let cat_id = first_expense_category_id(&conn);
     insert_budget(&conn, "budget-1", &cat_id, "monthly", 50000, "2026-07-01");
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM budgets WHERE is_deleted=0", [], |r| {
-            r.get(0)
-        })
-        .unwrap();
-    assert_eq!(count, 1);
+    let budgets = list_budgets(&conn).unwrap();
+    assert_eq!(budgets.len(), 1);
+    assert_eq!(budgets[0].id, "budget-1");
 }
 
 #[test]
@@ -210,7 +200,7 @@ fn delete_budget_soft_deletes() {
     );
 }
 
-// ---- create_budget_internal：写入校验与同分类同周期查重（issue #183） ----
+// ---- create_budget：写入校验与同分类同周期查重（issue #183） ----
 
 fn budget_input(category_id: &str, period: Option<BudgetPeriod>, amount_cents: i64) -> BudgetInput {
     BudgetInput {
@@ -241,7 +231,7 @@ fn create_budget_rejects_non_positive_amount() {
     let conn = setup();
     let cat_id = first_expense_category_id(&conn);
     for amount in [0, -100] {
-        let err = create_budget_internal(&conn, &budget_input(&cat_id, None, amount)).unwrap_err();
+        let err = create_budget(&conn, &budget_input(&cat_id, None, amount)).unwrap_err();
         assert!(
             matches!(err, AppError::Coded { ref message, .. } if message.contains("预算金额必须为正数")),
             "金额 {amount} 应被拒绝: {err:?}"
@@ -255,7 +245,7 @@ fn create_budget_rejects_non_positive_amount() {
 fn create_budget_rejects_income_category() {
     let conn = setup();
     let cat_id = first_income_category_id(&conn);
-    let err = create_budget_internal(&conn, &budget_input(&cat_id, None, 1000)).unwrap_err();
+    let err = create_budget(&conn, &budget_input(&cat_id, None, 1000)).unwrap_err();
     assert!(
         matches!(err, AppError::Coded { ref message, .. } if message.contains("预算只能设置在支出分类上")),
         "{err:?}"
@@ -267,7 +257,7 @@ fn create_budget_rejects_income_category() {
 #[test]
 fn create_budget_rejects_missing_category() {
     let conn = setup();
-    let err = create_budget_internal(&conn, &budget_input("no-such-cat", None, 1000)).unwrap_err();
+    let err = create_budget(&conn, &budget_input("no-such-cat", None, 1000)).unwrap_err();
     assert!(
         matches!(
             err,
@@ -286,7 +276,7 @@ fn create_budget_rejects_duplicate_monthly_and_keeps_original() {
     let conn = setup();
     let cat_id = first_expense_category_id(&conn);
     insert_budget(&conn, "budget-dup", &cat_id, "monthly", 50000, "2026-07-01");
-    let err = create_budget_internal(
+    let err = create_budget(
         &conn,
         &budget_input(&cat_id, Some(BudgetPeriod::Monthly), 1000),
     )
@@ -320,7 +310,7 @@ fn create_budget_rejects_duplicate_yearly() {
         100000,
         "2026-01-01",
     );
-    let err = create_budget_internal(
+    let err = create_budget(
         &conn,
         &budget_input(&cat_id, Some(BudgetPeriod::Yearly), 1000),
     )
@@ -337,7 +327,7 @@ fn create_budget_allows_same_category_different_period() {
     let conn = setup();
     let cat_id = first_expense_category_id(&conn);
     insert_budget(&conn, "budget-m", &cat_id, "monthly", 50000, "2026-07-01");
-    let id = create_budget_internal(
+    let id = create_budget(
         &conn,
         &budget_input(&cat_id, Some(BudgetPeriod::Yearly), 100000),
     )
@@ -356,7 +346,7 @@ fn create_budget_allows_same_category_different_period() {
 fn create_budget_defaults_to_monthly() {
     let conn = setup();
     let cat_id = first_expense_category_id(&conn);
-    let id = create_budget_internal(&conn, &budget_input(&cat_id, None, 1000)).unwrap();
+    let id = create_budget(&conn, &budget_input(&cat_id, None, 1000)).unwrap();
     let period: String = conn
         .query_row("SELECT period FROM budgets WHERE id=?1", [&id], |r| {
             r.get(0)
@@ -373,7 +363,7 @@ fn create_budget_allows_recreate_after_soft_delete() {
     insert_budget(&conn, "budget-old", &cat_id, "monthly", 50000, "2026-07-01");
     conn.execute("UPDATE budgets SET is_deleted=1 WHERE id='budget-old'", [])
         .unwrap();
-    create_budget_internal(
+    create_budget(
         &conn,
         &budget_input(&cat_id, Some(BudgetPeriod::Monthly), 1000),
     )
@@ -381,7 +371,7 @@ fn create_budget_allows_recreate_after_soft_delete() {
     assert_eq!(budget_count(&conn), 2);
 }
 
-// ---- update_budget_internal：编辑金额（issue #184） ----
+// ---- update_budget：编辑金额（issue #184） ----
 
 /// 编辑后金额生效，同步字段沿用软删除同一套机制：version +1、device_id 更新。
 #[test]
@@ -396,7 +386,7 @@ fn update_budget_changes_amount_and_bumps_version() {
         50000,
         "2026-07-01",
     );
-    update_budget_internal(&conn, "budget-edit", 80000).unwrap();
+    update_budget(&conn, "budget-edit", 80000).unwrap();
     let (amount, version): (i64, i64) = conn
         .query_row(
             "SELECT amount_cents,version FROM budgets WHERE id='budget-edit'",
@@ -423,7 +413,7 @@ fn update_budget_rejects_non_positive_amount() {
         "2026-07-01",
     );
     for amount in [0, -100] {
-        let err = update_budget_internal(&conn, "budget-edit2", amount).unwrap_err();
+        let err = update_budget(&conn, "budget-edit2", amount).unwrap_err();
         assert!(
             matches!(err, AppError::Coded { ref message, .. } if message.contains("预算金额必须为正数")),
             "金额 {amount} 应被拒绝: {err:?}"
@@ -454,7 +444,7 @@ fn update_budget_rejects_missing_or_deleted_budget() {
     );
     conn.execute("UPDATE budgets SET is_deleted=1 WHERE id='budget-gone'", [])
         .unwrap();
-    let err = update_budget_internal(&conn, "budget-gone", 1000).unwrap_err();
+    let err = update_budget(&conn, "budget-gone", 1000).unwrap_err();
     assert!(
         matches!(
             err,
@@ -465,7 +455,7 @@ fn update_budget_rejects_missing_or_deleted_budget() {
         ),
         "{err:?}"
     );
-    let err = update_budget_internal(&conn, "no-such-budget", 1000).unwrap_err();
+    let err = update_budget(&conn, "no-such-budget", 1000).unwrap_err();
     assert!(
         matches!(
             err,
@@ -496,7 +486,7 @@ fn update_budget_rejects_when_category_deleted() {
         rusqlite::params![cat_id],
     )
     .unwrap();
-    let err = update_budget_internal(&conn, "budget-orphan", 1000).unwrap_err();
+    let err = update_budget(&conn, "budget-orphan", 1000).unwrap_err();
     assert!(
         matches!(
             err,

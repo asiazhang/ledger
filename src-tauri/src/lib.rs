@@ -1,5 +1,6 @@
 pub mod api_server;
 pub mod auto_backup;
+pub mod budget;
 pub mod commands;
 pub mod db;
 pub mod error;
