@@ -75,28 +75,6 @@ pub fn compute_all_balances(conn: &Connection) -> Result<HashMap<String, i64>> {
     compute_all_balances_with_visibility(conn, false)
 }
 
-/// 账户行可见性读取（conn 级）：`include_hidden` 为 true 时含黑洞账户。
-/// 账户余额清单的账户侧来源，可见性口径与余额侧同一开关（#405 自账户壳层
-/// 模块下沉至此，与余额计算同址；账户域归位后随迁账户域）。
-pub fn list_accounts_with_visibility(
-    conn: &Connection,
-    include_hidden: bool,
-) -> Result<Vec<Account>> {
-    let where_clause = if include_hidden {
-        "is_deleted=0"
-    } else {
-        "is_deleted=0 AND is_hidden=0"
-    };
-    query_all(
-        conn,
-        &format!(
-            "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden \
-             FROM accounts WHERE {where_clause} ORDER BY created_at"
-        ),
-        [],
-    )
-}
-
 /// 批量计算未删除账户余额；`include_hidden` 为 true 时含黑洞账户。
 pub fn compute_all_balances_with_visibility(
     conn: &Connection,
@@ -125,9 +103,31 @@ pub fn compute_all_balances_with_visibility(
         .collect())
 }
 
+/// 账户行可见性读取（conn 级）：`include_hidden` 为 true 时含黑洞账户。
+/// 账户余额清单的账户侧来源，可见性口径与余额侧同一开关（#405 自账户壳层
+/// 模块下沉至此，与余额计算同址；账户域归位后随迁账户域）。
+pub fn list_accounts_with_visibility(
+    conn: &Connection,
+    include_hidden: bool,
+) -> Result<Vec<Account>> {
+    let where_clause = if include_hidden {
+        "is_deleted=0"
+    } else {
+        "is_deleted=0 AND is_hidden=0"
+    };
+    query_all(
+        conn,
+        &format!(
+            "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden \
+             FROM accounts WHERE {where_clause} ORDER BY created_at"
+        ),
+        [],
+    )
+}
+
 /// 账户余额清单（conn 级）：账户行 × 当前余额，`include_hidden` 为 true 时含黑洞账户。
 /// 账户列表/余额页、dashboard 净资产与投资域财务自由度共用的同一口径
-/// （#405 自账户壳层模块下沉至此，消除聚合域对壳层的反向依赖）。
+/// （#405 自账户壳层模块下沉至此，消除聚合域对壳层的反向依赖；账户域归位 #404 时随迁）。
 pub fn list_account_balances_with_visibility(
     conn: &Connection,
     include_hidden: bool,
