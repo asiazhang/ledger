@@ -1,4 +1,10 @@
-//! 行情同步领域模型。
+//! 行情同步域模型（#407 随域归位）：同步控制三类型 + 基金行情 DTO。
+//!
+//! 自全局模型目录迁入本域（#407 / #417 归属原则：类型归拥有它的域）：
+//! - 同步控制三类型（进度事件载荷 / 中断结果 / 增量同步结果）仅被本域引擎与
+//!   IPC 壳消费，不进 OpenAPI 契约面；
+//! - 基金行情 DTO（[`FundDetail`] / [`FundNav`]）由本域基金访问层生产，投资域
+//!   与 API 壳经域路径消费（编排接缝注入获取函数、BDD stub 构造跨 crate 使用）。
 
 use serde::Serialize;
 
@@ -43,4 +49,23 @@ pub struct SyncHoldingPricesResult {
     /// （前端无需感知，消息统计已含）。
     #[serde(skip)]
     pub written: usize,
+}
+
+/// 按代码即拉拉取到的基金详情（issue #301 / ADR-0038 决策 1）：名称与东财分类
+/// 为透传展示信息（不落库），nav 缺省（新发基金尚未公布首期净值等）时仅建
+/// 标的、不落现价（不广播价格失效信号）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct FundDetail {
+    pub code: String,
+    pub name: String,
+    /// 东财基金分类（如「混合型-灵活」），展示与 AI 确认识别用，不落库。
+    pub fund_class: String,
+    pub nav: Option<FundNav>,
+}
+
+/// 基金最新单位净值（真实价格值，元）与其净值日期（ISO 日期）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct FundNav {
+    pub nav: f64,
+    pub nav_date: String,
 }

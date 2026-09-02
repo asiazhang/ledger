@@ -17,15 +17,16 @@ use rusqlite::Connection;
 use tauri::AppHandle;
 
 use crate::error::Result;
-use crate::models::SyncProgress;
 
 use super::http::{MARKETS, MarketConfig, Pacer, StockItem, build_client, fetch_page, get_total};
+use super::model::SyncProgress;
 use super::persist::{apply_stock_item, build_existing_instruments};
+use super::progress::{emit_error_progress, emit_progress};
 
 /// 全量同步的一次执行结果：区分完成 / 被中断两种终态（issue #104）。
 /// 两种姿态都携带最终新增/更新计数，供进度事件与调用方（取消路径）取用。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum SyncOutcome {
+pub enum SyncOutcome {
     /// 正常完成：遍历了所有市场所有分页。
     Completed { inserted: usize, updated: usize },
     /// 分页循环中发现取消标志被置位，提前返回；已落库数据保留。
@@ -35,7 +36,7 @@ pub(super) enum SyncOutcome {
 impl SyncOutcome {
     /// 本次运行落库计数（新增 + 更新），完成与中断同口径——中断保留已落库数据
     /// （upsert 幂等）。供价格失效信号判定（ADR-0031）取用。
-    pub(super) fn written(&self) -> usize {
+    pub fn written(&self) -> usize {
         match self {
             SyncOutcome::Completed { inserted, updated }
             | SyncOutcome::Cancelled { inserted, updated } => inserted + updated,
@@ -46,7 +47,7 @@ impl SyncOutcome {
 /// 连接访问器接缝（issue #147）：分页循环的落库操作经它短暂获取/释放连接，
 /// 网络拉取与进度推送不持有连接。生产实现为 [`GlobalConn`]；测试注入 mock
 /// 以观察锁时序（拉取期间锁可用、每页落库才加锁）。
-pub(super) trait ConnAccessor {
+pub trait ConnAccessor {
     /// 持锁执行一次落库操作，闭包返回后立即释放。
     fn with_conn<R>(&self, f: impl FnOnce(&Connection) -> Result<R>) -> Result<R>;
 }
@@ -54,7 +55,7 @@ pub(super) trait ConnAccessor {
 /// 生产连接访问器：包装全局连接句柄（`DbState.conn`），每次落库短暂加锁/释放，
 /// 单条后台同步任务不再独占连接（issue #147）。与其它命令的互斥仍由
 /// SQLite 自身写锁 + 该互斥锁保证。
-pub(super) struct GlobalConn(pub(super) Arc<Mutex<Connection>>);
+pub struct GlobalConn(pub Arc<Mutex<Connection>>);
 
 impl ConnAccessor for GlobalConn {
     fn with_conn<R>(&self, f: impl FnOnce(&Connection) -> Result<R>) -> Result<R> {
@@ -67,7 +68,7 @@ impl ConnAccessor for GlobalConn {
 /// 全量同步主流程：依次拉取各市场分页行情并落库，实时推送进度事件。
 /// `cancel` 为跨命令共享的取消标志（issue #104），每页检查；命中即返回 [`SyncOutcome::Cancelled`]。
 /// 连接经访问器 `conn` 注入（issue #147），本函数自身不持锁等待网络。
-pub(super) fn do_sync<A: ConnAccessor>(
+pub fn do_sync<A: ConnAccessor>(
     conn: &A,
     app: &AppHandle,
     cancel: &AtomicBool,
@@ -81,7 +82,7 @@ pub(super) fn do_sync<A: ConnAccessor>(
             get_total(&client, &mut pacer, m)
                 .map(|t| (t, m))
                 .map_err(|e| {
-                    super::emit_error_progress(app, format!("获取{}总数失败: {e}", m.name));
+                    emit_error_progress(app, format!("获取{}总数失败: {e}", m.name));
                     e
                 })
         })
@@ -93,7 +94,7 @@ pub(super) fn do_sync<A: ConnAccessor>(
         |market: &MarketConfig, page: usize| fetch_page(&client, &mut pacer, market, page);
     // 每页进度投递主线程非阻塞执行（issue #369）：同步线程入队即返回，不持
     // `webviews_lock` 等回执。
-    let mut emit = |p: SyncProgress| super::emit_progress(app, p);
+    let mut emit = |p: SyncProgress| emit_progress(app, p);
 
     let outcome = run_sync_pages(
         conn,
@@ -105,7 +106,7 @@ pub(super) fn do_sync<A: ConnAccessor>(
     )?;
     // 终端进度（完成/中断）同样投递主线程（issue #369）；与每页进度同线程
     // 顺序入队，主线程按序执行、无乱序。
-    super::emit_progress(app, terminal_progress(&outcome));
+    emit_progress(app, terminal_progress(&outcome));
     Ok(outcome)
 }
 

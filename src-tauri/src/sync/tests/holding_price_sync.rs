@@ -6,16 +6,16 @@ use std::cell::RefCell;
 
 use rusqlite::{Connection, params};
 
-use crate::commands::sync::fund_nav::{LsjzPage, NavPoint, NavQuery};
-use crate::commands::sync::http::{
-    KlineBar, KlineResponse, StockItem, ULIST_BATCH_SIZE, UlistResponse, f2_to_price,
-    fx_secid_candidates, parse_klines, secid_prefix,
-};
-use crate::commands::sync::incremental::{beijing_today, do_incremental_sync_with};
 use crate::error::{AppError, Result};
 use crate::investment::prices::{
     EASTMONEY_PRICE_SOURCE, upsert_market_price, upsert_price_history,
 };
+use crate::sync::fund_nav::{LsjzPage, NavPoint, NavQuery};
+use crate::sync::http::{
+    KlineBar, KlineResponse, StockItem, ULIST_BATCH_SIZE, UlistResponse, f2_to_price,
+    fx_secid_candidates, parse_klines, secid_prefix,
+};
+use crate::sync::incremental::{beijing_today, do_incremental_sync_with};
 
 use super::common::setup_db;
 
@@ -849,7 +849,7 @@ fn week_key_matches_sqlite_week_start_column() {
     // Rust 侧降采样周键（week_monday）与 V010 week_start 生成列恒等——这是
     // 「整周覆盖幂等」的隐式契约：周键一旦漂移，ON CONFLICT 落点即错、产生重复周行。
     // 扫描跨年/闰年边界三年，每天与 SQLite 生成表达式比对。
-    use crate::commands::sync::incremental::week_monday;
+    use crate::sync::incremental::week_monday;
     use chrono::NaiveDate;
 
     let conn = setup_db();

@@ -19,6 +19,7 @@ pub mod reports;
 pub mod scheduled_transactions;
 pub mod settings;
 pub mod signals;
+pub mod sync;
 // 信号交叉核对测试（ADR-0044 决策 3 / #335）：声明表 × 映射表双向核对，仅测试可见。
 #[cfg(test)]
 mod signals_cross_check;
@@ -121,7 +122,7 @@ pub fn run() {
                 app.state::<db::DbState>().conn.clone(),
             );
             // 全量同步中断状态（issue #104）：跨命令共享运行/取消标志。
-            app.manage(commands::sync::SyncState::default());
+            app.manage(sync::SyncState::default());
             // 自动备份（issue #125/#126）：目录镜像为进程级单例 [`backup::shared_prefs`]，
             // 轮询调度线程与连接层写入口提交点检查（ADR-0032）共享同一份；
             // 退出兜底挂在下方 run 事件的 RunEvent::Exit 分支。

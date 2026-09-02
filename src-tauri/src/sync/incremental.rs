@@ -18,12 +18,12 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use chrono::{Datelike, NaiveDate};
 use rusqlite::Connection;
 
+use super::model::SyncHoldingPricesResult;
 use crate::error::Result;
 use crate::investment::predicates::INVESTED_EXISTS;
 use crate::investment::prices::{
     EASTMONEY_PRICE_SOURCE, price_value_to_cents, upsert_market_price, upsert_price_history,
 };
-use crate::models::SyncHoldingPricesResult;
 use crate::transaction::amount::default_currency_code;
 
 use super::fund_nav::{LsjzPage, NavQuery, sync_fund_navs};
@@ -272,7 +272,7 @@ pub(super) fn week_monday(d: NaiveDate) -> NaiveDate {
 /// 生产入口：接 HTTP 层的批量报价 / 日 K / 汇率 K 线 / 历史净值页查询（复用主机池、
 /// 重试、限流 pacer 与价格换算）。四个闭包串行使用，pacer 以 RefCell 共享，保证
 /// 全部请求之间仍然保持统一的限速间隔。
-pub(super) fn do_incremental_sync(conn: &Connection) -> Result<SyncHoldingPricesResult> {
+pub fn do_incremental_sync(conn: &Connection) -> Result<SyncHoldingPricesResult> {
     let client = build_client()?;
     let pacer = RefCell::new(Pacer::default());
     let beg = kline_beg();

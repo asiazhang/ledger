@@ -14,7 +14,8 @@ use rusqlite::Connection;
 use super::crud;
 use super::prices::{EASTMONEY_PRICE_SOURCE, price_value_to_cents, upsert_market_price};
 use crate::error::{AppError, Result};
-use crate::models::{AddFundResult, FundDetail, InstrumentInput, InstrumentType};
+use crate::models::{AddFundResult, InstrumentInput, InstrumentType};
+use crate::sync::FundDetail;
 
 /// 场外基金标的的固定字典形态（ADR-0038 决策 1）：类型 fund、市场恒 unknown
 /// （场外基金无交易所市场概念，纯字典键）、币种人民币（含 QDII 人民币份额）。

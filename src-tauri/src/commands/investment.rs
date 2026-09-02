@@ -136,7 +136,7 @@ pub async fn add_fund_by_code(
         let span = tracing::info_span!("command", command = "add_fund_by_code");
         let _entered = span.enter();
         // 网络拉取在锁外：单请求叠加限流冷却重试最长可达分钟级，不阻塞其它命令。
-        let detail = crate::commands::sync::fund::fetch_fund_detail_production(&code)?;
+        let detail = crate::sync::fetch_fund_detail_production(&code)?;
         // 编排单点：经接缝以已拉取的详情驱动（注入闭包同值回放）。
         let mut fetch = |_: &str| Ok(detail.clone());
         crate::db::write(&conn, |conn| {

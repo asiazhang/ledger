@@ -13,7 +13,8 @@ use tauri_app_lib::investment::{
     add_fund_by_code_with, create_instrument_manual, delete_instrument as delete_instrument_domain,
     list_instruments,
 };
-use tauri_app_lib::models::{FundDetail, FundNav, InstrumentInput, InstrumentListFilter};
+use tauri_app_lib::models::{InstrumentInput, InstrumentListFilter};
+use tauri_app_lib::sync::{FundDetail, FundNav};
 
 use crate::world::LedgerWorld;
 

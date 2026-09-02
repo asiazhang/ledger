@@ -36,6 +36,7 @@ export const WHITELIST = [
   { path: 'reports', layer: '域目录', note: '报表域（#405 归位，月度汇总/分类/商户/日期极值聚合读模型，消费 transaction::amount 矩阵）' },
   { path: 'dashboard', layer: '域目录', note: '仪表盘域（#405 归位，全仓净资产跨币种折算聚合）' },
   { path: 'backup', layer: '域目录', note: '备份域（#406 归位，备份引擎自 commands/backup/core、自动备份调度自顶层 auto_backup.rs 整合随迁）' },
+  { path: 'sync', layer: '域目录', note: '行情同步域（#407 归位，HTTP 爬取/东财基金净值/增全量同步编排自 commands/sync 随迁）' },
   { path: 'db', layer: '基础设施', note: '数据库连接' },
   { path: 'signals.rs', layer: '基础设施', note: '信号映射（ADR-0044）' },
   { path: 'models', layer: '基础设施', note: '模型' },

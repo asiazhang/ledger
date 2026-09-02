@@ -11,8 +11,8 @@
 
 use serde::Deserialize;
 
+use super::model::{FundDetail, FundNav};
 use crate::error::{AppError, Result};
-use crate::models::{FundDetail, FundNav};
 
 use super::http::{Pacer, RetryConfig, build_client, request_json_from_hosts};
 
@@ -134,7 +134,7 @@ pub(super) fn fetch_fund_detail(
 
 /// 生产拉取入口：构建客户端与限流器后执行单次详情查询（不经数据库连接，
 /// 供 IPC 命令在获取连接锁之前完成网络往返，避免长限流重试阻塞其它命令）。
-pub(crate) fn fetch_fund_detail_production(code: &str) -> Result<FundDetail> {
+pub fn fetch_fund_detail_production(code: &str) -> Result<FundDetail> {
     let client = build_client()?;
     let mut pacer = Pacer::default();
     fetch_fund_detail(&client, &mut pacer, code)

@@ -15,7 +15,6 @@ mod item;
 mod merchants;
 mod policy;
 mod reports;
-mod sync;
 mod transactions;
 
 pub use accounts::*;
@@ -30,5 +29,4 @@ pub use item::*;
 pub use merchants::*;
 pub use policy::*;
 pub use reports::*;
-pub use sync::*;
 pub use transactions::*;
