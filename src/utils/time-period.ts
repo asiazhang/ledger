@@ -147,7 +147,10 @@ export function derivePeriodBoundary(
   }
 
   const minIndex = unit === 'month' ? minParsed.m0 : unit === 'quarter' ? Math.floor(minParsed.m0 / 3) : 0
-  const earliest: NaturalPeriod = { unit, year: minParsed.y, index: minIndex }
+  const earliestFromData: NaturalPeriod = { unit, year: minParsed.y, index: minIndex }
+  // 当前期间必须始终可选；当所有交易都在未来时，从当前期间而不是未来的
+  // 最早交易期间开始，保持边界为连续且包含当前期间的闭区间。
+  const earliest = periodValue(earliestFromData) < periodValue(current) ? earliestFromData : current
 
   const maxIndex = unit === 'month' ? maxParsed.m0 : unit === 'quarter' ? Math.floor(maxParsed.m0 / 3) : 0
   const maxTxPeriod: NaturalPeriod = { unit, year: maxParsed.y, index: maxIndex }

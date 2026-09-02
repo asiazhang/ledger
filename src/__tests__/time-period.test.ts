@@ -353,6 +353,23 @@ describe('derivePeriodBoundary & deriveAllPeriodBoundaries：数据期间边界�
     })
   })
 
+  it('未来流水也保留当前期间：最早交易在未来时边界仍从当前期间开始', () => {
+    const range = { min_date: '2027-06-01', max_date: '2027-11-10' }
+
+    expect(derivePeriodBoundary('month', range, today)).toEqual({
+      earliest: { unit: 'month', year: 2026, index: 2 },
+      latest: { unit: 'month', year: 2027, index: 10 },
+    })
+    expect(derivePeriodBoundary('quarter', range, today)).toEqual({
+      earliest: { unit: 'quarter', year: 2026, index: 0 },
+      latest: { unit: 'quarter', year: 2027, index: 3 },
+    })
+    expect(derivePeriodBoundary('year', range, today)).toEqual({
+      earliest: { unit: 'year', year: 2026, index: 0 },
+      latest: { unit: 'year', year: 2027, index: 0 },
+    })
+  })
+
   it('单日流水恰为今天：起止均为当前期间', () => {
     const range = { min_date: '2026-03-15', max_date: '2026-03-15' }
     expect(derivePeriodBoundary('month', range, today)).toEqual({
