@@ -10,12 +10,12 @@ use rusqlite::Connection;
 use tauri_app_lib::commands::data_location::{
     WRITE_PROBE_FILE_NAME, gather_info_from_boot, validate_and_commit,
 };
-use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::db::{
     data_location, init_db, new_uuid, open_connection, open_db_in, reset_db_in,
 };
 use tauri_app_lib::models::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
+use tauri_app_lib::transaction::create_transaction_internal;
 
 use crate::common::{insert_account, new_account_id};
 use crate::world::LedgerWorld;

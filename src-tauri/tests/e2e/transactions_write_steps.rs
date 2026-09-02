@@ -1,12 +1,10 @@
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::commands::transactions::{
-    create_transaction_internal, delete_transaction_internal,
-};
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::models::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
+use tauri_app_lib::transaction::{create_transaction_internal, delete_transaction_internal};
 
 use crate::common::{insert_account, new_account_id, query_all_transactions};
 use crate::world::LedgerWorld;

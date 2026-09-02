@@ -1,6 +1,6 @@
 //! 交易命令域测试共享脚手架：仅限本测试目录（`transactions::tests`）内部使用。
 
-use super::super::*;
+use crate::models::TransactionInput;
 use rusqlite::Connection;
 
 use crate::db::{init_db, open_in_memory};

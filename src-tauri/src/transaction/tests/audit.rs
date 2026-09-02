@@ -3,6 +3,7 @@
 use super::super::*;
 use super::common::{insert_account, make_buy_input, make_input, setup, setup_investment_account};
 
+use crate::models::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 use rusqlite::params;
 

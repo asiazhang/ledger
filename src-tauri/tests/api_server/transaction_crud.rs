@@ -326,9 +326,9 @@ async fn test_sell_native_cents_converted_via_writer_seam() {
 
 #[tokio::test]
 async fn test_delete_buy_transaction_cleans_up_security_lots() {
-    use tauri_app_lib::commands::create_transaction_internal;
     use tauri_app_lib::models::TransactionInput;
     use tauri_app_lib::transaction::amount::TransactionKind;
+    use tauri_app_lib::transaction::create_transaction_internal;
 
     let (app, conn) = setup_app();
     {

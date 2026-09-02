@@ -9,13 +9,11 @@
 use cucumber::{then, when};
 use rusqlite::params;
 
-use tauri_app_lib::commands::batch::TransactionBatch;
-use tauri_app_lib::commands::transactions::{
-    create_transaction_internal, update_transaction_internal,
-};
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::models::TransactionInput;
+use tauri_app_lib::transaction::TransactionBatch;
 use tauri_app_lib::transaction::amount::TransactionKind;
+use tauri_app_lib::transaction::{create_transaction_internal, update_transaction_internal};
 
 use crate::common::query_all_transactions;
 use crate::world::LedgerWorld;

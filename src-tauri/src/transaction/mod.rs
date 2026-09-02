@@ -1,18 +1,45 @@
-//! 交易领域模块（spec #52）：交易写入与金额口径的单一权威。
+//! 交易领域模块（spec #52；#403 核心交易域收口 ADR-0056）：交易写入、行为编排、读取、搜索与金额口径的单一权威。
 //!
-//! 两个接缝：
+//! 接缝：
 //! - [`amount`]（口径权威）：kind 枚举真源 + kind→度量矩阵 + 本位币折算。
+//! - [`batch`]（批量编排权威）：批量事务、幂等键/内容哈希去重判定与批次汇总日志（`TransactionBatch::run`）。
+//! - [`behavior`]（行为层编排权威）：create / update / delete 三编排入口、嵌套事务感知、plan/apply 副作用分派与即建商户证据。
+//! - [`read`]（读取权威）：交易列表（过滤/排序/分页）与单笔读取。
+//! - [`search`]（搜索权威）：SQL 候选流式扫描 + 统一模糊搜索契约过滤与分页。
+//! - [`search_text`]（统一模糊搜索语义）：拼音首字母、子序列判定与词条匹配纯函数（ADR-0027）。
 //! - [`writer`]（写入权威）：归一化 + 全列映射 + 审计字段生成（issue #55 落地）。
 //!
-//! 另有 [`search_text`]：统一模糊搜索语义的后端单一实现（ADR-0027，全库唯一定义
-//! 点为核心域 TransactionSearch 词条）——拼音首字母、子序列判定与词条匹配纯函数，
-//! 与数据库无关；交易搜索（壳层 `commands::search`）与投资域标的搜索共用。
-//!
-//! 依赖方向恒为「壳层 → transaction」：本模块不反向依赖壳层。
+//! 依赖方向恒为「壳层 → transaction → 基础设施」，本模块不反向依赖壳层。
 
 pub mod amount;
+pub mod batch;
+pub mod behavior;
+pub mod read;
+pub mod search;
 pub mod search_text;
 pub mod writer;
+
+pub use amount::{
+    Measure, TransactionKind, TransferSide, account_flow_expr, contributing_kinds,
+    contributing_kinds_sql, convert_to_native, default_currency_code, expense_gross_expr,
+    expense_net_expr, income_net_expr, policy_inflow_expr, policy_premium_expr, refund_gross_expr,
+    signed_amount,
+};
+pub use batch::{
+    BatchOutcome, DedupIdentity, TransactionBatch, compute_dedup_hash, dedup_identity,
+};
+pub use behavior::{
+    TransactionWrite, create, create_transaction, create_transaction_internal, delete,
+    delete_transaction, delete_transaction_internal, update, update_transaction,
+    update_transaction_internal,
+};
+pub use read::{
+    get_transaction, get_transaction_internal, list_transactions, list_transactions_internal,
+};
+pub use search::{search_transactions, search_transactions_internal};
+pub use search_text::{
+    is_subsequence, pinyin_initials, split_terms, term_matches, term_matches_text,
+};
 
 #[cfg(test)]
 mod tests;

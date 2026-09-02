@@ -2,9 +2,9 @@
 //! 接缝折算、非投资账户拒绝、sell FIFO 多 lot 匹配、超卖拒绝、盈亏扣费、
 //! get_transaction_trade 明细与缺失拒绝（issue #257 纯移动归组）。
 
-use crate::commands::transactions::create_transaction_internal;
 use crate::models::TransactionInput;
 use crate::transaction::amount::TransactionKind;
+use crate::transaction::create_transaction_internal;
 use rusqlite::params;
 
 use super::super::*;
@@ -229,7 +229,7 @@ fn buy_native_cents_converted_via_amount_seam() {
 /// `amount_native_cents` 保持折算值（INSERT/UPDATE 共用 prepare，防回归）。
 #[test]
 fn buy_update_native_cents_converted_via_amount_seam() {
-    use crate::commands::transactions::update_transaction_internal;
+    use crate::transaction::update_transaction_internal;
     let conn = setup_db();
     insert_account(&conn, "acc-test-conv-upd", "美股", "investment", "USD");
     insert_rate(&conn, "USD", "CNY", 7.2);
@@ -344,7 +344,7 @@ fn sell_with_missing_instrument_rejected_as_invalid_in_prepare() {
 /// 原交易行与持仓批次保持不变（入口自持事务整体回滚，issue #295）。
 #[test]
 fn update_buy_to_missing_instrument_rejected_and_keeps_original() {
-    use crate::commands::transactions::update_transaction_internal;
+    use crate::transaction::update_transaction_internal;
     let conn = setup_db();
     insert_account(&conn, "acc-test-upd-miss", "美股", "investment", "USD");
     insert_rate_1_1(&conn, "USD");

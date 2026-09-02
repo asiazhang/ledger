@@ -1,7 +1,7 @@
 //! 已实现盈亏汇总（realized PnL）测试：空态、单笔 / 多账户聚合、按账户 / 按
 //! 标的过滤（issue #257 纯移动归组）。
 
-use crate::commands::transactions::create_transaction_internal;
+use crate::transaction::create_transaction_internal;
 
 use super::super::*;
 use super::common::*;

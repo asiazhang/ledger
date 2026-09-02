@@ -4,13 +4,15 @@
 
 use rusqlite::params;
 
-use crate::commands::batch::{DedupIdentity, TransactionBatch, compute_dedup_hash, dedup_identity};
-use crate::commands::transactions::{delete_transaction_internal, update_transaction_internal};
 use crate::db::{device_id, now_iso};
 use crate::models::TransactionInput;
 use crate::transaction::amount::TransactionKind;
+use crate::transaction::{
+    DedupIdentity, TransactionBatch, compute_dedup_hash, dedup_identity,
+    delete_transaction_internal, update_transaction_internal,
+};
 
-use super::common::{insert_account, make_input, setup};
+use super::batch_common::{insert_account, make_input, setup};
 
 // ---------------------------------------------------------------------------
 // 内容哈希：字段稳定性、排除项、已知向量。

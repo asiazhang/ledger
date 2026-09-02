@@ -469,7 +469,7 @@ fn write_sell_side_effects(conn: &Connection, id: &str, plan: &SellPlan) -> Resu
 ///
 /// 若该买入已有部分卖出（`remaining_quantity < initial_quantity`）则拒绝清理——避免破坏
 /// 对应卖出的已实现盈亏。`partially_sold_msg` 为调用入口单点定义的措辞
-/// （见 `commands::transactions::behavior` 的入口文案常量，ADR-0033 决策 #4）。
+/// （见 `transaction::behavior` 的入口文案常量，ADR-0033 决策 #4）。
 fn cleanup_buy_side_effects(
     conn: &Connection,
     id: &str,
@@ -556,7 +556,7 @@ impl Plan {
 
 /// 校验并归一化一笔 buy/sell 输入为 [`Plan`]（不落库、不产生副作用）。
 ///
-/// 由行为层（`commands::transactions`）在创建/修改路径按 kind 分派调用；
+/// 由行为层（`transaction`）在创建/修改路径按 kind 分派调用；
 /// `kind` 为已解析的 [`TransactionKind`]，收到非 buy/sell 的 kind 属编排错误，报错防误用。
 pub fn prepare(conn: &Connection, kind: TransactionKind, input: &TransactionInput) -> Result<Plan> {
     match kind {

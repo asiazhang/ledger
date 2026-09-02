@@ -7,11 +7,11 @@
 
 use cucumber::{then, when};
 
-use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::item::domain::{create_item, update_item};
 use tauri_app_lib::models::{ItemInput, TransactionInput};
 use tauri_app_lib::transaction::amount::TransactionKind;
+use tauri_app_lib::transaction::create_transaction_internal;
 
 use crate::items_common::{build_input, nth_item};
 use crate::world::LedgerWorld;

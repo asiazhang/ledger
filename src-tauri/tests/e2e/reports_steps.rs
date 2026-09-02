@@ -20,9 +20,9 @@ use rusqlite::params;
 use tauri_app_lib::commands::reports::{
     category_shares_rows, merchant_shares_rows, query_report_date_range,
 };
-use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::models::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
+use tauri_app_lib::transaction::create_transaction_internal;
 
 use crate::common::query_all_transactions;
 use crate::world::LedgerWorld;

@@ -12,7 +12,9 @@ use crate::db::query::FromRow;
 use crate::error::Result;
 use crate::models::{Transaction, TransactionSearchResult};
 
-use crate::transaction::search_text::{split_terms, term_matches};
+use super::search_text::{split_terms, term_matches};
+
+pub use search_transactions_internal as search_transactions;
 
 /// 每页条数上限（防呆，防止极端输入拖垮查询）。
 const MAX_PAGE_SIZE: usize = 200;

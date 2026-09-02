@@ -874,7 +874,7 @@ async fn list_transactions_handler(
     Query(query): Query<TransactionListFilter>,
 ) -> Result<Json<TransactionListResult>, AppError> {
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let result = crate::commands::list_transactions_internal(&conn, &query)?;
+    let result = crate::transaction::list_transactions_internal(&conn, &query)?;
     Ok(Json(result))
 }
 
@@ -906,7 +906,7 @@ async fn batch_create_transactions_handler(
     // 连接层统一写入口（ADR-0032，issue #245）：批次事务由 run 自持，提交点置脏/
     // 到期检查单点；整批回滚不置脏由写入口闭包失败语义保证。
     let outcome = crate::db::write(&conn, |conn| {
-        crate::commands::batch::TransactionBatch::run(conn, body.transactions, body.dedup)
+        crate::transaction::TransactionBatch::run(conn, body.transactions, body.dedup)
     })?;
     // 信号在写事务提交成功后发射（映射单点判定，ADR-0044）：批内任一行即建商户才发
     // 参考失效信号（修复 HTTP 导入即建商户后前端商户字典陈旧，issue #331）。
@@ -942,8 +942,8 @@ async fn update_transaction_handler(
 ) -> Result<Json<Transaction>, AppError> {
     // 连接层统一写入口（ADR-0032）：修改与读回同一写闭包，提交点置脏/检查单点。
     let (evidence, updated) = crate::db::write(&conn, |conn| {
-        let evidence = crate::commands::update_transaction_internal(conn, &id, input.into())?;
-        let updated = crate::commands::get_transaction_internal(conn, &id)?;
+        let evidence = crate::transaction::update_transaction_internal(conn, &id, input.into())?;
+        let updated = crate::transaction::get_transaction_internal(conn, &id)?;
         Ok((evidence, updated))
     })?;
     // 仅即建商户发参考失效信号（ADR-0044，issue #331）。
@@ -976,7 +976,7 @@ async fn delete_transaction_handler(
 ) -> Result<StatusCode, AppError> {
     // 连接层统一写入口（ADR-0032）：删除成功即置脏。
     crate::db::write(&conn, |conn| {
-        crate::commands::delete_transaction_internal(conn, &id)
+        crate::transaction::delete_transaction_internal(conn, &id)
     })?;
     Ok(StatusCode::NO_CONTENT)
 }

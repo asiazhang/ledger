@@ -8,7 +8,6 @@
 
 use rusqlite::{Connection, OptionalExtension};
 
-use crate::commands::transactions::create_transaction_internal;
 use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
@@ -17,6 +16,7 @@ use crate::models::{
     TransactionInput,
 };
 use crate::transaction::amount::TransactionKind;
+use crate::transaction::create_transaction_internal;
 
 fn list_accounts_with_visibility(conn: &Connection, include_hidden: bool) -> Result<Vec<Account>> {
     let where_clause = if include_hidden {

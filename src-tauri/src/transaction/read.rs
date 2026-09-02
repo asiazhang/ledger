@@ -4,6 +4,9 @@ use crate::db::query::{query_all, query_one};
 use crate::error::{AppError, Result};
 use crate::models::{Transaction, TransactionListFilter, TransactionListResult};
 
+pub use get_transaction_internal as get_transaction;
+pub use list_transactions_internal as list_transactions;
+
 pub fn list_transactions_internal(
     conn: &Connection,
     filter: &TransactionListFilter,

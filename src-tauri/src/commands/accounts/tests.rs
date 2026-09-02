@@ -429,7 +429,7 @@ fn hidden_account_transaction_visible_in_transaction_list() {
     insert_hidden_account(&conn, "acc-hidden", "无(CNY)", "CNY");
     insert_tx(&conn, "tx-hidden", "expense", 3000, "acc-hidden", None);
 
-    let rows = crate::commands::list_transactions_internal(
+    let rows = crate::transaction::list_transactions_internal(
         &conn,
         &crate::models::TransactionListFilter::default(),
     )

@@ -10,12 +10,12 @@
 
 use cucumber::{then, when};
 
-use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::item::cost;
 use tauri_app_lib::item::domain;
 use tauri_app_lib::models::{ItemInput, ItemStatus, TransactionInput};
 use tauri_app_lib::transaction::amount::TransactionKind;
+use tauri_app_lib::transaction::create_transaction_internal;
 
 use crate::common::{assert_last_error_contains, insert_account, new_account_id};
 use crate::items_common::{build_input, nth_item};

@@ -45,7 +45,7 @@
 ## 迁移状态与剩余内容 Triage（#402 终态收口）
 
 - **路线图五域（#397–#401）全部归位完成**：
-  - 核心交易 `transaction/`（既有）
+  - 核心交易 `transaction/`（#403 完整收口：行为编排 `behavior` + 读取 `read` + 搜索 `search` + 批量编排 `batch` + 既有 `amount`/`writer`/`search_text`，壳层压平为单文件 `commands/transactions.rs` 与 `commands/search.rs`，`commands/batch/` 迁空删除）
   - 定时计划 `scheduled_transactions/`（既有）
   - 物品 `item/`（阶段 1 #397 归位：域 API `item::domain` + 溯源守卫 `item::guard` + 成本口径 `item::cost`，壳层压平为单文件 `commands/item.rs`）
   - 保单 `policy/`（阶段 2 #398 归位：CRUD / 统计 / 校验分主题模块，壳层压平为单文件 `commands/policy.rs`）
@@ -58,9 +58,9 @@
 
 | 模块 / 文件 | 当前位置 | 归属判定 | 目标位置 | 判定理由 | 后续票 |
 |---|---|---|---|---|---|
-| **交易行为与读取** | `commands/transactions/` (`behavior.rs`, `read.rs`) | 迁移 | `src-tauri/src/transaction/` | 交易创建/修改/删除编排三入口、嵌套事务感知、副作用分派与读取实现是核心交易域引擎本体，非 IPC 壳 | #403 |
-| **交易搜索查询** | `commands/search/` (`query.rs`) | 迁移 | `src-tauri/src/transaction/` | `TransactionSearch` 的 SQL 候选全量扫描与流式分页实现，与既有 `transaction::search_text` 纯文本匹配汇流归位 | #403 |
-| **交易批量写入** | `commands/batch/` (`mod.rs`) | 迁移 | `src-tauri/src/transaction/` | `TransactionBatch::run` 批量落库、幂等键/内容哈希去重判定与批次汇总日志为核心交易域批量编排能力 | #403 |
+| **交易行为与读取** | `src-tauri/src/transaction/` (`behavior.rs`, `read.rs`) | 已归位 | `src-tauri/src/transaction/` | 交易创建/修改/删除编排三入口、嵌套事务感知、副作用分派与读取实现是核心交易域引擎本体，非 IPC 壳（#403 归位） | #403 |
+| **交易搜索查询** | `src-tauri/src/transaction/` (`search.rs`) | 已归位 | `src-tauri/src/transaction/` | `TransactionSearch` 的 SQL 候选全量扫描与流式分页实现，与既有 `transaction::search_text` 纯文本匹配汇流归位（#403 归位） | #403 |
+| **交易批量写入** | `src-tauri/src/transaction/` (`batch.rs`) | 已归位 | `src-tauri/src/transaction/` | `TransactionBatch::run` 批量落库、幂等键/内容哈希去重判定与批次汇总日志为核心交易域批量编排能力（#403 归位） | #403 |
 | **账户** | `commands/accounts/` (`core.rs`) | 迁移 | `src-tauri/src/accounts/` | 账户 CRUD、自然键幂等创建、币种锁定守卫、黑洞账户创建与余额调整交易编排等独立领域规则 | #404 |
 | **分类** | `commands/categories/` (`core.rs`) | 迁移 | `src-tauri/src/categories/` | 分类 CRUD、自然键幂等创建、两级分类校验、预算删除守卫与排序重排等独立领域规则 | #404 |
 | **币种** | `commands/currencies/` (`mod.rs`) | 迁移 | `src-tauri/src/currencies/` | 参考数据币种列表查询实现，独立建立顶层微域目录，壳层压平为单文件 | #404 |

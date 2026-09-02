@@ -265,10 +265,10 @@ fn 软删商户不可再被新档案选择() {
 // 含协议期次的下期扣款日推导由 BDD `policy_stats.feature` 验收）
 // ---------------------------------------------------------------------------
 
-use crate::commands::transactions::create_transaction_internal;
 use crate::models::TransactionInput;
 use crate::policy::policy_stats;
 use crate::transaction::amount::TransactionKind;
+use crate::transaction::create_transaction_internal;
 
 fn insert_account(conn: &Connection, id: &str) {
     conn.execute(
@@ -332,7 +332,7 @@ fn 统计_挂单保费与流入实时合计且软删流水不计入() {
         i
     })
     .unwrap();
-    crate::commands::transactions::delete_transaction_internal(&conn, &removed).unwrap();
+    crate::transaction::delete_transaction_internal(&conn, &removed).unwrap();
 
     let stats = policy_stats(&conn, today(2026, 6, 1)).unwrap();
     assert_eq!(stats.len(), 1);

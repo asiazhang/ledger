@@ -3,6 +3,7 @@
 
 use super::super::*;
 use super::common::{insert_account, make_input, setup};
+use crate::models::{TransactionInput, TransactionListFilter};
 use rusqlite::Connection;
 
 use crate::signals::{Signal, WriteEvidence, WriteOp, signals_for};
@@ -223,7 +224,7 @@ fn read_back_carries_merchant_id_after_merchant_soft_delete_and_rename() {
     let listed = list_transactions_internal(&conn, &TransactionListFilter::default()).unwrap();
     assert_eq!(listed.items[0].merchant_id.as_deref(), Some("mer-jd"));
 
-    let searched = crate::commands::search::search_transactions_internal(
+    let searched = crate::transaction::search_transactions_internal(
         &conn, "备注", 1, 10, None, None, None, None,
     )
     .unwrap();

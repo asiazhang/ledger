@@ -2,6 +2,7 @@
 
 use super::super::*;
 use super::common::{insert_account, make_input, setup};
+use crate::models::{TransactionInput, TransactionListFilter};
 use rusqlite::Connection;
 
 use crate::transaction::amount::TransactionKind;

@@ -4,7 +4,7 @@
 
 use rusqlite::Connection;
 
-use super::query::search_transactions_internal;
+use super::super::search::search_transactions_internal;
 use crate::db::{init_db, open_in_memory};
 use crate::error::Result;
 use crate::models::TransactionSearchResult;

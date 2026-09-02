@@ -25,18 +25,15 @@
 //! 均已如此），提交成功置脏一次、回滚不置脏的语义由写入口结构保证，不再依赖
 //! 「COMMIT 后补调」的调用方记忆。
 
-#[cfg(test)]
-mod tests;
-
 use std::time::Instant;
 
 use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 
-use crate::commands::transactions::create_transaction_internal;
 use crate::error::{AppError, ErrClass, Result};
 use crate::models::{CreateTransactionResult, TransactionInput};
 use crate::signals::WriteEvidence;
+use crate::transaction::behavior::create as create_transaction_internal;
 
 /// 批量写入结果：逐条创建结果（与 HTTP/IPC 响应形状一致）+ 聚合证据。
 /// `evidence` = 「本批任一实际落库的行即建了商户」（[`WriteEvidence::MerchantCreated`]）

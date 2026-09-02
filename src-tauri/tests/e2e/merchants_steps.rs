@@ -1,7 +1,6 @@
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::error::{AppError, ErrClass};
 use tauri_app_lib::merchants::{
     create_merchant as create_merchant_domain, delete_merchant as delete_merchant_domain,
@@ -9,6 +8,7 @@ use tauri_app_lib::merchants::{
 };
 use tauri_app_lib::models::{MerchantInput, MerchantUpdateInput, TransactionInput};
 use tauri_app_lib::transaction::amount::TransactionKind;
+use tauri_app_lib::transaction::create_transaction_internal;
 
 use crate::common::query_all_transactions;
 use crate::world::LedgerWorld;

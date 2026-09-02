@@ -1,5 +1,5 @@
-use crate::commands::transactions::create_transaction_internal;
 use crate::transaction::amount::TransactionKind;
+use crate::transaction::create_transaction_internal;
 use rusqlite::{Connection, params};
 
 use super::super::*;

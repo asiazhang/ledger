@@ -3,14 +3,14 @@
 
 use rusqlite::{Connection, params};
 
-use crate::commands::batch::TransactionBatch;
 use crate::models::TransactionInput;
 use crate::signals::WriteEvidence;
 use crate::test_utils::{CapturedEvent, capture_events};
+use crate::transaction::TransactionBatch;
 use crate::transaction::amount::TransactionKind;
 use tracing::Level;
 
-use super::common::{insert_account, make_input, setup};
+use super::batch_common::{insert_account, make_input, setup};
 
 #[test]
 fn batch_create_marks_duplicates_and_keeps_rows() {

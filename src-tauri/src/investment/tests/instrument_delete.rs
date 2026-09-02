@@ -4,7 +4,7 @@
 
 use rusqlite::{Connection, params};
 
-use crate::commands::transactions::create_transaction_internal;
+use crate::transaction::create_transaction_internal;
 
 use super::super::*;
 use super::common::*;

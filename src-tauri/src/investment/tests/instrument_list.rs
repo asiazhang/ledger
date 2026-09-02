@@ -1,8 +1,8 @@
 //! 标的列表与 CRUD 读路径测试：分页 / 搜索（拼音语义）/ invested 派生与过滤 /
 //! 软删除账户排除 / 建标的幂等 / 持仓视图（issue #257 纯移动归组）。
 
-use crate::commands::transactions::create_transaction_internal;
 use crate::models::InstrumentType;
+use crate::transaction::create_transaction_internal;
 use rusqlite::{Connection, params};
 
 use super::common::*;

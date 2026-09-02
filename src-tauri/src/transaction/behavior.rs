@@ -43,8 +43,16 @@ use crate::error::{AppError, Result};
 use crate::investment;
 use crate::models::TransactionInput;
 use crate::signals::WriteEvidence;
-use crate::transaction::amount::TransactionKind;
-use crate::transaction::writer;
+
+use super::amount::TransactionKind;
+use super::writer;
+
+pub use create as create_transaction;
+pub use create as create_transaction_internal;
+pub use delete as delete_transaction;
+pub use delete as delete_transaction_internal;
+pub use update as update_transaction;
+pub use update as update_transaction_internal;
 
 /// buy 已有部分卖出的守卫文案——修改入口措辞（ADR-0033 决策 #4：按入口内化、
 /// 行为层单点定义，调用方协议面不出现文案，同一入口同一文案不漂移）。

@@ -13,10 +13,10 @@ use rusqlite::params;
 
 use tauri_app_lib::budget::{budget_progress_rows, create_budget, delete_budget, update_budget};
 use tauri_app_lib::commands::categories::{delete_category_internal, list_categories_internal};
-use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
 use tauri_app_lib::models::{BudgetInput, TransactionInput};
 use tauri_app_lib::transaction::amount::TransactionKind;
+use tauri_app_lib::transaction::create_transaction_internal;
 
 use crate::common::assert_last_error_contains;
 use crate::world::LedgerWorld;

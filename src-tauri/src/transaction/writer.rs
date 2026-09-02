@@ -48,7 +48,7 @@ pub struct Input {
     pub existing_merchant_id: Option<String>,
     /// 可选保单引用（issue #361 / ADR-0051 决策 3）：保费（expense）与保单现金流入
     /// （income）可挂一张保单。kind 准入（哪些 kind 可携带）收口在行为层
-    /// [`commands::transactions::behavior`]，本模块只做引用有效性校验。
+    /// [`super::behavior`]，本模块只做引用有效性校验。
     /// 修改路径该行**当前**的保单 id（创建路径为 None）由行为层并入
     /// [`existing_policy_id`]：提交值与其相同视为「保持历史引用」——已软删保单的
     /// 历史交易仍可修改其他字段，跳过在用校验（与 [`existing_merchant_id`] 同款语义，
@@ -83,7 +83,7 @@ pub struct NormalizedRow {
 /// 只处理通用 kind（income/expense/transfer/refund）；buy/sell/dividend/split 属
 /// 投资层路径（产出归一化行后调 [`insert_row`]/[`update_row`]），收到即报错防误用。
 ///
-/// 语义（与命令层通用 kind 写入路径一致，见 `commands::transactions::write`）：
+/// 语义（与交易行为层通用 kind 写入路径一致，见 `transaction::behavior`）：
 /// - 金额必须 > 0；
 /// - transfer 必须指定 `to_account_id`；
 /// - 商户（merchant_id）：income/expense 携带的商户必须存在且未软删除（软删商户
