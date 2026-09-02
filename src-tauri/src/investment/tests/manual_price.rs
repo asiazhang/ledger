@@ -8,7 +8,7 @@
 
 use rusqlite::params;
 
-use crate::commands::investment::manual_price::record_manual_price;
+use crate::investment::manual_price::record_manual_price;
 use crate::models::{InstrumentInput, InstrumentType, ManualPriceInput, ManualPriceResult};
 
 use super::common::setup_db;
@@ -321,7 +321,7 @@ fn quote_rejects_unknown_instrument() {
 fn quote_after_upsert_reuse_keeps_working_on_existing_instrument() {
     let conn = setup_db();
     // 手动创建核心函数（（代码，类型）upsert 复用语义）建标的 → 直接录价。
-    let id = crate::commands::investment::create_instrument_internal(
+    let id = crate::investment::create_instrument(
         &conn,
         InstrumentInput {
             symbol: "稳稳地幸福".into(),

@@ -18,8 +18,11 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use chrono::{Datelike, NaiveDate};
 use rusqlite::Connection;
 
-use crate::commands::investment::predicates::INVESTED_EXISTS;
 use crate::error::Result;
+use crate::investment::predicates::INVESTED_EXISTS;
+use crate::investment::prices::{
+    EASTMONEY_PRICE_SOURCE, price_value_to_cents, upsert_market_price, upsert_price_history,
+};
 use crate::models::SyncHoldingPricesResult;
 use crate::transaction::amount::default_currency_code;
 
@@ -28,10 +31,7 @@ use super::http::{
     KlineBar, Pacer, StockItem, ULIST_BATCH_SIZE, build_client, f2_to_price, fetch_fx_kline,
     fetch_kline, fetch_ulist, secid_prefix,
 };
-use super::persist::{
-    EASTMONEY_PRICE_SOURCE, price_value_to_cents, upsert_fx_rate_history, upsert_market_price,
-    upsert_price_history,
-};
+use super::persist::upsert_fx_rate_history;
 
 /// 持仓股票的报价代码：东财 secid 与响应 f12 均为裸代码（如 600519 / 00700）。
 /// 字典 symbol 可能带市场后缀（schema 注释示例格式如 "600519.SH"），取点号前段归一化。

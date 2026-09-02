@@ -3,8 +3,8 @@
 //! 单点录入，一条通道两个落点：
 //!
 //! 1. **价格历史周采样幂等覆盖**：复用 `price_history` 既有周键（week_start
-//!    生成列）与整周覆盖语义（同周后写覆盖先写，与同步同规则），经
-//!    `sync::persist::upsert_price_history` 单点落库，不立第二承载；
+//!    生成列）与整周覆盖语义（同周后写覆盖先写，与同步同规则），经本域
+//!    `prices::upsert_price_history` 单点落库，不立第二承载；
 //! 2. **现价缓存 upsert**：现价是 MarketPrice 既有定义「PriceHistory 最新一条
 //!    的即时映像」——报价不早于该标的最新价格点时 upsert 现价；回填早于最新
 //!    点的旧价只沉淀历史、不改变现价（该规则是既有定义的推论，非新发明）。
@@ -18,7 +18,7 @@
 use chrono::NaiveDate;
 use rusqlite::Connection;
 
-use crate::commands::sync::persist::{upsert_market_price, upsert_price_history};
+use super::prices::{upsert_market_price, upsert_price_history};
 use crate::error::{AppError, Result};
 use crate::models::{ManualPriceInput, ManualPriceResult};
 
@@ -26,8 +26,8 @@ use crate::models::{ManualPriceInput, ManualPriceResult};
 pub(crate) const MANUAL_PRICE_SOURCE: &str = "manual";
 
 /// 手动报价核心接缝：校验 → 价格历史周采样落库 → 按最新点映像规则决定现价
-/// upsert。与 IPC 命令同一实现（先例 `create_instrument_manual_internal`）。
-pub(crate) fn record_manual_price(
+/// upsert。与 IPC 命令同一实现（先例 `create_instrument_manual`）。
+pub fn record_manual_price(
     conn: &Connection,
     input: &ManualPriceInput,
 ) -> Result<ManualPriceResult> {
@@ -76,7 +76,7 @@ pub(crate) fn record_manual_price(
         .as_ref()
         .is_none_or(|latest| trade_date.as_str() >= latest.as_str());
     if current_price_written {
-        // 手动落价无净值日期语义，nav_date 覆盖为 None（与 sync::persist 同规则）。
+        // 手动落价无净值日期语义，nav_date 覆盖为 None（与同步落库单点同规则）。
         upsert_market_price(
             conn,
             &instrument_id,

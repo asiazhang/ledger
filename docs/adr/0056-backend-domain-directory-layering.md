@@ -44,15 +44,15 @@
 
 ## 迁移状态（随手更新）
 
-- **已归位（守门白名单）**：核心交易 `transaction/`、定时计划 `scheduled_transactions/`、物品 `item/`（阶段 1 #397 归位：域 API `item::domain` + 溯源守卫 `item::guard` + 成本口径 `item::cost`，壳层压平为单文件 `commands/item.rs`）、保单 `policy/`（阶段 2 #398 归位：CRUD / 统计 / 校验分主题模块，壳层压平为单文件 `commands/policy.rs`）、预算 `budget/`（阶段 3 #399 归位：CRUD / 进度分主题模块，壳层压平为单文件 `commands/budget.rs`）、商户 `merchants/`（阶段 4 #400 归位：字典 CRUD 与按名查找/即建，壳层压平为单文件 `commands/merchants.rs`）；基础设施五处（`db/`、`signals.rs`、`models/`、`error.rs`、`settings.rs`）。
+- **已归位（守门白名单）**：核心交易 `transaction/`、定时计划 `scheduled_transactions/`、物品 `item/`（阶段 1 #397 归位：域 API `item::domain` + 溯源守卫 `item::guard` + 成本口径 `item::cost`，壳层压平为单文件 `commands/item.rs`）、保单 `policy/`（阶段 2 #398 归位：CRUD / 统计 / 校验分主题模块，壳层压平为单文件 `commands/policy.rs`）、预算 `budget/`（阶段 3 #399 归位：CRUD / 进度分主题模块，壳层压平为单文件 `commands/budget.rs`）、商户 `merchants/`（阶段 4 #400 归位：字典 CRUD 与按名查找/即建，壳层压平为单文件 `commands/merchants.rs`）、投资 `investment/`（阶段 5 #401 归位：买卖协议三件套 / 持仓 / 走势 / 行情与汇率录入 / 基金接入分主题模块，价格写入单点自 `sync::persist` 迁入 `investment::prices`，统一模糊搜索语义纯函数迁入 `transaction::search_text`；壳层压平为单文件 `commands/investment.rs`）；基础设施五处（`db/`、`signals.rs`、`models/`、`error.rs`、`settings.rs`）。
 - **前置**：口径修缮（#395，独立于搬迁的先行提交）。
-- **待归位**：投资域（阶段 5）。
+- **路线图五域（#397–#401）全部归位完成**；后续只剩下节未分类残留（收口 #402 triage）。
 - **未分类残留（收口 #402 triage）**：`api_server.rs` 单文件目录化（另立项）、`auto_backup.rs` / `events.rs` / `fs_util.rs` / `logger.rs` 归属、行为层编排入口住址。
 
 ## 开放问题
 
 - **行为层编排入口归位时点**：命令层通用 kind 的 plan → apply / revert 单点分派是域行为还是壳内编排？依赖阶段 5 后壳层剩余形状的观察，暂不裁决。
-- **行情同步与备份的归属**：行情同步引擎现居投资命令域、备份调度散居顶层与备份命令域——归各自域目录还是算壳层基础设施，随搬迁推进再判。
+- **行情同步与备份的归属**：行情同步引擎现居命令壳层 `commands/sync/`（价格写入单点已随投资域归位迁入 `investment::prices`，同步经域入口消费），备份调度散居顶层与备份命令域——归各自域目录还是算壳层基础设施，随收口 triage 再判。
 
 ## 备选方案与否决理由
 

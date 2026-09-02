@@ -41,7 +41,7 @@ fn delete_manual_instrument_without_trades_succeeds() {
     )
     .unwrap();
 
-    delete_instrument_internal(&conn, "inst-manual-1").unwrap();
+    delete_instrument(&conn, "inst-manual-1").unwrap();
 
     assert_eq!(
         count_instruments(&conn, "inst-manual-1"),
@@ -70,7 +70,7 @@ fn delete_instrument_with_trades_rejected() {
     )
     .unwrap();
 
-    let err = delete_instrument_internal(&conn, "inst-manual-2").unwrap_err();
+    let err = delete_instrument(&conn, "inst-manual-2").unwrap_err();
     assert!(
         err.to_string().contains("已有买卖流水"),
         "错误应说明有流水引用不可删：{err}"
@@ -88,7 +88,7 @@ fn delete_sync_source_instrument_rejected() {
     let conn = setup_db();
     insert_instrument_with_source(&conn, "inst-em-1", "600519", "eastmoney");
 
-    let err = delete_instrument_internal(&conn, "inst-em-1").unwrap_err();
+    let err = delete_instrument(&conn, "inst-em-1").unwrap_err();
     assert!(
         err.to_string().contains("同步来源"),
         "错误应说明同步来源标的不支持删除：{err}"
@@ -104,7 +104,7 @@ fn delete_sync_source_instrument_rejected() {
 #[test]
 fn delete_missing_instrument_not_found() {
     let conn = setup_db();
-    let err = delete_instrument_internal(&conn, "不存在的id").unwrap_err();
+    let err = delete_instrument(&conn, "不存在的id").unwrap_err();
     assert!(
         err.to_string().contains("标的 不存在的id 不存在"),
         "删除不存在的标的应报 NotFound：{err}"

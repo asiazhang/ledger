@@ -50,7 +50,7 @@ fn validate_range(range: &TrendRange) -> Result<()> {
 }
 
 /// 单标的走势：PriceHistory 直出，区间裁剪（含端点），按采样日升序。
-pub(crate) fn query_instrument_price_trend(
+pub fn query_instrument_price_trend(
     conn: &Connection,
     instrument_id: &str,
     range: &TrendRange,
@@ -108,7 +108,7 @@ struct PriceRow {
 /// 委托时点持仓接缝 [`holdings_as_of`]——buy/sell 口径单点在推算模块，本函数
 /// 只负责取数、折算与组装（数量按交易日取、汇率按周键取，双时间键契约
 /// 显式分界）；缺价格或缺同期汇率的标的该周跳过，全周无有效贡献则该周无点。
-pub(crate) fn query_portfolio_value_trend(
+pub fn query_portfolio_value_trend(
     conn: &Connection,
     range: &TrendRange,
 ) -> Result<PortfolioValueTrend> {

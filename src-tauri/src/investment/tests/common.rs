@@ -6,6 +6,11 @@ use rusqlite::{Connection, params};
 use crate::models::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 
+// 既有测试经域根 glob（`super::super::*`）消费的旧壳 mod.rs 私有 use 绑定，
+// 随 #401 域归位改由共享脚手架再导出（import 更新，断言与场景不变）。
+pub(crate) use crate::error::AppError;
+pub(crate) use crate::models::{InstrumentListFilter, InstrumentListResult, PnlFilter, TrendRange};
+
 pub(super) fn setup_db() -> Connection {
     let mut conn = crate::db::open_in_memory().unwrap();
     crate::db::init_db(&mut conn).unwrap();

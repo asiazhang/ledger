@@ -8,13 +8,13 @@
 //! - 结果不附 `stale` 标志：搜索为同步全量匹配，无任何索引滞后可言。
 //!
 //! 目录组织：
-//! - `text`：纯文本逻辑——拼音首字母/子序列判定/统一语义匹配（与数据库无关）；
-//! - `query`：查询执行——SQL 候选 + Rust 过滤 + 内存分页。
+//! - `query`：查询执行——SQL 候选 + Rust 过滤 + 内存分页；统一模糊搜索语义的
+//!   纯文本逻辑已随 #401 域目录化归入核心交易域（`transaction::search_text`，
+//!   唯一定义点见核心域 TransactionSearch 词条，ADR-0027），本壳按域入口消费。
 
 mod query;
 #[cfg(test)]
 mod tests;
-pub(crate) mod text;
 
 use tauri::State;
 

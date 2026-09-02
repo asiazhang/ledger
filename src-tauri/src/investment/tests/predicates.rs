@@ -11,7 +11,7 @@
 use rusqlite::{Connection, params};
 
 use super::common::{insert_account, setup_db};
-use crate::commands::investment::predicates::INVESTED_EXISTS;
+use crate::investment::predicates::INVESTED_EXISTS;
 
 /// 直插一个标的（类型可指定），绕过命令层以聚焦谓词集合本身。
 fn insert_instrument_typed(conn: &Connection, id: &str, symbol: &str, kind: &str) {

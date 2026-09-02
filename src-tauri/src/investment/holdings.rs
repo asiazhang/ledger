@@ -27,7 +27,7 @@ use crate::error::{AppError, Result};
 ///
 /// 每次调用自取流水（单一函数、无预载会话变体，spec #168 定案第 3 条）：
 /// 单条索引查询亚毫秒级，真慢了再加变体是纯增量。
-pub(crate) fn holdings_as_of(
+pub fn holdings_as_of(
     conn: &Connection,
     instrument_id: Option<&str>,
     as_of_date: &str,

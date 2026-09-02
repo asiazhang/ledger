@@ -15,7 +15,7 @@
 
 ## 决策
 
-1. **“已投资” = 当前持仓（术语定为“持仓标的” InvestedInstrument）**。判定谓词为“有当前持仓”，即 `security_lots.remaining_quantity > 0`（等价于 `v_holdings` 视图有行）、且排除软删除账户的批次；**不含已清仓标的**。同一口径单点定义（`commands::investment::crud` 的 `INVESTED_EXISTS` 谓词，与 `v_holdings` 视图口径一致），同时驱动四处：
+1. **“已投资” = 当前持仓（术语定为“持仓标的” InvestedInstrument）**。判定谓词为“有当前持仓”，即 `security_lots.remaining_quantity > 0`（等价于 `v_holdings` 视图有行）、且排除软删除账户的批次；**不含已清仓标的**。同一口径单点定义（投资域 `investment::predicates` 的 `INVESTED_EXISTS` 谓词，#401 域归位前住 `commands::investment`，与 `v_holdings` 视图口径一致），同时驱动四处：
    - `list_instruments` 返回的 `invested` 派生布尔列（issue #102）；
    - 标的页“只看持仓”过滤参数 `only_invested`（issue #102）；
    - 增量同步的标的集合（issue #103）；

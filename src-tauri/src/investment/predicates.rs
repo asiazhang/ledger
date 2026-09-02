@@ -22,6 +22,6 @@
 /// 谓词以 `i` 引用外层 `instruments` 行：引用本常量的外层查询**必须**以 `i`
 /// 作为 instruments 表别名（如 `FROM instruments i WHERE {INVESTED_EXISTS}`）。
 /// 违反契约在 prepare 期即报「no such column」类错误，不会静默通过。
-pub(crate) const INVESTED_EXISTS: &str = "EXISTS (SELECT 1 FROM security_lots l WHERE l.instrument_id=i.id \
+pub const INVESTED_EXISTS: &str = "EXISTS (SELECT 1 FROM security_lots l WHERE l.instrument_id=i.id \
      AND l.remaining_quantity > 0 \
      AND l.account_id IN (SELECT id FROM accounts WHERE is_deleted = 0))";

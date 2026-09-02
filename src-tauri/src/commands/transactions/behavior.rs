@@ -21,7 +21,7 @@
 //!
 //! 分派是薄而穷尽的 `match`（不引入 trait 注册表，避免过度设计）：
 //! 普通 kind（income/expense/transfer/refund）经 Writer 接缝归一化；buy/sell 委托投资域
-//! （`commands::investment` 的 prepare/apply/revert，正向分派保留）；`dividend` / `split`
+//! （`investment` 域入口的 prepare/apply/revert，正向分派保留）；`dividend` / `split`
 //! 已声明但未实现，在此显式「暂不支持」拒绝——这是 #72 重构唯一对外的可观测行为变化
 //! （此前经交易接口创建 dividend/split 落入 [`writer::normalize`] 的通用兜底，返回语义不明的
 //! 「仅处理通用交易类型」；现改为明确的「暂不支持」，两者都不落库）。
@@ -38,9 +38,9 @@
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 
-use crate::commands::investment;
 use crate::db::{device_id, now_iso};
 use crate::error::{AppError, Result};
+use crate::investment;
 use crate::models::TransactionInput;
 use crate::signals::WriteEvidence;
 use crate::transaction::amount::TransactionKind;

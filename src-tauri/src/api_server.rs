@@ -1,12 +1,11 @@
 use std::sync::{Arc, Mutex};
 
-use crate::commands::investment::{
-    FundCreateOutcome, create_fund_degraded, is_six_digit_code, persist_fund_detail,
-    validate_fund_code,
-};
-use crate::commands::sync::persist::price_value_to_cents;
 use crate::error::{AppError, ErrClass};
 use crate::events::SignalEmitter;
+use crate::investment::{
+    FundCreateOutcome, create_fund_degraded, is_six_digit_code, persist_fund_detail,
+    price_value_to_cents, validate_fund_code,
+};
 use crate::models::{
     Account, AccountBalance, AccountInput, AccountType, AccountUpdateInput, Category,
     CategoryInput, CreateTransactionResult, Currency, FundDetail, Instrument, InstrumentInput,
@@ -547,7 +546,7 @@ struct InstrumentSearchQuery {
 
 /// 标的搜索（AI 导入契约，issue #294 / ADR-0037）：供 AI 把流水中的标的描述
 /// （代码/名称/拼音首字母）解析为可用标的 id，不提供全量列表。语义复用
-/// ADR-0027 统一模糊搜索（既有标的搜索接缝 `list_instruments_internal`），
+/// ADR-0027 统一模糊搜索（既有标的搜索接缝 `investment::list_instruments`），
 /// 不为 AI 另造第二口径；按 symbol 排序，封顶返回 + 命中总数控制上下文预算。
 #[utoipa::path(
     get,
@@ -602,9 +601,7 @@ async fn search_instruments_handler(
         page_size: Some(limit as usize),
     };
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    Ok(Json(crate::commands::list_instruments_internal(
-        &conn, &filter,
-    )?))
+    Ok(Json(crate::investment::list_instruments(&conn, &filter)?))
 }
 
 /// 标的创建请求体（`POST /api/v1/instruments`，issue #296 / ADR-0037）。
@@ -641,8 +638,8 @@ fn derive_quote_currency(market: &str) -> &'static str {
 
 /// 标的幂等创建（AI 导入契约，issue #296 / ADR-0037）：find-or-create 自然键
 /// （symbol, 类型），命中静默复用并按需更新名称/市场、返回既有 id，未命中创建；
-/// 重复创建同一标的返回同一 id，不产生字典碎片。核心语义复用 IPC 共用创建函数
-/// `create_instrument_internal`（不经自建标的的 UI 类型白名单，ADR-0037 决策 4），
+/// 重复创建同一标的返回同一 id，不产生字典碎片。核心语义复用投资域核心创建函数
+/// `investment::create_instrument`（不经自建标的的 UI 类型白名单，ADR-0037 决策 4），
 /// 新建行来源标记 = `'manual'`（非同步即手动）。
 #[utoipa::path(
     post,
@@ -721,7 +718,7 @@ async fn create_instrument_handler(
                 market: input.market.clone(),
             };
             Ok(FundCreateOutcome {
-                instrument_id: crate::commands::create_instrument_internal(conn, generic_input)?,
+                instrument_id: crate::investment::create_instrument(conn, generic_input)?,
                 price_written: false,
             })
         }

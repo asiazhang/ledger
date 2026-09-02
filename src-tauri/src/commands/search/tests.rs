@@ -5,10 +5,12 @@
 use rusqlite::Connection;
 
 use super::query::search_transactions_internal;
-use super::text::{is_subsequence, pinyin_initials, split_terms, term_matches, term_matches_text};
 use crate::db::{init_db, open_in_memory};
 use crate::error::Result;
 use crate::models::TransactionSearchResult;
+use crate::transaction::search_text::{
+    is_subsequence, pinyin_initials, split_terms, term_matches, term_matches_text,
+};
 
 fn setup() -> Connection {
     let mut conn = open_in_memory().unwrap();

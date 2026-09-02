@@ -1,12 +1,12 @@
 //! 手动报价 e2e 步骤（issue #291 / ADR-0036）：录价写入走
-//! `commands::investment::record_manual_price_internal`（与 IPC 命令同一实现），
+//! `investment::record_manual_price`（与 IPC 命令同一实现，#401 域目录化后直调域入口），
 //! 断言读现价缓存 / 价格历史 / `v_holdings` 视图。组合走势、净资产总览与买卖
 //! 流水复用既有步骤（investment_trend_steps / dashboard_steps / instruments_steps）。
 
 use cucumber::{then, when};
 use rusqlite::params;
 
-use tauri_app_lib::commands::investment::record_manual_price_internal;
+use tauri_app_lib::investment::record_manual_price;
 use tauri_app_lib::models::ManualPriceInput;
 
 use crate::world::LedgerWorld;
@@ -32,7 +32,7 @@ fn record_manual_quote(world: &mut LedgerWorld, symbol: String, date: String, pr
         date,
         price_cents,
     };
-    let result = record_manual_price_internal(&world_conn!(world), &input);
+    let result = record_manual_price(&world_conn!(world), &input);
     match result {
         Ok(_) => world.last_error = None,
         Err(e) => world.last_error = Some(e.to_string()),

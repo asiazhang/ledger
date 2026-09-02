@@ -6,16 +6,17 @@
 use rusqlite::Connection;
 
 use super::predicates::INVESTED_EXISTS;
-use crate::commands::search::text::{split_terms, term_matches_text};
+use super::prices::upsert_market_price;
 use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{
     ExchangeRate, ExchangeRateInput, Holding, Instrument, InstrumentInput, InstrumentListFilter,
-    InstrumentListResult, MarketPrice, MarketPriceInput,
+    InstrumentListResult, InstrumentType, MarketPrice, MarketPriceInput,
 };
+use crate::transaction::search_text::{split_terms, term_matches_text};
 
-pub(crate) fn list_holdings(conn: &Connection) -> Result<Vec<Holding>> {
+pub fn list_holdings(conn: &Connection) -> Result<Vec<Holding>> {
     query_all(
         conn,
         "SELECT id,account_id,instrument_id,quantity,cost_basis_cents,cost_currency_code, \
@@ -25,7 +26,7 @@ pub(crate) fn list_holdings(conn: &Connection) -> Result<Vec<Holding>> {
     )
 }
 
-pub(crate) fn list_exchange_rates(conn: &Connection) -> Result<Vec<ExchangeRate>> {
+pub fn list_exchange_rates(conn: &Connection) -> Result<Vec<ExchangeRate>> {
     query_all(
         conn,
         "SELECT id,base_code,quote_code,rate,priced_at,source,updated_at,version,device_id \
@@ -34,7 +35,7 @@ pub(crate) fn list_exchange_rates(conn: &Connection) -> Result<Vec<ExchangeRate>
     )
 }
 
-pub(crate) fn create_exchange_rate(conn: &Connection, input: ExchangeRateInput) -> Result<String> {
+pub fn create_exchange_rate(conn: &Connection, input: ExchangeRateInput) -> Result<String> {
     if input.rate <= 0.0 {
         return Err(AppError::coded("fx.rate-positive", "汇率必须大于 0"));
     }
@@ -69,7 +70,7 @@ pub(crate) fn create_exchange_rate(conn: &Connection, input: ExchangeRateInput) 
     Ok(id)
 }
 
-pub(crate) fn list_market_prices(conn: &Connection) -> Result<Vec<MarketPrice>> {
+pub fn list_market_prices(conn: &Connection) -> Result<Vec<MarketPrice>> {
     query_all(
         conn,
         "SELECT id,instrument_id,price_cents,currency_code,priced_at,nav_date,source,created_at,updated_at,version,device_id \
@@ -78,20 +79,20 @@ pub(crate) fn list_market_prices(conn: &Connection) -> Result<Vec<MarketPrice>> 
     )
 }
 
-pub(crate) fn create_market_price(conn: &Connection, input: MarketPriceInput) -> Result<String> {
+pub fn create_market_price(conn: &Connection, input: MarketPriceInput) -> Result<String> {
     if input.price_cents <= 0 {
         return Err(AppError::coded(
             "instrument.price-positive",
             "价格必须大于 0",
         ));
     }
-    // 写入委托现价缓存单点 upsert（issue #291 收口：原就地 SQL 与 sync::persist
+    // 写入委托现价缓存单点 upsert（issue #291 收口：原就地 SQL 与同步通道
     // 两份同形 upsert 合并为一份）；手动落价无净值日期语义，nav_date 覆盖为 NULL
-    // （防基金现价被手动更新后旧净值日期残留错配，与 sync::persist 同规则）。
+    // （防基金现价被手动更新后旧净值日期残留错配，与同步通道同规则）。
     // source 透传入参（可空，发布 API 形状不变）；手动报价正经 manual_price 模块
     // （record_manual_price），本命令为已发布的独立写价通道（issue #291 前的半成品）。
     // 返回落库行实际 id（upsert 单点负责既有行复用/新建）。
-    crate::commands::sync::persist::upsert_market_price(
+    upsert_market_price(
         conn,
         &input.instrument_id,
         input.price_cents,
@@ -111,7 +112,7 @@ fn instrument_match_label(inst: &Instrument) -> String {
     }
 }
 
-pub(crate) fn list_instruments(
+pub fn list_instruments(
     conn: &Connection,
     filter: &InstrumentListFilter,
 ) -> Result<InstrumentListResult> {
@@ -210,7 +211,7 @@ pub(crate) fn list_instruments(
 /// buy_transaction_id 为指向 security_transactions 的 NOT NULL 外键——批次存在
 /// 必有买入明细行，故守卫的流水 COUNT 已覆盖批次（无流水 ⟺ 无批次），
 /// DELETE 不会撞到 RESTRICT 外键错误。
-pub(crate) fn delete_instrument(conn: &Connection, id: &str) -> Result<()> {
+pub fn delete_instrument(conn: &Connection, id: &str) -> Result<()> {
     let source: Option<String> = conn
         .query_row(
             "SELECT source FROM instruments WHERE id=?1",
@@ -245,7 +246,7 @@ pub(crate) fn delete_instrument(conn: &Connection, id: &str) -> Result<()> {
 /// 核心创建函数（手动 IPC 命令与 AI HTTP 端点共用，ADR-0037）：新建行来源标
 /// 'manual'（非同步即手动），（代码，类型）命中既有行则复用并只更新名称/市场，
 /// 来源随行终身不变（issue #293 / ADR-0036 决策 2）。
-pub(crate) fn create_instrument(conn: &Connection, input: InstrumentInput) -> Result<String> {
+pub fn create_instrument(conn: &Connection, input: InstrumentInput) -> Result<String> {
     if input.symbol.trim().is_empty() {
         return Err(AppError::coded(
             "instrument.symbol-required",
@@ -291,4 +292,35 @@ pub(crate) fn create_instrument(conn: &Connection, input: InstrumentInput) -> Re
         ],
     )?;
     Ok(id)
+}
+
+/// 手动创建入口守卫（ADR-0036 决策 3）：类型白名单收窄为债券/ETF/其他三类——
+/// 股票字典归全量同步修、基金唯一创建入口归按代码即拉（issue #301 / ADR-0038），
+/// 白名单让手动字典与两条自动通道永不相交；名称必填（自建标的主身份是名称）。
+/// 守卫属 UI 入口政策，核心创建函数 [`create_instrument`] 保持通用：AI HTTP
+/// 创建端点（ADR-0037）五类全开、名称可选，不经本守卫。同一接缝供 IPC 命令
+/// 与 BDD 步骤复用。
+pub fn create_instrument_manual(conn: &Connection, input: InstrumentInput) -> Result<String> {
+    match input.kind {
+        InstrumentType::Bond | InstrumentType::Etf | InstrumentType::Other => {}
+        InstrumentType::Stock => {
+            return Err(AppError::coded(
+                "instrument.stock-manual-forbidden",
+                "股票类标的不支持手动创建：股票字典由「全量同步」从东方财富维护",
+            ));
+        }
+        InstrumentType::Fund => {
+            return Err(AppError::coded(
+                "instrument.fund-manual-forbidden",
+                "基金类标的不支持手动创建：请用「添加基金」输入 6 位代码自动回填",
+            ));
+        }
+    }
+    if input.name.as_deref().is_none_or(|n| n.trim().is_empty()) {
+        return Err(AppError::coded(
+            "instrument.name-required",
+            "标的名称不能为空",
+        ));
+    }
+    create_instrument(conn, input)
 }
