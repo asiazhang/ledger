@@ -1,4 +1,4 @@
-//! 商户字典核心逻辑（issue #188 / ADR-0028）。
+//! 商户字典域行为（issue #188 / ADR-0028）。
 //!
 //! 列表 / 创建 / 更新（改名）/ 软删除；`name` 在用行全库唯一——重名创建与改名
 //! 撞名都返回明确错误（`AppError::Invalid`）。软删商户不再出现在列表（不可再被
@@ -19,7 +19,7 @@ const MERCHANT_COLUMNS: &str = "id,name,created_at,updated_at,version,device_id,
 /// 列表：默认仅未删除商户（字典语义，改名后即按新名排序）；
 /// `include_deleted=true` 返回含软删全量（交易列表筛选下拉数据源：
 /// 软删商户仍有历史交易，需可被选中过滤，issue #191）。
-pub fn list_merchants_internal(conn: &Connection, include_deleted: bool) -> Result<Vec<Merchant>> {
+pub fn list_merchants(conn: &Connection, include_deleted: bool) -> Result<Vec<Merchant>> {
     let where_clause = if include_deleted {
         ""
     } else {
@@ -35,7 +35,7 @@ pub fn list_merchants_internal(conn: &Connection, include_deleted: bool) -> Resu
 }
 
 /// 创建商户，返回新商户 id。在用行同名（含改名目标）→ 明确错误。
-pub fn create_merchant_internal(conn: &Connection, input: MerchantInput) -> Result<String> {
+pub fn create_merchant(conn: &Connection, input: MerchantInput) -> Result<String> {
     if merchant_name_taken(conn, &input.name, None)? {
         return Err(AppError::codedp(
             "merchant.already-exists",
@@ -55,11 +55,7 @@ pub fn create_merchant_internal(conn: &Connection, input: MerchantInput) -> Resu
 
 /// 更新商户（改名）：字段省略即保持原值；改名撞在用同名 → 明确错误。
 /// 不存在（或已软删除）的 id → `AppError::NotFound`。
-pub fn update_merchant_internal(
-    conn: &Connection,
-    id: &str,
-    input: MerchantUpdateInput,
-) -> Result<()> {
+pub fn update_merchant(conn: &Connection, id: &str, input: MerchantUpdateInput) -> Result<()> {
     let existing: Merchant = query_all(
         conn,
         &format!("SELECT {MERCHANT_COLUMNS} FROM merchants WHERE id=?1 AND is_deleted=0"),
@@ -90,7 +86,7 @@ pub fn update_merchant_internal(
 
 /// 软删除商户（`is_deleted=1`）。不存在的 id → `AppError::NotFound`。
 /// 历史交易引用保留（交易侧对软删商户仅拦截新写入），照常显示商户名。
-pub fn delete_merchant_internal(conn: &Connection, id: &str) -> Result<()> {
+pub fn delete_merchant(conn: &Connection, id: &str) -> Result<()> {
     let exists: bool = conn
         .query_row(
             "SELECT 1 FROM merchants WHERE id=?1 AND is_deleted=0",
@@ -144,7 +140,7 @@ pub fn create_merchant_by_name(conn: &Connection, name: &str) -> Result<String> 
     if let Some(id) = find_merchant_by_name(conn, name)? {
         return Ok(id);
     }
-    create_merchant_internal(
+    create_merchant(
         conn,
         MerchantInput {
             name: name.to_string(),
