@@ -12,11 +12,16 @@
 //! - [`guard`]（溯源守卫，ADR-0025 创建唯一入口的准入接缝）：关联购买交易的
 //!   解析、校验与自动带出——溯源必填/唯一在创建时刻强制。
 //!
-//! 依赖方向恒为「壳层 → item → 基础设施」：本模块不反向依赖壳层。
+//! 依赖方向恒为「壳层 → item → 基础设施」：本模块不反向依赖壳层；
+//! 对 `transaction::amount` 的消费属域间横向依赖（ADR-0056 决策 2 允许）。
 
 pub mod cost;
 pub mod domain;
 pub mod guard;
+
+/// 域 API 再导出：调用面用域语言短名（`item::create_item` 等），
+/// 与 ADR-0056 阶段 1 定格形状一致（先例：`scheduled_transactions` 入口再导出）。
+pub use domain::*;
 
 #[cfg(test)]
 mod tests;
