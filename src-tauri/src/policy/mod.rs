@@ -1,0 +1,24 @@
+//! 保单（Policy）领域模块（issue #360 / spec #358 / ADR-0051）。
+//!
+//! 职责：保单静态档案的创建、编辑、软删除、列表与保单视角统计（实时推导
+//! 不落库）——写入口的校验与归一化、口径接线与失效信号回调注入。
+//!
+//! 接缝：
+//! - [`domain`]（域 API，单一权威）：写路径（创建/编辑/删除）与读路径
+//!   （列表/保单视角统计），域语言短名；失效信号以 `notify` 回调注入
+//!   （回调注入式，仿 `commands::sync` 的 emit 注入先例）。
+//!
+//! 依赖方向恒为「壳层 → policy → 基础设施」：本模块不反向依赖壳层；
+//! 对 `transaction::amount` 的消费属域间横向依赖（ADR-0056 决策 2 允许）。
+
+pub mod crud;
+pub mod stats;
+pub mod validation;
+
+/// 域 API 再导出：调用面用域语言短名（`policy::list_policies` 等），
+/// 与 ADR-0056 定格形状一致（先例：`item` / `scheduled_transactions` 入口再导出）。
+pub use crud::{create_policy, delete_policy, list_policies, update_policy};
+pub use stats::policy_stats;
+
+#[cfg(test)]
+mod tests;

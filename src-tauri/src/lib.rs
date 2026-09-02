@@ -7,6 +7,7 @@ pub mod events;
 pub mod item;
 pub mod logger;
 pub mod models;
+pub mod policy;
 pub mod scheduled_transactions;
 pub mod settings;
 pub mod signals;
