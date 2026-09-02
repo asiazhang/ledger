@@ -46,6 +46,14 @@ export interface DateRange {
   to: string
 }
 
+/** 可空双端日期区间（共享受控组件的受控契约形状，issue #410）：
+ * 双端皆 null = 无日期过滤「全部」默认态；单端 null 是 URL 下钻可达的过渡态
+ *（无芯片点亮、无可步进游标）。 */
+export interface NullableDateRange {
+  from: string | null
+  to: string | null
+}
+
 /** YYYY-MM-DD 格式化复用本地日历日语义单点。 */
 const iso = formatLocalDateISO
 
@@ -288,18 +296,18 @@ export function stepPeriod(p: NaturalPeriod, delta: number): NaturalPeriod {
 }
 
 /** 期间标签本地化格式化：zh-CN「2026年2月」「2026年一季度」「2025年」；
- * en-US「Feb 2026」「Q1 2026」「2025」。模板与月/季名称表随交易域文案文件
- * （ADR-0049，无硬编码文案），经 t() 按当前界面语言现取（响应式上下文中调用
- * 随语言切换即时重渲染）。 */
+ * en-US「Feb 2026」「Q1 2026」「2025」。模板与月/季名称表随共享受控组件文案文件
+ * quickTimeRange（ADR-0049，无硬编码文案），经 t() 按当前界面语言现取
+ * （响应式上下文中调用随语言切换即时重渲染）。 */
 export function formatPeriodLabel(p: NaturalPeriod): string {
   const year = String(p.year)
   if (p.unit === 'year') {
-    return t('transactions.filter.periodLabel.year', { year })
+    return t('quickTimeRange.periodLabel.year', { year })
   }
   const namesKey = p.unit === 'month' ? 'monthNames' : 'quarterNames'
-  const name = t(`transactions.filter.periodLabel.${namesKey}.${p.index + 1}`)
+  const name = t(`quickTimeRange.periodLabel.${namesKey}.${p.index + 1}`)
   const key = p.unit === 'month' ? 'month' : 'quarter'
-  return t(`transactions.filter.periodLabel.${key}`, { year, name })
+  return t(`quickTimeRange.periodLabel.${key}`, { year, name })
 }
 
 /** 高亮派生：当前日期区间恰等于某预设定义（相对 today 的自然周期）时返回该预设；
