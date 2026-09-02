@@ -6,10 +6,10 @@ use tauri_app_lib::accounts::create_account;
 use tauri_app_lib::auto_backup::{
     AUTO_BACKUP_PREFIX, AttemptOutcome, SkipReason, get_state, set_state,
 };
+use tauri_app_lib::categories::{create_category, delete_category as delete_category_domain};
 use tauri_app_lib::commands::backup::{
     BackupKind, backup_db_to, expected_schema_version, read_backup_kind, restore_db_from,
 };
-use tauri_app_lib::commands::categories::{create_category_internal, delete_category_internal};
 use tauri_app_lib::db::{new_uuid, now_iso, open_connection};
 use tauri_app_lib::investment::{create_exchange_rate, create_instrument, create_market_price};
 use tauri_app_lib::item::cost;
@@ -418,7 +418,7 @@ fn create_category_via_entry(world: &mut LedgerWorld, name: String, kind: String
     };
     world
         .db
-        .write(|conn| create_category_internal(conn, input))
+        .write(|conn| create_category(conn, input))
         .expect("创建分类失败");
 }
 
@@ -436,7 +436,7 @@ fn delete_category_via_entry(world: &mut LedgerWorld, name: String) {
     };
     world
         .db
-        .write(|conn| delete_category_internal(conn, &id))
+        .write(|conn| delete_category_domain(conn, &id))
         .expect("删除分类失败");
 }
 

@@ -442,9 +442,7 @@ async fn list_categories_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
 ) -> Result<Json<Vec<crate::models::Category>>, AppError> {
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    Ok(Json(crate::commands::list_categories_internal(
-        &conn, false,
-    )?))
+    Ok(Json(crate::categories::list_categories(&conn, false)?))
 }
 
 #[utoipa::path(
@@ -470,7 +468,7 @@ async fn create_category_handler(
         serde_json::from_str(&body).map_err(|e| AppError::Invalid(e.to_string()))?;
     // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
     let id = crate::db::write(&conn, |conn| {
-        crate::commands::create_category_idempotent_internal(conn, input)
+        crate::categories::create_category_idempotent(conn, input)
     })?;
     emit_after_write(&emitter, WriteOp::CreateCategory, WriteEvidence::None);
     Ok((StatusCode::CREATED, Json(id)))
@@ -498,9 +496,7 @@ async fn delete_category_handler(
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
     // 连接层统一写入口（ADR-0032）：删除成功即置脏。
-    crate::db::write(&conn, |conn| {
-        crate::commands::delete_category_internal(conn, &id)
-    })?;
+    crate::db::write(&conn, |conn| crate::categories::delete_category(conn, &id))?;
     emit_after_write(&emitter, WriteOp::DeleteCategory, WriteEvidence::None);
     Ok(StatusCode::NO_CONTENT)
 }

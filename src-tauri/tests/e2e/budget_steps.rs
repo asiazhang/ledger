@@ -12,7 +12,9 @@ use cucumber::{given, then, when};
 use rusqlite::params;
 
 use tauri_app_lib::budget::{budget_progress_rows, create_budget, delete_budget, update_budget};
-use tauri_app_lib::commands::categories::{delete_category_internal, list_categories_internal};
+use tauri_app_lib::categories::{
+    delete_category as delete_category_domain, list_categories as list_categories_domain,
+};
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
 use tauri_app_lib::models::{BudgetInput, TransactionInput};
 use tauri_app_lib::transaction::amount::TransactionKind;
@@ -285,7 +287,7 @@ fn delete_budget_via_command(world: &mut LedgerWorld, name: String) {
 #[when(expr = "尝试删除分类 {string}")]
 fn delete_category_via_command(world: &mut LedgerWorld, name: String) {
     let id = category_id_any(&world_conn!(world), &name);
-    world.last_error = match world.db.write(|conn| delete_category_internal(conn, &id)) {
+    world.last_error = match world.db.write(|conn| delete_category_domain(conn, &id)) {
         Ok(_) => None,
         Err(e) => Some(e.to_string()),
     };
@@ -308,7 +310,7 @@ fn assert_delete_category_failed(world: &mut LedgerWorld, needle: String) {
 /// 命令层可见结果：分类在读回列表中（与真实读路径同款）。
 #[then(expr = "分类 {string} 仍应存在")]
 fn assert_category_still_exists(world: &mut LedgerWorld, name: String) {
-    let cats = list_categories_internal(&world_conn!(world), false).unwrap();
+    let cats = list_categories_domain(&world_conn!(world), false).unwrap();
     assert!(
         cats.iter().any(|c| c.name == name),
         "分类 '{}' 应仍存在于读回结果中",
@@ -318,7 +320,7 @@ fn assert_category_still_exists(world: &mut LedgerWorld, name: String) {
 
 #[then(expr = "分类 {string} 不应存在")]
 fn assert_category_gone(world: &mut LedgerWorld, name: String) {
-    let cats = list_categories_internal(&world_conn!(world), false).unwrap();
+    let cats = list_categories_domain(&world_conn!(world), false).unwrap();
     assert!(
         !cats.iter().any(|c| c.name == name),
         "分类 '{}' 不应再出现在读回结果中",

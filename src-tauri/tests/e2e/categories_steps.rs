@@ -4,8 +4,9 @@
 
 use cucumber::{given, then, when};
 
-use tauri_app_lib::commands::categories::{
-    create_category_internal, delete_category_internal, list_categories_internal,
+use tauri_app_lib::categories::{
+    create_category, delete_category as delete_category_domain,
+    list_categories as list_categories_domain,
 };
 use tauri_app_lib::models::CategoryInput;
 
@@ -17,7 +18,7 @@ use crate::world::LedgerWorld;
 
 #[given(expr = "存在分类 {string} 类型 {string}")]
 fn given_category(world: &mut LedgerWorld, name: String, kind: String) {
-    let id = create_category_internal(
+    let id = create_category(
         &world_conn!(world),
         CategoryInput {
             name: name.clone(),
@@ -34,7 +35,7 @@ fn given_category(world: &mut LedgerWorld, name: String, kind: String) {
 #[given(expr = "存在二级分类 {string} 父分类 {string} 类型 {string}")]
 fn given_subcategory(world: &mut LedgerWorld, name: String, parent: String, kind: String) {
     let parent_id = world.category_id(&parent);
-    let id = create_category_internal(
+    let id = create_category(
         &world_conn!(world),
         CategoryInput {
             name: name.clone(),
@@ -55,7 +56,7 @@ fn given_subcategory(world: &mut LedgerWorld, name: String, parent: String, kind
 #[when(expr = "软删分类 {string}")]
 fn delete_category(world: &mut LedgerWorld, name: String) {
     let id = world.category_id(&name);
-    delete_category_internal(&world_conn!(world), &id).expect("软删分类失败");
+    delete_category_domain(&world_conn!(world), &id).expect("软删分类失败");
 }
 
 // ---------------------------------------------------------------------------
@@ -65,8 +66,7 @@ fn delete_category(world: &mut LedgerWorld, name: String) {
 /// 在用列表不含软删分类（软删后不可再被选择）。
 #[then(expr = "分类列表不应包含 {string}")]
 fn category_list_not_contains(world: &mut LedgerWorld, name: String) {
-    let categories =
-        list_categories_internal(&world_conn!(world), false).expect("查询分类列表失败");
+    let categories = list_categories_domain(&world_conn!(world), false).expect("查询分类列表失败");
     assert!(
         !categories.iter().any(|c| c.name == name),
         "分类列表不应包含 '{name}'"
@@ -78,7 +78,7 @@ fn category_list_not_contains(world: &mut LedgerWorld, name: String) {
 #[then(expr = "分类含软删列表应包含 {string}")]
 fn category_list_with_deleted_contains(world: &mut LedgerWorld, name: String) {
     let categories =
-        list_categories_internal(&world_conn!(world), true).expect("查询含软删分类列表失败");
+        list_categories_domain(&world_conn!(world), true).expect("查询含软删分类列表失败");
     assert!(
         categories.iter().any(|c| c.name == name),
         "含软删分类列表应包含 '{name}'"
