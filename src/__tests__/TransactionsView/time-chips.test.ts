@@ -2,6 +2,7 @@ import { setTxnDb, makeTxn, mountView, listCalls, lastListFilter, tablePaginatio
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NButton, NDatePicker } from 'naive-ui'
+import AppDatePicker from '@/components/AppDatePicker.vue'
 import type { Transaction } from '@/types'
 
 /**
@@ -54,9 +55,24 @@ describe('TransactionsView 时间维度行（issue #382）', () => {
     expect(wrapper.text()).toContain('共 3 条')
   })
 
-  it('两个日期选择控件不再出现在交易页（搜索页保留任意区间）', async () => {
+  it('期间标签接入直达面板：全部态默认月单位，边界外月份置灰', async () => {
     const wrapper = await mountView()
-    expect(wrapper.findAllComponents(NDatePicker).length).toBe(0)
+    const picker = wrapper.findComponent(NDatePicker)
+    expect(wrapper.findComponent(AppDatePicker).exists()).toBe(true)
+    expect(picker.props('type')).toBe('month')
+    const isDisabled = picker.props('isDateDisabled') as (timestamp: number, detail: unknown) => boolean
+    expect(isDisabled(0, { type: 'month', year: 2025, month: 4 })).toBe(true)
+  })
+
+  it('面板 type 随当前期间单位切换（月/季/年）', async () => {
+    const wrapper = await mountView()
+    const picker = wrapper.findComponent(NDatePicker)
+    await clickChip(wrapper, '当月')
+    expect(picker.props('type')).toBe('month')
+    await clickChip(wrapper, '当季')
+    expect(picker.props('type')).toBe('quarter')
+    await clickChip(wrapper, '当年')
+    expect(picker.props('type')).toBe('year')
   })
 
   it('点「当月」写入当月快照：from/to 传后端、列表刷新、「当月」点亮「全部」熄灭', async () => {

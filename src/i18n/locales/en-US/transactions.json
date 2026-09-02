@@ -47,6 +47,13 @@
       "prev": "Previous period",
       "next": "Next period"
     },
+    "periodPicker": {
+      "format": {
+        "month": "MMM yyyy",
+        "quarter": "'Q'Q yyyy",
+        "year": "yyyy"
+      }
+    },
     "periodLabel": {
       "month": "{name} {year}",
       "quarter": "{name} {year}",

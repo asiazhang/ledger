@@ -19,6 +19,7 @@ import {
 } from 'naive-ui'
 import { ChevronBack, ChevronDown, ChevronForward } from '@vicons/ionicons5'
 import AppModal from '@/components/AppModal.vue'
+import AppDatePicker from '@/components/AppDatePicker.vue'
 import AppDropdown from '@/components/AppDropdown.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import { useAppDialog } from '@/composables/useAppDialog'
@@ -42,9 +43,13 @@ import {
   formatPeriodLabel,
   matchPreset,
   periodRange,
+  periodFromTimestamp,
+  periodStartTimestamp,
   presetRange,
   rangeToPeriod,
+  isPeriodWithinBoundary,
   stepPeriod,
+  type PeriodUnit,
   type TimePeriodPreset,
 } from '@/utils/time-period'
 import {
@@ -153,7 +158,60 @@ const canStepNext = computed(() => {
   return p !== null && canStepPeriod(p, 1, periodBoundary.value)
 })
 
-/** 期间标签随步进实时更新（常驻行尾）；无游标时展示占位符。 */
+/** 期间直达面板的单位：选中期间随当前游标单位，全部态约定从月面板开始。 */
+const periodPanelUnit = computed<PeriodUnit>(() => currentPeriod.value?.unit ?? 'month')
+const periodPanelValue = computed(() => {
+  const p = currentPeriod.value
+  if (p) return periodStartTimestamp(p)
+  return periodStartTimestamp(periodFromTimestamp('month', nowTick.value))
+})
+const periodPanelFormat = computed(() => t(`transactions.filter.periodPicker.format.${periodPanelUnit.value}`))
+const periodPanelBoundary = computed(() => {
+  if (!dateRange.value) return null
+  return derivePeriodBoundary(periodPanelUnit.value, dateRange.value, nowTick.value)
+})
+const periodPanelYearRange = computed<[number, number]>(() => {
+  const boundary = periodPanelBoundary.value
+  if (boundary) return [boundary.earliest.year, boundary.latest.year]
+  const year = new Date(nowTick.value).getFullYear()
+  return [year - 100, year + 100]
+})
+
+/** 面板只允许选择数据期间边界内的月/季/年；边界在途或失败时按步进器约定不钳制。 */
+type PeriodDatePickerDetail =
+  | { type: 'date'; year: number; month: number; date: number }
+  | { type: 'month'; year: number; month: number }
+  | { type: 'quarter'; year: number; quarter: number }
+  | { type: 'year'; year: number }
+  | { type: 'input' }
+
+const isPeriodDateDisabled = (_timestamp: number, detail: PeriodDatePickerDetail): boolean => {
+  const boundary = periodPanelBoundary.value
+  if (!boundary || detail.type === 'input') return false
+  let period
+  if (periodPanelUnit.value === 'month' && 'month' in detail) {
+    period = { unit: 'month' as const, year: detail.year, index: detail.month }
+  } else if (periodPanelUnit.value === 'quarter' && 'month' in detail) {
+    // Naive UI 的 quarter 面板将季度号（1–4）复用在 detail.month 字段。
+    period = { unit: 'quarter' as const, year: detail.year, index: detail.month - 1 }
+  } else if (periodPanelUnit.value === 'year' && 'year' in detail) {
+    period = { unit: 'year' as const, year: detail.year, index: 0 }
+  } else {
+    return false
+  }
+  return !isPeriodWithinBoundary(period, boundary)
+}
+
+/** 面板点选写精确自然周期快照；全部态仅在确认选定后才离开无过滤默认态。 */
+function onPeriodPanelSelect(timestamp: number | null) {
+  if (timestamp === null) return
+  const period = periodFromTimestamp(periodPanelUnit.value, timestamp)
+  const range = periodRange(period)
+  setFilter({ dateFrom: range.from, dateTo: range.to })
+  periodPanelOpen.value = false
+}
+
+const periodPanelOpen = ref(false)
 const periodLabelText = computed(() =>
   currentPeriod.value
     ? formatPeriodLabel(currentPeriod.value)
@@ -516,6 +574,8 @@ onBeforeUnmount(() => {
 <style scoped>
 /* 期间标签：常驻步进器中央，min-width 抑制不同期间文案宽度抖动 */
 .period-label {
+  position: relative;
+  cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -523,6 +583,16 @@ onBeforeUnmount(() => {
   padding: 0 8px;
   font-size: 13px;
   white-space: nowrap;
+}
+
+.period-label :deep(.period-picker) {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+
+.period-label :deep(.n-input) {
+  min-width: 96px;
 }
 </style>
 
@@ -608,7 +678,23 @@ onBeforeUnmount(() => {
         >
           <NIcon><ChevronBack /></NIcon>
         </NButton>
-        <span class="period-label">{{ periodLabelText }}</span>
+        <span class="period-label" @click="periodPanelOpen = true">
+          <span class="period-label-text">{{ periodLabelText }}</span>
+          <AppDatePicker
+            class="period-picker"
+            :show="periodPanelOpen"
+            :value="periodPanelValue"
+            :type="periodPanelUnit"
+            :format="periodPanelFormat"
+            :year-range="periodPanelYearRange"
+            :is-date-disabled="isPeriodDateDisabled"
+            :bordered="false"
+            :clearable="false"
+            :input-readonly="true"
+            @update:show="(show: boolean) => (periodPanelOpen = show)"
+            @update:value="onPeriodPanelSelect"
+          />
+        </span>
         <NButton
           size="small"
           quaternary

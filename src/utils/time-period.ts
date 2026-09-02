@@ -243,6 +243,22 @@ export function rangeToPeriod(from: string | null, to: string | null): NaturalPe
   return null
 }
 
+/** 时间戳按本地日历反推自然期间（期间面板与步进器共用）。 */
+export function periodFromTimestamp(unit: PeriodUnit, timestamp: number): NaturalPeriod {
+  const d = new Date(timestamp)
+  return {
+    unit,
+    year: d.getFullYear(),
+    index: unit === 'month' ? d.getMonth() : unit === 'quarter' ? Math.floor(d.getMonth() / 3) : 0,
+  }
+}
+
+/** 自然期间起点的本地时间戳（供期间面板的受控值使用）。 */
+export function periodStartTimestamp(p: NaturalPeriod): number {
+  const month = p.unit === 'month' ? p.index : p.unit === 'quarter' ? p.index * 3 : 0
+  return new Date(p.year, month, 1, 12).getTime()
+}
+
 /** 期间 → 含边界日期区间（与 presetRange 共用同一自然周期换算单点，写回快照用）。 */
 export function periodRange(p: NaturalPeriod): DateRange {
   switch (p.unit) {

@@ -47,6 +47,13 @@
       "prev": "上一个周期",
       "next": "下一个周期"
     },
+    "periodPicker": {
+      "format": {
+        "month": "yyyy年M月",
+        "quarter": "yyyy年Q季度",
+        "year": "yyyy年"
+      }
+    },
     "periodLabel": {
       "month": "{year}年{name}月",
       "quarter": "{year}年{name}季度",
