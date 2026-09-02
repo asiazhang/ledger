@@ -107,10 +107,10 @@ fn delete_account_soft_deletes() {
 }
 
 #[test]
-fn delete_account_internal_soft_deletes_and_excludes_from_readback() {
+fn delete_account_soft_deletes_and_excludes_from_readback() {
     let conn = setup();
     insert_account(&conn, "acc-del-1", "现金", "cash", "CNY", 0);
-    super::delete_account_internal(&conn, "acc-del-1").unwrap();
+    super::delete_account(&conn, "acc-del-1").unwrap();
     assert!(
         !list_accounts(&conn).iter().any(|a| a.id == "acc-del-1"),
         "删除后不应出现在读回结果中"
@@ -118,9 +118,9 @@ fn delete_account_internal_soft_deletes_and_excludes_from_readback() {
 }
 
 #[test]
-fn delete_account_internal_returns_not_found_for_missing_id() {
+fn delete_account_returns_not_found_for_missing_id() {
     let conn = setup();
-    let err = super::delete_account_internal(&conn, "不存在的id").unwrap_err();
+    let err = super::delete_account(&conn, "不存在的id").unwrap_err();
     assert!(matches!(
         err,
         AppError::Coded {
@@ -132,11 +132,11 @@ fn delete_account_internal_returns_not_found_for_missing_id() {
 }
 
 #[test]
-fn delete_account_internal_returns_not_found_for_already_deleted() {
+fn delete_account_returns_not_found_for_already_deleted() {
     let conn = setup();
     insert_account(&conn, "acc-del-2", "现金", "cash", "CNY", 0);
-    super::delete_account_internal(&conn, "acc-del-2").unwrap();
-    let err = super::delete_account_internal(&conn, "acc-del-2").unwrap_err();
+    super::delete_account(&conn, "acc-del-2").unwrap();
+    let err = super::delete_account(&conn, "acc-del-2").unwrap_err();
     assert!(
         matches!(
             err,
@@ -416,7 +416,7 @@ fn list_accounts_for_api_includes_hidden_with_flag() {
     insert_account(&conn, "acc-normal", "现金", "cash", "CNY", 0);
     insert_hidden_account(&conn, "acc-hidden", "无(CNY)", "CNY");
 
-    let accounts = super::list_accounts_for_api_internal(&conn).unwrap();
+    let accounts = super::list_accounts_for_api(&conn).unwrap();
     let hidden = accounts.iter().find(|a| a.id == "acc-hidden").unwrap();
     assert!(hidden.is_hidden, "API 应返回 is_hidden=true 的黑洞账户");
     let normal = accounts.iter().find(|a| a.id == "acc-normal").unwrap();
@@ -494,7 +494,7 @@ fn seed_contains_black_hole_accounts_for_cny_and_hkd() {
 }
 
 // ---------------------------------------------------------------------------
-// update_account_internal（编辑账户）
+// update_account（编辑账户）
 // ---------------------------------------------------------------------------
 
 use crate::models::{AccountBalanceAdjustInput, AccountUpdateInput};
@@ -512,7 +512,7 @@ fn find_black_hole(conn: &rusqlite::Connection, currency: &str) -> Option<String
 fn update_account_renames_and_bumps_version() {
     let conn = setup();
     insert_account(&conn, "acc-u1", "旧名", "cash", "CNY", 0);
-    super::update_account_internal(
+    super::update_account(
         &conn,
         "acc-u1",
         AccountUpdateInput {
@@ -521,7 +521,7 @@ fn update_account_renames_and_bumps_version() {
         },
     )
     .unwrap();
-    let account = super::get_account_internal(&conn, "acc-u1").unwrap();
+    let account = super::get_account(&conn, "acc-u1").unwrap();
     assert_eq!(account.name, "新名");
     assert_eq!(account.currency_code, "CNY", "未传字段保持原值");
     assert_eq!(account.version, 2, "编辑应递增 version");
@@ -531,7 +531,7 @@ fn update_account_renames_and_bumps_version() {
 fn update_account_rejects_empty_name() {
     let conn = setup();
     insert_account(&conn, "acc-u2", "现金", "cash", "CNY", 0);
-    let err = super::update_account_internal(
+    let err = super::update_account(
         &conn,
         "acc-u2",
         AccountUpdateInput {
@@ -549,7 +549,7 @@ fn update_account_rejects_currency_change_when_has_transactions() {
     let conn = setup();
     insert_account(&conn, "acc-u3", "现金", "cash", "CNY", 0);
     insert_tx(&conn, "tx-u3", "income", 1000, "acc-u3", None);
-    let err = super::update_account_internal(
+    let err = super::update_account(
         &conn,
         "acc-u3",
         AccountUpdateInput {
@@ -562,9 +562,7 @@ fn update_account_rejects_currency_change_when_has_transactions() {
     assert!(err.to_string().contains("不能修改币种"));
     // 币种未被改动
     assert_eq!(
-        super::get_account_internal(&conn, "acc-u3")
-            .unwrap()
-            .currency_code,
+        super::get_account(&conn, "acc-u3").unwrap().currency_code,
         "CNY"
     );
 }
@@ -573,7 +571,7 @@ fn update_account_rejects_currency_change_when_has_transactions() {
 fn update_account_allows_currency_change_without_transactions() {
     let conn = setup();
     insert_account(&conn, "acc-u4", "现金", "cash", "CNY", 0);
-    super::update_account_internal(
+    super::update_account(
         &conn,
         "acc-u4",
         AccountUpdateInput {
@@ -583,9 +581,7 @@ fn update_account_allows_currency_change_without_transactions() {
     )
     .unwrap();
     assert_eq!(
-        super::get_account_internal(&conn, "acc-u4")
-            .unwrap()
-            .currency_code,
+        super::get_account(&conn, "acc-u4").unwrap().currency_code,
         "HKD"
     );
 }
@@ -594,7 +590,7 @@ fn update_account_allows_currency_change_without_transactions() {
 fn update_account_rejects_unknown_currency() {
     let conn = setup();
     insert_account(&conn, "acc-u5", "现金", "cash", "CNY", 0);
-    let err = super::update_account_internal(
+    let err = super::update_account(
         &conn,
         "acc-u5",
         AccountUpdateInput {
@@ -610,7 +606,7 @@ fn update_account_rejects_unknown_currency() {
 #[test]
 fn update_account_returns_not_found_for_missing_id() {
     let conn = setup();
-    let err = super::update_account_internal(
+    let err = super::update_account(
         &conn,
         "不存在的id",
         AccountUpdateInput {
@@ -629,11 +625,11 @@ fn update_account_returns_not_found_for_missing_id() {
 }
 
 // ---------------------------------------------------------------------------
-// adjust_account_balance_internal（余额调整，ADR-0026 黑洞转账）
+// adjust_account_balance（余额调整，ADR-0026 黑洞转账）
 // ---------------------------------------------------------------------------
 
 fn adjust(conn: &rusqlite::Connection, id: &str, target: i64) -> Result<(String, bool), AppError> {
-    super::adjust_account_balance_internal(
+    super::adjust_account_balance(
         conn,
         id,
         &AccountBalanceAdjustInput {

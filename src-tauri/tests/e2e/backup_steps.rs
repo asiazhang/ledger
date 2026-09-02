@@ -2,10 +2,10 @@ use std::path::PathBuf;
 
 use cucumber::{then, when};
 
+use tauri_app_lib::accounts::create_account;
 use tauri_app_lib::auto_backup::{
     AUTO_BACKUP_PREFIX, AttemptOutcome, SkipReason, get_state, set_state,
 };
-use tauri_app_lib::commands::accounts::create_account_internal;
 use tauri_app_lib::commands::backup::{
     BackupKind, backup_db_to, expected_schema_version, read_backup_kind, restore_db_from,
 };
@@ -403,7 +403,7 @@ fn create_account_via_entry(world: &mut LedgerWorld, name: String, kind: String,
     };
     world
         .db
-        .write(|conn| create_account_internal(conn, input))
+        .write(|conn| create_account(conn, input))
         .expect("创建账户失败");
 }
 

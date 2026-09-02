@@ -313,7 +313,7 @@ async fn list_accounts_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
 ) -> Result<Json<Vec<Account>>, AppError> {
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let accounts = crate::commands::list_accounts_for_api_internal(&conn)?;
+    let accounts = crate::accounts::list_accounts_for_api(&conn)?;
     Ok(Json(accounts))
 }
 
@@ -338,7 +338,7 @@ async fn create_account_handler(
 ) -> Result<(StatusCode, Json<String>), AppError> {
     // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
     let id = crate::db::write(&conn, |conn| {
-        crate::commands::create_account_idempotent_internal(conn, input)
+        crate::accounts::create_account_idempotent(conn, input)
     })?;
     emit_after_write(&emitter, WriteOp::CreateAccount, WriteEvidence::None);
     Ok((StatusCode::CREATED, Json(id)))
@@ -372,8 +372,8 @@ async fn update_account_handler(
 ) -> Result<Json<Account>, AppError> {
     // 连接层统一写入口（ADR-0032）：修改与读回同一写闭包，提交点置脏/检查单点。
     let updated = crate::db::write(&conn, |conn| {
-        crate::commands::update_account_internal(conn, &id, input)?;
-        crate::commands::get_account_internal(conn, &id)
+        crate::accounts::update_account(conn, &id, input)?;
+        crate::accounts::get_account(conn, &id)
     })?;
     emit_after_write(&emitter, WriteOp::UpdateAccount, WriteEvidence::None);
     Ok(Json(updated))
@@ -401,9 +401,7 @@ async fn delete_account_handler(
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
     // 连接层统一写入口（ADR-0032）：删除成功即置脏。
-    crate::db::write(&conn, |conn| {
-        crate::commands::delete_account_internal(conn, &id)
-    })?;
+    crate::db::write(&conn, |conn| crate::accounts::delete_account(conn, &id))?;
     emit_after_write(&emitter, WriteOp::DeleteAccount, WriteEvidence::None);
     Ok(StatusCode::NO_CONTENT)
 }
@@ -425,7 +423,7 @@ async fn list_account_balances_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
 ) -> Result<Json<Vec<AccountBalance>>, AppError> {
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let balances = crate::commands::list_account_balances_for_api_internal(&conn)?;
+    let balances = crate::accounts::list_account_balances_for_api(&conn)?;
     Ok(Json(balances))
 }
 

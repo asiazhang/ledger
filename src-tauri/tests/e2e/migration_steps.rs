@@ -2,9 +2,7 @@ use cucumber::gherkin::Step;
 use cucumber::{then, when};
 use rusqlite::params;
 
-use tauri_app_lib::commands::accounts::{
-    create_account_idempotent_internal, list_account_balances_for_api_internal,
-};
+use tauri_app_lib::accounts::{create_account_idempotent, list_account_balances_for_api};
 use tauri_app_lib::models::{AccountInput, AccountType, TransactionInput, TransactionListFilter};
 use tauri_app_lib::transaction::TransactionBatch;
 use tauri_app_lib::transaction::amount::TransactionKind;
@@ -133,8 +131,7 @@ fn delete_txn_by_note(world: &mut LedgerWorld, note: String) {
 /// 查询全部未删除账户的实时余额（含黑洞账户），快照到 world.balances。
 #[when(expr = "查询全部账户余额")]
 fn query_balances(world: &mut LedgerWorld) {
-    let balances =
-        list_account_balances_for_api_internal(&world_conn!(world)).expect("查询账户余额失败");
+    let balances = list_account_balances_for_api(&world_conn!(world)).expect("查询账户余额失败");
     world.balances = balances
         .into_iter()
         .map(|ab| (ab.account.name, (ab.balance_cents, ab.account.is_hidden)))
@@ -148,7 +145,7 @@ fn reimport_create_account(world: &mut LedgerWorld, name: String, kind: String, 
     let account_kind: AccountType = kind
         .parse()
         .unwrap_or_else(|_| panic!("未知账户类型: {kind}"));
-    let id = create_account_idempotent_internal(
+    let id = create_account_idempotent(
         &world_conn!(world),
         AccountInput {
             name: name.clone(),
