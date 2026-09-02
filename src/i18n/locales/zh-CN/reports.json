@@ -9,7 +9,9 @@
   },
   "category": {
     "title": "支出分类构成",
-    "empty": "暂无支出数据"
+    "empty": "暂无支出数据",
+    "all": "全部分类",
+    "direct": "{name}（直挂）"
   },
   "merchant": {
     "title": "商户消费排行",

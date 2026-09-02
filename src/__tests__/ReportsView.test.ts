@@ -4,6 +4,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { NSelect } from 'naive-ui'
 import ReportsView from '@/views/ReportsView.vue'
+import { categoryColor } from '@/utils/category-chart'
 import { invokeHandler, makeCategory } from './factories'
 import type { ReportDateRange } from '@/types'
 
@@ -211,5 +212,82 @@ describe('ReportsView 支出分类构成横向柱状图（issue #378）', () => 
     // 渲染不受残留键影响：图数据与配色照常
     expect(categoryChartProp('data', wrapper).datasets[0].data).toEqual([6000, 3000, 800])
     localStorage.removeItem('view_state:reports_group_level')
+  })
+})
+
+describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
+  /** 点第 i 根分类柱（经图桩按钮按 chart.js onClick 契约回调） */
+  async function clickBar(wrapper: ReturnType<typeof mount>, index: number) {
+    await wrapper.findAll('[data-testid="bar-click"]')[index].trigger('click')
+    await flushPromises()
+  }
+
+  function breadcrumbOf(wrapper: ReturnType<typeof mount>) {
+    return wrapper.find('[data-testid="category-breadcrumb"]')
+  }
+
+  it('点一级柱图内下钻：行集合 = 直挂行 + 二级子分类行，合计 = 父柱金额', async () => {
+    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    const wrapper = await mountReports()
+    await clickBar(wrapper, 0) // 餐饮柱（6000 = 直挂 5000 + 零食 1000）
+    const data = categoryChartProp('data', wrapper)
+    expect(data.labels).toEqual(['餐饮（直挂）', '零食'])
+    expect(data.datasets[0].data).toEqual([5000, 1000])
+    expect(data.datasets[0].data.reduce((a: number, b: number) => a + b, 0)).toBe(6000)
+  })
+
+  it('下钻态配色沿用同一稳定映射：直挂行同父柱色，二级行同分类色', async () => {
+    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    const wrapper = await mountReports()
+    const baseColors: string[] = categoryChartProp('data', wrapper).datasets[0].backgroundColor
+    await clickBar(wrapper, 0)
+    const colors: string[] = categoryChartProp('data', wrapper).datasets[0].backgroundColor
+    // 直挂行（第一根）= 基础态餐饮柱色；零级行 = 同 id 稳定取色
+    expect(colors[0]).toBe(baseColors[0])
+    expect(colors[1]).toBe(categoryColor('food-snack'))
+  })
+
+  it('面包屑显示当前位置（全部分类 › 分类名），点根返回基础态', async () => {
+    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    const wrapper = await mountReports()
+    expect(breadcrumbOf(wrapper).exists()).toBe(false)
+    await clickBar(wrapper, 0)
+    expect(breadcrumbOf(wrapper).exists()).toBe(true)
+    expect(breadcrumbOf(wrapper).text()).toContain('全部分类')
+    expect(breadcrumbOf(wrapper).text()).toContain('餐饮')
+    await wrapper.find('[data-testid="breadcrumb-root"]').trigger('click')
+    await flushPromises()
+    expect(breadcrumbOf(wrapper).exists()).toBe(false)
+    expect(categoryChartProp('data', wrapper).labels).toEqual(['餐饮', '交通', '未分类'])
+  })
+
+  it('未分类柱本票不触发图内下钻（跳转接线归后续票）', async () => {
+    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    const wrapper = await mountReports()
+    await clickBar(wrapper, 2) // 未分类柱
+    expect(breadcrumbOf(wrapper).exists()).toBe(false)
+    expect(categoryChartProp('data', wrapper).labels).toEqual(['餐饮', '交通', '未分类'])
+  })
+
+  it('下钻态再点柱不变态：二级/直挂行的跳转接线归后续票', async () => {
+    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    const wrapper = await mountReports()
+    await clickBar(wrapper, 0)
+    const drilled = categoryChartProp('data', wrapper)
+    await clickBar(wrapper, 1) // 零食（二级）行
+    expect(categoryChartProp('data', wrapper)).toEqual(drilled)
+    expect(breadcrumbOf(wrapper).exists()).toBe(true)
+  })
+
+  it('切换年份复位基础态；下钻态不持久化（localStorage 零写入）', async () => {
+    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    const wrapper = await mountReports()
+    const keysBefore = Object.keys(localStorage)
+    await clickBar(wrapper, 0)
+    expect(Object.keys(localStorage)).toEqual(keysBefore)
+    wrapper.findComponent(NSelect).vm.$emit('update:value', currentYear - 6)
+    await flushPromises()
+    expect(breadcrumbOf(wrapper).exists()).toBe(false)
+    expect(categoryChartProp('data', wrapper).labels).toEqual(['餐饮', '交通', '未分类'])
   })
 })
