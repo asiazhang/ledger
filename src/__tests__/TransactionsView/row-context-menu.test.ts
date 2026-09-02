@@ -245,9 +245,11 @@ describe('TransactionsView 行右键「编辑」（issue #178）', () => {
     const form = wrapper.findComponent(CategoryForm)
     expect(form.props('kind')).toBe('expense')
     expect(form.props('editing')).toMatchObject({ id: 'txn-001' })
-    expect(form.getComponent(NInputNumber).props('value')).toBe(30)
+    // 金额回填（NInput，字段错误态改造后自由文本承载，ADR-0058 / #414；
+    // 表单内首个 NInput 即金额）
+    expect(form.getComponent(NInput).props('value')).toBe('30')
     expect(form.text()).toContain('保存修改')
-    // 回填备注（NInput 的 value，非文本节点；NInputNumber 内部也含 NInput，取最后一个）
+    // 回填备注（NInput 的 value，非文本节点；备注是表单末位 NInput）
     const inputs = form.findAllComponents(NInput)
     expect(inputs[inputs.length - 1].props('value')).toBe('咖啡')
     // 编辑弹窗内无另一个分类表单（kind 锁死不可切换）
@@ -270,7 +272,7 @@ describe('TransactionsView 行右键「编辑」（issue #178）', () => {
     const wrapper = await mountView()
     await openEditModal(wrapper, 0)
     const form = wrapper.findComponent(CategoryForm)
-    form.getComponent(NInputNumber).vm.$emit('update:value', 45)
+    form.getComponent(NInput).vm.$emit('update:value', '45')
     await flushPromises()
     mockInvoke.mockImplementationOnce((cmd: string) => {
       if (cmd === 'update_transaction') return Promise.resolve()
