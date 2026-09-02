@@ -5,7 +5,7 @@
     "expense": "Expense",
     "refund": "Refund",
     "net": "Net: {amount}",
-    "empty": "No data for this year"
+    "empty": "No data for this period"
   },
   "category": {
     "title": "Expense by Category",
