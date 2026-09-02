@@ -1,17 +1,18 @@
 //! 保单（Policy）BDD 步骤（issue #360 / spec #358 / ADR-0051）：
 //! 建档读回、建档校验、编辑、软删保留。
 //!
-//! 经 `commands::policy` 的 `*_internal` seam 断言外部可观察行为：创建/编辑读回、
+//! 经 `policy` 域 API（`tauri_app_lib::policy`）断言外部可观察行为：创建/编辑读回、
 //! 校验错误信息、写后发失效信号（notify 注入，生产路径发 `ledger:changed`）、
 //! 软删后不进列表且库内行引用保留不置空。
 //! 商户侧 Given/When（存在商户 / 软删商户）复用 `merchants_steps.rs` 已注册步骤。
 
 use cucumber::{then, when};
 
-use tauri_app_lib::commands::policy::{
-    create_policy_internal, delete_policy_internal, list_policies_internal, update_policy_internal,
-};
 use tauri_app_lib::models::PolicyInput;
+use tauri_app_lib::policy::{
+    create_policy as create_policy_domain, delete_policy as delete_policy_domain,
+    list_policies as list_policies_domain, update_policy as update_policy_domain,
+};
 
 use crate::common::assert_last_error_contains;
 use crate::world::LedgerWorld;
@@ -74,7 +75,7 @@ fn create_policy(
         &currency,
     );
     let mut signals = 0;
-    match create_policy_internal(&world_conn!(world), input, &mut || signals += 1) {
+    match create_policy_domain(&world_conn!(world), input, &mut || signals += 1) {
         Ok(id) => {
             world.last_policy_id = Some(id);
             world.policy_signal_count = signals;
@@ -109,7 +110,7 @@ fn try_create_policy(
         &currency,
     );
     let mut signals = 0;
-    match create_policy_internal(&world_conn!(world), input, &mut || signals += 1) {
+    match create_policy_domain(&world_conn!(world), input, &mut || signals += 1) {
         Ok(_) => panic!("创建保单应失败但成功"),
         Err(e) => {
             world.last_error = Some(e.to_string());
@@ -148,7 +149,7 @@ fn update_policy(
         &currency,
     );
     let mut signals = 0;
-    match update_policy_internal(&world_conn!(world), &id, input, &mut || signals += 1) {
+    match update_policy_domain(&world_conn!(world), &id, input, &mut || signals += 1) {
         Ok(()) => world.policy_signal_count += signals,
         Err(e) => panic!("编辑保单应成功但失败: {e}"),
     }
@@ -184,7 +185,7 @@ fn try_update_policy(
         &currency,
     );
     let mut signals = 0;
-    match update_policy_internal(&world_conn!(world), &id, input, &mut || signals += 1) {
+    match update_policy_domain(&world_conn!(world), &id, input, &mut || signals += 1) {
         Ok(()) => panic!("编辑保单应失败但成功"),
         Err(e) => {
             world.last_error = Some(e.to_string());
@@ -203,7 +204,7 @@ fn delete_policy(world: &mut LedgerWorld, n: usize) {
         .or_else(|| world.last_policy_id.clone())
         .expect("软删保单前应先创建保单");
     let mut signals = 0;
-    match delete_policy_internal(&world_conn!(world), &id, &mut || signals += 1) {
+    match delete_policy_domain(&world_conn!(world), &id, &mut || signals += 1) {
         Ok(()) => world.policy_signal_count += signals,
         Err(e) => panic!("软删保单应成功但失败: {e}"),
     }
@@ -217,7 +218,7 @@ fn try_delete_policy(world: &mut LedgerWorld, _n: usize) {
         .clone()
         .expect("软删保单前应先创建保单");
     let mut signals = 0;
-    match delete_policy_internal(&world_conn!(world), &id, &mut || signals += 1) {
+    match delete_policy_domain(&world_conn!(world), &id, &mut || signals += 1) {
         Ok(()) => panic!("软删保单应失败但成功"),
         Err(e) => {
             world.last_error = Some(e.to_string());
@@ -229,7 +230,7 @@ fn try_delete_policy(world: &mut LedgerWorld, _n: usize) {
 /// 刷新保单列表快照（Then 断言数据源）。
 #[when(expr = "记住第 {int} 张保单的创建时间")]
 fn remember_created_at(world: &mut LedgerWorld, n: usize) {
-    world.policies_list = list_policies_internal(&world_conn!(world)).expect("查询保单列表失败");
+    world.policies_list = list_policies_domain(&world_conn!(world)).expect("查询保单列表失败");
     let policy = world
         .policies_list
         .get(n - 1)
@@ -243,7 +244,7 @@ fn remember_created_at(world: &mut LedgerWorld, n: usize) {
 
 #[then(expr = "保单列表应包含 {int} 张保单")]
 fn check_list_count(world: &mut LedgerWorld, expected: usize) {
-    world.policies_list = list_policies_internal(&world_conn!(world)).expect("查询保单列表失败");
+    world.policies_list = list_policies_domain(&world_conn!(world)).expect("查询保单列表失败");
     assert_eq!(world.policies_list.len(), expected, "保单列表条数不匹配");
 }
 

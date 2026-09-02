@@ -1,6 +1,6 @@
 //! 保单视角统计与到期态推导 BDD 步骤（issue #363 / spec #358 / ADR-0051 决策 5/6）。
 //!
-//! 经 `commands::policy::policy_stats_internal` seam 断言外部可观察行为：
+//! 经 `policy` 域 API（`tauri_app_lib::policy`）断言外部可观察行为：
 //! 挂单保费/现金流入实时合计（逐笔对账、软删流水不计入、不挂单流水不串入）、
 //! 下期扣款日来自活跃协议期次（取消/暂停不显示、多段历史取活跃段）、
 //! 软删保单不进统计、到期态由保障期间推导。
@@ -14,8 +14,8 @@
 
 use cucumber::{then, when};
 
-use tauri_app_lib::commands::policy::{delete_policy_internal, policy_stats_internal};
 use tauri_app_lib::models::PolicyStats;
+use tauri_app_lib::policy::{delete_policy, policy_stats};
 
 use crate::world::LedgerWorld;
 
@@ -24,7 +24,7 @@ use crate::world::LedgerWorld;
 #[when(expr = "软删保单号 {string}")]
 fn delete_policy_by_number(world: &mut LedgerWorld, number: String) {
     let id = policy_id_by_number(world, &number);
-    delete_policy_internal(&world_conn!(world), &id, &mut || {}).expect("软删保单应成功但失败");
+    delete_policy(&world_conn!(world), &id, &mut || {}).expect("软删保单应成功但失败");
 }
 
 /// 以注入的固定「今日」查询逐保单统计（确定性到期口径，不依赖真实时钟）。
@@ -32,8 +32,7 @@ fn delete_policy_by_number(world: &mut LedgerWorld, number: String) {
 fn query_policy_stats(world: &mut LedgerWorld, today: String) {
     let today =
         chrono::NaiveDate::parse_from_str(&today, "%Y-%m-%d").expect("今日日期应为 YYYY-MM-DD");
-    world.policy_stats_list =
-        policy_stats_internal(&world_conn!(world), today).expect("查询保单统计失败");
+    world.policy_stats_list = policy_stats(&world_conn!(world), today).expect("查询保单统计失败");
 }
 
 // ---------------------------------------------------------------------------
