@@ -44,9 +44,9 @@
 
 ## 迁移状态（随手更新）
 
-- **已归位（守门白名单）**：核心交易 `transaction/`、定时计划 `scheduled_transactions/`、物品 `item/`（阶段 1 #397 归位：域 API `item::domain` + 溯源守卫 `item::guard` + 成本口径 `item::cost`，壳层压平为单文件 `commands/item.rs`）、保单 `policy/`（阶段 2 #398 归位：CRUD / 统计 / 校验分主题模块，壳层压平为单文件 `commands/policy.rs`）；基础设施五处（`db/`、`signals.rs`、`models/`、`error.rs`、`settings.rs`）。
+- **已归位（守门白名单）**：核心交易 `transaction/`、定时计划 `scheduled_transactions/`、物品 `item/`（阶段 1 #397 归位：域 API `item::domain` + 溯源守卫 `item::guard` + 成本口径 `item::cost`，壳层压平为单文件 `commands/item.rs`）、保单 `policy/`（阶段 2 #398 归位：CRUD / 统计 / 校验分主题模块，壳层压平为单文件 `commands/policy.rs`）、预算 `budget/`（阶段 3 #399 归位：CRUD / 进度分主题模块，壳层压平为单文件 `commands/budget.rs`）；基础设施五处（`db/`、`signals.rs`、`models/`、`error.rs`、`settings.rs`）。
 - **前置**：口径修缮（#395，独立于搬迁的先行提交）。
-- **待归位**：预算 → 商户（阶段 3–4）→ 投资域（阶段 5）。
+- **待归位**：商户（阶段 4）→ 投资域（阶段 5）。
 - **未分类残留（收口 #402 triage）**：`api_server.rs` 单文件目录化（另立项）、`auto_backup.rs` / `events.rs` / `fs_util.rs` / `logger.rs` 归属、行为层编排入口住址。
 
 ## 开放问题

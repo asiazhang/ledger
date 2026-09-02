@@ -27,6 +27,7 @@ export const WHITELIST = [
   { path: 'scheduled_transactions', layer: '域目录', note: '定时计划域' },
   { path: 'item', layer: '域目录', note: '物品域（#397 阶段 1 归位，主体自 commands/item 随迁）' },
   { path: 'policy', layer: '域目录', note: '保单域（#398 阶段 2 归位）' },
+  { path: 'budget', layer: '域目录', note: '预算域（#399 阶段 3 归位）' },
   { path: 'db', layer: '基础设施', note: '数据库连接' },
   { path: 'signals.rs', layer: '基础设施', note: '信号映射（ADR-0044）' },
   { path: 'models', layer: '基础设施', note: '模型' },

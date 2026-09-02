@@ -11,9 +11,7 @@ use chrono::{Datelike, Months, NaiveDate};
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::commands::budget::{
-    budget_progress_rows, create_budget_internal, delete_budget_internal, update_budget_internal,
-};
+use tauri_app_lib::budget::{budget_progress_rows, create_budget, delete_budget, update_budget};
 use tauri_app_lib::commands::categories::{delete_category_internal, list_categories_internal};
 use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
@@ -229,7 +227,7 @@ fn create_budget_via_command(world: &mut LedgerWorld, name: String, period: Stri
         amount_cents: amount,
         start_date: ymd(scenario_today(world)),
     };
-    world.last_error = match world.db.write(|conn| create_budget_internal(conn, &input)) {
+    world.last_error = match world.db.write(|conn| create_budget(conn, &input)) {
         Ok(_) => None,
         Err(e) => Some(e.to_string()),
     };
@@ -253,7 +251,7 @@ fn update_budget_via_command(world: &mut LedgerWorld, name: String, amount: i64)
         .unwrap_or_else(|e| panic!("分类 '{}' 没有可编辑的预算: {e}", name));
     world.last_error = match world
         .db
-        .write(|conn| update_budget_internal(conn, &budget_id, amount))
+        .write(|conn| update_budget(conn, &budget_id, amount))
     {
         Ok(_) => None,
         Err(e) => Some(e.to_string()),
@@ -272,10 +270,7 @@ fn delete_budget_via_command(world: &mut LedgerWorld, name: String) {
             |r| r.get(0),
         )
         .unwrap_or_else(|e| panic!("分类 '{name}' 没有可删除的预算: {e}"));
-    world.last_error = match world
-        .db
-        .write(|conn| delete_budget_internal(conn, &budget_id))
-    {
+    world.last_error = match world.db.write(|conn| delete_budget(conn, &budget_id)) {
         Ok(_) => None,
         Err(e) => Some(e.to_string()),
     };
