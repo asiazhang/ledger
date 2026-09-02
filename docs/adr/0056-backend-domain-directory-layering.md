@@ -60,6 +60,8 @@
   - 分类 `categories/`（#404 归位：CRUD / 自然键幂等创建 / 两级分类校验 / 预算删除守卫 / 排序重排，`core` + 测试随迁；壳层压平为单文件 `commands/categories.rs`）
   - 币种 `currencies/`（#404 归位：种子权威清单查询微域 `list`；壳层压平为单文件 `commands/currencies.rs`）
   - 基础设施五处（`db/`、`signals.rs`、`models/`、`error.rs`、`settings.rs`）已入守门白名单。
+- **备份域（#406）归位完成**：
+  - 备份 `backup/`（#406 归位：备份引擎 `engine`（zip 打包 / `VACUUM INTO` 快照 / 恢复与安全备份 / schema 校验 / 受管备份清理）自 `commands/backup/core.rs`、自动备份调度 `auto`（到期判定纯函数 / 本地日界门 / 三触发入口 / 偏好镜像 / 退出兑底）自顶层 `auto_backup.rs` 整合随迁，外挂测试随迁；壳层压平为单文件 `commands/backup.rs`）
 
 ### 剩余内容逐项 Triage 判定表（无未判定项）
 
@@ -74,12 +76,12 @@
 | **报表** | `src-tauri/src/reports/` | 已归位 | `src-tauri/src/reports/` | 月度汇总、分类下钻、商户排行与日期极值聚合读模型，消费 `transaction::amount` 矩阵 | #405 |
 | **仪表盘** | `src-tauri/src/dashboard/` | 已归位 | `src-tauri/src/dashboard/` | `query_dashboard_overview` 全仓净资产跨币种折算聚合逻辑下沉域目录，壳层退化为薄壳 | #405 |
 | **财务自由度** | `src-tauri/src/investment/` | 已归位 | `src-tauri/src/investment/` | `query_financial_freedom` 自由度计算口径（投资域 InvestableAssets 词条），下沉投资域 | #405 |
-| **备份与自动备份** | `commands/backup/core.rs` + `src-tauri/src/auto_backup.rs` | 迁移 | `src-tauri/src/backup/` | 备份/恢复/受管备份清理核心引擎与自动备份调度、到期判定纯函数、本地日界门整合归入顶层 backup 域 | #406 |
+| **备份与自动备份** | `src-tauri/src/backup/` | 已归位 | `src-tauri/src/backup/` | 备份/恢复/受管备份清理核心引擎与自动备份调度、到期判定纯函数、本地日界门整合归入顶层 backup 域（#406 归位） | #406 |
 | **行情同步** | `commands/sync/` | 迁移 | `src-tauri/src/sync/` | HTTP 网络客户端、东财基金净值爬取、增全量同步编排独立建顶层域目录，壳层压平 | #407 |
 | **数据位置** | `commands/data_location.rs` | 迁移 | `src-tauri/src/db/data_location/` | `validate_and_commit` / `gather_info` 数据库引导与位置切换三步校验下沉 db 基础设施，壳层压平 | #408 |
 | **AI 提示词** | `commands/ai.rs` | 确认纯壳 | `src-tauri/src/commands/ai.rs` | 纯 IPC 壳命令，仅读取静态内置提示词模板文件，零领域逻辑，无需单独建域 | — |
 | **日志查看** | `commands/logs.rs` | 确认纯壳 | `src-tauri/src/commands/logs.rs` | 系统控制类薄壳，仅调用平台 opener 打开日志目录，零领域逻辑 | — |
-| **应用重启** | `commands/backup/mod.rs` 中的 `restart_app` | 确认纯壳 | `src-tauri/src/commands/backup.rs` | 系统控制类命令，调用 `app.restart()` | — |
+| **应用重启** | `commands/backup.rs` 中的 `restart_app` | 确认纯壳 | `src-tauri/src/commands/backup.rs` | 系统控制类命令，调用 `app.restart()` | — |
 | **取消行情同步** | `commands/sync/mod.rs` 中的 `cancel_sync_instruments` | 确认纯壳 | `src-tauri/src/commands/sync.rs` | 控制类命令，操作同步状态取消标志 | — |
 | **原子文件工具** | `src-tauri/src/fs_util.rs` | 基础设施 | `src-tauri/src/fs_util.rs` | 通用文件原子操作与临时文件工具，零业务语义，列入守门白名单 | #408 |
 | **日志基础设施** | `src-tauri/src/logger.rs` | 基础设施 | `src-tauri/src/logger.rs` | tracing 日志初始化与 7 天自动滚动清理，零业务语义，列入守门白名单 | #408 |

@@ -315,19 +315,19 @@ fn success_marks_dirty_for_backup_linkage() {
 
     catch_up(&conn, false, "2026-02-20");
     assert!(
-        !crate::auto_backup::get_state(&conn).unwrap().dirty,
+        !crate::backup::get_state(&conn).unwrap().dirty,
         "空转不置脏"
     );
 
     catch_up(&conn, true, "2026-01-14");
     assert!(
-        !crate::auto_backup::get_state(&conn).unwrap().dirty,
+        !crate::backup::get_state(&conn).unwrap().dirty,
         "未到期不落账不置脏"
     );
 
     catch_up(&conn, true, "2026-02-20");
     assert!(
-        crate::auto_backup::get_state(&conn).unwrap().dirty,
+        crate::backup::get_state(&conn).unwrap().dirty,
         "成功落账应置脏联动自动备份判定"
     );
     let (status, tx) = occurrence_status(&conn, &occurrence_id_at(&conn, &plan_id, 0));

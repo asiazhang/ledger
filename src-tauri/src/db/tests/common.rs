@@ -52,7 +52,7 @@ pub(super) fn write_test_state() -> DbState {
 }
 
 /// 读回自动备份调度状态（断言置脏语义用）。
-pub(super) fn dirty_state(state: &DbState) -> crate::auto_backup::AutoBackupState {
+pub(super) fn dirty_state(state: &DbState) -> crate::backup::AutoBackupState {
     let conn = state.conn.lock().unwrap_or_else(|e| e.into_inner());
-    crate::auto_backup::get_state(&conn).expect("读调度状态")
+    crate::backup::get_state(&conn).expect("读调度状态")
 }
