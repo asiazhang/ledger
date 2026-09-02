@@ -14,7 +14,16 @@
 
 ## 项目概览
 
-Ledger：Tauri 2 桌面记账应用，前端 Vue 3 + TypeScript、后端 Rust。后端命令集中在 `src-tauri/src/commands/`，前端经 `src/api/index.ts` 的 `api` 对象 invoke。
+Ledger：Tauri 2 桌面记账应用，前端 Vue 3 + TypeScript、后端 Rust。后端 IPC 命令（壳层）集中在 `src-tauri/src/commands/`，前端经 `src/api/index.ts` 的 `api` 对象 invoke。
+
+## 后端分层（ADR-0056）
+
+三层结构与依赖方向：**壳 → 域 → 基础设施，域永不依赖壳**（定义、路线图与迁移状态见 `docs/adr/0056-backend-domain-directory-layering.md`）。
+
+- **壳层** = `src-tauri/src/commands/`（IPC 命令）与 `src-tauri/src/api_server.rs`（HTTP 端点）：只做参数解包、事务壳、信号发射，不含业务语义；新写命令不得把域行为逻辑留在壳内。
+- **域目录** = 顶层按域组织的引擎实现，已定格：`src-tauri/src/transaction/`（核心交易）、`src-tauri/src/scheduled_transactions/`（定时计划）、`src-tauri/src/item/`（物品）。域行为代码一律进域目录；未归位域随逐域搬迁票移动，commands 目录内不再新增业务实现。
+- **基础设施** = `src-tauri/src/db/`、`src-tauri/src/signals.rs`、`src-tauri/src/models/`、`src-tauri/src/error.rs`、`src-tauri/src/settings.rs`：无域语义，被所有层消费。
+- **结构守门**：`node scripts/check-structure.js`（挂 `scripts/check.sh` 与 CI）白名单校验域目录与基础设施对壳层零依赖，白名单即规格；域目录下测试代码（外挂形态：tests.rs 文件与 tests 目录）豁免。每归位一域：脚本白名单追加一行，并同步本节定格路径。
 
 > **发布约定：打 git tag 即发布。** 未发布（最新 tag 之后）的 schema、API、数据模型可自由修改；已发布（最新 tag 及更早）：**迁移文件可就地修改**（已执行过该迁移的存量库保持原 schema，与新装库的 schema 分叉被接受），**API 与数据模型只增不改**。凡就地修改已发布迁移，发布（打 tag）时必须以两级 BREAKING 标记承载：被改迁移文件头部加就地修改注记（指向 CHANGELOG 版本）+ CHANGELOG 对应版本下加 BREAKING 条目。
 
