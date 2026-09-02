@@ -65,8 +65,9 @@ function quarterRange(y: number, q: number): DateRange {
   return { from: iso(y, startMonth, 1), to: iso(y, startMonth + 2, lastDayOf(y, startMonth + 2)) }
 }
 
-/** 本地自然年区间。 */
-function yearRange(y: number): DateRange {
+/** 本地自然年区间（issue #380 导出）：自然年边界派生的单点，报表跳转载荷的
+ * 「所选年份首尾日期」同源复用，不在视图手搓第二份年界数学。 */
+export function yearRange(y: number): DateRange {
   return { from: iso(y, 0, 1), to: iso(y, 11, 31) }
 }
 

@@ -701,6 +701,128 @@ describe('useTransactionFilter URL 参数表·分类维度（issue #377）', () 
   })
 })
 
+describe('useTransactionFilter URL 参数表·日期维度（issue #380）', () => {
+  it('合法 dateFrom/dateTo：应用（请求携带 from/to），翻页归零 + 一次重拉', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.page.value = 3
+    tf.syncUrlQuery({ dateFrom: '2026-01-01', dateTo: '2026-12-31' })
+    await flushPromises()
+    expect(tf.filters.dateFrom).toBe('2026-01-01')
+    expect(tf.filters.dateTo).toBe('2026-12-31')
+    expect(tf.page.value).toBe(1)
+    expect(requests).toHaveLength(1)
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20, from: '2026-01-01', to: '2026-12-31' })
+  })
+
+  it('报表跳转载荷形态：category + 当年首尾日期组合直达，一次重拉，无交易类型字段', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ category: 'cat-1', dateFrom: '2026-01-01', dateTo: '2026-12-31' })
+    await flushPromises()
+    expect(tf.filters.categoryId).toBe('cat-1')
+    expect(tf.filters.dateFrom).toBe('2026-01-01')
+    expect(tf.filters.dateTo).toBe('2026-12-31')
+    expect(requests).toHaveLength(1)
+    expect(lastRequest()).toEqual({
+      page: 1,
+      page_size: 20,
+      category_id: 'cat-1',
+      from: '2026-01-01',
+      to: '2026-12-31',
+    })
+    expect(lastRequest().kind).toBeUndefined()
+  })
+
+  it('非法格式日期回退不过滤（参数视为不在场），不误清其他维度', async () => {
+    const { tf } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ category: 'cat-1', dateFrom: 'banana', dateTo: '2026-13-99' })
+    await flushPromises()
+    expect(tf.filters.dateFrom).toBeNull()
+    expect(tf.filters.dateTo).toBeNull()
+    expect(tf.filters.categoryId).toBe('cat-1')
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20, category_id: 'cat-1' })
+  })
+
+  it('复位守卫：分类参数无效回退时，日期参数有效在场 → 日期/类型不越界复位', async () => {
+    const { tf } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ category: 'missing-cat', dateFrom: '2026-01-01', dateTo: '2026-12-31' })
+    await flushPromises()
+    expect(tf.filters.categoryId).toBeNull()
+    expect(tf.filters.dateFrom).toBe('2026-01-01')
+    expect(tf.filters.dateTo).toBe('2026-12-31')
+  })
+
+  it('导航清除日期参数：对应维度同步清空（分类参数在场时不清分类维度）', async () => {
+    const { tf } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ category: 'cat-1', dateFrom: '2026-01-01', dateTo: '2026-12-31' })
+    await flushPromises()
+    tf.syncUrlQuery({ category: 'cat-1' })
+    await flushPromises()
+    expect(tf.filters.dateFrom).toBeNull()
+    expect(tf.filters.dateTo).toBeNull()
+    expect(tf.filters.categoryId).toBe('cat-1')
+  })
+
+  it('日期参数与分类参数统一挂起待就绪，就绪后一次性补判应用', async () => {
+    const release = gateReference('list_categories')
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ category: 'cat-1', dateFrom: '2026-01-01', dateTo: '2026-12-31' })
+    await flushPromises()
+    // 参考数据未就绪 → 全部维度统一挂起（同批次应用，列表只刷一次）
+    expect(tf.filters.categoryId).toBeNull()
+    expect(tf.filters.dateFrom).toBeNull()
+    expect(requests).toHaveLength(0)
+    release()
+    await flushPromises()
+    expect(tf.filters.categoryId).toBe('cat-1')
+    expect(tf.filters.dateFrom).toBe('2026-01-01')
+    expect(tf.filters.dateTo).toBe('2026-12-31')
+    expect(lastRequest()).toEqual({
+      page: 1,
+      page_size: 20,
+      category_id: 'cat-1',
+      from: '2026-01-01',
+      to: '2026-12-31',
+    })
+  })
+
+  it('补判前手动改动日期维度 → 日期参数让位（分类维度补判不受牵连）', async () => {
+    const release = gateReference('list_categories')
+    const { tf } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ category: 'cat-1', dateFrom: '2026-01-01', dateTo: '2026-12-31' })
+    await flushPromises()
+    tf.setFilter({ dateFrom: '2025-06-01', dateTo: '2025-06-30' })
+    release()
+    await flushPromises()
+    // 日期让位：保持手动改动；分类维度照常补判应用
+    expect(tf.filters.dateFrom).toBe('2025-06-01')
+    expect(tf.filters.dateTo).toBe('2025-06-30')
+    expect(tf.filters.categoryId).toBe('cat-1')
+  })
+
+  it('无效日期回退触发复位契约：无其他有效参数时复位日期/类型（#96 决策 3 语义不变）', async () => {
+    const { tf } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ account: 'acc-1' })
+    await flushPromises()
+    tf.setFilter({ dateFrom: '2026-01-01', kind: 'income' })
+    await flushPromises()
+    // 导航清除 account 且 dateFrom 变为非法：全部下钻参数均无效 → 复位日期/类型
+    tf.syncUrlQuery({ dateFrom: 'not-a-date' })
+    await flushPromises()
+    expect(tf.filters.involvingAccountId).toBeNull()
+    expect(tf.filters.dateFrom).toBeNull()
+    expect(tf.filters.kind).toBeNull()
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20 })
+  })
+})
+
 /** 挂起某张参考表响应：模拟冷启动深链时该表晚到；返回放行函数。 */
 function gateReference(gatedCmd: 'list_accounts' | 'list_merchants' | 'list_categories') {
   let release!: () => void
