@@ -1,7 +1,5 @@
-//! 报表（issue #92 创建，issue #57 迁移 Amount 口径）：命令外壳 + 内嵌测试外迁。
-//!
-//! 目录组织：
-//! - `tests`：针对模块接口的测试（期望值由度量矩阵逐行求和得出，不复制生产 SQL）。
+//! 报表域（issue #92 创建，issue #57 迁移 Amount 口径；#405 域目录化 ADR-0056）：
+//! 聚合分析读模型——月度汇总、分类聚合、商户排行与报表日期极值。
 //!
 //! 金额口径全部由 `transaction::amount` 的 kind→度量矩阵单一真源驱动：
 //! - 月度汇总毛值三列：income = `income_net`（收入+分红）、
@@ -12,19 +10,19 @@
 //! - 商户消费排行（issue #192）：`expense_net` 按商户聚合、本位币口径，无商户不进排行。
 //! - 日期筛选范围（issue #266 / #389）：`{min_date, max_date}`，空库双 None。
 //!
-//! 命令层为薄壳（锁 DbState 后调核心函数），核心函数吃 `&Connection` 可直接单测。
-//! 对外暴露的命令经 `commands/mod.rs` 的 `pub use reports::*` 重导出，
-//! 注册路径与前端调用零改动。
+//! 核心函数吃 `&Connection` 可直接单测；IPC 参数解包与连接锁管理在壳层
+//! `commands::reports`（#405 压平为单文件纯壳）。注册路径与前端调用零改动。
+//!
+//! 依赖方向恒为「壳层 → reports → 基础设施」，本模块不反向依赖壳层；
+//! 对 `transaction::amount` 的消费属域间横向依赖（ADR-0056 决策 2 允许）。
 
 #[cfg(test)]
 mod tests;
 
 use rusqlite::Connection;
-use tauri::State;
 
-use crate::db::DbState;
 use crate::db::query::query_all;
-use crate::error::{AppError, Result};
+use crate::error::Result;
 use crate::models::{CategoryShare, DateRange, MerchantShare, MonthlySummary};
 use crate::transaction::amount::{
     Measure, contributing_kinds_sql, expense_gross_expr, expense_net_expr, income_net_expr,
@@ -108,36 +106,4 @@ pub fn query_report_date_range(conn: &Connection) -> Result<DateRange> {
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
     Ok(DateRange { min_date, max_date })
-}
-
-#[tauri::command]
-pub fn monthly_summary(db: State<'_, DbState>, year: i64) -> Result<Vec<MonthlySummary>> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    monthly_summary_rows(&conn, year)
-}
-
-#[tauri::command]
-pub fn merchant_shares(db: State<'_, DbState>, year: i64) -> Result<Vec<MerchantShare>> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    merchant_shares_rows(&conn, year)
-}
-
-/// 报表日期极值范围（issue #266 / #389）：只读命令，返回未删交易日期极值对。
-#[tauri::command]
-pub fn report_date_range(db: State<'_, DbState>) -> Result<DateRange> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    query_report_date_range(&conn)
-}
-
-/// 分类份额（issue #376 年份联动）：可选年份参数只增不改，
-/// 缺省全时段；前端报表视图随年份选择器联动传参。
-#[tauri::command]
-pub fn category_shares(
-    db: State<'_, DbState>,
-    kind: String,
-    month: Option<String>,
-    year: Option<i64>,
-) -> Result<Vec<CategoryShare>> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    category_shares_rows(&conn, &kind, month.as_deref(), year)
 }

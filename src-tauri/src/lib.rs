@@ -11,6 +11,7 @@ pub mod logger;
 pub mod merchants;
 pub mod models;
 pub mod policy;
+pub mod reports;
 pub mod scheduled_transactions;
 pub mod settings;
 pub mod signals;

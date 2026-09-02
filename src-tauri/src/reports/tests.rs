@@ -3,8 +3,8 @@
 
 use rusqlite::Connection;
 
-use crate::commands::reports::{category_shares_rows, merchant_shares_rows, monthly_summary_rows};
 use crate::db::{device_id, now_iso};
+use crate::reports::{category_shares_rows, merchant_shares_rows, monthly_summary_rows};
 use crate::transaction::amount::{Measure, TransactionKind, signed_amount};
 
 fn setup() -> Connection {
@@ -778,7 +778,7 @@ fn merchant_shares_includes_soft_deleted_merchant_history() {
 
 // ---- query_report_date_range：日期极值范围（issue #266 / #389）----
 
-use crate::commands::reports::query_report_date_range;
+use crate::reports::query_report_date_range;
 
 #[test]
 fn date_range_spans_earliest_to_latest_date() {
