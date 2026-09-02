@@ -7,7 +7,7 @@
 “受影响域”包括：修改代码所在域、调用到的域、数据模型所属域，以及用户可见行为所属域。
 
 - **业务规则、领域术语或跨域改动**：先读 `CONTEXT-MAP.md`，再读所有受影响域的 `docs/contexts/CONTEXT-*.md` 与相关 ADR。
-- **后端壳、域、基础设施或目录归位**：读 `docs/adr/0056-backend-domain-directory-layering.md`；已归位域、待归位域和迁移状态以该 ADR 为准。
+- **后端壳、域、基础设施或目录归位**：读 `docs/adr/0056-backend-domain-directory-layering.md`；分层规则、归位域与 triage 判定以该 ADR 为准。
 - **金额或交易写入改动**：先读 `docs/contexts/CONTEXT-core.md` 和相关 ADR，再以当前金额与写入接缝为唯一实现依据。
 - **前端状态、界面交互或弹层**：读 `docs/contexts/CONTEXT-reference-settings.md`、`docs/contexts/CONTEXT-ui-interaction.md` 及相关 ADR。
 - **用户可见文案或错误**：读相关域词汇表、ADR-0049/0050 和现有 i18n 实现。
@@ -22,9 +22,9 @@
 
 ## 后端分层
 
-目标依赖方向是 **壳 → 域 → 基础设施**，域不依赖壳。IPC/HTTP 壳负责参数解包、事务边界和信号发射；业务语义进入域目录；无域语义的数据库、信号、模型、错误和设置能力进入基础设施。现有尚未迁移的 `src-tauri/src/commands/` 业务实现按 ADR-0056 处理，新代码不得扩大壳层业务语义。
+目标依赖方向是 **壳 → 域 → 基础设施**，域不依赖壳。IPC/HTTP 壳负责参数解包、事务边界和信号发射；业务语义进入域目录；无域语义的数据库、信号、模型、错误和设置能力进入基础设施。存量待迁移的 `src-tauri/src/commands/` 业务实现按 ADR-0056 判定表与后续演进推进，新代码不得扩大壳层业务语义。
 
-结构边界由 `node scripts/check-structure.js` 守门；白名单和迁移状态以脚本及 ADR-0056 为准。
+结构边界由 `node scripts/check-structure.js` 守门；白名单和归位状态以脚本及 ADR-0056 为准。
 
 ## 数据与交易
 
