@@ -144,10 +144,11 @@ export function maskNonCode(text) {
 export function scanRustSource(text) {
   const hits = []
   const masked = maskNonCode(text)
-  const lines = masked.split('\n')
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(SHELL_DEP_PATTERN)
-    if (m) hits.push({ line: i + 1, text: text.split('\n')[i].trim(), match: m[0] })
+  const maskedLines = masked.split('\n')
+  const rawLines = text.split('\n')
+  for (let i = 0; i < maskedLines.length; i++) {
+    const m = maskedLines[i].match(SHELL_DEP_PATTERN)
+    if (m) hits.push({ line: i + 1, text: rawLines[i].trim(), match: m[0] })
   }
   return hits
 }

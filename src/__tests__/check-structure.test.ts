@@ -3,12 +3,13 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { WHITELIST } from '../../scripts/check-structure.js'
 
 // 被测对象是仓库工具脚本 scripts/check-structure.js（结构守门，ADR-0056）。
 // 按测试决策只测外部可观察结果——进程退出码与输出，不测内部函数；
 // 通过位置参数把扫描目标指向临时夹具目录。
-// 夹具白名单清单与脚本 WHITELIST 同步维护：脚本新增条目而夹具未跟上时，
-// 「夹具全部为干净桩时通过」会因路径缺失变红，即被提醒（fail loud 不静默）。
+// 夹具白名单清单自脚本导出的 WHITELIST 派生（单一事实源，无双源漂移）；
 // （vitest 转换后 import.meta.url 非 file: scheme，取进程 cwd = 仓库根定位脚本）
 const script = join(process.cwd(), 'scripts', 'check-structure.js')
 
@@ -30,26 +31,14 @@ afterAll(() => {
 /** 白名单条目桩内容（无壳层依赖的最小 Rust 文件） */
 const STUB = '// 结构守门夹具桩\npub fn stub() {}\n'
 
-/** 与 scripts/check-structure.js 的 WHITELIST 同步的夹具清单（.rs 结尾为文件，其余为目录） */
-const FIXTURE_WHITELIST = [
-  'transaction',
-  'scheduled_transactions',
-  'item',
-  'db',
-  'signals.rs',
-  'models',
-  'error.rs',
-  'settings.rs',
-]
-
 /**
- * 建临时夹具：按清单生成全部白名单条目（目录 → mod.rs，文件 → 同名文件），
+ * 建临时夹具：按脚本导出的 WHITELIST 生成全部条目（目录 → mod.rs，文件 → 同名文件），
  * 再按 overrides 追加/覆盖文件。返回脚本参数（夹具 src 目录）。
  */
 function makeFixture(overrides: Record<string, string> = {}): string[] {
   const src = mkdtempSync(join(tmpdir(), 'check-structure-'))
   tempDirs.push(src)
-  for (const path of FIXTURE_WHITELIST) {
+  for (const { path } of WHITELIST) {
     const abs = join(src, path)
     if (path.endsWith('.rs')) {
       mkdirSync(join(abs, '..'), { recursive: true })
