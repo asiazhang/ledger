@@ -3,6 +3,7 @@ import { t } from '@/i18n'
 import { errorMessage } from '@/utils/errors'
 import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import {
   NDataTable,
   NButton,
@@ -36,6 +37,8 @@ import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/tran
 import { isLendingEntryKind } from '@/domain/lending'
 import {
   TIME_PERIOD_PRESETS,
+  canStepPeriod,
+  derivePeriodBoundary,
   formatPeriodLabel,
   matchPreset,
   periodRange,
@@ -49,6 +52,7 @@ import {
   LENDING_CREATE_DIRECTIONS,
   TRANSACTION_KINDS,
   type CreateFormKind,
+  type ReportDateRange,
   type Transaction,
   type TransactionKind,
   type TransactionListFilter,
@@ -97,8 +101,9 @@ const filtersActive = computed(() => Object.values(filters).some((v) => v !== nu
 // 今天以分钟级 tick 保持响应式（视图长驻跨期场景下预设定义随之翻转）；不持久化，
 // 清除筛选与 URL 下钻复位把日期维度清空后自然回「全部」。
 // 期间步进器（#383）在同一行尾部：游标不落状态——步进前从当前区间唯一反推
-//（单位，期间），±1 后换算回区间写回快照；「全部」（无可反推区间）时置灰；
-// 不钳制未来期间（空列表是诚实行为）。快照语义保持：步进后的高亮仍纯派生，
+//（单位，期间），±1 后换算回区间写回快照；「全部」（无可反推区间）时置灰。
+// 数据期间边界（#391，修订 #383「不钳制未来」）：步进钳制于边界内，
+// 边界末端对应箭头置灰，不再可达无数据的期间。快照语义保持：步进后的高亮仍纯派生，
 // 步到恰为某预设的历史周期时该芯片自然点亮（如当年 < 一步落到去年）。
 const nowTick = ref(Date.now())
 let nowTicker: ReturnType<typeof setInterval> | undefined
@@ -106,6 +111,47 @@ const activePreset = computed(() => matchPreset(filters.dateFrom, filters.dateTo
 
 /** 当前可步进游标：从日期区间唯一反推的自然周期；「全部」/任意区间为 null（置灰）。 */
 const currentPeriod = computed(() => rangeToPeriod(filters.dateFrom, filters.dateTo))
+
+// 数据期间边界原始日期对（issue #391）：挂载拉取 + ledger:changed 失效重拉
+//（AI 导入外扩历史、删除收窄边界即时跟随）。null = 在途或失败 → 钳制退化为
+// 不钳制（不阻塞步进）；空库（双 null 日期对，非 null 对象）由派生单点回退为
+// 单当前期间。重拉在途时沿用旧值到成功替换（stale-while-revalidate，与参考
+// store 同形，不闪烁）；仅在失败时置空退化，静默不 toast（辅助钳制状态，
+// 列表错误通道不受影响）。不走 useLoadable（ADR-0040）：需持值
+// stale-while-revalidate + 刻意静默退化，均在其形态之外，序号守卫为该形态最小实现。
+const dateRange = ref<ReportDateRange | null>(null)
+let dateRangeSeq = 0
+let unlistenLedgerChanged: UnlistenFn | null = null
+let ledgerListenerDisposed = false
+
+async function loadDateRange() {
+  const seq = ++dateRangeSeq
+  try {
+    const range = await api.reportDateRange()
+    if (seq === dateRangeSeq) dateRange.value = range
+  } catch {
+    if (seq === dateRangeSeq) dateRange.value = null
+  }
+}
+
+/** 当前游标单位下的数据期间边界；「全部」无游标或边界未知（在途/失败）时为 null。 */
+const periodBoundary = computed(() => {
+  const p = currentPeriod.value
+  if (!p || !dateRange.value) return null
+  return derivePeriodBoundary(p.unit, dateRange.value, nowTick.value)
+})
+
+/** 步进可达性（#391）：边界末端对应箭头置灰；边界未知时 canStepPeriod
+ * 退化为不钳制（恒 true）。公式 [最早交易期间, max(当前期间, 最新交易期间)]
+ * 由期间数学单点派生，「与今天更晚者」的抬升随分钟级 nowTick 推移。 */
+const canStepPrev = computed(() => {
+  const p = currentPeriod.value
+  return p !== null && canStepPeriod(p, -1, periodBoundary.value)
+})
+const canStepNext = computed(() => {
+  const p = currentPeriod.value
+  return p !== null && canStepPeriod(p, 1, periodBoundary.value)
+})
 
 /** 期间标签随步进实时更新（常驻行尾）；无游标时展示占位符。 */
 const periodLabelText = computed(() =>
@@ -115,10 +161,11 @@ const periodLabelText = computed(() =>
 )
 
 /** 步进：< / > 按当前区间单位步进到上一个/下一个自然周期并写回快照
- *（同值守卫在模块内；步进必然变更区间，不触发守卫）。 */
+ *（同值守卫在模块内；步进必然变更区间，不触发守卫）。钳制守卫双保险：
+ * 按钮置灰为主，边界在点击派发间隙到达时在此拦下。 */
 function onStepPeriod(delta: 1 | -1) {
   const p = currentPeriod.value
-  if (!p) return
+  if (!p || !canStepPeriod(p, delta, periodBoundary.value)) return
   const range = periodRange(stepPeriod(p, delta))
   setFilter({ dateFrom: range.from, dateTo: range.to })
 }
@@ -436,13 +483,33 @@ onMounted(() => {
   // 首刷经模块统一出口（refresh 即「翻回第 1 页 + 重拉」；URL 初始化已在 setup 期
   // 声明意图，同一同步批次内被 watcher 去重为一次首刷请求）
   refresh()
-  // 今天 tick：分钟级刷新响应式「今天」，驱动预设定义与高亮派生跨期翻转
+  // 数据期间边界首拉（issue #391）
+  void loadDateRange()
+  // 订阅 ledger:changed：数据写入/删除后边界重拉，即时外扩/收窄。注册为异步，
+  // 注册完成前到达的信号会丢失（窗口极窄，与参考 store 订阅同形）。
+  void listen('ledger:changed', () => {
+    void loadDateRange()
+  })
+    .then((fn) => {
+      if (ledgerListenerDisposed) {
+        fn()
+        return
+      }
+      unlistenLedgerChanged = fn
+    })
+    .catch(() => {
+      /* 监听注册失败不阻塞视图（本地事件，极少发生） */
+    })
+  // 今天 tick：分钟级刷新响应式「今天」，驱动预设定义、高亮派生与边界抬升跨期翻转
   nowTicker = setInterval(() => {
     nowTick.value = Date.now()
   }, 60_000)
 })
 onBeforeUnmount(() => {
   if (nowTicker !== undefined) clearInterval(nowTicker)
+  ledgerListenerDisposed = true
+  unlistenLedgerChanged?.()
+  unlistenLedgerChanged = null
 })
 </script>
 
@@ -515,7 +582,7 @@ onBeforeUnmount(() => {
     </NSpace>
     <!-- 时间维度行（第二行，issue #381/#382/#383）：单选分段芯片「全部 | 当月 | 当季 | 当年 | 去年」
          ＋尾部常驻期间步进器「< 期间标签 >」。点芯片/步进写入日期快照（翻页归零 + 重拉免费继承）；
-         点亮纯派生；「全部」= 默认态；「全部」时步进置灰，不钳制未来期间。
+         点亮纯派生；「全部」= 默认态；「全部」时步进置灰；步进钳制于数据期间边界（#391）。
          分段控件非弹层（#381），不涉弹层注册表与快捷键抑制。 -->
     <NSpace :size="8" align="center" :wrap="true">
       <NButtonGroup size="small">
@@ -535,7 +602,7 @@ onBeforeUnmount(() => {
         <NButton
           size="small"
           quaternary
-          :disabled="!currentPeriod"
+          :disabled="!canStepPrev"
           :aria-label="t('transactions.filter.period.prev')"
           @click="onStepPeriod(-1)"
         >
@@ -545,7 +612,7 @@ onBeforeUnmount(() => {
         <NButton
           size="small"
           quaternary
-          :disabled="!currentPeriod"
+          :disabled="!canStepNext"
           :aria-label="t('transactions.filter.period.next')"
           @click="onStepPeriod(1)"
         >
