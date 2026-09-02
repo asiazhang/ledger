@@ -3,7 +3,6 @@ import {
   NForm,
   NFormItem,
   NInput,
-  NInputNumber,
   NButton,
   NButtonGroup,
   NSpace,
@@ -54,12 +53,14 @@ const ctx = useLendingForm({
       </NFormItem>
 
       <NFormItem :label="t('transactions.form.amount')">
-        <NInputNumber
-          v-model:value="ctx.amount.value"
-          :min="0"
-          :precision="2"
+        <!-- 字段错误态（ADR-0058 / #415）：借贷复用 useTransferForm 金额状态，
+             红态行为与转账/支出/收入形态完全一致（自由文本、即时红、不拦截） -->
+        <NInput
+          v-model:value="ctx.amountText.value"
+          :status="ctx.amountError.value ? 'error' : undefined"
           :placeholder="t('transactions.form.amount')"
           style="width: 160px"
+          @blur="ctx.markAmountBlurred"
         />
         <AppSelect
           v-model:value="ctx.currencyCode.value"
@@ -98,7 +99,8 @@ const ctx = useLendingForm({
         />
       </NFormItem>
 
-      <NButton type="primary" @click="ctx.submit">
+      <!-- 任一字段错误态下禁用（红框＋提交禁用两件同发，ADR-0058 决策 1） -->
+      <NButton type="primary" :disabled="ctx.hasFieldError.value" @click="ctx.submit">
         {{
           editing
             ? t('transactions.form.saveChanges')

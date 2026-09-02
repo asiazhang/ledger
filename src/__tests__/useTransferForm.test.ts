@@ -42,7 +42,7 @@ describe('useTransferForm', () => {
     const form = useTransferForm()
     form.accountId.value = 'acc-1'
     form.toAccountId.value = 'acc-1'
-    form.amount.value = 100
+    form.amountText.value = '100'
 
     await expect(form.submit()).resolves.toBeUndefined()
     expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction')).toHaveLength(0)
@@ -53,7 +53,7 @@ describe('useTransferForm', () => {
     const form = useTransferForm()
     form.accountId.value = 'acc-1'
     form.toAccountId.value = 'acc-2'
-    form.amount.value = 200
+    form.amountText.value = '200'
 
     await form.submit()
 
@@ -85,7 +85,7 @@ describe('useTransferForm', () => {
 
     it('创建时按既有交易回填全部业务字段', () => {
       const form = useTransferForm({ editing: () => editingTx })
-      expect(form.amount.value).toBe(500)
+      expect(form.amountText.value).toBe('500')
       expect(form.currencyCode.value).toBe('CNY')
       expect(form.accountId.value).toBe('acc-1')
       expect(form.toAccountId.value).toBe('acc-2')
@@ -101,7 +101,7 @@ describe('useTransferForm', () => {
       // 用户改转入账户与金额
       form.toAccountId.value = 'acc-1'
       form.accountId.value = 'acc-2'
-      form.amount.value = 300
+      form.amountText.value = '300'
 
       await form.submit()
 
@@ -130,7 +130,7 @@ describe('useTransferForm', () => {
       await expect(form.submit()).resolves.toBeUndefined()
 
       expect(onUpdated).not.toHaveBeenCalled()
-      expect(form.amount.value).toBe(500)
+      expect(form.amountText.value).toBe('500')
       expect(form.note.value).toBe('房租')
     })
   })

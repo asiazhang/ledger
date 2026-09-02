@@ -1,8 +1,9 @@
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { api } from '@/api'
 import { centsToYuan } from '@/types'
 import { buildTransferInput } from '@/domain/transaction-input'
+import { judgeAmountText, fieldErrorKind } from '@/utils/field-error'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
 import { t } from '@/i18n'
 import type { Transaction } from '@/types'
@@ -24,19 +25,41 @@ export function useTransferForm(options?: {
   const { reference, accountOptions, currencyOptions } = useFormShared()
   const message = useMessage()
 
-  const amount = ref<number | null>(null)
+  // 金额字段错误态（ADR-0058 / issue #415）：同支出/收入形态（#414 先例）——金额以
+  // 原始文本承载输入（不拦截、不静默丢弃，非法文本原样保留），判定口径走共享单点
+  // judgeAmountText；错误态装配（输入中即时红 / 空值红在失焦或保存尝试后）由本薄层
+  // 声明时机。借贷变体（useLendingForm）展开复用同一状态，红态行为随接缝天然一致。
+  const amountText = ref('')
+  const amountBlurred = ref(false)
+  const saveAttempted = ref(false)
+  const amountJudgment = computed(() => judgeAmountText(amountText.value))
+  const amountError = computed(() =>
+    fieldErrorKind(amountJudgment.value, {
+      touched: amountBlurred.value,
+      saveAttempted: saveAttempted.value,
+    }),
+  )
+  /** 任一字段处于错误态（本期仅金额），保存按钮随之禁用 */
+  const hasFieldError = computed(() => amountError.value != null)
+
+  /** 金额失焦：空值红时机输入（touched） */
+  function markAmountBlurred() {
+    amountBlurred.value = true
+  }
+
   const currencyCode = ref('CNY')
   const accountId = ref<string | null>(null)
   const toAccountId = ref<string | null>(null)
   const note = ref('')
   const date = ref(Date.now())
 
-  // 编辑模式（issue #178）：打开即回填该笔交易全部业务字段。金额经 centsToYuan
-  // 按币种小数位换算（不手写 /100）；日期以 UTC 午夜时间戳承载回填，提交端
-  // 日期转换收口装配器 toLocalDateISO（issue #216）。
+  // 编辑模式（issue #178）：打开即回填该笔交易全部业务字段。日期以 UTC 午夜
+  // 时间戳承载回填，提交端日期转换收口装配器 toLocalDateISO（issue #216）。
   const editingTx = options?.editing?.() ?? null
   if (editingTx) {
-    amount.value = centsToYuan(editingTx.amount_cents, reference.getCurrency(editingTx.currency_code))
+    // 金额回填：分 → 元（不手写 /100）后以文本形态回填；整数分的合法回填至多
+    // 两位小数（币种小数位 ≤ 2），判定必为 ok，不显红态
+    amountText.value = String(centsToYuan(editingTx.amount_cents, reference.getCurrency(editingTx.currency_code)))
     currencyCode.value = editingTx.currency_code
     accountId.value = editingTx.account_id
     toAccountId.value = editingTx.to_account_id
@@ -45,6 +68,12 @@ export function useTransferForm(options?: {
   }
 
   async function submit() {
+    // 保存尝试即触发空值兜底红态（fieldErrorKind 的 saveAttempted 输入）
+    saveAttempted.value = true
+    // 格式类错误（解析失败 / 超精度 / 必填为空）由「红框＋提交禁用」取代旧格式
+    // toast（ADR-0058 决策 1/3）：错误态下静默中止提交（先于账户 toast：红态是
+    // 本次点击的全部反馈，账户提示延后到格式修正后的下次尝试），红框已在字段上呈现
+    if (amountError.value != null) return
     if (!accountId.value) {
       message.warning(t('transactions.form.warnSelectFromAccount'))
       return
@@ -57,7 +86,10 @@ export function useTransferForm(options?: {
       message.warning(t('transactions.form.warnSameAccount'))
       return
     }
-    if (amount.value == null || amount.value <= 0) {
+    const judgment = amountJudgment.value
+    if (judgment.kind !== 'ok') return // 不可达（错误态已被上方守卫拦截），仅为类型收窄
+    // 业务类校验（纯零/负数）保留既有提交 toast 通道，不动（ADR-0058：业务不成立不属字段错误态）
+    if (judgment.yuan <= 0) {
       message.warning(t('transactions.form.warnAmount'))
       return
     }
@@ -68,7 +100,7 @@ export function useTransferForm(options?: {
       // 同一装配结果（UpdateTransactionInput 与 TransactionInput 字段同构，
       // 幂等键不可编辑）；金额元转分与本地日期转换均为装配器实现细节
       const input = buildTransferInput({
-        amount: amount.value,
+        amount: judgment.yuan,
         currencyCode: currencyCode.value,
         accountId: accountId.value,
         toAccountId: toAccountId.value,
@@ -83,7 +115,10 @@ export function useTransferForm(options?: {
       } else {
         await api.createTransaction(input)
         message.success(options?.createdMessage?.() ?? t('transactions.form.transferCreated'))
-        amount.value = null
+        amountText.value = ''
+        // 时机标志同清：弹窗关窗销毁实例前不留潜伏红态（初始为空不红，ADR-0058 决策 2）
+        amountBlurred.value = false
+        saveAttempted.value = false
         note.value = ''
         options?.onCreated?.()
       }
@@ -97,7 +132,9 @@ export function useTransferForm(options?: {
   }
 
   function resetForm() {
-    amount.value = null
+    amountText.value = ''
+    amountBlurred.value = false
+    saveAttempted.value = false
     currencyCode.value = 'CNY'
     accountId.value = null
     toAccountId.value = null
@@ -106,7 +143,8 @@ export function useTransferForm(options?: {
   }
 
   return {
-    amount, currencyCode, accountId, toAccountId, note, date,
+    amountText, markAmountBlurred, amountError, hasFieldError,
+    currencyCode, accountId, toAccountId, note, date,
     accountOptions, currencyOptions,
     submit, resetForm,
   }

@@ -152,8 +152,9 @@ describe('TransactionsView 行右键菜单（issue #151）', () => {
     expect(visibleModalText()).toContain('2026-01-01')
     expect(visibleModalText()).toContain('¥30')
     expect(visibleModalText()).toContain('现金')
-    // 金额默认原交易金额（可改），币种/账户锁定（disabled）
-    expect(form.getComponent(NInputNumber).props('value')).toBe(30)
+    // 金额默认原交易金额（可改，字段错误态改造后为自由文本输入框，ADR-0058 / #415），
+    // 币种/账户锁定（disabled）
+    expect((form.find('input[placeholder="退款金额"]').element as HTMLInputElement).value).toBe('30')
     const lockedSelects = form.findAllComponents(NSelect)
     expect(lockedSelects.length).toBe(2) // 币种 + 账户
     expect(lockedSelects.every((s) => s.props('disabled'))).toBe(true)
@@ -165,7 +166,7 @@ describe('TransactionsView 行右键菜单（issue #151）', () => {
     await selectRowMenu(wrapper, 'refund')
     const form = wrapper.findComponent(RefundForm)
     // 修改退款金额为部分退款 ¥12.00
-    form.getComponent(NInputNumber).vm.$emit('update:value', 12)
+    form.find('input[placeholder="退款金额"]').setValue('12')
     await flushPromises()
     mockInvoke.mockImplementationOnce((cmd: string) => {
       if (cmd === 'create_transaction') return Promise.resolve('refund-id')
