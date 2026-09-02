@@ -5,6 +5,8 @@ import {
   formatPeriodLabel,
   matchPreset,
   periodRange,
+  periodFromTimestamp,
+  periodStartTimestamp,
   presetRange,
   rangeToPeriod,
   stepPeriod,
@@ -29,6 +31,18 @@ describe('time-period 预设闭集', () => {
 
   it('带日期区间的预设子集与全闭集一致（仅缺「全部」）', () => {
     expect(DATED_TIME_PERIOD_PRESETS).toEqual(['month', 'quarter', 'year', 'lastYear'])
+  })
+})
+
+describe('期间面板时间戳转换', () => {
+  it('按本地日历反推月/季/年，并取自然期间起点', () => {
+    const timestamp = new Date(2026, 4, 20, 12).getTime()
+    expect(periodFromTimestamp('month', timestamp)).toEqual({ unit: 'month', year: 2026, index: 4 })
+    expect(periodFromTimestamp('quarter', timestamp)).toEqual({ unit: 'quarter', year: 2026, index: 1 })
+    expect(periodFromTimestamp('year', timestamp)).toEqual({ unit: 'year', year: 2026, index: 0 })
+    expect(new Date(periodStartTimestamp({ unit: 'quarter', year: 2026, index: 1 }))).toEqual(
+      new Date(2026, 3, 1, 12),
+    )
   })
 })
 

@@ -189,12 +189,13 @@ const isPeriodDateDisabled = (_timestamp: number, detail: PeriodDatePickerDetail
   const boundary = periodPanelBoundary.value
   if (!boundary || detail.type === 'input') return false
   let period
-  if (periodPanelUnit.value === 'month' && 'month' in detail) {
+  if (periodPanelUnit.value === 'month' && detail.type === 'month') {
+    // Naive UI 的月份 detail.month 是 0 起月份。
     period = { unit: 'month' as const, year: detail.year, index: detail.month }
-  } else if (periodPanelUnit.value === 'quarter' && 'month' in detail) {
-    // Naive UI 的 quarter 面板将季度号（1–4）复用在 detail.month 字段。
-    period = { unit: 'quarter' as const, year: detail.year, index: detail.month - 1 }
-  } else if (periodPanelUnit.value === 'year' && 'year' in detail) {
+  } else if (periodPanelUnit.value === 'quarter' && detail.type === 'quarter') {
+    // Naive UI 的季度 detail.quarter 是 1 起季度号。
+    period = { unit: 'quarter' as const, year: detail.year, index: detail.quarter - 1 }
+  } else if (periodPanelUnit.value === 'year' && detail.type === 'year') {
     period = { unit: 'year' as const, year: detail.year, index: 0 }
   } else {
     return false
@@ -683,7 +684,7 @@ onBeforeUnmount(() => {
           <AppDatePicker
             class="period-picker"
             :show="periodPanelOpen"
-            :value="periodPanelValue"
+            :value="currentPeriod ? periodPanelValue : null"
             :type="periodPanelUnit"
             :format="periodPanelFormat"
             :year-range="periodPanelYearRange"
