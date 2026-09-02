@@ -255,7 +255,8 @@ export function periodRange(p: NaturalPeriod): DateRange {
 }
 
 /** 期间 ±delta 步进（视图只用 ±1）：月/季在年界自然回绕（12 月 → 次年 1 月、
- * 四季度 → 次年一季度），年直接 ±1；不钳制未来期间（空列表是诚实行为）。 */
+ * 四季度 → 次年一季度），年直接 ±1；本函数不做边界判定，钳制由 canStepPeriod
+ * 在调用方承担（issue #391 修订 #383「不钳制未来」）。 */
 export function stepPeriod(p: NaturalPeriod, delta: number): NaturalPeriod {
   if (p.unit === 'year') {
     return { unit: 'year', year: p.year + delta, index: 0 }

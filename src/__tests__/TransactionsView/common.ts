@@ -6,7 +6,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { NDataTable, NDropdown, NDialogProvider } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import TransactionsView from '@/views/TransactionsView.vue'
-import type { Account, Currency, Merchant, Transaction } from '@/types'
+import type { Account, Currency, Merchant, ReportDateRange, Transaction } from '@/types'
 
 export const mockInvoke = vi.mocked(invoke)
 
@@ -20,6 +20,13 @@ export function setTxnDb(rows: Transaction[]) {
 /** 账户库可变：借贷呈现测试注入 receivable/debt 账户（issue #374）。 */
 export function setAccountDb(rows: Account[]) {
   mockAccounts = rows
+}
+
+/** report_date_range 覆盖（issue #391 视图测试）：注入自定义 Promise 模拟边界
+ * 拉取失败（reject）/在途（永不 resolve）；null = 恢复默认（按 txnDb 推导极值）。 */
+let reportDateRangeOverride: Promise<ReportDateRange> | null = null
+export function setReportDateRange(value: Promise<ReportDateRange> | null) {
+  reportDateRangeOverride = value
 }
 
 /** 商户字典（可变：软删商户显示测试会清空它模拟 list_merchants 的新返回）。 */
@@ -134,6 +141,12 @@ beforeEach(async () => {
     if (cmd === 'list_categories') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
     if (cmd === 'list_policies') return Promise.resolve([])
+    if (cmd === 'report_date_range') {
+      // 数据期间边界（issue #391）：默认与后端口径一致（MIN/MAX 日期，随 txnDb 现算）
+      if (reportDateRangeOverride) return reportDateRangeOverride
+      const dates = txnDb.map((t) => t.date).sort()
+      return Promise.resolve({ min_date: dates[0] ?? null, max_date: dates[dates.length - 1] ?? null })
+    }
     if (cmd === 'list_transactions') {
       const filter = (args?.filter ?? {}) as Record<string, unknown>
       const scoped = applyListFilter(filter)
@@ -160,6 +173,7 @@ beforeEach(async () => {
       version: 1, device_id: 'test', is_deleted: false,
     },
   ]
+  reportDateRangeOverride = null
   localStorage.clear()
   const store = useReferenceStore()
   await store.refresh()
