@@ -65,7 +65,9 @@ describe('check-structure（结构守门）', () => {
     const r = run([])
     expect(r.status).toBe(0)
     expect(r.output).toContain('零依赖')
-    expect(r.output).toContain('域目录 12')
+    // 摘要中的域目录数自脚本导出的 WHITELIST 派生（单一事实源，迁域追加白名单后不再漂移）
+    const domainCount = WHITELIST.filter((w) => w.layer === '域目录').length
+    expect(r.output).toContain(`域目录 ${domainCount}`)
   })
 
   it('夹具全部为干净桩时通过', () => {
