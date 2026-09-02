@@ -1,5 +1,5 @@
 #!/bin/sh
-# 一键质量检查：前端类型检查 + Rust clippy + Rust fmt 检查 + 文档一致性检查 + 命令注册一致性检查 + i18n key 全等检查
+# 一键质量检查：前端类型检查 + Rust clippy + Rust fmt 检查 + 文档一致性检查 + 命令注册一致性检查 + 结构守门检查 + i18n key 全等检查
 # 任一环节失败即退出（CI 可直接调用）
 set -eu
 cd "$(dirname "$0")/.."
@@ -17,6 +17,9 @@ echo "▶ Rust 格式检查 (cargo fmt --check)"
 
 echo "▶ 命令注册一致性检查 (node scripts/check-commands.js)"
 node scripts/check-commands.js
+
+echo "▶ 结构守门检查 (node scripts/check-structure.js)"
+node scripts/check-structure.js
 
 echo "▶ i18n key 全等检查 (node scripts/check-i18n-keys.js)"
 node scripts/check-i18n-keys.js

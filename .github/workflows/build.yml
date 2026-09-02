@@ -36,6 +36,9 @@ jobs:
       - name: 命令注册一致性检查
         run: node scripts/check-commands.js
 
+      - name: 结构守门检查
+        run: node scripts/check-structure.js
+
       - name: 文档一致性检查
         run: ./scripts/check-docs.sh
 
