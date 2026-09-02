@@ -5,7 +5,6 @@ use crate::commands::transactions::create_transaction_internal;
 use crate::models::InstrumentType;
 use rusqlite::{Connection, params};
 
-use super::super::*;
 use super::common::*;
 
 #[test]

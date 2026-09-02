@@ -1,13 +1,23 @@
 use rusqlite::{Connection, OptionalExtension};
 
-use super::PRICE_UNITS_PER_FEN;
-use crate::commands::fx::account_currency_code;
+use super::prices::PRICE_UNITS_PER_FEN;
 use crate::db::query::{FromRow, query_all, query_one};
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::models::{AccountType, NormalizedTransaction, TransactionInput, TransactionTrade};
 use crate::transaction::amount;
 use crate::transaction::amount::TransactionKind;
+
+/// 查询账户本位币代码（原 `commands::fx::account_currency_code`，随投资域归位
+/// 迁入唯一消费方；交易行折算语义归核心交易域 `transaction::amount` 接缝）。
+fn account_currency_code(conn: &Connection, account_id: &str) -> Result<String> {
+    conn.query_row(
+        "SELECT currency_code FROM accounts WHERE id=?1",
+        rusqlite::params![account_id],
+        |r| r.get(0),
+    )
+    .map_err(Into::into)
+}
 
 /// 标的存在性校验 + 类型读取（issue #295 / #302）：prepare 阶段拦截引用不存在标的的
 /// buy/sell，返回可读回自纠的码化 [`AppError::Coded`] 中文错误（HTTP 侧 400）——否则
@@ -70,10 +80,7 @@ impl FromRow for ActiveLot {
 /// 读取一笔 buy/sell 交易的买卖明细（issue #180）：从 `security_transactions`
 /// 扩展表按交易 id 取标的/数量/价格/费用，JOIN `instruments` 带出展示字段。
 /// 供投资表单编辑模式回填；无明细（交易不存在/非 buy/sell）返回 `NotFound`。
-pub(crate) fn get_transaction_trade(
-    conn: &Connection,
-    transaction_id: &str,
-) -> Result<TransactionTrade> {
+pub fn get_transaction_trade(conn: &Connection, transaction_id: &str) -> Result<TransactionTrade> {
     query_one::<TransactionTrade, _>(
         conn,
         "SELECT st.instrument_id, i.symbol, i.name, i.instrument_type, st.quantity, st.price_cents, st.fee_cents \
@@ -91,7 +98,7 @@ pub(crate) fn get_transaction_trade(
     })
 }
 
-pub(crate) struct BuyPlan {
+pub struct BuyPlan {
     pub(crate) normalized: NormalizedTransaction,
     pub(crate) instrument_id: String,
     pub(crate) quantity: f64,
@@ -519,7 +526,7 @@ fn reverse_sell(conn: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) struct SellPlan {
+pub struct SellPlan {
     pub(crate) normalized: NormalizedTransaction,
     pub(crate) instrument_id: String,
     pub(crate) quantity: f64,
@@ -532,14 +539,14 @@ pub(crate) struct SellPlan {
 }
 
 /// 投资交易计划：归一化后的交易行 + kind 特有副作用数据（不落库）。
-pub(crate) enum Plan {
+pub enum Plan {
     Buy(BuyPlan),
     Sell(SellPlan),
 }
 
 impl Plan {
     /// 归一化交易行（供行为层经 `writer::NormalizedRow::try_from` 落库）。
-    pub(crate) fn normalized(&self) -> &NormalizedTransaction {
+    pub fn normalized(&self) -> &NormalizedTransaction {
         match self {
             Plan::Buy(p) => &p.normalized,
             Plan::Sell(p) => &p.normalized,
@@ -551,11 +558,7 @@ impl Plan {
 ///
 /// 由行为层（`commands::transactions`）在创建/修改路径按 kind 分派调用；
 /// `kind` 为已解析的 [`TransactionKind`]，收到非 buy/sell 的 kind 属编排错误，报错防误用。
-pub(crate) fn prepare(
-    conn: &Connection,
-    kind: TransactionKind,
-    input: &TransactionInput,
-) -> Result<Plan> {
+pub fn prepare(conn: &Connection, kind: TransactionKind, input: &TransactionInput) -> Result<Plan> {
     match kind {
         TransactionKind::Buy => Ok(Plan::Buy(prepare_buy(conn, input)?)),
         TransactionKind::Sell => Ok(Plan::Sell(prepare_sell(conn, input)?)),
@@ -574,7 +577,7 @@ pub(crate) fn prepare(
 
 /// 应用计划的副作用（buy 建仓 / sell 卖出匹配）。由编排层在交易行落库后调用，
 /// 与行写入同处一个事务；`id` 为已落库的交易行 id。
-pub(crate) fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
+pub fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
     match plan {
         Plan::Buy(p) => create_buy_lot(conn, id, p),
         Plan::Sell(p) => write_sell_side_effects(conn, id, p),
@@ -589,7 +592,7 @@ pub(crate) fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
 /// `partial_sold_code` / `partial_sold_msg` 为 buy 守卫的错误码与措辞，由行为层各编排入口传入其单点定义的
 /// 文案（修改/删除各持自己的措辞，ADR-0033 决策 #4）——本函数不自带措辞；
 /// 非 buy/sell 的 kind 无持仓副作用，防御性返回成功。
-pub(crate) fn revert(
+pub fn revert(
     conn: &Connection,
     id: &str,
     kind: TransactionKind,

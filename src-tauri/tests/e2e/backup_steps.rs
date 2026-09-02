@@ -11,13 +11,11 @@ use tauri_app_lib::commands::backup::{
 };
 use tauri_app_lib::commands::batch::TransactionBatch;
 use tauri_app_lib::commands::categories::{create_category_internal, delete_category_internal};
-use tauri_app_lib::commands::investment::{
-    create_exchange_rate_internal, create_instrument_internal, create_market_price_internal,
-};
 use tauri_app_lib::commands::transactions::{
     delete_transaction_internal, update_transaction_internal,
 };
 use tauri_app_lib::db::{new_uuid, now_iso, open_connection};
+use tauri_app_lib::investment::{create_exchange_rate, create_instrument, create_market_price};
 use tauri_app_lib::item::cost;
 use tauri_app_lib::item::domain::{create_item, delete_item, dispose_item, update_item};
 use tauri_app_lib::models::{
@@ -669,7 +667,7 @@ fn write_exchange_rate_via_entry(world: &mut LedgerWorld, base: String, quote: S
     };
     world
         .db
-        .write(|conn| create_exchange_rate_internal(conn, input))
+        .write(|conn| create_exchange_rate(conn, input))
         .expect("写入汇率失败");
 }
 
@@ -689,7 +687,7 @@ fn create_instrument_entry(
     };
     world
         .db
-        .write(|conn| create_instrument_internal(conn, input))
+        .write(|conn| create_instrument(conn, input))
         .expect("新建标的失败");
 }
 
@@ -742,7 +740,7 @@ fn write_market_price_via_entry(
     };
     world
         .db
-        .write(|conn| create_market_price_internal(conn, input))
+        .write(|conn| create_market_price(conn, input))
         .expect("写入行情失败");
 }
 

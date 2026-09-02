@@ -3,7 +3,7 @@
 //! 端到端固化 AI 投资迁移链路：搜索无命中 → 幂等创建标的 → 批量导入 buy/sell →
 //! 持仓批次 / 已实现盈亏 / 余额读回核对。各接缝与对外入口同一实现：
 //!
-//! - **标的创建**：`create_instrument_internal`——与创建端点同一核心接缝
+//! - **标的创建**：`investment::create_instrument`——与创建端点同一核心接缝
 //!   （find-or-create 幂等；币种推导在 HTTP handler 层，已有集成测试钉住，
 //!   本层显式传币种不重复验证）。
 //! - **买卖写入**：`batch::TransactionBatch::run`（dedup=true）——与 HTTP 批量
@@ -22,7 +22,7 @@ use cucumber::{then, when};
 use rusqlite::params;
 
 use tauri_app_lib::commands::batch::TransactionBatch;
-use tauri_app_lib::commands::investment::create_instrument_internal;
+use tauri_app_lib::investment::create_instrument;
 use tauri_app_lib::models::{InstrumentInput, InstrumentType, TransactionInput};
 use tauri_app_lib::transaction::amount::TransactionKind;
 
@@ -52,7 +52,7 @@ fn create_instrument_idempotently(
     currency: String,
 ) {
     let kind: InstrumentType = kind.parse().expect("未知金融工具类型");
-    create_instrument_internal(
+    create_instrument(
         &world_conn!(world),
         InstrumentInput {
             symbol,

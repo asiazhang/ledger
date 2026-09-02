@@ -8,15 +8,15 @@
 //!   plan → apply，ADR-0032 统一写入口），日期参数化以错开周采样键。
 //! - **软删账户**：复用 `删除账户` 步骤（accounts_steps，走真实
 //!   `delete_account_internal`）。
-//! - **组合走势查询**：走 `portfolio_value_trend_internal`——与 IPC 命令
-//!   `portfolio_value_trend` 同一实现（先例 `list_instruments_internal`）。
+//! - **组合走势查询**：走 `investment::query_portfolio_value_trend`——与 IPC 命令
+//!   `portfolio_value_trend` 同一实现（#401 域目录化后直调域入口）。
 
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::commands::investment::portfolio_value_trend_internal;
 use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
+use tauri_app_lib::investment::{query_instrument_price_trend, query_portfolio_value_trend};
 use tauri_app_lib::models::{TransactionInput, TrendRange};
 use tauri_app_lib::transaction::amount::TransactionKind;
 
@@ -178,7 +178,7 @@ fn create_trade(
 
 #[when(expr = "查询组合走势")]
 fn query_portfolio_trend(world: &mut LedgerWorld) {
-    match portfolio_value_trend_internal(&world_conn!(world), &TrendRange::default()) {
+    match query_portfolio_value_trend(&world_conn!(world), &TrendRange::default()) {
         Ok(trend) => {
             world.last_portfolio_trend = Some(trend);
             world.last_error = None;
@@ -205,11 +205,7 @@ fn assert_portfolio_trend_point_count(world: &mut LedgerWorld, expected: usize) 
 #[when(expr = "查询标的 {string} 的走势")]
 fn query_instrument_trend(world: &mut LedgerWorld, symbol: String) {
     let id = instrument_id(&world_conn!(world), &symbol);
-    match tauri_app_lib::commands::investment::instrument_price_trend_internal(
-        &world_conn!(world),
-        &id,
-        &TrendRange::default(),
-    ) {
+    match query_instrument_price_trend(&world_conn!(world), &id, &TrendRange::default()) {
         Ok(trend) => {
             world.last_instrument_trend = Some(trend);
             world.last_error = None;

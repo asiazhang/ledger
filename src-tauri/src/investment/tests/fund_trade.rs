@@ -8,7 +8,6 @@ use crate::models::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 use rusqlite::{Connection, params};
 
-use super::super::*;
 use super::common::*;
 
 /// 插入场外基金标的（type='fund'，市场 unknown——ADR-0038：基金无交易所市场概念）。

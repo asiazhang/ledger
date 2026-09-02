@@ -1,18 +1,18 @@
 //! 标的字典步骤（issue #199）：搜索语义的 BDD 接缝。实现为
-//! `commands::investment::list_instruments_internal`（与 IPC 命令同一实现）。
+//! `investment::list_instruments`（与 IPC 命令同一实现，#401 域目录化后直调域入口）。
 //! 另载按代码即拉添加基金的编排接缝（issue #301）：东财详情以注入桩离线驱动，
-//! 实现为 `commands::investment::add_fund_by_code_with`（与 IPC 命令同一套
+//! 实现为 `investment::add_fund_by_code_with`（与 IPC 命令同一套
 //! 校验/拉取编排/落库实现，网络层经注入替换）。
 
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::commands::investment::{
-    add_fund_by_code_with, create_instrument_manual_internal, delete_instrument_internal,
-    list_instruments_internal,
-};
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
 use tauri_app_lib::error::Result;
+use tauri_app_lib::investment::{
+    add_fund_by_code_with, create_instrument_manual, delete_instrument as delete_instrument_domain,
+    list_instruments,
+};
 use tauri_app_lib::models::{FundDetail, FundNav, InstrumentInput, InstrumentListFilter};
 
 use crate::world::LedgerWorld;
@@ -63,7 +63,7 @@ fn create_instrument_of_type(
 // ---------------------------------------------------------------------------
 
 /// 手动创建标的（issue #290 / ADR-0036）：驱动 IPC 命令入口层守卫同一接缝
-/// `create_instrument_manual_internal`（类型白名单 + 名称必填在先，核心创建函数
+/// `create_instrument_manual`（类型白名单 + 名称必填在先，核心创建函数
 /// 通用）。市场固定未知（不传入参，缺省 unknown）；结果/错误记入 world 供 Then 断言。
 #[when(expr = "手动创建标的 {string} 类型 {string} 名称 {string} 币种 {string}")]
 fn manual_create_instrument(
@@ -80,14 +80,14 @@ fn manual_create_instrument(
         currency_code: currency,
         market: None,
     };
-    match create_instrument_manual_internal(&world_conn!(world), input) {
+    match create_instrument_manual(&world_conn!(world), input) {
         Ok(_) => world.last_error = None,
         Err(e) => world.last_error = Some(e.to_string()),
     }
 }
 
 /// 删除标的（issue #292 / ADR-0036 决策 5）：驱动 IPC 命令同一接缝
-/// `delete_instrument_internal`（守卫前置检查在核心函数内）。入参为标的代码：
+/// `delete_instrument`（守卫前置检查在核心函数内）。入参为标的代码：
 /// 场景内代码唯一，按（代码）取 id 驱动；结果/错误记入 world 供 Then 断言。
 /// 步骤前提是标的已存在（不存在标的的错误路径由域单测覆盖）。
 #[when(expr = "删除标的 {string}")]
@@ -99,7 +99,7 @@ fn delete_instrument(world: &mut LedgerWorld, symbol: String) {
             |r| r.get(0),
         )
         .unwrap_or_else(|_| panic!("删除标的步骤：标的 {symbol} 应已存在"));
-    match delete_instrument_internal(&world_conn!(world), &id) {
+    match delete_instrument_domain(&world_conn!(world), &id) {
         Ok(_) => world.last_error = None,
         Err(e) => world.last_error = Some(e.to_string()),
     }
@@ -109,7 +109,7 @@ fn delete_instrument(world: &mut LedgerWorld, symbol: String) {
 #[when(expr = "列出全部标的")]
 fn list_all_instruments(world: &mut LedgerWorld) {
     world.last_instrument_search = Some(
-        list_instruments_internal(&world_conn!(world), &InstrumentListFilter::default())
+        list_instruments(&world_conn!(world), &InstrumentListFilter::default())
             .expect("标的列表查询失败"),
     );
 }
@@ -121,7 +121,7 @@ fn search_instruments(world: &mut LedgerWorld, query: String) {
         ..Default::default()
     };
     world.last_instrument_search =
-        Some(list_instruments_internal(&world_conn!(world), &filter).expect("标的搜索失败"));
+        Some(list_instruments(&world_conn!(world), &filter).expect("标的搜索失败"));
 }
 
 /// 按类型过滤搜索（同码异类型消歧语义，issue #294；与 HTTP 端点的 type 参数同一接缝）。
@@ -133,7 +133,7 @@ fn search_instruments_of_kind(world: &mut LedgerWorld, kind: String, query: Stri
         ..Default::default()
     };
     world.last_instrument_search =
-        Some(list_instruments_internal(&world_conn!(world), &filter).expect("标的搜索失败"));
+        Some(list_instruments(&world_conn!(world), &filter).expect("标的搜索失败"));
 }
 
 // ---------------------------------------------------------------------------

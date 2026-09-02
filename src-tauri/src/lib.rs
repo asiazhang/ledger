@@ -5,6 +5,7 @@ pub mod commands;
 pub mod db;
 pub mod error;
 pub mod events;
+pub mod investment;
 pub mod item;
 pub mod logger;
 pub mod merchants;

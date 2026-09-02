@@ -4,7 +4,7 @@ use crate::db::query::query_all;
 use crate::error::Result;
 use crate::models::{AccountPnl, InstrumentPnl, PnlDetail, PnlFilter, RealizedPnlSummary, YearPnl};
 
-pub(crate) fn query_realized_pnl_summary(
+pub fn query_realized_pnl_summary(
     conn: &Connection,
     filter: &PnlFilter,
 ) -> Result<RealizedPnlSummary> {

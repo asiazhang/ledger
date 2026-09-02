@@ -7,17 +7,14 @@
 //! 编排与网络解耦：核心接缝 [`add_fund_by_code_with`] 接受注入的详情获取函数
 //! （`&str → Result<FundDetail>`），测试与 BDD 以 stub 离线驱动（不依赖真实
 //! 网络）；生产命令在锁外完成网络拉取后调 [`persist_fund_detail`] 落库
-//! （见 `commands::investment::add_fund_by_code`）。
+//! （见 `commands::investment` 壳的 `add_fund_by_code` 命令）。
 
 use rusqlite::Connection;
 
-use crate::commands::sync::persist::{
-    EASTMONEY_PRICE_SOURCE, price_value_to_cents, upsert_market_price,
-};
+use super::crud;
+use super::prices::{EASTMONEY_PRICE_SOURCE, price_value_to_cents, upsert_market_price};
 use crate::error::{AppError, Result};
 use crate::models::{AddFundResult, FundDetail, InstrumentInput, InstrumentType};
-
-use super::crud;
 
 /// 场外基金标的的固定字典形态（ADR-0038 决策 1）：类型 fund、市场恒 unknown
 /// （场外基金无交易所市场概念，纯字典键）、币种人民币（含 QDII 人民币份额）。
@@ -28,12 +25,12 @@ const FUND_CURRENCY: &str = "CNY";
 /// 消费三方——按代码即拉的入口校验（[`validate_fund_code`]）、AI 端点 fund
 /// 增强/查询的触发前提、净值同步分区的「可拉取」判定；名称充代码的 fund 行
 ///（源数据无代码）非 6 位，不触发东财校验、不进净值通道，自编 6 位代码无产生通道。
-pub(crate) fn is_six_digit_code(code: &str) -> bool {
+pub fn is_six_digit_code(code: &str) -> bool {
     code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// 基金代码合法性校验：同 [`is_six_digit_code`]（按代码即拉入口形态）。
-pub(crate) fn validate_fund_code(code: &str) -> Result<()> {
+pub fn validate_fund_code(code: &str) -> Result<()> {
     if is_six_digit_code(code) {
         Ok(())
     } else {
@@ -46,7 +43,7 @@ pub(crate) fn validate_fund_code(code: &str) -> Result<()> {
 
 /// 创建端点 fund 增强的落库结果（issue #304 / ADR-0039 决策 3）：标的 id +
 /// 是否落现价（价格失效信号广播判定，语义同 `AddFundResult.price_written`）。
-pub(crate) struct FundCreateOutcome {
+pub struct FundCreateOutcome {
     pub instrument_id: String,
     pub price_written: bool,
 }
@@ -56,7 +53,7 @@ pub(crate) struct FundCreateOutcome {
 /// 留待人工编辑）。字典形态与按代码即拉一致（类型 fund、市场 unknown、币种
 /// 人民币）；既有行直接复用、名称不动——降级重放不得用 AI 名称覆盖已回填的
 /// 东财权威名称。
-pub(crate) fn create_fund_degraded(
+pub fn create_fund_degraded(
     conn: &Connection,
     symbol: &str,
     ai_name: Option<String>,
@@ -93,7 +90,7 @@ pub(crate) fn create_fund_degraded(
 /// 拉取到的基金详情落库：建标的行（复用核心创建函数的（代码，类型）幂等
 /// upsert，来源 manual，ADR-0036）+ 有净值时落现价缓存（净值即价格、
 /// priced_at = 净值日期）。返回结果含 `price_written`（价格失效信号判定依据）。
-pub(crate) fn persist_fund_detail(
+pub fn persist_fund_detail(
     conn: &Connection,
     code: &str,
     detail: &FundDetail,

@@ -15,14 +15,14 @@ use chrono::NaiveDate;
 use rusqlite::{Connection, params};
 use serde::Deserialize;
 
-use crate::commands::investment::is_six_digit_code;
 use crate::error::Result;
+use crate::investment::is_six_digit_code;
+use crate::investment::prices::{
+    EASTMONEY_PRICE_SOURCE, price_value_to_cents, upsert_market_price, upsert_price_history,
+};
 
 use super::fund::deserialize_flexible_f64;
 use super::http::{KlineBar, Pacer, RetryConfig, request_json_from_hosts};
-use super::persist::{
-    EASTMONEY_PRICE_SOURCE, price_value_to_cents, upsert_market_price, upsert_price_history,
-};
 
 // 历史净值接口：单主机（无公开镜像池），复用行情层的重试与限流泛型层。
 const LSJZ_HOSTS: &[&str] = &["https://api.fund.eastmoney.com"];

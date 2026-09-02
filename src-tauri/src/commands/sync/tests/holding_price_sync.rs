@@ -12,10 +12,10 @@ use crate::commands::sync::http::{
     fx_secid_candidates, parse_klines, secid_prefix,
 };
 use crate::commands::sync::incremental::{beijing_today, do_incremental_sync_with};
-use crate::commands::sync::persist::{
+use crate::error::{AppError, Result};
+use crate::investment::prices::{
     EASTMONEY_PRICE_SOURCE, upsert_market_price, upsert_price_history,
 };
-use crate::error::{AppError, Result};
 
 use super::common::setup_db;
 

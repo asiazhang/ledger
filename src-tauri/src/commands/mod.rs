@@ -14,7 +14,6 @@ pub mod currencies;
 pub mod dashboard;
 pub mod data_location;
 pub mod financial_freedom;
-pub mod fx;
 pub mod investment;
 pub mod item;
 pub mod logs;

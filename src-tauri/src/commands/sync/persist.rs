@@ -1,5 +1,6 @@
-//! 行情同步持久化（issue #89）：`instruments` / `market_prices` 的读写。
-//! 与 HTTP、编排无关，仅消费解析后的条目落库。
+//! 行情同步持久化（issue #89）：标的字典的应用与汇率历史周采样落库。
+//! 价格写入单点（现价缓存 / 价格历史周采样 upsert 与刻度换算）已随投资域归位
+//! 迁入 [`crate::investment::prices`]（#401 / ADR-0056），本模块经域入口消费。
 
 use std::collections::HashMap;
 
@@ -8,36 +9,12 @@ use rusqlite::params;
 
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::Result;
+use crate::investment::prices::{EASTMONEY_PRICE_SOURCE, upsert_market_price};
 
 use super::http::{StockItem, f2_to_price};
 
-/// 按 (标的, ISO 周) 插入或覆盖一条周采样价格历史（issue #137 / ADR-0019）。
-/// 「整周覆盖」幂等由 UNIQUE(instrument_id, week_start)（week_start 为生成列）保证：
-/// 同周任一采样日写入都落在同一行上，重复回填零重复行。清仓不删历史（仅随标的删除级联）。
-/// `source` 为价格数据来源标记（与字典侧 source 同词表）：同步 'eastmoney'、手动报价 'manual'
-/// （ADR-0036）——周采样落库单点，不立第二承载。
-pub(crate) fn upsert_price_history(
-    conn: &Connection,
-    instrument_id: &str,
-    trade_date: &str,
-    price_cents: i64,
-    currency: &str,
-    source: &str,
-) -> Result<()> {
-    let now = now_iso();
-    conn.execute(
-        "INSERT INTO price_history (id,instrument_id,trade_date,price_cents,currency_code,source,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?7,1,?8) \
-         ON CONFLICT(instrument_id, week_start) DO UPDATE SET \
-         trade_date=excluded.trade_date, price_cents=excluded.price_cents, \
-         currency_code=excluded.currency_code, source=excluded.source, \
-         updated_at=excluded.updated_at, version=version+1",
-        params![new_uuid(), instrument_id, trade_date, price_cents, currency, source, now, device_id()],
-    )?;
-    Ok(())
-}
-
-/// 按 (币种对, ISO 周) 插入或覆盖一条周采样汇率历史，规则与 [`upsert_price_history`] 对齐
+/// 按 (币种对, ISO 周) 插入或覆盖一条周采样汇率历史，规则与投资域价格历史
+/// 周采样 upsert（[`crate::investment::prices::upsert_price_history`]）对齐
 /// （同周整周覆盖、同期采集）。`rate` 口径与 exchange_rates 一致：1 base = ? quote。
 pub(super) fn upsert_fx_rate_history(
     conn: &Connection,
@@ -58,68 +35,12 @@ pub(super) fn upsert_fx_rate_history(
     Ok(())
 }
 
-/// 同步价格数据来源标记常量：价格侧 source 词表与字典侧同词（ADR-0036），
-/// 与手动报价的 `investment::manual_price::MANUAL_PRICE_SOURCE` 对称。
-pub(crate) const EASTMONEY_PRICE_SOURCE: &str = "eastmoney";
-/// 真实价格值（元）→ 万分之一元（0.0001 元，价格刻度 ADR-0038）。
-/// A 股/港股 K 线收盘价与场外基金单位净值同刻度换算（基金净值 4 位小数，
-/// issue #301），统一 ×10000。
-pub(crate) fn price_value_to_cents(value: f64) -> i64 {
-    (value * 10000.0).round() as i64
-}
-
 /// 已存在股票标的的映射值：(id, name, market)，键为 symbol。
 pub(super) type ExistingInstrument = (String, Option<String>, String);
 
-/// 按 instrument_id 插入或更新一条行情价格。`priced_at` 为该价格对应的行情/净值日期；
-/// `nav_date` 仅场外基金现价携带（单位净值日期，兼任净值同步水位，ADR-0038），
-/// 股票与手动报价传 None（手动落价无净值日期语义，覆盖为 NULL）。
-/// `source` 为价格数据来源（与字典侧 source 同词表）：同步 'eastmoney'、手动报价 'manual'
-/// （ADR-0036）——现价缓存写入的单点（投资域旧半成品 `crud::create_market_price` 已
-/// 委托至此，issue #291 收口），不另写第二份 upsert SQL。
-pub(crate) fn upsert_market_price(
-    conn: &Connection,
-    instrument_id: &str,
-    price_cents: i64,
-    currency: &str,
-    priced_at: &str,
-    nav_date: Option<&str>,
-    source: Option<&str>,
-) -> Result<String> {
-    let existing_id: Option<String> = conn
-        .query_row(
-            "SELECT id FROM market_prices WHERE instrument_id=?1",
-            params![instrument_id],
-            |r| r.get(0),
-        )
-        .ok();
-    let id = existing_id.unwrap_or_else(new_uuid);
-    let now = now_iso();
-    conn.execute(
-        "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,nav_date,source,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) \
-         ON CONFLICT(instrument_id) DO UPDATE SET \
-         price_cents=excluded.price_cents, currency_code=excluded.currency_code, \
-         priced_at=excluded.priced_at, nav_date=excluded.nav_date, source=excluded.source, \
-         updated_at=excluded.updated_at, version=version+1",
-        params![
-            id,
-            instrument_id,
-            price_cents,
-            currency,
-            priced_at,
-            nav_date,
-            source,
-            now,
-            now,
-            1,
-            device_id()
-        ],
-    )?;
-    Ok(id)
-}
-
-/// 构建现有股票标的映射：symbol → (id, name, market)。
+/// 构建现有股票标的映射：symbol → (id, name, market)。构造后由全量同步逐条
+/// 消费（[`apply_stock_item`]）；行情价格落库经投资域写入单点
+/// [`crate::investment::prices::upsert_market_price`]。
 pub(super) fn build_existing_instruments(
     conn: &Connection,
 ) -> Result<HashMap<String, ExistingInstrument>> {

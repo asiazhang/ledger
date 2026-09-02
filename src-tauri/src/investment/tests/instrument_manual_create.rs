@@ -1,11 +1,12 @@
-//! 手动创建入口守卫（`create_instrument_manual_internal`，issue #290 / ADR-0036
-//! 决策 3）：类型白名单（债券/ETF/其他）与名称必填收在 IPC 命令入口层；核心创建
-//! 函数保持通用（AI HTTP 端点五类全开、名称可选，ADR-0037），不经本守卫。
+//! 手动创建入口守卫（`create_instrument_manual`，issue #290 / ADR-0036
+//! 决策 3）：类型白名单（债券/ETF/其他）与名称必填收在域的手动创建入口
+//! （#401 域归位前住 IPC 命令入口层）；核心创建函数保持通用（AI HTTP 端点五类
+//! 全开、名称可选，ADR-0037），不经本守卫。
 
 use rusqlite::{Connection, params};
 
 use super::common::setup_db;
-use crate::commands::investment::create_instrument_manual_internal;
+use crate::investment::create_instrument_manual;
 use crate::models::{InstrumentInput, InstrumentType};
 
 fn input(kind: InstrumentType, symbol: &str, name: Option<&str>) -> InstrumentInput {
@@ -31,7 +32,7 @@ fn count_of(conn: &Connection, kind: &str) -> i64 {
 #[test]
 fn manual_create_rejects_stock() {
     let conn = setup_db();
-    let err = create_instrument_manual_internal(
+    let err = create_instrument_manual(
         &conn,
         input(InstrumentType::Stock, "600519", Some("贵州茅台")),
     )
@@ -47,7 +48,7 @@ fn manual_create_rejects_stock() {
 #[test]
 fn manual_create_rejects_fund() {
     let conn = setup_db();
-    let err = create_instrument_manual_internal(
+    let err = create_instrument_manual(
         &conn,
         input(InstrumentType::Fund, "000001", Some("华夏成长混合")),
     )
@@ -68,7 +69,7 @@ fn manual_create_allows_whitelisted_kinds() {
         (InstrumentType::Etf, "510300"),
         (InstrumentType::Other, "稳稳地幸福"),
     ] {
-        let id = create_instrument_manual_internal(&conn, input(kind, symbol, Some("某标的")))
+        let id = create_instrument_manual(&conn, input(kind, symbol, Some("某标的")))
             .unwrap_or_else(|e| panic!("{symbol} 应在白名单内：{e}"));
         assert!(!id.is_empty());
         let source: String = conn
@@ -87,9 +88,8 @@ fn manual_create_allows_whitelisted_kinds() {
 fn manual_create_requires_name() {
     let conn = setup_db();
     for name in [None, Some(""), Some("   ")] {
-        let err =
-            create_instrument_manual_internal(&conn, input(InstrumentType::Other, "HW-VR", name))
-                .unwrap_err();
+        let err = create_instrument_manual(&conn, input(InstrumentType::Other, "HW-VR", name))
+            .unwrap_err();
         assert!(
             err.to_string().contains("名称不能为空"),
             "空名称应被拒绝：{err}"
@@ -110,7 +110,7 @@ fn manual_create_reuse_keeps_existing_source() {
         [],
     )
     .unwrap();
-    let id = create_instrument_manual_internal(
+    let id = create_instrument_manual(
         &conn,
         input(InstrumentType::Etf, "510300", Some("沪深300ETF")),
     )
