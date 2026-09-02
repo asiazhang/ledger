@@ -35,7 +35,7 @@ pub fn list_policies(conn: &Connection) -> Result<Vec<Policy>> {
 }
 
 /// 创建一张保单：校验 → 落库（生成 `id` 与审计字段）→ 成功后调用 `notify`
-/// （生产路径发 `ledger:changed`）。校验语义见 [`validate_input`]。
+/// （生产路径发 `ledger:changed`）。校验语义见 `validation::validate_input`。
 pub fn create_policy(
     conn: &Connection,
     input: PolicyInput,
