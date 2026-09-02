@@ -35,6 +35,37 @@ fn legacy_txn(
     world.last_transaction_id = Some(id);
 }
 
+/// 存量外币交易：直接 SQL 插入，原始币种分与本位币分显式分叉（模拟汇率折算后
+/// 的落库形态），锁定金额区间过滤的本位币分口径（issue #395）。
+#[given(
+    expr = "存量外币交易 备注 {string} 金额 {int} 币种 {string} 本位币 {int} 账户 {string} 日期 {string}"
+)]
+fn legacy_foreign_txn(
+    world: &mut LedgerWorld,
+    note: String,
+    amount: i64,
+    currency: String,
+    native_amount: i64,
+    account_name: String,
+    date: String,
+) {
+    let account_id = world.account_id(&account_name);
+    let id = new_uuid();
+    let now = now_iso();
+    world_conn!(world)
+        .execute(
+            "INSERT INTO transactions \
+             (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
+             category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,'expense',?2,?3,?4,?5,NULL,NULL,NULL,?6,?7,?8,?8,1,?9,0)",
+            params![
+                id, amount, currency, native_amount, account_id, note, date, now,
+                device_id()
+            ],
+        )
+        .unwrap();
+}
+
 // ---------------------------------------------------------------------------
 // When
 // ---------------------------------------------------------------------------
