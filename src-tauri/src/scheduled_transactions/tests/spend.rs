@@ -256,3 +256,77 @@ fn subscription_spend_uses_native_amounts_from_transactions() {
     assert_eq!(row.currency_code, "USD");
     assert_eq!(row.this_year_native_cents, 72000);
 }
+
+/// 期次合计消费金额矩阵的支出净额口径（issue #395）：SUM 表达式由 kind→系数
+/// 矩阵生成而非裸求和——「期次流水恒为支出」是引擎当前行为而非聚合假设，
+/// 期次若关联非支出流水（income 等）系数为 0 不混入合计，退款流水按净额冲减，
+/// 引擎行为漂移不再静默改变实际花费。
+#[test]
+fn subscription_spend_aggregates_expense_net_from_matrix() {
+    let conn = setup_db();
+    insert_account(&conn, "acc", "CNY");
+    let plan_id = create_subscription(&conn, "acc", "CNY", 3000, Some("视频会员"));
+    execute_first_n_occurrences(&conn, &plan_id, 1); // 2026-01：expense 3000
+    let expense_txn_id: String = conn
+        .query_row(
+            "SELECT transaction_id FROM scheduled_transaction_occurrences \
+             WHERE scheduled_transaction_id = ?1 AND status = 'completed'",
+            params![plan_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+
+    // 漂移注入：同月再挂两笔 completed 期次，关联流水分别为 income 与 refund
+    // （引擎当前不生成，直接落库模拟未来行为漂移）：income 系数为 0 不混入，
+    // refund 按支出净额冲减；裸求和会把三者无符号相加（13088），口径即漂移。
+    insert_occurrence_txn(&conn, &plan_id, "2026-01-20", "income", 8888, None);
+    insert_occurrence_txn(
+        &conn,
+        &plan_id,
+        "2026-01-25",
+        "refund",
+        1200,
+        Some(&expense_txn_id),
+    );
+
+    let overview = query_subscription_spend(&conn, date("2026-02-20")).unwrap();
+    assert_eq!(
+        month_cents(&overview, "2026-01"),
+        3000 - 1200,
+        "income 不混入合计，refund 按支出净额冲减"
+    );
+}
+
+/// 漂移注入辅助：给计划挂一笔 completed 期次并直接插入指定 kind 的关联流水
+/// （绕过执行引擎，模拟期次生成非支出流水的假想漂移）。
+fn insert_occurrence_txn(
+    conn: &Connection,
+    plan_id: &str,
+    sched_date: &str,
+    kind: &str,
+    amount_cents: i64,
+    refund_of: Option<&str>,
+) {
+    let txn_id = format!("drift-{sched_date}-{kind}");
+    conn.execute(
+        "INSERT INTO transactions \
+         (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
+         category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,?3,'CNY',?3,'acc',NULL,NULL,?4,NULL,?5,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+        params![txn_id, kind, amount_cents, refund_of, sched_date],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO scheduled_transaction_occurrences \
+         (id,scheduled_transaction_id,scheduled_date,status,transaction_id,amount_cents,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,?3,'completed',?4,?5,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+        params![
+            format!("occ-{sched_date}-{kind}"),
+            plan_id,
+            sched_date,
+            txn_id,
+            amount_cents
+        ],
+    )
+    .unwrap();
+}

@@ -3,6 +3,10 @@
 //! 实际花费 = 某日历月/年内，由订阅计划期次生成的交易流水的忠实合计：
 //! - 金额读期次关联流水（`scheduled_transaction_occurrences.transaction_id`）的
 //!   `amount_native_cents`——落库时已经 Writer 接缝折算为本位币，读取期不二次折算；
+//! - 合计口径消费 Amount 接缝的支出净额度量（`expense_net`）：SUM 表达式由
+//!   kind→系数矩阵生成（`transaction::amount::expense_net_expr`）——「期次流水恒为
+//!   支出」是引擎当前行为而非聚合的口径假设，期次若关联非支出流水（income/transfer
+//!   等）系数为 0 不混入合计，退款按净额冲减，不静默漂移（issue #395）；
 //! - 按流水 `date`（= 期次 `scheduled_date`）的日历月/年聚合，**不摊销**——
 //!   年付订阅在扣款月全额计入，其余月份为 0；
 //! - 不过滤计划状态：取消/暂停计划的历史实际花费如实保留；
@@ -173,16 +177,20 @@ pub fn query_subscription_spend(
     today: NaiveDate,
 ) -> Result<SubscriptionSpendOverview> {
     // 期次关联流水的逐计划逐月本位币合计：只认 completed 期次真实生成的流水，
-    // 计划状态不参与过滤（取消/暂停不影响历史实际花费）。
+    // 计划状态不参与过滤（取消/暂停不影响历史实际花费）。合计表达式消费 Amount
+    // 接缝的支出净额矩阵片段而非裸求和（口径注释见模块头，issue #395）。
     let spends: Vec<PlanMonthSpend> = query_all(
         conn,
-        "SELECT st.id, substr(t.date,1,7) AS month, SUM(t.amount_native_cents) AS native_cents \
-         FROM scheduled_transaction_occurrences o \
-         JOIN scheduled_transactions st ON st.id = o.scheduled_transaction_id \
-         JOIN transactions t ON t.id = o.transaction_id \
-         WHERE st.kind = 'subscription' AND o.status = 'completed' \
-           AND o.is_deleted = 0 AND st.is_deleted = 0 AND t.is_deleted = 0 \
-         GROUP BY st.id, month",
+        &format!(
+            "SELECT st.id, substr(t.date,1,7) AS month, SUM({}) AS native_cents \
+             FROM scheduled_transaction_occurrences o \
+             JOIN scheduled_transactions st ON st.id = o.scheduled_transaction_id \
+             JOIN transactions t ON t.id = o.transaction_id \
+             WHERE st.kind = 'subscription' AND o.status = 'completed' \
+               AND o.is_deleted = 0 AND st.is_deleted = 0 AND t.is_deleted = 0 \
+             GROUP BY st.id, month",
+            amount::expense_net_expr("t")
+        ),
         [],
     )?;
 
