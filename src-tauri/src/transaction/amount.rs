@@ -395,7 +395,7 @@ pub fn default_currency_code() -> &'static str {
 
 /// 查询货币对当前汇率（正查失败则反查取倒数）。
 ///
-/// 私有依赖（spec #52）：旧命令层同名查询已随 issue #60 接线删除，
+/// 私有依赖（spec #52）：旧壳层同名查询已随 issue #60 接线删除，
 /// 本函数即其收口后的单一实现（Writer 接缝落地时已统一）。
 fn lookup_exchange_rate(conn: &Connection, base_code: &str, quote_code: &str) -> Result<f64> {
     if base_code == quote_code {

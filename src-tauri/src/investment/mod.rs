@@ -43,6 +43,8 @@ pub mod trend;
 
 /// 域 API 再导出：调用面用域语言短名（`investment::list_instruments` 等），
 /// 与 ADR-0056 阶段 1 定格形状一致（先例：`item::domain`、`merchants::crud`）。
+/// 模块级接缝（[`holdings`] / [`prices`] / [`predicates`]）按样板留在模块路径
+/// 消费（先例：`item::guard` / `item::cost` 不再导出到根）。
 pub use crud::{
     create_exchange_rate, create_instrument, create_instrument_manual, create_market_price,
     delete_instrument, list_exchange_rates, list_holdings, list_instruments, list_market_prices,
@@ -51,13 +53,7 @@ pub use fund::{
     FundCreateOutcome, add_fund_by_code_with, create_fund_degraded, is_six_digit_code,
     persist_fund_detail, validate_fund_code,
 };
-pub use holdings::holdings_as_of;
 pub use manual_price::record_manual_price;
-pub use predicates::INVESTED_EXISTS;
-pub use prices::{
-    EASTMONEY_PRICE_SOURCE, PRICE_UNITS_PER_FEN, price_value_to_cents, upsert_market_price,
-    upsert_price_history,
-};
 pub use reports::query_realized_pnl_summary;
 // 投资交易对外出口收窄为 prepare/apply/revert 三件套（issue #72 / spec #69）：
 // 校验归一化（prepare）、应用副作用（apply）、回退副作用（revert）各一个入口，

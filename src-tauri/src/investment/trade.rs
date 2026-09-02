@@ -1,6 +1,6 @@
 use rusqlite::{Connection, OptionalExtension};
 
-use super::PRICE_UNITS_PER_FEN;
+use super::prices::PRICE_UNITS_PER_FEN;
 use crate::db::query::{FromRow, query_all, query_one};
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};

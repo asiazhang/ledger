@@ -8,7 +8,7 @@
 //! 点为核心域 TransactionSearch 词条）——拼音首字母、子序列判定与词条匹配纯函数，
 //! 与数据库无关；交易搜索（壳层 `commands::search`）与投资域标的搜索共用。
 //!
-//! 依赖方向恒为「命令层 → transaction」：本模块不反向依赖命令层。
+//! 依赖方向恒为「壳层 → transaction」：本模块不反向依赖壳层。
 
 pub mod amount;
 pub mod search_text;

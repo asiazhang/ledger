@@ -2,9 +2,10 @@ use std::sync::{Arc, Mutex};
 
 use crate::error::{AppError, ErrClass};
 use crate::events::SignalEmitter;
+use crate::investment::prices::price_value_to_cents;
 use crate::investment::{
     FundCreateOutcome, create_fund_degraded, is_six_digit_code, persist_fund_detail,
-    price_value_to_cents, validate_fund_code,
+    validate_fund_code,
 };
 use crate::models::{
     Account, AccountBalance, AccountInput, AccountType, AccountUpdateInput, Category,

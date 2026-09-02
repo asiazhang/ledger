@@ -14,7 +14,7 @@ use rusqlite::Connection;
 
 use super::holdings::holdings_as_of;
 
-use super::PRICE_UNITS_PER_FEN;
+use super::prices::PRICE_UNITS_PER_FEN;
 use crate::error::{AppError, Result};
 use crate::models::{
     InstrumentPriceTrend, PortfolioTrendPoint, PortfolioValueTrend, PriceTrendPoint, TrendRange,
