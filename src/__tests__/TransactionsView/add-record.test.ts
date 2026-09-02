@@ -1,7 +1,7 @@
 import { mockInvoke, mountView, listCalls, lastListFilter, tablePagination, createCalls } from './common'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { NSelect, NButton, NModal, NInputNumber, NRadioGroup } from 'naive-ui'
+import { NSelect, NButton, NModal, NInput, NRadioGroup } from 'naive-ui'
 import CategoryForm from '@/components/CategoryForm.vue'
 import TransferForm from '@/components/TransferForm.vue'
 import LendingForm from '@/components/LendingForm.vue'
@@ -57,8 +57,9 @@ describe('TransactionsView 记一笔 Modal（issue #141）', () => {
     await openCreateModal(wrapper)
     // 主体按钮打开的 expense 弹窗 → CategoryForm；弹窗表单在 TransactionForm 子树内定位
     const form = wrapper.findComponent(TransactionForm)
-    // 金额（NInputNumber）与账户（CategoryForm 内第 2 个 NSelect，第 1 个是币种）
-    form.getComponent(NInputNumber).vm.$emit('update:value', 12.5)
+    // 金额（NInput，字段错误态改造后自由文本承载，ADR-0058 / #414）与账户
+    // （CategoryForm 内第 2 个 NSelect，第 1 个是币种）
+    form.getComponent(NInput).vm.$emit('update:value', '12.5')
     form.findAllComponents(NSelect)[1].vm.$emit('update:value', 'acc-1')
     await flushPromises()
     mockInvoke.mockImplementationOnce((cmd: string) => {

@@ -94,7 +94,7 @@ async function submitWithMerchant(
   await useReferenceStore().refresh()
   await usePoliciesStore().refresh()
   const form = useCategoryForm('expense', options)
-  form.amount.value = 50
+  form.amountText.value = '50'
   form.accountId.value = 'acc-1'
   form.merchantRef.value = merchantRef
   await form.submit()
@@ -196,7 +196,7 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
       const form = useCategoryForm('expense', { editing: () => editingTx })
       // 回填时不可用 uuid 裸值展示：兜底选项以可读标签承载原 id
       expect(form.merchantOptions.value.some((o) => o.value === 'mch-1')).toBe(true)
-      form.amount.value = 50
+      form.amountText.value = '50'
       form.accountId.value = 'acc-1'
       await form.submit()
       const input = submitCallInput() as { merchant_id: string | null }
@@ -210,7 +210,7 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
       await useReferenceStore().refresh()
       await usePoliciesStore().refresh()
       const form = useCategoryForm('expense')
-      form.amount.value = 50
+      form.amountText.value = '50'
       form.accountId.value = 'acc-1'
       form.policyId.value = policyId
       await form.submit()
@@ -250,7 +250,7 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
       })
       await usePoliciesStore().refresh()
       expect(form.policyOptions.value.some((o) => o.value === 'pol-1')).toBe(true)
-      form.amount.value = 50
+      form.amountText.value = '50'
       form.accountId.value = 'acc-1'
       await form.submit()
       const input = submitCallInput() as { policy_id: string | null }
