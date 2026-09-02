@@ -102,6 +102,104 @@ export interface NaturalPeriod {
   index: number
 }
 
+/** 数据期间边界（issue #390 / #388）：某粒度下的闭区间 [最早期间, 最晚期间]。 */
+export interface PeriodBoundary {
+  earliest: NaturalPeriod
+  latest: NaturalPeriod
+}
+
+/** 期间在时间轴上的单调整数序（用于跨年/年内大小比较与边界判定）。 */
+function periodValue(p: NaturalPeriod): number {
+  const perYear = p.unit === 'month' ? 12 : p.unit === 'quarter' ? 4 : 1
+  return p.year * perYear + p.index
+}
+
+/** 期间大小比较：返回负数表示 a 早于 b，0 表示相同期间，正数表示 a 晚于 b。
+ * 前提：a 与 b 为相同单位。 */
+export function comparePeriods(a: NaturalPeriod, b: NaturalPeriod): number {
+  return periodValue(a) - periodValue(b)
+}
+
+/** 数据期间边界派生单点（issue #390 / #388）：
+ * 输入日期对（min_date / max_date，可空）与「今天」，
+ * 输出指定单位下的闭区间 [最早交易期间, max(当前期间, 最新交易期间)]。
+ * 空库或非法日期回退为单「当前期间」；「与今天更晚者」的抬升在此发生。 */
+export function derivePeriodBoundary(
+  unit: PeriodUnit,
+  dateRange: { min_date: string | null; max_date: string | null } | null | undefined,
+  today: number | Date,
+): PeriodBoundary {
+  const d = typeof today === 'number' ? new Date(today) : today
+  const currentYear = d.getFullYear()
+  const currentMonth = d.getMonth()
+  const currentIndex = unit === 'month' ? currentMonth : unit === 'quarter' ? Math.floor(currentMonth / 3) : 0
+  const current: NaturalPeriod = { unit, year: currentYear, index: currentIndex }
+
+  if (!dateRange || !dateRange.min_date || !dateRange.max_date) {
+    return { earliest: current, latest: current }
+  }
+
+  const minParsed = parseISODate(dateRange.min_date)
+  const maxParsed = parseISODate(dateRange.max_date)
+  if (!minParsed || !maxParsed) {
+    return { earliest: current, latest: current }
+  }
+
+  const minIndex = unit === 'month' ? minParsed.m0 : unit === 'quarter' ? Math.floor(minParsed.m0 / 3) : 0
+  const earliest: NaturalPeriod = { unit, year: minParsed.y, index: minIndex }
+
+  const maxIndex = unit === 'month' ? maxParsed.m0 : unit === 'quarter' ? Math.floor(maxParsed.m0 / 3) : 0
+  const maxTxPeriod: NaturalPeriod = { unit, year: maxParsed.y, index: maxIndex }
+
+  const latest = periodValue(maxTxPeriod) > periodValue(current) ? maxTxPeriod : current
+
+  return { earliest, latest }
+}
+
+/** 一并派生月/季/年三档数据期间边界（issue #390）。 */
+export function deriveAllPeriodBoundaries(
+  dateRange: { min_date: string | null; max_date: string | null } | null | undefined,
+  today: number | Date,
+): Record<PeriodUnit, PeriodBoundary> {
+  return {
+    month: derivePeriodBoundary('month', dateRange, today),
+    quarter: derivePeriodBoundary('quarter', dateRange, today),
+    year: derivePeriodBoundary('year', dateRange, today),
+  }
+}
+
+/** 判定期间是否落在数据期间边界内（双端包含；异单位防御）。 */
+export function isPeriodWithinBoundary(p: NaturalPeriod, boundary: PeriodBoundary): boolean {
+  if (p.unit !== boundary.earliest.unit || p.unit !== boundary.latest.unit) {
+    return false
+  }
+  const val = periodValue(p)
+  return val >= periodValue(boundary.earliest) && val <= periodValue(boundary.latest)
+}
+
+/** 将期间钳制在数据期间边界内：低于下界取 earliest，高于上界取 latest，界内原样返回。 */
+export function clampPeriod(p: NaturalPeriod, boundary: PeriodBoundary): NaturalPeriod {
+  if (periodValue(p) < periodValue(boundary.earliest)) {
+    return boundary.earliest
+  }
+  if (periodValue(p) > periodValue(boundary.latest)) {
+    return boundary.latest
+  }
+  return p
+}
+
+/** 钳制步进辅助（issue #390 / #391）：判定期间 ±delta 步进后是否仍在数据边界内。
+ * 边界在途/失败时（boundary 为 null / undefined）退化为不钳制（恒返回 true，不阻塞步进）。 */
+export function canStepPeriod(
+  p: NaturalPeriod,
+  delta: number,
+  boundary?: PeriodBoundary | null,
+): boolean {
+  if (!boundary) return true
+  const next = stepPeriod(p, delta)
+  return isPeriodWithinBoundary(next, boundary)
+}
+
 /** YYYY-MM-DD 解析：非法格式、越界月份与不存在日期（如 2 月 30 日）返回 null。 */
 function parseISODate(s: string): { y: number; m0: number; day: number } | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)

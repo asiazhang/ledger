@@ -19,29 +19,22 @@ import { useReferenceStore } from '@/stores/reference'
 import { formatAmount } from '@/types'
 import type { CategoryShare, MerchantShare, MonthlySummary, ReportDateRange } from '@/types'
 import { barEndLabel, categoryBarTotal, categoryBars } from '@/utils/category-chart'
+import { derivePeriodBoundary } from '@/utils/time-period'
 import MerchantRankingPanel from '@/components/reports/MerchantRankingPanel.vue'
 
 ChartJS.register(Title, Tooltip, Legend, BarElement, CategoryScale, LinearScale)
 
 const reference = useReferenceStore()
 const year = ref(new Date().getFullYear())
-// 报表年份筛选（issue #267 / #389）：可选范围由后端日期极值对派生闭区间
-// [最早交易年份, max(当前年, 最新交易年份)]，空库回退 [当前年, 当前年]；
+// 报表年份筛选（issue #267 / #389）：可选范围由前端期间数学单点派生年档闭区间
+// [最早交易年份, max(当前年, 最新交易年份)]，空库回退单当前年；
 // 范围内年份升序平铺直选，任何年份一击直达（取代围绕已选年份 ±2 的滑动窗口）。
 const dateRange = ref<ReportDateRange | null>(null)
 const yearOptions = computed(() => {
   if (!dateRange.value) return []
-  const currentYear = new Date().getFullYear()
-  const minYear = dateRange.value.min_date
-    ? parseInt(dateRange.value.min_date.slice(0, 4), 10)
-    : currentYear
-  const maxYearFromData = dateRange.value.max_date
-    ? parseInt(dateRange.value.max_date.slice(0, 4), 10)
-    : currentYear
-  const maxYear = Math.max(currentYear, maxYearFromData)
-
+  const bounds = derivePeriodBoundary('year', dateRange.value, new Date())
   const options: { label: string; value: number }[] = []
-  for (let y = minYear; y <= maxYear; y++) {
+  for (let y = bounds.earliest.year; y <= bounds.latest.year; y++) {
     options.push({ label: String(y), value: y })
   }
   return options
