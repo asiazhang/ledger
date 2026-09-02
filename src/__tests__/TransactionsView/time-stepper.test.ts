@@ -69,7 +69,7 @@ describe('TransactionsView 期间步进器（issue #383 / #391）', () => {
       .find((b) => b.attributes('aria-label') === (key === 'prev' ? '上一个周期' : '下一个周期'))!
 
   const periodLabel = (wrapper: ReturnType<typeof mount>) =>
-    wrapper.find('.period-label').text()
+    wrapper.find('.period-label-text').text()
 
   async function clickChip(wrapper: ReturnType<typeof mount>, label: string) {
     const chip = wrapper
