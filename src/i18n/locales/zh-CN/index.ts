@@ -2,6 +2,7 @@
 // （消息 key 形如 `common.language.label`）。源语言 eager 加载，其他 locale
 // 由 i18n/index.ts 按需动态 import 本目录（懒加载）。
 import common from './common.json'
+import quickTimeRange from './quickTimeRange.json'
 import dashboard from './dashboard.json'
 import transactions from './transactions.json'
 import search from './search.json'
@@ -18,6 +19,7 @@ import errors from './errors.json'
 
 export default {
   common,
+  quickTimeRange,
   dashboard,
   transactions,
   search,

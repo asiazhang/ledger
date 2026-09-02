@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { t } from '@/i18n'
 import { errorMessage } from '@/utils/errors'
-import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, h, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import {
   NDataTable,
   NButton,
@@ -17,13 +16,13 @@ import {
   type DropdownOption,
   type PaginationProps,
 } from 'naive-ui'
-import { ChevronBack, ChevronDown, ChevronForward } from '@vicons/ionicons5'
+import { ChevronDown } from '@vicons/ionicons5'
 import AppModal from '@/components/AppModal.vue'
-import AppDatePicker from '@/components/AppDatePicker.vue'
 import AppDropdown from '@/components/AppDropdown.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import { useAppDialog } from '@/composables/useAppDialog'
 import TransactionForm from '@/components/TransactionForm.vue'
+import QuickTimeRange from '@/components/QuickTimeRange.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import RefundForm from '@/components/RefundForm.vue'
 import AddItemForm from '@/components/AddItemForm.vue'
@@ -36,28 +35,12 @@ import { useReferenceStore } from '@/stores/reference'
 import { useItemsStore } from '@/stores/items'
 import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/transaction-columns'
 import { isLendingEntryKind } from '@/domain/lending'
-import {
-  TIME_PERIOD_PRESETS,
-  canStepPeriod,
-  derivePeriodBoundary,
-  formatPeriodLabel,
-  matchPreset,
-  periodRange,
-  periodFromTimestamp,
-  periodStartTimestamp,
-  presetRange,
-  rangeToPeriod,
-  isPeriodWithinBoundary,
-  stepPeriod,
-  type PeriodUnit,
-  type TimePeriodPreset,
-} from '@/utils/time-period'
+import { type NullableDateRange } from '@/utils/time-period'
 import {
   CREATE_KINDS,
   LENDING_CREATE_DIRECTIONS,
   TRANSACTION_KINDS,
   type CreateFormKind,
-  type ReportDateRange,
   type Transaction,
   type TransactionKind,
   type TransactionListFilter,
@@ -99,150 +82,16 @@ const { intent, seq, open: openModal, close: closeModal } = useTransactionModalS
 /** 是否有任一激活的过滤条件（控制清除按钮可用性与空态文案）。 */
 const filtersActive = computed(() => Object.values(filters).some((v) => v !== null))
 
-// 时间维度行（issue #381/#382/#383）：预设芯片是过滤模块「部分修改过滤维度」入口的触发方式，
-// 点选即把含边界日期快照写入 dateFrom/dateTo（TransactionFilter 零改动，翻页归零与
-// 自动刷新免费继承）。「全部」= 无日期过滤 = 默认态；高亮纯派生（matchPreset）——
-// 当前区间恰为某预设定义（相对今天）时点亮，跨月/季/年后自动熄灭，列表快照不漂移。
-// 今天以分钟级 tick 保持响应式（视图长驻跨期场景下预设定义随之翻转）；不持久化，
-// 清除筛选与 URL 下钻复位把日期维度清空后自然回「全部」。
-// 期间步进器（#383）在同一行尾部：游标不落状态——步进前从当前区间唯一反推
-//（单位，期间），±1 后换算回区间写回快照；「全部」（无可反推区间）时置灰。
-// 数据期间边界（#391，修订 #383「不钳制未来」）：步进钳制于边界内，
-// 边界末端对应箭头置灰，不再可达无数据的期间。快照语义保持：步进后的高亮仍纯派生，
-// 步到恰为某预设的历史周期时该芯片自然点亮（如当年 < 一步落到去年）。
-const nowTick = ref(Date.now())
-let nowTicker: ReturnType<typeof setInterval> | undefined
-const activePreset = computed(() => matchPreset(filters.dateFrom, filters.dateTo, nowTick.value))
-
-/** 当前可步进游标：从日期区间唯一反推的自然周期；「全部」/任意区间为 null（置灰）。 */
-const currentPeriod = computed(() => rangeToPeriod(filters.dateFrom, filters.dateTo))
-
-// 数据期间边界原始日期对（issue #391）：挂载拉取 + ledger:changed 失效重拉
-//（AI 导入外扩历史、删除收窄边界即时跟随）。null = 在途或失败 → 钳制退化为
-// 不钳制（不阻塞步进）；空库（双 null 日期对，非 null 对象）由派生单点回退为
-// 单当前期间。重拉在途时沿用旧值到成功替换（stale-while-revalidate，与参考
-// store 同形，不闪烁）；仅在失败时置空退化，静默不 toast（辅助钳制状态，
-// 列表错误通道不受影响）。不走 useLoadable（ADR-0040）：需持值
-// stale-while-revalidate + 刻意静默退化，均在其形态之外，序号守卫为该形态最小实现。
-const dateRange = ref<ReportDateRange | null>(null)
-let dateRangeSeq = 0
-let unlistenLedgerChanged: UnlistenFn | null = null
-let ledgerListenerDisposed = false
-
-async function loadDateRange() {
-  const seq = ++dateRangeSeq
-  try {
-    const range = await api.reportDateRange()
-    if (seq === dateRangeSeq) dateRange.value = range
-  } catch {
-    if (seq === dateRangeSeq) dateRange.value = null
-  }
-}
-
-/** 当前游标单位下的数据期间边界；「全部」无游标或边界未知（在途/失败）时为 null。 */
-const periodBoundary = computed(() => {
-  const p = currentPeriod.value
-  if (!p || !dateRange.value) return null
-  return derivePeriodBoundary(p.unit, dateRange.value, nowTick.value)
+// 时间维度行（issue #381/#382/#383，#410 起由共享受控组件承载）：预设芯片
+// 「全部 | 当月 | 当季 | 当年 | 去年」＋期间步进器＋期间直达面板整行由
+// QuickTimeRange 承载。快照区间 v-model 进出——组件不持状态源，唯一事实源
+// 仍是 TransactionFilter 日期维度（dateFrom/dateTo 成对桥接）；同值守卫、
+// 翻页归零与自动刷新在模块内免费继承，交互、文案与弹层注册表上报零变化
+//（ADR-0057 决策 5；组件语义详见该组件头部注释）。
+const quickRange = computed<NullableDateRange>({
+  get: () => ({ from: filters.dateFrom, to: filters.dateTo }),
+  set: (range) => setFilter({ dateFrom: range.from, dateTo: range.to }),
 })
-
-/** 步进可达性（#391）：边界末端对应箭头置灰；边界未知时 canStepPeriod
- * 退化为不钳制（恒 true）。公式 [最早交易期间, max(当前期间, 最新交易期间)]
- * 由期间数学单点派生，「与今天更晚者」的抬升随分钟级 nowTick 推移。 */
-const canStepPrev = computed(() => {
-  const p = currentPeriod.value
-  return p !== null && canStepPeriod(p, -1, periodBoundary.value)
-})
-const canStepNext = computed(() => {
-  const p = currentPeriod.value
-  return p !== null && canStepPeriod(p, 1, periodBoundary.value)
-})
-
-/** 期间直达面板的单位：选中期间随当前游标单位，全部态约定从月面板开始。 */
-const periodPanelUnit = computed<PeriodUnit>(() => currentPeriod.value?.unit ?? 'month')
-const periodPanelValue = computed(() => {
-  const p = currentPeriod.value
-  if (p) return periodStartTimestamp(p)
-  return periodStartTimestamp(periodFromTimestamp('month', nowTick.value))
-})
-const periodPanelFormat = computed(() => t(`transactions.filter.periodPicker.format.${periodPanelUnit.value}`))
-const periodPanelBoundary = computed(() => {
-  if (!dateRange.value) return null
-  return derivePeriodBoundary(periodPanelUnit.value, dateRange.value, nowTick.value)
-})
-const periodPanelYearRange = computed<[number, number]>(() => {
-  const boundary = periodPanelBoundary.value
-  if (boundary) return [boundary.earliest.year, boundary.latest.year]
-  const year = new Date(nowTick.value).getFullYear()
-  return [year - 100, year + 100]
-})
-
-/** 面板只允许选择数据期间边界内的月/季/年；边界在途或失败时按步进器约定不钳制。 */
-type PeriodDatePickerDetail =
-  | { type: 'date'; year: number; month: number; date: number }
-  | { type: 'month'; year: number; month: number }
-  | { type: 'quarter'; year: number; quarter: number }
-  | { type: 'year'; year: number }
-  | { type: 'input' }
-
-const isPeriodDateDisabled = (_timestamp: number, detail: PeriodDatePickerDetail): boolean => {
-  const boundary = periodPanelBoundary.value
-  if (!boundary || detail.type === 'input') return false
-  let period
-  if (periodPanelUnit.value === 'month' && detail.type === 'month') {
-    // Naive UI 的月份 detail.month 是 0 起月份。
-    period = { unit: 'month' as const, year: detail.year, index: detail.month }
-  } else if (periodPanelUnit.value === 'quarter' && detail.type === 'quarter') {
-    // Naive UI 的季度 detail.quarter 是 1 起季度号。
-    period = { unit: 'quarter' as const, year: detail.year, index: detail.quarter - 1 }
-  } else if (periodPanelUnit.value === 'year' && detail.type === 'year') {
-    period = { unit: 'year' as const, year: detail.year, index: 0 }
-  } else {
-    return false
-  }
-  return !isPeriodWithinBoundary(period, boundary)
-}
-
-/** 面板点选写精确自然周期快照；全部态仅在确认选定后才离开无过滤默认态。 */
-function onPeriodPanelSelect(timestamp: number | null) {
-  if (timestamp === null) return
-  const period = periodFromTimestamp(periodPanelUnit.value, timestamp)
-  const range = periodRange(period)
-  setFilter({ dateFrom: range.from, dateTo: range.to })
-  periodPanelOpen.value = false
-}
-
-const periodPanelOpen = ref(false)
-const periodLabelText = computed(() =>
-  currentPeriod.value
-    ? formatPeriodLabel(currentPeriod.value)
-    : t('transactions.filter.periodLabel.none'),
-)
-
-/** 步进：< / > 按当前区间单位步进到上一个/下一个自然周期并写回快照
- *（同值守卫在模块内；步进必然变更区间，不触发守卫）。钳制守卫双保险：
- * 按钮置灰为主，边界在点击派发间隙到达时在此拦下。 */
-function onStepPeriod(delta: 1 | -1) {
-  const p = currentPeriod.value
-  if (!p || !canStepPeriod(p, delta, periodBoundary.value)) return
-  const range = periodRange(stepPeriod(p, delta))
-  setFilter({ dateFrom: range.from, dateTo: range.to })
-}
-
-/** 点芯片：换算含边界日期快照并写入过滤模块（同值守卫在模块内，重复点同芯片不重刷）。 */
-function onPresetSelect(preset: TimePeriodPreset) {
-  if (preset === 'all') {
-    setFilter({ dateFrom: null, dateTo: null })
-    return
-  }
-  const range = presetRange(preset, nowTick.value)
-  setFilter({ dateFrom: range.from, dateTo: range.to })
-}
-
-/** 芯片文案 key：闭集枚举 → i18n（transactions.filter.period.*）。 */
-function presetLabel(preset: TimePeriodPreset): string {
-  return t(`transactions.filter.period.${preset}`)
-}
 
 /** 账户下拉选项：来自参考数据账户映射（list_accounts 不含 is_hidden 黑洞账户，沿用既有边界）。 */
 const accountOptions = computed(() =>
@@ -540,62 +389,11 @@ const scrollX = computed(() => sumFixedColumnWidths(columns.value))
 onMounted(() => {
   // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll；
   // 首刷经模块统一出口（refresh 即「翻回第 1 页 + 重拉」；URL 初始化已在 setup 期
-  // 声明意图，同一同步批次内被 watcher 去重为一次首刷请求）
+  // 声明意图，同一同步批次内被 watcher 去重为一次首刷请求）；时间维度行的
+  // 边界拉取与「今天」时钟由 QuickTimeRange 组件内化，视图不再编排
   refresh()
-  // 数据期间边界首拉（issue #391）
-  void loadDateRange()
-  // 订阅 ledger:changed：数据写入/删除后边界重拉，即时外扩/收窄。注册为异步，
-  // 注册完成前到达的信号会丢失（窗口极窄，与参考 store 订阅同形）。
-  void listen('ledger:changed', () => {
-    void loadDateRange()
-  })
-    .then((fn) => {
-      if (ledgerListenerDisposed) {
-        fn()
-        return
-      }
-      unlistenLedgerChanged = fn
-    })
-    .catch(() => {
-      /* 监听注册失败不阻塞视图（本地事件，极少发生） */
-    })
-  // 今天 tick：分钟级刷新响应式「今天」，驱动预设定义、高亮派生与边界抬升跨期翻转
-  nowTicker = setInterval(() => {
-    nowTick.value = Date.now()
-  }, 60_000)
-})
-onBeforeUnmount(() => {
-  if (nowTicker !== undefined) clearInterval(nowTicker)
-  ledgerListenerDisposed = true
-  unlistenLedgerChanged?.()
-  unlistenLedgerChanged = null
 })
 </script>
-
-<style scoped>
-/* 期间标签：常驻步进器中央，min-width 抑制不同期间文案宽度抖动 */
-.period-label {
-  position: relative;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 96px;
-  padding: 0 8px;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.period-label :deep(.period-picker) {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-}
-
-.period-label :deep(.n-input) {
-  min-width: 96px;
-}
-</style>
 
 <template>
   <NSpace vertical :size="12">
@@ -651,62 +449,11 @@ onBeforeUnmount(() => {
         </AppDropdown>
       </NButtonGroup>
     </NSpace>
-    <!-- 时间维度行（第二行，issue #381/#382/#383）：单选分段芯片「全部 | 当月 | 当季 | 当年 | 去年」
-         ＋尾部常驻期间步进器「< 期间标签 >」。点芯片/步进写入日期快照（翻页归零 + 重拉免费继承）；
-         点亮纯派生；「全部」= 默认态；「全部」时步进置灰；步进钳制于数据期间边界（#391）。
-         分段控件非弹层（#381），不涉弹层注册表与快捷键抑制。 -->
-    <NSpace :size="8" align="center" :wrap="true">
-      <NButtonGroup size="small">
-        <NButton
-          v-for="p in TIME_PERIOD_PRESETS"
-          :key="p"
-          size="small"
-          :type="activePreset === p ? 'primary' : 'default'"
-          :quaternary="activePreset !== p"
-          :aria-pressed="activePreset === p"
-          @click="onPresetSelect(p)"
-        >
-          {{ presetLabel(p) }}
-        </NButton>
-      </NButtonGroup>
-      <NButtonGroup size="small">
-        <NButton
-          size="small"
-          quaternary
-          :disabled="!canStepPrev"
-          :aria-label="t('transactions.filter.period.prev')"
-          @click="onStepPeriod(-1)"
-        >
-          <NIcon><ChevronBack /></NIcon>
-        </NButton>
-        <span class="period-label" @click="periodPanelOpen = true">
-          <span class="period-label-text">{{ periodLabelText }}</span>
-          <AppDatePicker
-            class="period-picker"
-            :show="periodPanelOpen"
-            :value="currentPeriod ? periodPanelValue : null"
-            :type="periodPanelUnit"
-            :format="periodPanelFormat"
-            :year-range="periodPanelYearRange"
-            :is-date-disabled="isPeriodDateDisabled"
-            :bordered="false"
-            :clearable="false"
-            :input-readonly="true"
-            @update:show="(show: boolean) => (periodPanelOpen = show)"
-            @update:value="onPeriodPanelSelect"
-          />
-        </span>
-        <NButton
-          size="small"
-          quaternary
-          :disabled="!canStepNext"
-          :aria-label="t('transactions.filter.period.next')"
-          @click="onStepPeriod(1)"
-        >
-          <NIcon><ChevronForward /></NIcon>
-        </NButton>
-      </NButtonGroup>
-    </NSpace>
+    <!-- 时间维度行（第二行，issue #381/#382/#383，#410 起由共享受控组件承载）：
+         芯片「全部 | 当月 | 当季 | 当年 | 去年」＋期间步进器＋期间直达面板整行由
+         QuickTimeRange 渲染；快照区间 v-model 进出（唯一事实源仍是 TransactionFilter
+         日期维度），交互、文案、弹层注册表上报零变化（ADR-0057 决策 5）。 -->
+    <QuickTimeRange v-model="quickRange" />
     <!-- 快速记账弹窗：标题标明入口选定类型，内嵌收窄后的 TransactionForm（无类型单选），
          提交成功关闭并刷新列表；显示开关由模块意图派生，序号作表单 key 强制重建（ADR-0045） -->
     <AppModal
