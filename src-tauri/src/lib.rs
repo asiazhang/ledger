@@ -1,6 +1,6 @@
 pub mod accounts;
 pub mod api_server;
-pub mod auto_backup;
+pub mod backup;
 pub mod budget;
 pub mod categories;
 pub mod commands;
@@ -122,10 +122,10 @@ pub fn run() {
             );
             // 全量同步中断状态（issue #104）：跨命令共享运行/取消标志。
             app.manage(commands::sync::SyncState::default());
-            // 自动备份（issue #125/#126）：目录镜像为进程级单例 [`auto_backup::shared_prefs`]，
+            // 自动备份（issue #125/#126）：目录镜像为进程级单例 [`backup::shared_prefs`]，
             // 轮询调度线程与连接层写入口提交点检查（ADR-0032）共享同一份；
             // 退出兜底挂在下方 run 事件的 RunEvent::Exit 分支。
-            auto_backup::start_scheduler(app.handle());
+            backup::start_scheduler(app.handle());
             // 备份产物变更信号（issue #129）：自动备份的深路径执行点
             // （连接层写入口提交点的写时顺带检查）拿不到 AppHandle，启动时注入镜像句柄一次，
             // 之后经 [`events::emit_backups_changed_current`] 发射。
@@ -138,7 +138,7 @@ pub fn run() {
         .run(|app, event| {
             // 应用退出兜底（issue #125/#386）：退出前若脏且当天尚未自动备份过则补一次（日界门约束）。
             if let tauri::RunEvent::Exit = event {
-                auto_backup::exit_fallback(app);
+                backup::exit_fallback(app);
             }
         });
 }

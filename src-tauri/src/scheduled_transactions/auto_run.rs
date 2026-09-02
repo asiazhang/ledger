@@ -16,7 +16,7 @@
 //! 计划 `active`；生成交易日期忠实回填期次计划日期。`failed` / `processing` /
 //! `cancelled` 期次与 `paused` / `cancelled` 计划一律不碰；单期尝试失败置为
 //! `failed` 保持手动重试（ADR-0024 失败策略维持），不自动反复重试；单期失败不
-//! 中断同批后续；每笔成功经统一写入口语义置脏（[`crate::auto_backup::mark_dirty`]）
+//! 中断同批后续；每笔成功经统一写入口语义置脏（[`crate::backup::mark_dirty`]）
 //! 联动自动备份到期判定。
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -79,7 +79,7 @@ pub fn run_catch_up(conn: &Connection, enabled: bool, today: NaiveDate) -> Catch
                 summary.executed += 1;
                 // 与连接层统一写入口提交点同款：成功落账即置脏（联动自动备份判定）。
                 // 置脏失败仅记日志不上抛，不影响已成功的落账。
-                if let Err(e) = crate::auto_backup::mark_dirty(conn) {
+                if let Err(e) = crate::backup::mark_dirty(conn) {
                     tracing::warn!(
                         occurrence_id = %occurrence_id,
                         error = %e,

@@ -3,13 +3,11 @@ use std::path::PathBuf;
 use cucumber::{then, when};
 
 use tauri_app_lib::accounts::create_account;
-use tauri_app_lib::auto_backup::{
-    AUTO_BACKUP_PREFIX, AttemptOutcome, SkipReason, get_state, set_state,
+use tauri_app_lib::backup::{
+    AUTO_BACKUP_PREFIX, AttemptOutcome, BackupKind, SkipReason, backup_db_to,
+    expected_schema_version, get_state, read_backup_kind, restore_db_from, set_state,
 };
 use tauri_app_lib::categories::{create_category, delete_category as delete_category_domain};
-use tauri_app_lib::commands::backup::{
-    BackupKind, backup_db_to, expected_schema_version, read_backup_kind, restore_db_from,
-};
 use tauri_app_lib::db::{new_uuid, now_iso, open_connection};
 use tauri_app_lib::investment::{create_exchange_rate, create_instrument, create_market_price};
 use tauri_app_lib::item::cost;
@@ -57,7 +55,7 @@ fn auto_backup_to_temp(world: &mut LedgerWorld) {
         dir
     });
     world.auto_backup_dir = Some(dir.clone());
-    let outcome = tauri_app_lib::auto_backup::run_due_backup(
+    let outcome = tauri_app_lib::backup::run_due_backup(
         &world_conn!(world),
         Some(dir.to_str().unwrap()),
         "0.2.0",
@@ -251,7 +249,7 @@ fn fast_forward_backup_due(world: &mut LedgerWorld) {
 #[when(expr = "再次到期触发自动备份因日界门静默跳过")]
 fn due_trigger_skipped_by_day_gate(world: &mut LedgerWorld) {
     let anchor_before = get_state(&world_conn!(world)).unwrap().last_backup_at;
-    let outcome = tauri_app_lib::auto_backup::run_due_backup(
+    let outcome = tauri_app_lib::backup::run_due_backup(
         &world_conn!(world),
         Some(
             world
@@ -280,7 +278,7 @@ fn due_trigger_skipped_by_day_gate(world: &mut LedgerWorld) {
 #[when(expr = "退出兜底因日界门静默跳过")]
 fn exit_fallback_skipped_by_day_gate(world: &mut LedgerWorld) {
     let anchor_before = get_state(&world_conn!(world)).unwrap().last_backup_at;
-    let outcome = tauri_app_lib::auto_backup::run_exit_backup(
+    let outcome = tauri_app_lib::backup::run_exit_backup(
         &world_conn!(world),
         Some(
             world
@@ -311,7 +309,7 @@ fn exit_fallback_skipped_by_day_gate(world: &mut LedgerWorld) {
 #[when(expr = "跨日后触发自动备份数据库到临时目录")]
 fn auto_backup_next_day_to_temp(world: &mut LedgerWorld) {
     let dir = world.auto_backup_dir.clone().expect("尚未自动备份");
-    let outcome = tauri_app_lib::auto_backup::run_due_backup(
+    let outcome = tauri_app_lib::backup::run_due_backup(
         &world_conn!(world),
         Some(dir.to_str().unwrap()),
         "0.2.0",
@@ -330,7 +328,7 @@ fn auto_backup_next_day_to_temp(world: &mut LedgerWorld) {
 #[when(expr = "首次兜底因日界门静默跳过")]
 fn first_fallback_skipped_by_day_gate(world: &mut LedgerWorld) {
     let anchor_before = get_state(&world_conn!(world)).unwrap().last_backup_at;
-    let outcome = tauri_app_lib::auto_backup::run_first_backup(
+    let outcome = tauri_app_lib::backup::run_first_backup(
         &world_conn!(world),
         Some(
             world

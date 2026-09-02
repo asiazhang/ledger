@@ -186,7 +186,7 @@ pub fn reset(conn: &Connection, now: &str) -> crate::error::Result<()> {
 /// 自动备份产物命名前缀：`ledger-auto-YYYYMMDD-HHMMSS.db.zip`，
 /// 时间戳取本地时间（ADR-0016 修订：原 UTC，与手动备份命名拉齐；
 /// 存量 UTC 命名产物不迁移，随滚动清理自然淘汰）。
-/// 后端受管备份判定（`commands::backup::core`）与前端命名/判定共用该语义（T3）。
+/// 后端受管备份判定（域内 `engine` 受管命名规则）与前端命名/判定共用该语义（T3）。
 pub const AUTO_BACKUP_PREFIX: &str = "ledger-auto-";
 
 /// 轮询检查周期：每 10 分钟醒来检查一次到期判定（ADR-0016 及其修订注记：原 30 分钟）。
@@ -252,13 +252,9 @@ fn perform_backup(
     // 产物命名取注入时刻的本地时间（ADR-0016 修订：原 UTC，与手动备份拉齐）；
     // 锚点仍记 UTC 时刻（[`db::iso_at`]），值格式不变。
     let target = Path::new(dir).join(auto_backup_file_name(now.with_timezone(&Local)));
-    let path = crate::commands::backup::backup_db_to(
-        conn,
-        &target,
-        app_version,
-        crate::commands::backup::BackupKind::Auto,
-    )?
-    .path;
+    let path =
+        super::engine::backup_db_to(conn, &target, app_version, super::engine::BackupKind::Auto)?
+            .path;
     mark_clean(conn, &db::iso_at(now))?;
     Ok(path)
 }
@@ -372,7 +368,7 @@ pub fn run_first_backup(
         Ok(v) => v,
         Err(outcome) => return outcome,
     };
-    match crate::commands::backup::list_managed_backups(Path::new(&dir)) {
+    match super::engine::list_managed_backups(Path::new(&dir)) {
         Ok(list) if !list.is_empty() => {
             return AttemptOutcome::Skipped(SkipReason::ListNotEmpty);
         }
@@ -784,8 +780,8 @@ mod scheduler_tests {
                 );
                 // 产物元数据带 auto 来源标记（issue #127）。
                 assert_eq!(
-                    crate::commands::backup::read_backup_kind(Path::new(path)).unwrap(),
-                    crate::commands::backup::BackupKind::Auto
+                    crate::backup::read_backup_kind(Path::new(path)).unwrap(),
+                    crate::backup::BackupKind::Auto
                 );
             }
             other => panic!("应执行备份，实际 {other:?}"),

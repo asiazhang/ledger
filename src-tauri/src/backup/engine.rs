@@ -18,8 +18,7 @@ const ZIP_META_ENTRY: &str = "backup.json";
 /// 受管备份命名规则（与前端 `defaultBackupFileName` 保持一致）：
 /// 手动 `ledger-backup-YYYYMMDD-HHMMSS.db.zip` + 自动
 /// `ledger-auto-YYYYMMDD-HHMMSS.db.zip`（ADR-0016，两类同等参与清理与首次兜底判定）。
-const MANAGED_BACKUP_PREFIXES: &[&str] =
-    &["ledger-backup-", crate::auto_backup::AUTO_BACKUP_PREFIX];
+const MANAGED_BACKUP_PREFIXES: &[&str] = &["ledger-backup-", super::auto::AUTO_BACKUP_PREFIX];
 const MANAGED_BACKUP_SUFFIX: &str = ".db.zip";
 
 /// 备份来源标记（issue #127）：写入 zip 包内 `backup.json` 的 `kind` 字段，
@@ -176,7 +175,7 @@ pub fn list_managed_backups(dir: &Path) -> Result<Vec<BackupFileInfo>> {
                 .unwrap_or_default();
             // 来源优先读产物元数据；残缺包按前缀回落（自动前缀即 auto，否则 manual）。
             let kind = read_backup_kind(&path).unwrap_or_else(|_| {
-                if file_name.starts_with(crate::auto_backup::AUTO_BACKUP_PREFIX) {
+                if file_name.starts_with(super::auto::AUTO_BACKUP_PREFIX) {
                     BackupKind::Auto
                 } else {
                     BackupKind::Manual
@@ -384,7 +383,7 @@ pub fn restore_db_from(
     // 重新加载），必须把重置写进已就位的新库文件才能随恢复结果生效。
     match db::open_connection(db_path) {
         Ok(conn) => {
-            if let Err(e) = crate::auto_backup::reset(&conn, &restored_at) {
+            if let Err(e) = super::auto::reset(&conn, &restored_at) {
                 tracing::warn!(error = %e, "恢复后重置自动备份状态失败");
             }
         }

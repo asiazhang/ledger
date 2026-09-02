@@ -1,6 +1,6 @@
 //! 文件级原子操作工具：临时名生成、原子替换、临时文件清理。
 //!
-//! 备份（`commands::backup`）与 DataLocation 搬迁（`db::data_location`）共用的
+//! 备份（`backup` 域）与 DataLocation 搬迁（`db::data_location`）共用的
 //! 既有机制（ADR-0018：「先写唯一临时名，校验后再替换启用」），独立成模块
 //! 避免基础设施层反向依赖命令层。
 

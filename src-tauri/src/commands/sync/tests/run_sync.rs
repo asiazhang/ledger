@@ -184,7 +184,7 @@ fn global_conn_with_conn_marks_dirty_via_write_entry() {
             Ok(())
         })
         .expect("落库成功");
-    let state = crate::auto_backup::get_state(&conn.lock().unwrap()).expect("读状态");
+    let state = crate::backup::get_state(&conn.lock().unwrap()).expect("读状态");
     assert!(state.dirty, "with_conn 落库成功应置脏");
 }
 
@@ -196,7 +196,7 @@ fn global_conn_with_conn_error_does_not_mark_dirty() {
         .with_conn(|_c| Err::<(), _>(crate::error::AppError::Invalid("boom".into())))
         .unwrap_err();
     assert!(err.to_string().contains("boom"));
-    let state = crate::auto_backup::get_state(&conn.lock().unwrap()).expect("读状态");
+    let state = crate::backup::get_state(&conn.lock().unwrap()).expect("读状态");
     assert!(!state.dirty, "落库失败不应置脏");
 }
 
