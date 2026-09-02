@@ -53,7 +53,7 @@ import type {
   PnlFilter,
   PortfolioValueTrend,
   PruneResult,
-  YearRange,
+  ReportDateRange,
   RealizedPnlSummary,
   RestoreResult,
   TransactionTrade,
@@ -150,8 +150,8 @@ export const api = {
   financialFreedom: () => invoke<FinancialFreedomOverview>('financial_freedom'),
 
   // 报表
-  // 年份筛选范围（issue #266）：数据驱动闭区间，前端拉一次平铺年份下拉
-  reportYearRange: () => invoke<YearRange>('report_year_range'),
+  // 日期筛选范围（issue #266 / #389）：数据驱动极值日期对，前端拉一次派生年份下拉
+  reportDateRange: () => invoke<ReportDateRange>('report_date_range'),
   monthlySummary: (year: number) => invoke<MonthlySummary[]>('monthly_summary', { year }),
   merchantShares: (year: number) => invoke<MerchantShare[]>('merchant_shares', { year }),
   // 分类份额（issue #376 年份联动）：可选 month/year 过滤参数只增不改，缺省全时段；

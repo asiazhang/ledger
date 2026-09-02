@@ -5,7 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { NSelect } from 'naive-ui'
 import ReportsView from '@/views/ReportsView.vue'
 import { invokeHandler, makeCategory } from './factories'
-import type { YearRange } from '@/types'
+import type { ReportDateRange } from '@/types'
 
 // jsdom 无 canvas：图表组件用共享桩承接（line-chart-stub，先例 #160），
 // 把 data/options 序列化进 DOM 供断言图数据形态与横向 options。
@@ -19,7 +19,10 @@ const mockInvoke = vi.mocked(invoke)
 const currentYear = new Date().getFullYear()
 
 /** 范围夹具：起点比当前年早 6 年、终点在未来年——平铺全集须覆盖滑动窗口之外的年份 */
-const mockRange: YearRange = { min_year: currentYear - 6, max_year: currentYear + 1 }
+const mockRange: ReportDateRange = {
+  min_date: `${currentYear - 6}-03-01`,
+  max_date: `${currentYear + 1}-11-30`,
+}
 
 /** 分类夹具：food 下挂二级 snack（归并断言依赖父子关系） */
 const mockCategories = [
@@ -46,7 +49,7 @@ function baseInvoke(extra?: Record<string, unknown>) {
         list_accounts: [],
         list_categories: [],
         list_merchants: [],
-        report_year_range: mockRange,
+        report_date_range: mockRange,
         monthly_summary: [],
         category_shares: [],
         merchant_shares: [],
@@ -87,8 +90,14 @@ describe('ReportsView 年份筛选（issue #267）', () => {
     const expected = Array.from({ length: 8 }, (_, i) => currentYear - 6 + i)
     expect(yearOptionsOf(wrapper).map((o) => o.value)).toEqual(expected)
     expect(yearOptionsOf(wrapper).map((o) => o.label)).toEqual(expected.map(String))
-    const rangeCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'report_year_range')
+    const rangeCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'report_date_range')
     expect(rangeCalls).toHaveLength(1)
+  })
+
+  it('空库日期范围回退单当前年', async () => {
+    baseInvoke({ report_date_range: { min_date: null, max_date: null } })
+    const wrapper = await mountReports()
+    expect(yearOptionsOf(wrapper).map((o) => o.value)).toEqual([currentYear])
   })
 
   it('±2 滑动窗口已删除：远早于当前年的年份一击直达', async () => {
@@ -127,7 +136,7 @@ describe('ReportsView 年份筛选（issue #267）', () => {
       month: null,
       year: currentYear - 6,
     })
-    const rangeCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'report_year_range')
+    const rangeCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'report_date_range')
     expect(rangeCalls).toHaveLength(0)
   })
 })

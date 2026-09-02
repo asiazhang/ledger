@@ -5,8 +5,8 @@
 //! 交易夹具走与真实写路径一致的行为层（`create_transaction_internal`），
 //! 复用商户/交易步骤模块的既有步骤。
 //!
-//! 年份筛选范围（issue #266）：范围由核心函数 `query_report_year_range`
-//! （命令层同款注入）查询；「今年/去年/前年/明年」等相对年份记号以场景冻结的
+//! 日期筛选范围（issue #266 / #389）：范围由核心函数 `query_report_date_range`
+//! （命令层同款注入）查询；「今年/去年/前年/明年」等相对日期记号以场景冻结的
 //! 本地今日推算（同预算步骤先例），场景在任何日期运行都成立。
 //!
 //! 分类份额年份联动（issue #376）：口径由核心函数 `category_shares_rows`
@@ -18,7 +18,7 @@ use cucumber::{given, then, when};
 use rusqlite::params;
 
 use tauri_app_lib::commands::reports::{
-    category_shares_rows, merchant_shares_rows, query_report_year_range,
+    category_shares_rows, merchant_shares_rows, query_report_date_range,
 };
 use tauri_app_lib::commands::transactions::create_transaction_internal;
 use tauri_app_lib::models::TransactionInput;
@@ -64,6 +64,24 @@ fn resolve_year_token(token: &str, today: NaiveDate) -> i64 {
                 .expect("反推年份溢出")
                 .year(),
         )
+    }
+}
+
+/// 相对日期记号 → 实际日期字符串（YYYY-MM-DD）。
+/// 支持纯相对年份（前年/去年/今年/明年，默认年中 06-15，与夹具同日）或直接 YYYY-MM-DD。
+fn resolve_date_token(token: &str, today: NaiveDate) -> String {
+    if let Some((yt, rest)) = token.split_once('-')
+        && matches!(yt, "前年" | "去年" | "今年" | "明年")
+    {
+        let y = resolve_year_token(yt, today);
+        return format!("{y}-{rest}");
+    }
+    match token {
+        "前年" | "去年" | "今年" | "明年" => {
+            let y = resolve_year_token(token, today);
+            format!("{y}-06-15")
+        }
+        exact => exact.to_string(),
     }
 }
 
@@ -210,32 +228,40 @@ fn check_merchant_shares_json_not_contain_field(world: &mut LedgerWorld, field: 
 }
 
 // ---------------------------------------------------------------------------
-// 年份筛选范围（issue #266）
+// 日期筛选范围（issue #266 / #389）
 // ---------------------------------------------------------------------------
 
-/// 查询报表年份筛选范围（命令层同款核心函数注入，today 用场景冻结的本地今日）。
-#[when(expr = "查询报表年份范围")]
-fn query_year_range_step(world: &mut LedgerWorld) {
-    let today = scenario_today(world);
-    world.last_year_range =
-        Some(query_report_year_range(&world_conn!(world), today).expect("查询报表年份范围失败"));
+/// 查询报表日期筛选范围（命令层同款核心函数注入）。
+#[when(expr = "查询报表日期范围")]
+fn query_date_range_step(world: &mut LedgerWorld) {
+    world.last_date_range =
+        Some(query_report_date_range(&world_conn!(world)).expect("查询报表日期范围失败"));
 }
 
-/// 年份范围断言：两端以相对年份记号表述（前年/去年/今年/明年），
-/// 由冻结今日推算实际年份后比对。
-#[then(expr = "报表年份范围应为 {string} 到 {string}")]
-fn check_report_year_range(world: &mut LedgerWorld, min_token: String, max_token: String) {
+/// 日期范围断言：两端以相对记号（前年/去年/今年/明年）或实际日期表述，
+/// 由冻结今日推算实际日期后比对。
+#[then(expr = "报表日期范围应为 {string} 到 {string}")]
+fn check_report_date_range(world: &mut LedgerWorld, min_token: String, max_token: String) {
     let today = scenario_today(world);
-    let range = world.last_year_range.as_ref().expect("未查询报表年份范围");
-    let actual = (range.min_year, range.max_year);
-    let expected = (
-        resolve_year_token(&min_token, today),
-        resolve_year_token(&max_token, today),
-    );
+    let range = world.last_date_range.as_ref().expect("未查询报表日期范围");
+    let actual = (range.min_date.as_deref(), range.max_date.as_deref());
+    let expected_min = resolve_date_token(&min_token, today);
+    let expected_max = resolve_date_token(&max_token, today);
     assert_eq!(
-        actual, expected,
-        "报表年份范围不符：期望 {min_token}({}) 到 {max_token}({})",
-        expected.0, expected.1
+        actual,
+        (Some(expected_min.as_str()), Some(expected_max.as_str())),
+        "报表日期范围不符：期望 {min_token}({expected_min}) 到 {max_token}({expected_max})"
+    );
+}
+
+/// 空库或软删后无交易时的日期范围断言（双 None / null）。
+#[then(expr = "报表日期范围应为空")]
+fn check_report_date_range_empty(world: &mut LedgerWorld) {
+    let range = world.last_date_range.as_ref().expect("未查询报表日期范围");
+    assert_eq!(
+        (range.min_date.as_deref(), range.max_date.as_deref()),
+        (None, None),
+        "空库报表日期范围应为双 null"
     );
 }
 

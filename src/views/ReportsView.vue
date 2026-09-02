@@ -17,7 +17,7 @@ import { api } from '@/api'
 import { t } from '@/i18n'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount } from '@/types'
-import type { CategoryShare, MerchantShare, MonthlySummary, YearRange } from '@/types'
+import type { CategoryShare, MerchantShare, MonthlySummary, ReportDateRange } from '@/types'
 import { barEndLabel, categoryBarTotal, categoryBars } from '@/utils/category-chart'
 import MerchantRankingPanel from '@/components/reports/MerchantRankingPanel.vue'
 
@@ -25,15 +25,23 @@ ChartJS.register(Title, Tooltip, Legend, BarElement, CategoryScale, LinearScale)
 
 const reference = useReferenceStore()
 const year = ref(new Date().getFullYear())
-// 报表年份筛选（issue #267）：可选范围为后端数据驱动的闭区间
+// 报表年份筛选（issue #267 / #389）：可选范围由后端日期极值对派生闭区间
 // [最早交易年份, max(当前年, 最新交易年份)]，空库回退 [当前年, 当前年]；
 // 范围内年份升序平铺直选，任何年份一击直达（取代围绕已选年份 ±2 的滑动窗口）。
-const yearRange = ref<YearRange | null>(null)
+const dateRange = ref<ReportDateRange | null>(null)
 const yearOptions = computed(() => {
-  const range = yearRange.value
-  if (!range) return []
+  if (!dateRange.value) return []
+  const currentYear = new Date().getFullYear()
+  const minYear = dateRange.value.min_date
+    ? parseInt(dateRange.value.min_date.slice(0, 4), 10)
+    : currentYear
+  const maxYearFromData = dateRange.value.max_date
+    ? parseInt(dateRange.value.max_date.slice(0, 4), 10)
+    : currentYear
+  const maxYear = Math.max(currentYear, maxYearFromData)
+
   const options: { label: string; value: number }[] = []
-  for (let y = range.min_year; y <= range.max_year; y++) {
+  for (let y = minYear; y <= maxYear; y++) {
     options.push({ label: String(y), value: y })
   }
   return options
@@ -185,13 +193,13 @@ const categoryChartOptions: ChartOptions<'bar'> = {
 }
 
 // 范围挂载时拉取一次（不接失效信号：进视图即新鲜，跨会话自然生效）
-async function loadYearRange() {
-  yearRange.value = await api.reportYearRange()
+async function loadDateRange() {
+  dateRange.value = await api.reportDateRange()
 }
 
 onMounted(() => {
   // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll
-  void loadYearRange()
+  void loadDateRange()
   void refresh()
 })
 </script>

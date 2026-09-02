@@ -1,8 +1,7 @@
-/** 报表年份筛选范围（issue #266）：数据驱动的闭区间
- *  [最早交易年份, max(当前年, 最新交易年份)]，空库回退 [当前年, 当前年]。 */
-export interface YearRange {
-  min_year: number
-  max_year: number
+/** 报表日期极值范围（issue #266 / #389）：数据驱动的极值日期对，空库双 null。 */
+export interface ReportDateRange {
+  min_date: string | null
+  max_date: string | null
 }
 
 export interface MonthlySummary {

@@ -28,12 +28,12 @@ pub struct CategoryShare {
     pub amount_cents: i64,
 }
 
-/// 报表年份筛选范围（issue #266）：数据驱动的闭区间
-/// `[最早交易年份, max(当前年, 最新交易年份)]`，空库回退 `[当前年, 当前年]`。
-#[derive(Debug, Serialize)]
-pub struct YearRange {
-    pub min_year: i64,
-    pub max_year: i64,
+/// 报表日期极值范围（issue #266 / #389）：数据驱动的极值日期对 `{min_date, max_date}`
+/// （YYYY-MM-DD，空库双 null）。
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct DateRange {
+    pub min_date: Option<String>,
+    pub max_date: Option<String>,
 }
 
 impl FromRow for MonthlySummary {

@@ -776,17 +776,12 @@ fn merchant_shares_includes_soft_deleted_merchant_history() {
     assert_eq!(rows[0].amount_cents, 1000);
 }
 
-// ---- query_report_year_range：年份筛选范围（issue #266）----
+// ---- query_report_date_range：日期极值范围（issue #266 / #389）----
 
-use crate::commands::reports::query_report_year_range;
-
-/// 单测冻结的本地今日：2026-06-15（不依赖真实时钟，场景任意日期可复现）。
-fn frozen_today() -> chrono::NaiveDate {
-    chrono::NaiveDate::from_ymd_opt(2026, 6, 15).unwrap()
-}
+use crate::commands::reports::query_report_date_range;
 
 #[test]
-fn year_range_spans_earliest_to_current_year() {
+fn date_range_spans_earliest_to_latest_date() {
     let conn = setup();
     insert_account(&conn, "acc");
     for (id, date) in [
@@ -805,16 +800,16 @@ fn year_range_spans_earliest_to_current_year() {
             },
         );
     }
-    let range = query_report_year_range(&conn, frozen_today()).unwrap();
+    let range = query_report_date_range(&conn).unwrap();
     assert_eq!(
-        (range.min_year, range.max_year),
-        (2024, 2026),
-        "起点为最早流水年份，终点取「数据与今天更晚者」"
+        (range.min_date.as_deref(), range.max_date.as_deref()),
+        (Some("2024-03-01"), Some("2026-01-20")),
+        "起点为最早流水日期，终点为最新流水日期"
     );
 }
 
 #[test]
-fn year_range_end_expanded_by_future_data() {
+fn date_range_end_expanded_by_future_data() {
     let conn = setup();
     insert_account(&conn, "acc");
     for (id, date) in [("t-past", "2025-05-01"), ("t-future", "2027-11-30")] {
@@ -829,28 +824,28 @@ fn year_range_end_expanded_by_future_data() {
             },
         );
     }
-    let range = query_report_year_range(&conn, frozen_today()).unwrap();
+    let range = query_report_date_range(&conn).unwrap();
     assert_eq!(
-        (range.min_year, range.max_year),
-        (2025, 2027),
-        "未来日期流水把终点撑大到最新流水年份"
+        (range.min_date.as_deref(), range.max_date.as_deref()),
+        (Some("2025-05-01"), Some("2027-11-30")),
+        "未来日期流水如实撑大终点"
     );
 }
 
 #[test]
-fn year_range_empty_db_falls_back_to_current_year() {
+fn date_range_empty_db_returns_none_pair() {
     let conn = setup();
     insert_account(&conn, "acc");
-    let range = query_report_year_range(&conn, frozen_today()).unwrap();
+    let range = query_report_date_range(&conn).unwrap();
     assert_eq!(
-        (range.min_year, range.max_year),
-        (2026, 2026),
-        "空库回退 [当前年, 当前年]"
+        (range.min_date.as_deref(), range.max_date.as_deref()),
+        (None, None),
+        "空库回退双 None (null)"
     );
 }
 
 #[test]
-fn year_range_excludes_deleted() {
+fn date_range_excludes_deleted() {
     let conn = setup();
     insert_account(&conn, "acc");
     insert_tx(
@@ -868,16 +863,16 @@ fn year_range_excludes_deleted() {
         [],
     )
     .unwrap();
-    let range = query_report_year_range(&conn, frozen_today()).unwrap();
+    let range = query_report_date_range(&conn).unwrap();
     assert_eq!(
-        (range.min_year, range.max_year),
-        (2026, 2026),
+        (range.min_date.as_deref(), range.max_date.as_deref()),
+        (None, None),
         "软删交易不参与范围"
     );
 }
 
 #[test]
-fn year_range_counts_all_kinds_by_date() {
+fn date_range_counts_all_kinds_by_date() {
     let conn = setup();
     insert_account(&conn, "acc");
     insert_tx(
@@ -890,9 +885,10 @@ fn year_range_counts_all_kinds_by_date() {
             date: "2023-07-01",
         },
     );
-    let range = query_report_year_range(&conn, frozen_today()).unwrap();
+    let range = query_report_date_range(&conn).unwrap();
     assert_eq!(
-        range.min_year, 2023,
+        (range.min_date.as_deref(), range.max_date.as_deref()),
+        (Some("2023-07-01"), Some("2023-07-01")),
         "任何 kind 的未删交易日期都参与范围（转账也一样）"
     );
 }

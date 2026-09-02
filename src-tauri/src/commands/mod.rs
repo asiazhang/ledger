@@ -152,7 +152,7 @@ pub const IPC_COMMAND_WRITE_OPS: &[(&str, Option<WriteOp>)] = &[
     // ── 报表 ──
     ("monthly_summary", None),
     ("merchant_shares", None),
-    ("report_year_range", None),
+    ("report_date_range", None),
     ("category_shares", None),
     // ── 定时计划域 ──
     (
