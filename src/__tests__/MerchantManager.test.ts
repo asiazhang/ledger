@@ -292,3 +292,185 @@ describe('MerchantManager.vue 条数下钻（issue #446）', () => {
     expect(pushMock).toHaveBeenCalledWith({ name: 'transactions', query: { merchant: 'mch-2' } })
   })
 })
+
+describe('MerchantManager.vue 拼音模糊搜索（issue #447，统一模糊搜索语义 ADR-0027）', () => {
+  /** 五个商户：检索词构造覆盖原文子串（盒马 ⊂ 盒马/盒马鲜生、物业 ⊂ 万科物业）
+   * 与拼音首字母子序列（wy ⊂ wkwy、jd ⊂ jd）双入口。 */
+  const searchMerchants: Merchant[] = [
+    '京东', '盒马', '万科物业', '红旗连锁', '盒马鲜生',
+  ].map((name, i) => ({
+    id: `mch-s-${i}`, name,
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    version: 1, device_id: 'test', is_deleted: false,
+  }))
+
+  beforeEach(async () => {
+    setActivePinia(createPinia())
+    mockInvoke.mockReset()
+    merchantDb = searchMerchants
+    countDb = []
+    mockBaseCommands()
+    const store = useReferenceStore()
+    await store.refresh()
+  })
+
+  function searchInput(wrapper: ReturnType<typeof mount>) {
+    return wrapper
+      .findAll('input')
+      .find((i) => i.attributes('placeholder') === '搜索商户（名称/拼音）')!
+  }
+
+  function rowNames(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('tbody tr').map((r) => r.text())
+  }
+
+  it('汉字关键字过滤：未命中项隐藏、命中项保留', async () => {
+    const wrapper = mount(MerchantManager)
+    await searchInput(wrapper).setValue('物业')
+    const rows = rowNames(wrapper)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toContain('万科物业')
+  })
+
+  it('拼音首字母入口：子序列命中（wy → 万科物业），不误命中其他商户', async () => {
+    const wrapper = mount(MerchantManager)
+    await searchInput(wrapper).setValue('wy')
+    const rows = rowNames(wrapper)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toContain('万科物业')
+
+    await searchInput(wrapper).setValue('jd')
+    expect(rowNames(wrapper)).toHaveLength(1)
+    expect(rowNames(wrapper)[0]).toContain('京东')
+  })
+
+  it('只过滤不重排：命中项保持列表原有相对顺序（汉字与拼音双路径）', async () => {
+    const wrapper = mount(MerchantManager)
+    await searchInput(wrapper).setValue('盒马')
+    let rows = rowNames(wrapper)
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toContain('盒马')
+    expect(rows[1]).toContain('盒马鲜生')
+
+    // 拼音首字母子序列路径（hm ⊂ hm / hmxs）同序
+    await searchInput(wrapper).setValue('hm')
+    rows = rowNames(wrapper)
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toContain('盒马')
+    expect(rows[1]).toContain('盒马鲜生')
+  })
+
+  it('清空搜索词恢复完整列表', async () => {
+    const wrapper = mount(MerchantManager)
+    await searchInput(wrapper).setValue('物业')
+    expect(rowNames(wrapper)).toHaveLength(1)
+    await searchInput(wrapper).setValue('')
+    expect(rowNames(wrapper)).toHaveLength(5)
+    expect(wrapper.text()).toContain('京东')
+    expect(wrapper.text()).toContain('盒马鲜生')
+  })
+})
+
+describe('MerchantManager.vue 显示已删切换（issue #447）', () => {
+  const deletedMerchant: Merchant = {
+    id: 'mch-del', name: '永辉超市',
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    version: 1, device_id: 'test', is_deleted: true,
+  }
+
+  beforeEach(async () => {
+    setActivePinia(createPinia())
+    mockInvoke.mockReset()
+    merchantDb = [...mockMerchants, deletedMerchant]
+    countDb = []
+    mockBaseCommands()
+    pushMock.mockReset()
+    const store = useReferenceStore()
+    await store.refresh()
+  })
+
+  /** 「显示已删」开关（checkbox 语义定位）。 */
+  function showDeletedToggle(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('.n-checkbox').find((c) => c.text() === '显示已删')!
+  }
+
+  function rowTexts(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('tbody tr').map((r) => r.text())
+  }
+
+  function editButtons(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('button').filter((b) => b.text() === '编辑')
+  }
+
+  function deleteButtons(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('button').filter((b) => b.text() === '删除')
+  }
+
+  it('默认列表不含已软删商户', () => {
+    const wrapper = mount(MerchantManager)
+    expect(wrapper.text()).not.toContain('永辉超市')
+    expect(rowTexts(wrapper)).toHaveLength(2)
+  })
+
+  it('切换「显示已删」后已删商户以行展示', async () => {
+    const wrapper = mount(MerchantManager)
+    await showDeletedToggle(wrapper).trigger('click')
+    expect(wrapper.text()).toContain('永辉超市')
+    expect(rowTexts(wrapper)).toHaveLength(3)
+  })
+
+  it('已删行只读：无编辑/删除操作（在用行操作不受影响）', async () => {
+    const wrapper = mount(MerchantManager)
+    await showDeletedToggle(wrapper).trigger('click')
+    expect(editButtons(wrapper)).toHaveLength(2)
+    expect(deleteButtons(wrapper)).toHaveLength(2)
+    // 行级精确断言（按按钮而非裸文本，避免与「已删除」标记的子串相撞）
+    const deletedRowEl = wrapper
+      .findAll('tbody tr')
+      .find((r) => r.text().includes('永辉超市'))!
+    expect(
+      deletedRowEl.findAll('button').filter((b) => b.text() === '编辑'),
+    ).toHaveLength(0)
+    expect(
+      deletedRowEl.findAll('button').filter((b) => b.text() === '删除'),
+    ).toHaveLength(0)
+  })
+
+  it('已删行带删除标记（与在用行可区分）', async () => {
+    const wrapper = mount(MerchantManager)
+    await showDeletedToggle(wrapper).trigger('click')
+    const deletedRow = rowTexts(wrapper).find((r) => r.includes('永辉超市'))!
+    expect(deletedRow).toContain('已删除')
+  })
+
+  it('已删行条数照常显示且可下钻（软删商户条数后端照常计数）', async () => {
+    countDb = [{ merchant_id: 'mch-del', transaction_count: 7 }]
+    const wrapper = mount(MerchantManager)
+    await showDeletedToggle(wrapper).trigger('click')
+    const deletedRow = wrapper
+      .findAll('tbody tr')
+      .find((r) => r.text().includes('永辉超市'))!
+    const countBtn = deletedRow
+      .findAll('button')
+      .find((b) => b.attributes('title') === '查看该商户的交易')!
+    expect(countBtn.text()).toBe('7')
+
+    await countBtn.trigger('click')
+    expect(pushMock).toHaveBeenCalledWith({
+      name: 'transactions',
+      query: { merchant: 'mch-del' },
+    })
+  })
+
+  it('搜索与显示已删叠加：搜索词对已删行同样过滤', async () => {
+    const wrapper = mount(MerchantManager)
+    await showDeletedToggle(wrapper).trigger('click')
+    const search = wrapper
+      .findAll('input')
+      .find((i) => i.attributes('placeholder') === '搜索商户（名称/拼音）')!
+    await search.setValue('永辉')
+    const rows = rowTexts(wrapper)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toContain('永辉超市')
+  })
+})
