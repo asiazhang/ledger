@@ -27,12 +27,19 @@ import {
   resetSidebarOrder,
   moveIntoContainment,
   applyMoveIntoMore,
+  moveBackToSidebar,
+  applyMoveBackToSidebar,
+  isGroupFull,
+  GROUP_MAIN_LIMIT,
+  isSidebarMember,
+  isViewContained,
+  buildTabContextMenuOptions,
   sidebarGroupOrders,
   GROUP_CONTAINMENT_SEEDS,
   parseContainmentLists,
   sidebarContainment,
 } from '@/composables/useViewShortcuts'
-import type { ViewName, SidebarGroupOrders, SidebarContainmentLists } from '@/composables/useViewShortcuts'
+import type { ViewName, ContainableViewName, SidebarGroupOrders, SidebarContainmentLists } from '@/composables/useViewShortcuts'
 import type { DropdownOption } from 'naive-ui'
 import { VIEW_STATE_KEYS } from '@/utils/view-state'
 
@@ -92,7 +99,7 @@ describe('侧栏分组常量（issue #359 / ADR-0051；#473 记账组主项三�
     ])
   })
 
-  it('groupOfView：主项各有其组；概览/AI/设置与收纳成员、未知名不在任何组', () => {
+  it('groupOfView：主项各有其组；概览/AI/设置与未知名不在任何组（issue #475：出厂种子词法归属出厂组，移回后即本组主项）', () => {
     expect(groupOfView('transactions')).toBe('bookkeeping')
     expect(groupOfView('investments')).toBe('assets')
     expect(groupOfView('items')).toBe('assets')
@@ -101,8 +108,11 @@ describe('侧栏分组常量（issue #359 / ADR-0051；#473 记账组主项三�
     expect(groupOfView('dashboard')).toBeNull()
     expect(groupOfView('ai')).toBeNull()
     expect(groupOfView('settings')).toBeNull()
-    expect(groupOfView('scheduled')).toBeNull()
-    expect(groupOfView('policies')).toBeNull()
+    // 出厂收纳种子不跨组（ADR-0063 决策 4）：词法归属出厂组，移回侧栏后即以该组主项身份在册
+    expect(groupOfView('scheduled')).toBe('bookkeeping')
+    expect(groupOfView('merchants')).toBe('bookkeeping')
+    expect(groupOfView('policies')).toBe('assets')
+    expect(groupOfView('physicalAssets')).toBe('assets')
     expect(groupOfView('bogus' as ViewName)).toBeNull()
   })
 })
@@ -599,7 +609,7 @@ function row(o: DropdownOption) {
 }
 
 describe('moveArrangeable（组内移动纯函数，issue #270/#359）', () => {
-  const bookkeeping: ViewName[] = ['transactions', 'accounts', 'budget']
+  const bookkeeping: ContainableViewName[] = ['transactions', 'accounts', 'budget']
 
   it('组内上移一位：与前一项交换，其余相对顺序不变', () => {
     expect(moveArrangeable(bookkeeping, 'accounts', 'up')).toEqual([
@@ -648,7 +658,7 @@ describe('moveArrangeable（组内移动纯函数，issue #270/#359）', () => {
 })
 
 describe('buildSidebarSortMenuOptions（排序菜单选项构建纯函数，含组内边界置灰，issue #270/#359）', () => {
-  const bookkeeping: ViewName[] = ['transactions', 'accounts', 'budget']
+  const bookkeeping: ContainableViewName[] = ['transactions', 'accounts', 'budget']
 
   it('菜单形状：四种移动 + 分隔线 + 移入更多 + 分隔线 + 恢复默认排序（issue #474：移入在排序动作后、分隔线隔开）', () => {
     const opts = buildSidebarSortMenuOptions('accounts', bookkeeping)
@@ -973,5 +983,237 @@ describe('排序菜单打开期间视图快捷键被弹层抑制机制压制（i
     window.dispatchEvent(press('4', { metaKey: true }))
     expect(push).not.toHaveBeenCalled()
     resetOverlays()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 右键「移回侧栏」（issue #475 / ADR-0063 决策 2/4）：组满置灰判定、移回纯函数、
+// 页签右键菜单构建、写路径（清单删除 + 主项落末位、双存储立即持久化、键位随动）。
+// 移回的出厂种子以主项身份在册：解析不复活回收纳清单、键位重排、可再排序/再移入。
+// ---------------------------------------------------------------------------
+
+describe('isGroupFull（组满置灰判定纯函数，issue #475 / ADR-0063 决策 2：每组主项 ≤3 运行时硬上限）', () => {
+  it('上限常量 = 3：三组 × 3 即键位带封闭性的本体', () => {
+    expect(GROUP_MAIN_LIMIT).toBe(3)
+  })
+
+  it('主项数达 3 即满：记账出厂满员（定时/商户移回置灰的判定面），两员组未满，空组未满', () => {
+    expect(isGroupFull(DEFAULT_ORDERS.bookkeeping)).toBe(true)
+    expect(isGroupFull(DEFAULT_ORDERS.assets)).toBe(false)
+    expect(isGroupFull(DEFAULT_ORDERS.insights)).toBe(false)
+    expect(isGroupFull([])).toBe(false)
+  })
+})
+
+describe('moveBackToSidebar（移回纯函数，issue #475：移回 = 清单删除，主项归属由写路径落位）', () => {
+  const lists: SidebarContainmentLists = {
+    bookkeeping: ['scheduled', 'merchants'],
+    assets: ['policies', 'physicalAssets'],
+    insights: [],
+  }
+
+  it('从本组清单删除成员：他组不受牵连、输入不改', () => {
+    const next = moveBackToSidebar(lists, 'bookkeeping', 'scheduled')
+    expect(next.bookkeeping).toEqual(['merchants'])
+    expect(next.assets).toEqual(['policies', 'physicalAssets'])
+    expect(next.insights).toEqual([])
+    expect(lists.bookkeeping).toEqual(['scheduled', 'merchants'])
+  })
+
+  it('成员不在清单（含空清单组）：原样返回内容（no-op 语义）', () => {
+    expect(moveBackToSidebar(lists, 'insights', 'search')).toEqual(lists)
+    expect(moveBackToSidebar(lists, 'bookkeeping', 'transactions')).toEqual(lists)
+  })
+})
+
+describe('buildTabContextMenuOptions（「更多」页页签右键菜单构建纯函数，issue #475）', () => {
+  it('组未满：「移回侧栏」可用（单菜单项）', () => {
+    const opts = buildTabContextMenuOptions(['investments', 'items'])
+    expect(opts).toHaveLength(1)
+    expect(opts[0]!.key).toBe('backToSidebar')
+    expect(opts[0]!.disabled).toBe(false)
+  })
+
+  it('组满 3 主项：「移回侧栏」置灰且不隐藏菜单项（上限可见、可学习），提示文案挂在标签渲染函数里', () => {
+    const opts = buildTabContextMenuOptions(['transactions', 'accounts', 'budget'])
+    expect(opts).toHaveLength(1)
+    expect(opts[0]!.key).toBe('backToSidebar')
+    expect(opts[0]!.disabled).toBe(true)
+    expect(typeof opts[0]!.label).toBe('function')
+  })
+})
+
+describe('parseContainmentLists × 组内序耦合（issue #475：移回的出厂种子不复活回收纳清单）', () => {
+  it('清单数组存在且未列某种子、该种子已在本组组内序中：移回态，不按「缺失种子」补尾', () => {
+    const rawOrders = {
+      bookkeeping: ['accounts', 'budget', 'scheduled'],
+      assets: ['investments', 'items'],
+      insights: ['reports', 'search'],
+    }
+    const parsed = parseContainmentLists(
+      { bookkeeping: ['merchants'], assets: ['policies', 'physicalAssets'], insights: [] },
+      rawOrders,
+    )
+    expect(parsed.bookkeeping).toEqual(['merchants'])
+  })
+
+  it('清单存储缺失（旧版/出厂）：种子照常补尾（#473 迁移语义不变，存量组内序含定时仍判收纳）', () => {
+    const rawOrders = { bookkeeping: ['transactions', 'accounts', 'budget', 'scheduled'] }
+    expect(parseContainmentLists(null, rawOrders).bookkeeping).toEqual(['scheduled', 'merchants'])
+  })
+
+  it('清单数组存在但种子既不在清单也不在组内序（脏数据丢失）：照常补尾回出厂', () => {
+    const rawOrders = { bookkeeping: ['transactions', 'accounts', 'budget'] }
+    expect(parseContainmentLists({ bookkeeping: ['merchants'] }, rawOrders).bookkeeping).toEqual([
+      'merchants',
+      'scheduled',
+    ])
+  })
+
+  it('不带第二参数时行为不变（缺失种子照常补尾，既有调用零影响）', () => {
+    expect(parseContainmentLists({ bookkeeping: ['merchants'] }).bookkeeping).toEqual(['merchants', 'scheduled'])
+  })
+})
+
+describe('parseGroupOrders × 移回种子（issue #475：移回的出厂种子是合法主项）', () => {
+  const contained: SidebarContainmentLists = {
+    bookkeeping: ['merchants'],
+    assets: ['policies', 'physicalAssets'],
+    insights: [],
+  }
+
+  it('组内序中的本组种子（未在清单）按主项保留原位，不按非法名过滤；缺失主项照常补尾', () => {
+    expect(parseGroupOrders({ bookkeeping: ['budget', 'scheduled', 'accounts', 'transactions'] }, contained).bookkeeping)
+      .toEqual(['budget', 'scheduled', 'accounts', 'transactions'])
+  })
+
+  it('仍在清单中的种子依旧是非法名（清单是成员资格唯一事实源，#474 语义不变）；缺失主项照常补尾', () => {
+    expect(parseGroupOrders({ bookkeeping: ['transactions', 'scheduled'] }, {
+      ...contained,
+      bookkeeping: ['scheduled', 'merchants'],
+    }).bookkeeping).toEqual(['transactions', 'accounts', 'budget'])
+  })
+})
+
+describe('右键「移回侧栏」写路径（issue #475：点选即清单删除、主项落末位、双存储立即持久化、键位随动）', () => {
+  const ORDER_KEY = VIEW_STATE_KEYS.sidebarOrder
+  const CONTAINMENT_KEY = VIEW_STATE_KEYS.sidebarContainment
+
+  beforeEach(() => {
+    localStorage.clear()
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    localStorage.removeItem(ORDER_KEY)
+    localStorage.removeItem(CONTAINMENT_KEY)
+    vi.resetModules()
+  })
+
+  async function fresh() {
+    return await import('@/composables/useViewShortcuts')
+  }
+
+  it('组未满时移回：种子退出收纳清单 + 落本组主项末位，双存储立即持久化', async () => {
+    const mod = await fresh()
+    mod.applyMoveIntoMore('transactions') // 腾位：记账组主项剩 2（出厂满员须先移出一个主项）
+    mod.applyMoveBackToSidebar('scheduled')
+    expect(mod.sidebarContainment.value.bookkeeping).toEqual(['merchants', 'transactions'])
+    expect(mod.sidebarGroupOrders.value.bookkeeping).toEqual(['accounts', 'budget', 'scheduled'])
+    expect(JSON.parse(localStorage.getItem(ORDER_KEY)!)).toEqual(mod.sidebarGroupOrders.value)
+    expect(JSON.parse(localStorage.getItem(CONTAINMENT_KEY)!)).toEqual(mod.sidebarContainment.value)
+  })
+
+  it('键位随动重排：移回成员按末位取键，其后主项键位顺延（线性规则不变）', async () => {
+    const mod = await fresh()
+    mod.applyMoveIntoMore('transactions')
+    mod.applyMoveBackToSidebar('scheduled')
+    expect(mod.viewShortcuts.value.find((s) => s.name === 'accounts')!.key).toBe('2')
+    expect(mod.viewShortcuts.value.find((s) => s.name === 'budget')!.key).toBe('3')
+    expect(mod.viewShortcuts.value.find((s) => s.name === 'scheduled')!.key).toBe('4')
+    expect(mod.viewShortcuts.value.find((s) => s.name === 'investments')!.key).toBe('5')
+  })
+
+  it('组满拒写（运行时硬上限兑底，菜单置灰为第一道防线）：满员组移回 no-op 不写存储', async () => {
+    const mod = await fresh()
+    mod.applyMoveBackToSidebar('scheduled') // 记账出厂满员
+    expect(localStorage.getItem(ORDER_KEY)).toBeNull()
+    expect(localStorage.getItem(CONTAINMENT_KEY)).toBeNull()
+    expect(mod.sidebarContainment.value.bookkeeping).toEqual(['scheduled', 'merchants'])
+  })
+
+  it('非清单成员（在册主项、固定项）no-op 不写存储', async () => {
+    const mod = await fresh()
+    mod.applyMoveBackToSidebar('reports')
+    mod.applyMoveBackToSidebar('dashboard' as ContainableViewName)
+    expect(localStorage.getItem(ORDER_KEY)).toBeNull()
+    expect(localStorage.getItem(CONTAINMENT_KEY)).toBeNull()
+  })
+
+  it('移回资产组成员：保单落资产组主项末位（出厂未满员，无需腾位）', async () => {
+    const mod = await fresh()
+    mod.applyMoveBackToSidebar('policies')
+    expect(mod.sidebarContainment.value.assets).toEqual(['physicalAssets'])
+    expect(mod.sidebarGroupOrders.value.assets).toEqual(['investments', 'items', 'policies'])
+  })
+
+  it('移回组内最后一个收纳成员后清单为空（侧栏「更多」链接渲染条件失效）', async () => {
+    const mod = await fresh()
+    mod.applyMoveIntoMore('reports')
+    mod.applyMoveIntoMore('search')
+    mod.applyMoveBackToSidebar('reports')
+    mod.applyMoveBackToSidebar('search')
+    expect(mod.sidebarContainment.value.insights).toEqual([])
+  })
+
+  it('移回的种子可再移入更多、可组内排序微调（主项词表对称，ADR-0063 决策 4 无例外清单）', async () => {
+    const mod = await fresh()
+    mod.applyMoveIntoMore('transactions')
+    mod.applyMoveBackToSidebar('scheduled')
+    mod.applySidebarSort('scheduled', 'top')
+    expect(mod.sidebarGroupOrders.value.bookkeeping).toEqual(['scheduled', 'accounts', 'budget'])
+    mod.applyMoveIntoMore('scheduled')
+    expect(mod.sidebarGroupOrders.value.bookkeeping).toEqual(['accounts', 'budget'])
+    expect(mod.sidebarContainment.value.bookkeeping).toEqual(['merchants', 'transactions', 'scheduled'])
+  })
+
+  it('重启（重导入）后移回保持：种子不复活回收纳清单、主项保持、键位保持（持久化往返）', async () => {
+    const mod = await fresh()
+    mod.applyMoveIntoMore('transactions')
+    mod.applyMoveBackToSidebar('scheduled')
+    vi.resetModules()
+    const rebooted = await fresh()
+    expect(rebooted.sidebarGroupOrders.value.bookkeeping).toEqual(['accounts', 'budget', 'scheduled'])
+    expect(rebooted.sidebarContainment.value.bookkeeping).toEqual(['merchants', 'transactions'])
+    expect(rebooted.viewShortcuts.value.find((s) => s.name === 'scheduled')!.key).toBe('4')
+  })
+
+  it('恢复默认排序复位移回：种子回收纳清单、主项回出厂（一键回出厂唯一通道不变）', async () => {
+    const mod = await fresh()
+    mod.applyMoveIntoMore('transactions')
+    mod.applyMoveBackToSidebar('scheduled')
+    mod.resetSidebarOrder()
+    expect(mod.sidebarGroupOrders.value.bookkeeping).toEqual(['transactions', 'accounts', 'budget'])
+    expect(mod.sidebarContainment.value.bookkeeping).toEqual(['scheduled', 'merchants'])
+  })
+
+  it('isSidebarMember（在册判定）：默认在册 = 七主项；移回种子后在册、移入后退出在册；固定项恒不在册', async () => {
+    const mod = await fresh()
+    expect(mod.isSidebarMember('transactions')).toBe(true)
+    expect(mod.isSidebarMember('scheduled')).toBe(false)
+    mod.applyMoveIntoMore('transactions')
+    expect(mod.isSidebarMember('transactions')).toBe(false)
+    mod.applyMoveBackToSidebar('scheduled')
+    expect(mod.isSidebarMember('scheduled')).toBe(true)
+    expect(mod.isSidebarMember('dashboard')).toBe(false)
+    expect(mod.isSidebarMember('bogus')).toBe(false)
+  })
+
+  it('isViewContained（收纳在册判定）：出厂种子在册；移回后出册（/policies 路由守卫消费面）', async () => {
+    const mod = await fresh()
+    expect(mod.isViewContained('policies')).toBe(true)
+    mod.applyMoveBackToSidebar('policies')
+    expect(mod.isViewContained('policies')).toBe(false)
+    expect(mod.isViewContained('physicalAssets')).toBe(true)
   })
 })

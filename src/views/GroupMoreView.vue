@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, h, type Component } from 'vue'
+import { computed, h, nextTick, ref, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { t } from '@/i18n'
 import { NTabs, NTabPane, NIcon } from 'naive-ui'
+import AppDropdown from '@/components/AppDropdown.vue'
 import {
   ShieldCheckmarkOutline,
   CubeOutline,
@@ -26,7 +27,12 @@ import InvestmentsView from '@/views/InvestmentsView.vue'
 import ItemsView from '@/views/ItemsView.vue'
 import ReportsView from '@/views/ReportsView.vue'
 import SearchView from '@/views/SearchView.vue'
-import { sidebarContainment } from '@/composables/useViewShortcuts'
+import {
+  sidebarContainment,
+  sidebarGroupOrders,
+  applyMoveBackToSidebar,
+  buildTabContextMenuOptions,
+} from '@/composables/useViewShortcuts'
 import type { ContainableViewName, SidebarGroupId } from '@/composables/useViewShortcuts'
 
 /**
@@ -82,15 +88,61 @@ function onTabChange(key: string | number) {
     void router.replace({ query: { ...route.query, tab } })
   }
 }
+
+// ---------------------------------------------------------------------------
+// 页签右键「移回侧栏」（issue #475 / ADR-0063 决策 4）：手动定位弹出，与侧栏排序菜单
+// 同一模式（AppDropdown 封装 + 弹层注册表上报 ADR-0035，零新抑制机制）。
+// 组满 3 主项时菜单项置灰并附提示（上限可见、可学习）；点选即从清单删除并落本组
+// 主项末位（写路径 applyMoveBackToSidebar），页签序随清单响应式更新；
+// 移回最后一个成员后清单为空，本页退化为零页签、侧栏「更多」链接随之消失。
+// ---------------------------------------------------------------------------
+
+const backMenuShow = ref(false)
+const backMenuX = ref(0)
+const backMenuY = ref(0)
+const backTarget = ref<ContainableViewName | null>(null)
+
+/** 菜单选项由本组当前主项序派生（组满置灰判定在纯函数内，响应式随动）。 */
+const backMenuOptions = computed(() => buildTabContextMenuOptions(sidebarGroupOrders.value[props.group]))
+
+/** 右键页签弹出移回菜单：先收起再 nextTick 展开，保证连续弹出时位置刷新（侧栏菜单同款）。 */
+function onTabContextmenu(e: MouseEvent, name: ContainableViewName) {
+  backTarget.value = name
+  backMenuX.value = e.clientX
+  backMenuY.value = e.clientY
+  backMenuShow.value = false
+  void nextTick(() => {
+    backMenuShow.value = true
+  })
+}
+
+function onBackMenuSelect(key: string) {
+  backMenuShow.value = false
+  const target = backTarget.value
+  if (key !== 'backToSidebar' || !target) return
+  applyMoveBackToSidebar(target)
+}
 </script>
 
 <template>
   <NTabs type="line" :value="activeTab" @update:value="onTabChange">
     <NTabPane v-for="name in tabs" :key="name" :name="name">
-      <template #tab><span class="pane-tab"><NIcon :component="CONTAINED_VIEWS[name].icon" />{{ t(`common.nav.${name}`) }}</span></template>
+      <template #tab><span class="pane-tab" @contextmenu="onTabContextmenu($event, name)"><NIcon :component="CONTAINED_VIEWS[name].icon" />{{ t(`common.nav.${name}`) }}</span></template>
       <component :is="CONTAINED_VIEWS[name].component" />
     </NTabPane>
   </NTabs>
+  <!-- 页签右键「移回侧栏」菜单（issue #475）：手动定位弹出，与侧栏排序菜单同一封装 -->
+  <AppDropdown
+    trigger="manual"
+    placement="bottom-start"
+    :show="backMenuShow"
+    :x="backMenuX"
+    :y="backMenuY"
+    :options="backMenuOptions"
+    :min-width="140"
+    @select="onBackMenuSelect"
+    @clickoutside="backMenuShow = false"
+  />
 </template>
 
 <style scoped>

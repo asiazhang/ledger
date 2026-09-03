@@ -31,6 +31,9 @@ import {
   CalculatorOutline,
   SparklesOutline,
   SettingsOutline,
+  RepeatOutline,
+  StorefrontOutline,
+  ShieldCheckmarkOutline,
 } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
 import { currentLocale, t } from '@/i18n'
@@ -43,7 +46,6 @@ import {
   viewShortcuts,
   shortcutHint,
   useViewShortcuts,
-  isArrangeableView,
   isSidebarSortAction,
   sidebarGroups,
   sidebarGroupOrders,
@@ -52,11 +54,13 @@ import {
   buildSidebarSortMenuOptions,
   applySidebarSort,
   applyMoveIntoMore,
+  isSidebarMember,
   resetSidebarOrder,
   FIRST_VIEW,
   PENULTIMATE_VIEW,
   LAST_VIEW,
   type ViewName,
+  type ContainableViewName,
 } from '@/composables/useViewShortcuts'
 import { useWindowGuard } from '@/composables/useWindowGuard'
 
@@ -102,7 +106,7 @@ useDevicePreferenceSync()
 // key 构造收口在 i18n/view-label（key 契约有单测，漏域名前缀会原样渲染 key 代号）。
 
 // 视图图标（ionicons5 Outline 风格，与分类图标一致）：仅侧栏菜单项（主项 + 固定项）；
-// 收纳成员（定时/商户/保单/实物资产）不入侧栏，图标由 GroupMoreView 自带映射。
+// 出厂收纳成员图标与 GroupMoreView 页签映射同源（#475：移回侧栏后以主项身份入侧栏，随选随用）。
 const viewIcons: Record<string, Component> = {
   dashboard: HomeOutline,
   transactions: SwapHorizontalOutline,
@@ -114,6 +118,10 @@ const viewIcons: Record<string, Component> = {
   budget: CalculatorOutline,
   ai: SparklesOutline,
   settings: SettingsOutline,
+  scheduled: RepeatOutline,
+  merchants: StorefrontOutline,
+  policies: ShieldCheckmarkOutline,
+  physicalAssets: CubeOutline,
 }
 
 function renderMenuIcon(name: string) {
@@ -129,7 +137,7 @@ function renderMenuIcon(name: string) {
 // 不可键盘触发；折叠态不渲染组标题，「更多」链接随之不渲染（决策 6）。
 // 主项经 nodeProps 附右键组内排序菜单（issue #270/#359），固定项与分组标题不附
 // （右键无任何菜单，原生菜单由窗口守卫抑制）。注：NMenu 不支持选项级 props 字段，必须走菜单级 nodeProps。
-function renderItem(name: ViewName, key: string | null): MenuOption {
+function renderItem(name: ViewName | ContainableViewName, key: string | null): MenuOption {
   return {
     key: name,
     icon: renderMenuIcon(name),
@@ -143,7 +151,8 @@ function renderItem(name: ViewName, key: string | null): MenuOption {
 
 const menuOptions = computed<MenuOption[]>(() => {
   const keyOf = new Map(viewShortcuts.value.map((s) => [s.name, s.key]))
-  const item = (name: ViewName) => renderItem(name, keyOf.get(name) ?? null)
+  // 入参含移回的种子成员（#475）：侧栏菜单项词表 = 主项 ∪ 出厂种子
+  const item = (name: ViewName | ContainableViewName) => renderItem(name, keyOf.get(name) ?? null)
   return [
     item(FIRST_VIEW),
     ...sidebarGroups.value.map((g): MenuOption => ({
@@ -166,12 +175,13 @@ const menuOptions = computed<MenuOption[]>(() => {
   ]
 })
 
-/** 菜单级 nodeProps：仅可排区项附右键事件（固定项无任何右键菜单）。
+/** 菜单级 nodeProps：仅当前在册成员附右键事件（issue #475 改用 isSidebarMember：
+ *  主项与移回的种子可排序/移入；固定项与仍在清单的收纳成员无任何右键菜单）。
  *  naive-ui 的 nodeProps 返回类型把索引签名限成 string|number，事件函数过不去
  *  （类型仅对 data-* 友好），运行时照常铺到节点上，故此处断言放宽。 */
 function nodeProps(option: MenuOption) {
   const name = option.key as string
-  if (!isArrangeableView(name)) return {}
+  if (!isSidebarMember(name)) return {}
   return {
     onContextmenu: (e: MouseEvent) => showSortMenu(e, name),
   } as unknown as HTMLAttributes & Record<string, string | number | undefined>
@@ -186,7 +196,7 @@ function nodeProps(option: MenuOption) {
 const sortMenuShow = ref(false)
 const sortMenuX = ref(0)
 const sortMenuY = ref(0)
-const sortTarget = ref<ViewName | null>(null)
+const sortTarget = ref<ContainableViewName | null>(null)
 
 const sortMenuOptions = computed(() => {
   const target = sortTarget.value
@@ -195,8 +205,8 @@ const sortMenuOptions = computed(() => {
   return buildSidebarSortMenuOptions(target, sidebarGroupOrders.value[gid])
 })
 
-/** 右键可排区项弹出排序菜单：先收起再 nextTick 展开，保证连续弹出时位置刷新。 */
-function showSortMenu(e: MouseEvent, name: ViewName) {
+/** 右键在册成员弹出排序菜单：先收起再 nextTick 展开，保证连续弹出时位置刷新。 */
+function showSortMenu(e: MouseEvent, name: ContainableViewName) {
   sortTarget.value = name
   sortMenuX.value = e.clientX
   sortMenuY.value = e.clientY
