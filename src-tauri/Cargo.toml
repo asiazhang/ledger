@@ -4,6 +4,9 @@ version = "0.3.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2024"
+# 包内第二个 bin（性能基准工具 src/bin/ledger-perf，spec #458 / ADR-0062）出现后，
+# 显式指定默认可执行文件，保证 `cargo run` 与 tauri dev 仍指向主程序。
+default-run = "tauri-app"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
