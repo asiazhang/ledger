@@ -34,6 +34,15 @@ pub struct MerchantUpdateInput {
     pub name: Option<String>,
 }
 
+/// 商户关联交易计数行（issue #445，毛笔数口径）：商户字典行 → 引用它的未删流水
+/// 毛笔数。实时按流水推导、不落库（读模型，无持久化状态）；软删商户照常计数、
+/// 无引用商户计 0。仅供商户管理列表消费，不影响既有消费方。
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MerchantTransactionCount {
+    pub merchant_id: String,
+    pub transaction_count: i64,
+}
+
 impl FromRow for Merchant {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
         Ok(Merchant {
@@ -44,6 +53,15 @@ impl FromRow for Merchant {
             version: row.get(4)?,
             device_id: row.get(5)?,
             is_deleted: row.get::<_, i64>(6)? != 0,
+        })
+    }
+}
+
+impl FromRow for MerchantTransactionCount {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(MerchantTransactionCount {
+            merchant_id: row.get(0)?,
+            transaction_count: row.get(1)?,
         })
     }
 }

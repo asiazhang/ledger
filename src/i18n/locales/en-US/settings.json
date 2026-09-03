@@ -78,6 +78,7 @@
     },
     "columns": {
       "name": "Name",
+      "transactionCount": "Transactions",
       "actions": "Actions"
     },
     "rowActions": {

@@ -48,6 +48,7 @@ import type {
   Merchant,
   MerchantShare,
   MerchantInput,
+  MerchantTransactionCount,
   MerchantUpdateInput,
   MonthlySummary,
   PnlFilter,
@@ -112,6 +113,9 @@ export const api = {
   updateMerchant: (id: string, input: MerchantUpdateInput) =>
     invoke<void>('update_merchant', { id, input }),
   deleteMerchant: (id: string) => invoke<void>('delete_merchant', { id }),
+  /** 商户关联交易计数（issue #445，毛笔数口径）：含软删商户、无引用计 0，实时推导不落库 */
+  listMerchantTransactionCounts: () =>
+    invoke<MerchantTransactionCount[]>('list_merchant_transaction_counts'),
 
   // 交易
   listTransactions: (filter?: TransactionListFilter | null) =>

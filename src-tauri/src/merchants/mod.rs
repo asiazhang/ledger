@@ -10,9 +10,9 @@ mod model;
 
 pub use crud::{
     create_merchant, create_merchant_by_name, delete_merchant, find_merchant_by_name,
-    list_merchants, update_merchant,
+    list_merchants, transaction_counts, update_merchant,
 };
-pub use model::{Merchant, MerchantInput, MerchantUpdateInput};
+pub use model::{Merchant, MerchantInput, MerchantTransactionCount, MerchantUpdateInput};
 
 #[cfg(test)]
 mod tests;
