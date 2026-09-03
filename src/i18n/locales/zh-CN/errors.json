@@ -147,7 +147,8 @@
     "transfer-ext-not-found": "定时转账扩展信息不存在",
     "date-invalid": "日期格式错误 {0}: {1}",
     "not-active": "关联计划未处于活跃状态",
-    "policy-subscription-only": "只有订阅形态协议可挂保单"
+    "policy-subscription-only": "只有订阅形态协议可挂保单",
+    "kind-mismatch": "计划形态与期次执行路径不一致（内部不一致）"
   },
   "scheduled-occurrence": {
     "not-found": "期次不存在",
