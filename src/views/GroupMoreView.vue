@@ -3,11 +3,29 @@ import { computed, h, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { t } from '@/i18n'
 import { NTabs, NTabPane, NIcon } from 'naive-ui'
-import { ShieldCheckmarkOutline, CubeOutline, RepeatOutline, StorefrontOutline } from '@vicons/ionicons5'
+import {
+  ShieldCheckmarkOutline,
+  CubeOutline,
+  RepeatOutline,
+  StorefrontOutline,
+  SwapHorizontalOutline,
+  WalletOutline,
+  CalculatorOutline,
+  TrendingUpOutline,
+  BarChartOutline,
+  SearchOutline,
+} from '@vicons/ionicons5'
 import PoliciesView from '@/views/PoliciesView.vue'
 import PhysicalAssetsView from '@/views/PhysicalAssetsView.vue'
 import ScheduledView from '@/views/ScheduledView.vue'
 import MerchantManager from '@/components/MerchantManager.vue'
+import TransactionsView from '@/views/TransactionsView.vue'
+import AccountsView from '@/views/AccountsView.vue'
+import BudgetView from '@/views/BudgetView.vue'
+import InvestmentsView from '@/views/InvestmentsView.vue'
+import ItemsView from '@/views/ItemsView.vue'
+import ReportsView from '@/views/ReportsView.vue'
+import SearchView from '@/views/SearchView.vue'
 import { sidebarContainment } from '@/composables/useViewShortcuts'
 import type { ContainableViewName, SidebarGroupId } from '@/composables/useViewShortcuts'
 
@@ -23,8 +41,9 @@ import type { ContainableViewName, SidebarGroupId } from '@/composables/useViewS
 const props = defineProps<{ group: SidebarGroupId }>()
 
 /**
- * 收纳成员 → 装配记录（呈现层装配；#473 迁入定时/商户）：组件与图标同源一处，
- * 键收窄为 ContainableViewName（顺序源模块词表，拼错成员名即编译错误）。
+ * 收纳成员 → 装配记录（呈现层装配；#473 迁入定时/商户，#474 用户移入主项）：
+ * 组件与图标同源一处，键收窄为 ContainableViewName（顺序源模块词表，拼错成员名即编译错误）。
+ * 词表含全部主项（#474 移入自由）：任一主项被移入后在此整体装载、功能零损失。
  */
 const CONTAINED_VIEWS: Record<ContainableViewName, { component: Component; icon: Component }> = {
   policies: { component: PoliciesView, icon: ShieldCheckmarkOutline },
@@ -32,6 +51,14 @@ const CONTAINED_VIEWS: Record<ContainableViewName, { component: Component; icon:
   // 定时内嵌态：页签退内存态（容器页签与被收视图共用 query.tab 会双写互踩）
   scheduled: { component: () => h(ScheduledView, { embedded: true }), icon: RepeatOutline },
   merchants: { component: MerchantManager, icon: StorefrontOutline },
+  // 用户移入的主项（issue #474 / ADR-0063 决策 4：任一主项可入本组「更多」）
+  transactions: { component: TransactionsView, icon: SwapHorizontalOutline },
+  accounts: { component: AccountsView, icon: WalletOutline },
+  budget: { component: BudgetView, icon: CalculatorOutline },
+  investments: { component: InvestmentsView, icon: TrendingUpOutline },
+  items: { component: ItemsView, icon: CubeOutline },
+  reports: { component: ReportsView, icon: BarChartOutline },
+  search: { component: SearchView, icon: SearchOutline },
 }
 
 const route = useRoute()

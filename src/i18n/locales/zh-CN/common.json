@@ -37,6 +37,9 @@
     "bottom": "移到底部",
     "reset": "恢复默认排序"
   },
+  "sidebarContainment": {
+    "intoMore": "移入更多"
+  },
   "link": {
     "viewMerchant": "查看该商户的交易",
     "viewAccount": "查看该账户的交易"

@@ -183,6 +183,30 @@ describe('GroupMoreView 记账组接入（issue #473 / ADR-0063 决策 3：定�
   })
 })
 
+describe('GroupMoreView 用户移入页签（issue #474 / ADR-0063 决策 4：移入即本组「更多」末位页签）', () => {
+  // 移入写路径会改顺序源模块单例与 ViewState 存储：用后即复位，不污染同文件后续 describe
+  afterEach(async () => {
+    const mod = await import('@/composables/useViewShortcuts')
+    mod.resetSidebarOrder()
+    localStorage.clear()
+  })
+
+  it('移入洞察组的主项（搜索）即刻成为末位页签且整体装载（移入空组链接即现的容器面）', async () => {
+    const mod = await import('@/composables/useViewShortcuts')
+    mod.applyMoveIntoMore('search')
+    const { wrapper } = await mountGroupView('insights', '/insights/more?tab=search')
+    expect(containerTabs(wrapper)).toEqual(['搜索'])
+    expect((wrapper.find('.n-input input').element as HTMLInputElement).placeholder).toBeTruthy()
+  })
+
+  it('移入记账组的主项（交易）追加在出厂页签之后：清单序 = 页签序（出厂在前、移入缀尾）', async () => {
+    const mod = await import('@/composables/useViewShortcuts')
+    mod.applyMoveIntoMore('transactions')
+    const { wrapper } = await mountGroupView('bookkeeping')
+    expect(containerTabs(wrapper)).toEqual(['定时', '商户', '交易'])
+  })
+})
+
 describe('全局「更多」退役迁移链（issue #473 / ADR-0063 决策 1/5，#202/#472 重定向先例）', () => {
   it('真实路由表：/more 重定向到记账·更多（默认落清单首位定时页签）', async () => {
     await router.push('/more')

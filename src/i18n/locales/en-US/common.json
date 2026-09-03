@@ -37,6 +37,9 @@
     "bottom": "Move to Bottom",
     "reset": "Reset Default Order"
   },
+  "sidebarContainment": {
+    "intoMore": "Move to More"
+  },
   "link": {
     "viewMerchant": "View transactions with this merchant",
     "viewAccount": "View transactions with this account"
