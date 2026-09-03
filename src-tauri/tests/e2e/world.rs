@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use cucumber::World;
 
-use tauri_app_lib::commands::data_location::{DataLocationChangeOutcome, DataLocationInfo};
 use tauri_app_lib::db::DbState;
+use tauri_app_lib::db::data_location::{DataLocationChangeOutcome, DataLocationInfo};
 use tauri_app_lib::models::{
     CreateTransactionResult, DashboardOverview, ItemDailyCost, ItemDailyTotal, ItemWithDailyCost,
     Transaction, TransactionInput, TransactionSearchResult,
