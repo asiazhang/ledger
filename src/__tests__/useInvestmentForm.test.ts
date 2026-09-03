@@ -102,12 +102,12 @@ describe('useInvestmentForm', () => {
     })
   })
 
-  it('初始化状态：账户/标的/数量/价格为空', () => {
+  it('初始化状态：账户/标的/数量/价格为空（数量/价格为原始文本，#416）', () => {
     const form = useInvestmentForm('buy')
     expect(form.accountId.value).toBeNull()
     expect(form.instrumentId.value).toBeNull()
-    expect(form.quantity.value).toBeNull()
-    expect(form.price.value).toBeNull()
+    expect(form.quantityText.value).toBe('')
+    expect(form.priceText.value).toBe('')
   })
 
   it('submit 校验：无账户/标的/数量/单价时警告且不写入', async () => {
@@ -117,7 +117,9 @@ describe('useInvestmentForm', () => {
     await form.submit()
     form.instrumentId.value = 'ins-1'
     await form.submit()
-    form.quantity.value = 10
+    // 格式类错误（数量为空）由红态＋禁用接住，静默中止（ADR-0058）
+    await form.submit()
+    form.quantityText.value = '10'
     await form.submit()
     expect(
       mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction'),
@@ -137,8 +139,8 @@ describe('useInvestmentForm', () => {
     const form = useInvestmentForm('buy', { onCreated })
     form.accountId.value = 'acc-inv'
     form.instrumentId.value = 'ins-1'
-    form.quantity.value = 10
-    form.price.value = 15
+    form.quantityText.value = '10'
+    form.priceText.value = '15'
     form.fee.value = 5
     form.note.value = '测试'
     form.date.value = new Date('2026-07-11').getTime()
@@ -150,9 +152,11 @@ describe('useInvestmentForm', () => {
     expect(mockInvoke).toHaveBeenCalledWith('create_transaction', {
       input: expect.objectContaining({ kind: 'buy' }),
     })
-    // 创建成功后重置业务字段
+    // 创建成功后重置业务字段（数量/价格文本同清、时机标志同清不留潜伏红态，#416）
     expect(form.instrumentId.value).toBeNull()
-    expect(form.quantity.value).toBeNull()
+    expect(form.quantityText.value).toBe('')
+    expect(form.priceText.value).toBe('')
+    expect(form.quantityError.value).toBeNull()
     expect(onCreated).toHaveBeenCalledTimes(1)
   })
 
@@ -185,7 +189,7 @@ describe('useInvestmentForm', () => {
       expect(form.isFundInstrument.value).toBe(true)
       // (100000 − 150) × 100 ÷ 987.6543 = 10109.81… → 10110 → 1.0110 元
       form.amount.value = 1000
-      form.quantity.value = 987.6543
+      form.quantityText.value = '987.6543'
       form.fee.value = 1.5
       expect(form.derivedPrice.value).toBeCloseTo(1.011, 6)
     })
@@ -194,8 +198,7 @@ describe('useInvestmentForm', () => {
       const form = await searchFundCandidates('buy')
       form.instrumentId.value = 'ins-fund'
       form.accountId.value = 'acc-inv'
-      form.quantity.value = 987.6543
-      form.price.value = null
+      form.quantityText.value = '987.6543'
       await form.submit()
       expect(
         mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction'),
@@ -211,7 +214,7 @@ describe('useInvestmentForm', () => {
       form.instrumentId.value = 'ins-fund'
       form.accountId.value = 'acc-inv'
       form.amount.value = 1000
-      form.quantity.value = 987.6543
+      form.quantityText.value = '987.6543'
       form.fee.value = 1.5
       await form.submit()
       expect(mockInvoke).toHaveBeenCalledWith('create_transaction', {
@@ -229,7 +232,7 @@ describe('useInvestmentForm', () => {
       const form = await searchFundCandidates('sell')
       form.instrumentId.value = 'ins-fund'
       form.amount.value = 520
-      form.quantity.value = 500
+      form.quantityText.value = '500'
       form.fee.value = 0.52
       // (52000 + 52) × 100 ÷ 500 = 10410.4 → 10410 → 1.0410 元
       expect(form.derivedPrice.value).toBeCloseTo(1.041, 6)
@@ -242,9 +245,11 @@ describe('useInvestmentForm', () => {
       })
       expect(form.isFundInstrument.value).toBe(true)
       expect(form.amount.value).toBe(1000)
-      expect(form.quantity.value).toBe(987.6543)
+      expect(form.quantityText.value).toBe('987.6543')
       expect(form.fee.value).toBe(1.5)
-      expect(form.price.value).toBeNull()
+      expect(form.priceText.value).toBe('')
+      // 基金形态无单价输入面，单价错误态不装配（#416）
+      expect(form.priceError.value).toBeNull()
       // 反算展示与存储净值同一公式：(100000 − 150) × 100 ÷ 987.6543 → 1.0110 元
       expect(form.derivedPrice.value).toBeCloseTo(1.011, 6)
     })
@@ -260,8 +265,11 @@ describe('useInvestmentForm', () => {
       })
       expect(form.accountId.value).toBe('acc-inv')
       expect(form.instrumentId.value).toBe('ins-1')
-      expect(form.quantity.value).toBe(100)
-      expect(form.price.value).toBe(150)
+      expect(form.quantityText.value).toBe('100')
+      expect(form.priceText.value).toBe('150')
+      // 合法回填不显红态（#416）
+      expect(form.quantityError.value).toBeNull()
+      expect(form.priceError.value).toBeNull()
       expect(form.fee.value).toBe(5)
       expect(form.note.value).toBe('建仓买入')
       expect(form.date.value).toBe(new Date('2026-01-10T00:00:00Z').getTime())
@@ -333,7 +341,7 @@ describe('useInvestmentForm', () => {
       expect(onCreated).not.toHaveBeenCalled()
       // 编辑路径不重置表单：成功即关窗（onUpdated），实例整体销毁
       expect(form.instrumentId.value).toBe('ins-1')
-      expect(form.quantity.value).toBe(100)
+      expect(form.quantityText.value).toBe('100')
     })
 
     it('submit 编辑失败：错误不抛出、onUpdated 不触发、已填内容不丢', async () => {
@@ -357,8 +365,8 @@ describe('useInvestmentForm', () => {
       await expect(form.submit()).resolves.toBeUndefined()
       expect(onUpdated).not.toHaveBeenCalled()
       expect(form.instrumentId.value).toBe('ins-1')
-      expect(form.quantity.value).toBe(100)
-      expect(form.price.value).toBe(150)
+      expect(form.quantityText.value).toBe('100')
+      expect(form.priceText.value).toBe('150')
     })
   })
 })

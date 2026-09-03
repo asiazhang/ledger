@@ -3,6 +3,7 @@ import { useMessage } from 'naive-ui'
 import { api } from '@/api'
 import { t } from '@/i18n'
 import { centsToYuan, priceToYuan, yuanToCents } from '@/types'
+import { judgeQuantityText, judgePriceText, fieldErrorKind } from '@/utils/field-error'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
 import { buildTradeInput } from '@/domain/transaction-input'
 import { errorMessage } from '@/utils/errors'
@@ -42,8 +43,16 @@ export function useInvestmentForm(
   /** 确认单金额（元）：基金申赎的权威输入（issue #302 / ADR-0038 金额权威）；
    * 非基金形态恒 null（金额由后端按数量 × 单价重算，表单只展示）。 */
   const amount = ref<number | null>(null)
-  const quantity = ref<number | null>(null)
-  const price = ref<number | null>(null)
+  // 数量/价格字段错误态（ADR-0058 / issue #416）：同金额形态（#414/#415 先例）——
+  // 以原始文本承载输入（不拦截、不静默丢弃，非法文本原样保留），判定口径走共享单点
+  // judgeQuantityText / judgePriceText（数量与价格的精度口径与金额整数分不同：均至多
+  // 四位小数——数量同既有 NInputNumber precision=4 约束、价格同万分之一元刻度）；
+  // 错误态装配（输入中即时红 / 空值红在失焦或保存尝试后）由本薄层声明时机。
+  const quantityText = ref('')
+  const priceText = ref('')
+  const quantityBlurred = ref(false)
+  const priceBlurred = ref(false)
+  const saveAttempted = ref(false)
   const fee = ref<number | null>(null)
   const note = ref('')
   const date = ref(Date.now())
@@ -93,14 +102,17 @@ export function useInvestmentForm(
     accountId.value = editingTx.account_id
     currencyCode.value = editingTx.currency_code
     instrumentId.value = editingTrade.instrument_id
-    quantity.value = editingTrade.quantity
+    // 数量/价格以文本形态回填：存储值在本仓录入路径下必在各自精度口径内（数量
+    // 经 precision=4 录入、单价万分之一元刻度 ≤四位小数），合法回填不显红态；
+    // 极端历史数据（如导入超粒度数量）如实红显，属字段错误态的诚实反馈
+    quantityText.value = String(editingTrade.quantity)
     if (seededInstrumentIsFund) {
       amount.value = centsToYuan(
         editingTx.amount_cents,
         reference.getCurrency(editingTx.currency_code),
       )
     } else {
-      price.value = priceToYuan(editingTrade.price_cents)
+      priceText.value = String(priceToYuan(editingTrade.price_cents))
     }
     fee.value =
       editingTrade.fee_cents != null
@@ -120,12 +132,56 @@ export function useInvestmentForm(
     return id === seededInstrumentOption?.value && seededInstrumentIsFund
   })
 
+  // 数量/价格错误态装配：判定 + 时机 → 当前错误类别。价格错误态仅在非基金形态
+  // 装配——基金无单价输入面（单价反算只读展示），空文本不构成红态；数量（股数/份额）
+  // 两形态共用同一输入面，同规装配。
+  const quantityJudgment = computed(() => judgeQuantityText(quantityText.value))
+  const priceJudgment = computed(() => judgePriceText(priceText.value))
+  const quantityError = computed(() =>
+    fieldErrorKind(quantityJudgment.value, {
+      touched: quantityBlurred.value,
+      saveAttempted: saveAttempted.value,
+    }),
+  )
+  const priceError = computed(() =>
+    isFundInstrument.value
+      ? null
+      : fieldErrorKind(priceJudgment.value, {
+          touched: priceBlurred.value,
+          saveAttempted: saveAttempted.value,
+        }),
+  )
+  /** 任一字段处于错误态，保存按钮随之禁用（红框＋提交禁用两件同发） */
+  const hasFieldError = computed(
+    () => quantityError.value != null || priceError.value != null,
+  )
+
+  /** 数量失焦：空值红时机输入（touched） */
+  function markQuantityBlurred() {
+    quantityBlurred.value = true
+  }
+
+  /** 单价失焦：空值红时机输入（touched） */
+  function markPriceBlurred() {
+    priceBlurred.value = true
+  }
+
+  /** 判定 ok 时的已解析数量（null = 文本非 ok，供计算/提交消费） */
+  const quantityValue = computed(() =>
+    quantityJudgment.value.kind === 'ok' ? quantityJudgment.value.value : null,
+  )
+
+  /** 判定 ok 时的已解析单价（元；null = 文本非 ok） */
+  const priceValue = computed(() =>
+    priceJudgment.value.kind === 'ok' ? priceJudgment.value.yuan : null,
+  )
+
   /** 基金反算单价（元）：与后端 prepare 同一公式——(金额 ∓ 手续费) × 100 ÷ 份额，
    * 万分之一元单次舍入。买入减费（净投入）、卖出加费（费在收入外另收）。
    * 非基金形态或输入不完整时为 null（表单此时展示可编辑单价输入框而非反算值）。 */
   const derivedPrice = computed<number | null>(() => {
     if (!isFundInstrument.value) return null
-    const qty = quantity.value
+    const qty = quantityValue.value
     if (amount.value == null || qty == null || qty <= 0) return null
     const amountCents = yuanToCents(amount.value)
     if (amountCents == null) return null
@@ -138,11 +194,11 @@ export function useInvestmentForm(
   })
 
   const investmentAmount = computed(() => {
-    if (quantity.value == null || price.value == null) return 0
+    if (quantityValue.value == null || priceValue.value == null) return 0
     const feeValue = fee.value ?? 0
     const raw = kind === 'buy'
-      ? quantity.value * price.value + feeValue
-      : quantity.value * price.value - feeValue
+      ? quantityValue.value * priceValue.value + feeValue
+      : quantityValue.value * priceValue.value - feeValue
     return Math.round(raw * 100) / 100
   })
 
@@ -167,6 +223,12 @@ export function useInvestmentForm(
   }
 
   async function submit() {
+    // 保存尝试即触发空值兜底红态（fieldErrorKind 的 saveAttempted 输入）
+    saveAttempted.value = true
+    // 格式类错误（解析失败 / 超精度 / 必填为空）由「红框＋提交禁用」取代旧格式
+    // toast（ADR-0058 决策 1/3，#416 数量/价格接入）：错误态下静默中止提交（先于
+    // 账户/标的 toast：红框已在字段上呈现，账户提示延后到格式修正后的下次尝试）
+    if (quantityError.value != null || priceError.value != null) return
     if (!accountId.value) {
       message.warning(t('investments.form.selectAccount'))
       return
@@ -184,7 +246,10 @@ export function useInvestmentForm(
       )
       return
     }
-    if (quantity.value == null || quantity.value <= 0) {
+    const quantity = quantityValue.value
+    if (quantity == null) return // 不可达（错误态已被上方守卫拦截），仅为类型收窄
+    // 业务类校验（纯零/负数）保留既有提交 toast 通道，不动（ADR-0058：业务不成立不属字段错误态）
+    if (quantity <= 0) {
       message.warning(
         fund
           ? t('investments.form.inputShares')
@@ -192,11 +257,15 @@ export function useInvestmentForm(
       )
       return
     }
-    if (!fund && (price.value == null || price.value <= 0)) {
-      message.warning(
-        t(kind === 'buy' ? 'investments.form.inputBuyPrice' : 'investments.form.inputSellPrice'),
-      )
-      return
+    const price = priceValue.value
+    if (!fund) {
+      if (price == null) return // 不可达（错误态已被上方守卫拦截），仅为类型收窄
+      if (price <= 0) {
+        message.warning(
+          t(kind === 'buy' ? 'investments.form.inputBuyPrice' : 'investments.form.inputSellPrice'),
+        )
+        return
+      }
     }
 
     // 编辑目标提交时重读（getter 约定见 options.editing 注释）
@@ -212,8 +281,8 @@ export function useInvestmentForm(
         accountId: accountId.value,
         instrumentId: instrumentId.value,
         amount: fund ? amount.value : null,
-        quantity: quantity.value,
-        price: fund ? null : price.value,
+        quantity,
+        price: fund ? null : price,
         fee: fee.value,
         note: note.value,
         date: date.value,
@@ -228,8 +297,12 @@ export function useInvestmentForm(
         message.success(t(kind === 'buy' ? 'investments.form.recordedBuy' : 'investments.form.recordedSell'))
         instrumentId.value = null
         amount.value = null
-        quantity.value = null
-        price.value = null
+        quantityText.value = ''
+        priceText.value = ''
+        // 时机标志同清：弹窗关窗销毁实例前不留潜伏红态（初始为空不红，ADR-0058 决策 2）
+        quantityBlurred.value = false
+        priceBlurred.value = false
+        saveAttempted.value = false
         fee.value = null
         note.value = ''
         options?.onCreated?.()
@@ -247,8 +320,11 @@ export function useInvestmentForm(
     accountId.value = null
     instrumentId.value = null
     amount.value = null
-    quantity.value = null
-    price.value = null
+    quantityText.value = ''
+    priceText.value = ''
+    quantityBlurred.value = false
+    priceBlurred.value = false
+    saveAttempted.value = false
     fee.value = null
     note.value = ''
     date.value = Date.now()
@@ -256,7 +332,8 @@ export function useInvestmentForm(
   }
 
   return {
-    accountId, instrumentId, amount, quantity, price, fee, note, date, currencyCode,
+    accountId, instrumentId, amount, quantityText, priceText, fee, note, date, currencyCode,
+    quantityError, priceError, hasFieldError, markQuantityBlurred, markPriceBlurred,
     isFundInstrument, derivedPrice, investmentAmount,
     investmentAccountOptions, instrumentOptions, currencyOptions,
     searchingInstruments,

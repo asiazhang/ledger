@@ -178,3 +178,71 @@ describe('记一笔借贷入口完整链路（issue #374）', () => {
     expect(toOptions.map((o) => o.value)).toEqual(['acc-cash', 'acc-bank'])
   })
 })
+
+describe('借贷金额字段错误态（ADR-0058 / issue #416，共享接缝装配验证）', () => {
+  // jsdom 的 document.body 跨测试共享：清掉前序测试遗留的 teleport 内容
+  beforeEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  async function openLendModal(wrapper: ReturnType<typeof mount>, label: string) {
+    const arrow = wrapper.find('button[aria-label="更多记账类型"]')
+    await arrow.trigger('click')
+    await flushPromises()
+    const item = [...document.body.querySelectorAll('.n-dropdown-option')].find(
+      (el) => el.textContent?.trim() === label,
+    )
+    expect(item, `下拉菜单中应存在「${label}」项`).toBeDefined()
+    ;(item!.querySelector('.n-dropdown-option-body') as HTMLElement).click()
+    await flushPromises()
+  }
+
+  function amountInput(form: ReturnType<typeof mount>) {
+    return form.find('input[placeholder="金额"]')
+  }
+
+  function hasErrorStatus(form: ReturnType<typeof mount>) {
+    const el = amountInput(form).element.closest('.n-input')
+    expect(el).not.toBeNull()
+    return (el as Element).classList.contains('n-input--error-status')
+  }
+
+  function submitButton(form: ReturnType<typeof mount>, label: string) {
+    return form.findAllComponents(NButton).find((b) => b.text() === label)!
+  }
+
+  it('金额输入解析失败文本（4.30发）即时红显、记借出禁用、非法文本原样保留', async () => {
+    const wrapper = await mountView()
+    await openLendModal(wrapper, '借出')
+    const form = wrapper.findComponent(TransactionForm).findComponent(LendingForm)
+    await amountInput(form).setValue('4.30发')
+    expect(hasErrorStatus(form)).toBe(true)
+    expect(submitButton(form, '记借出').attributes('disabled')).toBeDefined()
+    // 非法文本原样保留（不拦截不静默丢弃）
+    expect((amountInput(form).element as HTMLInputElement).value).toBe('4.30发')
+  })
+
+  it('清空失焦红、修正解除、记借出恢复可点', async () => {
+    const wrapper = await mountView()
+    await openLendModal(wrapper, '借出')
+    const form = wrapper.findComponent(TransactionForm).findComponent(LendingForm)
+    await amountInput(form).setValue('100')
+    await amountInput(form).setValue('')
+    expect(hasErrorStatus(form)).toBe(false)
+    await amountInput(form).trigger('blur')
+    expect(hasErrorStatus(form)).toBe(true)
+    await amountInput(form).setValue('100')
+    expect(hasErrorStatus(form)).toBe(false)
+    expect(submitButton(form, '记借出').attributes('disabled')).toBeUndefined()
+  })
+
+  it('保存尝试空值红显兜底，不发起提交（红态取代格式类 toast）', async () => {
+    const wrapper = await mountView()
+    await openLendModal(wrapper, '借出')
+    const form = wrapper.findComponent(TransactionForm).findComponent(LendingForm)
+    await submitButton(form, '记借出').trigger('click')
+    await flushPromises()
+    expect(hasErrorStatus(form)).toBe(true)
+    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction')).toHaveLength(0)
+  })
+})

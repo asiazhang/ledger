@@ -90,12 +90,15 @@ const ctx = useInvestmentForm(props.kind, {
       </NFormItem>
 
       <NFormItem :label="ctx.isFundInstrument.value ? t('investments.form.shares') : t('investments.form.quantity')">
-        <NInputNumber
-          v-model:value="ctx.quantity.value"
-          :min="0"
-          :precision="4"
+        <!-- 字段错误态（ADR-0058 / #416）：数量/份额自由文本承载输入，不拦截不静默丢弃
+             （取代 NInputNumber precision 钳制的旧行为）；格式错误（含超四位小数）即时
+             红显（内置 status 错误色），红态持续到修正 -->
+        <NInput
+          v-model:value="ctx.quantityText.value"
+          :status="ctx.quantityError.value ? 'error' : undefined"
           :placeholder="ctx.isFundInstrument.value ? t('investments.form.sharesPlaceholder') : t('investments.form.quantityPlaceholder')"
           style="width: 160px"
+          @blur="ctx.markQuantityBlurred"
         />
       </NFormItem>
 
@@ -110,13 +113,16 @@ const ctx = useInvestmentForm(props.kind, {
           :placeholder="t('investments.form.derivedPricePlaceholder')"
           style="width: 160px"
         />
-        <NInputNumber
+        <!-- 字段错误态（ADR-0058 / #416）：单价同数量接线；精度口径为万分之一元刻度
+             （至多四位小数，价格刻度 ADR-0038）；基金形态无此输入面（反算只读），
+             错误态不装配 -->
+        <NInput
           v-else
-          v-model:value="ctx.price.value"
-          :min="0"
-          :precision="2"
+          v-model:value="ctx.priceText.value"
+          :status="ctx.priceError.value ? 'error' : undefined"
           :placeholder="t('investments.form.unitPricePlaceholder')"
           style="width: 160px"
+          @blur="ctx.markPriceBlurred"
         />
       </NFormItem>
 
@@ -138,7 +144,8 @@ const ctx = useInvestmentForm(props.kind, {
         <NInput v-model:value="ctx.note.value" :placeholder="t('investments.form.notePlaceholder')" style="width: 280px" />
       </NFormItem>
 
-      <NButton type="primary" @click="ctx.submit">
+      <!-- 任一字段错误态下禁用（红框＋提交禁用两件同发，ADR-0058 决策 1） -->
+      <NButton type="primary" :disabled="ctx.hasFieldError.value" @click="ctx.submit">
         {{ editing ? t('investments.form.saveEdit') : submitLabel }}
       </NButton>
     </NSpace>
