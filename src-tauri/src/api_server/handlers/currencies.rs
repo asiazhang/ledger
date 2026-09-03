@@ -7,8 +7,8 @@ use axum::extract::State;
 use rusqlite::Connection;
 
 use crate::api_server::error::ErrorResponse;
+use crate::currencies::Currency;
 use crate::error::AppError;
-use crate::models::Currency;
 
 #[utoipa::path(
     get,
