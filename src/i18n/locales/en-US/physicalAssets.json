@@ -7,14 +7,37 @@
     "name": "Name",
     "valuation": "Current Value",
     "valuationDate": "Valued At",
-    "status": "Status"
+    "status": "Status",
+    "actions": "Actions"
+  },
+  "actions": {
+    "updateValuation": "Update Value",
+    "edit": "Edit"
   },
   "status": {
     "holding": "Holding",
     "disposed": "Disposed"
   },
+  "valuation": {
+    "title": "Update Valuation",
+    "label": {
+      "amount": "Value",
+      "date": "Valued At"
+    },
+    "placeholder": {
+      "amount": "e.g. 800000",
+      "date": "Select valuation date"
+    },
+    "dateHint": "Empty = today; each update appends a history row, old values are kept",
+    "msg": {
+      "amountRequired": "Value amount is required",
+      "amountInvalid": "Value must be greater than 0",
+      "currencyRequired": "Please select a currency"
+    }
+  },
   "form": {
     "title": "New Physical Asset",
+    "titleEdit": "Edit Physical Asset",
     "label": {
       "name": "Name",
       "valuation": "Current Value",
@@ -41,6 +64,8 @@
   },
   "msg": {
     "created": "Asset created",
+    "updated": "Asset updated",
+    "valuationUpdated": "Valuation updated",
     "saveFailed": "Save failed: {msg}"
   }
 }

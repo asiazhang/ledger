@@ -60,6 +60,8 @@ mod manual_quote_steps;
 mod merchants_steps;
 #[path = "e2e/migration_steps.rs"]
 mod migration_steps;
+#[path = "e2e/physical_asset_updates_steps.rs"]
+mod physical_asset_updates_steps;
 #[path = "e2e/physical_assets_steps.rs"]
 mod physical_assets_steps;
 #[path = "e2e/policies_steps.rs"]
