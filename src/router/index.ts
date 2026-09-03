@@ -35,6 +35,9 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('@/views/InvestmentsView.vue'),
   },
   {
+    // 定时（issue #202）：自 #473 起不再是侧栏主项——主入口为记账组「更多」定时页签
+    // （issue #473 / ADR-0063 决策 3）。独立路由保留供 ViewState 存量名解析与旧深链
+    // （/subscriptions 重定向先例，issue #202）；侧栏不渲染、无键位。
     path: '/scheduled',
     name: 'scheduled',
     component: () => import('@/views/ScheduledView.vue'),
@@ -60,11 +63,16 @@ export const routes: RouteRecordRaw[] = [
     redirect: { name: 'assets-more', query: { tab: 'policies' } },
   },
   {
-    // 「更多」聚合视图（issue #371）：低频视图的单一收容器，页签态在 query.tab。
-    // issue #472 / ADR-0063：保单按域归位资产组后仅剩商户页签；全局收容器待 #473 退役。
+    // 全局「更多」聚合视图已退役（issue #473 / ADR-0063 决策 1/5）：仅留重定向记录，
+    // 承接旧视图名（ViewState 存量 'more' 启动恢复落记账·更多，不回退概览）与旧深链。
+    // 迁移链：/more → 记账·更多；/more?tab=merchants → 记账·更多商户页签；
+    // /more?tab=policies → 资产·更多保单页签（/policies 重定向先例的延伸）。
     path: '/more',
     name: 'more',
-    component: () => import('@/views/MoreView.vue'),
+    redirect: (to) =>
+      to.query.tab === 'policies'
+        ? { name: 'assets-more', query: to.query }
+        : { name: 'bookkeeping-more', query: to.query },
   },
   {
     // 组内「更多」聚合页（issue #472 / ADR-0063 决策 1/5：路由镜像侧栏层级），

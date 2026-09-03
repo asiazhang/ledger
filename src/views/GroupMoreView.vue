@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { computed, type Component } from 'vue'
+import { computed, h, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { t } from '@/i18n'
 import { NTabs, NTabPane, NIcon } from 'naive-ui'
-import { ShieldCheckmarkOutline, CubeOutline } from '@vicons/ionicons5'
+import { ShieldCheckmarkOutline, CubeOutline, RepeatOutline, StorefrontOutline } from '@vicons/ionicons5'
 import PoliciesView from '@/views/PoliciesView.vue'
 import PhysicalAssetsView from '@/views/PhysicalAssetsView.vue'
+import ScheduledView from '@/views/ScheduledView.vue'
+import MerchantManager from '@/components/MerchantManager.vue'
 import { sidebarContainment } from '@/composables/useViewShortcuts'
-import type { SidebarGroupId } from '@/composables/useViewShortcuts'
+import type { ContainableViewName, SidebarGroupId } from '@/composables/useViewShortcuts'
 
 /**
  * 组内「更多」聚合页（issue #472 / ADR-0063 决策 1/5）：收纳单位 = 侧栏分组。
@@ -20,14 +22,16 @@ import type { SidebarGroupId } from '@/composables/useViewShortcuts'
 
 const props = defineProps<{ group: SidebarGroupId }>()
 
-/** 收纳成员 → 视图组件（呈现层装配；后续票迁入商户/定时在此追加） */
-const CONTAINED_VIEW_COMPONENTS: Record<string, Component> = {
-  policies: PoliciesView,
-  physicalAssets: PhysicalAssetsView,
-}
-const CONTAINED_VIEW_ICONS: Record<string, Component> = {
-  policies: ShieldCheckmarkOutline,
-  physicalAssets: CubeOutline,
+/**
+ * 收纳成员 → 装配记录（呈现层装配；#473 迁入定时/商户）：组件与图标同源一处，
+ * 键收窄为 ContainableViewName（顺序源模块词表，拼错成员名即编译错误）。
+ */
+const CONTAINED_VIEWS: Record<ContainableViewName, { component: Component; icon: Component }> = {
+  policies: { component: PoliciesView, icon: ShieldCheckmarkOutline },
+  physicalAssets: { component: PhysicalAssetsView, icon: CubeOutline },
+  // 定时内嵌态：页签退内存态（容器页签与被收视图共用 query.tab 会双写互踩）
+  scheduled: { component: () => h(ScheduledView, { embedded: true }), icon: RepeatOutline },
+  merchants: { component: MerchantManager, icon: StorefrontOutline },
 }
 
 const route = useRoute()
@@ -56,8 +60,8 @@ function onTabChange(key: string | number) {
 <template>
   <NTabs type="line" :value="activeTab" @update:value="onTabChange">
     <NTabPane v-for="name in tabs" :key="name" :name="name">
-      <template #tab><span class="pane-tab"><NIcon :component="CONTAINED_VIEW_ICONS[name]" />{{ t(`common.nav.${name}`) }}</span></template>
-      <component :is="CONTAINED_VIEW_COMPONENTS[name]" />
+      <template #tab><span class="pane-tab"><NIcon :component="CONTAINED_VIEWS[name].icon" />{{ t(`common.nav.${name}`) }}</span></template>
+      <component :is="CONTAINED_VIEWS[name].component" />
     </NTabPane>
   </NTabs>
 </template>

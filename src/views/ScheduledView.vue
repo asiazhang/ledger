@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { t } from '@/i18n'
 import { NTabs, NTabPane, NIcon } from 'naive-ui'
@@ -18,10 +18,19 @@ import TransfersPane from '@/components/scheduled/TransfersPane.vue'
  * 订阅页签内容整体迁自原 /subscriptions 视图（SubscriptionsPane），
  * 分期页签由 InstallmentsPane 提供（issue #204），
  * 定时转账页签由 TransfersPane 提供（issue #203）。
+ * 自 #473 起主入口为记账组「更多」定时页签（ADR-0063 决策 3）；独立路由保留供
+ * ViewState 存量与旧深链（见 router）。
  */
 
 const TABS = ['subscriptions', 'installments', 'transfers'] as const
 type ScheduledTab = (typeof TABS)[number]
+
+/**
+ * embedded：组内「更多」容器内嵌态（issue #473）。容器页签同样占用 query.tab，
+ * 本视图内嵌时退为内存态页签（切页签不读写 query），避免同一路由参数双写互踩；
+ * 独立路由态（默认）行为不变。
+ */
+const props = defineProps<{ embedded?: boolean }>()
 
 const route = useRoute()
 const router = useRouter()
@@ -31,17 +40,24 @@ function isScheduledTab(v: unknown): v is ScheduledTab {
   return typeof v === 'string' && (TABS as readonly string[]).includes(v)
 }
 
-const activeTab = computed<ScheduledTab>(() =>
-  isScheduledTab(route.query.tab) ? route.query.tab : 'subscriptions',
-)
+/** 内嵌态页签（内存态，容器内不落 URL）。 */
+const localTab = ref<ScheduledTab>('subscriptions')
 
-/** 页签切换走 replace：不产生多余历史记录，深链语义（每页签一条 URL）；
- *  展开既有 query——保留路由上未来可能出现的其他参数。 */
+const activeTab = computed<ScheduledTab>(() => {
+  if (props.embedded) return localTab.value
+  return isScheduledTab(route.query.tab) ? route.query.tab : 'subscriptions'
+})
+
+/** 页签切换：独立态走 replace（不产生多余历史记录，深链语义，每页签一条 URL，
+ *  展开既有 query——保留路由上未来可能出现的其他参数）；内嵌态仅写内存态。 */
 function onTabChange(key: string | number) {
   const tab = String(key)
-  if (isScheduledTab(tab) && tab !== activeTab.value) {
-    void router.replace({ query: { ...route.query, tab } })
+  if (!isScheduledTab(tab) || tab === activeTab.value) return
+  if (props.embedded) {
+    localTab.value = tab
+    return
   }
+  void router.replace({ query: { ...route.query, tab } })
 }
 </script>
 
