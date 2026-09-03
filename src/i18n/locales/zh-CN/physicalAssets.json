@@ -1,0 +1,45 @@
+{
+  "newButton": "新建资产",
+  "holdingTotal": "在持估值合计",
+  "listTitle": "资产列表",
+  "emptyGuide": "还没有实物资产，点击「新建资产」为你的大件家当建立估值档案",
+  "columns": {
+    "name": "名称",
+    "valuation": "当前估值",
+    "valuationDate": "估值日期",
+    "status": "状态"
+  },
+  "status": {
+    "holding": "在持",
+    "disposed": "已处置"
+  },
+  "form": {
+    "title": "新建实物资产",
+    "label": {
+      "name": "名称",
+      "valuation": "当前估值",
+      "purchaseDate": "购买日期",
+      "purchasePrice": "购买价"
+    },
+    "placeholder": {
+      "name": "如：房子、车子、钢琴",
+      "valuation": "如 800000",
+      "currency": "币种",
+      "purchaseDate": "选择购买日期（可选）"
+    },
+    "msg": {
+      "nameRequired": "请输入资产名称",
+      "valuationRequired": "请填写当前估值",
+      "valuationInvalid": "当前估值必须大于 0",
+      "valuationCurrencyRequired": "请选择估值币种",
+      "purchaseInvalid": "购买价必须大于 0",
+      "purchaseCurrencyRequired": "请选择购买币种"
+    },
+    "cancel": "取消",
+    "save": "保存"
+  },
+  "msg": {
+    "created": "建档成功",
+    "saveFailed": "保存失败：{msg}"
+  }
+}

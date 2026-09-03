@@ -1,0 +1,45 @@
+{
+  "newButton": "New Asset",
+  "holdingTotal": "Holding Total",
+  "listTitle": "Assets",
+  "emptyGuide": "No physical assets yet. Click \"New Asset\" to start a valuation file for your valuables",
+  "columns": {
+    "name": "Name",
+    "valuation": "Current Value",
+    "valuationDate": "Valued At",
+    "status": "Status"
+  },
+  "status": {
+    "holding": "Holding",
+    "disposed": "Disposed"
+  },
+  "form": {
+    "title": "New Physical Asset",
+    "label": {
+      "name": "Name",
+      "valuation": "Current Value",
+      "purchaseDate": "Purchase Date",
+      "purchasePrice": "Purchase Price"
+    },
+    "placeholder": {
+      "name": "e.g. house, car, piano",
+      "valuation": "e.g. 800000",
+      "currency": "Currency",
+      "purchaseDate": "Select purchase date (optional)"
+    },
+    "msg": {
+      "nameRequired": "Asset name is required",
+      "valuationRequired": "Current value is required",
+      "valuationInvalid": "Current value must be greater than 0",
+      "valuationCurrencyRequired": "Please select a currency",
+      "purchaseInvalid": "Purchase price must be greater than 0",
+      "purchaseCurrencyRequired": "Please select a purchase currency"
+    },
+    "cancel": "Cancel",
+    "save": "Save"
+  },
+  "msg": {
+    "created": "Asset created",
+    "saveFailed": "Save failed: {msg}"
+  }
+}

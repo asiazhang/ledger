@@ -1,0 +1,139 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
+import { setActivePinia, createPinia } from 'pinia'
+import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
+import { usePhysicalAssetsStore } from '@/stores/physicalAssets'
+import { makePhysicalAsset, makePhysicalAssetList } from './factories'
+import type { PhysicalAsset, PhysicalAssetInput, PhysicalAssetList } from '@/types'
+
+const mockInvoke = vi.mocked(invoke)
+const mockListen = vi.mocked(listen)
+
+function baseAsset(over: Partial<PhysicalAsset> = {}): PhysicalAsset {
+  return makePhysicalAsset({ id: 'asset-1', ...over })
+}
+
+const createInput: PhysicalAssetInput = {
+  name: '代步车',
+  purchase_date: '2023-05-01',
+  purchase_price_cents: 12_000_000_00,
+  purchase_currency_code: 'CNY',
+  initial_valuation_cents: 8_000_000_00,
+  initial_valuation_currency_code: 'CNY',
+  initial_valuation_date: null,
+}
+
+/** 捕获 ledger:changed 监听处理器（store 创建时注册） */
+let handlers: Array<(evt: unknown) => void>
+
+beforeEach(() => {
+  setActivePinia(createPinia())
+  mockInvoke.mockReset()
+  mockListen.mockReset()
+  handlers = []
+  mockListen.mockImplementation(async (_evt, handler) => {
+    handlers.push(handler)
+    return vi.fn()
+  })
+})
+
+describe('usePhysicalAssetsStore', () => {
+  it('首次访问自动加载（self-init）：列表与在持合计同批就位，status=ready', async () => {
+    const asset = baseAsset()
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_physical_assets')
+        return Promise.resolve(makePhysicalAssetList({ assets: [asset], holding_total_native_cents: 5_000_000 }))
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const store = usePhysicalAssetsStore()
+    await flushPromises()
+    expect(store.assets).toHaveLength(1)
+    expect(store.assets[0].name).toBe('客厅油画')
+    expect(store.holdingTotalNativeCents).toBe(5_000_000)
+    expect(store.holdingTotalCurrency).toBe('CNY')
+    expect(store.status).toBe('ready')
+    expect(store.version).toBe(1)
+  })
+
+  it('加载失败时 status=error，不抛出（self-init 静默；缺汇率报错走同一通道）', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_physical_assets') return Promise.reject(new Error('未找到 USD -> CNY 的汇率'))
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const store = usePhysicalAssetsStore()
+    await flushPromises()
+    expect(store.status).toBe('error')
+    expect(store.assets).toEqual([])
+  })
+
+  it('ledger:changed 触发静默重拉（stale-while-revalidate：在途不闪空，成功后整体替换）', async () => {
+    const initial = [baseAsset()]
+    const fresh = [baseAsset(), baseAsset({ id: 'asset-2', name: '代步车' })]
+    let resolveSecond: (list: PhysicalAssetList) => void = () => {}
+    let listCalls = 0
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd !== 'list_physical_assets') return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      listCalls++
+      if (listCalls === 1) return Promise.resolve(makePhysicalAssetList({ assets: initial, holding_total_native_cents: 5_000_000 }))
+      return new Promise<PhysicalAssetList>((resolve) => {
+        resolveSecond = resolve
+      })
+    })
+    const store = usePhysicalAssetsStore()
+    await flushPromises()
+    expect(store.assets).toEqual(initial)
+
+    handlers.forEach((h) => h({ event: 'ledger:changed', payload: null }))
+    await flushPromises()
+    // 第二次拉取在途：旧数据保留，不闪空
+    expect(store.assets).toEqual(initial)
+    resolveSecond(makePhysicalAssetList({ assets: fresh, holding_total_native_cents: 13_000_000 }))
+    await flushPromises()
+    expect(store.assets).toEqual(fresh)
+    expect(store.holdingTotalNativeCents).toBe(13_000_000)
+    expect(store.version).toBe(2)
+  })
+
+  it('create 成功后立即重拉并返回 id（建档后列表与合计随之更新）', async () => {
+    let listCalls = 0
+    mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
+      if (cmd === 'list_physical_assets') {
+        listCalls++
+        return Promise.resolve(
+          listCalls > 1
+            ? makePhysicalAssetList({
+                assets: [baseAsset({ id: 'new-1', name: '代步车', current_valuation_cents: 8_000_000_00, current_valuation_native_cents: 8_000_000_00 })],
+                holding_total_native_cents: 8_000_000_00,
+              })
+            : makePhysicalAssetList(),
+        )
+      }
+      if (cmd === 'create_physical_asset') {
+        expect(args).toMatchObject({ input: createInput })
+        return Promise.resolve('new-1')
+      }
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const store = usePhysicalAssetsStore()
+    await flushPromises()
+    expect(store.assets).toHaveLength(0)
+    const id = await store.create(createInput)
+    expect(id).toBe('new-1')
+    await flushPromises()
+    expect(store.assets).toHaveLength(1)
+    expect(store.holdingTotalNativeCents).toBe(8_000_000_00)
+  })
+
+  it('create 失败不重拉、错误上抛（由调用方 toast 展示）', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_physical_assets') return Promise.resolve(makePhysicalAssetList())
+      if (cmd === 'create_physical_asset') return Promise.reject(new Error('资产名称不能为空'))
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const store = usePhysicalAssetsStore()
+    await flushPromises()
+    await expect(store.create({ ...createInput, name: '' })).rejects.toThrow('资产名称不能为空')
+    expect(store.version).toBe(1)
+  })
+})
