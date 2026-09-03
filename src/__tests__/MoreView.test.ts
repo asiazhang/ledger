@@ -79,9 +79,41 @@ describe('MoreView 「更多」聚合视图页签容器（issue #371）', () => 
   })
 })
 
-// 注：切页签 replace 写回用例本轮不可建——naive-ui Tab 对与当前激活值相同的
-// 点击不发 update:value，唯一页签下无「切换」可触发（与定时页同一实现形状，
-// 非共享抽象）；新页签接入时随定时页测试模式补齐。
+describe('商户页签迁入「更多」（issue #444 / ADR-0055 决策 2 清单追加成员）', () => {
+  it('页签顺序：保单在前、商户追加在后，容器零业务逻辑', async () => {
+    const { wrapper } = await mountView()
+    const tabs = wrapper.findAll('.n-tabs-tab').map((t) => t.text())
+    expect(tabs).toEqual(['保单', '商户'])
+  })
+
+  it('默认页签仍为保单：商户列表不随默认态渲染内容', async () => {
+    const { wrapper } = await mountView()
+    expect(wrapper.find('[data-testid="policy-new"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('新增商户')
+  })
+
+  it('点击「商户」页签：路由 query.tab replace 写回且商户管理完整装载', async () => {
+    const { wrapper, router: r } = await mountView()
+    await wrapper.findAll('.n-tabs-tab').find((t) => t.text() === '商户')!.trigger('click')
+    await flushPromises()
+    expect(r.currentRoute.value.query.tab).toBe('merchants')
+    expect(wrapper.text()).toContain('新增商户')
+    expect(wrapper.text()).toContain('商户列表')
+    // 整体迁入：既有功能行为不变——新建表单与行操作入口齐备
+    expect(wrapper.find('input[placeholder="商户名称"]').exists()).toBe(true)
+  })
+
+  it('tab query 深链直达商户页签（/more?tab=merchants）', async () => {
+    const { wrapper } = await mountView('/more?tab=merchants')
+    expect(wrapper.text()).toContain('新增商户')
+    expect(wrapper.find('[data-testid="policy-new"]').exists()).toBe(false)
+  })
+
+  it('保单迁入先例不变：/policies 旧路由仍落到「更多」保单页签', async () => {
+    const { wrapper } = await mountView('/policies')
+    expect(wrapper.find('[data-testid="policy-new"]').exists()).toBe(true)
+  })
+})
 
 describe('旧保单路由迁移（issue #371，#202 先例）', () => {
   it('真实路由表：/policies 重定向到「更多」并携带 tab: policies', async () => {

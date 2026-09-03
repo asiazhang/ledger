@@ -3,14 +3,12 @@ import { NSpace, NTabs, NTabPane, NIcon } from 'naive-ui'
 import {
   OptionsOutline,
   GridOutline,
-  StorefrontOutline,
   ServerOutline,
   RepeatOutline,
   InformationCircleOutline,
 } from '@vicons/ionicons5'
 import GeneralSettings from '@/components/settings/GeneralSettings.vue'
 import CategoryManager from '@/components/CategoryManager.vue'
-import MerchantManager from '@/components/MerchantManager.vue'
 import BackupSettings from '@/components/settings/BackupSettings.vue'
 import DataLocationSettings from '@/components/settings/DataLocationSettings.vue'
 import ScheduledSettings from '@/components/settings/ScheduledSettings.vue'
@@ -19,8 +17,9 @@ import { t } from '@/i18n'
 </script>
 
 <template>
-  <!-- Tab 分域（issue #157 / ADR-0022；ADR-0034 移除币种只读展示并更名；#308 新增定时）：
-       通用（轻量设备偏好）→ 分类（参考数据）→ 商户（参考数据）→ 数据（备份与存储位置）
+  <!-- Tab 分域（issue #157 / ADR-0022；ADR-0034 移除币种只读展示并更名；#308 新增定时；
+       #444 移除商户 Tab——商户管理迁入「更多」聚合页，入口全应用唯一，ADR-0055）：
+       通用（轻量设备偏好）→ 分类（参考数据）→ 数据（备份与存储位置）
        → 定时（定时计划域设备偏好）→ 关于（恒在末位，新增 Tab 一律插在它之前）。
        「数据」pane 用 display-directive='show:lazy'：首次激活挂载后保持挂载，
        备份列表在 tab 切换间保留缓存；useBackup 的 onMounted 于首次激活时刷新。
@@ -36,11 +35,6 @@ import { t } from '@/i18n'
     <NTabPane name="categories" key="categories">
       <template #tab><span class="pane-tab"><NIcon :component="GridOutline" />{{ t('settings.tabs.categories') }}</span></template>
       <CategoryManager />
-    </NTabPane>
-
-    <NTabPane name="merchants" key="merchants">
-      <template #tab><span class="pane-tab"><NIcon :component="StorefrontOutline" />{{ t('settings.tabs.merchants') }}</span></template>
-      <MerchantManager />
     </NTabPane>
 
     <NTabPane name="data" key="data" display-directive="show:lazy">

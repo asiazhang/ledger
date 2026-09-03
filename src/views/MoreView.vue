@@ -3,17 +3,20 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { t } from '@/i18n'
 import { NTabs, NTabPane, NIcon } from 'naive-ui'
-import { ShieldCheckmarkOutline } from '@vicons/ionicons5'
+import { ShieldCheckmarkOutline, StorefrontOutline } from '@vicons/ionicons5'
 import PoliciesView from '@/views/PoliciesView.vue'
+import MerchantManager from '@/components/MerchantManager.vue'
 
 /**
  * 「更多」聚合视图（issue #371 / ADR-0055）：低频视图的单一收容器。
  * 页签容器形态（先例：定时页三页签），低频视图组件整体作为页签装载，容器零业务逻辑；
- * 本轮唯一页签 = 保单。页签状态收敛在路由 query.tab（单字段路由状态，可深链/可恢复），
+ * 页签状态收敛在路由 query.tab（单字段路由状态，可深链/可恢复），
  * 切页签 replace 写回（定时页既有约定）；页签合法性守卫，无/非法 tab 回默认页签。
+ * 商户管理迁入为第二个页签（issue #444 / ADR-0055 决策 2 清单追加成员），
+ * 页签顺序：保单在前且默认不变、商户追加在后；页签切换不触碰抑制语义。
  */
 
-const TABS = ['policies'] as const
+const TABS = ['policies', 'merchants'] as const
 type MoreTab = (typeof TABS)[number]
 
 const route = useRoute()
@@ -43,6 +46,11 @@ function onTabChange(key: string | number) {
     <NTabPane name="policies">
       <template #tab><span class="pane-tab"><NIcon :component="ShieldCheckmarkOutline" />{{ t('common.nav.policies') }}</span></template>
       <PoliciesView />
+    </NTabPane>
+
+    <NTabPane name="merchants">
+      <template #tab><span class="pane-tab"><NIcon :component="StorefrontOutline" />{{ t('common.nav.merchants') }}</span></template>
+      <MerchantManager />
     </NTabPane>
   </NTabs>
 </template>
