@@ -96,7 +96,10 @@
       "updateFailed": "更新失败: {msg}",
       "deleted": "已删除商户",
       "deleteFailed": "删除失败: {msg}"
-    }
+    },
+    "searchPlaceholder": "搜索商户（名称/拼音）",
+    "showDeleted": "显示已删",
+    "deletedTag": "已删除"
   },
   "data": {
     "backup": {

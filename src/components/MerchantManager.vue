@@ -3,11 +3,13 @@ import { h, ref, computed, watch } from 'vue'
 import {
   NButton,
   NCard,
+  NCheckbox,
   NDataTable,
   NForm,
   NFormItem,
   NInput,
   NSpace,
+  NTag,
   useMessage,
   type DataTableColumn,
 } from 'naive-ui'
@@ -16,6 +18,7 @@ import MerchantEditModal from '@/components/merchants/MerchantEditModal.vue'
 import { api } from '@/api'
 import { useRouter } from 'vue-router'
 import { useReferenceStore } from '@/stores/reference'
+import { matchLabel } from '@/utils/pinyin-filter'
 import { t } from '@/i18n'
 import { formatQuantity } from '@/utils/money'
 import type { Merchant, MerchantInput } from '@/types'
@@ -32,6 +35,8 @@ import type { Merchant, MerchantInput } from '@/types'
 // （MerchantLink）、报表分类下钻同一 URL 下钻机制（?merchant=<id>）；落地后的
 // 过滤行为由 TransactionFilter 既有机制承担（含与分类/账户/日期参数 AND 并存、
 // 软删商户经 merchantMap 历史交易口径可解析）。本票只负责产生正确的跳转。
+// 拼音搜索与显示已删（issue #447）：搜索按统一模糊搜索语义本地过滤（ADR-0027，
+// 唯一定义点为核心交易域 TransactionSearch）；已删行只读展示、条数照常可下钻。
 
 interface MerchantRow extends Merchant {
   /** 关联交易条数（毛笔数）：无引用商户为 0 */
@@ -70,13 +75,37 @@ watch(
   { immediate: true },
 )
 
-/** 列表行视图模型：参考数据单一来源的商户行 + 客户端拼接的条数（缺失补 0）。 */
-const rows = computed<MerchantRow[]>(() =>
-  reference.merchants.map((m) => ({
-    ...m,
-    transactionCount: transactionCounts.value.get(m.id) ?? 0,
-  })),
+/** 行视图模型：商户行 + 客户端拼接的条数（缺失补 0）；在用与已删同构。 */
+function toRow(m: Merchant): MerchantRow {
+  return { ...m, transactionCount: transactionCounts.value.get(m.id) ?? 0 }
+}
+
+/** 列表行视图模型：参考数据单一来源的在用商户行。 */
+const rows = computed<MerchantRow[]>(() => reference.merchants.map(toRow))
+
+// —— 显示已删（issue #447）：默认只显示在用商户；切换后已软删商户以只读行
+// 追加在尾部展示（无编辑/删除操作），条数照常显示、照常可下钻。已删字典
+// 消费参考 store 既有软删缓存（历史交易口径同一数据源），无新增拉取。
+const showDeleted = ref(false)
+
+/** 已删行：软删商户同样拼接条数（照常计数、可下钻）。默认（名称序）展示在
+ * 在用行之后；条数列排序激活后由表格排序接管，不另行隔离已删行。 */
+const deletedRows = computed<MerchantRow[]>(() =>
+  [...reference.deletedMerchants.values()].map(toRow),
 )
+
+// —— 搜索（issue #447）：统一模糊搜索语义（全库唯一定义点为核心交易域
+// TransactionSearch，ADR-0027），复用拼音过滤工具的前端同规格纯函数；
+// 商户字典前端全量驻留，属本地过滤形态（拼音可搜下拉同款）。searchTerm
+// 过滤只隐藏未命中项、剩余项顺序不变（保护位置记忆），清空恢复完整列表。
+const searchTerm = ref('')
+
+/** 展示行：（显示已删？在用 + 已删：仅在用）→ 搜索词过滤
+ *（matchLabel 空输入恒命中，清空即完整列表；filter 保序不重排）。 */
+const displayRows = computed<MerchantRow[]>(() => {
+  const base = showDeleted.value ? [...rows.value, ...deletedRows.value] : rows.value
+  return base.filter((m) => matchLabel(searchTerm.value, m.name))
+})
 
 // —— 新增 ——
 const name = ref('')
@@ -119,7 +148,20 @@ async function removeMerchant(id: string) {
 
 // —— 列表 ——
 const columns: DataTableColumn<MerchantRow>[] = [
-  { title: () => t('settings.merchants.columns.name'), key: 'name', width: 200, ellipsis: { tooltip: true } },
+  {
+    // 已删行带「已删除」标记（issue #447）：与在用行可区分。
+    title: () => t('settings.merchants.columns.name'),
+    key: 'name',
+    width: 200,
+    ellipsis: { tooltip: true },
+    render: (m) =>
+      m.is_deleted
+        ? h(NSpace, { size: 'small', align: 'center', wrap: false }, () => [
+            h('span', m.name),
+            h(NTag, { size: 'small', bordered: false }, () => t('settings.merchants.deletedTag')),
+          ])
+        : m.name,
+  },
   {
     // 关联交易条数（issue #445）：毛笔数、可排序；展示走数字分组口径（数量列）。
     // 点击条数下钻（issue #446）：文字按钮跳转交易列表并携带商户过滤参数，
@@ -144,27 +186,30 @@ const columns: DataTableColumn<MerchantRow>[] = [
     title: () => t('settings.merchants.columns.actions'),
     key: 'actions',
     width: 140,
+    // 已删行只读（issue #447）：无编辑/删除操作。
     render: (m) =>
-      h(NSpace, { size: 'small' }, () => [
-        h(
-          NButton,
-          { size: 'tiny', quaternary: true, type: 'primary', onClick: () => openEdit(m) },
-          () => t('settings.merchants.rowActions.edit'),
-        ),
-        h(
-          AppPopconfirm,
-          { onPositiveClick: () => removeMerchant(m.id) },
-          {
-            default: () => t('settings.merchants.deleteConfirm'),
-            trigger: () =>
-              h(
-                NButton,
-                { size: 'tiny', type: 'error', quaternary: true },
-                () => t('settings.merchants.rowActions.delete'),
-              ),
-          },
-        ),
-      ]),
+      m.is_deleted
+        ? null
+        : h(NSpace, { size: 'small' }, () => [
+            h(
+              NButton,
+              { size: 'tiny', quaternary: true, type: 'primary', onClick: () => openEdit(m) },
+              () => t('settings.merchants.rowActions.edit'),
+            ),
+            h(
+              AppPopconfirm,
+              { onPositiveClick: () => removeMerchant(m.id) },
+              {
+                default: () => t('settings.merchants.deleteConfirm'),
+                trigger: () =>
+                  h(
+                    NButton,
+                    { size: 'tiny', type: 'error', quaternary: true },
+                    () => t('settings.merchants.rowActions.delete'),
+                  ),
+              },
+            ),
+          ]),
   },
 ]
 </script>
@@ -181,13 +226,26 @@ const columns: DataTableColumn<MerchantRow>[] = [
     </NCard>
 
     <NCard :title="t('settings.merchants.listTitle')" size="small">
-      <NDataTable
-        :columns="columns"
-        :data="rows"
-        :bordered="false"
-        size="small"
-        :row-key="(m: MerchantRow) => m.id"
-      />
+      <NSpace vertical :size="12">
+        <NSpace align="center">
+          <NInput
+            v-model:value="searchTerm"
+            clearable
+            :placeholder="t('settings.merchants.searchPlaceholder')"
+            style="width: 240px"
+          />
+          <NCheckbox v-model:checked="showDeleted">
+            {{ t('settings.merchants.showDeleted') }}
+          </NCheckbox>
+        </NSpace>
+        <NDataTable
+          :columns="columns"
+          :data="displayRows"
+          :bordered="false"
+          size="small"
+          :row-key="(m: MerchantRow) => m.id"
+        />
+      </NSpace>
     </NCard>
 
     <MerchantEditModal v-model:show="showEditModal" :merchant="editingMerchant" />

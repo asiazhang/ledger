@@ -96,7 +96,10 @@
       "updateFailed": "Update failed: {msg}",
       "deleted": "Merchant deleted",
       "deleteFailed": "Delete failed: {msg}"
-    }
+    },
+    "searchPlaceholder": "Search merchants (name/pinyin)",
+    "showDeleted": "Show deleted",
+    "deletedTag": "Deleted"
   },
   "data": {
     "backup": {

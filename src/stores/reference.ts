@@ -41,6 +41,7 @@ export const useReferenceStore = defineStore('reference', () => {
    * 软删商户（issue #189 / ADR-0028）：软删后不可再被选择，但历史交易引用照常显示。
    * 数据源为后端含软删全量列表（`list_merchants({ includeDeleted: true })`，issue #191）
    * 按 `is_deleted` 拆分而来：跨会话可用，无需 diff 缓存。
+   * 商户管理列表「显示已删」（issue #447）消费同一份缓存，无新增拉取。
    */
   const deletedMerchants = ref(new Map<string, Merchant>())
 
@@ -194,6 +195,7 @@ export const useReferenceStore = defineStore('reference', () => {
     accounts,
     categories,
     merchants,
+    deletedMerchants,
     status,
     version,
     currencyMap,
