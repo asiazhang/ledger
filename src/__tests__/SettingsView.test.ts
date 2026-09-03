@@ -97,7 +97,7 @@ beforeEach(async () => {
   await store.refresh()
 })
 
-describe('SettingsView.vue（issue #157：Tab 分域重构 6 → 4）', () => {
+describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格局 5 页签）', () => {
   it('Tab 格局为 通用 → 分类 → 数据 → 定时 → 关于，共 5 个，关于在末位（#308 定时；#444 商户 Tab 移除——商户管理迁入「更多」聚合页，入口唯一）', () => {
     const wrapper = mount(SettingsView)
     const labels = wrapper.findAll('.n-tabs-tab').map((t) => t.text())
@@ -126,12 +126,6 @@ describe('SettingsView.vue（issue #157：Tab 分域重构 6 → 4）', () => {
     ])
   })
 
-  it('商户 Tab 已移除（issue #444）：设置页不再承载商户管理，入口唯一在「更多」页', () => {
-    const wrapper = mount(SettingsView)
-    const labels = wrapper.findAll('.n-tabs-tab').map((t) => t.text())
-    expect(labels).not.toContain('商户')
-  })
-
   it('旧 Tab（备份与恢复 / 外观 / 存储位置）全部消失', () => {
     // 「分类」「币种」不再列入：ADR-0034 后「分类」是现役 Tab 名（原「分类与币种」更名），
     // 币种只读展示已移除，不再有独立币种 Tab。
@@ -141,6 +135,8 @@ describe('SettingsView.vue（issue #157：Tab 分域重构 6 → 4）', () => {
     expect(labels).not.toContain('备份与恢复')
     expect(labels).not.toContain('外观')
     expect(labels).not.toContain('存储位置')
+    // #444：商户管理迁入「更多」聚合页，设置页不再承载商户入口
+    expect(labels).not.toContain('商户')
   })
 
   it('「通用」默认激活，含深色模式开关与默认币种下拉，行为不变', async () => {

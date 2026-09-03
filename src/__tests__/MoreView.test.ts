@@ -108,11 +108,6 @@ describe('商户页签迁入「更多」（issue #444 / ADR-0055 决策 2 清单
     expect(wrapper.text()).toContain('新增商户')
     expect(wrapper.find('[data-testid="policy-new"]').exists()).toBe(false)
   })
-
-  it('保单迁入先例不变：/policies 旧路由仍落到「更多」保单页签', async () => {
-    const { wrapper } = await mountView('/policies')
-    expect(wrapper.find('[data-testid="policy-new"]').exists()).toBe(true)
-  })
 })
 
 describe('旧保单路由迁移（issue #371，#202 先例）', () => {
