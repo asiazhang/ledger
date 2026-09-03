@@ -4,6 +4,19 @@
 //! 各模块与资源域一一对应，公共设施（应用装配、参考数据创建辅助、批量请求、断言辅助）
 //! 集中在 `common`；散落在各资源域的 OpenAPI 文档契约断言集中到 `documentation`。
 
+// 测试整体豁免（ADR-0060）：集成测试 crate 经 cfg(test) 放行六件套，生产构建零放宽。
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::unreachable
+    )
+)]
+
 mod account_update;
 mod balance;
 mod batch_import;

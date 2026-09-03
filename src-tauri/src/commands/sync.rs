@@ -5,6 +5,10 @@
 //! `sync_holding_prices` / `sync_instruments` / `cancel_sync_instruments` 三个
 //! 命令（`commands/mod.rs` 经 `pub use sync::*` 重导出，注册路径与前端/BDD
 //! 调用零改动）。
+//
+// 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
+// （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
+#![allow(clippy::unreachable)]
 
 use std::sync::atomic::Ordering;
 use std::thread;

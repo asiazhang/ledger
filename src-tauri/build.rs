@@ -14,6 +14,17 @@
 //! cfg 条件命令、注解与 fn 之间的属性行均不支持——遇到不认识的形态直接 panic（fail loud，
 //! 宁可编译失败不可静默漏注册）；未来扩展时须同步修改 `scripts/check-commands.js`
 //! （TS 调用面一致性校验与本文共享同一扫描规则）。
+//
+// 豁免（ADR-0060）：构建脚本 fail-loud 守门（ADR-0047）刻意用 panic!/expect 表达
+// 「扫描器失灵即拒绝构建」；构建期代码不进入生产运行时，不受六件套门禁约束。
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::unreachable
+)]
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;

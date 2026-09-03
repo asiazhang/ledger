@@ -225,6 +225,8 @@ where
 
 /// 北京时间今天（A 股/基金净值日历以北京时间为准）。
 pub(super) fn beijing_today() -> NaiveDate {
+    // A 类临时豁免（ADR-0060，待结构性消除）：UTC+8 固定偏移恒合法，类型系统无法证明。
+    #[allow(clippy::expect_used)]
     let beijing = chrono::FixedOffset::east_opt(8 * 3600).expect("固定时区偏移合法");
     chrono::Utc::now().with_timezone(&beijing).date_naive()
 }

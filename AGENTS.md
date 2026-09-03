@@ -8,6 +8,7 @@
 
 - **业务规则、领域术语或跨域改动**：先读 `CONTEXT-MAP.md`，再读所有受影响域的 `docs/contexts/CONTEXT-*.md` 与相关 ADR。
 - **后端壳、域、基础设施或目录归位**：读 `docs/adr/0056-backend-domain-directory-layering.md`；分层规则、归位域与 triage 判定以该 ADR 为准。
+- **后端易 panic 构造（unwrap/expect/panic!/todo!/unimplemented!/unreachable!）或其豁免**：读 `docs/adr/0060-backend-panic-construction-gate.md`；六件套 deny 门禁与逐点豁免纪律以该 ADR 为准。
 - **金额或交易写入改动**：先读 `docs/contexts/CONTEXT-core.md` 和相关 ADR，再以当前金额与写入接缝为唯一实现依据。
 - **前端状态、界面交互或弹层**：读 `docs/contexts/CONTEXT-reference-settings.md`、`docs/contexts/CONTEXT-ui-interaction.md` 及相关 ADR。
 - **用户可见文案或错误**：读相关域词汇表、ADR-0049/0050 和现有 i18n 实现。

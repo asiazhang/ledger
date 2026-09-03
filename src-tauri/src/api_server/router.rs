@@ -74,6 +74,8 @@ pub fn build_router(state: ApiState) -> Router {
 
 pub fn start_http_server(app: AppHandle, state: Arc<Mutex<Connection>>) {
     std::thread::spawn(move || {
+        // B 类豁免（ADR-0060）：HTTP 壳启动期创建 Tokio 运行时，失败即无法运行。
+        #[allow(clippy::expect_used)]
         let rt = tokio::runtime::Runtime::new().expect("创建 Tokio 运行时失败");
         rt.block_on(async move {
             let router = build_router(ApiState {
@@ -81,10 +83,14 @@ pub fn start_http_server(app: AppHandle, state: Arc<Mutex<Connection>>) {
                 emitter: Some(Arc::new(app)),
                 fund_fetch: None,
             });
+            // B 类豁免（ADR-0060）：启动期绑定 9527 端口失败即无法运行。
+            #[allow(clippy::expect_used)]
             let listener = tokio::net::TcpListener::bind("127.0.0.1:9527")
                 .await
                 .expect("绑定 9527 端口失败");
             println!("Ledger API 服务已启动: http://127.0.0.1:9527");
+            // B 类豁免（ADR-0060）：服务器异常退出属启动期致命故障，fail loud。
+            #[allow(clippy::expect_used)]
             axum::serve(listener, router)
                 .await
                 .expect("HTTP 服务器异常退出");

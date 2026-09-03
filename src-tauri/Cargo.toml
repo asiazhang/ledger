@@ -52,3 +52,14 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 name = "e2e"
 harness = false
 
+[lints.clippy]
+# 易 panic 构造六件套 deny 门禁（issue #432 / ADR-0060）：门禁约束生产路径；
+# 测试目标经 crate 根与集成/BDD 测试 crate 头部 cfg_attr(test, allow) 整体豁免，
+# 存量生产 panic 点按 B/C/A 三类逐点豁免安置（清单与纪律见 ADR-0060）。
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+

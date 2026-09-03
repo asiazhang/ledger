@@ -573,6 +573,9 @@ pub fn expand_occurrences(conn: &Connection, st_id: &str) -> Result<Vec<String>>
     let mut ids = Vec::new();
 
     if is_installment {
+        // A 类临时豁免（ADR-0060，待结构性消除）：is_installment 分支内
+        // total_occurrences 恒为 Some（Installment 扩展行保证），结构性改写前保留。
+        #[allow(clippy::unwrap_used)]
         let total = total_occurrences.unwrap();
         let ext: InstallmentPlan = query_one(
             conn,
@@ -767,7 +770,12 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
                         ..Default::default()
                     }
                 }
-                ScheduledKind::ScheduledTransfer => unreachable!(),
+                // A 类临时豁免（ADR-0060，待结构性消除）：外层 match 已按
+                // ScheduledTransfer 分流处理，该聚合分支不可达，后续 ticket 改码化错误。
+                #[allow(clippy::unreachable)]
+                ScheduledKind::ScheduledTransfer => {
+                    unreachable!()
+                }
             };
             (TransactionKind::Expense, st.category_id.clone(), ext)
         }

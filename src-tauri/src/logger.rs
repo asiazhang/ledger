@@ -12,11 +12,17 @@ static LOG_DIR: OnceLock<PathBuf> = OnceLock::new();
 static GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 
 pub fn log_dir() -> &'static PathBuf {
+    // B 类豁免（ADR-0060）：日志目录由 init 在启动期首次登记；未初始化即启动装配
+    // 缺陷，fail loud。
+    #[allow(clippy::expect_used)]
     LOG_DIR.get().expect("logger not initialized")
 }
 
 pub fn init(app_handle: &tauri::AppHandle) {
+    // B 类豁免（ADR-0060）：日志系统首次初始化失败即无法运行——fail loud。
+    #[allow(clippy::expect_used)]
     let dir = app_handle.path().app_log_dir().expect("获取日志目录失败");
+    #[allow(clippy::expect_used)]
     std::fs::create_dir_all(&dir).expect("创建日志目录失败");
     LOG_DIR.set(dir.clone()).ok();
 

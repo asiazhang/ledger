@@ -302,6 +302,8 @@ where
         }
         // 现价 = 窗口内最新公布单位净值；priced_at = nav_date = 净值日期
         // （与 #301 添加基金同形；nav_date 兼任下次同步的水位）。
+        // A 类临时豁免（ADR-0060，待结构性消除）：points 非空已由前文判空保证。
+        #[allow(clippy::expect_used)]
         let latest = points
             .iter()
             .max_by_key(|p| p.date.as_str())

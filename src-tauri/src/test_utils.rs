@@ -8,6 +8,17 @@
 //! 说明：集成测试 `tests/api_server/` 链接的是非 `#[cfg(test)]` 构建的 lib，
 //! 因此本模块不能仅以 `#[cfg(test)]` 编译；`#[doc(hidden)]` 使其不进入文档，
 //! 对生产二进制的影响只是一些未使用的测试辅助类型（可被编译器消除）。
+//
+// C 类豁免（ADR-0060）：仅测试用——本模块被集成测试以非 cfg(test) 构建链接，
+// 无法经 crate 根 cfg(test) 豁免覆盖，故文件级放行六件套；生产路径不得消费本模块。
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::unreachable
+)]
 
 use std::sync::{Arc, Condvar, Mutex, Once};
 use std::thread;
