@@ -5,16 +5,16 @@
 
 use rusqlite::Connection;
 
+use super::model::{
+    Holding, Instrument, InstrumentInput, InstrumentListFilter, InstrumentListResult,
+    InstrumentType, MarketPrice, MarketPriceInput,
+};
 use super::predicates::INVESTED_EXISTS;
 use super::prices::upsert_market_price;
 use crate::currencies::{ExchangeRate, ExchangeRateInput};
 use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::models::{
-    Holding, Instrument, InstrumentInput, InstrumentListFilter, InstrumentListResult,
-    InstrumentType, MarketPrice, MarketPriceInput,
-};
 use crate::transaction::search_text::{split_terms, term_matches_text};
 
 pub fn list_holdings(conn: &Connection) -> Result<Vec<Holding>> {

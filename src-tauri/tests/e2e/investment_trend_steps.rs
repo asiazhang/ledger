@@ -15,8 +15,10 @@ use cucumber::{given, then, when};
 use rusqlite::params;
 
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
-use tauri_app_lib::investment::{query_instrument_price_trend, query_portfolio_value_trend};
-use tauri_app_lib::models::{TransactionInput, TrendRange};
+use tauri_app_lib::investment::{
+    TrendRange, query_instrument_price_trend, query_portfolio_value_trend,
+};
+use tauri_app_lib::models::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::create_transaction_internal;
 

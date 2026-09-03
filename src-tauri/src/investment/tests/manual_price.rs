@@ -9,7 +9,7 @@
 use rusqlite::params;
 
 use crate::investment::manual_price::record_manual_price;
-use crate::models::{InstrumentInput, InstrumentType, ManualPriceInput, ManualPriceResult};
+use crate::investment::{InstrumentInput, InstrumentType, ManualPriceInput, ManualPriceResult};
 
 use super::common::setup_db;
 

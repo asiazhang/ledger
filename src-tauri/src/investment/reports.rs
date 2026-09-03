@@ -1,8 +1,8 @@
 use rusqlite::Connection;
 
+use super::model::{AccountPnl, InstrumentPnl, PnlDetail, PnlFilter, RealizedPnlSummary, YearPnl};
 use crate::db::query::query_all;
 use crate::error::Result;
-use crate::models::{AccountPnl, InstrumentPnl, PnlDetail, PnlFilter, RealizedPnlSummary, YearPnl};
 
 pub fn query_realized_pnl_summary(
     conn: &Connection,

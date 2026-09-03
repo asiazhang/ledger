@@ -10,11 +10,9 @@ use rusqlite::params;
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
 use tauri_app_lib::error::Result;
 use tauri_app_lib::investment::{
-    add_fund_by_code_with, create_instrument_manual, delete_instrument as delete_instrument_domain,
-    list_instruments,
+    FundDetail, FundNav, InstrumentInput, InstrumentListFilter, add_fund_by_code_with,
+    create_instrument_manual, delete_instrument as delete_instrument_domain, list_instruments,
 };
-use tauri_app_lib::models::{InstrumentInput, InstrumentListFilter};
-use tauri_app_lib::sync::{FundDetail, FundNav};
 
 use crate::world::LedgerWorld;
 

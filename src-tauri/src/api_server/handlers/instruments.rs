@@ -14,11 +14,10 @@ use crate::api_server::state::ApiState;
 use crate::api_server::write_ops::emit_after_write;
 use crate::error::AppError;
 use crate::investment::{
-    FundCreateOutcome, create_fund_degraded, is_six_digit_code, persist_fund_detail,
+    FundCreateOutcome, FundDetail, InstrumentInput, InstrumentListFilter, InstrumentListResult,
+    InstrumentType, create_fund_degraded, is_six_digit_code, persist_fund_detail,
 };
-use crate::models::{InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentType};
 use crate::signals::{WriteEvidence, WriteOp};
-use crate::sync::FundDetail;
 
 /// 标的搜索查询参数（`GET /api/v1/instruments`，issue #294 / ADR-0037）。
 #[derive(Debug, Deserialize)]

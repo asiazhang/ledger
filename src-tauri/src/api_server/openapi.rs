@@ -7,10 +7,11 @@ use utoipa::OpenApi;
 use crate::accounts::{Account, AccountBalance, AccountInput, AccountType, AccountUpdateInput};
 use crate::categories::{Category, CategoryInput};
 use crate::currencies::Currency;
+use crate::investment::{Instrument, InstrumentListResult, InstrumentType};
 use crate::merchants::Merchant;
 use crate::models::{
-    CreateTransactionResult, Instrument, InstrumentListResult, InstrumentType, Transaction,
-    TransactionBatchInput, TransactionInput, TransactionListResult, UpdateTransactionInput,
+    CreateTransactionResult, Transaction, TransactionBatchInput, TransactionInput,
+    TransactionListResult, UpdateTransactionInput,
 };
 use crate::transaction::amount::TransactionKind;
 
@@ -90,16 +91,4 @@ pub struct ApiDoc;
 /// 生成式返回 OpenAPI 文档（机器可读契约，供 AI 查询端点结构）。
 pub async fn openapi_json_handler() -> impl IntoResponse {
     Json(ApiDoc::openapi())
-}
-
-#[cfg(test)]
-mod t5_contract_dump {
-    use utoipa::OpenApi;
-
-    /// 临时（#422 模型域化 T5 契约验收用，提交前移除）：dump OpenAPI 契约 JSON。
-    #[test]
-    fn dump_openapi_contract_json() {
-        let json = super::ApiDoc::openapi().to_pretty_json().expect("序列化 OpenAPI 契约");
-        std::fs::write("/tmp/ledger-openapi-t5.json", json).expect("写契约 dump");
-    }
 }

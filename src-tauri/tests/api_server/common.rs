@@ -10,7 +10,7 @@ use tauri_app_lib::api_server::{ApiState, EmitterSlot, FundDetailFetcher, build_
 use tauri_app_lib::db;
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::events::SignalEmitter;
-use tauri_app_lib::sync::{FundDetail, FundNav};
+use tauri_app_lib::investment::{FundDetail, FundNav};
 
 pub(crate) async fn body_to_bytes(body: Body) -> Vec<u8> {
     body.collect().await.unwrap().to_bytes().to_vec()

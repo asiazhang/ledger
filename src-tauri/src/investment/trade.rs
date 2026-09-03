@@ -1,11 +1,12 @@
 use rusqlite::{Connection, OptionalExtension};
 
+use super::model::TransactionTrade;
 use super::prices::PRICE_UNITS_PER_FEN;
 use crate::accounts::AccountType;
 use crate::db::query::{FromRow, query_all, query_one};
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::models::{NormalizedTransaction, TransactionInput, TransactionTrade};
+use crate::models::{NormalizedTransaction, TransactionInput};
 use crate::transaction::amount;
 use crate::transaction::amount::TransactionKind;
 

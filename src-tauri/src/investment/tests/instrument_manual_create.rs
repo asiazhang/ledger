@@ -7,7 +7,7 @@ use rusqlite::{Connection, params};
 
 use super::common::setup_db;
 use crate::investment::create_instrument_manual;
-use crate::models::{InstrumentInput, InstrumentType};
+use crate::investment::{InstrumentInput, InstrumentType};
 
 fn input(kind: InstrumentType, symbol: &str, name: Option<&str>) -> InstrumentInput {
     InstrumentInput {

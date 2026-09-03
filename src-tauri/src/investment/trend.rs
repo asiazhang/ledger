@@ -14,11 +14,11 @@ use rusqlite::Connection;
 
 use super::holdings::holdings_as_of;
 
-use super::prices::PRICE_UNITS_PER_FEN;
-use crate::error::{AppError, Result};
-use crate::models::{
+use super::model::{
     InstrumentPriceTrend, PortfolioTrendPoint, PortfolioValueTrend, PriceTrendPoint, TrendRange,
 };
+use super::prices::PRICE_UNITS_PER_FEN;
+use crate::error::{AppError, Result};
 use crate::transaction::amount::default_currency_code;
 
 /// 校验区间：日期格式合法且起点不晚于终点。返回原样起止字符串（SQL 字符串比较

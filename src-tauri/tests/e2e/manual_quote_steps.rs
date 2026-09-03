@@ -6,8 +6,8 @@
 use cucumber::{then, when};
 use rusqlite::params;
 
+use tauri_app_lib::investment::ManualPriceInput;
 use tauri_app_lib::investment::record_manual_price;
-use tauri_app_lib::models::ManualPriceInput;
 
 use crate::world::LedgerWorld;
 

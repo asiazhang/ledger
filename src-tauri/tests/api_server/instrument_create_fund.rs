@@ -188,14 +188,16 @@ fn toggle_stub(
             return Err(AppError::Io("东财网络不可达".into()));
         }
         match hits.get(code) {
-            Some(hit) => Ok(tauri_app_lib::sync::FundDetail {
+            Some(hit) => Ok(tauri_app_lib::investment::FundDetail {
                 code: code.to_string(),
                 name: hit.name.to_string(),
                 fund_class: hit.fund_class.to_string(),
-                nav: hit.nav.map(|(nav, nav_date)| tauri_app_lib::sync::FundNav {
-                    nav,
-                    nav_date: nav_date.to_string(),
-                }),
+                nav: hit
+                    .nav
+                    .map(|(nav, nav_date)| tauri_app_lib::investment::FundNav {
+                        nav,
+                        nav_date: nav_date.to_string(),
+                    }),
             }),
             None => Err(AppError::Invalid(format!(
                 "查无基金代码 {code}，请核对后重试"

@@ -18,9 +18,9 @@
 use chrono::NaiveDate;
 use rusqlite::Connection;
 
+use super::model::{ManualPriceInput, ManualPriceResult};
 use super::prices::{upsert_market_price, upsert_price_history};
 use crate::error::{AppError, Result};
-use crate::models::{ManualPriceInput, ManualPriceResult};
 
 /// 手动报价来源标记：价格数据来源「手动」（与字典侧 source 同词表，ADR-0036）。
 pub(crate) const MANUAL_PRICE_SOURCE: &str = "manual";

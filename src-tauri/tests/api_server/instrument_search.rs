@@ -14,7 +14,7 @@ use rusqlite::Connection;
 use tower::ServiceExt;
 
 use tauri_app_lib::investment::create_instrument;
-use tauri_app_lib::models::{InstrumentInput, InstrumentType};
+use tauri_app_lib::investment::{InstrumentInput, InstrumentType};
 
 use crate::common::{body_to_bytes, get_json, setup_app};
 
