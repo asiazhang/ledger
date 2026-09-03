@@ -7,6 +7,8 @@ import { NTag, type DataTableColumn } from 'naive-ui'
 import { formatAmount } from '@/types'
 import type { Transaction, TransactionKind } from '@/types'
 import type { useReferenceStore } from '@/stores/reference'
+import { useAppStore } from '@/stores/app'
+import { kindSemanticColor } from '@/theme/semantic-colors'
 import { t } from '@/i18n'
 import AccountLink from '@/components/AccountLink.vue'
 import MerchantLink from '@/components/MerchantLink.vue'
@@ -21,15 +23,6 @@ const KIND_TAG_TYPE: Record<TransactionKind, 'success' | 'warning' | 'info' | 'd
   transfer: 'default',
   buy: 'default',
   sell: 'default',
-}
-
-const AMOUNT_COLOR: Record<TransactionKind, string> = {
-  income: '#18a058',
-  expense: '#d03050',
-  refund: '#2080f0',
-  transfer: '',
-  buy: '',
-  sell: '',
 }
 
 /** 固定列宽总和（备注为弹性列不设 `width`，不计入）。
@@ -112,10 +105,14 @@ export function buildTransactionColumns(reference: ReferenceStore): DataTableCol
       title: t('transactions.columns.amount'),
       key: 'amount_native_cents',
       width: 125,
+      // 金额按交易类型语义色着色（issue #435）：色值单一来源在
+      // @/theme/semantic-colors（六类型亮/暗两套）。主题在渲染时读取 app store
+      // 响应式取值：切换外观主题即时换色，无需重建列；借出/借入/收回/还款是
+      // transfer 的派生视角（ADR-0053），随 transfer 同紫，不做派生级区分。
       render: (row) =>
         h(
           'span',
-          { style: AMOUNT_COLOR[row.kind] ? `color: ${AMOUNT_COLOR[row.kind]}` : '' },
+          { style: `color: ${kindSemanticColor(row.kind, useAppStore().theme)}` },
           formatAmount(row.amount_native_cents, reference.getCurrency(row.currency_code)),
         ),
     },
