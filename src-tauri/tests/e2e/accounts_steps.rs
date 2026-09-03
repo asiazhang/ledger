@@ -2,10 +2,10 @@ use cucumber::{given, then, when};
 use rusqlite::params;
 
 use tauri_app_lib::accounts::{
-    adjust_account_balance, delete_account as delete_account_domain, update_account,
+    AccountBalanceAdjustInput, AccountUpdateInput, adjust_account_balance,
+    delete_account as delete_account_domain, update_account,
 };
 use tauri_app_lib::db::{balance::compute_balance, device_id, new_uuid, now_iso};
-use tauri_app_lib::models::{AccountBalanceAdjustInput, AccountUpdateInput};
 use tauri_app_lib::transaction::delete_transaction_internal;
 
 use crate::common::query_accounts_by_name;

@@ -20,10 +20,11 @@
 
 use rusqlite::Connection;
 
+use crate::accounts::AccountType;
 use crate::db::balance::list_account_balances_with_visibility;
 use crate::db::query::{FromRow, query_all};
 use crate::error::Result;
-use crate::models::{AccountType, FinancialFreedomOverview};
+use crate::models::FinancialFreedomOverview;
 use crate::transaction::amount;
 
 /// 安全提取率常量（单点收口，ADR-0048）：自由度 = 可投资资产 × 3% 对年度预算
