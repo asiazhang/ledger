@@ -45,7 +45,7 @@
 ## 迁移状态与剩余内容 Triage（#402 终态收口）
 
 - **路线图全部完成**（#397–#407，含前置 #395 口径修缮与两处检查点）：核心交易 `transaction/`、定时计划 `scheduled_transactions/`（既有先例）、物品 `item/`、保单 `policy/`、预算 `budget/`、商户 `merchants/`、投资 `investment/`（财务自由度随迁，`investment/financial_freedom.rs`）、报表 `reports/`、仪表盘 `dashboard/`、账户 `accounts/`、分类 `categories/`、币种 `currencies/`、备份 `backup/`、行情同步 `sync/` 全部归位为顶层域目录，各域壳层压平为单文件 `commands/<域>.rs`；逐域模块划分与迁移细节见 git 历史与各域实施票（#397–#407）。
-- **数据位置引导**（`commands/data_location.rs`，票 #408）仍待下沉 `db/data_location/`（当前仅测试模块在 `db/data_location/tests.rs`，主实现尚未迁入）；**基础设施**守门白名单：`db/`、`signals.rs`、`models/`、`error.rs`、`settings.rs`（`fs_util.rs`、`logger.rs`、`events.rs` 属 #408 待办，尚未入白名单）。
+- **数据位置**（引导 + 更改校验/信息聚合）下沉 `db/data_location/`（#408 已收口，壳层压平为纯壳）；**基础设施**守门白名单：`db/`、`signals.rs`、`models/`、`error.rs`、`settings.rs`、`fs_util.rs`、`logger.rs`、`events.rs`（#408 入白名单）。
 - **确认纯壳不建域**：`commands/ai.rs`（提示词模板读取）、`commands/logs.rs`（打开日志目录）、`restart_app` 等系统控制命令。
 - `api_server.rs`（1000+ 行，专项 #429）待后续专项目录化重构。
 - 原开放问题（行为层编排入口归位、行情同步与备份归属）均已裁决并执行完毕。
