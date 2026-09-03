@@ -12,11 +12,14 @@ use tauri_app_lib::categories::{
 };
 use tauri_app_lib::currencies::ExchangeRateInput;
 use tauri_app_lib::db::{new_uuid, now_iso, open_connection};
-use tauri_app_lib::investment::{create_exchange_rate, create_instrument, create_market_price};
+use tauri_app_lib::investment::{
+    InstrumentInput, InstrumentType, MarketPriceInput, create_exchange_rate, create_instrument,
+    create_market_price,
+};
 use tauri_app_lib::item::cost;
 use tauri_app_lib::item::domain::{create_item, delete_item, dispose_item, update_item};
 use tauri_app_lib::item::{ItemDisposeInput, ItemInput};
-use tauri_app_lib::models::{InstrumentInput, InstrumentType, MarketPriceInput, TransactionInput};
+use tauri_app_lib::models::TransactionInput;
 use tauri_app_lib::settings::{self, SettingKey};
 use tauri_app_lib::transaction::TransactionBatch;
 use tauri_app_lib::transaction::amount::TransactionKind;

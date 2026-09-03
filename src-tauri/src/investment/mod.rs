@@ -17,6 +17,8 @@
 //!   按代码即拉注入接缝（`add_fund_by_code_with`）；
 //! - [`holdings`]：时点持仓（AsOfHolding）推算单点；
 //! - [`manual_price`]：手动报价两落点（价格历史周采样 + 现价缓存映像规则）；
+//! - [`model`]：域集中模型——全量投资类型、基金行情 DTO 与财务自由度总览
+//!   （#422 模型域化随域归位），经本入口逐类型再导出（禁止 glob）；
 //! - [`predicates`]：「持仓标的」判定谓词单点（`INVESTED_EXISTS`）；
 //! - [`prices`]：价格写入单点——现价缓存 upsert、价格历史周采样 upsert、
 //!   价格刻度换算（`PRICE_UNITS_PER_FEN` / `price_value_to_cents`）、东财来源标记；
@@ -44,6 +46,20 @@ pub mod prices;
 pub mod reports;
 pub mod trade;
 pub mod trend;
+
+/// 域集中模型（#422 模型域化随域归位，样板先例：`reports::model`）：全量投资
+/// 类型、基金行情 DTO（#422 Q11 归属修正自行情同步域迁入）与财务自由度类型
+/// （自由度归投资域，ADR-0048 既有裁决）集中本文件，经域路径逐类型再导出
+/// （禁止 glob），消费方经域路径显式 import。
+mod model;
+
+pub use model::{
+    AccountPnl, AddFundResult, FinancialFreedomOverview, FundDetail, FundNav, Holding, Instrument,
+    InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentPnl,
+    InstrumentPriceTrend, InstrumentType, ManualPriceInput, ManualPriceResult, MarketPrice,
+    MarketPriceInput, PnlDetail, PnlFilter, PortfolioTrendPoint, PortfolioValueTrend,
+    PriceTrendPoint, RealizedPnlSummary, TransactionTrade, TrendRange, YearPnl,
+};
 
 /// 域 API 再导出：调用面用域语言短名（`investment::list_instruments` 等），
 /// 与 ADR-0056 阶段 1 定格形状一致（先例：`item::domain`、`merchants::crud`）。

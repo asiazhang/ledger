@@ -7,9 +7,9 @@ use utoipa::ToSchema;
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::ApiState;
 use crate::error::AppError;
+use crate::investment::FundDetail;
 use crate::investment::prices::price_value_to_cents;
 use crate::investment::validate_fund_code;
-use crate::sync::FundDetail;
 
 /// 东财基金详情获取（查询与创建两端点共用，issue #304）：测试注入桩直接同步
 /// 调用（离线驱动）；生产路径经 `spawn_blocking` 在连接锁外完成阻塞网络往返

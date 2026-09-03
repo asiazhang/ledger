@@ -62,7 +62,7 @@ fn query_financial_freedom_step(world: &mut LedgerWorld) {
 // ---------------------------------------------------------------------------
 
 /// 取最近一次自由度快照（各 Then 断言共用）。
-fn overview_of(world: &LedgerWorld) -> &tauri_app_lib::models::FinancialFreedomOverview {
+fn overview_of(world: &LedgerWorld) -> &tauri_app_lib::investment::FinancialFreedomOverview {
     world
         .last_financial_freedom
         .as_ref()

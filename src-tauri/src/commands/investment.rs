@@ -20,8 +20,7 @@ use crate::currencies::{ExchangeRate, ExchangeRateInput};
 use crate::db::DbState;
 use crate::error::{AppError, Result};
 use crate::investment as investment_domain;
-
-use crate::models::{
+use crate::investment::{
     AddFundResult, Holding, InstrumentInput, InstrumentListFilter, InstrumentListResult,
     InstrumentPriceTrend, ManualPriceInput, ManualPriceResult, MarketPrice, MarketPriceInput,
     PnlFilter, PortfolioValueTrend, RealizedPnlSummary, TransactionTrade, TrendRange,

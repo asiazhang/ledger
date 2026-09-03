@@ -112,11 +112,11 @@ pub struct LedgerWorld {
     /// 最近一次交易搜索结果快照（搜索场景断言用）
     pub last_search: Option<TransactionSearchResult>,
     /// 最近一次标的搜索结果快照（标的搜索语义场景断言用，issue #199）
-    pub last_instrument_search: Option<tauri_app_lib::models::InstrumentListResult>,
+    pub last_instrument_search: Option<tauri_app_lib::investment::InstrumentListResult>,
     /// 最近一次组合走势查询快照（组合走势场景断言用，issue #248）
-    pub last_portfolio_trend: Option<tauri_app_lib::models::PortfolioValueTrend>,
+    pub last_portfolio_trend: Option<tauri_app_lib::investment::PortfolioValueTrend>,
     /// 最近一次单标的走势查询快照（基金净值走势场景断言用，issue #303）
-    pub last_instrument_trend: Option<tauri_app_lib::models::InstrumentPriceTrend>,
+    pub last_instrument_trend: Option<tauri_app_lib::investment::InstrumentPriceTrend>,
     /// 最近创建的物品 id（物品场景断言用）
     pub last_item_id: Option<String>,
     /// 最近一次物品写入发出的失效信号次数（ledger:changed 注入 seam 断言用）
@@ -144,7 +144,7 @@ pub struct LedgerWorld {
     /// 最近一次净资产总览快照（首页仪表盘场景断言用）
     pub last_overview: Option<DashboardOverview>,
     /// 最近一次财务自由度总览快照（自由度口径场景断言用，issue #343）
-    pub last_financial_freedom: Option<tauri_app_lib::models::FinancialFreedomOverview>,
+    pub last_financial_freedom: Option<tauri_app_lib::investment::FinancialFreedomOverview>,
     /// 最近一次订阅实际花费总览快照（订阅花费场景断言用，issue #160）
     pub last_spend: Option<tauri_app_lib::scheduled_transactions::SubscriptionSpendOverview>,
     /// 最近一次预算进度快照（预算滚动窗口场景断言用，issue #182）

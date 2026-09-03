@@ -1,4 +1,11 @@
-//! 投资领域模型：金融工具、持仓、行情价、已实现盈亏、标的列表分页。
+//! 投资域集中模型（#422 随域归位）：金融工具、持仓、行情价、已实现盈亏、
+//! 标的列表分页、基金行情 DTO 与财务自由度总览。
+//!
+//! 自全局模型目录迁入本域（#417 归属原则）；财务自由度并入为既有裁决
+//! （自由度归投资域，ADR-0048）。基金行情 DTO（[`FundDetail`] / [`FundNav`]）
+//! 虽有一个录入入口在行情同步壳，但被投资域引擎自身消费，域归属投资（#422
+//! Q11 事实修正）。全部类型经 `investment` 域路径逐类型再导出，消费方经
+//! 域路径显式 import，禁止 glob。
 
 use std::fmt;
 use std::str::FromStr;
@@ -482,4 +489,51 @@ pub struct PortfolioValueTrend {
     /// 折算基准（本位币）。
     pub currency_code: String,
     pub points: Vec<PortfolioTrendPoint>,
+}
+
+// ---------------------------------------------------------------------------
+// 基金行情 DTO（#422 Q11 归属修正自行情同步域迁入）
+// ---------------------------------------------------------------------------
+
+/// 按代码即拉拉取到的基金详情（issue #301 / ADR-0038 决策 1）：名称与东财分类
+/// 为透传展示信息（不落库），nav 缺省（新发基金尚未公布首期净值等）时仅建
+/// 标的、不落现价（不广播价格失效信号）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct FundDetail {
+    pub code: String,
+    pub name: String,
+    /// 东财基金分类（如「混合型-灵活」），展示与 AI 确认识别用，不落库。
+    pub fund_class: String,
+    pub nav: Option<FundNav>,
+}
+
+/// 基金最新单位净值（真实价格值，元）与其净值日期（ISO 日期）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct FundNav {
+    pub nav: f64,
+    pub nav_date: String,
+}
+
+// ---------------------------------------------------------------------------
+// 财务自由度（issue #343 / ADR-0048；#422 自全局模型目录并入本域）
+// ---------------------------------------------------------------------------
+
+/// `financial_freedom` 命令返回的财务自由度总览（本位币口径，金额单位：分）。
+///
+/// 自由度 = 可投资资产 × 3% 安全提取率 ÷ 年度预算总额 × 100%（口径取舍见
+/// docs/adr/0048-financial-freedom-ratio.md）。实时计算不落库；未设预算时
+/// 分母为零、ratio 与 coverage_years 均为 0（占位引导在展示层，不回退实际支出）。
+#[derive(Debug, Clone, Serialize)]
+pub struct FinancialFreedomOverview {
+    /// 自由度百分比（一位小数）
+    pub ratio: f64,
+    /// 分子：可投资资产合计（本位币，分）= Σ 折本位币持仓市值 + Σ 折本位币投资账户余额
+    /// （排除隐藏账户；未录价持仓按空值语义不计入）
+    pub numerator_cents: i64,
+    /// 分母：年度预算总额（分）= Σ 月度预算 × 12 + Σ 年度预算（全部未删除，无窗口不滚动）
+    pub denominator_cents: i64,
+    /// 覆盖年数（一位小数）= 分子 ÷ 分母（零分母为 0）
+    pub coverage_years: f64,
+    /// 折算基准币种（全局默认币种）
+    pub native_currency: String,
 }

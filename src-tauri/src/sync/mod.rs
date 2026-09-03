@@ -13,7 +13,8 @@
 //! - [`incremental`]：增量同步编排（issue #103，#137 升级，#303 基金分区）——
 //!   现价 upsert + 近两年日 K 回填周线落 `price_history` + 汇率 K 线落
 //!   `fx_rate_history`（ADR-0019）+ 基金历史净值按水位增量回填（ADR-0038 决策 6）；
-//! - [`model`]：域模型——同步控制三类型与基金行情 DTO（#407 随域归位）；
+//! - [`model`]：域模型——同步控制三类型（#407 随域归位；基金行情 DTO 已因
+//!   #422 Q11 归属修正迁入 [`crate::investment::model`]）；
 //! - [`state`]：全量同步中断状态（运行/取消标志，issue #104）；
 //! - [`progress`]：进度事件推送（主线程非阻塞投递，issue #369）；
 //! - `tests`：外挂测试（HTTP 层经本地 HTTP 服务独立测试，不依赖真实网络）。
@@ -40,7 +41,7 @@ mod tests;
 
 pub use fund::fetch_fund_detail_production;
 pub use incremental::do_incremental_sync;
-pub use model::{CancelSyncResult, FundDetail, FundNav, SyncHoldingPricesResult, SyncProgress};
+pub use model::{CancelSyncResult, SyncHoldingPricesResult, SyncProgress};
 pub use orchestrate::{GlobalConn, SyncOutcome, do_sync};
 pub use state::SyncState;
 

@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::error::AppError;
 use crate::events::SignalEmitter;
-use crate::sync::FundDetail;
+use crate::investment::FundDetail;
 use axum::extract::FromRef;
 use rusqlite::Connection;
 

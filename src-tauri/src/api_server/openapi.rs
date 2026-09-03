@@ -7,10 +7,11 @@ use utoipa::OpenApi;
 use crate::accounts::{Account, AccountBalance, AccountInput, AccountType, AccountUpdateInput};
 use crate::categories::{Category, CategoryInput};
 use crate::currencies::Currency;
+use crate::investment::{Instrument, InstrumentListResult, InstrumentType};
 use crate::merchants::Merchant;
 use crate::models::{
-    CreateTransactionResult, Instrument, InstrumentListResult, InstrumentType, Transaction,
-    TransactionBatchInput, TransactionInput, TransactionListResult, UpdateTransactionInput,
+    CreateTransactionResult, Transaction, TransactionBatchInput, TransactionInput,
+    TransactionListResult, UpdateTransactionInput,
 };
 use crate::transaction::amount::TransactionKind;
 
