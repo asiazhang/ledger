@@ -45,7 +45,7 @@
 ## 迁移状态与剩余内容 Triage（#402 终态收口）
 
 - **路线图全部完成**（#397–#407，含前置 #395 口径修缮与两处检查点）：核心交易 `transaction/`、定时计划 `scheduled_transactions/`（既有先例）、物品 `item/`、保单 `policy/`、预算 `budget/`、商户 `merchants/`、投资 `investment/`（财务自由度随迁，`investment/financial_freedom.rs`）、报表 `reports/`、仪表盘 `dashboard/`、账户 `accounts/`、分类 `categories/`、币种 `currencies/`、备份 `backup/`、行情同步 `sync/` 全部归位为顶层域目录，各域壳层压平为单文件 `commands/<域>.rs`；逐域模块划分与迁移细节见 git 历史与各域实施票（#397–#407）。
-- **数据位置**（引导 + 更改校验/信息聚合）下沉 `db/data_location/`（#408 已收口，壳层压平为纯壳）；**基础设施**守门白名单：`db/`、`signals.rs`、`models/`、`error.rs`、`settings.rs`、`fs_util.rs`、`logger.rs`、`events.rs`（#408 入白名单）。
+- **数据位置**（引导 + 更改校验/信息聚合）下沉 `db/data_location/`（#408 已收口，壳层压平为纯壳）；**基础设施**守门白名单：`db/`、`signals.rs`、`error.rs`、`settings.rs`、`fs_util.rs`、`logger.rs`、`events.rs`（#408 入白名单）。原「模型」行已随 ADR-0059 模型域化 T7 收口（#424）删除：模型类型各归其域、每域一份集中模型文件（定时计划域为先例名 `models.rs`，其余域为 `model.rs`），全局模型目录与统一入口 glob 已消亡、白名单不再含全局模型目录，结构守门同步新增两条全树扫描禁令——全局模型模块路径残留禁令与域模型 glob 再导出禁令（所有权逐类型可见）。
 - **确认纯壳不建域**：`commands/ai.rs`（提示词模板读取）、`commands/logs.rs`（打开日志目录）、`restart_app` 等系统控制命令。
 - HTTP 壳目录化（#429）：`api_server.rs`（1000+ 行）已拆为 `api_server/` 目录模块（state / error / openapi / write_ops / router / handlers 按资源域分文件），挂载点与 `crate::api_server::` 引用面零变化。
 - 原开放问题（行为层编排入口归位、行情同步与备份归属）均已裁决并执行完毕。
