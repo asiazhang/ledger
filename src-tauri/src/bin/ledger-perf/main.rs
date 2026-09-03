@@ -22,19 +22,30 @@
 //!                                        [--end-date YYYY-MM-DD] [--out PATH]
 //! ```
 //!
-//! ## generate：生成性能形似真实的核心交易域大库（issue #459）
+//! ## generate：生成性能形似真实的多域画像大库（issue #459/#460）
 //!
 //! 一条命令在本地生成默认 50 万笔 Transaction 的 SQLite 库：
 //!
 //! - 建库经应用自身的迁移应用路径（`db::open_connection` → `db::init_db`），
 //!   不复制任何 DDL——schema 与 user_version 永远和真实产品一致（迁移是唯一事实来源）。
-//! - 数据画像（核心交易域，ADR-0062）：50 个账户（现金/储蓄/信用卡/钱包混合，
-//!   含少量 USD/EUR 账户）；40 个分类（迁移自带默认种子分类之外另生成）；
+//! - 核心交易域画像（ADR-0062）：50 个账户（现金/储蓄/信用卡/钱包/投资混合，
+//!   含少量 USD/EUR/HKD 账户）；40 个分类（迁移自带默认种子分类之外另生成）；
 //!   800 个商户呈长尾（top 20 占挂商户流水的约 60%）；DefaultCurrency 为 CNY，
-//!   USD/EUR 少量且 `fx_rate_history` 全历史（窗口内每周一采样）填充；
+//!   USD/EUR/HKD 少量且 `fx_rate_history` 全历史（窗口内每周一采样）填充；
 //!   转账约 8%、退款链约 2%（`refund_of_transaction_id` 指向该账户更早生成的
-//!   支出，退款日期不早于原支出日）、
-//!   交易软删除约 1%。投资域 / Budget / ScheduledTransaction 填充见 issue #460。
+//!   支出，退款日期不早于原支出日）、交易软删除约 1%。
+//! - 投资域画像（issue #460）：20 个标的（A 股/ETF/港股/场外基金，同步来源随
+//!   通道标记）；周采样 `price_history` 全窗口 + `market_prices` 现价缓存
+//!   （现价 = 最新历史点映像，基金带净值日期）；约 0.6% 交易为 buy/sell 标的
+//!   交易（默认规模下约 3000 笔：买入 0.4% + 卖出 0.2%，含部分卖出与清仓）——
+//!   交易行 + `security_transactions` 扩展 + buy 建仓批次 + sell FIFO 匹配，
+//!   分摊/闭合公式镜像产品 Writer；标的只与同币种投资账户交易（产品金额
+//!   公式不做标的价币→账户币折算），港股市值的币种折算发生在净资产聚合层。
+//! - 计划域画像（issue #460）：6 条 Budget（月度 4 + 年度 2，支出分类不重复）；
+//!   8 个 ScheduledTransaction（分期 3/订阅 3/定时转账 2，含 paused/failed/
+//!   cancelled 形态）+ 期次展开——结束日前往期 completed 并各生成一条真实
+//!   交易（从 `--transactions` 预算预留，交易总数 = max(--transactions, 期次
+//!   交易数)），未来期次 pending。
 //! - 确定性：固定默认种子 42（`--seed` 覆盖）；默认 500,000 笔（`--transactions`）；
 //!   锚定结束日期 2025-12-31（`--end-date`），数据落在其前约 5 年窗口内，
 //!   不锚定「今天」；生成数据的全部时间字段（id 时间戳位 / created_at /
@@ -58,6 +69,8 @@
 //! 零新增依赖（ADR-0062：确定性生成而非入库；被否决备选见该 ADR）。
 
 mod generate;
+mod investments;
+mod plans;
 mod rng;
 
 #[cfg(test)]
@@ -87,7 +100,7 @@ USAGE:
     ledger-perf <SUBCOMMAND> [OPTIONS]
 
 SUBCOMMANDS:
-    generate    生成性能基准数据集（默认 50 万笔 Transaction 的 SQLite 库）
+    generate    生成性能基准数据集（默认 50 万笔 Transaction 的多域画像 SQLite 库）
     bench       查询基准（尚未实现，见 issue #461）
 
 generate OPTIONS:
