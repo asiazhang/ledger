@@ -9,7 +9,8 @@ use rusqlite::{Connection, OptionalExtension};
 use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::models::{Category, CategoryInput, CategoryUpdateInput, ReorderItem};
+
+use super::model::{Category, CategoryInput, CategoryUpdateInput, ReorderItem};
 
 /// 分类列表：默认仅未删除；`include_deleted=true` 返回含软删全量（issue #377）。
 /// 软删分类不可再被选择，但历史交易引用照常存在——含软删列表供前端下钻校验映射

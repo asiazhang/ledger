@@ -5,7 +5,8 @@ use crate::merchants::{
     create_merchant, create_merchant_by_name, delete_merchant, find_merchant_by_name,
     list_merchants as list_merchants_domain, update_merchant,
 };
-use crate::models::{Merchant, MerchantInput, MerchantUpdateInput};
+
+use super::model::{Merchant, MerchantInput, MerchantUpdateInput};
 
 fn setup() -> rusqlite::Connection {
     let mut conn = crate::db::open_in_memory().unwrap();

@@ -8,7 +8,7 @@ use rusqlite::Connection;
 
 use crate::api_server::error::ErrorResponse;
 use crate::error::AppError;
-use crate::models::Merchant;
+use crate::merchants::Merchant;
 
 /// 商户列表（AI 导入契约，issue #194 / ADR-0028）：供 AI 在提交交易前拉取在用商户，
 /// 按已有名字填 `merchant_name` 复用字典（避免同义名分裂商户字典）。仅返回在用行

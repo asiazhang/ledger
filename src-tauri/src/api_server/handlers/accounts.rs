@@ -7,11 +7,11 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use rusqlite::Connection;
 
+use crate::accounts::{Account, AccountBalance, AccountInput, AccountUpdateInput};
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::EmitterSlot;
 use crate::api_server::write_ops::emit_after_write;
 use crate::error::AppError;
-use crate::models::{Account, AccountBalance, AccountInput, AccountUpdateInput};
 use crate::signals::{WriteEvidence, WriteOp};
 
 #[utoipa::path(

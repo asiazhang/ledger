@@ -10,8 +10,8 @@ use rusqlite::Connection;
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::EmitterSlot;
 use crate::api_server::write_ops::emit_after_write;
+use crate::categories::{Category, CategoryInput};
 use crate::error::AppError;
-use crate::models::{Category, CategoryInput};
 use crate::signals::{WriteEvidence, WriteOp};
 
 #[utoipa::path(
@@ -27,7 +27,7 @@ use crate::signals::{WriteEvidence, WriteOp};
 )]
 pub async fn list_categories_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
-) -> Result<Json<Vec<crate::models::Category>>, AppError> {
+) -> Result<Json<Vec<crate::categories::Category>>, AppError> {
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     Ok(Json(crate::categories::list_categories(&conn, false)?))
 }

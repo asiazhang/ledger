@@ -1,7 +1,7 @@
+use super::model::Account;
 use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, ErrClass};
-use crate::models::Account;
 use crate::transaction::amount::{Measure, TransactionKind, TransferSide, signed_amount};
 
 fn setup() -> rusqlite::Connection {
@@ -497,7 +497,7 @@ fn seed_contains_black_hole_accounts_for_cny_and_hkd() {
 // update_account（编辑账户）
 // ---------------------------------------------------------------------------
 
-use crate::models::{AccountBalanceAdjustInput, AccountUpdateInput};
+use super::model::{AccountBalanceAdjustInput, AccountUpdateInput};
 
 fn find_black_hole(conn: &rusqlite::Connection, currency: &str) -> Option<String> {
     conn.query_row(

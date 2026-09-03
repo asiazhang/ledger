@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use rusqlite::Connection;
 
+use crate::accounts::{Account, AccountBalance};
 use crate::db::query::{FromRow, query_all};
 use crate::error::Result;
-use crate::models::{Account, AccountBalance};
 use crate::transaction::amount::{TransferSide, account_flow_expr};
 
 struct AccountBalanceEntry {
