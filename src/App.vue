@@ -28,10 +28,7 @@ import {
   BarChartOutline,
   TrendingUpOutline,
   CubeOutline,
-  ShieldCheckmarkOutline,
-  RepeatOutline,
   CalculatorOutline,
-  EllipsisHorizontalOutline,
   SparklesOutline,
   SettingsOutline,
 } from '@vicons/ionicons5'
@@ -58,7 +55,6 @@ import {
   FIRST_VIEW,
   PENULTIMATE_VIEW,
   LAST_VIEW,
-  EXTRA_VIEW,
   type ViewName,
 } from '@/composables/useViewShortcuts'
 import { useWindowGuard } from '@/composables/useWindowGuard'
@@ -104,7 +100,8 @@ useDevicePreferenceSync()
 // 视图名称走文案资源（issue #342）：侧栏菜单与内容区标题同源，随界面语言即时切换；
 // key 构造收口在 i18n/view-label（key 契约有单测，漏域名前缀会原样渲染 key 代号）。
 
-// 视图图标（ionicons5 Outline 风格，与分类图标一致）
+// 视图图标（ionicons5 Outline 风格，与分类图标一致）：仅侧栏菜单项（主项 + 固定项）；
+// 收纳成员（定时/商户/保单/实物资产）不入侧栏，图标由 GroupMoreView 自带映射。
 const viewIcons: Record<string, Component> = {
   dashboard: HomeOutline,
   transactions: SwapHorizontalOutline,
@@ -113,9 +110,6 @@ const viewIcons: Record<string, Component> = {
   reports: BarChartOutline,
   investments: TrendingUpOutline,
   items: CubeOutline,
-  policies: ShieldCheckmarkOutline,
-  scheduled: RepeatOutline,
-  more: EllipsisHorizontalOutline,
   budget: CalculatorOutline,
   ai: SparklesOutline,
   settings: SettingsOutline,
@@ -125,12 +119,14 @@ function renderMenuIcon(name: string) {
   return () => h(NIcon, { size: 18 }, { default: () => h(viewIcons[name]) })
 }
 
-// 菜单形态（issue #359 侧栏分组；#372 增「更多」第四固定项）：概览（固定）+
-// 记账/资产/洞察三组 + 更多、AI、设置（三固定项）。菜单项与快捷键共用同一顺序源
-// （viewShortcuts：由组内序按线性位置推导键位），分组标题不占键位、不参与排序与计数
+// 菜单形态（issue #359 侧栏分组；#473 终态，ADR-0063 决策 1）：概览（固定）+
+// 记账/资产/洞察三组（各自主项 + 组标题行按需「更多」链接）+ AI、设置（两固定项）。
+// 全局「更多」固定项已退役；菜单项与快捷键共用同一顺序源（viewShortcuts：由组内序按
+// 线性位置推导键位，只扫主项），分组标题不占键位、不参与排序与计数
 // （NMenu group 选项天然不可选）；菜单响应式派生，组内排序变更时顺序与快捷键提示同步更新。
-// 每项右侧附快捷键提示（数字位或设置项的 ⌘,）；「更多」与概览/AI/设置同属固定项，无键位不出提示。
-// 可排区八项经 nodeProps 附右键组内排序菜单（issue #270/#359），固定项与分组标题不附
+// 每项右侧附快捷键提示（数字位或设置项的 ⌘,）；「更多」链接与收纳成员无键位、不出提示、
+// 不可键盘触发；折叠态不渲染组标题，「更多」链接随之不渲染（决策 6）。
+// 主项经 nodeProps 附右键组内排序菜单（issue #270/#359），固定项与分组标题不附
 // （右键无任何菜单，原生菜单由窗口守卫抑制）。注：NMenu 不支持选项级 props 字段，必须走菜单级 nodeProps。
 function renderItem(name: ViewName, key: string | null): MenuOption {
   return {
@@ -152,7 +148,7 @@ const menuOptions = computed<MenuOption[]>(() => {
     ...sidebarGroups.value.map((g): MenuOption => ({
       type: 'group',
       key: `sidebar-group:${g.id}`,
-      // 组标题行：组名 + 按需「更多」链接（issue #472 / ADR-0063 决策 1）——
+      // 组标题行：组名 + 按需「更多」链接（issue #472/#473 / ADR-0063 决策 1）——
       // 链接仅当组内存在收纳成员时渲染（菜单分组标题天然不可交互，链接是自定义渲染的新元素）；
       // 折叠态不渲染组标题，链接随之不渲染（决策 6 天然成立）；链接无键位、不出提示。
       label: () =>
@@ -164,7 +160,6 @@ const menuOptions = computed<MenuOption[]>(() => {
         ]),
       children: g.views.map((name) => item(name)),
     })),
-    item(EXTRA_VIEW),
     item(PENULTIMATE_VIEW),
     item(LAST_VIEW),
   ]
@@ -182,7 +177,7 @@ function nodeProps(option: MenuOption) {
 }
 
 // ---------------------------------------------------------------------------
-// 侧栏右键排序菜单（issue #270，#359 收窄为组内）：可排区八项右键弹出组内排序菜单
+// 侧栏右键排序菜单（issue #270，#359 收窄为组内）：主项右键弹出组内排序菜单
 // （上移/下移/移顶/移底/恢复默认），手动定位弹出，与行级右键菜单同一模式；
 // 点选即重排并立即持久化，菜单打开期间视图快捷键由既有弹层抑制机制压制（零新代码）。
 // ---------------------------------------------------------------------------

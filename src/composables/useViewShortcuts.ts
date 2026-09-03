@@ -12,10 +12,6 @@ export interface ViewShortcut {
   key: string | null
 }
 
-/** 固定项 4：「更多」聚合视图（issue #372）——洞察组之后、AI 之前的第四固定项。
- *  #472 过渡保留（仅剩商户页签）；#473 退役转重定向记录（ADR-0063 决策 1/5）。 */
-export const EXTRA_VIEW = 'more'
-
 /**
  * 顺序源模块：侧边栏视图顺序单一来源（顺序 = 菜单顺序 = 数字键位）。
  * 侧栏为分组形态（issue #359 / ADR-0051）：组与组序固定（记账/资产/洞察），组内序可排
@@ -25,15 +21,14 @@ export const EXTRA_VIEW = 'more'
 
 /**
  * 三组（域职责分组，组 id 即 i18n key `common.sidebarGroup.<id>`）。
- * 组与组序固定、成员闭集；「资产」组 = 投资（金融资产）、物品（实物资产）——
- * 低频的保单已迁入「更多」聚合视图（issue #371/#372），再按域归位资产组「更多」
- * （issue #472 / ADR-0063 决策 3：每组收纳清单出厂种子，资产 = [保单]）。
- * 键位注：本过渡态（#472）可排区仍八项、数字键位 2–9 全占；#473 起记账组主项三项化
- * （定时迁入该组「更多」）、全局「更多」退役，主项 ≤3 硬上限保证键位带不溢出、
- * 出厂 ⌘2–⌘8 占用而 ⌘9 空置（ADR-0063 决策 2，「十键十视图全占」表述废止）。
+ * 组与组序固定、成员闭集；各组主项 ≤3 是运行时硬上限（ADR-0063 决策 2），
+ * 低频成员由各组「更多」收纳（GROUP_CONTAINMENT_SEEDS）：记账 = 定时、商户（#473），
+ * 资产 = 保单、实物资产（#472 / #466），洞察出厂无收纳成员。
+ * 键位注：键位只扫主项（ADR-0063 决策 2）——出厂主项七项，⌘2–⌘8 占用、⌘9 空置，
+ * 三组填满后自然回填；「十键十视图全占」表述废止。
  */
 export const SIDEBAR_GROUPS = [
-  { id: 'bookkeeping', views: ['transactions', 'accounts', 'budget', 'scheduled'] },
+  { id: 'bookkeeping', views: ['transactions', 'accounts', 'budget'] },
   { id: 'assets', views: ['investments', 'items'] },
   { id: 'insights', views: ['reports', 'search'] },
 ] as const
@@ -41,35 +36,34 @@ export const SIDEBAR_GROUPS = [
 export type SidebarGroupId = (typeof SIDEBAR_GROUPS)[number]['id']
 
 /**
- * 固定项词表：概览首位（与启动落地页一致）、「更多」（洞察组之后、AI 之前，
- * 不参与组内排序、不占数字键位）、AI 倒数第二、设置末位。
+ * 固定项词表：概览首位（与启动落地页一致）、AI 倒数第二、设置末位。
+ * 全局「更多」固定项已退役（issue #473 / ADR-0063 决策 1/5），不再入线性序——
+ * 旧路由与旧视图名由路由表重定向记录承接（见 router 的 /more 记录）。
  */
 export const FIRST_VIEW = 'dashboard'
 export const PENULTIMATE_VIEW = 'ai'
 export const LAST_VIEW = 'settings'
 
-/** 线性默认序（出厂快照）：概览 + 各组按组序展开 + 更多 + AI + 设置 */
+/** 线性默认序（出厂快照）：概览 + 各组按组序展开 + AI + 设置 */
 export const DEFAULT_VIEW_ORDER = [
   FIRST_VIEW,
   ...SIDEBAR_GROUPS.flatMap((g) => g.views),
-  EXTRA_VIEW,
   PENULTIMATE_VIEW,
   LAST_VIEW,
 ] as const
 
 export type ViewName = (typeof DEFAULT_VIEW_ORDER)[number]
 
-/** 可排区（组内）：各组成员按组序展开，相对顺序即默认相对顺序。
- *  过渡态（#472）容量八项 = 数字键位带 2..9 恰好覆盖；#473 起主项 ≤3 硬上限
- *  接管键位封闭（ADR-0063 决策 2，见 SIDEBAR_GROUPS 注）。 */
+/** 主项词表（组内可排区）：各组成员按组序展开，相对顺序即默认相对顺序。
+ *  每组 ≤3 硬上限保证键位带不溢出（ADR-0063 决策 2）；收纳成员不入本表、无键位。 */
 export const ARRANGEABLE_VIEWS: readonly ViewName[] = SIDEBAR_GROUPS.flatMap((g) => [...g.views])
 
-/** 固定项例外判定：可排区八项为真，概览/更多/AI/设置四固定项为假（右键无菜单）。 */
+/** 固定项例外判定：主项（可排区）为真，概览/AI/设置三固定项为假（右键无菜单）。 */
 export function isArrangeableView(v: unknown): v is ViewName {
   return typeof v === 'string' && (ARRANGEABLE_VIEWS as readonly string[]).includes(v)
 }
 
-/** 视图 → 所属组（可排区八项各有其组；概览/更多/AI/设置与未知名不在任何组，返回 null）。 */
+/** 视图 → 所属组（主项各有其组；概览/AI/设置与未知名不在任何组，返回 null）。 */
 export function groupOfView(name: ViewName): SidebarGroupId | null {
   for (const g of SIDEBAR_GROUPS) {
     if ((g.views as readonly string[]).includes(name)) return g.id
@@ -129,23 +123,23 @@ export const sidebarGroupOrders = computed<SidebarGroupOrders>(() => groupOrders
 // 组内收纳清单（issue #472 / ADR-0063 决策 3/5）：每组一个有序收纳清单，
 // 成员资格与页签顺序同源——清单序 = 该组「更多」页页签序，入 ViewState 跨启动持久化。
 // 与组内序同族同机制：出厂种子（开发者清单转任）+ 同型解析防御。
-// 资产组出厂成员 = 保单（#472）+ 实物资产（#466 / ADR-0064，合入 main 后随域归位）；
-// 记账/洞察种子为空、不渲染「更多」链接；
-// 记账（定时、商户）与用户移入/移回由后续票落地，届时扩展种子与合法成员注册表。
+// 资产组出厂成员 = 保单（#472）+ 实物资产（#466 / ADR-0064，随域归位）；
+// 记账组出厂成员 = 定时、商户（#473：定时自主项迁入，商户自全局「更多」迁入）；
+// 洞察种子为空、出厂不渲染「更多」链接（路由预建）；用户移入/移回由 #474/#475 落地。
 // ---------------------------------------------------------------------------
 
 /**
  * 每组收纳清单出厂种子（开发者清单，ADR-0063 决策 3）：
- * 资产 = [保单, 实物资产]（追加在后，ADR-0055 决策 2 追加先例）；记账、洞察 = 空。
- * 后续票扩展：记账 = [定时, 商户]（#473）。
+ * 记账 = [定时, 商户]（页签序 = 清单序，#473）；
+ * 资产 = [保单, 实物资产]（#472/#466，追加在后，ADR-0055 决策 2 追加先例）；洞察 = 空。
  */
 export const GROUP_CONTAINMENT_SEEDS = {
-  bookkeeping: [],
+  bookkeeping: ['scheduled', 'merchants'],
   assets: ['policies', 'physicalAssets'],
   insights: [],
 } as const satisfies Record<SidebarGroupId, readonly string[]>
 
-/** 收纳视图名（词表随出厂种子与移入成员扩展；现为保单、实物资产） */
+/** 收纳视图名（词表随出厂种子与移入成员扩展；现为定时、商户、保单、实物资产） */
 export type ContainableViewName = (typeof GROUP_CONTAINMENT_SEEDS)[SidebarGroupId][number]
 
 /** 每组收纳清单（只读形状）：与 SidebarGroupOrders 同族。 */
@@ -196,7 +190,7 @@ export function parseContainmentLists(raw: unknown): Record<SidebarGroupId, Cont
 
 /**
  * 已存收纳清单：启动读路径（解析防御后回出厂种子）。
- * 本票（#472）无用户移入/移回，写路径仅「恢复默认排序」复位（resetSidebarOrder）；
+ * 用户移入/移回未落地（#474/#475），写路径仅「恢复默认排序」复位（resetSidebarOrder）；
  * 移入/移回写路径（saveContainmentLists 点选即写）由后续票接入。
  */
 const containmentLists = ref<Record<SidebarGroupId, ContainableViewName[]>>(
@@ -298,11 +292,10 @@ export function resetSidebarOrder() {
 }
 
 // ---------------------------------------------------------------------------
-// 键位按线性位置推导（issue #359 / ADR-0051；#372 键位收紧）：数字键位覆盖前 10 个
-// 视图——数字键物理上限。概览恒 '1'；可排区 8 项按线性位置得 '2'..'9'；「更多」为
-// 第四固定项，不占键位（null）；AI 恒 '0'（第 10 位）；设置为唯一例外用 ','。
-// 过渡态（#472）可排区恰 8 项、键位带 2..9 全占；#473 起键位只扫主项、⌘9 出厂空置
-// （ADR-0063 决策 2）。组内重排键位随动。
+// 键位按线性位置推导（issue #359 / ADR-0051；#473 起只扫主项，ADR-0063 决策 2）：
+// 概览恒 '1'；主项按组序与组内序连续取 '2' 起；AI 恒 '0'；设置为唯一例外用 ','。
+// 收纳成员与「更多」链接不在推导表内——无键位、不出提示、不可键盘触发。
+// 出厂主项七项 → ⌘2–⌘8 占用、⌘9 空置，三组填满后自然回填；组内重排键位随动。
 // ---------------------------------------------------------------------------
 
 const LEAD_KEY = '1'
@@ -312,7 +305,7 @@ const LAST_KEY = ','
 
 /**
  * 键位推导纯函数：由组内序按线性位置派生全部视图快捷键（键随位置，重排即重排键位）。
- * 可排区恰 8 项时数字键位带 2..9 全占；「更多」不占键位（key: null）。
+ * 只扫主项：主项超位（理论上限内不发生）得 null；出厂七主项恰占 2..8，⌘9 空置。
  */
 export function deriveViewShortcuts(orders: SidebarGroupOrders): ViewShortcut[] {
   const shortcuts: ViewShortcut[] = [{ name: FIRST_VIEW, key: LEAD_KEY }]
@@ -323,7 +316,6 @@ export function deriveViewShortcuts(orders: SidebarGroupOrders): ViewShortcut[] 
       i++
     }
   }
-  shortcuts.push({ name: EXTRA_VIEW, key: null })
   shortcuts.push({ name: PENULTIMATE_VIEW, key: PENULTIMATE_KEY })
   shortcuts.push({ name: LAST_VIEW, key: LAST_KEY })
   return shortcuts
@@ -331,8 +323,9 @@ export function deriveViewShortcuts(orders: SidebarGroupOrders): ViewShortcut[] 
 
 /**
  * 视图快捷键映射（响应式）：由组内序按位置推导，键随位置（组内重排侧栏即重排键位）。
- * 每个视图恰一条记录（无键位视图 key 为 null）：数字 1–0 覆盖前 10 个视图，
- * 设置用 Cmd/Ctrl+,（macOS「设置」惯例键位，避免占用 Cmd+S 的「保存」肌肉记忆）。
+ * 每个侧栏主项/固定项恰一条记录：概览 ⌘1、主项按线性位置取 ⌘2 起、AI ⌘0、
+ * 设置 Cmd/Ctrl+,（macOS「设置」惯例键位，避免占用 Cmd+S 的「保存」肌肉记忆）；
+ * 收纳成员与「更多」链接不入表（无键位、不出提示、不可键盘触发）。
  */
 export const viewShortcuts = computed<ViewShortcut[]>(() => deriveViewShortcuts(groupOrders.value))
 

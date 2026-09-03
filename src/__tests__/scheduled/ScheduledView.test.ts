@@ -116,3 +116,25 @@ describe('旧 /subscriptions 入口重定向（issue #202）', () => {
     expect(router.currentRoute.value.query.tab).toBe('subscriptions')
   })
 })
+
+describe('内嵌态（issue #473：组内「更多」容器装载，页签退内存态）', () => {
+  it('内嵌态默认订阅页签，切内页签仅写内存态、不读写路由 query（容器页签占用 query.tab，避免双写互踩）', async () => {
+    const r = await makeRouter('/bookkeeping/more')
+    const wrapper = mount(ScheduledView, { props: { embedded: true }, global: { plugins: [r] } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="sub-create-open"]').exists()).toBe(true)
+    await wrapper.findAll('.n-tabs-tab').find((t) => t.text() === '分期')!.trigger('click')
+    await flushPromises()
+    expect(r.currentRoute.value.query.tab).toBeUndefined()
+    expect(wrapper.text()).toContain('分期清单')
+  })
+
+  it('独立路由态（默认）不受影响：切内页签仍写回 query.tab', async () => {
+    const r = await makeRouter('/scheduled')
+    const wrapper = mount(ScheduledView, { global: { plugins: [r] } })
+    await flushPromises()
+    await wrapper.findAll('.n-tabs-tab').find((t) => t.text() === '分期')!.trigger('click')
+    await flushPromises()
+    expect(r.currentRoute.value.query.tab).toBe('installments')
+  })
+})

@@ -3,11 +3,11 @@ import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
-import MoreView from '@/views/MoreView.vue'
 import GroupMoreView from '@/views/GroupMoreView.vue'
 import { makePolicy, makePolicyStats } from './factories'
 import { routes, router } from '@/router'
 import type { Currency, Merchant } from '@/types'
+import type { SubscriptionSpendOverview } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -24,6 +24,17 @@ const mockMerchants: Merchant[] = [
   { id: 'mer-1', name: '平安保险', is_deleted: false, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test' },
 ]
 
+/** 订阅花费总览空数据（定时页签挂载即拉取，容器壳测试不关心行内容）。 */
+const emptySpendOverview: SubscriptionSpendOverview = {
+  native_currency: 'CNY',
+  this_month_native_cents: 0,
+  this_year_native_cents: 0,
+  months: [],
+  rows: [],
+  projected_month_native_cents: 0,
+  projected_year_native_cents: 0,
+}
+
 /** 页签挂载即拉取：给最小空数据（容器壳测试不关心行内容）。 */
 function baseInvoke() {
   mockInvoke.mockImplementation(((cmd: string) => {
@@ -32,32 +43,27 @@ function baseInvoke() {
     if (cmd === 'list_categories') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
     if (cmd === 'list_policies') return Promise.resolve([])
+    if (cmd === 'list_scheduled_transactions') return Promise.resolve([])
+    if (cmd === 'subscription_spend_overview') return Promise.resolve(emptySpendOverview)
     if (cmd === 'list_physical_assets')
       return Promise.resolve({ assets: [], holding_total_native_cents: 0, native_currency: 'CNY' })
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   }) as typeof invoke)
 }
 
-/** memory router：与真实路由表同构（routes 单一来源复用，避免双份漂移）。 */
-async function makeRouter(initialPath = '/more') {
-  const r = createRouter({ history: createMemoryHistory(), routes })
-  await r.push(initialPath)
-  await r.isReady()
-  return r
-}
-
-async function mountView(initialPath = '/more') {
-  const r = await makeRouter(initialPath)
-  const wrapper = mount(MoreView, { global: { plugins: [r] } })
-  await flushPromises()
-  return { wrapper, router: r }
-}
-
 type GroupMoreId = 'bookkeeping' | 'assets' | 'insights'
+
+/** 容器自身页签文案：取首个 .n-tabs-nav（被收视图可能自带嵌套页签，需排除）。 */
+function containerTabs(wrapper: { element: Element }): string[] {
+  const nav = wrapper.element.querySelectorAll('.n-tabs-nav')[0]!
+  return Array.from(nav.querySelectorAll('.n-tabs-tab')).map((t) => t.textContent!.trim())
+}
 
 /** 组内「更多」容器：真实路由表同构 memory router + 按组传 prop。 */
 async function mountGroupView(group: GroupMoreId, initialPath?: string) {
-  const r = await makeRouter(initialPath ?? `/${group}/more`)
+  const r = createRouter({ history: createMemoryHistory(), routes })
+  await r.push(initialPath ?? `/${group}/more`)
+  await r.isReady()
   const wrapper = mount(GroupMoreView, { props: { group }, global: { plugins: [r] } })
   await flushPromises()
   return { wrapper, router: r }
@@ -67,35 +73,6 @@ beforeEach(() => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
   baseInvoke()
-})
-
-describe('MoreView 全局「更多」仅剩商户页签（issue #472 / ADR-0063：保单迁出至资产组，全局收容器 #473 退役）', () => {
-  it('页签仅剩商户：保单页签已迁出全局「更多」', async () => {
-    const { wrapper } = await mountView()
-    const tabs = wrapper.findAll('.n-tabs-tab').map((t) => t.text())
-    expect(tabs).toEqual(['商户'])
-  })
-
-  it('默认页签为商户：无 tab query 时商户管理完整装载', async () => {
-    const { wrapper } = await mountView()
-    expect(wrapper.text()).toContain('商户列表')
-    expect(wrapper.text()).toContain('新增商户')
-    expect(wrapper.find('input[placeholder="商户名称"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="policy-new"]').exists()).toBe(false)
-  })
-
-  it('tab query 深链直达商户页签（/more?tab=merchants）', async () => {
-    const { wrapper, router: r } = await mountView('/more?tab=merchants')
-    expect(r.currentRoute.value.query.tab).toBe('merchants')
-    expect(wrapper.text()).toContain('新增商户')
-  })
-
-  it('已迁出的保单页签深链回退默认页签：展示层回退，不写回 query（与定时页约定一致；/more?tab=policies 的重定向属 #473 迁移链，本票不处理）', async () => {
-    const { wrapper, router: r } = await mountView('/more?tab=policies')
-    expect(wrapper.text()).toContain('商户列表')
-    expect(wrapper.find('[data-testid="policy-new"]').exists()).toBe(false)
-    expect(r.currentRoute.value.query.tab).toBe('policies')
-  })
 })
 
 describe('GroupMoreView 组内「更多」容器（issue #472 / ADR-0063 决策 1/5：页签序 = 收纳清单序）', () => {
@@ -161,36 +138,80 @@ describe('GroupMoreView 组内「更多」容器（issue #472 / ADR-0063 决策 
     expect(text).toContain('¥6000')
     expect(wrapper.find('[data-testid="policy-new"]').exists()).toBe(true)
   })
+})
 
-  it('记账/洞察组路由预建：出厂无收纳成员，容器渲染空页签不崩', async () => {
-    const bk = await mountGroupView('bookkeeping')
-    expect(bk.router.currentRoute.value.name).toBe('bookkeeping-more')
-    expect(bk.wrapper.findAll('.n-tabs-tab').length).toBe(0)
+describe('GroupMoreView 记账组接入（issue #473 / ADR-0063 决策 3：定时、商户迁入，页签序 = 清单序）', () => {
+  it('记账·更多：定时页签为默认页签（清单首位），商户追加在后，两页签整体装载', async () => {
+    const { wrapper } = await mountGroupView('bookkeeping')
+    expect(containerTabs(wrapper)).toEqual(['定时', '商户'])
+    // 默认页签 = 定时（内嵌态页签退内存态）：订阅面板完整装载
+    expect(wrapper.find('[data-testid="sub-create-open"]').exists()).toBe(true)
+  })
+
+  it('tab query 深链直达商户页签（/bookkeeping/more?tab=merchants），商户管理完整装载', async () => {
+    const { wrapper, router: r } = await mountGroupView('bookkeeping', '/bookkeeping/more?tab=merchants')
+    expect(r.currentRoute.value.query.tab).toBe('merchants')
+    expect(wrapper.text()).toContain('商户列表')
+    expect(wrapper.text()).toContain('新增商户')
+    expect(wrapper.find('[data-testid="sub-create-open"]').exists()).toBe(false)
+  })
+
+  it('内嵌定时页签不占用容器 query.tab：切内页签仅写内存态，容器页签不被互踩', async () => {
+    const { wrapper, router: r } = await mountGroupView('bookkeeping')
+    // 点击定时视图内部「分期」页签：不写路由 query（内嵌态内存页签）
+    await wrapper.findAll('.n-tabs-tab').find((t) => t.text() === '分期')!.trigger('click')
+    await flushPromises()
+    expect(r.currentRoute.value.query.tab).toBeUndefined()
+    expect(wrapper.text()).toContain('分期清单')
+    // 容器页签仍停在定时（未被内页签值互踩回默认）
+    expect(containerTabs(wrapper)).toEqual(['定时', '商户'])
+  })
+
+  it('点击容器「商户」页签：query.tab replace 写回，定时视图卸载', async () => {
+    const { wrapper, router: r } = await mountGroupView('bookkeeping')
+    await wrapper.findAll('.n-tabs-tab').find((t) => t.text() === '商户')!.trigger('click')
+    await flushPromises()
+    expect(r.currentRoute.value.query.tab).toBe('merchants')
+    expect(wrapper.text()).toContain('商户列表')
+    expect(wrapper.find('[data-testid="sub-create-open"]').exists()).toBe(false)
+  })
+
+  it('洞察组路由预建：出厂无收纳成员，容器渲染空页签不崩（链接不渲染的镜像面）', async () => {
     const ins = await mountGroupView('insights')
     expect(ins.router.currentRoute.value.name).toBe('insights-more')
     expect(ins.wrapper.findAll('.n-tabs-tab').length).toBe(0)
   })
 })
 
-describe('旧保单路由迁移（issue #472 / ADR-0063 决策 5，#202 先例）', () => {
-  it('真实路由表：/policies 重定向到资产·更多并携带 tab: policies', async () => {
-    await router.push('/policies')
+describe('全局「更多」退役迁移链（issue #473 / ADR-0063 决策 1/5，#202/#472 重定向先例）', () => {
+  it('真实路由表：/more 重定向到记账·更多（默认落清单首位定时页签）', async () => {
+    await router.push('/more')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('bookkeeping-more')
+    expect(router.currentRoute.value.query.tab).toBeUndefined()
+  })
+
+  it('真实路由表：/more?tab=merchants 重定向到记账·更多商户页签', async () => {
+    await router.push('/more?tab=merchants')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('bookkeeping-more')
+    expect(router.currentRoute.value.query.tab).toBe('merchants')
+  })
+
+  it('真实路由表：/more?tab=policies 重定向到资产·更多保单页签', async () => {
+    await router.push('/more?tab=policies')
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('assets-more')
     expect(router.currentRoute.value.query.tab).toBe('policies')
   })
 
-  it('真实路由表：旧 name 仍可解析（ViewState 存量恢复路径不产生未知视图）', () => {
-    expect(router.hasRoute('policies')).toBe(true)
-  })
-
-  it('路由切换后持久化的视图名为 assets-more（组内「更多」路由名入 ViewState）', async () => {
-    await router.push('/policies')
-    await flushPromises()
-    expect(localStorage.getItem('view_state:route')).toBe(JSON.stringify('assets-more'))
-  })
-
-  it('全局「更多」本票保留：旧持久化视图名 more 仍可解析（不产生未知视图）', () => {
+  it('旧 name 仍可解析（ViewState 存量「more」启动恢复经重定向记录落记账·更多，不回退概览）', () => {
     expect(router.hasRoute('more')).toBe(true)
+  })
+
+  it('路由切换后持久化的视图名为 bookkeeping-more（重定向终态名入 ViewState，more 不再回写）', async () => {
+    await router.push('/more?tab=merchants')
+    await flushPromises()
+    expect(localStorage.getItem('view_state:route')).toBe(JSON.stringify('bookkeeping-more'))
   })
 })
