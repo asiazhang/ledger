@@ -17,6 +17,7 @@ import type { ActiveElement, Chart, ChartOptions, TooltipItem } from 'chart.js'
 import { api } from '@/api'
 import { t } from '@/i18n'
 import { useReferenceStore } from '@/stores/reference'
+import { useReportsSessionStore } from '@/stores/reports-session'
 import { formatAmount } from '@/types'
 import type { CategoryShare, MerchantShare, MonthlySummary } from '@/types'
 import {
@@ -29,8 +30,6 @@ import { categoryRoot } from '@/utils/category-tree'
 import { UNCATEGORIZED_ONLY } from '@/composables/useTransactionFilter'
 import {
   DATED_TIME_PERIOD_PRESETS,
-  presetRange,
-  type DateRange,
   type NullableDateRange,
 } from '@/utils/time-period'
 import MerchantRankingPanel from '@/components/reports/MerchantRankingPanel.vue'
@@ -39,26 +38,24 @@ ChartJS.register(Title, Tooltip, Legend, BarElement, CategoryScale, LinearScale)
 
 const reference = useReferenceStore()
 const router = useRouter()
-
-// 报表期间（issue #411 / ADR-0057 消费形态二）：视图自持快照起止日期，不进
-// TransactionFilter（其消费方边界维持交易列表专属）；进入默认「当年」快照；
-// 期间选择不持久化（ViewState「不做过度记忆」边界），重启回到默认当年。
-const period = ref<DateRange>(presetRange('year', new Date()))
+// 报表页会话状态（issue #427）：期间快照与图内下钻提升为会话级 store——
+// 同一会话内离开报表页再回来（Cmd+左回退、侧栏切换）= 回到离开时的样子；
+// 冷启动回默认「当年」；不写 localStorage、不写回路由 URL。
+// 同值守卫与期间切换复位下钻两条规则内化在 store，视图只接线。
+const session = useReportsSessionStore()
 
 // 报表页日期闭集（ADR-0057）：仅四枚日期芯片、无「全部」——期间必有界。
 const REPORT_PRESETS = DATED_TIME_PERIOD_PRESETS
 
 // 共享受控组件受控桥接（issue #410）：快照区间进出，组件不持状态源，
-// 视图是唯一事实源。四枚芯片与步进/面板只产出双端有界的自然周期快照，
-// 单端缺失（NullableDateRange 契约允许的过渡态）不采纳、期间保持有界；
-// 同值快照不动作（重复点同一芯片不重拉、不复位下钻，与交易页同值守卫同规）。
+// 唯一事实源是会话状态 store（issue #427）。四枚芯片与步进/面板只产出双端
+// 有界的自然周期快照，单端缺失（NullableDateRange 契约允许的过渡态）不采纳、
+// 期间保持有界；同值守卫在 store 内化（重复点同一芯片不重拉、不复位下钻）。
 const quickRange = computed<NullableDateRange>({
-  get: () => ({ from: period.value.from, to: period.value.to }),
+  get: () => ({ from: session.period.from, to: session.period.to }),
   set: (range) => {
     if (range.from !== null && range.to !== null) {
-      if (range.from !== period.value.from || range.to !== period.value.to) {
-        period.value = { from: range.from, to: range.to }
-      }
+      session.setPeriod({ from: range.from, to: range.to })
     }
   },
 })
@@ -67,18 +64,16 @@ const monthly = ref<MonthlySummary[]>([])
 const shares = ref<CategoryShare[]>([])
 const merchantShares = ref<MerchantShare[]>([])
 const loading = ref(false)
-// 图内下钻态（issue #379）：当前下钻的一级分类 id，null = 基础态；
-// 视图内瞬时状态，不持久化（与 ViewState 边界一致），期间切换复位。
-const drilledRootId = ref<string | null>(null)
 
 async function refresh() {
   loading.value = true
   try {
     const [m, s, ms] = await Promise.all([
-      // 三张卡随所选期间重算（issue #411）：期间口径一致，聚合在后端收口
-      api.monthlySummary({ from: period.value.from, to: period.value.to }),
-      api.categoryShares('expense', { from: period.value.from, to: period.value.to }),
-      api.merchantShares({ from: period.value.from, to: period.value.to }),
+      // 三张卡随所选期间重算（issue #411）：期间口径一致，聚合在后端收口；
+      // 期间读自会话状态 store（issue #427），恢复/改选同规
+      api.monthlySummary({ from: session.period.from, to: session.period.to }),
+      api.categoryShares('expense', { from: session.period.from, to: session.period.to }),
+      api.merchantShares({ from: session.period.from, to: session.period.to }),
     ])
     monthly.value = m
     shares.value = s
@@ -88,12 +83,16 @@ async function refresh() {
   }
 }
 
-watch(period, () => {
-  // 期间切换复位下钻（issue #379 裁决随期间化延续）：下钻是视图内瞬时状态，
-  // 停留在新区间无数据的悬停下钻态只会迷惑，回基础态重看全貌
-  drilledRootId.value = null
-  refresh()
-})
+watch(
+  // 监听原始值元组而非对象引用：只要期间双端任一变化就重拉，
+  // 不依赖 store 内部「快照整体替换」的实现方式（issue #427）
+  () => [session.period.from, session.period.to] as const,
+  () => {
+    // 期间切换复位下钻已内化在 store.setPeriod（issue #427）；视图只负责
+    // 照常重拉：三卡按当前期间重算，离开期间新记的账进入即反映
+    refresh()
+  },
+)
 
 const barChartData = computed(() => ({
   labels: monthly.value.map((m) => m.month),
@@ -144,8 +143,8 @@ const barChartOptions: ChartOptions<'bar'> = {
 // 图内下钻（issue #379）：点一级柱（未分类除外）切到该分类的二级构成
 // （二级子分类 + 直挂行）。
 const drilledRoot = computed(() =>
-  drilledRootId.value
-    ? (reference.categories.find((c) => c.id === drilledRootId.value) ?? null)
+  session.drilledRootId
+    ? (reference.categories.find((c) => c.id === session.drilledRootId) ?? null)
     : null,
 )
 
@@ -163,17 +162,18 @@ const categoryBarsData = computed(() => {
 })
 
 /** 跳转下钻（issue #380，载荷期间化 issue #412）：直达按该分类过滤的交易列表。
- * 载荷 = 分类（保留值 none = 仅无分类）+ 所选期间首尾日期——period 本就是共享受控
- * 组件经时间周期纯函数（presetRange / periodRange）写回的精确自然周期快照，
- * 月/季/年各档边界同源复用、不在视图另搓第二份年界数学；刻意不带交易类型参数——
- * 退款继承原分类，列表净额与图中柱值一致（分类下钻词条「跳转载荷与图所见同口径」）。 */
+ * 载荷 = 分类（保留值 none = 仅无分类）+ 所选期间首尾日期——期间本就是共享受控
+ * 组件经时间周期纯函数（presetRange / periodRange）写回会话状态 store 的精确
+ * 自然周期快照，月/季/年各档边界同源复用、不在视图另搓第二份年界数学；刻意不带
+ * 交易类型参数——退款继承原分类，列表净额与图中柱值一致（分类下钻词条
+ * 「跳转载荷与图所见同口径」）。 */
 function goCategoryTransactions(categoryId: string) {
   router.push({
     name: 'transactions',
     query: {
       category: categoryId,
-      dateFrom: period.value.from,
-      dateTo: period.value.to,
+      dateFrom: session.period.from,
+      dateTo: session.period.to,
     },
   })
 }
@@ -192,7 +192,7 @@ function handleCategoryBarClick(_event: unknown, elements: ActiveElement[]) {
       return
     }
     if (!categoryRoot(reference.categories, bar.id)) return
-    drilledRootId.value = bar.id
+    session.setDrilldown(bar.id)
     return
   }
   // 下钻行 id 非空由下钻纯函数保证（CategoryBar.id 类型联合故此处收窄）
@@ -298,7 +298,7 @@ onMounted(() => {
             <span>{{ t('reports.category.title') }}</span>
             <!-- 面包屑（issue #379）：下钻态显示当前位置，点根返回基础态 -->
             <NBreadcrumb v-if="drilledRoot" data-testid="category-breadcrumb" separator="›">
-              <NBreadcrumbItem @click="drilledRootId = null">
+              <NBreadcrumbItem @click="session.setDrilldown(null)">
                 <span data-testid="breadcrumb-root">{{ t('reports.category.all') }}</span>
               </NBreadcrumbItem>
               <NBreadcrumbItem>

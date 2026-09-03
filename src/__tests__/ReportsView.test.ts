@@ -98,6 +98,17 @@ async function clickChip(wrapper: ReturnType<typeof mount>, label: string) {
   await flushPromises()
 }
 
+/** 点第 i 根分类柱（经图桩按钮按 chart.js onClick 契约回调；#379 与 #427 两块共用） */
+async function clickBar(wrapper: ReturnType<typeof mount>, index: number) {
+  await wrapper.findAll('[data-testid="bar-click"]')[index].trigger('click')
+  await flushPromises()
+}
+
+/** 图内下钻面包屑（存在 = 下钻态；#379 与 #427 两块共用） */
+function breadcrumbOf(wrapper: ReturnType<typeof mount>) {
+  return wrapper.find('[data-testid="category-breadcrumb"]')
+}
+
 /** 经共享受控组件 emit 期间快照（v-model 回流视图），模拟步进/面板产出的任意期间 */
 async function emitPeriod(wrapper: ReturnType<typeof mount>, range: NullableDateRange) {
   wrapper.findComponent(QuickTimeRange).vm.$emit('update:modelValue', range)
@@ -291,16 +302,6 @@ describe('ReportsView 支出分类构成横向柱状图（issue #378）', () => 
 })
 
 describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
-  /** 点第 i 根分类柱（经图桩按钮按 chart.js onClick 契约回调） */
-  async function clickBar(wrapper: ReturnType<typeof mount>, index: number) {
-    await wrapper.findAll('[data-testid="bar-click"]')[index].trigger('click')
-    await flushPromises()
-  }
-
-  function breadcrumbOf(wrapper: ReturnType<typeof mount>) {
-    return wrapper.find('[data-testid="category-breadcrumb"]')
-  }
-
   it('点一级柱图内下钻：行集合 = 直挂行 + 二级子分类行，合计 = 父柱金额（不触发跳转）', async () => {
     baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
     const wrapper = await mountReports()
@@ -469,5 +470,124 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
       from: '2025-12-01',
       to: '2025-12-31',
     })
+  })
+})
+
+describe('ReportsView 会话内保留（issue #427）：同一 pinia 卸载重挂恢复，新 pinia 冷启动', () => {
+  it('选期间 + 图内下钻后卸载重挂（同一会话）：期间与下钻面包屑恢复，三卡以恢复期间重拉非缓存数据', async () => {
+    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    const first = await mountReports()
+    await clickChip(first, '去年')
+    await clickBar(first, 0) // 图内下钻餐饮
+    expect(breadcrumbOf(first).exists()).toBe(true)
+    first.unmount()
+
+    // 离开期间新记的账：重挂后三卡以恢复期间重新拉取，渲染新返回值（餐饮 9000 ≠ 离开前 6000）
+    const freshShares = [{ category_id: 'food', category_name: '餐饮', amount_cents: 9000 }]
+    baseInvoke({ list_categories: mockCategories, category_shares: freshShares })
+    mockInvoke.mockClear()
+    const second = await mountReports()
+
+    // 三张卡按恢复的「去年」期间重新查询（非缓存数据）
+    expect(mockInvoke).toHaveBeenCalledWith('monthly_summary', {
+      year: Y - 1,
+      from: `${Y - 1}-01-01`,
+      to: `${Y - 1}-12-31`,
+    })
+    expect(mockInvoke).toHaveBeenCalledWith('category_shares', {
+      kind: 'expense',
+      month: null,
+      year: null,
+      from: `${Y - 1}-01-01`,
+      to: `${Y - 1}-12-31`,
+    })
+    expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', {
+      year: Y - 1,
+      from: `${Y - 1}-01-01`,
+      to: `${Y - 1}-12-31`,
+    })
+
+    // 图内下钻位置恢复：面包屑仍在（全部分类 › 餐饮），图为下钻态行集合
+    expect(breadcrumbOf(second).exists()).toBe(true)
+    expect(breadcrumbOf(second).text()).toContain('餐饮')
+    const data = categoryChartProp('data', second)
+    expect(data.labels).toEqual(['餐饮（直挂）'])
+    expect(data.datasets[0].data).toEqual([9000])
+
+    // 路由 URL 不变：重挂本身不产生任何跳转
+    expect(pushMock).not.toHaveBeenCalled()
+  })
+
+  it('恢复期间点亮对应芯片：去年快照恢复后「去年」芯片高亮（primary）', async () => {
+    baseInvoke()
+    const first = await mountReports()
+    await clickChip(first, '去年')
+    first.unmount()
+
+    const second = await mountReports()
+    const lastYearChip = chip(second, '去年')
+    expect(lastYearChip.props('type')).toBe('primary')
+    expect(chip(second, '当年').props('type')).toBe('default')
+  })
+
+  it('多次往返（报表 → 交易 → 报表 → 更多 → 报表）：恢复最近一次离开时的样子', async () => {
+    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    // 第一次进入：切「当月」后离开
+    const first = await mountReports()
+    await clickChip(first, '当月')
+    first.unmount()
+    // 第二次进入（第一次「回来」）：恢复当月，再切「去年」+ 下钻后离开
+    const second = await mountReports()
+    expect(mockInvoke).toHaveBeenCalledWith('monthly_summary', {
+      year: Y,
+      from: `${Y}-01-01`,
+      to: `${Y}-01-31`,
+    })
+    await clickChip(second, '去年')
+    await clickBar(second, 0) // 图内下钻餐饮
+    second.unmount()
+
+    // 第三次进入：恢复最近一次离开（去年 + 餐饮下钻），而非更早的当月
+    mockInvoke.mockClear()
+    const third = await mountReports()
+    expect(mockInvoke).toHaveBeenCalledWith('monthly_summary', {
+      year: Y - 1,
+      from: `${Y - 1}-01-01`,
+      to: `${Y - 1}-12-31`,
+    })
+    expect(breadcrumbOf(third).exists()).toBe(true)
+    expect(breadcrumbOf(third).text()).toContain('餐饮')
+  })
+
+  it('新 pinia + 重挂表达冷启动：回默认「当年」，下钻回基础态，面包屑不出现', async () => {
+    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    const first = await mountReports()
+    await clickChip(first, '去年')
+    await clickBar(first, 0)
+    first.unmount()
+
+    // 新 pinia = 新会话（应用重启）：默认当年、无面包屑、图为基础态
+    setActivePinia(createPinia())
+    mockInvoke.mockClear()
+    const second = await mountReports()
+    expect(mockInvoke).toHaveBeenCalledWith('monthly_summary', {
+      year: Y,
+      from: `${Y}-01-01`,
+      to: `${Y}-12-31`,
+    })
+    expect(breadcrumbOf(second).exists()).toBe(false)
+    expect(categoryChartProp('data', second).labels).toEqual(['餐饮', '交通', '未分类'])
+  })
+
+  it('会话内保留零持久化：选择期间与下钻全程 localStorage 零写入', async () => {
+    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    const first = await mountReports()
+    const keysBefore = Object.keys(localStorage)
+    await clickChip(first, '去年')
+    await clickBar(first, 0)
+    first.unmount()
+    const second = await mountReports()
+    expect(Object.keys(localStorage)).toEqual(keysBefore)
+    second.unmount()
   })
 })
