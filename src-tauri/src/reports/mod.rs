@@ -15,6 +15,9 @@
 //! 遗留参数冻结保留、前端不再使用）。
 //! - 日期筛选范围（issue #266 / #389）：`{min_date, max_date}`，空库双 None。
 //!
+//! 报表读模型类型集中本域 [`model`]（#421 随域归位），消费方经域路径逐类型
+//! 显式 import。
+//!
 //! 核心函数吃 `&Connection` 可直接单测；IPC 参数解包与连接锁管理在壳层
 //! `commands::reports`（#405 压平为单文件纯壳）。注册路径与前端调用零改动。
 //!
@@ -24,11 +27,14 @@
 #[cfg(test)]
 mod tests;
 
+mod model;
+
+pub use model::{CategoryShare, DateRange, MerchantShare, MonthlySummary};
+
 use rusqlite::Connection;
 
 use crate::db::query::query_all;
 use crate::error::Result;
-use crate::models::{CategoryShare, DateRange, MerchantShare, MonthlySummary};
 use crate::transaction::amount::{
     Measure, contributing_kinds_sql, expense_gross_expr, expense_net_expr, income_net_expr,
     refund_gross_expr,
