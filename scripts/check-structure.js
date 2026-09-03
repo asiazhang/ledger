@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// 结构守门（issue #396 / ADR-0056）：白名单式分层依赖检查。
+// 结构守门（issue #396 / ADR-0056；模型域化禁令 issue #424 / ADR-0059 决策 6）：
+// 白名单式分层依赖检查。
 // 分层规则：壳 → 域 → 基础设施，域永不依赖壳。白名单 = 已归位域目录 + 全部
 // 基础设施（「已验证对壳层零依赖」固化为规格）；白名单内出现对壳层
 // （src-tauri/src/commands/）的模块路径依赖即红——每归位一域追加一行白名单。
@@ -10,6 +11,14 @@
 // 扫描边界：文本级扫描，注释与字符串/char 字面量掩码后匹配 `commands::`
 // 路径引用与 `commands as` 别名引入；经别名改名的间接引用文本不可达，
 // 靠评审兜底。
+// 模型域化禁令（ADR-0059 T7 / #424 收口落地，全树扫描、同样掩码与测试豁免）：
+// ① 全局模型模块路径残留禁令——`crate::models` / `tauri_app_lib::models` 即红：
+//    全局模型目录已随域归位消亡，防扁平命名空间复活（crate 根裸路径 `models::x`
+//    与别名改写文本不可达，靠评审兜底）；
+// ② 域模型 glob 再导出禁令——`pub use …model(s)::*`（域接缝或跨域拍平）与
+//    域模型文件（model.rs / models.rs）内的 `pub use …::*` 聚合即红，
+//    所有权必须逐类型可见（`pub(crate) use` 受限再导出与私有 `use` glob 引入
+//    不在文本可辨范围，靠评审兜底）。
 // 默认校验本仓库；测试可传位置参数指向夹具：node scripts/check-structure.js [src-dir]
 // 挂载于 scripts/check.sh 质量门槛序列与 CI（build.yml frontend job），
 // 与命令注册一致性检查并列。
@@ -39,7 +48,6 @@ export const WHITELIST = [
   { path: 'sync', layer: '域目录', note: '行情同步域（#407 归位，HTTP 爬取/东财基金净值/增全量同步编排自 commands/sync 随迁）' },
   { path: 'db', layer: '基础设施', note: '数据库连接' },
   { path: 'signals.rs', layer: '基础设施', note: '信号映射（ADR-0044）' },
-  { path: 'models', layer: '基础设施', note: '模型' },
   { path: 'error.rs', layer: '基础设施', note: '错误' },
   { path: 'settings.rs', layer: '基础设施', note: '设置' },
   { path: 'fs_util.rs', layer: '基础设施', note: '文件级原子操作工具（备份与 DataLocation 搬迁共用，#408 纳入守门）' },
@@ -49,6 +57,23 @@ export const WHITELIST = [
 
 /** 壳层依赖形态：模块路径引用（crate::commands::x / commands::x）与别名引入 */
 const SHELL_DEP_PATTERN = /\bcommands\s*::|\bcommands\s+as\b/
+
+/** 规则①形态：全局模型模块路径（全局目录已消亡，任何引用即残留） */
+const GLOBAL_MODEL_PATH_PATTERN = /\b(?:crate|tauri_app_lib)\s*::\s*models\b/
+
+/** 规则②形态：模型模块的 glob 再导出——域接缝 `pub use model::*` 与
+ *  跨域/旧目录同名拍平 `pub use …::models::*`；逐类型花括号列举不命中 */
+const MODEL_GLOB_REEXPORT_PATTERN = /\bpub\s+use\s+[\w:]*\bmodels?\b\s*::\s*\*/
+
+/** 规则②形态：任意 glob 再导出（仅用于域模型文件内的聚合扫描） */
+const MODEL_FILE_GLOB_PATTERN = /\bpub\s+use\s+[\w:]*\*/
+
+/** 域模型文件（ADR-0059 目标形状：每域一个 model.rs；定时计划域为先例名 models.rs） */
+function isModelFile(relPath) {
+  const segments = relPath.split('/')
+  const file = segments[segments.length - 1]
+  return file === 'model.rs' || file === 'models.rs'
+}
 
 /** 测试豁免形态（ADR-0056 决策 5）：tests.rs 文件与 tests/ 目录 */
 function isTestFile(relPath) {
@@ -154,14 +179,15 @@ export function maskNonCode(text) {
   return out.join('')
 }
 
-/** 扫描单个 Rust 文本：返回命中壳层依赖的行号（1 起算）与原文 */
-export function scanRustSource(text) {
+/** 扫描单个 Rust 文本（掩码注释与字符串/char 字面量）：返回命中指定形态的
+ *  行号（1 起算）与原文；形态缺省为壳层依赖（白名单分层检查的既有行为） */
+export function scanRustSource(text, pattern = SHELL_DEP_PATTERN) {
   const hits = []
   const masked = maskNonCode(text)
   const maskedLines = masked.split('\n')
   const rawLines = text.split('\n')
   for (let i = 0; i < maskedLines.length; i++) {
-    const m = maskedLines[i].match(SHELL_DEP_PATTERN)
+    const m = maskedLines[i].match(pattern)
     if (m) hits.push({ line: i + 1, text: rawLines[i].trim(), match: m[0] })
   }
   return hits
@@ -188,6 +214,46 @@ function main() {
   const problems = []
   let scannedFiles = 0
   const domainCount = WHITELIST.filter((w) => w.layer === '域目录').length
+
+  // 模型域化禁令（规则①/②）：全树扫描（壳、域、基础设施、顶层文件），
+  // 残留引用可出现在任何层；collectRustFiles 自带测试豁免（ADR-0056 决策 5）。
+  // srcDir 整体不可达时静默交由白名单循环报「路径不存在」，不在此抛栈。
+  let allFiles = []
+  try {
+    allFiles = collectRustFiles(srcDir, '')
+  } catch {
+    // 目录缺失：白名单循环会逐条报错并 fail loud
+  }
+  for (const f of allFiles) {
+    const source = readFileSync(f.abs, 'utf8')
+    for (const hit of scanRustSource(source, GLOBAL_MODEL_PATH_PATTERN)) {
+      problems.push(
+        `✗ 全局模型路径残留：${f.rel}:${hit.line}（${hit.match}）\n` +
+          `    ${hit.text}\n` +
+          `    全局模型目录已随 ADR-0059 模型域化消亡（T7 / #424），` +
+          `模型类型一律走域路径显式 import（如 crate::transaction::model::Transaction）` +
+          `——防扁平命名空间复活`,
+      )
+    }
+    for (const hit of scanRustSource(source, MODEL_GLOB_REEXPORT_PATTERN)) {
+      problems.push(
+        `✗ 域模型 glob 再导出：${f.rel}:${hit.line}（${hit.match}）\n` +
+          `    ${hit.text}\n` +
+          `    域 model 只许逐类型再导出，所有权必须逐类型可见 ` +
+          `（ADR-0059 决策 3/6，#424）：改为 pub use model::{TypeA, TypeB} 形态`,
+      )
+    }
+    if (isModelFile(f.rel)) {
+      for (const hit of scanRustSource(source, MODEL_FILE_GLOB_PATTERN)) {
+        problems.push(
+          `✗ 域模型文件内 glob 聚合：${f.rel}:${hit.line}（${hit.match}）\n` +
+            `    ${hit.text}\n` +
+            `    域模型文件只承载本域类型定义与逐类型再导出，禁止 glob 聚合 ` +
+            `（ADR-0059 决策 3/6，#424）`,
+        )
+      }
+    }
+  }
 
   for (const w of WHITELIST) {
     const abs = join(srcDir, w.path)
@@ -233,7 +299,8 @@ function main() {
   }
   console.log(
     `✓ 结构守门：白名单 ${WHITELIST.length} 项（域目录 ${domainCount} + 基础设施 ${WHITELIST.length - domainCount}）` +
-      `· 非测试文件 ${scannedFiles} 个 · 对壳层零依赖`,
+      `· 白名单面非测试文件 ${scannedFiles} 个 · 对壳层零依赖` +
+      `· 模型域化禁令全树扫描 ${allFiles.length} 个文件零残留（ADR-0059）`,
   )
 }
 

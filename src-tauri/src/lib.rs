@@ -27,7 +27,6 @@ pub mod investment;
 pub mod item;
 pub mod logger;
 pub mod merchants;
-pub mod models;
 pub mod policy;
 pub mod reports;
 pub mod scheduled_transactions;

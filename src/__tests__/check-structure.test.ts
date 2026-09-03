@@ -135,3 +135,86 @@ describe('check-structure（结构守门）', () => {
     expect(r.output).toContain('扫不到非测试')
   })
 })
+
+describe('check-structure 模型域化禁令（ADR-0059 决策 6 / #424 T7 收口）', () => {
+  it('规则①：crate::models 全局模型路径残留 → 红', () => {
+    const args = makeFixture({ 'item/crud.rs': 'use crate::models::Transaction;\npub fn x() {}\n' })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('全局模型路径残留')
+    expect(r.output).toContain('item/crud.rs:1')
+  })
+
+  it('规则①：tauri_app_lib::models 形态同样识别 → 红', () => {
+    const args = makeFixture({
+      'commands/transactions.rs': 'let t: tauri_app_lib::models::Transaction;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('全局模型路径残留')
+  })
+
+  it('规则①：注释与字符串中的 models 路径不误报（掩码边界）', () => {
+    const args = makeFixture({
+      'item/cost.rs': [
+        '/// 全局模型目录已消亡，crate::models 是历史形态（文档注释不算引用）',
+        '// 见 crate::models::Transaction 说明',
+        'let s = "crate::models::Transaction";',
+        'pub fn f() {}',
+      ].join('\n'),
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('规则①：外挂测试豁免（tests.rs / tests/ 目录不参与扫描）', () => {
+    const args = makeFixture({
+      'item/tests.rs': 'use crate::models::Transaction;\n',
+      'item/tests/scaffold.rs': 'use tauri_app_lib::models::Transaction;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+
+  it('规则②：域接缝 glob 再导出 pub use model::* → 红', () => {
+    const args = makeFixture({ 'item/mod.rs': 'mod model;\npub use model::*;\n' })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('glob 再导出')
+    expect(r.output).toContain('item/mod.rs:2')
+  })
+
+  it('规则②：跨域拍平形态 pub use crate::x::model::* → 红', () => {
+    const args = makeFixture({
+      'item/mod.rs': 'pub use crate::transaction::model::*;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('glob 再导出')
+  })
+
+  it('规则②：旧全局目录同名形态 pub use models::* → 红', () => {
+    const args = makeFixture({ 'item/mod.rs': 'pub use models::*;\n' })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('glob 再导出')
+  })
+
+  it('规则②：域模型文件内 glob 聚合 pub use xxx::* → 红', () => {
+    const args = makeFixture({ 'item/model.rs': 'pub use super::crud::*;\n' })
+    const r = run(args)
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('glob 聚合')
+    expect(r.output).toContain('item/model.rs:1')
+  })
+
+  it('规则②：逐类型再导出与域内私有 glob 引用合规 → 绿', () => {
+    const args = makeFixture({
+      'item/mod.rs': 'mod model;\npub use model::{Item, ItemInput};\n',
+      'item/behavior.rs': 'use super::model::*;\npub fn x() {}\n',
+      'item/model.rs': 'pub struct Item;\n',
+    })
+    const r = run(args)
+    expect(r.status).toBe(0)
+  })
+})
