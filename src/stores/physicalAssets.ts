@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event'
 import { api } from '@/api'
 import type {
   PhysicalAsset,
+  PhysicalAssetDisposeInput,
   PhysicalAssetInput,
   PhysicalAssetList,
   PhysicalAssetUpdateInput,
@@ -34,6 +35,9 @@ export const usePhysicalAssetsStore = defineStore('physicalAssets', () => {
   const nativeCurrency = ref('')
   const status = ref<PhysicalAssetsStatus>('idle')
   const version = ref(0)
+  /** 状态筛选（issue #468 T3）：默认只看在持；「已处置」筛选回看完整档案。
+   *  在持合计口径与筛选无关（后端恒算在持，回看已处置时合计不变）。 */
+  const statusFilter = ref<'holding' | 'disposed'>('holding')
 
   /** 在途加载 promise（并发调用合并去重）。 */
   let inFlight: Promise<void> | null = null
@@ -43,7 +47,7 @@ export const usePhysicalAssetsStore = defineStore('physicalAssets', () => {
   async function reload(): Promise<void> {
     status.value = 'loading'
     try {
-      const list: PhysicalAssetList = await api.listPhysicalAssets()
+      const list: PhysicalAssetList = await api.listPhysicalAssets(statusFilter.value)
       assets.value = list.assets
       holdingTotalNativeCents.value = list.holding_total_native_cents
       nativeCurrency.value = list.native_currency
@@ -67,6 +71,14 @@ export const usePhysicalAssetsStore = defineStore('physicalAssets', () => {
   /** 强制刷新（在途时合并，避免 IPC 风暴）。 */
   function refresh(): Promise<void> {
     return reloadMerged()
+  }
+
+  /** 切换状态筛选（issue #468 T3）：在持 / 已处置，切换后立即按新筛选重拉；
+   *  后续 ledger:changed 信号重拉沿用当前筛选。 */
+  async function setStatusFilter(filter: 'holding' | 'disposed'): Promise<void> {
+    if (statusFilter.value === filter) return
+    statusFilter.value = filter
+    await reloadMerged()
   }
 
   /** 建档（估值必填 = 首条估值历史行）：写入成功即返回 id，不因重拉失败
@@ -98,6 +110,25 @@ export const usePhysicalAssetsStore = defineStore('physicalAssets', () => {
     })
   }
 
+  /** 处置（issue #468 T3）：状态标记转已处置 + 处置信息纯记录（处置日期必填、
+   *  处置价 + 币种可选成对，后端守卫）；写入成功即返回（重拉失败语义同上），
+   *  资产退出默认列表与在持合计由后端读口径自然生效。 */
+  async function dispose(id: string, input: PhysicalAssetDisposeInput): Promise<void> {
+    await api.disposePhysicalAsset(id, input)
+    await refresh().catch(() => {
+      /* 重拉失败不阻断处置成功路径 */
+    })
+  }
+
+  /** 软删除（issue #468 T3）：数据与估值历史保留，资产退出列表与合计；
+   *  写入成功即返回（重拉失败语义同上）。 */
+  async function remove(id: string): Promise<void> {
+    await api.deletePhysicalAsset(id)
+    await refresh().catch(() => {
+      /* 重拉失败不阻断删除成功路径 */
+    })
+  }
+
   // —— push 生命周期 ——
   // 首次访问 self-init：触发一次加载（失败静默，失败信号已由 status 承载）。
   void refresh().catch(() => {
@@ -119,9 +150,13 @@ export const usePhysicalAssetsStore = defineStore('physicalAssets', () => {
     nativeCurrency,
     status,
     version,
+    statusFilter,
     refresh,
+    setStatusFilter,
     create,
     update,
     updateValuation,
+    dispose,
+    remove,
   }
 })

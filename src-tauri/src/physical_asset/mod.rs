@@ -22,10 +22,10 @@ pub mod validation;
 /// 域 API 再导出：调用面用域语言短名（`physical_asset::list_physical_assets` 等），
 /// 与 ADR-0056 定格形状一致（先例：`policy` / `item` 入口再导出）。
 pub use crud::{
-    create_physical_asset, get_physical_asset, list_physical_assets, update_physical_asset,
-    update_physical_asset_valuation,
+    create_physical_asset, delete_physical_asset, dispose_physical_asset, get_physical_asset,
+    list_physical_assets, update_physical_asset, update_physical_asset_valuation,
 };
 pub use model::{
-    PhysicalAsset, PhysicalAssetInput, PhysicalAssetList, PhysicalAssetStatus,
-    PhysicalAssetUpdateInput, PhysicalAssetValuationInput,
+    PhysicalAsset, PhysicalAssetDisposeInput, PhysicalAssetInput, PhysicalAssetList,
+    PhysicalAssetStatus, PhysicalAssetUpdateInput, PhysicalAssetValuationInput,
 };

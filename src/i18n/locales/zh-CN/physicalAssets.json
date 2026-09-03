@@ -8,12 +8,16 @@
     "valuation": "当前估值",
     "valuationDate": "估值日期",
     "status": "状态",
+    "disposal": "处置信息",
     "actions": "操作"
   },
   "actions": {
     "updateValuation": "更新估值",
-    "edit": "编辑"
+    "edit": "编辑",
+    "dispose": "处置",
+    "delete": "删除"
   },
+  "deleteConfirm": "删除后资产将退出列表与合计，数据与估值历史保留（软删除），确认删除？",
   "status": {
     "holding": "在持",
     "disposed": "已处置"
@@ -33,6 +37,23 @@
       "amountRequired": "请填写估值金额",
       "amountInvalid": "估值金额必须大于 0",
       "currencyRequired": "请选择估值币种"
+    }
+  },
+  "dispose": {
+    "title": "处置资产",
+    "label": {
+      "date": "处置日期",
+      "price": "处置价（可选）"
+    },
+    "placeholder": {
+      "date": "选择处置日期",
+      "price": "如 600000"
+    },
+    "dateHint": "处置后退出在持列表与合计，档案保留可经「已处置」筛选回看；处置价是纯记录，不进任何金额口径",
+    "msg": {
+      "dateRequired": "请选择处置日期",
+      "priceInvalid": "处置价必须大于 0",
+      "currencyRequired": "请选择处置币种"
     }
   },
   "form": {
@@ -66,6 +87,8 @@
     "created": "建档成功",
     "updated": "保存成功",
     "valuationUpdated": "估值已更新",
+    "disposed": "已处置",
+    "deleted": "已删除",
     "saveFailed": "保存失败：{msg}"
   }
 }

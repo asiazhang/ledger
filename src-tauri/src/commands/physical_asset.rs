@@ -16,8 +16,8 @@ use tauri::State;
 use crate::db::DbState;
 use crate::error::{AppError, Result};
 use crate::physical_asset::{
-    self as physical_asset_domain, PhysicalAsset, PhysicalAssetInput, PhysicalAssetList,
-    PhysicalAssetUpdateInput, PhysicalAssetValuationInput,
+    self as physical_asset_domain, PhysicalAsset, PhysicalAssetDisposeInput, PhysicalAssetInput,
+    PhysicalAssetList, PhysicalAssetUpdateInput, PhysicalAssetValuationInput,
 };
 use crate::signals::{WriteEvidence, WriteOp, emit_for};
 
@@ -65,6 +65,35 @@ pub fn update_physical_asset(
     db.write(|conn| {
         physical_asset_domain::update_physical_asset(conn, &id, input, &mut || {
             emit_for(&app, WriteOp::UpdatePhysicalAsset, WriteEvidence::None);
+        })
+    })
+}
+
+#[tauri::command]
+pub fn dispose_physical_asset(
+    db: State<'_, DbState>,
+    app: tauri::AppHandle,
+    id: String,
+    input: PhysicalAssetDisposeInput,
+) -> Result<()> {
+    // 连接层统一写入口（ADR-0032）：状态标记 + 处置信息落库 + 置脏；单表更新。
+    db.write(|conn| {
+        physical_asset_domain::dispose_physical_asset(conn, &id, input, &mut || {
+            emit_for(&app, WriteOp::DisposePhysicalAsset, WriteEvidence::None);
+        })
+    })
+}
+
+#[tauri::command]
+pub fn delete_physical_asset(
+    db: State<'_, DbState>,
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<()> {
+    // 连接层统一写入口（ADR-0032）：软删标志落库 + 置脏；单表更新。
+    db.write(|conn| {
+        physical_asset_domain::delete_physical_asset(conn, &id, &mut || {
+            emit_for(&app, WriteOp::DeletePhysicalAsset, WriteEvidence::None);
         })
     })
 }

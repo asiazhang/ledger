@@ -52,6 +52,7 @@ import type {
   MerchantUpdateInput,
   MonthlySummary,
   PhysicalAsset,
+  PhysicalAssetDisposeInput,
   PhysicalAssetInput,
   PhysicalAssetList,
   PhysicalAssetUpdateInput,
@@ -263,6 +264,11 @@ export const api = {
   // 更新估值（issue #467 T2）：追加一条估值历史行，当前估值变为最新一条
   updatePhysicalAssetValuation: (id: string, input: PhysicalAssetValuationInput) =>
     invoke<void>('update_physical_asset_valuation', { id, input }),
+  // 处置（issue #468 T3）：状态标记转已处置 + 处置信息纯记录，退出默认列表与在持合计
+  disposePhysicalAsset: (id: string, input: PhysicalAssetDisposeInput) =>
+    invoke<void>('dispose_physical_asset', { id, input }),
+  // 软删除（issue #468 T3）：数据与估值历史保留，退出列表与合计
+  deletePhysicalAsset: (id: string) => invoke<void>('delete_physical_asset', { id }),
 
   // 汇率
   listExchangeRates: () => invoke<ExchangeRate[]>('list_exchange_rates'),
