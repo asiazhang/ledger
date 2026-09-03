@@ -5,6 +5,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import MoreView from '@/views/MoreView.vue'
 import GroupMoreView from '@/views/GroupMoreView.vue'
+import { makePolicy, makePolicyStats } from './factories'
 import { routes, router } from '@/router'
 import type { Currency, Merchant } from '@/types'
 
@@ -87,7 +88,7 @@ describe('MoreView 全局「更多」仅剩商户页签（issue #472 / ADR-0063�
     expect(wrapper.text()).toContain('新增商户')
   })
 
-  it('已迁出的保单页签深链回退默认页签：展示层回退，不写回 query（与定时页约定一致）', async () => {
+  it('已迁出的保单页签深链回退默认页签：展示层回退，不写回 query（与定时页约定一致；/more?tab=policies 的重定向属 #473 迁移链，本票不处理）', async () => {
     const { wrapper, router: r } = await mountView('/more?tab=policies')
     expect(wrapper.text()).toContain('商户列表')
     expect(wrapper.find('[data-testid="policy-new"]').exists()).toBe(false)
@@ -114,9 +115,32 @@ describe('GroupMoreView 组内「更多」容器（issue #472 / ADR-0063 决策 
     expect(r.currentRoute.value.query.tab).toBe('hack')
   })
 
-  it('保单视图零功能损失：列表/建档/软删确认入口齐备（整体装载，容器零业务逻辑）', async () => {
+  it('保单视图零功能损失：列表/建档/软删入口/保单视角统计在容器内齐备（整体装载，容器零业务逻辑）', async () => {
+    const policy = makePolicy({ id: 'policy-1' })
+    const stats = makePolicyStats({
+      policy_id: 'policy-1',
+      total_paid_native_cents: 600_000,
+      total_inflow_native_cents: 50_000,
+    })
+    mockInvoke.mockImplementation(((cmd: string) => {
+      if (cmd === 'list_policies') return Promise.resolve([policy])
+      if (cmd === 'list_policy_stats') return Promise.resolve([stats])
+      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
+      if (cmd === 'list_accounts') return Promise.resolve([])
+      if (cmd === 'list_categories') return Promise.resolve([])
+      if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    }) as typeof invoke)
     const { wrapper } = await mountGroupView('assets')
-    expect(wrapper.text()).toContain('新建保单')
+    const text = wrapper.text()
+    // 列表照常渲染（保司/险种/保单号，同 PoliciesView 既有断言口径）
+    expect(text).toContain('重疾险')
+    expect(text).toContain('P2026-001')
+    // 软删入口在行上可达（确认交互归 PoliciesView 自身测试）
+    expect(wrapper.find('[data-testid="policy-delete-policy-1"]').exists()).toBe(true)
+    // 保单视角统计：累计已缴 600_000 分 → ¥6000（同 PoliciesView 既有断言口径）
+    expect(text).toContain('累计已缴')
+    expect(text).toContain('¥6000')
     expect(wrapper.find('[data-testid="policy-new"]').exists()).toBe(true)
   })
 
