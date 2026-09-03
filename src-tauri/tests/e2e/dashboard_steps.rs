@@ -133,6 +133,15 @@ fn assert_accounts_balance(world: &mut LedgerWorld, expected: i64) {
     );
 }
 
+#[then(expr = "实物资产估值合计应为 {int}")]
+fn assert_physical_assets_value(world: &mut LedgerWorld, expected: i64) {
+    let overview = world.last_overview.as_ref().expect("未查询到净资产总览");
+    assert_eq!(
+        overview.physical_assets_value_cents, expected,
+        "实物资产估值合计不符"
+    );
+}
+
 #[then(expr = "持仓市值合计应为 {int}")]
 fn assert_holdings_value(world: &mut LedgerWorld, expected: i64) {
     let overview = world.last_overview.as_ref().expect("未查询到净资产总览");

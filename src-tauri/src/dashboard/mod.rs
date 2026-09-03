@@ -1,8 +1,9 @@
 //! 仪表盘域（issue #142；#405 域目录化 ADR-0056）：首页净资产跨币种合计，
 //! 只读聚合。
 //!
-//! 口径（ADR-0020，真实财富视角）：
-//! 净资产 = Σ 非投资账户折本位币余额 + Σ 折本位币持仓市值。
+//! 口径（ADR-0020，真实财富视角；第三腿 ADR-0064 决策 6）：
+//! 净资产 = Σ 非投资账户折本位币余额 + Σ 折本位币持仓市值
+//!   + Σ 在持实物资产估值折本位币。
 //! - 账户侧余额沿用 `db::balance::list_account_balances_with_visibility`
 //!   （内部即 `account_flow` 口径的 `compute_all_balances_with_visibility`，
 //!   与账户列表/余额页一致，排除隐藏与黑洞账户），并剔除投资账户（其价值
@@ -11,7 +12,12 @@
 //!   `market_value_cents` 为 NULL（从未录价或缺折算汇率）时按空值语义跳过；
 //! - 币种折算一律复用 [`amount::convert_to_native`]，缺汇率错误上抛
 //!   （中文错误信息），不静默混币种；
-//! - 投资域不新增任何写函数（ADR-0013）。
+//! - 实物资产腿复用 [`crate::physical_asset`] 域 API 的在持合计读口径
+//!   （`list_physical_assets` 的 `holding_total_native_cents`，最新估值行经
+//!   Amount 接缝折算、缺汇率错误上抛、已处置 / 软删不计入），与实物资产
+//!   列表「家底合计」同源不漂移；
+//! - 投资域不新增任何写函数（ADR-0013）；可投资资产（财务自由度分子，
+//!   ADR-0048）不受实物资产影响。
 //!
 //! 核心函数吃 `&Connection` 可直接单测/供 e2e 复用；IPC 参数解包与连接锁
 //! 管理在壳层 `commands::dashboard`（#405 压平为单文件纯壳）。依赖方向恒为
@@ -28,6 +34,7 @@ use crate::accounts::AccountType;
 use crate::db::balance::list_account_balances_with_visibility;
 use crate::db::query::{FromRow, query_all};
 use crate::error::Result;
+use crate::physical_asset;
 use crate::transaction::amount;
 
 /// 持仓市值行：`v_holdings` 市值（账户本位币，可为 NULL）+ 账户币种。
@@ -73,10 +80,17 @@ pub fn query_dashboard_overview(conn: &Connection) -> Result<DashboardOverview> 
         }
     }
 
+    // 在持实物资产估值合计（第三腿，ADR-0064 决策 6）：经实物资产域单一读
+    // 口径取数（缺汇率错误上抛，不静默漏算；已处置 / 软删不计入），与实物
+    // 资产列表「家底合计」同源。
+    let physical_assets_value_cents =
+        physical_asset::list_physical_assets(conn, None)?.holding_total_native_cents;
+
     Ok(DashboardOverview {
         native_currency: amount::default_currency_code().to_string(),
-        net_worth_cents: accounts_sum + holdings_sum,
+        net_worth_cents: accounts_sum + holdings_sum + physical_assets_value_cents,
         accounts_balance_cents: accounts_sum,
         holdings_market_value_cents: holdings_sum,
+        physical_assets_value_cents,
     })
 }

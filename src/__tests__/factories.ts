@@ -159,6 +159,7 @@ export function makeOverview(partial: Partial<DashboardOverview> = {}): Dashboar
     net_worth_cents: 123456,
     accounts_balance_cents: 100000,
     holdings_market_value_cents: 23456,
+    physical_assets_value_cents: 0,
     ...partial,
   }
 }

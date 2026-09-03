@@ -6,7 +6,7 @@
 //! `ledger:changed`）、列表与在持合计。汇率 Given 复用 `scheduled_steps/occurrence`
 //! 的已注册步骤（写 `exchange_rates` 当期表）。
 
-use cucumber::{then, when};
+use cucumber::{given, then, when};
 
 use tauri_app_lib::physical_asset::{
     PhysicalAssetInput, create_physical_asset as create_physical_asset_domain,
@@ -48,6 +48,11 @@ fn build_input(
 }
 
 /// 创建实物资产并要求成功；记录失效信号次数（写后发 `ledger:changed` 的 seam 断言）。
+/// Given/When 双注册（先例 dashboard_steps 已买入）：其它域场景可作前置建档，
+/// 也可在动作流中建档（#469 净资产第三腿场景复用）。
+#[given(
+    expr = "创建实物资产 名称 {string} 购买日期 {string} 购买价 {string} 币种 {string} 估值 {string} 估值币种 {string} 估值日期 {string}"
+)]
 #[when(
     expr = "创建实物资产 名称 {string} 购买日期 {string} 购买价 {string} 币种 {string} 估值 {string} 估值币种 {string} 估值日期 {string}"
 )]
