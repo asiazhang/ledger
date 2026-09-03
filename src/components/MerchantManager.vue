@@ -12,6 +12,7 @@ import {
   NTag,
   useMessage,
   type DataTableColumn,
+  type PaginationProps,
 } from 'naive-ui'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import MerchantEditModal from '@/components/merchants/MerchantEditModal.vue'
@@ -37,6 +38,13 @@ import type { Merchant, MerchantInput } from '@/types'
 // 软删商户经 merchantMap 历史交易口径可解析）。本票只负责产生正确的跳转。
 // 拼音搜索与显示已删（issue #447）：搜索按统一模糊搜索语义本地过滤（ADR-0027，
 // 唯一定义点为核心交易域 TransactionSearch）；已删行只读展示、条数照常可下钻。
+// 前端分页（issue #457）：数据仍全量驻留前端、搜索仍是本地过滤，仅展示层切片——
+// 非表格 remote 分页形态（那是 ADR-0008 服务端分页载体），NDataTable 以客户端
+// 分页模式对过滤后全量行自行先排序后切片；分页条与交易页同形态（过滤后总数 +
+// 页大小选择）。过滤意图变化（搜索输入/清空、显示已删、排序）页码归零；删除
+// 当前页最后一条页码回退一页（ADR-0045 先例，按展示集合事实判定「本页删后
+// 剩余条数」：显示已删开启时软删行不离开展示集合，不回退）。页码与页大小为
+// 组件内受控状态、不持久化，页签卸载重挂即回第一页。
 
 interface MerchantRow extends Merchant {
   /** 关联交易条数（毛笔数）：无引用商户为 0 */
@@ -101,11 +109,66 @@ const deletedRows = computed<MerchantRow[]>(() =>
 const searchTerm = ref('')
 
 /** 展示行：（显示已删？在用 + 已删：仅在用）→ 搜索词过滤
- *（matchLabel 空输入恒命中，清空即完整列表；filter 保序不重排）。 */
+ *（matchLabel 空输入恒命中，清空即完整列表；filter 保序不重排）。
+ * 表格以此全量集合作 data，排序与分页切片由表格客户端模式自行完成。 */
 const displayRows = computed<MerchantRow[]>(() => {
   const base = showDeleted.value ? [...rows.value, ...deletedRows.value] : rows.value
   return base.filter((m) => matchLabel(searchTerm.value, m.name))
 })
+
+// —— 前端分页（issue #457）：组件内受控状态，不持久化；页签卸载重挂即回第一页 ——
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
+const currentPage = ref(1)
+const pageSize = ref(50)
+
+/** 「本页删后剩 N 条」（ADR-0045 删尾回退判定，就地声明）：按展示集合事实——
+ * 显示已删关闭时软删行离开展示集合，删前本页仅 1 条 ⇔ 剩 0；开启时行仍在
+ * （转已删行），集合不减。页码有效时本页条数 = 当前页起点到过滤后列表末尾的
+ * 行数（≤ pageSize，排序不影响行数）。 */
+function remainingOnPageAfterDelete(): number {
+  const start = (currentPage.value - 1) * pageSize.value
+  const rowsOnPage = Math.max(0, displayRows.value.length - start)
+  return showDeleted.value ? rowsOnPage : rowsOnPage - 1
+}
+
+/** 页码回退入口（ADR-0045 同形）：N 为 0 且当前页非第一页时减一页；
+ * 只回退不归零，与「过滤意图归零」是两类语义。 */
+function afterRowDelete(remainingOnPage: number) {
+  if (remainingOnPage === 0 && currentPage.value > 1) {
+    currentPage.value -= 1
+  }
+}
+
+// 过滤意图变化 → 页码归零：搜索输入/清空、切换「显示已删」；排序变化经
+// update:sorter 就地归零。新增/改名等参考数据重拉不是过滤意图，保持当前页。
+watch([searchTerm, showDeleted], () => {
+  currentPage.value = 1
+})
+
+/** 排序切换（表格内部非受控排序作用于过滤后全量行，先排序后切片）→ 页码归零。 */
+function resetPageOnSort() {
+  currentPage.value = 1
+}
+
+/** 分页条（与交易页同形态：过滤后总数 + 页大小选择 + 快捷跳页）；非 remote
+ * 模式下 itemCount 由表格按过滤后数据长度自动推导，prefix 直接消费。 */
+const pagination = computed<PaginationProps>(() => ({
+  page: currentPage.value,
+  pageSize: pageSize.value,
+  showSizePicker: true,
+  showQuickJumper: true,
+  pageSizes: PAGE_SIZE_OPTIONS,
+  prefix: ({ itemCount }) =>
+    h('span', null, () => t('settings.merchants.total', { n: itemCount ?? 0 })),
+  onChange: (p: number) => {
+    currentPage.value = p
+  },
+  onUpdatePageSize: (size: number) => {
+    // 页大小切换与交易页同语义：写入后回第一页
+    pageSize.value = size
+    currentPage.value = 1
+  },
+}))
 
 // —— 新增 ——
 const name = ref('')
@@ -140,6 +203,8 @@ function openEdit(m: Merchant) {
 async function removeMerchant(id: string) {
   try {
     await api.deleteMerchant(id)
+    // 删尾页码回退（issue #457，ADR-0045 先例）：判定用删除前状态，重拉未到。
+    afterRowDelete(remainingOnPageAfterDelete())
     message.success(t('settings.merchants.msg.deleted'))
   } catch (e) {
     message.error(t('settings.merchants.msg.deleteFailed', { msg: e }))
@@ -244,6 +309,8 @@ const columns: DataTableColumn<MerchantRow>[] = [
           :bordered="false"
           size="small"
           :row-key="(m: MerchantRow) => m.id"
+          :pagination="pagination"
+          @update:sorter="resetPageOnSort"
         />
       </NSpace>
     </NCard>
