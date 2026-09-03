@@ -572,11 +572,13 @@ pub fn expand_occurrences(conn: &Connection, st_id: &str) -> Result<Vec<String>>
     let now = now_iso();
     let mut ids = Vec::new();
 
-    if is_installment {
-        // A 类临时豁免（ADR-0060，待结构性消除）：is_installment 分支内
-        // total_occurrences 恒为 Some（Installment 扩展行保证），结构性改写前保留。
-        #[allow(clippy::unwrap_used)]
-        let total = total_occurrences.unwrap();
+    // 分期路径用 `if let` 收编 Option（#433，ADR-0060 A 类临时豁免就此摘除）：
+    // total 直接绑定自 total_occurrences，分支进入条件即「Option 有值且为分期」——
+    // 「分期恒 Some（Installment 扩展行保证）」不再依赖 unwrap 断言，而由控制流
+    // 结构性保证；Option 意外为 None 时走下方通用窗口路径而非 panic。
+    if let Some(total) = total_occurrences
+        && is_installment
+    {
         let ext: InstallmentPlan = query_one(
             conn,
             "SELECT scheduled_transaction_id,merchant_id,total_amount_cents,total_occurrences \
@@ -770,11 +772,17 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
                         ..Default::default()
                     }
                 }
-                // A 类临时豁免（ADR-0060，待结构性消除）：外层 match 已按
-                // ScheduledTransfer 分流处理，该聚合分支不可达，后续 ticket 改码化错误。
-                #[allow(clippy::unreachable)]
+                // 穷尽 match 防御臂改码化错误（#433，ADR-0060 A 类临时豁免就此
+                // 摘除）：外层 match 已按 ScheduledTransfer 分流处理，该聚合分支
+                // 正常不可达；万一触发（内部状态非法）返回码化错误而非 panic——
+                // 自动执行是无人值守路径（ADR-0042），此错误经追补失败走向按
+                // ADR-0024 失败策略置 failed 保持手动重试、不中断同批后续；手动
+                // 执行路径此臂位于事务 BEGIN 之前，期次保持原状态可直接重试。
                 ScheduledKind::ScheduledTransfer => {
-                    unreachable!()
+                    return Err(AppError::coded(
+                        "scheduled-plan.kind-mismatch",
+                        "计划形态与期次执行路径不一致（内部不一致）",
+                    ));
                 }
             };
             (TransactionKind::Expense, st.category_id.clone(), ext)
