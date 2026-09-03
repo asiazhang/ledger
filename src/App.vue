@@ -50,6 +50,7 @@ import {
   isSidebarSortAction,
   sidebarGroups,
   sidebarGroupOrders,
+  sidebarContainment,
   groupOfView,
   buildSidebarSortMenuOptions,
   applySidebarSort,
@@ -148,14 +149,21 @@ const menuOptions = computed<MenuOption[]>(() => {
   const item = (name: ViewName) => renderItem(name, keyOf.get(name) ?? null)
   return [
     item(FIRST_VIEW),
-    ...sidebarGroups.value.map(
-      (g): MenuOption => ({
-        type: 'group',
-        key: `sidebar-group:${g.id}`,
-        label: t(`common.sidebarGroup.${g.id}`),
-        children: g.views.map((name) => item(name)),
-      }),
-    ),
+    ...sidebarGroups.value.map((g): MenuOption => ({
+      type: 'group',
+      key: `sidebar-group:${g.id}`,
+      // 组标题行：组名 + 按需「更多」链接（issue #472 / ADR-0063 决策 1）——
+      // 链接仅当组内存在收纳成员时渲染（菜单分组标题天然不可交互，链接是自定义渲染的新元素）；
+      // 折叠态不渲染组标题，链接随之不渲染（决策 6 天然成立）；链接无键位、不出提示。
+      label: () =>
+        h('div', { class: 'sidebar-group-title' }, [
+          h('span', t(`common.sidebarGroup.${g.id}`)),
+          sidebarContainment.value[g.id].length > 0
+            ? h('a', { class: 'group-more-link', onClick: () => { void router.push({ name: `${g.id}-more` }) } }, t('common.nav.more'))
+            : null,
+        ]),
+      children: g.views.map((name) => item(name)),
+    })),
     item(EXTRA_VIEW),
     item(PENULTIMATE_VIEW),
     item(LAST_VIEW),
@@ -287,3 +295,24 @@ const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(rou
     </NMessageProvider>
   </NConfigProvider>
 </template>
+
+<style scoped>
+/* 组标题行「更多」链接（issue #472 / ADR-0063 决策 1）：标题行两端对齐，
+   链接弱化为次级样式，点击进入该组「更多」聚合页；无键位提示。 */
+.sidebar-group-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.group-more-link {
+  font-size: 12px;
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.group-more-link:hover {
+  opacity: 1;
+}
+</style>

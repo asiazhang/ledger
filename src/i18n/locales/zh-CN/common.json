@@ -20,7 +20,10 @@
     "policies": "保单",
     "more": "更多",
     "merchants": "商户",
-    "physicalAssets": "实物资产"
+    "physicalAssets": "实物资产",
+    "bookkeeping-more": "记账 · 更多",
+    "assets-more": "资产 · 更多",
+    "insights-more": "洞察 · 更多"
   },
   "sidebarGroup": {
     "bookkeeping": "记账",

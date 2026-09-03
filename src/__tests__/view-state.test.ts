@@ -8,6 +8,9 @@ import {
   getSavedSidebarOrder,
   saveSidebarOrders,
   clearSidebarOrder,
+  getSavedContainment,
+  saveContainmentLists,
+  clearContainment,
 } from '@/utils/view-state'
 
 beforeEach(() => {
@@ -96,5 +99,47 @@ describe('view-state sidebarOrder 写路径（issue #270/#359）', () => {
 
   it('clearSidebarOrder 对不存在的 key 不报错', () => {
     expect(() => clearSidebarOrder()).not.toThrow()
+  })
+})
+
+describe('view-state sidebarContainment（issue #472 / ADR-0063：每组有序收纳清单；key 与读助手，解析归顺序模块）', () => {
+  it('无记录时返回 null', () => {
+    expect(getSavedContainment()).toBeNull()
+  })
+
+  it('返回已存原始值（收纳清单对象不做解析，防御归顺序模块）', () => {
+    const lists = { bookkeeping: [], assets: ['policies'], insights: [] }
+    localStorage.setItem(VIEW_STATE_KEYS.sidebarContainment, JSON.stringify(lists))
+    expect(getSavedContainment()).toEqual(lists)
+  })
+
+  it('脏形状原样透传（由收纳解析整体回出厂种子）', () => {
+    localStorage.setItem(VIEW_STATE_KEYS.sidebarContainment, '"x"')
+    expect(getSavedContainment()).toBe('x')
+  })
+
+  it('损坏的 JSON 回退 null', () => {
+    localStorage.setItem(VIEW_STATE_KEYS.sidebarContainment, 'not-json{')
+    expect(getSavedContainment()).toBeNull()
+  })
+})
+
+describe('view-state sidebarContainment 写路径（issue #472）', () => {
+  it('saveContainmentLists 写入收纳清单对象 JSON，getSavedContainment 读回原始值', () => {
+    const lists = { bookkeeping: [], assets: ['policies'], insights: [] } as const
+    saveContainmentLists(lists)
+    expect(localStorage.getItem(VIEW_STATE_KEYS.sidebarContainment)).toBe(JSON.stringify(lists))
+    expect(getSavedContainment()).toEqual(lists)
+  })
+
+  it('clearContainment 移除 key，回退无记录态', () => {
+    saveContainmentLists({ bookkeeping: [], assets: ['policies'], insights: [] })
+    clearContainment()
+    expect(localStorage.getItem(VIEW_STATE_KEYS.sidebarContainment)).toBeNull()
+    expect(getSavedContainment()).toBeNull()
+  })
+
+  it('clearContainment 对不存在的 key 不报错', () => {
+    expect(() => clearContainment()).not.toThrow()
   })
 })

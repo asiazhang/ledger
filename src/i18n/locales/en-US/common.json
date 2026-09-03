@@ -20,7 +20,10 @@
     "policies": "Policies",
     "more": "More",
     "merchants": "Merchants",
-    "physicalAssets": "Physical Assets"
+    "physicalAssets": "Physical Assets",
+    "bookkeeping-more": "Bookkeeping · More",
+    "assets-more": "Assets · More",
+    "insights-more": "Insights · More"
   },
   "sidebarGroup": {
     "bookkeeping": "Bookkeeping",

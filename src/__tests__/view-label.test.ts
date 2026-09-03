@@ -26,4 +26,14 @@ describe('viewLabel（视图标题文案）', () => {
   it('zh-CN 解析示例：dashboard → 概览', () => {
     expect(viewLabel('dashboard')).toBe('概览')
   })
+
+  it('组内「更多」路由名解析为文案（issue #472 / ADR-0063：内容区标题同源，新增键 zh/en 同步）', () => {
+    for (const name of ['bookkeeping-more', 'assets-more', 'insights-more']) {
+      expect(zhCN.common.nav, name).toHaveProperty(name)
+      const label = viewLabel(name)
+      expect(label, name).toBeTruthy()
+      expect(label, name).not.toContain('nav.')
+    }
+    expect(viewLabel('assets-more')).toBe('资产 · 更多')
+  })
 })
