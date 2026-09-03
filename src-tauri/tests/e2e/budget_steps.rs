@@ -11,12 +11,13 @@ use chrono::{Datelike, Months, NaiveDate};
 use cucumber::{given, then, when};
 use rusqlite::params;
 
+use tauri_app_lib::budget::BudgetInput;
 use tauri_app_lib::budget::{budget_progress_rows, create_budget, delete_budget, update_budget};
 use tauri_app_lib::categories::{
     delete_category as delete_category_domain, list_categories as list_categories_domain,
 };
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
-use tauri_app_lib::models::{BudgetInput, TransactionInput};
+use tauri_app_lib::models::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::create_transaction_internal;
 

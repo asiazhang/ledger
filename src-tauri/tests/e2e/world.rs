@@ -147,7 +147,7 @@ pub struct LedgerWorld {
     /// 最近一次订阅实际花费总览快照（订阅花费场景断言用，issue #160）
     pub last_spend: Option<tauri_app_lib::scheduled_transactions::SubscriptionSpendOverview>,
     /// 最近一次预算进度快照（预算滚动窗口场景断言用，issue #182）
-    pub last_budget_progress: Vec<tauri_app_lib::models::BudgetProgress>,
+    pub last_budget_progress: Vec<tauri_app_lib::budget::BudgetProgress>,
     /// 最近一次商户消费排行快照（报表商户排行场景断言用，issue #192）
     pub last_merchant_shares: Vec<tauri_app_lib::models::MerchantShare>,
     /// 最近一次月度汇总快照（报表期间过滤场景断言用，issue #411）

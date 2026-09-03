@@ -6,10 +6,10 @@
 
 use rusqlite::{Connection, OptionalExtension};
 
+use super::model::{Budget, BudgetInput, BudgetPeriod};
 use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::models::{Budget, BudgetInput, BudgetPeriod};
 
 /// 列出全部未删除预算，排序按创建先后。
 pub fn list_budgets(conn: &Connection) -> Result<Vec<Budget>> {

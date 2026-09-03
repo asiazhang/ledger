@@ -5,10 +5,10 @@
 use chrono::NaiveDate;
 use rusqlite::Connection;
 
+use super::model::{BudgetInput, BudgetPeriod};
 use crate::budget::{budget_progress_rows, create_budget, list_budgets, update_budget};
 use crate::db::{device_id, now_iso};
 use crate::error::{AppError, ErrClass};
-use crate::models::{BudgetInput, BudgetPeriod};
 use crate::transaction::amount::{Measure, TransactionKind, signed_amount};
 
 fn setup() -> Connection {
