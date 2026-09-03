@@ -97,7 +97,7 @@ describe('QuickTimeRange 共享受控组件（issue #410）', () => {
     }
     expect(stepButton(wrapper, 'prev').props('disabled')).toBe(true)
     expect(stepButton(wrapper, 'next').props('disabled')).toBe(true)
-    expect(periodLabel(wrapper)).toBe('—')
+    expect(periodLabel(wrapper)).toBe('选择期间')
     expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === 'report_date_range')).toHaveLength(1)
   })
 
@@ -208,6 +208,27 @@ describe('QuickTimeRange 共享受控组件（issue #410）', () => {
     expect(lastEmitted(wrapper)).toEqual({ from: '2025-12-01', to: '2025-12-31' })
     // 面板关闭 + 注册表撤销
     expect(hasOpenOverlay()).toBe(false)
+  })
+
+  it('键盘可达：期间标签聚焦后 Enter/Space 打开面板，aria-expanded 随开合（issue #425）', async () => {
+    const wrapper = mountRange({ from: '2026-01-01', to: '2026-01-31' })
+    await flushPromises()
+    // 期间标签按钮：aria-haspopup 标记面板触发器，aria-expanded 初始收合
+    const trigger = wrapper.find('[aria-haspopup="dialog"]')
+    expect(trigger.exists()).toBe(true)
+    expect(trigger.attributes('aria-expanded')).toBe('false')
+    await trigger.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(hasOpenOverlay()).toBe(true)
+    expect(trigger.attributes('aria-expanded')).toBe('true')
+    // 关闭（update:show = false）→ aria-expanded 回落
+    wrapper.findComponent(NDatePicker).vm.$emit('update:show', false)
+    await flushPromises()
+    expect(trigger.attributes('aria-expanded')).toBe('false')
+    // Space 同样打开
+    await trigger.trigger('keydown', { key: ' ' })
+    await flushPromises()
+    expect(hasOpenOverlay()).toBe(true)
   })
 
   it('面板开/关上报弹层注册表（Overlay Suppression 不回退）', async () => {
