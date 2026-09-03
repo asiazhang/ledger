@@ -6,7 +6,7 @@ use rusqlite::Connection;
 use crate::db::{init_db, open_in_memory};
 use crate::item::domain::{create_item, delete_item, dispose_item, list_items, update_item};
 use crate::item::model::{ItemDisposeInput, ItemInput, ItemStatus};
-use crate::models::TransactionInput;
+use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::create_transaction_internal;
 

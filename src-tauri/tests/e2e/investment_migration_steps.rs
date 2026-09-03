@@ -22,8 +22,8 @@ use cucumber::{then, when};
 use rusqlite::params;
 
 use tauri_app_lib::investment::{InstrumentInput, InstrumentType, create_instrument};
-use tauri_app_lib::models::TransactionInput;
 use tauri_app_lib::transaction::TransactionBatch;
+use tauri_app_lib::transaction::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
 
 use crate::world::LedgerWorld;

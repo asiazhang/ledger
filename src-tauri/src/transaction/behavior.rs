@@ -38,10 +38,10 @@
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 
+use super::model::TransactionInput;
 use crate::db::{device_id, now_iso};
 use crate::error::{AppError, Result};
 use crate::investment;
-use crate::models::TransactionInput;
 use crate::signals::WriteEvidence;
 
 use super::amount::TransactionKind;

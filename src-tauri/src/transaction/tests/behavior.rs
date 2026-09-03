@@ -4,7 +4,7 @@
 use super::super::*;
 use super::common::{insert_account, make_buy_input, make_input, setup, setup_investment_account};
 use crate::error::{AppError, ErrClass};
-use crate::models::TransactionInput;
+use crate::transaction::TransactionInput;
 use rusqlite::Connection;
 
 use crate::db::{device_id, now_iso};

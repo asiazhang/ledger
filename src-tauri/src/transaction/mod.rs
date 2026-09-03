@@ -7,6 +7,8 @@
 //! - [`read`]（读取权威）：交易列表（过滤/排序/分页）与单笔读取。
 //! - [`search`]（搜索权威）：SQL 候选流式扫描 + 统一模糊搜索契约过滤与分页。
 //! - [`search_text`]（统一模糊搜索语义）：拼音首字母、子序列判定与词条匹配纯函数（ADR-0027）。
+//! - [`model`]：域集中模型——交易全量类型（#423 模型域化随域归位），经本入口
+//!   逐类型再导出（禁止 glob）；
 //! - [`writer`]（写入权威）：归一化 + 全列映射 + 审计字段生成（issue #55 落地）。
 //!
 //! 依赖方向恒为「壳层 → transaction → 基础设施」，本模块不反向依赖壳层。
@@ -18,6 +20,17 @@ pub mod read;
 pub mod search;
 pub mod search_text;
 pub mod writer;
+
+/// 域集中模型（#423 模型域化随域归位，样板先例：`investment::model`）：交易
+/// 全量类型集中本文件，经域路径逐类型再导出（禁止 glob），消费方经域路径
+/// 显式 import。
+mod model;
+
+pub use model::{
+    CreateTransactionResult, NormalizedTransaction, Transaction, TransactionBatchInput,
+    TransactionInput, TransactionListFilter, TransactionListResult, TransactionSearchResult,
+    UpdateTransactionInput,
+};
 
 pub use amount::{
     Measure, TransactionKind, TransferSide, account_flow_expr, contributing_kinds,

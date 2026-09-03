@@ -2,7 +2,7 @@ use rusqlite::Connection;
 use rusqlite::params;
 
 use tauri_app_lib::db::new_uuid;
-use tauri_app_lib::models::Transaction;
+use tauri_app_lib::transaction::Transaction;
 
 use crate::world::LedgerWorld;
 

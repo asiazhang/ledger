@@ -2,7 +2,7 @@
 //! 接缝折算、非投资账户拒绝、sell FIFO 多 lot 匹配、超卖拒绝、盈亏扣费、
 //! get_transaction_trade 明细与缺失拒绝（issue #257 纯移动归组）。
 
-use crate::models::TransactionInput;
+use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::create_transaction_internal;
 use rusqlite::params;

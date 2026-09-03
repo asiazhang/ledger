@@ -3,7 +3,7 @@
 //! 每份成本锚定权威金额、卖出 FIFO 匹配与已实现盈亏的舍入不变式（闭合不变式：
 //! 全平仓位 Σ已实现盈亏 = Σ卖出金额 − Σ买入金额，精确到分）、编辑全字段替换纠正。
 
-use crate::models::TransactionInput;
+use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::{create_transaction_internal, update_transaction_internal};
 use rusqlite::{Connection, params};

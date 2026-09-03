@@ -5,7 +5,7 @@ use rusqlite::params;
 
 use tauri_app_lib::dashboard::query_dashboard_overview;
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
-use tauri_app_lib::models::TransactionInput;
+use tauri_app_lib::transaction::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::create_transaction_internal;
 

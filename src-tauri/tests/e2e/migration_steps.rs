@@ -5,9 +5,9 @@ use rusqlite::params;
 use tauri_app_lib::accounts::{
     AccountInput, AccountType, create_account_idempotent, list_account_balances_for_api,
 };
-use tauri_app_lib::models::{TransactionInput, TransactionListFilter};
 use tauri_app_lib::transaction::TransactionBatch;
 use tauri_app_lib::transaction::amount::TransactionKind;
+use tauri_app_lib::transaction::{TransactionInput, TransactionListFilter};
 use tauri_app_lib::transaction::{
     delete_transaction_internal, list_transactions_internal, update_transaction_internal,
 };
@@ -326,7 +326,7 @@ fn check_batch_results(world: &mut LedgerWorld, duplicates: i64, new: i64) {
 /// 校验幂等键命中的去重结果携带该笔已有 id（并确证该 id 确为库中一笔未删除交易）。
 #[then(expr = "最近一次导入的去重结果应通过幂等键返回已有 id")]
 fn check_dup_returns_existing_id(world: &mut LedgerWorld) {
-    let dups: Vec<&tauri_app_lib::models::CreateTransactionResult> = world
+    let dups: Vec<&tauri_app_lib::transaction::CreateTransactionResult> = world
         .last_batch_results
         .iter()
         .filter(|r| r.duplicate)

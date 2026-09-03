@@ -8,10 +8,10 @@ use tauri_app_lib::dashboard::DashboardOverview;
 use tauri_app_lib::db::DbState;
 use tauri_app_lib::db::data_location::{DataLocationChangeOutcome, DataLocationInfo};
 use tauri_app_lib::item::{ItemDailyCost, ItemDailyTotal, ItemWithDailyCost};
-use tauri_app_lib::models::{
+use tauri_app_lib::transaction::amount::TransactionKind;
+use tauri_app_lib::transaction::{
     CreateTransactionResult, Transaction, TransactionInput, TransactionSearchResult,
 };
-use tauri_app_lib::transaction::amount::TransactionKind;
 
 /// 连接守卫（BDD 步骤专用宏）：取连接锁，展开为字段访问链——
 /// 借用发生在 `world.db.conn` 字段路径上而非整个 world，与步骤内对

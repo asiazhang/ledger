@@ -3,10 +3,10 @@
 
 use rusqlite::{Connection, params};
 
-use crate::models::TransactionInput;
 use crate::signals::WriteEvidence;
 use crate::test_utils::{CapturedEvent, capture_events};
 use crate::transaction::TransactionBatch;
+use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 use tracing::Level;
 

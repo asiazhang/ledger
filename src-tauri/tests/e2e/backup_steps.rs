@@ -19,9 +19,9 @@ use tauri_app_lib::investment::{
 use tauri_app_lib::item::cost;
 use tauri_app_lib::item::domain::{create_item, delete_item, dispose_item, update_item};
 use tauri_app_lib::item::{ItemDisposeInput, ItemInput};
-use tauri_app_lib::models::TransactionInput;
 use tauri_app_lib::settings::{self, SettingKey};
 use tauri_app_lib::transaction::TransactionBatch;
+use tauri_app_lib::transaction::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::{delete_transaction_internal, update_transaction_internal};
 

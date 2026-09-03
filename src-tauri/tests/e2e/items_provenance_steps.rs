@@ -10,7 +10,7 @@ use cucumber::{then, when};
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::item::ItemInput;
 use tauri_app_lib::item::domain::{create_item, update_item};
-use tauri_app_lib::models::TransactionInput;
+use tauri_app_lib::transaction::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::create_transaction_internal;
 

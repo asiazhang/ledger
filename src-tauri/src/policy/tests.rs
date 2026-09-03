@@ -265,8 +265,8 @@ fn 软删商户不可再被新档案选择() {
 // 含协议期次的下期扣款日推导由 BDD `policy_stats.feature` 验收）
 // ---------------------------------------------------------------------------
 
-use crate::models::TransactionInput;
 use crate::policy::policy_stats;
+use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::create_transaction_internal;
 

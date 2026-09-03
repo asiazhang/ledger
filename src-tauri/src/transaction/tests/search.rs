@@ -7,7 +7,7 @@ use rusqlite::Connection;
 use super::super::search::search_transactions_internal;
 use crate::db::{init_db, open_in_memory};
 use crate::error::Result;
-use crate::models::TransactionSearchResult;
+use crate::transaction::TransactionSearchResult;
 use crate::transaction::search_text::{
     is_subsequence, pinyin_initials, split_terms, term_matches, term_matches_text,
 };

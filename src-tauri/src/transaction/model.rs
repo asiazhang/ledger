@@ -1,12 +1,16 @@
-//! 交易领域模型：交易实体、入参、归一化结果、批量导入、列表/搜索分页。
+//! 核心交易域集中模型（#423 随域归位）：交易实体、入参、归一化结果、批量导入、
+//! 列表/搜索分页。
+//!
+//! 自全局模型目录迁入本域（#417 归属原则：交易类型归核心交易域）；全部类型经
+//! `transaction` 域路径逐类型再导出，消费方经域路径显式 import，禁止 glob。
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::amount::TransactionKind;
+use super::writer;
 use crate::db::query::FromRow;
 use crate::error::{AppError, Result};
-use crate::transaction::amount::TransactionKind;
-use crate::transaction::writer;
 
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct Transaction {

@@ -9,11 +9,11 @@ use crate::categories::{Category, CategoryInput};
 use crate::currencies::Currency;
 use crate::investment::{Instrument, InstrumentListResult, InstrumentType};
 use crate::merchants::Merchant;
-use crate::models::{
+use crate::transaction::amount::TransactionKind;
+use crate::transaction::{
     CreateTransactionResult, Transaction, TransactionBatchInput, TransactionInput,
     TransactionListResult, UpdateTransactionInput,
 };
-use crate::transaction::amount::TransactionKind;
 
 use super::error::ErrorResponse;
 use super::handlers;

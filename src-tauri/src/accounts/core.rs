@@ -12,7 +12,7 @@ use rusqlite::{Connection, OptionalExtension};
 use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::models::TransactionInput;
+use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::create_transaction_internal;
 

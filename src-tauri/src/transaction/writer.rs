@@ -15,7 +15,7 @@
 //! **边界**：kind 分派（buy/sell 持仓副作用）、幂等/去重留在命令层，事务边界自
 //! issue #228 起归行为层创建编排入口（嵌套感知，ADR-0033）；
 //! buy/sell 经其投资层产出归一化行后调用 [`insert_row`]/[`update_row`] 落交易行字段。
-//! 本模块不反向依赖命令层：入参/归一化行均为模块自有类型，与 `models::TransactionInput`
+//! 本模块不反向依赖命令层：入参/归一化行均为模块自有类型，与 [`super::model::TransactionInput`]
 //! 等命令层模型解耦（接线时由命令层做字段转换）。
 
 use rusqlite::Connection;
@@ -29,7 +29,7 @@ use super::amount::{self, TransactionKind};
 
 /// 通用 kind 的写入入参（income / expense / transfer / refund）。
 ///
-/// 与命令层 `models::TransactionInput` 解耦：不含 buy/sell 的投资字段
+/// 与命令层 [`super::model::TransactionInput`] 解耦：不含 buy/sell 的投资字段
 /// （instrument_id/quantity/price_cents/fee_cents）与幂等键——幂等身份由
 /// 命令层在落库后另行回写，不属本模块职责。
 #[derive(Debug, Clone, PartialEq, Eq)]
