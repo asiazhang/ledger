@@ -25,6 +25,7 @@ use tauri_app_lib::transaction::TransactionListFilter;
 use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::read::{get_transaction, list_transactions};
 
+use super::bench::{self, BenchConfig};
 use super::generate::{GenCounts, GenerateParams, generate_into};
 use super::{GenerateCli, ParsedArgs, parse_args};
 
@@ -35,6 +36,66 @@ fn run_cli(args: &[&str]) -> GenerateCli {
         ParsedArgs::Run(cli) => cli,
         ParsedArgs::Help => panic!("该输入应解析为运行参数"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// bench 冒烟（issue #461 验收项：小规模参数生成小库 → 跑完全部基准 → 产出全部指标）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bench_smoke_runs_all_ten_benchmarks() {
+    let (_dir, path) = temp_db("bench-smoke");
+    build(&path, 1_000, NaiveDate::from_ymd_opt(2025, 12, 31).unwrap());
+    let conn = open_connection(&path).unwrap();
+
+    let results = bench::run_benchmarks(
+        &conn,
+        &BenchConfig {
+            warmup: 0,
+            iterations: 2,
+            search_term: "咖啡".to_string(),
+        },
+    )
+    .unwrap();
+
+    // 名单钉住：10 项基准一个不少、顺序稳定（增删基准必须显式更新本断言）。
+    let names: Vec<&str> = results.iter().map(|r| r.name).collect();
+    assert_eq!(
+        names,
+        [
+            "列表首页分页",
+            "深分页",
+            "账户日期筛选列表",
+            "全账户实时余额",
+            "月度汇总",
+            "分类占比",
+            "备注搜索拼音过滤",
+            "净资产总览",
+            "持仓列表",
+            "时点持仓",
+        ]
+    );
+    for r in &results {
+        assert_eq!(r.iterations, 2, "基准 {} 迭代次数应与配置一致", r.name);
+        assert!(
+            r.min_ms.is_finite() && r.min_ms >= 0.0,
+            "基准 {} min 非法",
+            r.name
+        );
+        assert!(r.avg_ms >= r.min_ms, "基准 {} avg 应不小于 min", r.name);
+        assert!(r.p95_ms >= r.min_ms, "基准 {} p95 应不小于 min", r.name);
+        assert!(!r.context.is_empty(), "基准 {} 应携带规模备注", r.name);
+    }
+    // 搜索基准确实产出命中（生成器备注池保证「咖啡」可命中），拼音过滤路径被驱动。
+    let search = results
+        .iter()
+        .find(|r| r.name == "备注搜索拼音过滤")
+        .unwrap();
+    assert!(
+        search.context.contains("命中"),
+        "搜索基准备注应含命中数：{}",
+        search.context
+    );
 }
 
 // ---------------------------------------------------------------------------

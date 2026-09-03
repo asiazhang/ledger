@@ -59,15 +59,31 @@
 //!   `journal_mode=MEMORY`，均不持久化进库文件），50 万笔在几十秒内完成；
 //!   生成的库仅供性能基准消费，不是用户数据，崩溃重跑即可。
 //!
-//! ## bench：查询基准（issue #461，尚未实现）
+//! ## bench：查询基准（issue #461）
 //!
-//! 在生成的库上测量与 IPC 命令相同的查询函数，报 min/avg/p95。
+//! 对 generate 产出的库跑 10 项查询基准并输出 min/avg/p95 报告：
+//!
+//! ```text
+//! cargo run --bin ledger-perf -- bench [--db PATH] [--warmup N]
+//!                                     [--iterations N] [--search TERM]
+//! ```
+//!
+//! - 基准集：列表首页分页；深分页（OFFSET 逼近全量）；账户+日期范围筛选
+//!   列表；全账户实时余额；月度汇总（5 年 60 个月）；分类占比；TransactionSearch
+//!   备注搜索（含拼音过滤，CPU 密集）；净资产总览聚合；持仓列表；时点持仓
+//!   （直接聚合标的交易）。
+//! - 唯一接缝：全部经「现有 pub 查询函数 + 标准连接工厂打开文件库」调用，
+//!   与 IPC 命令同一 SQL 路径；慢查询日志（perf_trace，≥100ms warn）经连接
+//!   工厂自动挂载，基准内不重写 SQL。
+//! - 每项预热 + 多次迭代，报 min/avg/p95，人读表格输出；p95 超阈值的基准
+//!   在报告中以 ▲ 标记，SQL 级线索在日志「慢查询」条目中检索。
 //!
 //! # 实现边界
 //!
 //! 全部生成/基准/摘要逻辑封在本 bin 模块内部，产品 lib 不新增模块、
 //! 零新增依赖（ADR-0062：确定性生成而非入库；被否决备选见该 ADR）。
 
+mod bench;
 mod generate;
 mod investments;
 mod plans;
@@ -101,7 +117,14 @@ USAGE:
 
 SUBCOMMANDS:
     generate    生成性能基准数据集（默认 50 万笔 Transaction 的多域画像 SQLite 库）
-    bench       查询基准（尚未实现，见 issue #461）
+    bench       查询基准——10 项查询 × min/avg/p95 报告（issue #461）
+
+bench OPTIONS:
+    --db <PATH>            目标库文件（默认同 generate 输出路径，须已生成）
+    --warmup <N>           每项基准预热次数（默认 3，不计入统计）
+    --iterations <N>       每项基准计时迭代次数（默认 10）
+    --search <TERM>        备注搜索基准的关键字（默认 咖啡）
+    -h, --help             打印本说明
 
 generate OPTIONS:
     --seed <N>             随机种子（默认 42，同种子必出同库）
@@ -211,10 +234,24 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
-        "bench" => {
-            eprintln!("bench 子命令尚未实现（issue #461）");
-            ExitCode::from(2)
-        }
+        "bench" => match bench::parse_bench_args(&args[1..]) {
+            Ok(bench::ParsedBench::Help) => {
+                print_usage();
+                ExitCode::SUCCESS
+            }
+            Ok(bench::ParsedBench::Run(cli)) => match bench::run(cli) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(msg) => {
+                    eprintln!("bench 失败：{msg}");
+                    ExitCode::FAILURE
+                }
+            },
+            Err(msg) => {
+                eprintln!("参数错误：{msg}\n");
+                print_usage();
+                ExitCode::from(2)
+            }
+        },
         "-h" | "--help" => {
             print_usage();
             ExitCode::SUCCESS
