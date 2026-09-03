@@ -12,7 +12,8 @@ use rusqlite::{Connection, OptionalExtension};
 use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::models::{Merchant, MerchantInput, MerchantUpdateInput};
+
+use super::model::{Merchant, MerchantInput, MerchantUpdateInput};
 
 const MERCHANT_COLUMNS: &str = "id,name,created_at,updated_at,version,device_id,is_deleted";
 

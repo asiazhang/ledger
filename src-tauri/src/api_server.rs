@@ -8,11 +8,12 @@ use crate::investment::{
     FundCreateOutcome, create_fund_degraded, is_six_digit_code, persist_fund_detail,
     validate_fund_code,
 };
+use crate::merchants::Merchant;
 use crate::models::{
     Account, AccountBalance, AccountInput, AccountType, AccountUpdateInput, Category,
     CategoryInput, CreateTransactionResult, Instrument, InstrumentInput, InstrumentListFilter,
-    InstrumentListResult, InstrumentType, Merchant, Transaction, TransactionBatchInput,
-    TransactionInput, TransactionListFilter, TransactionListResult, UpdateTransactionInput,
+    InstrumentListResult, InstrumentType, Transaction, TransactionBatchInput, TransactionInput,
+    TransactionListFilter, TransactionListResult, UpdateTransactionInput,
 };
 use crate::signals::{WriteEvidence, WriteOp, emit_for};
 use crate::sync::FundDetail;

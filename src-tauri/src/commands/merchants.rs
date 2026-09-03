@@ -8,7 +8,7 @@ use tauri::State;
 use crate::db::DbState;
 use crate::error::{AppError, Result};
 use crate::merchants as merchant_domain;
-use crate::models::{Merchant, MerchantInput, MerchantUpdateInput};
+use crate::merchants::{Merchant, MerchantInput, MerchantUpdateInput};
 use crate::signals::{WriteEvidence, WriteOp, emit_for};
 
 /// 商户列表：默认仅未删除；`include_deleted=true` 返回含软删全量（交易筛选下拉用）。

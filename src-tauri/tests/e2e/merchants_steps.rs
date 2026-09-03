@@ -3,10 +3,11 @@ use rusqlite::params;
 
 use tauri_app_lib::error::{AppError, ErrClass};
 use tauri_app_lib::merchants::{
-    create_merchant as create_merchant_domain, delete_merchant as delete_merchant_domain,
-    list_merchants as list_merchants_domain, update_merchant as update_merchant_domain,
+    MerchantInput, MerchantUpdateInput, create_merchant as create_merchant_domain,
+    delete_merchant as delete_merchant_domain, list_merchants as list_merchants_domain,
+    update_merchant as update_merchant_domain,
 };
-use tauri_app_lib::models::{MerchantInput, MerchantUpdateInput, TransactionInput};
+use tauri_app_lib::models::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::create_transaction_internal;
 
