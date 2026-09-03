@@ -133,6 +133,12 @@ pub struct LedgerWorld {
     pub policy_stats_list: Vec<tauri_app_lib::policy::PolicyStats>,
     /// 记住的保单创建时间（编辑后审计字段保留断言用，issue #360）
     pub remembered_policy_created_at: Option<String>,
+    /// 最近创建的实物资产 id（实物资产场景断言用，issue #466）
+    pub last_physical_asset_id: Option<String>,
+    /// 最近一次实物资产写入发出的失效信号次数（ledger:changed 注入 seam 断言用）
+    pub physical_asset_signal_count: usize,
+    /// 实物资产列表快照（列表与合计场景断言用，issue #466）
+    pub physical_assets_list: Option<tauri_app_lib::physical_asset::PhysicalAssetList>,
     /// 记住的物品创建时间（修改后审计字段保留断言用，issue #117）
     pub remembered_item_created_at: Option<String>,
     /// 记住的关联购买交易 id（issue #119 自动带出/溯源断言用）
@@ -244,6 +250,9 @@ impl LedgerWorld {
             policies_list: Vec::new(),
             policy_stats_list: Vec::new(),
             remembered_policy_created_at: None,
+            last_physical_asset_id: None,
+            physical_asset_signal_count: 0,
+            physical_assets_list: None,
             remembered_item_created_at: None,
             remembered_purchase_transaction_id: None,
             last_item_cost: None,

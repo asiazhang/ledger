@@ -17,6 +17,7 @@ pub mod investment;
 pub mod item;
 pub mod logs;
 pub mod merchants;
+pub mod physical_asset;
 pub mod policy;
 pub mod reports;
 pub mod scheduled;
@@ -37,6 +38,7 @@ pub use investment::*;
 pub use item::*;
 pub use logs::*;
 pub use merchants::*;
+pub use physical_asset::*;
 pub use policy::*;
 pub use reports::*;
 pub use scheduled::*;
@@ -148,6 +150,10 @@ pub const IPC_COMMAND_WRITE_OPS: &[(&str, Option<WriteOp>)] = &[
     ("list_merchants", None),
     // 商户关联交易计数（issue #445，只读聚合）
     ("list_merchant_transaction_counts", None),
+    // ── 实物资产域（issue #466 / ADR-0063）──
+    ("create_physical_asset", Some(WriteOp::CreatePhysicalAsset)),
+    ("list_physical_assets", None),
+    ("get_physical_asset", None),
     // ── 报表 ──
     ("monthly_summary", None),
     ("merchant_shares", None),
