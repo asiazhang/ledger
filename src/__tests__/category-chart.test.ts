@@ -5,7 +5,7 @@ import {
   categoryColor,
   categoryBarTotal,
   categoryDrilldownBars,
-  barEndLabel,
+  barTooltipLabel,
 } from '@/utils/category-chart'
 import type { Category, CategoryShare } from '@/types'
 import { makeCategory } from './factories'
@@ -170,23 +170,23 @@ describe('categoryDrilldownBars 图内下钻（issue #379）', () => {
   })
 })
 
-describe('柱尾标签与合计（issue #378）', () => {
+describe('tooltip 标签与合计（issue #378）', () => {
   it('合计为全部一级柱净额的代数和（负柱冲减）', () => {
     expect(categoryBarTotal([{ value: 6000 }, { value: 3000 }, { value: -500 }])).toBe(8500)
     expect(categoryBarTotal([])).toBe(0)
   })
 
-  it('柱尾标签 =「金额 · 占比%」，分母为全部一级柱合计', () => {
+  it('tooltip 标签 =「金额 · 占比%」，分母为全部一级柱合计', () => {
     // formatAmount: 8500 分 → "85"、6000 分 → "60"
-    expect(barEndLabel(6000, 8500)).toBe('60 · 71%')
+    expect(barTooltipLabel(6000, 8500)).toBe('60 · 71%')
   })
 
   it('负柱显示负占比（净额口径诚实可查）', () => {
-    expect(barEndLabel(-500, 8500)).toBe('-5 · -6%')
+    expect(barTooltipLabel(-500, 8500)).toBe('-5 · -6%')
   })
 
   it('合计为 0（无柱或正负相抵）时只显示金额，不出现除零', () => {
-    expect(barEndLabel(1200, 0)).toBe('12')
-    expect(barEndLabel(-1200, 0)).toBe('-12')
+    expect(barTooltipLabel(1200, 0)).toBe('12')
+    expect(barTooltipLabel(-1200, 0)).toBe('-12')
   })
 })

@@ -23,7 +23,7 @@ import { kindSemanticColor } from '@/theme/semantic-colors'
 import { formatAmount } from '@/types'
 import type { CategoryShare, MerchantShare, MonthlySummary } from '@/types'
 import {
-  barEndLabel,
+  barTooltipLabel,
   categoryBarTotal,
   categoryBars,
   categoryDrilldownBars,
@@ -226,13 +226,12 @@ const categoryChartHeight = computed(() => {
   return rows * CATEGORY_ROW_HEIGHT
 })
 
-// 柱尾「金额 · 占比%」标签：占比分母 = 全部一级柱合计（图行净额代数和，负柱如实冲减）。
-const barEndLabelPlugin = {
-  id: 'barEndLabels',
+// 柱尾只标金额；占比收进 tooltip（悬停可见，分母随层级）。
+const barEndAmountPlugin = {
+  id: 'barEndAmounts',
   afterDatasetsDraw(chart: Chart<'bar'>) {
     const data = chart.data.datasets[0]?.data as number[] | undefined
     if (!data?.length) return
-    const total = categoryBarTotal(categoryBarsData.value)
     const ctx = chart.ctx
     ctx.save()
     ctx.fillStyle = typeof chart.options.color === 'string' ? chart.options.color : '#666'
@@ -244,7 +243,7 @@ const barEndLabelPlugin = {
       const { x, y } = el.getProps(['x', 'y'], true)
       // 正值柱标在柱尾右侧，负值柱标在柱尾左侧（0 轴如实渲染）
       ctx.textAlign = value >= 0 ? 'left' : 'right'
-      ctx.fillText(barEndLabel(value, total), value >= 0 ? x + 6 : x - 6, y)
+      ctx.fillText(formatAmount(value), value >= 0 ? x + 6 : x - 6, y)
     })
     ctx.restore()
   },
@@ -261,7 +260,8 @@ const categoryChartOptions: ChartOptions<'bar'> = {
     legend: { display: false },
     tooltip: {
       callbacks: {
-        label: (context: TooltipItem<'bar'>) => formatAmount(context.raw as number),
+        label: (context: TooltipItem<'bar'>) =>
+          barTooltipLabel(context.raw as number, categoryBarTotal(categoryBarsData.value)),
       },
     },
   },
@@ -328,7 +328,7 @@ onMounted(() => {
               class="category-chart"
               :data="categoryChartData"
               :options="categoryChartOptions"
-              :plugins="[barEndLabelPlugin]"
+              :plugins="[barEndAmountPlugin]"
             />
           </div>
         </div>
