@@ -98,10 +98,10 @@ beforeEach(async () => {
 })
 
 describe('SettingsView.vue（issue #157：Tab 分域重构 6 → 4）', () => {
-  it('Tab 格局为 通用 → 分类 → 商户 → 数据 → 定时 → 关于，共 6 个，关于在末位（#189 商户；#308 定时，按 ADR-0022 插在关于之前）', () => {
+  it('Tab 格局为 通用 → 分类 → 数据 → 定时 → 关于，共 5 个，关于在末位（#308 定时；#444 商户 Tab 移除——商户管理迁入「更多」聚合页，入口唯一）', () => {
     const wrapper = mount(SettingsView)
     const labels = wrapper.findAll('.n-tabs-tab').map((t) => t.text())
-    expect(labels).toEqual(['通用', '分类', '商户', '数据', '定时', '关于'])
+    expect(labels).toEqual(['通用', '分类', '数据', '定时', '关于'])
   })
 
   it('英文界面：Tab 页签以英文渲染，切回中文后恢复（issue #352）', async () => {
@@ -114,17 +114,22 @@ describe('SettingsView.vue（issue #157：Tab 分域重构 6 → 4）', () => {
       await applyLocale('zh-CN')
       await nextTick()
     }
-    expect(enLabels).toEqual(['General', 'Categories', 'Merchants', 'Data', 'Scheduled', 'About'])
+    expect(enLabels).toEqual(['General', 'Categories', 'Data', 'Scheduled', 'About'])
     // 切回中文后新挂载的组件恢复中文页签
     const wrapper = mount(SettingsView)
     expect(wrapper.findAll('.n-tabs-tab').map((tab) => tab.text())).toEqual([
       '通用',
       '分类',
-      '商户',
       '数据',
       '定时',
       '关于',
     ])
+  })
+
+  it('商户 Tab 已移除（issue #444）：设置页不再承载商户管理，入口唯一在「更多」页', () => {
+    const wrapper = mount(SettingsView)
+    const labels = wrapper.findAll('.n-tabs-tab').map((t) => t.text())
+    expect(labels).not.toContain('商户')
   })
 
   it('旧 Tab（备份与恢复 / 外观 / 存储位置）全部消失', () => {
