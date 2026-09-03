@@ -13,7 +13,7 @@ use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 
-use super::model::{Merchant, MerchantInput, MerchantUpdateInput};
+use super::model::{Merchant, MerchantInput, MerchantTransactionCount, MerchantUpdateInput};
 
 const MERCHANT_COLUMNS: &str = "id,name,created_at,updated_at,version,device_id,is_deleted";
 
@@ -108,6 +108,23 @@ pub fn delete_merchant(conn: &Connection, id: &str) -> Result<()> {
         rusqlite::params![id, now_iso(), device_id()],
     )?;
     Ok(())
+}
+
+/// 商户关联交易计数聚合（issue #445，毛笔数口径）：每个商户（含软删行）被**未删**
+/// 流水引用的条数——凡引用该商户的流水各计 1 条（可携带商户的 kind 由行为层收口，
+/// 仅 `expense` / `refund` / `income`），不做 refund 冲销、不做净笔数；实时按流水
+/// 推导、不落库。无引用商户计 0（LEFT JOIN 保证全字典行都在返回内，消费方无需
+/// 自行补零）。软删商户照常计数（历史引用语义，与报表商户排名同款：只滤交易侧
+/// 软删、不滤商户侧）；报表商户排名的金额口径（expense_net）不与之混淆。
+pub fn transaction_counts(conn: &Connection) -> Result<Vec<MerchantTransactionCount>> {
+    query_all(
+        conn,
+        "SELECT m.id, COUNT(t.id) AS transaction_count \
+         FROM merchants m \
+         LEFT JOIN transactions t ON t.merchant_id=m.id AND t.is_deleted=0 \
+         GROUP BY m.id ORDER BY m.name, m.created_at",
+        [],
+    )
 }
 
 /// 商户名归一化查找（AI 导入契约，issue #194 / ADR-0028）：按名字精确匹配在用商户

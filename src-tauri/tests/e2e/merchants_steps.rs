@@ -5,7 +5,7 @@ use tauri_app_lib::error::{AppError, ErrClass};
 use tauri_app_lib::merchants::{
     MerchantInput, MerchantUpdateInput, create_merchant as create_merchant_domain,
     delete_merchant as delete_merchant_domain, list_merchants as list_merchants_domain,
-    update_merchant as update_merchant_domain,
+    transaction_counts as transaction_counts_domain, update_merchant as update_merchant_domain,
 };
 use tauri_app_lib::models::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
@@ -299,6 +299,26 @@ fn check_merchant_all_contains(world: &mut LedgerWorld, name: String) {
         merchants.iter().any(|m| m.name == name),
         "含软删商户列表应包含 '{name}'"
     );
+}
+
+/// 商户关联交易条数断言（issue #445，毛笔数口径）：经商户域计数聚合按名字定位
+/// （含软删行，历史引用语义），断言引用该商户的未删流水毛笔数。
+#[then(expr = "商户 {string} 关联交易条数应为 {int}")]
+fn check_merchant_transaction_count(world: &mut LedgerWorld, name: String, expected: i64) {
+    let merchant_id: String = world_conn!(world)
+        .query_row(
+            "SELECT id FROM merchants WHERE name=?1",
+            params![name],
+            |r| r.get(0),
+        )
+        .unwrap_or_else(|_| panic!("商户行不存在: {name}"));
+    let counts = transaction_counts_domain(&world_conn!(world)).expect("查询商户关联交易计数失败");
+    let actual = counts
+        .iter()
+        .find(|c| c.merchant_id == merchant_id)
+        .map(|c| c.transaction_count)
+        .unwrap_or_else(|| panic!("计数聚合缺少商户 {name}（聚合应含全部商户行）"));
+    assert_eq!(actual, expected, "商户 '{name}' 关联交易条数不符");
 }
 
 /// 断言第 N 条交易（date DESC 排序）的商户名：按 merchant_id 实时解析

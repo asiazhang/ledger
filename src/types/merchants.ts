@@ -13,6 +13,13 @@ export interface MerchantInput {
   name: string
 }
 
+/** 商户关联交易计数行（issue #445，毛笔数口径）：实时推导、不落库的只读聚合，
+ *  含软删商户、无引用商户计 0；仅供商户管理列表消费。 */
+export interface MerchantTransactionCount {
+  merchant_id: string
+  transaction_count: number
+}
+
 /** 更新入参：name 可省略（省略即保持原值）；改名须避开在用同名。 */
 export interface MerchantUpdateInput {
   name?: string

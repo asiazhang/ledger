@@ -8,7 +8,7 @@ use tauri::State;
 use crate::db::DbState;
 use crate::error::{AppError, Result};
 use crate::merchants as merchant_domain;
-use crate::merchants::{Merchant, MerchantInput, MerchantUpdateInput};
+use crate::merchants::{Merchant, MerchantInput, MerchantTransactionCount, MerchantUpdateInput};
 use crate::signals::{WriteEvidence, WriteOp, emit_for};
 
 /// 商户列表：默认仅未删除；`include_deleted=true` 返回含软删全量（交易筛选下拉用）。
@@ -19,6 +19,16 @@ pub fn list_merchants(
 ) -> Result<Vec<Merchant>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     merchant_domain::list_merchants(&conn, include_deleted.unwrap_or(false))
+}
+
+/// 商户关联交易计数（issue #445，毛笔数口径）：每个商户（含软删）被未删流水引用的
+/// 条数，实时推导、不落库，无引用商户计 0。商户管理列表专用读命令，纯读无写身份。
+#[tauri::command]
+pub fn list_merchant_transaction_counts(
+    db: State<'_, DbState>,
+) -> Result<Vec<MerchantTransactionCount>> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    merchant_domain::transaction_counts(&conn)
 }
 
 #[tauri::command]

@@ -43,12 +43,16 @@ const mockMerchants: Merchant[] = [
 
 let merchantDb: Merchant[] = mockMerchants
 
+/** 关联交易计数后端响应（issue #445，毛笔数口径）：可缺行（无引用商户前端补 0）。 */
+let countDb: { merchant_id: string; transaction_count: number }[] = []
+
 function mockBaseCommands() {
   mockInvoke.mockImplementation((cmd: string) => {
     if (cmd === 'list_currencies') return Promise.resolve([])
     if (cmd === 'list_accounts') return Promise.resolve([])
     if (cmd === 'list_categories') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
+    if (cmd === 'list_merchant_transaction_counts') return Promise.resolve(countDb)
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
 }
@@ -62,6 +66,7 @@ describe('MerchantManager.vue（issue #189）', () => {
     setActivePinia(createPinia())
     mockInvoke.mockReset()
     merchantDb = mockMerchants
+    countDb = []
     mockBaseCommands()
     messageMock.success.mockClear()
     messageMock.error.mockClear()
@@ -150,5 +155,76 @@ describe('MerchantManager.vue（issue #189）', () => {
     const deleteBtns = wrapper.findAll('button').filter((b) => b.text() === '删除')
     expect(editBtns.length).toBe(2)
     expect(deleteBtns.length).toBe(2)
+  })
+})
+
+describe('MerchantManager.vue 关联交易条数列（issue #445，毛笔数口径）', () => {
+  beforeEach(async () => {
+    setActivePinia(createPinia())
+    mockInvoke.mockReset()
+    merchantDb = mockMerchants
+    countDb = []
+    mockBaseCommands()
+    const store = useReferenceStore()
+    await store.refresh()
+  })
+
+  function rowTexts(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('tbody tr').map((r) => r.text())
+  }
+
+  it('每行显示关联交易条数；计数缺失的无引用商户显示 0', async () => {
+    countDb = [{ merchant_id: 'mch-1', transaction_count: 2 }]
+    const wrapper = mount(MerchantManager)
+    await flushPromises()
+    const rows = rowTexts(wrapper)
+    expect(rows[0]).toContain('京东')
+    expect(rows[0]).toContain('2')
+    expect(rows[1]).toContain('红旗连锁')
+    expect(rows[1]).toContain('0')
+  })
+
+  it('条数列展示走数字分组口径（数量列与金额列同一核心助手）', async () => {
+    countDb = [{ merchant_id: 'mch-1', transaction_count: 12345 }]
+    const wrapper = mount(MerchantManager)
+    await flushPromises()
+    expect(rowTexts(wrapper)[0]).toContain('1,2345')
+  })
+
+  it('点击条数列表头可按条数排序（升/降序往返，不影响名称列自然序初始态）', async () => {
+    countDb = [
+      { merchant_id: 'mch-1', transaction_count: 1 },
+      { merchant_id: 'mch-2', transaction_count: 5 },
+    ]
+    const wrapper = mount(MerchantManager)
+    await flushPromises()
+    // 初始自然序（与后端名称序一致）：京东在前
+    expect(rowTexts(wrapper)[0]).toContain('京东')
+
+    const sorter = wrapper.find('th.n-data-table-th--sortable')
+    expect(sorter.exists()).toBe(true)
+    await sorter.trigger('click')
+    await flushPromises()
+    // 第一次点击降序：条数多的红旗连锁（5）在前
+    expect(rowTexts(wrapper)[0]).toContain('红旗连锁')
+
+    await sorter.trigger('click')
+    await flushPromises()
+    // 第二次点击升序：条数少的京东（1）回到最前
+    expect(rowTexts(wrapper)[0]).toContain('京东')
+  })
+
+  it('参考数据重拉后条数随之更新（既有失效机制，经 store version 伴随重拉计数）', async () => {
+    countDb = [{ merchant_id: 'mch-1', transaction_count: 2 }]
+    const wrapper = mount(MerchantManager)
+    await flushPromises()
+    expect(rowTexts(wrapper)[0]).toContain('2')
+
+    const callsBefore = merchantCalls('list_merchant_transaction_counts').length
+    countDb = [{ merchant_id: 'mch-1', transaction_count: 3 }]
+    await useReferenceStore().refresh()
+    await flushPromises()
+    expect(rowTexts(wrapper)[0]).toContain('3')
+    expect(merchantCalls('list_merchant_transaction_counts').length).toBeGreaterThan(callsBefore)
   })
 })

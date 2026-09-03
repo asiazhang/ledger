@@ -146,6 +146,8 @@ pub const IPC_COMMAND_WRITE_OPS: &[(&str, Option<WriteOp>)] = &[
     ("update_merchant", Some(WriteOp::UpdateMerchant)),
     ("delete_merchant", Some(WriteOp::DeleteMerchant)),
     ("list_merchants", None),
+    // 商户关联交易计数（issue #445，只读聚合）
+    ("list_merchant_transaction_counts", None),
     // ── 报表 ──
     ("monthly_summary", None),
     ("merchant_shares", None),

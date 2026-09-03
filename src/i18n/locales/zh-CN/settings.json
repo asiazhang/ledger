@@ -78,6 +78,7 @@
     },
     "columns": {
       "name": "名称",
+      "transactionCount": "关联交易",
       "actions": "操作"
     },
     "rowActions": {
