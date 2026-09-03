@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { api } from '@/api'
 import type { PhysicalAsset, PhysicalAssetInput, PhysicalAssetList } from '@/types'
@@ -63,16 +63,16 @@ export const usePhysicalAssetsStore = defineStore('physicalAssets', () => {
     return reloadMerged()
   }
 
-  /** 建档（估值必填 = 首条估值历史行）：成功后立即重拉
-   *  （后端同时发 ledger:changed，事件侧重拉被在途合并）。 */
+  /** 建档（估值必填 = 首条估值历史行）：写入成功即返回 id，不因重拉失败
+   *  反转为「保存失败」（数据已落库，重复提交才是真错）；列表刷新由后端
+   *  同步发出的 ledger:changed 信号驱动重拉兜底，失败信号由 status 承载。 */
   async function create(input: PhysicalAssetInput): Promise<string> {
     const id = await api.createPhysicalAsset(input)
-    await refresh()
+    await refresh().catch(() => {
+      /* 重拉失败不阻断建档成功路径 */
+    })
     return id
   }
-
-  /** 在持合计展示文本的折算基准（合计卡与币种符号同源）。 */
-  const holdingTotalCurrency = computed(() => nativeCurrency.value)
 
   // —— push 生命周期 ——
   // 首次访问 self-init：触发一次加载（失败静默，失败信号已由 status 承载）。
@@ -92,7 +92,7 @@ export const usePhysicalAssetsStore = defineStore('physicalAssets', () => {
   return {
     assets,
     holdingTotalNativeCents,
-    holdingTotalCurrency,
+    nativeCurrency,
     status,
     version,
     refresh,

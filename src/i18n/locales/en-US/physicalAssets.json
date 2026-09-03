@@ -25,7 +25,8 @@
       "name": "e.g. house, car, piano",
       "valuation": "e.g. 800000",
       "currency": "Currency",
-      "purchaseDate": "Select purchase date (optional)"
+      "purchaseDate": "Select purchase date (optional)",
+      "purchasePrice": "e.g. 120000"
     },
     "msg": {
       "nameRequired": "Asset name is required",

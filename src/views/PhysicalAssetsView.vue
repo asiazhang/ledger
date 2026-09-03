@@ -29,7 +29,7 @@ function openCreate() {
 const holdingTotalText = computed(() =>
   formatAmount(
     physicalAssetsStore.holdingTotalNativeCents,
-    reference.getCurrency(physicalAssetsStore.holdingTotalCurrency),
+    reference.getCurrency(physicalAssetsStore.nativeCurrency),
   ),
 )
 

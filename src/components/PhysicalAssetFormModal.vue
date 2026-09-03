@@ -160,7 +160,7 @@ defineExpose({ save })
       <NFormItem :label="t('physicalAssets.form.label.purchasePrice')">
         <NInput
           v-model:value="purchaseYuan"
-          :placeholder="t('physicalAssets.form.placeholder.valuation')"
+          :placeholder="t('physicalAssets.form.placeholder.purchasePrice')"
           style="width: 160px"
           data-testid="physical-asset-purchase-price"
         />

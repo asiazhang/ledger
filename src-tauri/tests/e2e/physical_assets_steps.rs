@@ -115,6 +115,19 @@ fn try_create_physical_asset(
     }
 }
 
+/// 读取最近创建资产的详情（详情读路径场景：与列表同一读口径）。
+#[when(expr = "读取实物资产详情")]
+fn get_physical_asset_detail(world: &mut LedgerWorld) {
+    let id = world
+        .last_physical_asset_id
+        .clone()
+        .expect("读取详情前应先创建实物资产");
+    match tauri_app_lib::physical_asset::get_physical_asset(&world_conn!(world), &id) {
+        Ok(asset) => world.physical_asset_detail = Some(asset),
+        Err(e) => panic!("读取实物资产详情应成功但失败: {e}"),
+    }
+}
+
 /// 拉取列表快照（默认口径 = 在持；合计口径恒为在持，与筛选无关）。
 #[then(expr = "实物资产列表应包含 {int} 件资产")]
 fn list_physical_assets(world: &mut LedgerWorld, expected: usize) {
@@ -276,4 +289,26 @@ fn check_no_signal(world: &mut LedgerWorld) {
 #[then(expr = "实物资产创建应返回错误 {string}")]
 fn check_create_error(world: &mut LedgerWorld, expected: String) {
     assert_last_error_contains(world, &expected);
+}
+
+#[then(expr = "实物资产详情当前估值应为 {int} 币种 {string} 折本位币应为 {int}")]
+fn assert_detail_valuation(
+    world: &mut LedgerWorld,
+    cents: i64,
+    currency: String,
+    native_cents: i64,
+) {
+    let asset = world.physical_asset_detail.as_ref().expect("应先读取详情");
+    assert_eq!(asset.current_valuation_cents, cents, "详情当前估值不符");
+    assert_eq!(
+        asset.current_valuation_currency_code, currency,
+        "详情当前估值币种不符"
+    );
+    assert_eq!(
+        asset.current_valuation_native_cents,
+        Some(native_cents),
+        "详情当前估值折本位币不符"
+    );
+    // 折算基准恒为全局默认币种（Amount 接缝）。
+    assert_eq!(asset.native_currency, "CNY", "详情本位币代码不符");
 }

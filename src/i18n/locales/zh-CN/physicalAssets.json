@@ -25,7 +25,8 @@
       "name": "如：房子、车子、钢琴",
       "valuation": "如 800000",
       "currency": "币种",
-      "purchaseDate": "选择购买日期（可选）"
+      "purchaseDate": "选择购买日期（可选）",
+      "purchasePrice": "如 120000"
     },
     "msg": {
       "nameRequired": "请输入资产名称",

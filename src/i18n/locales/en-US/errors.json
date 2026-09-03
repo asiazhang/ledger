@@ -181,7 +181,7 @@
     "purchase-currency-required": "Please select a currency for the purchase price",
     "currency-not-found": "Unknown currency: {0}",
     "date-invalid": "Invalid date format, expected YYYY-MM-DD: {0}",
-    "status-invalid": "Unknown status filter: {0} (valid values: holding/disposed)",
+    "status-invalid": "Unknown physical asset status: {0} (valid values: holding/disposed)",
     "not-found": "Physical asset not found: {0}"
   }
 }

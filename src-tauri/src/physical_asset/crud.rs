@@ -114,16 +114,12 @@ pub fn create_physical_asset(
 /// （缺汇率错误上抛，不以零或缺项静默通过）；合计口径恒为在持资产，
 /// 与筛选无关（回看已处置时「家底合计」不变）。排序按创建先后，列表稳定。
 pub fn list_physical_assets(conn: &Connection, status: Option<&str>) -> Result<PhysicalAssetList> {
+    // 状态筛选解析单点：合法值语义与实体状态解析同源（PhysicalAssetStatus::parse），
+    // 未知值码化报错（参数随 T1 命令面一次留足，处置筛选由 T3 消费）。
     let filter = match status {
-        None | Some("holding") => PhysicalAssetStatus::Holding,
-        Some("disposed") => PhysicalAssetStatus::Disposed,
-        Some(other) => {
-            return Err(AppError::codedp(
-                "physical-asset.status-invalid",
-                format!("未知资产状态筛选: {other}（合法值: holding/disposed）"),
-                &[other],
-            ));
-        }
+        None => PhysicalAssetStatus::Holding,
+        Some(raw) => PhysicalAssetStatus::parse(raw)
+            .map_err(|e| AppError::codedp("physical-asset.status-invalid", e, &[raw]))?,
     };
 
     let records: Vec<AssetRecord> = query_all(
@@ -139,43 +135,17 @@ pub fn list_physical_assets(conn: &Connection, status: Option<&str>) -> Result<P
     let mut assets = Vec::with_capacity(records.len());
     let mut holding_total_native_cents = 0i64;
     for record in records {
-        // 折算只发生在需要进合计的在持行；已处置行不折算（native 为 None）。
-        let current_valuation_native_cents = match record.status {
-            PhysicalAssetStatus::Holding => {
-                let native = convert_to_native(
-                    conn,
-                    record.current_valuation_cents,
-                    &record.current_valuation_currency_code,
-                )?;
-                holding_total_native_cents += native;
-                Some(native)
-            }
-            PhysicalAssetStatus::Disposed => None,
-        };
-        if record.status != filter {
-            continue;
+        // 折算/累计先于筛选：在持合计恒为全部在持行（回看已处置时合计不变）；
+        // 折算与搬运的单一落点在 into_entity（列表/详情共用）。
+        let asset = into_entity(
+            conn,
+            record,
+            &mut holding_total_native_cents,
+            &native_currency,
+        )?;
+        if asset.status == filter {
+            assets.push(asset);
         }
-        assets.push(PhysicalAsset {
-            id: record.id,
-            name: record.name,
-            purchase_date: record.purchase_date,
-            purchase_price_cents: record.purchase_price_cents,
-            purchase_currency_code: record.purchase_currency_code,
-            status: record.status,
-            disposal_date: record.disposal_date,
-            disposal_price_cents: record.disposal_price_cents,
-            disposal_currency_code: record.disposal_currency_code,
-            created_at: record.created_at,
-            updated_at: record.updated_at,
-            version: record.version,
-            device_id: record.device_id,
-            is_deleted: record.is_deleted,
-            current_valuation_cents: record.current_valuation_cents,
-            current_valuation_currency_code: record.current_valuation_currency_code,
-            current_valuation_date: record.current_valuation_date,
-            current_valuation_native_cents,
-            native_currency: native_currency.clone(),
-        });
     }
 
     Ok(PhysicalAssetList {
@@ -185,32 +155,25 @@ pub fn list_physical_assets(conn: &Connection, status: Option<&str>) -> Result<P
     })
 }
 
-/// 按 `id` 读单个未删除资产（详情）：不存在（或已软删除）→ 码化 NotFound。
-pub fn get_physical_asset(conn: &Connection, id: &str) -> Result<PhysicalAsset> {
-    let record = query_one::<AssetRecord, _>(
-        conn,
-        &format!(
-            "SELECT {ASSET_WITH_VALUATION_COLUMNS} {ASSET_WITH_VALUATION_FROM} \
-             WHERE a.is_deleted=0 AND a.id=?1"
-        ),
-        [id],
-    )?
-    .ok_or_else(|| {
-        AppError::codedp_not_found(
-            "physical-asset.not-found",
-            format!("实物资产不存在: {id}"),
-            &[id],
-        )
-    })?;
-
-    // 详情与列表同一读口径：在持行折算本位币（缺汇率错误上抛）。
-    let native_currency = default_currency_code().to_string();
+/// 行记录 → 读模型实体（列表 / 详情共用的单一搬运点）：在持行经 Amount 接缝
+/// 折算本位币（缺汇率错误上抛，不以零或缺项静默通过）并累计进 `holding_total`；
+/// 已处置行不折算（native 为 `None`，不进在持口径）。
+fn into_entity(
+    conn: &Connection,
+    record: AssetRecord,
+    holding_total: &mut i64,
+    native_currency: &str,
+) -> Result<PhysicalAsset> {
     let current_valuation_native_cents = match record.status {
-        PhysicalAssetStatus::Holding => Some(convert_to_native(
-            conn,
-            record.current_valuation_cents,
-            &record.current_valuation_currency_code,
-        )?),
+        PhysicalAssetStatus::Holding => {
+            let native = convert_to_native(
+                conn,
+                record.current_valuation_cents,
+                &record.current_valuation_currency_code,
+            )?;
+            *holding_total += native;
+            Some(native)
+        }
         PhysicalAssetStatus::Disposed => None,
     };
     Ok(PhysicalAsset {
@@ -232,6 +195,30 @@ pub fn get_physical_asset(conn: &Connection, id: &str) -> Result<PhysicalAsset> 
         current_valuation_currency_code: record.current_valuation_currency_code,
         current_valuation_date: record.current_valuation_date,
         current_valuation_native_cents,
-        native_currency,
+        native_currency: native_currency.to_string(),
     })
+}
+
+/// 按 `id` 读单个未删除资产（详情）：不存在（或已软删除）→ 码化 NotFound。
+pub fn get_physical_asset(conn: &Connection, id: &str) -> Result<PhysicalAsset> {
+    let record = query_one::<AssetRecord, _>(
+        conn,
+        &format!(
+            "SELECT {ASSET_WITH_VALUATION_COLUMNS} {ASSET_WITH_VALUATION_FROM} \
+             WHERE a.is_deleted=0 AND a.id=?1"
+        ),
+        [id],
+    )?
+    .ok_or_else(|| {
+        AppError::codedp_not_found(
+            "physical-asset.not-found",
+            format!("实物资产不存在: {id}"),
+            &[id],
+        )
+    })?;
+
+    // 详情与列表同一读口径（单一搬运点）；详情无合计语义，累计值丢弃。
+    let native_currency = default_currency_code().to_string();
+    let mut unused_total = 0i64;
+    into_entity(conn, record, &mut unused_total, &native_currency)
 }

@@ -51,7 +51,7 @@ describe('usePhysicalAssetsStore', () => {
     expect(store.assets).toHaveLength(1)
     expect(store.assets[0].name).toBe('客厅油画')
     expect(store.holdingTotalNativeCents).toBe(5_000_000)
-    expect(store.holdingTotalCurrency).toBe('CNY')
+    expect(store.nativeCurrency).toBe('CNY')
     expect(store.status).toBe('ready')
     expect(store.version).toBe(1)
   })

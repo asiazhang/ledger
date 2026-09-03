@@ -181,7 +181,7 @@
     "purchase-currency-required": "填写购买价时必须选择购买币种",
     "currency-not-found": "未知币种: {0}",
     "date-invalid": "日期格式无效，应为 YYYY-MM-DD: {0}",
-    "status-invalid": "未知资产状态筛选: {0}（合法值: holding/disposed）",
+    "status-invalid": "未知实物资产状态: {0}（合法值: holding/disposed）",
     "not-found": "实物资产不存在: {0}"
   }
 }
