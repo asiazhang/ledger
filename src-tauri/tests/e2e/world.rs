@@ -127,9 +127,9 @@ pub struct LedgerWorld {
     /// 最近一次保单写入发出的失效信号次数（ledger:changed 注入 seam 断言用）
     pub policy_signal_count: usize,
     /// 保单列表快照（保单列表场景断言用）
-    pub policies_list: Vec<tauri_app_lib::models::Policy>,
+    pub policies_list: Vec<tauri_app_lib::policy::Policy>,
     /// 最近一次逐保单统计快照（保单视角统计场景断言用，issue #363）
-    pub policy_stats_list: Vec<tauri_app_lib::models::PolicyStats>,
+    pub policy_stats_list: Vec<tauri_app_lib::policy::PolicyStats>,
     /// 记住的保单创建时间（编辑后审计字段保留断言用，issue #360）
     pub remembered_policy_created_at: Option<String>,
     /// 记住的物品创建时间（修改后审计字段保留断言用，issue #117）

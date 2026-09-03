@@ -8,7 +8,6 @@ mod dashboard;
 mod financial_freedom;
 mod investment;
 mod item;
-mod policy;
 mod reports;
 mod transactions;
 
@@ -17,6 +16,5 @@ pub use dashboard::*;
 pub use financial_freedom::*;
 pub use investment::*;
 pub use item::*;
-pub use policy::*;
 pub use reports::*;
 pub use transactions::*;
