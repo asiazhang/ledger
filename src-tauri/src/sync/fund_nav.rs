@@ -303,7 +303,8 @@ where
         // 现价 = 窗口内最新公布单位净值；priced_at = nav_date = 净值日期
         // （与 #301 添加基金同形；nav_date 兼任下次同步的水位）。
         // let-else 显式防线（#434，ADR-0060 A 类临时豁免已摘）：points 非空由
-        // 前文判空保证，此臂不可达；若达记警告并跳过该只，不中断同步。
+        // 前文判空保证，此臂理论不可达；一旦前置防线被移除，此处记警告并跳过
+        // 该只、不中断同步。
         let Some(latest) = points.iter().max_by_key(|p| p.date.as_str()) else {
             tracing::warn!(code = %fund.symbol, "净值点意外为空，跳过现价更新");
             continue;
