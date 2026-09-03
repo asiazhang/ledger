@@ -3,7 +3,7 @@
 - 状态：已接受
 - 日期：2026-09-02
 - 作者：Ledger 项目
-- 关联：spec #394 / issue #396（本文档票）；前置 #395（口径修缮先行，先修后搬）；逐域搬迁 #397–#401；收口 #402；守门先例 ADR-0047（命令注册单一来源的质量门槛化）；与 ADR-0032（置脏收口连接层）/ ADR-0033（行为层事务）/ ADR-0044（信号映射）无冲突——彼等约束接缝契约，本文只动实现住址
+- 关联：spec #394 / issue #396（本文档票）；前置 #395（口径修缮先行，先修后搬）；逐域搬迁 #397–#401；收口 #402（剩余内容判定表；后续票 #403–#408，HTTP 壳目录化专项 #429）；守门先例 ADR-0047（命令注册单一来源的质量门槛化）；与 ADR-0032（置脏收口连接层）/ ADR-0033（行为层事务）/ ADR-0044（信号映射）无冲突——彼等约束接缝契约，本文只动实现住址
 
 ## 背景
 
@@ -42,12 +42,12 @@
 - **豁免** = 外挂测试模块与测试目录（`tests.rs` 文件、`tests/` 目录；先例：写入接缝的外挂测试目录）：BDD/单元 fixture 合法引用壳层入口（既有先例：BDD 直调命令层内部函数），不制造虚假违规。
 - **不豁免** = 普通文件内的内联 `#[cfg(test)]` 模块：白名单内当前零壳层引用；内联测试若需引用壳层，应外挂为测试目录——豁免不以放宽主文件约束为代价。
 
-## 迁移状态（已全部收口）
+## 迁移状态与剩余内容 Triage（#402 终态收口）
 
 - **路线图全部完成**（#397–#407，含前置 #395 口径修缮与两处检查点）：核心交易 `transaction/`、定时计划 `scheduled_transactions/`（既有先例）、物品 `item/`、保单 `policy/`、预算 `budget/`、商户 `merchants/`、投资 `investment/`（财务自由度随迁，`investment/financial_freedom.rs`）、报表 `reports/`、仪表盘 `dashboard/`、账户 `accounts/`、分类 `categories/`、币种 `currencies/`、备份 `backup/`、行情同步 `sync/` 全部归位为顶层域目录，各域壳层压平为单文件 `commands/<域>.rs`；逐域模块划分与迁移细节见 git 历史与各域实施票（#397–#407）。
-- **数据位置引导**下沉 `db/data_location/`（#408）；**基础设施**守门白名单：`db/`、`signals.rs`、`models/`、`error.rs`、`settings.rs`、`fs_util.rs`、`logger.rs`、`events.rs`。
+- **数据位置引导**（`commands/data_location.rs`，票 #408）仍待下沉 `db/data_location/`（当前仅测试模块在 `db/data_location/tests.rs`，主实现尚未迁入）；**基础设施**守门白名单：`db/`、`signals.rs`、`models/`、`error.rs`、`settings.rs`（`fs_util.rs`、`logger.rs`、`events.rs` 属 #408 待办，尚未入白名单）。
 - **确认纯壳不建域**：`commands/ai.rs`（提示词模板读取）、`commands/logs.rs`（打开日志目录）、`restart_app` 等系统控制命令。
-- `api_server.rs`（1100+ 行）待后续专项目录化重构，另立专项。
+- `api_server.rs`（1000+ 行，专项 #429）待后续专项目录化重构。
 - 原开放问题（行为层编排入口归位、行情同步与备份归属）均已裁决并执行完毕。
 
 ## 备选方案与否决理由
