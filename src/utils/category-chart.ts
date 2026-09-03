@@ -1,6 +1,6 @@
 // 支出分类构成横向柱状图的数据形态（issue #378）：一级分类归并 + 未分类柱、
 // 净额降序（负值柱如实沉底）、分类按 id 稳定配色（跨年份/跨数据顺序恒定）、
-// 未分类固定灰。柱尾标签「金额 · 占比%」在此收口为纯函数，图表绘制只消费。
+// 未分类固定灰。柱尾只标金额；占比收进 tooltip，「金额 · 占比%」标签在此收口为纯函数。
 import type { Category, CategoryShare } from '@/types'
 import { categoryRoot } from '@/utils/category-tree'
 import { formatAmount } from '@/utils/money'
@@ -95,13 +95,13 @@ export function categoryDrilldownBars(
   return toBars(merged.values())
 }
 
-/** 全部一级柱净额合计（柱尾占比的分母）：代数和，负柱如实冲减 */
+/** 全部一级柱净额合计（tooltip 占比的分母）：代数和，负柱如实冲减 */
 export function categoryBarTotal(bars: { value: number }[]): number {
   return bars.reduce((sum, b) => sum + b.value, 0)
 }
 
-/** 柱尾标签「金额 · 占比%」；分母为 0（无柱或正负相抵）时只显示金额，不出现除零。 */
-export function barEndLabel(value: number, total: number): string {
+/** tooltip 标签「金额 · 占比%」；分母为 0（无柱或正负相抵）时只显示金额，不出现除零。 */
+export function barTooltipLabel(value: number, total: number): string {
   if (total === 0) return formatAmount(value)
   return `${formatAmount(value)} · ${Math.round((value / total) * 100)}%`
 }
