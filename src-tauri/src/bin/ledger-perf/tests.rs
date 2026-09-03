@@ -23,7 +23,16 @@ use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::read::{get_transaction, list_transactions};
 
 use super::generate::{GenCounts, GenerateParams, generate_into};
-use super::{GenerateCli, parse_args};
+use super::{GenerateCli, ParsedArgs, parse_args};
+
+/// 解析并取运行参数（帮助请求在该测试套件中不该出现）。
+fn run_cli(args: &[&str]) -> GenerateCli {
+    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    match parse_args(&owned).unwrap() {
+        ParsedArgs::Run(cli) => cli,
+        ParsedArgs::Help => panic!("该输入应解析为运行参数"),
+    }
+}
 
 // ---------------------------------------------------------------------------
 // 确定性摘要与 schema 观察工具（tests 专用；同种子两次生成的全表有序摘要必须一致）
@@ -273,7 +282,7 @@ fn profile_merchant_long_tail() {
         (share - 0.60).abs() < 0.05,
         "top 20 商户流水占比偏离 60%：{share}"
     );
-    // 长尾形态：尾部商户基本有流水、但单户占比很小。
+    // 长尾形态：最尾部商户单户占比应远小于账户均值（薄尾）。
     assert!(
         counts[799] as f64 / attached < 0.005,
         "最尾部商户占比应远小于均值"
@@ -473,7 +482,7 @@ fn same_seed_produces_identical_digest() {
 
 #[test]
 fn cli_defaults_and_overrides_parse() {
-    let cli = parse_args(&[]).unwrap();
+    let cli = run_cli(&[]);
     assert_eq!(cli, GenerateCli::default());
     assert_eq!(cli.seed, 42);
     assert_eq!(cli.transactions, 500_000);
@@ -484,16 +493,15 @@ fn cli_defaults_and_overrides_parse() {
             .ends_with("target/ledger-perf/ledger-perf.db")
     );
 
-    let cli = parse_args(&[
-        "--seed".to_string(),
-        "7".to_string(),
-        "--transactions=123".to_string(),
-        "--end-date".to_string(),
-        "2024-06-30".to_string(),
-        "--out".to_string(),
-        "/tmp/x.db".to_string(),
-    ])
-    .unwrap();
+    let cli = run_cli(&[
+        "--seed",
+        "7",
+        "--transactions=123",
+        "--end-date",
+        "2024-06-30",
+        "--out",
+        "/tmp/x.db",
+    ]);
     assert_eq!(cli.seed, 7);
     assert_eq!(cli.transactions, 123);
     assert_eq!(cli.end_date, "2024-06-30");
@@ -504,6 +512,11 @@ fn cli_defaults_and_overrides_parse() {
     assert!(
         parse_args(&["--seed".to_string(), "abc".to_string()]).is_err(),
         "非整数报错"
+    );
+    assert_eq!(
+        parse_args(&["--help".to_string()]),
+        Ok(ParsedArgs::Help),
+        "--help 请求"
     );
 }
 

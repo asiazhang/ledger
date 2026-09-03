@@ -32,12 +32,14 @@
 //!   含少量 USD/EUR 账户）；40 个分类（迁移自带默认种子分类之外另生成）；
 //!   800 个商户呈长尾（top 20 占挂商户流水的约 60%）；DefaultCurrency 为 CNY，
 //!   USD/EUR 少量且 `fx_rate_history` 全历史（窗口内每周一采样）填充；
-//!   转账约 8%、退款链约 2%（`refund_of_transaction_id` 指向更早的支出）、
+//!   转账约 8%、退款链约 2%（`refund_of_transaction_id` 指向该账户更早生成的
+//!   支出，退款日期不早于原支出日）、
 //!   交易软删除约 1%。投资域 / Budget / ScheduledTransaction 填充见 issue #460。
 //! - 确定性：固定默认种子 42（`--seed` 覆盖）；默认 500,000 笔（`--transactions`）；
 //!   锚定结束日期 2025-12-31（`--end-date`），数据落在其前约 5 年窗口内，
-//!   不锚定「今天」；全部时间字段（id 时间戳位 / created_at / updated_at）由
-//!   种子与日期推导，无墙钟参与——同参数两次生成产出逐字节同构的库。
+//!   不锚定「今天」；生成数据的全部时间字段（id 时间戳位 / created_at /
+//!   updated_at）由种子与日期推导，无墙钟参与——同参数两次生成，生成内容的
+//!   全表有序摘要一致（迁移种子行的审计时间列除外，见 tests 摘要断言）。
 //! - 默认输出 `<src-tauri>/target/ledger-perf/ledger-perf.db`（构建目标目录下，
 //!   天然被版本控制忽略、与真实用户库物理隔离，`--out` 可改为任意文件路径）。
 //!   目标文件已存在时先删除再重建（保证从空库迁移 + 幂等重建）。
@@ -116,8 +118,15 @@ impl Default for GenerateCli {
     }
 }
 
+/// 参数解析结果：运行参数或帮助请求。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ParsedArgs {
+    Run(GenerateCli),
+    Help,
+}
+
 /// 手写参数解析（零新增依赖）。返回 Err(消息) 表示用法错误。
-pub(crate) fn parse_args(args: &[String]) -> Result<GenerateCli, String> {
+pub(crate) fn parse_args(args: &[String]) -> Result<ParsedArgs, String> {
     let mut cli = GenerateCli::default();
     let mut i = 0;
     while i < args.len() {
@@ -152,12 +161,12 @@ pub(crate) fn parse_args(args: &[String]) -> Result<GenerateCli, String> {
             "--out" => {
                 cli.out = PathBuf::from(take_value(&mut i, inline_value)?);
             }
-            "-h" | "--help" => return Err(String::new()),
+            "-h" | "--help" => return Ok(ParsedArgs::Help),
             other => return Err(format!("未知参数 {other:?}")),
         }
         i += 1;
     }
-    Ok(cli)
+    Ok(ParsedArgs::Run(cli))
 }
 
 fn print_usage() {
@@ -172,17 +181,17 @@ fn main() -> ExitCode {
     };
     match sub.as_str() {
         "generate" => match parse_args(&args[1..]) {
-            Ok(cli) => match generate::run(cli) {
+            Ok(ParsedArgs::Help) => {
+                print_usage();
+                ExitCode::SUCCESS
+            }
+            Ok(ParsedArgs::Run(cli)) => match generate::run(cli) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(msg) => {
                     eprintln!("generate 失败：{msg}");
                     ExitCode::FAILURE
                 }
             },
-            Err(msg) if msg.is_empty() => {
-                print_usage();
-                ExitCode::SUCCESS
-            }
             Err(msg) => {
                 eprintln!("参数错误：{msg}\n");
                 print_usage();

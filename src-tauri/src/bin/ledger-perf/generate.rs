@@ -4,7 +4,8 @@
 //! 不复制 DDL）；数据行由本模块批量直插（一次性事务 + 关闭 fsync 的连接级 PRAGMA，
 //! 供几十秒内产出 50 万笔）。全部画像参数以常量集中在本模块头部，测试与
 //! 用法注释（bin 头）共用同一套数字；确定性由种子化 PRNG 与「无墙钟、无
-//! HashMap 遍历」纪律保证——同参数两次生成的库逐行同构（tests 内摘要断言）。
+//! HashMap 遍历」纪律保证——同参数两次生成，全部生成内容的全表有序摘要一致
+//! （迁移种子行的审计时间列不参与比对，tests 内断言）。
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
@@ -129,7 +130,8 @@ pub(crate) fn run(cli: GenerateCli) -> Result<(), String> {
     let started = std::time::Instant::now();
     let counts = generate_into(&mut conn, &params)?;
     println!(
-        "生成完成：{} accounts / {} categories（迁移种子另计）/ {} merchants / {} transactions（软删 {}、转账 {}、退款 {}）/ {} fx_rate_history（{} 周采样 × 2 币对）",
+        "生成完成：{} accounts / {} categories（迁移种子另计）/ {} merchants / {} transactions\
+         （软删 {}、转账 {}、退款 {}）/ {} exchange_rates / {} fx_rate_history（{} 周采样 × 2 币对）",
         counts.accounts,
         counts.categories,
         counts.merchants,
@@ -137,6 +139,7 @@ pub(crate) fn run(cli: GenerateCli) -> Result<(), String> {
         counts.deleted_transactions,
         counts.transfer_transactions,
         counts.refund_transactions,
+        counts.exchange_rates,
         counts.fx_rate_history,
         counts.fx_rate_history / 2,
     );
@@ -183,6 +186,12 @@ pub(crate) fn generate_into(
 
     let start_date = p.end_date - Months::new(WINDOW_MONTHS) + Duration::days(1);
     let total_days = (p.end_date - start_date).num_days() + 1;
+    let window = Window {
+        start: start_date,
+        total_days,
+        end: p.end_date,
+    };
+    let millis = date_millis(&start_date);
     let stamp = format!("{start_date}T08:00:00Z");
     let mut rng = Rng::new(p.seed);
     let mut counts = GenCounts::default();
@@ -190,28 +199,25 @@ pub(crate) fn generate_into(
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
 
     // 1) 账户（现金/储蓄/信用卡/钱包混合 + 少量 USD/EUR）
-    let account_rows = insert_accounts(&tx, &mut rng, &stamp, &start_date, &mut counts)?;
+    let account_rows = insert_accounts(&tx, &mut rng, &stamp, millis, &mut counts)?;
 
     // 2) 分类（40 个，支出 30 / 收入 10，两级）+ 读取全量分类池（含迁移种子）
-    insert_categories(&tx, &stamp, &mut counts)?;
+    insert_categories(&tx, &stamp, millis, &mut counts)?;
     let (expense_pool, income_pool) = category_pools(&tx)?;
 
     // 3) 商户（800 个，长尾结构）
-    let (top_merchants, tail_merchants) = insert_merchants(&tx, &stamp, &mut counts)?;
+    let (top_merchants, tail_merchants) = insert_merchants(&tx, &stamp, millis, &mut counts)?;
 
     // 4) 交易（核心画像）
-    let txn_counts = insert_transactions(
-        &tx,
-        &mut rng,
-        p,
+    let ctx = TxContext::new(
         &account_rows,
         &expense_pool,
         &income_pool,
         &top_merchants,
         &tail_merchants,
-        start_date,
-        total_days,
-    )?;
+        window,
+    );
+    let txn_counts = insert_transactions(&tx, &mut rng, p, &ctx)?;
     counts.transactions = txn_counts.total;
     counts.deleted_transactions = txn_counts.deleted;
     counts.transfer_transactions = txn_counts.transfers;
@@ -235,7 +241,7 @@ fn insert_accounts(
     conn: &Connection,
     rng: &mut Rng,
     stamp: &str,
-    start_date: &NaiveDate,
+    millis: i64,
     counts: &mut GenCounts,
 ) -> Result<Vec<AccountRow>, String> {
     let mut specs: Vec<(&'static str, &'static str)> = Vec::new();
@@ -274,7 +280,6 @@ fn insert_accounts(
 
     let mut rows: Vec<AccountRow> = Vec::with_capacity(specs.len());
     let mut seq_per_type: BTreeMap<&'static str, u32> = BTreeMap::new();
-    let millis = date_millis(start_date);
     for (idx, (atype, ccy)) in specs.iter().enumerate() {
         let seq = seq_per_type.entry(atype).or_insert(0);
         *seq += 1;
@@ -313,7 +318,12 @@ fn insert_accounts(
 
 /// 40 个生成分类：支出 10 顶级 + 20 二级，收入 4 顶级 + 6 二级；名字带「基准」前缀
 /// 与迁移种子默认分类区分。
-fn insert_categories(conn: &Connection, stamp: &str, counts: &mut GenCounts) -> Result<(), String> {
+fn insert_categories(
+    conn: &Connection,
+    stamp: &str,
+    millis: i64,
+    counts: &mut GenCounts,
+) -> Result<(), String> {
     let expense_tops = [
         "基准餐饮",
         "基准交通",
@@ -327,7 +337,6 @@ fn insert_categories(conn: &Connection, stamp: &str, counts: &mut GenCounts) -> 
         "基准其他",
     ];
     let income_tops = ["基准工资", "基准理财", "基准分红", "基准其他收入"];
-    let millis_stamp = stamp_date(stamp);
 
     let insert_one = |conn: &Connection,
                       name: &str,
@@ -335,7 +344,7 @@ fn insert_categories(conn: &Connection, stamp: &str, counts: &mut GenCounts) -> 
                       parent: Option<&str>,
                       seq: u64|
      -> Result<String, String> {
-        let id = time_ordered_id("categories", seq, millis_stamp);
+        let id = time_ordered_id("categories", seq, millis);
         conn.execute(
             "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,\
              created_at,updated_at,version,device_id,is_deleted)\
@@ -390,16 +399,6 @@ fn insert_categories(conn: &Connection, stamp: &str, counts: &mut GenCounts) -> 
     Ok(())
 }
 
-/// 从 stamp（ISO 时间戳）取日期部分转毫秒（仅用于确定性 ID 时间位）。
-fn stamp_date(stamp: &str) -> i64 {
-    stamp
-        .split('T')
-        .next()
-        .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
-        .map(|d| date_millis(&d))
-        .unwrap_or(0)
-}
-
 /// 分类池：读取全量在用分类并按 kind 分池（含迁移种子 + 生成分类）。
 fn category_pools(conn: &Connection) -> Result<(Vec<String>, Vec<String>), String> {
     let cats = categories::list_categories(conn, false).map_err(|e| e.to_string())?;
@@ -419,6 +418,7 @@ fn category_pools(conn: &Connection) -> Result<(Vec<String>, Vec<String>), Strin
 fn insert_merchants(
     conn: &Connection,
     stamp: &str,
+    millis: i64,
     counts: &mut GenCounts,
 ) -> Result<(Vec<String>, Vec<String>), String> {
     const TOP_NAMES: [&str; TOP_MERCHANTS] = [
@@ -443,7 +443,6 @@ fn insert_merchants(
         "苹果商店",
         "网易云音乐",
     ];
-    let millis = stamp_date(stamp);
     let mut top_ids = Vec::with_capacity(TOP_MERCHANTS);
     let mut tail_ids = Vec::with_capacity(MERCHANT_TOTAL - TOP_MERCHANTS);
     for (i, name) in TOP_NAMES.iter().enumerate() {
@@ -475,13 +474,21 @@ fn insert_merchants(
 // 交易
 // ---------------------------------------------------------------------------
 
+/// 数据窗口：交易与汇率历史共用的日期上下文（起点 / 天数 / 锚定结束日）。
+#[derive(Clone, Copy)]
+struct Window {
+    start: NaiveDate,
+    total_days: i64,
+    end: NaiveDate,
+}
+
 /// 生成的账户行：id 连同本位币（交易币种与转账同币约束都消费它）。
 struct AccountRow {
     id: String,
     ccy: &'static str,
 }
 
-/// 退款链的支出源引用（同账户环形缓冲，供 refund 继承账户/币种/分类/商户）。
+/// 退款链的支出源引用（同账户环形缓冲，供 refund 继承账户/分类/商户；币种随账户）。
 #[derive(Clone)]
 struct ExpenseRef {
     id: String,
@@ -491,6 +498,148 @@ struct ExpenseRef {
     merchant: Option<String>,
 }
 
+/// 交易生成的共享上下文：账户视图、分类/商户池与日期窗口（行间只读复用）。
+struct TxContext<'a> {
+    account_ids: Vec<&'a str>,
+    ccys: Vec<&'a str>,
+    same_ccy: Vec<(&'a str, Vec<usize>)>,
+    expense_pool: &'a [String],
+    income_pool: &'a [String],
+    top_merchants: &'a [String],
+    tail_merchants: &'a [String],
+    window: Window,
+}
+
+impl<'a> TxContext<'a> {
+    /// 由生成的账户行与各池构建；同币种账户索引表供转账挑对手
+    /// （转账必须在同币种两账户间进行，跨币种转账非产品语义）。
+    fn new(
+        account_rows: &'a [AccountRow],
+        expense_pool: &'a [String],
+        income_pool: &'a [String],
+        top_merchants: &'a [String],
+        tail_merchants: &'a [String],
+        window: Window,
+    ) -> Self {
+        let mut same_ccy: Vec<(&str, Vec<usize>)> = Vec::new();
+        for (idx, row) in account_rows.iter().enumerate() {
+            match same_ccy.iter_mut().find(|(c, _)| *c == row.ccy) {
+                Some((_, slot)) => slot.push(idx),
+                None => same_ccy.push((row.ccy, vec![idx])),
+            }
+        }
+        TxContext {
+            account_ids: account_rows.iter().map(|a| a.id.as_str()).collect(),
+            ccys: account_rows.iter().map(|a| a.ccy).collect(),
+            same_ccy,
+            expense_pool,
+            income_pool,
+            top_merchants,
+            tail_merchants,
+            window,
+        }
+    }
+
+    fn ccy_of(&self, idx: usize) -> &'a str {
+        self.ccys[idx]
+    }
+
+    /// 支出行：对数均匀金额 + 分类/商户/备注挂载；同时成为本账户的退款源。
+    fn expense_row(&self, rng: &mut Rng) -> PendingRow {
+        let amount = expense_amount(rng);
+        let category = Some(rng.pick(self.expense_pool).clone());
+        let merchant = maybe_merchant(
+            rng,
+            self.top_merchants,
+            self.tail_merchants,
+            EXPENSE_MERCHANT_RATE,
+        );
+        let note = maybe_note(rng, NOTE_RATE);
+        let date = rand_date(rng, self.window);
+        PendingRow {
+            kind: "expense",
+            to_account: None,
+            category: category.clone(),
+            merchant: merchant.clone(),
+            refund_of: None,
+            note,
+            amount,
+            date,
+            new_expense: Some(ExpenseRef {
+                id: String::new(),
+                date,
+                amount_cents: amount,
+                category,
+                merchant,
+            }),
+        }
+    }
+
+    /// 收入行：金额高一个量级、低商户挂载率（工资类收入通常无商户）。
+    fn income_row(&self, rng: &mut Rng) -> PendingRow {
+        PendingRow {
+            kind: "income",
+            to_account: None,
+            category: Some(rng.pick(self.income_pool).clone()),
+            merchant: maybe_merchant(
+                rng,
+                self.top_merchants,
+                self.tail_merchants,
+                INCOME_MERCHANT_RATE,
+            ),
+            refund_of: None,
+            note: maybe_note(rng, NOTE_RATE),
+            amount: rng.range_i64(50_000, 2_000_000),
+            date: rand_date(rng, self.window),
+            new_expense: None,
+        }
+    }
+
+    /// 转账行：同币种两账户间转账；本币种无第二个账户时降级为支出（如唯一的外币户）。
+    fn transfer_row(&self, rng: &mut Rng, account_idx: usize) -> PendingRow {
+        let ccy = self.ccy_of(account_idx);
+        let candidates = self
+            .same_ccy
+            .iter()
+            .find(|(c, _)| *c == ccy)
+            .map(|(_, idxs)| idxs)
+            .filter(|idxs| idxs.len() >= 2);
+        if let Some(idxs) = candidates {
+            let mut to = rng.below(idxs.len() as u64) as usize;
+            while idxs[to] == account_idx {
+                to = rng.below(idxs.len() as u64) as usize;
+            }
+            PendingRow {
+                kind: "transfer",
+                to_account: Some(self.account_ids[idxs[to]].to_string()),
+                category: None,
+                merchant: None,
+                refund_of: None,
+                note: maybe_note(rng, TRANSFER_NOTE_RATE),
+                amount: rng.range_i64(5_000, 2_000_000),
+                date: rand_date(rng, self.window),
+                new_expense: None,
+            }
+        } else {
+            self.expense_row(rng)
+        }
+    }
+}
+
+/// 一行待插入交易的内存形态（id/审计字段由主循环统一推导）。
+struct PendingRow {
+    kind: &'static str,
+    to_account: Option<String>,
+    category: Option<String>,
+    merchant: Option<String>,
+    refund_of: Option<String>,
+    note: Option<String>,
+    amount: i64,
+    date: NaiveDate,
+    /// 支出行携带：带 id 后入本账户退款源缓冲。
+    new_expense: Option<ExpenseRef>,
+}
+
 struct TxnCounts {
     total: usize,
     deleted: usize,
@@ -498,18 +647,11 @@ struct TxnCounts {
     refunds: usize,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn insert_transactions(
     conn: &Connection,
     rng: &mut Rng,
     p: &GenerateParams,
-    account_rows: &[AccountRow],
-    expense_pool: &[String],
-    income_pool: &[String],
-    top_merchants: &[String],
-    tail_merchants: &[String],
-    start_date: NaiveDate,
-    total_days: i64,
+    ctx: &TxContext,
 ) -> Result<TxnCounts, String> {
     const SQL: &str = "INSERT INTO transactions (id,kind,amount_cents,currency_code,\
          amount_native_cents,account_id,to_account_id,category_id,merchant_id,\
@@ -518,27 +660,8 @@ fn insert_transactions(
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,NULL,NULL,?12,?13,?13,1,?14,?15,NULL)";
     let mut stmt = conn.prepare(SQL).map_err(|e| e.to_string())?;
 
-    // 生成账户的 id 与本位币视图（决定交易币种与转账同币约束）；
-    // 外币折算率与 exchange_rates 落库值共用常量，恒一致。
-    let account_ids: Vec<&str> = account_rows.iter().map(|a| a.id.as_str()).collect();
-    let account_ccy = |idx: usize| account_rows[idx].ccy;
-    let fx = |ccy: &str| match ccy {
-        "USD" => USD_CNY,
-        "EUR" => EUR_CNY,
-        _ => 1.0,
-    };
-
-    // 同币种账户索引表：转账必须在同币种两账户间进行（跨币种转账非产品语义）。
-    let mut same_ccy: Vec<(&str, Vec<usize>)> = Vec::new();
-    for (idx, ccy_code) in account_rows.iter().enumerate() {
-        match same_ccy.iter_mut().find(|(c, _)| *c == ccy_code.ccy) {
-            Some((_, slot)) => slot.push(idx),
-            None => same_ccy.push((ccy_code.ccy, vec![idx])),
-        }
-    }
-
     // 各账户的近期支出环形缓冲（refund 链来源）。
-    let mut buffers: Vec<VecDeque<ExpenseRef>> = vec![VecDeque::new(); account_ids.len()];
+    let mut buffers: Vec<VecDeque<ExpenseRef>> = vec![VecDeque::new(); ctx.account_ids.len()];
     let mut counts = TxnCounts {
         total: 0,
         deleted: 0,
@@ -547,140 +670,67 @@ fn insert_transactions(
     };
 
     for seq in 0..p.transactions {
-        let account_idx = rng.below(account_ids.len() as u64) as usize;
-        let ccy = account_ccy(account_idx);
+        let account_idx = rng.below(ctx.account_ids.len() as u64) as usize;
+        let ccy = ctx.ccy_of(account_idx);
         let roll = rng.next_f64();
-        let mut new_expense: Option<ExpenseRef> = None;
-        let (kind, to_account, category, merchant, refund_of, note, amount, date) = if roll
-            < EXPENSE_SHARE
-        {
-            let amount = expense_amount(rng);
-            let category = Some(rng.pick(expense_pool).clone());
-            let merchant =
-                maybe_merchant(rng, top_merchants, tail_merchants, EXPENSE_MERCHANT_RATE);
-            let note = maybe_note(rng, NOTE_RATE);
-            let date = rand_date(rng, start_date, total_days, p.end_date);
-            new_expense = Some(ExpenseRef {
-                id: String::new(),
-                date,
-                amount_cents: amount,
-                category: category.clone(),
-                merchant: merchant.clone(),
-            });
-            (
-                "expense", None, category, merchant, None, note, amount, date,
-            )
+
+        let row = if roll < EXPENSE_SHARE {
+            ctx.expense_row(rng)
         } else if roll < EXPENSE_SHARE + INCOME_SHARE {
-            let amount = rng.range_i64(50_000, 2_000_000);
-            let category = Some(rng.pick(income_pool).clone());
-            let merchant = maybe_merchant(rng, top_merchants, tail_merchants, INCOME_MERCHANT_RATE);
-            let note = maybe_note(rng, NOTE_RATE);
-            let date = rand_date(rng, start_date, total_days, p.end_date);
-            ("income", None, category, merchant, None, note, amount, date)
+            ctx.income_row(rng)
         } else if roll < EXPENSE_SHARE + INCOME_SHARE + TRANSFER_SHARE {
-            // 同币种两账户间转账（跨币种转账非产品语义）；本币种无第二个账户时
-            // 降级为支出（如唯一的外币户），避免转账两端同户。
-            let candidates: Option<&Vec<usize>> = same_ccy
-                .iter()
-                .find(|(c, _)| *c == ccy)
-                .map(|(_, idxs)| idxs)
-                .filter(|idxs| idxs.len() >= 2);
-            if let Some(idxs) = candidates {
-                let mut to = rng.below(idxs.len() as u64) as usize;
-                while idxs[to] == account_idx {
-                    to = rng.below(idxs.len() as u64) as usize;
-                }
-                let amount = rng.range_i64(5_000, 2_000_000);
-                let note = maybe_note(rng, TRANSFER_NOTE_RATE);
-                let date = rand_date(rng, start_date, total_days, p.end_date);
-                counts.transfers += 1;
-                (
-                    "transfer",
-                    Some(account_ids[idxs[to]]),
-                    None,
-                    None,
-                    None,
-                    note,
-                    amount,
-                    date,
-                )
-            } else {
-                let amount = expense_amount(rng);
-                let category = Some(rng.pick(expense_pool).clone());
-                let merchant =
-                    maybe_merchant(rng, top_merchants, tail_merchants, EXPENSE_MERCHANT_RATE);
-                let note = maybe_note(rng, NOTE_RATE);
-                let date = rand_date(rng, start_date, total_days, p.end_date);
-                new_expense = Some(ExpenseRef {
-                    id: String::new(),
-                    date,
-                    amount_cents: amount,
-                    category: category.clone(),
-                    merchant: merchant.clone(),
-                });
-                (
-                    "expense", None, category, merchant, None, note, amount, date,
-                )
-            }
+            ctx.transfer_row(rng, account_idx)
         } else {
-            // 退款链：从同账户近期支出取源；缓冲为空（极小规模）时退化为支出。
-            let buffer_len = buffers[account_idx].len();
-            if buffer_len == 0 {
-                let amount = expense_amount(rng);
-                let category = Some(rng.pick(expense_pool).clone());
-                let merchant =
-                    maybe_merchant(rng, top_merchants, tail_merchants, EXPENSE_MERCHANT_RATE);
-                let note = maybe_note(rng, NOTE_RATE);
-                let date = rand_date(rng, start_date, total_days, p.end_date);
-                new_expense = Some(ExpenseRef {
-                    id: String::new(),
-                    date,
-                    amount_cents: amount,
-                    category: category.clone(),
-                    merchant: merchant.clone(),
-                });
-                (
-                    "expense", None, category, merchant, None, note, amount, date,
-                )
+            // 退款链：从同账户近期支出取源（账户/分类/商户继承，币种随账户，
+            // 退款日期不早于原支出）；缓冲为空（极小规模）时退化为支出。
+            let buffer = &mut buffers[account_idx];
+            if buffer.is_empty() {
+                ctx.expense_row(rng)
             } else {
-                let pick_idx = rng.below(buffer_len as u64) as usize;
-                let src = &buffers[account_idx][pick_idx];
+                let pick_idx = rng.below(buffer.len() as u64) as usize;
+                let src = &buffer[pick_idx];
                 let amount = if rng.chance(0.5) {
                     src.amount_cents
                 } else {
                     (src.amount_cents / 2).max(1)
                 };
-                let date = (src.date + Duration::days(rng.below(31) as i64)).min(p.end_date);
-                counts.refunds += 1;
-                (
-                    "refund",
-                    None,
-                    src.category.clone(),
-                    src.merchant.clone(),
-                    Some(src.id.clone()),
-                    Some("退款".to_string()),
+                let date = (src.date + Duration::days(rng.below(31) as i64)).min(ctx.window.end);
+                PendingRow {
+                    kind: "refund",
+                    to_account: None,
+                    category: src.category.clone(),
+                    merchant: src.merchant.clone(),
+                    refund_of: Some(src.id.clone()),
+                    note: Some("退款".to_string()),
                     amount,
                     date,
-                )
+                    new_expense: None,
+                }
             }
         };
+        if row.kind == "transfer" {
+            counts.transfers += 1;
+        } else if row.kind == "refund" {
+            counts.refunds += 1;
+        }
 
         // 行序号推导确定性 id；新支出带 id 入缓冲（成为后续退款的源）。
-        let millis = date_millis(&date);
-        let id = time_ordered_id("transactions", seq, millis);
-        if let Some(exp) = new_expense.as_mut() {
-            exp.id = id.clone();
-            buffers[account_idx].push_back(exp.clone());
+        let id = time_ordered_id("transactions", seq, date_millis(&row.date));
+        if let Some(exp) = &row.new_expense {
+            let mut src = exp.clone();
+            src.id = id.clone();
+            buffers[account_idx].push_back(src);
         }
         trim_buffer(&mut buffers[account_idx]);
 
         let created = format!(
-            "{date}T{:02}:{:02}:{:02}Z",
+            "{}T{:02}:{:02}:{:02}Z",
+            row.date,
             rng.range_i64(6, 23),
             rng.range_i64(0, 59),
             rng.range_i64(0, 59)
         );
-        let native = (amount as f64 * fx(ccy)).round() as i64;
+        let native = (row.amount as f64 * fx(ccy)).round() as i64;
         let deleted = rng.chance(SOFT_DELETE_RATE);
         if deleted {
             counts.deleted += 1;
@@ -688,17 +738,17 @@ fn insert_transactions(
 
         stmt.execute(rusqlite::params![
             id,
-            kind,
-            amount,
+            row.kind,
+            row.amount,
             ccy,
             native,
-            account_ids[account_idx],
-            to_account,
-            category,
-            merchant,
-            refund_of,
-            note,
-            date.to_string(),
+            ctx.account_ids[account_idx],
+            row.to_account,
+            row.category,
+            row.merchant,
+            row.refund_of,
+            row.note,
+            row.date.to_string(),
             created,
             DEVICE_ID,
             deleted as i64,
@@ -707,6 +757,15 @@ fn insert_transactions(
         counts.total += 1;
     }
     Ok(counts)
+}
+
+/// 外币折算基准（与 exchange_rates 落库值共用常量，恒一致）；CNY 为 DefaultCurrency。
+fn fx(ccy: &str) -> f64 {
+    match ccy {
+        "USD" => USD_CNY,
+        "EUR" => EUR_CNY,
+        _ => 1.0,
+    }
 }
 
 /// 支出金额：1.5–5 个数量级对数均匀（约 ¥0.3–¥316），形似日常长尾。
@@ -740,8 +799,8 @@ fn maybe_note(rng: &mut Rng, rate: f64) -> Option<String> {
 }
 
 /// 窗口内均匀随机日期（钳到锚定结束日期内）。
-fn rand_date(rng: &mut Rng, start: NaiveDate, total_days: i64, end: NaiveDate) -> NaiveDate {
-    (start + Duration::days(rng.below(total_days as u64) as i64)).min(end)
+fn rand_date(rng: &mut Rng, window: Window) -> NaiveDate {
+    (window.start + Duration::days(rng.below(window.total_days as u64) as i64)).min(window.end)
 }
 
 /// 保留每账户最近 REFUND_BUFFER_CAP 条支出作为退款源。
