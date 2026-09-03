@@ -1,4 +1,4 @@
-//! 实物资产（PhysicalAsset）BDD 步骤（issue #466 / spec #465 / ADR-0063）：
+//! 实物资产（PhysicalAsset）BDD 步骤（issue #466 / spec #465 / ADR-0064）：
 //! 建档守卫、字段读回（含首条估值为当前值）、在持合计与失效信号计数。
 //!
 //! 经 `physical_asset` 域 API（`tauri_app_lib::physical_asset`）断言外部可观察

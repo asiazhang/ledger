@@ -142,6 +142,6 @@ erDiagram
 | `V012__policies.sql` | 保单（policies）表 |
 | `V013__transaction_policy_id.sql` | 交易保单引用列 |
 | `V014__subscription_plan_policy_id.sql` | 订阅计划保单引用列 |
-| `V015__physical_assets.sql` | 实物资产（physical_assets）与估值历史（physical_asset_valuations）表（ADR-0063） |
+| `V015__physical_assets.sql` | 实物资产（physical_assets）与估值历史（physical_asset_valuations）表（ADR-0064） |
 
 > 迁移版本由 SQLite `user_version` 自动追踪，新迁移在数据库模块统一注册。V005（FTS5 搜索索引）已随统一模糊搜索方案移除（ADR-0027），编号不复用。新增 schema 变更时新建 `V00X__名称.sql` 并在注册处追加；已发布迁移的就地修改与 BREAKING 标记要求见 AGENTS.md 发布约定。

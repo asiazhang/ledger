@@ -150,7 +150,7 @@ pub const IPC_COMMAND_WRITE_OPS: &[(&str, Option<WriteOp>)] = &[
     ("list_merchants", None),
     // 商户关联交易计数（issue #445，只读聚合）
     ("list_merchant_transaction_counts", None),
-    // ── 实物资产域（issue #466 / ADR-0063）──
+    // ── 实物资产域（issue #466 / ADR-0064）──
     ("create_physical_asset", Some(WriteOp::CreatePhysicalAsset)),
     ("list_physical_assets", None),
     ("get_physical_asset", None),

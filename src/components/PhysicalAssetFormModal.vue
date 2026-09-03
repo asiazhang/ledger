@@ -13,7 +13,7 @@ import { usePhysicalAssetsStore } from '@/stores/physicalAssets'
 import type { PhysicalAssetInput } from '@/types'
 
 /**
- * 实物资产建档弹窗（issue #466 / ADR-0063）：名称与当前估值必填（三十秒
+ * 实物资产建档弹窗（issue #466 / ADR-0064）：名称与当前估值必填（三十秒
  * 建档的最简表单），购买日期与购买价（含币种）可选；估值与购买价币种均
  * 预选默认币种（核心交易域 DefaultCurrency 设备偏好）。估值日期不出表单
  * （缺省 = 今天）；估值不走本表单变更，更新估值由 T2 承接（只追加历史行）。

@@ -81,7 +81,7 @@ pub enum WriteOp {
     /// 删除保单（软删除；IPC `delete_policy`）。
     DeletePolicy,
 
-    // ── 实物资产域（ADR-0063：独立领域，复用 `ledger:changed` 同名事件）──
+    // ── 实物资产域（ADR-0064：独立领域，复用 `ledger:changed` 同名事件）──
     /// 建档实物资产（IPC `create_physical_asset`；资产行 + 首条估值行同事务）。
     CreatePhysicalAsset,
 
@@ -357,7 +357,7 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
         //    保单 store 自行订阅、自行重拉 ──
         WriteOp::CreatePolicy | WriteOp::UpdatePolicy | WriteOp::DeletePolicy => LEDGER_CHANGED_SET,
 
-        // ── 实物资产域（ADR-0063）：独立领域复用 ledger:changed 同名事件，
+        // ── 实物资产域（ADR-0064）：独立领域复用 ledger:changed 同名事件，
         //    实物资产 store 自行订阅、自行重拉 ──
         WriteOp::CreatePhysicalAsset => LEDGER_CHANGED_SET,
 
@@ -580,7 +580,7 @@ mod tests {
         );
     }
 
-    // ── 实物资产域（ADR-0063）：独立领域一律 ledger:changed ──
+    // ── 实物资产域（ADR-0064）：独立领域一律 ledger:changed ──
 
     #[test]
     fn create_physical_asset_emits_ledger_changed() {

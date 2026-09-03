@@ -1,10 +1,10 @@
-//! IPC 命令壳 · 实物资产（PhysicalAsset）（issue #466 / spec #465 / ADR-0063）：
+//! IPC 命令壳 · 实物资产（PhysicalAsset）（issue #466 / spec #465 / ADR-0064）：
 //! 建档、列表（含在持合计与状态筛选参数）与详情三个命令（T1）。
 //!
 //! 只做参数解包、事务壳与信号发射，不含业务语义；行为权威在
 //! [`crate::physical_asset`]（ADR-0056 分层）。
 //!
-//! 信号约定：实物资产是独立领域（ADR-0063），复用 `ledger:changed` 同名
+//! 信号约定：实物资产是独立领域（ADR-0064），复用 `ledger:changed` 同名
 //! 事件——实物资产 store 订阅后自动重拉。发不发、发哪个由映射单点判定
 //! （ADR-0044），notify 只是发射钩子。
 //!
@@ -45,7 +45,7 @@ pub fn create_physical_asset(
     // 提交，`db.write` 的 is_autocommit 复核与置脏照常生效（ADR-0033 嵌套感知）。
     db.write(|conn| {
         physical_asset_domain::create_physical_asset(conn, input, &mut || {
-            // 实物资产是独立领域（ADR-0063，同物品/保单先例）：复用
+            // 实物资产是独立领域（ADR-0064，同物品/保单先例）：复用
             // `ledger:changed` 同名事件。发不发由映射单点判定（ADR-0044）。
             emit_for(&app, WriteOp::CreatePhysicalAsset, WriteEvidence::None);
         })

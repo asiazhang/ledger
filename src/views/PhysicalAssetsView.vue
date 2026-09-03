@@ -9,7 +9,7 @@ import { useReferenceStore } from '@/stores/reference'
 import type { PhysicalAsset } from '@/types'
 
 /**
- * 实物资产视图（issue #466 / spec #465 / ADR-0063）：列表 + 在持合计卡 + 建档入口。
+ * 实物资产视图（issue #466 / spec #465 / ADR-0064）：列表 + 在持合计卡 + 建档入口。
  *
  * 「更多」页实物资产页签的装载体（ADR-0055 低频视图收纳，先例保单页签）；
  * 数据全部来自 `usePhysicalAssetsStore`（self-init + `ledger:changed` 静默重拉），

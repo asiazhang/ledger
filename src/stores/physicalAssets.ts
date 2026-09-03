@@ -8,7 +8,7 @@ import type { PhysicalAsset, PhysicalAssetInput, PhysicalAssetList } from '@/typ
 export type PhysicalAssetsStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 /**
- * 实物资产（PhysicalAsset）领域 store（issue #466 / ADR-0063）。
+ * 实物资产（PhysicalAsset）领域 store（issue #466 / ADR-0064）。
  *
  * 实物资产是大件实物的估值档案（实物资产分域词汇表 `PhysicalAsset`），
  * **不进** `useReferenceStore`（不是可选值字典），拥有自己的单一来源 store

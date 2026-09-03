@@ -249,7 +249,7 @@ export const api = {
   updatePolicy: (id: string, input: PolicyInput) => invoke<void>('update_policy', { id, input }),
   deletePolicy: (id: string) => invoke<void>('delete_policy', { id }),
 
-  // 实物资产（issue #466 / ADR-0063）：独立领域（估值档案），写入后由后端发 ledger:changed
+  // 实物资产（issue #466 / ADR-0064）：独立领域（估值档案），写入后由后端发 ledger:changed
   listPhysicalAssets: (status?: string) =>
     invoke<PhysicalAssetList>('list_physical_assets', { status: status ?? null }),
   getPhysicalAsset: (id: string) => invoke<PhysicalAsset>('get_physical_asset', { id }),

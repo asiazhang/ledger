@@ -38,7 +38,7 @@ export const WHITELIST = [
   { path: 'policy', layer: '域目录', note: '保单域（#398 阶段 2 归位）' },
   { path: 'budget', layer: '域目录', note: '预算域（#399 阶段 3 归位）' },
   { path: 'merchants', layer: '域目录', note: '商户域（#400 阶段 4 归位）' },
-  { path: 'physical_asset', layer: '域目录', note: '实物资产域（issue #466 新建即归位，ADR-0063）' },
+  { path: 'physical_asset', layer: '域目录', note: '实物资产域（issue #466 新建即归位，ADR-0064）' },
   { path: 'investment', layer: '域目录', note: '投资域（#401 阶段 5 归位，主体自 commands/investment 随迁；价格写入单点自 sync/persist 迁入）' },
   { path: 'accounts', layer: '域目录', note: '账户域（#404 参考数据域归位，主体自 commands/accounts 随迁）' },
   { path: 'categories', layer: '域目录', note: '分类域（#404 参考数据域归位，主体自 commands/categories 随迁）' },
