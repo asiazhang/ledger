@@ -6,7 +6,7 @@
 
 | 想知道 | 从代码查 |
 |---|---|
-| HTTP 端点契约 / 实现 | 运行期 `GET /api/v1/openapi.json`；`src-tauri/src/api_server.rs` |
+|| HTTP 端点契约 / 实现 | 运行期 `GET /api/v1/openapi.json`；`src-tauri/src/api_server/`（契约装配 `openapi.rs`、路由表 `router.rs`、端点 `handlers/`）|
 | 已注册 IPC 命令 | `src-tauri/src/lib.rs` 的 `generate_handler!` |
 | 前端调用封装与类型 | `src/api/index.ts` + `src/types/index.ts` |
 | 命令实现 / serde 契约类型 | `src-tauri/src/commands/` / `src-tauri/src/models/` |

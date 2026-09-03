@@ -13,7 +13,7 @@
 
 ### 1. 三层定名与职责
 
-- **壳层**：IPC 命令（`src-tauri/src/commands/`）与 HTTP 端点（`src-tauri/src/api_server.rs`）。只做参数解包、事务壳（ADR-0033）、信号发射（ADR-0044），不含业务语义——打开壳层任何文件都应能确信它读不到领域规则。
+- **壳层**：IPC 命令（`src-tauri/src/commands/`）与 HTTP 端点（`src-tauri/src/api_server/`）。只做参数解包、事务壳（ADR-0033）、信号发射（ADR-0044），不含业务语义——打开壳层任何文件都应能确信它读不到领域规则。
 - **域目录**：顶层按域组织的引擎实现（既有先例：`src-tauri/src/transaction/` 核心交易、`src-tauri/src/scheduled_transactions/` 定时计划）。域接口用域语言命名，测试以外挂测试模块/目录随迁。
 - **基础设施**：数据库连接（`db/`）、信号映射（`signals.rs`）、模型（`models/`）、错误（`error.rs`）、设置（`settings.rs`）。无域语义，被所有层消费。
 
@@ -47,7 +47,7 @@
 - **路线图全部完成**（#397–#407，含前置 #395 口径修缮与两处检查点）：核心交易 `transaction/`、定时计划 `scheduled_transactions/`（既有先例）、物品 `item/`、保单 `policy/`、预算 `budget/`、商户 `merchants/`、投资 `investment/`（财务自由度随迁，`investment/financial_freedom.rs`）、报表 `reports/`、仪表盘 `dashboard/`、账户 `accounts/`、分类 `categories/`、币种 `currencies/`、备份 `backup/`、行情同步 `sync/` 全部归位为顶层域目录，各域壳层压平为单文件 `commands/<域>.rs`；逐域模块划分与迁移细节见 git 历史与各域实施票（#397–#407）。
 - **数据位置**（引导 + 更改校验/信息聚合）下沉 `db/data_location/`（#408 已收口，壳层压平为纯壳）；**基础设施**守门白名单：`db/`、`signals.rs`、`models/`、`error.rs`、`settings.rs`、`fs_util.rs`、`logger.rs`、`events.rs`（#408 入白名单）。
 - **确认纯壳不建域**：`commands/ai.rs`（提示词模板读取）、`commands/logs.rs`（打开日志目录）、`restart_app` 等系统控制命令。
-- `api_server.rs`（1000+ 行，专项 #429）待后续专项目录化重构。
+- HTTP 壳目录化（#429）：`api_server.rs`（1000+ 行）已拆为 `api_server/` 目录模块（state / error / openapi / write_ops / router / handlers 按资源域分文件），挂载点与 `crate::api_server::` 引用面零变化。
 - 原开放问题（行为层编排入口归位、行情同步与备份归属）均已裁决并执行完毕。
 
 ## 备选方案与否决理由
