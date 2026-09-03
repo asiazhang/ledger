@@ -223,12 +223,17 @@ where
     })
 }
 
-/// 北京时间今天（A 股/基金净值日历以北京时间为准）。
+/// 北京时间今天（A 股/基金净值日历以北京时间为准）。北京日历日 = UTC 时刻
+/// 加 8 小时后取日期部分，UTC+8 算术直接得日期、无 Option 无 expect
+///（ADR-0060 的 A 类临时豁免已由 #434 结构性消除）。
 pub(super) fn beijing_today() -> NaiveDate {
-    // A 类临时豁免（ADR-0060，待结构性消除）：UTC+8 固定偏移恒合法，类型系统无法证明。
-    #[allow(clippy::expect_used)]
-    let beijing = chrono::FixedOffset::east_opt(8 * 3600).expect("固定时区偏移合法");
-    chrono::Utc::now().with_timezone(&beijing).date_naive()
+    beijing_date(chrono::Utc::now())
+}
+
+/// [`beijing_today`] 的纯函数核：UTC 时刻加 8 小时后取日期部分即北京日历日
+///（16:00 UTC 是北京午夜边界，边界语义由 `beijing_date_shifts_utc_by_plus_8h` 钉住）。
+pub(super) fn beijing_date(now: chrono::DateTime<chrono::Utc>) -> NaiveDate {
+    (now + chrono::Duration::hours(8)).date_naive()
 }
 
 /// 近两年回填窗口起点：北京时间今天 − 2 年。A 股/港股交易日历以北京时间为准，
