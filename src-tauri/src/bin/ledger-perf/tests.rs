@@ -740,6 +740,40 @@ fn profile_investments_holdings_and_trades() {
         )
         .unwrap();
     assert!(exhausted > 0, "应有清仓批次");
+
+    // 因果序：卖出不早于其匹配批次的买入日（产品不可产出先卖后买的数据）。
+    let sell_before_buy: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM security_lot_sales s \
+             JOIN security_lots l ON l.id = s.lot_id \
+             JOIN transactions tb ON tb.id = l.buy_transaction_id \
+             JOIN transactions ts ON ts.id = s.sell_transaction_id \
+             WHERE ts.date < tb.date",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(sell_before_buy, 0, "不得存在早于买入日的卖出");
+
+    // 基金买入份额按行情推导：反算单价应贴合该日价格线（±1%），不独立抽样。
+    let fund_price_deviation: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM security_transactions st \
+             JOIN instruments i ON i.id = st.instrument_id \
+             JOIN transactions t ON t.id = st.transaction_id \
+             WHERE i.instrument_type = 'fund' AND st.action = 'buy' \
+             AND st.price_cents > 1.01 * (SELECT ph.price_cents FROM price_history ph \
+                 WHERE ph.instrument_id = st.instrument_id AND ph.trade_date <= t.date \
+                 ORDER BY ph.trade_date DESC LIMIT 1) + 1 \
+             OR (i.instrument_type = 'fund' AND st.action = 'buy' \
+             AND st.price_cents < 0.99 * (SELECT ph.price_cents FROM price_history ph \
+                 WHERE ph.instrument_id = st.instrument_id AND ph.trade_date <= t.date \
+                 ORDER BY ph.trade_date DESC LIMIT 1) - 1)",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(fund_price_deviation, 0, "基金反算单价应贴合当日价格线");
 }
 
 #[test]

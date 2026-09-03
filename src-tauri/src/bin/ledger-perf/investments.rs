@@ -404,6 +404,8 @@ struct LotState {
     id: String,
     /// 创建时刻（由买入日期推导，产品 FIFO 匹配的排序键）。
     created: String,
+    /// 买入交易日（卖出日期的下界：产品因果序先买后卖）。
+    buy_date: NaiveDate,
     initial: f64,
     remaining: f64,
     cost_per_unit: i64,
@@ -504,10 +506,17 @@ pub(crate) fn plan_buy(
     let price = md.price_at(inst, date);
 
     let (quantity, fee, amount, price_units, cost_per_unit) = if is_fund(spec.itype) {
-        // 基金：确认单金额权威（整百元），份额两位小数，单价与每份成本反算。
+        // 基金：确认单金额权威（整百元）；份额按当日行情价推导（两位小数），
+        // 单价/每份成本由金额反算——反算价自然贴合价格线（若金额与份额独立
+        // 抽样，反算单价会系统性偏离行情，未实现盈亏失真）。
         let amount = rng.range_i64(500, 5_000) * 100;
-        let quantity = rng.range_i64(10_000, 2_000_000) as f64 / 100.0;
         let fee = (amount as f64 * FUND_BUY_FEE_RATE).round() as i64;
+        let quantity =
+            (((amount - fee) as f64 * PRICE_UNITS_PER_FEN / price as f64) * 100.0).floor() / 100.0;
+        if quantity < 0.01 {
+            // 行情极端高于确认金额档位（正常画像不可达）：返回 None 交调用方降级。
+            return None;
+        }
         let derived = ((amount - fee) as f64 * PRICE_UNITS_PER_FEN / quantity).round() as i64;
         let cost = (amount as f64 * PRICE_UNITS_PER_FEN / quantity).round() as i64;
         (quantity, fee, amount, derived, cost)
@@ -557,9 +566,18 @@ pub(crate) fn plan_sell(
     let &(pair, avail) = rng.pick(&available);
     let slot = pair / INSTRUMENT_TOTAL;
     let inst = pair % INSTRUMENT_TOTAL;
-    let date = window.rand_date(rng);
-    let price = md.price_at(inst, date);
 
+    // FIFO 候选（与产品 Writer 同序：created_at, id 升序）。
+    let mut candidates: Vec<usize> = pf.pairs[pair]
+        .iter()
+        .enumerate()
+        .filter(|(_, lot)| lot.remaining > 0.0)
+        .map(|(pos, _)| pos)
+        .collect();
+    candidates.sort_by(|&a, &b| {
+        let (la, lb) = (&pf.pairs[pair][a], &pf.pairs[pair][b]);
+        (&la.created, &la.id).cmp(&(&lb.created, &lb.id))
+    });
     let full = rng.chance(FULL_SELL_RATE);
     let fund = is_fund(INSTRUMENTS[inst].itype);
     let quantity = if full {
@@ -583,33 +601,23 @@ pub(crate) fn plan_sell(
         return None;
     }
 
-    let gross = (quantity * price as f64 / PRICE_UNITS_PER_FEN).round() as i64;
-    let fee = ((gross as f64 * STOCK_FEE_RATE).round() as i64).min(gross);
-    let amount = gross - fee;
-
-    // FIFO 与产品 Writer 同序：候选批次按（created_at, id）升序匹配
-    // （security_lots 的产品匹配排序键），而非内存插入序。
-    let mut candidates: Vec<usize> = pf.pairs[pair]
-        .iter()
-        .enumerate()
-        .filter(|(_, lot)| lot.remaining > 0.0)
-        .map(|(pos, _)| pos)
-        .collect();
-    candidates.sort_by(|&a, &b| {
-        let (la, lb) = (&pf.pairs[pair][a], &pf.pairs[pair][b]);
-        (&la.created, &la.id).cmp(&(&lb.created, &lb.id))
-    });
+    // 匹配集合只依赖数量与批次状态（与日期无关），先确定匹配，再取交易日：
+    // 因果序——卖出日不早于任何一个被匹配批次的买入日（产品先买后卖）。
     let mut matches = Vec::new();
     let mut left = quantity;
-    for pos in candidates {
+    let mut matched_max_buy_date = window.start;
+    for pos in &candidates {
         if left <= 0.0 {
             break;
         }
-        let lot = &pf.pairs[pair][pos];
+        let lot = &pf.pairs[pair][*pos];
         let exhausts = left >= lot.remaining;
         let matched = if exhausts { lot.remaining } else { left };
+        if lot.buy_date > matched_max_buy_date {
+            matched_max_buy_date = lot.buy_date;
+        }
         matches.push(LotMatch {
-            pos,
+            pos: *pos,
             quantity: matched,
             cost_per_unit: lot.cost_per_unit,
             initial: lot.initial,
@@ -617,6 +625,12 @@ pub(crate) fn plan_sell(
         });
         left -= matched;
     }
+    let date = window.rand_date(rng).max(matched_max_buy_date);
+    let price = md.price_at(inst, date);
+
+    let gross = (quantity * price as f64 / PRICE_UNITS_PER_FEN).round() as i64;
+    let fee = ((gross as f64 * STOCK_FEE_RATE).round() as i64).min(gross);
+    let amount = gross - fee;
 
     Some(SellTrade {
         slot,
@@ -689,6 +703,7 @@ fn apply_buy(
     pf.pairs[pair].push(LotState {
         id: lot_id,
         created: created.to_string(),
+        buy_date: trade.date,
         initial: trade.quantity,
         remaining: trade.quantity,
         cost_per_unit: trade.cost_per_unit,
