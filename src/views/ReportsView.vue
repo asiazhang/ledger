@@ -17,7 +17,9 @@ import type { ActiveElement, Chart, ChartOptions, TooltipItem } from 'chart.js'
 import { api } from '@/api'
 import { t } from '@/i18n'
 import { useReferenceStore } from '@/stores/reference'
+import { useAppStore } from '@/stores/app'
 import { useReportsSessionStore } from '@/stores/reports-session'
+import { kindSemanticColor } from '@/theme/semantic-colors'
 import { formatAmount } from '@/types'
 import type { CategoryShare, MerchantShare, MonthlySummary } from '@/types'
 import {
@@ -43,6 +45,10 @@ const router = useRouter()
 // 冷启动回默认「当年」；不写 localStorage、不写回路由 URL。
 // 同值守卫与期间切换复位下钻两条规则内化在 store，视图只接线。
 const session = useReportsSessionStore()
+// 月度收支图三根语义色柱随主题响应式换色（issue #435）：色值单一来源在
+// @/theme/semantic-colors，与交易列表/搜索金额列同源；barChartData 读
+// app store 主题，切换外观即时重算，无需重建图表。
+const app = useAppStore()
 
 // 报表页日期闭集（ADR-0057）：仅四枚日期芯片、无「全部」——期间必有界。
 const REPORT_PRESETS = DATED_TIME_PERIOD_PRESETS
@@ -98,10 +104,11 @@ const barChartData = computed(() => ({
   labels: monthly.value.map((m) => m.month),
   // dataset 顺序固定：0=收入、1=支出、2=退款；tooltip 回调按 datasetIndex 取值，
   // 不依赖 label 字符串（label 已随界面语言迁移，不能再当判断依据）。
+  // 三柱颜色与交易列表同类金额同源（issue #435）：语义色模块按当前主题取值。
   datasets: [
-    { label: t('reports.monthly.income'), data: monthly.value.map((m) => m.income_cents), backgroundColor: '#18a058' },
-    { label: t('reports.monthly.expense'), data: monthly.value.map((m) => m.expense_cents), backgroundColor: '#d03050' },
-    { label: t('reports.monthly.refund'), data: monthly.value.map((m) => m.refund_cents), backgroundColor: '#2080f0' },
+    { label: t('reports.monthly.income'), data: monthly.value.map((m) => m.income_cents), backgroundColor: kindSemanticColor('income', app.theme) },
+    { label: t('reports.monthly.expense'), data: monthly.value.map((m) => m.expense_cents), backgroundColor: kindSemanticColor('expense', app.theme) },
+    { label: t('reports.monthly.refund'), data: monthly.value.map((m) => m.refund_cents), backgroundColor: kindSemanticColor('refund', app.theme) },
   ],
 }))
 
