@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { NButton, NButtonGroup, NIcon, NSpace } from 'naive-ui'
-import { ChevronBack, ChevronForward } from '@vicons/ionicons5'
+import { ChevronBack, ChevronDown, ChevronForward } from '@vicons/ionicons5'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import { api } from '@/api'
 import { t } from '@/i18n'
@@ -250,8 +250,23 @@ onBeforeUnmount(() => {
       >
         <NIcon><ChevronBack /></NIcon>
       </NButton>
+      <!-- 期间标签按钮（issue #425）：与步进箭头同款 quaternary small + ChevronDown
+           「文字 + ▾」下拉通用信号，全部态占位文案同款可点（默认月档）；键盘 Tab 聚焦后
+           Enter/Space 打开（原生按钮键盘激活 + keydown 显式双路），aria-haspopup/
+           aria-expanded 随面板开合。透明面板载体 pointer-events 关闭，hover/点击
+           均落在按钮自身；载体仅作面板锚点。 -->
       <span class="period-label" @click="periodPanelOpen = true">
-        <span class="period-label-text">{{ periodLabelText }}</span>
+        <NButton
+          size="small"
+          quaternary
+          aria-haspopup="dialog"
+          :aria-expanded="periodPanelOpen"
+          @keydown.enter.prevent="periodPanelOpen = true"
+          @keydown.space.prevent="periodPanelOpen = true"
+        >
+          <span class="period-label-text">{{ periodLabelText }}</span>
+          <NIcon class="period-label-chevron"><ChevronDown /></NIcon>
+        </NButton>
         <AppDatePicker
           class="period-picker"
           :show="periodPanelOpen"
@@ -281,26 +296,29 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* 期间标签：常驻步进器中央，min-width 抑制不同期间文案宽度抖动 */
+/* 期间标签：常驻步进器中央（按钮形态，issue #425），min-width 抑制不同期间文案宽度抖动 */
 .period-label {
   position: relative;
-  cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-width: 96px;
-  padding: 0 8px;
-  font-size: 13px;
-  white-space: nowrap;
 }
 
+/* 隐形直达面板载体只作面板锚点，指针事件交给按钮（hover 底色/点击可达） */
 .period-label :deep(.period-picker) {
   position: absolute;
   inset: 0;
   opacity: 0;
+  pointer-events: none;
 }
 
 .period-label :deep(.n-input) {
   min-width: 96px;
+}
+
+/* 「文字 + ▾」下拉信号：箭头与文案的间距 */
+.period-label-chevron {
+  margin-left: 4px;
 }
 </style>

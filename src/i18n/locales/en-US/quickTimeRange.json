@@ -19,7 +19,7 @@
     "month": "{name} {year}",
     "quarter": "{name} {year}",
     "year": "{year}",
-    "none": "—",
+    "none": "Pick period",
     "monthNames": {
       "1": "Jan",
       "2": "Feb",

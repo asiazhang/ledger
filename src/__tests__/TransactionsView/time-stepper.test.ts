@@ -95,7 +95,7 @@ describe('TransactionsView 期间步进器（issue #383 / #391）', () => {
     const wrapper = await mountView()
     expect(stepButton(wrapper, 'prev').props('disabled')).toBe(true)
     expect(stepButton(wrapper, 'next').props('disabled')).toBe(true)
-    expect(periodLabel(wrapper)).toBe('—')
+    expect(periodLabel(wrapper)).toBe('选择期间')
     const before = listCalls().length
     await step(wrapper, 'prev')
     await step(wrapper, 'next')
