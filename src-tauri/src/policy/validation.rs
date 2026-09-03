@@ -2,8 +2,8 @@
 
 use rusqlite::{Connection, OptionalExtension};
 
+use super::model::PolicyInput;
 use crate::error::{AppError, Result};
-use crate::models::PolicyInput;
 
 // ---------------------------------------------------------------------------
 // 校验与归一化（创建/编辑共用）

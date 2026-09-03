@@ -8,7 +8,7 @@
 
 use cucumber::{then, when};
 
-use tauri_app_lib::models::PolicyInput;
+use tauri_app_lib::policy::PolicyInput;
 use tauri_app_lib::policy::{
     create_policy as create_policy_domain, delete_policy as delete_policy_domain,
     list_policies as list_policies_domain, update_policy as update_policy_domain,
@@ -249,7 +249,7 @@ fn check_list_count(world: &mut LedgerWorld, expected: usize) {
 }
 
 /// 取第 n 张（1 起）保单快照的辅助。
-fn nth(world: &LedgerWorld, n: usize) -> &tauri_app_lib::models::Policy {
+fn nth(world: &LedgerWorld, n: usize) -> &tauri_app_lib::policy::Policy {
     world
         .policies_list
         .get(n - 1)

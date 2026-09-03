@@ -14,14 +14,20 @@
 //!
 //! 依赖方向恒为「壳层 → item → 基础设施」：本模块不反向依赖壳层；
 //! 对 `transaction::amount` 的消费属域间横向依赖（ADR-0056 决策 2 允许）。
+//! 物品实体、入参与读模型集中本域 [`model`]（#420 随域归位），
+//! 消费方经域路径逐类型显式 import。
 
 pub mod cost;
 pub mod domain;
 pub mod guard;
+mod model;
 
 /// 域 API 再导出：调用面用域语言短名（`item::create_item` 等），
 /// 与 ADR-0056 阶段 1 定格形状一致（先例：`scheduled_transactions` 入口再导出）。
 pub use domain::*;
+pub use model::{
+    Item, ItemDailyCost, ItemDailyTotal, ItemDisposeInput, ItemInput, ItemStatus, ItemWithDailyCost,
+};
 
 #[cfg(test)]
 mod tests;

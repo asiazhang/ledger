@@ -6,9 +6,9 @@ use chrono::Local;
 use tauri::State;
 
 use crate::budget as budget_domain;
+use crate::budget::{Budget, BudgetInput, BudgetProgress, BudgetUpdateInput};
 use crate::db::DbState;
 use crate::error::{AppError, Result};
-use crate::models::{Budget, BudgetInput, BudgetProgress, BudgetUpdateInput};
 
 #[tauri::command]
 pub fn list_budgets(db: State<'_, DbState>) -> Result<Vec<Budget>> {

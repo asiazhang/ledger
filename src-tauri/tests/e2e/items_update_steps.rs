@@ -6,9 +6,9 @@
 use cucumber::{then, when};
 
 use tauri_app_lib::error::AppError;
+use tauri_app_lib::item::ItemInput;
 use tauri_app_lib::item::cost;
 use tauri_app_lib::item::domain;
-use tauri_app_lib::models::ItemInput;
 
 use crate::common::assert_last_error_contains;
 use crate::items_common::{build_input, nth_item};

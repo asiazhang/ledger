@@ -13,7 +13,8 @@ use cucumber::{then, when};
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::item::cost;
 use tauri_app_lib::item::domain;
-use tauri_app_lib::models::{ItemInput, ItemStatus, TransactionInput};
+use tauri_app_lib::item::{ItemInput, ItemStatus};
+use tauri_app_lib::models::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::create_transaction_internal;
 

@@ -4,8 +4,8 @@
 
 use cucumber::{then, when};
 
+use tauri_app_lib::item::ItemDisposeInput;
 use tauri_app_lib::item::domain::{delete_item, dispose_item};
-use tauri_app_lib::models::ItemDisposeInput;
 
 use crate::common::assert_last_error_contains;
 use crate::items_common::nth_item;

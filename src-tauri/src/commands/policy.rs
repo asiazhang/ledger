@@ -15,8 +15,7 @@ use tauri::State;
 
 use crate::db::DbState;
 use crate::error::{AppError, Result};
-use crate::models::{Policy, PolicyInput, PolicyStats};
-use crate::policy::{self as policy_domain};
+use crate::policy::{self as policy_domain, Policy, PolicyInput, PolicyStats};
 use crate::signals::{WriteEvidence, WriteOp, emit_for};
 
 #[tauri::command]

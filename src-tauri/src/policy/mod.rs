@@ -10,14 +10,18 @@
 //!
 //! 依赖方向恒为「壳层 → policy → 基础设施」：本模块不反向依赖壳层；
 //! 对 `transaction::amount` 的消费属域间横向依赖（ADR-0056 决策 2 允许）。
+//! 保单实体、入参与统计行集中本域 [`model`]（#420 随域归位），
+//! 消费方经域路径逐类型显式 import。
 
 pub mod crud;
+mod model;
 pub mod stats;
 pub mod validation;
 
 /// 域 API 再导出：调用面用域语言短名（`policy::list_policies` 等），
 /// 与 ADR-0056 定格形状一致（先例：`item` / `scheduled_transactions` 入口再导出）。
 pub use crud::{create_policy, delete_policy, list_policies, update_policy};
+pub use model::{Policy, PolicyInput, PolicyStats};
 pub use stats::policy_stats;
 
 #[cfg(test)]

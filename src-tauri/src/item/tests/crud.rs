@@ -5,7 +5,8 @@ use rusqlite::Connection;
 
 use crate::db::{init_db, open_in_memory};
 use crate::item::domain::{create_item, delete_item, dispose_item, list_items, update_item};
-use crate::models::{ItemDisposeInput, ItemInput, TransactionInput};
+use crate::item::model::{ItemDisposeInput, ItemInput, ItemStatus};
+use crate::models::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::create_transaction_internal;
 
@@ -104,7 +105,7 @@ fn update_item_persists_fields_and_increments_version() {
     assert_eq!(item.version, 2, "版本应递增");
     assert_eq!(item.created_at, created_at, "created_at 应保留");
     assert!(item.updated_at >= created_at, "updated_at 应刷新");
-    assert_eq!(item.status, crate::models::ItemStatus::InUse, "状态不动");
+    assert_eq!(item.status, ItemStatus::InUse, "状态不动");
     assert_eq!(item.disposal_date, None, "处置字段不动");
     assert_eq!(item.residual_value_cents, None);
     assert!(!item.is_deleted);
@@ -248,7 +249,7 @@ fn create_item_persists_and_returns_id() {
     let items = list_items(&conn).unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].item.id, id);
-    assert_eq!(items[0].item.status, crate::models::ItemStatus::InUse);
+    assert_eq!(items[0].item.status, ItemStatus::InUse);
     assert_eq!(items[0].item.cost_native_cents, 599_900);
 }
 
@@ -365,7 +366,7 @@ fn dispose_item_persists_disposal_fields_and_increments_version() {
     assert_eq!(fired, 1, "处置成功应恰好发出一次失效信号");
 
     let entry = &list_items(&conn).unwrap()[0];
-    assert_eq!(entry.item.status, crate::models::ItemStatus::Disposed);
+    assert_eq!(entry.item.status, ItemStatus::Disposed);
     assert_eq!(entry.item.disposal_date.as_deref(), Some("2026-01-10"));
     assert_eq!(entry.item.residual_value_cents, Some(20_000));
     assert_eq!(entry.item.version, 2, "版本应递增");
@@ -426,7 +427,7 @@ fn dispose_item_validates_date_and_residual() {
     }
     // 校验失败不落库：状态/版本均不动
     let item = &list_items(&conn).unwrap()[0].item;
-    assert_eq!(item.status, crate::models::ItemStatus::InUse);
+    assert_eq!(item.status, ItemStatus::InUse);
     assert_eq!(item.version, 1);
 }
 

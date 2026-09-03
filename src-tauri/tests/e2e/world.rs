@@ -6,9 +6,10 @@ use cucumber::World;
 
 use tauri_app_lib::db::DbState;
 use tauri_app_lib::db::data_location::{DataLocationChangeOutcome, DataLocationInfo};
+use tauri_app_lib::item::{ItemDailyCost, ItemDailyTotal, ItemWithDailyCost};
 use tauri_app_lib::models::{
-    CreateTransactionResult, DashboardOverview, ItemDailyCost, ItemDailyTotal, ItemWithDailyCost,
-    Transaction, TransactionInput, TransactionSearchResult,
+    CreateTransactionResult, DashboardOverview, Transaction, TransactionInput,
+    TransactionSearchResult,
 };
 use tauri_app_lib::transaction::amount::TransactionKind;
 
@@ -127,9 +128,9 @@ pub struct LedgerWorld {
     /// 最近一次保单写入发出的失效信号次数（ledger:changed 注入 seam 断言用）
     pub policy_signal_count: usize,
     /// 保单列表快照（保单列表场景断言用）
-    pub policies_list: Vec<tauri_app_lib::models::Policy>,
+    pub policies_list: Vec<tauri_app_lib::policy::Policy>,
     /// 最近一次逐保单统计快照（保单视角统计场景断言用，issue #363）
-    pub policy_stats_list: Vec<tauri_app_lib::models::PolicyStats>,
+    pub policy_stats_list: Vec<tauri_app_lib::policy::PolicyStats>,
     /// 记住的保单创建时间（编辑后审计字段保留断言用，issue #360）
     pub remembered_policy_created_at: Option<String>,
     /// 记住的物品创建时间（修改后审计字段保留断言用，issue #117）
@@ -147,7 +148,7 @@ pub struct LedgerWorld {
     /// 最近一次订阅实际花费总览快照（订阅花费场景断言用，issue #160）
     pub last_spend: Option<tauri_app_lib::scheduled_transactions::SubscriptionSpendOverview>,
     /// 最近一次预算进度快照（预算滚动窗口场景断言用，issue #182）
-    pub last_budget_progress: Vec<tauri_app_lib::models::BudgetProgress>,
+    pub last_budget_progress: Vec<tauri_app_lib::budget::BudgetProgress>,
     /// 最近一次商户消费排行快照（报表商户排行场景断言用，issue #192）
     pub last_merchant_shares: Vec<tauri_app_lib::models::MerchantShare>,
     /// 最近一次月度汇总快照（报表期间过滤场景断言用，issue #411）

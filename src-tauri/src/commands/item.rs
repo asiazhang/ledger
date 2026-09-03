@@ -17,9 +17,7 @@ use tauri::State;
 use crate::db::DbState;
 use crate::error::{AppError, Result};
 use crate::item::domain;
-use crate::models::{
-    ItemDailyCost, ItemDailyTotal, ItemDisposeInput, ItemInput, ItemWithDailyCost,
-};
+use crate::item::{ItemDailyCost, ItemDailyTotal, ItemDisposeInput, ItemInput, ItemWithDailyCost};
 use crate::signals::{WriteEvidence, WriteOp, emit_for};
 
 #[tauri::command]

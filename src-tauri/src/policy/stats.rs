@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use chrono::NaiveDate;
 use rusqlite::Connection;
 
+use super::model::PolicyStats;
 use crate::db::query::{FromRow, query_all};
 use crate::error::Result;
-use crate::models::PolicyStats;
 use crate::transaction::amount::{
     Measure, contributing_kinds_sql, policy_inflow_expr, policy_premium_expr,
 };
