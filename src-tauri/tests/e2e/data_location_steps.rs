@@ -7,7 +7,7 @@
 use cucumber::{given, then, when};
 use rusqlite::Connection;
 
-use tauri_app_lib::commands::data_location::{
+use tauri_app_lib::db::data_location::{
     WRITE_PROBE_FILE_NAME, gather_info_from_boot, validate_and_commit,
 };
 use tauri_app_lib::db::{
@@ -137,7 +137,7 @@ fn pointer_to_target(world: &mut LedgerWorld) {
 fn pointer_to_target_with_db(world: &mut LedgerWorld, count: usize) {
     pointer_to_target(world);
     let target = world.dl_target_dir.clone().unwrap();
-    // 真实流程中目标目录在命令层校验时已创建（#133）；场景现场直接准备就绪。
+    // 真实流程中目标目录在壳层校验时已创建（#133）；场景现场直接准备就绪。
     std::fs::create_dir_all(&target).unwrap();
     let mut conn = open_connection(target.join(data_location::DB_FILE_NAME)).unwrap();
     init_db(&mut conn).unwrap();
@@ -341,7 +341,8 @@ fn bak_file_preserved(world: &mut LedgerWorld) {
 }
 
 // ---------------------------------------------------------------------------
-// 领域命令层（issue #133）：直接调用命令层内部函数（与真实 IPC 命令同一实现）
+// 更改意图提交与信息查询（issue #133；#408 逻辑下沉 db 基础设施，
+// BDD 与真实 IPC 命令调用同一实现接缝）
 // ---------------------------------------------------------------------------
 
 /// 提交更改意图并记录结果（成功 → outcome，失败 → last_error）。
@@ -446,7 +447,7 @@ fn query_info(world: &mut LedgerWorld) {
 }
 
 // ---------------------------------------------------------------------------
-// Then：命令层结果断言
+// Then：提交/查询结果断言
 // ---------------------------------------------------------------------------
 
 #[then(expr = "提交结果应为意图已落盘")]
