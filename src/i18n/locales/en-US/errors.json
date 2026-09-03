@@ -147,7 +147,8 @@
     "transfer-ext-not-found": "scheduled transfer extension info does not exist",
     "date-invalid": "invalid date {0}: {1}",
     "not-active": "the linked plan is not active",
-    "policy-subscription-only": "only subscription agreements can reference a policy"
+    "policy-subscription-only": "only subscription agreements can reference a policy",
+    "kind-mismatch": "plan kind is inconsistent with the occurrence execution path (internal inconsistency)"
   },
   "scheduled-occurrence": {
     "not-found": "occurrence does not exist",
