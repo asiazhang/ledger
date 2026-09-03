@@ -6,7 +6,7 @@ import { useReferenceStore } from '@/stores/reference'
 import MerchantManager from '@/components/MerchantManager.vue'
 import type { Merchant } from '@/types'
 
-const { messageMock } = vi.hoisted(() => ({
+const { messageMock, pushMock } = vi.hoisted(() => ({
   messageMock: {
     success: vi.fn(),
     warning: vi.fn(),
@@ -15,6 +15,12 @@ const { messageMock } = vi.hoisted(() => ({
     loading: vi.fn(),
     destroyAll: vi.fn(),
   },
+  pushMock: vi.fn(),
+}))
+
+// 条数下钻（issue #446）经 useRouter 跳转（pushMock 断言导航目标，同 AccountLink 先例）
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: pushMock }),
 }))
 
 // 覆盖 setup.ts 的全局 naive-ui mock：message 实例可断言（重名错误提示等）
@@ -226,5 +232,63 @@ describe('MerchantManager.vue 关联交易条数列（issue #445，毛笔数口�
     await flushPromises()
     expect(rowTexts(wrapper)[0]).toContain('3')
     expect(merchantCalls('list_merchant_transaction_counts').length).toBeGreaterThan(callsBefore)
+  })
+})
+
+describe('MerchantManager.vue 条数下钻（issue #446）', () => {
+  beforeEach(async () => {
+    setActivePinia(createPinia())
+    mockInvoke.mockReset()
+    merchantDb = mockMerchants
+    countDb = []
+    mockBaseCommands()
+    pushMock.mockReset()
+    const store = useReferenceStore()
+    await store.refresh()
+  })
+
+  /** 条数下钻按钮：每行的条数单元格按钮（title 与 MerchantLink 同源，用作语义定位）。 */
+  function countButtons(wrapper: ReturnType<typeof mount>) {
+    return wrapper
+      .findAll('tbody tr')
+      .map((r) => r.findAll('button').find((b) => b.attributes('title') === '查看该商户的交易'))
+  }
+
+  it('条数渲染为可点击按钮并带 title 提示（与 MerchantLink 同一口径）', async () => {
+    countDb = [{ merchant_id: 'mch-1', transaction_count: 2 }]
+    const wrapper = mount(MerchantManager)
+    await flushPromises()
+    const btn = countButtons(wrapper)[0]!
+    expect(btn.exists()).toBe(true)
+    expect(btn.text()).toBe('2')
+  })
+
+  it('点击条数跳转交易列表，URL 携带该商户过滤参数（既有 URL 下钻机制）', async () => {
+    countDb = [
+      { merchant_id: 'mch-1', transaction_count: 2 },
+      { merchant_id: 'mch-2', transaction_count: 5 },
+    ]
+    const wrapper = mount(MerchantManager)
+    await flushPromises()
+    const btns = countButtons(wrapper)
+
+    await btns[0]!.trigger('click')
+    expect(pushMock).toHaveBeenCalledTimes(1)
+    expect(pushMock).toHaveBeenCalledWith({ name: 'transactions', query: { merchant: 'mch-1' } })
+
+    await btns[1]!.trigger('click')
+    expect(pushMock).toHaveBeenCalledWith({ name: 'transactions', query: { merchant: 'mch-2' } })
+  })
+
+  it('条数为 0 同样可下钻（跳转不按条数/商户状态设门；空列表行为归 TransactionFilter 既有测试）', async () => {
+    countDb = []
+    const wrapper = mount(MerchantManager)
+    await flushPromises()
+    const btns = countButtons(wrapper)
+    expect(btns).toHaveLength(2)
+    expect(btns.every((b) => b!.exists())).toBe(true)
+
+    await btns[1]!.trigger('click')
+    expect(pushMock).toHaveBeenCalledWith({ name: 'transactions', query: { merchant: 'mch-2' } })
   })
 })

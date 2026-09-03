@@ -14,6 +14,7 @@ import {
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import MerchantEditModal from '@/components/merchants/MerchantEditModal.vue'
 import { api } from '@/api'
+import { useRouter } from 'vue-router'
 import { useReferenceStore } from '@/stores/reference'
 import { t } from '@/i18n'
 import { formatQuantity } from '@/utils/money'
@@ -27,6 +28,10 @@ import type { Merchant, MerchantInput } from '@/types'
 // （list_merchant_transaction_counts，实时推导不落库），不进参考 store 四表——
 // 列表行仍消费参考数据单一来源，计数按 merchant_id 客户端拼接；
 // 商户写入经既有失效信号触发 store 重拉，store version 变化即伴随重拉计数。
+// 条数下钻（issue #446）：点击条数直达按该商户过滤的交易列表，与商户名链接
+// （MerchantLink）、报表分类下钻同一 URL 下钻机制（?merchant=<id>）；落地后的
+// 过滤行为由 TransactionFilter 既有机制承担（含与分类/账户/日期参数 AND 并存、
+// 软删商户经 merchantMap 历史交易口径可解析）。本票只负责产生正确的跳转。
 
 interface MerchantRow extends Merchant {
   /** 关联交易条数（毛笔数）：无引用商户为 0 */
@@ -35,6 +40,13 @@ interface MerchantRow extends Merchant {
 
 const reference = useReferenceStore()
 const message = useMessage()
+const router = useRouter()
+
+/** 条数下钻（issue #446）：按行 id 产生跳转，不对条数/商户状态设门——
+ * 条数为 0 点击只见空列表（诚实行为）；软删商户行（#447 引入展示后）同样可下钻。 */
+function goMerchantTransactions(m: MerchantRow) {
+  router.push({ name: 'transactions', query: { merchant: m.id } })
+}
 
 // —— 关联交易条数（独立读模型，非关键路径：失败保留旧值不阻塞字典管理）——
 const transactionCounts = ref(new Map<string, number>())
@@ -109,12 +121,24 @@ async function removeMerchant(id: string) {
 const columns: DataTableColumn<MerchantRow>[] = [
   { title: () => t('settings.merchants.columns.name'), key: 'name', width: 200, ellipsis: { tooltip: true } },
   {
-    // 关联交易条数（issue #445）：毛笔数、可排序；展示走数字分组口径（数量列）
+    // 关联交易条数（issue #445）：毛笔数、可排序；展示走数字分组口径（数量列）。
+    // 点击条数下钻（issue #446）：文字按钮跳转交易列表并携带商户过滤参数，
+    // title 与 MerchantLink 同源（common.link.viewMerchant）。
     title: () => t('settings.merchants.columns.transactionCount'),
     key: 'transactionCount',
     width: 110,
     sorter: (a, b) => a.transactionCount - b.transactionCount,
-    render: (m) => formatQuantity(m.transactionCount),
+    render: (m) =>
+      h(
+        NButton,
+        {
+          text: true,
+          type: 'primary',
+          title: t('common.link.viewMerchant'),
+          onClick: () => goMerchantTransactions(m),
+        },
+        () => formatQuantity(m.transactionCount),
+      ),
   },
   {
     title: () => t('settings.merchants.columns.actions'),
