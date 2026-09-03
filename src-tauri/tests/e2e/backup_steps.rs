@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use cucumber::{then, when};
 
-use tauri_app_lib::accounts::create_account;
+use tauri_app_lib::accounts::{AccountInput, AccountType, create_account};
 use tauri_app_lib::backup::{
     AUTO_BACKUP_PREFIX, AttemptOutcome, BackupKind, SkipReason, backup_db_to,
     expected_schema_version, get_state, read_backup_kind, restore_db_from, set_state,
@@ -16,8 +16,8 @@ use tauri_app_lib::investment::{create_exchange_rate, create_instrument, create_
 use tauri_app_lib::item::cost;
 use tauri_app_lib::item::domain::{create_item, delete_item, dispose_item, update_item};
 use tauri_app_lib::models::{
-    AccountInput, AccountType, InstrumentInput, InstrumentType, ItemDisposeInput, ItemInput,
-    MarketPriceInput, TransactionInput,
+    InstrumentInput, InstrumentType, ItemDisposeInput, ItemInput, MarketPriceInput,
+    TransactionInput,
 };
 use tauri_app_lib::settings::{self, SettingKey};
 use tauri_app_lib::transaction::TransactionBatch;

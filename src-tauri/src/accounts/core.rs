@@ -12,12 +12,13 @@ use rusqlite::{Connection, OptionalExtension};
 use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
-use crate::models::{
-    Account, AccountBalance, AccountBalanceAdjustInput, AccountInput, AccountUpdateInput,
-    TransactionInput,
-};
+use crate::models::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::create_transaction_internal;
+
+use super::model::{
+    Account, AccountBalance, AccountBalanceAdjustInput, AccountInput, AccountUpdateInput,
+};
 
 pub fn list_accounts(conn: &Connection) -> Result<Vec<Account>> {
     crate::db::balance::list_accounts_with_visibility(conn, false)

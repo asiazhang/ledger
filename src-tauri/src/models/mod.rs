@@ -3,7 +3,6 @@
 //! 全项目以 `crate::models::*` 引用模型；serde 结构、utoipa 契约与
 //! 拆分前（单一 `models.rs`）完全一致，外部引用零改动。
 
-mod accounts;
 mod budget;
 mod dashboard;
 mod financial_freedom;
@@ -13,7 +12,6 @@ mod policy;
 mod reports;
 mod transactions;
 
-pub use accounts::*;
 pub use budget::*;
 pub use dashboard::*;
 pub use financial_freedom::*;

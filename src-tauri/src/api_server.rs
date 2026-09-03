@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 
+use crate::accounts::{Account, AccountBalance, AccountInput, AccountType, AccountUpdateInput};
 use crate::categories::{Category, CategoryInput};
 use crate::currencies::Currency;
 use crate::error::{AppError, ErrClass};
@@ -11,7 +12,6 @@ use crate::investment::{
 };
 use crate::merchants::Merchant;
 use crate::models::{
-    Account, AccountBalance, AccountInput, AccountType, AccountUpdateInput,
     CreateTransactionResult, Instrument, InstrumentInput, InstrumentListFilter,
     InstrumentListResult, InstrumentType, Transaction, TransactionBatchInput, TransactionInput,
     TransactionListFilter, TransactionListResult, UpdateTransactionInput,

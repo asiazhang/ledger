@@ -19,10 +19,11 @@
 
 use rusqlite::Connection;
 
+use crate::accounts::AccountType;
 use crate::db::balance::list_account_balances_with_visibility;
 use crate::db::query::{FromRow, query_all};
 use crate::error::Result;
-use crate::models::{AccountType, DashboardOverview};
+use crate::models::DashboardOverview;
 use crate::transaction::amount;
 
 /// 持仓市值行：`v_holdings` 市值（账户本位币，可为 NULL）+ 账户币种。
