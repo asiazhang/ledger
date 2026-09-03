@@ -5,7 +5,6 @@
 
 mod accounts;
 mod budget;
-mod categories;
 mod dashboard;
 mod financial_freedom;
 mod investment;
@@ -16,7 +15,6 @@ mod transactions;
 
 pub use accounts::*;
 pub use budget::*;
-pub use categories::*;
 pub use dashboard::*;
 pub use financial_freedom::*;
 pub use investment::*;

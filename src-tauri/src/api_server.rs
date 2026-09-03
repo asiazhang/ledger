@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 
+use crate::categories::{Category, CategoryInput};
 use crate::currencies::Currency;
 use crate::error::{AppError, ErrClass};
 use crate::events::SignalEmitter;
@@ -10,8 +11,8 @@ use crate::investment::{
 };
 use crate::merchants::Merchant;
 use crate::models::{
-    Account, AccountBalance, AccountInput, AccountType, AccountUpdateInput, Category,
-    CategoryInput, CreateTransactionResult, Instrument, InstrumentInput, InstrumentListFilter,
+    Account, AccountBalance, AccountInput, AccountType, AccountUpdateInput,
+    CreateTransactionResult, Instrument, InstrumentInput, InstrumentListFilter,
     InstrumentListResult, InstrumentType, Transaction, TransactionBatchInput, TransactionInput,
     TransactionListFilter, TransactionListResult, UpdateTransactionInput,
 };
@@ -442,7 +443,7 @@ async fn list_account_balances_handler(
 )]
 async fn list_categories_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
-) -> Result<Json<Vec<crate::models::Category>>, AppError> {
+) -> Result<Json<Vec<crate::categories::Category>>, AppError> {
     let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     Ok(Json(crate::categories::list_categories(&conn, false)?))
 }
