@@ -15,7 +15,7 @@ use crate::sync::http::{
     KlineBar, KlineResponse, StockItem, ULIST_BATCH_SIZE, UlistResponse, f2_to_price,
     fx_secid_candidates, parse_klines, secid_prefix,
 };
-use crate::sync::incremental::{beijing_today, do_incremental_sync_with};
+use crate::sync::incremental::{beijing_date, beijing_today, do_incremental_sync_with};
 
 use super::common::setup_db;
 
@@ -908,6 +908,32 @@ fn mock_nav<'a>(
                 total: 0,
             }))
     }
+}
+
+#[test]
+fn beijing_date_shifts_utc_by_plus_8h() {
+    // 北京日历 = UTC 时刻 + 8h 后取日期部分：16:00 UTC 是北京午夜边界，
+    // 前一瞬仍属同日，后一瞬进入次日（A 股/基金净值日历以北京时间为准）。
+    use chrono::TimeZone;
+    let utc = chrono::Utc;
+    let at = |y: i32, m: u32, d: u32, h: u32, min: u32, s: u32| {
+        utc.with_ymd_and_hms(y, m, d, h, min, s).unwrap()
+    };
+    assert_eq!(
+        beijing_date(at(2026, 1, 30, 15, 59, 59)),
+        chrono::NaiveDate::from_ymd_opt(2026, 1, 30).unwrap(),
+        "UTC 15:59:59 = 北京 23:59:59，仍属同一日"
+    );
+    assert_eq!(
+        beijing_date(at(2026, 1, 30, 16, 0, 0)),
+        chrono::NaiveDate::from_ymd_opt(2026, 1, 31).unwrap(),
+        "UTC 16:00 即北京 00:00，进入次日"
+    );
+    assert_eq!(
+        beijing_date(at(2026, 1, 30, 2, 0, 0)),
+        chrono::NaiveDate::from_ymd_opt(2026, 1, 30).unwrap(),
+        "UTC 上午 = 北京同日傍晚"
+    );
 }
 
 /// 近两年首刷窗口起点（与 kline_beg / nav_window 同式，测试侧独立重算）。
