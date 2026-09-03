@@ -223,7 +223,7 @@ function handleSelect(key: string) {
   router.push({ name: key })
 }
 
-const title = () => h('div', { style: 'padding: 16px 18px; font-size: 18px; font-weight: 600' }, '📒 Ledger')
+const title = () => h('div', { style: 'padding: 16px; font-size: 18px; font-weight: 600' }, '📒 Ledger')
 
 const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(route.name) : ''))
 </script>
@@ -254,6 +254,7 @@ const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(rou
               <NMenu
                 :options="menuOptions"
                 :value="route.name as string"
+                :indent="16"
                 :node-props="nodeProps"
                 @update:value="handleSelect"
               />
