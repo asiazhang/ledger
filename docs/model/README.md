@@ -26,9 +26,9 @@ Ledger 采用 SQLite 作为本地数据库，面向**多设备同步的离线优
 
 > 实体清单、字段与外键的逐列 ON DELETE 语义以 migration 为唯一事实来源（三类动作的分工见上方「外键约定」）；以下三图只呈现领域结构与关系基数。`v_holdings` 为视图（聚合 security_lots 计算市值与未实现盈亏），不作为实体；`app_settings` 为无外键的 KV 表，不进图，经领域命令读写（ADR-0017）。
 
-**配色图例**：币种（黄）、账户（蓝）、分类（绿）、商户（黄绿）、物品（棕）、交易（红）、预算（青）、汇率（紫）为核心域；投资域用靛蓝（工具）/ 粉（证券扩展）/ 橙（持仓批次）/ 橄榄（卖出匹配）/ 天蓝（现价）/ 深天蓝（价格历史）/ 深紫（汇率历史）；计划域核心与期次为紫色系，三类扩展表为灰色。同一表在不同图中颜色一致。实体文字颜色跟随主题自适应，未手动覆盖。
+**配色图例**：币种（黄）、账户（蓝）、分类（绿）、商户（黄绿）、物品（棕）、交易（红）、预算（青）、汇率（紫）、实物资产与估值历史（赭石）为核心域；投资域用靛蓝（工具）/ 粉（证券扩展）/ 橙（持仓批次）/ 橄榄（卖出匹配）/ 天蓝（现价）/ 深天蓝（价格历史）/ 深紫（汇率历史）；计划域核心与期次为紫色系，三类扩展表为灰色。同一表在不同图中颜色一致。实体文字颜色跟随主题自适应，未手动覆盖。
 
-### 核心领域（币种 · 账户 · 分类 · 商户 · 物品 · 交易 · 预算 · 汇率）
+### 核心领域（币种 · 账户 · 分类 · 商户 · 物品 · 交易 · 预算 · 汇率 · 实物资产）
 
 ```mermaid
 erDiagram
@@ -45,12 +45,17 @@ erDiagram
     transactions ||--o{ transactions : "refund_of_transaction_id"
     merchants ||--o{ transactions : "merchant_id"
     transactions ||--o{ items : "purchase_transaction_id"
+    physical_assets ||--o{ physical_asset_valuations : "asset_id"
+    currencies ||--o{ physical_assets : "purchase_currency_code"
+    currencies ||--o{ physical_asset_valuations : "currency_code"
 
     style currencies fill:#FFF6E0,stroke:#E8A83C,stroke-width:2px
     style accounts fill:#E7F0FF,stroke:#5B8DEF,stroke-width:2px
     style categories fill:#E6F6E6,stroke:#57A96B,stroke-width:2px
     style merchants fill:#EFF7DC,stroke:#7FA23C,stroke-width:2px
     style items fill:#F2E8DA,stroke:#A67C48,stroke-width:2px
+    style physical_assets fill:#F0E0D0,stroke:#C4763C,stroke-width:2px
+    style physical_asset_valuations fill:#F7EDE4,stroke:#C4763C,stroke-width:2px
     style transactions fill:#FFEAE4,stroke:#E2654D,stroke-width:2px
     style budgets fill:#E0F5F0,stroke:#3CAE98,stroke-width:2px
     style exchange_rates fill:#EFEAFB,stroke:#8A6FD8,stroke-width:2px
@@ -134,5 +139,9 @@ erDiagram
 | `V009__items.sql` | 物品（items）表 |
 | `V010__price_history.sql` | `price_history` / `fx_rate_history` 周粒度历史表 |
 | `V011__instruments_source.sql` | 标的字典来源列（同步 / 手动标记，ADR-0036） |
+| `V012__policies.sql` | 保单（policies）表 |
+| `V013__transaction_policy_id.sql` | 交易保单引用列 |
+| `V014__subscription_plan_policy_id.sql` | 订阅计划保单引用列 |
+| `V015__physical_assets.sql` | 实物资产（physical_assets）与估值历史（physical_asset_valuations）表（ADR-0063） |
 
 > 迁移版本由 SQLite `user_version` 自动追踪，新迁移在数据库模块统一注册。V005（FTS5 搜索索引）已随统一模糊搜索方案移除（ADR-0027），编号不复用。新增 schema 变更时新建 `V00X__名称.sql` 并在注册处追加；已发布迁移的就地修改与 BREAKING 标记要求见 AGENTS.md 发布约定。
