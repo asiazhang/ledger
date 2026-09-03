@@ -81,6 +81,10 @@ pub enum WriteOp {
     /// 删除保单（软删除；IPC `delete_policy`）。
     DeletePolicy,
 
+    // ── 实物资产域（ADR-0064：独立领域，复用 `ledger:changed` 同名事件）──
+    /// 建档实物资产（IPC `create_physical_asset`；资产行 + 首条估值行同事务）。
+    CreatePhysicalAsset,
+
     // ── 账户域 ──
     /// 余额调整（IPC `adjust_account_balance`，ADR-0026）：预期证据
     /// [`WriteEvidence::BlackHoleCreated`]——仅按需新建黑洞账户时参考表变更。
@@ -193,7 +197,7 @@ impl WriteOp {
     /// 清单紧邻 enum，同步义务就地可查（同 `TransactionKind::ALL` 先例）。
     /// 长度标注与初始化个数不符即编译错；但 enum 新增变体而本清单漏登不会报错，
     /// 改 enum 必须同步改这里。
-    pub const ALL: [WriteOp; 47] = [
+    pub const ALL: [WriteOp; 48] = [
         // 参考数据四表
         WriteOp::CreateAccount,
         WriteOp::UpdateAccount,
@@ -214,6 +218,8 @@ impl WriteOp {
         WriteOp::CreatePolicy,
         WriteOp::UpdatePolicy,
         WriteOp::DeletePolicy,
+        // 实物资产域
+        WriteOp::CreatePhysicalAsset,
         // 账户域
         WriteOp::AdjustAccountBalance,
         // 价格域
@@ -350,6 +356,10 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
         // ── 保单域（ADR-0051）：独立领域复用 ledger:changed 同名事件，
         //    保单 store 自行订阅、自行重拉 ──
         WriteOp::CreatePolicy | WriteOp::UpdatePolicy | WriteOp::DeletePolicy => LEDGER_CHANGED_SET,
+
+        // ── 实物资产域（ADR-0064）：独立领域复用 ledger:changed 同名事件，
+        //    实物资产 store 自行订阅、自行重拉 ──
+        WriteOp::CreatePhysicalAsset => LEDGER_CHANGED_SET,
 
         // ── 账户域：余额调整仅「按需新建黑洞账户」时参考表变更（ADR-0026）──
         WriteOp::AdjustAccountBalance => when(evidence.black_hole_created(), LEDGER_CHANGED_SET),
@@ -566,6 +576,16 @@ mod tests {
     fn create_policy_emits_ledger_changed() {
         assert_signals(
             signals_for(Op::CreatePolicy, E::None),
+            &[Signal::LedgerChanged],
+        );
+    }
+
+    // ── 实物资产域（ADR-0064）：独立领域一律 ledger:changed ──
+
+    #[test]
+    fn create_physical_asset_emits_ledger_changed() {
+        assert_signals(
+            signals_for(Op::CreatePhysicalAsset, E::None),
             &[Signal::LedgerChanged],
         );
     }

@@ -19,7 +19,8 @@
     "settings": "Settings",
     "policies": "Policies",
     "more": "More",
-    "merchants": "Merchants"
+    "merchants": "Merchants",
+    "physicalAssets": "Physical Assets"
   },
   "sidebarGroup": {
     "bookkeeping": "Bookkeeping",

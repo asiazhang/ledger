@@ -9,6 +9,8 @@ import type {
   Holding,
   Instrument,
   ItemDailyTotal,
+  PhysicalAsset,
+  PhysicalAssetList,
   Policy,
   PolicyStats,
   RealizedPnlSummary,
@@ -221,6 +223,43 @@ export function makePnlSummary(partial: Partial<RealizedPnlSummary> = {}): Reali
 /** 假 toast sink：记录 error toast 调用（Loadable 默认策略经 sink 弹出，断言只看 sink 面） */
 export function makeFakeSink(): ToastSink & { error: ReturnType<typeof vi.fn> } {
   return { error: vi.fn() }
+}
+
+/** 实物资产实体夹具（issue #466）：全字段读模型 + 当前估值三件套。 */
+export function makePhysicalAsset(partial: Partial<PhysicalAsset> & { id: string }): PhysicalAsset {
+  return {
+    name: '客厅油画',
+    purchase_date: null,
+    purchase_price_cents: null,
+    purchase_currency_code: null,
+    status: 'holding',
+    disposal_date: null,
+    disposal_price_cents: null,
+    disposal_currency_code: null,
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: false,
+    current_valuation_cents: 5_000_000,
+    current_valuation_currency_code: 'CNY',
+    current_valuation_date: '2026-01-01',
+    current_valuation_native_cents: 5_000_000,
+    native_currency: 'CNY',
+    ...partial,
+  }
+}
+
+/** 实物资产列表返回夹具（资产行 + 在持合计同源快照）。 */
+export function makePhysicalAssetList(
+  partial: Partial<PhysicalAssetList> = {},
+): PhysicalAssetList {
+  return {
+    assets: [],
+    holding_total_native_cents: 0,
+    native_currency: 'CNY',
+    ...partial,
+  }
 }
 
 /** 每用例复位 sink 为 no-op，模拟「注册前」默认态，防模块级 sink 状态串扰 */

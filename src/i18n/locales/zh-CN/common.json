@@ -19,7 +19,8 @@
     "settings": "设置",
     "policies": "保单",
     "more": "更多",
-    "merchants": "商户"
+    "merchants": "商户",
+    "physicalAssets": "实物资产"
   },
   "sidebarGroup": {
     "bookkeeping": "记账",

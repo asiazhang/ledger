@@ -30,6 +30,8 @@ function baseInvoke() {
     if (cmd === 'list_categories') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
     if (cmd === 'list_policies') return Promise.resolve([])
+    if (cmd === 'list_physical_assets')
+      return Promise.resolve({ assets: [], holding_total_native_cents: 0, native_currency: 'CNY' })
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   }) as typeof invoke)
 }
@@ -83,7 +85,7 @@ describe('商户页签迁入「更多」（issue #444 / ADR-0055 决策 2 清单
   it('页签顺序：保单在前、商户追加在后，容器零业务逻辑', async () => {
     const { wrapper } = await mountView()
     const tabs = wrapper.findAll('.n-tabs-tab').map((t) => t.text())
-    expect(tabs).toEqual(['保单', '商户'])
+    expect(tabs).toEqual(['保单', '商户', '实物资产'])
   })
 
   it('默认页签仍为保单：商户列表不随默认态渲染内容', async () => {
@@ -107,6 +109,24 @@ describe('商户页签迁入「更多」（issue #444 / ADR-0055 决策 2 清单
     const { wrapper } = await mountView('/more?tab=merchants')
     expect(wrapper.text()).toContain('新增商户')
     expect(wrapper.find('[data-testid="policy-new"]').exists()).toBe(false)
+  })
+})
+
+describe('实物资产页签（issue #466 / spec #465：入口收纳在「更多」新页签）', () => {
+  it('点击「实物资产」页签：路由 query.tab replace 写回且视图完整装载（合计卡 + 新建入口）', async () => {
+    const { wrapper, router: r } = await mountView()
+    await wrapper.findAll('.n-tabs-tab').find((t) => t.text() === '实物资产')!.trigger('click')
+    await flushPromises()
+    expect(r.currentRoute.value.query.tab).toBe('physicalAssets')
+    expect(wrapper.text()).toContain('在持估值合计')
+    expect(wrapper.find('[data-testid="physical-asset-new"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="policy-new"]').exists()).toBe(false)
+  })
+
+  it('tab query 深链直达实物资产页签（/more?tab=physicalAssets）', async () => {
+    const { wrapper } = await mountView('/more?tab=physicalAssets')
+    expect(wrapper.text()).toContain('在持估值合计')
+    expect(wrapper.find('[data-testid="physical-asset-new"]').exists()).toBe(true)
   })
 })
 
