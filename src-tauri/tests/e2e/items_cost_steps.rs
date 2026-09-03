@@ -6,9 +6,9 @@ use cucumber::{then, when};
 use rusqlite::params;
 
 use tauri_app_lib::error::AppError;
+use tauri_app_lib::item::ItemDailyCost;
 use tauri_app_lib::item::cost;
 use tauri_app_lib::item::domain::{calculate_item_cost, item_daily_total};
-use tauri_app_lib::models::ItemDailyCost;
 
 use crate::common::assert_last_error_contains;
 use crate::world::LedgerWorld;

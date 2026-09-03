@@ -11,8 +11,8 @@
 
 use rusqlite::{Connection, OptionalExtension};
 
+use super::model::ItemInput;
 use crate::error::{AppError, Result};
-use crate::models::ItemInput;
 use crate::transaction::amount::TransactionKind;
 
 /// 解析关联购买交易并自动带出（issue #119）：入参带交易 id 时校验交易
