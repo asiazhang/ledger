@@ -451,14 +451,14 @@ describe('启动读路径（issue #269/#359：读取已存组内序，经解析�
 })
 
 describe('组内收纳清单：出厂种子与解析防御（issue #472 / ADR-0063 决策 3/5）', () => {
-  it('出厂种子锁定：资产 = [保单]；记账、洞察 = 空（本票仅资产组启用，两组不渲染链接）', () => {
+  it('出厂种子锁定：资产 = [保单, 实物资产]；记账、洞察 = 空（仅资产组有成员，其余两组不渲染链接）', () => {
     expect(GROUP_CONTAINMENT_SEEDS.bookkeeping).toEqual([])
-    expect(GROUP_CONTAINMENT_SEEDS.assets).toEqual(['policies'])
+    expect(GROUP_CONTAINMENT_SEEDS.assets).toEqual(['policies', 'physicalAssets'])
     expect(GROUP_CONTAINMENT_SEEDS.insights).toEqual([])
   })
 
   it('非对象整体回出厂种子（null/undefined/数组/标量）', () => {
-    const seeds = { bookkeeping: [], assets: ['policies'], insights: [] }
+    const seeds = { bookkeeping: [], assets: ['policies', 'physicalAssets'], insights: [] }
     expect(parseContainmentLists(null)).toEqual(seeds)
     expect(parseContainmentLists(undefined)).toEqual(seeds)
     expect(parseContainmentLists(['policies'])).toEqual(seeds)
@@ -469,7 +469,7 @@ describe('组内收纳清单：出厂种子与解析防御（issue #472 / ADR-00
   it('各组独立解析：组值非数组该组回种子，他组不受率连', () => {
     expect(parseContainmentLists({ bookkeeping: [], assets: 'x', insights: [] })).toEqual({
       bookkeeping: [],
-      assets: ['policies'],
+      assets: ['policies', 'physicalAssets'],
       insights: [],
     })
   })
@@ -480,13 +480,13 @@ describe('组内收纳清单：出厂种子与解析防御（issue #472 / ADR-00
       bookkeeping: ['policies'],
     }
     const parsed = parseContainmentLists(raw)
-    expect(parsed.assets).toEqual(['policies'])
+    expect(parsed.assets).toEqual(['policies', 'physicalAssets']) // 合法名只剩保单，实物资产作缺失出厂成员补尾
     expect(parsed.bookkeeping).toEqual([])
   })
 
   it('去重保留首现；缺失出厂成员按出厂序补尾', () => {
-    expect(parseContainmentLists({ assets: ['policies', 'policies'] }).assets).toEqual(['policies'])
-    expect(parseContainmentLists({ assets: [] }).assets).toEqual(['policies'])
+    expect(parseContainmentLists({ assets: ['policies', 'policies'] }).assets).toEqual(['policies', 'physicalAssets'])
+    expect(parseContainmentLists({ assets: [] }).assets).toEqual(['policies', 'physicalAssets'])
     expect(parseContainmentLists({ insights: [] }).insights).toEqual([])
   })
 })
@@ -511,20 +511,20 @@ describe('收纳清单启动读路径与复位（issue #472 / ADR-0063：ViewSta
 
   it('读取为空时回出厂种子（未自定义或恢复默认后存储为空）', async () => {
     const mod = await fresh()
-    expect(mod.sidebarContainment.value).toEqual({ bookkeeping: [], assets: ['policies'], insights: [] })
+    expect(mod.sidebarContainment.value).toEqual({ bookkeeping: [], assets: ['policies', 'physicalAssets'], insights: [] })
   })
 
   it('已存收纳清单对象：各组独立经解析防御生效（脏清单回种子，跨启动不异常）', async () => {
     localStorage.setItem(KEY, JSON.stringify({ assets: ['merchants'], insights: ['x'] }))
     vi.resetModules()
     const mod = await fresh()
-    expect(mod.sidebarContainment.value).toEqual({ bookkeeping: [], assets: ['policies'], insights: [] })
+    expect(mod.sidebarContainment.value).toEqual({ bookkeeping: [], assets: ['policies', 'physicalAssets'], insights: [] })
   })
 
   it('存储往返：saveContainmentLists 写入的清单经 parseContainmentLists 防御后还原', async () => {
     const mod = await fresh()
     const vs = await import('@/utils/view-state')
-    const lists = { bookkeeping: [], assets: ['policies'], insights: [] }
+    const lists = { bookkeeping: [], assets: ['policies', 'physicalAssets'], insights: [] }
     vs.saveContainmentLists(lists)
     expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual(lists)
     expect(mod.parseContainmentLists(JSON.parse(localStorage.getItem(KEY)!))).toEqual(lists)
@@ -536,7 +536,7 @@ describe('收纳清单启动读路径与复位（issue #472 / ADR-0063：ViewSta
       VIEW_STATE_KEYS.sidebarOrder,
       JSON.stringify({ bookkeeping: ['scheduled'], assets: ['items'], insights: ['reports'] }),
     )
-    localStorage.setItem(KEY, JSON.stringify({ assets: ['policies'] }))
+    localStorage.setItem(KEY, JSON.stringify({ assets: ['policies'] })) // 脏清单：缺实物资产，解析补尾
     vi.resetModules()
     const rebooted = await fresh()
     // 自定义组内序在（非出厂）
@@ -545,7 +545,7 @@ describe('收纳清单启动读路径与复位（issue #472 / ADR-0063：ViewSta
     expect(localStorage.getItem(VIEW_STATE_KEYS.sidebarOrder)).toBeNull()
     expect(localStorage.getItem(KEY)).toBeNull()
     expect(rebooted.sidebarGroupOrders.value).toEqual(rebooted.parseGroupOrders(null))
-    expect(rebooted.sidebarContainment.value).toEqual({ bookkeeping: [], assets: ['policies'], insights: [] })
+    expect(rebooted.sidebarContainment.value).toEqual({ bookkeeping: [], assets: ['policies', 'physicalAssets'], insights: [] })
   })
 })
 

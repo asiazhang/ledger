@@ -14,10 +14,13 @@ use chrono::NaiveDate;
 use rusqlite::Connection;
 
 use tauri_app_lib::accounts;
+use tauri_app_lib::budget;
 use tauri_app_lib::categories;
 use tauri_app_lib::currencies;
 use tauri_app_lib::db::{init_db, open_connection, open_in_memory};
+use tauri_app_lib::investment::{self, InstrumentListFilter};
 use tauri_app_lib::merchants;
+use tauri_app_lib::scheduled_transactions;
 use tauri_app_lib::transaction::TransactionListFilter;
 use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::read::{get_transaction, list_transactions};
@@ -51,7 +54,9 @@ fn digest_db(path: &PathBuf) -> Result<BTreeMap<String, String>, String> {
 
     const AUDIT_COLS: [&str; 2] = ["created_at", "updated_at"];
     let conn = open_connection(path).map_err(|e| e.to_string())?;
-    const TABLES: [&str; 7] = [
+    // 全部生成器写入面：核心交易域 7 表（#459）+ 投资域 6 表与预算/计划域 6 表
+    // （issue #460）。新增表必须进摘要清单——确定性验收「含新增表」的落点。
+    const TABLES: [&str; 19] = [
         "accounts",
         "categories",
         "merchants",
@@ -59,6 +64,20 @@ fn digest_db(path: &PathBuf) -> Result<BTreeMap<String, String>, String> {
         "exchange_rates",
         "fx_rate_history",
         "currencies",
+        // 投资域（issue #460）。
+        "instruments",
+        "security_transactions",
+        "security_lots",
+        "security_lot_sales",
+        "market_prices",
+        "price_history",
+        // 预算与定时计划域（issue #460）。
+        "budgets",
+        "scheduled_transactions",
+        "scheduled_transaction_occurrences",
+        "installment_plans",
+        "subscription_plans",
+        "scheduled_transfer_plans",
     ];
     let mut out = BTreeMap::new();
     for table in TABLES {
@@ -299,7 +318,8 @@ fn profile_foreign_currency_and_fx_history() {
     );
     let conn = open_connection(&path).unwrap();
 
-    // 3 个外币账户（2 USD + 1 EUR）/ 50 ≈ 6% 流水（涉及账户口径，含转账转入侧）。
+    // 4 个外币账户（2 USD + 1 EUR + 1 HKD 投资户）/ 50 ≈ 8% 流水（涉及账户口径，
+    // 含转账转入侧；issue #460 加入 HKD 投资户后外币账户多一个）。
     let foreign: u64 = accounts::list_accounts(&conn)
         .unwrap()
         .iter()
@@ -317,7 +337,7 @@ fn profile_foreign_currency_and_fx_history() {
         })
         .sum();
     let share = foreign as f64 / PROFILE_N as f64;
-    assert!((share - 0.06).abs() < 0.025, "外币流水占比偏离 6%：{share}");
+    assert!((share - 0.08).abs() < 0.03, "外币流水占比偏离 8%：{share}");
 
     // 外币交易 native 列按落库汇率折算（native ≠ raw），CNY 交易 1:1。
     let sample = list_transactions(
@@ -341,7 +361,7 @@ fn profile_foreign_currency_and_fx_history() {
         }
     }
 
-    // 当前汇率两行（USD/EUR → CNY）与全历史周采样（≈261 周 × 2 币对）。
+    // 当前汇率三行（USD/EUR/HKD → CNY）与全历史周采样（≈261 周 × 3 币对）。
     // 这两项无既有读 API（当前汇率读经 Writer 折算内部、历史经走势聚合），
     // 以原生 SQL 断言画像行数。
     let rate_pairs: i64 = conn
@@ -351,7 +371,7 @@ fn profile_foreign_currency_and_fx_history() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(rate_pairs, 2);
+    assert_eq!(rate_pairs, 3);
     let history: i64 = conn
         .query_row("SELECT COUNT(*) FROM fx_rate_history", [], |r| r.get(0))
         .unwrap();
@@ -589,4 +609,465 @@ fn regeneration_overwrites_existing_file() {
     assert_eq!(total, 500, "重复生成不叠加交易");
     drop(conn);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------------------
+// 投资域画像（issue #460：标的/价格线/标的交易/持仓视图）
+// ---------------------------------------------------------------------------
+
+/// 投资域画像测试的生成笔数：标的交易份额 0.6%，2 万笔 ≈ 120 笔标的交易，
+/// 足以覆盖部分卖出/清仓形态且仍在单测耗时预算内。
+const INVESTMENT_PROFILE_N: u64 = 20_000;
+
+#[test]
+fn profile_investments_holdings_and_trades() {
+    let (_dir, path) = temp_db("profile-investments");
+    let counts = build(
+        &path,
+        INVESTMENT_PROFILE_N,
+        NaiveDate::from_ymd_opt(2025, 12, 31).unwrap(),
+    );
+    let conn = open_connection(&path).unwrap();
+
+    // 标的字典 20 行；来源随产品通道（同步 eastmoney / 场外基金 manual）。
+    let instruments = investment::list_instruments(&conn, &InstrumentListFilter::default())
+        .unwrap()
+        .items;
+    assert_eq!(instruments.len(), 20);
+    assert_eq!(
+        instruments
+            .iter()
+            .filter(|i| i.source == "manual" && i.kind == investment::InstrumentType::Fund)
+            .count(),
+        3,
+        "场外基金标的手动来源"
+    );
+
+    // 标的交易份额 ≈ 0.6%（买 0.4% + 卖 0.2%；默认 50 万笔下即约 3000 笔）。
+    let (buys, sells) = (counts.buy_trades as f64, counts.sell_trades as f64);
+    let n = INVESTMENT_PROFILE_N as f64;
+    assert!(
+        (buys / n - 0.004).abs() < 0.002,
+        "买入占比偏离 0.4%：{buys}"
+    );
+    assert!(
+        (sells / n - 0.002).abs() < 0.0015,
+        "卖出占比偏离 0.2%：{sells}"
+    );
+
+    // 标的交易全部落在投资账户（同币种纪律的账户面），且不软删。
+    let misplaced: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM transactions t JOIN accounts a ON a.id=t.account_id \
+             WHERE t.kind IN ('buy','sell') AND a.type != 'investment'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(misplaced, 0, "标的交易必须落在投资账户");
+    let deleted_trades: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM transactions WHERE kind IN ('buy','sell') AND is_deleted=1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        deleted_trades, 0,
+        "标的交易不软删（产品删除会回滚批次副作用）"
+    );
+
+    // 持仓视图非空、市值全部可折算（有现价 + 汇率可达 → 不为 NULL）。
+    let holdings = investment::list_holdings(&conn).unwrap();
+    assert!(!holdings.is_empty(), "持仓视图应非空");
+    for h in &holdings {
+        assert!(h.quantity > 0.0);
+        assert!(
+            h.market_value_cents.is_some(),
+            "持仓 {} 市值应可折算",
+            h.instrument_id
+        );
+        assert!(h.unrealized_pnl_cents.is_some());
+        assert!(h.latest_price_cents.is_some());
+    }
+    // 同币种持仓的市值口径：quantity × 现价 ÷ 100（价格刻度万分之一元）。
+    let h = &holdings[0];
+    let price = h.latest_price_cents.unwrap();
+    let expected = (h.quantity * price as f64 / 100.0).round() as i64;
+    assert_eq!(
+        h.market_value_cents.unwrap(),
+        expected,
+        "同币种市值 = 数量×现价÷100"
+    );
+
+    // 批次账本闭合：每批次 初始 − 剩余 == Σ 卖出匹配量；耗尽批次剩余恰为 0。
+    let mut stmt = conn
+        .prepare(
+            "SELECT l.initial_quantity, l.remaining_quantity, \
+             (SELECT COALESCE(SUM(s.quantity),0) FROM security_lot_sales s WHERE s.lot_id=l.id) \
+             FROM security_lots l",
+        )
+        .unwrap();
+    let mut rows = stmt.query([]).unwrap();
+    let mut checked = 0;
+    while let Some(row) = rows.next().unwrap() {
+        let initial: f64 = row.get(0).unwrap();
+        let remaining: f64 = row.get(1).unwrap();
+        let sold: f64 = row.get(2).unwrap();
+        assert!(
+            (initial - remaining - sold).abs() < 1e-6,
+            "批次闭合失败：{initial} − {remaining} ≠ {sold}"
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "应有批次可校验");
+
+    // 卖出形态覆盖：部分卖出（0 < 剩余 < 初始）与清仓（剩余 = 0）都存在。
+    let partial: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM security_lots \
+             WHERE remaining_quantity > 0 AND remaining_quantity < initial_quantity",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(partial > 0, "应有部分卖出批次");
+    let exhausted: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM security_lots WHERE remaining_quantity = 0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(exhausted > 0, "应有清仓批次");
+
+    // 因果序：卖出不早于其匹配批次的买入日（产品不可产出先卖后买的数据）。
+    let sell_before_buy: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM security_lot_sales s \
+             JOIN security_lots l ON l.id = s.lot_id \
+             JOIN transactions tb ON tb.id = l.buy_transaction_id \
+             JOIN transactions ts ON ts.id = s.sell_transaction_id \
+             WHERE ts.date < tb.date",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(sell_before_buy, 0, "不得存在早于买入日的卖出");
+
+    // 基金买入份额按行情推导：反算单价应贴合该日价格线（±1%），不独立抽样。
+    let fund_price_deviation: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM security_transactions st \
+             JOIN instruments i ON i.id = st.instrument_id \
+             JOIN transactions t ON t.id = st.transaction_id \
+             WHERE i.instrument_type = 'fund' AND st.action = 'buy' \
+             AND st.price_cents > 1.01 * (SELECT ph.price_cents FROM price_history ph \
+                 WHERE ph.instrument_id = st.instrument_id AND ph.trade_date <= t.date \
+                 ORDER BY ph.trade_date DESC LIMIT 1) + 1 \
+             OR (i.instrument_type = 'fund' AND st.action = 'buy' \
+             AND st.price_cents < 0.99 * (SELECT ph.price_cents FROM price_history ph \
+                 WHERE ph.instrument_id = st.instrument_id AND ph.trade_date <= t.date \
+                 ORDER BY ph.trade_date DESC LIMIT 1) - 1)",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(fund_price_deviation, 0, "基金反算单价应贴合当日价格线");
+}
+
+#[test]
+fn profile_market_data_shape() {
+    let (_dir, path) = temp_db("profile-market-data");
+    build(&path, 2_000, NaiveDate::from_ymd_opt(2025, 12, 31).unwrap());
+    let conn = open_connection(&path).unwrap();
+
+    // 现价缓存每标的恰一行；价格线全窗口周采样。
+    let prices = investment::list_market_prices(&conn).unwrap();
+    assert_eq!(prices.len(), 20);
+    let per_instrument: i64 = conn
+        .query_row(
+            "SELECT MIN(c) FROM (SELECT COUNT(*) AS c FROM price_history GROUP BY instrument_id)",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(
+        per_instrument >= 250,
+        "每标的周采样应覆盖全窗口：{per_instrument}"
+    );
+    // 周唯一：每标的行数 == 标的 × 周数不重复（UNIQUE 约束保证，这里验证行数守恒）。
+    let history_total: i64 = conn
+        .query_row("SELECT COUNT(*) FROM price_history", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(history_total, per_instrument * 20);
+
+    // 现价 = 最新历史点映像（MarketPrice 语义），行情日期同步到末次采样。
+    let mismatch: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM market_prices mp \
+             WHERE mp.price_cents != (SELECT ph.price_cents FROM price_history ph \
+               WHERE ph.instrument_id = mp.instrument_id ORDER BY ph.trade_date DESC LIMIT 1) \
+             OR mp.priced_at != (SELECT ph.trade_date FROM price_history ph \
+               WHERE ph.instrument_id = mp.instrument_id ORDER BY ph.trade_date DESC LIMIT 1)",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(mismatch, 0, "现价必须等于该标的最新历史点");
+
+    // 场外基金现价带净值日期；股票/ETF 恒 NULL；来源为同步通道。
+    let funds_without_nav: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM market_prices mp JOIN instruments i ON i.id=mp.instrument_id \
+             WHERE i.instrument_type='fund' AND mp.nav_date IS NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(funds_without_nav, 0, "基金现价应带净值日期");
+    let stocks_with_nav: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM market_prices mp JOIN instruments i ON i.id=mp.instrument_id \
+             WHERE i.instrument_type != 'fund' AND mp.nav_date IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(stocks_with_nav, 0, "非基金现价不应有净值日期");
+    let bad_source: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM market_prices WHERE source != 'eastmoney'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(bad_source, 0);
+
+    // 港股标的以 HKD 计价，且 HKD→CNY 汇率可达（港股市值可折算的前提）。
+    let hkd_instruments: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM instruments WHERE currency_code='HKD' AND market='hk'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(hkd_instruments > 0, "应有港股标的");
+    let hkd_rate: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM exchange_rates WHERE base_code='HKD' AND quote_code='CNY'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(hkd_rate, 1);
+}
+
+#[test]
+fn trade_amounts_follow_product_invariants() {
+    let (_dir, path) = temp_db("trade-invariants");
+    build(
+        &path,
+        INVESTMENT_PROFILE_N,
+        NaiveDate::from_ymd_opt(2025, 12, 31).unwrap(),
+    );
+    let conn = open_connection(&path).unwrap();
+
+    // 交易行金额与扩展表的数量/单价/费用按产品公式闭合（issue #302 口径）：
+    // 非基金 buy：金额 = 数量×单价÷100 + 费；sell：金额 = 数量×单价÷100 − 费；
+    // 基金以金额权威：buy 单价 = (金额−费)×100÷数量，sell 单价 = (金额+费)×100÷数量。
+    let mut stmt = conn
+        .prepare(
+            "SELECT t.kind, t.amount_cents, st.action, st.quantity, st.price_cents, st.fee_cents, \
+             i.instrument_type FROM transactions t \
+             JOIN security_transactions st ON st.transaction_id=t.id \
+             JOIN instruments i ON i.id=st.instrument_id",
+        )
+        .unwrap();
+    let mut rows = stmt.query([]).unwrap();
+    let mut checked = 0;
+    while let Some(row) = rows.next().unwrap() {
+        let kind: String = row.get(0).unwrap();
+        let amount: i64 = row.get(1).unwrap();
+        let quantity: f64 = row.get(3).unwrap();
+        let price: i64 = row.get(4).unwrap();
+        let fee: i64 = row.get(5).unwrap();
+        let itype: String = row.get(6).unwrap();
+        let gross = (quantity * price as f64 / 100.0).round() as i64;
+        if itype == "fund" {
+            let derived = if kind == "buy" {
+                ((amount - fee) as f64 * 100.0 / quantity).round() as i64
+            } else {
+                ((amount + fee) as f64 * 100.0 / quantity).round() as i64
+            };
+            assert_eq!(price, derived, "基金单价应由金额反算");
+        } else if kind == "buy" {
+            assert_eq!(amount, gross + fee, "买入金额 = 数量×单价÷100 + 费");
+        } else {
+            assert_eq!(amount, gross - fee, "卖出金额 = 数量×单价÷100 − 费");
+            assert!(fee <= gross, "卖出费不超过毛收入");
+        }
+        checked += 1;
+    }
+    assert!(checked > 0, "应有标的交易可校验");
+}
+
+// ---------------------------------------------------------------------------
+// 预算与定时计划画像（issue #460）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn profile_budgets_and_scheduled_plans() {
+    let (_dir, path) = temp_db("profile-plans");
+    let counts = build(&path, 2_000, NaiveDate::from_ymd_opt(2025, 12, 31).unwrap());
+    let conn = open_connection(&path).unwrap();
+
+    // 预算：6 条 = 月度 4 + 年度 2，全部挂支出分类，「分类 + 周期」不重复。
+    let budgets = budget::list_budgets(&conn).unwrap();
+    assert_eq!(budgets.len(), 6);
+    assert_eq!(counts.budgets, 6);
+    assert_eq!(
+        budgets
+            .iter()
+            .filter(|b| b.period == budget::BudgetPeriod::Monthly)
+            .count(),
+        4
+    );
+    let mut seen: Vec<(String, String)> = Vec::new();
+    for b in &budgets {
+        assert!(b.amount_cents > 0);
+        let kind: String = conn
+            .query_row(
+                "SELECT kind FROM categories WHERE id=?1",
+                rusqlite::params![b.category_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(kind, "expense", "预算只能挂支出分类");
+        let key = (
+            b.category_id.clone(),
+            format!("{:?}", b.period).to_lowercase(),
+        );
+        assert!(!seen.contains(&key), "分类+周期不得重复：{key:?}");
+        seen.push(key);
+    }
+
+    // 计划：8 个 = 分期 3 / 订阅 3 / 定时转账 2，含 1 个 paused。
+    let plans = scheduled_transactions::list_plans(&conn).unwrap();
+    assert_eq!(plans.len(), 8);
+    let kind_count = |k: scheduled_transactions::ScheduledKind| {
+        plans.iter().filter(|p| p.core.kind == k).count()
+    };
+    assert_eq!(
+        kind_count(scheduled_transactions::ScheduledKind::Installment),
+        3
+    );
+    assert_eq!(
+        kind_count(scheduled_transactions::ScheduledKind::Subscription),
+        3
+    );
+    assert_eq!(
+        kind_count(scheduled_transactions::ScheduledKind::ScheduledTransfer),
+        2
+    );
+    assert_eq!(
+        plans.iter().filter(|p| p.core.status == "paused").count(),
+        1
+    );
+    // 三种形态各有扩展表行，且与计划一一对应。
+    for (table, expected) in [
+        ("installment_plans", 3),
+        ("subscription_plans", 3),
+        ("scheduled_transfer_plans", 2),
+    ] {
+        let n: i64 = conn
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, expected, "{table} 行数应与计划形态一一对应");
+    }
+
+    // 期次状态结构恒定（日期由锚定结束日推导，与种子无关）：
+    // completed 37 / pending 21 / failed 2 / cancelled 1；仅 completed 关联交易。
+    let status_count = |s: &str| -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM scheduled_transaction_occurrences WHERE status=?1",
+            rusqlite::params![s],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(status_count("completed"), 37);
+    assert_eq!(status_count("pending"), 21);
+    assert_eq!(status_count("failed"), 2);
+    assert_eq!(status_count("cancelled"), 1);
+    let orphan_completed: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM scheduled_transaction_occurrences \
+             WHERE status='completed' AND transaction_id IS NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(orphan_completed, 0, "completed 期次必须关联交易");
+    let linked_non_completed: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM scheduled_transaction_occurrences \
+             WHERE status != 'completed' AND transaction_id IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(linked_non_completed, 0, "非 completed 期次不关联交易");
+    assert_eq!(
+        counts.scheduled_occurrences as i64,
+        status_count("completed")
+            + status_count("pending")
+            + status_count("failed")
+            + status_count("cancelled")
+    );
+
+    // 期次交易的形态：分期/订阅 → expense（挂计划分类），定时转账 → transfer；
+    // 金额恒等于计划金额（每期固定），交易存在且未删除。
+    let shape: Vec<(String, i64)> = conn
+        .prepare(
+            "SELECT o.status, COUNT(*) FROM scheduled_transaction_occurrences o \
+             JOIN transactions t ON t.id=o.transaction_id WHERE o.status='completed' \
+             GROUP BY o.status",
+        )
+        .unwrap()
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(shape.len(), 1);
+    assert_eq!(shape[0].1, 37);
+    let amount_mismatch: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM scheduled_transaction_occurrences o \
+             JOIN transactions t ON t.id=o.transaction_id \
+             JOIN scheduled_transactions s ON s.id=o.scheduled_transaction_id \
+             WHERE t.amount_cents != s.amount_cents OR t.is_deleted != 0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(amount_mismatch, 0, "期次交易金额应等于计划金额且未删除");
+    let bad_kind: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM scheduled_transaction_occurrences o \
+             JOIN transactions t ON t.id=o.transaction_id \
+             JOIN scheduled_transactions s ON s.id=o.scheduled_transaction_id \
+             WHERE (s.kind = 'scheduled_transfer' AND (t.kind != 'transfer' OR t.to_account_id IS NULL)) \
+                OR (s.kind != 'scheduled_transfer' AND t.kind != 'expense')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(bad_kind, 0, "期次交易 kind 应随计划形态");
+
+    // 期次交易从 --transactions 预算预留：总数 = 参数笔数（规模 ≥ 期次交易数时）。
+    assert_eq!(
+        counts.transactions as u64, 2_000,
+        "交易总数应等于 --transactions（含预留期次交易）"
+    );
 }

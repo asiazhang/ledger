@@ -32,6 +32,8 @@ function baseInvoke() {
     if (cmd === 'list_categories') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
     if (cmd === 'list_policies') return Promise.resolve([])
+    if (cmd === 'list_physical_assets')
+      return Promise.resolve({ assets: [], holding_total_native_cents: 0, native_currency: 'CNY' })
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   }) as typeof invoke)
 }
@@ -97,9 +99,9 @@ describe('MoreView 全局「更多」仅剩商户页签（issue #472 / ADR-0063�
 })
 
 describe('GroupMoreView 组内「更多」容器（issue #472 / ADR-0063 决策 1/5：页签序 = 收纳清单序）', () => {
-  it('资产·更多：保单页签为默认页签（清单首位），保单视图整体装载、建档入口可用', async () => {
+  it('资产·更多：保单页签为默认页签（清单首位），实物资产追加在后，保单视图整体装载、建档入口可用', async () => {
     const { wrapper } = await mountGroupView('assets')
-    expect(wrapper.findAll('.n-tabs-tab').map((t) => t.text())).toEqual(['保单'])
+    expect(wrapper.findAll('.n-tabs-tab').map((t) => t.text())).toEqual(['保单', '实物资产'])
     expect(wrapper.find('[data-testid="policy-new"]').exists()).toBe(true)
   })
 
@@ -107,6 +109,22 @@ describe('GroupMoreView 组内「更多」容器（issue #472 / ADR-0063 决策 
     const { wrapper, router: r } = await mountGroupView('assets', '/assets/more?tab=policies')
     expect(r.currentRoute.value.query.tab).toBe('policies')
     expect(wrapper.find('[data-testid="policy-new"]').exists()).toBe(true)
+  })
+
+  it('实物资产随域归位资产组「更多」（issue #466 / ADR-0064 合入 main 后的接续归位，ADR-0063 决策 5）：深链直达、视图完整装载', async () => {
+    const { wrapper, router: r } = await mountGroupView('assets', '/assets/more?tab=physicalAssets')
+    expect(r.currentRoute.value.query.tab).toBe('physicalAssets')
+    expect(wrapper.text()).toContain('在持估值合计')
+    expect(wrapper.find('[data-testid="physical-asset-new"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="policy-new"]').exists()).toBe(false)
+  })
+
+  it('点击「实物资产」页签：路由 query.tab replace 写回且合计卡可见', async () => {
+    const { wrapper, router: r } = await mountGroupView('assets')
+    await wrapper.findAll('.n-tabs-tab').find((t) => t.text() === '实物资产')!.trigger('click')
+    await flushPromises()
+    expect(r.currentRoute.value.query.tab).toBe('physicalAssets')
+    expect(wrapper.text()).toContain('在持估值合计')
   })
 
   it('非法 tab 回退默认页签（清单首位），展示层回退不写回 query', async () => {

@@ -3,8 +3,9 @@ import { computed, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { t } from '@/i18n'
 import { NTabs, NTabPane, NIcon } from 'naive-ui'
-import { ShieldCheckmarkOutline } from '@vicons/ionicons5'
+import { ShieldCheckmarkOutline, CubeOutline } from '@vicons/ionicons5'
 import PoliciesView from '@/views/PoliciesView.vue'
+import PhysicalAssetsView from '@/views/PhysicalAssetsView.vue'
 import { sidebarContainment } from '@/composables/useViewShortcuts'
 import type { SidebarGroupId } from '@/composables/useViewShortcuts'
 
@@ -22,9 +23,11 @@ const props = defineProps<{ group: SidebarGroupId }>()
 /** 收纳成员 → 视图组件（呈现层装配；后续票迁入商户/定时在此追加） */
 const CONTAINED_VIEW_COMPONENTS: Record<string, Component> = {
   policies: PoliciesView,
+  physicalAssets: PhysicalAssetsView,
 }
 const CONTAINED_VIEW_ICONS: Record<string, Component> = {
   policies: ShieldCheckmarkOutline,
+  physicalAssets: CubeOutline,
 }
 
 const route = useRoute()

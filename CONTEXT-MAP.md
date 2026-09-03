@@ -25,6 +25,7 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 | 8 | 物品 | [`docs/contexts/CONTEXT-item.md`](docs/contexts/CONTEXT-item.md) | Item、DailyUsageCost、source_transaction_id、创建语义 |
 | 9 | 预算 | [`docs/contexts/CONTEXT-budget.md`](docs/contexts/CONTEXT-budget.md) | Budget（可挂任意层级支出分类、彼此独立，ADR-0052）、BudgetPeriod、BudgetProgress（永久滚动，ADR-0029；父含子、子只算自身）、AnnualBudgetTotal |
 | 10 | 保险 | [`docs/contexts/CONTEXT-insurance.md`](docs/contexts/CONTEXT-insurance.md) | Policy（保单）、Premium（保费）、PolicyInflow（保单现金流入）、PolicyReference（保单引用）、保单视角统计（ADR-0051） |
+| 11 | 实物资产 | [`docs/contexts/CONTEXT-physical-asset.md`](docs/contexts/CONTEXT-physical-asset.md) | PhysicalAsset（实物资产）、Valuation（估值）、ValuationHistory（估值历史）、Disposal（处置）（ADR-0064） |
 
 ## 域间关系
 
@@ -41,3 +42,4 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 - **物品（单列小域）→ 挂靠核心交易**：Item 是与参考数据、交易流水、投资标的并列的独立领域概念，自包含总成本、不进字典；创建**必须**关联一笔核心域 `expense` Transaction（`source_transaction_id` 必填、唯一，仅用于带出成本/日期与溯源），**不建立反向引用**，**无交易物品不可录入**；创建唯一入口 = 交易右键 + 确认弹窗（ADR-0025）。
 - **预算（单列小域）→ 核心交易**：Budget 是对核心域支出分类（Category）的持续性支出上限，可挂任意层级支出分类且**彼此独立**——父子预算并存不扣减、不互斥，父管总量、子管细分，同一笔支出有意计入两条预算（ADR-0052）；**永久滚动**——进度窗口永远是当前自然周期、随时间自动滚动，不持久化窗口状态（ADR-0029）；进度 spent 消费核心域 Amount Model 的 ExpenseNet 度量（与报表分类净值同口径），不另造第二个口径；`start_date` 为已发布 schema 的冻结残留，不参与计算。年度预算总额（AnnualBudgetTotal）是预算口径的跨域派生聚合（无窗口年化），供投资域财务自由度作分母，不改变 BudgetProgress 的输出边界。
 - **保险（单列小域）→ 核心交易 + 定时计划 + 参考数据**：Policy 是消费型保险合同的静态档案，保险公司复用核心交易域商户（Merchant）字典；缴费协议复用定时计划域订阅形态（Subscription）生成核心域 `expense` 保费流水，理赔款记核心域 `income`（非 refund，保住保费支出口径不失真）；保费/现金流入流水经 PolicyReference 可选直挂保单，保单可无协议独立建档、软删后引用保留，保单视角统计按流水忠实推导、不落库；AI 导入（AI 导入域 AI API）不识别保单（MVP 边界）；储蓄型现金价值资产化缓行、不在本域范围。
+- **实物资产（单列小域）→ 核心交易（只消费不产流水）**：PhysicalAsset 是大件实物的估值档案，与物品域 Item 按「要不要跟踪市值」互斥分家（物品摊成本、资产记市值）；估值全手动且每次追加估值历史行（当前值 = 最新一条），金额一律整数分、折本位币走核心域 Amount 接缝（当期汇率，缺汇率错误上抛）；币种复用核心域币种字典；在持估值计入净资产第三腿（ADR-0064），已处置/软删不计、可投资资产（财务自由度分子）不受影响；入口收纳「更多」页签（ADR-0055）；无交易流水产出，纯 IPC 面，AI 导入不识别（MVP 边界）。

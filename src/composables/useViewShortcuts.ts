@@ -129,21 +129,23 @@ export const sidebarGroupOrders = computed<SidebarGroupOrders>(() => groupOrders
 // 组内收纳清单（issue #472 / ADR-0063 决策 3/5）：每组一个有序收纳清单，
 // 成员资格与页签顺序同源——清单序 = 该组「更多」页页签序，入 ViewState 跨启动持久化。
 // 与组内序同族同机制：出厂种子（开发者清单转任）+ 同型解析防御。
-// 本票（#472）仅资产组启用（保单迁入），记账/洞察种子为空、不渲染「更多」链接；
+// 资产组出厂成员 = 保单（#472）+ 实物资产（#466 / ADR-0064，合入 main 后随域归位）；
+// 记账/洞察种子为空、不渲染「更多」链接；
 // 记账（定时、商户）与用户移入/移回由后续票落地，届时扩展种子与合法成员注册表。
 // ---------------------------------------------------------------------------
 
 /**
  * 每组收纳清单出厂种子（开发者清单，ADR-0063 决策 3）：
- * 资产 = [保单]；记账、洞察 = 空。后续票扩展：记账 = [定时, 商户]（#473）。
+ * 资产 = [保单, 实物资产]（追加在后，ADR-0055 决策 2 追加先例）；记账、洞察 = 空。
+ * 后续票扩展：记账 = [定时, 商户]（#473）。
  */
 export const GROUP_CONTAINMENT_SEEDS = {
   bookkeeping: [],
-  assets: ['policies'],
+  assets: ['policies', 'physicalAssets'],
   insights: [],
 } as const satisfies Record<SidebarGroupId, readonly string[]>
 
-/** 收纳视图名（词表随出厂种子与移入成员扩展；本票仅保单） */
+/** 收纳视图名（词表随出厂种子与移入成员扩展；现为保单、实物资产） */
 export type ContainableViewName = (typeof GROUP_CONTAINMENT_SEEDS)[SidebarGroupId][number]
 
 /** 每组收纳清单（只读形状）：与 SidebarGroupOrders 同族。 */
