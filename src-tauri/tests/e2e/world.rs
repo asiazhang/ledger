@@ -144,7 +144,7 @@ pub struct LedgerWorld {
     /// 最近一次净资产总览快照（首页仪表盘场景断言用）
     pub last_overview: Option<DashboardOverview>,
     /// 最近一次财务自由度总览快照（自由度口径场景断言用，issue #343）
-    pub last_financial_freedom: Option<tauri_app_lib::models::FinancialFreedomOverview>,
+    pub last_financial_freedom: Option<tauri_app_lib::investment::FinancialFreedomOverview>,
     /// 最近一次订阅实际花费总览快照（订阅花费场景断言用，issue #160）
     pub last_spend: Option<tauri_app_lib::scheduled_transactions::SubscriptionSpendOverview>,
     /// 最近一次预算进度快照（预算滚动窗口场景断言用，issue #182）

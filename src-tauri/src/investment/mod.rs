@@ -45,6 +45,13 @@ pub mod reports;
 pub mod trade;
 pub mod trend;
 
+/// 域集中模型（#422 模型域化，样板先例：`reports::model`）：财务自由度类型
+/// 并入本域集中模型（自由度归投资域，ADR-0048 既有裁决），经域路径逐类型
+/// 再导出（禁止 glob），消费方经域路径显式 import。
+mod model;
+
+pub use model::FinancialFreedomOverview;
+
 /// 域 API 再导出：调用面用域语言短名（`investment::list_instruments` 等），
 /// 与 ADR-0056 阶段 1 定格形状一致（先例：`item::domain`、`merchants::crud`）。
 /// 模块级接缝（[`holdings`] / [`prices`] / [`predicates`]）按样板留在模块路径

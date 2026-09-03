@@ -10,7 +10,7 @@ use tauri::State;
 use crate::db::DbState;
 use crate::error::{AppError, Result};
 use crate::investment as investment_domain;
-use crate::models::FinancialFreedomOverview;
+use crate::investment::FinancialFreedomOverview;
 
 /// 财务自由度总览：可投资资产 × 3% 安全提取率对年度预算总额的覆盖比例（只读）。
 #[tauri::command]

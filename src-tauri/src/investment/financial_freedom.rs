@@ -24,8 +24,9 @@ use crate::accounts::AccountType;
 use crate::db::balance::list_account_balances_with_visibility;
 use crate::db::query::{FromRow, query_all};
 use crate::error::Result;
-use crate::models::FinancialFreedomOverview;
 use crate::transaction::amount;
+
+use super::model::FinancialFreedomOverview;
 
 /// 安全提取率常量（单点收口，ADR-0048）：自由度 = 可投资资产 × 3% 对年度预算
 /// 总额的覆盖比例。取保守的 3% 而非教科书 4%——达标线更扎实、留足安全边际。
