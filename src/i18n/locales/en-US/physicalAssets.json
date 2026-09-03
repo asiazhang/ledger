@@ -8,12 +8,16 @@
     "valuation": "Current Value",
     "valuationDate": "Valued At",
     "status": "Status",
+    "disposal": "Disposal",
     "actions": "Actions"
   },
   "actions": {
     "updateValuation": "Update Value",
-    "edit": "Edit"
+    "edit": "Edit",
+    "dispose": "Dispose",
+    "delete": "Delete"
   },
+  "deleteConfirm": "After deletion the asset leaves the list and totals; data and valuation history are kept (soft delete). Delete?",
   "status": {
     "holding": "Holding",
     "disposed": "Disposed"
@@ -32,6 +36,23 @@
     "msg": {
       "amountRequired": "Value amount is required",
       "amountInvalid": "Value must be greater than 0",
+      "currencyRequired": "Please select a currency"
+    }
+  },
+  "dispose": {
+    "title": "Dispose Asset",
+    "label": {
+      "date": "Disposal Date",
+      "price": "Disposal Price (optional)"
+    },
+    "placeholder": {
+      "date": "Select disposal date",
+      "price": "e.g. 600000"
+    },
+    "dateHint": "After disposal the asset leaves the holding list and totals; the archive stays reviewable via the Disposed filter. The disposal price is a plain record and never enters any totals",
+    "msg": {
+      "dateRequired": "Please select a disposal date",
+      "priceInvalid": "Disposal price must be greater than 0",
       "currencyRequired": "Please select a currency"
     }
   },
@@ -66,6 +87,8 @@
     "created": "Asset created",
     "updated": "Asset updated",
     "valuationUpdated": "Valuation updated",
+    "disposed": "Asset disposed",
+    "deleted": "Asset deleted",
     "saveFailed": "Save failed: {msg}"
   }
 }

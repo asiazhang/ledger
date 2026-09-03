@@ -11,10 +11,12 @@
 use rusqlite::{Connection, OptionalExtension};
 
 use super::model::{
-    AssetRecord, PhysicalAsset, PhysicalAssetInput, PhysicalAssetList, PhysicalAssetStatus,
-    PhysicalAssetUpdateInput, PhysicalAssetValuationInput,
+    AssetRecord, PhysicalAsset, PhysicalAssetDisposeInput, PhysicalAssetInput, PhysicalAssetList,
+    PhysicalAssetStatus, PhysicalAssetUpdateInput, PhysicalAssetValuationInput,
 };
-use super::validation::{validate_input, validate_update_input, validate_valuation_input};
+use super::validation::{
+    validate_dispose_input, validate_input, validate_update_input, validate_valuation_input,
+};
 use crate::db::query::{query_all, query_one};
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
@@ -289,6 +291,77 @@ pub fn update_physical_asset_valuation(
             now_iso(),
         ],
     )?;
+    notify();
+    Ok(())
+}
+
+/// 处置（issue #468 T3）：状态标记转 `disposed` 并记录处置日期（必填）与
+/// 可选处置价 + 币种（纯记录，不进任何金额口径）。已处置不进默认列表 /
+/// 在持合计（读口径自然生效，无需额外写入）。对已处置资产再次处置 = 修正
+/// 处置信息（更新日期与价格，版本递增，先例物品域）。不存在（或已软删除）
+/// → 码化 NotFound；成功后 bump version / updated_at 并调用 `notify`。
+pub fn dispose_physical_asset(
+    conn: &Connection,
+    id: &str,
+    input: PhysicalAssetDisposeInput,
+    notify: &mut dyn FnMut(),
+) -> Result<()> {
+    // 处置日期与购买日期的先后守卫需要既有行的购买日期：单列裸读（与折算
+    // 读路径解耦，先例 require_asset_exists 的注释理由）。
+    let purchase_date: Option<String> = conn
+        .query_row(
+            "SELECT purchase_date FROM physical_assets WHERE id=?1 AND is_deleted=0",
+            rusqlite::params![id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .ok_or_else(|| {
+            AppError::codedp_not_found(
+                "physical-asset.not-found",
+                format!("实物资产不存在: {id}"),
+                &[id],
+            )
+        })?;
+    let normalized = validate_dispose_input(conn, purchase_date.as_deref(), &input)?;
+
+    let updated = conn.execute(
+        "UPDATE physical_assets SET status='disposed', disposal_date=?2, \
+         disposal_price_cents=?3, disposal_currency_code=?4, updated_at=?5, \
+         version=version+1, device_id=?6 WHERE id=?1 AND is_deleted=0",
+        rusqlite::params![
+            id,
+            normalized.disposal_date,
+            normalized.disposal_price_cents,
+            normalized.disposal_currency_code,
+            now_iso(),
+            device_id(),
+        ],
+    )?;
+    debug_assert_eq!(
+        updated, 1,
+        "前置存在性检查已排除 id 不存在/软删除，单连接下不可达"
+    );
+    // 处置成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
+    notify();
+    Ok(())
+}
+
+/// 软删除（issue #468 T3）：置 `is_deleted=1`，不物理移除——数据与估值历史
+/// 保留（误删有后悔药），列表（默认在持 / 已处置筛选）与在持合计经读口径
+/// `WHERE is_deleted=0` 自动过滤。不存在（含已删除）→ 码化 NotFound；
+/// 成功后 bump version / updated_at 并调用 `notify`。
+pub fn delete_physical_asset(conn: &Connection, id: &str, notify: &mut dyn FnMut()) -> Result<()> {
+    require_asset_exists(conn, id)?;
+    let deleted = conn.execute(
+        "UPDATE physical_assets SET is_deleted=1, updated_at=?2, \
+         version=version+1, device_id=?3 WHERE id=?1",
+        rusqlite::params![id, now_iso(), device_id()],
+    )?;
+    debug_assert_eq!(
+        deleted, 1,
+        "前置存在性检查已排除 id 不存在/软删除，单连接下不可达"
+    );
+    // 删除成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
     notify();
     Ok(())
 }

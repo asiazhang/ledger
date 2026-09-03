@@ -83,6 +83,17 @@ export interface PhysicalAssetValuationInput {
   valuation_date?: string | null
 }
 
+/** 处置入参（对应后端 `physical_asset::PhysicalAssetDisposeInput`，issue #468 T3）：
+ *  处置日期必填、处置价 + 币种可选纯记录（成对，后端守卫）。 */
+export interface PhysicalAssetDisposeInput {
+  /** 处置日期（必填；YYYY-MM-DD）。 */
+  disposal_date?: string | null
+  /** 处置价（可空，整数分；纯记录，不进任何金额口径）。 */
+  disposal_price_cents?: number | null
+  /** 处置价币种（处置价存在时必填）。 */
+  disposal_currency_code?: string | null
+}
+
 /** 列表返回（对应后端 `physical_asset::PhysicalAssetList`）：
  *  资产行 + **在持**估值合计（口径与筛选无关——「家底合计」恒指在持资产）。 */
 export interface PhysicalAssetList {

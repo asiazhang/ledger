@@ -211,6 +211,21 @@ pub struct PhysicalAssetValuationInput {
     pub valuation_date: Option<String>,
 }
 
+/// 处置入参（issue #468 T3）：处置日期必填、处置价 + 币种可选纯记录。
+///
+/// 校验归 `physical_asset` 域：处置日期必填显式报错（错误码化）、可解析、
+/// 拒绝未来（已发生的判断）、不早于购买日期（有购买日期时）；处置价与币种
+/// 成对（处置价存在时币种必填且须存在，处置价缺省时币种忽略存空，先例购买价）。
+#[derive(Debug, Clone, Deserialize)]
+pub struct PhysicalAssetDisposeInput {
+    /// 处置日期（必填；YYYY-MM-DD）。
+    pub disposal_date: Option<String>,
+    /// 处置价（可空，整数分；纯记录，不进任何金额口径）。
+    pub disposal_price_cents: Option<i64>,
+    /// 处置价币种（处置价存在时必填）。
+    pub disposal_currency_code: Option<String>,
+}
+
 /// 列表返回：资产行（按筛选状态）+ **在持**估值合计（口径与筛选无关——
 /// 「家底合计」恒指在持资产，回看已处置时合计不变）。
 #[derive(Debug, Clone, Serialize)]

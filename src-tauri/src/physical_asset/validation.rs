@@ -9,7 +9,10 @@
 
 use rusqlite::{Connection, OptionalExtension};
 
-use super::model::{PhysicalAssetInput, PhysicalAssetUpdateInput, PhysicalAssetValuationInput};
+use super::model::{
+    PhysicalAssetDisposeInput, PhysicalAssetInput, PhysicalAssetUpdateInput,
+    PhysicalAssetValuationInput,
+};
 use crate::error::{AppError, Result};
 
 // ---------------------------------------------------------------------------
@@ -39,25 +42,31 @@ fn normalize_name(raw: &str) -> Result<String> {
     Ok(name.to_string())
 }
 
-/// 购买价与币种成对（建档 / 编辑共用单点，先例保单保额）：购买价存在时
-/// 币种必填且须存在；购买价缺省 → 币种忽略存空，不产生只有币种的半挂状态。
-fn normalize_purchase(
+/// 可选金额与币种成对（建档/编辑购买价 / 处置价共用单点，先例保单保额）：
+/// 金额存在时必须 > 0 且币种必填、币种须存在；金额缺省 → 币种忽略存空，
+/// 不产生只有币种的半挂状态。错误码 `physical-asset.<condition>-*` 与文案
+/// 按 condition（purchase / disposal）与 label（购买价 / 处置价）派生，
+/// 调用面语义零变化（T2 拆出的共享助手家族收纳 T3 处置价）。
+fn normalize_optional_price(
     conn: &Connection,
     price_cents: Option<i64>,
     currency_code: Option<&str>,
+    condition: &str,
+    label: &str,
+    currency_label: &str,
 ) -> Result<(Option<i64>, Option<String>)> {
     match price_cents {
         Some(cents) => {
             if cents <= 0 {
                 return Err(AppError::coded(
-                    "physical-asset.purchase-price-positive",
-                    "购买价必须大于 0",
+                    &format!("physical-asset.{condition}-price-positive"),
+                    format!("{label}必须大于 0"),
                 ));
             }
             let code = currency_code.ok_or_else(|| {
                 AppError::coded(
-                    "physical-asset.purchase-currency-required",
-                    "填写购买价时必须选择购买币种",
+                    &format!("physical-asset.{condition}-currency-required"),
+                    format!("填写{label}时必须选择{currency_label}币种"),
                 )
             })?;
             require_currency(conn, code)?;
@@ -95,22 +104,31 @@ fn normalize_amount_and_currency(
 /// 估值日期守卫（建档首条估值 / 更新估值共用单点）：缺省今天；可补过去
 /// （事后整理），拒绝未来（估值是已发生的判断）。today 在域内取当前本地日期。
 fn normalize_valuation_date(raw: Option<&String>) -> Result<String> {
-    let today = chrono::Local::now().date_naive();
     let date = match raw {
         Some(raw) => {
             let date = parse_date(raw)?;
-            if date > today {
-                return Err(AppError::codedp(
-                    "physical-asset.valuation-date-future",
-                    format!("估值日期 {raw} 不能是未来"),
-                    &[raw],
-                ));
-            }
+            reject_future_date(date, raw, "估值")?;
             date
         }
-        None => today,
+        None => chrono::Local::now().date_naive(),
     };
     Ok(date.format("%Y-%m-%d").to_string())
+}
+
+/// 未来日期守卫（估值日期 / 处置日期共用单点）：日期晚于今天即拒绝——
+/// 估值与处置都是已发生的判断（先例物品域 disposal-in-future）。错误码
+/// `physical-asset.<field>-date-future`，文案 `{field}日期 {raw} 不能是未来`；
+/// field 传域语言中文短名（估值 / 处置）。
+fn reject_future_date(date: chrono::NaiveDate, raw: &str, field: &str) -> Result<()> {
+    let today = chrono::Local::now().date_naive();
+    if date > today {
+        return Err(AppError::codedp(
+            &format!("physical-asset.{field}-date-future"),
+            format!("{field}日期 {raw} 不能是未来"),
+            &[raw],
+        ));
+    }
+    Ok(())
 }
 
 /// 建档入参校验与归一化。估值日期缺省取今天（本地日期）；today 在域内取
@@ -126,10 +144,13 @@ pub(super) fn validate_input(
         None => None,
     };
 
-    let (purchase_price_cents, purchase_currency_code) = normalize_purchase(
+    let (purchase_price_cents, purchase_currency_code) = normalize_optional_price(
         conn,
         input.purchase_price_cents,
         input.purchase_currency_code.as_deref(),
+        "purchase",
+        "购买价",
+        "购买",
     )?;
 
     let (initial_valuation_cents, initial_valuation_currency_code) = normalize_amount_and_currency(
@@ -169,10 +190,13 @@ pub(super) fn validate_update_input(
         Some(raw) => Some(parse_date(raw)?.format("%Y-%m-%d").to_string()),
         None => None,
     };
-    let (purchase_price_cents, purchase_currency_code) = normalize_purchase(
+    let (purchase_price_cents, purchase_currency_code) = normalize_optional_price(
         conn,
         input.purchase_price_cents,
         input.purchase_currency_code.as_deref(),
+        "purchase",
+        "购买价",
+        "购买",
     )?;
     Ok(NormalizedUpdateInput {
         name,
@@ -203,6 +227,54 @@ pub(super) fn validate_valuation_input(
         amount_cents,
         currency_code,
         valuation_date,
+    })
+}
+
+/// 处置校验结果（归一化后）：日期 / 成对两件套（形状与
+/// [`NormalizedValuationInput`] 同族，字段名直读）。
+pub(super) struct NormalizedDisposeInput {
+    pub(super) disposal_date: String,
+    pub(super) disposal_price_cents: Option<i64>,
+    pub(super) disposal_currency_code: Option<String>,
+}
+
+/// 处置入参校验与归一化（issue #468 T3）：处置日期必填显式报错（不缺省今天
+/// ——处置是显式动作，缺失即录入错误）、可解析、拒绝未来（处置是已发生的
+/// 判断，先例估值与物品处置）、不早于购买日期（有购买日期时，先例物品域
+/// `item.disposal-before-purchase`）；处置价与币种成对（处置价存在时币种
+/// 必填且须存在、处置价必须 > 0，处置价缺省时币种忽略存空）。
+pub(super) fn validate_dispose_input(
+    conn: &Connection,
+    purchase_date: Option<&str>,
+    input: &PhysicalAssetDisposeInput,
+) -> Result<NormalizedDisposeInput> {
+    let raw_date = input.disposal_date.as_deref().ok_or_else(|| {
+        AppError::coded("physical-asset.disposal-date-required", "处置日期不能为空")
+    })?;
+    let disposal_date = parse_date(raw_date)?;
+    reject_future_date(disposal_date, raw_date, "处置")?;
+    if let Some(purchase) = purchase_date {
+        let purchase_date = parse_date(purchase)?;
+        if disposal_date < purchase_date {
+            return Err(AppError::codedp(
+                "physical-asset.disposal-before-purchase",
+                format!("处置日期 {disposal_date} 早于购买日期 {purchase_date}，无法处置"),
+                &[&disposal_date.to_string(), &purchase_date.to_string()],
+            ));
+        }
+    }
+    let (disposal_price_cents, disposal_currency_code) = normalize_optional_price(
+        conn,
+        input.disposal_price_cents,
+        input.disposal_currency_code.as_deref(),
+        "disposal",
+        "处置价",
+        "处置",
+    )?;
+    Ok(NormalizedDisposeInput {
+        disposal_date: disposal_date.format("%Y-%m-%d").to_string(),
+        disposal_price_cents,
+        disposal_currency_code,
     })
 }
 
