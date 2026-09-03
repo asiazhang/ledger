@@ -32,7 +32,8 @@ import {
  *
  * 受控契约：快照区间经 v-model 进出，组件不持状态源——高亮（matchPreset）与步进
  * 游标（rangeToPeriod）纯由 prop 区间派生，选择产出只经 update:modelValue 回流调用方
- * （交易页唯一事实源仍是 TransactionFilter 日期维度，报表页自持期间状态）。
+ * （交易页唯一事实源仍是 TransactionFilter 日期维度，报表页期间状态的唯一事实源
+ * 是其会话状态 store，issue #427）。
  * 组件内只持两类非选择状态：分钟级「今天」时钟（长驻跨期场景下预设定义与边界抬升
  * 随之翻转）与数据期间边界缓存（report_date_range 挂载拉取 + ledger:changed 失效重拉，
  * stale-while-revalidate；仅作钳制输入，不是选择状态）。
