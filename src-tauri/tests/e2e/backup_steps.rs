@@ -8,13 +8,14 @@ use tauri_app_lib::backup::{
     expected_schema_version, get_state, read_backup_kind, restore_db_from, set_state,
 };
 use tauri_app_lib::categories::{create_category, delete_category as delete_category_domain};
+use tauri_app_lib::currencies::ExchangeRateInput;
 use tauri_app_lib::db::{new_uuid, now_iso, open_connection};
 use tauri_app_lib::investment::{create_exchange_rate, create_instrument, create_market_price};
 use tauri_app_lib::item::cost;
 use tauri_app_lib::item::domain::{create_item, delete_item, dispose_item, update_item};
 use tauri_app_lib::models::{
-    AccountInput, AccountType, CategoryInput, ExchangeRateInput, InstrumentInput, InstrumentType,
-    ItemDisposeInput, ItemInput, MarketPriceInput, TransactionInput,
+    AccountInput, AccountType, CategoryInput, InstrumentInput, InstrumentType, ItemDisposeInput,
+    ItemInput, MarketPriceInput, TransactionInput,
 };
 use tauri_app_lib::settings::{self, SettingKey};
 use tauri_app_lib::transaction::TransactionBatch;
