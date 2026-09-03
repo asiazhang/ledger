@@ -4,12 +4,14 @@ import { NCard, NButton, NDataTable, NSpace, NTag, type DataTableColumns } from 
 import { formatAmount } from '@/types'
 import { t } from '@/i18n'
 import PhysicalAssetFormModal from '@/components/PhysicalAssetFormModal.vue'
+import PhysicalAssetValuationModal from '@/components/PhysicalAssetValuationModal.vue'
 import { usePhysicalAssetsStore } from '@/stores/physicalAssets'
 import { useReferenceStore } from '@/stores/reference'
 import type { PhysicalAsset } from '@/types'
 
 /**
- * 实物资产视图（issue #466 / spec #465 / ADR-0064）：列表 + 在持合计卡 + 建档入口。
+ * 实物资产视图（issue #466 建档列表 / issue #467 T2 更新估值与编辑 / spec #465 /
+ * ADR-0064）：列表 + 在持合计卡 + 建档入口 + 行操作（编辑 / 更新估值）。
  *
  * 「更多」页实物资产页签的装载体（ADR-0055 低频视图收纳，先例保单页签）；
  * 数据全部来自 `usePhysicalAssetsStore`（self-init + `ledger:changed` 静默重拉），
@@ -21,8 +23,25 @@ const physicalAssetsStore = usePhysicalAssetsStore()
 const reference = useReferenceStore()
 
 const formShow = ref(false)
+/** 编辑目标（null = 新建模式，T2：同一建档弹窗双模式）。 */
+const editingAsset = ref<PhysicalAsset | null>(null)
+const valuationShow = ref(false)
+/** 更新估值目标（T2：追加历史行入口）。 */
+const valuationAsset = ref<PhysicalAsset | null>(null)
+
 function openCreate() {
+  editingAsset.value = null
   formShow.value = true
+}
+
+function openEdit(asset: PhysicalAsset) {
+  editingAsset.value = asset
+  formShow.value = true
+}
+
+function openUpdateValuation(asset: PhysicalAsset) {
+  valuationAsset.value = asset
+  valuationShow.value = true
 }
 
 /** 在持估值合计（折本位币，后端同源快照；金额格式化走统一 formatAmount）。 */
@@ -65,6 +84,36 @@ const columns: DataTableColumns<PhysicalAsset> = [
             : t('physicalAssets.status.disposed'),
       ),
   },
+  {
+    // 行操作（T2）：编辑档案（名称 / 购买信息）与更新估值（追加历史行）
+    title: () => t('physicalAssets.columns.actions'),
+    key: 'actions',
+    width: 170,
+    render: (row) =>
+      h(NSpace, { size: 4, wrap: false }, () => [
+        h(
+          NButton,
+          {
+            size: 'tiny',
+            quaternary: true,
+            type: 'primary',
+            'data-testid': 'physical-asset-update-valuation',
+            onClick: () => openUpdateValuation(row),
+          },
+          () => t('physicalAssets.actions.updateValuation'),
+        ),
+        h(
+          NButton,
+          {
+            size: 'tiny',
+            quaternary: true,
+            'data-testid': 'physical-asset-edit',
+            onClick: () => openEdit(row),
+          },
+          () => t('physicalAssets.actions.edit'),
+        ),
+      ]),
+  },
 ]
 
 const listTitle = computed(() => t('physicalAssets.listTitle'))
@@ -104,7 +153,17 @@ onMounted(() => {
       </NDataTable>
     </NCard>
 
-    <!-- 建档弹窗（遮罩点击不关：AppModal 默认语义，ADR-0035） -->
-    <PhysicalAssetFormModal :show="formShow" @update:show="formShow = $event" />
+    <!-- 新建 / 编辑弹窗（同一建档表单双模式，编辑态无估值字段，T2） -->
+    <PhysicalAssetFormModal
+      :show="formShow"
+      :editing="editingAsset"
+      @update:show="formShow = $event"
+    />
+    <!-- 更新估值弹窗（T2：追加历史行，旧值保留） -->
+    <PhysicalAssetValuationModal
+      :show="valuationShow"
+      :asset="valuationAsset"
+      @update:show="valuationShow = $event"
+    />
   </NSpace>
 </template>

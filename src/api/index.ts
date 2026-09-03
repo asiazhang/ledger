@@ -54,6 +54,8 @@ import type {
   PhysicalAsset,
   PhysicalAssetInput,
   PhysicalAssetList,
+  PhysicalAssetUpdateInput,
+  PhysicalAssetValuationInput,
   PnlFilter,
   PortfolioValueTrend,
   PruneResult,
@@ -255,6 +257,12 @@ export const api = {
   getPhysicalAsset: (id: string) => invoke<PhysicalAsset>('get_physical_asset', { id }),
   createPhysicalAsset: (input: PhysicalAssetInput) =>
     invoke<string>('create_physical_asset', { input }),
+  // 编辑档案（issue #467 T2）：仅名称 / 购买信息，估值不经本入口变更
+  updatePhysicalAsset: (id: string, input: PhysicalAssetUpdateInput) =>
+    invoke<void>('update_physical_asset', { id, input }),
+  // 更新估值（issue #467 T2）：追加一条估值历史行，当前估值变为最新一条
+  updatePhysicalAssetValuation: (id: string, input: PhysicalAssetValuationInput) =>
+    invoke<void>('update_physical_asset_valuation', { id, input }),
 
   // 汇率
   listExchangeRates: () => invoke<ExchangeRate[]>('list_exchange_rates'),

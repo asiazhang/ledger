@@ -132,6 +132,30 @@ describe('PhysicalAssetsView 实物资产视图冒烟（issue #466）', () => {
     ).toContainEqual([false])
   })
 
+  it('点行内「编辑」打开编辑弹窗：预填名称、无估值字段（估值只能经「更新估值」变更，T2）', async () => {
+    list = makePhysicalAssetList({ assets: [baseAsset({ name: '代步车' })] })
+    const wrapper = mount(PhysicalAssetsView)
+    await flushPromises()
+    await wrapper.find('[data-testid="physical-asset-edit"]').trigger('click')
+    await flushPromises()
+    const modal = bodyQuery('[data-testid="physical-asset-form-modal"]')
+    expect(modal).not.toBeNull()
+    expect(formInput('physical-asset-name').exists()).toBe(true)
+    expect(formInput('physical-asset-name').element as HTMLInputElement).toBeTruthy()
+    // 编辑模式估值字段结构性排除（v-if 不渲染）
+    expect(formInput('physical-asset-valuation').exists()).toBe(false)
+  })
+
+  it('点行内「更新估值」打开估值弹窗（T2）', async () => {
+    list = makePhysicalAssetList({ assets: [baseAsset()] })
+    const wrapper = mount(PhysicalAssetsView)
+    await flushPromises()
+    await wrapper.find('[data-testid="physical-asset-update-valuation"]').trigger('click')
+    await flushPromises()
+    expect(bodyQuery('[data-testid="physical-asset-valuation-modal"]')).not.toBeNull()
+    expect(bodyQuery('[data-testid="physical-asset-valuation-amount"]')).not.toBeNull()
+  })
+
   it('建档缺名称：客户端校验拦截，不调用 create_physical_asset', async () => {
     const wrapper = mount(PhysicalAssetsView)
     await flushPromises()

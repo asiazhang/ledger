@@ -84,6 +84,12 @@ pub enum WriteOp {
     // ── 实物资产域（ADR-0064：独立领域，复用 `ledger:changed` 同名事件）──
     /// 建档实物资产（IPC `create_physical_asset`；资产行 + 首条估值行同事务）。
     CreatePhysicalAsset,
+    /// 编辑实物资产档案（IPC `update_physical_asset`，issue #467 T2）：
+    /// 仅名称 / 购买信息，估值不经本入口变更。
+    UpdatePhysicalAsset,
+    /// 更新实物资产估值（IPC `update_physical_asset_valuation`，issue #467 T2）：
+    /// 追加一条估值历史行（只追加不改写），当前估值变为最新一条。
+    UpdatePhysicalAssetValuation,
 
     // ── 账户域 ──
     /// 余额调整（IPC `adjust_account_balance`，ADR-0026）：预期证据
@@ -197,7 +203,7 @@ impl WriteOp {
     /// 清单紧邻 enum，同步义务就地可查（同 `TransactionKind::ALL` 先例）。
     /// 长度标注与初始化个数不符即编译错；但 enum 新增变体而本清单漏登不会报错，
     /// 改 enum 必须同步改这里。
-    pub const ALL: [WriteOp; 48] = [
+    pub const ALL: [WriteOp; 50] = [
         // 参考数据四表
         WriteOp::CreateAccount,
         WriteOp::UpdateAccount,
@@ -220,6 +226,8 @@ impl WriteOp {
         WriteOp::DeletePolicy,
         // 实物资产域
         WriteOp::CreatePhysicalAsset,
+        WriteOp::UpdatePhysicalAsset,
+        WriteOp::UpdatePhysicalAssetValuation,
         // 账户域
         WriteOp::AdjustAccountBalance,
         // 价格域
@@ -358,8 +366,10 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
         WriteOp::CreatePolicy | WriteOp::UpdatePolicy | WriteOp::DeletePolicy => LEDGER_CHANGED_SET,
 
         // ── 实物资产域（ADR-0064）：独立领域复用 ledger:changed 同名事件，
-        //    实物资产 store 自行订阅、自行重拉 ──
-        WriteOp::CreatePhysicalAsset => LEDGER_CHANGED_SET,
+        //    实物资产 store 自行订阅、自行重拉（编辑 / 更新估值同，T2）──
+        WriteOp::CreatePhysicalAsset
+        | WriteOp::UpdatePhysicalAsset
+        | WriteOp::UpdatePhysicalAssetValuation => LEDGER_CHANGED_SET,
 
         // ── 账户域：余额调整仅「按需新建黑洞账户」时参考表变更（ADR-0026）──
         WriteOp::AdjustAccountBalance => when(evidence.black_hole_created(), LEDGER_CHANGED_SET),
@@ -586,6 +596,22 @@ mod tests {
     fn create_physical_asset_emits_ledger_changed() {
         assert_signals(
             signals_for(Op::CreatePhysicalAsset, E::None),
+            &[Signal::LedgerChanged],
+        );
+    }
+
+    #[test]
+    fn update_physical_asset_emits_ledger_changed() {
+        assert_signals(
+            signals_for(Op::UpdatePhysicalAsset, E::None),
+            &[Signal::LedgerChanged],
+        );
+    }
+
+    #[test]
+    fn update_physical_asset_valuation_emits_ledger_changed() {
+        assert_signals(
+            signals_for(Op::UpdatePhysicalAssetValuation, E::None),
             &[Signal::LedgerChanged],
         );
     }

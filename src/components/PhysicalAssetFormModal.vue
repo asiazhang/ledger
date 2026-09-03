@@ -6,21 +6,28 @@ import AppDatePicker from '@/components/AppDatePicker.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import { t } from '@/i18n'
 import { errorMessage } from '@/utils/errors'
-import { yuanToCents } from '@/utils/money'
+import { yuanToCents, centsToYuan } from '@/utils/money'
 import { useFormShared } from '@/composables/useFormShared'
 import { useAppStore } from '@/stores/app'
 import { usePhysicalAssetsStore } from '@/stores/physicalAssets'
-import type { PhysicalAssetInput } from '@/types'
+import type { PhysicalAsset, PhysicalAssetInput, PhysicalAssetUpdateInput } from '@/types'
 
 /**
- * 实物资产建档弹窗（issue #466 / ADR-0064）：名称与当前估值必填（三十秒
- * 建档的最简表单），购买日期与购买价（含币种）可选；估值与购买价币种均
- * 预选默认币种（核心交易域 DefaultCurrency 设备偏好）。估值日期不出表单
- * （缺省 = 今天）；估值不走本表单变更，更新估值由 T2 承接（只追加历史行）。
- * 保存成功后关弹窗，列表经 store 重拉刷新；后端校验错误原样展示，弹窗不关、
- * 内容不丢。
+ * 实物资产新建/编辑弹窗（issue #466 建档 / issue #467 T2 编辑 / ADR-0064）：
+ * 新建时名称与当前估值必填（三十秒建档的最简表单），购买日期与购买价（含
+ * 币种）可选；估值与购买价币种均预选默认币种（核心交易域 DefaultCurrency
+ * 设备偏好）。估值日期不出表单（缺省 = 今天）。
+ *
+ * 编辑模式（T2，PolicyFormModal 先例）：仅名称与购买信息可改（全量替换），
+ * **估值字段结构性排除**（v-if 不渲染）——估值只能经「更新估值」变更（历史
+ * 只追加不改写，ADR-0064），编辑表单无估值入口。保存成功后关弹窗，列表经
+ * store 重拉刷新；后端校验错误原样展示，弹窗不关、内容不丢。
  */
-const props = defineProps<{ show: boolean }>()
+const props = defineProps<{
+  show: boolean
+  /** 待编辑资产；null = 新建模式 */
+  editing: PhysicalAsset | null
+}>()
 const emit = defineEmits<{ 'update:show': [value: boolean] }>()
 
 const message = useMessage()
@@ -39,17 +46,21 @@ const purchaseCurrency = ref<string | null>(null)
 const valuationFilled = computed(() => valuationYuan.value.trim() !== '')
 const purchaseFilled = computed(() => purchaseYuan.value.trim() !== '')
 
-/** 打开时复位为空白建档单（币种预选默认币种；immediate 兼容初始 show）。 */
+/** 打开时回填/复位（PolicyFormModal 先例；immediate 兼容初始 show）：
+ *  编辑模式预填名称与购买信息；新建模式复位为空白建档单（币种预选默认币种）。 */
 watch(
-  () => props.show,
+  () => [props.show, props.editing] as const,
   () => {
     if (!props.show) return
-    name.value = ''
+    const p = props.editing
+    name.value = p?.name ?? ''
+    // 估值字段仅新建模式使用（编辑模式结构性排除，不渲染不提交）
     valuationYuan.value = ''
     valuationCurrency.value = app.defaultCurrency
-    purchaseDate.value = null
-    purchaseYuan.value = ''
-    purchaseCurrency.value = app.defaultCurrency
+    purchaseDate.value = p?.purchase_date ?? null
+    purchaseYuan.value =
+      p?.purchase_price_cents != null ? String(centsToYuan(p.purchase_price_cents)) : ''
+    purchaseCurrency.value = p?.purchase_currency_code ?? app.defaultCurrency
   },
   { immediate: true },
 )
@@ -62,19 +73,6 @@ async function save() {
   // 客户端必填校验（消息与后端错误码文案同源，双保险防呆）
   if (!name.value.trim()) {
     message.warning(t('physicalAssets.form.msg.nameRequired'))
-    return
-  }
-  if (!valuationFilled.value) {
-    message.warning(t('physicalAssets.form.msg.valuationRequired'))
-    return
-  }
-  const valuationCents = yuanToCents(valuationYuan.value)
-  if (valuationCents === null || valuationCents <= 0) {
-    message.warning(t('physicalAssets.form.msg.valuationInvalid'))
-    return
-  }
-  if (!valuationCurrency.value) {
-    message.warning(t('physicalAssets.form.msg.valuationCurrencyRequired'))
     return
   }
   let purchaseCents: number | null = null
@@ -92,18 +90,44 @@ async function save() {
   }
 
   // 购买价与币种成对（清金额即清币种，不产生只有币种的半挂状态）
-  const input: PhysicalAssetInput = {
-    name: name.value.trim(),
-    purchase_date: purchaseDate.value || null,
-    purchase_price_cents: purchaseCents,
-    purchase_currency_code: purchaseCents !== null ? purchaseCurrency.value : null,
-    initial_valuation_cents: valuationCents,
-    initial_valuation_currency_code: valuationCurrency.value,
-    initial_valuation_date: null,
-  }
   try {
-    await physicalAssetsStore.create(input)
-    message.success(t('physicalAssets.msg.created'))
+    if (props.editing) {
+      // 编辑模式（T2）：仅名称 / 购买信息全量替换，无估值字段（结构性排除）
+      const input: PhysicalAssetUpdateInput = {
+        name: name.value.trim(),
+        purchase_date: purchaseDate.value || null,
+        purchase_price_cents: purchaseCents,
+        purchase_currency_code: purchaseCents !== null ? purchaseCurrency.value : null,
+      }
+      await physicalAssetsStore.update(props.editing.id, input)
+      message.success(t('physicalAssets.msg.updated'))
+    } else {
+      // 新建模式：估值必填（即首条估值历史行）
+      if (!valuationFilled.value) {
+        message.warning(t('physicalAssets.form.msg.valuationRequired'))
+        return
+      }
+      const valuationCents = yuanToCents(valuationYuan.value)
+      if (valuationCents === null || valuationCents <= 0) {
+        message.warning(t('physicalAssets.form.msg.valuationInvalid'))
+        return
+      }
+      if (!valuationCurrency.value) {
+        message.warning(t('physicalAssets.form.msg.valuationCurrencyRequired'))
+        return
+      }
+      const input: PhysicalAssetInput = {
+        name: name.value.trim(),
+        purchase_date: purchaseDate.value || null,
+        purchase_price_cents: purchaseCents,
+        purchase_currency_code: purchaseCents !== null ? purchaseCurrency.value : null,
+        initial_valuation_cents: valuationCents,
+        initial_valuation_currency_code: valuationCurrency.value,
+        initial_valuation_date: null,
+      }
+      await physicalAssetsStore.create(input)
+      message.success(t('physicalAssets.msg.created'))
+    }
     close()
   } catch (e) {
     // 后端校验错误原样展示（如「资产名称不能为空」），弹窗不关、内容不丢
@@ -118,7 +142,7 @@ defineExpose({ save })
   <AppModal
     :show="show"
     preset="card"
-    :title="t('physicalAssets.form.title')"
+    :title="editing ? t('physicalAssets.form.titleEdit') : t('physicalAssets.form.title')"
     style="width: 460px"
     data-testid="physical-asset-form-modal"
     @update:show="(v: boolean) => emit('update:show', v)"
@@ -131,7 +155,8 @@ defineExpose({ save })
           data-testid="physical-asset-name"
         />
       </NFormItem>
-      <NFormItem :label="t('physicalAssets.form.label.valuation')">
+      <!-- 编辑模式无估值字段：估值只能经「更新估值」变更（历史只追加，T2） -->
+      <NFormItem v-if="!editing" :label="t('physicalAssets.form.label.valuation')">
         <NInput
           v-model:value="valuationYuan"
           :placeholder="t('physicalAssets.form.placeholder.valuation')"

@@ -7,14 +7,37 @@
     "name": "名称",
     "valuation": "当前估值",
     "valuationDate": "估值日期",
-    "status": "状态"
+    "status": "状态",
+    "actions": "操作"
+  },
+  "actions": {
+    "updateValuation": "更新估值",
+    "edit": "编辑"
   },
   "status": {
     "holding": "在持",
     "disposed": "已处置"
   },
+  "valuation": {
+    "title": "更新估值",
+    "label": {
+      "amount": "估值金额",
+      "date": "估值日期"
+    },
+    "placeholder": {
+      "amount": "如 800000",
+      "date": "选择估值日期"
+    },
+    "dateHint": "留空 = 今天；每次更新追加一条历史，旧值保留",
+    "msg": {
+      "amountRequired": "请填写估值金额",
+      "amountInvalid": "估值金额必须大于 0",
+      "currencyRequired": "请选择估值币种"
+    }
+  },
   "form": {
     "title": "新建实物资产",
+    "titleEdit": "编辑实物资产",
     "label": {
       "name": "名称",
       "valuation": "当前估值",
@@ -41,6 +64,8 @@
   },
   "msg": {
     "created": "建档成功",
+    "updated": "保存成功",
+    "valuationUpdated": "估值已更新",
     "saveFailed": "保存失败：{msg}"
   }
 }

@@ -60,6 +60,29 @@ export interface PhysicalAssetInput {
   initial_valuation_date?: string | null
 }
 
+/** 编辑档案入参（对应后端 `physical_asset::PhysicalAssetUpdateInput`，issue #467 T2）：
+ *  仅名称与购买信息——估值不出现在编辑表单，只能经「更新估值」变更。 */
+export interface PhysicalAssetUpdateInput {
+  name: string
+  /** 购买日期（可空；YYYY-MM-DD）。 */
+  purchase_date?: string | null
+  /** 购买价（可空，整数分）。 */
+  purchase_price_cents?: number | null
+  /** 购买价币种（购买价存在时必填）。 */
+  purchase_currency_code?: string | null
+}
+
+/** 更新估值入参（对应后端 `physical_asset::PhysicalAssetValuationInput`，
+ *  issue #467 T2）：每次调用追加一条估值历史行，当前估值变为最新一条。 */
+export interface PhysicalAssetValuationInput {
+  /** 估值金额（整数分；必填——缺失后端显式报错）。 */
+  amount_cents?: number | null
+  /** 估值币种（必填；前端预选当前估值币种）。 */
+  currency_code?: string | null
+  /** 估值日期（可空 = 今天；YYYY-MM-DD；可补过去，拒绝未来）。 */
+  valuation_date?: string | null
+}
+
 /** 列表返回（对应后端 `physical_asset::PhysicalAssetList`）：
  *  资产行 + **在持**估值合计（口径与筛选无关——「家底合计」恒指在持资产）。 */
 export interface PhysicalAssetList {

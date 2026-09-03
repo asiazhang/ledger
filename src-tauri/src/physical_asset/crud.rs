@@ -1,17 +1,20 @@
-//! 实物资产域行为（issue #466 T1）：建档、列表（含在持合计）与详情。
+//! 实物资产域行为（issue #466 T1 建档 / 列表 / 详情，issue #467 T2 编辑与更新估值）。
 //!
 //! 估值必填 = 建档同时写入第一条估值历史行（两表写入同事务原子）；当前估值 =
 //! 最新一条历史行（估值日期最新，同日按插入序 = UUID v7 主键降序首条）；
-//! 在持合计 = Σ 在持资产当前估值经 Amount 接缝折本位币（当期汇率，缺汇率
-//! 错误上抛）。写路径成功落库后调用 `notify`（失效信号回调注入，保单域同款；
-//! 生产路径发 `ledger:changed`，失败不至此处）。
+//! 更新估值只追加新历史行不改写（旧值保留，当前估值随之变为最新一条，T2）；
+//! 编辑档案只改名称与购买信息（估值不经编辑变更，T2）。在持合计 = Σ 在持资产
+//! 当前估值经 Amount 接缝折本位币（当期汇率，缺汇率错误上抛）。写路径成功落库
+//! 后调用 `notify`（失效信号回调注入，保单域同款；生产路径发 `ledger:changed`，
+//! 失败不至此处）。
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 use super::model::{
     AssetRecord, PhysicalAsset, PhysicalAssetInput, PhysicalAssetList, PhysicalAssetStatus,
+    PhysicalAssetUpdateInput, PhysicalAssetValuationInput,
 };
-use super::validation::validate_input;
+use super::validation::{validate_input, validate_update_input, validate_valuation_input};
 use crate::db::query::{query_all, query_one};
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
@@ -197,6 +200,97 @@ fn into_entity(
         current_valuation_native_cents,
         native_currency: native_currency.to_string(),
     })
+}
+
+/// 前置存在性检查（T2 写入口共用单点，裸 SELECT 与折算读路径解耦）：
+/// 不存在（或已软删除）→ 码化 NotFound。不能用 `get_physical_asset` 判存在——
+/// 详情读会做本位币折算，缺汇率时报错会被误判为「不存在」，掩盖真实条件
+/// （缺汇率必须原样上抛，CONTEXT 口径「不以零或缺项静默通过」）。
+fn require_asset_exists(conn: &Connection, id: &str) -> Result<()> {
+    let exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM physical_assets WHERE id=?1 AND is_deleted=0",
+            rusqlite::params![id],
+            |_| Ok(true),
+        )
+        .optional()?
+        .is_some();
+    if !exists {
+        return Err(AppError::codedp_not_found(
+            "physical-asset.not-found",
+            format!("实物资产不存在: {id}"),
+            &[id],
+        ));
+    }
+    Ok(())
+}
+
+/// 编辑档案（issue #467 T2）：只改名称与购买信息（估值不经本入口变更，
+/// 只能走 [`update_physical_asset_valuation`] 追加历史行）。不存在（或已软
+/// 删除）→ 码化 NotFound；成功后 bump version / updated_at 并调用 `notify`。
+/// 购买价可清空（存 NULL，与币种成对落空）。
+pub fn update_physical_asset(
+    conn: &Connection,
+    id: &str,
+    input: PhysicalAssetUpdateInput,
+    notify: &mut dyn FnMut(),
+) -> Result<()> {
+    require_asset_exists(conn, id)?;
+    let normalized = validate_update_input(conn, &input)?;
+
+    let updated = conn.execute(
+        "UPDATE physical_assets SET name=?2, purchase_date=?3, purchase_price_cents=?4, \
+         purchase_currency_code=?5, updated_at=?6, version=version+1, device_id=?7 \
+         WHERE id=?1 AND is_deleted=0",
+        rusqlite::params![
+            id,
+            normalized.name,
+            normalized.purchase_date,
+            normalized.purchase_price_cents,
+            normalized.purchase_currency_code,
+            now_iso(),
+            device_id(),
+        ],
+    )?;
+    debug_assert_eq!(
+        updated, 1,
+        "前置存在性检查已排除 id 不存在/软删除，单连接下不可达"
+    );
+    notify();
+    Ok(())
+}
+
+/// 更新估值（issue #467 T2）：追加一条估值历史行（只追加不改写，旧值保留），
+/// 当前估值 = 最新一条（估值日期最新，同日按插入序）由读口径自然生效，列表 /
+/// 详情无需额外写入。不存在（或已软删除）→ 码化 NotFound；成功后调用
+/// `notify`。估值行无更新语义，不触碰资产行的 version（LWW 口径不变，
+/// 与 V015 迁移注释「估值历史仅留审计」一致）。
+pub fn update_physical_asset_valuation(
+    conn: &Connection,
+    id: &str,
+    input: PhysicalAssetValuationInput,
+    notify: &mut dyn FnMut(),
+) -> Result<()> {
+    // 前置存在性检查（含软删过滤）：估值历史依附资产存续，不允许孤儿行。
+    require_asset_exists(conn, id)?;
+    let normalized = validate_valuation_input(conn, &input)?;
+
+    conn.execute(
+        "INSERT INTO physical_asset_valuations \
+         (id,asset_id,valuation_date,amount_cents,currency_code,device_id,created_at) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        rusqlite::params![
+            new_uuid(),
+            id,
+            normalized.valuation_date,
+            normalized.amount_cents,
+            normalized.currency_code,
+            device_id(),
+            now_iso(),
+        ],
+    )?;
+    notify();
+    Ok(())
 }
 
 /// 按 `id` 读单个未删除资产（详情）：不存在（或已软删除）→ 码化 NotFound。

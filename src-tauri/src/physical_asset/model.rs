@@ -180,6 +180,37 @@ pub struct PhysicalAssetInput {
     pub initial_valuation_date: Option<String>,
 }
 
+/// 编辑档案入参（issue #467 T2）：仅名称与购买信息——估值不出现在编辑表单，
+/// 只能经「更新估值」变更（估值历史只追加不改写，ADR-0064）。
+///
+/// 校验语义与建档同源：名称 trim 非空；购买价与币种成对（购买价存在时币种
+/// 必填且存在，购买价缺省时币种忽略存空）。无估值字段，缺失即结构性排除。
+#[derive(Debug, Clone, Deserialize)]
+pub struct PhysicalAssetUpdateInput {
+    pub name: String,
+    /// 购买日期（可空；YYYY-MM-DD）。
+    pub purchase_date: Option<String>,
+    /// 购买价（可空，整数分）。
+    pub purchase_price_cents: Option<i64>,
+    /// 购买价币种（购买价存在时必填）。
+    pub purchase_currency_code: Option<String>,
+}
+
+/// 更新估值入参（issue #467 T2）：每次调用追加一条估值历史行（旧值保留
+/// 不覆盖），当前估值变为最新一条（估值日期最新，同日按插入序）。
+///
+/// 校验语义与建档首条估值同源：金额必填且 > 0、币种必填且存在；估值日期
+/// 可空（= 今天）、可解析、拒绝未来（估值是已发生的判断）。
+#[derive(Debug, Clone, Deserialize)]
+pub struct PhysicalAssetValuationInput {
+    /// 估值金额（整数分；必填——缺失显式报错而非默认 0）。
+    pub amount_cents: Option<i64>,
+    /// 估值币种（必填；前端预选当前估值币种）。
+    pub currency_code: Option<String>,
+    /// 估值日期（可空 = 今天；YYYY-MM-DD；可补过去，拒绝未来）。
+    pub valuation_date: Option<String>,
+}
+
 /// 列表返回：资产行（按筛选状态）+ **在持**估值合计（口径与筛选无关——
 /// 「家底合计」恒指在持资产，回看已处置时合计不变）。
 #[derive(Debug, Clone, Serialize)]

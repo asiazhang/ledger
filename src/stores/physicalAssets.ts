@@ -2,7 +2,13 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { api } from '@/api'
-import type { PhysicalAsset, PhysicalAssetInput, PhysicalAssetList } from '@/types'
+import type {
+  PhysicalAsset,
+  PhysicalAssetInput,
+  PhysicalAssetList,
+  PhysicalAssetUpdateInput,
+  PhysicalAssetValuationInput,
+} from '@/types'
 
 /** 实物资产加载状态：`idle` 为初始瞬态（self-init 同步置为 `loading`，外部基本观察不到）。 */
 export type PhysicalAssetsStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -74,6 +80,24 @@ export const usePhysicalAssetsStore = defineStore('physicalAssets', () => {
     return id
   }
 
+  /** 编辑档案（issue #467 T2）：仅名称 / 购买信息；写入成功即返回（不因重拉
+   *  失败反转为「保存失败」，重拉由 ledger:changed 信号兜底，同 create）。 */
+  async function update(id: string, input: PhysicalAssetUpdateInput): Promise<void> {
+    await api.updatePhysicalAsset(id, input)
+    await refresh().catch(() => {
+      /* 重拉失败不阻断编辑成功路径 */
+    })
+  }
+
+  /** 更新估值（issue #467 T2）：追加一条估值历史行（旧值保留不覆盖），当前
+   *  估值变为最新一条；写入成功即返回（重拉失败语义同上）。 */
+  async function updateValuation(id: string, input: PhysicalAssetValuationInput): Promise<void> {
+    await api.updatePhysicalAssetValuation(id, input)
+    await refresh().catch(() => {
+      /* 重拉失败不阻断更新成功路径 */
+    })
+  }
+
   // —— push 生命周期 ——
   // 首次访问 self-init：触发一次加载（失败静默，失败信号已由 status 承载）。
   void refresh().catch(() => {
@@ -97,5 +121,7 @@ export const usePhysicalAssetsStore = defineStore('physicalAssets', () => {
     version,
     refresh,
     create,
+    update,
+    updateValuation,
   }
 })
