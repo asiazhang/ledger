@@ -1,4 +1,5 @@
-//! generate 子命令：核心交易域性能画像的确定性生成（issue #459 / ADR-0062）。
+//! generate 子命令：核心交易域 + 投资域/计划域画像的确定性生成
+//! （issue #459/#460 / ADR-0062）。
 //!
 //! 建库经应用自身的迁移应用路径（[`open_connection`] + [`init_db`]，从 lib 复用，
 //! 不复制 DDL）；数据行由本模块批量直插（一次性事务 + 关闭 fsync 的连接级 PRAGMA，
@@ -17,6 +18,8 @@ use tauri_app_lib::categories;
 use tauri_app_lib::db::{init_db, open_connection};
 
 use super::GenerateCli;
+use super::investments::{self, MarketData, Portfolio, TradeKind};
+use super::plans;
 use super::rng::{Rng, time_ordered_id};
 
 // ---------------------------------------------------------------------------
@@ -36,21 +39,38 @@ const TOP_MERCHANT_FLOW_SHARE: f64 = 0.60;
 /// 商户挂载率：支出/退款 85%、收入 30%（工资类收入通常无商户）。
 const EXPENSE_MERCHANT_RATE: f64 = 0.85;
 const INCOME_MERCHANT_RATE: f64 = 0.30;
-/// kind 构成：支出 80% / 收入 10% / 转账 8% / 退款 2%（其余 kind 属投资域，见 issue #460）。
-const EXPENSE_SHARE: f64 = 0.80;
+/// kind 构成：支出 79.4% / 收入 10% / 转账 8% / 退款 2% / 买入 0.4% / 卖出 0.2%
+/// （买入+卖出 = 约 3000 笔标的交易 @50 万笔，见 issue #460；分红/拆股不生成——
+/// 产品写入层拒绝且分红以普通 income 承载，词汇表 Investment 词条）。
+const EXPENSE_SHARE: f64 = 0.794;
 const INCOME_SHARE: f64 = 0.10;
 const TRANSFER_SHARE: f64 = 0.08;
-// 退款 = 其余 2%（refund 链：refund_of_transaction_id 指向更早的支出）。
-/// 交易软删除比例（约 1%）。
+// 退款 = 2%（refund 链：refund_of_transaction_id 指向更早的支出）；
+// 买入 0.4% + 卖出 0.2% = 约 3000 笔标的交易 @50 万笔（issue #460）。
+const REFUND_SHARE: f64 = 0.02;
+const BUY_SHARE: f64 = 0.004;
+const SELL_SHARE: f64 = 0.002;
+// kind 边界（累计份额和恒为 1；assert 钉住画像常量不漂移）。
+const INCOME_BOUND: f64 = EXPENSE_SHARE + INCOME_SHARE;
+const TRANSFER_BOUND: f64 = INCOME_BOUND + TRANSFER_SHARE;
+const REFUND_BOUND: f64 = TRANSFER_BOUND + REFUND_SHARE;
+const BUY_BOUND: f64 = REFUND_BOUND + BUY_SHARE;
+const SELL_BOUND: f64 = BUY_BOUND + SELL_SHARE;
+/// 交易软删除比例（约 1%）。标的交易不软删：产品删除 buy/sell 会回滚批次副作用，
+/// 「软删交易行 + 存活批次」不是产品能产出的形态。
 const SOFT_DELETE_RATE: f64 = 0.01;
 /// 备注挂载率（保证 TransactionSearch 有内容可搜）。
 const NOTE_RATE: f64 = 0.40;
 const TRANSFER_NOTE_RATE: f64 = 0.20;
+/// 标的交易备注挂载率（低于支出：真实用户少给买卖写备注）。
+pub(crate) const TRADE_NOTE_RATE: f64 = 0.10;
 /// 外币折算基准（exchange_rates 落库值与 amount_native_cents 折算共用，恒一致）。
 const USD_CNY: f64 = 7.20;
 const EUR_CNY: f64 = 7.85;
+/// 港元折算基准（港股户交易的 native 折算与 exchange_rates 落库值共用，恒一致）。
+const HKD_CNY: f64 = 0.92;
 /// 写入侧设备标识（非真实设备）。
-const DEVICE_ID: &str = "ledger-perf";
+pub(crate) const DEVICE_ID: &str = "ledger-perf";
 /// 每账户保留的近期支出退款源上限（环形缓冲）。
 const REFUND_BUFFER_CAP: usize = 64;
 
@@ -111,6 +131,18 @@ pub(crate) struct GenCounts {
     pub refund_transactions: usize,
     pub exchange_rates: usize,
     pub fx_rate_history: usize,
+    /// 投资域（issue #460）。
+    pub instruments: usize,
+    pub market_prices: usize,
+    pub price_history: usize,
+    pub buy_trades: usize,
+    pub sell_trades: usize,
+    /// 预算与定时计划（issue #460）。
+    pub budgets: usize,
+    pub scheduled_plans: usize,
+    pub scheduled_occurrences: usize,
+    /// 已完成期次生成的真实交易（从 --transactions 预算中预留）。
+    pub scheduled_occurrence_transactions: usize,
 }
 
 /// 入口：解析日期、准备输出文件、经迁移建库、生成、打印摘要。
@@ -130,8 +162,8 @@ pub(crate) fn run(cli: GenerateCli) -> Result<(), String> {
     let started = std::time::Instant::now();
     let counts = generate_into(&mut conn, &params)?;
     println!(
-        "生成完成：{} accounts / {} categories（迁移种子另计）/ {} merchants / {} transactions\
-         （软删 {}、转账 {}、退款 {}）/ {} exchange_rates / {} fx_rate_history（{} 周采样 × 2 币对）",
+        "生成完成：核心域 {} accounts / {} categories（迁移种子另计）/ {} merchants / {} transactions\
+         （软删 {}、转账 {}、退款 {}）",
         counts.accounts,
         counts.categories,
         counts.merchants,
@@ -139,9 +171,26 @@ pub(crate) fn run(cli: GenerateCli) -> Result<(), String> {
         counts.deleted_transactions,
         counts.transfer_transactions,
         counts.refund_transactions,
+    );
+    println!(
+        "投资与计划：{} instruments / {} market_prices / {} price_history / {} 标的交易\
+         （买 {} 卖 {}）/ {} budgets / {} scheduled_plans（{} 期次、{} 期次交易）",
+        counts.instruments,
+        counts.market_prices,
+        counts.price_history,
+        counts.buy_trades + counts.sell_trades,
+        counts.buy_trades,
+        counts.sell_trades,
+        counts.budgets,
+        counts.scheduled_plans,
+        counts.scheduled_occurrences,
+        counts.scheduled_occurrence_transactions,
+    );
+    println!(
+        "汇率：{} exchange_rates / {} fx_rate_history（{} 周采样 × 3 币对）",
         counts.exchange_rates,
         counts.fx_rate_history,
-        counts.fx_rate_history / 2,
+        counts.fx_rate_history / 3,
     );
     println!(
         "输出：{}（耗时 {:.1?}）",
@@ -193,12 +242,13 @@ pub(crate) fn generate_into(
     };
     let millis = date_millis(&start_date);
     let stamp = format!("{start_date}T08:00:00Z");
+    debug_assert!((SELL_BOUND - 1.0).abs() < 1e-9, "kind 份额之和必须为 1");
     let mut rng = Rng::new(p.seed);
     let mut counts = GenCounts::default();
 
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
 
-    // 1) 账户（现金/储蓄/信用卡/钱包混合 + 少量 USD/EUR）
+    // 1) 账户（现金/储蓄/信用卡/钱包/投资混合 + 少量外币户）
     let account_rows = insert_accounts(&tx, &mut rng, &stamp, millis, &mut counts)?;
 
     // 2) 分类（40 个，支出 30 / 收入 10，两级）+ 读取全量分类池（含迁移种子）
@@ -208,7 +258,22 @@ pub(crate) fn generate_into(
     // 3) 商户（800 个，长尾结构）
     let (top_merchants, tail_merchants) = insert_merchants(&tx, &stamp, millis, &mut counts)?;
 
-    // 4) 交易（核心画像）
+    // 4) 投资域字典与价格线（20 标的 + 周采样历史 + 现价缓存，issue #460）
+    let instrument_rows = investments::insert_instruments(&tx, &stamp, millis, &mut counts)?;
+    let md = investments::insert_market_data(&tx, &mut rng, &instrument_rows, window, &mut counts)?;
+
+    // 5) 预算与定时计划（少量固定块；期次交易从预算预留，issue #460）
+    plans::insert_budgets(&tx, &mut rng, &expense_pool, start_date, &mut counts)?;
+    let reserved = plans::insert_scheduled(
+        &tx,
+        &expense_pool,
+        &top_merchants,
+        &account_rows,
+        p.end_date,
+        &mut counts,
+    )?;
+
+    // 6) 交易（核心画像 + 标的交易臂；预算扣留期次交易）
     let ctx = TxContext::new(
         &account_rows,
         &expense_pool,
@@ -216,14 +281,20 @@ pub(crate) fn generate_into(
         &top_merchants,
         &tail_merchants,
         window,
+        md,
     );
-    let txn_counts = insert_transactions(&tx, &mut rng, p, &ctx)?;
-    counts.transactions = txn_counts.total;
+    let mut pf = Portfolio::new(ctx.inv.slots.len());
+    let txn_counts =
+        insert_transactions(&tx, &mut rng, p, &ctx, &instrument_rows, &mut pf, reserved)?;
+    counts.transactions = txn_counts.total + reserved as usize;
     counts.deleted_transactions = txn_counts.deleted;
     counts.transfer_transactions = txn_counts.transfers;
     counts.refund_transactions = txn_counts.refunds;
+    let (buys, sells) = pf.trade_counts();
+    counts.buy_trades = buys;
+    counts.sell_trades = sells;
 
-    // 5) 当前汇率 + 全历史周采样汇率（全历史填充供历史折算与走势查询）
+    // 7) 当前汇率 + 全历史周采样汇率（全历史填充供历史折算与走势查询）
     counts.exchange_rates = insert_exchange_rates(&tx, p)?;
     counts.fx_rate_history = insert_fx_rate_history(&tx, &mut rng, p, start_date)?;
 
@@ -235,8 +306,9 @@ pub(crate) fn generate_into(
 // 账户
 // ---------------------------------------------------------------------------
 
-/// 50 个账户：现金 12 / 储蓄 22（19 CNY + 2 USD + 1 EUR）/ 信用卡 10（9 CNY + 1 USD）/
-/// 钱包 6，全 CNY 除注明的 3 个外币户。外币户占 3/50 ≈ 6%，即「USD/EUR 少量」。
+/// 50 个账户：现金 12 / 储蓄 19（16 CNY + 2 USD + 1 EUR）/ 信用卡 9（8 CNY + 1 USD）/
+/// 钱包 4 / 投资 6（5 CNY + 1 HKD），全 CNY 除注明的 3 个外币户。外币户占 3/50 ≈ 6%，
+/// 即「USD/EUR 少量」；投资户承接标的交易（同币种纪律见 investments 模块头）。
 fn insert_accounts(
     conn: &Connection,
     rng: &mut Rng,
@@ -248,25 +320,30 @@ fn insert_accounts(
     for _ in 0..12 {
         specs.push(("cash", "CNY"));
     }
-    for _ in 0..19 {
+    for _ in 0..16 {
         specs.push(("bank", "CNY"));
     }
     specs.push(("bank", "USD"));
     specs.push(("bank", "USD"));
     specs.push(("bank", "EUR"));
-    for _ in 0..9 {
+    for _ in 0..8 {
         specs.push(("credit", "CNY"));
     }
     specs.push(("credit", "USD"));
-    for _ in 0..6 {
+    for _ in 0..4 {
         specs.push(("ewallet", "CNY"));
     }
+    for _ in 0..5 {
+        specs.push(("investment", "CNY"));
+    }
+    specs.push(("investment", "HKD"));
     debug_assert_eq!(specs.len(), ACCOUNT_TOTAL);
 
     let type_label = |t: &str| match t {
         "cash" => "现金",
         "bank" => "储蓄卡",
         "credit" => "信用卡",
+        "investment" => "证券户",
         _ => "电子钱包",
     };
     let initial = |t: &str, rng: &mut Rng| -> i64 {
@@ -274,6 +351,7 @@ fn insert_accounts(
             "cash" => rng.range_i64(5_000, 200_000),
             "bank" => rng.range_i64(1_000_000, 30_000_000),
             "credit" => 0,
+            "investment" => rng.range_i64(500_000, 20_000_000),
             _ => rng.range_i64(20_000, 500_000),
         }
     };
@@ -306,7 +384,11 @@ fn insert_accounts(
             ],
         )
         .map_err(|e| e.to_string())?;
-        rows.push(AccountRow { id, ccy: ccy_code });
+        rows.push(AccountRow {
+            id,
+            ccy: ccy_code,
+            atype,
+        });
     }
     counts.accounts = rows.len();
     Ok(rows)
@@ -476,16 +558,25 @@ fn insert_merchants(
 
 /// 数据窗口：交易与汇率历史共用的日期上下文（起点 / 天数 / 锚定结束日）。
 #[derive(Clone, Copy)]
-struct Window {
-    start: NaiveDate,
-    total_days: i64,
-    end: NaiveDate,
+pub(crate) struct Window {
+    pub start: NaiveDate,
+    pub total_days: i64,
+    pub end: NaiveDate,
 }
 
-/// 生成的账户行：id 连同本位币（交易币种与转账同币约束都消费它）。
-struct AccountRow {
-    id: String,
-    ccy: &'static str,
+impl Window {
+    /// 窗口内均匀随机日期（锥到锚定结束日期内）。
+    pub fn rand_date(&self, rng: &mut Rng) -> NaiveDate {
+        (self.start + Duration::days(rng.below(self.total_days as u64) as i64)).min(self.end)
+    }
+}
+
+/// 生成行的账户：id 连同本位币与类型（交易币种/转账同币约束/计划账户选取/
+/// 投资槽位都消费它）。
+pub(crate) struct AccountRow {
+    pub id: String,
+    pub ccy: &'static str,
+    pub atype: &'static str,
 }
 
 /// 退款链的支出源引用（同账户环形缓冲，供 refund 继承账户/分类/商户；币种随账户）。
@@ -498,7 +589,8 @@ struct ExpenseRef {
     merchant: Option<String>,
 }
 
-/// 交易生成的共享上下文：账户视图、分类/商户池与日期窗口（行间只读复用）。
+/// 交易生成的共享上下文：账户视图、分类/商户池、日期窗口、投资价格线与
+/// 投资账户槽位（行间只读复用）。
 struct TxContext<'a> {
     account_ids: Vec<&'a str>,
     ccys: Vec<&'a str>,
@@ -508,11 +600,42 @@ struct TxContext<'a> {
     top_merchants: &'a [String],
     tail_merchants: &'a [String],
     window: Window,
+    /// 投资价格线（标的交易取当日周价）。
+    md: MarketData,
+    /// 投资账户选取：同币种槽位表 + 槽位 → 账户下标。
+    inv: InvPick,
+}
+
+/// 投资账户选取上下文：槽位（生成账户清单中的下标）按币种分桶，
+/// 标的交易按「标的币种 = 账户币种」同币纪律选槽。
+struct InvPick {
+    ccy_slots: Vec<(&'static str, Vec<usize>)>,
+    slots: Vec<usize>,
+}
+
+impl InvPick {
+    fn new(account_rows: &[AccountRow]) -> Self {
+        let mut slots = Vec::new();
+        let mut ccy_slots: Vec<(&'static str, Vec<usize>)> = Vec::new();
+        for (idx, row) in account_rows.iter().enumerate() {
+            if row.atype != "investment" {
+                continue;
+            }
+            let slot = slots.len();
+            slots.push(idx);
+            match ccy_slots.iter_mut().find(|(c, _)| *c == row.ccy) {
+                Some((_, list)) => list.push(slot),
+                None => ccy_slots.push((row.ccy, vec![slot])),
+            }
+        }
+        InvPick { ccy_slots, slots }
+    }
 }
 
 impl<'a> TxContext<'a> {
     /// 由生成的账户行与各池构建；同币种账户索引表供转账挑对手
-    /// （转账必须在同币种两账户间进行，跨币种转账非产品语义）。
+    /// （转账必须在同币种两账户间进行，跨币种转账非产品语义）；
+    /// 投资槽位与价格线供标的交易臂消费（issue #460）。
     fn new(
         account_rows: &'a [AccountRow],
         expense_pool: &'a [String],
@@ -520,6 +643,7 @@ impl<'a> TxContext<'a> {
         top_merchants: &'a [String],
         tail_merchants: &'a [String],
         window: Window,
+        md: MarketData,
     ) -> Self {
         let mut same_ccy: Vec<(&str, Vec<usize>)> = Vec::new();
         for (idx, row) in account_rows.iter().enumerate() {
@@ -537,6 +661,8 @@ impl<'a> TxContext<'a> {
             top_merchants,
             tail_merchants,
             window,
+            md,
+            inv: InvPick::new(account_rows),
         }
     }
 
@@ -555,7 +681,7 @@ impl<'a> TxContext<'a> {
             EXPENSE_MERCHANT_RATE,
         );
         let note = maybe_note(rng, NOTE_RATE);
-        let date = rand_date(rng, self.window);
+        let date = self.window.rand_date(rng);
         PendingRow {
             kind: "expense",
             to_account: None,
@@ -590,7 +716,7 @@ impl<'a> TxContext<'a> {
             refund_of: None,
             note: maybe_note(rng, NOTE_RATE),
             amount: rng.range_i64(50_000, 2_000_000),
-            date: rand_date(rng, self.window),
+            date: self.window.rand_date(rng),
             new_expense: None,
         }
     }
@@ -617,7 +743,7 @@ impl<'a> TxContext<'a> {
                 refund_of: None,
                 note: maybe_note(rng, TRANSFER_NOTE_RATE),
                 amount: rng.range_i64(5_000, 2_000_000),
-                date: rand_date(rng, self.window),
+                date: self.window.rand_date(rng),
                 new_expense: None,
             }
         } else {
@@ -652,6 +778,9 @@ fn insert_transactions(
     rng: &mut Rng,
     p: &GenerateParams,
     ctx: &TxContext,
+    instruments: &[investments::InstrumentRow],
+    pf: &mut Portfolio,
+    reserved: u64,
 ) -> Result<TxnCounts, String> {
     const SQL: &str = "INSERT INTO transactions (id,kind,amount_cents,currency_code,\
          amount_native_cents,account_id,to_account_id,category_id,merchant_id,\
@@ -669,23 +798,29 @@ fn insert_transactions(
         refunds: 0,
     };
 
-    for seq in 0..p.transactions {
+    // 预算扣留计划期次交易（issue #460）：序号接在其后，保证 transactions 表
+    // 确定性 id 全局不撞（同 tag 同 seq 同毫秒才同 id）。
+    let regular = p.transactions.saturating_sub(reserved);
+    let mut seq = reserved;
+    for _ in 0..regular {
+        seq += 1;
         let account_idx = rng.below(ctx.account_ids.len() as u64) as usize;
-        let ccy = ctx.ccy_of(account_idx);
         let roll = rng.next_f64();
 
-        let row = if roll < EXPENSE_SHARE {
-            ctx.expense_row(rng)
-        } else if roll < EXPENSE_SHARE + INCOME_SHARE {
-            ctx.income_row(rng)
-        } else if roll < EXPENSE_SHARE + INCOME_SHARE + TRANSFER_SHARE {
-            ctx.transfer_row(rng, account_idx)
-        } else {
+        // 常规臂产 PendingRow；标的臂（buy/sell）产 PendingRow + 交易计划——
+        // 交易行金额/日期由计划给出，批次副作用在行落库后应用（issue #460）。
+        let (row, trade): (PendingRow, Option<TradeKind>) = if roll < EXPENSE_SHARE {
+            (ctx.expense_row(rng), None)
+        } else if roll < INCOME_BOUND {
+            (ctx.income_row(rng), None)
+        } else if roll < TRANSFER_BOUND {
+            (ctx.transfer_row(rng, account_idx), None)
+        } else if roll < REFUND_BOUND {
             // 退款链：从同账户近期支出取源（账户/分类/商户继承，币种随账户，
             // 退款日期不早于原支出）；缓冲为空（极小规模）时退化为支出。
             let buffer = &mut buffers[account_idx];
             if buffer.is_empty() {
-                ctx.expense_row(rng)
+                (ctx.expense_row(rng), None)
             } else {
                 let pick_idx = rng.below(buffer.len() as u64) as usize;
                 let src = &buffer[pick_idx];
@@ -695,24 +830,87 @@ fn insert_transactions(
                     (src.amount_cents / 2).max(1)
                 };
                 let date = (src.date + Duration::days(rng.below(31) as i64)).min(ctx.window.end);
-                PendingRow {
-                    kind: "refund",
-                    to_account: None,
-                    category: src.category.clone(),
-                    merchant: src.merchant.clone(),
-                    refund_of: Some(src.id.clone()),
-                    note: Some("退款".to_string()),
-                    amount,
-                    date,
-                    new_expense: None,
-                }
+                (
+                    PendingRow {
+                        kind: "refund",
+                        to_account: None,
+                        category: src.category.clone(),
+                        merchant: src.merchant.clone(),
+                        refund_of: Some(src.id.clone()),
+                        note: Some("退款".to_string()),
+                        amount,
+                        date,
+                        new_expense: None,
+                    },
+                    None,
+                )
             }
+        } else if roll < BUY_BOUND {
+            // 买入：随机标的 → 同币种投资账户 → 当日周价（issue #460）。
+            match investments::plan_buy(rng, &ctx.inv.ccy_slots, &ctx.md, ctx.window) {
+                Some(t) => {
+                    let t = TradeKind::Buy(t);
+                    let row = PendingRow {
+                        kind: "buy",
+                        to_account: None,
+                        category: None,
+                        merchant: None,
+                        refund_of: None,
+                        note: maybe_note(rng, TRADE_NOTE_RATE),
+                        amount: t.row_amount(),
+                        date: t.row_date(),
+                        new_expense: None,
+                    };
+                    (row, Some(t))
+                }
+                // 结构退化兜底（无同币种投资账户，正常参数下不可达）：降级为支出。
+                None => (ctx.expense_row(rng), None),
+            }
+        } else if roll < SELL_BOUND {
+            // 卖出：有剩余量的（账户, 标的）组合中随机取一个，FIFO 匹配；
+            // 尚无可卖量（窗口初期的卖出 roll）时降级为买入。
+            let plan = match investments::plan_sell(rng, pf, &ctx.md, ctx.window) {
+                Some(t) => Some(TradeKind::Sell(Box::new(t))),
+                None => investments::plan_buy(rng, &ctx.inv.ccy_slots, &ctx.md, ctx.window)
+                    .map(TradeKind::Buy),
+            };
+            match plan {
+                Some(t) => {
+                    let kind = if matches!(t, TradeKind::Sell(_)) {
+                        "sell"
+                    } else {
+                        "buy"
+                    };
+                    let row = PendingRow {
+                        kind,
+                        to_account: None,
+                        category: None,
+                        merchant: None,
+                        refund_of: None,
+                        note: maybe_note(rng, TRADE_NOTE_RATE),
+                        amount: t.row_amount(),
+                        date: t.row_date(),
+                        new_expense: None,
+                    };
+                    (row, Some(t))
+                }
+                None => (ctx.expense_row(rng), None),
+            }
+        } else {
+            // 浮点边界之外的兜底臂（份额和恒 1，正常不可达）。
+            (ctx.expense_row(rng), None)
         };
         if row.kind == "transfer" {
             counts.transfers += 1;
         } else if row.kind == "refund" {
             counts.refunds += 1;
         }
+
+        // 标的交易的账户/币种由计划给出（投资账户 + 同币种纪律），常规行随随机账户。
+        let (ccy, account) = match &trade {
+            Some(t) => (t.ccy(), ctx.inv.slots[t.account_slot()]),
+            None => (ctx.ccy_of(account_idx), account_idx),
+        };
 
         // 行序号推导确定性 id；新支出带 id 入缓冲（成为后续退款的源）。
         let id = time_ordered_id("transactions", seq, date_millis(&row.date));
@@ -731,7 +929,9 @@ fn insert_transactions(
             rng.range_i64(0, 59)
         );
         let native = (row.amount as f64 * fx(ccy)).round() as i64;
-        let deleted = rng.chance(SOFT_DELETE_RATE);
+        // 标的交易不软删：产品删除 buy/sell 会回滚批次副作用，
+        // 「软删交易行 + 存活批次」不是产品能产出的形态。
+        let deleted = trade.is_none() && rng.chance(SOFT_DELETE_RATE);
         if deleted {
             counts.deleted += 1;
         }
@@ -742,7 +942,7 @@ fn insert_transactions(
             row.amount,
             ccy,
             native,
-            ctx.account_ids[account_idx],
+            ctx.account_ids[account],
             row.to_account,
             row.category,
             row.merchant,
@@ -754,6 +954,15 @@ fn insert_transactions(
             deleted as i64,
         ])
         .map_err(|e| e.to_string())?;
+        if let Some(t) = trade {
+            let fx = investments::SideEffects {
+                instrument_id: &instruments[t.instrument_idx()].id,
+                account_id: ctx.account_ids[account],
+                created: &created,
+                millis: date_millis(&row.date),
+            };
+            investments::apply_trade(conn, &id, t, &fx, pf)?;
+        }
         counts.total += 1;
     }
     Ok(counts)
@@ -764,6 +973,7 @@ fn fx(ccy: &str) -> f64 {
     match ccy {
         "USD" => USD_CNY,
         "EUR" => EUR_CNY,
+        "HKD" => HKD_CNY,
         _ => 1.0,
     }
 }
@@ -798,11 +1008,6 @@ fn maybe_note(rng: &mut Rng, rate: f64) -> Option<String> {
     ))
 }
 
-/// 窗口内均匀随机日期（钳到锚定结束日期内）。
-fn rand_date(rng: &mut Rng, window: Window) -> NaiveDate {
-    (window.start + Duration::days(rng.below(window.total_days as u64) as i64)).min(window.end)
-}
-
 /// 保留每账户最近 REFUND_BUFFER_CAP 条支出作为退款源。
 fn trim_buffer(buf: &mut VecDeque<ExpenseRef>) {
     while buf.len() > REFUND_BUFFER_CAP {
@@ -810,7 +1015,7 @@ fn trim_buffer(buf: &mut VecDeque<ExpenseRef>) {
     }
 }
 
-fn date_millis(d: &NaiveDate) -> i64 {
+pub(crate) fn date_millis(d: &NaiveDate) -> i64 {
     d.and_hms_opt(12, 0, 0)
         .map(|dt| dt.and_utc().timestamp_millis())
         .unwrap_or(0)
@@ -820,11 +1025,16 @@ fn date_millis(d: &NaiveDate) -> i64 {
 // 汇率
 // ---------------------------------------------------------------------------
 
-/// 当前汇率两行（USD/EUR → CNY；折算基准与交易 native 列共用常量，恒一致）。
+/// 当前汇率三行（USD/EUR/HKD → CNY；折算基准与交易 native 列共用常量，恒一致；
+/// HKD 行供港股市值在净资产/可投资资产聚合层的折算，issue #460）。
 fn insert_exchange_rates(conn: &Connection, p: &GenerateParams) -> Result<usize, String> {
     let millis = date_millis(&p.end_date);
     let priced_at = format!("{}T16:00:00Z", p.end_date);
-    for (seq, (base, rate)) in [(0u64, ("USD", USD_CNY)), (1, ("EUR", EUR_CNY))] {
+    for (seq, (base, rate)) in [
+        (0u64, ("USD", USD_CNY)),
+        (1, ("EUR", EUR_CNY)),
+        (2, ("HKD", HKD_CNY)),
+    ] {
         conn.execute(
             "INSERT OR REPLACE INTO exchange_rates (id,base_code,quote_code,rate,priced_at,source,\
              updated_at,version,device_id) VALUES (?1,?2,?3,?4,?5,'perf',?5,1,?6)",
@@ -839,11 +1049,11 @@ fn insert_exchange_rates(conn: &Connection, p: &GenerateParams) -> Result<usize,
         )
         .map_err(|e| e.to_string())?;
     }
-    Ok(2)
+    Ok(3)
 }
 
 /// fx_rate_history 全历史填充：窗口内每周一采样一条（trade_date 取当周周五、
-/// 不足则钳到锚定结束日），USD/EUR 两币对，汇率围绕基准 ±2% 种子化漂移。
+/// 不足则钳到锚定结束日），USD/EUR/HKD 三币对，汇率围绕基准 ±2% 种子化漂移。
 /// 「币种对 × 周唯一」由 UNIQUE(base,quote,week_start) 保证，每周恰一行不冲突。
 fn insert_fx_rate_history(
     conn: &Connection,
@@ -861,7 +1071,7 @@ fn insert_fx_rate_history(
     while monday <= p.end_date {
         let trade_date = (monday + Duration::days(4)).min(p.end_date);
         let created = format!("{trade_date}T16:00:00Z");
-        for (base, base_rate) in [("USD", USD_CNY), ("EUR", EUR_CNY)] {
+        for (base, base_rate) in [("USD", USD_CNY), ("EUR", EUR_CNY), ("HKD", HKD_CNY)] {
             let drift = 1.0 + (rng.next_f64() - 0.5) * 0.04;
             let rate = (base_rate * drift * 1e6).round() / 1e6;
             stmt.execute(rusqlite::params![
