@@ -1,5 +1,6 @@
 use crate::db::query::query_all;
-use crate::models::Currency;
+
+use super::model::Currency;
 
 fn setup() -> rusqlite::Connection {
     let mut conn = crate::db::open_in_memory().unwrap();
