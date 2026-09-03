@@ -4,12 +4,12 @@ use std::path::PathBuf;
 
 use cucumber::World;
 
+use tauri_app_lib::dashboard::DashboardOverview;
 use tauri_app_lib::db::DbState;
 use tauri_app_lib::db::data_location::{DataLocationChangeOutcome, DataLocationInfo};
 use tauri_app_lib::item::{ItemDailyCost, ItemDailyTotal, ItemWithDailyCost};
 use tauri_app_lib::models::{
-    CreateTransactionResult, DashboardOverview, Transaction, TransactionInput,
-    TransactionSearchResult,
+    CreateTransactionResult, Transaction, TransactionInput, TransactionSearchResult,
 };
 use tauri_app_lib::transaction::amount::TransactionKind;
 
@@ -150,13 +150,13 @@ pub struct LedgerWorld {
     /// 最近一次预算进度快照（预算滚动窗口场景断言用，issue #182）
     pub last_budget_progress: Vec<tauri_app_lib::budget::BudgetProgress>,
     /// 最近一次商户消费排行快照（报表商户排行场景断言用，issue #192）
-    pub last_merchant_shares: Vec<tauri_app_lib::models::MerchantShare>,
+    pub last_merchant_shares: Vec<tauri_app_lib::reports::MerchantShare>,
     /// 最近一次月度汇总快照（报表期间过滤场景断言用，issue #411）
-    pub last_monthly_summary: Vec<tauri_app_lib::models::MonthlySummary>,
+    pub last_monthly_summary: Vec<tauri_app_lib::reports::MonthlySummary>,
     /// 最近一次分类份额快照（报表分类份额年份联动场景断言用，issue #376）
-    pub last_category_shares: Vec<tauri_app_lib::models::CategoryShare>,
+    pub last_category_shares: Vec<tauri_app_lib::reports::CategoryShare>,
     /// 最近一次报表日期筛选范围快照（报表日期范围场景断言用，issue #266 / #389）
-    pub last_date_range: Option<tauri_app_lib::models::DateRange>,
+    pub last_date_range: Option<tauri_app_lib::reports::DateRange>,
     /// 最近一次追补入口执行汇总快照（自动执行追补场景断言用，issue #307）
     pub last_catch_up: Option<tauri_app_lib::scheduled_transactions::CatchUpSummary>,
     /// 最近一次定时计划详情快照（期次详情弹窗场景断言用，issue #205）

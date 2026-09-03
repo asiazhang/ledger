@@ -6,9 +6,9 @@
 use tauri::State;
 
 use crate::dashboard as dashboard_domain;
+use crate::dashboard::DashboardOverview;
 use crate::db::DbState;
 use crate::error::{AppError, Result};
-use crate::models::DashboardOverview;
 
 /// 首页净资产总览：本位币净资产及其两个组成。
 #[tauri::command]

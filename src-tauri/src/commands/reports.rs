@@ -10,8 +10,8 @@ use tauri::State;
 
 use crate::db::DbState;
 use crate::error::{AppError, Result};
-use crate::models::{CategoryShare, DateRange, MerchantShare, MonthlySummary};
 use crate::reports as reports_domain;
+use crate::reports::{CategoryShare, DateRange, MerchantShare, MonthlySummary};
 
 #[tauri::command]
 pub fn monthly_summary(
