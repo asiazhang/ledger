@@ -29,6 +29,8 @@ import {
   TrendingUpOutline,
   CubeOutline,
   CalculatorOutline,
+  ChevronForwardOutline,
+  LayersOutline,
   SparklesOutline,
   SettingsOutline,
 } from '@vicons/ionicons5'
@@ -151,12 +153,26 @@ const menuOptions = computed<MenuOption[]>(() => {
       key: `sidebar-group:${g.id}`,
       // 组标题行：组名 + 按需「更多」链接（issue #472/#473 / ADR-0063 决策 1）——
       // 链接仅当组内存在收纳成员时渲染（菜单分组标题天然不可交互，链接是自定义渲染的新元素）；
-      // 折叠态不渲染组标题，链接随之不渲染（决策 6 天然成立）；链接无键位、不出提示。
+      // 折叠态不渲染组标题，链接随之不渲染（决策 6 天然成立）；链接无键位、不出快捷键提示。
       label: () =>
         h('div', { class: 'sidebar-group-title' }, [
           h('span', t(`common.sidebarGroup.${g.id}`)),
           sidebarContainment.value[g.id].length > 0
-            ? h('a', { class: 'group-more-link', onClick: () => { void router.push({ name: `${g.id}-more` }) } }, t('common.nav.more'))
+            ? h('a',
+                {
+                  class: ['group-more-link', { 'is-active': route.name === `${g.id}-more` }],
+                  // 原生 tooltip 说明该组收纳了哪些功能，给「更多」一个可预期的去向
+                  title: sidebarContainment.value[g.id]
+                    .map((n) => viewLabel(n))
+                    .join(currentLocale.value === 'en-US' ? ', ' : '、'),
+                  onClick: () => { void router.push({ name: `${g.id}-more` }) },
+                },
+                [
+                  h(NIcon, { size: 14, class: 'group-more-icon' }, { default: () => h(LayersOutline) }),
+                  t('common.nav.more'),
+                  h(NIcon, { size: 12, class: 'group-more-caret' }, { default: () => h(ChevronForwardOutline) }),
+                ],
+              )
             : null,
         ]),
       children: g.views.map((name) => item(name)),
@@ -298,22 +314,49 @@ const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(rou
 </template>
 
 <style scoped>
-/* 组标题行「更多」链接（issue #472 / ADR-0063 决策 1）：标题行两端对齐，
-   链接弱化为次级样式，点击进入该组「更多」聚合页；无键位提示。 */
-.sidebar-group-title {
+/* 组标题行「更多」链接（issue #472 / ADR-0063 决策 1）。
+   这些类位于 label 渲染函数 h() 创建的元素上，不带本组件 data-v 属性，
+   scoped 原生类名选择器匹配不到，必须 :deep() 以 [data-v] 后代选择器命中
+   （锚点为 NMenu 根元素，继承父组件 scopeId）。
+   三态：静默与组标题同色 → hover 淡背景 + 实色 →
+   所在组「更多」页激活时主色 + 选中淡背景（与子菜单项选中态一致）。 */
+:deep(.sidebar-group-title) {
   display: flex;
+  flex: 1;
+  min-width: 0;
   justify-content: space-between;
   align-items: center;
   gap: 8px;
+  /* 14px + 链接自身 6px 右 padding = 20px，链接盒（文字+箭头）右缘
+     与上下菜单项键位提示对齐（.n-menu-item-content 18px + 键位行 2px）。 */
+  padding-right: 14px;
 }
 
-.group-more-link {
+:deep(.group-more-link) {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   font-size: 12px;
-  opacity: 0.6;
+  color: var(--n-group-text-color);
+  /* 扩大点击热区（约 24x16），不显眼地包住文字与箭头 */
+  padding: 2px 6px;
+  border-radius: var(--n-border-radius, 4px);
   cursor: pointer;
+  text-decoration: none;
+  transition:
+    color .2s var(--n-bezier),
+    background-color .2s var(--n-bezier);
 }
 
-.group-more-link:hover {
-  opacity: 1;
+:deep(.group-more-link:hover) {
+  color: var(--n-item-text-color-hover);
+  background-color: var(--n-item-color-hover);
+}
+
+/* 激活态置于 hover 之后：悬停已激活链接时保持选中背景不闪变 */
+:deep(.group-more-link.is-active),
+:deep(.group-more-link.is-active:hover) {
+  color: var(--n-item-text-color-active);
+  background-color: var(--n-item-color-active);
 }
 </style>
