@@ -44,58 +44,11 @@
 
 ## 迁移状态与剩余内容 Triage（#402 终态收口）
 
-- **路线图五域（#397–#401）全部归位完成**：
-  - 核心交易 `transaction/`（#403 完整收口：行为编排 `behavior` + 读取 `read` + 搜索 `search` + 批量编排 `batch` + 既有 `amount`/`writer`/`search_text`，壳层压平为单文件 `commands/transactions.rs` 与 `commands/search.rs`，`commands/batch/` 迁空删除）
-  - 定时计划 `scheduled_transactions/`（既有）
-  - 物品 `item/`（阶段 1 #397 归位：域 API `item::domain` + 溯源守卫 `item::guard` + 成本口径 `item::cost`，壳层压平为单文件 `commands/item.rs`）
-  - 保单 `policy/`（阶段 2 #398 归位：CRUD / 统计 / 校验分主题模块，壳层压平为单文件 `commands/policy.rs`）
-  - 预算 `budget/`（阶段 3 #399 归位：CRUD / 进度分主题模块，壳层压平为单文件 `commands/budget.rs`）
-  - 商户 `merchants/`（阶段 4 #400 归位：字典 CRUD 与按名查找/即建，壳层压平为单文件 `commands/merchants.rs`）
-  - 投资 `investment/`（阶段 5 #401 归位：买卖协议三件套 / 持仓 / 走势 / 行情与汇率录入 / 基金接入分主题模块，价格写入单点自 `sync::persist` 迁入 `investment::prices`，统一模糊搜索语义纯函数迁入 `transaction::search_text`；壳层压平为单文件 `commands/investment.rs`）
-  - 报表 `reports/`（#405 归位：月度汇总/分类/商户/日期极值聚合读模型，消费 `transaction::amount` 矩阵，壳层压平为单文件 `commands/reports.rs`）
-  - 仪表盘 `dashboard/`（#405 归位：全仓净资产跨币种折算聚合，壳层退化为单文件薄壳 `commands/dashboard.rs`）
-  - 财务自由度随投资域归位（#405：自由度计算口径迁入 `investment/financial_freedom.rs`，经 `investment::` 接缝再导出，壳层退化为薄壳 `commands/financial_freedom.rs`；其依赖的账户余额清单读模型先行下沉基础设施 `db::balance`，账户域归位 #404 时随迁）
-- **参考数据三域（#404）全部归位完成**：
-  - 账户 `accounts/`（#404 归位：CRUD / 自然键幂等创建 / 币种锁定守卫 / 黑洞账户即建与余额调整交易编排，`core` + 测试随迁；壳层压平为单文件 `commands/accounts.rs`；账户/余额清单读模型沿用基础设施 `db::balance` 单点）
-  - 分类 `categories/`（#404 归位：CRUD / 自然键幂等创建 / 两级分类校验 / 预算删除守卫 / 排序重排，`core` + 测试随迁；壳层压平为单文件 `commands/categories.rs`）
-  - 币种 `currencies/`（#404 归位：种子权威清单查询微域 `list`；壳层压平为单文件 `commands/currencies.rs`）
-  - 基础设施五处（`db/`、`signals.rs`、`models/`、`error.rs`、`settings.rs`）已入守门白名单。
-- **备份域（#406）归位完成**：
-  - 备份 `backup/`（#406 归位：备份引擎 `engine`（zip 打包 / `VACUUM INTO` 快照 / 恢复与安全备份 / schema 校验 / 受管备份清理）自 `commands/backup/core.rs`、自动备份调度 `auto`（到期判定纯函数 / 本地日界门 / 三触发入口 / 偏好镜像 / 退出兑底）自顶层 `auto_backup.rs` 整合随迁，外挂测试随迁；壳层压平为单文件 `commands/backup.rs`）
-
-- **行情同步域（#407）归位完成**：
-  - 行情同步 `sync/`（#407 归位：HTTP 网络客户端与解析 `http`、东财基金详情访问 `fund`、历史净值通道 `fund_nav`、增量同步 `incremental`、全量同步编排 `orchestrate`、标的字典与汇率落库 `persist` 自 `commands/sync/` 整体随迁，外挂测试随迁；同步控制三类型与基金行情 DTO 自全局模型目录随域迁入 `sync::model`（#417 归属裁决），中断状态与进度推送分主题归位 `state` / `progress`；壳层压平为单文件 `commands/sync.rs`）
-
-### 剩余内容逐项 Triage 判定表（无未判定项）
-
-| 模块 / 文件 | 当前位置 | 归属判定 | 目标位置 | 判定理由 | 后续票 |
-|---|---|---|---|---|---|
-| **交易行为与读取** | `src-tauri/src/transaction/` (`behavior.rs`, `read.rs`) | 已归位 | `src-tauri/src/transaction/` | 交易创建/修改/删除编排三入口、嵌套事务感知、副作用分派与读取实现是核心交易域引擎本体，非 IPC 壳（#403 归位） | #403 |
-| **交易搜索查询** | `src-tauri/src/transaction/` (`search.rs`) | 已归位 | `src-tauri/src/transaction/` | `TransactionSearch` 的 SQL 候选全量扫描与流式分页实现，与既有 `transaction::search_text` 纯文本匹配汇流归位（#403 归位） | #403 |
-| **交易批量写入** | `src-tauri/src/transaction/` (`batch.rs`) | 已归位 | `src-tauri/src/transaction/` | `TransactionBatch::run` 批量落库、幂等键/内容哈希去重判定与批次汇总日志为核心交易域批量编排能力（#403 归位） | #403 |
-| **账户** | `src-tauri/src/accounts/` | 已归位 | `src-tauri/src/accounts/` | 账户 CRUD、自然键幂等创建、币种锁定守卫、黑洞账户创建与余额调整交易编排等独立领域规则（#404 归位；账户/余额清单读模型沿用基础设施 `db::balance`） | #404 |
-| **分类** | `src-tauri/src/categories/` | 已归位 | `src-tauri/src/categories/` | 分类 CRUD、自然键幂等创建、两级分类校验、预算删除守卫与排序重排等独立领域规则（#404 归位） | #404 |
-| **币种** | `src-tauri/src/currencies/` | 已归位 | `src-tauri/src/currencies/` | 参考数据币种列表查询实现，独立建立顶层微域目录，壳层压平为单文件（#404 归位） | #404 |
-| **报表** | `src-tauri/src/reports/` | 已归位 | `src-tauri/src/reports/` | 月度汇总、分类下钻、商户排行与日期极值聚合读模型，消费 `transaction::amount` 矩阵 | #405 |
-| **仪表盘** | `src-tauri/src/dashboard/` | 已归位 | `src-tauri/src/dashboard/` | `query_dashboard_overview` 全仓净资产跨币种折算聚合逻辑下沉域目录，壳层退化为薄壳 | #405 |
-| **财务自由度** | `src-tauri/src/investment/` | 已归位 | `src-tauri/src/investment/` | `query_financial_freedom` 自由度计算口径（投资域 InvestableAssets 词条），下沉投资域 | #405 |
-| **备份与自动备份** | `src-tauri/src/backup/` | 已归位 | `src-tauri/src/backup/` | 备份/恢复/受管备份清理核心引擎与自动备份调度、到期判定纯函数、本地日界门整合归入顶层 backup 域（#406 归位） | #406 |
-| **行情同步** | `src-tauri/src/sync/` | 已归位 | `src-tauri/src/sync/` | HTTP 网络客户端、东财基金净值爬取、增全量同步编排独立建顶层域目录，壳层压平（#407 归位；同步控制三类型与基金行情 DTO 随域迁入 `sync::model`） | #407 |
-| **数据位置** | `commands/data_location.rs` | 迁移 | `src-tauri/src/db/data_location/` | `validate_and_commit` / `gather_info` 数据库引导与位置切换三步校验下沉 db 基础设施，壳层压平 | #408 |
-| **AI 提示词** | `commands/ai.rs` | 确认纯壳 | `src-tauri/src/commands/ai.rs` | 纯 IPC 壳命令，仅读取静态内置提示词模板文件，零领域逻辑，无需单独建域 | — |
-| **日志查看** | `commands/logs.rs` | 确认纯壳 | `src-tauri/src/commands/logs.rs` | 系统控制类薄壳，仅调用平台 opener 打开日志目录，零领域逻辑 | — |
-| **应用重启** | `commands/backup.rs` 中的 `restart_app` | 确认纯壳 | `src-tauri/src/commands/backup.rs` | 系统控制类命令，调用 `app.restart()` | — |
-| **取消行情同步** | `commands/sync.rs` 中的 `cancel_sync_instruments` | 确认纯壳 | `src-tauri/src/commands/sync.rs` | 控制类命令，操作同步状态取消标志（#407 压平后随壳层单文件） | — |
-| **原子文件工具** | `src-tauri/src/fs_util.rs` | 基础设施 | `src-tauri/src/fs_util.rs` | 通用文件原子操作与临时文件工具，零业务语义，列入守门白名单 | #408 |
-| **日志基础设施** | `src-tauri/src/logger.rs` | 基础设施 | `src-tauri/src/logger.rs` | tracing 日志初始化与 7 天自动滚动清理，零业务语义，列入守门白名单 | #408 |
-| **事件投递机制** | `src-tauri/src/events.rs` | 基础设施 | `src-tauri/src/events.rs` | 失效信号与 payload 事件主线程非阻塞投递机制（ADR-0044/0054），列入守门白名单 | #408 |
-| **HTTP 接口服务** | `src-tauri/src/api_server.rs` | 壳层 | `src-tauri/src/api_server/` | 与 `commands/` 并列为外部壳层，单文件 1000+ 行待后续专项目录化重构 | #429 |
-
-## 开放问题（已决收口）
-
-- **行为层编排入口归位时点**：已裁决。`transactions/behavior.rs` 与 `read.rs`、`search/query.rs`、`batch/` 共同构成核心交易域的完整读写编排与搜索能力，正式归位 `src-tauri/src/transaction/`（由后续票 #403 执行）。
-- **行情同步与备份的归属**：已裁决。`commands/sync/` 拥有完整的 HTTP 网络爬虫、基金净值解析与全增量同步编排，单独立顶层域目录 `src-tauri/src/sync/`（#407 已执行）；`commands/backup/core.rs` 与 `auto_backup.rs` 整合为顶层 `src-tauri/src/backup/` 域目录（#406 已执行）。
-- **至此，ADR-0056 开放问题全部收口落定。**
+- **路线图全部完成**（#397–#407，含前置 #395 口径修缮与两处检查点）：核心交易 `transaction/`、定时计划 `scheduled_transactions/`（既有先例）、物品 `item/`、保单 `policy/`、预算 `budget/`、商户 `merchants/`、投资 `investment/`（财务自由度随迁，`investment/financial_freedom.rs`）、报表 `reports/`、仪表盘 `dashboard/`、账户 `accounts/`、分类 `categories/`、币种 `currencies/`、备份 `backup/`、行情同步 `sync/` 全部归位为顶层域目录，各域壳层压平为单文件 `commands/<域>.rs`；逐域模块划分与迁移细节见 git 历史与各域实施票（#397–#407）。
+- **数据位置**（引导 + 更改校验/信息聚合）下沉 `db/data_location/`（#408 已收口，壳层压平为纯壳）；**基础设施**守门白名单：`db/`、`signals.rs`、`models/`、`error.rs`、`settings.rs`、`fs_util.rs`、`logger.rs`、`events.rs`（#408 入白名单）。
+- **确认纯壳不建域**：`commands/ai.rs`（提示词模板读取）、`commands/logs.rs`（打开日志目录）、`restart_app` 等系统控制命令。
+- `api_server.rs`（1000+ 行，专项 #429）待后续专项目录化重构。
+- 原开放问题（行为层编排入口归位、行情同步与备份归属）均已裁决并执行完毕。
 
 ## 备选方案与否决理由
 

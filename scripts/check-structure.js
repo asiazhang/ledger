@@ -42,6 +42,9 @@ export const WHITELIST = [
   { path: 'models', layer: '基础设施', note: '模型' },
   { path: 'error.rs', layer: '基础设施', note: '错误' },
   { path: 'settings.rs', layer: '基础设施', note: '设置' },
+  { path: 'fs_util.rs', layer: '基础设施', note: '文件级原子操作工具（备份与 DataLocation 搬迁共用，#408 纳入守门）' },
+  { path: 'logger.rs', layer: '基础设施', note: '日志初始化与滚动清理（#408 纳入守门）' },
+  { path: 'events.rs', layer: '基础设施', note: '事件发射机制（ADR-0054，#408 纳入守门）' },
 ]
 
 /** 壳层依赖形态：模块路径引用（crate::commands::x / commands::x）与别名引入 */
