@@ -1,5 +1,6 @@
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router'
 import { saveRouteName } from '@/utils/view-state'
+import { isViewContained } from '@/composables/useViewShortcuts'
 
 // 导出供测试用同构 memory router 复用，避免路由表双份漂移
 export const routes: RouteRecordRaw[] = [
@@ -57,10 +58,29 @@ export const routes: RouteRecordRaw[] = [
   {
     // 保单（issue #360 / ADR-0051）：消费型保险合同的静态档案，已迁入「更多」页保单页签
     // （issue #371 / ADR-0055），再按域归位资产组「更多」保单页签（issue #472 / ADR-0063 决策 5）。
-    // 旧路由保留 name 供 ViewState 兼容——存量记录 'policies' 仍可解析并落到资产·更多保单页签。
+    // #475 起按收纳状态分流（beforeEnter 守卫）：仍在收纳清单（出厂态与存量 ViewState 场景）
+    // 重定向到资产·更多保单页签（重定向先例不变）；用户右键「移回侧栏」后清单不再含保单，
+    // 侧栏主项导航（点击/键位）按 name 路由——独立路由渲染保单页。
     path: '/policies',
     name: 'policies',
-    redirect: { name: 'assets-more', query: { tab: 'policies' } },
+    component: () => import('@/views/PoliciesView.vue'),
+    beforeEnter: () =>
+      isViewContained('policies')
+        ? { name: 'assets-more', query: { tab: 'policies' } }
+        : true,
+  },
+  {
+    // 商户/实物资产独立路由（issue #475 / ADR-0063 决策 4）：两者出厂为收纳成员
+    // （记账·商户、资产·实物资产页签），主入口在各组「更多」页；用户右键「移回侧栏」
+    // 后以主项身份入侧栏，侧栏/键位导航按 name 路由——独立路由自本票起必须存在。
+    path: '/merchants',
+    name: 'merchants',
+    component: () => import('@/components/MerchantManager.vue'),
+  },
+  {
+    path: '/physical-assets',
+    name: 'physicalAssets',
+    component: () => import('@/views/PhysicalAssetsView.vue'),
   },
   {
     // 全局「更多」聚合视图已退役（issue #473 / ADR-0063 决策 1/5）：仅留重定向记录，

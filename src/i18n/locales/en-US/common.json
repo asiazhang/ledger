@@ -38,7 +38,9 @@
     "reset": "Reset Default Order"
   },
   "sidebarContainment": {
-    "intoMore": "Move to More"
+    "intoMore": "Move to More",
+    "backToSidebar": "Move to Sidebar",
+    "backBlockedFull": "This group already has 3 main items — move one out to make room"
   },
   "link": {
     "viewMerchant": "View transactions with this merchant",

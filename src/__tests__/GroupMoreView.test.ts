@@ -3,6 +3,7 @@ import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
+import { hasOpenOverlay, resetOverlays } from '@/composables/overlayRegistry'
 import GroupMoreView from '@/views/GroupMoreView.vue'
 import { makePolicy, makePolicyStats } from './factories'
 import { routes, router } from '@/router'
@@ -237,5 +238,94 @@ describe('全局「更多」退役迁移链（issue #473 / ADR-0063 决策 1/5�
     await router.push('/more?tab=merchants')
     await flushPromises()
     expect(localStorage.getItem('view_state:route')).toBe(JSON.stringify('bookkeeping-more'))
+  })
+})
+
+describe('GroupMoreView 页签右键「移回侧栏」（issue #475 / ADR-0063 决策 4）', () => {
+  afterEach(async () => {
+    const mod = await import('@/composables/useViewShortcuts')
+    mod.resetSidebarOrder()
+    localStorage.clear()
+    resetOverlays()
+  })
+
+  function findBackOption(): Element | undefined {
+    return Array.from(document.body.querySelectorAll('.n-dropdown-option')).find((el) =>
+      el.textContent?.includes('移回侧栏'),
+    )
+  }
+
+  it('出厂满员（记账组）：右键页签弹「移回侧栏」置灰且提示文案经 i18n 渲染（定时/商户移回置灰的天然验证场景）；菜单经既有弹层封装上报注册表', async () => {
+    const { wrapper } = await mountGroupView('bookkeeping')
+    await wrapper.findAll('.pane-tab').find((t) => t.text().includes('定时'))!.trigger('contextmenu')
+    await flushPromises()
+    // AppDropdown 封装 + 弹层注册表上报（ADR-0035），零新抑制机制
+    expect(hasOpenOverlay()).toBe(true)
+    const option = findBackOption()
+    expect(option).toBeDefined()
+    // 置灰：naive-ui 的 disabled 修饰类在选项体（后代节点）上
+    expect(option!.querySelector('[class*="disabled"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('本组主项已满 3 项')
+  })
+
+  it('腾位后右键可选：点选「移回侧栏」即从清单删除（页签消失、落本组主项末位）', async () => {
+    const mod = await import('@/composables/useViewShortcuts')
+    mod.applyMoveIntoMore('transactions') // 先移出一个主项腾位（出厂满员须先换位）
+    const { wrapper } = await mountGroupView('bookkeeping')
+    await wrapper.findAll('.pane-tab').find((t) => t.text().includes('定时'))!.trigger('contextmenu')
+    await flushPromises()
+    const option = findBackOption()
+    expect(option).toBeDefined()
+    expect(option!.querySelector('[class*="disabled"]')).toBeNull()
+    const hit = (option!.querySelector('.n-dropdown-option-body') ?? option!) as HTMLElement
+    hit.click()
+    await flushPromises()
+    // 定时页签消失，剩余页签随清单序（商户出厂在前、交易移入缀尾）
+    expect(containerTabs(wrapper)).toEqual(['商户', '交易'])
+    expect(mod.sidebarContainment.value.bookkeeping).toEqual(['merchants', 'transactions'])
+    expect(mod.sidebarGroupOrders.value.bookkeeping).toEqual(['accounts', 'budget', 'scheduled'])
+  })
+
+  it('移回组内最后一个收纳成员后容器零页签（侧栏「更多」链接渲染条件失效的容器面）', async () => {
+    const mod = await import('@/composables/useViewShortcuts')
+    mod.applyMoveIntoMore('reports')
+    mod.applyMoveIntoMore('search')
+    mod.applyMoveBackToSidebar('reports')
+    mod.applyMoveBackToSidebar('search')
+    expect(mod.sidebarContainment.value.insights).toEqual([])
+    const { wrapper } = await mountGroupView('insights')
+    expect(wrapper.findAll('.n-tabs-tab').length).toBe(0)
+  })
+})
+
+describe('移回侧栏后的独立路由（issue #475：侧栏/键位按 name 路由，种子须有真页面）', () => {
+  afterEach(async () => {
+    const mod = await import('@/composables/useViewShortcuts')
+    mod.resetSidebarOrder()
+    localStorage.clear()
+  })
+
+  it('/merchants 与 /physical-assets 独立路由可达（出厂为收纳成员，移回后导航可达）', async () => {
+    await router.push('/merchants')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('merchants')
+    await router.push('/physical-assets')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('physicalAssets')
+  })
+
+  it('/policies 分流：出厂收纳态重定向资产·更多保单页签（#472 重定向先例不变）', async () => {
+    await router.push('/policies')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('assets-more')
+    expect(router.currentRoute.value.query.tab).toBe('policies')
+  })
+
+  it('/policies 分流：移回侧栏后独立渲染保单页（守卫放行，侧栏主项导航可达）', async () => {
+    const mod = await import('@/composables/useViewShortcuts')
+    mod.applyMoveBackToSidebar('policies')
+    await router.push('/policies')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('policies')
   })
 })

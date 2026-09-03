@@ -38,7 +38,9 @@
     "reset": "恢复默认排序"
   },
   "sidebarContainment": {
-    "intoMore": "移入更多"
+    "intoMore": "移入更多",
+    "backToSidebar": "移回侧栏",
+    "backBlockedFull": "本组主项已满 3 项，先移出一个主项腾位"
   },
   "link": {
     "viewMerchant": "查看该商户的交易",
