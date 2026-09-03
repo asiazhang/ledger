@@ -20,6 +20,15 @@ import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { useReportsSessionStore } from '@/stores/reports-session'
 import { kindSemanticColor } from '@/theme/semantic-colors'
+import {
+  SOFT_BAR_PERCENTAGE,
+  SOFT_BAR_RADIUS,
+  SOFT_CATEGORY_PERCENTAGE,
+  SOFT_LEGEND_LABELS,
+  SOFT_TOOLTIP,
+  softBarFillPlugin,
+  softChartColors,
+} from '@/theme/chart-style'
 import { formatAmount } from '@/types'
 import type { CategoryShare, MerchantShare, MonthlySummary } from '@/types'
 import {
@@ -104,46 +113,84 @@ const barChartData = computed(() => ({
   labels: monthly.value.map((m) => m.month),
   // dataset 顺序固定：0=收入、1=支出、2=退款；tooltip 回调按 datasetIndex 取值，
   // 不依赖 label 字符串（label 已随界面语言迁移，不能再当判断依据）。
-  // 三柱颜色与交易列表同类金额同源（issue #435）：语义色模块按当前主题取值。
+  // 三柱颜色与交易列表同类金额同源（issue #435）：语义色模块按当前主题取值；
+  // 柱体渐隐是绘制期呈现（softBarFillPlugin 同色相淡出），此处仍传实色。
   datasets: [
-    { label: t('reports.monthly.income'), data: monthly.value.map((m) => m.income_cents), backgroundColor: kindSemanticColor('income', app.theme) },
-    { label: t('reports.monthly.expense'), data: monthly.value.map((m) => m.expense_cents), backgroundColor: kindSemanticColor('expense', app.theme) },
-    { label: t('reports.monthly.refund'), data: monthly.value.map((m) => m.refund_cents), backgroundColor: kindSemanticColor('refund', app.theme) },
+    {
+      label: t('reports.monthly.income'),
+      data: monthly.value.map((m) => m.income_cents),
+      backgroundColor: kindSemanticColor('income', app.theme),
+      borderRadius: SOFT_BAR_RADIUS,
+      barPercentage: SOFT_BAR_PERCENTAGE,
+      categoryPercentage: SOFT_CATEGORY_PERCENTAGE,
+    },
+    {
+      label: t('reports.monthly.expense'),
+      data: monthly.value.map((m) => m.expense_cents),
+      backgroundColor: kindSemanticColor('expense', app.theme),
+      borderRadius: SOFT_BAR_RADIUS,
+      barPercentage: SOFT_BAR_PERCENTAGE,
+      categoryPercentage: SOFT_CATEGORY_PERCENTAGE,
+    },
+    {
+      label: t('reports.monthly.refund'),
+      data: monthly.value.map((m) => m.refund_cents),
+      backgroundColor: kindSemanticColor('refund', app.theme),
+      borderRadius: SOFT_BAR_RADIUS,
+      barPercentage: SOFT_BAR_PERCENTAGE,
+      categoryPercentage: SOFT_CATEGORY_PERCENTAGE,
+    },
   ],
 }))
 
-const barChartOptions: ChartOptions<'bar'> = {
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: { position: 'top' },
-    tooltip: {
-      callbacks: {
-        label: (context: TooltipItem<'bar'>) =>
-          `${context.dataset.label}: ${formatAmount(context.raw as number)}`,
-        afterBody: (items: TooltipItem<'bar'>[]) => {
-          let income = 0
-          let expense = 0
-          let refund = 0
-          for (const item of items) {
-            if (item.datasetIndex === 0) income = item.raw as number
-            if (item.datasetIndex === 1) expense = item.raw as number
-            if (item.datasetIndex === 2) refund = item.raw as number
-          }
-          const net = income - expense + refund
-          return t('reports.monthly.net', { amount: formatAmount(net) })
+// 视觉柔化（chart-style 单一来源）：网格淡化只留值轴横向线、去轴线、刻度与图例
+// 文字中性灰、tooltip 圆角加大内边距、图例小圆点；颜色随主题响应式取值——
+// options 改 computed，vue-chartjs 对 options 深度监听，切外观即时重算。
+const barChartOptions = computed<ChartOptions<'bar'>>(() => {
+  const soft = softChartColors(app.theme)
+  return {
+    color: soft.ticks,
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { position: 'top', labels: { ...SOFT_LEGEND_LABELS } },
+      tooltip: {
+        ...SOFT_TOOLTIP,
+        callbacks: {
+          label: (context: TooltipItem<'bar'>) =>
+            `${context.dataset.label}: ${formatAmount(context.raw as number)}`,
+          afterBody: (items: TooltipItem<'bar'>[]) => {
+            let income = 0
+            let expense = 0
+            let refund = 0
+            for (const item of items) {
+              if (item.datasetIndex === 0) income = item.raw as number
+              if (item.datasetIndex === 1) expense = item.raw as number
+              if (item.datasetIndex === 2) refund = item.raw as number
+            }
+            const net = income - expense + refund
+            return t('reports.monthly.net', { amount: formatAmount(net) })
+          },
         },
       },
     },
-  },
-  scales: {
-    y: {
-      ticks: {
-        callback: (value: number | string) => formatAmount(Number(value)),
+    scales: {
+      x: {
+        grid: { display: false },
+        border: { display: false },
+        ticks: { color: soft.ticks },
+      },
+      y: {
+        grid: { color: soft.grid },
+        border: { display: false },
+        ticks: {
+          color: soft.ticks,
+          callback: (value: number | string) => formatAmount(Number(value)),
+        },
       },
     },
-  },
-}
+  }
+})
 
 // 支出分类构成（issue #378）：横向柱状图。一级归并 + 未分类柱、净额降序、
 // 按 id 稳定配色、未分类灰——数据形态收口在 category-chart 纯函数，此处只消费。
@@ -214,6 +261,7 @@ const categoryChartData = computed(() => ({
       data: categoryBarsData.value.map((b) => b.value),
       backgroundColor: categoryBarsData.value.map((b) => b.color),
       barThickness: 20,
+      borderRadius: SOFT_BAR_RADIUS,
     },
   ],
 }))
@@ -250,35 +298,47 @@ const barEndLabelPlugin = {
   },
 }
 
-const categoryChartOptions: ChartOptions<'bar'> = {
-  indexAxis: 'y',
-  responsive: true,
-  maintainAspectRatio: false,
-  // 两端留白容柱尾标签（x 轴 grace 把最大/最小值两端各拓 30%）
-  layout: { padding: { left: 4, right: 8 } },
-  onClick: handleCategoryBarClick,
-  plugins: {
-    legend: { display: false },
-    tooltip: {
-      callbacks: {
-        label: (context: TooltipItem<'bar'>) => formatAmount(context.raw as number),
+// 视觉柔化与月度图同源（chart-style）：值轴（x）留淡化网格，类目轴去网格与
+// 轴线，刻度文字中性灰；颜色随主题响应式取值（options computed）。
+const categoryChartOptions = computed<ChartOptions<'bar'>>(() => {
+  const soft = softChartColors(app.theme)
+  return {
+    indexAxis: 'y',
+    color: soft.ticks,
+    responsive: true,
+    maintainAspectRatio: false,
+    // 两端留白容柱尾标签（x 轴 grace 把最大/最小值两端各拓 30%）
+    layout: { padding: { left: 4, right: 8 } },
+    onClick: handleCategoryBarClick,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        ...SOFT_TOOLTIP,
+        callbacks: {
+          label: (context: TooltipItem<'bar'>) => formatAmount(context.raw as number),
+        },
       },
     },
-  },
-  scales: {
-    x: {
-      type: 'linear',
-      grace: '30%',
-      ticks: {
-        callback: (value: number | string) => formatAmount(Number(value)),
+    scales: {
+      x: {
+        type: 'linear',
+        grace: '30%',
+        grid: { color: soft.grid },
+        border: { display: false },
+        ticks: {
+          color: soft.ticks,
+          callback: (value: number | string) => formatAmount(Number(value)),
+        },
+      },
+      y: {
+        grid: { display: false },
+        border: { display: false },
+        // 平铺不截断：全部类目标签都画，行多时容器滚动
+        ticks: { autoSkip: false, color: soft.ticks },
       },
     },
-    y: {
-      // 平铺不截断：全部类目标签都画，行多时容器滚动
-      ticks: { autoSkip: false },
-    },
-  },
-}
+  }
+})
 
 onMounted(() => {
   // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll；
@@ -296,7 +356,11 @@ onMounted(() => {
       <NCard :title="t('reports.monthly.title')" size="small">
         <NEmpty v-if="monthly.length === 0" :description="t('reports.monthly.empty')" />
         <div v-else style="height: 320px">
-          <Bar :data="barChartData" :options="barChartOptions" />
+          <Bar
+            :data="barChartData"
+            :options="barChartOptions"
+            :plugins="[softBarFillPlugin]"
+          />
         </div>
       </NCard>
       <NCard size="small">
@@ -328,7 +392,7 @@ onMounted(() => {
               class="category-chart"
               :data="categoryChartData"
               :options="categoryChartOptions"
-              :plugins="[barEndLabelPlugin]"
+              :plugins="[barEndLabelPlugin, softBarFillPlugin]"
             />
           </div>
         </div>
