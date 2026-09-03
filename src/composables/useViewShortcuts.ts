@@ -2,7 +2,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { Router } from 'vue-router'
 import type { DropdownOption } from 'naive-ui'
 import { hasOpenOverlay } from '@/composables/overlayRegistry'
-import { getSavedSidebarOrder, saveSidebarOrders, clearSidebarOrder, getSavedContainment, clearContainment } from '@/utils/view-state'
+import { getSavedSidebarOrder, saveSidebarOrders, clearSidebarOrder, getSavedContainment, saveContainmentLists, clearContainment } from '@/utils/view-state'
 import { t } from '@/i18n'
 
 export interface ViewShortcut {
@@ -55,8 +55,9 @@ export const DEFAULT_VIEW_ORDER = [
 export type ViewName = (typeof DEFAULT_VIEW_ORDER)[number]
 
 /** 主项词表（组内可排区）：各组成员按组序展开，相对顺序即默认相对顺序。
- *  每组 ≤3 硬上限保证键位带不溢出（ADR-0063 决策 2）；收纳成员不入本表、无键位。 */
-export const ARRANGEABLE_VIEWS: readonly ViewName[] = SIDEBAR_GROUPS.flatMap((g) => [...g.views])
+ *  每组 ≤3 硬上限保证键位带不溢出（ADR-0063 决策 2）；收纳成员不入本表、无键位。
+ *  保留字面量元组类型（不加宽到 ViewName）：主项集合是 ContainableViewName 词表的组成部分。 */
+export const ARRANGEABLE_VIEWS = SIDEBAR_GROUPS.flatMap((g) => [...g.views])
 
 /** 固定项例外判定：主项（可排区）为真，概览/AI/设置三固定项为假（右键无菜单）。 */
 export function isArrangeableView(v: unknown): v is ViewName {
@@ -85,13 +86,19 @@ function defaultGroupOrders(): Record<SidebarGroupId, ViewName[]> {
  * 非对象输入整体回退默认序（旧平铺数据不迁移，直接回出厂序）。
  * 组内防御：非法名过滤（含固定项名、他组成员、未知名、非字符串项）→ 去重（保留首现）
  * → 缺失项按默认序补入组内末尾；组值非数组则该组整体回退默认序（他组不受牵连）。
+ * 第二参数 `contained`（issue #474）：已解析的各组收纳清单——清单成员不再视作
+ * 「缺失主项」回填组内序（清单是收纳成员资格的唯一事实源，主项不复活）。
  */
-export function parseGroupOrders(raw: unknown): Record<SidebarGroupId, ViewName[]> {
+export function parseGroupOrders(
+  raw: unknown,
+  contained: Readonly<Record<SidebarGroupId, readonly string[]>> = defaultContainmentLists(),
+): Record<SidebarGroupId, ViewName[]> {
   const result = defaultGroupOrders()
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return result
   const rec = raw as Record<string, unknown>
   for (const g of SIDEBAR_GROUPS) {
-    const members = g.views as readonly string[]
+    const excluded = contained[g.id] ?? []
+    const members = (g.views as readonly string[]).filter((v) => !excluded.includes(v))
     const kept: ViewName[] = []
     const seen = new Set<string>()
     if (Array.isArray(rec[g.id])) {
@@ -109,23 +116,15 @@ export function parseGroupOrders(raw: unknown): Record<SidebarGroupId, ViewName[
   return result
 }
 
-/**
- * 已存组内序：启动读路径（解析防御后回退默认序）。
- * 写路径收口在 applySidebarSort / resetSidebarOrder（issue #270/#359）：两者同步更新此 ref
- * 与持久化，菜单顺序与键位经 viewShortcuts 自动随动。
- */
-const groupOrders = ref<Record<SidebarGroupId, ViewName[]>>(parseGroupOrders(getSavedSidebarOrder()))
-
-/** 当前组内序（只读响应式）：侧栏排序菜单构建等消费；写路径不经它。 */
-export const sidebarGroupOrders = computed<SidebarGroupOrders>(() => groupOrders.value)
-
 // ---------------------------------------------------------------------------
 // 组内收纳清单（issue #472 / ADR-0063 决策 3/5）：每组一个有序收纳清单，
 // 成员资格与页签顺序同源——清单序 = 该组「更多」页页签序，入 ViewState 跨启动持久化。
 // 与组内序同族同机制：出厂种子（开发者清单转任）+ 同型解析防御。
 // 资产组出厂成员 = 保单（#472）+ 实物资产（#466 / ADR-0064，随域归位）；
 // 记账组出厂成员 = 定时、商户（#473：定时自主项迁入，商户自全局「更多」迁入）；
-// 洞察种子为空、出厂不渲染「更多」链接（路由预建）；用户移入/移回由 #474/#475 落地。
+// 洞察种子为空、出厂不渲染「更多」链接（路由预建）；用户移入由 #474 落地、移回由 #475。
+// 数据块先于组内序状态：启动读路径先解析收纳清单，组内序解析凭它排除收纳成员
+// （issue #474：移入后主项退出组内序，重启解析不得因「缺失补尾」复活）。
 // ---------------------------------------------------------------------------
 
 /**
@@ -139,8 +138,10 @@ export const GROUP_CONTAINMENT_SEEDS = {
   insights: [],
 } as const satisfies Record<SidebarGroupId, readonly string[]>
 
-/** 收纳视图名（词表随出厂种子与移入成员扩展；现为定时、商户、保单、实物资产） */
-export type ContainableViewName = (typeof GROUP_CONTAINMENT_SEEDS)[SidebarGroupId][number]
+/** 收纳视图名 = 出厂种子成员 + 任一本组主项（issue #474 移入自由，ADR-0063 决策 4）；固定项不可收纳，不在词表。 */
+export type ContainableViewName =
+  | (typeof GROUP_CONTAINMENT_SEEDS)[SidebarGroupId][number]
+  | (typeof ARRANGEABLE_VIEWS)[number]
 
 /** 每组收纳清单（只读形状）：与 SidebarGroupOrders 同族。 */
 export type SidebarContainmentLists = Readonly<Record<SidebarGroupId, readonly ContainableViewName[]>>
@@ -152,25 +153,20 @@ function defaultContainmentLists(): Record<SidebarGroupId, ContainableViewName[]
 }
 
 /**
- * 各组合法收纳成员注册表（解析防御用）：本票 = 出厂种子；
- * 用户移入（#474）落地后并入本组主项——注册表与种子在此分离，补尾仍按出厂序。
- */
-const CONTAINABLE_VIEWS: Record<SidebarGroupId, readonly string[]> = GROUP_CONTAINMENT_SEEDS
-
-/**
  * 收纳清单解析（纯函数，与 parseGroupOrders 同型防御）：
  * 已存「组 id → 收纳视图名数组」→ 各组解析后的收纳清单。
  * 整体形状防御：仅接受普通对象——null、数组、标量等非对象输入整体回出厂种子。
- * 组内防御：非法名过滤（主项名、他组成员、固定项名、未知名、非字符串项——不跨组）
+ * 组内防御：合法成员 = 出厂种子 + 本组主项（issue #474 移入自由，ADR-0063 决策 4——
+ * 任一主项可入本组「更多」；合法集在同一组迭代内就地取词表，不另设可错位的注册表；
+ * 他组成员、他组主项、固定项名、未知名、非字符串项一律非法——不跨组）
  * → 去重（保留首现）→ 缺失出厂成员按出厂序补尾；组值非数组则该组整体回种子（他组不受牵连）。
- * 注：本票合法成员注册表 = 出厂种子，用户移入落地后合法集超出种子，清单序才开始偏离种子序。
  */
 export function parseContainmentLists(raw: unknown): Record<SidebarGroupId, ContainableViewName[]> {
   const result = defaultContainmentLists()
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return result
   const rec = raw as Record<string, unknown>
   for (const g of SIDEBAR_GROUPS) {
-    const legal = CONTAINABLE_VIEWS[g.id]
+    const legal = [...GROUP_CONTAINMENT_SEEDS[g.id], ...(g.views as readonly string[])]
     const kept: ContainableViewName[] = []
     const seen = new Set<string>()
     if (Array.isArray(rec[g.id])) {
@@ -190,12 +186,22 @@ export function parseContainmentLists(raw: unknown): Record<SidebarGroupId, Cont
 
 /**
  * 已存收纳清单：启动读路径（解析防御后回出厂种子）。
- * 用户移入/移回未落地（#474/#475），写路径仅「恢复默认排序」复位（resetSidebarOrder）；
- * 移入/移回写路径（saveContainmentLists 点选即写）由后续票接入。
+ * 写路径收口在 applyMoveIntoMore（#474 移入）/ resetSidebarOrder（复位）：
+ * 点选即写、重启保持；移回写路径由 #475 接入。
  */
-const containmentLists = ref<Record<SidebarGroupId, ContainableViewName[]>>(
-  parseContainmentLists(getSavedContainment()),
+const containmentLists = ref<SidebarContainmentLists>(parseContainmentLists(getSavedContainment()))
+
+/**
+ * 已存组内序：启动读路径（解析防御后回退默认序）。
+ * 写路径收口在 applySidebarSort（issue #270/#359 排序）/ applyMoveIntoMore（#474 移入）/
+ * resetSidebarOrder（复位）：三者同步更新此 ref 与持久化，菜单顺序与键位经 viewShortcuts 自动随动。
+ */
+const groupOrders = ref<Record<SidebarGroupId, ViewName[]>>(
+  parseGroupOrders(getSavedSidebarOrder(), containmentLists.value),
 )
+
+/** 当前组内序（只读响应式）：侧栏排序菜单构建等消费；写路径不经它。 */
+export const sidebarGroupOrders = computed<SidebarGroupOrders>(() => groupOrders.value)
 
 /** 当前每组收纳清单（只读响应式）：组内「更多」页页签与侧栏链接显隐消费。 */
 export const sidebarContainment = computed<SidebarContainmentLists>(() => containmentLists.value)
@@ -204,6 +210,43 @@ export const sidebarContainment = computed<SidebarContainmentLists>(() => contai
 export const sidebarGroups = computed<readonly { id: SidebarGroupId; views: readonly ViewName[] }[]>(
   () => SIDEBAR_GROUPS.map((g) => ({ id: g.id, views: groupOrders.value[g.id] })),
 )
+
+// ---------------------------------------------------------------------------
+// 右键「移入更多」（issue #474 / ADR-0063 决策 4）：移入纯函数 + 写路径。
+// 移入自由、无例外面：任一主项可入本组「更多」，追加清单尾 = 该组「更多」页最后一个页签；
+// 空种子组（洞察）首个移入即清单非空，侧栏「更多」链接渲染条件即刻满足。
+// 不跨组：groupOfView 把写路径钉在本组，跨组移动结构上不可达。
+// ---------------------------------------------------------------------------
+
+/**
+ * 移入纯函数：主项名追加为本组收纳清单尾，返回新清单对象（不改输入）。
+ * 清单序 = 页签序——移入即该组「更多」页最后一个页签；
+ * 已在清单中的成员内容不变（去重保位，no-op 语义）。
+ */
+export function moveIntoContainment(
+  lists: SidebarContainmentLists,
+  gid: SidebarGroupId,
+  name: ContainableViewName,
+): SidebarContainmentLists {
+  const list = lists[gid]
+  if (list.includes(name)) return lists
+  return { ...lists, [gid]: [...list, name] }
+}
+
+/** 右键「移入更多」：主项退出组内序（键位随动重排）+ 追加本组收纳清单尾；
+ *  点选即写（组内序与收纳清单双存储同步持久化，与排序写路径同一纪律）；
+ *  固定项/收纳成员/未知名 no-op 不写存储（保住「恢复默认 = 删 key」语义）。 */
+export function applyMoveIntoMore(name: ViewName) {
+  const gid = groupOfView(name)
+  if (!gid) return
+  const prev = groupOrders.value[gid]
+  if (!prev.includes(name)) return
+  groupOrders.value = { ...groupOrders.value, [gid]: prev.filter((v) => v !== name) }
+  // prev.includes 已证明 name 是本组主项（运行时守卫对应 ContainableViewName 词表）
+  containmentLists.value = moveIntoContainment(containmentLists.value, gid, name as ContainableViewName)
+  saveSidebarOrders(groupOrders.value)
+  saveContainmentLists(containmentLists.value)
+}
 
 // ---------------------------------------------------------------------------
 // 组内自定义排序（issue #270，#359 收窄为组内）：右键菜单 → 移动纯函数 + 菜单构建
@@ -242,6 +285,7 @@ export function moveArrangeable(
 /**
  * 排序菜单 key 与移动动作同一词表（key 即 action，杜绝两套词表错位）：
  * up / down / top / bottom 四种移动 + reset 恢复默认排序。
+ * 「移入更多」（intoMore）不是排序动作，由调用方按菜单 key 分派（见 App.vue）。
  */
 export function isSidebarSortAction(v: string): v is SidebarSortAction {
   return v === 'up' || v === 'down' || v === 'top' || v === 'bottom'
@@ -250,6 +294,7 @@ export function isSidebarSortAction(v: string): v is SidebarSortAction {
 /**
  * 排序菜单选项构建纯函数（含组内边界置灰）：
  * 上移一位 / 下移一位 / 移到组内顶部 / 移到组内底部 /
+ * 分隔线 / 移入更多（issue #474：排序动作之后、分隔线隔开，移入自由恒可用）/
  * 分隔线 / 恢复默认排序（恒可用）。
  * 置灰按传入组内序的边界判定：首位上移、移顶置灰；末位下移、移底置灰。
  */
@@ -266,6 +311,8 @@ export function buildSidebarSortMenuOptions(
     { label: t('common.sidebarSort.top'), key: 'top', disabled: atTop },
     { label: t('common.sidebarSort.bottom'), key: 'bottom', disabled: atBottom },
     { type: 'divider', key: 'sort-divider' },
+    { label: t('common.sidebarContainment.intoMore'), key: 'intoMore', disabled: false },
+    { type: 'divider', key: 'reset-divider' },
     { label: t('common.sidebarSort.reset'), key: 'reset', disabled: false },
   ]
 }

@@ -25,12 +25,14 @@ import {
   buildSidebarSortMenuOptions,
   applySidebarSort,
   resetSidebarOrder,
+  moveIntoContainment,
+  applyMoveIntoMore,
   sidebarGroupOrders,
   GROUP_CONTAINMENT_SEEDS,
   parseContainmentLists,
   sidebarContainment,
 } from '@/composables/useViewShortcuts'
-import type { ViewName, SidebarGroupOrders } from '@/composables/useViewShortcuts'
+import type { ViewName, SidebarGroupOrders, SidebarContainmentLists } from '@/composables/useViewShortcuts'
 import type { DropdownOption } from 'naive-ui'
 import { VIEW_STATE_KEYS } from '@/utils/view-state'
 
@@ -160,6 +162,35 @@ describe('parseGroupOrders（组内序解析纯函数）', () => {
       assets: defaults.assets,
       insights: ['search', 'reports'],
     })
+  })
+})
+
+describe('parseGroupOrders × 收纳清单耦合（issue #474：收纳成员不回填主项，清单是成员资格唯一事实源）', () => {
+  const contained: SidebarContainmentLists = {
+    bookkeeping: ['scheduled', 'merchants', 'transactions'],
+    assets: ['policies', 'physicalAssets'],
+    insights: [],
+  }
+
+  it('第二参数（已解析收纳清单）中的成员不回填组内序：缺失项补尾跳过收纳成员', () => {
+    expect(parseGroupOrders({ bookkeeping: ['accounts'] }, contained)).toEqual({
+      bookkeeping: ['accounts', 'budget'],
+      assets: ['investments', 'items'],
+      insights: ['reports', 'search'],
+    })
+  })
+
+  it('已存数组中的收纳成员按非法名过滤（不因「缺失补尾」复活为主项）', () => {
+    expect(
+      parseGroupOrders(
+        { bookkeeping: ['transactions', 'accounts', 'budget'] },
+        contained,
+      ).bookkeeping,
+    ).toEqual(['accounts', 'budget'])
+  })
+
+  it('不带第二参数时行为不变（默认排除出厂种子，种子本就不在主项词表）', () => {
+    expect(parseGroupOrders(null)).toEqual(DEFAULT_ORDERS)
   })
 })
 
@@ -465,7 +496,7 @@ describe('组内收纳清单：出厂种子与解析防御（issue #472/#473 / A
     })
   })
 
-  it('非法名过滤：主项名/他组成员/固定项名/未知名/非字符串一律不入清单（不跨组）', () => {
+  it('非法名过滤：他组主项/他组种子/固定项名/未知名/非字符串一律不入清单（不跨组）', () => {
     const raw = {
       assets: ['transactions', 'scheduled', 'more', 'dashboard', 'settings', 42, 'bogus', 'policies'],
       bookkeeping: ['policies'],
@@ -473,6 +504,15 @@ describe('组内收纳清单：出厂种子与解析防御（issue #472/#473 / A
     const parsed = parseContainmentLists(raw)
     expect(parsed.assets).toEqual(['policies', 'physicalAssets']) // 合法名只剩保单，实物资产作缺失出厂成员补尾
     expect(parsed.bookkeeping).toEqual(['scheduled', 'merchants']) // 保单是他组成员，清单回出厂种子
+  })
+
+  it('本组主项名合法（issue #474 用户移入）：清单序保留，缺失种子仍按出厂序补尾', () => {
+    const parsed = parseContainmentLists({
+      bookkeeping: ['scheduled', 'transactions', 'merchants'],
+      insights: ['search'],
+    })
+    expect(parsed.bookkeeping).toEqual(['scheduled', 'transactions', 'merchants'])
+    expect(parsed.insights).toEqual(['search'])
   })
 
   it('去重保留首现；缺失出厂成员按出厂序补尾（自定义成员保位，缺失者缀后）', () => {
@@ -610,13 +650,13 @@ describe('moveArrangeable（组内移动纯函数，issue #270/#359）', () => {
 describe('buildSidebarSortMenuOptions（排序菜单选项构建纯函数，含组内边界置灰，issue #270/#359）', () => {
   const bookkeeping: ViewName[] = ['transactions', 'accounts', 'budget']
 
-  it('菜单形状：四种移动 + 分隔线 + 恢复默认排序，key 固定', () => {
+  it('菜单形状：四种移动 + 分隔线 + 移入更多 + 分隔线 + 恢复默认排序（issue #474：移入在排序动作后、分隔线隔开）', () => {
     const opts = buildSidebarSortMenuOptions('accounts', bookkeeping)
     expect(opts.map(row).map((o) => o.label ?? o.type)).toEqual([
-      '上移一位', '下移一位', '移到顶部', '移到底部', 'divider', '恢复默认排序',
+      '上移一位', '下移一位', '移到顶部', '移到底部', 'divider', '移入更多', 'divider', '恢复默认排序',
     ])
     expect(opts.map(row).map((o) => o.key)).toEqual([
-      'up', 'down', 'top', 'bottom', 'sort-divider', 'reset',
+      'up', 'down', 'top', 'bottom', 'sort-divider', 'intoMore', 'reset-divider', 'reset',
     ])
   })
 
@@ -624,7 +664,7 @@ describe('buildSidebarSortMenuOptions（排序菜单选项构建纯函数，含�
     const moveKeys = buildSidebarSortMenuOptions('budget', bookkeeping)
       .map(row)
       .map((o) => o.key!)
-      .filter((k) => k !== 'sort-divider' && k !== 'reset')
+      .filter((k) => k !== 'sort-divider' && k !== 'reset-divider' && k !== 'reset' && k !== 'intoMore')
     expect(moveKeys).toEqual(['up', 'down', 'top', 'bottom'])
     for (const k of moveKeys) expect(isSidebarSortAction(k)).toBe(true)
     // 每个菜单 key 直接可作为动作施加，效果与菜单语义一致（key 即 action）
@@ -648,14 +688,14 @@ describe('buildSidebarSortMenuOptions（排序菜单选项构建纯函数，含�
     expect(top!.disabled).toBe(false)
   })
 
-  it('组内中间项：四种移动全部可用；恢复默认排序恒可用', () => {
+  it('组内中间项：四种移动全部可用；移入更多与恢复默认排序恒可用（issue #474 移入自由）', () => {
     const opts = buildSidebarSortMenuOptions('accounts', bookkeeping).map(row)
     for (const o of opts) {
       if (o.type === 'divider') continue
       expect(o.disabled).toBe(false)
     }
-    expect(opts[5]!.key).toBe('reset')
-    expect(opts[5]!.disabled).toBe(false)
+    expect(opts[5]!.key).toBe('intoMore')
+    expect(opts[7]!.key).toBe('reset')
   })
 
   it('自定义序下的边界按当前组内序判定', () => {
@@ -776,6 +816,136 @@ describe('写路径与持久化（issue #270/#359：组内点选即重排、立�
     mod.applySidebarSort('transactions', 'up')
     expect(mod.sidebarGroupOrders.value).toEqual(mod.parseGroupOrders(null))
     expect(localStorage.getItem(ORDER_KEY)).toBeNull()
+  })
+})
+
+describe('moveIntoContainment（移入纯函数，issue #474 / ADR-0063 决策 4：移入自由）', () => {
+  const lists: SidebarContainmentLists = {
+    bookkeeping: ['scheduled', 'merchants'],
+    assets: ['policies', 'physicalAssets'],
+    insights: [],
+  }
+
+  it('追加为本组收纳清单尾（清单序 = 页签序）：他组不受牵连、输入不改', () => {
+    const next = moveIntoContainment(lists, 'bookkeeping', 'transactions')
+    expect(next.bookkeeping).toEqual(['scheduled', 'merchants', 'transactions'])
+    expect(next.assets).toEqual(['policies', 'physicalAssets'])
+    expect(next.insights).toEqual([])
+    expect(lists.bookkeeping).toEqual(['scheduled', 'merchants'])
+  })
+
+  it('空种子组（洞察）同样追加：移入即非空，「更多」链接的渲染条件（清单非空）即刻满足', () => {
+    expect(moveIntoContainment(lists, 'insights', 'search').insights).toEqual(['search'])
+  })
+
+  it('重复移入去重保位：已在清单尾的成员再移入内容不变', () => {
+    const once = moveIntoContainment(lists, 'bookkeeping', 'transactions')
+    expect(moveIntoContainment(once, 'bookkeeping', 'transactions')).toEqual(once)
+  })
+})
+
+describe('移入后键位重推导（issue #474 / ADR-0063 决策 2：主项集变化，其后主项键位随线性规则重排）', () => {
+  it('交易移入更多后：账户=2、预算=3，其后各主项依次前移，⌘8/⌘9 空置，移入成员退出键位表', () => {
+    const afterMoveIn = deriveViewShortcuts({
+      ...DEFAULT_ORDERS,
+      bookkeeping: ['accounts', 'budget'],
+    })
+    expect(afterMoveIn.find((s) => s.name === 'accounts')!.key).toBe('2')
+    expect(afterMoveIn.find((s) => s.name === 'budget')!.key).toBe('3')
+    expect(afterMoveIn.find((s) => s.name === 'investments')!.key).toBe('4')
+    expect(afterMoveIn.find((s) => s.name === 'items')!.key).toBe('5')
+    expect(afterMoveIn.find((s) => s.name === 'reports')!.key).toBe('6')
+    expect(afterMoveIn.find((s) => s.name === 'search')!.key).toBe('7')
+    expect(afterMoveIn.filter((s) => s.key === '8' || s.key === '9')).toHaveLength(0)
+    expect(afterMoveIn.find((s) => s.name === 'transactions')).toBeUndefined()
+  })
+
+  it('移入空组（洞察）后：报表移入、洞察组主项只剩搜索，其后主项键位整体前移', () => {
+    const afterMoveIn = deriveViewShortcuts({
+      ...DEFAULT_ORDERS,
+      insights: ['search'],
+    })
+    expect(afterMoveIn.find((s) => s.name === 'transactions')!.key).toBe('2')
+    expect(afterMoveIn.find((s) => s.name === 'items')!.key).toBe('6')
+    expect(afterMoveIn.find((s) => s.name === 'search')!.key).toBe('7')
+    expect(afterMoveIn.find((s) => s.name === 'reports')).toBeUndefined()
+  })
+})
+
+describe('右键「移入更多」写路径（issue #474：点选即追加本组清单尾、双存储立即持久化、键位随动）', () => {
+  const ORDER_KEY = VIEW_STATE_KEYS.sidebarOrder
+  const CONTAINMENT_KEY = VIEW_STATE_KEYS.sidebarContainment
+
+  beforeEach(() => {
+    localStorage.clear()
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    localStorage.removeItem(ORDER_KEY)
+    localStorage.removeItem(CONTAINMENT_KEY)
+    vi.resetModules()
+  })
+
+  async function fresh() {
+    return await import('@/composables/useViewShortcuts')
+  }
+
+  it('applyMoveIntoMore：主项退出组内序 + 追加本组收纳清单尾，双存储立即持久化', async () => {
+    const mod = await fresh()
+    mod.applyMoveIntoMore('transactions')
+    expect(mod.sidebarGroupOrders.value.bookkeeping).toEqual(['accounts', 'budget'])
+    expect(mod.sidebarContainment.value.bookkeeping).toEqual(['scheduled', 'merchants', 'transactions'])
+    expect(JSON.parse(localStorage.getItem(ORDER_KEY)!)).toEqual(mod.sidebarGroupOrders.value)
+    expect(JSON.parse(localStorage.getItem(CONTAINMENT_KEY)!)).toEqual(mod.sidebarContainment.value)
+  })
+
+  it('键位随动重排：其后主项依次前移，移入成员退出键位表（不可键盘触发）', async () => {
+    const mod = await fresh()
+    mod.applyMoveIntoMore('transactions')
+    expect(mod.viewShortcuts.value.find((s) => s.name === 'accounts')!.key).toBe('2')
+    expect(mod.viewShortcuts.value.find((s) => s.name === 'investments')!.key).toBe('4')
+    expect(mod.viewShortcuts.value.find((s) => s.name === 'transactions')).toBeUndefined()
+  })
+
+  it('移入空组（洞察）：清单即刻非空（侧栏「更多」链接渲染条件满足）、组内序同步收缩', async () => {
+    const mod = await fresh()
+    expect(mod.sidebarContainment.value.insights).toEqual([])
+    mod.applyMoveIntoMore('reports')
+    expect(mod.sidebarContainment.value.insights).toEqual(['reports'])
+    expect(mod.sidebarGroupOrders.value.insights).toEqual(['search'])
+  })
+
+  it('固定项与收纳成员不可移入：no-op 不写任何存储', async () => {
+    const mod = await fresh()
+    mod.applyMoveIntoMore('dashboard')
+    mod.applyMoveIntoMore('ai')
+    mod.applyMoveIntoMore('settings')
+    mod.applyMoveIntoMore('scheduled' as ViewName)
+    expect(localStorage.getItem(ORDER_KEY)).toBeNull()
+    expect(localStorage.getItem(CONTAINMENT_KEY)).toBeNull()
+    expect(mod.sidebarGroupOrders.value).toEqual(mod.parseGroupOrders(null))
+  })
+
+  it('重启（重导入）后移入保持：主项不复活、清单保持、键位保持重排（持久化往返）', async () => {
+    const mod = await fresh()
+    mod.applyMoveIntoMore('transactions')
+    vi.resetModules()
+    const rebooted = await fresh()
+    expect(rebooted.sidebarGroupOrders.value.bookkeeping).toEqual(['accounts', 'budget'])
+    expect(rebooted.sidebarContainment.value.bookkeeping).toEqual(['scheduled', 'merchants', 'transactions'])
+    expect(rebooted.viewShortcuts.value.find((s) => s.name === 'accounts')!.key).toBe('2')
+    expect(rebooted.viewShortcuts.value.find((s) => s.name === 'transactions')).toBeUndefined()
+  })
+
+  it('恢复默认排序复位移入：双存储清空、主项回组内、清单回种子（一键回出厂唯一通道）', async () => {
+    const mod = await fresh()
+    mod.applyMoveIntoMore('transactions')
+    mod.resetSidebarOrder()
+    expect(localStorage.getItem(ORDER_KEY)).toBeNull()
+    expect(localStorage.getItem(CONTAINMENT_KEY)).toBeNull()
+    expect(mod.sidebarGroupOrders.value).toEqual(mod.parseGroupOrders(null))
+    expect(mod.sidebarContainment.value.bookkeeping).toEqual(['scheduled', 'merchants'])
   })
 })
 

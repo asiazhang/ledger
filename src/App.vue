@@ -51,6 +51,7 @@ import {
   groupOfView,
   buildSidebarSortMenuOptions,
   applySidebarSort,
+  applyMoveIntoMore,
   resetSidebarOrder,
   FIRST_VIEW,
   PENULTIMATE_VIEW,
@@ -177,9 +178,9 @@ function nodeProps(option: MenuOption) {
 }
 
 // ---------------------------------------------------------------------------
-// 侧栏右键排序菜单（issue #270，#359 收窄为组内）：主项右键弹出组内排序菜单
-// （上移/下移/移顶/移底/恢复默认），手动定位弹出，与行级右键菜单同一模式；
-// 点选即重排并立即持久化，菜单打开期间视图快捷键由既有弹层抑制机制压制（零新代码）。
+// 侧栏右键排序菜单（issue #270，#359 收窄为组内；#474 增「移入更多」）：主项右键弹出
+// 组内排序菜单（上移/下移/移顶/移底/移入更多/恢复默认），手动定位弹出，与行级右键菜单
+// 同一模式；点选即重排或移入并立即持久化，菜单打开期间视图快捷键由既有弹层抑制机制压制。
 // ---------------------------------------------------------------------------
 
 const sortMenuShow = ref(false)
@@ -211,6 +212,11 @@ function onSortMenuSelect(key: string) {
   if (!target) return
   if (key === 'reset') {
     resetSidebarOrder()
+    return
+  }
+  // 「移入更多」（issue #474）：主项退出组内序、追加本组收纳清单尾，点选即持久化
+  if (key === 'intoMore') {
+    applyMoveIntoMore(target)
     return
   }
   // 菜单 key 与移动动作同一词表（key 即 action），守卫收窄后零断言
