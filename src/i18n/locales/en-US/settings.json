@@ -97,6 +97,7 @@
       "deleted": "Merchant deleted",
       "deleteFailed": "Delete failed: {msg}"
     },
+    "total": "Total {n}",
     "searchPlaceholder": "Search merchants (name/pinyin)",
     "showDeleted": "Show deleted",
     "deletedTag": "Deleted"
