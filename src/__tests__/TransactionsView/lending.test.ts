@@ -1,7 +1,7 @@
 import { mockInvoke, mountView, setAccountDb, setTxnDb, makeTxn, bodyRows, openMenuOnRow, selectRowMenu } from './common'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { NButton, NInputNumber, NModal, NSelect } from 'naive-ui'
+import { NButton, NModal, NSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import LendingForm from '@/components/LendingForm.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
@@ -88,13 +88,14 @@ describe('交易列表借贷编辑形态识别（issue #374）', () => {
     expect(dirButtons.map((b) => b.text())).toEqual(['借出', '收回', '借入', '还款'])
     const active = dirButtons.find((b) => b.props('type') === 'primary')
     expect(active?.text()).toBe('借出')
-    // 双账户按既有交易回填（转出=现金，转入=借出·张三）；金额同步回填（300 元）；
+    // 双账户按既有交易回填（转出=现金，转入=借出·张三）；金额同步回填（1 元，字段
+    // 错误态改造后金额为自由文本输入框，ADR-0058 / #415）；
     // PinyinSelect 经 attrs 透传（无声明 props），从内层 NSelect 读取声明 prop
     const selects = lending.findAllComponents(PinyinSelect)
     const [fromSelect, toSelect] = selects.map((s) => s.findComponent(NSelect))
     expect(fromSelect.props('value')).toBe('acc-cash')
     expect(toSelect.props('value')).toBe('acc-recv-zhang')
-    expect(lending.getComponent(NInputNumber).props('value')).toBe(1)
+    expect((lending.find('input[placeholder="金额"]').element as HTMLInputElement).value).toBe('1')
   })
 
   it('普通转账编辑仍分派 TransferForm（不误判为借贷）', async () => {
@@ -141,7 +142,7 @@ describe('记一笔借贷入口完整链路（issue #374）', () => {
     // 填表提交
     fromSelect.vm.$emit('update:value', 'acc-cash')
     toSelect.vm.$emit('update:value', 'acc-recv-zhang')
-    form.getComponent(NInputNumber).vm.$emit('update:value', 1000)
+    form.find('input[placeholder="金额"]').setValue('1000')
     await flushPromises()
     mockInvoke.mockImplementationOnce((cmd: string) => {
       if (cmd === 'create_transaction') return Promise.resolve('new-id')

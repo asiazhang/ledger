@@ -136,7 +136,7 @@ describe('useLendingForm（借贷变体 composable，issue #374 S3）', () => {
       const form = useLendingForm()
       form.accountId.value = 'acc-cash'
       form.toAccountId.value = 'acc-recv-zhang'
-      form.amount.value = 1000
+      form.amountText.value = '1000'
 
       await form.submit()
 
@@ -155,7 +155,7 @@ describe('useLendingForm（借贷变体 composable，issue #374 S3）', () => {
       form.setDirection('repay')
       form.accountId.value = 'acc-bank'
       form.toAccountId.value = 'acc-debt-li'
-      form.amount.value = 200
+      form.amountText.value = '200'
 
       await form.submit()
 
@@ -172,7 +172,7 @@ describe('useLendingForm（借贷变体 composable，issue #374 S3）', () => {
       const form = useLendingForm()
       form.accountId.value = 'acc-cash'
       form.toAccountId.value = 'acc-cash'
-      form.amount.value = 100
+      form.amountText.value = '100'
 
       await form.submit()
 
@@ -209,14 +209,14 @@ describe('useLendingForm（借贷变体 composable，issue #374 S3）', () => {
       expect(form.accountId.value).toBe('acc-cash')
       expect(form.toAccountId.value).toBe('acc-recv-zhang')
       // 金额按币种小数位换算回填（30000 分 → 300 元，不手写 /100）
-      expect(form.amount.value).toBe(300)
+      expect(form.amountText.value).toBe('300')
     })
 
     it('提交走更新命令、kind 恒 transfer（方向只影响双账户填法）', async () => {
       mockInvoke.mockResolvedValue(undefined)
       const onUpdated = vi.fn()
       const form = useLendingForm({ editing: () => editingTx, onUpdated })
-      form.amount.value = 500
+      form.amountText.value = '500'
 
       await form.submit()
 

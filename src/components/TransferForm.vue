@@ -3,7 +3,6 @@ import {
   NForm,
   NFormItem,
   NInput,
-  NInputNumber,
   NButton,
   NSpace,
 } from 'naive-ui'
@@ -30,12 +29,15 @@ const ctx = useTransferForm({
   <NForm label-placement="left" :show-feedback="false" size="small">
     <NSpace vertical :size="12">
       <NFormItem :label="t('transactions.form.amount')">
-        <NInputNumber
-          v-model:value="ctx.amount.value"
-          :min="0"
-          :precision="2"
+        <!-- 字段错误态（ADR-0058 / #415）：自由文本承载输入，不拦截不静默丢弃（取
+             代 NInputNumber 失焦清空非法文本的旧行为）；格式错误即时红显（内置
+             status 错误色），红态持续到修正。借贷变体（LendingForm）同款接线 -->
+        <NInput
+          v-model:value="ctx.amountText.value"
+          :status="ctx.amountError.value ? 'error' : undefined"
           :placeholder="t('transactions.form.amount')"
           style="width: 160px"
+          @blur="ctx.markAmountBlurred"
         />
         <AppSelect
           v-model:value="ctx.currencyCode.value"
@@ -74,7 +76,8 @@ const ctx = useTransferForm({
         />
       </NFormItem>
 
-      <NButton type="primary" @click="ctx.submit">
+      <!-- 任一字段错误态下禁用（红框＋提交禁用两件同发，ADR-0058 决策 1） -->
+      <NButton type="primary" :disabled="ctx.hasFieldError.value" @click="ctx.submit">
         {{ editing ? t('transactions.form.saveChanges') : t('transactions.form.submitTransfer') }}
       </NButton>
     </NSpace>
