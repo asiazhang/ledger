@@ -30,8 +30,8 @@ use std::time::Instant;
 use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 
+use super::model::{CreateTransactionResult, TransactionInput};
 use crate::error::{AppError, ErrClass, Result};
-use crate::models::{CreateTransactionResult, TransactionInput};
 use crate::signals::WriteEvidence;
 use crate::transaction::behavior::create as create_transaction_internal;
 

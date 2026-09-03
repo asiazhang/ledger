@@ -2,7 +2,7 @@ use cucumber::{then, when};
 use rusqlite::params;
 
 use tauri_app_lib::error::AppError;
-use tauri_app_lib::models::TransactionInput;
+use tauri_app_lib::transaction::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::{
     create_transaction_internal, delete_transaction_internal, update_transaction_internal,

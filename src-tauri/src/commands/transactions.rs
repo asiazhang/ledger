@@ -13,12 +13,12 @@ use tauri::State;
 
 use crate::db::DbState;
 use crate::error::{AppError, Result};
-use crate::models::{
+use crate::signals::{WriteOp, emit_for};
+use crate::transaction as transaction_domain;
+use crate::transaction::{
     CreateTransactionResult, TransactionInput, TransactionListFilter, TransactionListResult,
     UpdateTransactionInput,
 };
-use crate::signals::{WriteOp, emit_for};
-use crate::transaction as transaction_domain;
 
 #[tauri::command]
 pub fn list_transactions(

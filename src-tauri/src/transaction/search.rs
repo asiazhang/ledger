@@ -8,9 +8,9 @@
 
 use rusqlite::Connection;
 
+use super::model::{Transaction, TransactionSearchResult};
 use crate::db::query::FromRow;
 use crate::error::Result;
-use crate::models::{Transaction, TransactionSearchResult};
 
 use super::search_text::{split_terms, term_matches};
 

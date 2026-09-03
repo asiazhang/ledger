@@ -5,7 +5,7 @@
 use rusqlite::params;
 
 use crate::db::{device_id, now_iso};
-use crate::models::TransactionInput;
+use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::{
     DedupIdentity, TransactionBatch, compute_dedup_hash, dedup_identity,

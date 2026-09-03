@@ -7,8 +7,8 @@ use tauri::State;
 
 use crate::db::DbState;
 use crate::error::{AppError, Result};
-use crate::models::TransactionSearchResult;
 use crate::transaction as transaction_domain;
+use crate::transaction::TransactionSearchResult;
 
 /// IPC 命令：搜索交易（可选金额/日期筛选与关键字 AND 组合）。
 /// 四个筛选参数与内部函数一一对应（issue #40），作为独立命令参数暴露，

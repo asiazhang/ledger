@@ -7,7 +7,7 @@ use tauri_app_lib::merchants::{
     delete_merchant as delete_merchant_domain, list_merchants as list_merchants_domain,
     transaction_counts as transaction_counts_domain, update_merchant as update_merchant_domain,
 };
-use tauri_app_lib::models::TransactionInput;
+use tauri_app_lib::transaction::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::create_transaction_internal;
 

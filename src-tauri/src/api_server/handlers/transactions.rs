@@ -11,12 +11,12 @@ use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::EmitterSlot;
 use crate::api_server::write_ops::emit_after_write;
 use crate::error::AppError;
-use crate::models::{
+use crate::signals::WriteOp;
+use crate::transaction::amount::TransactionKind;
+use crate::transaction::{
     CreateTransactionResult, Transaction, TransactionBatchInput, TransactionListFilter,
     TransactionListResult, UpdateTransactionInput,
 };
-use crate::signals::WriteOp;
-use crate::transaction::amount::TransactionKind;
 
 #[utoipa::path(
     get,

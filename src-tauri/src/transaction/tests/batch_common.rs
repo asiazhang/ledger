@@ -3,7 +3,7 @@
 use rusqlite::{Connection, params};
 
 use crate::db::{init_db, open_in_memory};
-use crate::models::TransactionInput;
+use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 
 pub(super) fn setup() -> Connection {

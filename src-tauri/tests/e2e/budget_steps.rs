@@ -17,7 +17,7 @@ use tauri_app_lib::categories::{
     delete_category as delete_category_domain, list_categories as list_categories_domain,
 };
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
-use tauri_app_lib::models::TransactionInput;
+use tauri_app_lib::transaction::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::create_transaction_internal;
 

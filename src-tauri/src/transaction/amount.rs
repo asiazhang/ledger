@@ -119,7 +119,7 @@ impl rusqlite::types::FromSql for TransactionKind {
 
 // OpenAPI（utoipa）：闭集枚举以小写字符串枚举值入文档，与 wire 格式一致
 // （income/expense/transfer/refund/buy/sell/dividend/split）。内联 schema，
-// 消费方（如 `models::Transaction`）字段直接嵌入、无需注册组件。
+// 消费方（如 [`super::model::Transaction`]）字段直接嵌入、无需注册组件。
 impl PartialSchema for TransactionKind {
     fn schema() -> RefOr<Schema> {
         RefOr::T(Schema::Object(

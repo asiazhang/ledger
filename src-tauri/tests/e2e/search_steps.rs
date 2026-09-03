@@ -3,7 +3,7 @@ use rusqlite::params;
 
 use crate::world::LedgerWorld;
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
-use tauri_app_lib::models::TransactionSearchResult;
+use tauri_app_lib::transaction::TransactionSearchResult;
 use tauri_app_lib::transaction::search_transactions_internal;
 
 // ---------------------------------------------------------------------------

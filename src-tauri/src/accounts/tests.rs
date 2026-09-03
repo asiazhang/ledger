@@ -431,7 +431,7 @@ fn hidden_account_transaction_visible_in_transaction_list() {
 
     let rows = crate::transaction::list_transactions_internal(
         &conn,
-        &crate::models::TransactionListFilter::default(),
+        &crate::transaction::TransactionListFilter::default(),
     )
     .unwrap();
     assert!(

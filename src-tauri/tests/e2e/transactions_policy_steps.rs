@@ -10,8 +10,8 @@ use cucumber::{then, when};
 use rusqlite::params;
 
 use tauri_app_lib::error::AppError;
-use tauri_app_lib::models::TransactionInput;
 use tauri_app_lib::transaction::TransactionBatch;
+use tauri_app_lib::transaction::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::{create_transaction_internal, update_transaction_internal};
 
@@ -378,7 +378,7 @@ fn update_keep_policy(world: &mut LedgerWorld, index: usize, note: String) {
 }
 
 /// 既有交易 → 全量替换入参（修改是全字段替换，未提及字段原样保留）。
-fn existing_to_input(existing: &tauri_app_lib::models::Transaction) -> TransactionInput {
+fn existing_to_input(existing: &tauri_app_lib::transaction::Transaction) -> TransactionInput {
     TransactionInput {
         merchant_name: None,
         kind: existing.kind,

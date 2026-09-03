@@ -21,10 +21,10 @@ use chrono::{Datelike, Months, NaiveDate};
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::models::TransactionInput;
 use tauri_app_lib::reports::{
     category_shares_rows, merchant_shares_rows, monthly_summary_rows, query_report_date_range,
 };
+use tauri_app_lib::transaction::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::create_transaction_internal;
 

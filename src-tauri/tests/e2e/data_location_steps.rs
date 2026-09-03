@@ -13,7 +13,7 @@ use tauri_app_lib::db::data_location::{
 use tauri_app_lib::db::{
     data_location, init_db, new_uuid, open_connection, open_db_in, reset_db_in,
 };
-use tauri_app_lib::models::TransactionInput;
+use tauri_app_lib::transaction::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::create_transaction_internal;
 

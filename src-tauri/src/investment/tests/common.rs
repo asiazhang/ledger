@@ -3,7 +3,7 @@
 
 use rusqlite::{Connection, params};
 
-use crate::models::TransactionInput;
+use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 
 // 既有测试经域根 glob（`super::super::*`）消费的旧壳 mod.rs 私有 use 绑定，
