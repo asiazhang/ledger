@@ -1,1 +1,5 @@
-{}
+{
+  "packages": [
+    "git:github.com/asiazhang/pi-kit"
+  ]
+}
