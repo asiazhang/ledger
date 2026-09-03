@@ -6,11 +6,11 @@
 use tauri::State;
 
 use crate::accounts as account_domain;
-use crate::db::DbState;
-use crate::error::{AppError, Result};
-use crate::models::{
+use crate::accounts::{
     Account, AccountBalance, AccountBalanceAdjustInput, AccountInput, AccountUpdateInput,
 };
+use crate::db::DbState;
+use crate::error::{AppError, Result};
 use crate::signals::{WriteEvidence, WriteOp, emit_for};
 
 /// 账户列表：默认仅未删除、不含隐藏账户（黑洞账户经 AI 侧端点/`*_for_api` 口径可见）。

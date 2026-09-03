@@ -1,6 +1,7 @@
 use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
-use crate::models::Category;
+
+use super::model::Category;
 
 fn setup() -> rusqlite::Connection {
     let mut conn = crate::db::open_in_memory().unwrap();
@@ -224,7 +225,7 @@ fn delete_category_ignores_budgets_of_subcategories() {
 
 #[test]
 fn update_category_updates_fields() {
-    use crate::models::CategoryUpdateInput;
+    use super::model::CategoryUpdateInput;
     let conn = setup();
     let id = new_uuid();
     let now = now_iso();

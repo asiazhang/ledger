@@ -4,8 +4,8 @@
 use rusqlite::Connection;
 
 use crate::db::{init_db, open_in_memory};
-use crate::merchants::create_merchant;
-use crate::models::{MerchantInput, PolicyInput};
+use crate::merchants::{MerchantInput, create_merchant};
+use crate::models::PolicyInput;
 use crate::policy::{create_policy, delete_policy, list_policies, update_policy};
 
 fn conn() -> Connection {

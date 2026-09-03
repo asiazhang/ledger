@@ -1,4 +1,7 @@
-//! 分类领域模型：分类实体与入参、排序项。
+//! 分类领域模型（#419 随域归位）：分类实体与入参、排序项。
+//!
+//! 自全局模型目录迁入本域（#417 归属原则：实体归属优先于消费方分布），
+//! 消费方经 `categories` 域路径逐类型显式 import。
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
