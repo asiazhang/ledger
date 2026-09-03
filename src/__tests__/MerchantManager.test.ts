@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
+import { NDataTable, NPopconfirm } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import MerchantManager from '@/components/MerchantManager.vue'
 import type { Merchant } from '@/types'
@@ -472,5 +473,257 @@ describe('MerchantManager.vue 显示已删切换（issue #447）', () => {
     const rows = rowTexts(wrapper)
     expect(rows).toHaveLength(1)
     expect(rows[0]).toContain('永辉超市')
+  })
+})
+
+describe('MerchantManager.vue 前端分页（issue #457）', () => {
+  /** 分页数据工厂：名称序 = id 序（补零保证字典序稳定）；56 条 → 首页 50 + 第 2 页 6。 */
+  function makeMerchants(n: number): Merchant[] {
+    return Array.from({ length: n }, (_, i) => ({
+      id: `mch-p-${i}`,
+      name: `商户${String(i).padStart(3, '0')}`,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+      version: 1,
+      device_id: 'test',
+      is_deleted: false,
+    }))
+  }
+
+  const deletedExtra: Merchant = {
+    id: 'mch-p-del',
+    name: '永辉超市',
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: true,
+  }
+
+  beforeEach(async () => {
+    setActivePinia(createPinia())
+    mockInvoke.mockReset()
+    merchantDb = makeMerchants(56)
+    countDb = []
+    mockBaseCommands()
+    pushMock.mockReset()
+    const store = useReferenceStore()
+    await store.refresh()
+  })
+
+  function paginationProps(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findComponent(NDataTable).props('pagination') as {
+      page: number
+      pageSize: number
+      pageSizes: number[]
+      onChange: (page: number) => void
+      onUpdatePageSize: (size: number) => void
+    }
+  }
+
+  function rowTexts(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('tbody tr').map((r) => r.text())
+  }
+
+  async function gotoPage(wrapper: ReturnType<typeof mount>, n: number) {
+    const item = wrapper
+      .findAll('.n-pagination-item')
+      .find((el) => el.text() === String(n))
+    expect(item).toBeTruthy()
+    await item!.trigger('click')
+    await flushPromises()
+  }
+
+  function searchInput(wrapper: ReturnType<typeof mount>) {
+    return wrapper
+      .findAll('input')
+      .find((i) => i.attributes('placeholder') === '搜索商户（名称/拼音）')!
+  }
+
+  function showDeletedToggle(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('.n-checkbox').find((c) => c.text() === '显示已删')!
+  }
+
+  /** 走完整删除流程：点击行内「删除」→ popconfirm 正向确认（NPopconfirm 内容
+   * teleport 到 body，直接对其组件 emit 正向点击，PoliciesView 先例）→ mock 命令
+   * 更新数据 → 手动 refresh 模拟 ledger:changed 失效重拉。 */
+  async function deleteRow(wrapper: ReturnType<typeof mount>, rowIndex: number) {
+    const row = wrapper.findAll('tbody tr')[rowIndex]!
+    const deleteBtn = row.findAll('button').find((b) => b.text() === '删除')!
+    await deleteBtn.trigger('click')
+    await flushPromises()
+    wrapper.findComponent(NPopconfirm).vm.$emit('positiveClick')
+    await flushPromises()
+    await useReferenceStore().refresh()
+    await flushPromises()
+  }
+
+  /** 让 delete_merchant 命令对指定商户软删生效（is_deleted 置位；含软删全量
+   * 列表由 store 按 is_deleted 拆分，软删行转已删区而非消失）。 */
+  function mockDeleteMerchant(id: string) {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'delete_merchant') {
+        merchantDb = merchantDb.map((m) =>
+          m.id === id ? { ...m, is_deleted: true } : m,
+        )
+        return Promise.resolve(null)
+      }
+      if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
+      if (cmd === 'list_currencies') return Promise.resolve([])
+      if (cmd === 'list_accounts') return Promise.resolve([])
+      if (cmd === 'list_categories') return Promise.resolve([])
+      if (cmd === 'list_merchant_transaction_counts') return Promise.resolve(countDb)
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+  }
+
+  it('默认每页 50 条，分页条显示过滤后总数', () => {
+    const wrapper = mount(MerchantManager)
+    expect(rowTexts(wrapper)).toHaveLength(50)
+    expect(wrapper.text()).toContain('共 56 条')
+    expect(paginationProps(wrapper).pageSize).toBe(50)
+    expect(paginationProps(wrapper).page).toBe(1)
+  })
+
+  it('页大小档位为 10/20/50/100', () => {
+    const wrapper = mount(MerchantManager)
+    expect(paginationProps(wrapper).pageSizes).toEqual([10, 20, 50, 100])
+  })
+
+  it('翻页：第 2 页展示剩余 6 条', async () => {
+    const wrapper = mount(MerchantManager)
+    await gotoPage(wrapper, 2)
+    expect(paginationProps(wrapper).page).toBe(2)
+    const rows = rowTexts(wrapper)
+    expect(rows).toHaveLength(6)
+    expect(rows[0]).toContain('商户050')
+  })
+
+  it('切换页大小生效，且回到第一页', async () => {
+    const wrapper = mount(MerchantManager)
+    await gotoPage(wrapper, 2)
+    paginationProps(wrapper).onUpdatePageSize(20)
+    await flushPromises()
+    expect(paginationProps(wrapper).page).toBe(1)
+    expect(rowTexts(wrapper)).toHaveLength(20)
+
+    // 档位上限 100：56 条全量单页展示
+    paginationProps(wrapper).onUpdatePageSize(100)
+    await flushPromises()
+    expect(rowTexts(wrapper)).toHaveLength(56)
+  })
+
+  it('分页条总数随搜索过滤（过滤后总数而非全库条数）', async () => {
+    const wrapper = mount(MerchantManager)
+    await searchInput(wrapper).setValue('055')
+    await flushPromises()
+    expect(wrapper.text()).toContain('共 1 条')
+    expect(rowTexts(wrapper)).toHaveLength(1)
+  })
+
+  it('搜索输入归零页码：第 2 页输入搜索词回第一页', async () => {
+    const wrapper = mount(MerchantManager)
+    await gotoPage(wrapper, 2)
+    expect(rowTexts(wrapper)).toHaveLength(6)
+
+    await searchInput(wrapper).setValue('055')
+    await flushPromises()
+    expect(paginationProps(wrapper).page).toBe(1)
+    expect(rowTexts(wrapper)).toHaveLength(1)
+  })
+
+  it('清空搜索归零页码：第 2 页清空回第一页完整列表', async () => {
+    const wrapper = mount(MerchantManager)
+    await searchInput(wrapper).setValue('商户')
+    await flushPromises()
+    await gotoPage(wrapper, 2)
+    expect(rowTexts(wrapper)).toHaveLength(6)
+
+    await searchInput(wrapper).setValue('')
+    await flushPromises()
+    expect(paginationProps(wrapper).page).toBe(1)
+    expect(rowTexts(wrapper)).toHaveLength(50)
+    expect(wrapper.text()).toContain('共 56 条')
+  })
+
+  it('切换「显示已删」归零页码', async () => {
+    merchantDb = [...makeMerchants(56), deletedExtra]
+    await useReferenceStore().refresh()
+    const wrapper = mount(MerchantManager)
+    await gotoPage(wrapper, 2)
+    expect(rowTexts(wrapper)).toHaveLength(6)
+
+    await showDeletedToggle(wrapper).trigger('click')
+    await flushPromises()
+    expect(paginationProps(wrapper).page).toBe(1)
+    expect(rowTexts(wrapper)).toHaveLength(50)
+  })
+
+  it('切换排序归零页码', async () => {
+    const wrapper = mount(MerchantManager)
+    await gotoPage(wrapper, 2)
+    expect(rowTexts(wrapper)).toHaveLength(6)
+
+    await wrapper.find('th.n-data-table-th--sortable').trigger('click')
+    await flushPromises()
+    expect(paginationProps(wrapper).page).toBe(1)
+    expect(rowTexts(wrapper)).toHaveLength(50)
+  })
+
+  it('删除当前页最后一条 → 页码回退一页，不回第一页（ADR-0045 先例）', async () => {
+    merchantDb = makeMerchants(51)
+    await useReferenceStore().refresh()
+    const wrapper = mount(MerchantManager)
+    await gotoPage(wrapper, 2)
+    expect(rowTexts(wrapper)).toHaveLength(1)
+
+    mockDeleteMerchant('mch-p-50')
+    await deleteRow(wrapper, 0)
+
+    expect(paginationProps(wrapper).page).toBe(1)
+    expect(rowTexts(wrapper)).toHaveLength(50)
+    expect(wrapper.text()).not.toContain('商户050')
+  })
+
+  it('删除的行不是当前页最后一条 → 保持当前页', async () => {
+    const wrapper = mount(MerchantManager)
+    await gotoPage(wrapper, 2)
+    expect(rowTexts(wrapper)).toHaveLength(6)
+
+    mockDeleteMerchant('mch-p-50')
+    await deleteRow(wrapper, 0)
+
+    expect(paginationProps(wrapper).page).toBe(2)
+    expect(rowTexts(wrapper)).toHaveLength(5)
+  })
+
+  it('「显示已删」开启时删除行不离开展示集合 → 页码不回退', async () => {
+    merchantDb = [...makeMerchants(51), deletedExtra]
+    await useReferenceStore().refresh()
+    const wrapper = mount(MerchantManager)
+    await showDeletedToggle(wrapper).trigger('click')
+    await flushPromises()
+    await gotoPage(wrapper, 2)
+    expect(rowTexts(wrapper)).toHaveLength(2)
+
+    mockDeleteMerchant('mch-p-50')
+    // 第 2 页首行是商户050（在用区尾部）
+    await deleteRow(wrapper, 0)
+
+    // 软删行仍以已删行展示（移到已删区尾部），本页行数不变，页码不动
+    expect(paginationProps(wrapper).page).toBe(2)
+    expect(rowTexts(wrapper)).toHaveLength(2)
+  })
+
+  it('页码与页大小不持久化：重挂（页签切走再切回）回第一页、默认 50', async () => {
+    const wrapper = mount(MerchantManager)
+    await gotoPage(wrapper, 2)
+    expect(paginationProps(wrapper).page).toBe(2)
+    wrapper.unmount()
+
+    const remounted = mount(MerchantManager)
+    expect(paginationProps(remounted).page).toBe(1)
+    expect(paginationProps(remounted).pageSize).toBe(50)
+    expect(rowTexts(remounted)).toHaveLength(50)
   })
 })
