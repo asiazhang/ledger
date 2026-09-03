@@ -1,3 +1,17 @@
+// 测试整体豁免（ADR-0060）：BDD 测试 crate（harness=false）经 cfg(test) 放行六件套，
+// 生产构建零放宽。
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::unreachable
+    )
+)]
+
 use cucumber::World;
 
 #[macro_use]

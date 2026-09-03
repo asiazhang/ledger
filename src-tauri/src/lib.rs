@@ -1,3 +1,17 @@
+// 测试整体豁免（ADR-0060）：clippy 六件套 deny 仅约束生产路径；单元测试目标
+// （含 src/** 内 #[cfg(test)] 模块）经 crate 根 cfg(test) 整体放行，生产构建零放宽。
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::unreachable
+    )
+)]
+
 pub mod accounts;
 pub mod api_server;
 pub mod backup;
@@ -101,6 +115,8 @@ fn try_init_database(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // B 类豁免（ADR-0060）：启动装配失败即无法运行——Tauri 构建失败 fail loud 退出进程。
+    #[allow(clippy::expect_used)]
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())

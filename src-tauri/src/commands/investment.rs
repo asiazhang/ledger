@@ -9,6 +9,10 @@
 //! 置脏触发已收口连接层统一写入口（`db::write`，ADR-0032）：写路径对备份域
 //! 零感知，置脏/到期检查由写入口闭包在提交点单点执行。「是否发」失效信号的
 //! 判定单点在 signals 映射（ADR-0044 / issue #333），壳层只归一化证据并转发。
+//
+// 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
+// （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
+#![allow(clippy::unreachable)]
 
 use tauri::State;
 
