@@ -27,6 +27,9 @@ import {
   applySidebarSort,
   resetSidebarOrder,
   sidebarGroupOrders,
+  GROUP_CONTAINMENT_SEEDS,
+  parseContainmentLists,
+  sidebarContainment,
 } from '@/composables/useViewShortcuts'
 import type { ViewName, SidebarGroupOrders } from '@/composables/useViewShortcuts'
 import type { DropdownOption } from 'naive-ui'
@@ -444,6 +447,105 @@ describe('启动读路径（issue #269/#359：读取已存组内序，经解析�
     const mod = await import('@/composables/useViewShortcuts')
     expect(mod.viewShortcuts.value.map((s) => s.name)).toEqual([...mod.DEFAULT_VIEW_ORDER])
     expect(mod.viewShortcuts.value.find((s) => s.name === 'investments')!.key).toBe('6')
+  })
+})
+
+describe('组内收纳清单：出厂种子与解析防御（issue #472 / ADR-0063 决策 3/5）', () => {
+  it('出厂种子锁定：资产 = [保单]；记账、洞察 = 空（本票仅资产组启用，两组不渲染链接）', () => {
+    expect(GROUP_CONTAINMENT_SEEDS.bookkeeping).toEqual([])
+    expect(GROUP_CONTAINMENT_SEEDS.assets).toEqual(['policies'])
+    expect(GROUP_CONTAINMENT_SEEDS.insights).toEqual([])
+  })
+
+  it('非对象整体回出厂种子（null/undefined/数组/标量）', () => {
+    const seeds = { bookkeeping: [], assets: ['policies'], insights: [] }
+    expect(parseContainmentLists(null)).toEqual(seeds)
+    expect(parseContainmentLists(undefined)).toEqual(seeds)
+    expect(parseContainmentLists(['policies'])).toEqual(seeds)
+    expect(parseContainmentLists('x')).toEqual(seeds)
+    expect(parseContainmentLists(42)).toEqual(seeds)
+  })
+
+  it('各组独立解析：组值非数组该组回种子，他组不受率连', () => {
+    expect(parseContainmentLists({ bookkeeping: [], assets: 'x', insights: [] })).toEqual({
+      bookkeeping: [],
+      assets: ['policies'],
+      insights: [],
+    })
+  })
+
+  it('非法名过滤：主项名/他组成员/固定项名/未知名/非字符串一律不入清单（不跨组）', () => {
+    const raw = {
+      assets: ['transactions', 'merchants', 'more', 'dashboard', 'settings', 42, 'bogus', 'policies'],
+      bookkeeping: ['policies'],
+    }
+    const parsed = parseContainmentLists(raw)
+    expect(parsed.assets).toEqual(['policies'])
+    expect(parsed.bookkeeping).toEqual([])
+  })
+
+  it('去重保留首现；缺失出厂成员按出厂序补尾', () => {
+    expect(parseContainmentLists({ assets: ['policies', 'policies'] }).assets).toEqual(['policies'])
+    expect(parseContainmentLists({ assets: [] }).assets).toEqual(['policies'])
+    expect(parseContainmentLists({ insights: [] }).insights).toEqual([])
+  })
+})
+
+describe('收纳清单启动读路径与复位（issue #472 / ADR-0063：ViewState 持久化，恢复默认连收纳一起复位）', () => {
+  const KEY = VIEW_STATE_KEYS.sidebarContainment
+
+  beforeEach(() => {
+    localStorage.clear()
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    localStorage.removeItem(KEY)
+    localStorage.removeItem(VIEW_STATE_KEYS.sidebarOrder)
+    vi.resetModules()
+  })
+
+  async function fresh() {
+    return await import('@/composables/useViewShortcuts')
+  }
+
+  it('读取为空时回出厂种子（未自定义或恢复默认后存储为空）', async () => {
+    const mod = await fresh()
+    expect(mod.sidebarContainment.value).toEqual({ bookkeeping: [], assets: ['policies'], insights: [] })
+  })
+
+  it('已存收纳清单对象：各组独立经解析防御生效（脏清单回种子，跨启动不异常）', async () => {
+    localStorage.setItem(KEY, JSON.stringify({ assets: ['merchants'], insights: ['x'] }))
+    vi.resetModules()
+    const mod = await fresh()
+    expect(mod.sidebarContainment.value).toEqual({ bookkeeping: [], assets: ['policies'], insights: [] })
+  })
+
+  it('存储往返：saveContainmentLists 写入的清单经 parseContainmentLists 防御后还原', async () => {
+    const mod = await fresh()
+    const vs = await import('@/utils/view-state')
+    const lists = { bookkeeping: [], assets: ['policies'], insights: [] }
+    vs.saveContainmentLists(lists)
+    expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual(lists)
+    expect(mod.parseContainmentLists(JSON.parse(localStorage.getItem(KEY)!))).toEqual(lists)
+  })
+
+  it('resetSidebarOrder 同时复位组内序与收纳清单：两个存储键清除、状态回出厂', async () => {
+    const mod = await fresh()
+    localStorage.setItem(
+      VIEW_STATE_KEYS.sidebarOrder,
+      JSON.stringify({ bookkeeping: ['scheduled'], assets: ['items'], insights: ['reports'] }),
+    )
+    localStorage.setItem(KEY, JSON.stringify({ assets: ['policies'] }))
+    vi.resetModules()
+    const rebooted = await fresh()
+    // 自定义组内序在（非出厂）
+    expect(rebooted.sidebarGroupOrders.value).not.toEqual(rebooted.parseGroupOrders(null))
+    rebooted.resetSidebarOrder()
+    expect(localStorage.getItem(VIEW_STATE_KEYS.sidebarOrder)).toBeNull()
+    expect(localStorage.getItem(KEY)).toBeNull()
+    expect(rebooted.sidebarGroupOrders.value).toEqual(rebooted.parseGroupOrders(null))
+    expect(rebooted.sidebarContainment.value).toEqual({ bookkeeping: [], assets: ['policies'], insights: [] })
   })
 })
 

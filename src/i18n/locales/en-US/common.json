@@ -19,7 +19,10 @@
     "settings": "Settings",
     "policies": "Policies",
     "more": "More",
-    "merchants": "Merchants"
+    "merchants": "Merchants",
+    "bookkeeping-more": "Bookkeeping · More",
+    "assets-more": "Assets · More",
+    "insights-more": "Insights · More"
   },
   "sidebarGroup": {
     "bookkeeping": "Bookkeeping",

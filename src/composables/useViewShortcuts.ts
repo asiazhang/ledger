@@ -2,7 +2,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { Router } from 'vue-router'
 import type { DropdownOption } from 'naive-ui'
 import { hasOpenOverlay } from '@/composables/overlayRegistry'
-import { getSavedSidebarOrder, saveSidebarOrders, clearSidebarOrder } from '@/utils/view-state'
+import { getSavedSidebarOrder, saveSidebarOrders, clearSidebarOrder, getSavedContainment, clearContainment } from '@/utils/view-state'
 import { t } from '@/i18n'
 
 export interface ViewShortcut {
@@ -121,6 +121,85 @@ const groupOrders = ref<Record<SidebarGroupId, ViewName[]>>(parseGroupOrders(get
 /** 当前组内序（只读响应式）：侧栏排序菜单构建等消费；写路径不经它。 */
 export const sidebarGroupOrders = computed<SidebarGroupOrders>(() => groupOrders.value)
 
+// ---------------------------------------------------------------------------
+// 组内收纳清单（issue #472 / ADR-0063 决策 3/5）：每组一个有序收纳清单，
+// 成员资格与页签顺序同源——清单序 = 该组「更多」页页签序，入 ViewState 跨启动持久化。
+// 与组内序同族同机制：出厂种子（开发者清单转任）+ 同型解析防御。
+// 本票（#472）仅资产组启用（保单迁入），记账/洞察种子为空、不渲染「更多」链接；
+// 记账（定时、商户）与用户移入/移回由后续票落地，届时扩展种子与合法成员注册表。
+// ---------------------------------------------------------------------------
+
+/**
+ * 每组收纳清单出厂种子（开发者清单，ADR-0063 决策 3）：
+ * 资产 = [保单]；记账、洞察 = 空。后续票扩展：记账 = [定时, 商户]（#473）。
+ */
+export const GROUP_CONTAINMENT_SEEDS = {
+  bookkeeping: [],
+  assets: ['policies'],
+  insights: [],
+} as const satisfies Record<SidebarGroupId, readonly string[]>
+
+/** 收纳视图名（词表随出厂种子与移入成员扩展；本票仅保单） */
+export type ContainableViewName = (typeof GROUP_CONTAINMENT_SEEDS)[SidebarGroupId][number]
+
+/** 每组收纳清单（只读形状）：与 SidebarGroupOrders 同族。 */
+export type SidebarContainmentLists = Readonly<Record<SidebarGroupId, readonly ContainableViewName[]>>
+
+function defaultContainmentLists(): Record<SidebarGroupId, ContainableViewName[]> {
+  const result = {} as Record<SidebarGroupId, ContainableViewName[]>
+  for (const g of SIDEBAR_GROUPS) result[g.id] = [...GROUP_CONTAINMENT_SEEDS[g.id]]
+  return result
+}
+
+/**
+ * 各组合法收纳成员注册表（解析防御用）：本票 = 出厂种子；
+ * 用户移入（#474）落地后并入本组主项——注册表与种子在此分离，补尾仍按出厂序。
+ */
+const CONTAINABLE_VIEWS: Record<SidebarGroupId, readonly string[]> = GROUP_CONTAINMENT_SEEDS
+
+/**
+ * 收纳清单解析（纯函数，与 parseGroupOrders 同型防御）：
+ * 已存「组 id → 收纳视图名数组」→ 各组解析后的收纳清单。
+ * 整体形状防御：仅接受普通对象——null、数组、标量等非对象输入整体回出厂种子。
+ * 组内防御：非法名过滤（主项名、他组成员、固定项名、未知名、非字符串项——不跨组）
+ * → 去重（保留首现）→ 缺失出厂成员按出厂序补尾；组值非数组则该组整体回种子（他组不受牵连）。
+ * 注：本票合法成员注册表 = 出厂种子，用户移入落地后合法集超出种子，清单序才开始偏离种子序。
+ */
+export function parseContainmentLists(raw: unknown): Record<SidebarGroupId, ContainableViewName[]> {
+  const result = defaultContainmentLists()
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return result
+  const rec = raw as Record<string, unknown>
+  for (const g of SIDEBAR_GROUPS) {
+    const legal = CONTAINABLE_VIEWS[g.id]
+    const kept: ContainableViewName[] = []
+    const seen = new Set<string>()
+    if (Array.isArray(rec[g.id])) {
+      for (const item of rec[g.id] as unknown[]) {
+        if (typeof item !== 'string' || !legal.includes(item) || seen.has(item)) continue
+        seen.add(item)
+        kept.push(item as ContainableViewName)
+      }
+    }
+    for (const name of GROUP_CONTAINMENT_SEEDS[g.id]) {
+      if (!seen.has(name)) kept.push(name as ContainableViewName)
+    }
+    result[g.id] = kept
+  }
+  return result
+}
+
+/**
+ * 已存收纳清单：启动读路径（解析防御后回出厂种子）。
+ * 本票（#472）无用户移入/移回，写路径仅「恢复默认排序」复位（resetSidebarOrder）；
+ * 移入/移回写路径（saveContainmentLists 点选即写）由后续票接入。
+ */
+const containmentLists = ref<Record<SidebarGroupId, ContainableViewName[]>>(
+  parseContainmentLists(getSavedContainment()),
+)
+
+/** 当前每组收纳清单（只读响应式）：组内「更多」页页签与侧栏链接显隐消费。 */
+export const sidebarContainment = computed<SidebarContainmentLists>(() => containmentLists.value)
+
 /** 渲染用分组（组序固定 + 组内当前序）：侧栏菜单构建消费。 */
 export const sidebarGroups = computed<readonly { id: SidebarGroupId; views: readonly ViewName[] }[]>(
   () => SIDEBAR_GROUPS.map((g) => ({ id: g.id, views: groupOrders.value[g.id] })),
@@ -204,10 +283,12 @@ export function applySidebarSort(name: ViewName, action: SidebarSortAction) {
   saveSidebarOrders(groupOrders.value)
 }
 
-/** 恢复默认排序：清除存储回出厂序（之后可再次自定义，反复交替）。 */
+/** 恢复默认排序：组内序与收纳清单一并清除回出厂（ADR-0063 决策 4，一键回出厂布局的唯一通道）。 */
 export function resetSidebarOrder() {
   clearSidebarOrder()
+  clearContainment()
   groupOrders.value = defaultGroupOrders()
+  containmentLists.value = defaultContainmentLists()
 }
 
 // ---------------------------------------------------------------------------
