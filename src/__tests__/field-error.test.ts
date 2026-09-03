@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { judgeAmountText, judgeRequiredText, fieldErrorKind } from '@/utils/field-error'
+import {
+  judgeAmountText,
+  judgeQuantityText,
+  judgePriceText,
+  judgeRequiredText,
+  fieldErrorKind,
+} from '@/utils/field-error'
 
 /**
  * 字段错误态共享判定单点测试（ADR-0058 / issue #414，规则表接缝）：
@@ -61,6 +67,92 @@ describe('judgeAmountText（金额格式判定闭集）', () => {
   describe('超出表示精度（over-precision，金额以整数分表达、至多两位小数）', () => {
     it.each(['4.305', '0.001', '.505', '12.123', '-.005'])('%s → over-precision', (text) => {
       expect(judgeAmountText(text)).toEqual({ kind: 'over-precision' })
+    })
+  })
+})
+
+describe('judgeQuantityText（数量格式判定闭集，输入粒度至多四位小数）', () => {
+  describe('必填为空', () => {
+    it('空字符串 / 纯空白 → empty', () => {
+      expect(judgeQuantityText('')).toEqual({ kind: 'empty' })
+      expect(judgeQuantityText('  ')).toEqual({ kind: 'empty' })
+    })
+  })
+
+  describe('合法（ok，携带数值）', () => {
+    it.each([
+      ['100', 100],
+      ['0', 0],
+      ['0.5', 0.5],
+      ['0.0001', 0.0001],
+      ['12.', 12],
+      ['.5', 0.5],
+      [' 12 ', 12],
+    ])('%s → ok %s', (text, value) => {
+      expect(judgeQuantityText(text)).toEqual({ kind: 'ok', value })
+    })
+
+    it('负数可解析（业务类校验留提交通道）', () => {
+      expect(judgeQuantityText('-5')).toEqual({ kind: 'ok', value: -5 })
+    })
+  })
+
+  describe('解析失败（parse-error）', () => {
+    it.each([
+      '4.30发',
+      'abc',
+      '1e3',
+      '1,000',
+      '4.3.0',
+      '.',
+      '-',
+      '1 2',
+    ])('%s → parse-error', (text) => {
+      expect(judgeQuantityText(text)).toEqual({ kind: 'parse-error' })
+    })
+  })
+
+  describe('超出表示精度（over-precision，至多四位小数）', () => {
+    it.each(['1.23456', '0.00005', '.12345', '12.12345'])('%s → over-precision', (text) => {
+      expect(judgeQuantityText(text)).toEqual({ kind: 'over-precision' })
+    })
+  })
+})
+
+describe('judgePriceText（价格格式判定闭集，至多四位小数）', () => {
+  describe('必填为空', () => {
+    it('空字符串 / 纯空白 → empty', () => {
+      expect(judgePriceText('')).toEqual({ kind: 'empty' })
+      expect(judgePriceText('  ')).toEqual({ kind: 'empty' })
+    })
+  })
+
+  describe('合法（ok，携带元的数值）', () => {
+    it.each([
+      ['12', 12],
+      ['1.5', 1.5],
+      ['0.0001', 0.0001],
+      ['12.', 12],
+      ['.5', 0.5],
+      [' 1.5 ', 1.5],
+    ])('%s → ok %s', (text, yuan) => {
+      expect(judgePriceText(text)).toEqual({ kind: 'ok', yuan })
+    })
+
+    it('负数可解析（业务类校验留提交通道）', () => {
+      expect(judgePriceText('-1')).toEqual({ kind: 'ok', yuan: -1 })
+    })
+  })
+
+  describe('解析失败（parse-error）', () => {
+    it.each(['1.23元', 'abc', '1e3', '1,000', '1.2.3', '.', '-'])('%s → parse-error', (text) => {
+      expect(judgePriceText(text)).toEqual({ kind: 'parse-error' })
+    })
+  })
+
+  describe('超出表示精度（over-precision，至多四位小数）', () => {
+    it.each(['1.23456', '0.00005', '.10005'])('%s → over-precision', (text) => {
+      expect(judgePriceText(text)).toEqual({ kind: 'over-precision' })
     })
   })
 })

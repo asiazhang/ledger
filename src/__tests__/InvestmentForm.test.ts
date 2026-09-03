@@ -189,6 +189,205 @@ describe('InvestmentForm.vue 基金申赎形态（issue #302）', () => {
   })
 })
 
+describe('InvestmentForm.vue 字段错误态（ADR-0058 / issue #416）', () => {
+  /** 数量输入框（placeholder「数量」，股票形态；基金形态为「确认份额（以确认单为准）」） */
+  function quantityInput(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('input').find((i) => i.attributes('placeholder') === '数量')!
+  }
+
+  /** 单价输入框（placeholder「单价」，非基金形态的权威输入） */
+  function priceInput(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('input').find((i) => i.attributes('placeholder') === '单价')!
+  }
+
+  /** 输入框所属 NInput 根元素（错误态 class 挂载处，同 #415 先例） */
+  function inputRoot(input: ReturnType<typeof quantityInput>) {
+    const el = input.element.closest('.n-input')
+    expect(el).not.toBeNull()
+    return el as Element
+  }
+
+  function hasErrorStatus(input: ReturnType<typeof quantityInput>) {
+    return inputRoot(input).classList.contains('n-input--error-status')
+  }
+
+  /** 保存按钮（按可见文案定位；数量/费用 NInputNumber 自带步进按钮，不可按序取） */
+  function submitButton(wrapper: ReturnType<typeof mount>, label: string) {
+    return wrapper.findAll('button').find((b) => b.text().includes(label))!
+  }
+
+  /** 经内层 NSelect 注入选择（0=币种，1=投资账户，2=标的） */
+  function selectByIndex(wrapper: ReturnType<typeof mount>, index: number, value: string) {
+    return wrapper.findAllComponents(NSelect)[index].vm.$emit('update:value', value)
+  }
+
+  function createCalls() {
+    return mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction')
+  }
+
+  it('初始为空不红，保存按钮可点（不惩罚尚未输入）', () => {
+    const wrapper = mount(InvestmentForm, { props: { kind: 'buy', submitLabel: '记买入' } })
+    expect(hasErrorStatus(quantityInput(wrapper))).toBe(false)
+    expect(hasErrorStatus(priceInput(wrapper))).toBe(false)
+    expect(submitButton(wrapper, '记买入').attributes('disabled')).toBeUndefined()
+  })
+
+  it('数量输入解析失败文本（4.30发）即时红显、保存禁用、非法文本原样保留', async () => {
+    const wrapper = mount(InvestmentForm, { props: { kind: 'buy', submitLabel: '记买入' } })
+    await quantityInput(wrapper).setValue('4.30发')
+    expect(hasErrorStatus(quantityInput(wrapper))).toBe(true)
+    expect(submitButton(wrapper, '记买入').attributes('disabled')).toBeDefined()
+    expect((quantityInput(wrapper).element as HTMLInputElement).value).toBe('4.30发')
+  })
+
+  it('数量超四位小数（1.23456）即时红显', async () => {
+    const wrapper = mount(InvestmentForm, { props: { kind: 'buy', submitLabel: '记买入' } })
+    await quantityInput(wrapper).setValue('1.23456')
+    expect(hasErrorStatus(quantityInput(wrapper))).toBe(true)
+  })
+
+  it('单价超四位小数（1.23456）即时红显、保存禁用；四位小数（1.2345）合法不红', async () => {
+    const wrapper = mount(InvestmentForm, { props: { kind: 'buy', submitLabel: '记买入' } })
+    await priceInput(wrapper).setValue('1.23456')
+    expect(hasErrorStatus(priceInput(wrapper))).toBe(true)
+    expect(submitButton(wrapper, '记买入').attributes('disabled')).toBeDefined()
+    await priceInput(wrapper).setValue('1.2345')
+    expect(hasErrorStatus(priceInput(wrapper))).toBe(false)
+    expect(submitButton(wrapper, '记买入').attributes('disabled')).toBeUndefined()
+  })
+
+  it('非法文本失焦不清空、红态持续；修正后红态解除、保存恢复可点', async () => {
+    const wrapper = mount(InvestmentForm, { props: { kind: 'buy', submitLabel: '记买入' } })
+    await quantityInput(wrapper).setValue('4.30发')
+    await quantityInput(wrapper).trigger('blur')
+    expect((quantityInput(wrapper).element as HTMLInputElement).value).toBe('4.30发')
+    expect(hasErrorStatus(quantityInput(wrapper))).toBe(true)
+    await quantityInput(wrapper).setValue('100')
+    expect(hasErrorStatus(quantityInput(wrapper))).toBe(false)
+    expect(submitButton(wrapper, '记买入').attributes('disabled')).toBeUndefined()
+  })
+
+  it('清空后未失焦不红；失焦红；重新输入合法解除', async () => {
+    const wrapper = mount(InvestmentForm, { props: { kind: 'buy', submitLabel: '记买入' } })
+    await quantityInput(wrapper).setValue('12')
+    await quantityInput(wrapper).setValue('')
+    expect(hasErrorStatus(quantityInput(wrapper))).toBe(false)
+    await quantityInput(wrapper).trigger('blur')
+    expect(hasErrorStatus(quantityInput(wrapper))).toBe(true)
+    await quantityInput(wrapper).setValue('12')
+    expect(hasErrorStatus(quantityInput(wrapper))).toBe(false)
+  })
+
+  it('保存尝试时空值红显兜底（数量+单价同红），不发起提交（格式类 toast 被红态取代）', async () => {
+    const wrapper = mount(InvestmentForm, { props: { kind: 'buy', submitLabel: '记买入' } })
+    await submitButton(wrapper, '记买入').trigger('click')
+    expect(hasErrorStatus(quantityInput(wrapper))).toBe(true)
+    expect(hasErrorStatus(priceInput(wrapper))).toBe(true)
+    expect(createCalls()).toHaveLength(0)
+  })
+
+  it('编辑弹窗合法回填（数量 100 / 单价 150）不显示红态、保存可点', () => {
+    const editingTx = {
+      id: 'txn-buy-1',
+      kind: 'buy' as const,
+      amount_cents: 15500,
+      currency_code: 'CNY',
+      amount_native_cents: 15500,
+      account_id: 'acc-1',
+      to_account_id: null,
+      category_id: null,
+      refund_of_transaction_id: null,
+      note: null,
+      date: '2026-01-10',
+      created_at: '2026-01-10T01:00:00Z',
+    }
+    const editingTrade = {
+      instrument_id: 'ins-1',
+      symbol: 'NVDA',
+      instrument_name: '英伟达',
+      instrument_type: 'stock' as const,
+      quantity: 100,
+      price_cents: 1500000,
+      fee_cents: 500,
+    }
+    const wrapper = mount(InvestmentForm, {
+      props: { kind: 'buy', submitLabel: '记买入', editing: editingTx, trade: editingTrade },
+    })
+    expect((quantityInput(wrapper).element as HTMLInputElement).value).toBe('100')
+    expect((priceInput(wrapper).element as HTMLInputElement).value).toBe('150')
+    expect(hasErrorStatus(quantityInput(wrapper))).toBe(false)
+    expect(hasErrorStatus(priceInput(wrapper))).toBe(false)
+    expect(submitButton(wrapper, '保存修改').attributes('disabled')).toBeUndefined()
+  })
+
+  it('纯零/负数数量不红、保存可点、提交走业务类校验通道（不发起 create_transaction）', async () => {
+    const wrapper = mount(InvestmentForm, { props: { kind: 'buy', submitLabel: '记买入' } })
+    await selectByIndex(wrapper, 1, 'acc-1')
+    await selectByIndex(wrapper, 2, 'ins-1')
+    await quantityInput(wrapper).setValue('0')
+    await priceInput(wrapper).setValue('10')
+    expect(hasErrorStatus(quantityInput(wrapper))).toBe(false)
+    expect(submitButton(wrapper, '记买入').attributes('disabled')).toBeUndefined()
+    await submitButton(wrapper, '记买入').trigger('click')
+    await flushPromises()
+    expect(createCalls()).toHaveLength(0)
+    // 负数可解析（非格式错误闭集），同走提交通道
+    await quantityInput(wrapper).setValue('-5')
+    expect(hasErrorStatus(quantityInput(wrapper))).toBe(false)
+    await submitButton(wrapper, '记买入').trigger('click')
+    await flushPromises()
+    expect(createCalls()).toHaveLength(0)
+  })
+
+  it('基金形态：份额字段红态同规、单价为只读反算无输入面、修正后保存恢复', async () => {
+    const fundInstruments = [
+      {
+        id: 'ins-fund',
+        symbol: '000123',
+        name: '某混合基金',
+        type: 'fund' as const,
+        currency_code: 'CNY',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+        version: 1,
+        device_id: 'test',
+        is_deleted: false,
+        market: 'unknown' as const,
+        invested: false,
+        price_cents: null,
+      },
+    ]
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_instruments') return Promise.resolve({ items: fundInstruments, total: 1 })
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const wrapper = mount(InvestmentForm, { props: { kind: 'buy', submitLabel: '记买入' } })
+    const select = instrumentSelect(wrapper)
+    vi.useFakeTimers()
+    try {
+      await select.find('input').setValue('某混合')
+      await vi.advanceTimersByTimeAsync(300)
+      await flushPromises()
+    } finally {
+      vi.useRealTimers()
+    }
+    select.vm.$emit('update:value', 'ins-fund')
+    await flushPromises()
+
+    const sharesInput = wrapper.findAll('input').find((i) => i.attributes('placeholder') === '确认份额（以确认单为准）')!
+    await sharesInput.setValue('4.30发')
+    expect(hasErrorStatus(sharesInput)).toBe(true)
+    expect(submitButton(wrapper, '记买入').attributes('disabled')).toBeDefined()
+    // 基金单价为只读反算展示（disabled），无自由输入面即无红态口径
+    const derivedInput = wrapper.findAll('input').find((i) => i.attributes('placeholder') === '由金额与份额反算')!
+    expect(derivedInput.attributes('disabled')).toBeDefined()
+    // 修正份额：红态解除、保存恢复可点（基金形态无单价错误态牵连）
+    await sharesInput.setValue('987.6543')
+    expect(hasErrorStatus(sharesInput)).toBe(false)
+    expect(submitButton(wrapper, '记买入').attributes('disabled')).toBeUndefined()
+  })
+})
+
 describe('InvestmentForm.vue 编辑模式（issue #180）', () => {
   const editingTx = {
     id: 'txn-buy-1',

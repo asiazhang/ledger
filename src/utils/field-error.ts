@@ -28,11 +28,32 @@ export type AmountJudgment =
   /** 超出表示精度（金额以整数分表达，至多两位小数，如 `4.305`） */
   | { kind: 'over-precision' }
 
+/** 数量文本判定闭集（交易数量：股数/份额，输入粒度至多四位小数，issue #416） */
+export type QuantityJudgment =
+  /** 合法，value 为数量的数值（负数属业务类校验，不在此拦） */
+  | { kind: 'ok'; value: number }
+  | { kind: 'empty' }
+  | { kind: 'parse-error' }
+  /** 超出输入粒度（多于四位小数，如 `1.23456`） */
+  | { kind: 'over-precision' }
+
+/** 价格文本判定闭集（单价：万分之一元刻度见价格刻度 ADR-0038，至多四位小数，issue #416） */
+export type PriceJudgment =
+  /** 合法，yuan 为元的数值（供装配器 yuanToPrice；负数属业务类校验，不在此拦） */
+  | { kind: 'ok'; yuan: number }
+  | { kind: 'empty' }
+  | { kind: 'parse-error' }
+  /** 超出表示精度（多于四位小数，如 `1.23456`） */
+  | { kind: 'over-precision' }
+
 /** 必填文本判定闭集（名称类自由文本字段用；推广期消费） */
 export type RequiredTextJudgment = { kind: 'ok' } | { kind: 'empty' }
 
 /** 字段错误类别（不含 ok） */
-export type FieldErrorKind = Exclude<AmountJudgment | RequiredTextJudgment, { kind: 'ok' }>['kind']
+export type FieldErrorKind = Exclude<
+  AmountJudgment | QuantityJudgment | PriceJudgment | RequiredTextJudgment,
+  { kind: 'ok' }
+>['kind']
 
 /** 判定时机输入（消费方声明）：touched = 失焦过；saveAttempted = 发生过保存尝试 */
 export interface FieldTiming {
@@ -41,12 +62,28 @@ export interface FieldTiming {
 }
 
 /**
+ * 小数文本判定内部共用体：形状校验（可选负号 + 数字 + 至多一个小数点，尾随
+ * 小数点视为合法中间态避免逐键误红）+ 按字段粒度的超精度判定。金额/数量/价格
+ * 三规则变体各自命名出口，改粒度只碰对应一行。
+ */
+function judgeDecimalText(
+  text: string,
+  maxDecimals: number,
+): { kind: 'ok'; value: number } | { kind: 'empty' | 'parse-error' | 'over-precision' } {
+  const trimmed = text.trim()
+  if (!trimmed) return { kind: 'empty' }
+  // 形状：可选负号，（整数部分 + 可选小数点及小数）或（纯小数）——『12.』合法、『1.2.3』非法
+  if (!/^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(trimmed)) return { kind: 'parse-error' }
+  const dot = trimmed.indexOf('.')
+  if (dot !== -1 && trimmed.length - dot - 1 > maxDecimals) return { kind: 'over-precision' }
+  return { kind: 'ok', value: Number(trimmed) }
+}
+
+/**
  * 金额文本 → 判定。输入是输入框中**原样保留**的原始文本（不拦截口径）。
  *
  * - 空串 / 纯空白 → empty（必填为空是否红由装配按时机判定）；
- * - 形状合法（可选负号 + 数字 + 至多一个小数点，`12` / `12.5` / `.5` / `12.`）
- *   且至多两位小数 → ok（携带元的数值）；尾随小数点视为合法中间态
- *   （`12.` 即 12，避免逐键输入过程误红）；
+ * - 形状合法且至多两位小数（金额以整数分表达）→ ok（携带元的数值）；
  * - 形状非法 → parse-error；形状合法但超两位小数 → over-precision。
  *
  * 与既有口径的一致性：科学计数法（`1e3`）拒绝同 yuanToCents；两端空白容差
@@ -55,13 +92,28 @@ export interface FieldTiming {
  * 超安全整数范围的极端输入判 ok，由装配层 requireAmountCents 既有 fail fast 兜底。
  */
 export function judgeAmountText(text: string): AmountJudgment {
-  const trimmed = text.trim()
-  if (!trimmed) return { kind: 'empty' }
-  // 形状：可选负号，（整数部分 + 可选小数点及小数）或（纯小数）——『12.』合法、『1.2.3』非法
-  if (!/^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(trimmed)) return { kind: 'parse-error' }
-  const dot = trimmed.indexOf('.')
-  if (dot !== -1 && trimmed.length - dot - 1 > 2) return { kind: 'over-precision' }
-  return { kind: 'ok', yuan: Number(trimmed) }
+  const judgment = judgeDecimalText(text, 2)
+  return judgment.kind === 'ok' ? { kind: 'ok', yuan: judgment.value } : judgment
+}
+
+/**
+ * 数量文本 → 判定（issue #416）。输入是输入框中**原样保留**的原始文本。
+ * 输入粒度至多四位小数——与既有数量输入组件 precision=4 的约束一致；形状与
+ * 容差口径（trim、尾随小数点、科学计数法拒绝、负数可解析）同金额。
+ */
+export function judgeQuantityText(text: string): QuantityJudgment {
+  const judgment = judgeDecimalText(text, 4)
+  return judgment.kind === 'ok' ? { kind: 'ok', value: judgment.value } : judgment
+}
+
+/**
+ * 价格文本 → 判定（issue #416）。输入是输入框中**原样保留**的原始文本。
+ * 至多四位小数——价格刻度以万分之一元为最小单位（价格刻度 ADR-0038，全投资域
+ * 价格列统一口径）；形状与容差口径同金额。
+ */
+export function judgePriceText(text: string): PriceJudgment {
+  const judgment = judgeDecimalText(text, 4)
+  return judgment.kind === 'ok' ? { kind: 'ok', yuan: judgment.value } : judgment
 }
 
 /**

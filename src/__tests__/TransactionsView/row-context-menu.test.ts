@@ -419,12 +419,13 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
     expect(form.props('kind')).toBe('buy')
     expect(form.props('editing')).toMatchObject({ id: 'txn-001' })
     expect(form.props('trade')).toMatchObject({ instrument_id: 'ins-1' })
-    // NInputNumber 顺序：金额（disabled，0）/ 数量（1）/ 单价（2）/ 手续费（3）
+    // 数量/单价为自由文本输入框（字段错误态，ADR-0058 / #416），金额自动计算与
+    // 手续费仍为数字输入（NInputNumber 顺序：金额 disabled 0 / 手续费 1）
     const numbers = form.findAllComponents(NInputNumber)
     expect(numbers[0].props('disabled')).toBe(true)
-    expect(numbers[1].props('value')).toBe(100)
-    expect(numbers[2].props('value')).toBe(150)
-    expect(numbers[3].props('value')).toBe(5)
+    expect(numbers[1].props('value')).toBe(5)
+    expect((form.find('input[placeholder="数量"]').element as HTMLInputElement).value).toBe('100')
+    expect((form.find('input[placeholder="单价"]').element as HTMLInputElement).value).toBe('150')
     expect(form.text()).toContain('保存修改')
   })
 
@@ -467,7 +468,7 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
     expect(form.props('kind')).toBe('sell')
     expect(form.props('trade')).toMatchObject({ instrument_id: 'ins-1', fee_cents: null })
     const numbers = form.findAllComponents(NInputNumber)
-    expect(numbers[3].props('value')).toBeNull()
+    expect(numbers[1].props('value')).toBeNull()
   })
 
   it('取买卖明细失败：弹窗不打开并提示错误', async () => {
