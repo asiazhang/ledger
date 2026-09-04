@@ -188,6 +188,32 @@
       "restoreFailed": "Restore failed: {msg}",
       "loadFailed": "Failed to load data location: {msg}",
       "changeFailed": "Failed to change data location: {msg}"
+    },
+    "search": {
+      "title": "Pinyin search data",
+      "hint": "Pinyin-initial search relies on derived pinyin data of transaction notes. Upgrades or interrupted backfill may leave a backlog; Repair fills the whole backlog and reports the result (rows filled / converged / failure reason). Safe to run repeatedly.",
+      "repair": "Repair now",
+      "report": {
+        "doneTitle": "Repair complete: {n} rows filled",
+        "doneBody": "Pinyin data has converged (backlog cleared); pinyin search is fully restored.",
+        "noopTitle": "Nothing to repair",
+        "noopBody": "Pinyin data has already converged (0 rows filled this run).",
+        "notConvergedTitle": "Repair incomplete",
+        "notConvergedBody": "Some backlog remains. You can run Repair again; search never misses results during backlog.",
+        "failureBody": "Failed stage: {stage}; reason: {msg}",
+        "stage": {
+          "probe": "backlog probe",
+          "read": "reading backlog",
+          "begin": "beginning transaction",
+          "write": "writing",
+          "commit": "committing transaction"
+        }
+      },
+      "msg": {
+        "done": "Repair complete: {n} rows filled",
+        "incomplete": "Repair incomplete, see the report",
+        "repairFailed": "Repair failed: {msg}"
+      }
     }
   },
   "scheduled": {

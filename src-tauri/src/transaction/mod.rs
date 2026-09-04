@@ -27,7 +27,8 @@ pub mod writer;
 mod model;
 
 pub use model::{
-    CreateTransactionResult, NormalizedTransaction, Transaction, TransactionBatchInput,
+    CreateTransactionResult, NormalizedTransaction, NotePinyinRepairFailure,
+    NotePinyinRepairReport, NotePinyinRepairStage, Transaction, TransactionBatchInput,
     TransactionInput, TransactionListFilter, TransactionListResult, TransactionSearchResult,
     UpdateTransactionInput,
 };
@@ -49,7 +50,7 @@ pub use behavior::{
 pub use read::{
     get_transaction, get_transaction_internal, list_transactions, list_transactions_internal,
 };
-pub use search::{search_transactions, search_transactions_internal};
+pub use search::{repair_note_pinyin, search_transactions, search_transactions_internal};
 pub use search_text::{
     is_subsequence, pinyin_initials, split_terms, term_matches, term_matches_text,
 };

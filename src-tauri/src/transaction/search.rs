@@ -18,7 +18,10 @@
 //!    （`Transaction::from_row` 的 18 列，无 JOIN）。
 //! 3. **惰性回填**：存量行的 `note_pinyin` 积压由搜索读路径按 V018 探针索引
 //!    分批补齐（每批一个事务，内存有界）；回填属派生数据维护，失败仅降级为
-//!    现算兑底并记日志，不影响搜索结果。
+//!    现算兑底并记日志，不影响搜索结果。同一回填核心另暴露为显式一键修复
+//!    [`repair_note_pinyin`]（issue #513，设置页入口）：幂等回填全部积压并
+//!    返回报告（回填行数 / 是否收敛 / 失败原因），作为回填失败时可触发的
+//!    恢复手段。
 //!
 //! 热路径纪律：行内文本一律经 `get_ref` 借用匹配、词条与字典在搜索开始时一次性
 //! 小写化/拼音化，命中且落当前页窗口才分配 id——50 万候选流上每行分配会吞掉
@@ -30,7 +33,10 @@ use std::collections::HashMap;
 use rusqlite::Connection;
 use rusqlite::types::Value;
 
-use super::model::{Transaction, TransactionSearchResult};
+use super::model::{
+    NotePinyinRepairFailure, NotePinyinRepairReport, NotePinyinRepairStage, Transaction,
+    TransactionSearchResult,
+};
 use crate::db::query::FromRow;
 use crate::error::Result;
 
@@ -192,28 +198,69 @@ fn term_matches_borrowed(
         })
 }
 
-/// 惰性回填存量行的 note_pinyin（V018，issue #492）：经探针发现积压后分批
-/// （每批一个事务）补齐。任何失败仅记 warn 并终止本轮回填——搜索流式匹配对
-/// NULL 列现算兜底，语义不依赖回填完成度。派生数据维护不置脏（不触发备份）。
-fn backfill_note_pinyin(conn: &Connection) {
-    let probe = || -> Result<bool> {
-        let hit: i64 = conn.query_row(
-            "SELECT EXISTS(\
-             SELECT 1 FROM transactions WHERE note_pinyin IS NULL AND note IS NOT NULL)",
-            [],
-            |r| r.get(0),
-        )?;
-        Ok(hit != 0)
+/// 备注拼音积压探测（V018 partial 索引 `idx_transactions_note_pinyin_backlog`
+/// 支撑，恒 O(1)）：true = 仍有「有备注且拼音列 NULL」的积压行；无备注行的
+/// NULL 列不构成积压（拼音串仅由备注派生）。
+fn probe_note_pinyin_backlog(conn: &Connection) -> Result<bool> {
+    let hit: i64 = conn.query_row(
+        "SELECT EXISTS(\
+         SELECT 1 FROM transactions WHERE note_pinyin IS NULL AND note IS NOT NULL)",
+        [],
+        |r| r.get(0),
+    )?;
+    Ok(hit != 0)
+}
+
+/// 阶段化失败原因（底层错误消息原样透传，阶段供前端本地化）。
+fn repair_failure(
+    stage: NotePinyinRepairStage,
+    e: impl std::fmt::Display,
+) -> NotePinyinRepairFailure {
+    NotePinyinRepairFailure {
+        stage,
+        message: e.to_string(),
+    }
+}
+
+/// 收尾：最终收敛探测后组装报告（失败路径同样如实报告剩余积压；探测再失败
+/// 时收敛位保守置 false，原始失败原因优先保留）。
+fn finish_repair(
+    conn: &Connection,
+    backfilled: u64,
+    failure: Option<NotePinyinRepairFailure>,
+) -> NotePinyinRepairReport {
+    let converged = match probe_note_pinyin_backlog(conn) {
+        Ok(has_backlog) => !has_backlog,
+        Err(_) => false,
     };
-    match probe() {
-        Ok(false) => return, // 已收敛：探测恒 O(1)，零扫描。
+    NotePinyinRepairReport {
+        backfilled,
+        converged,
+        failure,
+    }
+}
+
+/// 备注拼音一键修复（issue #513）：显式回填全部积压并返回报告（回填行数 /
+/// 是否收敛 / 失败原因）。幂等——仅补「拼音列仍为 NULL」的行，重复执行零回填、
+/// 已回填行（含手工脏值）原样保留；分批事务与失败纪律同惰性回填：任一批失败
+/// 记 warn、终止本轮回填、报告携带失败阶段与底层错误，不静默。派生数据维护
+/// 不置脏（不触发备份）。搜索入口的惰性回填消费同一实现（报告在搜索路径不
+/// 消费，失败已 warn，语义由现算兜底保障）。
+pub fn repair_note_pinyin(conn: &Connection) -> NotePinyinRepairReport {
+    match probe_note_pinyin_backlog(conn) {
+        Ok(false) => return finish_repair(conn, 0, None), // 已收敛：探测恒 O(1)。
         Ok(true) => {}
         Err(e) => {
-            tracing::warn!(error = %e, "备注拼音回填探测失败（忽略，搜索走现算兜底）");
-            return;
+            tracing::warn!(error = %e, "备注拼音回填探测失败");
+            return finish_repair(
+                conn,
+                0,
+                Some(repair_failure(NotePinyinRepairStage::Probe, e)),
+            );
         }
     }
-    tracing::info!("备注拼音列存在积压，开始惰性回填（分批事务）");
+    tracing::info!("备注拼音列存在积压，开始回填（分批事务）");
+    let mut backfilled: u64 = 0;
     loop {
         let rows: Vec<(String, String)> = match (|| {
             let mut stmt = conn.prepare(
@@ -226,7 +273,11 @@ fn backfill_note_pinyin(conn: &Connection) {
             Ok(rows) => rows,
             Err(e) => {
                 tracing::warn!(error = %e, "备注拼音回填读取积压失败（终止本轮回填）");
-                return;
+                return finish_repair(
+                    conn,
+                    backfilled,
+                    Some(repair_failure(NotePinyinRepairStage::Read, e)),
+                );
             }
         };
         if rows.is_empty() {
@@ -236,7 +287,11 @@ fn backfill_note_pinyin(conn: &Connection) {
             Ok(tx) => tx,
             Err(e) => {
                 tracing::warn!(error = %e, "备注拼音回填开事务失败（终止本轮回填）");
-                return;
+                return finish_repair(
+                    conn,
+                    backfilled,
+                    Some(repair_failure(NotePinyinRepairStage::Begin, e)),
+                );
             }
         };
         let mut changed = 0usize;
@@ -258,12 +313,22 @@ fn backfill_note_pinyin(conn: &Connection) {
         }
         if let Some(e) = batch_err {
             tracing::warn!(error = %e, "备注拼音回填写入失败（终止本轮回填）");
-            return; // tx drop → 回滚本批，其余行下轮搜索重试。
+            // tx drop → 回滚本批，剩余积压由收敛探测如实报告。
+            return finish_repair(
+                conn,
+                backfilled,
+                Some(repair_failure(NotePinyinRepairStage::Write, e)),
+            );
         }
         if let Err(e) = tx.commit() {
             tracing::warn!(error = %e, "备注拼音回填提交失败（终止本轮回填，本批回滚）");
-            return; // 提交失败事务由 drop 回滚，其余行下轮搜索重试。
+            return finish_repair(
+                conn,
+                backfilled,
+                Some(repair_failure(NotePinyinRepairStage::Commit, e)),
+            );
         }
+        backfilled += changed as u64;
         if changed == 0 {
             // 全批皆已被补齐（防御：防同批死循环）。
             break;
@@ -272,6 +337,7 @@ fn backfill_note_pinyin(conn: &Connection) {
             break;
         }
     }
+    finish_repair(conn, backfilled, None)
 }
 
 /// 第二段：仅为当前页命中 id 回表取展示列（`Transaction::from_row` 的 18 列，
@@ -349,8 +415,9 @@ pub fn search_transactions_internal(
     let page = page.max(1);
     let page_size = page_size.clamp(1, MAX_PAGE_SIZE);
 
-    // 惰性回填存量行的拼音冗余列（V018）：回填失败降级现算，语义不受影响。
-    backfill_note_pinyin(conn);
+    // 惰性回填存量行的拼音冗余列（V018）：与显式一键修复（issue #513）消费
+    // 同一回填核心；报告在搜索路径不消费，失败已 warn，语义由现算兜底保障。
+    repair_note_pinyin(conn);
 
     // 可搜索名字与软删口径字典（账户/分类/商户，个位数到千行量级）：每次搜索
     // 新建，替代 50 万候选流上的逐行 JOIN（改名即刻生效语义不变，见模块注释）。
