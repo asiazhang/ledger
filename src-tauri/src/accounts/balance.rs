@@ -178,10 +178,11 @@ pub fn list_account_balances_with_visibility(
 /// 退款继承与投资归一的账户语义已被写入前的归一步骤前置消化，
 /// 推导只看行上两个账户引用列。
 ///
-/// 接线状态：创建写入（Writer 接缝 `transaction::writer::insert_row`）已消费
-/// 本函数（issue #533，收口 1/2）；修改/删除两路的手写推导改消费本函数在
-/// 收口 2/2——在那之前「三条写入路径消费同一口径」是目标态而非现状，
-/// 任何新写入口不得另造第四份推导、直接消费本函数。
+/// 接线状态：三条写入路径全部消费本函数——创建（Writer 接缝
+/// `transaction::writer::insert_row`，issue #533）、修改（`writer::update_row`，
+/// 旧 ∪ 新并集）与删除（行为层编排 `transaction::behavior::delete_within_transaction`，
+/// 原行两端）自 issue #534 起接线，三份手写推导已消亡；
+/// 任何新写入口不得另造第四份推导，直接消费本函数。
 ///
 /// 与余额口径 SQL 构造（[`account_flow_subquery`] / [`join_column`]）同模块
 /// 互指、必须共变：本函数决定刷新「算哪些」（账户引用对的收集），
