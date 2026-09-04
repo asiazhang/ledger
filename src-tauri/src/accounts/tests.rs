@@ -34,6 +34,8 @@ fn insert_account(
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0,0)",
         rusqlite::params![id, name, kind, currency, initial, now, now, 1, device_id()],
     ).unwrap();
+    // 裸 SQL 绕过 create_account 域钩子，按 V017 迁移回填语义补建缓存行（ADR-0066）。
+    crate::db::balance::refresh_account_balances(conn, &[id]).unwrap();
 }
 
 fn insert_hidden_account(conn: &rusqlite::Connection, id: &str, name: &str, currency: &str) {
@@ -43,6 +45,7 @@ fn insert_hidden_account(conn: &rusqlite::Connection, id: &str, name: &str, curr
          VALUES (?1,?2,'other',?3,0,?4,?5,?6,?7,0,1)",
         rusqlite::params![id, name, currency, now, now, 1, device_id()],
     ).unwrap();
+    crate::db::balance::refresh_account_balances(conn, &[id]).unwrap();
 }
 
 fn insert_tx(
@@ -61,6 +64,13 @@ fn insert_tx(
          VALUES (?1,?2,?3,'CNY',?3,?4,?5,NULL,NULL,NULL,'2026-01-15',?6,?7,?8,?9,0)",
         rusqlite::params![id, kind, amount, account_id, to_account_id, now, now, 1, device_id()],
     ).unwrap();
+    // 裸 SQL 绕过 Writer 接缝缓存刷新，同步补齐两侧账户的缓存行（保持「缓存==实时」
+    // 不变量，ADR-0066）。
+    let mut affected = vec![account_id];
+    if let Some(to) = to_account_id {
+        affected.push(to);
+    }
+    crate::db::balance::refresh_account_balances(conn, &affected).unwrap();
 }
 
 fn balance(conn: &rusqlite::Connection, account_id: &str) -> i64 {

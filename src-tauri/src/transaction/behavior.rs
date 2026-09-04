@@ -39,6 +39,7 @@ use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 
 use super::model::TransactionInput;
+use crate::db::balance::refresh_account_balances;
 use crate::db::{device_id, now_iso};
 use crate::error::{AppError, Result};
 use crate::investment;
@@ -228,11 +229,11 @@ pub fn delete(conn: &Connection, id: &str) -> Result<()> {
 
 /// 删除协议本体：`revert（仅 buy）→ 软删 UPDATE`（无事务语义，由 [`ensure_transaction`] 包裹）。
 fn delete_within_transaction(conn: &Connection, id: &str) -> Result<()> {
-    let kind: TransactionKind = conn
+    let (kind, account_id, to_account_id): (TransactionKind, String, Option<String>) = conn
         .query_row(
-            "SELECT kind FROM transactions WHERE id=?1 AND is_deleted=0",
+            "SELECT kind, account_id, to_account_id FROM transactions WHERE id=?1 AND is_deleted=0",
             rusqlite::params![id],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?
         .ok_or_else(|| {
@@ -255,6 +256,12 @@ fn delete_within_transaction(conn: &Connection, id: &str) -> Result<()> {
         "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id()],
     )?;
+    // 余额缓存写路径（issue #491 / ADR-0066）：软删后对原账户引用整体重算。
+    let mut affected = vec![account_id.as_str()];
+    if let Some(to_account_id) = &to_account_id {
+        affected.push(to_account_id.as_str());
+    }
+    refresh_account_balances(conn, &affected)?;
     // 搜索无索引（issue #196 全量扫描实现）：软删除即刻生效，删除的交易不再可搜。
     Ok(())
 }

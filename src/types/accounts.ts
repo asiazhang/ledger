@@ -37,6 +37,21 @@ export interface AccountBalance {
   balance_cents: number
 }
 
+/** 余额缓存审计差异行（issue #491）：缓存缺失记 null（回填前）。 */
+export interface BalanceCacheDrift {
+  account_id: string
+  account_name: string
+  cached_cents: number | null
+  actual_cents: number
+}
+
+/** 余额缓存审计报告（issue #491）：修复已完成后的差异快照。 */
+export interface BalanceCacheAudit {
+  accounts_checked: number
+  drifts: BalanceCacheDrift[]
+  repaired: boolean
+}
+
 /** 账户类型闭集（穷尽表驱动：新增 AccountType 变体未列出即编译报错）；
  * 显示标签在文案资源 accounts.type.*（i18n，ADR-0049），不再硬编码。 */
 const ACCOUNT_TYPE_PRESENCE = {

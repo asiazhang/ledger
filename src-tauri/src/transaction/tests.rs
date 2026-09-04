@@ -2,6 +2,7 @@
 //!
 //! - [`amount`]：kind 边界、度量矩阵、SQL 片段聚合、本位币折算
 //! - [`audit`]：审计字段统一生成与 native 本位币折算
+//! - [`balance_cache`]：余额/净资产持久化缓存一致性（issue #491）
 //! - [`behavior`]：写删行为、refund 链、嵌套感知事务与即建商户证据
 //! - [`common`]：交易行为/查询脚手架
 //! - [`merchant`]：商户携带收口与即建商户证据
@@ -13,6 +14,7 @@
 
 mod amount;
 mod audit;
+mod balance_cache;
 mod batch_common;
 mod batch_create;
 mod batch_dedup;

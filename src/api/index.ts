@@ -6,6 +6,7 @@ import type {
   AccountInput,
   AccountUpdateInput,
   AddFundResult,
+  BalanceCacheAudit,
   BackupFileInfo,
   AutoBackupState,
   BackupResult,
@@ -99,6 +100,8 @@ export const api = {
     invoke<string>('adjust_account_balance', { id, input }),
   deleteAccount: (id: string) => invoke<void>('delete_account', { id }),
   listAccountBalances: () => invoke<AccountBalance[]>('list_account_balances'),
+  /** 余额缓存手动审计（issue #491）：全账户实时重算 vs 缓存，修复差异并返回差异报告 */
+  auditBalanceCache: () => invoke<BalanceCacheAudit>('audit_balance_cache'),
 
   // 分类
   // includeDeleted=true 返回含软删全量（URL 下钻校验映射需含软删但仍有历史交易的分类，issue #377）
