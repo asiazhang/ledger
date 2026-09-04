@@ -7,6 +7,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::{AppError, Result};
 
 pub mod data_location;
+pub mod encryption;
 pub mod perf_trace;
 pub mod query;
 
@@ -123,19 +124,46 @@ pub fn check_integrity(conn: &Connection) -> Result<()> {
 /// 打开数据库连接并启用外键约束（SQLite 默认关闭，需每次连接显式开启）。
 /// 所有数据库连接都应通过此函数或其派生函数创建，以保证外键生效。
 /// 同时注册耗时 hook（`perf_trace`），覆盖所有 SQL 执行上下文。
+/// 明文路径：不设密钥，行为与 SQLCipher 引擎基座引入前完全一致
+/// （issue #569 不变量：未设密钥的连接保持明文）。
 pub fn open_connection<P: AsRef<Path>>(path: P) -> Result<Connection> {
-    let conn = Connection::open(path)?;
+    finish_open(Connection::open(path)?, None)
+}
+
+/// 以主口令打开数据库连接（issue #569 / ADR-0075）。
+///
+/// 建连接缝单点的密钥侧：密钥注入集中在本函数内部一处，业务路径
+/// 不散布密钥知识。参数是**主口令**（passphrase，SQLCipher 按默认
+/// KDF 参数派生密钥，ADR-0075 决策 3），不是派生密钥本体，也不是
+/// raw key 字符串。调用方必须先经 [`encryption::probe_file_kind`]
+/// 确认文件确为密文库（[`encryption::DbFileKind::Encrypted`]）——对
+/// 明文库设密钥后首条读语句会报「file is not a database」。口令错误的
+/// 失败同样发生在首条读语句（口令错误 ≠ 库损坏，由探测区分）。
+pub fn open_connection_with_passphrase<P: AsRef<Path>>(
+    path: P,
+    passphrase: &str,
+) -> Result<Connection> {
+    finish_open(Connection::open(path)?, Some(passphrase))
+}
+
+/// 建连收尾单点：密钥注入（如有）→ 外键 → 耗时 hook。
+fn finish_open(conn: Connection, passphrase: Option<&str>) -> Result<Connection> {
+    if let Some(passphrase) = passphrase {
+        // `PRAGMA key` 必须是连接上第一条语句；PRAGMA 不支持绑定参数，
+        // 经 `pragma_update` 以转义后的 SQL 字面量注入。耗时 hook 尚未安装，
+        // 语句文本（含主口令）不会进入 trace 输出（ADR-0075：日志与 trace
+        // 不落主口令）——调整顺序即破坏该纪律。
+        conn.pragma_update(None, "key", passphrase)?;
+    }
     conn.execute("PRAGMA foreign_keys = ON", [])?;
     perf_trace::install_perf_trace(&conn, perf_trace::DEFAULT_SLOW_QUERY_THRESHOLD);
     Ok(conn)
 }
 
 /// 打开内存数据库连接并启用外键约束（用于测试和 BDD 集成测试）。
+/// 与文件库路径共用建连收尾单点（外键、耗时 hook）。
 pub fn open_in_memory() -> Result<Connection> {
-    let conn = Connection::open_in_memory()?;
-    conn.execute("PRAGMA foreign_keys = ON", [])?;
-    perf_trace::install_perf_trace(&conn, perf_trace::DEFAULT_SLOW_QUERY_THRESHOLD);
-    Ok(conn)
+    finish_open(Connection::open_in_memory()?, None)
 }
 
 // ---------------------------------------------------------------------------
