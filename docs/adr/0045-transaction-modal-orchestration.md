@@ -12,6 +12,7 @@
 ## 决策
 
 1. **新增前端 composable `TransactionModalState`（工厂形态，交易弹窗编排）**：意图闭集四——`create`（携带 `CreateTransactionKind` 子类型，无目标行）、`refund` / `edit` / `add-item`（携带目标 `Transaction` 行，`edit` 另携带取到的 `TransactionTrade`）。`show = 意图非空` 由单一判别联合派生（无独立 show 布尔），`close()` 清回 null 终态，回调序号随 `open` 递增内化——「开启 / 目标 / 关闭编排」全仓仅此一处，视图不再持有任何 `showXxx / xxxSource / xxxSeq` 三件套。
+   > 注（2026-09-04 修订，issue #521）：本决策「等真正第二个消费者出现再参数化」的条件已触发——grilling 期盘点确认其余弹窗手搓「show + target + seq」三件套共 13 处。弹窗开启编排泛型化为通用工厂 ModalIntent（弹窗意图编排，ADR-0072），本模块迁为其上首个适配器，对外接口与行为不变；异步时序守卫（决策 2）仍留在本模块适配器层，不上浮通用工厂语义。
 2. **open 统一异步签名 + 编辑取数竞态守卫**：`open` 统一返回 `Promise<void>`（仅 `edit` 真正 await）。编辑的「先取买卖明细再开窗」时序内化：取到再开窗，失败走错误提示不开窗；并加代数守卫（last-open-wins）——每次 open 递增一代，await 返回后代数已过期则丢弃（不设意图、不 bump 序号、不开窗），消灭「慢 A 覆盖快 B」竞态。慢取/失败行为一处定义（user story 4）。
 3. **依赖 direct-import，不做注入**：模块直接 `import api` 与 `useMessage`，沿用 `useScheduledPlanList` 惯例；测试在 `vi.mock('naive-ui')`（捕获提示）+ `vi.mocked(invoke)`（捕获命令）两层 mock，不新增注入面。`getTransactionTrade` 只有一个实现，注入是 YAGNI。
 4. **关闭后副作用留视图**：模块只内化「关闭」（意图 → null 终态），refresh / load 仍归视图——视图成功 handler 收缩为 `close(); refresh()` / `close(); load()`。弹窗编排与 TransactionFilter 两个深模块保持正交，不建立「弹窗模块 → 过滤模块」依赖（ADR-0041 弹层纯度方向的延续）。
