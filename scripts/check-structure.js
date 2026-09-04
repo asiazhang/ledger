@@ -11,6 +11,17 @@
 // 扫描边界：文本级扫描，注释与字符串/char 字面量掩码后匹配 `commands::`
 // 路径引用与 `commands as` 别名引入；经别名改名的间接引用文本不可达，
 // 靠评审兜底。
+// 基础设施→域扫描（ADR-0071 决策 6 / #538）：白名单基础设施条目内的反向依赖
+// 文本级扫描，与壳层扫描同款形态（掩码后匹配、fail loud、外挂测试豁免不变）。
+// 匹配限定 crate 根前缀的域模块路径（`crate::`/`tauri_app_lib::` + 域目录名，
+// 再随 `::`/` as `/`;`）——不裸匹配域名单词：`sync` 等域名与 std::sync /
+// tokio::sync 撞名，裸词形态误报不可用，crate 根限定即 infra→域 import 的
+// 文本形状；花括号列举首段（use crate::{accounts::x, …}）同可命中。
+// 认许边（INFRA_DOMAIN_ALLOWED_EDGES）：基础设施→域的既有设计意图边逐条
+// 留痕于本脚本（精确到文件 + 目标域，附 ADR 指针），与白名单同属「已验证
+// 事实固化为规格」；清单之外的基础设施→域引用一律红。首条 db/mod.rs→backup
+// 为 ADR-0032 连接层写入口置脏单点（#246）——ADR-0071 §6「落地即全绿」原
+// 前提漏数此边，勘误注记见该 ADR（#538 实施时补录）。
 // 模型域化禁令（ADR-0059 T7 / #424 收口落地，全树扫描、同样掩码与测试豁免）：
 // ① 全局模型模块路径残留禁令——`crate::models` / `tauri_app_lib::models` 即红：
 //    全局模型目录已随域归位消亡，防扁平命名空间复活（crate 根裸路径 `models::x`
@@ -58,6 +69,41 @@ export const WHITELIST = [
 
 /** 壳层依赖形态：模块路径引用（crate::commands::x / commands::x）与别名引入 */
 const SHELL_DEP_PATTERN = /\bcommands\s*::|\bcommands\s+as\b/
+
+/** 分层词汇（白名单 layer 字段取值）：比较侧单一来源，防字面量漂移 */
+export const LAYER = {
+  DOMAIN: '域目录',
+  INFRA: '基础设施',
+}
+
+/** 已归位域目录名（自白名单派生，单一事实源）；按长度降序防前缀吞匹配 */
+const DOMAIN_NAMES = WHITELIST.filter((w) => w.layer === LAYER.DOMAIN)
+  .map((w) => w.path)
+  .sort((a, b) => b.length - a.length)
+
+/**
+ * 基础设施→域依赖形态（ADR-0071 决策 6 / #538）：crate 根前缀 + 域目录名，
+ * 再随 `::`（路径引用）、` as `（别名引入）或 `;`（模块自身导入）；
+ * 捕获组 1 = 目标域名（认许边匹配用）。`\{?\s*` 容纳花括号列举首段
+ * （use crate::{accounts::x, …}）。
+ */
+const INFRA_DOMAIN_DEP_PATTERN = new RegExp(
+  `\\b(?:crate|tauri_app_lib)\\s*::\\s*\\{?\\s*(${DOMAIN_NAMES.join('|')})\\b(?:\\s*::|\\s+as\\b|\\s*;)`,
+)
+
+/**
+ * 认许边（ADR-0071 决策 6 + §6 勘误注记 / #538）：基础设施→域的既有设计
+ * 意图边，与白名单同属「已验证事实固化为规格」——逐条精确到白名单条目内
+ * 文件相对路径 + 目标域目录名，新增条目须附 ADR 指针与成因；清单之外的
+ * 基础设施→域引用一律红。
+ */
+const INFRA_DOMAIN_ALLOWED_EDGES = [
+  {
+    file: 'db/mod.rs',
+    domain: 'backup',
+    reason: 'ADR-0032 连接层统一写入口置脏单点：after_commit 提交点触发置脏 + 到期检查（#246）',
+  },
+]
 
 /** 规则①形态：全局模型模块路径（全局目录已消亡，任何引用即残留） */
 const GLOBAL_MODEL_PATH_PATTERN = /\b(?:crate|tauri_app_lib)\s*::\s*models\b/
@@ -181,7 +227,8 @@ export function maskNonCode(text) {
 }
 
 /** 扫描单个 Rust 文本（掩码注释与字符串/char 字面量）：返回命中指定形态的
- *  行号（1 起算）与原文；形态缺省为壳层依赖（白名单分层检查的既有行为） */
+ *  行号（1 起算）与原文；形态缺省为壳层依赖（白名单分层检查的既有行为）；
+ *  captured = 形态捕获组 1（无捕获组时 undefined，基础设施→域形态为目标域名） */
 export function scanRustSource(text, pattern = SHELL_DEP_PATTERN) {
   const hits = []
   const masked = maskNonCode(text)
@@ -189,7 +236,7 @@ export function scanRustSource(text, pattern = SHELL_DEP_PATTERN) {
   const rawLines = text.split('\n')
   for (let i = 0; i < maskedLines.length; i++) {
     const m = maskedLines[i].match(pattern)
-    if (m) hits.push({ line: i + 1, text: rawLines[i].trim(), match: m[0] })
+    if (m) hits.push({ line: i + 1, text: rawLines[i].trim(), match: m[0], captured: m[1] })
   }
   return hits
 }
@@ -214,7 +261,7 @@ function main() {
   const srcDir = process.argv[2] ?? join(repoRoot, 'src-tauri', 'src')
   const problems = []
   let scannedFiles = 0
-  const domainCount = WHITELIST.filter((w) => w.layer === '域目录').length
+  const domainCount = WHITELIST.filter((w) => w.layer === LAYER.DOMAIN).length
 
   // 模型域化禁令（规则①/②）：全树扫描（壳、域、基础设施、顶层文件），
   // 残留引用可出现在任何层；collectRustFiles 自带测试豁免（ADR-0056 决策 5）。
@@ -274,14 +321,32 @@ function main() {
       continue
     }
     scannedFiles += files.length
+    const isInfra = w.layer === LAYER.INFRA
     for (const f of files) {
-      for (const hit of scanRustSource(readFileSync(f.abs, 'utf8'))) {
+      const source = readFileSync(f.abs, 'utf8')
+      for (const hit of scanRustSource(source)) {
         problems.push(
           `✗ 反向依赖：${w.path} 层（${w.note}）引用壳层 → ${f.rel}:${hit.line}（${hit.match}）\n` +
             `    ${hit.text}\n` +
             `    分层规则：壳 → 域 → 基础设施，域永不依赖壳（ADR-0056）；` +
             `被依赖逻辑应下沉到域目录或基础设施，或本次迁移应把该文件一并归位`,
         )
+      }
+      if (isInfra) {
+        for (const hit of scanRustSource(source, INFRA_DOMAIN_DEP_PATTERN)) {
+          const allowed = INFRA_DOMAIN_ALLOWED_EDGES.some(
+            (e) => e.file === f.rel && e.domain === hit.captured,
+          )
+          if (allowed) continue
+          problems.push(
+            `✗ 反向依赖：${w.path}（${w.layer}：${w.note}）引用域目录 ${hit.captured} → ` +
+              `${f.rel}:${hit.line}（${hit.match}）\n` +
+              `    ${hit.text}\n` +
+              `    分层规则：壳 → 域 → 基础设施；基础设施→域业务边归零且可机械守门` +
+              `（ADR-0071 决策 6，#538）；设计意图边须逐条留痕于本脚本 ` +
+              `INFRA_DOMAIN_ALLOWED_EDGES（附 ADR 指针），或把逻辑下沉域目录`,
+          )
+        }
       }
     }
   }
@@ -301,6 +366,7 @@ function main() {
   console.log(
     `✓ 结构守门：白名单 ${WHITELIST.length} 项（域目录 ${domainCount} + 基础设施 ${WHITELIST.length - domainCount}）` +
       `· 白名单面非测试文件 ${scannedFiles} 个 · 对壳层零依赖` +
+      `· 基础设施→域零未认许引用（认许边 ${INFRA_DOMAIN_ALLOWED_EDGES.length} 条，ADR-0071）` +
       `· 模型域化禁令全树扫描 ${allFiles.length} 个文件零残留（ADR-0059）`,
   )
 }
