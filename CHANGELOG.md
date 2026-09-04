@@ -2,6 +2,12 @@
 
 本文件记录 Ledger 各版本对使用者可见的变更，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)规则。
 
+## [Unreleased]
+
+### Changed
+
+- **性能**：结构索引与统计修复——交易表新增 6 条未删除行 partial 覆盖索引（列表排序、账户日期筛选、双侧现金流聚合、月度表达式、分类覆盖），报表日期极值探测改写为两个标量子查询，月度汇总钉定表达式索引；批量导入后自动重跑统计，仅新增迁移、查询契约零改动（[#490]）。
+
 ## [0.4.0] - 2026-09-04
 
 ### Added
@@ -126,3 +132,4 @@
 [#411]: https://github.com/asiazhang/ledger/issues/411
 [#412]: https://github.com/asiazhang/ledger/issues/412
 [#435]: https://github.com/asiazhang/ledger/issues/435
+[#490]: https://github.com/asiazhang/ledger/issues/490

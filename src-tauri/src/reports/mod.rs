@@ -74,12 +74,15 @@ pub fn monthly_summary_rows(
     from: Option<&str>,
     to: Option<&str>,
 ) -> Result<Vec<MonthlySummary>> {
+    // INDEXED BY 钉定表达式索引（issue #490）：GROUP BY month 的分组序与聚合列
+    // 全在 idx_transactions_month_expr 内，钉定防 planner 统计边际摇摆退回
+    // 临时 B-tree（不钉会退回 ~1s 量级）。
     let mut sql = format!(
         "SELECT substr(date,1,7) AS month, \
          SUM({income}) AS income, \
          SUM({expense_gross}) AS expense, \
          SUM({refund_gross}) AS refund \
-         FROM transactions WHERE is_deleted=0",
+         FROM transactions INDEXED BY idx_transactions_month_expr WHERE is_deleted=0",
         income = income_net_expr("transactions"),
         expense_gross = expense_gross_expr("transactions"),
         refund_gross = refund_gross_expr("transactions"),
@@ -174,8 +177,12 @@ pub fn merchant_shares_rows(
 /// 报表日期极值范围（issue #266 / #389）：对全部未删除交易各取一次最小/最大日期极值
 /// （ISO 文本字典序即时间序，索引友好）；返回日期对 `{min_date, max_date}`（YYYY-MM-DD，空库双 `None`）。
 pub fn query_report_date_range(conn: &Connection) -> Result<DateRange> {
+    // 两个标量子查询（issue #490）：单条 MIN+MAX 聚合无法同时双向走索引
+    // （SQLite 只对单聚合优化 MIN/MAX 极值查找），拆开后各自经列表序索引
+    // 首尾定位，由全表/全索引扫描降为两次索引端点探测（904ms→~1ms）。
     let (min_date, max_date): (Option<String>, Option<String>) = conn.query_row(
-        "SELECT MIN(date), MAX(date) FROM transactions WHERE is_deleted=0",
+        "SELECT (SELECT MIN(date) FROM transactions WHERE is_deleted=0), \
+         (SELECT MAX(date) FROM transactions WHERE is_deleted=0)",
         [],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;

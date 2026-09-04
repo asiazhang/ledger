@@ -157,6 +157,313 @@ fn perf_trace_zero_threshold_emits_warn() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// V016 结构索引与统计（issue #490）——EXPLAIN 绑定测试
+// ---------------------------------------------------------------------------
+
+/// 捕获 EXPLAIN QUERY PLAN 的 detail 列（与上方先例同款列序）。
+/// 占位符按调用方实参绑定（如时点持仓的 `?1`/`?2`），保证计划与真实调用一致。
+fn v016_plan<P>(conn: &Connection, sql: &str, params: P) -> String
+where
+    P: rusqlite::Params,
+{
+    let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+    let details: Vec<String> = stmt
+        .query_map(params, |r| r.get::<_, String>(3))
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect();
+    details.join(" | ")
+}
+
+/// V016 EXPLAIN 绑定测试世界：迁移后内存库 + 两账户 + 一分类 + 约 2000 笔交易
+/// （日期跨 3 个月、账户/分类轮转、约 1% 软删，与真实画像同分布）+ 一笔买入
+/// 证券交易；迁移尾部 ANALYZE 在空表运行，此处随数据重算——与存量用户升级、
+/// 基准库生成后的统计形态一致，保证 planner 选择可代表真实库。
+fn v016_world() -> Connection {
+    let mut conn = open_in_memory().unwrap();
+    init_db(&mut conn).unwrap();
+
+    conn.execute_batch(
+        "INSERT INTO accounts (id,name,type,currency_code,created_at,updated_at,version,device_id) \
+         VALUES ('acc-01','现金','cash','CNY','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test'),\
+                 ('acc-02','储蓄卡','bank','CNY','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test');\
+         INSERT INTO categories (id,name,kind,created_at,updated_at,version,device_id) \
+         VALUES ('cat-01','餐饮','expense','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test');\
+         INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+         VALUES ('inst-01','600000.SH','stock','浦发银行','CNY','sh','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test');\
+         WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM seq WHERE i<2000)\
+         INSERT INTO transactions\
+           (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
+            category_id,merchant_id,refund_of_transaction_id,note,dedup_hash,date,created_at,\
+            updated_at,version,device_id,is_deleted)\
+         SELECT printf('tx-%04d', i), 'expense', 100, 'CNY', 100,\
+                CASE WHEN i%2=0 THEN 'acc-01' ELSE 'acc-02' END,\
+                NULL, CASE WHEN i%3=0 THEN 'cat-01' ELSE NULL END, \
+                NULL, NULL, NULL, NULL,\
+                date('2026-03-01', '-' || (i%90) || ' days'),\
+                '2026-03-01T08:00:00Z', '2026-03-01T08:00:00Z',\
+                1, 'test', CASE WHEN i%100=0 THEN 1 ELSE 0 END \
+         FROM seq;\
+         INSERT INTO transactions\
+           (id,kind,amount_cents,currency_code,amount_native_cents,account_id,date,created_at,\
+            updated_at,version,device_id,is_deleted)\
+         VALUES ('tx-buy-01','buy',10000,'CNY',10000,'acc-01','2026-03-01',\
+                 '2026-03-01T08:00:00Z','2026-03-01T08:00:00Z',1,'test',0);\
+         INSERT INTO security_transactions (transaction_id,instrument_id,action,quantity,price_cents,fee_cents) \
+         VALUES ('tx-buy-01','inst-01','buy',100.0,10000,0);\
+         ANALYZE;",
+    )
+    .unwrap();
+    conn
+}
+
+/// V016 六条新索引存在且均为 partial（WHERE is_deleted=0）+ 全部覆盖列齐备。
+#[test]
+fn v016_structural_indexes_exist_with_covering_columns() {
+    let mut conn = open_in_memory().unwrap();
+    init_db(&mut conn).unwrap();
+
+    let expected: &[(&str, &[&str])] = &[
+        ("idx_transactions_list_order", &["date", "created_at", "id"]),
+        (
+            "idx_transactions_account_date",
+            &["account_id", "date", "created_at", "id"],
+        ),
+        (
+            "idx_transactions_account_flow",
+            &["account_id", "kind", "amount_native_cents"],
+        ),
+        (
+            "idx_transactions_to_account_flow",
+            &["to_account_id", "kind", "amount_native_cents"],
+        ),
+        (
+            "idx_transactions_month_expr",
+            &["substr(date, 1, 7)", "kind", "amount_native_cents", "date"],
+        ),
+        (
+            "idx_transactions_category_covering",
+            &["category_id", "kind", "date", "amount_native_cents"],
+        ),
+    ];
+    for (name, columns) in expected {
+        let sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND name=?1",
+                [*name],
+                |r| r.get(0),
+            )
+            .unwrap_or_else(|_| panic!("索引 {name} 应存在"));
+        assert!(
+            sql.contains("is_deleted = 0"),
+            "{name} 应为 partial index: {sql}"
+        );
+        for col in *columns {
+            assert!(sql.contains(col), "{name} 应包含 {col}: {sql}");
+        }
+    }
+}
+
+/// 列表/深分页钉计划：列表序索引驱动 + 无 ORDER BY 临时 B-tree
+/// （列表 SQL 与 ADR-0008 契约零改动，排序语义由索引反向扫描满足）。
+#[test]
+fn v016_list_pagination_uses_list_order_index_without_temp_btree() {
+    let conn = v016_world();
+    let sql = "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
+               to_account_id,category_id,refund_of_transaction_id,note,date,created_at,\
+               updated_at,version,device_id,is_deleted,merchant_id,policy_id \
+               FROM transactions WHERE is_deleted=0 \
+               ORDER BY date DESC, created_at DESC, id DESC";
+
+    // 首页（LIMIT 早停）与深分页（大 OFFSET）同计划形状。
+    for (label, tail) in [
+        ("首页", " LIMIT 20 OFFSET 0"),
+        ("深分页", " LIMIT 20 OFFSET 1980"),
+    ] {
+        let plan = v016_plan(&conn, &format!("{sql}{tail}"), []);
+        assert!(
+            plan.contains("idx_transactions_list_order"),
+            "{label}应由列表序索引驱动: {plan}"
+        );
+        assert!(
+            !plan.contains("TEMP B-TREE"),
+            "{label}不应有 ORDER BY 临时 B-tree: {plan}"
+        );
+    }
+}
+
+/// 账户 × 日期窗口筛选钉计划：账户筛选序索引覆盖定位与排序（无临时 B-tree）。
+#[test]
+fn v016_account_date_filter_uses_account_date_index() {
+    let conn = v016_world();
+    let plan = v016_plan(
+        &conn,
+        "SELECT id,kind,amount_cents FROM transactions \
+         WHERE is_deleted=0 AND date>='2026-02-01' AND date<='2026-03-01' \
+         AND account_id='acc-01' \
+         ORDER BY date DESC, created_at DESC, id DESC LIMIT 20 OFFSET 0",
+        [],
+    );
+    assert!(
+        plan.contains("idx_transactions_account_date"),
+        "账户日期筛选应由账户筛选序索引驱动: {plan}"
+    );
+    assert!(
+        !plan.contains("TEMP B-TREE"),
+        "账户日期筛选不应有 ORDER BY 临时 B-tree: {plan}"
+    );
+}
+
+/// 账户现金流钉计划：转出侧（account_id）与转入侧（to_account_id）余额聚合
+/// 各自命中对应覆盖索引（kind 与金额全在索引内，不回表）。
+#[test]
+fn v016_balance_flow_aggregates_use_cash_flow_indexes() {
+    let conn = v016_world();
+    // 转出侧：account_flow（Out）聚合形状与 db/balance.rs 同构。
+    let out_plan = v016_plan(
+        &conn,
+        "SELECT COALESCE(SUM(CASE t.kind \
+         WHEN 'income' THEN t.amount_native_cents WHEN 'expense' THEN -t.amount_native_cents \
+         ELSE 0 END),0) FROM transactions t \
+         WHERE t.is_deleted=0 AND t.account_id='acc-01'",
+        [],
+    );
+    assert!(
+        out_plan.contains("idx_transactions_account_flow"),
+        "转出侧聚合应由账户现金流索引驱动: {out_plan}"
+    );
+    // 转入侧：account_flow（In）聚合形状同构，走 to_account_id 索引。
+    let in_plan = v016_plan(
+        &conn,
+        "SELECT COALESCE(SUM(CASE t.kind \
+         WHEN 'income' THEN t.amount_native_cents WHEN 'expense' THEN -t.amount_native_cents \
+         ELSE 0 END),0) FROM transactions t \
+         WHERE t.is_deleted=0 AND t.to_account_id='acc-01'",
+        [],
+    );
+    assert!(
+        in_plan.contains("idx_transactions_to_account_flow"),
+        "转入侧聚合应由转入现金流索引驱动: {in_plan}"
+    );
+}
+
+/// 月度汇总钉计划：INDEXED BY 钉定的表达式索引驱动分组（无 GROUP BY 临时 B-tree），
+/// 期间与遗留年份两条口径同计划（钉定后 planner 不再随统计边际摇摆）。
+#[test]
+fn v016_monthly_summary_uses_pinned_expression_index() {
+    let conn = v016_world();
+    // 期间口径（from/to 均存在，基准口径）。
+    let period_plan = v016_plan(
+        &conn,
+        "SELECT substr(date,1,7) AS month, \
+         SUM(CASE WHEN kind IN ('income','dividend') THEN amount_native_cents ELSE 0 END), \
+         SUM(CASE WHEN kind='expense' THEN amount_native_cents \
+                  WHEN kind='refund' THEN -amount_native_cents ELSE 0 END) \
+         FROM transactions INDEXED BY idx_transactions_month_expr \
+         WHERE is_deleted=0 AND date>='2026-01-01' AND date<='2026-03-01' \
+         GROUP BY month ORDER BY month",
+        [],
+    );
+    assert!(
+        period_plan.contains("idx_transactions_month_expr"),
+        "月度汇总（期间口径）应由表达式索引驱动: {period_plan}"
+    );
+    assert!(
+        !period_plan.contains("TEMP B-TREE"),
+        "月度汇总（期间口径）不应有 GROUP BY 临时 B-tree: {period_plan}"
+    );
+
+    // 遗留年份口径（substr(date,1,4)=?）。
+    let year_plan = v016_plan(
+        &conn,
+        "SELECT substr(date,1,7) AS month, \
+         SUM(CASE WHEN kind IN ('income','dividend') THEN amount_native_cents ELSE 0 END) \
+         FROM transactions INDEXED BY idx_transactions_month_expr \
+         WHERE is_deleted=0 AND substr(date,1,4)='2026' \
+         GROUP BY month ORDER BY month",
+        [],
+    );
+    assert!(
+        year_plan.contains("idx_transactions_month_expr"),
+        "月度汇总（年份口径）应由表达式索引驱动: {year_plan}"
+    );
+    assert!(
+        !year_plan.contains("TEMP B-TREE"),
+        "月度汇总（年份口径）不应有 GROUP BY 临时 B-tree: {year_plan}"
+    );
+}
+
+/// 分类聚合钉计划：分类覆盖索引驱动 GROUP BY（分类/类型/日期/金额全在索引内）。
+#[test]
+fn v016_category_shares_use_category_covering_index() {
+    let conn = v016_world();
+    // 与 reports 域分类聚合同形状（含 ORDER BY net 的结果排序步骤）。
+    let plan = v016_plan(
+        &conn,
+        "SELECT t.category_id, SUM(CASE WHEN t.kind='expense' THEN t.amount_native_cents \
+         WHEN t.kind='refund' THEN -t.amount_native_cents ELSE 0 END) \
+         FROM transactions t LEFT JOIN categories c ON c.id=t.category_id \
+         WHERE t.kind IN ('expense','refund') AND t.is_deleted=0 \
+         GROUP BY t.category_id ORDER BY 2 DESC",
+        [],
+    );
+    assert!(
+        plan.contains("idx_transactions_category_covering"),
+        "分类聚合应由分类覆盖索引驱动: {plan}"
+    );
+}
+
+/// 日期探测钉计划：改写后的两个标量子查询各自经列表序索引端点定位
+/// （单条 MIN+MAX 无法双向走索引，拆开后亚毫秒）。
+#[test]
+fn v016_date_range_probe_uses_index_endpoints() {
+    let conn = v016_world();
+    let plan = v016_plan(
+        &conn,
+        "SELECT (SELECT MIN(date) FROM transactions WHERE is_deleted=0), \
+         (SELECT MAX(date) FROM transactions WHERE is_deleted=0)",
+        [],
+    );
+    assert!(
+        plan.matches("idx_transactions_list_order").count() >= 2,
+        "MIN 与 MAX 两个标量子查询都应经列表序索引定位: {plan}"
+    );
+    assert!(
+        !plan.contains("SCAN transactions"),
+        "不应存在无索引的全表扫描: {plan}"
+    );
+}
+
+/// 时点持仓钉计划：join 从 security_transactions 侧驱动（外层循环），
+/// 依赖迁移尾部 ANALYZE 与导入后 PRAGMA optimize 维持的统计假设。
+#[test]
+fn v016_holdings_as_of_driven_from_security_transactions() {
+    let conn = v016_world();
+    let plan = v016_plan(
+        &conn,
+        "SELECT COALESCE(SUM(\
+             CASE security_transactions.action WHEN 'buy' THEN security_transactions.quantity \
+                  ELSE -security_transactions.quantity END\
+         ), 0.0) \
+         FROM security_transactions \
+         JOIN transactions t ON t.id = security_transactions.transaction_id \
+         JOIN accounts a ON a.id = t.account_id \
+         WHERE security_transactions.action IN ('buy','sell') \
+           AND security_transactions.quantity IS NOT NULL \
+           AND t.is_deleted = 0 \
+           AND a.is_deleted = 0 \
+           AND security_transactions.instrument_id = COALESCE(?2, security_transactions.instrument_id) \
+           AND t.date <= ?1",
+        rusqlite::params!["2026-03-01", Option::<&str>::None],
+    );
+    let first_line = plan.split(" | ").next().unwrap_or_default();
+    assert!(
+        first_line.contains("security_transactions"),
+        "时点持仓应从 security_transactions 侧驱动: {plan}"
+    );
+}
+
 /// 接线回归：在 `command` span 内执行 SQL，SQL 耗时事件应归因到该 span
 /// （当前 span 名为 `command`）。这验证了 IPC 侧 `logged_invoke_handler`
 /// 用 `info_span!(command, id_hint)` 包裹命令执行后，hook 事件自动继承调用方 span
