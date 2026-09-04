@@ -22,7 +22,7 @@ use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 use rusqlite::params;
 
-use crate::accounts::balance::refresh_account_balances;
+use crate::accounts::balance::{affected_accounts, refresh_account_balances};
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 
@@ -311,10 +311,11 @@ pub fn insert_row(conn: &Connection, row: &NormalizedRow) -> Result<String> {
     // 余额缓存写路径（issue #491 / ADR-0067）：新行落库后在同一事务内对受影响
     // 账户按口径表达式整体重算。本接缝是全部交易创建（手动/批量导入/余额调整/
     // buy/sell/定时引擎例外）的单一收口，挂此处即覆盖全部创建入口。
-    let mut affected = vec![row.account_id.as_str()];
-    if let Some(to_account_id) = &row.to_account_id {
-        affected.push(to_account_id.as_str());
-    }
+    // 受影响账户推导消费余额模块唯一定义（issue #533）：创建 = 新行账户引用对。
+    let affected = affected_accounts(
+        None,
+        Some((row.account_id.as_str(), row.to_account_id.as_deref())),
+    );
     refresh_account_balances(conn, &affected)?;
     Ok(id)
 }
