@@ -63,6 +63,7 @@
     "amount-positive": "amount must be greater than 0",
     "not-found": "transaction {0} not found",
     "merchant-unsupported": "transaction type {0} cannot carry a merchant",
+    "category-unsupported": "transaction type {0} cannot carry a category",
     "merchant-id-and-name-conflict": "merchant_id and merchant_name cannot both be provided",
     "kind-unsupported": "transaction type {0} is not supported yet (not implemented in MVP)",
     "policy-unsupported": "Transaction kind {0} cannot carry a policy"

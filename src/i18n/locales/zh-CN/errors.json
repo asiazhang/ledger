@@ -63,6 +63,7 @@
     "amount-positive": "金额必须大于 0",
     "not-found": "交易不存在: {0}",
     "merchant-unsupported": "交易类型 {0} 不能携带商户",
+    "category-unsupported": "交易类型 {0} 不能携带分类",
     "merchant-id-and-name-conflict": "merchant_id 与 merchant_name 不可同时提供",
     "kind-unsupported": "交易类型 {0} 暂不支持（MVP 未实现）",
     "policy-unsupported": "交易类型 {0} 不能挂保单"
