@@ -300,6 +300,11 @@ pub(crate) fn generate_into(
 
     tx.commit().map_err(|e| e.to_string())?;
 
+    // 余额缓存回填（issue #491 / ADR-0067）：生成器绕过 Writer 接缝裸插数据，
+    // 对应「存量用户升级后被 V017 回填」形态——读基准走缓存口径，缺缓存行会
+    // 报码化错误而非实时聚合。
+    tauri_app_lib::db::balance::refresh_all_account_balances(conn).map_err(|e| e.to_string())?;
+
     // 数据落定后全量 ANALYZE（issue #490）：基准库对应「存量用户升级后」形态
     // ——迁移尾部 ANALYZE 在建库时空表运行，统计须随数据重算；时点持仓等
     // join 顺序依赖统计假设，缺统计会让基准失真于真实用户库。

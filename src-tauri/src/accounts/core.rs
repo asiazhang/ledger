@@ -9,6 +9,7 @@
 
 use rusqlite::{Connection, OptionalExtension};
 
+use crate::db::balance::refresh_account_balances;
 use crate::db::query::query_all;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
@@ -18,6 +19,7 @@ use crate::transaction::create_transaction_internal;
 
 use super::model::{
     Account, AccountBalance, AccountBalanceAdjustInput, AccountInput, AccountUpdateInput,
+    BalanceCacheAudit, BalanceCacheDrift,
 };
 
 pub fn list_accounts(conn: &Connection) -> Result<Vec<Account>> {
@@ -47,6 +49,8 @@ pub fn create_account(conn: &Connection, input: AccountInput) -> Result<String> 
             device_id()
         ],
     )?;
+    // 余额缓存写路径（issue #491 / ADR-0067）：新账户建缓存行（初始余额 + 零流水）。
+    refresh_account_balances(conn, &[id.as_str()])?;
     Ok(id)
 }
 
@@ -97,6 +101,8 @@ pub fn delete_account(conn: &Connection, id: &str) -> Result<()> {
         "UPDATE accounts SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id()],
     )?;
+    // 余额缓存写路径：touch 缓存行时间戳，净资产读探针指纹即时感知账户删除。
+    refresh_account_balances(conn, &[id])?;
     Ok(())
 }
 
@@ -170,6 +176,8 @@ pub fn update_account(conn: &Connection, id: &str, input: AccountUpdateInput) ->
         "UPDATE accounts SET name=?2, currency_code=?3, updated_at=?4, version=version+1, device_id=?5 WHERE id=?1",
         rusqlite::params![id, name, currency_code, now_iso(), device_id()],
     )?;
+    // 余额缓存写路径：touch 缓存行时间戳（币种改动影响净资产折算口径，读探针需即时感知）。
+    refresh_account_balances(conn, &[id])?;
     Ok(())
 }
 
@@ -206,6 +214,8 @@ pub fn ensure_black_hole_account(conn: &Connection, currency_code: &str) -> Resu
             device_id()
         ],
     )?;
+    // 余额缓存写路径：新建黑洞账户同建缓存行（与 create_account 同一不变量）。
+    refresh_account_balances(conn, &[id.as_str()])?;
     Ok((id, true))
 }
 
@@ -235,7 +245,8 @@ pub fn adjust_account_balance(
             "黑洞账户不支持余额调整",
         ));
     }
-    let current = crate::db::balance::compute_balance(conn, id)?;
+    // 余额调整取数（五出口之一，issue #491）：读缓存而非实时聚合。
+    let current = crate::db::balance::cached_balance(conn, id)?;
     let delta = input
         .target_balance_cents
         .checked_sub(current)
@@ -294,6 +305,35 @@ pub fn adjust_account_balance(
             Err(e)
         }
     }
+}
+
+/// 手动审计命令领域逻辑（issue #491 / ADR-0067）：全账户实时重算 vs 余额缓存，
+/// 逐账户比对→修复（整体重算回写）→差异报告。唯一允许绕过 db::write 的缓存修复
+/// 写入（与设置/恢复同列豁免形态）：缓存为派生数据，修复不置脏、不发信号。
+pub fn audit_balance_cache(conn: &Connection) -> Result<BalanceCacheAudit> {
+    let accounts = crate::db::balance::list_accounts_with_visibility(conn, true)?;
+    let mut drifts = Vec::new();
+    for account in &accounts {
+        let actual = crate::db::balance::compute_balance(conn, &account.id)?;
+        let cached = crate::db::balance::cached_balance_optional(conn, &account.id)?;
+        if cached != Some(actual) {
+            drifts.push(BalanceCacheDrift {
+                account_id: account.id.clone(),
+                account_name: account.name.clone(),
+                cached_cents: cached,
+                actual_cents: actual,
+            });
+        }
+    }
+    let repaired = !drifts.is_empty();
+    if repaired {
+        crate::db::balance::refresh_all_account_balances(conn)?;
+    }
+    Ok(BalanceCacheAudit {
+        accounts_checked: accounts.len(),
+        drifts,
+        repaired,
+    })
 }
 
 /// 账户余额清单（conn 级）：`include_hidden` 为 true 时含黑洞账户。

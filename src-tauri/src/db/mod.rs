@@ -8,6 +8,7 @@ use crate::error::{AppError, Result};
 
 pub mod balance;
 pub mod data_location;
+pub mod net_worth;
 pub mod perf_trace;
 pub mod query;
 
@@ -49,6 +50,9 @@ fn migrations() -> &'static Migrations<'static> {
             M::up(include_str!("../../migrations/V015__physical_assets.sql")),
             M::up(include_str!(
                 "../../migrations/V016__transaction_structural_indexes.sql"
+            )),
+            M::up(include_str!(
+                "../../migrations/V017__balance_net_worth_cache.sql"
             )),
         ])
     })

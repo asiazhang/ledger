@@ -127,9 +127,10 @@ pub async fn delete_account_handler(
     get,
     path = "/api/v1/accounts/balances",
     tag = "accounts",
-    summary = "列出全部未删除账户的实时余额（含黑洞账户）",
+    summary = "列出全部未删除账户的余额（含黑洞账户）",
     description = "返回 `{account, balance_cents}[]`，与 AI 侧账户列表一致**包含 `is_hidden` 黑洞账户**。\
-                  余额口径 = 初始余额 + 收入 − 支出 + 转入 − 转出 + 退款，实时计算不持久化。\
+                  余额口径 = 初始余额 + Σ `account_flow`（各 kind 符号归属见核心交易域 Transaction Kind Mapping），\
+                  读持久化余额缓存（ADR-0067，与用户侧同源不漂移；漂移经余额缓存审计修复）。\
                   软删除账户不在列表中。转账分别计入转出与转入账户。",
     responses(
         (status = 200, description = "账户余额列表（含黑洞账户）", body = [AccountBalance]),

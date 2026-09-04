@@ -22,6 +22,7 @@ use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 use rusqlite::params;
 
+use crate::db::balance::refresh_account_balances;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 
@@ -299,6 +300,14 @@ pub fn insert_row(conn: &Connection, row: &NormalizedRow) -> Result<String> {
             device_id(),
         ],
     )?;
+    // 余额缓存写路径（issue #491 / ADR-0067）：新行落库后在同一事务内对受影响
+    // 账户按口径表达式整体重算。本接缝是全部交易创建（手动/批量导入/余额调整/
+    // buy/sell/定时引擎例外）的单一收口，挂此处即覆盖全部创建入口。
+    let mut affected = vec![row.account_id.as_str()];
+    if let Some(to_account_id) = &row.to_account_id {
+        affected.push(to_account_id.as_str());
+    }
+    refresh_account_balances(conn, &affected)?;
     Ok(id)
 }
 
@@ -307,6 +316,12 @@ pub fn insert_row(conn: &Connection, row: &NormalizedRow) -> Result<String> {
 ///
 /// buy/sell 同样经本函数落交易行字段（其持仓/卖出关联副作用由调用方另行处理）。
 pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()> {
+    // 旧账户引用先行读取（同事务）：修改可能移动账户，两侧都要整体重算。
+    let (old_account_id, old_to_account_id): (String, Option<String>) = conn.query_row(
+        "SELECT account_id, to_account_id FROM transactions WHERE id=?1",
+        params![id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
     conn.execute(
         "UPDATE transactions \
          SET kind=?2, amount_cents=?3, currency_code=?4, amount_native_cents=?5, account_id=?6, \
@@ -331,6 +346,15 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
             device_id(),
         ],
     )?;
+    // 余额缓存写路径：旧/新账户引用并集整体重算（修改可能移动账户，ADR-0067）。
+    let mut affected = vec![old_account_id.as_str(), row.account_id.as_str()];
+    if let Some(old_to) = &old_to_account_id {
+        affected.push(old_to.as_str());
+    }
+    if let Some(to_account_id) = &row.to_account_id {
+        affected.push(to_account_id.as_str());
+    }
+    refresh_account_balances(conn, &affected)?;
     Ok(())
 }
 

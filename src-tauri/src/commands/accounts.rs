@@ -8,6 +8,7 @@ use tauri::State;
 use crate::accounts as account_domain;
 use crate::accounts::{
     Account, AccountBalance, AccountBalanceAdjustInput, AccountInput, AccountUpdateInput,
+    BalanceCacheAudit,
 };
 use crate::db::DbState;
 use crate::error::{AppError, Result};
@@ -86,4 +87,13 @@ pub fn adjust_account_balance(
 pub fn list_account_balances(db: State<'_, DbState>) -> Result<Vec<AccountBalance>> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     account_domain::list_account_balances_with_visibility(&conn, false)
+}
+
+/// 手动审计命令（issue #491 / ADR-0067，唯一新接缝）：全账户实时重算 vs 余额缓存，
+/// 修复差异并返回差异报告。缓存属派生数据：修复不置脏、不发信号（领域层说明），
+/// 故不经 `db.write` 包装，直连锁内执行。
+#[tauri::command]
+pub fn audit_balance_cache(db: State<'_, DbState>) -> Result<BalanceCacheAudit> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    account_domain::audit_balance_cache(&conn)
 }
