@@ -47,6 +47,14 @@ GitHub 的 issue 和 PR 共享编号空间，单独的 `#42` 可能是任一类�
 - **阻塞关系必须用 GitHub 原生 blocked-by**（不要只写在正文里）：存在先后依赖时，用下文 Wayfinding 操作的「阻塞关系」命令添加原生依赖。原生依赖可被 `/wayfinder` 与查询自动识别（`issue_dependencies_summary.blocked_by`），正文文本 `Blocked by: #<n>` 只在原生依赖功能不可用（API 返回 404/501）时作为回退。
 - **检查既有依赖**：`gh api graphql -f query='query{repository(owner:"<owner>",name:"<repo>"){issue(number:<n>){blockedBy(first:50){nodes{number title}} blocking(first:50){nodes{number title}}}}}' `。
 
+## 开发认领（开发中标记）
+
+issue 进入实际开发（`/implement` 开工）时必须先认领，使「open + 有 assignee」成为「开发中」的唯一标记；用户随时可用 `gh issue list --state open --assignee @me` 查看开发中的 issue。
+
+- **认领**: `gh issue edit <n> --add-assignee @me`，在开始编码前完成（与会话中的其他写操作相比应尽量靠前）。
+- **PR 创建后在 issue 上评论 PR 链接**，把「开发中」与「已交付待合并」区分开；PR 正文写 `Closes #<n>`，人工合并后 issue 自动关闭。
+- agent 不自行合并、不自行关闭；认领不做移除。
+
 ## 当 skill 说“获取相关 ticket”
 
 运行 `gh issue view <number> --comments`。
