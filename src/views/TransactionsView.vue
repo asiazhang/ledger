@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { t } from '@/i18n'
 import { errorMessage } from '@/utils/errors'
-import { computed, h, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, h, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   NDataTable,
@@ -28,6 +28,7 @@ import RefundForm from '@/components/RefundForm.vue'
 import AddItemForm from '@/components/AddItemForm.vue'
 import { buildRowMenuOptions } from '@/components/transaction-row-menu'
 import { useCreateShortcuts, CREATE_KIND_KEYS } from '@/composables/useCreateShortcuts'
+import { useRowContextMenu } from '@/composables/useRowContextMenu'
 import { useTransactionFilter, UNCATEGORIZED_ONLY } from '@/composables/useTransactionFilter'
 import { useTransactionModalState } from '@/composables/useTransactionModalState'
 import { api } from '@/api'
@@ -302,13 +303,22 @@ function onModalShowUpdate(show: boolean) {
 }
 
 /** 行右键菜单（issue #151 / #119 / #177 / #178 / #180）：除 refund 外行首项「编辑」，
- * expense 行另有「退款」「加入物品」（已建物品置灰），所有行含「删除」；
- * 选项组装收口在 transaction-row-menu 纯函数（可独立测试），
- * 菜单项图标与删除项 error 色也由该函数统一注入。 */
-const menuShow = ref(false)
-const menuX = ref(0)
-const menuY = ref(0)
-const menuRow = ref<Transaction | null>(null)
+ * expense 行另有「退款」「加入物品」（已建物品置灰），所有行含「删除」。
+ * 打开、重定位、关闭、选中的全部时序收进行菜单编排工厂 RowContextMenu
+ * （issue #550）；选项组装收口在 transaction-row-menu 纯函数（可独立测试），
+ * 菜单项图标与删除项 error 色也由该函数统一注入；业务动作分派留视图
+ * （工厂入参回调，选中即收起并交付收起瞬间的目标行）。 */
+const rowMenu = useRowContextMenu<Transaction>((key, row) => {
+  if (key === 'edit') openEditFromRow(row)
+  else if (key === 'refund') openRefundFromRow(row)
+  else if (key === 'add-item') openAddItemFromRow(row)
+  else if (key === 'delete') confirmDelete(row)
+})
+
+// 可见性与定位由单判别状态派生（非空即显示；关闭帧坐标无消费方）。
+const menuShow = computed(() => rowMenu.state.value !== null)
+const menuX = computed(() => rowMenu.state.value?.x ?? 0)
+const menuY = computed(() => rowMenu.state.value?.y ?? 0)
 
 /** 已建物品的交易 id 集合（按物品溯源指针比对，不新增查询、不建反向引用）。 */
 const linkedTxIds = computed(
@@ -322,40 +332,20 @@ const linkedTxIds = computed(
 // 暗色模式自动适配（useThemeVars 随当前主题响应式取值）。
 const themeVars = useThemeVars()
 
-const menuOptions = computed(() =>
-  menuRow.value
-    ? buildRowMenuOptions(menuRow.value, {
-        hasItem: linkedTxIds.value.has(menuRow.value.id),
+const menuOptions = computed(() => {
+  const row = rowMenu.state.value?.row
+  return row
+    ? buildRowMenuOptions(row, {
+        hasItem: linkedTxIds.value.has(row.id),
         errorColor: themeVars.value.errorColor,
       })
-    : [],
-)
+    : []
+})
 
-/** 行右键弹出菜单：先收起再 nextTick 展开，保证换行弹出时位置刷新。 */
-function showRowMenu(e: MouseEvent, row: Transaction) {
-  e.preventDefault()
-  menuRow.value = row
-  menuX.value = e.clientX
-  menuY.value = e.clientY
-  menuShow.value = false
-  void nextTick(() => {
-    menuShow.value = true
-  })
-}
-
-function onMenuSelect(key: string) {
-  menuShow.value = false
-  const row = menuRow.value
-  if (!row) return
-  if (key === 'edit') openEditFromRow(row)
-  else if (key === 'refund') openRefundFromRow(row)
-  else if (key === 'add-item') openAddItemFromRow(row)
-  else if (key === 'delete') confirmDelete(row)
-}
-
-/** 表格行属性：绑定行右键菜单。 */
+/** 表格行属性：绑定行右键菜单（open 内化「收起 → 下一帧重开」重定位舞步；
+ * 原生菜单拦截单点归窗口行为守卫，视图不再 preventDefault）。 */
 const rowProps = (row: Transaction) => ({
-  onContextmenu: (e: MouseEvent) => showRowMenu(e, row),
+  onContextmenu: (e: MouseEvent) => rowMenu.open(e, row),
 })
 
 const pagination = computed<PaginationProps>(() => ({
@@ -530,7 +520,8 @@ onMounted(() => {
         @saved="onEditSaved"
       />
     </AppModal>
-    <!-- 行右键菜单（issue #151 / #119）：expense 行「退款」「加入物品」+ 所有行「删除」，手动定位弹出 -->
+    <!-- 行右键菜单（issue #151 / #119 / #550）：expense 行「退款」「加入物品」+ 所有行「删除」，
+         手动定位弹出；开合上报经薄封装 attrs watch 自动生效（`:show` 绑定照旧） -->
     <AppDropdown
       trigger="manual"
       placement="bottom-start"
@@ -539,8 +530,8 @@ onMounted(() => {
       :y="menuY"
       :options="menuOptions"
       :min-width="140"
-      @select="onMenuSelect"
-      @clickoutside="menuShow = false"
+      @select="rowMenu.select"
+      @clickoutside="rowMenu.close"
     />
     <!-- 备注列为弹性列（transaction-columns 中不设 width），表格始终铺满容器；
          窄窗口时备注先收缩，scroll-x（固定列宽总和）作为横向滚动下限 -->
