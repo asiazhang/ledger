@@ -211,8 +211,7 @@ fn gate(results: &[BenchMetrics], max_p95_ms: Option<f64>) -> Result<(), String>
     println!();
     if failures.is_empty() {
         println!(
-            "门禁（默认 p95 ≤ {max_p95_ms:.0}ms，分项例外见 ADR-0068）：通过（{}/{} 项达标）",
-            results.len(),
+            "门禁（默认 p95 ≤ {max_p95_ms:.0}ms，分项例外见 ADR-0068）：通过（{} 项全部达标）",
             results.len()
         );
         Ok(())
@@ -234,14 +233,14 @@ fn gate(results: &[BenchMetrics], max_p95_ms: Option<f64>) -> Result<(), String>
 pub(crate) fn gate_failures(results: &[BenchMetrics], max_p95_ms: f64) -> Vec<String> {
     results
         .iter()
-        .filter(|r| r.p95_ms > gate_threshold_for(r.name, max_p95_ms))
-        .map(|r| {
-            format!(
-                "{}（p95 {:.2}ms > 阈值 {:.0}ms）",
-                r.name,
-                r.p95_ms,
-                gate_threshold_for(r.name, max_p95_ms)
-            )
+        .filter_map(|r| {
+            let threshold = gate_threshold_for(r.name, max_p95_ms);
+            (r.p95_ms > threshold).then(|| {
+                format!(
+                    "{}（p95 {:.2}ms > 阈值 {:.0}ms）",
+                    r.name, r.p95_ms, threshold
+                )
+            })
         })
         .collect()
 }
