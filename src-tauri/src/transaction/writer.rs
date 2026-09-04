@@ -22,7 +22,7 @@ use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 use rusqlite::params;
 
-use crate::db::balance::refresh_account_balances;
+use crate::accounts::balance::refresh_account_balances;
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 

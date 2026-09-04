@@ -8,7 +8,7 @@
 
 use rusqlite::{Connection, params};
 
-use crate::db::balance::compute_balance;
+use crate::accounts::balance::compute_balance;
 use crate::db::{init_db, migrations, open_in_memory};
 
 /// V017 之前的 schema 版本：余额缓存表加入前的迁移序列条数（V001–V016，无 V005，

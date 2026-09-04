@@ -9,7 +9,8 @@
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::db::{balance::refresh_account_balances, device_id, new_uuid, now_iso};
+use tauri_app_lib::accounts::balance::refresh_account_balances;
+use tauri_app_lib::db::{device_id, new_uuid, now_iso};
 use tauri_app_lib::investment::query_financial_freedom;
 
 use crate::world::LedgerWorld;

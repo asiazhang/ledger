@@ -4,7 +4,7 @@
 //! 口径（ADR-0020，真实财富视角；第三腿 ADR-0064 决策 6）：
 //! 净资产 = Σ 非投资账户折本位币余额 + Σ 折本位币持仓市值
 //!   + Σ 在持实物资产估值折本位币。
-//! - 账户侧余额沿用 `db::balance::list_account_balances_with_visibility`
+//! - 账户侧余额沿用 `accounts::balance::list_account_balances_with_visibility`
 //!   （内部即 `account_flow` 口径的 `compute_all_balances_with_visibility`，
 //!   与账户列表/余额页一致，排除隐藏与黑洞账户），并剔除投资账户（其价值
 //!   经持仓市值计入，避免同一笔资产重复计算）；
@@ -31,7 +31,7 @@ pub use model::DashboardOverview;
 use rusqlite::Connection;
 
 use crate::accounts::AccountType;
-use crate::db::balance::list_account_balances_with_visibility;
+use crate::accounts::balance::list_account_balances_with_visibility;
 use crate::db::net_worth::{self, CachedNetWorth};
 use crate::db::query::{FromRow, query_all};
 use crate::error::Result;

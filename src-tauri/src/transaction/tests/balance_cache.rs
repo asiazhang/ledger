@@ -13,15 +13,15 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use super::super::*;
 use super::common::{insert_account, make_buy_input, make_input, setup, setup_investment_account};
+use crate::accounts::balance::{
+    compute_all_balances_with_visibility, compute_balance, list_accounts_with_visibility,
+};
 use crate::accounts::{
     AccountBalanceAdjustInput, AccountInput, AccountType, adjust_account_balance,
     audit_balance_cache, create_account, delete_account, list_account_balances_for_api,
     list_account_balances_with_visibility as domain_list_balances,
 };
 use crate::dashboard::query_dashboard_overview;
-use crate::db::balance::{
-    compute_all_balances_with_visibility, compute_balance, list_accounts_with_visibility,
-};
 use crate::transaction::TransactionBatch;
 use crate::transaction::amount::TransactionKind;
 
@@ -29,7 +29,7 @@ use crate::transaction::amount::TransactionKind;
 /// `create_account` 域钩子），生产语义下存量账户由迁移一次性回填，此处
 /// 用同一整体重算接缝补齐，保证「每账户必有缓存行」不变量成立。
 fn backfill_scaffold_account(conn: &Connection, account_id: &str) {
-    crate::db::balance::refresh_account_balances(conn, &[account_id]).unwrap();
+    crate::accounts::balance::refresh_account_balances(conn, &[account_id]).unwrap();
 }
 
 /// 一致性断言：全部账户（含黑洞）缓存行 == 实时计算（逐账户比对）。
@@ -410,7 +410,7 @@ fn five_outlets_return_realtime_consistent_values() {
 
     // 出口 4：余额调整取数（cached_balance）与实时一致。
     assert_eq!(
-        crate::db::balance::cached_balance(&conn, "acc-o1").unwrap(),
+        crate::accounts::balance::cached_balance(&conn, "acc-o1").unwrap(),
         compute_balance(&conn, "acc-o1").unwrap()
     );
 

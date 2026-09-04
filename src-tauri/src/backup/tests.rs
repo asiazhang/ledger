@@ -91,7 +91,7 @@ fn restore_roundtrip_preserves_data() {
     init_db(&mut conn).unwrap();
     seed(&conn);
     // seed 裸 SQL 绕过写接缝，按生产不变量（备份时缓存与实时一致）补齐缓存行。
-    crate::db::balance::refresh_all_account_balances(&conn).unwrap();
+    crate::accounts::balance::refresh_all_account_balances(&conn).unwrap();
 
     let backup = temp_file("rt-backup");
     backup_db_to(&conn, &backup, "0.2.0", BackupKind::Manual).unwrap();
@@ -129,7 +129,7 @@ fn restore_roundtrip_preserves_data() {
         .unwrap();
     assert_eq!(
         cached,
-        crate::db::balance::compute_balance(&c, "acc-1").unwrap(),
+        crate::accounts::balance::compute_balance(&c, "acc-1").unwrap(),
         "恢复后缓存行应与实时计算一致"
     );
     // 恢复前的库被安全备份。

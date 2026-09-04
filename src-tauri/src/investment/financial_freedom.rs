@@ -21,7 +21,7 @@
 use rusqlite::Connection;
 
 use crate::accounts::AccountType;
-use crate::db::balance::list_account_balances_with_visibility;
+use crate::accounts::balance::list_account_balances_with_visibility;
 use crate::db::query::{FromRow, query_all};
 use crate::error::Result;
 use crate::transaction::amount;
