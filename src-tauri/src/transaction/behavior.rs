@@ -40,7 +40,7 @@ use rusqlite::OptionalExtension;
 
 use super::model::TransactionInput;
 use crate::db::balance::refresh_account_balances;
-use crate::db::{device_id, now_iso};
+use crate::db::{device_id, now_iso, search_cache};
 use crate::error::{AppError, Result};
 use crate::investment;
 use crate::signals::WriteEvidence;
@@ -253,6 +253,8 @@ fn delete_within_transaction(conn: &Connection, id: &str) -> Result<()> {
         )?;
     }
 
+    // 搜索候选缓存写后失效（issue #493）：软删改变可搜索候选集。
+    search_cache::invalidate();
     conn.execute(
         "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id()],

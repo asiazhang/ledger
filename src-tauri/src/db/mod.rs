@@ -11,6 +11,7 @@ pub mod data_location;
 pub mod net_worth;
 pub mod perf_trace;
 pub mod query;
+pub mod search_cache;
 
 /// 迁移集合。新增 schema 变更或种子数据时，在 `src-tauri/migrations/` 下新建
 /// `V00X__名称.sql`，并在 `migrations()` 的 `vec!` 里追加
@@ -124,11 +125,14 @@ pub fn check_integrity(conn: &Connection) -> Result<()> {
 
 /// 打开数据库连接并启用外键约束（SQLite 默认关闭，需每次连接显式开启）。
 /// 所有数据库连接都应通过此函数或其派生函数创建，以保证外键生效。
-/// 同时注册耗时 hook（`perf_trace`），覆盖所有 SQL 执行上下文。
+/// 同时注册耗时 hook（`perf_trace`），覆盖所有 SQL 执行上下文；并失效搜索
+/// 候选缓存（新连接身份：恢复、搬迁等重开连接的路径由此覆盖，见
+/// `search_cache` 模块注释）。
 pub fn open_connection<P: AsRef<Path>>(path: P) -> Result<Connection> {
     let conn = Connection::open(path)?;
     conn.execute("PRAGMA foreign_keys = ON", [])?;
     perf_trace::install_perf_trace(&conn, perf_trace::DEFAULT_SLOW_QUERY_THRESHOLD);
+    search_cache::invalidate();
     Ok(conn)
 }
 
@@ -137,6 +141,7 @@ pub fn open_in_memory() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
     conn.execute("PRAGMA foreign_keys = ON", [])?;
     perf_trace::install_perf_trace(&conn, perf_trace::DEFAULT_SLOW_QUERY_THRESHOLD);
+    search_cache::invalidate();
     Ok(conn)
 }
 
@@ -168,16 +173,20 @@ pub fn write<T>(conn: &Mutex<Connection>, f: impl FnOnce(&Connection) -> Result<
     result
 }
 
-/// 提交点单点后置动作：置脏 + 写时顺带到期检查（连接层内部实现细节，ADR-0032）。
+/// 提交点单点后置动作：失效搜索候选缓存 + 备份置脏 + 写时顺带到期检查
+/// （连接层内部实现细节，ADR-0032）。
 ///
 /// 仅由 [`write`] 在「闭包成功且 `is_autocommit()`」时调用；业务代码不可见也不可调用——
 /// 置脏触发不再是备份模块的公开 API（#246），而是本写入口的结构性副作用：
-/// - 置脏失败仅记日志不上抛，不影响已成功的业务写；
+/// - 搜索候选缓存失效（issue #493）：交易写入后关键字纯路径不再命中陈旧快照；
+///   失效失败不可能（纯内存操作），零代价排在最前；
+/// - 备份置脏失败仅记日志不上抛，不影响已成功的业务写；
 /// - 到期检查命中（脏且今天尚未自动备份，本地自然日界门，issue #386）即执行自动备份；开关关闭/目录未配置等
 ///   门禁由 [`crate::backup::run_due_backup`] 统一静默处理；
 /// - 闭包 Err（回滚）或未提交就返回（显式事务仍打开）不会到达本函数——
 ///   「事务内推迟、提交后补上」由 [`write`] 的 `is_autocommit()` 复核结构保证。
 fn after_commit(conn: &Connection) {
+    search_cache::invalidate();
     if let Err(e) = crate::backup::mark_dirty(conn) {
         tracing::warn!(error = %e, "写库成功但置脏失败（忽略）");
     }

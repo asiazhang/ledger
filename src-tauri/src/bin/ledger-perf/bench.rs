@@ -381,7 +381,7 @@ pub(crate) fn run_benchmarks(
                     None,
                 )
                 .map_err(|e| e.to_string())
-                .map(|r| format!("关键字「{search_term}」全量扫描，命中 {} 条", r.total))
+                .map(|r| format!("关键字「{search_term}」进程内候选匹配，命中 {} 条", r.total))
             }),
         ),
         (
