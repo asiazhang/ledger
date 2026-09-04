@@ -1,11 +1,17 @@
-# 性能基准 workflow（issue #462）：与主构建 workflow（build.yml，push/PR 触发）
-# 刻意分离——本 workflow 只在每周 cron 与手动 dispatch 时运行：
-#   现场生成 50 万笔基准库（ledger-perf generate，seed 42）→ 跑 10 项查询基准
-#   （ledger-perf bench）→ Markdown 耗时报告写入 $GITHUB_STEP_SUMMARY。
-# 只记录不判定（ADR-0062 观察期）：无性能阈值、无失败门禁；阈值机制等基线
-# 分布稳定后另立决策。
-# 手动验证入口：Actions → Perf Bench → Run workflow（端到端约一次 release
-# 冷编译 + 秒级生成 + 分钟级基准）。
+# 性能基准 workflow（issue #462；门禁 issue #493 / ADR-0068）：与主构建
+# workflow（build.yml，push/PR 触发）刻意分离——本 workflow 只在每周 cron
+# 与手动 dispatch 时运行：
+#   现场生成 50 万笔基准库（ledger-perf generate，seed 42）→ 跑 10 项查询
+#   基准（ledger-perf bench --iterations 20 --max-p95-ms 200）→ Markdown 耗时
+#   报告写入 $GITHUB_STEP_SUMMARY。
+# ADR-0062 观察期已结束，门禁生效（ADR-0068）：默认判据全部基准逐项
+# p95 ≤ 200ms；全量扫描型基准设分项例外（备注搜索 400ms，CPU 密集无法
+# 索引加速）。任何一项超标 bench 以非零退出、job 失败（超标清单随报告
+# 进 Summary）。不在 PR 上跑：一次 release 冷编译 + 生成 + 基准 ≈ 6 分钟
+# （rust-cache 命中时），回归由每周基线与性能批合入后的手动触发拦截。
+# ADR-0009 的 100ms 慢查询告警线（SQL 级观测）保留不动，与本门禁（基准
+# 项级判定）是两个层次。
+# 手动验证入口：Actions → Perf Bench → Run workflow。
 
 name: Perf Bench
 
@@ -44,6 +50,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # 失败也存缓存：门禁红（或其它失败）时下次 run 仍能命中依赖产物，
+          # 避免冷跑失败白费一次全量编译。
+          cache-on-failure: true
 
       - name: 编译 ledger-perf（release）
         working-directory: src-tauri
@@ -56,14 +65,18 @@ jobs:
           ./target/release/ledger-perf generate
           echo "GENERATE_SECONDS=$(($(date +%s) - START))" >> "$GITHUB_ENV"
 
-      - name: 运行查询基准（bench，10 项 × min/avg/p95）
+      - name: 运行查询基准（bench，10 项 × min/avg/p95 + 门禁 p95 ≤ 200ms/分项 400ms）
+        id: bench
         working-directory: src-tauri
         shell: bash
         run: |
           set -o pipefail
-          ./target/release/ledger-perf bench | tee bench-report.txt
+          # --iterations 20：n=10 时最近秩 p95 恒等于 max，20 次才成真分位数；
+          # --max-p95-ms 200：ADR-0068 默认门禁线（分项例外在 bench 内声明），
+          # 超标即非零退出（pipefail 保持步骤红）。
+          ./target/release/ledger-perf bench --iterations 20 --max-p95-ms 200 | tee bench-report.txt
 
-      - name: 写入 Job Summary（Markdown 耗时报告）
+      - name: 写入 Job Summary（Markdown 耗时报告 + 门禁结果）
         if: always()
         run: |
           {
@@ -71,6 +84,11 @@ jobs:
             echo
             echo "- 触发：${{ github.event_name }} @ ${{ github.sha }}"
             echo "- 生成耗时：${GENERATE_SECONDS:-未知}s（50 万笔，seed 42）"
+            if [ "${{ steps.bench.outcome }}" = "success" ]; then
+              echo "- 门禁：✅ 通过 —— 全部基准 p95 达标（默认 ≤ 200ms，分项例外见 ADR-0068）"
+            else
+              echo "- 门禁：❌ 失败 —— 存在基准 p95 超各自阈值（ADR-0068），超标清单见报告尾部门禁行"
+            fi
             echo
             if [ -f src-tauri/bench-report.txt ]; then
               ./scripts/perf-summary.sh src-tauri/bench-report.txt
