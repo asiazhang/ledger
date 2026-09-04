@@ -4,13 +4,14 @@
 
 use rusqlite::Connection;
 
-use super::super::search::search_transactions_internal;
+use super::super::search::{search_transactions_internal, stage1_sql};
 use crate::db::{init_db, open_in_memory};
 use crate::error::Result;
 use crate::transaction::TransactionSearchResult;
 use crate::transaction::search_text::{
     is_subsequence, pinyin_initials, split_terms, term_matches, term_matches_text,
 };
+use crate::transaction::writer::{NormalizedRow, insert_row, update_row};
 
 fn setup() -> Connection {
     let mut conn = open_in_memory().unwrap();
@@ -670,6 +671,159 @@ fn category_rename_does_not_affect_search() {
 // -----------------------------------------------------------------------
 // 流式分页（见 ADR-0027 修订记录）：较大数据量下分页无重复、无遗漏、total 精确
 // -----------------------------------------------------------------------
+
+// -----------------------------------------------------------------------
+// V018 两段式取行：拼音冗余列 + 惰性回填（issue #492，语义与 ADR-0027 验收口径零变更）
+// -----------------------------------------------------------------------
+
+/// 指定备注拼音列的存量交易（其余列与 `insert_txn` 一致）：
+/// note_pinyin = None 模拟 V018 之前的老行（升级后列为 NULL），Some(str) 模拟脏值。
+fn insert_txn_note_pinyin(
+    conn: &Connection,
+    id: &str,
+    account_id: &str,
+    note: Option<&str>,
+    date: &str,
+    note_pinyin: Option<&str>,
+) {
+    conn.execute(
+        "INSERT INTO transactions \
+         (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
+         category_id,refund_of_transaction_id,note,note_pinyin,date,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,'expense',1000,'CNY',1000,?2,NULL,NULL,NULL,?3,?4,?5,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+        rusqlite::params![id, account_id, note, note_pinyin, date],
+    )
+    .unwrap();
+}
+
+fn note_pinyin_of(conn: &Connection, id: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT note_pinyin FROM transactions WHERE id=?1",
+        rusqlite::params![id],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+/// Writer 接缝维护冗余列：创建/修改随 note 同写同换，NULL note → NULL。
+/// 搜索语义不受影响（该列只是匹配加速的派生数据）。
+#[test]
+fn writer_seam_populates_note_pinyin_on_insert_and_update() {
+    let conn = setup();
+    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let row = NormalizedRow {
+        kind: crate::transaction::TransactionKind::Expense,
+        amount_cents: 1000,
+        currency_code: "CNY".into(),
+        amount_native_cents: 1000,
+        account_id: "a1".into(),
+        to_account_id: None,
+        category_id: None,
+        merchant_id: None,
+        policy_id: None,
+        refund_of_transaction_id: None,
+        note: Some("万科物业".into()),
+        date: "2026-02-01".into(),
+    };
+    let id = insert_row(&conn, &row).unwrap();
+    assert_eq!(note_pinyin_of(&conn, &id).as_deref(), Some("wkwy"));
+
+    // 修改随新 note 重算。
+    let mut new_row = row.clone();
+    new_row.note = Some("招商银行".into());
+    update_row(&conn, &id, &new_row).unwrap();
+    assert_eq!(note_pinyin_of(&conn, &id).as_deref(), Some("zsyh"));
+
+    // 清空备注 → 冗余列同步置 NULL。
+    let mut empty_note = row.clone();
+    empty_note.note = None;
+    update_row(&conn, &id, &empty_note).unwrap();
+    assert_eq!(note_pinyin_of(&conn, &id), None);
+}
+
+/// 惰性回填（issue #492）：存量老行（note_pinyin NULL）搜索即命中且语义不变，
+/// 搜索后积压被分批回填；回填探针索引存在且收敛（命中集合不再变化）。
+#[test]
+fn lazy_backfill_heals_legacy_rows_on_search() {
+    let conn = setup();
+    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    // V018 之前的存量行形态：note 有值、拼音列为 NULL。
+    insert_txn_note_pinyin(&conn, "t1", "a1", Some("万科物业"), "2026-02-01", None);
+    insert_txn_note_pinyin(&conn, "t2", "a1", Some("招商银行转账"), "2026-02-02", None);
+    // 回填探针索引存在（惰性回填的 O(1) 探测基础）。
+    let backlog_index: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' \
+             AND name='idx_transactions_note_pinyin_backlog'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(backlog_index, 1, "V018 应创建回填探针 partial 索引");
+
+    // 回填前：拼音子序列语义立即生效（现算兑底，不因列缺失而漏匹配）。
+    let res = search(&conn, "wy").unwrap();
+    assert_eq!(res.total, 1);
+    assert_eq!(res.items[0].id, "t1");
+    let res = search(&conn, "zsyh").unwrap();
+    assert_eq!(res.total, 1);
+    assert_eq!(res.items[0].id, "t2");
+
+    // 搜索后：积压已被惰性回填，冗余列与现算规则一致。
+    assert_eq!(note_pinyin_of(&conn, "t1").as_deref(), Some("wkwy"));
+    assert_eq!(note_pinyin_of(&conn, "t2").as_deref(), Some("zsyhzz"));
+
+    // 回填后语义不变（同一查询命中集合一致）。
+    let res = search(&conn, "wy").unwrap();
+    assert_eq!(res.total, 1);
+    assert_eq!(res.items[0].id, "t1");
+}
+
+/// 惰性回填兜底：手工脏值（拼音列与 note 不一致的行）不阻断匹配——原文子串
+/// 路径始终按 note 现判，拼音子序列路径按列判（派生列允许漂移，审计不在此）。
+#[test]
+fn search_uses_pinyin_column_for_subsequence_path() {
+    let conn = setup();
+    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    // 列已回填：拼音子序列走列值（不逐行重算）。
+    insert_txn_note_pinyin(
+        &conn,
+        "t1",
+        "a1",
+        Some("万科物业"),
+        "2026-02-01",
+        Some("wkwy"),
+    );
+    let res = search(&conn, "wy").unwrap();
+    assert_eq!(res.total, 1);
+    // 原文子串路径不受列值影响。
+    let res = search(&conn, "物业").unwrap();
+    assert_eq!(res.total, 1);
+}
+
+/// 第一段扫描的计划钉定（父 #489 用户故事 18）：最小列流式匹配必须命中
+/// V016 列表序索引（idx_transactions_note_search）且不产生 ORDER BY 临时
+/// B-tree——planner 漂移在 CI 即刻暴露。
+#[test]
+fn stage1_scan_plan_uses_list_order_index() {
+    let conn = setup();
+    let sql = stage1_sql(&["t.is_deleted = 0"], true);
+    let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+    let details: Vec<String> = stmt
+        .query_map([], |r| r.get::<_, String>(3))
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect();
+    let plan = details.join(" | ");
+    assert!(
+        plan.contains("idx_transactions_note_search"),
+        "第一段扫描应命中搜索覆盖索引: {plan}"
+    );
+    assert!(
+        !plan.to_uppercase().contains("TEMP B-TREE"),
+        "排序应由索引序满足，不应出现临时 B-tree: {plan}"
+    );
+}
 
 #[test]
 fn streaming_pagination_no_dup_no_gap_and_exact_total() {
