@@ -53,9 +53,26 @@ const {
   close: closeForm,
 } = useModalIntent<PhysicalAssetFormIntent>()
 
-const valuationShow = ref(false)
-/** 更新估值目标（T2：追加历史行入口）。 */
-const valuationAsset = ref<PhysicalAsset | null>(null)
+// —— 更新估值弹窗（T2：追加历史行入口）——
+// 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
+// 意图闭集单成员（携带目标资产行），显示由「意图非空」派生（无独立 show 布尔），
+// 序号随开启递增驱动表单重建（:key=valuationSeq），关闭（✕ / ESC / 取消 /
+// 保存成功）统一经工厂清回 null 终态。现状无序号守卫，迁移为缺陷修复（本票
+// 唯一声明的行为变化）：守卫从无到有，「弹窗开着时目标行被替换回填旧行」
+// 缺陷消亡，同目标重开重回填等边缘语义细化同归此类；此外等价。
+
+/** 更新估值弹窗意图（单成员闭集）：携带目标资产行。 */
+interface PhysicalAssetValuationIntent {
+  asset: PhysicalAsset
+}
+
+const {
+  intent: valuationIntent,
+  seq: valuationSeq,
+  open: openValuationIntent,
+  close: closeValuation,
+} = useModalIntent<PhysicalAssetValuationIntent>()
+
 const disposeShow = ref(false)
 /** 处置目标（T3：状态标记入口，处置 = 状态标记；删除是分离的软删动作）。 */
 const disposingAsset = ref<PhysicalAsset | null>(null)
@@ -69,8 +86,7 @@ function openEdit(asset: PhysicalAsset) {
 }
 
 function openUpdateValuation(asset: PhysicalAsset) {
-  valuationAsset.value = asset
-  valuationShow.value = true
+  openValuationIntent({ asset })
 }
 
 function openDispose(asset: PhysicalAsset) {
@@ -276,11 +292,14 @@ onMounted(() => {
       :editing="formIntent?.mode === 'edit' ? formIntent.asset : null"
       @update:show="(v: boolean) => (v ? undefined : closeForm())"
     />
-    <!-- 更新估值弹窗（T2：追加历史行，旧值保留） -->
+    <!-- 更新估值弹窗（T2：追加历史行，旧值保留）。显示由「意图非空」派生
+         （无独立 show 布尔），关闭统一经工厂清回 null 终态；序号作 key 强制
+         重建（ADR-0072）。 -->
     <PhysicalAssetValuationModal
-      :show="valuationShow"
-      :asset="valuationAsset"
-      @update:show="valuationShow = $event"
+      :key="valuationSeq"
+      :show="valuationIntent !== null"
+      :asset="valuationIntent?.asset ?? null"
+      @update:show="(v: boolean) => (v ? undefined : closeValuation())"
     />
     <!-- 处置弹窗（T3：状态标记，处置日期必填、处置价可选纯记录） -->
     <PhysicalAssetDisposeModal
