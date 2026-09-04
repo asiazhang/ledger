@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
 import { yuanToCents } from '@/utils/money'
-import { computed, h, nextTick, onMounted, ref } from 'vue'
+import { computed, h, onMounted, ref } from 'vue'
 import {
   NCard,
   NButton,
@@ -25,6 +25,7 @@ import AppDatePicker from '@/components/AppDatePicker.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import { useAppDialog } from '@/composables/useAppDialog'
 import { useModalIntent } from '@/composables/useModalIntent'
+import { useRowContextMenu } from '@/composables/useRowContextMenu'
 import AccountLink from '@/components/AccountLink.vue'
 import { buildAccountRowMenuOptions } from '@/components/account-row-menu'
 import { ACCOUNT_TYPES, formatAmount } from '@/types'
@@ -236,43 +237,32 @@ async function submitAdjust() {
 }
 
 // ---------------------------------------------------------------------------
-// 行菜单（编辑 / 调整余额 / 删除）：操作列「⋯」按钮 + 行右键共用同一 options
-// （buildAccountRowMenuOptions 纯函数），删除项着主题 error 色
+// 行菜单（编辑 / 调整余额 / 删除）：操作列「⋯」按钮 + 行右键两入口共用同一
+// options（buildAccountRowMenuOptions 纯函数，删除项着主题 error 色）与同一
+// open 入口。打开、重定位、关闭、选中的全部时序收进行菜单编排工厂
+// RowContextMenu（issue #550 / #551，ADR-0077）：业务动作分派留视图（工厂
+// 入参回调，选中即收起并交付收起瞬间的目标行）。
 // ---------------------------------------------------------------------------
 
 const menuOptions = computed(() =>
   buildAccountRowMenuOptions({ errorColor: themeVars.value.errorColor }),
 )
 
-const menuShow = ref(false)
-const menuX = ref(0)
-const menuY = ref(0)
-const menuRow = ref<AccountBalance | null>(null)
-
-/** 行右键弹出菜单：先收起再 nextTick 展开，保证换行弹出时位置刷新。 */
-function showRowMenu(e: MouseEvent, row: AccountBalance) {
-  e.preventDefault()
-  menuRow.value = row
-  menuX.value = e.clientX
-  menuY.value = e.clientY
-  menuShow.value = false
-  void nextTick(() => {
-    menuShow.value = true
-  })
-}
-
-function onMenuSelect(key: string) {
-  menuShow.value = false
-  const row = menuRow.value
-  if (!row) return
+const rowMenu = useRowContextMenu<AccountBalance>((key, row) => {
   if (key === 'edit') openEdit(row)
   else if (key === 'adjust-balance') openAdjust(row)
   else if (key === 'delete') confirmDelete(row)
-}
+})
 
-/** 表格行属性：绑定行右键菜单。 */
+// 可见性与定位由单判别状态派生（非空即显示；关闭帧坐标无消费方）。
+const menuShow = computed(() => rowMenu.state.value !== null)
+const menuX = computed(() => rowMenu.state.value?.x ?? 0)
+const menuY = computed(() => rowMenu.state.value?.y ?? 0)
+
+/** 表格行属性：绑定行右键菜单（open 内化「收起 → 下一帧重开」重定位舞步；
+ * 原生菜单拦截单点归窗口行为守卫，视图不再 preventDefault）。 */
 const rowProps = (row: AccountBalance) => ({
-  onContextmenu: (e: MouseEvent) => showRowMenu(e, row),
+  onContextmenu: (e: MouseEvent) => rowMenu.open(e, row),
 })
 
 const columns = computed<DataTableColumns<AccountBalance>>(() => [
@@ -297,7 +287,7 @@ const columns = computed<DataTableColumns<AccountBalance>>(() => [
     title: t('accounts.list.colActions'),
     key: 'actions',
     width: 64,
-    // 「⋯」按钮与行右键共用同一手动定位菜单（showRowMenu 以点击坐标弹出）
+    // 「⋯」按钮与行右键共用同一工厂 open 入口（以点击坐标弹出）
     render: (row) =>
       h(
         NButton,
@@ -305,7 +295,7 @@ const columns = computed<DataTableColumns<AccountBalance>>(() => [
           size: 'tiny',
           quaternary: true,
           'aria-label': t('accounts.list.moreActions'),
-          onClick: (e: MouseEvent) => showRowMenu(e, row),
+          onClick: (e: MouseEvent) => rowMenu.open(e, row),
         },
         () => '⋯',
       ),
@@ -445,7 +435,8 @@ onMounted(() => {
       </NForm>
     </AppModal>
 
-    <!-- 行菜单（操作列「⋯」与行右键共用）：手动定位弹出 -->
+    <!-- 行菜单（操作列「⋯」与行右键共用）：手动定位弹出；开合上报经薄封装
+         attrs watch 自动生效（`:show` 绑定照旧） -->
     <AppDropdown
       trigger="manual"
       placement="bottom-start"
@@ -454,8 +445,8 @@ onMounted(() => {
       :y="menuY"
       :options="menuOptions"
       :min-width="140"
-      @select="onMenuSelect"
-      @clickoutside="menuShow = false"
+      @select="rowMenu.select"
+      @clickoutside="rowMenu.close"
     />
   </NSpace>
 </template>
