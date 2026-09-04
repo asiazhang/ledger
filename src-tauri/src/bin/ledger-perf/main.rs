@@ -132,7 +132,7 @@ bench OPTIONS:
     --search-pinyin <TERM> 拼音子序列搜索基准的关键字（默认 kf）
     --max-p95-ms <MS>      默认门禁阈值（毫秒）：全部基准 p95 ≤ 各自阈值才退出
                            0，任何一项超标即失败（CI 用；缺省不判定；分项例外
-                           如备注搜索 400ms 见 ADR-0068）
+                           机制与现行清单见 ADR-0068）
     -h, --help             打印本说明
 
 generate OPTIONS:
