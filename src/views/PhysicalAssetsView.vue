@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, computed, onMounted, ref } from 'vue'
+import { h, computed, onMounted } from 'vue'
 import {
   NCard,
   NButton,
@@ -16,6 +16,7 @@ import PhysicalAssetFormModal from '@/components/PhysicalAssetFormModal.vue'
 import PhysicalAssetValuationModal from '@/components/PhysicalAssetValuationModal.vue'
 import PhysicalAssetDisposeModal from '@/components/PhysicalAssetDisposeModal.vue'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
+import { useModalIntent } from '@/composables/useModalIntent'
 import { usePhysicalAssetsStore } from '@/stores/physicalAssets'
 import { useReferenceStore } from '@/stores/reference'
 import type { PhysicalAsset } from '@/types'
@@ -33,34 +34,79 @@ import type { PhysicalAsset } from '@/types'
 const physicalAssetsStore = usePhysicalAssetsStore()
 const reference = useReferenceStore()
 
-const formShow = ref(false)
-/** 编辑目标（null = 新建模式，T2：同一建档弹窗双模式）。 */
-const editingAsset = ref<PhysicalAsset | null>(null)
-const valuationShow = ref(false)
-/** 更新估值目标（T2：追加历史行入口）。 */
-const valuationAsset = ref<PhysicalAsset | null>(null)
-const disposeShow = ref(false)
-/** 处置目标（T3：状态标记入口，处置 = 状态标记；删除是分离的软删动作）。 */
-const disposingAsset = ref<PhysicalAsset | null>(null)
+// —— 建档弹窗（新建/编辑双模式，T2）——
+// 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
+// 意图闭集双成员（新建无载荷；编辑携带目标资产行），显示由「意图非空」派生
+// （无独立 show 布尔），序号随开启递增驱动表单重建（:key=formSeq），关闭
+// （✕ / ESC / 取消 / 保存成功）统一经工厂清回 null 终态。现状无序号守卫，
+// 迁移为缺陷修复（本票唯一声明的行为变化）：守卫从无到有，「弹窗开着时
+// 目标行被替换回填旧行」缺陷消亡，同目标重开重回填等边缘语义细化同归此类；
+// 此外等价。
+
+/** 建档弹窗意图（新建/编辑双模式闭集）：编辑携带目标资产行。 */
+type PhysicalAssetFormIntent = { mode: 'create' } | { mode: 'edit'; asset: PhysicalAsset }
+
+const {
+  intent: formIntent,
+  seq: formSeq,
+  open: openFormIntent,
+  close: closeForm,
+} = useModalIntent<PhysicalAssetFormIntent>()
+
+// —— 更新估值弹窗（T2：追加历史行入口）——
+// 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
+// 意图闭集单成员（携带目标资产行），显示由「意图非空」派生（无独立 show 布尔），
+// 序号随开启递增驱动表单重建（:key=valuationSeq），关闭（✕ / ESC / 取消 /
+// 保存成功）统一经工厂清回 null 终态。现状无序号守卫，迁移为缺陷修复（本票
+// 唯一声明的行为变化）：守卫从无到有，「弹窗开着时目标行被替换回填旧行」
+// 缺陷消亡，同目标重开重回填等边缘语义细化同归此类；此外等价。
+
+/** 更新估值弹窗意图（单成员闭集）：携带目标资产行。 */
+interface PhysicalAssetValuationIntent {
+  asset: PhysicalAsset
+}
+
+const {
+  intent: valuationIntent,
+  seq: valuationSeq,
+  open: openValuationIntent,
+  close: closeValuation,
+} = useModalIntent<PhysicalAssetValuationIntent>()
+
+// —— 处置弹窗（T3：状态标记入口，处置 = 状态标记；删除是分离的软删动作）——
+// 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
+// 意图闭集单成员（携带目标资产行），显示由「意图非空」派生（无独立 show 布尔），
+// 序号随开启递增驱动表单重建（:key=disposeSeq），关闭（✕ / ESC / 取消 /
+// 处置成功）统一经工厂清回 null 终态。现状无序号守卫，迁移为缺陷修复（本票
+// 唯一声明的行为变化）：守卫从无到有，「弹窗开着时目标行被替换回填旧行」
+// 缺陷消亡，同目标重开重回填等边缘语义细化同归此类；此外等价。
+
+/** 处置弹窗意图（单成员闭集）：携带目标资产行。 */
+interface PhysicalAssetDisposeIntent {
+  asset: PhysicalAsset
+}
+
+const {
+  intent: disposeIntent,
+  seq: disposeSeq,
+  open: openDisposeIntent,
+  close: closeDispose,
+} = useModalIntent<PhysicalAssetDisposeIntent>()
 
 function openCreate() {
-  editingAsset.value = null
-  formShow.value = true
+  openFormIntent({ mode: 'create' })
 }
 
 function openEdit(asset: PhysicalAsset) {
-  editingAsset.value = asset
-  formShow.value = true
+  openFormIntent({ mode: 'edit', asset })
 }
 
 function openUpdateValuation(asset: PhysicalAsset) {
-  valuationAsset.value = asset
-  valuationShow.value = true
+  openValuationIntent({ asset })
 }
 
 function openDispose(asset: PhysicalAsset) {
-  disposingAsset.value = asset
-  disposeShow.value = true
+  openDisposeIntent({ asset })
 }
 
 /** 软删除（T3）：二次确认后 is_deleted=1，数据与估值历史保留；
@@ -252,23 +298,32 @@ onMounted(() => {
       </NDataTable>
     </NCard>
 
-    <!-- 新建 / 编辑弹窗（同一建档表单双模式，编辑态无估值字段，T2） -->
+    <!-- 新建 / 编辑弹窗（同一建档表单双模式，编辑态无估值字段，T2）。
+         显示由「意图非空」派生（无独立 show 布尔），关闭（✕ / ESC / 取消 /
+         保存成功）统一经工厂清回 null 终态；序号作 key 强制重建（ADR-0072）。 -->
     <PhysicalAssetFormModal
-      :show="formShow"
-      :editing="editingAsset"
-      @update:show="formShow = $event"
+      :key="formSeq"
+      :show="formIntent !== null"
+      :editing="formIntent?.mode === 'edit' ? formIntent.asset : null"
+      @update:show="(v: boolean) => (v ? undefined : closeForm())"
     />
-    <!-- 更新估值弹窗（T2：追加历史行，旧值保留） -->
+    <!-- 更新估值弹窗（T2：追加历史行，旧值保留）。显示由「意图非空」派生
+         （无独立 show 布尔），关闭统一经工厂清回 null 终态；序号作 key 强制
+         重建（ADR-0072）。 -->
     <PhysicalAssetValuationModal
-      :show="valuationShow"
-      :asset="valuationAsset"
-      @update:show="valuationShow = $event"
+      :key="valuationSeq"
+      :show="valuationIntent !== null"
+      :asset="valuationIntent?.asset ?? null"
+      @update:show="(v: boolean) => (v ? undefined : closeValuation())"
     />
-    <!-- 处置弹窗（T3：状态标记，处置日期必填、处置价可选纯记录） -->
+    <!-- 处置弹窗（T3：状态标记，处置日期必填、处置价可选纯记录）。显示由
+         「意图非空」派生（无独立 show 布尔），关闭统一经工厂清回 null 终态；
+         序号作 key 强制重建（ADR-0072）。 -->
     <PhysicalAssetDisposeModal
-      :show="disposeShow"
-      :asset="disposingAsset"
-      @update:show="disposeShow = $event"
+      :key="disposeSeq"
+      :show="disposeIntent !== null"
+      :asset="disposeIntent?.asset ?? null"
+      @update:show="(v: boolean) => (v ? undefined : closeDispose())"
     />
   </NSpace>
 </template>
