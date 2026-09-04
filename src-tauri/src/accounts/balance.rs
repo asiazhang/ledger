@@ -32,6 +32,11 @@ impl FromRow for AccountBalanceEntry {
 /// `account_flow` 对 transfer 的符号由 side 决定，而 side 决定关联列：
 /// 转出侧 join `t.account_id`、转入侧 join `t.to_account_id`。
 /// 单个与批量余额共用本映射，口径一致性由代码结构保证而非注释约定。
+///
+/// 与 [`affected_accounts`] 同模块互指：此处消费的账户引用列（`account_id` /
+/// `to_account_id`，transactions 表上的两列闭集）即受影响账户推导的引用对——
+/// 新增账户引用列时两处必须共变（此处决定余额「怎么算」，彼处决定刷新「算哪些」，
+/// issue #533 / spec #519）。
 fn join_column(side: TransferSide) -> &'static str {
     match side {
         TransferSide::Out => "t.account_id",
@@ -162,6 +167,41 @@ pub fn list_account_balances_with_visibility(
 // 余额持久化缓存（issue #491 / ADR-0067）：写路径整体重算 + 读路径切缓存
 // ---------------------------------------------------------------------------
 
+/// 「受影响账户」推导的唯一定义点（词汇表核心交易域「受影响账户」词条，
+/// issue #533 / spec #519）：一次交易写入需要重算余额的账户集合——
+/// 旧行账户引用对 ∪ 新行账户引用对，去重并保持首见顺序（旧行引用先于新行，
+/// 行内先 `account_id` 后 `to_account_id`；行级两端判定与读视角
+/// InvolvingAccount 共享同一对列，不另设第二套端点口径）。
+///
+/// 入参为两行（可选）的账户引用对 `(account_id, to_account_id)`：
+/// 创建 `old=None`、修改两行都进、删除 `new=None`。kind 不进签名——
+/// 退款继承与投资归一的账户语义已被写入前的归一步骤前置消化，
+/// 推导只看行上两个账户引用列。
+///
+/// 接线状态：创建写入（Writer 接缝 `transaction::writer::insert_row`）已消费
+/// 本函数（issue #533，收口 1/2）；修改/删除两路的手写推导改消费本函数在
+/// 收口 2/2——在那之前「三条写入路径消费同一口径」是目标态而非现状，
+/// 任何新写入口不得另造第四份推导、直接消费本函数。
+///
+/// 与余额口径 SQL 构造（[`account_flow_subquery`] / [`join_column`]）同模块
+/// 互指、必须共变：本函数决定刷新「算哪些」（账户引用对的收集），
+/// SQL 构造决定账户余额「怎么算」（对同一对账户引用列聚合 `account_flow`）——
+/// 新增账户引用列时两处同改。
+pub fn affected_accounts<'a>(
+    old: Option<(&'a str, Option<&'a str>)>,
+    new: Option<(&'a str, Option<&'a str>)>,
+) -> Vec<&'a str> {
+    let mut affected: Vec<&'a str> = Vec::new();
+    for (account_id, to_account_id) in [old, new].into_iter().flatten() {
+        for reference in [Some(account_id), to_account_id].into_iter().flatten() {
+            if !affected.contains(&reference) {
+                affected.push(reference);
+            }
+        }
+    }
+    affected
+}
+
 /// 缓存行时间戳：毫秒精度 UTC ISO 时刻（与全库 `now_iso` 同为 UTC，仅精度不同）。
 ///
 /// 秒级精度会让同一秒内的连续写入无法从 MAX(updated_at) 指纹中区分
@@ -255,3 +295,6 @@ fn cached_all_balances(conn: &Connection) -> Result<HashMap<String, i64>> {
         .map(|e| (e.id, e.balance_cents))
         .collect())
 }
+
+#[cfg(test)]
+mod tests;
