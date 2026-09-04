@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, computed, onMounted, ref } from 'vue'
+import { h, computed, onMounted } from 'vue'
 import {
   NCard,
   NButton,
@@ -73,9 +73,25 @@ const {
   close: closeValuation,
 } = useModalIntent<PhysicalAssetValuationIntent>()
 
-const disposeShow = ref(false)
-/** 处置目标（T3：状态标记入口，处置 = 状态标记；删除是分离的软删动作）。 */
-const disposingAsset = ref<PhysicalAsset | null>(null)
+// —— 处置弹窗（T3：状态标记入口，处置 = 状态标记；删除是分离的软删动作）——
+// 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
+// 意图闭集单成员（携带目标资产行），显示由「意图非空」派生（无独立 show 布尔），
+// 序号随开启递增驱动表单重建（:key=disposeSeq），关闭（✕ / ESC / 取消 /
+// 处置成功）统一经工厂清回 null 终态。现状无序号守卫，迁移为缺陷修复（本票
+// 唯一声明的行为变化）：守卫从无到有，「弹窗开着时目标行被替换回填旧行」
+// 缺陷消亡，同目标重开重回填等边缘语义细化同归此类；此外等价。
+
+/** 处置弹窗意图（单成员闭集）：携带目标资产行。 */
+interface PhysicalAssetDisposeIntent {
+  asset: PhysicalAsset
+}
+
+const {
+  intent: disposeIntent,
+  seq: disposeSeq,
+  open: openDisposeIntent,
+  close: closeDispose,
+} = useModalIntent<PhysicalAssetDisposeIntent>()
 
 function openCreate() {
   openFormIntent({ mode: 'create' })
@@ -90,8 +106,7 @@ function openUpdateValuation(asset: PhysicalAsset) {
 }
 
 function openDispose(asset: PhysicalAsset) {
-  disposingAsset.value = asset
-  disposeShow.value = true
+  openDisposeIntent({ asset })
 }
 
 /** 软删除（T3）：二次确认后 is_deleted=1，数据与估值历史保留；
@@ -301,11 +316,14 @@ onMounted(() => {
       :asset="valuationIntent?.asset ?? null"
       @update:show="(v: boolean) => (v ? undefined : closeValuation())"
     />
-    <!-- 处置弹窗（T3：状态标记，处置日期必填、处置价可选纯记录） -->
+    <!-- 处置弹窗（T3：状态标记，处置日期必填、处置价可选纯记录）。显示由
+         「意图非空」派生（无独立 show 布尔），关闭统一经工厂清回 null 终态；
+         序号作 key 强制重建（ADR-0072）。 -->
     <PhysicalAssetDisposeModal
-      :show="disposeShow"
-      :asset="disposingAsset"
-      @update:show="disposeShow = $event"
+      :key="disposeSeq"
+      :show="disposeIntent !== null"
+      :asset="disposeIntent?.asset ?? null"
+      @update:show="(v: boolean) => (v ? undefined : closeDispose())"
     />
   </NSpace>
 </template>
