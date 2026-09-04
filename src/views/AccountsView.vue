@@ -155,20 +155,31 @@ async function submitEdit() {
 // ---------------------------------------------------------------------------
 // 调整余额弹窗（ADR-0026）：校准到目标值，后端生成一笔与黑洞账户的转账
 // （Δ>0 从「无」转入、Δ<0 转出至「无」，删除该转账即撤销调整）
+// 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072）：意图闭集单成员
+// （携带目标账户行），显示由「意图非空」派生、序号随开启递增驱动表单重建、
+// 关闭清回 null 终态。现状已带序号守卫（序号驱动表单重建），迁移为纯方言
+// 替换：行为完全等价，无缺陷修复。
 // ---------------------------------------------------------------------------
 
-const showAdjust = ref(false)
-const adjustSeq = ref(0)
-const adjustRow = ref<AccountBalance | null>(null)
+/** 调整余额弹窗意图（单成员闭集）：携带目标账户行。 */
+interface AccountAdjustIntent {
+  row: AccountBalance
+}
+
+const {
+  intent: adjustIntent,
+  seq: adjustSeq,
+  open: openAdjustIntent,
+  close: closeAdjust,
+} = useModalIntent<AccountAdjustIntent>()
+
 const adjustTarget = ref<number | null>(null)
 const adjustDate = ref<number | null>(Date.now())
 
 function openAdjust(row: AccountBalance) {
-  adjustRow.value = row
   adjustTarget.value = null
   adjustDate.value = Date.now()
-  adjustSeq.value += 1
-  showAdjust.value = true
+  openAdjustIntent({ row })
 }
 
 function todayIso(): string {
@@ -189,13 +200,13 @@ const adjustTargetCents = computed(() =>
 
 /** 差额 Δ = 目标 − 当前：>0 从黑洞转入，<0 转出至黑洞，=0 无需调整。 */
 const adjustDelta = computed(() => {
-  if (adjustRow.value === null || adjustTargetCents.value === null) return null
-  return adjustTargetCents.value - adjustRow.value.balance_cents
+  if (adjustIntent.value === null || adjustTargetCents.value === null) return null
+  return adjustTargetCents.value - adjustIntent.value.row.balance_cents
 })
 
 const adjustCurrency = computed(() =>
-  adjustRow.value
-    ? reference.getCurrency(adjustRow.value.account.currency_code)
+  adjustIntent.value
+    ? reference.getCurrency(adjustIntent.value.row.account.currency_code)
     : undefined,
 )
 
@@ -208,15 +219,15 @@ const adjustDeltaText = computed(() => {
 })
 
 async function submitAdjust() {
-  if (!adjustRow.value) return
+  if (!adjustIntent.value) return
   if (adjustTargetCents.value === null || adjustDelta.value === 0) return
   try {
-    await api.adjustAccountBalance(adjustRow.value.account.id, {
+    await api.adjustAccountBalance(adjustIntent.value.row.account.id, {
       target_balance_cents: adjustTargetCents.value,
       date: adjustDate.value ? formatLocalDate(new Date(adjustDate.value)) : todayIso(),
     })
     message.success(t('accounts.message.adjusted'))
-    showAdjust.value = false
+    closeAdjust()
     // 参考数据由 ledger:changed 信号自动重拉（若按需新建了黑洞账户）；此处仅刷新余额
     await refresh()
   } catch (e) {
@@ -379,17 +390,20 @@ onMounted(() => {
       </NForm>
     </AppModal>
 
-    <!-- 调整余额弹窗：输入目标余额，实时显示差额与去向；日期默认今天可改（对账常补记） -->
+    <!-- 调整余额弹窗：输入目标余额，实时显示差额与去向；日期默认今天可改（对账常补记）。
+         显示由「意图非空」派生（无独立 show 布尔），关闭（✕ / ESC / 取消 / 提交成功）
+         统一经工厂清回 null 终态；序号作表单 key 强制重建（ADR-0072）。 -->
     <AppModal
-      v-model:show="showAdjust"
+      :show="adjustIntent !== null"
       :title="t('accounts.adjust.title')"
       preset="card"
       display-directive="if"
       style="width: 420px"
       :bordered="false"
+      @update:show="(show: boolean) => { if (!show) closeAdjust() }"
     >
       <NForm
-        v-if="adjustRow"
+        v-if="adjustIntent"
         :key="adjustSeq"
         label-placement="left"
         :show-feedback="false"
@@ -397,7 +411,7 @@ onMounted(() => {
       >
         <NFormItem :label="t('accounts.adjust.currentBalance')">
           <NText>{{
-            formatAmount(adjustRow.balance_cents, adjustCurrency)
+            formatAmount(adjustIntent.row.balance_cents, adjustCurrency)
           }}</NText>
         </NFormItem>
         <NFormItem :label="t('accounts.adjust.targetBalance')">
@@ -418,7 +432,7 @@ onMounted(() => {
           </NText>
         </NFormItem>
         <NSpace justify="end" :size="8">
-          <NButton size="small" @click="showAdjust = false">{{ t('accounts.edit.cancel') }}</NButton>
+          <NButton size="small" @click="closeAdjust">{{ t('accounts.edit.cancel') }}</NButton>
           <NButton
             size="small"
             type="primary"
