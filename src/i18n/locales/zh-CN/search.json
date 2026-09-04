@@ -2,8 +2,6 @@
   "keywordPlaceholder": "输入关键字开始搜索（备注、账户名、商户名、拼音首字母，支持多关键字）",
   "amountMinPlaceholder": "最低金额（元）",
   "amountMaxPlaceholder": "最高金额（元）",
-  "dateFromPlaceholder": "起始日期",
-  "dateToPlaceholder": "结束日期",
   "appliedFilters": "已应用筛选：{filters}",
   "filterSeparator": "、",
   "clearFilters": "清除筛选",

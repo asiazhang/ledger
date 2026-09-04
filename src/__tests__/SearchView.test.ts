@@ -1,17 +1,23 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
-import { NDatePicker } from 'naive-ui'
+import { NButton, NDatePicker } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import SearchView from '@/views/SearchView.vue'
 import AccountLink from '@/components/AccountLink.vue'
 import { applyLocale } from '@/i18n'
+import { resetOverlays } from '@/composables/overlayRegistry'
 import type { Account, Category, Currency, Merchant, Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
+// jsdom 无元素滚动：期间直达面板打开时 naive-ui 会 scrollTo，补空实现避免
+// 打断 Vue 调度队列（QuickTimeRange 组件测试同款前提）。
+beforeAll(() => {
+  Element.prototype.scrollTo = () => {}
+})
 
 // AccountLink 经 useRouter 跳转（pushMock 断言导航目标，issue #99）
 const pushMock = vi.fn()
@@ -109,7 +115,7 @@ function makeTransaction(
 }
 
 // 25 条：前 23 条备注「午餐」、后 2 条备注「报销」（跨 2 页，pageSize=20）。
-// 金额随索引递增（1000 + i*100 分），日期逐日递增（2026-02-01 ~ 2026-02-25），供金额/日期筛选测试。
+// 金额随索引递增（1000 + i*100 分），日期逐日递增（2026-02-01 ~ 2026-02-25），供金额/期间筛选测试。
 const mockTransactions: Transaction[] = [
   ...Array.from({ length: 25 }, (_, i) =>
     makeTransaction(
@@ -127,6 +133,11 @@ const mockTransactions: Transaction[] = [
   // 带商户交易（issue #193 搜索结果展示商户）：备注唯一、日期/金额避开既有筛选测试口径
   makeTransaction('tx-mer', '家电采购', '2026-03-01', 100, { merchant_id: 'mer-jd' }),
 ]
+
+// 数据期间边界夹具（QuickTimeRange 钳制输入）：「今天」= 2026-02-10 时月档边界
+// 为 [2025-12, 2026-03]——最早端来自数据 2025-12，最新端 2026-03 为最新交易期间
+//（大于当前期间的抬升）。
+const MOCK_RANGE = { min_date: '2025-12-15', max_date: '2026-03-01' }
 
 function searchCalls() {
   return mockInvoke.mock.calls.filter(([cmd]) => cmd === 'search_transactions')
@@ -171,19 +182,42 @@ function maxAmountInput(wrapper: VueWrapper) {
   return el!
 }
 
-/** 直接向 NDatePicker emit update:formattedValue 设置日期（避免在 fake timers 下打开面板）。 */
-async function setDate(wrapper: VueWrapper, index: 0 | 1, value: string) {
-  const pickers = wrapper.findAllComponents(NDatePicker)
-  expect(pickers.length).toBe(2)
-  pickers[index].vm.$emit('update:formattedValue', value)
-  await nextTick()
-}
-
 async function applyFilters(wrapper: VueWrapper, delay = 300) {
   await vi.advanceTimersByTimeAsync(delay)
   await nextTick()
   await nextTick()
 }
+
+/** 固定「今天」= 2026-02-10（本地）：芯片快照与高亮随之确定——当月 2026-02、
+ * 当季 2026Q1、当年 2026、去年 2025（报表页视图测试同款前提，期望日期全用字面量）。 */
+function freezeToday() {
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date(2026, 1, 10, 12, 0, 0))
+}
+
+/** 芯片按钮按文案定位（闭集文案唯一：全部/当月/当季/当年/去年——交易页时间维度行测试同款）。 */
+const chip = (wrapper: VueWrapper, label: string) =>
+  wrapper.findAllComponents(NButton).find((b) => b.text().trim() === label)!
+
+async function clickChip(wrapper: VueWrapper, label: string) {
+  await chip(wrapper, label).trigger('click')
+  await flushPromises()
+}
+
+const lit = (wrapper: VueWrapper, label: string) => chip(wrapper, label).props('type') === 'primary'
+
+/** 步进按钮按 aria-label 定位（图标按钮无文案）。 */
+const stepButton = (wrapper: VueWrapper, key: 'prev' | 'next') =>
+  wrapper
+    .findAllComponents(NButton)
+    .find((b) => b.attributes('aria-label') === (key === 'prev' ? '上一个周期' : '下一个周期'))!
+
+async function step(wrapper: VueWrapper, key: 'prev' | 'next') {
+  await stepButton(wrapper, key).trigger('click')
+  await flushPromises()
+}
+
+const periodLabel = (wrapper: VueWrapper) => wrapper.find('.period-label-text').text()
 
 beforeEach(async () => {
   setActivePinia(createPinia())
@@ -194,6 +228,8 @@ beforeEach(async () => {
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve(mockCategories)
     if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
+    // 数据期间边界（QuickTimeRange 钳制输入）
+    if (cmd === 'report_date_range') return Promise.resolve(MOCK_RANGE)
     if (cmd === 'search_transactions') {
       const {
         query,
@@ -237,6 +273,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.useRealTimers()
+  resetOverlays()
 })
 
 describe('SearchView.vue', () => {
@@ -261,14 +298,24 @@ describe('SearchView.vue', () => {
     expect(wrapper.text()).toContain('输入关键字或设置筛选开始搜索')
   })
 
-  it('筛选器 UI：最低/最高金额输入与起止日期选择器位于关键字下方', async () => {
+  it('时间控件仅剩快捷选择行：五芯片就位、默认「全部」点亮，无日期选择器残留（issue #526）', async () => {
     const wrapper = mount(SearchView)
     await flushPromises()
     const keywordInput = wrapper.find('input')
     expect(keywordInput.attributes('placeholder')).toContain('输入关键字')
     expect(minAmountInput(wrapper).attributes('placeholder')).toBe('最低金额（元）')
     expect(maxAmountInput(wrapper).attributes('placeholder')).toBe('最高金额（元）')
-    expect(wrapper.findAllComponents(NDatePicker).length).toBe(2)
+    for (const label of ['全部', '当月', '当季', '当年', '去年']) {
+      expect(chip(wrapper, label)).toBeTruthy()
+    }
+    expect(lit(wrapper, '全部')).toBe(true)
+    for (const label of ['当月', '当季', '当年', '去年']) {
+      expect(lit(wrapper, label)).toBe(false)
+    }
+    // 两个独立日期选择器（任意起止/可单边）退役：无「起始日期/结束日期」占位残留
+    const placeholders = wrapper.findAll('input').map((i) => i.attributes('placeholder'))
+    expect(placeholders).not.toContain('起始日期')
+    expect(placeholders).not.toContain('结束日期')
   })
 
   it('输入后防抖 300ms 才触发一次搜索', async () => {
@@ -374,7 +421,7 @@ describe('SearchView.vue', () => {
     expect(wrapper.text()).not.toContain('删除')
   })
 
-  describe('金额/日期筛选（issue #41）', () => {
+  describe('金额筛选（issue #41）', () => {
     it('单边筛选：只填最低金额生效，金额小数元 → 分（15.5 → 1550）', async () => {
       vi.useFakeTimers()
       const wrapper = mount(SearchView)
@@ -406,25 +453,6 @@ describe('SearchView.vue', () => {
       })
     })
 
-    it('筛选+关键字 AND 组合时 invoke 参数正确', async () => {
-      vi.useFakeTimers()
-      const wrapper = mount(SearchView)
-      await nextTick()
-      await typeAndSearch(wrapper, '午餐')
-      await minAmountInput(wrapper).setValue('15')
-      await maxAmountInput(wrapper).setValue('30')
-      await setDate(wrapper, 0, '2026-02-05')
-      await setDate(wrapper, 1, '2026-02-20')
-      await applyFilters(wrapper)
-      expect(lastSearchArgs()).toMatchObject({
-        query: '午餐',
-        amountMinCents: 1500,
-        amountMaxCents: 3000,
-        dateFrom: '2026-02-05',
-        dateTo: '2026-02-20',
-      })
-    })
-
     it('无关键字仅筛选可出结果', async () => {
       vi.useFakeTimers()
       const wrapper = mount(SearchView)
@@ -434,22 +462,6 @@ describe('SearchView.vue', () => {
       // 金额 ≥ 3000 分：i=20..24 共 5 条（¥30.00 ~ ¥34.00）
       expect(wrapper.text()).toContain('命中 5 条')
       expect(lastSearchArgs()).toMatchObject({ query: '', amountMinCents: 3000 })
-    })
-
-    it('日期筛选（含边界）生效：起始+结束', async () => {
-      vi.useFakeTimers()
-      const wrapper = mount(SearchView)
-      await nextTick()
-      await setDate(wrapper, 0, '2026-02-01')
-      await setDate(wrapper, 1, '2026-02-03')
-      await applyFilters(wrapper)
-      // 2026-02-01 ~ 02-03 含边界：i=0..2 共 3 条
-      expect(wrapper.text()).toContain('命中 3 条')
-      expect(lastSearchArgs()).toMatchObject({
-        query: '',
-        dateFrom: '2026-02-01',
-        dateTo: '2026-02-03',
-      })
     })
 
     it('筛选变化同样防抖 ~300ms 触发查询', async () => {
@@ -469,16 +481,14 @@ describe('SearchView.vue', () => {
       expect(lastSearchArgs()).toMatchObject({ query: '', amountMinCents: 1500 })
     })
 
-    it('筛选激活时显示当前筛选条件，清除筛选后重置', async () => {
+    it('筛选激活时显示当前筛选条件，清除后重置', async () => {
       vi.useFakeTimers()
       const wrapper = mount(SearchView)
       await nextTick()
       await minAmountInput(wrapper).setValue('15.5')
-      await setDate(wrapper, 0, '2026-02-05')
       await applyFilters(wrapper)
       expect(wrapper.text()).toContain('已应用筛选')
       expect(wrapper.text()).toContain('最低 ¥15.5')
-      expect(wrapper.text()).toContain('起始 2026-02-05')
 
       const clearBtn = wrapper.findAll('button').find((b) => b.text() === '清除筛选')
       expect(clearBtn).toBeTruthy()
@@ -499,6 +509,195 @@ describe('SearchView.vue', () => {
       await applyFilters(wrapper)
       expect(searchCalls().length).toBe(0)
       expect(wrapper.text()).toContain('输入关键字或设置筛选开始搜索')
+    })
+  })
+
+  // 时间范围快捷选择（issue #526 / ADR-0070，消费形态三）：原两个日期选择器的
+  // 交互用例就地改写为芯片交互用例（先例：报表页视图测试——真实挂载视图与快捷
+  // 选择组件、mock invoke 夹具、固定「今天」、断言搜索载荷）；单边日期用例随
+  // 能力退役删除。芯片换算/钳制数学的组件级单测见 QuickTimeRange.test.ts 与
+  // time-period.test.ts，此处只测视图外部行为：载荷、防抖、点亮与清除。
+  describe('时间范围快捷选择（issue #526 / ADR-0070）', () => {
+    it('点「当月」写入双端有界快照并防抖自动搜索，芯片点亮切换', async () => {
+      freezeToday()
+      const wrapper = mount(SearchView)
+      await nextTick()
+      await clickChip(wrapper, '当月')
+      // 沿用既有防抖：300ms 到点才触发
+      expect(searchCalls().length).toBe(0)
+      await vi.advanceTimersByTimeAsync(299)
+      expect(searchCalls().length).toBe(0)
+      await vi.advanceTimersByTimeAsync(1)
+      await nextTick()
+      await nextTick()
+      expect(searchCalls().length).toBe(1)
+      expect(lastSearchArgs()).toMatchObject({
+        dateFrom: '2026-02-01',
+        dateTo: '2026-02-28',
+      })
+      // 2026-02-01 ~ 02-28 含边界：25 条日递增交易 + 02-26 转账共 26 条（03-01 不在内）
+      expect(wrapper.text()).toContain('命中 26 条')
+      expect(lit(wrapper, '当月')).toBe(true)
+      expect(lit(wrapper, '全部')).toBe(false)
+    })
+
+    it('五枚日期芯片各自写入对应自然周期快照（当季/当年/去年），命中数随期间变化', async () => {
+      freezeToday()
+      const wrapper = mount(SearchView)
+      await nextTick()
+      // 当季 2026-01-01 ~ 03-31：含全部夹具 27 条
+      await clickChip(wrapper, '当季')
+      await applyFilters(wrapper)
+      expect(lastSearchArgs()).toMatchObject({ dateFrom: '2026-01-01', dateTo: '2026-03-31' })
+      expect(wrapper.text()).toContain('命中 27 条')
+      expect(lit(wrapper, '当季')).toBe(true)
+      // 当年 2026 全年：同为 27 条
+      await clickChip(wrapper, '当年')
+      await applyFilters(wrapper)
+      expect(lastSearchArgs()).toMatchObject({ dateFrom: '2026-01-01', dateTo: '2026-12-31' })
+      expect(wrapper.text()).toContain('命中 27 条')
+      // 去年 2025 全年：无数据，命中 0 条（有界空区间是诚实结果）
+      await clickChip(wrapper, '去年')
+      await applyFilters(wrapper)
+      expect(lastSearchArgs()).toMatchObject({ dateFrom: '2025-01-01', dateTo: '2025-12-31' })
+      expect(wrapper.text()).toContain('命中 0 条')
+      expect(lit(wrapper, '去年')).toBe(true)
+    })
+
+    it('点「全部」一键清除日期条件：双空载荷，回默认态（issue #526）', async () => {
+      freezeToday()
+      const wrapper = mount(SearchView)
+      await nextTick()
+      await typeAndSearch(wrapper, '午餐')
+      await clickChip(wrapper, '当月')
+      await applyFilters(wrapper)
+      expect(lastSearchArgs()).toMatchObject({ dateFrom: '2026-02-01', dateTo: '2026-02-28' })
+      await clickChip(wrapper, '全部')
+      await applyFilters(wrapper)
+      expect(lastSearchArgs()).toMatchObject({ query: '午餐', dateFrom: null, dateTo: null })
+      expect(wrapper.text()).toContain('命中 23 条')
+      expect(lit(wrapper, '全部')).toBe(true)
+      expect(lit(wrapper, '当月')).toBe(false)
+    })
+
+    it('重复点同一芯片不重复搜索（同值守卫：快照未变不动作）', async () => {
+      freezeToday()
+      const wrapper = mount(SearchView)
+      await nextTick()
+      await clickChip(wrapper, '当月')
+      await applyFilters(wrapper)
+      expect(searchCalls().length).toBe(1)
+      await clickChip(wrapper, '当月')
+      await applyFilters(wrapper)
+      expect(searchCalls().length).toBe(1)
+    })
+
+    it('关键字＋金额＋时间范围 AND 组合：载荷日期双端有界（原日期选择器组合用例改造）', async () => {
+      freezeToday()
+      const wrapper = mount(SearchView)
+      await nextTick()
+      await typeAndSearch(wrapper, '午餐')
+      await minAmountInput(wrapper).setValue('15')
+      await maxAmountInput(wrapper).setValue('30')
+      await clickChip(wrapper, '当月')
+      await applyFilters(wrapper)
+      expect(lastSearchArgs()).toMatchObject({
+        query: '午餐',
+        amountMinCents: 1500,
+        amountMaxCents: 3000,
+        dateFrom: '2026-02-01',
+        dateTo: '2026-02-28',
+      })
+    })
+
+    it('「清除筛选」把日期条件一并清回「全部」（双空）', async () => {
+      freezeToday()
+      const wrapper = mount(SearchView)
+      await nextTick()
+      await minAmountInput(wrapper).setValue('15.5')
+      await clickChip(wrapper, '当月')
+      await applyFilters(wrapper)
+      // 金额与芯片变更防抖合并为一次搜索
+      expect(searchCalls().length).toBe(1)
+      expect(wrapper.text()).toContain('已应用筛选')
+      expect(wrapper.text()).toContain('最低 ¥15.5')
+      expect(wrapper.text()).toContain('起始 2026-02-01')
+      expect(wrapper.text()).toContain('结束 2026-02-28')
+
+      const clearBtn = wrapper.findAll('button').find((b) => b.text() === '清除筛选')
+      expect(clearBtn).toBeTruthy()
+      await clearBtn!.trigger('click')
+      await applyFilters(wrapper)
+      expect(wrapper.text()).not.toContain('已应用筛选')
+      expect(minAmountInput(wrapper).element as HTMLInputElement).toHaveProperty('value', '')
+      // 日期条件清回「全部」：芯片回默认点亮、载荷双空
+      expect(lit(wrapper, '全部')).toBe(true)
+      expect(lit(wrapper, '当月')).toBe(false)
+      // 关键字也为空 → 回到占位提示
+      expect(wrapper.text()).toContain('输入关键字或设置筛选开始搜索')
+      expect(searchCalls().length).toBe(1) // 清除后无新查询
+    })
+
+    it('「全部」态步进器置灰、期间标签占位，面板仍可开', async () => {
+      freezeToday()
+      const wrapper = mount(SearchView)
+      await flushPromises()
+      expect(stepButton(wrapper, 'prev').props('disabled')).toBe(true)
+      expect(stepButton(wrapper, 'next').props('disabled')).toBe(true)
+      expect(periodLabel(wrapper)).toBe('选择期间')
+      // 步进不可达，但期间标签仍可打开直达面板（aria-expanded 随开合翻转）
+      const trigger = wrapper.find('.period-label')
+      await trigger.trigger('click')
+      await nextTick()
+      expect(wrapper.find('button[aria-haspopup="dialog"]').attributes('aria-expanded')).toBe('true')
+    })
+
+    it('期间直达面板钳制于数据期间边界：全部态默认月档，界外月份不可选', async () => {
+      freezeToday()
+      const wrapper = mount(SearchView)
+      await flushPromises()
+      const picker = wrapper.findComponent(NDatePicker)
+      expect(picker.props('type')).toBe('month')
+      const isDisabled = picker.props('isDateDisabled') as (
+        timestamp: number,
+        detail: unknown,
+      ) => boolean
+      // 月档边界 [2025-12, 2026-03]：界外不可选、界内（含两端）可选
+      // （naive-ui 的月份 detail.month 为 0 起）
+      expect(isDisabled(0, { type: 'month', year: 2025, month: 10 })).toBe(true)
+      expect(isDisabled(0, { type: 'month', year: 2025, month: 11 })).toBe(false)
+      expect(isDisabled(0, { type: 'month', year: 2026, month: 2 })).toBe(false)
+      expect(isDisabled(0, { type: 'month', year: 2026, month: 3 })).toBe(true)
+    })
+
+    it('期间步进写有界快照并受数据期间边界钳制（边界外置灰）', async () => {
+      freezeToday()
+      const wrapper = mount(SearchView)
+      await flushPromises()
+      await clickChip(wrapper, '当月')
+      await applyFilters(wrapper)
+      expect(periodLabel(wrapper)).toBe('2026年2月')
+      // 上界：当月 → next 到 2026-03（最新交易期间），再 next 置灰
+      expect(stepButton(wrapper, 'next').props('disabled')).toBe(false)
+      await step(wrapper, 'next')
+      await applyFilters(wrapper)
+      expect(lastSearchArgs()).toMatchObject({ dateFrom: '2026-03-01', dateTo: '2026-03-31' })
+      expect(periodLabel(wrapper)).toBe('2026年3月')
+      // 历史期间不是任何预设定义 → 芯片全灭，列表快照不漂移
+      for (const label of ['全部', '当月', '当季', '当年', '去年']) {
+        expect(lit(wrapper, label)).toBe(false)
+      }
+      expect(stepButton(wrapper, 'next').props('disabled')).toBe(true)
+      // 下界：连步回 2025-12（最早交易期间），再 prev 置灰
+      await step(wrapper, 'prev')
+      await applyFilters(wrapper)
+      await step(wrapper, 'prev')
+      await applyFilters(wrapper)
+      await step(wrapper, 'prev')
+      await applyFilters(wrapper)
+      expect(lastSearchArgs()).toMatchObject({ dateFrom: '2025-12-01', dateTo: '2025-12-31' })
+      expect(periodLabel(wrapper)).toBe('2025年12月')
+      expect(stepButton(wrapper, 'prev').props('disabled')).toBe(true)
     })
   })
 })
