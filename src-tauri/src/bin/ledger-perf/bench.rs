@@ -9,7 +9,12 @@
 //!
 //! 统计口径：每项预热 `--warmup` 次（不计入统计，主要热 SQLite 页缓存与
 //! 语句缓存），计时 `--iterations` 次取 min / avg / p95（p95 按最近秩法，
-//! 迭代数 < 20 时退化为接近 max 的保守值）。
+//! n=10 时 rank=⌈9.5⌉=10 恒等于 max，默认 20 次起才有真分位数分辨力）。
+//!
+//! 性能门禁（issue #493 / ADR-0068）：`--max-p95-ms` 给出阈值时，全部基准
+//! 项逐项判定 p95 ≤ 阈值，任何一项超标则以非零退出码失败（超标清单打在
+//! 报告尾部）；缺省不判定，仅输出报告（本地观察不受影响）。判据与豁免
+//! 原则以 ADR-0068 为准。
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -38,10 +43,13 @@ pub(crate) struct BenchCli {
     pub db: PathBuf,
     /// 每项基准预热次数（不计入统计）。
     pub warmup: usize,
-    /// 每项基准计时迭代次数。
+    /// 每项基准计时迭代次数（默认 20：n=10 时最近秩 p95 恒等于 max，
+    /// 20 次才成真分位数；ADR-0068 统计口径）。
     pub iterations: usize,
     /// 备注搜索基准的关键字（默认「咖啡」，命中备注池并驱动拼音过滤路径）。
     pub search: String,
+    /// 性能门禁阈值（毫秒）：全部基准 p95 ≤ 阈值才退出 0；None = 不判定。
+    pub max_p95_ms: Option<f64>,
 }
 
 impl Default for BenchCli {
@@ -49,8 +57,9 @@ impl Default for BenchCli {
         BenchCli {
             db: super::default_out(),
             warmup: 3,
-            iterations: 10,
+            iterations: 20,
             search: "咖啡".to_string(),
+            max_p95_ms: None,
         }
     }
 }
@@ -98,6 +107,15 @@ pub(crate) fn parse_bench_args(args: &[String]) -> Result<ParsedBench, String> {
             "--search" => {
                 cli.search = take_value(&mut i, inline_value)?;
             }
+            "--max-p95-ms" => {
+                let v = take_value(&mut i, inline_value)?;
+                let ms = v
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|m| m.is_finite() && *m > 0.0)
+                    .ok_or_else(|| format!("--max-p95-ms 需要正数（毫秒），得到 {v:?}"))?;
+                cli.max_p95_ms = Some(ms);
+            }
             "-h" | "--help" => return Ok(ParsedBench::Help),
             other => return Err(format!("未知参数 {other:?}")),
         }
@@ -137,8 +155,9 @@ pub(crate) struct BenchMetrics {
 /// （行数/命中数/数量等线索，由各基准自行描述语义）。
 type BenchFn<'a> = dyn Fn(&Connection) -> Result<String, String> + 'a;
 
-/// 最近秩法 p95：升序样本取第 ⌈0.95·n⌉ 个（n<20 时偏保守、接近 max）。
-fn percentile_ms(sorted_ms: &[f64], p: f64) -> f64 {
+/// 最近秩法 p95：升序样本取第 ⌈0.95·n⌉ 个（n=10 时恒等于 max，
+/// n≥20 才有真分位数分辨力）。
+pub(crate) fn percentile_ms(sorted_ms: &[f64], p: f64) -> f64 {
     let n = sorted_ms.len();
     let rank = (p * n as f64).ceil().max(1.0) as usize;
     sorted_ms[rank.min(n) - 1]
@@ -161,7 +180,45 @@ pub(crate) fn run(cli: BenchCli) -> Result<(), String> {
     };
     let results = run_benchmarks(&conn, &cfg)?;
     print_report(&cli.db, &cfg, &results);
+    gate(&results, cli.max_p95_ms)?;
     Ok(())
+}
+
+/// 门禁判定（ADR-0068）：全部基准逐项 p95 ≤ 阈值才通过；任何一项超标，
+/// 超标清单打在报告尾部（随 tee 进 Job Summary）并返回 Err（非零退出）。
+fn gate(results: &[BenchMetrics], max_p95_ms: Option<f64>) -> Result<(), String> {
+    let Some(max_p95_ms) = max_p95_ms else {
+        return Ok(());
+    };
+    let failures = gate_failures(results, max_p95_ms);
+    println!();
+    if failures.is_empty() {
+        println!(
+            "门禁（全部基准 p95 ≤ {max_p95_ms:.0}ms）：通过（{}/{} 项达标）",
+            results.len(),
+            results.len()
+        );
+        Ok(())
+    } else {
+        println!(
+            "门禁（全部基准 p95 ≤ {max_p95_ms:.0}ms）：失败——{} 项超标：{}",
+            failures.len(),
+            failures.join("、")
+        );
+        Err(format!(
+            "性能门禁失败：{} 项 p95 超 {max_p95_ms:.0}ms（超标项见上方报告门禁行）",
+            failures.len()
+        ))
+    }
+}
+
+/// 超标项清单（判定纯函数）：p95 > 阈值（判据为 ≤）的基准名 + 实测值。
+pub(crate) fn gate_failures(results: &[BenchMetrics], max_p95_ms: f64) -> Vec<String> {
+    results
+        .iter()
+        .filter(|r| r.p95_ms > max_p95_ms)
+        .map(|r| format!("{}（p95 {:.2}ms）", r.name, r.p95_ms))
+        .collect()
 }
 
 /// 基准执行核心（测试接缝）：对已打开的连接跑全部 10 项基准。

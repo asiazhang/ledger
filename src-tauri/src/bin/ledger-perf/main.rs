@@ -59,13 +59,14 @@
 //!   `journal_mode=MEMORY`，均不持久化进库文件），50 万笔在几十秒内完成；
 //!   生成的库仅供性能基准消费，不是用户数据，崩溃重跑即可。
 //!
-//! ## bench：查询基准（issue #461）
+//! ## bench：查询基准（issue #461；门禁 issue #493 / ADR-0068）
 //!
 //! 对 generate 产出的库跑 10 项查询基准并输出 min/avg/p95 报告：
 //!
 //! ```text
 //! cargo run --bin ledger-perf -- bench [--db PATH] [--warmup N]
 //!                                     [--iterations N] [--search TERM]
+//!                                     [--max-p95-ms MS]
 //! ```
 //!
 //! - 基准集：列表首页分页；深分页（OFFSET 逼近全量）；账户+日期范围筛选
@@ -77,6 +78,8 @@
 //!   工厂自动挂载，基准内不重写 SQL。
 //! - 每项预热 + 多次迭代，报 min/avg/p95，人读表格输出；p95 超阈值的基准
 //!   在报告中以 ▲ 标记，SQL 级线索在日志「慢查询」条目中检索。
+//! - 门禁（CI）：`--max-p95-ms 200` 时全部基准逐项判定 p95 ≤ 阈值，超标即
+//!   非零退出（统计口径与豁免原则见 ADR-0068）；缺省只报告不判定。
 //!
 //! # 实现边界
 //!
@@ -122,8 +125,10 @@ SUBCOMMANDS:
 bench OPTIONS:
     --db <PATH>            目标库文件（默认同 generate 输出路径，须已生成）
     --warmup <N>           每项基准预热次数（默认 3，不计入统计）
-    --iterations <N>       每项基准计时迭代次数（默认 10）
+    --iterations <N>       每项基准计时迭代次数（默认 20，n=20 才成真 p95 分位数）
     --search <TERM>        备注搜索基准的关键字（默认 咖啡）
+    --max-p95-ms <MS>      门禁阈值（毫秒）：全部基准 p95 ≤ 阈值才退出 0，
+                           任何一项超标即失败（CI 用；缺省不判定）
     -h, --help             打印本说明
 
 generate OPTIONS:

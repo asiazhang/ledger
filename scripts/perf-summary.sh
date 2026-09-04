@@ -1,7 +1,8 @@
 #!/bin/sh
 # perf-summary.sh —— 把 ledger-perf bench 的人读 stdout 报告转成 GitHub Job
 # Summary 的 Markdown 片段（issue #462）。
-# ADR-0062「CI 观察不判定」：本脚本只做格式转换，不做任何阈值判定。
+# 阈值判定由 bench 自身承担（--max-p95-ms，issue #493 / ADR-0068，exit code
+# 表达结果）；本脚本仍只做格式转换，不做任何阈值判定。
 #
 # 用法：perf-summary.sh <bench-report.txt>
 #   <bench-report.txt> 是 `ledger-perf bench` 的 stdout 报告文件（CI 里由

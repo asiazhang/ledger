@@ -25,9 +25,19 @@ use tauri_app_lib::transaction::TransactionListFilter;
 use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::read::{get_transaction, list_transactions};
 
-use super::bench::{self, BenchConfig};
+use super::bench::{self, BenchCli, BenchConfig, BenchMetrics, ParsedBench};
 use super::generate::{GenCounts, GenerateParams, generate_into};
 use super::{GenerateCli, ParsedArgs, parse_args};
+
+/// 解析并取 bench 运行参数（帮助请求在该测试套件中不该出现；
+/// 用法错误经 Result 返回供断言）。
+fn parse_bench_cli(args: &[&str]) -> Result<BenchCli, String> {
+    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    match bench::parse_bench_args(&owned)? {
+        ParsedBench::Run(cli) => Ok(cli),
+        ParsedBench::Help => panic!("该输入应解析为运行参数"),
+    }
+}
 
 /// 解析并取运行参数（帮助请求在该测试套件中不该出现）。
 fn run_cli(args: &[&str]) -> GenerateCli {
@@ -96,6 +106,70 @@ fn bench_smoke_runs_all_ten_benchmarks() {
         "搜索基准备注应含命中数：{}",
         search.context
     );
+}
+
+// ---------------------------------------------------------------------------
+// 性能门禁（issue #493 / ADR-0068：全部基准 p95 ≤ 200ms 判定，exit code 表达结果）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn p95_nearest_rank_is_true_quantile_at_n20() {
+    // n=10：rank = ⌈0.95×10⌉ = 10 → p95 恒等于 max（iterations 10→20 的原因）。
+    let ten: Vec<f64> = (1..=10).map(|i| i as f64).collect();
+    assert_eq!(bench::percentile_ms(&ten, 0.95), 10.0);
+    // n=20：rank = ⌈0.95×20⌉ = 19 → 第 19 位样本，成真分位数。
+    let twenty: Vec<f64> = (1..=20).map(|i| i as f64).collect();
+    assert_eq!(bench::percentile_ms(&twenty, 0.95), 19.0);
+}
+
+#[test]
+fn bench_cli_gate_option_parses_and_defaults_off() {
+    // 默认：无门禁（本地观察不受影响），迭代 20（n=20 才成真 p95 分位数）。
+    let cli = parse_bench_cli(&[]).unwrap();
+    assert_eq!(cli.iterations, 20, "默认迭代次数应为 20");
+    assert_eq!(cli.max_p95_ms, None, "默认不启用门禁");
+
+    let cli = parse_bench_cli(&["--iterations", "20", "--max-p95-ms", "200"]).unwrap();
+    assert_eq!(cli.iterations, 20);
+    assert_eq!(cli.max_p95_ms, Some(200.0));
+
+    let cli = parse_bench_cli(&["--max-p95-ms=200.5"]).unwrap();
+    assert_eq!(cli.max_p95_ms, Some(200.5));
+
+    for bad in ["abc", "-1", "0", "NaN", "inf"] {
+        assert!(
+            parse_bench_cli(&["--max-p95-ms", bad]).is_err(),
+            "--max-p95-ms {bad} 应报错"
+        );
+    }
+    assert!(parse_bench_cli(&["--max-p95-ms"]).is_err(), "缺值报错");
+}
+
+#[test]
+fn gate_failures_lists_only_over_threshold_items() {
+    let mk = |name: &'static str, p95: f64| BenchMetrics {
+        name,
+        context: format!("p95={p95}"),
+        min_ms: p95,
+        avg_ms: p95,
+        p95_ms: p95,
+        iterations: 20,
+    };
+    let results = vec![
+        mk("列表首页分页", 10.0),
+        mk("深分页", 200.0), // 等号边界：判据为 ≤ 200ms，达标
+        mk("净资产总览", 250.5),
+        mk("时点持仓", 1000.0),
+    ];
+    assert_eq!(
+        bench::gate_failures(&results, 200.0),
+        vec!["净资产总览（p95 250.50ms）", "时点持仓（p95 1000.00ms）"],
+        "只列超标项，等号边界达标"
+    );
+
+    // 全达标：空清单。
+    let ok = vec![mk("列表首页分页", 199.9), mk("深分页", 200.0)];
+    assert!(bench::gate_failures(&ok, 200.0).is_empty());
 }
 
 // ---------------------------------------------------------------------------
