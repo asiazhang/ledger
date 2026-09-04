@@ -2,6 +2,12 @@
 
 本文件记录 Ledger 各版本对使用者可见的变更，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)规则。
 
+## [Unreleased]
+
+### Added
+
+- **界面**：新增金额隐私模式——侧栏标题行眼睛按钮一键把全应用金额数字（交易、账户余额、净资产、预算、报表、投资市值/盈亏/单价/份额、保费、实物资产估值、物品成本、搜索结果）替换为统一掩码 `••••`；支出红/收入绿等语义色、百分比与图表形状保留，表单输入不受影响；开关跨启动记住、仅本设备、不随备份迁移（[#566]）。
+
 ## [0.5.0] - 2026-09-05
 
 ### Added
@@ -153,3 +159,4 @@
 [#513]: https://github.com/asiazhang/ledger/issues/513
 [#515]: https://github.com/asiazhang/ledger/issues/515
 [#526]: https://github.com/asiazhang/ledger/issues/526
+[#566]: https://github.com/asiazhang/ledger/issues/566

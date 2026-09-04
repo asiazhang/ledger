@@ -7,6 +7,7 @@ import { Chart as ChartJS, Tooltip, Legend, CategoryScale, LinearScale } from 'c
 import type { ChartOptions, TooltipItem } from 'chart.js'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount, formatPrice } from '@/types'
+import { amountPrivacyEnabled } from '@/utils/money'
 import { t } from '@/i18n'
 import {
   hasMarketSource,
@@ -96,30 +97,36 @@ const chartData = computed(() => ({
   ],
 }))
 
-const chartOptions: ChartOptions<'line'> = {
-  responsive: true,
-  maintainAspectRatio: false,
-  interaction: { mode: 'nearest', intersect: false },
-  plugins: {
-    legend: { position: 'top' },
-    tooltip: {
-      callbacks: {
-        label: (context: TooltipItem<'line'>) =>
-          `${context.dataset.label}: ${formatTrendValue(context.raw as number)}`,
+// options computed 并读取隐私开关建立响应式依赖（issue #566）：tooltip 与轴刻度 formatter
+// 已同源走 formatAmount/formatPrice，但只在重绘时执行——切换时靠 options 变更驱动
+// vue-chartjs 重绘，满足「切换即时生效于所有已打开页面」（spec #564 user story 14）。
+const chartOptions = computed<ChartOptions<'line'>>(() => {
+  void amountPrivacyEnabled.value
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: 'nearest', intersect: false },
+    plugins: {
+      legend: { position: 'top' },
+      tooltip: {
+        callbacks: {
+          label: (context: TooltipItem<'line'>) =>
+            `${context.dataset.label}: ${formatTrendValue(context.raw as number)}`,
+        },
       },
     },
-  },
-  scales: {
-    x: {
-      ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 12 },
-    },
-    y: {
-      ticks: {
-        callback: (value: number | string) => formatTrendValue(Number(value)),
+    scales: {
+      x: {
+        ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 12 },
+      },
+      y: {
+        ticks: {
+          callback: (value: number | string) => formatTrendValue(Number(value)),
+        },
       },
     },
-  },
-}
+  }
+})
 
 ChartJS.register(Tooltip, Legend, CategoryScale, LinearScale)
 </script>

@@ -7,6 +7,7 @@ import { BarElement, CategoryScale, Chart as ChartJS, LinearScale, Tooltip } fro
 import type { ChartOptions, TooltipItem } from 'chart.js'
 import { api } from '@/api'
 import { formatAmount } from '@/types'
+import { amountPrivacyEnabled } from '@/utils/money'
 import { t } from '@/i18n'
 import { useReferenceStore } from '@/stores/reference'
 import { scheduledStatusLabel } from '@/utils/scheduled'
@@ -57,27 +58,33 @@ const chartData = computed(() => ({
   ],
 }))
 
-const chartOptions: ChartOptions<'bar'> = {
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: { display: false },
-    tooltip: {
-      callbacks: {
-        label: (context: TooltipItem<'bar'>) =>
-          formatAmount(context.raw as number, currency.value),
+// options computed 并读取隐私开关建立响应式依赖（issue #566）：tooltip 与轴刻度
+// formatter 已同源走 formatAmount，但只在重绘时执行——切换时靠 options 变更驱动
+// vue-chartjs 重绘，满足「切换即时生效于所有已打开页面」（spec #564 user story 14）。
+const chartOptions = computed<ChartOptions<'bar'>>(() => {
+  void amountPrivacyEnabled.value
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          label: (context: TooltipItem<'bar'>) =>
+            formatAmount(context.raw as number, currency.value),
+        },
       },
     },
-  },
-  scales: {
-    x: { ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } },
-    y: {
-      ticks: {
-        callback: (value: number | string) => formatAmount(Number(value), currency.value),
+    scales: {
+      x: { ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } },
+      y: {
+        ticks: {
+          callback: (value: number | string) => formatAmount(Number(value), currency.value),
+        },
       },
     },
-  },
-}
+  }
+})
 
 ChartJS.register(BarElement, CategoryScale, LinearScale, Tooltip)
 
