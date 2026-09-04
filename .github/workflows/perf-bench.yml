@@ -48,6 +48,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # 失败也存缓存：门禁红（或其它失败）时下次 run 仍能命中依赖产物，
+          # 避免冷跑失败白费一次全量编译。
+          cache-on-failure: true
 
       - name: 编译 ledger-perf（release）
         working-directory: src-tauri
