@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { loadLocal, saveLocal } from '@/utils/storage'
 import { getLocaleSetting, setLocaleSetting, type LocaleSetting } from '@/i18n'
+import { amountPrivacyEnabled, AMOUNT_PRIVACY_STORAGE_KEY } from '@/utils/money'
 
 export type Theme = 'dark' | 'light'
 
@@ -25,6 +26,11 @@ export const useAppStore = defineStore('app', () => {
   // 界面语言偏好（issue #342 / ADR-0049）：轻量设置项，'system' = 跟随系统；
   // 存储与生效逻辑收口在 @/i18n，此处只持状态供设置页读写。
   const localeSetting = ref<LocaleSetting>(getLocaleSetting())
+
+  // 金额隐私模式（issue #566）：轻量设置项，真源 ref 在展示格式化层（@/utils/money，
+  // 三个格式化函数消费，同界面语言 currentLocale 注入先例）；本 store 负责启动水合
+  // 与变更持久化，不随 Backup/Restore 迁移。
+  amountPrivacyEnabled.value = loadLocal<boolean>(AMOUNT_PRIVACY_STORAGE_KEY, false)
 
   function setTheme(t: Theme) {
     theme.value = t
@@ -56,6 +62,11 @@ export const useAppStore = defineStore('app', () => {
     await setLocaleSetting(value)
   }
 
+  function setAmountPrivacyEnabled(enabled: boolean) {
+    amountPrivacyEnabled.value = enabled
+    saveLocal(AMOUNT_PRIVACY_STORAGE_KEY, enabled)
+  }
+
   return {
     theme,
     defaultCurrency,
@@ -63,11 +74,13 @@ export const useAppStore = defineStore('app', () => {
     backupMaxCount,
     autoExecutionEnabled,
     localeSetting,
+    amountPrivacyEnabled,
     setTheme,
     setDefaultCurrency,
     setBackupDir,
     setBackupMaxCount,
     setAutoExecutionEnabled,
     setLocale,
+    setAmountPrivacyEnabled,
   }
 })

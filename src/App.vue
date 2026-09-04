@@ -14,6 +14,7 @@ import {
   NIcon,
   NSpace,
   NText,
+  NButton,
   darkTheme,
   zhCN,
   dateZhCN,
@@ -36,6 +37,8 @@ import {
   RepeatOutline,
   StorefrontOutline,
   ShieldCheckmarkOutline,
+  EyeOutline,
+  EyeOffOutline,
 } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
 import { currentLocale, t } from '@/i18n'
@@ -259,7 +262,40 @@ function handleSelect(key: string) {
   router.push({ name: key })
 }
 
-const title = () => h('div', { style: 'padding: 16px; font-size: 18px; font-weight: 600' }, '📒 Ledger')
+// 侧栏标题行（issue #566）：「📒 Ledger」+ 金额隐私模式眼睛按钮——入口唯一（spec #564：
+// 不进设置页、无快捷键、无第二渲染点），消费应用设置 store 同一状态；睁/闭两态图标与
+// tooltip、aria-label 反映当前状态（文案经 i18n 双语，aria-pressed 携带开关态），
+// 点击即切换并持久化；格式化层（@/utils/money）消费同一 ref，全应用金额即时掩码/恢复。
+// 渲染函数读取响应式状态，语言/开关变化时随重新渲染；侧栏折叠（宽度归零）时按钮
+// 不可见，展开即可切换（接受取舍，不设第二渲染点）。
+const title = () => {
+  // 无障碍标签/tooltip 反映当前状态（文案随界面语言）：关→「隐藏金额」、开→「显示金额」，
+  // aria-pressed 携带开关态（WAI-ARIA toggle button 模式）
+  const privacyLabel = store.amountPrivacyEnabled ? t('common.amountPrivacy.show') : t('common.amountPrivacy.hide')
+  return h(
+    'div',
+    { style: 'display:flex;align-items:center;justify-content:space-between;gap:4px;min-width:0;padding:12px 8px 12px 16px;font-size:18px;font-weight:600' },
+    [
+      h('span', '📒 Ledger'),
+      h(
+        NButton,
+        {
+          size: 'tiny',
+          quaternary: true,
+          circle: true,
+          'aria-pressed': store.amountPrivacyEnabled,
+          title: privacyLabel,
+          'aria-label': privacyLabel,
+          onClick: () => store.setAmountPrivacyEnabled(!store.amountPrivacyEnabled),
+        },
+        {
+          icon: () =>
+            h(NIcon, { size: 16 }, { default: () => h(store.amountPrivacyEnabled ? EyeOffOutline : EyeOutline) }),
+        },
+      ),
+    ],
+  )
+}
 
 const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(route.name) : ''))
 </script>

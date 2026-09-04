@@ -30,6 +30,7 @@ import {
   softChartColors,
 } from '@/theme/chart-style'
 import { formatAmount } from '@/types'
+import { amountPrivacyEnabled } from '@/utils/money'
 import type { CategoryShare, MerchantShare, MonthlySummary } from '@/types'
 import {
   barTooltipLabel,
@@ -147,6 +148,10 @@ const barChartData = computed(() => ({
 // 文字中性灰、tooltip 圆角加大内边距、图例小圆点；颜色随主题响应式取值——
 // options 改 computed，vue-chartjs 对 options 深度监听，切外观即时重算。
 const barChartOptions = computed<ChartOptions<'bar'>>(() => {
+  // 读取隐私开关建立响应式依赖（issue #566）：坐标轴刻度/tooltip 的 formatter 虽已同源
+  // 走 formatAmount，但只在重绘时执行——切换时靠 options 变更驱动 vue-chartjs 重绘，
+  // 满足「切换即时生效于所有已打开页面」（spec #564 user story 14）。
+  void amountPrivacyEnabled.value
   const soft = softChartColors(app.theme)
   return {
     color: soft.ticks,
@@ -300,6 +305,8 @@ const barEndAmountPlugin = {
 // 视觉柔化与月度图同源（chart-style）：值轴（x）留淡化网格，类目轴去网格与
 // 轴线，刻度文字中性灰；颜色随主题响应式取值（options computed）。
 const categoryChartOptions = computed<ChartOptions<'bar'>>(() => {
+  // 同 barChartOptions：追踪隐私开关，切换即时重绘轴刻度与柱尾标注（issue #566）
+  void amountPrivacyEnabled.value
   const soft = softChartColors(app.theme)
   return {
     indexAxis: 'y',
