@@ -16,6 +16,7 @@ import PhysicalAssetFormModal from '@/components/PhysicalAssetFormModal.vue'
 import PhysicalAssetValuationModal from '@/components/PhysicalAssetValuationModal.vue'
 import PhysicalAssetDisposeModal from '@/components/PhysicalAssetDisposeModal.vue'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
+import { useModalIntent } from '@/composables/useModalIntent'
 import { usePhysicalAssetsStore } from '@/stores/physicalAssets'
 import { useReferenceStore } from '@/stores/reference'
 import type { PhysicalAsset } from '@/types'
@@ -33,9 +34,25 @@ import type { PhysicalAsset } from '@/types'
 const physicalAssetsStore = usePhysicalAssetsStore()
 const reference = useReferenceStore()
 
-const formShow = ref(false)
-/** 编辑目标（null = 新建模式，T2：同一建档弹窗双模式）。 */
-const editingAsset = ref<PhysicalAsset | null>(null)
+// —— 建档弹窗（新建/编辑双模式，T2）——
+// 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
+// 意图闭集双成员（新建无载荷；编辑携带目标资产行），显示由「意图非空」派生
+// （无独立 show 布尔），序号随开启递增驱动表单重建（:key=formSeq），关闭
+// （✕ / ESC / 取消 / 保存成功）统一经工厂清回 null 终态。现状无序号守卫，
+// 迁移为缺陷修复（本票唯一声明的行为变化）：守卫从无到有，「弹窗开着时
+// 目标行被替换回填旧行」缺陷消亡，同目标重开重回填等边缘语义细化同归此类；
+// 此外等价。
+
+/** 建档弹窗意图（新建/编辑双模式闭集）：编辑携带目标资产行。 */
+type PhysicalAssetFormIntent = { mode: 'create' } | { mode: 'edit'; asset: PhysicalAsset }
+
+const {
+  intent: formIntent,
+  seq: formSeq,
+  open: openFormIntent,
+  close: closeForm,
+} = useModalIntent<PhysicalAssetFormIntent>()
+
 const valuationShow = ref(false)
 /** 更新估值目标（T2：追加历史行入口）。 */
 const valuationAsset = ref<PhysicalAsset | null>(null)
@@ -44,13 +61,11 @@ const disposeShow = ref(false)
 const disposingAsset = ref<PhysicalAsset | null>(null)
 
 function openCreate() {
-  editingAsset.value = null
-  formShow.value = true
+  openFormIntent({ mode: 'create' })
 }
 
 function openEdit(asset: PhysicalAsset) {
-  editingAsset.value = asset
-  formShow.value = true
+  openFormIntent({ mode: 'edit', asset })
 }
 
 function openUpdateValuation(asset: PhysicalAsset) {
@@ -252,11 +267,14 @@ onMounted(() => {
       </NDataTable>
     </NCard>
 
-    <!-- 新建 / 编辑弹窗（同一建档表单双模式，编辑态无估值字段，T2） -->
+    <!-- 新建 / 编辑弹窗（同一建档表单双模式，编辑态无估值字段，T2）。
+         显示由「意图非空」派生（无独立 show 布尔），关闭（✕ / ESC / 取消 /
+         保存成功）统一经工厂清回 null 终态；序号作 key 强制重建（ADR-0072）。 -->
     <PhysicalAssetFormModal
-      :show="formShow"
-      :editing="editingAsset"
-      @update:show="formShow = $event"
+      :key="formSeq"
+      :show="formIntent !== null"
+      :editing="formIntent?.mode === 'edit' ? formIntent.asset : null"
+      @update:show="(v: boolean) => (v ? undefined : closeForm())"
     />
     <!-- 更新估值弹窗（T2：追加历史行，旧值保留） -->
     <PhysicalAssetValuationModal
