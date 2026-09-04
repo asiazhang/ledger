@@ -48,5 +48,8 @@
   },
   "window": {
     "title": "Ledger"
+  },
+  "globalBusyBar": {
+    "label": "Working"
   }
 }
