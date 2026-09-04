@@ -77,6 +77,11 @@ const route = useRoute()
 // 根组件挂载一次，详见 composables/useWindowGuard.ts。
 useWindowGuard()
 
+// 侧栏展开宽度随界面语言（英文更长：160px 下组标题行「更多」链接被右缘裁切、
+// 菜单项行偏挤）：zh-CN 维持 160 不变，en-US 200；切换语言走 NLayoutSider
+// 原生宽度过渡。宽度不持久化（ViewState 只覆盖折叠态，不做过度记忆）。
+const siderWidth = computed(() => (currentLocale.value === 'en-US' ? 200 : 160))
+
 // ViewState：侧边栏折叠状态跨启动保持。
 const sidebarCollapsed = ref(loadSidebarCollapsed())
 function updateSidebarCollapsed(collapsed: boolean) {
@@ -319,7 +324,7 @@ const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(rou
         <NLayout has-sider style="height: 100vh">
           <NLayoutSider
             bordered
-            :width="160"
+            :width="siderWidth"
             :collapsed="sidebarCollapsed"
             :collapsed-width="0"
             show-trigger="arrow-circle"
