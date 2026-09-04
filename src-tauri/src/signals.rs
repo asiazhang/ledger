@@ -128,7 +128,7 @@ pub enum WriteOp {
     /// 当期表，不在 `ledger:prices-changed` 定义（MarketPrice / PriceHistory /
     /// FxRateHistory，ADR-0031）覆盖范围内。
     CreateExchangeRate,
-    /// 余额缓存手动审计（IPC `audit_balance_cache`，issue #491 / ADR-0066）：
+    /// 余额缓存手动审计（IPC `audit_balance_cache`，issue #491 / ADR-0067）：
     /// 刻意零信号——修复的是派生缓存行，不置脏（ADR-0032 豁免形态）、
     /// 前端按返回的差异报告就地刷新，无需失效广播。
     AuditBalanceCache,
@@ -388,7 +388,7 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
 
         // ── 账户域：余额调整仅「按需新建黑洞账户」时参考表变更（ADR-0026）──
         WriteOp::AdjustAccountBalance => when(evidence.black_hole_created(), LEDGER_CHANGED_SET),
-        // 余额缓存审计修复：派生数据自愈，不置脏不发信号（ADR-0066）。
+        // 余额缓存审计修复：派生数据自愈，不置脏不发信号（ADR-0067）。
         WriteOp::AuditBalanceCache => NO_SIGNALS,
 
         // ── 价格域：五操作共享同一行——映射内唯一一份「实际写入 → 发价格

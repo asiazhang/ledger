@@ -1,6 +1,7 @@
 use rusqlite::Connection;
 use rusqlite::params;
 
+use tauri_app_lib::db::balance::refresh_account_balances;
 use tauri_app_lib::db::new_uuid;
 use tauri_app_lib::transaction::Transaction;
 
@@ -25,6 +26,9 @@ pub fn insert_account(conn: &Connection, id: &str, name: &str, kind: &str, curre
         params![id, name, kind, currency],
     )
     .unwrap();
+    // 每账户必有缓存行是不变量（ADR-0067，create_account 同款）：直插后补建，
+    // 否则读缓存出口（余额调整/净资产/自由度）报 cache-row-missing。
+    refresh_account_balances(conn, &[id]).unwrap();
 }
 
 /// 生成 UUID v7 作为账户 ID。

@@ -1,4 +1,4 @@
-//! 余额与净资产持久化缓存一致性测试（issue #491 / ADR-0066）。
+//! 余额与净资产持久化缓存一致性测试（issue #491 / ADR-0067）。
 //!
 //! 不变量：任何写入入口落库后，`account_balance_cache` 必须与实时计算
 //! （`compute_balance` / `account_flow_expr` 单一口径矩阵）逐账户一致；

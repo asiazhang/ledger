@@ -133,7 +133,7 @@ pub struct AccountBalance {
     pub balance_cents: i64,
 }
 
-/// 余额缓存审计差异行（issue #491 / ADR-0066）：缓存缺失记 None（回填前）。
+/// 余额缓存审计差异行（issue #491 / ADR-0067）：缓存缺失记 None（回填前）。
 #[derive(Debug, Serialize, ToSchema)]
 pub struct BalanceCacheDrift {
     pub account_id: String,
@@ -142,7 +142,7 @@ pub struct BalanceCacheDrift {
     pub actual_cents: i64,
 }
 
-/// 余额缓存审计报告（issue #491 / ADR-0066）：修复已完成后的差异快照。
+/// 余额缓存审计报告（issue #491 / ADR-0067）：修复已完成后的差异快照。
 #[derive(Debug, Serialize, ToSchema)]
 pub struct BalanceCacheAudit {
     pub accounts_checked: usize,

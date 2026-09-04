@@ -153,7 +153,7 @@ pub fn list_account_balances_with_visibility(
 }
 
 // ---------------------------------------------------------------------------
-// 余额持久化缓存（issue #491 / ADR-0066）：写路径整体重算 + 读路径切缓存
+// 余额持久化缓存（issue #491 / ADR-0067）：写路径整体重算 + 读路径切缓存
 // ---------------------------------------------------------------------------
 
 /// 缓存行时间戳：毫秒精度 UTC ISO 时刻（与全库 `now_iso` 同为 UTC，仅精度不同）。
@@ -172,7 +172,7 @@ fn now_iso_millis() -> String {
 /// 表达式由 [`account_flow_subquery`] 生成（与 [`compute_balance`] 同一真源），
 /// 单条 UPSERT…SELECT 完成；每次调用无条件刷新 `updated_at`（毫秒精度），
 /// 即使余额值未变——这是净资产读探针指纹判定「源已变更」的依据之一。
-/// 必须在调用方既有写事务内调用（与引发重算的写入同事务，ADR-0066）。
+/// 必须在调用方既有写事务内调用（与引发重算的写入同事务，ADR-0067）。
 pub fn refresh_account_balances(conn: &Connection, account_ids: &[&str]) -> Result<()> {
     if account_ids.is_empty() {
         return Ok(());

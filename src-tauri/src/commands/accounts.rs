@@ -89,7 +89,7 @@ pub fn list_account_balances(db: State<'_, DbState>) -> Result<Vec<AccountBalanc
     account_domain::list_account_balances_with_visibility(&conn, false)
 }
 
-/// 手动审计命令（issue #491 / ADR-0066，唯一新接缝）：全账户实时重算 vs 余额缓存，
+/// 手动审计命令（issue #491 / ADR-0067，唯一新接缝）：全账户实时重算 vs 余额缓存，
 /// 修复差异并返回差异报告。缓存属派生数据：修复不置脏、不发信号（领域层说明），
 /// 故不经 `db.write` 包装，直连锁内执行。
 #[tauri::command]

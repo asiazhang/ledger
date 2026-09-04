@@ -49,7 +49,7 @@ pub fn create_account(conn: &Connection, input: AccountInput) -> Result<String> 
             device_id()
         ],
     )?;
-    // 余额缓存写路径（issue #491 / ADR-0066）：新账户建缓存行（初始余额 + 零流水）。
+    // 余额缓存写路径（issue #491 / ADR-0067）：新账户建缓存行（初始余额 + 零流水）。
     refresh_account_balances(conn, &[id.as_str()])?;
     Ok(id)
 }
@@ -307,7 +307,7 @@ pub fn adjust_account_balance(
     }
 }
 
-/// 手动审计命令领域逻辑（issue #491 / ADR-0066）：全账户实时重算 vs 余额缓存，
+/// 手动审计命令领域逻辑（issue #491 / ADR-0067）：全账户实时重算 vs 余额缓存，
 /// 逐账户比对→修复（整体重算回写）→差异报告。唯一允许绕过 db::write 的缓存修复
 /// 写入（与设置/恢复同列豁免形态）：缓存为派生数据，修复不置脏、不发信号。
 pub fn audit_balance_cache(conn: &Connection) -> Result<BalanceCacheAudit> {

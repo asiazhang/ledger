@@ -300,7 +300,7 @@ pub fn insert_row(conn: &Connection, row: &NormalizedRow) -> Result<String> {
             device_id(),
         ],
     )?;
-    // 余额缓存写路径（issue #491 / ADR-0066）：新行落库后在同一事务内对受影响
+    // 余额缓存写路径（issue #491 / ADR-0067）：新行落库后在同一事务内对受影响
     // 账户按口径表达式整体重算。本接缝是全部交易创建（手动/批量导入/余额调整/
     // buy/sell/定时引擎例外）的单一收口，挂此处即覆盖全部创建入口。
     let mut affected = vec![row.account_id.as_str()];
@@ -346,7 +346,7 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
             device_id(),
         ],
     )?;
-    // 余额缓存写路径：旧/新账户引用并集整体重算（修改可能移动账户，ADR-0066）。
+    // 余额缓存写路径：旧/新账户引用并集整体重算（修改可能移动账户，ADR-0067）。
     let mut affected = vec![old_account_id.as_str(), row.account_id.as_str()];
     if let Some(old_to) = &old_to_account_id {
         affected.push(old_to.as_str());

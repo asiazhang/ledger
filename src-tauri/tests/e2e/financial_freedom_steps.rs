@@ -9,7 +9,7 @@
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::db::{device_id, new_uuid, now_iso};
+use tauri_app_lib::db::{balance::refresh_account_balances, device_id, new_uuid, now_iso};
 use tauri_app_lib::investment::query_financial_freedom;
 
 use crate::world::LedgerWorld;
@@ -36,6 +36,8 @@ fn create_hidden_account(
             params![id, name, kind, currency, initial_balance, now, now, 1, device_id()],
         )
         .unwrap();
+    // 每账户必有缓存行是不变量（ADR-0067，create_account 同款）：直插后补建。
+    refresh_account_balances(&world_conn!(world), &[id.as_str()]).unwrap();
     world.account_name_to_id.insert(name, id);
 }
 

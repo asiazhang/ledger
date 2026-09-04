@@ -5,7 +5,10 @@ use tauri_app_lib::accounts::{
     AccountBalanceAdjustInput, AccountUpdateInput, adjust_account_balance,
     delete_account as delete_account_domain, update_account,
 };
-use tauri_app_lib::db::{balance::compute_balance, device_id, new_uuid, now_iso};
+use tauri_app_lib::db::{
+    balance::{compute_balance, refresh_account_balances},
+    device_id, new_uuid, now_iso,
+};
 use tauri_app_lib::transaction::delete_transaction_internal;
 
 use crate::common::query_accounts_by_name;
@@ -33,6 +36,9 @@ fn insert_account_and_register(
             params![id, name, kind, currency, initial_balance, now, now, 1, device_id()],
         )
         .unwrap();
+    // 每账户必有缓存行是不变量（ADR-0067，create_account 同款）：直插后补建，
+    // 否则读缓存出口（余额调整/净资产/自由度）报 cache-row-missing。
+    refresh_account_balances(&world_conn!(world), &[id.as_str()]).unwrap();
     world.account_name_to_id.insert(name, id);
 }
 

@@ -34,7 +34,7 @@ fn insert_account(
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0,0)",
         rusqlite::params![id, name, kind, currency, initial, now, now, 1, device_id()],
     ).unwrap();
-    // 裸 SQL 绕过 create_account 域钩子，按 V017 迁移回填语义补建缓存行（ADR-0066）。
+    // 裸 SQL 绕过 create_account 域钩子，按 V017 迁移回填语义补建缓存行（ADR-0067）。
     crate::db::balance::refresh_account_balances(conn, &[id]).unwrap();
 }
 
@@ -65,7 +65,7 @@ fn insert_tx(
         rusqlite::params![id, kind, amount, account_id, to_account_id, now, now, 1, device_id()],
     ).unwrap();
     // 裸 SQL 绕过 Writer 接缝缓存刷新，同步补齐两侧账户的缓存行（保持「缓存==实时」
-    // 不变量，ADR-0066）。
+    // 不变量，ADR-0067）。
     let mut affected = vec![account_id];
     if let Some(to) = to_account_id {
         affected.push(to);

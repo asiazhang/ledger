@@ -1,4 +1,4 @@
-//! 净资产终值缓存存储（issue #491 / ADR-0066）：只包存储，不写公式。
+//! 净资产终值缓存存储（issue #491 / ADR-0067）：只包存储，不写公式。
 //!
 //! 缓存行是首页净资产总览的派生终值（真实财富视角三腿合计，公式留在
 //! dashboard 域的既有实时聚合函数）。正确性由**读探针指纹**保证：读取方
@@ -34,7 +34,7 @@ pub struct CachedNetWorth {
 /// `MAX(updated_at)` 不变——故叠加判别器消除同秒盲区：带 `version` 列的表用
 /// `SUM(version)`（插入 version=1 或 version+1 都令判别值严格变化）；
 /// append-only 估值表无 version 列、只有插入，用 `COUNT(*)`；
-/// `account_balance_cache` 毫秒精度时间戳每次写入无条件刷新（ADR-0066），
+/// `account_balance_cache` 毫秒精度时间戳每次写入无条件刷新（ADR-0067），
 /// 天然无同秒盲区，不叠加（`none`）。
 const FINGERPRINT_SOURCES: &[(&str, &str, &str)] = &[
     ("accounts", "updated_at", "version"),

@@ -256,7 +256,7 @@ fn delete_within_transaction(conn: &Connection, id: &str) -> Result<()> {
         "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id()],
     )?;
-    // 余额缓存写路径（issue #491 / ADR-0066）：软删后对原账户引用整体重算。
+    // 余额缓存写路径（issue #491 / ADR-0067）：软删后对原账户引用整体重算。
     let mut affected = vec![account_id.as_str()];
     if let Some(to_account_id) = &to_account_id {
         affected.push(to_account_id.as_str());
