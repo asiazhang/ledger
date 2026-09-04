@@ -26,7 +26,10 @@ tauri-plugin-opener = "2"
 tauri-plugin-window-state = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.40", features = ["bundled", "trace"] }
+# 加密引擎基座（issue #569 / ADR-0075 决策 1）：SQLCipher 4 静态编译（bundled-sqlcipher），
+# OpenSSL 一并 vendored 静态编译，三平台产物自包含；加密参数用 SQLCipher 4 默认值不调参。
+# 未设密钥的连接保持明文（SQLCipher 无 key 时行为与标准 SQLite 一致）。
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
 rusqlite_migration = "2.6"
 chrono = { version = "0.4.45", features = ["serde"] }
 uuid = { version = "1.23", features = ["v7", "serde"] }
