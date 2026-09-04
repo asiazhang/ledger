@@ -8,15 +8,16 @@ import { t } from '@/i18n'
 export interface ViewShortcut {
   /** 路由 name（与侧边栏菜单 key 一致） */
   name: string
-  /** 主键：按线性位置推导的 '1'..'9'、'0'（AI）或 ','（设置）；null = 无键位 */
+  /** 主键：概览 '`'、各组固定键位带（'1'..'9'）、'0'（AI）或 ','（设置）；null = 无键位 */
   key: string | null
 }
 
 /**
- * 顺序源模块：侧边栏视图顺序单一来源（顺序 = 菜单顺序 = 数字键位）。
+ * 顺序源模块：侧边栏视图顺序单一来源（顺序 = 菜单顺序 = 组内键位）。
  * 侧栏为分组形态（issue #359 / ADR-0051）：组与组序固定（记账/资产/洞察），组内序可排
  * （右键菜单）且持久化对象收窄为组内序；分组标题不占键位、不参与排序与计数，
- * 键位按线性位置推导——「位置即键位」哲学在数字键物理上限内的诚实延伸。
+ * 键位按固定组带推导（ADR-0065，取代 ADR-0063 决策 2 的线性连续取键）——
+ * 「位置即键位」收窄为组内带内：组内重排键位随动，跨组互不牵连。
  */
 
 /**
@@ -24,8 +25,8 @@ export interface ViewShortcut {
  * 组与组序固定、成员闭集；各组主项 ≤3 是运行时硬上限（ADR-0063 决策 2），
  * 低频成员由各组「更多」收纳（GROUP_CONTAINMENT_SEEDS）：记账 = 定时、商户（#473），
  * 资产 = 保单、实物资产（#472 / #466），洞察出厂无收纳成员。
- * 键位注：键位只扫主项（ADR-0063 决策 2）——出厂主项七项，⌘2–⌘8 占用、⌘9 空置，
- * 三组填满后自然回填；「十键十视图全占」表述废止。
+ * 键位注：键位只扫主项，按固定组带推导（ADR-0065，取代 ADR-0063 决策 2 线性推导）——
+ * 出厂主项七项占 ⌘1–⌘5、⌘7、⌘8，⌘6 与 ⌘9 带内空置，组内补足后自然回填。
  */
 export const SIDEBAR_GROUPS = [
   { id: 'bookkeeping', views: ['transactions', 'accounts', 'budget'] },
@@ -35,7 +36,7 @@ export const SIDEBAR_GROUPS = [
 
 /**
  * 每组主项硬上限（issue #472/#475 / ADR-0063 决策 2，运行时不变量）：
- * 3 组 × 3 = 键位带封闭性的本体；组满时「移回侧栏」置灰（上限可见、可学习，不自动换出）。
+ * 3 组 × 3 = ⌘1–⌘9 九键（ADR-0065），键位带封闭性的本体；组满时「移回侧栏」置灰（上限可见、可学习，不自动换出）。
  */
 export const GROUP_MAIN_LIMIT = 3
 
@@ -458,29 +459,35 @@ export function resetSidebarOrder() {
 }
 
 // ---------------------------------------------------------------------------
-// 键位按线性位置推导（issue #359 / ADR-0051；#473 起只扫主项，ADR-0063 决策 2）：
-// 概览恒 '1'；主项按组序与组内序连续取 '2' 起；AI 恒 '0'；设置为唯一例外用 ','。
+// 键位按固定组带推导（ADR-0065，取代 ADR-0063 决策 2 的线性连续取键）：
+// 概览恒 '`'（运行时验证前提见 ADR-0065 决策 1）；三组按固定组序各占三键带
+// ——记账 1–3、资产 4–6、洞察 7–9，组内序定带内位置；AI 恒 '0'；设置为唯一例外用 ','。
 // 收纳成员与「更多」链接不在推导表内——无键位、不出提示、不可键盘触发。
-// 出厂主项七项 → ⌘2–⌘8 占用、⌘9 空置，三组填满后自然回填；组内重排键位随动。
+// 组主项不足 3 时带内空键保留（出厂 ⌘6、⌘9 空置），不跨组压缩；
+// 1–9 九键对 3×3 理论上限，键位封闭严格成立；组内重排键位带内随动。
 // ---------------------------------------------------------------------------
 
-const LEAD_KEY = '1'
-const ARRANGEABLE_KEYS = ['2', '3', '4', '5', '6', '7', '8', '9'] as const
+const LEAD_KEY = '`'
+/** 每组固定键位带（组序固定，带序随组序）：记账 1–3、资产 4–6、洞察 7–9（ADR-0065） */
+const GROUP_KEY_BANDS: Record<SidebarGroupId, readonly string[]> = {
+  bookkeeping: ['1', '2', '3'],
+  assets: ['4', '5', '6'],
+  insights: ['7', '8', '9'],
+}
 const PENULTIMATE_KEY = '0'
 const LAST_KEY = ','
 
 /**
- * 键位推导纯函数：由组内序按线性位置派生全部视图快捷键（键随位置，重排即重排键位）。
- * 只扫主项：主项超位（理论上限内不发生）得 null；出厂七主项恰占 2..8，⌘9 空置。
+ * 键位推导纯函数：由组内序按固定组带派生全部视图快捷键（组内序定带内位置，重排即带内重排键位）。
+ * 只扫主项：组主项不足 3 时带尾空键保留（不产记录）；超位（理论上限内不发生）得 null。
  */
 export function deriveViewShortcuts(orders: SidebarGroupOrders): ViewShortcut[] {
   const shortcuts: ViewShortcut[] = [{ name: FIRST_VIEW, key: LEAD_KEY }]
-  let i = 0
   for (const g of SIDEBAR_GROUPS) {
-    for (const name of orders[g.id]) {
-      shortcuts.push({ name, key: ARRANGEABLE_KEYS[i] ?? null })
-      i++
-    }
+    const band = GROUP_KEY_BANDS[g.id]
+    orders[g.id].forEach((name, i) => {
+      shortcuts.push({ name, key: band[i] ?? null })
+    })
   }
   shortcuts.push({ name: PENULTIMATE_VIEW, key: PENULTIMATE_KEY })
   shortcuts.push({ name: LAST_VIEW, key: LAST_KEY })
@@ -488,8 +495,8 @@ export function deriveViewShortcuts(orders: SidebarGroupOrders): ViewShortcut[] 
 }
 
 /**
- * 视图快捷键映射（响应式）：由组内序按位置推导，键随位置（组内重排侧栏即重排键位）。
- * 每个侧栏主项/固定项恰一条记录：概览 ⌘1、主项按线性位置取 ⌘2 起、AI ⌘0、
+ * 视图快捷键映射（响应式）：由组内序按固定组带推导，键随组内位置（组内重排侧栏即带内重排键位）。
+ * 每个侧栏主项/固定项恰一条记录：概览 ⌘`、主项按所在组键位带取 ⌘1–⌘9、AI ⌘0、
  * 设置 Cmd/Ctrl+,（macOS「设置」惯例键位，避免占用 Cmd+S 的「保存」肌肉记忆）；
  * 收纳成员与「更多」链接不入表（无键位、不出提示、不可键盘触发）。
  */
@@ -502,9 +509,9 @@ export function isMacPlatform(): boolean {
   return /mac/i.test(platform)
 }
 
-/** 菜单提示文案：macOS 显示 ⌘1，其余显示 Ctrl+1 */
+/** 菜单提示文案：macOS 显示 ⌘1，其余显示 ⌃1（⌃ 为 Control 键符，与 ⌘ 同族单字形、跨平台等宽对齐） */
 export function shortcutHint(key: string): string {
-  return isMacPlatform() ? `⌘${key}` : `Ctrl+${key}`
+  return isMacPlatform() ? `⌘${key}` : `⌃${key}`
 }
 
 /** 是否恰按主修饰键（不混按 Ctrl/Cmd 双键） */
