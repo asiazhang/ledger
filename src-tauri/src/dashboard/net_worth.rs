@@ -1,10 +1,13 @@
-//! 净资产终值缓存存储（issue #491 / ADR-0067）：只包存储，不写公式。
+//! 净资产缓存与读探针（issue #491 / ADR-0067；ADR-0071 决策 3 自
+//! `db/net_worth.rs` 整块迁入仪表盘域）：输入指纹推导、读探针、缓存回写
+//! 一个模块命中，缓存访问直接以本域 [`DashboardOverview`] 为结构——缓存
+//! 专用同形结构与桥接转换已消亡，五字段唯一定义只此一处。
 //!
-//! 缓存行是首页净资产总览的派生终值（真实财富视角三腿合计，公式留在
-//! dashboard 域的既有实时聚合函数）。正确性由**读探针指纹**保证：读取方
-//! 先算当前指纹（各贡献表 `MAX(updated_at)` 组合），与缓存行不一致即视为
-//! 失效，调实时聚合重算回填——无定时任务、无写路径挂钩（源表写入天然
-//! 推进 `MAX(updated_at)`）。
+//! 缓存行是首页净资产总览的派生终值（真实财富视角三腿合计，实时聚合公式
+//! 在域入口 `super::compute_dashboard_overview`，本模块不复制口径）。
+//! 正确性由**读探针指纹**保证：读取方先算当前指纹（各贡献表 `MAX(updated_at)`
+//! 组合），与缓存行不一致即视为失效，调实时聚合重算回填——无定时任务、
+//! 无写路径挂钩（源表写入天然推进 `MAX(updated_at)`）。
 //!
 //! 指纹包含 `account_balance_cache.MAX(updated_at)`：该表毫秒精度时间戳
 //! 在每次交易/账户写入时被无条件刷新（写路径整体重算接缝），为秒级精度
@@ -13,19 +16,10 @@
 
 use rusqlite::Connection;
 
+use super::model::DashboardOverview;
 use crate::db::now_iso;
 use crate::error::Result;
-
-/// 缓存的净资产终值（本位币口径，金额单位：分）。与 dashboard 域读模型
-/// 同形而独立定义：基础设施不反向依赖聚合域。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CachedNetWorth {
-    pub native_currency: String,
-    pub net_worth_cents: i64,
-    pub accounts_balance_cents: i64,
-    pub holdings_market_value_cents: i64,
-    pub physical_assets_value_cents: i64,
-}
+use crate::transaction::amount;
 
 /// 参与净资产计算的贡献表及其指纹输入（指纹输入清单，单一真源）。
 /// 元组：(表名, 时间戳列, 同秒判别器)。
@@ -79,9 +73,10 @@ pub fn current_fingerprint(conn: &Connection) -> Result<String> {
         .collect::<Vec<_>>()
         .join("|"))
 }
+
 /// 读取与给定指纹匹配的缓存终值；无缓存行或指纹不符返回 `None`
 /// （失效判定收口在此，调用方据此决定是否重算回填）。
-pub fn read_valid(conn: &Connection, fingerprint: &str) -> Result<Option<CachedNetWorth>> {
+pub fn read_valid(conn: &Connection, fingerprint: &str) -> Result<Option<DashboardOverview>> {
     let row = conn
         .query_row(
             "SELECT fingerprint, native_currency, net_worth_cents, accounts_balance_cents, \
@@ -108,7 +103,7 @@ pub fn read_valid(conn: &Connection, fingerprint: &str) -> Result<Option<CachedN
         Some((stored, native_currency, net_worth_cents, accounts, holdings, physical))
             if stored == fingerprint =>
         {
-            Ok(Some(CachedNetWorth {
+            Ok(Some(DashboardOverview {
                 native_currency,
                 net_worth_cents,
                 accounts_balance_cents: accounts,
@@ -121,7 +116,7 @@ pub fn read_valid(conn: &Connection, fingerprint: &str) -> Result<Option<CachedN
 }
 
 /// 回填/刷新缓存终值（单例行 UPSERT）。由读探针在实时重算后调用。
-pub fn write(conn: &Connection, fingerprint: &str, value: &CachedNetWorth) -> Result<()> {
+pub fn write(conn: &Connection, fingerprint: &str, overview: &DashboardOverview) -> Result<()> {
     conn.execute(
         "INSERT INTO net_worth_cache \
          (id, fingerprint, native_currency, net_worth_cents, accounts_balance_cents, \
@@ -137,13 +132,32 @@ pub fn write(conn: &Connection, fingerprint: &str, value: &CachedNetWorth) -> Re
              updated_at = excluded.updated_at",
         rusqlite::params![
             fingerprint,
-            value.native_currency,
-            value.net_worth_cents,
-            value.accounts_balance_cents,
-            value.holdings_market_value_cents,
-            value.physical_assets_value_cents,
+            overview.native_currency,
+            overview.net_worth_cents,
+            overview.accounts_balance_cents,
+            overview.holdings_market_value_cents,
+            overview.physical_assets_value_cents,
             now_iso()
         ],
     )?;
     Ok(())
+}
+
+/// conn 级聚合：净资产总览读探针（issue #491 / ADR-0067，只读 + 终值回填）。
+///
+/// 先算当前输入指纹（各贡献表 MAX(updated_at) 组合）：与缓存终值一致则直接
+/// 返回；不一致（或无缓存行）则调域入口实时聚合
+/// （`super::compute_dashboard_overview`）重算并回填缓存——指纹与缓存收口
+/// 在本模块，聚合公式在域入口，无定时任务。
+pub fn query_dashboard_overview(conn: &Connection) -> Result<DashboardOverview> {
+    let fingerprint = current_fingerprint(conn)?;
+    if let Some(cached) = read_valid(conn, &fingerprint)? {
+        // 基准币种与当前一致才可信（缓存跨币种设置变更不成立时重算）。
+        if cached.native_currency == amount::default_currency_code() {
+            return Ok(cached);
+        }
+    }
+    let overview = super::compute_dashboard_overview(conn)?;
+    write(conn, &fingerprint, &overview)?;
+    Ok(overview)
 }
