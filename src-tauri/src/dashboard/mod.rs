@@ -23,32 +23,24 @@
 //! 管理在壳层 `commands::dashboard`（#405 压平为单文件纯壳）。依赖方向恒为
 //! 「壳层 → dashboard → 基础设施」，本模块不反向依赖壳层。净资产总览
 //! 读模型集中本域 [`model`]（#421 随域归位），消费方经域路径逐类型显式 import。
+//! 输入指纹推导、读探针与缓存回写收口本域 [`net_worth`]（ADR-0071 决策 3，
+//! 自 `db/net_worth.rs` 整块迁入），实时聚合公式留在域入口。
 
 mod model;
 
+pub mod net_worth;
+
 pub use model::DashboardOverview;
+pub use net_worth::query_dashboard_overview;
 
 use rusqlite::Connection;
 
 use crate::accounts::AccountType;
 use crate::accounts::balance::list_account_balances_with_visibility;
-use crate::db::net_worth::{self, CachedNetWorth};
 use crate::db::query::{FromRow, query_all};
 use crate::error::Result;
 use crate::physical_asset;
 use crate::transaction::amount;
-
-impl From<&CachedNetWorth> for DashboardOverview {
-    fn from(cached: &CachedNetWorth) -> Self {
-        DashboardOverview {
-            native_currency: cached.native_currency.clone(),
-            net_worth_cents: cached.net_worth_cents,
-            accounts_balance_cents: cached.accounts_balance_cents,
-            holdings_market_value_cents: cached.holdings_market_value_cents,
-            physical_assets_value_cents: cached.physical_assets_value_cents,
-        }
-    }
-}
 
 /// 持仓市值行：`v_holdings` 市值（账户本位币，可为 NULL）+ 账户币种。
 /// 与投资域 `financial_freedom::HoldingValue` 同形片段刻意不收拢（跨域共享
@@ -67,36 +59,9 @@ impl FromRow for HoldingValue {
     }
 }
 
-/// conn 级聚合：净资产总览读探针（issue #491 / ADR-0067，只读 + 终值回填）。
-///
-/// 先算当前输入指纹（各贡献表 MAX(updated_at) 组合）：与缓存终值一致则直接
-/// 返回；不一致（或无缓存行）则调下方既有实时聚合重算并回填缓存——指纹与
-/// 缓存收口在 [`net_worth`]（只包存储），聚合公式仍在本域，无定时任务。
-pub fn query_dashboard_overview(conn: &Connection) -> Result<DashboardOverview> {
-    let fingerprint = net_worth::current_fingerprint(conn)?;
-    if let Some(cached) = net_worth::read_valid(conn, &fingerprint)? {
-        // 基准币种与当前一致才可信（缓存跨币种设置变更不成立时重算）。
-        if cached.native_currency == amount::default_currency_code() {
-            return Ok((&cached).into());
-        }
-    }
-    let overview = compute_dashboard_overview(conn)?;
-    net_worth::write(
-        conn,
-        &fingerprint,
-        &CachedNetWorth {
-            native_currency: overview.native_currency.clone(),
-            net_worth_cents: overview.net_worth_cents,
-            accounts_balance_cents: overview.accounts_balance_cents,
-            holdings_market_value_cents: overview.holdings_market_value_cents,
-            physical_assets_value_cents: overview.physical_assets_value_cents,
-        },
-    )?;
-    Ok(overview)
-}
-
 /// 既有实时聚合公式（本位币净资产总览）：三腿合计，口径不变——余额腿自
-/// B2 起读余额缓存（五出口切缓存），其余两腿仍实时聚合。
+/// B2 起读余额缓存（五出口切缓存），其余两腿仍实时聚合；读探针
+/// （[`net_worth::query_dashboard_overview`]）指纹命中直读缓存、失配回填。
 fn compute_dashboard_overview(conn: &Connection) -> Result<DashboardOverview> {
     // 非投资账户余额合计：余额口径与账户列表一致（account_flow，排除隐藏/黑洞）。
     let mut accounts_sum = 0i64;

@@ -7,7 +7,6 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::{AppError, Result};
 
 pub mod data_location;
-pub mod net_worth;
 pub mod perf_trace;
 pub mod query;
 

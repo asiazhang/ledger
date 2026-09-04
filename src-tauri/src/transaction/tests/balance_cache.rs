@@ -468,8 +468,8 @@ fn net_worth_probe_backfills_hits_and_self_heals() {
     // 首读：回填（迁移不回填净资产缓存，首读即自愈完成首次回填）。
     let first = query_dashboard_overview(&conn).unwrap();
     assert_eq!(first.net_worth_cents, 10000);
-    let fp = crate::db::net_worth::current_fingerprint(&conn).unwrap();
-    let cached = crate::db::net_worth::read_valid(&conn, &fp).unwrap();
+    let fp = crate::dashboard::net_worth::current_fingerprint(&conn).unwrap();
+    let cached = crate::dashboard::net_worth::read_valid(&conn, &fp).unwrap();
     assert!(cached.is_some(), "首读后应有指纹匹配的缓存行");
     assert_eq!(cached.unwrap().net_worth_cents, 10000);
 
