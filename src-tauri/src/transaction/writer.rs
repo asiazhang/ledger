@@ -27,6 +27,13 @@ use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 
 use super::amount::{self, TransactionKind};
+use super::search_text::pinyin_initials;
+
+/// 备注拼音首字母冗余列的取值（issue #492 / ADR-0027 修订）：与 note 同写同换，
+/// 供搜索流式匹配免逐行重算拼音。NULL note → NULL（派生列恒随 note）。
+fn note_pinyin_of(note: Option<&str>) -> Option<String> {
+    note.map(pinyin_initials)
+}
 
 /// 通用 kind 的写入入参（income / expense / transfer / refund）。
 ///
@@ -278,8 +285,8 @@ pub fn insert_row(conn: &Connection, row: &NormalizedRow) -> Result<String> {
     conn.execute(
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
-         category_id,merchant_id,policy_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,0)",
+         category_id,merchant_id,policy_id,refund_of_transaction_id,note,note_pinyin,date,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,0)",
         params![
             id,
             row.kind.as_str(),
@@ -293,6 +300,7 @@ pub fn insert_row(conn: &Connection, row: &NormalizedRow) -> Result<String> {
             row.policy_id,
             row.refund_of_transaction_id,
             row.note,
+            note_pinyin_of(row.note.as_deref()),
             row.date,
             now,
             now,
@@ -325,8 +333,8 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
     conn.execute(
         "UPDATE transactions \
          SET kind=?2, amount_cents=?3, currency_code=?4, amount_native_cents=?5, account_id=?6, \
-         to_account_id=?7, category_id=?8, merchant_id=?9, policy_id=?10, refund_of_transaction_id=?11, note=?12, date=?13, \
-         updated_at=?14, version=version+1, device_id=?15 \
+         to_account_id=?7, category_id=?8, merchant_id=?9, policy_id=?10, refund_of_transaction_id=?11, note=?12, note_pinyin=?13, date=?14, \
+         updated_at=?15, version=version+1, device_id=?16 \
          WHERE id=?1",
         params![
             id,
@@ -341,6 +349,7 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
             row.policy_id,
             row.refund_of_transaction_id,
             row.note,
+            note_pinyin_of(row.note.as_deref()),
             row.date,
             now_iso(),
             device_id(),

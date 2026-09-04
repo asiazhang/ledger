@@ -54,6 +54,7 @@ fn migrations() -> &'static Migrations<'static> {
             M::up(include_str!(
                 "../../migrations/V017__balance_net_worth_cache.sql"
             )),
+            M::up(include_str!("../../migrations/V018__note_pinyin.sql")),
         ])
     })
 }
