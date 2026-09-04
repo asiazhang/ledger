@@ -12,12 +12,13 @@ import {
   useMessage,
 } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
-import AppDatePicker from '@/components/AppDatePicker.vue'
+import QuickTimeRange from '@/components/QuickTimeRange.vue'
 import { api } from '@/api'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
 import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/transaction-columns'
 import { formatAmount, type Transaction, type TransactionSearchFilter } from '@/types'
+import type { NullableDateRange } from '@/utils/time-period'
 import { yuanToCents } from '@/utils/money'
 
 const store = useAppStore()
@@ -28,7 +29,8 @@ const keyword = ref('')
 // 金额筛选：用户以「元」输入（支持小数），内部转分后传后端
 const amountMinYuan = ref('')
 const amountMaxYuan = ref('')
-// 日期筛选：NDatePicker value-format 直接绑定 YYYY-MM-DD 字符串
+// 日期筛选：由时间范围快捷选择写入的期间边界快照（YYYY-MM-DD 双端有界，
+// 「全部」= 双空 = 默认态）；不持第二状态源，唯一事实源仍是本视图本地日期条件
 const dateFrom = ref<string | null>(null)
 const dateTo = ref<string | null>(null)
 const results = ref<Transaction[]>([])
@@ -45,6 +47,23 @@ let searchSeq = 0
 
 const amountMinCents = computed(() => yuanToCents(amountMinYuan.value))
 const amountMaxCents = computed(() => yuanToCents(amountMaxYuan.value))
+
+// 时间范围快捷选择（issue #526 / ADR-0070，消费形态三）：搜索页时间控件唯一形态——
+// 五枚芯片（全部 | 当月 | 当季 | 当年 | 去年，缺省预设零配置）＋期间步进器＋期间直达
+// 面板，随组件整体继承快照语义、游标派生与数据期间边界钳制。受控桥接与交易页同构：
+// 快照区间 v-model 进出，组件不持状态源，唯一事实源是本地日期条件（dateFrom/dateTo
+// 成对写入）；防抖自动搜索与「清除筛选」清回「全部」由既有 watcher/clearFilters 免费
+// 继承。两个独立日期选择器（任意起止/可单边）随本次接入退役，后端单边可选语义照旧
+// 冻结并存（比照 ADR-0057 遗留参数，新代码不使用单边语义）。
+const quickRange = computed<NullableDateRange>({
+  get: () => ({ from: dateFrom.value, to: dateTo.value }),
+  set: (range) => {
+    // 无条件成对写入：组件产出闭集只有双端有界或双空（「全部」须能清回默认态，
+    // 不能像报表页那样拒绝双空）；单端 null 不在产出闭集内，无需双端有界守卫。
+    dateFrom.value = range.from
+    dateTo.value = range.to
+  },
+})
 
 /** 是否有激活的筛选条件（金额任一边或日期任一端非空） */
 const filtersActive = computed(
@@ -182,6 +201,11 @@ const pagination = computed(() => ({
       clearable
       @keyup.enter="onEnter"
     />
+    <!-- 时间范围快捷选择行（issue #526 / ADR-0070）：搜索页唯一时间控件——
+         芯片「全部 | 当月 | 当季 | 当年 | 去年」＋期间步进器＋期间直达面板整行由
+         QuickTimeRange 渲染；快照区间 v-model 进出（唯一事实源是本地日期条件），
+         防抖自动搜索与清除筛选回「全部」由既有链路继承（交易页时间维度行同构）。 -->
+    <QuickTimeRange v-model="quickRange" />
     <NSpace :size="8" align="center" :wrap="true">
       <NInput
         v-model:value="amountMinYuan"
@@ -196,22 +220,6 @@ const pagination = computed(() => ({
         clearable
         style="width: 150px"
         @keyup.enter="onEnter"
-      />
-      <AppDatePicker
-        v-model:formatted-value="dateFrom"
-        type="date"
-        value-format="yyyy-MM-dd"
-        :placeholder="t('search.dateFromPlaceholder')"
-        clearable
-        style="width: 140px"
-      />
-      <AppDatePicker
-        v-model:formatted-value="dateTo"
-        type="date"
-        value-format="yyyy-MM-dd"
-        :placeholder="t('search.dateToPlaceholder')"
-        clearable
-        style="width: 140px"
       />
       <template v-if="filtersActive">
         <NText depth="3">{{

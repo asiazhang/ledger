@@ -2,8 +2,6 @@
   "keywordPlaceholder": "Enter keywords to search (note, account, merchant, pinyin initials; multiple keywords supported)",
   "amountMinPlaceholder": "Min amount",
   "amountMaxPlaceholder": "Max amount",
-  "dateFromPlaceholder": "Start date",
-  "dateToPlaceholder": "End date",
   "appliedFilters": "Applied filters: {filters}",
   "filterSeparator": ", ",
   "clearFilters": "Clear filters",
