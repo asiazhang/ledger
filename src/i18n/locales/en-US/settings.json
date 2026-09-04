@@ -103,6 +103,11 @@
     "deletedTag": "Deleted"
   },
   "data": {
+    "tabs": {
+      "backup": "Backup",
+      "location": "Storage Location",
+      "repair": "Data Repair"
+    },
     "backup": {
       "dirTitle": "Backup Directory",
       "dirHint": "Once a default backup directory is set, \"One-click Backup\" writes there directly without asking for a location each time.",
