@@ -43,6 +43,7 @@ import { viewLabel } from '@/i18n/view-label'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
 import { useDevicePreferenceSync } from '@/composables/useDevicePreferenceSync'
 import MessageSinkBridge from '@/components/MessageSinkBridge.vue'
+import GlobalBusyBar from '@/components/GlobalBusyBar.vue'
 import { loadSidebarCollapsed, saveSidebarCollapsed } from '@/utils/view-state'
 import {
   viewShortcuts,
@@ -270,6 +271,9 @@ const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(rou
     :locale="naiveLocale"
     :date-locale="naiveDateLocale"
   >
+    <!-- 全局忙碌条（issue #500）：非模态环境指示，只随忙碌状态渲染，
+         不注册 Overlay Suppression（ADR-0035 豁免，见词汇表词条） -->
+    <GlobalBusyBar />
     <NMessageProvider>
       <NDialogProvider>
         <!-- Loadable toast sink 注册桥（ADR-0040）：必须在消息提供器子树内 -->

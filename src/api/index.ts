@@ -1,4 +1,5 @@
-import { invoke } from '@tauri-apps/api/core'
+import { invoke as tauriInvoke, type InvokeArgs } from '@tauri-apps/api/core'
+import { trackBusy } from '@/composables/globalBusy'
 import type {
   Account,
   AccountBalance,
@@ -81,6 +82,15 @@ import type {
   UpdateStatusInput,
   UpdateSubscriptionInput,
 } from '@/types'
+
+/** 统一 invoke 封装（全局忙碌条收口点，issue #500）：所有 IPC IO 的生命周期自动
+ *  纳入忙碌聚合计数——300ms 阈值内的快操作从不点亮，慢 IO 聚合为一条忙碌条；
+ *  错误契约不变，原样上抛调用方（成败语义归 Loadable，见 globalBusy 模块头注）。
+ *  无参命令保持单参调用形态（不透传 undefined，保住调用点断言与既有契约）。 */
+const invoke = <T>(cmd: string, args?: InvokeArgs): Promise<T> =>
+  args === undefined
+    ? trackBusy(tauriInvoke<T>(cmd))
+    : trackBusy(tauriInvoke<T>(cmd, args))
 
 /** 期间起始年（issue #411）：月度汇总/商户排行的遗留 `year` 是已发布命令的必传参数，
  *  期间口径下后端不消费，传期间起始年占位——推导收口一处，不在调用点重复。 */

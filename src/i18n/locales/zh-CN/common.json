@@ -48,5 +48,8 @@
   },
   "window": {
     "title": "Ledger 账本"
+  },
+  "globalBusyBar": {
+    "label": "正在处理"
   }
 }
