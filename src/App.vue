@@ -93,7 +93,7 @@ watch(
   async () => {
     try {
       const { getCurrentWindow } = await import('@tauri-apps/api/window')
-      void getCurrentWindow().setTitle(t('common.window.title'))
+      void getCurrentWindow().setTitle(t('common.app.name'))
     } catch {
       /* 非 Tauri 环境 */
     }
@@ -262,8 +262,10 @@ function handleSelect(key: string) {
   router.push({ name: key })
 }
 
-// 侧栏标题行（issue #566）：「📒 Ledger」+ 金额隐私模式眼睛按钮——入口唯一（spec #564：
-// 不进设置页、无快捷键、无第二渲染点），消费应用设置 store 同一状态；睁/闭两态图标与
+// 侧栏标题行（issue #566）：应用显示名 + 金额隐私模式眼睛按钮——标题文本消费 i18n
+// 应用名键 common.app.name（ADR-0076：显示名不得在 i18n 之外硬编码，t() 随语言切换
+// 重渲染）；眼睛按钮入口唯一（spec #564：不进设置页、无快捷键、无第二渲染点），
+// 消费应用设置 store 同一状态；睁/闭两态图标与
 // tooltip、aria-label 反映当前状态（文案经 i18n 双语，aria-pressed 携带开关态），
 // 点击即切换并持久化；格式化层（@/utils/money）消费同一 ref，全应用金额即时掩码/恢复。
 // 渲染函数读取响应式状态，语言/开关变化时随重新渲染；侧栏折叠（宽度归零）时按钮
@@ -276,7 +278,7 @@ const title = () => {
     'div',
     { style: 'display:flex;align-items:center;justify-content:space-between;gap:4px;min-width:0;padding:12px 8px 12px 16px;font-size:18px;font-weight:600' },
     [
-      h('span', '📒 Ledger'),
+      h('span', `📒 ${t('common.app.name')}`),
       h(
         NButton,
         {

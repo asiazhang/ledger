@@ -46,8 +46,8 @@
     "viewMerchant": "View transactions with this merchant",
     "viewAccount": "View transactions with this account"
   },
-  "window": {
-    "title": "Ledger"
+  "app": {
+    "name": "OpenLedger"
   },
   "globalBusyBar": {
     "label": "Working"

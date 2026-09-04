@@ -1,6 +1,12 @@
 # Changelog
 
-本文件记录 Ledger 各版本对使用者可见的变更，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)规则。
+本文件记录开源记账（OpenLedger）各版本对使用者可见的变更，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)规则。
+
+## [Unreleased]
+
+### Changed
+
+- **应用更名**：应用更名为「开源记账」，英文门面名 OpenLedger，tagline「开源、本地优先的个人记账应用」——窗口标题、侧栏标题、关于页、错误文案、备份文件选择器、AI 提示词用户指引按界面语言显示双名；安装包与 Release 产物以 OpenLedger / openledger 命名。改名只动显示层：账本数据、历史备份与升级路径一切照旧，应用标识符、`ledger.db`、受管备份前缀与「Ledger API」协议称谓不变（[#584]，ADR-0076）。
 
 ## [Unreleased]
 
@@ -160,3 +166,4 @@
 [#515]: https://github.com/asiazhang/ledger/issues/515
 [#526]: https://github.com/asiazhang/ledger/issues/526
 [#566]: https://github.com/asiazhang/ledger/issues/566
+[#584]: https://github.com/asiazhang/ledger/issues/584
