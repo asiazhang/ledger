@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { applyLocale } from '@/i18n'
 import DashboardView from '@/views/DashboardView.vue'
 import TransactionForm from '@/components/TransactionForm.vue'
+import { amountPrivacyEnabled } from '@/utils/money'
 import { useReferenceStore } from '@/stores/reference'
 import { useItemsStore } from '@/stores/items'
 import { NProgress } from 'naive-ui'
@@ -451,6 +452,56 @@ describe('DashboardView 物品使用成本卡（issue #122）', () => {
     const card = wrapper.find('[data-testid="item-daily-cost-card"]')
     expect(card.text()).toContain('¥300/天')
     expect(card.text()).toContain('共 2 件在用物品')
+  })
+})
+
+describe('DashboardView 金额隐私模式（issue #567 仪表盘面核查：无 canvas 图表，数字卡全走格式化接缝）', () => {
+  afterEach(() => {
+    amountPrivacyEnabled.value = false
+  })
+
+  it('开启后各金额卡显示掩码、币种符号一同隐藏，百分比与件数保留', async () => {
+    setCurrentMonthSummary({ income_cents: 100000, expense_cents: 80000, refund_cents: 5000 })
+    mockBudgetProgress = [
+      {
+        budget: {
+          id: 'b-ok',
+          category_id: 'cat-1',
+          period: 'monthly',
+          amount_cents: 50000,
+          start_date: '2026-07-01',
+          created_at: '2026-07-01T00:00:00Z',
+          updated_at: '2026-07-01T00:00:00Z',
+          version: 1,
+          device_id: 'test',
+          is_deleted: false,
+        },
+        category_name: '餐饮',
+        spent_cents: 4000,
+        over_budget: false,
+      },
+    ]
+    const wrapper = await mountView()
+    // 关闭态先确认现状金额在位（回归基准）
+    expect(wrapper.text()).toContain('¥1234.56')
+
+    amountPrivacyEnabled.value = true
+    await nextTick()
+
+    const text = wrapper.text()
+    // 净资产 / 本月收支 / 投资概览 / 自由度分子分母 / 物品成本 / 预算行全部掩码；掩码无币种符号
+    expect(text).toContain('••••')
+    expect(text).not.toContain('¥')
+    expect(text).not.toContain('¥1234.56')
+    expect(wrapper.find('[data-testid="budget-progress-card"]').text()).toContain('•••• / ••••')
+    // 百分比与件数保留（spec #564：隐藏的是数字不是形状与方向）
+    expect(wrapper.find('[data-testid="financial-freedom-ratio"]').text()).toBe('7.5%')
+    expect(text).toContain('共 3 件在用物品')
+
+    // 关闭后立即恢复原样（回归保障）
+    amountPrivacyEnabled.value = false
+    await nextTick()
+    expect(wrapper.text()).toContain('¥1234.56')
   })
 })
 
