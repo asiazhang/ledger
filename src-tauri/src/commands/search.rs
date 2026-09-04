@@ -2,10 +2,17 @@
 //!
 //! 只做参数解包与连接锁管理，不含业务语义；搜索查询权威在
 //! [`crate::transaction::search`]（核心交易域归位，#403 / ADR-0056）。
+//!
+//! 命令 async 化（形状乙，spec #498 / #501）：DB 调用经连接层统一 helper
+//! [`crate::db::run_db`] 进 tauri 阻塞线程池执行，不占用界面事件循环线程。
+//
+// 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
+// （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
+#![allow(clippy::unreachable)]
 
 use tauri::State;
 
-use crate::db::DbState;
+use crate::db::{DbState, run_db};
 use crate::error::{AppError, Result};
 use crate::transaction as transaction_domain;
 use crate::transaction::TransactionSearchResult;
@@ -16,7 +23,7 @@ use crate::transaction::TransactionSearchResult;
 /// 故显式 allow `too_many_arguments`。
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
-pub fn search_transactions(
+pub async fn search_transactions(
     db: State<'_, DbState>,
     query: String,
     page: Option<usize>,
@@ -26,15 +33,19 @@ pub fn search_transactions(
     date_from: Option<String>,
     date_to: Option<String>,
 ) -> Result<TransactionSearchResult> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    transaction_domain::search_transactions_internal(
-        &conn,
-        &query,
-        page.unwrap_or(1),
-        page_size.unwrap_or(20),
-        amount_min_cents,
-        amount_max_cents,
-        date_from.as_deref(),
-        date_to.as_deref(),
-    )
+    let conn = db.conn.clone();
+    run_db("search_transactions", move || {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        transaction_domain::search_transactions_internal(
+            &conn,
+            &query,
+            page.unwrap_or(1),
+            page_size.unwrap_or(20),
+            amount_min_cents,
+            amount_max_cents,
+            date_from.as_deref(),
+            date_to.as_deref(),
+        )
+    })
+    .await
 }
