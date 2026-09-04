@@ -7,6 +7,7 @@
 ### Changed
 
 - **应用更名**：应用更名为「开源记账」，英文门面名 OpenLedger，tagline「开源、本地优先的个人记账应用」——窗口标题、侧栏标题、关于页、错误文案、备份文件选择器、AI 提示词用户指引按界面语言显示双名；安装包与 Release 产物以 OpenLedger / openledger 命名。改名只动显示层：账本数据、历史备份与升级路径一切照旧，应用标识符、`ledger.db`、受管备份前缀与「Ledger API」协议称谓不变（[#584]，ADR-0076）。
+- **交易**：行为层收口「可携带分类的交易类型」——转账 / 买入 / 卖出携带分类的写入（含批量导入单行）返回码化错误 `transaction.category-unsupported`、不再静默落库；支出 / 收入照常携带分类，退款照旧忽略传入分类、继承原支出分类；分红 / 拆股维持「暂不支持」不变（[#582]）。
 
 ## [Unreleased]
 
@@ -166,4 +167,5 @@
 [#515]: https://github.com/asiazhang/ledger/issues/515
 [#526]: https://github.com/asiazhang/ledger/issues/526
 [#566]: https://github.com/asiazhang/ledger/issues/566
+[#582]: https://github.com/asiazhang/ledger/issues/582
 [#584]: https://github.com/asiazhang/ledger/issues/584

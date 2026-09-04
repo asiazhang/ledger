@@ -288,6 +288,9 @@ fn delete_within_transaction(conn: &Connection, id: &str) -> Result<()> {
 /// [`investment::prepare`]（投资账户/数量/单价/可卖数量校验 + 折算）；
 /// `dividend` / `split` 已声明但未实现，显式「暂不支持」报错——取代此前
 /// [`writer::normalize`] 兜底的「仅处理通用交易类型」文案（唯一对外可观测变化）。
+/// 参考数据携带准入（商户/保单/分类，issue #188/#361/#582）在本函数内按 kind 单点
+/// 判定：准入集外的 kind 携带对应引用即码化拒绝，创建/修改/批量导入各写入口经本函数
+/// 自然共用同一收口，不另设第二份判定。
 /// 返回 `(计划, 是否即建商户)`：后者即 [`WriteEvidence::MerchantCreated`] 的载荷——
 /// 仅「入参带 `merchant_name` 且未命中、行内校验通过后落定即建」为真；命中复用、
 /// 直接带 `merchant_id`、refund 继承忽略、不涉商户的 kind 一律为假。
@@ -321,6 +324,23 @@ fn plan_with_existing_refs(
         return Err(AppError::codedp(
             "transaction.merchant-unsupported",
             format!("交易类型 {kind} 不能携带商户"),
+            &[&kind.to_string()],
+        ));
+    }
+    // 分类携带收口（issue #582）：expense / income 可携带分类；transfer / buy / sell
+    // 行为层拒绝（schema 层 category_id 允许 NULL、不设 kind 限制，放开无需再改表）——
+    // 转账与资本变动没有「花在哪类」的语义，无分类交易因此不进分类聚合。refund 携带
+    // 的分类在 [`writer::normalize`] 里被原支出分类覆盖（继承语义），此处不拦截。
+    // dividend / split 携带分类时本拒绝先于「暂不支持」触发（比照商户收口先例）。
+    if input.category_id.is_some()
+        && !matches!(
+            kind,
+            TransactionKind::Income | TransactionKind::Expense | TransactionKind::Refund
+        )
+    {
+        return Err(AppError::codedp(
+            "transaction.category-unsupported",
+            format!("交易类型 {kind} 不能携带分类"),
             &[&kind.to_string()],
         ));
     }
