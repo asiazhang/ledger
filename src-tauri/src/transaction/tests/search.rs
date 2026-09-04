@@ -2,9 +2,13 @@
 //! （拼音首字母/子序列判定/词条匹配/切词）与搜索行为（含金额/日期筛选、分页、
 //! 排序、写入立即可搜）。
 
+use std::collections::{BTreeSet, HashMap};
+
 use rusqlite::Connection;
 
-use super::super::search::{search_transactions_internal, stage1_sql};
+use super::super::search::{
+    Stage1Filter, TermLowered, build_stage1_query, load_search_dicts, search_transactions_internal,
+};
 use crate::db::{init_db, open_in_memory};
 use crate::error::Result;
 use crate::transaction::TransactionSearchResult;
@@ -761,7 +765,8 @@ fn lazy_backfill_heals_legacy_rows_on_search() {
         .unwrap();
     assert_eq!(backlog_index, 1, "V018 应创建回填探针 partial 索引");
 
-    // 回填前：拼音子序列语义立即生效（现算兑底，不因列缺失而漏匹配）。
+    // 搜索即回填（回填先于下推查询，issue #515 起不再运行时现算兑底）：
+    // 拼音子序列语义立即生效，不因列缺失而漏匹配。
     let res = search(&conn, "wy").unwrap();
     assert_eq!(res.total, 1);
     assert_eq!(res.items[0].id, "t1");
@@ -801,28 +806,66 @@ fn search_uses_pinyin_column_for_subsequence_path() {
     assert_eq!(res.total, 1);
 }
 
-/// 第一段扫描的计划钉定（父 #489 用户故事 18）：最小列流式匹配必须命中
-/// V016 列表序索引（idx_transactions_note_search）且不产生 ORDER BY 临时
-/// B-tree——planner 漂移在 CI 即刻暴露。
+/// 第一段下推查询的计划钉定（父 #489 用户故事 18 / issue #515 验收）：下推查询
+/// 必须命中 V018 搜索覆盖索引（idx_transactions_note_search，COVERING INDEX）
+/// 且不产生 ORDER BY 临时 B-tree——planner 漂移在 CI 即刻暴露。
 #[test]
 fn stage1_scan_plan_uses_list_order_index() {
     let conn = setup();
-    let sql = stage1_sql(&["t.is_deleted = 0"], true);
-    let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
-    let details: Vec<String> = stmt
-        .query_map([], |r| r.get::<_, String>(3))
-        .unwrap()
-        .filter_map(|r| r.ok())
+    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    insert_merchant(&conn, "m1", "京东");
+    let dicts = load_search_dicts(&conn).unwrap();
+    let term_lowers: Vec<TermLowered> = split_terms("kf jd")
+        .iter()
+        .map(|t| TermLowered {
+            lower: t.to_lowercase(),
+        })
         .collect();
-    let plan = details.join(" | ");
-    assert!(
-        plan.contains("idx_transactions_note_search"),
-        "第一段扫描应命中搜索覆盖索引: {plan}"
-    );
-    assert!(
-        !plan.to_uppercase().contains("TEMP B-TREE"),
-        "排序应由索引序满足，不应出现临时 B-tree: {plan}"
-    );
+    // 纯关键字与关键字 + 金额/日期筛选两种形态都必须钉定覆盖索引、无临时 B-tree。
+    let filter_sets: [Vec<Stage1Filter>; 2] = [
+        Vec::new(),
+        vec![
+            Stage1Filter {
+                column: "t.amount_native_cents",
+                op: ">=",
+                value: rusqlite::types::Value::Integer(1_000),
+            },
+            Stage1Filter {
+                column: "t.date",
+                op: "<=",
+                value: rusqlite::types::Value::Text("2026-12-31".into()),
+            },
+        ],
+    ];
+    for filters in &filter_sets {
+        let query = build_stage1_query(&term_lowers, &dicts, filters);
+        let mut stmt = conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {}", query.sql))
+            .unwrap();
+        let details: Vec<String> = stmt
+            .query_map(rusqlite::params_from_iter(query.params.iter()), |r| {
+                r.get::<_, String>(3)
+            })
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        let plan = details.join(" | ");
+        assert!(
+            plan.contains("idx_transactions_note_search"),
+            "下推查询应命中搜索覆盖索引: {plan}"
+        );
+        if filters.is_empty() {
+            // 纯关键字：无约束可用，应为覆盖索引全扫（index-only 零回表）。
+            assert!(
+                plan.contains("SCAN t USING COVERING INDEX idx_transactions_note_search"),
+                "纯关键字下推应为覆盖索引全扫: {plan}"
+            );
+        }
+        assert!(
+            !plan.to_uppercase().contains("TEMP B-TREE"),
+            "排序应由索引序满足，不应出现临时 B-tree: {plan}"
+        );
+    }
 }
 
 #[test]
@@ -862,4 +905,347 @@ fn streaming_pagination_no_dup_no_gap_and_exact_total() {
     // 与单次全量 total 一致。
     let all = search_paged(&conn, "午餐", 1, 200).unwrap();
     assert_eq!(all.total, 500);
+}
+
+// -----------------------------------------------------------------------
+// SQL 下推（issue #515，修订 ADR-0027）：转义字面、已知边界与「不漏」等价性
+// -----------------------------------------------------------------------
+
+/// LIKE 通配符按字面匹配（issue #515 验收）：`%`、`_`、`\` 经 ESCAPE 转义后
+/// 按字面命中——搜「100%」不误命中任意后缀，`_` 不当单字通配，`\` 自身可搜。
+#[test]
+fn search_like_wildcards_match_literally() {
+    let conn = setup();
+    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    insert_txn(&conn, "t1", "a1", None, Some("完成100%"), "2026-02-01");
+    // 误命中哨兵：若 `%`/`_` 未转义，这些行会被通配误命中。
+    insert_txn(&conn, "t2", "a1", None, Some("完成100x"), "2026-02-02");
+    insert_txn(&conn, "t3", "a1", None, Some("a_b 测试"), "2026-02-03");
+    insert_txn(&conn, "t4", "a1", None, Some("axb 测试"), "2026-02-04");
+    insert_txn(&conn, "t5", "a1", None, Some("路径C:\\Users"), "2026-02-05");
+    // 「100%」字面命中，不通配到「100x」。
+    let res = search(&conn, "100%").unwrap();
+    assert_eq!(res.total, 1);
+    assert_eq!(res.items[0].id, "t1");
+    // 「_」字面命中，不通配到「axb」。
+    let res = search(&conn, "a_b").unwrap();
+    assert_eq!(res.total, 1);
+    assert_eq!(res.items[0].id, "t3");
+    // 「\」自身按字面可搜（转义符翻倍）。
+    let res = search(&conn, "C:\\Users").unwrap();
+    assert_eq!(res.total, 1);
+    assert_eq!(res.items[0].id, "t5");
+}
+
+/// Unicode 非 ASCII 大小写折叠是显式已知边界（issue #515 / ADR-0027 修订）：
+/// SQLite LIKE 大小写折叠仅对 ASCII 生效，备注含非 ASCII 大写字母（É）且用户
+/// 以另一大小写搜索时不命中（ASCII 部分与中文子串不受影响；账户/商户名字典
+/// 路径仍在 Rust 侧全 Unicode 折叠，不受此边界影响）。
+#[test]
+fn unicode_non_ascii_case_folding_is_known_boundary() {
+    let conn = setup();
+    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    insert_txn(&conn, "t1", "a1", None, Some("CAFÉ 午餐"), "2026-02-01");
+    // 已知边界：非 ASCII 大写 É 不折叠到 é。
+    let res = search(&conn, "café").unwrap();
+    assert_eq!(res.total, 0);
+    // ASCII 折叠不受影响（大写备注搜小写）。
+    insert_txn(&conn, "t2", "a1", None, Some("ATM 转账"), "2026-02-02");
+    let res = search(&conn, "atm").unwrap();
+    assert_eq!(res.total, 1);
+    assert_eq!(res.items[0].id, "t2");
+    // 中文子串不受影响。
+    let res = search(&conn, "午餐").unwrap();
+    assert_eq!(res.total, 1);
+}
+
+/// 「不漏」等价性回归网（issue #515 验收）：以纯函数重算旧 Rust 逐行语义的
+/// 期望命中集合，断言 SQL 下推命中集合与之一致（⊇ 不遗漏且无误命中），覆盖
+/// 中文子串/拼音子序列/混合输入/多词条 AND/ASCII 大小写/数字/标点字面/
+/// 软删口径/零命中/高命中。
+#[test]
+fn pushdown_hit_set_covers_row_semantics() {
+    let conn = setup();
+    // 字典夹具：id → (名字, 是否软删) / id → 名字。
+    let accounts: Vec<(&str, &str, bool)> = vec![
+        ("a1", "现金", false),
+        ("a2", "招商银行", false),
+        ("a3", "已删咖啡账户", true),
+        ("a4", "咖啡厅账户", false),
+    ];
+    let merchants: Vec<(&str, &str, bool)> =
+        vec![("m1", "京东", false), ("m2", "已删外卖商户", true)];
+    let categories: Vec<(&str, bool)> = vec![("c1", false), ("c9", true)];
+    for (id, name, deleted) in &accounts {
+        insert_account(&conn, id, name, "cash", "CNY");
+        if *deleted {
+            conn.execute("UPDATE accounts SET is_deleted=1 WHERE id=?1", [id])
+                .unwrap();
+        }
+    }
+    for (id, name, deleted) in &merchants {
+        insert_merchant(&conn, id, name);
+        if *deleted {
+            conn.execute("UPDATE merchants SET is_deleted=1 WHERE id=?1", [id])
+                .unwrap();
+        }
+    }
+    for (id, deleted) in &categories {
+        insert_category(
+            &conn,
+            id,
+            if *deleted { "已删分类" } else { "餐饮" },
+            "expense",
+        );
+        if *deleted {
+            conn.execute("UPDATE categories SET is_deleted=1 WHERE id=?1", [id])
+                .unwrap();
+        }
+    }
+
+    /// 测试夹具中的一笔交易（期望侧重算与落库同源）。
+    struct FixtureTxn {
+        id: String,
+        note: Option<&'static str>,
+        account_id: &'static str,
+        merchant_id: Option<&'static str>,
+        category_id: Option<&'static str>,
+        deleted: bool,
+    }
+    let mut txns: Vec<FixtureTxn> = (0..40)
+        .map(|i| FixtureTxn {
+            id: format!("r{i:02}"),
+            note: Some("普通记录"),
+            account_id: "a1",
+            merchant_id: None,
+            category_id: None,
+            deleted: false,
+        })
+        .collect();
+    txns.push(FixtureTxn {
+        id: "t_cafe".into(),
+        note: Some("买咖啡"),
+        account_id: "a1",
+        merchant_id: None,
+        category_id: None,
+        deleted: false,
+    });
+    txns.push(FixtureTxn {
+        id: "t_kfc".into(),
+        note: Some("kfc炸鸡"),
+        account_id: "a1",
+        merchant_id: None,
+        category_id: None,
+        deleted: false,
+    });
+    txns.push(FixtureTxn {
+        id: "t_wkwy".into(),
+        note: Some("万科物业费"),
+        account_id: "a1",
+        merchant_id: None,
+        category_id: None,
+        deleted: false,
+    });
+    txns.push(FixtureTxn {
+        id: "t_zsyh_row".into(),
+        note: None,
+        account_id: "a2",
+        merchant_id: None,
+        category_id: None,
+        deleted: false,
+    });
+    txns.push(FixtureTxn {
+        id: "t_jd_row".into(),
+        note: Some("键盘"),
+        account_id: "a1",
+        merchant_id: Some("m1"),
+        category_id: None,
+        deleted: false,
+    });
+    txns.push(FixtureTxn {
+        id: "t_delm_row".into(),
+        note: Some("外卖历史单"),
+        account_id: "a1",
+        merchant_id: Some("m2"),
+        category_id: None,
+        deleted: false,
+    });
+    txns.push(FixtureTxn {
+        id: "t_mixed".into(),
+        note: Some("旧账zsyh导入"),
+        account_id: "a1",
+        merchant_id: None,
+        category_id: None,
+        deleted: false,
+    });
+    txns.push(FixtureTxn {
+        id: "t_abc".into(),
+        note: Some("ABC超市"),
+        account_id: "a1",
+        merchant_id: None,
+        category_id: None,
+        deleted: false,
+    });
+    txns.push(FixtureTxn {
+        id: "t_num".into(),
+        note: Some("会员123"),
+        account_id: "a1",
+        merchant_id: None,
+        category_id: None,
+        deleted: false,
+    });
+    txns.push(FixtureTxn {
+        id: "t_pct".into(),
+        note: Some("完成100%"),
+        account_id: "a1",
+        merchant_id: None,
+        category_id: None,
+        deleted: false,
+    });
+    txns.push(FixtureTxn {
+        id: "t_und".into(),
+        note: Some("a_b测试"),
+        account_id: "a1",
+        merchant_id: None,
+        category_id: None,
+        deleted: false,
+    });
+    txns.push(FixtureTxn {
+        id: "t_bs".into(),
+        note: Some("x\\y路径"),
+        account_id: "a1",
+        merchant_id: None,
+        category_id: None,
+        deleted: false,
+    });
+    txns.push(FixtureTxn {
+        id: "t_both".into(),
+        note: Some("咖啡报销"),
+        account_id: "a1",
+        merchant_id: None,
+        category_id: None,
+        deleted: false,
+    });
+    txns.push(FixtureTxn {
+        id: "t_accdel".into(),
+        note: Some("咖啡"),
+        account_id: "a3",
+        merchant_id: None,
+        category_id: None,
+        deleted: false,
+    });
+    txns.push(FixtureTxn {
+        id: "t_catdel".into(),
+        note: Some("咖啡"),
+        account_id: "a1",
+        merchant_id: None,
+        category_id: Some("c9"),
+        deleted: false,
+    });
+    txns.push(FixtureTxn {
+        id: "t_txndel".into(),
+        note: Some("咖啡"),
+        account_id: "a1",
+        merchant_id: None,
+        category_id: None,
+        deleted: true,
+    });
+    txns.push(FixtureTxn {
+        id: "t_kfacct".into(),
+        note: Some("聚餐"),
+        account_id: "a4",
+        merchant_id: None,
+        category_id: None,
+        deleted: false,
+    });
+    {
+        let dbtx = conn.unchecked_transaction().unwrap();
+        for (i, t) in txns.iter().enumerate() {
+            let date = format!("2026-01-{:02}", 1 + i % 28);
+            insert_txn_merchant(&dbtx, &t.id, t.account_id, t.merchant_id, t.note, &date);
+            if let Some(cid) = t.category_id {
+                dbtx.execute(
+                    "UPDATE transactions SET category_id=?1 WHERE id=?2",
+                    rusqlite::params![cid, t.id],
+                )
+                .unwrap();
+            }
+            if t.deleted {
+                dbtx.execute("UPDATE transactions SET is_deleted=1 WHERE id=?1", [&t.id])
+                    .unwrap();
+            }
+        }
+        dbtx.commit().unwrap();
+    }
+
+    // 期望侧：旧 Rust 逐行语义重算（词条 AND、字段 OR、口径同搜索）。
+    // 拼音串取 pinyin_initials(note)，与 Writer/回填同规则（列值同源）。
+    let account_by_id: HashMap<&str, (&str, bool)> =
+        accounts.iter().map(|(id, n, d)| (*id, (*n, *d))).collect();
+    let merchant_by_id: HashMap<&str, &str> =
+        merchants.iter().map(|(id, n, _)| (*id, *n)).collect();
+    let category_deleted: HashMap<&str, bool> =
+        categories.iter().map(|(id, d)| (*id, *d)).collect();
+    let expected_hits = |terms: &[&str]| -> BTreeSet<String> {
+        txns.iter()
+            .filter(|t| {
+                if t.deleted {
+                    return false;
+                }
+                let Some((name, deleted)) = account_by_id.get(t.account_id) else {
+                    return false;
+                };
+                if *deleted {
+                    return false;
+                }
+                if let Some(cid) = t.category_id
+                    && category_deleted.get(cid).copied().unwrap_or(false)
+                {
+                    return false;
+                }
+                let merchant_name = t.merchant_id.and_then(|m| merchant_by_id.get(m).copied());
+                terms
+                    .iter()
+                    .all(|term| term_matches(term, t.note, name, merchant_name))
+            })
+            .map(|t| t.id.to_string())
+            .collect()
+    };
+    let actual_hits = |query: &str| -> BTreeSet<String> {
+        let res = search_paged(&conn, query, 1, 200).unwrap();
+        res.items.iter().map(|t| t.id.clone()).collect()
+    };
+    let matrix: Vec<(&str, Vec<&str>)> = vec![
+        ("中文子串", vec!["咖啡"]),
+        ("拼音子序列", vec!["kf"]),
+        ("拼音子序列长串", vec!["wkwy"]),
+        ("账户名拼音", vec!["zsyh"]),
+        ("商户名原文", vec!["京东"]),
+        ("软删商户名仍可搜", vec!["已删外卖商户"]),
+        ("混合输入", vec!["招zsyh"]),
+        ("多词条AND", vec!["咖啡", "报销"]),
+        ("ASCII大写", vec!["ABC"]),
+        ("ASCII小写", vec!["abc"]),
+        ("数字", vec!["123"]),
+        ("标点百分号", vec!["100%"]),
+        ("标点下划线", vec!["a_b"]),
+        ("标点反斜杠", vec!["x\\y"]),
+        ("零命中", vec!["不存在的词条xyz"]),
+        ("高命中", vec!["记录"]),
+        ("高命中加词条", vec!["记录", "普通"]),
+    ];
+    for (label, terms) in matrix {
+        let expected = expected_hits(&terms);
+        let actual = actual_hits(&terms.join(" "));
+        assert!(
+            expected.is_subset(&actual),
+            "「{label}」SQL 下推命中集合必须覆盖旧实现（不漏）: 缺失 {:?}",
+            expected.difference(&actual).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            expected.len(),
+            actual.len(),
+            "「{label}」命中数应与旧实现一致（无误命中）"
+        );
+    }
 }
