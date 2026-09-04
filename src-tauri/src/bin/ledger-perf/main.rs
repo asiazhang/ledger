@@ -59,20 +59,22 @@
 //!   `journal_mode=MEMORY`，均不持久化进库文件），50 万笔在几十秒内完成；
 //!   生成的库仅供性能基准消费，不是用户数据，崩溃重跑即可。
 //!
-//! ## bench：查询基准（issue #461；门禁 issue #493 / ADR-0068）
+//! ## bench：查询基准（issue #461；门禁 issue #493 / ADR-0068；拼音子序列基准 issue #514）
 //!
-//! 对 generate 产出的库跑 10 项查询基准并输出 min/avg/p95 报告：
+//! 对 generate 产出的库跑 11 项查询基准并输出 min/avg/p95 报告：
 //!
 //! ```text
 //! cargo run --bin ledger-perf -- bench [--db PATH] [--warmup N]
 //!                                     [--iterations N] [--search TERM]
-//!                                     [--max-p95-ms MS]
+//!                                     [--search-pinyin TERM] [--max-p95-ms MS]
 //! ```
 //!
 //! - 基准集：列表首页分页；深分页（OFFSET 逼近全量）；账户+日期范围筛选
-//!   列表；全账户实时余额；月度汇总（5 年 60 个月）；分类占比；TransactionSearch
-//!   备注搜索（含拼音过滤，CPU 密集）；净资产总览聚合；持仓列表；时点持仓
-//!   （直接聚合标的交易）。
+//!   列表；全账户实时余额；月度汇总（5 年 60 个月）；分类占比；
+//!   TransactionSearch 备注搜索两条基准并列（issue #514）：中文子串
+//!   （默认「咖啡」，原文连续子串路径）与拼音子序列（默认「kf」，命中
+//!   「买咖啡」→ mkf 等、不构成原文子串，拼音首字母子序列路径），均为
+//!   CPU 密集全量扫描；净资产总览聚合；持仓列表；时点持仓（直接聚合标的交易）。
 //! - 唯一接缝：全部经「现有 pub 查询函数 + 标准连接工厂打开文件库」调用，
 //!   与 IPC 命令同一 SQL 路径；慢查询日志（perf_trace，≥100ms warn）经连接
 //!   工厂自动挂载，基准内不重写 SQL。
@@ -120,13 +122,14 @@ USAGE:
 
 SUBCOMMANDS:
     generate    生成性能基准数据集（默认 50 万笔 Transaction 的多域画像 SQLite 库）
-    bench       查询基准——10 项查询 × min/avg/p95 报告（issue #461）
+    bench       查询基准——11 项查询 × min/avg/p95 报告（issue #461）
 
 bench OPTIONS:
     --db <PATH>            目标库文件（默认同 generate 输出路径，须已生成）
     --warmup <N>           每项基准预热次数（默认 3，不计入统计）
     --iterations <N>       每项基准计时迭代次数（默认 20，n=20 才成真 p95 分位数）
-    --search <TERM>        备注搜索基准的关键字（默认 咖啡）
+    --search <TERM>        中文子串搜索基准的关键字（默认 咖啡）
+    --search-pinyin <TERM> 拼音子序列搜索基准的关键字（默认 kf）
     --max-p95-ms <MS>      默认门禁阈值（毫秒）：全部基准 p95 ≤ 各自阈值才退出
                            0，任何一项超标即失败（CI 用；缺省不判定；分项例外
                            如备注搜索 400ms 见 ADR-0068）

@@ -3,7 +3,9 @@
 //!
 //! 建库经应用自身的迁移应用路径（[`open_connection`] + [`init_db`]，从 lib 复用，
 //! 不复制 DDL）；数据行由本模块批量直插（一次性事务 + 关闭 fsync 的连接级 PRAGMA，
-//! 供几十秒内产出 50 万笔）。全部画像参数以常量集中在本模块头部，测试与
+//! 供几十秒内产出 50 万笔）。交易行同步补填 note_pinyin 派生列（V018，与 Writer
+//! 接缝同写维护同规则 [`pinyin_initials`]，issue #514：基准库与真实库搜索路径
+//! 画像一致，不依赖 bench 预热回填）。全部画像参数以常量集中在本模块头部，测试与
 //! 用法注释（bin 头）共用同一套数字；确定性由种子化 PRNG 与「无墙钟、无
 //! HashMap 遍历」纪律保证——同参数两次生成，全部生成内容的全表有序摘要一致
 //! （迁移种子行的审计时间列不参与比对，tests 内断言）。
@@ -16,6 +18,7 @@ use rusqlite::Connection;
 
 use tauri_app_lib::categories;
 use tauri_app_lib::db::{init_db, open_connection};
+use tauri_app_lib::transaction::pinyin_initials;
 
 use super::GenerateCli;
 use super::investments::{self, MarketData, Portfolio, TradeKind};
@@ -795,9 +798,9 @@ fn insert_transactions(
 ) -> Result<TxnCounts, String> {
     const SQL: &str = "INSERT INTO transactions (id,kind,amount_cents,currency_code,\
          amount_native_cents,account_id,to_account_id,category_id,merchant_id,\
-         refund_of_transaction_id,note,dedup_hash,idempotency_key,date,created_at,updated_at,\
+         refund_of_transaction_id,note,note_pinyin,dedup_hash,idempotency_key,date,created_at,updated_at,\
          version,device_id,is_deleted,policy_id)\
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,NULL,NULL,?12,?13,?13,1,?14,?15,NULL)";
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,NULL,NULL,?13,?14,?14,1,?15,?16,NULL)";
     let mut stmt = conn.prepare(SQL).map_err(|e| e.to_string())?;
 
     // 各账户的近期支出环形缓冲（refund 链来源）。
@@ -940,6 +943,9 @@ fn insert_transactions(
             rng.range_i64(0, 59)
         );
         let native = (row.amount as f64 * fx(ccy)).round() as i64;
+        // 派生列与 Writer 同规则同写（issue #514）：无备注为 NULL，有备注为
+        // pinyin_initials(note)（含空串情形，与 Writer 口径一致）。
+        let note_pinyin = row.note.as_deref().map(pinyin_initials);
         // 标的交易不软删：产品删除 buy/sell 会回滚批次副作用，
         // 「软删交易行 + 存活批次」不是产品能产出的形态。
         let deleted = trade.is_none() && rng.chance(SOFT_DELETE_RATE);
@@ -959,6 +965,7 @@ fn insert_transactions(
             row.merchant,
             row.refund_of,
             row.note,
+            note_pinyin,
             row.date.to_string(),
             created,
             DEVICE_ID,
