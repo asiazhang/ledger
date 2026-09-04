@@ -159,6 +159,14 @@ impl TransactionBatch {
             log_batch_summary(started, total, failed, false);
             return Err(e.into());
         }
+        // 大导入后重跑统计（issue #490）：`PRAGMA optimize` 按表行数变化启发式
+        // 增量 ANALYZE，只刷需要的表、代价可忽略；批量写入是唯一的批量落库入口，
+        // 新装库迁移期空表统计在此随数据积累逐步收敛。统计过期会误导 planner
+        // join 顺序与索引选择（时点持仓等基准依赖统计假设），失败仅记日志不上抛
+        // ——统计刷新不影响已提交的业务写。
+        if let Err(e) = conn.execute("PRAGMA optimize", []) {
+            tracing::warn!(error = %e, "批量导入后 PRAGMA optimize 失败（忽略）");
+        }
         // 汇总行在 COMMIT 后立即打一条（ADR-0009 决策 #5 / issue #45）：
         // 数据已提交，批次应有一条可观测的汇总行。置脏已随迁移收口写入口
         // （issue #245）：调用方的 db.write 闭包在此处返回 Ok 后于提交点触发。

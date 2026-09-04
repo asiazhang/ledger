@@ -299,6 +299,12 @@ pub(crate) fn generate_into(
     counts.fx_rate_history = insert_fx_rate_history(&tx, &mut rng, p, start_date)?;
 
     tx.commit().map_err(|e| e.to_string())?;
+
+    // 数据落定后全量 ANALYZE（issue #490）：基准库对应「存量用户升级后」形态
+    // ——迁移尾部 ANALYZE 在建库时空表运行，统计须随数据重算；时点持仓等
+    // join 顺序依赖统计假设，缺统计会让基准失真于真实用户库。
+    conn.execute_batch("ANALYZE;").map_err(|e| e.to_string())?;
+
     Ok(counts)
 }
 
