@@ -14,7 +14,12 @@ use tauri::State;
 
 use crate::db::{DbState, run_db};
 use crate::error::{AppError, Result};
-use crate::scheduled_transactions::*;
+use crate::scheduled_transactions as scheduled_domain;
+use crate::scheduled_transactions::{
+    CreateScheduledInput, ExecuteOccurrenceInput, ScheduledTransactionDetail,
+    ScheduledTransactionWithExt, SubscriptionSpendOverview, UpdateStatusInput,
+    UpdateSubscriptionInput,
+};
 
 #[tauri::command]
 pub async fn create_scheduled_transaction(
@@ -24,9 +29,7 @@ pub async fn create_scheduled_transaction(
     // 连接层统一写入口（ADR-0032，#246 审计补齐）：计划与期次属账本数据，成功即置脏。
     let conn = db.conn.clone();
     run_db("create_scheduled_transaction", move || {
-        crate::db::write(&conn, |conn| {
-            crate::scheduled_transactions::create_plan(conn, input)
-        })
+        crate::db::write(&conn, |conn| scheduled_domain::create_plan(conn, input))
     })
     .await
 }
@@ -38,7 +41,7 @@ pub async fn list_scheduled_transactions(
     let conn = db.conn.clone();
     run_db("list_scheduled_transactions", move || {
         let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        crate::scheduled_transactions::list_plans(&conn)
+        scheduled_domain::list_plans(&conn)
     })
     .await
 }
@@ -51,7 +54,7 @@ pub async fn get_scheduled_transaction_detail(
     let conn = db.conn.clone();
     run_db("get_scheduled_transaction_detail", move || {
         let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        crate::scheduled_transactions::get_plan_detail(&conn, &id)
+        scheduled_domain::get_plan_detail(&conn, &id)
     })
     .await
 }
@@ -65,7 +68,7 @@ pub async fn update_scheduled_transaction_status(
     let conn = db.conn.clone();
     run_db("update_scheduled_transaction_status", move || {
         crate::db::write(&conn, |conn| {
-            crate::scheduled_transactions::update_plan_status(conn, &input.id, input.new_status)
+            scheduled_domain::update_plan_status(conn, &input.id, input.new_status)
         })
     })
     .await
@@ -82,7 +85,7 @@ pub async fn update_scheduled_subscription(
     let conn = db.conn.clone();
     run_db("update_scheduled_subscription", move || {
         crate::db::write(&conn, |conn| {
-            crate::scheduled_transactions::update_subscription(conn, input)
+            scheduled_domain::update_subscription(conn, input)
         })
     })
     .await
@@ -97,7 +100,7 @@ pub async fn execute_scheduled_occurrence(
     let conn = db.conn.clone();
     run_db("execute_scheduled_occurrence", move || {
         crate::db::write(&conn, |conn| {
-            crate::scheduled_transactions::execute_occurrence(conn, &input.occurrence_id)
+            scheduled_domain::execute_occurrence(conn, &input.occurrence_id)
         })
     })
     .await
@@ -112,7 +115,7 @@ pub async fn expand_scheduled_occurrences(
     let conn = db.conn.clone();
     run_db("expand_scheduled_occurrences", move || {
         crate::db::write(&conn, |conn| {
-            crate::scheduled_transactions::expand_occurrences(conn, &id)
+            scheduled_domain::expand_occurrences(conn, &id)
         })
     })
     .await
@@ -127,10 +130,7 @@ pub async fn subscription_spend_overview(
     let conn = db.conn.clone();
     run_db("subscription_spend_overview", move || {
         let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        crate::scheduled_transactions::query_subscription_spend(
-            &conn,
-            chrono::Local::now().date_naive(),
-        )
+        scheduled_domain::query_subscription_spend(&conn, chrono::Local::now().date_naive())
     })
     .await
 }

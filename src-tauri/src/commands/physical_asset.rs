@@ -14,8 +14,8 @@
 //! 全部命令 async 化（形状乙，spec #498 / #502）：DB 调用经连接层统一 helper
 //! [`crate::db::run_db`] 进 tauri 阻塞线程池执行，不占用界面事件循环线程；
 //! 写路径仍在连接层统一写入口内置脏（ADR-0032 语义零改动）。notify 回调里的
-//! 信号发射经 `post_emit_with` 投递主线程队尾（ADR-0044），从阻塞线程调用安全，
-//! 对用户外部行为不变。
+//! 信号发射经 `post_emit_with` 投递主线程队尾（ADR-0054 主线程非阻塞投递），
+//! 从阻塞线程调用安全，对用户外部行为不变。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
 // （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
