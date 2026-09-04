@@ -32,8 +32,9 @@ mod tests {
             "应指引发现阶段：获取导入知识"
         );
         assert!(AI_PROMPT.contains("不删后重导"), "应保留唯一入口级纪律");
-        // 服务常驻排查提示在位（连接失败 → 请用户启动 Ledger 后重试）
-        assert!(AI_PROMPT.contains("启动 Ledger"), "应包含服务常驻排查提示");
+        // 服务常驻排查提示在位（连接失败 → 请用户启动开源记账后重试；标题
+        // 「Ledger API」是协议契约不做断言，正文用户指引随显示名更新 ADR-0076）
+        assert!(AI_PROMPT.contains("启动开源记账"), "应包含服务常驻排查提示");
         // 不复述细节：幂等键格式、商户建议、对账细则、纠错与错误响应、废弃别名
         for banned in [
             "idempotency_key",

@@ -31,7 +31,7 @@ async function openLogDir() {
 <template>
   <NCard :title="t('settings.about.title')" size="small">
     <NSpace vertical :size="8">
-      <NText>{{ t('settings.about.appName') }}Ledger</NText>
+      <NText>{{ t('settings.about.appName') }}{{ t('common.app.name') }}</NText>
       <NText>{{ t('settings.about.version') }}{{ pkg.version }}</NText>
       <NText
         v-if="gitVersion"

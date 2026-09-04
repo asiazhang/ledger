@@ -90,7 +90,7 @@ watch(
   async () => {
     try {
       const { getCurrentWindow } = await import('@tauri-apps/api/window')
-      void getCurrentWindow().setTitle(t('common.window.title'))
+      void getCurrentWindow().setTitle(t('common.app.name'))
     } catch {
       /* 非 Tauri 环境 */
     }
@@ -259,7 +259,10 @@ function handleSelect(key: string) {
   router.push({ name: key })
 }
 
-const title = () => h('div', { style: 'padding: 16px; font-size: 18px; font-weight: 600' }, '📒 Ledger')
+// 侧栏标题消费 i18n 应用名键（ADR-0076：显示名不得在 i18n 之外硬编码），
+// t() 绑定全局 Composer，语言切换时随响应式 locale 重渲染。
+const title = () =>
+  h('div', { style: 'padding: 16px; font-size: 18px; font-weight: 600' }, `📒 ${t('common.app.name')}`)
 
 const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(route.name) : ''))
 </script>

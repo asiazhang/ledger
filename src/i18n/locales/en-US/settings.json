@@ -186,7 +186,7 @@
       "backupFailed": "Backup failed: {msg}",
       "lastBackupPath": "{path} ({size})",
       "saveAsTitle": "Back Up To…",
-      "filterName": "Ledger Backup",
+      "filterName": "OpenLedger Backup",
       "restoreConfirm": "Restoring will replace all current data and cannot be undone.\n\nThe current data is backed up automatically before restoring; the app restarts automatically after a successful restore.\n\nContinue?",
       "restoreConfirmTitle": "Confirm Restore",
       "restoreOk": "Restored (schema v{version}); the app will restart shortly",
@@ -227,7 +227,7 @@
     "body2": "This switch is a per-device preference: it does not migrate with backup or restore, and stays off by default on a new machine or after restoring a backup."
   },
   "about": {
-    "title": "About Ledger",
+    "title": "About OpenLedger",
     "appName": "App Name: ",
     "version": "Version: ",
     "gitVersion": "Git Version: ",

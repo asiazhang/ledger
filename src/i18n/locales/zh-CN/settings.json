@@ -186,7 +186,7 @@
       "backupFailed": "备份失败: {msg}",
       "lastBackupPath": "{path}（{size}）",
       "saveAsTitle": "备份到…",
-      "filterName": "Ledger 备份",
+      "filterName": "开源记账备份",
       "restoreConfirm": "恢复将替换当前全部数据，且不可撤销。\n\n系统会在恢复前自动备份当前数据；恢复成功后应用将自动重启。\n\n确定继续吗？",
       "restoreConfirmTitle": "确认恢复",
       "restoreOk": "恢复成功（schema v{version}），应用即将重启",
@@ -227,7 +227,7 @@
     "body2": "开关属本机设备偏好：不随备份或恢复迁移，换新机器或恢复备份后保持默认关闭。"
   },
   "about": {
-    "title": "关于 Ledger",
+    "title": "关于开源记账",
     "appName": "应用名称：",
     "version": "版本号：",
     "gitVersion": "Git 版本：",
