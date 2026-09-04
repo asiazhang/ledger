@@ -39,6 +39,14 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+describe('AboutSettings.vue — 应用名称行（ADR-0076 显示名 i18n 化）', () => {
+  it('应用名称行消费 i18n 应用名键，显示中文显示名而非硬编码旧名', () => {
+    const wrapper = mountWithGit()
+    expect(wrapper.text()).toContain('应用名称：开源记账')
+    expect(wrapper.text()).not.toContain('应用名称：Ledger')
+  })
+})
+
 describe('AboutSettings.vue — Git 版本行', () => {
   it('显示短 sha（完整 sha 前 7 位）', () => {
     const wrapper = mountWithGit()

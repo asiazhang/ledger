@@ -105,7 +105,7 @@ pub fn read_backup_kind(backup_path: &Path) -> Result<BackupKind> {
     let mut archive = zip::ZipArchive::new(file).map_err(|e| {
         AppError::codedp(
             "backup.invalid-archive",
-            format!("不是有效的 Ledger 备份包: {e}"),
+            format!("不是有效的开源记账备份包: {e}"),
             &[&e.to_string()],
         )
     })?;
@@ -448,7 +448,7 @@ fn extract_db_file(backup_path: &Path, out: &Path) -> Result<()> {
     if !found {
         return Err(AppError::coded(
             "backup.db-entry-missing",
-            format!("备份包内未找到 {}，不是有效的 Ledger 备份", ZIP_DB_ENTRY),
+            format!("备份包内未找到 {}，不是有效的开源记账备份", ZIP_DB_ENTRY),
         ));
     }
     Ok(())

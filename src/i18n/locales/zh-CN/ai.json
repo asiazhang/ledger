@@ -1,7 +1,7 @@
 {
   "title": "AI 提示词",
   "copy": "复制",
-  "description": "将以下提示词复制给 AI 编程助手（如 Cursor、Claude Code），它会据此通过本地 HTTP API（127.0.0.1:9527）读取与写入账本数据；期间需保持 Ledger 运行。",
+  "description": "将以下提示词复制给 AI 编程助手（如 Cursor、Claude Code），它会据此通过本地 HTTP API（127.0.0.1:9527）读取与写入账本数据；期间需保持开源记账运行。",
   "loading": "加载中…",
   "loadFailed": "获取失败",
   "msg": {

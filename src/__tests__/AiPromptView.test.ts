@@ -9,7 +9,7 @@ const writeText = vi.fn().mockResolvedValue(undefined)
 
 const SAMPLE_PROMPT = `# Ledger API 入口提示词
 
-Ledger 在本地 http://127.0.0.1:9527 提供 HTTP API。
+开源记账在本地 http://127.0.0.1:9527 提供 HTTP API。
 
 - 先 GET /api/v1/openapi.json 发现全部端点。
 - 批量写交易/导入前，先 GET /api/v1/import/knowledge 获取拆行约定。`
@@ -48,10 +48,10 @@ describe('AiPromptView.vue', () => {
     expect(wrapper.find('button').attributes('disabled')).toBeDefined()
   })
 
-  it('页面说明包含「需保持 Ledger 运行」', async () => {
+  it('页面说明包含「需保持开源记账运行」（显示名随 ADR-0076 更新）', async () => {
     const wrapper = mount(AiPromptView)
     await flushPromises()
-    expect(wrapper.text()).toContain('需保持 Ledger 运行')
+    expect(wrapper.text()).toContain('需保持开源记账运行')
   })
 
   it('获取失败时展示错误提示', async () => {

@@ -40,12 +40,12 @@
   },
   "backup": {
     "keep-invalid": "备份保留上限非法: {0}",
-    "invalid-archive": "不是有效的 Ledger 备份包: {0}",
+    "invalid-archive": "不是有效的开源记账备份包: {0}",
     "meta-missing": "备份包内未找到 backup.json 元数据",
     "meta-parse-failed": "备份元数据解析失败: {0}",
     "target-dir-missing": "备份目标目录不存在: {0}",
     "schema-newer": "备份来自更高版本的应用（备份 schema v{0} > 当前 v{1}），请升级应用后再恢复",
-    "db-entry-missing": "备份包内未找到 ledger.db，不是有效的 Ledger 备份"
+    "db-entry-missing": "备份包内未找到 ledger.db，不是有效的开源记账备份"
   },
   "sync": {
     "already-running": "已有全量同步正在进行，请先中断或等待完成",

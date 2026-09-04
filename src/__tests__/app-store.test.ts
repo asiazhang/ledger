@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useAppStore } from '@/stores/app'
+import { formatAmount, amountPrivacyEnabled } from '@/utils/money'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -134,6 +135,39 @@ describe('useAppStore backupMaxCount', () => {
     localStorage.setItem('backup_max_count', '5')
     const store = useAppStore()
     expect(store.backupMaxCount).toBe(5)
+  })
+})
+
+describe('useAppStore amountPrivacyEnabled（issue #566：金额隐私模式，轻量设置项）', () => {
+  it('默认值为 false', () => {
+    const store = useAppStore()
+    expect(store.amountPrivacyEnabled).toBe(false)
+  })
+
+  it('setAmountPrivacyEnabled 切换并持久化 localStorage', () => {
+    const store = useAppStore()
+    store.setAmountPrivacyEnabled(true)
+    expect(store.amountPrivacyEnabled).toBe(true)
+    expect(localStorage.getItem('amount_privacy_enabled')).toBe('true')
+    store.setAmountPrivacyEnabled(false)
+    expect(store.amountPrivacyEnabled).toBe(false)
+    expect(localStorage.getItem('amount_privacy_enabled')).toBe('false')
+  })
+
+  it('从 localStorage 恢复开关（跨启动水合，不随备份迁移的落点）', () => {
+    localStorage.setItem('amount_privacy_enabled', 'true')
+    const store = useAppStore()
+    expect(store.amountPrivacyEnabled).toBe(true)
+  })
+
+  it('store 状态与格式化层消费同一 ref：切换即时反映到 formatAmount', () => {
+    const store = useAppStore()
+    expect(formatAmount(12345)).toBe('123.45')
+    store.setAmountPrivacyEnabled(true)
+    expect(formatAmount(12345)).toBe('••••')
+    store.setAmountPrivacyEnabled(false)
+    expect(formatAmount(12345)).toBe('123.45')
+    expect(amountPrivacyEnabled.value).toBe(false)
   })
 })
 

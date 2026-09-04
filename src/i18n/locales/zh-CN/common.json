@@ -46,10 +46,14 @@
     "viewMerchant": "查看该商户的交易",
     "viewAccount": "查看该账户的交易"
   },
-  "window": {
-    "title": "Ledger 账本"
+  "app": {
+    "name": "开源记账"
   },
   "globalBusyBar": {
     "label": "正在处理"
+  },
+  "amountPrivacy": {
+    "hide": "隐藏金额",
+    "show": "显示金额"
   }
 }
