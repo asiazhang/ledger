@@ -320,7 +320,7 @@ fn v016_account_date_filter_uses_account_date_index() {
 #[test]
 fn v016_balance_flow_aggregates_use_cash_flow_indexes() {
     let conn = v016_world();
-    // 转出侧：account_flow（Out）聚合形状与 db/balance.rs 同构。
+    // 转出侧：account_flow（Out）聚合形状与 accounts/balance.rs 同构。
     let out_plan = v016_plan(
         &conn,
         "SELECT COALESCE(SUM(CASE t.kind \

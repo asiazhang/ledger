@@ -10,6 +10,11 @@
 mod core;
 mod model;
 
+/// 余额口径权威（ADR-0071 决策 2 自 `db/balance.rs` 整文件迁入）：实时计算、
+/// 缓存整体重算刷新与读取、账户余额清单读取一个模块命中；契约与依赖边
+/// 详见 [`balance`] 模块文档。
+pub mod balance;
+
 pub use core::{
     adjust_account_balance, audit_balance_cache, create_account, create_account_idempotent,
     delete_account, ensure_black_hole_account, get_account, list_account_balances_for_api,

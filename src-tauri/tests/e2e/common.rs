@@ -1,7 +1,7 @@
 use rusqlite::Connection;
 use rusqlite::params;
 
-use tauri_app_lib::db::balance::refresh_account_balances;
+use tauri_app_lib::accounts::balance::refresh_account_balances;
 use tauri_app_lib::db::new_uuid;
 use tauri_app_lib::transaction::Transaction;
 

@@ -1,8 +1,16 @@
+//! 账户域余额口径权威（ADR-0071 决策 2，自 `db/balance.rs` 整文件迁入）：
+//! 实时权威计算、余额持久化缓存（V017 / ADR-0067）的整体重算刷新与读取、
+//! 账户余额清单读取一个模块命中。对外函数签名与 IPC/HTTP/信号契约零变化；
+//! ADR-0067 两契约原样保留——写路径同事务整体重算（禁止增量加减）、
+//! 缓存缺失报码化错误不静默回退。口径表达式消费核心交易域
+//! [`crate::transaction::amount::account_flow_expr`] 单一真源（transaction ⇄
+//! accounts 显式横向边，ADR-0071 决策 5：核心交易仅在写路径为账户域维护余额缓存）。
+
 use std::collections::HashMap;
 
 use rusqlite::{Connection, OptionalExtension};
 
-use crate::accounts::{Account, AccountBalance};
+use super::model::{Account, AccountBalance};
 use crate::db::query::{FromRow, query_all};
 use crate::error::{AppError, Result};
 use crate::transaction::amount::{TransferSide, account_flow_expr};
@@ -104,8 +112,7 @@ pub fn compute_all_balances_with_visibility(
 }
 
 /// 账户行可见性读取（conn 级）：`include_hidden` 为 true 时含黑洞账户。
-/// 账户余额清单的账户侧来源，可见性口径与余额侧同一开关（#405 自账户壳层
-/// 模块下沉至此，与余额计算同址；账户域归位后随迁账户域）。
+/// 账户余额清单的账户侧来源，可见性口径与余额侧同一开关。
 pub fn list_accounts_with_visibility(
     conn: &Connection,
     include_hidden: bool,
@@ -126,8 +133,7 @@ pub fn list_accounts_with_visibility(
 }
 
 /// 账户余额清单（conn 级）：账户行 × 当前余额，`include_hidden` 为 true 时含黑洞账户。
-/// 账户列表/余额页、dashboard 净资产与投资域财务自由度共用的同一口径
-/// （#405 自账户壳层模块下沉至此，消除聚合域对壳层的反向依赖；账户域归位 #404 时随迁）。
+/// 账户列表/余额页、dashboard 净资产与投资域财务自由度共用的同一口径。
 pub fn list_account_balances_with_visibility(
     conn: &Connection,
     include_hidden: bool,

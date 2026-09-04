@@ -35,7 +35,7 @@ fn insert_account(
         rusqlite::params![id, name, kind, currency, initial, now, now, 1, device_id()],
     ).unwrap();
     // 裸 SQL 绕过 create_account 域钩子，按 V017 迁移回填语义补建缓存行（ADR-0067）。
-    crate::db::balance::refresh_account_balances(conn, &[id]).unwrap();
+    crate::accounts::balance::refresh_account_balances(conn, &[id]).unwrap();
 }
 
 fn insert_hidden_account(conn: &rusqlite::Connection, id: &str, name: &str, currency: &str) {
@@ -45,7 +45,7 @@ fn insert_hidden_account(conn: &rusqlite::Connection, id: &str, name: &str, curr
          VALUES (?1,?2,'other',?3,0,?4,?5,?6,?7,0,1)",
         rusqlite::params![id, name, currency, now, now, 1, device_id()],
     ).unwrap();
-    crate::db::balance::refresh_account_balances(conn, &[id]).unwrap();
+    crate::accounts::balance::refresh_account_balances(conn, &[id]).unwrap();
 }
 
 fn insert_tx(
@@ -70,11 +70,11 @@ fn insert_tx(
     if let Some(to) = to_account_id {
         affected.push(to);
     }
-    crate::db::balance::refresh_account_balances(conn, &affected).unwrap();
+    crate::accounts::balance::refresh_account_balances(conn, &affected).unwrap();
 }
 
 fn balance(conn: &rusqlite::Connection, account_id: &str) -> i64 {
-    crate::db::balance::compute_balance(conn, account_id).unwrap()
+    crate::accounts::balance::compute_balance(conn, account_id).unwrap()
 }
 
 #[test]
@@ -341,7 +341,7 @@ fn balance_computed_via_account_flow_measure() {
     // acc-flow-n = +800 −2000 +1500 +60 +0 = 360
     assert_eq!(balance(&conn, "acc-flow-n"), 360);
 
-    let all = crate::db::balance::compute_all_balances(&conn).unwrap();
+    let all = crate::accounts::balance::compute_all_balances(&conn).unwrap();
     for id in ["acc-flow-m", "acc-flow-n"] {
         assert_eq!(
             *all.get(id).unwrap_or(&0),
@@ -376,7 +376,7 @@ fn compute_all_balances_matches_per_account() {
     insert_tx(&conn, "tx-b5", "refund", 500, "acc-bulk-1", None);
     insert_tx(&conn, "tx-b6", "dividend", 60, "acc-bulk-3", None);
 
-    let all = crate::db::balance::compute_all_balances(&conn).unwrap();
+    let all = crate::accounts::balance::compute_all_balances(&conn).unwrap();
 
     for id in ["acc-bulk-1", "acc-bulk-2", "acc-bulk-3"] {
         let expected = balance(&conn, id);
@@ -398,7 +398,7 @@ fn compute_all_balances_excludes_soft_deleted_accounts() {
         rusqlite::params!["acc-deleted", now_iso(), device_id()],
     ).unwrap();
 
-    let all = crate::db::balance::compute_all_balances(&conn).unwrap();
+    let all = crate::accounts::balance::compute_all_balances(&conn).unwrap();
     assert!(all.contains_key("acc-active"), "应包含活动账户");
     assert!(!all.contains_key("acc-deleted"), "不应包含已删除账户");
 }
@@ -458,7 +458,7 @@ fn hidden_account_balance_excluded_from_all_balances() {
     insert_hidden_account(&conn, "acc-hidden", "无(CNY)", "CNY");
     insert_tx(&conn, "tx-h", "income", 5000, "acc-hidden", None);
 
-    let all = crate::db::balance::compute_all_balances(&conn).unwrap();
+    let all = crate::accounts::balance::compute_all_balances(&conn).unwrap();
     assert!(
         !all.contains_key("acc-hidden"),
         "compute_all_balances 不应包含黑洞账户"

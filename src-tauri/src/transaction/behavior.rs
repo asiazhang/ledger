@@ -39,7 +39,7 @@ use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 
 use super::model::TransactionInput;
-use crate::db::balance::refresh_account_balances;
+use crate::accounts::balance::refresh_account_balances;
 use crate::db::{device_id, now_iso};
 use crate::error::{AppError, Result};
 use crate::investment;
