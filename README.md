@@ -60,9 +60,13 @@
 
 ## 安装
 
-从 [GitHub Releases](https://github.com/asiazhang/ledger/releases) 下载最新版 macOS 安装包（DMG），拖入「应用程序」即可。
+从 [GitHub Releases](https://github.com/asiazhang/ledger/releases) 下载对应平台的安装包：
 
-> 目前仅提供 macOS 安装包；Windows / Linux 可从源码自行构建（见下）。
+- **macOS（Apple Silicon）**：`.dmg`，拖入「应用程序」即可。未签名：首次打开若被 Gatekeeper 拦截，右键「打开」或到「系统设置 → 隐私与安全性」放行。
+- **Windows（x64）**：`.exe`（NSIS 安装器），双击按向导安装。未签名：SmartScreen 出现「已保护你的电脑」时点「更多信息 → 仍要运行」。
+- **Linux（x64）**：`.deb`（Debian/Ubuntu 系，`sudo dpkg -i` 安装）或 `.AppImage`（`chmod +x` 后直接运行）。
+
+> 安装包均未签名 / 未公证；Windows 与 Linux 版本发布初期未经真机验证，遇到问题请到 [Issues](https://github.com/asiazhang/ledger/issues) 反馈（决策记录见 [ADR-0066](docs/adr/0066-cross-platform-release.md)）。
 
 ## 从源码构建
 
