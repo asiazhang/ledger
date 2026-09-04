@@ -1,7 +1,7 @@
 {
   "name": "ledger",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "packageManager": "pnpm@12.1.0",
   "//": "typescript 刻意留在 6.x：TypeScript 7 尚未提供 programmatic API，vue-tsc（build 类型检查）不兼容，待 vue-tsc 支持 TS 7 后再升（官方预计 TS 7.1）",

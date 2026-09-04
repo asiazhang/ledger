@@ -2,13 +2,18 @@
 
 本文件记录 Ledger 各版本对使用者可见的变更，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)规则。
 
-## [Unreleased]
+## [0.5.0] - 2026-09-05
 
 ### Added
 
+- **搜索**：搜索页接入时间范围快捷选择——五枚芯片（全部 / 当月 / 当季 / 当年 / 去年）＋期间步进器＋期间直达面板，与报表页同构；两个独立日期选择器（任意起止 / 可单边）退役，「清除筛选」把日期条件一并清回「全部」，步进与直达自动钳制于数据期间边界（[#526]，ADR-0070）。
+- **界面**：新增全局忙碌条——应用顶部细条在后台任务执行期间显示（300ms 延迟显隐防闪烁）；配合后端命令全面 async 化，数据库操作期间界面不再卡顿（[#500]）。
+- **发布**：跨平台发布矩阵——Windows / Linux 安装包进入发布矩阵，与 macOS 共用单一 GitHub Release；正式 tag 前支持手动试跑（[#496]，ADR-0066）。
 - **设置**：设置页「数据」新增拼音搜索数据一键修复——把搜索入口的隐性回填提升为显式可调用命令，幂等回填交易备注拼音辅助数据全部积压并返回报告（回填行数 / 是否收敛 / 失败原因），作为回填失败时用户可触发的恢复手段；搜索入口惰性回填行为不变（[#513]）。
 
 ### Changed
+
+- **性能**：交易搜索 SQL 下推——词条匹配下推为单条 SQL（备注原文 LIKE 子串、拼音首字母子序列多段 LIKE），账户 / 商户字典预判与软删口径一并下推，钉定搜索覆盖索引 index-only 扫描；匹配语义与对外 API 零变更，50 万笔账本搜索基准 p95 中文子串 154ms→56ms、拼音子序列 63ms（[#515]，ADR-0027 修订）。
 
 - **性能**：搜索取行两段式优化——交易表新增备注拼音首字母冗余列（写入路径同写维护、存量行搜索时惰性回填）与搜索扫描覆盖索引，搜索改为最小列流式匹配、仅为当前页回表取展示列；匹配语义与验收口径零变更，50 万笔账本备注拼音搜索基准 p95 从 2932ms 降至 ~155ms（[#492]，ADR-0027 修订）。
 - **性能**：余额与净资产持久化缓存——新增账户余额缓存与净资产终值缓存两张表（V017），账户/交易全写路径在既有事务内对受影响账户整体重算回写，余额清单、首页净资产等读出口改读缓存，净资产经读探针指纹自愈，另提供余额缓存手动审计命令修复漂移；50 万笔库全账户余额与净资产总览读基准 p95 从 ~88s 大幅下降（[#491]，ADR-0067）。
@@ -141,5 +146,10 @@
 [#412]: https://github.com/asiazhang/ledger/issues/412
 [#435]: https://github.com/asiazhang/ledger/issues/435
 [#490]: https://github.com/asiazhang/ledger/issues/490
+[#491]: https://github.com/asiazhang/ledger/issues/491
 [#492]: https://github.com/asiazhang/ledger/issues/492
+[#496]: https://github.com/asiazhang/ledger/issues/496
+[#500]: https://github.com/asiazhang/ledger/issues/500
 [#513]: https://github.com/asiazhang/ledger/issues/513
+[#515]: https://github.com/asiazhang/ledger/issues/515
+[#526]: https://github.com/asiazhang/ledger/issues/526
