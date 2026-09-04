@@ -18,7 +18,7 @@ use rusqlite::Connection;
 
 use tauri_app_lib::categories;
 use tauri_app_lib::db::{init_db, open_connection};
-use tauri_app_lib::transaction::search_text::pinyin_initials;
+use tauri_app_lib::transaction::pinyin_initials;
 
 use super::GenerateCli;
 use super::investments::{self, MarketData, Portfolio, TradeKind};

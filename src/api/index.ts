@@ -79,6 +79,7 @@ import type {
   TransactionListResult,
   TransactionSearchFilter,
   TransactionSearchResult,
+  NotePinyinRepairReport,
   UpdateStatusInput,
   UpdateSubscriptionInput,
 } from '@/types'
@@ -165,6 +166,8 @@ export const api = {
       dateFrom: filter?.dateFrom ?? null,
       dateTo: filter?.dateTo ?? null,
     }),
+  /** 备注拼音一键修复（issue #513）：显式回填全部积压并返回报告（回填行数 / 是否收敛 / 失败原因），幂等 */
+  repairNotePinyin: () => invoke<NotePinyinRepairReport>('repair_note_pinyin'),
 
   // 预算
   listBudgets: () => invoke<Budget[]>('list_budgets'),

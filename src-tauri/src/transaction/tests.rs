@@ -8,6 +8,7 @@
 //! - [`merchant`]：商户携带收口与即建商户证据
 //! - [`query`]：交易查询、排序与分页
 //! - [`search`]：统一模糊搜索语义与搜索行为
+//! - [`search_repair`]：拼音辅助数据一键修复（积压回填、幂等、收敛）
 //! - [`batch_common`]：批量写入共享脚手架
 //! - [`batch_create`]：批量写入、幂等键语义与批次汇总日志
 //! - [`batch_dedup`]：内容哈希与去重身份判定
@@ -23,3 +24,4 @@ mod common;
 mod merchant;
 mod query;
 mod search;
+mod search_repair;

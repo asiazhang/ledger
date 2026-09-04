@@ -11,6 +11,7 @@ import GeneralSettings from '@/components/settings/GeneralSettings.vue'
 import CategoryManager from '@/components/CategoryManager.vue'
 import BackupSettings from '@/components/settings/BackupSettings.vue'
 import DataLocationSettings from '@/components/settings/DataLocationSettings.vue'
+import SearchDataSettings from '@/components/settings/SearchDataSettings.vue'
 import ScheduledSettings from '@/components/settings/ScheduledSettings.vue'
 import AboutSettings from '@/components/settings/AboutSettings.vue'
 import { t } from '@/i18n'
@@ -42,6 +43,9 @@ import { t } from '@/i18n'
       <NSpace vertical :size="16">
         <BackupSettings />
         <DataLocationSettings />
+        <!-- 拼音搜索数据一键修复（issue #513）：核心交易域搜索派生数据维护，
+             归数据管理而非设备偏好，故入「数据」页签（ADR-0022 归属规则）。 -->
+        <SearchDataSettings />
       </NSpace>
     </NTabPane>
 

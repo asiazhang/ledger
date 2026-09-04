@@ -1,15 +1,20 @@
 # 性能基准 workflow（issue #462；门禁 issue #493 / ADR-0068）：与主构建
-# workflow（build.yml，push/PR 触发）刻意分离——本 workflow 只在每周 cron
+# workflow（build.yml，push/PR 触发）刻意分离——本 workflow 只在每日 cron
 # 与手动 dispatch 时运行：
 #   现场生成 50 万笔基准库（ledger-perf generate，seed 42）→ 跑 11 项查询
 #   基准（ledger-perf bench --iterations 20 --max-p95-ms 200）→ Markdown 耗时
 #   报告写入 $GITHUB_STEP_SUMMARY。
+# 「每日一次、前提是有代码变动」由 gate job 兜底：schedule 触发时比对本次
+# 调度的提交与本 workflow 最近一次成功运行的 head_sha——相同即自上次成功
+# 以来无新代码，整体跳过不空转；上次失败则最近成功停在更早提交、差异
+# 成立，自动重试直至成功后恢复跳过。手动 dispatch 无条件放行（基线留存
+# 与复跑入口，ADR-0068 验收流程）。
 # ADR-0062 观察期已结束，门禁生效（ADR-0068）：默认判据全部基准逐项
 # p95 ≤ 200ms；全量扫描型基准设分项例外（两条搜索基准各 400ms：中文子串
 # 与拼音子序列，CPU 密集无法索引加速，issue #514）。任何一项超标 bench 以
 # 非零退出、job 失败（超标清单随报告
 # 进 Summary）。不在 PR 上跑：一次 release 冷编译 + 生成 + 基准 ≈ 6 分钟
-# （rust-cache 命中时），回归由每周基线与性能批合入后的手动触发拦截。
+# （rust-cache 命中时），回归由每日基线与性能批合入后的手动触发拦截。
 # ADR-0009 的 100ms 慢查询告警线（SQL 级观测）保留不动，与本门禁（基准
 # 项级判定）是两个层次。
 # 手动验证入口：Actions → Perf Bench → Run workflow。
@@ -18,20 +23,56 @@ name: Perf Bench
 
 on:
   schedule:
-    # 每周一 01:17 UTC（北京时间 09:17，避开整点调度高峰）
-    - cron: '17 1 * * 1'
+    # 每日 01:17 UTC（北京时间 09:17，避开整点调度高峰）；无新提交由 gate 跳过
+    - cron: '17 1 * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read # gate 读取本 workflow 历史运行（head_sha 比对）所需
 
 concurrency:
   group: perf-bench
   cancel-in-progress: false
 
 jobs:
+  gate:
+    name: 变动检测（无新提交则跳过基准）
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      should-run: ${{ steps.decide.outputs.should-run }}
+    steps:
+      - name: 判断自上次成功运行以来是否有新提交
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # 手动 dispatch 无条件放行：基线留存与复跑不依赖是否有新代码。
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "should-run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # 取本 workflow 在当前分支上最近一次成功运行的 head_sha。按
+          # status=success 过滤：上次若失败，最近一次成功停在更早提交，
+          # 与本次必然不同 ⇒ 自动重试；成功后恢复「无新提交即跳过」。
+          # 查询会排除本次运行自身（in_progress ≠ success）。
+          last_sha="$(gh api \
+            "repos/${{ github.repository }}/actions/workflows/perf-bench.yml/runs?status=success&branch=${{ github.ref_name }}&per_page=1" \
+            --jq '.workflow_runs[0].head_sha // empty')"
+          if [ -n "$last_sha" ] && [ "$last_sha" = "${{ github.sha }}" ]; then
+            echo "自上次成功运行以来无新提交（$last_sha），跳过本次基准"
+            echo "should-run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "有待基准的新提交（上次成功：${last_sha:-无}，本次：${{ github.sha }}）"
+            echo "should-run=true" >> "$GITHUB_OUTPUT"
+          fi
+
   bench:
     name: 性能基准（生成 + bench + summary）
+    needs: gate
+    if: needs.gate.outputs.should-run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:

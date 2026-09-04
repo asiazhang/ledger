@@ -201,6 +201,8 @@ pub const IPC_COMMAND_WRITE_OPS: &[(&str, Option<WriteOp>)] = &[
     ("subscription_spend_overview", None),
     // ── 搜索 ──
     ("search_transactions", None),
+    // 备注拼音一键修复（issue #513）：回填搜索派生列，不置脏不发信号
+    ("repair_note_pinyin", Some(WriteOp::RepairNotePinyin)),
     // ── 行情同步域 ──
     ("sync_holding_prices", Some(WriteOp::SyncHoldingPrices)),
     ("sync_instruments", Some(WriteOp::SyncInstruments)),

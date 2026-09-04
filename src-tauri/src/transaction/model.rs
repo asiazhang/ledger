@@ -45,6 +45,45 @@ pub struct TransactionSearchResult {
     pub total: i64,
 }
 
+/// 备注拼音回填失败阶段（issue #513）：报告内可本地化的失败位置——
+/// 积压探测 / 读取积压行 / 开启批事务 / 写入批内行 / 提交批事务。
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NotePinyinRepairStage {
+    /// 积压探测失败。
+    Probe,
+    /// 读取积压行失败。
+    Read,
+    /// 开启批事务失败。
+    Begin,
+    /// 写入批内行失败。
+    Write,
+    /// 提交批事务失败。
+    Commit,
+}
+
+/// 备注拼音回填失败原因（issue #513）：失败阶段 + 底层错误消息（诊断用，
+/// 阶段文案经前端文案资源本地化，消息原样透传不造码）。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct NotePinyinRepairFailure {
+    /// 失败阶段。
+    pub stage: NotePinyinRepairStage,
+    /// 底层错误消息。
+    pub message: String,
+}
+
+/// 备注拼音一键修复报告（issue #513）：回填行数 / 是否收敛 / 失败原因。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct NotePinyinRepairReport {
+    /// 本次实际补齐的 NULL 积压行数（幂等：重复执行为 0）。
+    pub backfilled: u64,
+    /// 结束后积压是否清零（「有备注且拼音列 NULL」的行不存在；无备注行的
+    /// NULL 列不构成积压）。
+    pub converged: bool,
+    /// 失败原因（None = 全程无失败）；失败时收敛位仍如实报告剩余积压。
+    pub failure: Option<NotePinyinRepairFailure>,
+}
+
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct TransactionInput {
     /// 交易类型枚举（serde 小写字符串反序列化）。非法 kind 在反序列化阶段报 400

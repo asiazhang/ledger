@@ -19,7 +19,7 @@
 use chrono::{Datelike, Duration, Months, NaiveDate};
 use rusqlite::Connection;
 
-use tauri_app_lib::transaction::search_text::pinyin_initials;
+use tauri_app_lib::transaction::pinyin_initials;
 
 use super::generate::date_millis;
 use super::generate::{AccountRow, DEVICE_ID, GenCounts};
