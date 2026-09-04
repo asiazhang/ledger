@@ -25,6 +25,7 @@ import AppModal from '@/components/AppModal.vue'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
+import { useModalIntent } from '@/composables/useModalIntent'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { useItemsStore } from '@/stores/items'
@@ -71,28 +72,41 @@ function applyLinkedTxToEdit(txId: string | null) {
 const editRelinking = computed(() => editLinkTxId.value !== editOrigLink.value)
 
 // —— 编辑（issue #117）：按 id 修改 名称 / 购买日期 / 总成本 / 备注；币种不可改 ——
-const editing = ref<ItemWithDailyCost | null>(null)
+// 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072）：意图闭集单成员
+// （携带目标物品行），显示由「意图非空」派生、序号随开启递增驱动表单重建、
+// 关闭清回 null 终态。现状无序号守卫，迁移为缺陷修复（本票唯一声明的行为
+// 变化）：守卫从无到有，「弹窗开着时目标行被替换回填旧行」缺陷消亡，
+// 同目标重开重回填等边缘语义细化同归此类；此外等价。
+
+/** 编辑物品弹窗意图（单成员闭集）：携带目标物品行。 */
+interface ItemEditIntent {
+  row: ItemWithDailyCost
+}
+
+const {
+  intent: editIntent,
+  seq: editSeq,
+  open: openEditIntent,
+  close: closeEdit,
+} = useModalIntent<ItemEditIntent>()
+
 const editName = ref('')
 const editPurchaseDate = ref('')
 const editCostYuan = ref('')
 const editNote = ref('')
 
 function openEdit(row: ItemWithDailyCost) {
-  editing.value = row
   editName.value = row.name
   editPurchaseDate.value = row.purchase_date
   editCostYuan.value = String(centsToYuan(row.total_cost_cents))
   editNote.value = row.note ?? ''
   editLinkTxId.value = row.purchase_transaction_id
   editOrigLink.value = row.purchase_transaction_id
-}
-
-function closeEdit() {
-  editing.value = null
+  openEditIntent({ row })
 }
 
 async function saveEdit() {
-  if (!editing.value) return
+  if (!editIntent.value) return
   if (!editName.value.trim()) {
     message.warning(t('items.msg.nameRequired'))
     return
@@ -110,12 +124,12 @@ async function saveEdit() {
     name: editName.value.trim(),
     purchase_date: editPurchaseDate.value,
     total_cost_cents: costCents,
-    currency_code: editing.value.currency_code,
+    currency_code: editIntent.value.row.currency_code,
     note: editNote.value.trim() || null,
     purchase_transaction_id: editLinkTxId.value,
   }
   try {
-    await itemsStore.update(editing.value.id, input)
+    await itemsStore.update(editIntent.value.row.id, input)
     message.success(t('items.msg.saved'))
     closeEdit()
   } catch (e) {
@@ -319,16 +333,24 @@ onMounted(() => {
       </NDataTable>
     </NCard>
 
-    <!-- 编辑弹窗（issue #117）：币种不可改，沿用行内币种 -->
+    <!-- 编辑弹窗（issue #117）：币种不可改，沿用行内币种。
+         显示由「意图非空」派生（无独立 show 布尔），关闭（✕ / ESC / 取消 / 提交成功）
+         统一经工厂清回 null 终态；序号作表单 key 强制重建（ADR-0072）。 -->
     <AppModal
-      :show="editing !== null"
+      :show="editIntent !== null"
       preset="card"
       :title="t('items.edit.title')"
       style="width: 440px"
       data-testid="item-edit-modal"
       @update:show="(v: boolean) => (v ? undefined : closeEdit())"
     >
-      <NForm v-if="editing" label-placement="left" :show-feedback="false" size="small">
+      <NForm
+        v-if="editIntent"
+        :key="editSeq"
+        label-placement="left"
+        :show-feedback="false"
+        size="small"
+      >
         <NFormItem :label="t('items.edit.label.name')">
           <NInput v-model:value="editName" :placeholder="t('items.edit.placeholder.name')" />
         </NFormItem>
@@ -358,7 +380,7 @@ onMounted(() => {
           />
         </NFormItem>
         <NFormItem :label="t('items.edit.label.currency')">
-          <span>{{ editing.currency_code }}{{ t('items.edit.currencyFixed') }}</span>
+          <span>{{ editIntent.row.currency_code }}{{ t('items.edit.currencyFixed') }}</span>
         </NFormItem>
         <NFormItem :label="t('items.edit.label.note')">
           <NInput v-model:value="editNote" :placeholder="t('items.edit.placeholder.note')" />
