@@ -10,7 +10,7 @@ use crate::dashboard::DashboardOverview;
 use crate::db::DbState;
 use crate::error::{AppError, Result};
 
-/// 首页净资产总览：本位币净资产及其两个组成。
+/// 首页净资产总览：本位币净资产及其三个组成。
 #[tauri::command]
 pub fn dashboard_overview(db: State<'_, DbState>) -> Result<DashboardOverview> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
