@@ -231,7 +231,10 @@ fn finish_repair(
 ) -> NotePinyinRepairReport {
     let converged = match probe_note_pinyin_backlog(conn) {
         Ok(has_backlog) => !has_backlog,
-        Err(_) => false,
+        Err(e) => {
+            tracing::warn!(error = %e, "备注拼音收敛探测失败（收敛位保守置否）");
+            false
+        }
     };
     NotePinyinRepairReport {
         backfilled,
@@ -240,15 +243,29 @@ fn finish_repair(
     }
 }
 
-/// 备注拼音一键修复（issue #513）：显式回填全部积压并返回报告（回填行数 /
-/// 是否收敛 / 失败原因）。幂等——仅补「拼音列仍为 NULL」的行，重复执行零回填、
-/// 已回填行（含手工脏值）原样保留；分批事务与失败纪律同惰性回填：任一批失败
-/// 记 warn、终止本轮回填、报告携带失败阶段与底层错误，不静默。派生数据维护
-/// 不置脏（不触发备份）。搜索入口的惰性回填消费同一实现（报告在搜索路径不
-/// 消费，失败已 warn，语义由现算兜底保障）。
+/// 备注拼音一键修复（issue #513，域接口）：显式回填全部积压并返回报告
+/// （回填行数 / 是否收敛 / 失败原因）。幂等——仅补「拼音列仍为 NULL」的行，
+/// 重复执行零回填、已回填行（含手工脏值）原样保留；分批事务与失败纪律同惰性
+/// 回填：任一批失败记 warn、终止本轮回填、报告携带失败阶段与底层错误，不静默。
+/// 派生数据维护不置脏（不触发备份）。搜索入口的惰性回填消费核心
+/// [`backfill_note_pinyin`]（报告在搜索路径不消费，失败已 warn，语义由现算
+/// 兜底保障），本入口只以「一键修复」领域语言显式触发同一实现并取报告。
 pub fn repair_note_pinyin(conn: &Connection) -> NotePinyinRepairReport {
+    backfill_note_pinyin(conn)
+}
+
+/// 备注拼音分批回填核心（惰性回填与一键修复的共享实现，见
+/// [`repair_note_pinyin`] 文档）：返回回填行数 / 是否收敛 / 失败原因的报告。
+fn backfill_note_pinyin(conn: &Connection) -> NotePinyinRepairReport {
     match probe_note_pinyin_backlog(conn) {
-        Ok(false) => return finish_repair(conn, 0, None), // 已收敛：探测恒 O(1)。
+        // 已收敛：探测恒 O(1)，直接出报告（免二次探测）。
+        Ok(false) => {
+            return NotePinyinRepairReport {
+                backfilled: 0,
+                converged: true,
+                failure: None,
+            };
+        }
         Ok(true) => {}
         Err(e) => {
             tracing::warn!(error = %e, "备注拼音回填探测失败");
@@ -417,7 +434,7 @@ pub fn search_transactions_internal(
 
     // 惰性回填存量行的拼音冗余列（V018）：与显式一键修复（issue #513）消费
     // 同一回填核心；报告在搜索路径不消费，失败已 warn，语义由现算兜底保障。
-    repair_note_pinyin(conn);
+    backfill_note_pinyin(conn);
 
     // 可搜索名字与软删口径字典（账户/分类/商户，个位数到千行量级）：每次搜索
     // 新建，替代 50 万候选流上的逐行 JOIN（改名即刻生效语义不变，见模块注释）。

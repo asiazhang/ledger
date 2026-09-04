@@ -210,7 +210,6 @@
         }
       },
       "msg": {
-        "done": "Repair complete: {n} rows filled",
         "incomplete": "Repair incomplete, see the report",
         "repairFailed": "Repair failed: {msg}"
       }

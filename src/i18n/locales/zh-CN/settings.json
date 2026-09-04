@@ -210,7 +210,6 @@
         }
       },
       "msg": {
-        "done": "修复完成：已回填 {n} 行",
         "incomplete": "修复未全部完成，详见报告",
         "repairFailed": "修复失败: {msg}"
       }

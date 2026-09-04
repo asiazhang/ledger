@@ -7,7 +7,7 @@ use rusqlite::Connection;
 use super::super::search::{repair_note_pinyin, search_transactions_internal};
 use crate::db::{init_db, open_in_memory};
 use crate::error::Result;
-use crate::transaction::TransactionSearchResult;
+use crate::transaction::{NotePinyinRepairStage, TransactionSearchResult};
 
 fn setup() -> Connection {
     let mut conn = open_in_memory().unwrap();
@@ -172,4 +172,43 @@ fn repair_ignores_noteless_rows() {
     assert_eq!(report.backfilled, 1);
     assert!(report.converged, "无备注行的 NULL 列不构成积压");
     assert_eq!(note_pinyin_of(&conn, "t2"), None);
+}
+
+/// 失败注入（验收：失败时报告原因，不静默）：探测阶段失败——表缺失使探针
+/// 查询出错，报告携带 Probe 阶段与底层消息、零回填、收敛保守置否。
+#[test]
+fn repair_reports_probe_failure() {
+    let conn = setup();
+    conn.execute("DROP TABLE transactions", []).unwrap();
+
+    let report = repair_note_pinyin(&conn);
+    let failure = report.failure.expect("探测失败应报告原因");
+    assert!(matches!(failure.stage, NotePinyinRepairStage::Probe));
+    assert!(!failure.message.is_empty());
+    assert_eq!(report.backfilled, 0);
+    assert!(!report.converged);
+}
+
+/// 失败注入（验收：失败时报告原因，不静默）：写入阶段失败——触发器对
+/// UPDATE RAISE(ABORT)，报告携带 Write 阶段与底层消息，剩余积压如实报告
+/// （收敛否），且事务回滚后已回填行不损。
+#[test]
+fn repair_reports_write_failure_and_stays_honest() {
+    let conn = setup();
+    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    insert_txn_note_pinyin(&conn, "t1", "a1", Some("万科物业"), "2026-02-01", None);
+    conn.execute(
+        "CREATE TRIGGER injected_abort BEFORE UPDATE ON transactions \
+         BEGIN SELECT RAISE(ABORT, 'injected write failure'); END",
+        [],
+    )
+    .unwrap();
+
+    let report = repair_note_pinyin(&conn);
+    let failure = report.failure.expect("写入失败应报告原因");
+    assert!(matches!(failure.stage, NotePinyinRepairStage::Write));
+    assert!(failure.message.contains("injected write failure"));
+    assert_eq!(report.backfilled, 0, "失败批不计回填数");
+    assert!(!report.converged, "剩余积压如实报告");
+    assert_eq!(note_pinyin_of(&conn, "t1"), None, "失败批已回滚");
 }

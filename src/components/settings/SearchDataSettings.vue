@@ -58,8 +58,11 @@ async function repair() {
     if (report.value.failure || !report.value.converged) {
       message.warning(t('settings.data.search.msg.incomplete'))
     } else {
+      // toast 与报告标题同文案（同一键，避免双源漂移）。
       message.success(
-        t('settings.data.search.msg.done', { n: report.value.backfilled }),
+        report.value.backfilled > 0
+          ? t('settings.data.search.report.doneTitle', { n: report.value.backfilled })
+          : t('settings.data.search.report.noopTitle'),
       )
     }
   } catch (e: any) {
