@@ -1,5 +1,19 @@
+import { ref } from 'vue'
 import type { Currency } from '@/types/currencies'
 import { currentLocale, type Locale } from '@/i18n'
+
+/** 金额隐私模式的 localStorage key（轻量设置项，水合与持久化收口在应用设置 store） */
+export const AMOUNT_PRIVACY_STORAGE_KEY = 'amount_privacy_enabled'
+
+/**
+ * 金额隐私模式开关（issue #566，轻量设置项 ADR-0017 口径）：模块级响应式单点，
+ * 三个展示格式化函数消费此开关（同界面语言 currentLocale 注入先例），全应用金额展示
+ * 收口隐藏、调用点零判断；应用设置 store 负责启动水合与变更持久化，测试可直接置位。
+ */
+export const amountPrivacyEnabled = ref(false)
+
+/** 掩码恒为固定长度，无负号、无币种符号、不随语言与数量级变化（spec #564 掩码恒等性） */
+const AMOUNT_PRIVACY_MASK = '••••'
 
 /**
  * 分组位数由界面语言隐含（词汇表「数字分组」）：中文每 4 位一组，英文每 3 位一组。
@@ -39,12 +53,14 @@ function groupNumberString(numStr: string, size: number): string {
  * 测试可显式传入以回归两种语言口径。
  */
 export function formatQuantity(quantity: number, locale: Locale = currentLocale.value): string {
+  if (amountPrivacyEnabled.value) return AMOUNT_PRIVACY_MASK
   return groupNumberString(String(quantity), groupSizeFor(locale))
 }
 
 /** 分 -> 元字符串，按币种小数位换算后裁剪小数尾零（98.00→98、98.50→98.5，无损去零不涉舍入）；
  *  整数部分走界面语言分组（展示层全局口径，见词汇表「数字分组」）；locale 缺省取应用当前语言 */
 export function formatAmount(cents: number, currency?: Currency, locale: Locale = currentLocale.value): string {
+  if (amountPrivacyEnabled.value) return AMOUNT_PRIVACY_MASK
   const dp = currency?.decimal_places ?? 2
   const sign = cents < 0 ? '-' : ''
   const abs = Math.abs(cents)
@@ -71,6 +87,7 @@ export function centsToYuan(cents: number, currency?: Currency): number {
  * 股票两位价、港股三位价、基金四位净值同一直口。整数部分走界面语言分组；locale 缺省取应用当前语言。
  */
 export function formatPrice(price: number, currency?: Currency, locale: Locale = currentLocale.value): string {
+  if (amountPrivacyEnabled.value) return AMOUNT_PRIVACY_MASK
   const sign = price < 0 ? '-' : ''
   const abs = Math.abs(price)
   const fixed = (abs / 10000).toFixed(4)

@@ -8,6 +8,12 @@
 
 - **应用更名**：应用更名为「开源记账」，英文门面名 OpenLedger，tagline「开源、本地优先的个人记账应用」——窗口标题、侧栏标题、关于页、错误文案、备份文件选择器、AI 提示词用户指引按界面语言显示双名；安装包与 Release 产物以 OpenLedger / openledger 命名。改名只动显示层：账本数据、历史备份与升级路径一切照旧，应用标识符、`ledger.db`、受管备份前缀与「Ledger API」协议称谓不变（[#584]，ADR-0076）。
 
+## [Unreleased]
+
+### Added
+
+- **界面**：新增金额隐私模式——侧栏标题行眼睛按钮一键把全应用金额数字（交易、账户余额、净资产、预算、报表、投资市值/盈亏/单价/份额、保费、实物资产估值、物品成本、搜索结果）替换为统一掩码 `••••`；支出红/收入绿等语义色、百分比与图表形状保留，表单输入不受影响；开关跨启动记住、仅本设备、不随备份迁移（[#566]）。
+
 ## [0.5.0] - 2026-09-05
 
 ### Added
@@ -159,4 +165,5 @@
 [#513]: https://github.com/asiazhang/ledger/issues/513
 [#515]: https://github.com/asiazhang/ledger/issues/515
 [#526]: https://github.com/asiazhang/ledger/issues/526
+[#566]: https://github.com/asiazhang/ledger/issues/566
 [#584]: https://github.com/asiazhang/ledger/issues/584

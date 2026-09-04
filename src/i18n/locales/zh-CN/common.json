@@ -51,5 +51,9 @@
   },
   "globalBusyBar": {
     "label": "正在处理"
+  },
+  "amountPrivacy": {
+    "hide": "隐藏金额",
+    "show": "显示金额"
   }
 }

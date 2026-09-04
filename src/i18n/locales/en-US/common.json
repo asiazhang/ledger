@@ -51,5 +51,9 @@
   },
   "globalBusyBar": {
     "label": "Working"
+  },
+  "amountPrivacy": {
+    "hide": "Hide amounts",
+    "show": "Show amounts"
   }
 }
