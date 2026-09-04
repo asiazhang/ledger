@@ -1,5 +1,5 @@
-//! bench 子命令：对 generate 产出的库跑 10 项查询基准并输出 min/avg/p95 报告
-//! （issue #461 / spec #458）。
+//! bench 子命令：对 generate 产出的库跑 11 项查询基准并输出 min/avg/p95 报告
+//! （issue #461 / spec #458；拼音子序列基准 issue #514）。
 //!
 //! 唯一接缝（验收项）：全部基准经「现有 pub 查询函数 + 标准连接工厂
 //! （[`open_connection`]）打开文件库」调用，与 IPC 命令同一 SQL 路径——
@@ -40,8 +40,10 @@ const PAGE_SIZE: usize = 20;
 /// 分项门禁阈值例外（ADR-0068）：默认判据 200ms 对全部基准生效；全量扫描型
 /// 基准（子序列语义无法索引加速，纯 CPU 密集、耗时线性于交易数）不能与索引
 /// 加速型基准共用一条线，例外项与阈值在此声明，增删须同步修订 ADR-0068 与
-/// tests 里的例外表钉住断言。
-pub(crate) const PER_BENCH_MAX_P95_MS: &[(&str, f64)] = &[("备注搜索拼音过滤", 400.0)];
+/// tests 里的例外表钉住断言。中文子串（「咖啡」）与拼音子序列（「kf」）两条
+/// 搜索基准同属全量扫描型，各占一项例外（issue #514）。
+pub(crate) const PER_BENCH_MAX_P95_MS: &[(&str, f64)] =
+    &[("备注搜索拼音过滤", 400.0), ("备注搜索拼音子序列", 400.0)];
 
 /// 某基准项的门禁阈值：分项例外优先，未列出的用默认阈值。
 fn gate_threshold_for(name: &str, default_max_p95_ms: f64) -> f64 {
@@ -62,8 +64,12 @@ pub(crate) struct BenchCli {
     /// 每项基准计时迭代次数（默认 20：n=10 时最近秩 p95 恒等于 max，
     /// 20 次才成真分位数；ADR-0068 统计口径）。
     pub iterations: usize,
-    /// 备注搜索基准的关键字（默认「咖啡」，命中备注池并驱动拼音过滤路径）。
+    /// 中文子串搜索基准的关键字（默认「咖啡」，命中备注池，驱动原文连续
+    /// 子串匹配路径）。
     pub search: String,
+    /// 拼音子序列搜索基准的关键字（默认「kf」：命中「买咖啡」→ mkf 等，
+    /// 不构成任何备注原文子串，真正驱动拼音首字母子序列匹配路径，issue #514）。
+    pub search_pinyin: String,
     /// 性能门禁阈值（毫秒）：全部基准 p95 ≤ 阈值才退出 0；None = 不判定。
     pub max_p95_ms: Option<f64>,
 }
@@ -75,6 +81,7 @@ impl Default for BenchCli {
             warmup: 3,
             iterations: 20,
             search: "咖啡".to_string(),
+            search_pinyin: "kf".to_string(),
             max_p95_ms: None,
         }
     }
@@ -123,6 +130,9 @@ pub(crate) fn parse_bench_args(args: &[String]) -> Result<ParsedBench, String> {
             "--search" => {
                 cli.search = take_value(&mut i, inline_value)?;
             }
+            "--search-pinyin" => {
+                cli.search_pinyin = take_value(&mut i, inline_value)?;
+            }
             "--max-p95-ms" => {
                 let v = take_value(&mut i, inline_value)?;
                 let ms = v
@@ -149,6 +159,7 @@ pub(crate) struct BenchConfig {
     pub warmup: usize,
     pub iterations: usize,
     pub search_term: String,
+    pub pinyin_search_term: String,
 }
 
 /// 单项基准的统计结果（人读报告行 + 冒烟断言面）。
@@ -193,6 +204,7 @@ pub(crate) fn run(cli: BenchCli) -> Result<(), String> {
         warmup: cli.warmup,
         iterations: cli.iterations,
         search_term: cli.search.clone(),
+        pinyin_search_term: cli.search_pinyin.clone(),
     };
     let results = run_benchmarks(&conn, &cfg)?;
     print_report(&cli.db, &cfg, &results);
@@ -245,7 +257,7 @@ pub(crate) fn gate_failures(results: &[BenchMetrics], max_p95_ms: f64) -> Vec<St
         .collect()
 }
 
-/// 基准执行核心（测试接缝）：对已打开的连接跑全部 10 项基准。
+/// 基准执行核心（测试接缝）：对已打开的连接跑全部 11 项基准。
 ///
 /// 前置数据（账户 id、日期极值、深分页页码）全部经现有查询函数在预热外
 /// 一次性探测，基准闭包内只做「参数已定型的单次查询调用」。
@@ -307,6 +319,7 @@ pub(crate) fn run_benchmarks(
     };
     // 每个闭包专用克隆（move 捕获，互不争用所有权）。
     let search_term = cfg.search_term.clone();
+    let pinyin_search_term = cfg.pinyin_search_term.clone();
     let account_window_end = max_date.clone();
     let monthly_min = min_date.clone();
     let monthly_max = max_date.clone();
@@ -406,6 +419,28 @@ pub(crate) fn run_benchmarks(
                 )
                 .map_err(|e| e.to_string())
                 .map(|r| format!("关键字「{search_term}」全量扫描，命中 {} 条", r.total))
+            }),
+        ),
+        (
+            "备注搜索拼音子序列",
+            Box::new(move |conn| {
+                search_transactions_internal(
+                    conn,
+                    &pinyin_search_term,
+                    1,
+                    PAGE_SIZE,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(|e| e.to_string())
+                .map(|r| {
+                    format!(
+                        "关键字「{pinyin_search_term}」拼音子序列全量扫描，命中 {} 条",
+                        r.total
+                    )
+                })
             }),
         ),
         (
