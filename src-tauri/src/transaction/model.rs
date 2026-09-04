@@ -283,6 +283,19 @@ pub struct TransactionListFilter {
     /// 交易类型过滤（income / expense / transfer / buy / sell / refund）。
     /// 枚举反序列化对未知值报参数错误（400），不再静默传字符串给 SQL。
     pub kind: Option<TransactionKind>,
+    /// 交易类型集合过滤（issue #581 报表分类下钻载荷）：命中 `kind IN (...)` 的未删除交易，
+    /// 与其余维度 AND 组合；与单值 `kind` 同携时也按 AND 组合。已发布单值参数语义冻结
+    /// （只增不改）：不携带本字段时行为与已发布契约一致。两形态反序列化
+    /// （[`deserialize_kind_set`]）：IPC JSON 为字符串数组；HTTP 查询串为逗号分隔单参数
+    /// （`kinds=expense,refund`，与前端下钻 URL 同一编码），逐元素闭集枚举、未知值
+    /// 报参数错误（400）。空数组视为未携带（不过滤，先例同 `uncategorized_only=false`）；
+    /// HTTP 空串（`kinds=`）不是合法字面量串，照报 400（先例同 `uncategorized_only=`）。
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_kind_set"
+    )]
+    pub kinds: Option<Vec<TransactionKind>>,
     /// 取前 N 条（仪表盘"最近 N 条"场景），与分页互斥：传 `page_size` 时分页路径生效。
     /// 沿用 SQLite 原生语义：`limit=0` 返回空，负值无上限。
     pub limit: Option<i64>,
@@ -290,6 +303,58 @@ pub struct TransactionListFilter {
     pub page: Option<usize>,
     /// 每页条数，缺省返回全部（total 恒返回）；小于 1 按 1 处理。
     pub page_size: Option<usize>,
+}
+
+/// `kinds` 字段双形态反序列化（issue #581）：字符串数组（IPC JSON）或逗号分隔单参数
+/// （HTTP 查询串，与前端下钻 URL 同一编码）。逐元素经 [`TransactionKind`] 闭集枚举
+/// 反序列化，未知值报参数错误（单值 `kind` 同规）。
+fn deserialize_kind_set<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<Vec<TransactionKind>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct KindSetVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for KindSetVisitor {
+        type Value = Option<Vec<TransactionKind>>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("kind 字符串数组或逗号分隔字符串")
+        }
+
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> std::result::Result<Self::Value, E> {
+            let mut kinds = Vec::new();
+            for s in v.split(',') {
+                match TransactionKind::parse(s.trim()) {
+                    Ok(k) => kinds.push(k),
+                    Err(e) => return Err(serde::de::Error::custom(e.to_string())),
+                }
+            }
+            Ok(Some(kinds))
+        }
+
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut seq: A,
+        ) -> std::result::Result<Self::Value, A::Error> {
+            let mut kinds = Vec::new();
+            while let Some(k) = seq.next_element::<TransactionKind>()? {
+                kinds.push(k);
+            }
+            Ok(Some(kinds))
+        }
+
+        fn visit_none<E: serde::de::Error>(self) -> std::result::Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_unit<E: serde::de::Error>(self) -> std::result::Result<Self::Value, E> {
+            Ok(None)
+        }
+    }
+
+    deserializer.deserialize_any(KindSetVisitor)
 }
 
 /// 交易列表分页结果。

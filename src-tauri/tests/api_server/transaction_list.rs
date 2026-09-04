@@ -1,8 +1,8 @@
 use axum::http::StatusCode;
 
 use crate::common::{
-    batch_body, create_account_via_api, dates_of, get_json, items_of, post_batch,
-    seed_readback_transactions, setup_app,
+    batch_body, create_account_via_api, create_category_via_api, dates_of, get_json, get_status,
+    items_of, post_batch, seed_readback_transactions, setup_app,
 };
 
 #[tokio::test]
@@ -102,6 +102,62 @@ async fn test_get_transactions_filters_by_kind() {
         .map(|t| t["amount_cents"].as_i64().unwrap())
         .sum();
     assert_eq!(sum, 700);
+}
+
+#[tokio::test]
+async fn test_get_transactions_filters_by_kinds_set() {
+    let (app, _) = setup_app();
+    let account_id = create_account_via_api(&app, "现金账户").await;
+    let category_id = create_category_via_api(&app, r#"{"name":"餐饮","kind":"expense"}"#).await;
+
+    // 带分类支出 + 其退款（继承分类）；无分类收入与转账（转账天然无分类）
+    let expense = format!(
+        r#"{{"kind":"expense","amount_cents":100,"currency_code":"CNY","account_id":"{account_id}","category_id":"{category_id}","date":"2026-05-01"}}"#
+    );
+    let income = format!(
+        r#"{{"kind":"income","amount_cents":200,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-02"}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&expense, &income], None)).await;
+    assert!(created.iter().all(|r| r["success"] == true), "{created:?}");
+    let expense_id = created[0]["id"].as_str().unwrap();
+    let refund = format!(
+        r#"{{"kind":"refund","amount_cents":50,"currency_code":"CNY","account_id":"{account_id}","refund_of_transaction_id":"{expense_id}","date":"2026-05-03"}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&refund], None)).await;
+    assert!(created.iter().all(|r| r["success"] == true), "{created:?}");
+
+    // 类型集合命中集合内各 kind（含带分类退款），排除无分类收入；逗号分隔单参数绑定
+    let (status, body) = get_json(&app, "/api/v1/transactions?kinds=expense,refund").await;
+    assert_eq!(status, StatusCode::OK);
+    let txs = items_of(&body);
+    assert_eq!(txs.len(), 2, "应只命中支出与退款: {body:?}");
+    assert!(
+        txs.iter()
+            .all(|t| t["kind"] == "expense" || t["kind"] == "refund")
+    );
+    assert_eq!(body["total"], 2);
+
+    // 类型集合 × 仅无分类 AND 组合：支出/退款都带分类 → 空集
+    let (status, body) = get_json(
+        &app,
+        "/api/v1/transactions?kinds=expense,refund&uncategorized_only=true",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(items_of(&body).is_empty(), "AND 组合应为空集: {body:?}");
+    assert_eq!(body["total"], 0);
+
+    // 仅无分类单独调用行为不变（语义纯 NULL，不限定类型）
+    let (_, body) = get_json(&app, "/api/v1/transactions?uncategorized_only=true").await;
+    assert_eq!(body["total"], 1, "仅无分类应命中无分类收入: {body:?}");
+
+    // 既有单值 kind 参数行为不变（只增不改）
+    let (_, body) = get_json(&app, "/api/v1/transactions?kind=expense").await;
+    assert_eq!(body["total"], 1);
+
+    // 集合外字面量：非法值 4xx（与单值 kind 同规）；Query 反序列化拒绝，响应体非 JSON 契约
+    let status = get_status(&app, "/api/v1/transactions?kinds=expense,bogus").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

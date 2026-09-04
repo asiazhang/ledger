@@ -3,7 +3,7 @@ import { defineComponent, watch } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import { invoke } from '@tauri-apps/api/core'
-import { useTransactionFilter, UNCATEGORIZED_ONLY } from '@/composables/useTransactionFilter'
+import { useTransactionFilter, UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
 import type { UseTransactionFilterReturn } from '@/composables/useTransactionFilter'
 import { useReferenceStore } from '@/stores/reference'
 import type { Account, Category, Merchant, TransactionListFilter } from '@/types'
@@ -80,6 +80,8 @@ const FilterHarness = defineComponent({
       if (tf.filters.categoryId === UNCATEGORIZED_ONLY) f.uncategorized_only = true
       else if (tf.filters.categoryId) f.category_id = tf.filters.categoryId
       if (tf.filters.kind) f.kind = tf.filters.kind
+      // 类型集合维度（issue #581，与视图 load 同构）：非空集合 → kinds 数组（浅拷贝脱只读）
+      if (tf.filters.kinds?.length) f.kinds = [...tf.filters.kinds]
       requests.push(f)
     })
     harness = { tf, requests }
@@ -101,7 +103,7 @@ function lastRequest(): TransactionListFilter {
 }
 
 describe('useTransactionFilter 初始状态', () => {
-  it('默认全量：五个过滤维度为 null，page=1，pageSize=20，版本号 0', () => {
+  it('默认全量：六个过滤维度为 null，page=1，pageSize=20，版本号 0', () => {
     const { tf } = mountHarness()
     expect(tf.filters).toEqual({
       dateFrom: null,
@@ -110,6 +112,7 @@ describe('useTransactionFilter 初始状态', () => {
       merchantId: null,
       categoryId: null,
       kind: null,
+      kinds: null,
     })
     expect(tf.page.value).toBe(1)
     expect(tf.pageSize.value).toBe(20)
@@ -191,6 +194,7 @@ describe('useTransactionFilter setFilter（手动过滤意图）', () => {
       merchantId: 'mch-1',
       categoryId: 'cat-1',
       kind: 'transfer',
+      kinds: null,
     })
     // 同一同步批次内的多次 bump 被 watcher 去重，最终以完整过滤状态重拉一次
     expect(requests).toHaveLength(1)
@@ -223,6 +227,7 @@ describe('useTransactionFilter resetFilters（清除筛选）', () => {
       merchantId: null,
       categoryId: null,
       kind: null,
+      kinds: null,
     })
     expect(tf.page.value).toBe(1)
     expect(requests).toHaveLength(2) // setFilter 一次 + resetFilters 一次
@@ -428,6 +433,7 @@ describe('useTransactionFilter URL 参数表·解析与校验（参考数据已�
       merchantId: null,
       categoryId: null,
       kind: null,
+      kinds: null,
     })
     expect(requests).toHaveLength(0)
   })
@@ -486,6 +492,7 @@ describe('useTransactionFilter URL 参数表·复位规则（#96 决策 3）', (
       merchantId: null,
       categoryId: null,
       kind: null,
+      kinds: null,
     })
     expect(tf.page.value).toBe(1)
     expect(lastRequest()).toEqual({ page: 1, page_size: 20 })
@@ -715,14 +722,20 @@ describe('useTransactionFilter URL 参数表·日期维度（issue #380）', () 
     expect(lastRequest()).toEqual({ page: 1, page_size: 20, from: '2026-01-01', to: '2026-12-31' })
   })
 
-  it('报表跳转载荷形态：category + 当年首尾日期组合直达，一次重拉，无交易类型字段', async () => {
+  it('报表跳转载荷形态：category + 当年首尾日期 + 类型集合组合直达，一次重拉，单值类型不受牵连', async () => {
     const { tf, requests } = mountHarness()
     await flushPromises()
-    tf.syncUrlQuery({ category: 'cat-1', dateFrom: '2026-01-01', dateTo: '2026-12-31' })
+    tf.syncUrlQuery({
+      category: 'cat-1',
+      dateFrom: '2026-01-01',
+      dateTo: '2026-12-31',
+      kinds: CATEGORY_DRILLDOWN_KINDS,
+    })
     await flushPromises()
     expect(tf.filters.categoryId).toBe('cat-1')
     expect(tf.filters.dateFrom).toBe('2026-01-01')
     expect(tf.filters.dateTo).toBe('2026-12-31')
+    expect(tf.filters.kinds).toEqual(['expense', 'refund'])
     expect(requests).toHaveLength(1)
     expect(lastRequest()).toEqual({
       page: 1,
@@ -730,7 +743,9 @@ describe('useTransactionFilter URL 参数表·日期维度（issue #380）', () 
       category_id: 'cat-1',
       from: '2026-01-01',
       to: '2026-12-31',
+      kinds: ['expense', 'refund'],
     })
+    // 类型集合维度与单值手动类型维度解耦：URL 载荷不触碰单值 kind
     expect(lastRequest().kind).toBeUndefined()
   })
 
@@ -820,6 +835,147 @@ describe('useTransactionFilter URL 参数表·日期维度（issue #380）', () 
     expect(tf.filters.dateFrom).toBeNull()
     expect(tf.filters.kind).toBeNull()
     expect(lastRequest()).toEqual({ page: 1, page_size: 20 })
+  })
+})
+
+// —— 类型集合维度（issue #581）：URL ?kinds= 下钻专用，逗号分隔闭集字面量；无参考数据
+// 映射、不涉保留值，挂起补判/让位/复位守卫与既有维度同规。消费方是报表分类下钻跳转，
+// 与「仅无分类」解耦：仅无分类命中一切无分类交易、不限定类型。
+
+describe('useTransactionFilter URL 参数表·类型集合维度（issue #581）', () => {
+  it('合法集合：应用（请求携带 kinds 数组），翻页归零 + 一次重拉', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.page.value = 3
+    tf.syncUrlQuery({ kinds: 'expense,refund' })
+    await flushPromises()
+    expect(tf.filters.kinds).toEqual(['expense', 'refund'])
+    expect(tf.page.value).toBe(1)
+    expect(requests).toHaveLength(1)
+    expect(lastRequest()).toEqual({
+      page: 1,
+      page_size: 20,
+      kinds: ['expense', 'refund'],
+    })
+  })
+
+  it('未分类柱下钻形态：kinds × category=none × 期间三维度组合，一次重拉', async () => {
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({
+      category: UNCATEGORIZED_ONLY,
+      dateFrom: '2026-01-01',
+      dateTo: '2026-12-31',
+      kinds: CATEGORY_DRILLDOWN_KINDS,
+    })
+    await flushPromises()
+    expect(tf.filters.kinds).toEqual(['expense', 'refund'])
+    expect(requests).toHaveLength(1)
+    expect(lastRequest()).toEqual({
+      page: 1,
+      page_size: 20,
+      uncategorized_only: true,
+      from: '2026-01-01',
+      to: '2026-12-31',
+      kinds: ['expense', 'refund'],
+    })
+  })
+
+  it('非法字面量：整串视为不在场（回退不过滤），不误清其他维度、不越界复位', async () => {
+    const { tf } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ category: 'cat-1', kinds: 'expense,bogus' })
+    await flushPromises()
+    expect(tf.filters.kinds).toBeNull()
+    expect(tf.filters.categoryId).toBe('cat-1')
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20, category_id: 'cat-1' })
+  })
+
+  it('复位守卫：kinds 无效回退时另一维度有效在场 → 日期/类型不越界复位', async () => {
+    const { tf } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ category: 'cat-1', kinds: 'expense,bogus' })
+    await flushPromises()
+    tf.setFilter({ dateFrom: '2026-01-01', kind: 'income' })
+    await flushPromises()
+    tf.syncUrlQuery({ category: 'cat-1', kinds: 'transfer,bogus' })
+    await flushPromises()
+    expect(tf.filters.kinds).toBeNull()
+    expect(tf.filters.categoryId).toBe('cat-1')
+    expect(tf.filters.dateFrom).toBe('2026-01-01')
+    expect(tf.filters.kind).toBe('income')
+  })
+
+  it('导航清除 kinds 参数：对应维度同步清空（分类参数在场时不清分类维度）', async () => {
+    const { tf } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ category: 'cat-1', kinds: 'expense,refund' })
+    await flushPromises()
+    tf.syncUrlQuery({ category: 'cat-1' })
+    await flushPromises()
+    expect(tf.filters.kinds).toBeNull()
+    expect(tf.filters.categoryId).toBe('cat-1')
+  })
+
+  it('参考数据未就绪时同规挂起，就绪后补判应用', async () => {
+    const release = gateReference('list_accounts')
+    const { tf, requests } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ kinds: 'expense,refund' })
+    await flushPromises()
+    expect(tf.filters.kinds).toBeNull()
+    expect(requests).toHaveLength(0)
+    release()
+    await flushPromises()
+    expect(tf.filters.kinds).toEqual(['expense', 'refund'])
+    expect(lastRequest()).toEqual({
+      page: 1,
+      page_size: 20,
+      kinds: ['expense', 'refund'],
+    })
+  })
+
+  it('单值手动类型维度与类型集合维度 AND 共存，互不改写', async () => {
+    const { tf } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ kinds: 'expense,refund' })
+    await flushPromises()
+    tf.setFilter({ kind: 'income' })
+    await flushPromises()
+    expect(lastRequest()).toEqual({
+      page: 1,
+      page_size: 20,
+      kind: 'income',
+      kinds: ['expense', 'refund'],
+    })
+  })
+
+  it('resetFilters（清除筛选）复位类型集合维度', async () => {
+    const { tf } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ kinds: 'expense,refund' })
+    await flushPromises()
+    tf.resetFilters()
+    await flushPromises()
+    expect(tf.filters.kinds).toBeNull()
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20 })
+  })
+
+  it('补判前手动改动同维度（setFilter 直写即手动意图）→ 让位且不再重放', async () => {
+    const release = gateReference('list_accounts')
+    const { tf } = mountHarness()
+    await flushPromises()
+    tf.syncUrlQuery({ kinds: 'expense,refund' })
+    await flushPromises()
+    // 参考数据就绪前，用户手动改动同维度
+    tf.setFilter({ kinds: ['transfer'] })
+    release()
+    await flushPromises()
+    // 让位：保持手动改动；之后参考数据重拉不重放
+    expect(tf.filters.kinds).toEqual(['transfer'])
+    await useReferenceStore().refresh()
+    await flushPromises()
+    expect(tf.filters.kinds).toEqual(['transfer'])
   })
 })
 

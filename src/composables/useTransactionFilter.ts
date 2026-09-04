@@ -1,12 +1,21 @@
 import { reactive, readonly, ref, watch } from 'vue'
 import type { Ref } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
+import { TRANSACTION_KINDS } from '@/types'
 import type { TransactionKind } from '@/types'
 
 /** 「仅无分类」哨兵值（issue #377）：分类过滤维度三态之一（不过滤 null / 精确 id / 哨兵）。
  * 同时是 URL ?category= 的保留参数值；分类 id 为 UUID，与哨兵串不可能撞值。
  * 视图装配时哨兵映射为后端 `uncategorized_only`。 */
 export const UNCATEGORIZED_ONLY = 'none'
+
+/** 报表分类下钻跳转的收支类型集合（issue #581）：支出 + 退款，与分类聚合的参与类型
+ * 同源（退款继承原分类、计入柱值）。URL 编码为逗号分隔闭集字面量，与后端列表过滤
+ * 契约的 HTTP 查询串 `kinds=expense,refund` 同一约定；消费方在 TransactionFilter
+ * 类型集合维度按同表解析。字面量经 satisfies 钉在 TransactionKind 闭集内：
+ * kind 字面量改名时此处编译报错，而非跳转载荷静默失效。 */
+const CATEGORY_DRILLDOWN_KIND_TOKENS = ['expense', 'refund'] as const satisfies readonly TransactionKind[]
+export const CATEGORY_DRILLDOWN_KINDS = CATEGORY_DRILLDOWN_KIND_TOKENS.join(',')
 
 /** URL 日期参数格式（issue #380）：YYYY-MM-DD，月/日限定在可能范围内（01-12 / 01-31）；
  * 非法格式视为参数不在场（回退不过滤）。不校验日历真实性（如 02-30 可通过）：后端按
@@ -31,6 +40,12 @@ export interface TransactionFilters {
   categoryId: string | null
   /** 交易类型过滤（前端 6 种：income/expense/transfer/refund/buy/sell） */
   kind: TransactionKind | null
+  /** 类型集合维度（issue #581，下钻专用）：URL ?kinds= 携带的交易类型集合（逗号分隔
+   * 闭集字面量解析为字面量数组），与其余维度 AND 组合。类型为闭集字面量、无参考数据
+   * 映射、不涉保留值，挂起补判/让位/复位守卫同规；与单值 kind 手动维度解耦共存。
+   * 消费方是报表分类下钻跳转（载荷显式携带与分类柱一致的收支类型集合）；与「仅无分类」
+   * 解耦：仅无分类命中一切无分类交易、不限定类型，收支限定由本维度承担。 */
+  kinds: readonly TransactionKind[] | null
 }
 
 /** 部分过滤意图：只声明要改的维度，未提及维度保持不变。 */
@@ -76,6 +91,7 @@ const DEFAULT_FILTERS: TransactionFilters = {
   merchantId: null,
   categoryId: null,
   kind: null,
+  kinds: null,
 }
 
 /**
@@ -84,7 +100,7 @@ const DEFAULT_FILTERS: TransactionFilters = {
  * 让位对每条同规则处理，视图不再感知下钻参数有几个（两条镜像解析链随之消灭），
  * 新增下钻维度只需在此表加一条。
  */
-/** 条目校验规则（判别联合，issue #380）：两类校验互斥，「既无映射又无格式」的非法
+/** 条目校验规则（判别联合，issue #380/#581）：三类校验互斥，「既无映射又无格式」的非法
  * 组合在类型层不可表示——「新增下钻维度只需在此表加一条」由类型结构背书。 */
 type UrlParamCheck =
   /** 参考数据映射校验（商户/分类含软删，历史交易口径 issue #191/#377）：
@@ -97,6 +113,10 @@ type UrlParamCheck =
   /** 格式校验（issue #380，无参考数据映射的维度）：命中即有效，原样作为过滤字段值；
    * 不命中回退 null（参数视为不在场）。 */
   | { readonly pattern: RegExp }
+  /** 闭集字面量校验（issue #581 类型集合维度，无参考数据映射）：逗号分隔串逐段命中
+   * 字面量闭集即整串有效；任一段不命中整串视为不在场（回退不过滤，与日期维度
+   * 「非法视为不在场」同规）。 */
+  | { readonly literalSet: ReadonlyArray<TransactionKind> }
 
 /** URL 下钻参数表条目（issue #234 / ADR-0030 决策 2）：一个维度一条，
  * query 键 → 过滤字段/校验规则/补丁构造的映射与消费状态。解析、校验、复位、补判、
@@ -104,8 +124,9 @@ type UrlParamCheck =
  * 新增下钻维度只需在此表加一条。
  */
 interface UrlParamDef {
-  /** URL query 键（?account= / ?merchant= / ?category= / ?dateFrom= / ?dateTo=，issue #380） */
-  readonly queryKey: 'account' | 'merchant' | 'category' | 'dateFrom' | 'dateTo'
+  /** URL query 键（?account= / ?merchant= / ?category= / ?kinds=（issue #581） /
+   * ?dateFrom= / ?dateTo=，issue #380） */
+  readonly queryKey: 'account' | 'merchant' | 'category' | 'kinds' | 'dateFrom' | 'dateTo'
   /** 接管的过滤维度字段 */
   readonly field: keyof TransactionFilters
   /** 校验规则（映射查 id 或格式校验，判别联合） */
@@ -143,6 +164,15 @@ const URL_PARAM_TABLE: ReadonlyArray<UrlParamDef> = [
     field: 'categoryId',
     check: { mapKey: 'categoryMap', reservedValues: [UNCATEGORIZED_ONLY] },
     toPatch: (value) => ({ categoryId: value }),
+  },
+  {
+    // 类型集合维度（issue #581）：报表分类下钻跳转载荷「分类 + 期间 + 收支类型集合」
+    // 的类型集合部分。闭集字面量、无参考数据映射、不涉保留值；挂起补判/让位/复位
+    // 守卫对每条同规则处理。
+    queryKey: 'kinds',
+    field: 'kinds',
+    check: { literalSet: TRANSACTION_KINDS },
+    toPatch: (value) => ({ kinds: value ? (value.split(',') as TransactionKind[]) : null }),
   },
   {
     // 日期边界维度（issue #380）：报表分类下钻跳转载荷「分类 + 所选年份首尾日期」的
@@ -261,7 +291,8 @@ export function useTransactionFilter(): UseTransactionFilterReturn {
   }
 
   /** 条目原始参数解析为过滤字段值：保留值命中 → 原样（哨兵即字段值）；
-   * 格式校验命中 → 原样（issue #380 日期维度）；映射命中 → 原样（分类 id 校验含软删，
+   * 格式校验命中 → 原样（issue #380 日期维度）；字面量闭集整串命中 → 原样
+   * （issue #581 类型集合维度，toPatch 再拆分）；映射命中 → 原样（分类 id 校验含软删，
    * 历史交易口径）；其余（不在场/未知/格式非法）→ null。 */
   function resolveValue(entry: UrlParamEntry): string | null {
     if (entry.raw === null) return null
@@ -269,6 +300,11 @@ export function useTransactionFilter(): UseTransactionFilterReturn {
     if ('mapKey' in check) {
       if (check.reservedValues?.includes(entry.raw)) return entry.raw
       return reference[check.mapKey].has(entry.raw) ? entry.raw : null
+    }
+    if ('literalSet' in check) {
+      return entry.raw.split(',').every((p) => check.literalSet.includes(p as TransactionKind))
+        ? entry.raw
+        : null
     }
     return check.pattern.test(entry.raw) ? entry.raw : null
   }

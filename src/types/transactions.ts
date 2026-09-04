@@ -69,6 +69,9 @@ export interface TransactionListFilter {
   uncategorized_only?: boolean | null
   /** income / expense / transfer / buy / sell / refund */
   kind?: TransactionKind | null
+  /** 类型集合过滤（issue #581 报表分类下钻载荷）：命中集合内各类型（与其余维度 AND 组合）；
+   * 与单值 kind 解耦共存，下钻专用、无手动控件 */
+  kinds?: TransactionKind[] | null
   /** 取前 N 条（仪表盘"最近 N 条"场景），与分页互斥：传 page_size 时分页路径生效 */
   limit?: number | null
   /** 页码，从 1 开始，默认 1 */

@@ -48,6 +48,16 @@ pub fn list_transactions_internal(
         where_clause.push_str(" AND kind = ?");
         params.push(kind.as_str().to_string());
     }
+    // 类型集合过滤（issue #581 报表分类下钻载荷）：kind IN (...)，与其余维度 AND 组合；
+    // 与单值 kind 同携时同样 AND（交集语义），已发布单值参数语义不变（只增不改）；
+    // 空集合视为未携带（不过滤），先例同 uncategorized_only=false。
+    if let Some(kinds) = filter.kinds.as_ref().filter(|k| !k.is_empty()) {
+        let placeholders = vec!["?"; kinds.len()].join(",");
+        where_clause.push_str(&format!(" AND kind IN ({placeholders})"));
+        kinds
+            .iter()
+            .for_each(|k| params.push(k.as_str().to_string()));
+    }
 
     let total: i64 = conn.query_row(
         &format!("SELECT COUNT(*) FROM transactions {where_clause}"),

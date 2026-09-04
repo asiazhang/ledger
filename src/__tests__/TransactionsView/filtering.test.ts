@@ -51,6 +51,31 @@ describe('TransactionsView URL 下钻接线（issue #97/#191，冒烟级）', ()
     expect(lastListFilter()).not.toHaveProperty('involving_account_id')
     expect(wrapper.text()).toContain('共 4 条')
   })
+
+  it('kinds 维度（issue #581）下钻直达：请求携带 kinds 数组，且不新增手动控件', async () => {
+    setTxnDb([
+      makeTxn(1, 'acc-1', { kind: 'expense', date: '2026-01-05' }),
+      makeTxn(2, 'acc-2', { kind: 'expense', date: '2026-02-10' }),
+      makeTxn(3, 'acc-1', { kind: 'transfer', to_account_id: 'acc-2', date: '2026-03-15' }),
+    ])
+    const wrapper = await mountView()
+    const selectCount = wrapper.findAllComponents(NSelect).length
+    routeMock.query = { category: 'none', kinds: 'expense,refund' }
+    await flushPromises()
+    expect(lastListFilter()).toMatchObject({
+      uncategorized_only: true,
+      kinds: ['expense', 'refund'],
+    })
+    // 未分类柱下钻列表只含支出与退款，转账不再出现（与图同口径）
+    expect(wrapper.text()).toContain('共 2 条')
+    // 类型集合维度是 URL 下钻专用：过滤行控件数量不变，无新控件
+    expect(wrapper.findAllComponents(NSelect).length).toBe(selectCount)
+    // 导航清除 → 类型集合同步清空回全量
+    routeMock.query = {}
+    await flushPromises()
+    expect(lastListFilter()).not.toHaveProperty('kinds')
+    expect(wrapper.text()).toContain('共 3 条')
+  })
 })
 
 describe('TransactionsView 过滤行与手动过滤接线（issue #98，冒烟级）', () => {

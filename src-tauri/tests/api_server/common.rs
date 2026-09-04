@@ -269,6 +269,16 @@ pub(crate) async fn get_json(app: &Router, uri: &str) -> (StatusCode, serde_json
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 
+/// GET 但不反序列化响应体（4xx 拒绝响应体非 JSON 契约，只需状态码时用）。
+pub(crate) async fn get_status(app: &Router, uri: &str) -> StatusCode {
+    let response = app
+        .clone()
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    response.status()
+}
+
 /// 取响应体中的交易数组（新契约：`{items, total}` 的 `items`）。
 pub(crate) fn items_of(body: &serde_json::Value) -> &[serde_json::Value] {
     body["items"]
