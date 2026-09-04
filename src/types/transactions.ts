@@ -91,6 +91,25 @@ export interface TransactionSearchResult {
   total: number
 }
 
+/** 备注拼音回填失败阶段（issue #513，阶段文案经文案资源本地化） */
+export type NotePinyinRepairStage = 'probe' | 'read' | 'begin' | 'write' | 'commit'
+
+/** 备注拼音回填失败原因：失败阶段 + 底层错误消息（诊断用） */
+export interface NotePinyinRepairFailure {
+  stage: NotePinyinRepairStage
+  message: string
+}
+
+/** 备注拼音一键修复报告（issue #513）：回填行数 / 是否收敛 / 失败原因 */
+export interface NotePinyinRepairReport {
+  /** 本次实际补齐的 NULL 积压行数（幂等：重复执行为 0） */
+  backfilled: number
+  /** 结束后积压是否清零（无备注行的 NULL 列不构成积压） */
+  converged: boolean
+  /** 失败原因（null = 全程无失败） */
+  failure: NotePinyinRepairFailure | null
+}
+
 /** 交易搜索筛选条件（与关键字 AND 组合；全部可选、单边可用） */
 export interface TransactionSearchFilter {
   /** 金额下限（整数分） */

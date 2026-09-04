@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **设置**：设置页「数据」新增拼音搜索数据一键修复——把搜索入口的隐性回填提升为显式可调用命令，幂等回填交易备注拼音辅助数据全部积压并返回报告（回填行数 / 是否收敛 / 失败原因），作为回填失败时用户可触发的恢复手段；搜索入口惰性回填行为不变（[#513]）。
+
 ### Changed
 
 - **性能**：搜索取行两段式优化——交易表新增备注拼音首字母冗余列（写入路径同写维护、存量行搜索时惰性回填）与搜索扫描覆盖索引，搜索改为最小列流式匹配、仅为当前页回表取展示列；匹配语义与验收口径零变更，50 万笔账本备注拼音搜索基准 p95 从 2932ms 降至 ~155ms（[#492]，ADR-0027 修订）。
@@ -138,3 +142,4 @@
 [#435]: https://github.com/asiazhang/ledger/issues/435
 [#490]: https://github.com/asiazhang/ledger/issues/490
 [#492]: https://github.com/asiazhang/ledger/issues/492
+[#513]: https://github.com/asiazhang/ledger/issues/513

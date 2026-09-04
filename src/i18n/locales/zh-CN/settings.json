@@ -188,6 +188,31 @@
       "restoreFailed": "恢复失败: {msg}",
       "loadFailed": "读取数据存储位置失败：{msg}",
       "changeFailed": "更改数据存储位置失败: {msg}"
+    },
+    "search": {
+      "title": "拼音搜索数据",
+      "hint": "拼音首字母搜索依赖交易备注的拼音辅助数据。应用升级或回填中断可能遗留未回填的积压；一键修复会补齐全部积压并返回报告（回填行数 / 是否收敛 / 失败原因），可重复执行。",
+      "repair": "一键修复",
+      "report": {
+        "doneTitle": "修复完成：已回填 {n} 行",
+        "doneBody": "拼音辅助数据已收敛（积压清零），拼音搜索恢复完整。",
+        "noopTitle": "无需修复",
+        "noopBody": "拼音辅助数据已收敛（本次回填 0 行）。",
+        "notConvergedTitle": "修复未全部完成",
+        "notConvergedBody": "仍有积压未回填，可重试一键修复；积压期间搜索不漏结果。",
+        "failureBody": "失败阶段：{stage}；原因：{msg}",
+        "stage": {
+          "probe": "积压探测",
+          "read": "读取积压行",
+          "begin": "开启事务",
+          "write": "写入",
+          "commit": "提交事务"
+        }
+      },
+      "msg": {
+        "incomplete": "修复未全部完成，详见报告",
+        "repairFailed": "修复失败: {msg}"
+      }
     }
   },
   "scheduled": {

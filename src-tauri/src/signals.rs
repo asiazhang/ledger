@@ -132,6 +132,10 @@ pub enum WriteOp {
     /// 刻意零信号——修复的是派生缓存行，不置脏（ADR-0032 豁免形态）、
     /// 前端按返回的差异报告就地刷新，无需失效广播。
     AuditBalanceCache,
+    /// 备注拼音一键修复（IPC `repair_note_pinyin`，issue #513）：刻意零信号——
+    /// 回填的是搜索派生列（V018 `note_pinyin`），不置脏（ADR-0032 豁免形态）、
+    /// 前端按返回的修复报告就地展示，无需失效广播。
+    RepairNotePinyin,
 
     // ── 备份域：`ledger:backups-changed`（issue #129）──
     /// 手动备份（IPC `create_backup`）：刻意零信号——前端备份组合在命令成功后
@@ -213,7 +217,7 @@ impl WriteOp {
     /// 清单紧邻 enum，同步义务就地可查（同 `TransactionKind::ALL` 先例）。
     /// 长度标注与初始化个数不符即编译错；但 enum 新增变体而本清单漏登不会报错，
     /// 改 enum 必须同步改这里。
-    pub const ALL: [WriteOp; 53] = [
+    pub const ALL: [WriteOp; 54] = [
         // 参考数据四表
         WriteOp::CreateAccount,
         WriteOp::UpdateAccount,
@@ -257,8 +261,9 @@ impl WriteOp {
         WriteOp::PruneBackups,
         WriteOp::RestoreBackup,
         WriteOp::AutoBackupDeepPath,
-        // 交易域
+        // 交易域（含搜索派生数据维护）
         WriteOp::CreateTransaction,
+        WriteOp::RepairNotePinyin,
         WriteOp::BatchCreateTransactions,
         WriteOp::UpdateTransaction,
         WriteOp::DeleteTransaction,
@@ -390,6 +395,8 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
         WriteOp::AdjustAccountBalance => when(evidence.black_hole_created(), LEDGER_CHANGED_SET),
         // 余额缓存审计修复：派生数据自愈，不置脏不发信号（ADR-0067）。
         WriteOp::AuditBalanceCache => NO_SIGNALS,
+        // 备注拼音一键修复：搜索派生列回填，不置脏不发信号（issue #513，同上豁免形态）。
+        WriteOp::RepairNotePinyin => NO_SIGNALS,
 
         // ── 价格域：五操作共享同一行——映射内唯一一份「实际写入 → 发价格
         //    信号」判定（ADR-0044 决策 4）；零变化不广播（ADR-0031）──

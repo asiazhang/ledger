@@ -15,7 +15,7 @@ use tauri::State;
 use crate::db::{DbState, run_db};
 use crate::error::{AppError, Result};
 use crate::transaction as transaction_domain;
-use crate::transaction::TransactionSearchResult;
+use crate::transaction::{NotePinyinRepairReport, TransactionSearchResult};
 
 /// IPC 命令：搜索交易（可选金额/日期筛选与关键字 AND 组合）。
 /// 四个筛选参数与内部函数一一对应（issue #40），作为独立命令参数暴露，
@@ -46,6 +46,19 @@ pub async fn search_transactions(
             date_from.as_deref(),
             date_to.as_deref(),
         )
+    })
+    .await
+}
+
+/// IPC 命令：备注拼音一键修复（issue #513）：显式回填全部积压并返回报告
+/// （回填行数 / 是否收敛 / 失败原因）。领域权威在
+/// [`crate::transaction::search`]（与搜索入口惰性回填同一实现，幂等）。
+#[tauri::command]
+pub async fn repair_note_pinyin(db: State<'_, DbState>) -> Result<NotePinyinRepairReport> {
+    let conn = db.conn.clone();
+    run_db("repair_note_pinyin", move || {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        Ok(transaction_domain::repair_note_pinyin(&conn))
     })
     .await
 }
