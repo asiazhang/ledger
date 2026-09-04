@@ -38,6 +38,18 @@ use crate::error::Result;
 use crate::physical_asset;
 use crate::transaction::amount;
 
+impl From<&CachedNetWorth> for DashboardOverview {
+    fn from(cached: &CachedNetWorth) -> Self {
+        DashboardOverview {
+            native_currency: cached.native_currency.clone(),
+            net_worth_cents: cached.net_worth_cents,
+            accounts_balance_cents: cached.accounts_balance_cents,
+            holdings_market_value_cents: cached.holdings_market_value_cents,
+            physical_assets_value_cents: cached.physical_assets_value_cents,
+        }
+    }
+}
+
 /// 持仓市值行：`v_holdings` 市值（账户本位币，可为 NULL）+ 账户币种。
 /// 与投资域 `financial_freedom::HoldingValue` 同形片段刻意不收拢（跨域共享
 /// 待共享持仓市值合计立项时统一提取，见对向注释）。
@@ -65,13 +77,7 @@ pub fn query_dashboard_overview(conn: &Connection) -> Result<DashboardOverview> 
     if let Some(cached) = net_worth::read_valid(conn, &fingerprint)? {
         // 基准币种与当前一致才可信（缓存跨币种设置变更不成立时重算）。
         if cached.native_currency == amount::default_currency_code() {
-            return Ok(DashboardOverview {
-                native_currency: cached.native_currency,
-                net_worth_cents: cached.net_worth_cents,
-                accounts_balance_cents: cached.accounts_balance_cents,
-                holdings_market_value_cents: cached.holdings_market_value_cents,
-                physical_assets_value_cents: cached.physical_assets_value_cents,
-            });
+            return Ok((&cached).into());
         }
     }
     let overview = compute_dashboard_overview(conn)?;

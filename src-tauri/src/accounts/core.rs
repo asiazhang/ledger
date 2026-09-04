@@ -315,13 +315,7 @@ pub fn audit_balance_cache(conn: &Connection) -> Result<BalanceCacheAudit> {
     let mut drifts = Vec::new();
     for account in &accounts {
         let actual = crate::db::balance::compute_balance(conn, &account.id)?;
-        let cached: Option<i64> = conn
-            .query_row(
-                "SELECT balance_cents FROM account_balance_cache WHERE account_id=?1",
-                rusqlite::params![account.id],
-                |r| r.get(0),
-            )
-            .optional()?;
+        let cached = crate::db::balance::cached_balance_optional(conn, &account.id)?;
         if cached != Some(actual) {
             drifts.push(BalanceCacheDrift {
                 account_id: account.id.clone(),

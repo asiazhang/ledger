@@ -70,7 +70,7 @@ pub const IPC_COMMAND_WRITE_OPS: &[(&str, Option<WriteOp>)] = &[
     ("list_accounts", None),
     ("list_account_balances", None),
     // 余额缓存手动审计（issue #491，唯一新接缝）：修复派生缓存，不置脏不发信号
-    ("audit_balance_cache", None),
+    ("audit_balance_cache", Some(WriteOp::AuditBalanceCache)),
     // ── AI 导入 ──
     ("get_ai_prompt", None),
     // ── 备份域 ──

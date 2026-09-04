@@ -27,30 +27,44 @@ pub struct CachedNetWorth {
     pub physical_assets_value_cents: i64,
 }
 
-/// 参与净资产计算的贡献表及其时间戳列（指纹输入清单，单一真源）。
-/// 元组：(表名, 时间戳列)。列恒为 `updated_at`，估值表例外（见模块注释）。
-const FINGERPRINT_SOURCES: &[(&str, &str)] = &[
-    ("accounts", "updated_at"),
-    ("transactions", "updated_at"),
-    ("security_lots", "updated_at"),
-    ("market_prices", "updated_at"),
-    ("exchange_rates", "updated_at"),
-    ("physical_assets", "updated_at"),
-    ("physical_asset_valuations", "created_at"),
-    ("account_balance_cache", "updated_at"),
+/// 参与净资产计算的贡献表及其指纹输入（指纹输入清单，单一真源）。
+/// 元组：(表名, 时间戳列, 同秒判别器)。
+///
+/// 时间戳列多为秒级精度（既有冻结约定，不改格式），同秒内连续两次写入
+/// `MAX(updated_at)` 不变——故叠加判别器消除同秒盲区：带 `version` 列的表用
+/// `SUM(version)`（插入 version=1 或 version+1 都令判别值严格变化）；
+/// append-only 估值表无 version 列、只有插入，用 `COUNT(*)`；
+/// `account_balance_cache` 毫秒精度时间戳每次写入无条件刷新（ADR-0066），
+/// 天然无同秒盲区，不叠加（`none`）。
+const FINGERPRINT_SOURCES: &[(&str, &str, &str)] = &[
+    ("accounts", "updated_at", "version"),
+    ("transactions", "updated_at", "version"),
+    ("security_lots", "updated_at", "version"),
+    ("market_prices", "updated_at", "version"),
+    ("exchange_rates", "updated_at", "version"),
+    ("physical_assets", "updated_at", "version"),
+    ("physical_asset_valuations", "created_at", "count"),
+    ("account_balance_cache", "updated_at", "none"),
 ];
 
-/// 当前输入指纹：各贡献表 `MAX(时间戳)` 的命名拼接。
-/// 空表记 `-`（该表尚无任何行；有行后指纹必然变化）。
+/// 当前输入指纹：各贡献表 `MAX(时间戳)`（带 version 判别的表再拼 `SUM(version)`）
+/// 的命名拼接。空表记 `-:0` 或 `-`（尚无任何行；有行后指纹必然变化）。
 pub fn current_fingerprint(conn: &Connection) -> Result<String> {
     let mut sql = String::from("SELECT ");
-    for (i, (table, column)) in FINGERPRINT_SOURCES.iter().enumerate() {
+    for (i, (table, column, discriminator)) in FINGERPRINT_SOURCES.iter().enumerate() {
         if i > 0 {
             sql.push_str(", ");
         }
         // 表名/列名来自上述编译期常量，非用户输入，拼接安全。
+        // 判别器：秒级时间戳表的同秒连续写入由 version 严格递增区分、append-only
+        // 表由行数区分（时间戳分量不变、判别分量必变，指纹必失配）。
+        let version_part = match *discriminator {
+            "version" => " || ':' || COALESCE(SUM(version), 0)",
+            "count" => " || ':' || COUNT(*)",
+            _ => "",
+        };
         sql.push_str(&format!(
-            "(SELECT COALESCE(MAX({column}), '-') FROM {table})"
+            "(SELECT COALESCE(MAX({column}), '-'){version_part} FROM {table})"
         ));
     }
     let parts: Vec<String> = conn.query_row(&sql, [], |r| {
@@ -61,11 +75,10 @@ pub fn current_fingerprint(conn: &Connection) -> Result<String> {
     Ok(FINGERPRINT_SOURCES
         .iter()
         .zip(parts)
-        .map(|((table, _), value)| format!("{table}={value}"))
+        .map(|((table, _, _), value)| format!("{table}={value}"))
         .collect::<Vec<_>>()
         .join("|"))
 }
-
 /// 读取与给定指纹匹配的缓存终值；无缓存行或指纹不符返回 `None`
 /// （失效判定收口在此，调用方据此决定是否重算回填）。
 pub fn read_valid(conn: &Connection, fingerprint: &str) -> Result<Option<CachedNetWorth>> {

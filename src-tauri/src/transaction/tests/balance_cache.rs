@@ -341,9 +341,9 @@ fn adjust_balance_targets_exact_value_via_cache() {
 // ---------------------------------------------------------------------------
 
 /// 五出口回归：账户余额清单（UI）、含黑洞口径（AI/HTTP）、dashboard 余额腿、
-/// 余额调整取数（cached_balance）读到的值都与实时计算一致。
-/// （财务自由度与 HTTP 列表经同一 `list_account_balances_with_visibility` 入口，
-/// 结构上同源，不重复铺世界。）
+/// 余额调整取数（cached_balance）、财务自由度分子读到的值都与实时计算一致。
+/// （HTTP 列表经同一 `list_account_balances_with_visibility` 入口，结构上同源，
+/// 不重复铺世界。）
 #[test]
 fn five_outlets_return_realtime_consistent_values() {
     let conn = setup();
@@ -353,7 +353,17 @@ fn five_outlets_return_realtime_consistent_values() {
     backfill_scaffold_account(&conn, "acc-o2");
     create_transaction_internal(
         &conn,
-        make_input("acc-o1", TransactionKind::Income, 9000, "2026-05-01"),
+        make_input("acc-o1", TransactionKind::Income, 1000000, "2026-05-01"),
+    )
+    .unwrap();
+    // 转入投资账户 600000，买入花费 4000（万分位刻度：1.0×400000/100），
+    // 投资账户留现金 596000（财务自由度现金腿）。
+    create_transaction_internal(
+        &conn,
+        TransactionInput {
+            to_account_id: Some("acc-o2".into()),
+            ..make_input("acc-o1", TransactionKind::Transfer, 600000, "2026-05-02")
+        },
     )
     .unwrap();
     create_transaction_internal(&conn, make_buy_input("acc-o2", "inst-o", 1.0, 400000, 0)).unwrap();
@@ -402,6 +412,15 @@ fn five_outlets_return_realtime_consistent_values() {
     assert_eq!(
         crate::db::balance::cached_balance(&conn, "acc-o1").unwrap(),
         compute_balance(&conn, "acc-o1").unwrap()
+    );
+
+    // 出口 5：财务自由度分子（投资账户现金腿 + 持仓市值，经同一缓存入口取数）。
+    // 现金腿 = acc-o2 余额 596000（600000 转入 − 4000 买入，1:1 汇率）；
+    // 持仓未录价按空值语义跳过（0）。分母预算为空 → 分子仍须与实时口径一致。
+    let freedom = crate::investment::query_financial_freedom(&conn).unwrap();
+    assert_eq!(
+        freedom.numerator_cents, 596000,
+        "财务自由度分子应与实时口径一致（投资账户现金腿读缓存）"
     );
 }
 

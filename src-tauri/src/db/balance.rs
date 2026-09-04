@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 use crate::accounts::{Account, AccountBalance};
 use crate::db::query::{FromRow, query_all};
@@ -156,7 +156,7 @@ pub fn list_account_balances_with_visibility(
 // 余额持久化缓存（issue #491 / ADR-0066）：写路径整体重算 + 读路径切缓存
 // ---------------------------------------------------------------------------
 
-/// 缓存行时间戳：毫秒精度本地 ISO 时刻。
+/// 缓存行时间戳：毫秒精度 UTC ISO 时刻（与全库 `now_iso` 同为 UTC，仅精度不同）。
 ///
 /// 秒级精度会让同一秒内的连续写入无法从 MAX(updated_at) 指纹中区分
 /// （净资产读探针将误判缓存仍新鲜），故缓存表自带毫秒精度时间戳；
@@ -178,19 +178,7 @@ pub fn refresh_account_balances(conn: &Connection, account_ids: &[&str]) -> Resu
         return Ok(());
     }
     let placeholders = vec!["?"; account_ids.len()].join(",");
-    let sql = format!(
-        "INSERT INTO account_balance_cache (account_id, balance_cents, updated_at) \
-         SELECT a.id, \
-                a.initial_balance_cents + COALESCE({out}, 0) + COALESCE({tin}, 0), \
-                ? \
-         FROM accounts a WHERE a.id IN ({placeholders}) \
-         ON CONFLICT(account_id) DO UPDATE SET \
-             balance_cents = excluded.balance_cents, \
-             updated_at = excluded.updated_at",
-        out = account_flow_subquery(TransferSide::Out, "a.id"),
-        tin = account_flow_subquery(TransferSide::In, "a.id"),
-        placeholders = placeholders,
-    );
+    let sql = refresh_upsert_sql(&format!("WHERE a.id IN ({placeholders})"));
     let now = now_iso_millis();
     let params: Vec<&str> = std::iter::once(now.as_str())
         .chain(account_ids.iter().copied())
@@ -201,38 +189,52 @@ pub fn refresh_account_balances(conn: &Connection, account_ids: &[&str]) -> Resu
 
 /// 全账户整体重算并回写缓存：手动审计命令的修复路径（issue #491）。
 pub fn refresh_all_account_balances(conn: &Connection) -> Result<()> {
-    let sql = format!(
+    // WHERE true：INSERT…SELECT 尾接 ON CONFLICT 需 WHERE 子句消歧（SQLite 语法）。
+    let sql = refresh_upsert_sql("WHERE true");
+    conn.execute(&sql, rusqlite::params![now_iso_millis()])?;
+    Ok(())
+}
+
+/// 余额缓存整体重算 UPSERT 语句的单一构造点：两个刷新入口共享同一条
+/// INSERT…SELECT…ON CONFLICT（口径表达式同源，仅账户筛选范围不同）。
+fn refresh_upsert_sql(account_filter: &str) -> String {
+    format!(
         "INSERT INTO account_balance_cache (account_id, balance_cents, updated_at) \
          SELECT a.id, \
                 a.initial_balance_cents + COALESCE({out}, 0) + COALESCE({tin}, 0), \
-                ?1 \
-         FROM accounts a WHERE true \
+                ? \
+         FROM accounts a {account_filter} \
          ON CONFLICT(account_id) DO UPDATE SET \
              balance_cents = excluded.balance_cents, \
              updated_at = excluded.updated_at",
         out = account_flow_subquery(TransferSide::Out, "a.id"),
         tin = account_flow_subquery(TransferSide::In, "a.id"),
-    );
-    conn.execute(&sql, rusqlite::params![now_iso_millis()])?;
-    Ok(())
+    )
 }
 
 /// 读取单账户缓存余额；缓存行缺失视为不变量破坏（正常路径由迁移回填与
 /// 账户创建/写入接缝维护），码化错误上抛引导审计修复，不静默回退实时计算。
 pub fn cached_balance(conn: &Connection, account_id: &str) -> Result<i64> {
+    cached_balance_optional(conn, account_id)?.ok_or_else(|| {
+        AppError::codedp(
+            "balance.cache-row-missing",
+            "账户缺少余额缓存行，请执行余额缓存审计修复",
+            &[account_id],
+        )
+    })
+}
+
+/// 读取单账户缓存余额的 Option 形态：缺失返回 `None` 而非报错。
+/// 供审计命令逐户比对（缺失本身就是要报告的差异形态），正常读出口仍走
+/// [`cached_balance`] 的码化错误路径。
+pub fn cached_balance_optional(conn: &Connection, account_id: &str) -> Result<Option<i64>> {
     conn.query_row(
         "SELECT balance_cents FROM account_balance_cache WHERE account_id = ?1",
         rusqlite::params![account_id],
         |r| r.get(0),
     )
-    .map_err(|e| match e {
-        rusqlite::Error::QueryReturnedNoRows => AppError::codedp(
-            "balance.cache-row-missing",
-            "账户缺少余额缓存行，请执行余额缓存审计修复",
-            &[account_id],
-        ),
-        other => other.into(),
-    })
+    .optional()
+    .map_err(Into::into)
 }
 
 /// 读取全账户缓存余额映射（缓存读侧单一来源）。
