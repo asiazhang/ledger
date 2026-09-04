@@ -13,9 +13,10 @@
 //!
 //! 性能门禁（issue #493 / ADR-0068）：`--max-p95-ms` 给出默认阈值时，全部基准
 //! 项逐项判定 p95 ≤ 各自阈值，任何一项超标则以非零退出码失败（超标清单打
-//! 在报告尾部）；缺省不判定，仅输出报告（本地观察不受影响）。全量扫描型
-//! 基准（子序列语义无法索引加速）设分项阈值例外，见 [`PER_BENCH_MAX_P95_MS`]；
-//! 判据、统计口径、分项例外与豁免原则以 ADR-0068 为准。
+//! 在报告尾部）；缺省不判定，仅输出报告（本地观察不受影响）。个别基准确需
+//! 不同阈值时经 [`PER_BENCH_MAX_P95_MS`] 登记分项例外（搜索 SQL 下推落地后
+//! 已按 CI 实测撤销、清单当前为空，issue #516）；判据、统计口径、分项例外
+//! 与豁免原则以 ADR-0068 为准。
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -37,13 +38,12 @@ use tauri_app_lib::transaction::{
 /// 列表类基准的页大小（与前端默认页大小同量级）。
 const PAGE_SIZE: usize = 20;
 
-/// 分项门禁阈值例外（ADR-0068）：默认判据 200ms 对全部基准生效；全量扫描型
-/// 基准（子序列语义无法索引加速，纯 CPU 密集、耗时线性于交易数）不能与索引
-/// 加速型基准共用一条线，例外项与阈值在此声明，增删须同步修订 ADR-0068 与
-/// tests 里的例外表钉住断言。中文子串（「咖啡」）与拼音子序列（「kf」）两条
-/// 搜索基准同属全量扫描型，各占一项例外（issue #514）。
-pub(crate) const PER_BENCH_MAX_P95_MS: &[(&str, f64)] =
-    &[("备注搜索拼音过滤", 400.0), ("备注搜索拼音子序列", 400.0)];
+/// 分项门禁阈值例外（ADR-0068）：默认判据 200ms 对全部基准生效；个别基准
+/// 确需不同阈值时在此登记（项名精确匹配 + 阈值），增删须同步修订 ADR-0068
+/// 与 tests 里的例外表钉住断言。当前为空——两条搜索基准的 400ms 全量扫描型
+/// 例外已随搜索 SQL 下推落地按 CI 实测撤销（run 33890569837：p95 69.52ms /
+/// 82.21ms，对默认线余量 2.9×/2.4×，issue #516），全部基准统一适用默认线。
+pub(crate) const PER_BENCH_MAX_P95_MS: &[(&str, f64)] = &[];
 
 /// 某基准项的门禁阈值：分项例外优先，未列出的用默认阈值。
 fn gate_threshold_for(name: &str, default_max_p95_ms: f64) -> f64 {
@@ -221,15 +221,18 @@ fn gate(results: &[BenchMetrics], max_p95_ms: Option<f64>) -> Result<(), String>
     };
     let failures = gate_failures(results, max_p95_ms);
     println!();
+    // 门禁行据实报告分项例外状态：清单为空时不再虚指「分项例外见 ADR-0068」。
+    let line_prefix = if PER_BENCH_MAX_P95_MS.is_empty() {
+        format!("门禁（全部基准 p95 ≤ {max_p95_ms:.0}ms，无分项例外）")
+    } else {
+        format!("门禁（默认 p95 ≤ {max_p95_ms:.0}ms，分项例外见 ADR-0068）")
+    };
     if failures.is_empty() {
-        println!(
-            "门禁（默认 p95 ≤ {max_p95_ms:.0}ms，分项例外见 ADR-0068）：通过（{} 项全部达标）",
-            results.len()
-        );
+        println!("{line_prefix}：通过（{} 项全部达标）", results.len());
         Ok(())
     } else {
         println!(
-            "门禁（默认 p95 ≤ {max_p95_ms:.0}ms，分项例外见 ADR-0068）：失败——{} 项超标：{}",
+            "{line_prefix}：失败——{} 项超标：{}",
             failures.len(),
             failures.join("、")
         );

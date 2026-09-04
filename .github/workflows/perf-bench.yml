@@ -10,9 +10,10 @@
 # 成立，自动重试直至成功后恢复跳过。手动 dispatch 无条件放行（基线留存
 # 与复跑入口，ADR-0068 验收流程）。
 # ADR-0062 观察期已结束，门禁生效（ADR-0068）：默认判据全部基准逐项
-# p95 ≤ 200ms；全量扫描型基准设分项例外（两条搜索基准各 400ms：中文子串
-# 与拼音子序列，CPU 密集无法索引加速，issue #514）。任何一项超标 bench 以
-# 非零退出、job 失败（超标清单随报告
+# p95 ≤ 200ms；两条搜索基准的 400ms 分项例外已随搜索 SQL 下推落地按 CI
+# 实测撤销（issue #516），分项例外机制保留、现行清单见 ADR-0068 与 bench
+# 工具内 PER_BENCH_MAX_P95_MS（当前为空）。任何一项超标 bench 以非零退出、
+# job 失败（超标清单随报告
 # 进 Summary）。不在 PR 上跑：一次 release 冷编译 + 生成 + 基准 ≈ 6 分钟
 # （rust-cache 命中时），回归由每日基线与性能批合入后的手动触发拦截。
 # ADR-0009 的 100ms 慢查询告警线（SQL 级观测）保留不动，与本门禁（基准
@@ -107,14 +108,15 @@ jobs:
           ./target/release/ledger-perf generate
           echo "GENERATE_SECONDS=$(($(date +%s) - START))" >> "$GITHUB_ENV"
 
-      - name: 运行查询基准（bench，11 项 × min/avg/p95 + 门禁 p95 ≤ 200ms/分项 400ms）
+      - name: 运行查询基准（bench，11 项 × min/avg/p95 + 门禁 p95 ≤ 200ms）
         id: bench
         working-directory: src-tauri
         shell: bash
         run: |
           set -o pipefail
           # --iterations 20：n=10 时最近秩 p95 恒等于 max，20 次才成真分位数；
-          # --max-p95-ms 200：ADR-0068 默认门禁线（分项例外在 bench 内声明），
+          # --max-p95-ms 200：ADR-0068 默认门禁线（分项例外机制在 bench 内，
+          # 现行清单见 ADR-0068，搜索例外撤销后当前为空），
           # 超标即非零退出（pipefail 保持步骤红）。
           ./target/release/ledger-perf bench --iterations 20 --max-p95-ms 200 | tee bench-report.txt
 
@@ -127,7 +129,7 @@ jobs:
             echo "- 触发：${{ github.event_name }} @ ${{ github.sha }}"
             echo "- 生成耗时：${GENERATE_SECONDS:-未知}s（50 万笔，seed 42）"
             if [ "${{ steps.bench.outcome }}" = "success" ]; then
-              echo "- 门禁：✅ 通过 —— 全部基准 p95 达标（默认 ≤ 200ms，分项例外见 ADR-0068）"
+              echo "- 门禁：✅ 通过 —— 全部基准 p95 达标（默认 ≤ 200ms，分项例外清单见 ADR-0068）"
             else
               echo "- 门禁：❌ 失败 —— 存在基准 p95 超各自阈值（ADR-0068），超标清单见报告尾部门禁行"
             fi

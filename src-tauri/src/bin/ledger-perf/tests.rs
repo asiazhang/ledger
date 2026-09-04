@@ -225,9 +225,12 @@ fn gate_failures_lists_only_over_threshold_items() {
 }
 
 #[test]
-fn gate_per_bench_threshold_overrides_default_for_scan_benchmarks() {
-    // 分项例外（ADR-0068）：全量扫描型基准（子序列语义无法索引加速，CPU
-    // 密集、耗时线性于交易数）不与索引加速型基准共用 200ms 线。
+fn gate_search_benchmarks_on_default_line_after_exception_revoked() {
+    // 分项例外已撤销（ADR-0068 修订，issue #516）：搜索 SQL 下推落地后 CI
+    // 实测（run 33890569837）备注搜索两条路径 p95 69.52ms / 82.21ms，对默认
+    // 线余量 2.9×/2.4×，高于最慢默认线项的余量——400ms 全量扫描型例外存在
+    // 的前提（Rust 逐行全扫、计算模型异于索引加速项，ADR-0027）已消失，
+    // 全部基准统一适用默认线：历史全扫口径实测值 313ms 若复现即门禁红。
     let mk = |name: &'static str, p95: f64| BenchMetrics {
         name,
         context: String::new(),
@@ -238,32 +241,35 @@ fn gate_per_bench_threshold_overrides_default_for_scan_benchmarks() {
     };
     let results = vec![
         mk("列表首页分页", 250.0),       // > 默认线 200 → 失败
-        mk("备注搜索拼音过滤", 313.0),   // CI 首跑实测值：> 200 但 ≤ 分项线 400 → 达标
-        mk("备注搜索拼音子序列", 313.0), // 拼音子序列基准同属全量扫描型 → 分项线达标
+        mk("备注搜索拼音过滤", 313.0),   // 历史全扫 CI 实测值：无例外 → 默认线 → 失败
+        mk("备注搜索拼音子序列", 313.0), // 同上，两条搜索路径不再有分项线
         mk("月度汇总", 313.0),           // 名字不在例外表 → 回落默认线 → 失败
     ];
     assert_eq!(
         bench::gate_failures(&results, 200.0),
         vec![
             "列表首页分页（p95 250.00ms > 阈值 200ms）",
+            "备注搜索拼音过滤（p95 313.00ms > 阈值 200ms）",
+            "备注搜索拼音子序列（p95 313.00ms > 阈值 200ms）",
             "月度汇总（p95 313.00ms > 阈值 200ms）",
         ],
-        "分项例外只对精确名单生效；两条搜索路径各自逐项判定"
+        "例外表为空：搜索基准与其它基准共用默认线，逐项判定含各自阈值"
     );
 
-    // 分项线等号边界达标（两条路径都验证）。
-    let boundary = vec![
-        mk("备注搜索拼音过滤", 400.0),
-        mk("备注搜索拼音子序列", 400.0),
+    // 本轮 CI 实测口径（run 33890569837，含当时最慢默认线项）：全部达标。
+    let measured = vec![
+        mk("备注搜索拼音过滤", 69.52),
+        mk("备注搜索拼音子序列", 82.21),
+        mk("分类占比", 99.12),
     ];
-    assert!(bench::gate_failures(&boundary, 200.0).is_empty());
+    assert!(bench::gate_failures(&measured, 200.0).is_empty());
 
-    // 例外表钉住：增删分项例外必须显式更新本断言（名单钉住纪律，与基准
-    // 名单断言同款——防止基准改名后例外静默失配）。
-    assert_eq!(
-        bench::PER_BENCH_MAX_P95_MS,
-        [("备注搜索拼音过滤", 400.0), ("备注搜索拼音子序列", 400.0)],
-        "分项例外表应恰为 ADR-0068 声明的清单"
+    // 例外表钉住：当前为空（撤销后状态）；未来增删分项例外必须显式更新本
+    // 断言并同步修订 ADR-0068（名单钉住纪律，与基准名单断言同款——防止
+    // 基准改名后例外静默失配）。
+    assert!(
+        bench::PER_BENCH_MAX_P95_MS.is_empty(),
+        "分项例外表应恰为 ADR-0068 声明的清单（当前为空）"
     );
 }
 
