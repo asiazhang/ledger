@@ -17,6 +17,7 @@ import {
 } from 'naive-ui'
 import { api } from '@/api'
 import { t } from '@/i18n'
+import { useModalIntent } from '@/composables/useModalIntent'
 import AppModal from '@/components/AppModal.vue'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
@@ -35,9 +36,27 @@ const loading = ref(false)
 const categoryId = ref<string | null>(null)
 const amount = ref<number | null>(null)
 
-// 编辑弹窗（issue #184）：仅金额可改，分类/周期不可改（改法为删旧建新）
-const showEdit = ref(false)
-const editing = ref<BudgetProgress | null>(null)
+// —— 编辑弹窗（issue #184）：仅金额可改，分类/周期不可改（改法为删旧建新）——
+// 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
+// 意图闭集单成员（携带目标预算进度行），显示由「意图非空」派生（无独立 show 布尔），
+// 序号随开启递增驱动表单重建（:key=editSeq），关闭（✕ / ESC / 取消 / 保存成功）
+// 统一经工厂清回 null 终态。现状无序号守卫，迁移为缺陷修复（本票唯一声明的行为
+// 变化）：守卫从无到有，「弹窗开着时目标行被替换回填旧行」缺陷消亡，同目标重开
+// 重回填等边缘语义细化同归此类；此外等价。金额回填（editAmount）是表单字段而非
+// 意图状态，留本视图在开启时直灌（票内裁量，非验收条件）。
+
+/** 编辑预算弹窗意图（单成员闭集）：携带目标预算进度行。 */
+interface BudgetEditIntent {
+  progress: BudgetProgress
+}
+
+const {
+  intent: editIntent,
+  seq: editSeq,
+  open: openEditIntent,
+  close: closeEdit,
+} = useModalIntent<BudgetEditIntent>()
+
 const editAmount = ref<number | null>(null)
 
 // 创建预算分类选项（issue #356）：从仅顶级支出分类放开到全部支出分类
@@ -61,8 +80,11 @@ const displayCategoryName = (row: BudgetProgress) =>
   reference.categoryDisplayName(row.budget.category_id, row.category_name)
 
 const editingCategoryName = computed(() =>
-  editing.value
-    ? reference.categoryDisplayName(editing.value.budget.category_id, editing.value.category_name)
+  editIntent.value
+    ? reference.categoryDisplayName(
+        editIntent.value.progress.budget.category_id,
+        editIntent.value.progress.category_name,
+      )
     : '',
 )
 
@@ -104,23 +126,23 @@ async function create() {
 }
 
 function openEdit(row: BudgetProgress) {
-  editing.value = row
   editAmount.value = centsToYuan(row.budget.amount_cents)
-  showEdit.value = true
+  openEditIntent({ progress: row })
 }
 
 async function saveEdit() {
-  if (!editing.value) return
+  const target = editIntent.value
+  if (!target) return
   if (editAmount.value == null || editAmount.value <= 0) {
     message.warning(t('budget.message.positive'))
     return
   }
   try {
-    await api.updateBudget(editing.value.budget.id, {
+    await api.updateBudget(target.progress.budget.id, {
       amount_cents: yuanToCents(editAmount.value) ?? 0,
     })
     message.success(t('budget.message.updated'))
-    showEdit.value = false
+    closeEdit()
     await refresh()
   } catch (e) {
     message.error(t('budget.message.updateFailed', { message: errorMessage(e) }))
@@ -231,14 +253,18 @@ onMounted(() => {
       </NCard>
     </NSpace>
 
-    <!-- 编辑弹窗（issue #184）：仅金额可改，分类/周期只读 -->
+    <!-- 编辑弹窗（issue #184）：仅金额可改，分类/周期只读。显示由「意图非空」派生
+         （无独立 show 布尔），关闭统一经工厂清回 null 终态；序号作 key 强制重建
+         （ADR-0072）。 -->
     <AppModal
-      v-model:show="showEdit"
+      :key="editSeq"
+      :show="editIntent !== null"
       :title="t('budget.edit.title')"
       preset="card"
       display-directive="if"
       style="width: 380px"
       :bordered="false"
+      @update:show="(v: boolean) => (v ? undefined : closeEdit())"
     >
       <NForm label-placement="left" :show-feedback="false" size="small">
         <NFormItem :label="t('budget.edit.category')">
@@ -246,7 +272,7 @@ onMounted(() => {
         </NFormItem>
         <NFormItem :label="t('budget.edit.period')">
           <NText>{{
-            editing ? t(`budget.period.${editing.budget.period}`) : ''
+            editIntent ? t(`budget.period.${editIntent.progress.budget.period}`) : ''
           }}</NText>
         </NFormItem>
         <NFormItem :label="t('budget.edit.amount')">
@@ -255,7 +281,7 @@ onMounted(() => {
       </NForm>
       <template #footer>
         <NSpace justify="end">
-          <NButton size="small" @click="showEdit = false">{{ t('budget.edit.cancel') }}</NButton>
+          <NButton size="small" @click="closeEdit">{{ t('budget.edit.cancel') }}</NButton>
           <NButton size="small" type="primary" @click="saveEdit">{{ t('budget.edit.save') }}</NButton>
         </NSpace>
       </template>
