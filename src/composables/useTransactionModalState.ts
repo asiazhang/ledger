@@ -1,6 +1,6 @@
-import { readonly, ref } from 'vue'
-import type { Ref } from 'vue'
 import { useMessage } from 'naive-ui'
+import type { Ref } from 'vue'
+import { useModalIntent } from '@/composables/useModalIntent'
 import { api } from '@/api'
 import { errorMessage } from '@/utils/errors'
 import { t } from '@/i18n'
@@ -13,6 +13,12 @@ import type { CreateFormKind, Transaction, TransactionTrade } from '@/types'
  * 不存在「目标非空但已关闭」的中间态）；回调序号随 open 递增内化（作表单 key 强制重建）；
  * 编辑 buy/sell 的「先取买卖明细再开窗、失败不开窗」异步时序与慢取竞态守卫（last-open-wins）
  * 内化其中，慢取/失败行为一处定义。
+ *
+ * 已迁为弹窗意图编排通用工厂 ModalIntent（useModalIntent，ADR-0072）之上的首个适配器：
+ * 意图与序号两面由工厂持有（意图落位即递增序号、关闭不重置），本模块只补交易弹窗族
+ * 特有的异步时序——「先取买卖明细再开窗、失败不开窗、最后一次开启胜出」守卫留适配器层，
+ * 不上浮通用工厂。适配器代数计数器与工厂序号是两个计数器：代数随每次开启尝试递增
+ * （含取数失败），序号只在意图真正落位递增，语义不同、不合并。
  *
  * 依赖 direct-import（api 与 useMessage），不做注入（先例 useScheduledPlanList；
  * getTransactionTrade 只有一个实现，注入是 YAGNI）。只内化「关闭」——列表刷新
@@ -69,22 +75,25 @@ export interface UseTransactionModalStateReturn {
 export function useTransactionModalState(): UseTransactionModalStateReturn {
   const message = useMessage()
 
-  const intent = ref(null) as Ref<TransactionModalIntent | null>
-  const seq = ref(0)
+  // 意图与序号归 ModalIntent 工厂所有（ADR-0072）：意图非空即显示、落位即递增序号、
+  // 关闭清回 null 终态；本适配器经工厂 open/close 驱动，不再直写这两面状态。
+  const { intent, seq, open: landIntent, close: clearIntent } = useModalIntent<TransactionModalIntent>()
 
   /**
    * 代数守卫（last-open-wins）：每次 open 递增一代；异步取数返回后，代数已过期
-   * （期间又有新的 open 或 close）则整体丢弃——不设意图、不递增序号、不开窗，
+   * （期间又有新的 open 或 close）则整体丢弃——不落意图（工厂序号不递增）、不开窗，
    * 迟到的失败也不报错。消灭「慢 A 覆盖快 B」竞态；close 一并推进代数，
    * 使「关闭清回空终态」成为接口保证——取数在途时关闭，迟到的成功不再重开弹窗。
+   *
+   * 代数与工厂序号是两个计数器（ADR-0072）：代数随每次开启尝试递增（含取数失败，
+   * 失败路径只推进代数、序号不动）；序号只在意图真正落位时经工厂递增。
    */
   let generation = 0
 
-  /** 结算一次开启：代数仍最新才落地意图并递增序号（同步意图即时结算，edit 待取数后结算）。 */
+  /** 结算一次开启：代数仍最新才经工厂落位意图并递增序号（同步意图即时结算，edit 待取数后结算）。 */
   function settle(gen: number, next: TransactionModalIntent) {
     if (gen !== generation) return
-    intent.value = next
-    seq.value += 1
+    landIntent(next)
   }
 
   async function open(request: TransactionModalOpenRequest): Promise<void> {
@@ -113,13 +122,13 @@ export function useTransactionModalState(): UseTransactionModalStateReturn {
   }
 
   function close() {
-    generation += 1
-    intent.value = null
+    generation += 1 // 关闭推进代数：取数在途时关闭，迟到的成功不再重开弹窗
+    clearIntent()
   }
 
   return {
-    intent: readonly(intent),
-    seq: readonly(seq),
+    intent,
+    seq,
     open,
     close,
   }
