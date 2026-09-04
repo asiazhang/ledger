@@ -9,6 +9,12 @@
 //! 置脏触发已收口连接层统一写入口（`db::write`，ADR-0032）：写路径对备份域
 //! 零感知，置脏/到期检查由写入口闭包在提交点单点执行。「是否发」失效信号的
 //! 判定单点在 signals 映射（ADR-0044 / issue #333），壳层只归一化证据并转发。
+//!
+//! 全部命令 async 化（形状乙，spec #498 / #503）：DB 调用经连接层统一 helper
+//! [`crate::db::run_db`] 进 tauri 阻塞线程池执行，不占用界面事件循环线程；
+//! 写路径仍在连接层统一写入口内置脏（ADR-0032 语义零改动），信号在 await 后
+//! 发射。`add_fund_by_code` 的东财拉取（单请求叠加限流冷却重试最长可达分钟级）
+//! 在闭包内、连接锁外先行完成，任何形状下不进锁（慢闭包纪律）。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
 // （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
@@ -17,7 +23,7 @@
 use tauri::State;
 
 use crate::currencies::{ExchangeRate, ExchangeRateInput};
-use crate::db::DbState;
+use crate::db::{DbState, run_db};
 use crate::error::{AppError, Result};
 use crate::investment as investment_domain;
 use crate::investment::{
@@ -28,102 +34,159 @@ use crate::investment::{
 use crate::signals::{WriteEvidence, WriteOp, emit_for};
 
 #[tauri::command]
-pub fn list_holdings(db: State<'_, DbState>) -> Result<Vec<Holding>> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    investment_domain::list_holdings(&conn)
+pub async fn list_holdings(db: State<'_, DbState>) -> Result<Vec<Holding>> {
+    let conn = db.conn.clone();
+    run_db("list_holdings", move || {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        investment_domain::list_holdings(&conn)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn instrument_price_trend(
+pub async fn instrument_price_trend(
     db: State<'_, DbState>,
     instrument_id: String,
     filter: Option<TrendRange>,
 ) -> Result<InstrumentPriceTrend> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let conn = db.conn.clone();
     // 域入口单点（#401 域目录化）：BDD 步骤直调同一域函数，与 IPC 命令同一实现。
-    investment_domain::query_instrument_price_trend(
-        &conn,
-        &instrument_id,
-        &filter.unwrap_or_default(),
-    )
+    run_db("instrument_price_trend", move || {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        investment_domain::query_instrument_price_trend(
+            &conn,
+            &instrument_id,
+            &filter.unwrap_or_default(),
+        )
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn portfolio_value_trend(
+pub async fn portfolio_value_trend(
     db: State<'_, DbState>,
     filter: Option<TrendRange>,
 ) -> Result<PortfolioValueTrend> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let conn = db.conn.clone();
     // 域入口单点（#401 域目录化）：BDD 步骤直调同一域函数，与 IPC 命令同一实现。
-    investment_domain::query_portfolio_value_trend(&conn, &filter.unwrap_or_default())
+    run_db("portfolio_value_trend", move || {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        investment_domain::query_portfolio_value_trend(&conn, &filter.unwrap_or_default())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn realized_pnl_summary(
+pub async fn realized_pnl_summary(
     db: State<'_, DbState>,
     filter: Option<PnlFilter>,
 ) -> Result<RealizedPnlSummary> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let filter = filter.unwrap_or(PnlFilter {
-        account_id: None,
-        instrument_id: None,
-    });
-    investment_domain::query_realized_pnl_summary(&conn, &filter)
+    let conn = db.conn.clone();
+    run_db("realized_pnl_summary", move || {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let filter = filter.unwrap_or(PnlFilter {
+            account_id: None,
+            instrument_id: None,
+        });
+        investment_domain::query_realized_pnl_summary(&conn, &filter)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn list_exchange_rates(db: State<'_, DbState>) -> Result<Vec<ExchangeRate>> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    investment_domain::list_exchange_rates(&conn)
+pub async fn list_exchange_rates(db: State<'_, DbState>) -> Result<Vec<ExchangeRate>> {
+    let conn = db.conn.clone();
+    run_db("list_exchange_rates", move || {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        investment_domain::list_exchange_rates(&conn)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn create_exchange_rate(db: State<'_, DbState>, input: ExchangeRateInput) -> Result<String> {
+pub async fn create_exchange_rate(
+    db: State<'_, DbState>,
+    input: ExchangeRateInput,
+) -> Result<String> {
     // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
-    db.write(|conn| investment_domain::create_exchange_rate(conn, input))
+    let conn = db.conn.clone();
+    run_db("create_exchange_rate", move || {
+        crate::db::write(&conn, |conn| {
+            investment_domain::create_exchange_rate(conn, input)
+        })
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn list_market_prices(db: State<'_, DbState>) -> Result<Vec<MarketPrice>> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    investment_domain::list_market_prices(&conn)
+pub async fn list_market_prices(db: State<'_, DbState>) -> Result<Vec<MarketPrice>> {
+    let conn = db.conn.clone();
+    run_db("list_market_prices", move || {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        investment_domain::list_market_prices(&conn)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn create_market_price(db: State<'_, DbState>, input: MarketPriceInput) -> Result<String> {
+pub async fn create_market_price(
+    db: State<'_, DbState>,
+    input: MarketPriceInput,
+) -> Result<String> {
     // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
-    db.write(|conn| investment_domain::create_market_price(conn, input))
+    let conn = db.conn.clone();
+    run_db("create_market_price", move || {
+        crate::db::write(&conn, |conn| {
+            investment_domain::create_market_price(conn, input)
+        })
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn list_instruments(
+pub async fn list_instruments(
     db: State<'_, DbState>,
     filter: Option<InstrumentListFilter>,
 ) -> Result<InstrumentListResult> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let filter = filter.unwrap_or_default();
-    investment_domain::list_instruments(&conn, &filter)
+    let conn = db.conn.clone();
+    run_db("list_instruments", move || {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let filter = filter.unwrap_or_default();
+        investment_domain::list_instruments(&conn, &filter)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn delete_instrument(db: State<'_, DbState>, id: String) -> Result<()> {
+pub async fn delete_instrument(db: State<'_, DbState>, id: String) -> Result<()> {
     // 连接层统一写入口（ADR-0032）：成功即置脏。删除只动标的字典（及级联的
     // 价格行），不发失效信号——无流水引用的标的无持仓/走势消费方，前端标的
     // 列表本地重拉（issue #292 验收项）。
-    db.write(|conn| investment_domain::delete_instrument(conn, &id))
+    let conn = db.conn.clone();
+    run_db("delete_instrument", move || {
+        crate::db::write(&conn, |conn| {
+            investment_domain::delete_instrument(conn, &id)
+        })
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn get_transaction_trade(db: State<'_, DbState>, id: String) -> Result<TransactionTrade> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    investment_domain::get_transaction_trade(&conn, &id)
+pub async fn get_transaction_trade(db: State<'_, DbState>, id: String) -> Result<TransactionTrade> {
+    let conn = db.conn.clone();
+    run_db("get_transaction_trade", move || {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        investment_domain::get_transaction_trade(&conn, &id)
+    })
+    .await
 }
 
 /// IPC 命令：按 6 位基金代码即拉添加场外基金（issue #301 / ADR-0038）。东财
-/// 拉取（名称/分类/最新净值）在连接锁外的后台线程完成；落库走连接层统一写入口
-/// （ADR-0032），编排经 `investment::add_fund_by_code_with` 同一接缝（拉取已在线外完成，
-/// 注入闭包直接回放结果，与测试/BDD 同一套校验→拉取→落库实现）。落现价即广播
-/// 价格失效信号（ADR-0031，与两同步命令同一信号），未取到净值仅建标的零信号
+/// 拉取（名称/分类/最新净值）在连接锁外完成（单请求叠加限流冷却重试最长可达
+/// 分钟级，任何形状下不进锁）；落库走连接层统一写入口（ADR-0032），编排经
+/// `investment::add_fund_by_code_with` 同一接缝（拉取已在锁外完成，注入闭包
+/// 直接回放结果，与测试/BDD 同一套校验→拉取→落库实现）。落现价即广播价格
+/// 失效信号（ADR-0031，与两同步命令同一信号），未取到净值仅建标的零信号
 ///（零变化不广播）；「是否发」判定单点在 signals 映射（ADR-0044 / issue #333），
 /// 壳层只归一化证据并转发。
 #[tauri::command]
@@ -135,9 +198,7 @@ pub async fn add_fund_by_code(
     // 格式非法即刻拒绝，不发起网络请求。
     investment_domain::validate_fund_code(&code)?;
     let conn = db.conn.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let span = tracing::info_span!("command", command = "add_fund_by_code");
-        let _entered = span.enter();
+    let result = run_db("add_fund_by_code", move || {
         // 网络拉取在锁外：单请求叠加限流冷却重试最长可达分钟级，不阻塞其它命令。
         let detail = crate::sync::fetch_fund_detail_production(&code)?;
         // 编排单点：经接缝以已拉取的详情驱动（注入闭包同值回放）。
@@ -146,8 +207,7 @@ pub async fn add_fund_by_code(
             investment_domain::add_fund_by_code_with(conn, &code, &mut fetch)
         })
     })
-    .await
-    .map_err(|e| AppError::Io(format!("添加基金任务执行失败: {e}")))??;
+    .await?;
     // 落现价即广播价格失效信号（ADR-0031），未取到净值零信号；
     // 「是否发」单点在 signals 映射（ADR-0044，#333），壳层只归一化证据并转发。
     emit_for(
@@ -159,10 +219,16 @@ pub async fn add_fund_by_code(
 }
 
 #[tauri::command]
-pub fn create_instrument(db: State<'_, DbState>, input: InstrumentInput) -> Result<String> {
+pub async fn create_instrument(db: State<'_, DbState>, input: InstrumentInput) -> Result<String> {
     // 手动创建入口守卫（类型白名单 + 名称必填，ADR-0036 决策 3）在先，写路径
     // 经连接层统一写入口（ADR-0032）：成功即置脏（含同名标的信息更新的 upsert 分支）。
-    db.write(|conn| investment_domain::create_instrument_manual(conn, input))
+    let conn = db.conn.clone();
+    run_db("create_instrument", move || {
+        crate::db::write(&conn, |conn| {
+            investment_domain::create_instrument_manual(conn, input)
+        })
+    })
+    .await
 }
 
 /// IPC 命令：手动报价（issue #291 / ADR-0036）。「日期 + 价格」单点录入，
@@ -174,12 +240,18 @@ pub fn create_instrument(db: State<'_, DbState>, input: InstrumentInput) -> Resu
 /// UI 入口只对同步覆盖不到的标的开放——判定收在 UI 侧，后端
 /// 命令不设守卫（ADR-0036 决策 1 修订）。
 #[tauri::command]
-pub fn record_manual_price(
+pub async fn record_manual_price(
     db: State<'_, DbState>,
     app: tauri::AppHandle,
     input: ManualPriceInput,
 ) -> Result<ManualPriceResult> {
-    let outcome = db.write(|conn| investment_domain::record_manual_price(conn, &input))?;
+    let conn = db.conn.clone();
+    let outcome = run_db("record_manual_price", move || {
+        crate::db::write(&conn, |conn| {
+            investment_domain::record_manual_price(conn, &input)
+        })
+    })
+    .await?;
     // 实际写入任一落点（`any_written` 归一化）即广播，零变化不广播；
     // 「是否发」单点在 signals 映射（ADR-0044，#333），壳层只归一化证据并转发。
     emit_for(

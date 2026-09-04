@@ -11,6 +11,7 @@ use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::EmitterSlot;
 use crate::api_server::write_ops::emit_after_write;
 use crate::categories::{Category, CategoryInput};
+use crate::db::run_db;
 use crate::error::AppError;
 use crate::signals::{WriteEvidence, WriteOp};
 
@@ -28,8 +29,11 @@ use crate::signals::{WriteEvidence, WriteOp};
 pub async fn list_categories_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
 ) -> Result<Json<Vec<crate::categories::Category>>, AppError> {
-    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    Ok(Json(crate::categories::list_categories(&conn, false)?))
+    run_db("GET /api/v1/categories", move || {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        Ok(Json(crate::categories::list_categories(&conn, false)?))
+    })
+    .await
 }
 
 #[utoipa::path(
@@ -54,9 +58,12 @@ pub async fn create_category_handler(
     let input: CategoryInput =
         serde_json::from_str(&body).map_err(|e| AppError::Invalid(e.to_string()))?;
     // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
-    let id = crate::db::write(&conn, |conn| {
-        crate::categories::create_category_idempotent(conn, input)
-    })?;
+    let id = run_db("POST /api/v1/categories", move || {
+        crate::db::write(&conn, |conn| {
+            crate::categories::create_category_idempotent(conn, input)
+        })
+    })
+    .await?;
     emit_after_write(&emitter, WriteOp::CreateCategory, WriteEvidence::None);
     Ok((StatusCode::CREATED, Json(id)))
 }
@@ -83,7 +90,10 @@ pub async fn delete_category_handler(
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
     // 连接层统一写入口（ADR-0032）：删除成功即置脏。
-    crate::db::write(&conn, |conn| crate::categories::delete_category(conn, &id))?;
+    run_db("DELETE /api/v1/categories/{id}", move || {
+        crate::db::write(&conn, |conn| crate::categories::delete_category(conn, &id))
+    })
+    .await?;
     emit_after_write(&emitter, WriteOp::DeleteCategory, WriteEvidence::None);
     Ok(StatusCode::NO_CONTENT)
 }

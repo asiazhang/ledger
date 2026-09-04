@@ -5,6 +5,13 @@
 //! `sync_holding_prices` / `sync_instruments` / `cancel_sync_instruments` 三个
 //! 命令（`commands/mod.rs` 经 `pub use sync::*` 重导出，注册路径与前端/BDD
 //! 调用零改动）。
+//!
+//! 触碰 DB 的命令 async 化（形状乙，spec #498 / #503）：`sync_holding_prices`
+//! 经连接层统一 helper [`crate::db::run_db`] 进阻塞线程池执行，信号在 await 后
+//! 发射。`sync_instruments` 保持「发射后不管」形态：命令本身不触 DB、即刻返回，
+//! 长任务在分离线程逐页推进并推进度（连接经访问器按页短暂获取，网络拉取与
+//! 进度推送不持锁，慢闭包纪律核对通过）；`cancel_sync_instruments` 是纯原子
+//! 标志位（不触 DB），保持同步形态（先例：`set_auto_execution_enabled`）。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
 // （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
@@ -15,7 +22,7 @@ use std::thread;
 
 use tauri::{AppHandle, State};
 
-use crate::db::DbState;
+use crate::db::{DbState, run_db};
 use crate::error::{AppError, Result};
 use crate::signals::{WriteEvidence, WriteOp, emit_for};
 use crate::sync::{
@@ -39,27 +46,22 @@ pub async fn sync_holding_prices(
     app: AppHandle,
 ) -> Result<SyncHoldingPricesResult> {
     let conn = db.conn.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        // 命令在后台线程池执行，手包 span 维持 SQL 耗时归因（lib.rs 异步命令归因约定）。
-        let span = tracing::info_span!("command", command = "sync_holding_prices");
-        let _entered = span.enter();
+    let result = run_db("sync_holding_prices", move || {
         // 连接层统一写入口（ADR-0032，#246 审计补齐）：行情/汇率/历史落库成功即置脏，
         // 提交点写时顺带到期检查；锁语义与先前整段持有一致（同步期间独占连接）。
         crate::db::write(&conn, do_incremental_sync)
     })
-    .await
-    .map_err(|e| AppError::Io(format!("同步任务执行失败: {e}")))?;
-    // 失败（Err）无证据零信号不广播；成功路径把实际写入归一化为证据（零变化
-    // 不广播：基金全部「已是最新」时 written 为 0，虽有成功处理亦不广播），
-    // 「是否发」单点在 signals 映射（ADR-0044，#333），壳层只归一化证据并转发。
-    if let Ok(r) = &result {
-        emit_for(
-            &app,
-            WriteOp::SyncHoldingPrices,
-            WriteEvidence::PriceWritten(r.written > 0),
-        );
-    }
-    result
+    .await?;
+    // Err 已在上方 `?` 早退：失败无证据零信号不广播；到达此处即成功路径，
+    // 把实际写入归一化为证据（零变化不广播：基金全部「已是最新」时 written
+    // 为 0，虽有成功处理亦不广播），「是否发」单点在 signals 映射
+    //（ADR-0044，#333），壳层只归一化证据并转发。
+    emit_for(
+        &app,
+        WriteOp::SyncHoldingPrices,
+        WriteEvidence::PriceWritten(result.written > 0),
+    );
+    Ok(result)
 }
 
 /// IPC 命令：全量同步股票行情。后台线程执行（不阻塞界面），进度经

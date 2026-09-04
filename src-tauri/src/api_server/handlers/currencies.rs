@@ -8,6 +8,7 @@ use rusqlite::Connection;
 
 use crate::api_server::error::ErrorResponse;
 use crate::currencies::Currency;
+use crate::db::run_db;
 use crate::error::AppError;
 
 #[utoipa::path(
@@ -25,6 +26,9 @@ use crate::error::AppError;
 pub async fn list_currencies_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
 ) -> Result<Json<Vec<Currency>>, AppError> {
-    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    Ok(Json(crate::currencies::list_currencies(&conn)?))
+    run_db("GET /api/v1/currencies", move || {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        Ok(Json(crate::currencies::list_currencies(&conn)?))
+    })
+    .await
 }
