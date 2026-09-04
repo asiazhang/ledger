@@ -398,13 +398,14 @@ fn v016_monthly_summary_uses_pinned_expression_index() {
 #[test]
 fn v016_category_shares_use_category_covering_index() {
     let conn = v016_world();
+    // 与 reports 域分类聚合同形状（含 ORDER BY net 的结果排序步骤）。
     let plan = v016_plan(
         &conn,
         "SELECT t.category_id, SUM(CASE WHEN t.kind='expense' THEN t.amount_native_cents \
          WHEN t.kind='refund' THEN -t.amount_native_cents ELSE 0 END) \
          FROM transactions t LEFT JOIN categories c ON c.id=t.category_id \
          WHERE t.kind IN ('expense','refund') AND t.is_deleted=0 \
-         GROUP BY t.category_id",
+         GROUP BY t.category_id ORDER BY 2 DESC",
         [],
     );
     assert!(
@@ -429,8 +430,7 @@ fn v016_date_range_probe_uses_index_endpoints() {
         "MIN 与 MAX 两个标量子查询都应经列表序索引定位: {plan}"
     );
     assert!(
-        !plan.contains("SCAN transactions ")
-            || plan.contains("USING INDEX idx_transactions_list_order"),
+        !plan.contains("SCAN transactions"),
         "不应存在无索引的全表扫描: {plan}"
     );
 }
