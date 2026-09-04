@@ -1,32 +1,35 @@
-//! 查询执行：两段式取行（V018，issue #492）——第一段最小列流式匹配 + 第二段当前页回表。
+//! 查询执行：SQL 下推（issue #515，修订 ADR-0027 决策 1）——匹配在 SQLite C 层
+//! 完成，Rust 不再逐行扫描。
 //!
 //! 语义契约仍是 ADR-0027 统一模糊搜索规格（原文连续子串 ∨ 拼音首字母子序列，
-//! 词条之间 AND、字段之间 OR，多音字前字规则），本模块只改**实现形态**（修订
-//! ADR-0027「不预留索引层逃生舱」实现条款；子序列与倒排索引不兼容、FTS5 仍排除）：
+//! 词条之间 AND、字段之间 OR，多音字前字规则），本模块只改**实现形态**：
 //!
-//! 1. **第一段（匹配段）**：SQL 只取单表最小列（id + note + note_pinyin + 三个
-//!    引用列），沿 V018 搜索覆盖索引 `idx_transactions_note_search` index-only
-//!    流式扫描（列表序供序、零回表；50 万笔实测 860ms → 233ms），逐行按统一语义
-//!    契约过滤、命中计数 `total`、仅收集当前页 id。可搜索名字与软删口径（账户名/
-//!    商户名/分类删除状态）改为搜索开始时一次性读取小参考表（个位数到千行量级）
-//!    成 Rust 字典，替代逐行 JOIN——50 万候选流上 accounts/categories JOIN 即取行
-//!    主要成本（实测单表扫描 25ms vs 带 JOIN 1170ms）；字典每次搜索新建，账户/
-//!    商户改名即刻生效的语义不变。备注拼音子序列路径消费 V018 冗余列
-//!    `note_pinyin`（Writer 接缝同写维护），免逐行重算拼音；列缺失（存量未回填/
-//!    派生漂移）时现算兑底，语义不受回填进度影响。
+//! 1. **第一段（匹配段，SQL 下推）**：词条对备注（原文子串 `LIKE`、拼音首字母
+//!    子序列逐字符 `%` 连接的多段 `LIKE`，严格等价于跳字子序列；词条含
+//!    `[a-z0-9]` 之外字符时拼音分支必然失败、精确省去）与账户名/商户名（字典
+//!    预判命中 id 集合下推 `IN`，复用既有纯函数语义）的匹配全部进入 WHERE；
+//!    软删口径（交易行、软删账户 `NOT IN`、软删分类 `NOT IN`）一并下推。查询以
+//!    `INDEXED BY` 钉定 V018 搜索覆盖索引 `idx_transactions_note_search`，
+//!    index-only 全扫、零回表、列表序供序（无临时 B-tree，EXPLAIN 测试钉定），
+//!    仅命中行的 id 流出 SQLite。账户/商户名即时读取与改名即刻生效语义由
+//!    「字典每次搜索新建 + 命中 id 集合现算」保持；词条内的 `%`、`_`、`\`
+//!    经 `ESCAPE '\'` 转义按字面匹配。**已知边界（显式记录，不兜底）**：
+//!    SQLite LIKE 大小写折叠仅对 ASCII 生效，备注含非 ASCII 大写字母且用户
+//!    以另一大小写搜索时不命中（账户/商户名字典路径仍在 Rust 侧全 Unicode
+//!    折叠，不受影响）。
 //! 2. **第二段（展示段）**：仅为当前页（≤ page_size）命中 id 回表取展示列
 //!    （`Transaction::from_row` 的 18 列，无 JOIN）。
-//! 3. **惰性回填**：存量行的 `note_pinyin` 积压由搜索读路径按 V018 探针索引
-//!    分批补齐（每批一个事务，内存有界）；回填属派生数据维护，失败仅降级为
-//!    现算兑底并记日志，不影响搜索结果。同一回填核心另暴露为显式一键修复
-//!    [`repair_note_pinyin`]（issue #513，设置页入口）：幂等回填全部积压并
-//!    返回报告（回填行数 / 是否收敛 / 失败原因），作为回填失败时可触发的
-//!    恢复手段。
+//! 3. **note_pinyin 兜底承诺修订**：搜索入口保留惰性自动回填（与显式一键修复
+//!    [`repair_note_pinyin`] 同一实现，issue #513），**去掉运行时逐行现算兜底**
+//!    ——回填失败时拼音路径降级漏配（warn），可经设置页一键修复恢复。
 //!
-//! 热路径纪律：行内文本一律经 `get_ref` 借用匹配、词条与字典在搜索开始时一次性
-//! 小写化/拼音化，命中且落当前页窗口才分配 id——50 万候选流上每行分配会吞掉
-//! 索引收益。内存 O(当前页 + 小参考字典)（流式匹配、仅页 id 物化，ADR-0027
-//! 修订记录口径不变；字典体量随账户/分类/商户字典而非交易流水增长）。
+//! 仅金额/日期筛选（无关键字）路径保持原形态：最小列流式扫描 + Rust 层口径
+//! 过滤（planner 自由——筛选选择性依赖数据分布，量筛选索引可能更优）。
+//!
+//! 热路径纪律：命中且落当前页窗口才分配 id——下推后每行仅流出 id 列，内存
+//! O(当前页 + 小参考字典)（流式计数、仅页 id 物化；字典体量随账户/分类/商户
+//! 字典而非交易流水增长）。词条数与 IN 集合体量受 SQLite 变量上限约束
+//! （默认 32766，现实输入远不可达）。
 
 use std::collections::HashMap;
 
@@ -50,16 +53,16 @@ const MAX_PAGE_SIZE: usize = 200;
 /// 惰性回填单批行数：每批一个独立事务，内存有界且可与其它写路径交错。
 const BACKFILL_BATCH: i64 = 2000;
 
-/// 小写化词条（搜索开始时一次性准备，热路径免逐行分配）。
-struct TermLowered {
-    lower: String,
+/// 已小写词条（搜索开始时一次性准备；下推 LIKE 模式由它派生）。
+pub(super) struct TermLowered {
+    pub(super) lower: String,
 }
 
 /// 可搜索名字字典条目：小写化名字 + 拼音首字母串（均搜索开始时算好，热路径
 /// 免逐行分配）。名字即时读取语义由「字典每次搜索新建」保证（改名即刻生效）。
-struct DictEntry {
-    name_lower: String,
-    pinyin: String,
+pub(super) struct DictEntry {
+    pub(super) name_lower: String,
+    pub(super) pinyin: String,
 }
 
 /// 搜索字典：可搜索名字与软删口径的小参考表，搜索开始时一次性读取。
@@ -69,7 +72,7 @@ struct DictEntry {
 ///   `(c.is_deleted = 0 OR c.id IS NULL)` 等价）；
 /// - 商户：id → 条目（含软删商户——历史交易仍可搜，与既有 LEFT JOIN 等价，
 ///   无 is_deleted 过滤）。
-struct SearchDicts {
+pub(super) struct SearchDicts {
     accounts: HashMap<String, (DictEntry, bool)>,
     categories: HashMap<String, bool>,
     merchants: HashMap<String, DictEntry>,
@@ -85,7 +88,7 @@ fn dict_rows<T>(
     Ok(mapped.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-fn load_search_dicts(conn: &Connection) -> Result<SearchDicts> {
+pub(super) fn load_search_dicts(conn: &Connection) -> Result<SearchDicts> {
     let entry = |name: String| DictEntry {
         name_lower: name.to_lowercase(),
         pinyin: pinyin_initials(&name),
@@ -119,38 +122,41 @@ fn load_search_dicts(conn: &Connection) -> Result<SearchDicts> {
     })
 }
 
-/// 第一段 SQL：单表最小列候选流（不物化展示列、无 JOIN），软删除交易口径与
-/// 可选金额/日期过滤与交易列表一致，按交易日期降序（created_at、id 兜底，防
-/// 同秒批量写入翻页漂移）预排序。
-///
-/// `pinned = true`（含关键字词条路径）时以 `INDEXED BY` 钉定 V018 搜索覆盖索引：
-/// 子序列语义决定全量扫描本质，钉定使排序由索引序满足（无临时 B-tree）且扫描
-/// index-only（零回表），并防 planner 在统计边际上摇摆（先例：V016 月度表达式
-/// 索引钉定）；仅金额/日期筛选路径（pinned = false）保留 planner 自由——筛选
-/// 选择性依赖数据分布，量筛选索引可能更优。账户/分类/商户侧口径由
-/// [`SearchDicts`] 在 Rust 层逐行判定（JOIN 即 50 万候选流的取行主要成本，
-/// 实测 25ms → 1170ms）。
-pub(super) fn stage1_sql(where_clauses: &[&str], pinned: bool) -> String {
-    let from = if pinned {
-        "FROM transactions t INDEXED BY idx_transactions_note_search"
-    } else {
-        "FROM transactions t"
-    };
-    format!(
-        "SELECT t.id,t.note,t.note_pinyin,t.account_id,t.merchant_id,t.category_id \
-         {from} \
-         WHERE {} \
-         ORDER BY t.date DESC, t.created_at DESC, t.id DESC",
-        where_clauses.join(" AND ")
-    )
+/// LIKE 通配转义（配 `ESCAPE '\'`）：`\`→`\\`、`%`→`\%`、`_`→`\_`，其余字符
+/// 原样。转义符只出现在这三类序列前——SQLite 对「转义符 + 非特殊字符」的序列
+/// 按不匹配处理，故 `\` 自身也要翻倍，保证特殊字符按字面匹配。
+fn escape_like(term: &str) -> String {
+    let mut out = String::with_capacity(term.len() + 8);
+    for ch in term.chars() {
+        if matches!(ch, '\\' | '%' | '_') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
 }
 
-/// 已小写词条对目标的子序列判定（热路径）。语义与 [`is_subsequence`] 一致
-/// （两侧小写化后逐字符有序匹配）：`pattern` 已小写；`target` 无大写字符时
-/// 小写化为恒等、直接免分配匹配，含大写（派生列脏值等冷情形）降级为原分配
-/// 路径。极小例外：titlecase 字符（如 'ǅ'）非 `is_uppercase` 而小写化非恒等，
-/// 快路径按原字符参与匹配；拼音串恒小写不受影响，仅备注原文恰含此类冷僻字符
-/// 时可感（热路径免逐字符小写化的取舍）。
+/// 原文连续子串 LIKE 模式：`%term%`（词条已小写；ASCII 大小写折叠由 LIKE
+/// 自带，非 ASCII 边界见模块注释）。
+fn like_substring_pattern(term_lower: &str) -> String {
+    format!("%{}%", escape_like(term_lower))
+}
+
+/// 拼音首字母子序列 LIKE 模式：词条逐字符以 `%` 连接（`kf` → `%k%f%`），
+/// 严格等价于「字符按原序出现、允许跳字」的子序列判定；字符同样经转义。
+fn like_subsequence_pattern(term_lower: &str) -> String {
+    let mut out = String::from("%");
+    for ch in term_lower.chars() {
+        out.push_str(&escape_like(&ch.to_string()));
+        out.push('%');
+    }
+    out
+}
+
+/// 已小写词条对目标的子序列判定（热路径，字典预判侧仍在 Rust）。语义与
+/// [`is_subsequence`] 一致（两侧小写化后逐字符有序匹配）：`pattern` 已小写；
+/// `target` 无大写字符时小写化为恒等、直接免分配匹配，含大写（冷情形）降级
+/// 为原分配路径。
 fn is_subsequence_lower(pattern_lower: &str, target: &str) -> bool {
     if target.chars().any(char::is_uppercase) {
         return is_subsequence(pattern_lower, target);
@@ -159,43 +165,220 @@ fn is_subsequence_lower(pattern_lower: &str, target: &str) -> bool {
     pattern_lower.chars().all(|p| chars.any(|t| t == p))
 }
 
-/// 原文对已小写词条的连续子串判定（热路径）。语义与
-/// `text.to_lowercase().contains(&term.to_lowercase())` 一致：`text` 无大写
-/// 字符时直接子串匹配，含大写（冷情形）降级为分配路径。极小例外同
-/// [`is_subsequence_lower`]：titlecase 字符快路径按原字符匹配。
-fn contains_lower(text: &str, term_lower: &str) -> bool {
-    if text.chars().any(char::is_uppercase) {
-        return text.to_lowercase().contains(term_lower);
-    }
-    text.contains(term_lower)
+/// 已小写词条对字典条目（账户/商户名）判定：原文子串 ∨ 拼音首字母子序列。
+/// 语义与 [`term_matches_text`](super::search_text::term_matches_text) 一致
+/// （两侧均已小写化；名字体量小且字典每次搜索新建，改名即刻生效）。
+fn term_matches_dict(term_lower: &str, entry: &DictEntry) -> bool {
+    entry.name_lower.contains(term_lower) || is_subsequence_lower(term_lower, &entry.pinyin)
 }
 
-/// 词条对一笔第一段候选判定（统一语义契约，字段 OR；词条 AND 由调用方组合）：
-/// - 备注字段：原文连续子串 ∨ 备注拼音首字母串的子序列（V018：拼音串优先取
-///   冗余列，缺失时现算兜底——子序列判定语义与列来源无关）；
-/// - 转出账户名 / 商户名：字典预计算的小写名与拼音串（与 [`term_matches_text`]
-///   语义一致——原文子串 ∨ 现算拼音首字母子序列；名字体量小且字典每次搜索
-///   新建，改名即刻生效）。
+/// 下推第一段查询：SQL 文本 + 绑定参数（`?N` 显式编号，与 `params` 下标一致）。
+pub(super) struct Stage1Query {
+    pub(super) sql: String,
+    pub(super) params: Vec<Value>,
+}
+
+/// 可选筛选（金额/日期，与关键字 AND 组合）：列、比较符、绑定值。下推查询
+/// 全语句统一用 `?N` 显式编号（不与匿名 `?` 混用，防编号漂移），由
+/// [`build_stage1_query`] 按登记顺序分配；仅筛选路径（[`stage1_sql`]）沿用
+/// 匿名 `?`（该语句无编号参数，无冲突）。
+pub(super) struct Stage1Filter {
+    pub(super) column: &'static str,
+    pub(super) op: &'static str,
+    pub(super) value: Value,
+}
+
+/// IN 集合子句形态（占位符编号与参数登记统一收口此处，防三处同形拼装漂移）。
+enum InClauseKind {
+    /// `col IN (?,?,…)`——空集合恒假占位 `0`（无可命中 id）。
+    In,
+    /// `col NOT IN (?,?,…)`——空集合恒真占位 `1`（无排除对象，子句可省）。
+    NotIn,
+    /// `(col IS NULL OR col NOT IN (?,?,…))`——可空列不约束；空集合恒真占位 `1`。
+    NullableNotIn,
+}
+
+/// IN 集合子句：非空集合按形态生成 SQL 并登记参数；空集合按语义生成恒假
+/// （IN）或恒真（NOT IN 系）占位。
+fn push_in_clause(
+    col: &str,
+    ids: Vec<Value>,
+    params: &mut Vec<Value>,
+    kind: InClauseKind,
+) -> String {
+    if ids.is_empty() {
+        return match kind {
+            InClauseKind::In => "0".into(),
+            InClauseKind::NotIn | InClauseKind::NullableNotIn => "1".into(),
+        };
+    }
+    let placeholders = ids
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", params.len() + i + 1))
+        .collect::<Vec<_>>()
+        .join(",");
+    params.extend(ids);
+    match kind {
+        InClauseKind::In => format!("{col} IN ({placeholders})"),
+        InClauseKind::NotIn => format!("{col} NOT IN ({placeholders})"),
+        InClauseKind::NullableNotIn => {
+            format!("({col} IS NULL OR {col} NOT IN ({placeholders}))")
+        }
+    }
+}
+
+/// 拼音分支可命中判定：`note_pinyin` 列只含 `[a-z0-9]`（拼音首字母规则：
+/// ASCII 字母/数字小写保留、其余跳过），子序列要求词条每个字符都出现在列值中——
+/// 词条含任一 `[a-z0-9]` 之外字符（汉字、标点、`%` 等）时拼音路径必然失败，
+/// 该 LIKE 分支可精确省去（中文搜索成本减半，语义零变更）。
+fn pinyin_branch_possible(term_lower: &str) -> bool {
+    term_lower
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+}
+
+/// 单词条下推子句（字段 OR）：备注原文子串 LIKE ∨ 拼音首字母子序列 LIKE（仅当
+/// [`pinyin_branch_possible`]）∨ 账户名 ∨ 商户名。账户/商户侧由字典预判命中的
+/// id 集合下推 IN（名字不固化在交易行上，即时读取语义由「字典每次搜索新建 +
+/// 集合现算」保持）；软删账户不进集合，与原行级口径过滤等价。
+fn term_clause(term: &TermLowered, dicts: &SearchDicts, params: &mut Vec<Value>) -> String {
+    let mut parts: Vec<String> = Vec::with_capacity(4);
+    params.push(like_substring_pattern(&term.lower).into());
+    let note_pattern_index = params.len();
+    parts.push(format!("t.note LIKE ?{note_pattern_index} ESCAPE '\\'"));
+    if pinyin_branch_possible(&term.lower) {
+        params.push(like_subsequence_pattern(&term.lower).into());
+        let pinyin_pattern_index = params.len();
+        parts.push(format!(
+            "t.note_pinyin LIKE ?{pinyin_pattern_index} ESCAPE '\\'"
+        ));
+    }
+    let account_ids: Vec<Value> = dicts
+        .accounts
+        .iter()
+        .filter(|(_, (entry, deleted))| !*deleted && term_matches_dict(&term.lower, entry))
+        .map(|(id, _)| Value::Text(id.clone()))
+        .collect();
+    parts.push(push_in_clause(
+        "t.account_id",
+        account_ids,
+        params,
+        InClauseKind::In,
+    ));
+    let merchant_ids: Vec<Value> = dicts
+        .merchants
+        .iter()
+        .filter(|(_, entry)| term_matches_dict(&term.lower, entry))
+        .map(|(id, _)| Value::Text(id.clone()))
+        .collect();
+    parts.push(push_in_clause(
+        "t.merchant_id",
+        merchant_ids,
+        params,
+        InClauseKind::In,
+    ));
+    format!("({})", parts.join(" OR "))
+}
+
+/// 第一段下推查询（issue #515，修订 ADR-0027 决策 1）：词条匹配与软删口径
+/// 全部进入 WHERE，`INDEXED BY` 钉定 V018 搜索覆盖索引——子序列语义决定全量
+/// 扫描本质，钉定使排序由索引序满足（无临时 B-tree）且扫描 index-only（零回
+/// 表），并防 planner 在统计边际上摇摆（先例：V016 月度表达式索引钉定）。
+/// 账户/分类/商户侧口径由字典预判成 id 集合下推（50 万候选流上 JOIN 即取行
+/// 主要成本，实测 25ms → 1170ms，V018 修订记录）。
 ///
-/// `account_name` / `merchant_name` 由调用方按 [`SearchDicts`] 解析并完成行级
-/// 口径过滤（账户在用、分类未删），本函数只做词条匹配。
-fn term_matches_borrowed(
-    term: &TermLowered,
-    note: Option<&str>,
-    note_pinyin: Option<&str>,
-    account: &DictEntry,
-    merchant: Option<&DictEntry>,
-) -> bool {
-    let note_hit = note.is_some_and(|note| {
-        contains_lower(note, &term.lower)
-            || is_subsequence_lower(&term.lower, note_pinyin.unwrap_or(&pinyin_initials(note)))
-    });
-    note_hit
-        || account.name_lower.contains(&term.lower)
-        || is_subsequence_lower(&term.lower, &account.pinyin)
-        || merchant.is_some_and(|m| {
-            m.name_lower.contains(&term.lower) || is_subsequence_lower(&term.lower, &m.pinyin)
-        })
+/// SQL 形态（每词条一组字段 OR，词条之间 AND，金额/日期筛选以
+/// [`Stage1Filter`] 描述、编号拼接在尾部）：
+///
+/// ```sql
+/// SELECT t.id FROM transactions t INDEXED BY idx_transactions_note_search
+/// WHERE t.is_deleted = 0
+///   [AND t.account_id NOT IN (软删账户)]
+///   AND (t.category_id IS NULL OR t.category_id NOT IN (软删分类))
+///   AND (t.note LIKE ? ESCAPE '\\' OR t.note_pinyin LIKE ? ESCAPE '\\'
+///        OR t.account_id IN (…) OR t.merchant_id IN (…))
+///   AND …
+///   [AND 金额/日期筛选]
+/// ORDER BY t.date DESC, t.created_at DESC, t.id DESC
+/// ```
+pub(super) fn build_stage1_query(
+    term_lowers: &[TermLowered],
+    dicts: &SearchDicts,
+    filters: &[Stage1Filter],
+) -> Stage1Query {
+    let mut params: Vec<Value> = Vec::new();
+    let mut clauses: Vec<String> = Vec::with_capacity(term_lowers.len() + 4);
+    clauses.push("t.is_deleted = 0".to_string());
+
+    // 全局口径：软删账户名下的交易不可搜（与原行级过滤等价）。用
+    // `NOT IN (软删账户集合)` 而非 `IN (在用全集)`——软删集合通常为空（子句
+    // 整体省略、零每行开销），且外键强制下账户引用不可能悬空
+    //（PRAGMA foreign_keys = ON），两种形态语义等价。
+    let deleted_account_ids: Vec<Value> = dicts
+        .accounts
+        .iter()
+        .filter(|(_, (_, deleted))| *deleted)
+        .map(|(id, _)| Value::Text(id.clone()))
+        .collect();
+    if !deleted_account_ids.is_empty() {
+        clauses.push(push_in_clause(
+            "t.account_id",
+            deleted_account_ids,
+            &mut params,
+            InClauseKind::NotIn,
+        ));
+    }
+
+    // 软删分类名下的交易不可搜（分类可空不约束，与 (c.is_deleted=0 OR c.id IS NULL) 等价）。
+    let deleted_category_ids: Vec<Value> = dicts
+        .categories
+        .iter()
+        .filter(|(_, deleted)| **deleted)
+        .map(|(id, _)| Value::Text(id.clone()))
+        .collect();
+    clauses.push(push_in_clause(
+        "t.category_id",
+        deleted_category_ids,
+        &mut params,
+        InClauseKind::NullableNotIn,
+    ));
+
+    // 词条 AND：每词条一组字段 OR（见 [`term_clause`]）。
+    for term in term_lowers {
+        clauses.push(term_clause(term, dicts, &mut params));
+    }
+
+    // 可选金额/日期筛选（与关键字 AND 组合，编号与登记顺序一致）。
+    for f in filters {
+        params.push(f.value.clone());
+        clauses.push(format!("{} {} ?{}", f.column, f.op, params.len()));
+    }
+
+    Stage1Query {
+        sql: format!(
+            "SELECT t.id FROM transactions t INDEXED BY idx_transactions_note_search \
+             WHERE {} \
+             ORDER BY t.date DESC, t.created_at DESC, t.id DESC",
+            clauses.join(" AND ")
+        ),
+        params,
+    }
+}
+
+/// 仅金额/日期筛选路径（无关键字）的第一段 SQL：单表最小列候选流（不物化展示
+/// 列、无 JOIN），软删除交易口径与可选金额/日期过滤与交易列表一致，按交易日期
+/// 降序（created_at、id 兜底，防同秒批量写入翻页漂移）预排序。不钉定索引——
+/// 筛选选择性依赖数据分布，planner 自由（量筛选索引可能更优）；软删账户/分类
+/// 口径由 [`SearchDicts`] 在 Rust 层逐行判定（与关键字路径同一字典）。
+pub(super) fn stage1_sql(where_clauses: &[&str]) -> String {
+    format!(
+        "SELECT t.id,t.note,t.note_pinyin,t.account_id,t.merchant_id,t.category_id \
+         FROM transactions t \
+         WHERE {} \
+         ORDER BY t.date DESC, t.created_at DESC, t.id DESC",
+        where_clauses.join(" AND ")
+    )
 }
 
 /// 备注拼音积压探测（V018 partial 索引 `idx_transactions_note_pinyin_backlog`
@@ -247,9 +430,9 @@ fn finish_repair(
 /// （回填行数 / 是否收敛 / 失败原因）。幂等——仅补「拼音列仍为 NULL」的行，
 /// 重复执行零回填、已回填行（含手工脏值）原样保留；分批事务与失败纪律同惰性
 /// 回填：任一批失败记 warn、终止本轮回填、报告携带失败阶段与底层错误，不静默。
-/// 派生数据维护不置脏（不触发备份）。搜索入口的惰性回填消费核心
-/// [`backfill_note_pinyin`]（报告在搜索路径不消费，失败已 warn，语义由现算
-/// 兜底保障），本入口只以「一键修复」领域语言显式触发同一实现并取报告。
+/// 派生数据维护不置脏（不触发备份）。搜索入口的惰性回填消费同一核心
+/// [`backfill_note_pinyin`]（报告在搜索路径消费收敛位，失败已 warn），本入口
+/// 只以「一键修复」领域语言显式触发同一实现并取报告。
 pub fn repair_note_pinyin(conn: &Connection) -> NotePinyinRepairReport {
     backfill_note_pinyin(conn)
 }
@@ -433,62 +616,73 @@ pub fn search_transactions_internal(
     let page_size = page_size.clamp(1, MAX_PAGE_SIZE);
 
     // 惰性回填存量行的拼音冗余列（V018）：与显式一键修复（issue #513）消费
-    // 同一回填核心；报告在搜索路径不消费，失败已 warn，语义由现算兜底保障。
-    backfill_note_pinyin(conn);
+    // 同一回填核心。兜底承诺修订（issue #515 / ADR-0027 修订）：不再逐行现算
+    // 兜底——回填失败时拼音路径降级漏配（warn），可经设置页一键修复恢复。
+    let repair_report = backfill_note_pinyin(conn);
+    if !repair_report.converged {
+        tracing::warn!(
+            backfilled = repair_report.backfilled,
+            "备注拼音列仍有积压，拼音子序列路径可能漏配，可在设置中一键修复"
+        );
+    }
 
     // 可搜索名字与软删口径字典（账户/分类/商户，个位数到千行量级）：每次搜索
     // 新建，替代 50 万候选流上的逐行 JOIN（改名即刻生效语义不变，见模块注释）。
     let dicts = load_search_dicts(conn)?;
 
-    // 交易行口径（is_deleted = 0）+ 可选金额/日期过滤（走既有 B-tree 索引）。
-    let mut where_clauses: Vec<&str> = vec!["t.is_deleted = 0"];
-    let mut params: Vec<rusqlite::types::Value> = Vec::new();
+    // 可选金额/日期过滤（走既有 B-tree 索引；与关键字 AND 组合）。
+    let mut filters: Vec<Stage1Filter> = Vec::new();
     if let Some(min) = amount_min_cents {
         // 本位币分口径（issue #395）：与全仓聚合一致，多币种下跨币种不再混滤。
-        where_clauses.push("t.amount_native_cents >= ?");
-        params.push(min.into());
+        filters.push(Stage1Filter {
+            column: "t.amount_native_cents",
+            op: ">=",
+            value: min.into(),
+        });
     }
     if let Some(max) = amount_max_cents {
-        where_clauses.push("t.amount_native_cents <= ?");
-        params.push(max.into());
+        filters.push(Stage1Filter {
+            column: "t.amount_native_cents",
+            op: "<=",
+            value: max.into(),
+        });
     }
     if let Some(from) = date_from {
-        where_clauses.push("t.date >= ?");
-        params.push(from.to_string().into());
+        filters.push(Stage1Filter {
+            column: "t.date",
+            op: ">=",
+            value: from.to_string().into(),
+        });
     }
     if let Some(to) = date_to {
-        where_clauses.push("t.date <= ?");
-        params.push(to.to_string().into());
+        filters.push(Stage1Filter {
+            column: "t.date",
+            op: "<=",
+            value: to.to_string().into(),
+        });
     }
 
-    // 第一段：单表最小列流式匹配（词条之间 AND；字段 OR 见 `term_matches_borrowed`）。
-    // 词条一次小写化；行内文本借用匹配，命中且落当前页窗口才分配 id
-    // （内存 O(当前页)）。
-    let term_lowers: Vec<TermLowered> = terms
-        .iter()
-        .map(|t| TermLowered {
-            lower: t.to_lowercase(),
-        })
-        .collect();
-    let mut stmt = conn.prepare(&stage1_sql(&where_clauses, !terms.is_empty()))?;
     // saturating 运算防极端输入（usize::MAX）下溢/溢出 panic（与 list_transactions 先例一致）；
     // 超出命中数的页返回空页。
     let offset = page.saturating_sub(1).saturating_mul(page_size);
     let mut total: i64 = 0;
     let mut page_ids: Vec<String> = Vec::with_capacity(page_size);
-    {
-        let rows = stmt.query_map(rusqlite::params_from_iter(params.iter()), |row| {
-            // 列序与 [`stage1_sql`] 的 SELECT 清单一一对应；文本列经 get_ref
-            // 借用（NULL → None），零分配匹配。
+    if terms.is_empty() {
+        // 仅筛选路径：最小列流式扫描 + Rust 层口径过滤（planner 自由，见
+        // [`stage1_sql`]）。行内文本经 get_ref 借用（NULL → None），零分配。
+        let mut where_clauses: Vec<String> = vec!["t.is_deleted = 0".to_string()];
+        where_clauses.extend(filters.iter().map(|f| format!("{} {} ?", f.column, f.op)));
+        let where_refs: Vec<&str> = where_clauses.iter().map(String::as_str).collect();
+        let filter_params: Vec<Value> = filters.iter().map(|f| f.value.clone()).collect();
+        let mut stmt = conn.prepare(&stage1_sql(&where_refs))?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(filter_params.iter()), |row| {
+            // 列序与 [`stage1_sql`] 的 SELECT 清单一一对应。
             let id = row.get_ref(0)?.as_str()?;
-            let note = row.get_ref(1)?.as_str().ok();
-            let note_pinyin = row.get_ref(2)?.as_str().ok();
             let account_id = row.get_ref(3)?.as_str()?;
-            let merchant_id = row.get_ref(4)?.as_str().ok();
             let category_id = row.get_ref(5)?.as_str().ok();
 
             // 行级口径过滤（与原 JOIN 谓词等价）：账户必须在用；分类未软删（可空）。
-            let Some((account, account_deleted)) = dicts.accounts.get(account_id) else {
+            let Some((_, account_deleted)) = dicts.accounts.get(account_id) else {
                 return Ok(());
             };
             if *account_deleted {
@@ -499,16 +693,34 @@ pub fn search_transactions_internal(
             {
                 return Ok(());
             }
-            let merchant = merchant_id.and_then(|mid| dicts.merchants.get(mid));
-            if term_lowers
-                .iter()
-                .all(|t| term_matches_borrowed(t, note, note_pinyin, account, merchant))
-            {
-                total += 1;
-                // 命中序号（0 起）落在当前页区间且未满页才收集 id。
-                if total as usize > offset && page_ids.len() < page_size {
-                    page_ids.push(id.to_string());
-                }
+            total += 1;
+            // 命中序号（0 起）落在当前页区间且未满页才收集 id。
+            if total as usize > offset && page_ids.len() < page_size {
+                page_ids.push(id.to_string());
+            }
+            Ok(())
+        })?;
+        for row in rows {
+            row?;
+        }
+    } else {
+        // 关键字路径：SQL 下推（issue #515，见 [`build_stage1_query`]）。匹配在
+        // SQLite C 层完成，仅命中行的 id 流出，命中计数 total、仅收集当前页 id
+        // （内存 O(当前页)）。
+        let term_lowers: Vec<TermLowered> = terms
+            .iter()
+            .map(|t| TermLowered {
+                lower: t.to_lowercase(),
+            })
+            .collect();
+        let query = build_stage1_query(&term_lowers, &dicts, &filters);
+        let mut stmt = conn.prepare(&query.sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(query.params.iter()), |row| {
+            let id = row.get_ref(0)?.as_str()?;
+            total += 1;
+            // 命中序号（0 起）落在当前页区间且未满页才收集 id。
+            if total as usize > offset && page_ids.len() < page_size {
+                page_ids.push(id.to_string());
             }
             Ok(())
         })?;
