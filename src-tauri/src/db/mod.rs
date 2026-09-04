@@ -201,22 +201,33 @@ fn after_commit(conn: &Connection) {
 ///
 /// - 闭包自带连接获取方式：读路径锁内执行（`conn.lock()`），写路径经连接层
 ///   统一写入口 [`write`]（ADR-0032 置脏语义零改动）；
-/// - `command` 用于在阻塞线程内重建命令 span：异步命令与 wrapper 不同线程，
-///   SQL 耗时归因靠这里兜底（lib.rs 异步命令归因约定，先例 `sync_holding_prices`）；
+/// - `command` 用于在闭包内重建命令 span：异步命令与 wrapper 不同线程，SQL 耗时
+///   归因靠这里兜底（lib.rs 异步命令归因约定，先例 `sync_holding_prices`）；
+///   调用点已有活动 span 时（HTTP handlers 在 tower_http 请求 span 内运行）改为
+///   携带调用方 span 与 dispatcher 跨线程执行——线程局部上下文不会自动跟随
+///   spawn_blocking，显式带入后 HTTP 侧 SQL 归因沿请求 span 不漂移（API 集成
+///   测试 `test_http_sql_duration_attributed_to_request_span` 钉死的行为）；
 /// - 闭包的 `Result` 原样传播（业务错误不二次包装）；闭包 panic（JoinError）
 ///   归一化为 [`AppError::Io`]，与既有 `spawn_blocking` 先例同形。
 ///
-/// 纯单测见 `db::tests::run_db`（闭包执行、Result 传播）。
+/// 纯单测见 `db::tests::run_db`（闭包执行、Result 传播、上下文传播与重建）。
 pub async fn run_db<T, F>(command: &'static str, f: F) -> Result<T>
 where
     T: Send + 'static,
     F: FnOnce() -> Result<T> + Send + 'static,
 {
+    // 捕获调用点当前 dispatcher 与 span（HTTP：tower_http 请求 span；IPC 异步
+    // 命令：无）——两者都是线程局部，需显式带入阻塞线程。
+    let dispatch = tracing::dispatcher::get_default(tracing::Dispatch::clone);
+    let caller_span = tracing::Span::current();
     tauri::async_runtime::spawn_blocking(move || {
-        // 命令在后台线程池执行，重建命令 span 维持 SQL 耗时归因（lib.rs 归因约定）。
-        let span = tracing::info_span!("command", command);
-        let _entered = span.enter();
-        f()
+        tracing::dispatcher::with_default(&dispatch, || {
+            let _caller = caller_span.enter();
+            // 调用点无 span（IPC 异步命令）→ 重建命令 span 兜底维持归因。
+            let command_span = tracing::info_span!("command", command);
+            let _command = caller_span.is_none().then(|| command_span.enter());
+            f()
+        })
     })
     .await
     .map_err(|e| AppError::Io(format!("数据库任务执行失败: {e}")))?

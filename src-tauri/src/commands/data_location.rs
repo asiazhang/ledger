@@ -6,12 +6,21 @@
 //! [`data_location::validate_and_commit`]；校验通过后意图写入指针文件，
 //! 真实搬迁只发生在下次启动（引导内核完成）。保持 ADR-0017 的领域形状约定：
 //! 单个类型化 DTO、不做通用 KV 透传。
+//!
+//! 全部命令 async 化（形状乙，spec #498 / #503）：目录创建/试写探针/指针
+//! 文件读写与聚合时的指针读取是阻塞文件 IO，经连接层统一 helper
+//! [`crate::db::run_db`] 进 tauri 阻塞线程池执行，不占用界面事件循环线程。
+//
+// 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
+// （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
+#![allow(clippy::unreachable)]
 
 use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Manager};
 
 use crate::db::data_location;
+use crate::db::run_db;
 use crate::error::{AppError, Result};
 
 /// 默认应用数据目录（指针文件所在地，也是「恢复默认」的目标）。
@@ -23,42 +32,51 @@ fn default_data_dir(app: &AppHandle) -> Result<PathBuf> {
 
 /// 获取 DataLocation 信息：当前生效目录、是否已更改待重启生效、回退警示。
 #[tauri::command]
-pub fn get_data_location_info(app: AppHandle) -> Result<data_location::DataLocationInfo> {
-    let default_dir = default_data_dir(&app)?;
-    let boot = app
-        .try_state::<data_location::Boot>()
-        .map(|state| state.inner().clone());
-    Ok(data_location::gather_info_from_boot(
-        &default_dir,
-        boot.as_ref(),
-    ))
+pub async fn get_data_location_info(app: AppHandle) -> Result<data_location::DataLocationInfo> {
+    run_db("get_data_location_info", move || {
+        let default_dir = default_data_dir(&app)?;
+        let boot = app
+            .try_state::<data_location::Boot>()
+            .map(|state| state.inner().clone());
+        Ok(data_location::gather_info_from_boot(
+            &default_dir,
+            boot.as_ref(),
+        ))
+    })
+    .await
 }
 
 /// 提交更改位置意图：三步校验通过后写入指针文件，下次启动搬迁生效。
 #[tauri::command]
-pub fn submit_data_location_change(
+pub async fn submit_data_location_change(
     app: AppHandle,
     target_dir: String,
     adopt_existing: bool,
 ) -> Result<data_location::DataLocationChangeOutcome> {
-    let default_dir = default_data_dir(&app)?;
-    let trimmed = target_dir.trim();
-    if trimmed.is_empty() {
-        return Err(AppError::coded(
-            "data-location.dir-required",
-            "目标目录不能为空",
-        ));
-    }
-    data_location::validate_and_commit(&default_dir, Path::new(trimmed), adopt_existing)
+    run_db("submit_data_location_change", move || {
+        let default_dir = default_data_dir(&app)?;
+        let trimmed = target_dir.trim();
+        if trimmed.is_empty() {
+            return Err(AppError::coded(
+                "data-location.dir-required",
+                "目标目录不能为空",
+            ));
+        }
+        data_location::validate_and_commit(&default_dir, Path::new(trimmed), adopt_existing)
+    })
+    .await
 }
 
 /// 恢复默认位置：与更改完全相同的校验 + 写意图机制，目标是默认应用数据目录。
 /// 默认目录可能仍保留搬迁前的旧库（原库永久保留），此时同样返回二选一信号。
 #[tauri::command]
-pub fn restore_default_data_location(
+pub async fn restore_default_data_location(
     app: AppHandle,
     adopt_existing: bool,
 ) -> Result<data_location::DataLocationChangeOutcome> {
-    let default_dir = default_data_dir(&app)?;
-    data_location::validate_and_commit(&default_dir, &default_dir, adopt_existing)
+    run_db("restore_default_data_location", move || {
+        let default_dir = default_data_dir(&app)?;
+        data_location::validate_and_commit(&default_dir, &default_dir, adopt_existing)
+    })
+    .await
 }

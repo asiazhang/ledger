@@ -7,6 +7,7 @@ use axum::extract::State;
 use rusqlite::Connection;
 
 use crate::api_server::error::ErrorResponse;
+use crate::db::run_db;
 use crate::error::AppError;
 use crate::merchants::Merchant;
 
@@ -30,6 +31,9 @@ use crate::merchants::Merchant;
 pub async fn list_merchants_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
 ) -> Result<Json<Vec<Merchant>>, AppError> {
-    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    Ok(Json(crate::merchants::list_merchants(&conn, false)?))
+    run_db("GET /api/v1/merchants", move || {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        Ok(Json(crate::merchants::list_merchants(&conn, false)?))
+    })
+    .await
 }

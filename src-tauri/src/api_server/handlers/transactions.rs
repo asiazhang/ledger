@@ -10,6 +10,7 @@ use rusqlite::Connection;
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::EmitterSlot;
 use crate::api_server::write_ops::emit_after_write;
+use crate::db::run_db;
 use crate::error::AppError;
 use crate::signals::WriteOp;
 use crate::transaction::amount::TransactionKind;
@@ -52,9 +53,12 @@ pub async fn list_transactions_handler(
     State(conn): State<Arc<Mutex<Connection>>>,
     Query(query): Query<TransactionListFilter>,
 ) -> Result<Json<TransactionListResult>, AppError> {
-    let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let result = crate::transaction::list_transactions_internal(&conn, &query)?;
-    Ok(Json(result))
+    run_db("GET /api/v1/transactions", move || {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        let result = crate::transaction::list_transactions_internal(&conn, &query)?;
+        Ok(Json(result))
+    })
+    .await
 }
 
 #[utoipa::path(
@@ -84,9 +88,12 @@ pub async fn batch_create_transactions_handler(
 ) -> Result<Json<Vec<CreateTransactionResult>>, AppError> {
     // 连接层统一写入口（ADR-0032，issue #245）：批次事务由 run 自持，提交点置脏/
     // 到期检查单点；整批回滚不置脏由写入口闭包失败语义保证。
-    let outcome = crate::db::write(&conn, |conn| {
-        crate::transaction::TransactionBatch::run(conn, body.transactions, body.dedup)
-    })?;
+    let outcome = run_db("POST /api/v1/transactions/batch", move || {
+        crate::db::write(&conn, |conn| {
+            crate::transaction::TransactionBatch::run(conn, body.transactions, body.dedup)
+        })
+    })
+    .await?;
     // 信号在写事务提交成功后发射（映射单点判定，ADR-0044）：批内任一行即建商户才发
     // 参考失效信号（修复 HTTP 导入即建商户后前端商户字典陈旧，issue #331）。
     emit_after_write(&emitter, WriteOp::BatchCreateTransactions, outcome.evidence);
@@ -120,11 +127,15 @@ pub async fn update_transaction_handler(
     Json(input): Json<UpdateTransactionInput>,
 ) -> Result<Json<Transaction>, AppError> {
     // 连接层统一写入口（ADR-0032）：修改与读回同一写闭包，提交点置脏/检查单点。
-    let (evidence, updated) = crate::db::write(&conn, |conn| {
-        let evidence = crate::transaction::update_transaction_internal(conn, &id, input.into())?;
-        let updated = crate::transaction::get_transaction_internal(conn, &id)?;
-        Ok((evidence, updated))
-    })?;
+    let (evidence, updated) = run_db("PUT /api/v1/transactions/{id}", move || {
+        crate::db::write(&conn, |conn| {
+            let evidence =
+                crate::transaction::update_transaction_internal(conn, &id, input.into())?;
+            let updated = crate::transaction::get_transaction_internal(conn, &id)?;
+            Ok((evidence, updated))
+        })
+    })
+    .await?;
     // 仅即建商户发参考失效信号（ADR-0044，issue #331）。
     emit_after_write(&emitter, WriteOp::UpdateTransaction, evidence);
     Ok(Json(updated))
@@ -154,8 +165,11 @@ pub async fn delete_transaction_handler(
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
     // 连接层统一写入口（ADR-0032）：删除成功即置脏。
-    crate::db::write(&conn, |conn| {
-        crate::transaction::delete_transaction_internal(conn, &id)
-    })?;
+    run_db("DELETE /api/v1/transactions/{id}", move || {
+        crate::db::write(&conn, |conn| {
+            crate::transaction::delete_transaction_internal(conn, &id)
+        })
+    })
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -5,6 +5,10 @@
 const AI_PROMPT: &str = include_str!("../../prompts/ledger-api.md");
 
 /// 获取 AI 入口提示词全文（markdown 原文）。
+///
+/// 保持同步形态（形状乙 sweep 判定，spec #498 / #503）：纯内存常量克隆
+///（`include_str!`，无 DB、无 IO、无阻塞工作面），与「全部触碰 DB 的命令
+/// async 化」口径一致（先例：`set_auto_execution_enabled`、`cancel_sync_instruments`）。
 #[tauri::command]
 pub fn get_ai_prompt() -> String {
     AI_PROMPT.to_string()
