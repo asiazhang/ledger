@@ -157,19 +157,61 @@ fn gate_failures_lists_only_over_threshold_items() {
     };
     let results = vec![
         mk("列表首页分页", 10.0),
-        mk("深分页", 200.0), // 等号边界：判据为 ≤ 200ms，达标
-        mk("净资产总览", 250.5),
+        mk("深分页", 200.0), // 等号边界：默认判据为 ≤ 200ms，达标
+        mk("月度汇总", 250.5),
         mk("时点持仓", 1000.0),
     ];
     assert_eq!(
         bench::gate_failures(&results, 200.0),
-        vec!["净资产总览（p95 250.50ms）", "时点持仓（p95 1000.00ms）"],
-        "只列超标项，等号边界达标"
+        vec![
+            "月度汇总（p95 250.50ms > 阈值 200ms）",
+            "时点持仓（p95 1000.00ms > 阈值 200ms）",
+        ],
+        "只列超标项（含各自阈值），等号边界达标"
     );
 
     // 全达标：空清单。
     let ok = vec![mk("列表首页分页", 199.9), mk("深分页", 200.0)];
     assert!(bench::gate_failures(&ok, 200.0).is_empty());
+}
+
+#[test]
+fn gate_per_bench_threshold_overrides_default_for_scan_benchmarks() {
+    // 分项例外（ADR-0068）：全量扫描型基准（子序列语义无法索引加速，CPU
+    // 密集、耗时线性于交易数）不与索引加速型基准共用 200ms 线。
+    let mk = |name: &'static str, p95: f64| BenchMetrics {
+        name,
+        context: String::new(),
+        min_ms: p95,
+        avg_ms: p95,
+        p95_ms: p95,
+        iterations: 20,
+    };
+    let results = vec![
+        mk("列表首页分页", 250.0),     // > 默认线 200 → 失败
+        mk("备注搜索拼音过滤", 313.0), // CI 首跑实测值：> 200 但 ≤ 分项线 400 → 达标
+        mk("月度汇总", 313.0),         // 名字不在例外表 → 回落默认线 → 失败
+    ];
+    assert_eq!(
+        bench::gate_failures(&results, 200.0),
+        vec![
+            "列表首页分页（p95 250.00ms > 阈值 200ms）",
+            "月度汇总（p95 313.00ms > 阈值 200ms）",
+        ],
+        "分项例外只对精确名单生效"
+    );
+
+    // 分项线等号边界达标。
+    let boundary = vec![mk("备注搜索拼音过滤", 400.0)];
+    assert!(bench::gate_failures(&boundary, 200.0).is_empty());
+
+    // 例外表钉住：增删分项例外必须显式更新本断言（名单钉住纪律，与基准
+    // 名单断言同款——防止基准改名后例外静默失配）。
+    assert_eq!(
+        bench::PER_BENCH_MAX_P95_MS,
+        [("备注搜索拼音过滤", 400.0)],
+        "分项例外表应恰为 ADR-0068 声明的清单"
+    );
 }
 
 // ---------------------------------------------------------------------------

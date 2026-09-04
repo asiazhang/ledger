@@ -11,10 +11,11 @@
 //! 语句缓存），计时 `--iterations` 次取 min / avg / p95（p95 按最近秩法，
 //! n=10 时 rank=⌈9.5⌉=10 恒等于 max，默认 20 次起才有真分位数分辨力）。
 //!
-//! 性能门禁（issue #493 / ADR-0068）：`--max-p95-ms` 给出阈值时，全部基准
-//! 项逐项判定 p95 ≤ 阈值，任何一项超标则以非零退出码失败（超标清单打在
-//! 报告尾部）；缺省不判定，仅输出报告（本地观察不受影响）。判据与豁免
-//! 原则以 ADR-0068 为准。
+//! 性能门禁（issue #493 / ADR-0068）：`--max-p95-ms` 给出默认阈值时，全部基准
+//! 项逐项判定 p95 ≤ 各自阈值，任何一项超标则以非零退出码失败（超标清单打
+//! 在报告尾部）；缺省不判定，仅输出报告（本地观察不受影响）。全量扫描型
+//! 基准（子序列语义无法索引加速）设分项阈值例外，见 [`PER_BENCH_MAX_P95_MS`]；
+//! 判据、统计口径、分项例外与豁免原则以 ADR-0068 为准。
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -35,6 +36,21 @@ use tauri_app_lib::transaction::{
 
 /// 列表类基准的页大小（与前端默认页大小同量级）。
 const PAGE_SIZE: usize = 20;
+
+/// 分项门禁阈值例外（ADR-0068）：默认判据 200ms 对全部基准生效；全量扫描型
+/// 基准（子序列语义无法索引加速，纯 CPU 密集、耗时线性于交易数）不能与索引
+/// 加速型基准共用一条线，例外项与阈值在此声明，增删须同步修订 ADR-0068 与
+/// tests 里的例外表钉住断言。
+pub(crate) const PER_BENCH_MAX_P95_MS: &[(&str, f64)] = &[("备注搜索拼音过滤", 400.0)];
+
+/// 某基准项的门禁阈值：分项例外优先，未列出的用默认阈值。
+fn gate_threshold_for(name: &str, default_max_p95_ms: f64) -> f64 {
+    PER_BENCH_MAX_P95_MS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, t)| *t)
+        .unwrap_or(default_max_p95_ms)
+}
 
 /// bench 参数（解析后形态；默认值见 [`Default`]）。
 #[derive(Debug, Clone, PartialEq)]
@@ -184,8 +200,9 @@ pub(crate) fn run(cli: BenchCli) -> Result<(), String> {
     Ok(())
 }
 
-/// 门禁判定（ADR-0068）：全部基准逐项 p95 ≤ 阈值才通过；任何一项超标，
-/// 超标清单打在报告尾部（随 tee 进 Job Summary）并返回 Err（非零退出）。
+/// 门禁判定（ADR-0068）：全部基准逐项 p95 ≤ 各自阈值（默认线 + 分项例外）
+/// 才通过；任何一项超标，超标清单打在报告尾部（随 tee 进 Job Summary）并
+/// 返回 Err（非零退出）。
 fn gate(results: &[BenchMetrics], max_p95_ms: Option<f64>) -> Result<(), String> {
     let Some(max_p95_ms) = max_p95_ms else {
         return Ok(());
@@ -194,30 +211,38 @@ fn gate(results: &[BenchMetrics], max_p95_ms: Option<f64>) -> Result<(), String>
     println!();
     if failures.is_empty() {
         println!(
-            "门禁（全部基准 p95 ≤ {max_p95_ms:.0}ms）：通过（{}/{} 项达标）",
+            "门禁（默认 p95 ≤ {max_p95_ms:.0}ms，分项例外见 ADR-0068）：通过（{}/{} 项达标）",
             results.len(),
             results.len()
         );
         Ok(())
     } else {
         println!(
-            "门禁（全部基准 p95 ≤ {max_p95_ms:.0}ms）：失败——{} 项超标：{}",
+            "门禁（默认 p95 ≤ {max_p95_ms:.0}ms，分项例外见 ADR-0068）：失败——{} 项超标：{}",
             failures.len(),
             failures.join("、")
         );
         Err(format!(
-            "性能门禁失败：{} 项 p95 超 {max_p95_ms:.0}ms（超标项见上方报告门禁行）",
+            "性能门禁失败：{} 项 p95 超各自阈值（默认 {max_p95_ms:.0}ms，超标项见上方报告门禁行）",
             failures.len()
         ))
     }
 }
 
-/// 超标项清单（判定纯函数）：p95 > 阈值（判据为 ≤）的基准名 + 实测值。
+/// 超标项清单（判定纯函数）：p95 > 各自阈值（判据为 ≤）的基准名 + 实测值
+/// + 阈值（分项例外优先，未列出者用默认线）。
 pub(crate) fn gate_failures(results: &[BenchMetrics], max_p95_ms: f64) -> Vec<String> {
     results
         .iter()
-        .filter(|r| r.p95_ms > max_p95_ms)
-        .map(|r| format!("{}（p95 {:.2}ms）", r.name, r.p95_ms))
+        .filter(|r| r.p95_ms > gate_threshold_for(r.name, max_p95_ms))
+        .map(|r| {
+            format!(
+                "{}（p95 {:.2}ms > 阈值 {:.0}ms）",
+                r.name,
+                r.p95_ms,
+                gate_threshold_for(r.name, max_p95_ms)
+            )
+        })
         .collect()
 }
 
