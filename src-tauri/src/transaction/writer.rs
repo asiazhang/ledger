@@ -23,7 +23,7 @@ use rusqlite::OptionalExtension;
 use rusqlite::params;
 
 use crate::db::balance::refresh_account_balances;
-use crate::db::{device_id, new_uuid, now_iso, search_cache};
+use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 
 use super::amount::{self, TransactionKind};
@@ -282,8 +282,6 @@ pub fn validate_policy_active(conn: &Connection, policy_id: Option<&str>) -> Res
 pub fn insert_row(conn: &Connection, row: &NormalizedRow) -> Result<String> {
     let id = new_uuid();
     let now = now_iso();
-    // 搜索候选缓存写后失效（issue #493）：保守失效，事务回滚多失效一次无害。
-    search_cache::invalidate();
     conn.execute(
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
@@ -326,8 +324,6 @@ pub fn insert_row(conn: &Connection, row: &NormalizedRow) -> Result<String> {
 ///
 /// buy/sell 同样经本函数落交易行字段（其持仓/卖出关联副作用由调用方另行处理）。
 pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()> {
-    // 搜索候选缓存写后失效（issue #493）：保守失效，事务回滚多失效一次无害。
-    search_cache::invalidate();
     // 旧账户引用先行读取（同事务）：修改可能移动账户，两侧都要整体重算。
     let (old_account_id, old_to_account_id): (String, Option<String>) = conn.query_row(
         "SELECT account_id, to_account_id FROM transactions WHERE id=?1",

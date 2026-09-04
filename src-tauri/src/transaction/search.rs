@@ -1,9 +1,4 @@
 //! 查询执行：两段式取行（V018，issue #492）——第一段最小列流式匹配 + 第二段当前页回表。
-//! 关键字纯路径的候选集自 issue #493 起由进程内候选缓存提供（ADR-0027 修订记录
-//! 预留手段：CI 实测 SQL 流式 p95 313ms 超 ADR-0068 门禁 200ms，候选集物化为
-//! 内存数组、写后失效惰性重建，存储与失效收口基础设施 `db::search_cache`，
-//! V017 同款分层先例）；关键字+筛选组合及仅筛选路径仍走 SQL 流式（瓶颈在
-//! 选择性索引，不在候选流）。
 //!
 //! 语义契约仍是 ADR-0027 统一模糊搜索规格（原文连续子串 ∨ 拼音首字母子序列，
 //! 词条之间 AND、字段之间 OR，多音字前字规则），本模块只改**实现形态**（修订
@@ -37,7 +32,6 @@ use rusqlite::types::Value;
 
 use super::model::{Transaction, TransactionSearchResult};
 use crate::db::query::FromRow;
-use crate::db::search_cache::{self, CandidateRow};
 use crate::error::Result;
 
 use super::search_text::{is_subsequence, pinyin_initials, split_terms};
@@ -280,36 +274,6 @@ fn backfill_note_pinyin(conn: &Connection) {
     }
 }
 
-/// 缓存候选行的行级判定：口径过滤（账户在用、分类未删，与 SQL 路径逐行
-/// 判定同语义同序）+ 词条匹配（与 [`term_matches_borrowed`] 同一语义契约）。
-/// 字典每次搜索新建，账户/商户改名即刻生效语义不变。
-fn candidate_matches(dicts: &SearchDicts, term_lowers: &[TermLowered], row: &CandidateRow) -> bool {
-    let Some((account, account_deleted)) = dicts.accounts.get(&row.account_id) else {
-        return false;
-    };
-    if *account_deleted {
-        return false;
-    }
-    if let Some(cid) = &row.category_id
-        && dicts.categories.get(cid).copied().unwrap_or(false)
-    {
-        return false;
-    }
-    let merchant = row
-        .merchant_id
-        .as_deref()
-        .and_then(|mid| dicts.merchants.get(mid));
-    term_lowers.iter().all(|t| {
-        term_matches_borrowed(
-            t,
-            row.note.as_deref(),
-            row.note_pinyin.as_deref(),
-            account,
-            merchant,
-        )
-    })
-}
-
 /// 第二段：仅为当前页命中 id 回表取展示列（`Transaction::from_row` 的 18 列，
 /// 无 JOIN）。输出保持第一段给定的日期降序（page_ids 顺序），页内缺行（理论上
 /// 不可达：id 来自同一连接刚流式扫过的候选）安静跳过。
@@ -386,43 +350,11 @@ pub fn search_transactions_internal(
     let page_size = page_size.clamp(1, MAX_PAGE_SIZE);
 
     // 惰性回填存量行的拼音冗余列（V018）：回填失败降级现算，语义不受影响。
-    // 缓存路径下本调用先行于快照重建（回填完成度固化进快照；命中路径探针
-    // O(1) 零成本，保持「积压终被补齐」语义不变）。
     backfill_note_pinyin(conn);
 
     // 可搜索名字与软删口径字典（账户/分类/商户，个位数到千行量级）：每次搜索
     // 新建，替代 50 万候选流上的逐行 JOIN（改名即刻生效语义不变，见模块注释）。
     let dicts = load_search_dicts(conn)?;
-
-    // 关键字纯路径（无筛选）：进程内候选缓存（issue #493 / ADR-0027 修订记录
-    // 预留手段）。CI 实测 SQL 流式匹配 p95 313ms 超 ADR-0068 门禁 200ms，
-    // 候选集物化为内存数组后同语义判定；写后失效由搜索候选缓存挂点承接。
-    if !terms.is_empty() && !has_filter {
-        let term_lowers: Vec<TermLowered> = terms
-            .iter()
-            .map(|t| TermLowered {
-                lower: t.to_lowercase(),
-            })
-            .collect();
-        let offset = page.saturating_sub(1).saturating_mul(page_size);
-        let (total, page_ids) = search_cache::with_shared_rows(conn, |rows| {
-            let mut total: i64 = 0;
-            let mut page_ids: Vec<String> = Vec::with_capacity(page_size);
-            for row in rows {
-                if !candidate_matches(&dicts, &term_lowers, row) {
-                    continue;
-                }
-                total += 1;
-                // 命中序号（0 起）落在当前页区间且未满页才收集 id。
-                if total as usize > offset && page_ids.len() < page_size {
-                    page_ids.push(row.id.clone());
-                }
-            }
-            (total, page_ids)
-        })?;
-        let items = fetch_display_rows(conn, &page_ids)?;
-        return Ok(TransactionSearchResult { items, total });
-    }
 
     // 交易行口径（is_deleted = 0）+ 可选金额/日期过滤（走既有 B-tree 索引）。
     let mut where_clauses: Vec<&str> = vec!["t.is_deleted = 0"];
