@@ -34,11 +34,25 @@ const mockCurrencies: Currency[] = [
   { code: 'JPY', name: '日元', symbol: '¥', decimal_places: 0 },
 ]
 
+/** 数据存储位置信息桩：统一形状，各用例只覆写差异字段。 */
+function dataLocationInfo(
+  overrides: Partial<{ active_dir: string; configured_dir: string | null; pending_restart: boolean; fallback_reason: string | null }> = {},
+) {
+  return {
+    active_dir: '/Users/me/Library/Application Support/ledger',
+    configured_dir: null,
+    pending_restart: false,
+    fallback_reason: null,
+    ...overrides,
+  }
+}
+
 /**
  * mock-invoke 桩分发（沿本文件既有模式收口样板）：默认覆盖公共桩，
  * 测试用 `overrides` 只覆写差异项，未命中走默认或 reject。
- * 「数据」pane 用 display-directive='show:lazy'，首次激活即同时挂载
- * BackupSettings 与 DataLocationSettings，故 get_data_location_info 进默认桩。
+ * 「数据」pane 用 display-directive='show:lazy'，首次激活挂载；pane 内子页签
+ * （issue #568）默认「备份」，DataLocationSettings 随「存储位置」子页签首切才挂载
+ * （show:lazy），故 get_data_location_info 仍进默认桩（子页签切换测试会触发）。
  */
 function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
   const defaults: Record<string, unknown> = {
@@ -47,12 +61,7 @@ function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
     list_categories: [],
     list_merchants: [],
     list_backups: [],
-    get_data_location_info: {
-      active_dir: '/Users/me/Library/Application Support/ledger',
-      configured_dir: null,
-      pending_restart: false,
-      fallback_reason: null,
-    },
+    get_data_location_info: dataLocationInfo(),
     create_backup: {
       path: '/tmp/ledger-backup.db.zip',
       size_bytes: 1024,
@@ -77,7 +86,7 @@ function findCardByTitle(wrapper: ReturnType<typeof mount>, title: string) {
   return wrapper.findAll('.n-card').find((c) => c.find('.n-card-header__main').text() === title)
 }
 
-/** 按标签文本点击设置页 Tab（避免依赖不稳定的位置下标）。 */
+/** 按标签文本点击设置页 Tab（避免依赖不稳定的位置下标）；「数据」内子页签同名不冲突，同一助手通吃。 */
 async function openTab(wrapper: ReturnType<typeof mount>, label: string) {
   const tab = wrapper.findAll('.n-tabs-tab').find((t) => t.text() === label)
   expect(tab, `设置页应存在「${label}」Tab`).toBeTruthy()
@@ -172,25 +181,84 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     expect(html).not.toContain('默认币种')
   })
 
-  it('「数据」同时承载备份与恢复、数据存储位置两组件', async () => {
+  it('「数据」页签内部子页签为 备份 / 存储位置 / 数据修复，默认「备份」（issue #568）', async () => {
+    const wrapper = mount(SettingsView)
+    await openTab(wrapper, '数据')
+    await flushPromises()
+    const labels = wrapper.findAll('.n-tabs-tab').map((t) => t.text())
+    expect(labels).toContain('备份')
+    expect(labels).toContain('存储位置')
+    expect(labels).toContain('数据修复')
+    // 默认「备份」：备份组件已挂载，存储位置与数据修复组件未挂载（子 pane show:lazy）。
+    const html = wrapper.html()
+    expect(html).toContain('一键备份')
+    expect(html).not.toContain('数据存储位置')
+    expect(html).not.toContain('拼音搜索数据')
+  })
+
+  it('「数据」承载备份、存储位置、数据修复三组件，随子页签挂载（issue #568）', async () => {
     stubInvoke({
-      get_data_location_info: () =>
-        Promise.resolve({
-          active_dir: '/Users/me/Library/Application Support/ledger',
-          configured_dir: null,
-          pending_restart: false,
-          fallback_reason: null,
-        }),
+      get_data_location_info: () => Promise.resolve(dataLocationInfo()),
     })
     const wrapper = mount(SettingsView)
     await openTab(wrapper, '数据')
     await flushPromises()
-    expect(mockInvoke).toHaveBeenCalledWith('get_data_location_info')
-    const html = wrapper.html()
+    // 默认「备份」子页签：备份组件原样在场。
+    let html = wrapper.html()
     expect(html).toContain('一键备份')
     expect(html).toContain('从备份恢复')
+    // 「存储位置」子页签：DataLocationSettings 原样迁入。
+    await openTab(wrapper, '存储位置')
+    await flushPromises()
+    expect(mockInvoke).toHaveBeenCalledWith('get_data_location_info')
+    html = wrapper.html()
     expect(html).toContain('数据存储位置')
     expect(html).toContain('/Users/me/Library/Application Support/ledger')
+    // 「数据修复」子页签：SearchDataSettings 原样迁入（issue #513 修复工具）。
+    await openTab(wrapper, '数据修复')
+    await flushPromises()
+    expect(wrapper.html()).toContain('拼音搜索数据')
+  })
+
+  it('子页签来回切换备份列表不卸载重拉（子 pane show:lazy + 显式 key，issue #568）', async () => {
+    useAppStore().setBackupDir('/Users/me/backups')
+    let listBackupsCalls = 0
+    stubInvoke({
+      list_backups: () => {
+        listBackupsCalls++
+        return Promise.resolve([])
+      },
+    })
+    const wrapper = mount(SettingsView)
+    await openTab(wrapper, '数据')
+    await flushPromises()
+    expect(listBackupsCalls).toBe(1)
+    await openTab(wrapper, '存储位置')
+    await openTab(wrapper, '数据修复')
+    await openTab(wrapper, '备份')
+    await flushPromises()
+    expect(listBackupsCalls).toBe(1)
+    expect(wrapper.html()).toContain('当前共 0 个备份，上限 30 个')
+  })
+
+  it('子页签选中态不持久化：离开设置页再回来默认回「备份」（issue #568）', async () => {
+    stubInvoke({
+      get_data_location_info: () => Promise.resolve(dataLocationInfo()),
+    })
+    const wrapper = mount(SettingsView)
+    await openTab(wrapper, '数据')
+    await flushPromises()
+    await openTab(wrapper, '存储位置')
+    await flushPromises()
+    expect(wrapper.html()).toContain('数据存储位置')
+    wrapper.unmount()
+
+    const wrapper2 = mount(SettingsView)
+    await openTab(wrapper2, '数据')
+    await flushPromises()
+    const html = wrapper2.html()
+    expect(html).toContain('一键备份')
+    expect(html).not.toContain('数据存储位置')
   })
 
   it('「关于」在末位，显示版本号', async () => {
@@ -456,15 +524,11 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
   it('存储位置异常态文案不变：待重启提示与回退告警照常展示', async () => {
     stubInvoke({
       get_data_location_info: () =>
-        Promise.resolve({
-          active_dir: '/Users/me/Library/Application Support/ledger',
-          configured_dir: '/Users/me/ledger-data',
-          pending_restart: true,
-          fallback_reason: null,
-        }),
+        Promise.resolve(dataLocationInfo({ pending_restart: true, configured_dir: '/Users/me/ledger-data' })),
     })
     const wrapper = mount(SettingsView)
     await openTab(wrapper, '数据')
+    await openTab(wrapper, '存储位置')
     await flushPromises()
     let html = wrapper.html()
     expect(html).toContain('数据存储位置')
@@ -474,15 +538,11 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     // 回退告警：fallback_reason 非空时展示回退提示，原路径仍可见。
     stubInvoke({
       get_data_location_info: () =>
-        Promise.resolve({
-          active_dir: '/Users/me/Library/Application Support/ledger',
-          configured_dir: null,
-          pending_restart: false,
-          fallback_reason: '配置的位置不可用：权限不足',
-        }),
+        Promise.resolve(dataLocationInfo({ fallback_reason: '配置的位置不可用：权限不足' })),
     })
     const wrapper2 = mount(SettingsView)
     await openTab(wrapper2, '数据')
+    await openTab(wrapper2, '存储位置')
     await flushPromises()
     html = wrapper2.html()
     expect(html).toContain('已回退到默认位置')

@@ -103,6 +103,11 @@
     "deletedTag": "已删除"
   },
   "data": {
+    "tabs": {
+      "backup": "备份",
+      "location": "存储位置",
+      "repair": "数据修复"
+    },
     "backup": {
       "dirTitle": "备份目录",
       "dirHint": "配置默认备份目录后，“一键备份”将直接写入该目录，无需每次选择位置。",
