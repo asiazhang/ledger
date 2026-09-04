@@ -348,6 +348,97 @@ fn check_page_uncategorized(
     );
 }
 
+// ---------------------------------------------------------------------------
+// 类型集合过滤（issue #581 报表分类下钻载荷）：播种 + 查询步骤
+// ---------------------------------------------------------------------------
+
+/// "expense,refund" → Vec<TransactionKind>：逗号分隔闭集字面量，未知值 panic（测试步骤即败）。
+fn parse_kinds(raw: &str) -> Vec<TransactionKind> {
+    raw.split(',')
+        .map(|k| TransactionKind::parse(k).unwrap_or_else(|e| panic!("非法 kind: {k}（{e}）")))
+        .collect()
+}
+
+/// 播种 8 种 kind × 带分类/无分类共 16 行（读侧过滤域级测试）：写入路径按 kind 各有
+/// 专用校验（buy/sell 需要标的、refund 需关联原支出），而本场景只针对读过滤接缝
+/// （kind IN + category_id IS NULL 的 AND 组合），直插 SQL 与同日批量导入步骤同先例。
+#[when(expr = "播种 8 类交易各带分类与无分类 日期 {string} 到账户 {string} 分类 {string}")]
+fn seed_kinds_with_and_without_category(
+    world: &mut LedgerWorld,
+    date: String,
+    account_name: String,
+    category_name: String,
+) {
+    let account_id = world.account_id(&account_name);
+    let category_id = world.category_id(&category_name);
+    let conn = world_conn!(world);
+    for kind in TransactionKind::ALL {
+        for cat in [Some(category_id.as_str()), None] {
+            let id = new_uuid();
+            conn.execute(
+                "INSERT INTO transactions \
+                 (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
+                 category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
+                 VALUES (?1,?2,100,'CNY',100,?3,NULL,?4,NULL,NULL,?5,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+                params![id, kind.as_str(), account_id, cat, date],
+            )
+            .unwrap();
+        }
+    }
+    world.transactions_list = query_all_transactions(&conn);
+}
+
+#[then(expr = "分页查询 类型集合 {string} page {int} page_size {int} 应返回 {int} 条 total {int}")]
+fn check_page_kinds(
+    world: &mut LedgerWorld,
+    kinds_raw: String,
+    page: i64,
+    page_size: i64,
+    expected_count: i64,
+    expected_total: i64,
+) {
+    let kinds = parse_kinds(&kinds_raw);
+    assert_paged(
+        world,
+        TransactionListFilter {
+            kinds: Some(kinds),
+            page: Some(page as usize),
+            page_size: Some(page_size as usize),
+            ..Default::default()
+        },
+        expected_count,
+        expected_total,
+        &format!("类型集合 '{kinds_raw}' page={page}"),
+    );
+}
+
+#[then(
+    expr = "分页查询 类型集合 {string} 仅无分类 page {int} page_size {int} 应返回 {int} 条 total {int}"
+)]
+fn check_page_kinds_uncategorized(
+    world: &mut LedgerWorld,
+    kinds_raw: String,
+    page: i64,
+    page_size: i64,
+    expected_count: i64,
+    expected_total: i64,
+) {
+    let kinds = parse_kinds(&kinds_raw);
+    assert_paged(
+        world,
+        TransactionListFilter {
+            kinds: Some(kinds),
+            uncategorized_only: Some(true),
+            page: Some(page as usize),
+            page_size: Some(page_size as usize),
+            ..Default::default()
+        },
+        expected_count,
+        expected_total,
+        &format!("类型集合 '{kinds_raw}' + 仅无分类 page={page}"),
+    );
+}
+
 #[then(expr = "缺省查询 应返回 {int} 条 total {int}")]
 fn check_default(world: &mut LedgerWorld, expected_count: i64, expected_total: i64) {
     let result = list_transactions_internal(&world_conn!(world), &TransactionListFilter::default())

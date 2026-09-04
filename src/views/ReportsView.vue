@@ -38,7 +38,7 @@ import {
   categoryDrilldownBars,
 } from '@/utils/category-chart'
 import { categoryRoot } from '@/utils/category-tree'
-import { UNCATEGORIZED_ONLY } from '@/composables/useTransactionFilter'
+import { UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
 import {
   DATED_TIME_PERIOD_PRESETS,
   type NullableDateRange,
@@ -215,12 +215,12 @@ const categoryBarsData = computed(() => {
   return categoryBars(shares.value, reference.categories)
 })
 
-/** 跳转下钻（issue #380，载荷期间化 issue #412）：直达按该分类过滤的交易列表。
- * 载荷 = 分类（保留值 none = 仅无分类）+ 所选期间首尾日期——期间本就是共享受控
- * 组件经时间周期纯函数（presetRange / periodRange）写回会话状态 store 的精确
- * 自然周期快照，月/季/年各档边界同源复用、不在视图另搓第二份年界数学；刻意不带
- * 交易类型参数——退款继承原分类，列表净额与图中柱值一致（分类下钻词条
- * 「跳转载荷与图所见同口径」）。 */
+/** 跳转下钻（issue #380，载荷期间化 issue #412，类型集合 issue #581）：直达按该分类
+ * 过滤的交易列表。载荷 = 分类（保留值 none = 仅无分类）+ 所选期间首尾日期 + 收支类型
+ * 集合（支出 + 退款，与分类聚合的参与类型同源——退款继承原分类、计入柱值）——期间
+ * 本就是共享受控组件经时间周期纯函数（presetRange / periodRange）写回会话状态 store
+ * 的精确自然周期快照，月/季/年各档边界同源复用、不在视图另搓第二份年界数学；列表
+ * 净值与柱值一致由载荷显式保证（分类下钻词条「跳转载荷与图所见同口径」）。 */
 function goCategoryTransactions(categoryId: string) {
   router.push({
     name: 'transactions',
@@ -228,6 +228,7 @@ function goCategoryTransactions(categoryId: string) {
       category: categoryId,
       dateFrom: session.period.from,
       dateTo: session.period.to,
+      kinds: CATEGORY_DRILLDOWN_KINDS,
     },
   })
 }

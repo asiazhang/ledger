@@ -6,7 +6,7 @@ import { NButton, NEmpty, NSelect } from 'naive-ui'
 import QuickTimeRange from '@/components/QuickTimeRange.vue'
 import ReportsView from '@/views/ReportsView.vue'
 import { categoryColor } from '@/utils/category-chart'
-import { UNCATEGORIZED_ONLY } from '@/composables/useTransactionFilter'
+import { UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
 import { invokeHandler, makeCategory } from './factories'
 import type { NullableDateRange } from '@/utils/time-period'
 import type { ReportDateRange } from '@/types'
@@ -339,7 +339,7 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
     expect(categoryChartProp('data', wrapper).labels).toEqual(['餐饮', '交通', '未分类'])
   })
 
-  it('未分类柱不进图内下钻，直达「仅无分类」列表：载荷 = 保留值 + 当年首尾日期，无类型字段', async () => {
+  it('未分类柱不进图内下钻，直达「仅无分类」列表：载荷 = 保留值 + 当年首尾日期 + 收支类型集合（issue #581）', async () => {
     baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
     const wrapper = await mountReports()
     await clickBar(wrapper, 2) // 未分类柱
@@ -350,6 +350,7 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
         category: UNCATEGORIZED_ONLY,
         dateFrom: `${Y}-01-01`,
         dateTo: `${Y}-12-31`,
+        kinds: CATEGORY_DRILLDOWN_KINDS,
       },
     })
     // 未分类是柱不是层级：图仍在基础态（面包屑不出现）
@@ -369,6 +370,7 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
         category: 'food-snack',
         dateFrom: `${Y}-01-01`,
         dateTo: `${Y}-12-31`,
+        kinds: CATEGORY_DRILLDOWN_KINDS,
       },
     })
   })
@@ -385,6 +387,7 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
         category: 'food',
         dateFrom: `${Y}-01-01`,
         dateTo: `${Y}-12-31`,
+        kinds: CATEGORY_DRILLDOWN_KINDS,
       },
     })
   })
@@ -400,6 +403,7 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
         category: UNCATEGORIZED_ONLY,
         dateFrom: `${Y - 1}-01-01`,
         dateTo: `${Y - 1}-12-31`,
+        kinds: CATEGORY_DRILLDOWN_KINDS,
       },
     })
   })
@@ -415,6 +419,7 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
         category: UNCATEGORIZED_ONLY,
         dateFrom: `${Y}-01-01`,
         dateTo: `${Y}-01-31`,
+        kinds: CATEGORY_DRILLDOWN_KINDS,
       },
     })
   })
@@ -432,6 +437,7 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
         category: 'food-snack',
         dateFrom: `${Y}-01-01`,
         dateTo: `${Y}-03-31`,
+        kinds: CATEGORY_DRILLDOWN_KINDS,
       },
     })
   })

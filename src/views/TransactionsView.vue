@@ -132,6 +132,8 @@ async function load() {
     if (filters.categoryId === UNCATEGORIZED_ONLY) filter.uncategorized_only = true
     else if (filters.categoryId) filter.category_id = filters.categoryId
     if (filters.kind) filter.kind = filters.kind
+    // 类型集合维度（issue #581，下钻专用，无手动控件）：非空集合 → 后端 kinds 数组（浅拷贝脱只读）
+    if (filters.kinds?.length) filter.kinds = [...filters.kinds]
     const res = await api.listTransactions(filter)
     data.value = res.items
     total.value = res.total

@@ -123,6 +123,10 @@ export function applyListFilter(filter: Record<string, unknown>) {
     if (filter.from && t.date < (filter.from as string)) return false
     if (filter.to && t.date > (filter.to as string)) return false
     if (filter.kind && t.kind !== (filter.kind as string)) return false
+    // 镜像后端读接缝（issue #377/#581）：精确分类 / 仅无分类 / 类型集合
+    if (filter.category_id && t.category_id !== (filter.category_id as string)) return false
+    if (filter.uncategorized_only === true && t.category_id !== null) return false
+    if (Array.isArray(filter.kinds) && !filter.kinds.includes(t.kind)) return false
     return true
   })
 }
