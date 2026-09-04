@@ -58,6 +58,8 @@ const amountMaxCents = computed(() => yuanToCents(amountMaxYuan.value))
 const quickRange = computed<NullableDateRange>({
   get: () => ({ from: dateFrom.value, to: dateTo.value }),
   set: (range) => {
+    // 无条件成对写入：组件产出闭集只有双端有界或双空（「全部」须能清回默认态，
+    // 不能像报表页那样拒绝双空）；单端 null 不在产出闭集内，无需双端有界守卫。
     dateFrom.value = range.from
     dateTo.value = range.to
   },

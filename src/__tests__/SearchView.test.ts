@@ -670,6 +670,27 @@ describe('SearchView.vue', () => {
       expect(isDisabled(0, { type: 'month', year: 2026, month: 3 })).toBe(true)
     })
 
+    it('期间直达面板点选写入精确期间快照：防抖搜索载荷双端有界（视图接缝端到端）', async () => {
+      freezeToday()
+      const wrapper = mount(SearchView)
+      await flushPromises()
+      // 经直达面板选 2025-12（界内历史月份）：面板载体为隐形 NDatePicker，
+      // 沿旧日期选择器用例先例在组件缝 emit 点选结果（避免 fake timers 下开面板）
+      const picker = wrapper.findComponent(NDatePicker)
+      picker.vm.$emit('update:value', new Date(2025, 11, 15, 12).getTime())
+      await flushPromises()
+      expect(searchCalls().length).toBe(0) // 沿用既有防抖，未到点不搜索
+      await applyFilters(wrapper)
+      expect(searchCalls().length).toBe(1)
+      expect(lastSearchArgs()).toMatchObject({ dateFrom: '2025-12-01', dateTo: '2025-12-31' })
+      // 历史期间非预设 → 芯片全灭；步进游标落在月档下界（prev 置灰）
+      for (const label of ['全部', '当月', '当季', '当年', '去年']) {
+        expect(lit(wrapper, label)).toBe(false)
+      }
+      expect(periodLabel(wrapper)).toBe('2025年12月')
+      expect(stepButton(wrapper, 'prev').props('disabled')).toBe(true)
+    })
+
     it('期间步进写有界快照并受数据期间边界钳制（边界外置灰）', async () => {
       freezeToday()
       const wrapper = mount(SearchView)
