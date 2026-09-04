@@ -786,7 +786,14 @@ fn search_uses_pinyin_column_for_subsequence_path() {
     let conn = setup();
     insert_account(&conn, "a1", "现金", "cash", "CNY");
     // 列已回填：拼音子序列走列值（不逐行重算）。
-    insert_txn_note_pinyin(&conn, "t1", "a1", Some("万科物业"), "2026-02-01", Some("wkwy"));
+    insert_txn_note_pinyin(
+        &conn,
+        "t1",
+        "a1",
+        Some("万科物业"),
+        "2026-02-01",
+        Some("wkwy"),
+    );
     let res = search(&conn, "wy").unwrap();
     assert_eq!(res.total, 1);
     // 原文子串路径不受列值影响。

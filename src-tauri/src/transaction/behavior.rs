@@ -145,7 +145,8 @@ fn create_within_transaction(
     let row = plan.normalized_row()?;
     let id = writer::insert_row(conn, &row)?;
     apply(conn, &id, &plan)?;
-    // 搜索无索引（issue #196 全量扫描实现）：写入路径零额外工作，交易立即可搜。
+    // 搜索（V018 两段式，issue #492）：Writer 接缝同写维护 note_pinyin 派生列，
+    // 交易立即可搜（存量积压由读路径惰性回填兜底）。
     Ok(TransactionWrite {
         id,
         evidence: WriteEvidence::MerchantCreated(merchant_created),
@@ -262,7 +263,8 @@ fn delete_within_transaction(conn: &Connection, id: &str) -> Result<()> {
         affected.push(to_account_id.as_str());
     }
     refresh_account_balances(conn, &affected)?;
-    // 搜索无索引（issue #196 全量扫描实现）：软删除即刻生效，删除的交易不再可搜。
+    // 搜索（V018 两段式，issue #492）：候选流带 is_deleted 口径过滤，软删即刻
+    // 生效，删除的交易不再可搜（拼音列非本路径维护字段，无需处理）。
     Ok(())
 }
 

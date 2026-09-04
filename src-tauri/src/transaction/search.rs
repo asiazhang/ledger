@@ -69,39 +69,42 @@ struct SearchDicts {
     merchants: HashMap<String, DictEntry>,
 }
 
+fn dict_rows<T>(
+    conn: &Connection,
+    sql: &str,
+    map: impl FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+) -> Result<Vec<T>> {
+    let mut stmt = conn.prepare(sql)?;
+    let mapped = stmt.query_map([], map)?;
+    Ok(mapped.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
 fn load_search_dicts(conn: &Connection) -> Result<SearchDicts> {
     let entry = |name: String| DictEntry {
         name_lower: name.to_lowercase(),
         pinyin: pinyin_initials(&name),
     };
     let mut accounts = HashMap::new();
-    {
-        let mut stmt = conn.prepare("SELECT id, name, is_deleted FROM accounts")?;
-        let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
-        })?;
-        for row in rows {
-            let (id, name, deleted) = row?;
-            accounts.insert(id, (entry(name), deleted != 0));
-        }
+    for (id, name, deleted) in dict_rows(conn, "SELECT id, name, is_deleted FROM accounts", |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, i64>(2)?,
+        ))
+    })? {
+        accounts.insert(id, (entry(name), deleted != 0));
     }
     let mut categories = HashMap::new();
-    {
-        let mut stmt = conn.prepare("SELECT id, is_deleted FROM categories")?;
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
-        for row in rows {
-            let (id, deleted) = row?;
-            categories.insert(id, deleted != 0);
-        }
+    for (id, deleted) in dict_rows(conn, "SELECT id, is_deleted FROM categories", |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+    })? {
+        categories.insert(id, deleted != 0);
     }
     let mut merchants = HashMap::new();
-    {
-        let mut stmt = conn.prepare("SELECT id, name FROM merchants")?;
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
-        for row in rows {
-            let (id, name) = row?;
-            merchants.insert(id, entry(name));
-        }
+    for (id, name) in dict_rows(conn, "SELECT id, name FROM merchants", |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    })? {
+        merchants.insert(id, entry(name));
     }
     Ok(SearchDicts {
         accounts,
@@ -139,7 +142,9 @@ pub(super) fn stage1_sql(where_clauses: &[&str], pinned: bool) -> String {
 /// 已小写词条对目标的子序列判定（热路径）。语义与 [`is_subsequence`] 一致
 /// （两侧小写化后逐字符有序匹配）：`pattern` 已小写；`target` 无大写字符时
 /// 小写化为恒等、直接免分配匹配，含大写（派生列脏值等冷情形）降级为原分配
-/// 路径，语义不分支。
+/// 路径。极小例外：titlecase 字符（如 'ǅ'）非 `is_uppercase` 而小写化非恒等，
+/// 快路径按原字符参与匹配；拼音串恒小写不受影响，仅备注原文恰含此类冷僻字符
+/// 时可感（热路径免逐字符小写化的取舍）。
 fn is_subsequence_lower(pattern_lower: &str, target: &str) -> bool {
     if target.chars().any(char::is_uppercase) {
         return is_subsequence(pattern_lower, target);
@@ -150,7 +155,8 @@ fn is_subsequence_lower(pattern_lower: &str, target: &str) -> bool {
 
 /// 原文对已小写词条的连续子串判定（热路径）。语义与
 /// `text.to_lowercase().contains(&term.to_lowercase())` 一致：`text` 无大写
-/// 字符时直接子串匹配，含大写（冷情形）降级为分配路径。
+/// 字符时直接子串匹配，含大写（冷情形）降级为分配路径。极小例外同
+/// [`is_subsequence_lower`]：titlecase 字符快路径按原字符匹配。
 fn contains_lower(text: &str, term_lower: &str) -> bool {
     if text.chars().any(char::is_uppercase) {
         return text.to_lowercase().contains(term_lower);
@@ -176,17 +182,13 @@ fn term_matches_borrowed(
 ) -> bool {
     let note_hit = note.is_some_and(|note| {
         contains_lower(note, &term.lower)
-            || is_subsequence_lower(
-                &term.lower,
-                note_pinyin.unwrap_or(&pinyin_initials(note)),
-            )
+            || is_subsequence_lower(&term.lower, note_pinyin.unwrap_or(&pinyin_initials(note)))
     });
     note_hit
         || account.name_lower.contains(&term.lower)
-            || is_subsequence_lower(&term.lower, &account.pinyin)
+        || is_subsequence_lower(&term.lower, &account.pinyin)
         || merchant.is_some_and(|m| {
-            m.name_lower.contains(&term.lower)
-                || is_subsequence_lower(&term.lower, &m.pinyin)
+            m.name_lower.contains(&term.lower) || is_subsequence_lower(&term.lower, &m.pinyin)
         })
 }
 
@@ -258,7 +260,10 @@ fn backfill_note_pinyin(conn: &Connection) {
             tracing::warn!(error = %e, "备注拼音回填写入失败（终止本轮回填）");
             return; // tx drop → 回滚本批，其余行下轮搜索重试。
         }
-        tx.commit().ok();
+        if let Err(e) = tx.commit() {
+            tracing::warn!(error = %e, "备注拼音回填提交失败（终止本轮回填，本批回滚）");
+            return; // 提交失败事务由 drop 回滚，其余行下轮搜索重试。
+        }
         if changed == 0 {
             // 全批皆已被补齐（防御：防同批死循环）。
             break;
@@ -290,7 +295,10 @@ fn fetch_display_rows(conn: &Connection, page_ids: &[String]) -> Result<Vec<Tran
     );
     let mut stmt = conn.prepare(&sql)?;
     let params: Vec<Value> = page_ids.iter().map(|id| id.clone().into()).collect();
-    let rows = stmt.query_map(rusqlite::params_from_iter(params.iter()), Transaction::from_row)?;
+    let rows = stmt.query_map(
+        rusqlite::params_from_iter(params.iter()),
+        Transaction::from_row,
+    )?;
     let mut by_id: HashMap<String, Transaction> = HashMap::with_capacity(page_ids.len());
     for row in rows {
         let txn = row?;
@@ -385,43 +393,41 @@ pub fn search_transactions_internal(
     let mut total: i64 = 0;
     let mut page_ids: Vec<String> = Vec::with_capacity(page_size);
     {
-        let rows = stmt.query_map(
-            rusqlite::params_from_iter(params.iter()),
-            |row| {
-                // 列序与 [`stage1_sql`] 的 SELECT 清单一一对应；文本列经 get_ref
-                // 借用（NULL → None），零分配匹配。
-                let id = row.get_ref(0)?.as_str()?;
-                let note = row.get_ref(1)?.as_str().ok();
-                let note_pinyin = row.get_ref(2)?.as_str().ok();
-                let account_id = row.get_ref(3)?.as_str()?;
-                let merchant_id = row.get_ref(4)?.as_str().ok();
-                let category_id = row.get_ref(5)?.as_str().ok();
+        let rows = stmt.query_map(rusqlite::params_from_iter(params.iter()), |row| {
+            // 列序与 [`stage1_sql`] 的 SELECT 清单一一对应；文本列经 get_ref
+            // 借用（NULL → None），零分配匹配。
+            let id = row.get_ref(0)?.as_str()?;
+            let note = row.get_ref(1)?.as_str().ok();
+            let note_pinyin = row.get_ref(2)?.as_str().ok();
+            let account_id = row.get_ref(3)?.as_str()?;
+            let merchant_id = row.get_ref(4)?.as_str().ok();
+            let category_id = row.get_ref(5)?.as_str().ok();
 
-                // 行级口径过滤（与原 JOIN 谓词等价）：账户必须在用；分类未软删（可空）。
-                let Some((account, account_deleted)) = dicts.accounts.get(account_id) else {
-                    return Ok(());
-                };
-                if *account_deleted {
-                    return Ok(());
+            // 行级口径过滤（与原 JOIN 谓词等价）：账户必须在用；分类未软删（可空）。
+            let Some((account, account_deleted)) = dicts.accounts.get(account_id) else {
+                return Ok(());
+            };
+            if *account_deleted {
+                return Ok(());
+            }
+            if let Some(cid) = category_id
+                && dicts.categories.get(cid).copied().unwrap_or(false)
+            {
+                return Ok(());
+            }
+            let merchant = merchant_id.and_then(|mid| dicts.merchants.get(mid));
+            if term_lowers
+                .iter()
+                .all(|t| term_matches_borrowed(t, note, note_pinyin, account, merchant))
+            {
+                total += 1;
+                // 命中序号（0 起）落在当前页区间且未满页才收集 id。
+                if total as usize > offset && page_ids.len() < page_size {
+                    page_ids.push(id.to_string());
                 }
-                if let Some(cid) = category_id {
-                    if dicts.categories.get(cid).copied().unwrap_or(false) {
-                        return Ok(());
-                    }
-                }
-                let merchant = merchant_id.and_then(|mid| dicts.merchants.get(mid));
-                if term_lowers.iter().all(|t| {
-                    term_matches_borrowed(t, note, note_pinyin, account, merchant)
-                }) {
-                    total += 1;
-                    // 命中序号（0 起）落在当前页区间且未满页才收集 id。
-                    if total as usize > offset && page_ids.len() < page_size {
-                        page_ids.push(id.to_string());
-                    }
-                }
-                Ok(())
-            },
-        )?;
+            }
+            Ok(())
+        })?;
         for row in rows {
             row?;
         }
