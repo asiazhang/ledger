@@ -10,5 +10,9 @@
   "resetBody": "A brand-new empty ledger will be created and opened immediately. The unreadable database file is kept as a copy (ledger.db.bak in the ledger data directory) for inspection or external repair; an existing copy with the same name will be overwritten.",
   "resetConfirm": "Reset",
   "resetCancel": "Cancel",
-  "resetOk": "Reset to a brand-new empty ledger"
+  "resetOk": "Reset to a brand-new empty ledger",
+  "restoreChannelTitle": "Restore from a backup file",
+  "restoreChannelHint": "Pick a backup file to restore your ledger to its state at backup time; the app restarts automatically after a successful restore.",
+  "restoreButton": "Restore from a backup file…",
+  "restorePickTitle": "Choose a backup file"
 }

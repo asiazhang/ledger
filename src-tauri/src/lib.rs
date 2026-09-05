@@ -68,10 +68,18 @@ const LOCKED_ALLOWED_COMMANDS: &[&str] = &[
     "reset_after_forgotten_passphrase",
 ];
 
-/// 启动失败期间放行的 IPC 命令白名单（issue #601 / ADR-0075 决策 5 修订）：
-/// 失败恢复屏所需的最小面（启动状态查询、重置为空库）；其余命令一律拒绝——
-/// 占位连接不是业务库，任何业务读写都不得触达。
-const BOOT_FAILURE_ALLOWED_COMMANDS: &[&str] = &["get_boot_status", "reset_after_startup_failure"];
+/// 启动失败期间放行的 IPC 命令白名单（issue #601 / #602 / ADR-0075 决策 5 修订）：
+/// 失败恢复屏所需的最小面（启动状态查询、重置为空库；#602 备份恢复通道：
+/// 备份元数据校验、当前模式探测、恢复执行、恢复成功后自动重启）；其余命令
+/// 一律拒绝——占位连接不是业务库，任何业务读写都不得触达。
+const BOOT_FAILURE_ALLOWED_COMMANDS: &[&str] = &[
+    "get_boot_status",
+    "reset_after_startup_failure",
+    "get_backup_meta",
+    "get_encryption_status",
+    "restore_backup",
+    "restart_app",
+];
 
 /// IPC 日志脱敏：载荷中含主口令字段时遮蔽其值（ADR-0075 后果条款：审计日志
 /// 与 trace 输出不落主口令）。按字段名匹配，对后续关闭加密/修改主口令等
