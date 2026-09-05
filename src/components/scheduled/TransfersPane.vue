@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { errorMessage } from '@/utils/errors'
-import { computed, h, onMounted, ref, watch, type VNode } from 'vue'
+import { computed, h, onMounted, ref, watch } from 'vue'
 import { t } from '@/i18n'
 import {
   NCard,
@@ -16,12 +15,11 @@ import {
   type DataTableColumns,
 } from 'naive-ui'
 import AppDatePicker from '@/components/AppDatePicker.vue'
-import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import AppSelect from '@/components/AppSelect.vue'
+import PlanRowActions from '@/components/scheduled/PlanRowActions.vue'
 import { formatAmount } from '@/types'
 import { yuanToCents } from '@/utils/money'
 import type { ScheduledTransactionOccurrence } from '@/types'
-import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import {
   earliestPendingOccurrence,
@@ -77,24 +75,6 @@ async function onDetailChanged() {
 }
 
 // ---------------------------------------------------------------------------
-// 新建定时转账 = 模态对话框（与订阅页签同模式）。
-// 表单接缝（ADR-0041）：公共草稿字段与公共 payload 组装全仓单点——转出账户即
-// 接缝的「账户」字段；转入账户过滤、币种跟随与总期数语义留本页签。
-// ---------------------------------------------------------------------------
-
-const form = useScheduledPlanForm()
-const {
-  note,
-  accountId: fromAccountId,
-  currencyCode,
-  recurrenceType,
-  recurrenceInterval,
-  startDate,
-  accountOptions,
-  currencyOptions,
-} = form
-
-// ---------------------------------------------------------------------------
 // 新建定时转账弹窗（issue #203 / #204）：开启/关闭编排归弹窗意图工厂 ModalIntent
 // （ADR-0072，词汇表 ModalIntent）——纯新建布尔方言收编为单成员意图闭集
 // （type: create，无目标载荷），显示由「意图非空」派生（无独立 show 布尔），
@@ -116,6 +96,35 @@ const toAccountId = ref<string | null>(null)
 const amountYuan = ref('')
 /** 总期数：null = 无限循环（留空），1 = 一次性，N = 有限期数 */
 const totalOccurrences = ref<number | null>(null)
+
+// ---------------------------------------------------------------------------
+// 新建定时转账 = 模态对话框（与订阅页签同模式）。
+// 表单接缝（ADR-0041）：公共草稿字段、公共 payload 组装与新建提交流程编排全仓单点——
+// 转出账户即接缝的「账户」字段；转入账户过滤、币种跟随与总期数语义留本页签。
+// submitCreate 接缝持编排（商户解析跳过 → payload 合并 → 创建 → 提示 → 公共草稿重置），
+// 成功回调注入本页签原子动作：关窗 + 特化字段重置 + 清单刷新（spec #520）。
+// ---------------------------------------------------------------------------
+
+const form = useScheduledPlanForm({
+  onSubmitted: () => {
+    // 提交成功后原子动作：关窗 + 特化字段重置 + 清单刷新（公共草稿已由接缝重置）
+    closeCreateIntent()
+    toAccountId.value = null
+    amountYuan.value = ''
+    totalOccurrences.value = null
+    void list.load()
+  },
+})
+const {
+  note,
+  accountId: fromAccountId,
+  currencyCode,
+  recurrenceType,
+  recurrenceInterval,
+  startDate,
+  accountOptions,
+  currencyOptions,
+} = form
 
 /** 转入账户候选（Vitest 验收 seam）：按转出账户币种过滤并排除转出账户本身
  * （转出 = 转入被后端拒绝）；未选转出账户时为全部账户。 */
@@ -142,14 +151,7 @@ watch(fromAccountId, (id) => {
   }
 })
 
-/** 重置新建表单到初始态：公共字段走接缝 reset，转入账户/金额/总期数留本页签。 */
-function resetCreateForm() {
-  form.reset()
-  toAccountId.value = null
-  amountYuan.value = ''
-  totalOccurrences.value = null
-}
-
+/** 新建提交：表单校验留页签，提交流程编排由接缝 submitCreate 持有（spec #520）。 */
 async function create() {
   if (!fromAccountId.value) {
     message.warning(t('scheduled.form.selectFromAccount'))
@@ -164,23 +166,11 @@ async function create() {
     message.warning(t('scheduled.form.amountPositive'))
     return
   }
-  try {
-    await api.createScheduledTransaction(
-      form.buildCreateInput({
-        kind: 'scheduled_transfer',
-        amountCents,
-        // 定时转账不使用商户（无商户面，不暴露商户字段，issue #203）
-        merchantId: null,
-        specific: { to_account_id: toAccountId.value, total_occurrences: totalOccurrences.value },
-      }),
-    )
-    message.success(t('scheduled.toast.transferCreated'))
-    closeCreateIntent()
-    resetCreateForm()
-    await list.load()
-  } catch (e) {
-    message.error(t('scheduled.toast.createFailed', { message: errorMessage(e) }))
-  }
+  await form.submitCreate({
+    kind: 'scheduled_transfer',
+    amountCents,
+    specific: { to_account_id: toAccountId.value, total_occurrences: totalOccurrences.value },
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -246,45 +236,13 @@ const columns = computed<DataTableColumns<TransferRow>>(() => [
   {
     title: t('scheduled.column.actions'),
     key: 'actions',
-    // 行操作描述符（可用性矩阵/标签/run）由模块构建；此处按描述符渲染，
-    // 含 confirm 文案的动作经 AppPopconfirm 二次确认（弹层纪律 ADR-0035）
-    render: (row) => {
-      const buttons: VNode[] = list
-        .rowActions(row)
-        .filter((a) => a.available)
-        .map((a) =>
-          a.confirm
-            ? h(
-                AppPopconfirm,
-                { onPositiveClick: a.run },
-                {
-                  default: () => a.confirm,
-                  trigger: () =>
-                    h(
-                      NButton,
-                      {
-                        size: 'tiny',
-                        type: 'error',
-                        quaternary: true,
-                        'data-testid': `op-${a.key}-${row.plan.core.id}`,
-                      },
-                      () => a.label,
-                    ),
-                },
-              )
-            : h(
-                NButton,
-                {
-                  size: 'tiny',
-                  'data-testid': `op-${a.key}-${row.plan.core.id}`,
-                  onClick: a.run,
-                },
-                () => a.label,
-              ),
-        )
-      if (buttons.length === 0) return '—'
-      return h(NSpace, { size: 4 }, () => buttons)
-    },
+    // 行操作描述符（可用性矩阵/标签/run）由模块构建；此处透传共享渲染组件，
+    // 确认弹层/测试锚点/空占位只此一份（ADR-0041 决策 7，spec #520）
+    render: (row) =>
+      h(PlanRowActions, {
+        actions: list.rowActions(row),
+        rowId: row.plan.core.id,
+      }),
   },
 ])
 

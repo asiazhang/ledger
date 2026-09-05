@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
-import { NModal, NSelect, NInputNumber, NPopconfirm } from 'naive-ui'
+import { NModal, NSelect, NPopconfirm } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
@@ -387,7 +387,11 @@ describe('TransfersPane 新建定时转账（转账形态真差异，issue #203�
     expect(currencySelect.props('value')).toBe('USD')
   })
 
-  it('创建无限循环转账：不填总期数提交 total_occurrences=null', async () => {
+  // 提交流程编排（商户解析跳过 → payload 合并 → 创建 → 提示 → 重置 → 回调）已迁移至接缝接口测试
+  // （useScheduledPlanForm.test.ts「submitCreate 提交时序编排」）。此处保留：交互冒烟（关窗 + 清单刷新接线）
+  // 与本页签职责的形态特化字段组装（yuanToCents 元转分 + to_account_id/total_occurrences 直传）。
+
+  it('创建成功后关闭弹窗并刷新清单，新转账出现在列表（页签直传特化字段与元转分）', async () => {
     const wrapper = await mountView()
     await openCreateModal(wrapper)
     accountSelect(wrapper, 'transfer-from-account').vm.$emit('update:value', 'acc-cny1')
@@ -397,9 +401,16 @@ describe('TransfersPane 新建定时转账（转账形态真差异，issue #203�
     const amountInput = findInput(wrapper, 'transfer-amount')
     await amountInput.setValue('500')
     await amountInput.trigger('input')
+    // 特化字段组装（页签职责）：总期数 N
+    wrapper
+      .findComponent('[data-testid="transfer-total-occurrences"]')
+      .vm.$emit('update:value', 3)
+    await flushPromises()
     await wrapper.findComponent('[data-testid="transfer-create"]').trigger('click')
     await flushPromises()
-
+    expect(wrapper.findComponent(NModal).props('show')).toBe(false)
+    expect(wrapper.text()).toContain('支付宝')
+    // 元转分（yuanToCents）与特化字段直传（非空断言留给接缝直测）
     const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_scheduled_transaction')
     expect(call).toBeDefined()
     expect(call![1]).toMatchObject({
@@ -408,53 +419,10 @@ describe('TransfersPane 新建定时转账（转账形态真差异，issue #203�
         account_id: 'acc-cny1',
         to_account_id: 'acc-cny2',
         amount_cents: 50000,
-        currency_code: 'CNY',
-        total_occurrences: null,
+        total_occurrences: 3,
         merchant_id: null,
-        category_id: null,
       },
     })
-  })
-
-  it('创建一次性（总期数=1）与有限期数（总期数=3）转账', async () => {
-    for (const n of [1, 3]) {
-      mockPlans = []
-      mockInvoke.mockClear()
-      baseInvoke()
-      const wrapper = await mountView()
-      await openCreateModal(wrapper)
-      accountSelect(wrapper, 'transfer-from-account').vm.$emit('update:value', 'acc-cny1')
-      await flushPromises()
-      accountSelect(wrapper, 'transfer-to-account').vm.$emit('update:value', 'acc-cny2')
-      await flushPromises()
-      const amountInput = findInput(wrapper, 'transfer-amount')
-      await amountInput.setValue('100')
-      await amountInput.trigger('input')
-      wrapper
-        .findComponent('[data-testid="transfer-total-occurrences"]')
-        .vm.$emit('update:value', n)
-      await flushPromises()
-      await wrapper.findComponent('[data-testid="transfer-create"]').trigger('click')
-      await flushPromises()
-      const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_scheduled_transaction')
-      expect(call![1]).toMatchObject({ input: { total_occurrences: n } })
-    }
-  })
-
-  it('创建成功后关闭弹窗并刷新清单，新转账出现在列表', async () => {
-    const wrapper = await mountView()
-    await openCreateModal(wrapper)
-    accountSelect(wrapper, 'transfer-from-account').vm.$emit('update:value', 'acc-cny1')
-    await flushPromises()
-    accountSelect(wrapper, 'transfer-to-account').vm.$emit('update:value', 'acc-cny2')
-    await flushPromises()
-    const amountInput = findInput(wrapper, 'transfer-amount')
-    await amountInput.setValue('500')
-    await amountInput.trigger('input')
-    await wrapper.findComponent('[data-testid="transfer-create"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.findComponent(NModal).props('show')).toBe(false)
-    expect(wrapper.text()).toContain('支付宝')
   })
 
   it('未选转出 / 转入账户或金额为 0 时不提交创建', async () => {
