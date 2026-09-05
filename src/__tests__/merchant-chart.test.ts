@@ -10,9 +10,9 @@ import type { MerchantShare } from '@/types'
 
 describe('merchantBars 图行构建（issue #588）', () => {
   const rows: MerchantShare[] = [
-    { merchant_id: 'm-1', merchant_name: '超市', amount_cents: 5000 },
-    { merchant_id: 'm-2', merchant_name: '咖啡', amount_cents: 3000 },
-    { merchant_id: 'm-3', merchant_name: '书店', amount_cents: 0 },
+    { merchant_id: 'm-1', merchant_name: '超市', amount_cents: 5000, transaction_count: 3 },
+    { merchant_id: 'm-2', merchant_name: '咖啡', amount_cents: 3000, transaction_count: 2 },
+    { merchant_id: 'm-3', merchant_name: '书店', amount_cents: 0, transaction_count: 1 },
   ]
 
   it('后端返回序即柱序：名称、数值逐行对应，零口径逻辑（不重排不过滤）', () => {
@@ -44,7 +44,7 @@ describe('merchantBars 图行构建（issue #588）', () => {
 
   it('负净额行（退款大于支出）如实渲染，口径归后端', () => {
     const bars = merchantBars([
-      { merchant_id: 'm-9', merchant_name: '退款户', amount_cents: -200 },
+      { merchant_id: 'm-9', merchant_name: '退款户', amount_cents: -200, transaction_count: 1 },
     ])
     expect(bars).toEqual([
       { merchant_id: 'm-9', name: '退款户', value: -200, color: paletteColor(0) },

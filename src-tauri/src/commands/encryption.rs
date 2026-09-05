@@ -1,10 +1,10 @@
-//! 加密模式命令壳层（issue #570 / ADR-0075）：状态查询、解锁、开启加密、
-//! 忘记口令重置（issue #573）。
+//! 加密模式命令壳层（issue #570 / #571 / ADR-0075）：状态查询、解锁、
+//! 开启加密、关闭加密、修改主口令、忘记口令重置（issue #573）。
 //!
 //! 只做参数解包与 [`crate::db::encryption`] / [`crate::db::data_location`]
-//! 调用与状态编排：文件级转换、解锁建连、搬迁补做、重置副本语义都在 db
-//! 基础设施，本文件不含领域规则。「关闭加密」「修改主口令」与「本机记住」
-//! 由后续票交付（ADR-0075 范围划分）。
+//! 调用与状态编排：文件级转换（三形态同机制）、解锁建连、搬迁补做、
+//! 重置副本语义都在 db 基础设施，本文件不含领域规则。「本机记住」由
+//! 后续票交付（ADR-0075 范围划分）。
 //!
 //! 全部命令 async 化（形状乙，spec #498 / #503 先例）：转换导出、解锁建连
 //! 与搬迁补做是阻塞文件 IO，经连接层统一 helper [`crate::db::run_db`] 进
@@ -44,6 +44,18 @@ pub struct UnlockOutcome {
 /// 生效目录中的库文件路径（引导结果登记的单一来源）。
 fn active_db_path(app: &AppHandle) -> std::path::PathBuf {
     app.state::<Boot>().db_dir.join(DB_FILE_NAME)
+}
+
+/// 转换类命令（开启/关闭/修改主口令）的共同门禁：应用处于锁定状态时
+/// 拒绝——转换只能在解锁后的运行中应用发起。
+fn ensure_unlocked(app: &AppHandle) -> Result<()> {
+    if app.state::<EncryptionGate>().is_locked() {
+        return Err(AppError::coded(
+            "encryption.locked",
+            "应用已锁定，请先解锁后再操作",
+        ));
+    }
+    Ok(())
 }
 
 /// 查询加密状态：锁定门状态 + 库文件头探测。
@@ -128,18 +140,48 @@ fn resume_business_surface(app: &AppHandle, conn: Connection) -> Result<()> {
 /// 「恢复成功后自动重启」同型）。
 #[tauri::command]
 pub async fn enable_encryption(app: AppHandle, passphrase: String) -> Result<()> {
-    if app.state::<EncryptionGate>().is_locked() {
-        return Err(AppError::coded(
-            "encryption.locked",
-            "应用已锁定，请先解锁后再操作",
-        ));
-    }
+    ensure_unlocked(&app)?;
     let db_path = active_db_path(&app);
     run_db("enable_encryption", move || {
         encryption::enable_encryption_for_file(&db_path, &passphrase)
     })
     .await?;
     tracing::info!("整库加密转换完成，待重启以新口令重新打开");
+    Ok(())
+}
+
+/// 关闭加密：把当前密文库整库一次性转换回明文库（需当前主口令，转换与
+/// 原子性语义见 [`encryption::disable_encryption_for_file`]）。完成后
+/// 重启由启动探测接管：明文库不再出现解锁屏；重启由前端经既有
+/// `restart_app` 触发（Restore 同型）。
+#[tauri::command]
+pub async fn disable_encryption(app: AppHandle, passphrase: String) -> Result<()> {
+    ensure_unlocked(&app)?;
+    let db_path = active_db_path(&app);
+    run_db("disable_encryption", move || {
+        encryption::disable_encryption_for_file(&db_path, &passphrase)
+    })
+    .await?;
+    tracing::info!("整库转换完成（关闭加密），待重启以明文重新打开");
+    Ok(())
+}
+
+/// 修改主口令：旧口令验证通过后把密文库整库转入新口令的新库（转换与
+/// 原子性语义见 [`encryption::change_passphrase_for_file`]）。完成后
+/// 重启以新口令解锁；重启由前端经既有 `restart_app` 触发（Restore 同型）。
+#[tauri::command]
+pub async fn change_encryption_passphrase(
+    app: AppHandle,
+    passphrase: String,
+    new_passphrase: String,
+) -> Result<()> {
+    ensure_unlocked(&app)?;
+    let db_path = active_db_path(&app);
+    run_db("change_encryption_passphrase", move || {
+        encryption::change_passphrase_for_file(&db_path, &passphrase, &new_passphrase)
+    })
+    .await?;
+    tracing::info!("整库转换完成（修改主口令），待重启以新口令重新打开");
     Ok(())
 }
 

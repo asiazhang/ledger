@@ -357,11 +357,14 @@ export const api = {
   restoreDefaultDataLocation: (adoptExisting: boolean) =>
     invoke<DataLocationChangeOutcome>('restore_default_data_location', { adoptExisting }),
 
-  // 加密模式（issue #570 / ADR-0075）：状态查询 / 解锁 / 开启加密 / 忘记口令重置（#573）
+  // 加密模式（issue #570/#571 / ADR-0075）：状态查询 / 解锁 / 转换三形态 / 忘记口令重置（#573）
   getEncryptionStatus: () => invoke<EncryptionStatus>('get_encryption_status'),
   unlockEncryption: (passphrase: string) =>
     invoke<UnlockOutcome>('unlock_encryption', { passphrase }),
   enableEncryption: (passphrase: string) => invoke<void>('enable_encryption', { passphrase }),
+  disableEncryption: (passphrase: string) => invoke<void>('disable_encryption', { passphrase }),
+  changeEncryptionPassphrase: (passphrase: string, newPassphrase: string) =>
+    invoke<void>('change_encryption_passphrase', { passphrase, newPassphrase }),
   resetAfterForgottenPassphrase: () => invoke<void>('reset_after_forgotten_passphrase'),
 
   // AI

@@ -66,7 +66,10 @@ const LOCKED_ALLOWED_COMMANDS: &[&str] = &[
 /// 与 trace 输出不落主口令）。按字段名匹配，对后续关闭加密/修改主口令等
 /// 命令同样生效。
 fn redact_passphrase_payload(payload: &serde_json::Value) -> serde_json::Value {
-    const SENSITIVE_KEYS: &[&str] = &["passphrase"];
+    // 主口令字段永不落日志/trace（ADR-0075）：解锁/开启加密的 `passphrase`
+    // 与修改主口令的 `new_passphrase` 同等敏感（Tauri v2 参数名按 JS 侧
+    // camelCase 到达，两种拼法都遮蔽）。
+    const SENSITIVE_KEYS: &[&str] = &["passphrase", "new_passphrase", "newPassphrase"];
     match payload {
         serde_json::Value::Object(map) => {
             let mut masked = map.clone();

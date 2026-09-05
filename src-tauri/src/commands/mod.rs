@@ -218,10 +218,12 @@ pub const IPC_COMMAND_WRITE_OPS: &[(&str, Option<WriteOp>)] = &[
     ("update_transaction", Some(WriteOp::UpdateTransaction)),
     ("delete_transaction", Some(WriteOp::DeleteTransaction)),
     ("list_transactions", None),
-    // ── 加密模式（issue #570 / ADR-0075）──
+    // ── 加密模式（issue #570 / #571 / ADR-0075）──
     // 转换/解锁/重置是文件级设置操作，非账本数据写（不置脏，ADR-0032 语义锚）。
     ("get_encryption_status", None),
-    ("unlock_encryption", None), // 设置操作：解锁建连并拉起调度
-    ("enable_encryption", None), // 设置操作：整库加密转换
+    ("unlock_encryption", None),  // 设置操作：解锁建连并拉起调度
+    ("enable_encryption", None),  // 设置操作：整库加密转换
+    ("disable_encryption", None), // 设置操作：整库转回明文转换
+    ("change_encryption_passphrase", None), // 设置操作：改主口令转换
     ("reset_after_forgotten_passphrase", None), // 逃生门重置（#573）：新明文空库并拉起调度
 ];

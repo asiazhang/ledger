@@ -17,11 +17,16 @@ pub struct MonthlySummary {
 
 /// 商户消费排行行（issue #192）：`expense_net`（毛支出 − 退款）按商户聚合、
 /// 本位币口径；商户名取自字典行现名（改名/软删后历史引用照常统计显示）。
+/// `transaction_count`（issue #617）：该商户在期间内、参与排行口径（支出 + 退款）
+/// 的交易记录数，与金额同口径——退款笔数计入、无商户交易不进排行不计数、
+/// 软删商户历史引用照常计数。区别于核心域 Merchant「关联交易条数（毛笔数）」
+///（字典管理视角、全 kind、不做退款冲减），见 CONTEXT-core.md。
 #[derive(Debug, Serialize)]
 pub struct MerchantShare {
     pub merchant_id: String,
     pub merchant_name: String,
     pub amount_cents: i64,
+    pub transaction_count: i64,
 }
 
 /// 商户消费排行载荷（issue #588）：排行行 + 本期全部商户净支出合计。
@@ -64,7 +69,9 @@ impl FromRow for MerchantShare {
         Ok(MerchantShare {
             merchant_id: row.get(0)?,
             merchant_name: row.get(1)?,
+            // SUM(expense_net) 对无贡献行可为 NULL，归 0；COUNT(*) 恒非 NULL。
             amount_cents: row.get::<_, Option<i64>>(2)?.unwrap_or(0),
+            transaction_count: row.get::<_, i64>(3)?,
         })
     }
 }

@@ -150,6 +150,12 @@ pub fn category_shares_rows(
 /// 本位币口径（`amount_native_cents`），与核心交易域净值恒等式一致。
 /// 无商户关联的交易不进排行；软删商户的历史引用照常统计（JOIN 不滤 is_deleted）。
 ///
+/// 交易笔数（issue #617）：每行新增 `transaction_count` = 期间内、参与排行口径
+/// （支出 + 退款）的交易记录数，与金额同口径——同一 `WHERE kind IN (kinds)` 过滤、
+/// 同一 JOIN（无商户排除、软删商户历史照常计数）下 `COUNT(*)` 逐商户聚合，
+/// 退款笔数计入（退款在金额中冲减、在笔数中计数）。区别于核心域 Merchant 的
+/// 「关联交易条数（毛笔数）」（全 kind、不做退款冲减），见 CONTEXT-core.md。
+///
 /// 期间过滤（issue #411 / ADR-0057 决策 4）：可选 `from`/`to`（YYYY-MM-DD 含边界，
 /// 字典序区间比较，各边独立）任一端存在即期间口径，遗留 `year` 不参与；
 /// 双端皆缺省回退遗留年份口径（已发布 API 只增不改）。
@@ -167,7 +173,7 @@ pub fn merchant_shares_report(
 ) -> Result<MerchantSharesReport> {
     let kinds = contributing_kinds_sql(Measure::ExpenseNet);
     let mut sql = format!(
-        "SELECT t.merchant_id, m.name, SUM({expr}) AS net \
+        "SELECT t.merchant_id, m.name, SUM({expr}) AS net, COUNT(*) AS transaction_count \
          FROM transactions t JOIN merchants m ON m.id=t.merchant_id \
          WHERE t.kind IN ({kinds}) AND t.is_deleted=0",
         expr = expense_net_expr("t"),
