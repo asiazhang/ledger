@@ -266,6 +266,16 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     expect(html).not.toContain('数据存储位置')
   })
 
+  it('设置页内容列限宽约 720px、左对齐不居中（issue #651）', () => {
+    const wrapper = mount(SettingsView)
+    const column = wrapper.find('[data-testid="settings-column"]')
+    expect(column.exists()).toBe(true)
+    const style = column.attributes('style') ?? ''
+    expect(style).toContain('max-width: 720px')
+    // 左对齐：无居中 margin（margin auto 居中与否在此由 margin 属性是否出现表达）。
+    expect(style).not.toContain('margin')
+  })
+
   it('「关于」在末位，显示版本号', async () => {
     const wrapper = mount(SettingsView)
     const tabs = wrapper.findAll('.n-tabs-tab')
@@ -302,7 +312,11 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     const wrapper = mount(SettingsView)
     await openTab(wrapper, '数据')
     await nextTick()
-    await wrapper.find('.n-button').trigger('click')
+    // 按文本定位目录按钮（卡片重排后首个按钮不再固定是它，issue #651）。
+    const dirBtn = wrapper.findAll('button').find((b) =>
+      b.text().includes('选择目录') || b.text().includes('更改目录'),
+    )!
+    await dirBtn.trigger('click')
     await nextTick()
     expect(mockOpen).toHaveBeenCalledWith({ directory: true, multiple: false, title: '选择备份目录' })
     expect(localStorage.getItem('backup_dir')).toBe('"/Users/me/ledger-backups"')

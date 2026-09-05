@@ -145,7 +145,8 @@
       "backupHint": "Packs the entire ledger (accounts, transactions, budgets, investment holdings, scheduled transactions and all other data) into a single backup file. UI preferences such as theme and default currency are not included.",
       "backupOnce": "One-click Backup",
       "backupAs": "Save As…",
-      "lastBackup": "Last backup: "
+      "lastBackup": "Last backup: ",
+      "refresh": "Refresh"
     },
     "location": {
       "title": "Data Location",
