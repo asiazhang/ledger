@@ -263,6 +263,9 @@ describe('GroupMoreView 页签右键「移回侧栏」（issue #475 / ADR-0063 �
     // 置灰：naive-ui 的 disabled 修饰类在选项体（后代节点）上
     expect(option!.querySelector('[class*="disabled"]')).not.toBeNull()
     expect(document.body.textContent).toContain('本组主项已满 3 项')
+    // 行高自适应包装层在菜单内：缺了它两行提示会溢出 naive 固定行盒，
+    // 画到菜单容器外成为无背景板漂浮文字（机制见 global.css .tab-back-option）
+    expect(document.body.querySelector('.tab-back-option')).not.toBeNull()
   })
 
   it('腾位后右键可选：点选「移回侧栏」即从清单删除（页签消失、落本组主项末位）', async () => {

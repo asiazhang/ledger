@@ -48,3 +48,16 @@ textarea,
   -webkit-user-select: text;
   user-select: text;
 }
+
+/*
+ * 「移回侧栏」页签菜单（GroupMoreView）选项行高随内容：组满提示是两行标签，而
+ * naive 下拉菜单项行盒高度固定（height/line-height: var(--n-option-height)，
+ * medium 34px）——两行内容会溢出行盒画到菜单容器外，成为无背景板、行距巨大的
+ * 漂浮文字盖在被收视图上。经 NDropdown 的 render-option 在选项外包一层标记类，
+ * 仅对该菜单放开行盒高度：主行仍吃 34px line-height（与全仓菜单手感一致），
+ * 提示行自带内联 line-height 收紧行距。选择器压过 naive 的
+ * `.n-dropdown-option .n-dropdown-option-body` 同权重规则，不依赖样式表顺序。
+ */
+.tab-back-option .n-dropdown-option .n-dropdown-option-body {
+  height: auto;
+}
