@@ -1,11 +1,12 @@
-//! 加密最小闭环 BDD 步骤（issue #570 / ADR-0075）。
+//! 加密转换三形态 BDD 步骤（issue #570/#571 / ADR-0075）。
 //!
 //! 与 data_location.feature 同一文件级接缝：真临时目录驱动真实文件系统，
 //! 每个 scenario 干净的目录现场，只断言外部可见行为（转换往返、启动探测
-//! 接管、失败原子性、口令错误可重试、搬迁后仍为密文库）。步骤直调 db
-//! 基础设施的实现接缝（`enable_encryption_for_file` / `unlock_db_file` /
-//! `boot` / `relocate_with_key`），与真实 IPC 命令同一实现（先例：BDD 直调
-//! 命令层内部函数）。
+//! 接管、失败原子性、口令错误可重试、关闭/改口令对称形态、搬迁后仍为密
+//! 文库）。步骤直调 db 基础设施的实现接缝（`enable_encryption_for_file`
+//! / `disable_encryption_for_file` / `change_passphrase_for_file` /
+//! `unlock_db_file` / `boot` / `relocate_with_key`），与真实 IPC 命令同一
+//! 实现（先例：BDD 直调命令层内部函数）。
 
 use cucumber::{given, then, when};
 use rusqlite::Connection;
@@ -13,7 +14,8 @@ use rusqlite::Connection;
 use tauri_app_lib::db::data_location::relocate_with_key;
 use tauri_app_lib::db::data_location::{self, DB_FILE_NAME};
 use tauri_app_lib::db::encryption::{
-    DbFileKind, enable_encryption_for_file, probe_file_kind, unlock_db_file,
+    DbFileKind, change_passphrase_for_file, disable_encryption_for_file,
+    enable_encryption_for_file, probe_file_kind, unlock_db_file,
 };
 use tauri_app_lib::db::{init_db, new_uuid, open_connection, open_connection_with_passphrase};
 use tauri_app_lib::error::AppError;
@@ -92,6 +94,19 @@ fn count_transactions_in_file(db: &std::path::Path, passphrase: Option<&str>) ->
         None => open_connection(db).unwrap(),
     };
     count_transactions(&conn)
+}
+
+/// 断言库中种子交易完整：数量一致且种子备注逐条在（转换往返不丢内容）。
+fn assert_seed_rows(conn: &Connection, count: usize) {
+    assert_eq!(count_transactions(conn) as usize, count, "交易数不符");
+    let notes: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM transactions WHERE note LIKE '加密种子交易 %'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(notes as usize, count, "种子交易内容应完整保留");
 }
 
 fn code_of(err: &AppError) -> Option<&str> {
@@ -180,14 +195,6 @@ fn given_dir_readonly(world: &mut LedgerWorld) {
 // When
 // ---------------------------------------------------------------------------
 
-#[when(expr = "执行启动引导并探测库文件")]
-fn when_boot_and_probe(world: &mut LedgerWorld) {
-    let default_dir = world.enc_dir.clone().unwrap();
-    let boot = data_location::boot(&default_dir);
-    world.last_boot = Some(boot);
-    world.enc_probe = probe_file_kind(&db_path(world)).ok();
-}
-
 #[when(expr = "执行启动引导")]
 fn when_boot(world: &mut LedgerWorld) {
     let default_dir = world.enc_dir.clone().unwrap();
@@ -198,6 +205,22 @@ fn when_boot(world: &mut LedgerWorld) {
 fn when_enable_encryption(world: &mut LedgerWorld, passphrase: String) {
     world.enc_last_error = None;
     if let Err(e) = enable_encryption_for_file(&db_path(world), &passphrase) {
+        world.enc_last_error = Some(e);
+    }
+}
+
+#[when(expr = "用当前主口令 {string} 关闭加密")]
+fn when_disable_encryption(world: &mut LedgerWorld, passphrase: String) {
+    world.enc_last_error = None;
+    if let Err(e) = disable_encryption_for_file(&db_path(world), &passphrase) {
+        world.enc_last_error = Some(e);
+    }
+}
+
+#[when(expr = "用旧口令 {string} 与新口令 {string} 修改主口令")]
+fn when_change_passphrase(world: &mut LedgerWorld, current: String, new_pass: String) {
+    world.enc_last_error = None;
+    if let Err(e) = change_passphrase_for_file(&db_path(world), &current, &new_pass) {
         world.enc_last_error = Some(e);
     }
 }
@@ -244,8 +267,8 @@ fn when_unlock_and_relocate(world: &mut LedgerWorld, passphrase: String) {
 #[then(expr = "库文件应探测为明文库")]
 fn then_probe_plaintext(world: &mut LedgerWorld) {
     assert_eq!(
-        world.enc_probe,
-        Some(DbFileKind::Plaintext),
+        probe_file_kind(&db_path(world)).unwrap(),
+        DbFileKind::Plaintext,
         "明文库应探测为明文"
     );
 }
@@ -313,24 +336,46 @@ fn then_bak_preserved(world: &mut LedgerWorld) {
     );
 }
 
+#[then(expr = "原库文件应保留为 .bak 密文副本")]
+fn then_bak_preserved_encrypted(world: &mut LedgerWorld) {
+    let bak = db_path(world).with_extension("db.bak");
+    assert!(bak.exists(), "原密文库应保留为 .bak 副本");
+    assert_eq!(
+        probe_file_kind(&bak).unwrap(),
+        DbFileKind::Encrypted,
+        ".bak 副本应为密文库"
+    );
+}
+
+#[then(expr = "明文打开当前库应包含 {int} 条交易且内容完整")]
+fn then_open_plaintext(world: &mut LedgerWorld, count: usize) {
+    let conn = open_connection(db_path(world)).unwrap();
+    assert_seed_rows(&conn, count);
+}
+
+#[then(expr = "凭主口令 {string} 打开 .bak 副本应包含 {int} 条交易且内容完整")]
+fn then_open_bak_with_passphrase(world: &mut LedgerWorld, passphrase: String, count: usize) {
+    let bak = db_path(world).with_extension("db.bak");
+    let conn = open_connection_with_passphrase(&bak, &passphrase).unwrap();
+    assert_seed_rows(&conn, count);
+}
+
+#[then(expr = "转换失败错误码应为 {string}")]
+fn then_convert_failed_with_code(world: &mut LedgerWorld, code: String) {
+    let error = world.enc_last_error.as_ref().expect("预期转换失败");
+    assert_eq!(
+        code_of(error),
+        Some(code.as_str()),
+        "错误码不匹配，实际: {error}"
+    );
+}
+
 #[then(expr = "凭主口令 {string} 打开当前库应包含 {int} 条交易且内容完整")]
 fn then_open_with_passphrase(world: &mut LedgerWorld, passphrase: String, count: usize) {
     let path = db_path(world);
     let conn = open_connection_with_passphrase(&path, &passphrase).unwrap();
-    assert_eq!(
-        count_transactions(&conn) as usize,
-        count,
-        "凭主口令打开的库交易数不符"
-    );
     // 内容完整：与转换前 seed 的确定性内容比对（同序同值）。
-    let notes: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM transactions WHERE note LIKE '加密种子交易 %'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(notes as usize, count, "种子交易内容应完整保留");
+    assert_seed_rows(&conn, count);
 }
 
 #[then(expr = "当前库文件字节应保持不变且仍为明文库")]
