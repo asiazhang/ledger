@@ -46,6 +46,7 @@ function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
 beforeEach(() => {
   mockInvoke.mockReset()
   mockConfirm.mockReset()
+  document.body.innerHTML = ''
   setActivePinia(createPinia())
   // 本机记住（issue #574）：清空偏好 localStorage 与模块级能力态，避免跨用例泄漏。
   localStorage.removeItem('remember_passphrase')
@@ -59,6 +60,15 @@ beforeEach(() => {
 
 function findButton(wrapper: ReturnType<typeof mount>, text: string) {
   return wrapper.findAll('button').find((b) => b.text().includes(text))!
+}
+
+/** 点开启加密确认弹窗内的「继续开启加密」按钮：弹窗 teleport 到 body，需经 document.body 查询。 */
+function clickEnableConfirm() {
+  const btn = [...document.body.querySelectorAll('button')].find((b) =>
+    b.textContent?.includes('继续开启加密'),
+  )
+  if (!btn) throw new Error('未找到开启加密确认按钮')
+  btn.click()
 }
 
 async function setPasswords(wrapper: ReturnType<typeof mount>, pass: string, confirm: string) {
@@ -107,12 +117,14 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
         },
         restart_app: () => Promise.resolve(),
       })
-      mockConfirm.mockResolvedValue(true)
       const wrapper = mount(EncryptionSettings)
       await flushPromises()
 
       await setPasswords(wrapper, '口令①', '口令①')
       await findButton(wrapper, '开启加密')!.trigger('click')
+      await flushPromises()
+      // 开启加密确认弹窗（ADR-0075 决策 2）：点应用内确认按钮。
+      clickEnableConfirm()
       await flushPromises()
       expect(mockInvoke).toHaveBeenCalledWith('enable_encryption', { passphrase: '口令①' })
       expect(messageApi.success).toHaveBeenCalled()
@@ -126,12 +138,17 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
 
   it('确认弹窗取消：不发起转换', async () => {
     stubInvoke()
-    mockConfirm.mockResolvedValue(false)
     const wrapper = mount(EncryptionSettings)
     await flushPromises()
 
     await setPasswords(wrapper, '口令①', '口令①')
     await findButton(wrapper, '开启加密')!.trigger('click')
+    await flushPromises()
+    // 取消弹窗（teleport 到 body）：点「取消」按钮，不发起转换。
+    const cancelBtn = [...document.body.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('取消'),
+    )!
+    cancelBtn.click()
     await flushPromises()
     expect(mockInvoke).not.toHaveBeenCalledWith('enable_encryption', expect.anything())
   })
@@ -145,12 +162,13 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
           code: 'encryption.passphrase-empty',
         }),
     })
-    mockConfirm.mockResolvedValue(true)
     const wrapper = mount(EncryptionSettings)
     await flushPromises()
 
     await setPasswords(wrapper, '口令①', '口令①')
     await findButton(wrapper, '开启加密')!.trigger('click')
+    await flushPromises()
+    clickEnableConfirm()
     await flushPromises()
     expect(messageApi.error).toHaveBeenCalled()
     // 未调用重启（转换失败不重启，应用回到明文可用状态）
@@ -353,7 +371,7 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
 describe('EncryptionSettings.vue 本机记住主口令（issue #574）', () => {
   /** 记住复选项（语义定位按钮文本）。 */
   function findRememberCheckbox(wrapper: ReturnType<typeof mount>) {
-    return wrapper.findAll('.n-checkbox').find((c) => c.text().includes('在本机记住主口令'))!
+    return wrapper.findAll('.n-checkbox').find((c) => c.text().includes('启动时自动解锁'))!
   }
 
   it('平台支持：明文库开启表单出现「记住」复选项；勾选后开启会缓存主口令', async () => {
@@ -382,6 +400,10 @@ describe('EncryptionSettings.vue 本机记住主口令（issue #574）', () => {
       await findButton(wrapper, '开启加密')!.trigger('click')
       await flushPromises()
 
+      // 开启加密确认弹窗（ADR-0075 决策 2）：点应用内确认按钮，而非系统 confirm。
+      clickEnableConfirm()
+      await flushPromises()
+
       expect(mockInvoke).toHaveBeenCalledWith('set_remember_passphrase', { passphrase: '口令①' })
       expect(useAppStore().rememberPassphrase).toBe(true)
       vi.advanceTimersByTime(900)
@@ -396,7 +418,7 @@ describe('EncryptionSettings.vue 本机记住主口令（issue #574）', () => {
     })
     const wrapper = mount(EncryptionSettings)
     await flushPromises()
-    expect(wrapper.html()).not.toContain('在本机记住主口令')
+    expect(wrapper.html()).not.toContain('启动时自动解锁')
   })
 
   it('已加密 + 记住已开：关闭开关调用 clear_remember_passphrase 并置偏好关', async () => {
@@ -436,10 +458,10 @@ describe('EncryptionSettings.vue 本机记住主口令（issue #574）', () => {
     await flushPromises()
     const passInput = wrapper
       .findAll('input')
-      .find((i) => i.attributes('placeholder')?.includes('以启用本机记住'))!
+      .find((i) => i.attributes('placeholder')?.includes('以便保存并自动解锁'))!
     expect(passInput).toBeTruthy()
     await passInput.setValue('当前口令')
-    await findButton(wrapper, '启用记住')!.trigger('click')
+    await findButton(wrapper, '启用自动解锁')!.trigger('click')
     await flushPromises()
 
     expect(mockInvoke).toHaveBeenCalledWith('set_remember_passphrase', { passphrase: '当前口令' })

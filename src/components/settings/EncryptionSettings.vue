@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
-import { NAlert, NButton, NCard, NCheckbox, NForm, NFormItem, NInput, NSpace, NSpin, NSwitch, NText, useMessage } from 'naive-ui'
+import { NAlert, NButton, NCard, NCheckbox, NForm, NFormItem, NInput, NSpace, NSpin, NSwitch, NText, NTooltip, useMessage } from 'naive-ui'
 import { computed, onMounted, ref } from 'vue'
 import { confirm } from '@tauri-apps/plugin-dialog'
 import { api } from '@/api'
@@ -8,6 +8,7 @@ import { t } from '@/i18n'
 import { restartAppShortly } from '@/utils/restart'
 import { useAppStore } from '@/stores/app'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
+import EnableEncryptionConfirmModal from '@/components/settings/EnableEncryptionConfirmModal.vue'
 import type { EncryptionStatus } from '@/types'
 
 // 加密卡片（issue #570/#571 / #574 / ADR-0075）：数据文件管理域的加密模式开关。
@@ -28,6 +29,10 @@ const loadError = ref('')
 const submitting = ref(false)
 const submittingChange = ref(false)
 const submittingDisable = ref(false)
+
+// 开启加密确认弹窗（ADR-0075 决策 2）：升级为应用内红色确认弹窗，承载无后门
+// 后果说明（忘记主口令 = 数据不可恢复）。`enableConfirmShow` 为受控显示开关。
+const enableConfirmShow = ref(false)
 
 const passphrase = ref('')
 const confirmPassphrase = ref('')
@@ -81,14 +86,16 @@ onMounted(() => {
   void loadRememberSupport()
 })
 
-/** 开启加密：确认 → 转换 → 提示重启（Restore 同型：成功 toast 后延迟重启）。 */
-async function enable() {
+/** 开启加密第一步：弹确认弹窗（无后门后果说明），确认后执行整库转换。 */
+function requestEnable() {
   if (submitting.value || mismatch.value || !passphrase.value) return
-  const ok = await confirm(t('settings.data.encryption.confirmBody'), {
-    title: t('settings.data.encryption.confirmTitle'),
-    kind: 'warning',
-  })
-  if (!ok) return
+  enableConfirmShow.value = true
+}
+
+/** 开启加密确认：转换 → 提示重启（Restore 同型：成功 toast 后延迟重启）。 */
+async function confirmEnable() {
+  enableConfirmShow.value = false
+  if (submitting.value || mismatch.value || !passphrase.value) return
   submitting.value = true
   try {
     await api.enableEncryption(passphrase.value)
@@ -346,7 +353,7 @@ async function disable() {
                 show-password-on="click"
                 :placeholder="t('settings.data.encryption.confirmPlaceholder')"
                 :disabled="submitting"
-                @keyup.enter="enable"
+                @keyup.enter="requestEnable"
               />
             </NFormItem>
             <NCheckbox
@@ -354,14 +361,19 @@ async function disable() {
               v-model:checked="enableRemember"
               :disabled="submitting"
             >
-              <NText depth="3">{{ t('settings.data.encryption.rememberCheckbox') }}</NText>
+              <NTooltip placement="top" :style="{ maxWidth: '320px' }">
+                <template #trigger>
+                  <NText depth="3">{{ t('settings.data.encryption.rememberCheckbox') }}</NText>
+                </template>
+                {{ t('settings.data.encryption.rememberCheckboxHint') }}
+              </NTooltip>
             </NCheckbox>
             <NSpace>
               <NButton
                 type="primary"
                 :loading="submitting"
                 :disabled="!passphrase || mismatch"
-                @click="enable"
+                @click="requestEnable"
               >
                 {{ t('settings.data.encryption.enable') }}
               </NButton>
@@ -370,6 +382,14 @@ async function disable() {
         </NForm>
       </NSpin>
     </NSpace>
+
+    <!-- 开启加密确认弹窗（ADR-0075 决策 2）：应用内红色确认弹窗，承载无后门后果说明 -->
+    <EnableEncryptionConfirmModal
+      v-model:show="enableConfirmShow"
+      :submitting="submitting"
+      :on-confirm="confirmEnable"
+      :on-cancel="() => (enableConfirmShow = false)"
+    />
   </NCard>
 </template>
 
