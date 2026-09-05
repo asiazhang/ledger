@@ -6,17 +6,12 @@
 //! [`crate::item::domain`]（阶段 1 域目录化，#397 / ADR-0056）。
 //!
 //! 信号约定：物品是独立领域（非参考数据，ADR-0014），复用 `ledger:changed`
-//! 同名事件——物品 store 与消费界面订阅后自动重拉。发不发、发哪个由映射
-//! 单点判定（ADR-0044 决策 8），notify 只是发射钩子。
+//! 同名事件——物品 store 与消费界面订阅后自动重拉。信号经统一写入口按写操作
+//! 身份发射（ADR-0073）；域内 notify 参数保留为 BDD 计数注入点（ADR-0044
+//! 决策 8），生产壳层传空回调。
 //!
-//! 置脏触发已收口连接层统一写入口（`db::write`，ADR-0032）：写路径对备份域
-//! 零感知，置脏/到期检查由写入口闭包在提交点单点执行。
-//!
-//! 全部命令 async 化（形状乙，spec #498 / #502）：DB 调用经连接层统一 helper
-//! [`crate::db::run_db`] 进 tauri 阻塞线程池执行，不占用界面事件循环线程；
-//! 写路径仍在连接层统一写入口内置脏（ADR-0032 语义零改动）。notify 回调里的
-//! 信号发射经 `post_emit_with` 投递主线程队尾（ADR-0054 主线程非阻塞投递），
-//! 从阻塞线程调用安全，对用户外部行为不变。
+//! 写命令经壳层统一写入口 [`crate::write_entry::write_entry`]（ADR-0073）：
+//! 仪式（锁、事务、置脏、信号）内化单点；读命令经 `run_db`（形状乙）。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
 // （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
@@ -28,7 +23,8 @@ use crate::db::{DbState, run_db};
 use crate::error::{AppError, Result};
 use crate::item::domain;
 use crate::item::{ItemDailyCost, ItemDailyTotal, ItemDisposeInput, ItemInput, ItemWithDailyCost};
-use crate::signals::{WriteEvidence, WriteOp, emit_for};
+use crate::signals::WriteOp;
+use crate::write_entry::{Outcome, write_entry};
 
 #[tauri::command]
 pub async fn list_items(db: State<'_, DbState>) -> Result<Vec<ItemWithDailyCost>> {
@@ -74,15 +70,16 @@ pub async fn create_item(
     app: tauri::AppHandle,
     input: ItemInput,
 ) -> Result<String> {
-    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
     let conn = db.conn.clone();
-    run_db("create_item", move || {
-        crate::db::write(&conn, |conn| {
-            domain::create_item(conn, input, &mut || {
-                emit_for(&app, WriteOp::CreateItem, WriteEvidence::None);
-            })
-        })
-    })
+    write_entry(
+        "create_item",
+        conn,
+        Some(&app),
+        WriteOp::CreateItem,
+        // notify 是 BDD 计数注入点（ADR-0044 决策 8）；信号已由写入口按身份
+        // 在提交成功后发射，生产壳层传空回调。
+        move |conn| domain::create_item(conn, input, &mut || {}).map(Outcome::Silent),
+    )
     .await
 }
 
@@ -93,15 +90,14 @@ pub async fn update_item(
     id: String,
     input: ItemInput,
 ) -> Result<()> {
-    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
     let conn = db.conn.clone();
-    run_db("update_item", move || {
-        crate::db::write(&conn, |conn| {
-            domain::update_item(conn, &id, input, &mut || {
-                emit_for(&app, WriteOp::UpdateItem, WriteEvidence::None);
-            })
-        })
-    })
+    write_entry(
+        "update_item",
+        conn,
+        Some(&app),
+        WriteOp::UpdateItem,
+        move |conn| domain::update_item(conn, &id, input, &mut || {}).map(Outcome::Silent),
+    )
     .await
 }
 
@@ -112,28 +108,26 @@ pub async fn dispose_item(
     id: String,
     input: ItemDisposeInput,
 ) -> Result<()> {
-    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
     let conn = db.conn.clone();
-    run_db("dispose_item", move || {
-        crate::db::write(&conn, |conn| {
-            domain::dispose_item(conn, &id, input, &mut || {
-                emit_for(&app, WriteOp::DisposeItem, WriteEvidence::None);
-            })
-        })
-    })
+    write_entry(
+        "dispose_item",
+        conn,
+        Some(&app),
+        WriteOp::DisposeItem,
+        move |conn| domain::dispose_item(conn, &id, input, &mut || {}).map(Outcome::Silent),
+    )
     .await
 }
 
 #[tauri::command]
 pub async fn delete_item(db: State<'_, DbState>, app: tauri::AppHandle, id: String) -> Result<()> {
-    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
     let conn = db.conn.clone();
-    run_db("delete_item", move || {
-        crate::db::write(&conn, |conn| {
-            domain::delete_item(conn, &id, &mut || {
-                emit_for(&app, WriteOp::DeleteItem, WriteEvidence::None);
-            })
-        })
-    })
+    write_entry(
+        "delete_item",
+        conn,
+        Some(&app),
+        WriteOp::DeleteItem,
+        move |conn| domain::delete_item(conn, &id, &mut || {}).map(Outcome::Silent),
+    )
     .await
 }

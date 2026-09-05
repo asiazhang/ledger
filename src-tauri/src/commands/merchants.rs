@@ -1,11 +1,11 @@
 //! IPC 命令壳 · 商户（Merchant）。
 //!
-//! 只负责参数解包、事务边界与失效信号发射；商户字典行为位于 [`crate::merchants`]。
+//! 只负责参数解包与统一写入口一行调用；商户字典行为位于 [`crate::merchants`]。
 //! 注册路径与前端调用保持不变。
 //!
-//! 全部命令 async 化（形状乙，spec #498 / #501）：DB 调用经连接层统一 helper
-//! [`crate::db::run_db`] 进 tauri 阻塞线程池执行，不占用界面事件循环线程；
-//! 写路径仍在连接层统一写入口内置脏（ADR-0032 语义零改动）。
+//! 全部命令 async 化（形状乙，spec #498 / #501）；写命令经壳层统一写入口
+//! [`crate::write_entry::write_entry`]（ADR-0073）：仪式内化单点，参考写入成功
+//! 发参考失效信号（映射单点判定，ADR-0044）。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
 // （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
@@ -17,7 +17,8 @@ use crate::db::{DbState, run_db};
 use crate::error::{AppError, Result};
 use crate::merchants as merchant_domain;
 use crate::merchants::{Merchant, MerchantInput, MerchantTransactionCount, MerchantUpdateInput};
-use crate::signals::{WriteEvidence, WriteOp, emit_for};
+use crate::signals::WriteOp;
+use crate::write_entry::{Outcome, write_entry};
 
 /// 商户列表：默认仅未删除；`include_deleted=true` 返回含软删全量（交易筛选下拉用）。
 #[tauri::command]
@@ -53,15 +54,15 @@ pub async fn create_merchant(
     app: tauri::AppHandle,
     input: MerchantInput,
 ) -> Result<String> {
-    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
     let conn = db.conn.clone();
-    let id = run_db("create_merchant", move || {
-        crate::db::write(&conn, |conn| merchant_domain::create_merchant(conn, input))
-    })
-    .await?;
-    // 参考写入成功 → 参考失效信号（映射单点判定，ADR-0044；issue #79 / ADR-0012）
-    emit_for(&app, WriteOp::CreateMerchant, WriteEvidence::None);
-    Ok(id)
+    write_entry(
+        "create_merchant",
+        conn,
+        Some(&app),
+        WriteOp::CreateMerchant,
+        move |conn| merchant_domain::create_merchant(conn, input).map(Outcome::Silent),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -71,17 +72,15 @@ pub async fn update_merchant(
     id: String,
     input: MerchantUpdateInput,
 ) -> Result<()> {
-    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
     let conn = db.conn.clone();
-    run_db("update_merchant", move || {
-        crate::db::write(&conn, |conn| {
-            merchant_domain::update_merchant(conn, &id, input)
-        })
-    })
-    .await?;
-    // 参考写入成功 → 参考失效信号（映射单点判定，ADR-0044）
-    emit_for(&app, WriteOp::UpdateMerchant, WriteEvidence::None);
-    Ok(())
+    write_entry(
+        "update_merchant",
+        conn,
+        Some(&app),
+        WriteOp::UpdateMerchant,
+        move |conn| merchant_domain::update_merchant(conn, &id, input).map(Outcome::Silent),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -90,13 +89,13 @@ pub async fn delete_merchant(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<()> {
-    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
     let conn = db.conn.clone();
-    run_db("delete_merchant", move || {
-        crate::db::write(&conn, |conn| merchant_domain::delete_merchant(conn, &id))
-    })
-    .await?;
-    // 参考写入成功 → 参考失效信号（映射单点判定，ADR-0044）
-    emit_for(&app, WriteOp::DeleteMerchant, WriteEvidence::None);
-    Ok(())
+    write_entry(
+        "delete_merchant",
+        conn,
+        Some(&app),
+        WriteOp::DeleteMerchant,
+        move |conn| merchant_domain::delete_merchant(conn, &id).map(Outcome::Silent),
+    )
+    .await
 }

@@ -1,10 +1,11 @@
 //! IPC 命令壳 · 定时计划（ScheduledTransaction）。
 //!
-//! 全部触碰 DB 的命令 async 化（形状乙，spec #498 / #502）：DB 调用经连接层
-//! 统一 helper [`crate::db::run_db`] 进 tauri 阻塞线程池执行，不占用界面事件
-//! 循环线程；写路径仍在连接层统一写入口内置脏（ADR-0032 语义零改动）。
+//! 全部触碰 DB 的命令 async 化（形状乙，spec #498 / #502）；写命令经壳层统一
+//! 写入口 [`crate::write_entry::write_entry`]（ADR-0073）：仪式（锁、事务、置脏、
+//! 信号）内化单点；读命令经 `run_db`。计划写入刻意零信号（映射单点显式登记），
+//! 身份仍随入口流动。
 //! `set_auto_execution_enabled` 是设备级运行时镜像推送（纯内存，不触 DB），
-//! 保持同步形态。
+//! 保持同步形态（例外白名单登记，ADR-0073）。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
 // （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
@@ -20,17 +21,24 @@ use crate::scheduled_transactions::{
     ScheduledTransactionWithExt, SubscriptionSpendOverview, UpdateStatusInput,
     UpdateSubscriptionInput,
 };
+use crate::signals::WriteOp;
+use crate::write_entry::{Outcome, write_entry};
 
 #[tauri::command]
 pub async fn create_scheduled_transaction(
     db: State<'_, DbState>,
+    app: tauri::AppHandle,
     input: CreateScheduledInput,
 ) -> Result<String> {
-    // 连接层统一写入口（ADR-0032，#246 审计补齐）：计划与期次属账本数据，成功即置脏。
+    // 计划与期次属账本数据，成功即置脏（ADR-0032，#246 审计补齐）。
     let conn = db.conn.clone();
-    run_db("create_scheduled_transaction", move || {
-        crate::db::write(&conn, |conn| scheduled_domain::create_plan(conn, input))
-    })
+    write_entry(
+        "create_scheduled_transaction",
+        conn,
+        Some(&app),
+        WriteOp::CreateScheduledTransaction,
+        move |conn| scheduled_domain::create_plan(conn, input).map(Outcome::Silent),
+    )
     .await
 }
 
@@ -62,15 +70,21 @@ pub async fn get_scheduled_transaction_detail(
 #[tauri::command]
 pub async fn update_scheduled_transaction_status(
     db: State<'_, DbState>,
+    app: tauri::AppHandle,
     input: UpdateStatusInput,
 ) -> Result<()> {
-    // 连接层统一写入口（ADR-0032，#246 审计补齐）：状态变更成功即置脏。
+    // 状态变更成功即置脏（ADR-0032，#246 审计补齐）。
     let conn = db.conn.clone();
-    run_db("update_scheduled_transaction_status", move || {
-        crate::db::write(&conn, |conn| {
+    write_entry(
+        "update_scheduled_transaction_status",
+        conn,
+        Some(&app),
+        WriteOp::UpdateScheduledTransactionStatus,
+        move |conn| {
             scheduled_domain::update_plan_status(conn, &input.id, input.new_status)
-        })
-    })
+                .map(Outcome::Silent)
+        },
+    )
     .await
 }
 
@@ -79,45 +93,56 @@ pub async fn update_scheduled_transaction_status(
 #[tauri::command]
 pub async fn update_scheduled_subscription(
     db: State<'_, DbState>,
+    app: tauri::AppHandle,
     input: UpdateSubscriptionInput,
 ) -> Result<()> {
-    // 连接层统一写入口（ADR-0032，#246 审计补齐）：订阅编辑成功即置脏。
+    // 订阅编辑成功即置脏（ADR-0032，#246 审计补齐）。
     let conn = db.conn.clone();
-    run_db("update_scheduled_subscription", move || {
-        crate::db::write(&conn, |conn| {
-            scheduled_domain::update_subscription(conn, input)
-        })
-    })
+    write_entry(
+        "update_scheduled_subscription",
+        conn,
+        Some(&app),
+        WriteOp::UpdateScheduledSubscription,
+        move |conn| scheduled_domain::update_subscription(conn, input).map(Outcome::Silent),
+    )
     .await
 }
 
 #[tauri::command]
 pub async fn execute_scheduled_occurrence(
     db: State<'_, DbState>,
+    app: tauri::AppHandle,
     input: ExecuteOccurrenceInput,
 ) -> Result<String> {
     // 期次执行落交易行（Writer 接缝交易增），经写入口置脏（ADR-0032）。
     let conn = db.conn.clone();
-    run_db("execute_scheduled_occurrence", move || {
-        crate::db::write(&conn, |conn| {
-            scheduled_domain::execute_occurrence(conn, &input.occurrence_id)
-        })
-    })
+    write_entry(
+        "execute_scheduled_occurrence",
+        conn,
+        Some(&app),
+        WriteOp::ExecuteScheduledOccurrence,
+        move |conn| {
+            scheduled_domain::execute_occurrence(conn, &input.occurrence_id).map(Outcome::Silent)
+        },
+    )
     .await
 }
 
 #[tauri::command]
 pub async fn expand_scheduled_occurrences(
     db: State<'_, DbState>,
+    app: tauri::AppHandle,
     id: String,
 ) -> Result<Vec<String>> {
-    // 连接层统一写入口（ADR-0032，#246 审计补齐）：期次回填写入成功即置脏。
+    // 期次回填写入成功即置脏（ADR-0032，#246 审计补齐）。
     let conn = db.conn.clone();
-    run_db("expand_scheduled_occurrences", move || {
-        crate::db::write(&conn, |conn| {
-            scheduled_domain::expand_occurrences(conn, &id)
-        })
-    })
+    write_entry(
+        "expand_scheduled_occurrences",
+        conn,
+        Some(&app),
+        WriteOp::ExpandScheduledOccurrences,
+        move |conn| scheduled_domain::expand_occurrences(conn, &id).map(Outcome::Silent),
+    )
     .await
 }
 

@@ -6,16 +6,12 @@
 //! [`crate::physical_asset`]（ADR-0056 分层）。
 //!
 //! 信号约定：实物资产是独立领域（ADR-0064），复用 `ledger:changed` 同名
-//! 事件——实物资产 store 订阅后自动重拉。发不发、发哪个由映射单点判定
-//! （ADR-0044），notify 只是发射钩子。
+//! 事件——实物资产 store 订阅后自动重拉。信号经统一写入口按写操作身份发射
+//! （ADR-0073）；域内 notify 参数保留为 BDD 计数注入点（ADR-0044 决策 8），
+//! 生产壳层传空回调。
 //!
-//! 置脏触发已收口连接层统一写入口（`db::write`，ADR-0032）。
-//!
-//! 全部命令 async 化（形状乙，spec #498 / #502）：DB 调用经连接层统一 helper
-//! [`crate::db::run_db`] 进 tauri 阻塞线程池执行，不占用界面事件循环线程；
-//! 写路径仍在连接层统一写入口内置脏（ADR-0032 语义零改动）。notify 回调里的
-//! 信号发射经 `post_emit_with` 投递主线程队尾（ADR-0054 主线程非阻塞投递），
-//! 从阻塞线程调用安全，对用户外部行为不变。
+//! 写命令经壳层统一写入口 [`crate::write_entry::write_entry`]（ADR-0073）：
+//! 仪式（锁、事务、置脏、信号）内化单点；读命令经 `run_db`（形状乙）。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
 // （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
@@ -29,7 +25,8 @@ use crate::physical_asset::{
     self as physical_asset_domain, PhysicalAsset, PhysicalAssetDisposeInput, PhysicalAssetInput,
     PhysicalAssetList, PhysicalAssetUpdateInput, PhysicalAssetValuationInput,
 };
-use crate::signals::{WriteEvidence, WriteOp, emit_for};
+use crate::signals::WriteOp;
+use crate::write_entry::{Outcome, write_entry};
 
 #[tauri::command]
 pub async fn list_physical_assets(
@@ -60,19 +57,21 @@ pub async fn create_physical_asset(
     app: tauri::AppHandle,
     input: PhysicalAssetInput,
 ) -> Result<String> {
-    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
     // 域内自持事务保证资产行 + 首条估值行两表原子；域事务在闭包返回前已
-    // 提交，`db.write` 的 is_autocommit 复核与置脏照常生效（ADR-0033 嵌套感知）。
+    // 提交，写入口的 is_autocommit 复核与置脏照常生效（ADR-0033 嵌套感知）。
     let conn = db.conn.clone();
-    run_db("create_physical_asset", move || {
-        crate::db::write(&conn, |conn| {
-            physical_asset_domain::create_physical_asset(conn, input, &mut || {
-                // 实物资产是独立领域（ADR-0064，同物品/保单先例）：复用
-                // `ledger:changed` 同名事件。发不发由映射单点判定（ADR-0044）。
-                emit_for(&app, WriteOp::CreatePhysicalAsset, WriteEvidence::None);
-            })
-        })
-    })
+    write_entry(
+        "create_physical_asset",
+        conn,
+        Some(&app),
+        WriteOp::CreatePhysicalAsset,
+        // notify 是 BDD 计数注入点（ADR-0044 决策 8）；信号已由写入口按身份
+        // 在提交成功后发射，生产壳层传空回调。
+        move |conn| {
+            physical_asset_domain::create_physical_asset(conn, input, &mut || {})
+                .map(Outcome::Silent)
+        },
+    )
     .await
 }
 
@@ -83,15 +82,18 @@ pub async fn update_physical_asset(
     id: String,
     input: PhysicalAssetUpdateInput,
 ) -> Result<()> {
-    // 连接层统一写入口（ADR-0032）：成功即置脏；单表更新，域函数内无自持事务。
+    // 单表更新，域函数内无自持事务。
     let conn = db.conn.clone();
-    run_db("update_physical_asset", move || {
-        crate::db::write(&conn, |conn| {
-            physical_asset_domain::update_physical_asset(conn, &id, input, &mut || {
-                emit_for(&app, WriteOp::UpdatePhysicalAsset, WriteEvidence::None);
-            })
-        })
-    })
+    write_entry(
+        "update_physical_asset",
+        conn,
+        Some(&app),
+        WriteOp::UpdatePhysicalAsset,
+        move |conn| {
+            physical_asset_domain::update_physical_asset(conn, &id, input, &mut || {})
+                .map(Outcome::Silent)
+        },
+    )
     .await
 }
 
@@ -102,15 +104,18 @@ pub async fn dispose_physical_asset(
     id: String,
     input: PhysicalAssetDisposeInput,
 ) -> Result<()> {
-    // 连接层统一写入口（ADR-0032）：状态标记 + 处置信息落库 + 置脏；单表更新。
+    // 状态标记 + 处置信息落库；单表更新。
     let conn = db.conn.clone();
-    run_db("dispose_physical_asset", move || {
-        crate::db::write(&conn, |conn| {
-            physical_asset_domain::dispose_physical_asset(conn, &id, input, &mut || {
-                emit_for(&app, WriteOp::DisposePhysicalAsset, WriteEvidence::None);
-            })
-        })
-    })
+    write_entry(
+        "dispose_physical_asset",
+        conn,
+        Some(&app),
+        WriteOp::DisposePhysicalAsset,
+        move |conn| {
+            physical_asset_domain::dispose_physical_asset(conn, &id, input, &mut || {})
+                .map(Outcome::Silent)
+        },
+    )
     .await
 }
 
@@ -120,15 +125,17 @@ pub async fn delete_physical_asset(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<()> {
-    // 连接层统一写入口（ADR-0032）：软删标志落库 + 置脏；单表更新。
+    // 软删标志落库；单表更新。
     let conn = db.conn.clone();
-    run_db("delete_physical_asset", move || {
-        crate::db::write(&conn, |conn| {
-            physical_asset_domain::delete_physical_asset(conn, &id, &mut || {
-                emit_for(&app, WriteOp::DeletePhysicalAsset, WriteEvidence::None);
-            })
-        })
-    })
+    write_entry(
+        "delete_physical_asset",
+        conn,
+        Some(&app),
+        WriteOp::DeletePhysicalAsset,
+        move |conn| {
+            physical_asset_domain::delete_physical_asset(conn, &id, &mut || {}).map(Outcome::Silent)
+        },
+    )
     .await
 }
 
@@ -139,18 +146,17 @@ pub async fn update_physical_asset_valuation(
     id: String,
     input: PhysicalAssetValuationInput,
 ) -> Result<()> {
-    // 连接层统一写入口（ADR-0032）：追加估值历史行 + 置脏；单表插入。
+    // 追加估值历史行；单表插入。
     let conn = db.conn.clone();
-    run_db("update_physical_asset_valuation", move || {
-        crate::db::write(&conn, |conn| {
-            physical_asset_domain::update_physical_asset_valuation(conn, &id, input, &mut || {
-                emit_for(
-                    &app,
-                    WriteOp::UpdatePhysicalAssetValuation,
-                    WriteEvidence::None,
-                );
-            })
-        })
-    })
+    write_entry(
+        "update_physical_asset_valuation",
+        conn,
+        Some(&app),
+        WriteOp::UpdatePhysicalAssetValuation,
+        move |conn| {
+            physical_asset_domain::update_physical_asset_valuation(conn, &id, input, &mut || {})
+                .map(Outcome::Silent)
+        },
+    )
     .await
 }
