@@ -1,8 +1,9 @@
-//! 加密模式命令壳层（issue #570 / ADR-0075）：状态查询、解锁、开启加密。
+//! 加密模式命令壳层（issue #570 / ADR-0075）：状态查询、解锁、开启加密、
+//! 忘记口令重置（issue #573）。
 //!
 //! 只做参数解包与 [`crate::db::encryption`] / [`crate::db::data_location`]
-//! 调用与状态编排：文件级转换、解锁建连、搬迁补做的行为语义都在 db 基础
-//! 设施，本文件不含领域规则。「关闭加密」「修改主口令」与「本机记住」
+//! 调用与状态编排：文件级转换、解锁建连、搬迁补做、重置副本语义都在 db
+//! 基础设施，本文件不含领域规则。「关闭加密」「修改主口令」与「本机记住」
 //! 由后续票交付（ADR-0075 范围划分）。
 //!
 //! 全部命令 async 化（形状乙，spec #498 / #503 先例）：转换导出、解锁建连
@@ -13,6 +14,7 @@
 // （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
 #![allow(clippy::unreachable)]
 
+use rusqlite::Connection;
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
@@ -77,14 +79,7 @@ pub async fn unlock_encryption(app: AppHandle, passphrase: String) -> Result<Unl
         encryption::unlock_db_file(&db_path, &pass)
     })
     .await?;
-    // 原位换连：DbState 的 Arc 形状不变，业务路径下次锁连接即取到真实库。
-    {
-        let state = app.state::<DbState>();
-        let mut guard = state.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        *guard = conn;
-    }
-    gate.set_locked(false);
-    tracing::info!("数据库解锁成功，业务读写恢复");
+    resume_business_surface(&app, conn)?;
 
     // 等待中的搬迁（issue #570）：源库为密文库时启动期无法搬迁，解锁后
     // 以主口令补做。失败不阻断解锁：应用继续以当前位置运行，意图保持
@@ -109,11 +104,22 @@ pub async fn unlock_encryption(app: AppHandle, passphrase: String) -> Result<Unl
             }
         }
     }
-
-    // 解锁即业务可用的起点：自动备份调度（与定时追补轮询）自此运行
-    // （ADR-0075 决策 5：解锁先于一切业务读写）。
-    backup::start_scheduler(&app);
     Ok(UnlockOutcome { relocated })
+}
+
+/// 业务可用起点编排（解锁与忘记口令重置共用，ADR-0075 决策 5）：新连接
+/// 原位换入 DbState（Arc 形状不变，业务路径下次锁连接即取到真实库）→
+/// 翻转锁定门 → 拉起自动备份调度（轮询同轮承载定时追补）。
+fn resume_business_surface(app: &AppHandle, conn: Connection) -> Result<()> {
+    {
+        let state = app.state::<DbState>();
+        let mut guard = state.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        *guard = conn;
+    }
+    app.state::<EncryptionGate>().set_locked(false);
+    tracing::info!("业务读写恢复（解锁/重置后），自动备份调度拉起");
+    backup::start_scheduler(app);
+    Ok(())
 }
 
 /// 开启加密：把当前明文库整库一次性转换为密文库（转换与原子性语义见
@@ -134,5 +140,31 @@ pub async fn enable_encryption(app: AppHandle, passphrase: String) -> Result<()>
     })
     .await?;
     tracing::info!("整库加密转换完成，待重启以新口令重新打开");
+    Ok(())
+}
+
+/// 忘记口令逃生门（issue #573 / ADR-0075 决策 2/5）：解锁屏可达的重置。
+/// 旧密文库按既有重置命名语义保留为密文副本，原位新建明文空库（副本与
+/// 新库语义见 [`encryption::reset_encrypted_db_file`]）。
+///
+/// 只在锁定状态可达（解锁屏专用面）；成功后经 [`resume_business_surface`]
+/// 原位换连、翻 unlock、拉起自动备份调度——应用随即回到明文模式的业务
+/// 可用状态，无需重启，可在设置页再次走开启加密流程。
+#[tauri::command]
+pub async fn reset_after_forgotten_passphrase(app: AppHandle) -> Result<()> {
+    let gate = app.state::<EncryptionGate>();
+    if !gate.is_locked() {
+        return Err(AppError::coded(
+            "encryption.not-locked",
+            "应用未处于锁定状态，无需重置",
+        ));
+    }
+    let db_path = active_db_path(&app);
+    let conn = run_db("reset_after_forgotten_passphrase", move || {
+        encryption::reset_encrypted_db_file(&db_path)
+    })
+    .await?;
+    resume_business_surface(&app, conn)?;
+    tracing::info!("忘记口令重置完成，应用以全新明文空库回到明文模式");
     Ok(())
 }

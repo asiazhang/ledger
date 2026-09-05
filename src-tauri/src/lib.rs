@@ -54,8 +54,13 @@ pub mod fs_util;
 include!(concat!(env!("OUT_DIR"), "/commands_registry.rs"));
 
 /// 锁定期间放行的 IPC 命令白名单（issue #570 / ADR-0075 决策 5）：解锁屏
-/// 启动期所需的最小面；其余命令在解锁前一律拒绝（解锁先于一切业务读写）。
-const LOCKED_ALLOWED_COMMANDS: &[&str] = &["get_encryption_status", "unlock_encryption"];
+/// 启动期所需的最小面（状态查询、解锁、忘记口令重置 #573）；其余命令在
+/// 解锁前一律拒绝（解锁先于一切业务读写）。
+const LOCKED_ALLOWED_COMMANDS: &[&str] = &[
+    "get_encryption_status",
+    "unlock_encryption",
+    "reset_after_forgotten_passphrase",
+];
 
 /// IPC 日志脱敏：载荷中含主口令字段时遮蔽其值（ADR-0075 后果条款：审计日志
 /// 与 trace 输出不落主口令）。按字段名匹配，对后续关闭加密/修改主口令等

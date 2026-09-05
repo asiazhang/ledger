@@ -13,7 +13,8 @@ use rusqlite::Connection;
 use tauri_app_lib::db::data_location::relocate_with_key;
 use tauri_app_lib::db::data_location::{self, DB_FILE_NAME};
 use tauri_app_lib::db::encryption::{
-    DbFileKind, enable_encryption_for_file, probe_file_kind, unlock_db_file,
+    DbFileKind, enable_encryption_for_file, probe_file_kind, reset_encrypted_db_file,
+    unlock_db_file,
 };
 use tauri_app_lib::db::{init_db, new_uuid, open_connection, open_connection_with_passphrase};
 use tauri_app_lib::error::AppError;
@@ -185,7 +186,6 @@ fn when_boot_and_probe(world: &mut LedgerWorld) {
     let default_dir = world.enc_dir.clone().unwrap();
     let boot = data_location::boot(&default_dir);
     world.last_boot = Some(boot);
-    world.enc_probe = probe_file_kind(&db_path(world)).ok();
 }
 
 #[when(expr = "执行启动引导")]
@@ -237,6 +237,29 @@ fn when_unlock_and_relocate(world: &mut LedgerWorld, passphrase: String) {
     }
 }
 
+#[when(expr = "执行忘记口令重置")]
+fn when_reset_forgotten(world: &mut LedgerWorld) {
+    world.enc_last_error = None;
+    match reset_encrypted_db_file(&db_path(world)) {
+        Ok(conn) => world.enc_conn = Some(conn),
+        Err(e) => world.enc_last_error = Some(e),
+    }
+}
+
+#[when(expr = "不带口令打开 .bak 密文副本")]
+fn when_open_bak_without_key(world: &mut LedgerWorld) {
+    let bak = db_path(world).with_extension("db.bak");
+    world.enc_last_error = (|| -> Result<i64, AppError> {
+        let conn = open_connection(&bak)?;
+        Ok(conn.query_row(
+            "SELECT COUNT(*) FROM transactions WHERE is_deleted = 0",
+            [],
+            |r| r.get(0),
+        )?)
+    })()
+    .err();
+}
+
 // ---------------------------------------------------------------------------
 // Then
 // ---------------------------------------------------------------------------
@@ -244,9 +267,9 @@ fn when_unlock_and_relocate(world: &mut LedgerWorld, passphrase: String) {
 #[then(expr = "库文件应探测为明文库")]
 fn then_probe_plaintext(world: &mut LedgerWorld) {
     assert_eq!(
-        world.enc_probe,
-        Some(DbFileKind::Plaintext),
-        "明文库应探测为明文"
+        probe_file_kind(&db_path(world)).unwrap(),
+        DbFileKind::Plaintext,
+        "当前库文件应探测为明文库"
     );
 }
 
@@ -382,6 +405,56 @@ fn then_no_leftovers(world: &mut LedgerWorld) {
     assert!(
         !db_path(world).with_extension("db.bak").exists(),
         "失败时不应产生 .bak 副本"
+    );
+}
+
+#[then(expr = "重置应成功")]
+fn then_reset_ok(world: &mut LedgerWorld) {
+    assert!(
+        world.enc_last_error.is_none(),
+        "重置应成功，实际: {:?}",
+        world.enc_last_error
+    );
+}
+
+#[then(expr = "重置后的新库应为不含交易的明文空库")]
+fn then_reset_fresh_empty(world: &mut LedgerWorld) {
+    let conn = world.enc_conn.as_ref().expect("重置后应有新库连接");
+    assert_eq!(count_transactions(conn), 0, "重置后的新库应为空库");
+}
+
+#[then(expr = "原密文库应保留为 .bak 密文副本")]
+fn then_bak_encrypted_preserved(world: &mut LedgerWorld) {
+    let bak = db_path(world).with_extension("db.bak");
+    assert!(bak.exists(), "原密文库应保留为 .bak 副本");
+    assert_eq!(
+        probe_file_kind(&bak).unwrap(),
+        DbFileKind::Encrypted,
+        ".bak 副本应为密文库（头部为密文，无密钥不可读）"
+    );
+}
+
+#[then(expr = ".bak 密文副本凭原主口令 {string} 仍可打开且包含 {int} 条交易")]
+fn then_bak_recoverable_with_passphrase(world: &mut LedgerWorld, passphrase: String, count: usize) {
+    let bak = db_path(world).with_extension("db.bak");
+    let conn = open_connection_with_passphrase(&bak, &passphrase).unwrap();
+    assert_eq!(
+        count_transactions(&conn) as usize,
+        count,
+        "日后想起口令时，副本数据应可完整救回"
+    );
+}
+
+#[then(expr = "打开应失败且错误为文件不可读")]
+fn then_bak_unreadable_without_key(world: &mut LedgerWorld) {
+    let error = world
+        .enc_last_error
+        .as_ref()
+        .expect("无密钥打开密文副本应失败");
+    let text = error.to_string();
+    assert!(
+        text.contains("not a database"),
+        "无密钥读取密文库应报文件不可读（not a database），实际: {text}"
     );
 }
 
