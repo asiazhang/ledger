@@ -350,8 +350,7 @@ onMounted(() => {
       :title="t('accounts.edit.title')"
       preset="card"
       display-directive="if"
-      style="width: 420px"
-      :bordered="false"
+      card-size="sm"
       @update:show="(show: boolean) => { if (!show) closeEdit() }"
     >
       <NForm
@@ -374,8 +373,8 @@ onMounted(() => {
           <AppSelect v-model:value="editCurrency" :options="currencyOptions()" style="width: 100%" />
         </NFormItem>
         <NSpace justify="end" :size="8">
-          <NButton size="small" @click="closeEdit">{{ t('accounts.edit.cancel') }}</NButton>
-          <NButton size="small" type="primary" @click="submitEdit">{{ t('accounts.edit.save') }}</NButton>
+          <NButton @click="closeEdit">{{ t('accounts.edit.cancel') }}</NButton>
+          <NButton type="primary" @click="submitEdit">{{ t('accounts.edit.save') }}</NButton>
         </NSpace>
       </NForm>
     </AppModal>
@@ -388,8 +387,7 @@ onMounted(() => {
       :title="t('accounts.adjust.title')"
       preset="card"
       display-directive="if"
-      style="width: 420px"
-      :bordered="false"
+      card-size="sm"
       @update:show="(show: boolean) => { if (!show) closeAdjust() }"
     >
       <NForm
@@ -422,9 +420,8 @@ onMounted(() => {
           </NText>
         </NFormItem>
         <NSpace justify="end" :size="8">
-          <NButton size="small" @click="closeAdjust">{{ t('accounts.edit.cancel') }}</NButton>
+          <NButton @click="closeAdjust">{{ t('accounts.edit.cancel') }}</NButton>
           <NButton
-            size="small"
             type="primary"
             :disabled="adjustTargetCents === null || adjustDelta === 0"
             @click="submitAdjust"

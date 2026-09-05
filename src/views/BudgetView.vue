@@ -262,8 +262,7 @@ onMounted(() => {
       :title="t('budget.edit.title')"
       preset="card"
       display-directive="if"
-      style="width: 380px"
-      :bordered="false"
+      card-size="sm"
       @update:show="(v: boolean) => (v ? undefined : closeEdit())"
     >
       <NForm label-placement="left" :show-feedback="false" size="small">
@@ -278,13 +277,11 @@ onMounted(() => {
         <NFormItem :label="t('budget.edit.amount')">
           <NInputNumber v-model:value="editAmount" :precision="2" style="width: 100%" />
         </NFormItem>
-      </NForm>
-      <template #footer>
-        <NSpace justify="end">
-          <NButton size="small" @click="closeEdit">{{ t('budget.edit.cancel') }}</NButton>
-          <NButton size="small" type="primary" @click="saveEdit">{{ t('budget.edit.save') }}</NButton>
+        <NSpace justify="end" :size="8">
+          <NButton @click="closeEdit">{{ t('budget.edit.cancel') }}</NButton>
+          <NButton type="primary" @click="saveEdit">{{ t('budget.edit.save') }}</NButton>
         </NSpace>
-      </template>
+      </NForm>
     </AppModal>
   </NSpin>
 </template>

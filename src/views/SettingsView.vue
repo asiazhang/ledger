@@ -40,45 +40,49 @@ import { t } from '@/i18n'
 </script>
 
 <template>
-  <NTabs type="line">
-    <NTabPane name="general" key="general">
-      <template #tab><span class="pane-tab"><NIcon :component="OptionsOutline" />{{ t('settings.tabs.general') }}</span></template>
-      <GeneralSettings />
-    </NTabPane>
+  <!-- 设置页内容列限宽约 720px、左对齐不居中（issue #651）：宽窗口下说明文字
+       保持舒适行宽、表单控件不被拉满；无 margin auto，列停靠左侧。 -->
+  <div data-testid="settings-column" style="max-width: 720px">
+    <NTabs type="line">
+      <NTabPane name="general" key="general">
+        <template #tab><span class="pane-tab"><NIcon :component="OptionsOutline" />{{ t('settings.tabs.general') }}</span></template>
+        <GeneralSettings />
+      </NTabPane>
 
-    <NTabPane name="categories" key="categories">
-      <template #tab><span class="pane-tab"><NIcon :component="GridOutline" />{{ t('settings.tabs.categories') }}</span></template>
-      <CategoryManager />
-    </NTabPane>
+      <NTabPane name="categories" key="categories">
+        <template #tab><span class="pane-tab"><NIcon :component="GridOutline" />{{ t('settings.tabs.categories') }}</span></template>
+        <CategoryManager />
+      </NTabPane>
 
-    <NTabPane name="data" key="data" display-directive="show:lazy">
-      <template #tab><span class="pane-tab"><NIcon :component="ServerOutline" />{{ t('settings.tabs.data') }}</span></template>
-      <NTabs type="line">
-        <NTabPane name="backup" key="backup" :tab="t('settings.data.tabs.backup')" display-directive="show:lazy">
-          <BackupSettings />
-        </NTabPane>
-        <NTabPane name="location" key="location" :tab="t('settings.data.tabs.location')" display-directive="show:lazy">
-          <DataLocationSettings />
-        </NTabPane>
-        <NTabPane name="encryption" key="encryption" :tab="t('settings.data.tabs.encryption')" display-directive="show:lazy">
-          <EncryptionSettings />
-        </NTabPane>
-        <NTabPane name="repair" key="repair" :tab="t('settings.data.tabs.repair')" display-directive="show:lazy">
-          <SearchDataSettings />
-        </NTabPane>
-      </NTabs>
-    </NTabPane>
+      <NTabPane name="data" key="data" display-directive="show:lazy">
+        <template #tab><span class="pane-tab"><NIcon :component="ServerOutline" />{{ t('settings.tabs.data') }}</span></template>
+        <NTabs type="line">
+          <NTabPane name="backup" key="backup" :tab="t('settings.data.tabs.backup')" display-directive="show:lazy">
+            <BackupSettings />
+          </NTabPane>
+          <NTabPane name="location" key="location" :tab="t('settings.data.tabs.location')" display-directive="show:lazy">
+            <DataLocationSettings />
+          </NTabPane>
+          <NTabPane name="encryption" key="encryption" :tab="t('settings.data.tabs.encryption')" display-directive="show:lazy">
+            <EncryptionSettings />
+          </NTabPane>
+          <NTabPane name="repair" key="repair" :tab="t('settings.data.tabs.repair')" display-directive="show:lazy">
+            <SearchDataSettings />
+          </NTabPane>
+        </NTabs>
+      </NTabPane>
 
-    <NTabPane name="scheduled" key="scheduled">
-      <template #tab><span class="pane-tab"><NIcon :component="RepeatOutline" />{{ t('settings.tabs.scheduled') }}</span></template>
-      <ScheduledSettings />
-    </NTabPane>
+      <NTabPane name="scheduled" key="scheduled">
+        <template #tab><span class="pane-tab"><NIcon :component="RepeatOutline" />{{ t('settings.tabs.scheduled') }}</span></template>
+        <ScheduledSettings />
+      </NTabPane>
 
-    <NTabPane name="about" key="about">
-      <template #tab><span class="pane-tab"><NIcon :component="InformationCircleOutline" />{{ t('settings.tabs.about') }}</span></template>
-      <AboutSettings />
-    </NTabPane>
-  </NTabs>
+      <NTabPane name="about" key="about">
+        <template #tab><span class="pane-tab"><NIcon :component="InformationCircleOutline" />{{ t('settings.tabs.about') }}</span></template>
+        <AboutSettings />
+      </NTabPane>
+    </NTabs>
+  </div>
 </template>
 
 <style scoped>
