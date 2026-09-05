@@ -30,6 +30,10 @@ pub enum SettingKey {
     AutoBackupLastBackupAt,
     /// 下次备份到期时间（Option<String>，UTC ISO）。
     AutoBackupNextDueAt,
+    /// 后端日志等级（闭集五档 error/warn/info/debug/trace 的档位字符串，默认 info，
+    /// 见 [`crate::logger::LogLevel`]）：后端消费、随 Backup/Restore 迁移（ADR-0006 / #611）。
+    /// 持久化表示取档位指令字符串（同 [`crate::logger::LogLevel::directive`]）。
+    LogLevel,
 }
 
 impl SettingKey {
@@ -39,6 +43,7 @@ impl SettingKey {
             Self::AutoBackupDirty => "auto_backup.dirty",
             Self::AutoBackupLastBackupAt => "auto_backup.last_backup_at",
             Self::AutoBackupNextDueAt => "auto_backup.next_due_at",
+            Self::LogLevel => "logging.level",
         }
     }
 }
@@ -182,5 +187,6 @@ mod tests {
             SettingKey::AutoBackupNextDueAt.as_str(),
             "auto_backup.next_due_at"
         );
+        assert_eq!(SettingKey::LogLevel.as_str(), "logging.level");
     }
 }

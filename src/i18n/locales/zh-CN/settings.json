@@ -297,7 +297,18 @@
     "platform": "构建平台：",
     "openLogDir": "打开日志目录",
     "copyShaOk": "已复制完整版本号",
-    "copyShaFailed": "复制完整版本号失败: {msg}"
+    "copyShaFailed": "复制完整版本号失败: {msg}",
+    "logLevel": {
+      "label": "日志等级",
+      "hint": "默认 info；切换后立即生效并跨启动保留。若本次启动设置了 RUST_LOG 环境变量，则启动时以它为准；此处展示的是持久化档位，手动切换会覆盖它。",
+      "error": "错误 (error)",
+      "warn": "警告 (warn)",
+      "info": "信息 (info)",
+      "debug": "调试 (debug)",
+      "trace": "追踪 (trace)",
+      "loadFailed": "读取日志等级失败：{msg}",
+      "saveFailed": "设置日志等级失败：{msg}"
+    }
   },
   "appearance": {
     "card": "主题模式",

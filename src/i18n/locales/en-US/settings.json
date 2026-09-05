@@ -297,7 +297,18 @@
     "platform": "Built with: ",
     "openLogDir": "Open Log Directory",
     "copyShaOk": "Full version copied",
-    "copyShaFailed": "Failed to copy full version: {msg}"
+    "copyShaFailed": "Failed to copy full version: {msg}",
+    "logLevel": {
+      "label": "Log Level",
+      "hint": "Defaults to info; changes take effect immediately and persist across restarts. If the RUST_LOG environment variable is set for this session, it takes precedence at startup; this shows the persisted value, and a manual change overrides it.",
+      "error": "Error (error)",
+      "warn": "Warn (warn)",
+      "info": "Info (info)",
+      "debug": "Debug (debug)",
+      "trace": "Trace (trace)",
+      "loadFailed": "Failed to read log level: {msg}",
+      "saveFailed": "Failed to set log level: {msg}"
+    }
   },
   "appearance": {
     "card": "Theme",

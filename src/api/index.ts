@@ -86,6 +86,7 @@ import type {
   NotePinyinRepairReport,
   UpdateStatusInput,
   UpdateSubscriptionInput,
+  LogLevelState,
 } from '@/types'
 
 /** 统一 invoke 封装（全局忙碌条收口点，issue #500）：所有 IPC IO 的生命周期自动
@@ -388,4 +389,10 @@ export const api = {
 
   // 日志（issue #283）：打开日志目录（系统文件管理器展示，按天滚动、保留 7 天）
   openLogDir: () => invoke<void>('open_log_dir'),
+
+  // 日志等级（spec #611，About 页「关于」Tab）：读持久化档位 + 校验闭集写入 +
+  // 运行期接管滤镜（文件/终端共用同一滤镜、立即生效、跨启动保留）。
+  // 界面展示的是持久化档位；显式 RUST_LOG 环境变量在本次启动内优先且不写库。
+  getLogLevel: () => invoke<LogLevelState>('get_log_level'),
+  setLogLevel: (level: string) => invoke<void>('set_log_level', { level }),
 }

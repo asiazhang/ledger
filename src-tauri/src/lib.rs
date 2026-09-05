@@ -122,6 +122,17 @@ fn init_database(
         }
         DbFileKind::Plaintext | DbFileKind::Empty => {
             let db_state = db::open_db_in(&db_dir)?;
+            // 日志等级接管（spec #608 / #611）：数据库就绪后按持久化档位 reload 一次
+            //（此前短暂按「RUST_LOG 环境变量或默认 info」运行，属 ADR-0006 接受的启动窗口）；
+            // 显式 RUST_LOG 在本次启动内优先级最高，此时不覆盖。密文库为占位连接，
+            // 此步随解锁换连后（`resume_business_surface`）再做。
+            {
+                let conn = db_state
+                    .conn
+                    .lock()
+                    .map_err(|e| crate::error::AppError::Db(e.to_string()))?;
+                logger::apply_persisted_level(&conn);
+            }
             app.manage(db_state);
             tracing::info!("数据库初始化完成");
         }

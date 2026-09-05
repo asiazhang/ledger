@@ -204,6 +204,10 @@ pub enum WriteOp {
     SubmitDataLocationChange,
     /// 恢复默认数据位置（IPC `restore_default_data_location`，同上写引导指针文件）。
     RestoreDefaultDataLocation,
+    /// 设置后端日志等级（IPC `set_log_level`，写 `app_settings` 的 `logging.level`，
+    /// ADR-0006）：刻意零信号——设置不是账本数据（ADR-0032 置脏豁免），也不属参考 /
+    /// 价格 / 备份任何失效语义；设置页自读回显。
+    SetLogLevel,
 }
 
 impl WriteOp {
@@ -216,7 +220,7 @@ impl WriteOp {
     /// 清单紧邻 enum，同步义务就地可查（同 `TransactionKind::ALL` 先例）。
     /// 长度标注与初始化个数不符即编译错；但 enum 新增变体而本清单漏登不会报错，
     /// 改 enum 必须同步改这里。
-    pub const ALL: [WriteOp; 54] = [
+    pub const ALL: [WriteOp; 55] = [
         // 参考数据四表
         WriteOp::CreateAccount,
         WriteOp::UpdateAccount,
@@ -282,6 +286,7 @@ impl WriteOp {
         WriteOp::SetAutoExecutionEnabled,
         WriteOp::SubmitDataLocationChange,
         WriteOp::RestoreDefaultDataLocation,
+        WriteOp::SetLogLevel,
     ];
 }
 
@@ -448,7 +453,8 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
         | WriteOp::SetAutoBackupDir
         | WriteOp::SetAutoExecutionEnabled
         | WriteOp::SubmitDataLocationChange
-        | WriteOp::RestoreDefaultDataLocation => NO_SIGNALS,
+        | WriteOp::RestoreDefaultDataLocation
+        | WriteOp::SetLogLevel => NO_SIGNALS,
     }
 }
 
@@ -932,6 +938,13 @@ mod tests {
     #[test]
     fn restore_default_data_location_is_silent() {
         assert_signals(signals_for(Op::RestoreDefaultDataLocation, E::None), &[]);
+    }
+
+    #[test]
+    fn set_log_level_is_silent() {
+        // 设置域（ADR-0006 / #611）：写 app_settings 的 logging.level，零信号——
+        // 设置不是账本数据（ADR-0032 置脏豁免），也不属参考/价格/备份失效语义。
+        assert_signals(signals_for(Op::SetLogLevel, E::None), &[]);
     }
 
     // ── 证据形状 ──
