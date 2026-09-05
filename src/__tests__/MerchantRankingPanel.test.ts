@@ -15,8 +15,8 @@ vi.mock('vue-chartjs', async () => {
 
 /** 夹具即后端返回顺序（净额降序 + topN 截断已收口后端），面板只渲染不再排序。 */
 const rows = [
-  { merchant_id: 'm1', merchant_name: '京东', amount_cents: 170000 },
-  { merchant_id: 'm2', merchant_name: '红旗连锁', amount_cents: 100000 },
+  { merchant_id: 'm1', merchant_name: '京东', amount_cents: 170000, transaction_count: 9 },
+  { merchant_id: 'm2', merchant_name: '红旗连锁', amount_cents: 100000, transaction_count: 5 },
 ]
 // total_cents 刻意 ≠ rows 合计（270000）：分母断言可辨真源
 const report: MerchantSharesReport = { rows, total_cents: 340000 }
