@@ -22,6 +22,7 @@ pub mod policy;
 pub mod reports;
 pub mod scheduled;
 pub mod search;
+pub mod settings;
 pub mod sync;
 pub mod transactions;
 
@@ -44,5 +45,6 @@ pub use policy::*;
 pub use reports::*;
 pub use scheduled::*;
 pub use search::*;
+pub use settings::*;
 pub use sync::*;
 pub use transactions::*;

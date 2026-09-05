@@ -204,5 +204,8 @@
     "remember-biometric-cancelled": "生物认证已取消，请手动输入主口令",
     "remember-biometric-unavailable": "无法启用本机记住（生物认证未启用或该设备不支持），已保持手动输入",
     "remember-unsupported": "当前平台不支持本机记住主口令"
+  },
+  "settings": {
+    "log-level-invalid": "日志等级非法: {0}（合法值: error/warn/info/debug/trace）"
   }
 }

@@ -76,6 +76,65 @@ pub fn set_level(level: LogLevel) {
     }
 }
 
+/// 读取持久化档位（spec #608 / #611）：`app_settings` 的 `logging.level` 键，缺 key
+/// 或整表缺失（旧版本备份）回默认 info（`settings::get` 兑底）；解析失败（库内被写入
+/// 闭集外字符串）同样回默认 info 并告警——读路径不因坏值上抛，行为免费正确。
+/// 界面展示的持久化档位与实际生效档位可能不一致（RUST_LOG 运行时覆盖），属已接受取舍。
+pub fn persisted_level(conn: &rusqlite::Connection) -> LogLevel {
+    let raw: String = crate::settings::get(
+        conn,
+        crate::settings::SettingKey::LogLevel,
+        "info".to_string(),
+    )
+    .unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "读取持久化日志档位失败，回默认 info");
+        "info".to_string()
+    });
+    raw.parse().unwrap_or_else(|e: String| {
+        tracing::warn!(level = %raw, error = %e, "持久化日志档位为闭集外值，回默认 info");
+        LogLevel::Info
+    })
+}
+
+/// 把持久化档位接管到运行期滤镜（spec #608 / #611 启动顺序契约）：启动期 `init`
+/// 以「RUST_LOG 环境变量或默认 info」建立滤镜，数据库就绪并读出持久化档位后
+/// [`set_level`] 接管一次。显式 `RUST_LOG` 在本次启动内优先（优先级：
+/// RUST_LOG > 持久化 > 默认 info），此时不覆盖、只记日志；终端/文件两条输出共用
+/// 同一滤镜、一起变化。密文库在解锁换连后再调用（锁定期间库未就绪）。
+pub fn apply_persisted_level(conn: &rusqlite::Connection) {
+    if std::env::var_os("RUST_LOG").is_some() {
+        tracing::info!("RUST_LOG 已显式设置，本次启动内以它为准，跳过持久化档位接管");
+        return;
+    }
+    let level = persisted_level(conn);
+    tracing::info!(level = %level.directive(), "按持久化档位接管全局日志滤镜");
+    set_level(level);
+}
+
+/// 校验闭集 + 持久化 + 运行期接管（`set_log_level` 命令与 BDD 共用，spec #611）：
+/// 非闭集档位返回码化错误 `settings.log-level-invalid`（未落库、未接管）；合法档位
+/// 写入 `app_settings`（经 settings 模块单点收口、置脏豁免 ADR-0032）后
+/// [`set_level`] 接管运行期滤镜。返回解析后的档位供调用方回显。
+pub fn set_persisted_level(
+    conn: &rusqlite::Connection,
+    level_str: &str,
+) -> crate::error::Result<LogLevel> {
+    let level = level_str.parse::<LogLevel>().map_err(|e: String| {
+        crate::error::AppError::codedp(
+            "settings.log-level-invalid",
+            format!("日志等级非法：{e}"),
+            &[level_str],
+        )
+    })?;
+    crate::settings::set(
+        conn,
+        crate::settings::SettingKey::LogLevel,
+        &level.directive(),
+    )?;
+    set_level(level);
+    Ok(level)
+}
+
 pub fn log_dir() -> &'static PathBuf {
     // B 类豁免（ADR-0060）：日志目录由 init 在启动期首次登记；未初始化即启动装配
     // 缺陷，fail loud。
@@ -238,5 +297,45 @@ mod tests {
         }
         // 闭集外字符串应被拒绝。
         assert!("verbose".parse::<LogLevel>().is_err());
+    }
+
+    // ---- 持久化档位读写（spec #611）----
+
+    fn migrated_conn() -> rusqlite::Connection {
+        let mut c = crate::db::open_in_memory().expect("打开内存库");
+        crate::db::init_db(&mut c).expect("执行迁移");
+        c
+    }
+
+    /// 缺 key / 缺表：`persisted_level` 回默认 info（`settings::get` 兑底）。
+    #[test]
+    fn persisted_level_defaults_to_info_when_unset() {
+        assert_eq!(persisted_level(&migrated_conn()), LogLevel::Info);
+    }
+
+    /// set→get 回读：`set_persisted_level` 写入后 `persisted_level` 读回一致。
+    #[test]
+    fn persisted_level_roundtrips_set_level() {
+        let conn = migrated_conn();
+        set_persisted_level(&conn, "debug").expect("写入 debug 档");
+        assert_eq!(persisted_level(&conn), LogLevel::Debug);
+    }
+
+    /// 库内残留闭集外字符串：读回兑底默认 info（settings::set 是通用 KV 写、不校验闭集）。
+    #[test]
+    fn persisted_level_falls_back_when_stored_value_outside_closed_set() {
+        let conn = migrated_conn();
+        crate::settings::set(&conn, crate::settings::SettingKey::LogLevel, &"verbose")
+            .expect("写入闭集外字符串");
+        assert_eq!(persisted_level(&conn), LogLevel::Info);
+    }
+
+    /// 闭集外档位被拒：未落库、未接管，读回仍默认；错误为码化错误。
+    #[test]
+    fn set_persisted_level_rejects_outside_closed_set() {
+        let conn = migrated_conn();
+        let err = set_persisted_level(&conn, "verbose").expect_err("应拒绝闭集外档位");
+        assert!(err.is_code("settings.log-level-invalid"));
+        assert_eq!(persisted_level(&conn), LogLevel::Info);
     }
 }

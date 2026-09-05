@@ -191,6 +191,14 @@ fn resume_business_surface(app: &AppHandle, conn: Connection) -> Result<()> {
         *guard = conn;
     }
     app.state::<EncryptionGate>().set_locked(false);
+    // 日志等级接管（spec #608 / #611）：解锁后真实库就绪，按持久化档位接管滤镜；
+    // 显式 RUST_LOG 在本次启动内优先，此时不覆盖。锁定期未读到持久化档位，
+    // 解锁是密文库的正式接管点（与启动期明文库的 `init_database` 对齐）。
+    {
+        let state = app.state::<DbState>();
+        let conn = state.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        crate::logger::apply_persisted_level(&conn);
+    }
     tracing::info!("业务读写恢复（解锁/重置后），自动备份调度拉起");
     backup::start_scheduler(app);
     Ok(())

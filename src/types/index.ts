@@ -21,6 +21,7 @@ export * from './reports'
 export * from './scheduled'
 export * from './sync'
 export * from './transactions'
+export * from './settings'
 
 export {
   formatAmount,

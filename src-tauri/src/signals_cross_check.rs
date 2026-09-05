@@ -365,6 +365,12 @@ const IPC_WRITE_ENTRY_EXCEPTIONS: &[(&str, WriteOp, &str)] = &[
         "设备级「自动执行」运行时标志镜像推送：纯内存不触 DB（ADR-0042）",
     ),
     (
+        "set_log_level",
+        WriteOp::SetLogLevel,
+        "设置日志等级 KV 写入（app_settings 的 logging.level）：经 settings.rs 单点收口、\
+         置脏豁免（ADR-0032/0017），刻意零信号（设置不是账本数据，ADR-0006）",
+    ),
+    (
         "audit_balance_cache",
         WriteOp::AuditBalanceCache,
         "余额缓存审计修复：派生缓存行直连锁内维护，不置脏不发信号（ADR-0067；置脏口径为已知开放点，不在本票裁决）",
