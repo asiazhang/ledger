@@ -458,8 +458,9 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
 ///（`test_utils::GatedEmitter`）断言「发射不阻塞写路径」（`emit_blocking_tests`，
 /// spec #366）。本函数只做一次非阻塞
 /// 投递即返回，不等发射完成；投递 / 发射失败静默忽略，不影响写事务结果。
-/// 壳层约定形态：`emit_for(&app, WriteOp::X, evidence)`，或先取
-/// [`signals_for`] 再 [`emit_all`]（需要先记日志 / 断言信号集时用后者）。
+/// 壳层约定形态：写路径经统一写入口 `write_entry`（ADR-0073）内化发射；
+/// 本函数供不经入口的例外路径（备份修剪、全量同步自发射）与写入口本体消费，
+/// 或先取 [`signals_for`] 再 [`emit_all`]（需要先记日志 / 断言信号集时用后者）。
 pub fn emit_all(emitter: &dyn events::SignalEmitter, signals: &[Signal]) {
     for signal in signals {
         match signal {
@@ -470,7 +471,7 @@ pub fn emit_all(emitter: &dyn events::SignalEmitter, signals: &[Signal]) {
     }
 }
 
-/// 组合助手：取 [`signals_for`] 判定并立即发射（壳层单行形态）。
+/// 组合助手：取 [`signals_for`] 判定并立即发射（写入口与例外路径的单行形态）。
 pub fn emit_for(emitter: &dyn events::SignalEmitter, op: WriteOp, evidence: WriteEvidence) {
     emit_all(emitter, signals_for(op, evidence));
 }
