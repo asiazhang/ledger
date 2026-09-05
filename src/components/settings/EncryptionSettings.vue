@@ -3,7 +3,6 @@ import { errorMessage } from '@/utils/errors'
 import { judgeMinLengthText } from '@/utils/field-error'
 import { NAlert, NButton, NCard, NCheckbox, NForm, NFormItem, NInput, NSpace, NSpin, NSwitch, NText, NTooltip, useMessage } from 'naive-ui'
 import { computed, onMounted, ref } from 'vue'
-import { confirm } from '@tauri-apps/plugin-dialog'
 import { api } from '@/api'
 import { t } from '@/i18n'
 import { restartAppShortly } from '@/utils/restart'
@@ -37,6 +36,9 @@ const enableConfirmShow = ref(false)
 // 修改主口令确认弹窗（issue #650 / ADR-0078）：从系统原生 confirm 升级为同封装的
 // error 级应用内弹窗——与开启加密风险同级（遗忘新口令同样数据不可读）。
 const changeConfirmShow = ref(false)
+// 关闭加密确认弹窗（issue #652 / ADR-0078）：warning 级——破坏性但有兜底
+// （既有密文副本保留、可再开启），原生 confirm 退役。
+const disableConfirmShow = ref(false)
 
 // 主口令最小长度（issue #650）：≥8，仅前端判定（后端契约不动）；走字段错误态
 // 既有口径（ADR-0058）：短口令即时红显、提交禁用，不拦截键入。
@@ -195,14 +197,16 @@ async function confirmChange() {
   }
 }
 
-/** 关闭加密：整库转回明文库，完成后重启，不再出现解锁屏。 */
-async function disable() {
+/** 关闭加密第一步：弹 warning 级确认弹窗（兜底说明，ADR-0078），确认后执行转换。 */
+function requestDisable() {
   if (submittingDisable.value || !disablePassphrase.value) return
-  const ok = await confirm(t('settings.data.encryption.disableConfirmBody'), {
-    title: t('settings.data.encryption.disableConfirmTitle'),
-    kind: 'warning',
-  })
-  if (!ok) return
+  disableConfirmShow.value = true
+}
+
+/** 关闭加密确认：整库转回明文库，完成后重启，不再出现解锁屏。 */
+async function confirmDisable() {
+  disableConfirmShow.value = false
+  if (submittingDisable.value || !disablePassphrase.value) return
   submittingDisable.value = true
   try {
     await api.disableEncryption(disablePassphrase.value)
@@ -359,7 +363,7 @@ async function disable() {
                   type="warning"
                   :loading="submittingDisable"
                   :disabled="!disablePassphrase"
-                  @click="disable"
+                  @click="requestDisable"
                 >
                   {{ t('settings.data.encryption.disable') }}
                 </NButton>
@@ -463,6 +467,23 @@ async function disable() {
       :submitting="submittingChange"
       :on-confirm="confirmChange"
       :on-cancel="() => (changeConfirmShow = false)"
+    />
+
+    <!-- 关闭加密确认（issue #652 / ADR-0078）：warning 级——破坏性但有兜底
+         （既有密文备份保留、可再开启），确认后整库转换与自动重启流程不变 -->
+    <AppDangerConfirmModal
+      level="warning"
+      v-model:show="disableConfirmShow"
+      :title="t('settings.data.encryption.disableConfirmTitle')"
+      :lead="t('settings.data.encryption.disableConfirmLead')"
+      :alert-title="t('settings.data.encryption.disableWarnTitle')"
+      :strong-warning="t('settings.data.encryption.disableConfirmStrong')"
+      :detail="t('settings.data.encryption.disableConfirmRest')"
+      :confirm-text="t('settings.data.encryption.disableConfirmOk')"
+      :cancel-text="t('settings.data.encryption.disableConfirmCancel')"
+      :submitting="submittingDisable"
+      :on-confirm="confirmDisable"
+      :on-cancel="() => (disableConfirmShow = false)"
     />
   </NCard>
 </template>

@@ -16,14 +16,12 @@ import type { Currency } from '@/types'
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(),
   save: vi.fn(),
-  confirm: vi.fn(),
 }))
 
-import { open, save, confirm } from '@tauri-apps/plugin-dialog'
+import { open, save } from '@tauri-apps/plugin-dialog'
 
 const mockOpen = vi.mocked(open)
 const mockSave = vi.mocked(save)
-const mockConfirm = vi.mocked(confirm)
 
 const mockInvoke = vi.mocked(invoke)
 const mockListen = vi.mocked(listen)
@@ -98,7 +96,6 @@ beforeEach(async () => {
   setActivePinia(createPinia())
   mockOpen.mockReset()
   mockSave.mockReset()
-  mockConfirm.mockReset()
   localStorage.clear()
   // 默认桩收口到 stubInvoke（含备份全链路与 get_data_location_info）。
   stubInvoke()
@@ -379,7 +376,6 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
       ],
       prune_backups: () => ({ kept: 1, deleted: ['ledger-backup-20260101-010101.db.zip'], failed: [] }),
     })
-    mockConfirm.mockResolvedValueOnce(true)
     const wrapper = mount(SettingsView)
     await openTab(wrapper, '数据')
     await flushPromises()
@@ -387,7 +383,13 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     const pruneBtn = wrapper.findAll('button').find((b) => b.text().includes('立即清理'))!
     await pruneBtn.trigger('click')
     await flushPromises()
-    expect(mockConfirm).toHaveBeenCalled()
+    // 手动清理确认弹窗（issue #652 / ADR-0078）：应用内 warning 级确认后续接删除
+    const confirmPruneBtn = document.body.querySelector(
+      '[data-testid="danger-confirm"]',
+    ) as HTMLButtonElement | null
+    expect(confirmPruneBtn, '清理确认弹窗应弹出').not.toBeNull()
+    confirmPruneBtn!.click()
+    await flushPromises()
     expect(mockInvoke).toHaveBeenCalledWith('prune_backups', { dir: '/Users/me/backups', keep: 1 })
   })
 

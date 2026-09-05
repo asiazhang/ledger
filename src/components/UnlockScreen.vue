@@ -17,8 +17,8 @@
  * 自动解锁时由后端钥匙串读出，不回流前端。
  *
  * 常驻「忘记口令」入口（issue #573 / ADR-0075 决策 2/5）：进入无后门
- * 后果说明（数据不可恢复）→ 二次确认（native confirm，与设置页加密
- * 卡片同型）→ 后端重置为全新明文空库，旧库保留密文副本；重置成功即
+ * 后果说明（数据不可恢复）→ error 级二次确认（issue #652 / ADR-0078，
+ * 应用内分级弹窗）→ 后端重置为全新明文空库，旧库保留密文副本；重置成功即
  * 翻转锁定门，主界面随全新空库挂载，无需重启。
  *
  * 无需注册 Overlay Suppression：本屏挂载期间侧栏/视图/快捷键宿主全部
@@ -26,13 +26,13 @@
  * 覆盖，不存在「ESC 关掉解锁屏」的通路。
  */
 import { NButton, NCard, NCheckbox, NInput, NSpace, NSpin, NText, useMessage } from 'naive-ui'
-import { confirm } from '@tauri-apps/plugin-dialog'
 import { onMounted, ref } from 'vue'
 import { t } from '@/i18n'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
 import { useAppStore } from '@/stores/app'
 import { errorMessage } from '@/utils/errors'
 import { restartAppShortly } from '@/utils/restart'
+import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'
 
 const {
   unlock,
@@ -56,6 +56,10 @@ const errorText = ref('')
 const autoUnlocking = ref(store.rememberPassphrase)
 const autoUnlockFallback = ref('')
 const rememberChecked = ref(store.rememberPassphrase)
+
+// 忘记口令重置确认弹窗（issue #652 / ADR-0078）：error 级应用内弹窗替代原生
+// confirm——不可逆（重置为全新空库），后果说明（无后门、密文副本保留）必选。
+const resetConfirmShow = ref(false)
 
 onMounted(async () => {
   // 平台能力恒加载（关闭「记住」时也要让复选框可按「平台支持」显隐）；开启时再尝试自动解锁。
@@ -103,19 +107,19 @@ async function submit() {
   }
 }
 
-/** 忘记口令重置：后果说明（无后门、不可恢复）→ 二次确认 → 重置为全新明文空库。
- *  取消或失败都留在解锁屏，可继续尝试口令或再次进入。重置后旧主口令不再适用，
- *  后端已清钥匙串缓存（ADR-0075 决策 5），此处同步清「记住」偏好为关。 */
-async function forgotPassphrase() {
+/** 忘记口令第一步：弹 error 级确认弹窗（后果说明：无后门、不可恢复，ADR-0078）。 */
+function forgotPassphrase() {
   if (resetting.value) return
   errorText.value = ''
-  const ok = await confirm(t('unlock.resetBody'), {
-    title: t('unlock.resetTitle'),
-    kind: 'warning',
-    okLabel: t('unlock.resetConfirm'),
-    cancelLabel: t('unlock.resetCancel'),
-  })
-  if (!ok) return
+  resetConfirmShow.value = true
+}
+
+/** 重置确认：重置为全新明文空库。取消或失败都留在解锁屏，可继续尝试口令或
+ *  再次进入。重置后旧主口令不再适用，后端已清钥匙串缓存（ADR-0075 决策 5），
+ *  此处同步清「记住」偏好为关。 */
+async function confirmReset() {
+  resetConfirmShow.value = false
+  if (resetting.value) return
   resetting.value = true
   try {
     await reset()
@@ -177,6 +181,21 @@ async function forgotPassphrase() {
         </template>
       </NSpace>
     </NCard>
+
+    <!-- 忘记口令重置确认（issue #652 / ADR-0078）：error 级——不可逆（清空数据），
+         承载无后门后果说明与密文副本保留兑底；确认后重置流程不变 -->
+    <AppDangerConfirmModal
+      level="error"
+      v-model:show="resetConfirmShow"
+      :title="t('unlock.resetTitle')"
+      :strong-warning="t('unlock.resetStrong')"
+      :detail="t('unlock.resetDetail')"
+      :confirm-text="t('unlock.resetConfirm')"
+      :cancel-text="t('unlock.resetCancel')"
+      :submitting="resetting"
+      :on-confirm="confirmReset"
+      :on-cancel="() => (resetConfirmShow = false)"
+    />
   </div>
 </template>
 

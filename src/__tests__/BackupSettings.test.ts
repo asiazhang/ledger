@@ -176,3 +176,71 @@ describe('BackupSettings 备份页签重排与危险视觉修正（issue #651 / 
     expect(cellTexts).toContain('ledger-auto-20260217-093000.db.zip')
   })
 })
+
+describe('BackupSettings 手动清理确认弹窗（issue #652 / ADR-0078）', () => {
+  /** 弹窗（teleport 到 body）内按 data-testid 找按钮。 */
+  function bodyButton(testid: string): HTMLButtonElement {
+    const btn = document.body.querySelector(`[data-testid="${testid}"]`) as HTMLButtonElement | null
+    if (!btn) throw new Error(`未找到 testid=${testid} 的按钮`)
+    return btn
+  }
+
+  function stubWithPrune(list: BackupFileInfo[], keep = 1) {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_backups') return Promise.resolve(list)
+      if (cmd === 'get_auto_backup_state')
+        return Promise.resolve({ enabled: true, last_backup_at: null })
+      if (cmd === 'prune_backups')
+        return Promise.resolve({ kept: keep, deleted: ['/a', '/b'], failed: [] })
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+  }
+
+  it('超上限点「立即清理」：弹 warning 级应用内弹窗，待删数量与不可恢复后果在场，不立即删除', async () => {
+    stubWithPrune([encryptedBackup, plaintextBackup])
+    useAppStore().setBackupMaxCount(1)
+    const wrapper = mount(BackupSettings)
+    await flushPromises()
+
+    await wrapper.findAll('button').find((b) => b.text().includes('立即清理'))!.trigger('click')
+    await flushPromises()
+
+    // warning 级形态（ADR-0078 决策 2）：琥珀警示块承载待删数量与不可恢复后果
+    const alert = document.body.querySelector('.n-modal .n-alert')
+    expect(alert, '警示块应存在').toBeTruthy()
+    expect(document.body.textContent).toContain('将删除最旧的 1 个备份')
+    expect(document.body.textContent).toContain('删除后不可恢复')
+    expect(bodyButton('danger-confirm').className).toContain('n-button--warning-type')
+    // 未确认前零删除副作用
+    expect(mockInvoke).not.toHaveBeenCalledWith('prune_backups', expect.anything())
+  })
+
+  it('确认清理：执行 prune_backups 后弹窗关闭并刷新列表', async () => {
+    stubWithPrune([encryptedBackup, plaintextBackup])
+    useAppStore().setBackupMaxCount(1)
+    const wrapper = mount(BackupSettings)
+    await flushPromises()
+
+    await wrapper.findAll('button').find((b) => b.text().includes('立即清理'))!.trigger('click')
+    await flushPromises()
+    bodyButton('danger-confirm').click()
+    await flushPromises()
+
+    expect(mockInvoke).toHaveBeenCalledWith('prune_backups', { dir: '/Users/me/backups', keep: 1 })
+  })
+
+  it('取消清理：弹窗关闭，不发任何删除调用（零副作用）', async () => {
+    stubWithPrune([encryptedBackup, plaintextBackup])
+    useAppStore().setBackupMaxCount(1)
+    const wrapper = mount(BackupSettings)
+    await flushPromises()
+
+    await wrapper.findAll('button').find((b) => b.text().includes('立即清理'))!.trigger('click')
+    await flushPromises()
+    bodyButton('danger-cancel').click()
+    await flushPromises()
+
+    expect(mockInvoke).not.toHaveBeenCalledWith('prune_backups', expect.anything())
+    void wrapper
+  })
+})

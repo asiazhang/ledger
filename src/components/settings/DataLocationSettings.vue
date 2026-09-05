@@ -2,9 +2,10 @@
 import { errorMessage } from '@/utils/errors'
 import { NAlert, NButton, NCard, NSpace, NSpin, NText, useMessage } from 'naive-ui'
 import { onMounted, ref } from 'vue'
-import { open, confirm } from '@tauri-apps/plugin-dialog'
+import { open } from '@tauri-apps/plugin-dialog'
 import { api } from '@/api'
 import { t } from '@/i18n'
+import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'
 import type { DataLocationChangeOutcome, DataLocationInfo } from '@/types'
 
 // 数据存储位置卡片（issue #134 / ADR-0018）：消费 #133 命令层契约。
@@ -18,6 +19,11 @@ const info = ref<DataLocationInfo | null>(null)
 const loading = ref(false)
 const loadError = ref('')
 const submitting = ref(false)
+
+// 二选一确认弹窗（issue #652 / ADR-0078）：warning 级应用内弹窗替代原生 confirm，
+// 按钮语义显式（接管该库 / 取消换位）；目标已有同名库时挂起二次提交，确认后续接。
+const adoptConfirmShow = ref(false)
+let pendingAdopt: (() => Promise<DataLocationChangeOutcome>) | null = null
 
 async function refresh() {
   loading.value = true
@@ -51,10 +57,17 @@ async function restoreDefault() {
   await submitWithChoice((adoptExisting) => api.restoreDefaultDataLocation(adoptExisting))
 }
 
+/** 意图落位呈现：成功提示＋刷新展示（首次提交与接管二次提交共用出口）。 */
+async function applyOutcome(outcome: DataLocationChangeOutcome) {
+  if (outcome.committed) {
+    message.success(t('settings.data.location.committed'))
+  }
+  await refresh()
+}
+
 /**
  * 提交更改意图并按命令结果分支呈现：
- * 校验通过 → 成功提示并刷新；目标已有同名库 → 二选一确认，
- * 接管则以 adopt_existing = true 二次提交，取消则状态保持不变；
+ * 校验通过 → 成功提示并刷新；目标已有同名库 → 二选一确认弹窗挂起二次提交；
  * 校验失败 → 错误反馈，状态不变。
  */
 async function submitWithChoice(
@@ -62,33 +75,41 @@ async function submitWithChoice(
 ) {
   submitting.value = true
   try {
-    let outcome = await submit(false)
+    const outcome = await submit(false)
     if (outcome.requires_choice) {
-      const ok = await confirm(
-        t('settings.data.location.adoptBody'),
-        {
-          title: t('settings.data.location.adoptTitle'),
-          kind: 'warning',
-          // 二选一按钮文案显式化（spec：接管该库 / 取消换位），不靠「确定/取消」猜语义。
-          okLabel: t('settings.data.location.adoptOk'),
-          cancelLabel: t('settings.data.location.adoptCancel'),
-        },
-      )
-      if (!ok) {
-        message.info(t('settings.data.location.cancelled'))
-        return
-      }
-      outcome = await submit(true)
+      pendingAdopt = () => submit(true)
+      adoptConfirmShow.value = true
+      return
     }
-    if (outcome.committed) {
-      message.success(t('settings.data.location.committed'))
-    }
-    await refresh()
+    await applyOutcome(outcome)
   } catch (e: any) {
     message.error(t('settings.data.msg.changeFailed', { msg: errorMessage(e) }))
   } finally {
     submitting.value = false
   }
+}
+
+/** 二选一确认「接管该库」：以 adopt_existing = true 二次提交（弹窗先关，与既有加载态衔接）。 */
+async function confirmAdopt() {
+  const submit = pendingAdopt
+  pendingAdopt = null
+  adoptConfirmShow.value = false
+  if (!submit) return
+  submitting.value = true
+  try {
+    await applyOutcome(await submit())
+  } catch (e: any) {
+    message.error(t('settings.data.msg.changeFailed', { msg: errorMessage(e) }))
+  } finally {
+    submitting.value = false
+  }
+}
+
+/** 二选一取消「取消换位」：放弃本次更改，数据存储位置状态不变。 */
+function cancelAdopt() {
+  pendingAdopt = null
+  adoptConfirmShow.value = false
+  message.info(t('settings.data.location.cancelled'))
 }
 </script>
 
@@ -134,5 +155,23 @@ async function submitWithChoice(
         </NButton>
       </NSpace>
     </NSpace>
+
+    <!-- 二选一确认弹窗（issue #652 / ADR-0078）：warning 级——原位置库文件保留、
+         无破坏；按钮文案即语义（接管该库 / 取消换位），不靠「确定/取消」猜。
+         ✕/ESC 关闭同归取消路径：清挂起二次提交并提示状态未变，不让 pendingAdopt 悬挂 -->
+    <AppDangerConfirmModal
+      level="warning"
+      :show="adoptConfirmShow"
+      :title="t('settings.data.location.adoptTitle')"
+      :lead="t('settings.data.location.adoptLead')"
+      :strong-warning="t('settings.data.location.adoptStrong')"
+      :detail="t('settings.data.location.adoptDetail')"
+      :confirm-text="t('settings.data.location.adoptOk')"
+      :cancel-text="t('settings.data.location.adoptCancel')"
+      :submitting="submitting"
+      :on-confirm="confirmAdopt"
+      :on-cancel="cancelAdopt"
+      @update:show="cancelAdopt"
+    />
   </NCard>
 </template>
