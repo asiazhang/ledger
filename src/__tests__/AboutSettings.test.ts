@@ -103,6 +103,14 @@ describe('AboutSettings.vue — 日志等级下拉（spec #611）', () => {
     expect(wrapper.findComponent(NSelect).props('value')).toBe('debug')
   })
 
+  it('渲染日志等级标签、下拉与静态提示（含 RUST_LOG 说明）', async () => {
+    const wrapper = await mountWithLogLevel('info')
+    expect(wrapper.findComponent(NSelect).exists()).toBe(true)
+    expect(wrapper.text()).toContain('日志等级')
+    // 静态提示说明 RUST_LOG 本次启动内优先（spec #608 接缝 3 / AC5）
+    expect(wrapper.text()).toContain('RUST_LOG')
+  })
+
   it('改动下拉触发 set_log_level 并回写当前档位', async () => {
     const wrapper = await mountWithLogLevel('info')
     mockInvoke.mockResolvedValueOnce(undefined)

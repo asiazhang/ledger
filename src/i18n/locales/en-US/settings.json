@@ -300,7 +300,7 @@
     "copyShaFailed": "Failed to copy full version: {msg}",
     "logLevel": {
       "label": "Log Level",
-      "hint": "Defaults to info; it takes effect immediately and persists across restarts. If the RUST_LOG environment variable is set for this session, it takes precedence (this shows the persisted value).",
+      "hint": "Defaults to info; changes take effect immediately and persist across restarts. If the RUST_LOG environment variable is set for this session, it takes precedence at startup; this shows the persisted value, and a manual change overrides it.",
       "error": "Error (error)",
       "warn": "Warn (warn)",
       "info": "Info (info)",

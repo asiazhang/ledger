@@ -114,11 +114,11 @@ pub fn apply_persisted_level(conn: &rusqlite::Connection) {
 /// 校验闭集 + 持久化 + 运行期接管（`set_log_level` 命令与 BDD 共用，spec #611）：
 /// 非闭集档位返回码化错误 `settings.log-level-invalid`（未落库、未接管）；合法档位
 /// 写入 `app_settings`（经 settings 模块单点收口、置脏豁免 ADR-0032）后
-/// [`set_level`] 接管运行期滤镜。返回解析后的档位供调用方回显。
+/// [`set_level`] 接管运行期滤镜（文件 / 终端共用同一滤镜）。
 pub fn set_persisted_level(
     conn: &rusqlite::Connection,
     level_str: &str,
-) -> crate::error::Result<LogLevel> {
+) -> crate::error::Result<()> {
     let level = level_str.parse::<LogLevel>().map_err(|e: String| {
         crate::error::AppError::codedp(
             "settings.log-level-invalid",
@@ -132,7 +132,7 @@ pub fn set_persisted_level(
         &level.directive(),
     )?;
     set_level(level);
-    Ok(level)
+    Ok(())
 }
 
 pub fn log_dir() -> &'static PathBuf {

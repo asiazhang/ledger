@@ -48,7 +48,7 @@ pub async fn set_log_level(app: tauri::AppHandle, level: String) -> Result<()> {
     let conn = app.state::<DbState>().conn.clone();
     run_db("set_log_level", move || {
         let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        logger::set_persisted_level(&conn, &level).map(|_| ())
+        logger::set_persisted_level(&conn, &level)
     })
     .await
 }
