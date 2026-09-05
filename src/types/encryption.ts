@@ -13,3 +13,9 @@ export interface EncryptionStatus {
 export interface UnlockOutcome {
   relocated: boolean
 }
+
+/** 本机记住主口令的平台能力（issue #574 / ADR-0075 决策 3）。 */
+export interface RememberPassphraseSupport {
+  /** 平台是否支持本机缓存主口令（v1 仅 macOS；不支持时前端隐藏选项、回退手输）。 */
+  supported: boolean
+}

@@ -8,6 +8,14 @@
  * 用户可见文案由后端码化错误区分（`encryption.passphrase-incorrect` /
  * `encryption.db-corrupt`），经 errorMessage 按码本地化。
  *
+ * 本机记住主口令（issue #574 / ADR-0075 决策 3/5）：开启「记住」后，
+ * 启动即在**有缓存时**凭系统钥匙串（macOS 以 Touch ID 生物认证门保护）
+ * 自动解锁——本屏挂载即尝试，认证通过直接进入、认证取消或无缓存回退手输
+ * （只损失便利，不损失数据）。平台不支持时隐藏「记住」选项并回退手输。
+ * 「记住」偏好是前端 localStorage 轻量设置项（app store），钥匙串内容为
+ * 主口令本身、密钥仍由口令派生（备份跨设备可移植性不受影响）。口令在
+ * 自动解锁时由后端钥匙串读出，不回流前端。
+ *
  * 常驻「忘记口令」入口（issue #573 / ADR-0075 决策 2/5）：进入无后门
  * 后果说明（数据不可恢复）→ 二次确认（native confirm，与设置页加密
  * 卡片同型）→ 后端重置为全新明文空库，旧库保留密文副本；重置成功即
@@ -15,17 +23,26 @@
  *
  * 无需注册 Overlay Suppression：本屏挂载期间侧栏/视图/快捷键宿主全部
  * 不存在，无被抑制对象；ESC 守卫由 useWindowGuard 的全局 preventDefault
- * 覆盖，不存在「ESC 关掉解锁屏」的通路。「本机记住」由后续票交付。
+ * 覆盖，不存在「ESC 关掉解锁屏」的通路。
  */
-import { NButton, NCard, NInput, NSpace, NText, useMessage } from 'naive-ui'
+import { NButton, NCard, NCheckbox, NInput, NSpace, NSpin, NText, useMessage } from 'naive-ui'
 import { confirm } from '@tauri-apps/plugin-dialog'
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { t } from '@/i18n'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
+import { useAppStore } from '@/stores/app'
 import { errorMessage } from '@/utils/errors'
 import { restartAppShortly } from '@/utils/restart'
 
-const { unlock, reset } = useEncryptionGate()
+const {
+  unlock,
+  reset,
+  rememberSupport,
+  unlockWithRemembered,
+  loadRememberSupport,
+  syncRememberCache,
+} = useEncryptionGate()
+const store = useAppStore()
 const message = useMessage()
 
 const passphrase = ref('')
@@ -33,12 +50,44 @@ const submitting = ref(false)
 const resetting = ref(false)
 const errorText = ref('')
 
+// 本机记住主口令（issue #574）：`autoUnlocking` 初始即反映偏好——「记住」开启时
+// 启动即显示自动解锁加载态；关闭时直接进手输表单。`rememberChecked` 是手动解锁
+// 时是否缓存口令的复选框（反映当前偏好，可在解锁时即时开/关）。
+const autoUnlocking = ref(store.rememberPassphrase)
+const autoUnlockFallback = ref('')
+const rememberChecked = ref(store.rememberPassphrase)
+
+onMounted(async () => {
+  // 平台能力恒加载（关闭「记住」时也要让复选框可按「平台支持」显隐）；开启时再尝试自动解锁。
+  await loadRememberSupport()
+  if (!autoUnlocking.value) return
+  if (!rememberSupport.value?.supported) {
+    // 平台不支持：回退手输（「记住」已开但本机不缓存，等价于未开启）。
+    autoUnlocking.value = false
+    return
+  }
+  try {
+    const relocated = await unlockWithRemembered()
+    if (relocated) {
+      // 自动解锁时补做了等待中的搬迁：提示后立即重启（Restore 同型语义）。
+      message.success(t('unlock.relocated'))
+      restartAppShortly()
+    }
+  } catch (e) {
+    // 无缓存 / 生物认证取消 / 缓存口令已过期：回退手输，提示按码本地化。
+    autoUnlocking.value = false
+    autoUnlockFallback.value = errorMessage(e)
+  }
+})
+
 async function submit() {
   if (submitting.value) return
   errorText.value = ''
   submitting.value = true
   try {
     const relocated = await unlock(passphrase.value)
+    const cached = await syncRememberCache(passphrase.value, rememberChecked.value)
+    if (!cached) message.warning(t('unlock.rememberFailed'))
     if (relocated) {
       // 解锁时补做了等待中的搬迁：提示后立即重启，由启动引导接管目标位置
       // （与 Restore「恢复成功后自动重启」同型；不让用户在旧位置继续写入）。
@@ -55,7 +104,8 @@ async function submit() {
 }
 
 /** 忘记口令重置：后果说明（无后门、不可恢复）→ 二次确认 → 重置为全新明文空库。
- *  取消或失败都留在解锁屏，可继续尝试口令或再次进入。 */
+ *  取消或失败都留在解锁屏，可继续尝试口令或再次进入。重置后旧主口令不再适用，
+ *  后端已清钥匙串缓存（ADR-0075 决策 5），此处同步清「记住」偏好为关。 */
 async function forgotPassphrase() {
   if (resetting.value) return
   errorText.value = ''
@@ -69,6 +119,8 @@ async function forgotPassphrase() {
   resetting.value = true
   try {
     await reset()
+    // 后端已清钥匙串缓存；此处仅清前端「记住」偏好（全新明文空库无主口令可记住）。
+    store.setRememberPassphrase(false)
     message.success(t('unlock.resetOk'))
   } catch (e) {
     errorText.value = errorMessage(e)
@@ -82,25 +134,47 @@ async function forgotPassphrase() {
   <div class="unlock-screen">
     <NCard class="unlock-card" :bordered="false">
       <NSpace vertical :size="16" align="center" :style="{ width: '100%' }">
-        <NText class="unlock-title">{{ t('unlock.title') }}</NText>
-        <NText depth="3">{{ t('unlock.hint') }}</NText>
-        <NInput
-          v-model:value="passphrase"
-          type="password"
-          show-password-on="click"
-          :placeholder="t('unlock.placeholder')"
-          :disabled="submitting"
-          autofocus
-          @keyup.enter="submit"
-        />
-        <NText v-if="errorText" type="error" class="unlock-error">{{ errorText }}</NText>
-        <NButton type="primary" block :loading="submitting" :disabled="!passphrase" @click="submit">
-          {{ t('unlock.button') }}
-        </NButton>
-        <!-- 忘记口令入口（issue #573）：常驻可达的逃生门，无后门后果说明后二次确认 -->
-        <NButton quaternary size="small" :disabled="resetting" @click="forgotPassphrase">
-          {{ t('unlock.forgot') }}
-        </NButton>
+        <!-- 自动解锁加载态（issue #574）：「记住」开启且正在尝试，认证通过即进入应用 -->
+        <NSpin v-if="autoUnlocking" size="small">
+          <div class="unlock-loading">{{ t('unlock.autoUnlocking') }}</div>
+        </NSpin>
+
+        <template v-else>
+          <NText class="unlock-title">{{ t('unlock.title') }}</NText>
+          <NText depth="3">{{ t('unlock.hint') }}</NText>
+          <NInput
+            v-model:value="passphrase"
+            type="password"
+            show-password-on="click"
+            :placeholder="t('unlock.placeholder')"
+            :disabled="submitting"
+            autofocus
+            @keyup.enter="submit"
+          />
+          <NText v-if="errorText" type="error" class="unlock-error">{{ errorText }}</NText>
+          <!-- 自动解锁回退提示（无缓存 / 生物认证取消）：告知用户回退手输 -->
+          <NText v-if="autoUnlockFallback" type="warning" class="unlock-error">
+            {{ autoUnlockFallback }}
+          </NText>
+          <NButton type="primary" block :loading="submitting" :disabled="!passphrase" @click="submit">
+            {{ t('unlock.button') }}
+          </NButton>
+          <!-- 本机记住主口令（issue #574）：平台不支持（v1 非 macOS）时隐藏该选项 -->
+          <NCheckbox
+            v-if="rememberSupport?.supported"
+            v-model:checked="rememberChecked"
+            :disabled="submitting"
+          >
+            <NText depth="3">{{ t('unlock.remember') }}</NText>
+          </NCheckbox>
+          <NText v-if="rememberSupport?.supported" depth="3" class="unlock-remember-hint">
+            {{ t('unlock.rememberHint') }}
+          </NText>
+          <!-- 忘记口令入口（issue #573）：常驻可达的逃生门，无后门后果说明后二次确认 -->
+          <NButton quaternary size="small" :disabled="resetting" @click="forgotPassphrase">
+            {{ t('unlock.forgot') }}
+          </NButton>
+        </template>
       </NSpace>
     </NCard>
   </div>
@@ -125,8 +199,18 @@ async function forgotPassphrase() {
   font-weight: 600;
 }
 
+.unlock-loading {
+  padding: 12px 0;
+}
+
 .unlock-error {
   /* 独占一行，重试提示完整可见 */
   align-self: flex-start;
+}
+
+.unlock-remember-hint {
+  align-self: flex-start;
+  font-size: 12px;
+  line-height: 1.6;
 }
 </style>

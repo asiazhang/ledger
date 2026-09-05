@@ -199,6 +199,10 @@
     "not-encrypted": "库文件当前不是加密状态，请重启应用后再试",
     "not-locked": "应用未处于锁定状态，无需解锁",
     "not-plaintext": "当前库已是加密库，无需再次开启加密",
-    "passphrase-empty": "主口令不能为空"
+    "passphrase-empty": "主口令不能为空",
+    "remember-no-cache": "本机没有缓存的主口令，请手动输入",
+    "remember-biometric-cancelled": "生物认证已取消，请手动输入主口令",
+    "remember-biometric-unavailable": "无法启用本机记住（生物认证未启用或该设备不支持），已保持手动输入",
+    "remember-unsupported": "当前平台不支持本机记住主口令"
   }
 }

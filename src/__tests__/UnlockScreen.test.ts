@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { invoke } from '@tauri-apps/api/core'
+import { setActivePinia, createPinia } from 'pinia'
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   confirm: vi.fn(),
@@ -9,6 +10,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
 import { confirm } from '@tauri-apps/plugin-dialog'
 import UnlockScreen from '@/components/UnlockScreen.vue'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
+import { useAppStore } from '@/stores/app'
 
 const mockInvoke = vi.mocked(invoke)
 const mockConfirm = vi.mocked(confirm)
@@ -24,9 +26,12 @@ function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
 beforeEach(() => {
   mockInvoke.mockReset()
   mockConfirm.mockReset()
-  // 每个用例从「未探测」起步（模块级单例状态复位）。
-  const { locked } = useEncryptionGate()
-  locked.value = null
+  setActivePinia(createPinia())
+  // 每个用例从「未探测」起步（模块级单例状态复位），并清空记住偏好的 localStorage。
+  const gate = useEncryptionGate()
+  gate.locked.value = null
+  gate.rememberSupport.value = null
+  localStorage.removeItem('remember_passphrase')
 })
 
 function findButton(wrapper: ReturnType<typeof mount>, text: string) {
@@ -231,5 +236,148 @@ describe('UnlockScreen.vue（加密锁定门·解锁屏流程）', () => {
     await flushPromises()
     expect(wrapper.html()).toContain('数据库文件不存在或为空')
     expect(locked.value).toBe(true)
+  })
+})
+
+describe('UnlockScreen.vue 本机记住主口令（issue #574）', () => {
+  /** 记住复选项（语义定位按钮文本）。 */
+  function findRememberCheckbox(wrapper: ReturnType<typeof mount>) {
+    return wrapper.find('.n-checkbox')
+  }
+
+  it('记住开启 + 平台支持：挂载即凭缓存自动解锁，成功后翻转为已解锁', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve({ locked: true, file_encrypted: true }),
+      get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
+      unlock_with_remembered_passphrase: () => Promise.resolve({ relocated: false }),
+    })
+    useAppStore().setRememberPassphrase(true)
+    const { probe, locked } = useEncryptionGate()
+    const probePromise = probe()
+    const wrapper = mount(UnlockScreen)
+    await probePromise
+    await flushPromises()
+
+    // 自动解锁：发起凭缓存解锁（口令不回流前端，只调命令），成功后翻解锁
+    expect(mockInvoke).toHaveBeenCalledWith('unlock_with_remembered_passphrase')
+    expect(locked.value).toBe(false)
+  })
+
+  it('记住开启但平台不支持：不触发自动解锁，回退手输并隐藏记住复选项', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve({ locked: true, file_encrypted: true }),
+      get_remember_passphrase_support: () => Promise.resolve({ supported: false }),
+    })
+    useAppStore().setRememberPassphrase(true)
+    const { probe, locked } = useEncryptionGate()
+    const probePromise = probe()
+    const wrapper = mount(UnlockScreen)
+    await probePromise
+    await flushPromises()
+
+    expect(mockInvoke).not.toHaveBeenCalledWith('unlock_with_remembered_passphrase')
+    expect(locked.value).toBe(true)
+    expect(wrapper.html()).toContain('账本已加密')
+    // 平台不支持：隐藏「记住」选项（回退手输）
+    expect(wrapper.html()).not.toContain('在本机记住主口令')
+  })
+
+  it('自动解锁失败（无缓存）：回退手输，提示本地化且口令输入可交互', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve({ locked: true, file_encrypted: true }),
+      get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
+      unlock_with_remembered_passphrase: () =>
+        Promise.reject({
+          kind: 'Invalid',
+          message: '本机没有缓存的主口令，请手动输入',
+          code: 'encryption.remember-no-cache',
+        }),
+    })
+    useAppStore().setRememberPassphrase(true)
+    const { probe, locked } = useEncryptionGate()
+    const probePromise = probe()
+    const wrapper = mount(UnlockScreen)
+    await probePromise
+    await flushPromises()
+
+    expect(locked.value).toBe(true)
+    expect(wrapper.html()).toContain('本机没有缓存的主口令')
+    // 回退手输：口令输入仍可交互
+    expect(wrapper.find('input').exists()).toBe(true)
+  })
+
+  it('自动解锁失败（生物认证取消）：回退手输并提示取消', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve({ locked: true, file_encrypted: true }),
+      get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
+      unlock_with_remembered_passphrase: () =>
+        Promise.reject({
+          kind: 'Invalid',
+          message: '生物认证已取消，请手动输入主口令',
+          code: 'encryption.remember-biometric-cancelled',
+        }),
+    })
+    useAppStore().setRememberPassphrase(true)
+    const { probe, locked } = useEncryptionGate()
+    const probePromise = probe()
+    const wrapper = mount(UnlockScreen)
+    await probePromise
+    await flushPromises()
+
+    expect(wrapper.html()).toContain('生物认证已取消')
+    expect(locked.value).toBe(true)
+  })
+
+  it('手动解锁勾选记住：解锁后缓存主口令并置偏好开', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve({ locked: true, file_encrypted: true }),
+      get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
+      unlock_encryption: (args: any) => {
+        expect(args.passphrase).toBe('口令①')
+        return Promise.resolve({ relocated: false })
+      },
+      set_remember_passphrase: (args: any) => {
+        expect(args.passphrase).toBe('口令①')
+        return Promise.resolve()
+      },
+    })
+    const { probe, locked } = useEncryptionGate()
+    const probePromise = probe()
+    const wrapper = mount(UnlockScreen)
+    await probePromise
+    await flushPromises()
+
+    // 勾选「记住」→ 输入口令 → 解锁
+    await findRememberCheckbox(wrapper).trigger('click')
+    await wrapper.find('input').setValue('口令①')
+    await findButton(wrapper, '解锁')!.trigger('click')
+    await flushPromises()
+
+    expect(mockInvoke).toHaveBeenCalledWith('set_remember_passphrase', { passphrase: '口令①' })
+    expect(useAppStore().rememberPassphrase).toBe(true)
+    expect(locked.value).toBe(false)
+  })
+
+  it('手动解锁取消记住：解锁后清缓存并置偏好关', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve({ locked: true, file_encrypted: true }),
+      get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
+      unlock_encryption: () => Promise.resolve({ relocated: false }),
+      clear_remember_passphrase: () => Promise.resolve(),
+    })
+    const { probe, locked } = useEncryptionGate()
+    const probePromise = probe()
+    const wrapper = mount(UnlockScreen)
+    await probePromise
+    await flushPromises()
+
+    // 不复选（默认关）→ 解锁后清缓存
+    await wrapper.find('input').setValue('口令')
+    await findButton(wrapper, '解锁')!.trigger('click')
+    await flushPromises()
+
+    expect(mockInvoke).toHaveBeenCalledWith('clear_remember_passphrase')
+    expect(useAppStore().rememberPassphrase).toBe(false)
+    expect(locked.value).toBe(false)
   })
 })

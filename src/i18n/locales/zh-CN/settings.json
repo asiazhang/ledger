@@ -203,7 +203,14 @@
       "disable": "关闭加密",
       "disableConfirmTitle": "关闭加密？",
       "disableConfirmBody": "将把整个账本库转换回明文库（转换期间请勿关闭应用），完成后应用自动重启，此后数据以明文存放、不再需要主口令。继续吗？",
-      "disableOkToast": "加密已关闭，应用即将重启"
+      "disableOkToast": "加密已关闭，应用即将重启",
+      "rememberCheckbox": "在本机记住主口令",
+      "rememberToggleLabel": "本机记住主口令",
+      "rememberToggleHint": "开启后下次启动凭本机钥匙串（macOS 经生物认证）自动解锁；关闭后恢复手动输入。",
+      "rememberPassLabel": "输入当前主口令以启用本机记住",
+      "rememberConfirm": "启用记住",
+      "rememberEnabled": "已启用本机记住",
+      "rememberFailed": "本机记住未能启用，已保持手动输入"
     },
     "source": {
       "auto": "自动",

@@ -55,12 +55,14 @@ pub mod fs_util;
 // include! 进本 crate；命令注册零手工清单，新增/删除命令只改命令域文件本身。
 include!(concat!(env!("OUT_DIR"), "/commands_registry.rs"));
 
-/// 锁定期间放行的 IPC 命令白名单（issue #570 / ADR-0075 决策 5）：解锁屏
-/// 启动期所需的最小面（状态查询、解锁、忘记口令重置 #573）；其余命令在
-/// 解锁前一律拒绝（解锁先于一切业务读写）。
+/// 锁定期间放行的 IPC 命令白名单（issue #570 / #574 / ADR-0075 决策 5）：解锁屏
+/// 启动期所需的最小面（状态查询、解锁、凭缓存解锁、平台能力查询、忘记口令重置
+/// #573）；其余命令在解锁前一律拒绝（解锁先于一切业务读写）。
 const LOCKED_ALLOWED_COMMANDS: &[&str] = &[
     "get_encryption_status",
     "unlock_encryption",
+    "unlock_with_remembered_passphrase",
+    "get_remember_passphrase_support",
     "reset_after_forgotten_passphrase",
 ];
 

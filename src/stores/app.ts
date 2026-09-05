@@ -27,6 +27,12 @@ export const useAppStore = defineStore('app', () => {
   // 存储与生效逻辑收口在 @/i18n，此处只持状态供设置页读写。
   const localeSetting = ref<LocaleSetting>(getLocaleSetting())
 
+  // 「本机记住主口令」（issue #574 / ADR-0075 决策 3）：轻量设置项，真源在本机
+  // localStorage（不落库、不随 Backup/Restore 迁移——钥匙串缓存内容为主口令本身，
+  // 种子/其他设备保持默认关）。只决定是否在下次解锁/设置口令时把主口令缓入系统
+  // 钥匙串；钥匙串的读写由后端 `passphrase_cache` 承担。
+  const rememberPassphrase = ref<boolean>(loadLocal<boolean>('remember_passphrase', false))
+
   // 金额隐私模式（issue #566）：轻量设置项，真源 ref 在展示格式化层（@/utils/money，
   // 三个格式化函数消费，同界面语言 currentLocale 注入先例）；本 store 负责启动水合
   // 与变更持久化，不随 Backup/Restore 迁移。
@@ -67,6 +73,11 @@ export const useAppStore = defineStore('app', () => {
     saveLocal(AMOUNT_PRIVACY_STORAGE_KEY, enabled)
   }
 
+  function setRememberPassphrase(enabled: boolean) {
+    rememberPassphrase.value = enabled
+    saveLocal('remember_passphrase', enabled)
+  }
+
   return {
     theme,
     defaultCurrency,
@@ -75,6 +86,7 @@ export const useAppStore = defineStore('app', () => {
     autoExecutionEnabled,
     localeSetting,
     amountPrivacyEnabled,
+    rememberPassphrase,
     setTheme,
     setDefaultCurrency,
     setBackupDir,
@@ -82,5 +94,6 @@ export const useAppStore = defineStore('app', () => {
     setAutoExecutionEnabled,
     setLocale,
     setAmountPrivacyEnabled,
+    setRememberPassphrase,
   }
 })

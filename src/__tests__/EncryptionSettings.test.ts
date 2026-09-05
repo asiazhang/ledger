@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { invoke } from '@tauri-apps/api/core'
+import { setActivePinia, createPinia } from 'pinia'
 import type { EncryptionStatus } from '@/types'
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
@@ -25,6 +26,8 @@ vi.mock('naive-ui', async (importOriginal) => {
 
 import { confirm } from '@tauri-apps/plugin-dialog'
 import EncryptionSettings from '@/components/settings/EncryptionSettings.vue'
+import { useEncryptionGate } from '@/composables/useEncryptionGate'
+import { useAppStore } from '@/stores/app'
 
 const mockInvoke = vi.mocked(invoke)
 const mockConfirm = vi.mocked(confirm)
@@ -43,6 +46,11 @@ function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
 beforeEach(() => {
   mockInvoke.mockReset()
   mockConfirm.mockReset()
+  setActivePinia(createPinia())
+  // 本机记住（issue #574）：清空偏好 localStorage 与模块级能力态，避免跨用例泄漏。
+  localStorage.removeItem('remember_passphrase')
+  const { rememberSupport } = useEncryptionGate()
+  rememberSupport.value = null
   messageApi.success.mockClear()
   messageApi.warning.mockClear()
   messageApi.error.mockClear()
@@ -339,5 +347,102 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
     await findButton(wrapper, '关闭加密')!.trigger('click')
     await flushPromises()
     expect(mockInvoke).not.toHaveBeenCalledWith('disable_encryption', expect.anything())
+  })
+})
+
+describe('EncryptionSettings.vue 本机记住主口令（issue #574）', () => {
+  /** 记住复选项（语义定位按钮文本）。 */
+  function findRememberCheckbox(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('.n-checkbox').find((c) => c.text().includes('在本机记住主口令'))!
+  }
+
+  it('平台支持：明文库开启表单出现「记住」复选项；勾选后开启会缓存主口令', async () => {
+    vi.useFakeTimers()
+    try {
+      stubInvoke({
+        get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
+        enable_encryption: (args: any) => {
+          expect(args.passphrase).toBe('口令①')
+          return Promise.resolve()
+        },
+        set_remember_passphrase: (args: any) => {
+          expect(args.passphrase).toBe('口令①')
+          return Promise.resolve()
+        },
+        restart_app: () => Promise.resolve(),
+      })
+      mockConfirm.mockResolvedValue(true)
+      const wrapper = mount(EncryptionSettings)
+      await flushPromises()
+
+      const checkbox = findRememberCheckbox(wrapper)
+      expect(checkbox).toBeTruthy()
+      await setPasswords(wrapper, '口令①', '口令①')
+      await checkbox.trigger('click')
+      await findButton(wrapper, '开启加密')!.trigger('click')
+      await flushPromises()
+
+      expect(mockInvoke).toHaveBeenCalledWith('set_remember_passphrase', { passphrase: '口令①' })
+      expect(useAppStore().rememberPassphrase).toBe(true)
+      vi.advanceTimersByTime(900)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('平台不支持：隐藏「记住」复选项与开关', async () => {
+    stubInvoke({
+      get_remember_passphrase_support: () => Promise.resolve({ supported: false }),
+    })
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+    expect(wrapper.html()).not.toContain('在本机记住主口令')
+  })
+
+  it('已加密 + 记住已开：关闭开关调用 clear_remember_passphrase 并置偏好关', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve(encryptedStatus),
+      get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
+      clear_remember_passphrase: () => Promise.resolve(),
+    })
+    // 预置「记住」已开
+    useAppStore().setRememberPassphrase(true)
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+
+    const sw = wrapper.find('.n-switch')
+    expect(sw.exists()).toBe(true)
+    await sw.trigger('click')
+    await flushPromises()
+
+    expect(mockInvoke).toHaveBeenCalledWith('clear_remember_passphrase')
+    expect(useAppStore().rememberPassphrase).toBe(false)
+  })
+
+  it('已加密 + 记住关：打开开关显示口令输入，确认后调用 set_remember_passphrase', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve(encryptedStatus),
+      get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
+      set_remember_passphrase: (args: any) => {
+        expect(args.passphrase).toBe('当前口令')
+        return Promise.resolve()
+      },
+    })
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+
+    // 打开开关（默认关 → 开）
+    await wrapper.find('.n-switch').trigger('click')
+    await flushPromises()
+    const passInput = wrapper
+      .findAll('input')
+      .find((i) => i.attributes('placeholder')?.includes('以启用本机记住'))!
+    expect(passInput).toBeTruthy()
+    await passInput.setValue('当前口令')
+    await findButton(wrapper, '启用记住')!.trigger('click')
+    await flushPromises()
+
+    expect(mockInvoke).toHaveBeenCalledWith('set_remember_passphrase', { passphrase: '当前口令' })
+    expect(useAppStore().rememberPassphrase).toBe(true)
   })
 })

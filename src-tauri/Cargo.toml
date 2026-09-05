@@ -47,6 +47,14 @@ zip = { version = "8.6", default-features = false, features = ["deflate"] }
 utoipa = { version = "5", features = ["axum_extras"] }
 pinyin = "0.11"
 
+# 主口令本机缓存（issue #574 / ADR-0075 决策 3）：macOS 系统钥匙串 + Touch ID 生物认证门。
+# 仅 macOS 目标编译（security-framework 自带 #![cfg(target_vendor = "apple")]
+# 空壳，其余平台为不支持桩，见 db/passphrase_cache.rs）；钥匙串/生物认证的
+# 运行期行为以手动冒烟清单验收（issue #574 AC），不进 CI 自动测试。
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7"
+security-framework-sys = "2.17"
+
 [dev-dependencies]
 cucumber = "0.23"
 futures = "0.3"

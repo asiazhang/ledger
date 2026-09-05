@@ -1,19 +1,26 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
-import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NSpace, NSpin, NText, useMessage } from 'naive-ui'
+import { NAlert, NButton, NCard, NCheckbox, NForm, NFormItem, NInput, NSpace, NSpin, NSwitch, NText, useMessage } from 'naive-ui'
 import { computed, onMounted, ref } from 'vue'
 import { confirm } from '@tauri-apps/plugin-dialog'
 import { api } from '@/api'
 import { t } from '@/i18n'
 import { restartAppShortly } from '@/utils/restart'
+import { useAppStore } from '@/stores/app'
+import { useEncryptionGate } from '@/composables/useEncryptionGate'
 import type { EncryptionStatus } from '@/types'
 
-// 加密卡片（issue #570/#571 / ADR-0075）：数据文件管理域的加密模式开关。
+// 加密卡片（issue #570/#571 / #574 / ADR-0075）：数据文件管理域的加密模式开关。
 // 形态对标 DataLocationSettings——命令往返、组件内状态。转换由后端完成
 // （三形态同一套整库转换机制、失败原库原样保留），成功后应用重启：
 // 开启/修改主口令由启动解锁屏接管，关闭后不再出现解锁屏。
+// 「本机记住主口令」（issue #574）：偏好是前端 localStorage 轻量设置项（app store），
+// 钥匙串缓存内容为主口令本身；平台不支持（v1 非 macOS）时隐藏该选项、回退手输。
 
 const message = useMessage()
+const store = useAppStore()
+const { rememberSupport, loadRememberSupport, syncRememberCache, clearRememberCache } =
+  useEncryptionGate()
 
 const status = ref<EncryptionStatus | null>(null)
 const loading = ref(false)
@@ -47,6 +54,15 @@ const changeReady = computed(
 // 关闭加密（已加密形态）：需当前主口令——文件级转换凭口令读取密文库。
 const disablePassphrase = ref('')
 
+// 本机记住主口令（issue #574）：`enableRemember`/`changeRemember` 是开启/修改主口令
+// 表单的复选项（修改表单默认反映当前偏好）；`rememberSwitch` 是已加密状态下的
+// 独立开关（关闭即清缓存恢复手输；开启需再次输入当前主口令以缓存）。
+const enableRemember = ref(false)
+const changeRemember = ref(store.rememberPassphrase)
+const rememberSwitch = ref(store.rememberPassphrase)
+const rememberPassInput = ref('')
+const rememberEnabling = ref(false)
+
 async function refresh() {
   loading.value = true
   loadError.value = ''
@@ -60,7 +76,10 @@ async function refresh() {
   }
 }
 
-onMounted(refresh)
+onMounted(() => {
+  void refresh()
+  void loadRememberSupport()
+})
 
 /** 开启加密：确认 → 转换 → 提示重启（Restore 同型：成功 toast 后延迟重启）。 */
 async function enable() {
@@ -73,6 +92,8 @@ async function enable() {
   submitting.value = true
   try {
     await api.enableEncryption(passphrase.value)
+    const cached = await syncRememberCache(passphrase.value, enableRemember.value)
+    if (!cached) message.warning(t('settings.data.encryption.rememberFailed'))
     passphrase.value = ''
     confirmPassphrase.value = ''
     message.success(t('settings.data.encryption.okToast'))
@@ -82,6 +103,39 @@ async function enable() {
     message.error(errorMessage(e))
   } finally {
     submitting.value = false
+  }
+}
+
+/** 清除「本机记住」的开关/输入态，并委托 composable 清缓存与偏好（关闭加密 /
+ *  忘记口令重置 / 关闭开关共用）。 */
+async function clearRemember() {
+  rememberSwitch.value = false
+  rememberPassInput.value = ''
+  await clearRememberCache()
+}
+
+/** 独立开关（已加密状态）：开→需再输入当前主口令以缓存；关→立即清缓存恢复手输。 */
+function onRememberToggle(value: boolean) {
+  rememberSwitch.value = value
+  if (!value) {
+    void clearRemember()
+  }
+}
+
+/** 开启「记住」确认：凭输入的主口令入缓存。失败回退开关为关并提示。 */
+async function enableRememberNow() {
+  if (rememberEnabling.value || !rememberPassInput.value) return
+  rememberEnabling.value = true
+  try {
+    await api.setRememberPassphrase(rememberPassInput.value)
+    store.setRememberPassphrase(true)
+    rememberPassInput.value = ''
+    message.success(t('settings.data.encryption.rememberEnabled'))
+  } catch (e: any) {
+    rememberSwitch.value = false
+    message.error(errorMessage(e))
+  } finally {
+    rememberEnabling.value = false
   }
 }
 
@@ -96,6 +150,8 @@ async function changePassphrase() {
   submittingChange.value = true
   try {
     await api.changeEncryptionPassphrase(changeOld.value, changeNew.value)
+    const cached = await syncRememberCache(changeNew.value, changeRemember.value)
+    if (!cached) message.warning(t('settings.data.encryption.rememberFailed'))
     changeOld.value = ''
     changeNew.value = ''
     changeConfirm.value = ''
@@ -119,6 +175,7 @@ async function disable() {
   submittingDisable.value = true
   try {
     await api.disableEncryption(disablePassphrase.value)
+    await clearRemember()
     disablePassphrase.value = ''
     message.success(t('settings.data.encryption.disableOkToast'))
     restartAppShortly()
@@ -145,6 +202,35 @@ async function disable() {
           <NAlert type="success" :show-icon="true" :title="t('settings.data.encryption.enabledTitle')">
             {{ t('settings.data.encryption.enabledBody') }}
           </NAlert>
+
+          <!-- 本机记住主口令（issue #574）：平台不支持（v1 非 macOS）时隐藏；
+               关闭即清缓存恢复手输，开启需再次输入当前主口令以缓存。 -->
+          <NSpace v-if="rememberSupport?.supported" vertical :size="8">
+            <NText depth="3">{{ t('settings.data.encryption.rememberToggleLabel') }}</NText>
+            <NSwitch
+              :value="rememberSwitch"
+              @update:value="onRememberToggle"
+              :disabled="rememberEnabling"
+            />
+            <NText depth="3" class="remember-hint">{{ t('settings.data.encryption.rememberToggleHint') }}</NText>
+            <template v-if="rememberSwitch && !store.rememberPassphrase">
+              <NInput
+                v-model:value="rememberPassInput"
+                type="password"
+                show-password-on="click"
+                :placeholder="t('settings.data.encryption.rememberPassLabel')"
+                :disabled="rememberEnabling"
+              />
+              <NButton
+                size="small"
+                :loading="rememberEnabling"
+                :disabled="!rememberPassInput"
+                @click="enableRememberNow"
+              >
+                {{ t('settings.data.encryption.rememberConfirm') }}
+              </NButton>
+            </template>
+          </NSpace>
 
           <NForm label-placement="top">
             <NSpace vertical :size="12">
@@ -187,6 +273,13 @@ async function disable() {
                   @keyup.enter="changePassphrase"
                 />
               </NFormItem>
+              <NCheckbox
+                v-if="rememberSupport?.supported"
+                v-model:checked="changeRemember"
+                :disabled="submittingChange"
+              >
+                <NText depth="3">{{ t('settings.data.encryption.rememberCheckbox') }}</NText>
+              </NCheckbox>
               <NSpace>
                 <NButton
                   type="primary"
@@ -256,6 +349,13 @@ async function disable() {
                 @keyup.enter="enable"
               />
             </NFormItem>
+            <NCheckbox
+              v-if="rememberSupport?.supported"
+              v-model:checked="enableRemember"
+              :disabled="submitting"
+            >
+              <NText depth="3">{{ t('settings.data.encryption.rememberCheckbox') }}</NText>
+            </NCheckbox>
             <NSpace>
               <NButton
                 type="primary"
@@ -272,3 +372,10 @@ async function disable() {
     </NSpace>
   </NCard>
 </template>
+
+<style scoped>
+.remember-hint {
+  font-size: 12px;
+  line-height: 1.6;
+}
+</style>
