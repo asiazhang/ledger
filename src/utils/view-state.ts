@@ -4,7 +4,6 @@
 // 边界：不做"过度记忆"（筛选、滚动位置、列宽等一律不持久化）。
 
 import { loadLocal, saveLocal, removeLocal } from '@/utils/storage'
-import type { SidebarGroupOrders, SidebarContainmentLists } from '@/composables/useViewShortcuts'
 
 export const VIEW_STATE_KEYS = {
   route: 'view_state:route',
@@ -34,14 +33,15 @@ export function saveSidebarCollapsed(collapsed: boolean) {
 /**
  * 已存侧栏组内序（原始值）；无记录或数据损坏时返回 null。
  * 旧平铺数组（issue #270 形态）等脏形状的整体回退、组内非法名过滤、去重、缺失项补齐等
- * 解析防御归顺序模块 parseGroupOrders，此处不解析。
+ * 解析防御归 sidebar-order store parseGroupOrders，此处不解析。
  */
 export function getSavedSidebarOrder(): unknown {
   return loadLocal<unknown>(VIEW_STATE_KEYS.sidebarOrder, null)
 }
 
-/** 持久化组内序（点选即写，写路径唯一出处，issue #270/#359）：对象形状「组 id → 视图名数组」。 */
-export function saveSidebarOrders(orders: SidebarGroupOrders) {
+/** 持久化组内序（点选即写，写路径唯一出处，issue #270/#359）：对象形状「组 id → 视图名数组」。
+ *  参数透传 unknown：类型耦合经透传消解（issue #549），词表与形状守卫归 sidebar-order store。 */
+export function saveSidebarOrders(orders: unknown) {
   saveLocal(VIEW_STATE_KEYS.sidebarOrder, orders)
 }
 
@@ -53,14 +53,15 @@ export function clearSidebarOrder() {
 /**
  * 已存每组收纳清单（原始值，issue #472 / ADR-0063）；无记录或数据损坏时返回 null。
  * 与组内序同族：脏形状整体回出厂种子、非法名过滤、去重、缺失成员补尾等解析防御
- * 归顺序模块 parseContainmentLists，此处不解析。
+ * 归 sidebar-order store parseContainmentLists，此处不解析。
  */
 export function getSavedContainment(): unknown {
   return loadLocal<unknown>(VIEW_STATE_KEYS.sidebarContainment, null)
 }
 
-/** 持久化每组收纳清单（写路径唯一出处）：对象形状「组 id → 收纳视图名数组」，清单序 = 页签序。 */
-export function saveContainmentLists(lists: SidebarContainmentLists) {
+/** 持久化每组收纳清单（写路径唯一出处）：对象形状「组 id → 收纳视图名数组」，清单序 = 页签序。
+ *  参数透传 unknown：类型耦合经透传消解（issue #549），词表与形状守卫归 sidebar-order store。 */
+export function saveContainmentLists(lists: unknown) {
   saveLocal(VIEW_STATE_KEYS.sidebarContainment, lists)
 }
 

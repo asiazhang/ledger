@@ -48,30 +48,29 @@ import { useDevicePreferenceSync } from '@/composables/useDevicePreferenceSync'
 import MessageSinkBridge from '@/components/MessageSinkBridge.vue'
 import GlobalBusyBar from '@/components/GlobalBusyBar.vue'
 import { loadSidebarCollapsed, saveSidebarCollapsed } from '@/utils/view-state'
+import { shortcutHint, useViewShortcuts } from '@/composables/useViewShortcuts'
 import {
-  viewShortcuts,
-  shortcutHint,
-  useViewShortcuts,
+  useSidebarOrderStore,
   isSidebarSortAction,
-  sidebarGroups,
-  sidebarGroupOrders,
-  sidebarContainment,
   groupOfView,
   buildSidebarSortMenuOptions,
-  applySidebarSort,
-  applyMoveIntoMore,
-  isSidebarMember,
-  resetSidebarOrder,
   FIRST_VIEW,
   PENULTIMATE_VIEW,
   LAST_VIEW,
   type ViewName,
   type ContainableViewName,
-} from '@/composables/useViewShortcuts'
+} from '@/stores/sidebar-order'
 import { useWindowGuard } from '@/composables/useWindowGuard'
 
 const router = useRouter()
 const route = useRoute()
+
+// 侧栏顺序状态（组内序 + 收纳清单）：sidebar-order store 单一归宿（issue #549），
+// 此处消费状态/写路径/谓词；键位面（viewShortcuts/shortcutHint）仍归 useViewShortcuts。
+const sidebarOrder = useSidebarOrderStore()
+const { applySidebarSort, applyMoveIntoMore, resetSidebarOrder, isSidebarMember } = sidebarOrder
+// 视图快捷键：窗口内 Cmd/Ctrl+1..0 与 Cmd/Ctrl+, 切换视图（弹窗/确认框打开时自动抑制）
+const { viewShortcuts } = useViewShortcuts(router)
 
 // 窗口行为守卫（issue #154）：ESC 不作用于窗口层 + 禁用原生右键菜单（可编辑元素例外），
 // 根组件挂载一次，详见 composables/useWindowGuard.ts。
@@ -166,7 +165,7 @@ const menuOptions = computed<MenuOption[]>(() => {
   const item = (name: ViewName | ContainableViewName) => renderItem(name, keyOf.get(name) ?? null)
   return [
     item(FIRST_VIEW),
-    ...sidebarGroups.value.map((g): MenuOption => ({
+    ...sidebarOrder.sidebarGroups.map((g): MenuOption => ({
       type: 'group',
       key: `sidebar-group:${g.id}`,
       // 组标题行：组名 + 按需「更多」链接（issue #472/#473 / ADR-0063 决策 1）——
@@ -175,12 +174,12 @@ const menuOptions = computed<MenuOption[]>(() => {
       label: () =>
         h('div', { class: 'sidebar-group-title' }, [
           h('span', t(`common.sidebarGroup.${g.id}`)),
-          sidebarContainment.value[g.id].length > 0
+          sidebarOrder.sidebarContainment[g.id].length > 0
             ? h('a',
                 {
                   class: ['group-more-link', { 'is-active': route.name === `${g.id}-more` }],
                   // 原生 tooltip 说明该组收纳了哪些功能，给「更多」一个可预期的去向
-                  title: sidebarContainment.value[g.id]
+                  title: sidebarOrder.sidebarContainment[g.id]
                     .map((n) => viewLabel(n))
                     .join(currentLocale.value === 'en-US' ? ', ' : '、'),
                   onClick: () => { void router.push({ name: `${g.id}-more` }) },
@@ -227,7 +226,7 @@ const sortMenuOptions = computed(() => {
   const target = sortTarget.value
   const gid = target ? groupOfView(target) : null
   if (!target || !gid) return []
-  return buildSidebarSortMenuOptions(target, sidebarGroupOrders.value[gid])
+  return buildSidebarSortMenuOptions(target, sidebarOrder.sidebarGroupOrders[gid])
 })
 
 /** 右键在册成员弹出排序菜单：先收起再 nextTick 展开，保证连续弹出时位置刷新。 */
@@ -259,9 +258,6 @@ function onSortMenuSelect(key: string) {
     applySidebarSort(target, key)
   }
 }
-
-// 视图快捷键：窗口内 Cmd/Ctrl+1..0 与 Cmd/Ctrl+, 切换视图（弹窗/确认框打开时自动抑制）
-useViewShortcuts(router)
 
 function handleSelect(key: string) {
   router.push({ name: key })

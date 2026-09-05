@@ -1,6 +1,6 @@
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router'
 import { saveRouteName } from '@/utils/view-state'
-import { isViewContained } from '@/composables/useViewShortcuts'
+import { useSidebarOrderStore } from '@/stores/sidebar-order'
 
 // 导出供测试用同构 memory router 复用，避免路由表双份漂移
 export const routes: RouteRecordRaw[] = [
@@ -65,7 +65,7 @@ export const routes: RouteRecordRaw[] = [
     name: 'policies',
     component: () => import('@/views/PoliciesView.vue'),
     beforeEnter: () =>
-      isViewContained('policies')
+      useSidebarOrderStore().isViewContained('policies')
         ? { name: 'assets-more', query: { tab: 'policies' } }
         : true,
   },
