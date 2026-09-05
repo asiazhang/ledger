@@ -17,6 +17,16 @@ export const UNCATEGORIZED_ONLY = 'none'
 const CATEGORY_DRILLDOWN_KIND_TOKENS = ['expense', 'refund'] as const satisfies readonly TransactionKind[]
 export const CATEGORY_DRILLDOWN_KINDS = CATEGORY_DRILLDOWN_KIND_TOKENS.join(',')
 
+/** 商户排行下钻跳转的收支类型集合（issue #589）：支出 + 退款，与商户排行聚合的参与
+ *  类型同源（退款减除进柱值；income 可携带商户但不进排行，故不含）。URL 编码为逗号
+ *  分隔闭集字面量，与后端列表过滤契约的 HTTP 查询串 `kinds=expense,refund` 同一约定；
+ *  消费方在 TransactionFilter 类型集合维度按同表解析。字面量经 satisfies 钉在
+ *  TransactionKind 闭集内：kind 字面量改名时此处编译报错，而非跳转载荷静默失效。
+ *  与 CATEGORY_DRILLDOWN_KIND_TOKENS 同值但独立定义：商户口径（income 不进排行）是
+ *  独立于分类口径的领域决策，不复用分类 token，避免分类 token 未来演化静默污染商户口径。 */
+const MERCHANT_DRILLDOWN_KIND_TOKENS = ['expense', 'refund'] as const satisfies readonly TransactionKind[]
+export const MERCHANT_DRILLDOWN_KINDS = MERCHANT_DRILLDOWN_KIND_TOKENS.join(',')
+
 /** URL 日期参数格式（issue #380）：YYYY-MM-DD，月/日限定在可能范围内（01-12 / 01-31）；
  * 非法格式视为参数不在场（回退不过滤）。不校验日历真实性（如 02-30 可通过）：后端按
  * 字典序比较，此类手工构造的畸形参数得到的是平移的边界而非报错——应用内跳转载荷

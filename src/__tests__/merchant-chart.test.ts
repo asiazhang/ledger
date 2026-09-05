@@ -6,6 +6,7 @@ import type { MerchantShare } from '@/types'
 // 商户消费排行柱图数据形态纯函数（issue #588）：按后端返回序渲染零口径逻辑；
 // 柱色与支出分类构成同源——分类色板按名次序取色（多颜色），hex 实色由
 // softBarFillPlugin 绘制期呈现「基线淡出 → 柱端实色」渐变。
+// merchant_id 透传为下钻跳转载荷用（issue #589）。
 
 describe('merchantBars 图行构建（issue #588）', () => {
   const rows: MerchantShare[] = [
@@ -18,6 +19,11 @@ describe('merchantBars 图行构建（issue #588）', () => {
     const bars = merchantBars(rows)
     expect(bars.map((b) => b.name)).toEqual(['超市', '咖啡', '书店'])
     expect(bars.map((b) => b.value)).toEqual([5000, 3000, 0])
+  })
+
+  it('merchant_id 同源透传（下钻跳转载荷用，issue #589）', () => {
+    const bars = merchantBars(rows)
+    expect(bars.map((b) => b.merchant_id)).toEqual(['m-1', 'm-2', 'm-3'])
   })
 
   it('柱色与分类构成同源：色板按名次序取色（多颜色，第 1 名 = 色板首位深蓝）', () => {
@@ -40,6 +46,8 @@ describe('merchantBars 图行构建（issue #588）', () => {
     const bars = merchantBars([
       { merchant_id: 'm-9', merchant_name: '退款户', amount_cents: -200 },
     ])
-    expect(bars).toEqual([{ name: '退款户', value: -200, color: paletteColor(0) }])
+    expect(bars).toEqual([
+      { merchant_id: 'm-9', name: '退款户', value: -200, color: paletteColor(0) },
+    ])
   })
 })
