@@ -145,7 +145,8 @@
       "backupHint": "将当前账本（账户、交易、预算、投资持仓、定时交易等全部数据）打包备份为一个文件。备份不含主题、默认币种等界面偏好。",
       "backupOnce": "一键备份",
       "backupAs": "另存为…",
-      "lastBackup": "最近备份："
+      "lastBackup": "最近备份：",
+      "refresh": "刷新"
     },
     "location": {
       "title": "数据存储位置",
