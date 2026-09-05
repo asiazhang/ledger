@@ -76,6 +76,7 @@ pub const IPC_COMMAND_WRITE_OPS: &[(&str, Option<WriteOp>)] = &[
     // ── AI 导入 ──
     ("get_ai_prompt", None),
     // ── 备份域 ──
+    ("get_backup_meta", None),
     ("create_backup", Some(WriteOp::CreateBackup)),
     ("restore_backup", Some(WriteOp::RestoreBackup)),
     ("prune_backups", Some(WriteOp::PruneBackups)),

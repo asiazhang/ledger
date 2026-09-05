@@ -113,7 +113,7 @@ fn restore_roundtrip_preserves_data() {
 
     let safety_dir = temp_safety_dir();
     let expected = expected_schema_version().unwrap();
-    let result = restore_db_from(&backup, &db_path, &safety_dir, expected).unwrap();
+    let result = restore_db_from(&backup, &db_path, &safety_dir, expected, None).unwrap();
     assert_eq!(result.schema_version, expected);
 
     // 恢复后数据与备份一致（1 条交易）。
@@ -160,7 +160,7 @@ fn restore_rejects_newer_schema() {
     let db_path = temp_file("db");
     let expected = expected_schema_version().unwrap();
     let tmp_dir = std::env::temp_dir();
-    let err = restore_db_from(&newer, &db_path, &tmp_dir, expected)
+    let err = restore_db_from(&newer, &db_path, &tmp_dir, expected, None)
         .unwrap_err()
         .to_string();
     assert!(err.contains("更高版本"), "错误信息: {err}");
@@ -183,7 +183,7 @@ fn restore_supports_bare_db() {
     let db_path = temp_file("db2");
     let safety_dir = temp_safety_dir();
     let expected = expected_schema_version().unwrap();
-    restore_db_from(&bare, &db_path, &safety_dir, expected).unwrap();
+    restore_db_from(&bare, &db_path, &safety_dir, expected, None).unwrap();
     let c = open_connection(&db_path).unwrap();
     assert_eq!(count_transactions(&c), 1);
     crate::fs_util::cleanup(&bare);
@@ -303,6 +303,7 @@ fn legacy_backup_restores_and_lists_without_error() {
         &db_path,
         &safety_dir,
         expected_schema_version().unwrap(),
+        None,
     );
     assert!(result.is_ok(), "旧格式备份恢复失败: {:?}", result.err());
     let c = open_connection(&db_path).unwrap();

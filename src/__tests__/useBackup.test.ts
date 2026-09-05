@@ -10,9 +10,15 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   save: vi.fn(),
   confirm: vi.fn(),
 }));
+// 重启钩子 mock：confirmRestore 成功后触发，断言恢复后重启语义用。
+vi.mock("@/utils/restart", () => ({ restartAppShortly: vi.fn() }));
 
 import { useAppStore } from "@/stores/app";
-import { useBackup } from "@/composables/useBackup";
+import {
+  restoreCrossModeWarningKey,
+  useBackup,
+} from "@/composables/useBackup";
+import { restartAppShortly } from "@/utils/restart";
 import type { BackupFileInfo } from "@/types";
 
 const mockInvoke = vi.mocked(invoke);
@@ -24,6 +30,7 @@ const autoBackupFile: BackupFileInfo = {
   size_bytes: 4096,
   created_at: "2026-02-17T09:30:00Z",
   kind: "auto",
+  encrypted: true,
 };
 
 const manualBackupFile: BackupFileInfo = {
@@ -32,6 +39,7 @@ const manualBackupFile: BackupFileInfo = {
   size_bytes: 1024,
   created_at: "2026-01-01T01:01:01Z",
   kind: "manual",
+  encrypted: false,
 };
 
 function makeStub(initialList: BackupFileInfo[]) {
@@ -187,5 +195,192 @@ describe("useBackup 来源列映射（issue #129）", () => {
     await flushPromises();
 
     expect(backup.backupRows.value[0].source_text).toBe("手动");
+  });
+});
+
+describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
+  beforeEach(() => {
+    mockListen.mockReset();
+    mockListen.mockResolvedValue(vi.fn() as unknown as UnlistenFn);
+    vi.mocked(restartAppShortly).mockClear();
+  });
+
+  it("backupRows 透传 encrypted 标记（备份列表锁形标记的数据源）", async () => {
+    makeStub([autoBackupFile, manualBackupFile]);
+    const { backup } = mountHost();
+    await flushPromises();
+
+    expect(backup.backupRows.value.map((r) => r.encrypted)).toEqual([true, false]);
+  });
+
+  it("restoreCrossModeWarningKey：跨模式返回对应警告文案 key，同模式为 null", () => {
+    expect(restoreCrossModeWarningKey(false, true)).toBe(
+      "settings.data.msg.restoreToPlaintextWarn",
+    );
+    expect(restoreCrossModeWarningKey(true, false)).toBe(
+      "settings.data.msg.restoreToEncryptedWarn",
+    );
+    expect(restoreCrossModeWarningKey(false, false)).toBeNull();
+    expect(restoreCrossModeWarningKey(true, true)).toBeNull();
+  });
+
+  it("pickRestore：密文备份开启恢复意图并携带跨模式载荷", async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_backups") return Promise.resolve([]);
+      if (cmd === "get_auto_backup_state")
+        return Promise.resolve({ enabled: true, last_backup_at: null });
+      if (cmd === "get_backup_meta")
+        return Promise.resolve({ kind: "manual", encrypted: true });
+      if (cmd === "get_encryption_status")
+        return Promise.resolve({ locked: false, file_encrypted: true });
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    });
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(open).mockResolvedValue("/Users/me/backups/enc.db.zip");
+
+    const { backup } = mountHost();
+    await flushPromises();
+    await backup.pickRestore();
+    await flushPromises();
+
+    expect(
+      mockInvoke.mock.calls.filter(([c]) => c === "get_backup_meta"),
+    ).toHaveLength(1);
+    expect(backup.restoreIntent.value).toEqual({
+      path: "/Users/me/backups/enc.db.zip",
+      backupEncrypted: true,
+      currentEncrypted: true,
+    });
+  });
+
+  it("pickRestore：读取备份元数据失败报错且不开启弹窗", async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_backups") return Promise.resolve([]);
+      if (cmd === "get_auto_backup_state")
+        return Promise.resolve({ enabled: true, last_backup_at: null });
+      if (cmd === "get_backup_meta") return Promise.reject(new Error("bad zip"));
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    });
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(open).mockResolvedValue("/Users/me/backups/broken.zip");
+
+    const { backup } = mountHost();
+    await flushPromises();
+    await backup.pickRestore();
+    await flushPromises();
+
+    expect(backup.restoreIntent.value).toBeNull();
+  });
+
+  it("pickRestore：加密状态读取失败中止不开弹窗（不静默回落为明文）", async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_backups") return Promise.resolve([]);
+      if (cmd === "get_auto_backup_state")
+        return Promise.resolve({ enabled: true, last_backup_at: null });
+      if (cmd === "get_backup_meta")
+        return Promise.resolve({ kind: "manual", encrypted: false });
+      if (cmd === "get_encryption_status")
+        return Promise.reject(new Error("status unavailable"));
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    });
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(open).mockResolvedValue("/Users/me/backups/plain.db.zip");
+
+    const { backup } = mountHost();
+    await flushPromises();
+    await backup.pickRestore();
+    await flushPromises();
+
+    // 跨模式警告是销毁性操作前的安全面：当前库模式未知时宁可不弹窗。
+    expect(backup.restoreIntent.value).toBeNull();
+  });
+
+  it("confirmRestore：密文备份附带主口令，成功后关闭意图并重启", async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_backups") return Promise.resolve([]);
+      if (cmd === "get_auto_backup_state")
+        return Promise.resolve({ enabled: true, last_backup_at: null });
+      if (cmd === "get_backup_meta")
+        return Promise.resolve({ kind: "manual", encrypted: true });
+      if (cmd === "get_encryption_status")
+        return Promise.resolve({ locked: false, file_encrypted: false });
+      if (cmd === "restore_backup")
+        return Promise.resolve({ schema_version: 12, restored_at: "2026-02-17T00:00:00Z" });
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    });
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(open).mockResolvedValue("/Users/me/backups/enc.db.zip");
+
+    const { backup } = mountHost();
+    await flushPromises();
+    await backup.pickRestore();
+    await flushPromises();
+    await backup.confirmRestore("pw");
+    await flushPromises();
+
+    const restoreCall = mockInvoke.mock.calls.find(([c]) => c === "restore_backup");
+    expect(restoreCall?.[1]).toEqual({
+      backupPath: "/Users/me/backups/enc.db.zip",
+      passphrase: "pw",
+    });
+    expect(backup.restoreIntent.value).toBeNull();
+    // 恢复成功后应用重启，由启动探测接管实际模式（ADR-0075 决策 4/7）。
+    expect(restartAppShortly).toHaveBeenCalled();
+  });
+
+  it("confirmRestore：明文备份不消费口令（passphrase 传 null）", async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_backups") return Promise.resolve([]);
+      if (cmd === "get_auto_backup_state")
+        return Promise.resolve({ enabled: true, last_backup_at: null });
+      if (cmd === "get_backup_meta")
+        return Promise.resolve({ kind: "manual", encrypted: false });
+      if (cmd === "get_encryption_status")
+        return Promise.resolve({ locked: false, file_encrypted: false });
+      if (cmd === "restore_backup")
+        return Promise.resolve({ schema_version: 12, restored_at: "2026-02-17T00:00:00Z" });
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    });
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(open).mockResolvedValue("/Users/me/backups/plain.db.zip");
+
+    const { backup } = mountHost();
+    await flushPromises();
+    await backup.pickRestore();
+    await flushPromises();
+    await backup.confirmRestore("");
+    await flushPromises();
+
+    const restoreCall = mockInvoke.mock.calls.find(([c]) => c === "restore_backup");
+    expect(restoreCall?.[1]).toEqual({
+      backupPath: "/Users/me/backups/plain.db.zip",
+      passphrase: null,
+    });
+  });
+
+  it("confirmRestore：失败不关弹窗（口令错误可就地重试）", async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_backups") return Promise.resolve([]);
+      if (cmd === "get_auto_backup_state")
+        return Promise.resolve({ enabled: true, last_backup_at: null });
+      if (cmd === "get_backup_meta")
+        return Promise.resolve({ kind: "manual", encrypted: true });
+      if (cmd === "get_encryption_status")
+        return Promise.resolve({ locked: false, file_encrypted: false });
+      if (cmd === "restore_backup")
+        return Promise.reject({ kind: "Coded", code: "encryption.passphrase-incorrect", message: "主口令不正确" });
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    });
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(open).mockResolvedValue("/Users/me/backups/enc.db.zip");
+
+    const { backup } = mountHost();
+    await flushPromises();
+    await backup.pickRestore();
+    await flushPromises();
+    await expect(backup.confirmRestore("wrong")).rejects.toBeTruthy();
+    await flushPromises();
+
+    expect(backup.restoreIntent.value).not.toBeNull();
   });
 });

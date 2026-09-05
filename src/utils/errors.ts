@@ -19,6 +19,11 @@ function extractCode(e: unknown): { code: string; params: string[] } | null {
   return { code, params }
 }
 
+/** 提取码化错误的稳定错误码；非码化错误返回 null（弹层按需显出口令输入等分支用）。 */
+export function errorCodeOf(e: unknown): string | null {
+  return extractCode(e)?.code ?? null
+}
+
 export function errorMessage(e: unknown): string {
   // 码化错误优先：按码查当前语言文案并插值（如缺汇率错误插出 USD→CNY）
   const coded = extractCode(e)

@@ -404,7 +404,9 @@ pub fn unlock_db_file(db_path: &Path, passphrase: &str) -> Result<Connection> {
     Ok(conn)
 }
 
-fn is_not_a_database(e: &rusqlite::Error) -> bool {
+/// 错误形态判别：SQLCipher 对错误口令与损坏文件均报 not-a-database；
+/// 本谓词供备份域等基础设施消费方归一错误形态（pub(crate)：勿在壳层使用）。
+pub(crate) fn is_not_a_database(e: &rusqlite::Error) -> bool {
     matches!(
         e,
         rusqlite::Error::SqliteFailure(err, _) if err.code == rusqlite::ffi::ErrorCode::NotADatabase

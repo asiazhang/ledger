@@ -7,6 +7,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::db;
+use crate::db::encryption::DbFileKind;
 use crate::error::{AppError, Result};
 use crate::fs_util::{cleanup, replace_file, temp_sibling};
 
@@ -72,6 +73,17 @@ pub struct BackupFileInfo {
     /// 备份触发来源（issue #129，列表展示用）：元数据 `kind` 为权威来源，
     /// 读取失败（非 zip / 元数据损坏的残缺包）按文件名前缀回落。
     pub kind: BackupKind,
+    /// 加密标记（issue #572 / ADR-0075 决策 7）：密文备份列表显示锁形标记；
+    /// 元数据缺标记（旧备份）或读取失败的残缺包按明文回落。
+    pub encrypted: bool,
+}
+
+/// 备份包元数据摘要（备份列表与恢复确认弹窗的消费形状，issue #572）。
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct BackupMetaSummary {
+    pub kind: BackupKind,
+    /// 加密标记：备份时探测写入；旧备份缺标记视为明文（向后兼容）。
+    pub encrypted: bool,
 }
 
 /// 备份滚动清理结果。
@@ -95,20 +107,20 @@ fn is_managed_backup_file_name(name: &str) -> bool {
     matched_managed_prefix(name).is_some() && name.ends_with(MANAGED_BACKUP_SUFFIX)
 }
 
-/// 读取备份包元数据中的来源标记（issue #127）。
-///
-/// 旧版本备份的 `backup.json` 缺 `kind` 字段时由 serde 默认值回落为
-/// [`BackupKind::Manual`]；非 zip 包或条目缺失视为无效备份而非静默降级——
-/// 裸 `.db` 文件本就不携带元数据，恢复路径自行处理其合法性。
-pub fn read_backup_kind(backup_path: &Path) -> Result<BackupKind> {
+/// 打开 zip 备份包（非 zip 输入报 `backup.invalid-archive`）。
+fn open_backup_archive(backup_path: &Path) -> Result<zip::ZipArchive<File>> {
     let file = File::open(backup_path)?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| {
+    zip::ZipArchive::new(file).map_err(|e| {
         AppError::codedp(
             "backup.invalid-archive",
             format!("不是有效的开源记账备份包: {e}"),
             &[&e.to_string()],
         )
-    })?;
+    })
+}
+
+/// 读取备份包内元数据 `backup.json` 并解析（单次开包，读侧共用）。
+fn read_meta_from_archive(archive: &mut zip::ZipArchive<File>) -> Result<BackupMeta> {
     let mut entry = archive.by_name(ZIP_META_ENTRY).map_err(|_| {
         AppError::coded(
             "backup.meta-missing",
@@ -117,15 +129,56 @@ pub fn read_backup_kind(backup_path: &Path) -> Result<BackupKind> {
     })?;
     let mut buf = Vec::new();
     entry.read_to_end(&mut buf)?;
-    serde_json::from_slice::<BackupMeta>(&buf)
-        .map(|meta| meta.kind)
-        .map_err(|e| {
-            AppError::codedp(
-                "backup.meta-parse-failed",
-                format!("备份元数据解析失败: {e}"),
-                &[&e.to_string()],
-            )
-        })
+    serde_json::from_slice::<BackupMeta>(&buf).map_err(|e| {
+        AppError::codedp(
+            "backup.meta-parse-failed",
+            format!("备份元数据解析失败: {e}"),
+            &[&e.to_string()],
+        )
+    })
+}
+
+/// 读取备份包元数据摘要（来源标记 + 加密标记，issue #572）。
+pub fn read_backup_meta(backup_path: &Path) -> Result<BackupMetaSummary> {
+    let mut archive = open_backup_archive(backup_path)?;
+    let meta = read_meta_from_archive(&mut archive)?;
+    Ok(BackupMetaSummary {
+        kind: meta.kind,
+        encrypted: meta.encrypted,
+    })
+}
+
+/// 探测单个备份文件的展示元数据（恢复确认弹窗消费，issue #572）。
+///
+/// zip 包读包内元数据（缺加密标记视为明文，向后兼容）；非 zip 输入按裸库
+/// 文件处理（与恢复通道的提取口径一致）：文件头探测判定密文（文件即真相），
+/// 来源按手动回落；探测失败原样上抛。「探测」语义与 [`db::encryption::probe_file_kind`]
+/// 对齐：输入可以是任何备份文件，不预设 zip 形态。
+pub fn probe_backup_meta(backup_path: &Path) -> Result<BackupMetaSummary> {
+    match open_backup_archive(backup_path) {
+        Ok(mut archive) => {
+            let meta = read_meta_from_archive(&mut archive)?;
+            Ok(BackupMetaSummary {
+                kind: meta.kind,
+                encrypted: meta.encrypted,
+            })
+        }
+        Err(_) => {
+            let encrypted = matches!(
+                db::encryption::probe_file_kind(backup_path)?,
+                DbFileKind::Encrypted
+            );
+            Ok(BackupMetaSummary {
+                kind: BackupKind::Manual,
+                encrypted,
+            })
+        }
+    }
+}
+
+/// 读取备份包元数据中的来源标记（issue #127）。委托 [`read_backup_meta`]。
+pub fn read_backup_kind(backup_path: &Path) -> Result<BackupKind> {
+    read_backup_meta(backup_path).map(|s| s.kind)
 }
 
 /// 从受管备份文件名解析备份时间（`YYYYMMDD-HHMMSS`）；解析失败返回 None。
@@ -173,14 +226,17 @@ pub fn list_managed_backups(dir: &Path) -> Result<Vec<BackupFileInfo>> {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            // 来源优先读产物元数据；残缺包按前缀回落（自动前缀即 auto，否则 manual）。
-            let kind = read_backup_kind(&path).unwrap_or_else(|_| {
-                if file_name.starts_with(super::auto::AUTO_BACKUP_PREFIX) {
-                    BackupKind::Auto
-                } else {
-                    BackupKind::Manual
-                }
-            });
+            // 来源与加密标记优先读产物元数据；残缺包按前缀/明文回落
+            // （自动前缀即 auto，否则 manual；加密标记回落明文，不误报锁标）。
+            let (kind, encrypted) = read_backup_meta(&path)
+                .map(|s| (s.kind, s.encrypted))
+                .unwrap_or_else(|_| {
+                    if file_name.starts_with(super::auto::AUTO_BACKUP_PREFIX) {
+                        (BackupKind::Auto, false)
+                    } else {
+                        (BackupKind::Manual, false)
+                    }
+                });
             Ok(BackupFileInfo {
                 file_name,
                 path: path.to_string_lossy().into_owned(),
@@ -189,6 +245,7 @@ pub fn list_managed_backups(dir: &Path) -> Result<Vec<BackupFileInfo>> {
                 // 非权威口径：均非 UTC 时刻，不带字面 Z 假标记，避免未来被按 UTC 解析双重换算。
                 created_at: ts.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 kind,
+                encrypted,
             })
         })
         .collect()
@@ -229,7 +286,8 @@ pub fn prune_managed_backups(dir: &Path, keep: usize) -> Result<PruneResult> {
     })
 }
 
-/// 备份元数据，写入 zip 包内 `backup.json`。`kind` 为旧版本备份可能缺失的字段。
+/// 备份元数据，写入 zip 包内 `backup.json`。`kind` 与 `encrypted` 均为旧版本
+/// 备份可能缺失的字段（serde 默认回落，向后兼容）。
 #[derive(Debug, Serialize, Deserialize)]
 struct BackupMeta {
     created_at: String,
@@ -238,6 +296,10 @@ struct BackupMeta {
     /// 来源标记（issue #127）；缺省回落 manual（向后兼容）。
     #[serde(default)]
     kind: BackupKind,
+    /// 加密标记（issue #572 / ADR-0075 决策 7）：备份时探测产物写入；
+    /// 旧版本备份缺该字段时按明文对待（缺省 false，向后兼容）。
+    #[serde(default)]
+    encrypted: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -299,12 +361,18 @@ pub fn backup_db_to(
         rusqlite::params![tmp_db.to_string_lossy()],
     )?;
 
-    // 2. 打包 zip：数据库 + 元数据。
+    // 2. 探测产物密文（VACUUM INTO 继承源库加密与密钥，ADR-0075 决策 7：
+    //    文件即真相，探测的是实际落盘的快照而非源连接），随元数据落盘。
+    let encrypted = matches!(
+        db::encryption::probe_file_kind(&tmp_db)?,
+        DbFileKind::Encrypted
+    );
     let meta = BackupMeta {
         created_at: db::now_iso(),
         app_version: app_version.to_string(),
         schema_version: schema_version(conn)?,
         kind,
+        encrypted,
     };
     let zip_result = (|| -> Result<()> {
         let file = File::create(&tmp_zip)?;
@@ -339,11 +407,15 @@ pub fn backup_db_to(
 ///
 /// `backup_path` 支持 zip 包（标准格式）与裸 `.db` 文件两种输入。
 /// `safety_dir` 用于存放恢复前自动创建的 RestoreSafetyBackup。
+/// `passphrase` 用于密文备份（issue #572）：提取出的备份库探测为密文时，
+/// 校验与迁移都需凭备份所在库的主口令打开（缺口令拒绝并报码化错误，
+/// 错误口令报 `encryption.passphrase-incorrect` 可重试）；明文备份不消费口令。
 pub fn restore_db_from(
     backup_path: &Path,
     db_path: &Path,
     safety_dir: &Path,
     expected_schema: i64,
+    passphrase: Option<&str>,
 ) -> Result<RestoreResult> {
     let tmp_db = temp_sibling(db_path, "restore");
 
@@ -353,8 +425,19 @@ pub fn restore_db_from(
         return Err(e);
     }
 
-    // 2. 完整性 + 版本校验；备份旧于当前则迁移升级。
-    let backup_schema = match validate_backup(&tmp_db, expected_schema) {
+    // 2. 探测备份库密文（文件即真相，issue #572），供口令消费与恢复后重置连接选择。
+    let backup_encrypted = match db::encryption::probe_file_kind(&tmp_db) {
+        Ok(kind) => kind == DbFileKind::Encrypted,
+        Err(e) => {
+            cleanup(&tmp_db);
+            return Err(e);
+        }
+    };
+
+    // 3. 完整性 + 版本校验；密文备份在此凭主口令打开（缺口令报
+    //    backup.passphrase-required，错误口令报 encryption.passphrase-incorrect），
+    //    拒绝发生在安全备份与替换之前；备份旧于当前则迁移升级。
+    let backup_schema = match validate_backup(&tmp_db, expected_schema, passphrase) {
         Ok(v) => v,
         Err(e) => {
             cleanup(&tmp_db);
@@ -362,7 +445,8 @@ pub fn restore_db_from(
         }
     };
 
-    // 3. 安全备份当前库（恢复出错时可回滚）。
+    // 4. 安全备份当前库（恢复出错时可回滚）。文件级拷贝：当前库为密文时
+    //    安全备份自然继承密文，凭同一主口令可回滚（issue #572 钉住）。
     if db_path.exists() {
         std::fs::create_dir_all(safety_dir)?;
         let stamp = db::now_iso().replace([':', 'T'], "-");
@@ -371,7 +455,7 @@ pub fn restore_db_from(
         tracing::info!(safety = %safety.display(), "恢复前已自动备份当前数据库");
     }
 
-    // 4. 替换原库。
+    // 5. 替换原库。
     let replace_result = replace_file(&tmp_db, db_path);
     cleanup(&tmp_db);
     replace_result?;
@@ -381,7 +465,23 @@ pub fn restore_db_from(
     // 恢复的旧状态触发「恢复完立即备份」；旧版本备份缺 key 时落到约定默认值。
     // 用新开连接写入：rename 替换后主连接仍指旧 inode（由前端 restart_app
     // 重新加载），必须把重置写进已就位的新库文件才能随恢复结果生效。
-    match db::open_connection(db_path) {
+    // 恢复出的库可能为密文（跨模式恢复 / 密文备份往返），凭恢复时提供的
+    // 主口令打开；无口令的密文库写不进去，跳过重置并记日志（issue #572）。
+    let open_reset = match (backup_encrypted, passphrase) {
+        (true, Some(pass)) => db::open_connection_with_passphrase(db_path, pass),
+        (false, _) => db::open_connection(db_path),
+        // 防御分支：密文备份缺口令在校验阶段（替换发生前）已被拒绝，
+        // 控制流到不了这里；保留以维持 match 穷尽性，不 panic（ADR-0060）。
+        (true, None) => {
+            tracing::warn!("恢复出的密文库缺少主口令，跳过自动备份状态重置");
+            tracing::info!(schema = %backup_schema, "恢复完成");
+            return Ok(RestoreResult {
+                schema_version: backup_schema,
+                restored_at,
+            });
+        }
+    };
+    match open_reset {
         Ok(conn) => {
             if let Err(e) = super::auto::reset(&conn, &restored_at) {
                 tracing::warn!(error = %e, "恢复后重置自动备份状态失败");
@@ -398,9 +498,45 @@ pub fn restore_db_from(
     })
 }
 
+/// 打开备份库连接：密文库凭主口令（缺口令报 `backup.passphrase-required`，
+/// 错误口令在建连后首条读语句报 `encryption.passphrase-incorrect`）；明文与
+/// 不足一个文件头的残缺输入都按既有明文路径打开（残缺输入由完整性检查报错，
+/// 保持既有错误形态）。
+fn open_backup_db_conn(tmp_db: &Path, passphrase: Option<&str>) -> Result<Connection> {
+    match db::encryption::probe_file_kind(tmp_db)? {
+        DbFileKind::Encrypted => {
+            let conn = match passphrase {
+                Some(pass) => db::open_connection_with_passphrase(tmp_db, pass)?,
+                None => {
+                    return Err(AppError::coded(
+                        "backup.passphrase-required",
+                        "该备份为密文备份，需要备份所在库的主口令才能恢复",
+                    ));
+                }
+            };
+            // `PRAGMA key` 本身不校验口令；校验发生在首条读语句。用类型化读
+            // 语句先行校验（与 unlock_db_file 同款），错误口令归一为可重试的
+            // 码化错误，而不是让后续完整性检查以裸错误上抛（issue #572）。
+            if let Err(e) =
+                conn.query_row::<i64, _, _>("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))
+            {
+                if db::encryption::is_not_a_database(&e) {
+                    return Err(AppError::coded(
+                        "encryption.passphrase-incorrect",
+                        "主口令不正确，请重试",
+                    ));
+                }
+                return Err(e.into());
+            }
+            Ok(conn)
+        }
+        DbFileKind::Plaintext | DbFileKind::Empty => db::open_connection(tmp_db),
+    }
+}
+
 /// 校验备份数据库文件：完整性检查 + schema 版本策略（旧→新允许并迁移，新→旧拒绝）。
-fn validate_backup(tmp_db: &Path, expected_schema: i64) -> Result<i64> {
-    let mut conn = db::open_connection(tmp_db)?;
+fn validate_backup(tmp_db: &Path, expected_schema: i64, passphrase: Option<&str>) -> Result<i64> {
+    let mut conn = open_backup_db_conn(tmp_db, passphrase)?;
     db::check_integrity(&conn)?;
     let backup_schema = schema_version(&conn)?;
     if backup_schema > expected_schema {

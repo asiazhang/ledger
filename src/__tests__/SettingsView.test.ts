@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { flushPromises } from '@vue/test-utils'
@@ -104,6 +104,11 @@ beforeEach(async () => {
   stubInvoke()
   const store = useReferenceStore()
   await store.refresh()
+})
+
+// 恢复确认弹窗（issue #572）内容 teleport 到 body，测试后清空防污染。
+afterEach(() => {
+  document.body.innerHTML = ''
 })
 
 describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格局 5 页签）', () => {
@@ -436,18 +441,32 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     expect(wrapper.html()).toContain('上次自动备份：从未')
   })
 
-  it('恢复前需要确认，确认后调用 restore_backup 与 restart_app', async () => {
+  it('恢复前经应用内弹窗确认（issue #572）：读取备份元数据，确认后带 passphrase 调用 restore_backup', async () => {
     mockOpen.mockResolvedValueOnce('/Users/me/backups/ledger-backup.db.zip')
-    mockConfirm.mockResolvedValueOnce(true)
+    stubInvoke({
+      get_backup_meta: () => ({ kind: 'manual', encrypted: false }),
+      get_encryption_status: () => ({ locked: false, file_encrypted: false }),
+    })
     const wrapper = mount(SettingsView)
     await openTab(wrapper, '数据')
     await nextTick()
     const restoreBtn = wrapper.findAll('button').find((b) => b.text().includes('从备份恢复'))!
     await restoreBtn.trigger('click')
     await flushPromises()
-    expect(mockConfirm).toHaveBeenCalled()
+    // 元数据先行：确认弹窗已开（teleport 到 body），恢复尚未执行。
+    expect(mockInvoke).toHaveBeenCalledWith('get_backup_meta', {
+      path: '/Users/me/backups/ledger-backup.db.zip',
+    })
+    expect(mockInvoke).not.toHaveBeenCalledWith('restore_backup', expect.anything())
+    const confirmBtn = document.body.querySelector(
+      '[data-testid="restore-confirm"]',
+    ) as HTMLButtonElement | null
+    expect(confirmBtn).not.toBeNull()
+    confirmBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    await flushPromises()
     expect(mockInvoke).toHaveBeenCalledWith('restore_backup', {
       backupPath: '/Users/me/backups/ledger-backup.db.zip',
+      passphrase: null,
     })
   })
 

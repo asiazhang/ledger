@@ -8,9 +8,12 @@ import type {
   AutoBackupState,
   BackupFileInfo,
   BackupKind,
+  BackupMetaSummary,
 } from "@/types";
 import { errorMessage } from "@/utils/errors";
 import { t } from "@/i18n";
+import { restartAppShortly } from "@/utils/restart";
+import { useModalIntent } from "@/composables/useModalIntent";
 import {
   defaultBackupFileName,
   isManagedBackupPath,
@@ -39,6 +42,30 @@ function sourceText(kind: BackupKind): string {
   return kind === "auto" ? t("settings.data.source.auto") : t("settings.data.source.manual");
 }
 
+/** 恢复确认弹窗意图（issue #572，ADR-0072 弹窗意图编排）：选中备份的目标载荷。 */
+export interface RestoreIntent {
+  /** 所选备份文件路径。 */
+  path: string;
+  /** 备份是否为密文（元数据标记或裸库探测，缺标记视为明文）。 */
+  backupEncrypted: boolean;
+  /** 当前库是否为密文（启动探测接管，文件即真相）。 */
+  currentEncrypted: boolean;
+}
+
+/**
+ * 跨模式恢复警告文案 key（issue #572 / ADR-0075 决策 7）：当前模式与备份模式
+ * 不一致时返回显著警告文案 key，一致返回 null（不警告）。
+ */
+export function restoreCrossModeWarningKey(
+  backupEncrypted: boolean,
+  currentEncrypted: boolean,
+): string | null {
+  if (backupEncrypted === currentEncrypted) return null;
+  return backupEncrypted
+    ? "settings.data.msg.restoreToEncryptedWarn"
+    : "settings.data.msg.restoreToPlaintextWarn";
+}
+
 export function useBackup() {
   const store = useAppStore();
   const message = useMessage();
@@ -48,6 +75,10 @@ export function useBackup() {
   const lastBackup = ref("");
   const backups = ref<BackupFileInfo[]>([]);
   const pruning = ref(false);
+
+  // 恢复确认弹窗（issue #572，ADR-0072）：意图内化开启/目标/关闭编排，
+  // 显示由意图非空派生；确认与取消副作用在视图层。
+  const restoreModal = useModalIntent<RestoreIntent>();
 
   // 自动备份设置（issue #128）：开关与上次自动备份时间存 ledger.db，经 IPC 读写。
   const autoBackupEnabled = ref(true);
@@ -226,22 +257,49 @@ export function useBackup() {
       filters: [{ name: t("settings.data.msg.filterName"), extensions: ["zip", "db"] }],
     });
     if (typeof path !== "string" || !path) return;
-    const ok = await confirm(t("settings.data.msg.restoreConfirm"), {
-      title: t("settings.data.msg.restoreConfirmTitle"),
-      kind: "warning",
-    });
-    if (!ok) return;
+    // 读取备份元数据（issue #572）：加密标记驱动跨模式警告与口令输入；
+    // 读取失败视为无效备份，报错中止（与恢复时同样失败，只是提前到确认前）。
+    let meta: BackupMetaSummary;
+    try {
+      meta = await api.getBackupMeta(path);
+    } catch (e: any) {
+      message.error(t("settings.data.msg.backupMetaFailed", { msg: errorMessage(e) }));
+      return;
+    }
+    // 当前库模式（文件即真相）：读取失败则中止恢复——按明文回落会在加密库
+    // 上静默跳过跨模式警告（销毁性操作前的安全面，宁可不弹窗）。
+    let currentEncrypted: boolean;
+    try {
+      currentEncrypted = (await api.getEncryptionStatus()).file_encrypted;
+    } catch (e: any) {
+      message.error(
+        t("settings.data.msg.encryptionStatusFailed", { msg: errorMessage(e) }),
+      );
+      return;
+    }
+    restoreModal.open({ path, backupEncrypted: meta.encrypted, currentEncrypted });
+  }
+
+  /** 恢复确认（弹窗提交）：密文备份附带主口令，明文备份不消费。 */
+  async function confirmRestore(passphrase: string) {
+    const intent = restoreModal.intent.value;
+    if (!intent) return;
     restoring.value = true;
     try {
-      const r = await api.restoreBackup(path);
+      const r = await api.restoreBackup(
+        intent.path,
+        intent.backupEncrypted ? passphrase : null,
+      );
+      restoreModal.close();
       message.success(
         t("settings.data.msg.restoreOk", { version: r.schema_version }),
       );
-      setTimeout(() => {
-        api.restartApp();
-      }, 800);
+      // 恢复成功后应用重启，由启动探测接管实际模式（ADR-0075 决策 4/7）。
+      restartAppShortly();
     } catch (e: any) {
-      message.error(t("settings.data.msg.restoreFailed", { msg: errorMessage(e) }));
+      // 失败不关弹窗：口令错误可就地重试（解锁同语义，ADR-0075 决策 5），
+      // 错误文案经码化错误归一（errorMessage）。
+      throw e;
     } finally {
       restoring.value = false;
     }
@@ -276,6 +334,10 @@ export function useBackup() {
     backups,
     pruning,
     backupRows,
+    restoreIntent: restoreModal.intent,
+    restoreSeq: restoreModal.seq,
+    closeRestore: restoreModal.close,
+    confirmRestore,
     pickBackupDir,
     clearBackupDir,
     onBackupMaxCountChange,
