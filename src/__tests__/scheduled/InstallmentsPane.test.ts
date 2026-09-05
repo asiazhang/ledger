@@ -4,8 +4,6 @@ import {
   NInput,
   NModal,
   NSelect,
-  NTreeSelect,
-  NDatePicker,
   NPopconfirm,
   NProgress,
 } from 'naive-ui'
@@ -482,45 +480,37 @@ describe('InstallmentsPane 新建分期（分期形态真差异，issue #204）'
     expect(preview).not.toContain('尾差')
   })
 
-  it('提交走创建命令：amount_cents 为每期 floor 口径，携带总额与期数（payload 走表单接缝组装）', async () => {
+  // 提交流程编排（商户解析 → payload 合并 → 创建 → 提示 → 重置 → 回调）已迁移至接缝接口测试
+  // （useScheduledPlanForm.test.ts「submitCreate 提交时序编排」分期形态用例）。此处保留：
+  // 交互冒烟（关窗 + 清单刷新接线）、校验（留页签）与每期 floor 口径/特化字段直传接线。
+
+  it('创建成功后关闭弹窗并刷新清单，新分期出现在列表（页签直传 floor 口径与特化字段）', async () => {
     const wrapper = await mountView()
     await openCreateModal(wrapper)
     await findInput(wrapper, 'inst-note').setValue('手机分期')
     await findInput(wrapper, 'inst-note').trigger('input')
-    // 总额 1000 元 = 100000 分，分 12 期：floor(100000/12)=8333，尾差 7 分进末期
+    // 总额 1000 元 = 100000 分，分 12 期：floor(100000/12)=8333（floor 口径页签持有）
     await findInput(wrapper, 'inst-total').setValue('1000')
     await findInput(wrapper, 'inst-total').trigger('input')
     wrapper
       .findComponent('[data-testid="inst-periods"]')
       .vm.$emit('update:value', 12)
-    // 账户 / 分类 / 开始日：经组件 emit 设置
     wrapper.findComponent('[data-testid="inst-account"]').vm.$emit('update:value', 'acc-1')
-    wrapper.findComponent(NTreeSelect).vm.$emit('update:value', 'cat-1')
-    wrapper
-      .findComponent(NDatePicker)
-      .vm.$emit('update:formatted-value', '2026-02-15')
     await flushPromises()
-
     await wrapper.findComponent('[data-testid="inst-create"]').trigger('click')
     await flushPromises()
-
+    expect(wrapper.findComponent(NModal).props('show')).toBe(false)
+    expect(wrapper.text()).toContain('手机分期')
+    // 元转分 + floor 口径 + 特化字段直传（公共字段与商户解析断言留给接缝直测）
     const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_scheduled_transaction')
     expect(call).toBeDefined()
-    expect(call![1]).toEqual({
+    expect(call![1]).toMatchObject({
       input: {
         kind: 'installment',
         account_id: 'acc-1',
-        category_id: 'cat-1',
-        merchant_id: null,
         amount_cents: 8333,
         total_amount_cents: 100000,
         total_occurrences: 12,
-        currency_code: 'CNY',
-        recurrence_type: 'monthly',
-        recurrence_interval: 1,
-        recurrence_day: null,
-        start_date: '2026-02-15',
-        note: '手机分期',
       },
     })
   })
