@@ -1,16 +1,20 @@
 <script setup lang="ts">
+import { h } from 'vue'
 import {
   NButton,
   NCard,
   NDataTable,
+  NIcon,
   NInputNumber,
   NSpace,
   NSwitch,
   NText,
 } from 'naive-ui'
+import { LockClosedOutline } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
 import { useBackup } from '@/composables/useBackup'
 import { t } from '@/i18n'
+import RestoreConfirmModal from '@/components/settings/RestoreConfirmModal.vue'
 
 const store = useAppStore()
 
@@ -21,6 +25,10 @@ const {
   backups,
   pruning,
   backupRows,
+  restoreIntent,
+  restoreSeq,
+  closeRestore,
+  confirmRestore,
   pickBackupDir,
   clearBackupDir,
   onBackupMaxCountChange,
@@ -36,6 +44,20 @@ const {
 const backupColumns = [
   { title: () => t('settings.data.backup.columns.fileName'), key: 'file_name' },
   { title: () => t('settings.data.backup.columns.source'), key: 'source_text', width: 70 },
+  // 加密列（issue #572）：密文备份显示锁形标记，明文/旧备份缺标记不显。
+  {
+    title: () => t('settings.data.backup.columns.encrypted'),
+    key: 'encrypted',
+    width: 56,
+    render: (row: { encrypted: boolean }) =>
+      row.encrypted
+        ? h(
+            NIcon,
+            { title: t('settings.data.backup.encryptedLabel') },
+            { default: () => h(LockClosedOutline) },
+          )
+        : null,
+  },
   { title: () => t('settings.data.backup.columns.size'), key: 'size_text', width: 100 },
   { title: () => t('settings.data.backup.columns.time'), key: 'created_at', width: 160 },
 ]
@@ -136,5 +158,13 @@ const backupColumns = [
         <NButton type="error" :loading="restoring" @click="pickRestore">{{ t('settings.data.backup.restoreButton') }}</NButton>
       </NSpace>
     </NCard>
+
+    <!-- 恢复确认弹窗（issue #572）：跨模式警告 + 密文备份主口令，失败可就地重试 -->
+    <RestoreConfirmModal
+      :intent="restoreIntent"
+      :seq="restoreSeq"
+      :on-confirm="confirmRestore"
+      @close="closeRestore"
+    />
   </NSpace>
 </template>

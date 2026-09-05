@@ -10,6 +10,7 @@ import type {
   BalanceCacheAudit,
   BackupFileInfo,
   AutoBackupState,
+  BackupMetaSummary,
   BackupResult,
   Budget,
   BudgetInput,
@@ -336,7 +337,11 @@ export const api = {
 
   // 备份与恢复
   createBackup: (targetPath: string) => invoke<BackupResult>('create_backup', { targetPath }),
-  restoreBackup: (backupPath: string) => invoke<RestoreResult>('restore_backup', { backupPath }),
+  // 密文备份需附带备份所在库的主口令（issue #572 / ADR-0075 决策 7）；明文备份传 null
+  restoreBackup: (backupPath: string, passphrase?: string | null) =>
+    invoke<RestoreResult>('restore_backup', { backupPath, passphrase: passphrase ?? null }),
+  // 读取单个备份文件元数据摘要（来源 + 加密标记，issue #572）：恢复确认弹窗消费
+  getBackupMeta: (path: string) => invoke<BackupMetaSummary>('get_backup_meta', { path }),
   restartApp: () => invoke<void>('restart_app'),
   listBackups: (dir: string) => invoke<BackupFileInfo[]>('list_backups', { dir }),
   pruneBackups: (dir: string, keep: number) => invoke<PruneResult>('prune_backups', { dir, keep }),

@@ -86,6 +86,8 @@ pub struct LedgerWorld {
     pub last_transaction_id: Option<String>,
     /// 最近一次操作错误（检查失败场景）
     pub last_error: Option<String>,
+    /// 最近一次操作的码化错误（错误码断言用，issue #572）
+    pub last_app_error: Option<tauri_app_lib::error::AppError>,
     /// 交易列表快照（用于 Then 断言）
     pub transactions_list: Vec<Transaction>,
     /// 最近一次批量导入的原始行（重跑导入用）
@@ -105,6 +107,8 @@ pub struct LedgerWorld {
     pub last_auto_backup_path: Option<PathBuf>,
     /// 本场景自动备份产物所在目录（日界门场景复用同一目录：同日/跨日产物计数）
     pub auto_backup_dir: Option<PathBuf>,
+    /// 最近一次恢复的恢复安全备份目录（加密库安全备份断言用，issue #572）
+    pub restore_safety_dir: Option<PathBuf>,
     /// 最近创建的定时计划 id（定时交易场景用）
     pub last_plan_id: Option<String>,
     /// 最近尝试执行的期次 id（失败重试场景用）
@@ -230,6 +234,7 @@ impl LedgerWorld {
             category_name_to_id: HashMap::new(),
             last_transaction_id: None,
             last_error: None,
+            last_app_error: None,
             transactions_list: Vec::new(),
             last_import_rows: Vec::new(),
             last_batch_results: Vec::new(),
@@ -239,6 +244,7 @@ impl LedgerWorld {
             restored_db_path: None,
             last_auto_backup_path: None,
             auto_backup_dir: None,
+            restore_safety_dir: None,
             last_plan_id: None,
             last_occurrence_id: None,
             last_search: None,

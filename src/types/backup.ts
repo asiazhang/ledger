@@ -20,6 +20,15 @@ export interface BackupFileInfo {
   created_at: string
   /** 备份触发来源（issue #129）：元数据为权威，旧版本备份回落 manual。 */
   kind: BackupKind
+  /** 加密标记（issue #572 / ADR-0075 决策 7）：密文备份列表显示锁形标记；
+   *  旧备份缺标记视为明文（向后兼容）。 */
+  encrypted: boolean
+}
+
+/** 备份包元数据摘要（issue #572）：单个备份文件的来源 + 加密标记，恢复确认弹窗消费。 */
+export interface BackupMetaSummary {
+  kind: BackupKind
+  encrypted: boolean
 }
 
 export interface PruneResult {
