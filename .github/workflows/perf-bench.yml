@@ -16,6 +16,9 @@
 # job 失败（超标清单随报告
 # 进 Summary）。不在 PR 上跑：一次 release 冷编译 + 生成 + 基准 ≈ 6 分钟
 # （rust-cache 命中时），回归由每日基线与性能批合入后的手动触发拦截。
+# 生成器正确性单测（src/bin/ledger-perf/tests.rs，issue #459 验收项）原随
+# build.yml 的 cargo test --all 运行，2026-09 起迁入本 workflow：bin 测试
+# target 不再占用 PR CI 编译与执行，工具链回归随每日基准一并拦截。
 # ADR-0009 的 100ms 慢查询告警线（SQL 级观测）保留不动，与本门禁（基准
 # 项级判定）是两个层次。
 # 手动验证入口：Actions → Perf Bench → Run workflow。
@@ -96,6 +99,10 @@ jobs:
           # 失败也存缓存：门禁红（或其它失败）时下次 run 仍能命中依赖产物，
           # 避免冷跑失败白费一次全量编译。
           cache-on-failure: true
+
+      - name: 生成器正确性单测（自 build.yml 迁入；先于基准运行，工具链坏则早失败）
+        working-directory: src-tauri
+        run: cargo test --bin ledger-perf
 
       - name: 编译 ledger-perf（release）
         working-directory: src-tauri
