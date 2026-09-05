@@ -15,6 +15,7 @@
   },
   "merchant": {
     "title": "商户消费排行",
-    "empty": "本期暂无商户消费"
+    "empty": "本期暂无商户消费",
+    "topOption": "Top {n}"
   }
 }

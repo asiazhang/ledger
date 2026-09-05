@@ -14,7 +14,7 @@ import { invokeHandler, makeCategory, makeInstrument } from './factories'
 import type {
   CategoryShare,
   Instrument,
-  MerchantShare,
+  MerchantSharesReport,
   MonthlySummary,
   PortfolioValueTrend,
   ReportDateRange,
@@ -62,10 +62,14 @@ const mockMonthly: MonthlySummary[] = [
   { month: `${Y}-01`, income_cents: 100000, expense_cents: 1234560, refund_cents: 5000 },
 ]
 
-const mockMerchants: MerchantShare[] = [
-  { merchant_id: 'm-1', merchant_name: '超市', amount_cents: 50000 },
-  { merchant_id: 'm-2', merchant_name: '咖啡', amount_cents: 9900 },
-]
+const mockMerchants: MerchantSharesReport = {
+  rows: [
+    { merchant_id: 'm-1', merchant_name: '超市', amount_cents: 50000 },
+    { merchant_id: 'm-2', merchant_name: '咖啡', amount_cents: 9900 },
+  ],
+  // 全量合计刻意 ≠ rows 合计（59900），供占比分母断言识别真源（issue #588）
+  total_cents: 150000,
+}
 
 const portfolioTrend: PortfolioValueTrend = {
   currency_code: 'CNY',
@@ -288,16 +292,53 @@ describe('报表卡面：支出分类构成（值轴刻度 / 图内柱尾标注 
   })
 })
 
-describe('报表卡面：商户排行（金额列同源掩码，issue #567）', () => {
-  it('开启后排行金额恒掩码，关闭态与现状逐字符一致', async () => {
+describe('报表卡面：商户排行柱图（值轴刻度 / 柱尾标注 / tooltip 同源掩码，issue #567 → #588 柱图化）', () => {
+  it('值轴刻度与 tooltip 关闭态与现状逐字符一致：金额 · 占比%（分母 = 后端全量合计）', async () => {
     const wrapper = mount(ReportsView)
     await flushPromises()
-    const amounts = () =>
-      wrapper.findAll('[data-testid="merchant-rank-amount"]').map((w) => w.text())
-    expect(amounts()).toEqual(['500', '99'])
+    const options = barOptions(wrapper, 2)
+    const tick = linearTick(options, 'x')
+    expect(tick(50000, 0, [])).toBe('500')
+    expect(tick(9900, 0, [])).toBe('99')
+    const label = tooltipCb<(item: TooltipItem<'bar'>) => string>(options, 'label')
+    // 全量合计 150000：50000 → 33%、9900 → 7%（误用展示行合计 59900 会得 83%/17%）
+    expect(label(tooltipItem(50000))).toBe('500 · 33%')
+    expect(label(tooltipItem(9900))).toBe('99 · 7%')
+    // 类目轴（y）为商户名字符串，不带金额刻度 callback
+    expect(options.scales?.y?.ticks?.callback).toBeUndefined()
+  })
+
+  it('开启后值轴与 tooltip 恒掩码，占比保留（图形与相对构成可用性不受损）', async () => {
+    const wrapper = mount(ReportsView)
+    await flushPromises()
     amountPrivacyEnabled.value = true
     await nextTick()
-    expect(amounts()).toEqual(['••••', '••••'])
+    const options = barOptions(wrapper, 2)
+    expect(linearTick(options, 'x')(50000, 0, [])).toBe('••••')
+    const label = tooltipCb<(item: TooltipItem<'bar'>) => string>(options, 'label')
+    expect(label(tooltipItem(50000))).toBe('•••• · 33%')
+    expect(label(tooltipItem(9900))).toBe('•••• · 7%')
+  })
+
+  it('图内柱尾金额标注（canvas 插件）开启恒掩码，关闭态与现状一致', async () => {
+    const wrapper = mount(ReportsView)
+    await flushPromises()
+    const plugins = barProp(wrapper, 2, 'plugins') as Array<{
+      id: string
+      afterDatasetsDraw(chart: Chart<'bar'>): void
+    }>
+    const endPlugin = plugins.find((p) => p.id === 'barEndAmounts')
+    expect(endPlugin).toBeTruthy()
+
+    // 关闭态：柱尾画「500 / 99」（与轴刻度同口径）
+    const off = fakeBarEndChart([50000, 9900])
+    endPlugin!.afterDatasetsDraw(off.chart)
+    expect(off.fillText.mock.calls.map((c) => c[0])).toEqual(['500', '99'])
+
+    amountPrivacyEnabled.value = true
+    const on = fakeBarEndChart([50000, 9900])
+    endPlugin!.afterDatasetsDraw(on.chart)
+    expect(on.fillText.mock.calls.map((c) => c[0])).toEqual(['••••', '••••'])
   })
 })
 

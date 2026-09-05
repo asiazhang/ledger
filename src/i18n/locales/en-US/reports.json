@@ -15,6 +15,7 @@
   },
   "merchant": {
     "title": "Merchant Ranking",
-    "empty": "No merchant spending this period"
+    "empty": "No merchant spending this period",
+    "topOption": "Top {n}"
   }
 }

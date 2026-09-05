@@ -13,7 +13,7 @@ import {
   CategoryScale,
   LinearScale,
 } from 'chart.js'
-import type { ActiveElement, Chart, ChartOptions, TooltipItem } from 'chart.js'
+import type { ActiveElement, ChartOptions, TooltipItem } from 'chart.js'
 import { api } from '@/api'
 import { t } from '@/i18n'
 import { useReferenceStore } from '@/stores/reference'
@@ -26,12 +26,13 @@ import {
   SOFT_CATEGORY_PERCENTAGE,
   SOFT_LEGEND_LABELS,
   SOFT_TOOLTIP,
+  barEndAmountPlugin,
   softBarFillPlugin,
   softChartColors,
 } from '@/theme/chart-style'
 import { formatAmount } from '@/types'
 import { amountPrivacyEnabled } from '@/utils/money'
-import type { CategoryShare, MerchantShare, MonthlySummary } from '@/types'
+import type { CategoryShare, MerchantSharesReport, MonthlySummary } from '@/types'
 import {
   barTooltipLabel,
   categoryBarTotal,
@@ -78,26 +79,54 @@ const quickRange = computed<NullableDateRange>({
 
 const monthly = ref<MonthlySummary[]>([])
 const shares = ref<CategoryShare[]>([])
-const merchantShares = ref<MerchantShare[]>([])
+// 商户排行载荷（issue #588）：rows + 全量合计（占比分母），截断收口后端
+const merchantReport = ref<MerchantSharesReport>({ rows: [], total_cents: 0 })
 const loading = ref(false)
+
+/** 商户排行取数（issue #588）：期间 + 当前 TopN 档位进载荷，排序与截断后端收口。
+ *  发起序号守卫（ADR-0040 竞态语义同款轻量内联）：终态 = 最后一次发起的结果，
+ *  迟到的前发响应一律丢弃——TopN 快速连点或与期间切换 refresh 并发时，
+ *  旧档位/旧期间的响应不得覆盖新结果。 */
+let merchantFetchSeq = 0
+async function fetchMerchantReport() {
+  const seq = ++merchantFetchSeq
+  const report = await api.merchantShares(
+    { from: session.period.from, to: session.period.to },
+    session.merchantTopN,
+  )
+  if (seq === merchantFetchSeq) merchantReport.value = report
+}
 
 async function refresh() {
   loading.value = true
   try {
-    const [m, s, ms] = await Promise.all([
+    await Promise.all([
       // 三张卡随所选期间重算（issue #411）：期间口径一致，聚合在后端收口；
-      // 期间读自会话状态 store（issue #427），恢复/改选同规
-      api.monthlySummary({ from: session.period.from, to: session.period.to }),
-      api.categoryShares('expense', { from: session.period.from, to: session.period.to }),
-      api.merchantShares({ from: session.period.from, to: session.period.to }),
+      // 期间读自会话状态 store（issue #427），恢复/改选同规；
+      // 商户卡自持落位（fetchMerchantReport 内含发起序守卫，issue #588）
+      api.monthlySummary({ from: session.period.from, to: session.period.to }).then((m) => {
+        monthly.value = m
+      }),
+      api
+        .categoryShares('expense', { from: session.period.from, to: session.period.to })
+        .then((s) => {
+          shares.value = s
+        }),
+      fetchMerchantReport(),
     ])
-    monthly.value = m
-    shares.value = s
-    merchantShares.value = ms
   } finally {
     loading.value = false
   }
 }
+
+// TopN 档位切换（issue #588）：仅商户卡以新 top_n 重拉，其余两卡不受牵连
+// （竞态由 fetchMerchantReport 发起序守卫内化：快速连点只让最后一次发起落位）
+watch(
+  () => session.merchantTopN,
+  () => {
+    void fetchMerchantReport()
+  },
+)
 
 watch(
   // 监听原始值元组而非对象引用：只要期间双端任一变化就重拉，
@@ -281,27 +310,7 @@ const categoryChartHeight = computed(() => {
 })
 
 // 柱尾只标金额；占比收进 tooltip（悬停可见，分母随层级）。
-const barEndAmountPlugin = {
-  id: 'barEndAmounts',
-  afterDatasetsDraw(chart: Chart<'bar'>) {
-    const data = chart.data.datasets[0]?.data as number[] | undefined
-    if (!data?.length) return
-    const ctx = chart.ctx
-    ctx.save()
-    ctx.fillStyle = typeof chart.options.color === 'string' ? chart.options.color : '#666'
-    const f = ChartJS.defaults.font
-    ctx.font = `${f.size ?? 12}px ${f.family ?? 'sans-serif'}`
-    ctx.textBaseline = 'middle'
-    chart.getDatasetMeta(0).data.forEach((el, i) => {
-      const value = data[i]
-      const { x, y } = el.getProps(['x', 'y'], true)
-      // 正值柱标在柱尾右侧，负值柱标在柱尾左侧（0 轴如实渲染）
-      ctx.textAlign = value >= 0 ? 'left' : 'right'
-      ctx.fillText(formatAmount(value), value >= 0 ? x + 6 : x - 6, y)
-    })
-    ctx.restore()
-  },
-}
+// 柱尾标注插件自 #588 起收口 chart-style 单点（分类图与商户图共用）。
 
 // 视觉柔化与月度图同源（chart-style）：值轴（x）留淡化网格，类目轴去网格与
 // 轴线，刻度文字中性灰；颜色随主题响应式取值（options computed）。
@@ -406,7 +415,11 @@ onMounted(() => {
           </div>
         </div>
       </NCard>
-      <MerchantRankingPanel :shares="merchantShares" />
+      <MerchantRankingPanel
+        :report="merchantReport"
+        :top-n="session.merchantTopN"
+        @update:top-n="session.setMerchantTopN"
+      />
     </NSpace>
   </NSpin>
 </template>

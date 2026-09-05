@@ -10,6 +10,7 @@ import { UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS } from '@/composables/useT
 import { invokeHandler, makeCategory } from './factories'
 import type { NullableDateRange } from '@/utils/time-period'
 import type { ReportDateRange } from '@/types'
+import type { ChartOptions, TooltipItem } from 'chart.js'
 
 // jsdom 无 canvas：图表组件用共享桩承接（line-chart-stub，先例 #160），
 // 把 data/options 序列化进 DOM 供断言图数据形态与横向 options。
@@ -63,7 +64,7 @@ function baseInvoke(extra?: Record<string, unknown>) {
         report_date_range: mockRange,
         monthly_summary: [],
         category_shares: [],
-        merchant_shares: [],
+        merchant_shares: { rows: [], total_cents: 0 },
       },
       extra,
     ),
@@ -139,6 +140,7 @@ describe('ReportsView 期间筛选（issue #411 / ADR-0057）', () => {
       year: Y,
       from: `${Y}-01-01`,
       to: `${Y}-12-31`,
+      top_n: 5,
     })
     expect(mockInvoke).toHaveBeenCalledWith('category_shares', {
       kind: 'expense',
@@ -175,6 +177,7 @@ describe('ReportsView 期间筛选（issue #411 / ADR-0057）', () => {
       year: Y - 1,
       from: `${Y - 1}-01-01`,
       to: `${Y - 1}-12-31`,
+      top_n: 5,
     })
     expect(mockInvoke).toHaveBeenCalledWith('category_shares', {
       kind: 'expense',
@@ -475,6 +478,7 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
       year: 2025,
       from: '2025-12-01',
       to: '2025-12-31',
+      top_n: 5,
     })
   })
 })
@@ -511,6 +515,7 @@ describe('ReportsView 会话内保留（issue #427）：同一 pinia 卸载重�
       year: Y - 1,
       from: `${Y - 1}-01-01`,
       to: `${Y - 1}-12-31`,
+      top_n: 5,
     })
 
     // 图内下钻位置恢复：面包屑仍在（全部分类 › 餐饮），图为下钻态行集合
@@ -595,5 +600,158 @@ describe('ReportsView 会话内保留（issue #427）：同一 pinia 卸载重�
     const second = await mountReports()
     expect(Object.keys(localStorage)).toEqual(keysBefore)
     second.unmount()
+  })
+})
+
+
+describe('ReportsView 商户排行柱图化 + TopN（issue #588）', () => {
+  const mockMerchants = [
+    { merchant_id: 'm-1', merchant_name: '超市', amount_cents: 5000 },
+    { merchant_id: 'm-2', merchant_name: '咖啡', amount_cents: 3000 },
+    { merchant_id: 'm-3', merchant_name: '书店', amount_cents: 1000 },
+  ]
+
+  /** 商户载荷：total_cents 刻意 ≠ rows 合计（9000），供占比分母断言识别真源 */
+  const merchantPayload = (rows = mockMerchants) => ({ rows, total_cents: 15000 })
+
+  /** 商户图（class 定位）的 data/options */
+  function merchantChartProp(prop: 'data' | 'options', wrapper: ReturnType<typeof mount>) {
+    const node = wrapper.find(`.merchant-chart [data-testid="bar-${prop}"]`)
+    return JSON.parse(node.text())
+  }
+
+  /** 商户图 options 真对象（图桩 props 不序列化，供 tooltip 回调直接调用） */
+  function merchantOptions(wrapper: ReturnType<typeof mount>) {
+    const bar = wrapper.findComponent('.merchant-chart')
+    expect(bar.exists()).toBe(true)
+    return bar.props('options') as ChartOptions<'bar'>
+  }
+
+  /** TopN 档位选择（面板头部 NRadioButton 按档位定位；naive-ui 交互走 input setValue，
+   * PortfolioTrendPanel.test.ts 同款） */
+  async function clickTopN(wrapper: ReturnType<typeof mount>, n: number) {
+    await wrapper
+      .find(`[data-testid="merchant-topn-${n}"] input`)
+      .setValue(true)
+    await flushPromises()
+  }
+
+  it('横向柱状图：indexAxis 为 y，柱序 = 后端返回序（排序截断收口后端，零口径逻辑）', async () => {
+    baseInvoke({ merchant_shares: merchantPayload() })
+    const wrapper = await mountReports()
+    const options = merchantChartProp('options', wrapper)
+    expect(options.indexAxis).toBe('y')
+    expect(options.plugins.legend.display).toBe(false)
+    const data = merchantChartProp('data', wrapper)
+    expect(data.labels).toEqual(['超市', '咖啡', '书店'])
+    expect(data.datasets[0].data).toEqual([5000, 3000, 1000])
+  })
+
+  it('名次梯度色随名次单调：第 1 名亮度最低（最深）', async () => {
+    baseInvoke({ merchant_shares: merchantPayload() })
+    const wrapper = await mountReports()
+    const colors: string[] = merchantChartProp('data', wrapper).datasets[0].backgroundColor
+    const lightness = (c: string) => Number(c.match(/ ([\d.]+)%\)/)![1])
+    expect(lightness(colors[0])).toBeLessThan(lightness(colors[1]))
+    expect(lightness(colors[1])).toBeLessThan(lightness(colors[2]))
+  })
+
+  it('默认 Top 5：进入即以 top_n=5 查询', async () => {
+    baseInvoke({ merchant_shares: merchantPayload() })
+    await mountReports()
+    expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', {
+      year: Y,
+      from: `${Y}-01-01`,
+      to: `${Y}-12-31`,
+      top_n: 5,
+    })
+  })
+
+  it('切 Top 10：仅商户卡以 top_n=10 重拉，其余两卡不受牵连', async () => {
+    baseInvoke({ merchant_shares: merchantPayload() })
+    const wrapper = await mountReports()
+    mockInvoke.mockClear()
+    await clickTopN(wrapper, 10)
+    expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', {
+      year: Y,
+      from: `${Y}-01-01`,
+      to: `${Y}-12-31`,
+      top_n: 10,
+    })
+    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === 'monthly_summary')).toHaveLength(0)
+    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === 'category_shares')).toHaveLength(0)
+  })
+
+  it('TopN 会话内保留：同 pinia 卸载重挂以 Top 10 重拉；冷启动（新 pinia）回默认 5', async () => {
+    baseInvoke({ merchant_shares: merchantPayload() })
+    const first = await mountReports()
+    await clickTopN(first, 10)
+    first.unmount()
+
+    mockInvoke.mockClear()
+    const second = await mountReports()
+    expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', {
+      year: Y,
+      from: `${Y}-01-01`,
+      to: `${Y}-12-31`,
+      top_n: 10,
+    })
+    second.unmount()
+
+    setActivePinia(createPinia())
+    mockInvoke.mockClear()
+    const third = await mountReports()
+    expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', {
+      year: Y,
+      from: `${Y}-01-01`,
+      to: `${Y}-12-31`,
+      top_n: 5,
+    })
+  })
+
+  it('TopN 切换零持久化：localStorage 零写入', async () => {
+    baseInvoke({ merchant_shares: merchantPayload() })
+    const wrapper = await mountReports()
+    const keysBefore = Object.keys(localStorage)
+    await clickTopN(wrapper, 10)
+    expect(Object.keys(localStorage)).toEqual(keysBefore)
+  })
+
+  it('TopN 快速连点竞态：最后一次发起胜出，迟到的前发响应丢弃（ADR-0040 同语义）', async () => {
+    baseInvoke({ merchant_shares: merchantPayload() })
+    const wrapper = await mountReports()
+    // 第 2 次发起（top_n=10）挂起；第 3 次发起（top_n=5）立即返回新数据
+    let releaseTop10!: (v: unknown) => void
+    const pendingTop10 = new Promise((resolve) => {
+      releaseTop10 = resolve
+    })
+    const top5Payload = {
+      rows: [{ merchant_id: 'm-9', merchant_name: '快餐', amount_cents: 500 }],
+      total_cents: 15000,
+    }
+    mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
+      if (cmd === 'merchant_shares') {
+        if (args.top_n === 10) return pendingTop10
+        return Promise.resolve(top5Payload)
+      }
+      return Promise.resolve([])
+    })
+    await clickTopN(wrapper, 10) // 发起 #2：挂起
+    await clickTopN(wrapper, 5) // 发起 #3：立即落位
+    // 迟到的 #2（top 10 旧响应）后到：必须被丢弃，不得覆盖 top 5 结果
+    releaseTop10({ rows: [{ merchant_id: 'm-x', merchant_name: '迟到户', amount_cents: 9 }], total_cents: 9 })
+    await flushPromises()
+    const data = merchantChartProp('data', wrapper)
+    expect(data.labels).toEqual(['快餐'])
+    expect(data.datasets[0].data).toEqual([500])
+  })
+
+  it('tooltip 占比分母 = 后端全量合计（payload total_cents），非展示行合计', async () => {
+    baseInvoke({ merchant_shares: merchantPayload() })
+    const wrapper = await mountReports()
+    const label = merchantOptions(wrapper).plugins?.tooltip?.callbacks
+      ?.label as (item: TooltipItem<'bar'>) => string
+    // 咖啡 3000 / 全量 15000 = 20%（若误用展示行合计 9000 会得 33%）
+    expect(label({ raw: 3000 } as TooltipItem<'bar'>)).toBe('30 · 20%')
   })
 })
