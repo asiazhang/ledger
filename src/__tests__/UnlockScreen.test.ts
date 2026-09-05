@@ -2,10 +2,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { invoke } from '@tauri-apps/api/core'
 
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  confirm: vi.fn(),
+}))
+
+import { confirm } from '@tauri-apps/plugin-dialog'
 import UnlockScreen from '@/components/UnlockScreen.vue'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
 
 const mockInvoke = vi.mocked(invoke)
+const mockConfirm = vi.mocked(confirm)
 
 /** mock-invoke 桩：解锁屏只消费加密命令面（fail-loud：其余命令一律拒绝）。 */
 function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
@@ -17,6 +23,7 @@ function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
 
 beforeEach(() => {
   mockInvoke.mockReset()
+  mockConfirm.mockReset()
   // 每个用例从「未探测」起步（模块级单例状态复位）。
   const { locked } = useEncryptionGate()
   locked.value = null
@@ -26,21 +33,25 @@ function findButton(wrapper: ReturnType<typeof mount>, text: string) {
   return wrapper.findAll('button').find((b) => b.text().includes(text))!
 }
 
-async function mountWithProbe(locked: boolean) {
+async function mountWithProbe(
+  locked: boolean,
+  overrides: Record<string, (args?: any) => unknown> = {},
+) {
   stubInvoke({
     get_encryption_status: () => Promise.resolve({ locked, file_encrypted: locked }),
+    ...overrides,
   })
-  const { probe } = useEncryptionGate()
-  const probePromise = probe()
+  const gate = useEncryptionGate()
+  const probePromise = gate.probe()
   const wrapper = mount(UnlockScreen)
   await probePromise
   await flushPromises()
-  return wrapper
+  return { wrapper, locked: gate.locked }
 }
 
 describe('UnlockScreen.vue（加密锁定门·解锁屏流程）', () => {
   it('锁定时挂载解锁屏：标题、口令输入与解锁按钮就位', async () => {
-    const wrapper = await mountWithProbe(true)
+    const { wrapper } = await mountWithProbe(true)
     const html = wrapper.html()
     expect(html).toContain('账本已加密')
     expect(html).toContain('主口令')
@@ -162,5 +173,63 @@ describe('UnlockScreen.vue（加密锁定门·解锁屏流程）', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('忘记口令入口常驻：不解锁也能直达逃生门', async () => {
+    const { wrapper } = await mountWithProbe(true)
+    const forgot = findButton(wrapper, '忘记口令')
+    expect(forgot).toBeTruthy()
+  })
+
+  it('点击入口先展示无后门后果说明（数据不可恢复 + 密文副本），二次确认才重置', async () => {
+    mockConfirm.mockResolvedValue(true)
+    const { wrapper, locked } = await mountWithProbe(true, {
+      reset_after_forgotten_passphrase: () => Promise.resolve(),
+    })
+
+    await findButton(wrapper, '忘记口令')!.trigger('click')
+    await flushPromises()
+    // 后果说明明确不可恢复，且告知密文副本可日后救回（issue #573）
+    expect(mockConfirm).toHaveBeenCalledTimes(1)
+    const [body] = mockConfirm.mock.calls[0]
+    expect(body).toContain('不可恢复')
+    expect(body).toContain('密文副本')
+
+    expect(mockInvoke).toHaveBeenCalledWith('reset_after_forgotten_passphrase')
+    expect(locked.value).toBe(false)
+  })
+
+  it('后果说明后取消：留在解锁屏，不发起重置', async () => {
+    mockConfirm.mockResolvedValue(false)
+    const { wrapper, locked } = await mountWithProbe(true, {
+      reset_after_forgotten_passphrase: () => Promise.resolve(),
+    })
+
+    await findButton(wrapper, '忘记口令')!.trigger('click')
+    await flushPromises()
+    expect(mockConfirm).toHaveBeenCalledTimes(1)
+    expect(
+      mockInvoke.mock.calls.some(([cmd]) => cmd === 'reset_after_forgotten_passphrase'),
+    ).toBe(false)
+    expect(locked.value).toBe(true)
+    // 解锁屏仍在，可继续尝试口令或再次进入
+    expect(wrapper.html()).toContain('账本已加密')
+  })
+
+  it('重置失败：错误文案透传，保持锁定可重试', async () => {
+    mockConfirm.mockResolvedValue(true)
+    const { wrapper, locked } = await mountWithProbe(true, {
+      reset_after_forgotten_passphrase: () =>
+        Promise.reject({
+          kind: 'Db',
+          message: '数据库文件不存在或为空',
+          code: 'encryption.db-missing',
+        }),
+    })
+
+    await findButton(wrapper, '忘记口令')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.html()).toContain('数据库文件不存在或为空')
+    expect(locked.value).toBe(true)
   })
 })

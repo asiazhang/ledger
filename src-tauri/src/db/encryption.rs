@@ -1,5 +1,6 @@
 //! 加密引擎基座：库文件头探测（issue #569 / ADR-0075 决策 4）、整库转换
-//! 三形态与解锁（issue #570/#571 / ADR-0075 决策 5/6）、进程级锁定门。
+//! 三形态与解锁（issue #570/#571 / ADR-0075 决策 5/6）、忘记口令重置
+//! （issue #573 / 决策 2/5）、进程级锁定门。
 //!
 //! 加密状态是**库文件的属性**，随备份、恢复、复制自然流动；探测判定只读
 //! 文件本身，不进任何库外引导状态（ADR-0017/0018 的「库外引导配置唯一
@@ -343,6 +344,57 @@ fn promote_converted_copy(db_path: &Path, tmp_path: &Path) -> Result<()> {
         return Err(AppError::Io(format!("转换副本替换启用失败: {e}")));
     }
     Ok(())
+}
+
+/// 忘记口令逃生门（issue #573 / ADR-0075 决策 2/5）：把密文库重置为全新
+/// 明文空库，旧密文库按既有重置命名语义（`ledger.db.bak`，见
+/// `db::reset_db_in`）保留为**密文副本**——无密钥不可读，日后想起口令
+/// 数据仍可救回。
+///
+/// 流程：探测确认文件确为密文库 → 旧库改名 `.bak` 保留副本 → 原位新建
+/// 明文库（建连 + 迁移 + 完整性检查）。新库建失败时尽力把副本改回原位，
+/// 保持锁定现场可重试；旧库本身永不删除。
+///
+/// 只做文件级重置，不触碰进程状态（锁定门、DbState 换连由 IPC 壳层
+/// 编排）。无后门：不存在任何「验证身份后解密旧库」的路径。
+pub fn reset_encrypted_db_file(db_path: &Path) -> Result<Connection> {
+    match probe_file_kind(db_path)? {
+        DbFileKind::Encrypted => {}
+        DbFileKind::Empty => {
+            return Err(AppError::coded(
+                "encryption.db-missing",
+                "数据库文件不存在或为空",
+            ));
+        }
+        DbFileKind::Plaintext => {
+            return Err(AppError::coded(
+                "encryption.not-encrypted",
+                "库文件当前不是加密状态，请重启应用后再试",
+            ));
+        }
+    }
+    let bak = bak_path(db_path);
+    std::fs::rename(db_path, &bak)?;
+    match open_new_plaintext_db(db_path) {
+        Ok(conn) => {
+            tracing::info!(bak = %bak.display(), "忘记口令重置完成：原密文库保留为 .bak 副本，新明文空库就绪");
+            Ok(conn)
+        }
+        Err(e) => {
+            // 回滚（尽力而为）：新库建失败时把密文库改回原位，锁定现场可重试。
+            std::fs::rename(&bak, db_path).ok();
+            tracing::error!(error = %e, "忘记口令重置失败，原密文库已改回原位");
+            Err(e)
+        }
+    }
+}
+
+/// 新建明文空库：明文路径建连 + 迁移 + 完整性检查（重置产物验收基准）。
+fn open_new_plaintext_db(db_path: &Path) -> Result<Connection> {
+    let mut conn = super::open_connection(db_path)?;
+    super::init_db(&mut conn)?;
+    super::check_integrity(&conn)?;
+    Ok(conn)
 }
 
 /// SQL 字符串字面量转义（单引号加倍）。仅用于 ATTACH 的路径与主口令注入

@@ -13,6 +13,7 @@ import { api } from '@/api'
  *
  * 解锁成功即翻转为 `false`；若后端在解锁时补做了等待中的搬迁
  * （relocated = true），由解锁屏触发应用重启（Restore 同型语义）。
+ * 忘记口令重置（issue #573）同样翻转状态：主界面随全新明文空库挂载。
  */
 const locked = ref<boolean | null>(null)
 
@@ -38,5 +39,15 @@ export function useEncryptionGate() {
     return outcome.relocated
   }
 
-  return { locked, probe, unlock }
+  /**
+   * 忘记口令重置（issue #573 / ADR-0075 决策 2/5）：逃生门确认后的执行面。
+   * 后端把密文库重置为全新明文空库（旧库保留密文副本），成功即翻转状态，
+   * 主界面随全新空库挂载，无需重启；失败保持锁定，可重试。
+   */
+  async function reset(): Promise<void> {
+    await api.resetAfterForgottenPassphrase()
+    locked.value = false
+  }
+
+  return { locked, probe, unlock, reset }
 }

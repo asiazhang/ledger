@@ -347,3 +347,30 @@ fn probe_detects_plaintext_encrypted_and_empty() {
         DbFileKind::Empty
     );
 }
+
+// ---------------------------------------------------------------------------
+// 忘记口令重置守卫（issue #573）
+// ---------------------------------------------------------------------------
+
+use crate::db::encryption::reset_encrypted_db_file;
+
+/// 重置只对密文库生效：明文库拒绝且现场不变（原库在位、无副本产生）。
+/// 密文库上的重置产物（副本存在、头部为密文、新库为明文）由 BDD 钉住。
+#[test]
+fn reset_rejects_non_encrypted_file() {
+    let dir = temp_dir("reset-guard");
+    let db = dir.join("ledger.db");
+    {
+        let mut conn = open_connection(&db).unwrap();
+        init_db(&mut conn).unwrap();
+    }
+    let err = reset_encrypted_db_file(&db).unwrap_err();
+    assert_eq!(code_of(&err), Some("encryption.not-encrypted"));
+    assert!(db.exists(), "明文库应原样保留");
+    assert!(!db.with_extension("db.bak").exists(), "不应产生副本");
+
+    // 库文件不存在（新装语义之外的逃生门误用）同样拒绝。
+    let missing = dir.join("missing.db");
+    let err = reset_encrypted_db_file(&missing).unwrap_err();
+    assert_eq!(code_of(&err), Some("encryption.db-missing"));
+}
