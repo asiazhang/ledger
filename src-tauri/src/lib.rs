@@ -40,6 +40,7 @@ mod signals_cross_check;
 #[doc(hidden)]
 pub mod test_utils;
 pub mod transaction;
+pub mod write_entry;
 
 use tauri::Manager;
 use tauri::ipc::Invoke;
