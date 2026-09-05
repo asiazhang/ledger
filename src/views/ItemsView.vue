@@ -340,7 +340,7 @@ onMounted(() => {
       :show="editIntent !== null"
       preset="card"
       :title="t('items.edit.title')"
-      style="width: 440px"
+      card-size="sm"
       data-testid="item-edit-modal"
       @update:show="(v: boolean) => (v ? undefined : closeEdit())"
     >
@@ -397,7 +397,7 @@ onMounted(() => {
       :show="disposing !== null"
       preset="card"
       :title="disposing?.status === 'in_use' ? t('items.dispose.titleInUse') : t('items.dispose.titleInfo')"
-      style="width: 400px"
+      card-size="sm"
       data-testid="item-dispose-modal"
       @update:show="(v: boolean) => (v ? undefined : closeDispose())"
     >
@@ -438,7 +438,7 @@ onMounted(() => {
       :show="detail !== null"
       preset="card"
       :title="t('items.detail.title')"
-      style="width: 480px"
+      card-size="md"
       data-testid="item-detail-modal"
       @update:show="(v: boolean) => (v ? undefined : (detail = null))"
     >
