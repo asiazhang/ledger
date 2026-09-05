@@ -19,6 +19,7 @@
 - **设置**：About 页新增日志等级配置——设置页「关于」Tab 在「打开日志目录」上方新增日志等级下拉（闭集五档 error/warn/info/debug/trace，默认 info），切换后立即生效（文件与终端日志共用同一滤镜）、跨启动保留并随备份/恢复迁移；显式 RUST_LOG 环境变量在本次启动内优先且不写库（About 页静态提示说明）；非法档位返回码化错误（[#611]，ADR-0006）。
 
 - **备份与数据文件**：新增启动失败恢复——启动时账本数据库打不开（明文库损坏等）不再弹原生「重置/退出」对话框、应用不再退出：启动失败状态交由前端启动失败恢复屏接管，「重置为空库」通道经应用内二次确认后把打不开的旧库按既有重置命名语义保留为 `.bak` 副本并新建空账本，完成后直接进入应用；同时修复恢复命令两处前置缺陷（恢复目标路径写死默认数据目录，自定义数据位置下恢复会错位；无已打开库连接时恢复不可用），为失败恢复屏的备份恢复通道铺路（[#601]，ADR-0075）。
+- **备份与数据文件**：启动失败恢复屏新增「从备份文件恢复…」通道——选定备份文件校验后走既有恢复全语义（恢复前自动生成安全备份字节副本、原子替换），恢复成功后应用自动重启进入恢复后的数据；当前库与备份加密模式不一致时警告照常出现，密文备份的口令可自动用上下文口令试开、失败弹口令框重输，明文损坏场景直接弹口令框（[#602]，ADR-0075）。
 
 ### Changed
 
@@ -189,6 +190,7 @@
 [#572]: https://github.com/asiazhang/ledger/issues/572
 [#573]: https://github.com/asiazhang/ledger/issues/573
 [#601]: https://github.com/asiazhang/ledger/issues/601
+[#602]: https://github.com/asiazhang/ledger/issues/602
 [#617]: https://github.com/asiazhang/ledger/issues/617
 [#618]: https://github.com/asiazhang/ledger/issues/618
 [#647]: https://github.com/asiazhang/ledger/issues/647

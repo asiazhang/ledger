@@ -8,6 +8,8 @@
 
 use cucumber::{given, then, when};
 
+use std::path::PathBuf;
+
 use tauri_app_lib::backup::{expected_schema_version, restore_db_from};
 use tauri_app_lib::db::data_location::{self, DB_FILE_NAME, effective_db_dir};
 use tauri_app_lib::db::encryption::SQLITE_HEADER_MAGIC;
@@ -96,6 +98,57 @@ fn restore_into_boot_dir(world: &mut LedgerWorld) {
 }
 
 // ---------------------------------------------------------------------------
+// 备份恢复通道（issue #602）：失败库位置的恢复全语义（引擎面）
+// ---------------------------------------------------------------------------
+
+/// 失败库位置（启动失败门接管时的库文件路径）：恢复目标与字节不变断言共用。
+fn failed_db_path(world: &LedgerWorld) -> PathBuf {
+    let dir = world.dl_default_dir.as_ref().expect("未登记默认数据目录");
+    dir.join(DB_FILE_NAME)
+}
+
+/// 恢复到失败库位置（真实命令壳同序：生效目录解析 → restore_db_from）。
+/// 与生产 restore_backup 一致：安全备份落默认数据目录，不随恢复删除，
+/// 供「字节副本」与「拒绝不生成」两组断言消费。
+fn restore_into_failed_location(world: &mut LedgerWorld, passphrase: Option<&str>) {
+    let backup = world.last_backup_path.clone().expect("尚未备份");
+    let db_path = failed_db_path(world);
+    let default_dir = world.dl_default_dir.clone().unwrap();
+    let safety_dir = default_dir.join("restore-safety");
+    let expected = expected_schema_version().unwrap();
+    let result = restore_db_from(&backup, &db_path, &safety_dir, expected, passphrase);
+    world.restore_safety_dir = Some(safety_dir);
+    world.restored_db_path = Some(db_path);
+    assert!(result.is_ok(), "恢复失败: {:?}", result.err());
+}
+
+#[when(expr = "从备份恢复到启动失败的库位置（无已打开库连接参与）")]
+fn restore_into_failed_location_plaintext(world: &mut LedgerWorld) {
+    restore_into_failed_location(world, None);
+}
+
+#[when(expr = "以主口令 {string} 从备份恢复到启动失败的库位置")]
+fn restore_into_failed_location_with_passphrase(world: &mut LedgerWorld, passphrase: String) {
+    restore_into_failed_location(world, Some(&passphrase));
+}
+
+/// 错误口令恢复尝试：被拒上抛（错误码断言），不改动失败库位置任何字节。
+#[when(expr = "尝试以主口令 {string} 从备份恢复到启动失败的库位置")]
+fn try_restore_into_failed_location(world: &mut LedgerWorld, passphrase: String) {
+    let backup = world.last_backup_path.clone().expect("尚未备份");
+    let db_path = failed_db_path(world);
+    let default_dir = world.dl_default_dir.clone().unwrap();
+    let safety_dir = default_dir.join("restore-safety-attempt");
+    let expected = expected_schema_version().unwrap();
+    let result = restore_db_from(&backup, &db_path, &safety_dir, expected, Some(&passphrase));
+    world.restore_safety_dir = Some(safety_dir);
+    assert!(result.is_err(), "错误口令恢复应被拒绝");
+    if let Err(e) = result {
+        world.last_app_error = Some(e);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Then
 // ---------------------------------------------------------------------------
 
@@ -166,5 +219,50 @@ fn default_dir_has_no_db(world: &mut LedgerWorld) {
     assert!(
         !dir.join(DB_FILE_NAME).exists(),
         "恢复应写入引导目录，默认数据目录不应被写入库文件（旧缺陷：写死默认目录）"
+    );
+}
+
+/// 目录中唯一的恢复安全备份文件路径（每场景独立 safety 目录，先例 backup_steps）。
+fn safety_backup_file(safety_dir: &std::path::Path) -> PathBuf {
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(safety_dir)
+        .expect("读安全备份目录失败")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .collect();
+    assert_eq!(entries.len(), 1, "安全备份目录应恰有一份安全备份");
+    entries.pop().unwrap()
+}
+
+#[then(expr = "恢复安全备份应与失败前库字节一致")]
+fn safety_backup_bytes_match_original(world: &mut LedgerWorld) {
+    let safety_dir = world.restore_safety_dir.as_ref().expect("尚未触发安全备份");
+    let safety = safety_backup_file(safety_dir);
+    let bytes = std::fs::read(&safety).unwrap();
+    assert_eq!(
+        bytes,
+        *world.dl_default_db_bytes.as_ref().expect("未记录字节快照"),
+        "失败场景的恢复安全备份应是失败前库的字节副本（fs::copy 语义）"
+    );
+}
+
+#[then(expr = "启动失败库位置的文件字节应保持不变")]
+fn failed_db_bytes_unchanged(world: &mut LedgerWorld) {
+    let bytes = std::fs::read(failed_db_path(world)).unwrap();
+    assert_eq!(
+        bytes,
+        *world.dl_default_db_bytes.as_ref().expect("未记录字节快照"),
+        "被拒绝的恢复不应改动失败库位置任何字节（可回滚语义）"
+    );
+}
+
+#[then(expr = "拒绝场景不应生成恢复安全备份")]
+fn rejected_restore_creates_no_safety_backup(world: &mut LedgerWorld) {
+    let safety_dir = world
+        .restore_safety_dir
+        .as_ref()
+        .expect("未登记尝试用安全目录");
+    assert!(
+        !safety_dir.exists(),
+        "口令校验拒绝发生在安全备份之前，不应生成安全备份目录"
     );
 }

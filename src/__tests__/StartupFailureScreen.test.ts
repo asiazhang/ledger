@@ -5,6 +5,18 @@ import { setActivePinia, createPinia } from 'pinia'
 
 import StartupFailureScreen from '@/components/StartupFailureScreen.vue'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
+import { open } from '@tauri-apps/plugin-dialog'
+
+// 文件选择与重启单点 mock（先例 useBackup.test.ts；restartAppShortly 内含
+// 800ms 延时，测试断言调用而非计时）。
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  open: vi.fn(),
+  save: vi.fn(),
+  confirm: vi.fn(),
+}))
+const restartAppShortly = vi.fn()
+vi.mock('@/utils/restart', () => ({ restartAppShortly: () => restartAppShortly() }))
+const mockOpen = vi.mocked(open)
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -18,6 +30,8 @@ function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
 
 beforeEach(() => {
   mockInvoke.mockReset()
+  mockOpen.mockReset()
+  restartAppShortly.mockClear()
   setActivePinia(createPinia())
   // 每个用例从「未探测」起步（模块级单例状态复位）。
   const gate = useEncryptionGate()
@@ -49,6 +63,18 @@ async function mountFailedScreen(
   })
   await flushPromises()
   return { wrapper, gate }
+}
+
+/** 备份恢复通道（issue #602）的命令面桩：文件选择返回指定备份，其余可覆写。 */
+function stubRestoreChannel(backupPath: string, overrides: Record<string, (args?: any) => unknown> = {}) {
+  mockOpen.mockResolvedValue(backupPath)
+  return stubInvoke({
+    get_backup_meta: () => Promise.resolve({ kind: 'manual', encrypted: false }),
+    get_encryption_status: () => Promise.resolve({ locked: false, file_encrypted: false }),
+    restore_backup: () =>
+      Promise.resolve({ schema_version: 42, restored_at: '2026-09-06T00:00:00Z' }),
+    ...overrides,
+  })
 }
 
 describe('StartupFailureScreen.vue（启动失败恢复屏·issue #601）', () => {
@@ -155,5 +181,140 @@ describe('StartupFailureScreen.vue（启动失败恢复屏·issue #601）', () =
     await flushPromises()
     expect(gate.bootFailed.value).toBe(false)
     expect(gate.locked.value).toBe(true)
+  })
+})
+
+describe('StartupFailureScreen.vue（备份恢复通道·issue #602）', () => {
+  /** 弹窗内元素（teleport 已 stub：内容内联在 wrapper 内）。 */
+  function modalEl(wrapper: ReturnType<typeof mount>, testid: string) {
+    return wrapper.find(`[data-testid="${testid}"]`)
+  }
+
+  /** 弹窗内 NInput 输入口令（受控值经组件 emit 驱动，先例 RestoreConfirmModal.test）。 */
+  async function typePassphrase(wrapper: ReturnType<typeof mount>, value: string) {
+    const { NInput } = await import('naive-ui')
+    const input = wrapper.findComponent(NInput)
+    input.vm.$emit('update:value', value)
+    await flushPromises()
+  }
+
+  /** 以「启动已失败 + 备份恢复通道」现场挂载。 */
+  async function mountWithRestore(overrides: Record<string, (args?: any) => unknown> = {}) {
+    stubRestoreChannel('/tmp/plain.db.zip', overrides)
+    const gate = useEncryptionGate()
+    gate.bootFailed.value = true
+    const wrapper = mount(StartupFailureScreen, {
+      global: { stubs: { teleport: true } },
+    })
+    await flushPromises()
+    return { wrapper, gate }
+  }
+
+  async function openRestoreModal(wrapper: ReturnType<typeof mount>) {
+    await findButton(wrapper, 'failure-restore-open')!.trigger('click')
+    await waitModal()
+  }
+
+  it('恢复通道入口就位：标题、说明与「从备份文件恢复…」按钮可见', async () => {
+    const { wrapper } = await mountWithRestore()
+    const html = wrapper.html()
+    expect(html).toContain('从备份文件恢复')
+    expect(html).toContain('备份时的状态')
+    expect(findButton(wrapper, 'failure-restore-open')).toBeTruthy()
+  })
+
+  it('明文备份同模式：无跨模式警告、无需口令，确认后恢复并自动重启', async () => {
+    const { wrapper } = await mountWithRestore()
+    await openRestoreModal(wrapper)
+
+    // 校验链：元数据 + 当前模式探测都在确认前发生
+    expect(mockInvoke.mock.calls.some(([c]) => c === 'get_backup_meta')).toBe(true)
+    expect(mockInvoke.mock.calls.some(([c]) => c === 'get_encryption_status')).toBe(true)
+    // 同模式（明文备份 → 明文库）：不出现跨模式警告
+    expect(wrapper.text()).not.toContain('加密模式不一致')
+    // 未确认前不发恢复命令
+    expect(mockInvoke.mock.calls.some(([c]) => c === 'restore_backup')).toBe(false)
+
+    await modalEl(wrapper, 'restore-confirm')!.trigger('click')
+    await flushPromises()
+    expect(mockInvoke).toHaveBeenCalledWith('restore_backup', {
+      backupPath: '/tmp/plain.db.zip',
+      passphrase: null,
+    })
+    // 恢复成功即自动重启进入恢复后的数据（Restore 同型）
+    expect(restartAppShortly).toHaveBeenCalledTimes(1)
+  })
+
+  it('密文备份跨模式（当前明文库）：显著警告 + 口令必填（无上下文口令直接弹口令框）', async () => {
+    const { wrapper } = await mountWithRestore({
+      get_backup_meta: () => Promise.resolve({ kind: 'manual', encrypted: true }),
+    })
+    await openRestoreModal(wrapper)
+
+    // 跨模式警告照常出现（复用 #572 警告语义与文案）
+    expect(wrapper.text()).toContain('加密模式不一致')
+    expect(wrapper.text()).toContain('恢复后此库将变为加密库，应用重启后需凭该备份的主口令解锁')
+    // 无上下文口令：密文备份直接显出口令框，口令未输时确认禁用
+    expect(modalEl(wrapper, 'restore-passphrase').exists()).toBe(true)
+    expect((modalEl(wrapper, 'restore-confirm').element as HTMLButtonElement).disabled).toBe(true)
+    expect(mockInvoke.mock.calls.some(([c]) => c === 'restore_backup')).toBe(false)
+  })
+
+  it('密文备份口令重试：错误口令不关弹窗，重输后恢复成功并重启', async () => {
+    let failFirst = true
+    const { wrapper } = await mountWithRestore({
+      get_backup_meta: () => Promise.resolve({ kind: 'manual', encrypted: true }),
+      restore_backup: () =>
+        failFirst
+          ? Promise.reject({
+              kind: 'Coded',
+              code: 'encryption.passphrase-incorrect',
+              message: '主口令不正确，请重试',
+            })
+          : Promise.resolve({ schema_version: 42, restored_at: '2026-09-06T00:00:00Z' }),
+    })
+    await openRestoreModal(wrapper)
+
+    // 第一次：错误口令 → 错误留在弹窗内，弹窗不关，可就地重输
+    await typePassphrase(wrapper, 'wrong')
+    await modalEl(wrapper, 'restore-confirm').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('主口令不正确，请重试')
+    expect(modalEl(wrapper, 'restore-confirm').exists()).toBe(true)
+    expect(restartAppShortly).not.toHaveBeenCalled()
+
+    // 第二次：正确口令 → 恢复成功，自动重启
+    failFirst = false
+    await typePassphrase(wrapper, 'right-pw')
+    await modalEl(wrapper, 'restore-confirm').trigger('click')
+    await flushPromises()
+    expect(mockInvoke).toHaveBeenLastCalledWith('restore_backup', {
+      backupPath: '/tmp/plain.db.zip',
+      passphrase: 'right-pw',
+    })
+    expect(restartAppShortly).toHaveBeenCalledTimes(1)
+  })
+
+  it('备份元数据读取失败：报错中止，不打开确认弹窗、不发恢复命令', async () => {
+    const { wrapper } = await mountWithRestore({
+      get_backup_meta: () =>
+        Promise.reject({ kind: 'Invalid', message: '不是有效的备份包', code: 'backup.corrupt' }),
+    })
+    await openRestoreModal(wrapper)
+    // 校验失败即中止：确认弹窗不开、恢复不发（错误经 message.error 提示，
+    // useMessage 为全局 mock，此处钉流程中止面）。
+    expect(mockInvoke.mock.calls.some(([c]) => c === 'get_backup_meta')).toBe(true)
+    expect(modalEl(wrapper, 'restore-confirm').exists()).toBe(false)
+    expect(mockInvoke.mock.calls.some(([c]) => c === 'restore_backup')).toBe(false)
+  })
+
+  it('当前模式探测失败：报错中止，不打开确认弹窗（宁可不弹窗不跳过警告）', async () => {
+    const { wrapper } = await mountWithRestore({
+      get_encryption_status: () =>
+        Promise.reject({ kind: 'Invalid', message: '探测失败', code: 'boot.db-unreadable' }),
+    })
+    await openRestoreModal(wrapper)
+    expect(modalEl(wrapper, 'restore-confirm').exists()).toBe(false)
+    expect(mockInvoke.mock.calls.some(([c]) => c === 'restore_backup')).toBe(false)
   })
 })

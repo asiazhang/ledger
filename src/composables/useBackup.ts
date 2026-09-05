@@ -50,6 +50,9 @@ export interface RestoreIntent {
   backupEncrypted: boolean;
   /** 当前库是否为密文（启动探测接管，文件即真相）。 */
   currentEncrypted: boolean;
+  /** 宿主上下文口令（issue #602/#603）：存在时确认弹窗先自动试开，失败才显出
+   *  口令框重输；明文损坏的失败恢复屏无上下文口令，不携带（直接弹口令框）。 */
+  contextPassphrase?: string;
 }
 
 /**

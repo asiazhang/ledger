@@ -9,12 +9,15 @@ import {
   type RestoreIntent,
 } from '@/composables/useBackup'
 
-// 恢复确认弹窗（issue #572 / ADR-0075 决策 7）：从原生 confirm 对话框升级为
-// 应用内弹窗，承载两件加密语义面——
+// 恢复确认弹窗（issue #572 / ADR-0075 决策 7；#602 起为共享组件，失败恢复屏
+// 复用同一加密语义面）：从原生 confirm 对话框升级为应用内弹窗，承载两件加密语义面——
 // - 跨模式警告：当前库模式与备份模式不一致时显著警告（恢复后加密模式随文件走，
 //   重启由启动探测接管实际模式）；
 // - 密文备份主口令：备份为密文时输入备份所在库的主口令以校验并恢复；口令错误
 //   不关弹窗、可就地重试（解锁同语义，ADR-0075 决策 5）。
+// 上下文口令自动试开（issue #602/#603）：意图携带 contextPassphrase 时（宿主
+// 上下文已有可用口令，如解锁屏手输过的主口令），确认先自动试开；失败才显出
+// 口令框重输。失败恢复屏（明文损坏场景）不携带上下文口令，直接弹口令框。
 // 弹层纪律：AppModal 收口关闭语义（遮罩不关）并接入弹层注册表（快捷键抑制）。
 const props = defineProps<{
   /** 弹窗意图（null = 关闭终态，ADR-0072：非空即显示）。 */
@@ -51,22 +54,31 @@ const warningText = computed(() => {
   return key ? t(key) : ''
 })
 
+/** 宿主上下文口令（#602/#603）：存在时确认先自动试开，失败才显出口令框。 */
+const contextPassphrase = computed(() => props.intent?.contextPassphrase ?? '')
+const hasContextPassphrase = computed(() => contextPassphrase.value.length > 0)
+
 /** 密文备份需主口令；口令未输时确认禁用。后端探测报需口令错误时按需显出。 */
 const needsPassphrase = computed(() => props.intent?.backupEncrypted ?? false)
-const showPassphrase = computed(() => needsPassphrase.value || passphraseRevealedByError.value)
+const showPassphrase = computed(
+  () => (needsPassphrase.value && !hasContextPassphrase.value) || passphraseRevealedByError.value,
+)
 const canSubmit = computed(() => !submitting.value && (!showPassphrase.value || passphrase.value.length > 0))
 
 async function confirm() {
   if (!canSubmit.value || !props.intent) return
   submitting.value = true
   error.value = null
+  // 提交口令：口令框显出时用输入值；否则用上下文口令自动试开（无上下文且
+  // 无需口令的明文备份不消费口令，传空与既有行为一致）。
+  const attempt = showPassphrase.value ? passphrase.value : contextPassphrase.value
   try {
-    await props.onConfirm(passphrase.value)
+    await props.onConfirm(attempt)
   } catch (e) {
     error.value = errorMessage(e)
-    // 元数据谎报明文而实库为密文（异常产物）：后端拒绝并要求口令，
-    // 显出口令输入让用户就地补救，而不是卡死在无输入框的错误提示上。
-    if (errorCodeOf(e) === 'backup.passphrase-required') {
+    // 密文备份（含上下文口令试开失败）与后端探测报需口令：显出口令输入让
+    // 用户就地重输重试，而不是卡死在无输入框的错误提示上。
+    if (needsPassphrase.value || errorCodeOf(e) === 'backup.passphrase-required') {
       passphraseRevealedByError.value = true
     }
   } finally {

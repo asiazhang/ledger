@@ -10,5 +10,9 @@
   "resetBody": "将建立一个全新的空账本并立即进入。当前打不开的库文件会按重置命名语义保留为副本（ledger.db.bak，位于账本数据目录），可留作排查或外部修复；同名义副本若已存在将被覆盖。",
   "resetConfirm": "确认重置",
   "resetCancel": "取消",
-  "resetOk": "已重置为全新空账本"
+  "resetOk": "已重置为全新空账本",
+  "restoreChannelTitle": "从备份文件恢复",
+  "restoreChannelHint": "选择一份备份文件，把账本数据恢复为备份时的状态；恢复成功后应用将自动重启。",
+  "restoreButton": "从备份文件恢复…",
+  "restorePickTitle": "选择备份文件"
 }

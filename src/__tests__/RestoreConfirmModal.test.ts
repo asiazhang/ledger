@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { NInput } from 'naive-ui'
 import AppModal from '@/components/AppModal.vue'
-import RestoreConfirmModal from '@/components/settings/RestoreConfirmModal.vue'
+import RestoreConfirmModal from '@/components/RestoreConfirmModal.vue'
 import type { RestoreIntent } from '@/composables/useBackup'
 
 // 恢复确认弹窗（issue #572 / ADR-0075 决策 7）：钉住跨模式显著警告文案与
@@ -36,6 +36,11 @@ const crossToEncrypted: RestoreIntent = {
   path: '/Users/me/backups/enc.db.zip',
   backupEncrypted: true,
   currentEncrypted: false,
+}
+/** 密文备份 + 宿主上下文口令（issue #602/#603）：确认先自动试开。 */
+const crossToEncryptedWithContext: RestoreIntent = {
+  ...crossToEncrypted,
+  contextPassphrase: 'context-pw',
 }
 
 function mountModal(intent: RestoreIntent | null, seq = 1) {
@@ -174,6 +179,58 @@ describe('RestoreConfirmModal（恢复确认弹窗，issue #572）', () => {
     await flushPromises()
 
     expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  // ---- 上下文口令自动试开（issue #602/#603）----
+
+  it('密文备份携带上下文口令：不显出口令框，确认先自动试开上下文口令', async () => {
+    const wrapper = mountModal(crossToEncryptedWithContext)
+    await flushPromises()
+
+    // 上下文口令在场：口令框不显出，确认按钮可直接点亮
+    expect(needsPassphraseInput()).toBe(false)
+    expect(confirmButton().disabled).toBe(false)
+
+    confirmButton().dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    await flushPromises()
+    expect(onConfirm).toHaveBeenCalledWith('context-pw')
+    void wrapper
+  })
+
+  it('上下文口令试开失败：显出口令框可重输，弹窗不关；重输后用输入值重试', async () => {
+    onConfirm
+      .mockRejectedValueOnce({
+        kind: 'Coded',
+        code: 'encryption.passphrase-incorrect',
+        message: '主口令不正确，请重试',
+      })
+      .mockResolvedValueOnce(undefined)
+    const wrapper = mountModal(crossToEncryptedWithContext)
+    await flushPromises()
+
+    confirmButton().dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    await flushPromises()
+
+    // 试开失败：错误可见、口令框显出（重输入口），弹窗仍开着
+    expect(document.body.textContent).toContain('主口令不正确，请重试')
+    expect(needsPassphraseInput()).toBe(true)
+    expect(confirmButton()).not.toBeNull()
+
+    // 重输后提交：改用输入值（不再是上下文口令）
+    await setPassphrase(wrapper, 'right-pw')
+    confirmButton().dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    await flushPromises()
+    expect(onConfirm).toHaveBeenCalledTimes(2)
+    expect(onConfirm).toHaveBeenLastCalledWith('right-pw')
+  })
+
+  it('无上下文口令的密文备份（明文损坏场景）：直接弹口令框，行为与 #572 一致', async () => {
+    const wrapper = mountModal(crossToEncrypted)
+    await flushPromises()
+
+    expect(needsPassphraseInput()).toBe(true)
+    expect(confirmButton().disabled).toBe(true)
+    void wrapper
   })
 })
 

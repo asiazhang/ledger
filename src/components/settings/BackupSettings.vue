@@ -14,7 +14,7 @@ import { LockClosedOutline } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
 import { useBackup } from '@/composables/useBackup'
 import { t } from '@/i18n'
-import RestoreConfirmModal from '@/components/settings/RestoreConfirmModal.vue'
+import RestoreConfirmModal from '@/components/RestoreConfirmModal.vue'
 
 const store = useAppStore()
 
