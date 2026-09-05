@@ -177,3 +177,66 @@ describe('PhysicalAssetsView 实物资产视图冒烟（issue #466）', () => {
     expect(createCalls).toBe(0)
   })
 })
+
+describe('PhysicalAssetsView 实物资产弹窗族排版统一（issue #635）', () => {
+  /** 取 body 上可见的卡片元素：弹窗卡片 teleport 到 body；视图自有的合计卡与
+   *  列表卡随 VTU 默认 detached 挂载不在 document 内，故 body 上可见卡片即当前
+   *  弹窗（先例 src/__tests__/TransactionsView/modal-layout.test.ts，其成立
+   *  理由是「视图无自有 NCard」，本视图不同，靠 detached 挂载成立；命中多张
+   *  时断言显式失败，不静默）。 */
+  function visibleModalCard(): HTMLElement {
+    const cards = [...document.querySelectorAll<HTMLElement>('.n-card')].filter((el) => {
+      let node: Element | null = el
+      while (node && node !== document.body) {
+        if ((node as HTMLElement).style.display === 'none') return false
+        node = node.parentElement
+      }
+      return true
+    })
+    expect(cards, '当前应恰有一个可见弹窗卡片').toHaveLength(1)
+    return cards[0]
+  }
+
+  /** 断言当前弹窗卡片：宽度档位 + 无边框（AppModal 默认，调用点不再显式声明）。 */
+  function expectModalCard(width: string) {
+    const card = visibleModalCard()
+    expect(card.style.width).toBe(width)
+    expect(card.classList.contains('n-card--bordered')).toBe(false)
+  }
+
+  async function openBy(testid: string) {
+    // 行内按钮（更新估值/处置）只在有在持资产行时渲染；预置一条对新建按钮无副作用
+    list = makePhysicalAssetList({ assets: [baseAsset()] })
+    const wrapper = mount(PhysicalAssetsView)
+    await flushPromises()
+    await wrapper.find(`[data-testid="${testid}"]`).trigger('click')
+    await flushPromises()
+    return wrapper
+  }
+
+  it.each([
+    ['physical-asset-new', '建档', '480px'],
+    ['physical-asset-update-valuation', '更新估值', '420px'],
+    ['physical-asset-dispose', '处置', '420px'],
+  ])('「%s」弹窗（%s）卡片宽度归对应档位且默认无边框', async (testid, _name, width) => {
+    await openBy(testid)
+    expectModalCard(width)
+  })
+
+  it('估值弹窗：日期提示为表单下方段落式说明，无内联 margin-left 挤占', async () => {
+    await openBy('physical-asset-update-valuation')
+    const modal = bodyQuery('[data-testid="physical-asset-valuation-modal"]')!
+    const hint = modal.querySelector<HTMLElement>('.form-hint')
+    expect(hint?.textContent).toContain('留空 = 今天')
+    expect(modal.querySelector<HTMLElement>('[style*="margin-left"]')).toBeNull()
+  })
+
+  it('处置弹窗：提示为表单下方段落式说明，无空 label 表单项 hack', async () => {
+    await openBy('physical-asset-dispose')
+    const modal = bodyQuery('[data-testid="physical-asset-dispose-modal"]')!
+    const hint = modal.querySelector<HTMLElement>('.form-hint')
+    expect(hint?.textContent).toContain('已处置')
+    const labels = [...modal.querySelectorAll<HTMLElement>('.n-form-item-label')]
+    expect(labels.some((el) => el.textContent!.trim() === '')).toBe(false)
+  })
+})

@@ -143,7 +143,7 @@ defineExpose({ save })
     :show="show"
     preset="card"
     :title="editing ? t('physicalAssets.form.titleEdit') : t('physicalAssets.form.title')"
-    style="width: 460px"
+    card-size="md"
     data-testid="physical-asset-form-modal"
     @update:show="(v: boolean) => emit('update:show', v)"
   >
