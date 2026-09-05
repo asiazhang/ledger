@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import MerchantRankingPanel from '@/components/reports/MerchantRankingPanel.vue'
-import { merchantRankColor } from '@/utils/merchant-chart'
+import { paletteColor } from '@/utils/category-chart'
 import type { TooltipItem } from 'chart.js'
 import type { MerchantSharesReport } from '@/types'
 
@@ -44,10 +44,10 @@ describe('MerchantRankingPanel（issue #588 柱图化）', () => {
     expect(data.datasets[0].data).toEqual([170000, 100000])
   })
 
-  it('名次梯度色：随名次单调（第 1 名最深），映射收 merchant-chart 纯函数', () => {
+  it('柱色与分类构成同源：色板按名次序取色（多颜色）', () => {
     const wrapper = mountPanel()
     const colors: string[] = chartDataOf(wrapper).datasets[0].backgroundColor
-    expect(colors).toEqual([merchantRankColor(0, 2), merchantRankColor(1, 2)])
+    expect(colors).toEqual([paletteColor(0), paletteColor(1)])
   })
 
   it('tooltip「金额 · 占比%」分母 = 载荷全量合计，非展示行合计', () => {
