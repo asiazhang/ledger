@@ -84,6 +84,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # 目录属 root，不 chown 的话 actions/cache 恢复解包全部 Permission denied
+      # （实测 run 33973388654），缓存命中也等于没恢复。
+      - name: 预备 apt 缓存目录属主
+        run: sudo chown -R "$(id -un):$(id -gn)" /var/cache/apt/archives
+
       - name: 恢复 apt 下载缓存
         uses: actions/cache@v4
         with:
@@ -120,6 +125,9 @@ jobs:
         working-directory: src-tauri
     steps:
       - uses: actions/checkout@v7
+
+      - name: 预备 apt 缓存目录属主
+        run: sudo chown -R "$(id -un):$(id -gn)" /var/cache/apt/archives
 
       - name: 恢复 apt 下载缓存
         uses: actions/cache@v4
