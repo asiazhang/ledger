@@ -39,7 +39,7 @@ use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 
 use super::model::TransactionInput;
-use crate::accounts::balance::refresh_account_balances;
+use crate::accounts::balance::{affected_accounts, refresh_account_balances};
 use crate::db::{device_id, now_iso};
 use crate::error::{AppError, Result};
 use crate::investment;
@@ -257,11 +257,9 @@ fn delete_within_transaction(conn: &Connection, id: &str) -> Result<()> {
         "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id()],
     )?;
-    // 余额缓存写路径（issue #491 / ADR-0067）：软删后对原账户引用整体重算。
-    let mut affected = vec![account_id.as_str()];
-    if let Some(to_account_id) = &to_account_id {
-        affected.push(to_account_id.as_str());
-    }
+    // 余额缓存写路径（issue #491 / ADR-0067）：软删后对原行账户引用对（受影响
+    // 账户推导，消费余额模块唯一定义，issue #534）同事务整体重算。
+    let affected = affected_accounts(Some((account_id.as_str(), to_account_id.as_deref())), None);
     refresh_account_balances(conn, &affected)?;
     // 搜索（V018 两段式，issue #492）：候选流带 is_deleted 口径过滤，软删即刻
     // 生效，删除的交易不再可搜（拼音列非本路径维护字段，无需处理）。

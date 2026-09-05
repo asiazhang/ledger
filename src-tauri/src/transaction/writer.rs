@@ -356,14 +356,13 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
             device_id(),
         ],
     )?;
-    // 余额缓存写路径：旧/新账户引用并集整体重算（修改可能移动账户，ADR-0067）。
-    let mut affected = vec![old_account_id.as_str(), row.account_id.as_str()];
-    if let Some(old_to) = &old_to_account_id {
-        affected.push(old_to.as_str());
-    }
-    if let Some(to_account_id) = &row.to_account_id {
-        affected.push(to_account_id.as_str());
-    }
+    // 余额缓存写路径：受影响账户 = 旧行 ∪ 新行账户引用对，消费余额模块唯一
+    // 定义（issue #534）；旧账户引用读取时机与刷新事务位置不变，同事务整体
+    // 重算（修改可能移动账户，ADR-0067）。
+    let affected = affected_accounts(
+        Some((old_account_id.as_str(), old_to_account_id.as_deref())),
+        Some((row.account_id.as_str(), row.to_account_id.as_deref())),
+    );
     refresh_account_balances(conn, &affected)?;
     Ok(())
 }
