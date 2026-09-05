@@ -149,7 +149,7 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
     expect(mockInvoke).not.toHaveBeenCalledWith('restart_app')
   })
 
-  it('已加密库：不再展示开启表单，只展示已开启状态', async () => {
+  it('已加密库：展示已开启状态与修改主口令、关闭加密表单，不再展示开启表单', async () => {
     stubInvoke({
       get_encryption_status: () => Promise.resolve(encryptedStatus),
     })
@@ -157,7 +157,187 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
     await flushPromises()
     const html = wrapper.html()
     expect(html).toContain('已开启加密')
-    expect(html).not.toContain('开启加密</button>')
+    expect(html).toContain('修改主口令')
+    expect(html).toContain('关闭加密')
     expect(findButton(wrapper, '开启加密')).toBeUndefined()
+  })
+
+  it('已加密库·修改主口令：新旧不一致禁用提交并给出即时反馈', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve(encryptedStatus),
+    })
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+
+    const inputs = wrapper.findAll('input')
+    await inputs[0].setValue('旧口令')
+    await inputs[1].setValue('新口令①')
+    await inputs[2].setValue('新口令②')
+    await flushPromises()
+    expect(wrapper.html()).toContain('两次输入不一致')
+    expect(findButton(wrapper, '修改主口令')!.element.disabled).toBe(true)
+  })
+
+  it('已加密库·修改主口令：新口令与当前口令相同禁用提交并给出警示反馈', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve(encryptedStatus),
+    })
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+
+    const inputs = wrapper.findAll('input')
+    await inputs[0].setValue('同一口令')
+    await inputs[1].setValue('同一口令')
+    await inputs[2].setValue('同一口令')
+    await flushPromises()
+    expect(wrapper.html()).toContain('新主口令与当前主口令相同')
+    expect(findButton(wrapper, '修改主口令')!.element.disabled).toBe(true)
+  })
+
+  it('已加密库·修改主口令：确认后调用 change_encryption_passphrase 携带新旧口令，成功提示重启', async () => {
+    vi.useFakeTimers()
+    try {
+      stubInvoke({
+        get_encryption_status: () => Promise.resolve(encryptedStatus),
+        change_encryption_passphrase: (args: any) => {
+          expect(args.passphrase).toBe('旧口令')
+          expect(args.newPassphrase).toBe('新口令①')
+          return Promise.resolve()
+        },
+        restart_app: () => Promise.resolve(),
+      })
+      mockConfirm.mockResolvedValue(true)
+      const wrapper = mount(EncryptionSettings)
+      await flushPromises()
+
+      const inputs = wrapper.findAll('input')
+      await inputs[0].setValue('旧口令')
+      await inputs[1].setValue('新口令①')
+      await inputs[2].setValue('新口令①')
+      await findButton(wrapper, '修改主口令')!.trigger('click')
+      await flushPromises()
+      expect(mockInvoke).toHaveBeenCalledWith('change_encryption_passphrase', {
+        passphrase: '旧口令',
+        newPassphrase: '新口令①',
+      })
+      expect(messageApi.success).toHaveBeenCalled()
+      vi.advanceTimersByTime(900)
+      await flushPromises()
+      expect(mockInvoke).toHaveBeenCalledWith('restart_app')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('已加密库·修改主口令：旧口令错误时错误反馈，不重启（原库原样保留）', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve(encryptedStatus),
+      change_encryption_passphrase: () =>
+        Promise.reject({
+          kind: 'Coded',
+          message: '主口令不正确，请重试',
+          code: 'encryption.passphrase-incorrect',
+        }),
+    })
+    mockConfirm.mockResolvedValue(true)
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+
+    const inputs = wrapper.findAll('input')
+    await inputs[0].setValue('错口令')
+    await inputs[1].setValue('新口令①')
+    await inputs[2].setValue('新口令①')
+    await findButton(wrapper, '修改主口令')!.trigger('click')
+    await flushPromises()
+    expect(messageApi.error).toHaveBeenCalled()
+    expect(mockInvoke).not.toHaveBeenCalledWith('restart_app')
+  })
+
+  it('已加密库·修改主口令：确认弹窗取消不发起转换', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve(encryptedStatus),
+    })
+    mockConfirm.mockResolvedValue(false)
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+
+    const inputs = wrapper.findAll('input')
+    await inputs[0].setValue('旧口令')
+    await inputs[1].setValue('新口令①')
+    await inputs[2].setValue('新口令①')
+    await findButton(wrapper, '修改主口令')!.trigger('click')
+    await flushPromises()
+    expect(mockInvoke).not.toHaveBeenCalledWith(
+      'change_encryption_passphrase',
+      expect.anything(),
+    )
+  })
+
+  it('已加密库·关闭加密：确认后调用 disable_encryption 携带当前口令，成功提示重启', async () => {
+    vi.useFakeTimers()
+    try {
+      stubInvoke({
+        get_encryption_status: () => Promise.resolve(encryptedStatus),
+        disable_encryption: (args: any) => {
+          expect(args.passphrase).toBe('当前口令')
+          return Promise.resolve()
+        },
+        restart_app: () => Promise.resolve(),
+      })
+      mockConfirm.mockResolvedValue(true)
+      const wrapper = mount(EncryptionSettings)
+      await flushPromises()
+
+      const inputs = wrapper.findAll('input')
+      await inputs[3].setValue('当前口令')
+      await findButton(wrapper, '关闭加密')!.trigger('click')
+      await flushPromises()
+      expect(mockInvoke).toHaveBeenCalledWith('disable_encryption', {
+        passphrase: '当前口令',
+      })
+      expect(messageApi.success).toHaveBeenCalled()
+      vi.advanceTimersByTime(900)
+      await flushPromises()
+      expect(mockInvoke).toHaveBeenCalledWith('restart_app')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('已加密库·关闭加密：后端报错（口令错误）时错误反馈，不重启（原库原样保留）', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve(encryptedStatus),
+      disable_encryption: () =>
+        Promise.reject({
+          kind: 'Coded',
+          message: '主口令不正确，请重试',
+          code: 'encryption.passphrase-incorrect',
+        }),
+    })
+    mockConfirm.mockResolvedValue(true)
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+
+    const inputs = wrapper.findAll('input')
+    await inputs[3].setValue('错口令')
+    await findButton(wrapper, '关闭加密')!.trigger('click')
+    await flushPromises()
+    expect(messageApi.error).toHaveBeenCalled()
+    expect(mockInvoke).not.toHaveBeenCalledWith('restart_app')
+  })
+
+  it('已加密库·关闭加密：确认弹窗取消不发起转换', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve(encryptedStatus),
+    })
+    mockConfirm.mockResolvedValue(false)
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+
+    const inputs = wrapper.findAll('input')
+    await inputs[3].setValue('当前口令')
+    await findButton(wrapper, '关闭加密')!.trigger('click')
+    await flushPromises()
+    expect(mockInvoke).not.toHaveBeenCalledWith('disable_encryption', expect.anything())
   })
 })
