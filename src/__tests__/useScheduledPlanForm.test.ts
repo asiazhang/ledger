@@ -7,6 +7,29 @@ import { useAppStore } from '@/stores/app'
 import { todayStr } from '@/utils/date'
 import type { Account, Category, Currency, Merchant } from '@/types'
 
+// 提示捕获：提交时序编排（submitCreate）的成功/失败提示是接缝接口行为的一部分。
+// setup.ts 的全局 useMessage mock 每次调用返回新对象，无法跨调用断言；
+// 此处以共享记录器覆盖（不渲染 naive-ui 组件，其余导出保留原样）。
+const messageCalls: Array<{ method: string; text: string }> = []
+vi.mock('naive-ui', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('naive-ui')>()
+  const record =
+    (method: string) =>
+    (...args: unknown[]) =>
+      messageCalls.push({ method, text: String(args[0]) })
+  return {
+    ...actual,
+    useMessage: () => ({
+      success: record('success'),
+      warning: record('warning'),
+      error: record('error'),
+      info: record('info'),
+      loading: record('loading'),
+      destroyAll: () => {},
+    }),
+  }
+})
+
 const mockInvoke = vi.mocked(invoke)
 
 const mockCurrencies: Currency[] = [
@@ -64,8 +87,15 @@ function mockBaseCommands(merchants: Merchant[] = mockMerchants) {
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve(mockCategories)
     if (cmd === 'list_merchants') return Promise.resolve(merchants)
+    if (cmd === 'create_scheduled_transaction') return Promise.resolve('new-plan-id')
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   }) as typeof invoke)
+}
+
+function lastMessage(method: string): string {
+  const found = [...messageCalls].reverse().find((c) => c.method === method)
+  expect(found, `应有一次 ${method} 提示`).toBeDefined()
+  return found!.text
 }
 
 /** 商户解析结果：填入草稿商户值后直接调接缝解析（不 mount 组件）。 */
@@ -80,6 +110,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
   mockBaseCommands()
+  messageCalls.length = 0
 })
 
 describe('useScheduledPlanForm 商户解析（输入即建 + 重名兜底，ADR-0041）', () => {
@@ -340,5 +371,109 @@ describe('useScheduledPlanForm 选项面（参考数据单源）', () => {
     expect(form.merchantOptions.value).toEqual([{ label: '视频平台', value: 'mch-1' }])
     // 分类树只含支出类（分期/订阅扣款为支出口径）
     expect(JSON.stringify(form.categoryTreeOptions.value)).toContain('订阅服务')
+  })
+})
+
+describe('useScheduledPlanForm submitCreate 提交时序编排（spec #520）', () => {
+  /** 建转账草稿：设置公共草稿字段（表单校验与特化字段组装留页签，此处直填）。 */
+  async function makeTransferForm(onSubmitted?: () => void) {
+    await useReferenceStore().refresh()
+    const form = useScheduledPlanForm({ onSubmitted })
+    form.note.value = '月度储蓄'
+    form.accountId.value = 'acc-1'
+    form.currencyCode.value = 'CNY'
+    return form
+  }
+
+  it('转账形态「显式跳过商户解析」：创建带 merchant_id=null，不调用 create_merchant', async () => {
+    // 用户可见无商户面（issue #203），即便草稿商户值非空也不应触发解析
+    const form = await makeTransferForm()
+    form.merchantRef.value = '盒马'
+    await form.submitCreate({
+      kind: 'scheduled_transfer',
+      amountCents: 50000,
+      specific: { to_account_id: 'acc-1', total_occurrences: null },
+    })
+    const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_scheduled_transaction')
+    expect(call).toBeDefined()
+    expect(call![1]).toMatchObject({
+      input: {
+        kind: 'scheduled_transfer',
+        account_id: 'acc-1',
+        to_account_id: 'acc-1',
+        total_occurrences: null,
+        merchant_id: null,
+        amount_cents: 50000,
+        currency_code: 'CNY',
+      },
+    })
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'create_merchant')).toBe(false)
+  })
+
+  it('转账形态一次性（总期数=1）与有限期数（总期数=3）：创建参数带 total_occurrences', async () => {
+    for (const n of [1, 3]) {
+      mockInvoke.mockReset()
+      mockBaseCommands()
+      await useReferenceStore().refresh()
+      const form = useScheduledPlanForm()
+      form.accountId.value = 'acc-1'
+      await form.submitCreate({
+        kind: 'scheduled_transfer',
+        amountCents: 10000,
+        specific: { to_account_id: 'acc-1', total_occurrences: n },
+      })
+      const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_scheduled_transaction')
+      expect(call![1]).toMatchObject({ input: { total_occurrences: n } })
+    }
+  })
+
+  it('成功路径：创建命令 → 成功提示 → 公共草稿重置终态 → 提交成功后回调（回调见已重置草稿）', async () => {
+    const seen: string[] = []
+    await useReferenceStore().refresh()
+    const form = useScheduledPlanForm({
+      onSubmitted: () => seen.push(`note=${form.note.value}`),
+    })
+    // 先改成非初始值，再提交
+    form.note.value = '月度储蓄'
+    form.accountId.value = 'acc-1'
+    form.currencyCode.value = 'USD'
+    form.recurrenceType.value = 'weekly'
+    form.recurrenceInterval.value = 2
+    form.startDate.value = '2026-03-01'
+    await form.submitCreate({
+      kind: 'scheduled_transfer',
+      amountCents: 50000,
+      specific: { to_account_id: 'acc-1', total_occurrences: null },
+    })
+    expect(lastMessage('success')).toBe('已创建定时转账')
+    // 公共草稿重置终态：币种回默认、周期每月×1、开始日=今天、备注/账户清空
+    expect(form.note.value).toBe('')
+    expect(form.accountId.value).toBeNull()
+    expect(form.currencyCode.value).toBe(useAppStore().defaultCurrency)
+    expect(form.recurrenceType.value).toBe('monthly')
+    expect(form.recurrenceInterval.value).toBe(1)
+    expect(form.startDate.value).toBe(todayStr())
+    // 回调时序：在草稿重置之后调用（回调所见 note 为空）
+    expect(seen).toEqual(['note='])
+  })
+
+  it('失败：错误提示（逐字维持 createFailed 文案）、不重置草稿、不触发提交成功后回调', async () => {
+    const onSubmitted = vi.fn()
+    const form = await makeTransferForm(onSubmitted)
+    mockInvoke.mockImplementation(((cmd: string) => {
+      if (cmd === 'create_scheduled_transaction')
+        return Promise.reject(new Error('转出账户与转入账户币种不一致，定时转账不支持跨币种'))
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    }) as typeof invoke)
+    await form.submitCreate({
+      kind: 'scheduled_transfer',
+      amountCents: 50000,
+      specific: { to_account_id: 'acc-1', total_occurrences: null },
+    })
+    expect(lastMessage('error')).toBe('创建失败: 转出账户与转入账户币种不一致，定时转账不支持跨币种')
+    // 不重置草稿（弹窗保持打开）
+    expect(form.note.value).toBe('月度储蓄')
+    expect(form.accountId.value).toBe('acc-1')
+    expect(onSubmitted).not.toHaveBeenCalled()
   })
 })
