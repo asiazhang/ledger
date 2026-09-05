@@ -96,8 +96,9 @@ export interface ScheduledPlanRow<E> {
 
 /** 行操作描述符：适配器据此渲染操作列（纯数据，无组件引用）。 */
 export interface ScheduledPlanRowAction {
-  /** 稳定键（适配器可作测试锚点前缀：op-detail / op-pause / op-resume / op-cancel）。 */
-  key: 'detail' | 'pause' | 'resume' | 'cancel'
+  /** 稳定键（适配器可作测试锚点前缀：op-detail / op-pause / op-resume / op-cancel；
+   * op-edit 由订阅适配器自建描述符，spec #520）。 */
+  key: 'detail' | 'edit' | 'pause' | 'resume' | 'cancel'
   label: string
   /** 按 Plan Lifecycle 状态的可用性（后端语义见 ADR-0024，模块只消费不重定义）。 */
   available: boolean

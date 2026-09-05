@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
-import { computed, h, onMounted, ref, type VNode } from 'vue'
+import { computed, h, onMounted, ref } from 'vue'
 import { t } from '@/i18n'
 import {
   NCard,
@@ -16,7 +16,6 @@ import {
   type DataTableColumns,
 } from 'naive-ui'
 import AppDatePicker from '@/components/AppDatePicker.vue'
-import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import AppTreeSelect from '@/components/AppTreeSelect.vue'
 import { formatAmount } from '@/types'
@@ -32,9 +31,11 @@ import {
   scheduledRecurrenceOptions,
   useScheduledPlanList,
   type ScheduledPlanRow,
+  type ScheduledPlanRowAction,
 } from '@/composables/useScheduledPlanList'
 import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
+import PlanRowActions from '@/components/scheduled/PlanRowActions.vue'
 import SubscriptionSpendPanel from '@/components/scheduled/SubscriptionSpendPanel.vue'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
 import { scheduledStatusLabel } from '@/utils/scheduled'
@@ -42,7 +43,10 @@ import { scheduledStatusLabel } from '@/utils/scheduled'
 /**
  * 订阅页签 = ScheduledPlanList 计划清单模块（ADR-0041 迁移步 2）的薄适配器：
  * 清单加载/刷新、状态过滤、Plan Lifecycle 操作、行操作描述符与周期标签全在模块，
- * 生命周期变更（暂停/恢复/取消）后经 onStatusChanged 回调钩子刷新订阅花费面板；
+ * 生命周期变更（暂停/恢复/取消）后经 onStatusChanged 回调钩子刷新订阅花费面板。
+ * 行操作经共享渲染组件 PlanRowActions 渲染（确认弹层/锚点/空占位只此一份，
+ * ADR-0041 决策 7 注），描述符由本页签自组——模块产出在详情动作后插入自建
+ * 编辑描述符（同形状、无确认文案；编辑弹窗开启逻辑留本页签，spec #520）。
  * 本组件只留订阅形态真差异——商户挂靠、编辑弹窗（仅金额以外字段可编辑，
  * ADR-0023 决策三，商户解析走表单接缝编辑分支）、花费面板与列/单元格渲染。
  * 本页签无 #309 显式可见变化项：列、操作、表单、提示、排序零变化。
@@ -53,24 +57,10 @@ const message = useMessage()
 
 // ---------------------------------------------------------------------------
 // 表单接缝（ADR-0041）：新建与编辑弹窗各持一份草稿实例——公共草稿字段、商户
-// 解析（含重名兜底竞态）与公共 payload 组装全仓单点；金额、校验与提交编排留本页签。
+// 解析（含重名兜底竞态）与公共 payload 组装全仓单点。新建实例的提交流程编排
+// 沉入接缝 submitCreate（见下方「新建订阅表单接缝与提交」段，spec #520）。
 // ---------------------------------------------------------------------------
 
-const createForm = useScheduledPlanForm()
-const {
-  note,
-  accountId,
-  categoryId,
-  merchantRef,
-  currencyCode,
-  recurrenceType,
-  recurrenceInterval,
-  startDate,
-  accountOptions,
-  currencyOptions,
-  categoryTreeOptions,
-  merchantOptions,
-} = createForm
 const editForm = useScheduledPlanForm()
 const {
   note: editNote,
@@ -134,12 +124,39 @@ const {
 
 const amountYuan = ref('')
 
-/** 重置新建表单到初始态：公共字段走接缝 reset，金额留本页签。 */
-function resetCreateForm() {
-  createForm.reset()
-  amountYuan.value = ''
-}
+// ---------------------------------------------------------------------------
+// 新建订阅表单接缝与提交（spec #520）：提交流程编排沉入接缝 submitCreate——
+// 商户解析进编排 → 公共 payload → 创建命令 → 提示 → 公共草稿重置 → 成功后回调；
+// 成功后回调注入本页签原子动作：关窗 + 金额重置 + 清单刷新 + 订阅花费刷新
+// （花费刷新为订阅真差异追加，时序与现状一致：清单刷新之后）。金额校验
+// （账户必选、金额 > 0）与元转分留本页签。
+// ---------------------------------------------------------------------------
 
+const createForm = useScheduledPlanForm({
+  onSubmitted: async () => {
+    // 提交成功后原子动作（公共草稿已由接缝重置）
+    closeCreateIntent()
+    amountYuan.value = ''
+    await list.load()
+    refreshSpend()
+  },
+})
+const {
+  note,
+  accountId,
+  categoryId,
+  merchantRef,
+  currencyCode,
+  recurrenceType,
+  recurrenceInterval,
+  startDate,
+  accountOptions,
+  currencyOptions,
+  categoryTreeOptions,
+  merchantOptions,
+} = createForm
+
+/** 新建提交：金额校验留页签，提交流程编排由接缝 submitCreate 持有（spec #520）。 */
 async function create() {
   if (!accountId.value) {
     message.warning(t('scheduled.form.selectAccount'))
@@ -150,19 +167,7 @@ async function create() {
     message.warning(t('scheduled.form.amountPositive'))
     return
   }
-  try {
-    const merchantId = await createForm.resolveMerchant()
-    await api.createScheduledTransaction(
-      createForm.buildCreateInput({ kind: 'subscription', amountCents, merchantId }),
-    )
-    message.success(t('scheduled.toast.subscriptionCreated'))
-    closeCreateIntent()
-    resetCreateForm()
-    await list.load()
-    refreshSpend()
-  } catch (e) {
-    message.error(t('scheduled.toast.createFailed', { message: errorMessage(e) }))
-  }
+  await createForm.submitCreate({ kind: 'subscription', amountCents })
 }
 
 // ---------------------------------------------------------------------------
@@ -315,65 +320,27 @@ const columns = computed<DataTableColumns<SubscriptionRow>>(() => [
   {
     title: t('scheduled.column.actions'),
     key: 'actions',
-    // 行操作描述符（可用性矩阵/标签/run）由模块构建；此处按描述符渲染，
-    // 含 confirm 文案的动作经 AppPopconfirm 二次确认（弹层纪律 ADR-0035）。
-    // 订阅真差异「编辑」（仅非金额字段，ADR-0023 决策三）插在期次之后：
-    // active/paused 可编辑、已取消不提供——模块描述符不含编辑，留本适配器。
+    // 行操作描述符由模块构建，本页签自组数组透传共享渲染组件（确认弹层/测试锚点/
+    // 空占位只此一份，ADR-0041 决策 7 注）：订阅真差异「编辑」（仅非金额字段，
+    // ADR-0023 决策三）以同形状描述符紧随详情动作之后——active/paused 可编辑、
+    // 已取消不提供、无确认文案；渲染组件不识形态，编辑弹窗开启逻辑留本页签。
     render: (row) => {
       const status = row.plan.core.status
-      const buttons: VNode[] = []
+      const actions: ScheduledPlanRowAction[] = []
       for (const action of list.rowActions(row)) {
-        if (!action.available) continue
-        if (action.confirm) {
-          buttons.push(
-            h(
-              AppPopconfirm,
-              { onPositiveClick: action.run },
-              {
-                default: () => action.confirm,
-                trigger: () =>
-                  h(
-                    NButton,
-                    {
-                      size: 'tiny',
-                      type: 'error',
-                      quaternary: true,
-                      'data-testid': `op-${action.key}-${row.plan.core.id}`,
-                    },
-                    () => action.label,
-                  ),
-              },
-            ),
-          )
+        if (action.key === 'detail') {
+          actions.push(action, {
+            key: 'edit',
+            label: t('scheduled.action.edit'),
+            available: status === 'active' || status === 'paused',
+            confirm: null,
+            run: () => openEdit(row),
+          })
         } else {
-          buttons.push(
-            h(
-              NButton,
-              {
-                size: 'tiny',
-                'data-testid': `op-${action.key}-${row.plan.core.id}`,
-                onClick: action.run,
-              },
-              () => action.label,
-            ),
-          )
-        }
-        if (action.key === 'detail' && (status === 'active' || status === 'paused')) {
-          buttons.push(
-            h(
-              NButton,
-              {
-                size: 'tiny',
-                'data-testid': `op-edit-${row.plan.core.id}`,
-                onClick: () => openEdit(row),
-              },
-              () => t('scheduled.action.edit'),
-            ),
-          )
+          actions.push(action)
         }
       }
-      if (buttons.length === 0) return '—'
-      return h(NSpace, { size: 4 }, () => buttons)
+      return h(PlanRowActions, { actions, rowId: row.plan.core.id })
     },
   },
 ])

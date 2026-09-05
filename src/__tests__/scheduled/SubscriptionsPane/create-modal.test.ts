@@ -50,7 +50,11 @@ describe('SubscriptionsPane 新建订阅模态对话框（issue #158）', () => 
     ).toBe(false)
   })
 
-  it('弹窗内填表创建走既有创建命令，金额转分、kind=subscription', async () => {
+  // 提交流程编排（商户解析 → payload 组装 → 创建 → 提示 → 重置 → 回调）已迁移至接缝接口测试
+  // （useScheduledPlanForm.test.ts「submitCreate 提交时序编排」订阅形态用例）。此处保留：
+  // 交互冒烟（关窗 + 清单刷新接线）、金额校验（留页签）与元转分接线。
+
+  it('弹窗内填表创建走创建命令，金额转分、kind=subscription（公共字段与商户解析断言留给接缝直测）', async () => {
     const wrapper = await mountView()
     await openCreateModal(wrapper)
     const noteInput = findInput(wrapper, 'sub-note')
@@ -73,18 +77,12 @@ describe('SubscriptionsPane 新建订阅模态对话框（issue #158）', () => 
 
     const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_scheduled_transaction')
     expect(call).toBeDefined()
-    expect(call![1]).toEqual({
+    expect(call![1]).toMatchObject({
       input: {
         kind: 'subscription',
         account_id: 'acc-1',
         category_id: 'cat-1',
-        merchant_id: null,
         amount_cents: 2500,
-        currency_code: 'CNY',
-        recurrence_type: 'monthly',
-        recurrence_interval: 1,
-        recurrence_day: null,
-        start_date: '2026-02-15',
         note: '音乐订阅',
       },
     })

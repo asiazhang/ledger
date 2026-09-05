@@ -427,6 +427,43 @@ describe('useScheduledPlanForm submitCreate 提交时序编排（spec #520）', 
     }
   })
 
+  it('订阅形态：商户解析进编排（按名复用），创建参数为公共字段全量且不带形态特化键', async () => {
+    const onSubmitted = vi.fn()
+    await useReferenceStore().refresh()
+    const form = useScheduledPlanForm({ onSubmitted })
+    form.note.value = '音乐订阅'
+    form.accountId.value = 'acc-1'
+    // 输入在用商户名（未选 id）：接缝按名复用（解析矩阵见「商户解析」describe）
+    form.merchantRef.value = '视频平台'
+    await form.submitCreate({
+      kind: 'subscription',
+      // 每期金额（分）由页签校验并元转分：页签传入什么金额就发什么
+      amountCents: 2500,
+    })
+    const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_scheduled_transaction')
+    expect(call).toBeDefined()
+    // 全 payload 全量钉住：公共字段单源组装（币种/周期三字段/开始日取草稿默认终态），
+    // 订阅无形态特化键（金额即每期金额，分期/转账特化键不出现）
+    expect(call![1]).toEqual({
+      input: {
+        kind: 'subscription',
+        account_id: 'acc-1',
+        category_id: null,
+        merchant_id: 'mch-1',
+        amount_cents: 2500,
+        currency_code: 'CNY',
+        recurrence_type: 'monthly',
+        recurrence_interval: 1,
+        recurrence_day: null,
+        start_date: todayStr(),
+        note: '音乐订阅',
+      },
+    })
+    // 成功提示按形态由接缝单源持有（文案键逐字维持现状）
+    expect(lastMessage('success')).toBe('已创建订阅')
+    expect(onSubmitted).toHaveBeenCalledTimes(1)
+  })
+
   it('分期形态：商户解析进编排（按名复用），创建参数含分期 specific 与解析后的商户 id', async () => {
     const onSubmitted = vi.fn()
     await useReferenceStore().refresh()
