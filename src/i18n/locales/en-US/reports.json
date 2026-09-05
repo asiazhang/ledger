@@ -16,6 +16,13 @@
   "merchant": {
     "title": "Merchant Ranking",
     "empty": "No merchant spending this period",
-    "topOption": "Top {n}"
+    "topOption": "Top {n}",
+    "columns": {
+      "name": "Merchant",
+      "bar": "Spending",
+      "amount": "Amount",
+      "share": "Share",
+      "count": "Count"
+    }
   }
 }

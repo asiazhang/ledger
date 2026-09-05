@@ -5,12 +5,11 @@ import { invoke } from '@tauri-apps/api/core'
 import { NButton, NEmpty, NSelect } from 'naive-ui'
 import QuickTimeRange from '@/components/QuickTimeRange.vue'
 import ReportsView from '@/views/ReportsView.vue'
-import { categoryColor, paletteColor } from '@/utils/category-chart'
+import { categoryColor } from '@/utils/category-chart'
 import { UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS, MERCHANT_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
 import { invokeHandler, makeCategory } from './factories'
 import type { NullableDateRange } from '@/utils/time-period'
 import type { ReportDateRange } from '@/types'
-import type { ChartOptions, TooltipItem } from 'chart.js'
 
 // jsdom 无 canvas：图表组件用共享桩承接（line-chart-stub，先例 #160），
 // 把 data/options 序列化进 DOM 供断言图数据形态与横向 options。
@@ -604,7 +603,7 @@ describe('ReportsView 会话内保留（issue #427）：同一 pinia 卸载重�
 })
 
 
-describe('ReportsView 商户排行柱图化 + TopN（issue #588）', () => {
+describe('ReportsView 商户排行表格化 + TopN（issue #588 → #618）', () => {
   const mockMerchants = [
     { merchant_id: 'm-1', merchant_name: '超市', amount_cents: 5000, transaction_count: 3 },
     { merchant_id: 'm-2', merchant_name: '咖啡', amount_cents: 3000, transaction_count: 2 },
@@ -614,17 +613,22 @@ describe('ReportsView 商户排行柱图化 + TopN（issue #588）', () => {
   /** 商户载荷：total_cents 刻意 ≠ rows 合计（9000），供占比分母断言识别真源 */
   const merchantPayload = (rows = mockMerchants) => ({ rows, total_cents: 15000 })
 
-  /** 商户图（class 定位）的 data/options */
-  function merchantChartProp(prop: 'data' | 'options', wrapper: ReturnType<typeof mount>) {
-    const node = wrapper.find(`.merchant-chart [data-testid="bar-${prop}"]`)
-    return JSON.parse(node.text())
-  }
+  /** 商户参考数据：MerchantLink 经 merchantMap 解析名称（软删历史名照常可下钻） */
+  const merchantRefs = mockMerchants.map((m) => ({
+    id: m.merchant_id,
+    name: m.merchant_name,
+    is_deleted: false,
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    version: 1,
+    device_id: 'test',
+  }))
 
-  /** 商户图 options 真对象（图桩 props 不序列化，供 tooltip 回调直接调用） */
-  function merchantOptions(wrapper: ReturnType<typeof mount>) {
-    const bar = wrapper.findComponent('.merchant-chart')
-    expect(bar.exists()).toBe(true)
-    return bar.props('options') as ChartOptions<'bar'>
+  /** 点第 i 行商户名（MerchantLink 受控下钻模式，#618 表格化后的下钻入口） */
+  async function clickMerchantName(wrapper: ReturnType<typeof mount>, index = 0) {
+    const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr')
+    await trs[index].find('[data-testid="merchant-name"]').trigger('click')
+    await flushPromises()
   }
 
   /** TopN 档位选择（面板头部 NRadioButton 按档位定位；naive-ui 交互走 input setValue，
@@ -636,23 +640,16 @@ describe('ReportsView 商户排行柱图化 + TopN（issue #588）', () => {
     await flushPromises()
   }
 
-  it('横向柱状图：indexAxis 为 y，柱序 = 后端返回序（排序截断收口后端，零口径逻辑）', async () => {
-    baseInvoke({ merchant_shares: merchantPayload() })
+  it('表格行序 = 后端返回序：商户名、金额、占比、笔数逐行渲染（口径归纯函数，此处锁视图接线）', async () => {
+    baseInvoke({ list_merchants: merchantRefs, merchant_shares: merchantPayload() })
     const wrapper = await mountReports()
-    const options = merchantChartProp('options', wrapper)
-    expect(options.indexAxis).toBe('y')
-    expect(options.plugins.legend.display).toBe(false)
-    const data = merchantChartProp('data', wrapper)
-    expect(data.labels).toEqual(['超市', '咖啡', '书店'])
-    expect(data.datasets[0].data).toEqual([5000, 3000, 1000])
-  })
-
-  it('柱色与分类构成同源：色板按名次序取色（多颜色 + hex 实色，渐变由绘制期插件呈现）', async () => {
-    baseInvoke({ merchant_shares: merchantPayload() })
-    const wrapper = await mountReports()
-    const colors: string[] = merchantChartProp('data', wrapper).datasets[0].backgroundColor
-    expect(colors).toEqual([paletteColor(0), paletteColor(1), paletteColor(2)])
-    for (const color of colors) expect(color).toMatch(/^#[0-9a-f]{6}$/)
+    const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr')
+    expect(trs).toHaveLength(3)
+    expect(trs[0].find('[data-testid="merchant-name"]').text()).toBe('超市')
+    // 金额走 formatAmount（分 → 元）：5000 → 50；占比分母 = 载荷全量合计 15000 → 33%
+    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe('50')
+    expect(trs[0].find('[data-testid="merchant-share"]').text()).toBe('33%')
+    expect(trs[0].find('[data-testid="merchant-count"]').text()).toBe('3')
   })
 
   it('默认 Top 5：进入即以 top_n=5 查询', async () => {
@@ -740,26 +737,17 @@ describe('ReportsView 商户排行柱图化 + TopN（issue #588）', () => {
     // 迟到的 #2（top 10 旧响应）后到：必须被丢弃，不得覆盖 top 5 结果
     releaseTop10({ rows: [{ merchant_id: 'm-x', merchant_name: '迟到户', amount_cents: 9, transaction_count: 1 }], total_cents: 9 })
     await flushPromises()
-    const data = merchantChartProp('data', wrapper)
-    expect(data.labels).toEqual(['快餐'])
-    expect(data.datasets[0].data).toEqual([500])
+    const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr')
+    expect(trs).toHaveLength(1)
+    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe('5')
   })
 
-  it('tooltip 占比分母 = 后端全量合计（payload total_cents），非展示行合计', async () => {
-    baseInvoke({ merchant_shares: merchantPayload() })
-    const wrapper = await mountReports()
-    const label = merchantOptions(wrapper).plugins?.tooltip?.callbacks
-      ?.label as (item: TooltipItem<'bar'>) => string
-    // 咖啡 3000 / 全量 15000 = 20%（若误用展示行合计 9000 会得 33%）
-    expect(label({ raw: 3000 } as TooltipItem<'bar'>)).toBe('30 · 20%')
-  })
-
-  it('点商户柱跳传交易列表（#589）：载荷 = 商户 id + 所选期间首尾日期 + 收支类型集合（支出+退款）', async () => {
-    baseInvoke({ merchant_shares: merchantPayload() })
+  it('点商户名跳传交易列表（#589 → #618）：载荷 = 商户 id + 所选期间首尾日期 + 收支类型集合（支出+退款）', async () => {
+    baseInvoke({ list_merchants: merchantRefs, merchant_shares: merchantPayload() })
     const wrapper = await mountReports()
     pushMock.mockClear()
-    // 点第 1 根柱（超市 5000，商户 id m-1）：直达该商户本期支出+退款明细
-    await wrapper.find('.merchant-chart [data-testid="bar-click"]').trigger('click')
+    // 点第 1 行商户名（超市 5000，商户 id m-1）：直达该商户本期支出+退款明细
+    await clickMerchantName(wrapper)
     expect(pushMock).toHaveBeenCalledTimes(1)
     expect(pushMock).toHaveBeenCalledWith({
       name: 'transactions',
@@ -772,12 +760,12 @@ describe('ReportsView 商户排行柱图化 + TopN（issue #588）', () => {
     })
   })
 
-  it('商户下钻载荷随期间（#589 边界）：选「去年」后点柱带去年年界', async () => {
-    baseInvoke({ merchant_shares: merchantPayload() })
+  it('商户下钻载荷随期间（#589 边界）：选「去年」后点商户名带去年年界', async () => {
+    baseInvoke({ list_merchants: merchantRefs, merchant_shares: merchantPayload() })
     const wrapper = await mountReports()
     await clickChip(wrapper, '去年')
     pushMock.mockClear()
-    await wrapper.find('.merchant-chart [data-testid="bar-click"]').trigger('click')
+    await clickMerchantName(wrapper)
     expect(pushMock).toHaveBeenCalledWith({
       name: 'transactions',
       query: {

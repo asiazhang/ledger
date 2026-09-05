@@ -292,53 +292,40 @@ describe('报表卡面：支出分类构成（值轴刻度 / 图内柱尾标注 
   })
 })
 
-describe('报表卡面：商户排行柱图（值轴刻度 / 柱尾标注 / tooltip 同源掩码，issue #567 → #588 柱图化）', () => {
-  it('值轴刻度与 tooltip 关闭态与现状逐字符一致：金额 · 占比%（分母 = 后端全量合计）', async () => {
+describe('报表卡面：商户排行表格（金额数字同源掩码，issue #567 → #618 表格化）', () => {
+  /** 商户表格数据行（NDataTable 渲染的 tbody tr） */
+  function merchantRows(wrapper: VueWrapper) {
+    return wrapper.findAll('[data-testid="merchant-table"] tbody tr')
+  }
+
+  it('关闭态金额与现状逐字符一致（formatAmount 分 → 元）；占比与内嵌条照常渲染', async () => {
     const wrapper = mount(ReportsView)
     await flushPromises()
-    const options = barOptions(wrapper, 2)
-    const tick = linearTick(options, 'x')
-    expect(tick(50000, 0, [])).toBe('500')
-    expect(tick(9900, 0, [])).toBe('99')
-    const label = tooltipCb<(item: TooltipItem<'bar'>) => string>(options, 'label')
-    // 全量合计 150000：50000 → 33%、9900 → 7%（误用展示行合计 59900 会得 83%/17%）
-    expect(label(tooltipItem(50000))).toBe('500 · 33%')
-    expect(label(tooltipItem(9900))).toBe('99 · 7%')
-    // 类目轴（y）为商户名字符串，不带金额刻度 callback
-    expect(options.scales?.y?.ticks?.callback).toBeUndefined()
+    const trs = merchantRows(wrapper)
+    expect(trs).toHaveLength(2)
+    // 50000 → 500、9900 → 99（金额数字走 formatAmount 展示格式化层，掩码单一来源）
+    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe('500')
+    expect(trs[1].find('[data-testid="merchant-amount"]').text()).toBe('99')
+    // 占比分母 = 后端全量合计 150000：50000 → 33%、9900 → 7%（误用展示行合计 59900 会得 83%/17%）
+    expect(trs[0].find('[data-testid="merchant-share"]').text()).toBe('33%')
+    expect(trs[1].find('[data-testid="merchant-share"]').text()).toBe('7%')
+    // 内嵌条（形状）照常渲染：条长 ∝ 金额 ÷ 显示区最大金额（50000 为最大 → 100% / 19.8%）
+    expect(trs[0].find('[data-testid="merchant-bar"]').attributes('style')).toContain('width: 100%')
+    expect(trs[1].find('[data-testid="merchant-bar"]').attributes('style')).toContain('width: 19.8%')
   })
 
-  it('开启后值轴与 tooltip 恒掩码，占比保留（图形与相对构成可用性不受损）', async () => {
+  it('开启后金额数字恒掩码，占比保留（相对构成可用性不受损）、内嵌条（形状）保留', async () => {
     const wrapper = mount(ReportsView)
     await flushPromises()
     amountPrivacyEnabled.value = true
     await nextTick()
-    const options = barOptions(wrapper, 2)
-    expect(linearTick(options, 'x')(50000, 0, [])).toBe('••••')
-    const label = tooltipCb<(item: TooltipItem<'bar'>) => string>(options, 'label')
-    expect(label(tooltipItem(50000))).toBe('•••• · 33%')
-    expect(label(tooltipItem(9900))).toBe('•••• · 7%')
-  })
-
-  it('图内柱尾金额标注（canvas 插件）开启恒掩码，关闭态与现状一致', async () => {
-    const wrapper = mount(ReportsView)
-    await flushPromises()
-    const plugins = barProp(wrapper, 2, 'plugins') as Array<{
-      id: string
-      afterDatasetsDraw(chart: Chart<'bar'>): void
-    }>
-    const endPlugin = plugins.find((p) => p.id === 'barEndAmounts')
-    expect(endPlugin).toBeTruthy()
-
-    // 关闭态：柱尾画「500 / 99」（与轴刻度同口径）
-    const off = fakeBarEndChart([50000, 9900])
-    endPlugin!.afterDatasetsDraw(off.chart)
-    expect(off.fillText.mock.calls.map((c) => c[0])).toEqual(['500', '99'])
-
-    amountPrivacyEnabled.value = true
-    const on = fakeBarEndChart([50000, 9900])
-    endPlugin!.afterDatasetsDraw(on.chart)
-    expect(on.fillText.mock.calls.map((c) => c[0])).toEqual(['••••', '••••'])
+    const trs = merchantRows(wrapper)
+    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe('••••')
+    expect(trs[1].find('[data-testid="merchant-amount"]').text()).toBe('••••')
+    expect(trs[0].find('[data-testid="merchant-share"]').text()).toBe('33%')
+    expect(trs[1].find('[data-testid="merchant-share"]').text()).toBe('7%')
+    expect(trs[0].find('[data-testid="merchant-bar"]').exists()).toBe(true)
+    expect(trs[0].find('[data-testid="merchant-bar"]').attributes('style')).toContain('width: 100%')
   })
 })
 

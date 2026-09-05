@@ -16,6 +16,13 @@
   "merchant": {
     "title": "商户消费排行",
     "empty": "本期暂无商户消费",
-    "topOption": "Top {n}"
+    "topOption": "Top {n}",
+    "columns": {
+      "name": "商户名",
+      "bar": "金额分布",
+      "amount": "金额",
+      "share": "占比",
+      "count": "笔数"
+    }
   }
 }

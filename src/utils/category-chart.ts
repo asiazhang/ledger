@@ -108,8 +108,16 @@ export function categoryBarTotal(bars: { value: number }[]): number {
   return bars.reduce((sum, b) => sum + b.value, 0)
 }
 
+/** 占比%（整数）：分母 = 调用方声明的合计口径；分母为 0（无柱或正负相抵）时归 0，
+ *  不出现除零。报表域占比的单一来源——分类 tooltip 与商户排行表格行（issue #618）
+ *  共用同一取整口径，负值照实（退款冲减可见）。 */
+export function sharePercent(value: number, total: number): number {
+  if (total === 0) return 0
+  return Math.round((value / total) * 100)
+}
+
 /** tooltip 标签「金额 · 占比%」；分母为 0（无柱或正负相抵）时只显示金额，不出现除零。 */
 export function barTooltipLabel(value: number, total: number): string {
   if (total === 0) return formatAmount(value)
-  return `${formatAmount(value)} · ${Math.round((value / total) * 100)}%`
+  return `${formatAmount(value)} · ${sharePercent(value, total)}%`
 }

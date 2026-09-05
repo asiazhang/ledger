@@ -12,11 +12,19 @@ import { t } from '@/i18n'
  *
  * 经 merchantMap（在用 + 软删显示映射）解析名称：软删商户的历史交易照常显示并可下钻；
  * 未知商户 id（参考数据晚到等）渲染为纯文本「-」，不可点击、不下钻。
+ *
+ * 受控下钻模式（drillIntent，issue #618）：置位后点击不自行跳转、只上报 `drill`
+ * 意图（携带商户 id），跳转载荷由调用方显式构造——报表商户排行表格先例：载荷还需
+ * 携带期间边界与收支类型集合，归报表视图构造（词汇表「商户排行下钻」）。
  */
 const props = defineProps<{
   /** 目标商户 id（在参考数据 merchantMap 中查找名称；查不到视为未知，渲染纯文本「-」） */
   merchantId: string
+  /** 受控下钻意图模式：点击只 emit('drill')，不自行跳转（默认 false 保持既有跳转） */
+  drillIntent?: boolean
 }>()
+
+const emit = defineEmits<{ (e: 'drill', merchantId: string): void }>()
 
 const reference = useReferenceStore()
 const router = useRouter()
@@ -38,6 +46,10 @@ const accent = computed(() => {
 })
 
 function go() {
+  if (props.drillIntent) {
+    emit('drill', props.merchantId)
+    return
+  }
   router.push({ name: 'transactions', query: { merchant: props.merchantId } })
 }
 </script>
