@@ -24,6 +24,7 @@ import { yuanToCents } from '@/utils/money'
 import type { ScheduledTransactionOccurrence } from '@/types'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
+import { useModalIntent } from '@/composables/useModalIntent'
 import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
 import {
   earliestPendingOccurrence,
@@ -156,11 +157,28 @@ async function create() {
 // 弹窗无金额输入；提交走订阅编辑命令，携带金额字段会被后端显式拒绝。
 // 编辑不改已生成的期次与交易（期次执行时从计划读取这些字段），只影响未来。
 // 草稿字段（备注/账户/分类/商户）复用表单接缝的第二实例，打开即回填。
+//
+// 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
+// 意图闭集单成员（携带目标计划行），显示由「意图非空」派生（无独立 show 布尔），
+// 序号随开启递增驱动表单重建（:key=editSeq），关闭（✕ / ESC / 取消 / 保存成功）
+// 统一经工厂清回 null 终态；行入口 openEdit 不变。editCurrentMerchantId 等
+// 表单伴随状态属表单接缝/视图侧，不进工厂。
 // ---------------------------------------------------------------------------
 
-const showEditModal = ref(false)
-const editingId = ref<string | null>(null)
-/** 被编辑计划的当前商户 id（供表单接缝 resolveMerchant 的软删兜底分支判定）。 */
+/** 编辑订阅弹窗意图（单成员闭集）：携带目标计划行。 */
+interface SubscriptionEditIntent {
+  row: SubscriptionRow
+}
+
+const {
+  intent: editIntent,
+  seq: editSeq,
+  open: openEditIntent,
+  close: closeEdit,
+} = useModalIntent<SubscriptionEditIntent>()
+
+/** 被编辑计划的当前商户 id（供表单接缝 resolveMerchant 的软删兜底分支判定）；
+ * 表单伴随状态属表单接缝/视图侧，不进意图工厂（ADR-0072 决策 4）。 */
 const editCurrentMerchantId = ref<string | null>(null)
 
 // 编辑商户下拉（issue #190）：在用商户 + 原商户软删且超出会话缓存时追加兜底选项
@@ -175,31 +193,31 @@ const editMerchantOptions = computed<{ label: string; value: string }[]>(() => {
 })
 
 function openEdit(row: SubscriptionRow) {
-  editingId.value = row.plan.core.id
   editNote.value = row.plan.core.note ?? ''
   editAccountId.value = row.plan.core.account_id
   editCategoryId.value = row.plan.core.category_id
   editCurrentMerchantId.value = row.plan.merchant_id
   editMerchantRef.value = row.plan.merchant_id
-  showEditModal.value = true
+  openEditIntent({ row })
 }
 
 async function saveEdit() {
-  if (!editingId.value) return
+  const target = editIntent.value
+  if (!target) return
   if (!editAccountId.value) {
     message.warning(t('scheduled.form.selectAccount'))
     return
   }
   try {
     await api.updateScheduledSubscription({
-      id: editingId.value,
+      id: target.row.plan.core.id,
       account_id: editAccountId.value,
       category_id: editCategoryId.value,
       merchant_id: await editForm.resolveMerchant(editCurrentMerchantId.value),
       note: editNote.value.trim() || null,
     })
     message.success(t('scheduled.toast.saved'))
-    showEditModal.value = false
+    closeEdit()
     await list.load()
     refreshSpend()
   } catch (e) {
@@ -484,16 +502,25 @@ onMounted(() => {
       </NForm>
     </AppModal>
 
-    <!-- 编辑订阅弹窗（issue #162）：仅非金额字段（备注/账户/分类），无金额输入 -->
+    <!-- 编辑订阅弹窗（issue #162）：仅非金额字段（备注/账户/分类），无金额输入。
+         显示由「意图非空」派生（无独立 show 布尔），关闭统一经工厂清回 null 终态；
+         序号作 key 强制重建（ADR-0072）。 -->
     <AppModal
-      v-model:show="showEditModal"
+      :show="editIntent !== null"
       :title="t('scheduled.pane.editSubscription')"
       preset="card"
       display-directive="if"
       style="width: 480px"
       :bordered="false"
+      @update:show="(v: boolean) => (v ? undefined : closeEdit())"
     >
-      <NForm label-placement="left" :show-feedback="false" size="small">
+      <NForm
+        v-if="editIntent"
+        :key="editSeq"
+        label-placement="left"
+        :show-feedback="false"
+        size="small"
+      >
         <NSpace vertical :size="12">
           <NFormItem :label="t('scheduled.form.note')">
             <NInput
@@ -534,7 +561,7 @@ onMounted(() => {
             />
           </NFormItem>
           <NSpace justify="end">
-            <NButton data-testid="sub-edit-cancel" @click="showEditModal = false">{{ t('scheduled.form.cancel') }}</NButton>
+            <NButton data-testid="sub-edit-cancel" @click="closeEdit">{{ t('scheduled.form.cancel') }}</NButton>
             <NButton type="primary" data-testid="sub-edit-save" @click="saveEdit">{{ t('scheduled.form.save') }}</NButton>
           </NSpace>
         </NSpace>
