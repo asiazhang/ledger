@@ -24,7 +24,8 @@ import {
 // （前缀集合与受管判定收口在 `src/utils/backup-name.ts`，issue #127）。
 // 后端在自动备份完成 / 备份清理成功后发出 `ledger:backups-changed`
 // 无 payload 信号（issue #129，与 `ledger:changed` 平行），本模块订阅后
-// 自动刷新备份列表与自动备份状态，无需手动刷新。
+// 自动刷新备份列表与自动备份状态；列表卡头部另有手动刷新按钮（issue #651），
+// 供用户在文件管理器手动增删文件后显式同步列表与磁盘。
 const BACKUPS_CHANGED_EVENT = "ledger:backups-changed";
 
 function formatSize(bytes: number): string {
@@ -151,6 +152,17 @@ export function useBackup() {
     } catch (e: any) {
       backups.value = [];
       message.error(t("settings.data.msg.listFailed", { msg: errorMessage(e) }));
+    }
+  }
+
+  /// 手动刷新（issue #651）：列表卡头部按钮，重拉使列表与磁盘一致。
+  const refreshing = ref(false);
+  async function refreshList() {
+    refreshing.value = true;
+    try {
+      await refreshBackups();
+    } finally {
+      refreshing.value = false;
     }
   }
 
@@ -317,7 +329,7 @@ export function useBackup() {
         void refreshAutoBackupState();
       });
     } catch (e) {
-      // 订阅失败不影响手动操作路径：列表仍可经按钮刷新。
+      // 订阅失败不影响手动刷新路径：列表可经刷新按钮重拉（refreshList）。
       console.warn("订阅 ledger:backups-changed 失败", e);
     }
   });
@@ -348,5 +360,7 @@ export function useBackup() {
     autoBackupEnabled,
     autoBackupLastText,
     toggleAutoBackup,
+    refreshing,
+    refreshList,
   };
 }

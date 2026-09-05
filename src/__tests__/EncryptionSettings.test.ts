@@ -588,4 +588,25 @@ describe('EncryptionSettings.vue 本机记住主口令（issue #574）', () => {
     expect(mockInvoke).toHaveBeenCalledWith('set_remember_passphrase', { passphrase: '当前口令' })
     expect(useAppStore().rememberPassphrase).toBe(true)
   })
+
+  it('开发回退形态（issue #662）：显示开发构建提示，区别于发布生物门形态', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve(encryptedStatus),
+      get_remember_passphrase_support: () =>
+        Promise.resolve({ supported: true, mode: 'dev-fallback' }),
+    })
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+    expect(wrapper.html()).toContain('当前为开发构建')
+  })
+
+  it('发布生物门形态（issue #662）：不显示开发构建提示', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve(encryptedStatus),
+      get_remember_passphrase_support: () => Promise.resolve({ supported: true, mode: 'biometry' }),
+    })
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+    expect(wrapper.html()).not.toContain('当前为开发构建')
+  })
 })

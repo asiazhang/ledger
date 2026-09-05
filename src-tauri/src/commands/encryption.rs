@@ -24,7 +24,7 @@ use crate::backup;
 use crate::db::DbState;
 use crate::db::data_location::{self, Boot, DB_FILE_NAME};
 use crate::db::encryption::{self, DbFileKind, EncryptionGate};
-use crate::db::passphrase_cache::{self, CacheLoad};
+use crate::db::passphrase_cache::{self, CacheLoad, RememberMode};
 use crate::db::run_db;
 use crate::error::{AppError, Result};
 
@@ -44,12 +44,16 @@ pub struct UnlockOutcome {
     pub relocated: bool,
 }
 
-/// 本机记住主口令的平台能力（issue #574 / ADR-0075 决策 3）：前端据 `supported`
-/// 决定是否展示「记住」选项（v1 仅 macOS 支持；否则隐藏选项、回退手输）。
+/// 本机记住主口令的平台能力与运行形态（issue #574 / #662 / ADR-0075 决策 3）：
+/// 前端据 `supported` 决定是否展示「记住」选项（v1 仅 macOS 支持；否则隐藏选项、
+/// 回退手输），据 `mode` 区分「平台不支持」与「开发构建回退」并给出可预期提示。
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct RememberPassphraseSupport {
     /// 平台是否支持本机缓存主口令（v1 仅 macOS；不支持时前端隐藏选项、回退手输）。
     pub supported: bool,
+    /// 运行形态（issue #662）：`biometry` = 发布构建，条目带 Touch ID 生物认证门；
+    /// `dev-fallback` = 开发/未签名构建的无门缓存回退（读取不弹生物认证）。
+    pub mode: RememberMode,
 }
 
 /// 生效目录中的库文件路径（引导结果登记的单一来源）。
@@ -288,13 +292,14 @@ pub async fn reset_after_forgotten_passphrase(app: AppHandle) -> Result<()> {
     Ok(())
 }
 
-/// 查询「本机记住主口令」的平台能力（issue #574）：locked 状态下（解锁屏）也要
-/// 可调——解锁屏据 `supported` 决定是否尝试自动解锁。纯能力查询、无副作用、
-/// 不经数据库，无需阻塞线程池。
+/// 查询「本机记住主口令」的平台能力与运行形态（issue #574 / #662）：locked
+/// 状态下（解锁屏）也要可调——解锁屏据 `supported` 决定是否尝试自动解锁。
+/// 纯能力查询、无副作用、不经数据库，无需阻塞线程池。
 #[tauri::command]
 pub async fn get_remember_passphrase_support() -> Result<RememberPassphraseSupport> {
     Ok(RememberPassphraseSupport {
         supported: passphrase_cache::supported(),
+        mode: passphrase_cache::current_mode(),
     })
 }
 

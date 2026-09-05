@@ -235,7 +235,8 @@ async function disable() {
           </NAlert>
 
           <!-- 本机记住主口令（issue #574）：平台不支持（v1 非 macOS）时隐藏；
-               关闭即清缓存恢复手输，开启需再次输入当前主口令以缓存。 -->
+               关闭即清缓存恢复手输，开启需再次输入当前主口令以缓存。
+               开发回退形态（issue #662）：提示当前为无门缓存，区别于发布生物门。 -->
           <NSpace v-if="rememberSupport?.supported" vertical :size="8">
             <NText depth="3">{{ t('settings.data.encryption.rememberToggleLabel') }}</NText>
             <NSwitch
@@ -244,6 +245,13 @@ async function disable() {
               :disabled="rememberEnabling"
             />
             <NText depth="3" class="remember-hint">{{ t('settings.data.encryption.rememberToggleHint') }}</NText>
+            <NText
+              v-if="rememberSupport?.mode === 'dev-fallback'"
+              type="warning"
+              class="remember-hint"
+            >
+              {{ t('settings.data.encryption.rememberDevFallbackHint') }}
+            </NText>
             <template v-if="rememberSwitch && !store.rememberPassphrase">
               <NInput
                 v-model:value="rememberPassInput"

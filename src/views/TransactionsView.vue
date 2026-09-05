@@ -453,8 +453,7 @@ onMounted(() => {
       :title="createTitle"
       preset="card"
       display-directive="if"
-      style="width: 480px"
-      :bordered="false"
+      card-size="md"
       @update:show="(show: boolean) => { if (!show) closeModal() }"
     >
       <TransactionForm
@@ -472,8 +471,7 @@ onMounted(() => {
       :title="t('transactions.refund.title')"
       preset="card"
       display-directive="if"
-      style="width: 480px"
-      :bordered="false"
+      card-size="md"
       @update:show="onModalShowUpdate"
     >
       <RefundForm
@@ -490,8 +488,7 @@ onMounted(() => {
       :title="t('transactions.addItem.title')"
       preset="card"
       display-directive="if"
-      style="width: 440px"
-      :bordered="false"
+      card-size="sm"
       @update:show="onModalShowUpdate"
     >
       <AddItemForm
@@ -510,8 +507,7 @@ onMounted(() => {
       :title="t('transactions.edit.title')"
       preset="card"
       display-directive="if"
-      style="width: 480px"
-      :bordered="false"
+      card-size="md"
       @update:show="onModalShowUpdate"
     >
       <TransactionForm

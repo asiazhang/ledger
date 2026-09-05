@@ -14,8 +14,14 @@ export interface UnlockOutcome {
   relocated: boolean
 }
 
-/** 本机记住主口令的平台能力（issue #574 / ADR-0075 决策 3）。 */
+/** 本机记住主口令的运行形态（issue #662）：缓存条目是否带生物认证门。 */
+export type RememberPassphraseMode = 'biometry' | 'dev-fallback'
+
+/** 本机记住主口令的平台能力与运行形态（issue #574 / #662 / ADR-0075 决策 3）。 */
 export interface RememberPassphraseSupport {
   /** 平台是否支持本机缓存主口令（v1 仅 macOS；不支持时前端隐藏选项、回退手输）。 */
   supported: boolean
+  /** 运行形态：biometry = 发布构建，条目带 Touch ID 门；
+   *  dev-fallback = 开发/未签名构建的无门缓存回退（读取不弹生物认证）。 */
+  mode: RememberPassphraseMode
 }
