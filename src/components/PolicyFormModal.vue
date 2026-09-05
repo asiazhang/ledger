@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from 'vue'
-import { NButton, NForm, NFormItem, NInput, NSpace, NSwitch, useMessage } from 'naive-ui'
+import { NButton, NForm, NFormItem, NInput, NSpace, NSwitch, NText, useMessage } from 'naive-ui'
 import AppModal from '@/components/AppModal.vue'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import AppSelect from '@/components/AppSelect.vue'
@@ -230,8 +230,8 @@ defineExpose({ save })
   <AppModal
     :show="show"
     preset="card"
+    card-size="md"
     :title="editing ? t('policies.form.titleEdit') : t('policies.form.titleCreate')"
-    style="width: 460px"
     data-testid="policy-form-modal"
     @update:show="(v: boolean) => emit('update:show', v)"
   >
@@ -310,11 +310,12 @@ defineExpose({ save })
       <!-- 新建模式：缴费协议折叠开关（默认关 = 趸交/缴清纯档案）+ 字段组 -->
       <template v-if="!editing">
         <NFormItem :label="t('policies.agreement.sectionTitle')">
-          <NSpace :size="8" align="center">
-            <NSwitch v-model:value="withAgreement" data-testid="policy-agreement-toggle" />
-            <span style="opacity: 0.6; font-size: 12px">{{ t('policies.agreement.toggleHint') }}</span>
-          </NSpace>
+          <NSwitch v-model:value="withAgreement" data-testid="policy-agreement-toggle" />
         </NFormItem>
+        <!-- 辅助说明统一段落式（spec #630 / #636）：不再内联 opacity 挤在开关旁 -->
+        <NText depth="3" class="form-hint">
+          {{ t('policies.agreement.toggleHint') }}
+        </NText>
         <div v-show="withAgreement" data-testid="policy-agreement-fields">
           <PolicyAgreementFields ref="agreementFields" />
         </div>
@@ -357,3 +358,11 @@ defineExpose({ save })
     </NForm>
   </AppModal>
 </template>
+
+<style scoped>
+/* 表单下方段落式辅助说明（spec #630）：块级 + 上下留白，不挤占表单项 */
+.form-hint {
+  display: block;
+  margin: 8px 0 12px;
+}
+</style>

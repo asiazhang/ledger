@@ -211,3 +211,31 @@ describe('PolicyFormModal 缴费协议区（issue #362 / ADR-0051 决策 2）', 
     ).toBe(false)
   })
 })
+
+describe('PolicyFormModal 保单弹窗排版统一（issue #636 / spec #630）', () => {
+  /** 断言弹窗卡片：宽度归 md 档（480px）+ 无边框（AppModal 默认，调用点不再显式声明）。
+   *  弹窗卡片 teleport 到 body，本测试直接 mount 组件、body 上应恰有一张卡片
+   *  （先例 PhysicalAssetsView.test.ts 的 visibleModalCard，此处无视图自有卡片故免过滤）。 */
+  function expectModalCard(width: string) {
+    const cards = [...document.querySelectorAll<HTMLElement>('.n-card')]
+    expect(cards, '当前应恰有一个弹窗卡片').toHaveLength(1)
+    expect(cards[0].style.width).toBe(width)
+    expect(cards[0].classList.contains('n-card--bordered')).toBe(false)
+  }
+
+  it('表单弹窗卡片宽度归 md 档（480px）且默认无边框', async () => {
+    await openCreateModal()
+    expectModalCard('480px')
+  })
+
+  it('协议开关提示为表单下方段落式说明，无内联 opacity 挤占开关行', async () => {
+    await openCreateModal()
+    const modal = bodyQuery('[data-testid="policy-form-modal"]')!
+    const hint = modal.querySelector<HTMLElement>('.form-hint')
+    expect(hint?.textContent).toContain('订阅形态缴费协议')
+    const toggleRow = modal
+      .querySelector('[data-testid="policy-agreement-toggle"]')!
+      .closest('.n-form-item')!
+    expect(toggleRow.querySelector('span[style*="opacity"]')).toBeNull()
+  })
+})
