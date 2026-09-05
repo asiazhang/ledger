@@ -189,5 +189,15 @@
     "date-invalid": "Invalid date format, expected YYYY-MM-DD: {0}",
     "status-invalid": "Unknown physical asset status: {0} (valid values: holding/disposed)",
     "not-found": "Physical asset not found: {0}"
+  },
+  "encryption": {
+    "locked": "The app is locked. Unlock it to use the API.",
+    "passphrase-incorrect": "Incorrect master passphrase. Please try again.",
+    "db-corrupt": "The database file is corrupted and failed the integrity check.",
+    "db-missing": "The database file is missing or empty.",
+    "not-encrypted": "The database is not encrypted. Please restart the app and try again.",
+    "not-locked": "The app is not locked and does not need unlocking.",
+    "not-plaintext": "The database is already encrypted. No need to enable encryption again.",
+    "passphrase-empty": "The master passphrase cannot be empty."
   }
 }

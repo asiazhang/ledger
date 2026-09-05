@@ -15,7 +15,8 @@ use std::path::{Path, PathBuf};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
-use super::{check_integrity, open_connection};
+use super::encryption::{DbFileKind, probe_file_kind};
+use super::{check_integrity, open_connection, open_connection_with_passphrase};
 use crate::error::{AppError, Result};
 use crate::fs_util::{cleanup, replace_file, temp_sibling};
 
@@ -41,6 +42,10 @@ pub struct Boot {
     /// 引导期发生回退（指针损坏 / 目标不可用）时的人类可读原因，
     /// 供界面显著提示；`None` 表示正常定位，未发生回退。
     pub fallback_reason: Option<String>,
+    /// 搬迁待解锁后补做（issue #570 / ADR-0075 决策 7）：源库是密文库
+    /// 而启动期无主口令，无法执行 `VACUUM INTO`——引导改用源库位置生效，
+    /// 待解锁成功后由解锁路径以主口令补做搬迁（成功后重启接管目标位置）。
+    pub deferred_relocation: Option<PathBuf>,
 }
 
 /// 指针文件读取结果。
@@ -86,10 +91,12 @@ pub fn boot(default_dir: &Path) -> Boot {
         PointerRead::Unconfigured => Boot {
             db_dir: default_dir.to_path_buf(),
             fallback_reason: None,
+            deferred_relocation: None,
         },
         PointerRead::Corrupt(reason) => Boot {
             db_dir: default_dir.to_path_buf(),
             fallback_reason: Some(reason),
+            deferred_relocation: None,
         },
         PointerRead::Configured(target) => relocate_or_adopt(default_dir, &target),
     }
@@ -97,24 +104,45 @@ pub fn boot(default_dir: &Path) -> Boot {
 
 /// 三分支：目标位置已有库 → 直接使用；目标为空而原位置有库 → `VACUUM INTO`
 /// 整库搬迁后再使用；两者皆无 → 使用目标位置（新建空库由随后的建连完成）。
-/// 任何失败都回退默认目录并携带回退原因，绝不删除或修改既有文件。
+/// 搬迁失败回退默认目录；源库为密文库时搬迁需要主口令（启动期不可得），
+/// 改为推迟到解锁后补做，同样以源库位置生效、不携带回退警示。
 fn relocate_or_adopt(default_dir: &Path, target: &Path) -> Boot {
     match enter_target(default_dir, target) {
         Ok(()) => Boot {
             db_dir: target.to_path_buf(),
             fallback_reason: None,
+            deferred_relocation: None,
         },
-        Err(reason) => {
+        Err(EnterTargetError::DeferredEncryptedRelocation) => {
+            tracing::info!(
+                target = %target.display(),
+                "源库为密文库，搬迁待解锁后补做（本次仍以源库位置生效）"
+            );
+            Boot {
+                db_dir: default_dir.to_path_buf(),
+                fallback_reason: None,
+                deferred_relocation: Some(target.to_path_buf()),
+            }
+        }
+        Err(EnterTargetError::Failed(reason)) => {
             tracing::warn!(target = %target.display(), reason = %reason, "DataLocation 引导回退默认目录");
             Boot {
                 db_dir: default_dir.to_path_buf(),
                 fallback_reason: Some(reason),
+                deferred_relocation: None,
             }
         }
     }
 }
 
-fn enter_target(default_dir: &Path, target: &Path) -> std::result::Result<(), String> {
+/// `enter_target` 的失败形态：可报告的失败（回退默认目录）或密文库搬迁
+/// 需要主口令而启动期不可得（推迟到解锁后补做，非回退）。
+enum EnterTargetError {
+    Failed(String),
+    DeferredEncryptedRelocation,
+}
+
+fn enter_target(default_dir: &Path, target: &Path) -> std::result::Result<(), EnterTargetError> {
     let target_db = target.join(DB_FILE_NAME);
     let source_db = default_dir.join(DB_FILE_NAME);
 
@@ -124,11 +152,26 @@ fn enter_target(default_dir: &Path, target: &Path) -> std::result::Result<(), St
     }
     // 分支 3：两者皆无 → 使用目标位置，空库由随后的建连迁移创建。
     if !source_db.exists() {
-        return ensure_target_dir(target);
+        return ensure_target_dir(target).map_err(EnterTargetError::Failed);
     }
-    // 分支 2：目标为空而原位置有库 → 整库搬迁。
-    ensure_target_dir(target)?;
-    relocate(&source_db, &target_db)
+    // 分支 2：目标为空而原位置有库 → 整库搬迁。源库是密文库时搬迁必须
+    // 凭主口令（无口令的连接首条语句即报 not-a-database），启动期不可得 →
+    // 推迟到解锁后补做；非页对齐的非明文文件是损坏残留而非密文库，保持
+    // 既有回退行为。
+    match probe_file_kind(&source_db) {
+        Ok(DbFileKind::Encrypted) if super::encryption::has_encrypted_file_layout(&source_db) => {
+            return Err(EnterTargetError::DeferredEncryptedRelocation);
+        }
+        Ok(_) => {}
+        Err(e) => {
+            return Err(EnterTargetError::Failed(format!(
+                "原库无法探测（{}）：{e}",
+                source_db.display()
+            )));
+        }
+    }
+    ensure_target_dir(target).map_err(EnterTargetError::Failed)?;
+    relocate(&source_db, &target_db, None).map_err(EnterTargetError::Failed)
 }
 
 fn ensure_target_dir(target: &Path) -> std::result::Result<(), String> {
@@ -137,9 +180,20 @@ fn ensure_target_dir(target: &Path) -> std::result::Result<(), String> {
 }
 
 /// 用 `VACUUM INTO` 把源库完整复制到目标：先写唯一临时名，校验完整后再替换启用
-/// （复用备份功能的既有机制）。源库只读不写，任何失败都清理临时文件后回退。
-fn relocate(source_db: &Path, target_db: &Path) -> std::result::Result<(), String> {
-    let source = open_connection(source_db)
+/// （复用备份功能的既有机制）。源库只读不写，任何失败都清理临时文件。
+/// `passphrase`：源库为密文库时必须携带主口令（带口令打开的连接执行
+/// `VACUUM INTO`，产物继承源库加密与密钥，ADR-0075 决策 7）；明文库传 `None`。
+fn relocate(
+    source_db: &Path,
+    target_db: &Path,
+    passphrase: Option<&str>,
+) -> std::result::Result<(), String> {
+    // 按口令有无选建连缝：密文库凭主口令打开（产物继承加密与密钥）。
+    let open_by_key = |path: &Path| match passphrase {
+        Some(pass) => open_connection_with_passphrase(path, pass),
+        None => open_connection(path),
+    };
+    let source = open_by_key(source_db)
         .map_err(|e| format!("原库无法打开（{}）：{e}", source_db.display()))?;
     let tmp_db = temp_sibling(target_db, "relocate");
 
@@ -147,8 +201,9 @@ fn relocate(source_db: &Path, target_db: &Path) -> std::result::Result<(), Strin
         source
             .execute("VACUUM INTO ?1", params![tmp_db.to_string_lossy()])
             .map_err(|e| format!("整库搬迁失败（VACUUM INTO）：{e}"))?;
-        // 校验：临时库能打开且完整性检查通过，才允许替换启用。
-        let check = open_connection(&tmp_db).map_err(|e| format!("搬迁临时库无法打开：{e}"))?;
+        // 校验：临时库能打开且完整性检查通过，才允许替换启用；密文产物
+        // （带口令搬迁）凭同一口令验证。
+        let check = open_by_key(&tmp_db).map_err(|e| format!("搬迁临时库无法打开：{e}"))?;
         check_integrity(&check).map_err(|e| format!("搬迁临时库完整性检查失败：{e}"))?;
         replace_file(&tmp_db, target_db).map_err(|e| format!("搬迁临时库替换启用失败：{e}"))?;
         Ok(())
@@ -160,6 +215,14 @@ fn relocate(source_db: &Path, target_db: &Path) -> std::result::Result<(), Strin
         return Err(reason);
     }
     Ok(())
+}
+
+/// 解锁后补做等待中的搬迁（issue #570）：以主口令打开源密文库执行
+/// `VACUUM INTO`，产物继承加密与密钥——目标库仍是密文库（ADR-0075 决策 7）。
+/// 成功后需重启应用，由启动引导接管目标位置（与「更改位置重启后生效」
+/// 语义一致）。失败时应用继续以当前位置运行，意图保持待重启状态。
+pub fn relocate_with_key(source_db: &Path, target_db: &Path, passphrase: &str) -> Result<()> {
+    relocate(source_db, target_db, Some(passphrase)).map_err(AppError::Io)
 }
 
 /// 读取当前已配置的意图目录（指针存在且可解析时返回 `Some`）。

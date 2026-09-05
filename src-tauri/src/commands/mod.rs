@@ -12,6 +12,7 @@ pub mod categories;
 pub mod currencies;
 pub mod dashboard;
 pub mod data_location;
+pub mod encryption;
 pub mod financial_freedom;
 pub mod investment;
 pub mod item;
@@ -33,6 +34,7 @@ pub use categories::*;
 pub use currencies::*;
 pub use dashboard::*;
 pub use data_location::*;
+pub use encryption::*;
 pub use financial_freedom::*;
 pub use investment::*;
 pub use item::*;
@@ -216,4 +218,9 @@ pub const IPC_COMMAND_WRITE_OPS: &[(&str, Option<WriteOp>)] = &[
     ("update_transaction", Some(WriteOp::UpdateTransaction)),
     ("delete_transaction", Some(WriteOp::DeleteTransaction)),
     ("list_transactions", None),
+    // ── 加密模式（issue #570 / ADR-0075）──
+    // 转换/解锁是文件级设置操作，非账本数据写（不置脏，ADR-0032 语义锚）。
+    ("get_encryption_status", None),
+    ("unlock_encryption", None), // 设置操作：解锁建连并拉起调度
+    ("enable_encryption", None), // 设置操作：整库加密转换
 ];

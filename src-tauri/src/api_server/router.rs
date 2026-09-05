@@ -26,6 +26,12 @@ use super::handlers::transactions::{
 };
 use super::openapi::openapi_json_handler;
 use super::state::ApiState;
+use crate::db::encryption::EncryptionGate;
+use crate::error::AppError;
+use axum::extract::State;
+use axum::http::Request;
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
 
 pub fn build_router(state: ApiState) -> Router {
     Router::new()
@@ -69,10 +75,32 @@ pub fn build_router(state: ApiState) -> Router {
         // 声明 route 再加层）。所以 `TraceLayer` 必须放在所有 route 声明之后，否则其请求
         // span 空转，导入路径 SQL 的归因不生效（issue #44）。
         .layer(TraceLayer::new_for_http())
+        // 加密锁定门（issue #570 / ADR-0075 决策 5）：置于最外层，锁定期间
+        // 除契约自举端点外一律返回码化错误，请求不进入任何 handler。
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            encryption_gate_middleware,
+        ))
         .with_state(state)
 }
 
-pub fn start_http_server(app: AppHandle, state: Arc<Mutex<Connection>>) {
+/// 加密锁定门中间件：锁定期间对除 OpenAPI 契约自举端点外的全部端点返回
+/// 码化错误 `encryption.locked`——AI 导入 HTTP 面在解锁前不可用；解锁成功
+/// 后标志翻转（IPC 壳解锁命令统一置位），请求照常放行，契约面零变化。
+async fn encryption_gate_middleware(
+    State(state): State<ApiState>,
+    req: Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    const OPENAPI_PATH: &str = "/api/v1/openapi.json";
+    if state.lock_gate.is_locked() && req.uri().path() != OPENAPI_PATH {
+        return AppError::coded("encryption.locked", "应用已锁定，请先解锁后再操作")
+            .into_response();
+    }
+    next.run(req).await
+}
+
+pub fn start_http_server(app: AppHandle, state: Arc<Mutex<Connection>>, lock_gate: EncryptionGate) {
     std::thread::spawn(move || {
         // B 类豁免（ADR-0060）：HTTP 壳启动期创建 Tokio 运行时，失败即无法运行。
         #[allow(clippy::expect_used)]
@@ -82,6 +110,7 @@ pub fn start_http_server(app: AppHandle, state: Arc<Mutex<Connection>>) {
                 conn: state,
                 emitter: Some(Arc::new(app)),
                 fund_fetch: None,
+                lock_gate,
             });
             // B 类豁免（ADR-0060）：启动期绑定 9527 端口失败即无法运行。
             #[allow(clippy::expect_used)]

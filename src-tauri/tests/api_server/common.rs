@@ -8,6 +8,7 @@ use tower::ServiceExt;
 
 use tauri_app_lib::api_server::{ApiState, EmitterSlot, FundDetailFetcher, build_router};
 use tauri_app_lib::db;
+use tauri_app_lib::db::encryption::EncryptionGate;
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::events::SignalEmitter;
 use tauri_app_lib::investment::{FundDetail, FundNav};
@@ -30,7 +31,7 @@ pub(crate) fn setup_app_with_fund_fetch(
 }
 
 /// 共享装配：内存库初始化 + 注入东财接缝与发射槽（spec #367 code review 去重：
-/// 各 setup 变体只差注入项，装配序列单一承载）。
+/// 各 setup 变体只差注入项，装配序列单一承载）。锁定门默认不锁（明文行为基线）。
 fn build_test_app(
     fund_fetch: Option<FundDetailFetcher>,
     emitter: EmitterSlot,
@@ -42,8 +43,22 @@ fn build_test_app(
         conn: conn.clone(),
         emitter,
         fund_fetch,
+        lock_gate: EncryptionGate::new(false),
     });
     (app, conn)
+}
+
+/// 装配锁定态应用（issue #570）：锁定门置为已锁——门禁中间件对除 OpenAPI
+/// 契约自举端点外的全部端点返回码化错误（连接仅为形状占位，不应被触达）。
+pub(crate) fn setup_locked_app() -> Router {
+    let mut conn = db::open_in_memory().unwrap();
+    db::init_db(&mut conn).unwrap();
+    build_router(ApiState {
+        conn: Arc::new(Mutex::new(conn)),
+        emitter: None,
+        fund_fetch: None,
+        lock_gate: EncryptionGate::new(true),
+    })
 }
 
 /// 装配带受控发射器的应用（spec #367）：发射槽接到外部提供的发射器上，

@@ -26,6 +26,8 @@ import type {
   DashboardOverview,
   DataLocationChangeOutcome,
   DataLocationInfo,
+  EncryptionStatus,
+  UnlockOutcome,
   ExchangeRate,
   ExchangeRateInput,
   ExecuteOccurrenceInput,
@@ -352,6 +354,12 @@ export const api = {
     }),
   restoreDefaultDataLocation: (adoptExisting: boolean) =>
     invoke<DataLocationChangeOutcome>('restore_default_data_location', { adoptExisting }),
+
+  // 加密模式（issue #570 / ADR-0075）：状态查询 / 解锁 / 开启加密
+  getEncryptionStatus: () => invoke<EncryptionStatus>('get_encryption_status'),
+  unlockEncryption: (passphrase: string) =>
+    invoke<UnlockOutcome>('unlock_encryption', { passphrase }),
+  enableEncryption: (passphrase: string) => invoke<void>('enable_encryption', { passphrase }),
 
   // AI
   getAiPrompt: () => invoke<string>('get_ai_prompt'),

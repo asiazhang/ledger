@@ -32,6 +32,7 @@ import GeneralSettings from '@/components/settings/GeneralSettings.vue'
 import CategoryManager from '@/components/CategoryManager.vue'
 import BackupSettings from '@/components/settings/BackupSettings.vue'
 import DataLocationSettings from '@/components/settings/DataLocationSettings.vue'
+import EncryptionSettings from '@/components/settings/EncryptionSettings.vue'
 import SearchDataSettings from '@/components/settings/SearchDataSettings.vue'
 import ScheduledSettings from '@/components/settings/ScheduledSettings.vue'
 import AboutSettings from '@/components/settings/AboutSettings.vue'
@@ -58,6 +59,9 @@ import { t } from '@/i18n'
         </NTabPane>
         <NTabPane name="location" key="location" :tab="t('settings.data.tabs.location')" display-directive="show:lazy">
           <DataLocationSettings />
+        </NTabPane>
+        <NTabPane name="encryption" key="encryption" :tab="t('settings.data.tabs.encryption')" display-directive="show:lazy">
+          <EncryptionSettings />
         </NTabPane>
         <NTabPane name="repair" key="repair" :tab="t('settings.data.tabs.repair')" display-directive="show:lazy">
           <SearchDataSettings />

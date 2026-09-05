@@ -1,0 +1,7 @@
+{
+  "title": "Ledger is encrypted",
+  "hint": "Enter the master passphrase to unlock your data",
+  "placeholder": "Master passphrase",
+  "button": "Unlock",
+  "relocated": "Data location migration finished; the app will restart shortly"
+}

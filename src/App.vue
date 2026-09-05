@@ -44,7 +44,9 @@ import { useAppStore } from '@/stores/app'
 import { currentLocale, t } from '@/i18n'
 import { viewLabel } from '@/i18n/view-label'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
-import { useDevicePreferenceSync } from '@/composables/useDevicePreferenceSync'
+import { useEncryptionGate } from '@/composables/useEncryptionGate'
+import UnlockScreen from '@/components/UnlockScreen.vue'
+import DevicePreferenceSyncHost from '@/components/DevicePreferenceSyncHost.vue'
 import MessageSinkBridge from '@/components/MessageSinkBridge.vue'
 import GlobalBusyBar from '@/components/GlobalBusyBar.vue'
 import { loadSidebarCollapsed, saveSidebarCollapsed } from '@/utils/view-state'
@@ -108,9 +110,12 @@ watch(
 const naiveLocale = computed(() => (currentLocale.value === 'en-US' ? enUS : zhCN))
 const naiveDateLocale = computed(() => (currentLocale.value === 'en-US' ? dateEnUS : dateZhCN))
 
-// 设备偏好镜像推送（备份目录 issue #125 / ADR-0016；自动执行开关 issue #308 / ADR-0042）：
-// 真源在前端 localStorage（应用设置 store），启动/变更时把镜像推给后端运行时消费。
-useDevicePreferenceSync()
+// 加密锁定门（issue #570 / ADR-0075 决策 5）：启动先探测锁定状态。锁定期间
+// 解锁屏整体替代主界面——主界面与全部业务 IPC 消费方（含设备偏好推送，已
+// 迁入 DevicePreferenceSyncHost 随主界面挂载）都不渲染，解锁先于一切业务读写；
+// 探测中（null）同样不渲染主界面，避免带半就绪状态闪屏。明文库/已解锁正常挂载。
+const { locked, probe } = useEncryptionGate()
+void probe()
 
 // 视图名称走文案资源（issue #342）：侧栏菜单与内容区标题同源，随界面语言即时切换；
 // key 构造收口在 i18n/view-label（key 契约有单测，漏域名前缀会原样渲染 key 代号）。
@@ -315,9 +320,14 @@ const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(rou
     <GlobalBusyBar />
     <NMessageProvider>
       <NDialogProvider>
+        <!-- 加密锁定分支（issue #570）：解锁屏整体替代主界面 -->
+        <UnlockScreen v-if="locked" />
         <!-- Loadable toast sink 注册桥（ADR-0040）：必须在消息提供器子树内 -->
-        <MessageSinkBridge />
-        <NLayout has-sider style="height: 100vh">
+        <MessageSinkBridge v-if="locked !== true" />
+        <!-- 探测中（null）不渲染主界面；解锁/明文后随设备偏好推送宿主一起挂载 -->
+        <template v-if="locked === false">
+          <DevicePreferenceSyncHost />
+          <NLayout has-sider style="height: 100vh">
           <NLayoutSider
             bordered
             :width="siderWidth"
@@ -360,7 +370,8 @@ const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(rou
               </NSpace>
             </NLayoutContent>
           </NLayout>
-        </NLayout>
+          </NLayout>
+        </template>
       </NDialogProvider>
     </NMessageProvider>
   </NConfigProvider>
