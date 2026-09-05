@@ -400,7 +400,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
       if (cmd === "get_encryption_status")
         return Promise.resolve({ locked: false, file_encrypted: false });
       if (cmd === "restore_backup")
-        return Promise.reject({ kind: "Coded", code: "encryption.passphrase-incorrect", message: "主口令不正确" });
+        return Promise.reject({ kind: "Coded", code: "encryption.passphrase-incorrect", message: "口令错误或文件损坏，请重试" });
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
     });
     const { open } = await import("@tauri-apps/plugin-dialog");

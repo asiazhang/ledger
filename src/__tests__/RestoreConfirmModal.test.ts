@@ -117,7 +117,7 @@ describe('RestoreConfirmModal（恢复确认弹窗，issue #572）', () => {
     onConfirm.mockRejectedValueOnce({
       kind: 'Coded',
       code: 'encryption.passphrase-incorrect',
-      message: '主口令不正确，请重试',
+      message: '口令错误或文件损坏，请重试',
     })
     const wrapper = mountModal(crossToEncrypted)
     await flushPromises()
@@ -126,7 +126,7 @@ describe('RestoreConfirmModal（恢复确认弹窗，issue #572）', () => {
     confirmButton().dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     await flushPromises()
 
-    expect(document.body.textContent).toContain('主口令不正确，请重试')
+    expect(document.body.textContent).toContain('口令错误或文件损坏，请重试')
     // 弹窗仍开着：确认按钮仍在，可重试。
     expect(confirmButton()).not.toBeNull()
   })
@@ -202,7 +202,7 @@ describe('RestoreConfirmModal（恢复确认弹窗，issue #572）', () => {
       .mockRejectedValueOnce({
         kind: 'Coded',
         code: 'encryption.passphrase-incorrect',
-        message: '主口令不正确，请重试',
+        message: '口令错误或文件损坏，请重试',
       })
       .mockResolvedValueOnce(undefined)
     const wrapper = mountModal(crossToEncryptedWithContext)
@@ -212,7 +212,7 @@ describe('RestoreConfirmModal（恢复确认弹窗，issue #572）', () => {
     await flushPromises()
 
     // 试开失败：错误可见、口令框显出（重输入口），弹窗仍开着
-    expect(document.body.textContent).toContain('主口令不正确，请重试')
+    expect(document.body.textContent).toContain('口令错误或文件损坏，请重试')
     expect(needsPassphraseInput()).toBe(true)
     expect(confirmButton()).not.toBeNull()
 
