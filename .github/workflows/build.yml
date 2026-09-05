@@ -81,6 +81,14 @@ jobs:
     defaults:
       run:
         working-directory: src-tauri
+    # CI 提速（仅 CI，本地开发不受影响）：workspace 自身降 debuginfo 到
+    # line-tables-only（依赖在 Cargo.toml 已是该配置），opt-level 0→1 提升测试
+    # 执行速度（无优化业务代码快 2~5 倍）；overflow-checks/debug-assertions 保持
+    # dev 默认开启，整数溢出 panic 语义不变。注意：profile 变更会使 cargo
+    # fingerprint 失效，合并后首跑 rust-cache 冷编译一次（一次性成本）。
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "1"
+      CARGO_PROFILE_DEV_OPT_LEVEL: "1"
     steps:
       - uses: actions/checkout@v7
 
@@ -113,8 +121,12 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # 显式列出 target（lib + api_server + e2e）：不编译也不运行 bin 测试——
+      # ledger-perf 的生成器正确性单测属性能工具链（perf-bench.yml 域），随每日常规
+      # 基准一起运行；PR CI 只守护产品代码路径。副作用：显式 target 选择不跑
+      # doc-tests（当前为 0 个，无损失）。
       - name: Rust 单元测试 + BDD/e2e 测试（cucumber）
-        run: cargo test --all
+        run: cargo test --lib --test api_server --test e2e
 
   backend-lint:
     name: 后端静态检查（fmt + clippy）
