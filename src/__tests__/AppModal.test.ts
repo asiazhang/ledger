@@ -24,6 +24,13 @@ async function pressReleaseOnMask(): Promise<void> {
   await flushPromises()
 }
 
+/** 取 body 上已渲染的卡片元素（preset="card" 的可见输出）。 */
+function findCard(): HTMLElement {
+  const el = document.body.querySelector('.n-card')
+  expect(el, '.n-card 应存在').not.toBeNull()
+  return el as HTMLElement
+}
+
 // naive-ui 的 doUpdateShow 直接调用 onUpdateShow prop 而非 $emit，
 // 断言走监听 spy，不用 wrapper.emitted()。
 function mountModal(extraProps: Record<string, unknown> = {}) {
@@ -71,5 +78,46 @@ describe('AppModal（issue #251 弹层关闭语义收口）', () => {
     await flushPromises()
 
     expect(onUpdateShow).toHaveBeenCalledWith(false)
+  })
+})
+
+describe('AppModal 卡牌弹窗视觉规范（issue #631 cardSize 分档与默认无边框）', () => {
+  it.each([
+    ['sm', '420px'],
+    ['md', '480px'],
+    ['lg', '560px'],
+  ])('cardSize=%s 等价产出宽度 %s', async (cardSize, width) => {
+    mountModal({ cardSize })
+    await flushPromises()
+
+    expect(findCard().style.width).toBe(width)
+  })
+
+  it('未传 cardSize 时不注入宽度：既有调用点的 style 宽度原样生效', async () => {
+    mountModal({ style: 'width: 440px' })
+    await flushPromises()
+
+    expect(findCard().style.width).toBe('440px')
+  })
+
+  it('cardSize 与调用方显式 style 并存时显式 style 胜出（向后兼容护栏）', async () => {
+    mountModal({ cardSize: 'md', style: 'width: 440px' })
+    await flushPromises()
+
+    expect(findCard().style.width).toBe('440px')
+  })
+
+  it('默认无边框：未传 bordered 的卡片弹窗不渲染边框', async () => {
+    mountModal()
+    await flushPromises()
+
+    expect(findCard().classList.contains('n-card--bordered')).toBe(false)
+  })
+
+  it('显式 bordered=true 逃逸门：边框照常渲染', async () => {
+    mountModal({ bordered: true })
+    await flushPromises()
+
+    expect(findCard().classList.contains('n-card--bordered')).toBe(true)
   })
 })
