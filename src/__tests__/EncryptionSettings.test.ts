@@ -7,7 +7,6 @@ import type { EncryptionStatus } from '@/types'
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(),
   save: vi.fn(),
-  confirm: vi.fn(),
 }))
 
 // 覆写 setup.ts 的 useMessage mock：改用稳定实例以便断言反馈分支。
@@ -24,14 +23,12 @@ vi.mock('naive-ui', async (importOriginal) => {
   return { ...actual, useMessage: () => messageApi }
 })
 
-import { confirm } from '@tauri-apps/plugin-dialog'
 import EncryptionSettings from '@/components/settings/EncryptionSettings.vue'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
 import { hasOpenOverlay, resetOverlays } from '@/composables/overlayRegistry'
 import { useAppStore } from '@/stores/app'
 
 const mockInvoke = vi.mocked(invoke)
-const mockConfirm = vi.mocked(confirm)
 
 const plaintextStatus: EncryptionStatus = { locked: false, file_encrypted: false }
 const encryptedStatus: EncryptionStatus = { locked: false, file_encrypted: true }
@@ -53,7 +50,6 @@ function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
 
 beforeEach(() => {
   mockInvoke.mockReset()
-  mockConfirm.mockReset()
   document.body.innerHTML = ''
   resetOverlays()
   setActivePinia(createPinia())
@@ -309,14 +305,13 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
     await flushPromises()
     bodyButton('danger-cancel').click()
     await flushPromises()
-    expect(mockConfirm).not.toHaveBeenCalled()
     expect(mockInvoke).not.toHaveBeenCalledWith(
       'change_encryption_passphrase',
       expect.anything(),
     )
   })
 
-  it('已加密库·关闭加密：确认后调用 disable_encryption 携带当前口令，成功提示重启', async () => {
+  it('已加密库·关闭加密：确认弹窗（warning 级）确认后调用 disable_encryption 携带当前口令，成功提示重启', async () => {
     vi.useFakeTimers()
     try {
       stubInvoke({
@@ -327,13 +322,15 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
         },
         restart_app: () => Promise.resolve(),
       })
-      mockConfirm.mockResolvedValue(true)
       const wrapper = mount(EncryptionSettings)
       await flushPromises()
 
       const inputs = wrapper.findAll('input')
       await inputs[3].setValue('当前口令')
       await findButton(wrapper, '关闭加密')!.trigger('click')
+      await flushPromises()
+      // 危险确认分级（issue #652 / ADR-0078）：点应用内 warning 级确认弹窗按钮。
+      bodyButton('danger-confirm').click()
       await flushPromises()
       expect(mockInvoke).toHaveBeenCalledWith('disable_encryption', {
         passphrase: '当前口令',
@@ -357,13 +354,14 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
           code: 'encryption.passphrase-incorrect',
         }),
     })
-    mockConfirm.mockResolvedValue(true)
     const wrapper = mount(EncryptionSettings)
     await flushPromises()
 
     const inputs = wrapper.findAll('input')
     await inputs[3].setValue('错口令')
     await findButton(wrapper, '关闭加密')!.trigger('click')
+    await flushPromises()
+    bodyButton('danger-confirm').click()
     await flushPromises()
     expect(messageApi.error).toHaveBeenCalled()
     expect(mockInvoke).not.toHaveBeenCalledWith('restart_app')
@@ -373,13 +371,14 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
     stubInvoke({
       get_encryption_status: () => Promise.resolve(encryptedStatus),
     })
-    mockConfirm.mockResolvedValue(false)
     const wrapper = mount(EncryptionSettings)
     await flushPromises()
 
     const inputs = wrapper.findAll('input')
     await inputs[3].setValue('当前口令')
     await findButton(wrapper, '关闭加密')!.trigger('click')
+    await flushPromises()
+    bodyButton('danger-cancel').click()
     await flushPromises()
     expect(mockInvoke).not.toHaveBeenCalledWith('disable_encryption', expect.anything())
   })
@@ -463,6 +462,31 @@ describe('危险确认分级试点（issue #650 / ADR-0078）', () => {
     void wrapper
   })
 
+  it('关闭加密：确认走 warning 级应用内弹窗（不再出现系统原生对话框），承载兜底说明', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve(encryptedStatus),
+    })
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+
+    const inputs = wrapper.findAll('input')
+    await inputs[3].setValue('当前口令')
+    await findButton(wrapper, '关闭加密')!.trigger('click')
+    await flushPromises()
+
+    // warning 级形态（原生 confirm 已由 no-native-confirm.test.ts 全树守门）：琥珀警示块承载后果与兜底说明（密文副本保留、可再开启）+ warning 色确认按钮
+    const alert = modalAlert()
+    expect(alert, '警示块应存在').toBeTruthy()
+    expect(document.body.textContent).toContain('日后可随时重新开启加密')
+    expect(bodyButton('danger-confirm').className).toContain('n-button--warning-type')
+    expect(hasOpenOverlay()).toBe(true)
+
+    bodyButton('danger-cancel').click()
+    await flushPromises()
+    expect(hasOpenOverlay()).toBe(false)
+    void wrapper
+  })
+
   it('修改主口令：确认走 error 级应用内弹窗（不再出现系统原生对话框），承载无后门后果说明', async () => {
     stubInvoke({
       get_encryption_status: () => Promise.resolve(encryptedStatus),
@@ -477,9 +501,7 @@ describe('危险确认分级试点（issue #650 / ADR-0078）', () => {
     await findButton(wrapper, '修改主口令')!.trigger('click')
     await flushPromises()
 
-    // 原生对话框退役（ADR-0078 决策 1）
-    expect(mockConfirm).not.toHaveBeenCalled()
-    // error 级形态：警示块 + 加粗无后门后果说明（新主口令遗忘即数据不可读）+ 红色确认按钮
+    // error 级形态（原生 confirm 已由 no-native-confirm.test.ts 全树守门）：警示块 + 加粗无后门后果说明（新主口令遗忘即数据不可读）+ 红色确认按钮
     const alert = modalAlert()
     expect(alert, '警示块应存在').toBeTruthy()
     expect(alert!.querySelector('.n-text--strong'), '后果句应加粗').toBeTruthy()

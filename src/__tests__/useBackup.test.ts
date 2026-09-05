@@ -416,3 +416,81 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
     expect(backup.restoreIntent.value).not.toBeNull();
   });
 });
+
+describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => {
+  /** 预置 3 个备份、保留上限 1：超上限 2 个（上限偏好显式设小，默认 30）。 */
+  function stubThreeBackups() {
+    useAppStore().setBackupMaxCount(1);
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_backups")
+        return Promise.resolve([
+          autoBackupFile,
+          manualBackupFile,
+          { ...manualBackupFile, file_name: "ledger-backup-20260102-010101.db.zip", path: "/Users/me/backups/ledger-backup-20260102-010101.db.zip" },
+        ]);
+      if (cmd === "get_auto_backup_state")
+        return Promise.resolve({ enabled: true, last_backup_at: null });
+      if (cmd === "prune_backups")
+        return Promise.resolve({ kept: 1, deleted: ["/a", "/b"], failed: [] });
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    });
+  }
+
+  it("manualPrune 超上限：开启 warning 级确认弹窗并锁定待删数量，不立即删除", async () => {
+    stubThreeBackups();
+    const { backup } = mountHost();
+    await flushPromises();
+
+    await backup.manualPrune();
+    expect(backup.pruneConfirmShow.value).toBe(true);
+    expect(backup.pruneExcess.value).toBe(2);
+    expect(
+      mockInvoke.mock.calls.some(([cmd]) => cmd === "prune_backups"),
+    ).toBe(false);
+  });
+
+  it("confirmPrune：执行清理并关闭弹窗（pruning 期间加载态收口在封装 submitting）", async () => {
+    stubThreeBackups();
+    const { backup } = mountHost();
+    await flushPromises();
+    await backup.manualPrune();
+
+    const p = backup.confirmPrune();
+    await flushPromises();
+    await p;
+    expect(backup.pruneConfirmShow.value).toBe(false);
+    expect(
+      mockInvoke.mock.calls.some(
+        ([cmd, args]) => cmd === "prune_backups" && (args as any)?.keep === 1,
+      ),
+    ).toBe(true);
+  });
+
+  it("cancelPrune：仅关弹窗，零删除副作用", async () => {
+    stubThreeBackups();
+    const { backup } = mountHost();
+    await flushPromises();
+    await backup.manualPrune();
+
+    backup.cancelPrune();
+    await flushPromises();
+    expect(backup.pruneConfirmShow.value).toBe(false);
+    expect(
+      mockInvoke.mock.calls.some(([cmd]) => cmd === "prune_backups"),
+    ).toBe(false);
+  });
+
+  it("未超上限：info 提示不开弹窗", async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_backups") return Promise.resolve([manualBackupFile]);
+      if (cmd === "get_auto_backup_state")
+        return Promise.resolve({ enabled: true, last_backup_at: null });
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    });
+    const { backup } = mountHost();
+    await flushPromises();
+
+    await backup.manualPrune();
+    expect(backup.pruneConfirmShow.value).toBe(false);
+  });
+});

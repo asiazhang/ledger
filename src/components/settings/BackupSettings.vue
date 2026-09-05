@@ -15,6 +15,7 @@ import { LockClosedOutline } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
 import { useBackup } from '@/composables/useBackup'
 import { t } from '@/i18n'
+import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'
 import RestoreConfirmModal from '@/components/RestoreConfirmModal.vue'
 
 const store = useAppStore()
@@ -34,6 +35,10 @@ const {
   clearBackupDir,
   onBackupMaxCountChange,
   manualPrune,
+  pruneConfirmShow,
+  pruneExcess,
+  confirmPrune,
+  cancelPrune,
   backupOnce,
   backupAs,
   pickRestore,
@@ -186,6 +191,21 @@ const backupColumns = [
       :seq="restoreSeq"
       :on-confirm="confirmRestore"
       @close="closeRestore"
+    />
+
+    <!-- 手动清理确认弹窗（issue #652 / ADR-0078）：warning 级——删除的是可再生
+         备份产物（有兜底），待删数量与不可恢复后果显式呈现；取消零副作用 -->
+    <AppDangerConfirmModal
+      level="warning"
+      v-model:show="pruneConfirmShow"
+      :title="t('settings.data.msg.pruneConfirmTitle')"
+      :strong-warning="t('settings.data.msg.pruneConfirmStrong', { n: pruneExcess })"
+      :detail="t('settings.data.msg.pruneConfirmDetail')"
+      :confirm-text="t('settings.data.msg.pruneConfirmOk')"
+      :cancel-text="t('settings.data.msg.pruneConfirmCancel')"
+      :submitting="pruning"
+      :on-confirm="confirmPrune"
+      :on-cancel="cancelPrune"
     />
   </NSpace>
 </template>

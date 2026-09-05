@@ -1,6 +1,6 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useMessage } from "naive-ui";
-import { open, save, confirm } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useAppStore } from "@/stores/app";
 import { api } from "@/api";
@@ -76,6 +76,12 @@ export function useBackup() {
   const lastBackup = ref("");
   const backups = ref<BackupFileInfo[]>([]);
   const pruning = ref(false);
+
+  // 手动清理确认弹窗（issue #652 / ADR-0078）：warning 级应用内弹窗替代原生
+  // confirm——破坏性但有兜底（删的是可再生备份产物，账本数据不受影响）。
+  // 待删数量在开启时锁定为 pruneExcess，供弹窗文案展示；取消路径零副作用。
+  const pruneConfirmShow = ref(false);
+  const pruneExcess = ref(0);
 
   // 恢复确认弹窗（issue #572，ADR-0072）：开启/目标/关闭编排、文件选择、
   // 元数据/模式校验、恢复确认与重启均收口在共享恢复流 useRestoreFromFile
@@ -203,25 +209,32 @@ export function useBackup() {
     }
   }
 
-  /// 手动立即清理：超过上限时弹确认后执行。
-  async function manualPrune() {
+  /// 手动立即清理：超过上限时弹 warning 级确认弹窗（ADR-0078），确认后执行。
+  function manualPrune() {
     if (!store.backupDir) return;
     const excess = Math.max(0, backups.value.length - store.backupMaxCount);
     if (excess === 0) {
       message.info(t("settings.data.msg.pruneNotNeeded"));
       return;
     }
-    const ok = await confirm(t("settings.data.msg.pruneConfirm", { n: excess }), {
-      title: t("settings.data.msg.pruneConfirmTitle"),
-      kind: "warning",
-    });
-    if (!ok) return;
+    pruneExcess.value = excess;
+    pruneConfirmShow.value = true;
+  }
+
+  /// 清理确认：执行修剪（弹窗先关，与既有 pruning 加载态衔接）。
+  async function confirmPrune() {
+    pruneConfirmShow.value = false;
     pruning.value = true;
     try {
       await pruneToLimit(store.backupMaxCount);
     } finally {
       pruning.value = false;
     }
+  }
+
+  /// 清理取消：仅关弹窗，零删除副作用。
+  function cancelPrune() {
+    pruneConfirmShow.value = false;
   }
 
   async function doBackup(target: string) {
@@ -312,6 +325,10 @@ export function useBackup() {
     clearBackupDir,
     onBackupMaxCountChange,
     manualPrune,
+    pruneConfirmShow,
+    pruneExcess,
+    confirmPrune,
+    cancelPrune,
     backupOnce,
     backupAs,
     pickRestore,

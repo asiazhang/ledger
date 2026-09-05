@@ -6,9 +6,7 @@ import type { DataLocationChangeOutcome, DataLocationInfo } from '@/types'
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(),
   save: vi.fn(),
-  confirm: vi.fn(),
 }))
-
 // 覆写 setup.ts 的 useMessage mock：改用稳定实例以便断言反馈分支
 // （spec：成功→生效提示、校验失败→错误反馈）。
 const messageApi = vi.hoisted(() => ({
@@ -24,12 +22,12 @@ vi.mock('naive-ui', async (importOriginal) => {
   return { ...actual, useMessage: () => messageApi }
 })
 
-import { open, confirm } from '@tauri-apps/plugin-dialog'
+import { open } from '@tauri-apps/plugin-dialog'
 import DataLocationSettings from '@/components/settings/DataLocationSettings.vue'
+import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'
 
 const mockInvoke = vi.mocked(invoke)
 const mockOpen = vi.mocked(open)
-const mockConfirm = vi.mocked(confirm)
 
 const baseInfo: DataLocationInfo = {
   active_dir: '/Users/me/Library/Application Support/ledger',
@@ -58,15 +56,22 @@ function nextInfo(info: DataLocationInfo) {
 beforeEach(() => {
   mockInvoke.mockReset()
   mockOpen.mockReset()
-  mockConfirm.mockReset()
   messageApi.success.mockClear()
   messageApi.warning.mockClear()
   messageApi.error.mockClear()
   messageApi.info.mockClear()
+  document.body.innerHTML = ''
 })
 
 function findButton(wrapper: ReturnType<typeof mount>, text: string) {
   return wrapper.findAll('button').find((b) => b.text().includes(text))!
+}
+
+/** 二选一弹窗（teleport 到 body）内按 data-testid 找按钮。 */
+function bodyButton(testid: string): HTMLButtonElement {
+  const btn = document.body.querySelector(`[data-testid="${testid}"]`) as HTMLButtonElement | null
+  if (!btn) throw new Error(`未找到 testid=${testid} 的按钮`)
+  return btn
 }
 
 describe('DataLocationSettings.vue', () => {
@@ -143,7 +148,7 @@ describe('DataLocationSettings.vue', () => {
     expect(wrapper.html()).toContain('下次启动')
   })
 
-  it('目标已有同名库：先弹二选一确认，确认接管后以 adoptExisting=true 二次提交', async () => {
+  it('目标已有同名库：先弹 warning 级二选一弹窗（按钮语义显式），接管后以 adoptExisting=true 二次提交', async () => {
     stubInvoke()
     const choice: DataLocationChangeOutcome = { requires_choice: true, committed: false, target_dir: null }
     const committed: DataLocationChangeOutcome = {
@@ -152,7 +157,6 @@ describe('DataLocationSettings.vue', () => {
       target_dir: '/Volumes/Sync/ledger-data',
     }
     mockOpen.mockResolvedValue('/Volumes/Sync/ledger-data')
-    mockConfirm.mockResolvedValue(true)
     let submits = 0
     mockInvoke.mockImplementation((cmd: string, args?: any) => {
       if (cmd === 'get_data_location_info') return Promise.resolve(baseInfo)
@@ -166,25 +170,31 @@ describe('DataLocationSettings.vue', () => {
     await flushPromises()
     await findButton(wrapper, '更改').trigger('click')
     await flushPromises()
-    expect(mockConfirm).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ okLabel: '接管该库', cancelLabel: '取消换位' }),
-    )
+
+    // 二选一确认弹窗（issue #652 / ADR-0078）：warning 级，按钮文案即语义
+    expect(bodyButton('danger-confirm').textContent).toContain('接管该库')
+    expect(bodyButton('danger-confirm').className).toContain('n-button--warning-type')
+    expect(bodyButton('danger-cancel').textContent).toContain('取消换位')
+    expect(document.body.textContent).toContain('原位置库文件仍会保留')
     expect(mockInvoke).toHaveBeenNthCalledWith(2, 'submit_data_location_change', {
       targetDir: '/Volumes/Sync/ledger-data',
       adoptExisting: false,
     })
+
+    bodyButton('danger-confirm').click()
+    await flushPromises()
     expect(mockInvoke).toHaveBeenNthCalledWith(3, 'submit_data_location_change', {
       targetDir: '/Volumes/Sync/ledger-data',
       adoptExisting: true,
     })
+    expect(messageApi.success).toHaveBeenCalled()
+    void wrapper
   })
 
-  it('二选一取消：不再提交，状态保持不变', async () => {
+  it('二选一取消「取消换位」：不再提交，状态保持不变', async () => {
     stubInvoke()
     const choice: DataLocationChangeOutcome = { requires_choice: true, committed: false, target_dir: null }
     mockOpen.mockResolvedValue('/Volumes/Sync/ledger-data')
-    mockConfirm.mockResolvedValue(false)
     let submits = 0
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'get_data_location_info') return Promise.resolve(baseInfo)
@@ -198,10 +208,41 @@ describe('DataLocationSettings.vue', () => {
     await flushPromises()
     await findButton(wrapper, '更改').trigger('click')
     await flushPromises()
+    bodyButton('danger-cancel').click()
+    await flushPromises()
     expect(submits).toBe(1)
-    expect(mockConfirm).toHaveBeenCalled()
     expect(messageApi.info).toHaveBeenCalled()
     expect(wrapper.html()).not.toContain('待重启生效')
+  })
+
+  it('✕/ESC 关闭弹窗同归取消路径：清挂起二次提交，零提交零误接管', async () => {
+    stubInvoke()
+    const choice: DataLocationChangeOutcome = { requires_choice: true, committed: false, target_dir: null }
+    mockOpen.mockResolvedValue('/Volumes/Sync/ledger-data')
+    let submits = 0
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'get_data_location_info') return Promise.resolve(baseInfo)
+      if (cmd === 'submit_data_location_change') {
+        submits += 1
+        return Promise.resolve(choice)
+      }
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const wrapper = mount(DataLocationSettings)
+    await flushPromises()
+    await findButton(wrapper, '更改').trigger('click')
+    await flushPromises()
+    // 模拟 ESC/✕ 关闭（AppModal 关闭意图 → update:show(false)）
+    wrapper.findComponent(AppDangerConfirmModal).vm.$emit('update:show', false)
+    await flushPromises()
+    expect(submits).toBe(1)
+    expect(messageApi.info).toHaveBeenCalled()
+
+    // 悬挂已清：下次更改重新走完整流程，不误续接上一次的 adoptExisting=true
+    await findButton(wrapper, '更改').trigger('click')
+    await flushPromises()
+    expect(submits).toBe(2)
+    expect(wrapper.findComponent(AppDangerConfirmModal).props('show')).toBe(true)
   })
 
   it('目录选择被取消时不提交任何更改', async () => {
@@ -275,7 +316,6 @@ describe('DataLocationSettings.vue', () => {
       committed: true,
       target_dir: '/Users/me/Library/Application Support/ledger',
     }
-    mockConfirm.mockResolvedValue(true)
     let submits = 0
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'get_data_location_info') return Promise.resolve(current)
@@ -289,7 +329,9 @@ describe('DataLocationSettings.vue', () => {
     await flushPromises()
     await findButton(wrapper, '恢复默认').trigger('click')
     await flushPromises()
-    expect(mockConfirm).toHaveBeenCalled()
+    // 目标已有同名库 → 二选一弹窗（与应用内确认同型）确认后续接
+    bodyButton('danger-confirm').click()
+    await flushPromises()
     expect(mockInvoke).toHaveBeenNthCalledWith(2, 'restore_default_data_location', {
       adoptExisting: false,
     })

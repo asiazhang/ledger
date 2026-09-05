@@ -4,21 +4,20 @@ import { invoke } from '@tauri-apps/api/core'
 import { setActivePinia, createPinia } from 'pinia'
 
 // 文件选择与重启单点 mock（先例 StartupFailureScreen.test.ts；restartAppShortly
-// 内含延时，测试断言调用而非计时）。
+// 内含延时，测试断言调用而非计时）。恢复流只需 open；confirm 已随 issue #652
+// 退役，不再 mock。
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(),
-  confirm: vi.fn(),
 }))
 const restartAppShortly = vi.fn()
 vi.mock('@/utils/restart', () => ({ restartAppShortly: () => restartAppShortly() }))
 
-import { confirm, open } from '@tauri-apps/plugin-dialog'
+import { open } from '@tauri-apps/plugin-dialog'
 import UnlockScreen from '@/components/UnlockScreen.vue'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
 import { useAppStore } from '@/stores/app'
 
 const mockInvoke = vi.mocked(invoke)
-const mockConfirm = vi.mocked(confirm)
 const mockOpen = vi.mocked(open)
 
 /** mock-invoke 桩：解锁屏只消费加密命令面（fail-loud：其余命令一律拒绝）。 */
@@ -31,7 +30,6 @@ function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
 
 beforeEach(() => {
   mockInvoke.mockReset()
-  mockConfirm.mockReset()
   mockOpen.mockReset()
   restartAppShortly.mockClear()
   setActivePinia(createPinia())
@@ -41,10 +39,18 @@ beforeEach(() => {
   gate.bootFailed.value = false
   gate.rememberSupport.value = null
   localStorage.removeItem('remember_passphrase')
+  document.body.innerHTML = ''
 })
 
 function findButton(wrapper: ReturnType<typeof mount>, text: string) {
   return wrapper.findAll('button').find((b) => b.text().includes(text))!
+}
+
+/** 重置确认弹窗（teleport 到 body）内按 data-testid 找按钮。 */
+function bodyButton(testid: string): HTMLButtonElement {
+  const btn = document.body.querySelector(`[data-testid="${testid}"]`) as HTMLButtonElement | null
+  if (!btn) throw new Error(`未找到 testid=${testid} 的按钮`)
+  return btn
 }
 
 async function mountWithProbe(
@@ -196,33 +202,37 @@ describe('UnlockScreen.vue（加密锁定门·解锁屏流程）', () => {
     expect(forgot).toBeTruthy()
   })
 
-  it('点击入口先展示无后门后果说明（数据不可恢复 + 密文副本），二次确认才重置', async () => {
-    mockConfirm.mockResolvedValue(true)
+  it('点击入口先弹 error 级应用内确认弹窗（不再有系统原生对话框），后果说明在场，二次确认才重置', async () => {
     const { wrapper, locked } = await mountWithProbe(true, {
       reset_after_forgotten_passphrase: () => Promise.resolve(),
     })
 
     await findButton(wrapper, '忘记口令')!.trigger('click')
     await flushPromises()
-    // 后果说明明确不可恢复，且告知密文副本可日后救回（issue #573）
-    expect(mockConfirm).toHaveBeenCalledTimes(1)
-    const [body] = mockConfirm.mock.calls[0]
-    expect(body).toContain('不可恢复')
-    expect(body).toContain('密文副本')
+    // 原生对话框退役（ADR-0078 决策 1，issue #652）：弹窗为应用内 error 级，
+    // 后果说明明确不可恢复，且告知密文副本可日后救回（issue #573 语义不回退）
+    expect(document.body.textContent).toContain('不可恢复')
+    expect(document.body.textContent).toContain('密文副本')
+    const alert = document.body.querySelector('.n-modal .n-alert')
+    expect(alert, '红色警示块应存在').toBeTruthy()
+    expect(alert!.querySelector('.n-text--strong'), '后果句应加粗').toBeTruthy()
+    expect(bodyButton('danger-confirm').className).toContain('n-button--error-type')
 
+    bodyButton('danger-confirm').click()
+    await flushPromises()
     expect(mockInvoke).toHaveBeenCalledWith('reset_after_forgotten_passphrase')
     expect(locked.value).toBe(false)
   })
 
   it('后果说明后取消：留在解锁屏，不发起重置', async () => {
-    mockConfirm.mockResolvedValue(false)
     const { wrapper, locked } = await mountWithProbe(true, {
       reset_after_forgotten_passphrase: () => Promise.resolve(),
     })
 
     await findButton(wrapper, '忘记口令')!.trigger('click')
     await flushPromises()
-    expect(mockConfirm).toHaveBeenCalledTimes(1)
+    bodyButton('danger-cancel').click()
+    await flushPromises()
     expect(
       mockInvoke.mock.calls.some(([cmd]) => cmd === 'reset_after_forgotten_passphrase'),
     ).toBe(false)
@@ -232,7 +242,6 @@ describe('UnlockScreen.vue（加密锁定门·解锁屏流程）', () => {
   })
 
   it('重置失败：错误文案透传，保持锁定可重试', async () => {
-    mockConfirm.mockResolvedValue(true)
     const { wrapper, locked } = await mountWithProbe(true, {
       reset_after_forgotten_passphrase: () =>
         Promise.reject({
@@ -243,6 +252,8 @@ describe('UnlockScreen.vue（加密锁定门·解锁屏流程）', () => {
     })
 
     await findButton(wrapper, '忘记口令')!.trigger('click')
+    await flushPromises()
+    bodyButton('danger-confirm').click()
     await flushPromises()
     expect(wrapper.html()).toContain('数据库文件不存在或为空')
     expect(locked.value).toBe(true)
