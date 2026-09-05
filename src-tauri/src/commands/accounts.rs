@@ -1,11 +1,11 @@
 //! IPC 命令壳 · 账户（Account）。
 //!
-//! 只负责参数解包、事务边界与失效信号发射；账户域行为位于 [`crate::accounts`]。
+//! 只负责参数解包与统一写入口一行调用；账户域行为位于 [`crate::accounts`]。
 //! 注册路径与前端调用保持不变。
 //!
-//! 全部命令 async 化（形状乙，spec #498 / #501）：DB 调用经连接层统一 helper
-//! [`crate::db::run_db`] 进 tauri 阻塞线程池执行，不占用界面事件循环线程；
-//! 写路径仍在连接层统一写入口内置脏（ADR-0032 语义零改动）。
+//! 全部命令 async 化（形状乙，spec #498 / #501）；写命令经壳层统一写入口
+//! [`crate::write_entry::write_entry`]（ADR-0073）：连接、发射器、写操作身份、
+//! 业务闭包进，仪式（锁、事务、置脏、信号）内化单点。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
 // （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
@@ -20,7 +20,8 @@ use crate::accounts::{
 };
 use crate::db::{DbState, run_db};
 use crate::error::{AppError, Result};
-use crate::signals::{WriteEvidence, WriteOp, emit_for};
+use crate::signals::{WriteEvidence, WriteOp};
+use crate::write_entry::{Outcome, write_entry};
 
 /// 账户列表：默认仅未删除、不含隐藏账户（黑洞账户经 AI 侧端点/`*_for_api` 口径可见）。
 #[tauri::command]
@@ -39,15 +40,16 @@ pub async fn create_account(
     app: tauri::AppHandle,
     input: AccountInput,
 ) -> Result<String> {
-    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
+    // 壳层统一写入口（ADR-0073）：置脏、信号内化单点，参考写入成功发参考失效信号。
     let conn = db.conn.clone();
-    let id = run_db("create_account", move || {
-        crate::db::write(&conn, |conn| account_domain::create_account(conn, input))
-    })
-    .await?;
-    // 参考写入成功 → 参考失效信号（映射单点判定，ADR-0044；issue #79）
-    emit_for(&app, WriteOp::CreateAccount, WriteEvidence::None);
-    Ok(id)
+    write_entry(
+        "create_account",
+        conn,
+        Some(&app),
+        WriteOp::CreateAccount,
+        move |conn| account_domain::create_account(conn, input).map(Outcome::Silent),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -56,15 +58,15 @@ pub async fn delete_account(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<()> {
-    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
     let conn = db.conn.clone();
-    run_db("delete_account", move || {
-        crate::db::write(&conn, |conn| account_domain::delete_account(conn, &id))
-    })
-    .await?;
-    // 参考写入成功 → 参考失效信号（映射单点判定，ADR-0044；issue #79）
-    emit_for(&app, WriteOp::DeleteAccount, WriteEvidence::None);
-    Ok(())
+    write_entry(
+        "delete_account",
+        conn,
+        Some(&app),
+        WriteOp::DeleteAccount,
+        move |conn| account_domain::delete_account(conn, &id).map(Outcome::Silent),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -74,17 +76,15 @@ pub async fn update_account(
     id: String,
     input: AccountUpdateInput,
 ) -> Result<()> {
-    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
     let conn = db.conn.clone();
-    run_db("update_account", move || {
-        crate::db::write(&conn, |conn| {
-            account_domain::update_account(conn, &id, input)
-        })
-    })
-    .await?;
-    // 参考写入成功 → 参考失效信号（映射单点判定，ADR-0044；issue #79）
-    emit_for(&app, WriteOp::UpdateAccount, WriteEvidence::None);
-    Ok(())
+    write_entry(
+        "update_account",
+        conn,
+        Some(&app),
+        WriteOp::UpdateAccount,
+        move |conn| account_domain::update_account(conn, &id, input).map(Outcome::Silent),
+    )
+    .await
 }
 
 /// 余额调整（ADR-0026）：生成一笔与黑洞账户的转账，把余额校准到目标值。
@@ -98,23 +98,21 @@ pub async fn adjust_account_balance(
     id: String,
     input: AccountBalanceAdjustInput,
 ) -> Result<String> {
-    // 连接层统一写入口（ADR-0032）：核心逻辑自管事务（BEGIN/COMMIT/ROLLBACK），
-    // 提交点置脏/到期检查由写入口在 `is_autocommit()` 复核时单点承接。
+    // 核心逻辑自管事务（BEGIN/COMMIT/ROLLBACK），提交点置脏/到期检查由写入口
+    // 在 `is_autocommit()` 复核时单点承接；黑洞即建证据随闭包返回必达。
     let conn = db.conn.clone();
-    let (tx_id, created_black_hole) = run_db("adjust_account_balance", move || {
-        crate::db::write(&conn, |conn| {
-            account_domain::adjust_account_balance(conn, &id, &input)
-        })
-    })
-    .await?;
-    // 按需新建黑洞账户 = 参考表变更 → 参考失效信号；纯转账零信号
-    //（发不发由映射单点依证据判定，ADR-0044）。
-    emit_for(
-        &app,
+    write_entry(
+        "adjust_account_balance",
+        conn,
+        Some(&app),
         WriteOp::AdjustAccountBalance,
-        WriteEvidence::BlackHoleCreated(created_black_hole),
-    );
-    Ok(tx_id)
+        move |conn| {
+            account_domain::adjust_account_balance(conn, &id, &input).map(|(tx_id, created)| {
+                Outcome::Evidenced(tx_id, WriteEvidence::BlackHoleCreated(created))
+            })
+        },
+    )
+    .await
 }
 
 /// 批量查询所有账户余额，单次数据库往返完成。

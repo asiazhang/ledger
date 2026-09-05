@@ -1,17 +1,12 @@
 //! 行情同步 IPC 命令壳（issue #89；#407 域目录化后压平为单文件纯壳）。
 //!
-//! 只做参数解包、事务壳与信号发射；行情同步引擎（HTTP 网络层、东财基金访问、
-//! 增全量同步编排、同步状态与进度推送）在 [`crate::sync`] 域目录。对外暴露
-//! `sync_holding_prices` / `sync_instruments` / `cancel_sync_instruments` 三个
-//! 命令（`commands/mod.rs` 经 `pub use sync::*` 重导出，注册路径与前端/BDD
-//! 调用零改动）。
-//!
-//! 触碰 DB 的命令 async 化（形状乙，spec #498 / #503）：`sync_holding_prices`
-//! 经连接层统一 helper [`crate::db::run_db`] 进阻塞线程池执行，信号在 await 后
-//! 发射。`sync_instruments` 保持「发射后不管」形态：命令本身不触 DB、即刻返回，
-//! 长任务在分离线程逐页推进并推进度（连接经访问器按页短暂获取，网络拉取与
-//! 进度推送不持锁，慢闭包纪律核对通过）；`cancel_sync_instruments` 是纯原子
-//! 标志位（不触 DB），保持同步形态（先例：`set_auto_execution_enabled`）。
+//! `sync_holding_prices` 写路径与信号经壳层统一写入口
+//! [`crate::write_entry::write_entry`]（ADR-0073）：仪式内化单点，证据随闭包
+//! 返回必达。`sync_instruments` 保持「发射后不管」形态：命令本身不触 DB、
+//! 即刻返回，长任务在分离线程逐页推进并推进度（连接经访问器按页短暂获取，
+//! 网络拉取与进度推送不持锁，慢闭包纪律核对通过），自发射信号——不经写入口
+//! （例外白名单登记，ADR-0073）；`cancel_sync_instruments` 是纯原子标志位
+//!（不触 DB），保持同步形态（先例：`set_auto_execution_enabled`）。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
 // （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
@@ -22,13 +17,14 @@ use std::thread;
 
 use tauri::{AppHandle, State};
 
-use crate::db::{DbState, run_db};
+use crate::db::DbState;
 use crate::error::{AppError, Result};
 use crate::signals::{WriteEvidence, WriteOp, emit_for};
 use crate::sync::{
     CancelSyncResult, GlobalConn, SyncHoldingPricesResult, SyncState, do_incremental_sync, do_sync,
     emit_error_progress,
 };
+use crate::write_entry::{Outcome, write_entry};
 
 /// IPC 命令：同步持仓价格（增量同步，issue #103 / #303）。单次按类型分区刷价：
 /// 股票走行情报价/K 线通道，场外基金走历史净值通道逐只按水位增量回填
@@ -38,30 +34,30 @@ use crate::sync::{
 ///（ADR-0031）：零变化（无持仓/全部跳过/基金无新净值）为库内零变化，不广播。
 ///
 /// 「是否发」判定已于 #333 归一化进 signals 映射单点（`signals_for` +
-/// [`WriteEvidence::PriceWritten`]，ADR-0044）：壳层只把终态归一化为证据——
-/// 到达保留落库的终态（成功或用户中断）按实际写入 n>0，失败无证据零信号。
+/// [`WriteEvidence::PriceWritten`]，ADR-0044）：入口只把终态归一化为证据——
+/// 到达保留落库的终态（成功或用户中断）按实际写入 n>0，失败无证据零信号
+///（写失败早退不发）。
 #[tauri::command]
 pub async fn sync_holding_prices(
     db: State<'_, DbState>,
     app: AppHandle,
 ) -> Result<SyncHoldingPricesResult> {
     let conn = db.conn.clone();
-    let result = run_db("sync_holding_prices", move || {
-        // 连接层统一写入口（ADR-0032，#246 审计补齐）：行情/汇率/历史落库成功即置脏，
-        // 提交点写时顺带到期检查；锁语义与先前整段持有一致（同步期间独占连接）。
-        crate::db::write(&conn, do_incremental_sync)
-    })
-    .await?;
-    // Err 已在上方 `?` 早退：失败无证据零信号不广播；到达此处即成功路径，
-    // 把实际写入归一化为证据（零变化不广播：基金全部「已是最新」时 written
-    // 为 0，虽有成功处理亦不广播），「是否发」单点在 signals 映射
-    //（ADR-0044，#333），壳层只归一化证据并转发。
-    emit_for(
-        &app,
+    write_entry(
+        "sync_holding_prices",
+        conn,
+        Some(&app),
         WriteOp::SyncHoldingPrices,
-        WriteEvidence::PriceWritten(result.written > 0),
-    );
-    Ok(result)
+        // 行情/汇率/历史落库成功即置脏，提交点写时顺带到期检查（ADR-0032，
+        // #246 审计补齐）；锁语义与先前整段持有一致（同步期间独占连接）。
+        move |conn| {
+            do_incremental_sync(conn).map(|result| {
+                let evidence = WriteEvidence::PriceWritten(result.written > 0);
+                Outcome::Evidenced(result, evidence)
+            })
+        },
+    )
+    .await
 }
 
 /// IPC 命令：全量同步股票行情。后台线程执行（不阻塞界面），进度经

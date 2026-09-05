@@ -1,4 +1,7 @@
 //! 分类端点：列表 / 幂等创建 / 软删除。
+//!
+//! 写端点经壳层统一写入口 [`crate::write_entry::write_entry`]（ADR-0073）；
+//! 读端点经 `run_db`（形状乙）。
 
 use std::sync::{Arc, Mutex};
 
@@ -9,11 +12,11 @@ use rusqlite::Connection;
 
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::EmitterSlot;
-use crate::api_server::write_ops::emit_after_write;
 use crate::categories::{Category, CategoryInput};
 use crate::db::run_db;
 use crate::error::AppError;
-use crate::signals::{WriteEvidence, WriteOp};
+use crate::signals::WriteOp;
+use crate::write_entry::{Outcome, write_entry};
 
 #[utoipa::path(
     get,
@@ -57,15 +60,15 @@ pub async fn create_category_handler(
 ) -> Result<(StatusCode, Json<String>), AppError> {
     let input: CategoryInput =
         serde_json::from_str(&body).map_err(|e| AppError::Invalid(e.to_string()))?;
-    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
-    let id = run_db("POST /api/v1/categories", move || {
-        crate::db::write(&conn, |conn| {
-            crate::categories::create_category_idempotent(conn, input)
-        })
-    })
-    .await?;
-    emit_after_write(&emitter, WriteOp::CreateCategory, WriteEvidence::None);
-    Ok((StatusCode::CREATED, Json(id)))
+    write_entry(
+        "POST /api/v1/categories",
+        conn,
+        emitter.as_deref(),
+        WriteOp::CreateCategory,
+        move |conn| crate::categories::create_category_idempotent(conn, input).map(Outcome::Silent),
+    )
+    .await
+    .map(|id| (StatusCode::CREATED, Json(id)))
 }
 
 #[utoipa::path(
@@ -89,11 +92,13 @@ pub async fn delete_category_handler(
     State(emitter): State<EmitterSlot>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    // 连接层统一写入口（ADR-0032）：删除成功即置脏。
-    run_db("DELETE /api/v1/categories/{id}", move || {
-        crate::db::write(&conn, |conn| crate::categories::delete_category(conn, &id))
-    })
+    write_entry(
+        "DELETE /api/v1/categories/{id}",
+        conn,
+        emitter.as_deref(),
+        WriteOp::DeleteCategory,
+        move |conn| crate::categories::delete_category(conn, &id).map(Outcome::Silent),
+    )
     .await?;
-    emit_after_write(&emitter, WriteOp::DeleteCategory, WriteEvidence::None);
     Ok(StatusCode::NO_CONTENT)
 }
