@@ -606,9 +606,9 @@ describe('ReportsView 会话内保留（issue #427）：同一 pinia 卸载重�
 
 describe('ReportsView 商户排行柱图化 + TopN（issue #588）', () => {
   const mockMerchants = [
-    { merchant_id: 'm-1', merchant_name: '超市', amount_cents: 5000 },
-    { merchant_id: 'm-2', merchant_name: '咖啡', amount_cents: 3000 },
-    { merchant_id: 'm-3', merchant_name: '书店', amount_cents: 1000 },
+    { merchant_id: 'm-1', merchant_name: '超市', amount_cents: 5000, transaction_count: 3 },
+    { merchant_id: 'm-2', merchant_name: '咖啡', amount_cents: 3000, transaction_count: 2 },
+    { merchant_id: 'm-3', merchant_name: '书店', amount_cents: 1000, transaction_count: 1 },
   ]
 
   /** 商户载荷：total_cents 刻意 ≠ rows 合计（9000），供占比分母断言识别真源 */
@@ -725,7 +725,7 @@ describe('ReportsView 商户排行柱图化 + TopN（issue #588）', () => {
       releaseTop10 = resolve
     })
     const top5Payload = {
-      rows: [{ merchant_id: 'm-9', merchant_name: '快餐', amount_cents: 500 }],
+      rows: [{ merchant_id: 'm-9', merchant_name: '快餐', amount_cents: 500, transaction_count: 2 }],
       total_cents: 15000,
     }
     mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
@@ -738,7 +738,7 @@ describe('ReportsView 商户排行柱图化 + TopN（issue #588）', () => {
     await clickTopN(wrapper, 10) // 发起 #2：挂起
     await clickTopN(wrapper, 5) // 发起 #3：立即落位
     // 迟到的 #2（top 10 旧响应）后到：必须被丢弃，不得覆盖 top 5 结果
-    releaseTop10({ rows: [{ merchant_id: 'm-x', merchant_name: '迟到户', amount_cents: 9 }], total_cents: 9 })
+    releaseTop10({ rows: [{ merchant_id: 'm-x', merchant_name: '迟到户', amount_cents: 9, transaction_count: 1 }], total_cents: 9 })
     await flushPromises()
     const data = merchantChartProp('data', wrapper)
     expect(data.labels).toEqual(['快餐'])
