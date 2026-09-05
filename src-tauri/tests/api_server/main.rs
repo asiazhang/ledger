@@ -22,6 +22,7 @@ mod balance;
 mod batch_import;
 mod common;
 mod documentation;
+mod encryption_gate;
 mod error_codes;
 mod fund_lookup;
 mod instrument_create;

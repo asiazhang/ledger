@@ -106,6 +106,7 @@
     "tabs": {
       "backup": "Backup",
       "location": "Storage Location",
+      "encryption": "Encryption",
       "repair": "Data Repair"
     },
     "backup": {
@@ -163,6 +164,24 @@
       "adoptCancel": "Keep Separate",
       "cancelled": "Change cancelled; data location unchanged",
       "committed": "Change saved; the migration takes effect on next startup"
+    },
+    "encryption": {
+      "title": "Encryption",
+      "hint": "Enable file-level encryption for the ledger database: the database and its backups on disk can no longer be read by arbitrary tools. Enabling is a one-step automatic whole-database conversion; on failure the original database stays untouched.",
+      "retry": "Retry",
+      "enabledTitle": "Encryption enabled",
+      "enabledBody": "The current ledger database is encrypted. Enter the master passphrase at every startup to unlock.",
+      "warnTitle": "Before you enable",
+      "warnBody": "You will need the master passphrase to unlock at every startup; the passphrase is never stored and cannot be recovered — losing it means the data can no longer be read (you may reset to a brand-new empty database; the old one is kept as an encrypted copy). The app restarts automatically after conversion.",
+      "passphraseLabel": "Master passphrase",
+      "passphrasePlaceholder": "Set a master passphrase",
+      "confirmLabel": "Confirm passphrase",
+      "confirmPlaceholder": "Re-enter the master passphrase",
+      "mismatch": "The two entries do not match",
+      "enable": "Enable Encryption",
+      "confirmTitle": "Enable encryption?",
+      "confirmBody": "The whole ledger database will be converted to an encrypted database (do not close the app during conversion); the app restarts automatically afterwards. Continue?",
+      "okToast": "Encryption enabled; the app will restart shortly"
     },
     "source": {
       "auto": "Auto",

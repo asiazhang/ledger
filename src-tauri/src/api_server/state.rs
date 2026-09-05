@@ -1,7 +1,8 @@
-//! HTTP 服务器状态与注入接缝：数据库连接 + 失效信号发射槽 + 可选东财基金详情接缝。
+//! HTTP 服务器状态与注入接缝：数据库连接 + 失效信号发射槽 + 可选东财基金详情接缝 + 加密锁定门。
 
 use std::sync::{Arc, Mutex};
 
+use crate::db::encryption::EncryptionGate;
 use crate::error::AppError;
 use crate::events::SignalEmitter;
 use crate::investment::FundDetail;
@@ -21,7 +22,7 @@ pub type FundDetailFetcher = Arc<dyn Fn(&str) -> Result<FundDetail, AppError> + 
 /// 生产注入 `AppHandle`（主线程非阻塞投递实现）经未尺寸化强转装入。
 pub type EmitterSlot = Option<Arc<dyn SignalEmitter>>;
 
-/// HTTP 服务器状态：数据库连接 + 失效信号发射槽 + 可选东财基金详情接缝。
+/// HTTP 服务器状态：数据库连接 + 失效信号发射槽 + 可选东财基金详情接缝 + 加密锁定门。
 ///
 /// `emitter`（发射槽，ADR-0044 / ADR-0054）：`Some` 时写事务提交成功后经信号
 /// 映射单点发射失效信号。生产路径由 `start_http_server` 注入
@@ -32,11 +33,17 @@ pub type EmitterSlot = Option<Arc<dyn SignalEmitter>>;
 ///
 /// `fund_fetch` 为东财基金详情获取接缝：`None` = 生产路径（真实东财，
 /// `spawn_blocking` 连接锁外往返）；集成测试注入桩离线驱动（issue #304）。
+///
+/// `lock_gate` 为加密锁定门（issue #570 / ADR-0075 决策 5）：与 IPC 壳共享
+/// 同一进程级门实例（`lib.rs` 创建的 [`crate::db::encryption::EncryptionGate`]），
+/// 锁定期间门禁中间件对数据端点统一返回码化错误——AI 导入 HTTP 面在解锁前
+/// 不可用；明文库路径门不锁，行为零变化。
 #[derive(Clone)]
 pub struct ApiState {
     pub conn: Arc<Mutex<Connection>>,
     pub emitter: EmitterSlot,
     pub fund_fetch: Option<FundDetailFetcher>,
+    pub lock_gate: EncryptionGate,
 }
 
 impl FromRef<ApiState> for Arc<Mutex<Connection>> {

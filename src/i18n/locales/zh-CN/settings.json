@@ -106,6 +106,7 @@
     "tabs": {
       "backup": "备份",
       "location": "存储位置",
+      "encryption": "加密",
       "repair": "数据修复"
     },
     "backup": {
@@ -163,6 +164,24 @@
       "adoptCancel": "取消换位",
       "cancelled": "已取消更改，数据存储位置未变化",
       "committed": "更改已保存，将在下次启动时搬迁生效"
+    },
+    "encryption": {
+      "title": "加密",
+      "hint": "为账本数据库开启文件级加密：磁盘上的库文件与备份不再能被任意工具直接阅读。开启是一次自动完成的整库转换，失败时原库原样保留。",
+      "retry": "重试",
+      "enabledTitle": "已开启加密",
+      "enabledBody": "当前账本库为加密库，每次启动需输入主口令解锁。",
+      "warnTitle": "开启前请确认",
+      "warnBody": "开启后每次启动都需输入主口令解锁；主口令不落盘、没有找回手段——遗忘将无法读取数据（可重置为全新空库，旧库保留为密文副本）。转换完成后应用将自动重启。",
+      "passphraseLabel": "主口令",
+      "passphrasePlaceholder": "设置主口令",
+      "confirmLabel": "确认主口令",
+      "confirmPlaceholder": "再次输入主口令",
+      "mismatch": "两次输入不一致",
+      "enable": "开启加密",
+      "confirmTitle": "开启加密？",
+      "confirmBody": "将把整个账本库转换为加密库（转换期间请勿关闭应用），完成后应用自动重启。继续吗？",
+      "okToast": "加密已开启，应用即将重启"
     },
     "source": {
       "auto": "自动",

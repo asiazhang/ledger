@@ -16,6 +16,7 @@ import scheduled from './scheduled.json'
 import budget from './budget.json'
 import ai from './ai.json'
 import settings from './settings.json'
+import unlock from './unlock.json'
 import errors from './errors.json'
 
 export default {
@@ -34,5 +35,6 @@ export default {
   budget,
   ai,
   settings,
+  unlock,
   errors,
 }

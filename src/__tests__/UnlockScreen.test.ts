@@ -1,0 +1,166 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
+import { invoke } from '@tauri-apps/api/core'
+
+import UnlockScreen from '@/components/UnlockScreen.vue'
+import { useEncryptionGate } from '@/composables/useEncryptionGate'
+
+const mockInvoke = vi.mocked(invoke)
+
+/** mock-invoke 桩：解锁屏只消费加密命令面（fail-loud：其余命令一律拒绝）。 */
+function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
+  mockInvoke.mockImplementation((cmd: string, args?: any) => {
+    if (cmd in overrides) return overrides[cmd](args)
+    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  })
+}
+
+beforeEach(() => {
+  mockInvoke.mockReset()
+  // 每个用例从「未探测」起步（模块级单例状态复位）。
+  const { locked } = useEncryptionGate()
+  locked.value = null
+})
+
+function findButton(wrapper: ReturnType<typeof mount>, text: string) {
+  return wrapper.findAll('button').find((b) => b.text().includes(text))!
+}
+
+async function mountWithProbe(locked: boolean) {
+  stubInvoke({
+    get_encryption_status: () => Promise.resolve({ locked, file_encrypted: locked }),
+  })
+  const { probe } = useEncryptionGate()
+  const probePromise = probe()
+  const wrapper = mount(UnlockScreen)
+  await probePromise
+  await flushPromises()
+  return wrapper
+}
+
+describe('UnlockScreen.vue（加密锁定门·解锁屏流程）', () => {
+  it('锁定时挂载解锁屏：标题、口令输入与解锁按钮就位', async () => {
+    const wrapper = await mountWithProbe(true)
+    const html = wrapper.html()
+    expect(html).toContain('账本已加密')
+    expect(html).toContain('主口令')
+    expect(findButton(wrapper, '解锁')).toBeTruthy()
+    // 不渲染主界面业务面（解锁先于一切业务读写）
+    expect(html).not.toContain('仪表盘')
+  })
+
+  it('探测失败：按锁定处理（fail-closed），解锁屏仍渲染而非主界面', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.reject(new Error('invoke 失败')),
+    })
+    const { probe, locked } = useEncryptionGate()
+    const probePromise = probe()
+    const wrapper = mount(UnlockScreen)
+    await probePromise
+    await flushPromises()
+    expect(locked.value).toBe(true)
+    expect(wrapper.html()).toContain('账本已加密')
+  })
+
+  it('解锁成功：调用 unlock_encryption 携带口令，状态翻转为已解锁', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve({ locked: true, file_encrypted: true }),
+      unlock_encryption: (args: any) => {
+        expect(args.passphrase).toBe('口令①')
+        return Promise.resolve({ relocated: false })
+      },
+    })
+    const { probe, locked } = useEncryptionGate()
+    const probePromise = probe()
+    const wrapper = mount(UnlockScreen)
+    await probePromise
+    await flushPromises()
+
+    const input = wrapper.find('input')
+    await input.setValue('口令①')
+    await findButton(wrapper, '解锁')!.trigger('click')
+    await flushPromises()
+    expect(mockInvoke).toHaveBeenCalledWith('unlock_encryption', { passphrase: '口令①' })
+    expect(locked.value).toBe(false)
+  })
+
+  it('错误口令：提示重试（码化文案），状态保持锁定可无限重试', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve({ locked: true, file_encrypted: true }),
+      unlock_encryption: () =>
+        Promise.reject({
+          kind: 'Invalid',
+          message: '主口令不正确，请重试',
+          code: 'encryption.passphrase-incorrect',
+        }),
+    })
+    const { probe, locked } = useEncryptionGate()
+    const probePromise = probe()
+    const wrapper = mount(UnlockScreen)
+    await probePromise
+    await flushPromises()
+
+    const input = wrapper.find('input')
+    await input.setValue('错误口令')
+    await findButton(wrapper, '解锁')!.trigger('click')
+    await flushPromises()
+    const html = wrapper.html()
+    expect(html).toContain('主口令不正确，请重试')
+    // 「口令错误」不是文件损坏：不出现损坏文案
+    expect(html).not.toContain('损坏')
+    expect(locked.value).toBe(true)
+
+    // 无限重试：再次输入并提交，按钮仍可用
+    await input.setValue('再试一次')
+    const button = findButton(wrapper, '解锁')!
+    expect((button.element as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('文件损坏与口令错误文案可区分：损坏码透出损坏提示', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve({ locked: true, file_encrypted: true }),
+      unlock_encryption: () =>
+        Promise.reject({
+          kind: 'Invalid',
+          message: '数据库文件损坏，无法通过完整性检查',
+          code: 'encryption.db-corrupt',
+        }),
+    })
+    const { probe } = useEncryptionGate()
+    const probePromise = probe()
+    const wrapper = mount(UnlockScreen)
+    await probePromise
+    await flushPromises()
+
+    await wrapper.find('input').setValue('口令')
+    await findButton(wrapper, '解锁')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.html()).toContain('数据库文件损坏')
+    expect(wrapper.html()).not.toContain('主口令不正确')
+  })
+
+  it('解锁时补做了搬迁：成功提示后调用 restart_app（Restore 同型重启语义）', async () => {
+    vi.useFakeTimers()
+    try {
+      stubInvoke({
+        get_encryption_status: () => Promise.resolve({ locked: true, file_encrypted: true }),
+        unlock_encryption: () => Promise.resolve({ relocated: true }),
+        restart_app: () => Promise.resolve(),
+      })
+      const { probe } = useEncryptionGate()
+      const probePromise = probe()
+      const wrapper = mount(UnlockScreen)
+      await probePromise
+      await flushPromises()
+
+      await wrapper.find('input').setValue('口令')
+      await findButton(wrapper, '解锁')!.trigger('click')
+      await flushPromises()
+      vi.advanceTimersByTime(900)
+      await flushPromises()
+      expect(mockInvoke).toHaveBeenCalledWith('restart_app')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

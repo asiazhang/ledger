@@ -185,6 +185,18 @@ pub struct LedgerWorld {
     pub dl_last_info: Option<DataLocationInfo>,
     /// 最近一次更改意图提交结果（#133 命令层断言用）
     pub dl_last_outcome: Option<DataLocationChangeOutcome>,
+    /// 加密场景（issue #570）：默认数据目录（真临时目录文件库）
+    pub enc_dir: Option<PathBuf>,
+    /// 加密场景：搬迁意图指向的目标目录
+    pub enc_target_dir: Option<PathBuf>,
+    /// 加密场景：最近一次库文件探测结果（启动接管断言用）
+    pub enc_probe: Option<tauri_app_lib::db::encryption::DbFileKind>,
+    /// 加密场景：最近一次转换/解锁/搬迁的错误（码化错误断言用）
+    pub enc_last_error: Option<tauri_app_lib::error::AppError>,
+    /// 加密场景：解锁成功后打开的文件库连接
+    pub enc_conn: Option<rusqlite::Connection>,
+    /// 加密场景：库文件字节快照（失败原子性断言用）
+    pub enc_db_bytes: Option<Vec<u8>>,
 }
 
 impl fmt::Debug for LedgerWorld {
@@ -267,6 +279,12 @@ impl LedgerWorld {
             dl_default_db_bytes: None,
             dl_last_info: None,
             dl_last_outcome: None,
+            enc_dir: None,
+            enc_target_dir: None,
+            enc_probe: None,
+            enc_last_error: None,
+            enc_conn: None,
+            enc_db_bytes: None,
         };
         // 注册种子黑洞账户（V004 预置 无(CNY)/无(HKD)），供迁移场景按名称引用。
         let hidden: Vec<(String, String)> = {

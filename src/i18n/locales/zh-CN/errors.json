@@ -189,5 +189,15 @@
     "date-invalid": "日期格式无效，应为 YYYY-MM-DD: {0}",
     "status-invalid": "未知实物资产状态: {0}（合法值: holding/disposed）",
     "not-found": "实物资产不存在: {0}"
+  },
+  "encryption": {
+    "locked": "应用已锁定，请先解锁后再操作",
+    "passphrase-incorrect": "主口令不正确，请重试",
+    "db-corrupt": "数据库文件损坏，无法通过完整性检查",
+    "db-missing": "数据库文件不存在或为空",
+    "not-encrypted": "库文件当前不是加密状态，请重启应用后再试",
+    "not-locked": "应用未处于锁定状态，无需解锁",
+    "not-plaintext": "当前库已是加密库，无需再次开启加密",
+    "passphrase-empty": "主口令不能为空"
   }
 }
