@@ -27,13 +27,8 @@ import InvestmentsView from '@/views/InvestmentsView.vue'
 import ItemsView from '@/views/ItemsView.vue'
 import ReportsView from '@/views/ReportsView.vue'
 import SearchView from '@/views/SearchView.vue'
-import {
-  sidebarContainment,
-  sidebarGroupOrders,
-  applyMoveBackToSidebar,
-  buildTabContextMenuOptions,
-} from '@/composables/useViewShortcuts'
-import type { ContainableViewName, SidebarGroupId } from '@/composables/useViewShortcuts'
+import { useSidebarOrderStore, buildTabContextMenuOptions } from '@/stores/sidebar-order'
+import type { ContainableViewName, SidebarGroupId } from '@/stores/sidebar-order'
 
 /**
  * 组内「更多」聚合页（issue #472 / ADR-0063 决策 1/5）：收纳单位 = 侧栏分组。
@@ -70,8 +65,12 @@ const CONTAINED_VIEWS: Record<ContainableViewName, { component: Component; icon:
 const route = useRoute()
 const router = useRouter()
 
+// 顺序状态消费 sidebar-order store（issue #549）：清单/组内序只读，移回写路径经 store。
+const sidebarOrder = useSidebarOrderStore()
+const { applyMoveBackToSidebar } = sidebarOrder
+
 /** 该组收纳清单（响应式）：空清单 = 无页签（出厂无成员的预建组）。 */
-const tabs = computed(() => sidebarContainment.value[props.group])
+const tabs = computed(() => sidebarOrder.sidebarContainment[props.group])
 
 /** 页签合法性收窄：query.tab 必须是当前清单成员。 */
 function isLegalTab(v: unknown): v is string {
@@ -103,7 +102,7 @@ const backMenuY = ref(0)
 const backTarget = ref<ContainableViewName | null>(null)
 
 /** 菜单选项由本组当前主项序派生（组满置灰判定在纯函数内，响应式随动）。 */
-const backMenuOptions = computed(() => buildTabContextMenuOptions(sidebarGroupOrders.value[props.group]))
+const backMenuOptions = computed(() => buildTabContextMenuOptions(sidebarOrder.sidebarGroupOrders[props.group]))
 
 /** 右键页签弹出移回菜单：先收起再 nextTick 展开，保证连续弹出时位置刷新（侧栏菜单同款）。 */
 function onTabContextmenu(e: MouseEvent, name: ContainableViewName) {

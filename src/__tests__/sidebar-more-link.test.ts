@@ -4,12 +4,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { setActivePinia, createPinia } from 'pinia'
 import App from '@/App.vue'
 import { routes } from '@/router'
-import {
-  applyMoveIntoMore,
-  applyMoveBackToSidebar,
-  resetSidebarOrder,
-  GROUP_CONTAINMENT_SEEDS,
-} from '@/composables/useViewShortcuts'
+import { useSidebarOrderStore, GROUP_CONTAINMENT_SEEDS } from '@/stores/sidebar-order'
 
 // 侧栏组标题行「更多」链接显隐渲染（issue #475 验收末项：移回组内最后一个收纳成员后链接消失；
 // #472/#473 建立的渲染条件 = 清单非空，App.vue 消费 sidebarContainment 响应式派生）。
@@ -37,9 +32,8 @@ function linkCount(wrapper: { findAll: (s: string) => unknown[] }): number {
 }
 
 describe('侧栏组标题行「更多」链接显隐渲染（issue #475 / ADR-0063 决策 1：清单非空才渲染，移回即消失）', () => {
-  afterEach(async () => {
-    const mod = await import('@/composables/useViewShortcuts')
-    mod.resetSidebarOrder()
+  afterEach(() => {
+    useSidebarOrderStore().resetSidebarOrder()
     localStorage.clear()
   })
 
@@ -51,29 +45,31 @@ describe('侧栏组标题行「更多」链接显隐渲染（issue #475 / ADR-00
 
   it('移入空组（洞察）后链接即现；移回该组最后一个收纳成员后链接消失（渲染条件失效）', async () => {
     const wrapper = await mountApp()
-    applyMoveIntoMore('reports')
+    const store = useSidebarOrderStore()
+    store.applyMoveIntoMore('reports')
     await flushPromises()
     expect(linkCount(wrapper)).toBe(3)
     // 移回组内全部收纳成员：清单回空，链接随之消失（零弹窗、零换出，纯渲染条件）
-    applyMoveIntoMore('search')
-    applyMoveBackToSidebar('reports')
+    store.applyMoveIntoMore('search')
+    store.applyMoveBackToSidebar('reports')
     await flushPromises()
     expect(linkCount(wrapper)).toBe(3)
-    applyMoveBackToSidebar('search')
+    store.applyMoveBackToSidebar('search')
     await flushPromises()
     expect(linkCount(wrapper)).toBe(2)
   })
 
   it('双向随动不串组：洞察链接随成员移回消失，出厂满员组的移回拒写（≤3 硬上限）不影响任何链接', async () => {
     const wrapper = await mountApp()
-    applyMoveIntoMore('reports')
+    const store = useSidebarOrderStore()
+    store.applyMoveIntoMore('reports')
     await flushPromises()
     expect(linkCount(wrapper)).toBe(3)
-    applyMoveBackToSidebar('reports') // 洞察组最后一个收纳成员移回：链接消失，出厂两链接保持
+    store.applyMoveBackToSidebar('reports') // 洞察组最后一个收纳成员移回：链接消失，出厂两链接保持
     await flushPromises()
     expect(linkCount(wrapper)).toBe(2)
     // 记账出厂满员：移回拒写（菜单置灰的第一道防线之下的写路径兑底），渲染面无变化
-    applyMoveBackToSidebar('scheduled')
+    store.applyMoveBackToSidebar('scheduled')
     await flushPromises()
     expect(linkCount(wrapper)).toBe(2)
   })

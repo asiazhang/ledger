@@ -5,6 +5,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { hasOpenOverlay, resetOverlays } from '@/composables/overlayRegistry'
 import GroupMoreView from '@/views/GroupMoreView.vue'
+import { useSidebarOrderStore } from '@/stores/sidebar-order'
 import { makePolicy, makePolicyStats } from './factories'
 import { routes, router } from '@/router'
 import type { Currency, Merchant } from '@/types'
@@ -185,24 +186,21 @@ describe('GroupMoreView 记账组接入（issue #473 / ADR-0063 决策 3：定�
 })
 
 describe('GroupMoreView 用户移入页签（issue #474 / ADR-0063 决策 4：移入即本组「更多」末位页签）', () => {
-  // 移入写路径会改顺序源模块单例与 ViewState 存储：用后即复位，不污染同文件后续 describe
-  afterEach(async () => {
-    const mod = await import('@/composables/useViewShortcuts')
-    mod.resetSidebarOrder()
+  // 移入写路径会改顺序状态与 ViewState 存储：用后即复位，不污染同文件后续 describe
+  afterEach(() => {
+    useSidebarOrderStore().resetSidebarOrder()
     localStorage.clear()
   })
 
   it('移入洞察组的主项（搜索）即刻成为末位页签且整体装载（移入空组链接即现的容器面）', async () => {
-    const mod = await import('@/composables/useViewShortcuts')
-    mod.applyMoveIntoMore('search')
+    useSidebarOrderStore().applyMoveIntoMore('search')
     const { wrapper } = await mountGroupView('insights', '/insights/more?tab=search')
     expect(containerTabs(wrapper)).toEqual(['搜索'])
     expect((wrapper.find('.n-input input').element as HTMLInputElement).placeholder).toBeTruthy()
   })
 
   it('移入记账组的主项（交易）追加在出厂页签之后：清单序 = 页签序（出厂在前、移入缀尾）', async () => {
-    const mod = await import('@/composables/useViewShortcuts')
-    mod.applyMoveIntoMore('transactions')
+    useSidebarOrderStore().applyMoveIntoMore('transactions')
     const { wrapper } = await mountGroupView('bookkeeping')
     expect(containerTabs(wrapper)).toEqual(['定时', '商户', '交易'])
   })
@@ -242,9 +240,8 @@ describe('全局「更多」退役迁移链（issue #473 / ADR-0063 决策 1/5�
 })
 
 describe('GroupMoreView 页签右键「移回侧栏」（issue #475 / ADR-0063 决策 4）', () => {
-  afterEach(async () => {
-    const mod = await import('@/composables/useViewShortcuts')
-    mod.resetSidebarOrder()
+  afterEach(() => {
+    useSidebarOrderStore().resetSidebarOrder()
     localStorage.clear()
     resetOverlays()
   })
@@ -269,8 +266,7 @@ describe('GroupMoreView 页签右键「移回侧栏」（issue #475 / ADR-0063 �
   })
 
   it('腾位后右键可选：点选「移回侧栏」即从清单删除（页签消失、落本组主项末位）', async () => {
-    const mod = await import('@/composables/useViewShortcuts')
-    mod.applyMoveIntoMore('transactions') // 先移出一个主项腾位（出厂满员须先换位）
+    useSidebarOrderStore().applyMoveIntoMore('transactions') // 先移出一个主项腾位（出厂满员须先换位）
     const { wrapper } = await mountGroupView('bookkeeping')
     await wrapper.findAll('.pane-tab').find((t) => t.text().includes('定时'))!.trigger('contextmenu')
     await flushPromises()
@@ -282,26 +278,26 @@ describe('GroupMoreView 页签右键「移回侧栏」（issue #475 / ADR-0063 �
     await flushPromises()
     // 定时页签消失，剩余页签随清单序（商户出厂在前、交易移入缀尾）
     expect(containerTabs(wrapper)).toEqual(['商户', '交易'])
-    expect(mod.sidebarContainment.value.bookkeeping).toEqual(['merchants', 'transactions'])
-    expect(mod.sidebarGroupOrders.value.bookkeeping).toEqual(['accounts', 'budget', 'scheduled'])
+    const store = useSidebarOrderStore()
+    expect(store.sidebarContainment.bookkeeping).toEqual(['merchants', 'transactions'])
+    expect(store.sidebarGroupOrders.bookkeeping).toEqual(['accounts', 'budget', 'scheduled'])
   })
 
   it('移回组内最后一个收纳成员后容器零页签（侧栏「更多」链接渲染条件失效的容器面）', async () => {
-    const mod = await import('@/composables/useViewShortcuts')
-    mod.applyMoveIntoMore('reports')
-    mod.applyMoveIntoMore('search')
-    mod.applyMoveBackToSidebar('reports')
-    mod.applyMoveBackToSidebar('search')
-    expect(mod.sidebarContainment.value.insights).toEqual([])
+    const store = useSidebarOrderStore()
+    store.applyMoveIntoMore('reports')
+    store.applyMoveIntoMore('search')
+    store.applyMoveBackToSidebar('reports')
+    store.applyMoveBackToSidebar('search')
+    expect(store.sidebarContainment.insights).toEqual([])
     const { wrapper } = await mountGroupView('insights')
     expect(wrapper.findAll('.n-tabs-tab').length).toBe(0)
   })
 })
 
 describe('移回侧栏后的独立路由（issue #475：侧栏/键位按 name 路由，种子须有真页面）', () => {
-  afterEach(async () => {
-    const mod = await import('@/composables/useViewShortcuts')
-    mod.resetSidebarOrder()
+  afterEach(() => {
+    useSidebarOrderStore().resetSidebarOrder()
     localStorage.clear()
   })
 
@@ -322,8 +318,7 @@ describe('移回侧栏后的独立路由（issue #475：侧栏/键位按 name �
   })
 
   it('/policies 分流：移回侧栏后独立渲染保单页（守卫放行，侧栏主项导航可达）', async () => {
-    const mod = await import('@/composables/useViewShortcuts')
-    mod.applyMoveBackToSidebar('policies')
+    useSidebarOrderStore().applyMoveBackToSidebar('policies')
     await router.push('/policies')
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('policies')
