@@ -34,7 +34,8 @@ pub mod scheduled_transactions;
 pub mod settings;
 pub mod signals;
 pub mod sync;
-// 信号交叉核对测试（ADR-0044 决策 3 / #335）：声明表 × 映射表双向核对，仅测试可见。
+// 信号守门测试（signals_cross_check，ADR-0044 决策 3 修订 / ADR-0073 决策 5）：
+// 写路径接线源码扫描核对，仅测试可见。
 #[cfg(test)]
 mod signals_cross_check;
 #[doc(hidden)]
