@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
 import { computed, ref, watch } from 'vue'
-import { NButton, NForm, NFormItem, NInput, useMessage } from 'naive-ui'
+import { NButton, NForm, NFormItem, NInput, NSpace, useMessage } from 'naive-ui'
 import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import { api } from '@/api'
@@ -64,12 +64,13 @@ async function saveEdit() {
 </script>
 
 <template>
+  <!-- 卡片外观走 AppModal 对话框排版规范（spec #630）：sm 档 + 默认无边框；
+       按钮行右对齐单主键（轻量单字段编辑保留无取消键语义，issue #637）。 -->
   <AppModal
     :show="show"
     :title="t('settings.categories.editModal.title')"
     preset="card"
-    style="width: 420px"
-    :bordered="false"
+    card-size="sm"
     @update:show="(v: boolean) => emit('update:show', v)"
   >
     <NForm label-placement="left" :show-feedback="false" size="small">
@@ -88,7 +89,9 @@ async function saveEdit() {
           style="width: 200px"
         />
       </NFormItem>
-      <NButton type="primary" block @click="saveEdit">{{ t('settings.categories.form.save') }}</NButton>
+      <NSpace justify="end">
+        <NButton type="primary" @click="saveEdit">{{ t('settings.categories.form.save') }}</NButton>
+      </NSpace>
     </NForm>
   </AppModal>
 </template>
