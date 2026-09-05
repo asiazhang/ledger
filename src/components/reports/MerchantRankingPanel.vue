@@ -1,44 +1,31 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { NCard, NEmpty, NRadioButton, NRadioGroup } from 'naive-ui'
-import { Bar } from 'vue-chartjs'
-import {
-  Chart as ChartJS,
-  Tooltip,
-  BarElement,
-  CategoryScale,
-  LinearScale,
-} from 'chart.js'
-import type { ActiveElement, ChartOptions, TooltipItem } from 'chart.js'
+import { computed, h } from 'vue'
+import { NCard, NDataTable, NEmpty, NRadioButton, NRadioGroup } from 'naive-ui'
+import type { DataTableColumns } from 'naive-ui'
 import { t } from '@/i18n'
-import { useAppStore } from '@/stores/app'
 import { MERCHANT_TOP_N_OPTIONS } from '@/stores/reports-session'
-import {
-  SOFT_BAR_RADIUS,
-  SOFT_TOOLTIP,
-  barEndAmountPlugin,
-  softBarFillPlugin,
-  softChartColors,
-} from '@/theme/chart-style'
 import { formatAmount } from '@/types'
-import { amountPrivacyEnabled } from '@/utils/money'
-import { barTooltipLabel } from '@/utils/category-chart'
-import { merchantBars } from '@/utils/merchant-chart'
+import { merchantTableRows } from '@/utils/merchant-chart'
+import type { MerchantTableRow } from '@/utils/merchant-chart'
+import MerchantLink from '@/components/MerchantLink.vue'
 import type { MerchantSharesReport } from '@/types'
 
-ChartJS.register(Tooltip, BarElement, CategoryScale, LinearScale)
-
-// 商户消费排行面板（issue #192 → #588 柱图化）：支出分类构成同款横向柱状图。
-// 口径、排序与 topN 截断全部在后端 `merchant_shares` 收口，前端按返回序渲染
-// 零口径逻辑；柱色与分类构成同源（分类色板按名次序，多颜色 + hex 实色，
-// 渐隐渐变由 softBarFillPlugin 绘制期呈现）；tooltip =
-// 名称（类目轴）+ 金额 · 占比%（复用 barTooltipLabel，分母 = 后端载荷的全量合计，
-// 不是展示中的前 N 行合计）。
+// 商户消费排行面板（issue #192 → #588 柱图化 → #618 表格化）：支出与商户的
+// 「列表化度量」以表格呈现——列为 商户名 | 金额分布（内嵌降序条）| 金额数字 |
+// 占比% | 交易笔数，无排名序号列。口径、排序与 topN 截断全部在后端
+// `merchant_shares` 收口；行构建（条长比例 / 占比 / 笔数透传 / 负值处理）收口
+// merchantTableRows 纯函数，本组件零口径逻辑、只做渲染与交互接线。
 //
-// 点击下钻（issue #589）：点任意商户柱 → 上报 drilldown 事件（携带 merchant_id），
+// 内嵌条：条长 ∝ 该行金额 ÷ 显示区最大金额（topN 下即第一名），负净额不画条
+// （比例归 0，金额与占比照实——退款大于支出如实可见）；条色沿用分类色板按名次
+// 取色（merchantTableRows 单一来源），「基线淡出 → 条端实色」以 CSS 渐变呈现
+// （柱图 canvas 插件 softBarFillPlugin 的表格等价物）。
+//
+// 点商户名下钻（issue #589 → #618）：商户名列复用记账页面可点击商户名入口
+// （MerchantLink 受控下钻模式），点击只上报 drilldown 事件（携带 merchant_id），
 // 由父组件（报表视图）构造跳转载荷（merchant + 日期边界 + 收支类型集合）。
 // 面板保持受控不持状态源：跳转逻辑不在本组件，与分类下钻的「载荷由视图显式构造」
-// 同一接缝，本组件只做把「点了哪根柱」这个意图上报出去。
+// 同一接缝。
 //
 // TopN 控件：卡片头部 Top 5 / Top 10 两枚选项（档位闭集二，默认 5），选择归
 // 报表页会话 store（会话内保留、冷启动回默认，ADR-0061 同粒度）；本组件受控
@@ -49,85 +36,78 @@ const emit = defineEmits<{
   (e: 'drilldown', merchantId: string): void
 }>()
 
-const app = useAppStore()
+const tableRows = computed(() =>
+  merchantTableRows(props.report.rows, props.report.total_cents),
+)
 
-const bars = computed(() => merchantBars(props.report.rows))
-
-/** 点柱上报（issue #589）：按点击索引取对应商户柱，携带 merchant_id 上报下钻意图。
- *  柱行 merchant_id 非空由 merchantBars 保证（MerchantShare.merchant_id 同源透传），
- *  此处置索引越界防护（稳妥不越界）；无商户交易不进排行、无下钻入口（后端已排除
- *  无商户行，本组件零口径）。 */
-function handleClick(_event: unknown, elements: ActiveElement[]) {
-  const bar = bars.value[elements[0]?.index ?? -1]
-  if (!bar) return
-  emit('drilldown', bar.merchant_id)
+// 行内下钻接线：MerchantLink 受控模式只上报意图，面板转发为 drilldown 事件，
+// 跳转载荷（期间边界 + 类型集合）由报表视图显式构造。
+function onDrill(merchantId: string) {
+  emit('drilldown', merchantId)
 }
 
-const chartData = computed(() => ({
-  labels: bars.value.map((b) => b.name),
-  datasets: [
-    {
-      data: bars.value.map((b) => b.value),
-      backgroundColor: bars.value.map((b) => b.color),
-      barThickness: 20,
-      borderRadius: SOFT_BAR_RADIUS,
-    },
-  ],
-}))
-
-// 视觉柔化与分类图同源（chart-style 单一来源）；options computed 并读取隐私开关
-// 建立响应式依赖（issue #566 同款）：轴刻度/tooltip 只在重绘时执行，切换隐私
-// 靠 options 变更驱动 vue-chartjs 重绘，即时生效。
-const chartOptions = computed<ChartOptions<'bar'>>(() => {
-  void amountPrivacyEnabled.value
-  const soft = softChartColors(app.theme)
-  return {
-    indexAxis: 'y',
-    color: soft.ticks,
-    responsive: true,
-    maintainAspectRatio: false,
-    // 两端留白容柱尾标签（x 轴 grace 把最大/最小值两端各拓 30%）
-    layout: { padding: { left: 4, right: 8 } },
-    onClick: handleClick,
-    plugins: {
-      legend: { display: false },
-      tooltip: {
-        ...SOFT_TOOLTIP,
-        callbacks: {
-          // 名称在 tooltip 标题（类目轴标签默认值）；label = 金额 · 占比%，
-          // 占比分母 = 后端全量合计（issue #588：全部商户而不仅是展示中的前 N）
-          label: (context: TooltipItem<'bar'>) =>
-            barTooltipLabel(context.raw as number, props.report.total_cents),
-        },
-      },
-    },
-    scales: {
-      x: {
-        type: 'linear',
-        grace: '30%',
-        grid: { color: soft.grid },
-        border: { display: false },
-        ticks: {
-          color: soft.ticks,
-          callback: (value: number | string) => formatAmount(Number(value)),
-        },
-      },
-      y: {
-        grid: { display: false },
-        border: { display: false },
-        // 平铺不截断：全部类目标签都画，行多时容器滚动
-        ticks: { autoSkip: false, color: soft.ticks },
-      },
-    },
-  }
-})
-
-// 平铺滚动（分类图同款）：图高随行数增长，卡片内限高滚动。
-const MERCHANT_ROW_HEIGHT = 32
-const MERCHANT_MIN_ROWS = 6
-const chartHeight = computed(
-  () => Math.max(MERCHANT_MIN_ROWS, bars.value.length) * MERCHANT_ROW_HEIGHT,
-)
+const columns = computed<DataTableColumns<MerchantTableRow>>(() => [
+  {
+    title: t('reports.merchant.columns.name'),
+    key: 'name',
+    render: (row) =>
+      h(MerchantLink, {
+        merchantId: row.merchant_id,
+        drillIntent: true,
+        'data-testid': 'merchant-name',
+        onDrill,
+      }),
+  },
+  {
+    title: t('reports.merchant.columns.bar'),
+    key: 'bar',
+    render: (row) =>
+      h('div', { class: 'merchant-bar-track', 'data-testid': 'merchant-bar-track' }, [
+        h('div', {
+          class: 'merchant-bar-fill',
+          'data-testid': 'merchant-bar',
+          style: {
+            width: `${row.barPct}%`,
+            // 名次色「淡入渐变 → 实色」：与柱图 softBarFillPlugin 视觉同源
+            background: `linear-gradient(90deg, ${row.color}66, ${row.color})`,
+          },
+        }),
+      ]),
+  },
+  {
+    title: t('reports.merchant.columns.amount'),
+    key: 'amount',
+    align: 'right',
+    render: (row) =>
+      h(
+        'span',
+        { class: 'merchant-amount', 'data-testid': 'merchant-amount' },
+        formatAmount(row.amount_cents),
+      ),
+  },
+  {
+    title: t('reports.merchant.columns.share'),
+    key: 'share',
+    align: 'right',
+    render: (row) =>
+      h(
+        'span',
+        { 'data-testid': 'merchant-share' },
+        `${row.sharePct}%`,
+      ),
+  },
+  {
+    title: t('reports.merchant.columns.count'),
+    key: 'count',
+    align: 'right',
+    render: (row) =>
+      h(
+        'span',
+        { 'data-testid': 'merchant-count' },
+        String(row.transactionCount),
+      ),
+  },
+])
 </script>
 
 <template>
@@ -160,20 +140,17 @@ const chartHeight = computed(
     />
     <div
       v-else
-      data-testid="merchant-chart-scroll"
+      data-testid="merchant-table-scroll"
       style="max-height: 320px; overflow-y: auto"
     >
-      <div
-        data-testid="merchant-chart-canvas"
-        :style="{ height: `${chartHeight}px`, position: 'relative' }"
-      >
-        <Bar
-          class="merchant-chart"
-          :data="chartData"
-          :options="chartOptions"
-          :plugins="[barEndAmountPlugin, softBarFillPlugin]"
-        />
-      </div>
+      <NDataTable
+        data-testid="merchant-table"
+        :columns="columns"
+        :data="tableRows"
+        :bordered="false"
+        size="small"
+        :row-key="(row: MerchantTableRow) => row.merchant_id"
+      />
     </div>
   </NCard>
 </template>
@@ -184,5 +161,19 @@ const chartHeight = computed(
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+/* 金额分布内嵌条：轨道占满单元格、细条居中（柱图 barThickness 的表格等价物） */
+.merchant-bar-track {
+  width: 100%;
+  min-width: 96px;
+  display: flex;
+  align-items: center;
+}
+
+.merchant-bar-fill {
+  height: 10px;
+  border-radius: 5px;
+  /* 条长为 0（负净额）时也不可见（宽度 0），金额与占比照实见邻列 */
 }
 </style>
