@@ -358,6 +358,38 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
     });
   });
 
+  it("confirmRestore：明文谎报实库为密文（后端报需口令）时，重输口令随请求上送", async () => {
+    // 元数据缺标记视为明文（intent.backupEncrypted=false），弹窗显出口令框
+    // 后用户重输：口令非空即上送，后端凭它打开实库为密文的备份（不再空转）。
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_backups") return Promise.resolve([]);
+      if (cmd === "get_auto_backup_state")
+        return Promise.resolve({ enabled: true, last_backup_at: null });
+      if (cmd === "get_backup_meta")
+        return Promise.resolve({ kind: "manual", encrypted: false });
+      if (cmd === "get_encryption_status")
+        return Promise.resolve({ locked: false, file_encrypted: false });
+      if (cmd === "restore_backup")
+        return Promise.resolve({ schema_version: 12, restored_at: "2026-02-17T00:00:00Z" });
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    });
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(open).mockResolvedValue("/Users/me/backups/lied-plain.db.zip");
+
+    const { backup } = mountHost();
+    await flushPromises();
+    await backup.pickRestore();
+    await flushPromises();
+    await backup.confirmRestore("real-pw");
+    await flushPromises();
+
+    const restoreCall = mockInvoke.mock.calls.find(([c]) => c === "restore_backup");
+    expect(restoreCall?.[1]).toEqual({
+      backupPath: "/Users/me/backups/lied-plain.db.zip",
+      passphrase: "real-pw",
+    });
+  });
+
   it("confirmRestore：失败不关弹窗（口令错误可就地重试）", async () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === "list_backups") return Promise.resolve([]);

@@ -4,16 +4,10 @@ import { open, save, confirm } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useAppStore } from "@/stores/app";
 import { api } from "@/api";
-import type {
-  AutoBackupState,
-  BackupFileInfo,
-  BackupKind,
-  BackupMetaSummary,
-} from "@/types";
+import type { AutoBackupState, BackupFileInfo, BackupKind } from "@/types";
 import { errorMessage } from "@/utils/errors";
 import { t } from "@/i18n";
-import { restartAppShortly } from "@/utils/restart";
-import { useModalIntent } from "@/composables/useModalIntent";
+import { useRestoreFromFile } from "@/composables/useRestoreFromFile";
 import {
   defaultBackupFileName,
   isManagedBackupPath,
@@ -55,6 +49,10 @@ export interface RestoreIntent {
   contextPassphrase?: string;
 }
 
+/** 后端码化错误（issue #572）：密文备份缺主口令——元数据谎报明文而实库为密文
+ *  时，确认弹窗据它按需显出口令框（与后端 engine 单源码字面对应）。 */
+export const BACKUP_PASSPHRASE_REQUIRED = 'backup.passphrase-required';
+
 /**
  * 跨模式恢复警告文案 key（issue #572 / ADR-0075 决策 7）：当前模式与备份模式
  * 不一致时返回显著警告文案 key，一致返回 null（不警告）。
@@ -74,14 +72,19 @@ export function useBackup() {
   const message = useMessage();
 
   const backingUp = ref(false);
-  const restoring = ref(false);
   const lastBackup = ref("");
   const backups = ref<BackupFileInfo[]>([]);
   const pruning = ref(false);
 
-  // 恢复确认弹窗（issue #572，ADR-0072）：意图内化开启/目标/关闭编排，
-  // 显示由意图非空派生；确认与取消副作用在视图层。
-  const restoreModal = useModalIntent<RestoreIntent>();
+  // 恢复确认弹窗（issue #572，ADR-0072）：开启/目标/关闭编排、文件选择、
+  // 元数据/模式校验、恢复确认与重启均收口在共享恢复流 useRestoreFromFile
+  // （与失败恢复屏/解锁屏恢复入口零拷贝），本模块只提供设置页侧的
+  // 文件选择器参数。
+  const restoreFlow = useRestoreFromFile({
+    pickTitleKey: "settings.data.backup.restoreButton",
+    defaultPath: () => store.backupDir || undefined,
+  });
+  const restoring = restoreFlow.restoring;
 
   // 自动备份设置（issue #128）：开关与上次自动备份时间存 ledger.db，经 IPC 读写。
   const autoBackupEnabled = ref(true);
@@ -252,60 +255,12 @@ export function useBackup() {
   }
 
   async function pickRestore() {
-    const path = await open({
-      title: t("settings.data.backup.restoreButton"),
-      directory: false,
-      multiple: false,
-      defaultPath: store.backupDir || undefined,
-      filters: [{ name: t("settings.data.msg.filterName"), extensions: ["zip", "db"] }],
-    });
-    if (typeof path !== "string" || !path) return;
-    // 读取备份元数据（issue #572）：加密标记驱动跨模式警告与口令输入；
-    // 读取失败视为无效备份，报错中止（与恢复时同样失败，只是提前到确认前）。
-    let meta: BackupMetaSummary;
-    try {
-      meta = await api.getBackupMeta(path);
-    } catch (e: any) {
-      message.error(t("settings.data.msg.backupMetaFailed", { msg: errorMessage(e) }));
-      return;
-    }
-    // 当前库模式（文件即真相）：读取失败则中止恢复——按明文回落会在加密库
-    // 上静默跳过跨模式警告（销毁性操作前的安全面，宁可不弹窗）。
-    let currentEncrypted: boolean;
-    try {
-      currentEncrypted = (await api.getEncryptionStatus()).file_encrypted;
-    } catch (e: any) {
-      message.error(
-        t("settings.data.msg.encryptionStatusFailed", { msg: errorMessage(e) }),
-      );
-      return;
-    }
-    restoreModal.open({ path, backupEncrypted: meta.encrypted, currentEncrypted });
+    await restoreFlow.pickRestore();
   }
 
   /** 恢复确认（弹窗提交）：密文备份附带主口令，明文备份不消费。 */
   async function confirmRestore(passphrase: string) {
-    const intent = restoreModal.intent.value;
-    if (!intent) return;
-    restoring.value = true;
-    try {
-      const r = await api.restoreBackup(
-        intent.path,
-        intent.backupEncrypted ? passphrase : null,
-      );
-      restoreModal.close();
-      message.success(
-        t("settings.data.msg.restoreOk", { version: r.schema_version }),
-      );
-      // 恢复成功后应用重启，由启动探测接管实际模式（ADR-0075 决策 4/7）。
-      restartAppShortly();
-    } catch (e: any) {
-      // 失败不关弹窗：口令错误可就地重试（解锁同语义，ADR-0075 决策 5），
-      // 错误文案经码化错误归一（errorMessage）。
-      throw e;
-    } finally {
-      restoring.value = false;
-    }
+    await restoreFlow.confirmRestore(passphrase);
   }
 
   let unlistenBackupsChanged: UnlistenFn | null = null;
@@ -337,9 +292,9 @@ export function useBackup() {
     backups,
     pruning,
     backupRows,
-    restoreIntent: restoreModal.intent,
-    restoreSeq: restoreModal.seq,
-    closeRestore: restoreModal.close,
+    restoreIntent: restoreFlow.restoreIntent,
+    restoreSeq: restoreFlow.restoreSeq,
+    closeRestore: restoreFlow.closeRestore,
     confirmRestore,
     pickBackupDir,
     clearBackupDir,

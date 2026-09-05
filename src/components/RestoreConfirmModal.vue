@@ -5,6 +5,7 @@ import AppModal from '@/components/AppModal.vue'
 import { t } from '@/i18n'
 import { errorMessage, errorCodeOf } from '@/utils/errors'
 import {
+  BACKUP_PASSPHRASE_REQUIRED,
   restoreCrossModeWarningKey,
   type RestoreIntent,
 } from '@/composables/useBackup'
@@ -78,7 +79,7 @@ async function confirm() {
     error.value = errorMessage(e)
     // 密文备份（含上下文口令试开失败）与后端探测报需口令：显出口令输入让
     // 用户就地重输重试，而不是卡死在无输入框的错误提示上。
-    if (needsPassphrase.value || errorCodeOf(e) === 'backup.passphrase-required') {
+    if (needsPassphrase.value || errorCodeOf(e) === BACKUP_PASSPHRASE_REQUIRED) {
       passphraseRevealedByError.value = true
     }
   } finally {
