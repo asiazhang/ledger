@@ -49,9 +49,16 @@ export type PriceJudgment =
 /** 必填文本判定闭集（名称类自由文本字段用；推广期消费） */
 export type RequiredTextJudgment = { kind: 'ok' } | { kind: 'empty' }
 
+/**
+ * 最小长度判定闭集（issue #650 主口令 ≥8 首批消费）：长度下限属格式类约束——
+ * 短于下限即时红，不拦截键入的输入行为由消费方保证。空白字符按原样计长
+ * （口令逐字符有效，不做 trim）；空串归 empty（是否红由装配按时机判定）。
+ */
+export type MinLengthJudgment = { kind: 'ok' } | { kind: 'empty' } | { kind: 'too-short' }
+
 /** 字段错误类别（不含 ok） */
 export type FieldErrorKind = Exclude<
-  AmountJudgment | QuantityJudgment | PriceJudgment | RequiredTextJudgment,
+  AmountJudgment | QuantityJudgment | PriceJudgment | RequiredTextJudgment | MinLengthJudgment,
   { kind: 'ok' }
 >['kind']
 
@@ -122,6 +129,16 @@ export function judgePriceText(text: string): PriceJudgment {
  */
 export function judgeRequiredText(value: string | null | undefined): RequiredTextJudgment {
   return value != null && value.trim() ? { kind: 'ok' } : { kind: 'empty' }
+}
+
+/**
+ * 最小长度文本 → 判定（issue #650 主口令最小长度 ≥8 首批消费，仅前端判定、
+ * 后端契约不动）。输入是输入框中**原样保留**的原始文本：空串 → empty；
+ * 长度（含空白字符）达下限 → ok；短于下限 → too-short（格式类，即时红）。
+ */
+export function judgeMinLengthText(text: string, min: number): MinLengthJudgment {
+  if (!text) return { kind: 'empty' }
+  return text.length >= min ? { kind: 'ok' } : { kind: 'too-short' }
 }
 
 /**
