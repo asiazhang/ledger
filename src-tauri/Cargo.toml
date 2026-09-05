@@ -54,6 +54,9 @@ pinyin = "0.11"
 # 仅 macOS 目标编译（security-framework 自带 #![cfg(target_vendor = "apple")]
 # 空壳，其余平台为不支持桩，见 db/passphrase_cache.rs）；钥匙串/生物认证的
 # 运行期行为以手动冒烟清单验收（issue #574 AC），不进 CI 自动测试。
+# 刻意不启用 OSX_10_15（use_protected_keychain / 数据保护钥匙串）：macOS 26 对
+# 未签名/ad-hoc 进程的无门 DPK 写入同样报 -34018（#662 本机探针实证；先例
+# block/buzz#1266），开发回退走传统钥匙串无门条目，勿因「重签稳定」旧论再开。
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3.7"
 security-framework-sys = "2.17"

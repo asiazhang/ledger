@@ -213,6 +213,7 @@
       "rememberCheckboxHint": "开启后，macOS 上经 Touch ID 自动解锁，无需再次输入主口令。",
       "rememberToggleLabel": "启动时自动解锁",
       "rememberToggleHint": "开启后，主口令会安全地保存在本机的系统钥匙串（macOS 上读取前需先通过 Touch ID），下次启动用它自动解锁、无需再输入；关闭后恢复手动输入。记住只对这台设备生效，换机或在其它设备恢复备份仍要手动输入。",
+      "rememberDevFallbackHint": "当前为开发构建：本机缓存不带 Touch ID 门，重启后凭缓存直接解锁、不弹生物认证；发布构建不受影响。",
       "rememberPassLabel": "输入当前主口令，以便保存并自动解锁",
       "rememberConfirm": "启用自动解锁",
       "rememberEnabled": "已启用自动解锁",

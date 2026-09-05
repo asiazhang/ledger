@@ -19,8 +19,8 @@ import type { RememberPassphraseSupport } from '@/types'
  */
 const locked = ref<boolean | null>(null)
 
-/** 本机记住主口令的平台能力（issue #574）：模块级单例，解锁屏与设置页共享
- *  （懒加载只查一次）。`null` = 尚未查询（调用 [`loadRememberSupport`] 填充）。 */
+/** 本机记住主口令的平台能力与运行形态（issue #574 / #662）：模块级单例，解锁屏
+ *  与设置页共享（懒加载只查一次）。`null` = 尚未查询（调用 [`loadRememberSupport`] 填充）。 */
 const rememberSupport = ref<RememberPassphraseSupport | null>(null)
 
 export function useEncryptionGate() {
@@ -53,7 +53,8 @@ export function useEncryptionGate() {
       rememberSupport.value = await api.getRememberPassphraseSupport()
     } catch (e) {
       console.warn('读取本机记住主口令能力失败，按不支持处理', e)
-      rememberSupport.value = { supported: false }
+      // mode 为占位：supported=false 时前端只读 supported 隐藏全部选项，mode 不被消费。
+      rememberSupport.value = { supported: false, mode: 'biometry' }
     }
   }
 
