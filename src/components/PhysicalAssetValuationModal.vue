@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { NButton, NForm, NFormItem, NInput, NSpace, useMessage } from 'naive-ui'
+import { NButton, NForm, NFormItem, NInput, NSpace, NText, useMessage } from 'naive-ui'
 import AppModal from '@/components/AppModal.vue'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import AppSelect from '@/components/AppSelect.vue'
@@ -94,7 +94,7 @@ defineExpose({ save })
     :show="show"
     preset="card"
     :title="t('physicalAssets.valuation.title')"
-    style="width: 420px"
+    card-size="sm"
     data-testid="physical-asset-valuation-modal"
     @update:show="(v: boolean) => emit('update:show', v)"
   >
@@ -124,10 +124,11 @@ defineExpose({ save })
           style="width: 160px"
           data-testid="physical-asset-valuation-date"
         />
-        <span style="margin-left: 8px; opacity: 0.6; font-size: 12px">
-          {{ t('physicalAssets.valuation.dateHint') }}
-        </span>
       </NFormItem>
+      <!-- 辅助说明统一段落式（spec #630 / #635）：不再内联挤在日期表单项旁 -->
+      <NText depth="3" class="form-hint">
+        {{ t('physicalAssets.valuation.dateHint') }}
+      </NText>
 
       <NSpace justify="end">
         <NButton @click="close">{{ t('physicalAssets.form.cancel') }}</NButton>
@@ -138,3 +139,11 @@ defineExpose({ save })
     </NForm>
   </AppModal>
 </template>
+
+<style scoped>
+/* 表单下方段落式辅助说明（spec #630）：块级 + 上下留白，不挤占表单项 */
+.form-hint {
+  display: block;
+  margin: 8px 0 12px;
+}
+</style>
