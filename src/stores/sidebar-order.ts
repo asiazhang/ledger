@@ -329,7 +329,9 @@ export function buildSidebarSortMenuOptions(
 /**
  * 「更多」页页签右键菜单构建纯函数：单菜单项「移回侧栏」。
  * 组满时置灰且不隐藏菜单项（上限可见、可学习），提示文案（组满须先移出一个主项）
- * 经 i18n 挂在标签渲染函数里（zh-CN 与 en-US 同步）。
+ * 经 i18n 挂在标签渲染函数里（zh-CN 与 en-US 同步）；两行标签由消费方经
+ * render-option 放开 naive 固定行盒（GroupMoreView + global.css .tab-back-option），
+ * 提示行自带 line-height 收紧行距，以 white-space:normal 覆写 label 元素的 nowrap 折行。
  */
 export function buildTabContextMenuOptions(order: readonly ContainableViewName[]): DropdownOption[] {
   const full = isGroupFull(order)
@@ -337,7 +339,7 @@ export function buildTabContextMenuOptions(order: readonly ContainableViewName[]
     ? () =>
         h('div', null, [
           h('div', null, t('common.sidebarContainment.backToSidebar')),
-          h('div', { style: 'font-size:12px;opacity:.6;white-space:normal;max-width:220px' }, t('common.sidebarContainment.backBlockedFull')),
+          h('div', { style: 'font-size:12px;line-height:1.5;opacity:.6;white-space:normal;max-width:220px' }, t('common.sidebarContainment.backBlockedFull')),
         ])
     : t('common.sidebarContainment.backToSidebar')
   return [{ key: 'backToSidebar', disabled: full, label }]

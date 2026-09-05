@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, nextTick, ref, type Component } from 'vue'
+import { computed, h, nextTick, ref, type Component, type VNode } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { t } from '@/i18n'
 import { NTabs, NTabPane, NIcon } from 'naive-ui'
@@ -91,7 +91,10 @@ function onTabChange(key: string | number) {
 // ---------------------------------------------------------------------------
 // 页签右键「移回侧栏」（issue #475 / ADR-0063 决策 4）：手动定位弹出，与侧栏排序菜单
 // 同一模式（AppDropdown 封装 + 弹层注册表上报 ADR-0035，零新抑制机制）。
-// 组满 3 主项时菜单项置灰并附提示（上限可见、可学习）；点选即从清单删除并落本组
+// 组满 3 主项时菜单项置灰并附提示（上限可见、可学习）：提示是两行标签，而 naive
+// 菜单项行盒高度固定，两行内容会溢出行盒画到菜单容器外（无背景板漂浮盖内容），
+// 故经 render-option 在选项外包一层 .tab-back-option 放开行盒随内容（规则在
+// global.css），整颗菜单（项 + 提示）保持一块实心浮层；点选即从清单删除并落本组
 // 主项末位（写路径 applyMoveBackToSidebar），页签序随清单响应式更新；
 // 移回最后一个成员后清单为空，本页退化为零页签、侧栏「更多」链接随之消失。
 // ---------------------------------------------------------------------------
@@ -121,6 +124,11 @@ function onBackMenuSelect(key: string) {
   if (key !== 'backToSidebar' || !target) return
   applyMoveBackToSidebar(target)
 }
+
+/** 选项行外包标记类：组满提示两行标签须撑开 naive 固定行盒（规则见 global.css .tab-back-option）。 */
+function renderBackOptionRow({ node }: { node: VNode }): VNode {
+  return h('div', { class: 'tab-back-option' }, [node])
+}
 </script>
 
 <template>
@@ -139,6 +147,7 @@ function onBackMenuSelect(key: string) {
     :y="backMenuY"
     :options="backMenuOptions"
     :min-width="140"
+    :render-option="renderBackOptionRow"
     @select="onBackMenuSelect"
     @clickoutside="backMenuShow = false"
   />
