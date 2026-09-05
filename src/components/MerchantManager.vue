@@ -19,6 +19,7 @@ import MerchantEditModal from '@/components/merchants/MerchantEditModal.vue'
 import { api } from '@/api'
 import { useRouter } from 'vue-router'
 import { useReferenceStore } from '@/stores/reference'
+import { useModalIntent } from '@/composables/useModalIntent'
 import { matchLabel } from '@/utils/pinyin-filter'
 import { t } from '@/i18n'
 import { formatQuantity } from '@/utils/money'
@@ -191,12 +192,27 @@ async function addMerchant() {
 }
 
 // —— 编辑 ——
-const showEditModal = ref(false)
-const editingMerchant = ref<Merchant | null>(null)
+// 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
+// 意图闭集单成员（携带目标商户行），显示由「意图非空」派生（无独立 show 布尔），
+// 序号随开启递增驱动表单重建（:key=editSeq），关闭（✕ / ESC / 取消 / 保存成功）
+// 统一经工厂清回 null 终态。现状无序号守卫，迁移为缺陷修复（本票唯一声明的行为
+// 变化）：守卫从无到有，「弹窗开着时目标行被替换回填旧行」缺陷消亡，同目标重开
+// 重回填等边缘语义细化同归此类；此外等价。
+
+/** 商户编辑弹窗意图（单成员闭集）：携带目标商户行。 */
+interface MerchantEditIntent {
+  merchant: Merchant
+}
+
+const {
+  intent: editIntent,
+  seq: editSeq,
+  open: openEditIntent,
+  close: closeEdit,
+} = useModalIntent<MerchantEditIntent>()
 
 function openEdit(m: Merchant) {
-  editingMerchant.value = m
-  showEditModal.value = true
+  openEditIntent({ merchant: m })
 }
 
 // —— 删除（软删：历史引用照常显示，不可再被新交易选择） ——
@@ -315,6 +331,13 @@ const columns: DataTableColumn<MerchantRow>[] = [
       </NSpace>
     </NCard>
 
-    <MerchantEditModal v-model:show="showEditModal" :merchant="editingMerchant" />
+    <!-- 商户编辑弹窗。显示由「意图非空」派生（无独立 show 布尔），关闭（✕ / ESC /
+         取消 / 保存成功）统一经工厂清回 null 终态；序号作 key 强制重建（ADR-0072）。 -->
+    <MerchantEditModal
+      :key="editSeq"
+      :show="editIntent !== null"
+      :merchant="editIntent?.merchant ?? null"
+      @update:show="(v: boolean) => (v ? undefined : closeEdit())"
+    />
   </NSpace>
 </template>
