@@ -6,7 +6,7 @@ import { NButton, NEmpty, NSelect } from 'naive-ui'
 import QuickTimeRange from '@/components/QuickTimeRange.vue'
 import ReportsView from '@/views/ReportsView.vue'
 import { categoryColor } from '@/utils/category-chart'
-import { UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
+import { UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS, MERCHANT_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
 import { invokeHandler, makeCategory } from './factories'
 import type { NullableDateRange } from '@/utils/time-period'
 import type { ReportDateRange } from '@/types'
@@ -753,5 +753,40 @@ describe('ReportsView 商户排行柱图化 + TopN（issue #588）', () => {
       ?.label as (item: TooltipItem<'bar'>) => string
     // 咖啡 3000 / 全量 15000 = 20%（若误用展示行合计 9000 会得 33%）
     expect(label({ raw: 3000 } as TooltipItem<'bar'>)).toBe('30 · 20%')
+  })
+
+  it('点商户柱跳传交易列表（#589）：载荷 = 商户 id + 所选期间首尾日期 + 收支类型集合（支出+退款）', async () => {
+    baseInvoke({ merchant_shares: merchantPayload() })
+    const wrapper = await mountReports()
+    pushMock.mockClear()
+    // 点第 1 根柱（超市 5000，商户 id m-1）：直达该商户本期支出+退款明细
+    await wrapper.find('.merchant-chart [data-testid="bar-click"]').trigger('click')
+    expect(pushMock).toHaveBeenCalledTimes(1)
+    expect(pushMock).toHaveBeenCalledWith({
+      name: 'transactions',
+      query: {
+        merchant: 'm-1',
+        dateFrom: `${Y}-01-01`,
+        dateTo: `${Y}-12-31`,
+        kinds: MERCHANT_DRILLDOWN_KINDS,
+      },
+    })
+  })
+
+  it('商户下钻载荷随期间（#589 边界）：选「去年」后点柱带去年年界', async () => {
+    baseInvoke({ merchant_shares: merchantPayload() })
+    const wrapper = await mountReports()
+    await clickChip(wrapper, '去年')
+    pushMock.mockClear()
+    await wrapper.find('.merchant-chart [data-testid="bar-click"]').trigger('click')
+    expect(pushMock).toHaveBeenCalledWith({
+      name: 'transactions',
+      query: {
+        merchant: 'm-1',
+        dateFrom: `${Y - 1}-01-01`,
+        dateTo: `${Y - 1}-12-31`,
+        kinds: MERCHANT_DRILLDOWN_KINDS,
+      },
+    })
   })
 })

@@ -77,4 +77,12 @@ describe('MerchantRankingPanel（issue #588 柱图化）', () => {
     expect(wrapper.find('[data-testid="merchant-empty"]').exists()).toBe(true)
     expect(wrapper.find('.merchant-chart').exists()).toBe(false)
   })
+
+  it('点商户柱上报下钻意图：emit drilldown（携带 merchant_id，issue #589）', async () => {
+    const wrapper = mountPanel()
+    await wrapper.findAll('[data-testid="bar-click"]')[0].trigger('click')
+    expect(wrapper.emitted('drilldown')).toEqual([['m1']])
+    await wrapper.findAll('[data-testid="bar-click"]')[1].trigger('click')
+    expect(wrapper.emitted('drilldown')).toEqual([['m1'], ['m2']])
+  })
 })

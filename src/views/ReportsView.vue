@@ -40,7 +40,7 @@ import {
   categoryDrilldownBars,
 } from '@/utils/category-chart'
 import { categoryRoot } from '@/utils/category-tree'
-import { UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
+import { UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS, MERCHANT_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
 import {
   DATED_TIME_PERIOD_PRESETS,
   type NullableDateRange,
@@ -289,6 +289,24 @@ function handleCategoryBarClick(_event: unknown, elements: ActiveElement[]) {
   goCategoryTransactions(bar.id)
 }
 
+/** 商户排行下钻（issue #589）：点商户柱 → 直达按该商户过滤的交易列表。载荷 =
+ *  商户 id + 所选期间首尾日期 + 收支类型集合（支出 + 退款，与商户排行聚合的参与
+ *  类型同源——income 可携带商户但不进排行，buy/sell/transfer 不参与经营收支口径，
+ *  故不含）；日期边界取报表页会话 store 期间快照（与分类下钻同款「跳转载荷与图所见
+ *  同口径」不变量——列表净值与柱值一致由载荷显式保证）。商户维度含软删商户
+ *  （TransactionFilter 既有口径），软删商户的历史名照常可下钻（user story 5）。 */
+function goMerchantTransactions(merchantId: string) {
+  router.push({
+    name: 'transactions',
+    query: {
+      merchant: merchantId,
+      dateFrom: session.period.from,
+      dateTo: session.period.to,
+      kinds: MERCHANT_DRILLDOWN_KINDS,
+    },
+  })
+}
+
 const categoryChartData = computed(() => ({
   labels: categoryBarsData.value.map((b) => b.name),
   datasets: [
@@ -419,6 +437,7 @@ onMounted(() => {
         :report="merchantReport"
         :top-n="session.merchantTopN"
         @update:top-n="session.setMerchantTopN"
+        @drilldown="goMerchantTransactions"
       />
     </NSpace>
   </NSpin>

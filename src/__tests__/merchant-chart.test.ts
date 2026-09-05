@@ -47,6 +47,11 @@ describe('merchantBars 图行构建（issue #588）', () => {
     expect(bars.map((b) => b.value)).toEqual([5000, 3000, 0])
   })
 
+  it('merchant_id 同源透传（下钻跳转载荷用，issue #589）', () => {
+    const bars = merchantBars(rows)
+    expect(bars.map((b) => b.merchant_id)).toEqual(['m-1', 'm-2', 'm-3'])
+  })
+
   it('梯度色随名次单调（柱色与行序一一对应）', () => {
     const bars = merchantBars(rows)
     expect(lightnessOf(bars[0].color)).toBeLessThan(lightnessOf(bars[1].color))
@@ -58,7 +63,7 @@ describe('merchantBars 图行构建（issue #588）', () => {
       { merchant_id: 'm-9', merchant_name: '退款户', amount_cents: -200 },
     ])
     expect(bars).toEqual([
-      { name: '退款户', value: -200, color: merchantRankColor(0, 1) },
+      { merchant_id: 'm-9', name: '退款户', value: -200, color: merchantRankColor(0, 1) },
     ])
   })
 })

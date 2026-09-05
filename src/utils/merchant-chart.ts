@@ -12,6 +12,9 @@ const RANK_L_LIGHT = 72
 
 /** 横向柱状图单根柱：后端返回序即柱序 */
 export interface MerchantBar {
+  /** 商户 id（下钻跳转载荷用，issue #589）：后端 MerchantShare.merchant_id 同源，
+   *  含软删商户的历史名下钻照常（TransactionFilter 既有口径）。 */
+  merchant_id: string
   name: string
   /** 净支出（分）：负值（退款大于支出）与 0 如实渲染，口径归后端 */
   value: number
@@ -28,9 +31,11 @@ export function merchantRankColor(index: number, count: number): string {
   return `hsl(${RANK_HUE}, ${RANK_SAT}%, ${l.toFixed(1)}%)`
 }
 
-/** 图行构建：后端返回序一一映射（不重排不过滤），色随名次梯度。 */
+/** 图行构建：后端返回序一一映射（不重排不过滤），色随名次梯度；
+ *  merchant_id 从 MerchantShare 透传（下钻跳转载荷用，issue #589）。 */
 export function merchantBars(rows: MerchantShare[]): MerchantBar[] {
   return rows.map((r, i) => ({
+    merchant_id: r.merchant_id,
     name: r.merchant_name,
     value: r.amount_cents,
     color: merchantRankColor(i, rows.length),

@@ -9,7 +9,7 @@ import {
   CategoryScale,
   LinearScale,
 } from 'chart.js'
-import type { ChartOptions, TooltipItem } from 'chart.js'
+import type { ActiveElement, ChartOptions, TooltipItem } from 'chart.js'
 import { t } from '@/i18n'
 import { useAppStore } from '@/stores/app'
 import { MERCHANT_TOP_N_OPTIONS } from '@/stores/reports-session'
@@ -32,17 +32,35 @@ ChartJS.register(Tooltip, BarElement, CategoryScale, LinearScale)
 // 口径、排序与 topN 截断全部在后端 `merchant_shares` 收口，前端按返回序渲染
 // 零口径逻辑；名次梯度色（第 1 名最深）收 merchant-chart 纯函数；tooltip =
 // 名称（类目轴）+ 金额 · 占比%（复用 barTooltipLabel，分母 = 后端载荷的全量合计，
-// 不是展示中的前 N 行合计）。本票不含点击下钻（兄弟票承接，接缝即本柱图）。
+// 不是展示中的前 N 行合计）。
+//
+// 点击下钻（issue #589）：点任意商户柱 → 上报 drilldown 事件（携带 merchant_id），
+// 由父组件（报表视图）构造跳转载荷（merchant + 日期边界 + 收支类型集合）。
+// 面板保持受控不持状态源：跳转逻辑不在本组件，与分类下钻的「载荷由视图显式构造」
+// 同一接缝，本组件只做把「点了哪根柱」这个意图上报出去。
 //
 // TopN 控件：卡片头部 Top 5 / Top 10 两枚选项（档位闭集二，默认 5），选择归
 // 报表页会话 store（会话内保留、冷启动回默认，ADR-0061 同粒度）；本组件受控
 // 不持状态源，v-model:topN 进出。
 const props = defineProps<{ report: MerchantSharesReport; topN: number }>()
-const emit = defineEmits<{ (e: 'update:topN', value: number): void }>()
+const emit = defineEmits<{
+  (e: 'update:topN', value: number): void
+  (e: 'drilldown', merchantId: string): void
+}>()
 
 const app = useAppStore()
 
 const bars = computed(() => merchantBars(props.report.rows))
+
+/** 点柱上报（issue #589）：按点击索引取对应商户柱，携带 merchant_id 上报下钻意图。
+ *  柱行 merchant_id 非空由 merchantBars 保证（MerchantShare.merchant_id 同源透传），
+ *  此处置索引越界防护（稳妥不越界）；无商户交易不进排行、无下钻入口（后端已排除
+ *  无商户行，本组件零口径）。 */
+function handleClick(_event: unknown, elements: ActiveElement[]) {
+  const bar = bars.value[elements[0]?.index ?? -1]
+  if (!bar) return
+  emit('drilldown', bar.merchant_id)
+}
 
 const chartData = computed(() => ({
   labels: bars.value.map((b) => b.name),
@@ -69,6 +87,7 @@ const chartOptions = computed<ChartOptions<'bar'>>(() => {
     maintainAspectRatio: false,
     // 两端留白容柱尾标签（x 轴 grace 把最大/最小值两端各拓 30%）
     layout: { padding: { left: 4, right: 8 } },
+    onClick: handleClick,
     plugins: {
       legend: { display: false },
       tooltip: {

@@ -17,6 +17,12 @@ export const UNCATEGORIZED_ONLY = 'none'
 const CATEGORY_DRILLDOWN_KIND_TOKENS = ['expense', 'refund'] as const satisfies readonly TransactionKind[]
 export const CATEGORY_DRILLDOWN_KINDS = CATEGORY_DRILLDOWN_KIND_TOKENS.join(',')
 
+/** 商户排行下钻跳转的收支类型集合（issue #589）：支出 + 退款，与商户排行聚合的参与
+ *  类型同源（退款减除进柱值；income 可携带商户但不进排行，故不含）。URL 编码为逗号
+ *  分隔闭集字面量，与 #581 分类下钻同一约定（值相同、语义独立命名）；消费方在
+ *  TransactionFilter 类型集合维度按同表解析。 */
+export const MERCHANT_DRILLDOWN_KINDS = CATEGORY_DRILLDOWN_KIND_TOKENS.join(',')
+
 /** URL 日期参数格式（issue #380）：YYYY-MM-DD，月/日限定在可能范围内（01-12 / 01-31）；
  * 非法格式视为参数不在场（回退不过滤）。不校验日历真实性（如 02-30 可通过）：后端按
  * 字典序比较，此类手工构造的畸形参数得到的是平移的边界而非报错——应用内跳转载荷
