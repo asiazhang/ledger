@@ -5,7 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { NButton, NEmpty, NSelect } from 'naive-ui'
 import QuickTimeRange from '@/components/QuickTimeRange.vue'
 import ReportsView from '@/views/ReportsView.vue'
-import { categoryColor } from '@/utils/category-chart'
+import { categoryColor, paletteColor } from '@/utils/category-chart'
 import { UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS, MERCHANT_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
 import { invokeHandler, makeCategory } from './factories'
 import type { NullableDateRange } from '@/utils/time-period'
@@ -140,7 +140,7 @@ describe('ReportsView 期间筛选（issue #411 / ADR-0057）', () => {
       year: Y,
       from: `${Y}-01-01`,
       to: `${Y}-12-31`,
-      top_n: 5,
+      topN: 5,
     })
     expect(mockInvoke).toHaveBeenCalledWith('category_shares', {
       kind: 'expense',
@@ -177,7 +177,7 @@ describe('ReportsView 期间筛选（issue #411 / ADR-0057）', () => {
       year: Y - 1,
       from: `${Y - 1}-01-01`,
       to: `${Y - 1}-12-31`,
-      top_n: 5,
+      topN: 5,
     })
     expect(mockInvoke).toHaveBeenCalledWith('category_shares', {
       kind: 'expense',
@@ -478,7 +478,7 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
       year: 2025,
       from: '2025-12-01',
       to: '2025-12-31',
-      top_n: 5,
+      topN: 5,
     })
   })
 })
@@ -515,7 +515,7 @@ describe('ReportsView 会话内保留（issue #427）：同一 pinia 卸载重�
       year: Y - 1,
       from: `${Y - 1}-01-01`,
       to: `${Y - 1}-12-31`,
-      top_n: 5,
+      topN: 5,
     })
 
     // 图内下钻位置恢复：面包屑仍在（全部分类 › 餐饮），图为下钻态行集合
@@ -647,13 +647,12 @@ describe('ReportsView 商户排行柱图化 + TopN（issue #588）', () => {
     expect(data.datasets[0].data).toEqual([5000, 3000, 1000])
   })
 
-  it('名次梯度色随名次单调：第 1 名亮度最低（最深）', async () => {
+  it('柱色与分类构成同源：色板按名次序取色（多颜色 + hex 实色，渐变由绘制期插件呈现）', async () => {
     baseInvoke({ merchant_shares: merchantPayload() })
     const wrapper = await mountReports()
     const colors: string[] = merchantChartProp('data', wrapper).datasets[0].backgroundColor
-    const lightness = (c: string) => Number(c.match(/ ([\d.]+)%\)/)![1])
-    expect(lightness(colors[0])).toBeLessThan(lightness(colors[1]))
-    expect(lightness(colors[1])).toBeLessThan(lightness(colors[2]))
+    expect(colors).toEqual([paletteColor(0), paletteColor(1), paletteColor(2)])
+    for (const color of colors) expect(color).toMatch(/^#[0-9a-f]{6}$/)
   })
 
   it('默认 Top 5：进入即以 top_n=5 查询', async () => {
@@ -663,7 +662,7 @@ describe('ReportsView 商户排行柱图化 + TopN（issue #588）', () => {
       year: Y,
       from: `${Y}-01-01`,
       to: `${Y}-12-31`,
-      top_n: 5,
+      topN: 5,
     })
   })
 
@@ -676,7 +675,7 @@ describe('ReportsView 商户排行柱图化 + TopN（issue #588）', () => {
       year: Y,
       from: `${Y}-01-01`,
       to: `${Y}-12-31`,
-      top_n: 10,
+      topN: 10,
     })
     expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === 'monthly_summary')).toHaveLength(0)
     expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === 'category_shares')).toHaveLength(0)
@@ -694,7 +693,7 @@ describe('ReportsView 商户排行柱图化 + TopN（issue #588）', () => {
       year: Y,
       from: `${Y}-01-01`,
       to: `${Y}-12-31`,
-      top_n: 10,
+      topN: 10,
     })
     second.unmount()
 
@@ -705,7 +704,7 @@ describe('ReportsView 商户排行柱图化 + TopN（issue #588）', () => {
       year: Y,
       from: `${Y}-01-01`,
       to: `${Y}-12-31`,
-      top_n: 5,
+      topN: 5,
     })
   })
 
@@ -731,7 +730,7 @@ describe('ReportsView 商户排行柱图化 + TopN（issue #588）', () => {
     }
     mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
       if (cmd === 'merchant_shares') {
-        if (args.top_n === 10) return pendingTop10
+        if (args.topN === 10) return pendingTop10
         return Promise.resolve(top5Payload)
       }
       return Promise.resolve([])

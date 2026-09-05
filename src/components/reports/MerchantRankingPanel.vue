@@ -30,7 +30,8 @@ ChartJS.register(Tooltip, BarElement, CategoryScale, LinearScale)
 
 // 商户消费排行面板（issue #192 → #588 柱图化）：支出分类构成同款横向柱状图。
 // 口径、排序与 topN 截断全部在后端 `merchant_shares` 收口，前端按返回序渲染
-// 零口径逻辑；名次梯度色（第 1 名最深）收 merchant-chart 纯函数；tooltip =
+// 零口径逻辑；柱色与分类构成同源（分类色板按名次序，多颜色 + hex 实色，
+// 渐隐渐变由 softBarFillPlugin 绘制期呈现）；tooltip =
 // 名称（类目轴）+ 金额 · 占比%（复用 barTooltipLabel，分母 = 后端载荷的全量合计，
 // 不是展示中的前 N 行合计）。
 //
