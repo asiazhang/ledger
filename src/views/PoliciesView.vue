@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
-import { h, computed, onMounted, ref } from 'vue'
+import { h, computed, onMounted } from 'vue'
 import {
   NCard,
   NButton,
@@ -17,6 +17,7 @@ import type { Policy, PolicyStats } from '@/types'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import MerchantLink from '@/components/MerchantLink.vue'
 import PolicyFormModal from '@/components/PolicyFormModal.vue'
+import { useModalIntent } from '@/composables/useModalIntent'
 import { useReferenceStore } from '@/stores/reference'
 import { usePoliciesStore } from '@/stores/policies'
 import { t } from '@/i18n'
@@ -25,22 +26,31 @@ const reference = useReferenceStore()
 const policiesStore = usePoliciesStore()
 const message = useMessage()
 
-// —— 新建/编辑弹窗（同一表单组件，editing 为 null 即新建）——
-const formShow = ref(false)
-const editing = ref<Policy | null>(null)
+// —— 新建/编辑弹窗（同一表单组件双模式）——
+// 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
+// 意图闭集双成员（新建无载荷；编辑携带目标保单行），显示由「意图非空」派生
+// （无独立 show 布尔），序号随开启递增驱动表单重建（:key=formSeq），关闭
+// （✕ / ESC / 取消 / 保存成功）统一经工厂清回 null 终态。现状无序号守卫，
+// 迁移为缺陷修复（本票唯一声明的行为变化）：守卫从无到有，「弹窗开着时
+// 目标行被替换回填旧行」缺陷消亡，同目标重开重回填等边缘语义细化同归此类；
+// 此外等价。
+
+/** 保单表单弹窗意图（新建/编辑双模式闭集）：编辑携带目标保单行。 */
+type PolicyFormIntent = { mode: 'create' } | { mode: 'edit'; policy: Policy }
+
+const {
+  intent: formIntent,
+  seq: formSeq,
+  open: openFormIntent,
+  close: closeForm,
+} = useModalIntent<PolicyFormIntent>()
 
 function openCreate() {
-  editing.value = null
-  formShow.value = true
+  openFormIntent({ mode: 'create' })
 }
 
 function openEdit(row: Policy) {
-  editing.value = row
-  formShow.value = true
-}
-
-function closeForm() {
-  formShow.value = false
+  openFormIntent({ mode: 'edit', policy: row })
 }
 
 // —— 软删除（issue #360 / ADR-0051 决策 5）：二次确认后 is_deleted=1，
@@ -189,7 +199,15 @@ onMounted(() => {
       </NDataTable>
     </NCard>
 
-    <!-- 新建/编辑弹窗（遮罩点击不关：AppModal 默认语义，ADR-0035） -->
-    <PolicyFormModal :show="formShow" :editing="editing" @update:show="closeForm" />
+    <!-- 新建/编辑弹窗（同一表单组件双模式，遮罩点击不关：AppModal 默认语义，
+         ADR-0035）。显示由「意图非空」派生（无独立 show 布尔），关闭（✕ /
+         ESC / 取消 / 保存成功）统一经工厂清回 null 终态；序号作 key 强制重建
+         （ADR-0072）。 -->
+    <PolicyFormModal
+      :key="formSeq"
+      :show="formIntent !== null"
+      :editing="formIntent?.mode === 'edit' ? formIntent.policy : null"
+      @update:show="(v: boolean) => (v ? undefined : closeForm())"
+    />
   </NSpace>
 </template>
