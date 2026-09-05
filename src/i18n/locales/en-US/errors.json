@@ -45,7 +45,8 @@
     "meta-parse-failed": "failed to parse backup metadata: {0}",
     "target-dir-missing": "backup target directory does not exist: {0}",
     "schema-newer": "backup is from a newer app version (backup schema v{0} > current v{1}), upgrade the app before restoring",
-    "db-entry-missing": "ledger.db not found in the archive, not a valid ledger backup"
+    "db-entry-missing": "ledger.db not found in the archive, not a valid ledger backup",
+    "passphrase-required": "this backup is encrypted; enter the master passphrase of the database it was made from to restore"
   },
   "sync": {
     "already-running": "a full sync is already running, cancel it or wait for it to finish",

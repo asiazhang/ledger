@@ -24,8 +24,9 @@ use tauri::{AppHandle, Manager};
 
 use crate::backup;
 use crate::backup::{
-    BackupFileInfo, BackupKind, BackupResult, PruneResult, RestoreResult, backup_db_to,
-    expected_schema_version, list_managed_backups, prune_managed_backups, restore_db_from,
+    BackupFileInfo, BackupKind, BackupMetaSummary, BackupResult, PruneResult, RestoreResult,
+    backup_db_to, expected_schema_version, list_managed_backups, probe_backup_meta,
+    prune_managed_backups, restore_db_from,
 };
 use crate::db::{DbState, run_db};
 use crate::error::{AppError, Result};
@@ -52,8 +53,14 @@ pub async fn create_backup(app: AppHandle, target_path: String) -> Result<Backup
 ///
 /// 恢复期间持有全局连接锁，阻塞 IPC 与本地 HTTP API 的并发写，避免恢复过程中被写入污染。
 /// 恢复成功后由前端调用 `restart_app` 重启应用。
+/// `passphrase` 用于密文备份（issue #572 / ADR-0075 决策 7）：备份库为密文时凭
+/// 该主口令校验与恢复；明文备份不消费。主口令不落日志与 trace（ADR-0075）。
 #[tauri::command]
-pub async fn restore_backup(app: AppHandle, backup_path: String) -> Result<RestoreResult> {
+pub async fn restore_backup(
+    app: AppHandle,
+    backup_path: String,
+    passphrase: Option<String>,
+) -> Result<RestoreResult> {
     let conn = app.state::<DbState>().conn.clone();
     run_db("restore_backup", move || {
         let dir = app
@@ -64,7 +71,23 @@ pub async fn restore_backup(app: AppHandle, backup_path: String) -> Result<Resto
         let expected = expected_schema_version()?;
         // 恢复期间持有主连接锁，阻塞 IPC 与本地 HTTP API 的并发写。
         let _guard = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        restore_db_from(Path::new(&backup_path), &db_path, &dir, expected)
+        restore_db_from(
+            Path::new(&backup_path),
+            &db_path,
+            &dir,
+            expected,
+            passphrase.as_deref(),
+        )
+    })
+    .await
+}
+
+/// 读取单个备份文件的元数据摘要（来源 + 加密标记，issue #572）：恢复确认弹窗
+/// 据加密标记与当前模式比对显警告、密文备份引导输入主口令。
+#[tauri::command]
+pub async fn get_backup_meta(path: String) -> Result<BackupMetaSummary> {
+    run_db("get_backup_meta", move || {
+        probe_backup_meta(Path::new(&path))
     })
     .await
 }

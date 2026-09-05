@@ -22,9 +22,9 @@ pub use auto::{
     run_exit_backup, run_first_backup, set_state, shared_prefs, start_scheduler,
 };
 pub use engine::{
-    BackupFileInfo, BackupKind, BackupResult, PruneResult, RestoreResult, backup_db_to,
-    expected_schema_version, list_managed_backups, prune_managed_backups, read_backup_kind,
-    restore_db_from,
+    BackupFileInfo, BackupKind, BackupMetaSummary, BackupResult, PruneResult, RestoreResult,
+    backup_db_to, expected_schema_version, list_managed_backups, probe_backup_meta,
+    prune_managed_backups, read_backup_kind, read_backup_meta, restore_db_from,
 };
 
 /// 连接层写入口提交点（`db::write` → after_commit，ADR-0032）与定时追补落账的
