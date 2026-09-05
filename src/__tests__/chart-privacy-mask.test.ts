@@ -64,8 +64,8 @@ const mockMonthly: MonthlySummary[] = [
 
 const mockMerchants: MerchantSharesReport = {
   rows: [
-    { merchant_id: 'm-1', merchant_name: '超市', amount_cents: 50000 },
-    { merchant_id: 'm-2', merchant_name: '咖啡', amount_cents: 9900 },
+    { merchant_id: 'm-1', merchant_name: '超市', amount_cents: 50000, transaction_count: 4 },
+    { merchant_id: 'm-2', merchant_name: '咖啡', amount_cents: 9900, transaction_count: 2 },
   ],
   // 全量合计刻意 ≠ rows 合计（59900），供占比分母断言识别真源（issue #588）
   total_cents: 150000,

@@ -193,8 +193,6 @@ pub struct LedgerWorld {
     pub enc_dir: Option<PathBuf>,
     /// 加密场景：搬迁意图指向的目标目录
     pub enc_target_dir: Option<PathBuf>,
-    /// 加密场景：最近一次库文件探测结果（启动接管断言用）
-    pub enc_probe: Option<tauri_app_lib::db::encryption::DbFileKind>,
     /// 加密场景：最近一次转换/解锁/搬迁的错误（码化错误断言用）
     pub enc_last_error: Option<tauri_app_lib::error::AppError>,
     /// 加密场景：解锁成功后打开的文件库连接
@@ -287,7 +285,6 @@ impl LedgerWorld {
             dl_last_outcome: None,
             enc_dir: None,
             enc_target_dir: None,
-            enc_probe: None,
             enc_last_error: None,
             enc_conn: None,
             enc_db_bytes: None,

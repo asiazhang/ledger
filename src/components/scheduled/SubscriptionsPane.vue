@@ -114,10 +114,23 @@ const { loading, statusFilter, statusFilterOptions, filteredRows } = list
 
 // ---------------------------------------------------------------------------
 // 新建订阅 = 模态对话框（issue #158）：不引入独立路由页面，
-// 弹窗内完成填写与校验，提交成功后关闭并刷新列表
+// 弹窗内完成填写与校验，提交成功后关闭并刷新列表。
+// 开启/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
+// 纯新建布尔方言收编为单成员意图闭集（type: create，无目标载荷），显示由
+// 「意图非空」派生（无独立 show 布尔），关闭（提交成功 / ✕ / ESC / 取消）统一
+// 经工厂清回 null 终态，不存在「布尔弹窗」方言的中间态；表单重置等关闭后副作用留视图。
 // ---------------------------------------------------------------------------
 
-const showCreateModal = ref(false)
+/** 新建订阅弹窗意图（单成员闭集）：纯新建，无目标载荷。 */
+interface SubscriptionCreateIntent {
+  type: 'create'
+}
+
+const {
+  intent: createIntent,
+  open: openCreateIntent,
+  close: closeCreateIntent,
+} = useModalIntent<SubscriptionCreateIntent>()
 
 const amountYuan = ref('')
 
@@ -143,7 +156,7 @@ async function create() {
       createForm.buildCreateInput({ kind: 'subscription', amountCents, merchantId }),
     )
     message.success(t('scheduled.toast.subscriptionCreated'))
-    showCreateModal.value = false
+    closeCreateIntent()
     resetCreateForm()
     await list.load()
     refreshSpend()
@@ -390,7 +403,7 @@ onMounted(() => {
             type="primary"
             size="small"
             data-testid="sub-create-open"
-            @click="showCreateModal = true"
+            @click="openCreateIntent({ type: 'create' })"
           >
             {{ t('scheduled.pane.createSubscription') }}
           </NButton>
@@ -406,9 +419,11 @@ onMounted(() => {
       />
     </NCard>
 
-    <!-- 新建订阅弹窗：提交成功关闭并刷新列表（与记一笔弹窗同模式） -->
+    <!-- 新建订阅弹窗：提交成功关闭并刷新列表（与记一笔弹窗同模式）；
+         显示由「意图非空」派生（无独立 show 布尔），关闭统一经工厂清回 null 终态 -->
     <AppModal
-      v-model:show="showCreateModal"
+      :show="createIntent !== null"
+      @update:show="(v: boolean) => (v ? undefined : closeCreateIntent())"
       :title="t('scheduled.pane.createSubscription')"
       preset="card"
       display-directive="if"
@@ -495,7 +510,7 @@ onMounted(() => {
             />
           </NFormItem>
           <NSpace justify="end">
-            <NButton data-testid="sub-create-cancel" @click="showCreateModal = false">{{ t('scheduled.form.cancel') }}</NButton>
+            <NButton data-testid="sub-create-cancel" @click="closeCreateIntent">{{ t('scheduled.form.cancel') }}</NButton>
             <NButton type="primary" data-testid="sub-create" @click="create">{{ t('scheduled.pane.createSubscriptionSubmit') }}</NButton>
           </NSpace>
         </NSpace>

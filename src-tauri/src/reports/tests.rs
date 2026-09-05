@@ -5,7 +5,7 @@ use rusqlite::Connection;
 
 use crate::db::{device_id, now_iso};
 use crate::reports::{category_shares_rows, merchant_shares_report, monthly_summary_rows};
-use crate::transaction::amount::{Measure, TransactionKind, signed_amount};
+use crate::transaction::amount::{Measure, TransactionKind, contributing_kinds, signed_amount};
 
 fn setup() -> Connection {
     let mut conn = crate::db::open_in_memory().unwrap();
@@ -834,6 +834,16 @@ fn merchant_measure_sum(rows: &[MerchantTxRow], month: &str, measure: Measure) -
         .sum()
 }
 
+/// 交易笔数期望（issue #617）：参与指定度量的行数（系数非 0，与 `merchant_measure_sum`
+/// 同一矩阵）——退款在金额中冲减、在笔数中计数；`contributing_kinds` 即矩阵系数非 0 的
+/// kind 清单，与生产 SQL 的 `WHERE kind IN` 同源，期望值不由手写 kind 清单推导。
+fn merchant_count(rows: &[MerchantTxRow], month: &str, measure: Measure) -> i64 {
+    rows.iter()
+        .filter(|r| r.date.starts_with(month))
+        .filter(|r| contributing_kinds(measure).contains(&r.kind.as_str()))
+        .count() as i64
+}
+
 /// 退款冲减商户净额：`expense_net`（毛支出 − 退款）口径。
 #[test]
 fn merchant_shares_expense_net_subtracts_refund() {
@@ -869,6 +879,12 @@ fn merchant_shares_expense_net_subtracts_refund() {
         "商户聚合应为 expense_net 口径"
     );
     assert_eq!(rows[0].amount_cents, 1700, "2000 − 300 退款冲减");
+    assert_eq!(
+        rows[0].transaction_count,
+        merchant_count(&fixture, "2026-03", Measure::ExpenseNet),
+        "笔数与金额同口径：退款笔数也计入"
+    );
+    assert_eq!(rows[0].transaction_count, 2, "支出 1 笔 + 退款 1 笔 = 2 笔");
 }
 
 /// 覆盖全部 8 种 kind：只有 expense/refund 进商户排行；income（即使带商户）不计消费。
@@ -948,6 +964,12 @@ fn merchant_shares_only_expense_kinds_contribute() {
         "只有 expense/refund 进消费口径"
     );
     assert_eq!(rows[0].amount_cents, 900);
+    assert_eq!(
+        rows[0].transaction_count,
+        merchant_count(&fixture, "2026-03", Measure::ExpenseNet),
+        "笔数只统计 expense/refund，无全 kind 混入"
+    );
+    assert_eq!(rows[0].transaction_count, 2, "仅支出 1 笔 + 退款 1 笔");
 }
 
 /// 无商户关联的交易不进排行：净支出一律不虚增合计。
@@ -981,6 +1003,58 @@ fn merchant_shares_excludes_unmerchant_transactions() {
         .unwrap()
         .rows;
     assert!(rows.is_empty(), "无商户支出与带商户收入都不进消费排行");
+}
+
+/// 无商户交易的笔数排除（issue #617）：与「无商户交易不进排行」同源——一笔无商户
+/// 支出即便发生也不产生排行行、更不被计入任何商户的笔数；带商户收入（非参与 kind）
+/// 同样不进笔数。仅参与 kind（支出 + 退款）的商户行才反映笔数，与金额同口径。
+#[test]
+fn merchant_shares_no_merchant_excluded_from_count() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    insert_merchant(&conn, "m-tt");
+    // 无商户支出 + 带商户收入：均不进排行、不计入笔数
+    insert_tx(
+        &conn,
+        &TxRow {
+            id: "t-no-merchant",
+            kind: TransactionKind::Expense,
+            amount: 900,
+            category_id: None,
+            date: "2026-03-05",
+        },
+    );
+    insert_merchant_tx(
+        &conn,
+        &MerchantTxRow {
+            id: "t-income",
+            kind: TransactionKind::Income,
+            amount: 9000,
+            merchant_id: "m-tt",
+            date: "2026-03-06",
+        },
+    );
+    // 带商户支出：唯一成行的参与 kind 记录
+    insert_merchant_tx(
+        &conn,
+        &MerchantTxRow {
+            id: "t-expense",
+            kind: TransactionKind::Expense,
+            amount: 700,
+            merchant_id: "m-tt",
+            date: "2026-03-07",
+        },
+    );
+    let rows = merchant_shares_report(&conn, 2026, None, None, None)
+        .unwrap()
+        .rows;
+    assert_eq!(rows.len(), 1, "仅 m-tt 的支出成行");
+    assert_eq!(rows[0].merchant_id, "m-tt", "无商户支出不带入任何商户行");
+    assert_eq!(rows[0].amount_cents, 700, "无商户支出不进金额");
+    assert_eq!(
+        rows[0].transaction_count, 1,
+        "无商户支出与带商户收入都不计入笔数，与金额同口径"
+    );
 }
 
 /// 多商户按净额降序排列，同额商户按名称次序稳定输出。
@@ -1054,6 +1128,7 @@ fn merchant_shares_filters_by_year() {
         .rows;
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].amount_cents, 700);
+    assert_eq!(rows[0].transaction_count, 1, "仅 2026 年这笔支出计入笔数");
 }
 
 /// 期间过滤（issue #411）：界内净支出进排行，界外不计入。
@@ -1095,8 +1170,10 @@ fn merchant_shares_filters_by_period() {
     assert_eq!(rows.len(), 2, "界外（2025-12-31）支出不计入");
     assert_eq!(rows[0].merchant_id, "m-jd");
     assert_eq!(rows[0].amount_cents, 1000);
+    assert_eq!(rows[0].transaction_count, 1, "期间内该商户 1 笔支出");
     assert_eq!(rows[1].merchant_id, "m-tt");
     assert_eq!(rows[1].amount_cents, 700);
+    assert_eq!(rows[1].transaction_count, 1, "期间内该商户 1 笔支出");
 }
 
 /// 软删商户的历史引用照常统计显示（ADR-0028：历史引用保留，改名/软删不回刷历史行）。
@@ -1122,6 +1199,64 @@ fn merchant_shares_includes_soft_deleted_merchant_history() {
         .rows;
     assert_eq!(rows.len(), 1, "软删商户的历史消费照常进排行");
     assert_eq!(rows[0].amount_cents, 1000);
+    assert_eq!(rows[0].transaction_count, 1, "软删商户的历史引用照常计数");
+}
+
+/// 交易笔数与金额同口径（issue #617）：退款在金额中冲减（expense_net 变小），
+/// 但在笔数中照常计数——一商户多笔支出 + 多笔退款，笔数 = 全部参与行，
+/// 不被退款冲减（避免「负数笔数」或「笔数被净额吞掉」的口径漂移）。
+#[test]
+fn merchant_shares_transaction_count_refunds_counted() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    insert_merchant(&conn, "m-jd");
+    let fixture = vec![
+        MerchantTxRow {
+            id: "t1",
+            kind: TransactionKind::Expense,
+            amount: 1000,
+            merchant_id: "m-jd",
+            date: "2026-03-01",
+        },
+        MerchantTxRow {
+            id: "t2",
+            kind: TransactionKind::Expense,
+            amount: 500,
+            merchant_id: "m-jd",
+            date: "2026-03-02",
+        },
+        MerchantTxRow {
+            id: "t3",
+            kind: TransactionKind::Refund,
+            amount: 200,
+            merchant_id: "m-jd",
+            date: "2026-03-03",
+        },
+        MerchantTxRow {
+            id: "t4",
+            kind: TransactionKind::Refund,
+            amount: 100,
+            merchant_id: "m-jd",
+            date: "2026-03-04",
+        },
+    ];
+    for r in &fixture {
+        insert_merchant_tx(&conn, r);
+    }
+    let rows = merchant_shares_report(&conn, 2026, None, None, None)
+        .unwrap()
+        .rows;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].amount_cents, 1200, "1000+500−200−100");
+    assert_eq!(
+        rows[0].transaction_count,
+        merchant_count(&fixture, "2026-03", Measure::ExpenseNet),
+        "笔数与金额同源（同一矩阵）"
+    );
+    assert_eq!(
+        rows[0].transaction_count, 4,
+        "支出 2 笔 + 退款 2 笔，退还不冲减笔数"
+    );
 }
 
 // ---- merchant_shares_report：可选 topN 截断 + 全量合计（issue #588）----
@@ -1162,6 +1297,11 @@ fn merchant_shares_top_n_truncates_after_sort() {
     let report = merchant_shares_report(&conn, 2026, None, None, Some(2)).unwrap();
     let ids: Vec<&str> = report.rows.iter().map(|r| r.merchant_id.as_str()).collect();
     assert_eq!(ids, vec!["m-d", "m-e"], "top_n=2 取净额前两名，排序不乱");
+    assert!(
+        report.rows.iter().all(|r| r.transaction_count == 1),
+        "截断只取前 N 行，不丢失/篡改各行笔数（fixture 每商户 1 笔）"
+    );
+    assert_eq!(report.total_cents, 1500, "合计仍全量，与截断无关");
 }
 
 #[test]
@@ -1188,8 +1328,22 @@ fn merchant_shares_total_cents_ignores_top_n() {
     insert_ranking_fixture(&conn);
     let truncated = merchant_shares_report(&conn, 2026, None, None, Some(2)).unwrap();
     assert_eq!(truncated.total_cents, 1500, "合计覆盖全部商户，与截断无关");
+    assert_eq!(
+        truncated
+            .rows
+            .iter()
+            .map(|r| r.transaction_count)
+            .sum::<i64>(),
+        2,
+        "截断行笔数照常透传（fixture 前两名各 1 笔）"
+    );
     let full = merchant_shares_report(&conn, 2026, None, None, None).unwrap();
     assert_eq!(full.total_cents, 1500);
+    assert_eq!(
+        full.rows.iter().map(|r| r.transaction_count).sum::<i64>(),
+        5,
+        "全量 5 商户各 1 笔"
+    );
 }
 
 #[test]
@@ -1234,6 +1388,11 @@ fn merchant_shares_top_n_keeps_name_tiebreak_at_boundary() {
     let ids: Vec<&str> = report.rows.iter().map(|r| r.merchant_id.as_str()).collect();
     assert_eq!(ids, vec!["m-a", "m-b"], "同额按名称序决胜，截断边界稳定");
     assert_eq!(report.total_cents, 700);
+    assert_eq!(
+        report.rows.iter().map(|r| r.transaction_count).sum::<i64>(),
+        2,
+        "笔数随行透传（前两名各 1 笔）"
+    );
 }
 
 // ---- query_report_date_range：日期极值范围（issue #266 / #389）----

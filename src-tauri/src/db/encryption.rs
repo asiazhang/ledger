@@ -1,5 +1,5 @@
-//! 加密引擎基座：库文件头探测（issue #569 / ADR-0075 决策 4）、整库加密
-//! 转换与解锁（issue #570 / ADR-0075 决策 5/6）、进程级锁定门。
+//! 加密引擎基座：库文件头探测（issue #569 / ADR-0075 决策 4）、整库转换
+//! 三形态与解锁（issue #570/#571 / ADR-0075 决策 5/6）、进程级锁定门。
 //!
 //! 加密状态是**库文件的属性**，随备份、恢复、复制自然流动；探测判定只读
 //! 文件本身，不进任何库外引导状态（ADR-0017/0018 的「库外引导配置唯一
@@ -127,12 +127,12 @@ impl EncryptionGate {
 }
 
 // ---------------------------------------------------------------------------
-// 整库加密转换（issue #570 / ADR-0075 决策 6）
+// 整库加密转换（issue #570/#571 / ADR-0075 决策 6：开启 / 关闭 / 修改主口令三形态同机制）
 // ---------------------------------------------------------------------------
 
 /// 把明文库整库一次性转换为密文库（用户显式开启加密，issue #570）。
 ///
-/// 流程（ADR-0075 决策 6）：ATTACH 空钥匙新库 + SQLCipher 标准导出
+/// 流程（ADR-0075 决策 6）：ATTACH 带口令新库 + SQLCipher 标准导出
 /// （`sqlcipher_export`）→ 新库用新口令试开验证（打开 + 完整性检查 +
 /// `user_version` 一致）→ 原子替换启用，旧文件按既有重置命名语义
 /// （`ledger.db.bak`，见 `db::reset_db_in`）保留明文副本。
@@ -166,39 +166,137 @@ pub fn enable_encryption_for_file(db_path: &Path, passphrase: &str) -> Result<()
             ));
         }
     }
+    convert_db_file(db_path, None, Some(passphrase))
+}
 
-    let tmp_path = temp_sibling(db_path, "encrypt");
-    let result = export_encrypted_copy(db_path, &tmp_path, passphrase)
-        .and_then(|user_version| verify_encrypted_copy(&tmp_path, passphrase, user_version))
-        .and_then(|()| promote_encrypted_copy(db_path, &tmp_path));
+/// 把密文库整库一次性转换回明文库（用户显式关闭加密，issue #571）。
+///
+/// 与开启加密同一套机制（ADR-0075 决策 6）：凭当前主口令读取密文源库，
+/// ATTACH 空钥匙新库（SQLCipher 语义：空钥匙 = 明文）导出 → 试开验证 →
+/// 原子替换启用，旧密文库保留 `.bak` 副本。完成后重启，启动探测发现
+/// 明文库、不再出现解锁屏。需当前主口令：文件级机制凭口令读取密文，
+/// 先验证后转换——口令错误报 `encryption.passphrase-incorrect`，原库
+/// 不动；中途任何失败原库原样保留，不存在半加密状态。
+pub fn disable_encryption_for_file(db_path: &Path, current_passphrase: &str) -> Result<()> {
+    require_encrypted_file(db_path)?;
+    verify_source_passphrase(db_path, current_passphrase)?;
+    convert_db_file(db_path, Some(current_passphrase), None)
+}
+
+/// 修改主口令：旧口令验证通过后，把密文库整库转入新口令的新库（issue #571）。
+///
+/// 与开启 / 关闭同一套机制（ADR-0075 决策 6：改口令 = 转入新口令的新库）：
+/// 凭旧口令读取密文源库，ATTACH 带新口令新库导出 → 新库用新口令试开验证
+/// → 原子替换启用，旧库保留 `.bak` 副本（仍凭旧口令可开）。旧口令错误
+/// 报 `encryption.passphrase-incorrect`，原库不动；中途任何失败原库原样
+/// 保留，不存在半加密状态。
+pub fn change_passphrase_for_file(
+    db_path: &Path,
+    current_passphrase: &str,
+    new_passphrase: &str,
+) -> Result<()> {
+    if new_passphrase.is_empty() {
+        return Err(AppError::coded(
+            "encryption.passphrase-empty",
+            "主口令不能为空",
+        ));
+    }
+    require_encrypted_file(db_path)?;
+    verify_source_passphrase(db_path, current_passphrase)?;
+    convert_db_file(db_path, Some(current_passphrase), Some(new_passphrase))
+}
+
+/// 转换核心：三形态共用的文件级机制——以 `source_passphrase` 打开源库
+/// （`None` = 明文源库，开启加密形态），ATTACH 以 `target_passphrase`
+/// （`None` = 空钥匙明文，关闭加密形态）命名的新库导出 → 新库试开验证
+/// → 原子替换启用，旧文件保留 `.bak` 副本。调用方负责形态门禁（探测
+/// 三态）与旧口令验证；中途失败清理临时产物、原库原样保留。
+fn convert_db_file(
+    db_path: &Path,
+    source_passphrase: Option<&str>,
+    target_passphrase: Option<&str>,
+) -> Result<()> {
+    let tmp_path = temp_sibling(db_path, "convert");
+    let result = export_converted_copy(db_path, &tmp_path, source_passphrase, target_passphrase)
+        .and_then(|user_version| verify_converted_copy(&tmp_path, target_passphrase, user_version))
+        .and_then(|()| promote_converted_copy(db_path, &tmp_path));
 
     if let Err(error) = result {
         // 失败收尾：临时产物用后即清（成功时已被 rename 走，cleanup 容忍不存在）。
         cleanup(&tmp_path);
-        tracing::warn!(error = %error, "整库加密转换失败，原库保持明文不变");
+        tracing::warn!(error = %error, "整库转换失败，原库保持原样不变");
         return Err(error);
     }
-    tracing::info!(bak = %bak_path(db_path).display(), "整库加密转换完成，原明文库保留为 .bak 副本");
+    tracing::info!(bak = %bak_path(db_path).display(), "整库转换完成，原库保留为 .bak 副本");
     Ok(())
 }
 
-/// 旧明文库的保留副本路径（既有重置命名语义：`ledger.db.bak` 固定名）。
+/// 形态门禁：只有密文库可关闭加密 / 修改主口令（issue #571，文件即真相）。
+fn require_encrypted_file(db_path: &Path) -> Result<()> {
+    match probe_file_kind(db_path)? {
+        DbFileKind::Encrypted => Ok(()),
+        DbFileKind::Empty => Err(AppError::coded(
+            "encryption.db-missing",
+            "数据库文件不存在或为空",
+        )),
+        DbFileKind::Plaintext => Err(AppError::coded(
+            "encryption.not-encrypted",
+            "库文件当前不是加密状态，请重启应用后再试",
+        )),
+    }
+}
+
+/// 验证当前主口令确实能读开密文源库（先验证后转换）：类型化读语句先行
+/// 校验（错误形态可精确匹配 not-a-database），口令错误报码化错误，原库
+/// 不动。转换本体在自有裸连接重开源库，验证连接即弃。
+fn verify_source_passphrase(db_path: &Path, passphrase: &str) -> Result<()> {
+    let conn = super::open_connection_with_passphrase(db_path, passphrase)?;
+    match conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
+        r.get::<_, i64>(0)
+    }) {
+        Ok(_) => Ok(()),
+        Err(e) if is_not_a_database(&e) => Err(AppError::coded(
+            "encryption.passphrase-incorrect",
+            "主口令不正确，请重试",
+        )),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// 旧库的保留副本路径（既有重置命名语义：`ledger.db.bak` 固定名）。
+/// 副本保留的是**转换前形态**：开启加密时为明文副本，关闭加密 / 修改
+/// 主口令时为密文副本（后者仍凭旧口令可开）。
 fn bak_path(db_path: &Path) -> std::path::PathBuf {
     db_path.with_extension("db.bak")
 }
 
-/// 在自有裸连接上导出加密副本：ATTACH 带口令新库 → `sqlcipher_export`
-/// → 显式对齐 `user_version`（不依赖导出函数对它的复制行为）→ DETACH。
+/// 在自有裸连接上导出转换副本：以源口令（如有）打开源库 → ATTACH 以
+/// 目标钥匙（`None` = 空钥匙明文）命名的新库 → `sqlcipher_export` →
+/// 显式对齐 `user_version`（不依赖导出函数对它的复制行为）→ DETACH。
 /// 返回源库的 `user_version` 供验证比对。
-fn export_encrypted_copy(source: &Path, target: &Path, passphrase: &str) -> Result<i64> {
-    // 裸连接：不装耗时 hook——ATTACH 语句文本含主口令，不得进 trace。
+fn export_converted_copy(
+    source: &Path,
+    target: &Path,
+    source_passphrase: Option<&str>,
+    target_passphrase: Option<&str>,
+) -> Result<i64> {
+    // 裸连接：不装耗时 hook——ATTACH 语句文本含目标主口令、PRAGMA key
+    // 语句文本含源主口令，均不得进 trace。密钥注入保持首条语句纪律
+    // （与 `open_connection_with_passphrase` 同序：key 先于一切库访问）。
     let conn = Connection::open(source)?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    if let Some(passphrase) = source_passphrase {
+        conn.pragma_update(None, "key", passphrase)?;
+    }
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    // SQLCipher 空钥匙 = 明文库（关闭加密形态的目标形态）。
+    let target_key = match target_passphrase {
+        Some(pass) => sql_string_literal(pass),
+        None => String::from("''"),
+    };
     let attach_sql = format!(
-        "ATTACH DATABASE {} AS encryption_target KEY {}",
+        "ATTACH DATABASE {} AS encryption_target KEY {target_key}",
         sql_string_literal(&target.to_string_lossy()),
-        sql_string_literal(passphrase),
     );
     conn.execute_batch(&attach_sql)?;
     let export_result = (|| -> Result<()> {
@@ -216,30 +314,33 @@ fn export_encrypted_copy(source: &Path, target: &Path, passphrase: &str) -> Resu
     Ok(user_version)
 }
 
-/// 试开验证加密副本：凭同一口令打开 + 完整性检查 + `user_version` 一致。
-/// 验证通过即证明「新库可凭该口令在重启后重新打开」。
-fn verify_encrypted_copy(target: &Path, passphrase: &str, user_version: i64) -> Result<()> {
-    let conn = super::open_connection_with_passphrase(target, passphrase)?;
+/// 试开验证转换副本：凭目标钥匙（`None` = 明文打开）打开 + 完整性检查 +
+/// `user_version` 一致。验证通过即证明「新库可凭目标形态在重启后重新打开」。
+fn verify_converted_copy(target: &Path, passphrase: Option<&str>, user_version: i64) -> Result<()> {
+    let conn = match passphrase {
+        Some(pass) => super::open_connection_with_passphrase(target, pass)?,
+        None => super::open_connection(target)?,
+    };
     super::check_integrity(&conn)
-        .map_err(|e| AppError::Io(format!("加密副本完整性检查失败: {e}")))?;
+        .map_err(|e| AppError::Io(format!("转换副本完整性检查失败: {e}")))?;
     let copied: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if copied != user_version {
         return Err(AppError::Io(format!(
-            "加密副本 schema 版本不一致（{copied} ≠ {user_version}），已拒绝启用"
+            "转换副本 schema 版本不一致（{copied} ≠ {user_version}），已拒绝启用"
         )));
     }
     Ok(())
 }
 
-/// 原子替换启用：旧明文库改名 `.bak` 保留副本，加密副本顶替原位。
-/// 第二次改名失败时尽力把副本改回原位，保证原库始终可用。
-fn promote_encrypted_copy(db_path: &Path, tmp_path: &Path) -> Result<()> {
+/// 原子替换启用：旧库改名 `.bak` 保留副本（保留转换前形态），转换副本
+/// 顶替原位。第二次改名失败时尽力把副本改回原位，保证原库始终可用。
+fn promote_converted_copy(db_path: &Path, tmp_path: &Path) -> Result<()> {
     let bak = bak_path(db_path);
     std::fs::rename(db_path, &bak)?;
     if let Err(e) = std::fs::rename(tmp_path, db_path) {
         // 回滚：把旧库改回原位（尽力而为，失败则保留 .bak 现场并报错）。
         std::fs::rename(&bak, db_path).ok();
-        return Err(AppError::Io(format!("加密副本替换启用失败: {e}")));
+        return Err(AppError::Io(format!("转换副本替换启用失败: {e}")));
     }
     Ok(())
 }
