@@ -21,13 +21,12 @@
 //!   三个 `ledger:*` 信号的生产者清单由此单点可查。
 //!
 //! 旧机制已随 #335 收缩删除：`events::REFERENCE_WRITE_COMMANDS` /
-//! `is_reference_write` / `emit_reference_changed` 不再存在，「谁发什么」的判定
-//! 知识唯一载体是本模块。壳侧接线由交叉核对测试（`signals_cross_check`）兜底：
-//! 两壳「命令 → 写操作身份」声明表（`commands::IPC_COMMAND_WRITE_OPS` /
-//! `api_server::HTTP_ENDPOINT_WRITE_OPS`）× 注册面真源（build.rs 生成的
-//! `IPC_COMMAND_MANIFEST` / OpenAPI 端点集）双向比对，加上 [`WriteOp::ALL`]
-//! 遍历的反向核对——「新写命令忘了声明身份」「声明漂移」「映射有行但无壳接线」
-//! 均在测试期即红。
+//! `is_reference_write` / `emit_reference_changed` 不再存在，「谁发什么」的
+//! 判定知识唯一载体是本模块。壳侧接线由源码扫描守门测试（`signals_cross_check`，
+//! ADR-0073 决策 5）兜底：从两壳 `write_entry` 调用点扫描提取「声明壳, 身份」
+//! 派生表（例外白名单登记不经入口的声明写命令）+ 反向守门（`db::write`/发射
+//! 调用必经写入口）——「新写命令忘了声明身份」「绕开入口写库」均在测试期即红。
+//! 手写声明表（IPC/HTTP 两张，约 190 行）已随 ADR-0073 消亡为扫描派生物。
 //!
 //! 写操作边界：本闭集收录「以写为意图」的操作（DB 行写入、KV / 指针文件写入、
 //! 备份产物、进程级设置镜像推送）；纯读命令与控制类命令（`restart_app` /
@@ -208,10 +207,10 @@ pub enum WriteOp {
 }
 
 impl WriteOp {
-    /// 全部写操作身份（闭集清单）：交叉核对测试（`signals_cross_check`，ADR-0044
-    /// 决策 3 / #335）按此遍历做「映射未声明」反向核对——除特例条目
+    /// 全部写操作身份（闭集清单）：信号守门测试（`signals_cross_check`，ADR-0044
+    /// 决策 3 / ADR-0073 决策 5）按此遍历做「映射未声明」反向核对——除特例条目
     /// [`WriteOp::AutoBackupDeepPath`]（登记生产者清单、刻意不做命令键）外，每个身份
-    /// 须被至少一个壳的声明表声明，否则测试期即红。
+    /// 须被至少一壳声明（`write_entry` 调用点或例外白名单），否则测试期即红。
     ///
     /// **与 enum 本体同步维护**：新增变体漏登本清单时，反向核对对该变体失明——
     /// 清单紧邻 enum，同步义务就地可查（同 `TransactionKind::ALL` 先例）。
@@ -459,8 +458,9 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
 ///（`test_utils::GatedEmitter`）断言「发射不阻塞写路径」（`emit_blocking_tests`，
 /// spec #366）。本函数只做一次非阻塞
 /// 投递即返回，不等发射完成；投递 / 发射失败静默忽略，不影响写事务结果。
-/// 壳层约定形态：`emit_for(&app, WriteOp::X, evidence)`，或先取
-/// [`signals_for`] 再 [`emit_all`]（需要先记日志 / 断言信号集时用后者）。
+/// 壳层约定形态：写路径经统一写入口 `write_entry`（ADR-0073）内化发射；
+/// 本函数供不经入口的例外路径（备份修剪、全量同步自发射）与写入口本体消费，
+/// 或先取 [`signals_for`] 再 [`emit_all`]（需要先记日志 / 断言信号集时用后者）。
 pub fn emit_all(emitter: &dyn events::SignalEmitter, signals: &[Signal]) {
     for signal in signals {
         match signal {
@@ -471,7 +471,7 @@ pub fn emit_all(emitter: &dyn events::SignalEmitter, signals: &[Signal]) {
     }
 }
 
-/// 组合助手：取 [`signals_for`] 判定并立即发射（壳层单行形态）。
+/// 组合助手：取 [`signals_for`] 判定并立即发射（写入口与例外路径的单行形态）。
 pub fn emit_for(emitter: &dyn events::SignalEmitter, op: WriteOp, evidence: WriteEvidence) {
     emit_all(emitter, signals_for(op, evidence));
 }

@@ -1,4 +1,7 @@
 //! 账户端点：列表（含黑洞账户）/ 幂等创建 / 编辑 / 软删除 / 实时余额。
+//!
+//! 写端点经壳层统一写入口 [`crate::write_entry::write_entry`]（ADR-0073）：
+//! 事务、置脏、信号内化单点；读端点经 `run_db`（形状乙）。
 
 use std::sync::{Arc, Mutex};
 
@@ -10,10 +13,10 @@ use rusqlite::Connection;
 use crate::accounts::{Account, AccountBalance, AccountInput, AccountUpdateInput};
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::EmitterSlot;
-use crate::api_server::write_ops::emit_after_write;
 use crate::db::run_db;
 use crate::error::AppError;
-use crate::signals::{WriteEvidence, WriteOp};
+use crate::signals::WriteOp;
+use crate::write_entry::{Outcome, write_entry};
 
 #[utoipa::path(
     get,
@@ -57,14 +60,16 @@ pub async fn create_account_handler(
     State(emitter): State<EmitterSlot>,
     Json(input): Json<AccountInput>,
 ) -> Result<(StatusCode, Json<String>), AppError> {
-    // 连接层统一写入口（ADR-0032）：成功即置脏，写路径对备份域零感知。
-    let id = run_db("POST /api/v1/accounts", move || {
-        crate::db::write(&conn, |conn| {
-            crate::accounts::create_account_idempotent(conn, input)
-        })
-    })
+    // 壳层统一写入口（ADR-0073）：置脏、信号内化单点；发射器 None 跳过
+    //（集成测试态语义），端点键作 SQL 归因串逐字节不变。
+    let id = write_entry(
+        "POST /api/v1/accounts",
+        conn,
+        emitter.as_deref(),
+        WriteOp::CreateAccount,
+        move |conn| crate::accounts::create_account_idempotent(conn, input).map(Outcome::Silent),
+    )
     .await?;
-    emit_after_write(&emitter, WriteOp::CreateAccount, WriteEvidence::None);
     Ok((StatusCode::CREATED, Json(id)))
 }
 
@@ -94,15 +99,19 @@ pub async fn update_account_handler(
     Path(id): Path<String>,
     Json(input): Json<AccountUpdateInput>,
 ) -> Result<Json<Account>, AppError> {
-    // 连接层统一写入口（ADR-0032）：修改与读回同一写闭包，提交点置脏/检查单点。
-    let updated = run_db("PUT /api/v1/accounts/{id}", move || {
-        crate::db::write(&conn, |conn| {
+    // 修改与读回同一写闭包，提交点置脏/检查单点。
+    let updated = write_entry(
+        "PUT /api/v1/accounts/{id}",
+        conn,
+        emitter.as_deref(),
+        WriteOp::UpdateAccount,
+        move |conn| {
             crate::accounts::update_account(conn, &id, input)?;
-            crate::accounts::get_account(conn, &id)
-        })
-    })
+            let updated = crate::accounts::get_account(conn, &id)?;
+            Ok(Outcome::Silent(updated))
+        },
+    )
     .await?;
-    emit_after_write(&emitter, WriteOp::UpdateAccount, WriteEvidence::None);
     Ok(Json(updated))
 }
 
@@ -127,12 +136,14 @@ pub async fn delete_account_handler(
     State(emitter): State<EmitterSlot>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    // 连接层统一写入口（ADR-0032）：删除成功即置脏。
-    run_db("DELETE /api/v1/accounts/{id}", move || {
-        crate::db::write(&conn, |conn| crate::accounts::delete_account(conn, &id))
-    })
+    write_entry(
+        "DELETE /api/v1/accounts/{id}",
+        conn,
+        emitter.as_deref(),
+        WriteOp::DeleteAccount,
+        move |conn| crate::accounts::delete_account(conn, &id).map(Outcome::Silent),
+    )
     .await?;
-    emit_after_write(&emitter, WriteOp::DeleteAccount, WriteEvidence::None);
     Ok(StatusCode::NO_CONTENT)
 }
 

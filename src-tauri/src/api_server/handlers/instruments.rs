@@ -11,7 +11,6 @@ use serde::Deserialize;
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::handlers::funds::fetch_fund_detail_for_api;
 use crate::api_server::state::ApiState;
-use crate::api_server::write_ops::emit_after_write;
 use crate::db::run_db;
 use crate::error::AppError;
 use crate::investment::{
@@ -19,6 +18,7 @@ use crate::investment::{
     InstrumentType, create_fund_degraded, is_six_digit_code, persist_fund_detail,
 };
 use crate::signals::{WriteEvidence, WriteOp};
+use crate::write_entry::{Outcome, write_entry};
 
 /// 标的搜索查询参数（`GET /api/v1/instruments`，issue #294 / ADR-0037）。
 #[derive(Debug, Deserialize)]
@@ -190,45 +190,46 @@ pub async fn create_instrument_handler(
     let currency_code = input.currency_code.unwrap_or_else(|| {
         derive_quote_currency(input.market.as_deref().unwrap_or("unknown")).to_string()
     });
-    // 连接层统一写入口（ADR-0032）：find-or-create 与信息更新同一写闭包，提交点置脏单点；
-    // 东财往返已在锁外完成（阻塞网络往返不进锁，慢闭包纪律），写闭包内零网络。
-    // 泛型入参仅泛型分支消费，惰性构造。
-    let conn = state.conn.clone();
-    let outcome: FundCreateOutcome = run_db("POST /api/v1/instruments", move || {
-        crate::db::write(&conn, |conn| match &enrichment {
-            Some(Enrichment::Authoritative(detail)) => {
-                // 东财命中：与按代码即拉同一落库接缝（权威名称回填 + 净值落现价）。
-                let r = persist_fund_detail(conn, &input.symbol, detail)?;
-                Ok(FundCreateOutcome {
-                    instrument_id: r.instrument_id,
-                    price_written: r.price_written,
-                })
-            }
-            Some(Enrichment::Degrade) => {
-                create_fund_degraded(conn, &input.symbol, input.name.clone())
-            }
-            None => {
-                let generic_input = InstrumentInput {
-                    symbol: input.symbol.clone(),
-                    kind: input.kind,
-                    name: input.name.clone(),
-                    currency_code,
-                    market: input.market.clone(),
-                };
-                Ok(FundCreateOutcome {
-                    instrument_id: crate::investment::create_instrument(conn, generic_input)?,
-                    price_written: false,
-                })
-            }
-        })
-    })
-    .await?;
-    // 落现价即广播价格失效信号（ADR-0031，与按代码即拉 IPC 命令同一信号语义；
-    // 零变化不广播）；「发不发」经映射单点判定（ADR-0044），证据 = 基金增强分支是否落现价。
-    emit_after_write(
-        &state.emitter,
+    // 壳层统一写入口（ADR-0073）：find-or-create 与信息更新同一写闭包，提交点置脏
+    // 与信号内化单点；东财往返已在锁外完成（阻塞网络往返不进锁，慢闭包纪律），
+    // 写闭包内零网络。泛型入参仅泛型分支消费，惰性构造；基金增强分支的落现价
+    // 证据随闭包返回必达（映射单点判定发不发价格信号，ADR-0044）。
+    let instrument_id = write_entry(
+        "POST /api/v1/instruments",
+        state.conn.clone(),
+        state.emitter.as_deref(),
         WriteOp::CreateInstrument,
-        WriteEvidence::PriceWritten(outcome.price_written),
-    );
-    Ok((StatusCode::CREATED, Json(outcome.instrument_id)))
+        move |conn| {
+            let outcome: FundCreateOutcome = match &enrichment {
+                Some(Enrichment::Authoritative(detail)) => {
+                    // 东财命中：与按代码即拉同一落库接缝（权威名称回填 + 净值落现价）。
+                    let r = persist_fund_detail(conn, &input.symbol, detail)?;
+                    FundCreateOutcome {
+                        instrument_id: r.instrument_id,
+                        price_written: r.price_written,
+                    }
+                }
+                Some(Enrichment::Degrade) => {
+                    create_fund_degraded(conn, &input.symbol, input.name.clone())?
+                }
+                None => {
+                    let generic_input = InstrumentInput {
+                        symbol: input.symbol.clone(),
+                        kind: input.kind,
+                        name: input.name.clone(),
+                        currency_code,
+                        market: input.market.clone(),
+                    };
+                    FundCreateOutcome {
+                        instrument_id: crate::investment::create_instrument(conn, generic_input)?,
+                        price_written: false,
+                    }
+                }
+            };
+            let evidence = WriteEvidence::PriceWritten(outcome.price_written);
+            Ok(Outcome::Evidenced(outcome.instrument_id, evidence))
+        },
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(instrument_id)))
 }
