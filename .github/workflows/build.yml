@@ -81,14 +81,18 @@ jobs:
     defaults:
       run:
         working-directory: src-tauri
-    # CI 提速（仅 CI，本地开发不受影响）：workspace 自身降 debuginfo 到
-    # line-tables-only（依赖在 Cargo.toml 已是该配置），opt-level 0→1 提升测试
-    # 执行速度（无优化业务代码快 2~5 倍）；overflow-checks/debug-assertions 保持
-    # dev 默认开启，整数溢出 panic 语义不变。注意：profile 变更会使 cargo
-    # fingerprint 失效，合并后首跑 rust-cache 冷编译一次（一次性成本）。
+    # CI 提速（仅 CI，本地开发不受影响）：
+    # - DEBUG=1：workspace 自身降 debuginfo 到 line-tables-only（依赖已同配置），
+    #   纯编译收益，backtrace 行号保留。
+    # - RUSTFLAGS + mold：链接器换 mold（lib + 两个集成测试 crate 各全量链接一次，
+    #   链接是 workspace 编译的大头），apt 装 mold 秒级完成。
+    # - 刻意不用 OPT_LEVEL=1：实测（run 33975823593）负优化——workspace 大 crate
+    #   的优化 pass 使编译 76s→2m43s，执行只省 ~14s，净 +60s，已回退。
+    # 注意：RUSTFLAGS/debug 变更会使 cargo fingerprint 失效，变更后首跑全量冷编译
+    # 一次（一次性成本），之后 rust-cache 恢复稳态。
     env:
       CARGO_PROFILE_DEV_DEBUG: "1"
-      CARGO_PROFILE_DEV_OPT_LEVEL: "1"
+      RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
     steps:
       - uses: actions/checkout@v7
 
@@ -105,14 +109,15 @@ jobs:
 
       # partial/ 目录属 root 权限 700，不清掉会导致 post 保存缓存时 tar 打包失败
       # （实测 run 33972603641 报 "tar failed with exit code 2"，缓存从未存上）。
-      - name: 安装 Linux 系统依赖（tauri 编译所需）
+      - name: 安装 Linux 系统依赖（tauri 编译所需 + mold 链接器）
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev
+            librsvg2-dev \
+            mold
           sudo rm -rf /var/cache/apt/archives/partial /var/cache/apt/archives/lock
 
       - uses: dtolnay/rust-toolchain@stable
