@@ -256,10 +256,8 @@ fn verify_source_passphrase(db_path: &Path, passphrase: &str) -> Result<()> {
         r.get::<_, i64>(0)
     }) {
         Ok(_) => Ok(()),
-        Err(e) if is_not_a_database(&e) => Err(AppError::coded(
-            "encryption.passphrase-incorrect",
-            "主口令不正确，请重试",
-        )),
+        // 合并口径（ADR-0075 决策 5 修订 / issue #603）：不误报损坏。
+        Err(e) if is_not_a_database(&e) => Err(passphrase_incorrect_error()),
         Err(e) => Err(e.into()),
     }
 }
@@ -403,17 +401,29 @@ fn sql_string_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
+/// SQLCipher 下错误口令与损坏同为 not-a-database、运行期不可靠区分
+/// （ADR-0075 决策 5 修订 / issue #603）：统一以「口令错误或文件损坏」
+/// 合并口径的码化错误上报——不误报损坏、可无限重试。单一构造点避免
+/// 口径文案多出漂移（zh 模板与之逐字一致，ADR-0050）。
+pub(crate) fn passphrase_incorrect_error() -> AppError {
+    AppError::coded(
+        "encryption.passphrase-incorrect",
+        "口令错误或文件损坏，请重试",
+    )
+}
+
 // ---------------------------------------------------------------------------
 // 解锁（issue #570 / ADR-0075 决策 5）
 // ---------------------------------------------------------------------------
 
 /// 解锁密文库：凭主口令打开库文件并完成迁移，返回可用连接。
 ///
-/// 「口令错误 ≠ 库损坏」由文件头探测与错误形态共同区分（ADR-0075 决策 5）：
-/// 文件头为密文（库在等待口令）时，打开阶段报 not-a-database → 码化错误
-/// `encryption.passphrase-incorrect`（可无限重试）；凭口令打开成功但
-/// 完整性检查失败 → `encryption.db-corrupt`。调用方可对同一文件无限次
-/// 重试本函数，失败不改动文件任何字节。
+/// 解锁失败提示采「口令错误或文件损坏」合并口径（ADR-0075 决策 5 修订 /
+/// issue #603）：SQLCipher 下错误口令与损坏同为 not-a-database、运行期
+/// 不可靠区分，打开阶段报码化错误 `encryption.passphrase-incorrect`（
+/// 可无限重试，不误报损坏）；凭口令打开成功但完整性检查失败 →
+/// `encryption.db-corrupt`。调用方可对同一文件无限次重试本函数，失败不
+/// 改动文件任何字节。
 pub fn unlock_db_file(db_path: &Path, passphrase: &str) -> Result<Connection> {
     match probe_file_kind(db_path)? {
         DbFileKind::Encrypted => {}
@@ -437,10 +447,7 @@ pub fn unlock_db_file(db_path: &Path, passphrase: &str) -> Result<Connection> {
         r.get::<_, i64>(0)
     }) {
         if is_not_a_database(&e) {
-            return Err(AppError::coded(
-                "encryption.passphrase-incorrect",
-                "主口令不正确，请重试",
-            ));
+            return Err(passphrase_incorrect_error());
         }
         return Err(e.into());
     }

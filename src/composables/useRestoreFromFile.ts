@@ -18,7 +18,7 @@ import type { RestoreIntent } from '@/composables/useBackup'
  * 宿主只各给一份文件选择器参数，编排零拷贝：
  * - 设置页备份卡（useBackup，issue #572）；
  * - 启动失败恢复屏（useFailureRestore，issue #602，无已打开库连接状态可用）；
- * - 解锁屏恢复入口（issue #603，将携带上下文口令自动试开）。
+ * - 解锁屏恢复入口（issue #603，携带上下文口令自动试开）。
  *
  * 校验失败即中止（确认弹窗不开）：元数据读取失败视为无效备份；当前模式探测
  * 失败按明文回落会在密文备份上静默跳过跨模式警告（破坏性操作前的安全面，
@@ -30,6 +30,10 @@ export function useRestoreFromFile(options: {
   pickTitleKey: string
   /** 文件选择器默认目录（可选；设置页传配置的备份目录，无则系统默认）。 */
   defaultPath?: () => string | undefined
+  /** 宿主上下文口令（issue #603，可选）：非空时随意图携带，恢复确认弹窗先
+   *  自动试开、失败才显出口令框重输（解锁屏传手输过的主口令；取值在选定
+   *  备份那一刻快照，不随后续输入漂移）。 */
+  contextPassphrase?: () => string
 }) {
   const message = useMessage();
 
@@ -65,7 +69,15 @@ export function useRestoreFromFile(options: {
       message.error(t('settings.data.msg.encryptionStatusFailed', { msg: errorMessage(e) }))
       return
     }
-    restoreModal.open({ path, backupEncrypted: meta.encrypted, currentEncrypted })
+    const contextPassphrase = options.contextPassphrase?.() ?? ''
+    restoreModal.open({
+      path,
+      backupEncrypted: meta.encrypted,
+      currentEncrypted,
+      // 上下文口令（issue #603）：宿主提供且非空才携带，空白不进意图（与
+      // 不携带同形，弹窗直接弹口令框）；取值在选定备份那一刻快照。
+      ...(contextPassphrase.trim() ? { contextPassphrase } : {}),
+    })
   }
 
   /** 恢复确认（弹窗提交）：密文备份附带主口令；明文备份口令位为空也不消费

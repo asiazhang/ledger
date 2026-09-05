@@ -10,10 +10,15 @@ use cucumber::{given, then, when};
 
 use std::path::PathBuf;
 
+use rusqlite::Connection;
+
 use tauri_app_lib::backup::{expected_schema_version, restore_db_from};
 use tauri_app_lib::db::data_location::{self, DB_FILE_NAME, effective_db_dir};
-use tauri_app_lib::db::encryption::SQLITE_HEADER_MAGIC;
-use tauri_app_lib::db::{boot, new_uuid, open_db_in};
+use tauri_app_lib::db::encryption::{SQLITE_HEADER_MAGIC, enable_encryption_for_file};
+use tauri_app_lib::db::{boot, init_db, new_uuid, open_connection, open_db_in};
+use tauri_app_lib::transaction::TransactionInput;
+use tauri_app_lib::transaction::amount::TransactionKind;
+use tauri_app_lib::transaction::create_transaction_internal;
 
 use crate::world::{LedgerWorld, StartupTakeover};
 
@@ -39,6 +44,61 @@ fn target_dir_with_corrupt_db(world: &mut LedgerWorld) {
     std::fs::create_dir_all(&target).unwrap();
     // 目标目录已有同名库（损坏残留）：引导直接接管目标位置，不发生搬迁。
     std::fs::write(target.join(DB_FILE_NAME), b"not a database at all").unwrap();
+}
+
+/// 在文件库中建账户与 N 条交易（经 Writer/行为层接缝，含余额缓存行不变量；
+/// 与 encryption_steps 的种子同型）。本文件仅解锁屏恢复入口场景使用。
+fn seed_vault_db(conn: &Connection, count: usize) {
+    let account_id = new_uuid();
+    conn.execute(
+        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,'cash','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+        rusqlite::params![account_id, "现金"],
+    )
+    .unwrap();
+    tauri_app_lib::accounts::balance::refresh_account_balances(conn, &[account_id.as_str()])
+        .unwrap();
+    for i in 0..count {
+        let input = TransactionInput {
+            merchant_name: None,
+            policy_id: None,
+            kind: TransactionKind::Expense,
+            amount_cents: 1000 + i as i64,
+            currency_code: "CNY".into(),
+            account_id: account_id.clone(),
+            to_account_id: None,
+            category_id: None,
+            merchant_id: None,
+            refund_of_transaction_id: None,
+            note: Some(format!("解锁屏恢复种子交易 {i}")),
+            date: "2026-03-01".into(),
+            instrument_id: None,
+            quantity: None,
+            price_cents: None,
+            fee_cents: None,
+            idempotency_key: None,
+        };
+        create_transaction_internal(conn, input).unwrap();
+    }
+}
+
+/// 等待解锁现场（issue #603）：默认数据目录中的真密文库（页对齐落盘形态），
+/// 解锁屏恢复入口场景的 Given——与 encryption_steps 的密文库 Given 独立声明
+/// （落点不同：本步骤落在启动失败恢复场景的 dl_default_dir，供接管步骤消费）。
+#[given(expr = "默认数据目录中有一个凭主口令 {string} 加密且含 {int} 条交易的真密文库")]
+fn default_dir_with_encrypted_vault(world: &mut LedgerWorld, passphrase: String, count: usize) {
+    let dir = std::env::temp_dir().join(format!("ledger-e2e-sf-vault-{}", new_uuid()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(DB_FILE_NAME);
+    {
+        let mut conn = open_connection(&path).unwrap();
+        init_db(&mut conn).unwrap();
+        seed_vault_db(&conn, count);
+    }
+    enable_encryption_for_file(&path, &passphrase).unwrap();
+    // 场景现场收尾：.bak 副本不入现场（它是转换的副产物，后续场景自己断言）。
+    std::fs::remove_file(path.with_extension("db.bak")).unwrap();
+    world.dl_default_dir = Some(dir);
 }
 
 // ---------------------------------------------------------------------------
@@ -101,8 +161,9 @@ fn restore_into_boot_dir(world: &mut LedgerWorld) {
 // 备份恢复通道（issue #602）：失败库位置的恢复全语义（引擎面）
 // ---------------------------------------------------------------------------
 
-/// 失败库位置（启动失败门接管时的库文件路径）：恢复目标与字节不变断言共用。
-fn failed_db_path(world: &LedgerWorld) -> PathBuf {
+/// 接管库位置（启动处置接管后的库文件路径）：恢复目标与字节不变断言共用——
+/// 启动失败与锁定等待两种相位下，接管指向同一库文件位置（命名不偏向任一相位）。
+fn takeover_db_path(world: &LedgerWorld) -> PathBuf {
     let dir = world.dl_default_dir.as_ref().expect("未登记默认数据目录");
     dir.join(DB_FILE_NAME)
 }
@@ -112,7 +173,7 @@ fn failed_db_path(world: &LedgerWorld) -> PathBuf {
 /// 供「字节副本」与「拒绝不生成」两组断言消费。
 fn restore_into_failed_location(world: &mut LedgerWorld, passphrase: Option<&str>) {
     let backup = world.last_backup_path.clone().expect("尚未备份");
-    let db_path = failed_db_path(world);
+    let db_path = takeover_db_path(world);
     let default_dir = world.dl_default_dir.clone().unwrap();
     let safety_dir = default_dir.join("restore-safety");
     let expected = expected_schema_version().unwrap();
@@ -136,7 +197,41 @@ fn restore_into_failed_location_with_passphrase(world: &mut LedgerWorld, passphr
 #[when(expr = "尝试以主口令 {string} 从备份恢复到启动失败的库位置")]
 fn try_restore_into_failed_location(world: &mut LedgerWorld, passphrase: String) {
     let backup = world.last_backup_path.clone().expect("尚未备份");
-    let db_path = failed_db_path(world);
+    let db_path = takeover_db_path(world);
+    let default_dir = world.dl_default_dir.clone().unwrap();
+    let safety_dir = default_dir.join("restore-safety-attempt");
+    let expected = expected_schema_version().unwrap();
+    let result = restore_db_from(&backup, &db_path, &safety_dir, expected, Some(&passphrase));
+    world.restore_safety_dir = Some(safety_dir);
+    assert!(result.is_err(), "错误口令恢复应被拒绝");
+    if let Err(e) = result {
+        world.last_app_error = Some(e);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 解锁屏恢复入口（issue #603）：等待解锁库位置的恢复全语义（引擎面与失败
+// 相位同型——恢复命令对无已打开库连接可用，恢复目标同经生效目录解析）
+// ---------------------------------------------------------------------------
+
+#[when(expr = "从备份恢复到等待解锁的库位置（解锁屏恢复入口）")]
+fn restore_into_awaiting_unlock_location(world: &mut LedgerWorld) {
+    restore_into_failed_location(world, None);
+}
+
+#[when(expr = "以主口令 {string} 从备份恢复到等待解锁的库位置")]
+fn restore_into_awaiting_unlock_location_with_passphrase(
+    world: &mut LedgerWorld,
+    passphrase: String,
+) {
+    restore_into_failed_location(world, Some(&passphrase));
+}
+
+/// 错误口令恢复尝试（等待解锁现场）：被拒上抛（错误码断言），不改库字节。
+#[when(expr = "尝试以主口令 {string} 从备份恢复到等待解锁的库位置")]
+fn try_restore_into_awaiting_unlock_location(world: &mut LedgerWorld, passphrase: String) {
+    let backup = world.last_backup_path.clone().expect("尚未备份");
+    let db_path = takeover_db_path(world);
     let default_dir = world.dl_default_dir.clone().unwrap();
     let safety_dir = default_dir.join("restore-safety-attempt");
     let expected = expected_schema_version().unwrap();
@@ -247,11 +342,21 @@ fn safety_backup_bytes_match_original(world: &mut LedgerWorld) {
 
 #[then(expr = "启动失败库位置的文件字节应保持不变")]
 fn failed_db_bytes_unchanged(world: &mut LedgerWorld) {
-    let bytes = std::fs::read(failed_db_path(world)).unwrap();
+    let bytes = std::fs::read(takeover_db_path(world)).unwrap();
     assert_eq!(
         bytes,
         *world.dl_default_db_bytes.as_ref().expect("未记录字节快照"),
         "被拒绝的恢复不应改动失败库位置任何字节（可回滚语义）"
+    );
+}
+
+#[then(expr = "等待解锁库位置的文件字节应保持不变")]
+fn awaiting_unlock_db_bytes_unchanged(world: &mut LedgerWorld) {
+    let bytes = std::fs::read(takeover_db_path(world)).unwrap();
+    assert_eq!(
+        bytes,
+        *world.dl_default_db_bytes.as_ref().expect("未记录字节快照"),
+        "被拒绝的恢复不应改动等待解锁的库文件任何字节（解锁无限重试前提）"
     );
 }
 

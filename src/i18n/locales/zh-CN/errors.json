@@ -197,7 +197,7 @@
   },
   "encryption": {
     "locked": "应用已锁定，请先解锁后再操作",
-    "passphrase-incorrect": "主口令不正确，请重试",
+    "passphrase-incorrect": "口令错误或文件损坏，请重试",
     "db-corrupt": "数据库文件损坏，无法通过完整性检查",
     "db-missing": "数据库文件不存在或为空",
     "not-encrypted": "库文件当前不是加密状态，请重启应用后再试",

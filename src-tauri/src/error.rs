@@ -258,7 +258,10 @@ mod tests {
 
     #[test]
     fn is_code_按稳定错误码判读() {
-        let err = AppError::coded("encryption.passphrase-incorrect", "主口令不正确");
+        let err = AppError::coded(
+            "encryption.passphrase-incorrect",
+            "口令错误或文件损坏，请重试",
+        );
         assert!(err.is_code("encryption.passphrase-incorrect"));
         assert!(!err.is_code("encryption.remember-no-cache"));
         // 非码化错误恒不匹配任何码（编排层按码分流不误判）。
