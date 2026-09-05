@@ -4,6 +4,7 @@ import {
   judgeQuantityText,
   judgePriceText,
   judgeRequiredText,
+  judgeMinLengthText,
   fieldErrorKind,
 } from '@/utils/field-error'
 
@@ -171,6 +172,29 @@ describe('judgeRequiredText（必填口径）', () => {
   })
 })
 
+describe('judgeMinLengthText（最小长度判定，issue #650 主口令 ≥8 首批消费）', () => {
+  it('空串 → empty（空值是否红由装配按时机判定，本处不代判）', () => {
+    expect(judgeMinLengthText('', 8)).toEqual({ kind: 'empty' })
+  })
+
+  it('长度恰为下限 → ok（边界值可提交）', () => {
+    expect(judgeMinLengthText('12345678', 8)).toEqual({ kind: 'ok' })
+  })
+
+  it('长度超过下限 → ok', () => {
+    expect(judgeMinLengthText('123456789', 8)).toEqual({ kind: 'ok' })
+  })
+
+  it('短于下限 → too-short（格式类：即时红；不拦截键入由消费方保证）', () => {
+    expect(judgeMinLengthText('1234567', 8)).toEqual({ kind: 'too-short' })
+  })
+
+  it('空白字符按原样计长（主口令逐字符有效，不做 trim）', () => {
+    expect(judgeMinLengthText('  ab    ', 8)).toEqual({ kind: 'ok' })
+    expect(judgeMinLengthText(' ab ', 8)).toEqual({ kind: 'too-short' })
+  })
+})
+
 describe('fieldErrorKind（错误态装配：格式类即时红，空值红在失焦或保存尝试后）', () => {
   const untouched = { touched: false, saveAttempted: false }
 
@@ -185,6 +209,10 @@ describe('fieldErrorKind（错误态装配：格式类即时红，空值红在�
 
   it('超出精度即时红', () => {
     expect(fieldErrorKind({ kind: 'over-precision' }, untouched)).toBe('over-precision')
+  })
+
+  it('过短（too-short）即时红（不待失焦/保存尝试，issue #650）', () => {
+    expect(fieldErrorKind({ kind: 'too-short' }, untouched)).toBe('too-short')
   })
 
   it('空值：初始未触碰未尝试 → 不红（不惩罚尚未输入）', () => {

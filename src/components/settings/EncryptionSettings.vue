@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
+import { judgeMinLengthText } from '@/utils/field-error'
 import { NAlert, NButton, NCard, NCheckbox, NForm, NFormItem, NInput, NSpace, NSpin, NSwitch, NText, NTooltip, useMessage } from 'naive-ui'
 import { computed, onMounted, ref } from 'vue'
 import { confirm } from '@tauri-apps/plugin-dialog'
@@ -8,7 +9,7 @@ import { t } from '@/i18n'
 import { restartAppShortly } from '@/utils/restart'
 import { useAppStore } from '@/stores/app'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
-import EnableEncryptionConfirmModal from '@/components/settings/EnableEncryptionConfirmModal.vue'
+import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'
 import type { EncryptionStatus } from '@/types'
 
 // 加密卡片（issue #570/#571 / #574 / ADR-0075）：数据文件管理域的加密模式开关。
@@ -30,12 +31,24 @@ const submitting = ref(false)
 const submittingChange = ref(false)
 const submittingDisable = ref(false)
 
-// 开启加密确认弹窗（ADR-0075 决策 2）：升级为应用内红色确认弹窗，承载无后门
-// 后果说明（忘记主口令 = 数据不可恢复）。`enableConfirmShow` 为受控显示开关。
+// 开启加密确认弹窗（issue #650 / ADR-0078）：迁入共享危险确认封装（error 级），
+// 承载无后门后果说明（忘记主口令 = 数据不可恢复）。`enableConfirmShow` 为受控显示开关。
 const enableConfirmShow = ref(false)
+// 修改主口令确认弹窗（issue #650 / ADR-0078）：从系统原生 confirm 升级为同封装的
+// error 级应用内弹窗——与开启加密风险同级（遗忘新口令同样数据不可读）。
+const changeConfirmShow = ref(false)
+
+// 主口令最小长度（issue #650）：≥8，仅前端判定（后端契约不动）；走字段错误态
+// 既有口径（ADR-0058）：短口令即时红显、提交禁用，不拦截键入。
+const PASSPHRASE_MIN_LENGTH = 8
 
 const passphrase = ref('')
 const confirmPassphrase = ref('')
+
+/** 新设主口令过短（字段错误态：格式类即时红，空值不在此列、走既有禁用逻辑）。 */
+const passphraseTooShort = computed(
+  () => judgeMinLengthText(passphrase.value, PASSPHRASE_MIN_LENGTH).kind === 'too-short',
+)
 
 /** 两次输入一致才允许提交（确认输错的即时反馈）。 */
 const mismatch = computed(
@@ -52,8 +65,17 @@ const changeMismatch = computed(
 const changeUnchanged = computed(
   () => changeNew.value.length > 0 && changeNew.value === changeOld.value,
 )
+/** 轮换后的新主口令同样受最小长度约束（issue #650），不弱于初始要求。 */
+const changeNewTooShort = computed(
+  () => judgeMinLengthText(changeNew.value, PASSPHRASE_MIN_LENGTH).kind === 'too-short',
+)
 const changeReady = computed(
-  () => changeOld.value.length > 0 && changeNew.value.length > 0 && !changeMismatch.value && !changeUnchanged.value,
+  () =>
+    changeOld.value.length > 0 &&
+    changeNew.value.length > 0 &&
+    !changeMismatch.value &&
+    !changeUnchanged.value &&
+    !changeNewTooShort.value,
 )
 
 // 关闭加密（已加密形态）：需当前主口令——文件级转换凭口令读取密文库。
@@ -88,7 +110,7 @@ onMounted(() => {
 
 /** 开启加密第一步：弹确认弹窗（无后门后果说明），确认后执行整库转换。 */
 function requestEnable() {
-  if (submitting.value || mismatch.value || !passphrase.value) return
+  if (submitting.value || mismatch.value || !passphrase.value || passphraseTooShort.value) return
   enableConfirmShow.value = true
 }
 
@@ -146,14 +168,16 @@ async function enableRememberNow() {
   }
 }
 
-/** 修改主口令：旧口令验证通过后转入新口令的新库，完成后重启以新口令解锁。 */
-async function changePassphrase() {
+/** 修改主口令第一步：弹 error 级确认弹窗（无后门后果说明，ADR-0078），确认后执行转换。 */
+function requestChange() {
   if (submittingChange.value || !changeReady.value) return
-  const ok = await confirm(t('settings.data.encryption.changeConfirmBody'), {
-    title: t('settings.data.encryption.changeConfirmTitle'),
-    kind: 'warning',
-  })
-  if (!ok) return
+  changeConfirmShow.value = true
+}
+
+/** 修改主口令确认：旧口令验证通过后转入新口令的新库，完成后重启以新口令解锁。 */
+async function confirmChange() {
+  changeConfirmShow.value = false
+  if (submittingChange.value || !changeReady.value) return
   submittingChange.value = true
   try {
     await api.changeEncryptionPassphrase(changeOld.value, changeNew.value)
@@ -259,7 +283,15 @@ async function disable() {
                   :disabled="submittingChange"
                 />
               </NFormItem>
-              <NFormItem :label="t('settings.data.encryption.newPassphraseLabel')">
+              <NFormItem
+                :label="t('settings.data.encryption.newPassphraseLabel')"
+                :validation-status="changeNewTooShort ? 'error' : undefined"
+                :feedback="
+                  changeNewTooShort
+                    ? t('settings.data.encryption.tooShort', { min: PASSPHRASE_MIN_LENGTH })
+                    : undefined
+                "
+              >
                 <NInput
                   v-model:value="changeNew"
                   type="password"
@@ -285,7 +317,7 @@ async function disable() {
                   show-password-on="click"
                   :placeholder="t('settings.data.encryption.confirmNewPlaceholder')"
                   :disabled="submittingChange"
-                  @keyup.enter="changePassphrase"
+                  @keyup.enter="requestChange"
                 />
               </NFormItem>
               <NCheckbox
@@ -300,7 +332,7 @@ async function disable() {
                   type="primary"
                   :loading="submittingChange"
                   :disabled="!changeReady"
-                  @click="changePassphrase"
+                  @click="requestChange"
                 >
                   {{ t('settings.data.encryption.change') }}
                 </NButton>
@@ -341,7 +373,15 @@ async function disable() {
             <NAlert type="warning" :show-icon="true" :title="t('settings.data.encryption.warnTitle')">
               {{ t('settings.data.encryption.warnBody') }}
             </NAlert>
-            <NFormItem :label="t('settings.data.encryption.passphraseLabel')">
+            <NFormItem
+              :label="t('settings.data.encryption.passphraseLabel')"
+              :validation-status="passphraseTooShort ? 'error' : undefined"
+              :feedback="
+                passphraseTooShort
+                  ? t('settings.data.encryption.tooShort', { min: PASSPHRASE_MIN_LENGTH })
+                  : undefined
+              "
+            >
               <NInput
                 v-model:value="passphrase"
                 type="password"
@@ -380,7 +420,7 @@ async function disable() {
               <NButton
                 type="primary"
                 :loading="submitting"
-                :disabled="!passphrase || mismatch"
+                :disabled="!passphrase || mismatch || passphraseTooShort"
                 @click="requestEnable"
               >
                 {{ t('settings.data.encryption.enable') }}
@@ -391,12 +431,38 @@ async function disable() {
       </NSpin>
     </NSpace>
 
-    <!-- 开启加密确认弹窗（ADR-0075 决策 2）：应用内红色确认弹窗，承载无后门后果说明 -->
-    <EnableEncryptionConfirmModal
+    <!-- 开启加密确认（issue #650 / ADR-0078）：共享危险确认封装 error 级，
+         无后门后果说明、转换期间勿关应用、完成后自动重启语义不回退 -->
+    <AppDangerConfirmModal
+      level="error"
       v-model:show="enableConfirmShow"
+      :title="t('settings.data.encryption.confirmTitle')"
+      :lead="t('settings.data.encryption.enableConfirmLead')"
+      :alert-title="t('settings.data.encryption.warnTitle')"
+      :strong-warning="t('settings.data.encryption.enableConfirmStrong')"
+      :detail="t('settings.data.encryption.enableConfirmRest')"
+      :confirm-text="t('settings.data.encryption.enableConfirmOk')"
+      :cancel-text="t('settings.data.encryption.enableConfirmCancel')"
       :submitting="submitting"
       :on-confirm="confirmEnable"
       :on-cancel="() => (enableConfirmShow = false)"
+    />
+
+    <!-- 修改主口令确认（issue #650 / ADR-0078）：error 级（与开启加密同级），
+         承载无后门后果说明（新主口令遗忘即数据不可读）；确认后整库转换与自动重启流程不变 -->
+    <AppDangerConfirmModal
+      level="error"
+      v-model:show="changeConfirmShow"
+      :title="t('settings.data.encryption.changeConfirmTitle')"
+      :lead="t('settings.data.encryption.changeConfirmLead')"
+      :alert-title="t('settings.data.encryption.warnTitle')"
+      :strong-warning="t('settings.data.encryption.changeConfirmStrong')"
+      :detail="t('settings.data.encryption.changeConfirmRest')"
+      :confirm-text="t('settings.data.encryption.changeConfirmOk')"
+      :cancel-text="t('settings.data.encryption.changeConfirmCancel')"
+      :submitting="submittingChange"
+      :on-confirm="confirmChange"
+      :on-cancel="() => (changeConfirmShow = false)"
     />
   </NCard>
 </template>

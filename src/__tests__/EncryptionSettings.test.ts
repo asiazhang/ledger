@@ -27,6 +27,7 @@ vi.mock('naive-ui', async (importOriginal) => {
 import { confirm } from '@tauri-apps/plugin-dialog'
 import EncryptionSettings from '@/components/settings/EncryptionSettings.vue'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
+import { hasOpenOverlay, resetOverlays } from '@/composables/overlayRegistry'
 import { useAppStore } from '@/stores/app'
 
 const mockInvoke = vi.mocked(invoke)
@@ -34,6 +35,13 @@ const mockConfirm = vi.mocked(confirm)
 
 const plaintextStatus: EncryptionStatus = { locked: false, file_encrypted: false }
 const encryptedStatus: EncryptionStatus = { locked: false, file_encrypted: true }
+
+/** 合法主口令（恰 8 位边界值，issue #650 最小长度 ≥8）。 */
+const PASS_OK = '主口令至少八个字'
+/** 另一合法主口令（8 位，构造不一致 / 相同分支）。 */
+const PASS_ALT = '不一样的八个字符'
+/** 过短主口令（3 位，触发即时红显与提交禁用）。 */
+const PASS_SHORT = '短口令'
 
 function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
   mockInvoke.mockImplementation((cmd: string, args?: any) => {
@@ -47,6 +55,7 @@ beforeEach(() => {
   mockInvoke.mockReset()
   mockConfirm.mockReset()
   document.body.innerHTML = ''
+  resetOverlays()
   setActivePinia(createPinia())
   // 本机记住（issue #574）：清空偏好 localStorage 与模块级能力态，避免跨用例泄漏。
   localStorage.removeItem('remember_passphrase')
@@ -62,13 +71,16 @@ function findButton(wrapper: ReturnType<typeof mount>, text: string) {
   return wrapper.findAll('button').find((b) => b.text().includes(text))!
 }
 
-/** 点开启加密确认弹窗内的「继续开启加密」按钮：弹窗 teleport 到 body，需经 document.body 查询。 */
-function clickEnableConfirm() {
-  const btn = [...document.body.querySelectorAll('button')].find((b) =>
-    b.textContent?.includes('继续开启加密'),
-  )
-  if (!btn) throw new Error('未找到开启加密确认按钮')
-  btn.click()
+/** 弹窗（teleport 到 body）内按 data-testid 找按钮。 */
+function bodyButton(testid: string): HTMLButtonElement {
+  const btn = document.body.querySelector(`[data-testid="${testid}"]`) as HTMLButtonElement | null
+  if (!btn) throw new Error(`未找到 testid=${testid} 的按钮`)
+  return btn
+}
+
+/** 弹窗内的警示块（表单区警示块不 teleport，弹窗内容在 .n-modal 下）。 */
+function modalAlert(): Element | null {
+  return document.body.querySelector('.n-modal .n-alert')
 }
 
 async function setPasswords(wrapper: ReturnType<typeof mount>, pass: string, confirm: string) {
@@ -88,7 +100,7 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
     // 无后门后果说明（ADR-0075 决策 2：用户显式知情）
     expect(html).toContain('无法读取数据')
 
-    await setPasswords(wrapper, '口令①', '口令①')
+    await setPasswords(wrapper, PASS_OK, PASS_OK)
     await flushPromises()
     const button = findButton(wrapper, '开启加密')!
     expect(button.element.disabled).toBe(false)
@@ -99,7 +111,7 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
     const wrapper = mount(EncryptionSettings)
     await flushPromises()
 
-    await setPasswords(wrapper, '口令①', '口令②')
+    await setPasswords(wrapper, PASS_OK, PASS_ALT)
     await flushPromises()
     const html = wrapper.html()
     expect(html).toContain('两次输入不一致')
@@ -112,7 +124,7 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
     try {
       stubInvoke({
         enable_encryption: (args: any) => {
-          expect(args.passphrase).toBe('口令①')
+          expect(args.passphrase).toBe(PASS_OK)
           return Promise.resolve()
         },
         restart_app: () => Promise.resolve(),
@@ -120,13 +132,13 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
       const wrapper = mount(EncryptionSettings)
       await flushPromises()
 
-      await setPasswords(wrapper, '口令①', '口令①')
+      await setPasswords(wrapper, PASS_OK, PASS_OK)
       await findButton(wrapper, '开启加密')!.trigger('click')
       await flushPromises()
-      // 开启加密确认弹窗（ADR-0075 决策 2）：点应用内确认按钮。
-      clickEnableConfirm()
+      // 开启加密确认弹窗（issue #650 / ADR-0078）：点应用内确认按钮。
+      bodyButton('danger-confirm').click()
       await flushPromises()
-      expect(mockInvoke).toHaveBeenCalledWith('enable_encryption', { passphrase: '口令①' })
+      expect(mockInvoke).toHaveBeenCalledWith('enable_encryption', { passphrase: PASS_OK })
       expect(messageApi.success).toHaveBeenCalled()
       vi.advanceTimersByTime(900)
       await flushPromises()
@@ -141,7 +153,7 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
     const wrapper = mount(EncryptionSettings)
     await flushPromises()
 
-    await setPasswords(wrapper, '口令①', '口令①')
+    await setPasswords(wrapper, PASS_OK, PASS_OK)
     await findButton(wrapper, '开启加密')!.trigger('click')
     await flushPromises()
     // 取消弹窗（teleport 到 body）：点「取消」按钮，不发起转换。
@@ -165,10 +177,10 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
     const wrapper = mount(EncryptionSettings)
     await flushPromises()
 
-    await setPasswords(wrapper, '口令①', '口令①')
+    await setPasswords(wrapper, PASS_OK, PASS_OK)
     await findButton(wrapper, '开启加密')!.trigger('click')
     await flushPromises()
-    clickEnableConfirm()
+    bodyButton('danger-confirm').click()
     await flushPromises()
     expect(messageApi.error).toHaveBeenCalled()
     // 未调用重启（转换失败不重启，应用回到明文可用状态）
@@ -197,8 +209,8 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
 
     const inputs = wrapper.findAll('input')
     await inputs[0].setValue('旧口令')
-    await inputs[1].setValue('新口令①')
-    await inputs[2].setValue('新口令②')
+    await inputs[1].setValue(PASS_OK)
+    await inputs[2].setValue(PASS_ALT)
     await flushPromises()
     expect(wrapper.html()).toContain('两次输入不一致')
     expect(findButton(wrapper, '修改主口令')!.element.disabled).toBe(true)
@@ -212,39 +224,41 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
     await flushPromises()
 
     const inputs = wrapper.findAll('input')
-    await inputs[0].setValue('同一口令')
-    await inputs[1].setValue('同一口令')
-    await inputs[2].setValue('同一口令')
+    await inputs[0].setValue('同一口令八个字符')
+    await inputs[1].setValue('同一口令八个字符')
+    await inputs[2].setValue('同一口令八个字符')
     await flushPromises()
     expect(wrapper.html()).toContain('新主口令与当前主口令相同')
     expect(findButton(wrapper, '修改主口令')!.element.disabled).toBe(true)
   })
 
-  it('已加密库·修改主口令：确认后调用 change_encryption_passphrase 携带新旧口令，成功提示重启', async () => {
+  it('已加密库·修改主口令：确认弹窗（error 级）确认后调用 change_encryption_passphrase 携带新旧口令，成功提示重启', async () => {
     vi.useFakeTimers()
     try {
       stubInvoke({
         get_encryption_status: () => Promise.resolve(encryptedStatus),
         change_encryption_passphrase: (args: any) => {
           expect(args.passphrase).toBe('旧口令')
-          expect(args.newPassphrase).toBe('新口令①')
+          expect(args.newPassphrase).toBe(PASS_OK)
           return Promise.resolve()
         },
         restart_app: () => Promise.resolve(),
       })
-      mockConfirm.mockResolvedValue(true)
       const wrapper = mount(EncryptionSettings)
       await flushPromises()
 
       const inputs = wrapper.findAll('input')
       await inputs[0].setValue('旧口令')
-      await inputs[1].setValue('新口令①')
-      await inputs[2].setValue('新口令①')
+      await inputs[1].setValue(PASS_OK)
+      await inputs[2].setValue(PASS_OK)
       await findButton(wrapper, '修改主口令')!.trigger('click')
+      await flushPromises()
+      // 危险确认分级（issue #650）：点应用内 error 级确认弹窗按钮，而非系统 confirm。
+      bodyButton('danger-confirm').click()
       await flushPromises()
       expect(mockInvoke).toHaveBeenCalledWith('change_encryption_passphrase', {
         passphrase: '旧口令',
-        newPassphrase: '新口令①',
+        newPassphrase: PASS_OK,
       })
       expect(messageApi.success).toHaveBeenCalled()
       vi.advanceTimersByTime(900)
@@ -265,34 +279,37 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
           code: 'encryption.passphrase-incorrect',
         }),
     })
-    mockConfirm.mockResolvedValue(true)
     const wrapper = mount(EncryptionSettings)
     await flushPromises()
 
     const inputs = wrapper.findAll('input')
     await inputs[0].setValue('错口令')
-    await inputs[1].setValue('新口令①')
-    await inputs[2].setValue('新口令①')
+    await inputs[1].setValue(PASS_OK)
+    await inputs[2].setValue(PASS_OK)
     await findButton(wrapper, '修改主口令')!.trigger('click')
+    await flushPromises()
+    bodyButton('danger-confirm').click()
     await flushPromises()
     expect(messageApi.error).toHaveBeenCalled()
     expect(mockInvoke).not.toHaveBeenCalledWith('restart_app')
   })
 
-  it('已加密库·修改主口令：确认弹窗取消不发起转换', async () => {
+  it('已加密库·修改主口令：确认弹窗取消不发起转换，也不再调用系统原生对话框', async () => {
     stubInvoke({
       get_encryption_status: () => Promise.resolve(encryptedStatus),
     })
-    mockConfirm.mockResolvedValue(false)
     const wrapper = mount(EncryptionSettings)
     await flushPromises()
 
     const inputs = wrapper.findAll('input')
     await inputs[0].setValue('旧口令')
-    await inputs[1].setValue('新口令①')
-    await inputs[2].setValue('新口令①')
+    await inputs[1].setValue(PASS_OK)
+    await inputs[2].setValue(PASS_OK)
     await findButton(wrapper, '修改主口令')!.trigger('click')
     await flushPromises()
+    bodyButton('danger-cancel').click()
+    await flushPromises()
+    expect(mockConfirm).not.toHaveBeenCalled()
     expect(mockInvoke).not.toHaveBeenCalledWith(
       'change_encryption_passphrase',
       expect.anything(),
@@ -368,6 +385,111 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
   })
 })
 
+describe('危险确认分级试点（issue #650 / ADR-0078）', () => {
+  it('开启表单：短于 8 位的主口令即时红显、提交禁用、不发起后端调用', async () => {
+    stubInvoke()
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+
+    await setPasswords(wrapper, PASS_SHORT, PASS_SHORT)
+    await flushPromises()
+    expect(wrapper.html()).toContain('主口令至少需要 8 位')
+    const button = findButton(wrapper, '开启加密')!
+    expect(button.element.disabled).toBe(true)
+    await button.trigger('click')
+    await flushPromises()
+    expect(mockInvoke).not.toHaveBeenCalledWith('enable_encryption', expect.anything())
+    // 确认弹窗未弹出
+    expect(document.body.querySelector('[data-testid="danger-confirm"]')).toBeNull()
+    void wrapper
+  })
+
+  it('开启表单：恰 8 位（边界值）不红、可提交', async () => {
+    stubInvoke()
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+
+    await setPasswords(wrapper, PASS_OK, PASS_OK)
+    await flushPromises()
+    expect(wrapper.html()).not.toContain('主口令至少需要 8 位')
+    expect(findButton(wrapper, '开启加密')!.element.disabled).toBe(false)
+  })
+
+  it('开启确认弹窗：error 级视觉——红色警示块＋加粗后果句＋红色确认按钮，打开期间快捷键抑制', async () => {
+    stubInvoke()
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+
+    await setPasswords(wrapper, PASS_OK, PASS_OK)
+    await findButton(wrapper, '开启加密')!.trigger('click')
+    await flushPromises()
+
+    // error 级形态（ADR-0078 决策 2）：警示块内加粗后果句 + 红色确认按钮；
+    // 既有语义不回退：无后门后果说明在场。
+    const alert = modalAlert()
+    expect(alert, '警示块应存在').toBeTruthy()
+    expect(alert!.querySelector('.n-text--strong'), '后果句应加粗').toBeTruthy()
+    expect(document.body.textContent).toContain('一旦忘记，这份账本的数据将无法再打开')
+    const confirmBtn = bodyButton('danger-confirm')
+    expect(confirmBtn.className).toContain('n-button--error-type')
+    // 弹层注册表上报（ADR-0035）：打开期间快捷键照常抑制
+    expect(hasOpenOverlay()).toBe(true)
+
+    bodyButton('danger-cancel').click()
+    await flushPromises()
+    expect(hasOpenOverlay()).toBe(false)
+    void wrapper
+  })
+
+  it('修改主口令：新口令短于 8 位即时红显、提交禁用、不发起后端调用', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve(encryptedStatus),
+    })
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+
+    const inputs = wrapper.findAll('input')
+    await inputs[0].setValue('旧口令')
+    await inputs[1].setValue(PASS_SHORT)
+    await inputs[2].setValue(PASS_SHORT)
+    await flushPromises()
+    expect(wrapper.html()).toContain('主口令至少需要 8 位')
+    const button = findButton(wrapper, '修改主口令')!
+    expect(button.element.disabled).toBe(true)
+    await button.trigger('click')
+    await flushPromises()
+    expect(mockInvoke).not.toHaveBeenCalledWith('change_encryption_passphrase', expect.anything())
+    expect(document.body.querySelector('[data-testid="danger-confirm"]')).toBeNull()
+    void wrapper
+  })
+
+  it('修改主口令：确认走 error 级应用内弹窗（不再出现系统原生对话框），承载无后门后果说明', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve(encryptedStatus),
+    })
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+
+    const inputs = wrapper.findAll('input')
+    await inputs[0].setValue('旧口令')
+    await inputs[1].setValue(PASS_OK)
+    await inputs[2].setValue(PASS_OK)
+    await findButton(wrapper, '修改主口令')!.trigger('click')
+    await flushPromises()
+
+    // 原生对话框退役（ADR-0078 决策 1）
+    expect(mockConfirm).not.toHaveBeenCalled()
+    // error 级形态：警示块 + 加粗无后门后果说明（新主口令遗忘即数据不可读）+ 红色确认按钮
+    const alert = modalAlert()
+    expect(alert, '警示块应存在').toBeTruthy()
+    expect(alert!.querySelector('.n-text--strong'), '后果句应加粗').toBeTruthy()
+    expect(document.body.textContent).toContain('一旦忘记，这份账本的数据将无法再打开')
+    expect(bodyButton('danger-confirm').className).toContain('n-button--error-type')
+    expect(hasOpenOverlay()).toBe(true)
+    void wrapper
+  })
+})
+
 describe('EncryptionSettings.vue 本机记住主口令（issue #574）', () => {
   /** 记住复选项（语义定位按钮文本）。 */
   function findRememberCheckbox(wrapper: ReturnType<typeof mount>) {
@@ -380,31 +502,30 @@ describe('EncryptionSettings.vue 本机记住主口令（issue #574）', () => {
       stubInvoke({
         get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
         enable_encryption: (args: any) => {
-          expect(args.passphrase).toBe('口令①')
+          expect(args.passphrase).toBe(PASS_OK)
           return Promise.resolve()
         },
         set_remember_passphrase: (args: any) => {
-          expect(args.passphrase).toBe('口令①')
+          expect(args.passphrase).toBe(PASS_OK)
           return Promise.resolve()
         },
         restart_app: () => Promise.resolve(),
       })
-      mockConfirm.mockResolvedValue(true)
       const wrapper = mount(EncryptionSettings)
       await flushPromises()
 
       const checkbox = findRememberCheckbox(wrapper)
       expect(checkbox).toBeTruthy()
-      await setPasswords(wrapper, '口令①', '口令①')
+      await setPasswords(wrapper, PASS_OK, PASS_OK)
       await checkbox.trigger('click')
       await findButton(wrapper, '开启加密')!.trigger('click')
       await flushPromises()
 
-      // 开启加密确认弹窗（ADR-0075 决策 2）：点应用内确认按钮，而非系统 confirm。
-      clickEnableConfirm()
+      // 开启加密确认弹窗（issue #650 / ADR-0078）：点应用内确认按钮，而非系统 confirm。
+      bodyButton('danger-confirm').click()
       await flushPromises()
 
-      expect(mockInvoke).toHaveBeenCalledWith('set_remember_passphrase', { passphrase: '口令①' })
+      expect(mockInvoke).toHaveBeenCalledWith('set_remember_passphrase', { passphrase: PASS_OK })
       expect(useAppStore().rememberPassphrase).toBe(true)
       vi.advanceTimersByTime(900)
     } finally {
