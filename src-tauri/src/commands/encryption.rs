@@ -1,14 +1,16 @@
-//! 加密模式命令壳层（issue #570 / #571 / ADR-0075）：状态查询、解锁、
-//! 开启加密、关闭加密、修改主口令、忘记口令重置（issue #573）。
+//! 加密模式命令壳层（issue #570 / #571 / #574 / ADR-0075）：状态查询、解锁、
+//! 开启加密、关闭加密、修改主口令、忘记口令重置（issue #573）、本机记住主口令
+//! （钥匙串缓存 + macOS 生物认证门，issue #574）。
 //!
-//! 只做参数解包与 [`crate::db::encryption`] / [`crate::db::data_location`]
-//! 调用与状态编排：文件级转换（三形态同机制）、解锁建连、搬迁补做、
-//! 重置副本语义都在 db 基础设施，本文件不含领域规则。「本机记住」由
-//! 后续票交付（ADR-0075 范围划分）。
+//! 只做参数解包与 [`crate::db::encryption`] / [`crate::db::data_location`] /
+//! [`crate::db::passphrase_cache`] 调用与状态编排：文件级转换（三形态同机制）、
+//! 解锁建连、搬迁补做、重置副本语义、钥匙串口令缓存都在 db 基础设施，
+//! 本文件不含领域规则。「本机记住」的偏好开关是前端 localStorage 轻量设置项
+//! （不落库、不随备份迁移），钥匙串缓存内容为主口令本身（密钥仍由口令派生）。
 //!
-//! 全部命令 async 化（形状乙，spec #498 / #503 先例）：转换导出、解锁建连
-//! 与搬迁补做是阻塞文件 IO，经连接层统一 helper [`crate::db::run_db`] 进
-//! tauri 阻塞线程池执行，不占用界面事件循环线程。
+//! 全部命令 async 化（形状乙，spec #498 / #503 先例）：转换导出、解锁建连、
+//! 搬迁补做与钥匙串读写（含生物认证阻塞）是阻塞 IO，经连接层统一 helper
+//! [`crate::db::run_db`] 进 tauri 阻塞线程池执行，不占用界面事件循环线程。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
 // （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
@@ -22,6 +24,7 @@ use crate::backup;
 use crate::db::DbState;
 use crate::db::data_location::{self, Boot, DB_FILE_NAME};
 use crate::db::encryption::{self, DbFileKind, EncryptionGate};
+use crate::db::passphrase_cache::{self, CacheLoad};
 use crate::db::run_db;
 use crate::error::{AppError, Result};
 
@@ -39,6 +42,14 @@ pub struct EncryptionStatus {
 #[derive(Debug, Serialize)]
 pub struct UnlockOutcome {
     pub relocated: bool,
+}
+
+/// 本机记住主口令的平台能力（issue #574 / ADR-0075 决策 3）：前端据 `supported`
+/// 决定是否展示「记住」选项（v1 仅 macOS 支持；否则隐藏选项、回退手输）。
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct RememberPassphraseSupport {
+    /// 平台是否支持本机缓存主口令（v1 仅 macOS；不支持时前端隐藏选项、回退手输）。
+    pub supported: bool,
 }
 
 /// 生效目录中的库文件路径（引导结果登记的单一来源）。
@@ -73,25 +84,18 @@ pub async fn get_encryption_status(app: AppHandle) -> Result<EncryptionStatus> {
     .await
 }
 
-/// 解锁：凭主口令打开密文库并原位换连（HTTP 壳与调度线程已持有的连接
-/// Arc 克隆全部可见），翻转锁定门、拉起自动备份调度；启动期等待中的
-/// 搬迁（源库为密文库）在解锁后以主口令补做，成功即触发重启语义。
-#[tauri::command]
-pub async fn unlock_encryption(app: AppHandle, passphrase: String) -> Result<UnlockOutcome> {
-    let gate = app.state::<EncryptionGate>();
-    if !gate.is_locked() {
-        return Err(AppError::coded(
-            "encryption.not-locked",
-            "应用未处于锁定状态，无需解锁",
-        ));
-    }
-    let db_path = active_db_path(&app);
-    let pass = passphrase.clone();
-    let conn = run_db("unlock_encryption", move || {
+/// 解锁核心（手输 [`unlock_encryption`] 与凭缓存 [`unlock_with_remembered_passphrase`]
+/// 共用，issue #574）：凭主口令打开密文库并原位换连（HTTP 壳与调度线程已持有的
+/// 连接 Arc 克隆全部可见），翻转锁定门、拉起自动备份调度；启动期等待中的搬迁
+/// （源库为密文库）在解锁后以主口令补做，成功即触发重启语义。
+async fn do_unlock(app: &AppHandle, passphrase: &str) -> Result<UnlockOutcome> {
+    let db_path = active_db_path(app);
+    let pass = passphrase.to_string();
+    let conn = run_db("unlock_encryption_core", move || {
         encryption::unlock_db_file(&db_path, &pass)
     })
     .await?;
-    resume_business_surface(&app, conn)?;
+    resume_business_surface(app, conn)?;
 
     // 等待中的搬迁（issue #570）：源库为密文库时启动期无法搬迁，解锁后
     // 以主口令补做。失败不阻断解锁：应用继续以当前位置运行，意图保持
@@ -99,9 +103,9 @@ pub async fn unlock_encryption(app: AppHandle, passphrase: String) -> Result<Unl
     let mut relocated = false;
     let pending = app.state::<Boot>().deferred_relocation.clone();
     if let Some(target_dir) = pending {
-        let source = active_db_path(&app);
+        let source = active_db_path(app);
         let target = target_dir.join(DB_FILE_NAME);
-        let pass = passphrase.clone();
+        let pass = passphrase.to_string();
         let outcome = run_db("unlock_deferred_relocation", move || {
             data_location::relocate_with_key(&source, &target, &pass)
         })
@@ -117,6 +121,64 @@ pub async fn unlock_encryption(app: AppHandle, passphrase: String) -> Result<Unl
         }
     }
     Ok(UnlockOutcome { relocated })
+}
+
+/// 解锁：凭主口令打开密文库并进入应用（见 [`do_unlock`]）。
+#[tauri::command]
+pub async fn unlock_encryption(app: AppHandle, passphrase: String) -> Result<UnlockOutcome> {
+    let gate = app.state::<EncryptionGate>();
+    if !gate.is_locked() {
+        return Err(AppError::coded(
+            "encryption.not-locked",
+            "应用未处于锁定状态，无需解锁",
+        ));
+    }
+    do_unlock(&app, &passphrase).await
+}
+
+/// 凭本机缓存的主口令解锁（issue #574 / ADR-0075 决策 3/5）：从系统钥匙串读取
+/// 缓存的主口令（macOS 在此弹 Touch ID 生物认证门）→ 以之为凭据走 [`do_unlock`]。
+/// 只在锁定状态可达；**口令不回流前端**（前端只调本命令、不拿口令）。
+///
+/// 失败回退（只损失便利，不损失数据）：
+/// - 无缓存：`encryption.remember-no-cache`（前端静默回退手输）；
+/// - 生物认证取消：`encryption.remember-biometric-cancelled`（前端回退手输）；
+/// - 缓存口令已过期（错误口令，如恢复其它主口令的备份）：清掉缓存避免每次启动
+///   都弹生物认证，并把错误上报（前端回退手输）。
+#[tauri::command]
+pub async fn unlock_with_remembered_passphrase(app: AppHandle) -> Result<UnlockOutcome> {
+    let gate = app.state::<EncryptionGate>();
+    if !gate.is_locked() {
+        return Err(AppError::coded(
+            "encryption.not-locked",
+            "应用未处于锁定状态，无需解锁",
+        ));
+    }
+    let cached = run_db("read_remembered_passphrase", passphrase_cache::load).await?;
+    match cached {
+        CacheLoad::Found(passphrase) => match do_unlock(&app, &passphrase).await {
+            Ok(outcome) => Ok(outcome),
+            Err(e) if e.is_code("encryption.passphrase-incorrect") => {
+                // 缓存口令已过期：清缓存（下次仍回退手输），并把错误上报前端回退。
+                tracing::warn!("本机缓存的主口令已过期，清理缓存以回退手输");
+                let _ = run_db(
+                    "clear_stale_remembered_passphrase",
+                    passphrase_cache::delete,
+                )
+                .await;
+                Err(e)
+            }
+            Err(e) => Err(e),
+        },
+        CacheLoad::NotFound => Err(AppError::coded(
+            "encryption.remember-no-cache",
+            "本机没有缓存的主口令，请手动输入",
+        )),
+        CacheLoad::Cancelled => Err(AppError::coded(
+            "encryption.remember-biometric-cancelled",
+            "生物认证已取消，请手动输入主口令",
+        )),
+    }
 }
 
 /// 业务可用起点编排（解锁与忘记口令重置共用，ADR-0075 决策 5）：新连接
@@ -162,6 +224,9 @@ pub async fn disable_encryption(app: AppHandle, passphrase: String) -> Result<()
         encryption::disable_encryption_for_file(&db_path, &passphrase)
     })
     .await?;
+    // 关闭加密后主口令不再适用：清钥匙串缓存（幂等，失败不阻断转换），
+    // 避免残留可自动解锁的旧口令（ADR-0075 决策 5）。
+    let _ = run_db("clear_remember_after_disable", passphrase_cache::delete).await;
     tracing::info!("整库转换完成（关闭加密），待重启以明文重新打开");
     Ok(())
 }
@@ -206,7 +271,41 @@ pub async fn reset_after_forgotten_passphrase(app: AppHandle) -> Result<()> {
         encryption::reset_encrypted_db_file(&db_path)
     })
     .await?;
+    // 忘记口令重置：旧主口令不再适用，清钥匙串缓存（幂等，失败不阻断重置），
+    // 不残留可自动解锁的旧口令（ADR-0075 决策 5）。
+    let _ = run_db("clear_remember_after_reset", passphrase_cache::delete).await;
     resume_business_surface(&app, conn)?;
     tracing::info!("忘记口令重置完成，应用以全新明文空库回到明文模式");
     Ok(())
+}
+
+/// 查询「本机记住主口令」的平台能力（issue #574）：locked 状态下（解锁屏）也要
+/// 可调——解锁屏据 `supported` 决定是否尝试自动解锁。纯能力查询、无副作用、
+/// 不经数据库，无需阻塞线程池。
+#[tauri::command]
+pub async fn get_remember_passphrase_support() -> Result<RememberPassphraseSupport> {
+    Ok(RememberPassphraseSupport {
+        supported: passphrase_cache::supported(),
+    })
+}
+
+/// 把主口令本身缓存进系统钥匙串（issue #574 / ADR-0075 决策 3；macOS 以
+/// Touch ID 生物认证门保护）。只在解锁后可达；「记住」偏好开关由前端
+/// localStorage 轻量设置项持有，本命令只落钥匙串缓存。
+#[tauri::command]
+pub async fn set_remember_passphrase(app: AppHandle, passphrase: String) -> Result<()> {
+    ensure_unlocked(&app)?;
+    run_db("set_remember_passphrase", move || {
+        passphrase_cache::store(&passphrase)
+    })
+    .await
+}
+
+/// 清除「本机记住」的主口令缓存（issue #574）：关闭「记住」、关闭加密或忘记口令
+/// 重置后调用，使钥匙串不再持有可自动解锁的口令。只在解锁后可达；幂等（无缓存
+/// 也成功）。
+#[tauri::command]
+pub async fn clear_remember_passphrase(app: AppHandle) -> Result<()> {
+    ensure_unlocked(&app)?;
+    run_db("clear_remember_passphrase", passphrase_cache::delete).await
 }

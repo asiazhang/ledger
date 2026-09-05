@@ -29,6 +29,7 @@ import type {
   DataLocationInfo,
   EncryptionStatus,
   UnlockOutcome,
+  RememberPassphraseSupport,
   ExchangeRate,
   ExchangeRateInput,
   ExecuteOccurrenceInput,
@@ -371,6 +372,16 @@ export const api = {
   changeEncryptionPassphrase: (passphrase: string, newPassphrase: string) =>
     invoke<void>('change_encryption_passphrase', { passphrase, newPassphrase }),
   resetAfterForgottenPassphrase: () => invoke<void>('reset_after_forgotten_passphrase'),
+
+  // 本机记住主口令（issue #574 / ADR-0075 决策 3）：钥匙串缓存 + macOS 生物认证门。
+  // 「记住」偏好开关是前端 localStorage 轻量设置项（app store），此处只暴露后端命令。
+  getRememberPassphraseSupport: () =>
+    invoke<RememberPassphraseSupport>('get_remember_passphrase_support'),
+  setRememberPassphrase: (passphrase: string) =>
+    invoke<void>('set_remember_passphrase', { passphrase }),
+  clearRememberPassphrase: () => invoke<void>('clear_remember_passphrase'),
+  unlockWithRememberedPassphrase: () =>
+    invoke<UnlockOutcome>('unlock_with_remembered_passphrase'),
 
   // AI
   getAiPrompt: () => invoke<string>('get_ai_prompt'),

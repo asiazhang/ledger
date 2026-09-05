@@ -86,6 +86,12 @@ impl AppError {
         }
     }
 
+    /// 是否恰好为指定码的码化错误（只判读、不构造；供编排层按失败原因分流，
+    /// 如解锁时凭缓存口令失败需识别「口令过期」以清理缓存）。
+    pub fn is_code(&self, code: &str) -> bool {
+        matches!(self, AppError::Coded { code: c, .. } if c == code)
+    }
+
     /// 序列化parts：`(kind, message, code, params)`——code/params 为 None 时字段整体缺席。
     fn parts(&self) -> (&'static str, &str, Option<&str>, Option<&[String]>) {
         match self {
@@ -248,5 +254,14 @@ mod tests {
             serde_json::to_value(AppError::Parse("bad json".into())).unwrap(),
             json!({ "kind": "Parse", "message": "bad json", "code": "parse.error" })
         );
+    }
+
+    #[test]
+    fn is_code_按稳定错误码判读() {
+        let err = AppError::coded("encryption.passphrase-incorrect", "主口令不正确");
+        assert!(err.is_code("encryption.passphrase-incorrect"));
+        assert!(!err.is_code("encryption.remember-no-cache"));
+        // 非码化错误恒不匹配任何码（编排层按码分流不误判）。
+        assert!(!AppError::Io("disk gone".into()).is_code("encryption.passphrase-incorrect"));
     }
 }

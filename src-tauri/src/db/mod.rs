@@ -8,6 +8,7 @@ use crate::error::{AppError, Result};
 
 pub mod data_location;
 pub mod encryption;
+pub mod passphrase_cache;
 pub mod perf_trace;
 pub mod query;
 

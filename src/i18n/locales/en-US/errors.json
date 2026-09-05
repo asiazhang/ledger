@@ -199,6 +199,10 @@
     "not-encrypted": "The database is not encrypted. Please restart the app and try again.",
     "not-locked": "The app is not locked and does not need unlocking.",
     "not-plaintext": "The database is already encrypted. No need to enable encryption again.",
-    "passphrase-empty": "The master passphrase cannot be empty."
+    "passphrase-empty": "The master passphrase cannot be empty.",
+    "remember-no-cache": "No cached master passphrase on this device. Please enter it manually.",
+    "remember-biometric-cancelled": "Biometric authentication was cancelled. Please enter the master passphrase manually.",
+    "remember-biometric-unavailable": "Couldn't enable remember on this device (biometrics not enrolled or unsupported). It stays on manual entry.",
+    "remember-unsupported": "This device does not support remembering the master passphrase."
   }
 }
