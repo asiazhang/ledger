@@ -25,6 +25,7 @@ import { yuanToCents } from '@/utils/money'
 import { installmentSchedule } from '@/utils/installment'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
+import { useModalIntent } from '@/composables/useModalIntent'
 import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
 import {
   scheduledRecurrenceLabel,
@@ -72,7 +73,23 @@ const {
   merchantOptions,
 } = form
 
-const showCreateModal = ref(false)
+// ---------------------------------------------------------------------------
+// 新建分期弹窗（issue #204 / #206）：开启/关闭编排归弹窗意图工厂 ModalIntent
+// （ADR-0072，词汇表 ModalIntent）——纯新建布尔方言收编为单成员意图闭集
+// （type: create，无目标载荷），显示由「意图非空」派生（无独立 show 布尔），
+// 关闭（提交成功 / ✕ / ESC / 取消）统一经工厂清回 null 终态；表单重置留视图。
+// ---------------------------------------------------------------------------
+
+/** 新建分期弹窗意图（单成员闭集）：纯新建，无目标载荷。 */
+interface InstallmentCreateIntent {
+  type: 'create'
+}
+
+const {
+  intent: createIntent,
+  open: openCreateIntent,
+  close: closeCreateIntent,
+} = useModalIntent<InstallmentCreateIntent>()
 
 const totalYuan = ref('')
 const periods = ref<number | null>(null)
@@ -143,7 +160,7 @@ async function create() {
       }),
     )
     message.success(t('scheduled.toast.installmentCreated'))
-    showCreateModal.value = false
+    closeCreateIntent()
     resetCreateForm()
     await list.load()
   } catch (e) {
@@ -333,7 +350,7 @@ onMounted(() => {
             type="primary"
             size="small"
             data-testid="inst-create-open"
-            @click="showCreateModal = true"
+            @click="openCreateIntent({ type: 'create' })"
           >
             {{ t('scheduled.pane.createInstallment') }}
           </NButton>
@@ -349,9 +366,11 @@ onMounted(() => {
       />
     </NCard>
 
-    <!-- 新建分期弹窗：总金额 + 期数实时预览；其余字段与订阅表单同款 -->
+    <!-- 新建分期弹窗：总金额 + 期数实时预览；其余字段与订阅表单同款；
+         显示由「意图非空」派生（无独立 show 布尔），关闭统一经工厂清回 null 终态 -->
     <AppModal
-      v-model:show="showCreateModal"
+      :show="createIntent !== null"
+      @update:show="(v: boolean) => (v ? undefined : closeCreateIntent())"
       :title="t('scheduled.pane.createInstallment')"
       preset="card"
       display-directive="if"
@@ -450,7 +469,7 @@ onMounted(() => {
             />
           </NFormItem>
           <NSpace justify="end">
-            <NButton data-testid="inst-create-cancel" @click="showCreateModal = false">{{ t('scheduled.form.cancel') }}</NButton>
+            <NButton data-testid="inst-create-cancel" @click="closeCreateIntent">{{ t('scheduled.form.cancel') }}</NButton>
             <NButton type="primary" data-testid="inst-create" @click="create">{{ t('scheduled.pane.createInstallmentSubmit') }}</NButton>
           </NSpace>
         </NSpace>
