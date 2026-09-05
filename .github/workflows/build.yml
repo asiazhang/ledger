@@ -16,6 +16,13 @@ permissions:
   contents: write
 
 jobs:
+  # CI 耗时基线（2026-09，run 33971568279）：frontend ≈229s（pnpm test 占 91%，
+  # vitest import+jsdom 环境创建是每文件固定成本，并行度仅 ~1.4 核），backend ≈222s
+  # （编译 76s + 固定 69s + clippy 19s + 测试执行 48s）。据此拆分为四个并行 job：
+  # 关键路径 = max(后端测试 ~180s, 前端测试分片 ~116s)，目标总时长 ~3 分钟。
+
+  # 前端构建与一致性检查：vue-tsc 类型检查 + vite build + 三个守门脚本，~25s。
+  # 测试拆至 frontend-test 分片 job，二者并行。
   frontend:
     name: 前端检查
     if: "!startsWith(github.ref, 'refs/tags/')"
@@ -31,8 +38,6 @@ jobs:
 
       - run: pnpm run build
 
-      - run: pnpm test
-
       - name: 命令注册一致性检查
         run: node scripts/check-commands.js
 
@@ -42,8 +47,35 @@ jobs:
       - name: 文档一致性检查
         run: ./scripts/check-docs.sh
 
+  # 前端测试按 shard 均分到 2 个并行 runner：vitest 单 job 208s（累计 586s），
+  # 分片后各 ~116s。不采用 isolate:false（worker 复用 jsdom 省每文件环境创建），
+  # 因 pinia/i18n/fake timers 等模块级单例跨文件泄漏风险不可控，放弃该项收益。
+  frontend-test:
+    name: 前端测试（shard ${{ matrix.shard }}/2）
+    if: "!startsWith(github.ref, 'refs/tags/')"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/setup@v2.1.0
+        with:
+          runtime: node@22
+          cache: true
+          require-lockfile: true
+
+      - name: Vitest 分片运行
+        run: pnpm exec vitest run --shard=${{ matrix.shard }}/2
+
+  # 后端测试：fmt/clippy 拆至 backend-lint 并行（clippy 仅 ~19s，不值得占关键路径）。
+  # cargo test 本体 ~125s（编译 76s + cucumber e2e 388 场景 29s 等），固定开销靠
+  # apt 下载缓存压缩（27s → ~10s）；rust-cache 默认按 job 隔离缓存，两个 job 各自
+  # 维护 check-profile / test-profile 产物，冷启动各编一次，热启动行为与拆分前一致。
   backend:
-    name: 后端检查（Rust 单测 + e2e）
+    name: 后端测试（Rust 单测 + BDD/e2e）
     if: "!startsWith(github.ref, 'refs/tags/')"
     runs-on: ubuntu-latest
     defaults:
@@ -51,6 +83,46 @@ jobs:
         working-directory: src-tauri
     steps:
       - uses: actions/checkout@v7
+
+      - name: 恢复 apt 下载缓存
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-tauri-deps-${{ runner.os }}-${{ hashFiles('.github/workflows/build.yml') }}
+
+      - name: 安装 Linux 系统依赖（tauri 编译所需）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Rust 单元测试 + BDD/e2e 测试（cucumber）
+        run: cargo test --all
+
+  backend-lint:
+    name: 后端静态检查（fmt + clippy）
+    if: "!startsWith(github.ref, 'refs/tags/')"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 恢复 apt 下载缓存
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-tauri-deps-${{ runner.os }}-${{ hashFiles('.github/workflows/build.yml') }}
 
       - name: 安装 Linux 系统依赖（tauri 编译所需）
         run: |
@@ -74,9 +146,6 @@ jobs:
 
       - name: Clippy 检查
         run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Rust 单元测试 + BDD/e2e 测试（cucumber）
-        run: cargo test --all
 
   # 发布构建：三平台矩阵并行（ADR-0066），产物 upload-artifact 交给 publish 汇总。
   # workflow_dispatch 可在正式 tag 前手动试跑（publish 仅在 tag 触发，不会误建 Release）。
