@@ -214,6 +214,7 @@
       "rememberCheckboxHint": "When on, the app unlocks automatically at launch via Touch ID on macOS, without re-entering the master passphrase.",
       "rememberToggleLabel": "Unlock automatically at launch",
       "rememberToggleHint": "When on, the master passphrase is stored securely in this device's keychain (reads require Touch ID on macOS) so the next launch unlocks automatically without re-entering it; turning it off returns to manual entry. It applies to this device only — you'll still enter it manually on another device or after restoring a backup elsewhere.",
+      "rememberDevFallbackHint": "Development build: the local cache has no Touch ID gate — restarts unlock directly from the cache without prompting biometrics. Release builds are unaffected.",
       "rememberPassLabel": "Enter the current master passphrase so it can be saved for auto-unlock",
       "rememberConfirm": "Enable auto-unlock",
       "rememberEnabled": "Auto-unlock enabled",

@@ -207,6 +207,7 @@
     "remember-no-cache": "本机没有缓存的主口令，请手动输入",
     "remember-biometric-cancelled": "生物认证已取消，请手动输入主口令",
     "remember-biometric-unavailable": "无法启用本机记住（生物认证未启用或该设备不支持），已保持手动输入",
+    "remember-entitlement-restricted": "系统钥匙串访问受当前构建签名形态限制（缺少 Apple 证书背书的钥匙串权限）",
     "remember-unsupported": "当前平台不支持本机记住主口令"
   },
   "settings": {
