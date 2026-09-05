@@ -199,6 +199,22 @@ pub struct LedgerWorld {
     pub enc_conn: Option<rusqlite::Connection>,
     /// 加密场景：库文件字节快照（失败原子性断言用）
     pub enc_db_bytes: Option<Vec<u8>>,
+    /// 启动失败恢复场景（issue #601）：最近一次启动处置接管结果
+    pub sf_last_takeover: Option<StartupTakeover>,
+    /// 启动失败恢复场景（issue #601）：以未登记引导解析出的生效库目录
+    pub sf_resolved_dir: Option<PathBuf>,
+}
+
+/// 启动处置接管结果（issue #601，启动失败恢复场景专用）：文件判定 + 建连的
+/// 复合结果，与 `lib.rs::init_database` 消费 `classify_for_boot` 的序列同型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartupTakeover {
+    /// 明文库/空文件：正常建连进入应用。
+    Opened,
+    /// 真密文库：锁定等待解锁。
+    AwaitUnlock,
+    /// 启动失败：损坏残留或建连失败（前端失败恢复屏接管）。
+    Failed,
 }
 
 impl fmt::Debug for LedgerWorld {
@@ -219,6 +235,7 @@ impl fmt::Debug for LedgerWorld {
             .field("last_overview", &self.last_overview.is_some())
             .field("last_plan_id", &self.last_plan_id)
             .field("last_occurrence_id", &self.last_occurrence_id)
+            .field("sf_last_takeover", &self.sf_last_takeover)
             .finish()
     }
 }
@@ -288,6 +305,8 @@ impl LedgerWorld {
             enc_last_error: None,
             enc_conn: None,
             enc_db_bytes: None,
+            sf_last_takeover: None,
+            sf_resolved_dir: None,
         };
         // 注册种子黑洞账户（V004 预置 无(CNY)/无(HKD)），供迁移场景按名称引用。
         let hidden: Vec<(String, String)> = {

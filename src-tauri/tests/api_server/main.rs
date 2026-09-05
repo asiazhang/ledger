@@ -20,6 +20,7 @@
 mod account_update;
 mod balance;
 mod batch_import;
+mod boot_gate;
 mod common;
 mod documentation;
 mod encryption_gate;

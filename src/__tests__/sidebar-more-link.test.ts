@@ -18,11 +18,11 @@ afterEach(() => {
 
 async function mountApp() {
   setActivePinia(createPinia())
-  // 加密锁定门探测（issue #570）：App 启动先探测锁定状态，本票与侧栏无关，
-  // 桩为明文未锁定让主界面照常挂载；其余命令 fail-loud。
+  // 启动门探测（issue #570 / #601）：App 启动先探测启动状态，本票与侧栏无关，
+  // 桩为明文就绪让主界面照常挂载；其余命令 fail-loud。
   vi.mocked(invoke).mockImplementation((cmd: string) =>
-    cmd === 'get_encryption_status'
-      ? Promise.resolve({ locked: false, file_encrypted: false })
+    cmd === 'get_boot_status'
+      ? Promise.resolve({ phase: 'ready', error_code: null })
       : Promise.reject(new Error(`unexpected invoke: ${cmd}`)),
   )
   const r = createRouter({ history: createMemoryHistory(), routes })

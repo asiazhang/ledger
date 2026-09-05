@@ -18,6 +18,8 @@
 
 - **设置**：About 页新增日志等级配置——设置页「关于」Tab 在「打开日志目录」上方新增日志等级下拉（闭集五档 error/warn/info/debug/trace，默认 info），切换后立即生效（文件与终端日志共用同一滤镜）、跨启动保留并随备份/恢复迁移；显式 RUST_LOG 环境变量在本次启动内优先且不写库（About 页静态提示说明）；非法档位返回码化错误（[#611]，ADR-0006）。
 
+- **备份与数据文件**：新增启动失败恢复——启动时账本数据库打不开（明文库损坏等）不再弹原生「重置/退出」对话框、应用不再退出：启动失败状态交由前端启动失败恢复屏接管，「重置为空库」通道经应用内二次确认后把打不开的旧库按既有重置命名语义保留为 `.bak` 副本并新建空账本，完成后直接进入应用；同时修复恢复命令两处前置缺陷（恢复目标路径写死默认数据目录，自定义数据位置下恢复会错位；无已打开库连接时恢复不可用），为失败恢复屏的备份恢复通道铺路（[#601]，ADR-0075）。
+
 ### Changed
 
 - **应用更名**：应用更名为「开源记账」，英文门面名 OpenLedger，tagline「开源、本地优先的个人记账应用」——窗口标题、侧栏标题、关于页、错误文案、备份文件选择器、AI 提示词用户指引按界面语言显示双名；安装包与 Release 产物以 OpenLedger / openledger 命名。改名只动显示层：账本数据、历史备份与升级路径一切照旧，应用标识符、`ledger.db`、受管备份前缀与「Ledger API」协议称谓不变（[#584]，ADR-0076）。
@@ -186,6 +188,7 @@
 [#571]: https://github.com/asiazhang/ledger/issues/571
 [#572]: https://github.com/asiazhang/ledger/issues/572
 [#573]: https://github.com/asiazhang/ledger/issues/573
+[#601]: https://github.com/asiazhang/ledger/issues/601
 [#617]: https://github.com/asiazhang/ledger/issues/617
 [#618]: https://github.com/asiazhang/ledger/issues/618
 [#647]: https://github.com/asiazhang/ledger/issues/647
