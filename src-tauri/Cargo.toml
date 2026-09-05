@@ -39,6 +39,9 @@ tokio = { version = "1", features = ["rt", "macros", "time"] }
 axum = "0.8"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "query", "rustls"] }
 tracing = "0.1"
+# 日志等级运行期 reload（spec #608）：`tracing-subscriber` 的 `reload` 模块在
+# std 下无条件可用；本版本（0.3.23）无独立 `reload` feature（可用 features 见解析）。
+# 故无需额外开启 feature，直接使用 `tracing_subscriber::reload`。
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 tower-http = { version = "0.7", features = ["trace"] }
