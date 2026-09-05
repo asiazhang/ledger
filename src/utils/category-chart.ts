@@ -8,7 +8,9 @@ import { formatAmount } from '@/utils/money'
 /** 未分类柱固定灰：与真实分类一眼区分 */
 export const UNCATEGORIZED_COLOR = '#909399'
 
-/** 分类色板（自环形图迁移）：命中顺序不参与取色，按 id 散列取色 */
+/** 分类色板（自环形图迁移）：命中顺序不参与取色，按 id 散列取色；
+ *  商户排行（issue #588）按名次序复用同一色板（多色 + hex 实色，
+ *  满足 softBarFillPlugin 渐变换装前提）。 */
 const PALETTE = [
   '#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272',
   '#fc8452', '#9a60b4', '#ea7ccc', '#18a058', '#d03050', '#2080f0',
@@ -27,6 +29,12 @@ function hashId(id: string): number {
 /** 分类颜色：同 id 恒同色（跨年份、跨数据顺序、跨层级） */
 export function categoryColor(id: string): string {
   return PALETTE[hashId(id) % PALETTE.length]
+}
+
+/** 色板按序取色（商户排行名次色）：第 1 名 = 色板首位深蓝；越界回绕（防御性，
+ *  档位闭集二 5/10 永不触达）。 */
+export function paletteColor(index: number): string {
+  return PALETTE[index % PALETTE.length]
 }
 
 /** 横向柱状图单根柱：一级归并（或未分类）后的图行 */
