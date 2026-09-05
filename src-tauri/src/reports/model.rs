@@ -24,6 +24,15 @@ pub struct MerchantShare {
     pub amount_cents: i64,
 }
 
+/// 商户消费排行载荷（issue #588）：排行行 + 本期全部商户净支出合计。
+/// `total_cents` 是柱图 tooltip 占比的分母——分母永远是全量（与 `top_n`
+/// 截断无关），截断只作用在 `rows` 上。
+#[derive(Debug, Serialize)]
+pub struct MerchantSharesReport {
+    pub rows: Vec<MerchantShare>,
+    pub total_cents: i64,
+}
+
 #[derive(Debug, Serialize)]
 pub struct CategoryShare {
     pub category_id: String,

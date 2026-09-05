@@ -1,6 +1,6 @@
 //! 报表 e2e 步骤定义。
 //!
-//! 商户消费排行（issue #192）：排行口径由核心函数 `merchant_shares_rows`
+//! 商户消费排行（issue #192）：排行口径由核心函数 `merchant_shares_report`
 //! （命令层同款注入）查询：`expense_net`（毛支出 − 退款）按商户聚合、本位币口径。
 //! 交易夹具走与真实写路径一致的行为层（`create_transaction_internal`），
 //! 复用商户/交易步骤模块的既有步骤。
@@ -22,7 +22,7 @@ use cucumber::{given, then, when};
 use rusqlite::params;
 
 use tauri_app_lib::reports::{
-    category_shares_rows, merchant_shares_rows, monthly_summary_rows, query_report_date_range,
+    category_shares_rows, merchant_shares_report, monthly_summary_rows, query_report_date_range,
 };
 use tauri_app_lib::transaction::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
@@ -180,7 +180,9 @@ fn create_txn_with_merchant_currency(
 #[when(expr = "查询 {int} 年商户排行")]
 fn query_merchant_shares(world: &mut LedgerWorld, year: i64) {
     world.last_merchant_shares =
-        merchant_shares_rows(&world_conn!(world), year, None, None).expect("查询商户排行失败");
+        merchant_shares_report(&world_conn!(world), year, None, None, None)
+            .expect("查询商户排行失败")
+            .rows;
 }
 
 /// 查询指定期间（YYYY-MM-DD 含边界）的商户消费排行（命令层同款核心函数注入，
@@ -188,8 +190,9 @@ fn query_merchant_shares(world: &mut LedgerWorld, year: i64) {
 #[when(expr = "查询商户排行 期间 {string} 到 {string}")]
 fn query_merchant_shares_period(world: &mut LedgerWorld, from: String, to: String) {
     world.last_merchant_shares =
-        merchant_shares_rows(&world_conn!(world), 0, Some(&from), Some(&to))
-            .expect("查询商户排行失败");
+        merchant_shares_report(&world_conn!(world), 0, Some(&from), Some(&to), None)
+            .expect("查询商户排行失败")
+            .rows;
 }
 
 // ---------------------------------------------------------------------------

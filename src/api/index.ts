@@ -48,7 +48,7 @@ import type {
   PolicyInput,
   PolicyStats,
   Merchant,
-  MerchantShare,
+  MerchantSharesReport,
   MerchantInput,
   MerchantTransactionCount,
   MerchantUpdateInput,
@@ -194,12 +194,15 @@ export const api = {
           from: period.from,
           to: period.to,
         }),
-  // 商户消费排行（issue #411 期间化）：报表页按期间查询（遗留 year 冻结不再使用）
-  merchantShares: (period: ReportPeriodRange) =>
-    invoke<MerchantShare[]>('merchant_shares', {
+  // 商户消费排行（issue #411 期间化；#588 可选 top_n 参数只增 + 载荷改为
+  // { rows, total_cents }——内部 IPC 契约，前端唯一调用方同发更新）：
+  // 报表页按期间查询（遗留 year 冻结不再使用）；topN null = 全量（既有行为不变）
+  merchantShares: (period: ReportPeriodRange, topN: number | null) =>
+    invoke<MerchantSharesReport>('merchant_shares', {
       year: periodPlaceholderYear(period),
       from: period.from,
       to: period.to,
+      top_n: topN,
     }),
   // 分类份额（issue #411 期间化）：报表页按期间查询（遗留 month/year 冻结不再使用）
   categoryShares: (kind: string, period: ReportPeriodRange) =>

@@ -8,6 +8,8 @@
 //! - 分类聚合净值：expense → `expense_net`（退款冲减）、income → `income_net`（含分红）。
 //!   可选年份参数（issue #376）：随报表年份筛选联动，缺省全时段口径不变（API 只增不改）。
 //! - 商户消费排行（issue #192）：`expense_net` 按商户聚合、本位币口径，无商户不进排行。
+//!   可选 topN 截断与全量合计（issue #588）：`top_n`（None = 全量）在排序之后应用、
+//!   收口后端；载荷携带本期全部商户净支出合计（tooltip 占比分母，与截断无关）。
 //!
 //! 期间过滤（issue #411 / ADR-0057）：三个聚合函数统一新增可选 `from`/`to`
 //! （YYYY-MM-DD 含边界，字典序区间比较），任一端存在即期间口径、遗留参数
@@ -29,7 +31,7 @@ mod tests;
 
 mod model;
 
-pub use model::{CategoryShare, DateRange, MerchantShare, MonthlySummary};
+pub use model::{CategoryShare, DateRange, MerchantShare, MerchantSharesReport, MonthlySummary};
 
 use rusqlite::Connection;
 
@@ -151,12 +153,18 @@ pub fn category_shares_rows(
 /// 期间过滤（issue #411 / ADR-0057 决策 4）：可选 `from`/`to`（YYYY-MM-DD 含边界，
 /// 字典序区间比较，各边独立）任一端存在即期间口径，遗留 `year` 不参与；
 /// 双端皆缺省回退遗留年份口径（已发布 API 只增不改）。
-pub fn merchant_shares_rows(
+///
+/// 可选 topN 截断 + 全量合计（issue #588）：`top_n`（None = 全量，既有行为不变）在
+/// ORDER BY（net DESC, name）之后应用——SQL 输出已排序，域内截断只取前 N 行，
+/// 参与 kind 集合、排序与 JOIN 语义零改动；载荷同时携带本期全部商户净支出合计
+/// （tooltip 占比分母，与截断无关），top_n 不影响合计。
+pub fn merchant_shares_report(
     conn: &Connection,
     year: i64,
     from: Option<&str>,
     to: Option<&str>,
-) -> Result<Vec<MerchantShare>> {
+    top_n: Option<i64>,
+) -> Result<MerchantSharesReport> {
     let kinds = contributing_kinds_sql(Measure::ExpenseNet);
     let mut sql = format!(
         "SELECT t.merchant_id, m.name, SUM({expr}) AS net \
@@ -171,7 +179,15 @@ pub fn merchant_shares_rows(
         sql.push_str(" AND substr(t.date,1,4)=?1");
     }
     sql.push_str(" GROUP BY t.merchant_id ORDER BY net DESC, m.name");
-    query_all(conn, &sql, rusqlite::params_from_iter(params))
+    let rows: Vec<MerchantShare> = query_all(conn, &sql, rusqlite::params_from_iter(params))?;
+    let total_cents = rows.iter().map(|r| r.amount_cents).sum();
+    // 截断在排序之后应用（issue #588）：SQL 已按 net DESC, name 输出，取前 N 行即可；
+    // 负值/零防御性归为空集（档位闭集二：5/10，正常调用方不会发出）。
+    let rows = match top_n.map(|n| usize::try_from(n).unwrap_or(0)) {
+        Some(limit) => rows.into_iter().take(limit).collect(),
+        None => rows,
+    };
+    Ok(MerchantSharesReport { rows, total_cents })
 }
 
 /// 报表日期极值范围（issue #266 / #389）：对全部未删除交易各取一次最小/最大日期极值

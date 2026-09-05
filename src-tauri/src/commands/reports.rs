@@ -19,7 +19,7 @@ use tauri::State;
 use crate::db::{DbState, run_db};
 use crate::error::{AppError, Result};
 use crate::reports as reports_domain;
-use crate::reports::{CategoryShare, DateRange, MerchantShare, MonthlySummary};
+use crate::reports::{CategoryShare, DateRange, MerchantSharesReport, MonthlySummary};
 
 #[tauri::command]
 pub async fn monthly_summary(
@@ -36,17 +36,20 @@ pub async fn monthly_summary(
     .await
 }
 
+/// 商户消费排行（issue #588）：可选 `top_n` 参数只增（None = 全量，既有调用行为不变）；
+/// 响应载荷同票改为 `{ rows, total_cents }`（内部 IPC 契约变更，前端唯一调用方同发更新）。
 #[tauri::command]
 pub async fn merchant_shares(
     db: State<'_, DbState>,
     year: i64,
     from: Option<String>,
     to: Option<String>,
-) -> Result<Vec<MerchantShare>> {
+    top_n: Option<i64>,
+) -> Result<MerchantSharesReport> {
     let conn = db.conn.clone();
     run_db("merchant_shares", move || {
         let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        reports_domain::merchant_shares_rows(&conn, year, from.as_deref(), to.as_deref())
+        reports_domain::merchant_shares_report(&conn, year, from.as_deref(), to.as_deref(), top_n)
     })
     .await
 }

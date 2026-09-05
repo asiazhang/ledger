@@ -4,7 +4,7 @@
 use rusqlite::Connection;
 
 use crate::db::{device_id, now_iso};
-use crate::reports::{category_shares_rows, merchant_shares_rows, monthly_summary_rows};
+use crate::reports::{category_shares_rows, merchant_shares_report, monthly_summary_rows};
 use crate::transaction::amount::{Measure, TransactionKind, signed_amount};
 
 fn setup() -> Connection {
@@ -859,7 +859,9 @@ fn merchant_shares_expense_net_subtracts_refund() {
     for r in &fixture {
         insert_merchant_tx(&conn, r);
     }
-    let rows = merchant_shares_rows(&conn, 2026, None, None).unwrap();
+    let rows = merchant_shares_report(&conn, 2026, None, None, None)
+        .unwrap()
+        .rows;
     assert_eq!(rows.len(), 1, "退款归属同一商户，不新增行");
     let expected = merchant_measure_sum(&fixture, "2026-03", Measure::ExpenseNet);
     assert_eq!(
@@ -936,7 +938,9 @@ fn merchant_shares_only_expense_kinds_contribute() {
     for r in &fixture {
         insert_merchant_tx(&conn, r);
     }
-    let rows = merchant_shares_rows(&conn, 2026, None, None).unwrap();
+    let rows = merchant_shares_report(&conn, 2026, None, None, None)
+        .unwrap()
+        .rows;
     assert_eq!(rows.len(), 1);
     assert_eq!(
         rows[0].amount_cents,
@@ -973,7 +977,9 @@ fn merchant_shares_excludes_unmerchant_transactions() {
             date: "2026-03-06",
         },
     );
-    let rows = merchant_shares_rows(&conn, 2026, None, None).unwrap();
+    let rows = merchant_shares_report(&conn, 2026, None, None, None)
+        .unwrap()
+        .rows;
     assert!(rows.is_empty(), "无商户支出与带商户收入都不进消费排行");
 }
 
@@ -1011,7 +1017,9 @@ fn merchant_shares_orders_desc() {
     for r in &fixture {
         insert_merchant_tx(&conn, r);
     }
-    let rows = merchant_shares_rows(&conn, 2026, None, None).unwrap();
+    let rows = merchant_shares_report(&conn, 2026, None, None, None)
+        .unwrap()
+        .rows;
     let names: Vec<&str> = rows.iter().map(|r| r.merchant_id.as_str()).collect();
     assert_eq!(names, vec!["m-b", "m-c", "m-a"], "应按净额降序");
 }
@@ -1041,7 +1049,9 @@ fn merchant_shares_filters_by_year() {
     for r in &fixture {
         insert_merchant_tx(&conn, r);
     }
-    let rows = merchant_shares_rows(&conn, 2026, None, None).unwrap();
+    let rows = merchant_shares_report(&conn, 2026, None, None, None)
+        .unwrap()
+        .rows;
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].amount_cents, 700);
 }
@@ -1079,7 +1089,9 @@ fn merchant_shares_filters_by_period() {
     for r in &fixture {
         insert_merchant_tx(&conn, r);
     }
-    let rows = merchant_shares_rows(&conn, 0, Some("2026-01-01"), Some("2026-12-31")).unwrap();
+    let rows = merchant_shares_report(&conn, 0, Some("2026-01-01"), Some("2026-12-31"), None)
+        .unwrap()
+        .rows;
     assert_eq!(rows.len(), 2, "界外（2025-12-31）支出不计入");
     assert_eq!(rows[0].merchant_id, "m-jd");
     assert_eq!(rows[0].amount_cents, 1000);
@@ -1105,9 +1117,123 @@ fn merchant_shares_includes_soft_deleted_merchant_history() {
     );
     conn.execute("UPDATE merchants SET is_deleted=1 WHERE id='m-jd'", [])
         .unwrap();
-    let rows = merchant_shares_rows(&conn, 2026, None, None).unwrap();
+    let rows = merchant_shares_report(&conn, 2026, None, None, None)
+        .unwrap()
+        .rows;
     assert_eq!(rows.len(), 1, "软删商户的历史消费照常进排行");
     assert_eq!(rows[0].amount_cents, 1000);
+}
+
+// ---- merchant_shares_report：可选 topN 截断 + 全量合计（issue #588）----
+//
+// 截断语义：top_n 在 ORDER BY（net DESC, name）之后应用、收口后端；
+// 全量合计（tooltip 占比分母）与截断无关，永远覆盖本期全部商户。
+
+/// 排行截断夹具：五商户各一笔支出，净额 100/300/200/500/400
+///（m-a..m-e 插入序 ≠ 名次序，期望序 = m-d(500) m-e(400) m-b(300) m-c(200) m-a(100)）。
+fn insert_ranking_fixture(conn: &Connection) {
+    insert_account(conn, "acc");
+    let rows = [
+        ("t-a", "m-a", 100),
+        ("t-b", "m-b", 300),
+        ("t-c", "m-c", 200),
+        ("t-d", "m-d", 500),
+        ("t-e", "m-e", 400),
+    ];
+    for (tid, mid, amount) in rows {
+        insert_merchant(conn, mid);
+        insert_merchant_tx(
+            conn,
+            &MerchantTxRow {
+                id: tid,
+                kind: TransactionKind::Expense,
+                amount,
+                merchant_id: mid,
+                date: "2026-03-05",
+            },
+        );
+    }
+}
+
+#[test]
+fn merchant_shares_top_n_truncates_after_sort() {
+    let conn = setup();
+    insert_ranking_fixture(&conn);
+    let report = merchant_shares_report(&conn, 2026, None, None, Some(2)).unwrap();
+    let ids: Vec<&str> = report.rows.iter().map(|r| r.merchant_id.as_str()).collect();
+    assert_eq!(ids, vec!["m-d", "m-e"], "top_n=2 取净额前两名，排序不乱");
+}
+
+#[test]
+fn merchant_shares_top_n_at_or_above_count_returns_all() {
+    let conn = setup();
+    insert_ranking_fixture(&conn);
+    for n in [5, 10] {
+        let report = merchant_shares_report(&conn, 2026, None, None, Some(n)).unwrap();
+        assert_eq!(report.rows.len(), 5, "top_n={n} ≥ 商户数，全量返回");
+    }
+}
+
+#[test]
+fn merchant_shares_none_top_n_returns_full() {
+    let conn = setup();
+    insert_ranking_fixture(&conn);
+    let report = merchant_shares_report(&conn, 2026, None, None, None).unwrap();
+    assert_eq!(report.rows.len(), 5, "None = 全量（既有行为不变）");
+}
+
+#[test]
+fn merchant_shares_total_cents_ignores_top_n() {
+    let conn = setup();
+    insert_ranking_fixture(&conn);
+    let truncated = merchant_shares_report(&conn, 2026, None, None, Some(2)).unwrap();
+    assert_eq!(truncated.total_cents, 1500, "合计覆盖全部商户，与截断无关");
+    let full = merchant_shares_report(&conn, 2026, None, None, None).unwrap();
+    assert_eq!(full.total_cents, 1500);
+}
+
+#[test]
+fn merchant_shares_top_n_zero_yields_empty_rows_with_total() {
+    let conn = setup();
+    insert_ranking_fixture(&conn);
+    let report = merchant_shares_report(&conn, 2026, None, None, Some(0)).unwrap();
+    assert!(report.rows.is_empty(), "top_n=0 = 空 rows（防御边界）");
+    assert_eq!(report.total_cents, 1500, "合计仍全量");
+    // 负值防御同归空集（档位闭集二：5/10，正常调用方不会发出）
+    let report = merchant_shares_report(&conn, 2026, None, None, Some(-1)).unwrap();
+    assert!(report.rows.is_empty(), "负 top_n 防御性归空集");
+    assert_eq!(report.total_cents, 1500, "合计仍全量");
+}
+
+#[test]
+fn merchant_shares_top_n_keeps_name_tiebreak_at_boundary() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    // 同额 300 两商户 + 100 一商户：同额按名称决胜，截断边界处不翻转
+    insert_merchant(&conn, "m-b");
+    insert_merchant(&conn, "m-a");
+    insert_merchant(&conn, "m-c");
+    let rows = [
+        ("t-b", "m-b", 300),
+        ("t-a", "m-a", 300),
+        ("t-c", "m-c", 100),
+    ];
+    for (tid, mid, amount) in rows {
+        insert_merchant_tx(
+            &conn,
+            &MerchantTxRow {
+                id: tid,
+                kind: TransactionKind::Expense,
+                amount,
+                merchant_id: mid,
+                date: "2026-03-05",
+            },
+        );
+    }
+    let report = merchant_shares_report(&conn, 2026, None, None, Some(2)).unwrap();
+    let ids: Vec<&str> = report.rows.iter().map(|r| r.merchant_id.as_str()).collect();
+    assert_eq!(ids, vec!["m-a", "m-b"], "同额按名称序决胜，截断边界稳定");
+    assert_eq!(report.total_cents, 700);
 }
 
 // ---- query_report_date_range：日期极值范围（issue #266 / #389）----

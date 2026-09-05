@@ -56,4 +56,29 @@ describe('useReportsSessionStore（issue #427 报表页会话状态）', () => {
     expect(store.drilledRootId).toBeNull()
     expect(store.period).toEqual({ from: `${Y}-01-01`, to: `${Y}-12-31` })
   })
+
+  it('商户排行 TopN 默认 5（issue #588 闭集二：5/10）', () => {
+    const store = useReportsSessionStore()
+    expect(store.merchantTopN).toBe(5)
+  })
+
+  it('setMerchantTopN 写入档位：期间与下钻不受牵连', () => {
+    const store = useReportsSessionStore()
+    store.setDrilldown('food')
+    store.setMerchantTopN(10)
+    expect(store.merchantTopN).toBe(10)
+    expect(store.period).toEqual({ from: `${Y}-01-01`, to: `${Y}-12-31` })
+    expect(store.drilledRootId).toBe('food')
+  })
+
+  it('TopN 会话内保留、冷启动（新 pinia）回默认 5（ADR-0061 同粒度）', () => {
+    const store = useReportsSessionStore()
+    store.setMerchantTopN(10)
+    expect(store.merchantTopN).toBe(10)
+    // 同一 pinia（同一会话）内重新取 store：保留选择
+    expect(useReportsSessionStore().merchantTopN).toBe(10)
+    // 新 pinia = 冷启动：回默认
+    setActivePinia(createPinia())
+    expect(useReportsSessionStore().merchantTopN).toBe(5)
+  })
 })

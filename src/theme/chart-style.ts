@@ -1,5 +1,6 @@
-import type { Chart } from 'chart.js'
+import { Chart as ChartJS, type Chart } from 'chart.js'
 import type { Theme } from '@/stores/app'
+import { formatAmount } from '@/types'
 
 /**
  * 柔和柱状图统一样式（报表页两张图共用，2026-09 视觉柔化；投资趋势图未来可复用）：
@@ -50,6 +51,34 @@ function withAlpha(hex: string, alpha: number): string {
   const g = Number.parseInt(n.slice(2, 4), 16)
   const b = Number.parseInt(n.slice(4, 6), 16)
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+/**
+ * 柱尾金额标注插件（issue #378 立项，issue #588 起报表页两张横向柱图共用单点）：
+ * afterDatasetsDraw 阶段在柱尾外侧画 formatAmount 金额（隐私模式同源掩码，#567）；
+ * 正值柱标柱尾右侧、负值柱标柱尾左侧（0 轴如实渲染）。挂进 Bar 的 plugins 即生效，
+ * 与柱体渐隐插件同先例。
+ */
+export const barEndAmountPlugin = {
+  id: 'barEndAmounts',
+  afterDatasetsDraw(chart: Chart<'bar'>) {
+    const data = chart.data.datasets[0]?.data as number[] | undefined
+    if (!data?.length) return
+    const ctx = chart.ctx
+    ctx.save()
+    ctx.fillStyle = typeof chart.options.color === 'string' ? chart.options.color : '#666'
+    const f = ChartJS.defaults.font
+    ctx.font = `${f.size ?? 12}px ${f.family ?? 'sans-serif'}`
+    ctx.textBaseline = 'middle'
+    chart.getDatasetMeta(0).data.forEach((el, i) => {
+      const value = data[i]
+      const { x, y } = el.getProps(['x', 'y'], true)
+      // 正值柱标在柱尾右侧，负值柱标在柱尾左侧（0 轴如实渲染）
+      ctx.textAlign = value >= 0 ? 'left' : 'right'
+      ctx.fillText(formatAmount(value), value >= 0 ? x + 6 : x - 6, y)
+    })
+    ctx.restore()
+  },
 }
 
 /**

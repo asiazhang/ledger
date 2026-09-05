@@ -32,3 +32,11 @@ export interface MerchantShare {
   merchant_name: string
   amount_cents: number
 }
+
+/** 商户消费排行载荷（issue #588）：rows = 排行行（后端已排序与 topN 截断，
+ *  前端按返回序渲染）；total_cents = 本期全部商户净支出合计，是 tooltip 占比的
+ *  分母（与 top_n 截断无关）。载荷形状为内部 IPC 契约，前后端同发更新。 */
+export interface MerchantSharesReport {
+  rows: MerchantShare[]
+  total_cents: number
+}
