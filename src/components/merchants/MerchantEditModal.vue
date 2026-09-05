@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { NButton, NForm, NFormItem, NInput, useMessage } from 'naive-ui'
+import { NButton, NForm, NFormItem, NInput, NSpace, useMessage } from 'naive-ui'
 import AppModal from '@/components/AppModal.vue'
 import { api } from '@/api'
 import { t } from '@/i18n'
@@ -49,19 +49,22 @@ async function saveEdit() {
 </script>
 
 <template>
+  <!-- 卡片外观走 AppModal 对话框排版规范（spec #630）：sm 档 + 默认无边框；
+       按钮行右对齐单主键（轻量单字段编辑保留无取消键语义，issue #637）。 -->
   <AppModal
     :show="show"
     :title="t('settings.merchants.editModal.title')"
     preset="card"
-    style="width: 420px"
-    :bordered="false"
+    card-size="sm"
     @update:show="(v: boolean) => emit('update:show', v)"
   >
     <NForm label-placement="left" :show-feedback="false" size="small">
       <NFormItem :label="t('settings.merchants.form.name')">
         <NInput v-model:value="editName" :placeholder="t('settings.merchants.form.namePlaceholder')" />
       </NFormItem>
-      <NButton type="primary" block @click="saveEdit">{{ t('settings.merchants.form.save') }}</NButton>
+      <NSpace justify="end">
+        <NButton type="primary" @click="saveEdit">{{ t('settings.merchants.form.save') }}</NButton>
+      </NSpace>
     </NForm>
   </AppModal>
 </template>
