@@ -58,7 +58,12 @@ include!(concat!(env!("OUT_DIR"), "/commands_registry.rs"));
 
 /// 锁定期间放行的 IPC 命令白名单（issue #570 / #574 / ADR-0075 决策 5）：解锁屏
 /// 启动期所需的最小面（启动状态查询、解锁、凭缓存解锁、平台能力查询、忘记口令重置
-/// #573；get_boot_status 是启动三态探测的统一入口，锁定与就绪态都要可达）；其余命令在解锁前一律拒绝（解锁先于一切业务读写）。
+/// #573；get_boot_status 是启动三态探测的统一入口，锁定与就绪态都要可达）。
+/// #603 起解锁屏常驻「从备份文件恢复」入口，恢复通道最小命令面随白名单放行
+/// （备份元数据校验、恢复执行、恢复成功后自动重启；get_encryption_status 既是
+/// 解锁屏既有面也供恢复前的当前模式探测）——恢复命令对「无已打开库连接」可用
+/// （issue #601 前置修复），锁定期间的占位连接同形；其余命令在解锁前一律拒绝
+/// （解锁先于一切业务读写）。
 const LOCKED_ALLOWED_COMMANDS: &[&str] = &[
     "get_boot_status",
     "get_encryption_status",
@@ -66,6 +71,9 @@ const LOCKED_ALLOWED_COMMANDS: &[&str] = &[
     "unlock_with_remembered_passphrase",
     "get_remember_passphrase_support",
     "reset_after_forgotten_passphrase",
+    "get_backup_meta",
+    "restore_backup",
+    "restart_app",
 ];
 
 /// 启动失败期间放行的 IPC 命令白名单（issue #601 / #602 / ADR-0075 决策 5 修订）：

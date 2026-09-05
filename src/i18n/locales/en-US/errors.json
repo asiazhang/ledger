@@ -197,7 +197,7 @@
   },
   "encryption": {
     "locked": "The app is locked. Unlock it to use the API.",
-    "passphrase-incorrect": "Incorrect master passphrase. Please try again.",
+    "passphrase-incorrect": "Incorrect passphrase or corrupted file. Please try again.",
     "db-corrupt": "The database file is corrupted and failed the integrity check.",
     "db-missing": "The database file is missing or empty.",
     "not-encrypted": "The database is not encrypted. Please restart the app and try again.",

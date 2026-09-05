@@ -3,17 +3,23 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { invoke } from '@tauri-apps/api/core'
 import { setActivePinia, createPinia } from 'pinia'
 
+// 文件选择与重启单点 mock（先例 StartupFailureScreen.test.ts；restartAppShortly
+// 内含延时，测试断言调用而非计时）。
 vi.mock('@tauri-apps/plugin-dialog', () => ({
+  open: vi.fn(),
   confirm: vi.fn(),
 }))
+const restartAppShortly = vi.fn()
+vi.mock('@/utils/restart', () => ({ restartAppShortly: () => restartAppShortly() }))
 
-import { confirm } from '@tauri-apps/plugin-dialog'
+import { confirm, open } from '@tauri-apps/plugin-dialog'
 import UnlockScreen from '@/components/UnlockScreen.vue'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
 import { useAppStore } from '@/stores/app'
 
 const mockInvoke = vi.mocked(invoke)
 const mockConfirm = vi.mocked(confirm)
+const mockOpen = vi.mocked(open)
 
 /** mock-invoke 桩：解锁屏只消费加密命令面（fail-loud：其余命令一律拒绝）。 */
 function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
@@ -26,6 +32,8 @@ function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
 beforeEach(() => {
   mockInvoke.mockReset()
   mockConfirm.mockReset()
+  mockOpen.mockReset()
+  restartAppShortly.mockClear()
   setActivePinia(createPinia())
   // 每个用例从「未探测」起步（模块级单例状态复位），并清空记住偏好的 localStorage。
   const gate = useEncryptionGate()
@@ -102,13 +110,13 @@ describe('UnlockScreen.vue（加密锁定门·解锁屏流程）', () => {
     expect(locked.value).toBe(false)
   })
 
-  it('错误口令：提示重试（码化文案），状态保持锁定可无限重试', async () => {
+  it('错误口令：提示「口令错误或文件损坏」合并口径（issue #603），状态保持锁定可无限重试', async () => {
     stubInvoke({
       get_boot_status: () => Promise.resolve({ phase: 'locked', error_code: null }),
       unlock_encryption: () =>
         Promise.reject({
           kind: 'Invalid',
-          message: '主口令不正确，请重试',
+          message: '口令错误或文件损坏，请重试',
           code: 'encryption.passphrase-incorrect',
         }),
     })
@@ -123,9 +131,9 @@ describe('UnlockScreen.vue（加密锁定门·解锁屏流程）', () => {
     await findButton(wrapper, '解锁')!.trigger('click')
     await flushPromises()
     const html = wrapper.html()
-    expect(html).toContain('主口令不正确，请重试')
-    // 「口令错误」不是文件损坏：不出现损坏文案
-    expect(html).not.toContain('损坏')
+    // 合并口径（issue #603 / ADR-0075 决策 5 修订）：错误口令与损坏同报
+    // NOTADB、运行期不可区分，提示不误报损坏、可无限重试。
+    expect(html).toContain('口令错误或文件损坏，请重试')
     expect(locked.value).toBe(true)
 
     // 无限重试：再次输入并提交，按钮仍可用
@@ -134,7 +142,7 @@ describe('UnlockScreen.vue（加密锁定门·解锁屏流程）', () => {
     expect((button.element as HTMLButtonElement).disabled).toBe(false)
   })
 
-  it('文件损坏与口令错误文案可区分：损坏码透出损坏提示', async () => {
+  it('文件损坏码透出专属损坏提示，与合并口径并存（凭口令打开成功但完整性检查失败）', async () => {
     stubInvoke({
       get_boot_status: () => Promise.resolve({ phase: 'locked', error_code: null }),
       unlock_encryption: () =>
@@ -154,16 +162,16 @@ describe('UnlockScreen.vue（加密锁定门·解锁屏流程）', () => {
     await findButton(wrapper, '解锁')!.trigger('click')
     await flushPromises()
     expect(wrapper.html()).toContain('数据库文件损坏')
-    expect(wrapper.html()).not.toContain('主口令不正确')
+    // db-corrupt 专属码不走口令失败的合并口径
+    expect(wrapper.html()).not.toContain('口令错误或文件损坏')
   })
 
-  it('解锁时补做了搬迁：成功提示后调用 restart_app（Restore 同型重启语义）', async () => {
+  it('解锁时补做了搬迁：成功提示后触发应用重启（Restore 同型重启语义）', async () => {
     vi.useFakeTimers()
     try {
       stubInvoke({
         get_boot_status: () => Promise.resolve({ phase: 'locked', error_code: null }),
         unlock_encryption: () => Promise.resolve({ relocated: true }),
-        restart_app: () => Promise.resolve(),
       })
       const { probe } = useEncryptionGate()
       const probePromise = probe()
@@ -176,7 +184,7 @@ describe('UnlockScreen.vue（加密锁定门·解锁屏流程）', () => {
       await flushPromises()
       vi.advanceTimersByTime(900)
       await flushPromises()
-      expect(mockInvoke).toHaveBeenCalledWith('restart_app')
+      expect(restartAppShortly).toHaveBeenCalledTimes(1)
     } finally {
       vi.useRealTimers()
     }
@@ -381,5 +389,161 @@ describe('UnlockScreen.vue 本机记住主口令（issue #574）', () => {
     expect(mockInvoke).toHaveBeenCalledWith('clear_remember_passphrase')
     expect(useAppStore().rememberPassphrase).toBe(false)
     expect(locked.value).toBe(false)
+  })
+})
+
+describe('UnlockScreen.vue 从备份文件恢复入口（issue #603）', () => {
+  /** 入口按钮（data-testid 定位，先例 StartupFailureScreen.test）。 */
+  function entryButton(wrapper: ReturnType<typeof mount>) {
+    return wrapper.find('[data-testid="unlock-restore-open"]')
+  }
+
+  /** 弹窗内元素（teleport 已 stub：内容内联在 wrapper 内，先例 StartupFailureScreen.test）。 */
+  function modalEl(wrapper: ReturnType<typeof mount>, testid: string) {
+    return wrapper.find(`[data-testid="${testid}"]`)
+  }
+
+  /** 弹窗打开稳定等待：naive-ui NModal 经过渡挂载内容，仅 flushPromises 时序不稳。 */
+  async function waitModal() {
+    await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    await flushPromises()
+  }
+
+  /** 弹窗内口令输入：经 data-testid 容器定位内层 input（解锁屏自身也有 NInput，
+   *  findComponent 会误中先渲染的解锁框，不能用）。 */
+  async function typePassphrase(wrapper: ReturnType<typeof mount>, value: string) {
+    const input = modalEl(wrapper, 'restore-passphrase').find('input')
+    await input.setValue(value)
+    await flushPromises()
+  }
+
+  /** 挂载解锁屏并桩好恢复通道命令面：文件选择器返回指定备份。 */
+  async function mountWithRestore(
+    backupPath: string,
+    overrides: Record<string, (args?: any) => unknown> = {},
+  ) {
+    mockOpen.mockResolvedValue(backupPath)
+    stubInvoke({
+      get_boot_status: () => Promise.resolve({ phase: 'locked', error_code: null }),
+      get_backup_meta: () => Promise.resolve({ kind: 'manual', encrypted: false }),
+      get_encryption_status: () => Promise.resolve({ locked: true, file_encrypted: true }),
+      restore_backup: () =>
+        Promise.resolve({ schema_version: 42, restored_at: '2026-09-06T00:00:00Z' }),
+      ...overrides,
+    })
+    const gate = useEncryptionGate()
+    const probePromise = gate.probe()
+    const wrapper = mount(UnlockScreen, {
+      // 恢复确认弹窗（AppModal/NModal）默认 teleport 到 body：stub 内联渲染才能断言
+      global: { stubs: { teleport: true } },
+    })
+    await probePromise
+    await flushPromises()
+    return { wrapper, gate }
+  }
+
+  it('恢复入口常驻：与「忘记口令」并列可见', async () => {
+    const { wrapper } = await mountWithRestore('/tmp/plain.db.zip')
+    expect(findButton(wrapper, '从备份文件恢复')).toBeTruthy()
+    expect(findButton(wrapper, '忘记口令')).toBeTruthy()
+  })
+
+  it('明文备份跨模式（密文库 → 明文）：警告照常出现，确认后恢复并自动重启进入恢复后的数据', async () => {
+    const { wrapper } = await mountWithRestore('/tmp/plain.db.zip')
+    await entryButton(wrapper)!.trigger('click')
+    await waitModal()
+
+    // 校验链在确认前发生（元数据 + 当前模式探测）
+    expect(mockInvoke.mock.calls.some(([c]) => c === 'get_backup_meta')).toBe(true)
+    expect(mockInvoke.mock.calls.some(([c]) => c === 'get_encryption_status')).toBe(true)
+    // 密文库恢复明文备份：跨模式警告照常出现（复用 #572 警告语义）
+    expect(wrapper.text()).toContain('加密模式不一致')
+    // 明文备份无需口令；未确认前不发恢复命令
+    expect(modalEl(wrapper, 'restore-passphrase').exists()).toBe(false)
+    expect(mockInvoke.mock.calls.some(([c]) => c === 'restore_backup')).toBe(false)
+
+    await modalEl(wrapper, 'restore-confirm')!.trigger('click')
+    await flushPromises()
+    expect(mockInvoke).toHaveBeenCalledWith('restore_backup', {
+      backupPath: '/tmp/plain.db.zip',
+      passphrase: null,
+    })
+    // 恢复成功即自动重启，由启动探测接管实际模式（重启后直达主界面）
+    expect(restartAppShortly).toHaveBeenCalledTimes(1)
+  })
+
+  it('密文备份上下文口令自动试开：手输过的口令随确认上送，无需重复输入', async () => {
+    const { wrapper } = await mountWithRestore('/tmp/enc.db.zip', {
+      get_backup_meta: () => Promise.resolve({ kind: 'manual', encrypted: true }),
+    })
+    // 先在解锁框手输口令（不提交解锁），再进入恢复入口
+    await wrapper.find('input').setValue('typed-pw')
+    await entryButton(wrapper)!.trigger('click')
+    await waitModal()
+
+    // 有上下文口令：不显出口令框，确认即可
+    expect(modalEl(wrapper, 'restore-passphrase').exists()).toBe(false)
+    await modalEl(wrapper, 'restore-confirm')!.trigger('click')
+    await flushPromises()
+    expect(mockInvoke).toHaveBeenCalledWith('restore_backup', {
+      backupPath: '/tmp/enc.db.zip',
+      passphrase: 'typed-pw',
+    })
+    expect(restartAppShortly).toHaveBeenCalledTimes(1)
+  })
+
+  it('上下文口令试开失败：口令框显出可就地重输（合并口径文案），重输成功后自动重启', async () => {
+    let failFirst = true
+    const { wrapper } = await mountWithRestore('/tmp/enc.db.zip', {
+      get_backup_meta: () => Promise.resolve({ kind: 'manual', encrypted: true }),
+      restore_backup: () =>
+        failFirst
+          ? Promise.reject({
+              kind: 'Coded',
+              code: 'encryption.passphrase-incorrect',
+              message: '口令错误或文件损坏，请重试',
+            })
+          : Promise.resolve({ schema_version: 42, restored_at: '2026-09-06T00:00:00Z' }),
+    })
+    await wrapper.find('input').setValue('wrong-pw')
+    await entryButton(wrapper)!.trigger('click')
+    await waitModal()
+
+    // 第一次：上下文口令自动试开失败 → 错误留在弹窗内（不关弹窗），口令框显出
+    await modalEl(wrapper, 'restore-confirm')!.trigger('click')
+    await flushPromises()
+    expect(mockInvoke).toHaveBeenLastCalledWith('restore_backup', {
+      backupPath: '/tmp/enc.db.zip',
+      passphrase: 'wrong-pw',
+    })
+    expect(wrapper.text()).toContain('口令错误或文件损坏，请重试')
+    expect(modalEl(wrapper, 'restore-confirm').exists()).toBe(true)
+    expect(modalEl(wrapper, 'restore-passphrase').exists()).toBe(true)
+    expect(restartAppShortly).not.toHaveBeenCalled()
+
+    // 第二次：重输正确口令 → 恢复成功，自动重启
+    failFirst = false
+    await typePassphrase(wrapper, 'right-pw')
+    await modalEl(wrapper, 'restore-confirm').trigger('click')
+    await flushPromises()
+    expect(mockInvoke).toHaveBeenLastCalledWith('restore_backup', {
+      backupPath: '/tmp/enc.db.zip',
+      passphrase: 'right-pw',
+    })
+    expect(restartAppShortly).toHaveBeenCalledTimes(1)
+  })
+
+  it('未手输口令时进入恢复入口：密文备份直接弹口令框（无上下文口令可试开）', async () => {
+    const { wrapper } = await mountWithRestore('/tmp/enc.db.zip', {
+      get_backup_meta: () => Promise.resolve({ kind: 'manual', encrypted: true }),
+    })
+    await entryButton(wrapper)!.trigger('click')
+    await waitModal()
+
+    // 无上下文口令：密文备份直接显出口令框，口令未输时确认禁用（防呆）
+    expect(modalEl(wrapper, 'restore-passphrase').exists()).toBe(true)
+    expect((modalEl(wrapper, 'restore-confirm')!.element as HTMLButtonElement).disabled).toBe(true)
+    expect(mockInvoke.mock.calls.some(([c]) => c === 'restore_backup')).toBe(false)
   })
 })

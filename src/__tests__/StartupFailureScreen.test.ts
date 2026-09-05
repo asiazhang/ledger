@@ -269,7 +269,7 @@ describe('StartupFailureScreen.vue（备份恢复通道·issue #602）', () => {
           ? Promise.reject({
               kind: 'Coded',
               code: 'encryption.passphrase-incorrect',
-              message: '主口令不正确，请重试',
+              message: '口令错误或文件损坏，请重试',
             })
           : Promise.resolve({ schema_version: 42, restored_at: '2026-09-06T00:00:00Z' }),
     })
@@ -279,7 +279,7 @@ describe('StartupFailureScreen.vue（备份恢复通道·issue #602）', () => {
     await typePassphrase(wrapper, 'wrong')
     await modalEl(wrapper, 'restore-confirm').trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('主口令不正确，请重试')
+    expect(wrapper.text()).toContain('口令错误或文件损坏，请重试')
     expect(modalEl(wrapper, 'restore-confirm').exists()).toBe(true)
     expect(restartAppShortly).not.toHaveBeenCalled()
 

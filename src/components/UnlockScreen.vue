@@ -4,9 +4,9 @@
  *
  * 密文库启动后、解锁成功前，本组件**整体替代**主界面（App.vue 以
  * `v-if` 分支渲染，主界面与全部业务 IPC 消费方都不挂载——解锁先于一切
- * 业务读写）。手输主口令、可无限重试；「口令错误」与「文件损坏」的
- * 用户可见文案由后端码化错误区分（`encryption.passphrase-incorrect` /
- * `encryption.db-corrupt`），经 errorMessage 按码本地化。
+ * 业务读写）。手输主口令、可无限重试；解锁失败提示采「口令错误或文件损坏」
+ * 合并口径（issue #603 / ADR-0075 决策 5 修订：SQLCipher 下错误口令与文件
+ * 损坏同为 NOTADB、运行期不可区分，不误报损坏），按码经 errorMessage 本地化。
  *
  * 本机记住主口令（issue #574 / ADR-0075 决策 3/5）：开启「记住」后，
  * 启动即在**有缓存时**凭系统钥匙串（macOS 以 Touch ID 生物认证门保护）
@@ -21,6 +21,16 @@
  * 卡片同型）→ 后端重置为全新明文空库，旧库保留密文副本；重置成功即
  * 翻转锁定门，主界面随全新空库挂载，无需重启。
  *
+ * 常驻「从备份文件恢复」入口（issue #603 / ADR-0075 决策 5 修订）：与
+ * 「忘记口令」并列可见的恢复通道，复用共享恢复流 useRestoreFromFile（与
+ * 设置页备份卡/失败恢复屏零拷贝）——文件选择器 → 元数据校验 → 当前模式
+ * 探测 → 恢复确认弹窗（跨模式警告 + 密文备份主口令，语义面在
+ * RestoreConfirmModal）→ 既有 Restore 全语义 → 成功后自动重启，由启动
+ * 探测接管实际模式（恢复出明文库则重启后直达主界面，恢复出密文库则回到
+ * 本屏）。上下文口令自动试开：手输过的主口令随意图携带，密文备份先自动
+ * 试开、失败才在弹窗内显出口令框重输（可无限重试）。锁定门禁白名单已放行
+ * 恢复通道最小命令面（get_backup_meta / restore_backup / restart_app）。
+ *
  * 无需注册 Overlay Suppression：本屏挂载期间侧栏/视图/快捷键宿主全部
  * 不存在，无被抑制对象；ESC 守卫由 useWindowGuard 的全局 preventDefault
  * 覆盖，不存在「ESC 关掉解锁屏」的通路。
@@ -28,8 +38,10 @@
 import { NButton, NCard, NCheckbox, NInput, NSpace, NSpin, NText, useMessage } from 'naive-ui'
 import { confirm } from '@tauri-apps/plugin-dialog'
 import { onMounted, ref } from 'vue'
+import RestoreConfirmModal from '@/components/RestoreConfirmModal.vue'
 import { t } from '@/i18n'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
+import { useRestoreFromFile } from '@/composables/useRestoreFromFile'
 import { useAppStore } from '@/stores/app'
 import { errorMessage } from '@/utils/errors'
 import { restartAppShortly } from '@/utils/restart'
@@ -49,6 +61,21 @@ const passphrase = ref('')
 const submitting = ref(false)
 const resetting = ref(false)
 const errorText = ref('')
+
+// 从备份文件恢复（issue #603）：共享恢复流第三处复用（设置页备份卡/失败恢复
+// 屏同源零拷贝）；上下文口令取当前手输框的值——选定备份那一刻非空即随意图
+// 携带，密文备份确认时先自动试开。
+const {
+  restoreIntent,
+  restoreSeq,
+  closeRestore,
+  confirmRestore,
+  pickRestore,
+} = useRestoreFromFile({
+  pickTitleKey: 'unlock.restorePickTitle',
+  defaultPath: () => store.backupDir || undefined,
+  contextPassphrase: () => passphrase.value,
+})
 
 // 本机记住主口令（issue #574）：`autoUnlocking` 初始即反映偏好——「记住」开启时
 // 启动即显示自动解锁加载态；关闭时直接进手输表单。`rememberChecked` 是手动解锁
@@ -170,13 +197,33 @@ async function forgotPassphrase() {
           <NText v-if="rememberSupport?.supported" depth="3" class="unlock-remember-hint">
             {{ t('unlock.rememberHint') }}
           </NText>
-          <!-- 忘记口令入口（issue #573）：常驻可达的逃生门，无后门后果说明后二次确认 -->
-          <NButton quaternary size="small" :disabled="resetting" @click="forgotPassphrase">
-            {{ t('unlock.forgot') }}
-          </NButton>
+          <!-- 逃生门双入口（issue #573 / #603）：忘记口令重置与从备份文件恢复并列常驻 -->
+          <NSpace :size="4" justify="center">
+            <NButton
+              quaternary
+              size="small"
+              data-testid="unlock-restore-open"
+              :disabled="resetting"
+              @click="pickRestore"
+            >
+              {{ t('unlock.restore') }}
+            </NButton>
+            <NButton quaternary size="small" :disabled="resetting" @click="forgotPassphrase">
+              {{ t('unlock.forgot') }}
+            </NButton>
+          </NSpace>
         </template>
       </NSpace>
     </NCard>
+
+    <!-- 备份恢复确认弹窗（issue #603）：跨模式警告 + 密文备份口令，语义面与
+         设置页/失败恢复屏同一 RestoreConfirmModal（上下文口令自动试开） -->
+    <RestoreConfirmModal
+      :intent="restoreIntent"
+      :seq="restoreSeq"
+      :on-confirm="confirmRestore"
+      @close="closeRestore"
+    />
   </div>
 </template>
 

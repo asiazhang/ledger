@@ -275,7 +275,7 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
       change_encryption_passphrase: () =>
         Promise.reject({
           kind: 'Coded',
-          message: '主口令不正确，请重试',
+          message: '口令错误或文件损坏，请重试',
           code: 'encryption.passphrase-incorrect',
         }),
     })
@@ -353,7 +353,7 @@ describe('EncryptionSettings.vue（设置页加密卡片）', () => {
       disable_encryption: () =>
         Promise.reject({
           kind: 'Coded',
-          message: '主口令不正确，请重试',
+          message: '口令错误或文件损坏，请重试',
           code: 'encryption.passphrase-incorrect',
         }),
     })

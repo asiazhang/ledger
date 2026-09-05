@@ -521,10 +521,9 @@ fn open_backup_db_conn(tmp_db: &Path, passphrase: Option<&str>) -> Result<Connec
                 conn.query_row::<i64, _, _>("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))
             {
                 if db::encryption::is_not_a_database(&e) {
-                    return Err(AppError::coded(
-                        "encryption.passphrase-incorrect",
-                        "主口令不正确，请重试",
-                    ));
+                    // 合并口径单一构造点（ADR-0075 决策 5 修订 / issue #603）：
+                    // 备份口令错误与备份损坏同报 NOTADB，不误报损坏、可就地重输。
+                    return Err(db::encryption::passphrase_incorrect_error());
                 }
                 return Err(e.into());
             }

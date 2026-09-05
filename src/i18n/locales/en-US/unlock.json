@@ -5,6 +5,8 @@
   "button": "Unlock",
   "relocated": "Data location migration finished; the app will restart shortly",
   "forgot": "Forgot passphrase?",
+  "restore": "Restore from a backup file…",
+  "restorePickTitle": "Choose a backup file",
   "resetTitle": "Reset to a fresh empty ledger?",
   "resetBody": "There is no backdoor and no way to recover the master passphrase: once it is forgotten, the data in this ledger cannot be recovered by the app.\n\nContinuing resets the ledger to a fresh empty plaintext file and the app starts over immediately; encryption can be enabled again afterwards.\n\nThe current ledger is kept as an encrypted copy (unreadable without the passphrase) — the data can still be recovered later if you remember it.",
   "resetConfirm": "Reset",
