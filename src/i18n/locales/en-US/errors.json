@@ -191,6 +191,10 @@
     "status-invalid": "Unknown physical asset status: {0} (valid values: holding/disposed)",
     "not-found": "Physical asset not found: {0}"
   },
+  "boot": {
+    "db-unreadable": "Startup failed; the database is unavailable. Reset or restore from the recovery screen first.",
+    "not-failed": "The app is not in a startup-failure state; nothing to reset."
+  },
   "encryption": {
     "locked": "The app is locked. Unlock it to use the API.",
     "passphrase-incorrect": "Incorrect master passphrase. Please try again.",

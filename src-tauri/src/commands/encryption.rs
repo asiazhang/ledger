@@ -181,10 +181,11 @@ pub async fn unlock_with_remembered_passphrase(app: AppHandle) -> Result<UnlockO
     }
 }
 
-/// 业务可用起点编排（解锁与忘记口令重置共用，ADR-0075 决策 5）：新连接
-/// 原位换入 DbState（Arc 形状不变，业务路径下次锁连接即取到真实库）→
-/// 翻转锁定门 → 拉起自动备份调度（轮询同轮承载定时追补）。
-fn resume_business_surface(app: &AppHandle, conn: Connection) -> Result<()> {
+/// 业务可用起点编排（解锁、忘记口令重置与启动失败重置共用，ADR-0075
+/// 决策 5 / issue #601）：新连接原位换入 DbState（Arc 形状不变，业务路径
+/// 下次锁连接即取到真实库）→ 翻转锁定门 → 拉起自动备份调度（轮询同轮
+/// 承载定时追补）。锁定门翻转对未锁定路径（启动失败重置）是无操作。
+pub(crate) fn resume_business_surface(app: &AppHandle, conn: Connection) -> Result<()> {
     {
         let state = app.state::<DbState>();
         let mut guard = state.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;

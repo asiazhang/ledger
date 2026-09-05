@@ -46,6 +46,7 @@ import { viewLabel } from '@/i18n/view-label'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
 import UnlockScreen from '@/components/UnlockScreen.vue'
+import StartupFailureScreen from '@/components/StartupFailureScreen.vue'
 import DevicePreferenceSyncHost from '@/components/DevicePreferenceSyncHost.vue'
 import MessageSinkBridge from '@/components/MessageSinkBridge.vue'
 import GlobalBusyBar from '@/components/GlobalBusyBar.vue'
@@ -110,11 +111,12 @@ watch(
 const naiveLocale = computed(() => (currentLocale.value === 'en-US' ? enUS : zhCN))
 const naiveDateLocale = computed(() => (currentLocale.value === 'en-US' ? dateEnUS : dateZhCN))
 
-// 加密锁定门（issue #570 / ADR-0075 决策 5）：启动先探测锁定状态。锁定期间
-// 解锁屏整体替代主界面——主界面与全部业务 IPC 消费方（含设备偏好推送，已
-// 迁入 DevicePreferenceSyncHost 随主界面挂载）都不渲染，解锁先于一切业务读写；
-// 探测中（null）同样不渲染主界面，避免带半就绪状态闪屏。明文库/已解锁正常挂载。
-const { locked, probe } = useEncryptionGate()
+// 启动门（issue #570 / #601 / ADR-0075 决策 5 修订）：启动先探测启动状态。
+// 锁定期间解锁屏、启动失败期间失败恢复屏各自整体替代主界面——主界面与全部
+// 业务 IPC 消费方（含设备偏好推送，已迁入 DevicePreferenceSyncHost 随主界面
+// 挂载）都不渲染，门禁放行前业务读写零发出；探测中（null）同样不渲染主界面，
+// 避免带半就绪状态闪屏。明文库/已解锁正常挂载。
+const { locked, bootFailed, probe } = useEncryptionGate()
 void probe()
 
 // 视图名称走文案资源（issue #342）：侧栏菜单与内容区标题同源，随界面语言即时切换；
@@ -320,10 +322,12 @@ const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(rou
     <GlobalBusyBar />
     <NMessageProvider>
       <NDialogProvider>
+        <!-- 启动失败分支（issue #601）：失败恢复屏整体替代主界面 -->
+        <StartupFailureScreen v-if="bootFailed" />
         <!-- 加密锁定分支（issue #570）：解锁屏整体替代主界面 -->
         <UnlockScreen v-if="locked" />
         <!-- Loadable toast sink 注册桥（ADR-0040）：必须在消息提供器子树内 -->
-        <MessageSinkBridge v-if="locked !== true" />
+        <MessageSinkBridge v-if="!bootFailed && locked !== true" />
         <!-- 探测中（null）不渲染主界面；解锁/明文后随设备偏好推送宿主一起挂载 -->
         <template v-if="locked === false">
           <DevicePreferenceSyncHost />

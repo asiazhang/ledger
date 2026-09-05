@@ -30,6 +30,17 @@ fn default_data_dir(app: &AppHandle) -> Result<PathBuf> {
         .map_err(|e| AppError::Io(format!("获取默认数据目录失败：{e}")))
 }
 
+/// 生效库目录（恢复通道共用，issue #601）：优先启动引导登记的生效目录，
+/// 未登记时回退默认数据目录——恢复命令目标路径与启动失败重置共用的
+/// 壳层解析点（领域解析见 [`data_location::effective_db_dir`]）。
+pub(crate) fn effective_db_dir_of(app: &AppHandle) -> Result<PathBuf> {
+    let default_dir = default_data_dir(app)?;
+    let boot = app
+        .try_state::<data_location::Boot>()
+        .map(|state| state.inner().clone());
+    Ok(data_location::effective_db_dir(boot.as_ref(), &default_dir))
+}
+
 /// 获取 DataLocation 信息：当前生效目录、是否已更改待重启生效、回退警示。
 #[tauri::command]
 pub async fn get_data_location_info(app: AppHandle) -> Result<data_location::DataLocationInfo> {

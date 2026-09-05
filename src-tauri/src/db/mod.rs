@@ -6,6 +6,7 @@ use rusqlite_migration::{M, Migrations};
 
 use crate::error::{AppError, Result};
 
+pub mod boot;
 pub mod data_location;
 pub mod encryption;
 pub mod passphrase_cache;
@@ -104,11 +105,24 @@ pub fn open_db_in(db_dir: &Path) -> Result<DbState> {
 /// 启动失败重置兜底：把当前库改名 `.bak` 保留后重新打开（新建空库）。
 /// 只作用于引导解析出的生效目录，绝不删除任何文件。
 pub fn reset_db_in(db_dir: &Path) -> Result<DbState> {
+    Ok(DbState {
+        conn: Arc::new(Mutex::new(reset_db_file(db_dir)?)),
+    })
+}
+
+/// 重置核心（连接形态，issue #601）：把当前库改名 `.bak` 保留后原位新建
+/// 明文空库（建连 + 迁移 + 完整性检查，重置产物验收基准与
+/// `encryption::open_new_plaintext_db` 同口径）。返回连接供启动失败
+/// 恢复通道原位换入存活 [`DbState`]（占位连接 → 真实新库，无需重启）。
+pub fn reset_db_file(db_dir: &Path) -> Result<Connection> {
     let db_path = db_dir.join(data_location::DB_FILE_NAME);
     let bak_path = db_path.with_extension("db.bak");
     std::fs::rename(&db_path, &bak_path).ok();
     tracing::info!(bak = %bak_path.display(), "已备份原数据库并重置");
-    open_db_in(db_dir)
+    let mut conn = open_connection(&db_path)?;
+    init_db(&mut conn)?;
+    check_integrity(&conn)?;
+    Ok(conn)
 }
 
 /// 校验数据库文件完整性（`PRAGMA integrity_check` 应返回 `ok`）。
