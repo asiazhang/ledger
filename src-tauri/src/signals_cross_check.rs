@@ -687,6 +687,24 @@ fn ipc_write_entry_span_matches_command_name() {
     }
 }
 
+/// 启动期两扇门禁白名单（锁定 `LOCKED_ALLOWED_COMMANDS` / 启动失败
+/// `BOOT_FAILURE_ALLOWED_COMMANDS`，lib.rs）中的每个命令名都必须真实注册
+/// （build.rs 生成的 ADR-0047 真源）：白名单字符串漂移（命令改名后白名单
+/// 残留旧名）在此即红，而非运行期静默放行失败。
+#[test]
+fn startup_gate_allowlists_only_contain_registered_commands() {
+    let registry: HashSet<&str> = IPC_COMMAND_MANIFEST.iter().copied().collect();
+    for name in crate::LOCKED_ALLOWED_COMMANDS
+        .iter()
+        .chain(crate::BOOT_FAILURE_ALLOWED_COMMANDS.iter())
+    {
+        assert!(
+            registry.contains(name),
+            "门禁白名单命令 {name} 不在命令注册清单上——白名单漂移（命令已改名或删除）"
+        );
+    }
+}
+
 /// IPC 派生命令必须都在注册清单上（build.rs 生成的 ADR-0047 真源）：扫描器具
 /// 自身的命名提取漂移（误把非命令 fn 当命令）在此即红。
 #[test]

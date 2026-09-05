@@ -30,6 +30,7 @@ import type {
   EncryptionStatus,
   UnlockOutcome,
   RememberPassphraseSupport,
+  BootStatus,
   ExchangeRate,
   ExchangeRateInput,
   ExecuteOccurrenceInput,
@@ -363,6 +364,11 @@ export const api = {
     }),
   restoreDefaultDataLocation: (adoptExisting: boolean) =>
     invoke<DataLocationChangeOutcome>('restore_default_data_location', { adoptExisting }),
+
+  // 启动状态与启动失败恢复（issue #601 / ADR-0075 决策 5 修订）：前端启动探测
+  // 唯一入口（主界面/解锁屏/失败恢复屏三态选择）+ 失败恢复屏的重置通道。
+  getBootStatus: () => invoke<BootStatus>('get_boot_status'),
+  resetAfterStartupFailure: () => invoke<void>('reset_after_startup_failure'),
 
   // 加密模式（issue #570/#571 / ADR-0075）：状态查询 / 解锁 / 转换三形态 / 忘记口令重置（#573）
   getEncryptionStatus: () => invoke<EncryptionStatus>('get_encryption_status'),

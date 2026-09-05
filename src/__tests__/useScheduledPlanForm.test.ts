@@ -427,6 +427,46 @@ describe('useScheduledPlanForm submitCreate 提交时序编排（spec #520）', 
     }
   })
 
+  it('分期形态：商户解析进编排（按名复用），创建参数含分期 specific 与解析后的商户 id', async () => {
+    const onSubmitted = vi.fn()
+    await useReferenceStore().refresh()
+    const form = useScheduledPlanForm({ onSubmitted })
+    form.note.value = '手机分期'
+    form.accountId.value = 'acc-1'
+    // 输入在用商户名（未选 id）：接缝按名复用（解析矩阵见「商户解析」describe）
+    form.merchantRef.value = '视频平台'
+    await form.submitCreate({
+      kind: 'installment',
+      // 每期 floor 口径由页签持有（installmentSchedule）：页签传入什么金额就发什么
+      amountCents: 8333,
+      specific: { total_amount_cents: 100000, total_occurrences: 12 },
+    })
+    const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_scheduled_transaction')
+    expect(call).toBeDefined()
+    // 全 payload 全量钉住：公共字段单源组装（币种/周期三字段/开始日取草稿默认终态）
+    // 合并分期 specific 与解析后的商户 id
+    expect(call![1]).toEqual({
+      input: {
+        kind: 'installment',
+        account_id: 'acc-1',
+        category_id: null,
+        merchant_id: 'mch-1',
+        amount_cents: 8333,
+        currency_code: 'CNY',
+        recurrence_type: 'monthly',
+        recurrence_interval: 1,
+        recurrence_day: null,
+        start_date: todayStr(),
+        note: '手机分期',
+        total_amount_cents: 100000,
+        total_occurrences: 12,
+      },
+    })
+    // 成功提示按形态由接缝单源持有（文案键逐字维持现状）
+    expect(lastMessage('success')).toBe('已创建分期计划')
+    expect(onSubmitted).toHaveBeenCalledTimes(1)
+  })
+
   it('成功路径：创建命令 → 成功提示 → 公共草稿重置终态 → 提交成功后回调（回调见已重置草稿）', async () => {
     const seen: string[] = []
     await useReferenceStore().refresh()

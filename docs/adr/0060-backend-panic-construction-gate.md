@@ -26,7 +26,7 @@
 - **B 类（7 处，启动期「失败即无法运行」，长期保留）**：应用启动装配链（`lib.rs` Tauri Builder 构建失败）、HTTP API 壳的 Tokio 运行时创建 / 端口绑定 / 服务器异常退出（`api_server/router.rs`）、日志系统首次初始化（`logger.rs`）。这些点失败即进程不可用，fail loud 是正确行为。
 - **C 类（1 个模块，文件级 allow + 「仅测试用」声明）**：集成测试专用夹具模块 `src/test_utils.rs`——被集成测试以非 test 构建链接而无法 `cfg(test)` 门控，文件级放行六件套并声明生产路径不得消费。
 - **A 类（原 4 处，已经 #433 / #434 结构性消除并摘除豁免，清点为零）**：定时计划域 2 处（`scheduled_transactions/engine.rs`：Occurrence 扩展 Option unwrap、穷尽 match 防御臂 unreachable）、投资域同步 2 处（`sync/fund_nav.rs` 现价选取 expect、`sync/incremental.rs` 北京时间计算 expect），两域防御面改写为 let-else 防线 / 码化错误后逐点豁免随之摘除；新增强制走码化错误路径，不再产生 A 类存量。
-- **宏生成代码（18 个文件，升 tauri 后移除）**：tauri 宏为 async 命令生成 `let _check: _ = unreachable!()`（tauri-macros wrapper.rs），宏不透传逐点 allow，只能在命令壳文件级放行——存量 `commands/investment.rs`、`commands/sync.rs`；#501 / #502 / #503 三批 async 化（形状乙，决策见 ADR-0069）新增 `commands/accounts.rs`、`commands/categories.rs`、`commands/currencies.rs`、`commands/merchants.rs`、`commands/search.rs`、`commands/dashboard.rs`、`commands/transactions.rs`、`commands/scheduled.rs`、`commands/reports.rs`、`commands/budget.rs`、`commands/item.rs`、`commands/policy.rs`、`commands/physical_asset.rs`、`commands/financial_freedom.rs`、`commands/backup.rs`、`commands/data_location.rs`；属上游缺陷，tauri 修复后移除。#504 收口复核：豁免注释各文件形态一致（均引本 ADR 与上游缺陷归属），无旧形态残留。
+- **宏生成代码（20 个文件，升 tauri 后移除）**：tauri 宏为 async 命令生成 `let _check: _ = unreachable!()`（tauri-macros wrapper.rs），宏不透传逐点 allow，只能在命令壳文件级放行——存量 `commands/investment.rs`、`commands/sync.rs`；#501 / #502 / #503 三批 async 化（形状乙，决策见 ADR-0069）新增 `commands/accounts.rs`、`commands/categories.rs`、`commands/currencies.rs`、`commands/merchants.rs`、`commands/search.rs`、`commands/dashboard.rs`、`commands/transactions.rs`、`commands/scheduled.rs`、`commands/reports.rs`、`commands/budget.rs`、`commands/item.rs`、`commands/policy.rs`、`commands/physical_asset.rs`、`commands/financial_freedom.rs`、`commands/backup.rs`、`commands/data_location.rs`；`commands/encryption.rs`（#570）与 `commands/boot.rs`（#601）后续 async 化同批豁免；属上游缺陷，tauri 修复后移除。#504 收口复核：豁免注释各文件形态一致（均引本 ADR 与上游缺陷归属），无旧形态残留。
 
 ### 4. 后续收紧方向
 
@@ -36,5 +36,5 @@
 
 - **新增易 panic 代码编译期即红**：clippy 环节零脚本改动自动拦截，评审不再依赖记忆。
 - **测试写法零负担**：测试面整体豁免，断言辅助照常用 unwrap；生产构建零放宽由 `cfg(test)` 语义保证。
-- **豁免可清点**：全库 `rg` 豁免点数量与位置即豁免清单（B 7 + C 1 + 宏 18 文件 + build.rs 1；A 类 4 处已消除，清点为零），漂移在 review 可见。
+- **豁免可清点**：全库 `rg` 豁免点数量与位置即豁免清单（B 7 + C 1 + 宏 20 文件 + build.rs 1；A 类 4 处已消除，清点为零），漂移在 review 可见。
 - **不改变运行时行为**：本门禁只加 lint 与豁免注释，零语义变化；A 类四处行为改写由后续 ticket 承载并有既有测试兜底。

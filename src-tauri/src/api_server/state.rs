@@ -2,6 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::db::boot::BootFailureGate;
 use crate::db::encryption::EncryptionGate;
 use crate::error::AppError;
 use crate::events::SignalEmitter;
@@ -38,12 +39,17 @@ pub type EmitterSlot = Option<Arc<dyn SignalEmitter>>;
 /// 同一进程级门实例（`lib.rs` 创建的 [`crate::db::encryption::EncryptionGate`]），
 /// 锁定期间门禁中间件对数据端点统一返回码化错误——AI 导入 HTTP 面在解锁前
 /// 不可用；明文库路径门不锁，行为零变化。
+///
+/// `boot_gate` 为启动失败门（issue #601 / ADR-0075 决策 5 修订）：与 IPC 壳
+/// 共享同一实例（[`crate::db::boot::BootFailureGate`]），失败期间数据端点
+/// 同口径返回码化错误——占位连接不是业务库，不得触达。
 #[derive(Clone)]
 pub struct ApiState {
     pub conn: Arc<Mutex<Connection>>,
     pub emitter: EmitterSlot,
     pub fund_fetch: Option<FundDetailFetcher>,
     pub lock_gate: EncryptionGate,
+    pub boot_gate: BootFailureGate,
 }
 
 impl FromRef<ApiState> for Arc<Mutex<Connection>> {

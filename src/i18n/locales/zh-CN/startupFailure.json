@@ -1,0 +1,14 @@
+{
+  "title": "无法打开账本数据库",
+  "hint": "启动时读取账本数据失败，文件可能已损坏。应用不会改动或删除你的数据文件。",
+  "resetChannelTitle": "重置为空库",
+  "resetChannelHint": "把打不开的账本重置为全新的空账本，重置后立即进入应用。",
+  "resetButton": "重置为空库…",
+  "resetTitle": "重置为空库？",
+  "resetWarnTitle": "此操作不可逆",
+  "resetConsequence": "重置后，当前账本数据将无法在本应用中访问。",
+  "resetBody": "将建立一个全新的空账本并立即进入。当前打不开的库文件会按重置命名语义保留为副本（ledger.db.bak，位于账本数据目录），可留作排查或外部修复；同名义副本若已存在将被覆盖。",
+  "resetConfirm": "确认重置",
+  "resetCancel": "取消",
+  "resetOk": "已重置为全新空账本"
+}

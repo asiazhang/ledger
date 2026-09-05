@@ -3,6 +3,7 @@
 
 export * from './accounts'
 export * from './backup'
+export * from './boot'
 export * from './budget'
 export * from './categories'
 export * from './common'

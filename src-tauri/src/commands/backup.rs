@@ -28,6 +28,8 @@ use crate::backup::{
     backup_db_to, expected_schema_version, list_managed_backups, probe_backup_meta,
     prune_managed_backups, restore_db_from,
 };
+use crate::commands::data_location::effective_db_dir_of;
+use crate::db::data_location::DB_FILE_NAME;
 use crate::db::{DbState, run_db};
 use crate::error::{AppError, Result};
 use crate::signals::{WriteEvidence, WriteOp, emit_for};
@@ -51,30 +53,41 @@ pub async fn create_backup(app: AppHandle, target_path: String) -> Result<Backup
 
 /// 从 `backup_path`（zip 或裸 db）恢复数据库。
 ///
-/// 恢复期间持有全局连接锁，阻塞 IPC 与本地 HTTP API 的并发写，避免恢复过程中被写入污染。
+/// 恢复期间持有主连接锁（如有），阻塞 IPC 与本地 HTTP API 的并发写，避免恢复过程中被写入污染。
 /// 恢复成功后由前端调用 `restart_app` 重启应用。
 /// `passphrase` 用于密文备份（issue #572 / ADR-0075 决策 7）：备份库为密文时凭
 /// 该主口令校验与恢复；明文备份不消费。主口令不落日志与 trace（ADR-0075）。
+///
+/// 恢复通道前置修复（issue #601）：目标库路径经 DataLocation 引导的生效目录
+/// 解析（不再写死默认数据目录——自定义数据位置下恢复曾会错位）；主连接可选——
+/// 「应用存活但无已打开库连接」（启动失败接管）时不再假定连接存在，不持锁、
+/// 不 panic，恢复照常可用（失败恢复屏的备份恢复通道由此成为可能，#602）。
 #[tauri::command]
 pub async fn restore_backup(
     app: AppHandle,
     backup_path: String,
     passphrase: Option<String>,
 ) -> Result<RestoreResult> {
-    let conn = app.state::<DbState>().conn.clone();
+    // 主连接可选（issue #601 前置修复）：无已打开库连接时不持锁、不 panic。
+    let conn = app.try_state::<DbState>().map(|state| state.conn.clone());
+    let db_dir = effective_db_dir_of(&app)?;
+    // 恢复安全备份落默认数据目录（词汇表 RestoreSafetyBackup 既有语义，不变）。
+    let safety_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Io(e.to_string()))?;
     run_db("restore_backup", move || {
-        let dir = app
-            .path()
-            .app_data_dir()
-            .map_err(|e| AppError::Io(e.to_string()))?;
-        let db_path = dir.join("ledger.db");
+        let db_path = db_dir.join(DB_FILE_NAME);
         let expected = expected_schema_version()?;
-        // 恢复期间持有主连接锁，阻塞 IPC 与本地 HTTP API 的并发写。
-        let _guard = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        // 恢复期间持有主连接锁（如有），阻塞 IPC 与本地 HTTP API 的并发写。
+        let _guard = match &conn {
+            Some(conn) => Some(conn.lock().map_err(|e| AppError::Db(e.to_string()))?),
+            None => None,
+        };
         restore_db_from(
             Path::new(&backup_path),
             &db_path,
-            &dir,
+            &safety_dir,
             expected,
             passphrase.as_deref(),
         )

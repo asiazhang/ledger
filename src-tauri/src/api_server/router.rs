@@ -79,28 +79,40 @@ pub fn build_router(state: ApiState) -> Router {
         // 除契约自举端点外一律返回码化错误，请求不进入任何 handler。
         .layer(middleware::from_fn_with_state(
             state.clone(),
-            encryption_gate_middleware,
+            startup_gate_middleware,
         ))
         .with_state(state)
 }
 
-/// 加密锁定门中间件：锁定期间对除 OpenAPI 契约自举端点外的全部端点返回
-/// 码化错误 `encryption.locked`——AI 导入 HTTP 面在解锁前不可用；解锁成功
-/// 后标志翻转（IPC 壳解锁命令统一置位），请求照常放行，契约面零变化。
-async fn encryption_gate_middleware(
+/// 启动门中间件（加密锁定门 + 启动失败门，issue #570 / #601）：除 OpenAPI
+/// 契约自举端点外的全部端点在锁定期间返回码化错误 `encryption.locked`、
+/// 在启动失败期间返回码化错误 `boot.db-unreadable`——AI 导入 HTTP 面在解锁
+/// 前/库不可用时不可用；标志翻转（IPC 壳命令统一置位）后请求照常放行，
+/// 契约面零变化。
+async fn startup_gate_middleware(
     State(state): State<ApiState>,
     req: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
     const OPENAPI_PATH: &str = "/api/v1/openapi.json";
-    if state.lock_gate.is_locked() && req.uri().path() != OPENAPI_PATH {
-        return AppError::coded("encryption.locked", "应用已锁定，请先解锁后再操作")
-            .into_response();
+    if req.uri().path() != OPENAPI_PATH {
+        if state.lock_gate.is_locked() {
+            return AppError::coded("encryption.locked", "应用已锁定，请先解锁后再操作")
+                .into_response();
+        }
+        if state.boot_gate.is_failed() {
+            return crate::db::boot::gate_rejection_error().into_response();
+        }
     }
     next.run(req).await
 }
 
-pub fn start_http_server(app: AppHandle, state: Arc<Mutex<Connection>>, lock_gate: EncryptionGate) {
+pub fn start_http_server(
+    app: AppHandle,
+    state: Arc<Mutex<Connection>>,
+    lock_gate: EncryptionGate,
+    boot_gate: crate::db::boot::BootFailureGate,
+) {
     std::thread::spawn(move || {
         // B 类豁免（ADR-0060）：HTTP 壳启动期创建 Tokio 运行时，失败即无法运行。
         #[allow(clippy::expect_used)]
@@ -111,6 +123,7 @@ pub fn start_http_server(app: AppHandle, state: Arc<Mutex<Connection>>, lock_gat
                 emitter: Some(Arc::new(app)),
                 fund_fetch: None,
                 lock_gate,
+                boot_gate,
             });
             // B 类豁免（ADR-0060）：启动期绑定 9527 端口失败即无法运行。
             #[allow(clippy::expect_used)]

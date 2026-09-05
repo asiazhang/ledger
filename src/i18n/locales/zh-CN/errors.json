@@ -191,6 +191,10 @@
     "status-invalid": "未知实物资产状态: {0}（合法值: holding/disposed）",
     "not-found": "实物资产不存在: {0}"
   },
+  "boot": {
+    "db-unreadable": "启动失败，数据库不可用，请先在失败恢复屏重置或恢复",
+    "not-failed": "应用未处于启动失败状态，无需重置"
+  },
   "encryption": {
     "locked": "应用已锁定，请先解锁后再操作",
     "passphrase-incorrect": "主口令不正确，请重试",

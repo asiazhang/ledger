@@ -30,6 +30,7 @@ beforeEach(() => {
   // 每个用例从「未探测」起步（模块级单例状态复位），并清空记住偏好的 localStorage。
   const gate = useEncryptionGate()
   gate.locked.value = null
+  gate.bootFailed.value = false
   gate.rememberSupport.value = null
   localStorage.removeItem('remember_passphrase')
 })
@@ -43,7 +44,8 @@ async function mountWithProbe(
   overrides: Record<string, (args?: any) => unknown> = {},
 ) {
   stubInvoke({
-    get_encryption_status: () => Promise.resolve({ locked, file_encrypted: locked }),
+    get_boot_status: () =>
+      Promise.resolve({ phase: locked ? ('locked' as const) : ('ready' as const), error_code: null }),
     ...overrides,
   })
   const gate = useEncryptionGate()
@@ -67,7 +69,7 @@ describe('UnlockScreen.vue（加密锁定门·解锁屏流程）', () => {
 
   it('探测失败：按锁定处理（fail-closed），解锁屏仍渲染而非主界面', async () => {
     stubInvoke({
-      get_encryption_status: () => Promise.reject(new Error('invoke 失败')),
+      get_boot_status: () => Promise.reject(new Error('invoke 失败')),
     })
     const { probe, locked } = useEncryptionGate()
     const probePromise = probe()
@@ -80,7 +82,7 @@ describe('UnlockScreen.vue（加密锁定门·解锁屏流程）', () => {
 
   it('解锁成功：调用 unlock_encryption 携带口令，状态翻转为已解锁', async () => {
     stubInvoke({
-      get_encryption_status: () => Promise.resolve({ locked: true, file_encrypted: true }),
+      get_boot_status: () => Promise.resolve({ phase: 'locked', error_code: null }),
       unlock_encryption: (args: any) => {
         expect(args.passphrase).toBe('口令①')
         return Promise.resolve({ relocated: false })
@@ -102,7 +104,7 @@ describe('UnlockScreen.vue（加密锁定门·解锁屏流程）', () => {
 
   it('错误口令：提示重试（码化文案），状态保持锁定可无限重试', async () => {
     stubInvoke({
-      get_encryption_status: () => Promise.resolve({ locked: true, file_encrypted: true }),
+      get_boot_status: () => Promise.resolve({ phase: 'locked', error_code: null }),
       unlock_encryption: () =>
         Promise.reject({
           kind: 'Invalid',
@@ -134,7 +136,7 @@ describe('UnlockScreen.vue（加密锁定门·解锁屏流程）', () => {
 
   it('文件损坏与口令错误文案可区分：损坏码透出损坏提示', async () => {
     stubInvoke({
-      get_encryption_status: () => Promise.resolve({ locked: true, file_encrypted: true }),
+      get_boot_status: () => Promise.resolve({ phase: 'locked', error_code: null }),
       unlock_encryption: () =>
         Promise.reject({
           kind: 'Invalid',
@@ -159,7 +161,7 @@ describe('UnlockScreen.vue（加密锁定门·解锁屏流程）', () => {
     vi.useFakeTimers()
     try {
       stubInvoke({
-        get_encryption_status: () => Promise.resolve({ locked: true, file_encrypted: true }),
+        get_boot_status: () => Promise.resolve({ phase: 'locked', error_code: null }),
         unlock_encryption: () => Promise.resolve({ relocated: true }),
         restart_app: () => Promise.resolve(),
       })
@@ -247,7 +249,7 @@ describe('UnlockScreen.vue 本机记住主口令（issue #574）', () => {
 
   it('记住开启 + 平台支持：挂载即凭缓存自动解锁，成功后翻转为已解锁', async () => {
     stubInvoke({
-      get_encryption_status: () => Promise.resolve({ locked: true, file_encrypted: true }),
+      get_boot_status: () => Promise.resolve({ phase: 'locked', error_code: null }),
       get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
       unlock_with_remembered_passphrase: () => Promise.resolve({ relocated: false }),
     })
@@ -265,7 +267,7 @@ describe('UnlockScreen.vue 本机记住主口令（issue #574）', () => {
 
   it('记住开启但平台不支持：不触发自动解锁，回退手输并隐藏记住复选项', async () => {
     stubInvoke({
-      get_encryption_status: () => Promise.resolve({ locked: true, file_encrypted: true }),
+      get_boot_status: () => Promise.resolve({ phase: 'locked', error_code: null }),
       get_remember_passphrase_support: () => Promise.resolve({ supported: false }),
     })
     useAppStore().setRememberPassphrase(true)
@@ -284,7 +286,7 @@ describe('UnlockScreen.vue 本机记住主口令（issue #574）', () => {
 
   it('自动解锁失败（无缓存）：回退手输，提示本地化且口令输入可交互', async () => {
     stubInvoke({
-      get_encryption_status: () => Promise.resolve({ locked: true, file_encrypted: true }),
+      get_boot_status: () => Promise.resolve({ phase: 'locked', error_code: null }),
       get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
       unlock_with_remembered_passphrase: () =>
         Promise.reject({
@@ -308,7 +310,7 @@ describe('UnlockScreen.vue 本机记住主口令（issue #574）', () => {
 
   it('自动解锁失败（生物认证取消）：回退手输并提示取消', async () => {
     stubInvoke({
-      get_encryption_status: () => Promise.resolve({ locked: true, file_encrypted: true }),
+      get_boot_status: () => Promise.resolve({ phase: 'locked', error_code: null }),
       get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
       unlock_with_remembered_passphrase: () =>
         Promise.reject({
@@ -330,7 +332,7 @@ describe('UnlockScreen.vue 本机记住主口令（issue #574）', () => {
 
   it('手动解锁勾选记住：解锁后缓存主口令并置偏好开', async () => {
     stubInvoke({
-      get_encryption_status: () => Promise.resolve({ locked: true, file_encrypted: true }),
+      get_boot_status: () => Promise.resolve({ phase: 'locked', error_code: null }),
       get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
       unlock_encryption: (args: any) => {
         expect(args.passphrase).toBe('口令①')
@@ -360,7 +362,7 @@ describe('UnlockScreen.vue 本机记住主口令（issue #574）', () => {
 
   it('手动解锁取消记住：解锁后清缓存并置偏好关', async () => {
     stubInvoke({
-      get_encryption_status: () => Promise.resolve({ locked: true, file_encrypted: true }),
+      get_boot_status: () => Promise.resolve({ phase: 'locked', error_code: null }),
       get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
       unlock_encryption: () => Promise.resolve({ relocated: false }),
       clear_remember_passphrase: () => Promise.resolve(),

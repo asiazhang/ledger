@@ -17,6 +17,7 @@ import budget from './budget.json'
 import ai from './ai.json'
 import settings from './settings.json'
 import unlock from './unlock.json'
+import startupFailure from './startupFailure.json'
 import errors from './errors.json'
 
 export default {
@@ -36,5 +37,6 @@ export default {
   ai,
   settings,
   unlock,
+  startupFailure,
   errors,
 }

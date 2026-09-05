@@ -1,0 +1,14 @@
+{
+  "title": "Cannot open the ledger database",
+  "hint": "Reading the ledger failed at startup; the file may be corrupted. The app will not modify or delete your data file.",
+  "resetChannelTitle": "Reset to an empty ledger",
+  "resetChannelHint": "Reset the unreadable ledger to a brand-new empty one and enter the app right away.",
+  "resetButton": "Reset to empty ledger…",
+  "resetTitle": "Reset to an empty ledger?",
+  "resetWarnTitle": "This action is irreversible",
+  "resetConsequence": "After resetting, the current ledger data will no longer be accessible in this app.",
+  "resetBody": "A brand-new empty ledger will be created and opened immediately. The unreadable database file is kept as a copy (ledger.db.bak in the ledger data directory) for inspection or external repair; an existing copy with the same name will be overwritten.",
+  "resetConfirm": "Reset",
+  "resetCancel": "Cancel",
+  "resetOk": "Reset to a brand-new empty ledger"
+}

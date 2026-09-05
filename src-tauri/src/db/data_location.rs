@@ -348,6 +348,15 @@ pub fn gather_info_from_boot(default_dir: &Path, boot: Option<&Boot>) -> DataLoc
     gather_info(default_dir, &active_dir, fallback.as_deref())
 }
 
+/// 生效库目录的兜底解析（issue #601）：引导结果已登记时用其生效目录；
+/// 未登记（极端时序/引导前置失败）回退默认目录——恢复命令目标路径与
+/// 启动失败重置共用的单一解析点，不再写死默认目录（旧缺陷：自定义
+/// DataLocation 下恢复会错位）。
+pub fn effective_db_dir(boot: Option<&Boot>, default_dir: &Path) -> PathBuf {
+    boot.map(|boot| boot.db_dir.clone())
+        .unwrap_or_else(|| default_dir.to_path_buf())
+}
+
 /// 聚合 DataLocation 信息：生效目录 / 意图目录 / 待重启生效 / 回退警示。
 /// 壳层与 BDD 共用的实现；`active_dir` 与 `fallback` 来自启动期
 /// 已登记的引导结果（[`Boot`]）。

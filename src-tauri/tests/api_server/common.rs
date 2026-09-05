@@ -8,6 +8,7 @@ use tower::ServiceExt;
 
 use tauri_app_lib::api_server::{ApiState, EmitterSlot, FundDetailFetcher, build_router};
 use tauri_app_lib::db;
+use tauri_app_lib::db::boot::BootFailureGate;
 use tauri_app_lib::db::encryption::EncryptionGate;
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::events::SignalEmitter;
@@ -44,6 +45,7 @@ fn build_test_app(
         emitter,
         fund_fetch,
         lock_gate: EncryptionGate::new(false),
+        boot_gate: BootFailureGate::new(),
     });
     (app, conn)
 }
@@ -58,6 +60,23 @@ pub(crate) fn setup_locked_app() -> Router {
         emitter: None,
         fund_fetch: None,
         lock_gate: EncryptionGate::new(true),
+        boot_gate: BootFailureGate::new(),
+    })
+}
+
+/// 装配启动失败应用（issue #601）：启动失败门置为已失败——门禁中间件对除
+/// OpenAPI 契约自举端点外的全部端点返回码化错误（连接仅为形状占位，不应被触达）。
+pub(crate) fn setup_boot_failed_app() -> Router {
+    let mut conn = db::open_in_memory().unwrap();
+    db::init_db(&mut conn).unwrap();
+    let boot_gate = BootFailureGate::new();
+    boot_gate.set_failed();
+    build_router(ApiState {
+        conn: Arc::new(Mutex::new(conn)),
+        emitter: None,
+        fund_fetch: None,
+        lock_gate: EncryptionGate::new(false),
+        boot_gate,
     })
 }
 

@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { errorMessage } from '@/utils/errors'
-import { computed, h, onMounted, ref, type VNode } from 'vue'
+import { computed, h, onMounted, ref } from 'vue'
 import { t } from '@/i18n'
 import {
   NCard,
@@ -17,13 +16,11 @@ import {
   type DataTableColumns,
 } from 'naive-ui'
 import AppDatePicker from '@/components/AppDatePicker.vue'
-import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import AppTreeSelect from '@/components/AppTreeSelect.vue'
 import { formatAmount } from '@/types'
 import { yuanToCents } from '@/utils/money'
 import { installmentSchedule } from '@/utils/installment'
-import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useModalIntent } from '@/composables/useModalIntent'
 import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
@@ -35,6 +32,7 @@ import {
 } from '@/composables/useScheduledPlanList'
 import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
+import PlanRowActions from '@/components/scheduled/PlanRowActions.vue'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 
@@ -44,34 +42,46 @@ import { scheduledStatusLabel } from '@/utils/scheduled'
  * 状态过滤补「已完成」项（#309 显式可见变化之二在此落地：按 Plan Lifecycle 自然
  * 完成的分期计划恢复可见可查，此前从清单消失且无入口可见）。本组件只留分期形态
  * 真差异——期数预览（含尾差文案）与进度列（期数维度百分比 + 已还金额/总额实时
- * 汇总，不持久化、不推算）。表单公共部分走 ScheduledPlanForm 接缝（商户挂靠保留，
- * issue #206）；总额/期数、校验与提交编排留本页签。
+ * 汇总，不持久化、不推算）。行操作经共享渲染组件 PlanRowActions 透传渲染（确认
+ * 弹层/锚点/空占位只此一份，ADR-0041 决策 7）；表单公共部分与提交流程编排走
+ * ScheduledPlanForm 接缝（商户挂靠保留，issue #206；submitCreate 编排，spec #520），
+ * 校验、每期 floor 口径与总额/期数特化组装留本页签。
  */
 
 const reference = useReferenceStore()
 const message = useMessage()
 
 // ---------------------------------------------------------------------------
-// 表单接缝（ADR-0041）：公共草稿字段、商户解析（含重名兜底竞态）与公共 payload
-// 组装全仓单点；总额/期数、校验与提交编排留本页签（每期金额预览口径唯一来源是
-// installmentSchedule，与后端 expand_occurrences 的 floor 均分、尾差进末期一致）。
+// 清单编排（ADR-0041）：全部经 ScheduledPlanList 模块；行操作经共享渲染组件
+// PlanRowActions 透传渲染（确认弹层由组件承载，ADR-0041 决策 3 注 / spec #520）。
+// 进度来自既有详情命令的已完成期次实时汇总（金额与期数，不持久化、不推算）。
 // ---------------------------------------------------------------------------
 
-const form = useScheduledPlanForm()
-const {
-  note,
-  accountId,
-  categoryId,
-  merchantRef,
-  currencyCode,
-  recurrenceType,
-  recurrenceInterval,
-  startDate,
-  accountOptions,
-  currencyOptions,
-  categoryTreeOptions,
-  merchantOptions,
-} = form
+/** 一行 = 计划 + 形态扩展器产出的已完成期次汇总（期数与金额）。 */
+interface InstallmentExt {
+  completedCount: number
+  completedAmountCents: number
+}
+type InstallmentRow = ScheduledPlanRow<InstallmentExt>
+
+const planDetailRef = ref<InstanceType<typeof PlanDetailModal> | null>(null)
+
+const list = useScheduledPlanList<InstallmentExt>({
+  kind: 'installment',
+  expandDetail: (_plan, detail) => ({
+    completedCount: detail?.completed_occurrences ?? 0,
+    completedAmountCents: detail?.completed_amount_cents ?? 0,
+  }),
+  loadErrorText: () => t('scheduled.pane.installmentLoadError'),
+  cancelConfirmText: () => t('scheduled.pane.installmentCancelConfirm'),
+  onOpenDetail: (row) => void planDetailRef.value?.open(row.plan.core.id),
+})
+const { loading, statusFilter, statusFilterOptions, filteredRows } = list
+
+/** 期次详情弹窗内重试成功会发 changed，清单随之刷新（进度由详情实时汇总，重拉即可）。 */
+async function onDetailChanged() {
+  await list.load()
+}
 
 // ---------------------------------------------------------------------------
 // 新建分期弹窗（issue #204 / #206）：开启/关闭编排归弹窗意图工厂 ModalIntent
@@ -93,6 +103,43 @@ const {
 
 const totalYuan = ref('')
 const periods = ref<number | null>(null)
+
+// ---------------------------------------------------------------------------
+// 表单接缝（ADR-0041）：公共草稿字段、商户解析（含重名兜底竞态）与公共 payload
+// 组装全仓单点；提交流程编排沉入接缝 submitCreate（spec #520）——商户解析进编排
+// → 公共 payload 合并形态特化字段 → 创建命令 → 提示 → 公共草稿重置 → 成功后回调，
+// 成功回调注入本页签原子动作：关窗 + 特化字段重置 + 清单刷新。总额/期数、校验与
+// 每期 floor 口径留本页签（每期金额预览口径唯一来源是 installmentSchedule，
+// 与后端 expand_occurrences 的 floor 均分、尾差进末期一致）。
+// ---------------------------------------------------------------------------
+
+const form = useScheduledPlanForm({
+  onSubmitted: () => {
+    // 提交成功后原子动作：关窗 + 特化字段重置 + 清单刷新（公共草稿已由接缝重置）
+    closeCreateIntent()
+    totalYuan.value = ''
+    periods.value = null
+    void list.load()
+  },
+})
+const {
+  note,
+  accountId,
+  categoryId,
+  merchantRef,
+  currencyCode,
+  recurrenceType,
+  recurrenceInterval,
+  startDate,
+  accountOptions,
+  currencyOptions,
+  categoryTreeOptions,
+  merchantOptions,
+} = form
+
+// ---------------------------------------------------------------------------
+// 每期金额预览与新建提交（分期形态真差异）
+// ---------------------------------------------------------------------------
 
 /** 周期下拉选项（与另两页签同单源；computed 现取标签，切语言即时生效） */
 const recurrenceOptions = computed(scheduledRecurrenceOptions)
@@ -121,13 +168,7 @@ const previewText = computed(() => {
   })
 })
 
-/** 重置新建表单到初始态：公共字段走接缝 reset，总额/期数留本页签。 */
-function resetCreateForm() {
-  totalYuan.value = ''
-  periods.value = null
-  form.reset()
-}
-
+/** 新建提交：校验与每期 floor 口径留页签，提交流程编排由接缝 submitCreate 持有（spec #520）。 */
 async function create() {
   if (!accountId.value) {
     message.warning(t('scheduled.form.selectAccount'))
@@ -147,56 +188,13 @@ async function create() {
     message.warning(t('scheduled.form.totalBelowPeriods'))
     return
   }
+  // amount_cents 存每期金额（floor 口径），与期次生成一致（见 e2e 先例）
   const s = installmentSchedule(totalCents, totalOccurrences)
-  try {
-    const merchantId = await form.resolveMerchant()
-    await api.createScheduledTransaction(
-      form.buildCreateInput({
-        kind: 'installment',
-        // amount_cents 存每期金额（floor 口径），与期次生成一致（见 e2e 先例）
-        amountCents: s.perPeriodCents,
-        merchantId,
-        specific: { total_amount_cents: totalCents, total_occurrences: totalOccurrences },
-      }),
-    )
-    message.success(t('scheduled.toast.installmentCreated'))
-    closeCreateIntent()
-    resetCreateForm()
-    await list.load()
-  } catch (e) {
-    message.error(t('scheduled.toast.createFailed', { message: errorMessage(e) }))
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 清单编排（ADR-0041）：全部经 ScheduledPlanList 模块；确认弹层在本适配器渲染。
-// 进度来自既有详情命令的已完成期次实时汇总（金额与期数，不持久化、不推算）。
-// ---------------------------------------------------------------------------
-
-/** 一行 = 计划 + 形态扩展器产出的已完成期次汇总（期数与金额）。 */
-interface InstallmentExt {
-  completedCount: number
-  completedAmountCents: number
-}
-type InstallmentRow = ScheduledPlanRow<InstallmentExt>
-
-const planDetailRef = ref<InstanceType<typeof PlanDetailModal> | null>(null)
-
-const list = useScheduledPlanList<InstallmentExt>({
-  kind: 'installment',
-  expandDetail: (_plan, detail) => ({
-    completedCount: detail?.completed_occurrences ?? 0,
-    completedAmountCents: detail?.completed_amount_cents ?? 0,
-  }),
-  loadErrorText: () => t('scheduled.pane.installmentLoadError'),
-  cancelConfirmText: () => t('scheduled.pane.installmentCancelConfirm'),
-  onOpenDetail: (row) => void planDetailRef.value?.open(row.plan.core.id),
-})
-const { loading, statusFilter, statusFilterOptions, filteredRows } = list
-
-/** 期次详情弹窗内重试成功会发 changed，清单随之刷新（进度由详情实时汇总，重拉即可）。 */
-async function onDetailChanged() {
-  await list.load()
+  await form.submitCreate({
+    kind: 'installment',
+    amountCents: s.perPeriodCents,
+    specific: { total_amount_cents: totalCents, total_occurrences: totalOccurrences },
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -283,45 +281,13 @@ const columns = computed<DataTableColumns<InstallmentRow>>(() => [
   {
     title: t('scheduled.column.actions'),
     key: 'actions',
-    // 行操作描述符（可用性矩阵/标签/run）由模块构建；此处按描述符渲染，
-    // 含 confirm 文案的动作经 AppPopconfirm 二次确认（弹层纪律 ADR-0035）
-    render: (row) => {
-      const buttons: VNode[] = list
-        .rowActions(row)
-        .filter((a) => a.available)
-        .map((a) =>
-          a.confirm
-            ? h(
-                AppPopconfirm,
-                { onPositiveClick: a.run },
-                {
-                  default: () => a.confirm,
-                  trigger: () =>
-                    h(
-                      NButton,
-                      {
-                        size: 'tiny',
-                        type: 'error',
-                        quaternary: true,
-                        'data-testid': `op-${a.key}-${row.plan.core.id}`,
-                      },
-                      () => a.label,
-                    ),
-                },
-              )
-            : h(
-                NButton,
-                {
-                  size: 'tiny',
-                  'data-testid': `op-${a.key}-${row.plan.core.id}`,
-                  onClick: a.run,
-                },
-                () => a.label,
-              ),
-        )
-      if (buttons.length === 0) return '—'
-      return h(NSpace, { size: 4 }, () => buttons)
-    },
+    // 行操作描述符（可用性矩阵/标签/run）由模块构建；此处透传共享渲染组件，
+    // 确认弹层/测试锚点/空占位只此一份（ADR-0041 决策 7，spec #520）
+    render: (row) =>
+      h(PlanRowActions, {
+        actions: list.rowActions(row),
+        rowId: row.plan.core.id,
+      }),
   },
 ])
 
