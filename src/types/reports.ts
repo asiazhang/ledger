@@ -26,11 +26,15 @@ export interface CategoryShare {
 }
 
 /** 商户消费排行行（issue #192）：expense_net（毛支出 − 退款）按商户聚合、本位币口径；
- *  商户名取自字典行现名（软删商户的历史引用照常统计显示）；icon/color 已退役（issue #223）。 */
+ *  商户名取自字典行现名（软删商户的历史引用照常统计显示）；icon/color 已退役（issue #223）。
+ *  transaction_count（issue #617）：该商户在期间内、参与排行口径（支出 + 退款）的
+ *  交易记录数，与金额同口径——退款笔数计入、无商户交易不进排行不计数、
+ *  软删商户历史引用照常计数。区别于核心域 Merchant「关联交易条数（毛笔数）」。 */
 export interface MerchantShare {
   merchant_id: string
   merchant_name: string
   amount_cents: number
+  transaction_count: number
 }
 
 /** 商户消费排行载荷（issue #588）：rows = 排行行（后端已排序与 topN 截断，
