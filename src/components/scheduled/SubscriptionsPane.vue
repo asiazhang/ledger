@@ -394,8 +394,7 @@ onMounted(() => {
       :title="t('scheduled.pane.createSubscription')"
       preset="card"
       display-directive="if"
-      style="width: 480px"
-      :bordered="false"
+      card-size="md"
     >
       <!-- 布局对齐记一笔表单（CategoryForm）：NSpace 提供行距，宽度取 160-280 档；
            金额+币种、周期+间隔 各并一行减少行数 -->
@@ -492,8 +491,7 @@ onMounted(() => {
       :title="t('scheduled.pane.editSubscription')"
       preset="card"
       display-directive="if"
-      style="width: 480px"
-      :bordered="false"
+      card-size="md"
       @update:show="(v: boolean) => (v ? undefined : closeEdit())"
     >
       <NForm

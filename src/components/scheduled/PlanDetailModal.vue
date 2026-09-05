@@ -182,8 +182,7 @@ defineExpose({ open })
     :title="t('scheduled.detail.title')"
     preset="card"
     display-directive="if"
-    style="width: 560px"
-    :bordered="false"
+    card-size="lg"
   >
     <NSpin :show="loading">
       <div v-if="loadFailed" data-testid="occ-load-failed">{{ t('scheduled.detail.loadFailed') }}</div>
