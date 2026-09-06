@@ -4,7 +4,6 @@ import { mount, flushPromises, enableAutoUnmount, DOMWrapper } from '@vue/test-u
 import { NPopconfirm, NSelect, NDatePicker } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
 import { nextTick } from 'vue'
-import { useItemsStore } from '@/stores/items'
 import { applyLocale } from '@/i18n'
 import ItemsView from '@/views/ItemsView.vue'
 import { stubReferenceInvoke } from './helpers/reference-stubs'

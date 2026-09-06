@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount, type VueWrapper } from '@vue/test-utils'
 import { NInputNumber } from 'naive-ui'
@@ -80,7 +80,7 @@ beforeEach(async () => {
 
 describe('ManualPriceModal 手动报价弹窗（issue #291 / ADR-0036）', () => {
   it('打开时日期默认今天、价格为空；标题带标的代码；价格未填时提交禁用、不发请求', async () => {
-    const wrapper = await mountModal()
+    await mountModal()
     expect(document.body.textContent).toContain('录价 — 稳稳地幸福')
     // 日期默认今天（录价当日即生效为主形态）
     const dateInput = bodyQuery('[data-testid="manual-quote-date"]')!.querySelector('input')!

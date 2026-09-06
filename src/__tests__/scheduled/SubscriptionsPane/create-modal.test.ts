@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NModal, NSelect, NTreeSelect, NDatePicker } from 'naive-ui'
 import { findInput, mockInvoke, mountView, setup } from './common'
+import { componentVm } from '../../helpers/component-vm'
 
 beforeEach(setup)
 
@@ -147,7 +148,7 @@ describe('SubscriptionsPane 新建订阅模态对话框（issue #158）', () => 
     const wrapper = await mountView()
     await openCreateModal(wrapper)
     // 输入文本「新商户」：未命中在用商户 → 保存时接缝即建
-    wrapper.findComponent('[data-testid="sub-merchant"]').vm.$emit('update:value', '新商户')
+    componentVm(wrapper.findComponent('[data-testid="sub-merchant"]')).$emit('update:value', '新商户')
     const amountInput = findInput(wrapper, 'sub-amount')
     await amountInput.setValue('25')
     await amountInput.trigger('input')

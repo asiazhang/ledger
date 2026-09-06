@@ -172,7 +172,7 @@ describe('InstrumentBrowser 标的页工具栏', () => {
   })
 
   it('未勾选「只看持仓」时标的查询 only_invested 为 null', async () => {
-    const wrapper = mountBrowser()
+    mountBrowser()
     await flushPromises()
     const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments')
     const [, args] = calls[calls.length - 1]
@@ -254,7 +254,7 @@ describe('InstrumentBrowser 同步持仓价格按钮', () => {
 
 describe('InstrumentBrowser 价格失效信号（issue #238 / ADR-0031）', () => {
   it('信号触发后恰好重拉一次当前页查询', async () => {
-    const wrapper = mountBrowser()
+    mountBrowser()
     await flushPromises()
     const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
     firePricesChanged()

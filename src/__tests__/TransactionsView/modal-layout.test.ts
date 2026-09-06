@@ -27,7 +27,7 @@ function visibleModalCard(): HTMLElement {
 }
 
 /** 断言当前弹窗卡片：宽度档位 + 无边框（AppModal 默认，调用点不再显式声明）。 */
-function expectModalCard(wrapper: VueWrapper, width: string) {
+function expectModalCard(width: string) {
   const card = visibleModalCard()
   expect(card.style.width).toBe(width)
   expect(card.classList.contains('n-card--bordered')).toBe(false)
@@ -58,6 +58,6 @@ describe('TransactionsView 交易弹窗族排版统一（issue #632）', () => {
     } else {
       await openRowModal(wrapper, key)
     }
-    expectModalCard(wrapper, width)
+    expectModalCard(width)
   })
 })

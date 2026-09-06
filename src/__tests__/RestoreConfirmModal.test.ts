@@ -67,7 +67,7 @@ async function setPassphrase(wrapper: ReturnType<typeof mount>, value: string) {
 
 describe('RestoreConfirmModal（恢复确认弹窗，issue #572）', () => {
   it('同模式（明文→明文）：不显示跨模式警告，无需口令即可确认', async () => {
-    const wrapper = mountModal(sameModePlaintext)
+    mountModal(sameModePlaintext)
     await flushPromises()
 
     const body = document.body

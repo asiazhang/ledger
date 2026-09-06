@@ -1,4 +1,4 @@
-import { vi, afterEach } from 'vitest'
+import { afterEach } from 'vitest'
 import { mockInvoke } from '../../helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'

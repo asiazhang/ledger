@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke } from '../helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { NModal, NSelect, NPopconfirm } from 'naive-ui'
@@ -6,7 +6,6 @@ import { setActivePinia, createPinia } from 'pinia'
 import { useReferenceStore } from '@/stores/reference'
 import TransfersPane from '@/components/scheduled/TransfersPane.vue'
 import { stubReferenceInvoke } from '../helpers/reference-stubs'
-import AppSelect from '@/components/AppSelect.vue'
 import type {
   Account,
   Currency,
@@ -15,6 +14,7 @@ import type {
   ScheduledTransactionOccurrence,
   ScheduledTransactionWithExt,
 } from '@/types'
+import { componentVm } from '../helpers/component-vm'
 
 /**
  * 定时转账页签组件测试（ADR-0041 决策 10）：清单加载/状态过滤/生命周期状态机等
@@ -401,9 +401,7 @@ describe('TransfersPane 新建定时转账（转账形态真差异，issue #203�
     await amountInput.setValue('500')
     await amountInput.trigger('input')
     // 特化字段组装（页签职责）：总期数 N
-    wrapper
-      .findComponent('[data-testid="transfer-total-occurrences"]')
-      .vm.$emit('update:value', 3)
+    componentVm(wrapper.findComponent('[data-testid="transfer-total-occurrences"]')).$emit('update:value', 3)
     await flushPromises()
     await wrapper.findComponent('[data-testid="transfer-create"]').trigger('click')
     await flushPromises()
