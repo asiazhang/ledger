@@ -80,6 +80,10 @@ pub struct LedgerWorld {
     pub account_name_to_id: HashMap<String, String>,
     /// 商户名称到 ID 的映射（Given/When 步骤创建商户后注册）
     pub merchant_name_to_id: HashMap<String, String>,
+    /// 保司名称到 ID 的映射（Given/When 步骤创建保司后注册，issue #712）
+    pub insurer_name_to_id: HashMap<String, String>,
+    /// 最近一次按名创建保司（find-or-create）返回的 id（复用断言用）
+    pub last_insurer_by_name_id: Option<String>,
     /// 分类名称到 ID 的映射（Given 步骤创建分类后注册，交易列表分类过滤场景用，issue #377）
     pub category_name_to_id: HashMap<String, String>,
     /// 最新创建的交易 ID（用于关联操作如退款）
@@ -248,6 +252,8 @@ impl LedgerWorld {
             db: DbState::open_in_memory().expect("数据库初始化失败"),
             account_name_to_id: HashMap::new(),
             merchant_name_to_id: HashMap::new(),
+            insurer_name_to_id: HashMap::new(),
+            last_insurer_by_name_id: None,
             category_name_to_id: HashMap::new(),
             last_transaction_id: None,
             last_error: None,
@@ -342,6 +348,14 @@ impl LedgerWorld {
             .get(name)
             .cloned()
             .unwrap_or_else(|| panic!("商户 '{}' 不存在", name))
+    }
+
+    /// 获取保司 ID，按名称查找（issue #712）
+    pub fn insurer_id(&self, name: &str) -> String {
+        self.insurer_name_to_id
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| panic!("保司 '{}' 不存在", name))
     }
 
     /// 获取分类 ID，按名称查找（软删分类的名称→ID 映射刻意保留，历史引用语义）
