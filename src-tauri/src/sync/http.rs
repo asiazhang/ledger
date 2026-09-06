@@ -222,12 +222,18 @@ pub(super) fn build_client() -> Result<reqwest::blocking::Client> {
         .map_err(|e| AppError::Io(e.to_string()))
 }
 
-/// 市场代码 → 东财 secid 前缀（沪 1 / 深 0 / 港 116）。市场未知（unknown）无法查询，返回 None。
+/// 市场代码 → 东财 secid 前缀（沪 1 / 深 0 / 港 116；美股三市场：纳斯达克 105 /
+/// 纽交所 106 / 美交所 107，ADR-0081）。市场未知（unknown）无法查询，返回 None。
+/// 注意 [`MARKETS`] 是全量同步的板块闭集（美股不做全量同步，字典走按代码即建），
+/// 本函数是行情查询侧的映射，两者闭集有意不同。
 pub(super) fn secid_prefix(market: &str) -> Option<&'static str> {
     match market {
         "sh" => Some("1"),
         "sz" => Some("0"),
         "hk" => Some("116"),
+        "nasdaq" => Some("105"),
+        "nyse" => Some("106"),
+        "amex" => Some("107"),
         _ => None,
     }
 }

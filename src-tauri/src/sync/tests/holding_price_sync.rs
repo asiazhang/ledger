@@ -128,6 +128,10 @@ fn secid_prefix_maps_known_markets() {
     assert_eq!(secid_prefix("sh"), Some("1"));
     assert_eq!(secid_prefix("sz"), Some("0"));
     assert_eq!(secid_prefix("hk"), Some("116"));
+    // 美股三市场（issue #692 / ADR-0081）：纳斯达克 105 / 纽交所 106 / 美交所 107。
+    assert_eq!(secid_prefix("nasdaq"), Some("105"));
+    assert_eq!(secid_prefix("nyse"), Some("106"));
+    assert_eq!(secid_prefix("amex"), Some("107"));
     assert_eq!(secid_prefix("unknown"), None);
 }
 
