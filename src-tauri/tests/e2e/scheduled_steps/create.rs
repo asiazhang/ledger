@@ -111,6 +111,44 @@ fn create_installment_plan(
     world.last_plan_id = Some(id);
 }
 
+/// 带备注的分期计划变体（issue #707 来源列场景）：备注即计划名（来源列展示名口径）。
+#[when(expr = "创建分期计划 总额 {int} 期数 {int} 账户 {string} 起始日期 {string} 备注 {string}")]
+fn create_installment_plan_with_note(
+    world: &mut LedgerWorld,
+    total: i64,
+    occurrences: i64,
+    account: String,
+    start: String,
+    note: String,
+) {
+    let id = world
+        .db
+        .write(|conn| {
+            create_plan(
+                conn,
+                CreateScheduledInput {
+                    kind: ScheduledKind::Installment,
+                    account_id: world.account_id(&account),
+                    category_id: None,
+                    amount_cents: total / occurrences,
+                    currency_code: "CNY".into(),
+                    recurrence_type: RecurrenceType::Monthly,
+                    recurrence_interval: 1,
+                    recurrence_day: None,
+                    start_date: start,
+                    note: Some(note),
+                    merchant_id: None,
+                    policy_id: None,
+                    total_amount_cents: Some(total),
+                    total_occurrences: Some(occurrences),
+                    to_account_id: None,
+                },
+            )
+        })
+        .expect("创建分期计划失败");
+    world.last_plan_id = Some(id);
+}
+
 #[when(expr = "创建定时转账计划 金额 {int} 从 {string} 到 {string} 期数 {int} 起始日期 {string}")]
 fn create_scheduled_transfer_plan(
     world: &mut LedgerWorld,
@@ -136,6 +174,47 @@ fn create_scheduled_transfer_plan(
                     recurrence_day: None,
                     start_date: start,
                     note: None,
+                    merchant_id: None,
+                    policy_id: None,
+                    total_amount_cents: None,
+                    total_occurrences: Some(occurrences),
+                    to_account_id: Some(world.account_id(&to)),
+                },
+            )
+        })
+        .expect("创建定时转账计划失败");
+    world.last_plan_id = Some(id);
+}
+
+/// 带备注的定时转账计划变体（issue #707 来源列场景）：备注即计划名。
+#[when(
+    expr = "创建定时转账计划 金额 {int} 从 {string} 到 {string} 期数 {int} 起始日期 {string} 备注 {string}"
+)]
+fn create_scheduled_transfer_plan_with_note(
+    world: &mut LedgerWorld,
+    amount: i64,
+    from: String,
+    to: String,
+    occurrences: i64,
+    start: String,
+    note: String,
+) {
+    let id = world
+        .db
+        .write(|conn| {
+            create_plan(
+                conn,
+                CreateScheduledInput {
+                    kind: ScheduledKind::ScheduledTransfer,
+                    account_id: world.account_id(&from),
+                    category_id: None,
+                    amount_cents: amount,
+                    currency_code: "CNY".into(),
+                    recurrence_type: RecurrenceType::Monthly,
+                    recurrence_interval: 1,
+                    recurrence_day: None,
+                    start_date: start,
+                    note: Some(note),
                     merchant_id: None,
                     policy_id: None,
                     total_amount_cents: None,

@@ -11,6 +11,8 @@ import {
 import SubscriptionsPane from '@/components/scheduled/SubscriptionsPane.vue'
 import InstallmentsPane from '@/components/scheduled/InstallmentsPane.vue'
 import TransfersPane from '@/components/scheduled/TransfersPane.vue'
+import { useFocusParam } from '@/composables/useFocusParam'
+import type { ScheduledFormTab } from '@/components/source-jump'
 
 /**
  * 「定时」统一视图（issue #202）：三页签壳——订阅 / 分期 / 定时转账。
@@ -22,8 +24,10 @@ import TransfersPane from '@/components/scheduled/TransfersPane.vue'
  * ViewState 存量与旧深链（见 router）。
  */
 
-const TABS = ['subscriptions', 'installments', 'transfers'] as const
-type ScheduledTab = (typeof TABS)[number]
+/** 页签词表与来源跳转深模块同源（source-jump ScheduledFormTab，spec #704/#707
+ *  收口：深模块产出 scheduledTab 通道、本视图消费同一形态页签闭集）。 */
+const TABS: readonly ScheduledFormTab[] = ['subscriptions', 'installments', 'transfers']
+type ScheduledTab = ScheduledFormTab
 
 /**
  * embedded：组内「更多」容器内嵌态（issue #473）。容器页签同样占用 query.tab，
@@ -42,6 +46,34 @@ function isScheduledTab(v: unknown): v is ScheduledTab {
 
 /** 内嵌态页签（内存态，容器内不落 URL）。 */
 const localTab = ref<ScheduledTab>('subscriptions')
+
+// 内嵌态落点页签（spec #704 / issue #707）：来源跳转以 scheduledTab 叠加形态
+// 页签（容器 query.tab 归容器，issue #473 双写互踩约定）。装配时读一次落定
+// 内存页签——独立路由态形态页签由 query.tab 承载（activeTab 直读），不经此处。
+if (props.embedded) {
+  const landingTab = route.query.scheduledTab
+  if (isScheduledTab(landingTab)) localTab.value = landingTab
+}
+
+// —— 计划来源落点（spec #704 / issue #707，词汇表「实体定位参数（focus 参数）」）：
+// 读一次语义归 useFocusParam 单点；回调只暂存计划 id，经 focus-plan-id prop 交给
+// 目标形态页签，页签装配后打开计划详情弹窗（弹窗按 id 独立取数，不受清单状态
+// 过滤影响——已取消计划照常可开）。setup 期消费：先于子页签装配，待开 id 在
+// 页签挂载前就位。消费后由页签回报清闸，页签切换不复弹；刷新/重进 = 新实例
+// 重定位（URL 在场即复现，深链可分享）。
+const pendingFocusPlanId = ref<string | null>(null)
+const focusParam = useFocusParam({
+  query: () => route.query,
+  onFocus: (planId) => {
+    pendingFocusPlanId.value = planId
+  },
+})
+focusParam.consume()
+
+/** 页签已消费待开计划（回报清闸：prop 置空，切换页签不复开）。 */
+function onPlanFocusConsumed() {
+  pendingFocusPlanId.value = null
+}
 
 const activeTab = computed<ScheduledTab>(() => {
   if (props.embedded) return localTab.value
@@ -65,15 +97,15 @@ function onTabChange(key: string | number) {
   <NTabs type="line" :value="activeTab" @update:value="onTabChange">
     <NTabPane name="subscriptions">
       <template #tab><span class="pane-tab"><NIcon :component="CalendarOutline" />{{ t('scheduled.tab.subscriptions') }}</span></template>
-      <SubscriptionsPane />
+      <SubscriptionsPane :focus-plan-id="pendingFocusPlanId" @focus-consumed="onPlanFocusConsumed" />
     </NTabPane>
     <NTabPane name="installments">
       <template #tab><span class="pane-tab"><NIcon :component="PulseOutline" />{{ t('scheduled.tab.installments') }}</span></template>
-      <InstallmentsPane />
+      <InstallmentsPane :focus-plan-id="pendingFocusPlanId" @focus-consumed="onPlanFocusConsumed" />
     </NTabPane>
     <NTabPane name="transfers">
       <template #tab><span class="pane-tab"><NIcon :component="SyncOutline" />{{ t('scheduled.tab.transfers') }}</span></template>
-      <TransfersPane />
+      <TransfersPane :focus-plan-id="pendingFocusPlanId" @focus-consumed="onPlanFocusConsumed" />
     </NTabPane>
   </NTabs>
 </template>

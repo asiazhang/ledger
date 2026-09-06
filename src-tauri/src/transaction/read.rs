@@ -9,19 +9,24 @@ use super::model::{
 use crate::db::query::{query_all, query_one};
 use crate::error::{AppError, Result};
 use crate::policy;
+use crate::scheduled_transactions::{self, ScheduledKind};
 
 pub use get_transaction_internal as get_transaction;
 pub use list_transactions_internal as list_transactions;
 
-/// 按页填充来源列（spec #704 / issue #706 tracer bullet：保单分支）：保单 id 已在
-/// 行内（PolicyReference 直挂），收集页内引用去重后**一次批量反查**保单展示字段
-/// （险种名 + 软删标志，`policy::source_display_by_ids`），不做逐行 N+1。
-/// 后续来源种类在同一处按优先级扩展：保单直挂 > 计划反查 > 物品反查 > 标的反查
-/// （词汇表「来源列」来源判定优先级；本期仅保单，双挂场景天然优先——其余线索
-/// 尚未接入）。
+/// 按页填充来源列（spec #704，词汇表「来源列」来源判定优先级：保单直挂 >
+/// 计划反查 > 物品反查 > 标的反查），逐级只对尚无来源的行填充，不做逐行 N+1：
+/// ① 保单直挂（issue #706）：保单 id 已在行内（PolicyReference），去重后一次
+///    批量反查（`policy::source_display_by_ids`）。双挂场景在此天然优先——
+///    订阅期次执行时把协议上的保单引用复制进流水，自动保费流水同时有
+///    「订阅协议 + 保单」两条线索，来源列显示保单（更具体的档案）。
+/// ② 计划反查（issue #707）：按生成交易 id 批量反查期次 → 计划
+///    （`scheduled_transactions::source_display_by_transaction_ids`），展示名 =
+///    计划名（备注，可空由前端按类型名兜底），已取消计划携带状态标注。
 ///
-/// 零迁移：来源是读时推导，不落库；无来源交易（无保单引用）原样为 `None`。
+/// 零迁移：来源是读时推导，不落库；无来源交易（手动录入/AI 导入）原样为 `None`。
 pub(super) fn attach_sources(conn: &Connection, items: &mut [Transaction]) -> Result<()> {
+    // ① 保单直挂（保单 id 已在行内）
     let mut policy_ids: Vec<String> = Vec::new();
     for txn in items.iter() {
         if let Some(pid) = txn.policy_id.as_ref()
@@ -30,29 +35,61 @@ pub(super) fn attach_sources(conn: &Connection, items: &mut [Transaction]) -> Re
             policy_ids.push(pid.clone());
         }
     }
-    if policy_ids.is_empty() {
-        return Ok(());
+    if !policy_ids.is_empty() {
+        let refs = policy::source_display_by_ids(conn, &policy_ids)?;
+        let by_id: HashMap<&str, &policy::PolicySourceDisplay> =
+            refs.iter().map(|r| (r.id.as_str(), r)).collect();
+        for txn in items.iter_mut() {
+            let Some(pid) = txn.policy_id.as_deref() else {
+                continue;
+            };
+            let Some(reference) = by_id.get(pid) else {
+                // 引用完整性由外键（ON DELETE RESTRICT）保证；缺行属防御性跳过，
+                // 不虚构展示名也不中断整页读取。
+                continue;
+            };
+            txn.source = Some(TransactionSource {
+                kind: TransactionSourceKind::Policy,
+                entity_id: pid.to_string(),
+                display_name: reference.product_name.clone(),
+                status: reference
+                    .is_deleted
+                    .then_some(TransactionSourceStatus::Deleted),
+            });
+        }
     }
-    let refs = policy::source_display_by_ids(conn, &policy_ids)?;
-    let by_id: HashMap<&str, &policy::PolicySourceDisplay> =
-        refs.iter().map(|r| (r.id.as_str(), r)).collect();
-    for txn in items.iter_mut() {
-        let Some(pid) = txn.policy_id.as_deref() else {
-            continue;
-        };
-        let Some(reference) = by_id.get(pid) else {
-            // 引用完整性由外键（ON DELETE RESTRICT）保证；缺行属防御性跳过，
-            // 不虚构展示名也不中断整页读取。
-            continue;
-        };
-        txn.source = Some(TransactionSource {
-            kind: TransactionSourceKind::Policy,
-            entity_id: pid.to_string(),
-            display_name: reference.product_name.clone(),
-            status: reference
-                .is_deleted
-                .then_some(TransactionSourceStatus::Deleted),
-        });
+
+    // ② 计划反查（仅对保单未命中的行；期次唯一索引保证一交易至多一行）
+    let plan_txn_ids: Vec<String> = items
+        .iter()
+        .filter(|t| t.source.is_none())
+        .map(|t| t.id.clone())
+        .collect();
+    if !plan_txn_ids.is_empty() {
+        let rows = scheduled_transactions::source_display_by_transaction_ids(conn, &plan_txn_ids)?;
+        let by_txn: HashMap<&str, &scheduled_transactions::PlanSourceDisplay> = rows
+            .iter()
+            .map(|r| (r.transaction_id.as_str(), r))
+            .collect();
+        for txn in items.iter_mut() {
+            if txn.source.is_some() {
+                continue;
+            }
+            let Some(row) = by_txn.get(txn.id.as_str()) else {
+                continue;
+            };
+            txn.source = Some(TransactionSource {
+                kind: match row.kind {
+                    ScheduledKind::Installment => TransactionSourceKind::InstallmentPlan,
+                    ScheduledKind::Subscription => TransactionSourceKind::Subscription,
+                    ScheduledKind::ScheduledTransfer => TransactionSourceKind::ScheduledTransfer,
+                },
+                entity_id: row.plan_id.clone(),
+                // 展示名 = 计划名（备注）；无备注回空串，前端按类型名兜底展示。
+                display_name: row.note.clone().unwrap_or_default(),
+                status: (row.status == "cancelled").then_some(TransactionSourceStatus::Cancelled),
+            });
+        }
     }
     Ok(())
 }

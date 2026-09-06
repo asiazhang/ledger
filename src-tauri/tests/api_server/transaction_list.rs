@@ -366,3 +366,80 @@ async fn test_get_transactions_includes_policy_source() {
     assert_eq!(premium["source"]["display_name"], "重疾险");
     assert_eq!(premium["source"]["status"], "deleted");
 }
+
+/// 行携带计划来源（spec #704 / issue #707 计划三形态分支）：期次生成的交易返回
+/// `{kind: "subscription", entity_id: 计划 id, display_name: 计划名（备注）,
+/// status}`；已取消计划携带 `status: "cancelled"`；无期次链接的交易 `source`
+/// 为 `null`。计划/期次行直插（scheduled 域无 HTTP 端点，先例保单直插）。
+#[tokio::test]
+async fn test_get_transactions_includes_plan_source() {
+    let (app, conn) = setup_app();
+    let account_id = create_account_via_api(&app, "现金").await;
+
+    // 先经既有 batch 端点落两笔交易（一挂期次、一不挂），再直插计划与期次行
+    let linked = format!(
+        r#"{{"kind":"expense","amount_cents":3000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-02-01"}}"#
+    );
+    let plain = format!(
+        r#"{{"kind":"income","amount_cents":200,"currency_code":"CNY","account_id":"{account_id}","date":"2026-03-01"}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&linked, &plain], None)).await;
+    assert!(created.iter().all(|r| r["success"] == true), "{created:?}");
+    let linked_txn_id = created[0]["id"].as_str().unwrap().to_string();
+
+    let plan_id = "plan-1";
+    {
+        let c = conn.lock().unwrap();
+        c.execute(
+            "INSERT INTO scheduled_transactions \
+             (id,kind,status,account_id,category_id,amount_cents,currency_code,\
+             recurrence_type,recurrence_interval,recurrence_day,start_date,note,\
+             created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,'subscription','cancelled',?2,NULL,3000,'CNY',\
+             'monthly',1,NULL,'2026-02-01','视频会员',\
+             '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            rusqlite::params![plan_id, account_id],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO scheduled_transaction_occurrences \
+             (id,scheduled_transaction_id,scheduled_date,status,transaction_id,amount_cents,\
+             created_at,updated_at,version,device_id,is_deleted) \
+             VALUES ('occ-1',?1,'2026-02-01','completed',?2,3000,\
+             '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            rusqlite::params![plan_id, linked_txn_id],
+        )
+        .unwrap();
+    }
+
+    let (status, body) = get_json(&app, "/api/v1/transactions").await;
+    assert_eq!(status, StatusCode::OK);
+    let txs = items_of(&body);
+    assert_eq!(txs.len(), 2);
+
+    // 期次生成的交易：来源 = 订阅计划（实体 id + 计划名，已取消标注）
+    let from_plan = txs
+        .iter()
+        .find(|t| t["id"] == linked_txn_id.as_str())
+        .expect("期次生成的交易应返回");
+    assert_eq!(
+        from_plan["source"],
+        serde_json::json!({
+            "kind": "subscription",
+            "entity_id": plan_id,
+            "display_name": "视频会员",
+            "status": "cancelled",
+        }),
+        "期次生成的交易来源应为已取消订阅计划: {from_plan:?}"
+    );
+
+    // 无期次链接的交易：来源为空
+    let plain_txn = txs
+        .iter()
+        .find(|t| t["id"] != linked_txn_id.as_str())
+        .unwrap();
+    assert!(
+        plain_txn["source"].is_null(),
+        "无来源交易 source 应为 null: {plain_txn:?}"
+    );
+}
