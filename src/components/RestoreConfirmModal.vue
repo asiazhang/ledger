@@ -92,9 +92,8 @@ async function confirm() {
   <AppModal
     :show="intent !== null"
     preset="card"
+    card-size="md"
     :title="t('settings.data.msg.restoreConfirmTitle')"
-    style="width: 480px"
-    :bordered="false"
     @update:show="(v: boolean) => { if (!v) emit('close') }"
   >
     <NSpace vertical :size="12">
