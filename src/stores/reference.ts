@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { api } from '@/api'
 import type { Account, Category, Currency, Insurer, Merchant } from '@/types'
+import type { Syncable } from '@/types/common'
 import {
   rootCategories as pureRootCategories,
   categoryChildren as pureCategoryChildren,
@@ -31,6 +32,17 @@ export type ReferenceStatus = 'idle' | 'loading' | 'ready' | 'error'
  * 失效信号：`status`（idle/loading/ready/error）与 `version`（每次成功重拉自增），
  * 供观测加载状态与重拉次数。动作：`refresh()`（强制重拉，在途合并去重）。
  */
+/**
+ * 含删全量字典行的统一拆分（reload 内分类/商户/保司三处同构）：
+ * 在用行进字典，软删行进显示/管理视图缓存 Map（历史引用与「显示已删」共用）。
+ */
+function splitDeleted<T extends Syncable & { id: string }>(all: T[]): { active: T[]; deleted: Map<string, T> } {
+  return {
+    active: all.filter((r) => !r.is_deleted),
+    deleted: new Map(all.filter((r) => r.is_deleted).map((r) => [r.id, r])),
+  }
+}
+
 export const useReferenceStore = defineStore('reference', () => {
   const currencies = ref<Currency[]>([])
   const accounts = ref<Account[]>([])
@@ -150,18 +162,15 @@ export const useReferenceStore = defineStore('reference', () => {
       ])
       currencies.value = cs
       accounts.value = as
-      categories.value = catsAll.filter((c) => !c.is_deleted)
-      deletedCategories.value = new Map(
-        catsAll.filter((c) => c.is_deleted).map((c) => [c.id, c]),
-      )
-      merchants.value = msAll.filter((m) => !m.is_deleted)
-      deletedMerchants.value = new Map(
-        msAll.filter((m) => m.is_deleted).map((m) => [m.id, m]),
-      )
-      insurers.value = insAll.filter((i) => !i.is_deleted)
-      deletedInsurers.value = new Map(
-        insAll.filter((i) => i.is_deleted).map((i) => [i.id, i]),
-      )
+      const cats = splitDeleted(catsAll)
+      categories.value = cats.active
+      deletedCategories.value = cats.deleted
+      const ms = splitDeleted(msAll)
+      merchants.value = ms.active
+      deletedMerchants.value = ms.deleted
+      const ins = splitDeleted(insAll)
+      insurers.value = ins.active
+      deletedInsurers.value = ins.deleted
       version.value += 1
       status.value = 'ready'
     } catch (e) {
