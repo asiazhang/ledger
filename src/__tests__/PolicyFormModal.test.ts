@@ -45,6 +45,7 @@ function setupInvoke() {
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
+    if (cmd === 'list_insurers') return Promise.resolve([])
     if (cmd === 'list_policies') return Promise.resolve([])
     if (cmd === 'list_policy_stats') return Promise.resolve([])
     if (cmd === 'create_policy') {

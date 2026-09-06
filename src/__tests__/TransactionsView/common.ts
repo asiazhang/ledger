@@ -144,6 +144,7 @@ beforeEach(async () => {
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
+    if (cmd === 'list_insurers') return Promise.resolve([])
     if (cmd === 'list_policies') return Promise.resolve([])
     if (cmd === 'report_date_range') {
       // 数据期间边界（issue #391）：默认与后端口径一致（MIN/MAX 日期，随 txnDb 现算）

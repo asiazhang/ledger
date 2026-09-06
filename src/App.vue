@@ -37,6 +37,7 @@ import {
   RepeatOutline,
   StorefrontOutline,
   ShieldCheckmarkOutline,
+  UmbrellaOutline,
   EyeOutline,
   EyeOffOutline,
 } from '@vicons/ionicons5'
@@ -139,6 +140,7 @@ const viewIcons: Record<string, Component> = {
   merchants: StorefrontOutline,
   policies: ShieldCheckmarkOutline,
   physicalAssets: CubeOutline,
+  insurers: UmbrellaOutline,
 }
 
 function renderMenuIcon(name: string) {

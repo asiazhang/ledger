@@ -7,6 +7,7 @@
 ### Added
 
 - **保险**：新增保司字典域与命令面（IPC list/create/update/delete）——全新库迁移后内置 30 家常用国内保司（人身险与财产险头部，覆盖车险场景，常用简称命名），即席创建未命中即建、重名拒绝、软删除、改名即时生效、list 支持含已删；保单换轨与管理界面随后续票交付（[#712]）。
+- **保险**：新增保险公司管理页（侧栏「资产」组·「更多」保司页签）：改名、软删除、「显示已删」切换后已删行只读展示，列表按名称/拼音本地过滤，清空恢复完整列表；改名/软删后保单表单等消费方经参考数据失效机制即时更新（[#714]）。
 
 - **设置**：路径与备份文件新增「复制路径」「在访达中显示」按钮（[#653]）。
 - **设置**：备份文件列表新增「刷新」按钮（[#651]）。
@@ -219,4 +220,5 @@
 [#644]: https://github.com/asiazhang/ledger/issues/644
 [#701]: https://github.com/asiazhang/ledger/issues/701
 [#712]: https://github.com/asiazhang/ledger/issues/712
+[#714]: https://github.com/asiazhang/ledger/issues/714
 [#532]: https://github.com/asiazhang/ledger/issues/532

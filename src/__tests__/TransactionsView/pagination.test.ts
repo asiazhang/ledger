@@ -75,6 +75,7 @@ describe('TransactionsView 服务端分页', () => {
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
+    if (cmd === 'list_insurers') return Promise.resolve([])
       if (cmd === 'list_transactions') {
         return new Promise((resolve) => {
           resolveList = resolve

@@ -15,11 +15,13 @@ import {
   TrendingUpOutline,
   BarChartOutline,
   SearchOutline,
+  UmbrellaOutline,
 } from '@vicons/ionicons5'
 import PoliciesView from '@/views/PoliciesView.vue'
 import PhysicalAssetsView from '@/views/PhysicalAssetsView.vue'
 import ScheduledView from '@/views/ScheduledView.vue'
 import MerchantManager from '@/components/MerchantManager.vue'
+import InsurerManager from '@/components/InsurerManager.vue'
 import TransactionsView from '@/views/TransactionsView.vue'
 import AccountsView from '@/views/AccountsView.vue'
 import BudgetView from '@/views/BudgetView.vue'
@@ -49,6 +51,8 @@ const props = defineProps<{ group: SidebarGroupId }>()
 const CONTAINED_VIEWS: Record<ContainableViewName, { component: Component; icon: Component }> = {
   policies: { component: PoliciesView, icon: ShieldCheckmarkOutline },
   physicalAssets: { component: PhysicalAssetsView, icon: CubeOutline },
+  // 保司管理（issue #714 / ADR-0082 决策 3）：保险域管理面，归位资产组「更多」
+  insurers: { component: InsurerManager, icon: UmbrellaOutline },
   // 定时内嵌态：页签退内存态（容器页签与被收视图共用 query.tab 会双写互踩）
   scheduled: { component: () => h(ScheduledView, { embedded: true }), icon: RepeatOutline },
   merchants: { component: MerchantManager, icon: StorefrontOutline },

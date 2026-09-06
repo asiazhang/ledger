@@ -60,6 +60,7 @@ function baseInvoke(extra?: Record<string, unknown>) {
         list_accounts: [],
         list_categories: [],
         list_merchants: [],
+        list_insurers: [],
         report_date_range: mockRange,
         monthly_summary: [],
         category_shares: [],

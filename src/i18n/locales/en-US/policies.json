@@ -105,5 +105,39 @@
     },
     "cancel": "Cancel",
     "save": "Save"
+  },
+  "insurers": {
+    "addTitle": "Add Insurance Company",
+    "listTitle": "Insurance Companies",
+    "form": {
+      "name": "Name",
+      "namePlaceholder": "Insurance company name",
+      "add": "Add",
+      "save": "Save"
+    },
+    "columns": {
+      "name": "Name",
+      "actions": "Actions"
+    },
+    "rowActions": {
+      "edit": "Edit",
+      "delete": "Delete"
+    },
+    "deleteConfirm": "Delete this insurance company? Related policies still show its name.",
+    "editModal": {
+      "title": "Edit Insurance Company"
+    },
+    "msg": {
+      "nameRequired": "Please enter an insurance company name",
+      "added": "Insurance company added",
+      "addFailed": "Failed to add: {msg}",
+      "updated": "Insurance company updated",
+      "updateFailed": "Failed to update: {msg}",
+      "deleted": "Insurance company deleted",
+      "deleteFailed": "Failed to delete: {msg}"
+    },
+    "searchPlaceholder": "Search insurance companies (name/pinyin)",
+    "showDeleted": "Show deleted",
+    "deletedTag": "Deleted"
   }
 }

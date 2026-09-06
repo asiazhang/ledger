@@ -105,5 +105,39 @@
     },
     "cancel": "取消",
     "save": "保存"
+  },
+  "insurers": {
+    "addTitle": "新增保险公司",
+    "listTitle": "保险公司列表",
+    "form": {
+      "name": "名称",
+      "namePlaceholder": "保险公司名称",
+      "add": "添加",
+      "save": "保存"
+    },
+    "columns": {
+      "name": "名称",
+      "actions": "操作"
+    },
+    "rowActions": {
+      "edit": "编辑",
+      "delete": "删除"
+    },
+    "deleteConfirm": "确认删除该保险公司？相关保单仍会显示它的名字。",
+    "editModal": {
+      "title": "编辑保险公司"
+    },
+    "msg": {
+      "nameRequired": "请输入保险公司名称",
+      "added": "已添加保险公司",
+      "addFailed": "添加失败: {msg}",
+      "updated": "已更新保险公司",
+      "updateFailed": "更新失败: {msg}",
+      "deleted": "已删除保险公司",
+      "deleteFailed": "删除失败: {msg}"
+    },
+    "searchPlaceholder": "搜索保险公司（名称/拼音）",
+    "showDeleted": "显示已删",
+    "deletedTag": "已删除"
   }
 }
