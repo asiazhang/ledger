@@ -137,7 +137,10 @@ export const REFERENCE_DEFAULTS: Record<string, unknown> = {
 /** 覆写值：固定返回值（JSON 可表达形态），或 `(args) => 返回值 | Promise`（可变库、
  *  在途、拒绝场景）。函数成员的 args 收窄为对象形态（tauri `InvokeArgs` 的 `number[]`
  *  缓冲区形态本应用不产生，收拢理由与边界见 helpers/invoke-mock.ts），覆写不标参数
- *  类型时经上下文推断获得；字段访问返回 `unknown`，具体形状在覆写体内断言。 */
+ *  类型时经上下文推断获得；字段访问返回 `unknown`，具体形状在覆写体内断言。
+ *  对象分支用 `object` 而非 `Record<string, unknown>`：接口类型（如 DataLocationInfo）
+ *  无隐式索引签名，对 `Record` 不可赋值（TS 已知限制）；本助手只透传覆写值
+ *  （`Promise.resolve(handler)`），不访问其字段，`object` 即是精确边界。 */
 export type ReferenceStubOverride =
   | ((args?: Record<string, unknown>) => unknown)
   | string
@@ -145,8 +148,7 @@ export type ReferenceStubOverride =
   | boolean
   | null
   | undefined
-  | unknown[]
-  | Record<string, unknown>
+  | object
 
 function isThenable(value: unknown): value is Promise<unknown> {
   return typeof (value as Promise<unknown> | undefined)?.then === 'function'

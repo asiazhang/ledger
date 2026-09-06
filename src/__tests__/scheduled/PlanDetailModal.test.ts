@@ -48,6 +48,7 @@ const mockCategories: Category[] = [
     kind: 'expense',
     parent_id: null,
     icon: null,
+    sort_order: 0,
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     version: 1,
@@ -116,13 +117,18 @@ function makeDetail(
   const cancelled = parts.cancelled ?? []
   return {
     core,
+    // 默认扩展按 SubscriptionPlan 全字段装配（makeCore 默认 kind = 'subscription'；
+    // 其余形态用例显式传 parts.extension，见分期用例）
     extension:
       parts.extension ?? {
         scheduled_transaction_id: core.id,
         merchant_id: null,
+        policy_id: null,
       },
     pending_occurrences: pending,
     completed_occurrences: completed.length,
+    // 已完成期次金额合计（issue #204 实时汇总口径）：由已完成期次金额求和
+    completed_amount_cents: completed.reduce((sum, o) => sum + o.amount_cents, 0),
     occurrences: [...pending, ...failed, ...completed, ...cancelled],
   }
 }

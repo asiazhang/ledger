@@ -9,6 +9,7 @@ import { stubReferenceInvoke } from '../helpers/reference-stubs'
 import type {
   Account,
   Currency,
+  ScheduledStatus,
   ScheduledTransaction,
   ScheduledTransactionDetail,
   ScheduledTransactionOccurrence,
@@ -84,6 +85,7 @@ function makeTransferPlan(
   return {
     core,
     merchant_id: null,
+    policy_id: null,
     total_amount_cents: null,
     total_occurrences,
     to_account_id,
@@ -165,7 +167,7 @@ function baseInvoke() {
       return id
     },
     update_scheduled_transaction_status: (args) => {
-      const { id, new_status } = args as { id: string; new_status: string }
+      const { id, new_status } = args as { id: string; new_status: ScheduledStatus }
       mockPlans = mockPlans.map((p) =>
         p.core.id === id ? { ...p, core: { ...p.core, status: new_status } } : p,
       )

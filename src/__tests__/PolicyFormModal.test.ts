@@ -30,7 +30,7 @@ const mockCurrencies: Currency[] = [
 ]
 
 const mockInsurers: Insurer[] = [
-  { id: 'ins-1', name: '平安保险', is_deleted: false, created_at: '', updated_at: '', version: 1, device_id: 'test' },
+  { id: 'ins-1', name: '平安保险', is_deleted: false, updated_at: '', version: 1, device_id: 'test' },
 ]
 
 const mockAccounts: Account[] = [

@@ -125,9 +125,6 @@ describe('SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
       {
         id: 'mer-2',
         name: '商户B',
-        icon: null,
-        color: null,
-        created_at: '2026-01-01T00:00:00Z',
         updated_at: '2026-01-01T00:00:00Z',
         version: 1,
         device_id: 'test',

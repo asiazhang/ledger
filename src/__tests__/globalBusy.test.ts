@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { mockInvoke, type AppInvokeHandler } from './helpers/invoke-mock'
 import { api } from '@/api'
 import { busyVisible, resetGlobalBusy } from '@/composables/globalBusy'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
@@ -99,7 +99,10 @@ describe('globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封�
   })
 
   it('invoke 替身返回裸值（非 thenable）也纳入聚合计数（invokeHandler 裸值处理器先例）', async () => {
-    mockInvoke.mockImplementation(() => [])
+    // 本用例刻意违反 invoke「恒返回 Promise」契约（invokeHandler 的函数型 handler
+    // 裸返回值原样透传，见 factories.ts），验证忙碌计数对非 thenable 返回同样收敛；
+    // 故仅在此单点豁免桩类型，不放宽 AppInvokeHandler 全局契约。
+    mockInvoke.mockImplementation((() => []) as unknown as AppInvokeHandler)
     await api.listCurrencies()
     await vi.advanceTimersByTimeAsync(1000)
     expect(busyVisible.value).toBe(false) // 递减走兑底包装，归零彻底

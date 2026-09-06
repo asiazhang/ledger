@@ -79,7 +79,6 @@ const mockMerchants: Merchant[] = [
   {
     id: 'mer-1',
     name: '京东白条',
-    created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     version: 1,
     device_id: 'test',
@@ -164,7 +163,6 @@ function baseInvoke() {
         {
           id,
           name: input.name,
-          created_at: '2026-01-01T00:00:00Z',
           updated_at: '2026-01-01T00:00:00Z',
           version: 1,
           device_id: 'test',

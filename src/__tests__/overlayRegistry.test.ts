@@ -1,6 +1,7 @@
 import { beforeAll, describe, it, expect, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NModal, NSelect } from 'naive-ui'
+import { defineComponent, h } from 'vue'
 import {
   createOverlayToken,
   hasOpenOverlay,
@@ -48,8 +49,14 @@ describe('AppSelect 封装契约：NSelect 的 update:show 驱动注册表', () 
     expect(received).toEqual([true, false])
   })
 
-  it('受控 show prop 变更同样驱动注册表（attrs watch 兜底）', async () => {
-    const wrapper = mount(AppSelect, { props: { options: [], show: false } })
+  it('受控 show 变更同样驱动注册表（attrs watch 兜底）', async () => {
+    // AppSelect 刻意不声明 show（见其头注释）：:show 经 attrs 透传 + watch 兜底。
+    // 以带声明的宿主组件按生产方式绑定 :show，宿主 setProps 驱动 attrs 变更。
+    const Host = defineComponent({
+      props: { show: { type: Boolean, required: true } },
+      setup: (props) => () => h(AppSelect, { options: [], show: props.show }),
+    })
+    const wrapper = mount(Host, { props: { show: false } })
     await wrapper.setProps({ show: true })
     expect(hasOpenOverlay()).toBe(true)
     await wrapper.setProps({ show: false })

@@ -10,6 +10,7 @@ import type {
   Category,
   Currency,
   Merchant,
+  ScheduledStatus,
   ScheduledTransaction,
   ScheduledTransactionDetail,
   ScheduledTransactionOccurrence,
@@ -51,6 +52,7 @@ export const mockCategories: Category[] = [
     kind: 'expense',
     parent_id: null,
     icon: null,
+    sort_order: 0,
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     version: 1,
@@ -63,9 +65,6 @@ export const mockMerchants: Merchant[] = [
   {
     id: 'mer-1',
     name: '视频平台',
-    icon: null,
-    color: null,
-    created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     version: 1,
     device_id: 'test',
@@ -100,6 +99,7 @@ export function makePlan(
   return {
     core,
     merchant_id,
+    policy_id: null,
     total_amount_cents: null,
     total_occurrences: null,
     to_account_id: null,
@@ -131,12 +131,16 @@ export function makeDetail(
 ): ScheduledTransactionDetail {
   return {
     core: plan.core,
+    // 本文件计划恒为订阅形态（makePlan 固定 kind: 'subscription'），
+    // extension 按SubscriptionPlan 全字段装配（policy_id 随 WithExt 透传）
     extension: {
       scheduled_transaction_id: plan.core.id,
       merchant_id: plan.merchant_id,
+      policy_id: plan.policy_id,
     },
     pending_occurrences,
     completed_occurrences: 0,
+    completed_amount_cents: 0,
     occurrences: [...pending_occurrences, ...failed_occurrences],
   }
 }
@@ -202,7 +206,7 @@ export function baseInvoke() {
       return Promise.resolve(id)
     },
     update_scheduled_transaction_status: (args?: Record<string, unknown>) => {
-      const { id, new_status } = args as { id: string; new_status: string }
+      const { id, new_status } = args as { id: string; new_status: ScheduledStatus }
       mockPlans = mockPlans.map((p) =>
         p.core.id === id ? { ...p, core: { ...p.core, status: new_status } } : p,
       )

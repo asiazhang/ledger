@@ -34,7 +34,7 @@ export function setReportDateRange(value: Promise<ReportDateRange> | null) {
 export let merchantDb: Merchant[] = [
   {
     id: 'mch-1', name: '京东',
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false,
   },
 ]
@@ -97,6 +97,8 @@ export function makeTxn(i: number, accountId = 'acc-1', overrides: Partial<Trans
     account_id: accountId,
     to_account_id: null,
     category_id: null,
+    merchant_id: null,
+    policy_id: null,
     refund_of_transaction_id: null,
     note: `备注 ${i}`,
     date: '2026-01-01',
@@ -105,6 +107,7 @@ export function makeTxn(i: number, accountId = 'acc-1', overrides: Partial<Trans
     version: 1,
     device_id: 'test',
     is_deleted: false,
+    source: null,
     ...overrides,
   }
 }
@@ -173,7 +176,7 @@ beforeEach(async () => {
   merchantDb = [
     {
       id: 'mch-1', name: '京东',
-      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
       version: 1, device_id: 'test', is_deleted: false,
     },
   ]

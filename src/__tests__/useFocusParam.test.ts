@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { useFocusParam } from '@/composables/useFocusParam'
+import type { LocationQuery } from 'vue-router'
 
 /**
  * focus 消费助手模块测试（spec #704 / issue #705，词汇表「实体定位参数
@@ -9,7 +10,7 @@ import { useFocusParam } from '@/composables/useFocusParam'
  */
 
 /** 快捷构造：以给定 query 对象建厂（getter 包一层，工厂只经它读取）。 */
-function make(query: Record<string, unknown>, onFocus: (id: string) => void = vi.fn()) {
+function make(query: LocationQuery, onFocus: (id: string) => void = vi.fn()) {
   return { helper: useFocusParam({ query: () => query, onFocus }), onFocus }
 }
 

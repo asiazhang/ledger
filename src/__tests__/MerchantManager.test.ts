@@ -38,12 +38,12 @@ vi.mock('naive-ui', async (importOriginal) => {
 const mockMerchants: Merchant[] = [
   {
     id: 'mch-1', name: '京东',
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false,
   },
   {
     id: 'mch-2', name: '红旗连锁',
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false,
   },
 ]
@@ -101,7 +101,7 @@ describe('MerchantManager.vue（issue #189）', () => {
           ...merchantDb,
           {
             id: 'mch-new', name: args!.input!.name,
-            created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
             version: 1, device_id: 'test', is_deleted: false,
           },
         ]
@@ -288,7 +288,7 @@ describe('MerchantManager.vue 拼音模糊搜索（issue #447，统一模糊搜�
     '京东', '盒马', '万科物业', '红旗连锁', '盒马鲜生',
   ].map((name, i) => ({
     id: `mch-s-${i}`, name,
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false,
   }))
 
@@ -362,7 +362,7 @@ describe('MerchantManager.vue 拼音模糊搜索（issue #447，统一模糊搜�
 describe('MerchantManager.vue 显示已删切换（issue #447）', () => {
   const deletedMerchant: Merchant = {
     id: 'mch-del', name: '永辉超市',
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: true,
   }
 
@@ -469,7 +469,6 @@ describe('MerchantManager.vue 前端分页（issue #457）', () => {
     return Array.from({ length: n }, (_, i) => ({
       id: `mch-p-${i}`,
       name: `商户${String(i).padStart(3, '0')}`,
-      created_at: '2026-01-01T00:00:00Z',
       updated_at: '2026-01-01T00:00:00Z',
       version: 1,
       device_id: 'test',
@@ -480,7 +479,6 @@ describe('MerchantManager.vue 前端分页（issue #457）', () => {
   const deletedExtra: Merchant = {
     id: 'mch-p-del',
     name: '永辉超市',
-    created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     version: 1,
     device_id: 'test',

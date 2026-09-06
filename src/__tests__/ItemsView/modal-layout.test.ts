@@ -40,6 +40,7 @@ const mockItem: ItemWithDailyCost = {
   device_id: 'test',
   is_deleted: false,
   used_days: 1000,
+  numerator_cents: 1_000_000,
   per_day_cents: 1000,
 }
 

@@ -59,6 +59,7 @@ const mockCategories: Category[] = [
     kind: 'expense',
     parent_id: null,
     icon: null,
+    sort_order: 0,
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     version: 1,
@@ -71,9 +72,6 @@ const mockMerchants: Merchant[] = [
   {
     id: 'mch-1',
     name: '视频平台',
-    icon: null,
-    color: null,
-    created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     version: 1,
     device_id: 'test',
@@ -167,9 +165,6 @@ describe('useScheduledPlanForm 商户解析（输入即建 + 重名兜底，ADR-
               {
                 id: 'mch-exist',
                 name: '盒马',
-                icon: null,
-                color: null,
-                created_at: '2026-01-01T00:00:00Z',
                 updated_at: '2026-01-01T00:00:00Z',
                 version: 1,
                 device_id: 'test',
@@ -506,7 +501,7 @@ describe('useScheduledPlanForm submitCreate 提交时序编排（spec #520）', 
     const seen: string[] = []
     await useReferenceStore().refresh()
     const form = useScheduledPlanForm({
-      onSubmitted: () => seen.push(`note=${form.note.value}`),
+      onSubmitted: () => { seen.push(`note=${form.note.value}`) },
     })
     // 先改成非初始值，再提交
     form.note.value = '月度储蓄'

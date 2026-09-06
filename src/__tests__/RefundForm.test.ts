@@ -19,10 +19,16 @@ const fixedTx: Transaction = {
   to_account_id: null,
   category_id: 'cat-1',
   merchant_id: null,
+  policy_id: null,
+  source: null,
   refund_of_transaction_id: null,
   note: null,
   date: '2026-01-01',
   created_at: '2026-01-01T00:00:00Z',
+  updated_at: '2026-01-01T00:00:00Z',
+  version: 1,
+  device_id: 'test',
+  is_deleted: false,
 }
 
 describe('RefundForm.vue', () => {

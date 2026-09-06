@@ -12,7 +12,7 @@ import type { Account, Category, Transaction } from '@/types'
 const mockAccounts: Account[] = [
   {
     id: 'acc-1', name: '现金', type: 'cash', currency_code: 'CNY',
-    initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z',
+    initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z', is_hidden: false,
     updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test',
     is_deleted: false,
   },
@@ -21,7 +21,7 @@ const mockAccounts: Account[] = [
 const mockCategories: Category[] = [
   {
     id: 'cat-1', name: '餐饮', kind: 'expense', parent_id: null,
-    icon: null, created_at: '2026-01-01T00:00:00Z',
+    icon: null, sort_order: 0, created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test',
     is_deleted: false,
   },
@@ -139,10 +139,16 @@ describe('CategoryForm.vue', () => {
       to_account_id: null,
       category_id: null,
       merchant_id: null,
+      policy_id: null,
+      source: null,
       refund_of_transaction_id: null,
       note: null,
       date: '2026-02-01',
       created_at: '2026-02-01T00:00:00Z',
+      updated_at: '2026-02-01T00:00:00Z',
+      version: 1,
+      device_id: 'test',
+      is_deleted: false,
     }
 
     function createCalls() {

@@ -36,8 +36,8 @@ const mockCurrencies: Currency[] = [
 ]
 
 const mockInsurers: Insurer[] = [
-  { id: 'ins-1', name: '平安保险', is_deleted: false, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test' },
-  { id: 'ins-2', name: '太平洋保险', is_deleted: false, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test' },
+  { id: 'ins-1', name: '平安保险', is_deleted: false, updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test' },
+  { id: 'ins-2', name: '太平洋保险', is_deleted: false, updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test' },
 ]
 
 function basePolicy(over: Partial<Policy> = {}): Policy {
@@ -80,7 +80,7 @@ function setupInvoke() {
     create_insurer: (args) => {
       const { input } = args as { input: { name: string } }
       const id = `ins-new-${input.name}`
-      mockInsurers.push({ id, name: input.name, is_deleted: false, created_at: '', updated_at: '', version: 1, device_id: 'test' })
+      mockInsurers.push({ id, name: input.name, is_deleted: false, updated_at: '', version: 1, device_id: 'test' })
       return id
     },
     create_merchant: () => Promise.reject(new Error('unexpected create_merchant')),
@@ -118,7 +118,7 @@ beforeAll(() => {
 type ViewWrapper = ReturnType<typeof mount>
 
 /** 保存按钮在 teleported 弹窗内（document.body），经 body 查询驱动 */
-function saveButton(): DOMWrapper<HTMLButtonElement> {
+function saveButton(): DOMWrapper<HTMLElement> {
   return new DOMWrapper(bodyQuery('[data-testid="policy-save"]'))
 }
 
