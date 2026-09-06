@@ -21,8 +21,10 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
 use crate::backup;
+use crate::commands::boot::current_boot;
+use crate::commands::data_location::default_data_dir;
 use crate::db::DbState;
-use crate::db::data_location::{self, Boot, DB_FILE_NAME};
+use crate::db::data_location::{self, DB_FILE_NAME};
 use crate::db::encryption::{self, DbFileKind, EncryptionGate};
 use crate::db::passphrase_cache::{self, CacheLoad, RememberMode};
 use crate::db::run_db;
@@ -56,9 +58,15 @@ pub struct RememberPassphraseSupport {
     pub mode: RememberMode,
 }
 
-/// 生效目录中的库文件路径（引导结果登记的单一来源）。
-fn active_db_path(app: &AppHandle) -> std::path::PathBuf {
-    app.state::<Boot>().db_dir.join(DB_FILE_NAME)
+/// 生效目录中的库文件路径（引导结果登记的单一来源，经 BootCell 只读快照；
+/// 未登记时回退默认数据目录，与 [`crate::commands::data_location::effective_db_dir_of`
+/// 同一兑底语义）。
+fn active_db_path(app: &AppHandle) -> Result<std::path::PathBuf> {
+    let db_dir = match current_boot(app) {
+        Some(boot) => boot.db_dir,
+        None => default_data_dir(app)?,
+    };
+    Ok(db_dir.join(DB_FILE_NAME))
 }
 
 /// 转换类命令（开启/关闭/修改主口令）的共同门禁：应用处于锁定状态时
@@ -77,7 +85,7 @@ fn ensure_unlocked(app: &AppHandle) -> Result<()> {
 #[tauri::command]
 pub async fn get_encryption_status(app: AppHandle) -> Result<EncryptionStatus> {
     let locked = app.state::<EncryptionGate>().is_locked();
-    let db_path = active_db_path(&app);
+    let db_path = active_db_path(&app)?;
     run_db("get_encryption_status", move || {
         let file_encrypted = encryption::probe_file_kind(&db_path)? == DbFileKind::Encrypted;
         Ok(EncryptionStatus {
@@ -93,7 +101,7 @@ pub async fn get_encryption_status(app: AppHandle) -> Result<EncryptionStatus> {
 /// 连接 Arc 克隆全部可见），翻转锁定门、拉起自动备份调度；启动期等待中的搬迁
 /// （源库为密文库）在解锁后以主口令补做，成功即触发重启语义。
 async fn do_unlock(app: &AppHandle, passphrase: &str) -> Result<UnlockOutcome> {
-    let db_path = active_db_path(app);
+    let db_path = active_db_path(app)?;
     let pass = passphrase.to_string();
     let conn = run_db("unlock_encryption_core", move || {
         encryption::unlock_db_file(&db_path, &pass)
@@ -105,9 +113,9 @@ async fn do_unlock(app: &AppHandle, passphrase: &str) -> Result<UnlockOutcome> {
     // 以主口令补做。失败不阻断解锁：应用继续以当前位置运行，意图保持
     // 待重启状态（下次解锁重试）。
     let mut relocated = false;
-    let pending = app.state::<Boot>().deferred_relocation.clone();
+    let pending = current_boot(app).and_then(|boot| boot.deferred_relocation);
     if let Some(target_dir) = pending {
-        let source = active_db_path(app);
+        let source = active_db_path(app)?;
         let target = target_dir.join(DB_FILE_NAME);
         let pass = passphrase.to_string();
         let outcome = run_db("unlock_deferred_relocation", move || {
@@ -158,7 +166,24 @@ pub async fn unlock_with_remembered_passphrase(app: AppHandle) -> Result<UnlockO
             "应用未处于锁定状态，无需解锁",
         ));
     }
-    let cached = run_db("read_remembered_passphrase", passphrase_cache::load).await?;
+    // 诊断可观测（issue #644）：钥匙串读取的耗时与三态结果单独留痕——耗时
+    // 异常拉长即「钥匙串阻塞」（白屏根因一），与「WebView 未加载」（根因二）
+    // 在日志上可区分。口令本体不落日志（ADR-0075）。
+    tracing::info!("自动解锁开始：读取钥匙串缓存");
+    let started = std::time::Instant::now();
+    let cached = run_db("read_remembered_passphrase", passphrase_cache::load).await;
+    let outcome = match &cached {
+        Ok(CacheLoad::Found(_)) => "found",
+        Ok(CacheLoad::NotFound) => "not-found",
+        Ok(CacheLoad::Cancelled) => "cancelled",
+        Err(_) => "error",
+    };
+    tracing::info!(
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        outcome,
+        "钥匙串缓存读取完成"
+    );
+    let cached = cached?;
     match cached {
         CacheLoad::Found(passphrase) => match do_unlock(&app, &passphrase).await {
             Ok(outcome) => Ok(outcome),
@@ -216,7 +241,7 @@ pub(crate) fn resume_business_surface(app: &AppHandle, conn: Connection) -> Resu
 #[tauri::command]
 pub async fn enable_encryption(app: AppHandle, passphrase: String) -> Result<()> {
     ensure_unlocked(&app)?;
-    let db_path = active_db_path(&app);
+    let db_path = active_db_path(&app)?;
     run_db("enable_encryption", move || {
         encryption::enable_encryption_for_file(&db_path, &passphrase)
     })
@@ -232,7 +257,7 @@ pub async fn enable_encryption(app: AppHandle, passphrase: String) -> Result<()>
 #[tauri::command]
 pub async fn disable_encryption(app: AppHandle, passphrase: String) -> Result<()> {
     ensure_unlocked(&app)?;
-    let db_path = active_db_path(&app);
+    let db_path = active_db_path(&app)?;
     run_db("disable_encryption", move || {
         encryption::disable_encryption_for_file(&db_path, &passphrase)
     })
@@ -254,7 +279,7 @@ pub async fn change_encryption_passphrase(
     new_passphrase: String,
 ) -> Result<()> {
     ensure_unlocked(&app)?;
-    let db_path = active_db_path(&app);
+    let db_path = active_db_path(&app)?;
     run_db("change_encryption_passphrase", move || {
         encryption::change_passphrase_for_file(&db_path, &passphrase, &new_passphrase)
     })
@@ -279,7 +304,7 @@ pub async fn reset_after_forgotten_passphrase(app: AppHandle) -> Result<()> {
             "应用未处于锁定状态，无需重置",
         ));
     }
-    let db_path = active_db_path(&app);
+    let db_path = active_db_path(&app)?;
     let conn = run_db("reset_after_forgotten_passphrase", move || {
         encryption::reset_encrypted_db_file(&db_path)
     })

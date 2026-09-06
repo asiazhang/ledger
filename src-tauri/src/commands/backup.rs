@@ -3,15 +3,14 @@
 //! 只做参数解包、事务壳（连接锁边界）与信号发射；备份引擎（zip 打包 / 恢复与
 //! 安全备份 / schema 校验 / 受管备份清理）与自动备份调度（到期判定、日界门、
 //! 触发入口）在 `crate::backup` 域目录。对外暴露 `create_backup` / `restore_backup`
-//! / `restart_app` / `list_backups` / `prune_backups` / `set_auto_backup_dir` /
+//! / `list_backups` / `prune_backups` / `set_auto_backup_dir` /
 //! `get_auto_backup_state` / `set_auto_backup_enabled` 命令（`commands/mod.rs` 经
-//! `pub use backup::*` 重导出，注册路径与前端/BDD 调用零改动）。
+//! `pub use backup::*` 重导出，注册路径与前端/BDD 调用零改动）。恢复成功后的
+//! `restart_app`（原位重引导）归口 `commands::boot`（issue #644 / ADR-0080）。
 //!
 //! 触碰 DB 与阻塞文件 IO 的命令 async 化（形状乙，spec #498 / #503）：DB/zip/
 //! 目录扫描等阻塞工作经连接层统一 helper [`crate::db::run_db`] 进 tauri 阻塞
-//! 线程池执行，不占用界面事件循环线程；信号在 await 后发射。`restart_app`
-//! 是系统控制命令（进程重启，无阻塞工作面），保持同步形态（先例：
-//! `set_auto_execution_enabled`）。
+//! 线程池执行，不占用界面事件循环线程；信号在 await 后发射。
 //
 // 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
 // （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
@@ -103,12 +102,6 @@ pub async fn get_backup_meta(path: String) -> Result<BackupMetaSummary> {
         probe_backup_meta(Path::new(&path))
     })
     .await
-}
-
-/// 重启应用（恢复成功后调用，使新数据以全新状态加载）。
-#[tauri::command]
-pub fn restart_app(app: AppHandle) {
-    app.restart();
 }
 
 /// 列出备份目录中的受管备份文件（自动命名，含手动 `ledger-backup-*` 与

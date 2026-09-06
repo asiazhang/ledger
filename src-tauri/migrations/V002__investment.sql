@@ -13,7 +13,7 @@
 -- 就地修改只影响全新安装；存量库不在兼容范围（裁定见 CHANGELOG BREAKING 条目
 -- 与 ADR-0038 决策 5），不提供一次性处置工具。
 --
--- market 检查约束闭集就地扩展（issue #692 / ADR-0080）：由 sh/sz/hk/unknown 扩至
+-- market 检查约束闭集就地扩展（issue #692 / ADR-0081）：由 sh/sz/hk/unknown 扩至
 -- 含美股三市场 nasdaq/nyse/amex（报价币种推导三市场→USD、行情 secid 前缀映射
 -- 105/106/107 同批落地）。全新安装生效；存量库不重跑本迁移、保持旧闭集，其上
 -- 创建美股市场标的将被 CHECK 拒绝，不提供自动修复（2026-09-06 裁定：1.0 前
@@ -25,14 +25,14 @@
 --    - 交易、持仓批次通过 instrument_id 与它关联，避免重复录入名称和币种。
 --    - currency_code 表示该工具报价和交易的币种。
 --    - market 表示工具所属市场：sh（上交所）/ sz（深交所）/ hk（港交所）/
---      nasdaq / nyse / amex（美股三市场，ADR-0080）/ unknown（其他，默认）。
+--      nasdaq / nyse / amex（美股三市场，ADR-0081）/ unknown（其他，默认）。
 CREATE TABLE IF NOT EXISTS instruments (
     id              TEXT PRIMARY KEY,  -- 工具全局唯一 ID（UUID v7）
     symbol          TEXT NOT NULL,                      -- 代码，如 "600519.SH" / "NVDA" / "000001"
     instrument_type TEXT NOT NULL CHECK(instrument_type IN ('stock','fund','bond','etf','other')),  -- 金融工具类型
     name            TEXT,                                -- 名称（可选，如 "贵州茅台"）
     currency_code   TEXT NOT NULL REFERENCES currencies(code) ON DELETE RESTRICT,  -- 报价币种
-    market          TEXT NOT NULL DEFAULT 'unknown' CHECK(market IN ('sh','sz','hk','nasdaq','nyse','amex','unknown')),  -- 所属市场：闭集扩至含美股三市场（ADR-0080），存量库保持旧闭集见头部注记
+    market          TEXT NOT NULL DEFAULT 'unknown' CHECK(market IN ('sh','sz','hk','nasdaq','nyse','amex','unknown')),  -- 所属市场：闭集扩至含美股三市场（ADR-0081），存量库保持旧闭集见头部注记
     created_at      TEXT NOT NULL,                     -- 创建时间
     updated_at      TEXT NOT NULL,                     -- 最后修改时间
     version         INTEGER NOT NULL DEFAULT 1,          -- 版本计数

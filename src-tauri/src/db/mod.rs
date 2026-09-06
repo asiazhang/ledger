@@ -89,14 +89,22 @@ pub fn device_id() -> String {
     String::from("device-1")
 }
 
-/// 在指定目录打开库并完成 schema 迁移（DataLocation 引导之后的建连步骤）。
-/// 启动期唯一入口：先经 [`data_location::boot`] 解析库所在目录，再调本函数建连
-/// （见 `lib.rs::init_database`）；不要自行拼接库路径。
-pub fn open_db_in(db_dir: &Path) -> Result<DbState> {
+/// 在指定目录打开库并完成 schema 迁移，返回裸连接（原位重引导的连接换入用：
+/// 换入目标是既有 `DbState` 的互斥体内槽，需要裸 `Connection` 才能移入，
+/// issue #644 / ADR-0080）。启动期唯一入口：先经 [`data_location::boot`] 解析
+/// 库所在目录，再调本函数建连；不要自行拼接库路径。
+pub fn open_connection_in(db_dir: &Path) -> Result<Connection> {
     let db_path = db_dir.join(data_location::DB_FILE_NAME);
     tracing::info!(db_path = %db_path.display(), "打开数据库");
     let mut conn = open_connection(db_path)?;
     init_db(&mut conn)?;
+    Ok(conn)
+}
+
+/// 在指定目录打开库并完成 schema 迁移（DataLocation 引导之后的建连步骤）：
+/// 裸连接包成共享锁形态。
+pub fn open_db_in(db_dir: &Path) -> Result<DbState> {
+    let conn = open_connection_in(db_dir)?;
     Ok(DbState {
         conn: Arc::new(Mutex::new(conn)),
     })

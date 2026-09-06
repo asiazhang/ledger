@@ -197,7 +197,7 @@ fn instruments_source_backfills_eastmoney_on_upgrade() {
     assert!(null_rejected.is_err(), "source 列 NOT NULL 应拒绝显式 NULL");
 }
 
-/// 标的 market 检查约束闭集（issue #692 / ADR-0080）：既有 sh/sz/hk/unknown
+/// 标的 market 检查约束闭集（issue #692 / ADR-0081）：既有 sh/sz/hk/unknown
 /// 行为不变，美股三市场 nasdaq/nyse/amex 可落库；闭集外取值仍被 CHECK 拒绝。
 /// 存量库不重跑本迁移、保持旧闭集，为已接受的 BREAKING 结论（V002 头部就地
 /// 修改注记与 CHANGELOG「Unreleased」BREAKING 条目两级标记）。

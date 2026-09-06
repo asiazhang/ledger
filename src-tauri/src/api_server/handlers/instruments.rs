@@ -100,7 +100,7 @@ pub async fn search_instruments_handler(
 /// 标的创建请求体（`POST /api/v1/instruments`，issue #296 / ADR-0037）。
 ///
 /// 与 IPC 侧 `InstrumentInput` 的差异仅在报价币种可省：缺省按市场推导
-/// （沪深→CNY、港→HKD、美股三市场→USD、未知→CNY，ADR-0080），显式传参可覆盖。
+/// （沪深→CNY、港→HKD、美股三市场→USD、未知→CNY，ADR-0081），显式传参可覆盖。
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct InstrumentCreateInput {
     /// 标的代码（必填；源数据只有名称时以名称充当代码，ADR-0037 决策 3）
@@ -116,13 +116,13 @@ pub struct InstrumentCreateInput {
     currency_code: Option<String>,
 }
 
-/// 报价币种缺省推导（ADR-0037 决策 2；美股三市场→USD 见 ADR-0080）：
+/// 报价币种缺省推导（ADR-0037 决策 2；美股三市场→USD 见 ADR-0081）：
 /// 沪深→人民币、港→港币、美股三市场（nasdaq/nyse/amex）→美元、其余（含 unknown）→人民币。
 ///
 /// 依据：标的币种不参与买卖账务（持仓批次成本币种 = 账户币种），仅影响行情/市值折算展示。
 /// 与同步侧 `crate::sync::http::MARKETS` 的 market→currency 对应（该表为全量同步
 /// 板块闭集、模块私有，本端点按 ADR 独立定义并多担 unknown 缺省）；美股三市场仅入本
-/// 推导、不入 MARKETS——美股字典走按代码即建、不做全量同步（ADR-0080）。
+/// 推导、不入 MARKETS——美股字典走按代码即建、不做全量同步（ADR-0081）。
 fn derive_quote_currency(market: &str) -> &'static str {
     match market {
         "hk" => "HKD",
@@ -188,7 +188,7 @@ pub async fn create_instrument_handler(
             None
         };
     // 报价币种可省：缺省按市场推导（沪深→CNY、港→HKD、美股三市场→USD、未知→CNY，
-    // ADR-0037 决策 2 / ADR-0080）；
+    // ADR-0037 决策 2 / ADR-0081）；
     // market 缺省解析（None→unknown）由核心创建函数单点承担，此处仅按同口径推导币种。
     // fund 增强分支不经此推导：字典形态收口为按代码即拉同款（市场 unknown、币种人民币）。
     let currency_code = input.currency_code.unwrap_or_else(|| {

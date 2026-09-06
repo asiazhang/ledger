@@ -17,5 +17,6 @@
   "rememberHint": "When enabled, the master passphrase is stored securely in this device's keychain (reads require Touch ID on macOS) so the next launch unlocks automatically without re-entering it; turning it off returns to manual entry. It applies to this device only — you'll still enter it manually on another device or after restoring a backup elsewhere.",
   "rememberDevFallbackHint": "When enabled, the master passphrase is stored securely in this device's keychain so the next launch unlocks automatically without re-entering it; turning it off returns to manual entry. Development build: the cache has no Touch ID gate and no biometric prompt. It applies to this device only — you'll still enter it manually on another device or after restoring a backup elsewhere.",
   "autoUnlocking": "Trying to unlock automatically…",
+  "autoUnlockTimeout": "Auto unlock timed out. Please enter your master passphrase",
   "rememberFailed": "Couldn't enable auto unlock; keeping manual entry"
 }

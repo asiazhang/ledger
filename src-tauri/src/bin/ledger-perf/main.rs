@@ -83,12 +83,43 @@
 //! - 门禁（CI）：`--max-p95-ms 200` 时全部基准逐项判定 p95 ≤ 阈值，超标即
 //!   非零退出（统计口径与豁免原则见 ADR-0068）；缺省只报告不判定。
 //!
+//! ## bench-import：批量导入写基准（issue #532）
+//!
+//! 对 generate 产出的库量测「批量导入固定行数」的写耗时，检验 ADR-0067
+//! 写路径每行整体重算的 O(N²) 假设（#519 grilling 裁决：粒度合并是否立项
+//! 由数裁决）：
+//!
+//! ```text
+//! cargo run --bin ledger-perf -- bench-import [--db PATH] [--rows <CSV>]
+//!                                             [--dedup <BOOL>] [--warmup N]
+//!                                             [--iterations N]
+//! ```
+//!
+//! - 量测矩阵：行数档（默认 50,100,200，按月导入真实量级：轻量/典型/上限月）
+//!   × 两种分布——「同账户集中」全部落
+//!   首账户（最坏形态）、「多账户均匀」按账户池轮转（最好形态）；报告每
+//!   单元总耗时 min/avg/p95 与单行均摊 p95（n<20 时 p95=max，同 ADR-0068
+//!   统计口径）。
+//! - 每次迭代从 pristine 快照恢复（源库零改动），迭代间数据集规模固定，
+//!   p95 是同一状态的真分位数；导入走批量编排权威 `TransactionBatch::run`
+//!   （与 HTTP 批量导入/IPC 批量创建同一 SQL 路径），基准行为 expense，
+//!   基准日期 = 数据集最大交易日期次日（去重身份不命中既有数据）。
+//! - 正确性底线：每次导入完成后断言余额缓存与实时计算逐账户一致，失败即
+//!   量测作废——基准必须跑在正确路径而非坏缓存路径上。
+//! - 刷新段开销不新增观测代码：余额缓存重算的单条 SQL 耗时经既有耗时日志
+//!   （perf_trace）归因——慢查询（≥100ms）warn 直接可见，全量明细需
+//!   DEBUG 级日志。
+//! - 无门禁判定：写基准阈值未立（本地/CI 磁盘口径差异未测，阈值待
+//!   CI 基线分布稳定后修订 ADR-0068 另立判据）；perf-bench CI 每日以
+//!   最大档 200 行 × 两分布观测、只记录进 Summary；check.sh 不跑本基准。
+//!
 //! # 实现边界
 //!
 //! 全部生成/基准/摘要逻辑封在本 bin 模块内部，产品 lib 不新增模块、
 //! 零新增依赖（ADR-0062：确定性生成而非入库；被否决备选见该 ADR）。
 
 mod bench;
+mod bench_import;
 mod generate;
 mod investments;
 mod plans;
@@ -121,8 +152,10 @@ USAGE:
     ledger-perf <SUBCOMMAND> [OPTIONS]
 
 SUBCOMMANDS:
-    generate    生成性能基准数据集（默认 50 万笔 Transaction 的多域画像 SQLite 库）
-    bench       查询基准——11 项查询 × min/avg/p95 报告（issue #461）
+    generate       生成性能基准数据集（默认 50 万笔 Transaction 的多域画像 SQLite 库）
+    bench          查询基准——11 项查询 × min/avg/p95 报告（issue #461）
+    bench-import   批量导入写基准——固定行数 × 两种分布 × 总耗时/单行均摊 p95
+                   （issue #532，纯观测无门禁）
 
 bench OPTIONS:
     --db <PATH>            目标库文件（默认同 generate 输出路径，须已生成）
@@ -133,6 +166,16 @@ bench OPTIONS:
     --max-p95-ms <MS>      默认门禁阈值（毫秒）：全部基准 p95 ≤ 各自阈值才退出
                            0，任何一项超标即失败（CI 用；缺省不判定；分项例外
                            机制与现行清单见 ADR-0068）
+    -h, --help             打印本说明
+
+bench-import OPTIONS:
+    --db <PATH>            源库文件（默认同 generate 输出路径，须已生成；本命令不
+                           修改源库——内部建 pristine 快照，每次迭代从快照恢复）
+    --rows <CSV>           每档导入行数（默认 50,100,200；逗号分隔、保持次序）
+    --dedup <BOOL>         批量导入去重开关（默认 true，HTTP 批量导入生产默认）
+    --warmup <N>           每档预热次数（默认 1，不计入统计）
+    --iterations <N>       每档计时迭代次数（默认 5；每次迭代从快照恢复，数据集
+                           规模固定）
     -h, --help             打印本说明
 
 generate OPTIONS:
@@ -252,6 +295,24 @@ fn main() -> ExitCode {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(msg) => {
                     eprintln!("bench 失败：{msg}");
+                    ExitCode::FAILURE
+                }
+            },
+            Err(msg) => {
+                eprintln!("参数错误：{msg}\n");
+                print_usage();
+                ExitCode::from(2)
+            }
+        },
+        "bench-import" => match bench_import::parse_bench_import_args(&args[1..]) {
+            Ok(bench_import::ParsedBenchImport::Help) => {
+                print_usage();
+                ExitCode::SUCCESS
+            }
+            Ok(bench_import::ParsedBenchImport::Run(cli)) => match bench_import::run(cli) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(msg) => {
+                    eprintln!("bench-import 失败：{msg}");
                     ExitCode::FAILURE
                 }
             },

@@ -144,7 +144,8 @@ pub enum WriteOp {
     /// 受管备份修剪（IPC `prune_backups`）：清理成功改变备份列表。
     PruneBackups,
     /// 从备份恢复（IPC `restore_backup`）：刻意零信号——恢复成功后前端随即调
-    /// `restart_app` 整体重启，全部状态重新加载，失效信号无消费窗口。
+    /// `restart_app`（原位重引导 + WebView 重载，ADR-0080），全部状态重新加载，
+    /// 失效信号无消费窗口。
     RestoreBackup,
     /// **特例条目，不做命令键**（ADR-0044 决策 5）：自动备份深路径执行点
     /// （连接层写入口提交点的写时顺带检查等，无命令身份）拿不到 `AppHandle`，

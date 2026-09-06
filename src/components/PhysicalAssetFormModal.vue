@@ -148,62 +148,65 @@ defineExpose({ save })
     @update:show="(v: boolean) => emit('update:show', v)"
   >
     <NForm label-placement="left" :show-feedback="false" size="small">
-      <NFormItem :label="t('physicalAssets.form.label.name')">
-        <NInput
-          v-model:value="name"
-          :placeholder="t('physicalAssets.form.placeholder.name')"
-          data-testid="physical-asset-name"
-        />
-      </NFormItem>
-      <!-- 编辑模式无估值字段：估值只能经「更新估值」变更（历史只追加，T2） -->
-      <NFormItem v-if="!editing" :label="t('physicalAssets.form.label.valuation')">
-        <NInput
-          v-model:value="valuationYuan"
-          :placeholder="t('physicalAssets.form.placeholder.valuation')"
-          style="width: 160px"
-          data-testid="physical-asset-valuation"
-        />
-        <AppSelect
-          v-model:value="valuationCurrency"
-          :options="currencyOptions"
-          :placeholder="t('physicalAssets.form.placeholder.currency')"
-          style="width: 120px"
-          data-testid="physical-asset-valuation-currency"
-        />
-      </NFormItem>
-      <NFormItem :label="t('physicalAssets.form.label.purchaseDate')">
-        <AppDatePicker
-          v-model:formatted-value="purchaseDate"
-          type="date"
-          value-format="yyyy-MM-dd"
-          clearable
-          :placeholder="t('physicalAssets.form.placeholder.purchaseDate')"
-          style="width: 160px"
-          data-testid="physical-asset-purchase-date"
-        />
-      </NFormItem>
-      <NFormItem :label="t('physicalAssets.form.label.purchasePrice')">
-        <NInput
-          v-model:value="purchaseYuan"
-          :placeholder="t('physicalAssets.form.placeholder.purchasePrice')"
-          style="width: 160px"
-          data-testid="physical-asset-purchase-price"
-        />
-        <AppSelect
-          v-model:value="purchaseCurrency"
-          :options="currencyOptions"
-          :disabled="!purchaseFilled"
-          :placeholder="t('physicalAssets.form.placeholder.currency')"
-          style="width: 120px"
-          data-testid="physical-asset-purchase-currency"
-        />
-      </NFormItem>
+      <!-- 行距由 NSpace 12 统一提供（对话框排版规范，issue #699）：NFormItem 默认零行距 -->
+      <NSpace vertical :size="12">
+        <NFormItem :label="t('physicalAssets.form.label.name')">
+          <NInput
+            v-model:value="name"
+            :placeholder="t('physicalAssets.form.placeholder.name')"
+            data-testid="physical-asset-name"
+          />
+        </NFormItem>
+        <!-- 编辑模式无估值字段：估值只能经「更新估值」变更（历史只追加，T2） -->
+        <NFormItem v-if="!editing" :label="t('physicalAssets.form.label.valuation')">
+          <NInput
+            v-model:value="valuationYuan"
+            :placeholder="t('physicalAssets.form.placeholder.valuation')"
+            style="width: 160px"
+            data-testid="physical-asset-valuation"
+          />
+          <AppSelect
+            v-model:value="valuationCurrency"
+            :options="currencyOptions"
+            :placeholder="t('physicalAssets.form.placeholder.currency')"
+            style="width: 120px"
+            data-testid="physical-asset-valuation-currency"
+          />
+        </NFormItem>
+        <NFormItem :label="t('physicalAssets.form.label.purchaseDate')">
+          <AppDatePicker
+            v-model:formatted-value="purchaseDate"
+            type="date"
+            value-format="yyyy-MM-dd"
+            clearable
+            :placeholder="t('physicalAssets.form.placeholder.purchaseDate')"
+            style="width: 160px"
+            data-testid="physical-asset-purchase-date"
+          />
+        </NFormItem>
+        <NFormItem :label="t('physicalAssets.form.label.purchasePrice')">
+          <NInput
+            v-model:value="purchaseYuan"
+            :placeholder="t('physicalAssets.form.placeholder.purchasePrice')"
+            style="width: 160px"
+            data-testid="physical-asset-purchase-price"
+          />
+          <AppSelect
+            v-model:value="purchaseCurrency"
+            :options="currencyOptions"
+            :disabled="!purchaseFilled"
+            :placeholder="t('physicalAssets.form.placeholder.currency')"
+            style="width: 120px"
+            data-testid="physical-asset-purchase-currency"
+          />
+        </NFormItem>
 
-      <NSpace justify="end">
-        <NButton @click="close">{{ t('physicalAssets.form.cancel') }}</NButton>
-        <NButton type="primary" data-testid="physical-asset-save" @click="save">
-          {{ t('physicalAssets.form.save') }}
-        </NButton>
+        <NSpace justify="end">
+          <NButton @click="close">{{ t('physicalAssets.form.cancel') }}</NButton>
+          <NButton type="primary" data-testid="physical-asset-save" @click="save">
+            {{ t('physicalAssets.form.save') }}
+          </NButton>
+        </NSpace>
       </NSpace>
     </NForm>
   </AppModal>

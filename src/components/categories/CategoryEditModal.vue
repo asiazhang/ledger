@@ -74,23 +74,26 @@ async function saveEdit() {
     @update:show="(v: boolean) => emit('update:show', v)"
   >
     <NForm label-placement="left" :show-feedback="false" size="small">
-      <NFormItem :label="t('settings.categories.form.name')">
-        <NInput v-model:value="editName" :placeholder="t('settings.categories.form.namePlaceholder')" />
-      </NFormItem>
-      <NFormItem :label="t('settings.categories.form.icon')">
-        <NInput v-model:value="editIcon" :placeholder="t('settings.categories.form.iconPlaceholder')" style="width: 120px" />
-      </NFormItem>
-      <NFormItem :label="t('settings.categories.form.parent')">
-        <PinyinSelect
-          v-model:value="editParentId"
-          :options="editParentOptions"
-          :placeholder="t('settings.categories.form.parentPlaceholder')"
-          clearable
-          style="width: 200px"
-        />
-      </NFormItem>
-      <NSpace justify="end">
-        <NButton type="primary" @click="saveEdit">{{ t('settings.categories.form.save') }}</NButton>
+      <!-- 行距由 NSpace 12 统一提供（对话框排版规范，issue #699）：NFormItem 默认零行距 -->
+      <NSpace vertical :size="12">
+        <NFormItem :label="t('settings.categories.form.name')">
+          <NInput v-model:value="editName" :placeholder="t('settings.categories.form.namePlaceholder')" />
+        </NFormItem>
+        <NFormItem :label="t('settings.categories.form.icon')">
+          <NInput v-model:value="editIcon" :placeholder="t('settings.categories.form.iconPlaceholder')" style="width: 120px" />
+        </NFormItem>
+        <NFormItem :label="t('settings.categories.form.parent')">
+          <PinyinSelect
+            v-model:value="editParentId"
+            :options="editParentOptions"
+            :placeholder="t('settings.categories.form.parentPlaceholder')"
+            clearable
+            style="width: 200px"
+          />
+        </NFormItem>
+        <NSpace justify="end">
+          <NButton type="primary" @click="saveEdit">{{ t('settings.categories.form.save') }}</NButton>
+        </NSpace>
       </NSpace>
     </NForm>
   </AppModal>

@@ -3,7 +3,7 @@
 //! 只断言外部行为：find-or-create 幂等（自然键（symbol, type），命中静默复用并按需
 //! 更新名称/市场、返回既有 id）、201 + 裸 id 响应形状（照账户/分类创建先例）、
 //! 创建行来源标记 = `'manual'`、报价币种缺省按市场推导（沪深→CNY、港→HKD、
-//! 美股三市场→USD、未知→CNY，ADR-0080），显式传参可覆盖）、类型五类全开、错误为统一错误形状中文信息、
+//! 美股三市场→USD、未知→CNY，ADR-0081），显式传参可覆盖）、类型五类全开、错误为统一错误形状中文信息、
 //! 开放 API 契约自描述。泛型断言以非 fund 类型为代表；fund 类型的东财增强
 //! （回填权威名称/净值、查无此码拒绝、不可达降级）见 instrument_create_fund.rs
 //! （issue #304 / ADR-0039）。
@@ -166,7 +166,7 @@ async fn test_create_instrument_all_types_open_without_ui_whitelist() {
 }
 
 // ---------------------------------------------------------------------------
-// 报价币种缺省推导（沪深→CNY、港→HKD、美股三市场→USD、未知→CNY，ADR-0080），显式传参可覆盖
+// 报价币种缺省推导（沪深→CNY、港→HKD、美股三市场→USD、未知→CNY，ADR-0081），显式传参可覆盖
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -189,7 +189,7 @@ async fn test_create_instrument_derives_currency_from_market() {
     assert_eq!(fields_of(&conn, "00700", "stock").0, "HKD", "港→港币");
 }
 
-/// 美股三市场 → USD（issue #692 / ADR-0080）：market nasdaq/nyse/amex 缺省推导
+/// 美股三市场 → USD（issue #692 / ADR-0081）：market nasdaq/nyse/amex 缺省推导
 /// 美元，标的 market 以精确交易所值落库（NASDAQ/NYSE/AMEX 三市场精确归属）。
 #[tokio::test]
 async fn test_create_instrument_derives_usd_for_us_markets() {

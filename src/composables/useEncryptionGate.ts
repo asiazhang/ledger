@@ -26,6 +26,21 @@ const locked = ref<boolean | null>(null)
 /** 启动失败状态（issue #601）：后端启动失败门的前端镜像，失败恢复屏由它驱动。 */
 const bootFailed = ref(false)
 
+/**
+ * 自动解锁有界等待上限（issue #644）：钥匙串读取/生物认证在受限形态或系统
+ * 弹窗滞留时可能长时间不返回，解锁屏对自动解锁的等待必须有边界——到期回退
+ * 手输解锁屏并提示，绝不无限停留在「正在尝试自动解锁」加载态（加载态遮蔽
+ * 了手输与逃生门双入口，是白屏/卡死的表现形态之一）。取值兼顾合法慢路径：
+ * 生物认证门下用户完成 Touch ID 需要时间，30s 内未完成视为受阻。后端调用
+ * 不取消：迟到成功照常进入应用，迟到失败由回退手输路径消化。
+ */
+export const AUTO_UNLOCK_TIMEOUT_MS = 30_000
+
+/** 凭缓存解锁的等待结果（issue #644）：`timeout` 表示有界等待到期——后端调用
+ *  仍在进行，其迟到结局仍有归属（成功照常翻门进入、失败不再上抛），只是
+ *  解锁屏不再替它等待。 */
+export type AutoUnlockWait = { status: 'unlocked'; relocated: boolean } | { status: 'timeout' }
+
 
 /** 本机记住主口令的平台能力与运行形态（issue #574 / #662）：模块级单例，解锁屏
  *  与设置页共享（懒加载只查一次）。`null` = 尚未查询（调用 [`loadRememberSupport`] 填充）。 */
@@ -72,13 +87,46 @@ export function useEncryptionGate() {
     }
   }
 
-  /** 凭本机缓存的主口令解锁（issue #574）：成功即翻转状态，主界面随之挂载；
-   *  返回是否补做了搬迁。口令在后端钥匙串读出，不回流前端。失败（无缓存 / 生物
-   *  认证取消 / 缓存口令已过期）由调用方回退手输。 */
-  async function unlockWithRemembered(): Promise<boolean> {
-    const outcome = await api.unlockWithRememberedPassphrase()
-    locked.value = false
-    return outcome.relocated
+  /** 凭本机缓存的主口令解锁（issue #574）：成功即翻转状态，主界面随之挂载。
+   *  等待有界（issue #644）：超过 [`AUTO_UNLOCK_TIMEOUT_MS`] 返回 `timeout`，
+   *  调用方回退手输；后端调用不取消，迟到结局仍有归属——迟到成功先复核后端
+   *  相位再翻门（等待期间可能已手输解锁/触发重引导，相位可能已变；仅后端
+   *  确已就绪才翻转，不遮蔽真实锁定/失败态），迟到失败静默消化，不炸未处理
+   *  拒绝。口令在后端钥匙串读出，不回流前端。失败（无缓存 / 生物认证取消 /
+   *  缓存口令已过期）在到期前发生则原样上抛，由调用方回退手输。 */
+  async function unlockWithRemembered(): Promise<AutoUnlockWait> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let expired = false
+    const core = api.unlockWithRememberedPassphrase().then(
+      async (outcome): Promise<AutoUnlockWait> => {
+        if (expired) {
+          // 迟到结局守卫（issue #644 审查）：正常路径不付这次探测，仅迟到时复核。
+          const status = await api.getBootStatus()
+          if (status.phase !== 'ready') {
+            return { status: 'unlocked', relocated: outcome.relocated }
+          }
+        }
+        locked.value = false
+        return { status: 'unlocked', relocated: outcome.relocated }
+      },
+    )
+    // 迟到结局的归属：成功照常翻转锁定门（见上）；失败不再上抛——等待已
+    // 到期、回退提示已出，迟到的失败由手输路径与下次启动消化。
+    core.catch(() => {})
+    try {
+      return await Promise.race([
+        core,
+        new Promise<AutoUnlockWait>((resolve) => {
+          timer = setTimeout(() => {
+            expired = true
+            resolve({ status: 'timeout' })
+          }, AUTO_UNLOCK_TIMEOUT_MS)
+        }),
+      ])
+    } finally {
+      // 竞速早胜后清定时器（审查）：不悬挂 30s 计时器。
+      if (timer !== undefined) clearTimeout(timer)
+    }
   }
 
   /** 清空「记住」的钥匙串缓存与偏好（关闭加密 / 忘记口令重置 / 关闭开关共用）。 */
