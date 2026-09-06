@@ -22,6 +22,11 @@
     "name-required": "商户名不能为空",
     "not-active": "商户不存在或已删除: {0}"
   },
+  "insurer": {
+    "already-exists": "保司已存在: {0}",
+    "not-found": "保司不存在: {0}",
+    "name-required": "保司名不能为空"
+  },
   "item": {
     "disposal-date-missing": "已处置物品缺少处置日期: {0}",
     "not-found": "物品不存在: {0}",
@@ -50,7 +55,9 @@
   },
   "sync": {
     "already-running": "已有全量同步正在进行，请先中断或等待完成",
-    "fund-not-found": "查无基金代码 {0}，请核对后重试"
+    "fund-not-found": "查无基金代码 {0}，请核对后重试",
+    "stock-not-found": "查无股票代码 {0}，请核对后重试",
+    "secid-unroutable": "市场 {0} 无法构造行情查询（内部不一致）"
   },
   "data-location": {
     "mkdir-failed": "无法创建目标目录（{0}）：{1}",
@@ -119,6 +126,12 @@
   },
   "fund": {
     "code-invalid": "基金代码须为 6 位数字"
+  },
+  "stock": {
+    "bse-unsupported": "股票代码 {0} 为北交所代码（4/8 开头），暂不支持查询",
+    "market-unsupported": "暂不支持查询 {0} 市场（当前支持沪 sh/深 sz/港 hk）",
+    "market-conflict": "market 参数 {0} 与股票代码 {1} 的市场形态矛盾，请核对后重试",
+    "code-unresolvable": "无法根据股票代码 {0} 的形态推断市场，请显式传入 market 参数"
   },
   "budget": {
     "amount-positive": "预算金额必须为正数",

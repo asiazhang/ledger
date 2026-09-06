@@ -20,4 +20,5 @@ pub mod funds;
 pub mod import;
 pub mod instruments;
 pub mod merchants;
+pub mod stocks;
 pub mod transactions;

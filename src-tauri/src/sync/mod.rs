@@ -4,6 +4,8 @@
 //! - [`http`]：HTTP 请求（含多主机切换、重试、限流冷却、Referer）与响应解析（报价
 //!   / 日 K / 汇率 K），可独立测试；
 //! - [`fund`]：东财基金详情访问（按代码即拉，issue #301 / ADR-0038）；
+//! - [`stock`]：东财股票单点行情访问——按（市场，代码）实时查询（issue #693 /
+//!   ADR-0081），类型特征探测与精度换算单点隔离；
 //! - [`fund_nav`]：东财历史净值通道——lsjz 访问、报文解析、水位语义与基金分区
 //!   编排（issue #303 / ADR-0038 决策 6）；
 //! - [`persist`]：`instruments` 标的字典应用 + `fx_rate_history` 周采样 upsert
@@ -35,6 +37,7 @@ mod orchestrate;
 mod persist;
 mod progress;
 mod state;
+mod stock;
 
 #[cfg(test)]
 mod tests;
@@ -44,6 +47,7 @@ pub use incremental::do_incremental_sync;
 pub use model::{CancelSyncResult, SyncHoldingPricesResult, SyncProgress};
 pub use orchestrate::{GlobalConn, SyncOutcome, do_sync};
 pub use state::SyncState;
+pub use stock::fetch_stock_quote_production;
 
 /// 失败终态进度推送：壳层 `sync_instruments` 失败路径经此收敛到同一事件投递单点。
 pub(crate) use progress::emit_error_progress;

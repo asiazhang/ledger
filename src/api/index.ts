@@ -57,6 +57,9 @@ import type {
   MerchantInput,
   MerchantTransactionCount,
   MerchantUpdateInput,
+  Insurer,
+  InsurerInput,
+  InsurerUpdateInput,
   MonthlySummary,
   PhysicalAsset,
   PhysicalAssetDisposeInput,
@@ -142,6 +145,15 @@ export const api = {
   /** 商户关联交易计数（issue #445，毛笔数口径）：含软删商户、无引用计 0，实时推导不落库 */
   listMerchantTransactionCounts: () =>
     invoke<MerchantTransactionCount[]>('list_merchant_transaction_counts'),
+
+  // 保司（issue #712 / ADR-0082）：保险域自有字典命令面，随 ledger:changed 失效信号重拉；
+  // includeDeleted=true 返回含已删全量（保司管理视图「显示已删」切换用，issue #714 消费）
+  listInsurers: (opts?: { includeDeleted?: boolean }) =>
+    invoke<Insurer[]>('list_insurers', { includeDeleted: opts?.includeDeleted ?? false }),
+  createInsurer: (input: InsurerInput) => invoke<string>('create_insurer', { input }),
+  updateInsurer: (id: string, input: InsurerUpdateInput) =>
+    invoke<void>('update_insurer', { id, input }),
+  deleteInsurer: (id: string) => invoke<void>('delete_insurer', { id }),
 
   // 交易
   listTransactions: (filter?: TransactionListFilter | null) =>

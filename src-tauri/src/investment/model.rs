@@ -1,11 +1,11 @@
 //! 投资域集中模型（#422 随域归位）：金融工具、持仓、行情价、已实现盈亏、
-//! 标的列表分页、基金行情 DTO 与财务自由度总览。
+//! 标的列表分页、基金/股票行情 DTO 与财务自由度总览。
 //!
 //! 自全局模型目录迁入本域（#417 归属原则）；财务自由度并入为既有裁决
 //! （自由度归投资域，ADR-0048）。基金行情 DTO（[`FundDetail`] / [`FundNav`]）
-//! 虽有一个录入入口在行情同步壳，但被投资域引擎自身消费，域归属投资（#422
-//! Q11 事实修正）。全部类型经 `investment` 域路径逐类型再导出，消费方经
-//! 域路径显式 import，禁止 glob。
+//! 与股票行情 DTO（[`StockQuote`]，issue #693）虽有录入入口在行情同步壳，
+//! 但被投资域引擎自身消费，域归属投资（#422 Q11 事实修正）。全部类型经
+//! `investment` 域路径逐类型再导出，消费方经域路径显式 import，禁止 glob。
 
 use std::fmt;
 use std::str::FromStr;
@@ -512,6 +512,22 @@ pub struct FundDetail {
 pub struct FundNav {
     pub nav: f64,
     pub nav_date: String,
+}
+
+/// 按（市场，代码）拉取到的股票行情（issue #693 / ADR-0081 决策 1）：与
+/// [`FundDetail`] 同为「按代码实时查询」领域接缝的返回形态——基金走场外净值
+/// 通道、股票走行情通道，两翼同一模式。name 为东财权威名称；最新价已在访问
+/// 层按市场缩放换算为万分之一元刻度（停牌/无有效报价为 None）；price_date 为
+/// 最新价的北京日历日；kind_hint 为东财类型特征字段的类型提示（场内基金类 →
+/// Etf，其余 → Stock，探测单点在行情同步域）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct StockQuote {
+    pub code: String,
+    pub name: String,
+    pub market: String,
+    pub price_cents: Option<i64>,
+    pub price_date: Option<String>,
+    pub kind_hint: InstrumentType,
 }
 
 // ---------------------------------------------------------------------------

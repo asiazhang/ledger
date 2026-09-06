@@ -13,7 +13,11 @@ use crate::error::{AppError, Result};
 const API_PATH: &str = "/api/qt/clist/get";
 // 批量报价接口路径：按 secid 一次携带多只跨市场代码查询最新价（增量同步用，issue #103）。
 // 响应结构与 clist 一致（data.total / data.diff，条目 f12/f14/f2），复用同一套解析。
-const ULIST_PATH: &str = "/api/qt/ulist.np/get";
+pub(super) const ULIST_PATH: &str = "/api/qt/ulist.np/get";
+// 单点行情接口路径：按单个 secid 返回个股实时详情（股票按代码查询用，issue #693）。
+// 响应 data 为单个对象（f43 价格 / f57 代码 / f58 名称 / f59 精度 / f62 类型特征 /
+// f86 时间戳），与 clist 的 diff 包装不同；stock 与 ulist 同主机池。
+pub(super) const STOCK_GET_PATH: &str = "/api/qt/stock/get";
 // 日 K 线接口路径：按 secid 一次返回一段日线（近两年回填用，issue #137 / ADR-0019）。
 // 注意历史 K 线仅在 push2his 主机上提供服务（push2delay 只响应当日报价、
 // 返回空 klines），因此 K 线走独立主机池，但复用同一套轮换/限流/重试泛型层。
@@ -37,7 +41,7 @@ const KLINE_END: &str = "20500101";
 pub(super) const ULIST_BATCH_SIZE: usize = 50;
 // 优先使用延迟行情主机池：push2 实时主机曾被东财对该出口 IP 触发风控（连接重置），
 // push2delay 返回相同数据结构且对批量访问更稳定；延迟行情对全量标的同步足够。
-const API_HOSTS: &[&str] = &[
+pub(super) const API_HOSTS: &[&str] = &[
     "https://push2delay.eastmoney.com",
     "https://12.push2delay.eastmoney.com",
     "https://21.push2delay.eastmoney.com",

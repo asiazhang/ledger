@@ -40,6 +40,8 @@ mod financial_freedom_steps;
 mod fund_trade_steps;
 #[path = "e2e/instruments_steps.rs"]
 mod instruments_steps;
+#[path = "e2e/insurers_steps.rs"]
+mod insurers_steps;
 #[path = "e2e/investment_migration_steps.rs"]
 mod investment_migration_steps;
 #[path = "e2e/investment_trend_steps.rs"]
