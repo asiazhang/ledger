@@ -198,8 +198,13 @@ async function confirmReset() {
           >
             <NText depth="3">{{ t('unlock.remember') }}</NText>
           </NCheckbox>
+          <!-- 提示按运行形态区分（issue #687）：dev 回退形态不宣称 Touch ID。 -->
           <NText v-if="rememberSupport?.supported" depth="3" class="unlock-remember-hint">
-            {{ t('unlock.rememberHint') }}
+            {{
+              rememberSupport?.mode === 'dev-fallback'
+                ? t('unlock.rememberDevFallbackHint')
+                : t('unlock.rememberHint')
+            }}
           </NText>
           <!-- 逃生门双入口（issue #573 / #603）：忘记口令重置与从备份文件恢复并列常驻 -->
           <NSpace :size="4" justify="center">

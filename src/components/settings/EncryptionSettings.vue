@@ -271,7 +271,15 @@ async function confirmDisable() {
             >
               {{ t('settings.data.encryption.rememberDevFallbackHint') }}
             </NText>
-            <NText depth="3" class="remember-hint">{{ t('settings.data.encryption.rememberToggleHint') }}</NText>
+            <!-- 提示按运行形态区分（issue #687）：dev 回退形态不宣称 Touch ID，
+                 免与上方 warning 提示同屏矛盾；发布形态保留生物门表述。 -->
+            <NText depth="3" class="remember-hint">
+              {{
+                rememberSupport?.mode === 'dev-fallback'
+                  ? t('settings.data.encryption.rememberToggleDevFallbackHint')
+                  : t('settings.data.encryption.rememberToggleHint')
+              }}
+            </NText>
           </NSpace>
 
           <!-- 低频高危流程折叠区（issue #654）：默认收起，减少误触面；展开后流程与
@@ -423,7 +431,12 @@ async function confirmDisable() {
                 <template #trigger>
                   <NText depth="3">{{ t('settings.data.encryption.rememberCheckbox') }}</NText>
                 </template>
-                {{ t('settings.data.encryption.rememberCheckboxHint') }}
+                <!-- 同 issue #687：tooltip 按运行形态区分，dev 回退不宣称 Touch ID。 -->
+                {{
+                  rememberSupport?.mode === 'dev-fallback'
+                    ? t('settings.data.encryption.rememberCheckboxDevFallbackHint')
+                    : t('settings.data.encryption.rememberCheckboxHint')
+                }}
               </NTooltip>
             </NCheckbox>
             <NSpace>
