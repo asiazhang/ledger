@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "lint": "oxlint --deny-warnings",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -37,6 +38,7 @@
     "@vitejs/plugin-vue": "^6.0.7",
     "@vue/test-utils": "^2.4.11",
     "jsdom": "^30.0.1",
+    "oxlint": "^1.81.0",
     "typescript": "^6.0.3",
     "vite": "^8.1.3",
     "vitest": "^4.1.10",

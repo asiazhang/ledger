@@ -1,9 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount, DOMWrapper } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import PolicyFormModal from '@/components/PolicyFormModal.vue'
-import { makeAccount, makePolicy } from './factories'
+import { makeAccount } from './factories'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Account, Currency, Insurer, Policy } from '@/types'
 
@@ -90,7 +90,7 @@ beforeEach(async () => {
 
 describe('PolicyFormModal 缴费协议区（issue #362 / ADR-0051 决策 2；不挂商户 #713 / ADR-0082）', () => {
   it('协议区可折叠可选：开关默认关，字段组隐藏；开启后可见', async () => {
-    const wrapper = await openCreateModal()
+    const _wrapper = await openCreateModal()
     const fields = bodyQuery('[data-testid="policy-agreement-fields"]')!
     expect(fields.style.display).toBe('none')
     const toggle = new DOMWrapper(bodyQuery('[data-testid="policy-agreement-toggle"]')!)

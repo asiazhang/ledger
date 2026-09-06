@@ -21,8 +21,9 @@ jobs:
   # （编译 76s + 固定 69s + clippy 19s + 测试执行 48s）。据此拆分为四个并行 job：
   # 关键路径 = max(后端测试 ~180s, 前端测试分片 ~116s)，目标总时长 ~3 分钟。
 
-  # 前端构建与一致性检查：vue-tsc 类型检查（前端 + 守门脚本与测试两个工程）+ vite build
-  # + 守门脚本（Bun 运行时，ADR-0083），~25s。测试拆至 frontend-test 分片 job，二者并行。
+  # 前端构建与一致性检查：vue-tsc 类型检查（前端 + 守门脚本与测试两个工程）+ oxlint lint
+  # （--deny-warnings，与本地 check.sh 同门槛）+ vite build + 守门脚本（Bun 运行时，ADR-0083），~25s。
+  # 测试拆至 frontend-test 分片 job，二者并行。
   frontend:
     name: 前端检查
     if: "!startsWith(github.ref, 'refs/tags/')"
@@ -45,6 +46,9 @@ jobs:
 
       - name: 守门脚本与测试类型检查
         run: pnpm exec vue-tsc -p tsconfig.scripts.json --noEmit
+
+      - name: 前端 lint
+        run: pnpm exec oxlint --deny-warnings
 
       - name: 命令注册一致性检查
         run: bun scripts/check-commands.ts

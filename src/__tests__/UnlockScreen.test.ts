@@ -275,7 +275,7 @@ describe('UnlockScreen.vue 本机记住主口令（issue #574）', () => {
     useAppStore().setRememberPassphrase(true)
     const { probe, locked } = useEncryptionGate()
     const probePromise = probe()
-    const wrapper = mount(UnlockScreen)
+    const _wrapper = mount(UnlockScreen)
     await probePromise
     await flushPromises()
 
@@ -384,7 +384,7 @@ describe('UnlockScreen.vue 本机记住主口令（issue #574）', () => {
       useAppStore().setRememberPassphrase(true)
       const { probe, locked } = useEncryptionGate()
       const probePromise = probe()
-      const wrapper = mount(UnlockScreen)
+      const _wrapper = mount(UnlockScreen)
       await probePromise
       await flushPromises()
 
@@ -448,7 +448,7 @@ describe('UnlockScreen.vue 本机记住主口令（issue #574）', () => {
       useAppStore().setRememberPassphrase(true)
       const { probe } = useEncryptionGate()
       const probePromise = probe()
-      const wrapper = mount(UnlockScreen)
+      const _wrapper = mount(UnlockScreen)
       await probePromise
       await flushPromises()
 

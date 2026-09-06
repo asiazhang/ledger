@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke } from '../helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { NModal, NSelect, NPopconfirm } from 'naive-ui'
@@ -6,7 +6,6 @@ import { setActivePinia, createPinia } from 'pinia'
 import { useReferenceStore } from '@/stores/reference'
 import TransfersPane from '@/components/scheduled/TransfersPane.vue'
 import { stubReferenceInvoke } from '../helpers/reference-stubs'
-import AppSelect from '@/components/AppSelect.vue'
 import type {
   Account,
   Currency,

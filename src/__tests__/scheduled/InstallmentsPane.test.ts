@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke } from '../helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import {
@@ -189,8 +189,8 @@ function baseInvoke() {
         { id, note: input.note ?? null },
         {
           total_amount_cents:
-            (args?.input as { total_amount_cents: number }).total_amount_cents ?? 0,
-          total_occurrences: (args?.input as { total_occurrences: number }).total_occurrences ?? 1,
+            (args!.input as { total_amount_cents: number }).total_amount_cents ?? 0,
+          total_occurrences: (args!.input as { total_occurrences: number }).total_occurrences ?? 1,
         },
         input.merchant_id,
       )

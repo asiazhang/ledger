@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { mockInvoke } from './helpers/invoke-mock'
 import { defineComponent, watch } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
@@ -245,7 +245,7 @@ describe('useTransactionFilter resetFilters（清除筛选）', () => {
 
 describe('useTransactionFilter refresh（外部数据变化回填）', () => {
   it('翻回第一页重拉，不动筛选', async () => {
-    const { tf, requests } = mountHarness()
+    const { tf } = mountHarness()
     await flushPromises()
     tf.setFilter({ involvingAccountId: 'acc-1' })
     tf.page.value = 3
@@ -269,7 +269,7 @@ describe('useTransactionFilter refresh（外部数据变化回填）', () => {
 
 describe('useTransactionFilter 分页所有权', () => {
   it('页大小切换经 refresh 出口：归零 + 以新页大小重拉，过滤条件保持', async () => {
-    const { tf, requests } = mountHarness()
+    const { tf } = mountHarness()
     await flushPromises()
     tf.setFilter({ involvingAccountId: 'acc-1' })
     await flushPromises()
@@ -370,7 +370,7 @@ describe('useTransactionFilter URL 参数表·解析与校验（参考数据已�
   })
 
   it('商户直达：在用与软删商户均有效（历史交易口径，issue #191）', async () => {
-    const { tf, requests } = mountHarness()
+    const { tf } = mountHarness()
     await flushPromises()
     tf.syncUrlQuery({ merchant: 'mch-2' }) // mch-2 为软删商户
     await flushPromises()
@@ -395,7 +395,7 @@ describe('useTransactionFilter URL 参数表·解析与校验（参考数据已�
   })
 
   it('无效参数回退：校验失败维度清空；两维度均无有效参数时复位日期/类型（#96 决策 3）', async () => {
-    const { tf, requests } = mountHarness()
+    const { tf } = mountHarness()
     await flushPromises()
     tf.setFilter({ dateFrom: '2026-01-01', kind: 'income' })
     await flushPromises()
@@ -408,7 +408,7 @@ describe('useTransactionFilter URL 参数表·解析与校验（参考数据已�
   })
 
   it('无效参数回退·merchant 维度同规则：字典中不存在的商户同样回退并复位', async () => {
-    const { tf, requests } = mountHarness()
+    const { tf } = mountHarness()
     await flushPromises()
     tf.setFilter({ dateFrom: '2026-01-01', kind: 'income' })
     await flushPromises()
@@ -462,7 +462,7 @@ describe('useTransactionFilter URL 参数表·解析与校验（参考数据已�
   })
 
   it('导航换参：account 参数 a → b 按新参数重新消费', async () => {
-    const { tf, requests } = mountHarness()
+    const { tf } = mountHarness()
     await flushPromises()
     tf.syncUrlQuery({ account: 'acc-1' })
     await flushPromises()
@@ -475,7 +475,7 @@ describe('useTransactionFilter URL 参数表·解析与校验（参考数据已�
 
 describe('useTransactionFilter URL 参数表·复位规则（#96 决策 3）', () => {
   it('导航清除参数：对应维度同步清空 + 日期/类型复位 + 翻页归零', async () => {
-    const { tf, requests } = mountHarness()
+    const { tf } = mountHarness()
     await flushPromises()
     tf.syncUrlQuery({ account: 'acc-1' })
     await flushPromises()
@@ -498,7 +498,7 @@ describe('useTransactionFilter URL 参数表·复位规则（#96 决策 3）', (
   })
 
   it('另一维度参数在场：被清除维度清空，日期/类型不越界复位', async () => {
-    const { tf, requests } = mountHarness()
+    const { tf } = mountHarness()
     await flushPromises()
     tf.syncUrlQuery({ account: 'acc-1', merchant: 'mch-1' })
     await flushPromises()
@@ -521,7 +521,7 @@ describe('useTransactionFilter URL 参数表·复位规则（#96 决策 3）', (
   })
 
   it('导航清除 merchant 参数：对应维度同步清空 + 日期/类型复位 + 翻页归零', async () => {
-    const { tf, requests } = mountHarness()
+    const { tf } = mountHarness()
     await flushPromises()
     tf.syncUrlQuery({ merchant: 'mch-1' })
     await flushPromises()
@@ -570,7 +570,7 @@ describe('useTransactionFilter URL 参数表·分类维度（issue #377）', () 
   })
 
   it('保留值 none：仅无分类（哨兵态，请求携带 uncategorized_only: true）', async () => {
-    const { tf, requests } = mountHarness()
+    const { tf } = mountHarness()
     await flushPromises()
     tf.syncUrlQuery({ category: UNCATEGORIZED_ONLY })
     await flushPromises()
@@ -579,7 +579,7 @@ describe('useTransactionFilter URL 参数表·分类维度（issue #377）', () 
   })
 
   it('软删分类 id 有效（历史交易口径）：校验应用不回退', async () => {
-    const { tf, requests } = mountHarness()
+    const { tf } = mountHarness()
     await flushPromises()
     tf.syncUrlQuery({ category: 'cat-2' }) // cat-2 为软删分类
     await flushPromises()
@@ -588,7 +588,7 @@ describe('useTransactionFilter URL 参数表·分类维度（issue #377）', () 
   })
 
   it('未知分类 id：回退不过滤；另一维度（账户）有效在场时不误清其他维度、不越界复位', async () => {
-    const { tf, requests } = mountHarness()
+    const { tf } = mountHarness()
     await flushPromises()
     tf.syncUrlQuery({ account: 'acc-1' })
     await flushPromises()
@@ -626,7 +626,7 @@ describe('useTransactionFilter URL 参数表·分类维度（issue #377）', () 
   })
 
   it('导航清除 category 参数：对应维度同步清空 + 日期/类型复位 + 翻页归零', async () => {
-    const { tf, requests } = mountHarness()
+    const { tf } = mountHarness()
     await flushPromises()
     tf.syncUrlQuery({ category: 'cat-1' })
     await flushPromises()
@@ -657,7 +657,7 @@ describe('useTransactionFilter URL 参数表·分类维度（issue #377）', () 
   })
 
   it('导航换参：category 参数 id → 保留值，按新参数重新消费', async () => {
-    const { tf, requests } = mountHarness()
+    const { tf } = mountHarness()
     await flushPromises()
     tf.syncUrlQuery({ category: 'cat-1' })
     await flushPromises()
