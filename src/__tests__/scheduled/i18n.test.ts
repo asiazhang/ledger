@@ -5,6 +5,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import ScheduledView from '@/views/ScheduledView.vue'
+import { stubReferenceInvoke } from '../helpers/reference-stubs'
 import { routes } from '@/router'
 import { applyLocale } from '@/i18n'
 import { occurrenceStatusLabel, scheduledStatusLabel } from '@/utils/scheduled'
@@ -41,16 +42,15 @@ const emptySpendOverview: SubscriptionSpendOverview = {
 }
 
 function baseInvoke() {
-  mockInvoke.mockImplementation(((cmd: string) => {
-    if (cmd === 'list_currencies') return Promise.resolve([])
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
-    if (cmd === 'subscription_spend_overview') return Promise.resolve(emptySpendOverview)
-    if (cmd === 'list_scheduled_transactions') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-  }) as typeof invoke)
+  stubReferenceInvoke({
+    list_currencies: [],
+    list_accounts: [],
+    list_categories: [],
+    list_insurers: [],
+    list_merchants: [],
+    subscription_spend_overview: emptySpendOverview,
+    list_scheduled_transactions: [],
+  })
 }
 
 async function mountView() {

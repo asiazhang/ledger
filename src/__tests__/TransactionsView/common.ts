@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { setActivePinia, createPinia } from 'pinia'
 import { NDataTable, NDropdown, NDialogProvider } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
+import { stubReferenceInvoke } from '../helpers/reference-stubs'
 import TransactionsView from '@/views/TransactionsView.vue'
 import type { Account, Currency, Merchant, ReportDateRange, Transaction } from '@/types'
 
@@ -139,21 +140,22 @@ beforeEach(async () => {
   txnDb = Array.from({ length: 45 }, (_, i) =>
     makeTxn(i + 1, i % 2 === 0 ? 'acc-2' : 'acc-1'),
   )
-  mockInvoke.mockImplementation((cmd: string, args?: { filter?: Record<string, unknown>; id?: string }) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
-    if (cmd === 'list_policies') return Promise.resolve([])
-    if (cmd === 'report_date_range') {
+  stubReferenceInvoke({
+    // 参考数据：只覆写本视图实际行使的命令；币种走规范夹具（同 mockCurrencies）。
+    // 可变库（setAccountDb/setMerchantDb 改写）用函数型覆写，派发时取最新值。
+    list_accounts: () => mockAccounts,
+    list_categories: [],
+    list_merchants: () => merchantDb,
+    list_policies: [],
+    list_items: [],
+    report_date_range: () => {
       // 数据期间边界（issue #391）：默认与后端口径一致（MIN/MAX 日期，随 txnDb 现算）
       if (reportDateRangeOverride) return reportDateRangeOverride
       const dates = txnDb.map((t) => t.date).sort()
       return Promise.resolve({ min_date: dates[0] ?? null, max_date: dates[dates.length - 1] ?? null })
-    }
-    if (cmd === 'list_transactions') {
-      const filter = (args?.filter ?? {}) as Record<string, unknown>
+    },
+    list_transactions: (args?: { filter?: Record<string, unknown> }) => {
+      const filter = args?.filter ?? {}
       const scoped = applyListFilter(filter)
       const pageSize = (filter.page_size as number) ?? scoped.length
       const page = (filter.page as number) ?? 1
@@ -162,15 +164,11 @@ beforeEach(async () => {
         items: scoped.slice(start, start + pageSize),
         total: scoped.length,
       })
-    }
-    if (cmd === 'delete_transaction') {
+    },
+    delete_transaction: (args?: { id?: string }) => {
       txnDb = txnDb.filter((t) => t.id !== args?.id)
       return Promise.resolve()
-    }
-    // 物品 store（issue #119 右键「加入物品」置灰态）默认空列表
-    if (cmd === 'list_items') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    },
   })
   merchantDb = [
     {

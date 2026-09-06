@@ -1,4 +1,5 @@
 import { mockInvoke, merchantDb, mockCurrencies, mockAccounts, mountView, mountViewSync, listCalls, lastListFilter, tablePagination, bodyRows, openMenuOnRow, selectRowMenu, clickDialogButton } from './common'
+import { stubReferenceInvoke } from '../helpers/reference-stubs'
 import { describe, it, expect } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { NDataTable } from 'naive-ui'
@@ -70,18 +71,17 @@ describe('TransactionsView 服务端分页', () => {
 
   it('查询期间 loading 状态可见', async () => {
     let resolveList!: (v: unknown) => void
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-      if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
-      if (cmd === 'list_transactions') {
-        return new Promise((resolve) => {
+    stubReferenceInvoke({
+      list_currencies: mockCurrencies,
+      list_accounts: mockAccounts,
+      list_categories: [],
+      list_insurers: [],
+      list_merchants: () => merchantDb,
+      // 领域命令：list_transactions 挂起不兑（loading 断言）
+      list_transactions: () =>
+        new Promise((resolve) => {
           resolveList = resolve
-        })
-      }
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+        }),
     })
     const wrapper = mountViewSync()
     await flushPromises()

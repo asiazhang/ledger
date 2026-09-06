@@ -6,6 +6,7 @@ import { NButton, NDatePicker } from 'naive-ui'
 import { resetOverlays, hasOpenOverlay, openOverlayNames } from '@/composables/overlayRegistry'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import QuickTimeRange from '@/components/QuickTimeRange.vue'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import { DATED_TIME_PERIOD_PRESETS, type NullableDateRange } from '@/utils/time-period'
 
 const mockInvoke = vi.mocked(invoke)
@@ -36,10 +37,9 @@ describe('QuickTimeRange 共享受控组件（issue #410）', () => {
     vi.setSystemTime(new Date(2026, 0, 15, 12, 0, 0))
     resetOverlays()
     mockInvoke.mockReset()
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'report_date_range') return Promise.resolve(BOUNDARY)
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      report_date_range: BOUNDARY,
+      list_insurers: [],
     })
   })
 
@@ -172,10 +172,9 @@ describe('QuickTimeRange 共享受控组件（issue #410）', () => {
     const failing: Promise<{ min_date: string | null; max_date: string | null }> =
       Promise.reject(new Error('boom'))
     failing.catch(() => {}) // 防 unhandled rejection 噪音
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'report_date_range') return failing
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      report_date_range: () => failing,
+      list_insurers: [],
     })
     const wrapper = mountRange({ from: '2026-01-01', to: '2026-01-31' })
     await flushPromises()
@@ -266,21 +265,17 @@ describe('QuickTimeRange 共享受控组件（issue #410）', () => {
       return vi.fn()
     })
     // 单月数据：月档边界 [2026-01, 2026-01]，< 置灰
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'report_date_range')
-        return Promise.resolve({ min_date: '2026-01-05', max_date: '2026-01-05' })
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      report_date_range: { min_date: '2026-01-05', max_date: '2026-01-05' },
+      list_insurers: [],
     })
     const wrapper = mountRange({ from: '2026-01-01', to: '2026-01-31' })
     await flushPromises()
     expect(stepButton(wrapper, 'prev').props('disabled')).toBe(true)
     // 数据外扩历史（AI 导入）→ ledger:changed 重拉 → < 随新边界（2025-08）解锁
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'report_date_range')
-        return Promise.resolve({ min_date: '2025-08-01', max_date: '2026-01-05' })
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      report_date_range: { min_date: '2025-08-01', max_date: '2026-01-05' },
+      list_insurers: [],
     })
     handlers.forEach((h) => h({ event: 'ledger:changed', payload: null }))
     await flushPromises()

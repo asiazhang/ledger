@@ -9,7 +9,7 @@ import { useReferenceStore } from '@/stores/reference'
 import { applyLocale } from '@/i18n'
 import InvestmentsView from '@/views/InvestmentsView.vue'
 import InvestmentForm from '@/components/InvestmentForm.vue'
-import type { Currency } from '@/types'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 
 // 走势图用共享桩组件替代（同 InvestmentsView.test.ts）
 vi.mock('vue-chartjs', async () => {
@@ -20,10 +20,6 @@ vi.mock('vue-chartjs', async () => {
 const mockInvoke = vi.mocked(invoke)
 const mockListen = vi.mocked(listen)
 
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-]
-
 // 英文渲染冒烟（issue #350）：切 en-US 后投资域文案走 en 资源；
 // 用例末尾还原 zh-CN，避免污染同进程其他测试（i18n 模块级单例）。
 beforeEach(async () => {
@@ -31,27 +27,21 @@ beforeEach(async () => {
   mockInvoke.mockReset()
   mockListen.mockReset()
   mockListen.mockResolvedValue(() => {})
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_instruments')
-      return Promise.resolve({ items: [], total: 0 })
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
-    if (cmd === 'list_holdings') return Promise.resolve([])
-    if (cmd === 'portfolio_value_trend')
-      return Promise.resolve({ currency_code: 'CNY', points: [] })
-    if (cmd === 'realized_pnl_summary')
-      return Promise.resolve({
-        total_realized_pnl_cents: 0,
-        by_year: [],
-        by_account: [],
-        by_instrument: [],
-        details: [],
-      })
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  stubReferenceInvoke({
+    list_accounts: [],
+    list_categories: [],
+    list_insurers: [],
+    list_merchants: [],
+    list_instruments: { items: [], total: 0 },
+    list_holdings: [],
+    portfolio_value_trend: { currency_code: 'CNY', points: [] },
+    realized_pnl_summary: {
+      total_realized_pnl_cents: 0,
+      by_year: [],
+      by_account: [],
+      by_instrument: [],
+      details: [],
+    },
   })
   localStorage.clear()
   const store = useReferenceStore()

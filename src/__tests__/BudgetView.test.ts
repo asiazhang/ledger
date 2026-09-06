@@ -6,7 +6,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import { todayStr } from '@/utils/date'
 import BudgetView from '@/views/BudgetView.vue'
-import type { BudgetProgress, Category, Currency } from '@/types'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
+import type { BudgetProgress, Category } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -29,10 +30,6 @@ vi.mock('naive-ui', async (importOriginal) => {
   const actual = await importOriginal<typeof import('naive-ui')>()
   return { ...actual, useMessage: () => messageApi }
 })
-
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-]
 
 const mockCategories: Category[] = [
   {
@@ -107,20 +104,20 @@ const orphanProgress: BudgetProgress = {
   over_budget: false,
 }
 
-/** 基础 invoke mock：参考数据 + 空预算进度。 */
-function baseInvokeImpl(cmd: string, progress: BudgetProgress[] = []): unknown {
-  if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-  if (cmd === 'list_accounts') return Promise.resolve([])
-  if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-  if (cmd === 'list_insurers') return Promise.resolve([])
-  if (cmd === 'list_merchants') return Promise.resolve([])
-  if (cmd === 'budget_progress') return Promise.resolve(progress)
-  return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+/** 基础 invoke 桩：参考数据 + 空预算进度（返回派发函数供用例内重桩委托）。 */
+function baseStub(progress: BudgetProgress[] = []) {
+  return stubReferenceInvoke({
+    list_accounts: [],
+    list_categories: mockCategories,
+    list_insurers: [],
+    list_merchants: [],
+    budget_progress: progress,
+  })
 }
 
 /** 挂载前注入进度行（编辑弹窗用例用）。 */
 function withProgress(progress: BudgetProgress[]) {
-  mockInvoke.mockImplementation((cmd: string) => baseInvokeImpl(cmd, progress))
+  baseStub(progress)
 }
 
 /** 挂载视图（参考数据经 store 注入），flush 后就绪。
@@ -170,7 +167,7 @@ beforeEach(async () => {
   messageApi.success.mockReset()
   messageApi.warning.mockReset()
   messageApi.error.mockReset()
-  mockInvoke.mockImplementation((cmd: string) => baseInvokeImpl(cmd))
+  baseStub()
   const store = useReferenceStore()
   await store.refresh()
 })
@@ -220,9 +217,10 @@ describe('BudgetView 预算表单（issue #183）', () => {
   })
 
   it('提交成功清空表单并提示；start_date 仅作记录字段传创建当日（issue #184）', async () => {
+    const base = baseStub()
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'create_budget') return Promise.resolve('budget-1')
-      return baseInvokeImpl(cmd)
+      return base(cmd)
     })
     const wrapper = await mountView()
     pickCategory(wrapper, 'cat-1')
@@ -239,11 +237,12 @@ describe('BudgetView 预算表单（issue #183）', () => {
   })
 
   it('查重失败把后端中文错误清晰呈现，提示引导编辑已有预算（issue #184）', async () => {
+    const base = baseStub()
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'create_budget') {
         return Promise.reject({ kind: 'Invalid', message: '该分类已存在按月预算，可编辑该预算的金额' })
       }
-      return baseInvokeImpl(cmd)
+      return base(cmd)
     })
     const wrapper = await mountView()
     pickCategory(wrapper, 'cat-1')
@@ -303,9 +302,10 @@ describe('BudgetView 编辑预算金额（issue #184）', () => {
   })
 
   it('弹窗回填当前金额，保存调用 update_budget 并刷新列表', async () => {
+    const base = baseStub([mockProgress])
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'update_budget') return Promise.resolve(null)
-      return baseInvokeImpl(cmd, [mockProgress])
+      return base(cmd)
     })
     const wrapper = await mountView()
     await openEditModal(wrapper)
@@ -337,11 +337,12 @@ describe('BudgetView 编辑预算金额（issue #184）', () => {
   })
 
   it('保存失败把后端错误清晰呈现', async () => {
+    const base = baseStub([mockProgress])
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'update_budget') {
         return Promise.reject({ kind: 'NotFound', message: '预算不存在: budget-1' })
       }
-      return baseInvokeImpl(cmd, [mockProgress])
+      return base(cmd)
     })
     const wrapper = await mountView()
     await openEditModal(wrapper)

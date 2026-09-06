@@ -3,6 +3,7 @@ import { DOMWrapper, mount, flushPromises, enableAutoUnmount } from '@vue/test-u
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import MerchantEditModal from '@/components/merchants/MerchantEditModal.vue'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Merchant } from '@/types'
 
 const { messageMock } = vi.hoisted(() => ({
@@ -71,10 +72,9 @@ describe('MerchantEditModal.vue（issue #189）', () => {
   })
 
   it('改名保存：调用 update_merchant 并关窗', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'update_merchant') return Promise.resolve(undefined)
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      list_insurers: [],
+      update_merchant: () => Promise.resolve(undefined),
     })
     const wrapper = mount(MerchantEditModal, {
       props: { show: true, merchant: mockMerchant },
@@ -108,12 +108,10 @@ describe('MerchantEditModal.vue（issue #189）', () => {
   })
 
   it('改名撞名：显示可理解的错误提示，弹窗不关', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'update_merchant') {
-        return Promise.reject(new Error('参数错误: 商户已存在: 京东商城'))
-      }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      list_insurers: [],
+      update_merchant: () =>
+        Promise.reject(new Error('参数错误: 商户已存在: 京东商城')),
     })
     const wrapper = mount(MerchantEditModal, {
       props: { show: true, merchant: mockMerchant },

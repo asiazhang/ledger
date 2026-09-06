@@ -4,6 +4,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import PolicyAgreementSection from '@/components/PolicyAgreementSection.vue'
 import { makeAccount, makePolicy } from './factories'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type {
   Account,
   Currency,
@@ -97,20 +98,18 @@ function detailFor(planId: string): ScheduledTransactionDetail {
 }
 
 function setupInvoke() {
-  mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
-    if (cmd === 'list_policies') return Promise.resolve([policy])
-    if (cmd === 'list_scheduled_transactions') return Promise.resolve(plans)
-    if (cmd === 'get_scheduled_transaction_detail') {
-      return Promise.resolve(detailFor((args as { id: string }).id))
-    }
-    if (cmd === 'create_scheduled_transaction') return Promise.resolve('plan-new')
-    if (cmd === 'update_scheduled_transaction_status') return Promise.resolve()
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  stubReferenceInvoke({
+    list_currencies: mockCurrencies,
+    list_accounts: mockAccounts,
+    list_categories: [],
+    list_insurers: [],
+    list_merchants: mockMerchants,
+    list_policies: [policy],
+    list_scheduled_transactions: () => plans,
+    get_scheduled_transaction_detail: (args) =>
+      Promise.resolve(detailFor((args as { id: string }).id)),
+    create_scheduled_transaction: 'plan-new',
+    update_scheduled_transaction_status: () => Promise.resolve(),
   })
 }
 

@@ -29,6 +29,7 @@ import EncryptionSettings from '@/components/settings/EncryptionSettings.vue'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
 import { hasOpenOverlay, resetOverlays } from '@/composables/overlayRegistry'
 import { useAppStore } from '@/stores/app'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -43,11 +44,10 @@ const PASS_ALT = '不一样的八个字符'
 const PASS_SHORT = '短口令'
 
 function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
-  mockInvoke.mockImplementation((cmd: string, args?: any) => {
-    if (cmd in overrides) return overrides[cmd](args)
-    if (cmd === 'get_encryption_status') return Promise.resolve(plaintextStatus)
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  stubReferenceInvoke({
+    get_encryption_status: () => plaintextStatus,
+    list_insurers: [],
+    ...overrides,
   })
 }
 

@@ -10,6 +10,7 @@ import {
   type ScheduledPlanRow,
   type UseScheduledPlanListReturn,
 } from '@/composables/useScheduledPlanList'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type {
   ScheduledKind,
   ScheduledTransactionDetail,
@@ -124,24 +125,21 @@ const mockDetails = new Map<string, ScheduledTransactionDetail>()
 let failList = false
 
 function baseInvoke() {
-  mockInvoke.mockImplementation(((cmd: string, args?: Record<string, unknown>) => {
-    if (cmd === 'list_scheduled_transactions') {
-      return failList ? Promise.reject(new Error('数据库不可用')) : Promise.resolve(mockPlans)
-    }
-    if (cmd === 'get_scheduled_transaction_detail') {
+  stubReferenceInvoke({
+    list_scheduled_transactions: () =>
+      failList ? Promise.reject(new Error('数据库不可用')) : mockPlans,
+    get_scheduled_transaction_detail: (args) => {
       const detail = mockDetails.get(String(args?.id))
       return detail ? Promise.resolve(detail) : Promise.reject(new Error('无此计划详情'))
-    }
-    if (cmd === 'update_scheduled_transaction_status') {
+    },
+    update_scheduled_transaction_status: (args) => {
       const { id, new_status } = args?.input as { id: string; new_status: string }
       mockPlans = mockPlans.map((p) =>
         p.core.id === id ? { ...p, core: { ...p.core, status: new_status as never } } : p,
       )
-      return Promise.resolve()
-    }
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-  }) as typeof invoke)
+    },
+    list_insurers: [],
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -419,13 +417,12 @@ describe('useScheduledPlanList Plan Lifecycle 操作', () => {
     const { list, pulls } = mountHarness()
     await list.load()
     await flushPromises()
-    mockInvoke.mockImplementation(((cmd: string) => {
-      if (cmd === 'update_scheduled_transaction_status')
-        return Promise.reject(new Error('状态不允许变更'))
-      if (cmd === 'list_scheduled_transactions') return Promise.resolve(mockPlans)
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    }) as typeof invoke)
+    stubReferenceInvoke({
+      update_scheduled_transaction_status: () =>
+        Promise.reject(new Error('状态不允许变更')),
+      list_scheduled_transactions: () => mockPlans,
+      list_insurers: [],
+    })
     await list.changeStatus('a1', 'paused')
     await flushPromises()
     expect(lastMessage('error')).toBe('操作失败: 状态不允许变更')

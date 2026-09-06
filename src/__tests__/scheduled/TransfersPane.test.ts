@@ -5,6 +5,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import TransfersPane from '@/components/scheduled/TransfersPane.vue'
+import { stubReferenceInvoke } from '../helpers/reference-stubs'
 import AppSelect from '@/components/AppSelect.vue'
 import type {
   Account,
@@ -133,18 +134,18 @@ const mockDetails = new Map<string, ScheduledTransactionDetail>()
 let failCreate = false
 
 function baseInvoke() {
-  mockInvoke.mockImplementation(((cmd: string, args?: Record<string, unknown>) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
-    if (cmd === 'list_scheduled_transactions') return Promise.resolve(mockPlans)
-    if (cmd === 'get_scheduled_transaction_detail') {
+  return stubReferenceInvoke({
+    list_currencies: mockCurrencies,
+    list_accounts: mockAccounts,
+    list_categories: [],
+    list_insurers: [],
+    list_merchants: [],
+    list_scheduled_transactions: () => mockPlans,
+    get_scheduled_transaction_detail: (args) => {
       const detail = mockDetails.get(String(args?.id))
       return detail ? Promise.resolve(detail) : Promise.reject(new Error('无此计划详情'))
-    }
-    if (cmd === 'create_scheduled_transaction') {
+    },
+    create_scheduled_transaction: (args) => {
       if (failCreate) {
         return Promise.reject(new Error('转出账户与转入账户币种不一致，定时转账不支持跨币种'))
       }
@@ -162,9 +163,9 @@ function baseInvoke() {
       )
       mockPlans = [...mockPlans, plan]
       mockDetails.set(id, makeDetail(plan, []))
-      return Promise.resolve(id)
-    }
-    if (cmd === 'update_scheduled_transaction_status') {
+      return id
+    },
+    update_scheduled_transaction_status: (args) => {
       const { id, new_status } = args as { id: string; new_status: string }
       mockPlans = mockPlans.map((p) =>
         p.core.id === id ? { ...p, core: { ...p.core, status: new_status } } : p,
@@ -173,10 +174,8 @@ function baseInvoke() {
       if (detail) {
         mockDetails.set(id, { ...detail, core: { ...detail.core, status: new_status } })
       }
-      return Promise.resolve()
-    }
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-  }) as typeof invoke)
+    },
+  })
 }
 
 /** 定位弹窗表单内输入框：NModal teleport 到 body，需经 findComponent 锚定。 */

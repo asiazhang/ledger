@@ -4,6 +4,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useItemsStore } from '@/stores/items'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { ItemInput, ItemWithDailyCost } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
@@ -43,6 +44,9 @@ const createInput: ItemInput = {
 /** 捕获 ledger:changed 监听处理器（store 创建时注册） */
 let handlers: Array<(evt: unknown) => void>
 
+/** 基础派发：各测试领域链处理完自己的命令后委托回它（参考命令同老链保持空保司表） */
+let base: ReturnType<typeof stubReferenceInvoke>
+
 beforeEach(() => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
@@ -52,15 +56,14 @@ beforeEach(() => {
     handlers.push(handler)
     return vi.fn()
   })
+  base = stubReferenceInvoke({ list_insurers: [] })
 })
 
 describe('useItemsStore', () => {
   it('首次访问自动加载（self-init），加载后 status=ready、version=1', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_items') return Promise.resolve([baseItem()])
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'list_items' ? Promise.resolve([baseItem()]) : base(cmd, args),
+    )
     const store = useItemsStore()
     await flushPromises()
     expect(store.items).toHaveLength(1)
@@ -70,11 +73,9 @@ describe('useItemsStore', () => {
   })
 
   it('加载失败时 status=error，不抛出（self-init 静默）', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_items') return Promise.reject(new Error('boom'))
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'list_items' ? Promise.reject(new Error('boom')) : base(cmd, args),
+    )
     const store = useItemsStore()
     await flushPromises()
     expect(store.status).toBe('error')
@@ -125,8 +126,7 @@ describe('useItemsStore', () => {
         expect(args).toEqual({ input: createInput })
         return Promise.resolve('item-new')
       }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return base(cmd, args)
     })
     const store = useItemsStore()
     await flushPromises()
@@ -158,8 +158,7 @@ describe('useItemsStore', () => {
         expect(args).toEqual({ id: 'item-1', input: updateInput })
         return Promise.resolve(null)
       }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return base(cmd, args)
     })
     const store = useItemsStore()
     await flushPromises()
@@ -172,11 +171,10 @@ describe('useItemsStore', () => {
 
   it('update 失败时抛出错误且不重拉', async () => {
     const initial = [baseItem()]
-    mockInvoke.mockImplementation((cmd: string) => {
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
       if (cmd === 'list_items') return Promise.resolve(initial)
       if (cmd === 'update_item') return Promise.reject(new Error('物品不存在'))
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return base(cmd, args)
     })
     const store = useItemsStore()
     await flushPromises()
@@ -215,8 +213,7 @@ describe('useItemsStore', () => {
         expect(args).toEqual({ id: 'item-1', input: disposeInput })
         return Promise.resolve(null)
       }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return base(cmd, args)
     })
     const store = useItemsStore()
     await flushPromises()
@@ -230,11 +227,10 @@ describe('useItemsStore', () => {
 
   it('dispose 失败时抛出错误且不重拉', async () => {
     const initial = [baseItem()]
-    mockInvoke.mockImplementation((cmd: string) => {
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
       if (cmd === 'list_items') return Promise.resolve(initial)
       if (cmd === 'dispose_item') return Promise.reject(new Error('处置日期早于购买日期'))
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return base(cmd, args)
     })
     const store = useItemsStore()
     await flushPromises()
@@ -260,8 +256,7 @@ describe('useItemsStore', () => {
         expect(args).toEqual({ id: 'item-1' })
         return Promise.resolve()
       }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return base(cmd, args)
     })
     const store = useItemsStore()
     await flushPromises()
@@ -274,11 +269,10 @@ describe('useItemsStore', () => {
 
   it('remove 失败时抛出错误且不重拉', async () => {
     const initial = [baseItem()]
-    mockInvoke.mockImplementation((cmd: string) => {
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
       if (cmd === 'list_items') return Promise.resolve(initial)
       if (cmd === 'delete_item') return Promise.reject(new Error('物品不存在'))
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return base(cmd, args)
     })
     const store = useItemsStore()
     await flushPromises()

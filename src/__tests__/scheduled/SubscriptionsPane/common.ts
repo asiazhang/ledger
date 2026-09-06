@@ -3,6 +3,7 @@ import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { invoke } from '@tauri-apps/api/core'
 import { setActivePinia, createPinia } from 'pinia'
 import { useReferenceStore } from '@/stores/reference'
+import { stubReferenceInvoke } from '../../helpers/reference-stubs'
 import SubscriptionsPane from '@/components/scheduled/SubscriptionsPane.vue'
 import type {
   Account,
@@ -172,19 +173,19 @@ export function setMockMerchants(rows: Merchant[]) {
 }
 
 export function baseInvoke() {
-  mockInvoke.mockImplementation(((cmd: string, args?: Record<string, unknown>) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-    if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve(mockMerchantsState)
-    if (cmd === 'subscription_spend_overview') return Promise.resolve(mockSpendOverview)
-    if (cmd === 'list_scheduled_transactions') return Promise.resolve(mockPlans)
-    if (cmd === 'get_scheduled_transaction_detail') {
+  // 参考数据：分类/账户本套夹具覆写，币种/保司走规范夹具（issue #725）；
+  // 可变库经函数型覆写派发时取值。
+  stubReferenceInvoke({
+    list_accounts: mockAccounts,
+    list_categories: mockCategories,
+    list_merchants: () => mockMerchantsState,
+    subscription_spend_overview: () => mockSpendOverview,
+    list_scheduled_transactions: () => mockPlans,
+    get_scheduled_transaction_detail: (args?: Record<string, unknown>) => {
       const detail = mockDetails.get(String(args?.id))
       return detail ? Promise.resolve(detail) : Promise.reject(new Error('无此计划详情'))
-    }
-    if (cmd === 'create_scheduled_transaction') {
+    },
+    create_scheduled_transaction: (args?: Record<string, unknown>) => {
       const input = args?.input as { kind: string; note: string | null; merchant_id: string | null }
       const id = `new-${input.kind}-${input.note ?? ''}`
       const plan = makePlan(
@@ -194,13 +195,13 @@ export function baseInvoke() {
       mockPlans = [...mockPlans, plan]
       mockDetails.set(id, makeDetail(plan, []))
       return Promise.resolve(id)
-    }
-    if (cmd === 'create_merchant') {
+    },
+    create_merchant: (args?: Record<string, unknown>) => {
       const input = args?.input as { name: string }
       const id = `mer-new-${input.name}`
       return Promise.resolve(id)
-    }
-    if (cmd === 'update_scheduled_transaction_status') {
+    },
+    update_scheduled_transaction_status: (args?: Record<string, unknown>) => {
       const { id, new_status } = args as { id: string; new_status: string }
       mockPlans = mockPlans.map((p) =>
         p.core.id === id ? { ...p, core: { ...p.core, status: new_status } } : p,
@@ -210,8 +211,8 @@ export function baseInvoke() {
         mockDetails.set(id, { ...detail, core: { ...detail.core, status: new_status } })
       }
       return Promise.resolve()
-    }
-    if (cmd === 'update_scheduled_subscription') {
+    },
+    update_scheduled_subscription: (args?: Record<string, unknown>) => {
       if (failSubscriptionUpdate) {
         return Promise.reject(new Error('订阅金额不可编辑：改价 = 取消旧计划 + 新建'))
       }
@@ -250,8 +251,8 @@ export function baseInvoke() {
         })
       }
       return Promise.resolve()
-    }
-    if (cmd === 'execute_scheduled_occurrence') {
+    },
+    execute_scheduled_occurrence: (args?: Record<string, unknown>) => {
       // 重试语义：failed 期次 → completed（issue #205 期次详情弹窗）
       const { occurrence_id } = (args?.input ?? {}) as { occurrence_id: string }
       for (const [id, d] of mockDetails) {
@@ -264,9 +265,8 @@ export function baseInvoke() {
         })
       }
       return Promise.resolve('txn-new')
-    }
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-  }) as typeof invoke)
+    },
+  })
 }
 
 /** 定位弹窗表单内输入框：NModal teleport 到 body，需经 findComponent 锚定。 */

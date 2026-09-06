@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { usePoliciesStore } from '@/stores/policies'
 import { makePolicy, makePolicyStats } from './factories'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Policy, PolicyInput, PolicyStats } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
@@ -45,11 +46,10 @@ beforeEach(() => {
 
 describe('usePoliciesStore', () => {
   it('首次访问自动加载（self-init），加载后 status=ready、version=1', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_policies') return Promise.resolve([basePolicy()])
-      if (cmd === 'list_policy_stats') return Promise.resolve([baseStats()])
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      list_policies: [basePolicy()],
+      list_policy_stats: [baseStats()],
+      list_insurers: [],
     })
     const store = usePoliciesStore()
     await flushPromises()
@@ -60,11 +60,10 @@ describe('usePoliciesStore', () => {
   })
 
   it('加载失败时 status=error，不抛出（self-init 静默）', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_policies') return Promise.reject(new Error('boom'))
-      if (cmd === 'list_policy_stats') return Promise.resolve([])
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      list_policies: () => Promise.reject(new Error('boom')),
+      list_policy_stats: [],
+      list_insurers: [],
     })
     const store = usePoliciesStore()
     await flushPromises()
@@ -102,18 +101,17 @@ describe('usePoliciesStore', () => {
 
   it('create 成功后立即重拉并返回 id', async () => {
     let listCalls = 0
-    mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
-      if (cmd === 'list_policy_stats') return Promise.resolve([])
-      if (cmd === 'list_policies') {
+    stubReferenceInvoke({
+      list_policy_stats: [],
+      list_policies: () => {
         listCalls++
-        return Promise.resolve(listCalls > 1 ? [basePolicy({ id: 'new-1', ...createInput })] : [])
-      }
-      if (cmd === 'create_policy') {
+        return listCalls > 1 ? [basePolicy({ id: 'new-1', ...createInput })] : []
+      },
+      create_policy: (args) => {
         expect(args).toMatchObject({ input: createInput })
-        return Promise.resolve('new-1')
-      }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+        return 'new-1'
+      },
+      list_insurers: [],
     })
     const store = usePoliciesStore()
     await flushPromises()
@@ -125,25 +123,20 @@ describe('usePoliciesStore', () => {
 
   it('update / remove 成功后立即重拉', async () => {
     const current = [basePolicy()]
-    mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
-      if (cmd === 'list_policy_stats') return Promise.resolve([])
-      if (cmd === 'list_policies') {
-        return Promise.resolve(current.filter((p) => !p.is_deleted))
-      }
-      if (cmd === 'update_policy') {
+    stubReferenceInvoke({
+      list_policy_stats: [],
+      list_policies: () => current.filter((p) => !p.is_deleted),
+      update_policy: (args) => {
         const { id, input } = args as { id: string; input: PolicyInput }
         expect(id).toBe('policy-1')
         current[0] = { ...current[0], ...input, version: 2 }
-        return Promise.resolve()
-      }
-      if (cmd === 'delete_policy') {
+      },
+      delete_policy: (args) => {
         const { id } = args as { id: string }
         current[0] = { ...current[0], is_deleted: true }
         expect(id).toBe('policy-1')
-        return Promise.resolve()
-      }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      },
+      list_insurers: [],
     })
     const store = usePoliciesStore()
     await flushPromises()
@@ -158,11 +151,10 @@ describe('usePoliciesStore', () => {
     const stats = [
       baseStats({ policy_id: 'policy-1', total_paid_native_cents: 600_000, next_charge_date: '2027-01-01' }),
     ]
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_policies') return Promise.resolve([basePolicy()])
-      if (cmd === 'list_policy_stats') return Promise.resolve(stats)
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      list_policies: [basePolicy()],
+      list_policy_stats: stats,
+      list_insurers: [],
     })
     const store = usePoliciesStore()
     await flushPromises()
@@ -173,11 +165,10 @@ describe('usePoliciesStore', () => {
   })
 
   it('统计拉取失败与列表失败同语义：status=error（整体失败，不部分更新）', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_policies') return Promise.resolve([basePolicy()])
-      if (cmd === 'list_policy_stats') return Promise.reject(new Error('stats boom'))
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      list_policies: [basePolicy()],
+      list_policy_stats: () => Promise.reject(new Error('stats boom')),
+      list_insurers: [],
     })
     const store = usePoliciesStore()
     await flushPromises()
@@ -187,12 +178,11 @@ describe('usePoliciesStore', () => {
   })
 
   it('create 失败向上抛（调用方展示错误，弹窗不关）', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_policies') return Promise.resolve([])
-      if (cmd === 'list_policy_stats') return Promise.resolve([])
-      if (cmd === 'create_policy') return Promise.reject(new Error('保单号不能为空'))
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      list_policies: [],
+      list_policy_stats: [],
+      create_policy: () => Promise.reject(new Error('保单号不能为空')),
+      list_insurers: [],
     })
     const store = usePoliciesStore()
     await flushPromises()

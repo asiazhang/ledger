@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { invoke } from '@tauri-apps/api/core'
 import { makeTransaction } from '@/__tests__/factories'
+import { stubReferenceInvoke } from '@/__tests__/helpers/reference-stubs'
 import { useTransactionModalState } from '@/composables/useTransactionModalState'
 import type { TransactionTrade } from '@/types'
 
@@ -104,12 +105,13 @@ describe('useTransactionModalState edit 意图（先取明细再开窗）', () =
     const modals = useTransactionModalState()
     const row = makeTransaction({ id: 'txn-b1', kind })
     const trade = makeTrade()
-    mockInvoke.mockImplementation(((cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'get_transaction_trade' && args?.id === 'txn-b1')
-        return Promise.resolve(trade)
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    }) as typeof invoke)
+    stubReferenceInvoke({
+      get_transaction_trade: (args) =>
+        args?.id === 'txn-b1'
+          ? Promise.resolve(trade)
+          : Promise.reject(new Error('unexpected invoke: get_transaction_trade')),
+      list_insurers: [],
+    })
     await modals.open({ type: 'edit', row })
     expect(mockInvoke).toHaveBeenCalledTimes(1)
     expect(mockInvoke.mock.calls[0]).toEqual(['get_transaction_trade', { id: 'txn-b1' }])
@@ -147,14 +149,14 @@ describe('useTransactionModalState 竞态守卫（last-open-wins）', () => {
     const tradeA = makeTrade({ symbol: 'AAA' })
     const tradeB = makeTrade({ symbol: 'BBB' })
     let resolveA!: (trade: TransactionTrade) => void
-    mockInvoke.mockImplementation(((cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'get_transaction_trade') {
+    stubReferenceInvoke({
+      get_transaction_trade: (args) => {
         if (args?.id === 'a1') return new Promise<TransactionTrade>((r) => (resolveA = r))
         if (args?.id === 'b1') return Promise.resolve(tradeB)
-      }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    }) as typeof invoke)
+        return Promise.reject(new Error('unexpected invoke: get_transaction_trade'))
+      },
+      list_insurers: [],
+    })
 
     const openA = modals.open({ type: 'edit', row: rowA })
     await modals.open({ type: 'edit', row: rowB })
@@ -174,14 +176,14 @@ describe('useTransactionModalState 竞态守卫（last-open-wins）', () => {
     const rowB = makeTransaction({ id: 'b1', kind: 'buy' })
     const tradeB = makeTrade()
     let rejectA!: (e: Error) => void
-    mockInvoke.mockImplementation(((cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'get_transaction_trade') {
+    stubReferenceInvoke({
+      get_transaction_trade: (args) => {
         if (args?.id === 'a1') return new Promise<TransactionTrade>((_, reject) => (rejectA = reject))
         if (args?.id === 'b1') return Promise.resolve(tradeB)
-      }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    }) as typeof invoke)
+        return Promise.reject(new Error('unexpected invoke: get_transaction_trade'))
+      },
+      list_insurers: [],
+    })
 
     const openA = modals.open({ type: 'edit', row: rowA })
     await modals.open({ type: 'edit', row: rowB })
@@ -199,14 +201,14 @@ describe('useTransactionModalState 竞态守卫（last-open-wins）', () => {
     const rowB = makeTransaction({ id: 'b1', kind: 'buy' })
     const tradeB = makeTrade({ symbol: 'BBB' })
     let resolveB!: (trade: TransactionTrade) => void
-    mockInvoke.mockImplementation(((cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'get_transaction_trade') {
+    stubReferenceInvoke({
+      get_transaction_trade: (args) => {
         if (args?.id === 'a1') return Promise.resolve(makeTrade({ symbol: 'AAA' }))
         if (args?.id === 'b1') return new Promise<TransactionTrade>((r) => (resolveB = r))
-      }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    }) as typeof invoke)
+        return Promise.reject(new Error('unexpected invoke: get_transaction_trade'))
+      },
+      list_insurers: [],
+    })
 
     await modals.open({ type: 'edit', row: rowA })
     expect(modals.intent.value!.row.id).toBe('a1')
@@ -224,12 +226,13 @@ describe('useTransactionModalState 竞态守卫（last-open-wins）', () => {
     const modals = useTransactionModalState()
     const rowA = makeTransaction({ id: 'a1', kind: 'buy' })
     let resolveA!: (trade: TransactionTrade) => void
-    mockInvoke.mockImplementation(((cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'get_transaction_trade' && args?.id === 'a1')
-        return new Promise<TransactionTrade>((r) => (resolveA = r))
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    }) as typeof invoke)
+    stubReferenceInvoke({
+      get_transaction_trade: (args) =>
+        args?.id === 'a1'
+          ? new Promise<TransactionTrade>((r) => (resolveA = r))
+          : Promise.reject(new Error('unexpected invoke: get_transaction_trade')),
+      list_insurers: [],
+    })
 
     const openA = modals.open({ type: 'edit', row: rowA })
     modals.close()
@@ -245,12 +248,13 @@ describe('useTransactionModalState 竞态守卫（last-open-wins）', () => {
     const rowA = makeTransaction({ id: 'a1', kind: 'buy' })
     const rowR = makeTransaction({ id: 'r1', kind: 'expense' })
     let resolveA!: (trade: TransactionTrade) => void
-    mockInvoke.mockImplementation(((cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'get_transaction_trade' && args?.id === 'a1')
-        return new Promise<TransactionTrade>((r) => (resolveA = r))
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    }) as typeof invoke)
+    stubReferenceInvoke({
+      get_transaction_trade: (args) =>
+        args?.id === 'a1'
+          ? new Promise<TransactionTrade>((r) => (resolveA = r))
+          : Promise.reject(new Error('unexpected invoke: get_transaction_trade')),
+      list_insurers: [],
+    })
 
     const openA = modals.open({ type: 'edit', row: rowA })
     await modals.open({ type: 'refund', row: rowR })

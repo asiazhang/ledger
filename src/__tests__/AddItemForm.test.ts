@@ -5,6 +5,7 @@ import { h } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import AddItemForm from '@/components/AddItemForm.vue'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
@@ -49,19 +50,19 @@ async function mountForm(txn: Transaction) {
   return wrapper
 }
 
+/** beforeEach 主链派发函数：中途重桩处理完自己的领域命令后委托回它 */
+let base: ReturnType<typeof stubReferenceInvoke>
+
 beforeEach(async () => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'list_currencies')
-      return Promise.resolve([{ code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 }])
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
-    if (cmd === 'list_items') return Promise.resolve([])
-    if (cmd === 'create_item') return Promise.resolve('item-new')
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  base = stubReferenceInvoke({
+    list_accounts: [],
+    list_categories: [],
+    list_insurers: [],
+    list_merchants: [],
+    list_items: [],
+    create_item: () => Promise.resolve('item-new'),
   })
 })
 
@@ -104,18 +105,11 @@ describe('AddItemForm（加入物品确认弹窗，issue #119）', () => {
   })
 
   it('后端校验失败（重复创建/非 expense）：不 emit created（弹窗保持打开，错误经 message 可见）', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_currencies')
-        return Promise.resolve([{ code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 }])
-      if (cmd === 'list_accounts') return Promise.resolve([])
-      if (cmd === 'list_categories') return Promise.resolve([])
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      if (cmd === 'list_merchants') return Promise.resolve([])
-      if (cmd === 'list_items') return Promise.resolve([])
-      if (cmd === 'create_item')
-        return Promise.reject(new Error('该购买交易已创建过物品，不能重复创建（溯源唯一）: txn-1'))
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'create_item'
+        ? Promise.reject(new Error('该购买交易已创建过物品，不能重复创建（溯源唯一）: txn-1'))
+        : base(cmd, args),
+    )
     const wrapper = await mountForm(makeTxn())
     await wrapper.find('button[data-testid="add-item-confirm"]').trigger('click')
     await flushPromises()

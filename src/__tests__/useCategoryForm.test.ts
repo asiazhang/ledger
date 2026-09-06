@@ -4,13 +4,10 @@ import { invoke } from '@tauri-apps/api/core'
 import { useCategoryForm } from '@/composables/useCategoryForm'
 import { useReferenceStore } from '@/stores/reference'
 import { usePoliciesStore } from '@/stores/policies'
-import type { Account, Currency, Merchant, Policy, Transaction } from '@/types'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
+import type { Account, Merchant, Policy, Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
-
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-]
 
 const mockAccounts: Account[] = [
   {
@@ -56,15 +53,13 @@ const editingTx: Transaction = {
 }
 
 function mockBaseCommands(merchants: Merchant[] = mockMerchants) {
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve(merchants)
-    if (cmd === 'list_policies') return Promise.resolve(mockPolicies)
-    if (cmd === 'list_policy_stats') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  return stubReferenceInvoke({
+    list_accounts: mockAccounts,
+    list_categories: [],
+    list_insurers: [],
+    list_merchants: merchants,
+    list_policies: mockPolicies,
+    list_policy_stats: [],
   })
 }
 
@@ -128,16 +123,10 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
   })
 
   it('输入新名字（未命中）：保存即建商户并携带新 id', async () => {
+    const base = mockBaseCommands()
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'create_merchant') return Promise.resolve('mch-new')
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-      if (cmd === 'list_categories') return Promise.resolve([])
-      if (cmd === 'list_policies') return Promise.resolve(mockPolicies)
-      if (cmd === 'list_policy_stats') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return base(cmd)
     })
     const input = await submitWithMerchant('盒马')
     expect(merchantCreateCalls()).toHaveLength(1)
@@ -147,11 +136,13 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
 
   it('即建撞重名（store 陈旧）：强制重拉后按名复用已有商户，不报错', async () => {
     let stale = true
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'create_merchant') {
-        return Promise.reject(new Error('参数错误: 商户已存在: 盒马'))
-      }
-      if (cmd === 'list_merchants') {
+    const base = stubReferenceInvoke({
+      list_accounts: mockAccounts,
+      list_categories: [],
+      list_insurers: [],
+      list_policies: mockPolicies,
+      list_policy_stats: [],
+      list_merchants: () => {
         const rows: Merchant[] = stale
           ? mockMerchants
           : [
@@ -164,14 +155,13 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
             ]
         stale = false
         return Promise.resolve(rows)
+      },
+    })
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'create_merchant') {
+        return Promise.reject(new Error('参数错误: 商户已存在: 盒马'))
       }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-      if (cmd === 'list_categories') return Promise.resolve([])
-      if (cmd === 'list_policies') return Promise.resolve(mockPolicies)
-      if (cmd === 'list_policy_stats') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return base(cmd)
     })
     const input = await submitWithMerchant('盒马')
     expect(input?.merchant_id).toBe('mch-exist')
@@ -243,14 +233,12 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
       const form = useCategoryForm('expense', { editing: () => editingWithPolicy })
       expect(form.policyId.value).toBe('pol-1')
       // 模拟原保单已软删：重拉后 store 列表不含 pol-1
-      mockInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_policies') return Promise.resolve([])
-        if (cmd === 'list_insurers') return Promise.resolve([])
-        if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
-        if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-        if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-        if (cmd === 'list_categories') return Promise.resolve([])
-        return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      stubReferenceInvoke({
+        list_policies: [],
+        list_insurers: [],
+        list_merchants: mockMerchants,
+        list_accounts: mockAccounts,
+        list_categories: [],
       })
       await usePoliciesStore().refresh()
       expect(form.policyOptions.value.some((o) => o.value === 'pol-1')).toBe(true)

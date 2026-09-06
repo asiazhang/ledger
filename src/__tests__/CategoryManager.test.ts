@@ -4,6 +4,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import CategoryManager from '@/components/CategoryManager.vue'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Category } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
@@ -45,14 +46,13 @@ describe('CategoryManager.vue', () => {
   beforeEach(async () => {
     setActivePinia(createPinia())
     mockInvoke.mockReset()
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_currencies') return Promise.resolve([])
-      if (cmd === 'list_accounts') return Promise.resolve([])
-      if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      if (cmd === 'list_merchants') return Promise.resolve([])
-      if (cmd === 'reorder_categories') return Promise.resolve(undefined)
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      list_currencies: [],
+      list_accounts: [],
+      list_categories: mockCategories,
+      list_insurers: [],
+      list_merchants: [],
+      reorder_categories: undefined,
     })
     const store = useReferenceStore()
     await store.refresh()
@@ -108,14 +108,13 @@ describe('CategoryManager.vue', () => {
 
   it('reorderCategories 接口存在且可调用', async () => {
     mockInvoke.mockClear()
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_currencies') return Promise.resolve([])
-      if (cmd === 'list_accounts') return Promise.resolve([])
-      if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      if (cmd === 'list_merchants') return Promise.resolve([])
-      if (cmd === 'reorder_categories') return Promise.resolve(undefined)
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      list_currencies: [],
+      list_accounts: [],
+      list_categories: mockCategories,
+      list_insurers: [],
+      list_merchants: [],
+      reorder_categories: undefined,
     })
     await expect(
       invoke('reorder_categories', { items: [{ id: 'food', sort_order: 0 }] }),

@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useTransactionFilter, UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
 import type { UseTransactionFilterReturn } from '@/composables/useTransactionFilter'
 import { useReferenceStore } from '@/stores/reference'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Account, Category, Merchant, TransactionListFilter } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
@@ -52,13 +53,11 @@ beforeEach(() => {
   // Reference Data store 用真实动作（createTestingPinia stubActions:false，ADR-0030 决策 7）：
   // 模块内部消费 store（#234），就绪补判走真实 status 时序，数据由 invoke mock 提供。
   mockInvoke.mockReset()
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'list_currencies') return Promise.resolve([])
-    if (cmd === 'list_accounts') return Promise.resolve(urlAccounts)
-    if (cmd === 'list_categories') return Promise.resolve(urlCategories)
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve(urlMerchants)
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  // URL 下钻用参考数据（issue #725 共享助手）：只覆写本模块行使的三张表
+  stubReferenceInvoke({
+    list_accounts: urlAccounts,
+    list_categories: urlCategories,
+    list_merchants: urlMerchants,
   })
 })
 
@@ -993,15 +992,7 @@ function gateReference(gatedCmd: 'list_accounts' | 'list_merchants' | 'list_cate
             : urlCategories,
       )
   })
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === gatedCmd) return pending
-    if (cmd === 'list_currencies') return Promise.resolve([])
-    if (cmd === 'list_accounts') return Promise.resolve(urlAccounts)
-    if (cmd === 'list_categories') return Promise.resolve(urlCategories)
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve(urlMerchants)
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-  })
+  stubReferenceInvoke({ [gatedCmd]: () => pending })
   return release
 }
 

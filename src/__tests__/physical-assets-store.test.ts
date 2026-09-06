@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { usePhysicalAssetsStore } from '@/stores/physicalAssets'
 import { makePhysicalAsset, makePhysicalAssetList } from './factories'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type {
   PhysicalAsset,
   PhysicalAssetDisposeInput,
@@ -34,6 +35,9 @@ const createInput: PhysicalAssetInput = {
 /** 捕获 ledger:changed 监听处理器（store 创建时注册） */
 let handlers: Array<(evt: unknown) => void>
 
+/** 基础派发：各测试领域链处理完自己的命令后委托回它（参考命令同老链保持空保司表） */
+let base: ReturnType<typeof stubReferenceInvoke>
+
 beforeEach(() => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
@@ -43,17 +47,19 @@ beforeEach(() => {
     handlers.push(handler)
     return vi.fn()
   })
+  base = stubReferenceInvoke({ list_insurers: [] })
 })
 
 describe('usePhysicalAssetsStore', () => {
   it('首次访问自动加载（self-init）：列表与在持合计同批就位，status=ready', async () => {
     const asset = baseAsset()
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_physical_assets')
-        return Promise.resolve(makePhysicalAssetList({ assets: [asset], holding_total_native_cents: 5_000_000 }))
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'list_physical_assets'
+        ? Promise.resolve(
+            makePhysicalAssetList({ assets: [asset], holding_total_native_cents: 5_000_000 }),
+          )
+        : base(cmd, args),
+    )
     const store = usePhysicalAssetsStore()
     await flushPromises()
     expect(store.assets).toHaveLength(1)
@@ -65,11 +71,11 @@ describe('usePhysicalAssetsStore', () => {
   })
 
   it('加载失败时 status=error，不抛出（self-init 静默；缺汇率报错走同一通道）', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_physical_assets') return Promise.reject(new Error('未找到 USD -> CNY 的汇率'))
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'list_physical_assets'
+        ? Promise.reject(new Error('未找到 USD -> CNY 的汇率'))
+        : base(cmd, args),
+    )
     const store = usePhysicalAssetsStore()
     await flushPromises()
     expect(store.status).toBe('error')
@@ -122,8 +128,7 @@ describe('usePhysicalAssetsStore', () => {
         expect(args).toMatchObject({ input: createInput })
         return Promise.resolve('new-1')
       }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return base(cmd, args)
     })
     const store = usePhysicalAssetsStore()
     await flushPromises()
@@ -136,11 +141,10 @@ describe('usePhysicalAssetsStore', () => {
   })
 
   it('create 失败不重拉、错误上抛（由调用方 toast 展示）', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
       if (cmd === 'list_physical_assets') return Promise.resolve(makePhysicalAssetList())
       if (cmd === 'create_physical_asset') return Promise.reject(new Error('资产名称不能为空'))
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return base(cmd, args)
     })
     const store = usePhysicalAssetsStore()
     await flushPromises()
@@ -171,8 +175,7 @@ describe('usePhysicalAssetsStore', () => {
         expect(args).toMatchObject({ id: 'asset-1', input: valuationInput })
         return Promise.resolve()
       }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return base(cmd, args)
     })
     const store = usePhysicalAssetsStore()
     await flushPromises()
@@ -183,11 +186,10 @@ describe('usePhysicalAssetsStore', () => {
   })
 
   it('updateValuation 失败不重拉、错误上抛（未来日期守卫由后端报错）', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
       if (cmd === 'list_physical_assets') return Promise.resolve(makePhysicalAssetList({ assets: [baseAsset()] }))
       if (cmd === 'update_physical_asset_valuation') return Promise.reject(new Error('估值日期 9999-12-31 不能是未来'))
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return base(cmd, args)
     })
     const store = usePhysicalAssetsStore()
     await flushPromises()
@@ -218,8 +220,7 @@ describe('usePhysicalAssetsStore', () => {
         expect(args).toMatchObject({ id: 'asset-1', input: updateInput })
         return Promise.resolve()
       }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return base(cmd, args)
     })
     const store = usePhysicalAssetsStore()
     await flushPromises()
@@ -230,11 +231,10 @@ describe('usePhysicalAssetsStore', () => {
   })
 
   it('update 失败不重拉、错误上抛（由调用方 toast 展示）', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
       if (cmd === 'list_physical_assets') return Promise.resolve(makePhysicalAssetList({ assets: [baseAsset()] }))
       if (cmd === 'update_physical_asset') return Promise.reject(new Error('资产名称不能为空'))
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return base(cmd, args)
     })
     const store = usePhysicalAssetsStore()
     await flushPromises()
@@ -263,8 +263,7 @@ describe('usePhysicalAssetsStore', () => {
         expect(args).toMatchObject({ id: 'asset-1', input: disposeInput })
         return Promise.resolve()
       }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return base(cmd, args)
     })
     const store = usePhysicalAssetsStore()
     await flushPromises()
@@ -276,11 +275,10 @@ describe('usePhysicalAssetsStore', () => {
   })
 
   it('dispose 失败不重拉、错误上抛（缺处置日期守卫由后端报错）', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
       if (cmd === 'list_physical_assets') return Promise.resolve(makePhysicalAssetList({ assets: [baseAsset()] }))
       if (cmd === 'dispose_physical_asset') return Promise.reject(new Error('处置日期不能为空'))
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return base(cmd, args)
     })
     const store = usePhysicalAssetsStore()
     await flushPromises()
@@ -304,8 +302,7 @@ describe('usePhysicalAssetsStore', () => {
         expect(args).toMatchObject({ id: 'asset-1' })
         return Promise.resolve()
       }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return base(cmd, args)
     })
     const store = usePhysicalAssetsStore()
     await flushPromises()
@@ -330,8 +327,7 @@ describe('usePhysicalAssetsStore', () => {
             : makePhysicalAssetList({ assets: holding, holding_total_native_cents: 5_000_000 }),
         )
       }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return base(cmd, args)
     })
     const store = usePhysicalAssetsStore()
     await flushPromises()

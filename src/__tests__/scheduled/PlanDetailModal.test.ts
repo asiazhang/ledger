@@ -4,6 +4,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
+import { stubReferenceInvoke } from '../helpers/reference-stubs'
 import type {
   Account,
   Category,
@@ -131,17 +132,17 @@ function makeDetail(
 let mockDetails = new Map<string, ScheduledTransactionDetail>()
 
 function baseInvoke() {
-  mockInvoke.mockImplementation(((cmd: string, args?: Record<string, unknown>) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-    if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
-    if (cmd === 'get_scheduled_transaction_detail') {
+  return stubReferenceInvoke({
+    list_currencies: mockCurrencies,
+    list_accounts: mockAccounts,
+    list_categories: mockCategories,
+    list_insurers: [],
+    list_merchants: mockMerchants,
+    get_scheduled_transaction_detail: (args) => {
       const detail = mockDetails.get(String(args?.id))
       return detail ? Promise.resolve(detail) : Promise.reject(new Error('无此计划详情'))
-    }
-    if (cmd === 'execute_scheduled_occurrence') {
+    },
+    execute_scheduled_occurrence: (args) => {
       const { occurrence_id } = (args?.input ?? {}) as { occurrence_id: string }
       // 重试语义：failed 期次 → completed
       for (const [id, d] of mockDetails) {
@@ -153,9 +154,9 @@ function baseInvoke() {
           ),
         })
       }
-      return Promise.resolve('txn-new')
-    }
-    if (cmd === 'expand_scheduled_occurrences') {
+      return 'txn-new'
+    },
+    expand_scheduled_occurrences: (args) => {
       const planId = String(args?.id)
       const d = mockDetails.get(planId)
       if (!d) return Promise.reject(new Error('无此计划详情'))
@@ -173,9 +174,8 @@ function baseInvoke() {
         occurrences: [...d.occurrences, occ],
       })
       return Promise.resolve([occ.id])
-    }
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-  }) as typeof invoke)
+    },
+  })
 }
 
 // NModal 内容 teleport 到 body：内容断言与交互直接走 document.body

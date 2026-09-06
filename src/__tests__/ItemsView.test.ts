@@ -7,6 +7,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useItemsStore } from '@/stores/items'
 import { applyLocale } from '@/i18n'
 import ItemsView from '@/views/ItemsView.vue'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Currency, ItemDailyCost, ItemInput, ItemWithDailyCost, Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
@@ -120,32 +121,32 @@ const mockExpenseTxs: Transaction[] = [
 ]
 
 function setupInvoke(expenseTxs: Transaction[] = mockExpenseTxs) {
-  mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
-    if (cmd === 'list_transactions') {
-      const filter = (args as { filter?: { kind?: string } | null }).filter
+  stubReferenceInvoke({
+    list_currencies: mockCurrencies,
+    list_accounts: [],
+    list_categories: [],
+    list_insurers: [],
+    list_merchants: [],
+    list_transactions: (args?: Record<string, unknown>) => {
+      const filter = (args as { filter?: { kind?: string } | null } | undefined)?.filter
       // 物品视图只拉支出交易（关联购买交易候选）；其他 kind 返回空
       return Promise.resolve({
         items: filter?.kind === 'expense' ? expenseTxs : [],
         total: filter?.kind === 'expense' ? expenseTxs.length : 0,
       })
-    }
-    if (cmd === 'list_items') return Promise.resolve(itemList)
-    if (cmd === 'calculate_item_cost') {
+    },
+    list_items: () => Promise.resolve(itemList),
+    calculate_item_cost: (args?: Record<string, unknown>) => {
       void (args as { id: string; referenceDate: string | null }).id
       if (calcResponse === null) return Promise.reject(new Error('重算失败'))
       return Promise.resolve(calcResponse)
-    }
-    if (cmd === 'update_item') {
+    },
+    update_item: (args?: Record<string, unknown>) => {
       const { id, input } = args as { id: string; input: { name: string } }
       itemList = itemList.map((it) => (it.id === id ? { ...it, ...input } : it))
       return Promise.resolve(null)
-    }
-    if (cmd === 'dispose_item') {
+    },
+    dispose_item: (args?: Record<string, unknown>) => {
       const { id, input } = args as {
         id: string
         input: { disposal_date: string; residual_value_cents: number | null }
@@ -156,14 +157,12 @@ function setupInvoke(expenseTxs: Transaction[] = mockExpenseTxs) {
           : it,
       )
       return Promise.resolve()
-    }
-    if (cmd === 'delete_item') {
+    },
+    delete_item: (args?: Record<string, unknown>) => {
       const { id } = args as { id: string }
       itemList = itemList.filter((i) => i.id !== id)
       return Promise.resolve()
-    }
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    },
   })
 }
 

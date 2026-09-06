@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { todayStr } from '@/utils/date'
@@ -82,15 +83,14 @@ const mockMerchants: Merchant[] = [
 ]
 
 function mockBaseCommands(merchants: Merchant[] = mockMerchants) {
-  mockInvoke.mockImplementation(((cmd: string) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-    if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-    if (cmd === 'list_merchants') return Promise.resolve(merchants)
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'create_scheduled_transaction') return Promise.resolve('new-plan-id')
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-  }) as typeof invoke)
+  stubReferenceInvoke({
+    list_currencies: mockCurrencies,
+    list_accounts: mockAccounts,
+    list_categories: mockCategories,
+    list_merchants: merchants,
+    list_insurers: [],
+    create_scheduled_transaction: 'new-plan-id',
+  })
 }
 
 function lastMessage(method: string): string {
@@ -140,15 +140,14 @@ describe('useScheduledPlanForm 商户解析（输入即建 + 重名兜底，ADR-
   })
 
   it('输入新名字（未命中）：保存即建商户并返回新 id', async () => {
-    mockInvoke.mockImplementation(((cmd: string) => {
-      if (cmd === 'create_merchant') return Promise.resolve('mch-new')
-      if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-      if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    }) as typeof invoke)
+    stubReferenceInvoke({
+      create_merchant: 'mch-new',
+      list_merchants: mockMerchants,
+      list_insurers: [],
+      list_currencies: mockCurrencies,
+      list_accounts: mockAccounts,
+      list_categories: mockCategories,
+    })
     const id = await resolvedMerchant('盒马')
     expect(mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_merchant')).toEqual([
       'create_merchant',
@@ -159,11 +158,9 @@ describe('useScheduledPlanForm 商户解析（输入即建 + 重名兜底，ADR-
 
   it('即建撞重名（store 陈旧竞态）：强制重拉后按名复用已有商户，不报错', async () => {
     let stale = true
-    mockInvoke.mockImplementation(((cmd: string) => {
-      if (cmd === 'create_merchant') {
-        return Promise.reject(new Error('参数错误: 商户已存在: 盒马'))
-      }
-      if (cmd === 'list_merchants') {
+    stubReferenceInvoke({
+      create_merchant: () => Promise.reject(new Error('参数错误: 商户已存在: 盒马')),
+      list_merchants: () => {
         const rows: Merchant[] = stale
           ? mockMerchants
           : [
@@ -181,48 +178,45 @@ describe('useScheduledPlanForm 商户解析（输入即建 + 重名兜底，ADR-
               },
             ]
         stale = false
-        return Promise.resolve(rows)
-      }
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-      if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    }) as typeof invoke)
+        return rows
+      },
+      list_currencies: mockCurrencies,
+      list_accounts: mockAccounts,
+      list_categories: mockCategories,
+      list_insurers: [],
+    })
     const id = await resolvedMerchant('盒马')
     expect(id).toBe('mch-exist')
   })
 
   it('重名兜底后重拉仍无此名：原 create 错误上抛', async () => {
-    mockInvoke.mockImplementation(((cmd: string) => {
-      if (cmd === 'create_merchant') return Promise.reject(new Error('商户已存在'))
-      if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-      if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    }) as typeof invoke)
+    stubReferenceInvoke({
+      create_merchant: () => Promise.reject(new Error('商户已存在')),
+      list_merchants: mockMerchants,
+      list_insurers: [],
+      list_currencies: mockCurrencies,
+      list_accounts: mockAccounts,
+      list_categories: mockCategories,
+    })
     await expect(resolvedMerchant('盒马')).rejects.toThrow('商户已存在')
   })
 
   it('重名兜底中重拉失败：仍上抛原 create 错误', async () => {
     await useReferenceStore().refresh() // 首拉成功（陈旧字典）
     let pulled = false
-    mockInvoke.mockImplementation(((cmd: string) => {
-      if (cmd === 'create_merchant') return Promise.reject(new Error('商户已存在'))
-      if (cmd === 'list_merchants') {
+    stubReferenceInvoke({
+      create_merchant: () => Promise.reject(new Error('商户已存在')),
+      list_merchants: () => {
         // 首拉已成功，之后的兜底重拉一律失败：吞掉重拉错误，保留原错误
         if (pulled) return Promise.reject(new Error('重拉失败'))
         pulled = true
-        return Promise.resolve(mockMerchants)
-      }
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-      if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    }) as typeof invoke)
+        return mockMerchants
+      },
+      list_currencies: mockCurrencies,
+      list_accounts: mockAccounts,
+      list_categories: mockCategories,
+      list_insurers: [],
+    })
     const form = useScheduledPlanForm()
     form.merchantRef.value = '盒马'
     await expect(form.resolveMerchant()).rejects.toThrow('商户已存在')
@@ -248,15 +242,14 @@ describe('useScheduledPlanForm 商户解析（输入即建 + 重名兜底，ADR-
     })
 
     it('同值但不传编辑中商户 id：不再原样携带，走按名解析（兜底以参数为准）', async () => {
-      mockInvoke.mockImplementation(((cmd: string) => {
-        if (cmd === 'create_merchant') return Promise.resolve('mch-new')
-        if (cmd === 'list_insurers') return Promise.resolve([])
-        if (cmd === 'list_merchants') return Promise.resolve([])
-        if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-        if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-        if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-        return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-      }) as typeof invoke)
+      stubReferenceInvoke({
+        create_merchant: 'mch-new',
+        list_insurers: [],
+        list_merchants: [],
+        list_currencies: mockCurrencies,
+        list_accounts: mockAccounts,
+        list_categories: mockCategories,
+      })
       await useReferenceStore().refresh()
       const form = useScheduledPlanForm()
       form.merchantRef.value = 'mch-gone'
@@ -543,12 +536,11 @@ describe('useScheduledPlanForm submitCreate 提交时序编排（spec #520）', 
   it('失败：错误提示（逐字维持 createFailed 文案）、不重置草稿、不触发提交成功后回调', async () => {
     const onSubmitted = vi.fn()
     const form = await makeTransferForm(onSubmitted)
-    mockInvoke.mockImplementation(((cmd: string) => {
-      if (cmd === 'create_scheduled_transaction')
-        return Promise.reject(new Error('转出账户与转入账户币种不一致，定时转账不支持跨币种'))
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    }) as typeof invoke)
+    stubReferenceInvoke({
+      create_scheduled_transaction: () =>
+        Promise.reject(new Error('转出账户与转入账户币种不一致，定时转账不支持跨币种')),
+      list_insurers: [],
+    })
     await form.submitCreate({
       kind: 'scheduled_transfer',
       amountCents: 50000,

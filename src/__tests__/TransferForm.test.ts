@@ -4,14 +4,11 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { NSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import TransferForm from '@/components/TransferForm.vue'
-import type { Account, Currency, Transaction } from '@/types'
+import type { Account, Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
-
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-]
 
 const mockAccounts: Account[] = [
   {
@@ -32,13 +29,12 @@ describe('TransferForm.vue', () => {
   beforeEach(async () => {
     setActivePinia(createPinia())
     mockInvoke.mockReset()
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-      if (cmd === 'list_categories') return Promise.resolve([])
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      if (cmd === 'list_merchants') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    // 参考命令桩统一走共享助手（issue #725）：币种与规范夹具等值流入，账户保留本文件夹具
+    stubReferenceInvoke({
+      list_accounts: mockAccounts,
+      list_categories: [],
+      list_insurers: [],
+      list_merchants: [],
     })
     // Pre-load store so components have data
     const store = useReferenceStore()
@@ -181,10 +177,8 @@ describe('TransferForm.vue', () => {
     })
 
     it('创建成功后表单不留潜伏红态（清空金额但初始为空不红，ADR-0058 决策 2）', async () => {
-      mockInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'create_transaction') return Promise.resolve('new-id')
-        return Promise.resolve([])
-      })
+      // 重桩：提交成功走 create_transaction，参考命令经共享助手回归规范夹具（issue #725）
+      stubReferenceInvoke({ create_transaction: 'new-id' })
       const wrapper = mount(TransferForm)
       // 先制造一次保存尝试与失焦（时机标志置位），再填合法值提交
       await submitButton(wrapper).trigger('click')

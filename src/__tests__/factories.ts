@@ -1,4 +1,5 @@
 import { vi } from 'vitest'
+import { REFERENCE_DEFAULTS } from './helpers/reference-stubs'
 import { registerToastSink, type ToastSink } from '@/composables/useLoadable'
 import type {
   Account,
@@ -271,7 +272,9 @@ export function resetToastSink(): void {
 }
 
 /**
- * invoke mock 处理函数组装器：extra 优先，其次 defaults，均未命中则 reject「unexpected invoke」。
+ * invoke mock 处理函数组装器：extra 优先，其次 defaults，再次参考数据桩助手
+ * 规范夹具（issue #725：参考命令默认值单一来源，新增参考表零测试文件改动），
+ * 均未命中则 reject「unexpected invoke」。
  * extra 中函数型 handler 以参数调用；其余当固定返回值。
  */
 export function invokeHandler(
@@ -283,7 +286,7 @@ export function invokeHandler(
     if (typeof handler === 'function') return (handler as () => unknown)()
     if (handler !== undefined) return Promise.resolve(handler)
     if (cmd in defaults) return Promise.resolve(defaults[cmd])
-    if (cmd === 'list_insurers') return Promise.resolve([])
+    if (cmd in REFERENCE_DEFAULTS) return Promise.resolve(REFERENCE_DEFAULTS[cmd])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   }
 }

@@ -19,6 +19,7 @@ import {
   useBackup,
 } from "@/composables/useBackup";
 import { restartAppShortly } from "@/utils/restart";
+import { stubReferenceInvoke } from "./helpers/reference-stubs";
 import type { BackupFileInfo } from "@/types";
 
 const mockInvoke = vi.mocked(invoke);
@@ -48,18 +49,12 @@ function makeStub(initialList: BackupFileInfo[]) {
   const listCalls = () =>
     mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_backups").length;
 
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === "list_backups") {
-      return Promise.resolve(list);
-    }
-    if (cmd === "get_auto_backup_state") {
-      return Promise.resolve(autoState);
-    }
-    if (cmd === "set_auto_backup_enabled" || cmd === "prune_backups") {
-      return Promise.resolve({ kept: 0, deleted: [], failed: [] });
-    }
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+  stubReferenceInvoke({
+    list_backups: () => Promise.resolve(list),
+    get_auto_backup_state: () => Promise.resolve(autoState),
+    set_auto_backup_enabled: { kept: 0, deleted: [], failed: [] },
+    prune_backups: { kept: 0, deleted: [], failed: [] },
+    list_insurers: [],
   });
 
   return {
@@ -226,16 +221,12 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
   });
 
   it("pickRestore：密文备份开启恢复意图并携带跨模式载荷", async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "list_backups") return Promise.resolve([]);
-      if (cmd === "get_auto_backup_state")
-        return Promise.resolve({ enabled: true, last_backup_at: null });
-      if (cmd === "get_backup_meta")
-        return Promise.resolve({ kind: "manual", encrypted: true });
-      if (cmd === "get_encryption_status")
-        return Promise.resolve({ locked: false, file_encrypted: true });
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    stubReferenceInvoke({
+      list_backups: [],
+      get_auto_backup_state: { enabled: true, last_backup_at: null },
+      get_backup_meta: { kind: "manual", encrypted: true },
+      get_encryption_status: { locked: false, file_encrypted: true },
+      list_insurers: [],
     });
     const { open } = await import("@tauri-apps/plugin-dialog");
     vi.mocked(open).mockResolvedValue("/Users/me/backups/enc.db.zip");
@@ -256,13 +247,11 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
   });
 
   it("pickRestore：读取备份元数据失败报错且不开启弹窗", async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "list_backups") return Promise.resolve([]);
-      if (cmd === "get_auto_backup_state")
-        return Promise.resolve({ enabled: true, last_backup_at: null });
-      if (cmd === "get_backup_meta") return Promise.reject(new Error("bad zip"));
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    stubReferenceInvoke({
+      list_backups: [],
+      get_auto_backup_state: { enabled: true, last_backup_at: null },
+      get_backup_meta: () => Promise.reject(new Error("bad zip")),
+      list_insurers: [],
     });
     const { open } = await import("@tauri-apps/plugin-dialog");
     vi.mocked(open).mockResolvedValue("/Users/me/backups/broken.zip");
@@ -276,16 +265,12 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
   });
 
   it("pickRestore：加密状态读取失败中止不开弹窗（不静默回落为明文）", async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "list_backups") return Promise.resolve([]);
-      if (cmd === "get_auto_backup_state")
-        return Promise.resolve({ enabled: true, last_backup_at: null });
-      if (cmd === "get_backup_meta")
-        return Promise.resolve({ kind: "manual", encrypted: false });
-      if (cmd === "get_encryption_status")
-        return Promise.reject(new Error("status unavailable"));
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    stubReferenceInvoke({
+      list_backups: [],
+      get_auto_backup_state: { enabled: true, last_backup_at: null },
+      get_backup_meta: { kind: "manual", encrypted: false },
+      get_encryption_status: () => Promise.reject(new Error("status unavailable")),
+      list_insurers: [],
     });
     const { open } = await import("@tauri-apps/plugin-dialog");
     vi.mocked(open).mockResolvedValue("/Users/me/backups/plain.db.zip");
@@ -300,18 +285,13 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
   });
 
   it("confirmRestore：密文备份附带主口令，成功后关闭意图并重启", async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "list_backups") return Promise.resolve([]);
-      if (cmd === "get_auto_backup_state")
-        return Promise.resolve({ enabled: true, last_backup_at: null });
-      if (cmd === "get_backup_meta")
-        return Promise.resolve({ kind: "manual", encrypted: true });
-      if (cmd === "get_encryption_status")
-        return Promise.resolve({ locked: false, file_encrypted: false });
-      if (cmd === "restore_backup")
-        return Promise.resolve({ schema_version: 12, restored_at: "2026-02-17T00:00:00Z" });
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    stubReferenceInvoke({
+      list_backups: [],
+      get_auto_backup_state: { enabled: true, last_backup_at: null },
+      get_backup_meta: { kind: "manual", encrypted: true },
+      get_encryption_status: { locked: false, file_encrypted: false },
+      restore_backup: { schema_version: 12, restored_at: "2026-02-17T00:00:00Z" },
+      list_insurers: [],
     });
     const { open } = await import("@tauri-apps/plugin-dialog");
     vi.mocked(open).mockResolvedValue("/Users/me/backups/enc.db.zip");
@@ -334,18 +314,13 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
   });
 
   it("confirmRestore：明文备份不消费口令（passphrase 传 null）", async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "list_backups") return Promise.resolve([]);
-      if (cmd === "get_auto_backup_state")
-        return Promise.resolve({ enabled: true, last_backup_at: null });
-      if (cmd === "get_backup_meta")
-        return Promise.resolve({ kind: "manual", encrypted: false });
-      if (cmd === "get_encryption_status")
-        return Promise.resolve({ locked: false, file_encrypted: false });
-      if (cmd === "restore_backup")
-        return Promise.resolve({ schema_version: 12, restored_at: "2026-02-17T00:00:00Z" });
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    stubReferenceInvoke({
+      list_backups: [],
+      get_auto_backup_state: { enabled: true, last_backup_at: null },
+      get_backup_meta: { kind: "manual", encrypted: false },
+      get_encryption_status: { locked: false, file_encrypted: false },
+      restore_backup: { schema_version: 12, restored_at: "2026-02-17T00:00:00Z" },
+      list_insurers: [],
     });
     const { open } = await import("@tauri-apps/plugin-dialog");
     vi.mocked(open).mockResolvedValue("/Users/me/backups/plain.db.zip");
@@ -367,18 +342,13 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
   it("confirmRestore：明文谎报实库为密文（后端报需口令）时，重输口令随请求上送", async () => {
     // 元数据缺标记视为明文（intent.backupEncrypted=false），弹窗显出口令框
     // 后用户重输：口令非空即上送，后端凭它打开实库为密文的备份（不再空转）。
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "list_backups") return Promise.resolve([]);
-      if (cmd === "get_auto_backup_state")
-        return Promise.resolve({ enabled: true, last_backup_at: null });
-      if (cmd === "get_backup_meta")
-        return Promise.resolve({ kind: "manual", encrypted: false });
-      if (cmd === "get_encryption_status")
-        return Promise.resolve({ locked: false, file_encrypted: false });
-      if (cmd === "restore_backup")
-        return Promise.resolve({ schema_version: 12, restored_at: "2026-02-17T00:00:00Z" });
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    stubReferenceInvoke({
+      list_backups: [],
+      get_auto_backup_state: { enabled: true, last_backup_at: null },
+      get_backup_meta: { kind: "manual", encrypted: false },
+      get_encryption_status: { locked: false, file_encrypted: false },
+      restore_backup: { schema_version: 12, restored_at: "2026-02-17T00:00:00Z" },
+      list_insurers: [],
     });
     const { open } = await import("@tauri-apps/plugin-dialog");
     vi.mocked(open).mockResolvedValue("/Users/me/backups/lied-plain.db.zip");
@@ -398,18 +368,14 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
   });
 
   it("confirmRestore：失败不关弹窗（口令错误可就地重试）", async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "list_backups") return Promise.resolve([]);
-      if (cmd === "get_auto_backup_state")
-        return Promise.resolve({ enabled: true, last_backup_at: null });
-      if (cmd === "get_backup_meta")
-        return Promise.resolve({ kind: "manual", encrypted: true });
-      if (cmd === "get_encryption_status")
-        return Promise.resolve({ locked: false, file_encrypted: false });
-      if (cmd === "restore_backup")
-        return Promise.reject({ kind: "Coded", code: "encryption.passphrase-incorrect", message: "口令错误或文件损坏，请重试" });
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    stubReferenceInvoke({
+      list_backups: [],
+      get_auto_backup_state: { enabled: true, last_backup_at: null },
+      get_backup_meta: { kind: "manual", encrypted: true },
+      get_encryption_status: { locked: false, file_encrypted: false },
+      restore_backup: () =>
+        Promise.reject({ kind: "Coded", code: "encryption.passphrase-incorrect", message: "口令错误或文件损坏，请重试" }),
+      list_insurers: [],
     });
     const { open } = await import("@tauri-apps/plugin-dialog");
     vi.mocked(open).mockResolvedValue("/Users/me/backups/enc.db.zip");
@@ -429,19 +395,15 @@ describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => 
   /** 预置 3 个备份、保留上限 1：超上限 2 个（上限偏好显式设小，默认 30）。 */
   function stubThreeBackups() {
     useAppStore().setBackupMaxCount(1);
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "list_backups")
-        return Promise.resolve([
-          autoBackupFile,
-          manualBackupFile,
-          { ...manualBackupFile, file_name: "ledger-backup-20260102-010101.db.zip", path: "/Users/me/backups/ledger-backup-20260102-010101.db.zip" },
-        ]);
-      if (cmd === "get_auto_backup_state")
-        return Promise.resolve({ enabled: true, last_backup_at: null });
-      if (cmd === "prune_backups")
-        return Promise.resolve({ kept: 1, deleted: ["/a", "/b"], failed: [] });
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    stubReferenceInvoke({
+      list_backups: [
+        autoBackupFile,
+        manualBackupFile,
+        { ...manualBackupFile, file_name: "ledger-backup-20260102-010101.db.zip", path: "/Users/me/backups/ledger-backup-20260102-010101.db.zip" },
+      ],
+      get_auto_backup_state: { enabled: true, last_backup_at: null },
+      prune_backups: { kept: 1, deleted: ["/a", "/b"], failed: [] },
+      list_insurers: [],
     });
   }
 
@@ -490,12 +452,10 @@ describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => 
   });
 
   it("未超上限：info 提示不开弹窗", async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "list_backups") return Promise.resolve([manualBackupFile]);
-      if (cmd === "get_auto_backup_state")
-        return Promise.resolve({ enabled: true, last_backup_at: null });
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
+    stubReferenceInvoke({
+      list_backups: [manualBackupFile],
+      get_auto_backup_state: { enabled: true, last_backup_at: null },
+      list_insurers: [],
     });
     const { backup } = mountHost();
     await flushPromises();

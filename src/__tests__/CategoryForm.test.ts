@@ -5,13 +5,10 @@ import { invoke } from '@tauri-apps/api/core'
 import { NSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import CategoryForm from '@/components/CategoryForm.vue'
-import type { Account, Category, Currency, Transaction } from '@/types'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
+import type { Account, Category, Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
-
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-]
 
 const mockAccounts: Account[] = [
   {
@@ -35,14 +32,12 @@ describe('CategoryForm.vue', () => {
   beforeEach(async () => {
     setActivePinia(createPinia())
     mockInvoke.mockReset()
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-      if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      if (cmd === 'list_merchants') return Promise.resolve([])
-      if (cmd === 'list_policies') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      list_accounts: mockAccounts,
+      list_categories: mockCategories,
+      list_insurers: [],
+      list_merchants: [],
+      list_policies: [],
     })
     // Pre-load store so components have data
     const store = useReferenceStore()

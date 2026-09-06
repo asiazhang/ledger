@@ -4,6 +4,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { NPopconfirm } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import InsurerManager from '@/components/InsurerManager.vue'
 import InsurerEditModal from '@/components/insurers/InsurerEditModal.vue'
 import type { Insurer } from '@/types'
@@ -48,16 +49,9 @@ const mockInsurers: Insurer[] = [
 
 let insurerDb: Insurer[] = mockInsurers
 
-/** 参考数据五表的最小 mock（管理页只消费保司表，其余给空）。 */
+/** 参考数据桩（issue #725）：管理页只消费保司表（可变库函数型覆写），其余走共享助手规范夹具。 */
 function mockBaseCommands() {
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'list_currencies') return Promise.resolve([])
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve(insurerDb)
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-  })
+  stubReferenceInvoke({ list_insurers: () => insurerDb })
 }
 
 function insurerCalls(cmd: string) {
@@ -106,8 +100,8 @@ describe('InsurerManager.vue 管理（issue #714 / ADR-0082 决策 3）', () => 
   })
 
   it('添加保司：调用 create_insurer，重拉后列表出现新保司、表单清空', async () => {
-    mockInvoke.mockImplementation((cmd: string, args?: { input?: { name: string } }) => {
-      if (cmd === 'create_insurer') {
+    stubReferenceInvoke({
+      create_insurer: (args?: { input?: { name: string } }) => {
         insurerDb = [
           ...insurerDb,
           {
@@ -117,13 +111,8 @@ describe('InsurerManager.vue 管理（issue #714 / ADR-0082 决策 3）', () => 
           },
         ]
         return Promise.resolve('ins-new')
-      }
-      if (cmd === 'list_insurers') return Promise.resolve(insurerDb)
-      if (cmd === 'list_currencies') return Promise.resolve([])
-      if (cmd === 'list_accounts') return Promise.resolve([])
-      if (cmd === 'list_categories') return Promise.resolve([])
-      if (cmd === 'list_merchants') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      },
+      list_insurers: () => insurerDb,
     })
     const wrapper = mount(InsurerManager)
     const nameInput = wrapper
@@ -145,16 +134,9 @@ describe('InsurerManager.vue 管理（issue #714 / ADR-0082 决策 3）', () => 
   })
 
   it('重名创建失败：显示可理解的错误提示，表单不清空', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'create_insurer') {
-        return Promise.reject(new Error('参数错误: 保司已存在: 泰康人寿'))
-      }
-      if (cmd === 'list_insurers') return Promise.resolve(insurerDb)
-      if (cmd === 'list_currencies') return Promise.resolve([])
-      if (cmd === 'list_accounts') return Promise.resolve([])
-      if (cmd === 'list_categories') return Promise.resolve([])
-      if (cmd === 'list_merchants') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      create_insurer: () => Promise.reject(new Error('参数错误: 保司已存在: 泰康人寿')),
+      list_insurers: () => insurerDb,
     })
     const wrapper = mount(InsurerManager)
     const nameInput = wrapper
@@ -180,19 +162,14 @@ describe('InsurerManager.vue 管理（issue #714 / ADR-0082 决策 3）', () => 
     const nameInput = findBodyInputByPlaceholder('保险公司名称')
     expect(nameInput.element.value).toBe('平安人寿')
 
-    mockInvoke.mockImplementation((cmd: string, args?: { id?: string; input?: { name?: string } }) => {
-      if (cmd === 'update_insurer') {
+    stubReferenceInvoke({
+      update_insurer: (args?: { id?: string; input?: { name?: string } }) => {
         insurerDb = insurerDb.map((i) =>
           i.id === args!.id ? { ...i, name: args!.input!.name! } : i,
         )
         return Promise.resolve(undefined)
-      }
-      if (cmd === 'list_insurers') return Promise.resolve(insurerDb)
-      if (cmd === 'list_currencies') return Promise.resolve([])
-      if (cmd === 'list_accounts') return Promise.resolve([])
-      if (cmd === 'list_categories') return Promise.resolve([])
-      if (cmd === 'list_merchants') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      },
+      list_insurers: () => insurerDb,
     })
     await nameInput.setValue('平安人寿股份')
     const saveBtn = Array.from(document.body.querySelectorAll('button')).find(

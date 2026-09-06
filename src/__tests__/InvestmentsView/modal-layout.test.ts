@@ -10,7 +10,7 @@ import CreateInstrumentModal from '@/components/investments/CreateInstrumentModa
 import ManualPriceModal from '@/components/investments/ManualPriceModal.vue'
 import InstrumentBrowser from '@/components/investments/InstrumentBrowser.vue'
 import { makeInstrument } from '../factories'
-import type { Currency } from '@/types'
+import { stubReferenceInvoke } from '../helpers/reference-stubs'
 
 // 投资弹窗族排版统一（issue #638，spec #630）：五个弹窗的卡片外观收敛为
 // AppModal cardSize 单一声明——自建标的创建、手动报价、添加基金、全量同步
@@ -23,10 +23,6 @@ import type { Currency } from '@/types'
 
 const mockListen = vi.mocked(listen)
 const mockInvoke = vi.mocked(invoke)
-
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-]
 
 const mockInstruments = [
   makeInstrument({ id: 'inst-1' }),
@@ -45,17 +41,13 @@ beforeEach(async () => {
   mockInvoke.mockReset()
   mockListen.mockReset()
   mockListen.mockImplementation(() => Promise.resolve(() => {}))
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_instruments')
-      return Promise.resolve({ items: mockInstruments, total: mockInstruments.length })
-    if (cmd === 'sync_instruments') return Promise.resolve(undefined)
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  stubReferenceInvoke({
+    list_accounts: [],
+    list_categories: [],
+    list_merchants: [],
+    list_insurers: [],
+    list_instruments: { items: mockInstruments, total: mockInstruments.length },
+    sync_instruments: () => Promise.resolve(undefined),
   })
   localStorage.clear()
   // 参考数据（币种选项）为 self-init，提前预热（先例：CreateInstrumentModal.test.ts）

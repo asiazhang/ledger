@@ -4,6 +4,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useInstrumentFullSync } from '@/composables/useInstrumentFullSync'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { SyncProgress } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
@@ -113,12 +114,10 @@ describe('useInstrumentFullSync 全量同步接缝（issue #109）', () => {
   })
 
   it('中断（done + cancelled=true）置状态为 cancelled，展示已同步计数', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'sync_instruments') return Promise.resolve(undefined)
-      if (cmd === 'cancel_sync_instruments')
-        return Promise.resolve({ cancelled: true, message: '已请求中断同步' })
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      sync_instruments: () => Promise.resolve(undefined),
+      cancel_sync_instruments: () =>
+        Promise.resolve({ cancelled: true, message: '已请求中断同步' }),
     })
     const sync = await mountHostReady()
     await sync.startSync()

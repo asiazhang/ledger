@@ -4,6 +4,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import PolicyFormModal from '@/components/PolicyFormModal.vue'
 import { makeAccount, makePolicy } from './factories'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Account, Currency, Insurer, Policy } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
@@ -40,22 +41,21 @@ const mockAccounts: Account[] = [
 const noPolicy: Policy | null = null
 
 function setupInvoke() {
-  mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
+  stubReferenceInvoke({
+    list_currencies: mockCurrencies,
+    list_accounts: mockAccounts,
+    list_categories: [],
+    list_merchants: [],
     // 保单换轨后表单消费保司下拉（ADR-0082），桩给真实保司数据
-    if (cmd === 'list_insurers') return Promise.resolve(mockInsurers)
-    if (cmd === 'list_policies') return Promise.resolve([])
-    if (cmd === 'list_policy_stats') return Promise.resolve([])
-    if (cmd === 'create_policy') {
+    list_insurers: mockInsurers,
+    list_policies: [],
+    list_policy_stats: [],
+    create_policy: (args) => {
       const { input } = args as { input: { policy_number: string } }
       return Promise.resolve(`policy-new-${input.policy_number}`)
-    }
-    if (cmd === 'create_scheduled_transaction') return Promise.resolve('plan-1')
-    if (cmd === 'create_insurer') return Promise.reject(new Error('unexpected create_insurer'))
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    },
+    create_scheduled_transaction: 'plan-1',
+    create_insurer: () => Promise.reject(new Error('unexpected create_insurer')),
   })
 }
 

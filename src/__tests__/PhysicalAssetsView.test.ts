@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import PhysicalAssetsView from '@/views/PhysicalAssetsView.vue'
 import PhysicalAssetFormModal from '@/components/PhysicalAssetFormModal.vue'
 import { makePhysicalAsset, makePhysicalAssetList } from './factories'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Currency, PhysicalAsset, PhysicalAssetList } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
@@ -40,11 +41,14 @@ function baseAsset(over: Partial<PhysicalAsset> = {}): PhysicalAsset {
 
 let list: PhysicalAssetList
 
+/** beforeEach 主链派发函数：中途重桩处理完自己的领域命令后委托回它 */
+let base: ReturnType<typeof stubReferenceInvoke>
+
 function setupInvoke() {
-  mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_physical_assets') return Promise.resolve(list)
-    if (cmd === 'create_physical_asset') {
+  base = stubReferenceInvoke({
+    list_currencies: mockCurrencies,
+    list_physical_assets: () => Promise.resolve(list),
+    create_physical_asset: (args?: Record<string, unknown>) => {
       const { input } = args as { input: { name: string; initial_valuation_cents: number } }
       const id = `asset-new-${input.name}`
       list = makePhysicalAssetList({
@@ -59,9 +63,8 @@ function setupInvoke() {
         holding_total_native_cents: input.initial_valuation_cents,
       })
       return Promise.resolve(id)
-    }
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    },
+    list_insurers: [],
   })
 }
 
@@ -164,15 +167,12 @@ describe('PhysicalAssetsView 实物资产视图冒烟（issue #466）', () => {
     await flushPromises()
     await formInput('physical-asset-valuation').setValue('80000')
     let createCalls = 0
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_physical_assets') return Promise.resolve(list)
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
       if (cmd === 'create_physical_asset') {
         createCalls++
         return Promise.resolve('x')
       }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      return base(cmd, args)
     })
     await saveButton().trigger('click')
     await flushPromises()

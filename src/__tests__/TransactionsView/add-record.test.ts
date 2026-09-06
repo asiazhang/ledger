@@ -62,11 +62,10 @@ describe('TransactionsView 记一笔 Modal（issue #141）', () => {
     form.getComponent(NInput).vm.$emit('update:value', '12.5')
     form.findAllComponents(NSelect)[1].vm.$emit('update:value', 'acc-1')
     await flushPromises()
-    mockInvoke.mockImplementationOnce((cmd: string) => {
-      if (cmd === 'create_transaction') return Promise.resolve('new-id')
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    // 参考命令兜底走共享助手（issue #725）：领域命令自接，其余委托回基础桩
+    const base = mockInvoke.getMockImplementation()!
+    mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'create_transaction' ? Promise.resolve('new-id') : base(cmd, args))
     // 点击提交按钮「记支出」
     const submitBtn = form
       .findAllComponents(NButton)

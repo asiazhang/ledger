@@ -6,7 +6,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { NDialogProvider } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import InvestmentsView from '@/views/InvestmentsView.vue'
-import type { Currency, Instrument } from '@/types'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
+import type { Instrument } from '@/types'
 
 // 走势图用共享桩组件替代：组件层测试只验证数据联动与文案渲染，不验证 canvas 绘制
 vi.mock('vue-chartjs', async () => {
@@ -15,10 +16,6 @@ vi.mock('vue-chartjs', async () => {
 })
 
 const mockInvoke = vi.mocked(invoke)
-
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-]
 
 const mockInstruments: Instrument[] = [
   {
@@ -65,34 +62,27 @@ const mockInstruments: Instrument[] = [
 beforeEach(async () => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_instruments')
-      return Promise.resolve({ items: mockInstruments, total: mockInstruments.length })
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
+  stubReferenceInvoke({
+    list_accounts: [],
+    list_categories: [],
+    list_insurers: [],
+    list_merchants: [],
+    list_instruments: { items: mockInstruments, total: mockInstruments.length },
     // 持仓概览（issue #110）：盈亏 tab 顶部会拉取当前持仓
-    if (cmd === 'list_holdings') return Promise.resolve([])
+    list_holdings: [],
     // 走势（issue #139）：标的列表「走势」入口切入走势 tab 时由面板拉取
-    if (cmd === 'portfolio_value_trend')
-      return Promise.resolve({ currency_code: 'CNY', points: [] })
-    if (cmd === 'instrument_price_trend')
-      return Promise.resolve({
-        instrument_id: 'inst-1',
-        points: [{ date: '2026-06-05', price_cents: 1500, currency_code: 'CNY' }],
-      })
-    if (cmd === 'realized_pnl_summary')
-      return Promise.resolve({
-        total_realized_pnl_cents: 0,
-        by_year: [],
-        by_account: [],
-        by_instrument: [],
-        details: [],
-      })
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    portfolio_value_trend: { currency_code: 'CNY', points: [] },
+    instrument_price_trend: {
+      instrument_id: 'inst-1',
+      points: [{ date: '2026-06-05', price_cents: 1500, currency_code: 'CNY' }],
+    },
+    realized_pnl_summary: {
+      total_realized_pnl_cents: 0,
+      by_year: [],
+      by_account: [],
+      by_instrument: [],
+      details: [],
+    },
   })
   localStorage.clear()
   const store = useReferenceStore()
