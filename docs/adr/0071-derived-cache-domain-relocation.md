@@ -39,7 +39,7 @@
 
 ### 6. 结构守门扩展：infra→域扫描
 
-`scripts/check-structure.js` 新增白名单基础设施条目内的「infra→域」文本级扫描，形态与现有 `commands::` 扫描同款（掩码注释与字符串后匹配域模块路径，fail loud）。迁移落地当天天然全绿——迁移前全基础设施仅 `db/balance.rs` 两行域 import。外挂测试继续豁免（ADR-0056 决策 5）。
+`scripts/check-structure.ts` 新增白名单基础设施条目内的「infra→域」文本级扫描，形态与现有 `commands::` 扫描同款（掩码注释与字符串后匹配域模块路径，fail loud）。迁移落地当天天然全绿——迁移前全基础设施仅 `db/balance.rs` 两行域 import。外挂测试继续豁免（ADR-0056 决策 5）。
 
 > **勘误（2026-09-05，#538 实施时，维护者裁决）**：「落地即全绿」原前提漏数一条现存边——`db/mod.rs` 的 `after_commit`（ADR-0032 连接层统一写入口置脏单点，#246）以代码调用 `crate::backup::{mark_dirty, shared_prefs, run_due_backup}` 三处，早于本文写作，上句「仅 db/balance.rs 两行」数漏。裁决：扫描按全路径形态落地（含内联全限定路径、别名引入与模块自身导入；限定 crate 根前缀以避开 std::sync 撞名），该边作为首条「认许边」逐条留痕于守门脚本 `INFRA_DOMAIN_ALLOWED_EDGES`——精确到文件 + 目标域、附 ADR 指针，与白名单同属「已验证事实固化为规格」；清单之外的基础设施→域引用一律红。
 

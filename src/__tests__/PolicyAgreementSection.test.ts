@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount, DOMWrapper } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import PolicyAgreementSection from '@/components/PolicyAgreementSection.vue'
 import { makeAccount, makePolicy } from './factories'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
@@ -14,7 +14,6 @@ import type {
   ScheduledTransactionWithExt,
 } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 
 enableAutoUnmount(afterEach)
 afterEach(() => {

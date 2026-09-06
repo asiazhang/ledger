@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { NButton, NEmpty, NSelect } from 'naive-ui'
 import QuickTimeRange from '@/components/QuickTimeRange.vue'
 import ReportsView from '@/views/ReportsView.vue'
@@ -22,7 +22,6 @@ vi.mock('vue-chartjs', async () => {
 const pushMock = vi.fn()
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: pushMock }) }))
 
-const mockInvoke = vi.mocked(invoke)
 
 // 固定「今天」= 2026-01-15（本地）：默认「当年」快照与芯片换算随之确定
 // （TransactionsView 时间维度行测试同款前提），期望年份一律用字面量 2026。

@@ -1,11 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { flushPromises, mount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import AiPromptView from '@/views/AiPromptView.vue'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 
-const mockInvoke = vi.mocked(invoke)
 const writeText = vi.fn().mockResolvedValue(undefined)
 
 const SAMPLE_PROMPT = `# Ledger API 入口提示词

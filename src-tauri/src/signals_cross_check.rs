@@ -20,7 +20,7 @@
 //! 的保障显式登记在测试面。信号知识本身（每身份一条直测断言，含零信号显式）
 //! 全部保留在 `signals::tests`，不在本文件。
 //!
-//! 扫描形态与既有守门先例同款（`scripts/check-structure.js`）：测试期文本级扫描，
+//! 扫描形态与既有守门先例同款（`scripts/check-structure.ts`）：测试期文本级扫描，
 //! 掩码注释与字符串/char 字面量后匹配；经别名改名的间接引用文本不可达，靠评审兜底。
 
 use std::collections::{HashMap, HashSet};
@@ -38,7 +38,7 @@ include!(concat!(env!("OUT_DIR"), "/commands_manifest.rs"));
 // ---------------------------------------------------------------------------
 
 /// 掩码 Rust 源文本中的注释与字符串/char 字面量：内容替换为等长空白（保留换行
-/// 与列位），使令牌扫描只落在真实代码上。与 `check-structure.js` 的 `maskNonCode`
+/// 与列位），使令牌扫描只落在真实代码上。与 `check-structure.ts` 的 `maskNonCode`
 /// 同款规则（行注释、可嵌套块注释、字符串、原始字符串、char 字面量）。
 fn mask_non_code(text: &str) -> String {
     let bytes: Vec<char> = text.chars().collect();

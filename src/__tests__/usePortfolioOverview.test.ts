@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import { registerToastSink } from '@/composables/useLoadable'
 import {
@@ -20,7 +20,6 @@ import {
   resetToastSink,
 } from './factories'
 
-const mockInvoke = vi.mocked(invoke)
 
 /** 默认 invoke mock：参考数据 + 持仓 + 持仓标的字典 */
 function baseInvoke(extra?: Record<string, unknown>) {

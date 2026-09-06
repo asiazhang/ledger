@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount, type VueWrapper } from '@vue/test-utils'
 import { NInputNumber } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import ManualPriceModal from '@/components/investments/ManualPriceModal.vue'
 import AppDatePicker from '@/components/AppDatePicker.vue'
@@ -18,7 +18,6 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-const mockInvoke = vi.mocked(invoke)
 
 /** 基础派发：beforeEach 安装；中途重桩处理完自己的领域命令后委托回它 */
 let base: ReturnType<typeof stubReferenceInvoke>

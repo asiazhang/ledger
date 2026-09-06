@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { flushPromises } from '@vue/test-utils'
-import { invoke } from '@tauri-apps/api/core'
 import { makeTransaction } from '@/__tests__/factories'
 import { stubReferenceInvoke } from '@/__tests__/helpers/reference-stubs'
 import { useTransactionModalState } from '@/composables/useTransactionModalState'
@@ -29,7 +29,6 @@ vi.mock('naive-ui', async (importOriginal) => {
   }
 })
 
-const mockInvoke = vi.mocked(invoke)
 
 // ---------------------------------------------------------------------------
 // 数据工厂：买卖明细（交易行走共享 makeTransaction，factories.ts）
@@ -52,7 +51,7 @@ beforeEach(() => {
   mockInvoke.mockReset()
   messageCalls.length = 0
   mockInvoke.mockImplementation((() =>
-    Promise.reject(new Error('unexpected invoke'))) as typeof invoke)
+    Promise.reject(new Error('unexpected invoke'))))
 })
 
 describe('useTransactionModalState 初始状态', () => {
@@ -132,7 +131,7 @@ describe('useTransactionModalState edit 意图（先取明细再开窗）', () =
     const modals = useTransactionModalState()
     const row = makeTransaction({ id: 'txn-bad', kind: 'buy' })
     mockInvoke.mockImplementation((() =>
-      Promise.reject(new Error('数据库不可用'))) as typeof invoke)
+      Promise.reject(new Error('数据库不可用'))))
     await modals.open({ type: 'edit', row })
     await flushPromises()
     expect(messageCalls).toEqual([{ method: 'error', text: '无法编辑: 数据库不可用' }])

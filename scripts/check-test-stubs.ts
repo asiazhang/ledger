@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // 前端测试桩守门（issue #725 + #726），两条规则：
 //
 // 规则 1（#725）：前端测试文件不得再手搓参考数据 `list_*` 桩接线。
@@ -42,22 +42,24 @@
 // 恰好整体等于接线形态的字符串字面量理论上可误报（现实中未见）。同一文件两个独立
 // 回调各桩同命令一次是整体替换语义，合法。
 //
-// 用法：node scripts/check-test-stubs.js [testsDir]
+// TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
+// 门槛检查；调用方式 `bun scripts/check-test-stubs.ts`。
+// 用法：bun scripts/check-test-stubs.ts [testsDir]
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { pathToFileURL } from 'node:url'
 
 const testsDir = resolve(process.argv[2] ?? join('src', '__tests__'))
 const helperPath = join(testsDir, 'helpers', 'reference-stubs.ts')
 
-function fail(message) {
+function fail(message: string): never {
   console.error(`✗ 测试桩守门：${message}`)
   process.exit(1)
 }
 
 // —— 从助手登记处提取命令清单（单一来源） ——
-function extractCommands() {
+function extractCommands(): string[] {
   if (!existsSync(helperPath)) {
     fail(`参考数据桩助手缺失：${helperPath}（issue #725 治理的桩单一来源）`)
   }
@@ -70,8 +72,8 @@ function extractCommands() {
 }
 
 // —— 递归收集 .ts 文件（helpers/ 纳入扫描；守门自身包装测试豁免） ——
-function walk(dir) {
-  const out = []
+function walk(dir: string): string[] {
+  const out: string[] = []
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, entry.name)
     if (entry.isDirectory()) {
@@ -84,7 +86,7 @@ function walk(dir) {
 }
 
 // —— 规则 1：参考数据手搓桩接线（行级扫描；接线正则每个命令只编译一次） ——
-function findHandWiredReferenceStubs(rel, source, commands) {
+function findHandWiredReferenceStubs(rel: string, source: string, commands: string[]): string[] {
   const wirings = commands.map((cmd) => {
     const q = `['"\`]${cmd}['"\`]`
     return {
@@ -96,7 +98,7 @@ function findHandWiredReferenceStubs(rel, source, commands) {
       ),
     }
   })
-  const hits = []
+  const hits: string[] = []
   source.split('\n').forEach((line, i) => {
     for (const { cmd, re } of wirings) {
       if (re.test(line)) {
@@ -109,15 +111,21 @@ function findHandWiredReferenceStubs(rel, source, commands) {
 
 // —— 规则 2：括号配对取出每个 mockImplementation 回调体范围（词法跳过字符串与注释，
 //    并记录它们在单元内的范围供后续挖空） ——
-function extractCallbackUnits(source) {
-  const units = []
+interface CallbackUnit {
+  start: number
+  end: number
+  masks: Array<[number, number]>
+}
+
+function extractCallbackUnits(source: string): CallbackUnit[] {
+  const units: CallbackUnit[] = []
   const re = /\.mockImplementation\s*\(/g // 不匹配 mockImplementationOnce（队列语义，无静默短路）
-  let m
+  let m: RegExpExecArray | null
   while ((m = re.exec(source))) {
     const start = m.index + m[0].length
     let i = start
     let depth = 1
-    const masks = []
+    const masks: Array<[number, number]> = []
     while (i < source.length && depth > 0) {
       const c = source[i]
       if (c === '/' && source[i + 1] === '/') {
@@ -152,7 +160,7 @@ function extractCallbackUnits(source) {
   return units
 }
 
-function lineOf(source, offset) {
+function lineOf(source: string, offset: number): number {
   let line = 1
   for (let i = 0; i < offset; i++) if (source[i] === '\n') line++
   return line
@@ -161,13 +169,15 @@ function lineOf(source, offset) {
 // —— 规则 2：同回调内同名命令 if 接线去重 ——
 // 仅统计活代码：接线匹配若落在注释/字符串内（与某个注释/字符串范围重叠且伸出其外），
 // 不计数；匹配自身携带的命令字符串完全包含于匹配内，不影响判定。
-function findDuplicateWiring(rel, source, units) {
-  const hits = []
+function findDuplicateWiring(rel: string, source: string, units: CallbackUnit[]): string[] {
+  const hits: string[] = []
   const IF_WIRING = /\bif\s*\(\s*cmd\s*===\s*(['"`])([^'"`]+)\1\s*\)/g
-  const isLive = (at, len, masks) =>
+  const isLive = (at: number, len: number, masks: Array<[number, number]>): boolean =>
     !masks.some(([ms, me]) => ms < at + len && me > at && (ms < at || me > at + len))
   for (const unit of units) {
-    const localMasks = unit.masks.map(([s, e]) => [s - unit.start, Math.min(e, unit.end) - unit.start])
+    const localMasks = unit.masks.map(
+      ([s, e]) => [s - unit.start, Math.min(e, unit.end) - unit.start] as [number, number],
+    )
     let text = source.slice(unit.start, unit.end)
     for (const nested of units) {
       if (nested === unit) continue
@@ -177,13 +187,13 @@ function findDuplicateWiring(rel, source, units) {
         text = text.slice(0, s) + text.slice(s, e).replace(/[^\n]/g, ' ') + text.slice(e) // 同长挖空，稳住行号
       }
     }
-    const byCmd = new Map()
-    let m
+    const byCmd = new Map<string, number[]>()
+    let m: RegExpExecArray | null
     IF_WIRING.lastIndex = 0
     while ((m = IF_WIRING.exec(text))) {
       if (!isLive(m.index, m[0].length, localMasks)) continue
       if (!byCmd.has(m[2])) byCmd.set(m[2], [])
-      byCmd.get(m[2]).push(lineOf(source, unit.start + m.index))
+      byCmd.get(m[2])!.push(lineOf(source, unit.start + m.index))
     }
     for (const [cmd, lines] of byCmd) {
       if (lines.length > 1) {
@@ -194,7 +204,7 @@ function findDuplicateWiring(rel, source, units) {
   return hits
 }
 
-function main() {
+function main(): void {
   const commands = extractCommands()
   if (commands.length === 0) {
     fail(`助手 ${helperPath} 的 REFERENCE_DEFAULTS 登记处提不出任何 list_* 命令（清单漂移？）`)
@@ -202,7 +212,7 @@ function main() {
 
   let handWired = 0
   let duplicated = 0
-  const violations = []
+  const violations: string[] = []
   for (const file of walk(testsDir)) {
     const rel = relative(testsDir, file)
     const source = readFileSync(file, 'utf8')

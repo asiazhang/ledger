@@ -1,13 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import { useReferenceStore } from '@/stores/reference'
 import { resolveLendingDirection } from '@/domain/lending'
 import { useLendingForm } from '@/composables/useLendingForm'
 import type { Account, Transaction } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 
 /** 覆盖资金侧（cash/bank）、借出侧（receivable）、负债侧（debt）的账户集 */
 const mockAccounts: Account[] = [

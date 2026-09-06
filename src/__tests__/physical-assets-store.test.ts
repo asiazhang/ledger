@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { usePhysicalAssetsStore } from '@/stores/physicalAssets'
 import { makePhysicalAsset, makePhysicalAssetList } from './factories'
@@ -15,7 +15,6 @@ import type {
   PhysicalAssetValuationInput,
 } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 const mockListen = vi.mocked(listen)
 
 function baseAsset(over: Partial<PhysicalAsset> = {}): PhysicalAsset {

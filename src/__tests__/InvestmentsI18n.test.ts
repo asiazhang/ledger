@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, enableAutoUnmount, flushPromises } from '@vue/test-utils'
 import { h, nextTick } from 'vue'
 import { NDialogProvider } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useReferenceStore } from '@/stores/reference'
 import { applyLocale } from '@/i18n'
@@ -17,7 +17,6 @@ vi.mock('vue-chartjs', async () => {
   return { Line: LineChartStub }
 })
 
-const mockInvoke = vi.mocked(invoke)
 const mockListen = vi.mocked(listen)
 
 // 英文渲染冒烟（issue #350）：切 en-US 后投资域文案走 en 资源；

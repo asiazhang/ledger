@@ -4,11 +4,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-// 被测对象是仓库工具脚本 scripts/check-commands.js（命令注册一致性校验）。
+// 被测对象是仓库工具脚本 scripts/check-commands.ts（命令注册一致性校验）。
+// 脚本以 Bun 运行时执行（ADR-0083）：spawnSync('bun') 与门槛调用同款，测的就是门槛路径。
 // 按测试决策只测外部可观察结果——进程退出码与输出，不测内部函数；
 // 通过位置参数把扫描目标指向临时夹具目录。
 // （vitest 转换后 import.meta.url 非 file: scheme，取进程 cwd = 仓库根定位脚本）
-const script = join(process.cwd(), 'scripts', 'check-commands.js')
+const script = join(process.cwd(), 'scripts', 'check-commands.ts')
 
 interface RunResult {
   status: number
@@ -16,7 +17,7 @@ interface RunResult {
 }
 
 function run(args: string[]): RunResult {
-  const r = spawnSync(process.execPath, [script, ...args], { encoding: 'utf8' })
+  const r = spawnSync('bun', [script, ...args], { encoding: 'utf8' })
   return { status: r.status ?? -1, output: (r.stdout ?? '') + (r.stderr ?? '') }
 }
 

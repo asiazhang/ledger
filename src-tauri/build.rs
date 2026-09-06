@@ -12,7 +12,7 @@
 //!
 //! 扫描维护边界：只认裸注解 + 紧随 fn 定义。带参注解（`#[tauri::command(rename_all = …)]`）、
 //! cfg 条件命令、注解与 fn 之间的属性行均不支持——遇到不认识的形态直接 panic（fail loud，
-//! 宁可编译失败不可静默漏注册）；未来扩展时须同步修改 `scripts/check-commands.js`
+//! 宁可编译失败不可静默漏注册）；未来扩展时须同步修改 `scripts/check-commands.ts`
 //! （TS 调用面一致性校验与本文共享同一扫描规则）。
 //
 // 豁免（ADR-0060）：构建脚本 fail-loud 守门（ADR-0047）刻意用 panic!/expect 表达
@@ -96,7 +96,7 @@ fn scan_source(file: &Path, source: &str) -> Vec<String> {
                 None => panic!(
                     "扫描器不认识的命令形态：{}:{}：{trimmed}\n\
                      扫描边界：只认裸 #[tauri::command] + 紧随 pub fn / pub async fn；\
-                     带参注解 / cfg 条件命令需同步扩展 build.rs 与 scripts/check-commands.js 的扫描规则（ADR-0047）",
+                     带参注解 / cfg 条件命令需同步扩展 build.rs 与 scripts/check-commands.ts 的扫描规则（ADR-0047）",
                     file.display(),
                     idx + 1
                 ),

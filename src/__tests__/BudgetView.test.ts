@@ -1,15 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { NSelect, NInputNumber, NDatePicker, NModal } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import { todayStr } from '@/utils/date'
 import BudgetView from '@/views/BudgetView.vue'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { BudgetProgress, Category } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 
 enableAutoUnmount(afterEach)
 afterEach(() => {

@@ -1,13 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useItemsStore } from '@/stores/items'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { ItemInput, ItemWithDailyCost } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 const mockListen = vi.mocked(listen)
 
 function baseItem(over: Partial<ItemWithDailyCost> = {}): ItemWithDailyCost {

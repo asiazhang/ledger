@@ -1,13 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount, DOMWrapper } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import PolicyFormModal from '@/components/PolicyFormModal.vue'
 import { makeAccount, makePolicy } from './factories'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Account, Currency, Insurer, Policy } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 
 // AppModal 内容 teleport 到 document.body：测试在 body 中查询/触发（同 PoliciesView 先例）。
 enableAutoUnmount(afterEach)

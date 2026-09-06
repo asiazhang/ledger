@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockInvoke } from '../helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import ScheduledView from '@/views/ScheduledView.vue'
 import { stubReferenceInvoke } from '../helpers/reference-stubs'
 import { routes } from '@/router'
@@ -18,7 +18,6 @@ import type { SubscriptionSpendOverview } from '@/types'
  * 领域标签函数输出，用例结束还原 zh-CN，不影响其他测试文件（vitest 文件级隔离）。
  */
 
-const mockInvoke = vi.mocked(invoke)
 
 // jsdom 无 canvas：与 SubscriptionSpendPanel.test.ts 同款桩，避免真实 chart.js 响应式重渲染报错
 vi.mock('vue-chartjs', async () => {

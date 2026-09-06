@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
-import { invoke } from '@tauri-apps/api/core'
 import { setActivePinia, createPinia } from 'pinia'
 import type { EncryptionStatus } from '@/types'
 import zhAll from '@/i18n/locales/zh-CN'
@@ -31,7 +31,6 @@ import { hasOpenOverlay, resetOverlays } from '@/composables/overlayRegistry'
 import { useAppStore } from '@/stores/app'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 
-const mockInvoke = vi.mocked(invoke)
 
 const plaintextStatus: EncryptionStatus = { locked: false, file_encrypted: false }
 const encryptedStatus: EncryptionStatus = { locked: false, file_encrypted: true }

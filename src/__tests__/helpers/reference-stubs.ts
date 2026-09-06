@@ -15,7 +15,7 @@ import type { Account, Category, Currency, Insurer, Merchant } from '@/types'
  * `unexpected invoke` 拒绝（既有严格性是有价值的，予以保留）。
  *
  * 新增参考表 = 只改本文件（夹具 + `REFERENCE_DEFAULTS` 一行），全仓测试文件
- * 零改动；守门脚本 scripts/check-test-stubs.js 从本文件的登记处提取命令清单，
+ * 零改动；守门脚本 scripts/check-test-stubs.ts 从本文件的登记处提取命令清单，
  * 防止手搓桩回归。
  */
 
@@ -88,7 +88,6 @@ export const refMerchants: Merchant[] = [
   {
     id: 'mch-1',
     name: '京东',
-    created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     version: 1,
     device_id: 'test',
@@ -97,7 +96,6 @@ export const refMerchants: Merchant[] = [
   {
     id: 'mch-del',
     name: '已删商户',
-    created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     version: 1,
     device_id: 'test',
@@ -109,7 +107,6 @@ export const refInsurers: Insurer[] = [
   {
     id: 'ins-1',
     name: '平安人寿',
-    created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     version: 1,
     device_id: 'test',
@@ -118,7 +115,6 @@ export const refInsurers: Insurer[] = [
   {
     id: 'ins-del',
     name: '已删保司',
-    created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     version: 1,
     device_id: 'test',
@@ -138,8 +134,19 @@ export const REFERENCE_DEFAULTS: Record<string, unknown> = {
   list_insurers: refInsurers,
 }
 
-/** 覆写值：固定返回值，或 `(args) => 返回值 | Promise`（可变库、在途、拒绝场景）。 */
-export type ReferenceStubOverride = unknown | ((args?: Record<string, unknown>) => unknown)
+/** 覆写值：固定返回值（JSON 可表达形态），或 `(args) => 返回值 | Promise`（可变库、
+ *  在途、拒绝场景）。函数成员的 args 收窄为对象形态（tauri `InvokeArgs` 的 `number[]`
+ *  缓冲区形态本应用不产生，收拢理由与边界见 helpers/invoke-mock.ts），覆写不标参数
+ *  类型时经上下文推断获得；字段访问返回 `unknown`，具体形状在覆写体内断言。 */
+export type ReferenceStubOverride =
+  | ((args?: Record<string, unknown>) => unknown)
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | unknown[]
+  | Record<string, unknown>
 
 function isThenable(value: unknown): value is Promise<unknown> {
   return typeof (value as Promise<unknown> | undefined)?.then === 'function'

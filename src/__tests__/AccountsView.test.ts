@@ -1,16 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NDialogProvider, NDropdown, NForm, NInput, NModal } from 'naive-ui'
 import { h } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import AccountsView from '@/views/AccountsView.vue'
 import AccountLink from '@/components/AccountLink.vue'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Account, AccountBalance } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 
 const pushMock = vi.fn()
 vi.mock('vue-router', () => ({

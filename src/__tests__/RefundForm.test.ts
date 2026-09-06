@@ -1,13 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import RefundForm from '@/components/RefundForm.vue'
 import type { Transaction } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 
 /** 行内退款模式的固定原交易（¥30 支出） */
 const fixedTx: Transaction = {

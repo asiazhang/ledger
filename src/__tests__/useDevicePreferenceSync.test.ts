@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { useAppStore } from '@/stores/app'
 import { useDevicePreferenceSync } from '@/composables/useDevicePreferenceSync'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
@@ -12,7 +12,6 @@ import { stubReferenceInvoke } from './helpers/reference-stubs'
 // 启动（immediate）与变更时推给后端运行时消费。测试主缝与既有先例一致：
 // mock invoke 断言命令调用，不触碰真实 Tauri。
 
-const mockInvoke = vi.mocked(invoke)
 
 /** 宿主组件：模拟 App.vue 在 setup 内挂载一次 composable。 */
 const Host = defineComponent({

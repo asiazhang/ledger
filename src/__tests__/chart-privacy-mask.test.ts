@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import type { Chart, ChartOptions, TooltipItem } from 'chart.js'
 import ReportsView from '@/views/ReportsView.vue'
 import PortfolioTrendPanel from '@/components/investments/PortfolioTrendPanel.vue'
@@ -36,7 +36,6 @@ vi.mock('vue-chartjs', async () => {
 const pushMock = vi.fn()
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: pushMock }) }))
 
-const mockInvoke = vi.mocked(invoke)
 
 // 固定「今天」= 2026-01-15：报表页默认「当年」快照随之确定（ReportsView 测试同款前提）
 const Y = 2026

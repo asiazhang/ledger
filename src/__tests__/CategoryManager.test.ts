@@ -1,13 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import CategoryManager from '@/components/CategoryManager.vue'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Category } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 
 const mockCategories: Category[] = [
   {
@@ -117,7 +116,7 @@ describe('CategoryManager.vue', () => {
       reorder_categories: undefined,
     })
     await expect(
-      invoke('reorder_categories', { items: [{ id: 'food', sort_order: 0 }] }),
+      mockInvoke('reorder_categories', { items: [{ id: 'food', sort_order: 0 }] }),
     ).resolves.toBeUndefined()
   })
 })

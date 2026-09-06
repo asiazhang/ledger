@@ -1,10 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { invoke } from '@tauri-apps/api/core'
+import { mockInvoke } from './helpers/invoke-mock'
 import { api } from '@/api'
 import { busyVisible, resetGlobalBusy } from '@/composables/globalBusy'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 
-const mockInvoke = vi.mocked(invoke)
 
 /** 手动完结的延迟 Promise：控制 invoke 完结时机以构造阈值与并发竞态 */
 function deferred<T = unknown>() {

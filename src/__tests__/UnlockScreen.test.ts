@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
-import { invoke } from '@tauri-apps/api/core'
 import { setActivePinia, createPinia } from 'pinia'
 
 // 文件选择与重启单点 mock（先例 StartupFailureScreen.test.ts；restartAppShortly
@@ -18,7 +18,6 @@ import { AUTO_UNLOCK_TIMEOUT_MS, useEncryptionGate } from '@/composables/useEncr
 import { useAppStore } from '@/stores/app'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 
-const mockInvoke = vi.mocked(invoke)
 const mockOpen = vi.mocked(open)
 
 /** mock-invoke 桩：解锁屏只消费加密命令面（fail-loud：其余命令一律拒绝）。 */

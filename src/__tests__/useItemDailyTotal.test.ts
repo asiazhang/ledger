@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { useItemsStore } from '@/stores/items'
 import { useItemDailyTotal } from '@/composables/useItemDailyTotal'
 import { registerToastSink } from '@/composables/useLoadable'
@@ -13,7 +13,6 @@ import {
   resetToastSink,
 } from './factories'
 
-const mockInvoke = vi.mocked(invoke)
 
 const mockTotal = makeItemDailyTotal()
 
