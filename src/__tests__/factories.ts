@@ -124,7 +124,7 @@ export const mockInstruments: Instrument[] = [
 /** 保单实体工厂（issue #360）：保单 store 与视图测试共用（消除本地复制）。 */
 export function makePolicy(partial: Partial<Policy> & { id: string }): Policy {
   return {
-    merchant_id: 'mer-1',
+    insurer_id: 'ins-1',
     policy_number: 'P2026-001',
     product_name: '重疾险',
     start_date: '2024-01-01',
@@ -283,6 +283,7 @@ export function invokeHandler(
     if (typeof handler === 'function') return (handler as () => unknown)()
     if (handler !== undefined) return Promise.resolve(handler)
     if (cmd in defaults) return Promise.resolve(defaults[cmd])
+    if (cmd === 'list_insurers') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   }
 }

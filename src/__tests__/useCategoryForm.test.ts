@@ -60,8 +60,8 @@ function mockBaseCommands(merchants: Merchant[] = mockMerchants) {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve(merchants)
     if (cmd === 'list_insurers') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve(merchants)
     if (cmd === 'list_policies') return Promise.resolve(mockPolicies)
     if (cmd === 'list_policy_stats') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
@@ -130,8 +130,8 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
   it('输入新名字（未命中）：保存即建商户并携带新 id', async () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'create_merchant') return Promise.resolve('mch-new')
-      if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
       if (cmd === 'list_insurers') return Promise.resolve([])
+      if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
       if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve([])
@@ -245,8 +245,8 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
       // 模拟原保单已软删：重拉后 store 列表不含 pol-1
       mockInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_policies') return Promise.resolve([])
-        if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
         if (cmd === 'list_insurers') return Promise.resolve([])
+        if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
         if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
         if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
         if (cmd === 'list_categories') return Promise.resolve([])

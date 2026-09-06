@@ -117,6 +117,7 @@ describe('useInstrumentFullSync 全量同步接缝（issue #109）', () => {
       if (cmd === 'sync_instruments') return Promise.resolve(undefined)
       if (cmd === 'cancel_sync_instruments')
         return Promise.resolve({ cancelled: true, message: '已请求中断同步' })
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const sync = await mountHostReady()

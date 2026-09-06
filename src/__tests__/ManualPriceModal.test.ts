@@ -28,8 +28,8 @@ function baseInvoke() {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve([])
     if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
     if (cmd === 'list_insurers') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
 }
@@ -109,6 +109,7 @@ describe('ManualPriceModal 手动报价弹窗（issue #291 / ADR-0036）', () =>
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'record_manual_price')
         return Promise.resolve({ history_written: true, current_price_written: true })
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     await clickSubmit()
@@ -131,6 +132,7 @@ describe('ManualPriceModal 手动报价弹窗（issue #291 / ADR-0036）', () =>
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'record_manual_price')
         return Promise.resolve({ history_written: true, current_price_written: false })
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     await clickSubmit()
@@ -145,6 +147,7 @@ describe('ManualPriceModal 手动报价弹窗（issue #291 / ADR-0036）', () =>
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'record_manual_price')
         return Promise.reject({ kind: 'Invalid', message: '价格必须大于 0' })
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     await clickSubmit()

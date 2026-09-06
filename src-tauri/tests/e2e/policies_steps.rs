@@ -4,7 +4,8 @@
 //! 经 `policy` 域 API（`tauri_app_lib::policy`）断言外部可观察行为：创建/编辑读回、
 //! 校验错误信息、写后发失效信号（notify 注入，生产路径发 `ledger:changed`）、
 //! 软删后不进列表且库内行引用保留不置空。
-//! 商户侧 Given/When（存在商户 / 软删商户）复用 `merchants_steps.rs` 已注册步骤。
+//! 保司侧 Given/When（存在保司 / 软删保司）复用 `insurers_steps.rs` 已注册步骤
+//! （issue #713 换轨：保司引用保险域自有字典，不再复用商户）。
 
 use cucumber::{then, when};
 
@@ -23,7 +24,7 @@ const NONE: &str = "无";
 #[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
 fn build_input(
     world: &LedgerWorld,
-    merchant: &str,
+    insurer: &str,
     policy_number: &str,
     product_name: &str,
     start_date: &str,
@@ -31,14 +32,14 @@ fn build_input(
     coverage: &str,
     currency: &str,
 ) -> PolicyInput {
-    let merchant_id = world.merchant_id(merchant);
+    let insurer_id = world.insurer_id(insurer);
     let end = (!end_date.eq_ignore_ascii_case(NONE)).then(|| end_date.to_string());
     let amount = coverage.parse::<i64>().ok();
     // 币种哨兵「无」→ None（缺省）；保额存在且币种给出时才携带（触发成对校验路径）
     let currency_code =
         (amount.is_some() && !currency.eq_ignore_ascii_case(NONE)).then(|| currency.to_string());
     PolicyInput {
-        merchant_id,
+        insurer_id,
         policy_number: policy_number.into(),
         product_name: product_name.into(),
         start_date: start_date.into(),
@@ -56,7 +57,7 @@ fn build_input(
 #[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
 fn create_policy(
     world: &mut LedgerWorld,
-    merchant: String,
+    insurer: String,
     policy_number: String,
     product_name: String,
     start_date: String,
@@ -66,7 +67,7 @@ fn create_policy(
 ) {
     let input = build_input(
         world,
-        &merchant,
+        &insurer,
         &policy_number,
         &product_name,
         &start_date,
@@ -91,7 +92,7 @@ fn create_policy(
 #[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
 fn try_create_policy(
     world: &mut LedgerWorld,
-    merchant: String,
+    insurer: String,
     policy_number: String,
     product_name: String,
     start_date: String,
@@ -101,7 +102,7 @@ fn try_create_policy(
 ) {
     let input = build_input(
         world,
-        &merchant,
+        &insurer,
         &policy_number,
         &product_name,
         &start_date,
@@ -126,7 +127,7 @@ fn try_create_policy(
 #[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
 fn update_policy(
     world: &mut LedgerWorld,
-    merchant: String,
+    insurer: String,
     policy_number: String,
     product_name: String,
     start_date: String,
@@ -140,7 +141,7 @@ fn update_policy(
         .expect("编辑保单前应先创建保单");
     let input = build_input(
         world,
-        &merchant,
+        &insurer,
         &policy_number,
         &product_name,
         &start_date,
@@ -162,7 +163,7 @@ fn update_policy(
 #[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
 fn try_update_policy(
     world: &mut LedgerWorld,
-    merchant: String,
+    insurer: String,
     policy_number: String,
     product_name: String,
     start_date: String,
@@ -176,7 +177,7 @@ fn try_update_policy(
         .expect("编辑保单前应先创建保单");
     let input = build_input(
         world,
-        &merchant,
+        &insurer,
         &policy_number,
         &product_name,
         &start_date,
@@ -260,14 +261,14 @@ fn nth(world: &LedgerWorld, n: usize) -> &tauri_app_lib::policy::Policy {
 fn check_identity(
     world: &mut LedgerWorld,
     n: usize,
-    merchant: String,
+    insurer: String,
     number: String,
     product: String,
 ) {
     let policy = nth(world, n);
-    // 保司以商户名断言（复用商户字典，ADR-0051 决策 7）
-    let merchant_id = world.merchant_id(&merchant);
-    assert_eq!(policy.merchant_id, merchant_id, "保司引用不匹配");
+    // 保司以保司名断言（保险域自有字典，ADR-0082）
+    let insurer_id = world.insurer_id(&insurer);
+    assert_eq!(policy.insurer_id, insurer_id, "保司引用不匹配");
     assert_eq!(policy.policy_number, number, "保单号不匹配");
     assert_eq!(policy.product_name, product, "险种名称不匹配");
 }
@@ -329,16 +330,16 @@ fn check_soft_deleted_row_kept(world: &mut LedgerWorld, number: String) {
         .last_policy_id
         .clone()
         .expect("软删保留断言前应先创建保单");
-    let (is_deleted, kept_number, kept_merchant): (i64, String, String) = world_conn!(world)
+    let (is_deleted, kept_number, kept_insurer): (i64, String, String) = world_conn!(world)
         .query_row(
-            "SELECT is_deleted, policy_number, merchant_id FROM policies WHERE id=?1",
+            "SELECT is_deleted, policy_number, insurer_id FROM policies WHERE id=?1",
             [&id],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .expect("软删后库内行应保留（不物理移除）");
     assert_eq!(is_deleted, 1, "应为软删标记");
     assert_eq!(kept_number, number, "保单号应原样保留（引用保留不置空）");
-    assert!(!kept_merchant.is_empty(), "保司引用应保留不置空");
+    assert!(!kept_insurer.is_empty(), "保司引用应保留不置空");
 }
 
 #[then(expr = "保单写入后应发出 {int} 次失效信号")]

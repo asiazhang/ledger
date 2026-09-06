@@ -19,6 +19,7 @@ beforeEach(() => {
   mockInvoke.mockReset()
   mockInvoke.mockImplementation((cmd: string) => {
     if (cmd === 'get_ai_prompt') return Promise.resolve(SAMPLE_PROMPT)
+    if (cmd === 'list_insurers') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
   Object.assign(navigator, { clipboard: { writeText } })

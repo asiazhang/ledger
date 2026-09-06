@@ -146,6 +146,7 @@ describe('记一笔借贷入口完整链路（issue #374）', () => {
     await flushPromises()
     mockInvoke.mockImplementationOnce((cmd: string) => {
       if (cmd === 'create_transaction') return Promise.resolve('new-id')
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const submitBtn = form.findAllComponents(NButton).find((b) => b.text() === '记借出')!

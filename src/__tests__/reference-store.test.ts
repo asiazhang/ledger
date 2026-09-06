@@ -191,6 +191,38 @@ describe('useReferenceStore', () => {
     expect(store.merchantByName.get('红旗连锁')?.id).toBe('mch-2')
   })
 
+  it('保司字典接入（issue #713 / ADR-0082）：在用进字典与按名查找，含已删全量拉取，insurerMap 含软删行', async () => {
+    const store = useReferenceStore()
+    await store.refresh() // 等 self-init 完成（避免与在途加载合并去重）
+    // 保司拉取以含已删全量（同商户先例：在用进字典，软删进显示映射）
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
+      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
+      if (cmd === 'list_categories') return Promise.resolve(mockCategories)
+      if (cmd === 'list_merchants') return Promise.resolve([])
+      if (cmd === 'list_insurers') {
+        return Promise.resolve([
+          { id: 'ins-1', name: '平安人寿', is_deleted: false, created_at: '', updated_at: '', version: 1, device_id: 'test' },
+          { id: 'ins-2', name: '海峡金桥', is_deleted: true, created_at: '', updated_at: '', version: 1, device_id: 'test' },
+        ])
+      }
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    await store.refresh()
+
+    const insurerCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_insurers')
+    expect(insurerCalls.length).toBeGreaterThan(0)
+    for (const [, args] of insurerCalls) {
+      expect(args).toMatchObject({ includeDeleted: true })
+    }
+    // 在用：进字典、进按名查找；软删：只进显示映射（存量保单保司列照常显示）
+    expect(store.insurers.map((i) => i.id)).toEqual(['ins-1'])
+    expect(store.insurerByName.get('平安人寿')?.id).toBe('ins-1')
+    expect(store.insurerByName.get('海峡金桥')).toBeUndefined()
+    expect(store.insurerMap.get('ins-1')?.name).toBe('平安人寿')
+    expect(store.insurerMap.get('ins-2')?.name).toBe('海峡金桥')
+  })
+
   it('list_merchants 以含软删全量拉取（includeDeleted=true，筛选下拉数据源 issue #191）', async () => {
     const store = useReferenceStore()
     await store.refresh()
@@ -446,6 +478,7 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
 
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_currencies') return Promise.reject(new Error('db 错误'))
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     await expect(store.refresh()).rejects.toThrow('db 错误')
@@ -462,6 +495,7 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
 
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_currencies') return Promise.reject(new Error('db 错误'))
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     await expect(store.refresh()).rejects.toThrow('db 错误')

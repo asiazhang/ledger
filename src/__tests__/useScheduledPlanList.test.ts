@@ -139,6 +139,7 @@ function baseInvoke() {
       )
       return Promise.resolve()
     }
+    if (cmd === 'list_insurers') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   }) as typeof invoke)
 }
@@ -422,6 +423,7 @@ describe('useScheduledPlanList Plan Lifecycle 操作', () => {
       if (cmd === 'update_scheduled_transaction_status')
         return Promise.reject(new Error('状态不允许变更'))
       if (cmd === 'list_scheduled_transactions') return Promise.resolve(mockPlans)
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     }) as typeof invoke)
     await list.changeStatus('a1', 'paused')

@@ -157,6 +157,18 @@ describe('SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
     expect(wrapper.text()).toContain('商户B')
   })
 
+  it('挂保单的缴费协议编辑弹窗不显示商户字段（issue #713 / ADR-0082：付款对象语义由保司承担）', async () => {
+    const plan = { ...makePlan({ id: 'a1', note: '重疾险年缴' }), policy_id: 'policy-1' }
+    setMockPlans([plan])
+    mockDetails.set('a1', makeDetail(plan, []))
+    const wrapper = await mountView()
+    await openEditModal(wrapper)
+    // 商户字段整个表单项不渲染（而非置灰）：协议计划行不挂商户
+    expect(
+      wrapper.findComponent('[data-testid="sub-edit-merchant"]').exists(),
+    ).toBe(false)
+  })
+
   it('原商户软删且不在字典：下拉兜底选项承载原 id，未改动提交仍携带原 id（接缝软删兜底分支接线）', async () => {
     const plan = makePlan({ id: 'a1', note: '视频会员' }, 'mer-gone')
     setMockPlans([plan])

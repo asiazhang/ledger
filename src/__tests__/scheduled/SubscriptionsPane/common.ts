@@ -176,8 +176,8 @@ export function baseInvoke() {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-    if (cmd === 'list_merchants') return Promise.resolve(mockMerchantsState)
     if (cmd === 'list_insurers') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve(mockMerchantsState)
     if (cmd === 'subscription_spend_overview') return Promise.resolve(mockSpendOverview)
     if (cmd === 'list_scheduled_transactions') return Promise.resolve(mockPlans)
     if (cmd === 'get_scheduled_transaction_detail') {

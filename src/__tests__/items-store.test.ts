@@ -58,6 +58,7 @@ describe('useItemsStore', () => {
   it('首次访问自动加载（self-init），加载后 status=ready、version=1', async () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_items') return Promise.resolve([baseItem()])
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = useItemsStore()
@@ -71,6 +72,7 @@ describe('useItemsStore', () => {
   it('加载失败时 status=error，不抛出（self-init 静默）', async () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_items') return Promise.reject(new Error('boom'))
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = useItemsStore()
@@ -123,6 +125,7 @@ describe('useItemsStore', () => {
         expect(args).toEqual({ input: createInput })
         return Promise.resolve('item-new')
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = useItemsStore()
@@ -155,6 +158,7 @@ describe('useItemsStore', () => {
         expect(args).toEqual({ id: 'item-1', input: updateInput })
         return Promise.resolve(null)
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = useItemsStore()
@@ -171,6 +175,7 @@ describe('useItemsStore', () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_items') return Promise.resolve(initial)
       if (cmd === 'update_item') return Promise.reject(new Error('物品不存在'))
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = useItemsStore()
@@ -210,6 +215,7 @@ describe('useItemsStore', () => {
         expect(args).toEqual({ id: 'item-1', input: disposeInput })
         return Promise.resolve(null)
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = useItemsStore()
@@ -227,6 +233,7 @@ describe('useItemsStore', () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_items') return Promise.resolve(initial)
       if (cmd === 'dispose_item') return Promise.reject(new Error('处置日期早于购买日期'))
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = useItemsStore()
@@ -253,6 +260,7 @@ describe('useItemsStore', () => {
         expect(args).toEqual({ id: 'item-1' })
         return Promise.resolve()
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = useItemsStore()
@@ -269,6 +277,7 @@ describe('useItemsStore', () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_items') return Promise.resolve(initial)
       if (cmd === 'delete_item') return Promise.reject(new Error('物品不存在'))
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = useItemsStore()

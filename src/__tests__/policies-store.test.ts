@@ -48,6 +48,7 @@ describe('usePoliciesStore', () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_policies') return Promise.resolve([basePolicy()])
       if (cmd === 'list_policy_stats') return Promise.resolve([baseStats()])
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = usePoliciesStore()
@@ -62,6 +63,7 @@ describe('usePoliciesStore', () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_policies') return Promise.reject(new Error('boom'))
       if (cmd === 'list_policy_stats') return Promise.resolve([])
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = usePoliciesStore()
@@ -110,6 +112,7 @@ describe('usePoliciesStore', () => {
         expect(args).toMatchObject({ input: createInput })
         return Promise.resolve('new-1')
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = usePoliciesStore()
@@ -139,6 +142,7 @@ describe('usePoliciesStore', () => {
         expect(id).toBe('policy-1')
         return Promise.resolve()
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = usePoliciesStore()
@@ -157,6 +161,7 @@ describe('usePoliciesStore', () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_policies') return Promise.resolve([basePolicy()])
       if (cmd === 'list_policy_stats') return Promise.resolve(stats)
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = usePoliciesStore()
@@ -171,6 +176,7 @@ describe('usePoliciesStore', () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_policies') return Promise.resolve([basePolicy()])
       if (cmd === 'list_policy_stats') return Promise.reject(new Error('stats boom'))
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = usePoliciesStore()
@@ -185,6 +191,7 @@ describe('usePoliciesStore', () => {
       if (cmd === 'list_policies') return Promise.resolve([])
       if (cmd === 'list_policy_stats') return Promise.resolve([])
       if (cmd === 'create_policy') return Promise.reject(new Error('保单号不能为空'))
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = usePoliciesStore()

@@ -76,6 +76,7 @@ function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
   mockInvoke.mockImplementation((cmd: string, args?: any) => {
     if (cmd in overrides) return overrides[cmd](args)
     if (cmd in defaults) return Promise.resolve(defaults[cmd])
+    if (cmd === 'list_insurers') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
 }

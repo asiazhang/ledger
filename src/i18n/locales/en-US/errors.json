@@ -163,6 +163,7 @@
     "date-invalid": "invalid date {0}: {1}",
     "not-active": "the linked plan is not active",
     "policy-subscription-only": "only subscription agreements can reference a policy",
+    "policy-merchant-forbidden": "policy agreements cannot carry a merchant: premiums are attributed via the policy reference",
     "kind-mismatch": "plan kind is inconsistent with the occurrence execution path (internal inconsistency)"
   },
   "scheduled-occurrence": {
@@ -176,7 +177,7 @@
   },
   "policy": {
     "not-found": "policy does not exist: {0}",
-    "merchant-not-found": "insurance company not found or deleted: {0}",
+    "insurer-not-found": "insurance company not found or deleted: {0}",
     "number-required": "policy number is required",
     "product-required": "product name is required",
     "date-invalid": "invalid date, expected YYYY-MM-DD: {0}",

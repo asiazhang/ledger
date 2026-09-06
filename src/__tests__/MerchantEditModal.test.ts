@@ -73,6 +73,7 @@ describe('MerchantEditModal.vue（issue #189）', () => {
   it('改名保存：调用 update_merchant 并关窗', async () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'update_merchant') return Promise.resolve(undefined)
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const wrapper = mount(MerchantEditModal, {
@@ -111,6 +112,7 @@ describe('MerchantEditModal.vue（issue #189）', () => {
       if (cmd === 'update_merchant') {
         return Promise.reject(new Error('参数错误: 商户已存在: 京东商城'))
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const wrapper = mount(MerchantEditModal, {

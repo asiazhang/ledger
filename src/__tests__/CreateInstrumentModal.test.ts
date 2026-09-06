@@ -27,8 +27,8 @@ function baseInvoke() {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve([])
     if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
     if (cmd === 'list_insurers') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
 }
@@ -118,6 +118,7 @@ describe('CreateInstrumentModal 新建标的弹窗（issue #290 / ADR-0036）', 
     expect(submitButton().disabled).toBe(false)
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'create_instrument') return Promise.resolve('inst-new')
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     await bodyQuery('[data-testid="submit-create-instrument"]')!.dispatchEvent(
@@ -151,6 +152,7 @@ describe('CreateInstrumentModal 新建标的弹窗（issue #290 / ADR-0036）', 
           kind: 'Invalid',
           message: '股票类标的不支持手动创建：股票字典由「全量同步」从东方财富维护',
         })
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     await bodyQuery('[data-testid="submit-create-instrument"]')!.dispatchEvent(

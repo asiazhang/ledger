@@ -56,6 +56,68 @@ fn init_db_is_idempotent_and_seeds_defaults() {
 }
 
 // ---------------------------------------------------------------------------
+// V012 就地修改：保单表保司换轨（issue #713 / ADR-0082 决策 1/5）
+// ---------------------------------------------------------------------------
+
+/// 保单表保司字段换轨（V012 就地修改，issue #713）：全新安装的 policies 表以
+/// `insurer_id` 引用保司字典（insurers，V019 建——DDL 允许前向引用，V012 与 V019
+/// 之间无本表 DML），不再引用商户字典；外键动作保持 RESTRICT（档案存续依赖，
+/// ADR-0051 决策 5 同款）。软删保司不可再建新档案引用（在用校验在行为层，
+/// 库层只验存在性）。
+#[test]
+fn policies_table_references_insurers() {
+    let mut conn = open_in_memory().unwrap();
+    init_db(&mut conn).unwrap();
+
+    // 新形状：insurer_id 在场、merchant_id 不在场（就地修改替换，非并存）。
+    let has_insurer_id: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('policies') WHERE name='insurer_id')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let has_merchant_id: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('policies') WHERE name='merchant_id')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(has_insurer_id, "policies 表应有 insurer_id 列（保司引用）");
+    assert!(
+        !has_merchant_id,
+        "policies 表不应再有 merchant_id 列（商户引用已换轨）"
+    );
+
+    // 外键指向 insurers：引用在用保司可落库；引用不存在的保司被拒。
+    conn.execute(
+        "INSERT INTO policies (id,insurer_id,policy_number,product_name,start_date,\
+         created_at,updated_at,version,device_id,is_deleted) \
+         SELECT 'pol-01', id, 'P-1', '重疾险', '2026-01-01', \
+         '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0 \
+         FROM insurers WHERE name='平安人寿' AND is_deleted=0",
+        [],
+    )
+    .unwrap_or_else(|e| panic!("引用种子保司应可落库: {e}"));
+    let dangling = conn.execute(
+        "INSERT INTO policies (id,insurer_id,policy_number,product_name,start_date,\
+         created_at,updated_at,version,device_id,is_deleted) \
+         VALUES ('pol-02','ins-nothing','P-2','医疗险','2026-01-01',\
+         '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+        [],
+    );
+    assert!(dangling.is_err(), "引用不存在保司应被外键拒绝");
+
+    // 外键动作保持 RESTRICT：被保单引用的保司行硬删被拒（档案存续依赖）。
+    let hard_delete = conn.execute("DELETE FROM insurers WHERE name='平安人寿'", []);
+    assert!(
+        hard_delete.is_err(),
+        "被保单引用的保司硬删应被 RESTRICT 拒绝"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // V019：保司字典（issue #712 / ADR-0082 决策 4）——insurers 表 + 常用保司种子
 // ---------------------------------------------------------------------------
 

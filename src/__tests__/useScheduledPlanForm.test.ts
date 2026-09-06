@@ -220,6 +220,7 @@ describe('useScheduledPlanForm 商户解析（输入即建 + 重名兜底，ADR-
       if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve(mockCategories)
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     }) as typeof invoke)
     const form = useScheduledPlanForm()
@@ -249,8 +250,8 @@ describe('useScheduledPlanForm 商户解析（输入即建 + 重名兜底，ADR-
     it('同值但不传编辑中商户 id：不再原样携带，走按名解析（兜底以参数为准）', async () => {
       mockInvoke.mockImplementation(((cmd: string) => {
         if (cmd === 'create_merchant') return Promise.resolve('mch-new')
-        if (cmd === 'list_merchants') return Promise.resolve([])
         if (cmd === 'list_insurers') return Promise.resolve([])
+        if (cmd === 'list_merchants') return Promise.resolve([])
         if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
         if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
         if (cmd === 'list_categories') return Promise.resolve(mockCategories)
@@ -545,6 +546,7 @@ describe('useScheduledPlanForm submitCreate 提交时序编排（spec #520）', 
     mockInvoke.mockImplementation(((cmd: string) => {
       if (cmd === 'create_scheduled_transaction')
         return Promise.reject(new Error('转出账户与转入账户币种不一致，定时转账不支持跨币种'))
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     }) as typeof invoke)
     await form.submitCreate({

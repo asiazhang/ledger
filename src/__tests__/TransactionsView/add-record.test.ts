@@ -64,6 +64,7 @@ describe('TransactionsView 记一笔 Modal（issue #141）', () => {
     await flushPromises()
     mockInvoke.mockImplementationOnce((cmd: string) => {
       if (cmd === 'create_transaction') return Promise.resolve('new-id')
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     // 点击提交按钮「记支出」

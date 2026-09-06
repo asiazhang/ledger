@@ -6,7 +6,7 @@ import { invoke } from '@tauri-apps/api/core'
 import PoliciesView from '@/views/PoliciesView.vue'
 import PolicyFormModal from '@/components/PolicyFormModal.vue'
 import { makePolicy, makePolicyStats } from './factories'
-import type { Currency, Merchant, Policy, PolicyStats } from '@/types'
+import type { Currency, Insurer, Policy, PolicyStats } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -34,9 +34,9 @@ const mockCurrencies: Currency[] = [
   { code: 'USD', name: '美元', symbol: '$', decimal_places: 2 },
 ]
 
-const mockMerchants: Merchant[] = [
-  { id: 'mer-1', name: '平安保险', is_deleted: false, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test' },
-  { id: 'mer-2', name: '太平洋保险', is_deleted: false, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test' },
+const mockInsurers: Insurer[] = [
+  { id: 'ins-1', name: '平安保险', is_deleted: false, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test' },
+  { id: 'ins-2', name: '太平洋保险', is_deleted: false, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test' },
 ]
 
 function basePolicy(over: Partial<Policy> = {}): Policy {
@@ -61,8 +61,9 @@ function setupInvoke() {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve([])
     if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
-    if (cmd === 'list_insurers') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve([])
+    // 保单换轨后页面消费保司下拉（ADR-0082），桩给真实保司数据
+    if (cmd === 'list_insurers') return Promise.resolve(mockInsurers)
     if (cmd === 'list_policies') {
       return Promise.resolve(policies.filter((p) => !p.is_deleted))
     }
@@ -70,7 +71,7 @@ function setupInvoke() {
       return Promise.resolve(policyStats.filter((s) => policies.some((p) => p.id === s.policy_id && !p.is_deleted)))
     }
     if (cmd === 'create_policy') {
-      const { input } = args as { input: { policy_number: string; merchant_id: string } }
+      const { input } = args as { input: { policy_number: string; insurer_id: string } }
       const id = `policy-new-${input.policy_number}`
       policies = [
         ...policies,
@@ -78,12 +79,13 @@ function setupInvoke() {
       ]
       return Promise.resolve(id)
     }
-    if (cmd === 'create_merchant') {
+    if (cmd === 'create_insurer') {
       const { input } = args as { input: { name: string } }
-      const id = `mer-new-${input.name}`
-      mockMerchants.push({ id, name: input.name, is_deleted: false, created_at: '', updated_at: '', version: 1, device_id: 'test' })
+      const id = `ins-new-${input.name}`
+      mockInsurers.push({ id, name: input.name, is_deleted: false, created_at: '', updated_at: '', version: 1, device_id: 'test' })
       return Promise.resolve(id)
     }
+    if (cmd === 'create_merchant') return Promise.reject(new Error('unexpected create_merchant'))
     if (cmd === 'update_policy') {
       const { id, input } = args as { id: string; input: Partial<Policy> }
       policies = policies.map((p) => (p.id === id ? { ...p, ...input } : p))
@@ -142,7 +144,7 @@ describe('PoliciesView 保单列表（issue #360）', () => {
     const wrapper = mount(PoliciesView)
     await flushPromises()
     const text = wrapper.text()
-    expect(text).toContain('平安保险') // 商户名经 merchantMap 解析
+    expect(text).toContain('平安保险') // 保司名经 insurerMap 解析（保司列纯文本，无下钻）
     expect(text).toContain('重疾险')
     expect(text).toContain('P2026-001')
     expect(text).toContain('2024-01-01 ~ 2036-01-01')
@@ -202,10 +204,10 @@ describe('PoliciesView 新建保单', () => {
     await flushPromises()
     expect(bodyQuery('[data-testid="policy-form-modal"]')).not.toBeNull()
 
-    // 保司下拉选择既有商户（PinyinSelect 内部 NSelect，emit update:value）
+    // 保司下拉选择既有保司（PinyinSelect 内部 NSelect，emit update:value）
     wrapper
-      .findComponent('[data-testid="policy-merchant"]')
-      .vm.$emit('update:value', 'mer-2')
+      .findComponent('[data-testid="policy-insurer"]')
+      .vm.$emit('update:value', 'ins-2')
     await flushPromises()
     await formInput('policy-number').setValue('P2026-100')
     await formInput('policy-product').setValue('医疗险')
@@ -221,7 +223,7 @@ describe('PoliciesView 新建保单', () => {
     expect(call).toBeTruthy()
     expect(call![1]).toMatchObject({
       input: {
-        merchant_id: 'mer-2',
+        insurer_id: 'ins-2',
         policy_number: 'P2026-100',
         product_name: '医疗险',
         start_date: '2026-03-01',
@@ -234,14 +236,14 @@ describe('PoliciesView 新建保单', () => {
     expect(wrapper.findComponent(PolicyFormModal).emitted('update:show')).toContainEqual([false])
   })
 
-  it('保司输入新名称：create_merchant 即建后携带新 id（同库同名一致）', async () => {
+  it('保司输入新名称：create_insurer 即建后携带新 id（同库同名一致）', async () => {
     const wrapper = mount(PoliciesView)
     await flushPromises()
     await wrapper.find('[data-testid="policy-new"]').trigger('click')
     await flushPromises()
 
     wrapper
-      .findComponent('[data-testid="policy-merchant"]')
+      .findComponent('[data-testid="policy-insurer"]')
       .vm.$emit('update:value', '人保健康')
     await flushPromises()
     await formInput('policy-number').setValue('P2026-200')
@@ -251,21 +253,21 @@ describe('PoliciesView 新建保单', () => {
     await saveButton().trigger('click')
     await flushPromises()
 
-    const merchantCall = mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_merchant')
-    expect(merchantCall).toBeTruthy()
-    expect((merchantCall![1] as { input: { name: string } }).input.name).toBe('人保健康')
+    const insurerCall = mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_insurer')
+    expect(insurerCall).toBeTruthy()
+    expect((insurerCall![1] as { input: { name: string } }).input.name).toBe('人保健康')
     const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_policy')
-    expect(call![1]).toMatchObject({ input: { merchant_id: 'mer-new-人保健康' } })
+    expect(call![1]).toMatchObject({ input: { insurer_id: 'ins-new-人保健康' } })
   })
 
-  it('保司输入文本精确命中在用商户名：按名复用既有 id，不即建（全库同名一致）', async () => {
+  it('保司输入文本精确命中在用保司名：按名复用既有 id，不即建（全库同名一致）', async () => {
     const wrapper = mount(PoliciesView)
     await flushPromises()
     await wrapper.find('[data-testid="policy-new"]').trigger('click')
     await flushPromises()
 
     wrapper
-      .findComponent('[data-testid="policy-merchant"]')
+      .findComponent('[data-testid="policy-insurer"]')
       .vm.$emit('update:value', '平安保险')
     await flushPromises()
     await formInput('policy-number').setValue('P2026-400')
@@ -275,10 +277,10 @@ describe('PoliciesView 新建保单', () => {
     await saveButton().trigger('click')
     await flushPromises()
 
-    // 未发起 create_merchant，创建携带既有商户 id
-    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'create_merchant')).toBe(false)
+    // 未发起 create_insurer，创建携带既有保司 id
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'create_insurer')).toBe(false)
     const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_policy')
-    expect(call![1]).toMatchObject({ input: { merchant_id: 'mer-1' } })
+    expect(call![1]).toMatchObject({ input: { insurer_id: 'ins-1' } })
   })
 
   it('止日留空保存为 null（长期/终身）；保额缺省币种一并存空', async () => {
@@ -288,7 +290,7 @@ describe('PoliciesView 新建保单', () => {
     await flushPromises()
 
     wrapper
-      .findComponent('[data-testid="policy-merchant"]')
+      .findComponent('[data-testid="policy-insurer"]')
       .vm.$emit('update:value', 'mer-1')
     await flushPromises()
     await formInput('policy-number').setValue('P2026-300')
@@ -312,7 +314,7 @@ describe('PoliciesView 新建保单', () => {
     await flushPromises()
 
     wrapper
-      .findComponent('[data-testid="policy-merchant"]')
+      .findComponent('[data-testid="policy-insurer"]')
       .vm.$emit('update:value', 'mer-1')
     await flushPromises()
 
@@ -418,7 +420,7 @@ describe('PoliciesView 编辑保单', () => {
     expect(call).toBeTruthy()
     expect(call![1]).toMatchObject({
       id: 'policy-1',
-      input: { policy_number: 'P-EDITED', merchant_id: 'mer-1' },
+      input: { policy_number: 'P-EDITED', insurer_id: 'ins-1' },
     })
   })
 })

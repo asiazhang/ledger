@@ -3,7 +3,6 @@
   "listTitle": "Policies",
   "emptyGuide": "No policies yet: click \"New Policy\" to create your first contract archive.",
   "columns": {
-    "merchant": "Insurer",
     "productName": "Product",
     "policyNumber": "Policy No.",
     "period": "Coverage Period",
@@ -12,7 +11,8 @@
     "paid": "Total Paid",
     "inflow": "Total Inflow",
     "nextCharge": "Next Charge",
-    "actions": "Actions"
+    "actions": "Actions",
+    "insurer": "Insurance Company"
   },
   "period": {
     "range": "{start} ~ {end}",
@@ -76,32 +76,32 @@
     "titleCreate": "New Policy",
     "titleEdit": "Edit Policy",
     "label": {
-      "merchant": "Insurer",
       "policyNumber": "Policy No.",
       "productName": "Product Name",
       "period": "Coverage Period",
       "coverage": "Coverage Amount",
-      "note": "Note"
+      "note": "Note",
+      "insurer": "Insurance Company"
     },
     "placeholder": {
-      "merchant": "Pick an insurer or type a new name",
       "policyNumber": "Policy number",
       "productName": "e.g. Critical Illness Insurance",
       "startDate": "Start date",
       "endDate": "End date (empty = lifetime)",
       "coverage": "Coverage amount (optional)",
       "coverageCurrency": "Currency",
-      "note": "Note (optional)"
+      "note": "Note (optional)",
+      "insurer": "Pick an insurance company or type a new name"
     },
     "msg": {
-      "merchantRequired": "Pick or enter an insurance company",
       "numberRequired": "Policy number is required",
       "productRequired": "Product name is required",
       "startRequired": "Pick the coverage start date",
       "endBeforeStart": "Coverage end date cannot be earlier than start date",
       "amountInvalid": "Coverage amount must be greater than 0",
       "currencyRequired": "Currency is required when coverage amount is filled",
-      "merchantFailed": "Failed to resolve insurer: {msg}"
+      "insurerRequired": "Pick or enter an insurance company",
+      "insurerFailed": "Failed to resolve insurance company: {msg}"
     },
     "cancel": "Cancel",
     "save": "Save"

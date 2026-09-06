@@ -58,8 +58,8 @@ function mockBaseCommands() {
     if (cmd === 'list_currencies') return Promise.resolve([])
     if (cmd === 'list_accounts') return Promise.resolve([])
     if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
     if (cmd === 'list_insurers') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
     if (cmd === 'list_merchant_transaction_counts') return Promise.resolve(countDb)
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
@@ -111,8 +111,8 @@ describe('MerchantManager.vue（issue #189）', () => {
         ]
         return Promise.resolve('mch-new')
       }
-      if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
       if (cmd === 'list_insurers') return Promise.resolve([])
+      if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
       if (cmd === 'list_currencies') return Promise.resolve([])
       if (cmd === 'list_accounts') return Promise.resolve([])
       if (cmd === 'list_categories') return Promise.resolve([])
@@ -140,8 +140,8 @@ describe('MerchantManager.vue（issue #189）', () => {
       if (cmd === 'create_merchant') {
         return Promise.reject(new Error('参数错误: 商户已存在: 盒马'))
       }
-      if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
       if (cmd === 'list_insurers') return Promise.resolve([])
+      if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
       if (cmd === 'list_currencies') return Promise.resolve([])
       if (cmd === 'list_accounts') return Promise.resolve([])
       if (cmd === 'list_categories') return Promise.resolve([])
@@ -571,8 +571,8 @@ describe('MerchantManager.vue 前端分页（issue #457）', () => {
         )
         return Promise.resolve(null)
       }
-      if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
       if (cmd === 'list_insurers') return Promise.resolve([])
+      if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
       if (cmd === 'list_currencies') return Promise.resolve([])
       if (cmd === 'list_accounts') return Promise.resolve([])
       if (cmd === 'list_categories') return Promise.resolve([])

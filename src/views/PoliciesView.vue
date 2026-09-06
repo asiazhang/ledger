@@ -16,7 +16,6 @@ import { todayStr } from '@/utils/date'
 import { policyStatAmountText } from '@/utils/policy-stats'
 import type { Policy, PolicyStats } from '@/types'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
-import MerchantLink from '@/components/MerchantLink.vue'
 import PolicyFormModal from '@/components/PolicyFormModal.vue'
 import { useModalIntent } from '@/composables/useModalIntent'
 import { useFocusParam } from '@/composables/useFocusParam'
@@ -100,9 +99,11 @@ function statsAmountText(row: Policy, pick: (s: PolicyStats) => number): string 
 
 const columns: DataTableColumns<Policy> = [
   {
-    title: () => t('policies.columns.merchant'),
-    key: 'merchant_id',
-    render: (row) => h(MerchantLink, { merchantId: row.merchant_id }),
+    // 保司列纯文本（issue #713 / ADR-0082）：保司不是商户，无商户排行可下钻；
+    // 名字经 reference store 保司显示映射解析（含软删保司——存量保单照常显示）。
+    title: () => t('policies.columns.insurer'),
+    key: 'insurer_id',
+    render: (row) => reference.insurerMap.get(row.insurer_id)?.name ?? '—',
   },
   { title: () => t('policies.columns.productName'), key: 'product_name' },
   { title: () => t('policies.columns.policyNumber'), key: 'policy_number' },

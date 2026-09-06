@@ -107,6 +107,7 @@ describe('useTransactionModalState edit 意图（先取明细再开窗）', () =
     mockInvoke.mockImplementation(((cmd: string, args?: Record<string, unknown>) => {
       if (cmd === 'get_transaction_trade' && args?.id === 'txn-b1')
         return Promise.resolve(trade)
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     }) as typeof invoke)
     await modals.open({ type: 'edit', row })
@@ -151,6 +152,7 @@ describe('useTransactionModalState 竞态守卫（last-open-wins）', () => {
         if (args?.id === 'a1') return new Promise<TransactionTrade>((r) => (resolveA = r))
         if (args?.id === 'b1') return Promise.resolve(tradeB)
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     }) as typeof invoke)
 
@@ -177,6 +179,7 @@ describe('useTransactionModalState 竞态守卫（last-open-wins）', () => {
         if (args?.id === 'a1') return new Promise<TransactionTrade>((_, reject) => (rejectA = reject))
         if (args?.id === 'b1') return Promise.resolve(tradeB)
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     }) as typeof invoke)
 
@@ -201,6 +204,7 @@ describe('useTransactionModalState 竞态守卫（last-open-wins）', () => {
         if (args?.id === 'a1') return Promise.resolve(makeTrade({ symbol: 'AAA' }))
         if (args?.id === 'b1') return new Promise<TransactionTrade>((r) => (resolveB = r))
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     }) as typeof invoke)
 
@@ -223,6 +227,7 @@ describe('useTransactionModalState 竞态守卫（last-open-wins）', () => {
     mockInvoke.mockImplementation(((cmd: string, args?: Record<string, unknown>) => {
       if (cmd === 'get_transaction_trade' && args?.id === 'a1')
         return new Promise<TransactionTrade>((r) => (resolveA = r))
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     }) as typeof invoke)
 
@@ -243,6 +248,7 @@ describe('useTransactionModalState 竞态守卫（last-open-wins）', () => {
     mockInvoke.mockImplementation(((cmd: string, args?: Record<string, unknown>) => {
       if (cmd === 'get_transaction_trade' && args?.id === 'a1')
         return new Promise<TransactionTrade>((r) => (resolveA = r))
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     }) as typeof invoke)
 

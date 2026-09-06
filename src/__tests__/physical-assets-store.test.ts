@@ -51,6 +51,7 @@ describe('usePhysicalAssetsStore', () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_physical_assets')
         return Promise.resolve(makePhysicalAssetList({ assets: [asset], holding_total_native_cents: 5_000_000 }))
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = usePhysicalAssetsStore()
@@ -66,6 +67,7 @@ describe('usePhysicalAssetsStore', () => {
   it('加载失败时 status=error，不抛出（self-init 静默；缺汇率报错走同一通道）', async () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_physical_assets') return Promise.reject(new Error('未找到 USD -> CNY 的汇率'))
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = usePhysicalAssetsStore()
@@ -120,6 +122,7 @@ describe('usePhysicalAssetsStore', () => {
         expect(args).toMatchObject({ input: createInput })
         return Promise.resolve('new-1')
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = usePhysicalAssetsStore()
@@ -136,6 +139,7 @@ describe('usePhysicalAssetsStore', () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_physical_assets') return Promise.resolve(makePhysicalAssetList())
       if (cmd === 'create_physical_asset') return Promise.reject(new Error('资产名称不能为空'))
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = usePhysicalAssetsStore()
@@ -167,6 +171,7 @@ describe('usePhysicalAssetsStore', () => {
         expect(args).toMatchObject({ id: 'asset-1', input: valuationInput })
         return Promise.resolve()
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = usePhysicalAssetsStore()
@@ -181,6 +186,7 @@ describe('usePhysicalAssetsStore', () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_physical_assets') return Promise.resolve(makePhysicalAssetList({ assets: [baseAsset()] }))
       if (cmd === 'update_physical_asset_valuation') return Promise.reject(new Error('估值日期 9999-12-31 不能是未来'))
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = usePhysicalAssetsStore()
@@ -212,6 +218,7 @@ describe('usePhysicalAssetsStore', () => {
         expect(args).toMatchObject({ id: 'asset-1', input: updateInput })
         return Promise.resolve()
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = usePhysicalAssetsStore()
@@ -226,6 +233,7 @@ describe('usePhysicalAssetsStore', () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_physical_assets') return Promise.resolve(makePhysicalAssetList({ assets: [baseAsset()] }))
       if (cmd === 'update_physical_asset') return Promise.reject(new Error('资产名称不能为空'))
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = usePhysicalAssetsStore()
@@ -255,6 +263,7 @@ describe('usePhysicalAssetsStore', () => {
         expect(args).toMatchObject({ id: 'asset-1', input: disposeInput })
         return Promise.resolve()
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = usePhysicalAssetsStore()
@@ -270,6 +279,7 @@ describe('usePhysicalAssetsStore', () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_physical_assets') return Promise.resolve(makePhysicalAssetList({ assets: [baseAsset()] }))
       if (cmd === 'dispose_physical_asset') return Promise.reject(new Error('处置日期不能为空'))
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = usePhysicalAssetsStore()
@@ -294,6 +304,7 @@ describe('usePhysicalAssetsStore', () => {
         expect(args).toMatchObject({ id: 'asset-1' })
         return Promise.resolve()
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = usePhysicalAssetsStore()
@@ -319,6 +330,7 @@ describe('usePhysicalAssetsStore', () => {
             : makePhysicalAssetList({ assets: holding, holding_total_native_cents: 5_000_000 }),
         )
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const store = usePhysicalAssetsStore()

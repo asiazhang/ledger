@@ -3,15 +3,16 @@ import type { Syncable } from './common'
 /**
  * 保单（Policy）领域类型（issue #360 / ADR-0051）：消费型保险合同的静态档案，
  * 与物品域 Item 同为独立领域概念（CONTEXT-insurance.md `Policy` 条目）。
- * 保司复用商户字典（Merchant）；保障期间止日可空（= 长期/终身）；
+ * 保司引用保险域自有独立字典（Insurer，issue #713 / ADR-0082，不复用商户）；
+ * 保障期间止日可空（= 长期/终身）；
  * 保额可选、纯展示、不进任何金额口径（不折算、不聚合）。
  */
 
 /** 保单实体（读模型，全字段，对应后端 `models::policy::Policy`）。 */
 export interface Policy extends Syncable {
   id: string
-  /** 保险公司（商户字典引用）。 */
-  merchant_id: string
+  /** 保险公司（保司字典引用，ADR-0082）。 */
+  insurer_id: string
   /** 保单号。 */
   policy_number: string
   /** 险种名称。 */
@@ -31,7 +32,7 @@ export interface Policy extends Syncable {
 
 /** 创建/编辑保单入参（对应后端 `models::policy::PolicyInput`，全量替换）。 */
 export interface PolicyInput {
-  merchant_id: string
+  insurer_id: string
   policy_number: string
   product_name: string
   /** 保障期间起（YYYY-MM-DD）。 */

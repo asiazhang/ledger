@@ -114,6 +114,21 @@ export const useReferenceStore = defineStore('reference', () => {
     return m
   })
 
+  /** 保司显示映射：在用 + 软删（存量保单的保司列显示用，issue #713）。 */
+  const insurerMap = computed(() => {
+    const m = new Map<string, Insurer>()
+    deletedInsurers.value.forEach((d) => m.set(d.id, d))
+    insurers.value.forEach((i) => m.set(i.id, i))
+    return m
+  })
+
+  /** 按名字查找：仅含在用保司（软删保司不可再选/不可按名复用，重名即建由后端校验）。 */
+  const insurerByName = computed(() => {
+    const m = new Map<string, Insurer>()
+    insurers.value.forEach((i) => m.set(i.name, i))
+    return m
+  })
+
   const rootCategories = computed(() => pureRootCategories(categories.value))
 
   const expenseCategories = computed(() =>
@@ -229,6 +244,8 @@ export const useReferenceStore = defineStore('reference', () => {
     accountMap,
     merchantMap,
     merchantByName,
+    insurerMap,
+    insurerByName,
     rootCategories,
     expenseCategories,
     incomeCategories,
