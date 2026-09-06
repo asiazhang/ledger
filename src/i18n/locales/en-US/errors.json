@@ -206,9 +206,9 @@
     "passphrase-empty": "The master passphrase cannot be empty.",
     "remember-no-cache": "No cached master passphrase on this device. Please enter it manually.",
     "remember-biometric-cancelled": "Biometric authentication was cancelled. Please enter the master passphrase manually.",
-    "remember-biometric-unavailable": "Couldn't enable remember on this device (biometrics not enrolled or unsupported). It stays on manual entry.",
+    "remember-biometric-unavailable": "Couldn't enable auto unlock on this device (biometrics not enrolled or unsupported). It stays on manual entry.",
     "remember-entitlement-restricted": "Keychain access is restricted by this build's signing form (missing an Apple-certificate-backed keychain entitlement).",
-    "remember-unsupported": "This device does not support remembering the master passphrase."
+    "remember-unsupported": "Auto unlock is not supported on this device."
   },
   "settings": {
     "log-level-invalid": "Invalid log level: {0} (valid values: error/warn/info/debug/trace)"
