@@ -104,6 +104,16 @@ function modalAlert(): Element | null {
   return document.body.querySelector('.n-modal .n-alert')
 }
 
+/** 强度条行（issue #685：纯展示、逐键刷新；scope 内全部强度条）。 */
+function strengthMeters(scope: ReturnType<typeof mount> | ReturnType<typeof collapseContent>) {
+  return scope.findAll('[data-testid="passphrase-strength"]')
+}
+
+/** 典型弱口令（issue #685 验收样例：password123 → 弱）。 */
+const PASS_WEAK = 'password123'
+/** 典型极强口令（长随机串）。 */
+const PASS_VERY_STRONG = 'qW7#mKx2$vLp9&zR4'
+
 async function setPasswords(wrapper: ReturnType<typeof mount>, pass: string, confirm: string) {
   const inputs = wrapper.findAll('input')
   await inputs[0].setValue(pass)
@@ -762,5 +772,111 @@ describe('EncryptionSettings.vue 自动解锁（issue #654 重做；原 #574）'
     const wrapper = mount(EncryptionSettings)
     await flushPromises()
     expect(wrapper.html()).not.toContain('当前为开发构建')
+  })
+})
+
+describe('口令强度实时显示（issue #685）', () => {
+  it('术语纪律：全部 zh 资源无「密码强度」措辞（正式术语为「口令强度」）', () => {
+    expect(JSON.stringify(zhAll)).not.toContain('密码强度')
+  })
+
+  it('开启表单：初始为空不显示强度条；输入弱口令显示「弱」，换强口令逐键刷新为「极强」', async () => {
+    stubInvoke()
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+
+    // 初始为空不显示（不惩罚尚未输入）
+    expect(strengthMeters(wrapper).length).toBe(0)
+
+    await wrapper.findAll('input')[0].setValue(PASS_WEAK)
+    await flushPromises()
+    expect(strengthMeters(wrapper).length).toBe(1)
+    expect(strengthMeters(wrapper)[0].text()).toContain('弱')
+
+    // 逐键刷新：同一输入框换成强口令，档位随输入更新
+    await wrapper.findAll('input')[0].setValue(PASS_VERY_STRONG)
+    await flushPromises()
+    expect(strengthMeters(wrapper).length).toBe(1)
+    expect(strengthMeters(wrapper)[0].text()).toContain('极强')
+  })
+
+  it('开启表单：确认字段不显示强度条（仅新设主口令框显示）', async () => {
+    stubInvoke()
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+
+    await setPasswords(wrapper, PASS_WEAK, PASS_WEAK)
+    await flushPromises()
+    expect(strengthMeters(wrapper).length).toBe(1)
+  })
+
+  it('开启表单：短于 8 位时字段错误红显与强度条并存（互不替代）', async () => {
+    stubInvoke()
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+
+    await setPasswords(wrapper, PASS_SHORT, PASS_SHORT)
+    await flushPromises()
+    expect(wrapper.html()).toContain('主口令至少需要 8 位')
+    expect(strengthMeters(wrapper).length).toBe(1)
+    expect(strengthMeters(wrapper)[0].text()).toContain('弱')
+  })
+
+  it('纯展示：弱口令强度显示不改变提交可用性（≥8 位即由既有规则放行）', async () => {
+    stubInvoke()
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+
+    // PASS_OK 为 8 位中文串，zxcvbn 大概率判弱；即便判弱，提交可用性只由既有规则决定
+    await setPasswords(wrapper, PASS_OK, PASS_OK)
+    await flushPromises()
+    expect(strengthMeters(wrapper).length).toBe(1)
+    expect(findButton(wrapper, '开启加密')!.element.disabled).toBe(false)
+  })
+
+  it('修改主口令折叠区：仅「新主口令」显示强度条；当前主口令与确认新主口令不显示', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve(encryptedStatus),
+    })
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+
+    await expandCollapseItem(wrapper, '修改主口令')
+    const inputs = collapseContent(wrapper, '修改主口令').findAll('input')
+    await inputs[0].setValue('旧口令')
+    await flushPromises()
+    expect(strengthMeters(wrapper).length).toBe(0)
+
+    await inputs[1].setValue(PASS_WEAK)
+    await flushPromises()
+    expect(strengthMeters(wrapper).length).toBe(1)
+    expect(strengthMeters(wrapper)[0].text()).toContain('弱')
+
+    await inputs[2].setValue(PASS_WEAK)
+    await flushPromises()
+    expect(strengthMeters(wrapper).length).toBe(1)
+  })
+
+  it('其余口令输入框不出现强度条：关闭加密表单与启用自动解锁弹窗', async () => {
+    stubInvoke({
+      get_encryption_status: () => Promise.resolve(encryptedStatus),
+      get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
+    })
+    const wrapper = mount(EncryptionSettings)
+    await flushPromises()
+
+    // 关闭加密表单：输入已存在口令，不显示强度
+    await expandCollapseItem(wrapper, '关闭加密')
+    await collapseContent(wrapper, '关闭加密').find('input').setValue(PASS_VERY_STRONG)
+    await flushPromises()
+    expect(strengthMeters(wrapper).length).toBe(0)
+
+    // 启用自动解锁小弹窗：输入当前主口令，不显示强度
+    await findButton(wrapper, '启用自动解锁')!.trigger('click')
+    await flushPromises()
+    const modalInput = document.body.querySelector('.n-modal input[type="password"]')!
+    await new DOMWrapper(modalInput).setValue(PASS_VERY_STRONG)
+    await flushPromises()
+    expect(strengthMeters(wrapper).length).toBe(0)
   })
 })

@@ -191,6 +191,12 @@
       "confirmLabel": "确认主口令",
       "confirmPlaceholder": "再次输入主口令",
       "mismatch": "两次输入不一致",
+      "passphraseStrength": {
+        "weak": "弱",
+        "medium": "中",
+        "strong": "强",
+        "veryStrong": "极强"
+      },
       "enable": "开启加密",
       "confirmTitle": "开启加密？",
       "enableConfirmLead": "开启后，每次启动都需输入主口令。",

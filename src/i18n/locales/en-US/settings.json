@@ -191,6 +191,12 @@
       "confirmLabel": "Confirm passphrase",
       "confirmPlaceholder": "Re-enter the master passphrase",
       "mismatch": "The two entries do not match",
+      "passphraseStrength": {
+        "weak": "Weak",
+        "medium": "Fair",
+        "strong": "Strong",
+        "veryStrong": "Very strong"
+      },
       "enable": "Enable Encryption",
       "confirmTitle": "Enable encryption?",
       "enableConfirmLead": "Once enabled, you'll need the master passphrase at every launch.",
