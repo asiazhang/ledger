@@ -8,6 +8,12 @@
 -- 4. budgets：预算表，按支出分类维度设置周期预算。
 -- 5. exchange_rates：汇率表，多币种换算预留。
 -- 投资相关表（instruments / security_transactions / holdings）见 V002__investment.sql。
+--
+-- 【就地修改注记】本文件已被就地修改（两级 BREAKING 标记之一，另一级见
+-- CHANGELOG「Unreleased」BREAKING 条目）：新增导入去重兜底部分索引
+-- idx_transactions_dedup_hash（issue #701，#532 归因）。就地修改只影响
+-- 全新安装；已执行过本迁移的存量库不带该索引（兜底查询维持全表扫描，
+-- 行为零差异、仅性能差异），重建库或手工补建索引后获得导入提速。
 
 CREATE TABLE IF NOT EXISTS currencies (
     code            TEXT PRIMARY KEY,           -- 货币代码（ISO 4217），如 CNY / USD / EUR
@@ -140,6 +146,15 @@ CREATE INDEX IF NOT EXISTS idx_transactions_merchant ON transactions(merchant_id
 CREATE INDEX IF NOT EXISTS idx_transactions_refund ON transactions(refund_of_transaction_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_sync ON transactions(updated_at, device_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_deleted ON transactions(is_deleted, updated_at);
+-- 导入去重兜底索引：batch.rs `dedup_identity` 无键路径的内容哈希查询
+-- （WHERE dedup_hash=? AND is_deleted=0 ORDER BY created_at LIMIT 1，
+-- #532 量测曾占导入耗时 94%）。部分谓词与查询谓词精确匹配（软删行/
+-- NULL 哈希不进索引，对齐幂等键部分唯一索引形态）；created_at 并入
+-- 索引列使 ORDER BY 由索引序满足——单列形态 EXPLAIN 实证退化
+-- USE TEMP B-TREE FOR ORDER BY（issue #701）。
+CREATE INDEX IF NOT EXISTS idx_transactions_dedup_hash
+    ON transactions(dedup_hash, created_at)
+    WHERE is_deleted = 0 AND dedup_hash IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_accounts_sync ON accounts(updated_at, device_id);
 CREATE INDEX IF NOT EXISTS idx_categories_sync ON categories(updated_at, device_id);
 CREATE INDEX IF NOT EXISTS idx_budgets_sync ON budgets(updated_at, device_id);

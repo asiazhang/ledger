@@ -197,6 +197,36 @@ fn instruments_source_backfills_eastmoney_on_upgrade() {
     assert!(null_rejected.is_err(), "source 列 NOT NULL 应拒绝显式 NULL");
 }
 
+/// 标的 market 检查约束闭集（issue #692 / ADR-0081）：既有 sh/sz/hk/unknown
+/// 行为不变，美股三市场 nasdaq/nyse/amex 可落库；闭集外取值仍被 CHECK 拒绝。
+/// 存量库不重跑本迁移、保持旧闭集，为已接受的 BREAKING 结论（V002 头部就地
+/// 修改注记与 CHANGELOG「Unreleased」BREAKING 条目两级标记）。
+#[test]
+fn instruments_market_check_accepts_us_markets() {
+    let mut conn = open_in_memory().unwrap();
+    init_db(&mut conn).unwrap();
+
+    for (i, market) in ["sh", "sz", "hk", "nasdaq", "nyse", "amex", "unknown"]
+        .into_iter()
+        .enumerate()
+    {
+        conn.execute(
+            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+             VALUES (?1,?2,'stock',NULL,'USD',?3,'2026-09-01T00:00:00Z','2026-09-01T00:00:00Z',1,'test')",
+            params![format!("inst-{i}"), format!("SYM{i}"), market],
+        )
+        .unwrap_or_else(|e| panic!("market {market} 应可落库: {e}"));
+    }
+
+    // 闭集外取值仍被 CHECK 拒绝。
+    let rejected = conn.execute(
+        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+         VALUES ('inst-x','LSE','stock',NULL,'USD','lse','2026-09-01T00:00:00Z','2026-09-01T00:00:00Z',1,'test')",
+        [],
+    );
+    assert!(rejected.is_err(), "闭集外 market 应被 CHECK 拒绝");
+}
+
 /// fx_rate_history：币种对 × 周唯一（与 PriceHistory 同规则）。
 #[test]
 fn fx_rate_history_weekly_unique_per_pair() {

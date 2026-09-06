@@ -21,6 +21,11 @@
 - **备份**：启动失败恢复屏新增「从备份文件恢复」通道（[#602]）。
 - **备份**：解锁屏新增「从备份文件恢复」入口，密文库无需先解锁即可恢复（[#603]）。
 
+### BREAKING
+
+- **数据库 schema**：V001 就地新增导入去重兜底部分索引 `idx_transactions_dedup_hash`，无幂等键行的导入去重查询由每行全表扫描（约占导入耗时 94%，[#532] 量测）降为索引定位。仅全新安装生效；存量库行为零差异但不带该索引（兜底查询维持全表扫描），重建库或手工补建索引后获得导入提速（[#701]）。
+- **数据库 schema**：标的 market 检查约束就地扩展至含美股三市场 nasdaq/nyse/amex（ADR-0081）。仅全新安装生效；**存量库不重跑迁移、保持旧市场闭集，创建美股市场标的会被拒绝，不提供自动修复**（[#692]）。
+
 ### Changed
 
 - **加密/备份**：转换、恢复、搬迁完成后的「应用自动重启」改为原位重引导（进程不退出、界面重载），开发与签名构建行为一致，修复开发构建下重启后白屏（[#644]）。
@@ -204,4 +209,7 @@
 [#687]: https://github.com/asiazhang/ledger/issues/687
 [#651]: https://github.com/asiazhang/ledger/issues/651
 [#653]: https://github.com/asiazhang/ledger/issues/653
+[#692]: https://github.com/asiazhang/ledger/issues/692
 [#644]: https://github.com/asiazhang/ledger/issues/644
+[#701]: https://github.com/asiazhang/ledger/issues/701
+[#532]: https://github.com/asiazhang/ledger/issues/532

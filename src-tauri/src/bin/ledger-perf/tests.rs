@@ -28,8 +28,13 @@ use tauri_app_lib::transaction::read::{get_transaction, list_transactions};
 use tauri_app_lib::transaction::search_transactions_internal;
 
 use super::bench::{self, BenchCli, BenchConfig, BenchMetrics, ParsedBench};
+use super::bench_import::{
+    self, BenchImportCli, Distribution, ImportBenchConfig, ParsedBenchImport,
+};
 use super::generate::{GenCounts, GenerateParams, generate_into};
 use super::{GenerateCli, ParsedArgs, parse_args};
+use tauri_app_lib::accounts::{Account, AccountType};
+use tauri_app_lib::transaction::compute_dedup_hash;
 
 /// 解析并取 bench 运行参数（帮助请求在该测试套件中不该出现；
 /// 用法错误经 Result 返回供断言）。
@@ -147,6 +152,247 @@ fn pinyin_bench_keyword_hits_only_via_pinyin_path() {
     // 同一关键字经搜索有真实命中（「买咖啡」→ mkf 等拼音首字母子序列）。
     let hits = search_transactions_internal(&conn, "kf", 1, 20, None, None, None, None).unwrap();
     assert!(hits.total > 0, "拼音子序列关键字应在生成库上有真实命中");
+}
+
+// ---------------------------------------------------------------------------
+// bench-import 批量导入写基准（issue #532）：量测矩阵、行生成、正确性底线与冒烟
+// ---------------------------------------------------------------------------
+
+/// 解析并取 bench-import 运行参数（帮助请求在该测试套件中不该出现）。
+fn parse_bench_import_cli(args: &[&str]) -> Result<BenchImportCli, String> {
+    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    match bench_import::parse_bench_import_args(&owned)? {
+        ParsedBenchImport::Run(cli) => Ok(cli),
+        ParsedBenchImport::Help => panic!("该输入应解析为运行参数"),
+    }
+}
+
+/// 小库上的导入基准配置（冒烟与报告口径共用）。
+fn small_import_cfg() -> ImportBenchConfig {
+    ImportBenchConfig {
+        rows: vec![50],
+        dedup: true,
+        warmup: 1,
+        iterations: 2,
+    }
+}
+
+#[test]
+fn bench_import_cli_defaults_cover_typical_and_stress_tiers() {
+    let cli = parse_bench_import_cli(&[]).unwrap();
+    assert_eq!(
+        cli.rows,
+        vec![50, 100, 200],
+        "默认矩阵应按月导入真实量级校准：轻量/典型/上限月（单批最多上百笔）"
+    );
+    assert!(
+        cli.dedup,
+        "默认去重应与 HTTP 批量导入生产默认（dedup=true）一致"
+    );
+    assert_eq!(cli.warmup, 1, "导入迭代成本高，预热默认 1 次");
+    assert_eq!(cli.iterations, 5);
+    assert_eq!(cli.db, super::default_out());
+}
+
+#[test]
+fn bench_import_cli_parses_overrides() {
+    let cli = parse_bench_import_cli(&[
+        "--rows",
+        "100,200",
+        "--dedup",
+        "false",
+        "--warmup",
+        "0",
+        "--iterations",
+        "2",
+    ])
+    .unwrap();
+    assert_eq!(cli.rows, vec![100, 200]);
+    assert!(!cli.dedup);
+    assert_eq!(cli.warmup, 0);
+    assert_eq!(cli.iterations, 2);
+}
+
+#[test]
+fn bench_import_cli_rejects_bad_values() {
+    assert!(
+        parse_bench_import_cli(&["--rows", ""]).is_err(),
+        "空矩阵应报错"
+    );
+    assert!(
+        parse_bench_import_cli(&["--rows", "0"]).is_err(),
+        "行数 0 应报错"
+    );
+    assert!(
+        parse_bench_import_cli(&["--rows", "1,x"]).is_err(),
+        "非数档位应报错"
+    );
+    assert!(
+        parse_bench_import_cli(&["--rows", "100,100"]).is_err(),
+        "重复档位应报错"
+    );
+    assert!(
+        parse_bench_import_cli(&["--dedup", "yes"]).is_err(),
+        "非布尔应报错"
+    );
+    assert!(
+        parse_bench_import_cli(&["--iterations", "0"]).is_err(),
+        "迭代 0 应报错"
+    );
+}
+
+#[test]
+fn bench_import_rows_are_deterministic_dedup_unique_and_distribution_shaped() {
+    let accounts: Vec<String> = (0..3).map(|i| format!("acc-{i}")).collect();
+    let date = "2026-01-01";
+
+    let concentrated =
+        bench_import::generate_inputs(5, &accounts, Distribution::Concentrated, "CNY", date);
+    let replay =
+        bench_import::generate_inputs(5, &accounts, Distribution::Concentrated, "CNY", date);
+    let uniform = bench_import::generate_inputs(5, &accounts, Distribution::Uniform, "CNY", date);
+
+    // 确定性：同参数两次生成，去重身份序列逐行相等。
+    let hashes = |rows: &[tauri_app_lib::transaction::TransactionInput]| {
+        rows.iter().map(compute_dedup_hash).collect::<Vec<_>>()
+    };
+    assert_eq!(
+        hashes(&concentrated),
+        hashes(&replay),
+        "同参数两次生成应逐行同身份（可复现规格）"
+    );
+
+    // 分布形态：同账户集中全部落首账户；多账户均匀按序轮转。
+    assert!(
+        concentrated.iter().all(|i| i.account_id == accounts[0]),
+        "同账户集中应全部落首账户"
+    );
+    let uniform_accounts: Vec<&str> = uniform.iter().map(|i| i.account_id.as_str()).collect();
+    assert_eq!(
+        uniform_accounts,
+        vec!["acc-0", "acc-1", "acc-2", "acc-0", "acc-1"],
+        "多账户均匀应按序轮转"
+    );
+
+    // 批内去重身份全异：dedup=true 时行行都真写、无一行命中去重（量测有效性前置）。
+    for rows in [&concentrated, &uniform] {
+        let mut seen = std::collections::HashSet::new();
+        for h in hashes(rows) {
+            assert!(seen.insert(h), "批内去重身份必须全异（否则行会被去重跳过）");
+        }
+    }
+
+    // 行形态：expense、逐行递增金额、统一日期、币种随入参。
+    for (i, input) in concentrated.iter().enumerate() {
+        assert_eq!(input.kind, TransactionKind::Expense);
+        assert_eq!(
+            input.amount_cents,
+            bench_import::BASE_AMOUNT_CENTS + i as i64
+        );
+        assert_eq!(input.date, date);
+        assert_eq!(input.currency_code, "CNY");
+    }
+}
+
+/// 手工构造账户行（只带筛选相关字段的全字段字面量）。
+fn acct(id: &str, kind: AccountType, ccy: &str) -> Account {
+    Account {
+        id: id.to_string(),
+        name: id.to_string(),
+        kind,
+        currency_code: ccy.to_string(),
+        initial_balance_cents: 0,
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+        version: 1,
+        device_id: "test".to_string(),
+        is_deleted: false,
+        is_hidden: false,
+    }
+}
+
+#[test]
+fn bench_import_eligible_accounts_filter_excludes_investment_and_foreign() {
+    let all = vec![
+        acct("a-cny-cash", AccountType::Cash, "CNY"),
+        acct("a-cny-inv", AccountType::Investment, "CNY"),
+        acct("a-usd-bank", AccountType::Bank, "USD"),
+        acct("a-cny-credit", AccountType::Credit, "CNY"),
+    ];
+    assert_eq!(
+        bench_import::eligible_account_ids(&all),
+        vec!["a-cny-cash".to_string(), "a-cny-credit".to_string()],
+        "投资户与外币户不进导入基准账户池（本位币折算与投资副作用都不属被测路径）"
+    );
+}
+
+/// 正确性底线（issue #532 测试决策）：健康库断言通过；缓存漂移与缓存行缺失
+/// 两种坏缓存形态都必须让断言失败——量测不许跑在坏缓存路径上。
+#[test]
+fn bench_import_cache_assertion_accepts_healthy_and_rejects_drift() {
+    let (_dir, path) = temp_db("bench-import-assert");
+    build(&path, 500, NaiveDate::from_ymd_opt(2025, 12, 31).unwrap());
+    let conn = open_connection(&path).unwrap();
+
+    // 生成库原生形态（generate 末尾已回填缓存）即健康基线。
+    bench_import::assert_cache_matches_realtime(&conn).unwrap();
+
+    // 漂移：缓存值偏离实时计算 → 必须失败。
+    conn.execute(
+        "UPDATE account_balance_cache SET balance_cents = balance_cents + 1",
+        [],
+    )
+    .unwrap();
+    let err = bench_import::assert_cache_matches_realtime(&conn).unwrap_err();
+    assert!(err.contains("缓存"), "漂移错误应指向缓存不一致：{err}");
+
+    // 缺失：删掉一条缓存行 → 必须失败（生产读路径的码化错误形态）。
+    conn.execute("DELETE FROM account_balance_cache", [])
+        .unwrap();
+    assert!(
+        bench_import::assert_cache_matches_realtime(&conn).is_err(),
+        "缓存行缺失应让断言失败（否则会静默跑在坏缓存路径上）"
+    );
+}
+
+/// 冒烟（对齐 bench_smoke_runs_all_benchmarks 形态）：小库 → 跑完量测矩阵 →
+/// 产出全部指标，且每次迭代「行行真写」前置未被违反。
+#[test]
+fn bench_import_smoke_runs_matrix_and_produces_all_metrics() {
+    let (_dir, path) = temp_db("bench-import-smoke");
+    build(&path, 2_000, NaiveDate::from_ymd_opt(2025, 12, 31).unwrap());
+
+    let results = bench_import::run_benchmark(&path, &small_import_cfg()).unwrap();
+
+    // 名单钉住：1 档 × 2 分布，顺序稳定（矩阵展开次序：行数档外层、分布内层）。
+    let names: Vec<String> = results.iter().map(|r| r.name.clone()).collect();
+    assert_eq!(names, ["导入 50 行·同账户集中", "导入 50 行·多账户均匀"],);
+    // 矩阵展开次序：行数档外层、分布内层（Distribution::ALL 稳定清单）。
+    let distributions: Vec<Distribution> = results.iter().map(|r| r.distribution).collect();
+    assert_eq!(
+        distributions,
+        [Distribution::Concentrated, Distribution::Uniform]
+    );
+    for r in &results {
+        assert_eq!(r.rows, 50, "指标行应携带行数档：{}", r.name);
+        assert!(
+            r.min_ms.is_finite() && r.min_ms >= 0.0,
+            "{} min 非法",
+            r.name
+        );
+        assert!(r.avg_ms >= r.min_ms, "{} avg 应不小于 min", r.name);
+        assert!(r.p95_ms >= r.min_ms, "{} p95 应不小于 min", r.name);
+        assert!(
+            r.per_row_p95_ms > 0.0 && r.per_row_p95_ms <= r.p95_ms,
+            "{} 单行均摊 p95 应在 (0, p95] 内",
+            r.name
+        );
+        assert!(
+            r.context.contains("单行均摊"),
+            "规模备注应携带单行均摊口径：{}",
+            r.context
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
