@@ -20,8 +20,8 @@ pub mod validation;
 
 /// 域 API 再导出：调用面用域语言短名（`policy::list_policies` 等），
 /// 与 ADR-0056 定格形状一致（先例：`item` / `scheduled_transactions` 入口再导出）。
-pub use crud::{create_policy, delete_policy, list_policies, update_policy};
-pub use model::{Policy, PolicyInput, PolicyStats};
+pub use crud::{create_policy, delete_policy, list_policies, source_display_by_ids, update_policy};
+pub use model::{Policy, PolicyInput, PolicySourceDisplay, PolicyStats};
 pub use stats::policy_stats;
 
 #[cfg(test)]

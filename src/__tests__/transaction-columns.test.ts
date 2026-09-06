@@ -6,9 +6,10 @@ import {
   buildTransactionColumns,
   type ReferenceStore,
 } from '@/components/transaction-columns'
+import SourceLink from '@/components/SourceLink.vue'
 import { useAppStore } from '@/stores/app'
 import { kindSemanticColor } from '@/theme/semantic-colors'
-import { TRANSACTION_KINDS, type Transaction } from '@/types'
+import { TRANSACTION_KINDS, type Transaction, type TransactionSource } from '@/types'
 import { makeTransaction } from './factories'
 
 /** 金额列按交易类型语义着色（issue #435）：只测外部行为——
@@ -67,5 +68,54 @@ describe('buildTransactionColumns 金额单元格语义着色', () => {
     app.setTheme('light')
     expect(colorOf()).not.toBe(darkStyle)
     expect(colorOf()).toBe(`color: ${kindSemanticColor('expense', 'light')}`)
+  })
+})
+
+/** 来源列（spec #704 / issue #706）：列序与渲染产物——
+ * 只测外部行为：列位置、单元格产物（SourceLink 组件/占位符），
+ * 链接交互与状态标注的渲染矩阵归 SourceLink 组件测试（一缝一测）。 */
+describe('buildTransactionColumns 来源列', () => {
+  function columnByKey(key: string): DataTableColumn<Transaction> & {
+    render: NonNullable<DataTableColumn<Transaction>['render']>
+  } {
+    const columns = buildTransactionColumns(reference)
+    return columns.find((c) => (c as { key?: string }).key === key)! as never
+  }
+
+  function sourceCellOf(row: Transaction): ReturnType<NonNullable<DataTableColumn<Transaction>['render']>> {
+    return columnByKey('source').render(row, 0)
+  }
+
+  it('列序：来源列位于账户之后、备注之前', () => {
+    const keys = buildTransactionColumns(reference).map((c) => (c as { key?: string }).key)
+    expect(keys.indexOf('account_id')).toBeLessThan(keys.indexOf('source'))
+    expect(keys.indexOf('source')).toBeLessThan(keys.indexOf('note'))
+  })
+
+  it('保单来源渲染 SourceLink，携带行来源对象', () => {
+    const source: TransactionSource = {
+      kind: 'policy',
+      entity_id: 'pol-1',
+      display_name: '重疾险',
+      status: null,
+    }
+    const vnode = sourceCellOf(makeTransaction({ id: 't1', source })) as VNode
+    expect(vnode.type).toBe(SourceLink)
+    expect((vnode.props as { source: TransactionSource }).source).toEqual(source)
+  })
+
+  it('软删保单来源同样走 SourceLink（禁用点击/标注归组件渲染矩阵）', () => {
+    const source: TransactionSource = {
+      kind: 'policy',
+      entity_id: 'pol-2',
+      display_name: '医疗险',
+      status: 'deleted',
+    }
+    const vnode = sourceCellOf(makeTransaction({ id: 't2', source })) as VNode
+    expect(vnode.type).toBe(SourceLink)
+  })
+
+  it('无来源留空（占位符，手动/AI 导入口径）', () => {
+    expect(sourceCellOf(makeTransaction({ id: 't3' }))).toBe('-')
   })
 })

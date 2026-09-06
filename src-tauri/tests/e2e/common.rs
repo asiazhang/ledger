@@ -66,6 +66,8 @@ pub fn query_all_transactions(conn: &Connection) -> Vec<Transaction> {
             is_deleted: r.get::<_, i64>(15)? != 0,
             merchant_id: r.get(16)?,
             policy_id: r.get(17)?,
+            // 步骤侧直读快照不做来源反查：来源契约断言一律走列表命令（transactions_source_steps）。
+            source: None,
         })
     })
     .unwrap()

@@ -22,8 +22,24 @@
     "category": "分类",
     "merchant": "商户",
     "account": "账户",
+    "source": "来源",
     "note": "备注",
     "amount": "金额"
+  },
+  "source": {
+    "kind": {
+      "installmentPlan": "分期计划",
+      "subscription": "订阅计划",
+      "scheduledTransfer": "定时转账计划",
+      "policy": "保单",
+      "item": "物品",
+      "instrument": "标的"
+    },
+    "status": {
+      "cancelled": "已取消",
+      "disposed": "已处置",
+      "deleted": "已删除"
+    }
   },
   "list": {
     "total": "共 {n} 条",

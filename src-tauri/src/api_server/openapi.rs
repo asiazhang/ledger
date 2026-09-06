@@ -12,7 +12,8 @@ use crate::merchants::Merchant;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::{
     CreateTransactionResult, Transaction, TransactionBatchInput, TransactionInput,
-    TransactionListResult, UpdateTransactionInput,
+    TransactionListResult, TransactionSource, TransactionSourceKind, TransactionSourceStatus,
+    UpdateTransactionInput,
 };
 
 use super::error::ErrorResponse;
@@ -81,6 +82,9 @@ use super::handlers::instruments::InstrumentCreateInput;
         UpdateTransactionInput,
         TransactionBatchInput,
         TransactionListResult,
+        TransactionSource,
+        TransactionSourceKind,
+        TransactionSourceStatus,
         CreateTransactionResult,
         TransactionKind,
         ErrorResponse
