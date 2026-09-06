@@ -4,11 +4,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-// 被测对象是仓库工具脚本 scripts/check-i18n-keys.js（i18n key 全等校验门槛）。
+// 被测对象是仓库工具脚本 scripts/check-i18n-keys.ts（i18n key 全等校验门槛）。
+// 脚本以 Bun 运行时执行（ADR-0083）：spawnSync('bun') 与门槛调用同款，测的就是门槛路径。
 // 按测试决策只测外部可观察结果——进程退出码与输出，不测内部函数；
 // 通过位置参数把扫描目标指向临时夹具目录（仿 check-commands.test.ts 先例）。
 // 注意：目录名即域前缀（common.json 内层不再重复域名）。
-const script = join(process.cwd(), 'scripts', 'check-i18n-keys.js')
+const script = join(process.cwd(), 'scripts', 'check-i18n-keys.ts')
 
 const tmpDirs: string[] = []
 
@@ -29,7 +30,7 @@ function makeFixture(zhFiles: Record<string, unknown>, enFiles: Record<string, u
 }
 
 function run(localesDir: string) {
-  const r = spawnSync(process.execPath, [script, localesDir], { encoding: 'utf8' })
+  const r = spawnSync('bun', [script, localesDir], { encoding: 'utf8' })
   return { status: r.status ?? -1, output: (r.stdout ?? '') + (r.stderr ?? '') }
 }
 

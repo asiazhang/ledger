@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { h, nextTick } from 'vue'
 import { NDialogProvider } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useReferenceStore } from '@/stores/reference'
 import InstrumentBrowser from '@/components/investments/InstrumentBrowser.vue'
@@ -44,7 +44,6 @@ function mountBrowser() {
 // 捕获全量同步进度事件回调，便于在组件测试中模拟 sync-instruments:progress
 let syncProgressHandler: ((event: { payload: SyncProgress }) => void) | undefined
 
-const mockInvoke = vi.mocked(invoke)
 
 const mockInstruments: Instrument[] = [
   {

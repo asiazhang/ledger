@@ -1,14 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { NMessageProvider } from 'naive-ui'
 import { h } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import AddItemForm from '@/components/AddItemForm.vue'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Transaction } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 
 enableAutoUnmount(afterEach)
 afterEach(() => {

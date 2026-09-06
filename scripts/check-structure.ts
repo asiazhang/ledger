@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // 结构守门（issue #396 / ADR-0056；模型域化禁令 issue #424 / ADR-0059 决策 6）：
 // 白名单式分层依赖检查。
 // 分层规则：壳 → 域 → 基础设施，域永不依赖壳。白名单 = 已归位域目录 + 全部
@@ -30,19 +30,36 @@
 //    域模型文件（model.rs / models.rs）内的 `pub use …::*` 聚合即红，
 //    所有权必须逐类型可见（`pub(crate) use` 受限再导出与私有 `use` glob 引入
 //    不在文本可辨范围，靠评审兜底）。
-// 默认校验本仓库；测试可传位置参数指向夹具：node scripts/check-structure.js [src-dir]
+// TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
+// 门槛检查；调用方式 `bun scripts/check-structure.ts`。
+// 默认校验本仓库；测试可传位置参数指向夹具：bun scripts/check-structure.ts [src-dir]
 // 挂载于 scripts/check.sh 质量门槛序列与 CI（build.yml frontend job），
 // 与命令注册一致性检查并列。
 
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync, type Stats } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
+
+/** 白名单条目（ADR-0056 决策 4） */
+export interface WhitelistEntry {
+  path: string
+  layer: Layer
+  note: string
+}
+
+/** 分层词汇（白名单 layer 字段取值）：比较侧单一来源，防字面量漂移 */
+export const LAYER = {
+  DOMAIN: '域目录',
+  INFRA: '基础设施',
+} as const
+
+export type Layer = (typeof LAYER)[keyof typeof LAYER]
 
 /**
  * 守门白名单（ADR-0056 决策 4）：路径相对 src-tauri/src。
  * 首批 = 已归位域目录 + 全部基础设施；每迁一域在此追加一行。
  */
-export const WHITELIST = [
+export const WHITELIST: readonly WhitelistEntry[] = [
   { path: 'transaction', layer: '域目录', note: '核心交易域' },
   { path: 'scheduled_transactions', layer: '域目录', note: '定时计划域' },
   { path: 'item', layer: '域目录', note: '物品域（#397 阶段 1 归位，主体自 commands/item 随迁）' },
@@ -71,14 +88,8 @@ export const WHITELIST = [
 /** 壳层依赖形态：模块路径引用（crate::commands::x / commands::x）与别名引入 */
 const SHELL_DEP_PATTERN = /\bcommands\s*::|\bcommands\s+as\b/
 
-/** 分层词汇（白名单 layer 字段取值）：比较侧单一来源，防字面量漂移 */
-export const LAYER = {
-  DOMAIN: '域目录',
-  INFRA: '基础设施',
-}
-
 /** 已归位域目录名（自白名单派生，单一事实源）；按长度降序防前缀吞匹配 */
-const DOMAIN_NAMES = WHITELIST.filter((w) => w.layer === LAYER.DOMAIN)
+const DOMAIN_NAMES: string[] = WHITELIST.filter((w) => w.layer === LAYER.DOMAIN)
   .map((w) => w.path)
   .sort((a, b) => b.length - a.length)
 
@@ -92,13 +103,20 @@ const INFRA_DOMAIN_DEP_PATTERN = new RegExp(
   `\\b(?:crate|tauri_app_lib)\\s*::\\s*\\{?\\s*(${DOMAIN_NAMES.join('|')})\\b(?:\\s*::|\\s+as\\b|\\s*;)`,
 )
 
+/** 认许边条目：基础设施文件相对路径 + 目标域目录名 + 成因留痕 */
+interface InfraDomainEdge {
+  file: string
+  domain: string
+  reason: string
+}
+
 /**
  * 认许边（ADR-0071 决策 6 + §6 勘误注记 / #538）：基础设施→域的既有设计
  * 意图边，与白名单同属「已验证事实固化为规格」——逐条精确到白名单条目内
  * 文件相对路径 + 目标域目录名，新增条目须附 ADR 指针与成因；清单之外的
  * 基础设施→域引用一律红。
  */
-const INFRA_DOMAIN_ALLOWED_EDGES = [
+const INFRA_DOMAIN_ALLOWED_EDGES: readonly InfraDomainEdge[] = [
   {
     file: 'db/mod.rs',
     domain: 'backup',
@@ -117,14 +135,14 @@ const MODEL_GLOB_REEXPORT_PATTERN = /\bpub\s+use\s+[\w:]*\bmodels?\b\s*::\s*\*/
 const MODEL_FILE_GLOB_PATTERN = /\bpub\s+use\s+[\w:]*\*/
 
 /** 域模型文件（ADR-0059 目标形状：每域一个 model.rs；定时计划域为先例名 models.rs） */
-function isModelFile(relPath) {
+function isModelFile(relPath: string): boolean {
   const segments = relPath.split('/')
   const file = segments[segments.length - 1]
   return file === 'model.rs' || file === 'models.rs'
 }
 
 /** 测试豁免形态（ADR-0056 决策 5）：tests.rs 文件与 tests/ 目录 */
-function isTestFile(relPath) {
+function isTestFile(relPath: string): boolean {
   const segments = relPath.split('/')
   const file = segments[segments.length - 1]
   return file === 'tests.rs' || segments.slice(0, -1).includes('tests')
@@ -137,10 +155,10 @@ function isTestFile(relPath) {
  * 普通字符串（含转义）、原始字符串 r"…" / r#"…"#（多级 #）、
  * char 字面量（'a'、'\n'、'\u{…}'）；生命周期标注（'a）按非字面量处理。
  */
-export function maskNonCode(text) {
+export function maskNonCode(text: string): string {
   const out = text.split('')
   const n = text.length
-  const blank = (from, to) => {
+  const blank = (from: number, to: number): void => {
     for (let k = from; k < to && k < n; k++) if (out[k] !== '\n') out[k] = ' '
   }
   let i = 0
@@ -227,11 +245,19 @@ export function maskNonCode(text) {
   return out.join('')
 }
 
+/** 单条扫描命中：行号（1 起算）、原文行、匹配文本、捕获组 1
+ *  （无捕获组时 undefined，基础设施→域形态为目标域名） */
+export interface ScanHit {
+  line: number
+  text: string
+  match: string
+  captured: string | undefined
+}
+
 /** 扫描单个 Rust 文本（掩码注释与字符串/char 字面量）：返回命中指定形态的
- *  行号（1 起算）与原文；形态缺省为壳层依赖（白名单分层检查的既有行为）；
- *  captured = 形态捕获组 1（无捕获组时 undefined，基础设施→域形态为目标域名） */
-export function scanRustSource(text, pattern = SHELL_DEP_PATTERN) {
-  const hits = []
+ *  行号（1 起算）与原文；形态缺省为壳层依赖（白名单分层检查的既有行为） */
+export function scanRustSource(text: string, pattern: RegExp = SHELL_DEP_PATTERN): ScanHit[] {
+  const hits: ScanHit[] = []
   const masked = maskNonCode(text)
   const maskedLines = masked.split('\n')
   const rawLines = text.split('\n')
@@ -242,9 +268,15 @@ export function scanRustSource(text, pattern = SHELL_DEP_PATTERN) {
   return hits
 }
 
+/** 收集到的 Rust 文件引用：绝对路径 + 相对路径（输出与报文用） */
+interface RustFileRef {
+  abs: string
+  rel: string
+}
+
 /** 递归收集目录下全部 .rs 文件（跳过测试豁免形态），相对路径排序保证输出确定 */
-function collectRustFiles(dir, relBase) {
-  const out = []
+function collectRustFiles(dir: string, relBase: string): RustFileRef[] {
+  const out: RustFileRef[] = []
   for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
     a.name.localeCompare(b.name),
   )) {
@@ -257,17 +289,17 @@ function collectRustFiles(dir, relBase) {
   return out
 }
 
-function main() {
+function main(): void {
   const repoRoot = fileURLToPath(new URL('..', import.meta.url))
   const srcDir = process.argv[2] ?? join(repoRoot, 'src-tauri', 'src')
-  const problems = []
+  const problems: string[] = []
   let scannedFiles = 0
   const domainCount = WHITELIST.filter((w) => w.layer === LAYER.DOMAIN).length
 
   // 模型域化禁令（规则①/②）：全树扫描（壳、域、基础设施、顶层文件），
   // 残留引用可出现在任何层；collectRustFiles 自带测试豁免（ADR-0056 决策 5）。
   // srcDir 整体不可达时静默交由白名单循环报「路径不存在」，不在此抛栈。
-  let allFiles = []
+  let allFiles: RustFileRef[] = []
   try {
     allFiles = collectRustFiles(srcDir, '')
   } catch {
@@ -306,14 +338,17 @@ function main() {
 
   for (const w of WHITELIST) {
     const abs = join(srcDir, w.path)
-    let stat
+    let stat: Stats | undefined
     try {
       stat = statSync(abs)
     } catch {
+      stat = undefined
+    }
+    if (!stat) {
       problems.push(`✗ 白名单路径不存在：${w.path}（${w.layer}：${w.note}）——目录改名/迁移后未同步守门清单`)
       continue
     }
-    const files = stat.isDirectory() ? collectRustFiles(abs, w.path) : [{ abs, rel: w.path }]
+    const files: RustFileRef[] = stat.isDirectory() ? collectRustFiles(abs, w.path) : [{ abs, rel: w.path }]
     if (files.length === 0) {
       problems.push(
         `✗ 白名单条目扫不到非测试 Rust 文件：${w.path}（${w.layer}：${w.note}）——` +

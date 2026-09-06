@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { NDialogProvider, NSelect, NTreeSelect } from 'naive-ui'
 import { h, reactive } from 'vue'
@@ -27,7 +27,6 @@ vi.mock('vue-router', () => ({
 // 重拉三表（stale-while-revalidate）→ 已挂载的视图/表单经响应式状态自动呈现新数据。
 // 测试主缝与 spec #76 一致：`invoke`（数据访问）与 `listen`（事件订阅），无需真实 Tauri/HTTP。
 
-const mockInvoke = vi.mocked(invoke)
 const mockListen = vi.mocked(listen)
 
 const mockAccounts: Account[] = [

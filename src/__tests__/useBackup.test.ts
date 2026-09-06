@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from "@vue/test-utils";
 import { defineComponent } from "vue";
 import { setActivePinia, createPinia } from "pinia";
@@ -22,7 +23,6 @@ import { restartAppShortly } from "@/utils/restart";
 import { stubReferenceInvoke } from "./helpers/reference-stubs";
 import type { BackupFileInfo } from "@/types";
 
-const mockInvoke = vi.mocked(invoke);
 const mockListen = vi.mocked(listen);
 
 const autoBackupFile: BackupFileInfo = {

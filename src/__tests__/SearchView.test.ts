@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { NButton, NDatePicker } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import SearchView from '@/views/SearchView.vue'
@@ -12,7 +12,6 @@ import { resetOverlays } from '@/composables/overlayRegistry'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Account, Category, Merchant, Transaction } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 
 // jsdom 无元素滚动：期间直达面板打开时 naive-ui 会 scrollTo，补空实现避免
 // 打断 Vue 调度队列（QuickTimeRange 组件测试同款前提）。

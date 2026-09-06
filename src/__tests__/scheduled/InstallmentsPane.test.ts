@@ -1,26 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from '../helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import {
-  NInput,
   NModal,
   NSelect,
   NPopconfirm,
   NProgress,
 } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import InstallmentsPane from '@/components/scheduled/InstallmentsPane.vue'
 import { stubReferenceInvoke } from '../helpers/reference-stubs'
+import { componentVm } from '../helpers/component-vm'
 import type {
   Account,
   Category,
   Currency,
   InstallmentPlan,
   Merchant,
+  ScheduledStatus,
   ScheduledTransaction,
   ScheduledTransactionDetail,
-  ScheduledTransactionOccurrence,
   ScheduledTransactionWithExt,
 } from '@/types'
 
@@ -33,7 +33,6 @@ import type {
  * 接线：期数/金额取自详情命令）与新建表单校验/提交编排。迁移与删除记录见对应提交信息。
  */
 
-const mockInvoke = vi.mocked(invoke)
 
 enableAutoUnmount(afterEach)
 afterEach(() => {
@@ -67,6 +66,7 @@ const mockCategories: Category[] = [
     kind: 'expense',
     parent_id: null,
     icon: null,
+    sort_order: 0,
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     version: 1,
@@ -79,8 +79,6 @@ const mockMerchants: Merchant[] = [
   {
     id: 'mer-1',
     name: '京东白条',
-    icon: null,
-    color: null,
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     version: 1,
@@ -120,6 +118,7 @@ function makePlan(
   return {
     core,
     merchant_id: merchantId,
+    policy_id: null,
     total_amount_cents: ext.total_amount_cents,
     total_occurrences: ext.total_occurrences,
     to_account_id: null,
@@ -142,6 +141,7 @@ function makeDetail(
     pending_occurrences: [],
     completed_occurrences: completed.count,
     completed_amount_cents: completed.amount,
+    occurrences: [],
   }
 }
 
@@ -164,8 +164,6 @@ function baseInvoke() {
         {
           id,
           name: input.name,
-          icon: null,
-          color: null,
           created_at: '2026-01-01T00:00:00Z',
           updated_at: '2026-01-01T00:00:00Z',
           version: 1,
@@ -201,7 +199,7 @@ function baseInvoke() {
       return id
     },
     update_scheduled_transaction_status: (args) => {
-      const { id, new_status } = args as { id: string; new_status: string }
+      const { id, new_status } = args as { id: string; new_status: ScheduledStatus }
       mockPlans = mockPlans.map((p) =>
         p.core.id === id ? { ...p, core: { ...p.core, status: new_status } } : p,
       )
@@ -456,9 +454,7 @@ describe('InstallmentsPane 新建分期（分期形态真差异，issue #204）'
     expect(modalText('inst-preview')).toBe('')
     await findInput(wrapper, 'inst-total').setValue('1')
     await findInput(wrapper, 'inst-total').trigger('input')
-    wrapper
-      .findComponent('[data-testid="inst-periods"]')
-      .vm.$emit('update:value', 3)
+    componentVm(wrapper.findComponent('[data-testid="inst-periods"]')).$emit('update:value', 3)
     await flushPromises()
     const preview = modalText('inst-preview')
     expect(preview).toContain('¥0.33')
@@ -471,9 +467,7 @@ describe('InstallmentsPane 新建分期（分期形态真差异，issue #204）'
     await openCreateModal(wrapper)
     await findInput(wrapper, 'inst-total').setValue('1200')
     await findInput(wrapper, 'inst-total').trigger('input')
-    wrapper
-      .findComponent('[data-testid="inst-periods"]')
-      .vm.$emit('update:value', 12)
+    componentVm(wrapper.findComponent('[data-testid="inst-periods"]')).$emit('update:value', 12)
     await flushPromises()
     const preview = modalText('inst-preview')
     expect(preview).toContain('¥100')
@@ -492,10 +486,8 @@ describe('InstallmentsPane 新建分期（分期形态真差异，issue #204）'
     // 总额 1000 元 = 100000 分，分 12 期：floor(100000/12)=8333（floor 口径页签持有）
     await findInput(wrapper, 'inst-total').setValue('1000')
     await findInput(wrapper, 'inst-total').trigger('input')
-    wrapper
-      .findComponent('[data-testid="inst-periods"]')
-      .vm.$emit('update:value', 12)
-    wrapper.findComponent('[data-testid="inst-account"]').vm.$emit('update:value', 'acc-1')
+    componentVm(wrapper.findComponent('[data-testid="inst-periods"]')).$emit('update:value', 12)
+    componentVm(wrapper.findComponent('[data-testid="inst-account"]')).$emit('update:value', 'acc-1')
     await flushPromises()
     await wrapper.findComponent('[data-testid="inst-create"]').trigger('click')
     await flushPromises()
@@ -518,12 +510,10 @@ describe('InstallmentsPane 新建分期（分期形态真差异，issue #204）'
   it('未填总额或期数时不提交', async () => {
     const wrapper = await mountView()
     await openCreateModal(wrapper)
-    wrapper.findComponent('[data-testid="inst-account"]').vm.$emit('update:value', 'acc-1')
+    componentVm(wrapper.findComponent('[data-testid="inst-account"]')).$emit('update:value', 'acc-1')
     await flushPromises()
     // 只填期数不填总额
-    wrapper
-      .findComponent('[data-testid="inst-periods"]')
-      .vm.$emit('update:value', 12)
+    componentVm(wrapper.findComponent('[data-testid="inst-periods"]')).$emit('update:value', 12)
     await flushPromises()
     await wrapper.findComponent('[data-testid="inst-create"]').trigger('click')
     await flushPromises()
@@ -537,10 +527,8 @@ describe('InstallmentsPane 新建分期（分期形态真差异，issue #204）'
     await openCreateModal(wrapper)
     await findInput(wrapper, 'inst-total').setValue('0.02')
     await findInput(wrapper, 'inst-total').trigger('input')
-    wrapper
-      .findComponent('[data-testid="inst-periods"]')
-      .vm.$emit('update:value', 3)
-    wrapper.findComponent('[data-testid="inst-account"]').vm.$emit('update:value', 'acc-1')
+    componentVm(wrapper.findComponent('[data-testid="inst-periods"]')).$emit('update:value', 3)
+    componentVm(wrapper.findComponent('[data-testid="inst-account"]')).$emit('update:value', 'acc-1')
     await flushPromises()
     await wrapper.findComponent('[data-testid="inst-create"]').trigger('click')
     await flushPromises()
@@ -556,10 +544,8 @@ describe('InstallmentsPane 新建分期（分期形态真差异，issue #204）'
     await findInput(wrapper, 'inst-note').trigger('input')
     await findInput(wrapper, 'inst-total').setValue('1200')
     await findInput(wrapper, 'inst-total').trigger('input')
-    wrapper
-      .findComponent('[data-testid="inst-periods"]')
-      .vm.$emit('update:value', 12)
-    wrapper.findComponent('[data-testid="inst-account"]').vm.$emit('update:value', 'acc-1')
+    componentVm(wrapper.findComponent('[data-testid="inst-periods"]')).$emit('update:value', 12)
+    componentVm(wrapper.findComponent('[data-testid="inst-account"]')).$emit('update:value', 'acc-1')
     await flushPromises()
     await wrapper.findComponent('[data-testid="inst-create"]').trigger('click')
     await flushPromises()
@@ -579,10 +565,8 @@ describe('InstallmentsPane 商户挂靠（issue #206：表单接缝接线冒烟�
   async function fillRequired(wrapper: ReturnType<typeof mount>) {
     await findInput(wrapper, 'inst-total').setValue('1200')
     await findInput(wrapper, 'inst-total').trigger('input')
-    wrapper
-      .findComponent('[data-testid="inst-periods"]')
-      .vm.$emit('update:value', 12)
-    wrapper.findComponent('[data-testid="inst-account"]').vm.$emit('update:value', 'acc-1')
+    componentVm(wrapper.findComponent('[data-testid="inst-periods"]')).$emit('update:value', 12)
+    componentVm(wrapper.findComponent('[data-testid="inst-account"]')).$emit('update:value', 'acc-1')
     await flushPromises()
   }
 
@@ -610,7 +594,7 @@ describe('InstallmentsPane 商户挂靠（issue #206：表单接缝接线冒烟�
     const wrapper = await mountView()
     await openCreateModal(wrapper)
     // 输入文本「新商户」：未命中在用商户 → 保存时接缝即建
-    wrapper.findComponent('[data-testid="inst-merchant"]').vm.$emit('update:value', '新商户')
+    componentVm(wrapper.findComponent('[data-testid="inst-merchant"]')).$emit('update:value', '新商户')
     await fillRequired(wrapper)
     await wrapper.findComponent('[data-testid="inst-create"]').trigger('click')
     await flushPromises()

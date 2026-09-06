@@ -1,15 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { defineComponent, watch } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
-import { invoke } from '@tauri-apps/api/core'
 import { useTransactionFilter, UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
 import type { UseTransactionFilterReturn } from '@/composables/useTransactionFilter'
 import { useReferenceStore } from '@/stores/reference'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Account, Category, Merchant, TransactionListFilter } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 
 /** URL 下钻用参考数据：两账户；商户含一软删、分类含一软删（历史交易口径，issue #191/#377 校验含软删）。 */
 const urlAccounts: Account[] = [

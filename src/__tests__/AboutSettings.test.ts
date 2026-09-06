@@ -1,11 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
-import { invoke } from '@tauri-apps/api/core'
 import { NSelect } from 'naive-ui'
 import AboutSettings from '@/components/settings/AboutSettings.vue'
 
 const writeText = vi.fn().mockResolvedValue(undefined)
-const mockInvoke = vi.mocked(invoke)
 
 // 覆写 setup.ts 的 useMessage mock：改用稳定实例以便断言反馈分支
 // （issue #283：成功→无提示、失败→原样透传后端中文错误）。

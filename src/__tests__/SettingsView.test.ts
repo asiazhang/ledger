@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 
 import { useAppStore } from '@/stores/app'
@@ -24,7 +24,6 @@ import { open, save } from '@tauri-apps/plugin-dialog'
 const mockOpen = vi.mocked(open)
 const mockSave = vi.mocked(save)
 
-const mockInvoke = vi.mocked(invoke)
 const mockListen = vi.mocked(listen)
 
 const mockCurrencies: Currency[] = [

@@ -1,14 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount, DOMWrapper } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import PhysicalAssetsView from '@/views/PhysicalAssetsView.vue'
 import PhysicalAssetFormModal from '@/components/PhysicalAssetFormModal.vue'
 import { makePhysicalAsset, makePhysicalAssetList } from './factories'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Currency, PhysicalAsset, PhysicalAssetList } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 
 // NModal 内容 teleport 到 document.body：测试在 body 中查询/触发（同 PoliciesView 先例）。
 enableAutoUnmount(afterEach)

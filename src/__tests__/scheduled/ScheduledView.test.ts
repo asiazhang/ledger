@@ -1,14 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockInvoke } from '../helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import ScheduledView from '@/views/ScheduledView.vue'
 import { stubReferenceInvoke } from '../helpers/reference-stubs'
 import { routes, router } from '@/router'
 import type { SubscriptionSpendOverview } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 
 enableAutoUnmount(afterEach)
 afterEach(() => {

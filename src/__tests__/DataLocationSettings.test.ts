@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
-import { invoke } from '@tauri-apps/api/core'
 import type { DataLocationChangeOutcome, DataLocationInfo } from '@/types'
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
@@ -27,7 +27,6 @@ import DataLocationSettings from '@/components/settings/DataLocationSettings.vue
 import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 
-const mockInvoke = vi.mocked(invoke)
 const mockOpen = vi.mocked(open)
 
 // 剧本剪贴板（issue #653）：断言写入内容与成功/失败提示分支（父 spec 测试决策：

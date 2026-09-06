@@ -1,7 +1,7 @@
 import { vi, beforeEach, afterEach } from 'vitest'
+import { mockInvoke } from '../helpers/invoke-mock'
 import { DOMWrapper, mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { h, reactive } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
 import { setActivePinia, createPinia } from 'pinia'
 import { NDataTable, NDropdown, NDialogProvider } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
@@ -9,7 +9,7 @@ import { stubReferenceInvoke } from '../helpers/reference-stubs'
 import TransactionsView from '@/views/TransactionsView.vue'
 import type { Account, Currency, Merchant, ReportDateRange, Transaction } from '@/types'
 
-export const mockInvoke = vi.mocked(invoke)
+export { mockInvoke } from '../helpers/invoke-mock'
 
 // 拆分后主题测试文件对导入绑定只读，可变模块态经 setter 改写。
 export function setMerchantDb(rows: Merchant[]) {

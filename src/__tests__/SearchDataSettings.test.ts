@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
-import { invoke } from '@tauri-apps/api/core'
 import type { NotePinyinRepairReport } from '@/types'
 
 // 覆写 setup.ts 的 useMessage mock：改用稳定实例以便断言反馈分支
@@ -20,7 +20,6 @@ vi.mock('naive-ui', async (importOriginal) => {
 
 import SearchDataSettings from '@/components/settings/SearchDataSettings.vue'
 
-const mockInvoke = vi.mocked(invoke)
 
 const convergedReport: NotePinyinRepairReport = {
   backfilled: 3,

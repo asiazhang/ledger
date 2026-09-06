@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { hasOpenOverlay, resetOverlays } from '@/composables/overlayRegistry'
 import GroupMoreView from '@/views/GroupMoreView.vue'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
@@ -12,7 +12,6 @@ import { routes, router } from '@/router'
 import type { Merchant } from '@/types'
 import type { SubscriptionSpendOverview } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 
 enableAutoUnmount(afterEach)
 afterEach(() => {

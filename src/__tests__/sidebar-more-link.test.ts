@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import App from '@/App.vue'
 import { routes } from '@/router'
 import { useSidebarOrderStore, GROUP_CONTAINMENT_SEEDS } from '@/stores/sidebar-order'
@@ -20,7 +20,7 @@ async function mountApp() {
   setActivePinia(createPinia())
   // 启动门探测（issue #570 / #601）：App 启动先探测启动状态，本票与侧栏无关，
   // 桩为明文就绪让主界面照常挂载；其余命令 fail-loud。
-  vi.mocked(invoke).mockImplementation((cmd: string) =>
+  mockInvoke.mockImplementation((cmd: string) =>
     cmd === 'get_boot_status'
       ? Promise.resolve({ phase: 'ready', error_code: null })
       : Promise.reject(new Error(`unexpected invoke: ${cmd}`)),
@@ -43,7 +43,7 @@ describe('侧栏组标题行「更多」链接显隐渲染（issue #475 / ADR-00
   afterEach(() => {
     useSidebarOrderStore().resetSidebarOrder()
     localStorage.clear()
-    vi.mocked(invoke).mockReset()
+    mockInvoke.mockReset()
   })
 
   it('出厂态：记账（定时/商户）与资产（保单/实物资产）两链接渲染，洞察（空清单）无链接', async () => {

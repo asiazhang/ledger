@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { applyLocale } from '@/i18n'
 import DashboardView from '@/views/DashboardView.vue'
 import TransactionForm from '@/components/TransactionForm.vue'
@@ -27,7 +27,6 @@ vi.mock('vue-router', () => ({
 }))
 import type { Account, BudgetProgress, Category, Currency, MonthlySummary } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 
 const mockCurrencies: Currency[] = [
   { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },

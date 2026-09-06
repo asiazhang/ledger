@@ -1,14 +1,13 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { NSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import InvestmentForm from '@/components/InvestmentForm.vue'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Account, Instrument } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 
 // jsdom 不实现 scrollTo：naive-ui 打开虚拟滚动下拉时会调用，提前 polyfill 避免 unhandled rejection
 beforeAll(() => {

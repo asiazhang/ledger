@@ -5,12 +5,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { REFERENCE_DEFAULTS } from './helpers/reference-stubs'
 
-// 被测对象是仓库工具脚本 scripts/check-test-stubs.js（参考数据测试桩守门，issue #725）。
+// 被测对象是仓库工具脚本 scripts/check-test-stubs.ts（前端测试桩守门，issue #725/#726）。
+// 脚本以 Bun 运行时执行（ADR-0083）：spawnSync('bun') 与门槛调用同款，测的就是门槛路径。
 // 按测试决策只测外部可观察结果——进程退出码与输出，不测内部函数；
 // 通过位置参数把扫描目标指向临时夹具目录。
 // 夹具命令清单自助手导出的 REFERENCE_DEFAULTS 派生（单一事实源，无双源漂移）；
 // （vitest 转换后 import.meta.url 非 file: scheme，取进程 cwd = 仓库根定位脚本）
-const script = join(process.cwd(), 'scripts', 'check-test-stubs.js')
+const script = join(process.cwd(), 'scripts', 'check-test-stubs.ts')
 
 interface RunResult {
   status: number
@@ -18,7 +19,7 @@ interface RunResult {
 }
 
 function run(args: string[]): RunResult {
-  const r = spawnSync(process.execPath, [script, ...args], { encoding: 'utf8' })
+  const r = spawnSync('bun', [script, ...args], { encoding: 'utf8' })
   return { status: r.status ?? -1, output: (r.stdout ?? '') + (r.stderr ?? '') }
 }
 
@@ -67,7 +68,7 @@ describe('check-test-stubs', () => {
     const dir = makeFixture({ 'SomeView.test.ts': CLEAN_TEST })
     const r = run([dir])
     expect(r.status).toBe(0)
-    expect(r.output).toContain('参考数据测试桩守门')
+    expect(r.output).toContain('测试桩守门')
   })
 
   it('手搓 if 链桩参考命令即红，逐处报文件与命令', () => {
@@ -165,5 +166,148 @@ expect(calls.length).toBeGreaterThan(0)
     const r = run([dir])
     expect(r.status).toBe(1)
     expect(r.output).toContain('REFERENCE_DEFAULTS')
+  })
+})
+
+describe('check-test-stubs 同回调重复接线检测（#726）', () => {
+  it('同回调重复 if 同名命令即红：报文件、行号、命令名（领域命令同样纳管）', () => {
+    const dir = makeFixture({
+      'Dup.test.ts': `mockInvoke.mockImplementation((cmd: string) => {
+  if (cmd === 'list_transactions') return Promise.resolve([a])
+  if (cmd === 'get_settings') return Promise.resolve(s)
+  if (cmd === 'list_transactions') return Promise.resolve([b])
+  return Promise.reject(new Error('unexpected invoke'))
+})`,
+    })
+    const r = run([dir])
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('Dup.test.ts')
+    expect(r.output).toContain('同回调重复桩')
+    expect(r.output).toContain('list_transactions')
+    expect(r.output).toContain('行 2、4')
+  })
+
+  it('同回调不同命令各一次合法', () => {
+    const dir = makeFixture({
+      'Multi.test.ts': `mockInvoke.mockImplementation((cmd: string) => {
+  if (cmd === 'list_transactions') return Promise.resolve([])
+  if (cmd === 'get_settings') return Promise.resolve({})
+  return Promise.reject(new Error('unexpected invoke'))
+})`,
+    })
+    expect(run([dir]).status).toBe(0)
+  })
+
+  it('嵌套回调各自成单元不误报（DataLocationSettings 内层 cmd2 先例）', () => {
+    const dir = makeFixture({
+      'Nested.test.ts': `mockInvoke.mockImplementation((cmd: string) => {
+  if (cmd === 'submit_data_location_change') {
+    mockInvoke.mockImplementation((cmd2: string) => {
+      if (cmd2 === 'get_data_location_info') return Promise.resolve(info)
+      return Promise.reject(new Error('unexpected invoke'))
+    })
+    return Promise.resolve(committed)
+  }
+  if (cmd === 'get_data_location_info') return Promise.resolve(baseInfo)
+  return Promise.reject(new Error('unexpected invoke'))
+})`,
+    })
+    expect(run([dir]).status).toBe(0)
+  })
+
+  it('嵌套内外层同名形参 cmd 各桩一次同命令，不误报', () => {
+    const dir = makeFixture({
+      'NestedSameParam.test.ts': `mockInvoke.mockImplementation((cmd: string) => {
+  if (cmd === 'get_settings') return Promise.resolve(s)
+  mockInvoke.mockImplementation((cmd: string) => {
+    if (cmd === 'get_settings') return Promise.resolve(s2)
+    return Promise.reject(new Error('unexpected invoke'))
+  })
+  return Promise.reject(new Error('unreachable'))
+})`,
+    })
+    expect(run([dir]).status).toBe(0)
+  })
+
+  it('else-if 形态的重复同样识别', () => {
+    const dir = makeFixture({
+      'ElseIf.test.ts': `mockInvoke.mockImplementation((cmd: string) => {
+  if (cmd === 'list_transactions') return Promise.resolve([a])
+  else if (cmd === 'list_transactions') return Promise.resolve([b])
+  return Promise.reject(new Error('unexpected invoke'))
+})`,
+    })
+    const r = run([dir])
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('ElseIf.test.ts')
+    expect(r.output).toContain('行 2、3')
+  })
+
+  it('两个独立 mockImplementation 各桩同命令一次，合法（整体替换语义）', () => {
+    const dir = makeFixture({
+      'Restub.test.ts': `mockInvoke.mockImplementation((cmd: string) => {
+  if (cmd === 'get_settings') return Promise.resolve(s)
+  return Promise.reject(new Error('unexpected invoke'))
+})
+mockInvoke.mockImplementation((cmd: string) => {
+  if (cmd === 'get_settings') return Promise.resolve(s2)
+  return Promise.reject(new Error('unexpected invoke'))
+})`,
+    })
+    expect(run([dir]).status).toBe(0)
+  })
+
+  it('helpers/ 内的同回调重复桩同样拦截（规则 2 扫描测试 helper）', () => {
+    const dir = makeFixture({
+      'helpers/domain-stubs.ts': `export function stubDomain(mockInvoke: { mockImplementation: (f: unknown) => void }) {
+  mockInvoke.mockImplementation((cmd: string) => {
+    if (cmd === 'list_transactions') return Promise.resolve([])
+    if (cmd === 'list_transactions') return Promise.resolve([])
+    return Promise.reject(new Error('unexpected invoke'))
+  })
+}`, 
+    })
+    const r = run([dir])
+    expect(r.status).toBe(1)
+    expect(r.output).toContain(join('helpers', 'domain-stubs.ts'))
+    expect(r.output).toContain('同回调重复桩')
+  })
+
+  it('回调体内注释含不配对引号/括号不影响括号配对（词法跳过注释）', () => {
+    const dir = makeFixture({
+      'Comments.test.ts': `mockInvoke.mockImplementation((cmd: string) => {
+  // don't stub twice (it's covered by the guard's own fixture)
+  /* 块注释带 ( 不配对括号与 ' 引号 */
+  if (cmd === 'get_settings') return Promise.resolve(s)
+  return Promise.reject(new Error('unexpected invoke'))
+})
+mockInvoke.mockImplementation((cmd: string) => {
+  if (cmd === 'get_settings') return Promise.resolve(s2)
+  return Promise.reject(new Error('unexpected invoke'))
+})`,
+    })
+    expect(run([dir]).status).toBe(0)
+  })
+
+  it('字符串字面量内的接线形文本不计数（仅统计活代码）', () => {
+    const dir = makeFixture({
+      'StringShape.test.ts': `mockInvoke.mockImplementation((cmd: string) => {
+  const hint = "if (cmd === 'get_settings') is a wiring shape, not wiring"
+  if (cmd === 'get_settings') return Promise.resolve(s)
+  return Promise.reject(new Error('unexpected invoke'))
+})`,
+    })
+    expect(run([dir]).status).toBe(0)
+  })
+
+  it('注释掉的接线不计数（临时注释掉不致守门误红）', () => {
+    const dir = makeFixture({
+      'DeadWiring.test.ts': `mockInvoke.mockImplementation((cmd: string) => {
+  // if (cmd === 'get_settings') return Promise.resolve(dead)
+  if (cmd === 'get_settings') return Promise.resolve(s)
+  return Promise.reject(new Error('unexpected invoke'))
+})`,
+    })
+    expect(run([dir]).status).toBe(0)
   })
 })

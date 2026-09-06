@@ -21,8 +21,8 @@ jobs:
   # （编译 76s + 固定 69s + clippy 19s + 测试执行 48s）。据此拆分为四个并行 job：
   # 关键路径 = max(后端测试 ~180s, 前端测试分片 ~116s)，目标总时长 ~3 分钟。
 
-  # 前端构建与一致性检查：vue-tsc 类型检查 + vite build + 三个守门脚本，~25s。
-  # 测试拆至 frontend-test 分片 job，二者并行。
+  # 前端构建与一致性检查：vue-tsc 类型检查（前端 + 守门脚本与测试两个工程）+ vite build
+  # + 守门脚本（Bun 运行时，ADR-0083），~25s。测试拆至 frontend-test 分片 job，二者并行。
   frontend:
     name: 前端检查
     if: "!startsWith(github.ref, 'refs/tags/')"
@@ -36,13 +36,21 @@ jobs:
           cache: true
           require-lockfile: true
 
+      # 守门脚本运行时 = Bun（ADR-0083）；版本与本地门槛同一固定值，升级走显式 bump
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
       - run: pnpm run build
 
+      - name: 守门脚本与测试类型检查
+        run: pnpm exec vue-tsc -p tsconfig.scripts.json --noEmit
+
       - name: 命令注册一致性检查
-        run: node scripts/check-commands.js
+        run: bun scripts/check-commands.ts
 
       - name: 结构守门检查
-        run: node scripts/check-structure.js
+        run: bun scripts/check-structure.ts
 
       - name: 文档一致性检查
         run: ./scripts/check-docs.sh
@@ -66,6 +74,11 @@ jobs:
           runtime: node@22
           cache: true
           require-lockfile: true
+
+      # 守门脚本测试经 spawnSync('bun', …) 同运行时调用（ADR-0083），需安装 bun
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
 
       - name: Vitest 分片运行
         run: pnpm exec vitest run --shard=${{ matrix.shard }}/2

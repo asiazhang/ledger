@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { defineComponent, watch, type PropType } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
-import { invoke } from '@tauri-apps/api/core'
 import {
   earliestPendingOccurrence,
   scheduledRecurrenceLabel,
@@ -41,7 +41,6 @@ vi.mock('naive-ui', async (importOriginal) => {
   }
 })
 
-const mockInvoke = vi.mocked(invoke)
 
 // ---------------------------------------------------------------------------
 // 数据工厂：计划（core.kind 可覆写）、期次、详情

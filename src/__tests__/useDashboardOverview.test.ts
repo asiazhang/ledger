@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import { useDashboardOverview } from '@/composables/useDashboardOverview'
 import { registerToastSink } from '@/composables/useLoadable'
@@ -12,7 +12,6 @@ import {
   resetToastSink,
 } from './factories'
 
-const mockInvoke = vi.mocked(invoke)
 
 const mockOverview = makeOverview({ net_worth_cents: 1234567, accounts_balance_cents: 1000000 })
 

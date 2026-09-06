@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { DOMWrapper, mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import MerchantEditModal from '@/components/merchants/MerchantEditModal.vue'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Merchant } from '@/types'
@@ -25,7 +25,6 @@ vi.mock('naive-ui', async (importOriginal) => {
   }
 })
 
-const mockInvoke = vi.mocked(invoke)
 
 // NModal 内容传送至 document.body：每测后卸载，避免前一用例的弹窗残留在 body 污染查询
 enableAutoUnmount(afterEach)

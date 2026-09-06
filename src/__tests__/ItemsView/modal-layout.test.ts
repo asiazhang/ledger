@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockInvoke } from '../helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import ItemsView from '@/views/ItemsView.vue'
 import { stubReferenceInvoke } from '../helpers/reference-stubs'
 import type { ItemWithDailyCost } from '@/types'
@@ -11,7 +11,6 @@ import type { ItemWithDailyCost } from '@/types'
 // 显式 style 宽度由 cardSize 承担，无边框由 AppModal 默认承担。断言只看
 // 组件可观察输出（卡片宽度样式与边框类），不深究 naive-ui 内部实现。
 
-const mockInvoke = vi.mocked(invoke)
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() }),

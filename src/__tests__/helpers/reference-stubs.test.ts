@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { invoke } from '@tauri-apps/api/core'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { mockInvoke } from './invoke-mock'
 import {
   stubReferenceInvoke,
   refCurrencies,
@@ -9,7 +9,6 @@ import {
   refInsurers,
 } from './reference-stubs'
 
-const mockInvoke = vi.mocked(invoke)
 
 beforeEach(() => {
   mockInvoke.mockReset()

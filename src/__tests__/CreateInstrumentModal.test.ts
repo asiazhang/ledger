@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { NSelect } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import CreateInstrumentModal from '@/components/investments/CreateInstrumentModal.vue'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
@@ -16,7 +16,6 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-const mockInvoke = vi.mocked(invoke)
 
 const mockCurrencies: Currency[] = [
   { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },

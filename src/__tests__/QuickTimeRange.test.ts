@@ -1,6 +1,6 @@
-import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { NButton, NDatePicker } from 'naive-ui'
 import { resetOverlays, hasOpenOverlay, openOverlayNames } from '@/composables/overlayRegistry'
@@ -9,7 +9,6 @@ import QuickTimeRange from '@/components/QuickTimeRange.vue'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import { DATED_TIME_PERIOD_PRESETS, type NullableDateRange } from '@/utils/time-period'
 
-const mockInvoke = vi.mocked(invoke)
 
 // jsdom 未实现元素滚动（naive-ui 日期面板打开时会 scrollTo），补空实现避免
 // 打断 Vue 调度队列（仅影响本文件的弹层交互用例）。

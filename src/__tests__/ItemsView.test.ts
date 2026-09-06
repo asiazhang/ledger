@@ -1,16 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount, DOMWrapper } from '@vue/test-utils'
 import { NPopconfirm, NSelect, NDatePicker } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
 import { nextTick } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
 import { useItemsStore } from '@/stores/items'
 import { applyLocale } from '@/i18n'
 import ItemsView from '@/views/ItemsView.vue'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Currency, ItemDailyCost, ItemInput, ItemWithDailyCost, Transaction } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 
 const pushMock = vi.fn()
 vi.mock('vue-router', () => ({

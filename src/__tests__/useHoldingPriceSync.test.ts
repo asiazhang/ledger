@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { invoke } from '@tauri-apps/api/core'
+import { mockInvoke } from './helpers/invoke-mock'
 import { useHoldingPriceSync } from '@/composables/useHoldingPriceSync'
 
-const mockInvoke = vi.mocked(invoke)
 
 beforeEach(() => {
   mockInvoke.mockReset()

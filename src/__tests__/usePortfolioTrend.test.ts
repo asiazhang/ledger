@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import {
   toTrendRange,
@@ -13,7 +13,6 @@ import type { PortfolioValueTrend } from '@/types'
 import { makeInstrument } from './factories'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 
-const mockInvoke = vi.mocked(invoke)
 
 const portfolioTrend: PortfolioValueTrend = {
   currency_code: 'CNY',

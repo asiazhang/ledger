@@ -1,15 +1,14 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount, DOMWrapper } from '@vue/test-utils'
 import { NPopconfirm } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import PoliciesView from '@/views/PoliciesView.vue'
 import PolicyFormModal from '@/components/PolicyFormModal.vue'
 import { makePolicy, makePolicyStats } from './factories'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Currency, Insurer, Policy, PolicyStats } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 
 // focus 参数读取自路由 query（useFocusParam 注入 getter，spec #704 / issue #706）。
 // 本文件用可控 mockRoute 替代真实 router：默认空 query（无 focus 空转），来源

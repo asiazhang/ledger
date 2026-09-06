@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from '../helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { NModal, NSelect, NPopconfirm } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import TransfersPane from '@/components/scheduled/TransfersPane.vue'
 import { stubReferenceInvoke } from '../helpers/reference-stubs'
@@ -23,7 +23,6 @@ import type {
  * 迁移记录见对应提交信息。
  */
 
-const mockInvoke = vi.mocked(invoke)
 
 enableAutoUnmount(afterEach)
 afterEach(() => {

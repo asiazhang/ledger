@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockInvoke } from '../helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { h, nextTick } from 'vue'
 import { NDialogProvider } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useReferenceStore } from '@/stores/reference'
 import CreateInstrumentModal from '@/components/investments/CreateInstrumentModal.vue'
@@ -22,7 +22,6 @@ import { stubReferenceInvoke } from '../helpers/reference-stubs'
 // ManualPriceModal 测试保障。
 
 const mockListen = vi.mocked(listen)
-const mockInvoke = vi.mocked(invoke)
 
 const mockInstruments = [
   makeInstrument({ id: 'inst-1' }),

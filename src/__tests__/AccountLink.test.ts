@@ -1,13 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import AccountLink from '@/components/AccountLink.vue'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Account } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 
 // AccountLink 经 useRouter 跳转（pushMock 断言导航目标，issue #97/#99）
 const pushMock = vi.fn()

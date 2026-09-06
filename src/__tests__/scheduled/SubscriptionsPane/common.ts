@@ -1,6 +1,6 @@
 import { vi, afterEach } from 'vitest'
+import { mockInvoke } from '../../helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
-import { invoke } from '@tauri-apps/api/core'
 import { setActivePinia, createPinia } from 'pinia'
 import { useReferenceStore } from '@/stores/reference'
 import { stubReferenceInvoke } from '../../helpers/reference-stubs'
@@ -17,7 +17,7 @@ import type {
   SubscriptionSpendOverview,
 } from '@/types'
 
-export const mockInvoke = vi.mocked(invoke)
+export { mockInvoke } from '../../helpers/invoke-mock'
 
 enableAutoUnmount(afterEach)
 afterEach(() => {

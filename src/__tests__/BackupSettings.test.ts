@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 // 覆写 setup.ts 的 useMessage mock（useBackup 内 useMessage 需要消息提供器）。
@@ -28,7 +28,6 @@ function cardTitles(wrapper: ReturnType<typeof mount>) {
   return wrapper.findAll('.n-card-header__main').map((c) => c.text())
 }
 
-const mockInvoke = vi.mocked(invoke)
 const mockListen = vi.mocked(listen)
 
 // 剧本剪贴板（issue #653）：断言复制内容与成功/失败提示分支（父 spec 测试决策：

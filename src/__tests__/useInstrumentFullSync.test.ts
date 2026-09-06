@@ -1,13 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { defineComponent, h } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
-import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useInstrumentFullSync } from '@/composables/useInstrumentFullSync'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { SyncProgress } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 const mockListen = vi.mocked(listen)
 
 let capturedHandler: ((event: { payload: SyncProgress }) => void) | undefined

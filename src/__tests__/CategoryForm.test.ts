@@ -1,14 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { NSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import CategoryForm from '@/components/CategoryForm.vue'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Account, Category, Transaction } from '@/types'
 
-const mockInvoke = vi.mocked(invoke)
 
 const mockAccounts: Account[] = [
   {

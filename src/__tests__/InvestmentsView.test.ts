@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { h, nextTick } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
 import { NDialogProvider } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import InvestmentsView from '@/views/InvestmentsView.vue'
@@ -15,7 +15,6 @@ vi.mock('vue-chartjs', async () => {
   return { Line: LineChartStub }
 })
 
-const mockInvoke = vi.mocked(invoke)
 
 const mockInstruments: Instrument[] = [
   {

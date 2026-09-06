@@ -1,24 +1,37 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // 命令注册一致性校验（issue #315 / ADR-0047）：命令单一来源 = `#[tauri::command]` 注解本身。
 // 左集 = Rust 注解命令名（与 src-tauri/build.rs 扫描器同源同界）；右集 = src/api/index.ts
 // 的 invoke('命令名') 字符串。双向全等，任一方向孤儿即非零退出并列出差异。
-// 默认校验本仓库；测试可传位置参数指向夹具：node scripts/check-commands.js [commands-dir] [api-file]
+// TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
+// 门槛检查；调用方式 `bun scripts/check-commands.ts`。
+// 默认校验本仓库；测试可传位置参数指向夹具：bun scripts/check-commands.ts [commands-dir] [api-file]
 // 挂载于 scripts/check.sh 质量门槛序列与 CI（build.yml frontend job）。
 
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 
+/** 单条扫描边界违规：行号 1 起算 + 违规行原文 */
+export interface ScanError {
+  line: number
+  text: string
+}
+
+/** scanRustSource 返回：命令名集 + 扫描边界违规 */
+export interface ScanResult {
+  names: string[]
+  errors: ScanError[]
+}
+
 /**
  * 扫描单个 Rust 源文本：裸 `#[tauri::command]` + 紧随 `pub fn` / `pub async fn`。
  * 扫描规则与 src-tauri/build.rs 同源同界：注解行必须紧随 fn 定义行，出现其他形态
  * （带参注解、cfg 条件、注解与 fn 之间插入属性行）即记入 errors——fail loud，
  * 未来扩展扫描规则时须同步改 build.rs 与本脚本（维护边界，见 ADR-0047）。
- * @returns {{ names: string[], errors: Array<{line: number, text: string}> }} 行号 1 起算
  */
-export function scanRustSource(text) {
-  const names = []
-  const errors = []
+export function scanRustSource(text: string): ScanResult {
+  const names: string[] = []
+  const errors: ScanError[] = []
   let armed = false
   const lines = text.split('\n')
   for (let i = 0; i < lines.length; i++) {
@@ -45,13 +58,13 @@ export function scanRustSource(text) {
  * 扫描 TS 调用面文本中的 invoke('命令名')（含 invoke<T>('命令名') 泛型形态）。
  * 只认单引号字符串字面量（api/index.ts 统一风格）。
  */
-export function scanTsSource(text) {
+export function scanTsSource(text: string): string[] {
   return [...text.matchAll(/\binvoke(?:<[^>]*>)?\(\s*'([^']+)'/g)].map((m) => m[1])
 }
 
 /** 递归收集目录下全部 .rs 文件（按路径排序，保证输出确定） */
-function collectRustFiles(dir) {
-  const out = []
+function collectRustFiles(dir: string): string[] {
+  const out: string[] = []
   for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
     a.name.localeCompare(b.name),
   )) {
@@ -62,13 +75,13 @@ function collectRustFiles(dir) {
   return out
 }
 
-function main() {
+function main(): void {
   const repoRoot = fileURLToPath(new URL('..', import.meta.url))
   const commandsDir = process.argv[2] ?? join(repoRoot, 'src-tauri', 'src', 'commands')
   const apiFile = process.argv[3] ?? join(repoRoot, 'src', 'api', 'index.ts')
 
-  const problems = []
-  const rustByName = new Map() // 命令名 → 定义文件（重复定义保留首个并报错）
+  const problems: string[] = []
+  const rustByName = new Map<string, string>() // 命令名 → 定义文件（重复定义保留首个并报错）
   for (const file of collectRustFiles(commandsDir)) {
     const { names, errors } = scanRustSource(readFileSync(file, 'utf8'))
     for (const e of errors) {

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
-import { invoke } from '@tauri-apps/api/core'
 import { setActivePinia, createPinia } from 'pinia'
 
 import StartupFailureScreen from '@/components/StartupFailureScreen.vue'
@@ -19,7 +19,6 @@ const restartAppShortly = vi.fn()
 vi.mock('@/utils/restart', () => ({ restartAppShortly: () => restartAppShortly() }))
 const mockOpen = vi.mocked(open)
 
-const mockInvoke = vi.mocked(invoke)
 
 /** mock-invoke 桩：失败恢复屏只消费启动命令面（fail-loud：其余命令一律拒绝）。 */
 function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
