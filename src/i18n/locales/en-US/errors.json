@@ -22,6 +22,11 @@
     "name-required": "merchant name is required",
     "not-active": "merchant does not exist or has been deleted: {0}"
   },
+  "insurer": {
+    "already-exists": "insurer already exists: {0}",
+    "not-found": "insurer does not exist: {0}",
+    "name-required": "insurer name is required"
+  },
   "item": {
     "disposal-date-missing": "disposed item is missing a disposal date: {0}",
     "not-found": "item does not exist: {0}",

@@ -55,6 +55,91 @@ fn init_db_is_idempotent_and_seeds_defaults() {
     assert_eq!(mismatched, 0);
 }
 
+// ---------------------------------------------------------------------------
+// V019：保司字典（issue #712 / ADR-0082 决策 4）——insurers 表 + 常用保司种子
+// ---------------------------------------------------------------------------
+
+/// 保司字典种子：迁移后预置 30 家常用国内保司（人身险头部 + 财产险头部，覆盖
+/// 车险场景）；种子行为普通字典行（可软删、无特殊标记）；init_db 重复执行幂等——
+/// 同名不重复建（按名 INSERT OR IGNORE），行数与身份（确定性 UUID）稳定。
+#[test]
+fn insurer_seed_is_present_and_idempotent() {
+    let mut conn = open_in_memory().unwrap();
+    init_db(&mut conn).unwrap();
+
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM insurers", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 30, "迁移后应预置 30 家常用保司");
+
+    // 人身险与财产险头部都在场（财产险覆盖车险场景是 ADR-0082 决策 4 的硬要求）。
+    for name in [
+        "中国人寿",
+        "平安人寿",
+        "中汇人寿",
+        "人保财险",
+        "平安财险",
+        "国寿财险",
+        "众安保险",
+    ] {
+        let hit: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM insurers WHERE name=?1 AND is_deleted=0",
+                params![name],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(hit, 1, "预置保司应包含 '{name}'");
+    }
+
+    // 种子为确定性 UUID v5（所有设备一致，同步合并不产生重复字典行）：
+    // 抽查「中国人寿」的 id 与迁移文件内登记值一致。
+    let id: String = conn
+        .query_row(
+            "SELECT id FROM insurers WHERE name='中国人寿'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(id, "dc5b304a-d85d-5d5f-a749-c92894e92a41");
+
+    // 种子行是普通字典行：version=1、device_id='seed'、在用（is_deleted=0）。
+    let (version, device_id, is_deleted): (i64, String, i64) = conn
+        .query_row(
+            "SELECT version, device_id, is_deleted FROM insurers WHERE name='中国人寿'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(version, 1);
+    assert_eq!(device_id, "seed");
+    assert_eq!(is_deleted, 0);
+
+    // 幂等重跑：再次 init_db（= 全迁移链重入）不产生重复行。
+    init_db(&mut conn).unwrap();
+    let count_after: i64 = conn
+        .query_row("SELECT COUNT(*) FROM insurers", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count_after, 30, "种子重复执行应幂等：同名不重复建");
+
+    // 在用行全库唯一（partial unique index）：同名第二行被数据库拒绝。
+    let dup = conn.execute(
+        "INSERT INTO insurers (id,name,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES ('ins-dup','中国人寿','2026-09-07T00:00:00Z','2026-09-07T00:00:00Z',1,'test',0)",
+        [],
+    );
+    assert!(dup.is_err(), "在用行同名应违反唯一约束");
+    // 软删行不占名字：软删后同名可再建（字典语义照抄商户先例）。
+    conn.execute("UPDATE insurers SET is_deleted=1 WHERE name='中国人寿'", [])
+        .unwrap();
+    conn.execute(
+        "INSERT INTO insurers (id,name,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES ('ins-new','中国人寿','2026-09-07T00:00:00Z','2026-09-07T00:00:00Z',1,'test',0)",
+        [],
+    )
+    .unwrap_or_else(|e| panic!("软删后同名可再建: {e}"));
+}
+
 /// 汇率表每货币对仅保留一行最新（UNIQUE(base_code, quote_code) 约束）。
 /// 正反向查表与折算语义已收口到 Amount 接缝（`transaction::amount::convert_to_native`，
 /// 见 transaction/tests.rs），此处不再重复。

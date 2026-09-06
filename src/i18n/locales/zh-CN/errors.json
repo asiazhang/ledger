@@ -22,6 +22,11 @@
     "name-required": "商户名不能为空",
     "not-active": "商户不存在或已删除: {0}"
   },
+  "insurer": {
+    "already-exists": "保司已存在: {0}",
+    "not-found": "保司不存在: {0}",
+    "name-required": "保司名不能为空"
+  },
   "item": {
     "disposal-date-missing": "已处置物品缺少处置日期: {0}",
     "not-found": "物品不存在: {0}",

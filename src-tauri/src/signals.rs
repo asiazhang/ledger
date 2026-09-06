@@ -61,6 +61,12 @@ pub enum WriteOp {
     UpdateMerchant,
     /// 删除商户（软删除；IPC `delete_merchant`）。
     DeleteMerchant,
+    /// 创建保司（保险域自有字典，ADR-0082；IPC `create_insurer`）。
+    CreateInsurer,
+    /// 保司改名（IPC `update_insurer`）。
+    UpdateInsurer,
+    /// 删除保司（软删除；IPC `delete_insurer`）。
+    DeleteInsurer,
 
     // ── 物品域（ADR-0014：独立领域，复用 `ledger:changed` 同名事件）──
     /// 创建物品（IPC `create_item`）。
@@ -221,7 +227,7 @@ impl WriteOp {
     /// 清单紧邻 enum，同步义务就地可查（同 `TransactionKind::ALL` 先例）。
     /// 长度标注与初始化个数不符即编译错；但 enum 新增变体而本清单漏登不会报错，
     /// 改 enum 必须同步改这里。
-    pub const ALL: [WriteOp; 55] = [
+    pub const ALL: [WriteOp; 58] = [
         // 参考数据四表
         WriteOp::CreateAccount,
         WriteOp::UpdateAccount,
@@ -233,6 +239,9 @@ impl WriteOp {
         WriteOp::CreateMerchant,
         WriteOp::UpdateMerchant,
         WriteOp::DeleteMerchant,
+        WriteOp::CreateInsurer,
+        WriteOp::UpdateInsurer,
+        WriteOp::DeleteInsurer,
         // 物品域
         WriteOp::CreateItem,
         WriteOp::UpdateItem,
@@ -376,7 +385,10 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
         | WriteOp::DeleteCategory
         | WriteOp::CreateMerchant
         | WriteOp::UpdateMerchant
-        | WriteOp::DeleteMerchant => LEDGER_CHANGED_SET,
+        | WriteOp::DeleteMerchant
+        | WriteOp::CreateInsurer
+        | WriteOp::UpdateInsurer
+        | WriteOp::DeleteInsurer => LEDGER_CHANGED_SET,
 
         // ── 物品域（ADR-0014）：独立领域复用 ledger:changed 同名事件，
         //    物品 store 与参考 store 各自订阅、各自重拉 ──
@@ -573,6 +585,30 @@ mod tests {
     fn delete_merchant_emits_ledger_changed() {
         assert_signals(
             signals_for(Op::DeleteMerchant, E::None),
+            &[Signal::LedgerChanged],
+        );
+    }
+
+    #[test]
+    fn create_insurer_emits_ledger_changed() {
+        assert_signals(
+            signals_for(Op::CreateInsurer, E::None),
+            &[Signal::LedgerChanged],
+        );
+    }
+
+    #[test]
+    fn update_insurer_emits_ledger_changed() {
+        assert_signals(
+            signals_for(Op::UpdateInsurer, E::None),
+            &[Signal::LedgerChanged],
+        );
+    }
+
+    #[test]
+    fn delete_insurer_emits_ledger_changed() {
+        assert_signals(
+            signals_for(Op::DeleteInsurer, E::None),
             &[Signal::LedgerChanged],
         );
     }
