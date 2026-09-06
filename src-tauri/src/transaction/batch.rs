@@ -76,7 +76,7 @@ impl TransactionBatch {
             // 客户端幂等键：带键时作为去重身份（内容无关），无键时 None 走内容哈希兜底。
             let idempotency_key = input.idempotency_key.clone();
             // 去重身份判定用 T1/issue #62 的 `dedup_identity`：带键按键查（走部分唯一索引）、
-            // 无键回退内容哈希；ADR-0010 的契约编码在 `DedupIdentity` 类型里，不散在 if 分支。
+            // 无键回退内容哈希（走部分索引）；ADR-0010 的契约编码在 `DedupIdentity` 类型里，不散在 if 分支。
             // `New` 携带内容哈希供落库回写 `dedup_hash` 列，避免重复计算。
             // 单条写入（含 buy/sell 的持仓副作用路径）由行为层创建编排入口
             // `behavior::create`（issue #228 / ADR-0033）承担：本函数持有外层批次事务，
@@ -214,9 +214,12 @@ pub enum DedupIdentity {
 
 /// 判定一条导入交易的去重身份：新写还是命中已有（issue #62）。
 ///
-/// 带客户端幂等键时按键查：内容无关、命中优先走部分唯一索引
-/// `idx_transactions_idempotency_key`（非全表扫描）；无键时回退确定性内容哈希
-/// （`compute_dedup_hash`，排除 note/category）。
+/// 两条查询路径各有索引依据：带客户端幂等键时按键查——内容无关、命中优先走
+/// 部分唯一索引 `idx_transactions_idempotency_key`（非全表扫描）；无键时回退
+/// 确定性内容哈希（`compute_dedup_hash`，排除 note/category），走部分索引
+/// `idx_transactions_dedup_hash`（V001；(dedup_hash, created_at) 列序使
+/// ORDER BY created_at 由索引序满足，无临时 B-tree。该索引就地补齐前兜底
+/// 路径为全表扫描、占导入耗时 94%，issue #701/#532）。
 pub fn dedup_identity(conn: &Connection, input: &TransactionInput) -> Result<DedupIdentity> {
     let dedup_hash = compute_dedup_hash(input);
     // 带客户端幂等键：按键查（内容无关、走部分唯一索引命中）；幂等键命中回传已有 id。
@@ -237,7 +240,8 @@ pub fn dedup_identity(conn: &Connection, input: &TransactionInput) -> Result<Ded
             None => DedupIdentity::New { dedup_hash },
         });
     }
-    // 无键：回退确定性内容哈希兜底；命中回传 id:None（冻结契约，不回归）。
+    // 无键：回退确定性内容哈希兜底（走部分索引 `idx_transactions_dedup_hash`，
+    // V001）；命中回传 id:None（冻结契约，不回归）。
     let hit: Option<String> = conn
         .query_row(
             "SELECT id FROM transactions \

@@ -464,6 +464,67 @@ fn v016_holdings_as_of_driven_from_security_transactions() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// V001 dedup_hash 兜底索引（issue #701 / #532 归因）——导入去重兜底查询的
+// EXPLAIN 绑定测试（索引经 V001 就地修改引入，全新安装生效）
+// ---------------------------------------------------------------------------
+
+/// dedup_hash 部分索引存在：列序 (dedup_hash, created_at) + 双条件部分谓词
+/// （软删行与 NULL 哈希不进索引，与兜底查询谓词精确匹配，对齐幂等键部分
+/// 唯一索引形态）。
+#[test]
+fn v001_dedup_hash_partial_index_exists() {
+    let mut conn = open_in_memory().unwrap();
+    init_db(&mut conn).unwrap();
+
+    let sql: String = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_transactions_dedup_hash'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or_else(|_| panic!("索引 idx_transactions_dedup_hash 应存在"));
+    assert!(
+        sql.contains("is_deleted = 0") && sql.contains("dedup_hash IS NOT NULL"),
+        "应为双条件 partial index: {sql}"
+    );
+    for col in ["dedup_hash", "created_at"] {
+        assert!(sql.contains(col), "索引应包含 {col}: {sql}");
+    }
+}
+
+/// 导入去重兜底查询（`batch.rs::dedup_identity` 无键路径原句）钉计划：
+/// dedup_hash 部分索引驱动等值定位，ORDER BY created_at 由索引列序满足——
+/// 无临时 B-tree（单列形态 EXPLAIN 实证会退化 USE TEMP B-TREE FOR ORDER BY，
+/// created_at 并入索引列后消除，issue #701）。
+#[test]
+fn v001_dedup_fallback_query_uses_dedup_hash_index_without_temp_btree() {
+    let conn = v016_world();
+    // v016_world 的 dedup_hash 全 NULL（partial 索引之外）；补齐一部分活跃哈希
+    // 并重算统计，保证 planner 选择可代表真实导入库（有键行分布）。
+    conn.execute_batch(
+        "UPDATE transactions SET dedup_hash = 'h-' || id \
+         WHERE is_deleted = 0 AND CAST(substr(id, 4) AS INTEGER) % 3 = 0;\
+         ANALYZE;",
+    )
+    .unwrap();
+
+    let plan = v016_plan(
+        &conn,
+        "SELECT id FROM transactions \
+         WHERE dedup_hash=?1 AND is_deleted=0 ORDER BY created_at LIMIT 1",
+        rusqlite::params!["h-tx-0003"],
+    );
+    assert!(
+        plan.contains("idx_transactions_dedup_hash"),
+        "兜底查询应命中 dedup_hash 部分索引: {plan}"
+    );
+    assert!(
+        !plan.contains("TEMP B-TREE"),
+        "ORDER BY created_at 应由索引列序满足，无临时 B-tree: {plan}"
+    );
+}
+
 /// 接线回归：在 `command` span 内执行 SQL，SQL 耗时事件应归因到该 span
 /// （当前 span 名为 `command`）。这验证了 IPC 侧 `logged_invoke_handler`
 /// 用 `info_span!(command, id_hint)` 包裹命令执行后，hook 事件自动继承调用方 span
