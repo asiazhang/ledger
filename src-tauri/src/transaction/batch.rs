@@ -214,12 +214,12 @@ pub enum DedupIdentity {
 
 /// 判定一条导入交易的去重身份：新写还是命中已有（issue #62）。
 ///
-/// 两条查询路径各有索引依据：带客户端幂等键时按键查——内容无关、命中优先走
-/// 部分唯一索引 `idx_transactions_idempotency_key`（非全表扫描）；无键时回退
-/// 确定性内容哈希（`compute_dedup_hash`，排除 note/category），走部分索引
-/// `idx_transactions_dedup_hash`（V001；(dedup_hash, created_at) 列序使
-/// ORDER BY created_at 由索引序满足，无临时 B-tree。该索引就地补齐前兜底
-/// 路径为全表扫描、占导入耗时 94%，issue #701/#532）。
+/// 两条查询路径各有索引依据（索引定义以迁移为唯一事实来源，V001/V007）：
+/// 带客户端幂等键时按键查——内容无关、命中优先走部分唯一索引
+/// `idx_transactions_idempotency_key`；无键时回退确定性内容哈希
+/// （`compute_dedup_hash`，排除 note/category），走部分索引
+/// `idx_transactions_dedup_hash`（V001 就地新增，仅全新安装携带；
+/// 旧 schema 存量库兜底查询维持全表扫描，见 V001 文件头就地修改注记）。
 pub fn dedup_identity(conn: &Connection, input: &TransactionInput) -> Result<DedupIdentity> {
     let dedup_hash = compute_dedup_hash(input);
     // 带客户端幂等键：按键查（内容无关、走部分唯一索引命中）；幂等键命中回传已有 id。
@@ -240,8 +240,7 @@ pub fn dedup_identity(conn: &Connection, input: &TransactionInput) -> Result<Ded
             None => DedupIdentity::New { dedup_hash },
         });
     }
-    // 无键：回退确定性内容哈希兜底（走部分索引 `idx_transactions_dedup_hash`，
-    // V001）；命中回传 id:None（冻结契约，不回归）。
+    // 无键：回退确定性内容哈希兜底（走部分索引 `idx_transactions_dedup_hash`）；命中回传 id:None（冻结契约，不回归）。
     let hit: Option<String> = conn
         .query_row(
             "SELECT id FROM transactions \
