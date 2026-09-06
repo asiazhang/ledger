@@ -1,5 +1,5 @@
 #!/bin/sh
-# 一键质量检查：前端类型检查 + Rust clippy + Rust fmt 检查 + 文档一致性检查 + 命令注册一致性检查 + 结构守门检查 + i18n key 全等检查 + 参考数据测试桩守门检查
+# 一键质量检查：前端类型检查 + Rust clippy + Rust fmt 检查 + 文档一致性检查 + 命令注册一致性检查 + 结构守门检查 + i18n key 全等检查 + 测试桩守门检查（参考数据手搓桩 + 同回调重复桩）
 # 任一环节失败即退出（CI 可直接调用）
 set -eu
 cd "$(dirname "$0")/.."
@@ -24,7 +24,7 @@ node scripts/check-structure.js
 echo "▶ i18n key 全等检查 (node scripts/check-i18n-keys.js)"
 node scripts/check-i18n-keys.js
 
-echo "▶ 参考数据测试桩守门检查 (node scripts/check-test-stubs.js)"
+echo "▶ 测试桩守门检查 (node scripts/check-test-stubs.js)"
 node scripts/check-test-stubs.js
 
 echo "✅ 所有检查通过"
