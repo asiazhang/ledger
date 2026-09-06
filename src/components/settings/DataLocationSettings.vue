@@ -41,6 +41,26 @@ async function refresh() {
 
 onMounted(refresh)
 
+// 复制路径（issue #653）：界面文本全局不可选（界面状态与交互域「界面文本不可选」），
+// 复制需求走显式通道——复制按钮 + clipboard API（关于页复制版本号同款接缝）。
+// 当前生效位置与待生效新位置各一个入口，写入的是命令返回的完整路径。
+async function copyText(value: string) {
+  try {
+    await navigator.clipboard.writeText(value)
+    message.success(t('settings.data.location.copyPathOk'))
+  } catch (e: any) {
+    message.error(t('settings.data.location.copyPathFailed', { msg: errorMessage(e) }))
+  }
+}
+
+function copyActivePath() {
+  if (info.value?.active_dir) void copyText(info.value.active_dir)
+}
+
+function copyPendingPath() {
+  if (info.value?.configured_dir) void copyText(info.value.configured_dir)
+}
+
 /** 唤起系统目录选择对话框，选中后提交更改意图。取消选择则不动状态。 */
 async function pickAndSubmit() {
   const dir = await open({
@@ -131,6 +151,9 @@ function cancelAdopt() {
         :title="t('settings.data.location.pendingTitle')"
       >
         {{ t('settings.data.location.pendingBody', { dir: info.configured_dir }) }}
+        <NButton size="tiny" style="margin-left: 8px" data-testid="copy-pending-path" @click="copyPendingPath">
+          {{ t('settings.data.location.copyPath') }}
+        </NButton>
       </NAlert>
 
       <NSpin :show="loading">
@@ -143,6 +166,9 @@ function cancelAdopt() {
           <NText style="word-break: break-all">
             {{ info?.active_dir ?? t('settings.data.location.reading') }}
           </NText>
+          <NButton v-if="info?.active_dir" size="small" data-testid="copy-active-path" @click="copyActivePath">
+            {{ t('settings.data.location.copyPath') }}
+          </NButton>
         </NSpace>
       </NSpin>
 

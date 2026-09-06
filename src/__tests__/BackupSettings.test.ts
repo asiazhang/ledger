@@ -30,6 +30,10 @@ function cardTitles(wrapper: ReturnType<typeof mount>) {
 const mockInvoke = vi.mocked(invoke)
 const mockListen = vi.mocked(listen)
 
+// 剧本剪贴板（issue #653）：断言复制内容与成功/失败提示分支（父 spec 测试决策：
+// 组件测试中 mock 剪贴板对象，断言写入内容与成功提示）。
+const writeText = vi.fn().mockResolvedValue(undefined)
+
 const encryptedBackup: BackupFileInfo = {
   file_name: 'ledger-auto-20260217-093000.db.zip',
   path: '/Users/me/backups/ledger-auto-20260217-093000.db.zip',
@@ -62,6 +66,8 @@ beforeEach(() => {
   mockInvoke.mockReset()
   mockListen.mockReset()
   mockListen.mockResolvedValue(vi.fn() as unknown as UnlistenFn)
+  writeText.mockClear()
+  Object.assign(navigator, { clipboard: { writeText } })
   localStorage.clear()
   // 备份列表以配置目录为前提（未配置时列表恒空、不发 IPC）。
   useAppStore().setBackupDir('/Users/me/backups')
@@ -241,6 +247,100 @@ describe('BackupSettings 手动清理确认弹窗（issue #652 / ADR-0078）', (
     await flushPromises()
 
     expect(mockInvoke).not.toHaveBeenCalledWith('prune_backups', expect.anything())
+    void wrapper
+  })
+})
+
+describe('BackupSettings 复制与访达定位通道（issue #653）', () => {
+  it('备份列表行「在访达中显示」：以该行完整路径调用 reveal_in_file_manager，成功无错误提示', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_backups') return Promise.resolve([encryptedBackup, plaintextBackup])
+      if (cmd === 'get_auto_backup_state')
+        return Promise.resolve({ enabled: true, last_backup_at: null })
+      if (cmd === 'reveal_in_file_manager') return Promise.resolve(undefined)
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const wrapper = mount(BackupSettings)
+    await flushPromises()
+
+    await wrapper
+      .find(`[data-testid="backup-reveal-${encryptedBackup.file_name}"]`)
+      .trigger('click')
+    await flushPromises()
+    expect(mockInvoke).toHaveBeenCalledWith('reveal_in_file_manager', {
+      path: encryptedBackup.path,
+    })
+    expect(messageApi.error).not.toHaveBeenCalled()
+  })
+
+  it('访达定位失败：后端中文错误原样透传为错误提示', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_backups') return Promise.resolve([plaintextBackup])
+      if (cmd === 'get_auto_backup_state')
+        return Promise.resolve({ enabled: true, last_backup_at: null })
+      if (cmd === 'reveal_in_file_manager')
+        return Promise.reject(new Error('在访达中显示失败：boom'))
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const wrapper = mount(BackupSettings)
+    await flushPromises()
+
+    await wrapper
+      .find(`[data-testid="backup-reveal-${plaintextBackup.file_name}"]`)
+      .trigger('click')
+    await flushPromises()
+    expect(mockInvoke).toHaveBeenCalledWith('reveal_in_file_manager', {
+      path: plaintextBackup.path,
+    })
+    expect(messageApi.error).toHaveBeenCalledWith('在访达中显示失败：boom')
+  })
+
+  it('最近备份路径「复制路径」：写入完整原始路径（不含大小括注）并成功提示', async () => {
+    const backupPath = '/Users/me/backups/ledger-backup-20260217-120000.db.zip'
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'create_backup')
+        return Promise.resolve({ path: backupPath, size_bytes: 2048 })
+      if (cmd === 'prune_backups') return Promise.resolve({ kept: 1, deleted: [], failed: [] })
+      if (cmd === 'list_backups') return Promise.resolve([])
+      if (cmd === 'get_auto_backup_state')
+        return Promise.resolve({ enabled: true, last_backup_at: null })
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const wrapper = mount(BackupSettings)
+    await flushPromises()
+    // 未备份前无复制入口（无路径可复制）。
+    expect(wrapper.find('[data-testid="copy-last-backup-path"]').exists()).toBe(false)
+
+    await wrapper.findAll('button').find((b) => b.text().includes('一键备份'))!.trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="copy-last-backup-path"]').trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenCalledTimes(1)
+    expect(writeText).toHaveBeenCalledWith(backupPath)
+    expect(messageApi.success).toHaveBeenCalledWith(expect.stringContaining('已复制完整路径'))
+  })
+
+  it('复制失败：错误提示，不静默', async () => {
+    const backupPath = '/Users/me/backups/ledger-backup-20260217-120000.db.zip'
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'create_backup') return Promise.resolve({ path: backupPath, size_bytes: 2048 })
+      if (cmd === 'prune_backups') return Promise.resolve({ kept: 1, deleted: [], failed: [] })
+      if (cmd === 'list_backups') return Promise.resolve([])
+      if (cmd === 'get_auto_backup_state')
+        return Promise.resolve({ enabled: true, last_backup_at: null })
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    const wrapper = mount(BackupSettings)
+    await flushPromises()
+    await wrapper.findAll('button').find((b) => b.text().includes('一键备份'))!.trigger('click')
+    await flushPromises()
+    writeText.mockRejectedValueOnce(new Error('剪贴板不可用'))
+    // 备份流程本身已有一次成功提示；复制失败后不应再增成功提示。
+    const successBefore = messageApi.success.mock.calls.length
+    await wrapper.find('[data-testid="copy-last-backup-path"]').trigger('click')
+    await flushPromises()
+    expect(messageApi.error).toHaveBeenCalledWith(expect.stringContaining('复制路径失败'))
+    expect(messageApi.success.mock.calls.length).toBe(successBefore)
     void wrapper
   })
 })

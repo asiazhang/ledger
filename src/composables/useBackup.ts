@@ -74,6 +74,9 @@ export function useBackup() {
 
   const backingUp = ref(false);
   const lastBackup = ref("");
+  // 最近备份的完整原始路径（issue #653）：展示文案含大小括注，
+  // 复制通道需要的是完整路径本体，两者分开持有。
+  const lastBackupPath = ref("");
   const backups = ref<BackupFileInfo[]>([]);
   const pruning = ref(false);
 
@@ -245,6 +248,7 @@ export function useBackup() {
         path: r.path,
         size: `${(r.size_bytes / 1024).toFixed(1)} KB`,
       });
+      lastBackupPath.value = r.path;
       message.success(t("settings.data.msg.backupOk"));
       if (isManagedBackupPath(target, store.backupDir)) {
         // 受管备份写入后立即滚动清理（一键备份/另存为同规则）。
@@ -281,6 +285,29 @@ export function useBackup() {
 
   async function pickRestore() {
     await restoreFlow.pickRestore();
+  }
+
+  /// 在系统文件管理器中定位备份文件（issue #653）：薄壳 IPC 命令包装系统 opener
+  /// 插件的文件定位能力（「打开日志目录」同款先例，无业务语义、不补 BDD）。
+  /// 后端错误已带中文前缀，此处原样透传不叠加。
+  async function revealInFinder(path: string) {
+    try {
+      await api.revealInFileManager(path);
+    } catch (e: any) {
+      message.error(errorMessage(e));
+    }
+  }
+
+  /// 复制最近备份的完整路径（issue #653）：界面文本不可选，复制走显式通道——
+  /// 复制按钮 + clipboard API（关于页复制版本号同款接缝）；展示文案含大小
+  /// 括注，写入的是原始完整路径。
+  async function copyLastBackupPath() {
+    try {
+      await navigator.clipboard.writeText(lastBackupPath.value);
+      message.success(t("settings.data.backup.copyPathOk"));
+    } catch (e: any) {
+      message.error(t("settings.data.backup.copyPathFailed", { msg: errorMessage(e) }));
+    }
   }
 
   /** 恢复确认（弹窗提交）：密文备份附带主口令，明文备份不消费。 */
@@ -332,6 +359,8 @@ export function useBackup() {
     backupOnce,
     backupAs,
     pickRestore,
+    revealInFinder,
+    copyLastBackupPath,
     autoBackupEnabled,
     autoBackupLastText,
     toggleAutoBackup,
