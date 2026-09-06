@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
 import { judgeMinLengthText } from '@/utils/field-error'
+import {
+  assessPassphraseStrength,
+  type PassphraseStrengthAssessment,
+} from '@/utils/passphrase-strength'
 import { NAlert, NButton, NCard, NCheckbox, NCollapse, NCollapseItem, NForm, NFormItem, NInput, NSpace, NSpin, NText, NTooltip, useMessage } from 'naive-ui'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch, type Ref } from 'vue'
 import { api } from '@/api'
 import { t } from '@/i18n'
 import { restartAppShortly } from '@/utils/restart'
@@ -10,6 +14,7 @@ import { useAppStore } from '@/stores/app'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
 import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'
 import AppModal from '@/components/AppModal.vue'
+import PassphraseStrengthMeter from '@/components/settings/PassphraseStrengthMeter.vue'
 import type { EncryptionStatus } from '@/types'
 
 // 加密卡片（issue #570/#571 / #574 / ADR-0075；#654 重排）：数据文件管理域的加密模式开关。
@@ -50,6 +55,24 @@ const PASSPHRASE_MIN_LENGTH = 8
 const passphrase = ref('')
 const confirmPassphrase = ref('')
 
+// 口令强度实时显示（issue #685，词汇表「口令强度」）：纯信息反馈，不拦截提交、
+// 不改提交可用性；只接新设主口令两框（开启加密「主口令」+ 修改主口令「新主口令」），
+// 确认字段与已存在口令的输入场景一律不接。判定与映射收口在
+// src/utils/passphrase-strength.ts，此处只消费（最后一次胜出守卫保证逐键刷新不串档）。
+function trackPassphraseStrength(source: Ref<string>) {
+  const assessment = ref<PassphraseStrengthAssessment | null>(null)
+  let latest = 0
+  watch(source, (value) => {
+    const seq = ++latest
+    void assessPassphraseStrength(value).then((result) => {
+      if (seq === latest) assessment.value = result
+    })
+  })
+  return assessment
+}
+
+const passphraseStrength = trackPassphraseStrength(passphrase)
+
 /** 新设主口令过短（字段错误态：格式类即时红，空值不在此列、走既有禁用逻辑）。 */
 const passphraseTooShort = computed(
   () => judgeMinLengthText(passphrase.value, PASSPHRASE_MIN_LENGTH).kind === 'too-short',
@@ -64,6 +87,7 @@ const mismatch = computed(
 const changeOld = ref('')
 const changeNew = ref('')
 const changeConfirm = ref('')
+const changeNewStrength = trackPassphraseStrength(changeNew)
 const changeMismatch = computed(
   () => changeConfirm.value.length > 0 && changeConfirm.value !== changeNew.value,
 )
@@ -290,23 +314,27 @@ async function confirmDisable() {
                       :disabled="submittingChange"
                     />
                   </NFormItem>
-                  <NFormItem
-                    :label="t('settings.data.encryption.newPassphraseLabel')"
-                    :validation-status="changeNewTooShort ? 'error' : undefined"
-                    :feedback="
-                      changeNewTooShort
-                        ? t('settings.data.encryption.tooShort', { min: PASSPHRASE_MIN_LENGTH })
-                        : undefined
-                    "
-                  >
-                    <NInput
-                      v-model:value="changeNew"
-                      type="password"
-                      show-password-on="click"
-                      :placeholder="t('settings.data.encryption.newPassphrasePlaceholder')"
-                      :disabled="submittingChange"
-                    />
-                  </NFormItem>
+                  <div>
+                    <NFormItem
+                      :label="t('settings.data.encryption.newPassphraseLabel')"
+                      :validation-status="changeNewTooShort ? 'error' : undefined"
+                      :feedback="
+                        changeNewTooShort
+                          ? t('settings.data.encryption.tooShort', { min: PASSPHRASE_MIN_LENGTH })
+                          : undefined
+                      "
+                    >
+                      <NInput
+                        v-model:value="changeNew"
+                        type="password"
+                        show-password-on="click"
+                        :placeholder="t('settings.data.encryption.newPassphrasePlaceholder')"
+                        :disabled="submittingChange"
+                      />
+                    </NFormItem>
+                    <!-- 口令强度（issue #685）：同开启表单，仅新设口令框显示 -->
+                    <PassphraseStrengthMeter v-if="changeNewStrength" :assessment="changeNewStrength" />
+                  </div>
                   <NFormItem
                     :label="t('settings.data.encryption.confirmNewLabel')"
                     :validation-status="changeMismatch ? 'error' : changeUnchanged ? 'warning' : undefined"
@@ -383,23 +411,27 @@ async function confirmDisable() {
             <NAlert type="warning" :show-icon="true" :title="t('settings.data.encryption.warnTitle')">
               {{ t('settings.data.encryption.warnBody') }}
             </NAlert>
-            <NFormItem
-              :label="t('settings.data.encryption.passphraseLabel')"
-              :validation-status="passphraseTooShort ? 'error' : undefined"
-              :feedback="
-                passphraseTooShort
-                  ? t('settings.data.encryption.tooShort', { min: PASSPHRASE_MIN_LENGTH })
-                  : undefined
-              "
-            >
-              <NInput
-                v-model:value="passphrase"
-                type="password"
-                show-password-on="click"
-                :placeholder="t('settings.data.encryption.passphrasePlaceholder')"
-                :disabled="submitting"
-              />
-            </NFormItem>
+            <div>
+              <NFormItem
+                :label="t('settings.data.encryption.passphraseLabel')"
+                :validation-status="passphraseTooShort ? 'error' : undefined"
+                :feedback="
+                  passphraseTooShort
+                    ? t('settings.data.encryption.tooShort', { min: PASSPHRASE_MIN_LENGTH })
+                    : undefined
+                "
+              >
+                <NInput
+                  v-model:value="passphrase"
+                  type="password"
+                  show-password-on="click"
+                  :placeholder="t('settings.data.encryption.passphrasePlaceholder')"
+                  :disabled="submitting"
+                />
+              </NFormItem>
+              <!-- 口令强度（issue #685）：初始为空不显示；与字段错误红显并存互不替代 -->
+              <PassphraseStrengthMeter v-if="passphraseStrength" :assessment="passphraseStrength" />
+            </div>
             <NFormItem
               :label="t('settings.data.encryption.confirmLabel')"
               :validation-status="mismatch ? 'error' : undefined"
