@@ -12,7 +12,8 @@ import {
   firePricesChanged,
   resetPricesChangedHandler,
 } from './prices-changed-mock'
-import type { Currency, Instrument, SyncProgress } from '@/types'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
+import type { Instrument, SyncProgress } from '@/types'
 
 const mockListen = vi.mocked(listen)
 
@@ -44,10 +45,6 @@ function mountBrowser() {
 let syncProgressHandler: ((event: { payload: SyncProgress }) => void) | undefined
 
 const mockInvoke = vi.mocked(invoke)
-
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-]
 
 const mockInstruments: Instrument[] = [
   {
@@ -85,21 +82,18 @@ const mockInstruments: Instrument[] = [
 ]
 
 function baseInvoke(
-  extra?: Record<string, (cmd: string, args?: unknown) => unknown>,
+  extra?: Record<string, (args?: Record<string, unknown>) => unknown>,
 ) {
-  mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
-    if (extra?.[cmd]) return extra[cmd](cmd, args)
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
-    if (cmd === 'list_instruments')
-      return Promise.resolve({ items: mockInstruments, total: mockInstruments.length })
-    if (cmd === 'sync_instruments') return Promise.resolve(undefined)
-    if (cmd === 'cancel_sync_instruments')
-      return Promise.resolve({ cancelled: false, message: '当前没有正在进行的同步' })
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  stubReferenceInvoke({
+    list_accounts: [],
+    list_categories: [],
+    list_insurers: [],
+    list_merchants: [],
+    list_instruments: { items: mockInstruments, total: mockInstruments.length },
+    sync_instruments: () => Promise.resolve(undefined),
+    cancel_sync_instruments: () =>
+      Promise.resolve({ cancelled: false, message: '当前没有正在进行的同步' }),
+    ...extra,
   })
 }
 
@@ -281,8 +275,8 @@ describe('InstrumentBrowser 价格失效信号（issue #238 / ADR-0031）', () =
       makeInstrument({ id: `inst-${i + 1}`, symbol: String(600000 + i) }),
     )
     baseInvoke({
-      list_instruments: (_cmd, args?: { filter?: { page?: number } }) => {
-        const page = args?.filter?.page ?? 1
+      list_instruments: (args?: Record<string, unknown>) => {
+        const page = (args?.filter as { page?: number } | undefined)?.page ?? 1
         return Promise.resolve({
           items: pool.slice((page - 1) * 50, page * 50),
           total: pool.length,

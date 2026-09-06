@@ -9,7 +9,8 @@ import SearchView from '@/views/SearchView.vue'
 import AccountLink from '@/components/AccountLink.vue'
 import { applyLocale } from '@/i18n'
 import { resetOverlays } from '@/composables/overlayRegistry'
-import type { Account, Category, Currency, Merchant, Transaction } from '@/types'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
+import type { Account, Category, Merchant, Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -24,10 +25,6 @@ const pushMock = vi.fn()
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: pushMock }),
 }))
-
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-]
 
 const mockAccounts: Account[] = [
   {
@@ -223,15 +220,16 @@ beforeEach(async () => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
   pushMock.mockReset()
-  mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-    if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
+  // 参考命令桩统一走共享助手（issue #725）：币种与规范夹具等值流入，账户/分类/商户
+  // 保留本文件夹具（交易夹具按 acc-cash/cat-food/mer-jd 解析名称）
+  stubReferenceInvoke({
+    list_accounts: mockAccounts,
+    list_categories: mockCategories,
+    list_insurers: [],
+    list_merchants: mockMerchants,
     // 数据期间边界（QuickTimeRange 钳制输入）
-    if (cmd === 'report_date_range') return Promise.resolve(MOCK_RANGE)
-    if (cmd === 'search_transactions') {
+    report_date_range: MOCK_RANGE,
+    search_transactions: (args?: Record<string, unknown>) => {
       const {
         query,
         page = 1,
@@ -264,9 +262,7 @@ beforeEach(async () => {
         items: all.slice(start, start + pageSize),
         total: all.length,
       })
-    }
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    },
   })
   localStorage.clear()
   const store = useReferenceStore()

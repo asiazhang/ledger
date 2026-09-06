@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import AiPromptView from '@/views/AiPromptView.vue'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 
 const mockInvoke = vi.mocked(invoke)
 const writeText = vi.fn().mockResolvedValue(undefined)
@@ -17,10 +18,9 @@ const SAMPLE_PROMPT = `# Ledger API 入口提示词
 beforeEach(() => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'get_ai_prompt') return Promise.resolve(SAMPLE_PROMPT)
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  stubReferenceInvoke({
+    get_ai_prompt: SAMPLE_PROMPT,
+    list_insurers: [],
   })
   Object.assign(navigator, { clipboard: { writeText } })
   writeText.mockClear()

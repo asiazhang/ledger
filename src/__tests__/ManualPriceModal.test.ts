@@ -8,7 +8,8 @@ import ManualPriceModal from '@/components/investments/ManualPriceModal.vue'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import { makeInstrument } from './factories'
 import { todayStr } from '@/utils/date'
-import type { Currency, Instrument } from '@/types'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
+import type { Instrument } from '@/types'
 
 // NModal 内容 teleport 到 document.body，须在每个测试后卸载 wrapper 并清空 body，
 // 否则上一个测试遗留的弹窗 DOM 会污染下一个测试（先例：CreateInstrumentModal.test.ts）。
@@ -19,18 +20,15 @@ afterEach(() => {
 
 const mockInvoke = vi.mocked(invoke)
 
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-]
+/** 基础派发：beforeEach 安装；中途重桩处理完自己的领域命令后委托回它 */
+let base: ReturnType<typeof stubReferenceInvoke>
 
 function baseInvoke() {
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  base = stubReferenceInvoke({
+    list_accounts: [],
+    list_categories: [],
+    list_insurers: [],
+    list_merchants: [],
   })
 }
 
@@ -106,12 +104,11 @@ describe('ManualPriceModal 手动报价弹窗（issue #291 / ADR-0036）', () =>
     const wrapper = await mountModal((msg) => quoted.push(msg))
     await setPrice(wrapper, 1.318)
     expect(submitButton().disabled).toBe(false)
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'record_manual_price')
-        return Promise.resolve({ history_written: true, current_price_written: true })
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'record_manual_price'
+        ? Promise.resolve({ history_written: true, current_price_written: true })
+        : base(cmd, args),
+    )
     await clickSubmit()
     // 价格 1.318 元 → 13180 万分之一元（价格刻度 ADR-0038）；日期为今天 ISO
     expect(mockInvoke).toHaveBeenCalledWith('record_manual_price', {
@@ -129,12 +126,11 @@ describe('ManualPriceModal 手动报价弹窗（issue #291 / ADR-0036）', () =>
     const quoted: string[] = []
     const wrapper = await mountModal((msg) => quoted.push(msg))
     await setPrice(wrapper, 0.9)
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'record_manual_price')
-        return Promise.resolve({ history_written: true, current_price_written: false })
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'record_manual_price'
+        ? Promise.resolve({ history_written: true, current_price_written: false })
+        : base(cmd, args),
+    )
     await clickSubmit()
     expect(quoted).toEqual(['已沉淀历史价格（早于最新价格点，稳稳地幸福 现价保持不变）'])
     expect(wrapper.emitted('update:show')).toContainEqual([false])
@@ -144,12 +140,11 @@ describe('ManualPriceModal 手动报价弹窗（issue #291 / ADR-0036）', () =>
     const quoted: string[] = []
     const wrapper = await mountModal((msg) => quoted.push(msg))
     await setPrice(wrapper, 1.318)
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'record_manual_price')
-        return Promise.reject({ kind: 'Invalid', message: '价格必须大于 0' })
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'record_manual_price'
+        ? Promise.reject({ kind: 'Invalid', message: '价格必须大于 0' })
+        : base(cmd, args),
+    )
     await clickSubmit()
     const err = bodyQuery('[data-testid="manual-quote-error"]')!
     expect(err.textContent).toContain('价格必须大于 0')

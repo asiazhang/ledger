@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useReferenceStore } from '@/stores/reference'
 import SubscriptionSpendPanel from '@/components/scheduled/SubscriptionSpendPanel.vue'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { SubscriptionSpendOverview, SubscriptionSpendRow } from '@/types'
 
 vi.mock('vue-chartjs', async () => {
@@ -19,8 +20,6 @@ enableAutoUnmount(afterEach)
 afterEach(() => {
   document.body.innerHTML = ''
 })
-
-const mockCurrencies = [{ code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 }]
 
 /** 生成以 endMonth 结尾的连续 n 个月（YYYY-MM，旧→新） */
 function lastMonths(endMonth: string, n: number): string[] {
@@ -75,17 +74,14 @@ const overview: SubscriptionSpendOverview = {
 }
 
 function baseInvoke(spend: SubscriptionSpendOverview | Error = overview) {
-  mockInvoke.mockImplementation(((cmd: string) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
-    if (cmd === 'subscription_spend_overview') {
-      return spend instanceof Error ? Promise.reject(spend) : Promise.resolve(spend)
-    }
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-  }) as typeof invoke)
+  stubReferenceInvoke({
+    list_accounts: [],
+    list_categories: [],
+    list_insurers: [],
+    list_merchants: [],
+    subscription_spend_overview: () =>
+      spend instanceof Error ? Promise.reject(spend) : Promise.resolve(spend),
+  })
 }
 
 beforeEach(async () => {

@@ -11,6 +11,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import InstallmentsPane from '@/components/scheduled/InstallmentsPane.vue'
+import { stubReferenceInvoke } from '../helpers/reference-stubs'
 import type {
   Account,
   Category,
@@ -149,13 +150,13 @@ let mockPlans: ScheduledTransactionWithExt[] = []
 const mockDetails = new Map<string, ScheduledTransactionDetail>()
 
 function baseInvoke() {
-  mockInvoke.mockImplementation(((cmd: string, args?: Record<string, unknown>) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-    if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve(mockMerchantsState)
-    if (cmd === 'create_merchant') {
+  return stubReferenceInvoke({
+    list_currencies: mockCurrencies,
+    list_accounts: mockAccounts,
+    list_categories: mockCategories,
+    list_insurers: [],
+    list_merchants: () => mockMerchantsState,
+    create_merchant: (args) => {
       const input = args?.input as { name: string }
       const id = `mer-new-${input.name}`
       mockMerchantsState = [
@@ -172,14 +173,14 @@ function baseInvoke() {
           is_deleted: false,
         },
       ]
-      return Promise.resolve(id)
-    }
-    if (cmd === 'list_scheduled_transactions') return Promise.resolve(mockPlans)
-    if (cmd === 'get_scheduled_transaction_detail') {
+      return id
+    },
+    list_scheduled_transactions: () => mockPlans,
+    get_scheduled_transaction_detail: (args) => {
       const detail = mockDetails.get(String(args?.id))
       return detail ? Promise.resolve(detail) : Promise.reject(new Error('无此计划详情'))
-    }
-    if (cmd === 'create_scheduled_transaction') {
+    },
+    create_scheduled_transaction: (args) => {
       const input = args?.input as {
         kind: string
         note: string | null
@@ -197,9 +198,9 @@ function baseInvoke() {
       )
       mockPlans = [...mockPlans, plan]
       mockDetails.set(id, makeDetail(plan, { count: 0, amount: 0 }))
-      return Promise.resolve(id)
-    }
-    if (cmd === 'update_scheduled_transaction_status') {
+      return id
+    },
+    update_scheduled_transaction_status: (args) => {
       const { id, new_status } = args as { id: string; new_status: string }
       mockPlans = mockPlans.map((p) =>
         p.core.id === id ? { ...p, core: { ...p.core, status: new_status } } : p,
@@ -208,10 +209,8 @@ function baseInvoke() {
       if (detail) {
         mockDetails.set(id, { ...detail, core: { ...detail.core, status: new_status } })
       }
-      return Promise.resolve()
-    }
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-  }) as typeof invoke)
+    },
+  })
 }
 
 /** 定位弹窗表单内输入框：NModal teleport 到 body，需经 findComponent 锚定。 */

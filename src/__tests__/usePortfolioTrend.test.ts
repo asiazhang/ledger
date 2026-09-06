@@ -11,6 +11,7 @@ import {
 } from '@/composables/usePortfolioTrend'
 import type { PortfolioValueTrend } from '@/types'
 import { makeInstrument } from './factories'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -25,20 +26,14 @@ const portfolioTrend: PortfolioValueTrend = {
 
 /** 默认 invoke mock：参考数据 + 组合走势 */
 function baseInvoke(extra?: Record<string, unknown>) {
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'list_currencies')
-      return Promise.resolve([{ code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 }])
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
-    if (extra && cmd in extra) {
-      const handler = (extra as Record<string, unknown>)[cmd]
-      return typeof handler === 'function' ? (handler as () => unknown)() : Promise.resolve(handler)
-    }
-    if (cmd === 'portfolio_value_trend') return Promise.resolve(portfolioTrend)
-    if (cmd === 'list_instruments') return Promise.resolve({ items: [], total: 0 })
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  stubReferenceInvoke({
+    list_accounts: [],
+    list_categories: [],
+    list_insurers: [],
+    list_merchants: [],
+    portfolio_value_trend: () => Promise.resolve(portfolioTrend),
+    list_instruments: { items: [], total: 0 },
+    ...extra,
   })
 }
 

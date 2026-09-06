@@ -3,13 +3,10 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import { useInvestmentForm } from '@/composables/useInvestmentForm'
-import type { Account, Currency, Instrument, Transaction, TransactionTrade } from '@/types'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
+import type { Account, Instrument, Transaction, TransactionTrade } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
-
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-]
 
 const mockAccounts: Account[] = [
   {
@@ -89,17 +86,18 @@ const editingFundTrade: TransactionTrade = {
   fee_cents: 150,
 }
 
+/** beforeEach 主链派发函数：中途重桩处理完自己的领域命令后委托回它 */
+let base: ReturnType<typeof stubReferenceInvoke>
+
 describe('useInvestmentForm', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     mockInvoke.mockReset()
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-      if (cmd === 'list_categories') return Promise.resolve([])
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      if (cmd === 'list_merchants') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    base = stubReferenceInvoke({
+      list_accounts: mockAccounts,
+      list_categories: [],
+      list_insurers: [],
+      list_merchants: [],
     })
   })
 
@@ -128,15 +126,9 @@ describe('useInvestmentForm', () => {
   })
 
   it('submit 创建：调用 create_transaction，成功后重置表单', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-      if (cmd === 'list_categories') return Promise.resolve([])
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      if (cmd === 'list_merchants') return Promise.resolve([])
-      if (cmd === 'create_transaction') return Promise.resolve('new-txn')
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'create_transaction' ? Promise.resolve('new-txn') : base(cmd, args),
+    )
     const onCreated = vi.fn()
     const form = useInvestmentForm('buy', { onCreated })
     form.accountId.value = 'acc-inv'
@@ -167,13 +159,11 @@ describe('useInvestmentForm', () => {
     async function searchFundCandidates(kind: 'buy' | 'sell') {
       vi.useFakeTimers()
       try {
-        mockInvoke.mockImplementation((cmd: string) => {
-          if (cmd === 'list_instruments') {
-            return Promise.resolve({ items: mockFundInstruments, total: 1 })
-          }
-          if (cmd === 'list_insurers') return Promise.resolve([])
-          return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-        })
+        mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+          cmd === 'list_instruments'
+            ? Promise.resolve({ items: mockFundInstruments, total: 1 })
+            : base(cmd, args),
+        )
         const form = useInvestmentForm(kind)
         form.searchInstruments('某混合')
         await vi.advanceTimersByTimeAsync(300)
@@ -210,11 +200,9 @@ describe('useInvestmentForm', () => {
 
     it('submit 创建：确认单金额落 amount_cents、单价不落 wire（price_cents null）', async () => {
       const form = await searchFundCandidates('buy')
-      mockInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'create_transaction') return Promise.resolve('fund-txn')
-        if (cmd === 'list_insurers') return Promise.resolve([])
-        return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-      })
+      mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+        cmd === 'create_transaction' ? Promise.resolve('fund-txn') : base(cmd, args),
+      )
       form.instrumentId.value = 'ins-fund'
       form.accountId.value = 'acc-inv'
       form.amount.value = 1000
@@ -292,15 +280,11 @@ describe('useInvestmentForm', () => {
         trade: () => ({ ...editingTrade, instrument_name: null }),
       })
       expect(form.instrumentOptions.value).toEqual([{ label: 'NVDA', value: 'ins-1' }])
-      mockInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-        if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-        if (cmd === 'list_categories') return Promise.resolve([])
-        if (cmd === 'list_insurers') return Promise.resolve([])
-        if (cmd === 'list_merchants') return Promise.resolve([])
-        if (cmd === 'list_instruments') return Promise.resolve({ items: mockInstruments, total: 1 })
-        return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-      })
+      mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+        cmd === 'list_instruments'
+          ? Promise.resolve({ items: mockInstruments, total: 1 })
+          : base(cmd, args),
+      )
       form.searchInstruments('NVDA')
       await vi.waitFor(() => {
         expect(form.searchingInstruments.value).toBe(false)
@@ -312,15 +296,9 @@ describe('useInvestmentForm', () => {
     it('submit 编辑：分派 update_transaction（同一入参形状），onUpdated 触发、onCreated 不触发、不重置表单', async () => {
       const store = useReferenceStore()
       await store.refresh()
-      mockInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-        if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-        if (cmd === 'list_categories') return Promise.resolve([])
-        if (cmd === 'list_insurers') return Promise.resolve([])
-        if (cmd === 'list_merchants') return Promise.resolve([])
-        if (cmd === 'update_transaction') return Promise.resolve(null)
-        return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-      })
+      mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+        cmd === 'update_transaction' ? Promise.resolve(null) : base(cmd, args),
+      )
       const onCreated = vi.fn()
       const onUpdated = vi.fn()
       const form = useInvestmentForm('buy', {
@@ -359,15 +337,11 @@ describe('useInvestmentForm', () => {
         editing: () => editingTx,
         trade: () => editingTrade,
       })
-      mockInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-        if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-        if (cmd === 'list_categories') return Promise.resolve([])
-        if (cmd === 'list_insurers') return Promise.resolve([])
-        if (cmd === 'list_merchants') return Promise.resolve([])
-        if (cmd === 'update_transaction') return Promise.reject(new Error('该买入交易已有部分卖出，无法修改'))
-        return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-      })
+      mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+        cmd === 'update_transaction'
+          ? Promise.reject(new Error('该买入交易已有部分卖出，无法修改'))
+          : base(cmd, args),
+      )
 
       await expect(form.submit()).resolves.toBeUndefined()
       expect(onUpdated).not.toHaveBeenCalled()

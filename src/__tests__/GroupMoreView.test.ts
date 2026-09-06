@@ -7,8 +7,9 @@ import { hasOpenOverlay, resetOverlays } from '@/composables/overlayRegistry'
 import GroupMoreView from '@/views/GroupMoreView.vue'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
 import { makePolicy, makePolicyStats } from './factories'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import { routes, router } from '@/router'
-import type { Currency, Merchant } from '@/types'
+import type { Merchant } from '@/types'
 import type { SubscriptionSpendOverview } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
@@ -17,10 +18,6 @@ enableAutoUnmount(afterEach)
 afterEach(() => {
   document.body.innerHTML = ''
 })
-
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-]
 
 const mockMerchants: Merchant[] = [
   { id: 'mer-1', name: '平安保险', is_deleted: false, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test' },
@@ -39,19 +36,13 @@ const emptySpendOverview: SubscriptionSpendOverview = {
 
 /** 页签挂载即拉取：给最小空数据（容器壳测试不关心行内容）。 */
 function baseInvoke() {
-  mockInvoke.mockImplementation(((cmd: string) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
-    if (cmd === 'list_policies') return Promise.resolve([])
-    if (cmd === 'list_scheduled_transactions') return Promise.resolve([])
-    if (cmd === 'subscription_spend_overview') return Promise.resolve(emptySpendOverview)
-    if (cmd === 'list_physical_assets')
-      return Promise.resolve({ assets: [], holding_total_native_cents: 0, native_currency: 'CNY' })
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-  }) as typeof invoke)
+  stubReferenceInvoke({
+    list_merchants: mockMerchants,
+    list_policies: [],
+    list_scheduled_transactions: [],
+    subscription_spend_overview: emptySpendOverview,
+    list_physical_assets: { assets: [], holding_total_native_cents: 0, native_currency: 'CNY' },
+  })
 }
 
 type GroupMoreId = 'bookkeeping' | 'assets' | 'insights'
@@ -127,16 +118,11 @@ describe('GroupMoreView 组内「更多」容器（issue #472 / ADR-0063 决策 
       total_paid_native_cents: 600_000,
       total_inflow_native_cents: 50_000,
     })
-    mockInvoke.mockImplementation(((cmd: string) => {
-      if (cmd === 'list_policies') return Promise.resolve([policy])
-      if (cmd === 'list_policy_stats') return Promise.resolve([stats])
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve([])
-      if (cmd === 'list_categories') return Promise.resolve([])
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    }) as typeof invoke)
+    stubReferenceInvoke({
+      list_policies: [policy],
+      list_policy_stats: [stats],
+      list_merchants: mockMerchants,
+    })
     const { wrapper } = await mountGroupView('assets')
     const text = wrapper.text()
     // 列表照常渲染（保司/险种/保单号，同 PoliciesView 既有断言口径）

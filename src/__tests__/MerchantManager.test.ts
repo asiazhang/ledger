@@ -4,6 +4,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { NDataTable, NPopconfirm } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import MerchantManager from '@/components/MerchantManager.vue'
 import type { Merchant } from '@/types'
 
@@ -53,15 +54,11 @@ let merchantDb: Merchant[] = mockMerchants
 /** 关联交易计数后端响应（issue #445，毛笔数口径）：可缺行（无引用商户前端补 0）。 */
 let countDb: { merchant_id: string; transaction_count: number }[] = []
 
+/** 参考数据桩（issue #725）：管理页只消费商户表与条数聚合（可变库函数型覆写），其余走共享助手规范夹具。 */
 function mockBaseCommands() {
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'list_currencies') return Promise.resolve([])
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
-    if (cmd === 'list_merchant_transaction_counts') return Promise.resolve(countDb)
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  stubReferenceInvoke({
+    list_merchants: () => merchantDb,
+    list_merchant_transaction_counts: () => countDb,
   })
 }
 
@@ -99,8 +96,8 @@ describe('MerchantManager.vue（issue #189）', () => {
   })
 
   it('添加商户：调用 create_merchant，重拉后列表出现新商户', async () => {
-    mockInvoke.mockImplementation((cmd: string, args?: { input?: { name: string } }) => {
-      if (cmd === 'create_merchant') {
+    stubReferenceInvoke({
+      create_merchant: (args?: { input?: { name: string } }) => {
         merchantDb = [
           ...merchantDb,
           {
@@ -110,13 +107,8 @@ describe('MerchantManager.vue（issue #189）', () => {
           },
         ]
         return Promise.resolve('mch-new')
-      }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
-      if (cmd === 'list_currencies') return Promise.resolve([])
-      if (cmd === 'list_accounts') return Promise.resolve([])
-      if (cmd === 'list_categories') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      },
+      list_merchants: () => merchantDb,
     })
     const wrapper = mount(MerchantManager)
     const nameInput = wrapper.findAll('input').find((i) => i.attributes('placeholder') === '商户名称')!
@@ -136,16 +128,9 @@ describe('MerchantManager.vue（issue #189）', () => {
   })
 
   it('重名创建失败：显示可理解的错误提示，表单不清空', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'create_merchant') {
-        return Promise.reject(new Error('参数错误: 商户已存在: 盒马'))
-      }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
-      if (cmd === 'list_currencies') return Promise.resolve([])
-      if (cmd === 'list_accounts') return Promise.resolve([])
-      if (cmd === 'list_categories') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      create_merchant: () => Promise.reject(new Error('参数错误: 商户已存在: 盒马')),
+      list_merchants: () => merchantDb,
     })
     const wrapper = mount(MerchantManager)
     const nameInput = wrapper.findAll('input').find((i) => i.attributes('placeholder') === '商户名称')!
@@ -564,20 +549,15 @@ describe('MerchantManager.vue 前端分页（issue #457）', () => {
   /** 让 delete_merchant 命令对指定商户软删生效（is_deleted 置位；含软删全量
    * 列表由 store 按 is_deleted 拆分，软删行转已删区而非消失）。 */
   function mockDeleteMerchant(id: string) {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'delete_merchant') {
+    stubReferenceInvoke({
+      delete_merchant: () => {
         merchantDb = merchantDb.map((m) =>
           m.id === id ? { ...m, is_deleted: true } : m,
         )
         return Promise.resolve(null)
-      }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
-      if (cmd === 'list_currencies') return Promise.resolve([])
-      if (cmd === 'list_accounts') return Promise.resolve([])
-      if (cmd === 'list_categories') return Promise.resolve([])
-      if (cmd === 'list_merchant_transaction_counts') return Promise.resolve(countDb)
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      },
+      list_merchants: () => merchantDb,
+      list_merchant_transaction_counts: () => countDb,
     })
   }
 

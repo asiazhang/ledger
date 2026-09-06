@@ -4,6 +4,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import ScheduledView from '@/views/ScheduledView.vue'
+import { stubReferenceInvoke } from '../helpers/reference-stubs'
 import { routes, router } from '@/router'
 import type { SubscriptionSpendOverview } from '@/types'
 
@@ -27,16 +28,15 @@ const emptySpendOverview: SubscriptionSpendOverview = {
 
 /** 壳层测试只关心页签结构：子页签的 invoke 一律给最小空数据。 */
 function baseInvoke() {
-  mockInvoke.mockImplementation(((cmd: string) => {
-    if (cmd === 'list_currencies') return Promise.resolve([])
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
-    if (cmd === 'subscription_spend_overview') return Promise.resolve(emptySpendOverview)
-    if (cmd === 'list_scheduled_transactions') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-  }) as typeof invoke)
+  stubReferenceInvoke({
+    list_currencies: [],
+    list_accounts: [],
+    list_categories: [],
+    list_insurers: [],
+    list_merchants: [],
+    subscription_spend_overview: emptySpendOverview,
+    list_scheduled_transactions: [],
+  })
 }
 
 /** memory router：与真实路由表同构（routes 单一来源复用，避免双份漂移）。 */
@@ -181,18 +181,16 @@ function planDetailOf(id: string, overrides: Partial<ScheduledTransactionDetail[
 
 /** 清单 + 详情命令桩：详情按 id 返回已取消计划（清单状态过滤影响不到弹窗）。 */
 function withPlanDetailInvoke() {
-  mockInvoke.mockImplementation(((cmd: string, args?: Record<string, unknown>) => {
-    if (cmd === 'list_currencies') return Promise.resolve([])
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
-    if (cmd === 'subscription_spend_overview') return Promise.resolve(emptySpendOverview)
-    if (cmd === 'list_scheduled_transactions') return Promise.resolve([])
-    if (cmd === 'get_scheduled_transaction_detail') {
-      return Promise.resolve(planDetailOf(String(args?.id)))
-    }
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-  }) as typeof invoke)
+  stubReferenceInvoke({
+    list_currencies: [],
+    list_accounts: [],
+    list_categories: [],
+    list_merchants: [],
+    subscription_spend_overview: emptySpendOverview,
+    list_scheduled_transactions: [],
+    get_scheduled_transaction_detail: (args) =>
+      Promise.resolve(planDetailOf(String(args?.id))),
+  })
 }
 
 describe('计划来源落点（issue #707）：focus 读一次 → 形态页签 + 计划详情弹窗', () => {

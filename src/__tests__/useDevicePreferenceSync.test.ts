@@ -5,6 +5,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useAppStore } from '@/stores/app'
 import { useDevicePreferenceSync } from '@/composables/useDevicePreferenceSync'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 
 // 设备偏好镜像推送（issue #308 / ADR-0042；备份目录先例 ADR-0016 决策 3）：
 // 真源在前端 localStorage（应用设置 store），应用根组件挂载一次本 composable，
@@ -24,12 +25,9 @@ const Host = defineComponent({
 beforeEach(() => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'set_auto_backup_dir' || cmd === 'set_auto_execution_enabled') {
-      return Promise.resolve()
-    }
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  stubReferenceInvoke({
+    set_auto_backup_dir: () => Promise.resolve(),
+    set_auto_execution_enabled: () => Promise.resolve(),
   })
   localStorage.clear()
 })

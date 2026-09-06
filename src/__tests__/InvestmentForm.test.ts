@@ -5,7 +5,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { NSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import InvestmentForm from '@/components/InvestmentForm.vue'
-import type { Account, Currency, Instrument } from '@/types'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
+import type { Account, Instrument } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -13,10 +14,6 @@ const mockInvoke = vi.mocked(invoke)
 beforeAll(() => {
   Element.prototype.scrollTo = () => {}
 })
-
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-]
 
 const mockAccounts: Account[] = [
   {
@@ -54,17 +51,18 @@ function instrumentSelect(wrapper: ReturnType<typeof mount>) {
   return wrapper.findAllComponents(NSelect).find((s) => s.props('remote'))!
 }
 
+/** beforeEach 主链派发函数：中途重桩/一次性桩处理完自己的领域命令后委托回它 */
+let base: ReturnType<typeof stubReferenceInvoke>
+
 beforeEach(async () => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
-    if (cmd === 'list_instruments') return Promise.resolve({ items: [], total: 0 })
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  base = stubReferenceInvoke({
+    list_accounts: mockAccounts,
+    list_categories: [],
+    list_insurers: [],
+    list_merchants: [],
+    list_instruments: { items: [], total: 0 },
   })
   const store = useReferenceStore()
   await store.refresh()
@@ -104,12 +102,12 @@ describe('InvestmentForm.vue 移除「新增标的」入口（issue #152）', ()
       expect(calls).toHaveLength(1)
       const [, args] = calls[0] as [string, { filter: { search: string } }]
       expect(args.filter.search).toBe('NVDA')
-      // 返回候选后可选择
-      mockInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_instruments') return Promise.resolve({ items: mockInstruments, total: 1 })
-        if (cmd === 'list_insurers') return Promise.resolve([])
-        return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-      })
+      // 返回候选后可选择（领域命令接住，其余委托回基础桩）
+      mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+        cmd === 'list_instruments'
+          ? Promise.resolve({ items: mockInstruments, total: 1 })
+          : base(cmd, args),
+      )
       await select.find('input').setValue('NVDA')
       await vi.advanceTimersByTimeAsync(300)
       await flushPromises()
@@ -167,11 +165,11 @@ describe('InvestmentForm.vue 基金申赎形态（issue #302）', () => {
   }
 
   it('选基金标的：金额可编辑（确认单权威）、份额标签、单价只读反算', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_instruments') return Promise.resolve({ items: fundInstruments, total: 1 })
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'list_instruments'
+        ? Promise.resolve({ items: fundInstruments, total: 1 })
+        : base(cmd, args),
+    )
     const wrapper = await mountWithFundSelected('buy')
     expect(inputByPlaceholder(wrapper, '确认金额（以确认单为准）')).toBeDefined()
     expect(inputByPlaceholder(wrapper, '确认份额（以确认单为准）')).toBeDefined()
@@ -360,11 +358,11 @@ describe('InvestmentForm.vue 字段错误态（ADR-0058 / issue #416）', () => 
         price_cents: null,
       },
     ]
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_instruments') return Promise.resolve({ items: fundInstruments, total: 1 })
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'list_instruments'
+        ? Promise.resolve({ items: fundInstruments, total: 1 })
+        : base(cmd, args),
+    )
     const wrapper = mount(InvestmentForm, { props: { kind: 'buy', submitLabel: '记买入' } })
     const select = instrumentSelect(wrapper)
     vi.useFakeTimers()
@@ -437,11 +435,9 @@ describe('InvestmentForm.vue 编辑模式（issue #180）', () => {
     const wrapper = mount(InvestmentForm, {
       props: { kind: 'buy', submitLabel: '记买入', editing: editingTx, trade: editingTrade },
     })
-    mockInvoke.mockImplementationOnce((cmd: string) => {
-      if (cmd === 'update_transaction') return Promise.resolve()
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'update_transaction' ? Promise.resolve() : base(cmd, args),
+    )
     await wrapper.findAll('button').find((b) => b.text().includes('保存修改'))!.trigger('click')
     await flushPromises()
     expect(wrapper.emitted('saved')).toHaveLength(1)

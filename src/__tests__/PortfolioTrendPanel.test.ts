@@ -10,6 +10,7 @@ import {
   firePricesChanged,
   resetPricesChangedHandler,
 } from './prices-changed-mock'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Instrument, PortfolioValueTrend } from '@/types'
 
 vi.mock('vue-chartjs', async () => {
@@ -59,22 +60,15 @@ const fundInstrument = makeInstrument({
 })
 
 function baseInvoke(extra?: Record<string, unknown>) {
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'list_currencies')
-      return Promise.resolve([{ code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 }])
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
-    if (cmd === 'list_holdings') return Promise.resolve([])
-    if (cmd === 'list_instruments')
-      return Promise.resolve({ items: [stockInstrument, fundInstrument], total: 2 })
-    if (extra && cmd in extra) {
-      const handler = (extra as Record<string, unknown>)[cmd]
-      return typeof handler === 'function' ? (handler as () => unknown)() : Promise.resolve(handler)
-    }
-    if (cmd === 'portfolio_value_trend') return Promise.resolve(portfolioTrend)
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  stubReferenceInvoke({
+    list_accounts: [],
+    list_categories: [],
+    list_insurers: [],
+    list_merchants: [],
+    list_holdings: [],
+    list_instruments: { items: [stockInstrument, fundInstrument], total: 2 },
+    portfolio_value_trend: () => Promise.resolve(portfolioTrend),
+    ...extra,
   })
 }
 

@@ -16,16 +16,16 @@ import { open } from '@tauri-apps/plugin-dialog'
 import UnlockScreen from '@/components/UnlockScreen.vue'
 import { AUTO_UNLOCK_TIMEOUT_MS, useEncryptionGate } from '@/composables/useEncryptionGate'
 import { useAppStore } from '@/stores/app'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 
 const mockInvoke = vi.mocked(invoke)
 const mockOpen = vi.mocked(open)
 
 /** mock-invoke 桩：解锁屏只消费加密命令面（fail-loud：其余命令一律拒绝）。 */
 function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
-  mockInvoke.mockImplementation((cmd: string, args?: any) => {
-    if (cmd in overrides) return overrides[cmd](args)
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  stubReferenceInvoke({
+    list_insurers: [],
+    ...overrides,
   })
 }
 

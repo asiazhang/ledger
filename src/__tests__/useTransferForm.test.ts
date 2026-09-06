@@ -1,14 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import { useTransferForm } from '@/composables/useTransferForm'
-import type { Account, Currency, Transaction } from '@/types'
+import type { Account, Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
-
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-]
 
 const mockAccounts: Account[] = [
   {
@@ -29,13 +26,12 @@ describe('useTransferForm', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     mockInvoke.mockReset()
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-      if (cmd === 'list_categories') return Promise.resolve([])
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      if (cmd === 'list_merchants') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    // 参考命令桩统一走共享助手（issue #725）：币种与规范夹具等值流入，账户保留本文件夹具
+    stubReferenceInvoke({
+      list_accounts: mockAccounts,
+      list_categories: [],
+      list_insurers: [],
+      list_merchants: [],
     })
   })
 

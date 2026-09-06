@@ -20,6 +20,7 @@ vi.mock('naive-ui', async (importOriginal) => {
 
 import BackupSettings from '@/components/settings/BackupSettings.vue'
 import { useAppStore } from '@/stores/app'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { BackupFileInfo } from '@/types'
 
 /** 按出现顺序取全部卡片标题（卡片顺序即页签内信息架构）。 */
@@ -53,12 +54,10 @@ const plaintextBackup: BackupFileInfo = {
 }
 
 function stubList(list: BackupFileInfo[]) {
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'list_backups') return Promise.resolve(list)
-    if (cmd === 'get_auto_backup_state')
-      return Promise.resolve({ enabled: true, last_backup_at: null })
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  stubReferenceInvoke({
+    list_backups: list,
+    get_auto_backup_state: { enabled: true, last_backup_at: null },
+    list_insurers: [],
   })
 }
 
@@ -152,17 +151,15 @@ describe('BackupSettings 备份页签重排与危险视觉修正（issue #651 / 
     let disk: BackupFileInfo[] = [plaintextBackup]
     let listCalls = 0
     let resolveList: (() => void) | null = null
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_backups') {
+    stubReferenceInvoke({
+      get_auto_backup_state: { enabled: true, last_backup_at: null },
+      list_insurers: [],
+      list_backups: () => {
         listCalls++
         return new Promise((resolve) => {
           resolveList = () => resolve(disk)
         })
-      }
-      if (cmd === 'get_auto_backup_state')
-        return Promise.resolve({ enabled: true, last_backup_at: null })
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      },
     })
     const wrapper = mount(BackupSettings)
     // 首刷在途：按钮在场，先放行首次拉取。
@@ -194,14 +191,11 @@ describe('BackupSettings 手动清理确认弹窗（issue #652 / ADR-0078）', (
   }
 
   function stubWithPrune(list: BackupFileInfo[], keep = 1) {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_backups') return Promise.resolve(list)
-      if (cmd === 'get_auto_backup_state')
-        return Promise.resolve({ enabled: true, last_backup_at: null })
-      if (cmd === 'prune_backups')
-        return Promise.resolve({ kept: keep, deleted: ['/a', '/b'], failed: [] })
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      list_backups: list,
+      get_auto_backup_state: { enabled: true, last_backup_at: null },
+      prune_backups: { kept: keep, deleted: ['/a', '/b'], failed: [] },
+      list_insurers: [],
     })
   }
 
@@ -256,13 +250,11 @@ describe('BackupSettings 手动清理确认弹窗（issue #652 / ADR-0078）', (
 
 describe('BackupSettings 复制与访达定位通道（issue #653）', () => {
   it('备份列表行「在访达中显示」：以该行完整路径调用 reveal_in_file_manager，成功无错误提示', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_backups') return Promise.resolve([encryptedBackup, plaintextBackup])
-      if (cmd === 'get_auto_backup_state')
-        return Promise.resolve({ enabled: true, last_backup_at: null })
-      if (cmd === 'reveal_in_file_manager') return Promise.resolve(undefined)
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      list_backups: [encryptedBackup, plaintextBackup],
+      get_auto_backup_state: { enabled: true, last_backup_at: null },
+      reveal_in_file_manager: () => Promise.resolve(undefined),
+      list_insurers: [],
     })
     const wrapper = mount(BackupSettings)
     await flushPromises()
@@ -278,14 +270,11 @@ describe('BackupSettings 复制与访达定位通道（issue #653）', () => {
   })
 
   it('访达定位失败：后端中文错误原样透传为错误提示', async () => {
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_backups') return Promise.resolve([plaintextBackup])
-      if (cmd === 'get_auto_backup_state')
-        return Promise.resolve({ enabled: true, last_backup_at: null })
-      if (cmd === 'reveal_in_file_manager')
-        return Promise.reject(new Error('在访达中显示失败：boom'))
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      list_backups: [plaintextBackup],
+      get_auto_backup_state: { enabled: true, last_backup_at: null },
+      reveal_in_file_manager: () => Promise.reject(new Error('在访达中显示失败：boom')),
+      list_insurers: [],
     })
     const wrapper = mount(BackupSettings)
     await flushPromises()
@@ -302,15 +291,12 @@ describe('BackupSettings 复制与访达定位通道（issue #653）', () => {
 
   it('最近备份路径「复制路径」：写入完整原始路径（不含大小括注）并成功提示', async () => {
     const backupPath = '/Users/me/backups/ledger-backup-20260217-120000.db.zip'
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'create_backup')
-        return Promise.resolve({ path: backupPath, size_bytes: 2048 })
-      if (cmd === 'prune_backups') return Promise.resolve({ kept: 1, deleted: [], failed: [] })
-      if (cmd === 'list_backups') return Promise.resolve([])
-      if (cmd === 'get_auto_backup_state')
-        return Promise.resolve({ enabled: true, last_backup_at: null })
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      create_backup: { path: backupPath, size_bytes: 2048 },
+      prune_backups: { kept: 1, deleted: [], failed: [] },
+      list_backups: [],
+      get_auto_backup_state: { enabled: true, last_backup_at: null },
+      list_insurers: [],
     })
     const wrapper = mount(BackupSettings)
     await flushPromises()
@@ -328,14 +314,12 @@ describe('BackupSettings 复制与访达定位通道（issue #653）', () => {
 
   it('复制失败：错误提示，不静默', async () => {
     const backupPath = '/Users/me/backups/ledger-backup-20260217-120000.db.zip'
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'create_backup') return Promise.resolve({ path: backupPath, size_bytes: 2048 })
-      if (cmd === 'prune_backups') return Promise.resolve({ kept: 1, deleted: [], failed: [] })
-      if (cmd === 'list_backups') return Promise.resolve([])
-      if (cmd === 'get_auto_backup_state')
-        return Promise.resolve({ enabled: true, last_backup_at: null })
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    stubReferenceInvoke({
+      create_backup: { path: backupPath, size_bytes: 2048 },
+      prune_backups: { kept: 1, deleted: [], failed: [] },
+      list_backups: [],
+      get_auto_backup_state: { enabled: true, last_backup_at: null },
+      list_insurers: [],
     })
     const wrapper = mount(BackupSettings)
     await flushPromises()

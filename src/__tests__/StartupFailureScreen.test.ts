@@ -6,6 +6,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import StartupFailureScreen from '@/components/StartupFailureScreen.vue'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
 import { open } from '@tauri-apps/plugin-dialog'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 
 // 文件选择与重启单点 mock（先例 useBackup.test.ts；restartAppShortly 内含
 // 800ms 延时，测试断言调用而非计时）。
@@ -22,10 +23,9 @@ const mockInvoke = vi.mocked(invoke)
 
 /** mock-invoke 桩：失败恢复屏只消费启动命令面（fail-loud：其余命令一律拒绝）。 */
 function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
-  mockInvoke.mockImplementation((cmd: string, args?: any) => {
-    if (cmd in overrides) return overrides[cmd](args)
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  stubReferenceInvoke({
+    list_insurers: [],
+    ...overrides,
   })
 }
 

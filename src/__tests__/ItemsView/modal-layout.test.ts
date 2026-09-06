@@ -3,6 +3,7 @@ import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import ItemsView from '@/views/ItemsView.vue'
+import { stubReferenceInvoke } from '../helpers/reference-stubs'
 import type { ItemWithDailyCost } from '@/types'
 
 // 物品弹窗族排版统一（issue #634，spec #630）：三个弹窗的卡片外观收敛为
@@ -43,21 +44,17 @@ const mockItem: ItemWithDailyCost = {
   per_day_cents: 1000,
 }
 
-const mockCurrencies = [{ code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 }]
-
 beforeEach(async () => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
-  mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
+  stubReferenceInvoke({
+    list_accounts: [],
+    list_categories: [],
+    list_merchants: [],
+    list_insurers: [],
     // 本测试不依赖交易候选，任意 kind 一律空列表
-    if (cmd === 'list_transactions') return Promise.resolve({ items: [], total: 0 })
-    if (cmd === 'list_items') return Promise.resolve([mockItem])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    list_transactions: { items: [], total: 0 },
+    list_items: [mockItem],
   })
   localStorage.clear()
   // 参考数据（币种选项）与物品 store 均为 self-init，提前预热

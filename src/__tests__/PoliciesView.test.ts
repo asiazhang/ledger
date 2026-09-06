@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core'
 import PoliciesView from '@/views/PoliciesView.vue'
 import PolicyFormModal from '@/components/PolicyFormModal.vue'
 import { makePolicy, makePolicyStats } from './factories'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Currency, Insurer, Policy, PolicyStats } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
@@ -57,46 +58,40 @@ function baseStats(policy: Policy): PolicyStats {
 }
 
 function setupInvoke() {
-  mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
+  stubReferenceInvoke({
+    list_currencies: mockCurrencies,
+    list_accounts: [],
+    list_categories: [],
+    list_merchants: [],
     // 保单换轨后页面消费保司下拉（ADR-0082），桩给真实保司数据
-    if (cmd === 'list_insurers') return Promise.resolve(mockInsurers)
-    if (cmd === 'list_policies') {
-      return Promise.resolve(policies.filter((p) => !p.is_deleted))
-    }
-    if (cmd === 'list_policy_stats') {
-      return Promise.resolve(policyStats.filter((s) => policies.some((p) => p.id === s.policy_id && !p.is_deleted)))
-    }
-    if (cmd === 'create_policy') {
+    list_insurers: mockInsurers,
+    list_policies: () => policies.filter((p) => !p.is_deleted),
+    list_policy_stats: () =>
+      policyStats.filter((s) => policies.some((p) => p.id === s.policy_id && !p.is_deleted)),
+    create_policy: (args) => {
       const { input } = args as { input: { policy_number: string; insurer_id: string } }
       const id = `policy-new-${input.policy_number}`
       policies = [
         ...policies,
         basePolicy({ id, ...input, coverage_amount_cents: null, coverage_currency_code: null, end_date: null }),
       ]
-      return Promise.resolve(id)
-    }
-    if (cmd === 'create_insurer') {
+      return id
+    },
+    create_insurer: (args) => {
       const { input } = args as { input: { name: string } }
       const id = `ins-new-${input.name}`
       mockInsurers.push({ id, name: input.name, is_deleted: false, created_at: '', updated_at: '', version: 1, device_id: 'test' })
-      return Promise.resolve(id)
-    }
-    if (cmd === 'create_merchant') return Promise.reject(new Error('unexpected create_merchant'))
-    if (cmd === 'update_policy') {
+      return id
+    },
+    create_merchant: () => Promise.reject(new Error('unexpected create_merchant')),
+    update_policy: (args) => {
       const { id, input } = args as { id: string; input: Partial<Policy> }
       policies = policies.map((p) => (p.id === id ? { ...p, ...input } : p))
-      return Promise.resolve()
-    }
-    if (cmd === 'delete_policy') {
+    },
+    delete_policy: (args) => {
       const { id } = args as { id: string }
       policies = policies.map((p) => (p.id === id ? { ...p, is_deleted: true } : p))
-      return Promise.resolve()
-    }
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    },
   })
 }
 

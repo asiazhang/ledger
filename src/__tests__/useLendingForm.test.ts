@@ -1,16 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import { useReferenceStore } from '@/stores/reference'
 import { resolveLendingDirection } from '@/domain/lending'
 import { useLendingForm } from '@/composables/useLendingForm'
-import type { Account, Currency, Transaction } from '@/types'
+import type { Account, Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
-
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-]
 
 /** 覆盖资金侧（cash/bank）、借出侧（receivable）、负债侧（debt）的账户集 */
 const mockAccounts: Account[] = [
@@ -49,13 +46,12 @@ describe('useLendingForm（借贷变体 composable，issue #374 S3）', () => {
   beforeEach(async () => {
     setActivePinia(createPinia())
     mockInvoke.mockReset()
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-      if (cmd === 'list_categories') return Promise.resolve([])
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      if (cmd === 'list_merchants') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    // 参考命令桩统一走共享助手（issue #725）：币种与规范夹具等值流入，账户保留本文件夹具
+    stubReferenceInvoke({
+      list_accounts: mockAccounts,
+      list_categories: [],
+      list_insurers: [],
+      list_merchants: [],
     })
     // 账户过滤集断言依赖参考数据就绪：等 self-init 拉取完成
     await useReferenceStore().refresh()

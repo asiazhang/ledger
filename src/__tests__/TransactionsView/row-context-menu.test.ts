@@ -9,6 +9,7 @@ import RefundForm from '@/components/RefundForm.vue'
 import AddItemForm from '@/components/AddItemForm.vue'
 import MerchantLink from '@/components/MerchantLink.vue'
 import { useReferenceStore } from '@/stores/reference'
+import { stubReferenceInvoke } from '../helpers/reference-stubs'
 import type { Transaction } from '@/types'
 
 describe('TransactionsView 行右键菜单（issue #151）', () => {
@@ -168,11 +169,10 @@ describe('TransactionsView 行右键菜单（issue #151）', () => {
     // 修改退款金额为部分退款 ¥12.00
     form.find('input[placeholder="退款金额"]').setValue('12')
     await flushPromises()
-    mockInvoke.mockImplementationOnce((cmd: string) => {
-      if (cmd === 'create_transaction') return Promise.resolve('refund-id')
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    // 参考命令兑底走共享助手（issue #725）：领域命令自接，其余委托回基础桩
+    const base = mockInvoke.getMockImplementation()!
+    mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'create_transaction' ? Promise.resolve('refund-id') : base(cmd, args))
     await form.findAll('button').find((b) => b.text().includes('记退款'))!.trigger('click')
     await flushPromises()
     // 载荷：kind=refund + 关联原交易；账户/币种由后端继承原支出（固定模式展示值）
@@ -197,11 +197,10 @@ describe('TransactionsView 行右键菜单（issue #151）', () => {
       await selectRowMenu(wrapper, 'refund')
       const form = wrapper.findComponent(RefundForm)
       expect(form.exists()).toBe(true)
-      mockInvoke.mockImplementationOnce((cmd: string) => {
-        if (cmd === 'create_transaction') return Promise.resolve(`refund-${round}`)
-        if (cmd === 'list_insurers') return Promise.resolve([])
-        return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-      })
+      // 参考命令兑底走共享助手（issue #725）：领域命令自接，其余委托回基础桩
+      const base = mockInvoke.getMockImplementation()!
+      mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
+        cmd === 'create_transaction' ? Promise.resolve(`refund-${round}`) : base(cmd, args))
       await form.findAll('button').find((b) => b.text().includes('记退款'))!.trigger('click')
       await flushPromises()
       expect(refundModal(wrapper).props('show')).toBe(false)
@@ -277,11 +276,10 @@ describe('TransactionsView 行右键「编辑」（issue #178）', () => {
     const form = wrapper.findComponent(CategoryForm)
     form.getComponent(NInput).vm.$emit('update:value', '45')
     await flushPromises()
-    mockInvoke.mockImplementationOnce((cmd: string) => {
-      if (cmd === 'update_transaction') return Promise.resolve()
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    // 参考命令兑底走共享助手（issue #725）：领域命令自接，其余委托回基础桩
+    const base = mockInvoke.getMockImplementation()!
+    mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'update_transaction' ? Promise.resolve() : base(cmd, args))
     await form.findAll('button').find((b) => b.text().includes('保存修改'))!.trigger('click')
     await flushPromises()
     expect(updateCalls()).toHaveLength(1)
@@ -310,11 +308,12 @@ describe('TransactionsView 行右键「编辑」（issue #178）', () => {
     const wrapper = await mountView()
     await openEditModal(wrapper, 0)
     const form = wrapper.findComponent(CategoryForm)
-    mockInvoke.mockImplementationOnce((cmd: string) => {
-      if (cmd === 'update_transaction') return Promise.reject(new Error('账户不存在'))
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    // 参考命令兑底走共享助手（issue #725）：领域命令自接，其余委托回基础桩
+    const base = mockInvoke.getMockImplementation()!
+    mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'update_transaction'
+        ? Promise.reject(new Error('账户不存在'))
+        : base(cmd, args))
     await form.findAll('button').find((b) => b.text().includes('保存修改'))!.trigger('click')
     await flushPromises()
     expect(editModal(wrapper).props('show')).toBe(true)
@@ -331,11 +330,10 @@ describe('TransactionsView 行右键「编辑」（issue #178）', () => {
     await flushPromises()
     await openEditModal(wrapper, 0)
     const form = wrapper.findComponent(CategoryForm)
-    mockInvoke.mockImplementationOnce((cmd: string) => {
-      if (cmd === 'update_transaction') return Promise.resolve()
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    // 参考命令兑底走共享助手（issue #725）：领域命令自接，其余委托回基础桩
+    const base = mockInvoke.getMockImplementation()!
+    mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'update_transaction' ? Promise.resolve() : base(cmd, args))
     await form.findAll('button').find((b) => b.text().includes('保存修改'))!.trigger('click')
     await flushPromises()
     expect(lastListFilter()).toMatchObject({ page: 2 })
@@ -359,19 +357,20 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
     fee_cents: 500,
   }
 
+  /** 基础桩（参考命令规范夹具 + 本域命令覆写），一次性桩委托回它（issue #725）。 */
+  let base: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
+
   beforeEach(() => {
     setTxnDb([...menuDb])
-    mockInvoke.mockImplementation((cmd: string, args?: {
-      filter?: Record<string, unknown>
-      id?: string
-    }) => {
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-      if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
-      if (cmd === 'list_policies') return Promise.resolve([])
-      if (cmd === 'list_transactions') {
+    base = stubReferenceInvoke({
+      list_currencies: mockCurrencies,
+      list_accounts: mockAccounts,
+      list_categories: [],
+      list_insurers: [],
+      list_merchants: () => merchantDb,
+      list_policies: [],
+      list_items: [],
+      list_transactions: (args?: Record<string, unknown>) => {
         const filter = (args?.filter ?? {}) as Record<string, unknown>
         const scoped = applyListFilter(filter)
         const pageSize = (filter.page_size as number) ?? scoped.length
@@ -381,14 +380,11 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
           items: scoped.slice(start, start + pageSize),
           total: scoped.length,
         })
-      }
-      if (cmd === 'list_items') return Promise.resolve([])
-      if (cmd === 'get_transaction_trade') {
+      },
+      get_transaction_trade: (args?: Record<string, unknown>) => {
         // sell 行返回无手续费明细，buy 行返回完整明细
         return Promise.resolve(args?.id === 'txn-002' ? { ...buyTrade, fee_cents: null } : buyTrade)
-      }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      },
     })
   })
 
@@ -440,11 +436,8 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
     const wrapper = await mountView()
     await openEditModal(wrapper, 0)
     const form = wrapper.findComponent(InvestmentForm)
-    mockInvoke.mockImplementationOnce((cmd: string) => {
-      if (cmd === 'update_transaction') return Promise.resolve()
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'update_transaction' ? Promise.resolve() : base(cmd, args))
     await form.findAll('button').find((b) => b.text().includes('保存修改'))!.trigger('click')
     await flushPromises()
     expect(updateCalls()).toHaveLength(1)
@@ -481,11 +474,11 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
 
   it('取买卖明细失败：弹窗不打开并提示错误', async () => {
     const wrapper = await mountView()
-    mockInvoke.mockImplementationOnce((cmd: string) => {
-      if (cmd === 'get_transaction_trade') return Promise.reject(new Error('交易不存在或无买卖明细: txn-001'))
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    // 参考命令兑底走共享助手（issue #725）：领域命令自接，其余委托回基础桩
+    mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'get_transaction_trade'
+        ? Promise.reject(new Error('交易不存在或无买卖明细: txn-001'))
+        : base(cmd, args))
     await openEditModal(wrapper, 0)
     expect(editModal(wrapper).props('show')).toBe(false)
     expect(wrapper.findComponent(InvestmentForm).exists()).toBe(false)
@@ -495,11 +488,11 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
     const wrapper = await mountView()
     await openEditModal(wrapper, 0)
     const form = wrapper.findComponent(InvestmentForm)
-    mockInvoke.mockImplementationOnce((cmd: string) => {
-      if (cmd === 'update_transaction') return Promise.reject(new Error('该买入交易已有部分卖出，无法修改'))
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    // 参考命令兑底走共享助手（issue #725）：领域命令自接，其余委托回基础桩
+    mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'update_transaction'
+        ? Promise.reject(new Error('该买入交易已有部分卖出，无法修改'))
+        : base(cmd, args))
     await form.findAll('button').find((b) => b.text().includes('保存修改'))!.trigger('click')
     await flushPromises()
     expect(editModal(wrapper).props('show')).toBe(true)
@@ -516,20 +509,20 @@ describe('TransactionsView 行右键「加入物品」（issue #119）', () => {
   /** 已建物品列表（默认空；置灰用例改写为关联 txn-001）。 */
   let itemList: unknown[] = []
 
+  /** 基础桩（参考命令规范夹具 + 本域命令覆写），一次性桩委托回它（issue #725）。 */
+  let base: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
+
   beforeEach(() => {
     setTxnDb([...menuDb])
     itemList = []
-    mockInvoke.mockImplementation((cmd: string, args?: {
-      filter?: Record<string, unknown>
-      id?: string
-    }) => {
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-      if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
-    if (cmd === 'list_insurers') return Promise.resolve([])
-      if (cmd === 'list_policies') return Promise.resolve([])
-      if (cmd === 'list_transactions') {
+    base = stubReferenceInvoke({
+      list_currencies: mockCurrencies,
+      list_accounts: mockAccounts,
+      list_categories: [],
+      list_insurers: [],
+      list_merchants: () => merchantDb,
+      list_policies: [],
+      list_transactions: (args?: Record<string, unknown>) => {
         const filter = (args?.filter ?? {}) as Record<string, unknown>
         const scoped = applyListFilter(filter)
         const pageSize = (filter.page_size as number) ?? scoped.length
@@ -539,11 +532,9 @@ describe('TransactionsView 行右键「加入物品」（issue #119）', () => {
           items: scoped.slice(start, start + pageSize),
           total: scoped.length,
         })
-      }
-      if (cmd === 'list_items') return Promise.resolve(itemList)
-      if (cmd === 'create_item') return Promise.resolve('item-new')
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      },
+      list_items: () => itemList,
+      create_item: 'item-new',
     })
   })
 
@@ -616,12 +607,11 @@ describe('TransactionsView 行右键「加入物品」（issue #119）', () => {
   it('后端校验失败（重复创建）：弹窗保持打开，错误后不 emit created', async () => {
     const wrapper = await mountView()
     await openAddItemModal(wrapper)
-    mockInvoke.mockImplementationOnce((cmd: string) => {
-      if (cmd === 'create_item')
-        return Promise.reject(new Error('该购买交易已创建过物品，不能重复创建（溯源唯一）: txn-001'))
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    // 参考命令兑底走共享助手（issue #725）：领域命令自接，其余委托回基础桩
+    mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'create_item'
+        ? Promise.reject(new Error('该购买交易已创建过物品，不能重复创建（溯源唯一）: txn-001'))
+        : base(cmd, args))
     const form = wrapper.findComponent(AddItemForm)
     await form.find('button[data-testid="add-item-confirm"]').trigger('click')
     await flushPromises()

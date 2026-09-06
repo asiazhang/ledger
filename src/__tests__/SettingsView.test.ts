@@ -11,6 +11,7 @@ import { useReferenceStore } from '@/stores/reference'
 import { applyLocale } from '@/i18n'
 import SettingsView from '@/views/SettingsView.vue'
 import CategoryManager from '@/components/CategoryManager.vue'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Currency } from '@/types'
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
@@ -53,14 +54,14 @@ function dataLocationInfo(
  * （show:lazy），故 get_data_location_info 仍进默认桩（子页签切换测试会触发）。
  */
 function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
-  const defaults: Record<string, unknown> = {
+  stubReferenceInvoke({
     list_currencies: mockCurrencies,
     list_accounts: [],
     list_categories: [],
     list_merchants: [],
     list_insurers: [],
     list_backups: [],
-    get_data_location_info: dataLocationInfo(),
+    get_data_location_info: () => dataLocationInfo(),
     create_backup: {
       path: '/tmp/ledger-backup.db.zip',
       size_bytes: 1024,
@@ -72,12 +73,7 @@ function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
     prune_backups: { kept: 0, deleted: [], failed: [] },
     get_auto_backup_state: { enabled: true, last_backup_at: null },
     set_auto_backup_enabled: null,
-  }
-  mockInvoke.mockImplementation((cmd: string, args?: any) => {
-    if (cmd in overrides) return overrides[cmd](args)
-    if (cmd in defaults) return Promise.resolve(defaults[cmd])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    ...overrides,
   })
 }
 

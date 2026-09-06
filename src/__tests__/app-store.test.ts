@@ -3,19 +3,19 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useAppStore } from '@/stores/app'
 import { formatAmount, amountPrivacyEnabled } from '@/utils/money'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 
 const mockInvoke = vi.mocked(invoke)
 
 beforeEach(() => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'list_currencies') return Promise.resolve([])
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  stubReferenceInvoke({
+    list_currencies: [],
+    list_accounts: [],
+    list_categories: [],
+    list_insurers: [],
+    list_merchants: [],
   })
   localStorage.clear()
 })

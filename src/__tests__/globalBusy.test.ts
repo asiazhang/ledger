@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
 import { api } from '@/api'
 import { busyVisible, resetGlobalBusy } from '@/composables/globalBusy'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -54,9 +55,11 @@ describe('globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封�
   it('并发调用聚合计数：部分完成仍显示，全部完成才隐藏', async () => {
     const a = deferred<void>()
     const b = deferred<void>()
-    mockInvoke.mockImplementation((cmd: string) =>
-      cmd === 'list_currencies' ? a.promise : b.promise,
-    )
+    // 参考命令桩统一走共享助手（issue #725）：在途/兑结时机由覆写控制
+    stubReferenceInvoke({
+      list_currencies: () => a.promise,
+      list_accounts: () => b.promise,
+    })
     const p1 = api.listCurrencies()
     const p2 = api.listAccounts()
 
@@ -115,9 +118,11 @@ describe('globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封�
 
   it('重叠在途窗口聚合：快调用与慢调用重叠使聚合窗口持续在途，跨阈值即点亮', async () => {
     const slow = deferred<void>()
-    mockInvoke.mockImplementation((cmd: string) =>
-      cmd === 'list_currencies' ? slow.promise : Promise.resolve([]),
-    )
+    // 参考命令桩统一走共享助手（issue #725）：慢调用挂起、快调用即刻兑结
+    stubReferenceInvoke({
+      list_currencies: () => slow.promise,
+      list_accounts: [],
+    })
     const pSlow = api.listCurrencies()
 
     // t=100ms 起一个即刻完成的快调用；聚合窗口自 t=0 起持续在途不归零

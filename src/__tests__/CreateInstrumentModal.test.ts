@@ -6,6 +6,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import CreateInstrumentModal from '@/components/investments/CreateInstrumentModal.vue'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Currency } from '@/types'
 
 // NModal 内容 teleport 到 document.body，须在每个测试后卸载 wrapper 并清空 body，
@@ -22,14 +23,16 @@ const mockCurrencies: Currency[] = [
   { code: 'USD', name: '美元', symbol: '$', decimal_places: 2 },
 ]
 
+/** 基础派发：beforeEach 安装；中途重桩/一次性桩处理完自己的领域命令后委托回它 */
+let base: ReturnType<typeof stubReferenceInvoke>
+
 function baseInvoke() {
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  base = stubReferenceInvoke({
+    list_currencies: mockCurrencies,
+    list_accounts: [],
+    list_categories: [],
+    list_insurers: [],
+    list_merchants: [],
   })
 }
 
@@ -116,11 +119,9 @@ describe('CreateInstrumentModal 新建标的弹窗（issue #290 / ADR-0036）', 
     await setInput('create-instrument-symbol', ' 稳稳地幸福 ')
     await setInput('create-instrument-name', ' 稳稳地幸福 ')
     expect(submitButton().disabled).toBe(false)
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'create_instrument') return Promise.resolve('inst-new')
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'create_instrument' ? Promise.resolve('inst-new') : base(cmd, args),
+    )
     await bodyQuery('[data-testid="submit-create-instrument"]')!.dispatchEvent(
       new MouseEvent('click', { bubbles: true }),
     )
@@ -146,15 +147,14 @@ describe('CreateInstrumentModal 新建标的弹窗（issue #290 / ADR-0036）', 
     typeSelect.vm.$emit('update:value', 'stock')
     await setInput('create-instrument-symbol', '600519')
     await setInput('create-instrument-name', '贵州茅台')
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'create_instrument')
-        return Promise.reject({
-          kind: 'Invalid',
-          message: '股票类标的不支持手动创建：股票字典由「全量同步」从东方财富维护',
-        })
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-    })
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'create_instrument'
+        ? Promise.reject({
+            kind: 'Invalid',
+            message: '股票类标的不支持手动创建：股票字典由「全量同步」从东方财富维护',
+          })
+        : base(cmd, args),
+    )
     await bodyQuery('[data-testid="submit-create-instrument"]')!.dispatchEvent(
       new MouseEvent('click', { bubbles: true }),
     )

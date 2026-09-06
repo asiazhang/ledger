@@ -25,6 +25,7 @@ vi.mock('naive-ui', async (importOriginal) => {
 import { open } from '@tauri-apps/plugin-dialog'
 import DataLocationSettings from '@/components/settings/DataLocationSettings.vue'
 import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 
 const mockInvoke = vi.mocked(invoke)
 const mockOpen = vi.mocked(open)
@@ -42,20 +43,18 @@ const baseInfo: DataLocationInfo = {
 
 /** mock-invoke 桩：默认返回 baseInfo，测试用 overrides 覆写差异项。 */
 function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
-  mockInvoke.mockImplementation((cmd: string, args?: any) => {
-    if (cmd in overrides) return overrides[cmd](args)
-    if (cmd === 'get_data_location_info') return Promise.resolve(baseInfo)
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  stubReferenceInvoke({
+    get_data_location_info: () => baseInfo,
+    list_insurers: [],
+    ...overrides,
   })
 }
 
 /** 让下一次 get_data_location_info 返回指定信息（模拟提交意图后刷新）。 */
 function nextInfo(info: DataLocationInfo) {
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'get_data_location_info') return Promise.resolve(info)
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  stubReferenceInvoke({
+    get_data_location_info: info,
+    list_insurers: [],
   })
 }
 
@@ -134,14 +133,15 @@ describe('DataLocationSettings.vue', () => {
     }
     mockOpen.mockResolvedValue('/Volumes/Sync/ledger-data')
     let called = 0
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'get_data_location_info') {
+    stubReferenceInvoke({
+      get_data_location_info: () => {
         called += 1
-        return Promise.resolve(called > 1 ? { ...baseInfo, pending_restart: true, configured_dir: '/Volumes/Sync/ledger-data' } : baseInfo)
-      }
-      if (cmd === 'submit_data_location_change') return Promise.resolve(committed)
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+        return called > 1
+          ? { ...baseInfo, pending_restart: true, configured_dir: '/Volumes/Sync/ledger-data' }
+          : baseInfo
+      },
+      submit_data_location_change: committed,
+      list_insurers: [],
     })
     const wrapper = mount(DataLocationSettings)
     await flushPromises()
@@ -167,14 +167,13 @@ describe('DataLocationSettings.vue', () => {
     }
     mockOpen.mockResolvedValue('/Volumes/Sync/ledger-data')
     let submits = 0
-    mockInvoke.mockImplementation((cmd: string, args?: any) => {
-      if (cmd === 'get_data_location_info') return Promise.resolve(baseInfo)
-      if (cmd === 'submit_data_location_change') {
+    stubReferenceInvoke({
+      get_data_location_info: baseInfo,
+      submit_data_location_change: () => {
         submits += 1
         return Promise.resolve(submits === 1 ? choice : committed)
-      }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      },
+      list_insurers: [],
     })
     const wrapper = mount(DataLocationSettings)
     await flushPromises()
@@ -206,14 +205,13 @@ describe('DataLocationSettings.vue', () => {
     const choice: DataLocationChangeOutcome = { requires_choice: true, committed: false, target_dir: null }
     mockOpen.mockResolvedValue('/Volumes/Sync/ledger-data')
     let submits = 0
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'get_data_location_info') return Promise.resolve(baseInfo)
-      if (cmd === 'submit_data_location_change') {
+    stubReferenceInvoke({
+      get_data_location_info: baseInfo,
+      submit_data_location_change: () => {
         submits += 1
         return Promise.resolve(choice)
-      }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      },
+      list_insurers: [],
     })
     const wrapper = mount(DataLocationSettings)
     await flushPromises()
@@ -231,14 +229,13 @@ describe('DataLocationSettings.vue', () => {
     const choice: DataLocationChangeOutcome = { requires_choice: true, committed: false, target_dir: null }
     mockOpen.mockResolvedValue('/Volumes/Sync/ledger-data')
     let submits = 0
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'get_data_location_info') return Promise.resolve(baseInfo)
-      if (cmd === 'submit_data_location_change') {
+    stubReferenceInvoke({
+      get_data_location_info: baseInfo,
+      submit_data_location_change: () => {
         submits += 1
         return Promise.resolve(choice)
-      }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      },
+      list_insurers: [],
     })
     const wrapper = mount(DataLocationSettings)
     await flushPromises()
@@ -329,14 +326,13 @@ describe('DataLocationSettings.vue', () => {
       target_dir: '/Users/me/Library/Application Support/ledger',
     }
     let submits = 0
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'get_data_location_info') return Promise.resolve(current)
-      if (cmd === 'restore_default_data_location') {
+    stubReferenceInvoke({
+      get_data_location_info: current,
+      restore_default_data_location: () => {
         submits += 1
         return Promise.resolve(submits === 1 ? choice : committed)
-      }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      },
+      list_insurers: [],
     })
     const wrapper = mount(DataLocationSettings)
     await flushPromises()
@@ -361,9 +357,9 @@ describe('DataLocationSettings.vue', () => {
       target_dir: '/Volumes/Sync/ledger-data',
     }
     mockOpen.mockResolvedValue('/Volumes/Sync/ledger-data')
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'get_data_location_info') return Promise.resolve(baseInfo)
-      if (cmd === 'submit_data_location_change') {
+    stubReferenceInvoke({
+      get_data_location_info: baseInfo,
+      submit_data_location_change: () => {
         // 提交后下一次查询返回新意图：展示值必须来自命令返回而非本地推断。
         mockInvoke.mockImplementation((cmd2: string) => {
           if (cmd2 === 'get_data_location_info') {
@@ -373,13 +369,11 @@ describe('DataLocationSettings.vue', () => {
               pending_restart: true,
             })
           }
-          if (cmd === 'list_insurers') return Promise.resolve([])
           return Promise.reject(new Error(`unexpected invoke: ${cmd2}`))
         })
         return Promise.resolve(committed)
-      }
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+      },
+      list_insurers: [],
     })
     const wrapper = mount(DataLocationSettings)
     await flushPromises()

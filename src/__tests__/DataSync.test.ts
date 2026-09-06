@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
 import SettingsView from '@/views/SettingsView.vue'
 import CategoryManager from '@/components/CategoryManager.vue'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Currency } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
@@ -18,13 +19,12 @@ const mockCurrencies: Currency[] = [
 beforeEach(async () => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
-  mockInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve([])
-    if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  stubReferenceInvoke({
+    list_currencies: mockCurrencies,
+    list_accounts: [],
+    list_categories: [],
+    list_insurers: [],
+    list_merchants: [],
   })
   localStorage.clear()
   const store = useReferenceStore()

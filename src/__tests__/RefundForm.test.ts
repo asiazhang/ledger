@@ -3,32 +3,11 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { useReferenceStore } from '@/stores/reference'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import RefundForm from '@/components/RefundForm.vue'
-import type { Account, Category, Currency, Transaction } from '@/types'
+import type { Transaction } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
-
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-]
-
-const mockAccounts: Account[] = [
-  {
-    id: 'acc-1', name: '现金', type: 'cash', currency_code: 'CNY',
-    initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test',
-    is_deleted: false,
-  },
-]
-
-const mockCategories: Category[] = [
-  {
-    id: 'cat-1', name: '餐饮', kind: 'expense', parent_id: null,
-    icon: null, created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test',
-    is_deleted: false,
-  },
-]
 
 /** 行内退款模式的固定原交易（¥30 支出） */
 const fixedTx: Transaction = {
@@ -51,13 +30,10 @@ describe('RefundForm.vue', () => {
   beforeEach(async () => {
     setActivePinia(createPinia())
     mockInvoke.mockReset()
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
-      if (cmd === 'list_categories') return Promise.resolve(mockCategories)
-      if (cmd === 'list_insurers') return Promise.resolve([])
-      if (cmd === 'list_merchants') return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    // 参考命令桩统一走共享助手（issue #725）：币种/账户/分类与规范夹具等值流入
+    stubReferenceInvoke({
+      list_insurers: [],
+      list_merchants: [],
     })
     // Pre-load store so components have data
     const store = useReferenceStore()
@@ -177,10 +153,8 @@ describe('RefundForm.vue', () => {
     })
 
     it('创建成功后表单不留潜伏红态（清空金额但初始为空不红，ADR-0058 决策 2）', async () => {
-      mockInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'create_transaction') return Promise.resolve('refund-id')
-        return Promise.resolve([])
-      })
+      // 重桩：提交成功走 create_transaction，参考命令经共享助手回归规范夹具（issue #725）
+      stubReferenceInvoke({ create_transaction: 'refund-id' })
       const wrapper = mount(RefundForm, { props: { fixedTarget: fixedTx } })
       // 行内模式金额预填 30：先清空（未失焦不红），再制造一次保存尝试（空值兜底
       // 红态、静默中止）与失焦（时机标志置位），最后填合法值提交

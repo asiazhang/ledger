@@ -6,10 +6,11 @@ import { listen } from '@tauri-apps/api/event'
 import { NDialogProvider, NSelect, NTreeSelect } from 'naive-ui'
 import { h, reactive } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
+import { stubReferenceInvoke } from './helpers/reference-stubs'
 import CategoryManager from '@/components/CategoryManager.vue'
 import CategoryForm from '@/components/CategoryForm.vue'
 import TransactionsView from '@/views/TransactionsView.vue'
-import type { Account, Category, Currency, Transaction } from '@/types'
+import type { Account, Category, Transaction } from '@/types'
 
 // TransactionsView 经 useRoute 读取 URL query（?account=<id> 只读入口，issue #97）；
 // 本文件挂载该视图但无路由上下文，mock 为空 query（无账户过滤，不影响既有断言）。
@@ -28,11 +29,6 @@ vi.mock('vue-router', () => ({
 
 const mockInvoke = vi.mocked(invoke)
 const mockListen = vi.mocked(listen)
-
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-  { code: 'USD', name: '美元', symbol: '$', decimal_places: 2 },
-]
 
 const mockAccounts: Account[] = [
   {
@@ -101,19 +97,15 @@ const importedCategory: Category = {
 
 let changedHandlers: Array<(...args: unknown[]) => void> = []
 
-/** 参考数据 list_* 命令的默认 mock 实现；overrides 可替换为写后数据库状态。 */
-function listImpl(overrides: {
+/** 参考数据命令覆写集；overrides 可替换为写后数据库状态（币种/商户/保司走共享助手规范夹具）。 */
+function listOverrides(overrides: {
   accounts?: Account[]
   categories?: Category[]
-} = {}): (cmd: string) => Promise<unknown> {
-  return (cmd: string) => {
-    if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
-    if (cmd === 'list_accounts') return Promise.resolve(overrides.accounts ?? mockAccounts)
-    if (cmd === 'list_categories') return Promise.resolve(overrides.categories ?? mockCategories)
-    if (cmd === 'list_insurers') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve([])
-    if (cmd === 'list_policies') return Promise.resolve([])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+} = {}) {
+  return {
+    list_accounts: overrides.accounts ?? mockAccounts,
+    list_categories: overrides.categories ?? mockCategories,
+    list_policies: [] as unknown[],
   }
 }
 
@@ -121,7 +113,7 @@ beforeEach(async () => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
   mockListen.mockReset()
-  mockInvoke.mockImplementation(listImpl())
+  stubReferenceInvoke(listOverrides())
   mockListen.mockImplementation((_event: string, handler: (...args: unknown[]) => void) => {
     // 多个 store（reference / items 等）各自订阅同一信号，全部捕获、全部触发
     changedHandlers.push(handler)
@@ -147,7 +139,7 @@ async function simulateExternalWrite(patch: {
   accounts?: Account[]
   categories?: Category[]
 }) {
-  mockInvoke.mockImplementation(listImpl(patch))
+  stubReferenceInvoke(listOverrides(patch))
   changedHandlers.forEach((h) => h({ payload: undefined }))
   await flushPromises()
 }
@@ -191,11 +183,9 @@ describe('组件层反应性：mock ledger:changed 使界面/选项原地更新�
 
   it('交易列表映射渲染：外部 AI 更新分类名后，已打开的交易列表分类列原地显示新名称', async () => {
     const txnDb: Transaction[] = [makeTxn(1, 'cat-food'), makeTxn(2, 'cat-food')]
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_transactions') {
-        return Promise.resolve({ items: txnDb, total: txnDb.length })
-      }
-      return listImpl()(cmd)
+    stubReferenceInvoke({
+      ...listOverrides(),
+      list_transactions: () => Promise.resolve({ items: txnDb, total: txnDb.length }),
     })
 
     // TransactionsView 顶层调用 useDialog（issue #151），需 NDialogProvider 包裹（同 App.vue）
@@ -221,13 +211,12 @@ describe('组件层反应性：mock ledger:changed 使界面/选项原地更新�
     expect(wrapper.text()).toContain('餐饮')
 
     let resolveCats!: (v: Category[]) => void
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_categories') {
-        return new Promise((res) => {
+    stubReferenceInvoke({
+      ...listOverrides(),
+      list_categories: () =>
+        new Promise((res) => {
           resolveCats = res
-        })
-      }
-      return listImpl()(cmd)
+        }),
     })
 
     // 触发 push：重拉挂起期间，已打开的分类树不闪空（旧数据原样保留）
