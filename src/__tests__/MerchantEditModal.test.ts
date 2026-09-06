@@ -60,7 +60,7 @@ describe('MerchantEditModal.vue（issue #189）', () => {
   })
 
   it('打开时回填商户名称（表单只含名称输入，icon/color 已退役）', async () => {
-    const wrapper = mount(MerchantEditModal, {
+    mount(MerchantEditModal, {
       props: { show: true, merchant: mockMerchant },
     })
     await flushPromises()
@@ -93,7 +93,7 @@ describe('MerchantEditModal.vue（issue #189）', () => {
   })
 
   it('空名称保存被拦截（不调用 update_merchant）', async () => {
-    const wrapper = mount(MerchantEditModal, {
+    mount(MerchantEditModal, {
       props: { show: true, merchant: mockMerchant },
     })
     await flushPromises()

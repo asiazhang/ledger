@@ -7,7 +7,7 @@ import LendingForm from '@/components/LendingForm.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import TransferForm from '@/components/TransferForm.vue'
 import TransactionForm from '@/components/TransactionForm.vue'
-import type { Account, Transaction } from '@/types'
+import type { Account } from '@/types'
 
 /** 覆盖资金侧 + 借出侧 + 负债侧的账户集（经 setAccountDb 注入，issue #374）。 */
 const lendingAccounts: Account[] = [

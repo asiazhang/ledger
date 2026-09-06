@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { errorMessage } from '@/utils/errors'
 import { applyLocale, i18n } from '@/i18n'
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { nextTick } from 'vue'

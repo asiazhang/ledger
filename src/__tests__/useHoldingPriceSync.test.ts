@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke } from './helpers/invoke-mock'
 import { useHoldingPriceSync } from '@/composables/useHoldingPriceSync'
 

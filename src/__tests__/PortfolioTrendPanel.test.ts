@@ -11,7 +11,7 @@ import {
   resetPricesChangedHandler,
 } from './prices-changed-mock'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
-import type { Instrument, PortfolioValueTrend } from '@/types'
+import type { PortfolioValueTrend } from '@/types'
 
 vi.mock('vue-chartjs', async () => {
   const { LineChartStub } = await import('./line-chart-stub')

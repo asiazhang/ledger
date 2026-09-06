@@ -3,7 +3,6 @@ import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from "@vue/test-utils";
 import { defineComponent } from "vue";
 import { setActivePinia, createPinia } from "pinia";
-import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({

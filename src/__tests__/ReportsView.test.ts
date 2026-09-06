@@ -696,7 +696,7 @@ describe('ReportsView 商户排行表格化 + TopN（issue #588 → #618）', ()
 
     setActivePinia(createPinia())
     mockInvoke.mockClear()
-    const third = await mountReports()
+    await mountReports()
     expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', {
       year: Y,
       from: `${Y}-01-01`,
