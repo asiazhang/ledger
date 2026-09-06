@@ -507,8 +507,9 @@ pub(crate) fn run_benchmarks(
 
 /// 初始化 tracing subscriber（stderr，默认 info）：让连接工厂自动挂载的
 /// perf_trace 慢查询 warn（≥100ms）在终端可见。重复初始化静默忽略
-/// （测试进程内可能已被其它用例占用全局 subscriber）。
-fn init_tracing() {
+/// （测试进程内可能已被其它用例占用全局 subscriber）。bench-import 子命令
+/// 同样依赖该挂载归因刷新段耗时（issue #532），故开放为 bin 内共享。
+pub(crate) fn init_tracing() {
     use tracing_subscriber::EnvFilter;
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let _ = tracing_subscriber::fmt()

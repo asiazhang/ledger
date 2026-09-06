@@ -2,8 +2,10 @@
 # workflow（build.yml，push/PR 触发）刻意分离——本 workflow 只在每日 cron
 # 与手动 dispatch 时运行：
 #   现场生成 50 万笔基准库（ledger-perf generate，seed 42）→ 跑 11 项查询
-#   基准（ledger-perf bench --iterations 20 --max-p95-ms 200）→ Markdown 耗时
-#   报告写入 $GITHUB_STEP_SUMMARY。
+#   基准（ledger-perf bench --iterations 20 --max-p95-ms 200）→ 批量导入写
+#   基准观测（ledger-perf bench-import，issue #532：只跑最大档 200 行 ×
+#   两分布、只记录不判定——写基准阈值未立，待 CI 基线分布稳定后修订
+#   ADR-0068 另立判据）→ Markdown 报告写入 $GITHUB_STEP_SUMMARY。
 # 「每日一次、前提是有代码变动」由 gate job 兜底：schedule 触发时比对本次
 # 调度的提交与本 workflow 最近一次成功运行的 head_sha——相同即自上次成功
 # 以来无新代码，整体跳过不空转；上次失败则最近成功停在更早提交、差异
@@ -14,8 +16,9 @@
 # 实测撤销（issue #516），分项例外机制保留、现行清单见 ADR-0068 与 bench
 # 工具内 PER_BENCH_MAX_P95_MS（当前为空）。任何一项超标 bench 以非零退出、
 # job 失败（超标清单随报告
-# 进 Summary）。不在 PR 上跑：一次 release 冷编译 + 生成 + 基准 ≈ 6 分钟
-# （rust-cache 命中时），回归由每日基线与性能批合入后的手动触发拦截。
+# 进 Summary）。不在 PR 上跑：一次 release 冷编译 + 生成 + 两段基准 ≈ 13
+# 分钟（rust-cache 命中时；bench-import 最大档观测约占 7 分钟），回归由
+# 每日基线与性能批合入后的手动触发拦截。
 # 生成器正确性单测（src/bin/ledger-perf/tests.rs，issue #459 验收项）原随
 # build.yml 的 cargo test --all 运行，2026-09 起迁入本 workflow：bin 测试
 # target 不再占用 PR CI 编译与执行，工具链回归随每日基准一并拦截。
@@ -127,6 +130,21 @@ jobs:
           # 超标即非零退出（pipefail 保持步骤红）。
           ./target/release/ledger-perf bench --iterations 20 --max-p95-ms 200 | tee bench-report.txt
 
+      - name: 运行批量导入写基准（bench-import，最大档 200 行 × 两分布，只记录不判定）
+        id: bench-import
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          set -o pipefail
+          # --rows 200：CI 只跑上限月最大档（写基准单元秒级，全矩阵入 CI
+          # 单次 run 成本翻三倍；50/100 档留作本地观察档）；--iterations 20：
+          # 与 ADR-0068 同款真分位数口径（n<20 时 p95=max 无分辨力），
+          # 观察期收集的分布就是将来立阈值的直接依据。不传 --max-p95-ms：
+          # 写基准无门禁（本地/CI 磁盘口径差异未测，阈值待 CI 基线分布
+          # 稳定后修订 ADR-0068 另立判据，同 ADR-0062→0068 先观察后立阈
+          # 的先例顺序）。
+          ./target/release/ledger-perf bench-import --rows 200 --iterations 20 | tee bench-import-report.txt
+
       - name: 写入 Job Summary（Markdown 耗时报告 + 门禁结果）
         if: always()
         run: |
@@ -145,5 +163,19 @@ jobs:
               ./scripts/perf-summary.sh src-tauri/bench-report.txt
             else
               echo '> ⚠️ bench 未产出报告（bench 步骤失败，详见上方日志）'
+            fi
+            echo
+            echo "## ledger-perf 批量导入写基准（bench-import，只记录不判定）"
+            echo
+            if [ "${{ steps.bench-import.outcome }}" = "success" ]; then
+              echo "- 观测：✅ 完成（最大档 200 行 × 两分布；写基准无门禁阈值，待 CI 基线分布稳定后修订 ADR-0068 另立判据）"
+            else
+              echo "- 观测：❌ 未完成 —— bench-import 步骤失败（详见上方日志）"
+            fi
+            echo
+            if [ -f src-tauri/bench-import-report.txt ]; then
+              ./scripts/perf-summary.sh src-tauri/bench-import-report.txt "ledger-perf bench-import stdout"
+            else
+              echo '> ⚠️ bench-import 未产出报告（步骤失败，详见上方日志）'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
