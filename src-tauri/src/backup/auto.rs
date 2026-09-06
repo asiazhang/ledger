@@ -462,19 +462,40 @@ pub(crate) fn lock_conn_with_timeout(
     }
 }
 
+/// 调度线程单次拉起守卫（issue #644 / ADR-0080）：启动、解锁恢复、原位重
+/// 引导三个入口收敛为「进程内至多一个调度线程」——线程持共享连接 Arc，
+/// 重引导换连对它透明；锁定/失败期间由每轮门检空转，不重建线程。
+static SCHEDULER_SPAWNED: AtomicBool = AtomicBool::new(false);
+
 /// 启动调度轮询线程（标准轮询线程模式：spawn + sleep）。
 ///
 /// 单一 tick 双判定（issue #307 / ADR-0042）：每轮先做自动备份到期判定，再做
 /// 定时计划追补判定；线程只做周期调用——备份决策全在纯函数到期判定，追补决策
 /// 全在参数注入（连接、开关状态、今天日期）的追补入口（开关从运行时镜像读出）。
+///
+/// 幂等（issue #644 / ADR-0080）：已在跑时本调用退化为无操作；每轮门检在
+/// 锁定/启动失败期间跳过备份与追补（占位连接不是业务库）——原位重引导把
+/// 门翻回锁定后，已存活的线程在门检处等待，解锁/恢复后自动继续。
 pub fn start_scheduler(app: &tauri::AppHandle) {
     use tauri::Manager;
+    if SCHEDULER_SPAWNED.swap(true, Ordering::SeqCst) {
+        return;
+    }
     let conn = Arc::clone(&app.state::<DbState>().conn);
+    let gate = crate::db::encryption::EncryptionGate::clone(
+        &app.state::<crate::db::encryption::EncryptionGate>(),
+    );
+    let boot_gate =
+        crate::db::boot::BootFailureGate::clone(&app.state::<crate::db::boot::BootFailureGate>());
     let dir_mirror = Arc::clone(&shared_prefs().dir);
     let handle = app.clone();
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(Duration::from_secs(CHECK_INTERVAL_SECS));
+            // 每轮门检（issue #644 / ADR-0080）：锁定/启动失败期间不触碰占位连接。
+            if gate.is_locked() || boot_gate.is_failed() {
+                continue;
+            }
             let Some(guard) = lock_conn_with_timeout(&conn) else {
                 continue; // 拿不到锁：跳过本轮、保留脏标记。
             };

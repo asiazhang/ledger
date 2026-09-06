@@ -588,3 +588,42 @@ fn then_source_preserved(world: &mut LedgerWorld) {
         "源库应保持密文形态"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 原位重引导计划（issue #644 / ADR-0080）：重启命令消费的引导序列内核
+// ---------------------------------------------------------------------------
+
+#[when(expr = "制定重引导计划")]
+fn when_plan_reboot(world: &mut LedgerWorld) {
+    let default_dir = world.enc_dir.clone().expect("尚未准备加密场景目录");
+    let plan = tauri_app_lib::db::boot::plan_boot(&default_dir);
+    world.last_boot = Some(plan.boot);
+    world.enc_last_plan = Some(plan.disposition.map_err(|e| e.to_string()));
+}
+
+#[then(expr = "重引导后生效目录应为目标目录")]
+fn then_plan_dir_is_target(world: &mut LedgerWorld) {
+    let boot = world.last_boot.as_ref().expect("尚未制定重引导计划");
+    let target = world.enc_target_dir.as_ref().expect("尚未配置搬迁目标目录");
+    assert_eq!(&boot.db_dir, target, "重引导后生效目录应切换到搬迁目标目录");
+}
+
+#[then(expr = "重引导处置应等待解锁")]
+fn then_plan_awaits_unlock(world: &mut LedgerWorld) {
+    let plan = world.enc_last_plan.as_ref().expect("尚未制定重引导计划");
+    assert_eq!(
+        plan.as_ref().expect("重引导计划不应失败"),
+        &tauri_app_lib::db::boot::BootDisposition::AwaitUnlock,
+        "重引导后密文库应推进到等待解锁（与启动同序列）"
+    );
+}
+
+#[then(expr = "重引导处置应就绪建连")]
+fn then_plan_ready(world: &mut LedgerWorld) {
+    let plan = world.enc_last_plan.as_ref().expect("尚未制定重引导计划");
+    assert_eq!(
+        plan.as_ref().expect("重引导计划不应失败"),
+        &tauri_app_lib::db::boot::BootDisposition::OpenPlaintext,
+        "重引导后明文库应就绪建连（与启动同序列）"
+    );
+}
