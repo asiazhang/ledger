@@ -59,11 +59,14 @@ async function saveEdit() {
     @update:show="(v: boolean) => emit('update:show', v)"
   >
     <NForm label-placement="left" :show-feedback="false" size="small">
-      <NFormItem :label="t('settings.merchants.form.name')">
-        <NInput v-model:value="editName" :placeholder="t('settings.merchants.form.namePlaceholder')" />
-      </NFormItem>
-      <NSpace justify="end">
-        <NButton type="primary" @click="saveEdit">{{ t('settings.merchants.form.save') }}</NButton>
+      <!-- 行距由 NSpace 12 统一提供（对话框排版规范，issue #699）：NFormItem 默认零行距 -->
+      <NSpace vertical :size="12">
+        <NFormItem :label="t('settings.merchants.form.name')">
+          <NInput v-model:value="editName" :placeholder="t('settings.merchants.form.namePlaceholder')" />
+        </NFormItem>
+        <NSpace justify="end">
+          <NButton type="primary" @click="saveEdit">{{ t('settings.merchants.form.save') }}</NButton>
+        </NSpace>
       </NSpace>
     </NForm>
   </AppModal>
