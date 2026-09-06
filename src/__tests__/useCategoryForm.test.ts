@@ -20,14 +20,14 @@ const mockAccounts: Account[] = [
 const mockMerchants: Merchant[] = [
   {
     id: 'mch-1', name: '京东',
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false,
   },
 ]
 
 const mockPolicies: Policy[] = [
   {
-    id: 'pol-1', merchant_id: 'mch-1', policy_number: 'P2026-001',
+    id: 'pol-1', insurer_id: 'mch-1', policy_number: 'P2026-001',
     product_name: '重疾险', start_date: '2026-01-01', end_date: '2036-01-01',
     coverage_amount_cents: null, coverage_currency_code: null,
     note: null, is_deleted: false, created_at: '2026-01-01T00:00:00Z',
@@ -45,10 +45,16 @@ const editingTx: Transaction = {
   to_account_id: null,
   category_id: null,
   merchant_id: 'mch-1',
+  policy_id: null,
   refund_of_transaction_id: null,
   note: null,
   date: '2026-02-01',
   created_at: '2026-02-01T00:00:00Z',
+  updated_at: '2026-02-01T00:00:00Z',
+  version: 1,
+  device_id: 'test',
+  is_deleted: false,
+  source: null,
 }
 
 function mockBaseCommands(merchants: Merchant[] = mockMerchants) {
@@ -148,7 +154,7 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
               ...mockMerchants,
               {
                 id: 'mch-exist', name: '盒马',
-                created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+                updated_at: '2026-01-01T00:00:00Z',
                 version: 1, device_id: 'test', is_deleted: false,
               },
             ]

@@ -29,6 +29,9 @@ const mockInstruments: Instrument[] = [
     version: 1,
     device_id: 'test',
     is_deleted: false,
+    source: 'eastmoney',
+    price_cents: null,
+    invested: false,
   },
   {
     id: 'inst-2',
@@ -42,6 +45,9 @@ const mockInstruments: Instrument[] = [
     version: 1,
     device_id: 'test',
     is_deleted: false,
+    source: 'eastmoney',
+    price_cents: null,
+    invested: false,
   },
   {
     id: 'inst-3',
@@ -55,6 +61,9 @@ const mockInstruments: Instrument[] = [
     version: 1,
     device_id: 'test',
     is_deleted: false,
+    source: 'eastmoney',
+    price_cents: null,
+    invested: false,
   },
 ]
 

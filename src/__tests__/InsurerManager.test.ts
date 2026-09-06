@@ -36,12 +36,12 @@ enableAutoUnmount(afterEach)
 const mockInsurers: Insurer[] = [
   {
     id: 'ins-1', name: '平安人寿',
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false,
   },
   {
     id: 'ins-2', name: '人保财险',
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false,
   },
 ]
@@ -105,7 +105,7 @@ describe('InsurerManager.vue 管理（issue #714 / ADR-0082 决策 3）', () => 
           ...insurerDb,
           {
             id: 'ins-new', name: args!.input!.name,
-            created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
             version: 1, device_id: 'test', is_deleted: false,
           },
         ]
@@ -245,7 +245,7 @@ describe('InsurerManager.vue 拼音模糊搜索（issue #714，统一模糊搜�
     '平安人寿', '平安财险', '中国人寿', '泰康人寿', '众安保险',
   ].map((name, i) => ({
     id: `ins-s-${i}`, name,
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false,
   }))
 
@@ -319,7 +319,7 @@ describe('InsurerManager.vue 拼音模糊搜索（issue #714，统一模糊搜�
 describe('InsurerManager.vue 显示已删切换（issue #714）', () => {
   const deletedInsurer: Insurer = {
     id: 'ins-del', name: '已裁撤保司',
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: true,
   }
 

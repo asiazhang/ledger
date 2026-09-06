@@ -13,9 +13,9 @@ import type { MerchantSharesReport } from '@/types'
 // 排序与 topN 截断收口后端，面板按返回序渲染、无排名序号列。
 
 const mockMerchants: Merchant[] = [
-  { id: 'm1', name: '京东', is_deleted: false, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test' },
-  { id: 'm2', name: '红旗连锁', is_deleted: false, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test' },
-  { id: 'm3', name: '退款户', is_deleted: false, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test' },
+  { id: 'm1', name: '京东', is_deleted: false, updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test' },
+  { id: 'm2', name: '红旗连锁', is_deleted: false, updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test' },
+  { id: 'm3', name: '退款户', is_deleted: false, updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test' },
 ]
 
 /** 夹具即后端返回顺序（净额降序 + topN 截断已收口后端），面板只渲染不再排序。 */

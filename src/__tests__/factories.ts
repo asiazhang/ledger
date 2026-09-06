@@ -1,4 +1,4 @@
-import { vi } from 'vitest'
+import { vi, type Mock } from 'vitest'
 import { REFERENCE_DEFAULTS } from './helpers/reference-stubs'
 import { registerToastSink, type ToastSink } from '@/composables/useLoadable'
 import type {
@@ -176,6 +176,7 @@ export function makeTransaction(partial: Partial<Transaction> & { id: string }):
     to_account_id: null,
     category_id: null,
     merchant_id: null,
+    policy_id: null,
     refund_of_transaction_id: null,
     note: null,
     date: '2026-01-01',
@@ -225,8 +226,8 @@ export function makePnlSummary(partial: Partial<RealizedPnlSummary> = {}): Reali
 }
 
 /** 假 toast sink：记录 error toast 调用（Loadable 默认策略经 sink 弹出，断言只看 sink 面） */
-export function makeFakeSink(): ToastSink & { error: ReturnType<typeof vi.fn> } {
-  return { error: vi.fn() }
+export function makeFakeSink(): ToastSink & { error: Mock<(content: string) => void> } {
+  return { error: vi.fn<(content: string) => void>() }
 }
 
 /** 实物资产实体夹具（issue #466）：全字段读模型 + 当前估值三件套。 */

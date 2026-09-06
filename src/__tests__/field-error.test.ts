@@ -6,6 +6,7 @@ import {
   judgeRequiredText,
   judgeMinLengthText,
   fieldErrorKind,
+  type AmountJudgment,
 } from '@/utils/field-error'
 
 /**
@@ -199,8 +200,11 @@ describe('fieldErrorKind（错误态装配：格式类即时红，空值红在�
   const untouched = { touched: false, saveAttempted: false }
 
   it('合法判定永无错误态（任意时机）', () => {
-    expect(fieldErrorKind({ kind: 'ok', yuan: 1 }, untouched)).toBeNull()
-    expect(fieldErrorKind({ kind: 'ok', yuan: 1 }, { touched: true, saveAttempted: true })).toBeNull()
+    // 以真实判定闭集类型承载字面量（fieldErrorKind 入参按结构只取 kind，
+    // 真实调用点传入的是含 yuan 的完整判定对象）
+    const okJudgment: AmountJudgment = { kind: 'ok', yuan: 1 }
+    expect(fieldErrorKind(okJudgment, untouched)).toBeNull()
+    expect(fieldErrorKind(okJudgment, { touched: true, saveAttempted: true })).toBeNull()
   })
 
   it('解析失败即时红（不待失焦/保存尝试）', () => {

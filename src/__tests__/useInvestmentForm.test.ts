@@ -36,7 +36,7 @@ const mockFundInstruments: Instrument[] = [
     id: 'ins-fund', symbol: '000123', name: '某混合基金', type: 'fund', currency_code: 'CNY',
     created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false, market: 'unknown', invested: false,
-    price_cents: null,
+    source: 'eastmoney', price_cents: null,
   },
 ]
 
@@ -49,6 +49,9 @@ const editingTx: Transaction = {
   account_id: 'acc-inv',
   to_account_id: null,
   category_id: null,
+  merchant_id: null,
+  policy_id: null,
+  source: null,
   refund_of_transaction_id: null,
   note: '建仓买入',
   date: '2026-01-10',

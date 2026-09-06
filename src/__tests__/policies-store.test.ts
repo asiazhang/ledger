@@ -19,7 +19,7 @@ function baseStats(over: Partial<PolicyStats> = {}): PolicyStats {
 }
 
 const createInput: PolicyInput = {
-  merchant_id: 'm-1',
+  insurer_id: 'm-1',
   policy_number: 'P2026-002',
   product_name: '医疗险',
   start_date: '2026-02-01',

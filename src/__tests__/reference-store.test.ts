@@ -53,12 +53,12 @@ const mockCategories: Category[] = [
 const mockMerchants: Merchant[] = [
   {
     id: 'mch-1', name: '京东',
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false,
   },
   {
     id: 'mch-2', name: '红旗连锁',
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false,
   },
 ]
@@ -66,12 +66,12 @@ const mockMerchants: Merchant[] = [
 const mockInsurers: Insurer[] = [
   {
     id: 'ins-1', name: '平安人寿',
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false,
   },
   {
     id: 'ins-del', name: '已删保司',
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: true,
   },
 ]
@@ -98,7 +98,8 @@ const newCategories: Category[] = [
 ]
 const newMerchants: Merchant[] = [
   {
-    created_at: '2026-02-01T00:00:00Z', updated_at: '2026-02-01T00:00:00Z',
+    id: 'mch-new', name: '新商户',
+    updated_at: '2026-02-01T00:00:00Z',
     version: 1, device_id: 'test', is_deleted: false,
   },
 ]
@@ -197,8 +198,8 @@ describe('useReferenceStore', () => {
       list_accounts: mockAccounts,
       list_categories: mockCategories,
       list_insurers: [
-        { id: 'ins-1', name: '平安人寿', is_deleted: false, created_at: '', updated_at: '', version: 1, device_id: 'test' },
-        { id: 'ins-2', name: '海峡金桥', is_deleted: true, created_at: '', updated_at: '', version: 1, device_id: 'test' },
+        { id: 'ins-1', name: '平安人寿', is_deleted: false, updated_at: '', version: 1, device_id: 'test' },
+        { id: 'ins-2', name: '海峡金桥', is_deleted: true, updated_at: '', version: 1, device_id: 'test' },
       ],
     })
     await store.refresh()

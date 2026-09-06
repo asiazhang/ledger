@@ -72,6 +72,7 @@ function makePlan(
   return {
     core,
     merchant_id: null,
+    policy_id: null,
     total_amount_cents: null,
     total_occurrences: null,
     to_account_id: null,

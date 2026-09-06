@@ -4,6 +4,7 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { defineComponent } from "vue";
 import { setActivePinia, createPinia } from "pinia";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { AutoBackupState } from "@/types";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(),
@@ -44,7 +45,7 @@ const manualBackupFile: BackupFileInfo = {
 
 function makeStub(initialList: BackupFileInfo[]) {
   let list: BackupFileInfo[] = initialList;
-  let autoState = { enabled: true, last_backup_at: null };
+  let autoState: AutoBackupState = { enabled: true, last_backup_at: null };
   const listCalls = () =>
     mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_backups").length;
 

@@ -19,7 +19,7 @@ afterEach(() => {
 })
 
 const mockMerchants: Merchant[] = [
-  { id: 'mer-1', name: '平安保险', is_deleted: false, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test' },
+  { id: 'mer-1', name: '平安保险', is_deleted: false, updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test' },
 ]
 
 /** 订阅花费总览空数据（定时页签挂载即拉取，容器壳测试不关心行内容）。 */

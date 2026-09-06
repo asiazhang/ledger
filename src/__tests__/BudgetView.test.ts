@@ -39,6 +39,10 @@ const mockCategories: Category[] = [
     icon: null,
     sort_order: 0,
     created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: false,
   },
   {
     id: 'cat-1-sub',
@@ -48,6 +52,10 @@ const mockCategories: Category[] = [
     icon: null,
     sort_order: 0,
     created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: false,
   },
   {
     id: 'cat-2',
@@ -57,6 +65,10 @@ const mockCategories: Category[] = [
     icon: null,
     sort_order: 0,
     created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: false,
   },
   {
     id: 'cat-2-sub',
@@ -66,6 +78,10 @@ const mockCategories: Category[] = [
     icon: null,
     sort_order: 0,
     created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    version: 1,
+    device_id: 'test',
+    is_deleted: false,
   },
 ]
 

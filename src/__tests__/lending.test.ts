@@ -117,6 +117,10 @@ describe('LENDING_DIRECTION_SIDES（方向 → 账户过滤侧别）与派生判
   it('方向派生与过滤表互为镜像：按过滤表选出的两端账户必派生回同一方向', () => {
     for (const direction of LENDING_FORM_DIRECTIONS) {
       const { from, to } = LENDING_DIRECTION_SIDES[direction]
+      // 不变量前提：四个真实方向的侧别不含 unknown（防御值不参与方向派生）
+      if (from === 'unknown' || to === 'unknown') {
+        throw new Error(`方向 ${direction} 的侧别含 unknown，镜像断言前提不成立`)
+      }
       const fromType: AccountType = from === 'fund' ? 'cash' : from
       const toType: AccountType = to === 'fund' ? 'bank' : to
       expect(deriveLendingDirection('transfer', fromType, toType)).toBe(direction)

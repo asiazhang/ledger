@@ -74,7 +74,6 @@ const mockMerchants: Merchant[] = [
   {
     id: 'mer-jd',
     name: '京东',
-    created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     version: 1,
     device_id: 'test',
@@ -98,6 +97,8 @@ function makeTransaction(
     account_id: 'acc-cash',
     to_account_id: null,
     category_id: 'cat-food',
+    merchant_id: null,
+    policy_id: null,
     refund_of_transaction_id: null,
     note,
     date,
@@ -106,6 +107,7 @@ function makeTransaction(
     version: 1,
     device_id: 'test',
     is_deleted: false,
+    source: null,
     ...overrides,
   }
 }
