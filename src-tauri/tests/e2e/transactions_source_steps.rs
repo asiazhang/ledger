@@ -9,8 +9,9 @@
 use cucumber::then;
 use rusqlite::params;
 
+use tauri_app_lib::scheduled_transactions::ScheduledKind;
 use tauri_app_lib::transaction::{
-    TransactionListFilter, TransactionSourceKind, TransactionSourceStatus,
+    TransactionListFilter, TransactionSource, TransactionSourceKind, TransactionSourceStatus,
     list_transactions_internal,
 };
 
@@ -93,6 +94,169 @@ fn list_nth_source_deleted_policy(
         &policy_number,
         &product_name,
         Some(TransactionSourceStatus::Deleted),
+    );
+}
+
+/// 断言来源 = 计划来源（issue #707：类型/实体 id/计划名/状态标注）：列表与搜索
+/// 侧共用。计划按备注定位（场景内备注唯一），展示名 = 计划名（备注）。
+fn assert_plan_source(
+    world: &LedgerWorld,
+    source: &TransactionSource,
+    kind: ScheduledKind,
+    note: &str,
+    expected_status: Option<TransactionSourceStatus>,
+) {
+    let expected_kind = match kind {
+        ScheduledKind::Installment => TransactionSourceKind::InstallmentPlan,
+        ScheduledKind::Subscription => TransactionSourceKind::Subscription,
+        ScheduledKind::ScheduledTransfer => TransactionSourceKind::ScheduledTransfer,
+    };
+    let plan_id = world_conn!(world)
+        .query_row(
+            "SELECT id FROM scheduled_transactions WHERE note=?1",
+            params![note],
+            |r| r.get::<_, String>(0),
+        )
+        .unwrap_or_else(|_| panic!("来源断言：备注为 {note} 的计划应已存在"));
+    assert_eq!(source.kind, expected_kind, "来源类型应为计划形态 {kind}");
+    assert_eq!(
+        source.entity_id, plan_id,
+        "来源实体 id 应为生成该期次的计划 id"
+    );
+    assert_eq!(source.display_name, note, "来源展示名应为计划名（备注）");
+    assert_eq!(source.status, expected_status, "来源状态标注不匹配");
+}
+
+/// 断言目标行来源所属快照：交易列表现查或搜索结果快照。
+#[derive(Clone, Copy)]
+enum NthList {
+    List,
+    Search,
+}
+
+/// 取第 index 条行的来源（列表或搜索快照；无来源即 panic，由调用方断言语义）。
+fn nth_source(world: &mut LedgerWorld, list: NthList, index: usize) -> TransactionSource {
+    let source = match list {
+        NthList::List => {
+            let result =
+                list_transactions_internal(&world_conn!(world), &TransactionListFilter::default())
+                    .expect("交易列表查询失败");
+            result.items.into_iter().nth(index - 1)
+        }
+        NthList::Search => world
+            .last_search
+            .clone()
+            .expect("搜索结果快照缺失（先执行搜索步骤）")
+            .items
+            .into_iter()
+            .nth(index - 1),
+    };
+    let txn = source.unwrap_or_else(|| panic!("目标快照第 {index} 条不存在"));
+    txn.source
+        .unwrap_or_else(|| panic!("第 {index} 条交易应携带来源，实际为空"))
+}
+
+/// 断言第 index 条行来源 = 指定形态计划来源（列表或搜索快照）。
+fn assert_nth_plan_source(
+    world: &mut LedgerWorld,
+    list: NthList,
+    index: usize,
+    kind: ScheduledKind,
+    note: &str,
+    expected_status: Option<TransactionSourceStatus>,
+) {
+    let source = nth_source(world, list, index);
+    assert_plan_source(world, &source, kind, note, expected_status);
+}
+
+/// 断言目标行来源所属行（列表或搜索快照）。
+#[then(expr = "交易列表第 {int} 条来源应为分期计划 备注 {string}")]
+fn list_nth_source_installment(world: &mut LedgerWorld, index: usize, note: String) {
+    assert_nth_plan_source(
+        world,
+        NthList::List,
+        index,
+        ScheduledKind::Installment,
+        &note,
+        None,
+    );
+}
+
+#[then(expr = "交易列表第 {int} 条来源应为订阅计划 备注 {string}")]
+fn list_nth_source_subscription(world: &mut LedgerWorld, index: usize, note: String) {
+    assert_nth_plan_source(
+        world,
+        NthList::List,
+        index,
+        ScheduledKind::Subscription,
+        &note,
+        None,
+    );
+}
+
+#[then(expr = "交易列表第 {int} 条来源应为定时转账计划 备注 {string}")]
+fn list_nth_source_transfer(world: &mut LedgerWorld, index: usize, note: String) {
+    assert_nth_plan_source(
+        world,
+        NthList::List,
+        index,
+        ScheduledKind::ScheduledTransfer,
+        &note,
+        None,
+    );
+}
+
+#[then(expr = "交易列表第 {int} 条来源应为已取消订阅计划 备注 {string}")]
+fn list_nth_source_cancelled_subscription(world: &mut LedgerWorld, index: usize, note: String) {
+    assert_nth_plan_source(
+        world,
+        NthList::List,
+        index,
+        ScheduledKind::Subscription,
+        &note,
+        Some(TransactionSourceStatus::Cancelled),
+    );
+}
+
+/// 无备注计划：来源仍在（类型/实体 id 在场），展示名为空串（前端按类型名兜底）。
+#[then(expr = "交易列表第 {int} 条来源应为无备注订阅计划 展示名为空")]
+fn list_nth_source_subscription_without_note(world: &mut LedgerWorld, index: usize) {
+    let result = list_transactions_internal(&world_conn!(world), &TransactionListFilter::default())
+        .expect("交易列表查询失败");
+    let txn = result
+        .items
+        .get(index - 1)
+        .unwrap_or_else(|| panic!("交易列表第 {index} 条不存在"));
+    let source = txn
+        .source
+        .as_ref()
+        .unwrap_or_else(|| panic!("第 {index} 条交易应携带来源，实际为空"));
+    assert_eq!(
+        source.kind,
+        TransactionSourceKind::Subscription,
+        "来源类型应为订阅计划"
+    );
+    let plan_id = world_conn!(world)
+        .query_row(
+            "SELECT id FROM scheduled_transactions WHERE note IS NULL",
+            [],
+            |r| r.get::<_, String>(0),
+        )
+        .unwrap_or_else(|_| panic!("来源断言：无备注计划应已存在"));
+    assert_eq!(source.entity_id, plan_id, "来源实体 id 应为计划 id");
+    assert_eq!(source.display_name, "", "无备注计划展示名应为空串");
+    assert_eq!(source.status, None, "进行中计划不应带状态标注");
+}
+
+#[then(expr = "搜索结果第 {int} 条来源应为订阅计划 备注 {string}")]
+fn search_nth_source_subscription(world: &mut LedgerWorld, index: usize, note: String) {
+    assert_nth_plan_source(
+        world,
+        NthList::Search,
+        index,
+        ScheduledKind::Subscription,
+        &note,
+        None,
     );
 }
 

@@ -1,6 +1,7 @@
 pub mod auto_run;
 pub mod engine;
 pub mod models;
+pub mod source;
 pub mod spend;
 
 // 域模型逐类型再导出（ADR-0059 决策 3：域 model 禁止 glob，#424 守门收口随禁令逐类型化）。
@@ -12,6 +13,7 @@ pub use models::{
     ScheduledTransactionDetail, ScheduledTransactionOccurrence, ScheduledTransactionWithExt,
     ScheduledTransferPlan, SubscriptionPlan, UpdateStatusInput, UpdateSubscriptionInput,
 };
+pub use source::{PlanSourceDisplay, source_display_by_transaction_ids};
 pub use spend::*;
 
 #[cfg(test)]
