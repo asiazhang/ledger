@@ -61,7 +61,7 @@ pub(crate) struct StockQuoteData {
 }
 
 /// 时间戳字段兼容数字与数字字符串（与基金净值 DWJZ 同策略）；≤0 视为无有效时间。
-pub(super) fn deserialize_timestamp<'de, D>(d: D) -> std::result::Result<Option<i64>, D::Error>
+fn deserialize_timestamp<'de, D>(d: D) -> std::result::Result<Option<i64>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -140,9 +140,19 @@ pub(super) fn fetch_stock_quote(
     market: &str,
     code: &str,
 ) -> Result<StockQuote> {
-    let prefix = secid_prefix(market)
-        .ok_or_else(|| AppError::Invalid(format!("市场 {market} 无法构造行情查询")))?;
-    let secid = format!("{prefix}.{code}");
+    let secid = format!(
+        "{}.{}",
+        // resolve 已限定沪深港闭集，三市场在 secid_prefix 均有映射；两者闭集
+        // 漂移才落到此分支——码化内部不一致（先例：scheduled-occurrence.kind-mismatch）。
+        secid_prefix(market).ok_or_else(|| {
+            AppError::codedp(
+                "sync.secid-unroutable",
+                format!("市场 {market} 无法构造行情查询（内部不一致）"),
+                &[market],
+            )
+        })?,
+        code
+    );
     tracing::debug!(secid, "股票单点行情查询");
     let resp: StockQuoteResponse = request_json_from_hosts(
         client,

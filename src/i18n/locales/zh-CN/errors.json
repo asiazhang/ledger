@@ -51,7 +51,8 @@
   "sync": {
     "already-running": "已有全量同步正在进行，请先中断或等待完成",
     "fund-not-found": "查无基金代码 {0}，请核对后重试",
-    "stock-not-found": "查无股票代码 {0}，请核对后重试"
+    "stock-not-found": "查无股票代码 {0}，请核对后重试",
+    "secid-unroutable": "市场 {0} 无法构造行情查询（内部不一致）"
   },
   "data-location": {
     "mkdir-failed": "无法创建目标目录（{0}）：{1}",

@@ -79,6 +79,15 @@ fn normalize_code(market: &str, code: &str) -> String {
     }
 }
 
+/// 「显式 market 与代码形态矛盾」的统一码化错误（两分支共用同一形状）。
+fn market_conflict(market: &str, code: &str) -> AppError {
+    AppError::codedp(
+        "stock.market-conflict",
+        format!("market 参数 {market} 与股票代码 {code} 的市场形态矛盾，请核对后重试"),
+        &[market, code],
+    )
+}
+
 /// 解析（可选市场，代码）→（市场，归一化代码）（单点，ADR-0081 决策 1）：
 /// - 缺省 market：按代码形态单点推断（6 位 6 开头→沪、6 位 0/3 开头→深、
 ///   ≤5 位数字→港股左补零归一）；
@@ -112,18 +121,10 @@ pub fn resolve_stock_market(market: Option<&str>, code: &str) -> Result<Resolved
                 market: inferred,
                 code: normalize_code(inferred, code),
             }),
-            Some(m) => Err(AppError::codedp(
-                "stock.market-conflict",
-                format!("market 参数 {m} 与股票代码 {code} 的市场形态矛盾，请核对后重试"),
-                &[m, code],
-            )),
+            Some(m) => Err(market_conflict(m, code)),
         },
         CodeShape::Ambiguous => match market {
-            Some(m) => Err(AppError::codedp(
-                "stock.market-conflict",
-                format!("market 参数 {m} 与股票代码 {code} 的市场形态矛盾，请核对后重试"),
-                &[m, code],
-            )),
+            Some(m) => Err(market_conflict(m, code)),
             None => Err(AppError::codedp(
                 "stock.code-unresolvable",
                 format!("无法根据股票代码 {code} 的形态推断市场，请显式传入 market 参数"),

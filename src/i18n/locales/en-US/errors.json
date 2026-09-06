@@ -51,7 +51,8 @@
   "sync": {
     "already-running": "a full sync is already running, cancel it or wait for it to finish",
     "fund-not-found": "fund code {0} not found, please verify and retry",
-    "stock-not-found": "stock code {0} not found, please verify and retry"
+    "stock-not-found": "stock code {0} not found, please verify and retry",
+    "secid-unroutable": "market {0} cannot be resolved to a quote secid (internal inconsistency)"
   },
   "data-location": {
     "mkdir-failed": "cannot create target directory ({0}): {1}",
