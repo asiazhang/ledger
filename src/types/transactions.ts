@@ -2,6 +2,31 @@ import type { Syncable } from './common'
 
 export type TransactionKind = 'income' | 'expense' | 'transfer' | 'refund' | 'buy' | 'sell'
 
+/** 交易来源类型闭集（spec #704 / issue #706，词汇表「来源列」）：定时计划三形态 /
+ * 保单 / 物品 / 标的；wire 字面与后端枚举（camelCase）同源，与 source-jump.ts
+ * 深模块词表一致（点击 → 跳转目标计算的入参闭集）。 */
+export type TransactionSourceKind =
+  | 'installmentPlan'
+  | 'subscription'
+  | 'scheduledTransfer'
+  | 'policy'
+  | 'item'
+  | 'instrument'
+
+/** 来源状态闭集（spec #704，可空字段）：已取消计划 / 已处置物品 / 软删保单。 */
+export type TransactionSourceStatus = 'cancelled' | 'disposed' | 'deleted'
+
+/** 交易行来源（读时反查推导，零迁移）：仅列表/搜索命令填充，其余返回点为 null。 */
+export interface TransactionSource {
+  kind: TransactionSourceKind
+  /** 来源实体 id */
+  entity_id: string
+  /** 展示名（保单 = 险种名；其余口径见各消费票） */
+  display_name: string
+  /** 来源状态（可空）：软删保单 = deleted */
+  status: TransactionSourceStatus | null
+}
+
 export interface Transaction extends Syncable {
   id: string
   kind: TransactionKind
@@ -14,6 +39,8 @@ export interface Transaction extends Syncable {
   merchant_id: string | null
   /** 可选保单引用（issue #361 / ADR-0051）：仅 expense/income 可挂，后端行为层准入 */
   policy_id: string | null
+  /** 来源列（spec #704 / issue #706）：仅列表/搜索读路径填充，其余返回点为 null */
+  source: TransactionSource | null
   refund_of_transaction_id: string | null
   note: string | null
   date: string

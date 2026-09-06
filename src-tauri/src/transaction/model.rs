@@ -34,6 +34,54 @@ pub struct Transaction {
     pub version: i64,
     pub device_id: String,
     pub is_deleted: bool,
+    /// 来源列（spec #704 / issue #706，词汇表「来源列」）：发起来源实体的读时反查推导，
+    /// 零数据迁移。仅列表/搜索读路径填充（`attach_sources`）；单笔读回与写入响应
+    /// 不做反查，恒为 `None`；无来源交易（手动录入/AI 导入）为 `None`。
+    pub source: Option<TransactionSource>,
+}
+
+/// 交易来源类型闭集（spec #704 / issue #706，词汇表「来源列」）：定时计划三形态 /
+/// 保单 / 物品 / 标的。wire 为 camelCase 字符串（与前端词表同字面）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum TransactionSourceKind {
+    /// 分期计划（期次对生成交易反查，#707 接线）。
+    InstallmentPlan,
+    /// 订阅计划（期次对生成交易反查，#707 接线）。
+    Subscription,
+    /// 定时转账计划（期次对生成交易反查，#707 接线）。
+    ScheduledTransfer,
+    /// 保单（PolicyReference 直挂，本票接线）。
+    Policy,
+    /// 物品（溯源指针反查，#708 接线）。
+    Item,
+    /// 投资标的（证券交易记录反查，#709 接线）。
+    Instrument,
+}
+
+/// 来源状态闭集（spec #704，可空字段）：`None` = 无状态标注。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum TransactionSourceStatus {
+    /// 已取消（计划，#707 接线）。
+    Cancelled,
+    /// 已处置（物品，#708 接线）。
+    Disposed,
+    /// 已删除（软删保单，本票接线；历史引用保留不置空，ADR-0051 决策 5）。
+    Deleted,
+}
+
+/// 交易行来源（spec #704 / issue #706）：展示名 + 可空状态，随行返回供来源列渲染。
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct TransactionSource {
+    /// 来源类型（六类闭集）。
+    pub kind: TransactionSourceKind,
+    /// 来源实体 id。
+    pub entity_id: String,
+    /// 展示名（保单 = 险种名；其余口径见各消费票）。
+    pub display_name: String,
+    /// 来源状态（可空）：软删保单 = deleted。
+    pub status: Option<TransactionSourceStatus>,
 }
 
 /// 交易搜索分页结果（服务端分页）。
@@ -386,6 +434,8 @@ impl FromRow for Transaction {
             is_deleted: row.get::<_, i64>(15)? != 0,
             merchant_id: row.get(16)?,
             policy_id: row.get(17)?,
+            // 来源列非库列：FromRow 恒空，由列表/搜索读路径 `attach_sources` 按页填充。
+            source: None,
         })
     }
 }

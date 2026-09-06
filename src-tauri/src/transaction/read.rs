@@ -1,11 +1,61 @@
+use std::collections::HashMap;
+
 use rusqlite::Connection;
 
-use super::model::{Transaction, TransactionListFilter, TransactionListResult};
+use super::model::{
+    Transaction, TransactionListFilter, TransactionListResult, TransactionSource,
+    TransactionSourceKind, TransactionSourceStatus,
+};
 use crate::db::query::{query_all, query_one};
 use crate::error::{AppError, Result};
+use crate::policy;
 
 pub use get_transaction_internal as get_transaction;
 pub use list_transactions_internal as list_transactions;
+
+/// 按页填充来源列（spec #704 / issue #706 tracer bullet：保单分支）：保单 id 已在
+/// 行内（PolicyReference 直挂），收集页内引用去重后**一次批量反查**保单展示字段
+/// （险种名 + 软删标志，`policy::source_display_by_ids`），不做逐行 N+1。
+/// 后续来源种类在同一处按优先级扩展：保单直挂 > 计划反查 > 物品反查 > 标的反查
+/// （词汇表「来源列」来源判定优先级；本期仅保单，双挂场景天然优先——其余线索
+/// 尚未接入）。
+///
+/// 零迁移：来源是读时推导，不落库；无来源交易（无保单引用）原样为 `None`。
+pub(super) fn attach_sources(conn: &Connection, items: &mut [Transaction]) -> Result<()> {
+    let mut policy_ids: Vec<String> = Vec::new();
+    for txn in items.iter() {
+        if let Some(pid) = txn.policy_id.as_ref()
+            && !policy_ids.contains(pid)
+        {
+            policy_ids.push(pid.clone());
+        }
+    }
+    if policy_ids.is_empty() {
+        return Ok(());
+    }
+    let refs = policy::source_display_by_ids(conn, &policy_ids)?;
+    let by_id: HashMap<&str, &policy::PolicySourceDisplay> =
+        refs.iter().map(|r| (r.id.as_str(), r)).collect();
+    for txn in items.iter_mut() {
+        let Some(pid) = txn.policy_id.as_deref() else {
+            continue;
+        };
+        let Some(reference) = by_id.get(pid) else {
+            // 引用完整性由外键（ON DELETE RESTRICT）保证；缺行属防御性跳过，
+            // 不虚构展示名也不中断整页读取。
+            continue;
+        };
+        txn.source = Some(TransactionSource {
+            kind: TransactionSourceKind::Policy,
+            entity_id: pid.to_string(),
+            display_name: reference.product_name.clone(),
+            status: reference
+                .is_deleted
+                .then_some(TransactionSourceStatus::Deleted),
+        });
+    }
+    Ok(())
+}
 
 pub fn list_transactions_internal(
     conn: &Connection,
@@ -88,7 +138,8 @@ pub fn list_transactions_internal(
     } else if let Some(n) = filter.limit {
         sql.push_str(&format!(" LIMIT {n}"));
     }
-    let items = query_all(conn, &sql, rusqlite::params_from_iter(params))?;
+    let mut items = query_all(conn, &sql, rusqlite::params_from_iter(params))?;
+    attach_sources(conn, &mut items)?;
     Ok(TransactionListResult { items, total })
 }
 

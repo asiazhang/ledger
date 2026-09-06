@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest'
 import { mount, flushPromises, enableAutoUnmount, DOMWrapper } from '@vue/test-utils'
 import { NPopconfirm } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
@@ -9,6 +9,15 @@ import { makePolicy, makePolicyStats } from './factories'
 import type { Currency, Merchant, Policy, PolicyStats } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
+
+// focus 参数读取自路由 query（useFocusParam 注入 getter，spec #704 / issue #706）。
+// 本文件用可控 mockRoute 替代真实 router：默认空 query（无 focus 空转），来源
+ // 落点场景在 mount 前写入 focus；路由守卫透传语义在 policies-route.test.ts 用真实路由表验证。
+const mockRoute = { query: {} as Record<string, string> }
+vi.mock('vue-router', () => ({
+  useRoute: () => mockRoute,
+  useRouter: () => ({ push: vi.fn() }),
+}))
 
 // NModal 内容 teleport 到 document.body：测试在 body 中查询/触发（同 ItemsView 先例）。
 enableAutoUnmount(afterEach)
@@ -91,12 +100,21 @@ function setupInvoke() {
 beforeEach(async () => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
+  mockRoute.query = {}
   policies = [basePolicy()]
   policyStats = [baseStats(policies[0])]
   setupInvoke()
   localStorage.clear()
+  if (Element.prototype.scrollIntoView) vi.mocked(Element.prototype.scrollIntoView).mockClear()
   // 参考数据（商户/币种选项）与保单 store 均为 self-init，提前预热
   await flushPromises()
+})
+
+beforeAll(() => {
+  // jsdom 无滚动实现：来源跳转的定位调用只断言不炸（spec #704 / issue #706）
+  Element.prototype.scrollIntoView = vi.fn()
+  // 调用状态按用例清理（断言「定位已发生/未发生」以单用例为界）
+  vi.mocked(Element.prototype.scrollIntoView).mockClear()
 })
 
 type ViewWrapper = ReturnType<typeof mount>
@@ -401,5 +419,48 @@ describe('PoliciesView 编辑保单', () => {
       id: 'policy-1',
       input: { policy_number: 'P-EDITED', merchant_id: 'mer-1' },
     })
+  })
+})
+
+/** 来源跳转落点（spec #704 / issue #706，词汇表「实体定位参数（focus 参数）」）：
+ * 视图装配断言——focus 在场 → 对应行高亮；无 focus 空转；读一次语义下
+ * 消费后路由 query 变化不再触发（高亮保持实例终态，不反复定位）。 */
+describe('PoliciesView 来源跳转落点（issue #706）', () => {
+  it('focus 在场：列表渲染后对应行获得高亮类，行锚点 data-policy-id 恒在', async () => {
+    policies = [
+      basePolicy({ id: 'p-1' }),
+      basePolicy({ id: 'p-2', policy_number: 'P2026-002' }),
+    ]
+    mockRoute.query = { focus: 'p-2' }
+    const wrapper = mount(PoliciesView)
+    await flushPromises()
+
+    const rows = wrapper.findAll('tr[data-policy-id]')
+    expect(rows.map((r) => r.attributes('data-policy-id'))).toEqual(['p-1', 'p-2'])
+    expect(rows[0].classes()).not.toContain('policy-row-focus')
+    expect(rows[1].classes()).toContain('policy-row-focus')
+    // 高亮行已滚动定位（jsdom 仅验证调用不炸）
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled()
+  })
+
+  it('无 focus：全部行无高亮（安全空转）', async () => {
+    const wrapper = mount(PoliciesView)
+    await flushPromises()
+    expect(wrapper.findAll('tr.policy-row-focus').length).toBe(0)
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
+  })
+
+  it('读一次语义：消费后 query 变化（页签切换 replace 保留残留 focus 场景）不重新高亮', async () => {
+    policies = [basePolicy({ id: 'p-1' }), basePolicy({ id: 'p-9', policy_number: 'P2026-009' })]
+    mockRoute.query = { focus: 'p-1' }
+    const wrapper = mount(PoliciesView)
+    await flushPromises()
+
+    // 模拟页签切换 replace 后残留新 focus：本实例闸门已耗尽，高亮不迁移
+    mockRoute.query = { tab: 'policies', focus: 'p-9' }
+    await flushPromises()
+    const highlighted = wrapper.findAll('tr.policy-row-focus')
+    expect(highlighted.length).toBe(1)
+    expect(highlighted[0].attributes('data-policy-id')).toBe('p-1')
   })
 })
