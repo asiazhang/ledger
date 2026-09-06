@@ -30,6 +30,7 @@ function baseInvoke(extra?: Record<string, unknown>) {
         list_accounts: mockAccounts,
         list_categories: [],
         list_merchants: [],
+        list_insurers: [],
         realized_pnl_summary: mockSummary,
         list_instruments: { items: [makeInstrument({ id: 'inst-1' })], total: 1 },
       },

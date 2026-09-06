@@ -4,7 +4,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useReferenceStore } from '@/stores/reference'
-import type { Account, Category, Currency, Merchant } from '@/types'
+import type { Account, Category, Currency, Insurer, Merchant } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 const mockListen = vi.mocked(listen)
@@ -63,6 +63,19 @@ const mockMerchants: Merchant[] = [
   },
 ]
 
+const mockInsurers: Insurer[] = [
+  {
+    id: 'ins-1', name: '平安人寿',
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    version: 1, device_id: 'test', is_deleted: false,
+  },
+  {
+    id: 'ins-del', name: '已删保司',
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    version: 1, device_id: 'test', is_deleted: true,
+  },
+]
+
 /** 重拉/事件后的新数据（用于验证 stale-while-revalidate 的替换）。 */
 const newCurrencies: Currency[] = [
   { code: 'EUR', name: '欧元', symbol: '€', decimal_places: 2 },
@@ -96,6 +109,7 @@ function mockListCommands() {
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve(mockCategories)
     if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
+    if (cmd === 'list_insurers') return Promise.resolve(mockInsurers)
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
 }
@@ -114,15 +128,52 @@ describe('useReferenceStore', () => {
     expect(store.accounts).toEqual([])
     expect(store.categories).toEqual([])
     expect(store.merchants).toEqual([])
+    expect(store.insurers).toEqual([])
+    expect(store.deletedInsurers.size).toBe(0)
   })
 
-  it('refresh 拉取四张参考表并填充响应式状态', async () => {
+  it('refresh 拉取五张参考表并填充响应式状态（保司 issue #714）', async () => {
     const store = useReferenceStore()
     await store.refresh()
     expect(store.currencies).toEqual(mockCurrencies)
     expect(store.accounts).toEqual(mockAccounts)
     expect(store.categories).toEqual(mockCategories)
     expect(store.merchants).toEqual(mockMerchants)
+    expect(store.insurers.map((i) => i.id)).toEqual(['ins-1'])
+    expect(store.deletedInsurers.get('ins-del')?.name).toBe('已删保司')
+  })
+
+  it('list_insurers 以含已删全量拉取（includeDeleted=true，管理视图「显示已删」数据源 issue #714）', async () => {
+    const store = useReferenceStore()
+    await store.refresh()
+    const insurerCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_insurers')
+    expect(insurerCalls.length).toBeGreaterThan(0)
+    for (const [, args] of insurerCalls) {
+      expect(args).toMatchObject({ includeDeleted: true })
+    }
+  })
+
+  it('软删保司：从在用字典消失（不可再选），deletedInsurers 保留（管理视图已删区 issue #714）', async () => {
+    const store = useReferenceStore()
+    await store.refresh()
+    expect(store.insurers.map((i) => i.id)).toEqual(['ins-1'])
+
+    // 平安人寿被软删：后端含已删列表返回 is_deleted=true 行
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
+      if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
+      if (cmd === 'list_categories') return Promise.resolve(mockCategories)
+      if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
+      if (cmd === 'list_insurers') {
+        return Promise.resolve([{ ...mockInsurers[0], is_deleted: true }, mockInsurers[1]])
+      }
+      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    })
+    await store.refresh()
+
+    expect(store.insurers).toEqual([])
+    expect(store.deletedInsurers.get('ins-1')?.name).toBe('平安人寿')
+    expect(store.deletedInsurers.get('ins-del')?.name).toBe('已删保司')
   })
 
   it('派生映射 currencyMap/accountMap/categoryMap 正确', async () => {
@@ -163,6 +214,7 @@ describe('useReferenceStore', () => {
       if (cmd === 'list_merchants') {
         return Promise.resolve([{ ...mockMerchants[0], is_deleted: true }, mockMerchants[1]])
       }
+      if (cmd === 'list_insurers') return Promise.resolve(mockInsurers)
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     await store.refresh()
@@ -231,10 +283,10 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
 
   it('首次访问 self-init 自动触发一次加载（无需手动调用 load*）', async () => {
     const store = useReferenceStore()
-    // self-init 同步发起了四张参考表的拉取（恰一次）
+    // self-init 同步发起了五张参考表的拉取（恰一次）
     expect(
       mockInvoke.mock.calls.filter(([cmd]) => cmd.startsWith('list_')),
-    ).toHaveLength(4)
+    ).toHaveLength(5)
     await store.refresh()
     expect(store.currencies).toEqual(mockCurrencies)
     expect(store.accounts).toEqual(mockAccounts)
@@ -275,6 +327,7 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
         })
       }
       if (cmd === 'list_merchants') return Promise.resolve(newMerchants)
+      if (cmd === 'list_insurers') return Promise.resolve(mockInsurers)
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     changedHandler?.({ payload: undefined })
@@ -293,7 +346,7 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
     expect(store.version).toBe(2)
   })
 
-  it('触发 ledger:changed 后四表自动更新，派生映射随之更新', async () => {
+  it('触发 ledger:changed 后五表自动更新，派生映射随之更新', async () => {
     const store = useReferenceStore()
     await store.refresh()
     expect(store.currencyMap.get('CNY')?.name).toBe('人民币')
@@ -303,6 +356,7 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
       if (cmd === 'list_accounts') return Promise.resolve(newAccounts)
       if (cmd === 'list_categories') return Promise.resolve(newCategories)
       if (cmd === 'list_merchants') return Promise.resolve(newMerchants)
+      if (cmd === 'list_insurers') return Promise.resolve(mockInsurers)
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     changedHandler?.({ payload: undefined })
@@ -335,16 +389,17 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
         })
       }
       if (cmd === 'list_merchants') return Promise.resolve(newMerchants)
+      if (cmd === 'list_insurers') return Promise.resolve(mockInsurers)
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
 
     const p1 = store.refresh()
     const p2 = store.refresh()
     const p3 = store.refresh()
-    // 三次并发调用只发起一次加载（四张表各一次 IPC）
+    // 三次并发调用只发起一次加载（五张表各一次 IPC）
     expect(
       mockInvoke.mock.calls.filter(([cmd]) => cmd.startsWith('list_')),
-    ).toHaveLength(4)
+    ).toHaveLength(5)
     resolveCats(newCategories)
     await Promise.all([p1, p2, p3])
     expect(store.categories).toEqual(newCategories)
@@ -365,6 +420,7 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
         })
       }
       if (cmd === 'list_merchants') return Promise.resolve(newMerchants)
+      if (cmd === 'list_insurers') return Promise.resolve(mockInsurers)
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
 
@@ -416,6 +472,7 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
       if (cmd === 'list_accounts') return Promise.resolve(newAccounts)
       if (cmd === 'list_categories') return Promise.resolve(newCategories)
       if (cmd === 'list_merchants') return Promise.resolve(newMerchants)
+      if (cmd === 'list_insurers') return Promise.resolve(mockInsurers)
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     await store.refresh()

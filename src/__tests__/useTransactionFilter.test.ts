@@ -57,6 +57,7 @@ beforeEach(() => {
     if (cmd === 'list_accounts') return Promise.resolve(urlAccounts)
     if (cmd === 'list_categories') return Promise.resolve(urlCategories)
     if (cmd === 'list_merchants') return Promise.resolve(urlMerchants)
+    if (cmd === 'list_insurers') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
 })
@@ -998,6 +999,7 @@ function gateReference(gatedCmd: 'list_accounts' | 'list_merchants' | 'list_cate
     if (cmd === 'list_accounts') return Promise.resolve(urlAccounts)
     if (cmd === 'list_categories') return Promise.resolve(urlCategories)
     if (cmd === 'list_merchants') return Promise.resolve(urlMerchants)
+    if (cmd === 'list_insurers') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
   return release

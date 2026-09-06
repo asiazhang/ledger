@@ -87,6 +87,7 @@ function mockBaseCommands(merchants: Merchant[] = mockMerchants) {
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve(mockCategories)
     if (cmd === 'list_merchants') return Promise.resolve(merchants)
+    if (cmd === 'list_insurers') return Promise.resolve([])
     if (cmd === 'create_scheduled_transaction') return Promise.resolve('new-plan-id')
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   }) as typeof invoke)
@@ -142,6 +143,7 @@ describe('useScheduledPlanForm 商户解析（输入即建 + 重名兜底，ADR-
     mockInvoke.mockImplementation(((cmd: string) => {
       if (cmd === 'create_merchant') return Promise.resolve('mch-new')
       if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
+      if (cmd === 'list_insurers') return Promise.resolve([])
       if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve(mockCategories)
@@ -184,6 +186,7 @@ describe('useScheduledPlanForm 商户解析（输入即建 + 重名兜底，ADR-
       if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve(mockCategories)
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     }) as typeof invoke)
     const id = await resolvedMerchant('盒马')
@@ -194,6 +197,7 @@ describe('useScheduledPlanForm 商户解析（输入即建 + 重名兜底，ADR-
     mockInvoke.mockImplementation(((cmd: string) => {
       if (cmd === 'create_merchant') return Promise.reject(new Error('商户已存在'))
       if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
+      if (cmd === 'list_insurers') return Promise.resolve([])
       if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve(mockCategories)
@@ -246,6 +250,7 @@ describe('useScheduledPlanForm 商户解析（输入即建 + 重名兜底，ADR-
       mockInvoke.mockImplementation(((cmd: string) => {
         if (cmd === 'create_merchant') return Promise.resolve('mch-new')
         if (cmd === 'list_merchants') return Promise.resolve([])
+        if (cmd === 'list_insurers') return Promise.resolve([])
         if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
         if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
         if (cmd === 'list_categories') return Promise.resolve(mockCategories)

@@ -58,6 +58,7 @@ function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
     list_accounts: [],
     list_categories: [],
     list_merchants: [],
+    list_insurers: [],
     list_backups: [],
     get_data_location_info: dataLocationInfo(),
     create_backup: {

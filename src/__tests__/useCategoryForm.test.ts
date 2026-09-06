@@ -61,6 +61,7 @@ function mockBaseCommands(merchants: Merchant[] = mockMerchants) {
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve(merchants)
+    if (cmd === 'list_insurers') return Promise.resolve([])
     if (cmd === 'list_policies') return Promise.resolve(mockPolicies)
     if (cmd === 'list_policy_stats') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
@@ -130,6 +131,7 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'create_merchant') return Promise.resolve('mch-new')
       if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
+      if (cmd === 'list_insurers') return Promise.resolve([])
       if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve([])
@@ -163,6 +165,7 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
         stale = false
         return Promise.resolve(rows)
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve([])
@@ -243,6 +246,7 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
       mockInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_policies') return Promise.resolve([])
         if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
+        if (cmd === 'list_insurers') return Promise.resolve([])
         if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
         if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
         if (cmd === 'list_categories') return Promise.resolve([])

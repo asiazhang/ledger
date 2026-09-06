@@ -65,6 +65,7 @@ function baseInvoke(extra?: Record<string, unknown>) {
     if (cmd === 'list_accounts') return Promise.resolve([])
     if (cmd === 'list_categories') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve([])
+    if (cmd === 'list_insurers') return Promise.resolve([])
     if (cmd === 'list_holdings') return Promise.resolve([])
     if (cmd === 'list_instruments')
       return Promise.resolve({ items: [stockInstrument, fundInstrument], total: 2 })

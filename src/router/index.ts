@@ -85,6 +85,19 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('@/views/PhysicalAssetsView.vue'),
   },
   {
+    // 保司管理（issue #714 / ADR-0082 决策 3）：保险域自有字典管理视图，出厂为收纳成员
+    // （资产·更多保司页签，组内收纳 ADR-0063）；#475 起按收纳状态分流（/policies 守卫先例）：
+    // 仍在收纳清单时重定向到资产·更多保司页签；用户右键「移回侧栏」后以主项身份入侧栏，
+    // 侧栏导航按 name 路由——独立路由渲染保司管理页。
+    path: '/insurers',
+    name: 'insurers',
+    component: () => import('@/components/InsurerManager.vue'),
+    beforeEnter: (to) =>
+      useSidebarOrderStore().isViewContained('insurers')
+        ? { name: 'assets-more', query: { ...to.query, tab: 'insurers' } }
+        : true,
+  },
+  {
     // 全局「更多」聚合视图已退役（issue #473 / ADR-0063 决策 1/5）：仅留重定向记录，
     // 承接旧视图名（ViewState 存量 'more' 启动恢复落记账·更多，不回退概览）与旧深链。
     // 迁移链：/more → 记账·更多；/more?tab=merchants → 记账·更多商户页签；

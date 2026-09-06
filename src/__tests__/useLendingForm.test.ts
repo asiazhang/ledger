@@ -54,6 +54,7 @@ describe('useLendingForm（借贷变体 composable，issue #374 S3）', () => {
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve([])
       if (cmd === 'list_merchants') return Promise.resolve([])
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     // 账户过滤集断言依赖参考数据就绪：等 self-init 拉取完成
