@@ -21,6 +21,10 @@
 - **备份**：启动失败恢复屏新增「从备份文件恢复」通道（[#602]）。
 - **备份**：解锁屏新增「从备份文件恢复」入口，密文库无需先解锁即可恢复（[#603]）。
 
+### BREAKING
+
+- **数据库 schema**：标的 market 检查约束就地扩展至含美股三市场 nasdaq/nyse/amex（ADR-0080）。仅全新安装生效；**存量库不重跑迁移、保持旧市场闭集，创建美股市场标的会被拒绝，不提供自动修复**（[#692]）。
+
 ### Changed
 
 - **应用更名**：应用更名为「开源记账」（OpenLedger），仅改显示层，数据与升级路径不变（[#584]）。
@@ -202,3 +206,4 @@
 [#687]: https://github.com/asiazhang/ledger/issues/687
 [#651]: https://github.com/asiazhang/ledger/issues/651
 [#653]: https://github.com/asiazhang/ledger/issues/653
+[#692]: https://github.com/asiazhang/ledger/issues/692

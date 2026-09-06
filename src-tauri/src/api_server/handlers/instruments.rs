@@ -27,7 +27,7 @@ pub struct InstrumentSearchQuery {
     query: Option<String>,
     /// 返回条数上限：缺省 20，最大 100（超出收敛为 100，小于 1 视为 1）
     limit: Option<i64>,
-    /// 交易市场精确过滤（sh / sz / hk / unknown）
+    /// 交易市场精确过滤（sh / sz / hk / nasdaq / nyse / amex / unknown）
     market: Option<String>,
     /// 标的类型过滤（stock/fund/bond/etf/other）：同码异类型消歧用
     #[serde(rename = "type")]
@@ -54,7 +54,7 @@ pub struct InstrumentSearchQuery {
     params(
         ("query" = String, Query, description = "搜索关键词（必填，空即 400）"),
         ("limit" = Option<i64>, Query, description = "返回条数上限，缺省 20，最大 100（小于 1 视为 1）"),
-        ("market" = Option<String>, Query, description = "交易市场精确过滤（sh / sz / hk / unknown）"),
+        ("market" = Option<String>, Query, description = "交易市场精确过滤（sh / sz / hk / nasdaq / nyse / amex / unknown）"),
         ("type" = InstrumentType, Query, description = "标的类型过滤（stock/fund/bond/etf/other），同码异类型消歧用")
     ),
     responses(
@@ -100,7 +100,7 @@ pub async fn search_instruments_handler(
 /// 标的创建请求体（`POST /api/v1/instruments`，issue #296 / ADR-0037）。
 ///
 /// 与 IPC 侧 `InstrumentInput` 的差异仅在报价币种可省：缺省按市场推导
-/// （沪深→CNY、港→HKD、未知→CNY），显式传参可覆盖。
+/// （沪深→CNY、港→HKD、美股三市场→USD、未知→CNY，ADR-0080），显式传参可覆盖。
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct InstrumentCreateInput {
     /// 标的代码（必填；源数据只有名称时以名称充当代码，ADR-0037 决策 3）
@@ -110,20 +110,23 @@ pub struct InstrumentCreateInput {
     kind: InstrumentType,
     /// 标的名称（可选）
     name: Option<String>,
-    /// 交易市场（可选，缺省 unknown；sh / sz / hk）
+    /// 交易市场（可选，缺省 unknown；sh / sz / hk / nasdaq / nyse / amex）
     market: Option<String>,
-    /// 报价币种（可选；缺省按市场推导：沪深→CNY、港→HKD、未知→CNY）
+    /// 报价币种（可选；缺省按市场推导：沪深→CNY、港→HKD、美股三市场→USD、未知→CNY）
     currency_code: Option<String>,
 }
 
-/// 报价币种缺省推导（ADR-0037 决策 2）：沪深→人民币、港→港币、其余（含 unknown）→人民币。
+/// 报价币种缺省推导（ADR-0037 决策 2；美股三市场→USD 见 ADR-0080）：
+/// 沪深→人民币、港→港币、美股三市场（nasdaq/nyse/amex）→美元、其余（含 unknown）→人民币。
 ///
 /// 依据：标的币种不参与买卖账务（持仓批次成本币种 = 账户币种），仅影响行情/市值折算展示。
-/// 与同步侧 `crate::sync::http::MARKETS` 的 market→currency 对应（该表为同步
-/// 市场闭集、模块私有，本端点按 ADR 独立定义并多担 unknown 缺省）；新增市场时两处同改。
+/// 与同步侧 `crate::sync::http::MARKETS` 的 market→currency 对应（该表为全量同步
+/// 板块闭集、模块私有，本端点按 ADR 独立定义并多担 unknown 缺省）；美股三市场仅入本
+/// 推导、不入 MARKETS——美股字典走按代码即建、不做全量同步（ADR-0080）。
 fn derive_quote_currency(market: &str) -> &'static str {
     match market {
         "hk" => "HKD",
+        "nasdaq" | "nyse" | "amex" => "USD",
         // 沪深与未知市场均落人民币
         _ => "CNY",
     }
@@ -145,7 +148,7 @@ fn derive_quote_currency(market: &str) -> &'static str {
                   201 + 裸 id 字符串，无 created 标记。\
                   入参：`symbol` 必填（源数据只有名称时以名称充当代码）；`type` 为闭集五类\
                   （stock/fund/bond/etf/other，五类全开）；`name` 可选；`market` 可选（缺省 `unknown`）；\
-                  `currency_code` 可选（缺省按市场推导：沪深→CNY、港→HKD、未知→CNY，显式传参可覆盖）。\
+                  `currency_code` 可选（缺省按市场推导：沪深→CNY、港→HKD、美股三市场→USD、未知→CNY，显式传参可覆盖）。\
                   **fund 类型增强**：`symbol` 为真实 6 位代码时后端经东方财富校验并回填权威名称、\
                   落最新净值现价；查无此码返回 400 拒绝创建；东财网络不可达时降级为提交名称 + 真实代码建行\
                   （不阻塞导入）；非 6 位 symbol（名称充代码，仅限源数据无代码）不触发校验、不进净值通道。\
@@ -184,7 +187,8 @@ pub async fn create_instrument_handler(
         } else {
             None
         };
-    // 报价币种可省：缺省按市场推导（沪深→CNY、港→HKD、未知→CNY，ADR-0037 决策 2）；
+    // 报价币种可省：缺省按市场推导（沪深→CNY、港→HKD、美股三市场→USD、未知→CNY，
+    // ADR-0037 决策 2 / ADR-0080）；
     // market 缺省解析（None→unknown）由核心创建函数单点承担，此处仅按同口径推导币种。
     // fund 增强分支不经此推导：字典形态收口为按代码即拉同款（市场 unknown、币种人民币）。
     let currency_code = input.currency_code.unwrap_or_else(|| {
