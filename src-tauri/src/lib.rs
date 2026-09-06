@@ -47,7 +47,8 @@ use tauri::Manager;
 use tauri::ipc::Invoke;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
-use crate::db::boot::{BOOT_DB_UNREADABLE, BootDisposition, BootFailureGate, classify_for_boot};
+use crate::commands::boot::{boot_sequence, recover_boot_failure};
+use crate::db::boot::BootFailureGate;
 use crate::db::encryption::EncryptionGate;
 
 pub mod fs_util;
@@ -111,96 +112,23 @@ fn redact_passphrase_payload(payload: &serde_json::Value) -> serde_json::Value {
     }
 }
 
-fn init_database(
-    app: &tauri::App,
-    gate: &EncryptionGate,
-    boot_gate: &BootFailureGate,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("获取数据目录失败：{e}"))?;
-    std::fs::create_dir_all(&dir)?;
-    // 两扇进程级门先登记（后续任何路径都能取到；实例由 run() 创建并供
-    // IPC/HTTP 门禁共享）：加密锁定门 + 启动失败门（issue #601）。
-    app.manage(gate.clone());
-    app.manage(boot_gate.clone());
-    // DataLocation 引导（ADR-0018）：建连前先解析库所在目录，必要时启动期搬迁。
-    let boot = db::data_location::boot(&dir);
-    if let Some(reason) = &boot.fallback_reason {
-        tracing::warn!(reason = %reason, "DataLocation 引导发生回退，已改用默认数据目录");
-    }
-    let db_dir = boot.db_dir.clone();
-    // 先登记引导结果再建连：启动失败重置兜底需要知道生效目录。
-    app.manage(boot);
-    // 启动处置接管（issue #570 / #601 / ADR-0075 决策 4/5 修订）：真密文库
-    // 不建连，进入锁定等待，解锁成功后原位换连；明文库/空文件走既有路径，
-    // 零改动；头部非明文魔数且无密文库形态的损坏残留不再误入解锁等待
-    // （旧缺陷：任意非魔数文件被当作密文库卡在解锁屏），按启动失败处理。
-    match classify_for_boot(&db_dir.join(db::data_location::DB_FILE_NAME))? {
-        BootDisposition::AwaitUnlock => {
-            // 占位连接只维持 DbState 形状（IPC/HTTP 壳在锁定期间被门禁拦截，
-            // 不会触达）；解锁成功后原位换成凭主口令打开的真实连接。
-            manage_placeholder_db(app)?;
-            gate.set_locked(true);
-            tracing::info!(db_dir = %db_dir.display(), "检测到密文库，等待解锁");
-        }
-        BootDisposition::OpenPlaintext => {
-            let db_state = db::open_db_in(&db_dir)?;
-            // 日志等级接管（spec #608 / #611）：数据库就绪后按持久化档位 reload 一次
-            //（此前短暂按「RUST_LOG 环境变量或默认 info」运行，属 ADR-0006 接受的启动窗口）；
-            // 显式 RUST_LOG 在本次启动内优先级最高，此时不覆盖。密文库为占位连接，
-            // 此步随解锁换连后（`resume_business_surface`）再做。
-            {
-                let conn = db_state
-                    .conn
-                    .lock()
-                    .map_err(|e| crate::error::AppError::Db(e.to_string()))?;
-                logger::apply_persisted_level(&conn);
-            }
-            app.manage(db_state);
-            tracing::info!("数据库初始化完成");
-        }
-        BootDisposition::Unreadable => {
-            // 明文损坏主场景（issue #601）：库文件不可读，按启动失败处理——
-            // 由 try_init_database 登记失败门、交由前端失败恢复屏接管。
-            return Err(Box::new(crate::error::AppError::coded(
-                BOOT_DB_UNREADABLE,
-                "数据库文件无法打开（文件可能已损坏）",
-            )));
-        }
-    }
-    Ok(())
-}
-
-/// 登记占位内存连接，维持 `DbState` 形状（锁定/启动失败期间门禁拦截业务
-/// IPC，占位连接不被触达；恢复通道成功后原位换入真实连接）。
-fn manage_placeholder_db(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    let placeholder = db::open_in_memory()?;
-    app.manage(db::DbState {
-        conn: std::sync::Arc::new(std::sync::Mutex::new(placeholder)),
-    });
-    Ok(())
-}
-
-fn try_init_database(
-    app: &tauri::App,
-    gate: &EncryptionGate,
-    boot_gate: &BootFailureGate,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn try_init_database(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("开始初始化数据库");
-    match init_database(app, gate, boot_gate) {
-        Ok(()) => Ok(()),
+    // 启动引导序列与重启命令（原位重引导）同一段（commands::boot::boot_sequence）：
+    // DataLocation 引导 → 生效库文件处置 → 连接登记/换入 + 两扇门翻转，
+    // 「重启后状态 = 新进程启动状态」恒成立（issue #644 / ADR-0080）。
+    match boot_sequence(app) {
+        Ok(phase) => {
+            tracing::info!(phase = phase.as_str(), "启动引导序列完成");
+            Ok(())
+        }
         Err(e) => {
             // 启动失败前端接管（issue #601 / ADR-0075 决策 5 修订）：不再弹原生
             // 「重置/退出」对话框、不再退出——失败状态经 BootFailureGate 暴露给
-            // 前端，由启动失败恢复屏承担恢复通道（首版通道：重置为空库，见
-            // `commands::boot::reset_after_startup_failure`）。
-            tracing::error!(error = %e, "数据库初始化失败，登记启动失败状态，交由前端失败恢复屏接管");
-            boot_gate.set_failed();
-            // 占位连接只维持 DbState 形状（IPC/HTTP 壳在失败期间被门禁拦截，
-            // 不会触达）；失败恢复通道（重置）成功后原位换入真实连接。
-            manage_placeholder_db(app)?;
+            // 前端，由启动失败恢复屏承担恢复通道（重置为空库 + 从备份文件恢复，
+            // 见 `commands::boot`）。此处 Err 仅在失败登记本身失败（连占位内存
+            // 库都建不起）时上抛，由 run() 的二次失败兜底 fail loud。
+            recover_boot_failure(app, &e)?;
             Ok(())
         }
     }
@@ -222,7 +150,12 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(move |app| {
             logger::init(app.handle());
-            try_init_database(app, &gate, &boot_gate).map_err(|e| {
+            // 两扇进程级门先登记（boot_sequence 与 IPC/HTTP 门禁共同消费；实例
+            // 由 run() 创建，同一份供 invoke wrapper 共享）：加密锁定门 + 启动
+            // 失败门（issue #601）。
+            app.manage(gate.clone());
+            app.manage(boot_gate.clone());
+            try_init_database(app.handle()).map_err(|e| {
                 // 二次失败兜底（登记失败状态也失败，如连占位内存库都打不开）：
                 // 进程无法运行，fail loud 退出（B 类豁免，ADR-0060）。
                 app.dialog()

@@ -119,5 +119,24 @@ pub enum BootDisposition {
     Unreadable,
 }
 
+/// 引导计划（issue #644 / ADR-0080）：启动引导序列的纯内核——先 DataLocation
+/// 引导解析生效目录（含启动期搬迁与推迟搬迁），再对**解析后的**生效库文件
+/// 做处置判定。进程启动与重启命令（原位重引导）消费同一序列，保证「重引导
+/// 后的状态 = 新进程启动的状态」恒成立——这也是进程重启退役后语义等价的
+/// 根据。连接换入与两扇门翻转由壳层按处置执行（[`BootPlan`] 是纯数据）。
+pub struct BootPlan {
+    /// DataLocation 引导结果（生效目录、回退原因、推迟搬迁目标）。
+    pub boot: super::data_location::Boot,
+    /// 生效库文件的处置判定；探测 IO 失败原样上抛（与建连失败同路处理）。
+    pub disposition: Result<BootDisposition>,
+}
+
+/// 制定引导计划：DataLocation 解析 → 生效库文件处置判定，两步同序。
+pub fn plan_boot(default_dir: &Path) -> BootPlan {
+    let boot = super::data_location::boot(default_dir);
+    let disposition = classify_for_boot(&boot.db_dir.join(super::data_location::DB_FILE_NAME));
+    BootPlan { boot, disposition }
+}
+
 #[cfg(test)]
 mod tests;

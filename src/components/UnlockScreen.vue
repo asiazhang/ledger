@@ -11,10 +11,12 @@
  * 本机记住主口令（issue #574 / ADR-0075 决策 3/5）：开启「记住」后，
  * 启动即在**有缓存时**凭系统钥匙串（macOS 以 Touch ID 生物认证门保护）
  * 自动解锁——本屏挂载即尝试，认证通过直接进入、认证取消或无缓存回退手输
- * （只损失便利，不损失数据）。平台不支持时隐藏「记住」选项并回退手输。
- * 「记住」偏好是前端 localStorage 轻量设置项（app store），钥匙串内容为
- * 主口令本身、密钥仍由口令派生（备份跨设备可移植性不受影响）。口令在
- * 自动解锁时由后端钥匙串读出，不回流前端。
+ * （只损失便利，不损失数据）。等待有界（issue #644）：钥匙串阻塞/认证滞留
+ * 超过 {@link AUTO_UNLOCK_TIMEOUT_MS} 即回退手输并提示，加载态绝不遮蔽
+ * 手输与逃生门入口；后端迟到成功仍照常进入。平台不支持时隐藏「记住」
+ * 选项并回退手输。「记住」偏好是前端 localStorage 轻量设置项（app store），
+ * 钥匙串内容为主口令本身、密钥仍由口令派生（备份跨设备可移植性不受影响）。
+ * 口令在自动解锁时由后端钥匙串读出，不回流前端。
  *
  * 常驻「忘记口令」入口（issue #573 / ADR-0075 决策 2/5）：进入无后门
  * 后果说明（数据不可恢复）→ error 级二次确认（issue #652 / ADR-0078，
@@ -98,8 +100,15 @@ onMounted(async () => {
     return
   }
   try {
-    const relocated = await unlockWithRemembered()
-    if (relocated) {
+    // 等待有界（issue #644）：钥匙串阻塞/认证滞留不再无限停在加载态，
+    // 到期回退手输并提示——手输与逃生门双入口随之重新可达。
+    const wait = await unlockWithRemembered()
+    if (wait.status === 'timeout') {
+      autoUnlocking.value = false
+      autoUnlockFallback.value = t('unlock.autoUnlockTimeout')
+      return
+    }
+    if (wait.relocated) {
       // 自动解锁时补做了等待中的搬迁：提示后立即重启（Restore 同型语义）。
       message.success(t('unlock.relocated'))
       restartAppShortly()

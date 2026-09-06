@@ -199,6 +199,8 @@ pub struct LedgerWorld {
     pub enc_conn: Option<rusqlite::Connection>,
     /// 加密场景：库文件字节快照（失败原子性断言用）
     pub enc_db_bytes: Option<Vec<u8>>,
+    /// 原位重引导计划（issue #644 / ADR-0080）：最近一次 plan_boot 的处置判定
+    pub enc_last_plan: Option<Result<tauri_app_lib::db::boot::BootDisposition, String>>,
     /// 启动失败恢复场景（issue #601）：最近一次启动处置接管结果
     pub sf_last_takeover: Option<StartupTakeover>,
     /// 启动失败恢复场景（issue #601）：以未登记引导解析出的生效库目录
@@ -305,6 +307,7 @@ impl LedgerWorld {
             enc_last_error: None,
             enc_conn: None,
             enc_db_bytes: None,
+            enc_last_plan: None,
             sf_last_takeover: None,
             sf_resolved_dir: None,
         };

@@ -93,3 +93,32 @@ fn clone_shares_the_same_flag() {
     cloned.set_failed();
     assert!(gate.is_failed());
 }
+
+#[test]
+fn plan_boot_classifies_the_resolved_dir_not_the_default_dir() {
+    // 重引导计划的两步同序钉子（issue #644）：DataLocation 解析把生效目录
+    // 指向目标后，处置判定消费的是目标目录里的库文件，不是默认目录的。
+    use crate::db::boot::plan_boot;
+    let base = std::env::temp_dir().join(format!("ledger-unit-planboot-{}", std::process::id()));
+    let default_dir = base.join("default");
+    let target = base.join("target");
+    std::fs::create_dir_all(&default_dir).unwrap();
+    std::fs::create_dir_all(&target).unwrap();
+    // 默认目录放损坏残留；目标目录放真密文库形态——计划必须判目标。
+    std::fs::write(default_dir.join("ledger.db"), b"garbage residue").unwrap();
+    std::fs::write(target.join("ledger.db"), vec![0x7bu8; 4096]).unwrap();
+    // 指针文件指向目标（configured intent，JSON 形态与 PointerFile 同型）。
+    std::fs::write(
+        default_dir.join(crate::db::data_location::POINTER_FILE_NAME),
+        serde_json::json!({ "data_dir": target.to_string_lossy() }).to_string(),
+    )
+    .unwrap();
+
+    let plan = plan_boot(&default_dir);
+    assert_eq!(plan.boot.db_dir, target);
+    assert_eq!(
+        plan.disposition.unwrap(),
+        super::BootDisposition::AwaitUnlock
+    );
+    std::fs::remove_dir_all(base).ok();
+}

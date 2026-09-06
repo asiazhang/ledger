@@ -14,7 +14,7 @@ vi.mock('@/utils/restart', () => ({ restartAppShortly: () => restartAppShortly()
 
 import { open } from '@tauri-apps/plugin-dialog'
 import UnlockScreen from '@/components/UnlockScreen.vue'
-import { useEncryptionGate } from '@/composables/useEncryptionGate'
+import { AUTO_UNLOCK_TIMEOUT_MS, useEncryptionGate } from '@/composables/useEncryptionGate'
 import { useAppStore } from '@/stores/app'
 
 const mockInvoke = vi.mocked(invoke)
@@ -325,6 +325,95 @@ describe('UnlockScreen.vue 本机记住主口令（issue #574）', () => {
     expect(wrapper.html()).toContain('本机没有缓存的主口令')
     // 回退手输：口令输入仍可交互
     expect(wrapper.find('input').exists()).toBe(true)
+  })
+
+  it('自动解锁有界等待（issue #644）：超时回退手输并提示，不无限停在加载态', async () => {
+    vi.useFakeTimers()
+    try {
+      stubInvoke({
+        get_boot_status: () => Promise.resolve({ phase: 'locked', error_code: null }),
+        get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
+        // 钥匙串读取阻塞：长时间不返回（开发构建受限形态的白屏根因一）。
+        unlock_with_remembered_passphrase: () => new Promise(() => {}),
+      })
+      useAppStore().setRememberPassphrase(true)
+      const { probe, locked } = useEncryptionGate()
+      const probePromise = probe()
+      const wrapper = mount(UnlockScreen)
+      await probePromise
+      await flushPromises()
+
+      // 到期前：仍处于自动解锁加载态
+      expect(wrapper.html()).toContain('正在尝试自动解锁')
+      vi.advanceTimersByTime(AUTO_UNLOCK_TIMEOUT_MS)
+      await flushPromises()
+
+      // 到期后：回退手输，超时提示可见，口令输入可交互（恢复通道不再被加载态遮蔽）
+      expect(locked.value).toBe(true)
+      expect(wrapper.html()).toContain('账本已加密')
+      expect(wrapper.html()).toContain('自动解锁超时')
+      expect(wrapper.find('input').exists()).toBe(true)
+      // 逃生门双入口随回退重新可达（恢复通道不受影响）
+      expect(findButton(wrapper, '从备份文件恢复')).toBeTruthy()
+      expect(findButton(wrapper, '忘记口令')).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('超时后自动解锁迟到成功：仍翻转锁定门进入应用（等待有界、结果不丢，issue #644）', async () => {
+    vi.useFakeTimers()
+    try {
+      let resolveUnlock!: (v: { relocated: boolean }) => void
+      stubInvoke({
+        get_boot_status: () => Promise.resolve({ phase: 'locked', error_code: null }),
+        get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
+        unlock_with_remembered_passphrase: () =>
+          new Promise((resolve) => {
+            resolveUnlock = resolve
+          }),
+      })
+      useAppStore().setRememberPassphrase(true)
+      const { probe, locked } = useEncryptionGate()
+      const probePromise = probe()
+      const wrapper = mount(UnlockScreen)
+      await probePromise
+      await flushPromises()
+
+      vi.advanceTimersByTime(AUTO_UNLOCK_TIMEOUT_MS)
+      await flushPromises()
+      expect(locked.value).toBe(true)
+
+      // 迟到成功：生物认证最终通过——结果照常生效，主界面挂载
+      resolveUnlock({ relocated: false })
+      await flushPromises()
+      expect(locked.value).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('自动解锁补做了搬迁：成功提示后触发应用重启（Restore 同型重启语义）', async () => {
+    vi.useFakeTimers()
+    try {
+      stubInvoke({
+        get_boot_status: () => Promise.resolve({ phase: 'locked', error_code: null }),
+        get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
+        unlock_with_remembered_passphrase: () => Promise.resolve({ relocated: true }),
+      })
+      useAppStore().setRememberPassphrase(true)
+      const { probe } = useEncryptionGate()
+      const probePromise = probe()
+      const wrapper = mount(UnlockScreen)
+      await probePromise
+      await flushPromises()
+
+      vi.advanceTimersByTime(900)
+      await flushPromises()
+      expect(restartAppShortly).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('自动解锁失败（生物认证取消）：回退手输并提示取消', async () => {
