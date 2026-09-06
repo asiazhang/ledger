@@ -175,7 +175,6 @@ function baseInvoke() {
       }
       return Promise.resolve()
     }
-    if (cmd === 'list_insurers') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   }) as typeof invoke)
 }

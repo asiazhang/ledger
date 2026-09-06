@@ -56,6 +56,12 @@ const statusLabel = computed(() =>
   props.source.status ? t(`transactions.source.status.${props.source.status}`) : null,
 )
 
+/** 展示名：计划来源无备注时后端回空串，按来源类型名兜底（图标旁仍有可读名称，
+ *  文案随界面语言；spec #704 / issue #707，计划名口径：备注即名）。 */
+const displayName = computed(
+  () => props.source.display_name || t(`transactions.source.kind.${props.source.kind}`),
+)
+
 /** 软删保单不可点击（不提供落空的跳转）；其余来源可点击。 */
 const clickable = computed(() => props.source.status !== 'deleted')
 
@@ -89,9 +95,9 @@ function go() {
       :style="{ color: accent.base, '--accent-hover': accent.hover }"
       @click="go"
     >
-      {{ source.display_name }}
+      {{ displayName }}
     </button>
-    <span v-else class="source-name">{{ source.display_name }}</span>
+    <span v-else class="source-name">{{ displayName }}</span>
     <NTag v-if="statusLabel" size="small" :bordered="false">{{ statusLabel }}</NTag>
   </span>
 </template>

@@ -61,8 +61,9 @@ function setupInvoke() {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve([])
     if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_insurers') return Promise.resolve(mockInsurers)
     if (cmd === 'list_merchants') return Promise.resolve([])
+    // 保单换轨后页面消费保司下拉（ADR-0082），桩给真实保司数据
+    if (cmd === 'list_insurers') return Promise.resolve(mockInsurers)
     if (cmd === 'list_policies') {
       return Promise.resolve(policies.filter((p) => !p.is_deleted))
     }
@@ -95,7 +96,6 @@ function setupInvoke() {
       policies = policies.map((p) => (p.id === id ? { ...p, is_deleted: true } : p))
       return Promise.resolve()
     }
-    if (cmd === 'list_insurers') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
 }

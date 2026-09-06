@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { api } from '@/api'
 import type { Account, Category, Currency, Insurer, Merchant } from '@/types'
+import type { Syncable } from '@/types/common'
 import {
   rootCategories as pureRootCategories,
   categoryChildren as pureCategoryChildren,
@@ -17,10 +18,9 @@ export type ReferenceStatus = 'idle' | 'loading' | 'ready' | 'error'
 /**
  * 参考数据（Reference Data）单一来源 store。
  *
- * 承载 `currencies / accounts / categories / merchants / insurers` 五张参考表及全部派生映射
- * （账户/分类/币种/商户/保司映射）与分类树逻辑，作为参考数据（Reference Data）的
- * 单一来源，消费端一律从本 store 读取。保司字典（insurers，issue #713 / ADR-0082）
- * 虽归保险域，但同享「随 ledger:changed 失效自动重拉」的参考数据心智，接入本 store。
+ * 承载 `currencies / accounts / categories / merchants` 四张参考表、保司字典
+ * `insurers`（保险域自有，ADR-0082，issue #714）及全部派生映射
+ * （账户/分类/币种/商户映射）与分类树逻辑，作为字典/枚举的单一来源，消费端一律从本 store 读取。
  *
  * 生命周期（push-first）：
  * - 首次访问 self-init：store 首次被创建时自动触发一次加载；
@@ -32,6 +32,17 @@ export type ReferenceStatus = 'idle' | 'loading' | 'ready' | 'error'
  * 失效信号：`status`（idle/loading/ready/error）与 `version`（每次成功重拉自增），
  * 供观测加载状态与重拉次数。动作：`refresh()`（强制重拉，在途合并去重）。
  */
+/**
+ * 含删全量字典行的统一拆分（reload 内分类/商户/保司三处同构）：
+ * 在用行进字典，软删行进显示/管理视图缓存 Map（历史引用与「显示已删」共用）。
+ */
+function splitDeleted<T extends Syncable & { id: string }>(all: T[]): { active: T[]; deleted: Map<string, T> } {
+  return {
+    active: all.filter((r) => !r.is_deleted),
+    deleted: new Map(all.filter((r) => r.is_deleted).map((r) => [r.id, r])),
+  }
+}
+
 export const useReferenceStore = defineStore('reference', () => {
   const currencies = ref<Currency[]>([])
   const accounts = ref<Account[]>([])
@@ -54,8 +65,10 @@ export const useReferenceStore = defineStore('reference', () => {
   const deletedCategories = ref(new Map<string, Category>())
 
   /**
-   * 软删保司（issue #713 / ADR-0082）：软删后不可再被新保单选择，但存量保单引用
-   * 照常显示。数据源与拆分方式同商户先例：含已删全量列表按 `is_deleted` 拆分。
+   * 保司字典（issue #714 / ADR-0082）：保险域自有独立字典，虽不归参考数据域，
+   * 但同享「随 ledger:changed 失效自动重拉」的参考数据心智，接入本 store
+   * （与 #713 的保单换轨同源消费；管理视图「显示已删」切换消费软删缓存）。
+   * 数据源与拆分方式同商户先例（issue #191）：含已删全量列表按 `is_deleted` 拆分。
    */
   const deletedInsurers = ref(new Map<string, Insurer>())
 
@@ -146,12 +159,12 @@ export const useReferenceStore = defineStore('reference', () => {
 
   /**
    * 核心：一次完整重拉，stale-while-revalidate。
-   * 拉取期间保留旧数据；五表全部成功才整体替换（避免闪空与部分更新）。
+   * 拉取期间保留旧数据；四表全部成功才整体替换（避免闪空与部分更新）。
    */
   async function reload(): Promise<void> {
     status.value = 'loading'
     try {
-      const [cs, as, catsAll, msAll, isAll] = await Promise.all([
+      const [cs, as, catsAll, msAll, insAll] = await Promise.all([
         api.listCurrencies(),
         api.listAccounts(),
         // 分类拉含软删全量，按 is_deleted 拆分：在用进字典，软删进显示/校验缓存
@@ -159,23 +172,20 @@ export const useReferenceStore = defineStore('reference', () => {
         api.listCategories({ includeDeleted: true }),
         // 商户拉含软删全量，按 is_deleted 拆分：在用进字典，软删进显示缓存（issue #191）
         api.listMerchants({ includeDeleted: true }),
-        // 保司拉含已删全量，按 is_deleted 拆分（同商户先例，issue #713 / ADR-0082）
+        // 保司拉含已删全量，按 is_deleted 拆分：在用进字典，已删进管理视图显示缓存（issue #714）
         api.listInsurers({ includeDeleted: true }),
       ])
       currencies.value = cs
       accounts.value = as
-      categories.value = catsAll.filter((c) => !c.is_deleted)
-      deletedCategories.value = new Map(
-        catsAll.filter((c) => c.is_deleted).map((c) => [c.id, c]),
-      )
-      merchants.value = msAll.filter((m) => !m.is_deleted)
-      deletedMerchants.value = new Map(
-        msAll.filter((m) => m.is_deleted).map((m) => [m.id, m]),
-      )
-      insurers.value = isAll.filter((i) => !i.is_deleted)
-      deletedInsurers.value = new Map(
-        isAll.filter((i) => i.is_deleted).map((i) => [i.id, i]),
-      )
+      const cats = splitDeleted(catsAll)
+      categories.value = cats.active
+      deletedCategories.value = cats.deleted
+      const ms = splitDeleted(msAll)
+      merchants.value = ms.active
+      deletedMerchants.value = ms.deleted
+      const ins = splitDeleted(insAll)
+      insurers.value = ins.active
+      deletedInsurers.value = ins.deleted
       version.value += 1
       status.value = 'ready'
     } catch (e) {
@@ -224,8 +234,8 @@ export const useReferenceStore = defineStore('reference', () => {
     accounts,
     categories,
     merchants,
-    deletedMerchants,
     insurers,
+    deletedMerchants,
     deletedInsurers,
     status,
     version,

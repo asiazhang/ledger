@@ -101,6 +101,7 @@ describe('侧栏分组常量（issue #359 / ADR-0051；#473 记账组主项三�
     expect(groupOfView('merchants')).toBe('bookkeeping')
     expect(groupOfView('policies')).toBe('assets')
     expect(groupOfView('physicalAssets')).toBe('assets')
+    expect(groupOfView('insurers')).toBe('assets')
     expect(groupOfView('bogus' as ViewName)).toBeNull()
   })
 })
@@ -166,7 +167,7 @@ describe('parseGroupOrders（组内序解析纯函数）', () => {
 describe('parseGroupOrders × 收纳清单耦合（issue #474：收纳成员不回填主项，清单是成员资格唯一事实源）', () => {
   const contained: SidebarContainmentLists = {
     bookkeeping: ['scheduled', 'merchants', 'transactions'],
-    assets: ['policies', 'physicalAssets'],
+    assets: ['policies', 'physicalAssets', 'insurers'],
     insights: [],
   }
 
@@ -193,14 +194,14 @@ describe('parseGroupOrders × 收纳清单耦合（issue #474：收纳成员不�
 })
 
 describe('组内收纳清单：出厂种子与解析防御（issue #472/#473 / ADR-0063 决策 3/5）', () => {
-  it('出厂种子锁定：记账 = [定时, 商户]（#473）；资产 = [保单, 实物资产]；洞察 = 空（出厂不渲染链接）', () => {
+  it('出厂种子锁定：记账 = [定时, 商户]（#473）；资产 = [保单, 实物资产, 保司]（#714）；洞察 = 空（出厂不渲染链接）', () => {
     expect(GROUP_CONTAINMENT_SEEDS.bookkeeping).toEqual(['scheduled', 'merchants'])
-    expect(GROUP_CONTAINMENT_SEEDS.assets).toEqual(['policies', 'physicalAssets'])
+    expect(GROUP_CONTAINMENT_SEEDS.assets).toEqual(['policies', 'physicalAssets', 'insurers'])
     expect(GROUP_CONTAINMENT_SEEDS.insights).toEqual([])
   })
 
   it('非对象整体回出厂种子（null/undefined/数组/标量）', () => {
-    const seeds = { bookkeeping: ['scheduled', 'merchants'], assets: ['policies', 'physicalAssets'], insights: [] }
+    const seeds = { bookkeeping: ['scheduled', 'merchants'], assets: ['policies', 'physicalAssets', 'insurers'], insights: [] }
     expect(parseContainmentLists(null)).toEqual(seeds)
     expect(parseContainmentLists(undefined)).toEqual(seeds)
     expect(parseContainmentLists(['policies'])).toEqual(seeds)
@@ -211,7 +212,7 @@ describe('组内收纳清单：出厂种子与解析防御（issue #472/#473 / A
   it('各组独立解析：组值非数组该组回种子，他组不受牵连', () => {
     expect(parseContainmentLists({ bookkeeping: [], assets: 'x', insights: [] })).toEqual({
       bookkeeping: ['scheduled', 'merchants'],
-      assets: ['policies', 'physicalAssets'],
+      assets: ['policies', 'physicalAssets', 'insurers'],
       insights: [],
     })
   })
@@ -222,7 +223,7 @@ describe('组内收纳清单：出厂种子与解析防御（issue #472/#473 / A
       bookkeeping: ['policies'],
     }
     const parsed = parseContainmentLists(raw)
-    expect(parsed.assets).toEqual(['policies', 'physicalAssets']) // 合法名只剩保单，实物资产作缺失出厂成员补尾
+    expect(parsed.assets).toEqual(['policies', 'physicalAssets', 'insurers']) // 合法名只剩保单，实物资产与保司作缺失出厂成员补尾
     expect(parsed.bookkeeping).toEqual(['scheduled', 'merchants']) // 保单是他组成员，清单回出厂种子
   })
 
@@ -237,7 +238,7 @@ describe('组内收纳清单：出厂种子与解析防御（issue #472/#473 / A
 
   it('去重保留首现；缺失出厂成员按出厂序补尾（自定义成员保位，缺失者缀后）', () => {
     expect(parseContainmentLists({ bookkeeping: ['merchants', 'merchants'] }).bookkeeping).toEqual(['merchants', 'scheduled'])
-    expect(parseContainmentLists({ assets: ['policies', 'policies'] }).assets).toEqual(['policies', 'physicalAssets'])
+    expect(parseContainmentLists({ assets: ['policies', 'policies'] }).assets).toEqual(['policies', 'physicalAssets', 'insurers'])
     expect(parseContainmentLists({ bookkeeping: [] }).bookkeeping).toEqual(['scheduled', 'merchants'])
     expect(parseContainmentLists({ insights: [] }).insights).toEqual([])
   })
@@ -301,7 +302,7 @@ describe('store 启动读路径（issue #269/#359/#472：读 view_state:* 两键
     expect(store.sidebarGroupOrders).toEqual(DEFAULT_ORDERS)
     expect(store.sidebarContainment).toEqual({
       bookkeeping: ['scheduled', 'merchants'],
-      assets: ['policies', 'physicalAssets'],
+      assets: ['policies', 'physicalAssets', 'insurers'],
       insights: [],
     })
   })
@@ -321,7 +322,7 @@ describe('store 启动读路径（issue #269/#359/#472：读 view_state:* 两键
     })
     expect(store.sidebarContainment).toEqual({
       bookkeeping: ['scheduled', 'merchants'],
-      assets: ['policies', 'physicalAssets'],
+      assets: ['policies', 'physicalAssets', 'insurers'],
       insights: [],
     })
   })
@@ -345,7 +346,7 @@ describe('store 启动读路径（issue #269/#359/#472：读 view_state:* 两键
   })
 
   it('存储往返：saveContainmentLists 写入的清单经 parseContainmentLists 防御后还原', () => {
-    const lists = { bookkeeping: ['scheduled', 'merchants'], assets: ['policies', 'physicalAssets'], insights: [] }
+    const lists = { bookkeeping: ['scheduled', 'merchants'], assets: ['policies', 'physicalAssets', 'insurers'], insights: [] }
     saveContainmentLists(lists)
     expect(JSON.parse(localStorage.getItem(VIEW_STATE_KEYS.sidebarContainment)!)).toEqual(lists)
     expect(parseContainmentLists(JSON.parse(localStorage.getItem(VIEW_STATE_KEYS.sidebarContainment)!))).toEqual(lists)
@@ -724,7 +725,7 @@ describe('右键「移回侧栏」写路径（issue #475：点选即清单删除
   it('移回资产组成员：保单落资产组主项末位（出厂未满员，无需腾位）', () => {
     const store = useSidebarOrderStore()
     store.applyMoveBackToSidebar('policies')
-    expect(store.sidebarContainment.assets).toEqual(['physicalAssets'])
+    expect(store.sidebarContainment.assets).toEqual(['physicalAssets', 'insurers'])
     expect(store.sidebarGroupOrders.assets).toEqual(['investments', 'items', 'policies'])
   })
 
@@ -785,5 +786,6 @@ describe('右键「移回侧栏」写路径（issue #475：点选即清单删除
     store.applyMoveBackToSidebar('policies')
     expect(store.isViewContained('policies')).toBe(false)
     expect(store.isViewContained('physicalAssets')).toBe(true)
+    expect(store.isViewContained('insurers')).toBe(true)
   })
 })

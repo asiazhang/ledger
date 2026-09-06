@@ -18,7 +18,7 @@ import { t } from '@/i18n'
  * 三组（域职责分组，组 id 即 i18n key `common.sidebarGroup.<id>`）。
  * 组与组序固定、成员闭集；各组主项 ≤3 是运行时硬上限（ADR-0063 决策 2），
  * 低频成员由各组「更多」收纳（GROUP_CONTAINMENT_SEEDS）：记账 = 定时、商户（#473），
- * 资产 = 保单、实物资产（#472 / #466），洞察出厂无收纳成员。
+ * 资产 = 保单、实物资产（#472 / #466）、保司（#714 / ADR-0082，保险域归位资产组），洞察出厂无收纳成员。
  * 键位注：键位只扫主项，按固定组带推导（ADR-0065，取代 ADR-0063 决策 2 线性推导）——
  * 出厂主项七项占 ⌘1–⌘5、⌘7、⌘8，⌘6 与 ⌘9 带内空置，组内补足后自然回填。
  */
@@ -142,11 +142,11 @@ export function parseGroupOrders(
 /**
  * 每组收纳清单出厂种子（开发者清单，ADR-0063 决策 3）：
  * 记账 = [定时, 商户]（页签序 = 清单序，#473）；
- * 资产 = [保单, 实物资产]（#472/#466，追加在后，ADR-0055 决策 2 追加先例）；洞察 = 空。
+ * 资产 = [保单, 实物资产, 保司]（#472/#466/#714，追加在后，ADR-0055 决策 2 追加先例）；洞察 = 空。
  */
 export const GROUP_CONTAINMENT_SEEDS = {
   bookkeeping: ['scheduled', 'merchants'],
-  assets: ['policies', 'physicalAssets'],
+  assets: ['policies', 'physicalAssets', 'insurers'],
   insights: [],
 } as const satisfies Record<SidebarGroupId, readonly string[]>
 

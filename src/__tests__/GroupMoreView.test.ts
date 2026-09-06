@@ -79,9 +79,9 @@ beforeEach(() => {
 })
 
 describe('GroupMoreView 组内「更多」容器（issue #472 / ADR-0063 决策 1/5：页签序 = 收纳清单序）', () => {
-  it('资产·更多：保单页签为默认页签（清单首位），实物资产追加在后，保单视图整体装载、建档入口可用', async () => {
+  it('资产·更多：保单页签为默认页签（清单首位），实物资产、保司追加在后，保单视图整体装载、建档入口可用（issue #714：保司页签入资产组）', async () => {
     const { wrapper } = await mountGroupView('assets')
-    expect(wrapper.findAll('.n-tabs-tab').map((t) => t.text())).toEqual(['保单', '实物资产'])
+    expect(wrapper.findAll('.n-tabs-tab').map((t) => t.text())).toEqual(['保单', '实物资产', '保险公司'])
     expect(wrapper.find('[data-testid="policy-new"]').exists()).toBe(true)
   })
 
@@ -97,6 +97,13 @@ describe('GroupMoreView 组内「更多」容器（issue #472 / ADR-0063 决策 
     expect(wrapper.text()).toContain('在持估值合计')
     expect(wrapper.find('[data-testid="physical-asset-new"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="policy-new"]').exists()).toBe(false)
+  })
+
+  it('保司管理进资产组「更多」（issue #714 / ADR-0082 决策 3）：深链直达、管理页完整装载', async () => {
+    const { wrapper, router: r } = await mountGroupView('assets', '/assets/more?tab=insurers')
+    expect(r.currentRoute.value.query.tab).toBe('insurers')
+    expect(wrapper.text()).toContain('保险公司列表')
+    expect(wrapper.text()).toContain('新增保险公司')
   })
 
   it('点击「实物资产」页签：路由 query.tab replace 写回且合计卡可见', async () => {

@@ -165,12 +165,12 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
         stale = false
         return Promise.resolve(rows)
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve([])
       if (cmd === 'list_policies') return Promise.resolve(mockPolicies)
       if (cmd === 'list_policy_stats') return Promise.resolve([])
-      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const input = await submitWithMerchant('盒马')

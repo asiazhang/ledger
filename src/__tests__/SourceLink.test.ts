@@ -73,3 +73,38 @@ describe('SourceLink 来源列单元格（spec #704 / issue #706）', () => {
     expect(wrapper.text()).not.toContain('已删除')
   })
 })
+
+describe('计划来源渲染（spec #704 / issue #707）：三形态图标 + 计划名，已取消可点击', () => {
+  it.each([
+    ['installmentPlan', '分期计划'],
+    ['subscription', '订阅计划'],
+    ['scheduledTransfer', '定时转账计划'],
+  ] as const)('计划来源（%s）：类型图标 + 计划名，可点击', (kind, kindLabel) => {
+    const wrapper = mount(SourceLink, {
+      props: { source: makeSource({ kind, entity_id: 'plan-1', display_name: '视频会员' }) },
+    })
+    expect(wrapper.find('.source-cell-icon').exists()).toBe(true)
+    expect(wrapper.find('button.source-link').text()).toBe('视频会员')
+    expect(wrapper.find('.source-cell').attributes('title')).toBe(kindLabel)
+  })
+
+  it('已取消计划（status=cancelled）：名称 +「已取消」标注，仍可点击（不提供落空跳转的裁决只限软删保单）', async () => {
+    const wrapper = mount(SourceLink, {
+      props: { source: makeSource({ kind: 'subscription', status: 'cancelled' }) },
+    })
+    expect(wrapper.find('button.source-link').exists()).toBe(true)
+    expect(wrapper.text()).toContain('已取消')
+    await wrapper.find('button.source-link').trigger('click')
+    expect(pushMock).toHaveBeenCalledWith({
+      name: 'bookkeeping-more',
+      query: { tab: 'scheduled', scheduledTab: 'subscriptions', focus: 'pol-1' },
+    })
+  })
+
+  it('无备注计划（展示名空串）：按来源类型名兜底展示', () => {
+    const wrapper = mount(SourceLink, {
+      props: { source: makeSource({ kind: 'installmentPlan', display_name: '' }) },
+    })
+    expect(wrapper.find('button.source-link').text()).toBe('分期计划')
+  })
+})

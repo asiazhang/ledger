@@ -139,3 +139,116 @@ describe('内嵌态（issue #473：组内「更多」容器装载，页签退内
     expect(r.currentRoute.value.query.tab).toBe('installments')
   })
 })
+
+// ---------------------------------------------------------------------------
+// 计划来源落点（spec #704 / issue #707，词汇表「来源列」「实体定位参数（focus 参数）」）：
+// 来源列点击计划 → 定时视图对应形态页签 + 自动打开计划详情弹窗（弹窗按 id
+// 独立取数，不受清单状态过滤影响——已取消计划照常可开）。
+// ---------------------------------------------------------------------------
+
+import type { ScheduledTransactionDetail } from '@/types'
+
+/** 已取消订阅计划详情（弹窗取数桩；展示名 = 计划名 = 备注）。 */
+function planDetailOf(id: string, overrides: Partial<ScheduledTransactionDetail['core']> = {}): ScheduledTransactionDetail {
+  return {
+    core: {
+      id,
+      kind: 'subscription',
+      status: 'cancelled',
+      account_id: 'acc-1',
+      category_id: null,
+      amount_cents: 3000,
+      currency_code: 'CNY',
+      recurrence_type: 'monthly',
+      recurrence_interval: 1,
+      recurrence_day: null,
+      start_date: '2026-02-01',
+      note: `计划-${id}`,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+      version: 1,
+      device_id: 'test',
+      is_deleted: false,
+      ...overrides,
+    },
+    extension: { scheduled_transaction_id: id, merchant_id: null, policy_id: null },
+    pending_occurrences: [],
+    completed_occurrences: 0,
+    completed_amount_cents: 0,
+    occurrences: [],
+  }
+}
+
+/** 清单 + 详情命令桩：详情按 id 返回已取消计划（清单状态过滤影响不到弹窗）。 */
+function withPlanDetailInvoke() {
+  mockInvoke.mockImplementation(((cmd: string, args?: Record<string, unknown>) => {
+    if (cmd === 'list_currencies') return Promise.resolve([])
+    if (cmd === 'list_accounts') return Promise.resolve([])
+    if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_merchants') return Promise.resolve([])
+    if (cmd === 'subscription_spend_overview') return Promise.resolve(emptySpendOverview)
+    if (cmd === 'list_scheduled_transactions') return Promise.resolve([])
+    if (cmd === 'get_scheduled_transaction_detail') {
+      return Promise.resolve(planDetailOf(String(args?.id)))
+    }
+    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+  }) as typeof invoke)
+}
+
+describe('计划来源落点（issue #707）：focus 读一次 → 形态页签 + 计划详情弹窗', () => {
+  beforeEach(() => {
+    withPlanDetailInvoke()
+  })
+
+  it('独立路由：focus + 形态页签（query.tab）落对应页签并自动打开计划详情弹窗', async () => {
+    const { wrapper } = await mountView('/scheduled?tab=installments&focus=plan-inst-1')
+    // 形态页签正确（分期），订阅页签内容不在场
+    expect(wrapper.find('[data-testid="inst-create-open"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="sub-create-open"]').exists()).toBe(false)
+    // 计划详情弹窗按 id 自动打开（不受清单状态过滤影响）
+    const detailCalls = mockInvoke.mock.calls.filter((c) => c[0] === 'get_scheduled_transaction_detail')
+    expect(detailCalls).toHaveLength(1)
+    expect((detailCalls[0] as unknown[])[1]).toEqual({ id: 'plan-inst-1' })
+    // 弹窗内容 teleport 到 body（AppModal 先例）：在 body 上查询
+    expect(document.body.querySelector('[data-testid="occ-plan-note"]')?.textContent).toBe('计划-plan-inst-1')
+  })
+
+  it('已取消计划同样可开：弹窗照常渲染（取消计划无独立列表入口，唯来源可达）', async () => {
+    const { wrapper } = await mountView('/scheduled?tab=subscriptions&focus=plan-cancelled')
+    expect(wrapper.find('[data-testid="sub-create-open"]').exists()).toBe(true)
+    expect(document.body.querySelector('[data-testid="occ-plan-note"]')?.textContent).toBe('计划-plan-cancelled')
+  })
+
+  it('收纳态：容器页签（tab=scheduled）+ scheduledTab 叠加落对应形态页签并打开弹窗', async () => {
+    const r = await makeRouter('/bookkeeping/more?tab=scheduled&scheduledTab=transfers&focus=plan-transfer-1')
+    const wrapper = mount(ScheduledView, { props: { embedded: true }, global: { plugins: [r] } })
+    await flushPromises()
+    // 形态页签正确（定时转账），容器 query.tab 不被内嵌页签写回（双写互踩约定）
+    expect(wrapper.find('[data-testid="transfer-create-open"]').exists()).toBe(true)
+    expect(r.currentRoute.value.query.tab).toBe('scheduled')
+    expect((mockInvoke.mock.calls.filter((c) => c[0] === 'get_scheduled_transaction_detail'))[0]?.[1]).toEqual({ id: 'plan-transfer-1' })
+    expect(document.body.querySelector('[data-testid="occ-plan-note"]')?.textContent).toBe('计划-plan-transfer-1')
+  })
+
+  it('读一次：消费后切换内嵌页签不重开弹窗（focus 残留 query 不复弹）', async () => {
+    const r = await makeRouter('/bookkeeping/more?tab=scheduled&scheduledTab=subscriptions&focus=plan-once')
+    const wrapper = mount(ScheduledView, { props: { embedded: true }, global: { plugins: [r] } })
+    await flushPromises()
+    expect(document.body.querySelector('[data-testid="occ-plan-note"]')?.textContent).toBe('计划-plan-once')
+    // 切内页签再切回：清单命令新增，详情命令不重放
+    await wrapper.findAll('.n-tabs-tab').find((t) => t.text() === '分期')!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('.n-tabs-tab').find((t) => t.text() === '订阅')!.trigger('click')
+    await flushPromises()
+    const detailCalls = mockInvoke.mock.calls.filter((c) => c[0] === 'get_scheduled_transaction_detail')
+    expect(detailCalls).toHaveLength(1)
+  })
+
+  it('无 focus 空转：正常进入视图不拉详情（unexpected invoke 守卫即证）', async () => {
+    mockInvoke.mockReset()
+    baseInvoke()
+    const { wrapper } = await mountView('/scheduled')
+    expect(wrapper.find('[data-testid="sub-create-open"]').exists()).toBe(true)
+    expect(document.body.querySelector('[data-testid="occ-plan-note"]')).toBeNull()
+  })
+})

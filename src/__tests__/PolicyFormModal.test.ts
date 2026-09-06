@@ -45,6 +45,7 @@ function setupInvoke() {
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve([])
+    // 保单换轨后表单消费保司下拉（ADR-0082），桩给真实保司数据
     if (cmd === 'list_insurers') return Promise.resolve(mockInsurers)
     if (cmd === 'list_policies') return Promise.resolve([])
     if (cmd === 'list_policy_stats') return Promise.resolve([])

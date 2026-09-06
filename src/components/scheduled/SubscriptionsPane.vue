@@ -38,6 +38,7 @@ import PinyinSelect from '@/components/PinyinSelect.vue'
 import PlanRowActions from '@/components/scheduled/PlanRowActions.vue'
 import SubscriptionSpendPanel from '@/components/scheduled/SubscriptionSpendPanel.vue'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
+import { usePlanFocusLanding } from '@/composables/usePlanFocusLanding'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 
 /**
@@ -344,6 +345,19 @@ const columns = computed<DataTableColumns<SubscriptionRow>>(() => [
     },
   },
 ])
+
+/** 来源跳转落点入参（spec #704 / issue #707）：待开的计划 id（视图侧 focus
+ * 读一次后的暂存；空则无落点）。 */
+const props = defineProps<{ focusPlanId?: string | null }>()
+
+const emit = defineEmits<{ (e: 'focusConsumed'): void }>()
+
+// 计划来源落点时序（读 id → 开窗 → 回报）收口共享工厂，三页签零手搓：
+usePlanFocusLanding({
+  focusPlanId: () => props.focusPlanId,
+  openDetail: (id) => void planDetailRef.value?.open(id),
+  onConsumed: () => emit('focusConsumed'),
+})
 
 onMounted(() => {
   void list.load()
