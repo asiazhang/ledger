@@ -216,11 +216,7 @@ pub async fn create_instrument_handler(
                             Err(_) => Enrichment::StockDegrade {
                                 kind: input.kind,
                                 market: plan.degrade_market,
-                                code: plan
-                                    .candidates
-                                    .first()
-                                    .map(|c| c.code.clone())
-                                    .unwrap_or_else(|| input.symbol.clone()),
+                                code: plan.degrade_code,
                             },
                         },
                     )

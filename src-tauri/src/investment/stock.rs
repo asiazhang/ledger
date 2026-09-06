@@ -30,7 +30,7 @@ pub const STOCK_LOOKUP_MARKETS: &[&str] = &["sh", "sz", "hk", "nasdaq", "nyse", 
 /// 不改变落库精确性——命中响应携带东财回显的精确市场。
 const US_TRAVERSAL_MARKETS: &[&str] = &["nasdaq", "nyse", "amex"];
 
-/// 美股三市场判定（币种推导与代码归一共用）。
+/// 美股三市场判定（代码归一、币种推导与 f2 缩放分支共用同一闭集定义）。
 fn is_us_market(market: &str) -> bool {
     matches!(market, "nasdaq" | "nyse" | "amex")
 }
@@ -43,11 +43,13 @@ fn is_us_market(market: &str) -> bool {
 /// 为全量同步板块闭集、模块私有）；美股三市场仅入本推导与行情 secid 映射、不入
 /// MARKETS——美股字典走按代码即建、不做全量同步（ADR-0081）。
 pub fn derive_quote_currency(market: &str) -> &'static str {
-    match market {
-        "hk" => "HKD",
-        "nasdaq" | "nyse" | "amex" => "USD",
+    if market == "hk" {
+        "HKD"
+    } else if is_us_market(market) {
+        "USD"
+    } else {
         // 沪深与未知市场均落人民币
-        _ => "CNY",
+        "CNY"
     }
 }
 
@@ -195,6 +197,13 @@ pub fn resolve_stock_quote_candidates(
     }
 }
 
+/// 候选遍历的「未命中」判定（语义单点，与查询端点/创建增强共用）：查无此码
+/// 是遍历可继续的错，网络故障等临时错误必须上抛、不得盲试剩余候选。遍历循环
+/// 本身在消费壳执行（异步接缝），「哪些错误算未命中」的语义归本域单点。
+pub fn is_stock_lookup_miss(err: &AppError) -> bool {
+    err.is_code("sync.stock-not-found")
+}
+
 // ---------------------------------------------------------------------------
 // 创建增强（issue #694 / ADR-0081 决策 2，镜像 fund.rs 的同名接缝）
 // ---------------------------------------------------------------------------
@@ -233,6 +242,9 @@ pub struct StockEnhancePlan {
     /// 所归属，降级为 unknown（诚实无行情通道，镜像基金恒 unknown；查询先行
     /// 流先经查询端点取得精确市场再显式传参创建，不会进入本分支）。
     pub degrade_market: String,
+    /// 降级建行用的归一化代码：候选共享同一归一化代码（港股补零/美股大写），
+    /// 随计划带出，壳层不必再从候选现取。
+    pub degrade_code: String,
 }
 
 /// 按创建入参路由东财增强（判定全部在发起网络前完成，先例：基金代码格式校验）。
@@ -247,9 +259,14 @@ pub fn route_stock_creation(market: Option<&str>, symbol: &str) -> StockCreateRo
                         Some((first, [])) => first.market.to_string(),
                         _ => "unknown".to_string(),
                     };
+                    let degrade_code = candidates
+                        .first()
+                        .map(|c| c.code.clone())
+                        .unwrap_or_default();
                     StockCreateRoute::Enhance(StockEnhancePlan {
                         candidates,
                         degrade_market,
+                        degrade_code,
                     })
                 }
                 // 真实代码 + 矛盾/不支持的 market：拒绝（错误随解析单点措辞）。

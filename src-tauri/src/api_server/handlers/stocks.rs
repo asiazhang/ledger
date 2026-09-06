@@ -11,7 +11,7 @@ use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::ApiState;
 use crate::error::AppError;
 use crate::investment::{
-    InstrumentType, ResolvedStockCode, StockQuote, derive_quote_currency,
+    InstrumentType, ResolvedStockCode, StockQuote, derive_quote_currency, is_stock_lookup_miss,
     resolve_stock_quote_candidates,
 };
 
@@ -38,10 +38,10 @@ pub async fn fetch_stock_quote_for_api(
     }
 }
 
-/// 按候选序查询首个命中（issue #696 / ADR-0081 决策 1）：候选序与「未命中继续、
-/// 其他错误上抛」的遍历语义由解析单点（`resolve_stock_quote_candidates`）决定，
-/// 本助手只执行遍历——查无此码（`sync.stock-not-found`）继续下一候选，网络
-/// 故障等临时错误立即上抛（不盲试剩余候选），全部候选未命中时报查无此码。
+/// 按候选序查询首个命中（issue #696 / ADR-0081 决策 1）：候选序由解析单点
+///（`resolve_stock_quote_candidates`）决定，「哪些错误算未命中」由域谓词
+///（`is_stock_lookup_miss`）决定，本助手只执行遍历——未命中继续下一候选，
+/// 临时错误立即上抛（不盲试剩余候选），全部候选未命中时报查无此码。
 /// 查询端点与创建增强共用同一遍历形状（spec #690 唯一接缝纪律）。
 pub async fn fetch_stock_quote_first_hit_for_api(
     state: &ApiState,
@@ -51,7 +51,7 @@ pub async fn fetch_stock_quote_first_hit_for_api(
     for candidate in candidates {
         match fetch_stock_quote_for_api(state, candidate.market, &candidate.code).await {
             Ok(quote) => return Ok(quote),
-            Err(e) if e.is_code("sync.stock-not-found") => last_miss = Some(e),
+            Err(e) if is_stock_lookup_miss(&e) => last_miss = Some(e),
             Err(e) => return Err(e),
         }
     }

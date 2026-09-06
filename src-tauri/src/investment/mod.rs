@@ -81,7 +81,7 @@ pub use manual_price::record_manual_price;
 pub use reports::query_realized_pnl_summary;
 pub use stock::{
     ResolvedStockCode, StockCreateOutcome, StockCreateRoute, StockEnhancePlan,
-    create_stock_degraded, derive_quote_currency, persist_stock_quote,
+    create_stock_degraded, derive_quote_currency, is_stock_lookup_miss, persist_stock_quote,
     resolve_stock_quote_candidates, route_stock_creation,
 };
 // 投资交易对外出口收窄为 prepare/apply/revert 三件套（issue #72 / spec #69）：
