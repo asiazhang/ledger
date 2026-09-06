@@ -87,6 +87,7 @@ export function useRestoreFromFile(options: {
     const intent = restoreModal.intent.value
     if (!intent) return
     restoring.value = true
+    // 失败不关弹窗：口令错误可就地重试；错误经弹窗内错误位展示（close 仅成功路径到达）。
     try {
       const r = await api.restoreBackup(
         intent.path,
@@ -96,9 +97,6 @@ export function useRestoreFromFile(options: {
       message.success(t('settings.data.msg.restoreOk', { version: r.schema_version }))
       // 恢复成功后应用重启，由启动探测接管实际模式（ADR-0075 决策 4/7）。
       restartAppShortly()
-    } catch (e) {
-      // 失败不关弹窗：口令错误可就地重试；错误经弹窗内错误位展示。
-      throw e
     } finally {
       restoring.value = false
     }

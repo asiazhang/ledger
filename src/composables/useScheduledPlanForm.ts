@@ -139,7 +139,7 @@ export function useScheduledPlanForm(options: UseScheduledPlanFormOptions = {}) 
       recurrence_day: recurrenceDay.value,
       start_date: startDate.value,
       note: note.value.trim() || null,
-      ...(spec.specific ?? {}),
+      ...spec.specific,
     }
   }
 

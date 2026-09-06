@@ -132,7 +132,7 @@ function baseInvoke() {
       return detail ? Promise.resolve(detail) : Promise.reject(new Error('无此计划详情'))
     },
     update_scheduled_transaction_status: (args) => {
-      const { id, new_status } = args?.input as { id: string; new_status: string }
+      const { id, new_status } = args!.input as { id: string; new_status: string }
       mockPlans = mockPlans.map((p) =>
         p.core.id === id ? { ...p, core: { ...p.core, status: new_status as never } } : p,
       )
