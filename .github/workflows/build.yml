@@ -102,7 +102,7 @@ jobs:
         run: sudo chown -R "$(id -un):$(id -gn)" /var/cache/apt/archives
 
       - name: 恢复 apt 下载缓存
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: /var/cache/apt/archives
           key: apt-tauri-deps-${{ runner.os }}-${{ hashFiles('.github/workflows/build.yml') }}
@@ -147,7 +147,7 @@ jobs:
         run: sudo chown -R "$(id -un):$(id -gn)" /var/cache/apt/archives
 
       - name: 恢复 apt 下载缓存
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: /var/cache/apt/archives
           key: apt-tauri-deps-${{ runner.os }}-${{ hashFiles('.github/workflows/build.yml') }}
