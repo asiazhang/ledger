@@ -516,6 +516,10 @@ fn v001_dedup_fallback_query_uses_dedup_hash_index_without_temp_btree() {
         rusqlite::params!["h-tx-0003"],
     );
     assert!(
+        plan.contains("SEARCH") && !plan.contains("SCAN"),
+        "兜底查询应经索引 SEARCH 定位而非 SCAN 全表: {plan}"
+    );
+    assert!(
         plan.contains("idx_transactions_dedup_hash"),
         "兜底查询应命中 dedup_hash 部分索引: {plan}"
     );
