@@ -6,13 +6,15 @@ use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-use tauri_app_lib::api_server::{ApiState, EmitterSlot, FundDetailFetcher, build_router};
+use tauri_app_lib::api_server::{
+    ApiState, EmitterSlot, FundDetailFetcher, StockQuoteFetcher, build_router,
+};
 use tauri_app_lib::db;
 use tauri_app_lib::db::boot::BootFailureGate;
 use tauri_app_lib::db::encryption::EncryptionGate;
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::events::SignalEmitter;
-use tauri_app_lib::investment::{FundDetail, FundNav};
+use tauri_app_lib::investment::{FundDetail, FundNav, InstrumentType, StockQuote};
 
 pub(crate) async fn body_to_bytes(body: Body) -> Vec<u8> {
     body.collect().await.unwrap().to_bytes().to_vec()
@@ -22,19 +24,11 @@ pub(crate) fn setup_app() -> (Router, Arc<Mutex<rusqlite::Connection>>) {
     setup_app_with_fund_fetch(None)
 }
 
-/// 装配带东财基金详情注入桩的应用（issue #304）：全部基金端点集成测试以桩
-/// 离线驱动，不触真实网络；`None` 即生产路径（真实东财，测试不用）。
-pub(crate) fn setup_app_with_fund_fetch(
-    fund_fetch: Option<FundDetailFetcher>,
-) -> (Router, Arc<Mutex<rusqlite::Connection>>) {
-    // 集成测试不经真实 Tauri 运行时，发射槽传 None（发射分支跳过，见 ApiState 注释）
-    build_test_app(fund_fetch, None)
-}
-
 /// 共享装配：内存库初始化 + 注入东财接缝与发射槽（spec #367 code review 去重：
 /// 各 setup 变体只差注入项，装配序列单一承载）。锁定门默认不锁（明文行为基线）。
 fn build_test_app(
     fund_fetch: Option<FundDetailFetcher>,
+    stock_fetch: Option<StockQuoteFetcher>,
     emitter: EmitterSlot,
 ) -> (Router, Arc<Mutex<rusqlite::Connection>>) {
     let mut conn = db::open_in_memory().unwrap();
@@ -44,10 +38,28 @@ fn build_test_app(
         conn: conn.clone(),
         emitter,
         fund_fetch,
+        stock_fetch,
         lock_gate: EncryptionGate::new(false),
         boot_gate: BootFailureGate::new(),
     });
     (app, conn)
+}
+
+/// 装配带东财基金详情注入桩的应用（issue #304）：全部基金端点集成测试以桩
+/// 离线驱动，不触真实网络；`None` 即生产路径（真实东财，测试不用）。
+pub(crate) fn setup_app_with_fund_fetch(
+    fund_fetch: Option<FundDetailFetcher>,
+) -> (Router, Arc<Mutex<rusqlite::Connection>>) {
+    // 集成测试不经真实 Tauri 运行时，发射槽传 None（发射分支跳过，见 ApiState 注释）
+    build_test_app(fund_fetch, None, None)
+}
+
+/// 装配带东财股票行情注入桩的应用（issue #693）：全部股票端点集成测试以桩
+/// 离线驱动，不触真实网络；`None` 即生产路径（真实东财，测试不用）。
+pub(crate) fn setup_app_with_stock_fetch(
+    stock_fetch: Option<StockQuoteFetcher>,
+) -> (Router, Arc<Mutex<rusqlite::Connection>>) {
+    build_test_app(None, stock_fetch, None)
 }
 
 /// 装配锁定态应用（issue #570）：锁定门置为已锁——门禁中间件对除 OpenAPI
@@ -59,6 +71,7 @@ pub(crate) fn setup_locked_app() -> Router {
         conn: Arc::new(Mutex::new(conn)),
         emitter: None,
         fund_fetch: None,
+        stock_fetch: None,
         lock_gate: EncryptionGate::new(true),
         boot_gate: BootFailureGate::new(),
     })
@@ -75,6 +88,7 @@ pub(crate) fn setup_boot_failed_app() -> Router {
         conn: Arc::new(Mutex::new(conn)),
         emitter: None,
         fund_fetch: None,
+        stock_fetch: None,
         lock_gate: EncryptionGate::new(false),
         boot_gate,
     })
@@ -86,7 +100,7 @@ pub(crate) fn setup_boot_failed_app() -> Router {
 pub(crate) fn setup_app_with_emitter(
     emitter: Arc<dyn SignalEmitter>,
 ) -> (Router, Arc<Mutex<rusqlite::Connection>>) {
-    build_test_app(None, Some(emitter))
+    build_test_app(None, None, Some(emitter))
 }
 
 /// 东财基金详情桩的返回形态（命中）：名称 / 东财分类 / 可选（净值，净值日期）。
@@ -138,6 +152,63 @@ pub(crate) fn setup_app_with_fund_stub(
     let calls = Arc::new(Mutex::new(Vec::new()));
     let fetch = fund_fetch_stub(hits, calls.clone());
     let (app, conn) = setup_app_with_fund_fetch(Some(fetch));
+    (app, conn, calls)
+}
+
+/// 东财股票行情桩的返回形态（命中）：权威名称 / 可选（万分之一元价格，ISO 日期）/
+/// 类型提示；市场由请求路径决定（归一化后代码与精确市场由后端传入桩）。
+pub(crate) struct StockStubHit {
+    pub name: &'static str,
+    pub price: Option<(i64, &'static str)>,
+    pub kind_hint: InstrumentType,
+}
+
+/// 构造可注入的东财股票行情桩：命中表按 `市场/代码` 键驱动（表外代码返回
+/// 「查无此码」码化中文 Invalid——与生产 `fetch_stock_quote` 未命中同形状），
+/// 并按调用顺序记录（市场， 代码）二元组（`calls`，供测试断言「未发起网络
+/// 请求」「推断与补零归一后请求了哪个市场代码」）。网络不可达等特殊形态由
+/// 测试自建闭包表达（先例 instrument_create_fund.rs 的命中/不可达切换桩）。
+pub(crate) fn stock_fetch_stub(
+    hits: std::collections::HashMap<String, StockStubHit>,
+    calls: Arc<Mutex<Vec<(String, String)>>>,
+) -> StockQuoteFetcher {
+    Arc::new(move |market: &str, code: &str| {
+        calls
+            .lock()
+            .unwrap()
+            .push((market.to_string(), code.to_string()));
+        match hits.get(&format!("{market}/{code}")) {
+            Some(hit) => Ok(StockQuote {
+                code: code.to_string(),
+                name: hit.name.to_string(),
+                market: market.to_string(),
+                price_cents: hit.price.map(|(p, _)| p),
+                price_date: hit.price.map(|(_, d)| d.to_string()),
+                kind_hint: hit.kind_hint,
+            }),
+            None => Err(AppError::codedp(
+                "sync.stock-not-found",
+                format!("查无股票代码 {code}，请核对后重试"),
+                &[code],
+            )),
+        }
+    })
+}
+
+/// 带命中表桩的一步装配（issue #693 测试便利）：返回 (router, 连接, 调用记录)，
+/// 各测试按需绑定；命中表外代码由桩返回「查无此码」码化中文 Invalid。
+pub(crate) type StockStubApp = (
+    Router,
+    Arc<Mutex<rusqlite::Connection>>,
+    Arc<Mutex<Vec<(String, String)>>>,
+);
+
+pub(crate) fn setup_app_with_stock_stub(
+    hits: std::collections::HashMap<String, StockStubHit>,
+) -> StockStubApp {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let fetch = stock_fetch_stub(hits, calls.clone());
+    let (app, conn) = setup_app_with_stock_fetch(Some(fetch));
     (app, conn, calls)
 }
 

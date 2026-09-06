@@ -7,7 +7,8 @@
 //! - `holding_price_sync`：持仓价格增量同步与 ulist / 日 K 报文解析；
 //! - `run_sync`：分页编排、取消、锁、重入守卫与价格失效信号判定。
 //! - `fund_search`：东财基金搜索报文解析与命中挑选（issue #301，fixture 驱动）；
-//! - `fund_nav`：历史净值报文解析、水位窗口与 Referer 传播（issue #303，fixture 驱动）。
+//! - `fund_nav`：历史净值报文解析、水位窗口与 Referer 传播（issue #303，fixture 驱动）；
+//! - `stock_quote`：股票单点行情报文解析、类型特征探测与命中挑选（issue #693，fixture 驱动）。
 
 mod common;
 
@@ -17,3 +18,4 @@ mod holding_price_sync;
 mod http_client;
 mod instrument_sync;
 mod run_sync;
+mod stock_quote;

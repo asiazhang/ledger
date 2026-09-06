@@ -77,6 +77,7 @@ async fn test_openapi_doc_covers_all_endpoints() {
         ("/api/v1/instruments", "get"),
         ("/api/v1/instruments", "post"),
         ("/api/v1/funds/{code}", "get"),
+        ("/api/v1/stocks/{code}", "get"),
         ("/api/v1/merchants", "get"),
         ("/api/v1/transactions", "get"),
         ("/api/v1/transactions/batch", "post"),
@@ -240,10 +241,11 @@ async fn test_openapi_doc_has_currencies_endpoint() {
     assert!(schemas.contains_key("TransactionInput"));
 }
 
-/// OpenAPI 契约文档体积预算护栏：当前 17 端点 ≈ 33KB，预算 40KB 留增长空间；
+/// OpenAPI 契约文档体积预算护栏：当前 18 端点 ≈ 41KB，预算 48KB 留增长空间；
 /// 端点继续增长触线时需人工决策（拆文档或提预算），避免契约文档无界膨胀挤占
-/// AI 上下文（32KB 预算在基金查询端点加入时触线，issue #304 人工决策提至 40KB：
-/// 17 端点下契约是 AI 教学的唯一权威文本，拆分反而破坏「一次拉取即自足」）。
+/// AI 上下文（32KB 预算在基金查询端点加入时触线，issue #304 人工决策提至 40KB；
+/// 40KB 在股票查询端点加入时触线，issue #693 人工决策提至 48KB：18 端点下契约
+/// 是 AI 教学的唯一权威文本，拆分反而破坏「一次拉取即自足」）。
 #[tokio::test]
 async fn test_openapi_doc_size_within_budget() {
     let (app, _) = setup_app();
@@ -261,8 +263,8 @@ async fn test_openapi_doc_size_within_budget() {
 
     let bytes = body_to_bytes(response.into_body()).await;
     assert!(
-        bytes.len() <= 40 * 1024,
-        "OpenAPI 契约文档应保持在预算内（当前 {} 字节，预算 40KB）",
+        bytes.len() <= 48 * 1024,
+        "OpenAPI 契约文档应保持在预算内（当前 {} 字节，预算 48KB）",
         bytes.len()
     );
 }

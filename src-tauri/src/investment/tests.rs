@@ -14,6 +14,7 @@
 //! - [`pnl`]：已实现盈亏汇总
 //! - [`trend`]：走势查询（单标的 / 组合）
 //! - [`holdings_as_of`]：时点持仓推算
+//! - [`stock_lookup`]：股票按（市场，代码）查询领域规则（市场推断 / 矛盾 400 / 币种推导，issue #693）
 
 mod common;
 mod fund_add;
@@ -26,6 +27,7 @@ mod instrument_manual_create;
 mod manual_price;
 mod pnl;
 mod predicates;
+mod stock_lookup;
 mod trade;
 mod trend;
 

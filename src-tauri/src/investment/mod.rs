@@ -17,12 +17,14 @@
 //!   按代码即拉注入接缝（`add_fund_by_code_with`）；
 //! - [`holdings`]：时点持仓（AsOfHolding）推算单点；
 //! - [`manual_price`]：手动报价两落点（价格历史周采样 + 现价缓存映像规则）；
-//! - [`model`]：域集中模型——全量投资类型、基金行情 DTO 与财务自由度总览
+//! - [`model`]：域集中模型——全量投资类型、基金/股票行情 DTO 与财务自由度总览
 //!   （#422 模型域化随域归位），经本入口逐类型再导出（禁止 glob）；
 //! - [`predicates`]：「持仓标的」判定谓词单点（`INVESTED_EXISTS`）；
 //! - [`prices`]：价格写入单点——现价缓存 upsert、价格历史周采样 upsert、
 //!   价格刻度换算（`PRICE_UNITS_PER_FEN` / `price_value_to_cents`）、东财来源标记；
 //! - [`reports`]：已实现盈亏汇总查询；
+//! - [`stock`]：股票按（市场，代码）查询的领域规则——代码形态 → 市场单点推断、
+//!   报价币种推导（issue #693 / ADR-0081；东财访问在 `sync::stock`）；
 //! - [`trade`]：buy/sell 协议三件套与买卖明细投影（`TransactionTrade`）；
 //! - [`trend`]：单标的 / 组合走势查询。
 //!
@@ -44,6 +46,7 @@ pub mod manual_price;
 pub mod predicates;
 pub mod prices;
 pub mod reports;
+pub mod stock;
 pub mod trade;
 pub mod trend;
 
@@ -58,7 +61,7 @@ pub use model::{
     InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentPnl,
     InstrumentPriceTrend, InstrumentType, ManualPriceInput, ManualPriceResult, MarketPrice,
     MarketPriceInput, PnlDetail, PnlFilter, PortfolioTrendPoint, PortfolioValueTrend,
-    PriceTrendPoint, RealizedPnlSummary, TransactionTrade, TrendRange, YearPnl,
+    PriceTrendPoint, RealizedPnlSummary, StockQuote, TransactionTrade, TrendRange, YearPnl,
 };
 
 /// 域 API 再导出：调用面用域语言短名（`investment::list_instruments` 等），
@@ -76,6 +79,7 @@ pub use fund::{
 };
 pub use manual_price::record_manual_price;
 pub use reports::query_realized_pnl_summary;
+pub use stock::{ResolvedStockCode, derive_quote_currency, resolve_stock_market};
 // 投资交易对外出口收窄为 prepare/apply/revert 三件套（issue #72 / spec #69）：
 // 校验归一化（prepare）、应用副作用（apply）、回退副作用（revert）各一个入口，
 // 不再暴露 create/update/cleanup/reverse 等散落函数；行写入经交易行为层编排。

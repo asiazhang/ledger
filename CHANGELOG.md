@@ -20,6 +20,7 @@
 - **备份**：启动失败不再弹窗退出，改由恢复屏接管，可重置为空库或从备份恢复；顺带修复恢复路径错位等两处缺陷（[#601]）。
 - **备份**：启动失败恢复屏新增「从备份文件恢复」通道（[#602]）。
 - **备份**：解锁屏新增「从备份文件恢复」入口，密文库无需先解锁即可恢复（[#603]）。
+- **投资**：新增股票按代码实时查询端点 `GET /api/v1/stocks/{code}`（沪深港）：返回东财权威名称、精确市场、币种、最新价（万分之一元刻度）、价格日期与类型提示（stock/etf）；`market` 可选、缺省按代码形态单点推断（沪深 6 位、港股补零归一）；北交所与参数矛盾显式 400 中文报错，AI 导入股票账单不再依赖标的字典（[#693]）。
 
 ### BREAKING
 
@@ -210,6 +211,7 @@
 [#651]: https://github.com/asiazhang/ledger/issues/651
 [#653]: https://github.com/asiazhang/ledger/issues/653
 [#692]: https://github.com/asiazhang/ledger/issues/692
+[#693]: https://github.com/asiazhang/ledger/issues/693
 [#644]: https://github.com/asiazhang/ledger/issues/644
 [#701]: https://github.com/asiazhang/ledger/issues/701
 [#532]: https://github.com/asiazhang/ledger/issues/532
