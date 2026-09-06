@@ -236,133 +236,132 @@ defineExpose({ save })
     @update:show="(v: boolean) => emit('update:show', v)"
   >
     <NForm label-placement="left" :show-feedback="false" size="small">
-      <NFormItem :label="t('policies.form.label.merchant')">
-        <PinyinSelect
-          v-model:value="merchantRef"
-          :options="merchantOptions"
-          tag
-          :placeholder="t('policies.form.placeholder.merchant')"
-          style="width: 280px"
-          data-testid="policy-merchant"
-        />
-      </NFormItem>
-      <NFormItem :label="t('policies.form.label.policyNumber')">
-        <NInput
-          v-model:value="policyNumber"
-          :placeholder="t('policies.form.placeholder.policyNumber')"
-          data-testid="policy-number"
-        />
-      </NFormItem>
-      <NFormItem :label="t('policies.form.label.productName')">
-        <NInput
-          v-model:value="productName"
-          :placeholder="t('policies.form.placeholder.productName')"
-          data-testid="policy-product"
-        />
-      </NFormItem>
-      <NFormItem :label="t('policies.form.label.period')">
-        <NSpace :size="8" align="center" inline>
-          <AppDatePicker
-            v-model:formatted-value="startDate"
-            type="date"
-            value-format="yyyy-MM-dd"
-            :placeholder="t('policies.form.placeholder.startDate')"
-            style="width: 140px"
-            data-testid="policy-start-date"
-            clearable
+      <!-- 行距由 NSpace 12 统一提供（对话框排版规范，issue #699）：NFormItem 默认零行距 -->
+      <NSpace vertical :size="12">
+        <NFormItem :label="t('policies.form.label.merchant')">
+          <PinyinSelect
+            v-model:value="merchantRef"
+            :options="merchantOptions"
+            tag
+            :placeholder="t('policies.form.placeholder.merchant')"
+            style="width: 280px"
+            data-testid="policy-merchant"
           />
-          <span style="opacity: 0.6">~</span>
-          <AppDatePicker
-            v-model:formatted-value="endDate"
-            type="date"
-            value-format="yyyy-MM-dd"
-            clearable
-            :placeholder="t('policies.form.placeholder.endDate')"
-            style="width: 140px"
-            data-testid="policy-end-date"
+        </NFormItem>
+        <NFormItem :label="t('policies.form.label.policyNumber')">
+          <NInput
+            v-model:value="policyNumber"
+            :placeholder="t('policies.form.placeholder.policyNumber')"
+            data-testid="policy-number"
           />
-        </NSpace>
-      </NFormItem>
-      <NFormItem :label="t('policies.form.label.coverage')">
-        <NInput
-          v-model:value="coverageYuan"
-          :placeholder="t('policies.form.placeholder.coverage')"
-          style="width: 160px"
-          data-testid="policy-coverage"
-        />
-        <AppSelect
-          v-model:value="coverageCurrency"
-          :options="currencyOptions"
-          :disabled="!coverageFilled"
-          :placeholder="t('policies.form.placeholder.coverageCurrency')"
-          style="width: 120px"
-          data-testid="policy-coverage-currency"
-        />
-      </NFormItem>
-      <NFormItem :label="t('policies.form.label.note')">
-        <NInput
-          v-model:value="note"
-          :placeholder="t('policies.form.placeholder.note')"
-          data-testid="policy-note"
-        />
-      </NFormItem>
+        </NFormItem>
+        <NFormItem :label="t('policies.form.label.productName')">
+          <NInput
+            v-model:value="productName"
+            :placeholder="t('policies.form.placeholder.productName')"
+            data-testid="policy-product"
+          />
+        </NFormItem>
+        <NFormItem :label="t('policies.form.label.period')">
+          <NSpace :size="8" align="center" inline>
+            <AppDatePicker
+              v-model:formatted-value="startDate"
+              type="date"
+              value-format="yyyy-MM-dd"
+              :placeholder="t('policies.form.placeholder.startDate')"
+              style="width: 165px"
+              data-testid="policy-start-date"
+              clearable
+            />
+            <span style="opacity: 0.6">~</span>
+            <AppDatePicker
+              v-model:formatted-value="endDate"
+              type="date"
+              value-format="yyyy-MM-dd"
+              clearable
+              :placeholder="t('policies.form.placeholder.endDate')"
+              style="width: 165px"
+              data-testid="policy-end-date"
+            />
+          </NSpace>
+        </NFormItem>
+        <NFormItem :label="t('policies.form.label.coverage')">
+          <NInput
+            v-model:value="coverageYuan"
+            :placeholder="t('policies.form.placeholder.coverage')"
+            style="width: 160px"
+            data-testid="policy-coverage"
+          />
+          <AppSelect
+            v-model:value="coverageCurrency"
+            :options="currencyOptions"
+            :disabled="!coverageFilled"
+            :placeholder="t('policies.form.placeholder.coverageCurrency')"
+            style="width: 120px"
+            data-testid="policy-coverage-currency"
+          />
+        </NFormItem>
+        <NFormItem :label="t('policies.form.label.note')">
+          <NInput
+            v-model:value="note"
+            :placeholder="t('policies.form.placeholder.note')"
+            data-testid="policy-note"
+          />
+        </NFormItem>
 
-      <!-- 新建模式：缴费协议折叠开关（默认关 = 趸交/缴清纯档案）+ 字段组 -->
-      <template v-if="!editing">
-        <NFormItem :label="t('policies.agreement.sectionTitle')">
+        <!-- 新建模式：缴费协议折叠开关（默认关 = 趸交/缴清纯档案）+ 字段组 -->
+        <NFormItem v-if="!editing" :label="t('policies.agreement.sectionTitle')">
           <NSwitch v-model:value="withAgreement" data-testid="policy-agreement-toggle" />
         </NFormItem>
         <!-- 辅助说明统一段落式（spec #630 / #636）：不再内联 opacity 挤在开关旁 -->
-        <NText depth="3" class="form-hint">
+        <NText v-if="!editing" depth="3" class="form-hint">
           {{ t('policies.agreement.toggleHint') }}
         </NText>
-        <div v-show="withAgreement" data-testid="policy-agreement-fields">
+        <div v-if="!editing" v-show="withAgreement" data-testid="policy-agreement-fields">
           <PolicyAgreementFields ref="agreementFields" />
         </div>
-      </template>
 
-      <!-- 编辑模式：协议历史 + 添加/改价（1 张保单 → 多段协议可展示） -->
-      <!-- 编辑模式：保单视角统计（实时推导，issue #363）+ 协议历史与添加/改价 -->
-      <div
-        v-if="editing"
-        data-testid="policy-stats-summary"
-        style="display: flex; gap: 16px; margin-bottom: 12px; font-size: 13px"
-      >
-        <span>{{ t('policies.stats.paid') }}：<strong>{{ paidText }}</strong></span>
-        <span>{{ t('policies.stats.inflow') }}：<strong>{{ inflowText }}</strong></span>
-        <span>
-          {{ t('policies.stats.nextCharge') }}：<strong>{{
-            statsSummary?.next_charge_date ?? '—'
-          }}</strong>
-        </span>
-        <span>{{ t('policies.stats.expiry') }}：<strong>{{ expiryText }}</strong></span>
-      </div>
-      <NFormItem
-        v-if="editing"
-        :label="t('policies.agreement.sectionTitle')"
-        :show-feedback="false"
-      >
-        <PolicyAgreementSection
-          :policy="editing"
-          style="width: 100%"
-          data-testid="policy-agreement-section"
-        />
-      </NFormItem>
+        <!-- 编辑模式：保单视角统计（实时推导，issue #363）+ 协议历史与添加/改价 -->
+        <div
+          v-if="editing"
+          data-testid="policy-stats-summary"
+          style="display: flex; gap: 16px; font-size: 13px"
+        >
+          <span>{{ t('policies.stats.paid') }}：<strong>{{ paidText }}</strong></span>
+          <span>{{ t('policies.stats.inflow') }}：<strong>{{ inflowText }}</strong></span>
+          <span>
+            {{ t('policies.stats.nextCharge') }}：<strong>{{
+              statsSummary?.next_charge_date ?? '—'
+            }}</strong>
+          </span>
+          <span>{{ t('policies.stats.expiry') }}：<strong>{{ expiryText }}</strong></span>
+        </div>
+        <NFormItem
+          v-if="editing"
+          :label="t('policies.agreement.sectionTitle')"
+          :show-feedback="false"
+        >
+          <PolicyAgreementSection
+            :policy="editing"
+            style="width: 100%"
+            data-testid="policy-agreement-section"
+          />
+        </NFormItem>
 
-      <NSpace justify="end">
-        <NButton @click="close">{{ t('policies.form.cancel') }}</NButton>
-        <NButton type="primary" data-testid="policy-save" @click="save">
-          {{ t('policies.form.save') }}
-        </NButton>
+        <NSpace justify="end">
+          <NButton @click="close">{{ t('policies.form.cancel') }}</NButton>
+          <NButton type="primary" data-testid="policy-save" @click="save">
+            {{ t('policies.form.save') }}
+          </NButton>
+        </NSpace>
       </NSpace>
     </NForm>
   </AppModal>
 </template>
 
 <style scoped>
-/* 表单下方段落式辅助说明（spec #630）：块级 + 上下留白，不挤占表单项 */
+/* 表单下方段落式辅助说明（spec #630）：块级呈现；上下留白归 NSpace 行距（issue #699） */
 .form-hint {
   display: block;
-  margin: 8px 0 12px;
 }
 </style>
