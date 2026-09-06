@@ -150,7 +150,7 @@ pub struct InstrumentCreateInput {
                   提交名称 + 真实代码建行且**保留解析市场**（股票行情通道只依赖市场+代码，降级行价格同步仍可达）。\
                   北交所代码（4/8 开头）与真实代码形态的 `market` 矛盾均返回 400（不建错行）；\
                   非代码形态（名称充代码兜底、美股 ticker 等）不触发校验、按提交参数直接建行。\
-                  类型提示（etf）只在 `GET /api/v1/stocks/{code}` 投影，创建不回填 `type`——类型以调用方提交为准。\
+                  stock/etf 同走本增强：类型按调用方提交落库（不因东财类型提示改写），增强与降级分支的币种按解析市场推导、显式 `currency_code` 不生效（镜像 fund 收口）。\
                   建议先按代码查询（股票 `GET /api/v1/stocks/{code}`、基金 `GET /api/v1/funds/{code}`）\
                   确认识别，再以真实代码与精确市场创建；仅源数据确无代码时以名称充代码兜底。",
     request_body = InstrumentCreateInput,
@@ -165,14 +165,21 @@ pub async fn create_instrument_handler(
     Json(input): Json<InstrumentCreateInput>,
 ) -> Result<(StatusCode, Json<String>), AppError> {
     // 东财增强的往返判定（ADR-0039 决策 3 / ADR-0081 决策 2）：仅 fund + 真实 6 位代码、
-    // stock + 可解析真实代码触发；名称充代码（兜底）与其他类型不发起网络请求。
-    // stock 的路由判定收口在投资域单点（route_stock_creation）：北交所与真实代码
-    // 形态的 market 矛盾在发起网络前显式 400；非代码形态走通用创建路径。
+    // stock/etf + 可解析真实代码触发（场内两类型同属行情通道，类型以提交为准落库）；
+    // 名称充代码（兜底）与其他类型不发起网络请求。stock 的路由判定收口在投资域单点
+    //（route_stock_creation）：北交所与真实代码形态的 market 矛盾在发起网络前显式
+    // 400；非代码形态走通用创建路径。
     enum Enrichment {
         FundAuthoritative(FundDetail),
         FundDegrade,
-        StockAuthoritative(StockQuote),
-        StockDegrade { market: String, code: String },
+        StockAuthoritative {
+            kind: InstrumentType,
+            quote: StockQuote,
+        },
+        StockDegrade {
+            kind: InstrumentType,
+            resolved: crate::investment::ResolvedStockCode,
+        },
     }
     let enrichment: Option<Enrichment> = match input.kind {
         InstrumentType::Fund if is_six_digit_code(&input.symbol) => {
@@ -187,30 +194,36 @@ pub async fn create_instrument_handler(
                 },
             )
         }
-        InstrumentType::Stock => match route_stock_creation(input.market.as_deref(), &input.symbol)
-        {
-            StockCreateRoute::Enhance(resolved) => {
-                Some(
-                    match fetch_stock_quote_for_api(&state, resolved.market, &resolved.code).await {
-                        // 东财命中：权威名称回填 + 最新价落现价。
-                        Ok(quote) => Enrichment::StockAuthoritative(quote),
-                        // 查无此码（接缝约定以 sync.stock-not-found 码化 400 上抛）：
-                        // 显式拒绝创建，AI 可提示用户核对代码或跳过该行。
-                        Err(e) if e.is_code("sync.stock-not-found") => return Err(e),
-                        // 网络不可达等临时故障：降级为提交名称 + 真实代码 + 解析市场建行
-                        //（市场保留，行情恢复后价格同步仍可达），不阻塞导入。
-                        Err(_) => Enrichment::StockDegrade {
-                            market: resolved.market.to_string(),
-                            code: resolved.code,
+        InstrumentType::Stock | InstrumentType::Etf => {
+            match route_stock_creation(input.market.as_deref(), &input.symbol) {
+                StockCreateRoute::Enhance(resolved) => {
+                    Some(
+                        match fetch_stock_quote_for_api(&state, resolved.market, &resolved.code)
+                            .await
+                        {
+                            // 东财命中：权威名称回填 + 最新价落现价。
+                            Ok(quote) => Enrichment::StockAuthoritative {
+                                kind: input.kind,
+                                quote,
+                            },
+                            // 查无此码（接缝约定以 sync.stock-not-found 码化 400 上抛）：
+                            // 显式拒绝创建，AI 可提示用户核对代码或跳过该行。
+                            Err(e) if e.is_code("sync.stock-not-found") => return Err(e),
+                            // 网络不可达等临时故障：降级为提交名称 + 真实代码 + 解析市场建行
+                            //（市场保留，行情恢复后价格同步仍可达），不阻塞导入。
+                            Err(_) => Enrichment::StockDegrade {
+                                kind: input.kind,
+                                resolved,
+                            },
                         },
-                    },
-                )
+                    )
+                }
+                // 北交所代码 / 真实代码 + 矛盾 market：显式 400，不建错行。
+                StockCreateRoute::Reject(e) => return Err(e),
+                // 非代码形态（名称充代码兜底、美股 ticker 等）：通用创建路径。
+                StockCreateRoute::Generic => None,
             }
-            // 北交所代码 / 真实代码 + 矛盾 market：显式 400，不建错行。
-            StockCreateRoute::Reject(e) => return Err(e),
-            // 非代码形态（名称充代码兜底、美股 ticker 等）：通用创建路径。
-            StockCreateRoute::Generic => None,
-        },
+        }
         _ => None,
     };
     // 报价币种可省：缺省按市场推导（沪深→CNY、港→HKD、美股三市场→USD、未知→CNY，
@@ -240,14 +253,20 @@ pub async fn create_instrument_handler(
                     let r = create_fund_degraded(conn, &input.symbol, input.name.clone())?;
                     (r.instrument_id, r.price_written)
                 }
-                Some(Enrichment::StockAuthoritative(quote)) => {
+                Some(Enrichment::StockAuthoritative { kind, quote }) => {
                     // 东财命中：与查询端点同一行情投影落库（权威名称回填 + 最新价落现价）。
-                    let r = persist_stock_quote(conn, quote)?;
+                    let r = persist_stock_quote(conn, *kind, quote)?;
                     (r.instrument_id, r.price_written)
                 }
-                Some(Enrichment::StockDegrade { market, code }) => {
+                Some(Enrichment::StockDegrade { kind, resolved }) => {
                     // 降级：提交名称 + 真实代码 + 解析市场建行（基金恒 unknown 的镜像差异）。
-                    let r = create_stock_degraded(conn, market, code, input.name.clone())?;
+                    let r = create_stock_degraded(
+                        conn,
+                        *kind,
+                        resolved.market,
+                        &resolved.code,
+                        input.name.clone(),
+                    )?;
                     (r.instrument_id, r.price_written)
                 }
                 None => {

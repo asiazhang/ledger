@@ -96,6 +96,15 @@ fn market_conflict(market: &str, code: &str) -> AppError {
     )
 }
 
+/// 北交所代码的统一码化错误（查询端点与创建增强共用同一码化边界）。
+fn bse_unsupported(code: &str) -> AppError {
+    AppError::codedp(
+        "stock.bse-unsupported",
+        format!("股票代码 {code} 为北交所代码（4/8 开头），暂不支持"),
+        &[code],
+    )
+}
+
 /// 解析（可选市场，代码）→（市场，归一化代码）（单点，ADR-0081 决策 1）：
 /// - 缺省 market：按代码形态单点推断（6 位 6 开头→沪、6 位 0/3 开头→深、
 ///   ≤5 位数字→港股左补零归一）；
@@ -115,11 +124,7 @@ pub fn resolve_stock_market(market: Option<&str>, code: &str) -> Result<Resolved
         ));
     }
     match code_shape(code) {
-        CodeShape::BeijingExchange => Err(AppError::codedp(
-            "stock.bse-unsupported",
-            format!("股票代码 {code} 为北交所代码（4/8 开头），暂不支持"),
-            &[code],
-        )),
+        CodeShape::BeijingExchange => Err(bse_unsupported(code)),
         CodeShape::Single(inferred) => match market {
             None => Ok(ResolvedStockCode {
                 market: inferred,
@@ -173,11 +178,7 @@ pub enum StockCreateRoute {
 /// 按创建入参路由东财增强（判定全部在发起网络前完成，先例：基金代码格式校验）。
 pub fn route_stock_creation(market: Option<&str>, symbol: &str) -> StockCreateRoute {
     match code_shape(symbol) {
-        CodeShape::BeijingExchange => StockCreateRoute::Reject(AppError::codedp(
-            "stock.bse-unsupported",
-            format!("股票代码 {symbol} 为北交所代码（4/8 开头），暂不支持"),
-            &[symbol],
-        )),
+        CodeShape::BeijingExchange => StockCreateRoute::Reject(bse_unsupported(symbol)),
         CodeShape::Single(_) => match resolve_stock_market(market, symbol) {
             Ok(resolved) => StockCreateRoute::Enhance(resolved),
             // 真实代码 + 矛盾/不支持的 market：拒绝（错误随 resolve 单点措辞）。
@@ -187,15 +188,17 @@ pub fn route_stock_creation(market: Option<&str>, symbol: &str) -> StockCreateRo
     }
 }
 
-/// AI 创建端点 stock 增强的东财命中落库（镜像 [`super::fund::persist_fund_detail`]）：
-/// 以归一化真实代码 + 东财权威名称 + 解析市场建/复用标的行（来源 manual、币种按
-/// 市场推导），有最新价时落现价缓存。现价 `priced_at` = 写入时刻、`nav_date` 恒
-/// None——与全量/增量同步的股票现价写入口径一致（净值日期是场外基金语义）；
-/// 覆盖不比较新旧：本通道语义 = 东财当前最新值整体回放。类型以调用方提交为准
-///（stock）——东财类型提示只在查询端点投影，不在此改写类型（自然键（代码，类型）
-/// 不因探测漂移而漂移）。
+/// AI 创建端点 stock 增强的东财命中落库（镜像 [`super::fund::persist_fund_detail`]，
+/// issue #694 / ADR-0081 决策 2）：以归一化真实代码 + 东财权威名称 + 解析市场建/复用
+/// 标的行（来源 manual、币种按市场推导），有最新价时落现价缓存。`kind` 为调用方
+/// 提交类型（stock/etf，两者同属场内行情通道；导入知识按类型提示填）——东财类型
+/// 提示只在查询端点投影，不在此改写类型（自然键（代码，类型）不因探测漂移而漂移）。
+/// 现价 `priced_at` = 写入时刻、`nav_date` 恒 None——与全量/增量同步的股票现价
+/// 写入口径一致（净值日期是场外基金语义）；覆盖不比较新旧：本通道语义 = 东财当前
+/// 最新值整体回放。
 pub fn persist_stock_quote(
     conn: &rusqlite::Connection,
+    kind: InstrumentType,
     quote: &StockQuote,
 ) -> Result<StockCreateOutcome> {
     let currency = derive_quote_currency(&quote.market);
@@ -203,7 +206,7 @@ pub fn persist_stock_quote(
         conn,
         InstrumentInput {
             symbol: quote.code.clone(),
-            kind: InstrumentType::Stock,
+            kind,
             name: Some(quote.name.clone()),
             currency_code: currency.to_string(),
             market: Some(quote.market.clone()),
@@ -229,20 +232,21 @@ pub fn persist_stock_quote(
 
 /// AI 创建端点 stock 增强的降级落库（镜像 [`super::fund::create_fund_degraded`]，
 /// 关键差异：**保留解析市场**）——东财临时不可达等临时故障时，以 AI 提交名称 +
-/// 真实代码 + 解析市场建行（不阻塞导入）。与基金恒 unknown 不同：股票行情通道
-/// 只依赖（市场，代码），降级行在行情恢复后仍可达（查询与价格同步照常服务）。
-/// 既有行直接复用、名称与市场不动——降级重放不得用 AI 名称覆盖已回填的东财
-/// 权威名称。
+/// 真实代码 + 解析市场建行（不阻塞导入）。`kind` 语义同 [`persist_stock_quote`]。
+/// 与基金恒 unknown 不同：股票行情通道只依赖（市场，代码），降级行在行情恢复后
+/// 仍可达（查询与价格同步照常服务）。既有行直接复用、名称与市场不动——降级重放
+/// 不得用 AI 名称覆盖已回填的东财权威名称。
 pub fn create_stock_degraded(
     conn: &rusqlite::Connection,
+    kind: InstrumentType,
     market: &str,
     code: &str,
     ai_name: Option<String>,
 ) -> Result<StockCreateOutcome> {
     let existing_id: Option<String> = conn
         .query_row(
-            "SELECT id FROM instruments WHERE symbol=?1 AND instrument_type='stock'",
-            params![code],
+            "SELECT id FROM instruments WHERE symbol=?1 AND instrument_type=?2",
+            params![code, kind],
             |r| r.get(0),
         )
         .ok();
@@ -256,7 +260,7 @@ pub fn create_stock_degraded(
         conn,
         InstrumentInput {
             symbol: code.to_string(),
-            kind: InstrumentType::Stock,
+            kind,
             name: ai_name,
             currency_code: derive_quote_currency(market).to_string(),
             market: Some(market.to_string()),

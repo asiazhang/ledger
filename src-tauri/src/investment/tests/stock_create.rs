@@ -141,8 +141,12 @@ fn routes_non_code_shapes_to_generic_path() {
 #[test]
 fn persists_quote_as_stock_row_with_market_and_price() {
     let conn = setup_db();
-    let outcome = persist_stock_quote(&conn, &quote("600519", "贵州茅台", "sh", Some(150000)))
-        .expect("命中落库应成功");
+    let outcome = persist_stock_quote(
+        &conn,
+        InstrumentType::Stock,
+        &quote("600519", "贵州茅台", "sh", Some(150000)),
+    )
+    .expect("命中落库应成功");
 
     let (name, market, currency, source) = stock_row(&conn, "600519");
     assert_eq!(name.as_deref(), Some("贵州茅台"), "应回填东财权威名称");
@@ -163,8 +167,12 @@ fn persists_quote_as_stock_row_with_market_and_price() {
 #[test]
 fn persists_quote_without_price_skips_price_row() {
     let conn = setup_db();
-    let outcome =
-        persist_stock_quote(&conn, &quote("000001", "平安银行", "sz", None)).expect("应成功");
+    let outcome = persist_stock_quote(
+        &conn,
+        InstrumentType::Stock,
+        &quote("000001", "平安银行", "sz", None),
+    )
+    .expect("应成功");
 
     let (_, market, currency, _) = stock_row(&conn, "000001");
     assert_eq!(market, "sz");
@@ -179,8 +187,12 @@ fn persists_quote_without_price_skips_price_row() {
 #[test]
 fn hong_kong_quote_derives_hkd_currency() {
     let conn = setup_db();
-    let outcome = persist_stock_quote(&conn, &quote("00700", "腾讯控股", "hk", Some(360500)))
-        .expect("应成功");
+    let outcome = persist_stock_quote(
+        &conn,
+        InstrumentType::Stock,
+        &quote("00700", "腾讯控股", "hk", Some(360500)),
+    )
+    .expect("应成功");
     let (_, _, currency, _) = stock_row(&conn, "00700");
     assert_eq!(currency, "HKD", "港股市价币种推导为港币");
     let (price_cents, price_currency, ..) = price_row(&conn, &outcome.instrument_id).unwrap();
@@ -198,6 +210,7 @@ fn degraded_creation_preserves_resolved_market() {
     let conn = setup_db();
     let outcome = create_stock_degraded(
         &conn,
+        InstrumentType::Stock,
         "sh",
         "600519",
         Some("贵州茅台（账单名）".to_string()),
@@ -226,7 +239,8 @@ fn degraded_creation_preserves_resolved_market() {
 #[test]
 fn degraded_creation_without_ai_name_creates_nameless_row() {
     let conn = setup_db();
-    create_stock_degraded(&conn, "sz", "000001", None).expect("降级不因缺名称被阻塞");
+    create_stock_degraded(&conn, InstrumentType::Stock, "sz", "000001", None)
+        .expect("降级不因缺名称被阻塞");
     let (name, market, ..) = stock_row(&conn, "000001");
     assert!(
         name.is_none(),
@@ -239,11 +253,16 @@ fn degraded_creation_without_ai_name_creates_nameless_row() {
 fn degraded_replay_reuses_row_without_overwriting_authoritative_name() {
     let conn = setup_db();
     // 第一笔：东财可达 → 权威名称回填 + 落价。
-    let first = persist_stock_quote(&conn, &quote("600519", "贵州茅台", "sh", Some(150000)))
-        .expect("命中落库应成功");
+    let first = persist_stock_quote(
+        &conn,
+        InstrumentType::Stock,
+        &quote("600519", "贵州茅台", "sh", Some(150000)),
+    )
+    .expect("命中落库应成功");
     // 第二笔：东财不可达 + AI 提交另一名称 → 降级复用同一 id，权威名称与现价不动。
     let replay = create_stock_degraded(
         &conn,
+        InstrumentType::Stock,
         "sh",
         "600519",
         Some("账单抄写名（降级）".to_string()),
@@ -263,5 +282,34 @@ fn degraded_replay_reuses_row_without_overwriting_authoritative_name() {
     assert!(
         price_row(&conn, &first.instrument_id).is_some(),
         "既有现价不被降级重放破坏"
+    );
+}
+
+#[test]
+fn persists_quote_with_submitted_etf_kind_preserves_type() {
+    let conn = setup_db();
+    // 场内基金段代码 + 调用方按类型提示提交 etf：增强照常生效，类型以提交为准
+    //（东财类型提示只在查询端点投影，不在此改写）。
+    let outcome = persist_stock_quote(
+        &conn,
+        InstrumentType::Etf,
+        &quote("510300", "沪深300ETF", "sh", Some(398500)),
+    )
+    .expect("etf 命中落库应成功");
+
+    let (row_type, market, currency): (String, String, String) = conn
+        .query_row(
+            "SELECT instrument_type, market, currency_code FROM instruments \
+             WHERE symbol='510300' AND instrument_type='etf'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .expect("etf 行应存在");
+    assert_eq!(row_type, "etf", "类型按提交落库，不被增强改写");
+    assert_eq!(market, "sh");
+    assert_eq!(currency, "CNY");
+    assert!(
+        price_row(&conn, &outcome.instrument_id).is_some(),
+        "etf 命中同样落现价"
     );
 }

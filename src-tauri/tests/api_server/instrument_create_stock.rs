@@ -149,6 +149,44 @@ async fn test_create_stock_without_market_infers_and_creates_with_resolved_marke
     );
 }
 
+#[tokio::test]
+async fn test_create_etf_typed_instrument_gets_same_enhancement() {
+    let mut hits = stub_hit();
+    hits.insert(
+        "sh/510300".to_string(),
+        StockStubHit {
+            name: "沪深300ETF",
+            price: Some((398500, "2026-09-04")),
+            kind_hint: InstrumentType::Etf,
+        },
+    );
+    let (app, conn, calls) = setup_app_with_stock_stub(hits);
+
+    // 导入知识教 AI 按类型提示填 type：etf 提交同样走增强（场内两类型同属行情
+    // 通道），回填权威名称 + 落现价；类型以提交为准落库，不被改写。
+    let (status, bytes) = post_instrument(&app, r#"{"symbol":"510300","type":"etf"}"#).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let _: String = serde_json::from_slice(&bytes).unwrap();
+
+    let conn = conn.lock().unwrap();
+    let (name, row_type, price_cents): (String, String, i64) = conn
+        .query_row(
+            "SELECT i.name, i.instrument_type, p.price_cents FROM instruments i \
+             JOIN market_prices p ON p.instrument_id = i.id \
+             WHERE i.symbol='510300' AND i.instrument_type='etf'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .expect("etf 行 + 现价应存在");
+    assert_eq!(name, "沪深300ETF", "应回填东财权威名称");
+    assert_eq!(row_type, "etf", "类型按提交落库");
+    assert_eq!(price_cents, 398500, "etf 命中同样落最新价现价");
+    assert_eq!(
+        *calls.lock().unwrap(),
+        vec![("sh".to_string(), "510300".to_string())]
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 查无此码：拒绝创建，不产生标的行
 // ---------------------------------------------------------------------------

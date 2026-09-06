@@ -326,12 +326,14 @@ async fn test_create_fund_with_name_as_code_skips_eastmoney_lookup() {
 }
 
 #[tokio::test]
-async fn test_create_non_fund_type_skips_eastmoney_lookup() {
+async fn test_create_non_fund_type_skips_fund_lookup() {
     let (app, _conn, calls) = setup_app_with_fund_stub(stub_hit());
 
+    // 非 fund 类型不经基金详情接缝（bond 亦不经股票行情接缝——
+    // 只有 fund/stock/etf 触发各自接缝，issue #694）。
     let (status, bytes) = post_instrument(
         &app,
-        r#"{"symbol":"600519","type":"stock","name":"贵州茅台","market":"sh"}"#,
+        r#"{"symbol":"600519","type":"bond","name":"贵州茅台","market":"sh"}"#,
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
@@ -339,7 +341,7 @@ async fn test_create_non_fund_type_skips_eastmoney_lookup() {
 
     assert!(
         calls.lock().unwrap().is_empty(),
-        "非 fund 类型不应发起东财请求（股票创建不受增强影响）"
+        "非 fund 类型不应发起基金详情请求"
     );
 }
 
