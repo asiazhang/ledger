@@ -98,8 +98,7 @@ async function submit() {
     :show="show"
     preset="card"
     :title="t('investments.create.title')"
-    style="width: 440px"
-    :bordered="false"
+    card-size="md"
     @update:show="(v: boolean) => emit('update:show', v)"
   >
     <NSpace vertical :size="12">

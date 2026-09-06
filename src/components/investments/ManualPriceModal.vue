@@ -87,8 +87,7 @@ async function submit() {
     :show="show"
     preset="card"
     :title="t('investments.manualPrice.title', { symbol: instrument?.symbol ?? '' })"
-    style="width: 440px"
-    :bordered="false"
+    card-size="md"
     @update:show="(v: boolean) => emit('update:show', v)"
   >
     <NSpace vertical :size="12">
