@@ -131,8 +131,8 @@ pub(crate) fn pick_stock_quote(
     })
 }
 
-/// 按（市场，代码）拉取单点行情。市场须已过投资域形态解析（沪深港，见
-/// `investment::stock::resolve_stock_market`）；查无此码返回码化中文错误
+/// 按（市场，代码）拉取单点行情。市场须已过投资域候选解析（沪深港美，见
+/// `investment::stock::resolve_stock_quote_candidates`）；查无此码返回码化中文错误
 ///（Invalid → 400），网络失败 / 风控拦截由 HTTP 层重试后上抛（Io → 500）。
 pub(super) fn fetch_stock_quote(
     client: &reqwest::blocking::Client,

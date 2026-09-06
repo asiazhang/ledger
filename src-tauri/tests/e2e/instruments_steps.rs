@@ -57,6 +57,26 @@ fn create_instrument_of_type(
         .unwrap();
 }
 
+/// 直接插入指定市场的金融工具字典行（美股持仓折算场景用，issue #696：
+/// market 为闭集值如 nasdaq/nyse/amex，经 V002 检查约束验证落库）。
+#[given(expr = "存在市场 {string} 的标的 {string} 名称 {string} 币种 {string}")]
+fn create_instrument_with_market(
+    world: &mut LedgerWorld,
+    market: String,
+    symbol: String,
+    name: String,
+    currency: String,
+) {
+    let now = now_iso();
+    world_conn!(world)
+        .execute(
+            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+             VALUES (?1,?2,'stock',?3,?4,?5,?6,?6,1,?7)",
+            params![new_uuid(), symbol, name, currency, market, now, device_id()],
+        )
+        .unwrap();
+}
+
 // ---------------------------------------------------------------------------
 // When
 // ---------------------------------------------------------------------------

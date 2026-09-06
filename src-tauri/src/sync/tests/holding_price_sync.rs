@@ -819,6 +819,16 @@ fn fx_secid_candidates_cover_onshore_and_reverse_fallback() {
             ("119.USDEUR".to_string(), true),
         ]
     );
+    // 美元→人民币（issue #696 美股持仓折算）：在岸中间价 120.USDCNYC 首选
+    //（2026-01 实测命中；离岸 119.USDCNY 无直连数据），反向兇底取倒数。
+    assert_eq!(
+        fx_secid_candidates("USDCNY"),
+        vec![
+            ("120.USDCNYC".to_string(), false),
+            ("119.USDCNY".to_string(), false),
+            ("119.CNYUSD".to_string(), true),
+        ]
+    );
     // 本位币为 base 的反向对：119 直连 + 119 反向 + 120 反向（取倒数）。
     assert_eq!(
         fx_secid_candidates("CNYHKD"),
@@ -1275,5 +1285,161 @@ fn fund_and_stock_partitions_roll_up_into_one_result() {
     assert_eq!(
         fund_price_of(&conn, "inst-fund"),
         Some((33480, Some("2026-01-30".into())))
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 美股行情通道（issue #696 / ADR-0081 决策 2）：f2 刻度实测钉住、美股持仓
+// 刷价 + 日 K 回填 + USDCNY 汇率同期采集的端到端离线注入。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn us_quotes_deserialize_with_thousand_scale() {
+    // 真实 ulist.np/get 响应样本（2026-01 实测，一次携带纳斯达克 105.AAPL /
+    // 纽交所 106.BABA / 美交所 107.SPY；f1 精度位随行返回但本通道不消费，
+    // 刻度按市场单点换算：美股 f2 与港股同为 3 位小数 ×1000）。
+    let json = r#"{"rc":0,"rt":11,"svr":177542528,"lt":1,"full":1,"dlmkts":"8,10,128","dsc":"0","data":{"total":3,"diff":[{"f1":3,"f2":319970,"f12":"AAPL","f14":"苹果"},{"f1":3,"f2":113240,"f12":"BABA","f14":"阿里巴巴"},{"f1":3,"f2":770190,"f12":"SPY","f14":"标普500ETF-SPDR"}]}}"#;
+    let resp: UlistResponse = serde_json::from_str(json).unwrap();
+    let items = resp.data.unwrap().diff.unwrap().into_items();
+    assert_eq!(items.len(), 3);
+    // 价格换算（万分之一元）：美股 f2 × 10 —— 319.970 / 113.240 / 770.190。
+    assert_eq!(f2_to_price(items[0].price.unwrap(), "nasdaq"), 3_199_700);
+    assert_eq!(f2_to_price(items[1].price.unwrap(), "nyse"), 1_132_400);
+    assert_eq!(f2_to_price(items[2].price.unwrap(), "amex"), 7_701_900);
+}
+
+#[test]
+fn us_stock_holding_syncs_quote_kline_and_usdcny() {
+    let conn = setup_db();
+    // 美股持仓：纳斯达克标的、USD 币种（创建增强落库形态）。
+    insert_holding(
+        &conn,
+        "acc-usd",
+        "inst-aapl",
+        "AAPL",
+        "stock",
+        "USD",
+        "nasdaq",
+    );
+
+    // 记录批量报价请求的完整 secid 串：断言按精确市场构造 105.AAPL（零候选开销）。
+    let secid_log = RefCell::new(Vec::new());
+    let mut fetch = |secids: &str| -> Result<Vec<StockItem>> {
+        secid_log.borrow_mut().push(secids.to_string());
+        // 原始 f2（3 位小数刻度）：AAPL $319.97 → 319970。
+        Ok(vec![StockItem {
+            name: "苹果".into(),
+            code: "AAPL".into(),
+            price: Some(319_970.0),
+        }])
+    };
+    // 近两年日 K 回填样本（美股美元价）：跨两周（01-02 周五、01-08 周四），末周取最后交易日。
+    let klines = [(
+        "105.AAPL",
+        vec![bar("2026-01-02", 315.10), bar("2026-01-08", 319.97)],
+    )];
+    let mut kline = mock_kline(&klines);
+
+    // USDCNY 汇率同期采集（持仓币种 USD ≠ 本位币 CNY）：记录被请求的币种对。
+    let fx_log = RefCell::new(Vec::new());
+    let fx_pairs = [(
+        "USDCNY",
+        vec![bar("2026-01-02", 7.02), bar("2026-01-08", 7.01)],
+    )];
+    let mut fx = mock_fx(&fx_pairs, &fx_log);
+
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap();
+    assert_eq!(result.synced, 1, "美股持仓应计入同步成功");
+    assert_eq!(result.skipped, 0);
+    assert_eq!(result.written, 1, "实际落价应计入写入（信号判定）");
+
+    // secid 按精确市场构造：105.AAPL（#692 已扩 105/106/107 映射）。
+    assert_eq!(*secid_log.borrow(), vec!["105.AAPL".to_string()]);
+
+    // 现价：f2 319970 × 10 = 3199700 万分之一元（$319.97），币种 USD。
+    assert_eq!(market_price_of(&conn, "inst-aapl"), Some(3_199_700));
+    let (price_ccy, source): (String, String) = conn
+        .query_row(
+            "SELECT currency_code, source FROM market_prices WHERE instrument_id='inst-aapl'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(price_ccy, "USD");
+    assert_eq!(source, EASTMONEY_PRICE_SOURCE);
+
+    // 日 K 周采样回填：价格历史以 USD 落库，刻度同万分之一元。
+    assert_eq!(
+        price_history_rows(&conn, "inst-aapl"),
+        vec![
+            ("2026-01-02".into(), 3_151_000, "USD".into()),
+            ("2026-01-08".into(), 3_199_700, "USD".into()),
+        ],
+        "近两年回填按周采样落 PriceHistory（每周取最后交易日）"
+    );
+
+    // USDCNY 汇率同期落 FxRateHistory（候选序钉住见 fx_secid_candidates 测试）。
+    assert_eq!(
+        *fx_log.borrow(),
+        vec!["USDCNY".to_string()],
+        "只对非本位币币种对发起汇率抓取"
+    );
+    assert_eq!(
+        fx_rows(&conn, "USD", "CNY"),
+        vec![("2026-01-02".into(), 7.02), ("2026-01-08".into(), 7.01)],
+    );
+
+    // 重跑幂等：现价覆盖更新、价格/汇率历史同周整周覆盖，零重复行。
+    let mut fetch = |secids: &str| -> Result<Vec<StockItem>> {
+        secid_log.borrow_mut().push(secids.to_string());
+        Ok(vec![StockItem {
+            name: "苹果".into(),
+            code: "AAPL".into(),
+            price: Some(320_000.0),
+        }])
+    };
+    let mut kline = mock_kline(&klines);
+    let mut fx = mock_fx(&fx_pairs, &fx_log);
+    do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap();
+    let price_rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM price_history", [], |r| r.get(0))
+        .unwrap();
+    let fx_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM fx_rate_history", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(price_rows, 2, "价格历史零重复行");
+    assert_eq!(fx_count, 2, "汇率历史零重复行");
+    assert_eq!(
+        market_price_of(&conn, "inst-aapl"),
+        Some(3_200_000),
+        "现价覆盖更新为最新价"
+    );
+}
+
+#[test]
+fn us_stock_holdings_route_exact_secids_per_market() {
+    // 三市场各一持仓：secid 前缀按精确市场映射（105/106/107），互不串市场。
+    // （全 stock 类型：ETF 行情分区扩展属 #695，不在本票范围。）
+    let conn = setup_db();
+    insert_holding(&conn, "acc-1", "inst-nq", "AAPL", "stock", "USD", "nasdaq");
+    insert_holding(&conn, "acc-2", "inst-ny", "BABA", "stock", "USD", "nyse");
+    insert_holding(&conn, "acc-3", "inst-am", "SPY", "stock", "USD", "amex");
+
+    let secid_log = RefCell::new(Vec::new());
+    let mut fetch = |secids: &str| -> Result<Vec<StockItem>> {
+        secid_log.borrow_mut().push(secids.to_string());
+        Ok(vec![])
+    };
+    let mut kline = mock_kline(&[]);
+    let fx_log = RefCell::new(Vec::new());
+    let usdcny = [("USDCNY", vec![bar("2026-01-05", 7.02)])];
+    let mut fx = mock_fx(&usdcny, &fx_log);
+    do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap();
+
+    assert_eq!(
+        *secid_log.borrow(),
+        vec!["105.AAPL,106.BABA,107.SPY".to_string()],
+        "三市场持仓同批查询，secid 各自按精确前缀构造（收集按 symbol 升序）"
     );
 }
