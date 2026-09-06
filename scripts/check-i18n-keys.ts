@@ -10,7 +10,7 @@
 
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 
 /** 源语言目录名（其余 locale 一律与它比对） */
 export const SOURCE_LOCALE_DIR = 'zh-CN'
@@ -91,7 +91,7 @@ export function compareLocalesDir(localesDir: string): CompareResult {
 }
 
 function main(): void {
-  const localesDir = process.argv[2] ?? new URL('../src/i18n/locales', import.meta.url).pathname
+  const localesDir = process.argv[2] ?? fileURLToPath(new URL('../src/i18n/locales', import.meta.url))
   const { sourceLocale, locales, failures } = compareLocalesDir(localesDir)
   if (failures.length === 0) {
     console.log(`✅ i18n key 全等：${locales.join(' / ')} 各语言 key 集合与源语言 ${sourceLocale} 全等`)
