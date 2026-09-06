@@ -32,6 +32,7 @@
 ### Fixed
 
 - **界面**：修复「移回侧栏」菜单提示文案溢出容器的问题（[#647]）。
+- **加密**：开发/未签名构建下，设置页与解锁屏的自动解锁提示不再误标 Touch ID，按运行形态区分文案（[#687]）。
 
 ## [0.5.0] - 2026-09-05
 
@@ -198,5 +199,6 @@
 [#650]: https://github.com/asiazhang/ledger/issues/650
 [#647]: https://github.com/asiazhang/ledger/issues/647
 [#662]: https://github.com/asiazhang/ledger/issues/662
+[#687]: https://github.com/asiazhang/ledger/issues/687
 [#651]: https://github.com/asiazhang/ledger/issues/651
 [#653]: https://github.com/asiazhang/ledger/issues/653

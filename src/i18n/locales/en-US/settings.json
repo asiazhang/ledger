@@ -236,6 +236,7 @@
       "disableOkToast": "Encryption disabled; the app will restart shortly",
       "rememberCheckbox": "Auto unlock",
       "rememberCheckboxHint": "When on, the app unlocks automatically at launch via Touch ID on macOS, without re-entering the master passphrase.",
+      "rememberCheckboxDevFallbackHint": "When on, the app unlocks automatically at launch without re-entering the master passphrase (development build: unlocks directly from the local keychain cache, no biometric prompt).",
       "rememberStatusOn": "On — the app unlocks automatically at next launch, no passphrase needed",
       "rememberStatusOff": "Off — enter the master passphrase manually at each launch",
       "rememberEnableButton": "Enable auto unlock…",
@@ -248,6 +249,7 @@
       "rememberEnableModalCancel": "Cancel",
       "rememberSectionLabel": "Auto unlock",
       "rememberToggleHint": "When enabled, the master passphrase is stored securely in this device's keychain (reads require Touch ID on macOS) so the next launch unlocks automatically without re-entering it; turning it off returns to manual entry. It applies to this device only — you'll still enter it manually on another device or after restoring a backup elsewhere.",
+      "rememberToggleDevFallbackHint": "When enabled, the master passphrase is stored securely in this device's keychain so the next launch unlocks automatically without re-entering it; turning it off returns to manual entry. It applies to this device only — you'll still enter it manually on another device or after restoring a backup elsewhere.",
       "rememberDevFallbackHint": "Development build: the local cache has no Touch ID gate — restarts unlock directly from the cache without prompting biometrics. Release builds are unaffected.",
       "rememberEnabled": "Auto unlock enabled",
       "rememberFailed": "Couldn't enable auto unlock; keeping manual entry"
