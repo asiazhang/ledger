@@ -89,13 +89,23 @@ export function useEncryptionGate() {
 
   /** 凭本机缓存的主口令解锁（issue #574）：成功即翻转状态，主界面随之挂载。
    *  等待有界（issue #644）：超过 [`AUTO_UNLOCK_TIMEOUT_MS`] 返回 `timeout`，
-   *  调用方回退手输；后端调用不取消，迟到结局仍有归属（成功照常翻门——
-   *  无论界面当前在哪，认证通过就应进入；失败静默消化，不炸未处理拒绝）。
-   *  口令在后端钥匙串读出，不回流前端。失败（无缓存 / 生物认证取消 / 缓存
-   *  口令已过期）在到期前发生则原样上抛，由调用方回退手输。 */
-  async function unlockWithRemembered(timeoutMs = AUTO_UNLOCK_TIMEOUT_MS): Promise<AutoUnlockWait> {
+   *  调用方回退手输；后端调用不取消，迟到结局仍有归属——迟到成功先复核后端
+   *  相位再翻门（等待期间可能已手输解锁/触发重引导，相位可能已变；仅后端
+   *  确已就绪才翻转，不遮蔽真实锁定/失败态），迟到失败静默消化，不炸未处理
+   *  拒绝。口令在后端钥匙串读出，不回流前端。失败（无缓存 / 生物认证取消 /
+   *  缓存口令已过期）在到期前发生则原样上抛，由调用方回退手输。 */
+  async function unlockWithRemembered(): Promise<AutoUnlockWait> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let expired = false
     const core = api.unlockWithRememberedPassphrase().then(
-      (outcome): AutoUnlockWait => {
+      async (outcome): Promise<AutoUnlockWait> => {
+        if (expired) {
+          // 迟到结局守卫（issue #644 审查）：正常路径不付这次探测，仅迟到时复核。
+          const status = await api.getBootStatus()
+          if (status.phase !== 'ready') {
+            return { status: 'unlocked', relocated: outcome.relocated }
+          }
+        }
         locked.value = false
         return { status: 'unlocked', relocated: outcome.relocated }
       },
@@ -103,12 +113,20 @@ export function useEncryptionGate() {
     // 迟到结局的归属：成功照常翻转锁定门（见上）；失败不再上抛——等待已
     // 到期、回退提示已出，迟到的失败由手输路径与下次启动消化。
     core.catch(() => {})
-    return Promise.race([
-      core,
-      new Promise<AutoUnlockWait>((resolve) =>
-        setTimeout(() => resolve({ status: 'timeout' }), timeoutMs),
-      ),
-    ])
+    try {
+      return await Promise.race([
+        core,
+        new Promise<AutoUnlockWait>((resolve) => {
+          timer = setTimeout(() => {
+            expired = true
+            resolve({ status: 'timeout' })
+          }, AUTO_UNLOCK_TIMEOUT_MS)
+        }),
+      ])
+    } finally {
+      // 竞速早胜后清定时器（审查）：不悬挂 30s 计时器。
+      if (timer !== undefined) clearTimeout(timer)
+    }
   }
 
   /** 清空「记住」的钥匙串缓存与偏好（关闭加密 / 忘记口令重置 / 关闭开关共用）。 */

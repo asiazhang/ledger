@@ -361,12 +361,20 @@ describe('UnlockScreen.vue 本机记住主口令（issue #574）', () => {
     }
   })
 
-  it('超时后自动解锁迟到成功：仍翻转锁定门进入应用（等待有界、结果不丢，issue #644）', async () => {
+  it('超时后自动解锁迟到成功：复核后端就绪仍翻门进入（等待有界、结果不丢，issue #644）', async () => {
     vi.useFakeTimers()
     try {
       let resolveUnlock!: (v: { relocated: boolean }) => void
+      let bootProbeCount = 0
       stubInvoke({
-        get_boot_status: () => Promise.resolve({ phase: 'locked', error_code: null }),
+        // 首次：启动探测（锁定）；第二次：迟到成功守卫的相位复核（已就绪）。
+        get_boot_status: () => {
+          bootProbeCount += 1
+          return Promise.resolve({
+            phase: bootProbeCount >= 2 ? ('ready' as const) : ('locked' as const),
+            error_code: null,
+          })
+        },
         get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
         unlock_with_remembered_passphrase: () =>
           new Promise((resolve) => {
@@ -384,10 +392,46 @@ describe('UnlockScreen.vue 本机记住主口令（issue #574）', () => {
       await flushPromises()
       expect(locked.value).toBe(true)
 
-      // 迟到成功：生物认证最终通过——结果照常生效，主界面挂载
+      // 迟到成功：生物认证最终通过——相位复核就绪后照常生效，主界面挂载
       resolveUnlock({ relocated: false })
       await flushPromises()
       expect(locked.value).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('迟到成功但后端已重回锁定：相位守卫拦下，不翻转前端门（不遮蔽真实锁定态，issue #644 审查）', async () => {
+    vi.useFakeTimers()
+    try {
+      let resolveUnlock!: (v: { relocated: boolean }) => void
+      stubInvoke({
+        // 启动探测与迟到守卫的复核都返回锁定（等待期间发生了手输解锁 +
+        // 重引导，后端已重回锁定态）。
+        get_boot_status: () =>
+          Promise.resolve({ phase: 'locked' as const, error_code: null }),
+        get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
+        unlock_with_remembered_passphrase: () =>
+          new Promise((resolve) => {
+            resolveUnlock = resolve
+          }),
+      })
+      useAppStore().setRememberPassphrase(true)
+      const { probe, locked } = useEncryptionGate()
+      const probePromise = probe()
+      const wrapper = mount(UnlockScreen)
+      await probePromise
+      await flushPromises()
+
+      vi.advanceTimersByTime(AUTO_UNLOCK_TIMEOUT_MS)
+      await flushPromises()
+      expect(locked.value).toBe(true)
+
+      resolveUnlock({ relocated: false })
+      await flushPromises()
+      // 相位守卫：后端非就绪，不翻转——解锁屏维持手输形态，不被主界面遮蔽。
+      expect(locked.value).toBe(true)
+      expect(wrapper.html()).toContain('账本已加密')
     } finally {
       vi.useRealTimers()
     }

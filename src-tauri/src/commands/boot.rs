@@ -26,6 +26,7 @@ use rusqlite::Connection;
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
+use crate::backup;
 use crate::commands::data_location::{default_data_dir, effective_db_dir_of};
 use crate::commands::encryption::resume_business_surface;
 use crate::db::boot::{BOOT_DB_UNREADABLE, BootFailureGate, BootPlan};
@@ -71,8 +72,8 @@ pub enum BootPhase {
 }
 
 impl BootPhase {
-    /// 日志用的稳定相位名（与 [`crate::commands::boot::get_boot_status`] 的
-    /// `phase` 字段同词表）。
+    /// 相位词表的单一来源（wire 形态与日志同名）：[`BootStatus::phase`]、
+    /// 日志相位字段都经此处产出，不得平行手拼同义字符串。
     pub fn as_str(self) -> &'static str {
         match self {
             BootPhase::Ready => "ready",
@@ -211,21 +212,17 @@ pub struct BootStatus {
 pub fn get_boot_status(app: AppHandle) -> Result<BootStatus> {
     let failed = app.state::<BootFailureGate>().is_failed();
     let locked = app.state::<EncryptionGate>().is_locked();
-    let status = if failed {
-        BootStatus {
-            phase: "failed",
-            error_code: Some(BOOT_DB_UNREADABLE.to_string()),
-        }
+    // 相位词表单一来源（审查：与 [`BootPhase::as_str`] 共用闭集，不再平行手拼）。
+    let phase = if failed {
+        BootPhase::Failed
     } else if locked {
-        BootStatus {
-            phase: "locked",
-            error_code: None,
-        }
+        BootPhase::AwaitUnlock
     } else {
-        BootStatus {
-            phase: "ready",
-            error_code: None,
-        }
+        BootPhase::Ready
+    };
+    let status = BootStatus {
+        phase: phase.as_str(),
+        error_code: (phase == BootPhase::Failed).then(|| BOOT_DB_UNREADABLE.to_string()),
     };
     tracing::info!(phase = status.phase, "前端启动探测完成（WebView 已加载）");
     Ok(status)
@@ -254,7 +251,16 @@ pub fn get_boot_status(app: AppHandle) -> Result<BootStatus> {
 #[tauri::command]
 pub async fn restart_app(app: AppHandle) -> Result<()> {
     tracing::info!("应用重启开始：原位重引导（进程不退出），完成后由前端重载 WebView");
-    let phase = run_db("restart_app", move || Ok(try_boot_sequence(&app))).await?;
+    let handle = app.clone();
+    let phase = run_db("restart_app", move || Ok(try_boot_sequence(&handle))).await?;
+    if phase == BootPhase::Ready {
+        // 重引导落到就绪即拉起调度（幂等，单次拉起守卫）：锁定/失败态启动的
+        // 会话里 setup 未拉起调度线程，恢复通道重启不经 setup——此处是该场景
+        // 下调度线程唯一的生产点（ADR-0080 决策 4：解锁/恢复后自动继续）。
+        // 未就绪（解锁屏/失败恢复屏）不拉：解锁/重置路径的
+        // `resume_business_surface` 会在业务可用起点拉起。
+        backup::start_scheduler(&app);
+    }
     tracing::info!(
         phase = phase.as_str(),
         "原位重引导完成，等待前端重载 WebView"
