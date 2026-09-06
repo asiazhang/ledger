@@ -340,8 +340,7 @@ onMounted(() => {
       :title="t('scheduled.pane.createInstallment')"
       preset="card"
       display-directive="if"
-      style="width: 480px"
-      :bordered="false"
+      card-size="md"
     >
       <NForm label-placement="left" :show-feedback="false" size="small">
         <NSpace vertical :size="12">
