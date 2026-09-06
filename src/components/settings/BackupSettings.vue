@@ -42,6 +42,8 @@ const {
   backupOnce,
   backupAs,
   pickRestore,
+  revealInFinder,
+  copyLastBackupPath,
   autoBackupEnabled,
   autoBackupLastText,
   toggleAutoBackup,
@@ -68,6 +70,24 @@ const backupColumns = [
   },
   { title: () => t('settings.data.backup.columns.size'), key: 'size_text', width: 100 },
   { title: () => t('settings.data.backup.columns.time'), key: 'created_at', width: 160 },
+  // 操作列（issue #653）：行级「在访达中显示」——系统文件管理器定位到该备份文件，
+  // 免在目录里人工比对长文件名（界面文本不可选，显式通道；路径与文件名不给
+  // 复制入口，分配见父 spec #649）。
+  {
+    title: () => t('settings.data.backup.columns.actions'),
+    key: 'actions',
+    width: 120,
+    render: (row: { file_name: string; path: string }) =>
+      h(
+        NButton,
+        {
+          size: 'tiny',
+          'data-testid': `backup-reveal-${row.file_name}`,
+          onClick: () => revealInFinder(row.path),
+        },
+        { default: () => t('settings.data.backup.revealInFinder') },
+      ),
+  },
 ]
 </script>
 
@@ -84,9 +104,15 @@ const backupColumns = [
           <NButton type="primary" :loading="backingUp" @click="backupOnce">{{ t('settings.data.backup.backupOnce') }}</NButton>
           <NButton :loading="backingUp" @click="backupAs">{{ t('settings.data.backup.backupAs') }}</NButton>
         </NSpace>
-        <NText v-if="lastBackup" type="success" style="word-break: break-all">
-          {{ t('settings.data.backup.lastBackup') }}{{ lastBackup }}
-        </NText>
+        <NSpace v-if="lastBackup" align="center" :size="8">
+          <NText type="success" style="word-break: break-all">
+            {{ t('settings.data.backup.lastBackup') }}{{ lastBackup }}
+          </NText>
+          <!-- 复制完整路径（issue #653）：展示文案含大小括注，复制的是原始完整路径 -->
+          <NButton size="small" data-testid="copy-last-backup-path" @click="copyLastBackupPath">
+            {{ t('settings.data.backup.copyPath') }}
+          </NButton>
+        </NSpace>
       </NSpace>
     </NCard>
 

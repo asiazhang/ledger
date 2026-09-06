@@ -396,6 +396,10 @@ export const api = {
   // 日志（issue #283）：打开日志目录（系统文件管理器展示，按天滚动、保留 7 天）
   openLogDir: () => invoke<void>('open_log_dir'),
 
+  // 在系统文件管理器中定位文件（issue #653）：薄壳系统命令包装 opener 插件定位
+  // 能力（「打开日志目录」同款先例），无业务语义；设置页备份列表行消费
+  revealInFileManager: (path: string) => invoke<void>('reveal_in_file_manager', { path }),
+
   // 日志等级（spec #611，About 页「关于」Tab）：读持久化档位 + 校验闭集写入 +
   // 运行期接管滤镜（文件/终端共用同一滤镜、立即生效、跨启动保留）。
   // 界面展示的是持久化档位；显式 RUST_LOG 环境变量在本次启动内优先且不写库。

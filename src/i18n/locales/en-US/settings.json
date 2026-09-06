@@ -123,7 +123,8 @@
         "source": "Source",
         "encrypted": "Encrypted",
         "size": "Size",
-        "time": "Backed Up At"
+        "time": "Backed Up At",
+        "actions": "Actions"
       },
       "encryptedLabel": "Encrypted backup",
       "listTitle": "Backup Files",
@@ -146,7 +147,11 @@
       "backupOnce": "One-click Backup",
       "backupAs": "Save As…",
       "lastBackup": "Last backup: ",
-      "refresh": "Refresh"
+      "refresh": "Refresh",
+      "copyPath": "Copy Path",
+      "copyPathOk": "Full path copied",
+      "copyPathFailed": "Failed to copy path: {msg}",
+      "revealInFinder": "Reveal in Finder"
     },
     "location": {
       "title": "Data Location",
@@ -168,7 +173,10 @@
       "adoptOk": "Adopt It",
       "adoptCancel": "Keep Separate",
       "cancelled": "Change cancelled; data location unchanged",
-      "committed": "Change saved; the migration takes effect on next startup"
+      "committed": "Change saved; the migration takes effect on next startup",
+      "copyPath": "Copy Path",
+      "copyPathOk": "Full path copied",
+      "copyPathFailed": "Failed to copy path: {msg}"
     },
     "encryption": {
       "title": "Encryption",

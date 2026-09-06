@@ -29,6 +29,10 @@ import AppDangerConfirmModal from '@/components/AppDangerConfirmModal.vue'
 const mockInvoke = vi.mocked(invoke)
 const mockOpen = vi.mocked(open)
 
+// 剧本剪贴板（issue #653）：断言写入内容与成功/失败提示分支（父 spec 测试决策：
+// 组件测试中 mock 剪贴板对象，断言写入内容与成功提示）。
+const writeText = vi.fn().mockResolvedValue(undefined)
+
 const baseInfo: DataLocationInfo = {
   active_dir: '/Users/me/Library/Application Support/ledger',
   configured_dir: null,
@@ -60,6 +64,8 @@ beforeEach(() => {
   messageApi.warning.mockClear()
   messageApi.error.mockClear()
   messageApi.info.mockClear()
+  writeText.mockClear()
+  Object.assign(navigator, { clipboard: { writeText } })
   document.body.innerHTML = ''
 })
 
@@ -373,5 +379,48 @@ describe('DataLocationSettings.vue', () => {
     expect(wrapper.html()).toContain('/Volumes/Sync/ledger-data')
     expect(messageApi.success).toHaveBeenCalled()
     expect(localStorage.getItem('data_location_dir')).toBeNull()
+  })
+})
+
+describe('复制路径通道（issue #653）：界面文本不可选，复制走显式按钮 + 剪贴板 API', () => {
+  it('当前生效位置：点击「复制路径」写入完整路径并成功提示', async () => {
+    stubInvoke()
+    const wrapper = mount(DataLocationSettings)
+    await flushPromises()
+    await wrapper.find('[data-testid="copy-active-path"]').trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenCalledTimes(1)
+    expect(writeText).toHaveBeenCalledWith('/Users/me/Library/Application Support/ledger')
+    expect(messageApi.success).toHaveBeenCalledWith(expect.stringContaining('已复制完整路径'))
+    expect(messageApi.error).not.toHaveBeenCalled()
+  })
+
+  it('待生效新位置：待重启生效时同样可复制意图目录完整路径（与当前生效位置两个入口并存）', async () => {
+    stubInvoke({
+      get_data_location_info: () => ({
+        ...baseInfo,
+        configured_dir: '/Volumes/Sync/ledger-data',
+        pending_restart: true,
+      }),
+    })
+    const wrapper = mount(DataLocationSettings)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="copy-active-path"]').exists()).toBe(true)
+    await wrapper.find('[data-testid="copy-pending-path"]').trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenCalledTimes(1)
+    expect(writeText).toHaveBeenCalledWith('/Volumes/Sync/ledger-data')
+    expect(messageApi.success).toHaveBeenCalled()
+  })
+
+  it('复制失败：错误提示，不静默', async () => {
+    stubInvoke()
+    writeText.mockRejectedValueOnce(new Error('剪贴板不可用'))
+    const wrapper = mount(DataLocationSettings)
+    await flushPromises()
+    await wrapper.find('[data-testid="copy-active-path"]').trigger('click')
+    await flushPromises()
+    expect(messageApi.error).toHaveBeenCalledWith(expect.stringContaining('复制路径失败'))
+    expect(messageApi.success).not.toHaveBeenCalled()
   })
 })
