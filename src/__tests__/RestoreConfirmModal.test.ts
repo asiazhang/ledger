@@ -238,3 +238,21 @@ describe('RestoreConfirmModal（恢复确认弹窗，issue #572）', () => {
 function needsPassphraseInput(): boolean {
   return bodyQuery('[data-testid="restore-passphrase"]') !== null
 }
+
+describe('RestoreConfirmModal 弹窗排版统一（issue #640 / spec #630）', () => {
+  /** 断言弹窗卡片：宽度归 md 档（480px）+ 无边框（AppModal 默认，调用点不再显式声明）。
+   *  弹窗卡片 teleport 到 body，本文件直接 mount 组件、body 上应恰有一张卡片
+   *  （先例 PolicyFormModal.test.ts 的 expectModalCard）。 */
+  function expectModalCard(width: string) {
+    const cards = [...document.querySelectorAll<HTMLElement>('.n-card')]
+    expect(cards, '当前应恰有一个弹窗卡片').toHaveLength(1)
+    expect(cards[0].style.width).toBe(width)
+    expect(cards[0].classList.contains('n-card--bordered')).toBe(false)
+  }
+
+  it('弹窗卡片宽度归 md 档（480px）且默认无边框', async () => {
+    mountModal(sameModePlaintext)
+    await flushPromises()
+    expectModalCard('480px')
+  })
+})
