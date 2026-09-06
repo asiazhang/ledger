@@ -80,7 +80,7 @@
 ## Counterparty（交易对手，已废弃）
 
 - **定义**：~~定时交易中的收款方或付款对象~~ 已废弃：该概念统一为核心交易域商户（Merchant），本域不再独立定义——定义与边界见核心交易域 `CONTEXT-core.md`「Merchant」。
-- **现状**：分期（InstallmentPlan）与订阅（Subscription）可关联商户，每期生成交易时复制到流水；定时转账（ScheduledTransfer）不使用商户（用 `to_account_id` 表示本方账户间转账）的边界维持。
+- **现状**：分期（InstallmentPlan）与订阅（Subscription）可关联商户，每期生成交易时复制到流水（保单缴费协议例外：不关联商户、流水不复制商户，ADR-0082）；定时转账（ScheduledTransfer）不使用商户（用 `to_account_id` 表示本方账户间转账）的边界维持。
 - **历史**：原 MVP 决策（`counterparty` 自由文本落计划扩展表、不在核心交易域 `Transaction` 表新增通用字段）已被 ADR-0028 推翻：`counterparty` 文本列改为 `merchant_id` 引用，全库统一「商户」，不再使用「交易对手」「商家」「收款方」等词。
 
 ## Recurrence Rule（周期规则）
