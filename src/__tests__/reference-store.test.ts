@@ -1,13 +1,15 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke } from './helpers/invoke-mock'
+import {
+  captureLastListener,
+  mockListen,
+  type CapturedListener,
+} from './helpers/listen-mock'
 import { flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { listen } from '@tauri-apps/api/event'
 import { useReferenceStore } from '@/stores/reference'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Account, Category, Currency, Insurer, Merchant } from '@/types'
-
-const mockListen = vi.mocked(listen)
 
 const mockCurrencies: Currency[] = [
   { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
@@ -290,18 +292,11 @@ describe('useReferenceStore', () => {
 })
 
 describe('useReferenceStore 失效信号与 push 生命周期', () => {
-  let changedHandler: ((...args: unknown[]) => void) | null = null
+  let readChangedHandler: () => CapturedListener | null
 
   beforeEach(() => {
     mockListen.mockReset()
-    mockListen.mockImplementation((_event: string, handler: (...args: unknown[]) => void) => {
-      changedHandler = handler
-      return Promise.resolve(vi.fn())
-    })
-  })
-
-  afterEach(() => {
-    changedHandler = null
+    readChangedHandler = captureLastListener()
   })
 
   it('首次访问 self-init 自动触发一次加载（无需手动调用 load*）', async () => {
@@ -351,7 +346,7 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
       list_merchants: newMerchants,
       list_insurers: mockInsurers,
     })
-    changedHandler?.({ payload: undefined })
+    readChangedHandler()?.({ payload: undefined })
     // 事件到达即置 loading，旧数据保留（stale-while-revalidate）
     expect(store.status).toBe('loading')
     expect(store.currencies).toEqual(mockCurrencies)
@@ -379,7 +374,7 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
       list_merchants: newMerchants,
       list_insurers: mockInsurers,
     })
-    changedHandler?.({ payload: undefined })
+    readChangedHandler()?.({ payload: undefined })
     await flushPromises()
 
     expect(store.currencies).toEqual(newCurrencies)

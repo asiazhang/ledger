@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { lastInvokeArgs, mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { h, nextTick } from 'vue'
 import { NDialogProvider } from 'naive-ui'
@@ -166,17 +166,13 @@ describe('InstrumentBrowser 标的页工具栏', () => {
     const sw = wrapper.find('[data-testid="only-invested-switch"]')
     await sw.trigger('click')
     await flushPromises()
-    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments')
-    const [, args] = calls[calls.length - 1]
-    expect(args.filter).toMatchObject({ only_invested: true })
+    expect(lastInvokeArgs('list_instruments').filter).toMatchObject({ only_invested: true })
   })
 
   it('未勾选「只看持仓」时标的查询 only_invested 为 null', async () => {
     mountBrowser()
     await flushPromises()
-    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments')
-    const [, args] = calls[calls.length - 1]
-    expect(args.filter).toMatchObject({ only_invested: null })
+    expect(lastInvokeArgs('list_instruments').filter).toMatchObject({ only_invested: null })
   })
 })
 

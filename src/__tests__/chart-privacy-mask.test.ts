@@ -151,9 +151,15 @@ function barOptions(wrapper: VueWrapper, index: number): ChartOptions<'bar'> {
   return barProp(wrapper, index, 'options') as ChartOptions<'bar'>
 }
 
+/**
+ * 图表 options 的测试侧形态：chart.js 的 `ChartOptions<T>` 按 T 分布，bar/line 两型
+ * 互不赋值；本文件跨类型读取回调，统一经此联合（各调用点持有的单型均可赋值）。
+ */
+type BarOrLineChartOptions = ChartOptions<'bar'> | ChartOptions<'line'>
+
 /** 线性轴刻度 callback（y 轴或 x 轴值轴），缺失即失败 */
 function linearTick(
-  options: ChartOptions<'bar' | 'line'>,
+  options: BarOrLineChartOptions,
   axis: 'x' | 'y',
 ): (value: number | string, index: number, ticks: unknown[]) => string {
   const cb = options.scales?.[axis]?.ticks?.callback
@@ -162,14 +168,15 @@ function linearTick(
 }
 
 /** tooltip 文本回调（label / afterBody），缺失即失败 */
-function tooltipCb<O>(options: ChartOptions<'bar' | 'line'>, key: 'label' | 'afterBody'): O {
+function tooltipCb<O>(options: BarOrLineChartOptions, key: 'label' | 'afterBody'): O {
   const cb = options.plugins?.tooltip?.callbacks?.[key]
   expect(typeof cb).toBe('function')
   return cb as O
 }
 
-function tooltipItem(raw: number, datasetLabel = ''): TooltipItem<'bar'> {
-  return { dataset: { label: datasetLabel }, raw } as unknown as TooltipItem<'bar'>
+/** bar/line 两型通用的假 tooltip 项（仅携带 dataset.label / raw 两字段） */
+function tooltipItem(raw: number, datasetLabel = ''): TooltipItem<'bar'> & TooltipItem<'line'> {
+  return { dataset: { label: datasetLabel }, raw } as unknown as TooltipItem<'bar'> & TooltipItem<'line'>
 }
 
 /** 月度图 afterBody 入参：三 dataset（收入/支出/退款）悬停项，净额 = 收入−支出+退款 */

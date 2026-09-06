@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { lastInvokeArgs, mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { h, nextTick } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
@@ -159,10 +159,7 @@ describe('InvestmentsView 标的 tab', () => {
     await instTab.trigger('click')
     await nextTick()
     await nextTick()
-    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments')
-    expect(calls.length).toBeGreaterThan(0)
-    const [, args] = calls[calls.length - 1]
-    expect(args.filter).toMatchObject({ page: 1, page_size: 50 })
+    expect(lastInvokeArgs('list_instruments').filter).toMatchObject({ page: 1, page_size: 50 })
   })
 
   it('走势 tab 存在', () => {

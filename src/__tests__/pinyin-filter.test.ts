@@ -114,7 +114,8 @@ describe('pinyinFilter（NSelect filter 签名收口）', () => {
   })
 
   it('数字 label 转字符串判定', () => {
-    expect(pinyinFilter('12', { label: 123, value: 123 } as SelectOption)).toBe(true)
+    // 契约违例夹具（数字 label）：naive-ui 选项类型不含数字 label，经 unknown 单点绕过
+    expect(pinyinFilter('12', { label: 123, value: 123 } as unknown as SelectOption)).toBe(true)
   })
 
   it('非字符串/数字 label（渲染函数）不参与拼音判定，恒显示', () => {

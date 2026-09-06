@@ -25,8 +25,9 @@ function formInput(testid: string) {
   return new DOMWrapper<HTMLInputElement>(modal.querySelector(`[data-testid="${testid}"] input`))
 }
 
+/** 弹窗内保存按钮（PoliciesView saveButton 先例：诚实化为 HTMLElement 包装器）。 */
 function saveButton() {
-  return new DOMWrapper<HTMLButtonElement>(bodyQuery('[data-testid="physical-asset-save"]')!)
+  return new DOMWrapper(bodyQuery('[data-testid="physical-asset-save"]')!)
 }
 
 const mockCurrencies: Currency[] = [

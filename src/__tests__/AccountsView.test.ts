@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mockInvoke } from './helpers/invoke-mock'
+import { fireProp } from './helpers/component-vm'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NDialogProvider, NDropdown, NForm, NInput, NModal } from 'naive-ui'
 import { h } from 'vue'
@@ -139,7 +140,8 @@ describe('AccountsView 行菜单冒烟（issue #551：右键 + 「⋯」双入�
     const wrapper = mountView()
     await flushPromises()
     await openMenuOnRow(wrapper, 1)
-    rowMenu(wrapper).props('onSelect')?.('edit')
+    // NDropdown onSelect 装配缝（fireProp 单点窄化）：分派到编辑弹窗
+    fireProp(rowMenu(wrapper), 'onSelect', 'edit')
     await flushPromises()
     const editModal = wrapper
       .findAllComponents(NModal)

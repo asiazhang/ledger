@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mockInvoke } from './helpers/invoke-mock'
+import { componentVm } from './helpers/component-vm'
 import { mount, flushPromises, enableAutoUnmount, DOMWrapper } from '@vue/test-utils'
 import { NPopconfirm, NSelect, NDatePicker } from 'naive-ui'
 import { setActivePinia, createPinia } from 'pinia'
@@ -417,7 +418,7 @@ describe('ItemsView 关联购买交易（issue #119）：编辑弹窗换关语�
     expect(costInput.disabled).toBe(false)
 
     // 换关到 tx-2 → 自动带出新日期与成本并锁定（后端将重新带出覆盖）
-    modalSelect.vm.$emit('update:value', 'tx-2')
+    componentVm(modalSelect!).$emit('update:value', 'tx-2')
     await flushPromises()
     const costAfterSwitch = modal.querySelector(
       'input[placeholder="总成本（元）"]',

@@ -49,7 +49,7 @@ describe('useFocusParam 消费一次', () => {
   })
 
   it('迟到消费丢弃：已消费后 query 换了新 focus 值也不回调', () => {
-    const query: Record<string, unknown> = { focus: 'pol1' }
+    const query: LocationQuery = { focus: 'pol1' }
     const { helper, onFocus } = make(query)
     helper.consume()
     query.focus = 'pol2' // 同实例后续到达的新定位意图
@@ -59,7 +59,7 @@ describe('useFocusParam 消费一次', () => {
   })
 
   it('空转即封闸：首次 consume 无 focus，此后 focus 在场也不再消费（挂载时消费一次即失效）', () => {
-    const query: Record<string, unknown> = {}
+    const query: LocationQuery = {}
     const { helper, onFocus } = make(query)
     helper.consume() // 挂载（无 focus）：安全空转，同时耗尽本实例唯一一次读取
     query.focus = 'pol1'
@@ -84,7 +84,7 @@ describe('useFocusParam query 形态防御', () => {
 
 describe('useFocusParam 不写回 URL 与实例独立', () => {
   it('消费不改写 query 对象（不写回 URL 的工厂侧形态：无 router 依赖、只读）', () => {
-    const query: Record<string, unknown> = { focus: 'pol1', tab: 'policies' }
+    const query: LocationQuery = { focus: 'pol1', tab: 'policies' }
     const snapshot = { ...query }
     const { helper } = make(query)
     helper.consume()
@@ -92,7 +92,7 @@ describe('useFocusParam 不写回 URL 与实例独立', () => {
   })
 
   it('多实例互不串扰：各自消费一次（页面刷新 = 新实例 = 重定位的机制基础）', () => {
-    const query: Record<string, unknown> = { focus: 'pol1' }
+    const query: LocationQuery = { focus: 'pol1' }
     const a = make(query)
     const b = make(query)
     a.helper.consume()

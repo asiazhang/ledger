@@ -3,7 +3,7 @@ import { mockInvoke } from './helpers/invoke-mock'
 import { mount, flushPromises } from "@vue/test-utils";
 import { defineComponent } from "vue";
 import { setActivePinia, createPinia } from "pinia";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { type UnlistenFn } from "@tauri-apps/api/event";
 import type { AutoBackupState } from "@/types";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -21,9 +21,8 @@ import {
 } from "@/composables/useBackup";
 import { restartAppShortly } from "@/utils/restart";
 import { stubReferenceInvoke } from "./helpers/reference-stubs";
+import { captureLastListener, mockListen } from "./helpers/listen-mock";
 import type { BackupFileInfo } from "@/types";
-
-const mockListen = vi.mocked(listen);
 
 const autoBackupFile: BackupFileInfo = {
   file_name: "ledger-auto-20260217-093000.db.zip",
@@ -122,11 +121,7 @@ describe("useBackup 备份产物变更信号（issue #129）", () => {
   it("信号到达后自动刷新备份列表，无需手动刷新", async () => {
     const stub = makeStub([]);
     mockListen.mockReset();
-    let fireBackupsChanged: () => void = () => {};
-    mockListen.mockImplementation((_event: string, handler: never) => {
-      fireBackupsChanged = handler;
-      return Promise.resolve(vi.fn());
-    });
+    const readFire = captureLastListener();
 
     const { backup } = mountHost();
     await flushPromises();
@@ -135,7 +130,7 @@ describe("useBackup 备份产物变更信号（issue #129）", () => {
 
     // 后端自动备份完成 → 产物出现 → 发出信号。
     stub.setList([manualBackupFile, autoBackupFile]);
-    fireBackupsChanged();
+    readFire()?.();
     await flushPromises();
 
     expect(backup.backups.value.map((b) => b.file_name)).toEqual([
@@ -148,18 +143,14 @@ describe("useBackup 备份产物变更信号（issue #129）", () => {
   it("信号到达后同步刷新自动备份状态展示", async () => {
     const stub = makeStub([]);
     mockListen.mockReset();
-    let fireBackupsChanged: () => void = () => {};
-    mockListen.mockImplementation((_event: string, handler: never) => {
-      fireBackupsChanged = handler;
-      return Promise.resolve(vi.fn());
-    });
+    const readFire = captureLastListener();
 
     const { backup } = mountHost();
     await flushPromises();
     expect(backup.autoBackupLastText.value).toBe("从未");
 
     stub.setAutoState({ enabled: true, last_backup_at: "2026-02-17T09:30:00Z" });
-    fireBackupsChanged();
+    readFire()?.();
     await flushPromises();
 
     expect(backup.autoBackupLastText.value).toBe("2026-02-17 09:30");

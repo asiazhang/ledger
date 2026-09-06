@@ -22,13 +22,22 @@ const reference = {
   getCurrency: () => undefined,
 } as unknown as ReferenceStore
 
+/**
+ * 按键取渲染列：DataTableColumn 是含分组列的联合（key/render 并非每支都有），
+ * 本文件只消费「带键、带 render 的普通列」——经断言守卫单点窄化，
+ * 不在用例内散布 as/非空断言。
+ */
+function renderColumnOf(columns: DataTableColumn<Transaction>[], key: string) {
+  const hit = columns.find((c) => (c as { key?: unknown }).key === key)
+  expect(hit, `列 ${key} 应存在`).toBeTruthy()
+  const render = (hit as { render?: unknown }).render
+  expect(typeof render).toBe('function')
+  return render as (row: Transaction, index: number) => unknown
+}
+
 function amountStyleOf(row: Transaction): string {
-  const columns = buildTransactionColumns(reference)
-  const amountColumn = columns.find(
-    (c): c is DataTableColumn<Transaction> & { render: NonNullable<DataTableColumn<Transaction>['render']> } =>
-      c.key === 'amount_native_cents',
-  )!
-  const vnode = amountColumn.render(row, 0) as VNode
+  const render = renderColumnOf(buildTransactionColumns(reference), 'amount_native_cents')
+  const vnode = render(row, 0) as VNode
   return (vnode.props as { style?: string }).style ?? ''
 }
 
@@ -60,9 +69,8 @@ describe('buildTransactionColumns 金额单元格语义着色', () => {
   it('切换主题即时换色：同一列配置下重渲染即取新主题色（无需重建列）', () => {
     const app = useAppStore()
     app.setTheme('dark')
-    const columns = buildTransactionColumns(reference)
     const row = makeTransaction({ id: 'tx-expense', kind: 'expense' })
-    const render = columns.find((c) => c.key === 'amount_native_cents')!.render!
+    const render = renderColumnOf(buildTransactionColumns(reference), 'amount_native_cents')
     const colorOf = () => ((render(row, 0) as VNode).props as { style: string }).style
     const darkStyle = colorOf()
     app.setTheme('light')
@@ -75,15 +83,12 @@ describe('buildTransactionColumns 金额单元格语义着色', () => {
  * 只测外部行为：列位置、单元格产物（SourceLink 组件/占位符），
  * 链接交互与状态标注的渲染矩阵归 SourceLink 组件测试（一缝一测）。 */
 describe('buildTransactionColumns 来源列', () => {
-  function columnByKey(key: string): DataTableColumn<Transaction> & {
-    render: NonNullable<DataTableColumn<Transaction>['render']>
-  } {
-    const columns = buildTransactionColumns(reference)
-    return columns.find((c) => (c as { key?: string }).key === key)! as never
+  function columnByKey(key: string) {
+    return renderColumnOf(buildTransactionColumns(reference), key)
   }
 
-  function sourceCellOf(row: Transaction): ReturnType<NonNullable<DataTableColumn<Transaction>['render']>> {
-    return columnByKey('source').render(row, 0)
+  function sourceCellOf(row: Transaction) {
+    return columnByKey('source')(row, 0)
   }
 
   it('列序：来源列位于账户之后、备注之前', () => {

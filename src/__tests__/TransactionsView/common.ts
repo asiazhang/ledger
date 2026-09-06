@@ -1,5 +1,6 @@
 import { vi, beforeEach, afterEach } from 'vitest'
 import { mockInvoke } from '../helpers/invoke-mock'
+import { fireProp } from '../helpers/component-vm'
 import { DOMWrapper, mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { h, reactive } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
@@ -249,9 +250,9 @@ export function rowMenuKeys(wrapper: ReturnType<typeof mount>) {
   return (rowMenu(wrapper).props('options') as Array<{ key: string }>).map((o) => o.key)
 }
 
-/** 菜单选择（走 NDropdown 的 onSelect 装配缝）。 */
+/** 菜单选择（走 NDropdown 的 onSelect 装配缝，经 fireProp 单点窄化）。 */
 export async function selectRowMenu(wrapper: ReturnType<typeof mount>, key: string) {
-  rowMenu(wrapper).props('onSelect')?.(key)
+  fireProp(rowMenu(wrapper), 'onSelect', key)
   await flushPromises()
 }
 

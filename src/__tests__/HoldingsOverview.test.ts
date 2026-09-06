@@ -164,9 +164,11 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     wrapper = mount(HoldingsOverview)
     await flushPromises()
     const cells = await cellText('latest_price')
-    expect(cells[0]).toBe('¥15', '股票行（无净值日期）只有价格')
+    // 股票行（无净值日期）只有价格
+    expect(cells[0]).toBe('¥15')
     expect(cells[1]).toContain('¥3.348')
-    expect(cells[1]).toContain('净值 2026-01-30', '基金行现价下方展示净值日期')
+    // 基金行现价下方展示净值日期
+    expect(cells[1]).toContain('净值 2026-01-30')
   })
 
   it('右上角「同步持仓价格」按钮触发增量同步命令，反馈与标的页一致', async () => {

@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke } from './helpers/invoke-mock'
+import { captureListenHandlers, mockListen, type CapturedListener } from './helpers/listen-mock'
 import { flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { listen } from '@tauri-apps/api/event'
 import { usePhysicalAssetsStore } from '@/stores/physicalAssets'
 import { makePhysicalAsset, makePhysicalAssetList } from './factories'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
@@ -14,8 +14,6 @@ import type {
   PhysicalAssetUpdateInput,
   PhysicalAssetValuationInput,
 } from '@/types'
-
-const mockListen = vi.mocked(listen)
 
 function baseAsset(over: Partial<PhysicalAsset> = {}): PhysicalAsset {
   return makePhysicalAsset({ id: 'asset-1', ...over })
@@ -32,7 +30,7 @@ const createInput: PhysicalAssetInput = {
 }
 
 /** 捕获 ledger:changed 监听处理器（store 创建时注册） */
-let handlers: Array<(evt: unknown) => void>
+let handlers: CapturedListener[]
 
 /** 基础派发：各测试领域链处理完自己的命令后委托回它（参考命令同老链保持空保司表） */
 let base: ReturnType<typeof stubReferenceInvoke>
@@ -41,11 +39,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
   mockListen.mockReset()
-  handlers = []
-  mockListen.mockImplementation(async (_evt, handler) => {
-    handlers.push(handler)
-    return vi.fn()
-  })
+  handlers = captureListenHandlers()
   base = stubReferenceInvoke({ list_insurers: [] })
 })
 
@@ -111,7 +105,7 @@ describe('usePhysicalAssetsStore', () => {
 
   it('create 成功后立即重拉并返回 id（建档后列表与合计随之更新）', async () => {
     let listCalls = 0
-    mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
+    mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_physical_assets') {
         listCalls++
         return Promise.resolve(
@@ -158,7 +152,7 @@ describe('usePhysicalAssetsStore', () => {
       valuation_date: null,
     }
     let listCalls = 0
-    mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
+    mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_physical_assets') {
         listCalls++
         return Promise.resolve(
@@ -206,7 +200,7 @@ describe('usePhysicalAssetsStore', () => {
       purchase_currency_code: 'CNY',
     }
     let listCalls = 0
-    mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
+    mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_physical_assets') {
         listCalls++
         return Promise.resolve(
@@ -249,7 +243,7 @@ describe('usePhysicalAssetsStore', () => {
       disposal_currency_code: 'CNY',
     }
     let listCalls = 0
-    mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
+    mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_physical_assets') {
         listCalls++
         return Promise.resolve(
@@ -288,7 +282,7 @@ describe('usePhysicalAssetsStore', () => {
 
   it('remove 成功后立即重拉（软删过滤：资产退出列表与合计，issue #468 T3）', async () => {
     let listCalls = 0
-    mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
+    mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_physical_assets') {
         listCalls++
         return Promise.resolve(
@@ -316,7 +310,7 @@ describe('usePhysicalAssetsStore', () => {
     const holding = [baseAsset()]
     const disposed = [baseAsset({ id: 'asset-9', name: '旧车', status: 'disposed', current_valuation_native_cents: null })]
     const seenStatus: string[] = []
-    mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
+    mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_physical_assets') {
         seenStatus.push((args as { status: string | null }).status ?? 'holding')
         const status = (args as { status: string | null }).status
