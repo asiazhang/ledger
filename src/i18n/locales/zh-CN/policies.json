@@ -3,7 +3,6 @@
   "listTitle": "保单列表",
   "emptyGuide": "暂无保单：点击「新建保单」建立第一份合同档案。",
   "columns": {
-    "merchant": "保险公司",
     "productName": "险种名称",
     "policyNumber": "保单号",
     "period": "保障期间",
@@ -12,7 +11,8 @@
     "paid": "累计已缴",
     "inflow": "累计流入",
     "nextCharge": "下期扣款日",
-    "actions": "操作"
+    "actions": "操作",
+    "insurer": "保险公司"
   },
   "period": {
     "range": "{start} ~ {end}",
@@ -76,32 +76,32 @@
     "titleCreate": "新建保单",
     "titleEdit": "编辑保单",
     "label": {
-      "merchant": "保险公司",
       "policyNumber": "保单号",
       "productName": "险种名称",
       "period": "保障期间",
       "coverage": "保额",
-      "note": "备注"
+      "note": "备注",
+      "insurer": "保险公司"
     },
     "placeholder": {
-      "merchant": "选择保司或输入新名称",
       "policyNumber": "保单号",
       "productName": "如：重大疾病保险",
       "startDate": "起日",
       "endDate": "止日（空 = 长期）",
       "coverage": "保额（元，可选）",
       "coverageCurrency": "币种",
-      "note": "备注（可选）"
+      "note": "备注（可选）",
+      "insurer": "选择保司或输入新名称"
     },
     "msg": {
-      "merchantRequired": "请选择或输入保险公司",
       "numberRequired": "保单号不能为空",
       "productRequired": "险种名称不能为空",
       "startRequired": "请选择保障期间起日",
       "endBeforeStart": "保障期间止日不能早于起日",
       "amountInvalid": "保额必须大于 0",
       "currencyRequired": "填写保额时必须选择保额币种",
-      "merchantFailed": "保司解析失败：{msg}"
+      "insurerRequired": "请选择或输入保险公司",
+      "insurerFailed": "保司解析失败：{msg}"
     },
     "cancel": "取消",
     "save": "保存"

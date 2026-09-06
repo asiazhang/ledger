@@ -19,8 +19,9 @@ import type { CreateScheduledInput, RecurrenceType } from '@/types'
  * `reset`（复位/预填）→ `validate`（校验，返回首个错误文案）→
  * `build`（组装 CreateScheduledInput，校验通过后调用）。
  *
- * 组装约定（ADR-0051 决策 7）：merchant_id 取保单保司（保险公司即保费流水的
- * 付款对象）；备注带险种名称（协议与保单分离，订阅清单靠备注可读）。
+ * 组装约定（issue #713 / ADR-0082 决策 2）：不携带 merchant_id——保单缴费协议
+ * 不挂商户，保费归属唯一事实是保单引用（policy_id），付款对象语义由保单的保司
+ * 承担；备注带险种名称（协议与保单分离，订阅清单靠备注可读）。
  */
 const app = useAppStore()
 const { accountOptions, currencyOptions } = useFormShared()
@@ -62,8 +63,8 @@ function validate(): string | null {
   return null
 }
 
-/** 组装创建入参（订阅形态 + 保单引用；校验通过后调用）。 */
-function build(policyId: string, merchantId: string, productName: string): CreateScheduledInput {
+/** 组装创建入参（订阅形态 + 保单引用 + 不挂商户；校验通过后调用）。 */
+function build(policyId: string, productName: string): CreateScheduledInput {
   return {
     kind: 'subscription',
     account_id: accountId.value!,
@@ -75,7 +76,7 @@ function build(policyId: string, merchantId: string, productName: string): Creat
     recurrence_day: null,
     start_date: startDate.value!,
     note: productName || null,
-    merchant_id: merchantId || null,
+    merchant_id: null,
     policy_id: policyId,
   }
 }

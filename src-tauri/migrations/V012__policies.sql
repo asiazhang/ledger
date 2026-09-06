@@ -3,14 +3,22 @@
 -- 「我有哪几张保单、保什么、保到什么时候」。一切缴费动态参数（每期保费金额、
 -- 缴费频率、扣款账户）不进保单，由缴费协议（复用定时计划域订阅形态，后续票）
 -- 单点持有——保单重复存即第二口径。
--- 保司复用商户字典（ADR-0028）：保险公司即保费流水的付款对象，不建第二份保司字典。
+-- 保司引用保险域自有保司字典（insurers，表由 V019 建；ADR-0082 决策 1）：
+-- 保险公司与商户分家，保单以 insurer_id 引用保司，不再混用商户字典。
+-- 【就地修改注记】本文件已被就地修改（两级 BREAKING 标记之一，另一级见
+-- CHANGELOG「Unreleased」BREAKING 条目，issue #713 / ADR-0082 决策 5）：
+-- 保司字段由商户引用换为保司引用——merchant_id（REFERENCES merchants）就地
+-- 替换为 insurer_id（REFERENCES insurers）。insurers 表在序列更后的 V019 建，
+-- DDL 允许前向引用、V012 与 V019 之间无本表 DML，全新安装直接落新形状；
+-- 已执行过旧版迁移的存量库不自动升级（无收敛迁移，升级后保单功能不可用，
+-- 需重建库），见 CHANGELOG 对应 BREAKING 条目。
 -- 保额纯展示：不进任何金额口径（不走 Amount 接缝折算、不参与聚合）。
 -- 生命周期：无手动状态字段（到期由保障期间推导，可推导的状态不持久化，
 -- 先例：预算永久滚动 ADR-0029）；删除为软删除，已删保单不进列表，
 -- 其上历史引用保留不置空（保单是档案非字典，置空会毁掉已缴/已赔历史）。
 CREATE TABLE IF NOT EXISTS policies (
     id                      TEXT PRIMARY KEY,                            -- 全局唯一 ID（UUID v7）
-    merchant_id             TEXT NOT NULL REFERENCES merchants(id) ON DELETE RESTRICT,  -- 保险公司（商户字典引用）
+    insurer_id              TEXT NOT NULL REFERENCES insurers(id) ON DELETE RESTRICT,  -- 保险公司（保司字典引用，ADR-0082）
     policy_number           TEXT NOT NULL,                               -- 保单号
     product_name            TEXT NOT NULL,                               -- 险种名称
     start_date              TEXT NOT NULL,                               -- 保障期间起（YYYY-MM-DD）

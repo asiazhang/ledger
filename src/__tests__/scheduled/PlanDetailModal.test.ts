@@ -135,6 +135,7 @@ function baseInvoke() {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve(mockCategories)
+    if (cmd === 'list_insurers') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
     if (cmd === 'get_scheduled_transaction_detail') {
       const detail = mockDetails.get(String(args?.id))
@@ -173,6 +174,7 @@ function baseInvoke() {
       })
       return Promise.resolve([occ.id])
     }
+    if (cmd === 'list_insurers') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   }) as typeof invoke)
 }

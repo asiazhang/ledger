@@ -82,11 +82,20 @@ pub fn create_plan(conn: &Connection, input: CreateScheduledInput) -> Result<Str
     // 保单引用准入（issue #362 / ADR-0051 决策 2）：保费协议 = 订阅形态，只有
     // 订阅可携带保单引用，分期/定时转账携带即在行为层显式拒绝；携带的保单必须
     // 存在且未软删除（软删保单不可被新协议选择，共用 Writer 接缝的保单校验）。
+    // 保单协议不挂商户（issue #713 / ADR-0082 决策 2）：保费归属唯一事实是保单
+    // 引用，付款对象语义由保单的保司承担——订阅 + 保单 + 商户组合在入口显式
+    // 拒绝（非保单订阅/分期照旧挂商户，不受本守卫约束）。
     if input.policy_id.is_some() {
         if input.kind != ScheduledKind::Subscription {
             return Err(AppError::coded(
                 "scheduled-plan.policy-subscription-only",
                 "只有订阅形态协议可挂保单",
+            ));
+        }
+        if input.merchant_id.is_some() {
+            return Err(AppError::coded(
+                "scheduled-plan.policy-merchant-forbidden",
+                "保单缴费协议不挂商户：保费归属走保单引用，付款对象由保司承担",
             ));
         }
         writer::validate_policy_active(conn, input.policy_id.as_deref())?;
@@ -260,6 +269,22 @@ pub fn update_subscription(conn: &Connection, input: UpdateSubscriptionInput) ->
 
     // 商户（issue #190）：与 writer 编辑路径同语义——提交值与当前引用相同视为
     // 保持历史引用（软删商户照常保留），变更时校验新商户在用（不可选软删商户）。
+    // 挂保单的计划行不回挂商户（issue #713 / ADR-0082 决策 2）：提交非空商户
+    // 显式拒绝（提交空 = 保持置空态），保费归属不重开商户口径。
+    let current_policy_id: Option<String> = conn
+        .query_row(
+            "SELECT policy_id FROM subscription_plans WHERE scheduled_transaction_id=?1",
+            rusqlite::params![&input.id],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .optional()?
+        .flatten();
+    if current_policy_id.is_some() && input.merchant_id.is_some() {
+        return Err(AppError::coded(
+            "scheduled-plan.policy-merchant-forbidden",
+            "保单缴费协议不挂商户：保费归属走保单引用，付款对象由保司承担",
+        ));
+    }
     let current_merchant: Option<String> = conn
         .query_row(
             "SELECT merchant_id FROM subscription_plans WHERE scheduled_transaction_id=?1",
@@ -740,6 +765,9 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
         ScheduledKind::Installment | ScheduledKind::Subscription => {
             // 复制计划的商户到流水（issue #190 / ADR-0028）：installment/subscription
             // 每期生成的交易带上计划扩展表的 merchant_id（沿用原 counterparty 复制语义）；
+            // 商户全程 Option 透传、无非空假设：非保单订阅/分期照旧复制商户，保单协议
+            // 计划行商户为空（建档入口已拒绝携带，issue #713 / ADR-0082 决策 2），
+            // 期次照常执行、生成的保费流水不携带商户引用；
             // 同时复制保单引用（issue #362 / ADR-0051 决策 2，同机制）：保费协议
             // （订阅形态）每期生成的交易携带扩展表的 policy_id——协议对保单的引用
             // 是历史引用（创建时已校验在用），保单随后被软删时照常复制（与商户

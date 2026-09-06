@@ -49,6 +49,7 @@ beforeEach(async () => {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve(mockBalances.map((b) => b.account))
     if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_insurers') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve([])
     if (cmd === 'list_account_balances') return Promise.resolve(mockBalances)
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))

@@ -6,13 +6,16 @@ import AppDatePicker from '@/components/AppDatePicker.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import PolicyAgreementFields from '@/components/PolicyAgreementFields.vue'
+// 编辑模式的协议历史区（v-if=editing）：模板曾未 import、渲染为未知元素，
+// 编辑弹窗协议历史实际不显示——本票顺手修复（issue #713 改动本文件时发现）。
+import PolicyAgreementSection from '@/components/PolicyAgreementSection.vue'
 import { t } from '@/i18n'
 import { errorMessage } from '@/utils/errors'
 import { todayStr } from '@/utils/date'
 import { policyStatAmountText } from '@/utils/policy-stats'
 import { yuanToCents, centsToYuan } from '@/utils/money'
 import { useFormShared } from '@/composables/useFormShared'
-import { resolveMerchantRef } from '@/composables/resolve-merchant'
+import { resolveInsurerRef } from '@/composables/resolve-insurer'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
 import { usePoliciesStore } from '@/stores/policies'
@@ -22,16 +25,17 @@ import type { Policy, PolicyInput } from '@/types'
 /**
  * 保单新建/编辑弹窗（issue #360 / ADR-0051）：静态合同要素录入。
  *
- * 保司复用商户字典（ADR-0051 决策 7）：PinyinSelect tag 模式「选择或输入即建」,
- * 保存时单点解析——选中 id 原样携带、输入文本精确命中按名复用、未命中
- * `create_merchant` 即建（重名竞态先强制重拉按名复用，同计划表单收口）。
+ * 保司为保险域自有独立字典（Insurer，ADR-0082）：PinyinSelect tag 模式「选择或
+ * 输入即建」——保存时单点解析：选中 id 原样携带、输入文本精确命中按名复用、
+ * 未命中 `create_insurer` 即建（重名竞态先强制重拉按名复用，同商户接缝先例）。
  * 保障期间止日可空 = 长期/终身；保额可选纯展示，与币种成对（清金额即清币种）。
  * 编辑模式全量替换；保存成功后关弹窗，列表经 store 重拉刷新。
  *
  * 缴费协议区（issue #362 / ADR-0051 决策 2，新建模式）：可折叠可选——开关
  * 默认关（趸交/缴清纯档案）；开启后填频率/金额/扣款账户/起始日，保存时先建档
- * 再创建订阅形态协议（携带保单引用，保司/险种名随协议组装），期次自动生成
- * 带引用的保费流水。编辑模式的协议历史与添加/改价见 PolicyAgreementSection。
+ * 再创建订阅形态协议（携带保单引用，不挂商户，ADR-0082 决策 2），期次自动生成
+ * 带保单引用、不带商户的保费流水。编辑模式的协议历史与添加/改价见
+ * PolicyAgreementSection。
  */
 const props = defineProps<{
   show: boolean
@@ -47,7 +51,7 @@ const policiesStore = usePoliciesStore()
 const { currencyOptions } = useFormShared()
 
 // —— 表单状态 ——
-const merchantRef = ref<string | null>(null)
+const insurerRef = ref<string | null>(null)
 const policyNumber = ref('')
 const productName = ref('')
 const startDate = ref<string | null>(null)
@@ -60,8 +64,8 @@ const note = ref('')
 const withAgreement = ref(false)
 const agreementFields = ref<InstanceType<typeof PolicyAgreementFields> | null>(null)
 
-const merchantOptions = computed(() =>
-  reference.merchants.map((m) => ({ label: m.name, value: m.id })),
+const insurerOptions = computed(() =>
+  reference.insurers.map((i) => ({ label: i.name, value: i.id })),
 )
 
 /** 保额录入中：币种选择仅在填了保额时有意义（与后端「成对」校验同形）。 */
@@ -103,7 +107,7 @@ watch(
   () => {
     if (!props.show) return
     const p = props.editing
-    merchantRef.value = p?.merchant_id ?? null
+    insurerRef.value = p?.insurer_id ?? null
     policyNumber.value = p?.policy_number ?? ''
     productName.value = p?.product_name ?? ''
     startDate.value = p?.start_date ?? todayStr()
@@ -125,18 +129,18 @@ function close() {
 }
 
 /**
- * 商户解析（保存时单点收口）：「输入即建 + 重名兜底」交互收口在共享接缝
- * `resolveMerchantRef`（计划表单同款消费）——选中 id 原样携带（编辑维持历史
- * 引用）、输入名精确命中在用商户复用、未命中即建。
+ * 保司解析（保存时单点收口）：「输入即建 + 重名兜底」交互收口在共享接缝
+ * `resolveInsurerRef`——选中 id 原样携带（编辑维持历史引用）、输入名精确命中
+ * 在用保司复用、未命中即建保司（ADR-0082：即建目标不再是商户）。
  */
-async function resolveMerchant(): Promise<string> {
-  return (await resolveMerchantRef(merchantRef.value)) ?? ''
+async function resolveInsurer(): Promise<string> {
+  return (await resolveInsurerRef(insurerRef.value)) ?? ''
 }
 
 async function save() {
   // 客户端必填校验（消息与后端错误码文案同源，双保险防呆）
-  if (!merchantRef.value?.trim()) {
-    message.warning(t('policies.form.msg.merchantRequired'))
+  if (!insurerRef.value?.trim()) {
+    message.warning(t('policies.form.msg.insurerRequired'))
     return
   }
   if (!policyNumber.value.trim()) {
@@ -169,15 +173,15 @@ async function save() {
     coverageCents = cents
   }
 
-  let merchantId: string
+  let insurerId: string
   try {
-    merchantId = await resolveMerchant()
+    insurerId = await resolveInsurer()
   } catch (e) {
-    message.error(t('policies.form.msg.merchantFailed', { msg: errorMessage(e) }))
+    message.error(t('policies.form.msg.insurerFailed', { msg: errorMessage(e) }))
     return
   }
-  if (!merchantId) {
-    message.warning(t('policies.form.msg.merchantRequired'))
+  if (!insurerId) {
+    message.warning(t('policies.form.msg.insurerRequired'))
     return
   }
 
@@ -191,7 +195,7 @@ async function save() {
   }
 
   const input: PolicyInput = {
-    merchant_id: merchantId,
+    insurer_id: insurerId,
     policy_number: policyNumber.value.trim(),
     product_name: productName.value.trim(),
     start_date: startDate.value,
@@ -208,10 +212,11 @@ async function save() {
     } else {
       const policyId = await policiesStore.create(input)
       // 同时创建缴费协议（issue #362 / ADR-0051 决策 2）：订阅形态 + 保单引用；
-      // 保司与险种名随字段组组装（保险公司即保费流水的付款对象，备注带险种可读）。
+      // 不挂商户（issue #713 / ADR-0082 决策 2：保费归属走保单引用），
+      // 备注带险种可读。
       if (withAgreement.value && agreementFields.value) {
         await api.createScheduledTransaction(
-          agreementFields.value.build(policyId, merchantId, input.product_name),
+          agreementFields.value.build(policyId, input.product_name),
         )
       }
       message.success(t('policies.msg.created'))
@@ -238,14 +243,14 @@ defineExpose({ save })
     <NForm label-placement="left" :show-feedback="false" size="small">
       <!-- 行距由 NSpace 12 统一提供（对话框排版规范，issue #699）：NFormItem 默认零行距 -->
       <NSpace vertical :size="12">
-        <NFormItem :label="t('policies.form.label.merchant')">
+        <NFormItem :label="t('policies.form.label.insurer')">
           <PinyinSelect
-            v-model:value="merchantRef"
-            :options="merchantOptions"
+            v-model:value="insurerRef"
+            :options="insurerOptions"
             tag
-            :placeholder="t('policies.form.placeholder.merchant')"
+            :placeholder="t('policies.form.placeholder.insurer')"
             style="width: 280px"
-            data-testid="policy-merchant"
+            data-testid="policy-insurer"
           />
         </NFormItem>
         <NFormItem :label="t('policies.form.label.policyNumber')">

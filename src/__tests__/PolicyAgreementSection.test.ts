@@ -32,7 +32,7 @@ const mockAccounts: Account[] = [
   makeAccount({ id: 'acc-1', name: '现金', type: 'cash' }),
 ]
 
-const policy: Policy = makePolicy({ id: 'policy-1', merchant_id: 'mer-1', product_name: '重疾险' })
+const policy: Policy = makePolicy({ id: 'policy-1', insurer_id: 'ins-1', product_name: '重疾险' })
 
 /** 协议行工厂：订阅形态 + 保单引用（分段历史断言用）。 */
 function makeSegment(partial: {
@@ -61,7 +61,7 @@ function makeSegment(partial: {
       device_id: 'test',
       is_deleted: false,
     },
-    merchant_id: 'mer-1',
+    merchant_id: null,
     policy_id: 'policy-1',
     total_amount_cents: null,
     total_occurrences: null,
@@ -101,7 +101,9 @@ function setupInvoke() {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_insurers') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
+    if (cmd === 'list_insurers') return Promise.resolve([])
     if (cmd === 'list_policies') return Promise.resolve([policy])
     if (cmd === 'list_scheduled_transactions') return Promise.resolve(plans)
     if (cmd === 'get_scheduled_transaction_detail') {
@@ -166,7 +168,7 @@ describe('PolicyAgreementSection 缴费协议区（issue #362）', () => {
     expect(wrapper.find('[data-testid="policy-agreement-add"]').exists()).toBe(true)
   })
 
-  it('添加缴费协议：创建入参携带保单引用/保司/险种备注，成功后重拉历史', async () => {
+  it('添加缴费协议：创建入参携带保单引用且不挂商户，备注带险种，成功后重拉历史', async () => {
     const wrapper = mountSection()
     await flushPromises()
     await wrapper.find('[data-testid="policy-agreement-add"]').trigger('click')
@@ -183,7 +185,7 @@ describe('PolicyAgreementSection 缴费协议区（issue #362）', () => {
       input: {
         kind: 'subscription',
         policy_id: 'policy-1',
-        merchant_id: 'mer-1',
+        merchant_id: null,
         amount_cents: 300_000,
         note: '重疾险',
       },

@@ -11,7 +11,7 @@ use crate::error::{AppError, Result};
 
 /// 校验结果（归一化后）：trim 非空、日期规范化、保额/币种成对落定。
 pub(super) struct NormalizedInput {
-    pub(super) merchant_id: String,
+    pub(super) insurer_id: String,
     pub(super) policy_number: String,
     pub(super) product_name: String,
     pub(super) start_date: String,
@@ -22,8 +22,8 @@ pub(super) struct NormalizedInput {
 }
 
 /// 创建/编辑共用的入参校验与归一化：
-/// - 保司必须为在用商户（软删商户不可再被新档案选择，历史引用不受影响）；
-///   `merchant_unchanged`（编辑路径保司未变）= 维持历史引用，跳过在用校验
+/// - 保司必须为在用保司（软删保司不可再被新档案选择，历史引用不受影响，ADR-0082）；
+///   `insurer_unchanged`（编辑路径保司未变）= 维持历史引用，跳过在用校验
 ///   （同 Writer 接缝 `existing_merchant_id` 语义）；
 /// - 保单号/险种名称 trim 非空；
 /// - 起止日可解析（YYYY-MM-DD），止日存在时不得早于起日（止日可空 = 长期/终身）；
@@ -33,23 +33,23 @@ pub(super) struct NormalizedInput {
 pub(super) fn validate_input(
     conn: &Connection,
     input: &PolicyInput,
-    merchant_unchanged: bool,
+    insurer_unchanged: bool,
 ) -> Result<NormalizedInput> {
-    // 保司：在用商户（ADR-0028 软删语义 + ADR-0051 决策 7）；未换保司 = 保持历史引用。
-    if !merchant_unchanged {
-        let merchant_active: bool = conn
+    // 保司：在用保司（软删语义，ADR-0082）；未换保司 = 保持历史引用。
+    if !insurer_unchanged {
+        let insurer_active: bool = conn
             .query_row(
-                "SELECT 1 FROM merchants WHERE id=?1 AND is_deleted=0",
-                rusqlite::params![input.merchant_id],
+                "SELECT 1 FROM insurers WHERE id=?1 AND is_deleted=0",
+                rusqlite::params![input.insurer_id],
                 |_| Ok(true),
             )
             .optional()?
             .is_some();
-        if !merchant_active {
+        if !insurer_active {
             return Err(AppError::codedp(
-                "policy.merchant-not-found",
-                format!("保险公司不存在或已删除: {}", input.merchant_id),
-                &[&input.merchant_id],
+                "policy.insurer-not-found",
+                format!("保险公司不存在或已删除: {}", input.insurer_id),
+                &[&input.insurer_id],
             ));
         }
     }
@@ -112,7 +112,7 @@ pub(super) fn validate_input(
     };
 
     Ok(NormalizedInput {
-        merchant_id: input.merchant_id.clone(),
+        insurer_id: input.insurer_id.clone(),
         policy_number: policy_number.to_string(),
         product_name: product_name.to_string(),
         start_date: start_date.format("%Y-%m-%d").to_string(),

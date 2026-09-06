@@ -61,6 +61,7 @@ beforeEach(async () => {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_insurers') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve([])
     if (cmd === 'list_instruments') return Promise.resolve({ items: [], total: 0 })
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
@@ -106,6 +107,7 @@ describe('InvestmentForm.vue 移除「新增标的」入口（issue #152）', ()
       // 返回候选后可选择
       mockInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_instruments') return Promise.resolve({ items: mockInstruments, total: 1 })
+        if (cmd === 'list_insurers') return Promise.resolve([])
         return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
       })
       await select.find('input').setValue('NVDA')
@@ -167,6 +169,7 @@ describe('InvestmentForm.vue 基金申赎形态（issue #302）', () => {
   it('选基金标的：金额可编辑（确认单权威）、份额标签、单价只读反算', async () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_instruments') return Promise.resolve({ items: fundInstruments, total: 1 })
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const wrapper = await mountWithFundSelected('buy')
@@ -359,6 +362,7 @@ describe('InvestmentForm.vue 字段错误态（ADR-0058 / issue #416）', () => 
     ]
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_instruments') return Promise.resolve({ items: fundInstruments, total: 1 })
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const wrapper = mount(InvestmentForm, { props: { kind: 'buy', submitLabel: '记买入' } })
@@ -435,6 +439,7 @@ describe('InvestmentForm.vue 编辑模式（issue #180）', () => {
     })
     mockInvoke.mockImplementationOnce((cmd: string) => {
       if (cmd === 'update_transaction') return Promise.resolve()
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     await wrapper.findAll('button').find((b) => b.text().includes('保存修改'))!.trigger('click')

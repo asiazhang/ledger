@@ -38,6 +38,7 @@ describe('QuickTimeRange 共享受控组件（issue #410）', () => {
     mockInvoke.mockReset()
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'report_date_range') return Promise.resolve(BOUNDARY)
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
   })
@@ -173,6 +174,7 @@ describe('QuickTimeRange 共享受控组件（issue #410）', () => {
     failing.catch(() => {}) // 防 unhandled rejection 噪音
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'report_date_range') return failing
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const wrapper = mountRange({ from: '2026-01-01', to: '2026-01-31' })
@@ -267,6 +269,7 @@ describe('QuickTimeRange 共享受控组件（issue #410）', () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'report_date_range')
         return Promise.resolve({ min_date: '2026-01-05', max_date: '2026-01-05' })
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const wrapper = mountRange({ from: '2026-01-01', to: '2026-01-31' })
@@ -276,6 +279,7 @@ describe('QuickTimeRange 共享受控组件（issue #410）', () => {
     mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'report_date_range')
         return Promise.resolve({ min_date: '2025-08-01', max_date: '2026-01-05' })
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     handlers.forEach((h) => h({ event: 'ledger:changed', payload: null }))

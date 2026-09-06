@@ -227,6 +227,7 @@ beforeEach(async () => {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve(mockCategories)
+    if (cmd === 'list_insurers') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
     // 数据期间边界（QuickTimeRange 钳制输入）
     if (cmd === 'report_date_range') return Promise.resolve(MOCK_RANGE)
@@ -264,6 +265,7 @@ beforeEach(async () => {
         total: all.length,
       })
     }
+    if (cmd === 'list_insurers') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
   localStorage.clear()

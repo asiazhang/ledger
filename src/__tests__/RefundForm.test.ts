@@ -55,6 +55,7 @@ describe('RefundForm.vue', () => {
       if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve(mockCategories)
+      if (cmd === 'list_insurers') return Promise.resolve([])
       if (cmd === 'list_merchants') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })

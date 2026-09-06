@@ -11,7 +11,8 @@ use cucumber::{then, when};
 use rusqlite::params;
 
 use tauri_app_lib::scheduled_transactions::{
-    CreateScheduledInput, RecurrenceType, ScheduledKind, create_plan,
+    CreateScheduledInput, RecurrenceType, ScheduledKind, UpdateSubscriptionInput, create_plan,
+    update_subscription,
 };
 
 use crate::world::LedgerWorld;
@@ -86,30 +87,121 @@ fn try_create_policy_agreement(
     start: String,
 ) {
     let policy_id = world.last_policy_id.clone().expect("尚无保单");
-    let result = world.db.write(|conn| {
+    let result = create_policy_plan(
+        world,
+        &policy_id,
+        amount,
+        &currency,
+        &account,
+        &recurrence,
+        &start,
+        None,
+    );
+    match result {
+        Ok(_) => panic!("创建缴费协议应失败但成功"),
+        Err(e) => world.last_error = Some(e.to_string()),
+    }
+}
+
+/// 尝试为最近创建的保单创建携带商户的缴费协议并捕获错误
+/// （守卫：保单协议不挂商户，ADR-0082 决策 2）。
+#[when(
+    expr = "尝试为最近保单创建缴费协议 金额 {int} 币种 {string} 账户 {string} 周期 {string} 起始日期 {string} 带商户 {string}"
+)]
+fn try_create_policy_agreement_with_merchant(
+    world: &mut LedgerWorld,
+    amount: i64,
+    currency: String,
+    account: String,
+    recurrence: String,
+    start: String,
+    merchant: String,
+) {
+    let policy_id = world.last_policy_id.clone().expect("尚无保单");
+    let merchant_id = world.merchant_id(&merchant);
+    let result = create_policy_plan(
+        world,
+        &policy_id,
+        amount,
+        &currency,
+        &account,
+        &recurrence,
+        &start,
+        Some(merchant_id),
+    );
+    match result {
+        Ok(_) => panic!("创建缴费协议应失败但成功"),
+        Err(e) => world.last_error = Some(e.to_string()),
+    }
+}
+
+/// 保单缴费协议创建共用组装（订阅形态 + 保单引用；`merchant_id` 由调用方决定——
+/// 合法路径恒 `None`，守卫场景显式携带以验证拒绝）。
+#[allow(clippy::too_many_arguments)] // 步骤参数全量透传，无法缩减
+fn create_policy_plan(
+    world: &mut LedgerWorld,
+    policy_id: &str,
+    amount: i64,
+    currency: &str,
+    account: &str,
+    recurrence: &str,
+    start: &str,
+    merchant_id: Option<String>,
+) -> tauri_app_lib::error::Result<String> {
+    world.db.write(|conn| {
         create_plan(
             conn,
             CreateScheduledInput {
                 kind: ScheduledKind::Subscription,
-                account_id: world.account_id(&account),
+                account_id: world.account_id(account),
                 category_id: None,
                 amount_cents: amount,
-                currency_code: currency,
-                recurrence_type: parse_recurrence(&recurrence),
+                currency_code: currency.to_string(),
+                recurrence_type: parse_recurrence(recurrence),
                 recurrence_interval: 1,
                 recurrence_day: None,
-                start_date: start,
+                start_date: start.to_string(),
                 note: None,
-                merchant_id: None,
-                policy_id: Some(policy_id),
+                merchant_id,
+                policy_id: Some(policy_id.to_string()),
                 total_amount_cents: None,
                 total_occurrences: None,
                 to_account_id: None,
             },
         )
+    })
+}
+
+/// 尝试编辑最近创建的保单缴费协议计划并提交商户（捕获错误：挂保单计划行
+/// 不回挂商户，ADR-0082 决策 2）。
+#[when(expr = "尝试编辑该订阅计划 商户 {string}")]
+fn try_edit_policy_plan_merchant(world: &mut LedgerWorld, merchant: String) {
+    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let (account_id, category_id, note): (String, Option<String>, Option<String>) =
+        world_conn!(world)
+            .query_row(
+                "SELECT account_id,category_id,note FROM scheduled_transactions WHERE id=?1",
+                params![plan_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+    let merchant_id = world.merchant_id(&merchant);
+    let result = world.db.write(|conn| {
+        update_subscription(
+            conn,
+            UpdateSubscriptionInput {
+                id: plan_id,
+                account_id,
+                category_id,
+                note,
+                merchant_id: Some(merchant_id),
+                amount_cents: false,
+                total_amount_cents: false,
+            },
+        )
     });
     match result {
-        Ok(_) => panic!("创建缴费协议应失败但成功"),
+        Ok(()) => panic!("编辑保单协议计划应失败但成功"),
         Err(e) => world.last_error = Some(e.to_string()),
     }
 }
@@ -214,6 +306,23 @@ fn policy_id_by_number(world: &LedgerWorld, policy_number: &str) -> String {
 // ---------------------------------------------------------------------------
 // Then：期次流水引用复制 / 多段协议历史
 // ---------------------------------------------------------------------------
+
+/// 最近执行期次生成的交易不应携带商户引用（保费不挂商户，ADR-0082 决策 2：
+/// 计划行商户置空/不写，期次对空商户透传——归属唯一事实是 policy_id）。
+#[then(expr = "该期次交易不应携带商户")]
+fn assert_occurrence_txn_without_merchant(world: &mut LedgerWorld) {
+    let occ_id = world.last_occurrence_id.clone().expect("尚无期次");
+    let (merchant_id, policy_id): (Option<String>, Option<String>) = world_conn!(world)
+        .query_row(
+            "SELECT t.merchant_id, t.policy_id FROM transactions t \
+             JOIN scheduled_transaction_occurrences o ON o.transaction_id=t.id WHERE o.id=?1",
+            params![occ_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert!(merchant_id.is_none(), "保费流水不应携带商户引用");
+    assert!(policy_id.is_some(), "保费流水应挂保单（对照断言）");
+}
 
 /// 最近执行期次生成的交易挂单应为指定保单（按保单号定位）。
 #[then(expr = "该期次交易挂单应为保单号 {string}")]

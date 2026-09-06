@@ -163,6 +163,7 @@
     "date-invalid": "日期格式错误 {0}: {1}",
     "not-active": "关联计划未处于活跃状态",
     "policy-subscription-only": "只有订阅形态协议可挂保单",
+    "policy-merchant-forbidden": "保单缴费协议不挂商户：保费归属走保单引用，付款对象由保司承担",
     "kind-mismatch": "计划形态与期次执行路径不一致（内部不一致）"
   },
   "scheduled-occurrence": {
@@ -176,7 +177,7 @@
   },
   "policy": {
     "not-found": "保单不存在: {0}",
-    "merchant-not-found": "保险公司不存在或已删除: {0}",
+    "insurer-not-found": "保险公司不存在或已删除: {0}",
     "number-required": "保单号不能为空",
     "product-required": "险种名称不能为空",
     "date-invalid": "日期格式无效，应为 YYYY-MM-DD: {0}",

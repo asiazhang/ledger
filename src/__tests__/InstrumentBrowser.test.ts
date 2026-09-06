@@ -92,6 +92,7 @@ function baseInvoke(
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve([])
     if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_insurers') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve([])
     if (cmd === 'list_instruments')
       return Promise.resolve({ items: mockInstruments, total: mockInstruments.length })

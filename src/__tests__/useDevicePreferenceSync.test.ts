@@ -28,6 +28,7 @@ beforeEach(() => {
     if (cmd === 'set_auto_backup_dir' || cmd === 'set_auto_execution_enabled') {
       return Promise.resolve()
     }
+    if (cmd === 'list_insurers') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
   localStorage.clear()

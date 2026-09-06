@@ -45,6 +45,7 @@ function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
   mockInvoke.mockImplementation((cmd: string, args?: any) => {
     if (cmd in overrides) return overrides[cmd](args)
     if (cmd === 'get_data_location_info') return Promise.resolve(baseInfo)
+    if (cmd === 'list_insurers') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
 }
@@ -53,6 +54,7 @@ function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
 function nextInfo(info: DataLocationInfo) {
   mockInvoke.mockImplementation((cmd: string) => {
     if (cmd === 'get_data_location_info') return Promise.resolve(info)
+    if (cmd === 'list_insurers') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
 }
@@ -138,6 +140,7 @@ describe('DataLocationSettings.vue', () => {
         return Promise.resolve(called > 1 ? { ...baseInfo, pending_restart: true, configured_dir: '/Volumes/Sync/ledger-data' } : baseInfo)
       }
       if (cmd === 'submit_data_location_change') return Promise.resolve(committed)
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const wrapper = mount(DataLocationSettings)
@@ -170,6 +173,7 @@ describe('DataLocationSettings.vue', () => {
         submits += 1
         return Promise.resolve(submits === 1 ? choice : committed)
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const wrapper = mount(DataLocationSettings)
@@ -208,6 +212,7 @@ describe('DataLocationSettings.vue', () => {
         submits += 1
         return Promise.resolve(choice)
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const wrapper = mount(DataLocationSettings)
@@ -232,6 +237,7 @@ describe('DataLocationSettings.vue', () => {
         submits += 1
         return Promise.resolve(choice)
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const wrapper = mount(DataLocationSettings)
@@ -329,6 +335,7 @@ describe('DataLocationSettings.vue', () => {
         submits += 1
         return Promise.resolve(submits === 1 ? choice : committed)
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const wrapper = mount(DataLocationSettings)
@@ -366,10 +373,12 @@ describe('DataLocationSettings.vue', () => {
               pending_restart: true,
             })
           }
+          if (cmd === 'list_insurers') return Promise.resolve([])
           return Promise.reject(new Error(`unexpected invoke: ${cmd2}`))
         })
         return Promise.resolve(committed)
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     const wrapper = mount(DataLocationSettings)

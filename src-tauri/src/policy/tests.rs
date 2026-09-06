@@ -5,8 +5,7 @@ use rusqlite::Connection;
 
 use super::model::PolicyInput;
 use crate::db::{init_db, open_in_memory};
-use crate::merchants::{MerchantInput, create_merchant};
-use crate::policy::{create_policy, delete_policy, list_policies, update_policy};
+use crate::policy::{create_insurer, create_policy, delete_policy, list_policies, update_policy};
 
 fn conn() -> Connection {
     let mut conn = open_in_memory().expect("内存库创建失败");
@@ -14,9 +13,9 @@ fn conn() -> Connection {
     conn
 }
 
-fn input(merchant_id: &str) -> PolicyInput {
+fn input(insurer_id: &str) -> PolicyInput {
     PolicyInput {
-        merchant_id: merchant_id.into(),
+        insurer_id: insurer_id.into(),
         policy_number: "P2026-001".into(),
         product_name: "重疾险".into(),
         start_date: "2026-01-01".into(),
@@ -27,8 +26,8 @@ fn input(merchant_id: &str) -> PolicyInput {
     }
 }
 
-fn seed_merchant(conn: &Connection, name: &str) -> String {
-    create_merchant(conn, MerchantInput { name: name.into() }).expect("创建商户失败")
+fn seed_insurer(conn: &Connection, name: &str) -> String {
+    create_insurer(conn, crate::policy::InsurerInput { name: name.into() }).expect("创建保司失败")
 }
 
 fn create_ok(conn: &Connection, input: PolicyInput) -> String {
@@ -38,13 +37,13 @@ fn create_ok(conn: &Connection, input: PolicyInput) -> String {
 #[test]
 fn 创建保单并读回全字段() {
     let conn = conn();
-    let merchant_id = seed_merchant(&conn, "平安保险");
-    let id = create_ok(&conn, input(&merchant_id));
+    let insurer_id = seed_insurer(&conn, "平安保险");
+    let id = create_ok(&conn, input(&insurer_id));
     let list = list_policies(&conn).unwrap();
     assert_eq!(list.len(), 1);
     let policy = &list[0];
     assert_eq!(policy.id, id);
-    assert_eq!(policy.merchant_id, merchant_id);
+    assert_eq!(policy.insurer_id, insurer_id);
     assert_eq!(policy.policy_number, "P2026-001");
     assert_eq!(policy.product_name, "重疾险");
     assert_eq!(policy.start_date, "2026-01-01");
@@ -61,8 +60,8 @@ fn 创建保单并读回全字段() {
 #[test]
 fn 止日为空建档成功且保额币种成对存空() {
     let conn = conn();
-    let merchant_id = seed_merchant(&conn, "平安保险");
-    let mut input = input(&merchant_id);
+    let insurer_id = seed_insurer(&conn, "平安保险");
+    let mut input = input(&insurer_id);
     input.end_date = None;
     input.coverage_amount_cents = None;
     // 保额缺省时币种忽略存空（成对原子）
@@ -79,14 +78,14 @@ fn 止日为空建档成功且保额币种成对存空() {
 #[test]
 fn 创建成功发失效信号_失败不发() {
     let conn = conn();
-    let merchant_id = seed_merchant(&conn, "平安保险");
+    let insurer_id = seed_insurer(&conn, "平安保险");
     let mut signals = 0;
-    let ok_input = input(&merchant_id);
+    let ok_input = input(&insurer_id);
     create_policy(&conn, ok_input, &mut || signals += 1).unwrap();
     assert_eq!(signals, 1);
 
     let mut signals_err = 0;
-    let bad = input("不存在的商户");
+    let bad = input("不存在的保司");
     let err = create_policy(&conn, bad, &mut || signals_err += 1).unwrap_err();
     assert!(err.to_string().contains("保险公司不存在或已删除"));
     assert_eq!(signals_err, 0);
@@ -95,12 +94,12 @@ fn 创建成功发失效信号_失败不发() {
 #[test]
 fn 编辑保单_审计字段保留() {
     let conn = conn();
-    let merchant_id = seed_merchant(&conn, "平安保险");
-    let id = create_ok(&conn, input(&merchant_id));
+    let insurer_id = seed_insurer(&conn, "平安保险");
+    let id = create_ok(&conn, input(&insurer_id));
     let created_at = list_policies(&conn).unwrap()[0].created_at.clone();
 
-    let merchant2 = seed_merchant(&conn, "太平洋保险");
-    let mut input = input(&merchant2);
+    let insurer2 = seed_insurer(&conn, "太平洋保险");
+    let mut input = input(&insurer2);
     input.policy_number = "P2026-002".into();
     input.product_name = "医疗险".into();
     input.start_date = "2026-02-01".into();
@@ -111,7 +110,7 @@ fn 编辑保单_审计字段保留() {
     update_policy(&conn, &id, input, &mut || {}).unwrap();
 
     let policy = &list_policies(&conn).unwrap()[0];
-    assert_eq!(policy.merchant_id, merchant2);
+    assert_eq!(policy.insurer_id, insurer2);
     assert_eq!(policy.policy_number, "P2026-002");
     assert_eq!(policy.product_name, "医疗险");
     assert_eq!(policy.end_date, None);
@@ -123,32 +122,32 @@ fn 编辑保单_审计字段保留() {
 #[test]
 fn 软删后不进列表且库内行引用保留不置空() {
     let conn = conn();
-    let merchant_id = seed_merchant(&conn, "平安保险");
-    let id = create_ok(&conn, input(&merchant_id));
+    let insurer_id = seed_insurer(&conn, "平安保险");
+    let id = create_ok(&conn, input(&insurer_id));
     delete_policy(&conn, &id, &mut || {}).unwrap();
 
     assert!(list_policies(&conn).unwrap().is_empty());
     // 库内行保留：is_deleted=1，保司引用等列原样（历史引用保留不置空，ADR-0051 决策 5）
-    let (is_deleted, kept_merchant, kept_number): (i64, String, String) = conn
+    let (is_deleted, kept_insurer, kept_number): (i64, String, String) = conn
         .query_row(
-            "SELECT is_deleted, merchant_id, policy_number FROM policies WHERE id=?1",
+            "SELECT is_deleted, insurer_id, policy_number FROM policies WHERE id=?1",
             [&id],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .unwrap();
     assert_eq!(is_deleted, 1);
-    assert_eq!(kept_merchant, merchant_id);
+    assert_eq!(kept_insurer, insurer_id);
     assert_eq!(kept_number, "P2026-001");
 }
 
 #[test]
 fn 已删保单再编辑再删均报不存在() {
     let conn = conn();
-    let merchant_id = seed_merchant(&conn, "平安保险");
-    let id = create_ok(&conn, input(&merchant_id));
+    let insurer_id = seed_insurer(&conn, "平安保险");
+    let id = create_ok(&conn, input(&insurer_id));
     delete_policy(&conn, &id, &mut || {}).unwrap();
 
-    let err = update_policy(&conn, &id, input(&merchant_id), &mut || {}).unwrap_err();
+    let err = update_policy(&conn, &id, input(&insurer_id), &mut || {}).unwrap_err();
     assert!(err.to_string().contains("保单不存在"));
     let err = delete_policy(&conn, &id, &mut || {}).unwrap_err();
     assert!(err.to_string().contains("保单不存在"));
@@ -157,19 +156,19 @@ fn 已删保单再编辑再删均报不存在() {
 #[test]
 fn 编辑时保司未变_软删保司维持历史引用可继续编辑() {
     let conn = conn();
-    let merchant_id = seed_merchant(&conn, "平安保险");
-    let id = create_ok(&conn, input(&merchant_id));
+    let insurer_id = seed_insurer(&conn, "平安保险");
+    let id = create_ok(&conn, input(&insurer_id));
     // 建档后保司被软删：未换保司的编辑 = 维持历史引用（同 Writer 接缝语义）
-    crate::merchants::delete_merchant(&conn, &merchant_id).unwrap();
-    let mut keep_input = input(&merchant_id);
+    crate::policy::delete_insurer(&conn, &insurer_id).unwrap();
+    let mut keep_input = input(&insurer_id);
     keep_input.product_name = "医疗险".into();
     update_policy(&conn, &id, keep_input, &mut || {}).unwrap();
     assert_eq!(list_policies(&conn).unwrap()[0].product_name, "医疗险");
 
-    // 换成另一个软删商户 = 新档案选择，仍被拒
-    let merchant2 = seed_merchant(&conn, "已退保保司");
-    crate::merchants::delete_merchant(&conn, &merchant2).unwrap();
-    let mut switch_input = input(&merchant2);
+    // 换成另一个软删保司 = 新档案选择，仍被拒
+    let insurer2 = seed_insurer(&conn, "已退保保司");
+    crate::policy::delete_insurer(&conn, &insurer2).unwrap();
+    let mut switch_input = input(&insurer2);
     switch_input.product_name = "医疗险".into();
     let err = update_policy(&conn, &id, switch_input, &mut || {}).unwrap_err();
     assert!(err.to_string().contains("保险公司不存在或已删除"));
@@ -178,13 +177,13 @@ fn 编辑时保司未变_软删保司维持历史引用可继续编辑() {
 #[test]
 fn 建档校验各分支() {
     let conn = conn();
-    let merchant_id = seed_merchant(&conn, "平安保险");
+    let insurer_id = seed_insurer(&conn, "平安保险");
 
     let cases: Vec<(PolicyInput, &str)> = vec![
-        (input("不存在的商户"), "保险公司不存在或已删除"),
+        (input("不存在的保司"), "保险公司不存在或已删除"),
         (
             {
-                let mut i = input(&merchant_id);
+                let mut i = input(&insurer_id);
                 i.policy_number = "  ".into();
                 i
             },
@@ -192,7 +191,7 @@ fn 建档校验各分支() {
         ),
         (
             {
-                let mut i = input(&merchant_id);
+                let mut i = input(&insurer_id);
                 i.product_name = "".into();
                 i
             },
@@ -200,7 +199,7 @@ fn 建档校验各分支() {
         ),
         (
             {
-                let mut i = input(&merchant_id);
+                let mut i = input(&insurer_id);
                 i.start_date = "2026/01/01".into();
                 i
             },
@@ -208,7 +207,7 @@ fn 建档校验各分支() {
         ),
         (
             {
-                let mut i = input(&merchant_id);
+                let mut i = input(&insurer_id);
                 i.end_date = Some("2025-12-31".into());
                 i
             },
@@ -216,7 +215,7 @@ fn 建档校验各分支() {
         ),
         (
             {
-                let mut i = input(&merchant_id);
+                let mut i = input(&insurer_id);
                 i.coverage_amount_cents = Some(0);
                 i
             },
@@ -224,7 +223,7 @@ fn 建档校验各分支() {
         ),
         (
             {
-                let mut i = input(&merchant_id);
+                let mut i = input(&insurer_id);
                 i.coverage_amount_cents = Some(100);
                 i.coverage_currency_code = None;
                 i
@@ -233,7 +232,7 @@ fn 建档校验各分支() {
         ),
         (
             {
-                let mut i = input(&merchant_id);
+                let mut i = input(&insurer_id);
                 i.coverage_amount_cents = Some(100);
                 i.coverage_currency_code = Some("XYZ".into());
                 i
@@ -252,11 +251,11 @@ fn 建档校验各分支() {
 }
 
 #[test]
-fn 软删商户不可再被新档案选择() {
+fn 软删保司不可再被新档案选择() {
     let conn = conn();
-    let merchant_id = seed_merchant(&conn, "已退保保司");
-    crate::merchants::delete_merchant(&conn, &merchant_id).unwrap();
-    let err = create_policy(&conn, input(&merchant_id), &mut || {}).unwrap_err();
+    let insurer_id = seed_insurer(&conn, "已退保保司");
+    crate::policy::delete_insurer(&conn, &insurer_id).unwrap();
+    let err = create_policy(&conn, input(&insurer_id), &mut || {}).unwrap_err();
     assert!(err.to_string().contains("保险公司不存在或已删除"));
 }
 
@@ -314,9 +313,9 @@ fn today(y: i32, m: u32, d: u32) -> chrono::NaiveDate {
 #[test]
 fn 统计_挂单保费与流入实时合计且软删流水不计入() {
     let conn = conn();
-    let merchant_id = seed_merchant(&conn, "平安保险");
+    let insurer_id = seed_insurer(&conn, "平安保险");
     insert_account(&conn, "acc-stat");
-    let policy_id = create_ok(&conn, input(&merchant_id));
+    let policy_id = create_ok(&conn, input(&insurer_id));
 
     let tx = |kind, amount, date| linked_input("acc-stat", kind, amount, date, &policy_id);
     // 三笔保费（其中一笔后软删）+ 一笔理赔款 + 一笔不挂单支出（不得串入）
@@ -349,10 +348,10 @@ fn 统计_挂单保费与流入实时合计且软删流水不计入() {
 #[test]
 fn 统计_到期态由止日与today推导() {
     let conn = conn();
-    let merchant_id = seed_merchant(&conn, "平安保险");
+    let insurer_id = seed_insurer(&conn, "平安保险");
 
     let build = |number: &str, start: &str, end: Option<&str>| {
-        let mut i = input(&merchant_id);
+        let mut i = input(&insurer_id);
         i.policy_number = number.into();
         i.start_date = start.into();
         i.end_date = end.map(String::from);
@@ -387,11 +386,11 @@ fn 统计_到期态由止日与today推导() {
 #[test]
 fn 统计_软删保单不产生统计行且不串其他保单() {
     let conn = conn();
-    let merchant_id = seed_merchant(&conn, "平安保险");
+    let insurer_id = seed_insurer(&conn, "平安保险");
     insert_account(&conn, "acc-stat");
-    let kept = create_ok(&conn, input(&merchant_id));
+    let kept = create_ok(&conn, input(&insurer_id));
     let removed = {
-        let mut i = input(&merchant_id);
+        let mut i = input(&insurer_id);
         i.policy_number = "P-DELETED".into();
         create_ok(&conn, i)
     };

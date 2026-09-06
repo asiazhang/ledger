@@ -48,6 +48,7 @@ function baseInvoke(extra?: Record<string, unknown>) {
         list_accounts: mockAccounts,
         list_categories: [],
         list_merchants: [],
+        list_insurers: [],
         list_holdings: mockHoldings,
         list_instruments: { items: mockInstruments, total: mockInstruments.length },
         sync_holding_prices: { synced: 2, skipped: 0, message: '已同步 2 只，跳过 0 只' },

@@ -124,6 +124,7 @@ function setupInvoke(expenseTxs: Transaction[] = mockExpenseTxs) {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve([])
     if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_insurers') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve([])
     if (cmd === 'list_transactions') {
       const filter = (args as { filter?: { kind?: string } | null }).filter
@@ -161,6 +162,7 @@ function setupInvoke(expenseTxs: Transaction[] = mockExpenseTxs) {
       itemList = itemList.filter((i) => i.id !== id)
       return Promise.resolve()
     }
+    if (cmd === 'list_insurers') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
 }

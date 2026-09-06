@@ -60,6 +60,7 @@ function setupInvoke() {
       })
       return Promise.resolve(id)
     }
+    if (cmd === 'list_insurers') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
 }
@@ -170,6 +171,7 @@ describe('PhysicalAssetsView 实物资产视图冒烟（issue #466）', () => {
         createCalls++
         return Promise.resolve('x')
       }
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
     await saveButton().trigger('click')

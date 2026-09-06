@@ -107,6 +107,7 @@ function baseInvoke(extra?: Record<string, unknown>) {
         list_accounts: [],
         list_categories: mockCategories,
         list_merchants: [],
+        list_insurers: [],
         report_date_range: mockRange,
         monthly_summary: mockMonthly,
         category_shares: mockShares,

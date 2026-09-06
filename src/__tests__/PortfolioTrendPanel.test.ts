@@ -64,6 +64,7 @@ function baseInvoke(extra?: Record<string, unknown>) {
       return Promise.resolve([{ code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 }])
     if (cmd === 'list_accounts') return Promise.resolve([])
     if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_insurers') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve([])
     if (cmd === 'list_holdings') return Promise.resolve([])
     if (cmd === 'list_instruments')

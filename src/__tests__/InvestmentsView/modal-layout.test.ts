@@ -53,6 +53,7 @@ beforeEach(async () => {
     if (cmd === 'list_instruments')
       return Promise.resolve({ items: mockInstruments, total: mockInstruments.length })
     if (cmd === 'sync_instruments') return Promise.resolve(undefined)
+    if (cmd === 'list_insurers') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
   localStorage.clear()

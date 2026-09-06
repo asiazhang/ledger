@@ -122,7 +122,7 @@ async function submit() {
     message.warning(err)
     return
   }
-  const input = fields.build(props.policy.id, props.policy.merchant_id, props.policy.product_name)
+  const input = fields.build(props.policy.id, props.policy.product_name)
   try {
     if (mode.value === 'rebuild' && rebuildFrom.value) {
       const oldId = rebuildFrom.value.core.id

@@ -97,6 +97,7 @@ describe('useInvestmentForm', () => {
       if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve([])
+      if (cmd === 'list_insurers') return Promise.resolve([])
       if (cmd === 'list_merchants') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
     })
@@ -131,6 +132,7 @@ describe('useInvestmentForm', () => {
       if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
       if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
       if (cmd === 'list_categories') return Promise.resolve([])
+      if (cmd === 'list_insurers') return Promise.resolve([])
       if (cmd === 'list_merchants') return Promise.resolve([])
       if (cmd === 'create_transaction') return Promise.resolve('new-txn')
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
@@ -169,6 +171,7 @@ describe('useInvestmentForm', () => {
           if (cmd === 'list_instruments') {
             return Promise.resolve({ items: mockFundInstruments, total: 1 })
           }
+          if (cmd === 'list_insurers') return Promise.resolve([])
           return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
         })
         const form = useInvestmentForm(kind)
@@ -209,6 +212,7 @@ describe('useInvestmentForm', () => {
       const form = await searchFundCandidates('buy')
       mockInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'create_transaction') return Promise.resolve('fund-txn')
+        if (cmd === 'list_insurers') return Promise.resolve([])
         return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
       })
       form.instrumentId.value = 'ins-fund'
@@ -292,6 +296,7 @@ describe('useInvestmentForm', () => {
         if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
         if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
         if (cmd === 'list_categories') return Promise.resolve([])
+        if (cmd === 'list_insurers') return Promise.resolve([])
         if (cmd === 'list_merchants') return Promise.resolve([])
         if (cmd === 'list_instruments') return Promise.resolve({ items: mockInstruments, total: 1 })
         return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
@@ -311,6 +316,7 @@ describe('useInvestmentForm', () => {
         if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
         if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
         if (cmd === 'list_categories') return Promise.resolve([])
+        if (cmd === 'list_insurers') return Promise.resolve([])
         if (cmd === 'list_merchants') return Promise.resolve([])
         if (cmd === 'update_transaction') return Promise.resolve(null)
         return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
@@ -357,6 +363,7 @@ describe('useInvestmentForm', () => {
         if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
         if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
         if (cmd === 'list_categories') return Promise.resolve([])
+        if (cmd === 'list_insurers') return Promise.resolve([])
         if (cmd === 'list_merchants') return Promise.resolve([])
         if (cmd === 'update_transaction') return Promise.reject(new Error('该买入交易已有部分卖出，无法修改'))
         return Promise.reject(new Error(`unexpected invoke: ${cmd}`))

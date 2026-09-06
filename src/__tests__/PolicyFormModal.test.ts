@@ -4,7 +4,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import PolicyFormModal from '@/components/PolicyFormModal.vue'
 import { makeAccount, makePolicy } from './factories'
-import type { Account, Currency, Merchant, Policy } from '@/types'
+import type { Account, Currency, Insurer, Policy } from '@/types'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -28,8 +28,8 @@ const mockCurrencies: Currency[] = [
   { code: 'USD', name: '美元', symbol: '$', decimal_places: 2 },
 ]
 
-const mockMerchants: Merchant[] = [
-  { id: 'mer-1', name: '平安保险', is_deleted: false, created_at: '', updated_at: '', version: 1, device_id: 'test' },
+const mockInsurers: Insurer[] = [
+  { id: 'ins-1', name: '平安保险', is_deleted: false, created_at: '', updated_at: '', version: 1, device_id: 'test' },
 ]
 
 const mockAccounts: Account[] = [
@@ -44,7 +44,8 @@ function setupInvoke() {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve([])
-    if (cmd === 'list_merchants') return Promise.resolve(mockMerchants)
+    if (cmd === 'list_merchants') return Promise.resolve([])
+    if (cmd === 'list_insurers') return Promise.resolve(mockInsurers)
     if (cmd === 'list_policies') return Promise.resolve([])
     if (cmd === 'list_policy_stats') return Promise.resolve([])
     if (cmd === 'create_policy') {
@@ -52,7 +53,7 @@ function setupInvoke() {
       return Promise.resolve(`policy-new-${input.policy_number}`)
     }
     if (cmd === 'create_scheduled_transaction') return Promise.resolve('plan-1')
-    if (cmd === 'create_merchant') return Promise.reject(new Error('unexpected create_merchant'))
+    if (cmd === 'create_insurer') return Promise.reject(new Error('unexpected create_insurer'))
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
 }
@@ -87,7 +88,7 @@ beforeEach(async () => {
   await flushPromises()
 })
 
-describe('PolicyFormModal 缴费协议区（issue #362 / ADR-0051 决策 2）', () => {
+describe('PolicyFormModal 缴费协议区（issue #362 / ADR-0051 决策 2；不挂商户 #713 / ADR-0082）', () => {
   it('协议区可折叠可选：开关默认关，字段组隐藏；开启后可见', async () => {
     const wrapper = await openCreateModal()
     const fields = bodyQuery('[data-testid="policy-agreement-fields"]')!
@@ -101,8 +102,8 @@ describe('PolicyFormModal 缴费协议区（issue #362 / ADR-0051 决策 2）', 
   it('跳过协议区保存 = 趸交/缴清纯档案：只调 create_policy，不调 create_scheduled_transaction', async () => {
     const wrapper = await openCreateModal()
     wrapper
-      .findComponent('[data-testid="policy-merchant"]')
-      .vm.$emit('update:value', 'mer-1')
+      .findComponent('[data-testid="policy-insurer"]')
+      .vm.$emit('update:value', 'ins-1')
     await formInput('policy-number').setValue('P2026-300')
     await formInput('policy-product').setValue('车险')
     await wrapper
@@ -118,11 +119,11 @@ describe('PolicyFormModal 缴费协议区（issue #362 / ADR-0051 决策 2）', 
     ).toBe(false)
   })
 
-  it('开启协议区保存：先建档再创建订阅形态协议，携带保单引用/保司/险种备注', async () => {
+  it('开启协议区保存：先建档再创建订阅形态协议，携带保单引用且不挂商户，备注带险种', async () => {
     const wrapper = await openCreateModal()
     wrapper
-      .findComponent('[data-testid="policy-merchant"]')
-      .vm.$emit('update:value', 'mer-1')
+      .findComponent('[data-testid="policy-insurer"]')
+      .vm.$emit('update:value', 'ins-1')
     await formInput('policy-number').setValue('P2026-301')
     await formInput('policy-product').setValue('重疾险')
     await wrapper
@@ -143,7 +144,7 @@ describe('PolicyFormModal 缴费协议区（issue #362 / ADR-0051 决策 2）', 
       input: {
         kind: 'subscription',
         policy_id: 'policy-new-P2026-301',
-        merchant_id: 'mer-1',
+        merchant_id: null,
         amount_cents: 300_000,
         currency_code: 'CNY',
         note: '重疾险',
@@ -166,8 +167,8 @@ describe('PolicyFormModal 缴费协议区（issue #362 / ADR-0051 决策 2）', 
   it('开启协议区但金额非法：警告且不提交任何请求', async () => {
     const wrapper = await openCreateModal()
     wrapper
-      .findComponent('[data-testid="policy-merchant"]')
-      .vm.$emit('update:value', 'mer-1')
+      .findComponent('[data-testid="policy-insurer"]')
+      .vm.$emit('update:value', 'ins-1')
     await formInput('policy-number').setValue('P2026-302')
     await formInput('policy-product').setValue('重疾险')
     await wrapper
@@ -190,8 +191,8 @@ describe('PolicyFormModal 缴费协议区（issue #362 / ADR-0051 决策 2）', 
   it('开启协议区但未选扣款账户：警告且不提交任何请求', async () => {
     const wrapper = await openCreateModal()
     wrapper
-      .findComponent('[data-testid="policy-merchant"]')
-      .vm.$emit('update:value', 'mer-1')
+      .findComponent('[data-testid="policy-insurer"]')
+      .vm.$emit('update:value', 'ins-1')
     await formInput('policy-number').setValue('P2026-303')
     await formInput('policy-product').setValue('重疾险')
     await wrapper

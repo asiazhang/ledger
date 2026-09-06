@@ -58,6 +58,7 @@ function makeStub(initialList: BackupFileInfo[]) {
     if (cmd === "set_auto_backup_enabled" || cmd === "prune_backups") {
       return Promise.resolve({ kept: 0, deleted: [], failed: [] });
     }
+    if (cmd === 'list_insurers') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
   });
 
@@ -233,6 +234,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
         return Promise.resolve({ kind: "manual", encrypted: true });
       if (cmd === "get_encryption_status")
         return Promise.resolve({ locked: false, file_encrypted: true });
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
     });
     const { open } = await import("@tauri-apps/plugin-dialog");
@@ -259,6 +261,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
       if (cmd === "get_auto_backup_state")
         return Promise.resolve({ enabled: true, last_backup_at: null });
       if (cmd === "get_backup_meta") return Promise.reject(new Error("bad zip"));
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
     });
     const { open } = await import("@tauri-apps/plugin-dialog");
@@ -281,6 +284,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
         return Promise.resolve({ kind: "manual", encrypted: false });
       if (cmd === "get_encryption_status")
         return Promise.reject(new Error("status unavailable"));
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
     });
     const { open } = await import("@tauri-apps/plugin-dialog");
@@ -306,6 +310,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
         return Promise.resolve({ locked: false, file_encrypted: false });
       if (cmd === "restore_backup")
         return Promise.resolve({ schema_version: 12, restored_at: "2026-02-17T00:00:00Z" });
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
     });
     const { open } = await import("@tauri-apps/plugin-dialog");
@@ -339,6 +344,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
         return Promise.resolve({ locked: false, file_encrypted: false });
       if (cmd === "restore_backup")
         return Promise.resolve({ schema_version: 12, restored_at: "2026-02-17T00:00:00Z" });
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
     });
     const { open } = await import("@tauri-apps/plugin-dialog");
@@ -371,6 +377,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
         return Promise.resolve({ locked: false, file_encrypted: false });
       if (cmd === "restore_backup")
         return Promise.resolve({ schema_version: 12, restored_at: "2026-02-17T00:00:00Z" });
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
     });
     const { open } = await import("@tauri-apps/plugin-dialog");
@@ -401,6 +408,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
         return Promise.resolve({ locked: false, file_encrypted: false });
       if (cmd === "restore_backup")
         return Promise.reject({ kind: "Coded", code: "encryption.passphrase-incorrect", message: "口令错误或文件损坏，请重试" });
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
     });
     const { open } = await import("@tauri-apps/plugin-dialog");
@@ -432,6 +440,7 @@ describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => 
         return Promise.resolve({ enabled: true, last_backup_at: null });
       if (cmd === "prune_backups")
         return Promise.resolve({ kept: 1, deleted: ["/a", "/b"], failed: [] });
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
     });
   }
@@ -485,6 +494,7 @@ describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => 
       if (cmd === "list_backups") return Promise.resolve([manualBackupFile]);
       if (cmd === "get_auto_backup_state")
         return Promise.resolve({ enabled: true, last_backup_at: null });
+      if (cmd === 'list_insurers') return Promise.resolve([])
       return Promise.reject(new Error(`unexpected invoke: ${cmd}`));
     });
     const { backup } = mountHost();

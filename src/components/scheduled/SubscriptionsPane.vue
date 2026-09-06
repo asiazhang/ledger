@@ -529,7 +529,9 @@ onMounted(() => {
               style="width: 220px"
             />
           </NFormItem>
-          <NFormItem :label="t('scheduled.form.merchant')">
+          <!-- 挂保单的缴费协议不显示商户（issue #713 / ADR-0082 决策 2）：付款对象
+               语义由保单的保司承担，计划行不挂商户（后端对非空提交显式拒绝） -->
+          <NFormItem v-if="!editIntent?.row.plan.policy_id" :label="t('scheduled.form.merchant')">
             <PinyinSelect
               v-model:value="editMerchantRef"
               :options="editMerchantOptions"

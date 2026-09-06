@@ -10,7 +10,7 @@ use crate::error::{AppError, Result};
 use super::validation::validate_input;
 
 /// 保单全列清单（读路径共用，与 `FromRow` 的列名约定一致）。
-const POLICY_COLUMNS: &str = "id,merchant_id,policy_number,product_name,start_date,end_date,\
+const POLICY_COLUMNS: &str = "id,insurer_id,policy_number,product_name,start_date,end_date,\
      coverage_amount_cents,coverage_currency_code,note,created_at,updated_at,version,device_id,is_deleted";
 
 /// 按 `id` 读未删除保单（多命令共用的前检）：不存在（或已软删除）返回 `None`。
@@ -47,12 +47,12 @@ pub fn create_policy(
     let now = now_iso();
     conn.execute(
         "INSERT INTO policies \
-         (id,merchant_id,policy_number,product_name,start_date,end_date,\
+         (id,insurer_id,policy_number,product_name,start_date,end_date,\
          coverage_amount_cents,coverage_currency_code,note,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10,1,?11,0)",
         rusqlite::params![
             id,
-            normalized.merchant_id,
+            normalized.insurer_id,
             normalized.policy_number,
             normalized.product_name,
             normalized.start_date,
@@ -76,7 +76,7 @@ pub fn create_policy(
 ///
 /// 保司校验语义与 Writer 接缝一致（`existing_merchant_id` 先例）：提交的保司与
 /// 既有行相同 = 维持历史引用（保司后被软删的历史保单仍可编辑其他要素），
-/// 换成新保司才校验在用（软删商户不可被新档案选择，ADR-0051 决策 7）。
+/// 换成新保司才校验在用（软删保司不可被新档案选择，ADR-0082）。
 pub fn update_policy(
     conn: &Connection,
     id: &str,
@@ -87,16 +87,16 @@ pub fn update_policy(
         AppError::codedp_not_found("policy.not-found", format!("保单不存在: {id}"), &[id])
     })?;
 
-    let merchant_unchanged = existing.merchant_id == input.merchant_id;
-    let normalized = validate_input(conn, &input, merchant_unchanged)?;
+    let insurer_unchanged = existing.insurer_id == input.insurer_id;
+    let normalized = validate_input(conn, &input, insurer_unchanged)?;
 
     let updated = conn.execute(
-        "UPDATE policies SET merchant_id=?2, policy_number=?3, product_name=?4, start_date=?5, \
+        "UPDATE policies SET insurer_id=?2, policy_number=?3, product_name=?4, start_date=?5, \
          end_date=?6, coverage_amount_cents=?7, coverage_currency_code=?8, note=?9, \
          updated_at=?10, version=version+1, device_id=?11 WHERE id=?1 AND is_deleted=0",
         rusqlite::params![
             id,
-            normalized.merchant_id,
+            normalized.insurer_id,
             normalized.policy_number,
             normalized.product_name,
             normalized.start_date,

@@ -143,6 +143,7 @@ beforeEach(async () => {
     if (cmd === 'list_currencies') return Promise.resolve(mockCurrencies)
     if (cmd === 'list_accounts') return Promise.resolve(mockAccounts)
     if (cmd === 'list_categories') return Promise.resolve([])
+    if (cmd === 'list_insurers') return Promise.resolve([])
     if (cmd === 'list_merchants') return Promise.resolve(merchantDb)
     if (cmd === 'list_policies') return Promise.resolve([])
     if (cmd === 'report_date_range') {
@@ -168,6 +169,7 @@ beforeEach(async () => {
     }
     // 物品 store（issue #119 右键「加入物品」置灰态）默认空列表
     if (cmd === 'list_items') return Promise.resolve([])
+    if (cmd === 'list_insurers') return Promise.resolve([])
     return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
   })
   merchantDb = [
