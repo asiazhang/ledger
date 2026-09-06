@@ -7,8 +7,8 @@
 “受影响域”包括：修改代码所在域、调用到的域、数据模型所属域，以及用户可见行为所属域。
 
 - **业务规则、领域术语或跨域改动**：先读 `CONTEXT-MAP.md`，再读所有受影响域的 `docs/contexts/CONTEXT-*.md` 与相关 ADR。
-- **后端壳、域、基础设施或目录归位**：读 `docs/adr/0056-backend-domain-directory-layering.md`；分层规则、归位域与 triage 判定以该 ADR 为准。
-- **后端易 panic 构造（unwrap/expect/panic!/todo!/unimplemented!/unreachable!）或其豁免**：读 `docs/adr/0060-backend-panic-construction-gate.md`；六件套 deny 门禁与逐点豁免纪律以该 ADR 为准。
+- **后端壳、域、基础设施或目录归位（含 triage 判定）**：读 `docs/adr/0056-backend-domain-directory-layering.md`。
+- **后端易 panic 构造（unwrap/expect/panic!/todo!/unimplemented!/unreachable!）或其豁免**：读 `docs/adr/0060-backend-panic-construction-gate.md`。
 - **金额或交易写入改动**：先读 `docs/contexts/CONTEXT-core.md` 和相关 ADR，再以当前金额与写入接缝为唯一实现依据。
 - **前端状态、界面交互或弹层**：读 `docs/contexts/CONTEXT-reference-settings.md`、`docs/contexts/CONTEXT-ui-interaction.md` 及相关 ADR。
 - **用户可见文案或错误**：读相关域词汇表、ADR-0049/0050 和现有 i18n 实现。
@@ -43,7 +43,8 @@
 ## 测试、工作流与发布
 
 - Rust 业务行为按项目约定补 BDD；HTTP-only 行为补 API 集成测试；纯内部逻辑可补单测；前端逻辑补 Vitest；BDD world 只保存跨步骤读写的状态。
-- 调用 `/implement` 实施代码改动时，对应 GitHub issue 先认领（见 `docs/agents/issue-tracker.md` 开发认领），再使用独立 git worktree，并在工作树内完成验证和提交；提交后推送分支并主动在 GitHub 上创建 PR，PR 是交付终点，不自行合并；只读审查不修改、不提交；研究任务是否写入文档，以用户要求和对应 skill 为准。worktree 缺少前端依赖时先运行 `pnpm install`。
+- 调用 `/implement` 实施代码改动时：对应 GitHub issue 先认领（见 `docs/agents/issue-tracker.md` 开发认领），再使用独立 git worktree，并在工作树内完成验证和提交；提交后推送分支并主动在 GitHub 上创建 PR，PR 是交付终点，不自行合并。worktree 缺少前端依赖时先运行 `pnpm install`。
+- 只读审查不修改、不提交；研究任务是否写入文档，以用户要求和对应 skill 为准。
 - 修改迁移、AI API 契约、数据模型或准备发布时，先判断当前提交相对最新 tag 的发布边界。无可用 tag 时，先报告无法判断发布边界，不擅自把 schema/AI API 契约当作已发布或未发布。已发布 AI API 契约和数据模型只增不改；已发布迁移的就地修改须在 migration 文件头部注明对应 CHANGELOG 条目，并在 `CHANGELOG.md` 的对应版本或 `Unreleased` 下增加 BREAKING 条目。
 
 ## 完成标准

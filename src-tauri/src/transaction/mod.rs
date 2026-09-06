@@ -30,7 +30,7 @@ pub use model::{
     CreateTransactionResult, NormalizedTransaction, NotePinyinRepairFailure,
     NotePinyinRepairReport, NotePinyinRepairStage, Transaction, TransactionBatchInput,
     TransactionInput, TransactionListFilter, TransactionListResult, TransactionSearchResult,
-    UpdateTransactionInput,
+    TransactionSource, TransactionSourceKind, TransactionSourceStatus, UpdateTransactionInput,
 };
 
 pub use amount::{

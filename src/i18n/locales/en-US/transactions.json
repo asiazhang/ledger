@@ -22,8 +22,24 @@
     "category": "Category",
     "merchant": "Merchant",
     "account": "Account",
+    "source": "Source",
     "note": "Note",
     "amount": "Amount"
+  },
+  "source": {
+    "kind": {
+      "installmentPlan": "Installment plan",
+      "subscription": "Subscription",
+      "scheduledTransfer": "Scheduled transfer",
+      "policy": "Policy",
+      "item": "Item",
+      "instrument": "Instrument"
+    },
+    "status": {
+      "cancelled": "Cancelled",
+      "disposed": "Disposed",
+      "deleted": "Deleted"
+    }
   },
   "list": {
     "total": "Total {n}",

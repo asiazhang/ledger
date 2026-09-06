@@ -92,6 +92,8 @@ mod transactions_edit_steps;
 mod transactions_policy_steps;
 #[path = "e2e/transactions_query_steps.rs"]
 mod transactions_query_steps;
+#[path = "e2e/transactions_source_steps.rs"]
+mod transactions_source_steps;
 #[path = "e2e/transactions_write_steps.rs"]
 mod transactions_write_steps;
 

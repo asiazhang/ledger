@@ -12,6 +12,7 @@ import { kindSemanticColor } from '@/theme/semantic-colors'
 import { t } from '@/i18n'
 import AccountLink from '@/components/AccountLink.vue'
 import MerchantLink from '@/components/MerchantLink.vue'
+import SourceLink from '@/components/SourceLink.vue'
 import { lendingLabelKey, resolveLendingDirection } from '@/domain/lending'
 
 export type ReferenceStore = ReturnType<typeof useReferenceStore>
@@ -48,9 +49,9 @@ export function sumFixedColumnWidths(columns: DataTableColumn<Transaction>[]): n
  *   150→286px、备注 240→398px）。
  * - 使用方以「所有固定列（有 `width` 的列，含金额列；备注不计入）宽度总和」作为 `scroll-x`，
  *   作为窄窗口下的横向滚动下限。备注为弹性列，窗口变窄时先由备注收缩吸收，各固定列宽保持恒定——
- *   只有当内容区窄于固定列宽总和时才出现横向滚动（账户列 180、商户列 120 后固定列总和 825，窄窗口可能触发，
+ *   只有当内容区窄于固定列宽总和时才出现横向滚动（固定列总和 965，含来源列 140，窄窗口可能触发，
  *   由 scroll-x 提供横向滚动底线）。
- * - 宽度按实际内容估算：日期 105 / 类型 65 / 分类 150（最长路径 ≈149px）/ 商户 120 / 账户 180（转账行需容纳「转出 → 转入」两个账户名 + 箭头，长名由链接自身省略号兜底）/ 金额 125。 */
+ * - 宽度按实际内容估算：日期 105 / 类型 65 / 分类 150（最长路径 ≈149px）/ 商户 120 / 账户 180（转账行需容纳「转出 → 转入」两个账户名 + 箭头，长名由链接自身省略号兜底）/ 来源 140（图标 + 实体名 + 状态标注，spec #704）/ 金额 125。固定列总和 965。 */
 /** 类型标签（issue #374）：借贷是 transfer 的派生视角——两端账户类型构成借贷
  * （receivable/debt）的转账显示借出/收回/借入/还款专属文案，普通转账仍显示「转账」；
  * 非 transfer kind 不参与派生、按自身 kind 标签。历史数据实时派生、无数据迁移。
@@ -93,6 +94,16 @@ export function buildTransactionColumns(reference: ReferenceStore): DataTableCol
       key: 'account_id',
       width: 180,
       render: (row) => renderAccountCell(row),
+    },
+    {
+      title: t('transactions.columns.source'),
+      key: 'source',
+      width: 140,
+      // 来源列（spec #704 / issue #706）：图标 + 实体名 + 状态标注，点击经来源
+      // 跳转深模块落地（SourceLink 内部收口）；无来源留空（手动/AI 导入口径）。
+      // 不设列级 ellipsis（账户列同款理由：NEllipsis 会把图标/名称/标注包装成
+      // 整体省略，破坏链接自身省略与标注并排语义），超长由链接自身省略号兜底。
+      render: (row) => (row.source ? h(SourceLink, { source: row.source }) : '-'),
     },
     {
       title: t('transactions.columns.note'),

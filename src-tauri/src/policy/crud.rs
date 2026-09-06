@@ -2,7 +2,7 @@
 
 use rusqlite::{Connection, OptionalExtension};
 
-use super::model::{Policy, PolicyInput};
+use super::model::{Policy, PolicyInput, PolicySourceDisplay};
 use crate::db::query::{query_all, query_one};
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
@@ -31,6 +31,25 @@ pub fn list_policies(conn: &Connection) -> Result<Vec<Policy>> {
             "SELECT {POLICY_COLUMNS} FROM policies WHERE is_deleted=0 ORDER BY created_at, id"
         ),
         [],
+    )
+}
+
+/// 按 id 批量取保单展示字段（spec #704 / issue #706 交易来源列反查）：供核心
+/// 交易域按页填充来源列（收集页内 policy_id 后一次查询，不做逐行 N+1）。
+/// 软删保单照常返回（历史引用保留不置空，ADR-0051 决策 5，来源列显示名称 +
+/// 已删除状态）；不存在的 id 不在结果中（引用完整性由外键保证，缺失属防御性跳过）。
+pub fn source_display_by_ids(
+    conn: &Connection,
+    ids: &[String],
+) -> Result<Vec<PolicySourceDisplay>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = vec!["?"; ids.len()].join(",");
+    query_all(
+        conn,
+        &format!("SELECT id, product_name, is_deleted FROM policies WHERE id IN ({placeholders})"),
+        rusqlite::params_from_iter(ids.iter()),
     )
 }
 

@@ -282,3 +282,87 @@ async fn test_get_transactions_excludes_soft_deleted() {
     assert_eq!(txs[0]["amount_cents"], 1000);
     assert_eq!(txs[0]["date"], "2026-01-01");
 }
+
+/// 行携带来源字段（spec #704 / issue #706 tracer bullet：保单分支）：
+/// 挂单保费返回 `{kind: "policy", entity_id, display_name: 险种名, status: null}`；
+/// 软删保单的历史引用照常返回名称并携带 `status: "deleted"`；
+/// 无保单交易 `source` 为 `null`。保单/保司行直插（policy 域无 HTTP 端点，先例商户）。
+#[tokio::test]
+async fn test_get_transactions_includes_policy_source() {
+    let (app, conn) = setup_app();
+    let account_id = create_account_via_api(&app, "现金").await;
+
+    let policy_id = "pol-1";
+    {
+        let c = conn.lock().unwrap();
+        c.execute(
+            "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES ('mch-1','平安保险','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO policies (id,merchant_id,policy_number,product_name,start_date,end_date,\
+             coverage_amount_cents,coverage_currency_code,note,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,'mch-1','P2026-201','重疾险','2026-01-01','2036-01-01',NULL,NULL,NULL,\
+             '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            rusqlite::params![policy_id],
+        )
+        .unwrap();
+    }
+
+    let with_policy = format!(
+        r#"{{"kind":"expense","amount_cents":300000,"currency_code":"CNY","account_id":"{account_id}","policy_id":"{policy_id}","date":"2026-02-01"}}"#
+    );
+    let without_policy = format!(
+        r#"{{"kind":"income","amount_cents":200,"currency_code":"CNY","account_id":"{account_id}","date":"2026-03-01"}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&with_policy, &without_policy], None)).await;
+    assert!(created.iter().all(|r| r["success"] == true), "{created:?}");
+
+    let (status, body) = get_json(&app, "/api/v1/transactions").await;
+    assert_eq!(status, StatusCode::OK);
+    let txs = items_of(&body);
+    assert_eq!(txs.len(), 2);
+
+    // 挂单保费：来源 = 保单（实体 id + 险种名，在册无状态标注）
+    let premium = txs
+        .iter()
+        .find(|t| t["policy_id"] == policy_id)
+        .expect("挂单保费应返回");
+    assert_eq!(
+        premium["source"],
+        serde_json::json!({
+            "kind": "policy",
+            "entity_id": policy_id,
+            "display_name": "重疾险",
+            "status": serde_json::Value::Null,
+        }),
+        "挂单保费来源应为保单: {premium:?}"
+    );
+
+    // 无保单交易：来源为空
+    let plain = txs.iter().find(|t| t["policy_id"].is_null()).unwrap();
+    assert!(
+        plain["source"].is_null(),
+        "无挂单交易来源应为 null: {plain:?}"
+    );
+
+    // 软删保单：历史引用照常返回名称 + 已删除状态（引用保留不置空，ADR-0051 决策 5）
+    {
+        let c = conn.lock().unwrap();
+        c.execute(
+            "UPDATE policies SET is_deleted=1 WHERE id=?1",
+            rusqlite::params![policy_id],
+        )
+        .unwrap();
+    }
+    let (_, body) = get_json(&app, "/api/v1/transactions").await;
+    let txs = items_of(&body);
+    let premium = txs
+        .iter()
+        .find(|t| t["policy_id"] == policy_id)
+        .expect("软删保单的历史流水应照常返回");
+    assert_eq!(premium["source"]["display_name"], "重疾险");
+    assert_eq!(premium["source"]["status"], "deleted");
+}

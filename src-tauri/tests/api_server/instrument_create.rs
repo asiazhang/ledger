@@ -6,14 +6,27 @@
 //! 美股三市场→USD、未知→CNY，ADR-0081），显式传参可覆盖）、类型五类全开、错误为统一错误形状中文信息、
 //! 开放 API 契约自描述。泛型断言以非 fund 类型为代表；fund 类型的东财增强
 //! （回填权威名称/净值、查无此码拒绝、不可达降级）见 instrument_create_fund.rs
-//! （issue #304 / ADR-0039）。
+//! （issue #304 / ADR-0039）；stock 类型的东财增强（issue #694 / ADR-0081）见
+//! instrument_create_stock.rs——本文件以「东财不可达」桩让 stock 真实代码创建
+//! 一律走降级路径（不触真实网络），聚焦通用创建语义。
 
 use std::sync::{Arc, Mutex};
 
 use axum::http::StatusCode;
 use rusqlite::params;
 
-use crate::common::{post_instrument, setup_app};
+use tauri_app_lib::api_server::StockQuoteFetcher;
+use tauri_app_lib::error::AppError;
+
+use crate::common::{post_instrument, setup_app, setup_app_with_stock_fetch};
+
+/// 东财不可达桩：stock 真实代码创建的东财往返一律失败（Io）→ 降级路径——
+/// 提交名称 + 真实代码 + 解析市场建行，与预增强时代的通用行为对齐（除显式
+/// currency_code 在增强分支不生效外）。全部请求离线，不触真实网络。
+fn setup_app_stock_degraded() -> (axum::Router, Arc<Mutex<rusqlite::Connection>>) {
+    let fetch: StockQuoteFetcher = Arc::new(|_, _| Err(AppError::Io("东财网络不可达".into())));
+    setup_app_with_stock_fetch(Some(fetch))
+}
 
 /// 响应体应为裸 id 字符串（非 JSON 对象——`{"id": …}` 之类包装在此即解析失败）。
 fn id_of(bytes: &[u8]) -> String {
@@ -43,7 +56,7 @@ fn fields_of(
 
 #[tokio::test]
 async fn test_create_instrument_returns_201_with_bare_id_and_manual_source() {
-    let (app, conn) = setup_app();
+    let (app, conn) = setup_app_stock_degraded();
 
     let body = r#"{"symbol":"600519","type":"stock","name":"贵州茅台","market":"sh","currency_code":"CNY"}"#;
     let (status, bytes) = post_instrument(&app, body).await;
@@ -59,20 +72,22 @@ async fn test_create_instrument_returns_201_with_bare_id_and_manual_source() {
 }
 
 // ---------------------------------------------------------------------------
-// find-or-create 幂等：命中静默复用并按需更新名称/市场
+// find-or-create 幂等：命中静默复用并按需更新名称/市场（bond：不经东财增强的
+// 通用类型——stock 真实代码重放携矛盾 market 会被增强分支显式 400，见
+// instrument_create_stock.rs；同码改市场本就是应被拦截的错挂行为）
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_create_instrument_idempotent_returns_same_id_without_new_row() {
     let (app, conn) = setup_app();
 
-    let first_body = r#"{"symbol":"600519","type":"stock","name":"贵州茅台","market":"sh"}"#;
+    let first_body = r#"{"symbol":"600519","type":"bond","name":"贵州茅台","market":"sh"}"#;
     let (first_status, first_bytes) = post_instrument(&app, first_body).await;
     assert_eq!(first_status, StatusCode::CREATED);
     let first_id = id_of(&first_bytes);
 
     // 重跑同自然键：名称/市场有变也复用（按需更新），仍返回 201 + 既有 id。
-    let second_body = r#"{"symbol":"600519","type":"stock","name":"贵州茅台A","market":"sz"}"#;
+    let second_body = r#"{"symbol":"600519","type":"bond","name":"贵州茅台A","market":"sz"}"#;
     let (second_status, second_bytes) = post_instrument(&app, second_body).await;
     assert_eq!(second_status, StatusCode::CREATED);
     let second_id = id_of(&second_bytes);
@@ -82,21 +97,21 @@ async fn test_create_instrument_idempotent_returns_same_id_without_new_row() {
         .lock()
         .unwrap()
         .query_row(
-            "SELECT COUNT(*) FROM instruments WHERE symbol='600519' AND instrument_type='stock'",
+            "SELECT COUNT(*) FROM instruments WHERE symbol='600519' AND instrument_type='bond'",
             [],
             |r| r.get(0),
         )
         .unwrap();
     assert_eq!(count, 1, "幂等重放不应产生字典碎片");
 
-    let (_, market, _) = fields_of(&conn, "600519", "stock");
+    let (_, market, _) = fields_of(&conn, "600519", "bond");
     assert_eq!(market, "sz", "命中复用应按需更新市场");
 
     let name: Option<String> = conn
         .lock()
         .unwrap()
         .query_row(
-            "SELECT name FROM instruments WHERE symbol='600519' AND instrument_type='stock'",
+            "SELECT name FROM instruments WHERE symbol='600519' AND instrument_type='bond'",
             [],
             |r| r.get(0),
         )
@@ -106,7 +121,7 @@ async fn test_create_instrument_idempotent_returns_same_id_without_new_row() {
 
 #[tokio::test]
 async fn test_create_instrument_distinguishes_type_for_same_symbol() {
-    let (app, conn) = setup_app();
+    let (app, conn) = setup_app_stock_degraded();
 
     let (stock_status, stock_bytes) = post_instrument(
         &app,
@@ -139,7 +154,7 @@ async fn test_create_instrument_distinguishes_type_for_same_symbol() {
 
 #[tokio::test]
 async fn test_create_instrument_all_types_open_without_ui_whitelist() {
-    let (app, conn) = setup_app();
+    let (app, conn) = setup_app_stock_degraded();
 
     // stock 是自建标的 UI 白名单排除的类型——AI 面可建即为「不经白名单」的直接证据。
     for (symbol, kind) in [
@@ -171,7 +186,7 @@ async fn test_create_instrument_all_types_open_without_ui_whitelist() {
 
 #[tokio::test]
 async fn test_create_instrument_derives_currency_from_market() {
-    let (app, conn) = setup_app();
+    let (app, conn) = setup_app_stock_degraded();
 
     // 沪深→人民币
     let (status, bytes) =
@@ -221,14 +236,17 @@ async fn test_create_instrument_without_market_defaults_unknown_and_cny() {
 async fn test_create_instrument_explicit_currency_overrides_derivation() {
     let (app, conn) = setup_app();
 
+    // bond 不经东财增强：显式 currency_code 在通用路径生效。stock 真实代码的
+    // 增强/降级分支以解析市场推导币种为权威、显式传参不生效（镜像 fund 分支
+    // 字典形态收口，instrument_create_stock.rs / instrument_create_fund.rs）。
     let (status, _) = post_instrument(
         &app,
-        r#"{"symbol":"00700","type":"stock","market":"hk","currency_code":"USD"}"#,
+        r#"{"symbol":"00700","type":"bond","market":"hk","currency_code":"USD"}"#,
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
 
-    let (currency_code, _, _) = fields_of(&conn, "00700", "stock");
+    let (currency_code, _, _) = fields_of(&conn, "00700", "bond");
     assert_eq!(currency_code, "USD", "显式传参应覆盖市场推导");
 }
 

@@ -729,8 +729,10 @@ pub fn search_transactions_internal(
         }
     }
 
-    // 第二段：仅为当前页回表取展示列。
-    let items = fetch_display_rows(conn, &page_ids)?;
+    // 第二段：仅为当前页回表取展示列；来源列随页填充（与列表命令同一反查，
+    // spec #704 / issue #706：搜索页与交易页同一来源口径）。
+    let mut items = fetch_display_rows(conn, &page_ids)?;
+    super::read::attach_sources(conn, &mut items)?;
 
     Ok(TransactionSearchResult { items, total })
 }

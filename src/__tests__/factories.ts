@@ -183,6 +183,8 @@ export function makeTransaction(partial: Partial<Transaction> & { id: string }):
     version: 1,
     device_id: 'test',
     is_deleted: false,
+    // 来源列默认无来源（列表/搜索读路径才填充）；来源场景显式传 source
+    source: null,
     ...partial,
   }
 }

@@ -61,12 +61,14 @@ export const routes: RouteRecordRaw[] = [
     // #475 起按收纳状态分流（beforeEnter 守卫）：仍在收纳清单（出厂态与存量 ViewState 场景）
     // 重定向到资产·更多保单页签（重定向先例不变）；用户右键「移回侧栏」后清单不再含保单，
     // 侧栏主项导航（点击/键位）按 name 路由——独立路由渲染保单页。
+    // 重定向透传既有 query（spec #704 / issue #706）：来源列深链 /policies?focus=<id>
+    // 在收纳态经此落「更多」页签，focus 不丢、高亮不丢（词汇表 focus 参数「落点尊重组内收纳」）。
     path: '/policies',
     name: 'policies',
     component: () => import('@/views/PoliciesView.vue'),
-    beforeEnter: () =>
+    beforeEnter: (to) =>
       useSidebarOrderStore().isViewContained('policies')
-        ? { name: 'assets-more', query: { tab: 'policies' } }
+        ? { name: 'assets-more', query: { ...to.query, tab: 'policies' } }
         : true,
   },
   {

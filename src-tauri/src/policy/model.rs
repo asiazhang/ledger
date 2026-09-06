@@ -80,6 +80,27 @@ pub struct PolicyInput {
     pub note: Option<String>,
 }
 
+/// 来源列展示反查投影（spec #704 / issue #706）：按 id 批量取保单展示字段的最小行——
+/// 险种名（来源列展示名）+ 软删标志（来源状态），供核心交易域按页填充来源列。
+#[derive(Debug, Clone)]
+pub struct PolicySourceDisplay {
+    pub id: String,
+    /// 险种名称（来源列展示名）。
+    pub product_name: String,
+    /// 软删标志：历史引用保留不置空（ADR-0051 决策 5），软删保单照常返回。
+    pub is_deleted: bool,
+}
+
+impl FromRow for PolicySourceDisplay {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(PolicySourceDisplay {
+            id: row.get(0)?,
+            product_name: row.get(1)?,
+            is_deleted: row.get::<_, i64>(2)? != 0,
+        })
+    }
+}
+
 /// 逐保单视角统计行（issue #363 / ADR-0051 决策 5/6）：全部字段实时推导，
 /// **不落库、不摊销**（与 SubscriptionSpend 实际花费口径同纪律）——
 /// 每个数字可逐笔对账到挂单流水。
