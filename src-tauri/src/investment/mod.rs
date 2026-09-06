@@ -79,7 +79,10 @@ pub use fund::{
 };
 pub use manual_price::record_manual_price;
 pub use reports::query_realized_pnl_summary;
-pub use stock::{ResolvedStockCode, derive_quote_currency, resolve_stock_market};
+pub use stock::{
+    ResolvedStockCode, StockCreateOutcome, StockCreateRoute, create_stock_degraded,
+    derive_quote_currency, persist_stock_quote, resolve_stock_market, route_stock_creation,
+};
 // 投资交易对外出口收窄为 prepare/apply/revert 三件套（issue #72 / spec #69）：
 // 校验归一化（prepare）、应用副作用（apply）、回退副作用（revert）各一个入口，
 // 不再暴露 create/update/cleanup/reverse 等散落函数；行写入经交易行为层编排。
