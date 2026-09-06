@@ -12,6 +12,7 @@
 //! 挂载点与引用面零变化（issue #429 验收项）：`lib.rs` 经 `crate::api_server::`
 //! 消费 `start_http_server`；信号守门测试消费 `ApiDoc`（端点集真源）；
 //! HTTP 集成测试消费 `build_router` / `ApiState` / `EmitterSlot` / `FundDetailFetcher`
+//! / `StockQuoteFetcher`
 //! ——均由本入口再导出承载，路径不变。
 //! 「端点 → 写操作身份」手写声明表（`write_ops.rs`，ADR-0044 #335）已随
 //! ADR-0073（spec #523）消亡为源码扫描派生物：身份内化进统一写入口调用点，
@@ -25,7 +26,7 @@ mod state;
 
 // 壳层引用面单点：`crate::api_server::` 对外路径零变化（issue #429）。
 pub use router::{build_router, start_http_server};
-pub use state::{ApiState, EmitterSlot, FundDetailFetcher};
+pub use state::{ApiState, EmitterSlot, FundDetailFetcher, StockQuoteFetcher};
 // 信号守门测试（signals_cross_check，#[cfg(test)]）在 crate 内消费契约装配本体；
 // 非测试构建本再导出无消费方，allow 压制单边 unused 告警（引用面保持 issue #429 原状）。
 #[allow(unused_imports)]

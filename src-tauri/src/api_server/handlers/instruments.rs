@@ -15,7 +15,8 @@ use crate::db::run_db;
 use crate::error::AppError;
 use crate::investment::{
     FundCreateOutcome, FundDetail, InstrumentInput, InstrumentListFilter, InstrumentListResult,
-    InstrumentType, create_fund_degraded, is_six_digit_code, persist_fund_detail,
+    InstrumentType, create_fund_degraded, derive_quote_currency, is_six_digit_code,
+    persist_fund_detail,
 };
 use crate::signals::{WriteEvidence, WriteOp};
 use crate::write_entry::{Outcome, write_entry};
@@ -116,21 +117,9 @@ pub struct InstrumentCreateInput {
     currency_code: Option<String>,
 }
 
-/// 报价币种缺省推导（ADR-0037 决策 2；美股三市场→USD 见 ADR-0081）：
-/// 沪深→人民币、港→港币、美股三市场（nasdaq/nyse/amex）→美元、其余（含 unknown）→人民币。
-///
-/// 依据：标的币种不参与买卖账务（持仓批次成本币种 = 账户币种），仅影响行情/市值折算展示。
-/// 与同步侧 `crate::sync::http::MARKETS` 的 market→currency 对应（该表为全量同步
-/// 板块闭集、模块私有，本端点按 ADR 独立定义并多担 unknown 缺省）；美股三市场仅入本
-/// 推导、不入 MARKETS——美股字典走按代码即建、不做全量同步（ADR-0081）。
-fn derive_quote_currency(market: &str) -> &'static str {
-    match market {
-        "hk" => "HKD",
-        "nasdaq" | "nyse" | "amex" => "USD",
-        // 沪深与未知市场均落人民币
-        _ => "CNY",
-    }
-}
+// 报价币种缺省推导已上收投资域单点 `crate::investment::derive_quote_currency`
+// （issue #693 随股票查询接缝收口：stocks 查询端点投影同一推导，两处不漂移；
+// 推导规则与依据注释见该函数，ADR-0037 决策 2 / ADR-0081）。
 
 /// 标的幂等创建（AI 导入契约，issue #296 / ADR-0037）：find-or-create 自然键
 /// （symbol, 类型），命中静默复用并按需更新名称/市场、返回既有 id，未命中创建；

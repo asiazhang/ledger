@@ -19,6 +19,7 @@ use super::error::ErrorResponse;
 use super::handlers;
 use super::handlers::funds::FundLookup;
 use super::handlers::instruments::InstrumentCreateInput;
+use super::handlers::stocks::StockLookup;
 
 /// Ledger 记账 API 的 OpenAPI 契约文档。
 ///
@@ -38,7 +39,9 @@ use super::handlers::instruments::InstrumentCreateInput;
                       批量交易默认去重，命中返回 `duplicate: true`。\
                       buy/sell 需携带标的 id：可先用标的搜索端点把流水中的标的描述解析为 id；\
                       场外基金例外——先按 6 位代码查询（`GET /api/v1/funds/{code}`）确认识别，\
-                      再以真实代码创建标的（见导入知识「基金申赎」节）。",
+                      再以真实代码创建标的（见导入知识「基金申赎」节），不走名称充代码；\
+                      股票（沪深港）同理——先按代码查询（`GET /api/v1/stocks/{code}`，`market` 可选、\
+                      缺省按代码形态推断）确认权威名称与最新价，再创建标的。",
         version = "0.1.0"
     ),
     paths(
@@ -54,6 +57,7 @@ use super::handlers::instruments::InstrumentCreateInput;
         handlers::instruments::search_instruments_handler,
         handlers::instruments::create_instrument_handler,
         handlers::funds::lookup_fund_handler,
+        handlers::stocks::lookup_stock_handler,
         handlers::merchants::list_merchants_handler,
         handlers::transactions::list_transactions_handler,
         handlers::transactions::batch_create_transactions_handler,
@@ -76,6 +80,7 @@ use super::handlers::instruments::InstrumentCreateInput;
         InstrumentListResult,
         InstrumentType,
         Merchant,
+        StockLookup,
         Transaction,
         TransactionInput,
         UpdateTransactionInput,

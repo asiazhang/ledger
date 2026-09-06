@@ -33,5 +33,6 @@ mod investment_migration;
 mod merchant_import;
 mod reference_data;
 mod signal_delivery;
+mod stock_lookup;
 mod transaction_crud;
 mod transaction_list;

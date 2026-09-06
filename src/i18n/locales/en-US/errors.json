@@ -55,7 +55,9 @@
   },
   "sync": {
     "already-running": "a full sync is already running, cancel it or wait for it to finish",
-    "fund-not-found": "fund code {0} not found, please verify and retry"
+    "fund-not-found": "fund code {0} not found, please verify and retry",
+    "stock-not-found": "stock code {0} not found, please verify and retry",
+    "secid-unroutable": "market {0} cannot be resolved to a quote secid (internal inconsistency)"
   },
   "data-location": {
     "mkdir-failed": "cannot create target directory ({0}): {1}",
@@ -124,6 +126,12 @@
   },
   "fund": {
     "code-invalid": "fund code must be 6 digits"
+  },
+  "stock": {
+    "bse-unsupported": "stock code {0} belongs to the Beijing Stock Exchange (starts with 4/8), which is not supported for lookup yet",
+    "market-unsupported": "market {0} is not supported for lookup yet (currently sh / sz / hk)",
+    "market-conflict": "market parameter {0} conflicts with the shape of stock code {1}, please verify and retry",
+    "code-unresolvable": "cannot infer the market from the shape of stock code {0}, pass the market parameter explicitly"
   },
   "budget": {
     "amount-positive": "budget amount must be positive",
