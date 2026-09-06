@@ -286,7 +286,8 @@ async fn test_get_transactions_excludes_soft_deleted() {
 /// 行携带来源字段（spec #704 / issue #706 tracer bullet：保单分支）：
 /// 挂单保费返回 `{kind: "policy", entity_id, display_name: 险种名, status: null}`；
 /// 软删保单的历史引用照常返回名称并携带 `status: "deleted"`；
-/// 无保单交易 `source` 为 `null`。保单/保司行直插（policy 域无 HTTP 端点，先例商户）。
+/// 无保单交易 `source` 为 `null`。保单/保司行直插（policy 域无 HTTP 端点，先例商户；
+/// 保单挂保司字典不挂商户，ADR-0082）。
 #[tokio::test]
 async fn test_get_transactions_includes_policy_source() {
     let (app, conn) = setup_app();
@@ -296,15 +297,15 @@ async fn test_get_transactions_includes_policy_source() {
     {
         let c = conn.lock().unwrap();
         c.execute(
-            "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES ('mch-1','平安保险','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            "INSERT INTO insurers (id,name,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES ('ins-1','测试保司','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
             [],
         )
         .unwrap();
         c.execute(
-            "INSERT INTO policies (id,merchant_id,policy_number,product_name,start_date,end_date,\
+            "INSERT INTO policies (id,insurer_id,policy_number,product_name,start_date,end_date,\
              coverage_amount_cents,coverage_currency_code,note,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES (?1,'mch-1','P2026-201','重疾险','2026-01-01','2036-01-01',NULL,NULL,NULL,\
+             VALUES (?1,'ins-1','P2026-201','重疾险','2026-01-01','2036-01-01',NULL,NULL,NULL,\
              '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
             rusqlite::params![policy_id],
         )
