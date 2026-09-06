@@ -361,7 +361,7 @@ const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(rou
               :x="sortMenuX"
               :y="sortMenuY"
               :options="sortMenuOptions"
-              :min-width="140"
+              style="max-width: 140px"
               @select="onSortMenuSelect"
               @clickoutside="sortMenuShow = false"
             />

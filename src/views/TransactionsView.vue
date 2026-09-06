@@ -527,7 +527,7 @@ onMounted(() => {
       :x="menuX"
       :y="menuY"
       :options="menuOptions"
-      :min-width="140"
+      style="max-width: 140px"
       @select="rowMenu.select"
       @clickoutside="rowMenu.close"
     />

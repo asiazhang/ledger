@@ -150,7 +150,7 @@ function renderBackOptionRow({ node }: { node: VNode }): VNode {
     :x="backMenuX"
     :y="backMenuY"
     :options="backMenuOptions"
-    :min-width="140"
+    style="max-width: 140px"
     :render-option="renderBackOptionRow"
     @select="onBackMenuSelect"
     @clickoutside="backMenuShow = false"
