@@ -72,6 +72,11 @@ zip = { version = "8.6", default-features = false, features = ["deflate"] }
 name = "e2e"
 harness = false
 
+# 多 worktree 并行开发降载：依赖 crate 的 dev 构建只保留行表级调试信息，削减 codegen 与链接体积；
+# 本仓业务 crate 不受影响，断点调试行为不变。需要依赖完整符号时临时注释本段。
+[profile.dev.package."*"]
+debug = "line-tables-only"
+
 [lints.clippy]
 # 易 panic 构造六件套 deny 门禁（issue #432 / ADR-0060）：门禁约束生产路径；
 # 测试目标经 crate 根与集成/BDD 测试 crate 头部 cfg_attr(test, allow) 整体豁免，
