@@ -1,10 +1,11 @@
-//! 股票按代码查询 HTTP 端点（`GET /api/v1/stocks/{code}`，issue #693 / ADR-0081
-//! 决策 1）。
+//! 股票按代码查询 HTTP 端点（`GET /api/v1/stocks/{code}`，issue #693/#696 /
+//! ADR-0081 决策 1/2）。
 //!
-//! 只断言外部行为：沪深港命中投影（权威名称/精确市场/币种/最新价/价格日期/类型
+//! 只断言外部行为：沪深港美命中投影（权威名称/精确市场/币种/最新价/价格日期/类型
 //! 提示，价格按万分之一元刻度）、6 位代码免传 market 推断沪深、5 位数字港股命中
-//! 与补零归一、北交所与参数矛盾/无法推断 400 中文错误且不发起网络、查无此码 400、
-//! 网络故障 500、开放 API 契约自描述覆盖。东财访问经注入桩离线驱动。
+//! 与补零归一、字母 ticker 美股三市场候选遍历返回精确交易所与 USD、北交所与参数
+//! 矛盾/无法推断 400 中文错误且不发起网络、全候选未命中 400、网络故障 500、开放
+//! API 契约自描述覆盖。东财访问经注入桩离线驱动。
 
 use std::collections::HashMap;
 
@@ -17,7 +18,9 @@ use crate::common::{
 };
 
 /// 命中表：沪 600519 贵州茅台 / 深 000001 平安银行 / 港 00700 腾讯控股 /
-/// 沪 ETF 510300（类型提示 etf）。价格为万分之一元刻度。
+/// 沪 ETF 510300（类型提示 etf）/
+/// 美股三市场各一（nasdaq/AAPL、nyse/BABA、amex/SPY，issue #696）。
+/// 价格为万分之一元刻度。
 fn stub_hits() -> HashMap<String, StockStubHit> {
     HashMap::from([
         (
@@ -49,6 +52,30 @@ fn stub_hits() -> HashMap<String, StockStubHit> {
             StockStubHit {
                 name: "沪深300ETF华泰柏瑞",
                 price: Some((46_160, "2026-09-04")),
+                kind_hint: InstrumentType::Etf,
+            },
+        ),
+        (
+            "nasdaq/AAPL".to_string(),
+            StockStubHit {
+                name: "苹果",
+                price: Some((3_199_700, "2026-01-08")),
+                kind_hint: InstrumentType::Stock,
+            },
+        ),
+        (
+            "nyse/BABA".to_string(),
+            StockStubHit {
+                name: "阿里巴巴",
+                price: Some((1_132_400, "2026-01-08")),
+                kind_hint: InstrumentType::Stock,
+            },
+        ),
+        (
+            "amex/SPY".to_string(),
+            StockStubHit {
+                name: "标普500ETF-SPDR",
+                price: Some((7_701_900, "2026-01-08")),
                 kind_hint: InstrumentType::Etf,
             },
         ),
@@ -148,6 +175,144 @@ async fn test_lookup_stock_hk_five_digit_and_zero_padding() {
 }
 
 // ---------------------------------------------------------------------------
+// 美股：字母 ticker 三市场候选遍历、精确市场与 USD（issue #696 / ADR-0081 决策 2）
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_lookup_us_ticker_traverses_and_returns_exact_market() {
+    let (app, _conn, calls) = setup_app_with_stock_stub(stub_hits());
+
+    // 纳斯达克首候选即命中：零多余遍历。
+    let (status, body) = get_json(&app, "/api/v1/stocks/AAPL").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["code"], "AAPL");
+    assert_eq!(body["market"], "nasdaq", "应返回精确交易所市场");
+    assert_eq!(body["currency_code"], "USD", "美股推导美元");
+    assert_eq!(body["name"], "苹果");
+    assert_eq!(body["price_cents"], 3_199_700);
+    assert_eq!(
+        *calls.lock().unwrap(),
+        vec![("nasdaq".to_string(), "AAPL".to_string())],
+        "首候选命中即止"
+    );
+}
+
+#[tokio::test]
+async fn test_lookup_us_ticker_traversal_falls_through_to_later_candidates() {
+    let (app, _conn, calls) = setup_app_with_stock_stub(stub_hits());
+
+    // nasdaq 无 BABA：遍历至 nyse 命中。
+    let (status, body) = get_json(&app, "/api/v1/stocks/BABA").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["market"], "nyse");
+    assert_eq!(body["currency_code"], "USD");
+
+    // nasdaq/nyse 均无 SPY：遍历至 amex 命中（类型提示 etf 同通道探测）。
+    let (status, body) = get_json(&app, "/api/v1/stocks/SPY").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["market"], "amex");
+    assert_eq!(body["kind_hint"], "etf");
+
+    assert_eq!(
+        *calls.lock().unwrap(),
+        vec![
+            ("nasdaq".to_string(), "BABA".to_string()),
+            ("nyse".to_string(), "BABA".to_string()),
+            ("nasdaq".to_string(), "SPY".to_string()),
+            ("nyse".to_string(), "SPY".to_string()),
+            ("amex".to_string(), "SPY".to_string()),
+        ],
+        "未命中候选逐个跳过，按 nasdaq→nyse→amex 序遍历"
+    );
+}
+
+#[tokio::test]
+async fn test_lookup_us_ticker_lowercase_normalized_to_uppercase() {
+    let (app, _conn, calls) = setup_app_with_stock_stub(stub_hits());
+
+    let (status, body) = get_json(&app, "/api/v1/stocks/aapl").await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "小写 ticker 应大写归一后命中: {body}"
+    );
+    assert_eq!(body["code"], "AAPL", "响应应返回归一化代码");
+    assert_eq!(
+        *calls.lock().unwrap(),
+        vec![("nasdaq".to_string(), "AAPL".to_string())],
+        "归一后以大写发起东财请求（幂等建行同自然键）"
+    );
+}
+
+#[tokio::test]
+async fn test_lookup_us_ticker_explicit_market_skips_traversal() {
+    let (app, _conn, calls) = setup_app_with_stock_stub(stub_hits());
+
+    // 显式美股市场：单候选零遍历；形态矛盾（数字代码 + 美股市场）仍 400。
+    let (status, body) = get_json(&app, "/api/v1/stocks/SPY?market=amex").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["market"], "amex");
+
+    let (status, err) = get_json(&app, "/api/v1/stocks/600519?market=nasdaq").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(err["code"], "stock.market-conflict");
+
+    let (status, err) = get_json(&app, "/api/v1/stocks/AAPL?market=hk").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(err["code"], "stock.market-conflict");
+
+    assert_eq!(
+        *calls.lock().unwrap(),
+        vec![("amex".to_string(), "SPY".to_string())],
+        "显式传参走单候选，矛盾路径不发起网络"
+    );
+}
+
+#[tokio::test]
+async fn test_lookup_us_ticker_all_miss_returns_400_after_full_traversal() {
+    let (app, _conn, calls) = setup_app_with_stock_stub(stub_hits());
+
+    let (status, err) = get_json(&app, "/api/v1/stocks/ZZZZZ").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "全不命中应 400: {err}");
+    assert_eq!(err["kind"], "Invalid");
+    assert_eq!(err["code"], "sync.stock-not-found");
+    assert!(
+        err["message"]
+            .as_str()
+            .unwrap()
+            .contains("查无股票代码 ZZZZZ"),
+        "全不命中应报查无此码中文错误，实际: {err}"
+    );
+    assert_eq!(
+        *calls.lock().unwrap(),
+        vec![
+            ("nasdaq".to_string(), "ZZZZZ".to_string()),
+            ("nyse".to_string(), "ZZZZZ".to_string()),
+            ("amex".to_string(), "ZZZZZ".to_string()),
+        ],
+        "三候选全部尝试后才报 400"
+    );
+}
+
+#[tokio::test]
+async fn test_lookup_us_ticker_traversal_stops_on_network_failure() {
+    // 首候选即网络故障：立即 500，不盲试剩余候选（桩对后续候选直接 panic）。
+    let (app, _conn) =
+        setup_app_with_stock_fetch(Some(std::sync::Arc::new(|market: &str, _code: &str| {
+            assert_eq!(market, "nasdaq", "网络故障后不应继续遍历");
+            Err(tauri_app_lib::error::AppError::Io("东财网络不可达".into()))
+        })));
+
+    let (status, err) = get_json(&app, "/api/v1/stocks/AAPL").await;
+    assert_eq!(
+        status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "遍历中的临时错误应上抛 500: {err}"
+    );
+    assert_eq!(err["kind"], "Io");
+}
+
+// ---------------------------------------------------------------------------
 // 400 矩阵：北交所 / 参数矛盾 / 市场不支持 / 无法推断（均不发起网络）
 // ---------------------------------------------------------------------------
 
@@ -196,8 +361,9 @@ async fn test_lookup_stock_market_conflict_rejected_without_network() {
 async fn test_lookup_stock_unsupported_market_rejected() {
     let (app, _conn, calls) = setup_app_with_stock_stub(stub_hits());
 
-    // 美股三市场属标的 market 闭集但本端点未开放查询（T4 落地）：显式 400 暂不支持。
-    for market in ["nasdaq", "nyse", "amex"] {
+    // 闭集外市场（含北交所形态 bse）：显式 400 暂不支持；美股三市场自 #696 起
+    // 属支持闭集，不再落入本分支（美股行为见上方遍历组测试）。
+    for market in ["bse", "us", "unknown"] {
         let (status, err) = get_json(&app, &format!("/api/v1/stocks/600519?market={market}")).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{market} 应 400");
         assert_eq!(
@@ -216,8 +382,9 @@ async fn test_lookup_stock_unsupported_market_rejected() {
 async fn test_lookup_stock_unresolvable_code_rejected_without_network() {
     let (app, _conn, calls) = setup_app_with_stock_stub(stub_hits());
 
-    // 字母 ticker（美股遍历 T4 落地）与闭集外数字形态：缺省 market 无法推断。
-    for code in ["AAPL", "900001", "1234567"] {
+    // 字母数字混杂（含点号）与闭集外数字形态：缺省 market 无法推断；
+    // 纯字母 ticker 自 #696 起按美股遍历解析，不再落入本分支。
+    for code in ["1234A6", "BRK.B", "900001", "1234567"] {
         let (status, err) = get_json(&app, &format!("/api/v1/stocks/{code}")).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{code} 应 400");
         assert_eq!(
@@ -295,6 +462,7 @@ async fn test_openapi_doc_covers_stock_lookup_endpoint() {
         "查无此码",
         "万分之一元",
         "北交所",
+        "美股",
     ] {
         assert!(
             description.contains(expected),

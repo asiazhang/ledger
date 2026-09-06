@@ -167,9 +167,11 @@ where
 }
 
 /// 将原始 f2 换算为万分之一元（0.0001 元，价格刻度 ADR-0038）：
-/// A 股 f2=价格×100（再 ×100 得万分之一元），港股 f2=价格×1000（×10 得万分之一元）。
+/// A 股 f2=价格×100（再 ×100 得万分之一元），港股与美股三市场 f2=价格×1000
+///（×10 得万分之一元；美股 3 位小数刻度，2026-01 实测：105.AAPL f2=319970 →
+/// 319.970 美元、106.BABA f1/f2=3/113240 → 113.240、107.SPY f2=770190 → 770.190）。
 pub(super) fn f2_to_price(raw: f64, market_code: &str) -> i64 {
-    if market_code == "hk" {
+    if market_code == "hk" || matches!(market_code, "nasdaq" | "nyse" | "amex") {
         (raw * 10.0).round() as i64
     } else {
         (raw * 100.0).round() as i64

@@ -129,7 +129,7 @@
   },
   "stock": {
     "bse-unsupported": "股票代码 {0} 为北交所代码（4/8 开头），暂不支持",
-    "market-unsupported": "暂不支持查询 {0} 市场（当前支持沪 sh/深 sz/港 hk）",
+    "market-unsupported": "暂不支持查询 {0} 市场（当前支持沪 sh/深 sz/港 hk/美股 nasdaq/nyse/amex）",
     "market-conflict": "market 参数 {0} 与股票代码 {1} 的市场形态矛盾，请核对后重试",
     "code-unresolvable": "无法根据股票代码 {0} 的形态推断市场，请显式传入 market 参数"
   },

@@ -19,7 +19,8 @@ pub type FundDetailFetcher = Arc<dyn Fn(&str) -> Result<FundDetail, AppError> + 
 
 /// 东财股票行情获取函数接缝（issue #693 / ADR-0081）：`(市场, 代码) → Result<StockQuote>`，
 /// 查无此码以码化中文错误上抛——注入桩形态与 [`FundDetailFetcher`] 同构。市场/代码
-/// 形态解析在投资域单点完成（`resolve_stock_market`），本接缝只接归一化后的查询。
+/// 形态解析在投资域单点完成（`resolve_stock_quote_candidates`），本接缝只接归一化后的查询；
+/// 美股 ticker 的候选遍历由壳层共享助手 `fetch_stock_quote_first_hit_for_api` 执行（issue #696）。
 /// 生产路径为东财单点行情（`fetch_stock_quote_production`）；HTTP 集成测试以注入桩
 /// 离线驱动，全部股票端点集成测试不触真实网络。
 pub type StockQuoteFetcher = Arc<dyn Fn(&str, &str) -> Result<StockQuote, AppError> + Send + Sync>;

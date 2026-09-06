@@ -1,9 +1,12 @@
-//! 股票按（市场，代码）查询的领域规则（issue #693 / ADR-0081 决策 1）：
-//! 代码形态 → 市场单点推断、显式 market 校验（矛盾/不支持/北交所三态 400）、
-//! 港股左补零归一与报价币种推导。纯函数测试，不触网络。
+//! 股票按（市场，代码）查询的领域规则（issue #693/#696 / ADR-0081 决策 1/2）：
+//! 代码形态 → 查询候选单点解析（显式 market 校验：矛盾/不支持/北交所三态 400）、
+//! 港股左补零与美股大写归一、美股三市场候选遍历序与报价币种推导。纯函数测试，
+//! 不触网络。
 
 use crate::error::AppError;
-use crate::investment::stock::{ResolvedStockCode, derive_quote_currency, resolve_stock_market};
+use crate::investment::stock::{
+    ResolvedStockCode, derive_quote_currency, resolve_stock_quote_candidates,
+};
 
 fn resolved(market: &'static str, code: &str) -> ResolvedStockCode {
     ResolvedStockCode {
@@ -19,18 +22,18 @@ fn resolved(market: &'static str, code: &str) -> ResolvedStockCode {
 #[test]
 fn six_digit_codes_infer_sh_and_sz_by_leading_digit() {
     assert_eq!(
-        resolve_stock_market(None, "600519").unwrap(),
-        resolved("sh", "600519"),
-        "6 开头 6 位数字推断沪市"
+        resolve_stock_quote_candidates(None, "600519").unwrap(),
+        vec![resolved("sh", "600519")],
+        "6 开头 6 位数字推断沪市（单候选）"
     );
     assert_eq!(
-        resolve_stock_market(None, "000001").unwrap(),
-        resolved("sz", "000001"),
+        resolve_stock_quote_candidates(None, "000001").unwrap(),
+        vec![resolved("sz", "000001")],
         "0 开头 6 位数字推断深市"
     );
     assert_eq!(
-        resolve_stock_market(None, "300750").unwrap(),
-        resolved("sz", "300750"),
+        resolve_stock_quote_candidates(None, "300750").unwrap(),
+        vec![resolved("sz", "300750")],
         "3 开头 6 位数字推断深市（创业板）"
     );
 }
@@ -40,38 +43,86 @@ fn exchange_traded_fund_code_segments_infer_their_exchange() {
     // 场内基金段入形态闭集：ETF/LOF 是本端点类型提示（etf）的探测对象
     //（spec #690 用户故事 12 / ADR-0081），免传 market 应按交易所推断。
     assert_eq!(
-        resolve_stock_market(None, "510300").unwrap(),
-        resolved("sh", "510300"),
+        resolve_stock_quote_candidates(None, "510300").unwrap(),
+        vec![resolved("sh", "510300")],
         "5 开头（沪场内基金段）推断沪市"
     );
     assert_eq!(
-        resolve_stock_market(None, "159915").unwrap(),
-        resolved("sz", "159915"),
+        resolve_stock_quote_candidates(None, "159915").unwrap(),
+        vec![resolved("sz", "159915")],
         "1 开头（深场内基金段）推断深市"
     );
     assert_eq!(
-        resolve_stock_market(None, "161725").unwrap(),
-        resolved("sz", "161725")
+        resolve_stock_quote_candidates(None, "161725").unwrap(),
+        vec![resolved("sz", "161725")]
     );
 }
 
 #[test]
 fn short_numeric_codes_infer_hk_with_zero_padding() {
     assert_eq!(
-        resolve_stock_market(None, "700").unwrap(),
-        resolved("hk", "00700"),
+        resolve_stock_quote_candidates(None, "700").unwrap(),
+        vec![resolved("hk", "00700")],
         "3 位数字推断港股并左补零归一"
     );
     assert_eq!(
-        resolve_stock_market(None, "00700").unwrap(),
-        resolved("hk", "00700"),
+        resolve_stock_quote_candidates(None, "00700").unwrap(),
+        vec![resolved("hk", "00700")],
         "已 5 位数字的港股代码归一后不变"
     );
     assert_eq!(
-        resolve_stock_market(None, "12345").unwrap(),
-        resolved("hk", "12345"),
+        resolve_stock_quote_candidates(None, "12345").unwrap(),
+        vec![resolved("hk", "12345")],
         "5 位数字推断港股"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 美股：纯字母 ticker 三市场候选遍历、大写归一（issue #696 / ADR-0081 决策 2）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn letter_ticker_resolves_to_us_traversal_candidates_in_order() {
+    assert_eq!(
+        resolve_stock_quote_candidates(None, "AAPL").unwrap(),
+        vec![
+            resolved("nasdaq", "AAPL"),
+            resolved("nyse", "AAPL"),
+            resolved("amex", "AAPL"),
+        ],
+        "纯字母 ticker 缺省遍历美股三市场（首个命中生效）"
+    );
+    // 小写 ticker 归一为大写（东财 secid 规范形态，幂等建行同自然键）。
+    assert_eq!(
+        resolve_stock_quote_candidates(None, "aapl").unwrap(),
+        vec![
+            resolved("nasdaq", "AAPL"),
+            resolved("nyse", "AAPL"),
+            resolved("amex", "AAPL"),
+        ],
+        "小写 ticker 应大写归一"
+    );
+}
+
+#[test]
+fn letter_ticker_with_explicit_us_market_resolves_to_single_candidate() {
+    for market in ["nasdaq", "nyse", "amex"] {
+        assert_eq!(
+            resolve_stock_quote_candidates(Some(market), "aapl").unwrap(),
+            vec![resolved_static(market, "AAPL")],
+            "显式美股市场走单候选（零遍历开销）: {market}"
+        );
+    }
+}
+
+fn resolved_static(market: &str, code: &str) -> ResolvedStockCode {
+    let market_static = match market {
+        "nasdaq" => "nasdaq",
+        "nyse" => "nyse",
+        "amex" => "amex",
+        _ => unreachable!(),
+    };
+    resolved(market_static, code)
 }
 
 // ---------------------------------------------------------------------------
@@ -81,17 +132,17 @@ fn short_numeric_codes_infer_hk_with_zero_padding() {
 #[test]
 fn explicit_market_consistent_with_shape_passes() {
     assert_eq!(
-        resolve_stock_market(Some("sh"), "600519").unwrap(),
-        resolved("sh", "600519"),
+        resolve_stock_quote_candidates(Some("sh"), "600519").unwrap(),
+        vec![resolved("sh", "600519")],
         "显式 market 与形态一致时放行"
     );
     assert_eq!(
-        resolve_stock_market(Some("sz"), "000001").unwrap(),
-        resolved("sz", "000001")
+        resolve_stock_quote_candidates(Some("sz"), "000001").unwrap(),
+        vec![resolved("sz", "000001")]
     );
     assert_eq!(
-        resolve_stock_market(Some("hk"), "700").unwrap(),
-        resolved("hk", "00700"),
+        resolve_stock_quote_candidates(Some("hk"), "700").unwrap(),
+        vec![resolved("hk", "00700")],
         "显式 hk 与短数字代码一致，仍左补零归一"
     );
 }
@@ -99,17 +150,19 @@ fn explicit_market_consistent_with_shape_passes() {
 #[test]
 fn explicit_market_contradicting_shape_returns_coded_400() {
     for (market, code) in [
-        ("sz", "600519"),  // 沪市形态传深市
-        ("sh", "000001"),  // 深市形态传沪市
-        ("sh", "300750"),  // 创业板形态传沪市
-        ("sz", "510300"),  // 沪场内基金段传深市
-        ("sh", "159915"),  // 深场内基金段传沪市
-        ("sz", "00700"),   // 港股形态传深市
-        ("hk", "600519"),  // 沪市形态传港股
-        ("sh", "AAPL"),    // 非数字形态与任何市场都矛盾
-        ("sh", "1234567"), // 7 位数字不在任何市场形态闭集
+        ("sz", "600519"),     // 沪市形态传深市
+        ("sh", "000001"),     // 深市形态传沪市
+        ("sh", "300750"),     // 创业板形态传沪市
+        ("sz", "510300"),     // 沪场内基金段传深市
+        ("sh", "159915"),     // 深场内基金段传沪市
+        ("sz", "00700"),      // 港股形态传深市
+        ("hk", "600519"),     // 沪市形态传港股
+        ("sh", "AAPL"),       // 字母 ticker 传沪深港：形态矛盾
+        ("nasdaq", "600519"), // 数字形态传美股：形态矛盾
+        ("nyse", "00700"),    // 港股形态传美股
+        ("sh", "1234567"),    // 7 位数字不在任何市场形态闭集
     ] {
-        let err = resolve_stock_market(Some(market), code).unwrap_err();
+        let err = resolve_stock_quote_candidates(Some(market), code).unwrap_err();
         assert!(
             err.is_code("stock.market-conflict"),
             "{market}/{code} 应报参数矛盾，实际: {err:?}"
@@ -127,15 +180,30 @@ fn explicit_market_contradicting_shape_returns_coded_400() {
 }
 
 #[test]
-fn explicit_us_market_returns_unsupported_400() {
-    // 美股三市场属标的 market 闭集（ADR-0081）但本议题端点未开放查询（T4 落地），
-    // 显式传参显式 400 而非静默矛盾。
-    for market in ["nasdaq", "nyse", "amex"] {
-        let err = resolve_stock_market(Some(market), "600519").unwrap_err();
+fn unsupported_market_outside_closed_set_returns_400() {
+    // 闭集外市场（含北交所市场形态 bse 与任意值）：显式 400 暂不支持；
+    // 美股三市场自 #696 起属支持闭集，不再落入本分支。
+    for market in ["bse", "unknown", "us"] {
+        let err = resolve_stock_quote_candidates(Some(market), "600519").unwrap_err();
         assert!(
             err.is_code("stock.market-unsupported"),
             "{market} 应报暂不支持，实际: {err:?}"
         );
+        match &err {
+            AppError::Coded {
+                message, params, ..
+            } => {
+                assert!(
+                    message.contains("暂不支持"),
+                    "应中文说明暂不支持，实际: {message}"
+                );
+                assert!(
+                    params.contains(&market.to_string()),
+                    "错误参数应含市场: {params:?}"
+                );
+            }
+            other => panic!("{market} 应为码化错误，实际: {other:?}"),
+        }
     }
 }
 
@@ -146,7 +214,7 @@ fn explicit_us_market_returns_unsupported_400() {
 #[test]
 fn beijing_exchange_codes_rejected_as_unsupported() {
     for code in ["430047", "830799", "871981"] {
-        let err = resolve_stock_market(None, code).unwrap_err();
+        let err = resolve_stock_quote_candidates(None, code).unwrap_err();
         assert!(
             err.is_code("stock.bse-unsupported"),
             "{code} 应报北交所暂不支持"
@@ -167,7 +235,7 @@ fn beijing_exchange_codes_rejected_as_unsupported() {
             other => panic!("{code} 应为码化错误，实际: {other:?}"),
         }
         // 显式 market 也无法挽救：北交所不在任何支持市场的形态闭集内。
-        assert!(resolve_stock_market(Some("sh"), code).is_err());
+        assert!(resolve_stock_quote_candidates(Some("sh"), code).is_err());
     }
 }
 
@@ -177,8 +245,10 @@ fn beijing_exchange_codes_rejected_as_unsupported() {
 
 #[test]
 fn unresolvable_shapes_rejected_with_explicit_market_hint() {
-    for code in ["AAPL", "900001", "1234567", "1234A6", ""] {
-        let err = resolve_stock_market(None, code).unwrap_err();
+    // 混合形态（字母数字混杂、含点号）与闭集外数字形态无法推断；纯字母 ticker
+    // 自 #696 起按美股遍历解析，不再落入本分支。
+    for code in ["1234A6", "BRK.B", "900001", "1234567", ""] {
+        let err = resolve_stock_quote_candidates(None, code).unwrap_err();
         assert!(
             err.is_code("stock.code-unresolvable"),
             "{code} 应报无法推断"

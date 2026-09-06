@@ -64,19 +64,53 @@ fn price_row(conn: &rusqlite::Connection, instrument_id: &str) -> Option<StockPr
 #[test]
 fn routes_resolvable_real_code_to_enhance_with_resolved_market() {
     let route = route_stock_creation(Some("sh"), "600519");
-    let StockCreateRoute::Enhance(resolved) = route else {
+    let StockCreateRoute::Enhance(plan) = route else {
         panic!("显式一致 market 应路由到增强: {route:?}");
     };
-    assert_eq!(resolved.market, "sh");
-    assert_eq!(resolved.code, "600519");
+    assert_eq!(plan.candidates.len(), 1, "显式一致 market 为单候选");
+    assert_eq!(plan.candidates[0].market, "sh");
+    assert_eq!(plan.candidates[0].code, "600519");
+    assert_eq!(plan.degrade_market, "sh", "单候选降级保留该市场");
 
     // 缺省 market：按形态推断（深市 + 港股补零归一）后同样路由到增强。
     for (market, code) in [("sz", "000001"), ("hk", "00700")] {
-        let StockCreateRoute::Enhance(resolved) = route_stock_creation(None, code) else {
+        let StockCreateRoute::Enhance(plan) = route_stock_creation(None, code) else {
             panic!("缺省 market 的真实代码应路由到增强: {code}");
         };
-        assert_eq!(resolved.market, market);
-        assert_eq!(resolved.code, code, "港股应左补零归一");
+        assert_eq!(plan.candidates.len(), 1);
+        assert_eq!(plan.candidates[0].market, market);
+        assert_eq!(plan.candidates[0].code, code, "港股应左补零归一");
+        assert_eq!(plan.degrade_market, market);
+    }
+}
+
+#[test]
+fn routes_us_ticker_to_enhance_with_traversal_candidates() {
+    // 美股 ticker 缺省 market：三市场候选遍历（首个命中生效），降级市场 unknown
+    //（无网络时无法预知交易所归属，issue #696）。
+    let route = route_stock_creation(None, "aapl");
+    let StockCreateRoute::Enhance(plan) = route else {
+        panic!("美股 ticker 应路由到增强: {route:?}");
+    };
+    assert_eq!(
+        plan.candidates
+            .iter()
+            .map(|c| (c.market, c.code.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("nasdaq", "AAPL"), ("nyse", "AAPL"), ("amex", "AAPL")],
+        "候选应按纳斯达克→纽交所→美交所序、代码大写归一"
+    );
+    assert_eq!(plan.degrade_market, "unknown", "遍历降级无法预知市场");
+
+    // 显式美股市场：单候选、降级保留该市场（行情通道仍可达）。
+    for market in ["nasdaq", "nyse", "amex"] {
+        let StockCreateRoute::Enhance(plan) = route_stock_creation(Some(market), "AAPL") else {
+            panic!("显式美股市场应路由到增强: {market}");
+        };
+        assert_eq!(plan.candidates.len(), 1);
+        assert_eq!(plan.candidates[0].market, market);
+        assert_eq!(plan.candidates[0].code, "AAPL");
+        assert_eq!(plan.degrade_market, market);
     }
 }
 
@@ -95,19 +129,27 @@ fn rejects_beijing_code_before_network() {
 }
 
 #[test]
-fn rejects_real_code_with_conflicting_or_unsupported_market() {
+fn rejects_real_code_with_conflicting_market() {
     let route = route_stock_creation(Some("sz"), "600519");
     let StockCreateRoute::Reject(e) = route else {
         panic!("真实代码 + 矛盾 market 应拒绝");
     };
     assert!(e.is_code("stock.market-conflict"));
 
-    // 真实代码 + 本接缝未开放的市场：同样是显式拒绝（错挂市场 = 永无行情的错行）。
+    // 数字形态 + 显式美股市场：形态矛盾（美股候选只服务字母 ticker），
+    // 显式拒绝（错挂市场 = 永无行情的错行）。
     let route = route_stock_creation(Some("nasdaq"), "600519");
     let StockCreateRoute::Reject(e) = route else {
-        panic!("真实代码 + 未开放 market 应拒绝");
+        panic!("数字代码 + 美股 market 应拒绝");
     };
-    assert!(e.is_code("stock.market-unsupported"));
+    assert!(e.is_code("stock.market-conflict"));
+
+    // 字母 ticker + 显式沪深港：同样矛盾。
+    let route = route_stock_creation(Some("sh"), "AAPL");
+    let StockCreateRoute::Reject(e) = route else {
+        panic!("字母 ticker + 沪市 market 应拒绝");
+    };
+    assert!(e.is_code("stock.market-conflict"));
 }
 
 #[test]
@@ -120,16 +162,6 @@ fn routes_non_code_shapes_to_generic_path() {
                 StockCreateRoute::Generic
             ),
             "名称充代码应走通用路径: {market:?}"
-        );
-    }
-    // 美股 ticker：本接缝未开放（T4 议题），走通用路径、提交 market 原样保留。
-    for market in [None, Some("nasdaq")] {
-        assert!(
-            matches!(
-                route_stock_creation(market, "AAPL"),
-                StockCreateRoute::Generic
-            ),
-            "美股 ticker 在 T4 前应走通用路径: {market:?}"
         );
     }
 }

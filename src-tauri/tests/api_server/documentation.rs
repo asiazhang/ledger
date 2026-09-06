@@ -375,6 +375,7 @@ async fn test_import_knowledge_covers_key_conventions() {
         "查无此码",
         "降级",
         "北交所",
+        "美股",
         "兜底建行",
         // 个人间借贷教学关键词锁（issue #368 / ADR-0053）：落账映射方向
         // （借出=自资金账户转入 receivable、借入经 debt、还款反向转账、
