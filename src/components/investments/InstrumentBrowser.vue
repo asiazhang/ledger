@@ -496,8 +496,7 @@ onMounted(load)
       v-model:show="addFundOpen"
       preset="card"
       :title="t('investments.browser.addFundTitle')"
-      style="width: 440px"
-      :bordered="false"
+      card-size="md"
     >
       <NSpace vertical :size="12">
         <NText depth="3">
@@ -536,8 +535,7 @@ onMounted(load)
       v-model:show="confirmOpen"
       preset="card"
       :title="t('investments.browser.confirmTitle')"
-      style="width: 480px"
-      :bordered="false"
+      card-size="md"
     >
       <NSpace vertical :size="12">
         <NText depth="3">
@@ -564,8 +562,7 @@ onMounted(load)
       v-model:show="modalOpen"
       preset="card"
       :title="t('investments.browser.progressTitle')"
-      style="width: 480px"
-      :bordered="false"
+      card-size="md"
       @update:show="(v: boolean) => !v && closeModal()"
     >
       <NSpace vertical :size="12">
