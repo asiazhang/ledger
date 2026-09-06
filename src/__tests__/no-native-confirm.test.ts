@@ -8,7 +8,7 @@ import { join } from 'node:path'
  * `confirm()` 在本仓库无存量、不容新增——新增危险操作确认走共享封装。
  * plugin-dialog 依赖保留：`open` / `save` 的文件选择不受影响。
  * 守门为文本级扫描：import 子句中的 `confirm` 标识符即红（动态 import 解构等
- * 间接形态文本不可达，靠评审兜底，与 check-structure.js 同款口径）。
+ * 间接形态文本不可达，靠评审兜底，与 check-structure.ts 同款口径）。
  */
 
 const SRC_ROOT = join(import.meta.dirname, '..')

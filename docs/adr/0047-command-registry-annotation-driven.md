@@ -36,12 +36,13 @@
    是接受的对价，见决策 5 的「平凡模式无漂移空间」）。
 4. **TS 侧手写调用面保留 + 双向全等校验**：`src/api/index.ts` 调用面本体不动（经删除检验，
    命令名字符串、入参命名规约、返回类型 import 的知识仍在调用面挣饭吃）；新增
-   `scripts/check-commands.js`（Node，无依赖，默认 check 模式）比对「Rust 注解命令集 ↔
+   `scripts/check-commands.ts`（零 npm 依赖，默认 check 模式；初版为 node 脚本，运行时
+   后改判 Bun，ADR-0083）比对「Rust 注解命令集 ↔
    invoke('命令名') 集」双向全等，任一方向孤儿即非零退出并列出差异项。例外清单机制不做
    （YAGNI，实施时 78 = 78 零孤儿，严格规则零迁移成本）。校验精度边界 = 命令名存在性；
    参数名 / 返回 serde 形状匹配不做（跨语言类型生成 out of scope），形状层仍靠评审 +
    vue-tsc 的 TS 内部自洽。
-5. **门槛挂载**：`node scripts/check-commands.js` 挂入 `scripts/check.sh`（与
+5. **门槛挂载**：`bun scripts/check-commands.ts` 挂入 `scripts/check.sh`（与
    check-docs.sh 相邻）；CI `build.yml` frontend job 补跑该校验与 check-docs.sh（CI 此前
    不跑 check.sh，文档校验的 CI 缺口顺手一并补）。测试策略按「只测外部可观察结果」：校验
    脚本以进程退出码与输出为接缝做 Vitest 测试（真实仓库活体全等 + 夹具正反例），
@@ -66,13 +67,13 @@
 - **为什么扫描器 fail loud 而非尽力匹配**：扫描器的价值在「注解集即全集」的完备性承诺；
   对不认识形态保持沉默会把承诺变成假象（新形态命令静默缺席注册表，回到运行时 404）。
   构建失败把维护边界变成显式的一次性决策点。
-- **为什么两条扫描规则（Rust 侧 build.rs 与 Node 侧校验脚本）写两遍是可接受的**：两者匹配
+- **为什么两条扫描规则（Rust 侧 build.rs 与 TS 侧校验脚本）写两遍是可接受的**：两者匹配
   的都是同一文本形态（裸注解 + 紧随 fn 行）——平凡模式没有漂移空间；真出现分歧形态时
   fail loud 机制会先拦住（任一侧对未知形态拒绝），不会静默分叉。
 
 ## 代价与边界
 
-1. 扫描规则文本存在于 build.rs 与 scripts/check-commands.js 两处，扩展时须同步修改
+1. 扫描规则文本存在于 build.rs 与 scripts/check-commands.ts 两处，扩展时须同步修改
    （失败模式是构建/校验显式报错，不是静默漏配）。
 2. 注解与 fn 定义之间不允许任何其他行（含 doc comment 与内层属性）；这是当前全库事实形态，
    收紧带来的表达力损失在需要时由扩展扫描规则赎回。
@@ -95,4 +96,4 @@
 
 - ADR-0032（连接层统一写入口）与本决策同属「接线收口」系列：写路径收口到接缝，注册收口到注解。
 - ADR-0046（包管理器切 pnpm）：CI frontend job 的执行器即 pnpm；本决策新增的 CI 步骤
-  与包管理器无耦合（纯 node 脚本）。
+  与包管理器无耦合（校验脚本初版纯 node，运行时后改 Bun，ADR-0083）。
