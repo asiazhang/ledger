@@ -13,8 +13,8 @@
   "resetConfirm": "Reset",
   "resetCancel": "Cancel",
   "resetOk": "Reset to a fresh empty ledger",
-  "remember": "Unlock automatically at launch",
-  "rememberHint": "When on, the master passphrase is stored securely in this device's keychain (reads require Touch ID on macOS) so the next launch unlocks automatically without re-entering it; turning it off returns to manual entry. It applies to this device only — you'll still enter it manually on another device or after restoring a backup elsewhere.",
+  "remember": "Auto unlock",
+  "rememberHint": "When enabled, the master passphrase is stored securely in this device's keychain (reads require Touch ID on macOS) so the next launch unlocks automatically without re-entering it; turning it off returns to manual entry. It applies to this device only — you'll still enter it manually on another device or after restoring a backup elsewhere.",
   "autoUnlocking": "Trying to unlock automatically…",
-  "rememberFailed": "Couldn't enable auto-unlock; keeping manual entry"
+  "rememberFailed": "Couldn't enable auto unlock; keeping manual entry"
 }
