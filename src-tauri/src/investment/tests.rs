@@ -15,6 +15,7 @@
 //! - [`trend`]：走势查询（单标的 / 组合）
 //! - [`holdings_as_of`]：时点持仓推算
 //! - [`stock_lookup`]：股票按（市场，代码）查询领域规则（市场推断 / 矛盾 400 / 币种推导，issue #693）
+//! - [`stock_create`]：股票创建增强的东财往返路由与落库接缝（权威名称 + 现价 / 降级市场保留，issue #694）
 
 mod common;
 mod fund_add;
@@ -27,6 +28,7 @@ mod instrument_manual_create;
 mod manual_price;
 mod pnl;
 mod predicates;
+mod stock_create;
 mod stock_lookup;
 mod trade;
 mod trend;

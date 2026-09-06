@@ -28,6 +28,7 @@ mod error_codes;
 mod fund_lookup;
 mod instrument_create;
 mod instrument_create_fund;
+mod instrument_create_stock;
 mod instrument_search;
 mod investment_migration;
 mod merchant_import;

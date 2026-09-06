@@ -6,8 +6,9 @@
 //! 余额口径核对（投资账户现金流：buy 含费流出、sell 净额流入）。
 //! 「标的不存在」路径断言为 400（非 500，issue #295 prepare 拦截的对外形状）。
 //!
-//! 通用链路示例标的用非 fund 类型（stock）；基金申赎迁移链路（查询→创建→
-//! 批量导入，issue #304）见本文件末尾独立测试。
+//! 通用链路示例标的用非 fund 类型（stock，东财往返经注入桩离线驱动——issue #694
+//! 起 stock 真实代码创建经东财增强）；基金申赎迁移链路（查询→创建→
+//! 批量导入，issue #304）与股票三步法链路（issue #694）见本文件末尾独立测试。
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -15,11 +16,12 @@ use std::sync::{Arc, Mutex};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use rusqlite::params;
+use tauri_app_lib::investment::InstrumentType;
 use tower::ServiceExt;
 
 use crate::common::{
-    FundStubHit, batch_body, body_to_bytes, get_json, post_batch, post_instrument, setup_app,
-    setup_app_with_fund_stub,
+    FundStubHit, StockStubHit, batch_body, body_to_bytes, get_json, post_batch, post_instrument,
+    setup_app_with_fund_stub, setup_app_with_stock_stub,
 };
 
 /// 直插投资账户（账户创建 API 的夹具固定 cash 类型；先例 batch_import.rs #295 测试）。
@@ -30,6 +32,29 @@ fn seed_investment_account(conn: &Arc<Mutex<rusqlite::Connection>>) -> String {
         [],
     ).unwrap();
     "acc-inv-297".to_string()
+}
+
+/// 通用链路的股票东财桩命中表（issue #694 起 stock 真实代码创建经东财增强，
+/// 全部链路测试离线驱动、不触真实网络）。
+fn generic_chain_stock_hits() -> HashMap<String, StockStubHit> {
+    HashMap::from([
+        (
+            "sh/600519".to_string(),
+            StockStubHit {
+                name: "贵州茅台",
+                price: Some((150000, "2026-09-04")),
+                kind_hint: InstrumentType::Stock,
+            },
+        ),
+        (
+            "sh/600036".to_string(),
+            StockStubHit {
+                name: "招商银行",
+                price: Some((45000, "2026-09-04")),
+                kind_hint: InstrumentType::Stock,
+            },
+        ),
+    ])
 }
 
 /// 锚定持仓批次顺序：`now_iso` 精度为秒，同一批次内连续落库的两笔 buy 其批次
@@ -70,7 +95,7 @@ fn trade_row(
 /// - 余额：0 − 150500 − 180100 + 299800 = −30800（现金流口径）
 #[tokio::test]
 async fn test_full_migration_flow_search_create_buy_sell_holdings_balance() {
-    let (app, conn) = setup_app();
+    let (app, conn, _calls) = setup_app_with_stock_stub(generic_chain_stock_hits());
 
     // 1. 搜索（链路起点）：无命中
     let (status, body) = get_json(&app, "/api/v1/instruments?query=600519").await;
@@ -224,7 +249,7 @@ async fn test_full_migration_flow_search_create_buy_sell_holdings_balance() {
 /// 原交易保持不变——AI 可据此回自纠（重搜/重建标的后再提交）。
 #[tokio::test]
 async fn test_update_trade_to_missing_instrument_returns_400_not_500() {
-    let (app, conn) = setup_app();
+    let (app, conn, _calls) = setup_app_with_stock_stub(generic_chain_stock_hits());
 
     let create_body = r#"{"symbol":"600036","type":"stock","name":"招商银行","market":"sh"}"#;
     let (status, bytes) = post_instrument(&app, create_body).await;
@@ -422,5 +447,142 @@ async fn test_fund_migration_flow_lookup_create_batch_dedup_readback() {
     assert_eq!(
         *calls.lock().unwrap(),
         vec!["012345".to_string(), "012345".to_string()]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 股票迁移全链路（issue #694 / ADR-0081）：查询 → 创建（东财增强回填+落价）→
+// 批量导入 buy/sell → 幂等键去重 → 读回对账 + 余额核对。空标的字典账本起点，
+// 全程不依赖全量同步；东财经注入桩离线驱动，与基金申赎链路对称。
+// ---------------------------------------------------------------------------
+
+/// 链路数字（单价万分之一元刻度；金额全整除便于断言）：
+/// - buy：100 份 × 150000（15.00 元）+ 500 分 = 150500 分（含费建仓）
+/// - sell：40 份 × 200000（20.00 元）− 200 分 = 79800 分（减费回款）
+/// - 余额：0 − 150500 + 79800 = −70700 分（现金流口径）
+/// - 东财最新价 20.00 元 @ 2026-09-04 → 创建后现价缓存 200000
+#[tokio::test]
+async fn test_stock_migration_flow_lookup_create_batch_dedup_readback() {
+    let hits = HashMap::from([(
+        "sh/600519".to_string(),
+        StockStubHit {
+            name: "贵州茅台",
+            price: Some((200000, "2026-09-04")),
+            kind_hint: InstrumentType::Stock,
+        },
+    )]);
+    let (app, conn, calls) = setup_app_with_stock_stub(hits);
+
+    // 0. 链路起点：标的字典为空（空字典账本，无全量同步前置）
+    let (status, body) = get_json(&app, "/api/v1/instruments?query=600519").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"], 0, "链路起点标的字典应为空");
+
+    // 1. 先按代码查询确认识别（命中返回权威名称/精确市场/币种/最新价/价格日期/类型提示）
+    let (status, lookup) = get_json(&app, "/api/v1/stocks/600519").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(lookup["name"], "贵州茅台");
+    assert_eq!(lookup["market"], "sh");
+    assert_eq!(lookup["currency_code"], "CNY");
+    assert_eq!(lookup["price_cents"], 200000);
+    assert_eq!(lookup["price_date"], "2026-09-04");
+    assert_eq!(lookup["kind_hint"], "stock");
+
+    // 2. 再以真实代码 + 精确市场创建标的（AI 抄写名有误，后端应回填东财权威名称、落最新价现价）
+    let create_body =
+        r#"{"symbol":"600519","type":"stock","market":"sh","name":"贵州茅台(账单抄写)"}"#;
+    let (status, bytes) = post_instrument(&app, create_body).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let instrument_id: String = serde_json::from_slice(&bytes).expect("201 应为裸 id 字符串");
+    {
+        let conn = conn.lock().unwrap();
+        let (name, market, price_cents): (String, String, i64) = conn
+            .query_row(
+                "SELECT i.name, i.market, p.price_cents FROM instruments i \
+                 JOIN market_prices p ON p.instrument_id = i.id WHERE i.id = ?1",
+                params![instrument_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "贵州茅台", "创建应回填东财权威名称");
+        assert_eq!(market, "sh", "创建应落查询返回的精确市场");
+        assert_eq!(
+            price_cents, 200000,
+            "创建应落最新价现价（导入后持仓立有市值）"
+        );
+    }
+
+    // 3. 批量提交 buy/sell（数量 × 单价权威、金额由服务端重算；幂等键取源内稳定行号）
+    let account_id = seed_investment_account(&conn);
+    let buy = format!(
+        r#"{{"kind":"buy","amount_cents":0,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-11","instrument_id":"{instrument_id}","quantity":100,"price_cents":150000,"fee_cents":500,"idempotency_key":"stock-bill.csv:3:1"}}"#
+    );
+    let sell = format!(
+        r#"{{"kind":"sell","amount_cents":0,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-25","instrument_id":"{instrument_id}","quantity":40,"price_cents":200000,"fee_cents":200,"idempotency_key":"stock-bill.csv:5:1"}}"#
+    );
+    let refs = [buy.as_str(), sell.as_str()];
+    let first = post_batch(&app, batch_body(&refs, None)).await;
+    assert_eq!(first.len(), 2);
+    assert!(
+        first
+            .iter()
+            .all(|r| r["success"] == true && r["duplicate"] == false),
+        "买入/卖出行应全部成功: {first:?}"
+    );
+
+    // 4. 幂等重放同一批（AI 重跑迁移）：同键去重全部跳过、不产生重复行
+    let replay = post_batch(&app, batch_body(&refs, None)).await;
+    assert_eq!(replay.len(), 2);
+    assert!(
+        replay
+            .iter()
+            .all(|r| r["success"] == true && r["duplicate"] == true),
+        "同键重跑应全部按幂等键去重: {replay:?}"
+    );
+    let total: i64 = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(total, 2, "重放后仍应只有两笔交易");
+
+    // 5. 读回对账：按日期区间读回，逐行核对金额 = 数量 × 单价 ± 手续费
+    let (status, list) = get_json(&app, "/api/v1/transactions?from=2026-05-01&to=2026-05-31").await;
+    assert_eq!(status, StatusCode::OK);
+    let items = list["items"].as_array().expect("读回应为 {items, total}");
+    assert_eq!(items.len(), 2, "两行买卖应全部落库");
+    let amounts: std::collections::BTreeSet<i64> = items
+        .iter()
+        .map(|t| t["amount_cents"].as_i64().unwrap())
+        .collect();
+    assert_eq!(
+        amounts,
+        [150500i64, 79800].into_iter().collect(),
+        "行金额应为服务端重算结果（buy 含费流出、sell 减费回款）"
+    );
+
+    // 6. 余额对账：投资账户现金流 = 初始 − 买入含费 + 卖出净额
+    let (_, balances) = get_json(&app, "/api/v1/accounts/balances").await;
+    let rows = balances.as_array().unwrap();
+    let securities = rows
+        .iter()
+        .find(|r| r["account"]["name"] == "证券账户")
+        .expect("余额清单应含投资账户");
+    assert_eq!(
+        securities["balance_cents"], -70700,
+        "投资账户余额应为现金流口径"
+    );
+
+    // 全链路对东财的依赖仅两次（查询 + 创建校验），批量导入零网络
+    assert_eq!(
+        *calls.lock().unwrap(),
+        vec![
+            ("sh".to_string(), "600519".to_string()),
+            ("sh".to_string(), "600519".to_string())
+        ]
     );
 }
