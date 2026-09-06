@@ -6,6 +6,7 @@ import PolicyFormModal from '@/components/PolicyFormModal.vue'
 import { makeAccount } from './factories'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Account, Currency, Insurer, Policy } from '@/types'
+import { componentVm } from './helpers/component-vm'
 
 
 // AppModal 内容 teleport 到 document.body：测试在 body 中查询/触发（同 PoliciesView 先例）。
@@ -74,9 +75,7 @@ async function enableAgreement(wrapper: ReturnType<typeof mount>) {
   await formInput('policy-agreement-amount').setValue('3000')
   // 扣款账户：PinyinSelect 内部选择，emit update:value（同保司下拉先例；
   // teleport 不改变 vnode 层级，仍可从 wrapper 按定位找到组件）
-  wrapper
-    .findComponent('[data-testid="policy-agreement-account"]')
-    .vm.$emit('update:value', 'acc-1')
+  componentVm(wrapper.findComponent('[data-testid="policy-agreement-account"]')).$emit('update:value', 'acc-1')
   await flushPromises()
 }
 
@@ -90,7 +89,7 @@ beforeEach(async () => {
 
 describe('PolicyFormModal 缴费协议区（issue #362 / ADR-0051 决策 2；不挂商户 #713 / ADR-0082）', () => {
   it('协议区可折叠可选：开关默认关，字段组隐藏；开启后可见', async () => {
-    const _wrapper = await openCreateModal()
+    await openCreateModal()
     const fields = bodyQuery('[data-testid="policy-agreement-fields"]')!
     expect(fields.style.display).toBe('none')
     const toggle = new DOMWrapper(bodyQuery('[data-testid="policy-agreement-toggle"]')!)
@@ -101,14 +100,13 @@ describe('PolicyFormModal 缴费协议区（issue #362 / ADR-0051 决策 2；不
 
   it('跳过协议区保存 = 趸交/缴清纯档案：只调 create_policy，不调 create_scheduled_transaction', async () => {
     const wrapper = await openCreateModal()
-    wrapper
-      .findComponent('[data-testid="policy-insurer"]')
-      .vm.$emit('update:value', 'ins-1')
+    componentVm(wrapper.findComponent('[data-testid="policy-insurer"]')).$emit('update:value', 'ins-1')
     await formInput('policy-number').setValue('P2026-300')
     await formInput('policy-product').setValue('车险')
-    await wrapper
-      .findComponent('[data-testid="policy-start-date"]')
-      .vm.$emit('update:formatted-value', '2026-01-01')
+    await componentVm(wrapper.findComponent('[data-testid="policy-start-date"]')).$emit(
+      'update:formatted-value',
+      '2026-01-01',
+    )
 
     await new DOMWrapper(bodyQuery('[data-testid="policy-save"]')!).trigger('click')
     await flushPromises()
@@ -121,14 +119,13 @@ describe('PolicyFormModal 缴费协议区（issue #362 / ADR-0051 决策 2；不
 
   it('开启协议区保存：先建档再创建订阅形态协议，携带保单引用且不挂商户，备注带险种', async () => {
     const wrapper = await openCreateModal()
-    wrapper
-      .findComponent('[data-testid="policy-insurer"]')
-      .vm.$emit('update:value', 'ins-1')
+    componentVm(wrapper.findComponent('[data-testid="policy-insurer"]')).$emit('update:value', 'ins-1')
     await formInput('policy-number').setValue('P2026-301')
     await formInput('policy-product').setValue('重疾险')
-    await wrapper
-      .findComponent('[data-testid="policy-start-date"]')
-      .vm.$emit('update:formatted-value', '2026-01-01')
+    await componentVm(wrapper.findComponent('[data-testid="policy-start-date"]')).$emit(
+      'update:formatted-value',
+      '2026-01-01',
+    )
     await enableAgreement(wrapper)
 
     await new DOMWrapper(bodyQuery('[data-testid="policy-save"]')!).trigger('click')
@@ -166,14 +163,13 @@ describe('PolicyFormModal 缴费协议区（issue #362 / ADR-0051 决策 2；不
 
   it('开启协议区但金额非法：警告且不提交任何请求', async () => {
     const wrapper = await openCreateModal()
-    wrapper
-      .findComponent('[data-testid="policy-insurer"]')
-      .vm.$emit('update:value', 'ins-1')
+    componentVm(wrapper.findComponent('[data-testid="policy-insurer"]')).$emit('update:value', 'ins-1')
     await formInput('policy-number').setValue('P2026-302')
     await formInput('policy-product').setValue('重疾险')
-    await wrapper
-      .findComponent('[data-testid="policy-start-date"]')
-      .vm.$emit('update:formatted-value', '2026-01-01')
+    await componentVm(wrapper.findComponent('[data-testid="policy-start-date"]')).$emit(
+      'update:formatted-value',
+      '2026-01-01',
+    )
     const toggle = new DOMWrapper(bodyQuery('[data-testid="policy-agreement-toggle"]')!)
     await toggle.trigger('click')
     await flushPromises()
@@ -190,14 +186,13 @@ describe('PolicyFormModal 缴费协议区（issue #362 / ADR-0051 决策 2；不
 
   it('开启协议区但未选扣款账户：警告且不提交任何请求', async () => {
     const wrapper = await openCreateModal()
-    wrapper
-      .findComponent('[data-testid="policy-insurer"]')
-      .vm.$emit('update:value', 'ins-1')
+    componentVm(wrapper.findComponent('[data-testid="policy-insurer"]')).$emit('update:value', 'ins-1')
     await formInput('policy-number').setValue('P2026-303')
     await formInput('policy-product').setValue('重疾险')
-    await wrapper
-      .findComponent('[data-testid="policy-start-date"]')
-      .vm.$emit('update:formatted-value', '2026-01-01')
+    await componentVm(wrapper.findComponent('[data-testid="policy-start-date"]')).$emit(
+      'update:formatted-value',
+      '2026-01-01',
+    )
     const toggle = new DOMWrapper(bodyQuery('[data-testid="policy-agreement-toggle"]')!)
     await toggle.trigger('click')
     await flushPromises()

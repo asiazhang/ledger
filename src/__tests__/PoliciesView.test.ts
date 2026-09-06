@@ -8,6 +8,7 @@ import PolicyFormModal from '@/components/PolicyFormModal.vue'
 import { makePolicy, makePolicyStats } from './factories'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Currency, Insurer, Policy, PolicyStats } from '@/types'
+import { componentVm } from './helpers/component-vm'
 
 
 // focus 参数读取自路由 query（useFocusParam 注入 getter，spec #704 / issue #706）。
@@ -128,9 +129,7 @@ function formInput(testid: string): DOMWrapper<HTMLInputElement> {
 
 /** 弹窗内日期选择器：直接 emit formatted-value（同计划表单测试先例） */
 function setDate(wrapper: ViewWrapper, testid: string, value: string | null) {
-  wrapper
-    .findComponent(`[data-testid="${testid}"]`)
-    .vm.$emit('update:formatted-value', value)
+  componentVm(wrapper.findComponent(`[data-testid="${testid}"]`)).$emit('update:formatted-value', value)
 }
 
 describe('PoliciesView 保单列表（issue #360）', () => {
@@ -199,9 +198,7 @@ describe('PoliciesView 新建保单', () => {
     expect(bodyQuery('[data-testid="policy-form-modal"]')).not.toBeNull()
 
     // 保司下拉选择既有保司（PinyinSelect 内部 NSelect，emit update:value）
-    wrapper
-      .findComponent('[data-testid="policy-insurer"]')
-      .vm.$emit('update:value', 'ins-2')
+    componentVm(wrapper.findComponent('[data-testid="policy-insurer"]')).$emit('update:value', 'ins-2')
     await flushPromises()
     await formInput('policy-number').setValue('P2026-100')
     await formInput('policy-product').setValue('医疗险')
@@ -236,9 +233,7 @@ describe('PoliciesView 新建保单', () => {
     await wrapper.find('[data-testid="policy-new"]').trigger('click')
     await flushPromises()
 
-    wrapper
-      .findComponent('[data-testid="policy-insurer"]')
-      .vm.$emit('update:value', '人保健康')
+    componentVm(wrapper.findComponent('[data-testid="policy-insurer"]')).$emit('update:value', '人保健康')
     await flushPromises()
     await formInput('policy-number').setValue('P2026-200')
     await formInput('policy-product').setValue('意外险')
@@ -260,9 +255,7 @@ describe('PoliciesView 新建保单', () => {
     await wrapper.find('[data-testid="policy-new"]').trigger('click')
     await flushPromises()
 
-    wrapper
-      .findComponent('[data-testid="policy-insurer"]')
-      .vm.$emit('update:value', '平安保险')
+    componentVm(wrapper.findComponent('[data-testid="policy-insurer"]')).$emit('update:value', '平安保险')
     await flushPromises()
     await formInput('policy-number').setValue('P2026-400')
     await formInput('policy-product').setValue('重疾险')
@@ -283,9 +276,7 @@ describe('PoliciesView 新建保单', () => {
     await wrapper.find('[data-testid="policy-new"]').trigger('click')
     await flushPromises()
 
-    wrapper
-      .findComponent('[data-testid="policy-insurer"]')
-      .vm.$emit('update:value', 'mer-1')
+    componentVm(wrapper.findComponent('[data-testid="policy-insurer"]')).$emit('update:value', 'mer-1')
     await flushPromises()
     await formInput('policy-number').setValue('P2026-300')
     await formInput('policy-product').setValue('终身寿险')
@@ -307,9 +298,7 @@ describe('PoliciesView 新建保单', () => {
     await wrapper.find('[data-testid="policy-new"]').trigger('click')
     await flushPromises()
 
-    wrapper
-      .findComponent('[data-testid="policy-insurer"]')
-      .vm.$emit('update:value', 'mer-1')
+    componentVm(wrapper.findComponent('[data-testid="policy-insurer"]')).$emit('update:value', 'mer-1')
     await flushPromises()
 
     await saveButton().trigger('click')

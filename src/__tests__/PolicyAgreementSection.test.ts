@@ -13,6 +13,7 @@ import type {
   ScheduledTransactionDetail,
   ScheduledTransactionWithExt,
 } from '@/types'
+import { componentVm } from './helpers/component-vm'
 
 
 enableAutoUnmount(afterEach)
@@ -127,9 +128,7 @@ function amountInput(): DOMWrapper<HTMLInputElement> {
 
 /** 协议字段组内的扣款账户（组件实例 emit，非 teleport 直接挂载）。 */
 async function selectAccount(wrapper: ReturnType<typeof mount>) {
-  wrapper
-    .findComponent('[data-testid="policy-agreement-account"]')
-    .vm.$emit('update:value', 'acc-1')
+  componentVm(wrapper.findComponent('[data-testid="policy-agreement-account"]')).$emit('update:value', 'acc-1')
   await flushPromises()
 }
 

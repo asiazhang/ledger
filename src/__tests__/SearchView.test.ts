@@ -178,7 +178,7 @@ function maxAmountInput(wrapper: VueWrapper) {
   return el!
 }
 
-async function applyFilters(wrapper: VueWrapper, delay = 300) {
+async function applyFilters(delay = 300) {
   await vi.advanceTimersByTimeAsync(delay)
   await nextTick()
   await nextTick()
@@ -424,7 +424,7 @@ describe('SearchView.vue', () => {
       const wrapper = mount(SearchView)
       await nextTick()
       await minAmountInput(wrapper).setValue('15.5')
-      await applyFilters(wrapper)
+      await applyFilters()
       expect(searchCalls().length).toBe(1)
       expect(lastSearchArgs()).toMatchObject({
         query: '',
@@ -442,7 +442,7 @@ describe('SearchView.vue', () => {
       const wrapper = mount(SearchView)
       await nextTick()
       await maxAmountInput(wrapper).setValue('20')
-      await applyFilters(wrapper)
+      await applyFilters()
       expect(lastSearchArgs()).toMatchObject({
         query: '',
         amountMinCents: null,
@@ -455,7 +455,7 @@ describe('SearchView.vue', () => {
       const wrapper = mount(SearchView)
       await nextTick()
       await minAmountInput(wrapper).setValue('30')
-      await applyFilters(wrapper)
+      await applyFilters()
       // 金额 ≥ 3000 分：i=20..24 共 5 条（¥30.00 ~ ¥34.00）
       expect(wrapper.text()).toContain('命中 5 条')
       expect(lastSearchArgs()).toMatchObject({ query: '', amountMinCents: 3000 })
@@ -483,14 +483,14 @@ describe('SearchView.vue', () => {
       const wrapper = mount(SearchView)
       await nextTick()
       await minAmountInput(wrapper).setValue('15.5')
-      await applyFilters(wrapper)
+      await applyFilters()
       expect(wrapper.text()).toContain('已应用筛选')
       expect(wrapper.text()).toContain('最低 ¥15.5')
 
       const clearBtn = wrapper.findAll('button').find((b) => b.text() === '清除筛选')
       expect(clearBtn).toBeTruthy()
       await clearBtn!.trigger('click')
-      await applyFilters(wrapper)
+      await applyFilters()
       expect(wrapper.text()).not.toContain('已应用筛选')
       expect(minAmountInput(wrapper).element as HTMLInputElement).toHaveProperty('value', '')
       // 关键字也为空 → 回到占位提示
@@ -503,7 +503,7 @@ describe('SearchView.vue', () => {
       const wrapper = mount(SearchView)
       await nextTick()
       await minAmountInput(wrapper).setValue('abc')
-      await applyFilters(wrapper)
+      await applyFilters()
       expect(searchCalls().length).toBe(0)
       expect(wrapper.text()).toContain('输入关键字或设置筛选开始搜索')
     })
@@ -544,18 +544,18 @@ describe('SearchView.vue', () => {
       await nextTick()
       // 当季 2026-01-01 ~ 03-31：含全部夹具 27 条
       await clickChip(wrapper, '当季')
-      await applyFilters(wrapper)
+      await applyFilters()
       expect(lastSearchArgs()).toMatchObject({ dateFrom: '2026-01-01', dateTo: '2026-03-31' })
       expect(wrapper.text()).toContain('命中 27 条')
       expect(lit(wrapper, '当季')).toBe(true)
       // 当年 2026 全年：同为 27 条
       await clickChip(wrapper, '当年')
-      await applyFilters(wrapper)
+      await applyFilters()
       expect(lastSearchArgs()).toMatchObject({ dateFrom: '2026-01-01', dateTo: '2026-12-31' })
       expect(wrapper.text()).toContain('命中 27 条')
       // 去年 2025 全年：无数据，命中 0 条（有界空区间是诚实结果）
       await clickChip(wrapper, '去年')
-      await applyFilters(wrapper)
+      await applyFilters()
       expect(lastSearchArgs()).toMatchObject({ dateFrom: '2025-01-01', dateTo: '2025-12-31' })
       expect(wrapper.text()).toContain('命中 0 条')
       expect(lit(wrapper, '去年')).toBe(true)
@@ -567,10 +567,10 @@ describe('SearchView.vue', () => {
       await nextTick()
       await typeAndSearch(wrapper, '午餐')
       await clickChip(wrapper, '当月')
-      await applyFilters(wrapper)
+      await applyFilters()
       expect(lastSearchArgs()).toMatchObject({ dateFrom: '2026-02-01', dateTo: '2026-02-28' })
       await clickChip(wrapper, '全部')
-      await applyFilters(wrapper)
+      await applyFilters()
       expect(lastSearchArgs()).toMatchObject({ query: '午餐', dateFrom: null, dateTo: null })
       expect(wrapper.text()).toContain('命中 23 条')
       expect(lit(wrapper, '全部')).toBe(true)
@@ -582,10 +582,10 @@ describe('SearchView.vue', () => {
       const wrapper = mount(SearchView)
       await nextTick()
       await clickChip(wrapper, '当月')
-      await applyFilters(wrapper)
+      await applyFilters()
       expect(searchCalls().length).toBe(1)
       await clickChip(wrapper, '当月')
-      await applyFilters(wrapper)
+      await applyFilters()
       expect(searchCalls().length).toBe(1)
     })
 
@@ -597,7 +597,7 @@ describe('SearchView.vue', () => {
       await minAmountInput(wrapper).setValue('15')
       await maxAmountInput(wrapper).setValue('30')
       await clickChip(wrapper, '当月')
-      await applyFilters(wrapper)
+      await applyFilters()
       expect(lastSearchArgs()).toMatchObject({
         query: '午餐',
         amountMinCents: 1500,
@@ -613,7 +613,7 @@ describe('SearchView.vue', () => {
       await nextTick()
       await minAmountInput(wrapper).setValue('15.5')
       await clickChip(wrapper, '当月')
-      await applyFilters(wrapper)
+      await applyFilters()
       // 金额与芯片变更防抖合并为一次搜索
       expect(searchCalls().length).toBe(1)
       expect(wrapper.text()).toContain('已应用筛选')
@@ -624,7 +624,7 @@ describe('SearchView.vue', () => {
       const clearBtn = wrapper.findAll('button').find((b) => b.text() === '清除筛选')
       expect(clearBtn).toBeTruthy()
       await clearBtn!.trigger('click')
-      await applyFilters(wrapper)
+      await applyFilters()
       expect(wrapper.text()).not.toContain('已应用筛选')
       expect(minAmountInput(wrapper).element as HTMLInputElement).toHaveProperty('value', '')
       // 日期条件清回「全部」：芯片回默认点亮、载荷双空
@@ -677,7 +677,7 @@ describe('SearchView.vue', () => {
       picker.vm.$emit('update:value', new Date(2025, 11, 15, 12).getTime())
       await flushPromises()
       expect(searchCalls().length).toBe(0) // 沿用既有防抖，未到点不搜索
-      await applyFilters(wrapper)
+      await applyFilters()
       expect(searchCalls().length).toBe(1)
       expect(lastSearchArgs()).toMatchObject({ dateFrom: '2025-12-01', dateTo: '2025-12-31' })
       // 历史期间非预设 → 芯片全灭；步进游标落在月档下界（prev 置灰）
@@ -693,12 +693,12 @@ describe('SearchView.vue', () => {
       const wrapper = mount(SearchView)
       await flushPromises()
       await clickChip(wrapper, '当月')
-      await applyFilters(wrapper)
+      await applyFilters()
       expect(periodLabel(wrapper)).toBe('2026年2月')
       // 上界：当月 → next 到 2026-03（最新交易期间），再 next 置灰
       expect(stepButton(wrapper, 'next').props('disabled')).toBe(false)
       await step(wrapper, 'next')
-      await applyFilters(wrapper)
+      await applyFilters()
       expect(lastSearchArgs()).toMatchObject({ dateFrom: '2026-03-01', dateTo: '2026-03-31' })
       expect(periodLabel(wrapper)).toBe('2026年3月')
       // 历史期间不是任何预设定义 → 芯片全灭，列表快照不漂移
@@ -708,11 +708,11 @@ describe('SearchView.vue', () => {
       expect(stepButton(wrapper, 'next').props('disabled')).toBe(true)
       // 下界：连步回 2025-12（最早交易期间），再 prev 置灰
       await step(wrapper, 'prev')
-      await applyFilters(wrapper)
+      await applyFilters()
       await step(wrapper, 'prev')
-      await applyFilters(wrapper)
+      await applyFilters()
       await step(wrapper, 'prev')
-      await applyFilters(wrapper)
+      await applyFilters()
       expect(lastSearchArgs()).toMatchObject({ dateFrom: '2025-12-01', dateTo: '2025-12-31' })
       expect(periodLabel(wrapper)).toBe('2025年12月')
       expect(stepButton(wrapper, 'prev').props('disabled')).toBe(true)
