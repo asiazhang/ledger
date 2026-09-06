@@ -115,8 +115,18 @@ fn insurer_seed_is_present_and_idempotent() {
     assert_eq!(device_id, "seed");
     assert_eq!(is_deleted, 0);
 
-    // 幂等重跑：再次 init_db（= 全迁移链重入）不产生重复行。
+    // 幂等重跑：再次 init_db（= 全迁移链重入）不产生重复行；并直接重放 V019
+    // 迁移 SQL 本体两遍（init_db 因 user_version 已至最新不会重放 V019，
+    // 重放 SQL 本体才能真验种子语句集的幂等性：IF NOT EXISTS + OR IGNORE）。
     init_db(&mut conn).unwrap();
+    conn.execute_batch(include_str!(
+        "../../../migrations/V019__insurer_dictionary.sql"
+    ))
+    .unwrap();
+    conn.execute_batch(include_str!(
+        "../../../migrations/V019__insurer_dictionary.sql"
+    ))
+    .unwrap();
     let count_after: i64 = conn
         .query_row("SELECT COUNT(*) FROM insurers", [], |r| r.get(0))
         .unwrap();

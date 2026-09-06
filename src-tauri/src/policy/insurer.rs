@@ -19,7 +19,8 @@ use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 
 /// 保司字典行（参考数据模式，与商户同款审计字段；名字字典，无视觉字段）。
-#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, utoipa::ToSchema)]
+/// 不进 OpenAPI/AI 契约面（ADR-0082：保司字典同在 AI 契约之外），故无 ToSchema。
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct Insurer {
     pub id: String,
     pub name: String,
@@ -30,8 +31,8 @@ pub struct Insurer {
     pub is_deleted: bool,
 }
 
-/// 创建入参：名字（在用行全库唯一，重名被拒）。
-#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
+/// 创建入参：名字（在用行全库唯一，重名被拒；trim 归一，空名拒绝）。
+#[derive(Debug, serde::Deserialize)]
 pub struct InsurerInput {
     pub name: String,
 }
@@ -113,11 +114,15 @@ pub fn update_insurer(conn: &Connection, id: &str, input: InsurerUpdateInput) ->
     })?;
 
     let name = input.name.unwrap_or(existing.name);
-    if insurer_name_taken(conn, &name, Some(id))? {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(AppError::coded("insurer.name-required", "保司名不能为空"));
+    }
+    if insurer_name_taken(conn, name, Some(id))? {
         return Err(AppError::codedp(
             "insurer.already-exists",
             format!("保司已存在: {name}"),
-            &[&name],
+            &[name],
         ));
     }
 
