@@ -39,7 +39,7 @@ describe('globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封�
     await vi.advanceTimersByTimeAsync(1)
     expect(busyVisible.value).toBe(true) // 超阈值
 
-    d.resolve([])
+    d.resolve()
     await pending
     expect(busyVisible.value).toBe(false) // 计数归零即隐藏
   })
@@ -65,11 +65,11 @@ describe('globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封�
     await vi.advanceTimersByTimeAsync(300)
     expect(busyVisible.value).toBe(true)
 
-    a.resolve([])
+    a.resolve()
     await p1
     expect(busyVisible.value).toBe(true) // b 仍在途，聚合窗口未归零
 
-    b.resolve([])
+    b.resolve()
     await p2
     expect(busyVisible.value).toBe(false)
   })
@@ -93,7 +93,7 @@ describe('globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封�
     const pending2 = api.listCurrencies()
     await vi.advanceTimersByTimeAsync(300)
     expect(busyVisible.value).toBe(true)
-    d2.resolve([])
+    d2.resolve()
     await pending2
     expect(busyVisible.value).toBe(false)
   })
@@ -113,7 +113,7 @@ describe('globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封�
     const pending = api.listAccounts()
     await vi.advanceTimersByTimeAsync(300)
     expect(busyVisible.value).toBe(true)
-    d.resolve([])
+    d.resolve()
     await pending
     expect(busyVisible.value).toBe(false)
   })
@@ -136,7 +136,7 @@ describe('globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封�
     await vi.advanceTimersByTimeAsync(200) // t=300ms：聚合窗口持续在途越过阈值
     expect(busyVisible.value).toBe(true)
 
-    slow.resolve([])
+    slow.resolve()
     await pSlow
     expect(busyVisible.value).toBe(false)
   })

@@ -56,7 +56,7 @@ const mockOverview = makeOverview()
 let mockMonthlySummary: MonthlySummary[] = []
 let mockBudgetProgress: BudgetProgress[] = []
 
-function setCurrentMonthSummary(summary: MonthlySummary) {
+function setCurrentMonthSummary(summary: Omit<MonthlySummary, 'month'>) {
   const now = new Date()
   const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
   mockMonthlySummary = [{ month: monthKey, ...summary }]

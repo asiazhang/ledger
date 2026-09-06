@@ -1,13 +1,13 @@
 {
-  /* 守门脚本与测试的类型检查工程（issue #734 / ADR-0083）。
+  /* 守门脚本与测试的类型检查工程（issue #734 / ADR-0083；include 全量翻转见 #740）。
      执行：pnpm exec vue-tsc -p tsconfig.scripts.json --noEmit（挂载于 scripts/check.sh
      与 CI frontend job）。compilerOptions 与根 tsconfig.json 保持同构（strict 套件 /
      bundler 解析 / DOM lib——jsdom 测试需要 DOM 类型），差异仅两处：
      ① types 限定 node + vitest/globals（@types/node 提供 node:* 声明；vitest 测试全局
         describe/it/afterEach 经 globals:true 使用，类型声明须显式引入）；
-     ② include = 脚本 + 测试助手 + 守门相关测试（收窄范围，#737）；扩到全量测试目录
-        的分批计划见 #738–#740（最终翻转后全量测试纳入门槛）。另收入 src 下全局
-        .d.ts（vite-env.d.ts 等全局声明，脚本与测试导入图引用）。
+     ② include = 脚本 + 全量测试目录（#737 收窄入门，#738/#739 分批清债，#740 收口
+        翻转——「测试文件零类型检查」缺口正式关死）。另收入 src 下全局 .d.ts
+        （vite-env.d.ts 等全局声明，脚本与测试导入图引用）。
      scripts 由 Bun 运行时执行（ADR-0083），类型检查仍按 TS 语义进行。 */
   "compilerOptions": {
     "target": "ES2020",
@@ -32,11 +32,7 @@
   },
   "include": [
     "scripts/**/*.ts",
-    "src/__tests__/helpers/**/*.ts",
-    "src/__tests__/check-commands.test.ts",
-    "src/__tests__/check-i18n-keys.test.ts",
-    "src/__tests__/check-structure.test.ts",
-    "src/__tests__/check-test-stubs.test.ts",
+    "src/__tests__/**/*.ts",
     "src/**/*.d.ts"
   ]
 }

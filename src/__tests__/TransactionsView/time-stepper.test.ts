@@ -11,7 +11,7 @@ import {
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NButton } from 'naive-ui'
-import { listen } from '@tauri-apps/api/event'
+import { captureListenHandlers, type CapturedListener } from '../helpers/listen-mock'
 import type { Transaction } from '@/types'
 
 /**
@@ -35,19 +35,14 @@ describe('TransactionsView 期间步进器（issue #383 / #391）', () => {
   ]
 
   /** 捕获 ledger:changed 监听处理器（视图与各 store 在挂载/创建时注册）。 */
-  const mockListen = vi.mocked(listen)
-  let ledgerHandlers: Array<(evt: unknown) => void>
+  let ledgerHandlers: CapturedListener[]
 
   beforeEach(() => {
     setTxnDb([...stepDb])
     // 固定「今天」：步进起点（当月 2026-01）与高亮随之确定
     vi.useFakeTimers()
     vi.setSystemTime(new Date(2026, 0, 15, 12, 0, 0))
-    ledgerHandlers = []
-    mockListen.mockImplementation(async (_evt, handler) => {
-      ledgerHandlers.push(handler)
-      return vi.fn()
-    })
+    ledgerHandlers = captureListenHandlers()
   })
 
   afterEach(() => {

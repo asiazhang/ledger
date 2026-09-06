@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { defineComponent } from "vue";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { captureLastListener, mockListen } from "./helpers/listen-mock";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 
 import {
   PRICES_CHANGED_EVENT,
   usePricesChanged,
 } from "@/composables/usePricesChanged";
 
-const mockListen = vi.mocked(listen);
 
 /** 承载 composable 生命周期的宿主组件。 */
 function mountHost(callback: () => void) {
@@ -27,12 +27,7 @@ beforeEach(() => {
 
 describe("usePricesChanged 价格失效信号订阅基座（issue #237 / ADR-0031）", () => {
   it("订阅 ledger:prices-changed，注册的是调用方回调", async () => {
-    let registered: (() => void) | undefined;
-    mockListen.mockImplementation(async (_event: string, handler: never) => {
-      registered = handler;
-      return vi.fn() as unknown as UnlistenFn;
-    });
-
+    const readRegistered = captureLastListener();
     mountHost(() => {});
 
     expect(mockListen).toHaveBeenCalledTimes(1);
@@ -42,23 +37,19 @@ describe("usePricesChanged 价格失效信号订阅基座（issue #237 / ADR-003
     );
     // 常量单点定义：事件名即 ADR-0031 的 ledger:prices-changed
     expect(PRICES_CHANGED_EVENT).toBe("ledger:prices-changed");
-    expect(registered).toBeTypeOf("function");
+    expect(readRegistered()).toBeTypeOf("function");
   });
 
   it("信号到达时调用回调（重拉自身数据由调用方承载）", async () => {
-    let fire: () => void = () => {};
-    mockListen.mockImplementation(async (_event: string, handler: never) => {
-      fire = handler;
-      return vi.fn() as unknown as UnlistenFn;
-    });
+    const readFire = captureLastListener();
 
     let pulls = 0;
     mountHost(() => {
       pulls += 1;
     });
 
-    fire();
-    fire();
+    readFire()?.();
+    readFire()?.();
     expect(pulls).toBe(2);
   });
 

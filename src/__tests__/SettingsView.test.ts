@@ -4,7 +4,6 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { listen } from '@tauri-apps/api/event'
 
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
@@ -12,6 +11,7 @@ import { applyLocale } from '@/i18n'
 import SettingsView from '@/views/SettingsView.vue'
 import CategoryManager from '@/components/CategoryManager.vue'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
+import { captureLastListener, mockListen } from './helpers/listen-mock'
 import type { Currency } from '@/types'
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
@@ -23,8 +23,6 @@ import { open, save } from '@tauri-apps/plugin-dialog'
 
 const mockOpen = vi.mocked(open)
 const mockSave = vi.mocked(save)
-
-const mockListen = vi.mocked(listen)
 
 const mockCurrencies: Currency[] = [
   { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
@@ -518,11 +516,7 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
   it('ledger:backups-changed 到达后自动刷新备份列表（issue #129）', async () => {
     useAppStore().setBackupDir('/Users/me/backups')
     mockListen.mockReset()
-    let backupsChangedHandler: (...args: unknown[]) => void = () => {}
-    mockListen.mockImplementation((_event: string, handler: never) => {
-      backupsChangedHandler = handler
-      return Promise.resolve(vi.fn())
-    })
+    const readBackupsChanged = captureLastListener()
     let backupList: unknown[] = []
     stubInvoke({
       list_backups: () => Promise.resolve(backupList),
@@ -544,7 +538,7 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
         kind: 'auto',
       },
     ]
-    backupsChangedHandler()
+    readBackupsChanged()?.()
     await flushPromises()
 
     expect(wrapper.html()).toContain('当前共 1 个备份，上限 30 个')

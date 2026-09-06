@@ -1,13 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke } from './helpers/invoke-mock'
+import { captureListenHandlers, mockListen, type CapturedListener } from './helpers/listen-mock'
 import { flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { listen } from '@tauri-apps/api/event'
 import { useItemsStore } from '@/stores/items'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { ItemInput, ItemWithDailyCost } from '@/types'
-
-const mockListen = vi.mocked(listen)
 
 function baseItem(over: Partial<ItemWithDailyCost> = {}): ItemWithDailyCost {
   return {
@@ -43,7 +41,7 @@ const createInput: ItemInput = {
 }
 
 /** 捕获 ledger:changed 监听处理器（store 创建时注册） */
-let handlers: Array<(evt: unknown) => void>
+let handlers: CapturedListener[]
 
 /** 基础派发：各测试领域链处理完自己的命令后委托回它（参考命令同老链保持空保司表） */
 let base: ReturnType<typeof stubReferenceInvoke>
@@ -52,11 +50,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
   mockListen.mockReset()
-  handlers = []
-  mockListen.mockImplementation(async (_evt, handler) => {
-    handlers.push(handler)
-    return vi.fn()
-  })
+  handlers = captureListenHandlers()
   base = stubReferenceInvoke({ list_insurers: [] })
 })
 
@@ -118,7 +112,7 @@ describe('useItemsStore', () => {
     const initial = [baseItem()]
     const created = baseItem({ id: 'item-new', name: '笔记本', total_cost_cents: 500_000 })
     let listCalls = 0
-    mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
+    mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_items') {
         listCalls++
         return Promise.resolve(listCalls === 1 ? initial : [...initial, created])
@@ -150,7 +144,7 @@ describe('useItemsStore', () => {
       currency_code: 'CNY',
       note: '顶配',
     }
-    mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
+    mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_items') {
         listCalls++
         return Promise.resolve(listCalls === 1 ? before : after)
@@ -205,7 +199,7 @@ describe('useItemsStore', () => {
     ]
     let listCalls = 0
     const disposeInput = { disposal_date: '2026-01-10', residual_value_cents: 20_000 }
-    mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
+    mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_items') {
         listCalls++
         return Promise.resolve(listCalls === 1 ? before : after)
@@ -248,7 +242,7 @@ describe('useItemsStore', () => {
     const initial = [baseItem()]
     const after = [] as ItemWithDailyCost[]
     let listCalls = 0
-    mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
+    mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'list_items') {
         listCalls++
         return Promise.resolve(listCalls === 1 ? initial : after)

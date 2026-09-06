@@ -1,6 +1,6 @@
-import { listen } from '@tauri-apps/api/event'
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
 import { mockInvoke } from './helpers/invoke-mock'
+import { captureListenHandlers } from './helpers/listen-mock'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { NButton, NDatePicker } from 'naive-ui'
 import { resetOverlays, hasOpenOverlay, openOverlayNames } from '@/composables/overlayRegistry'
@@ -257,12 +257,7 @@ describe('QuickTimeRange 共享受控组件（issue #410）', () => {
   })
 
   it('数据期间边界失效重拉：ledger:changed 后即时外扩（钳制边界跟随新数据）', async () => {
-    const mockListen = vi.mocked(listen)
-    const handlers: Array<(evt: unknown) => void> = []
-    mockListen.mockImplementation(async (_evt, handler) => {
-      handlers.push(handler)
-      return vi.fn()
-    })
+    const handlers = captureListenHandlers()
     // 单月数据：月档边界 [2026-01, 2026-01]，< 置灰
     stubReferenceInvoke({
       report_date_range: { min_date: '2026-01-05', max_date: '2026-01-05' },

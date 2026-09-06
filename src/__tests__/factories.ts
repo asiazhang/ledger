@@ -1,5 +1,6 @@
 import { vi, type Mock } from 'vitest'
 import { REFERENCE_DEFAULTS } from './helpers/reference-stubs'
+import type { AppInvokeHandler } from './helpers/invoke-mock'
 import { registerToastSink, type ToastSink } from '@/composables/useLoadable'
 import type {
   Account,
@@ -277,14 +278,17 @@ export function resetToastSink(): void {
  * 规范夹具（issue #725：参考命令默认值单一来源，新增参考表零测试文件改动），
  * 均未命中则 reject「unexpected invoke」。
  * extra 中函数型 handler 以参数调用；其余当固定返回值。
+ * 返回类型声明为 AppInvokeHandler，供直接传给 `mockInvoke.mockImplementation`；
+ * 唯一例外是函数型 handler 的裸返回值原样透传（刻意不包 Promise——
+ * globalBusy.test.ts 借此观察「非 thenable 兑底」路径），类型层在单点按契约声明。
  */
 export function invokeHandler(
   defaults: Record<string, unknown>,
   extra?: Record<string, unknown>,
-): (cmd: string) => unknown {
-  return (cmd: string) => {
+): AppInvokeHandler {
+  return (cmd, _args) => {
     const handler = extra && extra[cmd]
-    if (typeof handler === 'function') return (handler as () => unknown)()
+    if (typeof handler === 'function') return (handler as () => unknown)() as Promise<unknown>
     if (handler !== undefined) return Promise.resolve(handler)
     if (cmd in defaults) return Promise.resolve(defaults[cmd])
     if (cmd in REFERENCE_DEFAULTS) return Promise.resolve(REFERENCE_DEFAULTS[cmd])

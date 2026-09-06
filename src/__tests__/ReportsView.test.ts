@@ -725,9 +725,9 @@ describe('ReportsView 商户排行表格化 + TopN（issue #588 → #618）', ()
       rows: [{ merchant_id: 'm-9', merchant_name: '快餐', amount_cents: 500, transaction_count: 2 }],
       total_cents: 15000,
     }
-    mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
+    mockInvoke.mockImplementation((cmd, args) => {
       if (cmd === 'merchant_shares') {
-        if (args.topN === 10) return pendingTop10
+        if (args?.topN === 10) return pendingTop10
         return Promise.resolve(top5Payload)
       }
       return Promise.resolve([])

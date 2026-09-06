@@ -210,7 +210,8 @@ describe('useTransactionModalState 竞态守卫（last-open-wins）', () => {
     })
 
     await modals.open({ type: 'edit', row: rowA })
-    expect(modals.intent.value!.row.id).toBe('a1')
+    // 编辑意图已在场（trade 仍在途，下一断言补全）；matchObject 兼容意图联合（create 支无 row）
+    expect(modals.intent.value).toMatchObject({ type: 'edit', row: { id: 'a1' } })
     const openB = modals.open({ type: 'edit', row: rowB })
     expect(modals.intent.value).toEqual({ type: 'edit', row: rowA, trade: makeTrade({ symbol: 'AAA' }) })
 

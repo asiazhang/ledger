@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mockInvoke } from './helpers/invoke-mock'
+import { captureListenHandlers, mockListen, type CapturedListener } from './helpers/listen-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { listen } from '@tauri-apps/api/event'
 import { NDialogProvider, NSelect, NTreeSelect } from 'naive-ui'
 import { h, reactive } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
@@ -27,7 +27,18 @@ vi.mock('vue-router', () => ({
 // 重拉三表（stale-while-revalidate）→ 已挂载的视图/表单经响应式状态自动呈现新数据。
 // 测试主缝与 spec #76 一致：`invoke`（数据访问）与 `listen`（事件订阅），无需真实 Tauri/HTTP。
 
-const mockListen = vi.mocked(listen)
+let changedHandlers: CapturedListener[] = []
+
+/**
+ * 下拉/树选项桩值读取：NSelect/NTreeSelect 的 options prop 经 props 泛型链为
+ * naive-ui 联合（含 undefined），本文件只消费「取某字段为字符串数组」这一种形态——
+ * 经断言守卫单点窄化，不在用例内散布 as/非空断言。
+ */
+function optionValues(select: { props(key: string): unknown }, pick: 'value' | 'key' | 'label'): string[] {
+  const opts = select.props('options')
+  expect(Array.isArray(opts), 'options 应为数组').toBe(true)
+  return (opts as Array<Record<string, unknown>>).map((o) => o[pick] as string)
+}
 
 const mockAccounts: Account[] = [
   {
@@ -97,8 +108,6 @@ const importedCategory: Category = {
   is_deleted: false,
 }
 
-let changedHandlers: Array<(...args: unknown[]) => void> = []
-
 /** 参考数据命令覆写集；overrides 可替换为写后数据库状态（币种/商户/保司走共享助手规范夹具）。 */
 function listOverrides(overrides: {
   accounts?: Account[]
@@ -116,11 +125,8 @@ beforeEach(async () => {
   mockInvoke.mockReset()
   mockListen.mockReset()
   stubReferenceInvoke(listOverrides())
-  mockListen.mockImplementation((_event: string, handler: (...args: unknown[]) => void) => {
-    // 多个 store（reference / items 等）各自订阅同一信号，全部捕获、全部触发
-    changedHandlers.push(handler)
-    return Promise.resolve(vi.fn())
-  })
+  // 多个 store（reference / items 等）各自订阅同一信号，全部捕获、全部触发
+  changedHandlers = captureListenHandlers()
   localStorage.clear()
   // 先访问 store 以捕获 listen 回调（组件复用同一 store 单例），再确保数据就绪
   const store = useReferenceStore()
@@ -162,25 +168,22 @@ describe('组件层反应性：mock ledger:changed 使界面/选项原地更新�
   it('表单选项：外部 AI 导入新账户后，已打开的交易表单账户下拉原地出现新选项', async () => {
     const wrapper = mount(CategoryForm, { props: { kind: 'expense', submitLabel: '记支出' } })
     const accountSelect = wrapper.findAllComponents(NSelect)[1] // 账户下拉（第 1 个为币种）
-    expect(accountSelect.props('options').map((o: { value: string }) => o.value))
-      .toEqual(['acc-1', 'acc-2'])
+    expect(optionValues(accountSelect, 'value')).toEqual(['acc-1', 'acc-2'])
 
     await simulateExternalWrite({ accounts: [...mockAccounts, importedAccount] })
 
-    const options = accountSelect.props('options') as { value: string; label: string }[]
-    expect(options.map((o) => o.value)).toEqual(['acc-1', 'acc-2', 'acc-ai'])
-    expect(options.map((o) => o.label)).toContain('AI 导入账户')
+    expect(optionValues(accountSelect, 'value')).toEqual(['acc-1', 'acc-2', 'acc-ai'])
+    expect(optionValues(accountSelect, 'label')).toContain('AI 导入账户')
   })
 
   it('表单选项：外部 AI 导入新分类后，分类树选择器原地出现新分类', async () => {
     const wrapper = mount(CategoryForm, { props: { kind: 'expense', submitLabel: '记支出' } })
     const treeSelect = wrapper.findAllComponents(NTreeSelect)[0]
-    expect(treeSelect.props('options').map((o: { key: string }) => o.key)).toEqual(['cat-food'])
+    expect(optionValues(treeSelect, 'key')).toEqual(['cat-food'])
 
     await simulateExternalWrite({ categories: [...mockCategories, importedCategory] })
 
-    expect(treeSelect.props('options').map((o: { key: string }) => o.key))
-      .toEqual(['cat-food', 'cat-ai'])
+    expect(optionValues(treeSelect, 'key')).toEqual(['cat-food', 'cat-ai'])
   })
 
   it('交易列表映射渲染：外部 AI 更新分类名后，已打开的交易列表分类列原地显示新名称', async () => {
@@ -243,8 +246,7 @@ describe('端到端整合验证：外部 AI 导入账户/分类 → 已打开界
     expect(treeWrapper.text()).toContain('餐饮')
     expect(treeWrapper.text()).not.toContain('AI 导入')
     const accountSelect = formWrapper.findAllComponents(NSelect)[1]
-    expect(accountSelect.props('options').map((o: { value: string }) => o.value))
-      .toEqual(['acc-1', 'acc-2'])
+    expect(optionValues(accountSelect, 'value')).toEqual(['acc-1', 'acc-2'])
     const store = useReferenceStore()
     expect(store.version).toBe(1)
 
@@ -257,9 +259,8 @@ describe('端到端整合验证：外部 AI 导入账户/分类 → 已打开界
 
     // 两个已打开界面无需重挂载即呈现新数据
     expect(treeWrapper.text()).toContain('AI 导入分类')
-    const options = accountSelect.props('options') as { value: string; label: string }[]
-    expect(options.map((o) => o.value)).toContain('acc-ai')
-    expect(options.map((o) => o.label)).toContain('AI 导入账户')
+    expect(optionValues(accountSelect, 'value')).toContain('acc-ai')
+    expect(optionValues(accountSelect, 'label')).toContain('AI 导入账户')
     // 失效信号可观测：成功重拉 version 自增、status 回到 ready
     expect(store.version).toBe(2)
     expect(store.status).toBe('ready')

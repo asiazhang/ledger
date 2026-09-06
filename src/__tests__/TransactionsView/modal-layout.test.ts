@@ -46,7 +46,7 @@ async function openRowModal(wrapper: VueWrapper, key: 'refund' | 'add-item' | 'e
 }
 
 describe('TransactionsView 交易弹窗族排版统一（issue #632）', () => {
-  it.each([
+  it.each<[key: 'create' | 'refund' | 'edit' | 'add-item', width: string]>([
     ['create', '480px'],
     ['refund', '480px'],
     ['edit', '480px'],
@@ -56,6 +56,7 @@ describe('TransactionsView 交易弹窗族排版统一（issue #632）', () => {
     if (key === 'create') {
       await openCreateModal(wrapper)
     } else {
+      // else 分支窄化掉 create，与 openRowModal 的行弹窗键闭集吻合
       await openRowModal(wrapper, key)
     }
     expectModalCard(width)

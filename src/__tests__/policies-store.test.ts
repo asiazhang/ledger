@@ -1,14 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke } from './helpers/invoke-mock'
+import { captureListenHandlers, mockListen, type CapturedListener } from './helpers/listen-mock'
 import { flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import { listen } from '@tauri-apps/api/event'
 import { usePoliciesStore } from '@/stores/policies'
 import { makePolicy, makePolicyStats } from './factories'
 import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Policy, PolicyInput, PolicyStats } from '@/types'
-
-const mockListen = vi.mocked(listen)
 
 function basePolicy(over: Partial<Policy> = {}): Policy {
   return makePolicy({ id: 'policy-1', ...over })
@@ -30,17 +28,13 @@ const createInput: PolicyInput = {
 }
 
 /** 捕获 ledger:changed 监听处理器（store 创建时注册） */
-let handlers: Array<(evt: unknown) => void>
+let handlers: CapturedListener[]
 
 beforeEach(() => {
   setActivePinia(createPinia())
   mockInvoke.mockReset()
   mockListen.mockReset()
-  handlers = []
-  mockListen.mockImplementation(async (_evt, handler) => {
-    handlers.push(handler)
-    return vi.fn()
-  })
+  handlers = captureListenHandlers()
 })
 
 describe('usePoliciesStore', () => {
