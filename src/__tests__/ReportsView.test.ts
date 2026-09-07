@@ -115,7 +115,19 @@ function categoryChartProp(prop: 'data' | 'options', wrapper: ReturnType<typeof 
 
 describe('ReportsView 期间筛选（issue #411 / ADR-0057）', () => {
   it('进入默认「当年」快照：三卡以当年期间查询，期间边界由组件内化拉取一次', async () => {
-    await mountReports()
+    // 双断言（issue #778）：替身返回可区分载荷，断言调用事实后继续断言三卡渲染了对应值
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        monthly_summary: [{ month: `${Y}-01`, income_cents: 1100, expense_cents: 700, refund_cents: 90 }],
+        category_shares: [{ category_id: 'food', category_name: '餐饮', amount_cents: 700 }],
+        merchant_shares: {
+          rows: [{ merchant_id: 'm-1', merchant_name: '超市', amount_cents: 500, transaction_count: 2 }],
+          total_cents: 500,
+        },
+      },
+    })
+    const wrapper = await mountReports()
     expect(mockInvoke).toHaveBeenCalledWith('monthly_summary', {
       year: Y,
       from: `${Y}-01-01`,
@@ -136,6 +148,14 @@ describe('ReportsView 期间筛选（issue #411 / ADR-0057）', () => {
     })
     const rangeCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'report_date_range')
     expect(rangeCalls).toHaveLength(1)
+    // 三卡渲染了对应载荷（「调用产生了效果」）
+    const data = monthlyChartProp('data', wrapper)
+    expect(data.labels).toEqual([`${Y}-01`])
+    expect(data.datasets.map((d: { data: number[] }) => d.data)).toEqual([[1100], [700], [90]])
+    expect(categoryChartProp('data', wrapper).datasets[0].data).toEqual([700])
+    const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr')
+    expect(trs).toHaveLength(1)
+    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe('5')
   })
 
   it('年份下拉退役：无年份选择下拉，快捷选择行为唯一时间控件（四枚芯片、无「全部」）', async () => {
@@ -150,7 +170,30 @@ describe('ReportsView 期间筛选（issue #411 / ADR-0057）', () => {
   })
 
   it('点「去年」芯片：三卡以去年期间重算，边界不重复拉取', async () => {
+    // 双断言（issue #778）：替身按期间参数分支返回可区分载荷——当年空集为对照，
+    // 去年载荷可辨识，渲染差异只能来自「去年」调用的效果
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        monthly_summary: (args) =>
+          args?.year === Y - 1
+            ? [{ month: `${Y - 1}-06`, income_cents: 2100, expense_cents: 1700, refund_cents: 190 }]
+            : [],
+        category_shares: (args) =>
+          args?.from === `${Y - 1}-01-01`
+            ? [{ category_id: 'food', category_name: '餐饮', amount_cents: 1700 }]
+            : [],
+        merchant_shares: (args) =>
+          args?.year === Y - 1
+            ? {
+                rows: [{ merchant_id: 'm-2', merchant_name: '咖啡', amount_cents: 1700, transaction_count: 1 }],
+                total_cents: 1700,
+              }
+            : { rows: [], total_cents: 0 },
+      },
+    })
     const wrapper = await mountReports()
+    expect(wrapper.text()).toContain('本期暂无数据')
     mockInvoke.mockClear()
     await clickChip(wrapper, '去年')
     expect(mockInvoke).toHaveBeenCalledWith('monthly_summary', {
@@ -173,6 +216,14 @@ describe('ReportsView 期间筛选（issue #411 / ADR-0057）', () => {
     })
     const rangeCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'report_date_range')
     expect(rangeCalls).toHaveLength(0)
+    // 三卡以去年载荷重渲染（「调用产生了效果」）
+    const data = monthlyChartProp('data', wrapper)
+    expect(data.labels).toEqual([`${Y - 1}-06`])
+    expect(data.datasets.map((d: { data: number[] }) => d.data)).toEqual([[2100], [1700], [190]])
+    expect(categoryChartProp('data', wrapper).datasets[0].data).toEqual([1700])
+    const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr')
+    expect(trs).toHaveLength(1)
+    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe('17')
   })
 
   it('重复点同一段期间的芯片不重复刷新（同值守卫）', async () => {
@@ -496,9 +547,28 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
   })
 
   it('步进器/面板产出的任意月期间同样驱动三卡重算（受控 v-model 桥接）', async () => {
+    // 双断言（issue #778）：替身按期间参数分支返回可区分载荷——初始期间走原夹具
+    //（分类图 6000/3000/800、两卡空态），12 月载荷可辨识
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
-      overrides: { list_categories: mockCategories, category_shares: mockShares },
+      overrides: {
+        list_categories: mockCategories,
+        monthly_summary: (args) =>
+          args?.from === '2025-12-01'
+            ? [{ month: '2025-12', income_cents: 3000, expense_cents: 2200, refund_cents: 200 }]
+            : [],
+        category_shares: (args) =>
+          args?.from === '2025-12-01'
+            ? [{ category_id: 'food', category_name: '餐饮', amount_cents: 2200 }]
+            : mockShares,
+        merchant_shares: (args) =>
+          args?.from === '2025-12-01'
+            ? {
+                rows: [{ merchant_id: 'm-3', merchant_name: '书店', amount_cents: 2200, transaction_count: 3 }],
+                total_cents: 2200,
+              }
+            : { rows: [], total_cents: 0 },
+      },
     })
     const wrapper = await mountReports()
     mockInvoke.mockClear()
@@ -522,6 +592,14 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
       to: '2025-12-31',
       topN: 5,
     })
+    // 三卡以该期间载荷重渲染（「调用产生了效果」）
+    const data = monthlyChartProp('data', wrapper)
+    expect(data.labels).toEqual(['2025-12'])
+    expect(data.datasets.map((d: { data: number[] }) => d.data)).toEqual([[3000], [2200], [200]])
+    expect(categoryChartProp('data', wrapper).datasets[0].data).toEqual([2200])
+    const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr')
+    expect(trs).toHaveLength(1)
+    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe('22')
   })
 })
 
