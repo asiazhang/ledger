@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { mockInvoke, wireInvokeSeam, type InvokeSeamOverride } from './helpers/invoke-mock'
+import { messageCalls } from './helpers/message-mock'
 import { defineComponent, watch, type PropType } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import {
@@ -10,37 +11,12 @@ import {
   type ScheduledPlanRow,
   type UseScheduledPlanListReturn,
 } from '@/composables/useScheduledPlanList'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type {
   ScheduledKind,
   ScheduledTransactionDetail,
   ScheduledTransactionOccurrence,
   ScheduledTransactionWithExt,
 } from '@/types'
-
-// 提示捕获：模块的生命周期成功/失败提示是接口行为的一部分。
-// setup.ts 的全局 useMessage mock 每次调用返回新对象，无法跨调用断言；
-// 此处以共享记录器覆盖（壳内不渲染 naive-ui 组件，其余导出保留原样）。
-const messageCalls: Array<{ method: string; text: string }> = []
-vi.mock('naive-ui', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('naive-ui')>()
-  const record =
-    (method: string) =>
-    (...args: unknown[]) =>
-      messageCalls.push({ method, text: String(args[0]) })
-  return {
-    ...actual,
-    useMessage: () => ({
-      success: record('success'),
-      warning: record('warning'),
-      error: record('error'),
-      info: record('info'),
-      loading: record('loading'),
-      destroyAll: () => {},
-    }),
-  }
-})
-
 
 // ---------------------------------------------------------------------------
 // 数据工厂：计划（core.kind 可覆写）、期次、详情
@@ -117,29 +93,26 @@ function makeDetail(
 }
 
 // ---------------------------------------------------------------------------
-// invoke mock：可变数据源，状态操作后重载读得到最新值
+// invoke 布线：可变数据源（状态操作后重载读最新值）；保司字典走接缝内建兑底
 // ---------------------------------------------------------------------------
 
 let mockPlans: ScheduledTransactionWithExt[] = []
 const mockDetails = new Map<string, ScheduledTransactionDetail>()
 let failList = false
 
-function baseInvoke() {
-  stubReferenceInvoke({
-    list_scheduled_transactions: () =>
-      failList ? Promise.reject(new Error('数据库不可用')) : mockPlans,
-    get_scheduled_transaction_detail: (args) => {
-      const detail = mockDetails.get(String(args?.id))
-      return detail ? Promise.resolve(detail) : Promise.reject(new Error('无此计划详情'))
-    },
-    update_scheduled_transaction_status: (args) => {
-      const { id, new_status } = args!.input as { id: string; new_status: string }
-      mockPlans = mockPlans.map((p) =>
-        p.core.id === id ? { ...p, core: { ...p.core, status: new_status as never } } : p,
-      )
-    },
-    list_insurers: [],
-  })
+const PLAN_INVOKE: Record<string, InvokeSeamOverride> = {
+  list_scheduled_transactions: () =>
+    failList ? Promise.reject(new Error('数据库不可用')) : mockPlans,
+  get_scheduled_transaction_detail: (args) => {
+    const detail = mockDetails.get(String(args?.id))
+    return detail ? Promise.resolve(detail) : Promise.reject(new Error('无此计划详情'))
+  },
+  update_scheduled_transaction_status: (args) => {
+    const { id, new_status } = args!.input as { id: string; new_status: string }
+    mockPlans = mockPlans.map((p) =>
+      p.core.id === id ? { ...p, core: { ...p.core, status: new_status as never } } : p,
+    )
+  },
 }
 
 // ---------------------------------------------------------------------------
@@ -197,18 +170,16 @@ function mountHarness(kind: ScheduledKind = 'scheduled_transfer') {
 }
 
 function lastMessage(method: string): string {
-  const found = [...messageCalls].reverse().find((c) => c.method === method)
+  const found = [...messageCalls()].reverse().find((c) => c.method === method)
   expect(found, `应有一次 ${method} 提示`).toBeDefined()
   return found!.text
 }
 
 beforeEach(() => {
-  mockInvoke.mockReset()
   mockPlans = []
   mockDetails.clear()
   failList = false
-  messageCalls.length = 0
-  baseInvoke()
+  wireInvokeSeam({ overrides: PLAN_INVOKE })
 })
 
 describe('useScheduledPlanList 初始状态', () => {
@@ -417,11 +388,12 @@ describe('useScheduledPlanList Plan Lifecycle 操作', () => {
     const { list, pulls } = mountHarness()
     await list.load()
     await flushPromises()
-    stubReferenceInvoke({
-      update_scheduled_transaction_status: () =>
-        Promise.reject(new Error('状态不允许变更')),
-      list_scheduled_transactions: () => mockPlans,
-      list_insurers: [],
+    wireInvokeSeam({
+      overrides: {
+        update_scheduled_transaction_status: () =>
+          Promise.reject(new Error('状态不允许变更')),
+        list_scheduled_transactions: () => mockPlans,
+      },
     })
     await list.changeStatus('a1', 'paused')
     await flushPromises()

@@ -1,10 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { captureListenHandlers, mockListen, type CapturedListener } from './helpers/listen-mock'
+import { wireInvokeSeam } from './helpers/invoke-mock'
+import { captureListenHandlers, type CapturedListener } from './helpers/listen-mock'
 import { flushPromises } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
 import { useItemsStore } from '@/stores/items'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { ItemInput, ItemWithDailyCost } from '@/types'
 
 function baseItem(over: Partial<ItemWithDailyCost> = {}): ItemWithDailyCost {
@@ -43,22 +41,13 @@ const createInput: ItemInput = {
 /** 捕获 ledger:changed 监听处理器（store 创建时注册） */
 let handlers: CapturedListener[]
 
-/** 基础派发：各测试领域链处理完自己的命令后委托回它（参考命令同老链保持空保司表） */
-let base: ReturnType<typeof stubReferenceInvoke>
-
 beforeEach(() => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  mockListen.mockReset()
   handlers = captureListenHandlers()
-  base = stubReferenceInvoke({ list_insurers: [] })
 })
 
 describe('useItemsStore', () => {
   it('首次访问自动加载（self-init），加载后 status=ready、version=1', async () => {
-    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
-      cmd === 'list_items' ? Promise.resolve([baseItem()]) : base(cmd, args),
-    )
+    wireInvokeSeam({ defaults: { list_items: [baseItem()] } })
     const store = useItemsStore()
     await flushPromises()
     expect(store.items).toHaveLength(1)
@@ -68,9 +57,7 @@ describe('useItemsStore', () => {
   })
 
   it('加载失败时 status=error，不抛出（self-init 静默）', async () => {
-    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
-      cmd === 'list_items' ? Promise.reject(new Error('boom')) : base(cmd, args),
-    )
+    wireInvokeSeam({ overrides: { list_items: () => Promise.reject(new Error('boom')) } })
     const store = useItemsStore()
     await flushPromises()
     expect(store.status).toBe('error')
@@ -82,13 +69,16 @@ describe('useItemsStore', () => {
     const fresh = [baseItem(), baseItem({ id: 'item-2', name: '笔记本' })]
     let resolveSecond: (items: ItemWithDailyCost[]) => void = () => {}
     let listCalls = 0
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd !== 'list_items') return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-      listCalls++
-      if (listCalls === 1) return Promise.resolve(initial)
-      return new Promise<ItemWithDailyCost[]>((resolve) => {
-        resolveSecond = resolve
-      })
+    wireInvokeSeam({
+      overrides: {
+        list_items: () => {
+          listCalls++
+          if (listCalls === 1) return Promise.resolve(initial)
+          return new Promise<ItemWithDailyCost[]>((resolve) => {
+            resolveSecond = resolve
+          })
+        },
+      },
     })
     const store = useItemsStore()
     await flushPromises()
@@ -112,16 +102,17 @@ describe('useItemsStore', () => {
     const initial = [baseItem()]
     const created = baseItem({ id: 'item-new', name: '笔记本', total_cost_cents: 500_000 })
     let listCalls = 0
-    mockInvoke.mockImplementation((cmd, args) => {
-      if (cmd === 'list_items') {
-        listCalls++
-        return Promise.resolve(listCalls === 1 ? initial : [...initial, created])
-      }
-      if (cmd === 'create_item') {
-        expect(args).toEqual({ input: createInput })
-        return Promise.resolve('item-new')
-      }
-      return base(cmd, args)
+    wireInvokeSeam({
+      overrides: {
+        list_items: () => {
+          listCalls++
+          return Promise.resolve(listCalls === 1 ? initial : [...initial, created])
+        },
+        create_item: (args) => {
+          expect(args).toEqual({ input: createInput })
+          return 'item-new'
+        },
+      },
     })
     const store = useItemsStore()
     await flushPromises()
@@ -144,16 +135,17 @@ describe('useItemsStore', () => {
       currency_code: 'CNY',
       note: '顶配',
     }
-    mockInvoke.mockImplementation((cmd, args) => {
-      if (cmd === 'list_items') {
-        listCalls++
-        return Promise.resolve(listCalls === 1 ? before : after)
-      }
-      if (cmd === 'update_item') {
-        expect(args).toEqual({ id: 'item-1', input: updateInput })
-        return Promise.resolve(null)
-      }
-      return base(cmd, args)
+    wireInvokeSeam({
+      overrides: {
+        list_items: () => {
+          listCalls++
+          return Promise.resolve(listCalls === 1 ? before : after)
+        },
+        update_item: (args) => {
+          expect(args).toEqual({ id: 'item-1', input: updateInput })
+          return null
+        },
+      },
     })
     const store = useItemsStore()
     await flushPromises()
@@ -166,10 +158,9 @@ describe('useItemsStore', () => {
 
   it('update 失败时抛出错误且不重拉', async () => {
     const initial = [baseItem()]
-    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'list_items') return Promise.resolve(initial)
-      if (cmd === 'update_item') return Promise.reject(new Error('物品不存在'))
-      return base(cmd, args)
+    wireInvokeSeam({
+      defaults: { list_items: initial },
+      overrides: { update_item: () => Promise.reject(new Error('物品不存在')) },
     })
     const store = useItemsStore()
     await flushPromises()
@@ -199,16 +190,17 @@ describe('useItemsStore', () => {
     ]
     let listCalls = 0
     const disposeInput = { disposal_date: '2026-01-10', residual_value_cents: 20_000 }
-    mockInvoke.mockImplementation((cmd, args) => {
-      if (cmd === 'list_items') {
-        listCalls++
-        return Promise.resolve(listCalls === 1 ? before : after)
-      }
-      if (cmd === 'dispose_item') {
-        expect(args).toEqual({ id: 'item-1', input: disposeInput })
-        return Promise.resolve(null)
-      }
-      return base(cmd, args)
+    wireInvokeSeam({
+      overrides: {
+        list_items: () => {
+          listCalls++
+          return Promise.resolve(listCalls === 1 ? before : after)
+        },
+        dispose_item: (args) => {
+          expect(args).toEqual({ id: 'item-1', input: disposeInput })
+          return null
+        },
+      },
     })
     const store = useItemsStore()
     await flushPromises()
@@ -222,10 +214,9 @@ describe('useItemsStore', () => {
 
   it('dispose 失败时抛出错误且不重拉', async () => {
     const initial = [baseItem()]
-    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'list_items') return Promise.resolve(initial)
-      if (cmd === 'dispose_item') return Promise.reject(new Error('处置日期早于购买日期'))
-      return base(cmd, args)
+    wireInvokeSeam({
+      defaults: { list_items: initial },
+      overrides: { dispose_item: () => Promise.reject(new Error('处置日期早于购买日期')) },
     })
     const store = useItemsStore()
     await flushPromises()
@@ -242,16 +233,16 @@ describe('useItemsStore', () => {
     const initial = [baseItem()]
     const after = [] as ItemWithDailyCost[]
     let listCalls = 0
-    mockInvoke.mockImplementation((cmd, args) => {
-      if (cmd === 'list_items') {
-        listCalls++
-        return Promise.resolve(listCalls === 1 ? initial : after)
-      }
-      if (cmd === 'delete_item') {
-        expect(args).toEqual({ id: 'item-1' })
-        return Promise.resolve()
-      }
-      return base(cmd, args)
+    wireInvokeSeam({
+      overrides: {
+        list_items: () => {
+          listCalls++
+          return Promise.resolve(listCalls === 1 ? initial : after)
+        },
+        delete_item: (args) => {
+          expect(args).toEqual({ id: 'item-1' })
+        },
+      },
     })
     const store = useItemsStore()
     await flushPromises()
@@ -264,10 +255,9 @@ describe('useItemsStore', () => {
 
   it('remove 失败时抛出错误且不重拉', async () => {
     const initial = [baseItem()]
-    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'list_items') return Promise.resolve(initial)
-      if (cmd === 'delete_item') return Promise.reject(new Error('物品不存在'))
-      return base(cmd, args)
+    wireInvokeSeam({
+      defaults: { list_items: initial },
+      overrides: { delete_item: () => Promise.reject(new Error('物品不存在')) },
     })
     const store = useItemsStore()
     await flushPromises()

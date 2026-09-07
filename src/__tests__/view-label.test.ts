@@ -3,17 +3,13 @@
 // 缺失 key 原样渲染 key 代号，侧栏整排显示 nav.dashboard；而两个 locale 结构
 // 全等（check-i18n-keys 只查互全等），一起缺 key 时门槛拦不住——只能在消费侧
 // 断言解析结果，故 key 构造收口在 i18n/view-label 并在此测试。
-import { describe, expect, it, beforeEach } from 'vitest'
-import { setActivePinia, createPinia } from 'pinia'
+import { describe, expect, it } from 'vitest'
 import { deriveViewShortcuts } from '@/composables/useViewShortcuts'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
 import { viewLabel } from '@/i18n/view-label'
 import zhCN from '@/i18n/locales/zh-CN'
 
 // 键位表经 sidebar-order store 装配（issue #549）：派生入参 = store 组内序。
-beforeEach(() => {
-  setActivePinia(createPinia())
-})
 
 describe('viewLabel（视图标题文案）', () => {
   it('全部视图名解析为文案而非 key 代号（漏域名前缀回归）', () => {

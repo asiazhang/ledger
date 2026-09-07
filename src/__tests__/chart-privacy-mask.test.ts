@@ -1,16 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
+import { wireInvokeSeam } from './helpers/invoke-mock'
+import { mount, flushPromises } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
-import { setActivePinia, createPinia } from 'pinia'
 import type { Chart, ChartOptions, TooltipItem } from 'chart.js'
 import ReportsView from '@/views/ReportsView.vue'
 import PortfolioTrendPanel from '@/components/investments/PortfolioTrendPanel.vue'
 import SubscriptionSpendPanel from '@/components/scheduled/SubscriptionSpendPanel.vue'
 import { amountPrivacyEnabled } from '@/utils/money'
 import { useReferenceStore } from '@/stores/reference'
-import { invokeHandler, makeCategory, makeInstrument } from './factories'
+import { makeInstrument } from './factories'
 import type {
   CategoryShare,
   Instrument,
@@ -40,15 +39,7 @@ vi.mock('vue-router', () => ({ useRouter: () => ({ push: pushMock }) }))
 // 固定「今天」= 2026-01-15：报表页默认「当年」快照随之确定（ReportsView 测试同款前提）
 const Y = 2026
 
-const cny = { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 }
-
 const mockRange: ReportDateRange = { min_date: '2020-03-01', max_date: '2027-11-30' }
-
-const mockCategories = [
-  makeCategory({ id: 'food', name: '餐饮', sort_order: 0 }),
-  makeCategory({ id: 'food-snack', name: '零食', parent_id: 'food', sort_order: 1 }),
-  makeCategory({ id: 'transport', name: '交通', sort_order: 2 }),
-]
 
 const mockShares: CategoryShare[] = [
   { category_id: 'food', category_name: '餐饮', amount_cents: 5000 },
@@ -98,35 +89,23 @@ const spendOverview: SubscriptionSpendOverview = {
   rows: [],
 }
 
-function baseInvoke(extra?: Record<string, unknown>) {
-  mockInvoke.mockImplementation(
-    invokeHandler(
-      {
-        list_currencies: [cny],
-        list_accounts: [],
-        list_categories: mockCategories,
-        list_merchants: [],
-        list_insurers: [],
-        report_date_range: mockRange,
-        monthly_summary: mockMonthly,
-        category_shares: mockShares,
-        merchant_shares: mockMerchants,
-        list_holdings: [],
-        list_instruments: { items: [stockInstrument], total: 1 },
-        portfolio_value_trend: portfolioTrend,
-        instrument_price_trend: instrumentTrend,
-        subscription_spend_overview: spendOverview,
-      },
-      extra,
-    ),
-  )
+/** 默认布线 defaults 表：期间边界 + 三报表数据 + 投资趋势/订阅花费四命令
+ *（参考五命令走接缝规范兜底） */
+const BASE_DEFAULTS = {
+  report_date_range: mockRange,
+  monthly_summary: mockMonthly,
+  category_shares: mockShares,
+  merchant_shares: mockMerchants,
+  list_holdings: [],
+  list_instruments: { items: [stockInstrument], total: 1 },
+  portfolio_value_trend: portfolioTrend,
+  instrument_price_trend: instrumentTrend,
+  subscription_spend_overview: spendOverview,
 }
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
+  wireInvokeSeam({ defaults: BASE_DEFAULTS })
   pushMock.mockReset()
-  baseInvoke()
   amountPrivacyEnabled.value = false
   vi.useFakeTimers()
   vi.setSystemTime(new Date(2026, 0, 15, 12, 0, 0))
@@ -137,8 +116,6 @@ afterEach(() => {
   amountPrivacyEnabled.value = false
   vi.useRealTimers()
 })
-
-enableAutoUnmount(afterEach)
 
 /** 第 index 个 Bar 图桩（ReportsView 模板序：0 = 月度收支、1 = 分类构成）的 prop */
 function barProp(wrapper: VueWrapper, index: number, prop: 'options' | 'plugins'): unknown {

@@ -1,13 +1,11 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount, DOMWrapper } from '@vue/test-utils'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
 import { NPopconfirm } from 'naive-ui'
-import { setActivePinia, createPinia } from 'pinia'
 import PoliciesView from '@/views/PoliciesView.vue'
 import PolicyFormModal from '@/components/PolicyFormModal.vue'
 import { makePolicy, makePolicyStats } from './factories'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
-import type { Currency, Insurer, Policy, PolicyStats } from '@/types'
+import type { Insurer, Policy, PolicyStats } from '@/types'
 import { componentVm } from './helpers/component-vm'
 
 
@@ -21,19 +19,10 @@ vi.mock('vue-router', () => ({
 }))
 
 // NModal 内容 teleport 到 document.body：测试在 body 中查询/触发（同 ItemsView 先例）。
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
 
 function bodyQuery(selector: string): HTMLElement | null {
   return document.body.querySelector(selector)
 }
-
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-  { code: 'USD', name: '美元', symbol: '$', decimal_places: 2 },
-]
 
 const mockInsurers: Insurer[] = [
   { id: 'ins-1', name: '平安保险', is_deleted: false, updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test' },
@@ -58,51 +47,47 @@ function baseStats(policy: Policy): PolicyStats {
 }
 
 function setupInvoke() {
-  stubReferenceInvoke({
-    list_currencies: mockCurrencies,
-    list_accounts: [],
-    list_categories: [],
-    list_merchants: [],
-    // 保单换轨后页面消费保司下拉（ADR-0082），桩给真实保司数据
-    list_insurers: mockInsurers,
-    list_policies: () => policies.filter((p) => !p.is_deleted),
-    list_policy_stats: () =>
-      policyStats.filter((s) => policies.some((p) => p.id === s.policy_id && !p.is_deleted)),
-    create_policy: (args) => {
-      const { input } = args as { input: { policy_number: string; insurer_id: string } }
-      const id = `policy-new-${input.policy_number}`
-      policies = [
-        ...policies,
-        basePolicy({ id, ...input, coverage_amount_cents: null, coverage_currency_code: null, end_date: null }),
-      ]
-      return id
-    },
-    create_insurer: (args) => {
-      const { input } = args as { input: { name: string } }
-      const id = `ins-new-${input.name}`
-      mockInsurers.push({ id, name: input.name, is_deleted: false, updated_at: '', version: 1, device_id: 'test' })
-      return id
-    },
-    create_merchant: () => Promise.reject(new Error('unexpected create_merchant')),
-    update_policy: (args) => {
-      const { id, input } = args as { id: string; input: Partial<Policy> }
-      policies = policies.map((p) => (p.id === id ? { ...p, ...input } : p))
-    },
-    delete_policy: (args) => {
-      const { id } = args as { id: string }
-      policies = policies.map((p) => (p.id === id ? { ...p, is_deleted: true } : p))
+  wireInvokeSeam({
+    overrides: {
+      // 保单换轨后页面消费保司下拉（ADR-0082）：参考命令本场景需真实保司数据
+      // （overrides 优先于参考兑底）
+      list_insurers: mockInsurers,
+      list_policies: () => policies.filter((p) => !p.is_deleted),
+      list_policy_stats: () =>
+        policyStats.filter((s) => policies.some((p) => p.id === s.policy_id && !p.is_deleted)),
+      create_policy: (args) => {
+        const { input } = args as { input: { policy_number: string; insurer_id: string } }
+        const id = `policy-new-${input.policy_number}`
+        policies = [
+          ...policies,
+          basePolicy({ id, ...input, coverage_amount_cents: null, coverage_currency_code: null, end_date: null }),
+        ]
+        return id
+      },
+      create_insurer: (args) => {
+        const { input } = args as { input: { name: string } }
+        const id = `ins-new-${input.name}`
+        mockInsurers.push({ id, name: input.name, is_deleted: false, updated_at: '', version: 1, device_id: 'test' })
+        return id
+      },
+      create_merchant: () => Promise.reject(new Error('unexpected create_merchant')),
+      update_policy: (args) => {
+        const { id, input } = args as { id: string; input: Partial<Policy> }
+        policies = policies.map((p) => (p.id === id ? { ...p, ...input } : p))
+      },
+      delete_policy: (args) => {
+        const { id } = args as { id: string }
+        policies = policies.map((p) => (p.id === id ? { ...p, is_deleted: true } : p))
+      },
     },
   })
 }
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
   mockRoute.query = {}
   policies = [basePolicy()]
   policyStats = [baseStats(policies[0])]
   setupInvoke()
-  localStorage.clear()
   if (Element.prototype.scrollIntoView) vi.mocked(Element.prototype.scrollIntoView).mockClear()
   // 参考数据（商户/币种选项）与保单 store 均为 self-init，提前预热
   await flushPromises()

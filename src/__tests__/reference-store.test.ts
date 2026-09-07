@@ -1,14 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import {
   captureLastListener,
   mockListen,
   type CapturedListener,
 } from './helpers/listen-mock'
 import { flushPromises } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
 import { useReferenceStore } from '@/stores/reference'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Account, Category, Currency, Insurer, Merchant } from '@/types'
 
 const mockCurrencies: Currency[] = [
@@ -106,22 +104,21 @@ const newMerchants: Merchant[] = [
   },
 ]
 
-// 参考命令桩统一走共享助手（issue #725）；本文件以自身夹具为被测数据，全量覆写。
+// 参考命令桩统一走接缝（issue #725）；本文件以自身夹具为被测数据，全量覆写。
 function mockListCommands() {
-  stubReferenceInvoke({
-    list_currencies: mockCurrencies,
-    list_accounts: mockAccounts,
-    list_categories: mockCategories,
-    list_merchants: mockMerchants,
-    list_insurers: mockInsurers,
+  wireInvokeSeam({
+    overrides: {
+      list_currencies: mockCurrencies,
+      list_accounts: mockAccounts,
+      list_categories: mockCategories,
+      list_merchants: mockMerchants,
+      list_insurers: mockInsurers,
+    },
   })
 }
 
 beforeEach(() => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
   mockListCommands()
-  localStorage.clear()
 })
 
 describe('useReferenceStore', () => {
@@ -162,12 +159,14 @@ describe('useReferenceStore', () => {
     expect(store.insurers.map((i) => i.id)).toEqual(['ins-1'])
 
     // 平安人寿被软删：后端含已删列表返回 is_deleted=true 行
-    stubReferenceInvoke({
-      list_currencies: mockCurrencies,
-      list_accounts: mockAccounts,
-      list_categories: mockCategories,
-      list_merchants: mockMerchants,
-      list_insurers: [{ ...mockInsurers[0], is_deleted: true }, mockInsurers[1]],
+    wireInvokeSeam({
+      overrides: {
+        list_currencies: mockCurrencies,
+        list_accounts: mockAccounts,
+        list_categories: mockCategories,
+        list_merchants: mockMerchants,
+        list_insurers: [{ ...mockInsurers[0], is_deleted: true }, mockInsurers[1]],
+      },
     })
     await store.refresh()
 
@@ -195,14 +194,16 @@ describe('useReferenceStore', () => {
     const store = useReferenceStore()
     await store.refresh() // 等 self-init 完成（避免与在途加载合并去重）
     // 保司拉取以含已删全量（同商户先例：在用进字典，软删进显示映射）
-    stubReferenceInvoke({
-      list_currencies: mockCurrencies,
-      list_accounts: mockAccounts,
-      list_categories: mockCategories,
-      list_insurers: [
-        { id: 'ins-1', name: '平安人寿', is_deleted: false, updated_at: '', version: 1, device_id: 'test' },
-        { id: 'ins-2', name: '海峡金桥', is_deleted: true, updated_at: '', version: 1, device_id: 'test' },
-      ],
+    wireInvokeSeam({
+      overrides: {
+        list_currencies: mockCurrencies,
+        list_accounts: mockAccounts,
+        list_categories: mockCategories,
+        list_insurers: [
+          { id: 'ins-1', name: '平安人寿', is_deleted: false, updated_at: '', version: 1, device_id: 'test' },
+          { id: 'ins-2', name: '海峡金桥', is_deleted: true, updated_at: '', version: 1, device_id: 'test' },
+        ],
+      },
     })
     await store.refresh()
 
@@ -235,12 +236,14 @@ describe('useReferenceStore', () => {
     expect(store.merchantMap.get('mch-1')?.name).toBe('京东')
 
     // 京东被软删：后端含软删列表返回 is_deleted=true 行，其余表不变
-    stubReferenceInvoke({
-      list_currencies: mockCurrencies,
-      list_accounts: mockAccounts,
-      list_categories: mockCategories,
-      list_merchants: [{ ...mockMerchants[0], is_deleted: true }, mockMerchants[1]],
-      list_insurers: mockInsurers,
+    wireInvokeSeam({
+      overrides: {
+        list_currencies: mockCurrencies,
+        list_accounts: mockAccounts,
+        list_categories: mockCategories,
+        list_merchants: [{ ...mockMerchants[0], is_deleted: true }, mockMerchants[1]],
+        list_insurers: mockInsurers,
+      },
     })
     await store.refresh()
 
@@ -295,7 +298,6 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
   let readChangedHandler: () => CapturedListener | null
 
   beforeEach(() => {
-    mockListen.mockReset()
     readChangedHandler = captureLastListener()
   })
 
@@ -336,15 +338,17 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
     await store.refresh()
 
     let resolveCats!: (v: Category[]) => void
-    stubReferenceInvoke({
-      list_currencies: newCurrencies,
-      list_accounts: newAccounts,
-      list_categories: () =>
-        new Promise((res) => {
-          resolveCats = res
-        }),
-      list_merchants: newMerchants,
-      list_insurers: mockInsurers,
+    wireInvokeSeam({
+      overrides: {
+        list_currencies: newCurrencies,
+        list_accounts: newAccounts,
+        list_categories: () =>
+          new Promise((res) => {
+            resolveCats = res
+          }),
+        list_merchants: newMerchants,
+        list_insurers: mockInsurers,
+      },
     })
     readChangedHandler()?.({ payload: undefined })
     // 事件到达即置 loading，旧数据保留（stale-while-revalidate）
@@ -367,12 +371,14 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
     await store.refresh()
     expect(store.currencyMap.get('CNY')?.name).toBe('人民币')
 
-    stubReferenceInvoke({
-      list_currencies: newCurrencies,
-      list_accounts: newAccounts,
-      list_categories: newCategories,
-      list_merchants: newMerchants,
-      list_insurers: mockInsurers,
+    wireInvokeSeam({
+      overrides: {
+        list_currencies: newCurrencies,
+        list_accounts: newAccounts,
+        list_categories: newCategories,
+        list_merchants: newMerchants,
+        list_insurers: mockInsurers,
+      },
     })
     readChangedHandler()?.({ payload: undefined })
     await flushPromises()
@@ -395,15 +401,17 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
     mockInvoke.mockClear()
 
     let resolveCats!: (v: Category[]) => void
-    stubReferenceInvoke({
-      list_currencies: newCurrencies,
-      list_accounts: newAccounts,
-      list_categories: () =>
-        new Promise((res) => {
-          resolveCats = res
-        }),
-      list_merchants: newMerchants,
-      list_insurers: mockInsurers,
+    wireInvokeSeam({
+      overrides: {
+        list_currencies: newCurrencies,
+        list_accounts: newAccounts,
+        list_categories: () =>
+          new Promise((res) => {
+            resolveCats = res
+          }),
+        list_merchants: newMerchants,
+        list_insurers: mockInsurers,
+      },
     })
 
     const p1 = store.refresh()
@@ -424,15 +432,17 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
     await store.refresh()
 
     let resolveCats!: (v: Category[]) => void
-    stubReferenceInvoke({
-      list_currencies: newCurrencies,
-      list_accounts: newAccounts,
-      list_categories: () =>
-        new Promise((res) => {
-          resolveCats = res
-        }),
-      list_merchants: newMerchants,
-      list_insurers: mockInsurers,
+    wireInvokeSeam({
+      overrides: {
+        list_currencies: newCurrencies,
+        list_accounts: newAccounts,
+        list_categories: () =>
+          new Promise((res) => {
+            resolveCats = res
+          }),
+        list_merchants: newMerchants,
+        list_insurers: mockInsurers,
+      },
     })
 
     const p = store.refresh()
@@ -455,7 +465,7 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
     const store = useReferenceStore()
     await store.refresh()
 
-    stubReferenceInvoke({ list_currencies: () => Promise.reject(new Error('db 错误')) })
+    wireInvokeSeam({ overrides: { list_currencies: () => Promise.reject(new Error('db 错误')) } })
     await expect(store.refresh()).rejects.toThrow('db 错误')
     expect(store.status).toBe('error')
     expect(store.version).toBe(1)
@@ -468,16 +478,18 @@ describe('useReferenceStore 失效信号与 push 生命周期', () => {
     const store = useReferenceStore()
     await store.refresh()
 
-    stubReferenceInvoke({ list_currencies: () => Promise.reject(new Error('db 错误')) })
+    wireInvokeSeam({ overrides: { list_currencies: () => Promise.reject(new Error('db 错误')) } })
     await expect(store.refresh()).rejects.toThrow('db 错误')
     expect(store.status).toBe('error')
 
-    stubReferenceInvoke({
-      list_currencies: newCurrencies,
-      list_accounts: newAccounts,
-      list_categories: newCategories,
-      list_merchants: newMerchants,
-      list_insurers: mockInsurers,
+    wireInvokeSeam({
+      overrides: {
+        list_currencies: newCurrencies,
+        list_accounts: newAccounts,
+        list_categories: newCategories,
+        list_merchants: newMerchants,
+        list_insurers: mockInsurers,
+      },
     })
     await store.refresh()
     expect(store.status).toBe('ready')

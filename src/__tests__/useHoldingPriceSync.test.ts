@@ -1,11 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { mockInvoke } from './helpers/invoke-mock'
 import { useHoldingPriceSync } from '@/composables/useHoldingPriceSync'
 
-
-beforeEach(() => {
-  mockInvoke.mockReset()
-})
 
 describe('useHoldingPriceSync 持仓价格增量同步（标的页/盈亏页共用接缝）', () => {
   it('无持仓时同步：resolve success（success 子形态），message 为「无持仓标的可同步」', async () => {

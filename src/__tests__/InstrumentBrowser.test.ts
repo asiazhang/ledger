@@ -1,9 +1,8 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { lastInvokeArgs, mockInvoke } from './helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { mount, flushPromises } from '@vue/test-utils'
 import { h, nextTick } from 'vue'
 import { NDialogProvider } from 'naive-ui'
-import { setActivePinia, createPinia } from 'pinia'
 import { listen } from '@tauri-apps/api/event'
 import { useReferenceStore } from '@/stores/reference'
 import InstrumentBrowser from '@/components/investments/InstrumentBrowser.vue'
@@ -12,7 +11,6 @@ import {
   firePricesChanged,
   resetPricesChangedHandler,
 } from './prices-changed-mock'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Instrument, SyncProgress } from '@/types'
 
 const mockListen = vi.mocked(listen)
@@ -26,13 +24,6 @@ vi.mock('@/composables/usePricesChanged', async () => {
   }
 })
 
-// NModal 内容 teleport 到 document.body，须在每个测试后卸载 wrapper 并清空 body，
-// 否则上一个测试遗留的弹窗 DOM 会污染下一个测试（bodyQuery 拿到陈旧元素）。
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
-
 /** 组件顶层调用 useAppDialog（删除二次确认，issue #292），与 App.vue 同构需
  * NDialogProvider 包裹（先例：AccountsView.test.ts 的 mountView）。 */
 function mountBrowser() {
@@ -43,7 +34,6 @@ function mountBrowser() {
 
 // 捕获全量同步进度事件回调，便于在组件测试中模拟 sync-instruments:progress
 let syncProgressHandler: ((event: { payload: SyncProgress }) => void) | undefined
-
 
 const mockInstruments: Instrument[] = [
   {
@@ -80,25 +70,18 @@ const mockInstruments: Instrument[] = [
   },
 ]
 
-function baseInvoke(
-  extra?: Record<string, (args?: Record<string, unknown>) => unknown>,
-) {
-  stubReferenceInvoke({
-    list_accounts: [],
-    list_categories: [],
-    list_insurers: [],
-    list_merchants: [],
-    list_instruments: { items: mockInstruments, total: mockInstruments.length },
-    sync_instruments: () => Promise.resolve(undefined),
-    cancel_sync_instruments: () =>
-      Promise.resolve({ cancelled: false, message: '当前没有正在进行的同步' }),
-    ...extra,
-  })
+/** 基础布线：beforeEach 安装；用例中途换桩时以模块级表为底再覆写。 */
+const BASE_DEFAULTS = {
+  list_instruments: { items: mockInstruments, total: mockInstruments.length },
+}
+
+const BASE_OVERRIDES = {
+  sync_instruments: () => Promise.resolve(undefined),
+  cancel_sync_instruments: () =>
+    Promise.resolve({ cancelled: false, message: '当前没有正在进行的同步' }),
 }
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
   mockListen.mockReset()
   syncProgressHandler = undefined
   resetPricesChangedHandler()
@@ -106,8 +89,7 @@ beforeEach(async () => {
     syncProgressHandler = handler as (event: { payload: SyncProgress }) => void
     return Promise.resolve(() => {})
   })
-  baseInvoke()
-  localStorage.clear()
+  wireInvokeSeam({ defaults: BASE_DEFAULTS, overrides: BASE_OVERRIDES })
   const store = useReferenceStore()
   await store.refresh()
 })
@@ -192,11 +174,14 @@ describe('InstrumentBrowser 持仓标记列', () => {
 describe('InstrumentBrowser 同步持仓价格按钮', () => {
   it('点击按钮触发 sync_holding_prices，进行中按钮 loading', async () => {
     let resolveSync!: (v: unknown) => void
-    baseInvoke({
-      sync_holding_prices: () =>
-        new Promise((res) => {
-          resolveSync = res
-        }),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        sync_holding_prices: () =>
+          new Promise((res) => {
+            resolveSync = res
+          }),      },
     })
     const wrapper = mountBrowser()
     await flushPromises()
@@ -211,9 +196,12 @@ describe('InstrumentBrowser 同步持仓价格按钮', () => {
   })
 
   it('同步成功显示结果消息', async () => {
-    baseInvoke({
-      sync_holding_prices: () =>
-        Promise.resolve({ synced: 2, skipped: 1, message: '已同步 2 只，跳过 1 只' }),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        sync_holding_prices: () =>
+          Promise.resolve({ synced: 2, skipped: 1, message: '已同步 2 只，跳过 1 只' }),      },
     })
     const wrapper = mountBrowser()
     await flushPromises()
@@ -223,10 +211,13 @@ describe('InstrumentBrowser 同步持仓价格按钮', () => {
   })
 
   it('无持仓时同步不报错并提示「无持仓标的可同步」', async () => {
-    baseInvoke({
-      list_instruments: () => Promise.resolve({ items: [], total: 0 }),
-      sync_holding_prices: () =>
-        Promise.resolve({ synced: 0, skipped: 0, message: '无持仓标的可同步' }),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        list_instruments: () => Promise.resolve({ items: [], total: 0 }),
+        sync_holding_prices: () =>
+          Promise.resolve({ synced: 0, skipped: 0, message: '无持仓标的可同步' }),      },
     })
     const wrapper = mountBrowser()
     await flushPromises()
@@ -236,8 +227,11 @@ describe('InstrumentBrowser 同步持仓价格按钮', () => {
   })
 
   it('同步失败显示错误消息', async () => {
-    baseInvoke({
-      sync_holding_prices: () => Promise.reject(new Error('网络错误')),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        sync_holding_prices: () => Promise.reject(new Error('网络错误')),      },
     })
     const wrapper = mountBrowser()
     await flushPromises()
@@ -269,14 +263,17 @@ describe('InstrumentBrowser 价格失效信号（issue #238 / ADR-0031）', () =
     const pool = Array.from({ length: 60 }, (_, i) =>
       makeInstrument({ id: `inst-${i + 1}`, symbol: String(600000 + i) }),
     )
-    baseInvoke({
-      list_instruments: (args?: Record<string, unknown>) => {
-        const page = (args?.filter as { page?: number } | undefined)?.page ?? 1
-        return Promise.resolve({
-          items: pool.slice((page - 1) * 50, page * 50),
-          total: pool.length,
-        })
-      },
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        list_instruments: (args?: Record<string, unknown>) => {
+          const page = (args?.filter as { page?: number } | undefined)?.page ?? 1
+          return Promise.resolve({
+            items: pool.slice((page - 1) * 50, page * 50),
+            total: pool.length,
+          })
+        },      },
     })
     const wrapper = mountBrowser()
     await flushPromises()
@@ -336,7 +333,7 @@ describe('InstrumentBrowser 全量同步（issue #109）', () => {
   })
 
   it('确认后调用 sync_instruments，模态框展示进度详情', async () => {
-    baseInvoke({ sync_instruments: () => Promise.resolve(undefined) })
+    wireInvokeSeam({ defaults: BASE_DEFAULTS, overrides: BASE_OVERRIDES })
     const wrapper = mountBrowser()
     await flushPromises()
     await wrapper.find('[data-testid="full-sync"]').trigger('click')
@@ -358,7 +355,10 @@ describe('InstrumentBrowser 全量同步（issue #109）', () => {
 
   it('同步进行中按钮呈「同步中」态，点击重开进度框而非重复同步', async () => {
     let resolveSync!: (v: unknown) => void
-    baseInvoke({ sync_instruments: () => new Promise((res) => { resolveSync = res }) })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { ...BASE_OVERRIDES, sync_instruments: () => new Promise((res) => { resolveSync = res }) },
+    })
     const wrapper = mountBrowser()
     await flushPromises()
     await wrapper.find('[data-testid="full-sync"]').trigger('click')
@@ -378,10 +378,13 @@ describe('InstrumentBrowser 全量同步（issue #109）', () => {
   })
 
   it('点「中断同步」立即中断，显示「已中断 + 已同步 N 只」', async () => {
-    baseInvoke({
-      sync_instruments: () => Promise.resolve(undefined),
-      cancel_sync_instruments: () =>
-        Promise.resolve({ cancelled: true, message: '已请求中断同步' }),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        sync_instruments: () => Promise.resolve(undefined),
+        cancel_sync_instruments: () =>
+          Promise.resolve({ cancelled: true, message: '已请求中断同步' }),      },
     })
     const wrapper = mountBrowser()
     await flushPromises()
@@ -402,7 +405,7 @@ describe('InstrumentBrowser 全量同步（issue #109）', () => {
   })
 
   it('完成时显示新增/更新统计，失败时显示错误', async () => {
-    baseInvoke({ sync_instruments: () => Promise.resolve(undefined) })
+    wireInvokeSeam({ defaults: BASE_DEFAULTS, overrides: BASE_OVERRIDES })
     const wrapper = mountBrowser()
     await flushPromises()
     await wrapper.find('[data-testid="full-sync"]').trigger('click')
@@ -469,7 +472,10 @@ describe('InstrumentBrowser 添加基金（issue #301 / ADR-0038）', () => {
   })
 
   it('点击打开弹窗；非 6 位数字时提交按钮禁用、不发请求', async () => {
-    baseInvoke({ add_fund_by_code: () => Promise.resolve(fundResult) })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { ...BASE_OVERRIDES, add_fund_by_code: () => Promise.resolve(fundResult) },
+    })
     await openAddFundModal()
     expect(bodyQuery('[data-testid="add-fund-code"]')).not.toBeNull()
     // 空码 / 位数不足：提交禁用
@@ -504,7 +510,10 @@ describe('InstrumentBrowser 添加基金（issue #301 / ADR-0038）', () => {
   }
 
   it('有效代码提交：调用 add_fund_by_code，成功回执展示名称/分类/净值/日期并重拉列表', async () => {
-    baseInvoke({ add_fund_by_code: () => Promise.resolve(fundResult) })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { ...BASE_OVERRIDES, add_fund_by_code: () => Promise.resolve(fundResult) },
+    })
     const wrapper = await openAddFundModal()
     const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
     await setCode('000001')
@@ -523,14 +532,17 @@ describe('InstrumentBrowser 添加基金（issue #301 / ADR-0038）', () => {
   })
 
   it('未取到净值：仍添加成功，回执提示暂未取到净值', async () => {
-    baseInvoke({
-      add_fund_by_code: () =>
-        Promise.resolve({
-          ...fundResult,
-          nav_cents: null,
-          nav_date: null,
-          price_written: false,
-        }),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        add_fund_by_code: () =>
+          Promise.resolve({
+            ...fundResult,
+            nav_cents: null,
+            nav_date: null,
+            price_written: false,
+          }),      },
     })
     const wrapper = await openAddFundModal()
     await setCode('012345')
@@ -540,9 +552,12 @@ describe('InstrumentBrowser 添加基金（issue #301 / ADR-0038）', () => {
   })
 
   it('查无此码：弹窗内展示中文报错，不重拉列表、无成功回执', async () => {
-    baseInvoke({
-      add_fund_by_code: () =>
-        Promise.reject({ kind: 'Invalid', message: '查无基金代码 999999，请核对后重试' }),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        add_fund_by_code: () =>
+          Promise.reject({ kind: 'Invalid', message: '查无基金代码 999999，请核对后重试' }),      },
     })
     const wrapper = await openAddFundModal()
     const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
@@ -563,15 +578,18 @@ describe('InstrumentBrowser 添加基金（issue #301 / ADR-0038）', () => {
 
 describe('InstrumentBrowser 来源列与新建标的入口（issue #290 / ADR-0036）', () => {
   it('来源列渲染：同步标的显示「同步」，手动标的显示「手动」标记', async () => {
-    baseInvoke({
-      list_instruments: () =>
-        Promise.resolve({
-          items: [
-            ...mockInstruments,
-            makeInstrument({ id: 'inst-3', symbol: '稳稳地幸福', type: 'other', name: '稳稳地幸福', market: 'unknown', source: 'manual' }),
-          ],
-          total: 3,
-        }),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        list_instruments: () =>
+          Promise.resolve({
+            items: [
+              ...mockInstruments,
+              makeInstrument({ id: 'inst-3', symbol: '稳稳地幸福', type: 'other', name: '稳稳地幸福', market: 'unknown', source: 'manual' }),
+            ],
+            total: 3,
+          }),      },
     })
     const wrapper = mountBrowser()
     await flushPromises()
@@ -591,8 +609,11 @@ describe('InstrumentBrowser 来源列与新建标的入口（issue #290 / ADR-00
   })
 
   it('创建成功：页面级回执 + 列表重拉（回到第 1 页）', async () => {
-    baseInvoke({
-      create_instrument: () => Promise.resolve('inst-new'),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        create_instrument: () => Promise.resolve('inst-new'),      },
     })
     const wrapper = mountBrowser()
     await flushPromises()
@@ -627,8 +648,11 @@ describe('InstrumentBrowser 自建标的删除（issue #292 / ADR-0036）', () =
   }
 
   function listWith(...items: Instrument[]) {
-    baseInvoke({
-      list_instruments: () => Promise.resolve({ items, total: items.length }),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        list_instruments: () => Promise.resolve({ items, total: items.length }),      },
     })
   }
 
@@ -668,9 +692,12 @@ describe('InstrumentBrowser 自建标的删除（issue #292 / ADR-0036）', () =
   })
 
   it('确认后调用 delete_instrument，列表原地重拉并显示成功回执', async () => {
-    baseInvoke({
-      list_instruments: () => Promise.resolve({ items: [manualRow()], total: 1 }),
-      delete_instrument: () => Promise.resolve(),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        list_instruments: () => Promise.resolve({ items: [manualRow()], total: 1 }),
+        delete_instrument: () => Promise.resolve(),      },
     })
     const wrapper = mountBrowser()
     await flushPromises()
@@ -687,13 +714,16 @@ describe('InstrumentBrowser 自建标的删除（issue #292 / ADR-0036）', () =
   })
 
   it('删除失败（如已产生买卖流水）：显示后端中文错误，不重拉列表', async () => {
-    baseInvoke({
-      list_instruments: () => Promise.resolve({ items: [manualRow()], total: 1 }),
-      delete_instrument: () =>
-        Promise.reject({
-          kind: 'Invalid',
-          message: '该标的已有买卖流水，无法删除：可先删除相关交易后再试',
-        }),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        list_instruments: () => Promise.resolve({ items: [manualRow()], total: 1 }),
+        delete_instrument: () =>
+          Promise.reject({
+            kind: 'Invalid',
+            message: '该标的已有买卖流水，无法删除：可先删除相关交易后再试',
+          }),      },
     })
     const wrapper = mountBrowser()
     await flushPromises()
@@ -725,8 +755,11 @@ describe('InstrumentBrowser 行内录价入口（issue #291 / ADR-0036）', () =
 
   it('录价入口只对同步覆盖不到的标的开放：股票与 6 位代码基金无入口，自建标的与名称充代码基金行有入口', async () => {
     const rows = rowsForQuoteGating()
-    baseInvoke({
-      list_instruments: () => Promise.resolve({ items: rows, total: rows.length }),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        list_instruments: () => Promise.resolve({ items: rows, total: rows.length }),      },
     })
     const wrapper = mountBrowser()
     await flushPromises()
@@ -740,8 +773,11 @@ describe('InstrumentBrowser 行内录价入口（issue #291 / ADR-0036）', () =
 
   it('点击行内「录价」打开报价弹窗，弹窗内展示标的代码', async () => {
     const rows = [rowsForQuoteGating()[2]]
-    baseInvoke({
-      list_instruments: () => Promise.resolve({ items: rows, total: rows.length }),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        list_instruments: () => Promise.resolve({ items: rows, total: rows.length }),      },
     })
     const wrapper = mountBrowser()
     await flushPromises()
@@ -751,9 +787,12 @@ describe('InstrumentBrowser 行内录价入口（issue #291 / ADR-0036）', () =
   })
 
   it('录价成功：页面级回执 + 列表零手动重拉（刷新由价格失效信号驱动）', async () => {
-    baseInvoke({
-      record_manual_price: () =>
-        Promise.resolve({ history_written: true, current_price_written: true }),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        record_manual_price: () =>
+          Promise.resolve({ history_written: true, current_price_written: true }),      },
     })
     const wrapper = mountBrowser()
     await flushPromises()

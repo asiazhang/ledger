@@ -1,12 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { wireInvokeSeam } from './helpers/invoke-mock'
 import { defineComponent, watch } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import { useTransactionFilter, UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
 import type { UseTransactionFilterReturn } from '@/composables/useTransactionFilter'
 import { useReferenceStore } from '@/stores/reference'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Account, Category, Merchant, TransactionListFilter } from '@/types'
 
 
@@ -51,12 +50,13 @@ const urlCategories: Category[] = [
 beforeEach(() => {
   // Reference Data store 用真实动作（createTestingPinia stubActions:false，ADR-0030 决策 7）：
   // 模块内部消费 store（#234），就绪补判走真实 status 时序，数据由 invoke mock 提供。
-  mockInvoke.mockReset()
   // URL 下钻用参考数据（issue #725 共享助手）：只覆写本模块行使的三张表
-  stubReferenceInvoke({
-    list_accounts: urlAccounts,
-    list_categories: urlCategories,
-    list_merchants: urlMerchants,
+  wireInvokeSeam({
+    overrides: {
+      list_accounts: urlAccounts,
+      list_categories: urlCategories,
+      list_merchants: urlMerchants,
+    },
   })
 })
 
@@ -991,7 +991,7 @@ function gateReference(gatedCmd: 'list_accounts' | 'list_merchants' | 'list_cate
             : urlCategories,
       )
   })
-  stubReferenceInvoke({ [gatedCmd]: () => pending })
+  wireInvokeSeam({ overrides: { [gatedCmd]: () => pending } })
   return release
 }
 

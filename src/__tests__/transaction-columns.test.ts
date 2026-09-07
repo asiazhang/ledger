@@ -1,5 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
-import { createPinia, setActivePinia } from 'pinia'
+import { describe, expect, it } from 'vitest'
 import type { DataTableColumn } from 'naive-ui'
 import type { VNode } from 'vue'
 import {
@@ -42,10 +41,6 @@ function amountStyleOf(row: Transaction): string {
 }
 
 describe('buildTransactionColumns 金额单元格语义着色', () => {
-  beforeEach(() => {
-    setActivePinia(createPinia())
-  })
-
   it('暗色主题（默认）：逐类型呈现语义色暗色变体', () => {
     const app = useAppStore()
     app.setTheme('dark')

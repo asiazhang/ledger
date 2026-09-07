@@ -1,12 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
 
 import StartupFailureScreen from '@/components/StartupFailureScreen.vue'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
 import { open } from '@tauri-apps/plugin-dialog'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 
 // 文件选择与重启单点 mock（先例 useBackup.test.ts；restartAppShortly 内含
 // 800ms 延时，测试断言调用而非计时）。
@@ -20,19 +18,9 @@ vi.mock('@/utils/restart', () => ({ restartAppShortly: () => restartAppShortly()
 const mockOpen = vi.mocked(open)
 
 
-/** mock-invoke 桩：失败恢复屏只消费启动命令面（fail-loud：其余命令一律拒绝）。 */
-function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
-  stubReferenceInvoke({
-    list_insurers: [],
-    ...overrides,
-  })
-}
-
 beforeEach(() => {
-  mockInvoke.mockReset()
   mockOpen.mockReset()
   restartAppShortly.mockClear()
-  setActivePinia(createPinia())
   // 每个用例从「未探测」起步（模块级单例状态复位）。
   const gate = useEncryptionGate()
   gate.locked.value = null
@@ -50,11 +38,12 @@ async function waitModal() {
   await flushPromises()
 }
 
-/** 以「启动已失败」现场挂载失败恢复屏（模拟 probe 返回 failed 后的状态）。 */
+/** 以「启动已失败」现场挂载失败恢复屏（模拟 probe 返回 failed 后的状态）。
+ *  失败恢复屏只消费启动命令面（fail-loud：未布线命令由接缝一律拒绝）。 */
 async function mountFailedScreen(
-  overrides: Record<string, (args?: any) => unknown> = {},
+  overrides: Record<string, (args?: Record<string, unknown>) => unknown> = {},
 ) {
-  stubInvoke(overrides)
+  wireInvokeSeam({ overrides })
   const gate = useEncryptionGate()
   gate.bootFailed.value = true
   const wrapper = mount(StartupFailureScreen, {
@@ -66,14 +55,19 @@ async function mountFailedScreen(
 }
 
 /** 备份恢复通道（issue #602）的命令面桩：文件选择返回指定备份，其余可覆写。 */
-function stubRestoreChannel(backupPath: string, overrides: Record<string, (args?: any) => unknown> = {}) {
+function stubRestoreChannel(
+  backupPath: string,
+  overrides: Record<string, (args?: Record<string, unknown>) => unknown> = {},
+) {
   mockOpen.mockResolvedValue(backupPath)
-  return stubInvoke({
-    get_backup_meta: () => Promise.resolve({ kind: 'manual', encrypted: false }),
-    get_encryption_status: () => Promise.resolve({ locked: false, file_encrypted: false }),
-    restore_backup: () =>
-      Promise.resolve({ schema_version: 42, restored_at: '2026-09-06T00:00:00Z' }),
-    ...overrides,
+  wireInvokeSeam({
+    overrides: {
+      get_backup_meta: () => Promise.resolve({ kind: 'manual', encrypted: false }),
+      get_encryption_status: () => Promise.resolve({ locked: false, file_encrypted: false }),
+      restore_backup: () =>
+        Promise.resolve({ schema_version: 42, restored_at: '2026-09-06T00:00:00Z' }),
+      ...overrides,
+    },
   })
 }
 
@@ -149,9 +143,11 @@ describe('StartupFailureScreen.vue（启动失败恢复屏·issue #601）', () =
   })
 
   it('探测返回 failed：门状态翻转，失败恢复屏应由 App 挂载', async () => {
-    stubInvoke({
-      get_boot_status: () =>
-        Promise.resolve({ phase: 'failed', error_code: 'boot.db-unreadable' }),
+    wireInvokeSeam({
+      overrides: {
+        get_boot_status: () =>
+          Promise.resolve({ phase: 'failed', error_code: 'boot.db-unreadable' }),
+      },
     })
     const gate = useEncryptionGate()
     await gate.probe()
@@ -162,8 +158,10 @@ describe('StartupFailureScreen.vue（启动失败恢复屏·issue #601）', () =
   })
 
   it('探测返回 ready：明文库正常进入主界面（明文日常启动零改动）', async () => {
-    stubInvoke({
-      get_boot_status: () => Promise.resolve({ phase: 'ready', error_code: null }),
+    wireInvokeSeam({
+      overrides: {
+        get_boot_status: () => Promise.resolve({ phase: 'ready', error_code: null }),
+      },
     })
     const gate = useEncryptionGate()
     await gate.probe()
@@ -173,8 +171,10 @@ describe('StartupFailureScreen.vue（启动失败恢复屏·issue #601）', () =
   })
 
   it('探测返回 locked：密文库进入解锁屏路径（#570 既有行为零改动）', async () => {
-    stubInvoke({
-      get_boot_status: () => Promise.resolve({ phase: 'locked', error_code: null }),
+    wireInvokeSeam({
+      overrides: {
+        get_boot_status: () => Promise.resolve({ phase: 'locked', error_code: null }),
+      },
     })
     const gate = useEncryptionGate()
     await gate.probe()
@@ -199,7 +199,9 @@ describe('StartupFailureScreen.vue（备份恢复通道·issue #602）', () => {
   }
 
   /** 以「启动已失败 + 备份恢复通道」现场挂载。 */
-  async function mountWithRestore(overrides: Record<string, (args?: any) => unknown> = {}) {
+  async function mountWithRestore(
+    overrides: Record<string, (args?: Record<string, unknown>) => unknown> = {},
+  ) {
     stubRestoreChannel('/tmp/plain.db.zip', overrides)
     const gate = useEncryptionGate()
     gate.bootFailed.value = true

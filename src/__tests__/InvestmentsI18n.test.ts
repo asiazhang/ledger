@@ -1,15 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { mount, enableAutoUnmount, flushPromises } from '@vue/test-utils'
+import { wireInvokeSeam } from './helpers/invoke-mock'
+import { mount, flushPromises } from '@vue/test-utils'
 import { h, nextTick } from 'vue'
 import { NDialogProvider } from 'naive-ui'
-import { setActivePinia, createPinia } from 'pinia'
-import { listen } from '@tauri-apps/api/event'
-import { useReferenceStore } from '@/stores/reference'
 import { applyLocale } from '@/i18n'
 import InvestmentsView from '@/views/InvestmentsView.vue'
 import InvestmentForm from '@/components/InvestmentForm.vue'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 
 // 走势图用共享桩组件替代（同 InvestmentsView.test.ts）
 vi.mock('vue-chartjs', async () => {
@@ -17,39 +13,28 @@ vi.mock('vue-chartjs', async () => {
   return { Line: LineChartStub }
 })
 
-const mockListen = vi.mocked(listen)
+/** 投资域三命令的空数据契约快照（英文渲染不消费具体数据）。 */
+const EMPTY_INVESTMENT_DEFAULTS = {
+  list_instruments: { items: [], total: 0 },
+  list_holdings: [],
+  portfolio_value_trend: { currency_code: 'CNY', points: [] },
+  realized_pnl_summary: {
+    total_realized_pnl_cents: 0,
+    by_year: [],
+    by_account: [],
+    by_instrument: [],
+    details: [],
+  },
+}
 
 // 英文渲染冒烟（issue #350）：切 en-US 后投资域文案走 en 资源；
 // 用例末尾还原 zh-CN，避免污染同进程其他测试（i18n 模块级单例）。
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  mockListen.mockReset()
-  mockListen.mockResolvedValue(() => {})
-  stubReferenceInvoke({
-    list_accounts: [],
-    list_categories: [],
-    list_insurers: [],
-    list_merchants: [],
-    list_instruments: { items: [], total: 0 },
-    list_holdings: [],
-    portfolio_value_trend: { currency_code: 'CNY', points: [] },
-    realized_pnl_summary: {
-      total_realized_pnl_cents: 0,
-      by_year: [],
-      by_account: [],
-      by_instrument: [],
-      details: [],
-    },
-  })
-  localStorage.clear()
-  const store = useReferenceStore()
-  await store.refresh()
+  // 参考 store 预载走接缝 opt-in 参数（五个 list 命令由桩层规范夹具兑底）。
+  await wireInvokeSeam({ defaults: EMPTY_INVESTMENT_DEFAULTS, refreshReferenceStores: true }).ready
 })
 
-enableAutoUnmount(afterEach)
 afterEach(async () => {
-  document.body.innerHTML = ''
   await applyLocale('zh-CN')
 })
 

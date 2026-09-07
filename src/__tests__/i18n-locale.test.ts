@@ -19,7 +19,6 @@ async function freshI18n() {
 }
 
 beforeEach(() => {
-  localStorage.clear()
   stubNavigatorLanguage('zh-CN')
 })
 

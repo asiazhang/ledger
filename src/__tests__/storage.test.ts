@@ -1,10 +1,6 @@
 // storage 工具测试：JSON 序列化 + 静默容错（loadLocal / saveLocal / removeLocal）。
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { loadLocal, saveLocal, removeLocal } from '@/utils/storage'
-
-beforeEach(() => {
-  localStorage.clear()
-})
 
 describe('loadLocal / saveLocal', () => {
   it('saveLocal JSON 序列化写入，loadLocal 读回', () => {

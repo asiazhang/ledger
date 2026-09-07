@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { NSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import CategoryForm from '@/components/CategoryForm.vue'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Account, Category, Transaction } from '@/types'
 
 
@@ -29,14 +28,13 @@ const mockCategories: Category[] = [
 
 describe('CategoryForm.vue', () => {
   beforeEach(async () => {
-    setActivePinia(createPinia())
-    mockInvoke.mockReset()
-    stubReferenceInvoke({
-      list_accounts: mockAccounts,
-      list_categories: mockCategories,
-      list_insurers: [],
-      list_merchants: [],
-      list_policies: [],
+    // 参考命令本场景需自定义值（overrides 优先于参考兑底）；保单选项经 list_policies 自定义空表
+    wireInvokeSeam({
+      overrides: {
+        list_accounts: mockAccounts,
+        list_categories: mockCategories,
+        list_policies: [],
+      },
     })
     // Pre-load store so components have data
     const store = useReferenceStore()
@@ -93,10 +91,7 @@ describe('CategoryForm.vue', () => {
 
   it('设置 valid 表单数据后提交会调用 create_transaction', async () => {
     mockInvoke.mockClear()
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_policies') return Promise.resolve([])
-      return Promise.resolve('new-id')
-    })
+    wireInvokeSeam({ defaults: { list_policies: [], list_policy_stats: [] } })
     const wrapper = mount(CategoryForm, {
       props: { kind: 'expense', submitLabel: '记支出' },
     })
@@ -250,9 +245,8 @@ describe('CategoryForm.vue', () => {
 
     it('创建成功后表单不留潜伏红态（清空金额但初始为空不红，ADR-0058 决策 2）', async () => {
       mockInvoke.mockClear()
-      mockInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'create_transaction') return Promise.resolve('new-id')
-        return Promise.resolve([])
+      wireInvokeSeam({
+        defaults: { list_policies: [], list_policy_stats: [], create_transaction: 'new-id' },
       })
       const wrapper = mount(CategoryForm, {
         props: { kind: 'expense', submitLabel: '记支出' },

@@ -1,42 +1,30 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
-import { setActivePinia, createPinia } from 'pinia'
 import { useReferenceStore } from '@/stores/reference'
 import { useRealizedPnl } from '@/composables/useRealizedPnl'
 import { registerToastSink } from '@/composables/useLoadable'
 import type { RealizedPnlSummary } from '@/types'
 import {
-  invokeHandler,
   makeFakeSink,
   makeInstrument,
   makePnlSummary,
   mockAccounts,
-  mockCurrencies,
   resetToastSink,
 } from './factories'
 
 
 const mockSummary = makePnlSummary()
 
-/** 默认 invoke mock：参考数据 + 已实现盈亏汇总 + 标的搜索 */
-function baseInvoke(extra?: Record<string, unknown>) {
-  mockInvoke.mockImplementation(
-    invokeHandler(
-      {
-        list_currencies: mockCurrencies,
-        list_accounts: mockAccounts,
-        list_categories: [],
-        list_merchants: [],
-        list_insurers: [],
-        realized_pnl_summary: mockSummary,
-        list_instruments: { items: [makeInstrument({ id: 'inst-1' })], total: 1 },
-      },
-      extra,
-    ),
-  )
+/** 默认 invoke 布线：已实现盈亏汇总 + 标的搜索契约快照（参考字典命令走接缝内建兑底） */
+const BASE_DEFAULTS = {
+  realized_pnl_summary: mockSummary,
+  list_instruments: { items: [makeInstrument({ id: 'inst-1' })], total: 1 },
 }
+
+/** 参考命令本场景需自定义值（overrides 优先于参考兑底）：账户选项断言消费「证券账户A」 */
+const REFERENCE_OVERRIDES = { list_accounts: mockAccounts }
 
 /** 宿主组件：模拟盈亏页在 setup 内使用 composable（onMounted 自动首刷时序留在薄壳内） */
 const Host = defineComponent({
@@ -47,9 +35,7 @@ const Host = defineComponent({
 })
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  baseInvoke()
+  wireInvokeSeam({ defaults: BASE_DEFAULTS, overrides: REFERENCE_OVERRIDES })
   // 每用例复位为 no-op，模拟「注册前」默认态，防模块级 sink 状态串扰
   resetToastSink()
   const store = useReferenceStore()
@@ -76,16 +62,20 @@ describe('useRealizedPnl 已实现盈亏数据层', () => {
   it('竞态：后发覆盖先发，迟到前发结果不覆写 summary 终态', async () => {
     let releaseFirst!: (summary: RealizedPnlSummary) => void
     let calls = 0
-    baseInvoke({
-      realized_pnl_summary: () => {
-        calls += 1
-        if (calls === 1) {
-          // 先发慢请求：手动放行，制造「后发已终态、先发迟到」的交错
-          return new Promise<RealizedPnlSummary>((resolve) => {
-            releaseFirst = resolve
-          })
-        }
-        return Promise.resolve(makePnlSummary({ total_realized_pnl_cents: 777 }))
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...REFERENCE_OVERRIDES,
+        realized_pnl_summary: () => {
+          calls += 1
+          if (calls === 1) {
+            // 先发慢请求：手动放行，制造「后发已终态、先发迟到」的交错
+            return new Promise<RealizedPnlSummary>((resolve) => {
+              releaseFirst = resolve
+            })
+          }
+          return Promise.resolve(makePnlSummary({ total_realized_pnl_cents: 777 }))
+        },
       },
     })
     const { summary, error, refresh } = useRealizedPnl()
@@ -152,7 +142,13 @@ describe('useRealizedPnl 标的远程搜索（防抖 + 刻意吞错，不收编�
   it('搜索失败刻意吞错：静默清空选项，不置 error、不弹 toast（词汇表「刻意静默不收编」合法形态）', async () => {
     const sink = makeFakeSink()
     registerToastSink(sink)
-    baseInvoke({ list_instruments: () => Promise.reject(new Error('搜索失败')) })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...REFERENCE_OVERRIDES,
+        list_instruments: () => Promise.reject(new Error('搜索失败')),
+      },
+    })
     vi.useFakeTimers()
     const { searchInstruments, error, searchingInstruments } = useRealizedPnl()
     searchInstruments('浦发')
@@ -171,7 +167,13 @@ describe('useRealizedPnl 失败治愈（issue #325 Loadable 薄壳化）', () =>
     await refresh()
     expect(summary.value).toEqual(mockSummary)
 
-    baseInvoke({ realized_pnl_summary: () => Promise.reject(new Error('数据库文件已锁定')) })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...REFERENCE_OVERRIDES,
+        realized_pnl_summary: () => Promise.reject(new Error('数据库文件已锁定')),
+      },
+    })
     await expect(refresh()).resolves.not.toThrow()
     expect(loading.value).toBe(false)
     expect(error.value).toBe('数据库文件已锁定')
@@ -181,8 +183,12 @@ describe('useRealizedPnl 失败治愈（issue #325 Loadable 薄壳化）', () =>
   it('失败弹默认 toast（serde 对象错误归一取 message），成功不弹——error 状态与 toast 双通道共存', async () => {
     const sink = makeFakeSink()
     registerToastSink(sink)
-    baseInvoke({
-      realized_pnl_summary: () => Promise.reject({ kind: 'db', message: '盈亏汇总查询失败' }),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...REFERENCE_OVERRIDES,
+        realized_pnl_summary: () => Promise.reject({ kind: 'db', message: '盈亏汇总查询失败' }),
+      },
     })
     const { error, refresh } = useRealizedPnl()
     await refresh()
@@ -190,26 +196,38 @@ describe('useRealizedPnl 失败治愈（issue #325 Loadable 薄壳化）', () =>
     expect(sink.error).toHaveBeenCalledTimes(1)
     expect(sink.error).toHaveBeenCalledWith('盈亏汇总查询失败')
 
-    baseInvoke()
+    wireInvokeSeam({ defaults: BASE_DEFAULTS, overrides: REFERENCE_OVERRIDES })
     await refresh()
     expect(sink.error).toHaveBeenCalledTimes(1)
   })
 
   it('失败后重试成功：error 清零、summary 重新填充（error 是唯一成败判据）', async () => {
-    baseInvoke({ realized_pnl_summary: () => Promise.reject('首刷失败') })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...REFERENCE_OVERRIDES,
+        realized_pnl_summary: () => Promise.reject('首刷失败'),
+      },
+    })
     const { summary, error, refresh } = useRealizedPnl()
     await refresh()
     expect(error.value).toBe('首刷失败')
     expect(summary.value).toBeNull()
 
-    baseInvoke()
+    wireInvokeSeam({ defaults: BASE_DEFAULTS, overrides: REFERENCE_OVERRIDES })
     await refresh()
     expect(error.value).toBeNull()
     expect(summary.value).toEqual(mockSummary)
   })
 
   it('挂载首刷失败（onMounted 自动首刷）：不再产生未处理 rejection，进入 error 终态并弹 toast', async () => {
-    baseInvoke({ realized_pnl_summary: () => Promise.reject(new Error('首刷失败')) })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...REFERENCE_OVERRIDES,
+        realized_pnl_summary: () => Promise.reject(new Error('首刷失败')),
+      },
+    })
     const sink = makeFakeSink()
     registerToastSink(sink)
     const wrapper = mount(Host)

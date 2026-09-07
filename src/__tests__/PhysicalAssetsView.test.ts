@@ -1,19 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount, DOMWrapper } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { findButtonByTestId, findBodyButtonByTestId } from './helpers/dom'
+import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
 import PhysicalAssetsView from '@/views/PhysicalAssetsView.vue'
 import PhysicalAssetFormModal from '@/components/PhysicalAssetFormModal.vue'
 import { makePhysicalAsset, makePhysicalAssetList } from './factories'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Currency, PhysicalAsset, PhysicalAssetList } from '@/types'
 
-
-// NModal 内容 teleport 到 document.body：测试在 body 中查询/触发（同 PoliciesView 先例）。
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
 
 function bodyQuery(selector: string): HTMLElement | null {
   return document.body.querySelector(selector)
@@ -27,7 +20,7 @@ function formInput(testid: string) {
 
 /** 弹窗内保存按钮（PoliciesView saveButton 先例：诚实化为 HTMLElement 包装器）。 */
 function saveButton() {
-  return new DOMWrapper(bodyQuery('[data-testid="physical-asset-save"]')!)
+  return findBodyButtonByTestId('physical-asset-save')!
 }
 
 const mockCurrencies: Currency[] = [
@@ -41,38 +34,32 @@ function baseAsset(over: Partial<PhysicalAsset> = {}): PhysicalAsset {
 
 let list: PhysicalAssetList
 
-/** beforeEach 主链派发函数：中途重桩处理完自己的领域命令后委托回它 */
-let base: ReturnType<typeof stubReferenceInvoke>
-
-function setupInvoke() {
-  base = stubReferenceInvoke({
-    list_currencies: mockCurrencies,
-    list_physical_assets: () => Promise.resolve(list),
-    create_physical_asset: (args?: Record<string, unknown>) => {
-      const { input } = args as { input: { name: string; initial_valuation_cents: number } }
-      const id = `asset-new-${input.name}`
-      list = makePhysicalAssetList({
-        assets: [
-          baseAsset({
-            id,
-            name: input.name,
-            current_valuation_cents: input.initial_valuation_cents,
-            current_valuation_native_cents: input.initial_valuation_cents,
-          }),
-        ],
-        holding_total_native_cents: input.initial_valuation_cents,
-      })
-      return Promise.resolve(id)
-    },
-    list_insurers: [],
-  })
+/** 视图布线：list_currencies 参考命令本场景需自定义值（CNY+USD，overrides 优先于参考兜底）；
+ *  list_physical_assets/create_physical_asset 为动态行为（可变库 + 建档写库），归 overrides。 */
+const VIEW_OVERRIDES = {
+  list_currencies: mockCurrencies,
+  list_physical_assets: () => Promise.resolve(list),
+  create_physical_asset: (args?: Record<string, unknown>) => {
+    const { input } = args as { input: { name: string; initial_valuation_cents: number } }
+    const id = `asset-new-${input.name}`
+    list = makePhysicalAssetList({
+      assets: [
+        baseAsset({
+          id,
+          name: input.name,
+          current_valuation_cents: input.initial_valuation_cents,
+          current_valuation_native_cents: input.initial_valuation_cents,
+        }),
+      ],
+      holding_total_native_cents: input.initial_valuation_cents,
+    })
+    return Promise.resolve(id)
+  },
 }
 
 beforeEach(() => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
   list = makePhysicalAssetList()
-  setupInvoke()
+  wireInvokeSeam({ overrides: VIEW_OVERRIDES })
 })
 
 describe('PhysicalAssetsView 实物资产视图冒烟（issue #466）', () => {
@@ -98,7 +85,7 @@ describe('PhysicalAssetsView 实物资产视图冒烟（issue #466）', () => {
   it('点「新建资产」打开建档弹窗：表单字段就位', async () => {
     const wrapper = mount(PhysicalAssetsView)
     await flushPromises()
-    await wrapper.find('[data-testid="physical-asset-new"]').trigger('click')
+    await findButtonByTestId(wrapper, 'physical-asset-new').trigger('click')
     await flushPromises()
     const modal = bodyQuery('[data-testid="physical-asset-form-modal"]')
     expect(modal).not.toBeNull()
@@ -109,7 +96,7 @@ describe('PhysicalAssetsView 实物资产视图冒烟（issue #466）', () => {
   it('建档成功：调用 create_physical_asset 后列表与合计刷新、弹窗关闭', async () => {
     const wrapper = mount(PhysicalAssetsView)
     await flushPromises()
-    await wrapper.find('[data-testid="physical-asset-new"]').trigger('click')
+    await findButtonByTestId(wrapper, 'physical-asset-new').trigger('click')
     await flushPromises()
     expect(bodyQuery('[data-testid="physical-asset-form-modal"]')).not.toBeNull()
     await formInput('physical-asset-name').setValue('代步车')
@@ -140,7 +127,7 @@ describe('PhysicalAssetsView 实物资产视图冒烟（issue #466）', () => {
     list = makePhysicalAssetList({ assets: [baseAsset({ name: '代步车' })] })
     const wrapper = mount(PhysicalAssetsView)
     await flushPromises()
-    await wrapper.find('[data-testid="physical-asset-edit"]').trigger('click')
+    await findButtonByTestId(wrapper, 'physical-asset-edit').trigger('click')
     await flushPromises()
     const modal = bodyQuery('[data-testid="physical-asset-form-modal"]')
     expect(modal).not.toBeNull()
@@ -154,7 +141,7 @@ describe('PhysicalAssetsView 实物资产视图冒烟（issue #466）', () => {
     list = makePhysicalAssetList({ assets: [baseAsset()] })
     const wrapper = mount(PhysicalAssetsView)
     await flushPromises()
-    await wrapper.find('[data-testid="physical-asset-update-valuation"]').trigger('click')
+    await findButtonByTestId(wrapper, 'physical-asset-update-valuation').trigger('click')
     await flushPromises()
     expect(bodyQuery('[data-testid="physical-asset-valuation-modal"]')).not.toBeNull()
     expect(bodyQuery('[data-testid="physical-asset-valuation-amount"]')).not.toBeNull()
@@ -163,16 +150,18 @@ describe('PhysicalAssetsView 实物资产视图冒烟（issue #466）', () => {
   it('建档缺名称：客户端校验拦截，不调用 create_physical_asset', async () => {
     const wrapper = mount(PhysicalAssetsView)
     await flushPromises()
-    await wrapper.find('[data-testid="physical-asset-new"]').trigger('click')
+    await findButtonByTestId(wrapper, 'physical-asset-new').trigger('click')
     await flushPromises()
     await formInput('physical-asset-valuation').setValue('80000')
     let createCalls = 0
-    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'create_physical_asset') {
-        createCalls++
-        return Promise.resolve('x')
-      }
-      return base(cmd, args)
+    wireInvokeSeam({
+      overrides: {
+        ...VIEW_OVERRIDES,
+        create_physical_asset: () => {
+          createCalls++
+          return Promise.resolve('x')
+        },
+      },
     })
     await saveButton().trigger('click')
     await flushPromises()
@@ -211,7 +200,7 @@ describe('PhysicalAssetsView 实物资产弹窗族排版统一（issue #635）',
     list = makePhysicalAssetList({ assets: [baseAsset()] })
     const wrapper = mount(PhysicalAssetsView)
     await flushPromises()
-    await wrapper.find(`[data-testid="${testid}"]`).trigger('click')
+    await findButtonByTestId(wrapper, testid).trigger('click')
     await flushPromises()
     return wrapper
   }

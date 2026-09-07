@@ -1,34 +1,14 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect, NInputNumber, NDatePicker, NModal } from 'naive-ui'
-import { setActivePinia, createPinia } from 'pinia'
 import { useReferenceStore } from '@/stores/reference'
 import { todayStr } from '@/utils/date'
 import BudgetView from '@/views/BudgetView.vue'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
+import { messageApi } from './helpers/message-mock'
+import { findButton, findBodyButton } from './helpers/dom'
 import type { BudgetProgress, Category } from '@/types'
 
-
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
-
-// 覆写 setup.ts 的 useMessage mock：改用稳定实例以便断言反馈分支
-// （spec：提交失败→把后端错误清晰呈现给用户）。
-const messageApi = vi.hoisted(() => ({
-  success: vi.fn(),
-  warning: vi.fn(),
-  error: vi.fn(),
-  info: vi.fn(),
-  loading: vi.fn(),
-  destroyAll: vi.fn(),
-}))
-vi.mock('naive-ui', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('naive-ui')>()
-  return { ...actual, useMessage: () => messageApi }
-})
 
 const mockCategories: Category[] = [
   {
@@ -85,6 +65,9 @@ const mockCategories: Category[] = [
   },
 ]
 
+/** 参考命令本场景需自定义值（overrides 优先于参考兜底）：断言消费自定义支出分类集。 */
+const REFERENCE_OVERRIDES = { list_categories: mockCategories }
+
 const mockProgress: BudgetProgress = {
   budget: {
     id: 'budget-1',
@@ -119,24 +102,8 @@ const orphanProgress: BudgetProgress = {
   over_budget: false,
 }
 
-/** 基础 invoke 桩：参考数据 + 空预算进度（返回派发函数供用例内重桩委托）。 */
-function baseStub(progress: BudgetProgress[] = []) {
-  return stubReferenceInvoke({
-    list_accounts: [],
-    list_categories: mockCategories,
-    list_insurers: [],
-    list_merchants: [],
-    budget_progress: progress,
-  })
-}
-
-/** 挂载前注入进度行（编辑弹窗用例用）。 */
-function withProgress(progress: BudgetProgress[]) {
-  baseStub(progress)
-}
-
 /** 挂载视图（参考数据经 store 注入），flush 后就绪。
- *  需自定义 invoke 返回（进度行/override）时，在调用本函数前 mockImplementation。 */
+ *  需自定义 invoke 返回（进度行/override）时，在调用本函数前重新 wireInvokeSeam。 */
 async function mountView() {
   const wrapper = mount(BudgetView)
   await flushPromises()
@@ -151,7 +118,7 @@ function pickCategory(wrapper: Awaited<ReturnType<typeof mountView>>, id: string
 /** 填金额并点击「添加」。 */
 async function submitAmount(wrapper: Awaited<ReturnType<typeof mountView>>, amount: number) {
   wrapper.findComponent(NInputNumber).vm.$emit('update:value', amount)
-  const add = wrapper.findAll('button').find((b) => b.text() === '添加')
+  const add = findButton(wrapper, '添加', { exact: true })
   expect(add, '应存在「添加」按钮').toBeDefined()
   await add!.trigger('click')
   await flushPromises()
@@ -159,30 +126,24 @@ async function submitAmount(wrapper: Awaited<ReturnType<typeof mountView>>, amou
 
 /** 打开编辑弹窗：点击列表首行「编辑」按钮。 */
 async function openEditModal(wrapper: Awaited<ReturnType<typeof mountView>>) {
-  const edit = wrapper.findAll('button').find((b) => b.text() === '编辑')
+  const edit = findButton(wrapper, '编辑', { exact: true })
   expect(edit, '操作列应存在「编辑」按钮').toBeDefined()
   await edit!.trigger('click')
   await flushPromises()
 }
 
 /** 编辑弹窗内容由 NModal teleport 到 body，按钮与文案从 document.body 查询。 */
-function bodyButtons() {
-  return Array.from(document.body.querySelectorAll('button'))
-}
-
 function bodyButton(text: string, label: string) {
-  const btn = bodyButtons().find((b) => b.textContent?.trim() === text)
+  const btn = findBodyButton(text, { exact: true })
   expect(btn, `应存在「${text}」按钮（${label}）`).toBeDefined()
-  return btn!
+  return btn!.element
 }
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  messageApi.success.mockReset()
-  messageApi.warning.mockReset()
-  messageApi.error.mockReset()
-  baseStub()
+  wireInvokeSeam({
+    defaults: { budget_progress: [] },
+    overrides: { ...REFERENCE_OVERRIDES },
+  })
   const store = useReferenceStore()
   await store.refresh()
 })
@@ -232,10 +193,12 @@ describe('BudgetView 预算表单（issue #183）', () => {
   })
 
   it('提交成功清空表单并提示；start_date 仅作记录字段传创建当日（issue #184）', async () => {
-    const base = baseStub()
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'create_budget') return Promise.resolve('budget-1')
-      return base(cmd)
+    wireInvokeSeam({
+      defaults: { budget_progress: [] },
+      overrides: {
+        ...REFERENCE_OVERRIDES,
+        create_budget: () => Promise.resolve('budget-1'),
+      },
     })
     const wrapper = await mountView()
     pickCategory(wrapper, 'cat-1')
@@ -252,12 +215,13 @@ describe('BudgetView 预算表单（issue #183）', () => {
   })
 
   it('查重失败把后端中文错误清晰呈现，提示引导编辑已有预算（issue #184）', async () => {
-    const base = baseStub()
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'create_budget') {
-        return Promise.reject({ kind: 'Invalid', message: '该分类已存在按月预算，可编辑该预算的金额' })
-      }
-      return base(cmd)
+    wireInvokeSeam({
+      defaults: { budget_progress: [] },
+      overrides: {
+        ...REFERENCE_OVERRIDES,
+        create_budget: () =>
+          Promise.reject({ kind: 'Invalid', message: '该分类已存在按月预算，可编辑该预算的金额' }),
+      },
     })
     const wrapper = await mountView()
     pickCategory(wrapper, 'cat-1')
@@ -270,20 +234,20 @@ describe('BudgetView 预算表单（issue #183）', () => {
 
 describe('BudgetView 子分类预算路径名呈现与孤儿回退（issue #356）', () => {
   it('预算执行列表对子分类预算显示「父 > 子」路径名', async () => {
-    withProgress([subProgress])
+    wireInvokeSeam({ defaults: { budget_progress: [subProgress] }, overrides: { ...REFERENCE_OVERRIDES } })
     const wrapper = await mountView()
     expect(wrapper.text()).toContain('餐饮 > 早餐')
   })
 
   it('编辑弹窗分类只读行显示路径名', async () => {
-    withProgress([subProgress])
+    wireInvokeSeam({ defaults: { budget_progress: [subProgress] }, overrides: { ...REFERENCE_OVERRIDES } })
     const wrapper = await mountView()
     await openEditModal(wrapper)
     expect(document.body.textContent).toContain('餐饮 > 早餐')
   })
 
   it('孤儿预算（分类已删）回退显示「未分类」，列表与编辑弹窗均不报错', async () => {
-    withProgress([orphanProgress])
+    wireInvokeSeam({ defaults: { budget_progress: [orphanProgress] }, overrides: { ...REFERENCE_OVERRIDES } })
     const wrapper = await mountView()
     expect(wrapper.text()).toContain('未分类')
     await openEditModal(wrapper)
@@ -291,7 +255,7 @@ describe('BudgetView 子分类预算路径名呈现与孤儿回退（issue #356�
   })
 
   it('路径名呈现与孤儿回退在同一列表共存（父预算 + 子预算 + 孤儿）', async () => {
-    withProgress([mockProgress, subProgress, orphanProgress])
+    wireInvokeSeam({ defaults: { budget_progress: [mockProgress, subProgress, orphanProgress] }, overrides: { ...REFERENCE_OVERRIDES } })
     const wrapper = await mountView()
     expect(wrapper.text()).toContain('餐饮')
     expect(wrapper.text()).toContain('餐饮 > 早餐')
@@ -301,7 +265,7 @@ describe('BudgetView 子分类预算路径名呈现与孤儿回退（issue #356�
 
 describe('BudgetView 编辑预算金额（issue #184）', () => {
   it('列表操作列有「编辑」入口，弹窗仅金额可改（分类/周期只读，无日期选择器）', async () => {
-    withProgress([mockProgress])
+    wireInvokeSeam({ defaults: { budget_progress: [mockProgress] }, overrides: { ...REFERENCE_OVERRIDES } })
     const wrapper = await mountView()
     expect(wrapper.text()).not.toContain('开始日期')
     await openEditModal(wrapper)
@@ -317,10 +281,12 @@ describe('BudgetView 编辑预算金额（issue #184）', () => {
   })
 
   it('弹窗回填当前金额，保存调用 update_budget 并刷新列表', async () => {
-    const base = baseStub([mockProgress])
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'update_budget') return Promise.resolve(null)
-      return base(cmd)
+    wireInvokeSeam({
+      defaults: { budget_progress: [mockProgress] },
+      overrides: {
+        ...REFERENCE_OVERRIDES,
+        update_budget: () => Promise.resolve(null),
+      },
     })
     const wrapper = await mountView()
     await openEditModal(wrapper)
@@ -340,7 +306,7 @@ describe('BudgetView 编辑预算金额（issue #184）', () => {
   })
 
   it('弹窗金额非正前置拦截，不发起后端调用', async () => {
-    withProgress([mockProgress])
+    wireInvokeSeam({ defaults: { budget_progress: [mockProgress] }, overrides: { ...REFERENCE_OVERRIDES } })
     const wrapper = await mountView()
     await openEditModal(wrapper)
     const modal = wrapper.findComponent(NModal)
@@ -352,12 +318,13 @@ describe('BudgetView 编辑预算金额（issue #184）', () => {
   })
 
   it('保存失败把后端错误清晰呈现', async () => {
-    const base = baseStub([mockProgress])
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'update_budget') {
-        return Promise.reject({ kind: 'NotFound', message: '预算不存在: budget-1' })
-      }
-      return base(cmd)
+    wireInvokeSeam({
+      defaults: { budget_progress: [mockProgress] },
+      overrides: {
+        ...REFERENCE_OVERRIDES,
+        update_budget: () =>
+          Promise.reject({ kind: 'NotFound', message: '预算不存在: budget-1' }),
+      },
     })
     const wrapper = await mountView()
     await openEditModal(wrapper)

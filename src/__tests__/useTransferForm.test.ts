@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { setActivePinia, createPinia } from 'pinia'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { useTransferForm } from '@/composables/useTransferForm'
 import type { Account, Transaction } from '@/types'
 
@@ -21,17 +19,14 @@ const mockAccounts: Account[] = [
   },
 ]
 
+/** 参考命令覆写集（beforeEach 与用例级覆写共享）：账户保留本文件夹具，其余三表空集。 */
+const REFERENCE_OVERRIDES = {
+  list_accounts: mockAccounts,
+}
+
 describe('useTransferForm', () => {
   beforeEach(() => {
-    setActivePinia(createPinia())
-    mockInvoke.mockReset()
-    // 参考命令桩统一走共享助手（issue #725）：币种与规范夹具等值流入，账户保留本文件夹具
-    stubReferenceInvoke({
-      list_accounts: mockAccounts,
-      list_categories: [],
-      list_insurers: [],
-      list_merchants: [],
-    })
+    wireInvokeSeam({ overrides: { ...REFERENCE_OVERRIDES } })
   })
 
   it('submit 校验：转出转入账户相同时提示警告（不调用写入命令）', async () => {
@@ -45,7 +40,7 @@ describe('useTransferForm', () => {
   })
 
   it('submit 调用 api.createTransaction（创建路径）', async () => {
-    mockInvoke.mockResolvedValue('new-txn-id')
+    wireInvokeSeam({ overrides: { ...REFERENCE_OVERRIDES, create_transaction: 'new-txn-id' } })
     const form = useTransferForm()
     form.accountId.value = 'acc-1'
     form.toAccountId.value = 'acc-2'
@@ -93,7 +88,7 @@ describe('useTransferForm', () => {
     })
 
     it('submit 走更新命令：同形入参（无幂等键）+ 交易 id，成功触发 onUpdated', async () => {
-      mockInvoke.mockResolvedValue(undefined)
+      wireInvokeSeam({ overrides: { ...REFERENCE_OVERRIDES, update_transaction: undefined } })
       const onCreated = vi.fn()
       const onUpdated = vi.fn()
       const form = useTransferForm({ onCreated, onUpdated, editing: () => editingTx })
@@ -121,7 +116,12 @@ describe('useTransferForm', () => {
     })
 
     it('提交失败不重置已填内容且不触发 onUpdated', async () => {
-      mockInvoke.mockRejectedValue('转账必须指定目标账户')
+      wireInvokeSeam({
+        overrides: {
+          ...REFERENCE_OVERRIDES,
+          update_transaction: () => Promise.reject('转账必须指定目标账户'),
+        },
+      })
       const onUpdated = vi.fn()
       const form = useTransferForm({ onUpdated, editing: () => editingTx })
       form.toAccountId.value = null

@@ -1,11 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { captureListenHandlers, mockListen, type CapturedListener } from './helpers/listen-mock'
+import { wireInvokeSeam } from './helpers/invoke-mock'
+import { captureListenHandlers, type CapturedListener } from './helpers/listen-mock'
 import { flushPromises } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
 import { usePoliciesStore } from '@/stores/policies'
 import { makePolicy, makePolicyStats } from './factories'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Policy, PolicyInput, PolicyStats } from '@/types'
 
 function basePolicy(over: Partial<Policy> = {}): Policy {
@@ -31,18 +29,16 @@ const createInput: PolicyInput = {
 let handlers: CapturedListener[]
 
 beforeEach(() => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  mockListen.mockReset()
   handlers = captureListenHandlers()
 })
 
 describe('usePoliciesStore', () => {
   it('首次访问自动加载（self-init），加载后 status=ready、version=1', async () => {
-    stubReferenceInvoke({
-      list_policies: [basePolicy()],
-      list_policy_stats: [baseStats()],
-      list_insurers: [],
+    wireInvokeSeam({
+      overrides: {
+        list_policies: [basePolicy()],
+        list_policy_stats: [baseStats()],
+      },
     })
     const store = usePoliciesStore()
     await flushPromises()
@@ -53,10 +49,11 @@ describe('usePoliciesStore', () => {
   })
 
   it('加载失败时 status=error，不抛出（self-init 静默）', async () => {
-    stubReferenceInvoke({
-      list_policies: () => Promise.reject(new Error('boom')),
-      list_policy_stats: [],
-      list_insurers: [],
+    wireInvokeSeam({
+      overrides: {
+        list_policies: () => Promise.reject(new Error('boom')),
+        list_policy_stats: [],
+      },
     })
     const store = usePoliciesStore()
     await flushPromises()
@@ -69,14 +66,17 @@ describe('usePoliciesStore', () => {
     const fresh = [basePolicy(), basePolicy({ id: 'policy-2', policy_number: 'P2026-002' })]
     let resolveSecond: (items: Policy[]) => void = () => {}
     let listCalls = 0
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_policy_stats') return Promise.resolve([baseStats()])
-      if (cmd !== 'list_policies') return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-      listCalls++
-      if (listCalls === 1) return Promise.resolve(initial)
-      return new Promise<Policy[]>((resolve) => {
-        resolveSecond = resolve
-      })
+    wireInvokeSeam({
+      defaults: { list_policy_stats: [baseStats()] },
+      overrides: {
+        list_policies: () => {
+          listCalls++
+          if (listCalls === 1) return Promise.resolve(initial)
+          return new Promise<Policy[]>((resolve) => {
+            resolveSecond = resolve
+          })
+        },
+      },
     })
     const store = usePoliciesStore()
     await flushPromises()
@@ -94,17 +94,18 @@ describe('usePoliciesStore', () => {
 
   it('create 成功后立即重拉并返回 id', async () => {
     let listCalls = 0
-    stubReferenceInvoke({
-      list_policy_stats: [],
-      list_policies: () => {
-        listCalls++
-        return listCalls > 1 ? [basePolicy({ id: 'new-1', ...createInput })] : []
+    wireInvokeSeam({
+      overrides: {
+        list_policy_stats: [],
+        list_policies: () => {
+          listCalls++
+          return listCalls > 1 ? [basePolicy({ id: 'new-1', ...createInput })] : []
+        },
+        create_policy: (args) => {
+          expect(args).toMatchObject({ input: createInput })
+          return 'new-1'
+        },
       },
-      create_policy: (args) => {
-        expect(args).toMatchObject({ input: createInput })
-        return 'new-1'
-      },
-      list_insurers: [],
     })
     const store = usePoliciesStore()
     await flushPromises()
@@ -116,20 +117,21 @@ describe('usePoliciesStore', () => {
 
   it('update / remove 成功后立即重拉', async () => {
     const current = [basePolicy()]
-    stubReferenceInvoke({
-      list_policy_stats: [],
-      list_policies: () => current.filter((p) => !p.is_deleted),
-      update_policy: (args) => {
-        const { id, input } = args as { id: string; input: PolicyInput }
-        expect(id).toBe('policy-1')
-        current[0] = { ...current[0], ...input, version: 2 }
+    wireInvokeSeam({
+      overrides: {
+        list_policy_stats: [],
+        list_policies: () => current.filter((p) => !p.is_deleted),
+        update_policy: (args) => {
+          const { id, input } = args as { id: string; input: PolicyInput }
+          expect(id).toBe('policy-1')
+          current[0] = { ...current[0], ...input, version: 2 }
+        },
+        delete_policy: (args) => {
+          const { id } = args as { id: string }
+          current[0] = { ...current[0], is_deleted: true }
+          expect(id).toBe('policy-1')
+        },
       },
-      delete_policy: (args) => {
-        const { id } = args as { id: string }
-        current[0] = { ...current[0], is_deleted: true }
-        expect(id).toBe('policy-1')
-      },
-      list_insurers: [],
     })
     const store = usePoliciesStore()
     await flushPromises()
@@ -144,10 +146,11 @@ describe('usePoliciesStore', () => {
     const stats = [
       baseStats({ policy_id: 'policy-1', total_paid_native_cents: 600_000, next_charge_date: '2027-01-01' }),
     ]
-    stubReferenceInvoke({
-      list_policies: [basePolicy()],
-      list_policy_stats: stats,
-      list_insurers: [],
+    wireInvokeSeam({
+      overrides: {
+        list_policies: [basePolicy()],
+        list_policy_stats: stats,
+      },
     })
     const store = usePoliciesStore()
     await flushPromises()
@@ -158,10 +161,11 @@ describe('usePoliciesStore', () => {
   })
 
   it('统计拉取失败与列表失败同语义：status=error（整体失败，不部分更新）', async () => {
-    stubReferenceInvoke({
-      list_policies: [basePolicy()],
-      list_policy_stats: () => Promise.reject(new Error('stats boom')),
-      list_insurers: [],
+    wireInvokeSeam({
+      overrides: {
+        list_policies: [basePolicy()],
+        list_policy_stats: () => Promise.reject(new Error('stats boom')),
+      },
     })
     const store = usePoliciesStore()
     await flushPromises()
@@ -171,11 +175,12 @@ describe('usePoliciesStore', () => {
   })
 
   it('create 失败向上抛（调用方展示错误，弹窗不关）', async () => {
-    stubReferenceInvoke({
-      list_policies: [],
-      list_policy_stats: [],
-      create_policy: () => Promise.reject(new Error('保单号不能为空')),
-      list_insurers: [],
+    wireInvokeSeam({
+      overrides: {
+        list_policies: [],
+        list_policy_stats: [],
+        create_policy: () => Promise.reject(new Error('保单号不能为空')),
+      },
     })
     const store = usePoliciesStore()
     await flushPromises()

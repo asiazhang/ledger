@@ -1,9 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
 import { useReferenceStore } from '@/stores/reference'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import RefundForm from '@/components/RefundForm.vue'
 import type { Transaction } from '@/types'
 
@@ -33,12 +31,10 @@ const fixedTx: Transaction = {
 
 describe('RefundForm.vue', () => {
   beforeEach(async () => {
-    setActivePinia(createPinia())
-    mockInvoke.mockReset()
-    // 参考命令桩统一走共享助手（issue #725）：币种/账户/分类与规范夹具等值流入
-    stubReferenceInvoke({
-      list_insurers: [],
-      list_merchants: [],
+    // 参考命令桩统一走接缝（issue #725）：币种/账户/分类与规范夹具等值流入
+    wireInvokeSeam({
+      overrides: {
+      },
     })
     // Pre-load store so components have data
     const store = useReferenceStore()
@@ -158,8 +154,8 @@ describe('RefundForm.vue', () => {
     })
 
     it('创建成功后表单不留潜伏红态（清空金额但初始为空不红，ADR-0058 决策 2）', async () => {
-      // 重桩：提交成功走 create_transaction，参考命令经共享助手回归规范夹具（issue #725）
-      stubReferenceInvoke({ create_transaction: 'refund-id' })
+      // 重桩：提交成功走 create_transaction，参考命令经接缝回归规范夹具（issue #725）
+      wireInvokeSeam({ overrides: { create_transaction: 'refund-id' } })
       const wrapper = mount(RefundForm, { props: { fixedTarget: fixedTx } })
       // 行内模式金额预填 30：先清空（未失焦不红），再制造一次保存尝试（空值兜底
       // 红态、静默中止）与失焦（时机标志置位），最后填合法值提交

@@ -32,9 +32,10 @@ export interface FindInputOptions {
   type?: string
 }
 
-/** wrapper 范围内按文本找按钮（既有 `findAll('button')` + 过滤形态的收口）。 */
+/** wrapper 范围内按文本找按钮（既有 `findAll('button')` + 过滤形态的收口；
+ *  接受 VueWrapper 或行/卡片级 DOMWrapper 作用域）。 */
 export function findButton(
-  wrapper: VueWrapper,
+  wrapper: VueWrapper | DOMWrapper<Element>,
   text: string,
   options: FindByTextOptions = {},
 ): DOMWrapper<HTMLButtonElement> | undefined {

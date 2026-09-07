@@ -1,41 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { setActivePinia, createPinia } from 'pinia'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { messageCalls } from './helpers/message-mock'
 import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { todayStr } from '@/utils/date'
 import type { Account, Category, Currency, Merchant } from '@/types'
 
-// 提示捕获：提交时序编排（submitCreate）的成功/失败提示是接缝接口行为的一部分。
-// setup.ts 的全局 useMessage mock 每次调用返回新对象，无法跨调用断言；
-// 此处以共享记录器覆盖（不渲染 naive-ui 组件，其余导出保留原样）。
-const messageCalls: Array<{ method: string; text: string }> = []
-vi.mock('naive-ui', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('naive-ui')>()
-  const record =
-    (method: string) =>
-    (...args: unknown[]) =>
-      messageCalls.push({ method, text: String(args[0]) })
-  return {
-    ...actual,
-    useMessage: () => ({
-      success: record('success'),
-      warning: record('warning'),
-      error: record('error'),
-      info: record('info'),
-      loading: record('loading'),
-      destroyAll: () => {},
-    }),
-  }
-})
-
 
 const mockCurrencies: Currency[] = [
   { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
 ]
-
 const mockAccounts: Account[] = [
   {
     id: 'acc-1',
@@ -79,19 +54,20 @@ const mockMerchants: Merchant[] = [
   },
 ]
 
-function mockBaseCommands(merchants: Merchant[] = mockMerchants) {
-  stubReferenceInvoke({
-    list_currencies: mockCurrencies,
-    list_accounts: mockAccounts,
-    list_categories: mockCategories,
-    list_merchants: merchants,
-    list_insurers: [],
-    create_scheduled_transaction: 'new-plan-id',
-  })
+/**
+ * 基础布线表（overrides 优先于接缝参考兑底）：分类/商户为自定义夹具——商户解析与
+ * 选项断言消费「订阅服务」「视频平台」；账户单行走账户选项断言；创建命令固定返回新 id。
+ * 币种夹具与规范夹具一致，保司无断言消费，均走内建兑底。
+ */
+const BASE_OVERRIDES = {
+  list_accounts: mockAccounts,
+  list_categories: mockCategories,
+  list_merchants: mockMerchants,
+  create_scheduled_transaction: 'new-plan-id',
 }
 
 function lastMessage(method: string): string {
-  const found = [...messageCalls].reverse().find((c) => c.method === method)
+  const found = [...messageCalls()].reverse().find((c) => c.method === method)
   expect(found, `应有一次 ${method} 提示`).toBeDefined()
   return found!.text
 }
@@ -105,10 +81,7 @@ async function resolvedMerchant(merchantValue: string | null): Promise<string | 
 }
 
 beforeEach(() => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  mockBaseCommands()
-  messageCalls.length = 0
+  wireInvokeSeam({ overrides: BASE_OVERRIDES })
 })
 
 describe('useScheduledPlanForm 商户解析（输入即建 + 重名兜底，ADR-0041）', () => {
@@ -137,13 +110,14 @@ describe('useScheduledPlanForm 商户解析（输入即建 + 重名兜底，ADR-
   })
 
   it('输入新名字（未命中）：保存即建商户并返回新 id', async () => {
-    stubReferenceInvoke({
-      create_merchant: 'mch-new',
-      list_merchants: mockMerchants,
-      list_insurers: [],
-      list_currencies: mockCurrencies,
-      list_accounts: mockAccounts,
-      list_categories: mockCategories,
+    wireInvokeSeam({
+      overrides: {
+        create_merchant: 'mch-new',
+        list_merchants: mockMerchants,
+        list_currencies: mockCurrencies,
+        list_accounts: mockAccounts,
+        list_categories: mockCategories,
+      },
     })
     const id = await resolvedMerchant('盒马')
     expect(mockInvoke.mock.calls.find(([cmd]) => cmd === 'create_merchant')).toEqual([
@@ -155,42 +129,44 @@ describe('useScheduledPlanForm 商户解析（输入即建 + 重名兜底，ADR-
 
   it('即建撞重名（store 陈旧竞态）：强制重拉后按名复用已有商户，不报错', async () => {
     let stale = true
-    stubReferenceInvoke({
-      create_merchant: () => Promise.reject(new Error('参数错误: 商户已存在: 盒马')),
-      list_merchants: () => {
-        const rows: Merchant[] = stale
-          ? mockMerchants
-          : [
-              ...mockMerchants,
-              {
-                id: 'mch-exist',
-                name: '盒马',
-                updated_at: '2026-01-01T00:00:00Z',
-                version: 1,
-                device_id: 'test',
-                is_deleted: false,
-              },
-            ]
-        stale = false
-        return rows
+    wireInvokeSeam({
+      overrides: {
+        create_merchant: () => Promise.reject(new Error('参数错误: 商户已存在: 盒马')),
+        list_merchants: () => {
+          const rows: Merchant[] = stale
+            ? mockMerchants
+            : [
+                ...mockMerchants,
+                {
+                  id: 'mch-exist',
+                  name: '盒马',
+                  updated_at: '2026-01-01T00:00:00Z',
+                  version: 1,
+                  device_id: 'test',
+                  is_deleted: false,
+                },
+              ]
+          stale = false
+          return rows
+        },
+        list_currencies: mockCurrencies,
+        list_accounts: mockAccounts,
+        list_categories: mockCategories,
       },
-      list_currencies: mockCurrencies,
-      list_accounts: mockAccounts,
-      list_categories: mockCategories,
-      list_insurers: [],
     })
     const id = await resolvedMerchant('盒马')
     expect(id).toBe('mch-exist')
   })
 
   it('重名兜底后重拉仍无此名：原 create 错误上抛', async () => {
-    stubReferenceInvoke({
-      create_merchant: () => Promise.reject(new Error('商户已存在')),
-      list_merchants: mockMerchants,
-      list_insurers: [],
-      list_currencies: mockCurrencies,
-      list_accounts: mockAccounts,
-      list_categories: mockCategories,
+    wireInvokeSeam({
+      overrides: {
+        create_merchant: () => Promise.reject(new Error('商户已存在')),
+        list_merchants: mockMerchants,
+        list_currencies: mockCurrencies,
+        list_accounts: mockAccounts,
+        list_categories: mockCategories,
+      },
     })
     await expect(resolvedMerchant('盒马')).rejects.toThrow('商户已存在')
   })
@@ -198,18 +174,19 @@ describe('useScheduledPlanForm 商户解析（输入即建 + 重名兜底，ADR-
   it('重名兜底中重拉失败：仍上抛原 create 错误', async () => {
     await useReferenceStore().refresh() // 首拉成功（陈旧字典）
     let pulled = false
-    stubReferenceInvoke({
-      create_merchant: () => Promise.reject(new Error('商户已存在')),
-      list_merchants: () => {
-        // 首拉已成功，之后的兜底重拉一律失败：吞掉重拉错误，保留原错误
-        if (pulled) return Promise.reject(new Error('重拉失败'))
-        pulled = true
-        return mockMerchants
+    wireInvokeSeam({
+      overrides: {
+        create_merchant: () => Promise.reject(new Error('商户已存在')),
+        list_merchants: () => {
+          // 首拉已成功，之后的兜底重拉一律失败：吞掉重拉错误，保留原错误
+          if (pulled) return Promise.reject(new Error('重拉失败'))
+          pulled = true
+          return mockMerchants
+        },
+        list_currencies: mockCurrencies,
+        list_accounts: mockAccounts,
+        list_categories: mockCategories,
       },
-      list_currencies: mockCurrencies,
-      list_accounts: mockAccounts,
-      list_categories: mockCategories,
-      list_insurers: [],
     })
     const form = useScheduledPlanForm()
     form.merchantRef.value = '盒马'
@@ -222,7 +199,11 @@ describe('useScheduledPlanForm 商户解析（输入即建 + 重名兜底，ADR-
       merchantValue: string | null,
       editingMerchantId: string | null,
     ): Promise<string | null> {
-      mockBaseCommands([])
+      wireInvokeSeam({
+        overrides: {
+          ...BASE_OVERRIDES,
+        },
+      })
       await useReferenceStore().refresh()
       const form = useScheduledPlanForm()
       form.merchantRef.value = merchantValue
@@ -236,13 +217,13 @@ describe('useScheduledPlanForm 商户解析（输入即建 + 重名兜底，ADR-
     })
 
     it('同值但不传编辑中商户 id：不再原样携带，走按名解析（兜底以参数为准）', async () => {
-      stubReferenceInvoke({
-        create_merchant: 'mch-new',
-        list_insurers: [],
-        list_merchants: [],
-        list_currencies: mockCurrencies,
-        list_accounts: mockAccounts,
-        list_categories: mockCategories,
+      wireInvokeSeam({
+        overrides: {
+          create_merchant: 'mch-new',
+          list_currencies: mockCurrencies,
+          list_accounts: mockAccounts,
+          list_categories: mockCategories,
+        },
       })
       await useReferenceStore().refresh()
       const form = useScheduledPlanForm()
@@ -406,7 +387,7 @@ describe('useScheduledPlanForm submitCreate 提交时序编排（spec #520）', 
   it('转账形态一次性（总期数=1）与有限期数（总期数=3）：创建参数带 total_occurrences', async () => {
     for (const n of [1, 3]) {
       mockInvoke.mockReset()
-      mockBaseCommands()
+      wireInvokeSeam({ overrides: BASE_OVERRIDES })
       await useReferenceStore().refresh()
       const form = useScheduledPlanForm()
       form.accountId.value = 'acc-1'
@@ -530,10 +511,11 @@ describe('useScheduledPlanForm submitCreate 提交时序编排（spec #520）', 
   it('失败：错误提示（逐字维持 createFailed 文案）、不重置草稿、不触发提交成功后回调', async () => {
     const onSubmitted = vi.fn()
     const form = await makeTransferForm(onSubmitted)
-    stubReferenceInvoke({
-      create_scheduled_transaction: () =>
-        Promise.reject(new Error('转出账户与转入账户币种不一致，定时转账不支持跨币种')),
-      list_insurers: [],
+    wireInvokeSeam({
+      overrides: {
+        create_scheduled_transaction: () =>
+          Promise.reject(new Error('转出账户与转入账户币种不一致，定时转账不支持跨币种')),
+      },
     })
     await form.submitCreate({
       kind: 'scheduled_transfer',

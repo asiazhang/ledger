@@ -1,21 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { NSelect } from 'naive-ui'
-import { setActivePinia, createPinia } from 'pinia'
 import { useReferenceStore } from '@/stores/reference'
 import CreateInstrumentModal from '@/components/investments/CreateInstrumentModal.vue'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Currency } from '@/types'
-
-// NModal 内容 teleport 到 document.body，须在每个测试后卸载 wrapper 并清空 body，
-// 否则上一个测试遗留的弹窗 DOM 会污染下一个测试（先例：InstrumentBrowser.test.ts）。
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
-
 
 const mockCurrencies: Currency[] = [
   { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
@@ -23,17 +13,8 @@ const mockCurrencies: Currency[] = [
 ]
 
 /** 基础派发：beforeEach 安装；中途重桩/一次性桩处理完自己的领域命令后委托回它 */
-let base: ReturnType<typeof stubReferenceInvoke>
-
-function baseInvoke() {
-  base = stubReferenceInvoke({
-    list_currencies: mockCurrencies,
-    list_accounts: [],
-    list_categories: [],
-    list_insurers: [],
-    list_merchants: [],
-  })
-}
+/** 弹窗布线：list_currencies 参考命令本场景需自定义值（CNY+USD，overrides 优先于参考兜底）。 */
+const BASE_OVERRIDES = { list_currencies: mockCurrencies }
 
 async function mountModal(onCreated?: (msg: string) => void) {
   const wrapper = mount(CreateInstrumentModal, {
@@ -61,10 +42,7 @@ function submitButton(): HTMLButtonElement {
 }
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  baseInvoke()
-  localStorage.clear()
+  wireInvokeSeam({ overrides: BASE_OVERRIDES })
   await useReferenceStore().refresh()
 })
 
@@ -118,9 +96,7 @@ describe('CreateInstrumentModal 新建标的弹窗（issue #290 / ADR-0036）', 
     await setInput('create-instrument-symbol', ' 稳稳地幸福 ')
     await setInput('create-instrument-name', ' 稳稳地幸福 ')
     expect(submitButton().disabled).toBe(false)
-    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
-      cmd === 'create_instrument' ? Promise.resolve('inst-new') : base(cmd, args),
-    )
+    wireInvokeSeam({ overrides: { ...BASE_OVERRIDES, create_instrument: Promise.resolve('inst-new') } })
     await bodyQuery('[data-testid="submit-create-instrument"]')!.dispatchEvent(
       new MouseEvent('click', { bubbles: true }),
     )
@@ -146,14 +122,15 @@ describe('CreateInstrumentModal 新建标的弹窗（issue #290 / ADR-0036）', 
     typeSelect.vm.$emit('update:value', 'stock')
     await setInput('create-instrument-symbol', '600519')
     await setInput('create-instrument-name', '贵州茅台')
-    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
-      cmd === 'create_instrument'
-        ? Promise.reject({
-            kind: 'Invalid',
-            message: '股票类标的不支持手动创建：股票字典由「全量同步」从东方财富维护',
-          })
-        : base(cmd, args),
-    )
+    wireInvokeSeam({
+      overrides: {
+        ...BASE_OVERRIDES,
+        create_instrument: Promise.reject({
+          kind: 'Invalid',
+          message: '股票类标的不支持手动创建：股票字典由「全量同步」从东方财富维护',
+        }),
+      },
+    })
     await bodyQuery('[data-testid="submit-create-instrument"]')!.dispatchEvent(
       new MouseEvent('click', { bubbles: true }),
     )

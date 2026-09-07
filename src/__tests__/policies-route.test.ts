@@ -1,6 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { setActivePinia, createPinia } from 'pinia'
 import { routes } from '@/router'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
 
@@ -12,11 +11,6 @@ import { useSidebarOrderStore } from '@/stores/sidebar-order'
 function makeRouter() {
   return createRouter({ history: createMemoryHistory(), routes })
 }
-
-beforeEach(() => {
-  setActivePinia(createPinia())
-  localStorage.clear()
-})
 
 describe('/policies 路由守卫（issue #706 focus 透传）', () => {
   it('收纳态（出厂种子）：/policies?focus=x 重定向 assets-more 且 focus 透传', async () => {

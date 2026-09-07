@@ -1,8 +1,6 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
-import { listen } from '@tauri-apps/api/event'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { mount, flushPromises } from '@vue/test-utils'
 import { useReferenceStore } from '@/stores/reference'
 import PortfolioTrendPanel from '@/components/investments/PortfolioTrendPanel.vue'
 import { makeInstrument } from './factories'
@@ -10,15 +8,12 @@ import {
   firePricesChanged,
   resetPricesChangedHandler,
 } from './prices-changed-mock'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { PortfolioValueTrend } from '@/types'
 
 vi.mock('vue-chartjs', async () => {
   const { LineChartStub } = await import('./line-chart-stub')
   return { Line: LineChartStub }
 })
-
-const mockListen = vi.mocked(listen)
 
 // 价格失效信号订阅基座 mock（issue #238 / ADR-0031 决策 3）：捕获订阅回调，
 // 测试中手动触发模拟后端 emit；捕获/触发辅助收在 prices-changed-mock 共享。
@@ -27,11 +22,6 @@ vi.mock('@/composables/usePricesChanged', async () => {
   return {
     usePricesChanged: (cb: () => void) => capturePricesChangedHandler(cb),
   }
-})
-
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
 })
 
 const portfolioTrend: PortfolioValueTrend = {
@@ -58,26 +48,18 @@ const fundInstrument = makeInstrument({
   market: 'unknown',
 })
 
-function baseInvoke(extra?: Record<string, unknown>) {
-  stubReferenceInvoke({
-    list_accounts: [],
-    list_categories: [],
-    list_insurers: [],
-    list_merchants: [],
-    list_holdings: [],
-    list_instruments: { items: [stockInstrument, fundInstrument], total: 2 },
-    portfolio_value_trend: () => Promise.resolve(portfolioTrend),
-    ...extra,
-  })
+/** 面板挂载即拉的领域命令契约快照：持仓空集 + 两标的字典。 */
+const PANEL_DEFAULTS = {
+  list_holdings: [],
+  list_instruments: { items: [stockInstrument, fundInstrument], total: 2 },
 }
 
+/** 组合走势默认应答（函数型，保持既有形态）。 */
+const portfolioTrendResponse = () => Promise.resolve(portfolioTrend)
+
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  mockListen.mockReset()
-  mockListen.mockResolvedValue(() => {})
   resetPricesChangedHandler()
-  baseInvoke()
+  wireInvokeSeam({ defaults: PANEL_DEFAULTS, overrides: { portfolio_value_trend: portfolioTrendResponse } })
   const store = useReferenceStore()
   await store.refresh()
 })
@@ -126,7 +108,10 @@ describe('PortfolioTrendPanel 走势面板', () => {
   })
 
   it('组合走势无数据 → 引导文案提示去「同步持仓价格」', async () => {
-    baseInvoke({ portfolio_value_trend: { currency_code: 'CNY', points: [] } })
+    wireInvokeSeam({
+      defaults: PANEL_DEFAULTS,
+      overrides: { portfolio_value_trend: { currency_code: 'CNY', points: [] } },
+    })
     const wrapper = mount(PortfolioTrendPanel)
     await flushPromises()
     expect(wrapper.text()).toContain('暂无历史价格数据')
@@ -135,12 +120,16 @@ describe('PortfolioTrendPanel 走势面板', () => {
   })
 
   it('标的列表带入单标的：以标的 id 查询并标注计价币种', async () => {
-    baseInvoke({
-      instrument_price_trend: {
-        instrument_id: 'inst-1',
-        points: [
-          { date: '2026-06-05', price_cents: 1500, currency_code: 'CNY' },
-        ],
+    wireInvokeSeam({
+      defaults: PANEL_DEFAULTS,
+      overrides: {
+        portfolio_value_trend: portfolioTrendResponse,
+        instrument_price_trend: {
+          instrument_id: 'inst-1',
+          points: [
+            { date: '2026-06-05', price_cents: 1500, currency_code: 'CNY' },
+          ],
+        },
       },
     })
     const wrapper = mount(PortfolioTrendPanel, {

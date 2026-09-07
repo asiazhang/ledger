@@ -1,15 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
-import { setActivePinia, createPinia } from 'pinia'
 import { NButton, NDatePicker } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import SearchView from '@/views/SearchView.vue'
 import AccountLink from '@/components/AccountLink.vue'
 import { applyLocale } from '@/i18n'
 import { resetOverlays } from '@/composables/overlayRegistry'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { findButton } from './helpers/dom'
 import type { Account, Category, Merchant, Transaction } from '@/types'
 
 
@@ -218,54 +217,52 @@ async function step(wrapper: VueWrapper, key: 'prev' | 'next') {
 const periodLabel = (wrapper: VueWrapper) => wrapper.find('.period-label-text').text()
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
   pushMock.mockReset()
-  // 参考命令桩统一走共享助手（issue #725）：币种与规范夹具等值流入，账户/分类/商户
-  // 保留本文件夹具（交易夹具按 acc-cash/cat-food/mer-jd 解析名称）
-  stubReferenceInvoke({
-    list_accounts: mockAccounts,
-    list_categories: mockCategories,
-    list_insurers: [],
-    list_merchants: mockMerchants,
-    // 数据期间边界（QuickTimeRange 钳制输入）
-    report_date_range: MOCK_RANGE,
-    search_transactions: (args?: Record<string, unknown>) => {
-      const {
-        query,
-        page = 1,
-        pageSize = 20,
-        amountMinCents = null,
-        amountMaxCents = null,
-        dateFrom = null,
-        dateTo = null,
-      } = (args ?? {}) as {
-        query?: string
-        page?: number
-        pageSize?: number
-        amountMinCents?: number | null
-        amountMaxCents?: number | null
-        dateFrom?: string | null
-        dateTo?: string | null
-      }
-      // 与后端一致：仅筛选（无关键字）也正常执行
-      const all = mockTransactions.filter((t) => {
-        if (query && !(t.note ?? '').includes(query)) return false
-        if (amountMinCents != null && t.amount_cents < amountMinCents) return false
-        if (amountMaxCents != null && t.amount_cents > amountMaxCents) return false
-        // 日期为 YYYY-MM-DD 字符串，字典序即时间序（含边界）
-        if (dateFrom && t.date < dateFrom) return false
-        if (dateTo && t.date > dateTo) return false
-        return true
-      })
-      const start = (page - 1) * pageSize
-      return Promise.resolve({
-        items: all.slice(start, start + pageSize),
-        total: all.length,
-      })
+  // 参考命令统一走接缝：币种走规范夹具兑底，账户/分类/商户保留本文件夹具
+  //（交易夹具按 acc-cash/cat-food/mer-jd 解析名称）
+  wireInvokeSeam({
+    overrides: {
+      list_accounts: mockAccounts,
+      list_categories: mockCategories,
+      list_merchants: mockMerchants,
+      // 数据期间边界（QuickTimeRange 钳制输入）
+      report_date_range: MOCK_RANGE,
+      search_transactions: (args?: Record<string, unknown>) => {
+        const {
+          query,
+          page = 1,
+          pageSize = 20,
+          amountMinCents = null,
+          amountMaxCents = null,
+          dateFrom = null,
+          dateTo = null,
+        } = (args ?? {}) as {
+          query?: string
+          page?: number
+          pageSize?: number
+          amountMinCents?: number | null
+          amountMaxCents?: number | null
+          dateFrom?: string | null
+          dateTo?: string | null
+        }
+        // 与后端一致：仅筛选（无关键字）也正常执行
+        const all = mockTransactions.filter((t) => {
+          if (query && !(t.note ?? '').includes(query)) return false
+          if (amountMinCents != null && t.amount_cents < amountMinCents) return false
+          if (amountMaxCents != null && t.amount_cents > amountMaxCents) return false
+          // 日期为 YYYY-MM-DD 字符串，字典序即时间序（含边界）
+          if (dateFrom && t.date < dateFrom) return false
+          if (dateTo && t.date > dateTo) return false
+          return true
+        })
+        const start = (page - 1) * pageSize
+        return Promise.resolve({
+          items: all.slice(start, start + pageSize),
+          total: all.length,
+        })
+      },
     },
   })
-  localStorage.clear()
   const store = useReferenceStore()
   await store.refresh()
 })
@@ -489,7 +486,7 @@ describe('SearchView.vue', () => {
       expect(wrapper.text()).toContain('已应用筛选')
       expect(wrapper.text()).toContain('最低 ¥15.5')
 
-      const clearBtn = wrapper.findAll('button').find((b) => b.text() === '清除筛选')
+      const clearBtn = findButton(wrapper, '清除筛选', { exact: true })
       expect(clearBtn).toBeTruthy()
       await clearBtn!.trigger('click')
       await applyFilters()
@@ -623,7 +620,7 @@ describe('SearchView.vue', () => {
       expect(wrapper.text()).toContain('起始 2026-02-01')
       expect(wrapper.text()).toContain('结束 2026-02-28')
 
-      const clearBtn = wrapper.findAll('button').find((b) => b.text() === '清除筛选')
+      const clearBtn = findButton(wrapper, '清除筛选', { exact: true })
       expect(clearBtn).toBeTruthy()
       await clearBtn!.trigger('click')
       await applyFilters()

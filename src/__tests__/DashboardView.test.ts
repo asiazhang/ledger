@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
+import { findButton } from './helpers/dom'
 import { nextTick } from 'vue'
-import { setActivePinia, createPinia } from 'pinia'
 import { applyLocale } from '@/i18n'
 import DashboardView from '@/views/DashboardView.vue'
 import TransactionForm from '@/components/TransactionForm.vue'
@@ -11,7 +11,6 @@ import { useReferenceStore } from '@/stores/reference'
 import { useItemsStore } from '@/stores/items'
 import { NProgress } from 'naive-ui'
 import {
-  invokeHandler,
   makeAccount,
   makeFinancialFreedom,
   makeHolding,
@@ -65,43 +64,33 @@ function setCurrentMonthSummary(summary: Omit<MonthlySummary, 'month'>) {
 /** 在用物品每天成本合计（issue #122）用例可按需覆写 */
 const mockItemDailyTotal = { native_currency: 'CNY', per_day_cents: 12345, item_count: 3 }
 
-/** 默认 invoke mock：参考数据 + 持仓 + 持仓标的字典 + 本月收支/预算（extra 优先覆盖） */
-function baseInvoke(extra?: Record<string, unknown>) {
-  mockInvoke.mockImplementation(
-    invokeHandler(
-      {
-        list_currencies: mockCurrencies,
-        list_accounts: mockAccounts,
-        list_categories: [],
-        list_merchants: [],
-        list_insurers: [],
-        list_holdings: mockHoldings,
-        list_instruments: { items: mockInstruments, total: mockInstruments.length },
-        dashboard_overview: mockOverview,
-        // 物品使用成本卡（issue #122）挂载时会创建物品 store（self-init 拉列表）
-        list_items: [],
-        item_daily_total: mockItemDailyTotal,
-        // 财务自由度卡（issue #344）默认自由度 7.5%，用例可覆写
-        financial_freedom: makeFinancialFreedom(),
-      },
-      {
-        // 函数型 handler 实时读取可变变量，#144 用例挂载前直接改写生效
-        monthly_summary: () => mockMonthlySummary,
-        budget_progress: () => mockBudgetProgress,
-        ...extra,
-      },
-    ),
-  )
+/** 默认布线 defaults 表：持仓 + 持仓标的字典 + 总览 + 物品/自由度（参考五命令走接缝规范兜底） */
+const BASE_DEFAULTS = {
+  list_holdings: mockHoldings,
+  list_instruments: { items: mockInstruments, total: mockInstruments.length },
+  dashboard_overview: mockOverview,
+  // 物品使用成本卡（issue #122）挂载时会创建物品 store（self-init 拉列表）
+  list_items: [],
+  item_daily_total: mockItemDailyTotal,
+  // 财务自由度卡（issue #344）默认自由度 7.5%，用例可覆写
+  financial_freedom: makeFinancialFreedom(),
+}
+
+/** 每测基线 overrides 表：函数型 handler 实时读取可变变量（#144 用例挂载前改写生效）；
+ * list_currencies 参考命令本场景需自定义值（CNY+USD，overrides 优先于参考兜底）；
+ * list_categories 参考命令本场景需自定义空集（分类不在参考表时预算行回退载荷名） */
+const BASE_OVERRIDES = {
+  list_currencies: mockCurrencies,
+  list_categories: [],
+  monthly_summary: () => mockMonthlySummary,
+  budget_progress: () => mockBudgetProgress,
 }
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
   pushMock.mockClear()
   mockMonthlySummary = []
   mockBudgetProgress = []
-  baseInvoke()
-  localStorage.clear()
+  wireInvokeSeam({ defaults: BASE_DEFAULTS, overrides: BASE_OVERRIDES })
   const store = useReferenceStore()
   await store.refresh()
 })
@@ -156,8 +145,12 @@ describe('DashboardView 净资产总览卡（issue #143）', () => {
   })
 
   it('命令报错（如缺汇率）时卡片显示提示文案而非空数字或崩溃', async () => {
-    baseInvoke({
-      dashboard_overview: () => Promise.reject(new Error('缺少 USD→CNY 汇率，无法折算')),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        dashboard_overview: () => Promise.reject(new Error('缺少 USD→CNY 汇率，无法折算')),
+      },
     })
     const wrapper = await mountView()
     const card = wrapper.find('[data-testid="net-worth-card"]')
@@ -192,9 +185,13 @@ describe('DashboardView 投资概览卡（issue #145）', () => {
       market_value_cents: 3000,
       unrealized_pnl_cents: -500,
     })
-    baseInvoke({
-      list_holdings: [mockHoldings[0], usdHolding],
-      list_accounts: [mockAccounts[0], usdAccount],
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        list_holdings: [mockHoldings[0], usdHolding],
+        list_accounts: [mockAccounts[0], usdAccount],
+      },
     })
     const wrapper = await mountView()
     const card = wrapper.find('[data-testid="investment-overview-card"]')
@@ -204,7 +201,10 @@ describe('DashboardView 投资概览卡（issue #145）', () => {
   })
 
   it('无任何持仓时卡片保留，空态占位而非统计数字', async () => {
-    baseInvoke({ list_holdings: [], list_instruments: { items: [], total: 0 } })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { ...BASE_OVERRIDES, list_holdings: [], list_instruments: { items: [], total: 0 } },
+    })
     const wrapper = await mountView()
     const card = wrapper.find('[data-testid="investment-overview-card"]')
     expect(card.exists()).toBe(true)
@@ -214,9 +214,13 @@ describe('DashboardView 投资概览卡（issue #145）', () => {
   })
 
   it('有持仓但全部无行情时空值分支：合计统计精确降级为「总市值-」', async () => {
-    baseInvoke({
-      list_holdings: [mockHoldings[1]],
-      list_instruments: { items: [mockInstruments[1]], total: 1 },
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        list_holdings: [mockHoldings[1]],
+        list_instruments: { items: [mockInstruments[1]], total: 1 },
+      },
     })
     const wrapper = await mountView()
     const card = wrapper.find('[data-testid="investment-overview-card"]')
@@ -260,7 +264,10 @@ describe('DashboardView 财务自由度卡（issue #344）', () => {
 
   it('阶段标签三档边界：<30% 积累期 / 30–100% 接近自由 / ≥100% 财务自由', async () => {
     const stageOf = async (ratio: number) => {
-      baseInvoke({ financial_freedom: makeFinancialFreedom({ ratio }) })
+      wireInvokeSeam({
+        defaults: BASE_DEFAULTS,
+        overrides: { ...BASE_OVERRIDES, financial_freedom: makeFinancialFreedom({ ratio }) },
+      })
       const wrapper = await mountView()
       return wrapper.find('[data-testid="financial-freedom-stage"]').text()
     }
@@ -271,7 +278,10 @@ describe('DashboardView 财务自由度卡（issue #344）', () => {
   })
 
   it('≥100% 进度条转成功状态；>100% 百分比原文呈现、进度条封顶 100', async () => {
-    baseInvoke({ financial_freedom: makeFinancialFreedom({ ratio: 150 }) })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { ...BASE_OVERRIDES, financial_freedom: makeFinancialFreedom({ ratio: 150 }) },
+    })
     const wrapper = await mountView()
     const card = wrapper.find('[data-testid="financial-freedom-card"]')
     expect(card.find('[data-testid="financial-freedom-ratio"]').text()).toBe('150%')
@@ -281,12 +291,16 @@ describe('DashboardView 财务自由度卡（issue #344）', () => {
   })
 
   it('零分母（未设预算）显示占位引导，点击跳转预算页；不回退实际支出', async () => {
-    baseInvoke({
-      financial_freedom: makeFinancialFreedom({
-        ratio: 0,
-        denominator_cents: 0,
-        coverage_years: 0,
-      }),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        financial_freedom: makeFinancialFreedom({
+          ratio: 0,
+          denominator_cents: 0,
+          coverage_years: 0,
+        }),
+      },
     })
     const wrapper = await mountView()
     const card = wrapper.find('[data-testid="financial-freedom-card"]')
@@ -295,14 +309,20 @@ describe('DashboardView 财务自由度卡（issue #344）', () => {
     expect(card.text()).not.toContain('%')
     expect(card.text()).not.toContain('¥')
     expect(card.findComponent(NProgress).exists()).toBe(false)
-    const btn = card.findAll('button').find((b) => b.text() === '去设置预算')
+    const btn = findButton(card, '去设置预算', { exact: true })
     expect(btn).toBeTruthy()
     await btn!.trigger('click')
     expect(pushMock).toHaveBeenCalledWith({ name: 'budget' })
   })
 
   it('零资产显示 0%（起点清晰可见而非功能消失）', async () => {
-    baseInvoke({ financial_freedom: makeFinancialFreedom({ ratio: 0, numerator_cents: 0 }) })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        financial_freedom: makeFinancialFreedom({ ratio: 0, numerator_cents: 0 }),
+      },
+    })
     const wrapper = await mountView()
     const card = wrapper.find('[data-testid="financial-freedom-card"]')
     expect(card.find('[data-testid="financial-freedom-ratio"]').text()).toBe('0%')
@@ -310,16 +330,20 @@ describe('DashboardView 财务自由度卡（issue #344）', () => {
   })
 
   it('缺汇率时卡内警告提示，可重试恢复', async () => {
-    baseInvoke({
-      financial_freedom: () => Promise.reject(new Error('缺少 USD→CNY 汇率，无法折算')),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        financial_freedom: () => Promise.reject(new Error('缺少 USD→CNY 汇率，无法折算')),
+      },
     })
     const wrapper = await mountView()
     let card = wrapper.find('[data-testid="financial-freedom-card"]')
     expect(card.text()).toContain('缺少 USD→CNY 汇率，无法折算')
     expect(card.text()).not.toContain('%')
 
-    baseInvoke()
-    const retry = card.findAll('button').find((b) => b.text() === '重试')
+    wireInvokeSeam({ defaults: BASE_DEFAULTS, overrides: BASE_OVERRIDES })
+    const retry = findButton(card, '重试', { exact: true })
     expect(retry).toBeTruthy()
     await retry!.trigger('click')
     await flushPromises()
@@ -329,11 +353,6 @@ describe('DashboardView 财务自由度卡（issue #344）', () => {
 })
 
 describe('DashboardView 财务自由度卡计算口径提示（tooltip）', () => {
-  afterEach(() => {
-    // NTooltip 内容 teleport 到 document.body：清防串扰（同 InstrumentBrowser 先例）
-    document.body.innerHTML = ''
-  })
-
   it('标题旁信息图标悬停展示计算口径：公式、分子/分母构成与 3% 提取率', async () => {
     const wrapper = await mountView()
     const card = wrapper.find('[data-testid="financial-freedom-card"]')
@@ -419,7 +438,13 @@ describe('DashboardView 物品使用成本卡（issue #122）', () => {
   })
 
   it('无在用物品时空态占位而非 0 数字', async () => {
-    baseInvoke({ item_daily_total: { native_currency: 'CNY', per_day_cents: 0, item_count: 0 } })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        item_daily_total: { native_currency: 'CNY', per_day_cents: 0, item_count: 0 },
+      },
+    })
     const wrapper = await mountView()
     const card = wrapper.find('[data-testid="item-daily-cost-card"]')
     expect(card.text()).toContain('暂无在用物品')
@@ -427,8 +452,12 @@ describe('DashboardView 物品使用成本卡（issue #122）', () => {
   })
 
   it('聚合命令报错（如缺汇率）时显示提示文案而非空数字', async () => {
-    baseInvoke({
-      item_daily_total: () => Promise.reject(new Error('缺少 JPY→CNY 汇率，无法折算')),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        item_daily_total: () => Promise.reject(new Error('缺少 JPY→CNY 汇率，无法折算')),
+      },
     })
     const wrapper = await mountView()
     const card = wrapper.find('[data-testid="item-daily-cost-card"]')
@@ -439,9 +468,13 @@ describe('DashboardView 物品使用成本卡（issue #122）', () => {
 
   it('物品写入失效（store version 变化）后自动重拉合计', async () => {
     let total = { native_currency: 'CNY', per_day_cents: 10000, item_count: 1 }
-    baseInvoke({
-      item_daily_total: () => Promise.resolve(total),
-      list_items: [],
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        item_daily_total: () => Promise.resolve(total),
+        list_items: [],
+      },
     })
     const wrapper = await mountView()
     expect(wrapper.find('[data-testid="item-daily-cost-card"]').text()).toContain('¥100/天')
@@ -596,12 +629,16 @@ describe('DashboardView 预算进度卡（issue #144）', () => {
         is_deleted: false,
       },
     ]
-    baseInvoke({
-      list_categories: dashCategories,
-      budget_progress: () => [
-        progress(false, 4000, 50000, '早餐', 'cat-1-sub'),
-        progress(false, 1000, 20000, '未分类', 'cat-gone'),
-      ],
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...BASE_OVERRIDES,
+        list_categories: dashCategories,
+        budget_progress: () => [
+          progress(false, 4000, 50000, '早餐', 'cat-1-sub'),
+          progress(false, 1000, 20000, '未分类', 'cat-gone'),
+        ],
+      },
     })
     await useReferenceStore().refresh()
     const wrapper = await mountView()
