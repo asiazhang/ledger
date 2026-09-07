@@ -38,6 +38,10 @@ pub mod sync;
 // 写路径接线源码扫描核对，仅测试可见。
 #[cfg(test)]
 mod signals_cross_check;
+// 统一测试数据库工厂与共享断言库（ADR-0084，issue #751）：建库/种子/对拍断言
+// 单一入口，域测试与外部集成测试共用，仅测试可见。
+#[doc(hidden)]
+pub mod test_support;
 #[doc(hidden)]
 pub mod test_utils;
 pub mod transaction;
