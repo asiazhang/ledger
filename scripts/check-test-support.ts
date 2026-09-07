@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
-// Rust 测试守门（issue #752 / ADR-0084 决策 8），三条规则：
+// Rust 测试守门（issue #752 落地 / #758 收口 / ADR-0084 决策 8），三条规则：
 //
 // 统一测试数据库工厂（src-tauri/src/test_support/，#751 落地）是建库与种子知识的
 // 唯一入口；本守门防回潮——测试代码绕开工厂直连建库、直写种子表、自抄默认时刻，
-// 一律红。白名单起步、覆盖全部存量（「白名单即规格」，ADR-0056 哲学），随按域
-// 迁移票逐组缩减为空（API 集成组已随 #753 清零，叶子域+db+sync 组已随 #754
-// 清零），#758 收口转纯禁令。前端同构先例：
+// 一律红。白名单起步（「白名单即规格」，ADR-0056 哲学）、随按域迁移票逐组清零
+// （API 集成 #753、叶子域+db+sync #754、investment #755、scheduled_transactions
+// #756、transaction #757、backup/内联簿记 #758），#758 收口移除白名单机制转
+// 纯禁令：扫描范围内命中即红，无基线可维护。前端同构先例：
 // check-test-stubs.ts（#725/#726）已验证「深模块收敛 + 文本级守门 + 白名单防回潮」
 // 在本仓有效。
 //
@@ -23,8 +24,8 @@
 // REFERENCE_DEFAULTS 提取命令清单同款，无双源漂移）；登记处提不出任何表名即红。
 // 薄皮豁免按文件名形状：父目录恰为 tests 目录段且文件名为 common.rs /
 // batch_common.rs——域薄皮按准入规则长期保留单域特有种子（ADR-0084 决策 1）。
-// 顶屋 tests/ 下的子目录共享层（tests/api_server/common.rs、tests/e2e/common.rs）
-// 不豁免——它们的种子表 INSERT 与建库命中照常计入/入白名单，可见才可减。
+// 顶屋 tests/ 下的子目录共享层（tests/api_server/common.rs 等）不豁免——文件名
+// common.rs 不构成薄皮（薄皮以父目录恰为 tests 判定），命中照常计入。
 // 业务表（transactions/categories/budgets 等）的 INSERT 不在本守门范围——那是
 // 公开写入口纪律（测试层显式例外逐个登记）的辖域，不是建库/种子工厂的。
 //
@@ -40,6 +41,10 @@
 //   ② 其余产品文件内的 `#[cfg(test)] mod <name> { … }` 内联块（括号配对，词法
 //   跳过字符串与注释）。产品代码本体不扫——产品开库、产品写表、产品默认时刻
 //   均合法，三条规则只辖测试代码。
+// - tests/e2e/** 暂离扫描边界（#758 收口）：BDD 层与工厂分层互斥（CONTEXT-testing
+//   「公开写入口（测试侧）」词条——e2e 经公开写入口造数、不消费种子工厂），其
+//   建库/种子/字面量旁路随 spec #729/#764 以公开入口收敛或登记例外处置；#764
+//   落地时恢复本守门对 tests/e2e 的整目录覆盖（该票验收含与本守门的衔接项）。
 // - 字符串字面量不掩码（SQL 就住在字符串里）；注释（行/块，含嵌套块注释）掩码
 //   为等长空白。裸字符串 "…" 处理转义，r"…" / r#"…"# 等原始字符串按 hash 数配对
 //   终止；'…' 仅按合法 char 字面量吞掉，其余（生命周期 'a、标签 'outer:）跳过
@@ -50,15 +55,13 @@
 // 属性内部含不平衡括号的非常规写法。char 字面量形态枚举之外的怪异转义可能致
 // 词法错位——失衡区段跳过不计（宁漏不误）。
 //
-// 白名单语义（下方 WHITELIST）：每条目 = 一个文件在各规则的允许命中数，注释记
-// 行数作迁移票递减基线。命中数与声明数**必须严格相等**：超出红（违规，收敛到
-// 工厂/薄皮），低于也红（基线过期——迁移票必须同步缩减声明数，白名单即规格）。
-// 条目文件消失或全字段清零即红（清单漂移 fail loud）。
+// 纯禁令语义（#758 收口）：扫描范围内任一命中即红，逐文件逐规则计数输出；无
+// 白名单、无基线——需要旁路的形态先收敛进工厂/薄皮，或按显式例外纪律登记动机
+// （先例：壳层写仪式例外白名单，ADR-0073）后再恢复扫描覆盖。
 //
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/check-test-support.ts`。
-// 默认校验本仓库（应用白名单）；测试可传位置参数指向夹具（夹具不应用白名单，
-// 全部命中按未入白名单报告）：bun scripts/check-test-support.ts [src-tauri-dir]
+// 默认校验本仓库；测试可传位置参数指向夹具：bun scripts/check-test-support.ts [src-tauri-dir]
 // 挂载于 scripts/check.sh 质量门槛序列；包装测试 src/__tests__/check-test-support.test.ts。
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
@@ -67,52 +70,6 @@ import { fileURLToPath } from 'node:url'
 import { pathToFileURL } from 'node:url'
 
 const DEFAULT_SRC_TAURI = join(fileURLToPath(import.meta.url), '..', '..', 'src-tauri')
-
-/** 白名单条目：一个文件在各规则的允许命中数（严格相等，注释记行数作递减基线） */
-export interface GateWhitelistEntry {
-  /** 文件路径，相对 src-tauri，'/' 分隔 */
-  file: string
-  /** 域分组说明（迁移票按组认领） */
-  note: string
-  /** 规则 1（禁直连建库）允许命中数；缺省 = 0 */
-  r1?: number
-  /** 规则 2（禁夹具裸 SQL）允许命中数；缺省 = 0 */
-  r2?: number
-  /** 规则 3（禁默认时刻字面量）允许命中数；缺省 = 0 */
-  r3?: number
-}
-
-/**
- * 白名单起步（issue #752）：现存全部违规按域分组，一组一行、注释记行数。
- * 每张按域迁移票负责把自己那组缩减为空（e2e 与 backup/内联簿记组暂无对应迁移票，
- * 随 e2e 夹具 spec 或对应域票处置）。API 集成层组已随 #753 清零，叶子域+db+sync 组
- * 已随 #754 清零，investment 组已随 #755 清零，scheduled_transactions 组已随
- * #756 清零，transaction 组已随 #757 清零。#758 收口：全表清零转纯禁令。
- */
-export const WHITELIST: readonly GateWhitelistEntry[] = [
-  // ── e2e（夹具统一另立 spec，暂无迁移票）──
-  { file: 'tests/e2e/accounts_steps.rs', note: 'e2e', r2: 2, r3: 1 },
-  { file: 'tests/e2e/backup_steps.rs', note: 'e2e', r1: 3, r2: 1 },
-  { file: 'tests/e2e/common.rs', note: 'e2e', r2: 1, r3: 2 },
-  { file: 'tests/e2e/world.rs', note: 'e2e', r1: 1 },
-  { file: 'tests/e2e/dashboard_steps.rs', note: 'e2e', r2: 1 },
-  { file: 'tests/e2e/data_location_steps.rs', note: 'e2e', r1: 4 },
-  { file: 'tests/e2e/encryption_steps.rs', note: 'e2e', r1: 3, r2: 1, r3: 2 },
-  { file: 'tests/e2e/financial_freedom_steps.rs', note: 'e2e', r2: 1 },
-  { file: 'tests/e2e/fund_trade_steps.rs', note: 'e2e', r2: 1 },
-  { file: 'tests/e2e/instruments_steps.rs', note: 'e2e', r2: 3 },
-  { file: 'tests/e2e/investment_trend_steps.rs', note: 'e2e', r2: 2 },
-  { file: 'tests/e2e/scheduled_steps/occurrence.rs', note: 'e2e', r2: 1 },
-  { file: 'tests/e2e/startup_failure_steps.rs', note: 'e2e', r1: 2, r2: 1, r3: 2 },
-  { file: 'tests/e2e/transactions_query_steps.rs', note: 'e2e', r3: 4 },
-
-  // ── backup 域与壳/基础设施内联 cfg(test)（暂无迁移票）──
-  { file: 'src/backup/auto.rs', note: 'backup/内联簿记', r1: 5 },
-  { file: 'src/backup/tests.rs', note: 'backup/内联簿记', r1: 13, r2: 1, r3: 2 },
-  { file: 'src/logger.rs', note: 'backup/内联簿记', r1: 2 },
-  { file: 'src/settings.rs', note: 'backup/内联簿记', r1: 6 },
-  { file: 'src/write_entry.rs', note: 'backup/内联簿记', r1: 1, r3: 2 },
-]
 
 function fail(message: string): never {
   console.error(`✗ Rust 测试守门：${message}`)
@@ -298,16 +255,12 @@ function main(): void {
 
   const bannedTables = extractSeedTables(join(srcDir, 'test_support', 'seed.rs'))
 
-  // 白名单属本仓规格（路径相对本仓 src-tauri）：仅默认扫描本仓时应用；
-  // 夹具模式（位置参数）不应用——判定机制由包装测试静态导入 judge 覆盖。
-  const whitelist = process.argv[2] ? [] : WHITELIST
   const files = [...walkRustFiles(srcDir), ...(existsSync(testsDir) ? walkRustFiles(testsDir) : [])]
   const { countByFile, hits } = scanFiles(files, srcTauri, bannedTables)
-  const problems = judge(countByFile, hits, whitelist)
-  const whitelistedTotal = whitelist.reduce((s, e) => s + (e.r1 ?? 0) + (e.r2 ?? 0) + (e.r3 ?? 0), 0)
+  const problems = violations(countByFile, hits)
   if (problems.length > 0) {
     console.error(
-      `✗ Rust 测试守门：发现 ${problems.length} 处问题（白名单 ${whitelist.length} 组存量 ${whitelistedTotal} 处；` +
+      `✗ Rust 测试守门：发现 ${problems.length} 处违规（纯禁令，无白名单；` +
         `禁用种子表：${bannedTables.join(' ')}）\n` +
         problems.join('\n') +
         `\n建库/种子/断言唯一入口：src-tauri/src/test_support/（spec #728 / issue #751，ADR-0084）`,
@@ -316,12 +269,12 @@ function main(): void {
   }
 
   console.log(
-    `✅ Rust 测试守门通过（白名单 ${whitelist.length} 组存量 ${whitelistedTotal} 处待迁移；` +
+    `✅ Rust 测试守门通过（纯禁令：白名单机制已随 #758 收口移除；` +
       `禁用种子表 ${bannedTables.length} 张：${bannedTables.join(' ')}）`,
   )
 }
 
-/** 逐文件扫描，返回 (文件×规则) 命中数与全部命中明细（供白名单判定与输出） */
+/** 逐文件扫描，返回 (文件×规则) 命中数与全部命中明细（供纯禁令判定与输出） */
 function scanFiles(
   files: string[],
   srcTauri: string,
@@ -331,6 +284,8 @@ function scanFiles(
   const hits: Array<{ rel: string } & Hit> = []
   for (const file of files.sort()) {
     const rel = relative(srcTauri, file).split('\\').join('/')
+    // tests/e2e/** 暂离扫描边界（#758 收口）：处置归 spec #729/#764，落地时恢复覆盖
+    if (rel.startsWith('tests/e2e/')) continue
     const segments = rel.split('/')
     const underTestSupport = segments[0] === 'src' && segments[1] === 'test_support'
     const source = readFileSync(file, 'utf8')
@@ -365,55 +320,29 @@ function scanFiles(
   return { countByFile, hits }
 }
 
-/** 白名单判定（纯函数，供包装测试静态导入复用）：返回问题清单，空 = 通过。
- *  命中与声明严格相等：超出红（违规，收敛到工厂/薄皮）；低于也红（基线过期——
- *  迁移票必须同步缩减声明数，白名单即规格）；条目文件消失或全字段为零红（漂移）。 */
-export function judge(
+/** 纯禁令判定（#758 收口，白名单机制已移除）：任一命中即违规，返回违规清单，空 = 通过。 */
+function violations(
   countByFile: Map<string, Map<1 | 2 | 3, number>>,
   hits: Array<{ rel: string } & Hit>,
-  whitelist: readonly GateWhitelistEntry[] = WHITELIST,
 ): string[] {
   const problems: string[] = []
-  const declared = new Map(whitelist.map((e) => [e.file, e]))
-
-  // 1) 白名单条目校验：文件存在、至少一个规则计数为正
-  for (const entry of whitelist) {
-    const total = (entry.r1 ?? 0) + (entry.r2 ?? 0) + (entry.r3 ?? 0)
-    if (total === 0) {
-      problems.push(`  白名单条目 ${entry.file} 全字段为零——迁移完成后请整行移除（白名单即规格）`)
-    } else if (!countByFile.has(entry.file)) {
-      problems.push(`  白名单条目 ${entry.file} 已无任何命中——基线过期，请移除条目（${entry.note}）`)
-    }
-  }
-
-  // 2) 逐文件严格相等判定
-  const files = new Set<string>([...countByFile.keys(), ...declared.keys()])
   const RULE_NAMES = { 1: '直连建库', 2: '夹具裸SQL', 3: '默认时刻字面量' } as const
-  for (const file of [...files].sort()) {
-    const entry = declared.get(file)
+  for (const file of [...countByFile.keys()].sort()) {
     for (const rule of [1, 2, 3] as const) {
       const actual = countByFile.get(file)?.get(rule) ?? 0
-      const expected = entry?.[`r${rule}`] ?? 0
-      if (actual > expected) {
-        const lines = hits.filter((h) => h.rel === file && h.rule === rule).map((h) => h.line)
-        problems.push(
-          `  ${file}:${lines.join(':')}\n` +
-            `      规则 ${rule}（${RULE_NAMES[rule]}）命中 ${actual} 处，白名单声明 ${expected} 处` +
-            (expected > 0 ? '——超出基线' : '——未入白名单') +
-            `，收敛到 test_support 工厂/种子或域薄皮（ADR-0084）`,
-        )
-      } else if (actual < expected) {
-        problems.push(
-          `  ${file}  规则 ${rule}（${RULE_NAMES[rule]}）基线过期：声明 ${expected} 处、实际 ${actual} 处——` +
-            `请把白名单该组缩减为 ${actual}（迁移票递减基线）`,
-        )
-      }
+      if (actual === 0) continue
+      const lines = hits.filter((h) => h.rel === file && h.rule === rule).map((h) => h.line)
+      problems.push(
+        `  ${file}:${lines.join(':')}\n` +
+          `      规则 ${rule}（${RULE_NAMES[rule]}）命中 ${actual} 处——纯禁令（白名单已移除），` +
+          `收敛到 test_support 工厂/种子或域薄皮（ADR-0084）`,
+      )
     }
   }
   return problems
 }
 
-// 仅直接运行时执行 main；被测试/其他工具 import 时只取导出的扫描函数与白名单。
+// 仅直接运行时执行 main；包装测试以子进程调用（行为等价判据：只测外部可观察结果）。
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main()
 }

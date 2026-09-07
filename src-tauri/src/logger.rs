@@ -302,9 +302,8 @@ mod tests {
     // ---- 持久化档位读写（spec #611）----
 
     fn migrated_conn() -> rusqlite::Connection {
-        let mut c = crate::db::open_in_memory().expect("打开内存库");
-        crate::db::init_db(&mut c).expect("执行迁移");
-        c
+        // 建库两行序经统一测试工厂承载（spec #728 / issue #758 / ADR-0084 决策 3/7）。
+        crate::test_support::open()
     }
 
     /// 缺 key / 缺表：`persisted_level` 回默认 info（`settings::get` 兑底）。

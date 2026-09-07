@@ -123,6 +123,21 @@ const INFRA_DOMAIN_ALLOWED_EDGES: readonly InfraDomainEdge[] = [
     domain: 'backup',
     reason: 'ADR-0032 连接层统一写入口置脏单点：after_commit 提交点触发置脏 + 到期检查（#246）',
   },
+  {
+    file: 'settings.rs',
+    domain: 'test_support',
+    reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库/取常量（#758 收口），测试专用边、非产品依赖',
+  },
+  {
+    file: 'logger.rs',
+    domain: 'test_support',
+    reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库（#758 收口），测试专用边、非产品依赖',
+  },
+  {
+    file: 'write_entry.rs',
+    domain: 'test_support',
+    reason: 'ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试工厂建库/簿记戳引用 FIXED_NOW（#758 收口），测试专用边、非产品依赖',
+  },
 ]
 
 /** 规则①形态：全局模型模块路径（全局目录已消亡，任何引用即残留） */
