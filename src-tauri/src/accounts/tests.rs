@@ -5,9 +5,8 @@ use crate::error::{AppError, ErrClass};
 use crate::transaction::amount::{Measure, TransactionKind, TransferSide, signed_amount};
 
 fn setup() -> rusqlite::Connection {
-    let mut conn = crate::db::open_in_memory().unwrap();
-    crate::db::init_db(&mut conn).unwrap();
-    conn
+    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）。
+    crate::test_support::open()
 }
 
 fn list_accounts(conn: &rusqlite::Connection) -> Vec<Account> {
@@ -28,23 +27,21 @@ fn insert_account(
     currency: &str,
     initial: i64,
 ) {
-    let now = now_iso();
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0,0)",
-        rusqlite::params![id, name, kind, currency, initial, now, now, 1, device_id()],
-    ).unwrap();
-    // 裸 SQL 绕过 create_account 域钩子，按 V017 迁移回填语义补建缓存行（ADR-0067）。
+    // 工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）；裸种子绕过
+    // create_account 域钩子，按 V017 迁移回填语义补建缓存行（ADR-0067）。
+    crate::test_support::seed_account(conn, id, name, kind, currency, initial);
     crate::accounts::balance::refresh_account_balances(conn, &[id]).unwrap();
 }
 
 fn insert_hidden_account(conn: &rusqlite::Connection, id: &str, name: &str, currency: &str) {
-    let now = now_iso();
+    // 黑洞账户 = 工厂账户种子 + is_hidden 修正（隐藏语义为本域场景输入，
+    // 不入工厂种子）；缓存行补建同 insert_account（ADR-0067）。
+    crate::test_support::seed_account(conn, id, name, "other", currency, 0);
     conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden) \
-         VALUES (?1,?2,'other',?3,0,?4,?5,?6,?7,0,1)",
-        rusqlite::params![id, name, currency, now, now, 1, device_id()],
-    ).unwrap();
+        "UPDATE accounts SET is_hidden=1 WHERE id=?1",
+        rusqlite::params![id],
+    )
+    .unwrap();
     crate::accounts::balance::refresh_account_balances(conn, &[id]).unwrap();
 }
 
@@ -88,12 +85,7 @@ fn list_accounts_empty_initially() {
 fn create_account_and_list() {
     let conn = setup();
     let id = new_uuid();
-    let now = now_iso();
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,'bank','CNY',0,?3,?4,?5,?6,0)",
-        rusqlite::params![id, "测试账户", now, now, 1, device_id()],
-    ).unwrap();
+    insert_account(&conn, &id, "测试账户", "bank", "CNY", 0);
     let accounts = list_accounts(&conn);
     assert!(accounts.iter().any(|a| a.id == id && a.name == "测试账户"));
 }
@@ -102,12 +94,7 @@ fn create_account_and_list() {
 fn delete_account_soft_deletes() {
     let conn = setup();
     let id = new_uuid();
-    let now = now_iso();
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,'cash','CNY',0,?3,?4,?5,?6,0)",
-        rusqlite::params![id, "待删除", now, now, 1, device_id()],
-    ).unwrap();
+    insert_account(&conn, &id, "待删除", "cash", "CNY", 0);
     assert!(list_accounts(&conn).iter().any(|a| a.id == id));
     conn.execute(
         "UPDATE accounts SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
@@ -734,12 +721,9 @@ fn ensure_rate(conn: &rusqlite::Connection, code: &str, rate: f64) {
         rusqlite::params![code],
     )
     .unwrap();
-    conn.execute(
-        "INSERT INTO exchange_rates (id, base_code, quote_code, rate, priced_at, source, updated_at, version, device_id) \
-         VALUES (?1, ?2, 'CNY', ?3, '2026-01-01T00:00:00Z', 'manual', ?4, 1, ?5)",
-        rusqlite::params![new_uuid(), code, rate, now_iso(), device_id()],
-    )
-    .unwrap();
+    // 汇率行：工厂汇率种子（簿记戳内部发放，spec #728 / ADR-0084 决策 5；
+    // 来源列落表默认，被测调整路径只读汇率值）。
+    crate::test_support::seed_exchange_rate(conn, code, "CNY", rate);
 }
 
 #[test]

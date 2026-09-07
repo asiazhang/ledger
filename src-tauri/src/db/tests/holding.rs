@@ -1,38 +1,26 @@
 //! 净值与汇率折算测试：`v_holdings` 跨币种折算、反向汇率兜底、id 唯一性、
 //! 软删除账户过滤，以及非本位币交易折算到 `amount_native_cents` 的语义。
+//!
+//! 建库与账户/标的/汇率种子经统一测试工厂（spec #728 / issue #754 / ADR-0084
+//! 决策 7，原同目录内联重抄副本已删）；交易/批次/持仓/行情行是本域测试的世界
+//! 构造（非工厂种子表），保留显式直写。
 
 use rusqlite::params;
 
-use crate::db::{init_db, open_in_memory};
+use crate::test_support::{seed_account, seed_exchange_rate, seed_instrument};
 
 /// 跨币种持仓：CNY 账户持 USD 标的，市值与成本都应折算到 CNY 后再相减。
 /// 旧实现只折算市值、不折算成本，会把 CNY 市值直接减 USD 成本，结果错误。
 #[test]
 fn cross_currency_holding_pnl() {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
+    let conn = crate::test_support::open();
 
     let account_id = "acc-test-cny-inv";
     let instrument_id = "inst-test-nvda";
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,'美股CNY','investment','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        params![account_id],
-    )
-    .unwrap();
-    conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-          VALUES (?1,'NVDA','stock','NVIDIA','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        params![instrument_id],
-    )
-    .unwrap();
+    seed_account(&conn, account_id, "美股CNY", "investment", "CNY", 0);
+    seed_instrument(&conn, instrument_id, "NVDA", "NVIDIA", "USD", "unknown");
     // USD -> CNY 汇率 7.2
-    conn.execute(
-        "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,source,updated_at,version,device_id) \
-         VALUES (?1,'USD','CNY',7.2,'2026-06-01','manual','2026-06-01T00:00:00Z',1,'test')",
-        params!["er-usd-cny"],
-    )
-    .unwrap();
+    seed_exchange_rate(&conn, "USD", "CNY", 7.2);
 
     let buy_txn_id = "txn-buy-cross";
     conn.execute(
@@ -84,30 +72,21 @@ fn cross_currency_holding_pnl() {
 /// 视图应取倒数折算，市值与盈亏与正向 USD->CNY 等价。
 #[test]
 fn holding_reverse_rate_fallback() {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
+    let conn = crate::test_support::open();
 
     let account_id = "acc-test-rev";
     let instrument_id = "inst-test-rev";
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,'反向','investment','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        params![account_id],
-    )
-    .unwrap();
-    conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-          VALUES (?1,'REV','stock','reverse test','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        params![instrument_id],
-    )
-    .unwrap();
+    seed_account(&conn, account_id, "反向", "investment", "CNY", 0);
+    seed_instrument(
+        &conn,
+        instrument_id,
+        "REV",
+        "reverse test",
+        "USD",
+        "unknown",
+    );
     // 只录反向汇率 CNY->USD = 0.125（即 1 USD = 8 CNY）
-    conn.execute(
-        "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,source,updated_at,version,device_id) \
-         VALUES (?1,'CNY','USD',0.125,'2026-06-01','manual','2026-06-01T00:00:00Z',1,'test')",
-        params!["er-rev"],
-    )
-    .unwrap();
+    seed_exchange_rate(&conn, "CNY", "USD", 0.125);
 
     let buy_txn_id = "txn-buy-rev";
     conn.execute(
@@ -155,23 +134,19 @@ fn holding_reverse_rate_fallback() {
 /// id 纳入 currency_code，避免 account_id-instrument_id 重复 key。
 #[test]
 fn holding_id_unique_across_currencies() {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
+    let conn = crate::test_support::open();
 
     let account_id = "acc-test-id-uniq";
     let instrument_id = "inst-test-multi";
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,'多币种','investment','USD',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        params![account_id],
-    )
-    .unwrap();
-    conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-          VALUES (?1,'MULTI','stock','多币种标的','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        params![instrument_id],
-    )
-    .unwrap();
+    seed_account(&conn, account_id, "多币种", "investment", "USD", 0);
+    seed_instrument(
+        &conn,
+        instrument_id,
+        "MULTI",
+        "多币种标的",
+        "USD",
+        "unknown",
+    );
 
     // 同账户同标的两笔买入，但 lot 币种不同（USD 与 EUR），绕过应用层直接写入。
     conn.execute(
@@ -240,26 +215,22 @@ fn holding_id_unique_across_currencies() {
 /// v_holdings 过滤软删除账户：已删账户的 lot 仍存在于 security_lots，但视图不应返回其持仓行。
 #[test]
 fn holding_excludes_soft_deleted_account() {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
+    let conn = crate::test_support::open();
 
     let active_acc = "acc-soft-active";
     let deleted_acc = "acc-soft-deleted";
     let instrument_id = "inst-soft-test";
     for acc in [active_acc, deleted_acc] {
-        conn.execute(
-            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES (?1,?2,'investment','USD',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-            params![acc, acc],
-        )
-        .unwrap();
+        seed_account(&conn, acc, acc, "investment", "USD", 0);
     }
-    conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-          VALUES (?1,'SOFT','stock','soft-delete test','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        params![instrument_id],
-    )
-    .unwrap();
+    seed_instrument(
+        &conn,
+        instrument_id,
+        "SOFT",
+        "soft-delete test",
+        "USD",
+        "unknown",
+    );
 
     // 两个账户各一笔买入 + lot
     for (acc, txn, lot) in [
@@ -321,23 +292,11 @@ fn holding_excludes_soft_deleted_account() {
 /// 非本位币交易按日期汇率折算到 amount_native_cents。
 #[test]
 fn transaction_currency_conversion() {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
+    let conn = crate::test_support::open();
 
     let account_id = "acc-test-cny";
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,'现金','cash','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        params![account_id],
-    )
-    .unwrap();
-
-    conn.execute(
-        "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,source,updated_at,version,device_id) \
-         VALUES (?1,'USD','CNY',7.2,'2026-01-01','manual','2026-01-01T00:00:00Z',1,'test')",
-        params!["er-01"],
-    )
-    .unwrap();
+    seed_account(&conn, account_id, "现金", "cash", "CNY", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 7.2);
 
     let native = crate::transaction::amount::convert_to_native(&conn, 10000, "USD").unwrap();
     assert_eq!(native, 72000);

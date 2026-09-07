@@ -17,17 +17,16 @@ use crate::sync::orchestrate::{
 };
 use crate::sync::persist::build_existing_instruments;
 
-use super::common::setup_db;
-
 // ---------------------------------------------------------------------------
 // 全量同步中断机制（issue #104）：分页循环每页检查取消标志、提前返回、已落库数据保留、
 // 终态区分完成/中断；SyncState 的运行/取消标志语义。
 // 锁粒度收窄（issue #147）：分页循环经连接访问器落库，拉取/推送进度不持锁。
 // ---------------------------------------------------------------------------
 
-/// 把内存库连接包进真实互斥锁，供分页循环经生产访问器驱动（与 DbState.conn 同构）。
+/// 把内存库连接包进真实互斥锁，供分页循环经生产访问器驱动（与 DbState.conn 同构）；
+/// 建库经统一测试工厂（spec #728 / issue #754 / ADR-0084 决策 7）。
 fn locked_conn() -> (Arc<Mutex<Connection>>, GlobalConn) {
-    let conn = Arc::new(Mutex::new(setup_db()));
+    let conn = Arc::new(Mutex::new(crate::test_support::open()));
     let accessor = GlobalConn(conn.clone());
     (conn, accessor)
 }

@@ -9,9 +9,8 @@ use crate::merchants::{
 use super::model::{Merchant, MerchantInput, MerchantUpdateInput};
 
 fn setup() -> rusqlite::Connection {
-    let mut conn = crate::db::open_in_memory().unwrap();
-    crate::db::init_db(&mut conn).unwrap();
-    conn
+    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）。
+    crate::test_support::open()
 }
 
 fn list_merchants(conn: &rusqlite::Connection) -> Vec<Merchant> {
