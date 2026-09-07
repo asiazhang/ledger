@@ -159,46 +159,123 @@ fn delete_account_returns_not_found_for_already_deleted() {
     );
 }
 
-#[test]
-fn balance_starts_at_initial() {
-    let conn = setup();
-    insert_account(&conn, "acc-bal-1", "现金", "cash", "CNY", 10000);
-    assert_eq!(balance(&conn, "acc-bal-1"), 10000);
+/// 场景行内的一笔流水（kind 用 Amount 接缝的 TransactionKind 枚举表述）。
+#[derive(Debug)]
+struct ScenarioTx {
+    kind: TransactionKind,
+    amount: i64,
+    account_id: &'static str,
+    to_account_id: Option<&'static str>,
 }
 
-#[test]
-fn balance_adds_income() {
-    let conn = setup();
-    insert_account(&conn, "acc-bal-2", "现金", "cash", "CNY", 0);
-    insert_tx(&conn, "tx1", "income", 5000, "acc-bal-2", None);
-    assert_eq!(balance(&conn, "acc-bal-2"), 5000);
+/// 场景行：行名 + 账户（id, 初始额）+ 若干笔流水 + 期望余额。
+/// 转移行带 A/B 双侧期望，退款行为多笔流水行。
+#[derive(Debug)]
+struct ScenarioRow {
+    name: &'static str,
+    accounts: &'static [(&'static str, i64)],
+    txs: &'static [ScenarioTx],
+    expects: &'static [(&'static str, i64)],
 }
 
+/// 余额场景矩阵（#767）：原五连测（初始额/收入/支出/转入/退款）仅类型与金额不同，
+/// 收敛为行数据 + 单一断言体。断言面保持五连测原样——单账户余额查询，
+/// 不因收敛扩大；软删过滤语义不同（soft_deleted_transaction_excluded_from_balance），
+/// 不进表。
+/// 期望值为独立人算字面量（守「余额口径本身对」）；同文件度量矩阵测试
+/// `balance_computed_via_account_flow_measure` 的期望由 signed_amount × AccountFlow
+/// 复算推导（守「SQL↔Rust 口径一致」），两类预言并存互补，不合并不删除。
 #[test]
-fn balance_subtracts_expense() {
-    let conn = setup();
-    insert_account(&conn, "acc-bal-3", "现金", "cash", "CNY", 10000);
-    insert_tx(&conn, "tx2", "expense", 3000, "acc-bal-3", None);
-    assert_eq!(balance(&conn, "acc-bal-3"), 7000);
-}
-
-#[test]
-fn balance_adds_transfer_in() {
-    let conn = setup();
-    insert_account(&conn, "acc-a", "账户A", "cash", "CNY", 0);
-    insert_account(&conn, "acc-b", "账户B", "cash", "CNY", 0);
-    insert_tx(&conn, "tx3", "transfer", 2000, "acc-a", Some("acc-b"));
-    assert_eq!(balance(&conn, "acc-a"), -2000);
-    assert_eq!(balance(&conn, "acc-b"), 2000);
-}
-
-#[test]
-fn balance_adds_refund() {
-    let conn = setup();
-    insert_account(&conn, "acc-bal-4", "现金", "cash", "CNY", 0);
-    insert_tx(&conn, "tx4", "expense", 1000, "acc-bal-4", None);
-    insert_tx(&conn, "tx5", "refund", 300, "acc-bal-4", None);
-    assert_eq!(balance(&conn, "acc-bal-4"), -700);
+fn balance_scenario_matrix() {
+    let rows: &[ScenarioRow] = &[
+        // balance_starts_at_initial
+        ScenarioRow {
+            name: "初始额起步",
+            accounts: &[("acc-bal-1", 10000)],
+            txs: &[],
+            expects: &[("acc-bal-1", 10000)],
+        },
+        // balance_adds_income
+        ScenarioRow {
+            name: "收入入账",
+            accounts: &[("acc-bal-2", 0)],
+            txs: &[ScenarioTx {
+                kind: TransactionKind::Income,
+                amount: 5000,
+                account_id: "acc-bal-2",
+                to_account_id: None,
+            }],
+            expects: &[("acc-bal-2", 5000)],
+        },
+        // balance_subtracts_expense
+        ScenarioRow {
+            name: "支出扣减",
+            accounts: &[("acc-bal-3", 10000)],
+            txs: &[ScenarioTx {
+                kind: TransactionKind::Expense,
+                amount: 3000,
+                account_id: "acc-bal-3",
+                to_account_id: None,
+            }],
+            expects: &[("acc-bal-3", 7000)],
+        },
+        // balance_adds_transfer_in：转出/转入双侧
+        ScenarioRow {
+            name: "转账 A/B 双侧",
+            accounts: &[("acc-a", 0), ("acc-b", 0)],
+            txs: &[ScenarioTx {
+                kind: TransactionKind::Transfer,
+                amount: 2000,
+                account_id: "acc-a",
+                to_account_id: Some("acc-b"),
+            }],
+            expects: &[("acc-a", -2000), ("acc-b", 2000)],
+        },
+        // balance_adds_refund：多笔流水行
+        ScenarioRow {
+            name: "退款冲减",
+            accounts: &[("acc-bal-4", 0)],
+            txs: &[
+                ScenarioTx {
+                    kind: TransactionKind::Expense,
+                    amount: 1000,
+                    account_id: "acc-bal-4",
+                    to_account_id: None,
+                },
+                ScenarioTx {
+                    kind: TransactionKind::Refund,
+                    amount: 300,
+                    account_id: "acc-bal-4",
+                    to_account_id: None,
+                },
+            ],
+            expects: &[("acc-bal-4", -700)],
+        },
+    ];
+    for row in rows {
+        let conn = setup();
+        for (id, initial) in row.accounts {
+            insert_account(&conn, id, id, "cash", "CNY", *initial);
+        }
+        for (i, tx) in row.txs.iter().enumerate() {
+            insert_tx(
+                &conn,
+                &format!("tx-{i}"),
+                tx.kind.as_str(),
+                tx.amount,
+                tx.account_id,
+                tx.to_account_id,
+            );
+        }
+        for &(account, expected) in row.expects {
+            let got = balance(&conn, account);
+            assert_eq!(
+                got, expected,
+                "场景矩阵行「{}」失败: 行数据={row:?} 账户={account}",
+                row.name
+            );
+        }
+    }
 }
 
 #[test]
