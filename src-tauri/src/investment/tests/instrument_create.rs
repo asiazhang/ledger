@@ -5,9 +5,10 @@
 
 use rusqlite::{Connection, params};
 
-use super::common::setup_db;
+use super::common::insert_instrument_with_source;
 use crate::investment::crud::create_instrument;
 use crate::investment::{InstrumentInput, InstrumentType};
+use crate::test_support::open;
 
 fn input(symbol: &str, kind: InstrumentType, name: &str) -> InstrumentInput {
     InstrumentInput {
@@ -31,7 +32,7 @@ fn source_of(conn: &Connection, symbol: &str) -> String {
 /// 核心创建函数新建行来源标记为手动（同步通道才写 'eastmoney'，见 sync 模块测试）。
 #[test]
 fn create_instrument_marks_new_row_manual() {
-    let conn = setup_db();
+    let conn = open();
     let id = create_instrument(
         &conn,
         input("稳稳地幸福", InstrumentType::Other, "稳稳地幸福"),
@@ -45,14 +46,17 @@ fn create_instrument_marks_new_row_manual() {
 /// 既有行来源保持终身不变（与同步更新分支同语义）。
 #[test]
 fn create_instrument_reuse_keeps_existing_source() {
-    let conn = setup_db();
-    conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id,source) \
-         VALUES ('inst-em','600000','stock','浦发银行','CNY','sh',\
-                 '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test','eastmoney')",
-        [],
-    )
-    .unwrap();
+    let conn = open();
+    insert_instrument_with_source(
+        &conn,
+        "inst-em",
+        "600000",
+        "浦发银行",
+        "CNY",
+        "sh",
+        "stock",
+        "eastmoney",
+    );
 
     let id = create_instrument(
         &conn,

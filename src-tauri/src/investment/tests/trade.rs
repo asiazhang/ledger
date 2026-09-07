@@ -9,6 +9,7 @@ use rusqlite::params;
 
 use super::super::*;
 use super::common::*;
+use crate::test_support::{open, seed_account, seed_exchange_rate, seed_instrument};
 
 /// 价格刻度不变式（ADR-0038）：四类价格列（成交单价/每份成本/现价/价格历史）
 /// 以万分之一元（0.0001 元）存储，金额列仍为整数分——金额分 = 数量 × 单价 ÷ 100。
@@ -17,9 +18,16 @@ use super::common::*;
 /// 1.5678 元（15678）；赎回 3 份 @ 1.30 元 → 收入 3.90 元，已实现盈亏 −0.80 元。
 #[test]
 fn price_scale_invariant_unit_price_is_ten_thousandths_of_yuan() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-fund", "基金户", "investment", "CNY");
-    insert_instrument(&conn, "inst-fund-abc", "000123", "某公募基金", "CNY");
+    let conn = open();
+    seed_account(&conn, "acc-fund", "基金户", "investment", "CNY", 0);
+    seed_instrument(
+        &conn,
+        "inst-fund-abc",
+        "000123",
+        "某公募基金",
+        "CNY",
+        "unknown",
+    );
 
     // 申购：数量 3、单价 1.2345 元（存 12345 万分之一元）、手续费 1 元（100 分）。
     let buy_id = create_transaction_internal(
@@ -81,9 +89,16 @@ fn price_scale_invariant_unit_price_is_ten_thousandths_of_yuan() {
 /// 成本（分）= 数量 × 每份成本（万分之一元）÷ 100（v_holdings 表达式与 V002 同源）。
 #[test]
 fn price_scale_invariant_v_holdings_market_value() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-scale", "刻度户", "investment", "CNY");
-    insert_instrument(&conn, "inst-scale", "000456", "净值保真基金", "CNY");
+    let conn = open();
+    seed_account(&conn, "acc-scale", "刻度户", "investment", "CNY", 0);
+    seed_instrument(
+        &conn,
+        "inst-scale",
+        "000456",
+        "净值保真基金",
+        "CNY",
+        "unknown",
+    );
 
     // 买入 100 份 @ 0.1234 元（存 1234 万分之一元），无费。
     let buy_id = create_transaction_internal(
@@ -121,10 +136,10 @@ fn price_scale_invariant_v_holdings_market_value() {
 
 #[test]
 fn buy_transaction_creates_lot() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-test-buy", "美股", "investment", "USD");
-    insert_rate_1_1(&conn, "USD");
-    insert_instrument(&conn, "inst-test-nvda", "NVDA", "NVIDIA", "USD");
+    let conn = open();
+    seed_account(&conn, "acc-test-buy", "美股", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_instrument(&conn, "inst-test-nvda", "NVDA", "NVIDIA", "USD", "unknown");
 
     let input = make_buy_input("acc-test-buy", "inst-test-nvda", 10.0, 1_000_000, 500);
     let txn_id = create_transaction_internal(&conn, input).unwrap().id;
@@ -203,10 +218,10 @@ fn buy_transaction_creates_lot() {
 /// 落库的 `amount_native_cents` 为折算值而非原始金额（旧行为硬编码 1:1）。
 #[test]
 fn buy_native_cents_converted_via_amount_seam() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-test-conv", "美股", "investment", "USD");
-    insert_rate(&conn, "USD", "CNY", 7.2);
-    insert_instrument(&conn, "inst-test-conv", "NVDA", "NVIDIA", "USD");
+    let conn = open();
+    seed_account(&conn, "acc-test-conv", "美股", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 7.2);
+    seed_instrument(&conn, "inst-test-conv", "NVDA", "NVIDIA", "USD", "unknown");
 
     let input = make_buy_input("acc-test-conv", "inst-test-conv", 10.0, 1_000_000, 500);
     let txn_id = create_transaction_internal(&conn, input).unwrap().id;
@@ -230,10 +245,17 @@ fn buy_native_cents_converted_via_amount_seam() {
 #[test]
 fn buy_update_native_cents_converted_via_amount_seam() {
     use crate::transaction::update_transaction_internal;
-    let conn = setup_db();
-    insert_account(&conn, "acc-test-conv-upd", "美股", "investment", "USD");
-    insert_rate(&conn, "USD", "CNY", 7.2);
-    insert_instrument(&conn, "inst-test-conv-upd", "NVDA", "NVIDIA", "USD");
+    let conn = open();
+    seed_account(&conn, "acc-test-conv-upd", "美股", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 7.2);
+    seed_instrument(
+        &conn,
+        "inst-test-conv-upd",
+        "NVDA",
+        "NVIDIA",
+        "USD",
+        "unknown",
+    );
 
     let txn_id = create_transaction_internal(
         &conn,
@@ -268,9 +290,9 @@ fn buy_update_native_cents_converted_via_amount_seam() {
 
 #[test]
 fn buy_transaction_requires_investment_account() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-test-cash", "现金", "cash", "CNY");
-    insert_instrument(&conn, "inst-test-cny", "600519", "茅台", "CNY");
+    let conn = open();
+    seed_account(&conn, "acc-test-cash", "现金", "cash", "CNY", 0);
+    seed_instrument(&conn, "inst-test-cny", "600519", "茅台", "CNY", "unknown");
 
     let input = make_buy_input("acc-test-cash", "inst-test-cny", 1.0, 10000, 0);
     let err = create_transaction_internal(&conn, input).unwrap_err();
@@ -285,9 +307,9 @@ fn buy_transaction_requires_investment_account() {
 /// 「数据库错误」500，AI 可读错误回自纠（issue #295）。错误携带标的 id。
 #[test]
 fn buy_with_missing_instrument_rejected_as_invalid_in_prepare() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-test-missing", "美股", "investment", "USD");
-    insert_rate_1_1(&conn, "USD");
+    let conn = open();
+    seed_account(&conn, "acc-test-missing", "美股", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
 
     let input = make_buy_input("acc-test-missing", "inst-not-exist", 10.0, 10000, 0);
     let err = create_transaction_internal(&conn, input).unwrap_err();
@@ -319,9 +341,9 @@ fn buy_with_missing_instrument_rejected_as_invalid_in_prepare() {
 /// 校验（否则会误报「可卖出数量不足，当前持有 0」，语义不明，issue #295）。
 #[test]
 fn sell_with_missing_instrument_rejected_as_invalid_in_prepare() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-test-sell-miss", "美股", "investment", "USD");
-    insert_rate_1_1(&conn, "USD");
+    let conn = open();
+    seed_account(&conn, "acc-test-sell-miss", "美股", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
 
     let input = make_sell_input("acc-test-sell-miss", "inst-not-exist", 5.0, 12000, 0);
     let err = create_transaction_internal(&conn, input).unwrap_err();
@@ -345,10 +367,17 @@ fn sell_with_missing_instrument_rejected_as_invalid_in_prepare() {
 #[test]
 fn update_buy_to_missing_instrument_rejected_and_keeps_original() {
     use crate::transaction::update_transaction_internal;
-    let conn = setup_db();
-    insert_account(&conn, "acc-test-upd-miss", "美股", "investment", "USD");
-    insert_rate_1_1(&conn, "USD");
-    insert_instrument(&conn, "inst-test-upd-miss", "NVDA", "NVIDIA", "USD");
+    let conn = open();
+    seed_account(&conn, "acc-test-upd-miss", "美股", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_instrument(
+        &conn,
+        "inst-test-upd-miss",
+        "NVDA",
+        "NVIDIA",
+        "USD",
+        "unknown",
+    );
 
     let txn_id = create_transaction_internal(
         &conn,
@@ -396,10 +425,10 @@ fn update_buy_to_missing_instrument_rejected_and_keeps_original() {
 
 #[test]
 fn sell_transaction_matches_multiple_lots_fifo() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-test-sell", "美股", "investment", "USD");
-    insert_rate_1_1(&conn, "USD");
-    insert_instrument(&conn, "inst-test-sell", "TSLA", "Tesla", "USD");
+    let conn = open();
+    seed_account(&conn, "acc-test-sell", "美股", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_instrument(&conn, "inst-test-sell", "TSLA", "Tesla", "USD", "unknown");
 
     let lot1_txn = create_transaction_internal(
         &conn,
@@ -487,10 +516,17 @@ fn sell_transaction_matches_multiple_lots_fifo() {
 
 #[test]
 fn sell_transaction_rejects_oversell() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-test-oversell", "美股", "investment", "USD");
-    insert_rate_1_1(&conn, "USD");
-    insert_instrument(&conn, "inst-test-oversell", "MSFT", "Microsoft", "USD");
+    let conn = open();
+    seed_account(&conn, "acc-test-oversell", "美股", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_instrument(
+        &conn,
+        "inst-test-oversell",
+        "MSFT",
+        "Microsoft",
+        "USD",
+        "unknown",
+    );
 
     create_transaction_internal(
         &conn,
@@ -504,10 +540,10 @@ fn sell_transaction_rejects_oversell() {
 
 #[test]
 fn sell_transaction_pnl_deducts_fee() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-test-pnl", "美股", "investment", "USD");
-    insert_rate_1_1(&conn, "USD");
-    insert_instrument(&conn, "inst-test-pnl", "AAPL", "Apple", "USD");
+    let conn = open();
+    seed_account(&conn, "acc-test-pnl", "美股", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_instrument(&conn, "inst-test-pnl", "AAPL", "Apple", "USD", "unknown");
 
     let buy_txn = create_transaction_internal(
         &conn,
@@ -556,10 +592,10 @@ fn sell_transaction_pnl_deducts_fee() {
 
 #[test]
 fn get_transaction_trade_returns_buy_detail_with_instrument_display() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-inv", "证券户", "investment", "USD");
-    insert_instrument(&conn, "inst-t", "600519", "贵州茅台", "USD");
-    insert_rate_1_1(&conn, "USD");
+    let conn = open();
+    seed_account(&conn, "acc-inv", "证券户", "investment", "USD", 0);
+    seed_instrument(&conn, "inst-t", "600519", "贵州茅台", "USD", "unknown");
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
     let id = create_transaction_internal(
         &conn,
         make_buy_input("acc-inv", "inst-t", 100.0, 150_000, 500),
@@ -582,8 +618,8 @@ fn get_transaction_trade_returns_buy_detail_with_instrument_display() {
 
 #[test]
 fn get_transaction_trade_rejects_missing_or_non_trade_transaction() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-cash", "现金", "cash", "CNY");
+    let conn = open();
+    seed_account(&conn, "acc-cash", "现金", "cash", "CNY", 0);
     // 非买卖交易（expense）无买卖明细
     let expense_id = create_transaction_internal(
         &conn,

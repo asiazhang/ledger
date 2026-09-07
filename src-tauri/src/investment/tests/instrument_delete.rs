@@ -8,16 +8,7 @@ use crate::transaction::create_transaction_internal;
 
 use super::super::*;
 use super::common::*;
-
-/// 插入指定来源的标的行（守卫两态的夹具：'eastmoney' 同步 / 'manual' 手动）。
-fn insert_instrument_with_source(conn: &Connection, id: &str, symbol: &str, source: &str) {
-    conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id,source) \
-         VALUES (?1,?2,'other',?3,'CNY','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',?4)",
-        params![id, symbol, symbol, source],
-    )
-    .unwrap();
-}
+use crate::test_support::{open, seed_account};
 
 fn count_instruments(conn: &Connection, id: &str) -> i64 {
     conn.query_row(
@@ -31,8 +22,17 @@ fn count_instruments(conn: &Connection, id: &str) -> i64 {
 /// 无引用自建标的：物理删除成功，行消失（现价缓存随 CASCADE 一并消失）。
 #[test]
 fn delete_manual_instrument_without_trades_succeeds() {
-    let conn = setup_db();
-    insert_instrument_with_source(&conn, "inst-manual-1", "稳稳地幸福", "manual");
+    let conn = open();
+    insert_instrument_with_source(
+        &conn,
+        "inst-manual-1",
+        "稳稳地幸福",
+        "稳稳地幸福",
+        "CNY",
+        "unknown",
+        "other",
+        "manual",
+    );
     // 现价缓存行（手动报价通道可落）应随标的删除级联消失。
     conn.execute(
         "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,created_at,updated_at,version,device_id) \
@@ -61,9 +61,18 @@ fn delete_manual_instrument_without_trades_succeeds() {
 /// 有 buy/sell 流水引用的自建标的：拒删（中文错误），行保留。
 #[test]
 fn delete_instrument_with_trades_rejected() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-inv", "证券户", "investment", "CNY");
-    insert_instrument_with_source(&conn, "inst-manual-2", "HW-VR", "manual");
+    let conn = open();
+    seed_account(&conn, "acc-inv", "证券户", "investment", "CNY", 0);
+    insert_instrument_with_source(
+        &conn,
+        "inst-manual-2",
+        "HW-VR",
+        "HW-VR",
+        "CNY",
+        "unknown",
+        "other",
+        "manual",
+    );
     create_transaction_internal(
         &conn,
         make_buy_input("acc-inv", "inst-manual-2", 10.0, 10000, 0),
@@ -85,8 +94,17 @@ fn delete_instrument_with_trades_rejected() {
 /// 同步来源标的：即使无流水引用也拒删（填错由全量同步修正，ADR-0036 决策 5）。
 #[test]
 fn delete_sync_source_instrument_rejected() {
-    let conn = setup_db();
-    insert_instrument_with_source(&conn, "inst-em-1", "600519", "eastmoney");
+    let conn = open();
+    insert_instrument_with_source(
+        &conn,
+        "inst-em-1",
+        "600519",
+        "600519",
+        "CNY",
+        "unknown",
+        "other",
+        "eastmoney",
+    );
 
     let err = delete_instrument(&conn, "inst-em-1").unwrap_err();
     assert!(
@@ -103,7 +121,7 @@ fn delete_sync_source_instrument_rejected() {
 /// 不存在的标的 id：码化 NotFound（`instrument.not-found`），中文错误。
 #[test]
 fn delete_missing_instrument_not_found() {
-    let conn = setup_db();
+    let conn = open();
     let err = delete_instrument(&conn, "不存在的id").unwrap_err();
     assert!(
         err.to_string().contains("标的 不存在的id 不存在"),

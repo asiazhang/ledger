@@ -10,8 +10,7 @@ use rusqlite::params;
 
 use crate::investment::manual_price::record_manual_price;
 use crate::investment::{InstrumentInput, InstrumentType, ManualPriceInput, ManualPriceResult};
-
-use super::common::setup_db;
+use crate::test_support::{open, seed_instrument};
 
 fn quote_input(instrument_id: &str, date: &str, price_cents: i64) -> ManualPriceInput {
     ManualPriceInput {
@@ -28,16 +27,6 @@ fn quote(
     price_cents: i64,
 ) -> ManualPriceResult {
     record_manual_price(conn, &quote_input(instrument_id, date, price_cents)).expect("录价失败")
-}
-
-/// 插入指定类型的标的行（手动报价消费的字典形态：类型/来源任意，币种随行）。
-fn insert_instrument(conn: &rusqlite::Connection, id: &str, kind: &str, currency: &str) {
-    conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id,source) \
-         VALUES (?1,?1,?2,'测试标的',?3,'unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test','manual')",
-        params![id, kind, currency],
-    )
-    .unwrap();
 }
 
 /// 现价行：(price_cents, currency_code, priced_at, nav_date, source)。
@@ -133,8 +122,8 @@ fn price_written_evidence_pins_all_outcome_shapes() {
 
 #[test]
 fn quote_writes_both_landings_with_manual_source() {
-    let conn = setup_db();
-    insert_instrument(&conn, "inst-1", "other", "CNY");
+    let conn = open();
+    seed_instrument(&conn, "inst-1", "inst-1", "测试标的", "CNY", "unknown");
 
     let outcome = quote(&conn, "inst-1", "2026-08-28", 13180);
 
@@ -157,8 +146,8 @@ fn quote_writes_both_landings_with_manual_source() {
 
 #[test]
 fn quote_reuses_instrument_currency_and_is_idempotent_per_week() {
-    let conn = setup_db();
-    insert_instrument(&conn, "inst-hkd", "other", "HKD");
+    let conn = open();
+    seed_instrument(&conn, "inst-hkd", "inst-hkd", "测试标的", "HKD", "unknown");
 
     quote(&conn, "inst-hkd", "2026-08-24", 10000);
     quote(&conn, "inst-hkd", "2026-08-24", 10500);
@@ -176,8 +165,8 @@ fn quote_reuses_instrument_currency_and_is_idempotent_per_week() {
 
 #[test]
 fn same_week_later_quote_overwrites_whole_week_and_moves_current_price() {
-    let conn = setup_db();
-    insert_instrument(&conn, "inst-2", "other", "CNY");
+    let conn = open();
+    seed_instrument(&conn, "inst-2", "inst-2", "测试标的", "CNY", "unknown");
 
     // 同一周（周一 08-24 与周四 08-27）：整周覆盖，仅一条周点，trade_date 随后写。
     quote(&conn, "inst-2", "2026-08-24", 10000);
@@ -204,8 +193,8 @@ fn same_week_later_quote_overwrites_whole_week_and_moves_current_price() {
 
 #[test]
 fn backfill_older_than_latest_settles_history_only() {
-    let conn = setup_db();
-    insert_instrument(&conn, "inst-3", "other", "CNY");
+    let conn = open();
+    seed_instrument(&conn, "inst-3", "inst-3", "测试标的", "CNY", "unknown");
 
     // 先录今天价，再回填早于最新点的旧价。
     quote(&conn, "inst-3", "2026-08-28", 12000);
@@ -224,8 +213,8 @@ fn backfill_older_than_latest_settles_history_only() {
 
 #[test]
 fn backfill_same_week_overwrite_of_old_point_still_keeps_current_price() {
-    let conn = setup_db();
-    insert_instrument(&conn, "inst-4", "other", "CNY");
+    let conn = open();
+    seed_instrument(&conn, "inst-4", "inst-4", "测试标的", "CNY", "unknown");
 
     quote(&conn, "inst-4", "2026-08-28", 12000);
     quote(&conn, "inst-4", "2026-08-05", 10000);
@@ -245,8 +234,8 @@ fn backfill_same_week_overwrite_of_old_point_still_keeps_current_price() {
 
 #[test]
 fn quote_newer_than_latest_moves_current_price_forward() {
-    let conn = setup_db();
-    insert_instrument(&conn, "inst-5", "other", "CNY");
+    let conn = open();
+    seed_instrument(&conn, "inst-5", "inst-5", "测试标的", "CNY", "unknown");
 
     quote(&conn, "inst-5", "2026-08-05", 10000);
     let outcome = quote(&conn, "inst-5", "2026-08-28", 13180);
@@ -267,8 +256,8 @@ fn quote_newer_than_latest_moves_current_price_forward() {
 
 #[test]
 fn quote_rejects_non_positive_price() {
-    let conn = setup_db();
-    insert_instrument(&conn, "inst-6", "other", "CNY");
+    let conn = open();
+    seed_instrument(&conn, "inst-6", "inst-6", "测试标的", "CNY", "unknown");
 
     for bad in [0, -1] {
         let err = record_manual_price(&conn, &quote_input("inst-6", "2026-08-28", bad))
@@ -284,8 +273,8 @@ fn quote_rejects_non_positive_price() {
 
 #[test]
 fn quote_rejects_malformed_date() {
-    let conn = setup_db();
-    insert_instrument(&conn, "inst-7", "other", "CNY");
+    let conn = open();
+    seed_instrument(&conn, "inst-7", "inst-7", "测试标的", "CNY", "unknown");
 
     for bad in ["2026/08/28", "not-a-date", "", "2026-13-40"] {
         let err = record_manual_price(&conn, &quote_input("inst-7", bad, 10000))
@@ -297,8 +286,8 @@ fn quote_rejects_malformed_date() {
 
 #[test]
 fn quote_canonicalizes_lenient_date_input() {
-    let conn = setup_db();
-    insert_instrument(&conn, "inst-7b", "other", "CNY");
+    let conn = open();
+    seed_instrument(&conn, "inst-7b", "inst-7b", "测试标的", "CNY", "unknown");
 
     // 非补零输入按解析结果规范化落库（week_start 生成列要求 canonical ISO 串）。
     let outcome = quote(&conn, "inst-7b", "2026-8-8", 10000);
@@ -309,7 +298,7 @@ fn quote_canonicalizes_lenient_date_input() {
 
 #[test]
 fn quote_rejects_unknown_instrument() {
-    let conn = setup_db();
+    let conn = open();
 
     let err = record_manual_price(&conn, &quote_input("no-such", "2026-08-28", 10000))
         .expect_err("不存在的标的应被拒绝");
@@ -319,7 +308,7 @@ fn quote_rejects_unknown_instrument() {
 
 #[test]
 fn quote_after_upsert_reuse_keeps_working_on_existing_instrument() {
-    let conn = setup_db();
+    let conn = open();
     // 手动创建核心函数（（代码，类型）upsert 复用语义）建标的 → 直接录价。
     let id = crate::investment::create_instrument(
         &conn,

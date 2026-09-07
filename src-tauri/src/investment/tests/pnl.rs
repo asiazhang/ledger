@@ -5,6 +5,7 @@ use crate::transaction::create_transaction_internal;
 
 use super::super::*;
 use super::common::*;
+use crate::test_support::{open, seed_account, seed_exchange_rate, seed_instrument};
 
 fn empty_filter() -> PnlFilter {
     PnlFilter {
@@ -15,7 +16,7 @@ fn empty_filter() -> PnlFilter {
 
 #[test]
 fn realized_pnl_summary_empty_when_no_sales() {
-    let conn = setup_db();
+    let conn = open();
     let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
     assert_eq!(result.total_realized_pnl_cents, 0);
     assert!(result.by_year.is_empty());
@@ -26,10 +27,10 @@ fn realized_pnl_summary_empty_when_no_sales() {
 
 #[test]
 fn realized_pnl_summary_aggregates_single_sale() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-pnl", "美股账户", "investment", "USD");
-    insert_rate_1_1(&conn, "USD");
-    insert_instrument(&conn, "inst-pnl", "AAPL", "Apple", "USD");
+    let conn = open();
+    seed_account(&conn, "acc-pnl", "美股账户", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_instrument(&conn, "inst-pnl", "AAPL", "Apple", "USD", "unknown");
 
     let _buy = create_transaction_internal(
         &conn,
@@ -64,11 +65,11 @@ fn realized_pnl_summary_aggregates_single_sale() {
 
 #[test]
 fn realized_pnl_summary_aggregates_multiple_accounts() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-a", "账户A", "investment", "USD");
-    insert_account(&conn, "acc-b", "账户B", "investment", "USD");
-    insert_rate_1_1(&conn, "USD");
-    insert_instrument(&conn, "inst-xyz", "XYZ", "Test Corp", "USD");
+    let conn = open();
+    seed_account(&conn, "acc-a", "账户A", "investment", "USD", 0);
+    seed_account(&conn, "acc-b", "账户B", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_instrument(&conn, "inst-xyz", "XYZ", "Test Corp", "USD", "unknown");
 
     create_transaction_internal(&conn, make_buy_input("acc-a", "inst-xyz", 10.0, 100_000, 0))
         .unwrap();
@@ -92,11 +93,11 @@ fn realized_pnl_summary_aggregates_multiple_accounts() {
 
 #[test]
 fn realized_pnl_summary_filter_by_account() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-a", "账户A", "investment", "USD");
-    insert_account(&conn, "acc-b", "账户B", "investment", "USD");
-    insert_rate_1_1(&conn, "USD");
-    insert_instrument(&conn, "inst-xyz", "XYZ", "Test Corp", "USD");
+    let conn = open();
+    seed_account(&conn, "acc-a", "账户A", "investment", "USD", 0);
+    seed_account(&conn, "acc-b", "账户B", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_instrument(&conn, "inst-xyz", "XYZ", "Test Corp", "USD", "unknown");
 
     create_transaction_internal(&conn, make_buy_input("acc-a", "inst-xyz", 10.0, 100_000, 0))
         .unwrap();
@@ -120,11 +121,11 @@ fn realized_pnl_summary_filter_by_account() {
 
 #[test]
 fn realized_pnl_summary_filter_by_instrument() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-pnl", "美股", "investment", "USD");
-    insert_rate_1_1(&conn, "USD");
-    insert_instrument(&conn, "inst-a", "AAPL", "Apple", "USD");
-    insert_instrument(&conn, "inst-b", "GOOGL", "Alphabet", "USD");
+    let conn = open();
+    seed_account(&conn, "acc-pnl", "美股", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_instrument(&conn, "inst-a", "AAPL", "Apple", "USD", "unknown");
+    seed_instrument(&conn, "inst-b", "GOOGL", "Alphabet", "USD", "unknown");
 
     create_transaction_internal(&conn, make_buy_input("acc-pnl", "inst-a", 10.0, 100_000, 0))
         .unwrap();

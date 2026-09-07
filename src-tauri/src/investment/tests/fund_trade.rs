@@ -9,16 +9,7 @@ use crate::transaction::{create_transaction_internal, update_transaction_interna
 use rusqlite::{Connection, params};
 
 use super::common::*;
-
-/// 插入场外基金标的（type='fund'，市场 unknown——ADR-0038：基金无交易所市场概念）。
-fn insert_fund_instrument(conn: &Connection, id: &str, symbol: &str, name: &str) {
-    conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,'fund',?3,'CNY','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        params![id, symbol, name],
-    )
-    .unwrap();
-}
+use crate::test_support::{open, seed_account, seed_instrument};
 
 /// 基金申购输入：确认单整分金额为权威（amount_cents 必填 > 0），单价不提供
 /// （由后端反算，wire 上 price_cents = None）。
@@ -98,8 +89,8 @@ fn trade_row(conn: &Connection, id: &str) -> (i64, f64, i64, i64) {
 /// 每份成本 = 100_000 × 100 ÷ 987.6543 = 10_125（1.0125 元）。
 #[test]
 fn fund_buy_amount_is_authoritative_and_price_derived() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-fund", "基金户", "investment", "CNY");
+    let conn = open();
+    seed_account(&conn, "acc-fund", "基金户", "investment", "CNY", 0);
     insert_fund_instrument(&conn, "inst-fund", "000123", "某混合基金");
 
     let buy_id = create_transaction_internal(
@@ -143,8 +134,8 @@ fn fund_buy_amount_is_authoritative_and_price_derived() {
 /// 1_234_600 给出的 65_400）。
 #[test]
 fn fund_lot_cost_anchors_to_authoritative_amount_and_pnl_closes_exactly() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-cost", "基金户", "investment", "CNY");
+    let conn = open();
+    seed_account(&conn, "acc-cost", "基金户", "investment", "CNY", 0);
     insert_fund_instrument(&conn, "inst-cost", "000456", "净值保真基金");
 
     let buy_id = create_transaction_internal(
@@ -192,8 +183,8 @@ fn fund_lot_cost_anchors_to_authoritative_amount_and_pnl_closes_exactly() {
 /// 基金申购金额必填且为正：金额缺失（0）拒绝，中文报错。
 #[test]
 fn fund_buy_requires_positive_authoritative_amount() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-amount", "基金户", "investment", "CNY");
+    let conn = open();
+    seed_account(&conn, "acc-amount", "基金户", "investment", "CNY", 0);
     insert_fund_instrument(&conn, "inst-amount", "000124", "某基金");
 
     let err = create_transaction_internal(
@@ -218,8 +209,8 @@ fn fund_buy_requires_positive_authoritative_amount() {
 /// 基金申购手续费不得超过金额：反算净投入 ≤ 0 无从产生正单价，显式拒绝。
 #[test]
 fn fund_buy_fee_must_not_exceed_amount() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-fee", "基金户", "investment", "CNY");
+    let conn = open();
+    seed_account(&conn, "acc-fee", "基金户", "investment", "CNY", 0);
     insert_fund_instrument(&conn, "inst-fee", "000125", "某基金");
 
     let err = create_transaction_internal(
@@ -243,8 +234,8 @@ fn fund_buy_fee_must_not_exceed_amount() {
 /// ÷ 500 = 10_410.4 → 10_410（1.0410 元）；盈亏 = 52_000 − 50_000 = 2_000 分。
 #[test]
 fn fund_sell_amount_is_authoritative_price_derived_and_fifo_pnl_exact() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-sell", "基金户", "investment", "CNY");
+    let conn = open();
+    seed_account(&conn, "acc-sell", "基金户", "investment", "CNY", 0);
     insert_fund_instrument(&conn, "inst-sell", "000126", "某债券基金");
 
     let buy_id = create_transaction_internal(
@@ -310,8 +301,8 @@ fn fund_sell_amount_is_authoritative_price_derived_and_fifo_pnl_exact() {
 /// - Σ 盈亏 = 1_125 + 2_747 + 2_628 = 6_500 = (31_500 + 125_000) − (100_000 + 50_000)。
 #[test]
 fn fund_closed_position_realized_pnl_equals_sell_amounts_minus_buy_amounts() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-close", "基金户", "investment", "CNY");
+    let conn = open();
+    seed_account(&conn, "acc-close", "基金户", "investment", "CNY", 0);
     insert_fund_instrument(&conn, "inst-close", "000127", "丑数检验基金");
 
     let buy1 = create_transaction_internal(
@@ -396,8 +387,8 @@ fn fund_closed_position_realized_pnl_equals_sell_amounts_minus_buy_amounts() {
 /// 与前端装配器「金额与单价不可同时提供」同一契约，issue #302）。
 #[test]
 fn fund_buy_rejects_price_cents_alongside_authoritative_amount() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-mutual", "基金户", "investment", "CNY");
+    let conn = open();
+    seed_account(&conn, "acc-mutual", "基金户", "investment", "CNY", 0);
     insert_fund_instrument(&conn, "inst-mutual", "000131", "互斥检验基金");
 
     let mut input = make_fund_buy_input("acc-mutual", "inst-mutual", 100.0, 10_000, 0);
@@ -416,9 +407,9 @@ fn fund_buy_rejects_price_cents_alongside_authoritative_amount() {
 /// 行金额仍由数量 × 单价 ± 手续费重算（类型分支不误伤既有通道）。
 #[test]
 fn stock_buy_keeps_price_authoritative_and_ignores_amount_field() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-stock", "证券户", "investment", "CNY");
-    insert_instrument(&conn, "inst-stock", "600519", "贵州茅台", "CNY");
+    let conn = open();
+    seed_account(&conn, "acc-stock", "证券户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-stock", "600519", "贵州茅台", "CNY", "unknown");
 
     let mut input = make_buy_input("acc-stock", "inst-stock", 3.0, 12_345, 100);
     input.amount_cents = 999_999; // 非基金：金额字段不具权威语义，应被忽略
@@ -437,8 +428,8 @@ fn stock_buy_keeps_price_authoritative_and_ignores_amount_field() {
 /// 按新确认单重建，每份成本随新金额重锚。
 #[test]
 fn fund_buy_edit_replaces_fields_and_reanchors_lot_cost() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-edit", "基金户", "investment", "CNY");
+    let conn = open();
+    seed_account(&conn, "acc-edit", "基金户", "investment", "CNY", 0);
     insert_fund_instrument(&conn, "inst-edit", "000128", "可纠错基金");
 
     let buy_id = create_transaction_internal(
@@ -481,8 +472,8 @@ fn fund_buy_edit_replaces_fields_and_reanchors_lot_cost() {
 /// = 10_000（批次闭合）、费 10 → 盈亏 100；Σ = 1_100 = 51_100 − 50_000。
 #[test]
 fn fund_sell_edit_rebuilds_matches_and_closed_invariant_still_holds() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-sell-edit", "基金户", "investment", "CNY");
+    let conn = open();
+    seed_account(&conn, "acc-sell-edit", "基金户", "investment", "CNY", 0);
     insert_fund_instrument(&conn, "inst-sell-edit", "000129", "纠错赎回基金");
 
     let _buy_id = create_transaction_internal(
@@ -538,8 +529,8 @@ fn fund_sell_edit_rebuilds_matches_and_closed_invariant_still_holds() {
 /// 盈亏按万分位刻度实时计算，成本锚定权威金额。
 #[test]
 fn fund_holdings_show_market_value_and_unrealized_pnl() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-holding", "基金户", "investment", "CNY");
+    let conn = open();
+    seed_account(&conn, "acc-holding", "基金户", "investment", "CNY", 0);
     insert_fund_instrument(&conn, "inst-holding", "000130", "持仓显形基金");
 
     create_transaction_internal(

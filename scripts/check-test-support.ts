@@ -110,17 +110,6 @@ export const WHITELIST: readonly GateWhitelistEntry[] = [
   { file: 'src/sync/tests/holding_price_sync.rs', note: '叶子域+db+sync', r2: 2, r3: 6 },
   { file: 'src/sync/tests/instrument_sync.rs', note: '叶子域+db+sync', r2: 2 },
 
-  // ── investment 域（迁移票 #755）──
-  { file: 'src/investment/tests/common.rs', note: 'investment 域', r1: 2, r3: 10 },
-  { file: 'src/investment/tests/fund_trade.rs', note: 'investment 域', r2: 1, r3: 2 },
-  { file: 'src/investment/tests/instrument_create.rs', note: 'investment 域', r2: 1, r3: 2 },
-  { file: 'src/investment/tests/instrument_delete.rs', note: 'investment 域', r2: 1, r3: 2 },
-  { file: 'src/investment/tests/instrument_list.rs', note: 'investment 域', r2: 3 },
-  { file: 'src/investment/tests/instrument_manual_create.rs', note: 'investment 域', r2: 1, r3: 2 },
-  { file: 'src/investment/tests/manual_price.rs', note: 'investment 域', r2: 1, r3: 2 },
-  { file: 'src/investment/tests/predicates.rs', note: 'investment 域', r2: 1, r3: 2 },
-  { file: 'src/investment/tests/trend.rs', note: 'investment 域', r2: 2, r3: 4 },
-
   // ── scheduled_transactions 域（迁移票 #756）──
   { file: 'src/scheduled_transactions/tests/common.rs', note: 'scheduled_transactions 域', r1: 2, r3: 2 },
   { file: 'src/scheduled_transactions/tests/merchant.rs', note: 'scheduled_transactions 域', r3: 2 },

@@ -1,8 +1,16 @@
 //! `investment` 命令测试共享脚手架（issue #257 纯移动自原 tests.rs 顶部，
 //! 抽取仅限本测试模块内部，跨模块合并见 issue #250）。
+//!
+//! 建库与跨域重复夹具（账户 / 标的字典 / 汇率 / 价格与汇率历史）已上收统一
+//! 测试工厂 `crate::test_support`（spec #728 / ADR-0084，域迁移票 #755）：
+//! 调用点直接用 `open` / `seed_account` / `seed_instrument` / `seed_exchange_rate`
+//! / `seed_price_history` / `seed_fx_rate_history`。本薄皮按准入规则（ADR-0084
+//! 决策 1）只留域特有形态：带市场 / 来源 / 基金类型的标的种子与交易输入构造器
+//! （域语义，非 DB 夹具）；种子簿记戳一律引用工厂 [`FIXED_NOW`]，零字面量。
 
 use rusqlite::{Connection, params};
 
+use crate::test_support::FIXED_NOW;
 use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 
@@ -12,55 +20,8 @@ use crate::transaction::amount::TransactionKind;
 pub(crate) use crate::error::AppError;
 pub(crate) use crate::investment::{InstrumentListFilter, InstrumentListResult};
 
-pub(super) fn setup_db() -> Connection {
-    let mut conn = crate::db::open_in_memory().unwrap();
-    crate::db::init_db(&mut conn).unwrap();
-    conn
-}
-
-pub(super) fn insert_account(conn: &Connection, id: &str, name: &str, kind: &str, currency: &str) {
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        params![id, name, kind, currency],
-    ).unwrap();
-}
-
-pub(super) fn insert_instrument(
-    conn: &Connection,
-    id: &str,
-    symbol: &str,
-    name: &str,
-    currency: &str,
-) {
-    conn.execute(
-         "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-          VALUES (?1,?2,'stock',?3,?4,'unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        params![id, symbol, name, currency],
-    ).unwrap();
-}
-
-/// buy/sell 本位币折算走 Amount 接缝（issue #70）：测试库补 1:1 汇率，
-/// 非默认币种（USD）账户的交易折算不报缺汇率。
-pub(super) fn insert_rate_1_1(conn: &Connection, base: &str) {
-    conn.execute(
-        "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,updated_at,version,device_id) \
-         VALUES ('er-1-1',?1,'CNY',1.0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        params![base],
-    )
-    .unwrap();
-}
-
-/// 补一条指定汇率（供非 1:1 折算断言用，如 7.2）。
-pub(super) fn insert_rate(conn: &Connection, base: &str, quote: &str, rate: f64) {
-    conn.execute(
-        "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,updated_at,version,device_id) \
-         VALUES ('er-rate',?1,?2,?3,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        params![base, quote, rate],
-    )
-    .unwrap();
-}
-
+/// 种入一个标的行（市场 / 类型显式的域内变体形态），panic 形态。库层约束断言
+/// （同码同类型 UNIQUE 冲突等）需拿 `Err` 的用 [`try_insert_instrument_with_market`]。
 pub(super) fn insert_instrument_with_market(
     conn: &Connection,
     id: &str,
@@ -70,11 +31,60 @@ pub(super) fn insert_instrument_with_market(
     market: &str,
     kind: &str,
 ) {
+    try_insert_instrument_with_market(conn, id, symbol, name, currency, market, kind).unwrap();
+}
+
+/// [`insert_instrument_with_market`] 的可失败形态：断言库层约束（UNIQUE 冲突等）
+/// 的测试需要 `Err` 而非 panic（种子统一 unwrap，不表达预期失败）。
+pub(super) fn try_insert_instrument_with_market(
+    conn: &Connection,
+    id: &str,
+    symbol: &str,
+    name: &str,
+    currency: &str,
+    market: &str,
+    kind: &str,
+) -> rusqlite::Result<String> {
     conn.execute(
          "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-          VALUES (?1,?2,?6,?3,?4,?5,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        params![id, symbol, name, currency, market, kind],
-    ).unwrap();
+          VALUES (?1,?2,?6,?3,?4,?5,?7,?7,1,'test')",
+        params![id, symbol, name, currency, market, kind, FIXED_NOW],
+    )?;
+    Ok(id.to_string())
+}
+
+/// 种入带来源标记的标的行（来源是域语义：'eastmoney' 同步 / 'manual' 手动，
+/// 随行终身不变——ADR-0036「非同步即手动」）：来源标记与复用语义测试用。
+/// 全位置参数保持列显式（ADR-0084 决策 4 同款理由），故显式 allow
+/// `too_many_arguments`。
+#[allow(clippy::too_many_arguments)]
+pub(super) fn insert_instrument_with_source(
+    conn: &Connection,
+    id: &str,
+    symbol: &str,
+    name: &str,
+    currency: &str,
+    market: &str,
+    kind: &str,
+    source: &str,
+) {
+    conn.execute(
+         "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id,source) \
+          VALUES (?1,?2,?6,?3,?4,?5,?8,?8,1,'test',?7)",
+        params![id, symbol, name, currency, market, kind, source, FIXED_NOW],
+    )
+    .unwrap();
+}
+
+/// 插入场外基金标的（type='fund'，市场 unknown——ADR-0038：基金无交易所市场
+/// 概念，报价币种 CNY）。自 fund_trade 本地副本迁入（#755 裸 SQL 清零）。
+pub(super) fn insert_fund_instrument(conn: &Connection, id: &str, symbol: &str, name: &str) {
+    conn.execute(
+        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+         VALUES (?1,?2,'fund',?3,'CNY','unknown',?4,?4,1,'test')",
+        params![id, symbol, name, FIXED_NOW],
+    )
+    .unwrap();
 }
 
 pub(super) fn make_buy_input(
