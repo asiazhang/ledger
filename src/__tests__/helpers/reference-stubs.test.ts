@@ -1,7 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke } from './invoke-mock'
+import { describe, it, expect } from 'vitest'
+import { mockInvoke, wireInvokeSeam } from './invoke-mock'
 import {
-  stubReferenceInvoke,
   refCurrencies,
   refAccounts,
   refCategories,
@@ -9,14 +8,9 @@ import {
   refInsurers,
 } from './reference-stubs'
 
-
-beforeEach(() => {
-  mockInvoke.mockReset()
-})
-
-describe('stubReferenceInvoke 默认行为', () => {
-  it('参考 store 重拉的全部 list_* 命令默认返回规范夹具', async () => {
-    stubReferenceInvoke()
+describe('参考数据兜底（REFERENCE_DEFAULTS 经唯一接缝，issue #725/#750）', () => {
+  it('未布线时参考 store 重拉的全部 list_* 命令由规范夹具应答', async () => {
+    wireInvokeSeam()
     await expect(mockInvoke('list_currencies')).resolves.toBe(refCurrencies)
     await expect(mockInvoke('list_accounts')).resolves.toBe(refAccounts)
     await expect(mockInvoke('list_categories')).resolves.toBe(refCategories)
@@ -36,16 +30,16 @@ describe('stubReferenceInvoke 默认行为', () => {
   })
 
   it('未覆写的非参考命令保持 unexpected invoke 拒绝', async () => {
-    stubReferenceInvoke()
+    wireInvokeSeam()
     await expect(mockInvoke('list_transactions')).rejects.toThrow('unexpected invoke: list_transactions')
     await expect(mockInvoke('create_account')).rejects.toThrow('unexpected invoke: create_account')
   })
 })
 
-describe('stubReferenceInvoke 覆写', () => {
+describe('参考命令覆写（overrides 表优先于规范夹具）', () => {
   it('覆写参考命令：固定值优先于规范夹具', async () => {
     const custom = [{ code: 'USD', name: '美元', symbol: '$', decimal_places: 2 }]
-    stubReferenceInvoke({ list_currencies: custom })
+    wireInvokeSeam({ overrides: { list_currencies: custom } })
     await expect(mockInvoke('list_currencies')).resolves.toBe(custom)
     // 未覆写的参考命令仍走规范夹具
     await expect(mockInvoke('list_merchants')).resolves.toBe(refMerchants)
@@ -53,9 +47,11 @@ describe('stubReferenceInvoke 覆写', () => {
 
   it('覆写参考命令：函数型覆写在派发时以 args 调用', async () => {
     let merchants = refMerchants
-    stubReferenceInvoke({
-      list_merchants: () => merchants,
-      list_accounts: (args) => ({ echoed: args ?? null }),
+    wireInvokeSeam({
+      overrides: {
+        list_merchants: () => merchants,
+        list_accounts: (args) => ({ echoed: args ?? null }),
+      },
     })
     await expect(mockInvoke('list_merchants')).resolves.toBe(refMerchants)
     const emptied: typeof refMerchants = []
@@ -66,9 +62,11 @@ describe('stubReferenceInvoke 覆写', () => {
   })
 
   it('函数型覆写可返回 Promise（在途/拒绝场景原样透传）', async () => {
-    stubReferenceInvoke({
-      list_insurers: () => Promise.reject(new Error('db 错误')),
-      list_categories: () => new Promise(() => {}), // 永不 resolve（在途）
+    wireInvokeSeam({
+      overrides: {
+        list_insurers: () => Promise.reject(new Error('db 错误')),
+        list_categories: () => new Promise(() => {}), // 永不 resolve（在途）
+      },
     })
     await expect(mockInvoke('list_insurers')).rejects.toThrow('db 错误')
     let settled = false
@@ -79,14 +77,14 @@ describe('stubReferenceInvoke 覆写', () => {
 
   it('覆写非参考命令：领域数据命令照常覆写', async () => {
     const txns = [{ id: 'txn-1' }]
-    stubReferenceInvoke({ list_transactions: txns })
+    wireInvokeSeam({ overrides: { list_transactions: txns } })
     await expect(mockInvoke('list_transactions', { filter: {} })).resolves.toBe(txns)
     await expect(mockInvoke('list_policies')).rejects.toThrow('unexpected invoke: list_policies')
   })
 
-  it('返回派发函数：一次性桩可把其余命令委托回基础桩', async () => {
-    const base = stubReferenceInvoke({ list_transactions: [{ id: 'txn-1' }] })
-    mockInvoke.mockImplementation((cmd, args) =>
+  it('返回派发函数：一次性桩（钦定形态）处理完自己的命令后委托回接缝', async () => {
+    const base = wireInvokeSeam({ overrides: { list_transactions: [{ id: 'txn-1' }] } })
+    mockInvoke.mockImplementationOnce((cmd, args) =>
       cmd === 'create_transaction'
         ? Promise.resolve('new-id')
         : base(cmd, args as Record<string, unknown>),

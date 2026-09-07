@@ -1,16 +1,16 @@
 import type { Account, Category, Currency, Insurer, Merchant } from '@/types'
-import { wireInvokeSeam } from './invoke-mock'
 
 /**
- * 参考数据测试桩的单一来源（issue #725）。
+ * 参考数据测试桩的单一来源（issue #725；收尾票 #750 起本文件只承载夹具与登记处）。
  *
  * 根因回顾：每个测试文件手搓全量 `list_*` invoke 桩，参考数据每加一张表就要
  * 散弹式改全部文件；两分支并行各改一轮，合并时产生同回调重复桩（if 链先命中
  * 短路，后一条永远不生效），带数据桩被兜底空桩短路、数据静默变空。
  *
- * 深模块收口：本文件集中持有规范参考数据夹具与命令登记处，测试经
- * `stubReferenceInvoke(overrides?)` 一行接入——默认桩住参考 store 重拉的全部
- * `list_*` 命令，测试只覆写自己实际行使的命令；未覆写的非参考命令保持
+ * 深模块收口：本文件集中持有规范参考数据夹具与命令登记处；接线能力在唯一接缝
+ * `wireInvokeSeam`（helpers/invoke-mock.ts）——参考字典五命令由接缝经
+ * `REFERENCE_DEFAULTS` 内建兜底应答，测试只覆写自己实际行使的命令；未覆写的
+ * 非参考命令保持
  * `unexpected invoke` 拒绝（既有严格性是有价值的，予以保留）。
  *
  * 新增参考表 = 只改本文件（夹具 + `REFERENCE_DEFAULTS` 一行），全仓测试文件
@@ -131,44 +131,4 @@ export const REFERENCE_DEFAULTS: Record<string, unknown> = {
   list_categories: refCategories,
   list_merchants: refMerchants,
   list_insurers: refInsurers,
-}
-
-/** 覆写值：固定返回值（JSON 可表达形态），或 `(args) => 返回值 | Promise`（可变库、
- *  在途、拒绝场景）。函数成员的 args 收窄为对象形态（tauri `InvokeArgs` 的 `number[]`
- *  缓冲区形态本应用不产生，收拢理由与边界见 helpers/invoke-mock.ts），覆写不标参数
- *  类型时经上下文推断获得；字段访问返回 `unknown`，具体形状在覆写体内断言。
- *  对象分支用 `object` 而非 `Record<string, unknown>`：接口类型（如 DataLocationInfo）
- *  无隐式索引签名，对 `Record` 不可赋值（TS 已知限制）；本助手只透传覆写值
- *  （`Promise.resolve(handler)`），不访问其字段，`object` 即是精确边界。 */
-export type ReferenceStubOverride =
-  | ((args?: Record<string, unknown>) => unknown)
-  | string
-  | number
-  | boolean
-  | null
-  | undefined
-  | object
-
-/**
- * 桩住参考 store 重拉的全部 `list_*` 命令（默认规范夹具），`overrides` 按命令
- * 覆写（参考命令与领域数据命令均可覆写；函数型覆写在派发时以 args 调用）。
- * 未覆写的非参考命令保持 `unexpected invoke` 拒绝。
- * 返回派发函数本身：`mockImplementationOnce` 等一次性桩处理完自己的领域命令后，
- * 可把其余命令委托回派发函数，避免手拷参考命令兑底（参考命令集合随助手演进）。
- *
- * 迁移期薄别名（issue #746）：能力已并入唯一接缝 `wireInvokeSeam`，本入口保持
- * 既有形态供既有使用者不改一字；迁移完成后由收尾票删除。
- *
- * 典型用法（beforeEach 内，mockReset 之后）：
- * ```ts
- * const base = stubReferenceInvoke({ list_transactions: () => Promise.resolve(txnDb) })
- * // 一次性桩：领域命令自己接，其余（含参考命令）委托回基础桩
- * mockInvoke.mockImplementationOnce((cmd, args) =>
- *   cmd === 'create_transaction' ? Promise.resolve('new-id') : base(cmd, args))
- * ```
- */
-export function stubReferenceInvoke(
-  overrides: Record<string, ReferenceStubOverride> = {},
-): (cmd: string, args?: Record<string, unknown>) => Promise<unknown> {
-  return wireInvokeSeam({ overrides })
 }

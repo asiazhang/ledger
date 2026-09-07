@@ -1,10 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { expect, vi, type Mock } from 'vitest'
 import { useReferenceStore } from '@/stores/reference'
-// 注：与 reference-stubs.ts 构成模块环（本文件引 REFERENCE_DEFAULTS，对岸薄别名
-// 引回 wireInvokeSeam）——守门脚本把 REFERENCE_DEFAULTS 登记处钉在
-// reference-stubs.ts、既有使用者从该文件导入别名，环为迁移窗口期的结构必然；
-// 双方绑定都只在函数体内使用，无模块求值期取值，收尾票（#750）删除别名后即消解。
 import { REFERENCE_DEFAULTS } from './reference-stubs'
 
 /**
@@ -46,9 +42,10 @@ export function unexpectedInvoke(cmd: string): Promise<never> {
 /**
  * 接缝求值序的静态兜底层：defaults 表 → 参考数据预热 → 未命中报错。
  * 参考字典的五个 list 命令由桩层规范夹具（REFERENCE_DEFAULTS，含软删行）兜底
- * 应答，测试不得在 defaults 表重复枚举。
+ * 应答，测试不得在 defaults 表重复枚举。仅供接缝内部分派使用（#750 收尾后
+ * 「只组装不接线」旧入口已删，无文件外消费者）。
  */
-export function resolveSeamFallback(
+function resolveSeamFallback(
   cmd: string,
   defaults: Record<string, unknown> = {},
 ): Promise<unknown> {

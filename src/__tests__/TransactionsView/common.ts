@@ -1,5 +1,5 @@
 import { vi, beforeEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from '../helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam, type InvokeSeamOverride, type InvokeSeamStaticValue } from '../helpers/invoke-mock'
 import { fireProp } from '../helpers/component-vm'
 import { flushPromises, type VueWrapper } from '@vue/test-utils'
 import { reactive } from 'vue'
@@ -132,6 +132,43 @@ function applyListFilter(filter: Record<string, unknown>) {
   })
 }
 
+/** 薄壳场景契约表（模块级常量，issue #750）：主题测试组的 describe 级增量命令
+ * 经展开合并重走唯一接缝（`wireInvokeSeam({ defaults: SHELL_DEFAULTS, overrides:
+ * { ...SHELL_OVERRIDES, <本组覆写> } })`）——全量替换叠加桩已禁（守门规则 3）。
+ * defaults 只收静态契约；可变库与行为编排为函数型 overrides。参考字典五命令
+ * 不在此枚举——桩层规范夹具兜底（账户/商户以目录夹具覆写）。 */
+export const SHELL_DEFAULTS: Record<string, InvokeSeamStaticValue> = {
+  list_policies: [],
+  list_items: [],
+}
+
+export const SHELL_OVERRIDES: Record<string, InvokeSeamOverride> = {
+  // 可变库（setAccountDb/setMerchantDb 改写）用函数型覆写，派发时取最新值。
+  list_accounts: () => mockAccounts,
+  list_merchants: () => merchantDb,
+  report_date_range: () => {
+    // 数据期间边界（issue #391）：默认与后端口径一致（MIN/MAX 日期，随 txnDb 现算）
+    if (reportDateRangeOverride) return reportDateRangeOverride
+    const dates = txnDb.map((t) => t.date).sort()
+    return Promise.resolve({ min_date: dates[0] ?? null, max_date: dates[dates.length - 1] ?? null })
+  },
+  list_transactions: (args?: { filter?: Record<string, unknown> }) => {
+    const filter = args?.filter ?? {}
+    const scoped = applyListFilter(filter)
+    const pageSize = (filter.page_size as number) ?? scoped.length
+    const page = (filter.page as number) ?? 1
+    const start = (page - 1) * pageSize
+    return Promise.resolve({
+      items: scoped.slice(start, start + pageSize),
+      total: scoped.length,
+    })
+  },
+  delete_transaction: (args?: { id?: string }) => {
+    txnDb = txnDb.filter((t) => t.id !== args?.id)
+    return Promise.resolve()
+  },
+}
+
 beforeEach(async () => {
   pushMock.mockReset()
   routeMock.query = {}
@@ -146,42 +183,11 @@ beforeEach(async () => {
     },
   ]
   reportDateRangeOverride = null
-  // 唯一接缝布线（ADR-0085）：defaults 表只收本目录场景的静态契约；可变库与
-  // 行为编排（镜像过滤、删除移除、边界在途/失败）为函数型 overrides。参考字典
-  // 五命令不在此枚举——桩层规范夹具兜底（币种走规范夹具，账户/商户以目录夹具
-  // 覆写）。store 层预热 opt-in 开启：视图用例依赖参考数据就绪后的即时渲染。
+  // 唯一接缝布线（ADR-0085）：表内容见上方 SHELL_DEFAULTS / SHELL_OVERRIDES。
+  // store 层预热 opt-in 开启：视图用例依赖参考数据就绪后的即时渲染。
   const seam = wireInvokeSeam({
-    defaults: {
-      list_categories: [],
-      list_policies: [],
-      list_items: [],
-    },
-    overrides: {
-      // 可变库（setAccountDb/setMerchantDb 改写）用函数型覆写，派发时取最新值。
-      list_accounts: () => mockAccounts,
-      list_merchants: () => merchantDb,
-      report_date_range: () => {
-        // 数据期间边界（issue #391）：默认与后端口径一致（MIN/MAX 日期，随 txnDb 现算）
-        if (reportDateRangeOverride) return reportDateRangeOverride
-        const dates = txnDb.map((t) => t.date).sort()
-        return Promise.resolve({ min_date: dates[0] ?? null, max_date: dates[dates.length - 1] ?? null })
-      },
-      list_transactions: (args?: { filter?: Record<string, unknown> }) => {
-        const filter = args?.filter ?? {}
-        const scoped = applyListFilter(filter)
-        const pageSize = (filter.page_size as number) ?? scoped.length
-        const page = (filter.page as number) ?? 1
-        const start = (page - 1) * pageSize
-        return Promise.resolve({
-          items: scoped.slice(start, start + pageSize),
-          total: scoped.length,
-        })
-      },
-      delete_transaction: (args?: { id?: string }) => {
-        txnDb = txnDb.filter((t) => t.id !== args?.id)
-        return Promise.resolve()
-      },
-    },
+    defaults: SHELL_DEFAULTS,
+    overrides: SHELL_OVERRIDES,
     refreshReferenceStores: true,
   })
   await seam.ready

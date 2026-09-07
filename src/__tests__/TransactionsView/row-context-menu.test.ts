@@ -1,5 +1,5 @@
-import { merchantDb, makeTxn, mountView, listCalls, lastListFilter, tablePagination, bodyRows, deleteCalls, createCalls, openMenuOnRow, rowMenu, rowMenuKeys, selectRowMenu, setTxnDb, setMerchantDb, pushMock } from './common'
-import { mockInvoke } from '../helpers/invoke-mock'
+import { merchantDb, makeTxn, mountView, listCalls, lastListFilter, tablePagination, bodyRows, deleteCalls, createCalls, openMenuOnRow, rowMenu, rowMenuKeys, selectRowMenu, setTxnDb, setMerchantDb, pushMock, SHELL_DEFAULTS, SHELL_OVERRIDES } from './common'
+import { mockInvoke, wireInvokeSeam, type InvokeSeamDispatcher } from '../helpers/invoke-mock'
 import { clickDialogButton, dialogText, pressReleaseOnDialogMask, visibleModalText } from '../helpers/dom'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
@@ -170,7 +170,7 @@ describe('TransactionsView 行右键菜单（issue #151）', () => {
     // 修改退款金额为部分退款 ¥12.00
     form.find('input[placeholder="退款金额"]').setValue('12')
     await flushPromises()
-    // 参考命令兑底走共享助手（issue #725）：领域命令自接，其余委托回基础桩
+    // 一次性委托桩（接缝钦定形态）：领域命令自接，其余委托回接缝分发器
     const base = mockInvoke.getMockImplementation()!
     mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
       cmd === 'create_transaction' ? Promise.resolve('refund-id') : base(cmd, args))
@@ -198,7 +198,7 @@ describe('TransactionsView 行右键菜单（issue #151）', () => {
       await selectRowMenu(wrapper, 'refund')
       const form = wrapper.findComponent(RefundForm)
       expect(form.exists()).toBe(true)
-      // 参考命令兑底走共享助手（issue #725）：领域命令自接，其余委托回基础桩
+      // 一次性委托桩（接缝钦定形态）：领域命令自接，其余委托回接缝分发器
       const base = mockInvoke.getMockImplementation()!
       mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
         cmd === 'create_transaction' ? Promise.resolve(`refund-${round}`) : base(cmd, args))
@@ -277,7 +277,7 @@ describe('TransactionsView 行右键「编辑」（issue #178）', () => {
     const form = wrapper.findComponent(CategoryForm)
     form.getComponent(NInput).vm.$emit('update:value', '45')
     await flushPromises()
-    // 参考命令兑底走共享助手（issue #725）：领域命令自接，其余委托回基础桩
+    // 一次性委托桩（接缝钦定形态）：领域命令自接，其余委托回接缝分发器
     const base = mockInvoke.getMockImplementation()!
     mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
       cmd === 'update_transaction' ? Promise.resolve() : base(cmd, args))
@@ -309,7 +309,7 @@ describe('TransactionsView 行右键「编辑」（issue #178）', () => {
     const wrapper = await mountView()
     await openEditModal(wrapper, 0)
     const form = wrapper.findComponent(CategoryForm)
-    // 参考命令兑底走共享助手（issue #725）：领域命令自接，其余委托回基础桩
+    // 一次性委托桩（接缝钦定形态）：领域命令自接，其余委托回接缝分发器
     const base = mockInvoke.getMockImplementation()!
     mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
       cmd === 'update_transaction'
@@ -331,7 +331,7 @@ describe('TransactionsView 行右键「编辑」（issue #178）', () => {
     await flushPromises()
     await openEditModal(wrapper, 0)
     const form = wrapper.findComponent(CategoryForm)
-    // 参考命令兑底走共享助手（issue #725）：领域命令自接，其余委托回基础桩
+    // 一次性委托桩（接缝钦定形态）：领域命令自接，其余委托回接缝分发器
     const base = mockInvoke.getMockImplementation()!
     mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
       cmd === 'update_transaction' ? Promise.resolve() : base(cmd, args))
@@ -358,17 +358,21 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
     fee_cents: 500,
   }
 
-  /** 一次性叠加桩：get_transaction_trade 自接，其余委托回薄壳接线（issue #725/#748）。 */
-  let base: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
+  /** 接缝分发器：薄壳表展开合并本组特有覆写，重走唯一接缝
+   * （持久叠加桩已禁，守门规则 3；issue #750）。 */
+  let base: InvokeSeamDispatcher
 
   beforeEach(() => {
     setTxnDb([...menuDb])
-    base = mockInvoke.getMockImplementation()!
-    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
-      cmd === 'get_transaction_trade'
-        ? // sell 行返回无手续费明细，buy 行返回完整明细
-          Promise.resolve(args?.id === 'txn-002' ? { ...buyTrade, fee_cents: null } : buyTrade)
-        : base(cmd, args))
+    base = wireInvokeSeam({
+      defaults: SHELL_DEFAULTS,
+      overrides: {
+        ...SHELL_OVERRIDES,
+        // sell 行返回无手续费明细，buy 行返回完整明细
+        get_transaction_trade: (args) =>
+          Promise.resolve(args?.id === 'txn-002' ? { ...buyTrade, fee_cents: null } : buyTrade),
+      },
+    })
   })
 
   function updateCalls() {
@@ -457,7 +461,7 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
 
   it('取买卖明细失败：弹窗不打开并提示错误', async () => {
     const wrapper = await mountView()
-    // 参考命令兑底走共享助手（issue #725）：领域命令自接，其余委托回基础桩
+    // 一次性委托桩（接缝钦定形态）：领域命令自接，其余委托回接缝分发器
     mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
       cmd === 'get_transaction_trade'
         ? Promise.reject(new Error('交易不存在或无买卖明细: txn-001'))
@@ -471,7 +475,7 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
     const wrapper = await mountView()
     await openEditModal(wrapper, 0)
     const form = wrapper.findComponent(InvestmentForm)
-    // 参考命令兑底走共享助手（issue #725）：领域命令自接，其余委托回基础桩
+    // 一次性委托桩（接缝钦定形态）：领域命令自接，其余委托回接缝分发器
     mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
       cmd === 'update_transaction'
         ? Promise.reject(new Error('该买入交易已有部分卖出，无法修改'))
@@ -492,19 +496,21 @@ describe('TransactionsView 行右键「加入物品」（issue #119）', () => {
   /** 已建物品列表（默认空；置灰用例改写为关联 txn-001）。 */
   let itemList: unknown[] = []
 
-  /** 一次性叠加桩：list_items/create_item 自接，其余委托回薄壳接线（issue #725/#748）。 */
-  let base: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
+  /** 接缝分发器：薄壳表展开合并本组特有覆写，重走唯一接缝
+   * （持久叠加桩已禁，守门规则 3；issue #750）。 */
+  let base: InvokeSeamDispatcher
 
   beforeEach(() => {
     setTxnDb([...menuDb])
     itemList = []
-    base = mockInvoke.getMockImplementation()!
-    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
-      cmd === 'list_items'
-        ? Promise.resolve(itemList)
-        : cmd === 'create_item'
-          ? Promise.resolve('item-new')
-          : base(cmd, args))
+    base = wireInvokeSeam({
+      defaults: SHELL_DEFAULTS,
+      overrides: {
+        ...SHELL_OVERRIDES,
+        list_items: () => itemList,
+        create_item: () => Promise.resolve('item-new'),
+      },
+    })
   })
 
   /** 右键 expense 行并选「加入物品」。 */
@@ -576,7 +582,7 @@ describe('TransactionsView 行右键「加入物品」（issue #119）', () => {
   it('后端校验失败（重复创建）：弹窗保持打开，错误后不 emit created', async () => {
     const wrapper = await mountView()
     await openAddItemModal(wrapper)
-    // 参考命令兑底走共享助手（issue #725）：领域命令自接，其余委托回基础桩
+    // 一次性委托桩（接缝钦定形态）：领域命令自接，其余委托回接缝分发器
     mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
       cmd === 'create_item'
         ? Promise.reject(new Error('该购买交易已创建过物品，不能重复创建（溯源唯一）: txn-001'))

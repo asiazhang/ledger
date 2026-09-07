@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke, wireInvokeSeam } from '../helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam, type InvokeSeamOverride } from '../helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import ScheduledView from '@/views/ScheduledView.vue'
@@ -18,13 +18,16 @@ const emptySpendOverview: SubscriptionSpendOverview = {
 }
 
 /** 壳层布线：只关心页签结构，子页签的 invoke 一律给最小空数据。
- * 参考字典五命令不在此枚举——桩层规范夹具兑底（页签结构不渲染字典内容）。 */
-function wireShellDefaults() {
+ * 参考字典五命令不在此枚举——桩层规范夹具兑底（页签结构不渲染字典内容）。
+ * `overrides` 供 describe 级增量命令展开合并重走唯一接缝
+ * （持久叠加桩已禁，守门规则 3；issue #750）。 */
+function wireShellDefaults(overrides: Record<string, InvokeSeamOverride> = {}) {
   return wireInvokeSeam({
     defaults: {
       subscription_spend_overview: emptySpendOverview,
       list_scheduled_transactions: [],
     },
+    overrides,
   })
 }
 
@@ -166,18 +169,12 @@ function planDetailOf(id: string, overrides: Partial<ScheduledTransactionDetail[
   }
 }
 
-/** 详情叠加桩：get_scheduled_transaction_detail 自接，其余委托回壳层接线。 */
-function withPlanDetailInvoke() {
-  const base = mockInvoke.getMockImplementation()!
-  mockInvoke.mockImplementation((cmd, args) =>
-    cmd === 'get_scheduled_transaction_detail'
-      ? Promise.resolve(planDetailOf(String(args?.id)))
-      : base(cmd, args))
-}
-
 describe('计划来源落点（issue #707）：focus 读一次 → 形态页签 + 计划详情弹窗', () => {
   beforeEach(() => {
-    withPlanDetailInvoke()
+    // 壳层表展开合并本组特有覆写，重走唯一接缝（持久叠加桩已禁，守门规则 3）
+    wireShellDefaults({
+      get_scheduled_transaction_detail: (args) => Promise.resolve(planDetailOf(String(args?.id))),
+    })
   })
 
   it('独立路由：focus + 形态页签（query.tab）落对应页签并自动打开计划详情弹窗', async () => {
