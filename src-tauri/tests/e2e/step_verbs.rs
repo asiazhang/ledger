@@ -1,9 +1,11 @@
 //! 步骤动词（L2，issue #760 / ADR-0086 决策 1、3）：BDD 共享层中代表一个场景
 //! 前置（Given）或动作（When）的命名函数。完整管线：**名称注册表解析 → L1 输入
 //! 工厂构造 → 经域层/行为层公开函数写入 → 结果注册回 world**；写入一律经公开写
-//! 入口（与 IPC 命令体同款 `db.write`，测试无应用运行时、不经壳层、不裸 SQL——
-//! 见 CONTEXT-testing「公开写入口（测试侧）」），业务不变量（余额缓存行等派生
-//! 数据维护）由产品代码保证。
+//! 入口（域层/行为层函数，测试无应用运行时、不经壳层、不裸 SQL——见
+//! CONTEXT-testing「公开写入口（测试侧）」），业务不变量（余额缓存行等派生
+//! 数据维护）由产品代码保证。置脏语义（`db.write` 写仪式）按步骤语义取舍：
+//! 被测写路径动词与 IPC 命令体同款走 `db.write`；账户域创建动词服务「存在账户」
+//! 类前置夹具，不经 `db.write`（夹具自身不触发自动备份脏标记，见该动词文档）。
 //!
 //! 两类形态：
 //! - **成功形态**：写入失败即 panic（场景失败），返回生成 id；
@@ -12,13 +14,9 @@
 //!   构造后走通用 try 入口。
 //!
 //! 本模块自 #761 起由交易域步骤消费（创建/修改/删除动词接线），自 #762 起由
-//! 定时计划域步骤消费（三形态创建 + 生命周期动词接线）；账户域动词待 #763
-//! 消费（「存在账户」前置旁路归零时接线）。步骤动词是测试层唯一允许触发写入
-//! 的形态；写入失败被静默吞掉属违规（CONTEXT-testing「步骤动词」）。
-
-// 迁移进行中：交易域（#761）与计划域（#762）动词已消费；仅剩账户域动词待
-// #763 消费（bin crate 的 dead_code 会报未使用）——全量消费后移除本豁免。
-#![allow(dead_code)]
+//! 定时计划域步骤消费（三形态创建 + 生命周期动词接线），自 #763 起由账户域
+//! 步骤消费（「存在账户」前置旁路归零接线）。步骤动词是测试层唯一允许触发
+//! 写入的形态；写入失败被静默吞掉属违规（CONTEXT-testing「步骤动词」）。
 
 use tauri_app_lib::accounts::{AccountInput, AccountType, create_account};
 use tauri_app_lib::error::AppError;
@@ -30,8 +28,8 @@ use tauri_app_lib::transaction::{
 };
 
 use crate::step_inputs::{
-    expense_input, income_input, installment_plan_input, refund_input,
-    scheduled_transfer_plan_input, subscription_plan_input, transfer_input,
+    installment_plan_input, refund_input, scheduled_transfer_plan_input, subscription_plan_input,
+    transfer_input,
 };
 use crate::world::LedgerWorld;
 
@@ -42,6 +40,11 @@ use crate::world::LedgerWorld;
 /// 创建账户并注册名称→id：类型为账户类型字符串（"cash"/"bank"/…，解析失败即场
 /// 景文本错误）；`initial_balance_cents` 经 [`AccountInput`] 公开入参传入（None =
 /// 零初始余额）。返回生成 id。
+/// 经域公开创建入口（非 IPC 命令、非裸 SQL）；**不经 `db.write` 置脏包装**——
+/// 本动词服务「存在账户」类前置夹具，夹具自身不得触发自动备份脏标记
+/// （backup.feature 置脏语义场景以「存在账户」为未写基线，issue #243 行为保持）；
+/// 需要置脏的账户写路径场景由 backup_steps 的 When 创建账户（db.write + 同一
+/// 域入口）表达。
 pub fn create_account_verb(
     world: &mut LedgerWorld,
     name: &str,
@@ -69,7 +72,7 @@ pub fn try_create_account_verb(
         currency_code: currency.into(),
         initial_balance_cents,
     };
-    let id = world.db.write(|conn| create_account(conn, input))?;
+    let id = create_account(&world_conn!(world), input)?;
     world.account_name_to_id.insert(name.into(), id.clone());
     Ok(id)
 }
@@ -94,28 +97,6 @@ pub fn try_create_transaction_verb(
     let write: TransactionWrite = world.db.write(|conn| create_transaction(conn, input))?;
     world.txn.last_transaction_id = Some(write.id.clone());
     Ok(write.id)
-}
-
-/// 支出动词：账户按名称解析，输入经 [`expense_input`] 构造。
-pub fn create_expense(
-    world: &mut LedgerWorld,
-    amount_cents: i64,
-    account: &str,
-    date: &str,
-) -> String {
-    let account_id = world.account_id(account);
-    create_transaction_verb(world, expense_input(amount_cents, &account_id, date))
-}
-
-/// 收入动词：同 [`create_expense`] 形态。
-pub fn create_income(
-    world: &mut LedgerWorld,
-    amount_cents: i64,
-    account: &str,
-    date: &str,
-) -> String {
-    let account_id = world.account_id(account);
-    create_transaction_verb(world, income_input(amount_cents, &account_id, date))
 }
 
 /// 转账动词：两端账户按名称解析，输入经 [`transfer_input`] 构造。

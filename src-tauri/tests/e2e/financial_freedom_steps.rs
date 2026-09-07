@@ -7,10 +7,8 @@
 //! 查询经核心函数 `query_financial_freedom`（命令层同款，不经 IPC 壳）。
 
 use cucumber::{given, then, when};
-use rusqlite::params;
 
-use tauri_app_lib::accounts::balance::refresh_account_balances;
-use tauri_app_lib::db::{device_id, new_uuid, now_iso};
+use tauri_app_lib::accounts::{AccountInput, AccountType, create_account};
 use tauri_app_lib::investment::query_financial_freedom;
 
 use crate::world::LedgerWorld;
@@ -19,7 +17,10 @@ use crate::world::LedgerWorld;
 // Given：隐藏投资账户夹具（隐藏账户不进分子的场景专用）
 // ---------------------------------------------------------------------------
 
-/// 直插一个隐藏账户行并注册名称→id 映射（`is_hidden=1`，含黑洞同款可见性）。
+/// 创建隐藏账户（`is_hidden=1`，含黑洞同款可见性）并注册名称→id 映射：创建经
+/// 账户域公开入口（余额缓存行不变量由产品代码保证，#763 旁路归零）；
+/// `is_hidden` 无公开入口可表达（黑洞账户仅由种子预置），库内状态直置后仅在
+/// 该属性上留置（归 #764 例外清单汇总）。
 #[given(expr = "存在隐藏账户 {string} 类型 {string} 币种 {string} 初始余额 {int}")]
 fn create_hidden_account(
     world: &mut LedgerWorld,
@@ -28,17 +29,19 @@ fn create_hidden_account(
     currency: String,
     initial_balance: i64,
 ) {
-    let id = new_uuid();
-    let now = now_iso();
+    let id = create_account(
+        &world_conn!(world),
+        AccountInput {
+            name: name.clone(),
+            kind: kind.parse::<AccountType>().expect("非法账户类型"),
+            currency_code: currency,
+            initial_balance_cents: Some(initial_balance),
+        },
+    )
+    .expect("创建隐藏账户失败");
     world_conn!(world)
-        .execute(
-            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0,1)",
-            params![id, name, kind, currency, initial_balance, now, now, 1, device_id()],
-        )
-        .unwrap();
-    // 每账户必有缓存行是不变量（ADR-0067，create_account 同款）：直插后补建。
-    refresh_account_balances(&world_conn!(world), &[id.as_str()]).unwrap();
+        .execute("UPDATE accounts SET is_hidden=1 WHERE id=?1", [id.as_str()])
+        .expect("置隐藏标志失败");
     world.account_name_to_id.insert(name, id);
 }
 

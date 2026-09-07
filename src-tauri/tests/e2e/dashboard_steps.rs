@@ -5,43 +5,38 @@ use rusqlite::params;
 
 use tauri_app_lib::dashboard::query_dashboard_overview;
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
-use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::create_transaction_internal;
+use tauri_app_lib::investment::{InstrumentInput, InstrumentType, create_instrument};
+use tauri_app_lib::transaction::{TransactionKind, create_transaction_internal};
 
+use crate::common::instrument_id_by_symbol;
+use crate::step_inputs::trade_input;
 use crate::world::LedgerWorld;
-
-/// 按标的代码查 instrument id（同一连接内刚插入，必存在）。
-fn instrument_id(conn: &rusqlite::Connection, symbol: &str) -> String {
-    conn.query_row(
-        "SELECT id FROM instruments WHERE symbol=?1",
-        params![symbol],
-        |r| r.get(0),
-    )
-    .unwrap()
-}
 
 // ---------------------------------------------------------------------------
 // Given
 // ---------------------------------------------------------------------------
 
-/// 直接插入金融工具字典行（投资域字典，聚合测试只需要 id/symbol/币种）。
+/// 经投资域核心创建入口建标的字典行（聚合测试只需要 id/symbol/币种；
+/// #763 旁路归零；市场缺省 unknown，与原直插同值）。
 #[given(expr = "存在标的 {string} 币种 {string}")]
-fn create_instrument(world: &mut LedgerWorld, symbol: String, currency: String) {
-    let now = now_iso();
-    world_conn!(world)
-        .execute(
-            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-             VALUES (?1,?2,'stock',?2,?3,'unknown',?4,?4,1,?5)",
-            params![new_uuid(), symbol, currency, now, device_id()],
-        )
-        .unwrap();
+fn create_instrument_fixture(world: &mut LedgerWorld, symbol: String, currency: String) {
+    let input = InstrumentInput {
+        symbol: symbol.clone(),
+        kind: InstrumentType::Stock,
+        name: Some(symbol),
+        currency_code: currency,
+        market: None,
+    };
+    world
+        .db
+        .write(|conn| create_instrument(conn, input))
+        .expect("新建标的失败");
 }
 
 /// 插入标的市场现价（market_prices 每标的仅保留最新一行）。
 #[given(expr = "标的 {string} 现价 {int} 币种 {string}")]
 fn set_market_price(world: &mut LedgerWorld, symbol: String, price: i64, currency: String) {
-    let instrument_id = instrument_id(&world_conn!(world), &symbol);
+    let instrument_id = instrument_id_by_symbol(&world_conn!(world), &symbol);
     let now = now_iso();
     world_conn!(world)
         .execute(
@@ -63,35 +58,18 @@ fn buy_instrument(
     price_cents: i64,
     account_name: String,
 ) {
-    let instrument_id = instrument_id(&world_conn!(world), &symbol);
+    let instrument_id = instrument_id_by_symbol(&world_conn!(world), &symbol);
     let account_id = world.account_id(&account_name);
-    // 买入交易以账户币种成交：fixture 入参与真实写路径一致，不依赖 prepare 兕底覆盖。
-    let currency_code: String = world_conn!(world)
-        .query_row(
-            "SELECT currency_code FROM accounts WHERE id=?1",
-            params![account_id],
-            |r| r.get(0),
-        )
-        .unwrap();
-    let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::Buy,
-        amount_cents: quantity * price_cents,
-        currency_code,
-        account_id,
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: None,
-        note: None,
-        date: "2026-01-10".into(),
-        instrument_id: Some(instrument_id),
-        quantity: Some(quantity as f64),
-        price_cents: Some(price_cents),
-        fee_cents: Some(0),
-        idempotency_key: None,
-    };
+    // 买入交易以账户币种成交、行金额由 prepare 按数量×单价重算（L1 买卖工厂
+    // 置零语义）；fixture 入参与真实写路径一致，不依赖 prepare 兕底覆盖。
+    let input = trade_input(
+        TransactionKind::Buy,
+        &instrument_id,
+        quantity as f64,
+        price_cents,
+        &account_id,
+        "2026-01-10",
+    );
     let result = create_transaction_internal(&world_conn!(world), input);
     assert!(result.is_ok(), "创建买入交易失败: {:?}", result.err());
 }

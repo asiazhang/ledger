@@ -1,7 +1,7 @@
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::accounts::balance::{compute_balance, refresh_account_balances};
+use tauri_app_lib::accounts::balance::compute_balance;
 use tauri_app_lib::accounts::{
     AccountBalanceAdjustInput, AccountUpdateInput, adjust_account_balance,
     delete_account as delete_account_domain, update_account,
@@ -10,35 +10,12 @@ use tauri_app_lib::db::{device_id, new_uuid, now_iso};
 use tauri_app_lib::transaction::delete_transaction_internal;
 
 use crate::common::query_accounts_by_name;
+use crate::step_verbs::create_account_verb;
 use crate::world::LedgerWorld;
 
 // ---------------------------------------------------------------------------
-// 共享辅助（步骤函数体共用的落库/查询形状）
+// 共享辅助（步骤函数体共用的查询形状）
 // ---------------------------------------------------------------------------
-
-/// 直插一个账户行并注册名称→id 映射（「创建账户…初始余额」与「存在账户…初始余额」
-/// 两个步骤共用同一落库形状）。
-fn insert_account_and_register(
-    world: &mut LedgerWorld,
-    name: String,
-    kind: String,
-    currency: String,
-    initial_balance: i64,
-) {
-    let id = new_uuid();
-    let now = now_iso();
-    world_conn!(world)
-        .execute(
-            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0)",
-            params![id, name, kind, currency, initial_balance, now, now, 1, device_id()],
-        )
-        .unwrap();
-    // 每账户必有缓存行是不变量（ADR-0067，create_account 同款）：直插后补建，
-    // 否则读缓存出口（余额调整/净资产/自由度）报 cache-row-missing。
-    refresh_account_balances(&world_conn!(world), &[id.as_str()]).unwrap();
-    world.account_name_to_id.insert(name, id);
-}
 
 /// 未删除的隐藏账户（黑洞账户）名单（存在/不残留两个对称断言共用同一查询）。
 fn hidden_account_names(world: &LedgerWorld) -> Vec<String> {
@@ -60,8 +37,9 @@ fn hidden_account_names(world: &LedgerWorld) -> Vec<String> {
 // When：编辑账户 / 余额调整（ADR-0026 黑洞转账）
 // ---------------------------------------------------------------------------
 
-/// 带初始余额的账户前置（余额调整场景用）：仅为「创建账户…初始余额」的 Given 语义别名
-/// （cucumber 不跨 given/when 匹配，缺失本步骤时场景整体被静默跳过）。
+/// 带初始余额的账户前置（余额调整场景用）：经账户域公开创建入口动词创建并注册
+/// 名称→id（#763 旁路归零；仅为「创建账户…初始余额」的 Given 语义别名——
+/// cucumber 不跨 given/when 匹配，缺失本步骤时场景整体被静默跳过）。
 #[given(expr = "存在账户 {string} 类型 {string} 币种 {string} 初始余额 {int}")]
 fn create_account_with_initial_balance(
     world: &mut LedgerWorld,
@@ -70,10 +48,11 @@ fn create_account_with_initial_balance(
     currency: String,
     initial_balance: i64,
 ) {
-    insert_account_and_register(world, name, kind, currency, initial_balance);
+    create_account_verb(world, &name, &kind, &currency, Some(initial_balance));
 }
 
 /// 缺失币种的黑洞账户场景用：补一条 1:1 汇率（MVP 多币种汇率 1:1，本位币折算所需）。
+/// 汇率表无公开创建入口的测试接缝（归 #764 例外裁决），保留直置。
 #[given(expr = "存在汇率 {string} 兑本位币 {float}")]
 fn ensure_exchange_rate(world: &mut LedgerWorld, code: String, rate: f64) {
     world_conn!(world)
@@ -201,7 +180,7 @@ fn create_account(
     currency: String,
     initial_balance: i64,
 ) {
-    insert_account_and_register(world, name, kind, currency, initial_balance);
+    create_account_verb(world, &name, &kind, &currency, Some(initial_balance));
 }
 
 #[when(expr = "删除账户 {string}")]

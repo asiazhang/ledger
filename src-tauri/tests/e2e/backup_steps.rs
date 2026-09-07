@@ -29,9 +29,10 @@ use tauri_app_lib::item::{ItemDisposeInput, ItemInput};
 use tauri_app_lib::settings::{self, SettingKey};
 use tauri_app_lib::transaction::TransactionBatch;
 use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::{delete_transaction_internal, update_transaction_internal};
 
+use crate::common::{count_transactions, count_transactions_in_file, seed_account_with_expenses};
+use crate::step_inputs::{expense_input, refund_input};
 use crate::world::LedgerWorld;
 
 fn temp_path(name: &str) -> PathBuf {
@@ -258,13 +259,7 @@ fn backup_db_has_txns(world: &mut LedgerWorld, expected: i64) {
     std::io::copy(&mut db_entry, &mut out_f).unwrap();
     drop(out_f);
     let conn = open_connection(&out).unwrap();
-    let count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
+    let count = count_transactions(&conn);
     assert_eq!(count, expected, "备份包内交易数量不匹配");
     std::fs::remove_file(&out).ok();
 }
@@ -272,14 +267,7 @@ fn backup_db_has_txns(world: &mut LedgerWorld, expected: i64) {
 #[then(expr = "恢复的数据库应包含 {int} 条交易")]
 fn restored_has_txns(world: &mut LedgerWorld, expected: i64) {
     let p = world.boot.restored_db_path.as_ref().expect("尚未恢复");
-    let conn = open_connection(p).unwrap();
-    let count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
+    let count = count_transactions_in_file(p, None);
     assert_eq!(count, expected, "恢复出的交易数量不匹配");
 }
 
@@ -574,25 +562,7 @@ fn update_last_transaction_invalid_amount(world: &mut LedgerWorld) {
         .last_transaction_id
         .clone()
         .expect("没有可修改的交易");
-    let input = TransactionInput {
-        kind: TransactionKind::Expense,
-        amount_cents: 0,
-        currency_code: "CNY".into(),
-        account_id: "acc-any".into(),
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        merchant_name: None,
-        policy_id: None,
-        refund_of_transaction_id: None,
-        note: None,
-        date: "2026-02-01".into(),
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
-    };
+    let input = expense_input(0, "acc-any", "2026-02-01");
     world.last_error = match world
         .db
         .write(|conn| update_transaction_internal(conn, &id, input))
@@ -618,25 +588,9 @@ fn batch_import_expenses_via_entry(
 ) {
     let account_id = world.account_id(&account);
     let inputs: Vec<TransactionInput> = (0..count)
-        .map(|i| TransactionInput {
-            kind: TransactionKind::Expense,
-            amount_cents: cents,
-            currency_code: "CNY".into(),
-            account_id: account_id.clone(),
-            to_account_id: None,
-            category_id: None,
-            merchant_id: None,
-            merchant_name: None,
-            policy_id: None,
-            refund_of_transaction_id: None,
-            note: None,
+        .map(|i| {
             // 日期互异：dedup=true 时同内容行会被判重复，这里保证每行身份唯一。
-            date: format!("2026-02-{:02}", i + 1),
-            instrument_id: None,
-            quantity: None,
-            price_cents: None,
-            fee_cents: None,
-            idempotency_key: None,
+            expense_input(cents, &account_id, &format!("2026-02-{:02}", i + 1))
         })
         .collect();
     let results = world
@@ -656,35 +610,8 @@ fn batch_import_expenses_via_entry(
 #[when(expr = "批量导入两笔交易但退款行引用不存在的原支出交易")]
 fn batch_import_rollback_via_entry(world: &mut LedgerWorld) {
     let account_id = world.account_id("现金");
-    let expense = TransactionInput {
-        kind: TransactionKind::Expense,
-        amount_cents: 1500,
-        currency_code: "CNY".into(),
-        account_id: account_id.clone(),
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        merchant_name: None,
-        policy_id: None,
-        refund_of_transaction_id: None,
-        note: None,
-        date: "2026-02-01".into(),
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
-    };
-    let refund = TransactionInput {
-        policy_id: None,
-        kind: TransactionKind::Refund,
-        amount_cents: 500,
-        // 占位值即可：退款归一化以原支出覆盖账户/币种，但原支出不存在先行报错。
-        currency_code: "CNY".into(),
-        account_id,
-        refund_of_transaction_id: Some(String::from("tx-no-such")),
-        ..expense.clone()
-    };
+    let expense = expense_input(1500, &account_id, "2026-02-01");
+    let refund = refund_input(500, &account_id, "tx-no-such", "2026-02-01");
     world.last_error = match world
         .db
         .write(|conn| TransactionBatch::run(conn, vec![expense, refund], true))
@@ -888,46 +815,15 @@ fn restored_auto_backup_state_reset(world: &mut LedgerWorld) {
 // 加密语义（issue #572 / ADR-0075 决策 7：模式随文件走）
 // ---------------------------------------------------------------------------
 
-/// 在文件库连接中直插账户（含余额缓存行，ADR-0067）并写入 count 条种子
-/// 交易（经行为层接缝），返回账户 id。加密/明文两个 Given 共用同一落库形状。
+/// 在文件库连接中以共享种子助手建账户（经公开创建入口，#763 旁路归零）并
+/// 写入 count 条种子交易，返回账户 id。加密/明文两个 Given 共用同一落库形状。
 fn seed_account_and_transactions(
     conn: &rusqlite::Connection,
     account: &str,
     note_prefix: &str,
     count: usize,
 ) -> String {
-    let id = new_uuid();
-    let now = now_iso();
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,'cash','CNY',0,?3,?3,1,'test',0)",
-        rusqlite::params![id, account, now],
-    )
-    .unwrap();
-    tauri_app_lib::accounts::balance::refresh_account_balances(conn, &[id.as_str()]).unwrap();
-    for i in 0..count {
-        let input = TransactionInput {
-            kind: TransactionKind::Expense,
-            amount_cents: 1500 + i as i64,
-            currency_code: "CNY".into(),
-            account_id: id.clone(),
-            to_account_id: None,
-            category_id: None,
-            merchant_id: None,
-            merchant_name: None,
-            policy_id: None,
-            refund_of_transaction_id: None,
-            note: Some(format!("{note_prefix} {i}")),
-            date: "2026-02-01".into(),
-            instrument_id: None,
-            quantity: None,
-            price_cents: None,
-            fee_cents: None,
-            idempotency_key: None,
-        };
-        tauri_app_lib::transaction::create_transaction_internal(conn, input).unwrap();
-    }
-    id
+    seed_account_with_expenses(conn, account, note_prefix, count, 1500, "2026-02-01")
 }
 
 /// 加密文件库前置（真临时目录，先例 encryption_steps）：直插账户并注册到
@@ -1108,14 +1004,7 @@ fn restored_db_is_plaintext(world: &mut LedgerWorld) {
 #[then(expr = "凭主口令 {string} 打开恢复的数据库应包含 {int} 条交易")]
 fn restored_db_count_with_passphrase(world: &mut LedgerWorld, passphrase: String, count: i64) {
     let p = world.boot.restored_db_path.as_ref().expect("尚未恢复");
-    let conn = open_connection_with_passphrase(p, &passphrase).unwrap();
-    let n: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
+    let n = count_transactions_in_file(p, Some(&passphrase));
     assert_eq!(n, count, "凭主口令打开的恢复库交易数不匹配");
 }
 
@@ -1155,13 +1044,6 @@ fn rollback_from_safety_backup(world: &mut LedgerWorld, passphrase: String, coun
     let safety = safety_backup_file(safety_dir);
     let db_path = enc_backup_db_path(world);
     std::fs::copy(&safety, &db_path).expect("回滚拷贝失败");
-    let conn = open_connection_with_passphrase(&db_path, &passphrase).unwrap();
-    let n: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
+    let n = count_transactions_in_file(&db_path, Some(&passphrase));
     assert_eq!(n, count, "回滚后的库交易数不匹配");
 }

@@ -13,11 +13,8 @@ use tauri_app_lib::db::data_location::{
 use tauri_app_lib::db::{
     data_location, init_db, new_uuid, open_connection, open_db_in, reset_db_in,
 };
-use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::create_transaction_internal;
 
-use crate::common::{insert_account, new_account_id};
+use crate::common::{count_transactions_in_file, seed_account_with_expenses};
 use crate::world::LedgerWorld;
 
 // ---------------------------------------------------------------------------
@@ -32,48 +29,14 @@ fn ensure_default_dir(world: &mut LedgerWorld) {
     }
 }
 
-/// 在指定文件库中建账户与交易（经 Writer/行为层接缝，与真实写路径一致）。
+/// 在指定文件库中建账户与交易：账户经域公开创建入口（余额缓存行不变量由
+/// 产品代码保证，#763 旁路归零），交易经共享种子助手（L1 工厂 + 行为层接缝）。
 fn seed_db(conn: &Connection, account: &str, count: usize) {
-    insert_account(conn, &new_account_id(), account, "cash", "CNY");
-    let account_id: String = conn
-        .query_row(
-            "SELECT id FROM accounts WHERE name = ?1 AND is_deleted = 0",
-            [account],
-            |r| r.get(0),
-        )
-        .unwrap();
-    for i in 0..count {
-        let input = TransactionInput {
-            merchant_name: None,
-            policy_id: None,
-            kind: TransactionKind::Expense,
-            amount_cents: 1000 + i as i64,
-            currency_code: "CNY".into(),
-            account_id: account_id.clone(),
-            to_account_id: None,
-            category_id: None,
-            merchant_id: None,
-            refund_of_transaction_id: None,
-            note: Some(format!("种子交易 {i}")),
-            date: "2026-03-01".into(),
-            instrument_id: None,
-            quantity: None,
-            price_cents: None,
-            fee_cents: None,
-            idempotency_key: None,
-        };
-        create_transaction_internal(conn, input).unwrap();
-    }
+    seed_account_with_expenses(conn, account, "种子交易", count, 1000, "2026-03-01");
 }
 
 fn count_transactions(db_path: &std::path::Path) -> usize {
-    let conn = open_connection(db_path).unwrap();
-    conn.query_row(
-        "SELECT COUNT(*) FROM transactions WHERE is_deleted = 0",
-        [],
-        |r| r.get::<_, i64>(0),
-    )
-    .unwrap() as usize
+    count_transactions_in_file(db_path, None) as usize
 }
 
 /// 抽取关键表的内容快照（排序后逐行拼接），供搬迁前后一致性比对。
@@ -267,14 +230,8 @@ fn fallback_reason_contains(world: &mut LedgerWorld, needle: String) {
 fn opened_db_contains(world: &mut LedgerWorld, count: usize) {
     let state = world.boot.dl_conn.as_ref().unwrap();
     let conn = state.conn.lock().unwrap();
-    let actual: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM transactions WHERE is_deleted = 0",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(actual as usize, count, "打开的库交易数不符");
+    let actual = crate::common::count_transactions(&conn) as usize;
+    assert_eq!(actual, count, "打开的库交易数不符");
 }
 
 #[then(expr = "打开的库应为空库（0 条交易）")]

@@ -5,24 +5,30 @@
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::db::{device_id, new_uuid, now_iso};
+use tauri_app_lib::investment::{InstrumentInput, InstrumentType, create_instrument};
 use tauri_app_lib::transaction::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::create_transaction_internal;
 
-use crate::common::query_all_transactions;
+use crate::common::{instrument_id_by_symbol, query_all_transactions};
+use crate::step_inputs::{buy_input, sell_input};
 use crate::world::LedgerWorld;
 
+/// 经投资域核心创建入口建基金标的字典行（#763 旁路归零；基金不设手动白名单，
+/// 核心入口与 AI HTTP 端点同款五类全开；场景无来源断言，来源标记不涉被测语义）。
 #[given(expr = "存在基金标的 {string} 名称 {string}")]
 fn create_fund_instrument(world: &mut LedgerWorld, symbol: String, name: String) {
-    let now = now_iso();
-    world_conn!(world)
-        .execute(
-            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-             VALUES (?1,?2,'fund',?3,'CNY','unknown',?4,?4,1,?5)",
-            params![new_uuid(), symbol, name, now, device_id()],
-        )
-        .unwrap();
+    let input = InstrumentInput {
+        symbol: symbol.clone(),
+        kind: InstrumentType::Fund,
+        name: Some(name),
+        currency_code: "CNY".into(),
+        market: None,
+    };
+    world
+        .db
+        .write(|conn| create_instrument(conn, input))
+        .expect("新建基金标的失败");
 }
 
 /// 按确认单录入基金申赎（金额权威：amount_cents = 确认单整分金额，wire 不带单价）。
@@ -40,13 +46,7 @@ fn fund_trade(
         TransactionKind::Buy => "2026-01-10",
         _ => "2026-01-20",
     };
-    let instrument_id: String = world_conn!(world)
-        .query_row(
-            "SELECT id FROM instruments WHERE symbol=?1",
-            params![symbol],
-            |r| r.get(0),
-        )
-        .expect("基金标的不存在，先铺垫 Given 存在基金标的");
+    let instrument_id = instrument_id_by_symbol(&world_conn!(world), symbol);
     let account_id = world.account_id(account_name);
     let currency_code = world_conn!(world)
         .query_row(
@@ -55,25 +55,19 @@ fn fund_trade(
             |r| r.get(0),
         )
         .expect("账户不存在");
+    // 金额权威（issue #302 / ADR-0038）：确认单整分金额 + 手续费进 wire，
+    // 单价不落 wire（L1 买卖工厂金额置零 + 单价权威为默认，基金经结构体
+    // 更新改走金额权威——step_inputs::buy_input 文档载明的基金形态）。
+    let base = match kind {
+        TransactionKind::Buy => buy_input(&instrument_id, quantity, None, &account_id, date),
+        TransactionKind::Sell => sell_input(&instrument_id, quantity, None, &account_id, date),
+        other => panic!("基金申赎仅支持 buy/sell，收到: {other}"),
+    };
     let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind,
         amount_cents,
         currency_code,
-        account_id,
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: None,
-        note: None,
-        date: date.into(),
-        instrument_id: Some(instrument_id),
-        quantity: Some(quantity),
-        // 金额权威：单价不落 wire，由后端按（金额 ∓ 手续费）÷ 份额反算（issue #302）
-        price_cents: None,
         fee_cents: Some(fee_cents),
-        idempotency_key: None,
+        ..base
     };
     let write = create_transaction_internal(&world_conn!(world), input).expect("基金申赎落库失败");
     world.txn.last_transaction_id = Some(write.id);
@@ -133,13 +127,7 @@ fn assert_fund_trade_detail(
         .last_transaction_id
         .clone()
         .expect("没有最近的申赎交易");
-    let expected_instrument_id: String = world_conn!(world)
-        .query_row(
-            "SELECT id FROM instruments WHERE symbol=?1",
-            params![symbol],
-            |r| r.get(0),
-        )
-        .expect("标的不存在");
+    let expected_instrument_id = instrument_id_by_symbol(&world_conn!(world), symbol);
     let (instrument_id, trade_quantity, trade_price, trade_fee): (String, f64, i64, i64) =
         world_conn!(world)
             .query_row(

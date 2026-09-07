@@ -1,11 +1,13 @@
+use std::path::Path;
+
 use rusqlite::Connection;
 use rusqlite::params;
 
-use tauri_app_lib::accounts::balance::refresh_account_balances;
-use tauri_app_lib::db::new_uuid;
+use tauri_app_lib::db::{open_connection, open_connection_with_passphrase};
 use tauri_app_lib::error::AppError;
-use tauri_app_lib::transaction::Transaction;
+use tauri_app_lib::transaction::{Transaction, TransactionInput};
 
+use crate::step_inputs::expense_input;
 use crate::world::LedgerWorld;
 
 /// 断言最近一次操作记录的错误信息包含指定片段（多个 `*_steps` 模块共用的 seam 断言）。
@@ -30,22 +32,57 @@ pub fn capture_expected_error<T>(world: &mut LedgerWorld, result: Result<T, AppE
     };
 }
 
-/// 在数据库中插入账户用于测试。
-pub fn insert_account(conn: &Connection, id: &str, name: &str, kind: &str, currency: &str) {
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        params![id, name, kind, currency],
+/// 统计未删除交易数（backup/encryption/data_location 文件级步骤共用的内联
+/// COUNT 收编，#763）：连接形态，断言侧直接消费。
+pub fn count_transactions(conn: &Connection) -> i64 {
+    conn.query_row(
+        "SELECT COUNT(*) FROM transactions WHERE is_deleted = 0",
+        [],
+        |r| r.get(0),
     )
-    .unwrap();
-    // 每账户必有缓存行是不变量（ADR-0067，create_account 同款）：直插后补建，
-    // 否则读缓存出口（余额调整/净资产/自由度）报 cache-row-missing。
-    refresh_account_balances(conn, &[id]).unwrap();
+    .unwrap()
 }
 
-/// 生成 UUID v7 作为账户 ID。
-pub fn new_account_id() -> String {
-    new_uuid()
+/// 打开库文件（可选主口令）并统计未删除交易数（[#count_transactions] 的文件
+/// 形态）：备份恢复产物与加密转换副本的「应包含 N 条交易」断言共用。
+pub fn count_transactions_in_file(db: &Path, passphrase: Option<&str>) -> i64 {
+    let conn = match passphrase {
+        Some(p) => open_connection_with_passphrase(db, p).unwrap(),
+        None => open_connection(db).unwrap(),
+    };
+    count_transactions(&conn)
+}
+
+/// 在文件库中经账户域公开创建入口建现金账户（余额缓存行由产品代码保证，
+/// #763 旁路归零）并落 count 条带备注支出（L1 工厂 + 行为层接缝），返回账户
+/// id 供调用方注册。引导组四文件（backup/encryption/data_location/
+/// startup_failure）共用的种子形状：数量与日期各文件自选，备注按序号编码。
+pub fn seed_account_with_expenses(
+    conn: &Connection,
+    account: &str,
+    note_prefix: &str,
+    count: usize,
+    amount_base: i64,
+    date: &str,
+) -> String {
+    let id = tauri_app_lib::accounts::create_account(
+        conn,
+        tauri_app_lib::accounts::AccountInput {
+            name: account.into(),
+            kind: tauri_app_lib::accounts::AccountType::Cash,
+            currency_code: "CNY".into(),
+            initial_balance_cents: Some(0),
+        },
+    )
+    .unwrap();
+    for i in 0..count {
+        let input = TransactionInput {
+            note: Some(format!("{note_prefix} {i}")),
+            ..expense_input(amount_base + i as i64, &id, date)
+        };
+        tauri_app_lib::transaction::create_transaction_internal(conn, input).unwrap();
+    }
+    id
 }
 
 /// 按标的代码取 id（场景内代码唯一；不存在即 panic——场景文本错误）。买入/卖出/

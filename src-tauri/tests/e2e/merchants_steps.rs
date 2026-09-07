@@ -12,6 +12,7 @@ use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::create_transaction_internal;
 
 use crate::common::query_all_transactions;
+use crate::step_inputs::{parse_kind, plain_input};
 use crate::world::LedgerWorld;
 
 // ---------------------------------------------------------------------------
@@ -113,23 +114,13 @@ fn create_txn_with_merchant(
     merchant_name: String,
 ) {
     let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
-        amount_cents: amount,
-        currency_code: "CNY".into(),
-        account_id: world.account_id(&account_name),
-        to_account_id: None,
-        category_id: None,
         merchant_id: Some(world.merchant_id(&merchant_name)),
-        refund_of_transaction_id: None,
-        note: None,
-        date,
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
+        ..plain_input(
+            parse_kind(&kind),
+            amount,
+            &world.account_id(&account_name),
+            &date,
+        )
     };
     let result = create_transaction_internal(&world_conn!(world), input);
     assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
@@ -148,23 +139,13 @@ fn try_create_txn_with_merchant(
     merchant_name: String,
 ) {
     let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
-        amount_cents: amount,
-        currency_code: "CNY".into(),
-        account_id: world.account_id(&account_name),
-        to_account_id: None,
-        category_id: None,
         merchant_id: Some(world.merchant_id(&merchant_name)),
-        refund_of_transaction_id: None,
-        note: None,
-        date,
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
+        ..plain_input(
+            parse_kind(&kind),
+            amount,
+            &world.account_id(&account_name),
+            &date,
+        )
     };
     let result = create_transaction_internal(&world_conn!(world), input);
     world.last_error = match result {
@@ -183,23 +164,15 @@ fn try_transfer_with_merchant(
     merchant_name: String,
 ) {
     let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::Transfer,
-        amount_cents: amount,
-        currency_code: "CNY".into(),
-        account_id: world.account_id(&account_name),
-        to_account_id: None,
-        category_id: None,
         merchant_id: Some(world.merchant_id(&merchant_name)),
-        refund_of_transaction_id: None,
-        note: None,
-        date,
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
+        // 故意不传转入账户：「不合法形态被后端守卫拒绝」的被测前提
+        // （transfer.to-account-required，与 L1 工厂 per-kind 矩阵一致）。
+        ..plain_input(
+            TransactionKind::Transfer,
+            amount,
+            &world.account_id(&account_name),
+            &date,
+        )
     };
     let result = create_transaction_internal(&world_conn!(world), input);
     world.last_error = match result {

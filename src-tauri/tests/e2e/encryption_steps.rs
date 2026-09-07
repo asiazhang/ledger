@@ -19,10 +19,8 @@ use tauri_app_lib::db::encryption::{
 };
 use tauri_app_lib::db::{init_db, new_uuid, open_connection, open_connection_with_passphrase};
 use tauri_app_lib::error::AppError;
-use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::create_transaction_internal;
 
+use crate::common::{count_transactions, count_transactions_in_file, seed_account_with_expenses};
 use crate::world::LedgerWorld;
 
 // ---------------------------------------------------------------------------
@@ -44,56 +42,10 @@ fn db_path(world: &LedgerWorld) -> std::path::PathBuf {
     world.boot.enc_dir.as_ref().unwrap().join(DB_FILE_NAME)
 }
 
-/// 在文件库中建账户与 N 条交易（经 Writer/行为层接缝，含余额缓存行不变量）。
+/// 在文件库中建账户与 N 条交易：账户经域公开创建入口（余额缓存行不变量由
+/// 产品代码保证，#763 旁路归零），交易经共享种子助手（L1 工厂 + 行为层接缝）。
 fn seed_db(conn: &Connection, count: usize) {
-    let account_id = new_uuid();
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,'cash','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        rusqlite::params![account_id, "现金"],
-    )
-    .unwrap();
-    tauri_app_lib::accounts::balance::refresh_account_balances(conn, &[account_id.as_str()])
-        .unwrap();
-    for i in 0..count {
-        let input = TransactionInput {
-            merchant_name: None,
-            policy_id: None,
-            kind: TransactionKind::Expense,
-            amount_cents: 1000 + i as i64,
-            currency_code: "CNY".into(),
-            account_id: account_id.clone(),
-            to_account_id: None,
-            category_id: None,
-            merchant_id: None,
-            refund_of_transaction_id: None,
-            note: Some(format!("加密种子交易 {i}")),
-            date: "2026-03-01".into(),
-            instrument_id: None,
-            quantity: None,
-            price_cents: None,
-            fee_cents: None,
-            idempotency_key: None,
-        };
-        create_transaction_internal(conn, input).unwrap();
-    }
-}
-
-fn count_transactions(conn: &Connection) -> i64 {
-    conn.query_row(
-        "SELECT COUNT(*) FROM transactions WHERE is_deleted = 0",
-        [],
-        |r| r.get(0),
-    )
-    .unwrap()
-}
-
-fn count_transactions_in_file(db: &std::path::Path, passphrase: Option<&str>) -> i64 {
-    let conn = match passphrase {
-        Some(p) => open_connection_with_passphrase(db, p).unwrap(),
-        None => open_connection(db).unwrap(),
-    };
-    count_transactions(&conn)
+    seed_account_with_expenses(conn, "现金", "加密种子交易", count, 1000, "2026-03-01");
 }
 
 /// 断言库中种子交易完整：数量一致且种子备注逐条在（转换往返不丢内容）。

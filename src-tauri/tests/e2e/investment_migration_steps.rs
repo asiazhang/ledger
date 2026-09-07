@@ -24,17 +24,9 @@ use tauri_app_lib::transaction::TransactionBatch;
 use tauri_app_lib::transaction::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
 
+use crate::common::instrument_id_by_symbol;
+use crate::step_inputs::trade_input;
 use crate::world::LedgerWorld;
-
-/// 按标的代码查 instrument id（先行「幂等创建标的」步骤落库，必存在）。
-fn instrument_id_by_symbol(conn: &rusqlite::Connection, symbol: &str) -> String {
-    conn.query_row(
-        "SELECT id FROM instruments WHERE symbol=?1",
-        params![symbol],
-        |r| r.get(0),
-    )
-    .unwrap_or_else(|_| panic!("标的不存在，先执行幂等创建标的步骤: {symbol}"))
-}
 
 // ---------------------------------------------------------------------------
 // When：幂等创建标的（创建端点同一核心接缝）
@@ -100,25 +92,19 @@ fn batch_import_trades(world: &mut LedgerWorld, #[step] step: &Step) {
                 .unwrap_or_else(|_| panic!("账户不存在: {account_name}"));
             (instrument_id, account_id, currency_code)
         };
+        // L1 买卖工厂：行金额置零（prepare 按「数量 × 单价 ± 手续费」重算，
+        // 提交值不被采信）、单价进 wire；币种/手续费为冷字段经结构体更新覆盖。
         inputs.push(TransactionInput {
-            kind,
-            // 占位金额：prepare 按「数量 × 单价 ± 手续费」重算交易行金额
-            amount_cents: 0,
             currency_code,
-            account_id,
-            to_account_id: None,
-            category_id: None,
-            merchant_id: None,
-            merchant_name: None,
-            policy_id: None,
-            refund_of_transaction_id: None,
-            note: None,
-            date: get(row, "日期"),
-            instrument_id: Some(instrument_id),
-            quantity: Some(get(row, "数量").parse().expect("数量必须是数字")),
-            price_cents: Some(get(row, "单价").parse().expect("单价必须是整数")),
             fee_cents: Some(get(row, "手续费").parse().expect("手续费必须是整数")),
-            idempotency_key: None,
+            ..trade_input(
+                kind,
+                &instrument_id,
+                get(row, "数量").parse().expect("数量必须是数字"),
+                get(row, "单价").parse().expect("单价必须是整数"),
+                &account_id,
+                &get(row, "日期"),
+            )
         });
     }
     let count = inputs.len();

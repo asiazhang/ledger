@@ -13,6 +13,7 @@ use tauri_app_lib::transaction::{
 };
 
 use crate::common::query_all_transactions;
+use crate::step_inputs::income_input;
 use crate::world::{ImportedRow, LedgerWorld};
 
 /// 批量导入：模拟 AI 迁移，与 HTTP 批量导入同走 `batch::TransactionBatch::run`（dedup=true）。
@@ -95,23 +96,9 @@ fn edit_txn_by_key(world: &mut LedgerWorld, key: String, amount: i64, date: Stri
         )
         .unwrap_or_else(|_| panic!("未找到幂等键为 '{key}' 的交易"));
     let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::Income,
-        amount_cents: amount,
         currency_code,
-        account_id,
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: None,
         note: Some(note),
-        date,
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
+        ..income_input(amount, &account_id, &date)
     };
     update_transaction_internal(&world_conn!(world), &id, input).expect("修改交易失败");
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
