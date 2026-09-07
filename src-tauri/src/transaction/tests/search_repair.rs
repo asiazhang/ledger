@@ -5,15 +5,10 @@
 use rusqlite::Connection;
 
 use super::super::search::{repair_note_pinyin, search_transactions_internal};
-use crate::db::{init_db, open_in_memory};
+use super::common::{insert_account, setup};
 use crate::error::Result;
+use crate::test_support::FIXED_NOW;
 use crate::transaction::{NotePinyinRepairStage, TransactionSearchResult};
-
-fn setup() -> Connection {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
-    conn
-}
 
 fn search(conn: &Connection, query: &str) -> Result<TransactionSearchResult> {
     search_transactions_internal(conn, query, 1, 20, None, None, None, None)
@@ -32,8 +27,8 @@ fn insert_txn_note_pinyin(
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,note_pinyin,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,'expense',1000,'CNY',1000,?2,NULL,NULL,NULL,?3,?4,?5,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        rusqlite::params![id, account_id, note, note_pinyin, date],
+         VALUES (?1,'expense',1000,'CNY',1000,?2,NULL,NULL,NULL,?3,?4,?5,?6,?6,1,'test',0)",
+        rusqlite::params![id, account_id, note, note_pinyin, date, FIXED_NOW],
     )
     .unwrap();
 }
@@ -54,15 +49,6 @@ fn backlog_count(conn: &Connection) -> i64 {
         |r| r.get(0),
     )
     .unwrap()
-}
-
-fn insert_account(conn: &Connection, id: &str, name: &str, kind: &str, currency: &str) {
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        rusqlite::params![id, name, kind, currency],
-    )
-    .unwrap();
 }
 
 /// 积压全量回填：报告回填行数、判定收敛，列值与现算规则一致，拼音搜索不漏。

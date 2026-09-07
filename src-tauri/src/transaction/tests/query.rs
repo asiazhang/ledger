@@ -345,8 +345,9 @@ fn list_transactions_deterministic_order_by_id_when_same_timestamp() {
         .id;
         ids.push(id);
     }
-    // 同一批导入：所有行 created_at 相同（每批一个时间戳）
-    set_created_at(&conn, "2026-01-01T00:00:00Z");
+    // 同一批导入：所有行 created_at 相同（每批一个时间戳）；具体值不被观察，
+    // 用工厂固定时刻常量表达簿记戳（spec #728 / ADR-0084 决策 5）。
+    set_created_at(&conn, crate::test_support::FIXED_NOW);
 
     // 期望顺序 = SQLite TEXT 列的 id DESC（字典序降序，确定性 tiebreaker）
     let mut expected = ids.clone();

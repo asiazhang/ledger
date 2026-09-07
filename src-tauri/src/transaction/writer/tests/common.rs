@@ -1,31 +1,39 @@
 //! Writer 接缝测试共享脚手架：仅限本测试目录（`writer::tests`）内部使用
 //! （跨测试模块合并不在此列，见 #250）。
+//!
+//! 建库与账户夹具已上收统一测试工厂 `crate::test_support`（spec #728 / ADR-0084，
+//! 域迁移票 #757）：按检查点结论（#754，中大型域）保留一行转发，调用点不动；
+//! 种子簿记戳引用工厂 [`FIXED_NOW`]，零字面量。分类种子与退款来源行为域特有，
+//! 按准入规则留薄皮。
 
 use rusqlite::{Connection, params};
 
+use crate::test_support::FIXED_NOW;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::writer::{Input, insert_row, normalize};
 
 pub(super) fn setup_db() -> Connection {
-    let mut conn = crate::db::open_in_memory().unwrap();
-    crate::db::init_db(&mut conn).unwrap();
-    conn
+    crate::test_support::open()
+}
+
+/// 共享锁形态的已初始化内存库：写入口置脏语义测试（`DbState::write` 提交点单点，
+/// ADR-0032）需要 DbState 壳，连接本身仍经工厂打开，不绕开统一建库入口。
+pub(super) fn setup_db_state() -> crate::db::DbState {
+    crate::db::DbState {
+        conn: std::sync::Arc::new(std::sync::Mutex::new(crate::test_support::open())),
+    }
 }
 
 pub(super) fn insert_account(conn: &Connection, id: &str, currency: &str) {
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id) \
-         VALUES (?1,?1,'cash',?2,0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        params![id, currency],
-    )
-    .unwrap();
+    // 脚手架账户（id 兼名、cash）：工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）。
+    crate::test_support::seed_account(conn, id, id, "cash", currency, 0);
 }
 
 pub(super) fn insert_category(conn: &Connection, id: &str) {
     conn.execute(
         "INSERT INTO categories (id,name,kind,created_at,updated_at,version,device_id) \
-         VALUES (?1,?1,'expense','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        params![id],
+         VALUES (?1,?1,'expense',?2,?2,1,'test')",
+        params![id, FIXED_NOW],
     )
     .unwrap();
 }

@@ -1,21 +1,10 @@
 //! normalize 归一化校验：通用 kind 直通、金额 > 0、transfer 必填目标账户、
 //! 仅接受通用 kind（buy/sell/dividend/split 拒绝）、本位币折算（Amount 接缝）。
 
-use rusqlite::{Connection, params};
-
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::writer::{Input, normalize};
 
 use super::common::{input, insert_account, insert_category, setup_db};
-
-fn insert_rate(conn: &Connection, base: &str, quote: &str, rate: f64) {
-    conn.execute(
-        "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,updated_at,version,device_id) \
-         VALUES ('er-1',?1,?2,?3,'2026-02-01T00:00:00Z','2026-02-01T00:00:00Z',1,'test')",
-        params![base, quote, rate],
-    )
-    .unwrap();
-}
 
 // ---------------------------------------------------------------------------
 // normalize：通用 kind 直通
@@ -143,7 +132,8 @@ fn normalize_rejects_non_generic_kinds() {
 fn normalize_converts_via_amount_seam_to_default_currency() {
     let conn = setup_db();
     insert_account(&conn, "acc-usd", "USD");
-    insert_rate(&conn, "USD", "CNY", 7.2);
+    // USD→CNY 汇率：工厂当前汇率种子一行建成（折算查找只按货币对，id/priced_at 不被观察）。
+    crate::test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
     let norm = normalize(
         &conn,
         &Input {

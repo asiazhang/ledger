@@ -9,19 +9,14 @@ use rusqlite::Connection;
 use super::super::search::{
     Stage1Filter, TermLowered, build_stage1_query, load_search_dicts, search_transactions_internal,
 };
-use crate::db::{init_db, open_in_memory};
+use super::common::{insert_account, setup};
 use crate::error::Result;
+use crate::test_support::FIXED_NOW;
 use crate::transaction::TransactionSearchResult;
 use crate::transaction::search_text::{
     is_subsequence, pinyin_initials, split_terms, term_matches, term_matches_text,
 };
 use crate::transaction::writer::{NormalizedRow, insert_row, update_row};
-
-fn setup() -> Connection {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
-    conn
-}
 
 /// 无筛选搜索（第 1 页、每页 20 条）。
 fn search(conn: &Connection, query: &str) -> Result<TransactionSearchResult> {
@@ -38,20 +33,11 @@ fn search_paged(
     search_transactions_internal(conn, query, page, page_size, None, None, None, None)
 }
 
-fn insert_account(conn: &Connection, id: &str, name: &str, kind: &str, currency: &str) {
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        rusqlite::params![id, name, kind, currency],
-    )
-    .unwrap();
-}
-
 fn insert_category(conn: &Connection, id: &str, name: &str, kind: &str) {
     conn.execute(
         "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,NULL,NULL,0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        rusqlite::params![id, name, kind],
+         VALUES (?1,?2,?3,NULL,NULL,0,?4,?4,1,'test',0)",
+        rusqlite::params![id, name, kind, FIXED_NOW],
     )
     .unwrap();
 }
@@ -59,8 +45,8 @@ fn insert_category(conn: &Connection, id: &str, name: &str, kind: &str) {
 fn insert_merchant(conn: &Connection, id: &str, name: &str) {
     conn.execute(
         "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        rusqlite::params![id, name],
+         VALUES (?1,?2,?3,?3,1,'test',0)",
+        rusqlite::params![id, name, FIXED_NOW],
     )
     .unwrap();
 }
@@ -77,8 +63,8 @@ fn insert_txn(
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,'expense',1000,'CNY',1000,?2,NULL,?3,NULL,?4,?5,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        rusqlite::params![id, account_id, category_id, note, date],
+         VALUES (?1,'expense',1000,'CNY',1000,?2,NULL,?3,NULL,?4,?5,?6,?6,1,'test',0)",
+        rusqlite::params![id, account_id, category_id, note, date, FIXED_NOW],
     )
     .unwrap();
 }
@@ -96,8 +82,8 @@ fn insert_txn_merchant(
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted,merchant_id) \
-         VALUES (?1,'expense',1000,'CNY',1000,?2,NULL,NULL,NULL,?3,?4,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0,?5)",
-        rusqlite::params![id, account_id, note, date, merchant_id],
+         VALUES (?1,'expense',1000,'CNY',1000,?2,NULL,NULL,NULL,?3,?4,?5,?5,1,'test',0,?6)",
+        rusqlite::params![id, account_id, note, date, FIXED_NOW, merchant_id],
     )
     .unwrap();
 }
@@ -115,8 +101,8 @@ fn insert_txn_amount(
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,'expense',?2,'CNY',?2,?3,NULL,NULL,NULL,?4,?5,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        rusqlite::params![id, amount_cents, account_id, note, date],
+         VALUES (?1,'expense',?2,'CNY',?2,?3,NULL,NULL,NULL,?4,?5,?6,?6,1,'test',0)",
+        rusqlite::params![id, amount_cents, account_id, note, date, FIXED_NOW],
     )
     .unwrap();
 }
@@ -531,9 +517,8 @@ fn search_amount_range_filters_on_native_cents() {
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES ('t1','expense',10000,'USD',72000,'a1',NULL,NULL,NULL,'美元订阅','2026-02-01',\
-         '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        [],
+         VALUES ('t1','expense',10000,'USD',72000,'a1',NULL,NULL,NULL,'美元订阅','2026-02-01',?1,?1,1,'test',0)",
+        rusqlite::params![FIXED_NOW],
     )
     .unwrap();
     insert_txn_amount(&conn, "t2", "a1", Some("午餐"), "2026-02-02", 1500);
@@ -616,8 +601,8 @@ fn search_includes_hidden_account_and_all_kinds() {
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES ('t1','income',700,'CNY',700,'a1',NULL,NULL,NULL,'退款入账','2026-02-01','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        [],
+         VALUES ('t1','income',700,'CNY',700,'a1',NULL,NULL,NULL,'退款入账','2026-02-01',?1,?1,1,'test',0)",
+        rusqlite::params![FIXED_NOW],
     )
     .unwrap();
     insert_txn(&conn, "t2", "a2", None, Some("工资"), "2026-02-02");
@@ -626,8 +611,8 @@ fn search_includes_hidden_account_and_all_kinds() {
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES ('t3','transfer',3000,'CNY',3000,'a2','a3',NULL,NULL,NULL,'2026-02-03','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        [],
+         VALUES ('t3','transfer',3000,'CNY',3000,'a2','a3',NULL,NULL,NULL,'2026-02-03',?1,?1,1,'test',0)",
+        rusqlite::params![FIXED_NOW],
     )
     .unwrap();
     let res = search(&conn, "退款").unwrap();
@@ -694,8 +679,8 @@ fn insert_txn_note_pinyin(
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,note_pinyin,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,'expense',1000,'CNY',1000,?2,NULL,NULL,NULL,?3,?4,?5,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        rusqlite::params![id, account_id, note, note_pinyin, date],
+         VALUES (?1,'expense',1000,'CNY',1000,?2,NULL,NULL,NULL,?3,?4,?5,?6,?6,1,'test',0)",
+        rusqlite::params![id, account_id, note, note_pinyin, date, FIXED_NOW],
     )
     .unwrap();
 }

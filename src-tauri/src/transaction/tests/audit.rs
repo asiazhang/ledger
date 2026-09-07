@@ -1,8 +1,9 @@
 //! 审计字段统一生成与 native 本位币折算（issue #60：统一经 Writer 落库）。
 
 use super::super::*;
-use super::common::{insert_account, make_buy_input, make_input, setup, setup_investment_account};
+use super::common::{insert_account, make_buy_input, make_input, setup};
 
+use crate::test_support::seed_investment_setup;
 use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 use rusqlite::params;
@@ -18,7 +19,7 @@ fn create_transaction_internal_audit_fields_uniform_across_kinds() {
     let conn = setup();
     insert_account(&conn, "acc-w", "现金", "cash", "CNY");
     insert_account(&conn, "acc-w2", "银行", "bank", "CNY");
-    setup_investment_account(&conn, "acc-inv-w", "inst-w");
+    seed_investment_setup(&conn, "acc-inv-w", "inst-w");
 
     let expense_id = create_transaction_internal(
         &conn,
@@ -135,12 +136,9 @@ fn update_transaction_internal_preserves_created_at_and_refreshes_audit() {
 fn create_transaction_internal_generic_converts_native_via_amount_seam() {
     let conn = setup();
     insert_account(&conn, "acc-usd", "美元", "cash", "USD");
-    conn.execute(
-        "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,updated_at,version,device_id) \
-         VALUES ('er-w','USD','CNY',7.2,'2026-02-01T00:00:00Z','2026-02-01T00:00:00Z',1,'test')",
-        [],
-    )
-    .unwrap();
+    // USD 账户本位币折算需要 USD→CNY 汇率（Amount 接缝，issue #60）；折算查找只按
+    // 货币对，用工厂当前汇率种子一行建成。
+    crate::test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
 
     let id = create_transaction_internal(
         &conn,

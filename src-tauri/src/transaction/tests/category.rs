@@ -33,8 +33,8 @@ fn assert_coded_rejection(err: AppError, code: &str, message_part: &str) {
 fn insert_category(conn: &Connection, id: &str, name: &str, kind: &str) {
     conn.execute(
         "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,NULL,NULL,0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        params![id, name, kind],
+         VALUES (?1,?2,?3,NULL,NULL,0,?4,?4,1,'test',0)",
+        params![id, name, kind, crate::test_support::FIXED_NOW],
     )
     .unwrap();
 }

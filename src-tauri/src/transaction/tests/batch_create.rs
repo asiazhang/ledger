@@ -4,6 +4,7 @@
 use rusqlite::{Connection, params};
 
 use crate::signals::WriteEvidence;
+use crate::test_support::{FIXED_NOW, seed_instrument, seed_investment_setup};
 use crate::test_utils::{CapturedEvent, capture_events};
 use crate::transaction::TransactionBatch;
 use crate::transaction::TransactionInput;
@@ -11,6 +12,7 @@ use crate::transaction::amount::TransactionKind;
 use tracing::Level;
 
 use super::batch_common::{insert_account, make_input, setup};
+use super::common::make_buy_input;
 
 #[test]
 fn batch_create_marks_duplicates_and_keeps_rows() {
@@ -227,67 +229,12 @@ fn idempotency_key_dedup_query_uses_partial_index() {
     );
 }
 
-fn make_buy_input(
-    account_id: &str,
-    instrument_id: &str,
-    qty: f64,
-    price: i64,
-    fee: i64,
-) -> TransactionInput {
-    TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::Buy,
-        amount_cents: 0,
-        currency_code: "USD".into(),
-        account_id: account_id.into(),
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: None,
-        note: None,
-        date: "2026-01-10".into(),
-        instrument_id: Some(instrument_id.into()),
-        quantity: Some(qty),
-        price_cents: Some(price),
-        fee_cents: Some(fee),
-        idempotency_key: None,
-    }
-}
-
-fn setup_investment_account(conn: &Connection, account_id: &str, instrument_id: &str) {
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,'美股','investment','USD',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        params![account_id],
-    )
-    .unwrap();
-    conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-         VALUES (?1,'SYM','stock','Symbol','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        params![instrument_id],
-    )
-    .unwrap();
-    // buy/sell 本位币折算走 Amount 接缝（issue #70）：补 1:1 汇率，非默认币种账户交易不报缺汇率。
-    conn.execute(
-        "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,updated_at,version,device_id) \
-         VALUES ('er-fix','USD','CNY',1.0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        [],
-    )
-    .unwrap();
-}
-
 #[test]
 fn batch_create_idempotency_key_buy_sell_different_instruments_kept() {
     let conn = setup();
-    setup_investment_account(&conn, "acc-inv-key", "inst-aapl");
-    // 第二个不同标的（相同币种 USD）。
-    conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-         VALUES (?1,'MSFT','stock','Msft','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        params!["inst-msft"],
-    )
-    .unwrap();
+    seed_investment_setup(&conn, "acc-inv-key", "inst-aapl");
+    // 第二个不同标的（相同币种 USD）：工厂标的种子。
+    seed_instrument(&conn, "inst-msft", "MSFT", "Msft", "USD", "unknown");
 
     // 两笔买入：不同标的、相同原始金额字段（amount_cents=0，内容哈希盲区），带键应都保留。
     let mut buy1 = make_buy_input("acc-inv-key", "inst-aapl", 10.0, 10000, 500);
@@ -544,8 +491,8 @@ fn run_with_reused_merchants_aggregates_false() {
     // 预置既有商户「京东」，并先落一行建立 id 复用目标。
     conn.execute(
         "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES ('mer-jd','京东','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        [],
+         VALUES ('mer-jd','京东',?1,?1,1,'test',0)",
+        params![FIXED_NOW],
     )
     .unwrap();
 

@@ -1,24 +1,22 @@
 //! 交易命令域测试共享脚手架：仅限本测试目录（`transactions::tests`）内部使用。
+//!
+//! 建库与跨域重复夹具（账户、投资铺垫）已上收统一测试工厂 `crate::test_support`
+//! （spec #728 / ADR-0084，域迁移票 #757）：本薄皮按检查点结论（#754，中大型域）
+//! 保留一行转发，调用点不动、种子常数单点化。域语义构造器（`make_input` 等
+//! TransactionInput 构造，非 DB 夹具）按准入规则留域内。
 
 use crate::transaction::TransactionInput;
 use rusqlite::Connection;
 
-use crate::db::{init_db, open_in_memory};
 use crate::transaction::amount::TransactionKind;
-use rusqlite::params;
 
 pub(crate) fn setup() -> Connection {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
-    conn
+    crate::test_support::open()
 }
 
 pub(crate) fn insert_account(conn: &Connection, id: &str, name: &str, kind: &str, currency: &str) {
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        params![id, name, kind, currency],
-    ).unwrap();
+    // 脚手架账户：工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）。
+    crate::test_support::seed_account(conn, id, name, kind, currency, 0);
 }
 
 pub(crate) fn make_input(
@@ -74,26 +72,4 @@ pub(crate) fn make_buy_input(
         fee_cents: Some(fee),
         idempotency_key: None,
     }
-}
-
-pub(crate) fn setup_investment_account(conn: &Connection, account_id: &str, instrument_id: &str) {
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,'美股','investment','USD',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        params![account_id],
-    )
-    .unwrap();
-    conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-         VALUES (?1,'SYM','stock','Symbol','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        params![instrument_id],
-    )
-    .unwrap();
-    // buy/sell 本位币折算走 Amount 接缝（issue #70）：补 1:1 汇率，非默认币种账户交易不报缺汇率。
-    conn.execute(
-        "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,updated_at,version,device_id) \
-         VALUES ('er-fix','USD','CNY',1.0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        [],
-    )
-    .unwrap();
 }

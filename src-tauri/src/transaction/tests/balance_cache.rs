@@ -12,7 +12,7 @@
 use rusqlite::{Connection, params};
 
 use super::super::*;
-use super::common::{insert_account, make_buy_input, make_input, setup, setup_investment_account};
+use super::common::{insert_account, make_buy_input, make_input, setup};
 use crate::accounts::balance::{compute_all_balances_with_visibility, compute_balance};
 use crate::accounts::{
     AccountBalanceAdjustInput, AccountInput, AccountType, adjust_account_balance,
@@ -20,7 +20,7 @@ use crate::accounts::{
     list_account_balances_with_visibility as domain_list_balances,
 };
 use crate::dashboard::query_dashboard_overview;
-use crate::test_support::assert_balance_cache_matches_realtime;
+use crate::test_support::{assert_balance_cache_matches_realtime, seed_investment_setup};
 use crate::transaction::TransactionBatch;
 use crate::transaction::amount::TransactionKind;
 
@@ -44,7 +44,7 @@ fn backfill_scaffold_account(conn: &Connection, account_id: &str) {
 fn create_all_kinds_keep_cache_consistent() {
     let conn = setup();
     insert_account(&conn, "acc-cash", "现金", "cash", "CNY");
-    setup_investment_account(&conn, "acc-inv", "inst-k");
+    seed_investment_setup(&conn, "acc-inv", "inst-k");
     backfill_scaffold_account(&conn, "acc-cash");
     backfill_scaffold_account(&conn, "acc-inv");
 
@@ -329,7 +329,7 @@ fn adjust_balance_targets_exact_value_via_cache() {
 fn five_outlets_return_realtime_consistent_values() {
     let conn = setup();
     insert_account(&conn, "acc-o1", "现金", "cash", "CNY");
-    setup_investment_account(&conn, "acc-o2", "inst-o");
+    seed_investment_setup(&conn, "acc-o2", "inst-o");
     backfill_scaffold_account(&conn, "acc-o1");
     backfill_scaffold_account(&conn, "acc-o2");
     create_transaction_internal(

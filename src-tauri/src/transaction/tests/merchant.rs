@@ -16,8 +16,8 @@ use rusqlite::params;
 fn insert_merchant(conn: &Connection, id: &str, name: &str) {
     conn.execute(
         "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        params![id, name],
+         VALUES (?1,?2,?3,?3,1,'test',0)",
+        params![id, name, crate::test_support::FIXED_NOW],
     )
     .unwrap();
 }

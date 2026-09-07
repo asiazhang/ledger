@@ -84,10 +84,10 @@ export interface GateWhitelistEntry {
 
 /**
  * 白名单起步（issue #752）：现存全部违规按域分组，一组一行、注释记行数。
- * 每张按域迁移票负责把自己那组缩减为空（#756 scheduled_transactions / #757
- * transaction；e2e 与 backup/内联簿记组暂无对应迁移票，随 e2e 夹具 spec 或对应
- * 域票处置）。API 集成层组已随 #753 清零，叶子域+db+sync 组已随 #754 清零，
- * investment 组已随 #755 清零。
+ * 每张按域迁移票负责把自己那组缩减为空（#756 scheduled_transactions；e2e 与
+ * backup/内联簿记组暂无对应迁移票，随 e2e 夹具 spec 或对应域票处置）。
+ * API 集成层组已随 #753 清零，叶子域+db+sync 组已随 #754 清零，investment 组
+ * 已随 #755 清零，transaction 域组已随 #757 清零。
  * #758 收口：全表清零转纯禁令。
  */
 export const WHITELIST: readonly GateWhitelistEntry[] = [
@@ -95,23 +95,6 @@ export const WHITELIST: readonly GateWhitelistEntry[] = [
   { file: 'src/scheduled_transactions/tests/common.rs', note: 'scheduled_transactions 域', r1: 2, r3: 2 },
   { file: 'src/scheduled_transactions/tests/merchant.rs', note: 'scheduled_transactions 域', r3: 2 },
   { file: 'src/scheduled_transactions/tests/spend.rs', note: 'scheduled_transactions 域', r3: 4 },
-
-  // ── transaction 域（迁移票 #757）──
-  { file: 'src/transaction/tests/amount.rs', note: 'transaction 域', r1: 2, r2: 2, r3: 2 },
-  { file: 'src/transaction/tests/audit.rs', note: 'transaction 域', r2: 1 },
-  { file: 'src/transaction/tests/batch_common.rs', note: 'transaction 域', r1: 4, r3: 2 },
-  { file: 'src/transaction/tests/batch_create.rs', note: 'transaction 域', r2: 4, r3: 10 },
-  { file: 'src/transaction/tests/behavior.rs', note: 'transaction 域', r3: 4 },
-  { file: 'src/transaction/tests/category.rs', note: 'transaction 域', r3: 2 },
-  { file: 'src/transaction/tests/common.rs', note: 'transaction 域', r1: 4, r3: 8 },
-  { file: 'src/transaction/tests/merchant.rs', note: 'transaction 域', r3: 2 },
-  { file: 'src/transaction/tests/query.rs', note: 'transaction 域', r3: 1 },
-  { file: 'src/transaction/tests/search.rs', note: 'transaction 域', r1: 4, r2: 1, r3: 20 },
-  { file: 'src/transaction/tests/search_repair.rs', note: 'transaction 域', r1: 4, r2: 1, r3: 4 },
-  { file: 'src/transaction/writer/tests/common.rs', note: 'transaction 域', r1: 2, r3: 4 },
-  { file: 'src/transaction/writer/tests/merchant.rs', note: 'transaction 域', r3: 2 },
-  { file: 'src/transaction/writer/tests/normalize.rs', note: 'transaction 域', r2: 1 },
-  { file: 'src/transaction/writer/tests/rows.rs', note: 'transaction 域', r1: 1 },
 
   // ── e2e（夹具统一另立 spec，暂无迁移票）──
   { file: 'tests/e2e/accounts_steps.rs', note: 'e2e', r2: 2, r3: 1 },

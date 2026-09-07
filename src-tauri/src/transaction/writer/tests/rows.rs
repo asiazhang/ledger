@@ -7,7 +7,7 @@ use rusqlite::{Connection, params};
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::writer::{Input, NormalizedRow, insert_row, normalize, update_row};
 
-use super::common::{input, insert_account, insert_category, setup_db};
+use super::common::{input, insert_account, insert_category, setup_db, setup_db_state};
 
 /// 读回一行交易的全部业务字段（与 insert_row 的列映射逐列比对）。
 fn read_row(conn: &Connection, id: &str) -> NormalizedRow {
@@ -287,8 +287,8 @@ fn writer_rows_do_not_mark_dirty_entry_does() {
     );
 
     // 经写入口执行同样的落库（与 IPC 命令同形态）→ 提交点置脏，且置脏是幂等
-    // 标记、不做「已脏跳过」优化。
-    let state = crate::db::DbState::open_in_memory().unwrap();
+    // 标记、不做「已脏跳过」优化。连接本身经工厂打开（薄皮包装成共享锁形态）。
+    let state = setup_db_state();
     state
         .write(|conn| {
             insert_account(conn, "acc", "CNY");

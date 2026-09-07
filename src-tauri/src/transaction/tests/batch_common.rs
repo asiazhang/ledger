@@ -1,23 +1,20 @@
 //! 批量写入测试共享脚手架：仅限本测试目录内各子模块使用（跨测试模块合并不在此列，见 #250）。
+//!
+//! 建库与账户夹具已上收统一测试工厂 `crate::test_support`（spec #728 / ADR-0084，
+//! 域迁移票 #757）：按检查点结论（#754，中大型域）保留一行转发，调用点不动。
 
-use rusqlite::{Connection, params};
+use rusqlite::Connection;
 
-use crate::db::{init_db, open_in_memory};
 use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 
 pub(super) fn setup() -> Connection {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
-    conn
+    crate::test_support::open()
 }
 
 pub(super) fn insert_account(conn: &Connection, id: &str, name: &str, kind: &str, currency: &str) {
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        params![id, name, kind, currency],
-    ).unwrap();
+    // 脚手架账户：工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）。
+    crate::test_support::seed_account(conn, id, name, kind, currency, 0);
 }
 
 pub(super) fn make_input(
