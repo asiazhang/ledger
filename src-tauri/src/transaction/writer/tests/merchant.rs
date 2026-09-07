@@ -6,7 +6,8 @@ use rusqlite::{Connection, params};
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::writer::{Input, insert_row, normalize};
 
-use super::common::{input, insert_account, insert_source_expense, setup_db};
+use super::common::{input, insert_source_expense};
+use crate::test_support;
 
 // ---------------------------------------------------------------------------
 // normalize：商户（merchant_id）
@@ -15,8 +16,8 @@ use super::common::{input, insert_account, insert_source_expense, setup_db};
 fn insert_merchant(conn: &Connection, id: &str, name: &str) {
     conn.execute(
         "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        params![id, name],
+         VALUES (?1,?2,?3,?3,1,'test',0)",
+        params![id, name, test_support::FIXED_NOW],
     )
     .unwrap();
 }
@@ -24,8 +25,8 @@ fn insert_merchant(conn: &Connection, id: &str, name: &str) {
 /// income/expense 携带存在的商户 → 归一化行透传 merchant_id。
 #[test]
 fn normalize_merchant_passthrough() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     insert_merchant(&conn, "mer-jd", "京东");
     let norm = normalize(
         &conn,
@@ -41,8 +42,8 @@ fn normalize_merchant_passthrough() {
 /// 携带不存在的商户 → 明确错误（商户不存在）。
 #[test]
 fn normalize_merchant_not_found_is_rejected() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let err = normalize(
         &conn,
         &Input {
@@ -57,8 +58,8 @@ fn normalize_merchant_not_found_is_rejected() {
 /// 携带已软删除的商户 → 明确错误（软删商户不可再被新交易选择）。
 #[test]
 fn normalize_soft_deleted_merchant_is_rejected_for_new_txn() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     insert_merchant(&conn, "mer-dead", "已删商户");
     conn.execute("UPDATE merchants SET is_deleted=1 WHERE id='mer-dead'", [])
         .unwrap();
@@ -77,8 +78,8 @@ fn normalize_soft_deleted_merchant_is_rejected_for_new_txn() {
 /// 取原支出商户。
 #[test]
 fn normalize_refund_inherits_source_merchant() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-src", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-src", "acc-src", "cash", "CNY", 0);
     insert_merchant(&conn, "mer-jd", "京东");
     insert_merchant(&conn, "mer-pdd", "拼多多");
     // 落一笔带商户的原支出
@@ -112,8 +113,8 @@ fn normalize_refund_inherits_source_merchant() {
 /// 原支出无商户 → 退款商户为空。
 #[test]
 fn normalize_refund_without_source_merchant_has_none() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-src", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-src", "acc-src", "cash", "CNY", 0);
     let source_id = insert_source_expense(&conn, "acc-src", None);
     let norm = normalize(
         &conn,
@@ -130,8 +131,8 @@ fn normalize_refund_without_source_merchant_has_none() {
 /// 跳过在用校验——软删商户的历史交易仍可修改其他字段（与账户/分类更新语义一致）。
 #[test]
 fn normalize_keeps_unchanged_merchant_even_if_soft_deleted() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     insert_merchant(&conn, "mer-dead", "已删商户");
     conn.execute("UPDATE merchants SET is_deleted=1 WHERE id='mer-dead'", [])
         .unwrap();
@@ -151,8 +152,8 @@ fn normalize_keeps_unchanged_merchant_even_if_soft_deleted() {
 /// 修改路径改选其他商户仍按新选择校验在用：目标为软删商户 → 拒绝。
 #[test]
 fn normalize_rejects_changing_to_soft_deleted_merchant() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     insert_merchant(&conn, "mer-old", "旧商户");
     insert_merchant(&conn, "mer-dead", "已删商户");
     conn.execute("UPDATE merchants SET is_deleted=1 WHERE id='mer-dead'", [])

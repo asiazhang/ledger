@@ -7,7 +7,8 @@ use crate::error::{AppError, ErrClass};
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::writer::{Input, insert_row, normalize};
 
-use super::common::{input, insert_account, insert_category, insert_source_expense, setup_db};
+use super::common::{input, insert_category, insert_source_expense};
+use crate::test_support;
 
 // ---------------------------------------------------------------------------
 // normalize：退款继承原支出
@@ -16,8 +17,8 @@ use super::common::{input, insert_account, insert_category, insert_source_expens
 /// refund 未关联原支出交易 → 报错。
 #[test]
 fn normalize_refund_requires_source_id() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let err = normalize(&conn, &input(TransactionKind::Refund, 200, "acc")).unwrap_err();
     assert_eq!(err.to_string(), "退款必须关联原支出交易");
 }
@@ -25,9 +26,9 @@ fn normalize_refund_requires_source_id() {
 /// 退款继承原支出的账户/币种/分类，忽略调用方填写的 account_id/currency_code/category_id。
 #[test]
 fn normalize_refund_inherits_source_fields() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-src", "CNY");
-    insert_account(&conn, "acc-other", "USD");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-src", "acc-src", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-other", "acc-other", "cash", "USD", 0);
     insert_category(&conn, "cat-src");
     let source_id = insert_source_expense(&conn, "acc-src", Some("cat-src"));
 
@@ -60,8 +61,8 @@ fn normalize_refund_inherits_source_fields() {
 /// 关联的交易不是支出（income）→ 报错。
 #[test]
 fn normalize_refund_rejects_non_expense_source() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let income_norm = normalize(&conn, &input(TransactionKind::Income, 1000, "acc")).unwrap();
     let income_id = insert_row(&conn, &income_norm).unwrap();
 
@@ -79,8 +80,8 @@ fn normalize_refund_rejects_non_expense_source() {
 /// 关联的原支出不存在 → NotFound。
 #[test]
 fn normalize_refund_source_not_found() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let err = normalize(
         &conn,
         &Input {
@@ -104,8 +105,8 @@ fn normalize_refund_source_not_found() {
 /// 关联的原支出已软删除 → 视为不存在（NotFound）。
 #[test]
 fn normalize_refund_source_soft_deleted_is_not_found() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let source_id = insert_source_expense(&conn, "acc", None);
     conn.execute(
         "UPDATE transactions SET is_deleted=1 WHERE id=?1",

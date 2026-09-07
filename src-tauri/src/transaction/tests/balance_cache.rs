@@ -12,7 +12,7 @@
 use rusqlite::{Connection, params};
 
 use super::super::*;
-use super::common::{insert_account, make_buy_input, make_input, setup, setup_investment_account};
+use super::common::{make_buy_input, make_input};
 use crate::accounts::balance::{compute_all_balances_with_visibility, compute_balance};
 use crate::accounts::{
     AccountBalanceAdjustInput, AccountInput, AccountType, adjust_account_balance,
@@ -20,6 +20,7 @@ use crate::accounts::{
     list_account_balances_with_visibility as domain_list_balances,
 };
 use crate::dashboard::query_dashboard_overview;
+use crate::test_support;
 use crate::test_support::assert_balance_cache_matches_realtime;
 use crate::transaction::TransactionBatch;
 use crate::transaction::amount::TransactionKind;
@@ -42,9 +43,9 @@ fn backfill_scaffold_account(conn: &Connection, account_id: &str) {
 /// income/refund 为 +、expense 为 −、transfer 双侧、buy/sell 投资路径。
 #[test]
 fn create_all_kinds_keep_cache_consistent() {
-    let conn = setup();
-    insert_account(&conn, "acc-cash", "现金", "cash", "CNY");
-    setup_investment_account(&conn, "acc-inv", "inst-k");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-cash", "现金", "cash", "CNY", 0);
+    test_support::seed_investment_setup(&conn, "acc-inv", "inst-k");
     backfill_scaffold_account(&conn, "acc-cash");
     backfill_scaffold_account(&conn, "acc-inv");
 
@@ -125,10 +126,10 @@ fn create_all_kinds_keep_cache_consistent() {
 /// 修改把交易移到别的账户：旧∪新三账户缓存都要与实时一致（update_row 并集重算）。
 #[test]
 fn update_cross_account_refreshes_old_and_new_union() {
-    let conn = setup();
-    insert_account(&conn, "acc-u1", "甲", "cash", "CNY");
-    insert_account(&conn, "acc-u2", "乙", "cash", "CNY");
-    insert_account(&conn, "acc-u3", "丙", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-u1", "甲", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-u2", "乙", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-u3", "丙", "cash", "CNY", 0);
     for id in ["acc-u1", "acc-u2", "acc-u3"] {
         backfill_scaffold_account(&conn, id);
     }
@@ -166,9 +167,9 @@ fn update_cross_account_refreshes_old_and_new_union() {
 /// 删除 transfer 交易：两侧账户缓存回到初始（delete_within_transaction 重算）。
 #[test]
 fn delete_transfer_restores_both_sides() {
-    let conn = setup();
-    insert_account(&conn, "acc-d1", "甲", "cash", "CNY");
-    insert_account(&conn, "acc-d2", "乙", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-d1", "甲", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-d2", "乙", "cash", "CNY", 0);
     for id in ["acc-d1", "acc-d2"] {
         backfill_scaffold_account(&conn, id);
     }
@@ -199,8 +200,8 @@ fn delete_transfer_restores_both_sides() {
 /// 批量导入（HTTP 导入路径，`TransactionBatch::run`）落库后缓存一致。
 #[test]
 fn batch_import_keeps_cache_consistent() {
-    let conn = setup();
-    insert_account(&conn, "acc-batch", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-batch", "现金", "cash", "CNY", 0);
     backfill_scaffold_account(&conn, "acc-batch");
 
     TransactionBatch::run(
@@ -219,8 +220,8 @@ fn batch_import_keeps_cache_consistent() {
 /// 引擎 `execute_within_transaction` 直调 `writer::insert_row`，缓存刷新挂本接缝。
 #[test]
 fn writer_insert_row_direct_seam_refreshes_cache() {
-    let conn = setup();
-    insert_account(&conn, "acc-eng", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-eng", "现金", "cash", "CNY", 0);
     backfill_scaffold_account(&conn, "acc-eng");
 
     let input = writer::Input {
@@ -251,7 +252,7 @@ fn writer_insert_row_direct_seam_refreshes_cache() {
 /// 创建账户即建缓存行（初始余额 + 零流水）；软删后缓存仍与实时一致。
 #[test]
 fn account_create_and_delete_maintain_cache_rows() {
-    let conn = setup();
+    let conn = test_support::open();
     let id = create_account(
         &conn,
         AccountInput {
@@ -279,7 +280,7 @@ fn account_create_and_delete_maintain_cache_rows() {
 /// 缓存与实时一致；正向（黑洞转入）与反向（转出至黑洞）两个方向。
 #[test]
 fn adjust_balance_targets_exact_value_via_cache() {
-    let conn = setup();
+    let conn = test_support::open();
     let id = create_account(
         &conn,
         AccountInput {
@@ -327,9 +328,9 @@ fn adjust_balance_targets_exact_value_via_cache() {
 /// 不重复铺世界。）
 #[test]
 fn five_outlets_return_realtime_consistent_values() {
-    let conn = setup();
-    insert_account(&conn, "acc-o1", "现金", "cash", "CNY");
-    setup_investment_account(&conn, "acc-o2", "inst-o");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-o1", "现金", "cash", "CNY", 0);
+    test_support::seed_investment_setup(&conn, "acc-o2", "inst-o");
     backfill_scaffold_account(&conn, "acc-o1");
     backfill_scaffold_account(&conn, "acc-o2");
     create_transaction_internal(
@@ -413,8 +414,8 @@ fn five_outlets_return_realtime_consistent_values() {
 /// 引导审计修复，不静默回退实时计算。
 #[test]
 fn missing_cache_row_raises_coded_error() {
-    let conn = setup();
-    insert_account(&conn, "acc-miss", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-miss", "现金", "cash", "CNY", 0);
     backfill_scaffold_account(&conn, "acc-miss");
 
     conn.execute(
@@ -437,8 +438,8 @@ fn missing_cache_row_raises_coded_error() {
 /// 源表变更（指纹失配）后重算自愈。
 #[test]
 fn net_worth_probe_backfills_hits_and_self_heals() {
-    let conn = setup();
-    insert_account(&conn, "acc-p1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-p1", "现金", "cash", "CNY", 0);
     backfill_scaffold_account(&conn, "acc-p1");
     create_transaction_internal(
         &conn,
@@ -484,9 +485,9 @@ fn net_worth_probe_backfills_hits_and_self_heals() {
 /// 复检干净（repaired=false、无 drift）。
 #[test]
 fn audit_polluted_cache_reports_then_repairs() {
-    let conn = setup();
-    insert_account(&conn, "acc-a1", "甲", "cash", "CNY");
-    insert_account(&conn, "acc-a2", "乙", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-a1", "甲", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-a2", "乙", "cash", "CNY", 0);
     for id in ["acc-a1", "acc-a2"] {
         backfill_scaffold_account(&conn, id);
     }

@@ -12,7 +12,8 @@ use crate::transaction::{
     delete_transaction_internal, update_transaction_internal,
 };
 
-use super::batch_common::{insert_account, make_input, setup};
+use super::batch_common::make_input;
+use crate::test_support;
 
 // ---------------------------------------------------------------------------
 // 内容哈希：字段稳定性、排除项、已知向量。
@@ -20,8 +21,8 @@ use super::batch_common::{insert_account, make_input, setup};
 
 #[test]
 fn dedup_hash_is_stable_for_same_fields() {
-    let conn = setup();
-    insert_account(&conn, "acc-dedup", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-dedup", "现金", "cash", "CNY", 0);
     let a = make_input("acc-dedup", TransactionKind::Income, 1000, "2026-07-01");
     let b = make_input("acc-dedup", TransactionKind::Income, 1000, "2026-07-01");
     assert_eq!(compute_dedup_hash(&a), compute_dedup_hash(&b));
@@ -29,8 +30,8 @@ fn dedup_hash_is_stable_for_same_fields() {
 
 #[test]
 fn dedup_hash_excludes_note_and_category() {
-    let conn = setup();
-    insert_account(&conn, "acc-dedup", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-dedup", "现金", "cash", "CNY", 0);
     let base = make_input("acc-dedup", TransactionKind::Expense, 500, "2026-07-02");
     let with_note = TransactionInput {
         policy_id: None,
@@ -49,8 +50,8 @@ fn dedup_hash_excludes_note_and_category() {
 
 #[test]
 fn dedup_hash_changes_when_content_fields_change() {
-    let conn = setup();
-    insert_account(&conn, "acc-dedup", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-dedup", "现金", "cash", "CNY", 0);
     let base = make_input("acc-dedup", TransactionKind::Income, 1000, "2026-07-01");
     let h = compute_dedup_hash(&base);
     assert_ne!(
@@ -93,8 +94,8 @@ fn dedup_hash_changes_when_content_fields_change() {
 
 #[test]
 fn dedup_hash_pins_empty_to_account_id_as_empty_string() {
-    let conn = setup();
-    insert_account(&conn, "acc-dedup", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-dedup", "现金", "cash", "CNY", 0);
     let no_to = make_input("acc-dedup", TransactionKind::Transfer, 3000, "2026-07-03");
     let empty_to = TransactionInput {
         policy_id: None,
@@ -120,8 +121,8 @@ fn dedup_hash_pins_empty_to_account_id_as_empty_string() {
 
 #[test]
 fn dedup_hash_matches_known_sha256_vector() {
-    let conn = setup();
-    insert_account(&conn, "acc-1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-1", "现金", "cash", "CNY", 0);
     let input = make_input("acc-1", TransactionKind::Income, 1000, "2026-07-01");
     // sha256("2026-07-01|income|1000|CNY|acc-1|")
     assert_eq!(
@@ -134,8 +135,8 @@ fn dedup_hash_matches_known_sha256_vector() {
 
 #[test]
 fn dedup_identity_key_hit_returns_existing_id() {
-    let conn = setup();
-    insert_account(&conn, "acc-ident", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-ident", "现金", "cash", "CNY", 0);
 
     // 落库一笔带幂等键的交易。
     let mut a = make_input("acc-ident", TransactionKind::Income, 1000, "2026-01-01");
@@ -162,8 +163,8 @@ fn dedup_identity_key_hit_returns_existing_id() {
 
 #[test]
 fn dedup_identity_hash_hit_returns_none() {
-    let conn = setup();
-    insert_account(&conn, "acc-ident", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-ident", "现金", "cash", "CNY", 0);
 
     let a = make_input("acc-ident", TransactionKind::Income, 1000, "2026-01-01");
     TransactionBatch::run(&conn, vec![a.clone()], true).unwrap();
@@ -179,8 +180,8 @@ fn dedup_identity_hash_hit_returns_none() {
 
 #[test]
 fn dedup_identity_new_for_fresh_row() {
-    let conn = setup();
-    insert_account(&conn, "acc-ident", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-ident", "现金", "cash", "CNY", 0);
 
     let a = make_input("acc-ident", TransactionKind::Income, 1000, "2026-01-01");
     TransactionBatch::run(&conn, vec![a], true).unwrap();
@@ -201,8 +202,8 @@ fn dedup_identity_new_for_fresh_row() {
 
 #[test]
 fn dedup_identity_key_takes_precedence_over_content_hash() {
-    let conn = setup();
-    insert_account(&conn, "acc-ident", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-ident", "现金", "cash", "CNY", 0);
 
     // 两笔内容完全相同但幂等键不同的交易（内容哈希相同）：不同键都应保留。
     let mut a = make_input("acc-ident", TransactionKind::Income, 1000, "2026-01-01");
@@ -240,8 +241,8 @@ fn dedup_identity_key_takes_precedence_over_content_hash() {
 
 #[test]
 fn dedup_identity_ignores_soft_deleted_rows() {
-    let conn = setup();
-    insert_account(&conn, "acc-ident", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-ident", "现金", "cash", "CNY", 0);
 
     // 带键落库后软删除：键路径与哈希路径都不应命中。
     let mut a = make_input("acc-ident", TransactionKind::Income, 1000, "2026-01-01");
@@ -270,8 +271,8 @@ fn dedup_identity_ignores_soft_deleted_rows() {
 
 #[test]
 fn dedup_ignores_soft_deleted_transactions() {
-    let conn = setup();
-    insert_account(&conn, "acc-dedup", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-dedup", "现金", "cash", "CNY", 0);
 
     let input = make_input("acc-dedup", TransactionKind::Income, 1000, "2026-07-01");
     let first = TransactionBatch::run(&conn, vec![input.clone()], true)
@@ -301,8 +302,8 @@ fn dedup_ignores_soft_deleted_transactions() {
 
 #[test]
 fn batch_create_idempotency_key_soft_deleted_frees_slot() {
-    let conn = setup();
-    insert_account(&conn, "acc-key", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-key", "现金", "cash", "CNY", 0);
 
     let mut a = make_input("acc-key", TransactionKind::Income, 1000, "2026-01-01");
     a.idempotency_key = Some("file:1:1".into());
@@ -331,8 +332,8 @@ fn batch_create_idempotency_key_soft_deleted_frees_slot() {
 
 #[test]
 fn delete_transaction_internal_frees_dedup_slot_for_reimport() {
-    let conn = setup();
-    insert_account(&conn, "acc-reimport", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-reimport", "现金", "cash", "CNY", 0);
 
     let input = make_input("acc-reimport", TransactionKind::Income, 1000, "2026-07-01");
     let first = TransactionBatch::run(&conn, vec![input.clone()], true)
@@ -362,8 +363,8 @@ fn delete_transaction_internal_frees_dedup_slot_for_reimport() {
 
 #[test]
 fn update_transaction_internal_preserves_key_and_rerun_dedup() {
-    let conn = setup();
-    insert_account(&conn, "acc-key", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-key", "现金", "cash", "CNY", 0);
     let mut a = make_input("acc-key", TransactionKind::Income, 1000, "2026-01-01");
     a.idempotency_key = Some("file:1:1".into());
     let first = TransactionBatch::run(&conn, vec![a.clone()], true)
