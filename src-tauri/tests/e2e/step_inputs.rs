@@ -19,13 +19,15 @@
 //!
 //! 与 TransactionInput 装配器（前端产品装配接缝，核心交易域词汇表）互不替代、
 //! 互不调用。单测暂缺：e2e 目标 `harness = false`（Cargo.toml），进程内 `#[test]`
-//! 不会执行；正确性由迁移票（#761–#763）调用点落地后的 BDD 全量背书。
+//! 不会执行；正确性由迁移票调用点落地后的 BDD 全量背书（#761 交易域已背书交易
+//! 构造，#762/#763 待背书计划与其余域）。
 
-// 骨架票：与既有 helper 并存、不迁移任何调用点，迁移票 #761–#763 消费前全量未
-// 被引用（bin crate 的 dead_code 会报未使用）——显式豁免并登记，消费后可移除。
+// 迁移进行中：交易域消费自 #761 起；income/transfer 工厂与计划三形态仍待
+// #762/#763 消费（bin crate 的 dead_code 会报未使用）——全量消费后移除本豁免。
 #![allow(dead_code)]
 
 use tauri_app_lib::scheduled_transactions::{CreateScheduledInput, RecurrenceType, ScheduledKind};
+use tauri_app_lib::transaction::Transaction;
 use tauri_app_lib::transaction::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
 
@@ -141,6 +143,83 @@ pub fn sell_input(
         quantity: Some(quantity),
         price_cents,
         ..txn_base(TransactionKind::Sell, 0, account_id, date)
+    }
+}
+
+/// 按已解析 kind 分派买卖工厂（买卖铺垫/直提标的步骤共用，#761 收编 write/edit
+/// 两文件同形 match）：buy/sell 之外不是合法买卖铺垫，场景文本错误即 panic。
+pub fn trade_input(
+    kind: TransactionKind,
+    instrument_id: &str,
+    quantity: f64,
+    price_cents: i64,
+    account_id: &str,
+    date: &str,
+) -> TransactionInput {
+    match kind {
+        TransactionKind::Buy => {
+            buy_input(instrument_id, quantity, Some(price_cents), account_id, date)
+        }
+        TransactionKind::Sell => {
+            sell_input(instrument_id, quantity, Some(price_cents), account_id, date)
+        }
+        other => panic!("买卖铺垫仅支持 buy/sell，收到: {other}"),
+    }
+}
+
+/// 步骤文本 kind 解析（#761 收编）：未知值 panic（测试步骤即败）——原先散布在
+/// 各动态 kind 步骤函数内的 `TransactionKind::parse + panic` 同款形态。归本模块
+/// 是因 kind 是下方工厂的热点入参：解析与构造同一处，步骤函数只留文本解析调用。
+pub fn parse_kind(kind: &str) -> TransactionKind {
+    TransactionKind::parse(kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）"))
+}
+
+/// 通用「创建/尝试创建交易 类型 …」步骤短语的工厂形态（#761）：kind 显式给出、
+/// 其余取中性默认（即 [`txn_base`]）。三用途：
+/// - expense/income：与 per-kind 工厂同底座等价，通用步骤短语无 per-kind 热点
+///   字段可给，直接落底座；
+/// - transfer 缺转入账户、refund 缺原支出：「不合法形态被后端守卫拒绝」场景的
+///   被测前提（`transfer.to-account-required` / `refund.source-required`），非法性
+///   由后端背书、测试层不预判（CONTEXT-testing「步骤动词」：写入失败进入错误
+///   断言路径）；
+/// - dividend/split 未实现：场景断言「暂不支持」显式拒绝，本就无合法形态可设
+///   per-kind 工厂。
+///
+/// 与 ADR-0086 否决的「单一 transaction_input(kind) 工厂」不同界：那把 per-kind
+/// 矩阵知识摊到每个调用点；本函数只服务无 per-kind 热点字段的通用步骤短语与
+/// 「不合法形态被拒」场景，专用步骤（转账/退款/买卖）仍走 per-kind 工厂。
+pub fn plain_input(
+    kind: TransactionKind,
+    amount_cents: i64,
+    account_id: &str,
+    date: &str,
+) -> TransactionInput {
+    txn_base(kind, amount_cents, account_id, date)
+}
+
+/// 既有交易行 → 全量替换入参（#761 收编，原 transactions_policy_steps 的
+/// existing_to_input）：修改是全字段替换，未提及字段原样保留——edit/policy 修改
+/// 步骤共用的 L1 底座。买卖扩展字段不在快照行上，修改买卖输入须在本底座上显式
+/// 覆盖 instrument/quantity/price/fee（见 transactions_edit_steps::trade_edit_input）。
+pub fn existing_input(existing: &Transaction) -> TransactionInput {
+    TransactionInput {
+        merchant_name: None,
+        kind: existing.kind,
+        amount_cents: existing.amount_cents,
+        currency_code: existing.currency_code.clone(),
+        account_id: existing.account_id.clone(),
+        to_account_id: existing.to_account_id.clone(),
+        category_id: existing.category_id.clone(),
+        merchant_id: existing.merchant_id.clone(),
+        policy_id: existing.policy_id.clone(),
+        refund_of_transaction_id: existing.refund_of_transaction_id.clone(),
+        note: existing.note.clone(),
+        date: existing.date.clone(),
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        idempotency_key: None,
     }
 }
 

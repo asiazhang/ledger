@@ -1,12 +1,24 @@
-use cucumber::{given, then, when};
-use rusqlite::params;
+//! 交易写入 BDD 步骤（issue #761 迁移）：交易输入构造收编 L1 步骤输入工厂
+//! （[`crate::step_inputs`]）、写入收编 L2 步骤动词（[`crate::step_verbs`]）——
+//! 步骤函数薄化为文本解析 + 快照刷新；错误断言路径改走动词 try 形态（构造 +
+//! 显式写入捕获），断言语义不变。「存在账户」前置的裸 SQL 属账户旁路，归 #763
+//! 旁路归零处置；注入触发器两步骤为纯测试侧注入（spec #169 定案），留直连例外。
 
-use tauri_app_lib::error::AppError;
+use cucumber::{given, then, when};
+
 use tauri_app_lib::transaction::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::{create_transaction_internal, delete_transaction_internal};
 
-use crate::common::{insert_account, new_account_id, query_all_transactions};
+use crate::common::{
+    capture_expected_error, insert_account, instrument_id_by_symbol, new_account_id,
+    query_all_transactions,
+};
+use crate::step_inputs::{buy_input, parse_kind, plain_input, trade_input};
+use crate::step_verbs;
+use crate::step_verbs::{
+    create_transaction_verb, refund_last_transaction, try_create_transaction_verb,
+    try_delete_transaction_verb,
+};
 use crate::world::LedgerWorld;
 
 // ---------------------------------------------------------------------------
@@ -32,31 +44,11 @@ fn create_txn(
     account_name: String,
     date: String,
 ) {
-    let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
-        amount_cents: amount,
-        currency_code: "CNY".into(),
-        account_id: world.account_id(&account_name),
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: None,
-        note: None,
-        date,
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
-    };
-    // 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）创建，提交点置脏/到期检查。
-    let result = world
-        .db
-        .write(|conn| create_transaction_internal(conn, input));
-    assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
-    world.txn.last_transaction_id = Some(result.unwrap().id);
+    let account_id = world.account_id(&account_name);
+    create_transaction_verb(
+        world,
+        plain_input(parse_kind(&kind), amount, &account_id, &date),
+    );
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
@@ -69,31 +61,14 @@ fn create_txn_with_note(
     date: String,
     note: String,
 ) {
-    let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
-        amount_cents: amount,
-        currency_code: "CNY".into(),
-        account_id: world.account_id(&account_name),
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: None,
-        note: Some(note),
-        date,
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
-    };
-    // 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）创建，提交点置脏/到期检查。
-    let result = world
-        .db
-        .write(|conn| create_transaction_internal(conn, input));
-    assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
-    world.txn.last_transaction_id = Some(result.unwrap().id);
+    let account_id = world.account_id(&account_name);
+    create_transaction_verb(
+        world,
+        TransactionInput {
+            note: Some(note),
+            ..plain_input(parse_kind(&kind), amount, &account_id, &date)
+        },
+    );
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
@@ -104,30 +79,12 @@ fn try_transfer_without_target(
     account_name: String,
     date: String,
 ) {
-    let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::Transfer,
-        amount_cents: amount,
-        currency_code: "CNY".into(),
-        account_id: world.account_id(&account_name),
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: None,
-        note: None,
-        date,
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
-    };
-    let result = create_transaction_internal(&world_conn!(world), input);
-    world.last_error = match result {
-        Err(AppError::Coded { message, .. }) => Some(message),
-        _ => Some("预期失败但成功了".into()),
-    };
+    let account_id = world.account_id(&account_name);
+    // 缺转入账户：被测前提是 writer 守卫 `transfer.to-account-required`，
+    // 经通用底座构造不合法形态、try 动词显式捕获（不静默吞错）。
+    let input = plain_input(TransactionKind::Transfer, amount, &account_id, &date);
+    let result = try_create_transaction_verb(world, input);
+    capture_expected_error(world, result);
 }
 
 /// 尝试创建一笔交易并捕获错误（供「应返回错误」断言）。
@@ -140,30 +97,10 @@ fn try_create_txn(
     account_name: String,
     date: String,
 ) {
-    let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
-        amount_cents: amount,
-        currency_code: "CNY".into(),
-        account_id: world.account_id(&account_name),
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: None,
-        note: None,
-        date,
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
-    };
-    let result = create_transaction_internal(&world_conn!(world), input);
-    world.last_error = match result {
-        Err(AppError::Coded { message, .. }) => Some(message),
-        _ => Some("预期失败但成功了".into()),
-    };
+    let account_id = world.account_id(&account_name);
+    let input = plain_input(parse_kind(&kind), amount, &account_id, &date);
+    let result = try_create_transaction_verb(world, input);
+    capture_expected_error(world, result);
 }
 
 /// 尝试创建一笔买入交易并捕获错误（供「应返回错误」断言，issue #228）。
@@ -175,41 +112,16 @@ fn try_create_buy(
     price_cents: i64,
     account_name: String,
 ) {
-    let instrument_id: String = world_conn!(world)
-        .query_row(
-            "SELECT id FROM instruments WHERE symbol=?1",
-            params![symbol],
-            |r| r.get(0),
-        )
-        .expect("标的不存在，先铺垫 Given 存在标的");
+    let instrument_id = instrument_id_by_symbol(&world_conn!(world), &symbol);
     let account_id = world.account_id(&account_name);
-    let currency_code: String = world_conn!(world)
-        .query_row(
-            "SELECT currency_code FROM accounts WHERE id=?1",
-            params![account_id],
-            |r| r.get(0),
-        )
-        .expect("账户不存在");
-    let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::Buy,
-        amount_cents: 0,
-        currency_code,
-        account_id,
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: None,
-        note: None,
-        date: "2026-01-10".into(),
-        instrument_id: Some(instrument_id),
-        quantity: Some(quantity as f64),
-        price_cents: Some(price_cents),
-        fee_cents: Some(0),
-        idempotency_key: None,
-    };
-    world.last_error = match create_transaction_internal(&world_conn!(world), input) {
+    let input = buy_input(
+        &instrument_id,
+        quantity as f64,
+        Some(price_cents),
+        &account_id,
+        "2026-01-10",
+    );
+    world.last_error = match try_create_transaction_verb(world, input) {
         Ok(_) => Some("预期失败但成功了".into()),
         Err(e) => Some(e.to_string()),
     };
@@ -226,33 +138,15 @@ fn try_create_trade_with_raw_instrument_id(
     account_name: &str,
 ) {
     let account_id = world.account_id(account_name);
-    let currency_code: String = world_conn!(world)
-        .query_row(
-            "SELECT currency_code FROM accounts WHERE id=?1",
-            params![account_id],
-            |r| r.get(0),
-        )
-        .expect("账户不存在");
-    let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
+    let input = trade_input(
         kind,
-        amount_cents: 0,
-        currency_code,
-        account_id,
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: None,
-        note: None,
-        date: "2026-01-10".into(),
-        instrument_id: Some(instrument_id.to_string()),
-        quantity: Some(quantity as f64),
-        price_cents: Some(price_cents),
-        fee_cents: Some(0),
-        idempotency_key: None,
-    };
-    world.last_error = match create_transaction_internal(&world_conn!(world), input) {
+        instrument_id,
+        quantity as f64,
+        price_cents,
+        &account_id,
+        "2026-01-10",
+    );
+    world.last_error = match try_create_transaction_verb(world, input) {
         Ok(_) => Some("预期失败但成功了".into()),
         Err(e) => Some(e.to_string()),
     };
@@ -332,7 +226,7 @@ fn try_delete_last_txn(world: &mut LedgerWorld) {
         .last_transaction_id
         .clone()
         .expect("没有可删除的交易");
-    world.last_error = match delete_transaction_internal(&world_conn!(world), &id) {
+    world.last_error = match try_delete_transaction_verb(world, &id) {
         Ok(()) => None,
         Err(e) => Some(e.to_string()),
     };
@@ -346,69 +240,13 @@ fn create_transfer(
     to_name: String,
     date: String,
 ) {
-    let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::Transfer,
-        amount_cents: amount,
-        currency_code: "CNY".into(),
-        account_id: world.account_id(&from_name),
-        to_account_id: Some(world.account_id(&to_name)),
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: None,
-        note: None,
-        date,
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
-    };
-    let result = create_transaction_internal(&world_conn!(world), input);
-    assert!(result.is_ok(), "创建转账失败: {:?}", result.err());
-    world.txn.last_transaction_id = Some(result.unwrap().id);
+    step_verbs::create_transfer(world, amount, &from_name, &to_name, &date);
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 #[when(expr = "关联上一笔交易创建退款 金额 {int} 日期 {string}")]
 fn create_refund(world: &mut LedgerWorld, amount: i64, date: String) {
-    let expense_id = world
-        .txn
-        .last_transaction_id
-        .clone()
-        .expect("没有上一笔交易可关联");
-    let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::Refund,
-        amount_cents: amount,
-        currency_code: "CNY".into(),
-        account_id: {
-            // 从已有交易中获取支出的 account_id
-            let txn = world
-                .txn
-                .transactions_list
-                .iter()
-                .find(|t| t.id == expense_id)
-                .expect("原交易不存在");
-            txn.account_id.clone()
-        },
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: Some(expense_id),
-        note: None,
-        date,
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
-    };
-    let result = create_transaction_internal(&world_conn!(world), input);
-    assert!(result.is_ok(), "创建退款失败: {:?}", result.err());
-    world.txn.last_transaction_id = Some(result.unwrap().id);
+    refund_last_transaction(world, amount, &date);
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
