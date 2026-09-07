@@ -6,9 +6,8 @@ import { createOverlayToken, resetOverlays } from '@/composables/overlayRegistry
 import TransactionForm from '@/components/TransactionForm.vue'
 
 describe('TransactionsView 裸键快捷键（issue #153）', () => {
-  // jsdom 的 document.body 跨测试共享；注册表是模块级状态，同样需要复位
+  // 注册表是模块级状态，需每测复位（body 清空由全局壳层承担）
   beforeEach(() => {
-    document.body.innerHTML = ''
     resetOverlays()
   })
 

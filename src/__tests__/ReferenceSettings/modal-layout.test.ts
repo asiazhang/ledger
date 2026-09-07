@@ -1,6 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
+import { describe, it, expect } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
 import MerchantEditModal from '@/components/merchants/MerchantEditModal.vue'
 import CategoryEditModal from '@/components/categories/CategoryEditModal.vue'
 import type { Merchant, Category } from '@/types'
@@ -11,35 +10,10 @@ import type { Merchant, Category } from '@/types'
 // 单颗全宽 block 主键改为右对齐单主键（保留无取消键的轻量语义）。断言
 // 只看组件可观察输出（卡片宽度样式、边框类、按钮行排列），不深究
 // naive-ui 内部实现。
-
-const { messageMock } = vi.hoisted(() => ({
-  messageMock: {
-    success: vi.fn(),
-    warning: vi.fn(),
-    error: vi.fn(),
-    info: vi.fn(),
-    loading: vi.fn(),
-    destroyAll: vi.fn(),
-  },
-}))
-
-vi.mock('naive-ui', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('naive-ui')>()
-  return {
-    ...actual,
-    useMessage: () => messageMock,
-  }
-})
-
-// NModal 内容传送至 document.body：每测后卸载，避免前一用例的弹窗残留污染查询
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
-
-beforeEach(() => {
-  setActivePinia(createPinia())
-})
+//
+// 本文件无 invoke 布线需求：弹窗为纯 props 表单；消息替身用全局稳定实例
+// （setup.ts 统一 mock，issue #748 后不再自建 vi.hoisted 实例），清理四件套
+// 由全局壳层每测自动执行。
 
 const mockMerchant: Merchant = {
   id: 'mch-1',

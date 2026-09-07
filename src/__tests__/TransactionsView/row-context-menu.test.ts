@@ -1,4 +1,6 @@
-import { mockInvoke, merchantDb, mockCurrencies, mockAccounts, makeTxn, applyListFilter, mountView, listCalls, lastListFilter, tablePagination, bodyRows, deleteCalls, createCalls, openMenuOnRow, rowMenu, rowMenuKeys, selectRowMenu, dialogText, visibleModalText, clickDialogButton, pressReleaseOnDialogMask, setTxnDb, setMerchantDb, pushMock } from './common'
+import { merchantDb, makeTxn, mountView, listCalls, lastListFilter, tablePagination, bodyRows, deleteCalls, createCalls, openMenuOnRow, rowMenu, rowMenuKeys, selectRowMenu, setTxnDb, setMerchantDb, pushMock } from './common'
+import { mockInvoke } from '../helpers/invoke-mock'
+import { clickDialogButton, dialogText, pressReleaseOnDialogMask, visibleModalText } from '../helpers/dom'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NDataTable, NPopconfirm, NSelect, NModal, NInput, NInputNumber } from 'naive-ui'
@@ -9,7 +11,6 @@ import RefundForm from '@/components/RefundForm.vue'
 import AddItemForm from '@/components/AddItemForm.vue'
 import MerchantLink from '@/components/MerchantLink.vue'
 import { useReferenceStore } from '@/stores/reference'
-import { stubReferenceInvoke } from '../helpers/reference-stubs'
 import type { Transaction } from '@/types'
 
 describe('TransactionsView 行右键菜单（issue #151）', () => {
@@ -357,35 +358,17 @@ describe('TransactionsView 行右键「编辑」buy/sell（issue #180）', () =>
     fee_cents: 500,
   }
 
-  /** 基础桩（参考命令规范夹具 + 本域命令覆写），一次性桩委托回它（issue #725）。 */
+  /** 一次性叠加桩：get_transaction_trade 自接，其余委托回薄壳接线（issue #725/#748）。 */
   let base: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
 
   beforeEach(() => {
     setTxnDb([...menuDb])
-    base = stubReferenceInvoke({
-      list_currencies: mockCurrencies,
-      list_accounts: mockAccounts,
-      list_categories: [],
-      list_insurers: [],
-      list_merchants: () => merchantDb,
-      list_policies: [],
-      list_items: [],
-      list_transactions: (args?: Record<string, unknown>) => {
-        const filter = (args?.filter ?? {}) as Record<string, unknown>
-        const scoped = applyListFilter(filter)
-        const pageSize = (filter.page_size as number) ?? scoped.length
-        const page = (filter.page as number) ?? 1
-        const start = (page - 1) * pageSize
-        return Promise.resolve({
-          items: scoped.slice(start, start + pageSize),
-          total: scoped.length,
-        })
-      },
-      get_transaction_trade: (args?: Record<string, unknown>) => {
-        // sell 行返回无手续费明细，buy 行返回完整明细
-        return Promise.resolve(args?.id === 'txn-002' ? { ...buyTrade, fee_cents: null } : buyTrade)
-      },
-    })
+    base = mockInvoke.getMockImplementation()!
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'get_transaction_trade'
+        ? // sell 行返回无手续费明细，buy 行返回完整明细
+          Promise.resolve(args?.id === 'txn-002' ? { ...buyTrade, fee_cents: null } : buyTrade)
+        : base(cmd, args))
   })
 
   function updateCalls() {
@@ -509,33 +492,19 @@ describe('TransactionsView 行右键「加入物品」（issue #119）', () => {
   /** 已建物品列表（默认空；置灰用例改写为关联 txn-001）。 */
   let itemList: unknown[] = []
 
-  /** 基础桩（参考命令规范夹具 + 本域命令覆写），一次性桩委托回它（issue #725）。 */
+  /** 一次性叠加桩：list_items/create_item 自接，其余委托回薄壳接线（issue #725/#748）。 */
   let base: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
 
   beforeEach(() => {
     setTxnDb([...menuDb])
     itemList = []
-    base = stubReferenceInvoke({
-      list_currencies: mockCurrencies,
-      list_accounts: mockAccounts,
-      list_categories: [],
-      list_insurers: [],
-      list_merchants: () => merchantDb,
-      list_policies: [],
-      list_transactions: (args?: Record<string, unknown>) => {
-        const filter = (args?.filter ?? {}) as Record<string, unknown>
-        const scoped = applyListFilter(filter)
-        const pageSize = (filter.page_size as number) ?? scoped.length
-        const page = (filter.page as number) ?? 1
-        const start = (page - 1) * pageSize
-        return Promise.resolve({
-          items: scoped.slice(start, start + pageSize),
-          total: scoped.length,
-        })
-      },
-      list_items: () => itemList,
-      create_item: 'item-new',
-    })
+    base = mockInvoke.getMockImplementation()!
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'list_items'
+        ? Promise.resolve(itemList)
+        : cmd === 'create_item'
+          ? Promise.resolve('item-new')
+          : base(cmd, args))
   })
 
   /** 右键 expense 行并选「加入物品」。 */

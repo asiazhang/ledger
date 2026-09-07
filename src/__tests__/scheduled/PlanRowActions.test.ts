@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { NPopconfirm } from 'naive-ui'
 import PlanRowActions from '@/components/scheduled/PlanRowActions.vue'
 import type { ScheduledPlanRowAction } from '@/composables/useScheduledPlanList'
@@ -19,8 +19,6 @@ function makeAction(over: Partial<ScheduledPlanRowAction> & { key: ScheduledPlan
     ...over,
   }
 }
-
-enableAutoUnmount(afterEach)
 
 describe('PlanRowActions 共享行操作渲染组件', () => {
   it('锚点命名 op-${key}-${rowId}：可用的描述符渲染为按钮，锚点与既有测试断言兼容', () => {

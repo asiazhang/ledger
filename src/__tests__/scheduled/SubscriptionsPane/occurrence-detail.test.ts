@@ -5,11 +5,11 @@ import {
   makeDetail,
   makeOccurrence,
   makePlan,
-  mockInvoke,
   mountView,
   setMockPlans,
   setup,
 } from './common'
+import { mockInvoke } from '../../helpers/invoke-mock'
 
 beforeEach(setup)
 

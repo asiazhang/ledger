@@ -1,26 +1,20 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockInvoke } from '../helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { wireInvokeSeam } from '../helpers/invoke-mock'
+import { mount, flushPromises } from '@vue/test-utils'
 import ItemsView from '@/views/ItemsView.vue'
-import { stubReferenceInvoke } from '../helpers/reference-stubs'
 import type { ItemWithDailyCost } from '@/types'
 
 // 物品弹窗族排版统一（issue #634，spec #630）：三个弹窗的卡片外观收敛为
 // AppModal cardSize 单一声明——编辑/处置归 sm（420）、详情归 md（480）；
 // 显式 style 宽度由 cardSize 承担，无边框由 AppModal 默认承担。断言只看
 // 组件可观察输出（卡片宽度样式与边框类），不深究 naive-ui 内部实现。
+// 布线走唯一接缝（issue #748）：清单所需的最小领域契约进 defaults 表，
+// 参考字典五命令由规范夹具兑底；清理四件套由全局壳层承担。
 
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() }),
 }))
-
-// NModal 内容 teleport 到 document.body：测试在 body 中查询（同 ItemsView.test.ts 先例）。
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
 
 const mockItem: ItemWithDailyCost = {
   id: 'item-1',
@@ -44,21 +38,14 @@ const mockItem: ItemWithDailyCost = {
   per_day_cents: 1000,
 }
 
-beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  stubReferenceInvoke({
-    list_accounts: [],
-    list_categories: [],
-    list_merchants: [],
-    list_insurers: [],
-    // 本测试不依赖交易候选，任意 kind 一律空列表
-    list_transactions: { items: [], total: 0 },
-    list_items: [mockItem],
+beforeEach(() => {
+  // 本测试不依赖交易候选，任意 kind 一律空列表；清单数据为 mockItem
+  wireInvokeSeam({
+    defaults: {
+      list_transactions: { items: [], total: 0 },
+      list_items: [mockItem],
+    },
   })
-  localStorage.clear()
-  // 参考数据（币种选项）与物品 store 均为 self-init，提前预热
-  await flushPromises()
 })
 
 /** 取弹窗卡片元素：preset="card" 下 $attrs（含 data-testid）落在 NCard 根元素。 */

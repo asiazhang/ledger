@@ -1,29 +1,17 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke } from '../helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
-import { useReferenceStore } from '@/stores/reference'
+import { mockInvoke, wireInvokeSeam } from '../helpers/invoke-mock'
+import { mount, flushPromises } from '@vue/test-utils'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
-import { stubReferenceInvoke } from '../helpers/reference-stubs'
+import { mountFlushed } from '../helpers/mount'
 import type {
   Account,
   Category,
-  Currency,
   Merchant,
   ScheduledTransaction,
   ScheduledTransactionDetail,
   ScheduledTransactionOccurrence,
 } from '@/types'
 
-
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
-
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-]
 
 const mockAccounts: Account[] = [
   {
@@ -136,53 +124,6 @@ function makeDetail(
 // —— invoke mock：可变数据源，重试/展开后重载读得到最新值 ——
 let mockDetails = new Map<string, ScheduledTransactionDetail>()
 
-function baseInvoke() {
-  return stubReferenceInvoke({
-    list_currencies: mockCurrencies,
-    list_accounts: mockAccounts,
-    list_categories: mockCategories,
-    list_insurers: [],
-    list_merchants: mockMerchants,
-    get_scheduled_transaction_detail: (args) => {
-      const detail = mockDetails.get(String(args?.id))
-      return detail ? Promise.resolve(detail) : Promise.reject(new Error('无此计划详情'))
-    },
-    execute_scheduled_occurrence: (args) => {
-      const { occurrence_id } = (args?.input ?? {}) as { occurrence_id: string }
-      // 重试语义：failed 期次 → completed
-      for (const [id, d] of mockDetails) {
-        if (!d.occurrences.some((o) => o.id === occurrence_id && o.status === 'failed')) continue
-        mockDetails.set(id, {
-          ...d,
-          occurrences: d.occurrences.map((o) =>
-            o.id === occurrence_id ? { ...o, status: 'completed' as const } : o,
-          ),
-        })
-      }
-      return 'txn-new'
-    },
-    expand_scheduled_occurrences: (args) => {
-      const planId = String(args?.id)
-      const d = mockDetails.get(planId)
-      if (!d) return Promise.reject(new Error('无此计划详情'))
-      const last = [...d.occurrences].sort((a, b) =>
-        b.scheduled_date.localeCompare(a.scheduled_date),
-      )[0]
-      const newDate = `${Number(last?.scheduled_date.slice(0, 4) ?? '2026') + 1}-01-01`
-      const occ = makeOccurrence({
-        id: 'occ-expanded',
-        scheduled_transaction_id: planId,
-        scheduled_date: newDate,
-      })
-      mockDetails.set(planId, {
-        ...d,
-        occurrences: [...d.occurrences, occ],
-      })
-      return Promise.resolve([occ.id])
-    },
-  })
-}
-
 // NModal 内容 teleport 到 body：内容断言与交互直接走 document.body
 function q(sel: string): HTMLElement | null {
   return document.body.querySelector(sel)
@@ -200,9 +141,7 @@ async function click(sel: string) {
 }
 
 async function mountModal() {
-  const wrapper = mount(PlanDetailModal)
-  await flushPromises()
-  return wrapper
+  return mountFlushed(PlanDetailModal)
 }
 
 async function openModal(wrapper: ReturnType<typeof mount>, id = 'plan-1') {
@@ -212,12 +151,59 @@ async function openModal(wrapper: ReturnType<typeof mount>, id = 'plan-1') {
 }
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
   mockDetails = new Map()
-  baseInvoke()
-  const store = useReferenceStore()
-  await store.refresh()
+  // 唯一接缝布线（ADR-0085）：账户/分类/商户以本套夹具覆写（值与规范夹具
+  // 不同，属场景契约而非重复枚举），进 defaults 表；可变详情库与重试/展开
+  // 编排为函数型 overrides。其余参考命令由规范夹具兑底；store 层预热
+  // opt-in 开启：弹窗按 id 独立取数前，账户/分类字典已就绪。
+  const seam = wireInvokeSeam({
+    defaults: {
+      list_accounts: mockAccounts,
+      list_categories: mockCategories,
+      list_merchants: mockMerchants,
+    },
+    overrides: {
+      get_scheduled_transaction_detail: (args) => {
+        const detail = mockDetails.get(String(args?.id))
+        return detail ? Promise.resolve(detail) : Promise.reject(new Error('无此计划详情'))
+      },
+      execute_scheduled_occurrence: (args) => {
+        const { occurrence_id } = (args?.input ?? {}) as { occurrence_id: string }
+        // 重试语义：failed 期次 → completed
+        for (const [id, d] of mockDetails) {
+          if (!d.occurrences.some((o) => o.id === occurrence_id && o.status === 'failed')) continue
+          mockDetails.set(id, {
+            ...d,
+            occurrences: d.occurrences.map((o) =>
+              o.id === occurrence_id ? { ...o, status: 'completed' as const } : o,
+            ),
+          })
+        }
+        return 'txn-new'
+      },
+      expand_scheduled_occurrences: (args) => {
+        const planId = String(args?.id)
+        const d = mockDetails.get(planId)
+        if (!d) return Promise.reject(new Error('无此计划详情'))
+        const last = [...d.occurrences].sort((a, b) =>
+          b.scheduled_date.localeCompare(a.scheduled_date),
+        )[0]
+        const newDate = `${Number(last?.scheduled_date.slice(0, 4) ?? '2026') + 1}-01-01`
+        const occ = makeOccurrence({
+          id: 'occ-expanded',
+          scheduled_transaction_id: planId,
+          scheduled_date: newDate,
+        })
+        mockDetails.set(planId, {
+          ...d,
+          occurrences: [...d.occurrences, occ],
+        })
+        return Promise.resolve([occ.id])
+      },
+    },
+    refreshReferenceStores: true,
+  })
+  await seam.ready
 })
 
 describe('PlanDetailModal 期次列表（issue #205）', () => {

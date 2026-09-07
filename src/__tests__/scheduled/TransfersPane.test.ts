@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke } from '../helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
+import { mockInvoke, wireInvokeSeam } from '../helpers/invoke-mock'
+import { mount, flushPromises } from '@vue/test-utils'
 import { NModal, NSelect, NPopconfirm } from 'naive-ui'
-import { setActivePinia, createPinia } from 'pinia'
-import { useReferenceStore } from '@/stores/reference'
 import TransfersPane from '@/components/scheduled/TransfersPane.vue'
-import { stubReferenceInvoke } from '../helpers/reference-stubs'
+import { findInputByTestId as findInput } from '../helpers/dom'
+import { mountFlushed } from '../helpers/mount'
 import type {
   Account,
   Currency,
@@ -23,12 +22,6 @@ import { componentVm } from '../helpers/component-vm'
  * 刷新版本号镜像法）；本文件收缩为渲染与交互冒烟 + 转账形态真差异（表单）。
  * 迁移记录见对应提交信息。
  */
-
-
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
 
 const mockCurrencies: Currency[] = [
   { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
@@ -134,71 +127,63 @@ const mockDetails = new Map<string, ScheduledTransactionDetail>()
 /** 创建失败开关（后端拒绝币种不一致等场景） */
 let failCreate = false
 
-function baseInvoke() {
-  return stubReferenceInvoke({
-    list_currencies: mockCurrencies,
-    list_accounts: mockAccounts,
-    list_categories: [],
-    list_insurers: [],
-    list_merchants: [],
-    list_scheduled_transactions: () => mockPlans,
-    get_scheduled_transaction_detail: (args) => {
-      const detail = mockDetails.get(String(args?.id))
-      return detail ? Promise.resolve(detail) : Promise.reject(new Error('无此计划详情'))
-    },
-    create_scheduled_transaction: (args) => {
-      if (failCreate) {
-        return Promise.reject(new Error('转出账户与转入账户币种不一致，定时转账不支持跨币种'))
-      }
-      const input = args?.input as {
-        kind: string
-        note: string | null
-        to_account_id: string | null
-        total_occurrences: number | null
-      }
-      const id = `new-transfer-${input.note ?? ''}`
-      const plan = makeTransferPlan(
-        { id, note: input.note ?? null },
-        input.to_account_id,
-        input.total_occurrences ?? null,
-      )
-      mockPlans = [...mockPlans, plan]
-      mockDetails.set(id, makeDetail(plan, []))
-      return id
-    },
-    update_scheduled_transaction_status: (args) => {
-      const { id, new_status } = args as { id: string; new_status: ScheduledStatus }
-      mockPlans = mockPlans.map((p) =>
-        p.core.id === id ? { ...p, core: { ...p.core, status: new_status } } : p,
-      )
-      const detail = mockDetails.get(id)
-      if (detail) {
-        mockDetails.set(id, { ...detail, core: { ...detail.core, status: new_status } })
-      }
-    },
-  })
-}
-
-/** 定位弹窗表单内输入框：NModal teleport 到 body，需经 findComponent 锚定。 */
-function findInput(wrapper: ReturnType<typeof mount>, testid: string) {
-  return wrapper.findComponent(`[data-testid="${testid}"]`).find('input')
-}
-
-async function mountView() {
-  const wrapper = mount(TransfersPane)
-  await flushPromises()
-  return wrapper
+function mountView() {
+  return mountFlushed(TransfersPane)
 }
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
   mockPlans = []
   mockDetails.clear()
   failCreate = false
-  baseInvoke()
-  const store = useReferenceStore()
-  await store.refresh()
+  // 唯一接缝布线（ADR-0085）：币种（含 USD）与账户以本套夹具覆写（值与规范
+  // 夹具不同，属场景契约而非重复枚举），进 defaults 表；可变计划库与创建/
+  // 状态编排为函数型 overrides。其余参考命令由规范夹具兑底；store 层预热
+  // opt-in 开启：主题用例依赖参考数据就绪后的即时渲染（账户名、币种符号）。
+  const seam = wireInvokeSeam({
+    defaults: {
+      list_currencies: mockCurrencies,
+      list_accounts: mockAccounts,
+    },
+    overrides: {
+      list_scheduled_transactions: () => mockPlans,
+      get_scheduled_transaction_detail: (args) => {
+        const detail = mockDetails.get(String(args?.id))
+        return detail ? Promise.resolve(detail) : Promise.reject(new Error('无此计划详情'))
+      },
+      create_scheduled_transaction: (args) => {
+        if (failCreate) {
+          return Promise.reject(new Error('转出账户与转入账户币种不一致，定时转账不支持跨币种'))
+        }
+        const input = args?.input as {
+          kind: string
+          note: string | null
+          to_account_id: string | null
+          total_occurrences: number | null
+        }
+        const id = `new-transfer-${input.note ?? ''}`
+        const plan = makeTransferPlan(
+          { id, note: input.note ?? null },
+          input.to_account_id,
+          input.total_occurrences ?? null,
+        )
+        mockPlans = [...mockPlans, plan]
+        mockDetails.set(id, makeDetail(plan, []))
+        return id
+      },
+      update_scheduled_transaction_status: (args) => {
+        const { id, new_status } = args as { id: string; new_status: ScheduledStatus }
+        mockPlans = mockPlans.map((p) =>
+          p.core.id === id ? { ...p, core: { ...p.core, status: new_status } } : p,
+        )
+        const detail = mockDetails.get(id)
+        if (detail) {
+          mockDetails.set(id, { ...detail, core: { ...detail.core, status: new_status } })
+        }
+      },
+    },
+    refreshReferenceStores: true,
+  })
+  await seam.ready
 })
 
 describe('TransfersPane 清单渲染冒烟（编排用例见 useScheduledPlanList.test.ts）', () => {

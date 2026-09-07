@@ -1,4 +1,5 @@
-import { mockInvoke, mountView, setAccountDb, setTxnDb, makeTxn, bodyRows, openMenuOnRow, selectRowMenu } from './common'
+import { mountView, setAccountDb, setTxnDb, makeTxn, bodyRows, openMenuOnRow, selectRowMenu } from './common'
+import { mockInvoke } from '../helpers/invoke-mock'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NButton, NModal, NSelect } from 'naive-ui'
@@ -108,11 +109,6 @@ describe('交易列表借贷编辑形态识别（issue #374）', () => {
 })
 
 describe('记一笔借贷入口完整链路（issue #374）', () => {
-  // jsdom 的 document.body 跨测试共享：清掉前序测试遗留的 teleport 内容
-  beforeEach(() => {
-    document.body.innerHTML = ''
-  })
-
   async function openLendModal(wrapper: ReturnType<typeof mount>, label: string) {
     const arrow = wrapper.find('button[aria-label="更多记账类型"]')
     await arrow.trigger('click')
@@ -180,11 +176,6 @@ describe('记一笔借贷入口完整链路（issue #374）', () => {
 })
 
 describe('借贷金额字段错误态（ADR-0058 / issue #416，共享接缝装配验证）', () => {
-  // jsdom 的 document.body 跨测试共享：清掉前序测试遗留的 teleport 内容
-  beforeEach(() => {
-    document.body.innerHTML = ''
-  })
-
   async function openLendModal(wrapper: ReturnType<typeof mount>, label: string) {
     const arrow = wrapper.find('button[aria-label="更多记账类型"]')
     await arrow.trigger('click')

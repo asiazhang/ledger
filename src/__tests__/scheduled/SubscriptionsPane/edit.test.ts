@@ -2,13 +2,13 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NModal, NInputNumber, NDatePicker, NSelect, NTreeSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
+import { mockInvoke } from '../../helpers/invoke-mock'
 import {
   mockDetails,
   makeDetail,
   makePlan,
   mockMerchants,
   findInput,
-  mockInvoke,
   mountView,
   setFailSubscriptionUpdate,
   setMockMerchants,

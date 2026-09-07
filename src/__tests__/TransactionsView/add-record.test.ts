@@ -1,5 +1,6 @@
-import { mockInvoke, mountView, listCalls, lastListFilter, tablePagination } from './common'
-import { describe, it, expect, beforeEach } from 'vitest'
+import { mountView, listCalls, lastListFilter, tablePagination } from './common'
+import { mockInvoke } from '../helpers/invoke-mock'
+import { describe, it, expect } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect, NButton, NModal, NInput, NRadioGroup } from 'naive-ui'
 import CategoryForm from '@/components/CategoryForm.vue'
@@ -100,12 +101,6 @@ describe('TransactionsView 记一笔 Modal（issue #141）', () => {
 })
 
 describe('TransactionsView 记一笔分裂按钮（issue #150）', () => {
-  // jsdom 的 document.body 跨测试共享：前序测试遗留的已展开下拉菜单（teleport 到 body、
-  // wrapper 未 destroy）会被 querySelector 误命中，先清掉
-  beforeEach(() => {
-    document.body.innerHTML = ''
-  })
-
   /** 点击下拉箭头展开菜单，返回 document.body 中的菜单项文案列表。 */
   async function openDropdown(wrapper: ReturnType<typeof mount>): Promise<string[]> {
     const arrow = wrapper.find('button[aria-label="更多记账类型"]')
