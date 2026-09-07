@@ -8,7 +8,7 @@ const AI_PROMPT: &str = include_str!("../../prompts/ledger-api.md");
 ///
 /// 保持同步形态（形状乙 sweep 判定，spec #498 / #503）：纯内存常量克隆
 ///（`include_str!`，无 DB、无 IO、无阻塞工作面），与「全部触碰 DB 的命令
-/// async 化」口径一致（先例：`set_auto_execution_enabled`、`cancel_sync_instruments`）。
+/// async 化」口径一致（先例：`set_auto_execution_enabled`、`open_log_dir`）。
 #[tauri::command]
 pub fn get_ai_prompt() -> String {
     AI_PROMPT.to_string()

@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use crate::sync::http::{
-    ClistResponse, Pacer, RetryConfig, request_json_from_hosts, request_json_with_retry,
+    Pacer, RetryConfig, UlistResponse, request_json_from_hosts, request_json_with_retry,
 };
 
 fn fast_cfg(max_retries: u32, max_throttle_retries: u32) -> RetryConfig {
@@ -47,13 +47,13 @@ fn request_json_retries_429_then_succeeds() {
         if n == 1 {
             (429, "rate limited".into())
         } else {
-            (200, r#"{"data":{"total":7}}"#.into())
+            (200, r#"{"data":{"diff":[]}}"#.into())
         }
     });
     let client = reqwest::blocking::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
     let params = [("fs", "test"), ("pn", "1")];
-    let json = request_json_with_retry::<ClistResponse>(
+    let json = request_json_with_retry::<UlistResponse>(
         &client,
         &url,
         &params,
@@ -63,7 +63,11 @@ fn request_json_retries_429_then_succeeds() {
         None,
     )
     .unwrap();
-    assert_eq!(json.data.total, Some(7));
+    assert_eq!(
+        json.data.unwrap().diff.unwrap().into_items().len(),
+        0,
+        "解析成功即视为重试成功"
+    );
 }
 
 #[test]
@@ -72,13 +76,13 @@ fn request_json_retries_on_json_decode_failure() {
         if n == 1 {
             (200, "not json at all".into())
         } else {
-            (200, r#"{"data":{"total":9}}"#.into())
+            (200, r#"{"data":{"diff":[]}}"#.into())
         }
     });
     let client = reqwest::blocking::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
     let params = [("fs", "test")];
-    let json = request_json_with_retry::<ClistResponse>(
+    let json = request_json_with_retry::<UlistResponse>(
         &client,
         &url,
         &params,
@@ -88,7 +92,11 @@ fn request_json_retries_on_json_decode_failure() {
         None,
     )
     .unwrap();
-    assert_eq!(json.data.total, Some(9));
+    assert_eq!(
+        json.data.unwrap().diff.unwrap().into_items().len(),
+        0,
+        "解析成功即视为重试成功"
+    );
 }
 
 #[test]
@@ -97,7 +105,7 @@ fn request_json_returns_error_after_429_exhausted() {
     let client = reqwest::blocking::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
     let params = [("fs", "test")];
-    let err = request_json_with_retry::<ClistResponse>(
+    let err = request_json_with_retry::<UlistResponse>(
         &client,
         &url,
         &params,
@@ -122,7 +130,7 @@ fn request_json_returns_error_when_connection_refused() {
     let url = "http://127.0.0.1:1/x".to_string();
     let mut pacer = Pacer::new(Duration::ZERO);
     let params = [("fs", "test")];
-    let err = request_json_with_retry::<ClistResponse>(
+    let err = request_json_with_retry::<UlistResponse>(
         &client,
         &url,
         &params,
@@ -149,14 +157,14 @@ fn request_json_falls_back_to_next_host() {
     let h2 = hits.clone();
     let url2 = spawn_http_server(move |_| {
         h2.fetch_add(1, Ordering::SeqCst);
-        (200, r#"{"data":{"total":7}}"#.into())
+        (200, r#"{"data":{"diff":[]}}"#.into())
     });
 
     let hosts = [url1.as_str(), url2.as_str()];
     let client = reqwest::blocking::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
     let params = [("fs", "test")];
-    let resp = request_json_from_hosts::<ClistResponse>(
+    let resp = request_json_from_hosts::<UlistResponse>(
         &client,
         &params,
         "/x",
@@ -167,7 +175,11 @@ fn request_json_falls_back_to_next_host() {
         None,
     )
     .unwrap();
-    assert_eq!(resp.data.total, Some(7));
+    assert_eq!(
+        resp.data.unwrap().diff.unwrap().into_items().len(),
+        0,
+        "解析成功即视为主机切换成功"
+    );
     assert_eq!(hits.load(Ordering::SeqCst), 2);
 }
 
@@ -178,7 +190,7 @@ fn request_json_returns_error_when_all_hosts_fail() {
     let client = reqwest::blocking::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
     let params = [("fs", "test")];
-    let err = request_json_from_hosts::<ClistResponse>(
+    let err = request_json_from_hosts::<UlistResponse>(
         &client,
         &params,
         "/x",

@@ -36,6 +36,10 @@
 - **数据库 schema**：V001 就地新增导入去重兜底部分索引 `idx_transactions_dedup_hash`，无幂等键行的导入去重查询由每行全表扫描（约占导入耗时 94%，[#532] 量测）降为索引定位。仅全新安装生效；存量库行为零差异但不带该索引（兜底查询维持全表扫描），重建库或手工补建索引后获得导入提速（[#701]）。
 - **数据库 schema**：标的 market 检查约束就地扩展至含美股三市场 nasdaq/nyse/amex（ADR-0081）。仅全新安装生效；**存量库不重跑迁移、保持旧市场闭集，创建美股市场标的会被拒绝，不提供自动修复**（[#692]）。
 
+### Removed
+
+- **投资**：标的全量同步退役（ADR-0081 决策 3）——标的页「全量同步」入口、二次确认与进度弹窗、同步/中断命令（`sync_instruments` / `cancel_sync_instruments`）与进度事件整体删除；股票字典修正改由「按代码查询/创建带回权威名称」承担（添加投资标的与 AI 导入按代码即回填，无需先同步）；持仓价格增量同步（含 ETF 与美股）不受退役影响（[#698]）。
+
 ### Changed
 
 - **加密/备份**：转换、恢复、搬迁完成后的「应用自动重启」改为原位重引导（进程不退出、界面重载），开发与签名构建行为一致，修复开发构建下重启后白屏（[#644]）。
@@ -227,6 +231,7 @@
 [#695]: https://github.com/asiazhang/ledger/issues/695
 [#696]: https://github.com/asiazhang/ledger/issues/696
 [#697]: https://github.com/asiazhang/ledger/issues/697
+[#698]: https://github.com/asiazhang/ledger/issues/698
 [#644]: https://github.com/asiazhang/ledger/issues/644
 [#701]: https://github.com/asiazhang/ledger/issues/701
 [#712]: https://github.com/asiazhang/ledger/issues/712

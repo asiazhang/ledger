@@ -79,7 +79,8 @@ describe('InvestmentsView 英文渲染（issue #350 / ADR-0049）', () => {
     await clickTab(wrapper, 1)
     expect(wrapper.text()).toContain('Holdings only')
     expect(wrapper.text()).toContain('Add Instrument')
-    expect(wrapper.text()).toContain('Full Sync')
+    // 全量同步入口已退役（issue #698），不再渲染 Full Sync
+    expect(wrapper.text()).not.toContain('Full Sync')
     expect(wrapper.find('input[placeholder="Search symbol or name..."]').exists()).toBe(true)
     // 空表列头英文
     const headers = wrapper.findAll('th').map((th) => th.text())

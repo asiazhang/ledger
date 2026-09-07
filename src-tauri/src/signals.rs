@@ -30,7 +30,7 @@
 //!
 //! 写操作边界：本闭集收录「以写为意图」的操作（DB 行写入、KV / 指针文件写入、
 //! 备份产物、进程级设置镜像推送）；纯读命令与控制类命令（`restart_app` /
-//! `cancel_sync_instruments` / `open_log_dir`）不是写操作，不入集。
+//! `open_log_dir`）不是写操作，不入集。
 
 use crate::events;
 
@@ -111,8 +111,6 @@ pub enum WriteOp {
     //    [`WriteEvidence::PriceWritten`]，映射内共享一份「实际写入」判定 ──
     /// 增量同步持仓价格（IPC `sync_holding_prices`）：证据 = 实际写入 n>0。
     SyncHoldingPrices,
-    /// 全量同步标的行情（IPC `sync_instruments`）：证据 = 本次运行有落库（含用户中断）。
-    SyncInstruments,
     /// 按代码即拉场外基金（IPC `add_fund_by_code`，ADR-0038）：证据 = 落现价缓存。
     AddFundByCode,
     /// 按代码添加投资标的·场内通道（IPC `add_instrument_by_code`，issue #697 /
@@ -230,7 +228,7 @@ impl WriteOp {
     /// 清单紧邻 enum，同步义务就地可查（同 `TransactionKind::ALL` 先例）。
     /// 长度标注与初始化个数不符即编译错；但 enum 新增变体而本清单漏登不会报错，
     /// 改 enum 必须同步改这里。
-    pub const ALL: [WriteOp; 59] = [
+    pub const ALL: [WriteOp; 58] = [
         // 参考数据四表
         WriteOp::CreateAccount,
         WriteOp::UpdateAccount,
@@ -265,7 +263,6 @@ impl WriteOp {
         WriteOp::AuditBalanceCache,
         // 价格域
         WriteOp::SyncHoldingPrices,
-        WriteOp::SyncInstruments,
         WriteOp::AddFundByCode,
         WriteOp::AddInstrumentByCode,
         WriteOp::RecordManualPrice,
@@ -313,7 +310,7 @@ impl WriteOp {
 pub enum WriteEvidence {
     /// 无证据（默认）：信号完全由写操作身份的静态映射行决定。
     None,
-    /// 价格实际写入：增量 / 全量同步「落库 n>0（含用户中断保留的落库）」、
+    /// 价格实际写入：增量同步「落库 n>0」、
     /// 按代码即拉「落现价缓存」、手动报价「实际写入任一落点」的统一形状。
     PriceWritten(bool),
     /// 余额调整按需新建黑洞账户（参考表变更；纯转账零变化）。
@@ -419,10 +416,9 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
         // 备注拼音一键修复：搜索派生列回填，不置脏不发信号（issue #513，同上豁免形态）。
         WriteOp::RepairNotePinyin => NO_SIGNALS,
 
-        // ── 价格域：五操作共享同一行——映射内唯一一份「实际写入 → 发价格
+        // ── 价格域：四操作共享同一行——映射内唯一一份「实际写入 → 发价格
         //    信号」判定（ADR-0044 决策 4）；零变化不广播（ADR-0031）──
         WriteOp::SyncHoldingPrices
-        | WriteOp::SyncInstruments
         | WriteOp::AddFundByCode
         | WriteOp::AddInstrumentByCode
         | WriteOp::RecordManualPrice
@@ -483,7 +479,7 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
 /// spec #366）。本函数只做一次非阻塞
 /// 投递即返回，不等发射完成；投递 / 发射失败静默忽略，不影响写事务结果。
 /// 壳层约定形态：写路径经统一写入口 `write_entry`（ADR-0073）内化发射；
-/// 本函数供不经入口的例外路径（备份修剪、全量同步自发射）与写入口本体消费，
+/// 本函数供不经入口的例外路径（备份修剪）与写入口本体消费，
 /// 或先取 [`signals_for`] 再 [`emit_all`]（需要先记日志 / 断言信号集时用后者）。
 pub fn emit_all(emitter: &dyn events::SignalEmitter, signals: &[Signal]) {
     for signal in signals {
@@ -752,19 +748,6 @@ mod tests {
     }
 
     #[test]
-    fn sync_instruments_emits_prices_changed_only_when_written() {
-        // 全量同步终态含用户中断（中断保留已落库价格，证据归一化为「有落库」）。
-        assert_signals(
-            signals_for(Op::SyncInstruments, E::PriceWritten(true)),
-            &[Signal::PricesChanged],
-        );
-        assert_signals(
-            signals_for(Op::SyncInstruments, E::PriceWritten(false)),
-            &[],
-        );
-    }
-
-    #[test]
     fn add_fund_by_code_emits_prices_changed_only_when_price_written() {
         // 落现价即广播；未取到净值仅建标的、不广播（ADR-0038）。
         assert_signals(
@@ -1012,7 +995,6 @@ mod tests {
         // 条件行拿到非本域证据或无证据，一律零信号。
         let price_ops = [
             Op::SyncHoldingPrices,
-            Op::SyncInstruments,
             Op::AddFundByCode,
             Op::AddInstrumentByCode,
             Op::RecordManualPrice,

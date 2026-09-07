@@ -143,10 +143,24 @@ fn ulist_response_deserializes_cross_market_codes() {
     let items = resp.data.unwrap().diff.unwrap().into_items();
     assert_eq!(items.len(), 3);
     assert_eq!(items[0].code, "600519");
-    // 价格换算（万分之一元，ADR-0038）：A 股 f2 × 100、港股 × 10（与全量同步一致）
+    // 价格换算（万分之一元，ADR-0038）：A 股 f2 × 100、港股 × 10（市场回退单点）
     assert_eq!(f2_to_price(items[0].price.unwrap(), "sh"), 13028000);
     assert_eq!(f2_to_price(items[1].price.unwrap(), "sz"), 117300);
     assert_eq!(f2_to_price(items[2].price.unwrap(), "hk"), 4454000);
+}
+
+/// 市场固定倍数回退换算（万分之一元，ADR-0038）：批量报价精度位缺失/越界时
+/// 的回退单点（[`f2_to_price`]），与增量同步/按代码查询两条通道共用。
+#[test]
+fn f2_to_price_scales_by_market() {
+    assert_eq!(f2_to_price(951.0, "sh"), 95100);
+    assert_eq!(f2_to_price(1700.0, "sz"), 170000);
+    assert_eq!(f2_to_price(475200.0, "hk"), 4752000);
+    assert_eq!(f2_to_price(73600.0, "hk"), 736000);
+    // 美股三市场 3 位小数刻度（ADR-0081，#695 实测钉住）。
+    assert_eq!(f2_to_price(319970.0, "nasdaq"), 3_199_700);
+    assert_eq!(f2_to_price(113240.0, "nyse"), 1_132_400);
+    assert_eq!(f2_to_price(770190.0, "amex"), 7_701_900);
 }
 
 #[test]
@@ -182,7 +196,7 @@ fn ulist_items_carry_precision_and_convert_etf_scale() {
 
 #[test]
 fn ulist_items_without_precision_fall_back_to_market_scale() {
-    // 缺 f1（旧形态响应 / 全量同步 clist 通道不带 f1）→ None：按市场回退，
+    // 缺 f1（旧形态响应）→ None：按市场回退，
     // 股票行为与既有 f2_to_price 完全一致（回退分支只兜异常/旧形态）。
     let json = r#"{"rc":0,"data":{"total":1,"diff":[{"f2":4634,"f12":"510300","f14":"沪深300ETF华泰柏瑞"}]}}"#;
     let resp: UlistResponse = serde_json::from_str(json).unwrap();

@@ -3,21 +3,17 @@ import { computed, h, onMounted, ref, watch } from 'vue'
 import {
   NButton,
   NDataTable,
-  NIcon,
   NInput,
-  NProgress,
   NSpace,
   NSwitch,
   NTag,
   NText,
 } from 'naive-ui'
-import { Refresh } from '@vicons/ionicons5'
 import type { DataTableColumn } from 'naive-ui'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { t } from '@/i18n'
 import { useHoldingPriceSync } from '@/composables/useHoldingPriceSync'
-import { useInstrumentFullSync } from '@/composables/useInstrumentFullSync'
 import { usePricesChanged } from '@/composables/usePricesChanged'
 import { useAppDialog } from '@/composables/useAppDialog'
 import { errorMessage as extractErrorMessage } from '@/utils/errors'
@@ -29,7 +25,6 @@ import {
   MARKET_TYPES,
   canManualPrice,
 } from '@/types'
-import AppModal from '@/components/AppModal.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import AddInstrumentModal from '@/components/investments/AddInstrumentModal.vue'
 import ManualPriceModal from '@/components/investments/ManualPriceModal.vue'
@@ -44,32 +39,8 @@ const dialog = useAppDialog()
 // 标的行「走势」入口（issue #139）：向视图层发出带标的信息的事件，由其切换到走势 tab
 const emit = defineEmits<{ 'view-trend': [instrument: Instrument] }>()
 
-// 股票标的全量同步（issue #109）：二次确认 + 模态进度 + 中断 + 终态反馈
-const {
-  syncStatus,
-  syncing: fullSyncing,
-  progress,
-  current,
-  total: syncTotal,
-  inserted,
-  updated,
-  errorMessage,
-  confirmOpen,
-  modalOpen,
-  cancelling,
-  openConfirm,
-  closeConfirm,
-  confirmSync,
-  requestCancel,
-  openModal,
-  closeModal,
-} = useInstrumentFullSync()
-
-// 全量同步按钮：同步中点击重开进度框（同步后台继续），否则弹二次确认（防重复触发同步）
-function onFullSyncClick() {
-  if (fullSyncing.value) openModal()
-  else openConfirm()
-}
+// 标的全量同步入口/组装已随 ADR-0081 决策 3 整体退役（issue #698）：
+// 股票字典修正归「按代码查询/创建带回权威名称」。
 
 // 标的浏览（服务端分页 + 搜索）
 const searchText = ref('')
@@ -124,7 +95,7 @@ watch(searchText, () => {
 watch(selectedMarket, reload)
 watch(onlyInvested, reload)
 
-// 价格失效信号（ADR-0031）：增量/全量同步实际写价后原地重拉——
+// 价格失效信号（ADR-0031）：持仓价格同步/录价等实际写价后原地重拉——
 // 用 load() 保留分页与搜索状态；reload() 会重置到第 1 页，
 // 抽走用户视线下的行（issue #238）。
 usePricesChanged(() => {
@@ -150,7 +121,8 @@ function onInstrumentAdded(message: string) {
 // ---------------------------------------------------------------------------
 // 自建标的删除（issue #292 / ADR-0036 决策 5）：仅手动来源且无任何 buy/sell
 // 流水引用（security_transactions 无行）的标的可物理删除，守卫在后端前置检查；
-// 同步来源标的不渲染删除动作（填错由全量同步修正）。行内删除 → useAppDialog
+// 同步来源标的不渲染删除动作（字典修正由按代码查询/创建带回权威名称承担，
+// ADR-0081）。行内删除 → useAppDialog
 // 二次确认（遮罩点击不构成关闭意图）→ 确认后调 IPC 命令并本地重拉。
 // ---------------------------------------------------------------------------
 const deleteMessage = ref<{ type: 'success' | 'error'; text: string } | null>(null)
@@ -377,17 +349,6 @@ onMounted(load)
       >
         {{ t('investments.browser.syncHoldingPrices') }}
       </NButton>
-      <NButton
-        secondary
-        size="small"
-        data-testid="full-sync"
-        @click="onFullSyncClick"
-      >
-        <template v-if="fullSyncing" #icon>
-          <NIcon class="sync-spin"><Refresh /></NIcon>
-        </template>
-        {{ fullSyncing ? t('investments.browser.syncing') : t('investments.browser.fullSync') }}
-      </NButton>
     </NSpace>
     <NText v-if="resultMessage" :type="status === 'error' ? 'error' : 'info'">
       {{ resultMessage }}
@@ -431,102 +392,5 @@ onMounted(load)
       :instrument="quoteTarget"
       @quoted="onQuoted"
     />
-
-    <!-- 二次确认：未确认不发起同步（issue #109） -->
-    <AppModal
-      v-model:show="confirmOpen"
-      preset="card"
-      :title="t('investments.browser.confirmTitle')"
-      card-size="md"
-    >
-      <NSpace vertical :size="12">
-        <NText depth="3">
-          {{ t('investments.browser.confirmIntro') }}
-        </NText>
-        <NSpace justify="end" :size="12">
-          <NButton data-testid="cancel-confirm-full-sync" @click="closeConfirm">
-            {{ t('investments.browser.confirmCancel') }}
-          </NButton>
-          <NButton
-            type="primary"
-            data-testid="confirm-full-sync"
-            :loading="fullSyncing"
-            @click="confirmSync"
-          >
-            {{ t('investments.browser.confirmStart') }}
-          </NButton>
-        </NSpace>
-      </NSpace>
-    </AppModal>
-
-    <!-- 模态进度：进度条 + 已处理/总数 + 累计新增/更新 + 中断；终态明确反馈 -->
-    <AppModal
-      v-model:show="modalOpen"
-      preset="card"
-      :title="t('investments.browser.progressTitle')"
-      card-size="md"
-      @update:show="(v: boolean) => !v && closeModal()"
-    >
-      <NSpace vertical :size="12">
-        <template v-if="fullSyncing">
-          <NProgress
-            type="line"
-            :percentage="progress"
-            :show-indicator="true"
-            :indicator-placement="'inside'"
-            status="success"
-            :height="28"
-          />
-          <NText depth="3" data-testid="full-sync-count">
-            {{ t('investments.browser.progress', {
-              current,
-              total: syncTotal,
-              pending: syncTotal === 0 ? t('investments.browser.progressPending') : '',
-            }) }}
-          </NText>
-          <NText depth="3" data-testid="full-sync-cumulative">
-            {{ t('investments.browser.cumulative', { inserted, updated }) }}
-          </NText>
-          <NSpace justify="end" :size="12">
-            <NButton
-              type="error"
-              size="small"
-              :loading="cancelling"
-              data-testid="cancel-full-sync"
-              @click="requestCancel"
-            >
-              {{ t('investments.browser.cancelSync') }}
-            </NButton>
-          </NSpace>
-        </template>
-        <template v-else-if="syncStatus === 'done'">
-          <NText type="success" data-testid="full-sync-result">
-            {{ t('investments.browser.done', { inserted, updated }) }}
-          </NText>
-        </template>
-        <template v-else-if="syncStatus === 'cancelled'">
-          <NText type="warning" data-testid="full-sync-result">
-            {{ t('investments.browser.cancelled', { inserted, updated }) }}
-          </NText>
-        </template>
-        <template v-else-if="syncStatus === 'error'">
-          <NText type="error" data-testid="full-sync-result">
-            {{ t('investments.browser.failed', { message: errorMessage }) }}
-          </NText>
-        </template>
-      </NSpace>
-    </AppModal>
   </NSpace>
 </template>
-
-<style scoped>
-/* 同步中按钮的旋转装载指示：视觉呈「loading」，但按钮保持可点击以重开进度框（issue #109） */
-.sync-spin {
-  animation: sync-spin 1s linear infinite;
-}
-@keyframes sync-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-</style>

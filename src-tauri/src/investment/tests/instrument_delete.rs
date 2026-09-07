@@ -91,7 +91,8 @@ fn delete_instrument_with_trades_rejected() {
     );
 }
 
-/// 同步来源标的：即使无流水引用也拒删（填错由全量同步修正，ADR-0036 决策 5）。
+/// 同步来源标的：即使无流水引用也拒删（字典修正由按代码查询/创建带回权威名称承担，
+/// ADR-0036 决策 5 / ADR-0081）。
 #[test]
 fn delete_sync_source_instrument_rejected() {
     let conn = open();
