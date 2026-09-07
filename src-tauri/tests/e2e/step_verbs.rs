@@ -11,17 +11,20 @@
 //!   复用；非法形态输入（如缺转入账户的转账）由调用方经 L1 工厂 + 结构体更新
 //!   构造后走通用 try 入口。
 //!
-//! 本模块自 #761 起由交易域步骤消费（创建/修改/删除动词接线）；账户与计划域
-//! 动词由迁移票 #762/#763 接续消费。步骤动词是测试层唯一允许触发写入的形态；
-//! 写入失败被静默吞掉属违规（CONTEXT-testing「步骤动词」）。
+//! 本模块自 #761 起由交易域步骤消费（创建/修改/删除动词接线），自 #762 起由
+//! 定时计划域步骤消费（三形态创建 + 生命周期动词接线）；账户域动词待 #763
+//! 消费（「存在账户」前置旁路归零时接线）。步骤动词是测试层唯一允许触发写入
+//! 的形态；写入失败被静默吞掉属违规（CONTEXT-testing「步骤动词」）。
 
-// 迁移进行中：交易域动词已由 #761 消费；账户与计划域动词仍待 #762/#763 消费
-// （bin crate 的 dead_code 会报未使用）——全量消费后移除本豁免。
+// 迁移进行中：交易域（#761）与计划域（#762）动词已消费；仅剩账户域动词待
+// #763 消费（bin crate 的 dead_code 会报未使用）——全量消费后移除本豁免。
 #![allow(dead_code)]
 
 use tauri_app_lib::accounts::{AccountInput, AccountType, create_account};
 use tauri_app_lib::error::AppError;
-use tauri_app_lib::scheduled_transactions::{CreateScheduledInput, create_plan};
+use tauri_app_lib::scheduled_transactions::{
+    CreateScheduledInput, ScheduledStatus, create_plan, update_plan_status,
+};
 use tauri_app_lib::transaction::{
     TransactionInput, TransactionWrite, create_transaction, delete_transaction, update_transaction,
 };
@@ -279,8 +282,9 @@ pub fn create_scheduled_transfer_plan(
     )
 }
 
-/// 账户的币种代码（计划动词派生币种用）。
-fn account_currency_code(world: &LedgerWorld, account_id: &str) -> String {
+/// 账户的币种代码（计划动词派生币种用；#762 起步骤侧冷字段覆盖路径亦消费——
+/// 分期/转账计划的商户/备注变体经 L1 工厂构造，币种取账户实际币种同一口径）。
+pub(crate) fn account_currency_code(world: &LedgerWorld, account_id: &str) -> String {
     let conn = world_conn!(world);
     conn.query_row(
         "SELECT currency_code FROM accounts WHERE id=?1",
@@ -288,4 +292,14 @@ fn account_currency_code(world: &LedgerWorld, account_id: &str) -> String {
         |r| r.get(0),
     )
     .expect("查询账户币种失败")
+}
+
+/// 计划生命周期动词（#762 接线）：经既有生命周期命令形态的域函数
+/// `update_plan_status`（暂停/恢复/取消命令体）变更状态；失败即 panic。
+/// 不为测试开旁路——期次状态回写等无公开入口的直置不在此列（归 #763 例外裁决）。
+pub fn update_plan_status_verb(world: &mut LedgerWorld, id: &str, status: ScheduledStatus) {
+    world
+        .db
+        .write(|conn| update_plan_status(conn, id, status))
+        .expect("计划状态变更失败");
 }

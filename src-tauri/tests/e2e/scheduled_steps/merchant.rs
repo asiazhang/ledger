@@ -1,14 +1,20 @@
 //! 带商户的定时计划（issue #190 / ADR-0028）：installment/subscription 可携带商户、
 //! 定时转账拒绝携带；商户相关断言（计划 / 生成流水 / 扩展表 schema）也归此。
+//!
+//! #762 迁移：输入构造收编 L1 三形态工厂（[`crate::step_inputs`]，商户为冷字段
+//! 覆盖）、写入收编 L2 计划动词（[`crate::step_verbs`]）；try 形态 +
+//! `capture_expected_error` 承接「应返回错误」断言，断言语义不变。
 
 use cucumber::{then, when};
 use rusqlite::params;
 
-use tauri_app_lib::error::AppError;
-use tauri_app_lib::scheduled_transactions::{
-    CreateScheduledInput, RecurrenceType, ScheduledKind, create_plan,
-};
+use tauri_app_lib::scheduled_transactions::CreateScheduledInput;
 
+use crate::common::capture_expected_error;
+use crate::step_inputs::{
+    installment_plan_input, scheduled_transfer_plan_input, subscription_plan_input,
+};
+use crate::step_verbs::{account_currency_code, create_plan_verb, try_create_plan_verb};
 use crate::world::LedgerWorld;
 
 // ---------------------------------------------------------------------------
@@ -28,32 +34,15 @@ fn create_subscription_plan_with_merchant(
     note: String,
     merchant: String,
 ) {
-    let id = world
-        .db
-        .write(|conn| {
-            create_plan(
-                conn,
-                CreateScheduledInput {
-                    kind: ScheduledKind::Subscription,
-                    account_id: world.account_id(&account),
-                    category_id: None,
-                    amount_cents: amount,
-                    currency_code: currency,
-                    recurrence_type: RecurrenceType::Monthly,
-                    recurrence_interval: 1,
-                    recurrence_day: None,
-                    start_date: start,
-                    note: Some(note),
-                    merchant_id: Some(world.merchant_id(&merchant)),
-                    policy_id: None,
-                    total_amount_cents: None,
-                    total_occurrences: None,
-                    to_account_id: None,
-                },
-            )
-        })
-        .expect("创建订阅计划失败");
-    world.plan.last_plan_id = Some(id);
+    let account_id = world.account_id(&account);
+    create_plan_verb(
+        world,
+        CreateScheduledInput {
+            note: Some(note),
+            merchant_id: Some(world.merchant_id(&merchant)),
+            ..subscription_plan_input(amount, &account_id, &currency, &start)
+        },
+    );
 }
 
 /// 创建带商户的分期计划。
@@ -66,32 +55,15 @@ fn create_installment_plan_with_merchant(
     start: String,
     merchant: String,
 ) {
-    let id = world
-        .db
-        .write(|conn| {
-            create_plan(
-                conn,
-                CreateScheduledInput {
-                    kind: ScheduledKind::Installment,
-                    account_id: world.account_id(&account),
-                    category_id: None,
-                    amount_cents: total / occurrences,
-                    currency_code: "CNY".into(),
-                    recurrence_type: RecurrenceType::Monthly,
-                    recurrence_interval: 1,
-                    recurrence_day: None,
-                    start_date: start,
-                    note: None,
-                    merchant_id: Some(world.merchant_id(&merchant)),
-                    policy_id: None,
-                    total_amount_cents: Some(total),
-                    total_occurrences: Some(occurrences),
-                    to_account_id: None,
-                },
-            )
-        })
-        .expect("创建分期计划失败");
-    world.plan.last_plan_id = Some(id);
+    let account_id = world.account_id(&account);
+    let currency = account_currency_code(world, &account_id);
+    create_plan_verb(
+        world,
+        CreateScheduledInput {
+            merchant_id: Some(world.merchant_id(&merchant)),
+            ..installment_plan_input(total, occurrences, &account_id, &currency, &start)
+        },
+    );
 }
 
 /// 尝试创建定时转账计划并捕获错误（行为层拒绝携带商户，issue #190）。
@@ -107,32 +79,16 @@ fn try_create_transfer_plan_with_merchant(
     start: String,
     merchant: String,
 ) {
-    let result = world.db.write(|conn| {
-        create_plan(
-            conn,
-            CreateScheduledInput {
-                kind: ScheduledKind::ScheduledTransfer,
-                account_id: world.account_id(&from),
-                category_id: None,
-                amount_cents: amount,
-                currency_code: "CNY".into(),
-                recurrence_type: RecurrenceType::Monthly,
-                recurrence_interval: 1,
-                recurrence_day: None,
-                start_date: start,
-                note: None,
-                merchant_id: Some(world.merchant_id(&merchant)),
-                policy_id: None,
-                total_amount_cents: None,
-                total_occurrences: Some(occurrences),
-                to_account_id: Some(world.account_id(&to)),
-            },
-        )
-    });
-    world.last_error = match result {
-        Err(AppError::Coded { message, .. }) => Some(message),
-        _ => Some("预期失败但成功了".into()),
+    let from_id = world.account_id(&from);
+    let to_id = world.account_id(&to);
+    let currency = account_currency_code(world, &from_id);
+    let input = CreateScheduledInput {
+        merchant_id: Some(world.merchant_id(&merchant)),
+        total_occurrences: Some(occurrences),
+        ..scheduled_transfer_plan_input(amount, &from_id, &to_id, &currency, &start)
     };
+    let result = try_create_plan_verb(world, input);
+    capture_expected_error(world, result);
 }
 
 /// 尝试创建带商户的订阅计划并捕获错误（软删商户不可被新计划选择）。
@@ -147,32 +103,13 @@ fn try_create_subscription_plan_with_merchant(
     start: String,
     merchant: String,
 ) {
-    let result = world.db.write(|conn| {
-        create_plan(
-            conn,
-            CreateScheduledInput {
-                kind: ScheduledKind::Subscription,
-                account_id: world.account_id(&account),
-                category_id: None,
-                amount_cents: amount,
-                currency_code: currency,
-                recurrence_type: RecurrenceType::Monthly,
-                recurrence_interval: 1,
-                recurrence_day: None,
-                start_date: start,
-                note: None,
-                merchant_id: Some(world.merchant_id(&merchant)),
-                policy_id: None,
-                total_amount_cents: None,
-                total_occurrences: None,
-                to_account_id: None,
-            },
-        )
-    });
-    world.last_error = match result {
-        Err(AppError::Coded { message, .. }) => Some(message),
-        _ => Some("预期失败但成功了".into()),
+    let account_id = world.account_id(&account);
+    let input = CreateScheduledInput {
+        merchant_id: Some(world.merchant_id(&merchant)),
+        ..subscription_plan_input(amount, &account_id, &currency, &start)
     };
+    let result = try_create_plan_verb(world, input);
+    capture_expected_error(world, result);
 }
 
 /// 最近期次生成的交易商户名（左联 merchants 现名：改名即时生效，软删照常显示）。

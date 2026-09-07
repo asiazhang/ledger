@@ -19,12 +19,10 @@
 //!
 //! 与 TransactionInput 装配器（前端产品装配接缝，核心交易域词汇表）互不替代、
 //! 互不调用。单测暂缺：e2e 目标 `harness = false`（Cargo.toml），进程内 `#[test]`
-//! 不会执行；正确性由迁移票调用点落地后的 BDD 全量背书（#761 交易域已背书交易
-//! 构造，#762/#763 待背书计划与其余域）。
+//! 不会执行；正确性由迁移票调用点落地后的 BDD 全量背书（#761 交易域、#762 计划
+//! 域已背书；其余域待 #763）。
 
-// 迁移进行中：交易域消费自 #761 起；income/transfer 工厂与计划三形态仍待
-// #762/#763 消费（bin crate 的 dead_code 会报未使用）——全量消费后移除本豁免。
-#![allow(dead_code)]
+// #762 起全部工厂均已被迁移票消费（交易域 #761 + 计划域 #762），移除 dead_code 豁免。
 
 use tauri_app_lib::scheduled_transactions::{CreateScheduledInput, RecurrenceType, ScheduledKind};
 use tauri_app_lib::transaction::Transaction;
