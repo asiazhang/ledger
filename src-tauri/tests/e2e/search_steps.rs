@@ -1,17 +1,19 @@
 use cucumber::{given, then, when};
-use rusqlite::params;
 
+use crate::step_inputs::expense_input;
+use crate::step_verbs::create_transaction_verb;
 use crate::world::LedgerWorld;
-use tauri_app_lib::db::{device_id, new_uuid, now_iso};
-use tauri_app_lib::transaction::TransactionSearchResult;
+use tauri_app_lib::currencies::ExchangeRateInput;
+use tauri_app_lib::investment::create_exchange_rate;
 use tauri_app_lib::transaction::search_transactions_internal;
+use tauri_app_lib::transaction::{TransactionInput, TransactionSearchResult};
 
 // ---------------------------------------------------------------------------
 // Given
 // ---------------------------------------------------------------------------
 
-/// 存量交易：直接 SQL 插入，绕过应用层写入路径（语义与正常写入一致——
-/// 搜索无索引，两种来源的写入立即可搜）。
+/// 存量交易：经行为层创建编排入口写入（#764 旁路收敛——原直插与正常写入语义
+/// 一致，搜索无索引、两种来源立即可搜，收敛后由产品代码保证落库形态）。
 #[given(expr = "存量交易 备注 {string} 金额 {int} 账户 {string} 日期 {string}")]
 fn legacy_txn(
     world: &mut LedgerWorld,
@@ -21,22 +23,17 @@ fn legacy_txn(
     date: String,
 ) {
     let account_id = world.account_id(&account_name);
-    let id = new_uuid();
-    let now = now_iso();
-    world_conn!(world)
-        .execute(
-            "INSERT INTO transactions \
-             (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
-             category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES (?1,'expense',?2,'CNY',?2,?3,NULL,NULL,NULL,?4,?5,?6,?6,1,?7,0)",
-            params![id, amount, account_id, note, date, now, device_id()],
-        )
-        .unwrap();
-    world.txn.last_transaction_id = Some(id);
+    let input = TransactionInput {
+        note: Some(note),
+        ..expense_input(amount, &account_id, &date)
+    };
+    create_transaction_verb(world, input);
 }
 
-/// 存量外币交易：直接 SQL 插入，原始币种分与本位币分显式分叉（模拟汇率折算后
-/// 的落库形态），锁定金额区间过滤的本位币分口径（issue #395）。
+/// 存量外币交易：经行为层写入，原始币种分与本位币分显式分叉（issue #395）。
+/// 本位币分由产品折算路径产生：先经投资域公开创建入口按「本位币 ÷ 金额」综合
+/// 汇率（原直插模拟「汇率折算后的落库形态」，收敛后改走真实折算，锁定金额区
+/// 间过滤的本位币分口径；折算四舍五入由产品承担）。
 #[given(
     expr = "存量外币交易 备注 {string} 金额 {int} 币种 {string} 本位币 {int} 账户 {string} 日期 {string}"
 )]
@@ -49,21 +46,25 @@ fn legacy_foreign_txn(
     account_name: String,
     date: String,
 ) {
+    assert!(amount > 0, "存量外币交易金额须为正（汇率综合需要）");
     let account_id = world.account_id(&account_name);
-    let id = new_uuid();
-    let now = now_iso();
-    world_conn!(world)
-        .execute(
-            "INSERT INTO transactions \
-             (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
-             category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES (?1,'expense',?2,?3,?4,?5,NULL,NULL,NULL,?6,?7,?8,?8,1,?9,0)",
-            params![
-                id, amount, currency, native_amount, account_id, note, date, now,
-                device_id()
-            ],
-        )
-        .unwrap();
+    create_exchange_rate(
+        &world_conn!(world),
+        ExchangeRateInput {
+            base_code: currency.clone(),
+            quote_code: "CNY".into(),
+            rate: native_amount as f64 / amount as f64,
+            priced_at: date.clone(),
+            source: Some("manual".into()),
+        },
+    )
+    .expect("存量外币交易夹具：综合汇率失败");
+    let input = TransactionInput {
+        note: Some(note),
+        currency_code: currency,
+        ..expense_input(amount, &account_id, &date)
+    };
+    create_transaction_verb(world, input);
 }
 
 // ---------------------------------------------------------------------------

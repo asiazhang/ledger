@@ -1,6 +1,6 @@
 # ADR 0086: BDD e2e 步骤共享层加深——步骤输入工厂、步骤动词走公开写入口、world 快照按域分组
 
-- 状态：已接受（grilling 定稿，2026-09-07 两轮）
+- 状态：已接受（grilling 定稿，2026-09-07 两轮；例外裁决收口见文末「修订注记」段，#764）
 - 日期：2026-09-07
 - 作者：Ledger 项目
 - 关联：spec #729（本文档票，测试架构评审 2026-09-06 姊妹 spec #728–#732 之一）；ADR-0084（统一测试数据库工厂——分层相邻互不消费，其决策 7 明言「e2e 层不动、夹具统一另立 spec」即本票）；ADR-0085（前端 invoke 测试接缝——测试基础设施域的姊妹决策）；ADR-0073（壳层写仪式收敛——例外白名单纪律同构）；ADR-0067（余额缓存——「存在账户」旁路的历史成因）；ADR-0033（行为层三编排入口——交易写入的公开接缝）
@@ -46,3 +46,32 @@ grilling（2026-09-07）对评审证据修正两处（以代码为准）：
 - 与 ADR-0084 守门衔接：其「夹具表裸 SQL」白名单中的 e2e 条目随本 spec 迁移递减清零。
 - 词汇落测试基础设施域（`CONTEXT-testing.md` 新增测试世界、步骤输入工厂、步骤动词、快照分组、公开写入口（测试侧）五条）。
 - 落地：spec #729 及其子 ticket（拆分见 issue 正文）。
+
+## 修订注记（例外裁决收口终态，#764，2026-09-07）
+
+决策 4「旁路归零 + 例外白名单」的收尾裁决：以裁决时点代码为准逐个复核（grilling 普查 30 处经 #761–#763 迁移后余 15 处直置形态），公开入口存在即收敛、不存在即保留直置并在代码处附动机注释（比照 ADR-0073 例外白名单纪律）。feature 零 diff、断言语义零变化，BDD 全量保持绿。
+
+**收敛（公开入口存在，改走公开写入口）**：
+
+- 汇率直插 ×2（accounts_steps「存在汇率 兑本位币」、scheduled_steps/occurrence「存在汇率 兑 X 兑 Y」）→ `investment::create_exchange_rate`（upsert 单点，source 落 'manual'）。
+- 行情现价直插（dashboard「标的现价」）→ 投资域现价缓存写入单点 `investment::prices::upsert_market_price`（source/nav_date 与原直插形状一致）。
+- 价格历史直插（investment_trend「存在标的的价格历史」）→ 周采样写入单点 `investment::prices::upsert_price_history`（整周覆盖语义由域函数承担）。
+- 交易直插播种之「存量交易」（search_steps）→ 行为层 create 编排入口（CNY 1:1 折算与原直插落库形态一致）。
+- 交易直插播种之「存量外币交易」（search_steps）→ 行为层写入 + 经 `create_exchange_rate` 按场景给定的「本位币 ÷ 金额」综合汇率：本位币分由产品折算路径产生，原「模拟折算后落库形态」的直置被真实折算取代（折算四舍五入由产品承担）。
+- 交易批量软删态（backup「删除全部交易」）→ 逐笔经域层删除入口（软删态随备份落盘的被测语义不变，余额缓存等派生数据由产品维护）。
+
+**例外清单（无公开入口，保留直置；登记处 = 本节 + 代码处注释）**：
+
+| 位置 | 动机一句话 |
+|---|---|
+| `scheduled_steps/plan_detail.rs` 期次置 failed（UPDATE occurrences） | 期次状态机无「置 failed」公开入口：引擎失败路径保持 pending，failed 为 ADR-0001 预留状态；为测试开产品后门被本决策否决 |
+| `items_cost_steps.rs` 移除汇率（DELETE exchange_rates） | 汇率仅 upsert、无公开删除入口；「落库时有汇率、聚合时缺汇率」的被测前提只能直置构造 |
+| `transactions_query_steps.rs` 同日批量直插（INSERT transactions） | 全行同 created_at 平局是被测前提（确定性排序 id tiebreaker）；writer 逐行发放秒级时钟，跨秒即失去平局，前提无法确定性构造 |
+| `transactions_query_steps.rs` 播种 8 类交易（INSERT transactions） | dividend/split 未实现、公开写入入口显式拒绝；buy/sell/refund 有 per-kind 校验，全 kind 读侧过滤覆盖无法经行为层构造 |
+| `investment_trend_steps.rs` 汇率历史直插（INSERT fx_rate_history） | 唯一写入点在 sync 持久化模块内部（`pub(super)`，采集通道需 HTTP），域层无公开落库入口 |
+| `instruments_steps.rs` 标的直插 ×3（INSERT instruments，#763 裁决） | 存量同步行夹具：公开创建入口只产 'manual' 行且来源随行终身不变（ADR-0036），「同步来源拒删」等被测前提依赖 'eastmoney' 直置 |
+| `financial_freedom_steps.rs` 隐藏标志直置（UPDATE accounts.is_hidden，#763 裁决） | 创建经公开入口后 `is_hidden` 无公开入口可表达（黑洞账户仅由种子预置），窄化为单属性 UPDATE |
+
+**已消失项（裁决时点前已被既有票处置，无需再裁）**：持仓时间戳回溯（investment_migration 的 security_lots UPDATE）随 #773 迁移链路两层收缩消失（旅程改走批量导入行为路径）；交易直插播种第 5 处（accounts_steps）随 #772 删除凑数据场景消失。
+
+**与 ADR-0084 守门衔接（决策 8 终态）**：`scripts/check-test-support.ts` 恢复对 tests/e2e 的规则 2（禁夹具表裸 SQL）/规则 3（禁默认时刻字面量）整目录覆盖，未登记命中即红；e2e 存量例外以「文件 + 规则 + 预期命中数 + 动机」登记于脚本例外表，与本节清单一一对应并严格相等校验（命中数漂移、例外收敛后条目滞留均红——失效登记是第二份事实）。规则 1（禁直连建库）裁决为不辖 tests/e2e：BDD 层与工厂分层互斥（决策 9；ADR-0084 决策 3 文件库/加密不入工厂），e2e 建库走产品开库入口（world 持产品 DbState、boot 组文件库 init_db/open_db_in）是分层形态而非旁路。域时刻字面量恰同 FIXED_NOW 值者按守门注记改写（存在汇率夹具的 priced_at 无断言语义，取非同值字面量）。

@@ -1,12 +1,12 @@
 use cucumber::{given, then, when};
-use rusqlite::params;
 
 use tauri_app_lib::accounts::balance::compute_balance;
 use tauri_app_lib::accounts::{
     AccountBalanceAdjustInput, AccountUpdateInput, adjust_account_balance,
     delete_account as delete_account_domain, update_account,
 };
-use tauri_app_lib::db::{device_id, new_uuid, now_iso};
+use tauri_app_lib::currencies::ExchangeRateInput;
+use tauri_app_lib::investment::create_exchange_rate;
 use tauri_app_lib::transaction::delete_transaction_internal;
 
 use crate::common::query_accounts_by_name;
@@ -52,16 +52,22 @@ fn create_account_with_initial_balance(
 }
 
 /// 缺失币种的黑洞账户场景用：补一条 1:1 汇率（MVP 多币种汇率 1:1，本位币折算所需）。
-/// 汇率表无公开创建入口的测试接缝（归 #764 例外裁决），保留直置。
+/// 经投资域公开创建入口写入（#764 旁路收敛）；`priced_at` 为汇率报价时刻，
+/// 折算查询（`lookup_exchange_rate`）不消费该列，值无断言语义，取非 FIXED_NOW
+/// 值避免守门规则 3 误伤（域时刻字面量合法，恰同值者按守门注记改写）。
 #[given(expr = "存在汇率 {string} 兑本位币 {float}")]
 fn ensure_exchange_rate(world: &mut LedgerWorld, code: String, rate: f64) {
-    world_conn!(world)
-        .execute(
-            "INSERT INTO exchange_rates (id, base_code, quote_code, rate, priced_at, source, updated_at, version, device_id) \
-             VALUES (?1, ?2, 'CNY', ?3, '2026-01-01T00:00:00Z', 'manual', ?4, 1, ?5)",
-            params![new_uuid(), code, rate, now_iso(), device_id()],
-        )
-        .unwrap();
+    create_exchange_rate(
+        &world_conn!(world),
+        ExchangeRateInput {
+            base_code: code,
+            quote_code: "CNY".into(),
+            rate,
+            priced_at: "2025-06-01T00:00:00Z".into(),
+            source: Some("manual".into()),
+        },
+    )
+    .expect("存在汇率夹具：写入失败");
 }
 
 #[when(expr = "修改账户 {string} 名称为 {string}")]

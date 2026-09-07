@@ -2,8 +2,10 @@
 //!
 //! 夹具设计为可复用、不绑定单一场景（后续走势类行为变更的 BDD 落点）：
 //!
-//! - **价格历史/汇率历史**：采集通道是行情同步（需 HTTP），走势查询为只读，
-//!   故按单测先例直插周点行（V010 `week_start` 生成列由 trade_date 派生）。
+//! - **价格历史**：经投资域周采样写入单点 [`upsert_price_history`]（#764 旁路
+//!   收敛；整周覆盖语义由域函数承担，V010 `week_start` 生成列由 trade_date 派生）。
+//! - **汇率历史**：保留直置（#764 已登记例外）——唯一落库点在 sync 持久化模块
+//!   内部（`pub(super)`，采集通道需 HTTP），无域层公开写入入口。
 //! - **买卖流水**：经真实写路径 `create_transaction_internal`（行为层
 //!   plan → apply，ADR-0032 统一写入口），日期参数化以错开周采样键。
 //! - **软删账户**：复用 `删除账户` 步骤（accounts_steps，走真实
@@ -15,6 +17,7 @@ use cucumber::{given, then, when};
 use rusqlite::params;
 
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
+use tauri_app_lib::investment::prices::upsert_price_history;
 use tauri_app_lib::investment::{
     TrendRange, query_instrument_price_trend, query_portfolio_value_trend,
 };
@@ -26,11 +29,12 @@ use crate::step_inputs::trade_input;
 use crate::world::LedgerWorld;
 
 // ---------------------------------------------------------------------------
-// Given：行情 / 汇率历史夹具（直插周点行，采集通道需 HTTP 故绕过）
+// Given：行情 / 汇率历史夹具（价格历史经域写入单点；汇率历史无公开入口直置）
 // ---------------------------------------------------------------------------
 
-/// 直插一条价格历史周点行（`week_start` 为 STORED 生成列，随 trade_date 派生；
-/// 同标的同周重复插入撞 UNIQUE，与「整周覆盖」的库层约束一致）。
+/// 写入一条价格历史周点行：经投资域周采样写入单点 [`upsert_price_history`]（#764
+/// 旁路收敛；同标的同周重复写入按「整周覆盖」幂等，与库层 UNIQUE 约束一致）；
+/// source 落 'eastmoney' 与原直插同值（同步来源语义）。
 #[given(expr = "存在标的 {string} 的价格历史 交易日 {string} 价格 {int} 万分之一元 币种 {string}")]
 fn add_price_history(
     world: &mut LedgerWorld,
@@ -40,17 +44,21 @@ fn add_price_history(
     currency: String,
 ) {
     let instrument_id = instrument_id_by_symbol(&world_conn!(world), &symbol);
-    let now = now_iso();
-    world_conn!(world)
-        .execute(
-            "INSERT INTO price_history (id,instrument_id,trade_date,price_cents,currency_code,source,created_at,updated_at,version,device_id) \
-             VALUES (?1,?2,?3,?4,?5,'eastmoney',?6,?6,1,?7)",
-            params![new_uuid(), instrument_id, trade_date, price_cents, currency, now, device_id()],
-        )
-        .unwrap();
+    upsert_price_history(
+        &world_conn!(world),
+        &instrument_id,
+        &trade_date,
+        price_cents,
+        &currency,
+        "eastmoney",
+    )
+    .expect("价格历史夹具：写入失败");
 }
 
 /// 直插一条汇率历史周点行（1 base = rate quote；同期折算走本表，不用当期汇率近似）。
+/// 库内状态直置（#764 已登记例外）：唯一落库点 `sync::persist::upsert_fx_rate_history`
+/// 为 `pub(super)` 模块私有接缝（采集通道需 HTTP），域层无公开写入入口，
+/// 公开入口表达不了，保留直置。
 #[given(expr = "存在汇率历史 {string} 兑 {string} 交易日 {string} 汇率 {float}")]
 fn add_fx_rate_history(
     world: &mut LedgerWorld,

@@ -163,6 +163,8 @@ fn check_item_daily_total(world: &mut LedgerWorld, per_day: f64, currency: Strin
 
 /// 移除汇率行（测试脚手架，与 scheduled_steps 的「存在汇率」对偶）：
 /// 构造「物品落库时有汇率、聚合时缺汇率」的环境，断言错误上抛而非以零计入。
+/// 库内状态直置（#764 已登记例外）：汇率仅 upsert（写入通道收口），
+/// 无公开删除入口，「缺汇率」这一被测前提只能直置构造。
 #[when(expr = "移除汇率 {string} 兑 {string}")]
 fn remove_exchange_rate(world: &mut LedgerWorld, base: String, quote: String) {
     world_conn!(world)

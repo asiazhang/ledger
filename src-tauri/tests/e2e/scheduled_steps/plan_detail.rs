@@ -19,6 +19,8 @@ use super::common::execute_occurrence_step;
 /// 把最近计划最早的一条 pending 期次置为 failed（当前引擎失败路径在 CAS 前
 /// 返回、保持 pending 可重试；failed 为 ADR-0001 预留状态，此处直接构造
 /// 以驱动详情返回与重试门控的断言）。
+/// 库内状态直置（#764 已登记例外）：期次状态机无「置 failed」公开入口——
+/// 产品当前不产 failed 状态，为测试开产品后门被 ADR-0086 否决。
 #[when(expr = "将最近计划最早的一条待执行期次置为失败")]
 fn mark_first_pending_failed(world: &mut LedgerWorld) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
