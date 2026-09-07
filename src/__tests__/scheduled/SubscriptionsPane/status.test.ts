@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { NPopconfirm } from 'naive-ui'
-import { mockDetails, makeDetail, makePlan, mountView, setMockPlans, setup } from './common'
+import { makeSubscriptionPlan } from '../../factories'
+import { mockDetails, makeDetail, mountView, setMockPlans, setup } from './common'
 import { mockInvoke } from '../../helpers/invoke-mock'
 
 beforeEach(setup)
@@ -21,7 +22,7 @@ function spendCallCount() {
 
 describe('SubscriptionsPane 操作列交互冒烟（状态机见 useScheduledPlanList.test.ts）', () => {
   it('active 行点「暂停」发出状态命令，且订阅花费面板随之刷新（onStatusChanged 钩子）', async () => {
-    const plan = makePlan({ id: 'a1' })
+    const plan = makeSubscriptionPlan({ id: 'a1' })
     setMockPlans([plan])
     mockDetails.set('a1', makeDetail(plan, []))
     const wrapper = await mountView()
@@ -39,7 +40,7 @@ describe('SubscriptionsPane 操作列交互冒烟（状态机见 useScheduledPla
   })
 
   it('已暂停的订阅可恢复，恢复后花费面板再次刷新', async () => {
-    const plan = makePlan({ id: 'p1', status: 'paused' })
+    const plan = makeSubscriptionPlan({ id: 'p1', status: 'paused' })
     setMockPlans([plan])
     mockDetails.set('p1', makeDetail(plan, []))
     const wrapper = await mountView()
@@ -59,7 +60,7 @@ describe('SubscriptionsPane 操作列交互冒烟（状态机见 useScheduledPla
   })
 
   it('取消需二次确认（NPopconfirm），确认后走状态命令并刷新花费面板', async () => {
-    const plan = makePlan({ id: 'a1' })
+    const plan = makeSubscriptionPlan({ id: 'a1' })
     setMockPlans([plan])
     mockDetails.set('a1', makeDetail(plan, []))
     const wrapper = await mountView()
@@ -86,7 +87,7 @@ describe('SubscriptionsPane 操作列交互冒烟（状态机见 useScheduledPla
   })
 
   it('已取消的订阅不再提供状态操作（可用性矩阵归模块，此处验渲染接线）', async () => {
-    const plan = makePlan({ id: 'c1', status: 'cancelled', note: '已取消订阅' })
+    const plan = makeSubscriptionPlan({ id: 'c1', status: 'cancelled', note: '已取消订阅' })
     setMockPlans([plan])
     mockDetails.set('c1', makeDetail(plan, []))
     const wrapper = await mountView()

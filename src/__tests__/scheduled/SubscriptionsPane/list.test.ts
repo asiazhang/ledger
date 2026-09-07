@@ -10,14 +10,12 @@ import { flushPromises } from '@vue/test-utils'
 import { formatAmount } from '@/utils/money'
 import { refCurrencies } from '../../helpers/reference-stubs'
 import {
-  mockDetails,
-  makeDetail,
+  makeInstallmentPlan,
   makeOccurrence,
-  makePlan,
-  mountView,
-  setMockPlans,
-  setup,
-} from './common'
+  makeSubscriptionPlan,
+  makeTransferPlan,
+} from '../../factories'
+import { mockDetails, makeDetail, mountView, setMockPlans, setup } from './common'
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
 const cny = refCurrencies[0]
@@ -27,9 +25,9 @@ beforeEach(setup)
 describe('SubscriptionsPane 订阅清单渲染冒烟（编排用例见 useScheduledPlanList.test.ts）', () => {
   it('默认只显示进行中（active）的订阅（默认过滤归模块，此处验渲染）', async () => {
     setMockPlans([
-      makePlan({ id: 'a1', note: '进行中订阅' }),
-      makePlan({ id: 'p1', note: '已暂停订阅', status: 'paused' }),
-      makePlan({ id: 'c1', note: '已取消订阅', status: 'cancelled' }),
+      makeSubscriptionPlan({ id: 'a1', note: '进行中订阅' }),
+      makeSubscriptionPlan({ id: 'p1', note: '已暂停订阅', status: 'paused' }),
+      makeSubscriptionPlan({ id: 'c1', note: '已取消订阅', status: 'cancelled' }),
     ])
     const wrapper = await mountView()
     expect(wrapper.text()).toContain('进行中订阅')
@@ -39,9 +37,9 @@ describe('SubscriptionsPane 订阅清单渲染冒烟（编排用例见 useSchedu
 
   it('切换过滤查看已暂停 / 已取消', async () => {
     setMockPlans([
-      makePlan({ id: 'a1', note: '进行中订阅' }),
-      makePlan({ id: 'p1', note: '已暂停订阅', status: 'paused' }),
-      makePlan({ id: 'c1', note: '已取消订阅', status: 'cancelled' }),
+      makeSubscriptionPlan({ id: 'a1', note: '进行中订阅' }),
+      makeSubscriptionPlan({ id: 'p1', note: '已暂停订阅', status: 'paused' }),
+      makeSubscriptionPlan({ id: 'c1', note: '已取消订阅', status: 'cancelled' }),
     ])
     const wrapper = await mountView()
     await wrapper.find('[data-testid="filter-paused"]').trigger('click')
@@ -57,9 +55,9 @@ describe('SubscriptionsPane 订阅清单渲染冒烟（编排用例见 useSchedu
 
   it('只展示订阅计划，分期 / 定时转账不出现（按形态过滤归模块，此处验渲染）', async () => {
     const plans = [
-      makePlan({ id: 'a1', note: '视频会员' }),
-      makePlan({ id: 'i1', note: '某分期', kind: 'installment' }),
-      makePlan({ id: 't1', note: '某定时转账', kind: 'scheduled_transfer' }),
+      makeSubscriptionPlan({ id: 'a1', note: '视频会员' }),
+      makeInstallmentPlan({ id: 'i1', note: '某分期' }, 30000, 3),
+      makeTransferPlan({ id: 't1', note: '某定时转账' }, null),
     ]
     setMockPlans(plans)
     mockDetails.set('a1', makeDetail(plans[0], []))
@@ -70,7 +68,7 @@ describe('SubscriptionsPane 订阅清单渲染冒烟（编排用例见 useSchedu
   })
 
   it('每行显示下期扣款日与金额（expandDetail 接线：取最早 pending 期次，选取逻辑归模块）', async () => {
-    const plan = makePlan({ id: 'a1', amount_cents: 1500 })
+    const plan = makeSubscriptionPlan({ id: 'a1', amount_cents: 1500 })
     setMockPlans([plan])
     mockDetails.set(
       'a1',
@@ -86,7 +84,7 @@ describe('SubscriptionsPane 订阅清单渲染冒烟（编排用例见 useSchedu
   })
 
   it('无 pending 期次（窗口外/已取消）时下期扣款显示 — 占位，不推算日期', async () => {
-    const plan = makePlan({ id: 'a1' })
+    const plan = makeSubscriptionPlan({ id: 'a1' })
     setMockPlans([plan])
     mockDetails.set('a1', makeDetail(plan, []))
     const wrapper = await mountView()
@@ -97,7 +95,7 @@ describe('SubscriptionsPane 订阅清单渲染冒烟（编排用例见 useSchedu
   })
 
   it('详情命令失败时显示加载失败，不与「无 pending」混淆', async () => {
-    const plan = makePlan({ id: 'a1' })
+    const plan = makeSubscriptionPlan({ id: 'a1' })
     setMockPlans([plan])
     // 不注册 a1 的详情：get_scheduled_transaction_detail 将 reject
     const wrapper = await mountView()
@@ -105,7 +103,7 @@ describe('SubscriptionsPane 订阅清单渲染冒烟（编排用例见 useSchedu
   })
 
   it('金额与周期按原始币种与规则展示', async () => {
-    const plan = makePlan({ id: 'a1', amount_cents: 9900, recurrence_interval: 3 })
+    const plan = makeSubscriptionPlan({ id: 'a1', amount_cents: 9900, recurrence_interval: 3 })
     setMockPlans([plan])
     mockDetails.set('a1', makeDetail(plan, []))
     const wrapper = await mountView()
@@ -116,7 +114,7 @@ describe('SubscriptionsPane 订阅清单渲染冒烟（编排用例见 useSchedu
 
 describe('SubscriptionsPane 商户列（issue #190）', () => {
   it('列表显示计划商户（merchantMap 派生，改名即时生效）', async () => {
-    const plan = makePlan({ id: 'a1', note: '视频会员' }, 'mer-1')
+    const plan = makeSubscriptionPlan({ id: 'a1', note: '视频会员' }, 'mer-1')
     setMockPlans([plan])
     mockDetails.set('a1', makeDetail(plan, []))
     const wrapper = await mountView()
@@ -124,7 +122,7 @@ describe('SubscriptionsPane 商户列（issue #190）', () => {
   })
 
   it('无商户计划显示 — 占位', async () => {
-    const plan = makePlan({ id: 'a1', note: '视频会员' })
+    const plan = makeSubscriptionPlan({ id: 'a1', note: '视频会员' })
     setMockPlans([plan])
     mockDetails.set('a1', makeDetail(plan, []))
     const wrapper = await mountView()

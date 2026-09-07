@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// 前端测试桩守门（issue #725 + #726 + #750），三条规则：
+// 前端测试桩守门（issue #725 + #726 + #750 + #822），四条规则：
 //
 // 规则 1（#725）：前端测试文件不得再手搓参考数据 `list_*` 桩接线。
 //
@@ -56,6 +56,21 @@
 //   已知文本不可达处（靠评审兜底）：形参改名（cmd → c）与 async (cmd) 等前缀形态逃逸
 //   3a；Once 无委托形态、非声明形的局部布线包装不可达。3b 按行首判定跳过注释行、
 //   不做字符串掩码——字符串内恰好含完整声明形态文本理论上可误红（现实中未见）。
+//
+// 规则 4（#822）：测试文件内定义领域数据工厂即红——组件测试数据工厂唯一定义点
+// 在共享工厂层出口（src/__tests__/factories.ts），测试文件本地定义即副本回潮。
+//   名单（精确声明名）：makePlan / makeSubscriptionPlan / makeInstallmentPlan /
+//   makeTransferPlan / makeOccurrence。交易侧 makeTxn / makeTransaction 待 #821
+//   收敛落地后补入名单——本票与 #821 文件面不相交、互不阻塞，名单先行会让其
+//   未收敛副本在守门直接变红。
+//   白名单（相对 testsDir 路径）：factories.ts（唯一定义点）与
+//   TransactionsView/common.ts（#821 交易薄壳一行包装，交易名补入名单时生效）。
+//   双源代价（登记处）：名单与共享工厂层出口须人工同步——新增共享工厂必须同步
+//   本名单，否则该厂的新副本不被拦截。
+//   文本盲区（靠评审兜底）：改名逃逸（工厂改名或换名定义即逃逸名单）；仅识别
+//   function/const/let/var 声明形，注释行整行跳过、字符串内无声明前缀不匹配，
+//   与规则 3b 同款行首判定。规则 4 不豁免 helpers/——唯一定义点不在 helpers，
+//   测试 helper 内本地定义名单工厂同样是回潮（豁免分工与规则 1/3 不同是有意为之）。
 //
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/check-test-stubs.ts`。
@@ -295,6 +310,40 @@ function findLocalWiringWrapper(rel: string, source: string): string[] {
   return hits
 }
 
+// —— 规则 4：领域数据工厂本地定义（声明形出现即红；注释行整行跳过，字符串内
+//    无声明关键字前缀不匹配——与规则 3b 同款行首判定） ——
+// 名单与共享工厂层出口人工同步（双源代价，见头注释）：新增共享工厂必须同步此清单；
+// 交易侧 makeTxn/makeTransaction 待 #821 收敛落地后补入。
+const FACTORY_NAMES = [
+  'makePlan',
+  'makeSubscriptionPlan',
+  'makeInstallmentPlan',
+  'makeTransferPlan',
+  'makeOccurrence',
+]
+const FACTORY_DECL = new RegExp(
+  `\\b(?:function\\s+|(?:const|let|var)\\s+)(${FACTORY_NAMES.join('|')})\\b`,
+  'g',
+)
+// 白名单按相对 testsDir 的 posix 路径登记：唯一定义点 + 交易薄壳一行包装（#821）
+const FACTORY_WHITELIST = new Set(['factories.ts', join('TransactionsView', 'common.ts')])
+
+function findFactoryDefinition(rel: string, source: string): string[] {
+  const hits: string[] = []
+  source.split('\n').forEach((line, i) => {
+    const t = line.trim()
+    if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) return
+    FACTORY_DECL.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = FACTORY_DECL.exec(line))) {
+      hits.push(
+        `  ${rel}:${i + 1}  领域数据工厂本地定义（${m[1]}）——组件测试数据工厂唯一定义点在共享工厂层，消费共享出口而非本地定义`,
+      )
+    }
+  })
+  return hits
+}
+
 function main(): void {
   const commands = extractCommands()
   if (commands.length === 0) {
@@ -305,6 +354,7 @@ function main(): void {
   let duplicated = 0
   let dispatchStubs = 0
   let wiringWrappers = 0
+  let factoryDefs = 0
   const violations: string[] = []
   for (const file of walk(testsDir)) {
     const rel = relative(testsDir, file)
@@ -315,23 +365,27 @@ function main(): void {
     const rule2 = findDuplicateWiring(rel, source, units)
     const rule3a = inHelpers ? [] : findHandWrittenDispatchStub(rel, source, units)
     const rule3b = inHelpers ? [] : findLocalWiringWrapper(rel, source)
+    const rule4 = FACTORY_WHITELIST.has(rel.split(sep).join('/'))
+      ? []
+      : findFactoryDefinition(rel, source)
     handWired += rule1.length
     duplicated += rule2.length
     dispatchStubs += rule3a.length
     wiringWrappers += rule3b.length
-    violations.push(...rule1, ...rule2, ...rule3a, ...rule3b)
+    factoryDefs += rule4.length
+    violations.push(...rule1, ...rule2, ...rule3a, ...rule3b, ...rule4)
   }
 
   if (violations.length > 0) {
     console.error(
-      `✗ 测试桩守门：发现 ${handWired} 处手搓参考数据桩、${duplicated} 处同回调重复桩、${dispatchStubs} 处手写 invoke 分发桩、${wiringWrappers} 处本地布线包装（登记处命令：${commands.join(' ')}）\n` +
+      `✗ 测试桩守门：发现 ${handWired} 处手搓参考数据桩、${duplicated} 处同回调重复桩、${dispatchStubs} 处手写 invoke 分发桩、${wiringWrappers} 处本地布线包装、${factoryDefs} 处领域数据工厂本地定义（登记处命令：${commands.join(' ')}）\n` +
         violations.join('\n') +
         `\ninvoke 布线唯一接缝：wireInvokeSeam（${relative(process.cwd(), join(testsDir, 'helpers', 'invoke-mock.ts'))}，issue #746/#750，ADR-0085）`,
     )
     process.exit(1)
   }
 
-  console.log(`✅ 测试桩守门通过（登记处 ${commands.length} 条命令；同回调重复 0、手写分发桩 0、本地布线包装 0，testsDir=${relative(process.cwd(), testsDir) || '.'}）`)
+  console.log(`✅ 测试桩守门通过（登记处 ${commands.length} 条命令；同回调重复 0、手写分发桩 0、本地布线包装 0、领域数据工厂本地定义 0，testsDir=${relative(process.cwd(), testsDir) || '.'}）`)
 }
 
 // 仅直接运行时执行 main；被测试/其他工具 import 时只取导出的扫描函数。

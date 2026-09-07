@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { REFERENCE_DEFAULTS } from './helpers/reference-stubs'
 
-// 被测对象是仓库工具脚本 scripts/check-test-stubs.ts（前端测试桩守门，issue #725/#726）。
+// 被测对象是仓库工具脚本 scripts/check-test-stubs.ts（前端测试桩守门，issue #725/#726/#822）。
 // 脚本以 Bun 运行时执行（ADR-0083）：spawnSync('bun') 与门槛调用同款，测的就是门槛路径。
 // 按测试决策只测外部可观察结果——进程退出码与输出，不测内部函数；
 // 通过位置参数把扫描目标指向临时夹具目录。
@@ -444,6 +444,110 @@ export const legacy = { fn: 'invokeHandler' }`,
     return Promise.reject(new Error('unexpected invoke'))
   })
 }`, 
+    })
+    expect(run([dir]).status).toBe(0)
+  })
+})
+
+describe('check-test-stubs 领域数据工厂本地定义检测（#822 规则 4）', () => {
+  it('测试文件 function 声明名单内工厂即红：报文件与工厂名', () => {
+    const dir = makeFixture({
+      'SomeView.test.ts': `import { makeSubscriptionPlan } from './factories'
+function makePlan(partial: { id: string }) {
+  return { id: partial.id, amount_cents: 1500 }
+}
+const plan = makePlan({ id: 'p1' })
+`,
+    })
+    const r = run([dir])
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('SomeView.test.ts')
+    expect(r.output).toContain('makePlan')
+    expect(r.output).toContain('领域数据工厂本地定义')
+  })
+
+  it('const/let 声明形（含别名绑定）同样拦：别名禁用', () => {
+    const dir = makeFixture({
+      'Aliased.test.ts': `import { makeSubscriptionPlan as shared } from './factories'
+const makeOccurrence = shared  // 本地别名绑定也是定义，别名禁用
+export { makeOccurrence }
+`,
+      'LetForm.test.ts': `let makeTransferPlan: unknown
+export { makeTransferPlan }
+`,
+    })
+    const r = run([dir])
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('makeOccurrence')
+    expect(r.output).toContain('makeTransferPlan')
+  })
+
+  it('名单逐一纳管：三形态厂与期次厂均拦', () => {
+    const dir = makeFixture({
+      'A.test.ts': 'function makeSubscriptionPlan(p: unknown) { return p }\n',
+      'B.test.ts': 'function makeInstallmentPlan(p: unknown) { return p }\n',
+      'C.test.ts': 'const makeTransferPlan = (p: unknown) => p\n',
+      'D.test.ts': 'export function makeOccurrence(p: unknown) { return p }\n',
+    })
+    const r = run([dir])
+    expect(r.status).toBe(1)
+    for (const name of [
+      'makeSubscriptionPlan',
+      'makeInstallmentPlan',
+      'makeTransferPlan',
+      'makeOccurrence',
+    ]) {
+      expect(r.output).toContain(name)
+    }
+  })
+
+  it('共享工厂层出口 factories.ts 白名单不拦（唯一定义点）', () => {
+    const dir = makeFixture({
+      'factories.ts': `export function makePlan(partial: { id: string }) {
+  return { id: partial.id }
+}
+export const makeOccurrence = (partial: { id: string }) => ({ id: partial.id })
+`,
+    })
+    expect(run([dir]).status).toBe(0)
+  })
+
+  it('目录薄壳包装白名单（TransactionsView/common.ts）不拦', () => {
+    const dir = makeFixture({
+      'TransactionsView/common.ts': `export function makePlan(partial: { id: string }) {
+  return { id: partial.id }
+}
+`,
+    })
+    expect(run([dir]).status).toBe(0)
+  })
+
+  it('消费共享出口（import 绑定与调用）不拦：只拦定义', () => {
+    const dir = makeFixture({
+      'Consumer.test.ts': `import { makePlan, makeOccurrence } from './factories'
+const plan = makePlan({ id: 'p1' })
+const occ = makeOccurrence({ id: 'o1' })
+`,
+    })
+    expect(run([dir]).status).toBe(0)
+  })
+
+  it('同名前缀的无关函数不误报（边界判定 \b）', () => {
+    const dir = makeFixture({
+      'Prefix.test.ts': `function makePlanner(p: unknown) { return p }
+const makePlans = (p: unknown) => p
+`,
+    })
+    expect(run([dir]).status).toBe(0)
+  })
+
+  it('注释/字符串中提及工厂名不拦（声明形才拦，与规则 3b 同款行首判定）', () => {
+    const dir = makeFixture({
+      'Mention4.test.ts': `// 历史副本 function makePlan(...) 已删除，见 issue #822
+/* makeOccurrence 曾经在此定义 */
+const note = '字符串里的 makeTransferPlan 提及不拦'
+const legacy = { factory: 'makeInstallmentPlan' }
+`,
     })
     expect(run([dir]).status).toBe(0)
   })

@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { mockInvoke, wireInvokeSeam, type InvokeSeamOverride } from './helpers/invoke-mock'
 import { messageCalls } from './helpers/message-mock'
+import {
+  makeInstallmentPlan,
+  makeOccurrence,
+  makeSubscriptionPlan,
+  makeTransferPlan,
+} from './factories'
 import { defineComponent, watch, type PropType } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import {
@@ -19,60 +25,8 @@ import type {
 } from '@/types'
 
 // ---------------------------------------------------------------------------
-// 数据工厂：计划（core.kind 可覆写）、期次、详情
+// 数据工厂：计划/期次消费共享层出口（factories，#822 收敛）；详情组装留守本地
 // ---------------------------------------------------------------------------
-
-function makePlan(
-  partial: Partial<ScheduledTransactionWithExt['core']> & { id: string },
-  ext: Partial<ScheduledTransactionWithExt> = {},
-): ScheduledTransactionWithExt {
-  const core = {
-    kind: 'scheduled_transfer' as const,
-    status: 'active' as const,
-    account_id: 'acc-cny1',
-    category_id: null,
-    amount_cents: 50000,
-    currency_code: 'CNY',
-    recurrence_type: 'monthly' as const,
-    recurrence_interval: 1,
-    recurrence_day: null,
-    start_date: '2026-01-01',
-    note: null,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    ...partial,
-  }
-  return {
-    core,
-    merchant_id: null,
-    policy_id: null,
-    total_amount_cents: null,
-    total_occurrences: null,
-    to_account_id: null,
-    ...ext,
-  }
-}
-
-function makeOccurrence(
-  partial: Partial<ScheduledTransactionOccurrence> & { id: string },
-): ScheduledTransactionOccurrence {
-  return {
-    scheduled_transaction_id: 'unknown',
-    scheduled_date: '2026-03-01',
-    status: 'pending',
-    transaction_id: null,
-    amount_cents: 50000,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    ...partial,
-  }
-}
 
 function makeDetail(
   plan: ScheduledTransactionWithExt,
@@ -225,9 +179,9 @@ describe('useScheduledPlanList 初始状态', () => {
 describe('useScheduledPlanList 清单加载', () => {
   it('按形态过滤清单：只加载本形态计划，其他形态不进行', async () => {
     mockPlans = [
-      makePlan({ id: 't1', note: '月度储蓄' }),
-      makePlan({ id: 's1', note: '某订阅', kind: 'subscription' }),
-      makePlan({ id: 'i1', note: '某分期', kind: 'installment' }),
+      makeTransferPlan({ id: 't1', note: '月度储蓄' }, null),
+      makeSubscriptionPlan({ id: 's1', note: '某订阅' }),
+      makeInstallmentPlan({ id: 'i1', note: '某分期' }, 30000, 3),
     ]
     mockDetails.set('t1', makeDetail(mockPlans[0], []))
     const { list } = mountHarness()
@@ -238,7 +192,7 @@ describe('useScheduledPlanList 清单加载', () => {
   })
 
   it('详情扩展：下期取最早 pending 期次（乱序输入取日期最早，不现场推算）；无 pending 为 null', async () => {
-    const plan = makePlan({ id: 't1', note: '月度储蓄' })
+    const plan = makeTransferPlan({ id: 't1', note: '月度储蓄' }, null)
     mockPlans = [plan]
     mockDetails.set(
       't1',
@@ -247,7 +201,7 @@ describe('useScheduledPlanList 清单加载', () => {
         makeOccurrence({ id: 'o1', scheduled_date: '2026-03-01' }),
       ]),
     )
-    const plan2 = makePlan({ id: 't2', note: '已完成一次性' })
+    const plan2 = makeTransferPlan({ id: 't2', note: '已完成一次性' }, null)
     mockPlans.push(plan2)
     mockDetails.set('t2', makeDetail(plan2, []))
     const { list } = mountHarness()
@@ -260,8 +214,8 @@ describe('useScheduledPlanList 清单加载', () => {
   })
 
   it('详情命令失败的行标记 detailFailed（与「无数据」区分，不静默），其余行照常', async () => {
-    const ok = makePlan({ id: 'ok1', note: '正常行' })
-    const bad = makePlan({ id: 'bad1', note: '详情失败行' })
+    const ok = makeTransferPlan({ id: 'ok1', note: '正常行' }, null)
+    const bad = makeTransferPlan({ id: 'bad1', note: '详情失败行' }, null)
     mockPlans = [ok, bad]
     mockDetails.set('ok1', makeDetail(ok, []))
     // bad1 详情命令将失败
@@ -276,7 +230,7 @@ describe('useScheduledPlanList 清单加载', () => {
   })
 
   it('清单命令失败：错误提示（形态文案归一）、loading 收尾、版本号不 bump、行保持旧值', async () => {
-    const plan = makePlan({ id: 't1' })
+    const plan = makeTransferPlan({ id: 't1' }, null)
     mockPlans = [plan]
     mockDetails.set('t1', makeDetail(plan, []))
     const { list } = mountHarness()
@@ -295,8 +249,8 @@ describe('useScheduledPlanList 清单加载', () => {
 
 describe('useScheduledPlanList 状态过滤', () => {
   it('前端过滤即时生效：completed 行经「已完成」过滤可见；切换过滤不发请求', async () => {
-    const done = makePlan({ id: 'd1', note: '一次性转账', status: 'completed' })
-    const active = makePlan({ id: 'a1', note: '循环转账' })
+    const done = makeTransferPlan({ id: 'd1', note: '一次性转账', status: 'completed' }, null)
+    const active = makeTransferPlan({ id: 'a1', note: '循环转账' }, null)
     mockPlans = [done, active]
     mockDetails.set('d1', makeDetail(done, []))
     mockDetails.set('a1', makeDetail(active, []))
@@ -313,8 +267,8 @@ describe('useScheduledPlanList 状态过滤', () => {
   })
 
   it('已暂停与已取消行经对应过滤可见（迁自原组件测试，承接覆盖）', async () => {
-    const paused = makePlan({ id: 'p1', note: '已暂停转账', status: 'paused' })
-    const cancelled = makePlan({ id: 'c1', note: '已取消转账', status: 'cancelled' })
+    const paused = makeTransferPlan({ id: 'p1', note: '已暂停转账', status: 'paused' }, null)
+    const cancelled = makeTransferPlan({ id: 'c1', note: '已取消转账', status: 'cancelled' }, null)
     mockPlans = [paused, cancelled]
     mockDetails.set('p1', makeDetail(paused, []))
     mockDetails.set('c1', makeDetail(cancelled, []))
@@ -332,7 +286,7 @@ describe('useScheduledPlanList 状态过滤', () => {
 
 describe('useScheduledPlanList Plan Lifecycle 操作', () => {
   it('暂停：走既有状态命令（参数正确）、成功提示、重拉一次反映状态终态、回调被通知', async () => {
-    const plan = makePlan({ id: 'a1' })
+    const plan = makeTransferPlan({ id: 'a1' }, null)
     mockPlans = [plan]
     mockDetails.set('a1', makeDetail(plan, []))
     const { list, counters, pulls } = mountHarness()
@@ -356,7 +310,7 @@ describe('useScheduledPlanList Plan Lifecycle 操作', () => {
   })
 
   it('恢复：paused → active，成功提示「已恢复」', async () => {
-    const plan = makePlan({ id: 'p1', status: 'paused' })
+    const plan = makeTransferPlan({ id: 'p1', status: 'paused' }, null)
     mockPlans = [plan]
     mockDetails.set('p1', makeDetail(plan, []))
     const { list } = mountHarness()
@@ -369,7 +323,7 @@ describe('useScheduledPlanList Plan Lifecycle 操作', () => {
   })
 
   it('取消：→ cancelled，成功提示「已取消」', async () => {
-    const plan = makePlan({ id: 'c1' })
+    const plan = makeTransferPlan({ id: 'c1' }, null)
     mockPlans = [plan]
     mockDetails.set('c1', makeDetail(plan, []))
     const { list } = mountHarness()
@@ -382,7 +336,7 @@ describe('useScheduledPlanList Plan Lifecycle 操作', () => {
   })
 
   it('状态命令失败：「操作失败」错误提示、不重拉', async () => {
-    const plan = makePlan({ id: 'a1' })
+    const plan = makeTransferPlan({ id: 'a1' }, null)
     mockPlans = [plan]
     mockDetails.set('a1', makeDetail(plan, []))
     const { list, pulls } = mountHarness()
@@ -406,10 +360,10 @@ describe('useScheduledPlanList Plan Lifecycle 操作', () => {
 describe('useScheduledPlanList 行操作描述符', () => {
   it('可用性矩阵：active = 期次/暂停/取消；paused = 期次/恢复/取消；completed 与 cancelled 仅期次', async () => {
     const plans = [
-      makePlan({ id: 'a1', status: 'active' }),
-      makePlan({ id: 'p1', status: 'paused' }),
-      makePlan({ id: 'd1', status: 'completed' }),
-      makePlan({ id: 'c1', status: 'cancelled' }),
+      makeTransferPlan({ id: 'a1', status: 'active' }, null),
+      makeTransferPlan({ id: 'p1', status: 'paused' }, null),
+      makeTransferPlan({ id: 'd1', status: 'completed' }, null),
+      makeTransferPlan({ id: 'c1', status: 'cancelled' }, null),
     ]
     mockPlans = plans
     plans.forEach((p) => mockDetails.set(p.core.id, makeDetail(p, [])))
@@ -429,7 +383,7 @@ describe('useScheduledPlanList 行操作描述符', () => {
   })
 
   it('描述符自带标签、确认文案（确认弹层留适配器）与 run 动作；run 接通详情回调与状态命令', async () => {
-    const plan = makePlan({ id: 'a1' })
+    const plan = makeTransferPlan({ id: 'a1' }, null)
     mockPlans = [plan]
     mockDetails.set('a1', makeDetail(plan, []))
     const { list, detailOpened } = mountHarness()
@@ -496,7 +450,7 @@ describe('周期选项与周期标签单源（#309 显式可见变化：转账�
   })
 
   it('earliestPendingOccurrence：空 pending 返回 null', () => {
-    const plan = makePlan({ id: 't1' })
+    const plan = makeTransferPlan({ id: 't1' }, null)
     expect(earliestPendingOccurrence(makeDetail(plan, []))).toBeNull()
   })
 })
