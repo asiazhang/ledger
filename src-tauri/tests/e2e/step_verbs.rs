@@ -1,0 +1,302 @@
+//! 步骤动词（L2，issue #760 / ADR-0086 决策 1、3）：BDD 共享层中代表一个场景
+//! 前置（Given）或动作（When）的命名函数。完整管线：**名称注册表解析 → L1 输入
+//! 工厂构造 → 经域层/行为层公开函数写入 → 结果注册回 world**；写入一律经公开写
+//! 入口（与 IPC 命令体同款 `db.write`，测试无应用运行时、不经壳层、不裸 SQL——
+//! 见 CONTEXT-testing「公开写入口（测试侧）」），业务不变量（余额缓存行等派生
+//! 数据维护）由产品代码保证。
+//!
+//! 两类形态：
+//! - **成功形态**：写入失败即 panic（场景失败），返回生成 id；
+//! - **try 形态**（`try_*`）：不 panic、返回 `Result`，供「应返回错误」断言场景
+//!   复用；非法形态输入（如缺转入账户的转账）由调用方经 L1 工厂 + 结构体更新
+//!   构造后走通用 try 入口。
+//!
+//! 本模块是骨架（与既有 helper 并存，issue #760 不迁移任何调用点）；步骤函数
+//! 薄化为文本解析后由迁移票 #761–#763 消费。步骤动词是测试层唯一允许触发写入
+//! 的形态；写入失败被静默吞掉属违规（CONTEXT-testing「步骤动词」）。
+
+// 骨架票：与既有 helper 并存、不迁移任何调用点，迁移票 #761–#763 消费前全量未
+// 被引用（bin crate 的 dead_code 会报未使用）——显式豁免并登记，消费后可移除。
+#![allow(dead_code)]
+
+use tauri_app_lib::accounts::{AccountInput, AccountType, create_account};
+use tauri_app_lib::error::AppError;
+use tauri_app_lib::scheduled_transactions::{CreateScheduledInput, create_plan};
+use tauri_app_lib::transaction::{TransactionInput, TransactionWrite, create_transaction};
+
+use crate::step_inputs::{
+    buy_input, expense_input, income_input, installment_plan_input, refund_input,
+    scheduled_transfer_plan_input, sell_input, subscription_plan_input, transfer_input,
+};
+use crate::world::LedgerWorld;
+
+// ---------------------------------------------------------------------------
+// 账户动词：经 accounts 域公开创建入口（非 IPC 命令、非裸 SQL），注册名称→id
+// ---------------------------------------------------------------------------
+
+/// 创建账户并注册名称→id：类型为账户类型字符串（"cash"/"bank"/…，解析失败即场
+/// 景文本错误）；`initial_balance_cents` 经 [`AccountInput`] 公开入参传入（None =
+/// 零初始余额）。返回生成 id。
+pub fn create_account_verb(
+    world: &mut LedgerWorld,
+    name: &str,
+    kind: &str,
+    currency: &str,
+    initial_balance_cents: Option<i64>,
+) -> String {
+    try_create_account_verb(world, name, kind, currency, initial_balance_cents)
+        .expect("创建账户失败")
+}
+
+/// [`create_account_verb`] 的 try 形态：不 panic，创建失败原样返回错误。
+pub fn try_create_account_verb(
+    world: &mut LedgerWorld,
+    name: &str,
+    kind: &str,
+    currency: &str,
+    initial_balance_cents: Option<i64>,
+) -> Result<String, AppError> {
+    let input = AccountInput {
+        name: name.into(),
+        kind: kind
+            .parse::<AccountType>()
+            .map_err(|e| AppError::Invalid(format!("非法账户类型 {kind}: {e}")))?,
+        currency_code: currency.into(),
+        initial_balance_cents,
+    };
+    let id = world.db.write(|conn| create_account(conn, input))?;
+    world.account_name_to_id.insert(name.into(), id.clone());
+    Ok(id)
+}
+
+// ---------------------------------------------------------------------------
+// 交易动词：名称解析 → L1 工厂 → 行为层 create 编排入口 → 注册回 world
+// ---------------------------------------------------------------------------
+
+/// 通用成功动词：接受任意已构造输入（L1 工厂产物 + 冷字段覆盖），经行为层
+/// create 编排入口（连接 + 输入进，ADR-0033）写入并注册
+/// `world.txn.last_transaction_id`；失败即 panic。返回新交易 id。
+pub fn create_transaction_verb(world: &mut LedgerWorld, input: TransactionInput) -> String {
+    try_create_transaction_verb(world, input).expect("创建交易失败")
+}
+
+/// [`create_transaction_verb`] 的 try 形态：不 panic，写入失败原样返回行为层
+/// 错误（码化错误信息可供「应返回错误」断言）。
+pub fn try_create_transaction_verb(
+    world: &mut LedgerWorld,
+    input: TransactionInput,
+) -> Result<String, AppError> {
+    let write: TransactionWrite = world.db.write(|conn| create_transaction(conn, input))?;
+    world.txn.last_transaction_id = Some(write.id.clone());
+    Ok(write.id)
+}
+
+/// 支出动词：账户按名称解析，输入经 [`expense_input`] 构造。
+pub fn create_expense(
+    world: &mut LedgerWorld,
+    amount_cents: i64,
+    account: &str,
+    date: &str,
+) -> String {
+    let account_id = world.account_id(account);
+    create_transaction_verb(world, expense_input(amount_cents, &account_id, date))
+}
+
+/// 收入动词：同 [`create_expense`] 形态。
+pub fn create_income(
+    world: &mut LedgerWorld,
+    amount_cents: i64,
+    account: &str,
+    date: &str,
+) -> String {
+    let account_id = world.account_id(account);
+    create_transaction_verb(world, income_input(amount_cents, &account_id, date))
+}
+
+/// 转账动词：两端账户按名称解析，输入经 [`transfer_input`] 构造。
+pub fn create_transfer(
+    world: &mut LedgerWorld,
+    amount_cents: i64,
+    from: &str,
+    to: &str,
+    date: &str,
+) -> String {
+    let from_id = world.account_id(from);
+    let to_id = world.account_id(to);
+    create_transaction_verb(world, transfer_input(amount_cents, &from_id, &to_id, date))
+}
+
+/// 退款动词：按原交易 id 关联退款；原支出账户直接读库取（账户/币种后端继承原
+/// 支出，此处取值只为输入完整、语义一致）。
+pub fn create_refund(
+    world: &mut LedgerWorld,
+    amount_cents: i64,
+    original_id: &str,
+    date: &str,
+) -> String {
+    let account_id = transaction_account_id(world, original_id);
+    create_transaction_verb(
+        world,
+        refund_input(amount_cents, &account_id, original_id, date),
+    )
+}
+
+/// 退款动词（关联最近一笔交易）：「关联上一笔交易创建退款」场景形态，原交易取
+/// `world.txn.last_transaction_id`。
+pub fn refund_last_transaction(world: &mut LedgerWorld, amount_cents: i64, date: &str) -> String {
+    let original_id = world
+        .txn
+        .last_transaction_id
+        .clone()
+        .expect("没有上一笔交易可关联退款");
+    create_refund(world, amount_cents, &original_id, date)
+}
+
+/// 买入动词（非基金路径）：标的 id、数量、单价为热点，金额置零语义见
+/// [`buy_input`]；基金（金额权威）场景走 [`create_transaction_verb`] + 结构体更新。
+pub fn create_buy(
+    world: &mut LedgerWorld,
+    instrument_id: &str,
+    quantity: f64,
+    price_cents: i64,
+    account: &str,
+    date: &str,
+) -> String {
+    let account_id = world.account_id(account);
+    create_transaction_verb(
+        world,
+        buy_input(
+            instrument_id,
+            quantity,
+            Some(price_cents),
+            &account_id,
+            date,
+        ),
+    )
+}
+
+/// 卖出动词：同 [`create_buy`] 形态。
+pub fn create_sell(
+    world: &mut LedgerWorld,
+    instrument_id: &str,
+    quantity: f64,
+    price_cents: i64,
+    account: &str,
+    date: &str,
+) -> String {
+    let account_id = world.account_id(account);
+    create_transaction_verb(
+        world,
+        sell_input(
+            instrument_id,
+            quantity,
+            Some(price_cents),
+            &account_id,
+            date,
+        ),
+    )
+}
+
+/// 交易行的账户 id（退款动词派生账户用）。
+fn transaction_account_id(world: &LedgerWorld, transaction_id: &str) -> String {
+    let conn = world_conn!(world);
+    conn.query_row(
+        "SELECT account_id FROM transactions WHERE id=?1",
+        [transaction_id],
+        |r| r.get(0),
+    )
+    .expect("查询原交易账户失败")
+}
+
+// ---------------------------------------------------------------------------
+// 计划动词：同形，走计划域公开创建入口（scheduled_transactions::create_plan）
+// ---------------------------------------------------------------------------
+
+/// 通用成功动词：接受任意已构造计划输入（L1 工厂产物 + 冷字段覆盖），经计划域
+/// 公开创建入口写入并注册 `world.plan.last_plan_id`；失败即 panic。返回计划 id。
+pub fn create_plan_verb(world: &mut LedgerWorld, input: CreateScheduledInput) -> String {
+    try_create_plan_verb(world, input).expect("创建计划失败")
+}
+
+/// [`create_plan_verb`] 的 try 形态：不 panic，创建失败原样返回领域错误。
+pub fn try_create_plan_verb(
+    world: &mut LedgerWorld,
+    input: CreateScheduledInput,
+) -> Result<String, AppError> {
+    let id = world.db.write(|conn| create_plan(conn, input))?;
+    world.plan.last_plan_id = Some(id.clone());
+    Ok(id)
+}
+
+/// 订阅计划动词：币种随步骤文本显式给出（计划行原样存储），备注为冷字段
+/// （`CreateScheduledInput { note: Some(..), ..subscription_plan_input(..) }` +
+/// [`create_plan_verb`]）。
+pub fn create_subscription_plan(
+    world: &mut LedgerWorld,
+    amount_cents: i64,
+    currency: &str,
+    account: &str,
+    start: &str,
+) -> String {
+    let account_id = world.account_id(account);
+    create_plan_verb(
+        world,
+        subscription_plan_input(amount_cents, &account_id, currency, start),
+    )
+}
+
+/// 分期计划动词：总额 + 期数为热点；币种取账户实际币种（与既有分期步骤的 CNY
+/// 硬编码在 CNY 账户场景等价，且不引入「币种与账户不符」的隐蔽数据）。
+pub fn create_installment_plan(
+    world: &mut LedgerWorld,
+    total_amount_cents: i64,
+    total_occurrences: i64,
+    account: &str,
+    start: &str,
+) -> String {
+    let account_id = world.account_id(account);
+    let currency = account_currency_code(world, &account_id);
+    create_plan_verb(
+        world,
+        installment_plan_input(
+            total_amount_cents,
+            total_occurrences,
+            &account_id,
+            &currency,
+            start,
+        ),
+    )
+}
+
+/// 定时转账计划动词：两端账户按名称解析，币种取转出账户实际币种；`total_occurrences`
+/// 为 None 即无限循环（与既有带期数/无限循环两步骤变体同形）。
+pub fn create_scheduled_transfer_plan(
+    world: &mut LedgerWorld,
+    amount_cents: i64,
+    from: &str,
+    to: &str,
+    total_occurrences: Option<i64>,
+    start: &str,
+) -> String {
+    let from_id = world.account_id(from);
+    let to_id = world.account_id(to);
+    let currency = account_currency_code(world, &from_id);
+    create_plan_verb(
+        world,
+        CreateScheduledInput {
+            total_occurrences,
+            ..scheduled_transfer_plan_input(amount_cents, &from_id, &to_id, &currency, start)
+        },
+    )
+}
+
+/// 账户的币种代码（计划动词派生币种用）。
+fn account_currency_code(world: &LedgerWorld, account_id: &str) -> String {
+    let conn = world_conn!(world);
+    conn.query_row(
+        "SELECT currency_code FROM accounts WHERE id=?1",
+        [account_id],
+        |r| r.get(0),
+    )
+    .expect("查询账户币种失败")
+}

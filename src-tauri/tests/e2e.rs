@@ -86,6 +86,10 @@ mod scheduled_steps;
 mod search_steps;
 #[path = "e2e/startup_failure_steps.rs"]
 mod startup_failure_steps;
+#[path = "e2e/step_inputs.rs"]
+mod step_inputs;
+#[path = "e2e/step_verbs.rs"]
+mod step_verbs;
 #[path = "e2e/transactions_edit_steps.rs"]
 mod transactions_edit_steps;
 #[path = "e2e/transactions_policy_steps.rs"]
