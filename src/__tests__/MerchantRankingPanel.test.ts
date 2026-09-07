@@ -4,8 +4,12 @@ import { createPinia, setActivePinia } from 'pinia'
 import MerchantRankingPanel from '@/components/reports/MerchantRankingPanel.vue'
 import { useReferenceStore } from '@/stores/reference'
 import { paletteColor } from '@/utils/category-chart'
+import { formatAmount } from '@/utils/money'
 import type { Merchant } from '@/types'
 import type { MerchantSharesReport } from '@/types'
+
+// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现（无币种形态），
+// 格式规则唯一归属其专测
 
 // 商户消费排行表格（issue #618 表格化）：面板只做渲染与交互接线——列渲染、
 // 点商户名上报下钻意图、TopN 档位切换、空态；比例 / 占比 / 负值处理等口径
@@ -67,10 +71,10 @@ describe('MerchantRankingPanel 表格化（issue #618）', () => {
     expect(cellText(trs[0], 'merchant-name')).toBe('京东')
     expect(cellText(trs[1], 'merchant-name')).toBe('红旗连锁')
     expect(cellText(trs[2], 'merchant-name')).toBe('退款户')
-    // 金额走 formatAmount（分 → 元）：170000 → 1700、-5000 → -50
-    expect(cellText(trs[0], 'merchant-amount')).toBe('1700')
-    expect(cellText(trs[1], 'merchant-amount')).toBe('850')
-    expect(cellText(trs[2], 'merchant-amount')).toBe('-50')
+    // 金额走 formatAmount（分 → 元，无币种形态）：170000、85000、-5000
+    expect(cellText(trs[0], 'merchant-amount')).toBe(formatAmount(170000))
+    expect(cellText(trs[1], 'merchant-amount')).toBe(formatAmount(85000))
+    expect(cellText(trs[2], 'merchant-amount')).toBe(formatAmount(-5000))
     // 占比分母 = 载荷全量合计 340000：170000 → 50%、85000 → 25%、-5000 → -1%
     //（误用展示行合计 250000 会得 68%/34%）
     expect(cellText(trs[0], 'merchant-share')).toBe('50%')
@@ -101,7 +105,7 @@ describe('MerchantRankingPanel 表格化（issue #618）', () => {
     const wrapper = mountPanel()
     const fill = bodyRows(wrapper)[2].find('[data-testid="merchant-bar"]')
     expect(fill.attributes('style')).toContain('width: 0%')
-    expect(cellText(bodyRows(wrapper)[2], 'merchant-amount')).toBe('-50')
+    expect(cellText(bodyRows(wrapper)[2], 'merchant-amount')).toBe(formatAmount(-5000))
     expect(cellText(bodyRows(wrapper)[2], 'merchant-share')).toBe('-1%')
   })
 

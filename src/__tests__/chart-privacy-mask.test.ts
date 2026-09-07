@@ -321,6 +321,8 @@ describe('投资趋势面：组合 / 单标的（y 轴刻度 / tooltip 同源掩
     expect(line.exists()).toBe(true)
     const options = line.props('options') as ChartOptions<'line'>
     const tick = linearTick(options, 'y')
+    // 豁免登记（issue #770）：本用例断言「隐私开启后同输入同掩码」，关闭态字面量
+    // 是逐字符一致回归锚点——委托 formatAmount 期待值将变同义反复，字面量即契约
     expect(tick(100000, 0, [])).toBe('¥1000')
     const label = tooltipCb<(item: TooltipItem<'line'>) => string>(options, 'label')
     expect(label(tooltipItem(100000, '组合市值'))).toBe('组合市值: ¥1000')
@@ -340,7 +342,8 @@ describe('投资趋势面：组合 / 单标的（y 轴刻度 / tooltip 同源掩
     await flushPromises()
     const options = wrapper.findComponent({ name: 'Line' }).props('options') as ChartOptions<'line'>
     const tick = linearTick(options, 'y')
-    // 1500 万分之一元 → ¥0.15（价格列 ADR-0038 刻度）
+    // 1500 万分之一元（价格列 ADR-0038 刻度）；字面量豁免登记同上（issue #770）：
+    // 关闭态逐字符一致回归锚点，委托即同义反复
     expect(tick(1500, 0, [])).toBe('¥0.15')
     amountPrivacyEnabled.value = true
     await nextTick()
@@ -354,6 +357,7 @@ describe('订阅花费趋势面（y 轴刻度 / tooltip 同源掩码，issue #56
     await flushPromises()
     const options = wrapper.findComponent({ name: 'Bar' }).props('options') as ChartOptions<'bar'>
     const tick = linearTick(options, 'y')
+    // 字面量豁免登记同上（issue #770）：关闭态逐字符一致回归锚点，委托即同义反复
     expect(tick(34800, 0, [])).toBe('¥348')
     const label = tooltipCb<(item: TooltipItem<'bar'>) => string>(options, 'label')
     expect(label(tooltipItem(34800))).toBe('¥348')

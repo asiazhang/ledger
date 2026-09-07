@@ -5,7 +5,12 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { NMessageProvider } from 'naive-ui'
 import { h } from 'vue'
 import AddItemForm from '@/components/AddItemForm.vue'
+import { formatAmount } from '@/utils/money'
+import { refCurrencies } from './helpers/reference-stubs'
 import type { Transaction } from '@/types'
+
+// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
+const cny = refCurrencies[0]
 
 
 function makeTxn(overrides: Partial<Transaction> = {}): Transaction {
@@ -59,7 +64,7 @@ describe('AddItemForm（加入物品确认弹窗，issue #119）', () => {
     // 自动带出只读展示（文本节点，非输入控件）
     expect(wrapper.text()).toContain('购买日期')
     expect(wrapper.text()).toContain('2026-01-15')
-    expect(wrapper.text()).toContain('¥5999')
+    expect(wrapper.text()).toContain(formatAmount(599_900, cny))
     expect(wrapper.text()).toContain('CNY')
     // 名称默认 = 交易备注
     const nameInput = wrapper.find('input[placeholder="默认取交易备注，可微调"]')

@@ -7,6 +7,7 @@ import { NPopconfirm, NSelect, NDatePicker } from 'naive-ui'
 import { nextTick } from 'vue'
 import { applyLocale } from '@/i18n'
 import ItemsView from '@/views/ItemsView.vue'
+import { formatAmount } from '@/utils/money'
 import type { Currency, ItemDailyCost, ItemInput, ItemWithDailyCost, Transaction } from '@/types'
 
 
@@ -25,6 +26,9 @@ const mockCurrencies: Currency[] = [
   { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
   { code: 'USD', name: '美元', symbol: '$', decimal_places: 2 },
 ]
+
+// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
+const [cny, usd] = mockCurrencies
 
 const mockItems: ItemWithDailyCost[] = [
   {
@@ -182,14 +186,14 @@ describe('ItemsView 物品列表', () => {
     const html = wrapper.text()
     expect(html).toContain('手机')
     expect(html).toContain('显示器')
-    // 总成本按原始币种 formatAmount（万分位分组：10000 元 → 1,0000）
-    expect(html).toContain('¥1,0000')
-    expect(html).toContain('$1234.5')
+    // 总成本按原始币种 formatAmount（10000 元，万分位分组）
+    expect(html).toContain(formatAmount(1_000_000, cny))
+    expect(html).toContain(formatAmount(123_450, usd))
     expect(html).toContain('1000')
     expect(html).toContain('30')
-    // 每天成本 formatAmount：1000 分/天 → ¥10；4115 分/天 → $41.15
-    expect(html).toContain('¥10')
-    expect(html).toContain('$41.15')
+    // 每天成本 formatAmount：1000 分/天 与 4115 分/天
+    expect(html).toContain(formatAmount(1000, cny))
+    expect(html).toContain(formatAmount(4115, usd))
   })
 
   it('不含新增物品表单，顶部常驻创建唯一入口提示（issue #207）', async () => {
@@ -360,11 +364,11 @@ describe('ItemsView 物品详情（issue #117）', () => {
     expect(modal).not.toBeNull()
     const text = modal!.textContent ?? ''
     expect(text).toContain('手机')
-    // 总成本（原始币种 formatAmount：10000 元 → ¥1,0000）
-    expect(text).toContain('¥1,0000')
-    // 成本分解：分子 ¥1,0000 ÷ 1000 天 = 每天成本 ¥10
+    // 总成本（原始币种 formatAmount：10000 元，万分位分组）
+    expect(text).toContain(formatAmount(1_000_000, cny))
+    // 成本分解：分子 ÷ 1000 天 = 每天成本
     expect(text).toContain('1000')
-    expect(text).toContain('¥10')
+    expect(text).toContain(formatAmount(1000, cny))
     expect(text).toContain('每天成本分解')
   })
 
@@ -532,8 +536,8 @@ describe('ItemsView 物品处置（issue #120）', () => {
     expect(modal).not.toBeNull()
     expect(modal!.textContent).toContain('已处置')
     expect(modal!.textContent).toContain('2026-06-01')
-    // 残值 10000 分 → ¥100（formatAmount）
-    expect(modal!.textContent).toContain('¥100')
+    // 残值 10000 分（formatAmount）
+    expect(modal!.textContent).toContain(formatAmount(10000, cny))
   })
 
   it('处置日期为空时提示且不调用 dispose_item', async () => {
@@ -592,11 +596,11 @@ describe('ItemsView 自选参考日重算（issue #121）', () => {
     const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'calculate_item_cost')
     expect(calls).toHaveLength(1)
     expect(calls[0][1]).toEqual({ id: 'item-1', referenceDate: '2026-03-01' })
-    // 重算结果覆盖展示：2000 天；每天成本 500 分 → ¥5；分子 ¥1,0000
+    // 重算结果覆盖展示：2000 天；每天成本 500 分；分子 1,000,000 分
     const text = modal.textContent ?? ''
     expect(text).toContain('2000')
-    expect(text).toContain('¥5')
-    expect(text).toContain('¥1,0000')
+    expect(text).toContain(formatAmount(500, cny))
+    expect(text).toContain(formatAmount(1_000_000, cny))
   })
 
   it('清空参考日回退缺省口径（referenceDate 传 null）', async () => {
@@ -639,7 +643,7 @@ describe('ItemsView 自选参考日重算（issue #121）', () => {
     // 原列表快照口径不变
     const text = modal.textContent ?? ''
     expect(text).toContain('1000')
-    expect(text).toContain('¥10')
+    expect(text).toContain(formatAmount(1000, cny))
   })
 
   function modalText(): string {

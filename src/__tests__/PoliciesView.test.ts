@@ -5,8 +5,13 @@ import { NPopconfirm } from 'naive-ui'
 import PoliciesView from '@/views/PoliciesView.vue'
 import PolicyFormModal from '@/components/PolicyFormModal.vue'
 import { makePolicy, makePolicyStats } from './factories'
+import { formatAmount } from '@/utils/money'
+import { refCurrencies } from './helpers/reference-stubs'
 import type { Insurer, Policy, PolicyStats } from '@/types'
 import { componentVm } from './helpers/component-vm'
+
+// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
+const cny = refCurrencies[0]
 
 
 // focus 参数读取自路由 query（useFocusParam 注入 getter，spec #704 / issue #706）。
@@ -127,8 +132,8 @@ describe('PoliciesView 保单列表（issue #360）', () => {
     expect(text).toContain('P2026-001')
     expect(text).toContain('2024-01-01 ~ 2036-01-01')
     expect(text).toContain('保障中')
-    // 保额纯展示：30_000_000 分 → ¥30,0000（自带币种原样格式化，不折算）
-    expect(text).toContain('¥30,0000')
+    // 保额纯展示：30_000_000 分（自带币种原样格式化，不折算）
+    expect(text).toContain(formatAmount(30_000_000, cny))
   })
 
   it('止日为空显示「长期」；止日已过显示「已到期」', async () => {
@@ -300,11 +305,10 @@ describe('PoliciesView 保单视角统计（issue #363）', () => {
     const wrapper = mount(PoliciesView)
     await flushPromises()
     const text = wrapper.text()
-    // 600_000 分 → ¥6000；50_000 分 → ¥500（统计本位币口径，经 formatAmount；
-    // 中文分组万位制，千位无分隔——与列表保额列同款断言先例）
+    // 600_000 分与 50_000 分（统计本位币口径，经 formatAmount；中文分组万位制）
     expect(text).toContain('累计已缴')
-    expect(text).toContain('¥6000')
-    expect(text).toContain('¥500')
+    expect(text).toContain(formatAmount(600_000, cny))
+    expect(text).toContain(formatAmount(50_000, cny))
     expect(text).toContain('2027-01-01')
   })
 
@@ -344,8 +348,8 @@ describe('PoliciesView 编辑保单', () => {
     await flushPromises()
     const summary = bodyQuery('[data-testid="policy-stats-summary"]')!
     expect(summary.textContent).toContain('累计已缴保费')
-    expect(summary.textContent).toContain('¥6000')
-    expect(summary.textContent).toContain('¥500')
+    expect(summary.textContent).toContain(formatAmount(600_000, cny))
+    expect(summary.textContent).toContain(formatAmount(50_000, cny))
     expect(summary.textContent).toContain('2027-01-01')
     // 到期态摘要：止日 2036 未到（统计行 is_expired=false）→ 保障中
     expect(summary.textContent).toContain('到期状态')

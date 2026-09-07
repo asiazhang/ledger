@@ -5,6 +5,7 @@ import { NModal, NSelect, NPopconfirm } from 'naive-ui'
 import TransfersPane from '@/components/scheduled/TransfersPane.vue'
 import { findInputByTestId as findInput } from '../helpers/dom'
 import { mountFlushed } from '../helpers/mount'
+import { formatAmount } from '@/utils/money'
 import type {
   Account,
   Currency,
@@ -27,6 +28,9 @@ const mockCurrencies: Currency[] = [
   { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
   { code: 'USD', name: '美元', symbol: '$', decimal_places: 2 },
 ]
+
+// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
+const cny = mockCurrencies[0]
 
 const mockAccounts: Account[] = [
   makeAccount('acc-cny1', '招商银行', 'CNY'),
@@ -217,7 +221,7 @@ describe('TransfersPane 清单渲染冒烟（编排用例见 useScheduledPlanLis
     const wrapper = await mountView()
     expect(wrapper.text()).toContain('招商银行')
     expect(wrapper.text()).toContain('支付宝')
-    expect(wrapper.text()).toContain('¥500')
+    expect(wrapper.text()).toContain(formatAmount(50000, cny))
     expect(wrapper.text()).toContain('每2月')
     const cell = wrapper.find('[data-testid="next-transfer-t1"]')
     expect(cell.text()).toContain('2026-03-01')

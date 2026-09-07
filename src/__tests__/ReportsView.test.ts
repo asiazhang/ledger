@@ -8,8 +8,12 @@ import ReportsView from '@/views/ReportsView.vue'
 import { categoryColor } from '@/utils/category-chart'
 import { UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS, MERCHANT_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
 import { makeCategory } from './factories'
+import { formatAmount } from '@/utils/money'
 import type { NullableDateRange } from '@/utils/time-period'
 import type { ReportDateRange } from '@/types'
+
+// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现（无币种形态），
+// 格式规则唯一归属其专测
 
 // jsdom 无 canvas：图表组件用共享桩承接（line-chart-stub，先例 #160），
 // 把 data/options 序列化进 DOM 供断言图数据形态与横向 options。
@@ -155,7 +159,7 @@ describe('ReportsView 期间筛选（issue #411 / ADR-0057）', () => {
     expect(categoryChartProp('data', wrapper).datasets[0].data).toEqual([700])
     const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr')
     expect(trs).toHaveLength(1)
-    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe('5')
+    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe(formatAmount(500))
   })
 
   it('年份下拉退役：无年份选择下拉，快捷选择行为唯一时间控件（四枚芯片、无「全部」）', async () => {
@@ -223,7 +227,7 @@ describe('ReportsView 期间筛选（issue #411 / ADR-0057）', () => {
     expect(categoryChartProp('data', wrapper).datasets[0].data).toEqual([1700])
     const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr')
     expect(trs).toHaveLength(1)
-    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe('17')
+    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe(formatAmount(1700))
   })
 
   it('重复点同一段期间的芯片不重复刷新（同值守卫）', async () => {
@@ -599,7 +603,7 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
     expect(categoryChartProp('data', wrapper).datasets[0].data).toEqual([2200])
     const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr')
     expect(trs).toHaveLength(1)
-    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe('22')
+    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe(formatAmount(2200))
   })
 })
 
@@ -785,8 +789,8 @@ describe('ReportsView 商户排行表格化 + TopN（issue #588 → #618）', ()
     const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr')
     expect(trs).toHaveLength(3)
     expect(trs[0].find('[data-testid="merchant-name"]').text()).toBe('超市')
-    // 金额走 formatAmount（分 → 元）：5000 → 50；占比分母 = 载荷全量合计 15000 → 33%
-    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe('50')
+    // 金额走 formatAmount（分 → 元，无币种形态）：5000；占比分母 = 载荷全量合计 15000 → 33%
+    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe(formatAmount(5000))
     expect(trs[0].find('[data-testid="merchant-share"]').text()).toBe('33%')
     expect(trs[0].find('[data-testid="merchant-count"]').text()).toBe('3')
   })
@@ -893,7 +897,7 @@ describe('ReportsView 商户排行表格化 + TopN（issue #588 → #618）', ()
     await flushPromises()
     const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr')
     expect(trs).toHaveLength(1)
-    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe('5')
+    expect(trs[0].find('[data-testid="merchant-amount"]').text()).toBe(formatAmount(500))
   })
 
   it('点商户名跳传交易列表（#589 → #618）：载荷 = 商户 id + 所选期间首尾日期 + 收支类型集合（支出+退款）', async () => {
