@@ -2,7 +2,8 @@
 //! 金额字段（含显式 null）显式拒绝——改价 = 取消旧计划 + 新建。
 
 use super::super::*;
-use super::common::{create_subscription, insert_account, setup_db};
+use super::common::create_subscription;
+use crate::test_support;
 use rusqlite::params;
 
 // ---------------------------------------------------------------------------
@@ -13,8 +14,8 @@ use rusqlite::params;
 /// 一律显式拒绝，且拒绝后计划字段不被改动。
 #[test]
 fn update_subscription_rejects_amount_field_including_explicit_null() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let plan_id = create_subscription(&conn, "acc", "CNY", 3000, Some("视频会员"));
 
     let payloads = [

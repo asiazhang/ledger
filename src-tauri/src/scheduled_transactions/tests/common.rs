@@ -1,32 +1,12 @@
-//! `scheduled_transactions` 测试共享脚手架：仅限本测试目录（`scheduled_transactions::tests`）内部使用。
+//! `scheduled_transactions` 测试薄皮：仅限本测试目录（`scheduled_transactions::tests`）
+//! 内部使用。通用夹具（建库两行序、账户与汇率种子）已上收统一测试工厂
+//! `crate::test_support`（spec #728 / issue #756 / ADR-0084 决策 7），本文件剩余函数
+//! 全部为域特有编排——三类计划创建、期次状态与交易行读取器，是「工厂只收跨 ≥2 域
+//! 重复、单域编排留薄皮」准入规则（ADR-0084 决策 1）的参照样本。
 
 use super::super::*;
 use rusqlite::Connection;
 use rusqlite::params;
-
-pub(crate) fn setup_db() -> Connection {
-    let mut conn = crate::db::open_in_memory().unwrap();
-    crate::db::init_db(&mut conn).unwrap();
-    conn
-}
-
-pub(crate) fn insert_account(conn: &Connection, id: &str, currency: &str) {
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,'cash',?3,0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        params![id, id, currency],
-    )
-    .unwrap();
-}
-
-pub(crate) fn insert_rate(conn: &Connection, base: &str, quote: &str, rate: f64) {
-    conn.execute(
-        "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,updated_at,version,device_id) \
-         VALUES ('er-1',?1,?2,?3,'2026-02-01T00:00:00Z','2026-02-01T00:00:00Z',1,'test')",
-        params![base, quote, rate],
-    )
-    .unwrap();
-}
 
 /// 创建订阅计划（无上限，预生成窗口期次），返回计划 id。
 pub(crate) fn create_subscription(

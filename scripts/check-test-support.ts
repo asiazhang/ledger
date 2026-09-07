@@ -84,18 +84,12 @@ export interface GateWhitelistEntry {
 
 /**
  * 白名单起步（issue #752）：现存全部违规按域分组，一组一行、注释记行数。
- * 每张按域迁移票负责把自己那组缩减为空（#756 scheduled_transactions / #757
- * transaction；e2e 与 backup/内联簿记组暂无对应迁移票，随 e2e 夹具 spec 或对应
- * 域票处置）。API 集成层组已随 #753 清零，叶子域+db+sync 组已随 #754 清零，
- * investment 组已随 #755 清零。
- * #758 收口：全表清零转纯禁令。
+ * 每张按域迁移票负责把自己那组缩减为空（#757 transaction；e2e 与 backup/内联簿记
+ * 组暂无对应迁移票，随 e2e 夹具 spec 或对应域票处置）。API 集成层组已随 #753
+ * 清零，叶子域+db+sync 组已随 #754 清零，investment 组已随 #755 清零，
+ * scheduled_transactions 组已随 #756 清零。#758 收口：全表清零转纯禁令。
  */
 export const WHITELIST: readonly GateWhitelistEntry[] = [
-  // ── scheduled_transactions 域（迁移票 #756）──
-  { file: 'src/scheduled_transactions/tests/common.rs', note: 'scheduled_transactions 域', r1: 2, r3: 2 },
-  { file: 'src/scheduled_transactions/tests/merchant.rs', note: 'scheduled_transactions 域', r3: 2 },
-  { file: 'src/scheduled_transactions/tests/spend.rs', note: 'scheduled_transactions 域', r3: 4 },
-
   // ── transaction 域（迁移票 #757）──
   { file: 'src/transaction/tests/amount.rs', note: 'transaction 域', r1: 2, r2: 2, r3: 2 },
   { file: 'src/transaction/tests/audit.rs', note: 'transaction 域', r2: 1 },

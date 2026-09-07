@@ -5,8 +5,9 @@
 use super::super::*;
 use super::common::{
     create_installment, create_subscription, create_transfer_plan, first_pending_occurrence,
-    insert_account, insert_rate, occurrence_status, read_txn, setup_db,
+    occurrence_status, read_txn,
 };
+use crate::test_support;
 use rusqlite::{Connection, params};
 
 // ---------------------------------------------------------------------------
@@ -17,9 +18,9 @@ use rusqlite::{Connection, params};
 /// 而不是把原始金额当作本位币金额落库（修复前的 bug 行为）。
 #[test]
 fn execute_occurrence_converts_non_default_currency_to_native() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-usd", "USD");
-    insert_rate(&conn, "USD", "CNY", 7.2);
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-usd", "acc-usd", "cash", "USD", 0);
+    test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
     let plan_id = create_subscription(&conn, "acc-usd", "USD", 10000, Some("国际订阅"));
     let occ_id = first_pending_occurrence(&conn, &plan_id);
 
@@ -43,8 +44,8 @@ fn execute_occurrence_converts_non_default_currency_to_native() {
 /// 且期次保持 pending（normalize 在 CAS 锁定前完成），可重试、不滞留 processing。
 #[test]
 fn execute_occurrence_errors_without_rate_for_non_default_currency() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-jpy", "JPY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-jpy", "acc-jpy", "cash", "JPY", 0);
     let plan_id = create_subscription(&conn, "acc-jpy", "JPY", 10000, None);
     let occ_id = first_pending_occurrence(&conn, &plan_id);
 
@@ -56,7 +57,7 @@ fn execute_occurrence_errors_without_rate_for_non_default_currency() {
     assert_eq!(status, "pending", "期次不应滞留 processing");
     assert_eq!(backfilled, None, "失败不应回填交易 id");
     // 补录汇率后同一期次可重试成功
-    insert_rate(&conn, "JPY", "CNY", 0.05);
+    test_support::seed_exchange_rate(&conn, "JPY", "CNY", 0.05);
     let txn_id = execute_occurrence(&conn, &occ_id).unwrap();
     let txn = read_txn(&conn, &txn_id);
     assert_eq!(txn.amount_native_cents, 500);
@@ -65,8 +66,8 @@ fn execute_occurrence_errors_without_rate_for_non_default_currency() {
 /// 默认币种（CNY）定时交易本位币与原始金额 1:1（MVP 口径不变）。
 #[test]
 fn execute_occurrence_default_currency_stays_1_1() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let plan_id = create_subscription(&conn, "acc", "CNY", 6600, Some("视频会员"));
     let occ_id = first_pending_occurrence(&conn, &plan_id);
 
@@ -95,8 +96,8 @@ fn inject_txn_insert_failure(conn: &Connection) {
 /// processing），移除注入后同一期次重试成功。
 #[test]
 fn execute_occurrence_mid_failure_rolls_back_to_pending() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let plan_id = create_subscription(&conn, "acc", "CNY", 3000, Some("回滚订阅"));
     let occ_id = first_pending_occurrence(&conn, &plan_id);
     inject_txn_insert_failure(&conn);
@@ -132,8 +133,8 @@ fn execute_occurrence_mid_failure_rolls_back_to_pending() {
 /// 期次置为 completed 并回填 transaction_id。
 #[test]
 fn execute_subscription_maps_expense_and_completes_occurrence() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let plan_id = create_subscription(&conn, "acc", "CNY", 3000, Some("云服务"));
     let occ_id = first_pending_occurrence(&conn, &plan_id);
 
@@ -159,8 +160,8 @@ fn execute_subscription_maps_expense_and_completes_occurrence() {
 /// 订阅计划带分类时，支出交易继承计划分类。
 #[test]
 fn execute_subscription_inherits_category() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let plan_id = create_plan(
         &conn,
         CreateScheduledInput {
@@ -201,9 +202,9 @@ fn execute_subscription_inherits_category() {
 /// 定时转账计划 → 转账交易：kind=transfer、account_id 转出、to_account_id 转入。
 #[test]
 fn execute_transfer_maps_out_and_in_accounts() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-a", "CNY");
-    insert_account(&conn, "acc-b", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-a", "acc-a", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-b", "acc-b", "cash", "CNY", 0);
     let plan_id = create_transfer_plan(&conn, "acc-a", "acc-b", 50000);
     let occ_id = first_pending_occurrence(&conn, &plan_id);
 
@@ -225,8 +226,8 @@ fn execute_transfer_maps_out_and_in_accounts() {
 /// 全部执行完毕后计划状态置为 completed。
 #[test]
 fn execute_installments_all_marks_plan_completed() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     // 3100 / 3：前两期 1033，末期 1034（尾差并入末期）
     let plan_id = create_installment(&conn, "acc", 3100, 3);
     let occ_ids: Vec<String> = get_plan_detail(&conn, &plan_id)
@@ -269,8 +270,8 @@ fn execute_installments_all_marks_plan_completed() {
 /// 已暂停的计划执行期次 → 报错（状态流转不变）。
 #[test]
 fn execute_occurrence_rejects_paused_plan() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let plan_id = create_subscription(&conn, "acc", "CNY", 3000, None);
     update_plan_status(&conn, &plan_id, ScheduledStatus::Paused).unwrap();
     let occ_id = first_pending_occurrence(&conn, &plan_id);

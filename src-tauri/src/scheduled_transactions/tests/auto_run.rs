@@ -5,7 +5,8 @@
 //! （周期调用结构由调度线程「只做周期调用」保证，与自动备份同款纪律）。
 
 use super::super::*;
-use super::common::{create_subscription, insert_account, occurrence_status, setup_db};
+use super::common::{create_subscription, occurrence_status};
+use crate::test_support;
 use chrono::NaiveDate;
 use rusqlite::{Connection, params};
 
@@ -74,8 +75,8 @@ fn set_status(conn: &Connection, occ_id: &str, status: &str) {
 /// 开关关闭时追补空转：不动任何期次、不产生交易（验收①）。
 #[test]
 fn disabled_means_idle() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-cny", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-cny", "acc-cny", "cash", "CNY", 0);
     let plan_id = create_subscription(&conn, "acc-cny", "CNY", 3000, None);
 
     let summary = catch_up(&conn, false, "2026-03-20");
@@ -98,8 +99,8 @@ fn disabled_means_idle() {
 /// 再次注入更晚的「今天」模拟跨午夜后的下一轮，滚动追补新到期期次。
 #[test]
 fn due_executed_with_plan_date_and_rolls_on_later_days() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-cny", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-cny", "acc-cny", "cash", "CNY", 0);
     let plan_id = create_subscription(&conn, "acc-cny", "CNY", 3000, None);
 
     let summary = catch_up(&conn, true, "2026-02-20");
@@ -140,8 +141,8 @@ fn due_executed_with_plan_date_and_rolls_on_later_days() {
 /// 「今天」含边界：计划日期恰为今天的期次当轮即被追补。
 #[test]
 fn today_boundary_is_due() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-cny", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-cny", "acc-cny", "cash", "CNY", 0);
     let plan_id = create_plan(
         &conn,
         CreateScheduledInput {
@@ -176,8 +177,8 @@ fn today_boundary_is_due() {
 /// 未到期（计划日期 > 今天）不动：明天才到期的期次留在 pending。
 #[test]
 fn future_occurrences_untouched() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-cny", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-cny", "acc-cny", "cash", "CNY", 0);
     let plan_id = create_subscription(&conn, "acc-cny", "CNY", 3000, None);
 
     let summary = catch_up(&conn, true, "2026-01-14");
@@ -198,8 +199,8 @@ fn future_occurrences_untouched() {
 /// failed / processing / cancelled 期次一律不被追补，其余 pending 正常补齐（验收③）。
 #[test]
 fn non_pending_occurrences_untouched() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-cny", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-cny", "acc-cny", "cash", "CNY", 0);
     let plan_id = create_subscription(&conn, "acc-cny", "CNY", 3000, None);
     let (failed_id, processing_id, cancelled_id) = (
         occurrence_id_at(&conn, &plan_id, 0),
@@ -230,9 +231,9 @@ fn non_pending_occurrences_untouched() {
 /// 暂停与取消的计划不被追补（验收③）：期次与交易保持原状。
 #[test]
 fn paused_and_cancelled_plans_untouched() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-paused", "CNY");
-    insert_account(&conn, "acc-cancelled", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-paused", "acc-paused", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-cancelled", "acc-cancelled", "cash", "CNY", 0);
     let paused = create_subscription(&conn, "acc-paused", "CNY", 3000, None);
     let cancelled = create_subscription(&conn, "acc-cancelled", "CNY", 3000, None);
     update_plan_status(&conn, &paused, ScheduledStatus::Paused).unwrap();
@@ -264,9 +265,9 @@ fn paused_and_cancelled_plans_untouched() {
 /// 后续轮次不重试已 failed 的期次（保持手动重试，验收③）。
 #[test]
 fn failure_marks_failed_continues_and_never_auto_retries() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-usd", "USD"); // 无汇率：归一化必失败
-    insert_account(&conn, "acc-cny", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-usd", "acc-usd", "cash", "USD", 0); // 无汇率：归一化必失败
+    test_support::seed_account(&conn, "acc-cny", "acc-cny", "cash", "CNY", 0);
     let usd = create_subscription(&conn, "acc-usd", "USD", 10000, Some("缺汇率订阅"));
     let cny = create_subscription(&conn, "acc-cny", "CNY", 2000, Some("正常订阅"));
 
@@ -309,8 +310,8 @@ fn failure_marks_failed_continues_and_never_auto_retries() {
 /// 空转与未到期轮次不动脏标记。
 #[test]
 fn success_marks_dirty_for_backup_linkage() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-cny", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-cny", "acc-cny", "cash", "CNY", 0);
     let plan_id = create_subscription(&conn, "acc-cny", "CNY", 3000, None);
 
     catch_up(&conn, false, "2026-02-20");
