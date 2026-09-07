@@ -127,10 +127,6 @@ pub struct AssetGroup {
     pub physical_assets_list: Option<tauri_app_lib::physical_asset::PhysicalAssetList>,
     /// 最近一次详情读回快照（详情场景断言用，issue #466）
     pub physical_asset_detail: Option<tauri_app_lib::physical_asset::PhysicalAsset>,
-    /// 投资迁移链路（issue #297）：已导入 buy 交易 id 按导入先后累积
-    /// （「持仓批次按导入先后锚定顺序」步骤据此回填批次 created_at）；
-    /// 消费场景为投资迁移断言，故归本组
-    pub imported_buy_txn_ids: Vec<String>,
 }
 
 /// 物品组快照：物品创建/修改/处置/每日成本场景的状态。

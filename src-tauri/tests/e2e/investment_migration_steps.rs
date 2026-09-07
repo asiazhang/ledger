@@ -10,9 +10,6 @@
 //!   导入端点同一编排（先例：迁移验证步骤「批量导入交易」）；行金额占位 0，
 //!   交易行金额由行为层 prepare 按「数量 × 单价 ± 手续费」重算（CONTEXT-investment
 //!   TransactionTrade 词条），与 AI 实际提交形状一致。
-//! - **批次顺序锚定**：`now_iso` 精度为秒，同批连续落库的买入其批次
-//!   `created_at` 相同、FIFO 将退化为 uuid 随机序——按导入先后回填递增
-//!   `created_at` 确定性化（夹具手段，先例：投资域单测 trade.rs）。
 //!
 //! 持仓断言直查投资域扩展表（先例：instruments_steps 直插直查；每份成本等
 //! 域细节权威在域单测 trade.rs，此处不展开）；
@@ -84,7 +81,6 @@ fn batch_import_trades(world: &mut LedgerWorld, #[step] step: &Step) {
     };
 
     let mut inputs: Vec<TransactionInput> = Vec::new();
-    let mut kinds: Vec<TransactionKind> = Vec::new();
     for row in table.rows.iter().skip(1) {
         let symbol = get(row, "标的");
         let account_name = get(row, "账户");
@@ -104,7 +100,6 @@ fn batch_import_trades(world: &mut LedgerWorld, #[step] step: &Step) {
                 .unwrap_or_else(|_| panic!("账户不存在: {account_name}"));
             (instrument_id, account_id, currency_code)
         };
-        kinds.push(kind);
         inputs.push(TransactionInput {
             kind,
             // 占位金额：prepare 按「数量 × 单价 ± 手续费」重算交易行金额
@@ -136,33 +131,11 @@ fn batch_import_trades(world: &mut LedgerWorld, #[step] step: &Step) {
         .results;
     assert_eq!(results.len(), count, "导入结果行数应与提交行数一致");
 
-    // buy 行交易 id 按导入先后累积（「持仓批次按导入先后锚定顺序」步骤的输入）。
-    for (kind, result) in kinds.iter().zip(&results) {
-        if let (TransactionKind::Buy, Some(id)) = (kind, &result.id) {
-            world.asset.imported_buy_txn_ids.push(id.clone());
-        }
-    }
     world.txn.last_batch_results = results;
 }
 
-/// 回填批次 created_at 锚定「先导入先消耗」的确定性顺序（夹具手段，见模块文档）。
-#[when(expr = "持仓批次按导入先后锚定顺序")]
-fn anchor_lot_order(world: &mut LedgerWorld) {
-    let ids = world.asset.imported_buy_txn_ids.clone();
-    let conn = world_conn!(world);
-    for (i, txn_id) in ids.iter().enumerate() {
-        // 分/秒进位避免分钟数溢出（批次数不受 60 限制）
-        let created_at = format!("2026-01-01T00:{:02}:{:02}Z", i / 60, i % 60);
-        conn.execute(
-            "UPDATE security_lots SET created_at=?1 WHERE buy_transaction_id=?2",
-            params![created_at, txn_id],
-        )
-        .unwrap_or_else(|e| panic!("锚定批次顺序失败（txn {txn_id}）: {e}"));
-    }
-}
-
 // ---------------------------------------------------------------------------
-// Then：导入结果与持仓/盈亏读回
+// Then：导入结果与持仓读回
 // ---------------------------------------------------------------------------
 
 #[then(expr = "导入的投资交易应有 {int} 行全部成功")]
