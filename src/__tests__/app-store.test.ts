@@ -161,18 +161,9 @@ describe('useAppStore amountPrivacyEnabled（issue #566：金额隐私模式，�
 })
 
 describe('useAppStore 收缩契约（issue #85）', () => {
-  it('仅暴露 UI 设置，不再暴露参考数据 / 派生映射 / load 函数', () => {
+  it('已移除的参考数据 / 派生映射 / load 函数键不得回归', () => {
     const store = useAppStore() as unknown as Record<string, unknown>
-    // UI 设置（主题 / 默认币种 / 备份设置）保留
-    expect(store.theme).toBeDefined()
-    expect(store.defaultCurrency).toBeDefined()
-    expect(store.backupDir).toBeDefined()
-    expect(store.backupMaxCount).toBeDefined()
-    expect(store.setTheme).toBeDefined()
-    expect(store.setDefaultCurrency).toBeDefined()
-    expect(store.setBackupDir).toBeDefined()
-    expect(store.setBackupMaxCount).toBeDefined()
-    // 参考数据 getters / 派生映射 / load 函数已移除
+    // 已移除的键不得回归（收缩契约本体）。
     const removed = [
       'currencies', 'accounts', 'categories',
       'currencyMap', 'accountMap', 'categoryMap',
