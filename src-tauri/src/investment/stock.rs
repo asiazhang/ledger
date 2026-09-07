@@ -15,7 +15,7 @@
 use rusqlite::params;
 
 use super::crud;
-use super::model::{InstrumentInput, InstrumentType, StockQuote};
+use super::model::{AddStockInstrumentResult, InstrumentInput, InstrumentType, StockQuote};
 use super::prices::{EASTMONEY_PRICE_SOURCE, upsert_market_price};
 use crate::db::now_iso;
 use crate::error::{AppError, Result};
@@ -195,6 +195,87 @@ pub fn resolve_stock_quote_candidates(
             )),
         },
     }
+}
+
+/// 「添加投资标的」股票侧录入通道闭集（spec #690 / issue #697 / ADR-0081 决策 2）：
+/// 沪/深/港为显式市场（代码形态矛盾在候选解析单点显式拒绝），美股为 UI 折叠的
+/// 通道标签（UI 只显「美股」）——落库精确交易所交由三市场候选遍历取东财回显；
+/// 场外基金通道走基金接缝（`add_fund_by_code_with`），不在本闭集。
+pub const ADD_STOCK_CHANNELS: &[&str] = &["sh", "sz", "hk", "us"];
+
+/// 录入通道 → 股票查询的显式市场参数（单点）：美股通道 → None（按 ticker 形态
+/// 遍历三市场候选，首个命中生效）；沪深港 → 显式市场。闭集外通道即内部不一致
+///（前端下拉闭集之外不应有值，先例：`sync.secid-unroutable` 的码化拒绝）。
+pub fn resolve_add_stock_channel(channel: &str) -> Result<Option<&'static str>> {
+    match channel {
+        "sh" => Ok(Some("sh")),
+        "sz" => Ok(Some("sz")),
+        "hk" => Ok(Some("hk")),
+        "us" => Ok(None),
+        other => Err(AppError::codedp(
+            "stock.channel-unsupported",
+            format!("暂不支持的投资标的录入通道 {other}（当前支持沪 sh/深 sz/港 hk/美股 us）"),
+            &[other],
+        )),
+    }
+}
+
+/// 「添加投资标的」查询阶段（issue #697，spec #690 唯一接缝的 IPC 侧编排，注入
+/// 形态与基金详情获取接缝同构）：通道解析 → 候选解析（全部拒绝路径在发起网络
+/// 前，先例：基金代码格式校验）→ 按候选序遍历（未命中继续、临时错误立即上抛，
+/// 「哪些错误算未命中」谓词 [`is_stock_lookup_miss`]）。本函数不触数据库：生产壳
+/// 在连接锁外以生产拉取闭包驱动（慢闭包纪律，先例：`fetch_fund_detail_production`），
+/// 测试与 BDD 以注入桩离线驱动。
+pub fn fetch_stock_quote_for_add<F>(channel: &str, code: &str, fetch: &mut F) -> Result<StockQuote>
+where
+    F: FnMut(&str, &str) -> Result<StockQuote>,
+{
+    let market = resolve_add_stock_channel(channel)?;
+    let candidates = resolve_stock_quote_candidates(market, code)?;
+    let mut last_miss: Option<AppError> = None;
+    for candidate in &candidates {
+        match fetch(candidate.market, &candidate.code) {
+            Ok(quote) => return Ok(quote),
+            Err(e) if is_stock_lookup_miss(&e) => last_miss = Some(e),
+            Err(e) => return Err(e),
+        }
+    }
+    // 候选非空由解析单点保证（每个形态分支至少产出一个候选）；全候选未命中时
+    // 未命中错误必有值。unwrap 不可用（ADR-0060），码化内部不一致兕底
+    // （先例：stocks 查询端点的候选遍历壳）。
+    match last_miss {
+        Some(e) => Err(e),
+        None => Err(AppError::codedp(
+            "sync.secid-unroutable",
+            "候选列表为空（内部不一致）",
+            &[],
+        )),
+    }
+}
+
+/// 添加投资标的·识别落库阶段（issue #697）：类型自动识别（行情命中 → stock、
+/// 东财类型特征 → etf，提示随行情在访问层投影为 `kind_hint`，探测单点
+/// `sync::stock::detect_kind_hint`）后经创建增强同一落库接缝
+///（[`persist_stock_quote`]：权威名称回填 + 精确市场落库 + 最新价落现价，来源
+/// manual、币种按市场推导）。与 AI 创建端点的差异只在类型来源：对话框无类型
+/// 入参，类型即识别结果（spec #690 用户故事 12）；误判代价仅类型标签，已接受
+///（ADR-0081）。返回投影供壳层回显（识别回显）。
+pub fn add_stock_instrument_with_quote(
+    conn: &rusqlite::Connection,
+    quote: &StockQuote,
+) -> Result<AddStockInstrumentResult> {
+    let outcome = persist_stock_quote(conn, quote.kind_hint, quote)?;
+    Ok(AddStockInstrumentResult {
+        instrument_id: outcome.instrument_id,
+        symbol: quote.code.clone(),
+        name: quote.name.clone(),
+        kind: quote.kind_hint,
+        market: quote.market.clone(),
+        currency_code: derive_quote_currency(&quote.market).to_string(),
+        price_cents: quote.price_cents,
+        price_date: quote.price_date.clone(),
+        price_written: outcome.price_written,
+    })
 }
 
 /// 候选遍历的「未命中」判定（语义单点，与查询端点/创建增强共用）：查无此码

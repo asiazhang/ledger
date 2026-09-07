@@ -57,10 +57,10 @@ pub mod trend;
 mod model;
 
 pub use model::{
-    AccountPnl, AddFundResult, FinancialFreedomOverview, FundDetail, FundNav, Holding, Instrument,
-    InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentPnl,
-    InstrumentPriceTrend, InstrumentType, ManualPriceInput, ManualPriceResult, MarketPrice,
-    MarketPriceInput, PnlDetail, PnlFilter, PortfolioTrendPoint, PortfolioValueTrend,
+    AccountPnl, AddFundResult, AddStockInstrumentResult, FinancialFreedomOverview, FundDetail,
+    FundNav, Holding, Instrument, InstrumentInput, InstrumentListFilter, InstrumentListResult,
+    InstrumentPnl, InstrumentPriceTrend, InstrumentType, ManualPriceInput, ManualPriceResult,
+    MarketPrice, MarketPriceInput, PnlDetail, PnlFilter, PortfolioTrendPoint, PortfolioValueTrend,
     PriceTrendPoint, RealizedPnlSummary, StockQuote, TransactionTrade, TrendRange, YearPnl,
 };
 
@@ -81,8 +81,9 @@ pub use manual_price::record_manual_price;
 pub use reports::query_realized_pnl_summary;
 pub use stock::{
     ResolvedStockCode, StockCreateOutcome, StockCreateRoute, StockEnhancePlan,
-    create_stock_degraded, derive_quote_currency, is_stock_lookup_miss, persist_stock_quote,
-    resolve_stock_quote_candidates, route_stock_creation,
+    add_stock_instrument_with_quote, create_stock_degraded, derive_quote_currency,
+    fetch_stock_quote_for_add, is_stock_lookup_miss, persist_stock_quote,
+    resolve_add_stock_channel, resolve_stock_quote_candidates, route_stock_creation,
 };
 // 投资交易对外出口收窄为 prepare/apply/revert 三件套（issue #72 / spec #69）：
 // 校验归一化（prepare）、应用副作用（apply）、回退副作用（revert）各一个入口，

@@ -115,6 +115,9 @@ pub enum WriteOp {
     SyncInstruments,
     /// 按代码即拉场外基金（IPC `add_fund_by_code`，ADR-0038）：证据 = 落现价缓存。
     AddFundByCode,
+    /// 按代码添加投资标的·场内通道（IPC `add_instrument_by_code`，issue #697 /
+    /// ADR-0081）：证据 = 落现价缓存（与基金即拉同款，零变化不广播）。
+    AddInstrumentByCode,
     /// 手动报价（IPC `record_manual_price`，ADR-0036）：证据 = 实际写入任一落点。
     RecordManualPrice,
     /// 标的创建 / 幂等复用（IPC `create_instrument` 手动创建；HTTP
@@ -227,7 +230,7 @@ impl WriteOp {
     /// 清单紧邻 enum，同步义务就地可查（同 `TransactionKind::ALL` 先例）。
     /// 长度标注与初始化个数不符即编译错；但 enum 新增变体而本清单漏登不会报错，
     /// 改 enum 必须同步改这里。
-    pub const ALL: [WriteOp; 58] = [
+    pub const ALL: [WriteOp; 59] = [
         // 参考数据四表
         WriteOp::CreateAccount,
         WriteOp::UpdateAccount,
@@ -264,6 +267,7 @@ impl WriteOp {
         WriteOp::SyncHoldingPrices,
         WriteOp::SyncInstruments,
         WriteOp::AddFundByCode,
+        WriteOp::AddInstrumentByCode,
         WriteOp::RecordManualPrice,
         WriteOp::CreateInstrument,
         WriteOp::DeleteInstrument,
@@ -420,6 +424,7 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
         WriteOp::SyncHoldingPrices
         | WriteOp::SyncInstruments
         | WriteOp::AddFundByCode
+        | WriteOp::AddInstrumentByCode
         | WriteOp::RecordManualPrice
         | WriteOp::CreateInstrument => when(evidence.price_written(), PRICES_CHANGED_SET),
 
@@ -770,6 +775,21 @@ mod tests {
     }
 
     #[test]
+    fn add_instrument_by_code_emits_prices_changed_only_when_price_written() {
+        // 添加投资标的·场内通道（issue #697）：落现价即广播；停牌未取到价仅建
+        // 标的、不广播（零变化不广播，与基金即拉同款）。
+        assert_signals(
+            signals_for(Op::AddInstrumentByCode, E::PriceWritten(true)),
+            &[Signal::PricesChanged],
+        );
+        assert_signals(
+            signals_for(Op::AddInstrumentByCode, E::PriceWritten(false)),
+            &[],
+        );
+        assert_signals(signals_for(Op::AddInstrumentByCode, E::None), &[]);
+    }
+
+    #[test]
     fn record_manual_price_emits_prices_changed_only_when_any_point_written() {
         // 实际写入任一落点（现价缓存 / 价格历史）即广播（ADR-0036）。
         assert_signals(
@@ -994,6 +1014,7 @@ mod tests {
             Op::SyncHoldingPrices,
             Op::SyncInstruments,
             Op::AddFundByCode,
+            Op::AddInstrumentByCode,
             Op::RecordManualPrice,
             Op::CreateInstrument,
         ];

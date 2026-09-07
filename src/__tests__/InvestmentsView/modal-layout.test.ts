@@ -3,14 +3,14 @@ import { wireInvokeSeam } from '../helpers/invoke-mock'
 import { nextTick } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { mountFlushed, mountWithDialog } from '../helpers/mount'
-import CreateInstrumentModal from '@/components/investments/CreateInstrumentModal.vue'
+import AddInstrumentModal from '@/components/investments/AddInstrumentModal.vue'
 import ManualPriceModal from '@/components/investments/ManualPriceModal.vue'
 import InstrumentBrowser from '@/components/investments/InstrumentBrowser.vue'
 import { makeInstrument } from '../factories'
 
 // 投资弹窗族排版统一（issue #638，spec #630）：五个弹窗的卡片外观收敛为
-// AppModal cardSize 单一声明——自建标的创建、手动报价、添加基金、全量同步
-// 确认、同步进度均归 md（480；前三个 440 归档、后两个 480 原档归位）；
+// AppModal cardSize 单一声明——添加投资标的（#697 收编原自建标的创建与
+// 添加基金两入口）、手动报价、全量同步确认、同步进度均归 md；
 // 显式 style 宽度由 cardSize 承担，无边框由 AppModal 默认承担（调用点不再
 // 显式 :bordered="false"）。断言只看组件可观察输出（卡片宽度样式与边框类），
 // 不深究 naive-ui 内部实现；开合编排与快捷键抑制（ADR-0035/ADR-0072）不在
@@ -76,8 +76,8 @@ async function clickBody(testid: string) {
 }
 
 describe('投资弹窗族排版统一（issue #638）', () => {
-  it('自建标的创建弹窗归 md 档且默认无边框', async () => {
-    await mountFlushed(CreateInstrumentModal, { props: { show: true } })
+  it('添加投资标的弹窗（独立挂载）归 md 档且默认无边框', async () => {
+    await mountFlushed(AddInstrumentModal, { props: { show: true } })
     expectCardSizeMd(modalCard())
   })
 
@@ -88,10 +88,10 @@ describe('投资弹窗族排版统一（issue #638）', () => {
     expectCardSizeMd(modalCard())
   })
 
-  it('添加基金弹窗归 md 档且默认无边框', async () => {
+  it('添加投资标的弹窗（经标的页工具栏入口打开）归 md 档且默认无边框', async () => {
     const wrapper = mountBrowser()
     await flushPromises()
-    await clickToolbarButton(wrapper, 'add-fund')
+    await clickToolbarButton(wrapper, 'add-instrument')
     expectCardSizeMd(modalCard())
   })
 

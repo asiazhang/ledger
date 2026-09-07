@@ -129,6 +129,7 @@
   },
   "stock": {
     "bse-unsupported": "stock code {0} belongs to the Beijing Stock Exchange (starts with 4/8), which is not supported yet",
+    "channel-unsupported": "instrument entry channel {0} is not supported (currently sh / sz / hk / us)",
     "market-unsupported": "market {0} is not supported for lookup yet (currently sh / sz / hk / nasdaq / nyse / amex)",
     "market-conflict": "market parameter {0} conflicts with the shape of stock code {1}, please verify and retry",
     "code-unresolvable": "cannot infer the market from the shape of stock code {0}, pass the market parameter explicitly"

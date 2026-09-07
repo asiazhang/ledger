@@ -10,8 +10,10 @@ use rusqlite::params;
 use tauri_app_lib::db::{device_id, new_uuid, now_iso};
 use tauri_app_lib::error::Result;
 use tauri_app_lib::investment::{
-    FundDetail, FundNav, InstrumentInput, InstrumentListFilter, add_fund_by_code_with,
-    create_instrument_manual, delete_instrument as delete_instrument_domain, list_instruments,
+    FundDetail, FundNav, InstrumentInput, InstrumentListFilter, StockQuote, add_fund_by_code_with,
+    add_stock_instrument_with_quote, create_instrument_manual,
+    delete_instrument as delete_instrument_domain, fetch_stock_quote_for_add, list_instruments,
+    prices::price_value_to_cents,
 };
 
 use crate::world::LedgerWorld;
@@ -103,6 +105,31 @@ fn manual_create_instrument(
         name: Some(name),
         currency_code: currency,
         market: None,
+    };
+    match create_instrument_manual(&world_conn!(world), input) {
+        Ok(_) => world.last_error = None,
+        Err(e) => world.last_error = Some(e.to_string()),
+    }
+}
+
+/// 手动创建标的（带市场，issue #697 兑底建档）：同上接缝，市场取所选值
+///（无市场通道时前端传 null、后端缺省 unknown）。既有命令契约本就支持
+/// 市场透传（核心创建函数单点），本步骤钉住兑底流的「市场取所选值」。
+#[when(expr = "手动创建标的 {string} 类型 {string} 名称 {string} 币种 {string} 市场 {string}")]
+fn manual_create_instrument_with_market(
+    world: &mut LedgerWorld,
+    symbol: String,
+    kind: String,
+    name: String,
+    currency: String,
+    market: String,
+) {
+    let input = InstrumentInput {
+        symbol,
+        kind: kind.parse().expect("未知金融工具类型"),
+        name: Some(name),
+        currency_code: currency,
+        market: Some(market),
     };
     match create_instrument_manual(&world_conn!(world), input) {
         Ok(_) => world.last_error = None,
@@ -322,6 +349,97 @@ fn add_fund_with_stub_not_found(world: &mut LedgerWorld, code: String) {
 }
 
 // ---------------------------------------------------------------------------
+// 添加投资标的·股票通道（issue #697 / spec #690）：市场必选的录入通道 → 按代码
+// 查询 → 类型自动识别 → 创建增强回填。编排接缝与生产 IPC 命令同一组合：
+// fetch_stock_quote_for_add（锁外查询阶段）→ add_stock_instrument_with_quote
+//（识别落库阶段）；东财行情以注入桩离线驱动，桩按请求市场是否等于命中市场
+// 决定命中或未命中——美股通道命中前的候选按未命中继续（遍历语义随之被驱动），
+// 代码回显请求归一化形态（港股补零 / 美股大写，与访问层回显同构）。
+// ---------------------------------------------------------------------------
+
+/// 股票添加的桩驱动组合：命中市场与行情内容随参数给定；`quote_market` 为 None
+/// 时桩恒未命中（查无此码），`Err(Io)` 形态以 `temporary_failure` 开关表达。
+fn run_add_instrument<F>(world: &mut LedgerWorld, channel: String, code: String, fetch: &mut F)
+where
+    F: FnMut(&str, &str) -> Result<StockQuote>,
+{
+    // 查询阶段（生产在连接锁外）：通道解析 → 候选遍历。
+    let quote = match fetch_stock_quote_for_add(&channel, &code, fetch) {
+        Ok(quote) => quote,
+        Err(e) => {
+            world.last_error = Some(e.to_string());
+            return;
+        }
+    };
+    // 识别落库阶段（生产在统一写入口内）：类型 = 行情 kind_hint。
+    match add_stock_instrument_with_quote(&world_conn!(world), &quote) {
+        Ok(_) => world.last_error = None,
+        Err(e) => world.last_error = Some(e.to_string()),
+    }
+}
+
+#[when(
+    expr = "按代码添加投资标的 市场 {string} 代码 {string} 行情命中名称 {string} 市场 {string} 现价 {float} 类型提示 {string}"
+)]
+fn add_instrument_with_stub_quote(
+    world: &mut LedgerWorld,
+    channel: String,
+    code: String,
+    name: String,
+    quote_market: String,
+    price: f64,
+    kind_hint: String,
+) {
+    let kind: tauri_app_lib::investment::InstrumentType =
+        kind_hint.parse().expect("未知类型提示（stock/etf）");
+    let mut fetch = move |market: &str, code: &str| -> Result<StockQuote> {
+        if market == quote_market {
+            Ok(StockQuote {
+                // 代码回显请求归一化形态（与访问层回显同构：命中判定 = 回显全等）。
+                code: code.to_string(),
+                name: name.clone(),
+                market: market.to_string(),
+                price_cents: Some(price_value_to_cents(price)),
+                price_date: Some("2026-09-04".to_string()),
+                kind_hint: kind,
+            })
+        } else {
+            Err(tauri_app_lib::error::AppError::codedp(
+                "sync.stock-not-found",
+                format!("查无股票代码 {code}，请核对后重试"),
+                &[code],
+            ))
+        }
+    };
+    run_add_instrument(world, channel, code, &mut fetch);
+}
+
+#[when(expr = "按代码添加投资标的 市场 {string} 代码 {string} 行情查无此码")]
+fn add_instrument_with_stub_all_miss(world: &mut LedgerWorld, channel: String, code: String) {
+    let mut fetch = |market: &str, code: &str| -> Result<StockQuote> {
+        let _ = market;
+        Err(tauri_app_lib::error::AppError::codedp(
+            "sync.stock-not-found",
+            format!("查无股票代码 {code}，请核对后重试"),
+            &[code],
+        ))
+    };
+    run_add_instrument(world, channel, code, &mut fetch);
+}
+
+#[when(expr = "按代码添加投资标的 市场 {string} 代码 {string} 行情临时不可达")]
+fn add_instrument_with_stub_temporary_failure(
+    world: &mut LedgerWorld,
+    channel: String,
+    code: String,
+) {
+    let mut fetch = |_market: &str, _code: &str| -> Result<StockQuote> {
+        Err(tauri_app_lib::error::AppError::Io("东财临时不可达".into()))
+    };
+    run_add_instrument(world, channel, code, &mut fetch);
+}
+
+// ---------------------------------------------------------------------------
 // Then：标的字典行 / 现价缓存 / 错误
 // ---------------------------------------------------------------------------
 
@@ -408,4 +526,39 @@ fn assert_add_fund_error(world: &mut LedgerWorld, fragment: String) {
         error.contains(&fragment),
         "错误「{error}」应包含「{fragment}」"
     );
+}
+
+#[then(expr = "添加投资标的应返回错误 {string}")]
+fn assert_add_instrument_error(world: &mut LedgerWorld, fragment: String) {
+    let error = world
+        .last_error
+        .as_ref()
+        .unwrap_or_else(|| panic!("添加投资标的应失败但未记录错误"));
+    assert!(
+        error.contains(&fragment),
+        "错误「{error}」应包含「{fragment}」"
+    );
+}
+
+/// 股票/ETF 通道落库后的现价断言（issue #697）：与基金现价不同源——
+/// priced_at 为写入时刻、nav_date 恒 None（净值日期是场外基金语义）。
+#[then(expr = "标的 {string} 现价为 {int} 币种 {string}")]
+fn assert_stock_market_price(
+    world: &mut LedgerWorld,
+    symbol: String,
+    price_cents: i64,
+    currency: String,
+) {
+    let row: (i64, String, Option<String>) = world_conn!(world)
+        .query_row(
+            "SELECT p.price_cents, p.currency_code, p.nav_date \
+             FROM market_prices p JOIN instruments i ON i.id = p.instrument_id \
+             WHERE i.symbol=?1",
+            params![symbol],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap_or_else(|e| panic!("标的 {symbol} 应有现价（{e}）"));
+    assert_eq!(row.0, price_cents, "现价（万分之一元）不符");
+    assert_eq!(row.1, currency, "币种不符");
+    assert_eq!(row.2, None, "股票通道现价不带净值日期");
 }

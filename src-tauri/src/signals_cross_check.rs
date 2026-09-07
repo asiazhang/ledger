@@ -449,6 +449,7 @@ fn parse_write_op(ident: &str) -> WriteOp {
         "SyncHoldingPrices" => WriteOp::SyncHoldingPrices,
         "SyncInstruments" => WriteOp::SyncInstruments,
         "AddFundByCode" => WriteOp::AddFundByCode,
+        "AddInstrumentByCode" => WriteOp::AddInstrumentByCode,
         "RecordManualPrice" => WriteOp::RecordManualPrice,
         "CreateInstrument" => WriteOp::CreateInstrument,
         "DeleteInstrument" => WriteOp::DeleteInstrument,

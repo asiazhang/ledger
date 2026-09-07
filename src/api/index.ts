@@ -7,6 +7,7 @@ import type {
   AccountInput,
   AccountUpdateInput,
   AddFundResult,
+  AddStockInstrumentResult,
   BalanceCacheAudit,
   BackupFileInfo,
   AutoBackupState,
@@ -248,6 +249,10 @@ export const api = {
   deleteInstrument: (id: string) => invoke<void>('delete_instrument', { id }),
   // 按代码即拉添加场外基金（issue #301 / ADR-0038）：东财回填名称/分类/最新净值
   addFundByCode: (code: string) => invoke<AddFundResult>('add_fund_by_code', { code }),
+  // 按代码添加投资标的·场内通道（issue #697 / ADR-0081）：市场必选录入通道
+  // （sh/sz/hk/us），后端按代码查询东财、类型自动识别并经创建增强回填名称与最新价
+  addInstrumentByCode: (market: string, code: string) =>
+    invoke<AddStockInstrumentResult>('add_instrument_by_code', { market, code }),
   // 手动报价（issue #291 / ADR-0036）：无行情来源标的的「日期 + 价格」单点录入，
   // 一条通道两个落点（现价缓存 upsert + 价格历史周采样幂等覆盖）；实际写入
   // 任一落点后端广播价格失效信号，调用方依赖信号消费方刷新，零手动重拉
