@@ -266,20 +266,23 @@ onMounted(() => {
       @update:show="(v: boolean) => (v ? undefined : closeEdit())"
     >
       <NForm label-placement="left" :show-feedback="false" size="small">
-        <NFormItem :label="t('budget.edit.category')">
-          <NText>{{ editingCategoryName }}</NText>
-        </NFormItem>
-        <NFormItem :label="t('budget.edit.period')">
-          <NText>{{
-            editIntent ? t(`budget.period.${editIntent.progress.budget.period}`) : ''
-          }}</NText>
-        </NFormItem>
-        <NFormItem :label="t('budget.edit.amount')">
-          <NInputNumber v-model:value="editAmount" :precision="2" style="width: 100%" />
-        </NFormItem>
-        <NSpace justify="end" :size="8">
-          <NButton @click="closeEdit">{{ t('budget.edit.cancel') }}</NButton>
-          <NButton type="primary" @click="saveEdit">{{ t('budget.edit.save') }}</NButton>
+        <!-- 行距节奏容器：NFormItem 默认零行距，表单项与按钮行同包（ADR-0079 决策 4 / issue #804） -->
+        <NSpace vertical :size="12">
+          <NFormItem :label="t('budget.edit.category')">
+            <NText>{{ editingCategoryName }}</NText>
+          </NFormItem>
+          <NFormItem :label="t('budget.edit.period')">
+            <NText>{{
+              editIntent ? t(`budget.period.${editIntent.progress.budget.period}`) : ''
+            }}</NText>
+          </NFormItem>
+          <NFormItem :label="t('budget.edit.amount')">
+            <NInputNumber v-model:value="editAmount" :precision="2" style="width: 100%" />
+          </NFormItem>
+          <NSpace justify="end" :size="8">
+            <NButton @click="closeEdit">{{ t('budget.edit.cancel') }}</NButton>
+            <NButton type="primary" @click="saveEdit">{{ t('budget.edit.save') }}</NButton>
+          </NSpace>
         </NSpace>
       </NForm>
     </AppModal>

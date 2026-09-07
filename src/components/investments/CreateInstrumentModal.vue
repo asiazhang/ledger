@@ -106,43 +106,46 @@ async function submit() {
         {{ t('investments.create.intro') }}
       </NText>
       <NForm label-placement="left" :show-feedback="false" size="small">
-        <NFormItem :label="t('investments.create.typeLabel')" required>
-          <AppSelect
-            v-model:value="form.kind"
-            :options="TYPE_OPTIONS"
-            :placeholder="t('investments.create.typePlaceholder')"
-            data-testid="create-instrument-type"
-            style="width: 100%"
-          />
-        </NFormItem>
-        <NFormItem :label="t('investments.create.symbolLabel')" required>
-          <NInput
-            v-model:value="form.symbol"
-            :placeholder="t('investments.create.symbolPlaceholder')"
-            :maxlength="32"
-            :disabled="submitting"
-            data-testid="create-instrument-symbol"
-          />
-        </NFormItem>
-        <NFormItem :label="t('investments.create.nameLabel')" required>
-          <NInput
-            v-model:value="form.name"
-            :placeholder="t('investments.create.namePlaceholder')"
-            :maxlength="64"
-            :disabled="submitting"
-            data-testid="create-instrument-name"
-            @keyup.enter="submit"
-          />
-        </NFormItem>
-        <NFormItem :label="t('investments.create.currencyLabel')">
-          <AppSelect
-            v-model:value="form.currencyCode"
-            :options="currencyOptions"
-            filterable
-            data-testid="create-instrument-currency"
-            style="width: 100%"
-          />
-        </NFormItem>
+        <!-- 行距节奏容器：NFormItem 默认零行距，不得裸排（ADR-0079 决策 4 / issue #804） -->
+        <NSpace vertical :size="12">
+          <NFormItem :label="t('investments.create.typeLabel')" required>
+            <AppSelect
+              v-model:value="form.kind"
+              :options="TYPE_OPTIONS"
+              :placeholder="t('investments.create.typePlaceholder')"
+              data-testid="create-instrument-type"
+              style="width: 100%"
+            />
+          </NFormItem>
+          <NFormItem :label="t('investments.create.symbolLabel')" required>
+            <NInput
+              v-model:value="form.symbol"
+              :placeholder="t('investments.create.symbolPlaceholder')"
+              :maxlength="32"
+              :disabled="submitting"
+              data-testid="create-instrument-symbol"
+            />
+          </NFormItem>
+          <NFormItem :label="t('investments.create.nameLabel')" required>
+            <NInput
+              v-model:value="form.name"
+              :placeholder="t('investments.create.namePlaceholder')"
+              :maxlength="64"
+              :disabled="submitting"
+              data-testid="create-instrument-name"
+              @keyup.enter="submit"
+            />
+          </NFormItem>
+          <NFormItem :label="t('investments.create.currencyLabel')">
+            <AppSelect
+              v-model:value="form.currencyCode"
+              :options="currencyOptions"
+              filterable
+              data-testid="create-instrument-currency"
+              style="width: 100%"
+            />
+          </NFormItem>
+        </NSpace>
       </NForm>
       <NText v-if="error" type="error" data-testid="create-instrument-error">
         {{ error }}

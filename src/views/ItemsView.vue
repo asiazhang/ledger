@@ -351,43 +351,46 @@ onMounted(() => {
         :show-feedback="false"
         size="small"
       >
-        <NFormItem :label="t('items.edit.label.name')">
-          <NInput v-model:value="editName" :placeholder="t('items.edit.placeholder.name')" />
-        </NFormItem>
-        <NFormItem :label="t('items.edit.label.purchaseDate')">
-          <AppDatePicker
-            v-model:formatted-value="editPurchaseDate"
-            :disabled="editRelinking"
-            type="date"
-            value-format="yyyy-MM-dd"
-            style="width: 160px"
-          />
-        </NFormItem>
-        <NFormItem :label="t('items.edit.label.totalCost')">
-          <NInput
-            v-model:value="editCostYuan"
-            :disabled="editRelinking"
-            :placeholder="t('items.edit.placeholder.totalCost')"
-            style="width: 160px"
-          />
-        </NFormItem>
-        <NFormItem :label="t('items.edit.label.linkedTx')">
-          <PinyinSelect
-            v-model:value="editLinkTxId"
-            :options="linkTxOptions()"
-            :placeholder="t('items.edit.placeholder.linkedTx')"
-            @update:value="applyLinkedTxToEdit"
-          />
-        </NFormItem>
-        <NFormItem :label="t('items.edit.label.currency')">
-          <span>{{ editIntent.row.currency_code }}{{ t('items.edit.currencyFixed') }}</span>
-        </NFormItem>
-        <NFormItem :label="t('items.edit.label.note')">
-          <NInput v-model:value="editNote" :placeholder="t('items.edit.placeholder.note')" />
-        </NFormItem>
-        <NSpace justify="end">
-          <NButton @click="closeEdit">{{ t('items.rowActions.cancel') }}</NButton>
-          <NButton type="primary" @click="saveEdit">{{ t('items.rowActions.save') }}</NButton>
+        <!-- 行距节奏容器：NFormItem 默认零行距，表单项与按钮行同包（ADR-0079 决策 4 / issue #804） -->
+        <NSpace vertical :size="12">
+          <NFormItem :label="t('items.edit.label.name')">
+            <NInput v-model:value="editName" :placeholder="t('items.edit.placeholder.name')" />
+          </NFormItem>
+          <NFormItem :label="t('items.edit.label.purchaseDate')">
+            <AppDatePicker
+              v-model:formatted-value="editPurchaseDate"
+              :disabled="editRelinking"
+              type="date"
+              value-format="yyyy-MM-dd"
+              style="width: 160px"
+            />
+          </NFormItem>
+          <NFormItem :label="t('items.edit.label.totalCost')">
+            <NInput
+              v-model:value="editCostYuan"
+              :disabled="editRelinking"
+              :placeholder="t('items.edit.placeholder.totalCost')"
+              style="width: 160px"
+            />
+          </NFormItem>
+          <NFormItem :label="t('items.edit.label.linkedTx')">
+            <PinyinSelect
+              v-model:value="editLinkTxId"
+              :options="linkTxOptions()"
+              :placeholder="t('items.edit.placeholder.linkedTx')"
+              @update:value="applyLinkedTxToEdit"
+            />
+          </NFormItem>
+          <NFormItem :label="t('items.edit.label.currency')">
+            <span>{{ editIntent.row.currency_code }}{{ t('items.edit.currencyFixed') }}</span>
+          </NFormItem>
+          <NFormItem :label="t('items.edit.label.note')">
+            <NInput v-model:value="editNote" :placeholder="t('items.edit.placeholder.note')" />
+          </NFormItem>
+          <NSpace justify="end">
+            <NButton @click="closeEdit">{{ t('items.rowActions.cancel') }}</NButton>
+            <NButton type="primary" @click="saveEdit">{{ t('items.rowActions.save') }}</NButton>
+          </NSpace>
         </NSpace>
       </NForm>
     </AppModal>
@@ -402,33 +405,36 @@ onMounted(() => {
       @update:show="(v: boolean) => (v ? undefined : closeDispose())"
     >
       <NForm v-if="disposing" label-placement="left" :show-feedback="false" size="small">
-        <NFormItem :label="t('items.dispose.label.item')">
-          <span>{{ disposing.name }}</span>
-        </NFormItem>
-        <NFormItem :label="t('items.dispose.label.date')">
-          <AppDatePicker
-            v-model:formatted-value="disposeDate"
-            type="date"
-            value-format="yyyy-MM-dd"
-            style="width: 160px"
-          />
-        </NFormItem>
-        <NFormItem :label="t('items.dispose.label.residual')">
-          <NInput
-            v-model:value="disposeResidualYuan"
-            :placeholder="t('items.dispose.residualPlaceholder')"
-            style="width: 160px"
-          />
-        </NFormItem>
-        <NSpace justify="end">
-          <NButton @click="closeDispose">{{ t('items.rowActions.cancel') }}</NButton>
-          <NButton
-            type="primary"
-            data-testid="item-dispose-confirm"
-            @click="confirmDispose"
-          >
-            {{ disposing.status === 'in_use' ? t('items.dispose.confirm') : t('items.rowActions.save') }}
-          </NButton>
+        <!-- 行距节奏容器：NFormItem 默认零行距，表单项与按钮行同包（ADR-0079 决策 4 / issue #804） -->
+        <NSpace vertical :size="12">
+          <NFormItem :label="t('items.dispose.label.item')">
+            <span>{{ disposing.name }}</span>
+          </NFormItem>
+          <NFormItem :label="t('items.dispose.label.date')">
+            <AppDatePicker
+              v-model:formatted-value="disposeDate"
+              type="date"
+              value-format="yyyy-MM-dd"
+              style="width: 160px"
+            />
+          </NFormItem>
+          <NFormItem :label="t('items.dispose.label.residual')">
+            <NInput
+              v-model:value="disposeResidualYuan"
+              :placeholder="t('items.dispose.residualPlaceholder')"
+              style="width: 160px"
+            />
+          </NFormItem>
+          <NSpace justify="end">
+            <NButton @click="closeDispose">{{ t('items.rowActions.cancel') }}</NButton>
+            <NButton
+              type="primary"
+              data-testid="item-dispose-confirm"
+              @click="confirmDispose"
+            >
+              {{ disposing.status === 'in_use' ? t('items.dispose.confirm') : t('items.rowActions.save') }}
+            </NButton>
+          </NSpace>
         </NSpace>
       </NForm>
     </AppModal>

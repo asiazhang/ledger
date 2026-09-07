@@ -47,6 +47,7 @@
 
 ### Fixed
 
+- **界面**：修复弹窗表单行距为零导致的行贴死——账户编辑/调整余额、预算编辑、物品编辑/处置、实物资产估值/处置、投资自建标的/手动录价九处弹窗表单补 12px 行距节奏容器（ADR-0079 决策 4）；新增弹窗表单节奏守门脚本，非 inline `NForm` 漏包节奏容器在 `check.sh` 门槛即失败，不再靠模仿维持（[#804]）。
 - **界面**：修复「移回侧栏」菜单提示文案溢出容器的问题（[#647]）。
 - **加密**：开发/未签名构建下，设置页与解锁屏的自动解锁提示不再误标 Touch ID，按运行形态区分文案（[#687]）。
 
@@ -228,3 +229,4 @@
 [#713]: https://github.com/asiazhang/ledger/issues/713
 [#714]: https://github.com/asiazhang/ledger/issues/714
 [#532]: https://github.com/asiazhang/ledger/issues/532
+[#804]: https://github.com/asiazhang/ledger/issues/804

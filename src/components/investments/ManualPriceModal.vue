@@ -95,27 +95,30 @@ async function submit() {
         {{ t('investments.manualPrice.intro') }}
       </NText>
       <NForm label-placement="left" :show-feedback="false" size="small">
-        <NFormItem :label="t('investments.manualPrice.dateLabel')" required>
-          <AppDatePicker
-            v-model:formatted-value="date"
-            type="date"
-            value-format="yyyy-MM-dd"
-            :disabled="submitting"
-            style="width: 200px"
-            data-testid="manual-quote-date"
-          />
-        </NFormItem>
-        <NFormItem :label="t('investments.manualPrice.priceLabel')" required>
-          <NInputNumber
-            v-model:value="price"
-            :min="0"
-            :precision="4"
-            :placeholder="t('investments.manualPrice.pricePlaceholder')"
-            :disabled="submitting"
-            style="width: 200px"
-            data-testid="manual-quote-price"
-          />
-        </NFormItem>
+        <!-- 行距节奏容器：NFormItem 默认零行距，不得裸排（ADR-0079 决策 4 / issue #804） -->
+        <NSpace vertical :size="12">
+          <NFormItem :label="t('investments.manualPrice.dateLabel')" required>
+            <AppDatePicker
+              v-model:formatted-value="date"
+              type="date"
+              value-format="yyyy-MM-dd"
+              :disabled="submitting"
+              style="width: 200px"
+              data-testid="manual-quote-date"
+            />
+          </NFormItem>
+          <NFormItem :label="t('investments.manualPrice.priceLabel')" required>
+            <NInputNumber
+              v-model:value="price"
+              :min="0"
+              :precision="4"
+              :placeholder="t('investments.manualPrice.pricePlaceholder')"
+              :disabled="submitting"
+              style="width: 200px"
+              data-testid="manual-quote-price"
+            />
+          </NFormItem>
+        </NSpace>
       </NForm>
       <NText v-if="error" type="error" data-testid="manual-quote-error">
         {{ error }}
