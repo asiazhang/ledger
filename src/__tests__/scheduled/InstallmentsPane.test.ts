@@ -1,21 +1,19 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke } from '../helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
+import { mockInvoke, wireInvokeSeam } from '../helpers/invoke-mock'
+import { mount, flushPromises } from '@vue/test-utils'
 import {
   NModal,
   NSelect,
   NPopconfirm,
   NProgress,
 } from 'naive-ui'
-import { setActivePinia, createPinia } from 'pinia'
-import { useReferenceStore } from '@/stores/reference'
 import InstallmentsPane from '@/components/scheduled/InstallmentsPane.vue'
-import { stubReferenceInvoke } from '../helpers/reference-stubs'
+import { findInputByTestId as findInput } from '../helpers/dom'
+import { mountFlushed } from '../helpers/mount'
 import { componentVm } from '../helpers/component-vm'
 import type {
   Account,
   Category,
-  Currency,
   InstallmentPlan,
   Merchant,
   ScheduledStatus,
@@ -32,16 +30,6 @@ import type {
  * 渲染与交互冒烟 + 分期形态真差异——期数预览（含尾差文案）、进度列（expandDetail
  * 接线：期数/金额取自详情命令）与新建表单校验/提交编排。迁移与删除记录见对应提交信息。
  */
-
-
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
-
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-]
 
 const mockAccounts: Account[] = [
   {
@@ -148,92 +136,86 @@ function makeDetail(
 let mockPlans: ScheduledTransactionWithExt[] = []
 const mockDetails = new Map<string, ScheduledTransactionDetail>()
 
-function baseInvoke() {
-  return stubReferenceInvoke({
-    list_currencies: mockCurrencies,
-    list_accounts: mockAccounts,
-    list_categories: mockCategories,
-    list_insurers: [],
-    list_merchants: () => mockMerchantsState,
-    create_merchant: (args) => {
-      const input = args?.input as { name: string }
-      const id = `mer-new-${input.name}`
-      mockMerchantsState = [
-        ...mockMerchantsState,
-        {
-          id,
-          name: input.name,
-          updated_at: '2026-01-01T00:00:00Z',
-          version: 1,
-          device_id: 'test',
-          is_deleted: false,
-        },
-      ]
-      return id
-    },
-    list_scheduled_transactions: () => mockPlans,
-    get_scheduled_transaction_detail: (args) => {
-      const detail = mockDetails.get(String(args?.id))
-      return detail ? Promise.resolve(detail) : Promise.reject(new Error('无此计划详情'))
-    },
-    create_scheduled_transaction: (args) => {
-      const input = args?.input as {
-        kind: string
-        note: string | null
-        merchant_id: string | null
-      }
-      const id = `new-${input.kind}-${input.note ?? ''}`
-      const plan = makePlan(
-        { id, note: input.note ?? null },
-        {
-          total_amount_cents:
-            (args!.input as { total_amount_cents: number }).total_amount_cents ?? 0,
-          total_occurrences: (args!.input as { total_occurrences: number }).total_occurrences ?? 1,
-        },
-        input.merchant_id,
-      )
-      mockPlans = [...mockPlans, plan]
-      mockDetails.set(id, makeDetail(plan, { count: 0, amount: 0 }))
-      return id
-    },
-    update_scheduled_transaction_status: (args) => {
-      const { id, new_status } = args as { id: string; new_status: ScheduledStatus }
-      mockPlans = mockPlans.map((p) =>
-        p.core.id === id ? { ...p, core: { ...p.core, status: new_status } } : p,
-      )
-      const detail = mockDetails.get(id)
-      if (detail) {
-        mockDetails.set(id, { ...detail, core: { ...detail.core, status: new_status } })
-      }
-    },
-  })
-}
-
-/** 定位弹窗表单内输入框：NModal teleport 到 body，需经 findComponent 锚定。 */
-function findInput(wrapper: ReturnType<typeof mount>, testid: string) {
-  return wrapper.findComponent(`[data-testid="${testid}"]`).find('input')
-}
 
 /** 弹窗内普通元素（非组件）经 document.body 查询：NModal teleport 到 body。 */
 function modalText(testid: string) {
   return document.body.querySelector(`[data-testid="${testid}"]`)?.textContent ?? ''
 }
 
-async function mountView() {
-  const wrapper = mount(InstallmentsPane)
-  await flushPromises()
-  return wrapper
+function mountView() {
+  return mountFlushed(InstallmentsPane)
 }
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
   mockPlans = []
   mockDetails.clear()
   mockMerchantsState = mockMerchants
-  baseInvoke()
-  const store = useReferenceStore()
-  await store.refresh()
+  // 唯一接缝布线（ADR-0085）：账户与分类以本套夹具覆写（值与规范夹具不同，
+  // 属场景契约而非重复枚举），进 defaults 表；可变商户库与创建/详情/状态
+  // 编排为函数型 overrides。其余参考命令由规范夹具兑底；store 层预热
+  // opt-in 开启：主题用例依赖参考数据就绪后的即时渲染（商户列、下拉选项）。
+  const seam = wireInvokeSeam({
+    defaults: {
+      list_accounts: mockAccounts,
+      list_categories: mockCategories,
+    },
+    overrides: {
+      list_merchants: () => mockMerchantsState,
+      create_merchant: (args) => {
+        const input = args?.input as { name: string }
+        const id = `mer-new-${input.name}`
+        mockMerchantsState = [
+          ...mockMerchantsState,
+          {
+            id,
+            name: input.name,
+            updated_at: '2026-01-01T00:00:00Z',
+            version: 1,
+            device_id: 'test',
+            is_deleted: false,
+          },
+        ]
+        return id
+      },
+      list_scheduled_transactions: () => mockPlans,
+      get_scheduled_transaction_detail: (args) => {
+        const detail = mockDetails.get(String(args?.id))
+        return detail ? Promise.resolve(detail) : Promise.reject(new Error('无此计划详情'))
+      },
+      create_scheduled_transaction: (args) => {
+        const input = args?.input as {
+          kind: string
+          note: string | null
+          merchant_id: string | null
+        }
+        const id = `new-${input.kind}-${input.note ?? ''}`
+        const plan = makePlan(
+          { id, note: input.note ?? null },
+          {
+            total_amount_cents:
+              (args!.input as { total_amount_cents: number }).total_amount_cents ?? 0,
+            total_occurrences: (args!.input as { total_occurrences: number }).total_occurrences ?? 1,
+          },
+          input.merchant_id,
+        )
+        mockPlans = [...mockPlans, plan]
+        mockDetails.set(id, makeDetail(plan, { count: 0, amount: 0 }))
+        return id
+      },
+      update_scheduled_transaction_status: (args) => {
+        const { id, new_status } = args as { id: string; new_status: ScheduledStatus }
+        mockPlans = mockPlans.map((p) =>
+          p.core.id === id ? { ...p, core: { ...p.core, status: new_status } } : p,
+        )
+        const detail = mockDetails.get(id)
+        if (detail) {
+          mockDetails.set(id, { ...detail, core: { ...detail.core, status: new_status } })
+        }
+      },
+    },
+    refreshReferenceStores: true,
+  })
+  await seam.ready
 })
 
 describe('InstallmentsPane 清单渲染冒烟（编排用例见 useScheduledPlanList.test.ts）', () => {

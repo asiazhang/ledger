@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NModal, NSelect, NTreeSelect, NDatePicker } from 'naive-ui'
-import { findInput, mockInvoke, mountView, setup } from './common'
+import { findInput, mountView, setup } from './common'
+import { mockInvoke } from '../../helpers/invoke-mock'
 import { componentVm } from '../../helpers/component-vm'
 
 beforeEach(setup)

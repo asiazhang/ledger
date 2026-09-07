@@ -1,18 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mockInvoke } from '../helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { mockInvoke, wireInvokeSeam } from '../helpers/invoke-mock'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { setActivePinia, createPinia } from 'pinia'
 import ScheduledView from '@/views/ScheduledView.vue'
-import { stubReferenceInvoke } from '../helpers/reference-stubs'
 import { routes, router } from '@/router'
 import type { SubscriptionSpendOverview } from '@/types'
-
-
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
 
 /** 订阅花费总览空数据（子页签挂载即拉取）。 */
 const emptySpendOverview: SubscriptionSpendOverview = {
@@ -25,16 +17,14 @@ const emptySpendOverview: SubscriptionSpendOverview = {
   projected_year_native_cents: 0,
 }
 
-/** 壳层测试只关心页签结构：子页签的 invoke 一律给最小空数据。 */
-function baseInvoke() {
-  stubReferenceInvoke({
-    list_currencies: [],
-    list_accounts: [],
-    list_categories: [],
-    list_insurers: [],
-    list_merchants: [],
-    subscription_spend_overview: emptySpendOverview,
-    list_scheduled_transactions: [],
+/** 壳层布线：只关心页签结构，子页签的 invoke 一律给最小空数据。
+ * 参考字典五命令不在此枚举——桩层规范夹具兑底（页签结构不渲染字典内容）。 */
+function wireShellDefaults() {
+  return wireInvokeSeam({
+    defaults: {
+      subscription_spend_overview: emptySpendOverview,
+      list_scheduled_transactions: [],
+    },
   })
 }
 
@@ -54,9 +44,7 @@ async function mountView(initialPath = '/scheduled') {
 }
 
 beforeEach(() => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  baseInvoke()
+  wireShellDefaults()
 })
 
 describe('ScheduledView 「定时」视图三页签（issue #202）', () => {
@@ -178,18 +166,13 @@ function planDetailOf(id: string, overrides: Partial<ScheduledTransactionDetail[
   }
 }
 
-/** 清单 + 详情命令桩：详情按 id 返回已取消计划（清单状态过滤影响不到弹窗）。 */
+/** 详情叠加桩：get_scheduled_transaction_detail 自接，其余委托回壳层接线。 */
 function withPlanDetailInvoke() {
-  stubReferenceInvoke({
-    list_currencies: [],
-    list_accounts: [],
-    list_categories: [],
-    list_merchants: [],
-    subscription_spend_overview: emptySpendOverview,
-    list_scheduled_transactions: [],
-    get_scheduled_transaction_detail: (args) =>
-      Promise.resolve(planDetailOf(String(args?.id))),
-  })
+  const base = mockInvoke.getMockImplementation()!
+  mockInvoke.mockImplementation((cmd, args) =>
+    cmd === 'get_scheduled_transaction_detail'
+      ? Promise.resolve(planDetailOf(String(args?.id)))
+      : base(cmd, args))
 }
 
 describe('计划来源落点（issue #707）：focus 读一次 → 形态页签 + 计划详情弹窗', () => {
@@ -243,7 +226,7 @@ describe('计划来源落点（issue #707）：focus 读一次 → 形态页签 
 
   it('无 focus 空转：正常进入视图不拉详情（unexpected invoke 守卫即证）', async () => {
     mockInvoke.mockReset()
-    baseInvoke()
+    wireShellDefaults()
     const { wrapper } = await mountView('/scheduled')
     expect(wrapper.find('[data-testid="sub-create-open"]').exists()).toBe(true)
     expect(document.body.querySelector('[data-testid="occ-plan-note"]')).toBeNull()

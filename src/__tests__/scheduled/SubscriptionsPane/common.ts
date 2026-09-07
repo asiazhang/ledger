@@ -1,14 +1,9 @@
-import { afterEach } from 'vitest'
-import { mockInvoke } from '../../helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
-import { useReferenceStore } from '@/stores/reference'
-import { stubReferenceInvoke } from '../../helpers/reference-stubs'
+import { wireInvokeSeam } from '../../helpers/invoke-mock'
+import { mountFlushed } from '../../helpers/mount'
 import SubscriptionsPane from '@/components/scheduled/SubscriptionsPane.vue'
 import type {
   Account,
   Category,
-  Currency,
   Merchant,
   ScheduledStatus,
   ScheduledTransaction,
@@ -18,16 +13,16 @@ import type {
   SubscriptionSpendOverview,
 } from '@/types'
 
-export { mockInvoke } from '../../helpers/invoke-mock'
+/**
+ * SubscriptionsPane 测试目录薄壳（issue #748，ADR-0085 决策 7）：只承载本目录
+ * 特有夹具与编排组合——计划三件套夹具族、可变数据源（重载读最新值）、面板挂载
+ * 编排。通用布线（wireInvokeSeam）、清理四件套（全局壳层每测自动执行）、挂载与
+ * DOM 查找（helpers/mount、helpers/dom）一律上收测试辅助层，禁止薄壳再生长
+ * 通用能力。
+ */
 
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
-
-export const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-]
+// 查找助手直用测试辅助层出口（本目录惯用名 findInput 保持主题文件导入不变）。
+export { findInputByTestId as findInput } from '../../helpers/dom'
 
 export const mockAccounts: Account[] = [
   {
@@ -131,8 +126,8 @@ export function makeDetail(
 ): ScheduledTransactionDetail {
   return {
     core: plan.core,
-    // 本文件计划恒为订阅形态（makePlan 固定 kind: 'subscription'），
-    // extension 按SubscriptionPlan 全字段装配（policy_id 随 WithExt 透传）
+    // 本目录计划恒为订阅形态（makePlan 固定 kind: 'subscription'），
+    // extension 按 SubscriptionPlan 全字段装配（policy_id 随 WithExt 透传）
     extension: {
       scheduled_transaction_id: plan.core.id,
       merchant_id: plan.merchant_id,
@@ -145,7 +140,7 @@ export function makeDetail(
   }
 }
 
-// —— invoke mock：可变数据源，状态操作后重载读得到最新值 ——
+// —— 可变数据源，状态操作后重载读得到最新值 ——
 let mockPlans: ScheduledTransactionWithExt[] = []
 export const mockDetails = new Map<string, ScheduledTransactionDetail>()
 /** 订阅编辑失败开关（issue #162 拒绝路径测试用） */
@@ -176,124 +171,117 @@ export function setMockMerchants(rows: Merchant[]) {
   mockMerchantsState = rows
 }
 
-export function baseInvoke() {
-  // 参考数据：分类/账户本套夹具覆写，币种/保司走规范夹具（issue #725）；
-  // 可变库经函数型覆写派发时取值。
-  stubReferenceInvoke({
-    list_accounts: mockAccounts,
-    list_categories: mockCategories,
-    list_merchants: () => mockMerchantsState,
-    subscription_spend_overview: () => mockSpendOverview,
-    list_scheduled_transactions: () => mockPlans,
-    get_scheduled_transaction_detail: (args?: Record<string, unknown>) => {
-      const detail = mockDetails.get(String(args?.id))
-      return detail ? Promise.resolve(detail) : Promise.reject(new Error('无此计划详情'))
-    },
-    create_scheduled_transaction: (args?: Record<string, unknown>) => {
-      const input = args?.input as { kind: string; note: string | null; merchant_id: string | null }
-      const id = `new-${input.kind}-${input.note ?? ''}`
-      const plan = makePlan(
-        { id, note: input.note ?? null },
-        input.merchant_id,
-      )
-      mockPlans = [...mockPlans, plan]
-      mockDetails.set(id, makeDetail(plan, []))
-      return Promise.resolve(id)
-    },
-    create_merchant: (args?: Record<string, unknown>) => {
-      const input = args?.input as { name: string }
-      const id = `mer-new-${input.name}`
-      return Promise.resolve(id)
-    },
-    update_scheduled_transaction_status: (args?: Record<string, unknown>) => {
-      const { id, new_status } = args as { id: string; new_status: ScheduledStatus }
-      mockPlans = mockPlans.map((p) =>
-        p.core.id === id ? { ...p, core: { ...p.core, status: new_status } } : p,
-      )
-      const detail = mockDetails.get(id)
-      if (detail) {
-        mockDetails.set(id, { ...detail, core: { ...detail.core, status: new_status } })
-      }
-      return Promise.resolve()
-    },
-    update_scheduled_subscription: (args?: Record<string, unknown>) => {
-      if (failSubscriptionUpdate) {
-        return Promise.reject(new Error('订阅金额不可编辑：改价 = 取消旧计划 + 新建'))
-      }
-      const input = args?.input as {
-        id: string
-        account_id: string
-        category_id: string | null
-        merchant_id: string | null
-        note: string | null
-      }
-      mockPlans = mockPlans.map((p) =>
-        p.core.id === input.id
-          ? {
-              ...p,
-              core: {
-                ...p.core,
-                account_id: input.account_id,
-                category_id: input.category_id,
-                note: input.note,
-              },
-              merchant_id: input.merchant_id,
-            }
-          : p,
-      )
-      const detail = mockDetails.get(input.id)
-      if (detail) {
-        mockDetails.set(input.id, {
-          ...detail,
-          core: {
-            ...detail.core,
-            account_id: input.account_id,
-            category_id: input.category_id,
-            note: input.note,
-          },
-          extension: { ...detail.extension, merchant_id: input.merchant_id },
-        })
-      }
-      return Promise.resolve()
-    },
-    execute_scheduled_occurrence: (args?: Record<string, unknown>) => {
-      // 重试语义：failed 期次 → completed（issue #205 期次详情弹窗）
-      const { occurrence_id } = (args?.input ?? {}) as { occurrence_id: string }
-      for (const [id, d] of mockDetails) {
-        if (!d.occurrences.some((o) => o.id === occurrence_id && o.status === 'failed')) continue
-        mockDetails.set(id, {
-          ...d,
-          occurrences: d.occurrences.map((o) =>
-            o.id === occurrence_id ? { ...o, status: 'completed' as const } : o,
-          ),
-        })
-      }
-      return Promise.resolve('txn-new')
-    },
-  })
-}
-
-/** 定位弹窗表单内输入框：NModal teleport 到 body，需经 findComponent 锚定。 */
-export function findInput(wrapper: ReturnType<typeof mount>, testid: string) {
-  return wrapper.findComponent(`[data-testid="${testid}"]`).find('input')
-}
-
 export async function mountView() {
-  const wrapper = mount(SubscriptionsPane)
-  await flushPromises()
-  return wrapper
+  return mountFlushed(SubscriptionsPane)
 }
 
-/** 原 SubscriptionsPane.test.ts 顶层 beforeEach（280–292 行）收口：各主题文件显式调用。 */
+/** 各主题文件 beforeEach 显式调用：目录态重置 + 唯一接缝布线 + 参考数据预热。 */
 export async function setup() {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
   mockPlans = []
   mockDetails.clear()
   mockSpendOverview = emptySpendOverview
   failSubscriptionUpdate = false
   mockMerchantsState = mockMerchants
-  baseInvoke()
-  const store = useReferenceStore()
-  await store.refresh()
+  // 唯一接缝布线（ADR-0085）：账户与分类以本套夹具覆写（值与规范夹具不同，
+  // 属场景契约而非重复枚举），进 defaults 表；可变库与行为编排（订阅 CRUD、
+  // 状态机、重试、花费总览）为函数型 overrides。其余参考命令由规范夹具兑底；
+  // store 层预热 opt-in 开启：主题用例依赖参考数据就绪后的即时渲染。
+  const seam = wireInvokeSeam({
+    defaults: {
+      list_accounts: mockAccounts,
+      list_categories: mockCategories,
+    },
+    overrides: {
+      list_merchants: () => mockMerchantsState,
+      subscription_spend_overview: () => mockSpendOverview,
+      list_scheduled_transactions: () => mockPlans,
+      get_scheduled_transaction_detail: (args?: Record<string, unknown>) => {
+        const detail = mockDetails.get(String(args?.id))
+        return detail ? Promise.resolve(detail) : Promise.reject(new Error('无此计划详情'))
+      },
+      create_scheduled_transaction: (args?: Record<string, unknown>) => {
+        const input = args?.input as { kind: string; note: string | null; merchant_id: string | null }
+        const id = `new-${input.kind}-${input.note ?? ''}`
+        const plan = makePlan(
+          { id, note: input.note ?? null },
+          input.merchant_id,
+        )
+        mockPlans = [...mockPlans, plan]
+        mockDetails.set(id, makeDetail(plan, []))
+        return Promise.resolve(id)
+      },
+      create_merchant: (args?: Record<string, unknown>) => {
+        const input = args?.input as { name: string }
+        const id = `mer-new-${input.name}`
+        return Promise.resolve(id)
+      },
+      update_scheduled_transaction_status: (args?: Record<string, unknown>) => {
+        const { id, new_status } = args as { id: string; new_status: ScheduledStatus }
+        mockPlans = mockPlans.map((p) =>
+          p.core.id === id ? { ...p, core: { ...p.core, status: new_status } } : p,
+        )
+        const detail = mockDetails.get(id)
+        if (detail) {
+          mockDetails.set(id, { ...detail, core: { ...detail.core, status: new_status } })
+        }
+        return Promise.resolve()
+      },
+      update_scheduled_subscription: (args?: Record<string, unknown>) => {
+        if (failSubscriptionUpdate) {
+          return Promise.reject(new Error('订阅金额不可编辑：改价 = 取消旧计划 + 新建'))
+        }
+        const input = args?.input as {
+          id: string
+          account_id: string
+          category_id: string | null
+          merchant_id: string | null
+          note: string | null
+        }
+        mockPlans = mockPlans.map((p) =>
+          p.core.id === input.id
+            ? {
+                ...p,
+                core: {
+                  ...p.core,
+                  account_id: input.account_id,
+                  category_id: input.category_id,
+                  note: input.note,
+                },
+                merchant_id: input.merchant_id,
+              }
+            : p,
+        )
+        const detail = mockDetails.get(input.id)
+        if (detail) {
+          mockDetails.set(input.id, {
+            ...detail,
+            core: {
+              ...detail.core,
+              account_id: input.account_id,
+              category_id: input.category_id,
+              note: input.note,
+            },
+            extension: { ...detail.extension, merchant_id: input.merchant_id },
+          })
+        }
+        return Promise.resolve()
+      },
+      execute_scheduled_occurrence: (args?: Record<string, unknown>) => {
+        // 重试语义：failed 期次 → completed（issue #205 期次详情弹窗）
+        const { occurrence_id } = (args?.input ?? {}) as { occurrence_id: string }
+        for (const [id, d] of mockDetails) {
+          if (!d.occurrences.some((o) => o.id === occurrence_id && o.status === 'failed')) continue
+          mockDetails.set(id, {
+            ...d,
+            occurrences: d.occurrences.map((o) =>
+              o.id === occurrence_id ? { ...o, status: 'completed' as const } : o,
+            ),
+          })
+        }
+        return Promise.resolve('txn-new')
+      },
+    },
+    refreshReferenceStores: true,
+  })
+  await seam.ready
 }

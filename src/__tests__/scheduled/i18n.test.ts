@@ -1,11 +1,9 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockInvoke } from '../helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { wireInvokeSeam } from '../helpers/invoke-mock'
+import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { setActivePinia, createPinia } from 'pinia'
 import ScheduledView from '@/views/ScheduledView.vue'
-import { stubReferenceInvoke } from '../helpers/reference-stubs'
 import { routes } from '@/router'
 import { applyLocale } from '@/i18n'
 import { occurrenceStatusLabel, scheduledStatusLabel } from '@/utils/scheduled'
@@ -25,11 +23,6 @@ vi.mock('vue-chartjs', async () => {
   return { Bar: BarChartStub }
 })
 
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
-
 const emptySpendOverview: SubscriptionSpendOverview = {
   native_currency: 'CNY',
   this_month_native_cents: 0,
@@ -40,15 +33,14 @@ const emptySpendOverview: SubscriptionSpendOverview = {
   projected_year_native_cents: 0,
 }
 
-function baseInvoke() {
-  stubReferenceInvoke({
-    list_currencies: [],
-    list_accounts: [],
-    list_categories: [],
-    list_insurers: [],
-    list_merchants: [],
-    subscription_spend_overview: emptySpendOverview,
-    list_scheduled_transactions: [],
+function wireI18nDefaults() {
+  // 唯一接缝布线（ADR-0085）：只给页签与卡片标题所需的最小空数据；参考字典
+  // 五命令不在此枚举（规范夹具兑底，i18n 文案断言不依赖字典内容）。
+  return wireInvokeSeam({
+    defaults: {
+      subscription_spend_overview: emptySpendOverview,
+      list_scheduled_transactions: [],
+    },
   })
 }
 
@@ -62,9 +54,7 @@ async function mountView() {
 }
 
 beforeEach(() => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  baseInvoke()
+  wireI18nDefaults()
 })
 
 describe('定时计划域 i18n（默认 zh-CN，切换 en-US 即时生效）', () => {

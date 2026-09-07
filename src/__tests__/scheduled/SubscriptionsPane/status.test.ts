@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { NPopconfirm } from 'naive-ui'
-import { mockDetails, makeDetail, makePlan, mockInvoke, mountView, setMockPlans, setup } from './common'
+import { mockDetails, makeDetail, makePlan, mountView, setMockPlans, setup } from './common'
+import { mockInvoke } from '../../helpers/invoke-mock'
 
 beforeEach(setup)
 

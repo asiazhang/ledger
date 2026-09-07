@@ -1,5 +1,6 @@
-import { merchantDb, mockCurrencies, mockAccounts, mountView, mountViewSync, listCalls, lastListFilter, tablePagination, bodyRows, openMenuOnRow, selectRowMenu, clickDialogButton } from './common'
-import { stubReferenceInvoke } from '../helpers/reference-stubs'
+import { mountView, mountViewSync, listCalls, lastListFilter, tablePagination, bodyRows, openMenuOnRow, selectRowMenu } from './common'
+import { wireInvokeSeam } from '../helpers/invoke-mock'
+import { clickDialogButton } from '../helpers/dom'
 import { describe, it, expect } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { NDataTable } from 'naive-ui'
@@ -71,17 +72,15 @@ describe('TransactionsView 服务端分页', () => {
 
   it('查询期间 loading 状态可见', async () => {
     let resolveList!: (v: unknown) => void
-    stubReferenceInvoke({
-      list_currencies: mockCurrencies,
-      list_accounts: mockAccounts,
-      list_categories: [],
-      list_insurers: [],
-      list_merchants: () => merchantDb,
-      // 领域命令：list_transactions 挂起不兑（loading 断言）
-      list_transactions: () =>
-        new Promise((resolve) => {
-          resolveList = resolve
-        }),
+    // 接缝重布线：整体替换实现，仅 list_transactions 挂起不兑（loading 断言）；
+    // 参考命令由规范夹具兑底（本用例不断言字典内容），其余命令不需布线。
+    wireInvokeSeam({
+      overrides: {
+        list_transactions: () =>
+          new Promise((resolve) => {
+            resolveList = resolve
+          }),
+      },
     })
     const wrapper = mountViewSync()
     await flushPromises()

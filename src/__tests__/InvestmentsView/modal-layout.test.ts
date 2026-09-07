@@ -1,16 +1,12 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockInvoke } from '../helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
-import { h, nextTick } from 'vue'
-import { NDialogProvider } from 'naive-ui'
-import { setActivePinia, createPinia } from 'pinia'
-import { listen } from '@tauri-apps/api/event'
-import { useReferenceStore } from '@/stores/reference'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { wireInvokeSeam } from '../helpers/invoke-mock'
+import { nextTick } from 'vue'
+import { flushPromises } from '@vue/test-utils'
+import { mountFlushed, mountWithDialog } from '../helpers/mount'
 import CreateInstrumentModal from '@/components/investments/CreateInstrumentModal.vue'
 import ManualPriceModal from '@/components/investments/ManualPriceModal.vue'
 import InstrumentBrowser from '@/components/investments/InstrumentBrowser.vue'
 import { makeInstrument } from '../factories'
-import { stubReferenceInvoke } from '../helpers/reference-stubs'
 
 // 投资弹窗族排版统一（issue #638，spec #630）：五个弹窗的卡片外观收敛为
 // AppModal cardSize 单一声明——自建标的创建、手动报价、添加基金、全量同步
@@ -20,37 +16,30 @@ import { stubReferenceInvoke } from '../helpers/reference-stubs'
 // 不深究 naive-ui 内部实现；开合编排与快捷键抑制（ADR-0035/ADR-0072）不在
 // 本测试断言面内，由既有 InstrumentBrowser/CreateInstrumentModal/
 // ManualPriceModal 测试保障。
-
-const mockListen = vi.mocked(listen)
+// 布线走唯一接缝（issue #748）：标的清单契约进 defaults 表、同步动作为
+// overrides；参考字典五命令由规范夹具兑底；store 层预热 opt-in 开启
+// （币种选项为 self-init，弹窗内下拉依赖就绪后的渲染，先例：
+// CreateInstrumentModal.test.ts）。清理四件套由全局壳层承担。
 
 const mockInstruments = [
   makeInstrument({ id: 'inst-1' }),
   makeInstrument({ id: 'inst-2', symbol: '000001', name: '平安银行', market: 'sz' }),
 ]
 
-// NModal 内容 teleport 到 document.body：每测后卸载并清空 body，
-// 避免前一用例的弹窗残留污染查询（先例：InstrumentBrowser.test.ts）。
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
+// NModal 内容 teleport 到 document.body：弹窗残留的清理与卸载由全局壳层
+// 每测自动执行（issue #748）。
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  mockListen.mockReset()
-  mockListen.mockImplementation(() => Promise.resolve(() => {}))
-  stubReferenceInvoke({
-    list_accounts: [],
-    list_categories: [],
-    list_merchants: [],
-    list_insurers: [],
-    list_instruments: { items: mockInstruments, total: mockInstruments.length },
-    sync_instruments: () => Promise.resolve(undefined),
+  const seam = wireInvokeSeam({
+    defaults: {
+      list_instruments: { items: mockInstruments, total: mockInstruments.length },
+    },
+    overrides: {
+      sync_instruments: () => Promise.resolve(undefined),
+    },
+    refreshReferenceStores: true,
   })
-  localStorage.clear()
-  // 参考数据（币种选项）为 self-init，提前预热（先例：CreateInstrumentModal.test.ts）
-  await useReferenceStore().refresh()
+  await seam.ready
 })
 
 /** 卡片根元素（preset="card" 下卡片即 NCard 根；单测内同时只开一个弹窗）。 */
@@ -68,9 +57,7 @@ function expectCardSizeMd(card: HTMLElement) {
 
 /** 组件顶层调用 useAppDialog（删除二次确认），与 App.vue 同构需 NDialogProvider 包裹（先例：InstrumentBrowser.test.ts）。 */
 function mountBrowser() {
-  return mount(NDialogProvider, {
-    slots: { default: () => h(InstrumentBrowser) },
-  })
+  return mountWithDialog(InstrumentBrowser)
 }
 
 async function clickToolbarButton(wrapper: ReturnType<typeof mountBrowser>, testid: string) {
@@ -90,16 +77,14 @@ async function clickBody(testid: string) {
 
 describe('投资弹窗族排版统一（issue #638）', () => {
   it('自建标的创建弹窗归 md 档且默认无边框', async () => {
-    mount(CreateInstrumentModal, { props: { show: true } })
-    await flushPromises()
+    await mountFlushed(CreateInstrumentModal, { props: { show: true } })
     expectCardSizeMd(modalCard())
   })
 
   it('手动报价弹窗归 md 档且默认无边框', async () => {
-    mount(ManualPriceModal, {
+    await mountFlushed(ManualPriceModal, {
       props: { show: true, instrument: makeInstrument({ id: 'inst-quote-1' }) },
     })
-    await flushPromises()
     expectCardSizeMd(modalCard())
   })
 

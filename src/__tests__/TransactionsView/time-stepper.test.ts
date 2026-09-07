@@ -6,8 +6,8 @@ import {
   lastListFilter,
   tablePagination,
   setReportDateRange,
-  mockInvoke,
 } from './common'
+import { mockInvoke } from '../helpers/invoke-mock'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NButton } from 'naive-ui'
