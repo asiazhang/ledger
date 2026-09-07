@@ -274,6 +274,16 @@ pub(crate) fn eligible_account_ids(all: &[Account]) -> Vec<String> {
 /// [`accounts::list_account_balances_with_visibility`]（读缓存，缓存行缺失
 /// 报码化错误）、实时侧 [`balance::compute_all_balances_with_visibility`]；
 /// 任何漂移让量测作废（基准不许跑在坏缓存路径上）。
+///
+/// 与共享断言库
+/// [`tauri_app_lib::test_support::assert_balance_cache_matches_realtime`]
+/// 的分工边界（issue #776 裁决，甲案不归一）：两份实现刻意不同、各自长期
+/// 存在，非漏收编——本函数属基准工具域正确性底线：Result 契约（失败给可读
+/// 报告让量测作废，非 panic；bin 生产路径在 ADR-0060 六件套 deny 下，panic
+/// 形态需另行豁免论证）+ 生产读出口接缝（要验证的正是生产读路径没跑在坏
+/// 缓存上）；共享版本属测试域对拍：panic 契约 + 逐账户 `compute_balance`
+/// 审计口径（ADR-0084 决策 6 收编清单不含本函数，决策 1 准入规则只收跨
+/// ≥2 域重复）。
 pub(crate) fn assert_cache_matches_realtime(conn: &Connection) -> Result<(), String> {
     let cached = accounts::list_account_balances_with_visibility(conn, true)
         .map_err(|e| format!("余额缓存读取失败（缓存行缺失即不变量破坏）：{e}"))?;
