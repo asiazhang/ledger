@@ -152,11 +152,18 @@ fn invalid_code_rejected_before_fetch() {
 
 #[test]
 fn validate_fund_code_accepts_six_digits_only() {
+    // 接受侧全部契约（载荷 Result<()>，拒绝一切入参的实现会使其变红）。
     assert!(validate_fund_code("000001").is_ok());
     assert!(validate_fund_code("510300").is_ok());
-    assert!(validate_fund_code("１２３４５").is_err()); // 全角数字不算 ASCII 数字
-    assert!(validate_fund_code("000 01").is_err());
-    assert!(validate_fund_code("abc123").is_err());
+    // 拒绝侧消费码化错误（issue #778）：非 6 位 ASCII 数字（全角数字不算）一律
+    // 以 fund.code-invalid 拒绝。
+    for bad in ["１２３４５", "000 01", "abc123"] {
+        let err = validate_fund_code(bad).unwrap_err();
+        assert!(
+            err.is_code("fund.code-invalid"),
+            "「{bad}」应以 fund.code-invalid 拒绝，实际 {err:?}"
+        );
+    }
 }
 
 #[test]
