@@ -50,7 +50,7 @@ pub(super) struct HeldInstrument {
 }
 
 impl HeldInstrument {
-    /// 是否走行情通道：股票与场内 ETF（stock|etf，issue #695 / ADR-0081 决策 6）。
+    /// 是否走行情通道：股票与场内 ETF（stock|etf，issue #695 / spec #690 方案 6）。
     /// 场内 ETF 与股票共用东财行情报价/日 K 接口族，按市场+代码构造 secid 同路
     /// 刷价与回填；市场未知仍无法构造 secid，照常计入跳过。
     fn is_quote_channel(&self) -> bool {
@@ -158,7 +158,7 @@ where
         let items = fetch(&secids.join(","))?;
         for item in &items {
             if let Some(inst) = meta.get(&item.code) {
-                // f2≤0（停牌/无效价）经 deserialize_f2 已过滤为 None，此处跳过、保留旧价。
+                // f2≤0（停牌/无效价）经 deserialize_positive_f64 已过滤为 None，此处跳过、保留旧价。
                 if let Some(raw) = item.price {
                     // 换算按随行精度位单点（场内 ETF 三位小数报价，#695；缺 f1 按市场回退）。
                     let price = price_cents_from_raw(raw, item.precision, &inst.market);

@@ -183,7 +183,7 @@ fn ulist_items_carry_precision_and_convert_etf_scale() {
 #[test]
 fn ulist_items_without_precision_fall_back_to_market_scale() {
     // 缺 f1（旧形态响应 / 全量同步 clist 通道不带 f1）→ None：按市场回退，
-    // 股票行为与既有 f2_to_price 完全一致（回退分支只兕异常/旧形态）。
+    // 股票行为与既有 f2_to_price 完全一致（回退分支只兜异常/旧形态）。
     let json = r#"{"rc":0,"data":{"total":1,"diff":[{"f2":4634,"f12":"510300","f14":"沪深300ETF华泰柏瑞"}]}}"#;
     let resp: UlistResponse = serde_json::from_str(json).unwrap();
     let items = resp.data.unwrap().diff.unwrap().into_items();
@@ -1277,62 +1277,11 @@ fn fund_nav_fetch_error_propagates() {
     assert!(err.to_string().contains("模拟净值请求失败"));
 }
 
-#[test]
-fn fund_and_stock_partitions_roll_up_into_one_result() {
-    let conn = crate::test_support::open();
-    insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
-    insert_holding(
-        &conn,
-        "acc-2",
-        "inst-fund",
-        "110022",
-        "fund",
-        "CNY",
-        "unknown",
-    );
-    insert_holding(
-        &conn,
-        "acc-3",
-        "inst-namefund",
-        "华夏成长混合",
-        "fund",
-        "CNY",
-        "unknown",
-    );
-    insert_holding(
-        &conn,
-        "acc-4",
-        "inst-bond",
-        "019547",
-        "bond",
-        "CNY",
-        "unknown",
-    );
-
-    let pages = [("110022", vec![nav_page(1, &[("2026-01-30", 3.348)])])];
-    let requested = RefCell::new(Vec::new());
-    let prices = [("600519", Some(130280.0))];
-    let mut fetch = mock_fetch(&prices);
-    let mut nav = mock_nav(&pages, &requested);
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut nav).unwrap();
-
-    // synced = 股票 1 + 基金 1；skipped = 名称充代码基金 + 债券；written = 2。
-    assert_eq!(result.synced, 2);
-    assert_eq!(result.skipped, 2);
-    assert_eq!(result.written, 2);
-    assert_eq!(result.message, "已同步 2 只，跳过 2 只");
-    assert_eq!(market_price_of(&conn, "inst-sh"), Some(13028000));
-    assert_eq!(
-        fund_price_of(&conn, "inst-fund"),
-        Some((33480, Some("2026-01-30".into())))
-    );
-}
-
 // ---------------------------------------------------------------------------
-// ETF 行情分区（issue #695 / ADR-0081 决策 6）：行情分区从仅 stock 扩为
+// ETF 行情分区（issue #695 / spec #690 方案 6）：行情分区从仅 stock 扩为
 // stock|etf——场内 ETF 持仓与股票同走批量报价/日 K 通道；fund 仍走净值通道；
-// 债券等无行情来源标的仍计入跳过。离线注入桩钉住三分区行为。
+// 债券等无行情来源标的仍计入跳过。离线注入桩钉住三分区行为；
+// three_type_partitions_roll_up_into_one_result 收编既有 fund+stock 汇总用例。
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1517,8 +1466,8 @@ fn three_type_partitions_roll_up_into_one_result() {
 #[test]
 fn us_quotes_deserialize_with_thousand_scale() {
     // 真实 ulist.np/get 响应样本（2026-01 实测，一次携带纳斯达克 105.AAPL /
-    // 纽交所 106.BABA / 美交所 107.SPY；f1 精度位随行返回但本通道不消费，
-    // 刻度按市场单点换算：美股 f2 与港股同为 3 位小数 ×1000）。
+    // 纽交所 106.BABA / 美交所 107.SPY；f1 精度位随行返回、经换算单点消费，
+    // 美股 Some(3) 与市场回退同刻度；刻度按市场单点换算：美股 f2 与港股同为 3 位小数 ×1000）。
     let json = r#"{"rc":0,"rt":11,"svr":177542528,"lt":1,"full":1,"dlmkts":"8,10,128","dsc":"0","data":{"total":3,"diff":[{"f1":3,"f2":319970,"f12":"AAPL","f14":"苹果"},{"f1":3,"f2":113240,"f12":"BABA","f14":"阿里巴巴"},{"f1":3,"f2":770190,"f12":"SPY","f14":"标普500ETF-SPDR"}]}}"#;
     let resp: UlistResponse = serde_json::from_str(json).unwrap();
     let items = resp.data.unwrap().diff.unwrap().into_items();

@@ -152,14 +152,16 @@ pub(super) struct StockItem {
     pub(super) code: String,
     #[serde(rename = "f14", default)]
     pub(super) name: String,
-    #[serde(rename = "f2", default, deserialize_with = "deserialize_f2")]
+    #[serde(rename = "f2", default, deserialize_with = "deserialize_positive_f64")]
     pub(super) price: Option<f64>,
     /// 价格小数位（f1；缺省/异常时为 None，换算按市场回退）。
-    #[serde(rename = "f1", default, deserialize_with = "deserialize_f2")]
+    #[serde(rename = "f1", default, deserialize_with = "deserialize_positive_f64")]
     pub(super) precision: Option<f64>,
 }
 
-fn deserialize_f2<'de, D>(d: D) -> std::result::Result<Option<f64>, D::Error>
+/// 把可能缺失/非数值/非正数的字段（f2 价格、f1 精度位；停牌为 "-"、无效价 ≤0）
+/// 宽容为 Option<f64>：仅接受正数，其余一律 None。
+fn deserialize_positive_f64<'de, D>(d: D) -> std::result::Result<Option<f64>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
