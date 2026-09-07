@@ -11,7 +11,7 @@ use tauri_app_lib::item::cost;
 use tauri_app_lib::item::domain;
 
 use crate::common::assert_last_error_contains;
-use crate::items_common::{build_input, nth_item};
+use crate::items_common::build_input;
 use crate::world::LedgerWorld;
 
 /// 填备注：空字符串规为清除（None），其余原样。
@@ -24,7 +24,7 @@ fn with_note(mut input: ItemInput, note: &str) -> ItemInput {
     input
 }
 
-/// 修改最近创建的物品（`world.last_item_id`）并要求成功；备注空字符串规为清除（None）。
+/// 修改最近创建的物品（`world.item.last_item_id`）并要求成功；备注空字符串规为清除（None）。
 #[when(
     expr = "修改物品名称为 {string} 购买日期 {string} 总成本 {int} 币种 {string} 备注为 {string}"
 )]
@@ -38,6 +38,7 @@ fn update_item(
 ) {
     let mut signals = 0;
     let id = world
+        .item
         .last_item_id
         .clone()
         .unwrap_or_else(|| panic!("没有已创建的物品可修改"));
@@ -48,7 +49,7 @@ fn update_item(
         &mut || signals += 1,
     );
     match result {
-        Ok(()) => world.item_signal_count = signals,
+        Ok(()) => world.item.item_signal_count = signals,
         Err(e) => panic!("修改物品应成功但失败: {e}"),
     }
 }
@@ -86,6 +87,7 @@ fn try_update_item(
     let mut signals = 0;
     // 不存在场景传固定假 id，真实走到 query_one 落空的 NotFound 路径
     let id = world
+        .item
         .last_item_id
         .clone()
         .unwrap_or_else(|| "no-such-item".into());
@@ -95,7 +97,7 @@ fn try_update_item(
         with_note(build_input(&name, date, cost_cents, &currency), &note),
         &mut || signals += 1,
     );
-    world.item_signal_count = signals;
+    world.item.item_signal_count = signals;
     world.last_error = match result {
         Err(AppError::Invalid(msg)) => Some(msg),
         Err(e) => Some(e.to_string()),
@@ -105,33 +107,34 @@ fn try_update_item(
 
 #[then(expr = "第 {int} 件物品版本应为 {int}")]
 fn check_item_version(world: &mut LedgerWorld, n: usize, version: i64) {
-    assert_eq!(nth_item(world, n).item.version, version);
+    assert_eq!(world.item.nth(n).item.version, version);
 }
 
 #[then(expr = "第 {int} 件物品备注应为 {string}")]
 fn check_item_note(world: &mut LedgerWorld, n: usize, note: String) {
-    assert_eq!(nth_item(world, n).item.note.as_deref(), Some(note.as_str()));
+    assert_eq!(world.item.nth(n).item.note.as_deref(), Some(note.as_str()));
 }
 
 #[then(expr = "第 {int} 件物品备注应为空")]
 fn check_item_note_empty(world: &mut LedgerWorld, n: usize) {
-    assert_eq!(nth_item(world, n).item.note, None);
+    assert_eq!(world.item.nth(n).item.note, None);
 }
 
 #[when(expr = "记住第 {int} 件物品的创建时间")]
 fn remember_item_created_at(world: &mut LedgerWorld, n: usize) {
-    world.items_list = domain::list_items(&world_conn!(world)).expect("列出物品失败");
-    world.remembered_item_created_at = Some(nth_item(world, n).item.created_at.clone());
+    world.item.items_list = domain::list_items(&world_conn!(world)).expect("列出物品失败");
+    world.item.remembered_item_created_at = Some(world.item.nth(n).item.created_at.clone());
 }
 
 #[then(expr = "第 {int} 件物品创建时间应与记住的一致")]
 fn check_item_created_at_preserved(world: &mut LedgerWorld, n: usize) {
     let remembered = world
+        .item
         .remembered_item_created_at
         .as_deref()
         .unwrap_or_else(|| panic!("没有记住的创建时间（先调「记住…创建时间」步骤）"));
     assert_eq!(
-        nth_item(world, n).item.created_at,
+        world.item.nth(n).item.created_at,
         remembered,
         "修改不应改动 created_at"
     );
@@ -146,7 +149,7 @@ fn check_item_cost_breakdown(
     days: i64,
     per_day: f64,
 ) {
-    let entry = nth_item(world, n);
+    let entry = world.item.nth(n);
     assert_eq!(entry.numerator_cents, numerator, "成本分解分子不匹配");
     assert_eq!(entry.used_days, days, "成本分解天数不匹配");
     assert!(

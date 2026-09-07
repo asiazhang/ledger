@@ -32,7 +32,7 @@ fn legacy_txn(
             params![id, amount, account_id, note, date, now, device_id()],
         )
         .unwrap();
-    world.last_transaction_id = Some(id);
+    world.txn.last_transaction_id = Some(id);
 }
 
 /// 存量外币交易：直接 SQL 插入，原始币种分与本位币分显式分叉（模拟汇率折算后
@@ -72,7 +72,7 @@ fn legacy_foreign_txn(
 
 #[when(expr = "搜索 {string}")]
 fn search(world: &mut LedgerWorld, query: String) {
-    world.last_search = Some(
+    world.txn.last_search = Some(
         search_transactions_internal(&world_conn!(world), &query, 1, 20, None, None, None, None)
             .expect("搜索失败"),
     );
@@ -80,7 +80,7 @@ fn search(world: &mut LedgerWorld, query: String) {
 
 #[when(expr = "搜索 {string} 第 {int} 页 每页 {int} 条")]
 fn search_paged(world: &mut LedgerWorld, query: String, page: usize, page_size: usize) {
-    world.last_search = Some(
+    world.txn.last_search = Some(
         search_transactions_internal(
             &world_conn!(world),
             &query,
@@ -98,7 +98,7 @@ fn search_paged(world: &mut LedgerWorld, query: String, page: usize, page_size: 
 /// 关键字 + 金额区间（分）AND 组合。
 #[when(expr = "搜索 {string} 金额区间 {int} 至 {int} 分")]
 fn search_keyword_amount_range(world: &mut LedgerWorld, query: String, min: i64, max: i64) {
-    world.last_search = Some(
+    world.txn.last_search = Some(
         search_transactions_internal(
             &world_conn!(world),
             &query,
@@ -116,7 +116,7 @@ fn search_keyword_amount_range(world: &mut LedgerWorld, query: String, min: i64,
 /// 关键字 + 日期区间（含边界）AND 组合。
 #[when(expr = "搜索 {string} 日期区间 {string} 至 {string}")]
 fn search_keyword_date_range(world: &mut LedgerWorld, query: String, from: String, to: String) {
-    world.last_search = Some(
+    world.txn.last_search = Some(
         search_transactions_internal(
             &world_conn!(world),
             &query,
@@ -134,7 +134,7 @@ fn search_keyword_date_range(world: &mut LedgerWorld, query: String, from: Strin
 /// 仅金额筛选（无关键字）：金额区间（分，含边界）。
 #[when(expr = "搜索金额区间 {int} 至 {int} 分")]
 fn search_amount_range(world: &mut LedgerWorld, min: i64, max: i64) {
-    world.last_search = Some(
+    world.txn.last_search = Some(
         search_transactions_internal(
             &world_conn!(world),
             "",
@@ -154,7 +154,7 @@ fn search_amount_range(world: &mut LedgerWorld, min: i64, max: i64) {
 fn search_amount_range_yuan(world: &mut LedgerWorld, min: f64, max: f64) {
     let min_cents = (min * 100.0).round() as i64;
     let max_cents = (max * 100.0).round() as i64;
-    world.last_search = Some(
+    world.txn.last_search = Some(
         search_transactions_internal(
             &world_conn!(world),
             "",
@@ -172,7 +172,7 @@ fn search_amount_range_yuan(world: &mut LedgerWorld, min: f64, max: f64) {
 /// 仅金额筛选（无关键字）：单边下限（分，含边界）。
 #[when(expr = "搜索金额下限 {int} 分")]
 fn search_amount_min(world: &mut LedgerWorld, min: i64) {
-    world.last_search = Some(
+    world.txn.last_search = Some(
         search_transactions_internal(&world_conn!(world), "", 1, 20, Some(min), None, None, None)
             .expect("搜索失败"),
     );
@@ -181,7 +181,7 @@ fn search_amount_min(world: &mut LedgerWorld, min: i64) {
 /// 仅金额筛选（无关键字）：单边上限（分，含边界）。
 #[when(expr = "搜索金额上限 {int} 分")]
 fn search_amount_max(world: &mut LedgerWorld, max: i64) {
-    world.last_search = Some(
+    world.txn.last_search = Some(
         search_transactions_internal(&world_conn!(world), "", 1, 20, None, Some(max), None, None)
             .expect("搜索失败"),
     );
@@ -190,7 +190,7 @@ fn search_amount_max(world: &mut LedgerWorld, max: i64) {
 /// 仅日期筛选（无关键字）：日期区间（含边界）。
 #[when(expr = "搜索日期区间 {string} 至 {string}")]
 fn search_date_range(world: &mut LedgerWorld, from: String, to: String) {
-    world.last_search = Some(
+    world.txn.last_search = Some(
         search_transactions_internal(
             &world_conn!(world),
             "",
@@ -210,7 +210,7 @@ fn search_date_range(world: &mut LedgerWorld, from: String, to: String) {
 // ---------------------------------------------------------------------------
 
 fn search_snapshot(world: &LedgerWorld) -> &TransactionSearchResult {
-    world.last_search.as_ref().expect("尚未执行搜索")
+    world.txn.last_search.as_ref().expect("尚未执行搜索")
 }
 
 #[then(expr = "搜索命中 {int} 条")]

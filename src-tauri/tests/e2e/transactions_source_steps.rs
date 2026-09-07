@@ -3,7 +3,7 @@
 //! 断言口径是命令输出本身（好测试只测外部行为）：列表断言经
 //! `list_transactions_internal` 现查（与列表命令同一排序：date DESC,
 //! created_at DESC, id DESC），搜索断言读 `search_steps.rs` 的
-//! `world.last_search` 快照。保单/商户/账户 Given 复用 `policies_steps.rs` /
+//! `world.txn.last_search` 快照。保单/商户/账户 Given 复用 `policies_steps.rs` /
 //! `merchants_steps.rs` / `accounts_steps.rs` 已注册步骤。
 
 use cucumber::then;
@@ -144,6 +144,7 @@ fn nth_source(world: &mut LedgerWorld, list: NthList, index: usize) -> Transacti
             result.items.into_iter().nth(index - 1)
         }
         NthList::Search => world
+            .txn
             .last_search
             .clone()
             .expect("搜索结果快照缺失（先执行搜索步骤）")
@@ -283,6 +284,7 @@ fn search_nth_source_policy(
     product_name: String,
 ) {
     let snapshot = world
+        .txn
         .last_search
         .clone()
         .expect("搜索结果快照缺失（先执行搜索步骤）");
@@ -300,6 +302,7 @@ fn search_nth_source_policy(
 #[then(expr = "搜索结果第 {int} 条应无来源")]
 fn search_nth_no_source(world: &mut LedgerWorld, index: usize) {
     let snapshot = world
+        .txn
         .last_search
         .clone()
         .expect("搜索结果快照缺失（先执行搜索步骤）");

@@ -17,7 +17,7 @@ use crate::world::LedgerWorld;
 // 自选参考日重算（issue #121）：计算接口接受可选参考日，缺省沿用列表口径
 // ---------------------------------------------------------------------------
 
-/// 计算最近创建的物品（`world.last_item_id`）每天使用成本的共用入口。
+/// 计算最近创建的物品（`world.item.last_item_id`）每天使用成本的共用入口。
 fn calc_item_cost(
     world: &mut LedgerWorld,
     id: &str,
@@ -30,23 +30,25 @@ fn calc_item_cost(
 #[when(expr = "按最近创建的物品计算每天成本 不带参考日")]
 fn calc_item_cost_default(world: &mut LedgerWorld) {
     let id = world
+        .item
         .last_item_id
         .clone()
         .unwrap_or_else(|| panic!("没有已创建的物品可计算"));
-    world.last_item_cost = Some(calc_item_cost(world, &id, None).expect("计算每天成本应成功"));
+    world.item.last_item_cost = Some(calc_item_cost(world, &id, None).expect("计算每天成本应成功"));
 }
 
 /// 自选参考日 = 今天前 N 天（相对日期，保证天数可静态断言）。
 #[when(expr = "按最近创建的物品计算每天成本 今天前 {int} 天为参考日")]
 fn calc_item_cost_days_ago(world: &mut LedgerWorld, days_ago: i64) {
     let id = world
+        .item
         .last_item_id
         .clone()
         .unwrap_or_else(|| panic!("没有已创建的物品可计算"));
     let date = (cost::today() - chrono::Duration::days(days_ago))
         .format("%Y-%m-%d")
         .to_string();
-    world.last_item_cost =
+    world.item.last_item_cost =
         Some(calc_item_cost(world, &id, Some(date)).expect("计算每天成本应成功"));
 }
 
@@ -54,13 +56,14 @@ fn calc_item_cost_days_ago(world: &mut LedgerWorld, days_ago: i64) {
 #[when(expr = "按最近创建的物品计算每天成本 今天后 {int} 天为参考日")]
 fn calc_item_cost_days_later(world: &mut LedgerWorld, days_later: i64) {
     let id = world
+        .item
         .last_item_id
         .clone()
         .unwrap_or_else(|| panic!("没有已创建的物品可计算"));
     let date = (cost::today() + chrono::Duration::days(days_later))
         .format("%Y-%m-%d")
         .to_string();
-    world.last_item_cost =
+    world.item.last_item_cost =
         Some(calc_item_cost(world, &id, Some(date)).expect("计算每天成本应成功"));
 }
 
@@ -68,10 +71,11 @@ fn calc_item_cost_days_later(world: &mut LedgerWorld, days_later: i64) {
 #[when(expr = "按最近创建的物品计算每天成本 参考日 {string}")]
 fn calc_item_cost_fixed_ref(world: &mut LedgerWorld, date: String) {
     let id = world
+        .item
         .last_item_id
         .clone()
         .unwrap_or_else(|| panic!("没有已创建的物品可计算"));
-    world.last_item_cost =
+    world.item.last_item_cost =
         Some(calc_item_cost(world, &id, Some(date)).expect("计算每天成本应成功"));
 }
 
@@ -80,6 +84,7 @@ fn calc_item_cost_fixed_ref(world: &mut LedgerWorld, date: String) {
 fn try_calc_item_cost(world: &mut LedgerWorld, date: String) {
     // 不存在场景传固定假 id，真实走到 query_one 落空的 NotFound 路径（同其它步骤惯例）
     let id = world
+        .item
         .last_item_id
         .clone()
         .unwrap_or_else(|| "no-such-item-id".into());
@@ -102,6 +107,7 @@ fn try_calc_item_cost_missing(world: &mut LedgerWorld) {
 #[then(expr = "计算结果已用天数应为 {int} 分子应为 {int} 每天成本应为 {float}")]
 fn check_calc_item_cost(world: &mut LedgerWorld, days: i64, numerator: i64, per_day: f64) {
     let result = world
+        .item
         .last_item_cost
         .as_ref()
         .unwrap_or_else(|| panic!("没有计算结果（先调「按最近创建的物品计算每天成本」）"));
@@ -128,12 +134,12 @@ fn check_calc_item_cost_error(world: &mut LedgerWorld, expected: String) {
 fn query_item_daily_total(world: &mut LedgerWorld) {
     match item_daily_total(&world_conn!(world)) {
         Ok(total) => {
-            world.last_item_daily_total = Some(total);
+            world.item.last_item_daily_total = Some(total);
             world.last_error = None;
         }
         Err(e) => {
             world.last_error = Some(e.to_string());
-            world.last_item_daily_total = None;
+            world.item.last_item_daily_total = None;
         }
     }
 }
@@ -142,6 +148,7 @@ fn query_item_daily_total(world: &mut LedgerWorld) {
 #[then(expr = "在用物品每天成本合计应为 {float} 本位币应为 {string} 件数应为 {int}")]
 fn check_item_daily_total(world: &mut LedgerWorld, per_day: f64, currency: String, count: usize) {
     let total = world
+        .item
         .last_item_daily_total
         .as_ref()
         .expect("未查询到合计（先调「查询在用物品每天成本合计」）");

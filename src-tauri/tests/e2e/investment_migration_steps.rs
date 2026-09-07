@@ -138,16 +138,16 @@ fn batch_import_trades(world: &mut LedgerWorld, #[step] step: &Step) {
     // buy 行交易 id 按导入先后累积（「持仓批次按导入先后锚定顺序」步骤的输入）。
     for (kind, result) in kinds.iter().zip(&results) {
         if let (TransactionKind::Buy, Some(id)) = (kind, &result.id) {
-            world.imported_buy_txn_ids.push(id.clone());
+            world.asset.imported_buy_txn_ids.push(id.clone());
         }
     }
-    world.last_batch_results = results;
+    world.txn.last_batch_results = results;
 }
 
 /// 回填批次 created_at 锚定「先导入先消耗」的确定性顺序（夹具手段，见模块文档）。
 #[when(expr = "持仓批次按导入先后锚定顺序")]
 fn anchor_lot_order(world: &mut LedgerWorld) {
-    let ids = world.imported_buy_txn_ids.clone();
+    let ids = world.asset.imported_buy_txn_ids.clone();
     let conn = world_conn!(world);
     for (i, txn_id) in ids.iter().enumerate() {
         // 分/秒进位避免分钟数溢出（批次数不受 60 限制）
@@ -166,8 +166,12 @@ fn anchor_lot_order(world: &mut LedgerWorld) {
 
 #[then(expr = "导入的投资交易应有 {int} 行全部成功")]
 fn assert_imported_trades_all_success(world: &mut LedgerWorld, expected: usize) {
-    assert_eq!(world.last_batch_results.len(), expected, "导入结果行数不符");
-    for r in &world.last_batch_results {
+    assert_eq!(
+        world.txn.last_batch_results.len(),
+        expected,
+        "导入结果行数不符"
+    );
+    for r in &world.txn.last_batch_results {
         assert!(r.success, "导入行应成功: {r:?}");
         assert!(!r.duplicate, "首次导入不应命中重复: {r:?}");
         assert!(r.id.is_some(), "成功行应返回交易 id: {r:?}");

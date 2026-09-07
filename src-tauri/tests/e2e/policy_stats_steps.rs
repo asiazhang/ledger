@@ -32,7 +32,8 @@ fn delete_policy_by_number(world: &mut LedgerWorld, number: String) {
 fn query_policy_stats(world: &mut LedgerWorld, today: String) {
     let today =
         chrono::NaiveDate::parse_from_str(&today, "%Y-%m-%d").expect("今日日期应为 YYYY-MM-DD");
-    world.policy_stats_list = policy_stats(&world_conn!(world), today).expect("查询保单统计失败");
+    world.policy.policy_stats_list =
+        policy_stats(&world_conn!(world), today).expect("查询保单统计失败");
 }
 
 // ---------------------------------------------------------------------------
@@ -54,6 +55,7 @@ fn policy_id_by_number(world: &LedgerWorld, number: &str) -> String {
 fn stats_by_number<'a>(world: &'a LedgerWorld, number: &str) -> &'a PolicyStats {
     let id = policy_id_by_number(world, number);
     world
+        .policy
         .policy_stats_list
         .iter()
         .find(|s| s.policy_id == id)
@@ -66,7 +68,11 @@ fn stats_by_number<'a>(world: &'a LedgerWorld, number: &str) -> &'a PolicyStats 
 
 #[then(expr = "保单统计应包含 {int} 张保单")]
 fn check_stats_count(world: &mut LedgerWorld, expected: usize) {
-    assert_eq!(world.policy_stats_list.len(), expected, "保单统计行数不符");
+    assert_eq!(
+        world.policy.policy_stats_list.len(),
+        expected,
+        "保单统计行数不符"
+    );
 }
 
 #[then(expr = "保单 {string} 累计已缴应为 {int} 现金流入应为 {int}")]

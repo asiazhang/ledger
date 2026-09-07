@@ -19,7 +19,7 @@ use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::create_transaction_internal;
 
 use crate::common::{assert_last_error_contains, insert_account, new_account_id};
-use crate::items_common::{build_input, nth_item};
+use crate::items_common::build_input;
 use crate::world::LedgerWorld;
 
 /// 脚手架：创建一笔 expense 购买交易并返回其 id（issue #207 起物品创建必关联
@@ -87,8 +87,8 @@ fn create_item(
     let result = domain::create_item(&world_conn!(world), input, &mut || signals += 1);
     match result {
         Ok(id) => {
-            world.last_item_id = Some(id);
-            world.item_signal_count = signals;
+            world.item.last_item_id = Some(id);
+            world.item.item_signal_count = signals;
         }
         Err(AppError::Invalid(msg)) => panic!("创建物品应成功但失败: {msg}"),
         Err(e) => panic!("创建物品应成功但失败: {e}"),
@@ -139,7 +139,7 @@ fn try_create_item(
     };
     let mut signals = 0;
     let result = domain::create_item(&world_conn!(world), input, &mut || signals += 1);
-    world.item_signal_count = signals;
+    world.item.item_signal_count = signals;
     world.last_error = match result {
         Err(AppError::Invalid(msg)) => Some(msg),
         Err(e) => Some(e.to_string()),
@@ -150,12 +150,13 @@ fn try_create_item(
 /// 刷新物品列表快照并断言件数。
 #[then(expr = "物品列表应包含 {int} 件物品")]
 fn refresh_and_check_item_count(world: &mut LedgerWorld, expected: usize) {
-    world.items_list = domain::list_items(&world_conn!(world)).expect("列出物品失败");
+    world.item.items_list = domain::list_items(&world_conn!(world)).expect("列出物品失败");
     assert_eq!(
-        world.items_list.len(),
+        world.item.items_list.len(),
         expected,
         "物品件数不匹配: {:?}",
         world
+            .item
             .items_list
             .iter()
             .map(|i| &i.item.name)
@@ -165,7 +166,7 @@ fn refresh_and_check_item_count(world: &mut LedgerWorld, expected: usize) {
 
 #[then(expr = "第 {int} 件物品名称应为 {string}")]
 fn check_item_name(world: &mut LedgerWorld, n: usize, name: String) {
-    assert_eq!(nth_item(world, n).item.name, name);
+    assert_eq!(world.item.nth(n).item.name, name);
 }
 
 #[then(expr = "第 {int} 件物品总成本应为 {int} 币种应为 {string} 本位币成本应为 {int}")]
@@ -176,7 +177,7 @@ fn check_item_amounts(
     currency: String,
     native_cents: i64,
 ) {
-    let item = &nth_item(world, n).item;
+    let item = &world.item.nth(n).item;
     assert_eq!(item.total_cost_cents, cost_cents);
     assert_eq!(item.currency_code, currency);
     assert_eq!(item.cost_native_cents, native_cents);
@@ -185,12 +186,12 @@ fn check_item_amounts(
 #[then(expr = "第 {int} 件物品状态应为 {string}")]
 fn check_item_status(world: &mut LedgerWorld, n: usize, status: String) {
     let parsed = ItemStatus::parse(&status).unwrap_or_else(|e| panic!("{e}"));
-    assert_eq!(nth_item(world, n).item.status, parsed);
+    assert_eq!(world.item.nth(n).item.status, parsed);
 }
 
 #[then(expr = "第 {int} 件物品已用天数应为 {int} 每天成本应为 {float}")]
 fn check_item_daily_cost(world: &mut LedgerWorld, n: usize, days: i64, per_day: f64) {
-    let entry = nth_item(world, n);
+    let entry = world.item.nth(n);
     assert_eq!(entry.used_days, days);
     assert!(
         (entry.per_day_cents - per_day).abs() < 1e-6,
@@ -201,7 +202,7 @@ fn check_item_daily_cost(world: &mut LedgerWorld, n: usize, days: i64, per_day: 
 
 #[then(expr = "第 {int} 件物品应有唯一 ID 与审计字段")]
 fn check_item_audit_fields(world: &mut LedgerWorld, n: usize) {
-    let item = &nth_item(world, n).item;
+    let item = &world.item.nth(n).item;
     assert!(!item.id.is_empty(), "物品 id 不应为空");
     assert_eq!(item.version, 1, "新物品 version 应为 1");
     assert!(!item.device_id.is_empty(), "device_id 不应为空");
@@ -213,14 +214,14 @@ fn check_item_audit_fields(world: &mut LedgerWorld, n: usize) {
 #[then(expr = "写入后应发出 {int} 次失效信号")]
 fn check_item_signals(world: &mut LedgerWorld, expected: usize) {
     assert_eq!(
-        world.item_signal_count, expected,
+        world.item.item_signal_count, expected,
         "失效信号次数不匹配（生产路径对应 ledger:changed）"
     );
 }
 
 #[then(expr = "未发出失效信号")]
 fn check_no_item_signals(world: &mut LedgerWorld) {
-    assert_eq!(world.item_signal_count, 0, "不应发出失效信号");
+    assert_eq!(world.item.item_signal_count, 0, "不应发出失效信号");
 }
 
 /// 复用交易的「应返回错误」断言（同一 seam：world.last_error 包含片段）。

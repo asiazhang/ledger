@@ -26,6 +26,7 @@ fn build_dispose_input(date: &str, price: &str, currency: &str) -> PhysicalAsset
 
 fn require_last_asset_id(world: &LedgerWorld) -> String {
     world
+        .asset
         .last_physical_asset_id
         .clone()
         .expect("处置 / 软删前应先创建实物资产")
@@ -37,7 +38,7 @@ fn dispose_asset(world: &mut LedgerWorld, date: String, price: String, currency:
     let input = build_dispose_input(&date, &price, &currency);
     let mut signals = 0;
     match dispose_physical_asset_domain(&world_conn!(world), &id, input, &mut || signals += 1) {
-        Ok(()) => world.physical_asset_signal_count = signals,
+        Ok(()) => world.asset.physical_asset_signal_count = signals,
         Err(e) => panic!("处置实物资产应成功但失败: {e}"),
     }
 }
@@ -51,7 +52,7 @@ fn try_dispose_asset(world: &mut LedgerWorld, date: String, price: String, curre
         Ok(()) => panic!("处置实物资产应失败但成功"),
         Err(e) => {
             world.last_error = Some(e.to_string());
-            world.physical_asset_signal_count = signals;
+            world.asset.physical_asset_signal_count = signals;
         }
     }
 }
@@ -61,7 +62,7 @@ fn delete_asset(world: &mut LedgerWorld) {
     let id = require_last_asset_id(world);
     let mut signals = 0;
     match delete_physical_asset_domain(&world_conn!(world), &id, &mut || signals += 1) {
-        Ok(()) => world.physical_asset_signal_count = signals,
+        Ok(()) => world.asset.physical_asset_signal_count = signals,
         Err(e) => panic!("软删除实物资产应成功但失败: {e}"),
     }
 }
@@ -76,7 +77,7 @@ fn list_disposed_assets(world: &mut LedgerWorld, expected: usize) {
         "已处置筛选列表件数不符: {:?}",
         list.assets
     );
-    world.physical_assets_list = Some(list);
+    world.asset.physical_assets_list = Some(list);
 }
 
 #[then(expr = "第 {int} 件资产处置日期应为 {string} 处置价应为 {int} 币种 {string}")]
@@ -88,6 +89,7 @@ fn assert_disposal_fields(
     currency: String,
 ) {
     let asset = &world
+        .asset
         .physical_assets_list
         .as_ref()
         .expect("应先拉取列表快照")
@@ -108,6 +110,7 @@ fn assert_disposal_fields(
 #[then(expr = "第 {int} 件资产当前估值折本位币应为空")]
 fn assert_native_valuation_none(world: &mut LedgerWorld, index: usize) {
     let asset = &world
+        .asset
         .physical_assets_list
         .as_ref()
         .expect("应先拉取列表快照")

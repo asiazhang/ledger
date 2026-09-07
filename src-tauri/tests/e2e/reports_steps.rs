@@ -130,8 +130,8 @@ fn create_expense_in_relative_year(
         "创建 {year_token}支出失败: {:?}",
         result.err()
     );
-    world.last_transaction_id = Some(result.unwrap().id);
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.last_transaction_id = Some(result.unwrap().id);
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 // ---------------------------------------------------------------------------
@@ -172,14 +172,14 @@ fn create_txn_with_merchant_currency(
     };
     let result = create_transaction_internal(&world_conn!(world), input);
     assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
-    world.last_transaction_id = Some(result.unwrap().id);
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.last_transaction_id = Some(result.unwrap().id);
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 查询指定年份的商户消费排行（命令层同款核心函数注入，遗留年份口径）。
 #[when(expr = "查询 {int} 年商户排行")]
 fn query_merchant_shares(world: &mut LedgerWorld, year: i64) {
-    world.last_merchant_shares =
+    world.report.last_merchant_shares =
         merchant_shares_report(&world_conn!(world), year, None, None, None)
             .expect("查询商户排行失败")
             .rows;
@@ -189,7 +189,7 @@ fn query_merchant_shares(world: &mut LedgerWorld, year: i64) {
 /// issue #411 期间口径）。遗留 `year` 在期间口径下不参与，传 0 占位（下同）。
 #[when(expr = "查询商户排行 期间 {string} 到 {string}")]
 fn query_merchant_shares_period(world: &mut LedgerWorld, from: String, to: String) {
-    world.last_merchant_shares =
+    world.report.last_merchant_shares =
         merchant_shares_report(&world_conn!(world), 0, Some(&from), Some(&to), None)
             .expect("查询商户排行失败")
             .rows;
@@ -203,10 +203,11 @@ fn query_merchant_shares_period(world: &mut LedgerWorld, from: String, to: Strin
 #[then(expr = "商户排行应为 {int} 行")]
 fn check_merchant_ranking_len(world: &mut LedgerWorld, n: usize) {
     assert_eq!(
-        world.last_merchant_shares.len(),
+        world.report.last_merchant_shares.len(),
         n,
         "排行行数不符：实际 {:?}",
         world
+            .report
             .last_merchant_shares
             .iter()
             .map(|s| (s.merchant_name.as_str(), s.amount_cents))
@@ -219,6 +220,7 @@ fn check_merchant_ranking_len(world: &mut LedgerWorld, n: usize) {
 #[then(expr = "商户排行第 {int} 名应为 {string} 金额 {int}")]
 fn check_merchant_ranking_row(world: &mut LedgerWorld, index: usize, name: String, amount: i64) {
     let share = world
+        .report
         .last_merchant_shares
         .get(index - 1)
         .unwrap_or_else(|| panic!("商户排行第 {index} 名不存在"));
@@ -231,10 +233,10 @@ fn check_merchant_ranking_row(world: &mut LedgerWorld, index: usize, name: Strin
 #[then(expr = "商户排行响应 JSON 不含字段 {string}")]
 fn check_merchant_shares_json_not_contain_field(world: &mut LedgerWorld, field: String) {
     assert!(
-        !world.last_merchant_shares.is_empty(),
+        !world.report.last_merchant_shares.is_empty(),
         "商户排行为空，无法校验响应字段契约"
     );
-    for s in &world.last_merchant_shares {
+    for s in &world.report.last_merchant_shares {
         let json = serde_json::to_value(s).expect("商户排行行序列化失败");
         assert!(
             json.get(&field).is_none(),
@@ -250,7 +252,7 @@ fn check_merchant_shares_json_not_contain_field(world: &mut LedgerWorld, field: 
 /// 查询报表日期筛选范围（命令层同款核心函数注入）。
 #[when(expr = "查询报表日期范围")]
 fn query_date_range_step(world: &mut LedgerWorld) {
-    world.last_date_range =
+    world.report.last_date_range =
         Some(query_report_date_range(&world_conn!(world)).expect("查询报表日期范围失败"));
 }
 
@@ -259,7 +261,11 @@ fn query_date_range_step(world: &mut LedgerWorld) {
 #[then(expr = "报表日期范围应为 {string} 到 {string}")]
 fn check_report_date_range(world: &mut LedgerWorld, min_token: String, max_token: String) {
     let today = scenario_today(world);
-    let range = world.last_date_range.as_ref().expect("未查询报表日期范围");
+    let range = world
+        .report
+        .last_date_range
+        .as_ref()
+        .expect("未查询报表日期范围");
     let actual = (range.min_date.as_deref(), range.max_date.as_deref());
     let expected_min = resolve_date_token(&min_token, today);
     let expected_max = resolve_date_token(&max_token, today);
@@ -273,7 +279,11 @@ fn check_report_date_range(world: &mut LedgerWorld, min_token: String, max_token
 /// 空库或软删后无交易时的日期范围断言（双 None / null）。
 #[then(expr = "报表日期范围应为空")]
 fn check_report_date_range_empty(world: &mut LedgerWorld) {
-    let range = world.last_date_range.as_ref().expect("未查询报表日期范围");
+    let range = world
+        .report
+        .last_date_range
+        .as_ref()
+        .expect("未查询报表日期范围");
     assert_eq!(
         (range.min_date.as_deref(), range.max_date.as_deref()),
         (None, None),
@@ -326,14 +336,14 @@ fn create_txn_with_category(
     };
     let result = create_transaction_internal(&world_conn!(world), input);
     assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
-    world.last_transaction_id = Some(result.unwrap().id);
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.last_transaction_id = Some(result.unwrap().id);
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 查询指定年份的支出分类份额（命令层同款核心函数注入，年份联动口径）。
 #[when(expr = "查询 {int} 年分类份额")]
 fn query_category_shares(world: &mut LedgerWorld, year: i64) {
-    world.last_category_shares =
+    world.report.last_category_shares =
         category_shares_rows(&world_conn!(world), "expense", None, Some(year), None, None)
             .expect("查询分类份额失败");
 }
@@ -341,7 +351,7 @@ fn query_category_shares(world: &mut LedgerWorld, year: i64) {
 /// 缺省年份查询（全时段口径）：既有调用方不回归的回归锁定。
 #[when(expr = "查询分类份额 全时段")]
 fn query_category_shares_all_time(world: &mut LedgerWorld) {
-    world.last_category_shares =
+    world.report.last_category_shares =
         category_shares_rows(&world_conn!(world), "expense", None, None, None, None)
             .expect("查询分类份额失败");
 }
@@ -349,7 +359,7 @@ fn query_category_shares_all_time(world: &mut LedgerWorld) {
 /// 查询指定期间（YYYY-MM-DD 含边界）的支出分类份额（issue #411 期间口径）。
 #[when(expr = "查询分类份额 期间 {string} 到 {string}")]
 fn query_category_shares_period(world: &mut LedgerWorld, from: String, to: String) {
-    world.last_category_shares = category_shares_rows(
+    world.report.last_category_shares = category_shares_rows(
         &world_conn!(world),
         "expense",
         None,
@@ -367,7 +377,7 @@ fn query_category_shares_period(world: &mut LedgerWorld, from: String, to: Strin
 /// 查询指定期间（YYYY-MM-DD 含边界）的月度汇总（命令层同款核心函数注入）。
 #[when(expr = "查询月度汇总 期间 {string} 到 {string}")]
 fn query_monthly_summary_period(world: &mut LedgerWorld, from: String, to: String) {
-    world.last_monthly_summary =
+    world.report.last_monthly_summary =
         monthly_summary_rows(&world_conn!(world), 0, Some(&from), Some(&to))
             .expect("查询月度汇总失败");
 }
@@ -375,7 +385,7 @@ fn query_monthly_summary_period(world: &mut LedgerWorld, from: String, to: Strin
 /// 查询指定年份的月度汇总（遗留年份口径）：缺省期间回退旧口径的回归锁定。
 #[when(expr = "查询 {int} 年月度汇总")]
 fn query_monthly_summary_year(world: &mut LedgerWorld, year: i64) {
-    world.last_monthly_summary =
+    world.report.last_monthly_summary =
         monthly_summary_rows(&world_conn!(world), year, None, None).expect("查询月度汇总失败");
 }
 
@@ -383,10 +393,10 @@ fn query_monthly_summary_year(world: &mut LedgerWorld, year: i64) {
 #[then(expr = "月度汇总应为 {int} 行")]
 fn check_monthly_summary_len(world: &mut LedgerWorld, n: usize) {
     assert_eq!(
-        world.last_monthly_summary.len(),
+        world.report.last_monthly_summary.len(),
         n,
         "月度汇总行数不符：实际 {:?}",
-        world.last_monthly_summary
+        world.report.last_monthly_summary
     );
 }
 
@@ -401,6 +411,7 @@ fn check_monthly_summary_row(
     refund: i64,
 ) {
     let row = world
+        .report
         .last_monthly_summary
         .get(index - 1)
         .unwrap_or_else(|| panic!("月度汇总第 {index} 行不存在"));
@@ -416,10 +427,11 @@ fn check_monthly_summary_row(
 #[then(expr = "分类份额应为 {int} 行")]
 fn check_category_shares_len(world: &mut LedgerWorld, n: usize) {
     assert_eq!(
-        world.last_category_shares.len(),
+        world.report.last_category_shares.len(),
         n,
         "分类份额行数不符：实际 {:?}",
         world
+            .report
             .last_category_shares
             .iter()
             .map(|s| (s.category_name.as_str(), s.amount_cents))
@@ -432,6 +444,7 @@ fn check_category_shares_len(world: &mut LedgerWorld, n: usize) {
 #[then(expr = "分类份额第 {int} 名应为 {string} 金额 {int}")]
 fn check_category_shares_row(world: &mut LedgerWorld, index: usize, name: String, amount: i64) {
     let share = world
+        .report
         .last_category_shares
         .get(index - 1)
         .unwrap_or_else(|| panic!("分类份额第 {index} 名不存在"));

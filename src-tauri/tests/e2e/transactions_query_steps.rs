@@ -48,7 +48,7 @@ fn create_txn_with_category(
         .db
         .write(|conn| create_transaction_internal(conn, input));
     assert!(result.is_ok(), "创建带分类交易失败: {:?}", result.err());
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 // ---------------------------------------------------------------------------
@@ -73,7 +73,7 @@ fn batch_import_same_day(world: &mut LedgerWorld, count: i64, date: String, acco
             )
             .unwrap();
     }
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 执行分页查询并断言当前页条数与 total，快照 items 供后续步骤使用。
@@ -92,7 +92,7 @@ fn assert_paged(
         "{label} 返回条数不匹配"
     );
     assert_eq!(result.total, expected_total, "{label} total 不匹配");
-    world.transactions_list = result.items;
+    world.txn.transactions_list = result.items;
 }
 
 #[then(expr = "分页查询 page {int} page_size {int} 应返回 {int} 条 total {int}")]
@@ -385,7 +385,7 @@ fn seed_kinds_with_and_without_category(
             .unwrap();
         }
     }
-    world.transactions_list = query_all_transactions(&conn);
+    world.txn.transactions_list = query_all_transactions(&conn);
 }
 
 #[then(expr = "分页查询 类型集合 {string} page {int} page_size {int} 应返回 {int} 条 total {int}")]
@@ -449,7 +449,7 @@ fn check_default(world: &mut LedgerWorld, expected_count: i64, expected_total: i
         "缺省查询应返回全部"
     );
     assert_eq!(result.total, expected_total, "缺省查询 total 不匹配");
-    world.transactions_list = result.items;
+    world.txn.transactions_list = result.items;
 }
 
 #[then(expr = "读取 limit {int} 应返回 {int} 条")]

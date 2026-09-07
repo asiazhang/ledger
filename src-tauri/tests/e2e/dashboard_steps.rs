@@ -104,12 +104,12 @@ fn buy_instrument(
 fn query_net_worth(world: &mut LedgerWorld) {
     match query_dashboard_overview(&world_conn!(world)) {
         Ok(overview) => {
-            world.last_overview = Some(overview);
+            world.report.last_overview = Some(overview);
             world.last_error = None;
         }
         Err(e) => {
             world.last_error = Some(e.to_string());
-            world.last_overview = None;
+            world.report.last_overview = None;
         }
     }
 }
@@ -120,13 +120,21 @@ fn query_net_worth(world: &mut LedgerWorld) {
 
 #[then(expr = "净资产应为 {int}")]
 fn assert_net_worth(world: &mut LedgerWorld, expected: i64) {
-    let overview = world.last_overview.as_ref().expect("未查询到净资产总览");
+    let overview = world
+        .report
+        .last_overview
+        .as_ref()
+        .expect("未查询到净资产总览");
     assert_eq!(overview.net_worth_cents, expected, "净资产合计不符");
 }
 
 #[then(expr = "非投资账户余额合计应为 {int}")]
 fn assert_accounts_balance(world: &mut LedgerWorld, expected: i64) {
-    let overview = world.last_overview.as_ref().expect("未查询到净资产总览");
+    let overview = world
+        .report
+        .last_overview
+        .as_ref()
+        .expect("未查询到净资产总览");
     assert_eq!(
         overview.accounts_balance_cents, expected,
         "非投资账户余额合计不符"
@@ -135,7 +143,11 @@ fn assert_accounts_balance(world: &mut LedgerWorld, expected: i64) {
 
 #[then(expr = "实物资产估值合计应为 {int}")]
 fn assert_physical_assets_value(world: &mut LedgerWorld, expected: i64) {
-    let overview = world.last_overview.as_ref().expect("未查询到净资产总览");
+    let overview = world
+        .report
+        .last_overview
+        .as_ref()
+        .expect("未查询到净资产总览");
     assert_eq!(
         overview.physical_assets_value_cents, expected,
         "实物资产估值合计不符"
@@ -144,7 +156,11 @@ fn assert_physical_assets_value(world: &mut LedgerWorld, expected: i64) {
 
 #[then(expr = "持仓市值合计应为 {int}")]
 fn assert_holdings_value(world: &mut LedgerWorld, expected: i64) {
-    let overview = world.last_overview.as_ref().expect("未查询到净资产总览");
+    let overview = world
+        .report
+        .last_overview
+        .as_ref()
+        .expect("未查询到净资产总览");
     assert_eq!(
         overview.holdings_market_value_cents, expected,
         "持仓市值合计不符"

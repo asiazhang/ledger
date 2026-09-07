@@ -53,6 +53,7 @@ fn build_update_input(
 /// 定位最近创建资产的 id（T1 创建步骤写入；T2 写步骤前置条件）。
 fn require_last_asset_id(world: &LedgerWorld) -> String {
     world
+        .asset
         .last_physical_asset_id
         .clone()
         .expect("更新 / 编辑前应先创建实物资产")
@@ -67,7 +68,7 @@ fn update_valuation(world: &mut LedgerWorld, amount: String, currency: String, d
     match update_physical_asset_valuation_domain(&world_conn!(world), &id, input, &mut || {
         signals += 1
     }) {
-        Ok(()) => world.physical_asset_signal_count = signals,
+        Ok(()) => world.asset.physical_asset_signal_count = signals,
         Err(e) => panic!("更新实物资产估值应成功但失败: {e}"),
     }
 }
@@ -84,7 +85,7 @@ fn try_update_valuation(world: &mut LedgerWorld, amount: String, currency: Strin
         Ok(()) => panic!("更新实物资产估值应失败但成功"),
         Err(e) => {
             world.last_error = Some(e.to_string());
-            world.physical_asset_signal_count = signals;
+            world.asset.physical_asset_signal_count = signals;
         }
     }
 }
@@ -102,7 +103,7 @@ fn update_asset(
     let input = build_update_input(&name, &purchase_date, &purchase_price, &purchase_currency);
     let mut signals = 0;
     match update_physical_asset_domain(&world_conn!(world), &id, input, &mut || signals += 1) {
-        Ok(()) => world.physical_asset_signal_count = signals,
+        Ok(()) => world.asset.physical_asset_signal_count = signals,
         Err(e) => panic!("编辑实物资产应成功但失败: {e}"),
     }
 }
@@ -123,7 +124,7 @@ fn try_update_asset(
         Ok(()) => panic!("编辑实物资产应失败但成功"),
         Err(e) => {
             world.last_error = Some(e.to_string());
-            world.physical_asset_signal_count = signals;
+            world.asset.physical_asset_signal_count = signals;
         }
     }
 }
@@ -138,6 +139,7 @@ fn check_operation_error(world: &mut LedgerWorld, expected: String) {
 #[then(expr = "第 {int} 件资产版本应为 {int}")]
 fn assert_asset_version(world: &mut LedgerWorld, index: usize, expected: i64) {
     let asset = &world
+        .asset
         .physical_assets_list
         .as_ref()
         .expect("应先拉取列表快照")

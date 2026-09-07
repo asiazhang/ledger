@@ -23,12 +23,12 @@ fn run_catchup_disabled(world: &mut LedgerWorld, today: String) {
 
 fn run_catchup(world: &mut LedgerWorld, enabled: bool, today: &str) {
     let day = chrono::NaiveDate::parse_from_str(today, "%Y-%m-%d").expect("日期应为 YYYY-MM-DD");
-    world.last_catch_up = Some(run_catch_up(&world_conn!(world), enabled, day));
+    world.plan.last_catch_up = Some(run_catch_up(&world_conn!(world), enabled, day));
 }
 
 #[then(expr = "追补汇总应为 到期 {int} 成功 {int} 失败 {int}")]
 fn assert_catchup_summary(world: &mut LedgerWorld, due: usize, executed: usize, failed: usize) {
-    let summary = world.last_catch_up.as_ref().expect("尚未执行追补");
+    let summary = world.plan.last_catch_up.as_ref().expect("尚未执行追补");
     assert_eq!(
         (summary.due, summary.executed, summary.failed),
         (due, executed, failed),
@@ -39,7 +39,7 @@ fn assert_catchup_summary(world: &mut LedgerWorld, due: usize, executed: usize, 
 /// 最近计划生成的交易日期应依次为给定清单（按交易日期升序）。
 #[then(expr = "最近计划生成的交易日期应依次为 {string}")]
 fn assert_plan_txn_dates(world: &mut LedgerWorld, dates_csv: String) {
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let expected: Vec<String> = dates_csv
         .split(',')
         .map(|s| s.trim().to_string())

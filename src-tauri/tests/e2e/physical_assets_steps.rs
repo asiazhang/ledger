@@ -79,8 +79,8 @@ fn create_physical_asset(
     let mut signals = 0;
     match create_physical_asset_domain(&world_conn!(world), input, &mut || signals += 1) {
         Ok(id) => {
-            world.last_physical_asset_id = Some(id);
-            world.physical_asset_signal_count = signals;
+            world.asset.last_physical_asset_id = Some(id);
+            world.asset.physical_asset_signal_count = signals;
         }
         Err(e) => panic!("创建实物资产应成功但失败: {e}"),
     }
@@ -115,7 +115,7 @@ fn try_create_physical_asset(
         Ok(_) => panic!("创建实物资产应失败但成功"),
         Err(e) => {
             world.last_error = Some(e.to_string());
-            world.physical_asset_signal_count = signals;
+            world.asset.physical_asset_signal_count = signals;
         }
     }
 }
@@ -124,11 +124,12 @@ fn try_create_physical_asset(
 #[when(expr = "读取实物资产详情")]
 fn get_physical_asset_detail(world: &mut LedgerWorld) {
     let id = world
+        .asset
         .last_physical_asset_id
         .clone()
         .expect("读取详情前应先创建实物资产");
     match tauri_app_lib::physical_asset::get_physical_asset(&world_conn!(world), &id) {
-        Ok(asset) => world.physical_asset_detail = Some(asset),
+        Ok(asset) => world.asset.physical_asset_detail = Some(asset),
         Err(e) => panic!("读取实物资产详情应成功但失败: {e}"),
     }
 }
@@ -143,12 +144,13 @@ fn list_physical_assets(world: &mut LedgerWorld, expected: usize) {
         "实物资产列表件数不符: {:?}",
         list.assets
     );
-    world.physical_assets_list = Some(list);
+    world.asset.physical_assets_list = Some(list);
 }
 
 #[then(expr = "第 {int} 件资产名称应为 {string} 状态应为 {string}")]
 fn assert_asset_name_status(world: &mut LedgerWorld, index: usize, name: String, status: String) {
     let asset = &world
+        .asset
         .physical_assets_list
         .as_ref()
         .expect("应先拉取列表快照")
@@ -160,6 +162,7 @@ fn assert_asset_name_status(world: &mut LedgerWorld, index: usize, name: String,
 #[then(expr = "第 {int} 件资产当前估值应为 {int} 币种 {string}")]
 fn assert_asset_valuation(world: &mut LedgerWorld, index: usize, cents: i64, currency: String) {
     let asset = &world
+        .asset
         .physical_assets_list
         .as_ref()
         .expect("应先拉取列表快照")
@@ -176,6 +179,7 @@ fn assert_asset_valuation(world: &mut LedgerWorld, index: usize, cents: i64, cur
 fn assert_asset_valuation_today(world: &mut LedgerWorld, index: usize) {
     let today = chrono::Local::now().date_naive().to_string();
     let asset = &world
+        .asset
         .physical_assets_list
         .as_ref()
         .expect("应先拉取列表快照")
@@ -186,6 +190,7 @@ fn assert_asset_valuation_today(world: &mut LedgerWorld, index: usize) {
 #[then(expr = "第 {int} 件资产当前估值日期应为 {string}")]
 fn assert_asset_valuation_date(world: &mut LedgerWorld, index: usize, date: String) {
     let asset = &world
+        .asset
         .physical_assets_list
         .as_ref()
         .expect("应先拉取列表快照")
@@ -196,6 +201,7 @@ fn assert_asset_valuation_date(world: &mut LedgerWorld, index: usize, date: Stri
 #[then(expr = "第 {int} 件资产购买信息应为空")]
 fn assert_asset_purchase_empty(world: &mut LedgerWorld, index: usize) {
     let asset = &world
+        .asset
         .physical_assets_list
         .as_ref()
         .expect("应先拉取列表快照")
@@ -217,6 +223,7 @@ fn assert_asset_purchase(
     currency: String,
 ) {
     let asset = &world
+        .asset
         .physical_assets_list
         .as_ref()
         .expect("应先拉取列表快照")
@@ -237,6 +244,7 @@ fn assert_asset_valuation_native(
     currency: String,
 ) {
     let asset = &world
+        .asset
         .physical_assets_list
         .as_ref()
         .expect("应先拉取列表快照")
@@ -252,6 +260,7 @@ fn assert_asset_valuation_native(
 #[then(expr = "在持估值合计应为 {int} 币种 {string}")]
 fn assert_holding_total(world: &mut LedgerWorld, cents: i64, currency: String) {
     let list = world
+        .asset
         .physical_assets_list
         .as_ref()
         .expect("应先拉取列表快照");
@@ -263,6 +272,7 @@ fn assert_holding_total(world: &mut LedgerWorld, cents: i64, currency: String) {
 #[then(expr = "第 {int} 件资产应有唯一 ID 与审计字段")]
 fn assert_asset_audit(world: &mut LedgerWorld, index: usize) {
     let asset = &world
+        .asset
         .physical_assets_list
         .as_ref()
         .expect("应先拉取列表快照")
@@ -278,7 +288,7 @@ fn assert_asset_audit(world: &mut LedgerWorld, index: usize) {
 #[then(expr = "实物资产写入后应发出 {int} 次失效信号")]
 fn check_signals(world: &mut LedgerWorld, expected: usize) {
     assert_eq!(
-        world.physical_asset_signal_count, expected,
+        world.asset.physical_asset_signal_count, expected,
         "失效信号次数不符"
     );
 }
@@ -286,7 +296,7 @@ fn check_signals(world: &mut LedgerWorld, expected: usize) {
 #[then(expr = "实物资产未发出失效信号")]
 fn check_no_signal(world: &mut LedgerWorld) {
     assert_eq!(
-        world.physical_asset_signal_count, 0,
+        world.asset.physical_asset_signal_count, 0,
         "失败路径不应发出失效信号"
     );
 }
@@ -303,7 +313,11 @@ fn assert_detail_valuation(
     currency: String,
     native_cents: i64,
 ) {
-    let asset = world.physical_asset_detail.as_ref().expect("应先读取详情");
+    let asset = world
+        .asset
+        .physical_asset_detail
+        .as_ref()
+        .expect("应先读取详情");
     assert_eq!(asset.current_valuation_cents, cents, "详情当前估值不符");
     assert_eq!(
         asset.current_valuation_currency_code, currency,

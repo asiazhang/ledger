@@ -14,8 +14,13 @@ use crate::world::LedgerWorld;
 /// 按 id 全字段替换最近一笔交易（修改场景），沿用原交易账户/币种等非编辑字段。
 #[when(expr = "修改最近交易 类型 {string} 金额 {int} 日期 {string} 备注 {string}")]
 fn update_last_txn(world: &mut LedgerWorld, kind: String, amount: i64, date: String, note: String) {
-    let id = world.last_transaction_id.clone().expect("没有可修改的交易");
+    let id = world
+        .txn
+        .last_transaction_id
+        .clone()
+        .expect("没有可修改的交易");
     let existing = world
+        .txn
         .transactions_list
         .iter()
         .find(|t| t.id == id)
@@ -41,14 +46,19 @@ fn update_last_txn(world: &mut LedgerWorld, kind: String, amount: i64, date: Str
     };
     let result = update_transaction_internal(&world_conn!(world), &id, input);
     assert!(result.is_ok(), "修改交易失败: {:?}", result.err());
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 尝试把最近一笔交易改为转账（缺目标账户），应触发按 kind 校验并记录错误。
 #[when(expr = "尝试修改最近交易为转账 金额 {int} 日期 {string}")]
 fn try_update_last_to_transfer(world: &mut LedgerWorld, amount: i64, date: String) {
-    let id = world.last_transaction_id.clone().expect("没有可修改的交易");
+    let id = world
+        .txn
+        .last_transaction_id
+        .clone()
+        .expect("没有可修改的交易");
     let existing = world
+        .txn
         .transactions_list
         .iter()
         .find(|t| t.id == id)
@@ -111,9 +121,13 @@ fn try_update_missing_txn(world: &mut LedgerWorld, amount: i64, date: String) {
 /// 供「编辑已删除交易」场景铺垫。
 #[when(expr = "删除最近交易")]
 fn delete_last_txn(world: &mut LedgerWorld) {
-    let id = world.last_transaction_id.clone().expect("没有可删除的交易");
+    let id = world
+        .txn
+        .last_transaction_id
+        .clone()
+        .expect("没有可删除的交易");
     delete_transaction_internal(&world_conn!(world), &id).expect("删除交易失败");
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 查询账户币种（买入/卖出以账户币种成交，与真实写路径一致）。
@@ -180,8 +194,8 @@ fn insert_trade_for_edit(
         idempotency_key: None,
     };
     let write = create_transaction_internal(&world_conn!(world), input).expect("创建买卖交易失败");
-    world.last_transaction_id = Some(write.id);
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.last_transaction_id = Some(write.id);
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 #[when(expr = "买入标的 {string} 数量 {int} 单价 {int} 到投资账户 {string}")]
@@ -240,6 +254,7 @@ fn trade_edit_input(
         )
         .expect("该交易无买卖明细");
     let existing = world
+        .txn
         .transactions_list
         .iter()
         .find(|t| t.id == id)
@@ -285,7 +300,7 @@ fn update_buy(
     );
     let result = update_transaction_internal(&world_conn!(world), &id, input);
     assert!(result.is_ok(), "修改买入交易失败: {:?}", result.err());
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 尝试修改买入交易，应触发部分卖出守卫并记录错误（issue #180）。
@@ -324,13 +339,17 @@ fn update_sell(
     );
     let result = update_transaction_internal(&world_conn!(world), &id, input);
     assert!(result.is_ok(), "修改卖出交易失败: {:?}", result.err());
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 尝试修改一笔已删除的交易，应返回明确错误（NotFound：已删除与不存在同口径）。
 #[when(expr = "尝试修改已删除的交易 金额 {int} 日期 {string}")]
 fn try_update_deleted_txn(world: &mut LedgerWorld, amount: i64, date: String) {
-    let id = world.last_transaction_id.clone().expect("没有可修改的交易");
+    let id = world
+        .txn
+        .last_transaction_id
+        .clone()
+        .expect("没有可修改的交易");
     let input = TransactionInput {
         merchant_name: None,
         policy_id: None,
@@ -360,12 +379,12 @@ fn try_update_deleted_txn(world: &mut LedgerWorld, amount: i64, date: String) {
 fn check_txn_version(world: &mut LedgerWorld, index: i64, expected_version: i64) {
     let idx = (index - 1) as usize;
     assert!(
-        idx < world.transactions_list.len(),
+        idx < world.txn.transactions_list.len(),
         "交易列表只有 {} 条，无法访问第 {index} 条",
-        world.transactions_list.len()
+        world.txn.transactions_list.len()
     );
     assert_eq!(
-        world.transactions_list[idx].version, expected_version,
+        world.txn.transactions_list[idx].version, expected_version,
         "交易版本号不匹配"
     );
 }

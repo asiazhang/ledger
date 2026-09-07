@@ -49,7 +49,7 @@ fn execute_all_occurrences(world: &mut LedgerWorld) {
 
 /// 最近计划的 pending 期次 id（按 scheduled_date 升序；`limit` 为 None 时取全部）。
 fn pending_occurrence_ids(world: &LedgerWorld, limit: Option<i64>) -> Vec<String> {
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let conn = world_conn!(world);
     let mut stmt = conn
         .prepare(
@@ -69,7 +69,7 @@ fn pending_occurrence_ids(world: &LedgerWorld, limit: Option<i64>) -> Vec<String
 /// 重新执行上一次尝试的期次（失败场景中补录汇率后重试）。
 #[when(expr = "重新执行该期次")]
 fn re_execute_occurrence(world: &mut LedgerWorld) {
-    let occ_id = world.last_occurrence_id.clone().expect("尚无期次");
+    let occ_id = world.plan.last_occurrence_id.clone().expect("尚无期次");
     execute_occurrence_step(world, &occ_id);
 }
 
@@ -109,7 +109,7 @@ fn assert_last_error(world: &mut LedgerWorld, needle: String) {
 
 #[then(expr = "期次未回填交易")]
 fn assert_occurrence_not_backfilled(world: &mut LedgerWorld) {
-    let occ_id = world.last_occurrence_id.clone().expect("尚无期次");
+    let occ_id = world.plan.last_occurrence_id.clone().expect("尚无期次");
     let txn_id: Option<String> = world_conn!(world)
         .query_row(
             "SELECT transaction_id FROM scheduled_transaction_occurrences WHERE id=?1",
@@ -122,7 +122,7 @@ fn assert_occurrence_not_backfilled(world: &mut LedgerWorld) {
 
 #[then(expr = "该期次状态应为 {string}")]
 fn assert_occurrence_status(world: &mut LedgerWorld, expected: String) {
-    let occ_id = world.last_occurrence_id.clone().expect("尚无期次");
+    let occ_id = world.plan.last_occurrence_id.clone().expect("尚无期次");
     let status: String = world_conn!(world)
         .query_row(
             "SELECT status FROM scheduled_transaction_occurrences WHERE id=?1",
@@ -172,7 +172,7 @@ fn assert_generated_txns(world: &mut LedgerWorld, count: i64, kind: String, amou
         .collect();
     assert_eq!(expected.len() as i64, count, "金额列表长度应与笔数一致");
     // 只统计最近计划的期次回填的交易（经 occurrence 关联），避免整库 kind 误计。
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let amounts: Vec<i64> = {
         let conn = world_conn!(world);
         let mut stmt = conn
@@ -194,7 +194,7 @@ fn assert_generated_txns(world: &mut LedgerWorld, count: i64, kind: String, amou
 
 #[then(expr = "计划状态应为 {string}")]
 fn assert_plan_status(world: &mut LedgerWorld, expected: String) {
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let status: String = world_conn!(world)
         .query_row(
             "SELECT status FROM scheduled_transactions WHERE id=?1",
@@ -214,7 +214,7 @@ struct OccurrenceTxn {
 }
 
 fn occurrence_txn(world: &LedgerWorld) -> OccurrenceTxn {
-    let occ_id = world.last_occurrence_id.clone().expect("尚无期次");
+    let occ_id = world.plan.last_occurrence_id.clone().expect("尚无期次");
     let txn_id: Option<String> = world_conn!(world)
         .query_row(
             "SELECT transaction_id FROM scheduled_transaction_occurrences WHERE id=?1",

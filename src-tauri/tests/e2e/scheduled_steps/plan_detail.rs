@@ -21,7 +21,7 @@ use super::common::execute_occurrence_step;
 /// 以驱动详情返回与重试门控的断言）。
 #[when(expr = "将最近计划最早的一条待执行期次置为失败")]
 fn mark_first_pending_failed(world: &mut LedgerWorld) {
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let occ_id: String = world_conn!(world)
         .query_row(
             "SELECT id FROM scheduled_transaction_occurrences \
@@ -38,19 +38,19 @@ fn mark_first_pending_failed(world: &mut LedgerWorld) {
             params![occ_id, tauri_app_lib::db::now_iso()],
         )
         .unwrap();
-    world.last_occurrence_id = Some(occ_id);
+    world.plan.last_occurrence_id = Some(occ_id);
 }
 
 /// 查询最近计划的详情（走 get_plan_detail 命令体）。
 #[when(expr = "查询该计划详情")]
 fn query_plan_detail(world: &mut LedgerWorld) {
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
-    world.last_detail =
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
+    world.plan.last_detail =
         Some(get_plan_detail(&world_conn!(world), &plan_id).expect("查询计划详情失败"));
 }
 
 fn last_detail(world: &LedgerWorld) -> &ScheduledTransactionDetail {
-    world.last_detail.as_ref().expect("尚未查询计划详情")
+    world.plan.last_detail.as_ref().expect("尚未查询计划详情")
 }
 
 #[then(expr = "详情应含 {int} 条待执行期次")]
@@ -95,7 +95,7 @@ fn assert_detail_status_date(world: &mut LedgerWorld, status: String, expected: 
 /// 重试最近计划的 failed 期次（走 execute_occurrence 命令体，与弹窗重试同一缝）。
 #[when(expr = "重试该失败期次")]
 fn retry_failed_occurrence(world: &mut LedgerWorld) {
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let occ_id: String = world_conn!(world)
         .query_row(
             "SELECT id FROM scheduled_transaction_occurrences \
@@ -111,7 +111,7 @@ fn retry_failed_occurrence(world: &mut LedgerWorld) {
 /// 展开最近计划的期次（走 expand_occurrences 命令体）。
 #[when(expr = "展开该计划期次")]
 fn expand_plan_occurrences(world: &mut LedgerWorld) {
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let ids = world
         .db
         .write(|conn| expand_occurrences(conn, &plan_id))

@@ -53,7 +53,7 @@ fn create_subscription_plan_with_merchant(
             )
         })
         .expect("创建订阅计划失败");
-    world.last_plan_id = Some(id);
+    world.plan.last_plan_id = Some(id);
 }
 
 /// 创建带商户的分期计划。
@@ -91,7 +91,7 @@ fn create_installment_plan_with_merchant(
             )
         })
         .expect("创建分期计划失败");
-    world.last_plan_id = Some(id);
+    world.plan.last_plan_id = Some(id);
 }
 
 /// 尝试创建定时转账计划并捕获错误（行为层拒绝携带商户，issue #190）。
@@ -177,7 +177,7 @@ fn try_create_subscription_plan_with_merchant(
 
 /// 最近期次生成的交易商户名（左联 merchants 现名：改名即时生效，软删照常显示）。
 fn occurrence_txn_merchant_name(world: &LedgerWorld) -> Option<String> {
-    let occ_id = world.last_occurrence_id.clone().expect("尚无期次");
+    let occ_id = world.plan.last_occurrence_id.clone().expect("尚无期次");
     world_conn!(world)
         .query_row(
             "SELECT m.name FROM scheduled_transaction_occurrences o \
@@ -226,7 +226,7 @@ fn assert_scheduled_ext_schema(world: &mut LedgerWorld) {
 /// 最近计划生成的每笔交易商户名都应是指定商户（分期逐期断言）。
 #[then(expr = "最近计划生成的每笔交易商户应为 {string}")]
 fn assert_all_plan_txns_merchant(world: &mut LedgerWorld, expected: String) {
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let names: Vec<Option<String>> = {
         let conn = world_conn!(world);
         let mut stmt = conn
@@ -252,7 +252,7 @@ fn assert_all_plan_txns_merchant(world: &mut LedgerWorld, expected: String) {
 /// 最近创建的计划商户名（左联 merchants 现名）。
 #[then(expr = "最近创建的计划商户应为 {string}")]
 fn assert_plan_merchant(world: &mut LedgerWorld, expected: String) {
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let name: Option<String> = world_conn!(world)
         .query_row(
             "SELECT m.name FROM scheduled_transactions st \
@@ -274,7 +274,7 @@ fn assert_plan_merchant(world: &mut LedgerWorld, expected: String) {
 /// 最近计划生成的第 n 笔交易商户名（左联 merchants 现名）。
 #[then(expr = "第 {int} 笔计划交易商户应为 {string}")]
 fn assert_plan_txn_merchant(world: &mut LedgerWorld, nth: usize, expected: String) {
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let name: Option<String> = world_conn!(world)
         .query_row(
             "SELECT m.name FROM transactions t \

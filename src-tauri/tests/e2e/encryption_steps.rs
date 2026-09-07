@@ -30,18 +30,18 @@ use crate::world::LedgerWorld;
 // ---------------------------------------------------------------------------
 
 fn ensure_dir(world: &mut LedgerWorld) {
-    if world.enc_dir.is_none() {
+    if world.boot.enc_dir.is_none() {
         let dir = std::env::temp_dir().join(format!("ledger-e2e-enc-{}", new_uuid()));
         std::fs::create_dir_all(&dir).unwrap();
-        world.enc_dir = Some(dir.clone());
+        world.boot.enc_dir = Some(dir.clone());
         // 同步登记到 DataLocation 场景现场：生目录断言类步骤（"生效目录应为
         // 默认数据目录"）复用 data_location_steps 的既有定义，不重复声明。
-        world.dl_default_dir = Some(dir);
+        world.boot.dl_default_dir = Some(dir);
     }
 }
 
 fn db_path(world: &LedgerWorld) -> std::path::PathBuf {
-    world.enc_dir.as_ref().unwrap().join(DB_FILE_NAME)
+    world.boot.enc_dir.as_ref().unwrap().join(DB_FILE_NAME)
 }
 
 /// 在文件库中建账户与 N 条交易（经 Writer/行为层接缝，含余额缓存行不变量）。
@@ -166,22 +166,22 @@ fn given_encrypted_db(world: &mut LedgerWorld, passphrase: String, count: usize)
 
 #[given(expr = "记录当前库文件字节")]
 fn given_record_bytes(world: &mut LedgerWorld) {
-    world.enc_db_bytes = Some(std::fs::read(db_path(world)).unwrap());
+    world.boot.enc_db_bytes = Some(std::fs::read(db_path(world)).unwrap());
 }
 
 #[given(expr = "指针文件指向空的目标目录")]
 fn given_pointer_to_empty_target(world: &mut LedgerWorld) {
     ensure_dir(world);
-    let default_dir = world.enc_dir.clone().unwrap();
+    let default_dir = world.boot.enc_dir.clone().unwrap();
     let target = std::env::temp_dir().join(format!("ledger-e2e-enc-target-{}", new_uuid()));
     std::fs::create_dir_all(&target).unwrap();
     data_location::write_pointer(&default_dir, &target).unwrap();
-    world.enc_target_dir = Some(target);
+    world.boot.enc_target_dir = Some(target);
 }
 
 #[given(expr = "数据目录不可写")]
 fn given_dir_readonly(world: &mut LedgerWorld) {
-    let dir = world.enc_dir.clone().unwrap();
+    let dir = world.boot.enc_dir.clone().unwrap();
     // Unix 权限位（非 root 下真实生效；root 绕过权限检查，不可依赖）。
     // 先置只读再进入转换，转换结束后由 Then 侧恢复权限。
     #[cfg(unix)]
@@ -197,40 +197,40 @@ fn given_dir_readonly(world: &mut LedgerWorld) {
 
 #[when(expr = "执行启动引导")]
 fn when_boot(world: &mut LedgerWorld) {
-    let default_dir = world.enc_dir.clone().unwrap();
-    world.last_boot = Some(data_location::boot(&default_dir));
+    let default_dir = world.boot.enc_dir.clone().unwrap();
+    world.boot.last_boot = Some(data_location::boot(&default_dir));
 }
 
 #[when(expr = "用主口令 {string} 开启加密")]
 fn when_enable_encryption(world: &mut LedgerWorld, passphrase: String) {
-    world.enc_last_error = None;
+    world.boot.enc_last_error = None;
     if let Err(e) = enable_encryption_for_file(&db_path(world), &passphrase) {
-        world.enc_last_error = Some(e);
+        world.boot.enc_last_error = Some(e);
     }
 }
 
 #[when(expr = "用当前主口令 {string} 关闭加密")]
 fn when_disable_encryption(world: &mut LedgerWorld, passphrase: String) {
-    world.enc_last_error = None;
+    world.boot.enc_last_error = None;
     if let Err(e) = disable_encryption_for_file(&db_path(world), &passphrase) {
-        world.enc_last_error = Some(e);
+        world.boot.enc_last_error = Some(e);
     }
 }
 
 #[when(expr = "用旧口令 {string} 与新口令 {string} 修改主口令")]
 fn when_change_passphrase(world: &mut LedgerWorld, current: String, new_pass: String) {
-    world.enc_last_error = None;
+    world.boot.enc_last_error = None;
     if let Err(e) = change_passphrase_for_file(&db_path(world), &current, &new_pass) {
-        world.enc_last_error = Some(e);
+        world.boot.enc_last_error = Some(e);
     }
 }
 
 #[when(expr = "以主口令 {string} 解锁")]
 fn when_unlock(world: &mut LedgerWorld, passphrase: String) {
-    world.enc_last_error = None;
+    world.boot.enc_last_error = None;
     match unlock_db_file(&db_path(world), &passphrase) {
-        Ok(conn) => world.enc_conn = Some(conn),
-        Err(e) => world.enc_last_error = Some(e),
+        Ok(conn) => world.boot.enc_conn = Some(conn),
+        Err(e) => world.boot.enc_last_error = Some(e),
     }
 }
 
@@ -241,38 +241,38 @@ fn when_unlock_again(world: &mut LedgerWorld, passphrase: String) {
 
 #[when(expr = "以主口令 {string} 解锁并补做等待中的搬迁")]
 fn when_unlock_and_relocate(world: &mut LedgerWorld, passphrase: String) {
-    world.enc_last_error = None;
+    world.boot.enc_last_error = None;
     match unlock_db_file(&db_path(world), &passphrase) {
-        Ok(conn) => world.enc_conn = Some(conn),
+        Ok(conn) => world.boot.enc_conn = Some(conn),
         Err(e) => {
-            world.enc_last_error = Some(e);
+            world.boot.enc_last_error = Some(e);
             return;
         }
     }
-    let default_dir = world.enc_dir.clone().unwrap();
-    let target = world.enc_target_dir.clone().unwrap();
+    let default_dir = world.boot.enc_dir.clone().unwrap();
+    let target = world.boot.enc_target_dir.clone().unwrap();
     if let Err(e) = relocate_with_key(
         &default_dir.join(DB_FILE_NAME),
         &target.join(DB_FILE_NAME),
         &passphrase,
     ) {
-        world.enc_last_error = Some(e);
+        world.boot.enc_last_error = Some(e);
     }
 }
 
 #[when(expr = "执行忘记口令重置")]
 fn when_reset_forgotten(world: &mut LedgerWorld) {
-    world.enc_last_error = None;
+    world.boot.enc_last_error = None;
     match reset_encrypted_db_file(&db_path(world)) {
-        Ok(conn) => world.enc_conn = Some(conn),
-        Err(e) => world.enc_last_error = Some(e),
+        Ok(conn) => world.boot.enc_conn = Some(conn),
+        Err(e) => world.boot.enc_last_error = Some(e),
     }
 }
 
 #[when(expr = "不带口令打开 .bak 密文副本")]
 fn when_open_bak_without_key(world: &mut LedgerWorld) {
     let bak = db_path(world).with_extension("db.bak");
-    world.enc_last_error = (|| -> Result<i64, AppError> {
+    world.boot.enc_last_error = (|| -> Result<i64, AppError> {
         let conn = open_connection(&bak)?;
         Ok(conn.query_row(
             "SELECT COUNT(*) FROM transactions WHERE is_deleted = 0",
@@ -307,7 +307,7 @@ fn then_probe_encrypted(world: &mut LedgerWorld) {
 
 #[then(expr = "引导不应等待解锁")]
 fn then_no_deferred(world: &mut LedgerWorld) {
-    let boot = world.last_boot.as_ref().expect("尚未执行引导");
+    let boot = world.boot.last_boot.as_ref().expect("尚未执行引导");
     assert!(
         boot.deferred_relocation.is_none(),
         "明文库引导不应等待解锁后搬迁"
@@ -316,7 +316,7 @@ fn then_no_deferred(world: &mut LedgerWorld) {
 
 #[then(expr = "引导不应发生回退")]
 fn then_no_fallback(world: &mut LedgerWorld) {
-    let boot = world.last_boot.as_ref().expect("尚未执行引导");
+    let boot = world.boot.last_boot.as_ref().expect("尚未执行引导");
     assert!(
         boot.fallback_reason.is_none(),
         "不应发生回退，实际: {:?}",
@@ -327,23 +327,23 @@ fn then_no_fallback(world: &mut LedgerWorld) {
 #[then(expr = "转换应成功")]
 fn then_convert_ok(world: &mut LedgerWorld) {
     assert!(
-        world.enc_last_error.is_none(),
+        world.boot.enc_last_error.is_none(),
         "转换应成功，实际: {:?}",
-        world.enc_last_error
+        world.boot.enc_last_error
     );
 }
 
 #[then(expr = "转换应失败")]
 fn then_convert_failed(world: &mut LedgerWorld) {
     assert!(
-        world.enc_last_error.is_some(),
+        world.boot.enc_last_error.is_some(),
         "预期转换失败（目录不可写），实际成功"
     );
     // 恢复目录权限，便于临时目录清理与后续断言。
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let dir = world.enc_dir.clone().unwrap();
+        let dir = world.boot.enc_dir.clone().unwrap();
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 }
@@ -385,7 +385,7 @@ fn then_open_bak_with_passphrase(world: &mut LedgerWorld, passphrase: String, co
 
 #[then(expr = "转换失败错误码应为 {string}")]
 fn then_convert_failed_with_code(world: &mut LedgerWorld, code: String) {
-    let error = world.enc_last_error.as_ref().expect("预期转换失败");
+    let error = world.boot.enc_last_error.as_ref().expect("预期转换失败");
     assert_eq!(
         code_of(error),
         Some(code.as_str()),
@@ -406,7 +406,7 @@ fn then_bytes_unchanged_and_plaintext(world: &mut LedgerWorld) {
     let current = std::fs::read(db_path(world)).unwrap();
     assert_eq!(
         current,
-        *world.enc_db_bytes.as_ref().expect("未记录字节快照"),
+        *world.boot.enc_db_bytes.as_ref().expect("未记录字节快照"),
         "失败场景中原库文件字节不应被改动"
     );
     assert_eq!(
@@ -421,7 +421,7 @@ fn then_bytes_unchanged(world: &mut LedgerWorld) {
     let current = std::fs::read(db_path(world)).unwrap();
     assert_eq!(
         current,
-        *world.enc_db_bytes.as_ref().expect("未记录字节快照"),
+        *world.boot.enc_db_bytes.as_ref().expect("未记录字节快照"),
         "失败重试不得改动库文件"
     );
 }
@@ -437,7 +437,7 @@ fn then_still_plaintext_readable(world: &mut LedgerWorld, count: usize) {
 
 #[then(expr = "目录中不应残留转换临时文件或 .bak 副本")]
 fn then_no_leftovers(world: &mut LedgerWorld) {
-    let dir = world.enc_dir.clone().unwrap();
+    let dir = world.boot.enc_dir.clone().unwrap();
     let names: Vec<String> = std::fs::read_dir(&dir)
         .unwrap()
         .filter_map(|e| e.ok())
@@ -456,15 +456,15 @@ fn then_no_leftovers(world: &mut LedgerWorld) {
 #[then(expr = "重置应成功")]
 fn then_reset_ok(world: &mut LedgerWorld) {
     assert!(
-        world.enc_last_error.is_none(),
+        world.boot.enc_last_error.is_none(),
         "重置应成功，实际: {:?}",
-        world.enc_last_error
+        world.boot.enc_last_error
     );
 }
 
 #[then(expr = "重置后的新库应为不含交易的明文空库")]
 fn then_reset_fresh_empty(world: &mut LedgerWorld) {
-    let conn = world.enc_conn.as_ref().expect("重置后应有新库连接");
+    let conn = world.boot.enc_conn.as_ref().expect("重置后应有新库连接");
     assert_eq!(count_transactions(conn), 0, "重置后的新库应为空库");
 }
 
@@ -493,6 +493,7 @@ fn then_bak_recoverable_with_passphrase(world: &mut LedgerWorld, passphrase: Str
 #[then(expr = "打开应失败且错误为文件不可读")]
 fn then_bak_unreadable_without_key(world: &mut LedgerWorld) {
     let error = world
+        .boot
         .enc_last_error
         .as_ref()
         .expect("无密钥打开密文副本应失败");
@@ -506,17 +507,17 @@ fn then_bak_unreadable_without_key(world: &mut LedgerWorld) {
 #[then(expr = "解锁应成功且打开的库应包含 {int} 条交易")]
 fn then_unlocked_with_count(world: &mut LedgerWorld, count: usize) {
     assert!(
-        world.enc_last_error.is_none(),
+        world.boot.enc_last_error.is_none(),
         "解锁应成功，实际: {:?}",
-        world.enc_last_error
+        world.boot.enc_last_error
     );
-    let conn = world.enc_conn.as_ref().expect("解锁后应有连接");
+    let conn = world.boot.enc_conn.as_ref().expect("解锁后应有连接");
     assert_eq!(count_transactions(conn) as usize, count);
 }
 
 #[then(expr = "解锁应失败且错误码为 {string}")]
 fn then_unlock_failed_with_code(world: &mut LedgerWorld, code: String) {
-    let error = world.enc_last_error.as_ref().expect("预期解锁失败");
+    let error = world.boot.enc_last_error.as_ref().expect("预期解锁失败");
     assert_eq!(
         code_of(error),
         Some(code.as_str()),
@@ -532,8 +533,8 @@ fn then_reopen_with_passphrase(world: &mut LedgerWorld, passphrase: String) {
 
 #[then(expr = "引导应等待解锁后搬迁到目标目录")]
 fn then_deferred_relocation(world: &mut LedgerWorld) {
-    let boot = world.last_boot.as_ref().expect("尚未执行引导");
-    let target = world.enc_target_dir.as_ref().unwrap();
+    let boot = world.boot.last_boot.as_ref().expect("尚未执行引导");
+    let target = world.boot.enc_target_dir.as_ref().unwrap();
     assert_eq!(
         boot.deferred_relocation.as_deref(),
         Some(target.as_path()),
@@ -548,15 +549,15 @@ fn then_deferred_relocation(world: &mut LedgerWorld) {
 #[then(expr = "搬迁应成功")]
 fn then_relocate_ok(world: &mut LedgerWorld) {
     assert!(
-        world.enc_last_error.is_none(),
+        world.boot.enc_last_error.is_none(),
         "搬迁应成功，实际: {:?}",
-        world.enc_last_error
+        world.boot.enc_last_error
     );
 }
 
 #[then(expr = "目标目录的库应探测为密文库")]
 fn then_target_encrypted(world: &mut LedgerWorld) {
-    let target = world.enc_target_dir.as_ref().unwrap();
+    let target = world.boot.enc_target_dir.as_ref().unwrap();
     assert_eq!(
         probe_file_kind(&target.join(DB_FILE_NAME)).unwrap(),
         DbFileKind::Encrypted,
@@ -566,7 +567,7 @@ fn then_target_encrypted(world: &mut LedgerWorld) {
 
 #[then(expr = "凭主口令 {string} 打开目标目录的库应包含 {int} 条交易且内容完整")]
 fn then_target_content(world: &mut LedgerWorld, passphrase: String, count: usize) {
-    let target = world.enc_target_dir.as_ref().unwrap();
+    let target = world.boot.enc_target_dir.as_ref().unwrap();
     let conn = open_connection_with_passphrase(target.join(DB_FILE_NAME), &passphrase).unwrap();
     assert_eq!(count_transactions(&conn) as usize, count);
     // 与源库快照逐行比对：搬迁前后内容一致。
@@ -595,22 +596,30 @@ fn then_source_preserved(world: &mut LedgerWorld) {
 
 #[when(expr = "制定重引导计划")]
 fn when_plan_reboot(world: &mut LedgerWorld) {
-    let default_dir = world.enc_dir.clone().expect("尚未准备加密场景目录");
+    let default_dir = world.boot.enc_dir.clone().expect("尚未准备加密场景目录");
     let plan = tauri_app_lib::db::boot::plan_boot(&default_dir);
-    world.last_boot = Some(plan.boot);
-    world.enc_last_plan = Some(plan.disposition.map_err(|e| e.to_string()));
+    world.boot.last_boot = Some(plan.boot);
+    world.boot.enc_last_plan = Some(plan.disposition.map_err(|e| e.to_string()));
 }
 
 #[then(expr = "重引导后生效目录应为目标目录")]
 fn then_plan_dir_is_target(world: &mut LedgerWorld) {
-    let boot = world.last_boot.as_ref().expect("尚未制定重引导计划");
-    let target = world.enc_target_dir.as_ref().expect("尚未配置搬迁目标目录");
+    let boot = world.boot.last_boot.as_ref().expect("尚未制定重引导计划");
+    let target = world
+        .boot
+        .enc_target_dir
+        .as_ref()
+        .expect("尚未配置搬迁目标目录");
     assert_eq!(&boot.db_dir, target, "重引导后生效目录应切换到搬迁目标目录");
 }
 
 #[then(expr = "重引导处置应等待解锁")]
 fn then_plan_awaits_unlock(world: &mut LedgerWorld) {
-    let plan = world.enc_last_plan.as_ref().expect("尚未制定重引导计划");
+    let plan = world
+        .boot
+        .enc_last_plan
+        .as_ref()
+        .expect("尚未制定重引导计划");
     assert_eq!(
         plan.as_ref().expect("重引导计划不应失败"),
         &tauri_app_lib::db::boot::BootDisposition::AwaitUnlock,
@@ -620,7 +629,11 @@ fn then_plan_awaits_unlock(world: &mut LedgerWorld) {
 
 #[then(expr = "重引导处置应就绪建连")]
 fn then_plan_ready(world: &mut LedgerWorld) {
-    let plan = world.enc_last_plan.as_ref().expect("尚未制定重引导计划");
+    let plan = world
+        .boot
+        .enc_last_plan
+        .as_ref()
+        .expect("尚未制定重引导计划");
     assert_eq!(
         plan.as_ref().expect("重引导计划不应失败"),
         &tauri_app_lib::db::boot::BootDisposition::OpenPlaintext,

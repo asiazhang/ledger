@@ -133,8 +133,8 @@ fn create_txn_with_merchant(
     };
     let result = create_transaction_internal(&world_conn!(world), input);
     assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
-    world.last_transaction_id = Some(result.unwrap().id);
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.last_transaction_id = Some(result.unwrap().id);
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 尝试创建带商户的交易并捕获错误（供「应返回错误」断言）。
@@ -327,11 +327,11 @@ fn check_merchant_transaction_count(world: &mut LedgerWorld, name: String, expec
 fn check_txn_merchant(world: &mut LedgerWorld, index: i64, merchant_name: String) {
     let idx = (index - 1) as usize;
     assert!(
-        idx < world.transactions_list.len(),
+        idx < world.txn.transactions_list.len(),
         "交易列表只有 {} 条，无法访问第 {index} 条",
-        world.transactions_list.len()
+        world.txn.transactions_list.len()
     );
-    let txn = &world.transactions_list[idx];
+    let txn = &world.txn.transactions_list[idx];
     let mid = txn
         .merchant_id
         .as_deref()

@@ -32,7 +32,7 @@ fn edit_subscription_plan(world: &mut LedgerWorld, note: String, category: Strin
 /// 编辑最近订阅计划的商户（issue #190：改商户只影响未来期次；其余字段取当前值）。
 #[when(expr = "编辑该订阅计划 商户 {string}")]
 fn edit_subscription_plan_merchant(world: &mut LedgerWorld, merchant: String) {
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let (account_id, category_id, note): (String, Option<String>, Option<String>) =
         world_conn!(world)
             .query_row(
@@ -77,7 +77,7 @@ fn edit_subscription_plan_inner(
     category: Option<String>,
     account: Option<String>,
 ) {
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let (current_account_id, current_category_id): (String, Option<String>) = world_conn!(world)
         .query_row(
             "SELECT account_id,category_id FROM scheduled_transactions WHERE id=?1",
@@ -125,7 +125,7 @@ fn edit_subscription_plan_inner(
 /// 携带金额字段发出编辑请求：应被后端显式拒绝（ADR-0023 决策三）。
 #[when(expr = "携带金额 {int} 编辑该订阅计划")]
 fn edit_subscription_plan_with_amount(world: &mut LedgerWorld, _amount: i64) {
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let (account_id, category_id, note): (String, Option<String>, Option<String>) =
         world_conn!(world)
             .query_row(
@@ -168,7 +168,7 @@ fn assert_edit_error(world: &mut LedgerWorld, needle: String) {
 
 #[then(expr = "该计划备注应为 {string}")]
 fn assert_plan_note(world: &mut LedgerWorld, expected: String) {
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let note: String = world_conn!(world)
         .query_row(
             "SELECT note FROM scheduled_transactions WHERE id=?1",
@@ -219,7 +219,7 @@ struct PlanTxnRow {
 }
 
 fn plan_generated_txn(world: &LedgerWorld, nth: usize) -> PlanTxnRow {
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     world_conn!(world)
         .query_row(
             "SELECT t.note,t.category_id,t.account_id FROM transactions t \
@@ -250,7 +250,7 @@ fn assert_plan_txn_account(world: &mut LedgerWorld, nth: usize, expected: String
 
 #[then(expr = "该计划扣款账户应为 {string}")]
 fn assert_plan_account(world: &mut LedgerWorld, expected: String) {
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let account_id: String = world_conn!(world)
         .query_row(
             "SELECT account_id FROM scheduled_transactions WHERE id=?1",

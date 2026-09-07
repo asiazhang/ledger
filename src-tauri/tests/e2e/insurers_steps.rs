@@ -52,7 +52,7 @@ fn try_create_insurer(world: &mut LedgerWorld, name: String) {
 #[when(expr = "按名创建保司 {string}")]
 fn find_or_create_insurer(world: &mut LedgerWorld, name: String) {
     let id = create_insurer_by_name(&world_conn!(world), &name).expect("按名创建保司失败");
-    world.last_insurer_by_name_id = Some(id.clone());
+    world.policy.last_insurer_by_name_id = Some(id.clone());
     world.insurer_name_to_id.insert(name, id);
 }
 
@@ -183,6 +183,7 @@ fn check_insurer_all_contains(world: &mut LedgerWorld, name: String) {
 #[then(expr = "按名创建保司 {string} 应复用已有行")]
 fn check_find_or_create_reuses_existing(world: &mut LedgerWorld, name: String) {
     let previous = world
+        .policy
         .last_insurer_by_name_id
         .clone()
         .expect("复用断言前应先执行过按名创建保司");

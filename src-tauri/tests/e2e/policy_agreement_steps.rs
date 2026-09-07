@@ -45,7 +45,7 @@ fn create_policy_agreement(
     recurrence: String,
     start: String,
 ) {
-    let policy_id = world.last_policy_id.clone().expect("尚无保单");
+    let policy_id = world.policy.last_policy_id.clone().expect("尚无保单");
     let id = world
         .db
         .write(|conn| {
@@ -71,7 +71,7 @@ fn create_policy_agreement(
             )
         })
         .expect("创建保单缴费协议应成功但失败");
-    world.last_plan_id = Some(id);
+    world.plan.last_plan_id = Some(id);
 }
 
 /// 尝试为最近创建的保单创建缴费协议并捕获错误（软删保单不可被新协议选择）。
@@ -86,7 +86,7 @@ fn try_create_policy_agreement(
     recurrence: String,
     start: String,
 ) {
-    let policy_id = world.last_policy_id.clone().expect("尚无保单");
+    let policy_id = world.policy.last_policy_id.clone().expect("尚无保单");
     let result = create_policy_plan(
         world,
         &policy_id,
@@ -117,7 +117,7 @@ fn try_create_policy_agreement_with_merchant(
     start: String,
     merchant: String,
 ) {
-    let policy_id = world.last_policy_id.clone().expect("尚无保单");
+    let policy_id = world.policy.last_policy_id.clone().expect("尚无保单");
     let merchant_id = world.merchant_id(&merchant);
     let result = create_policy_plan(
         world,
@@ -176,7 +176,7 @@ fn create_policy_plan(
 /// 不回挂商户，ADR-0082 决策 2）。
 #[when(expr = "尝试编辑该订阅计划 商户 {string}")]
 fn try_edit_policy_plan_merchant(world: &mut LedgerWorld, merchant: String) {
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let (account_id, category_id, note): (String, Option<String>, Option<String>) =
         world_conn!(world)
             .query_row(
@@ -311,7 +311,7 @@ fn policy_id_by_number(world: &LedgerWorld, policy_number: &str) -> String {
 /// 计划行商户置空/不写，期次对空商户透传——归属唯一事实是 policy_id）。
 #[then(expr = "该期次交易不应携带商户")]
 fn assert_occurrence_txn_without_merchant(world: &mut LedgerWorld) {
-    let occ_id = world.last_occurrence_id.clone().expect("尚无期次");
+    let occ_id = world.plan.last_occurrence_id.clone().expect("尚无期次");
     let (merchant_id, policy_id): (Option<String>, Option<String>) = world_conn!(world)
         .query_row(
             "SELECT t.merchant_id, t.policy_id FROM transactions t \
@@ -339,7 +339,7 @@ fn assert_occurrence_txn_policy(world: &mut LedgerWorld, policy_number: String) 
 /// 最近计划已生成（期次回填）的全部交易均挂同一保单。
 #[then(expr = "最近计划生成的每笔交易挂单均应为保单号 {string}")]
 fn assert_plan_txns_all_policy(world: &mut LedgerWorld, policy_number: String) {
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let policy_id = policy_id_by_number(world, &policy_number);
     let policies: Vec<Option<String>> = {
         let conn = world_conn!(world);
@@ -397,7 +397,7 @@ fn assert_policy_plan_segment(
 
 /// 最近执行期次生成交易的 policy_id（未回填则 panic，与 occurrence 断言先例一致）。
 fn occurrence_txn_policy_id(world: &LedgerWorld) -> Option<String> {
-    let occ_id = world.last_occurrence_id.clone().expect("尚无期次");
+    let occ_id = world.plan.last_occurrence_id.clone().expect("尚无期次");
     let txn_id: Option<String> = world_conn!(world)
         .query_row(
             "SELECT transaction_id FROM scheduled_transaction_occurrences WHERE id=?1",
@@ -424,7 +424,7 @@ struct PolicyPlanRow {
 }
 
 fn policy_plan_rows(world: &LedgerWorld) -> Vec<PolicyPlanRow> {
-    let policy_id = world.last_policy_id.clone().expect("尚无保单");
+    let policy_id = world.policy.last_policy_id.clone().expect("尚无保单");
     let conn = world_conn!(world);
     let mut stmt = conn
         .prepare(
