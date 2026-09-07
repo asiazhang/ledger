@@ -9,19 +9,18 @@
 //! 删除、批量导入、Writer 直写（定时引擎例外接缝）、余额调整、账户增删；
 //! 五出口回归、缓存缺失码化错误、净资产探针（回填/命中/自愈）与审计修复。
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, params};
 
 use super::super::*;
 use super::common::{insert_account, make_buy_input, make_input, setup, setup_investment_account};
-use crate::accounts::balance::{
-    compute_all_balances_with_visibility, compute_balance, list_accounts_with_visibility,
-};
+use crate::accounts::balance::{compute_all_balances_with_visibility, compute_balance};
 use crate::accounts::{
     AccountBalanceAdjustInput, AccountInput, AccountType, adjust_account_balance,
     audit_balance_cache, create_account, delete_account, list_account_balances_for_api,
     list_account_balances_with_visibility as domain_list_balances,
 };
 use crate::dashboard::query_dashboard_overview;
+use crate::test_support::assert_balance_cache_matches_realtime;
 use crate::transaction::TransactionBatch;
 use crate::transaction::amount::TransactionKind;
 
@@ -32,26 +31,8 @@ fn backfill_scaffold_account(conn: &Connection, account_id: &str) {
     crate::accounts::balance::refresh_account_balances(conn, &[account_id]).unwrap();
 }
 
-/// 一致性断言：全部账户（含黑洞）缓存行 == 实时计算（逐账户比对）。
-fn assert_cache_matches_realtime(conn: &Connection) {
-    for account in list_accounts_with_visibility(conn, true).unwrap() {
-        let cached: Option<i64> = conn
-            .query_row(
-                "SELECT balance_cents FROM account_balance_cache WHERE account_id=?1",
-                params![account.id],
-                |r| r.get(0),
-            )
-            .optional()
-            .unwrap();
-        assert_eq!(
-            cached,
-            Some(compute_balance(conn, &account.id).unwrap()),
-            "账户 {}({}) 缓存应等于实时计算",
-            account.id,
-            account.name
-        );
-    }
-}
+// 一致性对拍断言上收共享断言库（issue #751 / ADR-0084 决策 6）：本地断言体删除，
+// 改调 test_support::assert_balance_cache_matches_realtime（全库唯一维护点）。
 
 // ---------------------------------------------------------------------------
 // 创建入口参数化：六 kind 全覆盖
@@ -73,7 +54,7 @@ fn create_all_kinds_keep_cache_consistent() {
         make_input("acc-cash", TransactionKind::Income, 10000, "2026-01-01"),
     )
     .unwrap();
-    assert_cache_matches_realtime(&conn);
+    assert_balance_cache_matches_realtime(&conn);
 
     // expense −
     create_transaction_internal(
@@ -81,7 +62,7 @@ fn create_all_kinds_keep_cache_consistent() {
         make_input("acc-cash", TransactionKind::Expense, 2000, "2026-01-02"),
     )
     .unwrap();
-    assert_cache_matches_realtime(&conn);
+    assert_balance_cache_matches_realtime(&conn);
 
     // transfer：转出侧 −、转入侧 +
     create_account(
@@ -107,7 +88,7 @@ fn create_all_kinds_keep_cache_consistent() {
         },
     )
     .unwrap();
-    assert_cache_matches_realtime(&conn);
+    assert_balance_cache_matches_realtime(&conn);
 
     // refund +（挂真实 expense）
     let expense_id = create_transaction_internal(
@@ -124,17 +105,17 @@ fn create_all_kinds_keep_cache_consistent() {
         },
     )
     .unwrap();
-    assert_cache_matches_realtime(&conn);
+    assert_balance_cache_matches_realtime(&conn);
 
     // buy − / sell +（投资账户）
     create_transaction_internal(&conn, make_buy_input("acc-inv", "inst-k", 2.0, 100000, 100))
         .unwrap();
-    assert_cache_matches_realtime(&conn);
+    assert_balance_cache_matches_realtime(&conn);
     let mut sell = make_buy_input("acc-inv", "inst-k", 1.0, 110000, 0);
     sell.kind = TransactionKind::Sell;
     sell.date = "2026-01-06".into();
     create_transaction_internal(&conn, sell).unwrap();
-    assert_cache_matches_realtime(&conn);
+    assert_balance_cache_matches_realtime(&conn);
 }
 
 // ---------------------------------------------------------------------------
@@ -158,7 +139,7 @@ fn update_cross_account_refreshes_old_and_new_union() {
     )
     .unwrap()
     .id;
-    assert_cache_matches_realtime(&conn);
+    assert_balance_cache_matches_realtime(&conn);
 
     // expense(acc-u1) → transfer(acc-u1→acc-u2)：两侧并集。
     update_transaction_internal(
@@ -170,7 +151,7 @@ fn update_cross_account_refreshes_old_and_new_union() {
         },
     )
     .unwrap();
-    assert_cache_matches_realtime(&conn);
+    assert_balance_cache_matches_realtime(&conn);
 
     // transfer → expense(acc-u3)：旧引用（u1/u2）与新引用（u3）并集。
     update_transaction_internal(
@@ -179,7 +160,7 @@ fn update_cross_account_refreshes_old_and_new_union() {
         make_input("acc-u3", TransactionKind::Expense, 900, "2026-01-02"),
     )
     .unwrap();
-    assert_cache_matches_realtime(&conn);
+    assert_balance_cache_matches_realtime(&conn);
 }
 
 /// 删除 transfer 交易：两侧账户缓存回到初始（delete_within_transaction 重算）。
@@ -201,12 +182,12 @@ fn delete_transfer_restores_both_sides() {
     )
     .unwrap()
     .id;
-    assert_cache_matches_realtime(&conn);
+    assert_balance_cache_matches_realtime(&conn);
     assert_eq!(compute_balance(&conn, "acc-d1").unwrap(), -700);
     assert_eq!(compute_balance(&conn, "acc-d2").unwrap(), 700);
 
     delete_transaction_internal(&conn, &id).unwrap();
-    assert_cache_matches_realtime(&conn);
+    assert_balance_cache_matches_realtime(&conn);
     assert_eq!(compute_balance(&conn, "acc-d1").unwrap(), 0);
     assert_eq!(compute_balance(&conn, "acc-d2").unwrap(), 0);
 }
@@ -231,7 +212,7 @@ fn batch_import_keeps_cache_consistent() {
         true,
     )
     .unwrap();
-    assert_cache_matches_realtime(&conn);
+    assert_balance_cache_matches_realtime(&conn);
 }
 
 /// Writer 接缝直写（定时交易引擎例外接缝，ADR-0033 登记的唯一绕行为层入口）：
@@ -259,7 +240,7 @@ fn writer_insert_row_direct_seam_refreshes_cache() {
     };
     let row = writer::normalize(&conn, &input).unwrap();
     writer::insert_row(&conn, &row).unwrap();
-    assert_cache_matches_realtime(&conn);
+    assert_balance_cache_matches_realtime(&conn);
     assert_eq!(compute_balance(&conn, "acc-eng").unwrap(), 1200);
 }
 
@@ -291,7 +272,7 @@ fn account_create_and_delete_maintain_cache_rows() {
     assert_eq!(cached, 6800, "创建账户应即建缓存行（初始余额）");
 
     delete_account(&conn, &id).unwrap();
-    assert_cache_matches_realtime(&conn);
+    assert_balance_cache_matches_realtime(&conn);
 }
 
 /// 余额调整（ADR-0026）取数走缓存（五出口之一）：调整后余额精确等于目标值，
@@ -324,16 +305,16 @@ fn adjust_balance_targets_exact_value_via_cache() {
         .unwrap()
     };
     adjust(5600);
-    assert_cache_matches_realtime(&conn);
+    assert_balance_cache_matches_realtime(&conn);
     assert_eq!(compute_balance(&conn, &id).unwrap(), 5600);
 
     // 反向：5600 → 4300。
     adjust(4300);
-    assert_cache_matches_realtime(&conn);
+    assert_balance_cache_matches_realtime(&conn);
     assert_eq!(compute_balance(&conn, &id).unwrap(), 4300);
 
     // 黑洞账户自身缓存也应一致（转账对方）。
-    assert_cache_matches_realtime(&conn);
+    assert_balance_cache_matches_realtime(&conn);
 }
 
 // ---------------------------------------------------------------------------
@@ -544,7 +525,7 @@ fn audit_polluted_cache_reports_then_repairs() {
     assert_eq!(missing.actual_cents, 1500);
 
     // 修复后：缓存 == 实时，复检干净。
-    assert_cache_matches_realtime(&conn);
+    assert_balance_cache_matches_realtime(&conn);
     let recheck = audit_balance_cache(&conn).unwrap();
     assert!(!recheck.repaired, "修复后复检应无差异");
     assert!(recheck.drifts.is_empty());

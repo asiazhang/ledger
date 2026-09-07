@@ -8,8 +8,8 @@
 
 use rusqlite::{Connection, params};
 
-use crate::accounts::balance::compute_balance;
 use crate::db::{init_db, migrations, open_in_memory};
+use crate::test_support::{assert_balance_cache_matches_realtime, read_scalar_i64};
 
 /// V017 之前的 schema 版本：余额缓存表加入前的迁移序列条数（V001–V016，无 V005，
 /// 共 15 条；version 为迁移向量下标从 1 起，V017 本身即 version 16）。
@@ -81,33 +81,21 @@ fn v017_backfill_matches_compute_balance_on_upgrade() {
 
     init_db(&mut conn).unwrap();
 
-    // 每个未删除账户：缓存行 == 实时重算（含投资与转入侧账户）。
-    for account_id in ["acc-a", "acc-b", "acc-inv"] {
-        let cached: i64 = conn
-            .query_row(
-                "SELECT balance_cents FROM account_balance_cache WHERE account_id=?1",
-                params![account_id],
-                |r| r.get(0),
-            )
-            .unwrap_or_else(|_| panic!("账户 {account_id} 应有缓存行"));
-        assert_eq!(
-            cached,
-            compute_balance(&conn, account_id).unwrap(),
-            "账户 {account_id} 回填值应等于实时计算"
-        );
-    }
+    // 回填值 == 实时重算：断言体上收共享断言库（issue #751 / ADR-0084 决策 6），
+    // 逐账户比对全部未删除账户（含本世界三账户与 V004 默认种子账户、投资与转入
+    // 侧），与 transaction 域 balance_cache 测试同一份断言体。
+    assert_balance_cache_matches_realtime(&conn);
 
     // 软删账户同样被回填（迁移一次性冻结产物不过滤 is_deleted；读路径不读它，
     // 审计命令只巡检未删除账户，回填行留存无害）。
 
     // 期望值抽查（锚定口径，防止两侧同错）：acc-a = 10000 + 5000 − 1200 − 800 + 200。
-    let a: i64 = conn
-        .query_row(
-            "SELECT balance_cents FROM account_balance_cache WHERE account_id='acc-a'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
+    let a = read_scalar_i64(
+        &conn,
+        "SELECT balance_cents FROM account_balance_cache WHERE account_id='acc-a'",
+        [],
+    )
+    .expect("acc-a 应有缓存行");
     assert_eq!(a, 13200, "acc-a 回填值应符合口径锚点");
 
     // 净资产缓存为空单例：迁移不回填，首次读取由读探针自愈。
