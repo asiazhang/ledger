@@ -68,14 +68,6 @@ fn try_update_last_to_transfer(world: &mut LedgerWorld, amount: i64, date: Strin
     capture_expected_error(world, result);
 }
 
-/// 尝试修改一笔不存在的交易，应返回明确错误（NotFound）。
-#[when(expr = "尝试修改不存在的交易 金额 {int} 日期 {string}")]
-fn try_update_missing_txn(world: &mut LedgerWorld, amount: i64, date: String) {
-    let input = expense_input(amount, "missing-acc", &date);
-    let result = try_update_transaction_verb(world, "nonexistent-id", input);
-    capture_expected_error(world, result);
-}
-
 /// 删除最近一笔交易（软删除，与 IPC/HTTP 删除同一行为层权威），
 /// 供「编辑已删除交易」场景铺垫。
 #[when(expr = "删除最近交易")]

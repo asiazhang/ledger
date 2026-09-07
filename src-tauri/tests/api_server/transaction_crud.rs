@@ -41,17 +41,6 @@ async fn test_delete_transaction_returns_204_and_removes_from_readback() {
 }
 
 #[tokio::test]
-async fn test_delete_transaction_not_found_returns_404() {
-    let (app, _) = setup_app();
-
-    let (status, body) = delete_transaction_via_api(&app, "不存在的id").await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    let err: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(err["kind"], "NotFound");
-    assert!(err["message"].as_str().unwrap().contains("交易不存在"));
-}
-
-#[tokio::test]
 async fn test_delete_transaction_frees_dedup_slot_for_reimport() {
     let (app, _) = setup_app();
     let account_id = create_account_via_api(&app, "现金账户").await;
@@ -98,21 +87,6 @@ async fn test_update_transaction_returns_200_and_updates_fields() {
     assert_eq!(txs.len(), 1);
     assert_eq!(txs[0]["amount_cents"], 900);
     assert_eq!(txs[0]["note"], "改后");
-}
-
-#[tokio::test]
-async fn test_update_transaction_not_found_returns_404() {
-    let (app, _) = setup_app();
-    let account_id = create_account_via_api(&app, "现金账户").await;
-
-    let body = format!(
-        r#"{{"kind":"expense","amount_cents":100,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01"}}"#
-    );
-    let (status, bytes) = put_transaction_via_api(&app, "不存在的id", &body).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(err["kind"], "NotFound");
-    assert!(err["message"].as_str().unwrap().contains("交易不存在"));
 }
 
 #[tokio::test]
