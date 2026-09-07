@@ -1,5 +1,6 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use tauri_app_lib::test_support;
 use tower::ServiceExt;
 
 use crate::common::{
@@ -209,16 +210,16 @@ async fn test_batch_create_dividend_and_split_rejected_with_not_supported() {
 #[tokio::test]
 async fn test_batch_buy_sell_with_missing_instrument_rejected_with_readable_error() {
     let (app, conn) = setup_app();
-    // buy/sell 需投资账户：直接插入（账户创建 API 的夹具固定 cash 类型）。
-    {
-        let conn = conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES ('acc-inv-295','证券账户','investment','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-            [],
-        )
-        .unwrap();
-    }
+    // buy/sell 需投资账户（账户创建 API 的夹具固定 cash 类型）：工厂账户种子直建
+    // （归一签名，spec #728 / ADR-0084 决策 4）。
+    test_support::seed_account(
+        &conn.lock().unwrap(),
+        "acc-inv-295",
+        "证券账户",
+        "investment",
+        "CNY",
+        0,
+    );
     let account_id = "acc-inv-295";
 
     let body = format!(

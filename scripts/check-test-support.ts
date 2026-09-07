@@ -4,7 +4,7 @@
 // 统一测试数据库工厂（src-tauri/src/test_support/，#751 落地）是建库与种子知识的
 // 唯一入口；本守门防回潮——测试代码绕开工厂直连建库、直写种子表、自抄默认时刻，
 // 一律红。白名单起步、覆盖全部存量（「白名单即规格」，ADR-0056 哲学），随按域
-// 迁移票 #753–#757 逐组缩减为空，#758 收口转纯禁令。前端同构先例：
+// 迁移票逐组缩减为空（API 集成组已随 #753 清零），#758 收口转纯禁令。前端同构先例：
 // check-test-stubs.ts（#725/#726）已验证「深模块收敛 + 文本级守门 + 白名单防回潮」
 // 在本仓有效。
 //
@@ -83,20 +83,12 @@ export interface GateWhitelistEntry {
 
 /**
  * 白名单起步（issue #752）：现存全部违规按域分组，一组一行、注释记行数。
- * 每张按域迁移票负责把自己那组缩减为空（#753 API 集成 / #754 叶子域+db+sync /
- * #755 investment / #756 scheduled_transactions / #757 transaction；
- * e2e 与 backup/内联簿记组暂无对应迁移票，随 e2e 夹具 spec 或对应域票处置）。
+ * 每张按域迁移票负责把自己那组缩减为空（#754 叶子域+db+sync / #755 investment /
+ * #756 scheduled_transactions / #757 transaction；e2e 与 backup/内联簿记组暂无
+ * 对应迁移票，随 e2e 夹具 spec 或对应域票处置）。API 集成层组已随 #753 清零。
  * #758 收口：全表清零转纯禁令。
  */
 export const WHITELIST: readonly GateWhitelistEntry[] = [
-  // ── API 集成层（迁移票 #753）──
-  { file: 'tests/api_server/account_update.rs', note: 'API 集成层', r2: 1, r3: 2 },
-  { file: 'tests/api_server/batch_import.rs', note: 'API 集成层', r2: 1, r3: 2 },
-  { file: 'tests/api_server/common.rs', note: 'API 集成层', r1: 6 },
-  { file: 'tests/api_server/investment_migration.rs', note: 'API 集成层', r2: 1, r3: 2 },
-  { file: 'tests/api_server/transaction_crud.rs', note: 'API 集成层', r2: 12, r3: 24 },
-  { file: 'tests/api_server/transaction_list.rs', note: 'API 集成层', r3: 10 },
-
   // ── 叶子域 + db + sync + ledger-perf（迁移票 #754）──
   { file: 'src/accounts/tests.rs', note: '叶子域+db+sync', r1: 2, r2: 5, r3: 1 },
   { file: 'src/bin/ledger-perf/tests.rs', note: '叶子域+db+sync', r1: 8, r3: 2 },

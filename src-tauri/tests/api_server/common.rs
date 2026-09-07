@@ -9,12 +9,12 @@ use tower::ServiceExt;
 use tauri_app_lib::api_server::{
     ApiState, EmitterSlot, FundDetailFetcher, StockQuoteFetcher, build_router,
 };
-use tauri_app_lib::db;
 use tauri_app_lib::db::boot::BootFailureGate;
 use tauri_app_lib::db::encryption::EncryptionGate;
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::events::SignalEmitter;
 use tauri_app_lib::investment::{FundDetail, FundNav, InstrumentType, StockQuote};
+use tauri_app_lib::test_support;
 
 pub(crate) async fn body_to_bytes(body: Body) -> Vec<u8> {
     body.collect().await.unwrap().to_bytes().to_vec()
@@ -26,14 +26,14 @@ pub(crate) fn setup_app() -> (Router, Arc<Mutex<rusqlite::Connection>>) {
 
 /// 共享装配：内存库初始化 + 注入东财接缝与发射槽（spec #367 code review 去重：
 /// 各 setup 变体只差注入项，装配序列单一承载）。锁定门默认不锁（明文行为基线）。
+/// 建库两行序经统一测试工厂 `test_support::open()` 承载（spec #728 / issue #753 /
+/// ADR-0084 决策 7）：`ApiState` 注入形状不变，外部调用点零改动。
 fn build_test_app(
     fund_fetch: Option<FundDetailFetcher>,
     stock_fetch: Option<StockQuoteFetcher>,
     emitter: EmitterSlot,
 ) -> (Router, Arc<Mutex<rusqlite::Connection>>) {
-    let mut conn = db::open_in_memory().unwrap();
-    db::init_db(&mut conn).unwrap();
-    let conn = Arc::new(Mutex::new(conn));
+    let conn = Arc::new(Mutex::new(test_support::open()));
     let app = build_router(ApiState {
         conn: conn.clone(),
         emitter,
@@ -65,10 +65,8 @@ pub(crate) fn setup_app_with_stock_fetch(
 /// 装配锁定态应用（issue #570）：锁定门置为已锁——门禁中间件对除 OpenAPI
 /// 契约自举端点外的全部端点返回码化错误（连接仅为形状占位，不应被触达）。
 pub(crate) fn setup_locked_app() -> Router {
-    let mut conn = db::open_in_memory().unwrap();
-    db::init_db(&mut conn).unwrap();
     build_router(ApiState {
-        conn: Arc::new(Mutex::new(conn)),
+        conn: Arc::new(Mutex::new(test_support::open())),
         emitter: None,
         fund_fetch: None,
         stock_fetch: None,
@@ -80,12 +78,10 @@ pub(crate) fn setup_locked_app() -> Router {
 /// 装配启动失败应用（issue #601）：启动失败门置为已失败——门禁中间件对除
 /// OpenAPI 契约自举端点外的全部端点返回码化错误（连接仅为形状占位，不应被触达）。
 pub(crate) fn setup_boot_failed_app() -> Router {
-    let mut conn = db::open_in_memory().unwrap();
-    db::init_db(&mut conn).unwrap();
     let boot_gate = BootFailureGate::new();
     boot_gate.set_failed();
     build_router(ApiState {
-        conn: Arc::new(Mutex::new(conn)),
+        conn: Arc::new(Mutex::new(test_support::open())),
         emitter: None,
         fund_fetch: None,
         stock_fetch: None,

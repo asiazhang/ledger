@@ -1,4 +1,5 @@
 use axum::http::StatusCode;
+use tauri_app_lib::test_support::FIXED_NOW;
 
 use crate::common::{
     batch_body, create_account_via_api, create_category_via_api, dates_of, get_json, get_status,
@@ -170,8 +171,8 @@ async fn test_get_transactions_filters_by_merchant_id_query_param() {
         let c = conn.lock().unwrap();
         c.execute(
             "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES ('mch-1','京东','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-            [],
+             VALUES ('mch-1','京东',?1,?2,1,'test',0)",
+            rusqlite::params![FIXED_NOW, FIXED_NOW],
         )
         .unwrap();
     }
@@ -298,16 +299,16 @@ async fn test_get_transactions_includes_policy_source() {
         let c = conn.lock().unwrap();
         c.execute(
             "INSERT INTO insurers (id,name,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES ('ins-1','测试保司','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-            [],
+             VALUES ('ins-1','测试保司',?1,?2,1,'test',0)",
+            rusqlite::params![FIXED_NOW, FIXED_NOW],
         )
         .unwrap();
         c.execute(
             "INSERT INTO policies (id,insurer_id,policy_number,product_name,start_date,end_date,\
              coverage_amount_cents,coverage_currency_code,note,created_at,updated_at,version,device_id,is_deleted) \
              VALUES (?1,'ins-1','P2026-201','重疾险','2026-01-01','2036-01-01',NULL,NULL,NULL,\
-             '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-            rusqlite::params![policy_id],
+             ?2,?3,1,'test',0)",
+            rusqlite::params![policy_id, FIXED_NOW, FIXED_NOW],
         )
         .unwrap();
     }
@@ -398,8 +399,8 @@ async fn test_get_transactions_includes_plan_source() {
              created_at,updated_at,version,device_id,is_deleted) \
              VALUES (?1,'subscription','cancelled',?2,NULL,3000,'CNY',\
              'monthly',1,NULL,'2026-02-01','视频会员',\
-             '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-            rusqlite::params![plan_id, account_id],
+             ?3,?4,1,'test',0)",
+            rusqlite::params![plan_id, account_id, FIXED_NOW, FIXED_NOW],
         )
         .unwrap();
         c.execute(
@@ -407,8 +408,8 @@ async fn test_get_transactions_includes_plan_source() {
              (id,scheduled_transaction_id,scheduled_date,status,transaction_id,amount_cents,\
              created_at,updated_at,version,device_id,is_deleted) \
              VALUES ('occ-1',?1,'2026-02-01','completed',?2,3000,\
-             '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-            rusqlite::params![plan_id, linked_txn_id],
+             ?3,?4,1,'test',0)",
+            rusqlite::params![plan_id, linked_txn_id, FIXED_NOW, FIXED_NOW],
         )
         .unwrap();
     }

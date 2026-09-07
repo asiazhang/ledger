@@ -17,22 +17,13 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use rusqlite::params;
 use tauri_app_lib::investment::InstrumentType;
+use tauri_app_lib::test_support;
 use tower::ServiceExt;
 
 use crate::common::{
     FundStubHit, StockStubHit, batch_body, body_to_bytes, get_json, post_batch, post_instrument,
     setup_app_with_fund_stub, setup_app_with_stock_stub,
 };
-
-/// 直插投资账户（账户创建 API 的夹具固定 cash 类型；先例 batch_import.rs #295 测试）。
-fn seed_investment_account(conn: &Arc<Mutex<rusqlite::Connection>>) -> String {
-    conn.lock().unwrap().execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES ('acc-inv-297','证券账户','investment','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        [],
-    ).unwrap();
-    "acc-inv-297".to_string()
-}
 
 /// 通用链路的股票东财桩命中表（issue #694 起 stock 真实代码创建经东财增强，
 /// 全部链路测试离线驱动、不触真实网络）。
@@ -113,7 +104,15 @@ async fn test_full_migration_flow_search_create_buy_sell_holdings_balance() {
     assert_eq!(replay_id, instrument_id, "链路重跑应幂等复用同一标的");
 
     // 3. 批量导入第一批：两笔买入建仓（不同价格批次，含手续费）
-    let account_id = seed_investment_account(&conn);
+    // 工厂账户种子直建（归一签名，spec #728 / ADR-0084 决策 4）。
+    let account_id = test_support::seed_account(
+        &conn.lock().unwrap(),
+        "acc-inv-297",
+        "证券账户",
+        "investment",
+        "CNY",
+        0,
+    );
     let buys = [
         trade_row(
             "buy",
@@ -256,7 +255,14 @@ async fn test_update_trade_to_missing_instrument_returns_400_not_500() {
     assert_eq!(status, StatusCode::CREATED);
     let instrument_id: String = serde_json::from_slice(&bytes).unwrap();
 
-    let account_id = seed_investment_account(&conn);
+    let account_id = test_support::seed_account(
+        &conn.lock().unwrap(),
+        "acc-inv-297",
+        "证券账户",
+        "investment",
+        "CNY",
+        0,
+    );
     let buy = trade_row(
         "buy",
         &account_id,
@@ -379,7 +385,14 @@ async fn test_fund_migration_flow_lookup_create_batch_dedup_readback() {
 
     // 3. 批量提交申购/赎回（确认单金额权威、不传单价——净值由服务端反算，
     // issue #302 / ADR-0038；幂等键取源内稳定行号）
-    let account_id = seed_investment_account(&conn);
+    let account_id = test_support::seed_account(
+        &conn.lock().unwrap(),
+        "acc-inv-297",
+        "证券账户",
+        "investment",
+        "CNY",
+        0,
+    );
     let buy = format!(
         r#"{{"kind":"buy","amount_cents":151500,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-11","instrument_id":"{instrument_id}","quantity":1000,"fee_cents":1500,"idempotency_key":"fund-bill.csv:3:1"}}"#
     );
@@ -513,7 +526,14 @@ async fn test_stock_migration_flow_lookup_create_batch_dedup_readback() {
     }
 
     // 3. 批量提交 buy/sell（数量 × 单价权威、金额由服务端重算；幂等键取源内稳定行号）
-    let account_id = seed_investment_account(&conn);
+    let account_id = test_support::seed_account(
+        &conn.lock().unwrap(),
+        "acc-inv-297",
+        "证券账户",
+        "investment",
+        "CNY",
+        0,
+    );
     let buy = format!(
         r#"{{"kind":"buy","amount_cents":0,"currency_code":"CNY","account_id":"{account_id}","date":"2026-05-11","instrument_id":"{instrument_id}","quantity":100,"price_cents":150000,"fee_cents":500,"idempotency_key":"stock-bill.csv:3:1"}}"#
     );

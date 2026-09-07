@@ -5,6 +5,7 @@ use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 use tracing_subscriber::layer::SubscriberExt;
 
+use tauri_app_lib::test_support;
 use tauri_app_lib::test_utils::{CaptureLayer, ensure_global_max_level};
 
 use crate::common::{
@@ -211,15 +212,15 @@ async fn test_http_sql_duration_attributed_to_request_span() {
     // 预置账户：直接写库（在捕获 guard 之前，其 SQL 不进入断言范围），
     // 使捕获到的 SQL 只来自导入请求 span。
     let account_id = "acc-import-001";
-    {
-        let conn = conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES (?1,'导入账户','cash','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-            rusqlite::params![account_id],
-        )
-        .unwrap();
-    }
+    // 工厂账户种子直建（归一签名，spec #728 / ADR-0084 决策 4）。
+    test_support::seed_account(
+        &conn.lock().unwrap(),
+        account_id,
+        "导入账户",
+        "cash",
+        "CNY",
+        0,
+    );
 
     let layer = CaptureLayer::new();
     let captured = Arc::clone(&layer.events);
