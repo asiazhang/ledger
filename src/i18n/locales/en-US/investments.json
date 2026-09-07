@@ -50,8 +50,6 @@
     "allMarkets": "All markets",
     "onlyInvested": "Holdings only",
     "syncHoldingPrices": "Sync Holding Prices",
-    "fullSync": "Full Sync",
-    "syncing": "Syncing",
     "columns": {
       "symbol": "Symbol",
       "name": "Name",
@@ -75,18 +73,6 @@
     "deleteCancel": "Cancel",
     "deleteSuccess": "Deleted instrument: {name}",
     "deleteFailed": "Delete failed: {message}",
-    "confirmTitle": "Full Sync of Stock Instruments",
-    "confirmIntro": "This fetches the latest quotes for stock instruments on the Shanghai, Shenzhen, and Hong Kong markets from Eastmoney, involving hundreds of API requests and possibly taking a few minutes. Existing instruments with changed names or markets are updated automatically; no existing data is deleted.",
-    "confirmCancel": "Cancel",
-    "confirmStart": "Start Sync",
-    "progressTitle": "Full Sync of Stock Instruments",
-    "progress": "Processed {current} / {total}{pending}",
-    "progressPending": " (fetching quotes...)",
-    "cumulative": "Inserted {inserted} · Updated {updated}",
-    "cancelSync": "Cancel Sync",
-    "done": "Sync complete: {inserted} inserted, {updated} updated",
-    "cancelled": "Cancelled — {inserted} inserted, {updated} updated",
-    "failed": "Sync failed: {message}",
     "addInstrument": "Add Instrument"
   },
   "manualPrice": {
@@ -156,8 +142,7 @@
     "recordFailed": "Failed to record: {message}"
   },
   "sync": {
-    "failed": "Sync failed: {message}",
-    "cancelFailed": "Failed to cancel: {message}"
+    "failed": "Sync failed: {message}"
   },
   "market": {
     "sh": "Shanghai",

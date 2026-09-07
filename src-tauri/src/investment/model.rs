@@ -305,7 +305,7 @@ impl ManualPriceResult {
     /// 「实际写入任一落点」：价格失效信号证据（`WriteEvidence::PriceWritten`
     /// 载荷，ADR-0044）的域内归一化——任一落点实际写入即价格数据已变更。
     /// 「是否发信号」的判定单点在 `signals_for` 映射行，本方法只做结果 →
-    /// 证据的形状翻译（`SyncOutcome::written` 同款先例）。
+    /// 证据的形状翻译（增量同步结果 `written` 字段同款先例）。
     pub fn any_written(&self) -> bool {
         self.history_written || self.current_price_written
     }

@@ -45,7 +45,7 @@ ADR-0069 统一了执行线程，但写命令的仪式仍逐处重复：克隆�
    - 不经 `db::write` 的声明写命令进显式例外白名单，逐个附动机注释（文件级备份三命令、
      settings KV 两命令、data_location 引导指针两命令、`set_auto_execution_enabled`
      进程标志、`audit_balance_cache` / `repair_note_pinyin` 直连锁内维护、
-     `sync_instruments` 分离线程自发射——先例：ADR-0069 六命令清单、ADR-0033 例外登记纪律）；
+     `sync_instruments` 分离线程自发射（已随 ADR-0081 决策 3 退役删除，issue #698）——先例：ADR-0069 保留同步形态命令清单、ADR-0033 例外登记纪律）；
    - 信号知识本身的守门不降级：`signals_for` 穷尽 match（编译期）+ 每身份一条直测断言
      （含零信号显式断言）全部保留。
 6. **覆盖面 = 壳层专用，入口零豁免概念**。53 个 IPC 声明写命令与 9 个 HTTP 写端点中呈

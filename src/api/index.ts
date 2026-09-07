@@ -80,7 +80,6 @@ import type {
   ScheduledTransactionDetail,
   ScheduledTransactionWithExt,
   SubscriptionSpendOverview,
-  CancelSyncResult,
   SyncHoldingPricesResult,
   TrendRange,
   TransactionInput,
@@ -349,11 +348,8 @@ export const api = {
   setAutoExecutionEnabled: (enabled: boolean) =>
     invoke<void>('set_auto_execution_enabled', { enabled }),
 
-  // 数据同步
-  syncInstruments: () => invoke<void>('sync_instruments'),
-  // 请求中断进行中的全量同步（issue #104）：返回是否确实中断 + 提示文案
-  cancelSyncInstruments: () => invoke<CancelSyncResult>('cancel_sync_instruments'),
-  // 同步持仓价格（增量同步）：仅刷新当前持仓股票的最新价，返回同步/跳过统计
+  // 同步持仓价格（增量同步）：仅刷新当前持仓标的价格，返回同步/跳过统计。
+  // 标的全量同步命令与中断命令已随 ADR-0081 决策 3 退役（issue #698）。
   syncHoldingPrices: () => invoke<SyncHoldingPricesResult>('sync_holding_prices'),
 
   // 备份与恢复

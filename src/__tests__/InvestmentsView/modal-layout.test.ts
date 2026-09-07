@@ -8,14 +8,14 @@ import ManualPriceModal from '@/components/investments/ManualPriceModal.vue'
 import InstrumentBrowser from '@/components/investments/InstrumentBrowser.vue'
 import { makeInstrument } from '../factories'
 
-// 投资弹窗族排版统一（issue #638，spec #630）：五个弹窗的卡片外观收敛为
+// 投资弹窗族排版统一（issue #638，spec #630）：弹窗的卡片外观收敛为
 // AppModal cardSize 单一声明——添加投资标的（#697 收编原自建标的创建与
-// 添加基金两入口）、手动报价、全量同步确认、同步进度均归 md；
-// 显式 style 宽度由 cardSize 承担，无边框由 AppModal 默认承担（调用点不再
-// 显式 :bordered="false"）。断言只看组件可观察输出（卡片宽度样式与边框类），
-// 不深究 naive-ui 内部实现；开合编排与快捷键抑制（ADR-0035/ADR-0072）不在
-// 本测试断言面内，由既有 InstrumentBrowser/CreateInstrumentModal/
-// ManualPriceModal 测试保障。
+// 添加基金两入口）、手动报价均归 md；全量同步确认/同步进度两弹窗已随
+// 全量同步退役删除（issue #698）。显式 style 宽度由 cardSize 承担，无边框由
+// AppModal 默认承担（调用点不再显式 :bordered="false"）。断言只看组件可观察
+// 输出（卡片宽度样式与边框类），不深究 naive-ui 内部实现；开合编排与快捷键
+// 抑制（ADR-0035/ADR-0072）不在本测试断言面内，由既有 InstrumentBrowser/
+// AddInstrumentModal/ManualPriceModal 测试保障。
 // 布线走唯一接缝（issue #748）：标的清单契约进 defaults 表、同步动作为
 // overrides；参考字典五命令由规范夹具兑底；store 层预热 opt-in 开启
 // （币种选项为 self-init，弹窗内下拉依赖就绪后的渲染，先例：
@@ -33,9 +33,6 @@ beforeEach(async () => {
   const seam = wireInvokeSeam({
     defaults: {
       list_instruments: { items: mockInstruments, total: mockInstruments.length },
-    },
-    overrides: {
-      sync_instruments: () => Promise.resolve(undefined),
     },
     refreshReferenceStores: true,
   })
@@ -66,15 +63,6 @@ async function clickToolbarButton(wrapper: ReturnType<typeof mountBrowser>, test
   await flushPromises()
 }
 
-/** 弹窗内容 teleport 到 document.body：弹窗内元素（确认键）用原生事件触发（先例：InstrumentBrowser.test.ts）。 */
-async function clickBody(testid: string) {
-  const el = document.body.querySelector(`[data-testid="${testid}"]`)
-  if (!el) throw new Error(`body 中未找到: ${testid}`)
-  el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-  await nextTick()
-  await flushPromises()
-}
-
 describe('投资弹窗族排版统一（issue #638）', () => {
   it('添加投资标的弹窗（独立挂载）归 md 档且默认无边框', async () => {
     await mountFlushed(AddInstrumentModal, { props: { show: true } })
@@ -95,20 +83,9 @@ describe('投资弹窗族排版统一（issue #638）', () => {
     expectCardSizeMd(modalCard())
   })
 
-  it('全量同步确认弹窗归 md 档且默认无边框', async () => {
+  it('全量同步确认/进度弹窗已随全量同步退役删除（issue #698）', async () => {
     const wrapper = mountBrowser()
     await flushPromises()
-    await clickToolbarButton(wrapper, 'full-sync')
-    expectCardSizeMd(modalCard())
-  })
-
-  it('同步进度弹窗归 md 档且默认无边框', async () => {
-    const wrapper = mountBrowser()
-    await flushPromises()
-    await clickToolbarButton(wrapper, 'full-sync')
-    await clickBody('confirm-full-sync')
-    // 确认后同步发起、进度框打开（中断按钮是进度框的标志元素）
-    expect(document.body.querySelector('[data-testid="cancel-full-sync"]')).not.toBeNull()
-    expectCardSizeMd(modalCard())
+    expect(wrapper.find('[data-testid="full-sync"]').exists()).toBe(false)
   })
 })

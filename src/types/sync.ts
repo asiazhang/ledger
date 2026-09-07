@@ -1,30 +1,6 @@
-export interface SyncProgress {
-  current: number
-  total: number
-  market: string
-  done: boolean
-  total_inserted: number
-  total_updated: number
-  error: string | null
-  /// 终态是否被中断（issue #104）：done 且 cancelled=true 表示中断，done 且 cancelled=false 表示完成。
-  cancelled: boolean
-}
-
-/// 全量同步中断命令的结果（issue #104）。
-export interface CancelSyncResult {
-  /// 是否确实中断了一个正在进行的全量同步。
-  cancelled: boolean
-  /// 结果提示文案（无同步时为「当前没有正在进行的同步」）。
-  message: string
-}
-
-/// 同步完成后的展示结果（由 SyncProgress 的 total_inserted/total_updated 派生）。
-export interface SyncResult {
-  inserted: number
-  updated: number
-}
-
-/// 持仓价格增量同步结果（issue #103）：只刷新当前持仓股票的最新价。
+/// 持仓价格增量同步结果（issue #103）：只刷新当前持仓标的的最新价。
+/// 标的全量同步的控制类型（进度事件载荷 / 中断结果 / 展示结果）已随
+/// ADR-0081 决策 3 退役删除（issue #698）。
 export interface SyncHoldingPricesResult {
   /// 成功同步价格的股票数
   synced: number

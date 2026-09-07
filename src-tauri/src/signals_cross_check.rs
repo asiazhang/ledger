@@ -380,11 +380,6 @@ const IPC_WRITE_ENTRY_EXCEPTIONS: &[(&str, WriteOp, &str)] = &[
         WriteOp::RepairNotePinyin,
         "备注拼音派生列回填：搜索派生数据直连锁内维护，不置脏不发信号（issue #513）",
     ),
-    (
-        "sync_instruments",
-        WriteOp::SyncInstruments,
-        "全量同步「发射后不管」：分离线程自推进自发射（ADR-0069 决策 2 保留同步形态），命令体不触 DB",
-    ),
 ];
 
 /// IPC 派生声明表：`write_entry` 调用点提取的（命令, 身份）。
@@ -447,7 +442,6 @@ fn parse_write_op(ident: &str) -> WriteOp {
         "AuditBalanceCache" => WriteOp::AuditBalanceCache,
         "RepairNotePinyin" => WriteOp::RepairNotePinyin,
         "SyncHoldingPrices" => WriteOp::SyncHoldingPrices,
-        "SyncInstruments" => WriteOp::SyncInstruments,
         "AddFundByCode" => WriteOp::AddFundByCode,
         "AddInstrumentByCode" => WriteOp::AddInstrumentByCode,
         "RecordManualPrice" => WriteOp::RecordManualPrice,

@@ -207,7 +207,7 @@ pub fn list_instruments(
 /// 自建标的物理删除（issue #292 / ADR-0036 决策 5）：守卫前置检查——仅来源为
 /// 手动且无任何 buy/sell 流水引用（security_transactions 无行）的自建标的可删；
 /// 有引用拒删（交易行与明细归属用户记账事实，不随字典清理）、同步来源标的拒删
-/// （填错由全量同步修正）。不引入软删——标的字典查询面不被污染。现价缓存与
+/// （字典修正由按代码查询/创建带回权威名称承担，ADR-0081）。不引入软删——标的字典查询面不被污染。现价缓存与
 /// 价格历史随外键 CASCADE 一并消失；持仓批次表虽是 RESTRICT，但批次行的
 /// buy_transaction_id 为指向 security_transactions 的 NOT NULL 外键——批次存在
 /// 必有买入明细行，故守卫的流水 COUNT 已覆盖批次（无流水 ⟺ 无批次），
@@ -226,7 +226,7 @@ pub fn delete_instrument(conn: &Connection, id: &str) -> Result<()> {
     if source != "manual" {
         return Err(AppError::coded(
             "instrument.sync-delete-forbidden",
-            "同步来源标的不支持删除：股票字典由「全量同步」维护，填错可重新同步修正",
+            "同步来源标的不支持删除：名称与市场由按代码查询/创建带回权威信息维护",
         ));
     }
     let trade_refs: i64 = conn.query_row(
@@ -296,8 +296,9 @@ pub fn create_instrument(conn: &Connection, input: InstrumentInput) -> Result<St
 }
 
 /// 手动创建入口守卫（ADR-0036 决策 3）：类型白名单收窄为债券/ETF/其他三类——
-/// 股票字典归全量同步修、基金唯一创建入口归按代码即拉（issue #301 / ADR-0038），
-/// 白名单让手动字典与两条自动通道永不相交；名称必填（自建标的主身份是名称）。
+/// 股票字典归按代码查询/创建带回权威名称（ADR-0081）、基金唯一创建入口归按代码
+/// 即拉（issue #301 / ADR-0038），白名单让手动字典与两条自动通道永不相交；
+/// 名称必填（自建标的主身份是名称）。
 /// 守卫属 UI 入口政策，核心创建函数 [`create_instrument`] 保持通用：AI HTTP
 /// 创建端点（ADR-0037）五类全开、名称可选，不经本守卫。同一接缝供 IPC 命令
 /// 与 BDD 步骤复用。
@@ -307,7 +308,7 @@ pub fn create_instrument_manual(conn: &Connection, input: InstrumentInput) -> Re
         InstrumentType::Stock => {
             return Err(AppError::coded(
                 "instrument.stock-manual-forbidden",
-                "股票类标的不支持手动创建：股票字典由「全量同步」从东方财富维护",
+                "股票类标的不支持手动创建：请用「添加投资标的」按代码查询，自动回填东财权威名称",
             ));
         }
         InstrumentType::Fund => {

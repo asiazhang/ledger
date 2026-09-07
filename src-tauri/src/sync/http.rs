@@ -1,5 +1,7 @@
-//! 行情 HTTP 网络层（issue #89）：东财 clist 接口请求、多主机切换、重试与限流冷却、
-//! 响应解析。与数据库、进度事件无关，可独立测试（见 `tests.rs` 中本地 HTTP 服务用例）。
+//! 行情 HTTP 网络层（issue #89）：东财行情接口请求、多主机切换、重试与限流冷却、
+//! 响应解析。与数据库无关，可独立测试（见 `tests.rs` 中本地 HTTP 服务用例）。
+//! 标的全量同步（clist 分页爬取）已随 ADR-0081 决策 3 退役删除（issue #698），
+//! 本层现服务增量同步批量报价、单点行情、日 K 与基金净值通道。
 
 use std::collections::HashMap;
 use std::thread;
@@ -9,10 +11,9 @@ use serde::Deserialize;
 
 use crate::error::{AppError, Result};
 
-// 行情接口路径。东财 clist 接口同一数据结构分布在多个主机，按顺序尝试，失败自动切换下一个。
-const API_PATH: &str = "/api/qt/clist/get";
 // 批量报价接口路径：按 secid 一次携带多只跨市场代码查询最新价（增量同步用，issue #103）。
-// 响应结构与 clist 一致（data.total / data.diff，条目 f12/f14/f2），复用同一套解析。
+// 响应 data 为列表对象（data.diff，条目 f12/f14/f1/f2），与已退役的 clist 接口同形、
+// 复用同一套解析（全量同步 clist 爬取已随 ADR-0081 决策 3 退役）。
 pub(super) const ULIST_PATH: &str = "/api/qt/ulist.np/get";
 // 单点行情接口路径：按单个 secid 返回个股实时详情（股票按代码查询用，issue #693）。
 // 响应 data 为单个对象（f43 价格 / f57 代码 / f58 名称 / f59 精度 / f62 类型特征 /
@@ -40,7 +41,7 @@ const KLINE_END: &str = "20500101";
 // 每批最多携带的 secid 数（东财批量报价接口支持一次查多只，约 50 只/请求已足够小、避开限流）。
 pub(super) const ULIST_BATCH_SIZE: usize = 50;
 // 优先使用延迟行情主机池：push2 实时主机曾被东财对该出口 IP 触发风控（连接重置），
-// push2delay 返回相同数据结构且对批量访问更稳定；延迟行情对全量标的同步足够。
+// push2delay 返回相同数据结构且对批量访问更稳定。
 pub(super) const API_HOSTS: &[&str] = &[
     "https://push2delay.eastmoney.com",
     "https://12.push2delay.eastmoney.com",
@@ -49,8 +50,6 @@ pub(super) const API_HOSTS: &[&str] = &[
     "https://90.push2delay.eastmoney.com",
     "https://push2.eastmoney.com",
 ];
-/// 每页条数：同步编排按此分页遍历。
-pub(super) const PAGE_SIZE: usize = 100;
 // 东方财富公开行情接口限频约 60 次/分钟（1 次/秒），此处留更多余量并串行访问。
 // 出口 IP 会被 onegate WAF 间歇性限流（返回 200 非 JSON 拦截页或 429），限流窗口约 2-4 分钟自动恢复。
 const REQUEST_INTERVAL: Duration = Duration::from_millis(2000);
@@ -111,41 +110,11 @@ impl Default for Pacer {
     }
 }
 
-/// 市场配置：`fs` 为东财接口的板块筛选参数，`currency` 为该市场标的的本币。
-pub(super) struct MarketConfig {
-    pub(super) code: &'static str,
-    pub(super) fs: &'static str,
-    pub(super) name: &'static str,
-    pub(super) currency: &'static str,
-}
-
-pub(super) const MARKETS: &[MarketConfig] = &[
-    MarketConfig {
-        code: "sh",
-        fs: "m:1+t:2,m:1+t:23",
-        name: "沪市",
-        currency: "CNY",
-    },
-    MarketConfig {
-        code: "sz",
-        fs: "m:0+t:6,m:0+t:80",
-        name: "深市",
-        currency: "CNY",
-    },
-    MarketConfig {
-        code: "hk",
-        fs: "m:128+t:3,m:128+t:4",
-        name: "港股",
-        currency: "HKD",
-    },
-];
-
 /// 行情接口返回的单个股票条目（字段 f12=代码, f14=名称, f2=价格原始值, f1=价格精度位）。
 /// 注意 f2 的隐含小数位随标的种类而异（由随行返回的 f1 精度位声明，与 stock/get
 /// 的 f59 同义：A 股股票 2 位、场内基金 ETF 与港股/美股 3 位），因此这里保留
 /// 原始 f2 与 f1，换算在 [`price_cents_from_raw`] 按精度位单点处理、缺省按市场
-/// 回退（[`f2_to_price`]）。
-/// get_total 请求只带 fields=f12，响应条目可能缺 f14/f2/f1，因此名称/价格/精度均可缺省。
+/// 回退（[`f2_to_price`]）；响应条目可能缺 f14/f2/f1，名称/价格/精度均可缺省。
 #[derive(Debug, Deserialize)]
 pub(super) struct StockItem {
     #[serde(rename = "f12")]
@@ -198,22 +167,15 @@ pub(super) fn price_cents_from_raw(raw: f64, precision: Option<f64>, market: &st
     }
 }
 
-/// 行情列表接口整体响应。
-#[derive(Debug, Deserialize)]
-pub(super) struct ClistResponse {
-    pub(super) data: ClistData,
-}
-
 /// ulist 批量报价响应：`data` 可能为 null（全部代码无效时东财返回 `rc=102` 且 `data:null`），
 /// 此时应视为无行情条目而非错误，保证增量同步「停牌/无效价不中断同步」语义。
 #[derive(Debug, Deserialize)]
 pub(super) struct UlistResponse {
-    pub(super) data: Option<ClistData>,
+    pub(super) data: Option<UlistData>,
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct ClistData {
-    pub(super) total: Option<u64>,
+pub(super) struct UlistData {
     pub(super) diff: Option<DiffField>,
 }
 
@@ -240,7 +202,7 @@ impl DiffField {
     }
 }
 
-/// 构建行情 HTTP 客户端（全量/增量同步共用，UA 保持一致）。
+/// 构建行情 HTTP 客户端（增量同步与按代码查询通道共用，UA 保持一致）。
 pub(super) fn build_client() -> Result<reqwest::blocking::Client> {
     reqwest::blocking::Client::builder()
         .user_agent("Mozilla/5.0")
@@ -250,8 +212,6 @@ pub(super) fn build_client() -> Result<reqwest::blocking::Client> {
 
 /// 市场代码 → 东财 secid 前缀（沪 1 / 深 0 / 港 116；美股三市场：纳斯达克 105 /
 /// 纽交所 106 / 美交所 107，ADR-0081）。市场未知（unknown）无法查询，返回 None。
-/// 注意 [`MARKETS`] 是全量同步的板块闭集（美股不做全量同步，字典走按代码即建），
-/// 本函数是行情查询侧的映射，两者闭集有意不同。
 pub(super) fn secid_prefix(market: &str) -> Option<&'static str> {
     match market {
         "sh" => Some("1"),
@@ -265,24 +225,6 @@ pub(super) fn secid_prefix(market: &str) -> Option<&'static str> {
 }
 
 /// 发送请求并解析 JSON，按序尝试多个主机，对传输错误做短退避、对限流拦截做长冷却重试。
-fn request_json(
-    client: &reqwest::blocking::Client,
-    params: &[(&str, &str)],
-    pacer: &mut Pacer,
-    ctx: &str,
-) -> Result<ClistResponse> {
-    request_json_from_hosts(
-        client,
-        params,
-        API_PATH,
-        API_HOSTS,
-        RetryConfig::production(),
-        pacer,
-        ctx,
-        None,
-    )
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn request_json_from_hosts<T>(
     client: &reqwest::blocking::Client,
@@ -400,57 +342,6 @@ where
             }
         }
     }
-}
-
-pub(super) fn fetch_page(
-    client: &reqwest::blocking::Client,
-    pacer: &mut Pacer,
-    market: &MarketConfig,
-    page: usize,
-) -> Result<Vec<StockItem>> {
-    tracing::debug!(market = %market.name, page = %page, "获取股票数据页");
-    let page_str = page.to_string();
-    let size_str = PAGE_SIZE.to_string();
-    let params = [
-        ("fs", market.fs),
-        ("pn", page_str.as_str()),
-        ("pz", size_str.as_str()),
-        ("fields", "f12,f14,f2"),
-    ];
-    let resp = request_json(
-        client,
-        &params,
-        pacer,
-        &format!("fetch_page:{}({})", market.name, page),
-    )?;
-    resp.data
-        .diff
-        .map(DiffField::into_items)
-        .ok_or_else(|| AppError::Parse("响应中缺少 data.diff 字段".into()))
-}
-
-pub(super) fn get_total(
-    client: &reqwest::blocking::Client,
-    pacer: &mut Pacer,
-    market: &MarketConfig,
-) -> Result<usize> {
-    let params = [
-        ("fs", market.fs),
-        ("pn", "1"),
-        ("pz", "1"),
-        ("fields", "f12"),
-    ];
-    let resp = request_json(
-        client,
-        &params,
-        pacer,
-        &format!("get_total:{}", market.name),
-    )?;
-
-    resp.data
-        .total
-        .map(|t| t as usize)
-        .ok_or_else(|| AppError::Parse("响应中缺少 data.total 字段".into()))
 }
 
 /// 按 secid 批量查询最新价（跨市场一次携带多只，复用 clist 同一套主机池/重试/限流与解析）。

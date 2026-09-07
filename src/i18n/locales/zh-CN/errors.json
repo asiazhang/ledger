@@ -54,7 +54,6 @@
     "passphrase-required": "该备份为密文备份，需要备份所在库的主口令才能恢复"
   },
   "sync": {
-    "already-running": "已有全量同步正在进行，请先中断或等待完成",
     "fund-not-found": "查无基金代码 {0}，请核对后重试",
     "stock-not-found": "查无股票代码 {0}，请核对后重试",
     "secid-unroutable": "市场 {0} 无法构造行情查询（内部不一致）"
@@ -114,9 +113,9 @@
     "price-date-format": "日期格式须为 YYYY-MM-DD",
     "not-found": "标的 {0} 不存在",
     "symbol-required": "标的代码不能为空",
-    "sync-delete-forbidden": "同步来源标的不支持删除：股票字典由「全量同步」维护，填错可重新同步修正",
+    "sync-delete-forbidden": "同步来源标的不支持删除：名称与市场由按代码查询/创建带回权威信息维护",
     "traded-delete-forbidden": "该标的已有买卖流水，无法删除：可先删除相关交易后再试",
-    "stock-manual-forbidden": "股票类标的不支持手动创建：股票字典由「全量同步」从东方财富维护",
+    "stock-manual-forbidden": "股票类标的不支持手动创建：请用「添加投资标的」按代码查询，自动回填东财权威名称",
     "fund-manual-forbidden": "基金类标的不支持手动创建：请用「添加基金」输入 6 位代码自动回填",
     "name-required": "标的名称不能为空",
     "as-of-date-invalid": "as-of 交易日格式无效: {0}",

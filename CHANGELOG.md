@@ -46,6 +46,10 @@
 - **设置**：备份页签卡片重排，一键备份免滚动直达，恢复入口降为次要形态（[#651]）。
 - **加密**：危险确认统一升级为应用内弹窗；主口令设最短 8 位（[#650]）。
 
+### Removed
+
+- **投资**：标的全量同步退役（ADR-0081 决策 3）——标的页「全量同步」入口、二次确认与进度弹窗、同步/中断命令（`sync_instruments` / `cancel_sync_instruments`）与进度事件整体删除；股票字典修正改由「按代码查询/创建带回权威名称」承担（添加投资标的与 AI 导入按代码即回填，无需先同步）；持仓价格增量同步（含 ETF 与美股）不受退役影响（[#698]）。
+
 ### Fixed
 
 - **投资**：场内 ETF 持仓纳入行情通道——持仓价格增量同步的行情分区从仅 stock 扩为 stock|etf（spec #690 方案 6），ETF 持仓照常刷现价并回填近两年周线走势，不再无价无市值；批量报价换算改按数据源随行返回的精度位单点收口（场内 ETF 为三位小数报价，缺省按市场回退）；场外基金仍走净值通道，债券等无行情来源标的仍计入跳过统计（[#695]）。
@@ -227,6 +231,7 @@
 [#695]: https://github.com/asiazhang/ledger/issues/695
 [#696]: https://github.com/asiazhang/ledger/issues/696
 [#697]: https://github.com/asiazhang/ledger/issues/697
+[#698]: https://github.com/asiazhang/ledger/issues/698
 [#644]: https://github.com/asiazhang/ledger/issues/644
 [#701]: https://github.com/asiazhang/ledger/issues/701
 [#712]: https://github.com/asiazhang/ledger/issues/712

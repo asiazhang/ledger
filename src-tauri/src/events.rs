@@ -26,8 +26,8 @@
 //!   与前者平行、同样无 payload；前端设置页订阅后自动刷新备份列表与自动备份状态。
 //!   深路径执行点拿不到 `AppHandle`，经 [`init_event_app`] 注入的镜像句柄发射。
 //! - `ledger:prices-changed`（ADR-0031，issue #236）：行情同步命令写入价格后 emit——
-//!   增量 `sync_holding_prices` 成功且实际写入、全量 `sync_instruments` 结束且有落库
-//!   （含用户中断，中断保留已落库价格）；与前者平行、同样无 payload，前端价格消费方
+//!   增量 `sync_holding_prices` 成功且实际写入（全量同步已随 ADR-0081 决策 3 退役，
+//!   issue #698）；与前者平行、同样无 payload，前端价格消费方
 //!   各自订阅后重拉自身数据。「是否 emit」的判定单点在 `signals` 映射
 //!   （ADR-0044，#333 起价格域四命令壳层经 `emit_for` 归一化证据后发射），
 //!   本模块只承载事件名与发射入口。
@@ -47,7 +47,7 @@ pub const BACKUPS_CHANGED: &str = "ledger:backups-changed";
 /// 价格数据变更信号事件名（ADR-0031，issue #236；无 payload，与 [`LEDGER_CHANGED`] /
 /// [`BACKUPS_CHANGED`] 平行，同一 `ledger:*` 命名空间、同一 `<domain 复数>-changed` 风格）。
 /// 语义锚「价格数据已变更」，覆盖 MarketPrice / PriceHistory / FxRateHistory；生产者：
-/// 两个行情同步命令按判定发出（增量实际写入 / 全量有落库）、场外基金按代码即拉
+/// 行情同步命令按判定发出（增量实际写入；全量同步已退役，issue #698）、场外基金按代码即拉
 /// 落现价缓存时（issue #301 / ADR-0038，未取到净值不广播）与手动报价实际写入
 /// 任一落点时（issue #291 / ADR-0036，生产者清单再添一处；证据归一化与「是否发」
 /// 判定单点见 `signals` 映射，ADR-0044 / issue #333）；前端价格消费方

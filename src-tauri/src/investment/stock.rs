@@ -39,9 +39,8 @@ fn is_us_market(market: &str) -> bool {
 /// 沪深→人民币、港→港币、美股三市场（nasdaq/nyse/amex）→美元、其余（含 unknown）→人民币。
 ///
 /// 依据：标的币种不参与买卖账务（持仓批次成本币种 = 账户币种），仅影响行情/市值
-/// 折算展示。与同步侧 `crate::sync::http::MARKETS` 的 market→currency 对应（该表
-/// 为全量同步板块闭集、模块私有）；美股三市场仅入本推导与行情 secid 映射、不入
-/// MARKETS——美股字典走按代码即建、不做全量同步（ADR-0081）。
+/// 折算展示。行情 secid 映射与报价币种推导共用同一市场闭集；美股三市场仅入
+/// 本推导与行情 secid 映射，字典走按代码即建（ADR-0081）。
 pub fn derive_quote_currency(market: &str) -> &'static str {
     if market == "hk" {
         "HKD"

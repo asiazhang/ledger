@@ -54,7 +54,6 @@
     "passphrase-required": "this backup is encrypted; enter the master passphrase of the database it was made from to restore"
   },
   "sync": {
-    "already-running": "a full sync is already running, cancel it or wait for it to finish",
     "fund-not-found": "fund code {0} not found, please verify and retry",
     "stock-not-found": "stock code {0} not found, please verify and retry",
     "secid-unroutable": "market {0} cannot be resolved to a quote secid (internal inconsistency)"
@@ -114,9 +113,9 @@
     "price-date-format": "date must be in YYYY-MM-DD format",
     "not-found": "instrument {0} does not exist",
     "symbol-required": "instrument symbol must not be empty",
-    "sync-delete-forbidden": "sync-sourced instruments cannot be deleted: the stock dictionary is maintained by full sync, fix wrong entries by re-syncing",
+    "sync-delete-forbidden": "sync-sourced instruments cannot be deleted: names and markets are maintained via by-code lookup/creation with authoritative values",
     "traded-delete-forbidden": "this instrument has trade records and cannot be deleted: delete the related transactions first and try again",
-    "stock-manual-forbidden": "stock instruments cannot be created manually: the stock dictionary is maintained from Eastmoney by full sync",
+    "stock-manual-forbidden": "stock instruments cannot be created manually: use Add Instrument to look up by code and auto-fill the authoritative name",
     "fund-manual-forbidden": "fund instruments cannot be created manually: use add fund with a 6-digit code to auto-fill",
     "name-required": "instrument name must not be empty",
     "as-of-date-invalid": "invalid as-of trading date: {0}",
