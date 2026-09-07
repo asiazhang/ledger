@@ -105,8 +105,8 @@ mod transactions_write_steps;
 /// Unix 成立——root 凭 CAP_DAC_OVERRIDE 无视权限位，非 Unix 无权限位可依；
 /// 不可用时 @non-root-only 场景显式跳过，不假红（失败路径由 Linux 非 root
 /// CI 覆盖；与 #791 的 db 单测 readonly_trigger_available 守卫同根源同策略）。
-/// 经 /proc/self 属主读有效 uid（零新依赖）；无 /proc 的 Unix 平台按非 root
-/// 处理（票面针对 Linux root）。
+/// 经 /proc/self 属主读本进程身份（测试进程不切换 uid，零新依赖）；
+/// 无 /proc 的 Unix 平台按非 root 处理（票面针对 Linux root）。
 fn readonly_trigger_available() -> bool {
     #[cfg(unix)]
     {
