@@ -8,18 +8,13 @@ use crate::reports::{category_shares_rows, merchant_shares_report, monthly_summa
 use crate::transaction::amount::{Measure, TransactionKind, contributing_kinds, signed_amount};
 
 fn setup() -> Connection {
-    let mut conn = crate::db::open_in_memory().unwrap();
-    crate::db::init_db(&mut conn).unwrap();
-    conn
+    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）。
+    crate::test_support::open()
 }
 
 fn insert_account(conn: &Connection, id: &str) {
-    let now = now_iso();
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,'cash','CNY',0,?3,?4,?5,?6,0)",
-        rusqlite::params![id, "测试账户", now, now, 1, device_id()],
-    ).unwrap();
+    // 报表世界脚手架账户：工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）。
+    crate::test_support::seed_account(conn, id, "测试账户", "cash", "CNY", 0);
 }
 
 /// 夹具一行 = 一笔交易（kind 用 Amount 接缝的 TransactionKind 枚举表述）。

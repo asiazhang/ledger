@@ -1,14 +1,14 @@
 //! 生成器正确性单测（issue #459 验收项：写在 bin 模块内部、随常规测试循环运行）。
 //!
 //! 断言接缝（spec #458 测试决策）：标准连接工厂
-//! （[`tauri_app_lib::db::open_connection`] 打开生成的文件库、`open_in_memory`
-//! 对照产品迁移路径）+ 现有查询函数层（accounts / categories / merchants /
-//! transaction 读取接口）；仅 schema 级事实（user_version / foreign_key_check）
+//! （[`tauri_app_lib::db::open_connection`] 打开生成的文件库、统一测试工厂
+//! `test_support::open()` 对照产品迁移路径）+ 现有查询函数层（accounts / categories /
+//! merchants / transaction 读取接口）；仅 schema 级事实（user_version / foreign_key_check）
 //! 与无既有读 API 的画像事实（fx_rate_history 行数）用 PRAGMA / 原生 SQL。
 //! 测试一律用小规模参数（数百至数千笔），50 万笔默认规模只在手动验证时跑。
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use chrono::NaiveDate;
 use rusqlite::Connection;
@@ -17,10 +17,11 @@ use tauri_app_lib::accounts;
 use tauri_app_lib::budget;
 use tauri_app_lib::categories;
 use tauri_app_lib::currencies;
-use tauri_app_lib::db::{init_db, open_connection, open_in_memory};
+use tauri_app_lib::db::{open_connection, open_connection_in};
 use tauri_app_lib::investment::{self, InstrumentListFilter};
 use tauri_app_lib::merchants;
 use tauri_app_lib::scheduled_transactions;
+use tauri_app_lib::test_support::{self, FIXED_NOW};
 use tauri_app_lib::transaction::TransactionListFilter;
 use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::pinyin_initials;
@@ -302,8 +303,8 @@ fn acct(id: &str, kind: AccountType, ccy: &str) -> Account {
         kind,
         currency_code: ccy.to_string(),
         initial_balance_cents: 0,
-        created_at: "2026-01-01T00:00:00Z".to_string(),
-        updated_at: "2026-01-01T00:00:00Z".to_string(),
+        created_at: FIXED_NOW.to_string(),
+        updated_at: FIXED_NOW.to_string(),
         version: 1,
         device_id: "test".to_string(),
         is_deleted: false,
@@ -664,13 +665,16 @@ const PROFILE_N: u64 = 4000;
 fn temp_db(tag: &str) -> (PathBuf, PathBuf) {
     let dir = std::env::temp_dir().join(format!("ledger-perf-test-{}-{}", tag, std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    (dir.clone(), dir.join(format!("{tag}.db")))
+    // 库文件名用产品常量：build 经 open_connection_in（按目录打开 ledger.db）建库。
+    let db = dir.join(tauri_app_lib::db::data_location::DB_FILE_NAME);
+    (dir, db)
 }
 
-/// 经完整路径生成小库：标准连接工厂打开 → 迁移 → 生成。
-fn build(path: &PathBuf, transactions: u64, end_date: NaiveDate) -> GenCounts {
-    let mut conn = open_connection(path).unwrap();
-    init_db(&mut conn).unwrap();
+/// 经完整路径生成小库：产品建连缝打开（open_connection_in = 打开 + init_db）
+/// → 生成；内存对照库经统一测试工厂（spec #728 / issue #754 / ADR-0084 决策 7，
+/// 文件库不入工厂，迁移知识仍单一来源）。
+fn build(path: &Path, transactions: u64, end_date: NaiveDate) -> GenCounts {
+    let mut conn = open_connection_in(path.parent().expect("临时库目录")).unwrap();
     generate_into(
         &mut conn,
         &GenerateParams {
@@ -692,8 +696,8 @@ fn generated_schema_matches_product_migration_path() {
     build(&path, 300, NaiveDate::from_ymd_opt(2025, 12, 31).unwrap());
 
     let conn = open_connection(&path).unwrap();
-    let mut mem = open_in_memory().unwrap();
-    init_db(&mut mem).unwrap();
+    // 基线 = 产品迁移路径产出的内存库（建库经统一测试工厂，含默认种子）。
+    let mem = test_support::open();
 
     // user_version 与产品迁移路径产出的内存库一致（建库不复制 DDL 的直接证据）。
     let file_version = user_version(&conn).unwrap();
@@ -724,10 +728,9 @@ fn profile_matches_spec_counts() {
     );
     let conn = open_connection(&path).unwrap();
 
-    // 基线 = 产品迁移路径产出的内存库（含默认种子，种子数不硬编码）：
+    // 基线 = 产品迁移路径产出的内存库（建库经统一测试工厂，种子数不硬编码）：
     // 文件库各参考数据量 = 基线 + 生成量。
-    let mut mem = open_in_memory().unwrap();
-    init_db(&mut mem).unwrap();
+    let mem = test_support::open();
 
     // 账户：生成 50 个（与 list_accounts 同口径，不含隐藏黑洞种子）。
     let mem_accounts = accounts::list_accounts(&mem).unwrap().len();
@@ -1004,9 +1007,8 @@ fn same_seed_produces_identical_digest() {
     let end = NaiveDate::from_ymd_opt(2025, 12, 31).unwrap();
     build(&path_a, 1500, end);
     build(&path_b, 1500, end);
-    // 不同种子：同规模对照。
-    let mut conn = open_connection(&path_c).unwrap();
-    init_db(&mut conn).unwrap();
+    // 不同种子：同规模对照（产品建连缝打开 + 迁移一次完成）。
+    let mut conn = open_connection_in(path_c.parent().unwrap()).unwrap();
     generate_into(
         &mut conn,
         &GenerateParams {

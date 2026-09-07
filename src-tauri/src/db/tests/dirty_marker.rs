@@ -2,6 +2,7 @@
 //! 闭包内自管事务延迟到提交点，以及目录未配置时不记备份锚点。
 
 use crate::error::AppError;
+use crate::test_support::FIXED_NOW;
 
 use super::common::{dirty_state, write_test_state};
 
@@ -43,11 +44,12 @@ fn write_inside_open_transaction_defers_to_commit_point() {
     state
         .write(|conn| {
             conn.execute("BEGIN", [])?;
-            // 任意一笔真实写（未提交）：用调度状态 KV，避开业务表外键。
+            // 任意一笔真实写（未提交）：用调度状态 KV，避开业务表外键；
+            // 时刻值为夹具簿记，引用工厂固定时刻常量（ADR-0084 决策 5）。
             crate::settings::set(
                 conn,
                 crate::settings::SettingKey::AutoBackupNextDueAt,
-                &Some(String::from("2026-01-01T00:00:00Z")),
+                &Some(String::from(FIXED_NOW)),
             )?;
             Ok(())
         })
@@ -78,7 +80,7 @@ fn write_closure_committing_own_tx_marks_dirty() {
             crate::settings::set(
                 conn,
                 crate::settings::SettingKey::AutoBackupNextDueAt,
-                &Some(String::from("2026-01-01T00:00:00Z")),
+                &Some(String::from(FIXED_NOW)),
             )?;
             conn.execute("COMMIT", [])?;
             Ok(())

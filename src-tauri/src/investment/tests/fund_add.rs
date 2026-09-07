@@ -10,7 +10,7 @@ use crate::investment::add_fund_by_code_with;
 use crate::investment::fund::validate_fund_code;
 use crate::investment::{FundDetail, FundNav};
 
-use super::common::setup_db;
+use crate::test_support::open;
 
 /// 构造一份典型基金详情（净值 1.3180 → 13180 万分之一元）。
 fn detail(code: &str, name: &str, fund_class: &str, nav: Option<FundNav>) -> FundDetail {
@@ -65,7 +65,7 @@ fn price_row(conn: &Connection, instrument_id: &str) -> Option<PriceRow> {
 
 #[test]
 fn adds_fund_with_nav_and_price_cache() {
-    let conn = setup_db();
+    let conn = open();
     let result = add_fund_by_code_with(
         &conn,
         "000001",
@@ -108,7 +108,7 @@ fn adds_fund_with_nav_and_price_cache() {
 fn adds_fund_without_nav_only_instrument_row() {
     // 新发基金未公布净值：仍建标的行（名称/分类权威回填），不落现价、
     // price_written=false（IPC 层据此不广播价格失效信号——零变化不广播）。
-    let conn = setup_db();
+    let conn = open();
     let result = add_fund_by_code_with(
         &conn,
         "012345",
@@ -125,7 +125,7 @@ fn adds_fund_without_nav_only_instrument_row() {
 
 #[test]
 fn invalid_code_rejected_before_fetch() {
-    let conn = setup_db();
+    let conn = open();
     for bad in ["12345", "1234567", "00001a", "000 01", ""] {
         let mut called = 0usize;
         let mut fetch = |_code: &str| -> Result<FundDetail> {
@@ -162,7 +162,7 @@ fn validate_fund_code_accepts_six_digits_only() {
 #[test]
 fn unknown_code_error_propagates_without_instrument_row() {
     // 查无此码：获取函数返回中文 Invalid 错误，上抛给 UI；不产生标的行。
-    let conn = setup_db();
+    let conn = open();
     let mut fetch = |_code: &str| -> Result<FundDetail> {
         Err(AppError::Invalid(
             "查无基金代码 999999，请核对后重试".into(),
@@ -180,7 +180,7 @@ fn unknown_code_error_propagates_without_instrument_row() {
 fn re_add_reuses_instrument_row_and_overwrites_price() {
     // （代码，fund）已存在（含 AI 通道建的 manual 行）：复用该标的、更新名称、
     // 现价整行覆盖（净值日期水位随之刷新）；来源不随复用改写（随行终身不变）。
-    let conn = setup_db();
+    let conn = open();
     let first = add_fund_by_code_with(
         &conn,
         "000001",

@@ -4,6 +4,7 @@ use rusqlite::params;
 
 use super::super::*;
 use super::common::*;
+use crate::test_support::{open, seed_account, seed_exchange_rate, seed_instrument};
 
 // ---------------------------------------------------------------------------
 // 时点持仓（AsOfHolding，spec #168 / issue #218）：
@@ -12,9 +13,9 @@ use super::common::*;
 
 #[test]
 fn holdings_as_of_sums_multiple_buys_and_sells_within_same_week() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-ao", "证券户", "investment", "CNY");
-    insert_instrument(&conn, "inst-ao", "000001", "平安银行", "CNY");
+    let conn = open();
+    seed_account(&conn, "acc-ao", "证券户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-ao", "000001", "平安银行", "CNY", "unknown");
     // 同一周内三笔流水：买 10 → 卖 4 → 买 2（周采样键不影响推算，前缀只认交易日）。
     for (kind, qty, price, date) in [
         (TransactionKind::Buy, 10.0, 1500, "2026-02-04"),
@@ -42,9 +43,9 @@ fn holdings_as_of_sums_multiple_buys_and_sells_within_same_week() {
 #[test]
 fn holdings_as_of_replays_flow_before_query_range_start() {
     // 区间起点前买入（历史时点回放）：前缀求和把查询区间之前的流水累积带入。
-    let conn = setup_db();
-    insert_account(&conn, "acc-ao2", "证券户", "investment", "CNY");
-    insert_instrument(&conn, "inst-ao2", "600519", "贵州茅台", "CNY");
+    let conn = open();
+    seed_account(&conn, "acc-ao2", "证券户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-ao2", "600519", "贵州茅台", "CNY", "unknown");
     create_transaction_internal(
         &conn,
         make_trade_input(
@@ -69,9 +70,9 @@ fn holdings_as_of_replays_flow_before_query_range_start() {
 #[test]
 fn holdings_as_of_supports_historical_points_after_full_exit() {
     // 已清仓后查历史时点：清仓时点前有持仓、清仓时点后归零。
-    let conn = setup_db();
-    insert_account(&conn, "acc-ao3", "证券户", "investment", "CNY");
-    insert_instrument(&conn, "inst-ao3", "000001", "平安银行", "CNY");
+    let conn = open();
+    seed_account(&conn, "acc-ao3", "证券户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-ao3", "000001", "平安银行", "CNY", "unknown");
     create_transaction_internal(
         &conn,
         make_trade_input(
@@ -106,10 +107,10 @@ fn holdings_as_of_supports_historical_points_after_full_exit() {
 #[test]
 fn holdings_as_of_is_currency_agnostic_for_cross_currency_instrument() {
     // 跨币种标的：模块只管数量，币种与折算不进推算。
-    let conn = setup_db();
-    insert_account(&conn, "acc-usd", "美股户", "investment", "USD");
-    insert_instrument(&conn, "inst-usd", "AAPL", "苹果", "USD");
-    insert_rate_1_1(&conn, "USD"); // 买卖落库经 Amount 接缝需要当期汇率
+    let conn = open();
+    seed_account(&conn, "acc-usd", "美股户", "investment", "USD", 0);
+    seed_instrument(&conn, "inst-usd", "AAPL", "苹果", "USD", "unknown");
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0); // 买卖落库经 Amount 接缝需要当期汇率
     create_transaction_internal(&conn, make_buy_input("acc-usd", "inst-usd", 5.0, 10_000, 0))
         .unwrap();
     create_transaction_internal(
@@ -125,10 +126,10 @@ fn holdings_as_of_is_currency_agnostic_for_cross_currency_instrument() {
 #[test]
 fn holdings_as_of_without_instrument_sums_whole_portfolio() {
     // 全组合形态（instrument_id=None）：所有标的数量之和，与单标的形态同接缝。
-    let conn = setup_db();
-    insert_account(&conn, "acc-ao4", "证券户", "investment", "CNY");
-    insert_instrument(&conn, "inst-a", "000001", "平安银行", "CNY");
-    insert_instrument(&conn, "inst-b", "600519", "贵州茅台", "CNY");
+    let conn = open();
+    seed_account(&conn, "acc-ao4", "证券户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-a", "000001", "平安银行", "CNY", "unknown");
+    seed_instrument(&conn, "inst-b", "600519", "贵州茅台", "CNY", "unknown");
     create_transaction_internal(
         &conn,
         make_trade_input(
@@ -169,9 +170,9 @@ fn holdings_as_of_without_instrument_sums_whole_portfolio() {
 /// 归 issue #247 单测、#248 e2e，夹具此处从简不涉软删。
 #[test]
 fn holdings_as_of_today_matches_holding_quantity() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-ao5", "证券户", "investment", "CNY");
-    insert_instrument(&conn, "inst-ao5", "000001", "平安银行", "CNY");
+    let conn = open();
+    seed_account(&conn, "acc-ao5", "证券户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-ao5", "000001", "平安银行", "CNY", "unknown");
     for (kind, qty, price, date) in [
         (TransactionKind::Buy, 10.0, 1500, "2026-01-05"),
         (TransactionKind::Buy, 5.0, 1600, "2026-01-12"),

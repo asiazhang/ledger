@@ -17,7 +17,7 @@ use crate::sync::http::{
 };
 use crate::sync::incremental::{beijing_date, beijing_today, do_incremental_sync_with};
 
-use super::common::setup_db;
+use crate::test_support::{seed_account, seed_instrument};
 
 // ---------------------------------------------------------------------------
 // 持仓价格增量同步（issue #103）：secid 构造、ulist 响应解析、编排、跳过规则、
@@ -25,31 +25,45 @@ use super::common::setup_db;
 // ---------------------------------------------------------------------------
 
 /// 直插一条持仓（账户 + 标的 + 交易 + 批次），绕过交易行为层以聚焦增量同步自身逻辑。
-fn insert_account(conn: &Connection, id: &str, currency: &str) {
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,'investment',?3,0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        params![id, format!("账户-{id}"), currency],
-    )
-    .unwrap();
-}
-
-fn insert_instrument(
+/// 账户/标的经工厂种子（spec #728 / ADR-0084 决策 4）；标的类型工厂固定 stock，
+/// bond/other/fund 等域变体经类型修正表达——类型是本域 secid 构造/跳过规则的
+/// 行为输入，不入工厂种子。
+fn insert_holding(
     conn: &Connection,
-    id: &str,
+    account_id: &str,
+    instrument_id: &str,
     symbol: &str,
     kind: &str,
     currency: &str,
     market: &str,
 ) {
-    conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,?4,?5,?6,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        params![id, symbol, kind, format!("名称-{symbol}"), currency, market],
-    )
-    .unwrap();
+    seed_account(
+        conn,
+        account_id,
+        &format!("账户-{account_id}"),
+        "investment",
+        currency,
+        0,
+    );
+    seed_instrument(
+        conn,
+        instrument_id,
+        symbol,
+        &format!("名称-{symbol}"),
+        currency,
+        market,
+    );
+    if kind != "stock" {
+        conn.execute(
+            "UPDATE instruments SET instrument_type=?1 WHERE id=?2",
+            params![kind, instrument_id],
+        )
+        .unwrap();
+    }
+    insert_lot(conn, account_id, instrument_id, currency);
 }
 
+/// 直插一笔买入交易 + 持仓批次（绕过交易行为层，聚焦同步自身逻辑）。
 fn insert_lot(conn: &Connection, account_id: &str, instrument_id: &str, currency: &str) {
     let txn_id = format!("txn-{account_id}-{instrument_id}");
     conn.execute(
@@ -76,21 +90,6 @@ fn insert_lot(conn: &Connection, account_id: &str, instrument_id: &str, currency
         ],
     )
     .unwrap();
-}
-
-/// 组合帮手：账户 + 标的 + 持仓批次一步建好。
-fn insert_holding(
-    conn: &Connection,
-    account_id: &str,
-    instrument_id: &str,
-    symbol: &str,
-    kind: &str,
-    currency: &str,
-    market: &str,
-) {
-    insert_account(conn, account_id, currency);
-    insert_instrument(conn, instrument_id, symbol, kind, currency, market);
-    insert_lot(conn, account_id, instrument_id, currency);
 }
 
 fn market_price_of(conn: &Connection, instrument_id: &str) -> Option<i64> {
@@ -159,7 +158,7 @@ fn ulist_response_null_data_yields_no_items() {
 
 #[test]
 fn incremental_sync_normalizes_symbol_suffix() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     // schema 注释示例格式：symbol 带市场后缀（"600519.SH"），secid 应取裸代码 "1.600519"。
     insert_holding(&conn, "acc-1", "inst-sh", "600519.SH", "stock", "CNY", "sh");
     insert_holding(&conn, "acc-2", "inst-hk", "00700.HK", "stock", "HKD", "hk");
@@ -187,7 +186,7 @@ fn incremental_sync_normalizes_symbol_suffix() {
 
 #[test]
 fn incremental_sync_all_missing_response_counts_all_skipped() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(&conn, "acc-1", "inst-a", "600001", "stock", "CNY", "sh");
     insert_holding(&conn, "acc-2", "inst-b", "600002", "stock", "CNY", "sh");
 
@@ -206,7 +205,7 @@ fn incremental_sync_all_missing_response_counts_all_skipped() {
 
 #[test]
 fn incremental_sync_no_holdings_returns_message() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     let mut fetch = mock_fetch(&[]);
     let result =
         do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
@@ -218,7 +217,7 @@ fn incremental_sync_no_holdings_returns_message() {
 
 #[test]
 fn incremental_sync_updates_holding_prices_only() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     insert_holding(&conn, "acc-2", "inst-sz", "000001", "stock", "CNY", "sz");
     insert_holding(&conn, "acc-3", "inst-hk", "00700", "stock", "HKD", "hk");
@@ -228,7 +227,8 @@ fn incremental_sync_updates_holding_prices_only() {
         "inst-sh",
         999,
         "CNY",
-        "2026-01-01T00:00:00Z",
+        // 预置旧价的时间点为夹具簿记，引用工厂固定时刻常量（ADR-0084 决策 5）。
+        crate::test_support::FIXED_NOW,
         None,
         Some("eastmoney"),
     )
@@ -277,7 +277,7 @@ fn incremental_sync_updates_holding_prices_only() {
 
 #[test]
 fn incremental_sync_skips_holdings_without_quote_source() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     insert_holding(
         &conn,
@@ -321,7 +321,7 @@ fn incremental_sync_skips_holdings_without_quote_source() {
 
 #[test]
 fn incremental_sync_keeps_old_price_when_suspended() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     insert_holding(&conn, "acc-2", "inst-sz", "000001", "stock", "CNY", "sz");
     // 停牌股已有旧价
@@ -330,7 +330,8 @@ fn incremental_sync_keeps_old_price_when_suspended() {
         "inst-sz",
         888,
         "CNY",
-        "2026-01-01T00:00:00Z",
+        // 预置旧价的时间点为夹具簿记，引用工厂固定时刻常量（ADR-0084 决策 5）。
+        crate::test_support::FIXED_NOW,
         None,
         Some("eastmoney"),
     )
@@ -355,7 +356,7 @@ fn incremental_sync_keeps_old_price_when_suspended() {
 
 #[test]
 fn incremental_sync_counts_missing_response_as_skipped() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(&conn, "acc-1", "inst-a", "600001", "stock", "CNY", "sh");
     insert_holding(&conn, "acc-2", "inst-b", "600002", "stock", "CNY", "sh");
 
@@ -374,7 +375,7 @@ fn incremental_sync_counts_missing_response_as_skipped() {
 
 #[test]
 fn incremental_sync_skips_unknown_market() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(&conn, "acc-1", "inst-ok", "600519", "stock", "CNY", "sh");
     // 市场未知的持仓股票（如手动创建未设市场）：无法构造 secid，计入跳过
     insert_holding(
@@ -394,7 +395,7 @@ fn incremental_sync_skips_unknown_market() {
 
 #[test]
 fn incremental_sync_is_idempotent() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
 
     let prices = [("600519", Some(130280.0))];
@@ -419,10 +420,10 @@ fn incremental_sync_is_idempotent() {
 
 #[test]
 fn incremental_sync_dedupes_same_instrument_across_accounts() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     // 同一标的在另一账户也有持仓：应去重为一只、只查一次
-    insert_account(&conn, "acc-2", "CNY");
+    seed_account(&conn, "acc-2", "账户-acc-2", "investment", "CNY", 0);
     insert_lot(&conn, "acc-2", "inst-sh", "CNY");
 
     let prices = [("600519", Some(1000.0))];
@@ -442,7 +443,7 @@ fn incremental_sync_dedupes_same_instrument_across_accounts() {
 
 #[test]
 fn incremental_sync_batches_by_fifty() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     // 55 只股票：应拆为 2 批（50 + 5），每批 secid 数不超 ULIST_BATCH_SIZE
     for i in 0..55 {
         let symbol = format!("{:06}", 600000 + i);
@@ -484,7 +485,7 @@ fn incremental_sync_batches_by_fifty() {
 
 #[test]
 fn incremental_sync_propagates_fetch_error() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
 
     let mut fetch = |_: &str| Err(AppError::Io("模拟网络失败".into()));
@@ -594,7 +595,7 @@ fn fx_rows(conn: &Connection, base: &str, quote: &str) -> Vec<(String, f64)> {
 
 #[test]
 fn kline_backfill_downsamples_daily_to_weekly() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
 
     // 一段跨年日线：2025-12-29 ~ 2026-01-04 属同一 ISO 周（跨年边界），
@@ -630,7 +631,7 @@ fn kline_backfill_downsamples_daily_to_weekly() {
 
 #[test]
 fn kline_backfill_full_week_overwrite_is_idempotent() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     let prices = [("600519", Some(920.0))];
     let fx_log = RefCell::new(Vec::new());
@@ -669,7 +670,7 @@ fn kline_backfill_full_week_overwrite_is_idempotent() {
 
 #[test]
 fn kline_backfill_keeps_history_after_position_cleared() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     insert_holding(&conn, "acc-2", "inst-sz", "000001", "stock", "CNY", "sz");
 
@@ -719,7 +720,7 @@ fn kline_backfill_keeps_history_after_position_cleared() {
 
 #[test]
 fn kline_backfill_writes_fx_rate_history_alongside() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     insert_holding(&conn, "acc-2", "inst-hk", "00700", "stock", "HKD", "hk");
 
@@ -767,7 +768,7 @@ fn kline_backfill_writes_fx_rate_history_alongside() {
 
 #[test]
 fn kline_backfill_empty_history_keeps_quote_only() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     let prices = [("600519", Some(1000.0))];
     let fx_log = RefCell::new(Vec::new());
@@ -788,7 +789,7 @@ fn kline_backfill_empty_history_keeps_quote_only() {
 
 #[test]
 fn kline_backfill_fetch_error_propagates() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     let prices = [("600519", Some(1000.0))];
     let fx_log = RefCell::new(Vec::new());
@@ -866,7 +867,7 @@ fn week_key_matches_sqlite_week_start_column() {
     use crate::sync::incremental::week_monday;
     use chrono::NaiveDate;
 
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     let mut d = NaiveDate::from_ymd_opt(2025, 1, 1).unwrap();
     let end = NaiveDate::from_ymd_opt(2027, 12, 31).unwrap();
     while d <= end {
@@ -971,7 +972,7 @@ fn fund_price_of(conn: &Connection, instrument_id: &str) -> Option<(i64, Option<
 
 #[test]
 fn fund_first_sync_backfills_two_years_with_cross_page_weekly() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -1032,7 +1033,7 @@ fn fund_first_sync_backfills_two_years_with_cross_page_weekly() {
 
 #[test]
 fn fund_incremental_fetches_from_watermark_and_overwrites_same_week() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -1109,7 +1110,7 @@ fn fund_incremental_fetches_from_watermark_and_overwrites_same_week() {
 
 #[test]
 fn fund_incremental_up_to_date_counts_synced_without_write() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -1157,7 +1158,7 @@ fn fund_incremental_up_to_date_counts_synced_without_write() {
 
 #[test]
 fn fund_first_sync_without_nav_counts_skipped() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -1183,7 +1184,7 @@ fn fund_first_sync_without_nav_counts_skipped() {
 
 #[test]
 fn fund_rows_without_real_code_skip_without_fetch() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     // 名称充代码的基金行（无真实代码，查不到净值）与债券：计入跳过、零请求。
     insert_holding(
         &conn,
@@ -1218,7 +1219,7 @@ fn fund_rows_without_real_code_skip_without_fetch() {
 
 #[test]
 fn fund_nav_fetch_error_propagates() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(
         &conn,
         "acc-1",
@@ -1238,7 +1239,7 @@ fn fund_nav_fetch_error_propagates() {
 
 #[test]
 fn fund_and_stock_partitions_roll_up_into_one_result() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
     insert_holding(
         &conn,
@@ -1310,7 +1311,7 @@ fn us_quotes_deserialize_with_thousand_scale() {
 
 #[test]
 fn us_stock_holding_syncs_quote_kline_and_usdcny() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     // 美股持仓：纳斯达克标的、USD 币种（创建增强落库形态）。
     insert_holding(
         &conn,
@@ -1421,7 +1422,7 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
 fn us_stock_holdings_route_exact_secids_per_market() {
     // 三市场各一持仓：secid 前缀按精确市场映射（105/106/107），互不串市场。
     // （全 stock 类型：ETF 行情分区扩展属 #695，不在本票范围。）
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     insert_holding(&conn, "acc-1", "inst-nq", "AAPL", "stock", "USD", "nasdaq");
     insert_holding(&conn, "acc-2", "inst-ny", "BABA", "stock", "USD", "nyse");
     insert_holding(&conn, "acc-3", "inst-am", "SPY", "stock", "USD", "amex");

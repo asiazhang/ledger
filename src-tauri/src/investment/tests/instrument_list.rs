@@ -6,10 +6,11 @@ use crate::transaction::create_transaction_internal;
 use rusqlite::{Connection, params};
 
 use super::common::*;
+use crate::test_support::{open, seed_account, seed_exchange_rate, seed_instrument};
 
 #[test]
 fn list_instruments_pagination_and_search() {
-    let conn = setup_db();
+    let conn = open();
     for i in 0..5 {
         insert_instrument_with_market(
             &conn,
@@ -115,7 +116,7 @@ fn list_instruments_pagination_and_search() {
 /// 词条 AND、大小写不敏感，判定目标为下拉 label 等价文本「代码 · 名称」。
 #[test]
 fn list_instruments_search_pinyin_semantics() {
-    let conn = setup_db();
+    let conn = open();
     insert_instrument_with_market(&conn, "inst-zs", "600519", "招商银行", "CNY", "sh", "stock");
     insert_instrument_with_market(&conn, "inst-wk", "000002", "万科物业", "CNY", "sz", "stock");
     insert_instrument_with_market(&conn, "inst-abc", "ABCH", "ABC银行", "CNY", "sh", "stock");
@@ -172,9 +173,9 @@ fn search_all(conn: &Connection, search: &str) -> InstrumentListResult {
 /// invested 派生字段：持仓中为 true，未投资 / 已清仓为 false（issue #102）。
 #[test]
 fn list_instruments_invested_flag() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-inv", "美股", "investment", "USD");
-    insert_rate_1_1(&conn, "USD");
+    let conn = open();
+    seed_account(&conn, "acc-inv", "美股", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
     // 持仓中：买入 10 股，未卖出
     insert_instrument_with_market(&conn, "inst-held", "HELD", "持仓标的", "USD", "sh", "stock");
     // 已清仓：买入 10 股后全部卖出
@@ -232,9 +233,9 @@ fn list_instruments_invested_flag() {
 /// only_invested 过滤：与搜索、市场过滤、分页组合正确（issue #102）。
 #[test]
 fn list_instruments_only_invested_filter() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-inv", "美股", "investment", "USD");
-    insert_rate_1_1(&conn, "USD");
+    let conn = open();
+    seed_account(&conn, "acc-inv", "美股", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
     insert_instrument_with_market(&conn, "inst-held", "HELD", "持仓标的", "USD", "sh", "stock");
     insert_instrument_with_market(
         &conn,
@@ -344,9 +345,9 @@ fn list_instruments_only_invested_filter() {
 /// 软删除账户的持仓批次不计入 invested（口径与 v_holdings 一致，issue #102）。
 #[test]
 fn list_instruments_invested_excludes_soft_deleted_accounts() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-del", "已删账户", "investment", "USD");
-    insert_rate_1_1(&conn, "USD");
+    let conn = open();
+    seed_account(&conn, "acc-del", "已删账户", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
     insert_instrument_with_market(
         &conn,
         "inst-del",
@@ -382,7 +383,7 @@ fn list_instruments_invested_excludes_soft_deleted_accounts() {
 /// 标的类型过滤（issue #294）：同码异类型消歧（如基金 000001 vs 股票 000001）。
 #[test]
 fn list_instruments_kind_filter_disambiguates_same_symbol() {
-    let conn = setup_db();
+    let conn = open();
     insert_instrument_with_market(
         &conn,
         "inst-fund",
@@ -442,7 +443,7 @@ fn list_instruments_kind_filter_disambiguates_same_symbol() {
 
 #[test]
 fn list_instruments_empty_initially() {
-    let conn = setup_db();
+    let conn = open();
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM instruments", [], |r| r.get(0))
         .unwrap();
@@ -451,14 +452,15 @@ fn list_instruments_empty_initially() {
 
 #[test]
 fn create_instrument_inserts_and_returns_id() {
-    let conn = setup_db();
-    let id = crate::db::new_uuid();
-    let now = crate::db::now_iso();
-    conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,'stock',?3,?4,'unknown',?5,?6,?7,?8)",
-        params![id, "NVDA", "NVIDIA Corporation", "USD", now, now, 1, "test"],
-    ).unwrap();
+    let conn = open();
+    let id = seed_instrument(
+        &conn,
+        &crate::db::new_uuid(),
+        "NVDA",
+        "NVIDIA Corporation",
+        "USD",
+        "unknown",
+    );
     let (symbol, name, ccy): (String, Option<String>, String) = conn
         .query_row(
             "SELECT symbol, name, currency_code FROM instruments WHERE id=?1",
@@ -473,19 +475,19 @@ fn create_instrument_inserts_and_returns_id() {
 
 #[test]
 fn create_instrument_is_idempotent() {
-    let conn = setup_db();
+    let conn = open();
     let id1 = crate::db::new_uuid();
     let id2 = crate::db::new_uuid();
-    let now = crate::db::now_iso();
-    conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-         VALUES (?1,'AAPL','stock',?2,'USD','unknown',?3,?4,?5,?6)",
-        params![id1, "Apple Inc.", now, now, 1, "test"],
-    ).unwrap();
-    let result = conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-         VALUES (?1,'AAPL','stock',?2,'USD','unknown',?3,?4,?5,?6)",
-        params![id2, "Apple Again", now, now, 1, "test"],
+    seed_instrument(&conn, &id1, "AAPL", "Apple Inc.", "USD", "unknown");
+    // 同码同类型第二行被库层 UNIQUE(symbol, instrument_type) 拒绝（可失败薄皮种子拿 Err）。
+    let result = try_insert_instrument_with_market(
+        &conn,
+        &id2,
+        "AAPL",
+        "Apple Again",
+        "USD",
+        "unknown",
+        "stock",
     );
     assert!(result.is_err());
     let count: i64 = conn
@@ -500,10 +502,10 @@ fn create_instrument_is_idempotent() {
 
 #[test]
 fn list_holdings_returns_after_buy_and_market_price() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-hold", "投资账户", "investment", "USD");
-    insert_rate_1_1(&conn, "USD");
-    insert_instrument(&conn, "inst-hold", "GOOGL", "Alphabet", "USD");
+    let conn = open();
+    seed_account(&conn, "acc-hold", "投资账户", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
+    seed_instrument(&conn, "inst-hold", "GOOGL", "Alphabet", "USD", "unknown");
 
     let buy_input = make_buy_input("acc-hold", "inst-hold", 10.0, 1_500_000, 1000);
     create_transaction_internal(&conn, buy_input).unwrap();

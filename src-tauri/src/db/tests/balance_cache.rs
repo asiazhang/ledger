@@ -8,8 +8,8 @@
 
 use rusqlite::{Connection, params};
 
-use crate::db::{init_db, migrations, open_in_memory};
-use crate::test_support::{assert_balance_cache_matches_realtime, read_scalar_i64};
+use crate::db::migrations;
+use crate::test_support::{assert_balance_cache_matches_realtime, read_scalar_i64, seed_account};
 
 /// V017 之前的 schema 版本：余额缓存表加入前的迁移序列条数（V001–V016，无 V005，
 /// 共 15 条；version 为迁移向量下标从 1 起，V017 本身即 version 16）。
@@ -19,30 +19,18 @@ const PRE_V017_SCHEMA_VERSION: usize = 15;
 /// （income/refund/sell 为 +，expense/buy 为 −，transfer 双侧，split 恒 0，
 /// 含软删行）。`amount_native_cents` 直接取 `amount_cents`（CNY 1:1）。
 fn seed_legacy_world(conn: &Connection) {
+    // 账户行经工厂种子（归一签名，spec #728 / ADR-0084 决策 4）。
     // 现金 A：初始余额 + income + expense + transfer 转出 + refund。
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES ('acc-a','现金A','cash','CNY',10000,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        [],
-    ).unwrap();
+    seed_account(conn, "acc-a", "现金A", "cash", "CNY", 10000);
     // 现金 B：transfer 转入侧 + 软删行（不计入）。
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES ('acc-b','现金B','cash','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        [],
-    ).unwrap();
+    seed_account(conn, "acc-b", "现金B", "cash", "CNY", 0);
     // 投资账户：buy/sell 路径。
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES ('acc-inv','美股','investment','USD',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        [],
-    ).unwrap();
-    // 已软删账户：不回填、不参与实时计算。
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES ('acc-gone','已删','cash','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',1)",
-        [],
-    ).unwrap();
+    seed_account(conn, "acc-inv", "美股", "investment", "USD", 0);
+    // 已软删账户：不回填、不参与实时计算（软删语义为本测试场景输入，
+    // 工厂种子后 is_deleted 修正）。
+    seed_account(conn, "acc-gone", "已删", "cash", "CNY", 0);
+    conn.execute("UPDATE accounts SET is_deleted=1 WHERE id='acc-gone'", [])
+        .unwrap();
 
     let now = "2026-01-15T00:00:00Z";
     let insert_tx = |id: &str,
@@ -73,13 +61,13 @@ fn seed_legacy_world(conn: &Connection) {
 /// 与实时计算逐账户一致（迁移 SQL 表达式 ↔ Rust account_flow_expr 一致性锁定）。
 #[test]
 fn v017_backfill_matches_compute_balance_on_upgrade() {
-    let mut conn = open_in_memory().unwrap();
-    migrations()
-        .to_version(&mut conn, PRE_V017_SCHEMA_VERSION)
-        .unwrap();
+    // 升级路径：先开停在旧 schema 的库、种存量世界，再补齐迁移（建库经 db 测试
+    // 域薄皮 `open_at_schema_version`；补齐走产品迁移缝 `to_latest`，即 init_db
+    // 的迁移核心——spec #728 / issue #754 / ADR-0084 决策 7）。
+    let mut conn = super::common::open_at_schema_version(PRE_V017_SCHEMA_VERSION);
     seed_legacy_world(&conn);
 
-    init_db(&mut conn).unwrap();
+    migrations().to_latest(&mut conn).unwrap();
 
     // 回填值 == 实时重算：断言体上收共享断言库（issue #751 / ADR-0084 决策 6），
     // 逐账户比对全部未删除账户（含本世界三账户与 V004 默认种子账户、投资与转入

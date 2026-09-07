@@ -10,8 +10,6 @@
 //! - `fund_nav`：历史净值报文解析、水位窗口与 Referer 传播（issue #303，fixture 驱动）；
 //! - `stock_quote`：股票单点行情报文解析、类型特征探测与命中挑选（issue #693，fixture 驱动）。
 
-mod common;
-
 mod fund_nav;
 mod fund_search;
 mod holding_price_sync;

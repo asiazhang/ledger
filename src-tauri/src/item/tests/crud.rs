@@ -3,7 +3,6 @@
 
 use rusqlite::Connection;
 
-use crate::db::{init_db, open_in_memory};
 use crate::item::domain::{create_item, delete_item, dispose_item, list_items, update_item};
 use crate::item::model::{ItemDisposeInput, ItemInput, ItemStatus};
 use crate::transaction::TransactionInput;
@@ -11,9 +10,8 @@ use crate::transaction::amount::TransactionKind;
 use crate::transaction::create_transaction_internal;
 
 fn conn() -> Connection {
-    let mut conn = open_in_memory().expect("内存库创建失败");
-    init_db(&mut conn).expect("迁移失败");
-    conn
+    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）。
+    crate::test_support::open()
 }
 
 fn input(name: &str, date: &str, cost_cents: i64) -> ItemInput {
@@ -30,14 +28,25 @@ fn input(name: &str, date: &str, cost_cents: i64) -> ItemInput {
 /// 创建脚手架账户 + expense 购买交易（issue #207 起创建必关联交易），返回交易 id。
 /// 账户行幂等插入（同 id 复用），交易入参经 Writer 接缝校验（金额>0、日期可解析、折算有汇率）。
 fn seed_purchase_tx(conn: &Connection, date: &str, cost_cents: i64, currency: &str) -> String {
-    conn.execute(
-        "INSERT OR IGNORE INTO accounts \
-         (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES ('acc-item-scaffold','物品脚手架','cash',?1,0,\
-          '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        [currency],
-    )
-    .unwrap();
+    // 脚手架账户：工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）；同连接
+    // 可多次播种（同 id 复用），已存在则跳过（幂等语义与原 INSERT OR IGNORE 一致）。
+    let scaffold_exists: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM accounts WHERE id='acc-item-scaffold'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    if scaffold_exists == 0 {
+        crate::test_support::seed_account(
+            conn,
+            "acc-item-scaffold",
+            "物品脚手架",
+            "cash",
+            currency,
+            0,
+        );
+    }
     create_transaction_internal(
         conn,
         TransactionInput {

@@ -4,13 +4,11 @@
 use rusqlite::Connection;
 
 use super::model::PolicyInput;
-use crate::db::{init_db, open_in_memory};
 use crate::policy::{create_insurer, create_policy, delete_policy, list_policies, update_policy};
 
 fn conn() -> Connection {
-    let mut conn = open_in_memory().expect("内存库创建失败");
-    init_db(&mut conn).expect("迁移失败");
-    conn
+    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）。
+    crate::test_support::open()
 }
 
 fn input(insurer_id: &str) -> PolicyInput {
@@ -270,12 +268,8 @@ use crate::transaction::amount::TransactionKind;
 use crate::transaction::create_transaction_internal;
 
 fn insert_account(conn: &Connection, id: &str) {
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,'cash','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        rusqlite::params![id, id],
-    )
-    .unwrap();
+    // 统计世界脚手架账户：工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）。
+    crate::test_support::seed_account(conn, id, id, "cash", "CNY", 0);
 }
 
 fn linked_input(

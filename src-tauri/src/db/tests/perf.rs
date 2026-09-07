@@ -6,15 +6,15 @@ use std::time::Duration;
 use rusqlite::Connection;
 use tracing::Level;
 
-use crate::db::{init_db, open_in_memory, perf_trace};
+use crate::db::perf_trace;
+use crate::test_support::{self, seed_account, seed_instrument};
 use crate::test_utils::capture_events;
 
 /// security_lots 聚合索引：partial covering index 存在并覆盖聚合列，旧冗余索引已删除，
 /// 且 v_holdings 聚合子查询实际命中该覆盖索引（EXPLAIN QUERY PLAN 出现索引名）。
 #[test]
 fn security_lots_active_covering_index() {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
+    let conn = test_support::open();
 
     // 新 partial covering index 存在，含 partial 谓词与全部聚合列。
     let sql: String = conn
@@ -112,12 +112,13 @@ fn timing_level_boundaries() {
     );
 }
 
-/// 接线回归：open_in_memory 默认注册 hook，执行 SELECT 1 能捕获到含 SQL 文本的事件。
+/// 接线回归：产品建库路径默认注册 hook，执行 SELECT 1 能捕获到含 SQL 文本的事件。
 /// 不限定具体级别——级别分类由 `timing_level` 纯函数测试覆盖；此处只验证 hook 接线生效
-/// 且事件带 SQL 原文（占位符 SQL 记录于所有级别）。
+/// 且事件带 SQL 原文（占位符 SQL 记录于所有级别）。建库经统一测试工厂（hook 注册
+/// 在建连收尾单点 `finish_open`，工厂 open 同缝，spec #728 / issue #754）。
 #[test]
 fn perf_trace_factory_emits_sql_event() {
-    let conn = open_in_memory().unwrap();
+    let conn = test_support::open();
 
     let events = capture_events(|| {
         conn.query_row("SELECT 1", [], |r| r.get::<_, i64>(0))
@@ -138,7 +139,9 @@ fn perf_trace_factory_emits_sql_event() {
 /// 保证一条真实耗时的语句，验证阈值注入生效。）
 #[test]
 fn perf_trace_zero_threshold_emits_warn() {
-    let conn = Connection::open_in_memory().unwrap();
+    // 工厂连接的 hook 已由建连缝按默认阈值安装；本测试以零阈值重装覆盖
+    // （trace 回调单槽，末次安装生效）。
+    let conn = test_support::open();
     perf_trace::install_perf_trace(&conn, Duration::ZERO);
 
     let events = capture_events(|| {
@@ -181,18 +184,20 @@ where
 /// 证券交易；迁移尾部 ANALYZE 在空表运行，此处随数据重算——与存量用户升级、
 /// 基准库生成后的统计形态一致，保证 planner 选择可代表真实库。
 fn v016_world() -> Connection {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
+    let conn = test_support::open();
 
+    // 账户与标的经工厂种子；分类与批量交易是本测试的世界构造（非工厂种子表）。
+    seed_account(&conn, "acc-01", "现金", "cash", "CNY", 0);
+    seed_account(&conn, "acc-02", "储蓄卡", "bank", "CNY", 0);
+    seed_instrument(&conn, "inst-01", "600000.SH", "浦发银行", "CNY", "sh");
+    conn.execute(
+        "INSERT INTO categories (id,name,kind,created_at,updated_at,version,device_id) \
+         VALUES ('cat-01','餐饮','expense',?1,?1,1,'test')",
+        rusqlite::params![test_support::FIXED_NOW],
+    )
+    .unwrap();
     conn.execute_batch(
-        "INSERT INTO accounts (id,name,type,currency_code,created_at,updated_at,version,device_id) \
-         VALUES ('acc-01','现金','cash','CNY','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test'),\
-                 ('acc-02','储蓄卡','bank','CNY','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test');\
-         INSERT INTO categories (id,name,kind,created_at,updated_at,version,device_id) \
-         VALUES ('cat-01','餐饮','expense','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test');\
-         INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-         VALUES ('inst-01','600000.SH','stock','浦发银行','CNY','sh','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test');\
-         WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM seq WHERE i<2000)\
+        "WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM seq WHERE i<2000)\
          INSERT INTO transactions\
            (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
             category_id,merchant_id,refund_of_transaction_id,note,dedup_hash,date,created_at,\
@@ -221,8 +226,7 @@ fn v016_world() -> Connection {
 /// V016 六条新索引存在且均为 partial（WHERE is_deleted=0）+ 全部覆盖列齐备。
 #[test]
 fn v016_structural_indexes_exist_with_covering_columns() {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
+    let conn = test_support::open();
 
     let expected: &[(&str, &[&str])] = &[
         ("idx_transactions_list_order", &["date", "created_at", "id"]),
@@ -474,8 +478,7 @@ fn v016_holdings_as_of_driven_from_security_transactions() {
 /// 唯一索引形态）。
 #[test]
 fn v001_dedup_hash_partial_index_exists() {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
+    let conn = test_support::open();
 
     let sql: String = conn
         .query_row(
@@ -535,7 +538,7 @@ fn v001_dedup_fallback_query_uses_dedup_hash_index_without_temp_btree() {
 /// （同步命令与 wrapper 同线程执行，归因成立）。
 #[test]
 fn perf_trace_sql_event_inherits_command_span() {
-    let conn = open_in_memory().unwrap();
+    let conn = test_support::open();
 
     let events = capture_events(|| {
         // 与 `logged_invoke_handler` 一致的命令 span 形状：name=command，含 command 字段。
