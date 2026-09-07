@@ -5,7 +5,7 @@
 use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::create_transaction_internal;
-use rusqlite::params;
+use rusqlite::{Connection, params};
 
 use super::super::*;
 use super::common::*;
@@ -357,125 +357,141 @@ fn buy_transaction_requires_investment_account() {
     );
 }
 
-/// buy 引用不存在的标的：prepare 校验段拦截为码化 [`AppError::Coded`]（HTTP 侧 400）
-/// 中文错误，不再等到 apply 落 `security_transactions` 才触发外键违规的
-/// 「数据库错误」500，AI 可读错误回自纠（issue #295）。错误携带标的 id。
-#[test]
-fn buy_with_missing_instrument_rejected_as_invalid_in_prepare() {
-    let conn = open();
-    seed_account(&conn, "acc-test-missing", "美股", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
-
-    let input = make_buy_input("acc-test-missing", "inst-not-exist", 10.0, 10000, 0);
-    let err = create_transaction_internal(&conn, input).unwrap_err();
-    match err {
-        AppError::Coded { message, .. } => {
-            assert!(
-                message.contains("买入标的不存在"),
-                "应报买入标的不存在，got: {message}"
-            );
-            assert!(
-                message.contains("inst-not-exist"),
-                "错误应携带标的 id 供回自纠，got: {message}"
-            );
-        }
-        other => panic!("应返回 Coded（400），got: {other:?}"),
-    }
-    // prepare 拦截：交易行与持仓/明细均无落库残留。
-    let txns: i64 = conn
-        .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(txns, 0, "被拒的买入不应落交易行");
-    let lots: i64 = conn
-        .query_row("SELECT COUNT(*) FROM security_lots", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(lots, 0, "被拒的买入不应有持仓批次");
+/// 拒绝理由表行（#768）：行 =（行名，期望文案，动作闭包，可选后置闭包）。
+/// 行名以写入口动作开头，兼作失败输出中的动作标识；期望文案为拒绝消息必须
+/// 逐条 `contains` 的子串清单（拒绝文案与标的 id，逐条对应原三胞胎断言面）。
+struct RejectionRow {
+    name: &'static str,
+    expected: &'static [&'static str],
+    /// 动作闭包：自备前置（种子/建仓）并触发目标写入口；返回 Ok 即意外成功。
+    action: fn(&Connection) -> Result<(), AppError>,
+    /// 可选后置闭包：拒绝生效后的残留/原值断言。
+    post: Option<fn(&Connection)>,
 }
 
-/// sell 引用不存在的标的：同样在 prepare 拦截为码化 Coded——且必须先于可卖数量
-/// 校验（否则会误报「可卖出数量不足，当前持有 0」，语义不明，issue #295）。
+/// 标的不存在的拒绝理由表（#768）：原三胞胎（buy 建仓 / sell 建仓 / buy 修改）
+/// 拒绝断言体逐字同构，收敛为行数据 + 单一断言体，新增拒绝理由 = 加一行数据。
+/// 断言面原样保留（issue #295）：引用不存在标的在 prepare 校验段拦截为码化
+/// [`AppError::Coded`]（HTTP 侧 400），不再等到 apply 落 `security_transactions`
+/// 触发外键违规的「数据库错误」500；sell 侧先于可卖数量校验（否则误报
+/// 「可卖出数量不足，当前持有 0」，语义不明）；文案与标的 id 的 contains 断言
+/// 逐条对应原三处。第三行「保留原值」后置断言作可选后置列，不丢断言面。
+/// 失败报行：输出含行名（动作标识）、期望文案与实际消息。跨层重复（BDD 镜像
+/// 场景、api_server 400 断言）不进本表，归 #730 测试层级重划。
 #[test]
-fn sell_with_missing_instrument_rejected_as_invalid_in_prepare() {
-    let conn = open();
-    seed_account(&conn, "acc-test-sell-miss", "美股", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
-
-    let input = make_sell_input("acc-test-sell-miss", "inst-not-exist", 5.0, 12000, 0);
-    let err = create_transaction_internal(&conn, input).unwrap_err();
-    match err {
-        AppError::Coded { message, .. } => {
-            assert!(
-                message.contains("卖出标的不存在"),
-                "应报卖出标的不存在，got: {message}"
-            );
-            assert!(
-                message.contains("inst-not-exist"),
-                "错误应携带标的 id 供回自纠，got: {message}"
-            );
-        }
-        other => panic!("应返回 Coded（400），got: {other:?}"),
-    }
-}
-
-/// 修改（全字段替换）路径同样生效：把已有买入改为引用不存在的标的 → Invalid，
-/// 原交易行与持仓批次保持不变（入口自持事务整体回滚，issue #295）。
-#[test]
-fn update_buy_to_missing_instrument_rejected_and_keeps_original() {
+fn missing_instrument_rejection_reason_table() {
     use crate::transaction::update_transaction_internal;
-    let conn = open();
-    seed_account(&conn, "acc-test-upd-miss", "美股", "investment", "USD", 0);
-    seed_exchange_rate(&conn, "USD", "CNY", 1.0);
-    seed_instrument(
-        &conn,
-        "inst-test-upd-miss",
-        "NVDA",
-        "NVIDIA",
-        "USD",
-        "unknown",
-    );
 
-    let txn_id = create_transaction_internal(
-        &conn,
-        make_buy_input(
-            "acc-test-upd-miss",
-            "inst-test-upd-miss",
-            10.0,
-            1_000_000,
-            0,
-        ),
-    )
-    .unwrap()
-    .id;
-
-    let edited = make_buy_input("acc-test-upd-miss", "inst-not-exist", 5.0, 1_200_000, 0);
-    let err = update_transaction_internal(&conn, &txn_id, edited).unwrap_err();
-    match err {
-        AppError::Coded { message, .. } => {
-            assert!(
-                message.contains("买入标的不存在"),
-                "应报买入标的不存在，got: {message}"
-            );
+    let rows: &[RejectionRow] = &[
+        // buy_with_missing_instrument_rejected_as_invalid_in_prepare
+        RejectionRow {
+            name: "buy_create 引用不存在标的",
+            expected: &["买入标的不存在", "inst-not-exist"],
+            action: |conn| {
+                seed_account(conn, "acc-test-missing", "美股", "investment", "USD", 0);
+                seed_exchange_rate(conn, "USD", "CNY", 1.0);
+                let input = make_buy_input("acc-test-missing", "inst-not-exist", 10.0, 10000, 0);
+                create_transaction_internal(conn, input).map(|_| ())
+            },
+            post: Some(|conn| {
+                // prepare 拦截：交易行与持仓/明细均无落库残留。
+                let txns: i64 = conn
+                    .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
+                    .unwrap();
+                assert_eq!(txns, 0, "被拒的买入不应落交易行");
+                let lots: i64 = conn
+                    .query_row("SELECT COUNT(*) FROM security_lots", [], |r| r.get(0))
+                    .unwrap();
+                assert_eq!(lots, 0, "被拒的买入不应有持仓批次");
+            }),
+        },
+        // sell_with_missing_instrument_rejected_as_invalid_in_prepare
+        RejectionRow {
+            name: "sell_create 引用不存在标的",
+            expected: &["卖出标的不存在", "inst-not-exist"],
+            action: |conn| {
+                seed_account(conn, "acc-test-sell-miss", "美股", "investment", "USD", 0);
+                seed_exchange_rate(conn, "USD", "CNY", 1.0);
+                let input = make_sell_input("acc-test-sell-miss", "inst-not-exist", 5.0, 12000, 0);
+                create_transaction_internal(conn, input).map(|_| ())
+            },
+            post: None,
+        },
+        // update_buy_to_missing_instrument_rejected_and_keeps_original
+        RejectionRow {
+            name: "update_buy 改引不存在标的",
+            expected: &["买入标的不存在"],
+            action: |conn| {
+                seed_account(conn, "acc-test-upd-miss", "美股", "investment", "USD", 0);
+                seed_exchange_rate(conn, "USD", "CNY", 1.0);
+                seed_instrument(
+                    conn,
+                    "inst-test-upd-miss",
+                    "NVDA",
+                    "NVIDIA",
+                    "USD",
+                    "unknown",
+                );
+                let txn_id = create_transaction_internal(
+                    conn,
+                    make_buy_input(
+                        "acc-test-upd-miss",
+                        "inst-test-upd-miss",
+                        10.0,
+                        1_000_000,
+                        0,
+                    ),
+                )
+                .unwrap()
+                .id;
+                // 修改（全字段替换）路径同样在 prepare 拦截：改引不存在标的 → Invalid，
+                // 入口自持事务整体回滚（revert→plan 中途失败不留中间态）。
+                let edited =
+                    make_buy_input("acc-test-upd-miss", "inst-not-exist", 5.0, 1_200_000, 0);
+                update_transaction_internal(conn, &txn_id, edited).map(|_| ())
+            },
+            post: Some(|conn| {
+                // 原交易行与持仓批次保持原样（revert→plan 中途失败整体回滚）：
+                // 库中唯一交易行即原买入、唯一批次即其持仓，断言其金额与剩余
+                // 数量未被改动（与原测试同面：只锁原行值，不断总行数）。
+                let amount_cents: i64 = conn
+                    .query_row("SELECT amount_cents FROM transactions", [], |r| r.get(0))
+                    .unwrap();
+                assert_eq!(amount_cents, 100000, "原交易金额不应被修改");
+                let remaining: f64 = conn
+                    .query_row("SELECT remaining_quantity FROM security_lots", [], |r| {
+                        r.get(0)
+                    })
+                    .unwrap();
+                assert!((remaining - 10.0).abs() < 1e-9, "原持仓批次不应被清理");
+            }),
+        },
+    ];
+    for row in rows {
+        let conn = open();
+        let err = match (row.action)(&conn) {
+            Err(err) => err,
+            Ok(()) => panic!("拒绝理由表行「{}」失败：动作意外成功，应被拒绝", row.name),
+        };
+        match err {
+            AppError::Coded { message, .. } => {
+                for expected in row.expected {
+                    assert!(
+                        message.contains(expected),
+                        "拒绝理由表行「{}」失败：期望文案「{expected}」未出现在拒绝消息中，got: {message}",
+                        row.name
+                    );
+                }
+            }
+            other => panic!(
+                "拒绝理由表行「{}」失败：应返回 Coded（400），got: {other:?}",
+                row.name
+            ),
         }
-        other => panic!("应返回 Coded（400），got: {other:?}"),
+        if let Some(post) = row.post {
+            post(&conn);
+        }
     }
-
-    // 原交易行与持仓批次保持原样（revert→plan 中途失败整体回滚）。
-    let amount_cents: i64 = conn
-        .query_row(
-            "SELECT amount_cents FROM transactions WHERE id=?1",
-            params![txn_id],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(amount_cents, 100000, "原交易金额不应被修改");
-    let remaining: f64 = conn
-        .query_row(
-            "SELECT remaining_quantity FROM security_lots WHERE buy_transaction_id=?1",
-            params![txn_id],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert!((remaining - 10.0).abs() < 1e-9, "原持仓批次不应被清理");
 }
 
 #[test]
