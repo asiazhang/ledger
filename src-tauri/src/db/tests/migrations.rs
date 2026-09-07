@@ -5,9 +5,16 @@
 
 use rusqlite::{Connection, params};
 
-use crate::db::{init_db, migrations, open_in_memory};
+use crate::db::migrations;
+use crate::test_support::{
+    FIXED_NOW, seed_account, seed_exchange_rate, seed_fx_rate_history, seed_instrument,
+    seed_price_history,
+};
 
-use super::common::{insert_fx_rate_history, insert_instrument, insert_price_history};
+use super::common::{
+    probe_exchange_rate, probe_fx_rate_history, probe_instrument_market, probe_instrument_source,
+    probe_price_history,
+};
 
 /// 校验迁移集合本身定义正确（在临时内存 DB 上从首到尾跑一遍向上迁移）。
 #[test]
@@ -17,11 +24,13 @@ fn migrations_validate() {
 
 /// init_db 应幂等：连续跑两次不报错，且默认币种 11 条、分类 92 条已写入
 /// （18 顶级 + 74 二级）。
+/// 建库经统一测试工厂（= open_in_memory + init_db 两行序）；幂等重入走产品
+/// 迁移缝 `to_latest`（init_db 的迁移核心），spec #728 / issue #754 / ADR-0084 决策 7。
 #[test]
 fn init_db_is_idempotent_and_seeds_defaults() {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
-    init_db(&mut conn).unwrap();
+    let mut conn = crate::test_support::open();
+    migrations().to_latest(&mut conn).unwrap();
+    migrations().to_latest(&mut conn).unwrap();
 
     let currency_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM currencies", [], |r| r.get(0))
@@ -66,8 +75,7 @@ fn init_db_is_idempotent_and_seeds_defaults() {
 /// 库层只验存在性）。
 #[test]
 fn policies_table_references_insurers() {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
+    let conn = crate::test_support::open();
 
     // 新形状：insurer_id 在场、merchant_id 不在场（就地修改替换，非并存）。
     let has_insurer_id: bool = conn
@@ -91,21 +99,22 @@ fn policies_table_references_insurers() {
     );
 
     // 外键指向 insurers：引用在用保司可落库；引用不存在的保司被拒。
+    // 簿记戳引用工厂固定时刻常量（ADR-0084 决策 5）。
     conn.execute(
         "INSERT INTO policies (id,insurer_id,policy_number,product_name,start_date,\
          created_at,updated_at,version,device_id,is_deleted) \
          SELECT 'pol-01', id, 'P-1', '重疾险', '2026-01-01', \
-         '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0 \
+         ?1,?2,1,'test',0 \
          FROM insurers WHERE name='平安人寿' AND is_deleted=0",
-        [],
+        params![FIXED_NOW, FIXED_NOW],
     )
     .unwrap_or_else(|e| panic!("引用种子保司应可落库: {e}"));
     let dangling = conn.execute(
         "INSERT INTO policies (id,insurer_id,policy_number,product_name,start_date,\
          created_at,updated_at,version,device_id,is_deleted) \
          VALUES ('pol-02','ins-nothing','P-2','医疗险','2026-01-01',\
-         '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        [],
+         ?1,?2,1,'test',0)",
+        params![FIXED_NOW, FIXED_NOW],
     );
     assert!(dangling.is_err(), "引用不存在保司应被外键拒绝");
 
@@ -126,8 +135,7 @@ fn policies_table_references_insurers() {
 /// 同名不重复建（按名 INSERT OR IGNORE），行数与身份（确定性 UUID）稳定。
 #[test]
 fn insurer_seed_is_present_and_idempotent() {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
+    let mut conn = crate::test_support::open();
 
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM insurers", [], |r| r.get(0))
@@ -177,10 +185,9 @@ fn insurer_seed_is_present_and_idempotent() {
     assert_eq!(device_id, "seed");
     assert_eq!(is_deleted, 0);
 
-    // 幂等重跑：再次 init_db（= 全迁移链重入）不产生重复行；并直接重放 V019
-    // 迁移 SQL 本体两遍（init_db 因 user_version 已至最新不会重放 V019，
+    // 幂等重跑：再次重入迁移链（init_db 因 user_version 已至最新不会重放 V019，
     // 重放 SQL 本体才能真验种子语句集的幂等性：IF NOT EXISTS + OR IGNORE）。
-    init_db(&mut conn).unwrap();
+    migrations().to_latest(&mut conn).unwrap();
     conn.execute_batch(include_str!(
         "../../../migrations/V019__insurer_dictionary.sql"
     ))
@@ -217,22 +224,14 @@ fn insurer_seed_is_present_and_idempotent() {
 /// 见 transaction/tests.rs），此处不再重复。
 #[test]
 fn exchange_rate_single_row_per_pair() {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
+    let conn = crate::test_support::open();
 
-    conn.execute(
-        "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,source,updated_at,version,device_id) \
-         VALUES (?1,'USD','CNY',7.2,'2026-06-01','manual','2026-06-01T00:00:00Z',1,'test')",
-        params!["er-01"],
-    )
-    .unwrap();
+    // 当前行：工厂汇率种子（行 id 由货币对派生，spec #728 / ADR-0084 决策 4）。
+    seed_exchange_rate(&conn, "USD", "CNY", 7.2);
 
-    // 同货币对第二行应被 UNIQUE(base_code, quote_code) 拒绝。
-    let dup = conn.execute(
-        "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,source,updated_at,version,device_id) \
-         VALUES (?1,'USD','CNY',7.0,'2026-01-01','manual','2026-01-01T00:00:00Z',1,'test')",
-        params!["er-02"],
-    );
+    // 同货币对第二行应被 UNIQUE(base_code, quote_code) 拒绝（探针直写：自定义
+    // id，排除主键冲突干扰；探针见 db 测试域薄皮 common.rs）。
+    let dup = probe_exchange_rate(&conn, "er-02", "USD", "CNY", 7.0);
     assert!(dup.is_err(), "同货币对第二行应违反唯一约束");
 }
 
@@ -250,30 +249,22 @@ const V030_SCHEMA_VERSION: usize = 7;
 /// + 标的级联删除跟随。
 #[test]
 fn price_history_weekly_unique_and_cascade() {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
-    insert_instrument(&conn, "inst-01", "CNY");
+    let conn = crate::test_support::open();
+    seed_instrument(&conn, "inst-01", "600519.SH", "贵州茅台", "CNY", "sh");
 
-    insert_price_history(&conn, "ph-01", "inst-01", "2026-05-27");
-    // 同标的同采样日第二行应被周唯一约束拒绝（整周覆盖走 upsert，不产生重复）。
-    let dup = conn.execute(
-        "INSERT INTO price_history (id,instrument_id,trade_date,price_cents,currency_code,source,created_at,updated_at,version,device_id) \
-         VALUES ('ph-02','inst-01','2026-05-27',170000,'CNY','eastmoney','2026-06-01T00:00:00Z','2026-06-01T00:00:00Z',1,'test')",
-        [],
-    );
+    seed_price_history(&conn, "ph-01", "inst-01", "2026-05-27", 170000, "CNY");
+    // 同标的同采样日第二行应被周唯一约束拒绝（整周覆盖走 upsert，不产生重复；
+    // 探针直写，自定义 id）。
+    let dup = probe_price_history(&conn, "ph-02", "inst-01", "2026-05-27", 170000);
     assert!(dup.is_err(), "同标的同采样日第二行应违反周唯一约束");
     // 同周不同采样日（周三 vs 周五）同样应被拒绝——「每周至多一条」由库层强制。
-    let dup_same_week = conn.execute(
-        "INSERT INTO price_history (id,instrument_id,trade_date,price_cents,currency_code,source,created_at,updated_at,version,device_id) \
-         VALUES ('ph-02b','inst-01','2026-05-29',171000,'CNY','eastmoney','2026-06-01T00:00:00Z','2026-06-01T00:00:00Z',1,'test')",
-        [],
-    );
+    let dup_same_week = probe_price_history(&conn, "ph-02b", "inst-01", "2026-05-29", 171000);
     assert!(
         dup_same_week.is_err(),
         "同周不同采样日第二行应违反周唯一约束"
     );
     // 不同周（另一采样周）可正常写入。
-    insert_price_history(&conn, "ph-03", "inst-01", "2026-06-03");
+    seed_price_history(&conn, "ph-03", "inst-01", "2026-06-03", 170000, "CNY");
 
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM price_history", [], |r| r.get(0))
@@ -302,21 +293,13 @@ const PRE_V011_SCHEMA_VERSION: usize = 9;
 /// 库层设 CHECK（与价格侧 source 列同款）。
 #[test]
 fn instruments_source_backfills_eastmoney_on_upgrade() {
-    let mut conn = open_in_memory().unwrap();
-    migrations()
-        .to_version(&mut conn, PRE_V011_SCHEMA_VERSION)
-        .unwrap();
+    // 升级路径：旧 schema 部分开放经 db 测试域薄皮（ADR-0084 决策 7）。
+    let mut conn = super::common::open_at_schema_version(PRE_V011_SCHEMA_VERSION);
 
-    // 旧 schema（无 source 列）下的存量行：同步产物。
-    conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-         VALUES ('inst-old','600000','stock','浦发银行','CNY','sh',\
-                 '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        [],
-    )
-    .unwrap();
+    // 旧 schema（无 source 列）下的存量行：同步产物（工厂种子列集不含 source）。
+    seed_instrument(&conn, "inst-old", "600000", "浦发银行", "CNY", "sh");
 
-    init_db(&mut conn).unwrap();
+    migrations().to_latest(&mut conn).unwrap();
 
     let source: String = conn
         .query_row(
@@ -328,13 +311,7 @@ fn instruments_source_backfills_eastmoney_on_upgrade() {
     assert_eq!(source, "eastmoney", "存量行升级后应回填同步来源");
 
     // 升级后省略 source 的新写入落默认值。
-    conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-         VALUES ('inst-new','000001','stock','平安银行','CNY','sz',\
-                 '2026-01-02T00:00:00Z','2026-01-02T00:00:00Z',1,'test')",
-        [],
-    )
-    .unwrap();
+    seed_instrument(&conn, "inst-new", "000001", "平安银行", "CNY", "sz");
     let source: String = conn
         .query_row(
             "SELECT source FROM instruments WHERE id='inst-new'",
@@ -344,13 +321,8 @@ fn instruments_source_backfills_eastmoney_on_upgrade() {
         .unwrap();
     assert_eq!(source, "eastmoney");
 
-    // 显式 NULL 被 NOT NULL 拒绝。
-    let null_rejected = conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id,source) \
-         VALUES ('inst-null','000002','stock','万科A','CNY','sz',\
-                 '2026-01-02T00:00:00Z','2026-01-02T00:00:00Z',1,'test',NULL)",
-        [],
-    );
+    // 显式 NULL 被 NOT NULL 拒绝（探针直写，source 列显式入列）。
+    let null_rejected = probe_instrument_source(&conn, "inst-null", "000002", "sz", None);
     assert!(null_rejected.is_err(), "source 列 NOT NULL 应拒绝显式 NULL");
 }
 
@@ -360,78 +332,58 @@ fn instruments_source_backfills_eastmoney_on_upgrade() {
 /// 修改注记与 CHANGELOG「Unreleased」BREAKING 条目两级标记）。
 #[test]
 fn instruments_market_check_accepts_us_markets() {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
+    let conn = crate::test_support::open();
 
     for (i, market) in ["sh", "sz", "hk", "nasdaq", "nyse", "amex", "unknown"]
         .into_iter()
         .enumerate()
     {
-        conn.execute(
-            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-             VALUES (?1,?2,'stock',NULL,'USD',?3,'2026-09-01T00:00:00Z','2026-09-01T00:00:00Z',1,'test')",
-            params![format!("inst-{i}"), format!("SYM{i}"), market],
-        )
-        .unwrap_or_else(|e| panic!("market {market} 应可落库: {e}"));
+        probe_instrument_market(&conn, &format!("inst-{i}"), &format!("SYM{i}"), market)
+            .unwrap_or_else(|e| panic!("market {market} 应可落库: {e}"));
     }
 
     // 闭集外取值仍被 CHECK 拒绝。
-    let rejected = conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-         VALUES ('inst-x','LSE','stock',NULL,'USD','lse','2026-09-01T00:00:00Z','2026-09-01T00:00:00Z',1,'test')",
-        [],
-    );
+    let rejected = probe_instrument_market(&conn, "inst-x", "LSE", "lse");
     assert!(rejected.is_err(), "闭集外 market 应被 CHECK 拒绝");
 }
 
 /// fx_rate_history：币种对 × 周唯一（与 PriceHistory 同规则）。
 #[test]
 fn fx_rate_history_weekly_unique_per_pair() {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
+    let conn = crate::test_support::open();
 
-    insert_fx_rate_history(&conn, "fx-01", "HKD", "CNY", "2026-05-27", 0.92);
-    // 同币种对同采样日第二行应被周唯一约束拒绝。
-    let dup = conn.execute(
-        "INSERT INTO fx_rate_history (id,base_code,quote_code,trade_date,rate,source,created_at,updated_at,version,device_id) \
-         VALUES ('fx-02','HKD','CNY','2026-05-27',0.92,'eastmoney','2026-06-01T00:00:00Z','2026-06-01T00:00:00Z',1,'test')",
-        [],
-    );
+    seed_fx_rate_history(&conn, "fx-01", "HKD", "CNY", "2026-05-27", 0.92);
+    // 同币种对同采样日第二行应被周唯一约束拒绝（探针直写，自定义 id）。
+    let dup = probe_fx_rate_history(&conn, "fx-02", "HKD", "CNY", "2026-05-27", 0.92);
     assert!(dup.is_err(), "同币种对同采样日第二行应违反周唯一约束");
     // 同周不同采样日同样拒绝——周采样语义与 PriceHistory 对齐。
-    let dup_same_week = conn.execute(
-        "INSERT INTO fx_rate_history (id,base_code,quote_code,trade_date,rate,source,created_at,updated_at,version,device_id) \
-         VALUES ('fx-02b','HKD','CNY','2026-05-29',0.93,'eastmoney','2026-06-01T00:00:00Z','2026-06-01T00:00:00Z',1,'test')",
-        [],
-    );
+    let dup_same_week = probe_fx_rate_history(&conn, "fx-02b", "HKD", "CNY", "2026-05-29", 0.93);
     assert!(dup_same_week.is_err(), "同币种对同周第二行应违反周唯一约束");
     // 不同周可写入；反向币种对是另一条序列，互不冲突。
-    insert_fx_rate_history(&conn, "fx-03", "HKD", "CNY", "2026-06-03", 0.92);
-    insert_fx_rate_history(&conn, "fx-04", "CNY", "HKD", "2026-05-27", 1.087);
+    seed_fx_rate_history(&conn, "fx-03", "HKD", "CNY", "2026-06-03", 0.92);
+    seed_fx_rate_history(&conn, "fx-04", "CNY", "HKD", "2026-05-27", 1.087);
 }
 
 /// 旧版本备份恢复后升级路径：旧库停在发布时的 schema 版本，经 init_db 补齐
 /// 后续迁移，price_history / fx_rate_history 自动创建。
 #[test]
 fn migration_upgrades_v030_backup_with_new_tables() {
-    let mut conn = open_in_memory().unwrap();
-    migrations()
-        .to_version(&mut conn, V030_SCHEMA_VERSION)
-        .unwrap();
+    // 升级路径：旧 schema 部分开放经 db 测试域薄皮（ADR-0084 决策 7）。
+    let mut conn = super::common::open_at_schema_version(V030_SCHEMA_VERSION);
     let before: i64 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
     assert_eq!(before, V030_SCHEMA_VERSION as i64);
 
-    // 旧库中已有数据（如一个账户）在升级后应原样保留。
-    insert_account(&conn, "acc-01");
+    // 旧库中已有数据（如一个账户）在升级后应原样保留（工厂账户种子）。
+    seed_account(&conn, "acc-01", "现金", "cash", "CNY", 0);
 
-    init_db(&mut conn).unwrap();
+    migrations().to_latest(&mut conn).unwrap();
 
     // 新表存在且可直接写入（迁移不止是建表语句语法有效，约束也生效）。
-    insert_instrument(&conn, "inst-up", "CNY");
-    insert_price_history(&conn, "ph-up", "inst-up", "2026-05-27");
-    insert_fx_rate_history(&conn, "fx-up", "HKD", "CNY", "2026-05-27", 0.92);
+    seed_instrument(&conn, "inst-up", "600519.SH", "贵州茅台", "CNY", "sh");
+    seed_price_history(&conn, "ph-up", "inst-up", "2026-05-27", 170000, "CNY");
+    seed_fx_rate_history(&conn, "fx-up", "HKD", "CNY", "2026-05-27", 0.92);
 
     // 旧数据未受迁移影响。
     let acc: String = conn
@@ -446,18 +398,8 @@ fn migration_upgrades_v030_backup_with_new_tables() {
 // 全库外键显式 ON DELETE：迁移审计 + 定时交易系删除行为抽查（issue #273 / spec #271）
 // ---------------------------------------------------------------------------
 
-/// 插入一个现金账户（最小合法行，本位币 CNY，供迁移升级与行为抽查使用）。
-fn insert_account(conn: &Connection, id: &str) {
-    conn.execute(
-        "INSERT INTO accounts (id, name, type, currency_code, created_at, updated_at, version, device_id) \
-         VALUES (?1, '现金', 'cash', 'CNY', \
-                 '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1, 'test')",
-        [id],
-    )
-    .unwrap();
-}
-
-/// 插入一条定时交易（最小合法行，category_id 可空由调用方决定）。
+/// 插入一条定时交易（最小合法行，category_id 可空由调用方决定；簿记戳引用
+/// 工厂固定时刻常量，ADR-0084 决策 5）。
 fn insert_scheduled_plan(conn: &Connection, id: &str, kind: &str, category_id: Option<&str>) {
     conn.execute(
         "INSERT INTO scheduled_transactions \
@@ -466,8 +408,8 @@ fn insert_scheduled_plan(conn: &Connection, id: &str, kind: &str, category_id: O
           created_at, updated_at, version, device_id, is_deleted) \
          VALUES (?1, ?2, 'active', 'acc-01', ?3, 1500, 'CNY', \
                  'monthly', 1, 1, '2026-06-01', NULL, \
-                 '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1, 'test', 0)",
-        rusqlite::params![id, kind, category_id],
+                 ?4, ?4, 1, 'test', 0)",
+        rusqlite::params![id, kind, category_id, FIXED_NOW],
     )
     .unwrap();
 }
@@ -479,17 +421,16 @@ fn insert_occurrence(conn: &Connection, id: &str, plan_id: &str) {
          (id, scheduled_transaction_id, scheduled_date, status, transaction_id, \
           amount_cents, created_at, updated_at, version, device_id, is_deleted) \
          VALUES (?1, ?2, '2026-06-01', 'pending', NULL, \
-                 1500, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1, 'test', 0)",
-        rusqlite::params![id, plan_id],
+                 1500, ?3, ?3, 1, 'test', 0)",
+        rusqlite::params![id, plan_id, FIXED_NOW],
     )
     .unwrap();
 }
 
 /// 准备行为抽查的世界：迁移后的内存库 + 一个现金账户；返回连接。
 fn world_with_account() -> Connection {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
-    insert_account(&conn, "acc-01");
+    let conn = crate::test_support::open();
+    seed_account(&conn, "acc-01", "现金", "cash", "CNY", 0);
     conn
 }
 
@@ -534,8 +475,7 @@ fn count(conn: &Connection, table: &str) -> i64 {
 /// 经 `PRAGMA foreign_key_list` 反射观察 schema，不测实现细节。
 #[test]
 fn migration_audit_every_foreign_key_has_explicit_on_delete() {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
+    let conn = crate::test_support::open();
 
     let tables: Vec<String> = conn
         .prepare(
@@ -585,9 +525,8 @@ fn hard_delete_category_nulls_scheduled_plan_category() {
     let conn = world_with_account();
     conn.execute(
         "INSERT INTO categories (id, name, kind, created_at, updated_at, version, device_id) \
-         VALUES ('cat-01', '餐饮', 'expense', \
-                 '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1, 'test')",
-        [],
+         VALUES ('cat-01', '餐饮', 'expense', ?1, ?1, 1, 'test')",
+        params![FIXED_NOW],
     )
     .unwrap();
     insert_scheduled_plan(&conn, "st-01", "subscription", Some("cat-01"));

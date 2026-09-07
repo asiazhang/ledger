@@ -4,13 +4,17 @@
 //!
 //! 用户可见的加密流程（解锁、转换、备份语义）由后续票的 BDD（真临时
 //! 目录文件库）覆盖；本处钉住引擎基座的连接与文件级行为。
+//!
+//! 建连经产品建缝 `open_connection` / `open_connection_with_passphrase`（文件库
+//! 不入测试工厂，ADR-0084 决策 3）；建库后的迁移补齐/重入经产品迁移缝
+//! `migrations().to_latest`（即 `init_db` 的迁移核心，spec #728 / issue #754）。
 
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, params};
 
 use crate::db::encryption::{DbFileKind, SQLITE_HEADER_MAGIC, probe_file_kind};
-use crate::db::{init_db, new_uuid, open_connection, open_connection_with_passphrase};
+use crate::db::{migrations, new_uuid, open_connection, open_connection_with_passphrase};
 
 fn temp_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("ledger-db-enc-{tag}-{}", new_uuid()));
@@ -33,7 +37,7 @@ fn connection_without_key_stays_plaintext() {
     let dir = temp_dir("plain");
     let db = dir.join("ledger.db");
     let mut conn = open_connection(&db).unwrap();
-    init_db(&mut conn).unwrap();
+    migrations().to_latest(&mut conn).unwrap();
     drop(conn);
 
     assert_eq!(
@@ -45,7 +49,7 @@ fn connection_without_key_stays_plaintext() {
 
     // 切换前既有的明文打开路径可继续打开使用。
     let mut reopened = open_connection(&db).unwrap();
-    init_db(&mut reopened).unwrap();
+    migrations().to_latest(&mut reopened).unwrap();
     let currencies: i64 = reopened
         .query_row("SELECT COUNT(*) FROM currencies", [], |r| r.get(0))
         .unwrap();
@@ -60,7 +64,7 @@ fn passphrase_connection_writes_ciphertext_and_reopens_with_same_passphrase() {
     let db = dir.join("ledger.db");
     {
         let mut conn = open_connection_with_passphrase(&db, "主口令-正确").unwrap();
-        init_db(&mut conn).unwrap();
+        migrations().to_latest(&mut conn).unwrap();
         conn.execute("CREATE TABLE reopen_probe(name TEXT)", [])
             .unwrap();
         conn.execute(
@@ -80,7 +84,7 @@ fn passphrase_connection_writes_ciphertext_and_reopens_with_same_passphrase() {
 
     // 凭同一主口令可再次打开，迁移幂等、数据读回。
     let mut conn = open_connection_with_passphrase(&db, "主口令-正确").unwrap();
-    init_db(&mut conn).unwrap();
+    migrations().to_latest(&mut conn).unwrap();
     let name: String = conn
         .query_row("SELECT name FROM reopen_probe", [], |r| r.get(0))
         .unwrap();
@@ -96,12 +100,12 @@ fn passphrase_connection_rejects_wrong_passphrase() {
     let db = dir.join("ledger.db");
     {
         let mut conn = open_connection_with_passphrase(&db, "正确口令").unwrap();
-        init_db(&mut conn).unwrap();
+        migrations().to_latest(&mut conn).unwrap();
     }
     assert_eq!(probe_file_kind(&db).unwrap(), DbFileKind::Encrypted);
 
     let mut conn = open_connection_with_passphrase(&db, "错误口令").unwrap();
-    let err = init_db(&mut conn).unwrap_err();
+    let err = migrations().to_latest(&mut conn).unwrap_err();
     assert!(
         err.to_string().contains("file is not a database"),
         "错误主口令应以 not-a-database 失败，实际: {err}"
@@ -121,12 +125,9 @@ fn seed_transactions(conn: &Connection, count: usize) {
     use crate::transaction::TransactionInput;
     use crate::transaction::amount::TransactionKind;
     let account_id = crate::db::new_uuid();
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,'cash','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        params![account_id, "现金"],
-    )
-    .unwrap();
+    // 工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）；裸种子绕过 Writer
+    // 接缝，按 V017 迁移回填语义补建缓存行（ADR-0067）。
+    crate::test_support::seed_account(conn, &account_id, "现金", "cash", "CNY", 0);
     crate::accounts::balance::refresh_account_balances(conn, &[account_id.as_str()]).unwrap();
     for i in 0..count {
         let input = TransactionInput {
@@ -177,7 +178,7 @@ fn enable_encryption_converts_plaintext_db_and_preserves_data() {
     let db = dir.join("ledger.db");
     {
         let mut conn = open_connection(&db).unwrap();
-        init_db(&mut conn).unwrap();
+        migrations().to_latest(&mut conn).unwrap();
         seed_transactions(&conn, 3);
     }
     assert_eq!(probe_file_kind(&db).unwrap(), DbFileKind::Plaintext);
@@ -193,7 +194,7 @@ fn enable_encryption_converts_plaintext_db_and_preserves_data() {
 
     // 凭新口令打开：数据完整、迁移幂等（user_version 已对齐，不再变化）。
     let mut conn = reopen_with_key(&db, "correct horse").unwrap();
-    init_db(&mut conn).unwrap();
+    migrations().to_latest(&mut conn).unwrap();
     assert_eq!(count_transactions(&conn), 3, "转换后交易数据应完整无损");
     check_integrity(&conn).unwrap();
 }
@@ -206,7 +207,7 @@ fn enable_encryption_failure_keeps_original_db_intact() {
     let db = dir.join("ledger.db");
     {
         let mut conn = open_connection(&db).unwrap();
-        init_db(&mut conn).unwrap();
+        migrations().to_latest(&mut conn).unwrap();
         seed_transactions(&conn, 2);
     }
     let original_bytes = std::fs::read(&db).unwrap();
@@ -260,7 +261,7 @@ fn unlock_accepts_correct_passphrase_and_retries_after_wrong() {
     let db = dir.join("ledger.db");
     {
         let mut conn = open_connection(&db).unwrap();
-        init_db(&mut conn).unwrap();
+        migrations().to_latest(&mut conn).unwrap();
         seed_transactions(&conn, 3);
     }
     enable_encryption_for_file(&db, "正确口令").unwrap();
@@ -293,7 +294,7 @@ fn unlock_on_plaintext_file_reports_not_encrypted() {
     let db = dir.join("ledger.db");
     {
         let mut conn = open_connection(&db).unwrap();
-        init_db(&mut conn).unwrap();
+        migrations().to_latest(&mut conn).unwrap();
     }
     let err = unlock_db_file(&db, "pw").unwrap_err();
     assert_eq!(code_of(&err), Some("encryption.not-encrypted"));
@@ -306,7 +307,7 @@ fn enable_encryption_rejects_empty_passphrase() {
     let db = dir.join("ledger.db");
     {
         let mut conn = open_connection(&db).unwrap();
-        init_db(&mut conn).unwrap();
+        migrations().to_latest(&mut conn).unwrap();
     }
     let err = enable_encryption_for_file(&db, "").unwrap_err();
     assert_eq!(code_of(&err), Some("encryption.passphrase-empty"));
@@ -325,14 +326,14 @@ fn probe_detects_plaintext_encrypted_and_empty() {
     // 明文库。
     let plain = dir.join("plain.db");
     let mut conn = open_connection(&plain).unwrap();
-    init_db(&mut conn).unwrap();
+    migrations().to_latest(&mut conn).unwrap();
     drop(conn);
     assert_eq!(probe_file_kind(&plain).unwrap(), DbFileKind::Plaintext);
 
     // 密文库。
     let encrypted = dir.join("encrypted.db");
     let mut conn = open_connection_with_passphrase(&encrypted, "口令").unwrap();
-    init_db(&mut conn).unwrap();
+    migrations().to_latest(&mut conn).unwrap();
     drop(conn);
     assert_eq!(probe_file_kind(&encrypted).unwrap(), DbFileKind::Encrypted);
 
@@ -362,7 +363,7 @@ fn reset_rejects_non_encrypted_file() {
     let db = dir.join("ledger.db");
     {
         let mut conn = open_connection(&db).unwrap();
-        init_db(&mut conn).unwrap();
+        migrations().to_latest(&mut conn).unwrap();
     }
     let err = reset_encrypted_db_file(&db).unwrap_err();
     assert_eq!(code_of(&err), Some("encryption.not-encrypted"));

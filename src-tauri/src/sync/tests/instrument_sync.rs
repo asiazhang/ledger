@@ -1,14 +1,13 @@
 //! 全量同步（InstrumentSync，issue #89）：clist 报文解析、f2 报价换算、
 //! 标的字典构建与市场行情落库。
 
-use rusqlite::{Connection, params};
+use rusqlite::Connection;
 
-use crate::db::{new_uuid, now_iso};
+use crate::db::new_uuid;
 use crate::error::Result;
 use crate::sync::http::{ClistResponse, StockItem, f2_to_price};
 use crate::sync::persist::{apply_stock_item, build_existing_instruments};
-
-use super::common::setup_db;
+use crate::test_support::seed_instrument;
 
 #[test]
 fn clist_response_deserializes_object_diff() {
@@ -74,22 +73,17 @@ fn clist_response_ignores_suspension_prices() {
 
 #[test]
 fn build_existing_instruments_returns_empty_when_no_stocks() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
     let map = build_existing_instruments(&conn).unwrap();
     assert!(map.is_empty());
 }
 
 #[test]
 fn build_existing_instruments_returns_stock_symbols() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
+    // 工厂标的种子（归一签名，spec #728 / ADR-0084 决策 4）。
     let id = new_uuid();
-    let now = now_iso();
-    conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-         VALUES (?1,'600000','stock','浦发银行','CNY','sh',?2,?2,1,'test')",
-        params![id, now],
-    )
-    .unwrap();
+    seed_instrument(&conn, &id, "600000", "浦发银行", "CNY", "sh");
     let map = build_existing_instruments(&conn).unwrap();
     assert_eq!(map.len(), 1);
     let (eid, ename, emarket) = map.get("600000").unwrap();
@@ -100,7 +94,7 @@ fn build_existing_instruments_returns_stock_symbols() {
 
 #[test]
 fn do_sync_inserts_new_instruments_and_prices() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
 
     let items = vec![
         StockItem {
@@ -157,7 +151,7 @@ fn do_sync_inserts_new_instruments_and_prices() {
 
 #[test]
 fn do_sync_updates_existing_instrument_name_and_market() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
 
     let existing = vec![StockItem {
         code: "000001".into(),
@@ -200,14 +194,14 @@ fn do_sync_updates_existing_instrument_name_and_market() {
 /// 同步按代码命中后只更新名称/市场，来源保持不变。
 #[test]
 fn do_sync_update_keeps_existing_source() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
 
-    // 手动/AI 通道所建的同码 stock 行（经同步 upsert 复用的合法并存态）。
-    let now = now_iso();
+    // 手动/AI 通道所建的同码 stock 行（经同步 upsert 复用的合法并存态）：
+    // 工厂标的种子 + 来源修正（来源 'manual' 是本场景的行为输入，不入工厂种子）。
+    seed_instrument(&conn, "inst-manual", "000001", "某某科技", "CNY", "unknown");
     conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id,source) \
-         VALUES ('inst-manual','000001','stock','某某科技','CNY','unknown',?1,?1,1,'test','manual')",
-        params![now],
+        "UPDATE instruments SET source='manual' WHERE id='inst-manual'",
+        [],
     )
     .unwrap();
 
@@ -233,7 +227,7 @@ fn do_sync_update_keeps_existing_source() {
 
 #[test]
 fn do_sync_skips_zero_price() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
 
     let items = vec![StockItem {
         code: "000001".into(),
@@ -251,7 +245,7 @@ fn do_sync_skips_zero_price() {
 
 #[test]
 fn do_sync_updates_market_price_on_existing_instrument() {
-    let conn = setup_db();
+    let conn = crate::test_support::open();
 
     let first = vec![StockItem {
         code: "000001".into(),
