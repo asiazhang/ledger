@@ -9,6 +9,7 @@ import { applyLocale } from '@/i18n'
 import { resetOverlays } from '@/composables/overlayRegistry'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { findButton } from './helpers/dom'
+import { makeTransaction } from './factories'
 import type { Account, Category, Merchant, Transaction } from '@/types'
 
 
@@ -80,55 +81,44 @@ const mockMerchants: Merchant[] = [
   },
 ]
 
-function makeTransaction(
-  id: string,
-  note: string,
-  date: string,
-  amountCents: number,
-  overrides: Partial<Transaction> = {},
-): Transaction {
-  return {
-    id,
-    kind: 'expense',
-    amount_cents: amountCents,
-    currency_code: 'CNY',
-    amount_native_cents: amountCents,
-    account_id: 'acc-cash',
-    to_account_id: null,
-    category_id: 'cat-food',
-    merchant_id: null,
-    policy_id: null,
-    refund_of_transaction_id: null,
-    note,
-    date,
-    created_at: `${date}T00:00:00Z`,
-    updated_at: `${date}T00:00:00Z`,
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    source: null,
-    ...overrides,
-  }
-}
-
 // 25 条：前 23 条备注「午餐」、后 2 条备注「报销」（跨 2 页，pageSize=20）。
 // 金额随索引递增（1000 + i*100 分），日期逐日递增（2026-02-01 ~ 2026-02-25），供金额/期间筛选测试。
+// 行数据走共享 makeTransaction（factories.ts），本目录特有字段（acc-cash/cat-food）逐行显式覆写。
 const mockTransactions: Transaction[] = [
   ...Array.from({ length: 25 }, (_, i) =>
-    makeTransaction(
-      `tx-${i + 1}`,
-      i < 23 ? '午餐' : '报销',
-      `2026-02-${String(i + 1).padStart(2, '0')}`,
-      1000 + i * 100,
-    ),
+    makeTransaction({
+      id: `tx-${i + 1}`,
+      note: i < 23 ? '午餐' : '报销',
+      date: `2026-02-${String(i + 1).padStart(2, '0')}`,
+      amount_cents: 1000 + i * 100,
+      amount_native_cents: 1000 + i * 100,
+      account_id: 'acc-cash',
+      category_id: 'cat-food',
+    }),
   ),
   // 转账交易（issue #99 双向账户名断言）：acc-cash → acc-bank（金额低于既有筛选测试阈值，避免影响命中数）
-  makeTransaction('tx-tr', '转账', '2026-02-26', 1500, {
+  makeTransaction({
+    id: 'tx-tr',
+    note: '转账',
+    date: '2026-02-26',
+    amount_cents: 1500,
+    amount_native_cents: 1500,
+    account_id: 'acc-cash',
+    category_id: 'cat-food',
     kind: 'transfer',
     to_account_id: 'acc-bank',
   }),
   // 带商户交易（issue #193 搜索结果展示商户）：备注唯一、日期/金额避开既有筛选测试口径
-  makeTransaction('tx-mer', '家电采购', '2026-03-01', 100, { merchant_id: 'mer-jd' }),
+  makeTransaction({
+    id: 'tx-mer',
+    note: '家电采购',
+    date: '2026-03-01',
+    amount_cents: 100,
+    amount_native_cents: 100,
+    account_id: 'acc-cash',
+    category_id: 'cat-food',
+    merchant_id: 'mer-jd',
+  }),
 ]
 
 // 数据期间边界夹具（QuickTimeRange 钳制输入）：「今天」= 2026-02-10 时月档边界

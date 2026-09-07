@@ -5,6 +5,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { NDialogProvider, NSelect, NTreeSelect } from 'naive-ui'
 import { h, reactive } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
+import { makeTransaction } from './factories'
 import CategoryManager from '@/components/CategoryManager.vue'
 import CategoryForm from '@/components/CategoryForm.vue'
 import TransactionsView from '@/views/TransactionsView.vue'
@@ -67,30 +68,6 @@ const mockCategories: Category[] = [
     is_deleted: false,
   },
 ]
-
-function makeTxn(i: number, categoryId: string | null): Transaction {
-  return {
-    id: `txn-${String(i).padStart(3, '0')}`,
-    kind: 'expense',
-    amount_cents: i * 100,
-    currency_code: 'CNY',
-    amount_native_cents: i * 100,
-    account_id: 'acc-1',
-    to_account_id: null,
-    category_id: categoryId,
-    merchant_id: null,
-    policy_id: null,
-    source: null,
-    refund_of_transaction_id: null,
-    note: `备注 ${i}`,
-    date: '2026-01-01',
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-  }
-}
 
 /** 外部 AI 导入后新增的参考数据 fixture（与基准数据同型，模拟写后数据库状态）。 */
 const importedAccount: Account = {
@@ -181,7 +158,23 @@ describe('组件层反应性：mock ledger:changed 使界面/选项原地更新�
   })
 
   it('交易列表映射渲染：外部 AI 更新分类名后，已打开的交易列表分类列原地显示新名称', async () => {
-    const txnDb: Transaction[] = [makeTxn(1, 'cat-food'), makeTxn(2, 'cat-food')]
+    // 交易行走共享 makeTransaction（factories.ts）：id/金额/备注逐行显式，账户与日期取共享默认
+    const txnDb: Transaction[] = [
+      makeTransaction({
+        id: 'txn-001',
+        amount_cents: 100,
+        amount_native_cents: 100,
+        note: '备注 1',
+        category_id: 'cat-food',
+      }),
+      makeTransaction({
+        id: 'txn-002',
+        amount_cents: 200,
+        amount_native_cents: 200,
+        note: '备注 2',
+        category_id: 'cat-food',
+      }),
+    ]
     wireInvokeSeam({
       overrides: {
         ...listOverrides(),

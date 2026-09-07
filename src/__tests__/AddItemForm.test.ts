@@ -1,37 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { findButton, findButtonByTestId } from './helpers/dom'
+import { makeTransaction } from './factories'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NMessageProvider } from 'naive-ui'
 import { h } from 'vue'
 import AddItemForm from '@/components/AddItemForm.vue'
 import type { Transaction } from '@/types'
 
-
-function makeTxn(overrides: Partial<Transaction> = {}): Transaction {
-  return {
-    id: 'txn-1',
-    kind: 'expense',
-    amount_cents: 599_900,
-    currency_code: 'CNY',
-    amount_native_cents: 599_900,
-    account_id: 'acc-1',
-    to_account_id: null,
-    category_id: null,
-    merchant_id: null,
-    policy_id: null,
-    source: null,
-    refund_of_transaction_id: null,
-    note: 'iPhone 15',
-    date: '2026-01-15',
-    created_at: '2026-01-15T00:00:00Z',
-    updated_at: '2026-01-15T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    ...overrides,
-  }
-}
 
 function createCalls() {
   return mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_item')
@@ -55,7 +31,15 @@ beforeEach(() => {
 
 describe('AddItemForm（加入物品确认弹窗，issue #119）', () => {
   it('预填：日期/成本/币种从交易只读带出（formatAmount），名称默认取交易备注', async () => {
-    const wrapper = await mountForm(makeTxn())
+    const wrapper = await mountForm(
+      makeTransaction({
+        id: 'txn-1',
+        amount_cents: 599_900,
+        amount_native_cents: 599_900,
+        note: 'iPhone 15',
+        date: '2026-01-15',
+      }),
+    )
     // 自动带出只读展示（文本节点，非输入控件）
     expect(wrapper.text()).toContain('购买日期')
     expect(wrapper.text()).toContain('2026-01-15')
@@ -67,13 +51,29 @@ describe('AddItemForm（加入物品确认弹窗，issue #119）', () => {
   })
 
   it('备注为空时名称默认留空', async () => {
-    const wrapper = await mountForm(makeTxn({ note: null }))
+    const wrapper = await mountForm(
+      makeTransaction({
+        id: 'txn-1',
+        amount_cents: 599_900,
+        amount_native_cents: 599_900,
+        note: null,
+        date: '2026-01-15',
+      }),
+    )
     const nameInput = wrapper.find('input[placeholder="默认取交易备注，可微调"]')
     expect((nameInput.element as HTMLInputElement).value).toBe('')
   })
 
   it('确认创建：create_item 收到溯源必填的完整入参，emit created', async () => {
-    const wrapper = await mountForm(makeTxn())
+    const wrapper = await mountForm(
+      makeTransaction({
+        id: 'txn-1',
+        amount_cents: 599_900,
+        amount_native_cents: 599_900,
+        note: 'iPhone 15',
+        date: '2026-01-15',
+      }),
+    )
     const nameInput = wrapper.find('input[placeholder="默认取交易备注，可微调"]')
     await nameInput.setValue('iPhone 15 国行')
     await findButtonByTestId(wrapper, 'add-item-confirm').trigger('click')
@@ -99,7 +99,15 @@ describe('AddItemForm（加入物品确认弹窗，issue #119）', () => {
           Promise.reject(new Error('该购买交易已创建过物品，不能重复创建（溯源唯一）: txn-1')),
       },
     })
-    const wrapper = await mountForm(makeTxn())
+    const wrapper = await mountForm(
+      makeTransaction({
+        id: 'txn-1',
+        amount_cents: 599_900,
+        amount_native_cents: 599_900,
+        note: 'iPhone 15',
+        date: '2026-01-15',
+      }),
+    )
     await findButtonByTestId(wrapper, 'add-item-confirm').trigger('click')
     await flushPromises()
     expect(createCalls()).toHaveLength(1)
@@ -108,7 +116,15 @@ describe('AddItemForm（加入物品确认弹窗，issue #119）', () => {
   })
 
   it('名称为空（备注为空且未填）时不提交', async () => {
-    const wrapper = await mountForm(makeTxn({ note: null }))
+    const wrapper = await mountForm(
+      makeTransaction({
+        id: 'txn-1',
+        amount_cents: 599_900,
+        amount_native_cents: 599_900,
+        note: null,
+        date: '2026-01-15',
+      }),
+    )
     await findButtonByTestId(wrapper, 'add-item-confirm').trigger('click')
     await flushPromises()
     expect(createCalls()).toHaveLength(0)
@@ -116,7 +132,15 @@ describe('AddItemForm（加入物品确认弹窗，issue #119）', () => {
   })
 
   it('点击取消 emit cancel（弹窗由视图关闭，不触发提交）', async () => {
-    const wrapper = await mountForm(makeTxn())
+    const wrapper = await mountForm(
+      makeTransaction({
+        id: 'txn-1',
+        amount_cents: 599_900,
+        amount_native_cents: 599_900,
+        note: 'iPhone 15',
+        date: '2026-01-15',
+      }),
+    )
     const cancelBtn = findButton(wrapper, '取消', { exact: true })!
     await cancelBtn.trigger('click')
     await flushPromises()
