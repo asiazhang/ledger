@@ -5,6 +5,7 @@ import { flushPromises, type VueWrapper } from '@vue/test-utils'
 import { reactive } from 'vue'
 import { NDataTable, NDropdown } from 'naive-ui'
 import { mountWithDialog } from '../helpers/mount'
+import { makeTransaction } from '../factories'
 import TransactionsView from '@/views/TransactionsView.vue'
 import type { Account, Merchant, ReportDateRange, Transaction } from '@/types'
 
@@ -84,29 +85,17 @@ export let mockAccounts: Account[] = [
   },
 ]
 
+/** 交易行薄壳：序号派生 id/金额/备注留在本目录（与可变库 txnDb 编排一体），
+ * 其余字段一律走共享 makeTransaction（factories.ts），不在本地复制字段全集。 */
 export function makeTxn(i: number, accountId = 'acc-1', overrides: Partial<Transaction> = {}): Transaction {
-  return {
+  return makeTransaction({
     id: `txn-${String(i).padStart(3, '0')}`,
-    kind: 'expense',
     amount_cents: i * 100,
-    currency_code: 'CNY',
     amount_native_cents: i * 100,
-    account_id: accountId,
-    to_account_id: null,
-    category_id: null,
-    merchant_id: null,
-    policy_id: null,
-    refund_of_transaction_id: null,
     note: `备注 ${i}`,
-    date: '2026-01-01',
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    source: null,
+    account_id: accountId,
     ...overrides,
-  }
+  })
 }
 
 /** 可变的交易库（模块内部态，主题测试经 setTxnDb 改写）：删除操作会真实移除，
