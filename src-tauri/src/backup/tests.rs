@@ -8,7 +8,7 @@ use rusqlite::params;
 
 use super::*;
 use crate::db;
-use crate::db::{init_db, open_connection, open_in_memory};
+use crate::db::open_connection;
 
 fn temp_file(tag: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
@@ -18,14 +18,9 @@ fn temp_file(tag: &str) -> PathBuf {
     ))
 }
 
-/// 建内存库并写入一条账户 + 一条交易。
+/// 建内存库并写入一条账户 + 一条交易（账户经工厂种子，spec #728 / ADR-0084 决策 4）。
 fn seed(conn: &Connection) {
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES ('acc-1','现金','cash','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        [],
-    )
-    .unwrap();
+    crate::test_support::seed_account(conn, "acc-1", "现金", "cash", "CNY", 0);
     conn.execute(
         "INSERT INTO transactions (id,kind,amount_cents,currency_code,amount_native_cents,account_id,date,created_at,updated_at,version,device_id,is_deleted) \
          VALUES ('txn-1','expense',1500,'CNY',1500,'acc-1','2026-02-01','2026-02-01T00:00:00Z','2026-02-01T00:00:00Z',1,'test',0)",
@@ -52,8 +47,7 @@ fn temp_safety_dir() -> PathBuf {
 
 #[test]
 fn backup_creates_zip_with_db_and_meta() {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
+    let conn = crate::test_support::open();
     seed(&conn);
 
     let target = temp_file("zip");
@@ -87,8 +81,7 @@ fn backup_creates_zip_with_db_and_meta() {
 
 #[test]
 fn restore_roundtrip_preserves_data() {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
+    let conn = crate::test_support::open();
     seed(&conn);
     // seed 裸 SQL 绕过写接缝，按生产不变量（备份时缓存与实时一致）补齐缓存行。
     crate::accounts::balance::refresh_all_account_balances(&conn).unwrap();
@@ -99,8 +92,7 @@ fn restore_roundtrip_preserves_data() {
     // 目标库先建好，含一条多余交易；恢复后应只剩备份里的数据。
     let db_path = temp_file("rt-db");
     {
-        let mut c = open_connection(&db_path).unwrap();
-        init_db(&mut c).unwrap();
+        let c = crate::test_support::open();
         seed(&c);
         c.execute(
             "INSERT INTO transactions (id,kind,amount_cents,currency_code,amount_native_cents,account_id,date,created_at,updated_at,version,device_id,is_deleted) \
@@ -108,6 +100,10 @@ fn restore_roundtrip_preserves_data() {
             [],
         )
         .unwrap();
+        // 文件库不入测试工厂（ADR-0084 决策 3）：迁移后的库经 VACUUM INTO 落盘
+        // （与下方裸库产物同款模式）。
+        c.execute("VACUUM INTO ?1", params![db_path.to_string_lossy()])
+            .unwrap();
         assert_eq!(count_transactions(&c), 2);
     }
 
@@ -171,8 +167,7 @@ fn restore_rejects_newer_schema() {
 
 #[test]
 fn restore_supports_bare_db() {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
+    let conn = crate::test_support::open();
     seed(&conn);
 
     // 直接 VACUUM INTO 生成裸 db 文件作为"备份"。
@@ -193,7 +188,8 @@ fn restore_supports_bare_db() {
 
 #[test]
 fn backup_meta_records_kind_for_auto_and_manual() {
-    let conn = open_in_memory().unwrap();
+    // 仅验产物元数据，无需表结构：工厂全量建库无碍（spec #728 / ADR-0084）。
+    let conn = crate::test_support::open();
     // 手动产物：kind 落盘为 manual。
     let manual = temp_file("meta-manual");
     backup_db_to(&conn, &manual, "0.2.0", BackupKind::Manual).unwrap();
@@ -254,8 +250,7 @@ fn meta_with_unknown_kind_reads_as_manual() {
 /// 旧版本备份（元数据无 kind 字段）：恢复不报错、列表正常出现，视为 manual。
 #[test]
 fn legacy_backup_restores_and_lists_without_error() {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
+    let conn = crate::test_support::open();
     seed(&conn);
 
     // 用 VACUUM INTO 造一份裸库，再打包成元数据缺 kind 的旧格式 zip。
@@ -397,7 +392,7 @@ fn prune_keeps_all_when_within_limit_and_missing_dir() {
 
 #[test]
 fn backup_fails_when_target_dir_missing() {
-    let conn = open_in_memory().unwrap();
+    let conn = crate::test_support::open();
     let missing = std::env::temp_dir().join(format!(
         "no-such-dir-{}-{}",
         std::process::id(),

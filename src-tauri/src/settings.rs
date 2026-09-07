@@ -106,27 +106,33 @@ pub fn set<T: Serialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db;
 
     fn conn() -> rusqlite::Connection {
-        let mut c = db::open_in_memory().expect("打开内存库");
-        db::init_db(&mut c).expect("执行迁移");
-        c
+        // 建库两行序经统一测试工厂承载（spec #728 / issue #758 / ADR-0084 决策 3/7）。
+        crate::test_support::open()
     }
 
     /// 迁移可重复执行幂等（CREATE TABLE IF NOT EXISTS）。
     #[test]
     fn migration_is_idempotent() {
-        let mut c = db::open_in_memory().expect("打开内存库");
-        db::init_db(&mut c).expect("首次迁移");
+        let c = crate::test_support::open();
         c.execute_batch(APP_SETTINGS_SQL)
             .expect("重复执行同一建表语句");
+    }
+
+    /// 工厂库删除 app_settings 模拟旧版本备份恢复后的缺表现场（工厂无
+    /// 「未迁移库」形态：建库 = 内存库 + 迁移，ADR-0084 决策 3）。
+    fn conn_without_app_settings() -> rusqlite::Connection {
+        let c = crate::test_support::open();
+        c.execute("DROP TABLE app_settings", [])
+            .expect("删除 app_settings");
+        c
     }
 
     /// 表缺失时写入自愈：就地建表后写入成功，随后可读回。
     #[test]
     fn set_creates_table_when_missing() {
-        let c = db::open_in_memory().expect("未迁移的内存库");
+        let c = conn_without_app_settings();
         set(&c, SettingKey::AutoBackupDirty, &true).expect("缺表写入应自愈");
         let dirty: bool = get(&c, SettingKey::AutoBackupDirty, false).expect("读回");
         assert!(dirty);
@@ -135,7 +141,7 @@ mod tests {
     /// 表尚未创建（旧版本备份缺表）时 get 返回默认值而非报错。
     #[test]
     fn get_returns_default_when_table_missing() {
-        let c = db::open_in_memory().expect("未迁移的内存库");
+        let c = conn_without_app_settings();
         let v: bool = get(&c, SettingKey::AutoBackupEnabled, true).expect("缺表取默认");
         assert!(v);
     }
