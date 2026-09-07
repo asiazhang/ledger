@@ -1,22 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { setActivePinia, createPinia } from 'pinia'
+import { wireInvokeSeam } from './helpers/invoke-mock'
 import { useAppStore } from '@/stores/app'
 import { formatAmount, amountPrivacyEnabled } from '@/utils/money'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 
 
 beforeEach(() => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  stubReferenceInvoke({
-    list_currencies: [],
-    list_accounts: [],
-    list_categories: [],
-    list_insurers: [],
-    list_merchants: [],
-  })
-  localStorage.clear()
+  wireInvokeSeam()
 })
 
 describe('useAppStore theme', () => {

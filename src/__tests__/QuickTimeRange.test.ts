@@ -1,12 +1,11 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { captureListenHandlers } from './helpers/listen-mock'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { NButton, NDatePicker } from 'naive-ui'
 import { resetOverlays, hasOpenOverlay, openOverlayNames } from '@/composables/overlayRegistry'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import QuickTimeRange from '@/components/QuickTimeRange.vue'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import { DATED_TIME_PERIOD_PRESETS, type NullableDateRange } from '@/utils/time-period'
 
 
@@ -35,10 +34,11 @@ describe('QuickTimeRange 共享受控组件（issue #410）', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date(2026, 0, 15, 12, 0, 0))
     resetOverlays()
-    mockInvoke.mockReset()
-    stubReferenceInvoke({
-      report_date_range: BOUNDARY,
-      list_insurers: [],
+    wireInvokeSeam({
+      overrides: {
+        report_date_range: BOUNDARY,
+
+      },
     })
   })
 
@@ -171,9 +171,11 @@ describe('QuickTimeRange 共享受控组件（issue #410）', () => {
     const failing: Promise<{ min_date: string | null; max_date: string | null }> =
       Promise.reject(new Error('boom'))
     failing.catch(() => {}) // 防 unhandled rejection 噪音
-    stubReferenceInvoke({
-      report_date_range: () => failing,
-      list_insurers: [],
+    wireInvokeSeam({
+      overrides: {
+        report_date_range: () => failing,
+
+      },
     })
     const wrapper = mountRange({ from: '2026-01-01', to: '2026-01-31' })
     await flushPromises()
@@ -259,17 +261,21 @@ describe('QuickTimeRange 共享受控组件（issue #410）', () => {
   it('数据期间边界失效重拉：ledger:changed 后即时外扩（钳制边界跟随新数据）', async () => {
     const handlers = captureListenHandlers()
     // 单月数据：月档边界 [2026-01, 2026-01]，< 置灰
-    stubReferenceInvoke({
-      report_date_range: { min_date: '2026-01-05', max_date: '2026-01-05' },
-      list_insurers: [],
+    wireInvokeSeam({
+      overrides: {
+        report_date_range: { min_date: '2026-01-05', max_date: '2026-01-05' },
+
+      },
     })
     const wrapper = mountRange({ from: '2026-01-01', to: '2026-01-31' })
     await flushPromises()
     expect(stepButton(wrapper, 'prev').props('disabled')).toBe(true)
     // 数据外扩历史（AI 导入）→ ledger:changed 重拉 → < 随新边界（2025-08）解锁
-    stubReferenceInvoke({
-      report_date_range: { min_date: '2025-08-01', max_date: '2026-01-05' },
-      list_insurers: [],
+    wireInvokeSeam({
+      overrides: {
+        report_date_range: { min_date: '2025-08-01', max_date: '2026-01-05' },
+
+      },
     })
     handlers.forEach((h) => h({ event: 'ledger:changed', payload: null }))
     await flushPromises()

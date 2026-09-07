@@ -1,26 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
+import { wireInvokeSeam } from './helpers/invoke-mock'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { setActivePinia, createPinia } from 'pinia'
 import { hasOpenOverlay, resetOverlays } from '@/composables/overlayRegistry'
 import GroupMoreView from '@/views/GroupMoreView.vue'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
 import { makePolicy, makePolicyStats } from './factories'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import { routes, router } from '@/router'
-import type { Merchant } from '@/types'
 import type { SubscriptionSpendOverview } from '@/types'
 
-
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
-
-const mockMerchants: Merchant[] = [
-  { id: 'mer-1', name: '平安保险', is_deleted: false, updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test' },
-]
 
 /** 订阅花费总览空数据（定时页签挂载即拉取，容器壳测试不关心行内容）。 */
 const emptySpendOverview: SubscriptionSpendOverview = {
@@ -34,14 +22,11 @@ const emptySpendOverview: SubscriptionSpendOverview = {
 }
 
 /** 页签挂载即拉取：给最小空数据（容器壳测试不关心行内容）。 */
-function baseInvoke() {
-  stubReferenceInvoke({
-    list_merchants: mockMerchants,
-    list_policies: [],
-    list_scheduled_transactions: [],
-    subscription_spend_overview: emptySpendOverview,
-    list_physical_assets: { assets: [], holding_total_native_cents: 0, native_currency: 'CNY' },
-  })
+const BASE_DEFAULTS = {
+  list_policies: [],
+  list_scheduled_transactions: [],
+  subscription_spend_overview: emptySpendOverview,
+  list_physical_assets: { assets: [], holding_total_native_cents: 0, native_currency: 'CNY' },
 }
 
 type GroupMoreId = 'bookkeeping' | 'assets' | 'insights'
@@ -63,9 +48,7 @@ async function mountGroupView(group: GroupMoreId, initialPath?: string) {
 }
 
 beforeEach(() => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  baseInvoke()
+  wireInvokeSeam({ defaults: BASE_DEFAULTS })
 })
 
 describe('GroupMoreView 组内「更多」容器（issue #472 / ADR-0063 决策 1/5：页签序 = 收纳清单序）', () => {
@@ -117,10 +100,9 @@ describe('GroupMoreView 组内「更多」容器（issue #472 / ADR-0063 决策 
       total_paid_native_cents: 600_000,
       total_inflow_native_cents: 50_000,
     })
-    stubReferenceInvoke({
-      list_policies: [policy],
-      list_policy_stats: [stats],
-      list_merchants: mockMerchants,
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_policies: [policy], list_policy_stats: [stats] },
     })
     const { wrapper } = await mountGroupView('assets')
     const text = wrapper.text()
@@ -183,7 +165,6 @@ describe('GroupMoreView 用户移入页签（issue #474 / ADR-0063 决策 4：�
   // 移入写路径会改顺序状态与 ViewState 存储：用后即复位，不污染同文件后续 describe
   afterEach(() => {
     useSidebarOrderStore().resetSidebarOrder()
-    localStorage.clear()
   })
 
   it('移入洞察组的主项（搜索）即刻成为末位页签且整体装载（移入空组链接即现的容器面）', async () => {
@@ -236,7 +217,6 @@ describe('全局「更多」退役迁移链（issue #473 / ADR-0063 决策 1/5�
 describe('GroupMoreView 页签右键「移回侧栏」（issue #475 / ADR-0063 决策 4）', () => {
   afterEach(() => {
     useSidebarOrderStore().resetSidebarOrder()
-    localStorage.clear()
     resetOverlays()
   })
 
@@ -295,7 +275,6 @@ describe('GroupMoreView 页签右键「移回侧栏」（issue #475 / ADR-0063 �
 describe('移回侧栏后的独立路由（issue #475：侧栏/键位按 name 路由，种子须有真页面）', () => {
   afterEach(() => {
     useSidebarOrderStore().resetSidebarOrder()
-    localStorage.clear()
   })
 
   it('/merchants 与 /physical-assets 独立路由可达（出厂为收纳成员，移回后导航可达）', async () => {

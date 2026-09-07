@@ -1,14 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { wireInvokeSeam } from './helpers/invoke-mock'
 import { fireProp } from './helpers/component-vm'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NDialogProvider, NDropdown, NForm, NInput, NModal } from 'naive-ui'
 import { h } from 'vue'
-import { setActivePinia, createPinia } from 'pinia'
-import { useReferenceStore } from '@/stores/reference'
 import AccountsView from '@/views/AccountsView.vue'
 import AccountLink from '@/components/AccountLink.vue'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Account, AccountBalance } from '@/types'
 
 
@@ -39,19 +36,14 @@ const mockBalances: AccountBalance[] = [
 ]
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
   pushMock.mockReset()
-  stubReferenceInvoke({
-    list_accounts: mockBalances.map((b) => b.account),
-    list_categories: [],
-    list_insurers: [],
-    list_merchants: [],
-    list_account_balances: mockBalances,
-  })
-  localStorage.clear()
-  const store = useReferenceStore()
-  await store.refresh()
+  // list_accounts 参考命令本场景需自定义值（acc-2「银行」，overrides 优先于参考兑底）；
+  // 参考 store 预载走接缝 opt-in 参数。
+  await wireInvokeSeam({
+    defaults: { list_account_balances: mockBalances },
+    overrides: { list_accounts: mockBalances.map((b) => b.account) },
+    refreshReferenceStores: true,
+  }).ready
 })
 
 describe('AccountsView 账户名下钻（issue #97）', () => {

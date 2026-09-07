@@ -1,10 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
-import { useReferenceStore } from '@/stores/reference'
 import CategoryManager from '@/components/CategoryManager.vue'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Category } from '@/types'
 
 
@@ -41,20 +38,20 @@ const mockCategories: Category[] = [
   },
 ]
 
+/** 本场景命令快照（beforeEach 与直调接缝的用例共享）：重排序按契约返回 undefined。 */
+const CATEGORY_SEAM_DEFAULTS = { reorder_categories: undefined }
+
+/** list_categories 参考命令本场景需自定义分类树（overrides 优先于参考兑底）。 */
+const CATEGORY_SEAM_OVERRIDES = { list_categories: mockCategories }
+
 describe('CategoryManager.vue', () => {
   beforeEach(async () => {
-    setActivePinia(createPinia())
-    mockInvoke.mockReset()
-    stubReferenceInvoke({
-      list_currencies: [],
-      list_accounts: [],
-      list_categories: mockCategories,
-      list_insurers: [],
-      list_merchants: [],
-      reorder_categories: undefined,
-    })
-    const store = useReferenceStore()
-    await store.refresh()
+    // 参考 store 预载走接缝 opt-in 参数。
+    await wireInvokeSeam({
+      defaults: CATEGORY_SEAM_DEFAULTS,
+      overrides: CATEGORY_SEAM_OVERRIDES,
+      refreshReferenceStores: true,
+    }).ready
   })
 
   it('挂载并渲染分类列表（默认支出 Tab）', () => {
@@ -107,14 +104,7 @@ describe('CategoryManager.vue', () => {
 
   it('reorderCategories 接口存在且可调用', async () => {
     mockInvoke.mockClear()
-    stubReferenceInvoke({
-      list_currencies: [],
-      list_accounts: [],
-      list_categories: mockCategories,
-      list_insurers: [],
-      list_merchants: [],
-      reorder_categories: undefined,
-    })
+    wireInvokeSeam({ defaults: CATEGORY_SEAM_DEFAULTS, overrides: CATEGORY_SEAM_OVERRIDES })
     await expect(
       mockInvoke('reorder_categories', { items: [{ id: 'food', sort_order: 0 }] }),
     ).resolves.toBeUndefined()

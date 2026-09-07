@@ -1,34 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { describe, expect, it } from 'vitest'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { flushPromises } from '@vue/test-utils'
 import { makeTransaction } from '@/__tests__/factories'
-import { stubReferenceInvoke } from '@/__tests__/helpers/reference-stubs'
+import { messageCalls } from './helpers/message-mock'
 import { useTransactionModalState } from '@/composables/useTransactionModalState'
 import type { TransactionTrade } from '@/types'
-
-// 提示捕获（先例 useScheduledPlanList.test.ts）：setup.ts 的全局 useMessage mock
-// 每次调用返回新对象，无法跨调用断言；此处以共享记录器覆盖（不渲染 naive-ui 组件，
-// 其余导出保留原样）。useMessage 被 mock 为普通函数，工厂可在组件外直打。
-const messageCalls: Array<{ method: string; text: string }> = []
-vi.mock('naive-ui', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('naive-ui')>()
-  const record =
-    (method: string) =>
-    (...args: unknown[]) =>
-      messageCalls.push({ method, text: String(args[0]) })
-  return {
-    ...actual,
-    useMessage: () => ({
-      success: record('success'),
-      warning: record('warning'),
-      error: record('error'),
-      info: record('info'),
-      loading: record('loading'),
-      destroyAll: () => {},
-    }),
-  }
-})
-
 
 // ---------------------------------------------------------------------------
 // 数据工厂：买卖明细（交易行走共享 makeTransaction，factories.ts）
@@ -46,13 +22,6 @@ function makeTrade(overrides: Partial<TransactionTrade> = {}): TransactionTrade 
     ...overrides,
   }
 }
-
-beforeEach(() => {
-  mockInvoke.mockReset()
-  messageCalls.length = 0
-  mockInvoke.mockImplementation((() =>
-    Promise.reject(new Error('unexpected invoke'))))
-})
 
 describe('useTransactionModalState 初始状态', () => {
   it('意图为 null（= 关闭终态，显示开关由「意图非空」派生）、序号 0', () => {
@@ -104,12 +73,13 @@ describe('useTransactionModalState edit 意图（先取明细再开窗）', () =
     const modals = useTransactionModalState()
     const row = makeTransaction({ id: 'txn-b1', kind })
     const trade = makeTrade()
-    stubReferenceInvoke({
-      get_transaction_trade: (args) =>
+    wireInvokeSeam({
+      overrides: {
+        get_transaction_trade: (args) =>
         args?.id === 'txn-b1'
           ? Promise.resolve(trade)
           : Promise.reject(new Error('unexpected invoke: get_transaction_trade')),
-      list_insurers: [],
+      },
     })
     await modals.open({ type: 'edit', row })
     expect(mockInvoke).toHaveBeenCalledTimes(1)
@@ -130,11 +100,14 @@ describe('useTransactionModalState edit 意图（先取明细再开窗）', () =
   it('取明细失败：错误提示、不开窗（意图保持 null）、序号不递增', async () => {
     const modals = useTransactionModalState()
     const row = makeTransaction({ id: 'txn-bad', kind: 'buy' })
-    mockInvoke.mockImplementation((() =>
-      Promise.reject(new Error('数据库不可用'))))
+    wireInvokeSeam({
+      overrides: {
+        get_transaction_trade: () => Promise.reject(new Error('数据库不可用')),
+      },
+    })
     await modals.open({ type: 'edit', row })
     await flushPromises()
-    expect(messageCalls).toEqual([{ method: 'error', text: '无法编辑: 数据库不可用' }])
+    expect(messageCalls()).toEqual([{ method: 'error', text: '无法编辑: 数据库不可用' }])
     expect(modals.intent.value).toBeNull()
     expect(modals.seq.value).toBe(0)
   })
@@ -148,13 +121,14 @@ describe('useTransactionModalState 竞态守卫（last-open-wins）', () => {
     const tradeA = makeTrade({ symbol: 'AAA' })
     const tradeB = makeTrade({ symbol: 'BBB' })
     let resolveA!: (trade: TransactionTrade) => void
-    stubReferenceInvoke({
-      get_transaction_trade: (args) => {
+    wireInvokeSeam({
+      overrides: {
+        get_transaction_trade: (args) => {
         if (args?.id === 'a1') return new Promise<TransactionTrade>((r) => (resolveA = r))
         if (args?.id === 'b1') return Promise.resolve(tradeB)
         return Promise.reject(new Error('unexpected invoke: get_transaction_trade'))
       },
-      list_insurers: [],
+      },
     })
 
     const openA = modals.open({ type: 'edit', row: rowA })
@@ -175,13 +149,14 @@ describe('useTransactionModalState 竞态守卫（last-open-wins）', () => {
     const rowB = makeTransaction({ id: 'b1', kind: 'buy' })
     const tradeB = makeTrade()
     let rejectA!: (e: Error) => void
-    stubReferenceInvoke({
-      get_transaction_trade: (args) => {
+    wireInvokeSeam({
+      overrides: {
+        get_transaction_trade: (args) => {
         if (args?.id === 'a1') return new Promise<TransactionTrade>((_, reject) => (rejectA = reject))
         if (args?.id === 'b1') return Promise.resolve(tradeB)
         return Promise.reject(new Error('unexpected invoke: get_transaction_trade'))
       },
-      list_insurers: [],
+      },
     })
 
     const openA = modals.open({ type: 'edit', row: rowA })
@@ -189,7 +164,7 @@ describe('useTransactionModalState 竞态守卫（last-open-wins）', () => {
     rejectA(new Error('数据库不可用'))
     await openA
     await flushPromises()
-    expect(messageCalls).toEqual([])
+    expect(messageCalls()).toEqual([])
     expect(modals.intent.value).toEqual({ type: 'edit', row: rowB, trade: tradeB })
     expect(modals.seq.value).toBe(1)
   })
@@ -200,13 +175,14 @@ describe('useTransactionModalState 竞态守卫（last-open-wins）', () => {
     const rowB = makeTransaction({ id: 'b1', kind: 'buy' })
     const tradeB = makeTrade({ symbol: 'BBB' })
     let resolveB!: (trade: TransactionTrade) => void
-    stubReferenceInvoke({
-      get_transaction_trade: (args) => {
+    wireInvokeSeam({
+      overrides: {
+        get_transaction_trade: (args) => {
         if (args?.id === 'a1') return Promise.resolve(makeTrade({ symbol: 'AAA' }))
         if (args?.id === 'b1') return new Promise<TransactionTrade>((r) => (resolveB = r))
         return Promise.reject(new Error('unexpected invoke: get_transaction_trade'))
       },
-      list_insurers: [],
+      },
     })
 
     await modals.open({ type: 'edit', row: rowA })
@@ -226,12 +202,13 @@ describe('useTransactionModalState 竞态守卫（last-open-wins）', () => {
     const modals = useTransactionModalState()
     const rowA = makeTransaction({ id: 'a1', kind: 'buy' })
     let resolveA!: (trade: TransactionTrade) => void
-    stubReferenceInvoke({
-      get_transaction_trade: (args) =>
+    wireInvokeSeam({
+      overrides: {
+        get_transaction_trade: (args) =>
         args?.id === 'a1'
           ? new Promise<TransactionTrade>((r) => (resolveA = r))
           : Promise.reject(new Error('unexpected invoke: get_transaction_trade')),
-      list_insurers: [],
+      },
     })
 
     const openA = modals.open({ type: 'edit', row: rowA })
@@ -248,12 +225,13 @@ describe('useTransactionModalState 竞态守卫（last-open-wins）', () => {
     const rowA = makeTransaction({ id: 'a1', kind: 'buy' })
     const rowR = makeTransaction({ id: 'r1', kind: 'expense' })
     let resolveA!: (trade: TransactionTrade) => void
-    stubReferenceInvoke({
-      get_transaction_trade: (args) =>
+    wireInvokeSeam({
+      overrides: {
+        get_transaction_trade: (args) =>
         args?.id === 'a1'
           ? new Promise<TransactionTrade>((r) => (resolveA = r))
           : Promise.reject(new Error('unexpected invoke: get_transaction_trade')),
-      list_insurers: [],
+      },
     })
 
     const openA = modals.open({ type: 'edit', row: rowA })

@@ -1,11 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
-import { useReferenceStore } from '@/stores/reference'
 import AccountLink from '@/components/AccountLink.vue'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
-import type { Account } from '@/types'
 
 
 // AccountLink 经 useRouter 跳转（pushMock 断言导航目标，issue #97/#99）
@@ -14,35 +10,11 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push: pushMock }),
 }))
 
-const mockAccounts: Account[] = [
-  {
-    id: 'acc-1',
-    name: '现金',
-    type: 'cash',
-    currency_code: 'CNY',
-    initial_balance_cents: 0,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    is_hidden: false,
-  },
-]
-
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
   pushMock.mockReset()
-  stubReferenceInvoke({
-    list_accounts: mockAccounts,
-    list_categories: [],
-    list_insurers: [],
-    list_merchants: [],
-  })
-  localStorage.clear()
-  const store = useReferenceStore()
-  await store.refresh()
+  // 参考 store 预载走接缝 opt-in 参数（list_accounts 由桩层规范夹具兜底，
+  // 含断言消费的 acc-1「现金」行，不在本文件重复枚举）。
+  await wireInvokeSeam({ refreshReferenceStores: true }).ready
 })
 
 describe('AccountLink 账户名下钻（issue #97/#99）', () => {

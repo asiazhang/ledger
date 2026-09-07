@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockInvoke, type AppInvokeHandler } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam, type AppInvokeHandler } from './helpers/invoke-mock'
 import { api } from '@/api'
 import { busyVisible, resetGlobalBusy } from '@/composables/globalBusy'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 
 
 /** 手动完结的延迟 Promise：控制 invoke 完结时机以构造阈值与并发竞态 */
@@ -18,7 +17,6 @@ function deferred<T = unknown>() {
 
 beforeEach(() => {
   vi.useFakeTimers()
-  mockInvoke.mockReset()
   // 模块级单例状态防串扰（先例：resetToastSink）
   resetGlobalBusy()
 })
@@ -30,7 +28,7 @@ afterEach(() => {
 describe('globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封装收口）', () => {
   it('在途 IO 超过 300ms 阈值后忙碌条可见，计数归零即隐藏', async () => {
     const d = deferred<void>()
-    mockInvoke.mockReturnValue(d.promise)
+    wireInvokeSeam({ overrides: { list_currencies: () => d.promise } })
     const pending = api.listCurrencies()
 
     expect(busyVisible.value).toBe(false) // 调用即计数，但阈值内不可见
@@ -45,7 +43,7 @@ describe('globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封�
   })
 
   it('阈值内结束的快操作从不显示忙碌条', async () => {
-    mockInvoke.mockResolvedValue([])
+    wireInvokeSeam()
     await api.listCurrencies()
     await vi.advanceTimersByTimeAsync(1000)
     expect(busyVisible.value).toBe(false)
@@ -54,10 +52,12 @@ describe('globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封�
   it('并发调用聚合计数：部分完成仍显示，全部完成才隐藏', async () => {
     const a = deferred<void>()
     const b = deferred<void>()
-    // 参考命令桩统一走共享助手（issue #725）：在途/兑结时机由覆写控制
-    stubReferenceInvoke({
-      list_currencies: () => a.promise,
-      list_accounts: () => b.promise,
+    // 参考命令桩统一走接缝（issue #725）：在途/兑结时机由覆写控制
+    wireInvokeSeam({
+      overrides: {
+        list_currencies: () => a.promise,
+        list_accounts: () => b.promise,
+      },
     })
     const p1 = api.listCurrencies()
     const p2 = api.listAccounts()
@@ -76,7 +76,7 @@ describe('globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封�
 
   it('reject 路径正常递减：条不卡死，错误契约不变照常上抛', async () => {
     const d = deferred<void>()
-    mockInvoke.mockReturnValue(d.promise)
+    wireInvokeSeam({ overrides: { list_currencies: () => d.promise } })
     const pending = api.listCurrencies()
 
     await vi.advanceTimersByTimeAsync(300)
@@ -89,7 +89,7 @@ describe('globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封�
 
     // 不卡死：后续慢 IO 仍能再次点亮忙碌条
     const d2 = deferred<void>()
-    mockInvoke.mockReturnValue(d2.promise)
+    wireInvokeSeam({ overrides: { list_currencies: () => d2.promise } })
     const pending2 = api.listCurrencies()
     await vi.advanceTimersByTimeAsync(300)
     expect(busyVisible.value).toBe(true)
@@ -120,10 +120,12 @@ describe('globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封�
 
   it('重叠在途窗口聚合：快调用与慢调用重叠使聚合窗口持续在途，跨阈值即点亮', async () => {
     const slow = deferred<void>()
-    // 参考命令桩统一走共享助手（issue #725）：慢调用挂起、快调用即刻兑结
-    stubReferenceInvoke({
-      list_currencies: () => slow.promise,
-      list_accounts: [],
+    // 参考命令桩统一走接缝（issue #725）：慢调用挂起、快调用即刻兑结
+    wireInvokeSeam({
+      overrides: {
+        list_currencies: () => slow.promise,
+        list_accounts: [],
+      },
     })
     const pSlow = api.listCurrencies()
 

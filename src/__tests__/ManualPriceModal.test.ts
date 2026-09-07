@@ -1,35 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount, type VueWrapper } from '@vue/test-utils'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { NInputNumber } from 'naive-ui'
-import { setActivePinia, createPinia } from 'pinia'
 import { useReferenceStore } from '@/stores/reference'
 import ManualPriceModal from '@/components/investments/ManualPriceModal.vue'
 import AppDatePicker from '@/components/AppDatePicker.vue'
 import { makeInstrument } from './factories'
 import { todayStr } from '@/utils/date'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Instrument } from '@/types'
 
-// NModal 内容 teleport 到 document.body，须在每个测试后卸载 wrapper 并清空 body，
-// 否则上一个测试遗留的弹窗 DOM 会污染下一个测试（先例：CreateInstrumentModal.test.ts）。
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
-
-
-/** 基础派发：beforeEach 安装；中途重桩处理完自己的领域命令后委托回它 */
-let base: ReturnType<typeof stubReferenceInvoke>
-
-function baseInvoke() {
-  base = stubReferenceInvoke({
-    list_accounts: [],
-    list_categories: [],
-    list_insurers: [],
-    list_merchants: [],
-  })
-}
 
 const instrument: Instrument = makeInstrument({
   id: 'inst-quote-1',
@@ -71,10 +50,8 @@ async function clickSubmit() {
 }
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  baseInvoke()
-  localStorage.clear()
+  // 参考字典五个 list 命令由接缝内建规范夹具兑底，供 beforeEach 的 store 预拉
+  wireInvokeSeam()
   await useReferenceStore().refresh()
 })
 
@@ -103,11 +80,12 @@ describe('ManualPriceModal 手动报价弹窗（issue #291 / ADR-0036）', () =>
     const wrapper = await mountModal((msg) => quoted.push(msg))
     await setPrice(wrapper, 1.318)
     expect(submitButton().disabled).toBe(false)
-    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
-      cmd === 'record_manual_price'
-        ? Promise.resolve({ history_written: true, current_price_written: true })
-        : base(cmd, args),
-    )
+    wireInvokeSeam({
+      overrides: {
+        record_manual_price: () =>
+          Promise.resolve({ history_written: true, current_price_written: true }),
+      },
+    })
     await clickSubmit()
     // 价格 1.318 元 → 13180 万分之一元（价格刻度 ADR-0038）；日期为今天 ISO
     expect(mockInvoke).toHaveBeenCalledWith('record_manual_price', {
@@ -125,11 +103,12 @@ describe('ManualPriceModal 手动报价弹窗（issue #291 / ADR-0036）', () =>
     const quoted: string[] = []
     const wrapper = await mountModal((msg) => quoted.push(msg))
     await setPrice(wrapper, 0.9)
-    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
-      cmd === 'record_manual_price'
-        ? Promise.resolve({ history_written: true, current_price_written: false })
-        : base(cmd, args),
-    )
+    wireInvokeSeam({
+      overrides: {
+        record_manual_price: () =>
+          Promise.resolve({ history_written: true, current_price_written: false }),
+      },
+    })
     await clickSubmit()
     expect(quoted).toEqual(['已沉淀历史价格（早于最新价格点，稳稳地幸福 现价保持不变）'])
     expect(wrapper.emitted('update:show')).toContainEqual([false])
@@ -139,11 +118,12 @@ describe('ManualPriceModal 手动报价弹窗（issue #291 / ADR-0036）', () =>
     const quoted: string[] = []
     const wrapper = await mountModal((msg) => quoted.push(msg))
     await setPrice(wrapper, 1.318)
-    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
-      cmd === 'record_manual_price'
-        ? Promise.reject({ kind: 'Invalid', message: '价格必须大于 0' })
-        : base(cmd, args),
-    )
+    wireInvokeSeam({
+      overrides: {
+        record_manual_price: () =>
+          Promise.reject({ kind: 'Invalid', message: '价格必须大于 0' }),
+      },
+    })
     await clickSubmit()
     const err = bodyQuery('[data-testid="manual-quote-error"]')!
     expect(err.textContent).toContain('价格必须大于 0')

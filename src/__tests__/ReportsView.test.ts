@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { NButton, NEmpty, NSelect } from 'naive-ui'
@@ -7,7 +7,7 @@ import QuickTimeRange from '@/components/QuickTimeRange.vue'
 import ReportsView from '@/views/ReportsView.vue'
 import { categoryColor } from '@/utils/category-chart'
 import { UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS, MERCHANT_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
-import { invokeHandler, makeCategory } from './factories'
+import { makeCategory } from './factories'
 import type { NullableDateRange } from '@/utils/time-period'
 import type { ReportDateRange } from '@/types'
 
@@ -49,31 +49,17 @@ const mockShares = [
   { category_id: 'zero', category_name: '零净额', amount_cents: 0 },
 ]
 
-/** 默认 invoke mock：参考数据（reference store self-init）+ 期间边界（组件钳制输入）
- * + 三报表查询（空集即可） */
-function baseInvoke(extra?: Record<string, unknown>) {
-  mockInvoke.mockImplementation(
-    invokeHandler(
-      {
-        list_currencies: [],
-        list_accounts: [],
-        list_categories: [],
-        list_merchants: [],
-        list_insurers: [],
-        report_date_range: mockRange,
-        monthly_summary: [],
-        category_shares: [],
-        merchant_shares: { rows: [], total_cents: 0 },
-      },
-      extra,
-    ),
-  )
+/** 默认布线 defaults 表：期间边界（组件钳制输入）+ 三报表查询空集
+ *（参考五命令走接缝规范兜底，reference store 自拉） */
+const BASE_DEFAULTS = {
+  report_date_range: mockRange,
+  monthly_summary: [],
+  category_shares: [],
+  merchant_shares: { rows: [], total_cents: 0 },
 }
 
 beforeEach(() => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  baseInvoke()
+  wireInvokeSeam({ defaults: BASE_DEFAULTS })
   pushMock.mockReset()
   vi.useFakeTimers()
   vi.setSystemTime(new Date(2026, 0, 15, 12, 0, 0))
@@ -200,8 +186,11 @@ describe('ReportsView 期间筛选（issue #411 / ADR-0057）', () => {
   })
 
   it('点「当月」芯片：月度收支卡单组柱如实展示（月期间不切日粒度）', async () => {
-    baseInvoke({
-      monthly_summary: [{ month: `${Y}-01`, income_cents: 1000, expense_cents: 500, refund_cents: 100 }],
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        monthly_summary: [{ month: `${Y}-01`, income_cents: 1000, expense_cents: 500, refund_cents: 100 }],
+      },
     })
     const wrapper = await mountReports()
     mockInvoke.mockClear()
@@ -235,7 +224,10 @@ describe('ReportsView 期间筛选（issue #411 / ADR-0057）', () => {
 
 describe('ReportsView 支出分类构成横向柱状图（issue #378）', () => {
   it('横向柱状图：indexAxis 为 y，图卡正常挂载', async () => {
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     const wrapper = await mountReports()
     const options = categoryChartProp('options', wrapper)
     expect(options.indexAxis).toBe('y')
@@ -244,7 +236,10 @@ describe('ReportsView 支出分类构成横向柱状图（issue #378）', () => 
   })
 
   it('图数据形态：一级归并（二级并入根）+ 未分类柱，净额降序，净额 0 不进图', async () => {
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     const wrapper = await mountReports()
     const data = categoryChartProp('data', wrapper)
     // 餐饮 = 根 5000 + 二级零食 1000；降序：餐饮 6000 > 交通 3000 > 未分类 800
@@ -253,7 +248,10 @@ describe('ReportsView 支出分类构成横向柱状图（issue #378）', () => 
   })
 
   it('配色：与柱同序按 id 稳定取色，未分类固定灰', async () => {
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     const wrapper = await mountReports()
     const data = categoryChartProp('data', wrapper)
     const colors: string[] = data.datasets[0].backgroundColor
@@ -266,7 +264,10 @@ describe('ReportsView 支出分类构成横向柱状图（issue #378）', () => 
   })
 
   it('同分类跨期间颜色稳定：切期间后同 id 的柱颜色不变', async () => {
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     const wrapper = await mountReports()
     const before = categoryChartProp('data', wrapper).datasets[0].backgroundColor
     await clickChip(wrapper, '去年')
@@ -275,7 +276,10 @@ describe('ReportsView 支出分类构成横向柱状图（issue #378）', () => 
   })
 
   it('全部平铺、卡片内滚动：容器限高滚动、图高随行数增长不截断', async () => {
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     const wrapper = await mountReports()
     const scroll = wrapper.find('[data-testid="category-chart-scroll"]')
     expect(scroll.exists()).toBe(true)
@@ -286,14 +290,20 @@ describe('ReportsView 支出分类构成横向柱状图（issue #378）', () => 
   })
 
   it('汇总层级切换器已退役：不再渲染 NRadioGroup', async () => {
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     const wrapper = await mountReports()
     expect(wrapper.findComponent({ name: 'NRadioGroup' }).exists()).toBe(false)
   })
 
   it('localStorage 残留汇总层级键无副作用：原样保留、渲染正常、不写回', async () => {
     localStorage.setItem('view_state:reports_group_level', '"level1"')
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     const wrapper = await mountReports()
     // 残留键不读、不写、不清：视图不感知该键
     expect(localStorage.getItem('view_state:reports_group_level')).toBe('"level1"')
@@ -305,7 +315,10 @@ describe('ReportsView 支出分类构成横向柱状图（issue #378）', () => 
 
 describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
   it('点一级柱图内下钻：行集合 = 直挂行 + 二级子分类行，合计 = 父柱金额（不触发跳转）', async () => {
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     const wrapper = await mountReports()
     await clickBar(wrapper, 0) // 餐饮柱（6000 = 直挂 5000 + 零食 1000）
     const data = categoryChartProp('data', wrapper)
@@ -317,7 +330,10 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
   })
 
   it('下钻态配色沿用同一稳定映射：直挂行同父柱色，二级行同分类色', async () => {
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     const wrapper = await mountReports()
     const baseColors: string[] = categoryChartProp('data', wrapper).datasets[0].backgroundColor
     await clickBar(wrapper, 0)
@@ -328,7 +344,10 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
   })
 
   it('面包屑显示当前位置（全部分类 › 分类名），点根返回基础态', async () => {
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     const wrapper = await mountReports()
     expect(breadcrumbOf(wrapper).exists()).toBe(false)
     await clickBar(wrapper, 0)
@@ -342,7 +361,10 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
   })
 
   it('未分类柱不进图内下钻，直达「仅无分类」列表：载荷 = 保留值 + 当年首尾日期 + 收支类型集合（issue #581）', async () => {
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     const wrapper = await mountReports()
     await clickBar(wrapper, 2) // 未分类柱
     expect(pushMock).toHaveBeenCalledTimes(1)
@@ -361,7 +383,10 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
   })
 
   it('下钻态点二级子分类行：跳转该分类精确过滤，载荷带当年首尾日期', async () => {
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     const wrapper = await mountReports()
     await clickBar(wrapper, 0) // 下钻餐饮
     pushMock.mockClear()
@@ -378,7 +403,10 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
   })
 
   it('下钻态点父直挂行：按父分类精确过滤（载荷 category = 父分类 id）', async () => {
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     const wrapper = await mountReports()
     await clickBar(wrapper, 0) // 下钻餐饮
     pushMock.mockClear()
@@ -395,7 +423,10 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
   })
 
   it('跳转载荷 = 所选期间首尾日期（#412 期间化）：「去年」芯片后未分类柱带去年年界', async () => {
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     const wrapper = await mountReports()
     await clickChip(wrapper, '去年')
     await clickBar(wrapper, 2) // 未分类柱
@@ -411,7 +442,10 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
   })
 
   it('跳转载荷随月期间（#412）：「当月」芯片后未分类柱带当月月界', async () => {
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     const wrapper = await mountReports()
     await clickChip(wrapper, '当月')
     await clickBar(wrapper, 2) // 未分类柱
@@ -427,7 +461,10 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
   })
 
   it('跳转载荷随季期间（#412）：「当季」芯片后下钻二级行带当季季界', async () => {
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     const wrapper = await mountReports()
     await clickChip(wrapper, '当季')
     await clickBar(wrapper, 0) // 图内下钻餐饮
@@ -445,7 +482,10 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
   })
 
   it('切换期间复位基础态；下钻态不持久化（localStorage 零写入）', async () => {
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     const wrapper = await mountReports()
     const keysBefore = Object.keys(localStorage)
     await clickBar(wrapper, 0)
@@ -456,7 +496,10 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
   })
 
   it('步进器/面板产出的任意月期间同样驱动三卡重算（受控 v-model 桥接）', async () => {
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     const wrapper = await mountReports()
     mockInvoke.mockClear()
     // 任意历史月（面板可达）：视图按快照区间查询
@@ -484,7 +527,10 @@ describe('ReportsView 分类图内下钻 + 面包屑（issue #379）', () => {
 
 describe('ReportsView 会话内保留（issue #427）：同一 pinia 卸载重挂恢复，新 pinia 冷启动', () => {
   it('选期间 + 图内下钻后卸载重挂（同一会话）：期间与下钻面包屑恢复，三卡以恢复期间重拉非缓存数据', async () => {
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     const first = await mountReports()
     await clickChip(first, '去年')
     await clickBar(first, 0) // 图内下钻餐饮
@@ -493,7 +539,10 @@ describe('ReportsView 会话内保留（issue #427）：同一 pinia 卸载重�
 
     // 离开期间新记的账：重挂后三卡以恢复期间重新拉取，渲染新返回值（餐饮 9000 ≠ 离开前 6000）
     const freshShares = [{ category_id: 'food', category_name: '餐饮', amount_cents: 9000 }]
-    baseInvoke({ list_categories: mockCategories, category_shares: freshShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: freshShares },
+    })
     mockInvoke.mockClear()
     const second = await mountReports()
 
@@ -529,7 +578,7 @@ describe('ReportsView 会话内保留（issue #427）：同一 pinia 卸载重�
   })
 
   it('恢复期间点亮对应芯片：去年快照恢复后「去年」芯片高亮（primary）', async () => {
-    baseInvoke()
+    wireInvokeSeam({ defaults: BASE_DEFAULTS })
     const first = await mountReports()
     await clickChip(first, '去年')
     first.unmount()
@@ -541,7 +590,10 @@ describe('ReportsView 会话内保留（issue #427）：同一 pinia 卸载重�
   })
 
   it('多次往返（报表 → 交易 → 报表 → 更多 → 报表）：恢复最近一次离开时的样子', async () => {
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     // 第一次进入：切「当月」后离开
     const first = await mountReports()
     await clickChip(first, '当月')
@@ -570,7 +622,10 @@ describe('ReportsView 会话内保留（issue #427）：同一 pinia 卸载重�
   })
 
   it('新 pinia + 重挂表达冷启动：回默认「当年」，下钻回基础态，面包屑不出现', async () => {
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     const first = await mountReports()
     await clickChip(first, '去年')
     await clickBar(first, 0)
@@ -590,7 +645,10 @@ describe('ReportsView 会话内保留（issue #427）：同一 pinia 卸载重�
   })
 
   it('会话内保留零持久化：选择期间与下钻全程 localStorage 零写入', async () => {
-    baseInvoke({ list_categories: mockCategories, category_shares: mockShares })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
     const first = await mountReports()
     const keysBefore = Object.keys(localStorage)
     await clickChip(first, '去年')
@@ -641,7 +699,10 @@ describe('ReportsView 商户排行表格化 + TopN（issue #588 → #618）', ()
   }
 
   it('表格行序 = 后端返回序：商户名、金额、占比、笔数逐行渲染（口径归纯函数，此处锁视图接线）', async () => {
-    baseInvoke({ list_merchants: merchantRefs, merchant_shares: merchantPayload() })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_merchants: merchantRefs, merchant_shares: merchantPayload() },
+    })
     const wrapper = await mountReports()
     const trs = wrapper.findAll('[data-testid="merchant-table"] tbody tr')
     expect(trs).toHaveLength(3)
@@ -653,7 +714,10 @@ describe('ReportsView 商户排行表格化 + TopN（issue #588 → #618）', ()
   })
 
   it('默认 Top 5：进入即以 top_n=5 查询', async () => {
-    baseInvoke({ merchant_shares: merchantPayload() })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { merchant_shares: merchantPayload() },
+    })
     await mountReports()
     expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', {
       year: Y,
@@ -664,7 +728,10 @@ describe('ReportsView 商户排行表格化 + TopN（issue #588 → #618）', ()
   })
 
   it('切 Top 10：仅商户卡以 top_n=10 重拉，其余两卡不受牵连', async () => {
-    baseInvoke({ merchant_shares: merchantPayload() })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { merchant_shares: merchantPayload() },
+    })
     const wrapper = await mountReports()
     mockInvoke.mockClear()
     await clickTopN(wrapper, 10)
@@ -679,7 +746,10 @@ describe('ReportsView 商户排行表格化 + TopN（issue #588 → #618）', ()
   })
 
   it('TopN 会话内保留：同 pinia 卸载重挂以 Top 10 重拉；冷启动（新 pinia）回默认 5', async () => {
-    baseInvoke({ merchant_shares: merchantPayload() })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { merchant_shares: merchantPayload() },
+    })
     const first = await mountReports()
     await clickTopN(first, 10)
     first.unmount()
@@ -706,7 +776,10 @@ describe('ReportsView 商户排行表格化 + TopN（issue #588 → #618）', ()
   })
 
   it('TopN 切换零持久化：localStorage 零写入', async () => {
-    baseInvoke({ merchant_shares: merchantPayload() })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { merchant_shares: merchantPayload() },
+    })
     const wrapper = await mountReports()
     const keysBefore = Object.keys(localStorage)
     await clickTopN(wrapper, 10)
@@ -714,7 +787,10 @@ describe('ReportsView 商户排行表格化 + TopN（issue #588 → #618）', ()
   })
 
   it('TopN 快速连点竞态：最后一次发起胜出，迟到的前发响应丢弃（ADR-0040 同语义）', async () => {
-    baseInvoke({ merchant_shares: merchantPayload() })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { merchant_shares: merchantPayload() },
+    })
     const wrapper = await mountReports()
     // 第 2 次发起（top_n=10）挂起；第 3 次发起（top_n=5）立即返回新数据
     let releaseTop10!: (v: unknown) => void
@@ -725,12 +801,12 @@ describe('ReportsView 商户排行表格化 + TopN（issue #588 → #618）', ()
       rows: [{ merchant_id: 'm-9', merchant_name: '快餐', amount_cents: 500, transaction_count: 2 }],
       total_cents: 15000,
     }
-    mockInvoke.mockImplementation((cmd, args) => {
-      if (cmd === 'merchant_shares') {
-        if (args?.topN === 10) return pendingTop10
-        return Promise.resolve(top5Payload)
-      }
-      return Promise.resolve([])
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        merchant_shares: (args) =>
+          args?.topN === 10 ? pendingTop10 : Promise.resolve(top5Payload),
+      },
     })
     await clickTopN(wrapper, 10) // 发起 #2：挂起
     await clickTopN(wrapper, 5) // 发起 #3：立即落位
@@ -743,7 +819,10 @@ describe('ReportsView 商户排行表格化 + TopN（issue #588 → #618）', ()
   })
 
   it('点商户名跳传交易列表（#589 → #618）：载荷 = 商户 id + 所选期间首尾日期 + 收支类型集合（支出+退款）', async () => {
-    baseInvoke({ list_merchants: merchantRefs, merchant_shares: merchantPayload() })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_merchants: merchantRefs, merchant_shares: merchantPayload() },
+    })
     const wrapper = await mountReports()
     pushMock.mockClear()
     // 点第 1 行商户名（超市 5000，商户 id m-1）：直达该商户本期支出+退款明细
@@ -761,7 +840,10 @@ describe('ReportsView 商户排行表格化 + TopN（issue #588 → #618）', ()
   })
 
   it('商户下钻载荷随期间（#589 边界）：选「去年」后点商户名带去年年界', async () => {
-    baseInvoke({ list_merchants: merchantRefs, merchant_shares: merchantPayload() })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_merchants: merchantRefs, merchant_shares: merchantPayload() },
+    })
     const wrapper = await mountReports()
     await clickChip(wrapper, '去年')
     pushMock.mockClear()

@@ -1,19 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount, DOMWrapper } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
 import PolicyFormModal from '@/components/PolicyFormModal.vue'
-import { makeAccount } from './factories'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
-import type { Account, Currency, Insurer, Policy } from '@/types'
+import type { Policy } from '@/types'
 import { componentVm } from './helpers/component-vm'
 
-
 // AppModal 内容 teleport 到 document.body：测试在 body 中查询/触发（同 PoliciesView 先例）。
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
 
 function bodyQuery(selector: string): HTMLElement | null {
   return document.body.querySelector(selector)
@@ -24,38 +16,19 @@ function formInput(testid: string): DOMWrapper<HTMLInputElement> {
   return new DOMWrapper(modal.querySelector(`[data-testid="${testid}"] input`)!)
 }
 
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-  { code: 'USD', name: '美元', symbol: '$', decimal_places: 2 },
-]
-
-const mockInsurers: Insurer[] = [
-  { id: 'ins-1', name: '平安保险', is_deleted: false, updated_at: '', version: 1, device_id: 'test' },
-]
-
-const mockAccounts: Account[] = [
-  makeAccount({ id: 'acc-1', name: '现金', type: 'cash' }),
-]
-
 /** 新建模式下打开的空保单（editing=null）。 */
 const noPolicy: Policy | null = null
 
 function setupInvoke() {
-  stubReferenceInvoke({
-    list_currencies: mockCurrencies,
-    list_accounts: mockAccounts,
-    list_categories: [],
-    list_merchants: [],
-    // 保单换轨后表单消费保司下拉（ADR-0082），桩给真实保司数据
-    list_insurers: mockInsurers,
-    list_policies: [],
-    list_policy_stats: [],
-    create_policy: (args) => {
-      const { input } = args as { input: { policy_number: string } }
-      return Promise.resolve(`policy-new-${input.policy_number}`)
+  wireInvokeSeam({
+    defaults: { list_policies: [], list_policy_stats: [], create_scheduled_transaction: 'plan-1' },
+    overrides: {
+      create_policy: (args) => {
+        const { input } = args as { input: { policy_number: string } }
+        return Promise.resolve(`policy-new-${input.policy_number}`)
+      },
+      create_insurer: () => Promise.reject(new Error('unexpected create_insurer')),
     },
-    create_scheduled_transaction: 'plan-1',
-    create_insurer: () => Promise.reject(new Error('unexpected create_insurer')),
   })
 }
 
@@ -80,10 +53,7 @@ async function enableAgreement(wrapper: ReturnType<typeof mount>) {
 }
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
   setupInvoke()
-  localStorage.clear()
   await flushPromises()
 })
 

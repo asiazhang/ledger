@@ -1,37 +1,14 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount, DOMWrapper } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
 import PolicyAgreementSection from '@/components/PolicyAgreementSection.vue'
-import { makeAccount, makePolicy } from './factories'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
+import { makePolicy } from './factories'
 import type {
-  Account,
-  Currency,
-  Merchant,
   Policy,
   ScheduledTransactionDetail,
   ScheduledTransactionWithExt,
 } from '@/types'
 import { componentVm } from './helpers/component-vm'
-
-
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
-
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-]
-
-const mockMerchants: Merchant[] = [
-  { id: 'mer-1', name: '平安保险', is_deleted: false, updated_at: '', version: 1, device_id: 'test' },
-]
-
-const mockAccounts: Account[] = [
-  makeAccount({ id: 'acc-1', name: '现金', type: 'cash' }),
-]
 
 const policy: Policy = makePolicy({ id: 'policy-1', insurer_id: 'ins-1', product_name: '重疾险' })
 
@@ -98,18 +75,14 @@ function detailFor(planId: string): ScheduledTransactionDetail {
 }
 
 function setupInvoke() {
-  stubReferenceInvoke({
-    list_currencies: mockCurrencies,
-    list_accounts: mockAccounts,
-    list_categories: [],
-    list_insurers: [],
-    list_merchants: mockMerchants,
-    list_policies: [policy],
-    list_scheduled_transactions: () => plans,
-    get_scheduled_transaction_detail: (args) =>
-      Promise.resolve(detailFor((args as { id: string }).id)),
-    create_scheduled_transaction: 'plan-new',
-    update_scheduled_transaction_status: () => Promise.resolve(),
+  wireInvokeSeam({
+    defaults: { list_policies: [policy], create_scheduled_transaction: 'plan-new' },
+    overrides: {
+      list_scheduled_transactions: () => plans,
+      get_scheduled_transaction_detail: (args) =>
+        Promise.resolve(detailFor((args as { id: string }).id)),
+      update_scheduled_transaction_status: () => Promise.resolve(),
+    },
   })
 }
 
@@ -133,11 +106,8 @@ async function selectAccount(wrapper: ReturnType<typeof mount>) {
 }
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
   plans = []
   setupInvoke()
-  localStorage.clear()
   await flushPromises()
 })
 

@@ -1,13 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { componentVm } from './helpers/component-vm'
-import { mount, flushPromises, enableAutoUnmount, DOMWrapper } from '@vue/test-utils'
+import { findButton } from './helpers/dom'
+import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
 import { NPopconfirm, NSelect, NDatePicker } from 'naive-ui'
-import { setActivePinia, createPinia } from 'pinia'
 import { nextTick } from 'vue'
 import { applyLocale } from '@/i18n'
 import ItemsView from '@/views/ItemsView.vue'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Currency, ItemDailyCost, ItemInput, ItemWithDailyCost, Transaction } from '@/types'
 
 
@@ -17,10 +16,6 @@ vi.mock('vue-router', () => ({
 }))
 
 // NModal 内容 teleport 到 document.body：测试在 body 中查询/触发（同 InstrumentBrowser 先例）。
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
 
 function bodyQuery(selector: string): HTMLElement | null {
   return document.body.querySelector(selector)
@@ -128,58 +123,54 @@ const mockExpenseTxs: Transaction[] = [
 ]
 
 function setupInvoke(expenseTxs: Transaction[] = mockExpenseTxs) {
-  stubReferenceInvoke({
-    list_currencies: mockCurrencies,
-    list_accounts: [],
-    list_categories: [],
-    list_insurers: [],
-    list_merchants: [],
-    list_transactions: (args?: Record<string, unknown>) => {
-      const filter = (args as { filter?: { kind?: string } | null } | undefined)?.filter
-      // 物品视图只拉支出交易（关联购买交易候选）；其他 kind 返回空
-      return Promise.resolve({
-        items: filter?.kind === 'expense' ? expenseTxs : [],
-        total: filter?.kind === 'expense' ? expenseTxs.length : 0,
-      })
-    },
-    list_items: () => Promise.resolve(itemList),
-    calculate_item_cost: (args?: Record<string, unknown>) => {
-      void (args as { id: string; referenceDate: string | null }).id
-      if (calcResponse === null) return Promise.reject(new Error('重算失败'))
-      return Promise.resolve(calcResponse)
-    },
-    update_item: (args?: Record<string, unknown>) => {
-      const { id, input } = args as { id: string; input: { name: string } }
-      itemList = itemList.map((it) => (it.id === id ? { ...it, ...input } : it))
-      return Promise.resolve(null)
-    },
-    dispose_item: (args?: Record<string, unknown>) => {
-      const { id, input } = args as {
-        id: string
-        input: { disposal_date: string; residual_value_cents: number | null }
-      }
-      itemList = itemList.map((it) =>
-        it.id === id
-          ? { ...it, status: 'disposed' as const, ...input, version: it.version + 1 }
-          : it,
-      )
-      return Promise.resolve()
-    },
-    delete_item: (args?: Record<string, unknown>) => {
-      const { id } = args as { id: string }
-      itemList = itemList.filter((i) => i.id !== id)
-      return Promise.resolve()
+  wireInvokeSeam({
+    overrides: {
+      // list_currencies 参考命令本场景需 USD 行（$ 金额格式化断言，overrides 优先于参考兑底）
+      list_currencies: mockCurrencies,
+      list_transactions: (args?: Record<string, unknown>) => {
+        const filter = (args as { filter?: { kind?: string } | null } | undefined)?.filter
+        // 物品视图只拉支出交易（关联购买交易候选）；其他 kind 返回空
+        return Promise.resolve({
+          items: filter?.kind === 'expense' ? expenseTxs : [],
+          total: filter?.kind === 'expense' ? expenseTxs.length : 0,
+        })
+      },
+      list_items: () => Promise.resolve(itemList),
+      calculate_item_cost: (args?: Record<string, unknown>) => {
+        void (args as { id: string; referenceDate: string | null }).id
+        if (calcResponse === null) return Promise.reject(new Error('重算失败'))
+        return Promise.resolve(calcResponse)
+      },
+      update_item: (args?: Record<string, unknown>) => {
+        const { id, input } = args as { id: string; input: { name: string } }
+        itemList = itemList.map((it) => (it.id === id ? { ...it, ...input } : it))
+        return Promise.resolve(null)
+      },
+      dispose_item: (args?: Record<string, unknown>) => {
+        const { id, input } = args as {
+          id: string
+          input: { disposal_date: string; residual_value_cents: number | null }
+        }
+        itemList = itemList.map((it) =>
+          it.id === id
+            ? { ...it, status: 'disposed' as const, ...input, version: it.version + 1 }
+            : it,
+        )
+        return Promise.resolve()
+      },
+      delete_item: (args?: Record<string, unknown>) => {
+        const { id } = args as { id: string }
+        itemList = itemList.filter((i) => i.id !== id)
+        return Promise.resolve()
+      },
     },
   })
 }
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
   itemList = mockItems
   calcResponse = null
   setupInvoke()
-  localStorage.clear()
   // 参考数据（币种选项）与物品 store 均为 self-init，提前预热
   await flushPromises()
 })
@@ -257,7 +248,7 @@ describe('ItemsView 物品列表', () => {
     const wrapper = mount(ItemsView)
     await flushPromises()
 
-    const deleteBtn = wrapper.findAll('button').find((b) => b.text() === '删除')
+    const deleteBtn = findButton(wrapper, '删除', { exact: true })
     expect(deleteBtn).toBeTruthy()
     await deleteBtn!.trigger('click')
     await flushPromises()
@@ -282,7 +273,7 @@ describe('ItemsView 物品编辑（issue #117）', () => {
     const wrapper = mount(ItemsView)
     await flushPromises()
 
-    const editBtn = wrapper.findAll('button').find((b) => b.text() === '编辑')
+    const editBtn = findButton(wrapper, '编辑', { exact: true })
     expect(editBtn).toBeTruthy()
     await editBtn!.trigger('click')
     await flushPromises()
@@ -300,7 +291,7 @@ describe('ItemsView 物品编辑（issue #117）', () => {
     const wrapper = mount(ItemsView)
     await flushPromises()
 
-    const editBtn = wrapper.findAll('button').find((b) => b.text() === '编辑')
+    const editBtn = findButton(wrapper, '编辑', { exact: true })
     await editBtn!.trigger('click')
     await flushPromises()
 
@@ -339,7 +330,7 @@ describe('ItemsView 物品编辑（issue #117）', () => {
     const wrapper = mount(ItemsView)
     await flushPromises()
 
-    const editBtn = wrapper.findAll('button').find((b) => b.text() === '编辑')
+    const editBtn = findButton(wrapper, '编辑', { exact: true })
     await editBtn!.trigger('click')
     await flushPromises()
 
@@ -360,7 +351,7 @@ describe('ItemsView 物品详情（issue #117）', () => {
     const wrapper = mount(ItemsView)
     await flushPromises()
 
-    const detailBtn = wrapper.findAll('button').find((b) => b.text() === '详情')
+    const detailBtn = findButton(wrapper, '详情', { exact: true })
     expect(detailBtn).toBeTruthy()
     await detailBtn!.trigger('click')
     await flushPromises()
@@ -383,7 +374,7 @@ describe('ItemsView 物品详情（issue #117）', () => {
     const wrapper = mount(ItemsView)
     await flushPromises()
 
-    const detailBtn = wrapper.findAll('button').find((b) => b.text() === '详情')
+    const detailBtn = findButton(wrapper, '详情', { exact: true })
     await detailBtn!.trigger('click')
     await flushPromises()
 
@@ -401,7 +392,7 @@ describe('ItemsView 关联购买交易（issue #119）：编辑弹窗换关语�
     const wrapper = mount(ItemsView)
     await flushPromises()
 
-    const editBtn = wrapper.findAll('button').find((b) => b.text() === '编辑')
+    const editBtn = findButton(wrapper, '编辑', { exact: true })
     await editBtn!.trigger('click')
     await flushPromises()
 
@@ -445,7 +436,7 @@ describe('ItemsView 关联购买交易（issue #119）：编辑弹窗换关语�
     const wrapper = mount(ItemsView)
     await flushPromises()
 
-    const detailBtn = wrapper.findAll('button').find((b) => b.text() === '详情')
+    const detailBtn = findButton(wrapper, '详情', { exact: true })
     await detailBtn!.trigger('click')
     await flushPromises()
 
@@ -459,7 +450,7 @@ describe('ItemsView 物品处置（issue #120）', () => {
     const wrapper = mount(ItemsView)
     await flushPromises()
 
-    const disposeBtn = wrapper.findAll('button').find((b) => b.text() === '处置')
+    const disposeBtn = findButton(wrapper, '处置', { exact: true })
     expect(disposeBtn).toBeTruthy()
     await disposeBtn!.trigger('click')
     await flushPromises()
@@ -500,7 +491,7 @@ describe('ItemsView 物品处置（issue #120）', () => {
     const wrapper = mount(ItemsView)
     await flushPromises()
 
-    const editDisposeBtn = wrapper.findAll('button').find((b) => b.text() === '处置信息')
+    const editDisposeBtn = findButton(wrapper, '处置信息', { exact: true })
     expect(editDisposeBtn).toBeTruthy()
     await editDisposeBtn!.trigger('click')
     await flushPromises()
@@ -533,7 +524,7 @@ describe('ItemsView 物品处置（issue #120）', () => {
     const wrapper = mount(ItemsView)
     await flushPromises()
 
-    const detailBtn = wrapper.findAll('button').find((b) => b.text() === '详情')
+    const detailBtn = findButton(wrapper, '详情', { exact: true })
     await detailBtn!.trigger('click')
     await flushPromises()
 
@@ -549,7 +540,7 @@ describe('ItemsView 物品处置（issue #120）', () => {
     const wrapper = mount(ItemsView)
     await flushPromises()
 
-    const disposeBtn = wrapper.findAll('button').find((b) => b.text() === '处置')
+    const disposeBtn = findButton(wrapper, '处置', { exact: true })
     await disposeBtn!.trigger('click')
     await flushPromises()
 
@@ -573,7 +564,7 @@ describe('ItemsView 物品处置（issue #120）', () => {
 describe('ItemsView 自选参考日重算（issue #121）', () => {
   /** 打开第 1 件物品的详情弹窗并返回弹窗元素。 */
   async function openDetailModal(wrapper: ReturnType<typeof mount>) {
-    const detailBtn = wrapper.findAll('button').find((b) => b.text() === '详情')
+    const detailBtn = findButton(wrapper, '详情', { exact: true })
     await detailBtn!.trigger('click')
     await flushPromises()
     const modal = bodyQuery('[data-testid="item-detail-modal"]')

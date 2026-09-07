@@ -26,3 +26,10 @@ export function resetMessageApi(): void {
   messageApi.loading.mockReset()
   messageApi.destroyAll.mockReset()
 }
+
+/** 消息断言面：按方法汇总稳定实例的全部调用记录（全局每测自动清零）。 */
+export function messageCalls(): Array<{ method: string; text: string }> {
+  return (['success', 'warning', 'error', 'info', 'loading'] as const).flatMap((method) =>
+    messageApi[method].mock.calls.map((c) => ({ method, text: String(c[0]) })),
+  )
+}

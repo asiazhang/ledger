@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import {
   SIDEBAR_GROUPS,
@@ -27,14 +27,9 @@ import type { DropdownOption } from 'naive-ui'
 import { VIEW_STATE_KEYS, saveContainmentLists } from '@/utils/view-state'
 
 // 侧栏排序 store 接口测试（issue #524/#549：排序状态机迁入 sidebar-order store）。
-// 「重启」惯用法 = setActivePinia(createPinia())（sidebar-more-link.test.ts 先例）：
-// store 首次实例化即启动读路径（读 view_state:* 两键经解析防御），新 pinia = 新一次启动。
+// 「重启」惯用法 = setActivePinia(createPinia())：store 首次实例化即启动读路径
+//（读 view_state:* 两键经解析防御），新 pinia = 新一次启动。
 // 键位带推导纯逻辑测试留守 useViewShortcuts.test.ts（经 store 装配），此处不重复。
-
-beforeEach(() => {
-  localStorage.clear()
-  setActivePinia(createPinia())
-})
 
 /** 重启：换新 pinia，下一次 useSidebarOrderStore() 即新一次启动读路径 */
 function reboot() {

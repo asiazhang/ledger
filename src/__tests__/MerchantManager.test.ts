@@ -1,22 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
 import { NDataTable, NPopconfirm } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
+import { messageApi } from './helpers/message-mock'
+import { findButton } from './helpers/dom'
 import MerchantManager from '@/components/MerchantManager.vue'
 import type { Merchant } from '@/types'
 
-const { messageMock, pushMock } = vi.hoisted(() => ({
-  messageMock: {
-    success: vi.fn(),
-    warning: vi.fn(),
-    error: vi.fn(),
-    info: vi.fn(),
-    loading: vi.fn(),
-    destroyAll: vi.fn(),
-  },
+const { pushMock } = vi.hoisted(() => ({
   pushMock: vi.fn(),
 }))
 
@@ -24,15 +16,6 @@ const { messageMock, pushMock } = vi.hoisted(() => ({
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: pushMock }),
 }))
-
-// 覆盖 setup.ts 的全局 naive-ui mock：message 实例可断言（重名错误提示等）
-vi.mock('naive-ui', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('naive-ui')>()
-  return {
-    ...actual,
-    useMessage: () => messageMock,
-  }
-})
 
 
 const mockMerchants: Merchant[] = [
@@ -53,12 +36,10 @@ let merchantDb: Merchant[] = mockMerchants
 /** 关联交易计数后端响应（issue #445，毛笔数口径）：可缺行（无引用商户前端补 0）。 */
 let countDb: { merchant_id: string; transaction_count: number }[] = []
 
-/** 参考数据桩（issue #725）：管理页只消费商户表与条数聚合（可变库函数型覆写），其余走共享助手规范夹具。 */
-function mockBaseCommands() {
-  stubReferenceInvoke({
-    list_merchants: () => merchantDb,
-    list_merchant_transaction_counts: () => countDb,
-  })
+/** 管理页只消费商户表与条数聚合（可变库函数型覆写），其余走参考兑底规范夹具。 */
+const BASE_OVERRIDES = {
+  list_merchants: () => merchantDb,
+  list_merchant_transaction_counts: () => countDb,
 }
 
 function merchantCalls(cmd: string) {
@@ -67,14 +48,9 @@ function merchantCalls(cmd: string) {
 
 describe('MerchantManager.vue（issue #189）', () => {
   beforeEach(async () => {
-    setActivePinia(createPinia())
-    mockInvoke.mockReset()
     merchantDb = mockMerchants
     countDb = []
-    mockBaseCommands()
-    messageMock.success.mockClear()
-    messageMock.error.mockClear()
-    messageMock.warning.mockClear()
+    wireInvokeSeam({ overrides: BASE_OVERRIDES })
     const store = useReferenceStore()
     await store.refresh()
   })
@@ -88,37 +64,39 @@ describe('MerchantManager.vue（issue #189）', () => {
 
   it('空名称不调用 create_merchant', async () => {
     const wrapper = mount(MerchantManager)
-    const addBtn = wrapper.findAll('button').find((b) => b.text() === '添加')!
+    const addBtn = findButton(wrapper, '添加', { exact: true })!
     await addBtn.trigger('click')
     expect(merchantCalls('create_merchant')).toHaveLength(0)
-    expect(messageMock.warning).toHaveBeenCalled()
+    expect(messageApi.warning).toHaveBeenCalled()
   })
 
   it('添加商户：调用 create_merchant，重拉后列表出现新商户', async () => {
-    stubReferenceInvoke({
-      create_merchant: (args?: { input?: { name: string } }) => {
-        merchantDb = [
-          ...merchantDb,
-          {
-            id: 'mch-new', name: args!.input!.name,
-            updated_at: '2026-01-01T00:00:00Z',
-            version: 1, device_id: 'test', is_deleted: false,
-          },
-        ]
-        return Promise.resolve('mch-new')
+    wireInvokeSeam({
+      overrides: {
+        create_merchant: (args?: { input?: { name: string } }) => {
+          merchantDb = [
+            ...merchantDb,
+            {
+              id: 'mch-new', name: args!.input!.name,
+              updated_at: '2026-01-01T00:00:00Z',
+              version: 1, device_id: 'test', is_deleted: false,
+            },
+          ]
+          return Promise.resolve('mch-new')
+        },
+        list_merchants: () => merchantDb,
       },
-      list_merchants: () => merchantDb,
     })
     const wrapper = mount(MerchantManager)
     const nameInput = wrapper.findAll('input').find((i) => i.attributes('placeholder') === '商户名称')!
     await nameInput.setValue('盒马')
-    const addBtn = wrapper.findAll('button').find((b) => b.text() === '添加')!
+    const addBtn = findButton(wrapper, '添加', { exact: true })!
     await addBtn.trigger('click')
     await flushPromises()
 
     expect(merchantCalls('create_merchant')).toHaveLength(1)
     expect(merchantCalls('create_merchant')[0][1]).toEqual({ input: { name: '盒马' } })
-    expect(messageMock.success).toHaveBeenCalled()
+    expect(messageApi.success).toHaveBeenCalled()
     // 表单清空
     expect(nameInput.element.value).toBe('')
     // 重拉后列表出现新商户（store 由失效信号驱动，测试中手动 refresh 模拟）
@@ -127,18 +105,20 @@ describe('MerchantManager.vue（issue #189）', () => {
   })
 
   it('重名创建失败：显示可理解的错误提示，表单不清空', async () => {
-    stubReferenceInvoke({
-      create_merchant: () => Promise.reject(new Error('参数错误: 商户已存在: 盒马')),
-      list_merchants: () => merchantDb,
+    wireInvokeSeam({
+      overrides: {
+        create_merchant: () => Promise.reject(new Error('参数错误: 商户已存在: 盒马')),
+        list_merchants: () => merchantDb,
+      },
     })
     const wrapper = mount(MerchantManager)
     const nameInput = wrapper.findAll('input').find((i) => i.attributes('placeholder') === '商户名称')!
     await nameInput.setValue('盒马')
-    const addBtn = wrapper.findAll('button').find((b) => b.text() === '添加')!
+    const addBtn = findButton(wrapper, '添加', { exact: true })!
     await addBtn.trigger('click')
     await flushPromises()
 
-    expect(messageMock.error).toHaveBeenCalledWith('添加失败: Error: 参数错误: 商户已存在: 盒马')
+    expect(messageApi.error).toHaveBeenCalledWith('添加失败: Error: 参数错误: 商户已存在: 盒马')
     // 表单不清空，用户可直接修正
     expect(nameInput.element.value).toBe('盒马')
   })
@@ -154,11 +134,9 @@ describe('MerchantManager.vue（issue #189）', () => {
 
 describe('MerchantManager.vue 关联交易条数列（issue #445，毛笔数口径）', () => {
   beforeEach(async () => {
-    setActivePinia(createPinia())
-    mockInvoke.mockReset()
     merchantDb = mockMerchants
     countDb = []
-    mockBaseCommands()
+    wireInvokeSeam({ overrides: BASE_OVERRIDES })
     const store = useReferenceStore()
     await store.refresh()
   })
@@ -225,11 +203,9 @@ describe('MerchantManager.vue 关联交易条数列（issue #445，毛笔数口�
 
 describe('MerchantManager.vue 条数下钻（issue #446）', () => {
   beforeEach(async () => {
-    setActivePinia(createPinia())
-    mockInvoke.mockReset()
     merchantDb = mockMerchants
     countDb = []
-    mockBaseCommands()
+    wireInvokeSeam({ overrides: BASE_OVERRIDES })
     pushMock.mockReset()
     const store = useReferenceStore()
     await store.refresh()
@@ -293,11 +269,9 @@ describe('MerchantManager.vue 拼音模糊搜索（issue #447，统一模糊搜�
   }))
 
   beforeEach(async () => {
-    setActivePinia(createPinia())
-    mockInvoke.mockReset()
     merchantDb = searchMerchants
     countDb = []
-    mockBaseCommands()
+    wireInvokeSeam({ overrides: BASE_OVERRIDES })
     const store = useReferenceStore()
     await store.refresh()
   })
@@ -367,11 +341,9 @@ describe('MerchantManager.vue 显示已删切换（issue #447）', () => {
   }
 
   beforeEach(async () => {
-    setActivePinia(createPinia())
-    mockInvoke.mockReset()
     merchantDb = [...mockMerchants, deletedMerchant]
     countDb = []
-    mockBaseCommands()
+    wireInvokeSeam({ overrides: BASE_OVERRIDES })
     pushMock.mockReset()
     const store = useReferenceStore()
     await store.refresh()
@@ -486,11 +458,9 @@ describe('MerchantManager.vue 前端分页（issue #457）', () => {
   }
 
   beforeEach(async () => {
-    setActivePinia(createPinia())
-    mockInvoke.mockReset()
     merchantDb = makeMerchants(56)
     countDb = []
-    mockBaseCommands()
+    wireInvokeSeam({ overrides: BASE_OVERRIDES })
     pushMock.mockReset()
     const store = useReferenceStore()
     await store.refresh()
@@ -534,7 +504,7 @@ describe('MerchantManager.vue 前端分页（issue #457）', () => {
    * 更新数据 → 手动 refresh 模拟 ledger:changed 失效重拉。 */
   async function deleteRow(wrapper: ReturnType<typeof mount>, rowIndex: number) {
     const row = wrapper.findAll('tbody tr')[rowIndex]!
-    const deleteBtn = row.findAll('button').find((b) => b.text() === '删除')!
+    const deleteBtn = findButton(row, '删除', { exact: true })!
     await deleteBtn.trigger('click')
     await flushPromises()
     wrapper.findComponent(NPopconfirm).vm.$emit('positiveClick')
@@ -546,15 +516,17 @@ describe('MerchantManager.vue 前端分页（issue #457）', () => {
   /** 让 delete_merchant 命令对指定商户软删生效（is_deleted 置位；含软删全量
    * 列表由 store 按 is_deleted 拆分，软删行转已删区而非消失）。 */
   function mockDeleteMerchant(id: string) {
-    stubReferenceInvoke({
-      delete_merchant: () => {
-        merchantDb = merchantDb.map((m) =>
-          m.id === id ? { ...m, is_deleted: true } : m,
-        )
-        return Promise.resolve(null)
+    wireInvokeSeam({
+      overrides: {
+        delete_merchant: () => {
+          merchantDb = merchantDb.map((m) =>
+            m.id === id ? { ...m, is_deleted: true } : m,
+          )
+          return Promise.resolve(null)
+        },
+        list_merchants: () => merchantDb,
+        list_merchant_transaction_counts: () => countDb,
       },
-      list_merchants: () => merchantDb,
-      list_merchant_transaction_counts: () => countDb,
     })
   }
 

@@ -1,8 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
+import { wireInvokeSeam } from './helpers/invoke-mock'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { setActivePinia, createPinia } from 'pinia'
 import App from '@/App.vue'
 import { routes } from '@/router'
 import { useSidebarOrderStore, GROUP_CONTAINMENT_SEEDS } from '@/stores/sidebar-order'
@@ -11,20 +10,10 @@ import { useSidebarOrderStore, GROUP_CONTAINMENT_SEEDS } from '@/stores/sidebar-
 // #472/#473 建立的渲染条件 = 清单非空，App.vue 消费 sidebarContainment 响应式派生）。
 // 容器内测试只覆盖「镜像面」（清单空 → 零页签），此处挂真实 App 侧栏断言链接本体。
 
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
-
 async function mountApp() {
-  setActivePinia(createPinia())
   // 启动门探测（issue #570 / #601）：App 启动先探测启动状态，本票与侧栏无关，
-  // 桩为明文就绪让主界面照常挂载；其余命令 fail-loud。
-  mockInvoke.mockImplementation((cmd: string) =>
-    cmd === 'get_boot_status'
-      ? Promise.resolve({ phase: 'ready', error_code: null })
-      : Promise.reject(new Error(`unexpected invoke: ${cmd}`)),
-  )
+  // 桩为明文就绪让主界面照常挂载；其余命令由接缝未命中报错兜底（fail-loud）。
+  wireInvokeSeam({ defaults: { get_boot_status: { phase: 'ready', error_code: null } } })
   const r = createRouter({ history: createMemoryHistory(), routes })
   await r.push('/dashboard')
   await r.isReady()
@@ -42,8 +31,6 @@ function linkCount(wrapper: { findAll: (s: string) => unknown[] }): number {
 describe('侧栏组标题行「更多」链接显隐渲染（issue #475 / ADR-0063 决策 1：清单非空才渲染，移回即消失）', () => {
   afterEach(() => {
     useSidebarOrderStore().resetSidebarOrder()
-    localStorage.clear()
-    mockInvoke.mockReset()
   })
 
   it('出厂态：记账（定时/商户）与资产（保单/实物资产）两链接渲染，洞察（空清单）无链接', async () => {

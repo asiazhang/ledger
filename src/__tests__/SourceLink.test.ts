@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
 import SourceLink from '@/components/SourceLink.vue'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
 import type { TransactionSource } from '@/types'
@@ -22,8 +21,6 @@ function makeSource(partial: Partial<TransactionSource> = {}): TransactionSource
 }
 
 beforeEach(() => {
-  setActivePinia(createPinia())
-  localStorage.clear()
   pushMock.mockReset()
 })
 

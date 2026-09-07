@@ -7,7 +7,6 @@ import { useReportsSessionStore } from '@/stores/reports-session'
 const Y = 2026
 
 beforeEach(() => {
-  setActivePinia(createPinia())
   vi.useFakeTimers()
   vi.setSystemTime(new Date(Y, 0, 15, 12, 0, 0))
 })

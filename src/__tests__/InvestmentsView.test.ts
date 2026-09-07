@@ -1,12 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { lastInvokeArgs, mockInvoke } from './helpers/invoke-mock'
+import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { h, nextTick } from 'vue'
-import { setActivePinia, createPinia } from 'pinia'
 import { NDialogProvider } from 'naive-ui'
-import { useReferenceStore } from '@/stores/reference'
 import InvestmentsView from '@/views/InvestmentsView.vue'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { Instrument } from '@/types'
 
 // 走势图用共享桩组件替代：组件层测试只验证数据联动与文案渲染，不验证 canvas 绘制
@@ -67,34 +64,29 @@ const mockInstruments: Instrument[] = [
   },
 ]
 
+/** 投资域命令契约快照（标的列表/持仓/走势/盈亏汇总，均为静态空数据或固定行）。 */
+const INVESTMENT_DEFAULTS = {
+  list_instruments: { items: mockInstruments, total: mockInstruments.length },
+  // 持仓概览（issue #110）：盈亏 tab 顶部会拉取当前持仓
+  list_holdings: [],
+  // 走势（issue #139）：标的列表「走势」入口切入走势 tab 时由面板拉取
+  portfolio_value_trend: { currency_code: 'CNY', points: [] },
+  instrument_price_trend: {
+    instrument_id: 'inst-1',
+    points: [{ date: '2026-06-05', price_cents: 1500, currency_code: 'CNY' }],
+  },
+  realized_pnl_summary: {
+    total_realized_pnl_cents: 0,
+    by_year: [],
+    by_account: [],
+    by_instrument: [],
+    details: [],
+  },
+}
+
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  stubReferenceInvoke({
-    list_accounts: [],
-    list_categories: [],
-    list_insurers: [],
-    list_merchants: [],
-    list_instruments: { items: mockInstruments, total: mockInstruments.length },
-    // 持仓概览（issue #110）：盈亏 tab 顶部会拉取当前持仓
-    list_holdings: [],
-    // 走势（issue #139）：标的列表「走势」入口切入走势 tab 时由面板拉取
-    portfolio_value_trend: { currency_code: 'CNY', points: [] },
-    instrument_price_trend: {
-      instrument_id: 'inst-1',
-      points: [{ date: '2026-06-05', price_cents: 1500, currency_code: 'CNY' }],
-    },
-    realized_pnl_summary: {
-      total_realized_pnl_cents: 0,
-      by_year: [],
-      by_account: [],
-      by_instrument: [],
-      details: [],
-    },
-  })
-  localStorage.clear()
-  const store = useReferenceStore()
-  await store.refresh()
+  // 参考 store 预载走接缝 opt-in 参数（五个 list 命令由桩层规范夹具兑底）。
+  await wireInvokeSeam({ defaults: INVESTMENT_DEFAULTS, refreshReferenceStores: true }).ready
 })
 
 describe('InvestmentsView 标的 tab', () => {

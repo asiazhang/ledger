@@ -1,10 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
 import { NSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import TransferForm from '@/components/TransferForm.vue'
 import type { Account, Transaction } from '@/types'
 
@@ -26,14 +24,11 @@ const mockAccounts: Account[] = [
 
 describe('TransferForm.vue', () => {
   beforeEach(async () => {
-    setActivePinia(createPinia())
-    mockInvoke.mockReset()
-    // 参考命令桩统一走共享助手（issue #725）：币种与规范夹具等值流入，账户保留本文件夹具
-    stubReferenceInvoke({
-      list_accounts: mockAccounts,
-      list_categories: [],
-      list_insurers: [],
-      list_merchants: [],
+    // 参考命令桩统一走接缝（issue #725）：币种与规范夹具等值流入，账户保留本文件夹具
+    wireInvokeSeam({
+      overrides: {
+        list_accounts: mockAccounts,
+      },
     })
     // Pre-load store so components have data
     const store = useReferenceStore()
@@ -183,8 +178,13 @@ describe('TransferForm.vue', () => {
     })
 
     it('创建成功后表单不留潜伏红态（清空金额但初始为空不红，ADR-0058 决策 2）', async () => {
-      // 重桩：提交成功走 create_transaction，参考命令经共享助手回归规范夹具（issue #725）
-      stubReferenceInvoke({ create_transaction: 'new-id' })
+      // 重桩：提交成功走 create_transaction，参考命令保留本文件夹具（issue #725）
+      wireInvokeSeam({
+        overrides: {
+          list_accounts: mockAccounts,
+          create_transaction: 'new-id',
+        },
+      })
       const wrapper = mount(TransferForm)
       // 先制造一次保存尝试与失焦（时机标志置位），再填合法值提交
       await submitButton(wrapper).trigger('click')

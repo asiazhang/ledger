@@ -1,42 +1,18 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { setActivePinia, createPinia } from 'pinia'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { useReferenceStore } from '@/stores/reference'
 import { useDashboardOverview } from '@/composables/useDashboardOverview'
 import { registerToastSink } from '@/composables/useLoadable'
-import {
-  invokeHandler,
-  makeFakeSink,
-  makeOverview,
-  mockCurrencies,
-  resetToastSink,
-} from './factories'
+import { makeFakeSink, makeOverview, resetToastSink } from './factories'
 
 
 const mockOverview = makeOverview({ net_worth_cents: 1234567, accounts_balance_cents: 1000000 })
 
-/** 默认 invoke mock：参考数据 + 净资产总览 */
-function baseInvoke(extra?: Record<string, unknown>) {
-  mockInvoke.mockImplementation(
-    invokeHandler(
-      {
-        list_currencies: mockCurrencies,
-        list_accounts: [],
-        list_categories: [],
-        list_merchants: [],
-        list_insurers: [],
-        dashboard_overview: mockOverview,
-      },
-      extra,
-    ),
-  )
-}
+/** 默认 invoke 布线：净资产总览契约快照（参考字典命令走接缝内建兜底，不在此枚举） */
+const BASE_DEFAULTS = { dashboard_overview: mockOverview }
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  baseInvoke()
-  localStorage.clear()
+  wireInvokeSeam({ defaults: BASE_DEFAULTS })
   // 每用例复位为 no-op，模拟「注册前」默认态，防模块级 sink 状态串扰
   resetToastSink()
   const store = useReferenceStore()
@@ -58,8 +34,11 @@ describe('useDashboardOverview 首页净资产数据层（issue #143）', () => 
   })
 
   it('命令报错（如缺汇率）时进入兜底状态：overview 置空、error 带后端中文错误信息，不抛异常', async () => {
-    baseInvoke({
-      dashboard_overview: () => Promise.reject(new Error('缺少 USD→CNY 汇率，无法折算')),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        dashboard_overview: () => Promise.reject(new Error('缺少 USD→CNY 汇率，无法折算')),
+      },
     })
     const sink = makeFakeSink()
     registerToastSink(sink)
@@ -74,7 +53,10 @@ describe('useDashboardOverview 首页净资产数据层（issue #143）', () => 
   })
 
   it('非 Error 抛出值（如 Tauri 字符串错误）也能兜底为文案', async () => {
-    baseInvoke({ dashboard_overview: () => Promise.reject('缺汇率') })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { dashboard_overview: () => Promise.reject('缺汇率') },
+    })
     const { error, refresh } = useDashboardOverview()
     await refresh()
     expect(error.value).toBe('缺汇率')
@@ -85,14 +67,17 @@ describe('useDashboardOverview 首页净资产数据层（issue #143）', () => 
     await refresh()
     expect(overview.value).not.toBeNull()
 
-    baseInvoke({
-      dashboard_overview: () => Promise.reject(new Error('缺少 HKD→CNY 汇率')),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        dashboard_overview: () => Promise.reject(new Error('缺少 HKD→CNY 汇率')),
+      },
     })
     await refresh()
     expect(overview.value).toBeNull()
     expect(error.value).toBe('缺少 HKD→CNY 汇率')
 
-    baseInvoke()
+    wireInvokeSeam({ defaults: BASE_DEFAULTS })
     await refresh()
     expect(overview.value).toEqual(mockOverview)
     expect(error.value).toBeNull()
@@ -101,14 +86,17 @@ describe('useDashboardOverview 首页净资产数据层（issue #143）', () => 
   it('失败 toast 只在失败那次弹出：错误态↔成功态往返中 sink 各就各位', async () => {
     const sink = makeFakeSink()
     registerToastSink(sink)
-    baseInvoke({
-      dashboard_overview: () => Promise.reject(new Error('缺少 HKD→CNY 汇率')),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        dashboard_overview: () => Promise.reject(new Error('缺少 HKD→CNY 汇率')),
+      },
     })
     const { refresh } = useDashboardOverview()
     await refresh()
     expect(sink.error).toHaveBeenCalledTimes(1)
 
-    baseInvoke()
+    wireInvokeSeam({ defaults: BASE_DEFAULTS })
     await refresh()
     expect(sink.error).toHaveBeenCalledTimes(1)
   })

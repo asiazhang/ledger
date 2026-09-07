@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import {
   VIEW_STATE_KEYS,
   getSavedRouteName,
@@ -12,10 +12,6 @@ import {
   saveContainmentLists,
   clearContainment,
 } from '@/utils/view-state'
-
-beforeEach(() => {
-  localStorage.clear()
-})
 
 describe('view-state route', () => {
   it('无记录时返回 null', () => {

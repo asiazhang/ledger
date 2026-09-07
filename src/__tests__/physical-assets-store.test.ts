@@ -1,11 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { captureListenHandlers, mockListen, type CapturedListener } from './helpers/listen-mock'
+import { wireInvokeSeam } from './helpers/invoke-mock'
+import { captureListenHandlers, type CapturedListener } from './helpers/listen-mock'
 import { flushPromises } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
 import { usePhysicalAssetsStore } from '@/stores/physicalAssets'
 import { makePhysicalAsset, makePhysicalAssetList } from './factories'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type {
   PhysicalAsset,
   PhysicalAssetDisposeInput,
@@ -32,27 +30,21 @@ const createInput: PhysicalAssetInput = {
 /** 捕获 ledger:changed 监听处理器（store 创建时注册） */
 let handlers: CapturedListener[]
 
-/** 基础派发：各测试领域链处理完自己的命令后委托回它（参考命令同老链保持空保司表） */
-let base: ReturnType<typeof stubReferenceInvoke>
-
 beforeEach(() => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  mockListen.mockReset()
   handlers = captureListenHandlers()
-  base = stubReferenceInvoke({ list_insurers: [] })
 })
 
 describe('usePhysicalAssetsStore', () => {
   it('首次访问自动加载（self-init）：列表与在持合计同批就位，status=ready', async () => {
     const asset = baseAsset()
-    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
-      cmd === 'list_physical_assets'
-        ? Promise.resolve(
-            makePhysicalAssetList({ assets: [asset], holding_total_native_cents: 5_000_000 }),
-          )
-        : base(cmd, args),
-    )
+    wireInvokeSeam({
+      defaults: {
+        list_physical_assets: makePhysicalAssetList({
+          assets: [asset],
+          holding_total_native_cents: 5_000_000,
+        }),
+      },
+    })
     const store = usePhysicalAssetsStore()
     await flushPromises()
     expect(store.assets).toHaveLength(1)
@@ -64,11 +56,11 @@ describe('usePhysicalAssetsStore', () => {
   })
 
   it('加载失败时 status=error，不抛出（self-init 静默；缺汇率报错走同一通道）', async () => {
-    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
-      cmd === 'list_physical_assets'
-        ? Promise.reject(new Error('未找到 USD -> CNY 的汇率'))
-        : base(cmd, args),
-    )
+    wireInvokeSeam({
+      overrides: {
+        list_physical_assets: () => Promise.reject(new Error('未找到 USD -> CNY 的汇率')),
+      },
+    })
     const store = usePhysicalAssetsStore()
     await flushPromises()
     expect(store.status).toBe('error')
@@ -80,13 +72,19 @@ describe('usePhysicalAssetsStore', () => {
     const fresh = [baseAsset(), baseAsset({ id: 'asset-2', name: '代步车' })]
     let resolveSecond: (list: PhysicalAssetList) => void = () => {}
     let listCalls = 0
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd !== 'list_physical_assets') return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-      listCalls++
-      if (listCalls === 1) return Promise.resolve(makePhysicalAssetList({ assets: initial, holding_total_native_cents: 5_000_000 }))
-      return new Promise<PhysicalAssetList>((resolve) => {
-        resolveSecond = resolve
-      })
+    wireInvokeSeam({
+      overrides: {
+        list_physical_assets: () => {
+          listCalls++
+          if (listCalls === 1)
+            return Promise.resolve(
+              makePhysicalAssetList({ assets: initial, holding_total_native_cents: 5_000_000 }),
+            )
+          return new Promise<PhysicalAssetList>((resolve) => {
+            resolveSecond = resolve
+          })
+        },
+      },
     })
     const store = usePhysicalAssetsStore()
     await flushPromises()
@@ -105,23 +103,24 @@ describe('usePhysicalAssetsStore', () => {
 
   it('create 成功后立即重拉并返回 id（建档后列表与合计随之更新）', async () => {
     let listCalls = 0
-    mockInvoke.mockImplementation((cmd, args) => {
-      if (cmd === 'list_physical_assets') {
-        listCalls++
-        return Promise.resolve(
-          listCalls > 1
-            ? makePhysicalAssetList({
-                assets: [baseAsset({ id: 'new-1', name: '代步车', current_valuation_cents: 8_000_000_00, current_valuation_native_cents: 8_000_000_00 })],
-                holding_total_native_cents: 8_000_000_00,
-              })
-            : makePhysicalAssetList(),
-        )
-      }
-      if (cmd === 'create_physical_asset') {
-        expect(args).toMatchObject({ input: createInput })
-        return Promise.resolve('new-1')
-      }
-      return base(cmd, args)
+    wireInvokeSeam({
+      overrides: {
+        list_physical_assets: () => {
+          listCalls++
+          return Promise.resolve(
+            listCalls > 1
+              ? makePhysicalAssetList({
+                  assets: [baseAsset({ id: 'new-1', name: '代步车', current_valuation_cents: 8_000_000_00, current_valuation_native_cents: 8_000_000_00 })],
+                  holding_total_native_cents: 8_000_000_00,
+                })
+              : makePhysicalAssetList(),
+          )
+        },
+        create_physical_asset: (args) => {
+          expect(args).toMatchObject({ input: createInput })
+          return 'new-1'
+        },
+      },
     })
     const store = usePhysicalAssetsStore()
     await flushPromises()
@@ -134,10 +133,11 @@ describe('usePhysicalAssetsStore', () => {
   })
 
   it('create 失败不重拉、错误上抛（由调用方 toast 展示）', async () => {
-    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'list_physical_assets') return Promise.resolve(makePhysicalAssetList())
-      if (cmd === 'create_physical_asset') return Promise.reject(new Error('资产名称不能为空'))
-      return base(cmd, args)
+    wireInvokeSeam({
+      defaults: { list_physical_assets: makePhysicalAssetList() },
+      overrides: {
+        create_physical_asset: () => Promise.reject(new Error('资产名称不能为空')),
+      },
     })
     const store = usePhysicalAssetsStore()
     await flushPromises()
@@ -152,23 +152,23 @@ describe('usePhysicalAssetsStore', () => {
       valuation_date: null,
     }
     let listCalls = 0
-    mockInvoke.mockImplementation((cmd, args) => {
-      if (cmd === 'list_physical_assets') {
-        listCalls++
-        return Promise.resolve(
-          listCalls > 1
-            ? makePhysicalAssetList({
-                assets: [baseAsset({ current_valuation_cents: 6_000_000_00, current_valuation_native_cents: 6_000_000_00 })],
-                holding_total_native_cents: 6_000_000_00,
-              })
-            : makePhysicalAssetList({ assets: [baseAsset()] }),
-        )
-      }
-      if (cmd === 'update_physical_asset_valuation') {
-        expect(args).toMatchObject({ id: 'asset-1', input: valuationInput })
-        return Promise.resolve()
-      }
-      return base(cmd, args)
+    wireInvokeSeam({
+      overrides: {
+        list_physical_assets: () => {
+          listCalls++
+          return Promise.resolve(
+            listCalls > 1
+              ? makePhysicalAssetList({
+                  assets: [baseAsset({ current_valuation_cents: 6_000_000_00, current_valuation_native_cents: 6_000_000_00 })],
+                  holding_total_native_cents: 6_000_000_00,
+                })
+              : makePhysicalAssetList({ assets: [baseAsset()] }),
+          )
+        },
+        update_physical_asset_valuation: (args) => {
+          expect(args).toMatchObject({ id: 'asset-1', input: valuationInput })
+        },
+      },
     })
     const store = usePhysicalAssetsStore()
     await flushPromises()
@@ -179,10 +179,12 @@ describe('usePhysicalAssetsStore', () => {
   })
 
   it('updateValuation 失败不重拉、错误上抛（未来日期守卫由后端报错）', async () => {
-    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'list_physical_assets') return Promise.resolve(makePhysicalAssetList({ assets: [baseAsset()] }))
-      if (cmd === 'update_physical_asset_valuation') return Promise.reject(new Error('估值日期 9999-12-31 不能是未来'))
-      return base(cmd, args)
+    wireInvokeSeam({
+      defaults: { list_physical_assets: makePhysicalAssetList({ assets: [baseAsset()] }) },
+      overrides: {
+        update_physical_asset_valuation: () =>
+          Promise.reject(new Error('估值日期 9999-12-31 不能是未来')),
+      },
     })
     const store = usePhysicalAssetsStore()
     await flushPromises()
@@ -200,20 +202,20 @@ describe('usePhysicalAssetsStore', () => {
       purchase_currency_code: 'CNY',
     }
     let listCalls = 0
-    mockInvoke.mockImplementation((cmd, args) => {
-      if (cmd === 'list_physical_assets') {
-        listCalls++
-        return Promise.resolve(
-          listCalls > 1
-            ? makePhysicalAssetList({ assets: [baseAsset({ name: '家用代步车' })] })
-            : makePhysicalAssetList({ assets: [baseAsset({ name: '代步车' })] }),
-        )
-      }
-      if (cmd === 'update_physical_asset') {
-        expect(args).toMatchObject({ id: 'asset-1', input: updateInput })
-        return Promise.resolve()
-      }
-      return base(cmd, args)
+    wireInvokeSeam({
+      overrides: {
+        list_physical_assets: () => {
+          listCalls++
+          return Promise.resolve(
+            listCalls > 1
+              ? makePhysicalAssetList({ assets: [baseAsset({ name: '家用代步车' })] })
+              : makePhysicalAssetList({ assets: [baseAsset({ name: '代步车' })] }),
+          )
+        },
+        update_physical_asset: (args) => {
+          expect(args).toMatchObject({ id: 'asset-1', input: updateInput })
+        },
+      },
     })
     const store = usePhysicalAssetsStore()
     await flushPromises()
@@ -224,10 +226,11 @@ describe('usePhysicalAssetsStore', () => {
   })
 
   it('update 失败不重拉、错误上抛（由调用方 toast 展示）', async () => {
-    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'list_physical_assets') return Promise.resolve(makePhysicalAssetList({ assets: [baseAsset()] }))
-      if (cmd === 'update_physical_asset') return Promise.reject(new Error('资产名称不能为空'))
-      return base(cmd, args)
+    wireInvokeSeam({
+      defaults: { list_physical_assets: makePhysicalAssetList({ assets: [baseAsset()] }) },
+      overrides: {
+        update_physical_asset: () => Promise.reject(new Error('资产名称不能为空')),
+      },
     })
     const store = usePhysicalAssetsStore()
     await flushPromises()
@@ -243,20 +246,20 @@ describe('usePhysicalAssetsStore', () => {
       disposal_currency_code: 'CNY',
     }
     let listCalls = 0
-    mockInvoke.mockImplementation((cmd, args) => {
-      if (cmd === 'list_physical_assets') {
-        listCalls++
-        return Promise.resolve(
-          listCalls > 1
-            ? makePhysicalAssetList({ assets: [], holding_total_native_cents: 0 })
-            : makePhysicalAssetList({ assets: [baseAsset()] }),
-        )
-      }
-      if (cmd === 'dispose_physical_asset') {
-        expect(args).toMatchObject({ id: 'asset-1', input: disposeInput })
-        return Promise.resolve()
-      }
-      return base(cmd, args)
+    wireInvokeSeam({
+      overrides: {
+        list_physical_assets: () => {
+          listCalls++
+          return Promise.resolve(
+            listCalls > 1
+              ? makePhysicalAssetList({ assets: [], holding_total_native_cents: 0 })
+              : makePhysicalAssetList({ assets: [baseAsset()] }),
+          )
+        },
+        dispose_physical_asset: (args) => {
+          expect(args).toMatchObject({ id: 'asset-1', input: disposeInput })
+        },
+      },
     })
     const store = usePhysicalAssetsStore()
     await flushPromises()
@@ -268,10 +271,11 @@ describe('usePhysicalAssetsStore', () => {
   })
 
   it('dispose 失败不重拉、错误上抛（缺处置日期守卫由后端报错）', async () => {
-    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'list_physical_assets') return Promise.resolve(makePhysicalAssetList({ assets: [baseAsset()] }))
-      if (cmd === 'dispose_physical_asset') return Promise.reject(new Error('处置日期不能为空'))
-      return base(cmd, args)
+    wireInvokeSeam({
+      defaults: { list_physical_assets: makePhysicalAssetList({ assets: [baseAsset()] }) },
+      overrides: {
+        dispose_physical_asset: () => Promise.reject(new Error('处置日期不能为空')),
+      },
     })
     const store = usePhysicalAssetsStore()
     await flushPromises()
@@ -282,20 +286,20 @@ describe('usePhysicalAssetsStore', () => {
 
   it('remove 成功后立即重拉（软删过滤：资产退出列表与合计，issue #468 T3）', async () => {
     let listCalls = 0
-    mockInvoke.mockImplementation((cmd, args) => {
-      if (cmd === 'list_physical_assets') {
-        listCalls++
-        return Promise.resolve(
-          listCalls > 1
-            ? makePhysicalAssetList({ assets: [], holding_total_native_cents: 0 })
-            : makePhysicalAssetList({ assets: [baseAsset()] }),
-        )
-      }
-      if (cmd === 'delete_physical_asset') {
-        expect(args).toMatchObject({ id: 'asset-1' })
-        return Promise.resolve()
-      }
-      return base(cmd, args)
+    wireInvokeSeam({
+      overrides: {
+        list_physical_assets: () => {
+          listCalls++
+          return Promise.resolve(
+            listCalls > 1
+              ? makePhysicalAssetList({ assets: [], holding_total_native_cents: 0 })
+              : makePhysicalAssetList({ assets: [baseAsset()] }),
+          )
+        },
+        delete_physical_asset: (args) => {
+          expect(args).toMatchObject({ id: 'asset-1' })
+        },
+      },
     })
     const store = usePhysicalAssetsStore()
     await flushPromises()
@@ -310,17 +314,16 @@ describe('usePhysicalAssetsStore', () => {
     const holding = [baseAsset()]
     const disposed = [baseAsset({ id: 'asset-9', name: '旧车', status: 'disposed', current_valuation_native_cents: null })]
     const seenStatus: string[] = []
-    mockInvoke.mockImplementation((cmd, args) => {
-      if (cmd === 'list_physical_assets') {
-        seenStatus.push((args as { status: string | null }).status ?? 'holding')
-        const status = (args as { status: string | null }).status
-        return Promise.resolve(
-          status === 'disposed'
+    wireInvokeSeam({
+      overrides: {
+        list_physical_assets: (args) => {
+          const status = (args as { status: string | null }).status
+          seenStatus.push(status ?? 'holding')
+          return status === 'disposed'
             ? makePhysicalAssetList({ assets: disposed, holding_total_native_cents: 5_000_000 })
-            : makePhysicalAssetList({ assets: holding, holding_total_native_cents: 5_000_000 }),
-        )
-      }
-      return base(cmd, args)
+            : makePhysicalAssetList({ assets: holding, holding_total_native_cents: 5_000_000 })
+        },
+      },
     })
     const store = usePhysicalAssetsStore()
     await flushPromises()

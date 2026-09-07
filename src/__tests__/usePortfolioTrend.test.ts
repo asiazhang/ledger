@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { setActivePinia, createPinia } from 'pinia'
+import {
+  mockInvoke,
+  wireInvokeSeam,
+  type InvokeSeamOverride,
+} from './helpers/invoke-mock'
 import { useReferenceStore } from '@/stores/reference'
 import {
   toTrendRange,
@@ -11,7 +14,6 @@ import {
 } from '@/composables/usePortfolioTrend'
 import type { PortfolioValueTrend } from '@/types'
 import { makeInstrument } from './factories'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 
 
 const portfolioTrend: PortfolioValueTrend = {
@@ -23,23 +25,17 @@ const portfolioTrend: PortfolioValueTrend = {
   ],
 }
 
-/** 默认 invoke mock：参考数据 + 组合走势 */
-function baseInvoke(extra?: Record<string, unknown>) {
-  stubReferenceInvoke({
-    list_accounts: [],
-    list_categories: [],
-    list_insurers: [],
-    list_merchants: [],
-    portfolio_value_trend: () => Promise.resolve(portfolioTrend),
-    list_instruments: { items: [], total: 0 },
-    ...extra,
-  })
+/**
+ * 默认布线表：组合走势（动态函数归 overrides）+ 空标的字典；
+ * 参考字典命令走接缝内建兑底，不在此枚举。
+ */
+const BASE_OVERRIDES: Record<string, InvokeSeamOverride> = {
+  portfolio_value_trend: () => Promise.resolve(portfolioTrend),
+  list_instruments: { items: [], total: 0 },
 }
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  baseInvoke()
+  wireInvokeSeam({ overrides: BASE_OVERRIDES })
   const store = useReferenceStore()
   await store.refresh()
 })
@@ -171,13 +167,16 @@ describe('usePortfolioTrend 走势数据层', () => {
   })
 
   it('单标的模式：以标的 id 调用单标的走势命令，币种取自采样点', async () => {
-    baseInvoke({
-      instrument_price_trend: {
-        instrument_id: 'inst-1',
-        points: [
-          { date: '2026-06-05', price_cents: 1500, currency_code: 'CNY' },
-          { date: '2026-06-12', price_cents: 1600, currency_code: 'CNY' },
-        ],
+    wireInvokeSeam({
+      overrides: {
+        ...BASE_OVERRIDES,
+        instrument_price_trend: {
+          instrument_id: 'inst-1',
+          points: [
+            { date: '2026-06-05', price_cents: 1500, currency_code: 'CNY' },
+            { date: '2026-06-12', price_cents: 1600, currency_code: 'CNY' },
+          ],
+        },
       },
     })
     const { refresh, mode, showInstrument, chartSeries, currencyCode } = usePortfolioTrend()
@@ -194,7 +193,12 @@ describe('usePortfolioTrend 走势数据层', () => {
   })
 
   it('无历史数据：points 为空 → 空态判定为真', async () => {
-    baseInvoke({ portfolio_value_trend: { currency_code: 'CNY', points: [] } })
+    wireInvokeSeam({
+      overrides: {
+        ...BASE_OVERRIDES,
+        portfolio_value_trend: { currency_code: 'CNY', points: [] },
+      },
+    })
     const { refresh, isEmpty } = usePortfolioTrend()
     await refresh()
     expect(isEmpty.value).toBe(true)
@@ -209,7 +213,12 @@ describe('usePortfolioTrend 走势数据层', () => {
   })
 
   it('加载完成后 loading 复位；命令异常时 loading 同样复位', async () => {
-    baseInvoke({ portfolio_value_trend: () => Promise.reject(new Error('boom')) })
+    wireInvokeSeam({
+      overrides: {
+        ...BASE_OVERRIDES,
+        portfolio_value_trend: () => Promise.reject(new Error('boom')),
+      },
+    })
     const { refresh, loading } = usePortfolioTrend()
     await expect(refresh()).rejects.toThrow('boom')
     expect(loading.value).toBe(false)

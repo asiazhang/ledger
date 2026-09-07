@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
 import { NInput } from 'naive-ui'
 import AppModal from '@/components/AppModal.vue'
 import RestoreConfirmModal from '@/components/RestoreConfirmModal.vue'
@@ -7,12 +7,6 @@ import type { RestoreIntent } from '@/composables/useBackup'
 
 // 恢复确认弹窗（issue #572 / ADR-0075 决策 7）：钉住跨模式显著警告文案与
 // 密文备份主口令输入面——文案经 i18n，断言当前语言渲染出的完整句子。
-// NModal 内容 teleport 到 document.body，须在每个测试后卸载 wrapper 并清空 body
-// （先例：ManualPriceModal.test.ts）。
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
 
 /** 恢复确认回调桩（useBackup.confirmRestore 的形状）。 */
 const onConfirm = vi.fn<(passphrase: string) => Promise<void>>()

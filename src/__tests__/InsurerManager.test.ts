@@ -1,37 +1,14 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { DOMWrapper, mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import { NPopconfirm } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
+import { messageApi } from './helpers/message-mock'
+import { findBodyButton, findButton } from './helpers/dom'
 import InsurerManager from '@/components/InsurerManager.vue'
 import InsurerEditModal from '@/components/insurers/InsurerEditModal.vue'
 import type { Insurer } from '@/types'
 
-const { messageMock } = vi.hoisted(() => ({
-  messageMock: {
-    success: vi.fn(),
-    warning: vi.fn(),
-    error: vi.fn(),
-    info: vi.fn(),
-    loading: vi.fn(),
-    destroyAll: vi.fn(),
-  },
-}))
-
-// 覆盖 setup.ts 的全局 naive-ui mock：message 实例可断言（重名错误提示等）
-vi.mock('naive-ui', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('naive-ui')>()
-  return {
-    ...actual,
-    useMessage: () => messageMock,
-  }
-})
-
-
-// NModal 内容传送至 document.body：每测后卸载，避免前一用例的弹窗残留在 body 污染查询
-enableAutoUnmount(afterEach)
 
 const mockInsurers: Insurer[] = [
   {
@@ -48,23 +25,14 @@ const mockInsurers: Insurer[] = [
 
 let insurerDb: Insurer[] = mockInsurers
 
-/** 参考数据桩（issue #725）：管理页只消费保司表（可变库函数型覆写），其余走共享助手规范夹具。 */
-function mockBaseCommands() {
-  stubReferenceInvoke({ list_insurers: () => insurerDb })
-}
-
 function insurerCalls(cmd: string) {
   return mockInvoke.mock.calls.filter(([c]) => c === cmd)
 }
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
   insurerDb = mockInsurers
-  mockBaseCommands()
-  messageMock.success.mockClear()
-  messageMock.error.mockClear()
-  messageMock.warning.mockClear()
+  // 管理页只消费保司表（可变库函数型覆写），其余走参考兑底规范夹具
+  wireInvokeSeam({ overrides: { list_insurers: () => insurerDb } })
   const store = useReferenceStore()
   await store.refresh()
 })
@@ -92,39 +60,41 @@ describe('InsurerManager.vue 管理（issue #714 / ADR-0082 决策 3）', () => 
 
   it('空名称不调用 create_insurer', async () => {
     const wrapper = mount(InsurerManager)
-    const addBtn = wrapper.findAll('button').find((b) => b.text() === '添加')!
+    const addBtn = findButton(wrapper, '添加', { exact: true })!
     await addBtn.trigger('click')
     expect(insurerCalls('create_insurer')).toHaveLength(0)
-    expect(messageMock.warning).toHaveBeenCalled()
+    expect(messageApi.warning).toHaveBeenCalled()
   })
 
   it('添加保司：调用 create_insurer，重拉后列表出现新保司、表单清空', async () => {
-    stubReferenceInvoke({
-      create_insurer: (args?: { input?: { name: string } }) => {
-        insurerDb = [
-          ...insurerDb,
-          {
-            id: 'ins-new', name: args!.input!.name,
-            updated_at: '2026-01-01T00:00:00Z',
-            version: 1, device_id: 'test', is_deleted: false,
-          },
-        ]
-        return Promise.resolve('ins-new')
+    wireInvokeSeam({
+      overrides: {
+        create_insurer: (args?: { input?: { name: string } }) => {
+          insurerDb = [
+            ...insurerDb,
+            {
+              id: 'ins-new', name: args!.input!.name,
+              updated_at: '2026-01-01T00:00:00Z',
+              version: 1, device_id: 'test', is_deleted: false,
+            },
+          ]
+          return Promise.resolve('ins-new')
+        },
+        list_insurers: () => insurerDb,
       },
-      list_insurers: () => insurerDb,
     })
     const wrapper = mount(InsurerManager)
     const nameInput = wrapper
       .findAll('input')
       .find((i) => i.attributes('placeholder') === '保险公司名称')!
     await nameInput.setValue('泰康人寿')
-    const addBtn = wrapper.findAll('button').find((b) => b.text() === '添加')!
+    const addBtn = findButton(wrapper, '添加', { exact: true })!
     await addBtn.trigger('click')
     await flushPromises()
 
     expect(insurerCalls('create_insurer')).toHaveLength(1)
     expect(insurerCalls('create_insurer')[0][1]).toEqual({ input: { name: '泰康人寿' } })
-    expect(messageMock.success).toHaveBeenCalled()
+    expect(messageApi.success).toHaveBeenCalled()
     // 表单清空
     expect(nameInput.element.value).toBe('')
     // 重拉后列表出现新保司（store 由失效信号驱动，测试中手动 refresh 模拟）
@@ -133,20 +103,22 @@ describe('InsurerManager.vue 管理（issue #714 / ADR-0082 决策 3）', () => 
   })
 
   it('重名创建失败：显示可理解的错误提示，表单不清空', async () => {
-    stubReferenceInvoke({
-      create_insurer: () => Promise.reject(new Error('参数错误: 保司已存在: 泰康人寿')),
-      list_insurers: () => insurerDb,
+    wireInvokeSeam({
+      overrides: {
+        create_insurer: () => Promise.reject(new Error('参数错误: 保司已存在: 泰康人寿')),
+        list_insurers: () => insurerDb,
+      },
     })
     const wrapper = mount(InsurerManager)
     const nameInput = wrapper
       .findAll('input')
       .find((i) => i.attributes('placeholder') === '保险公司名称')!
     await nameInput.setValue('泰康人寿')
-    const addBtn = wrapper.findAll('button').find((b) => b.text() === '添加')!
+    const addBtn = findButton(wrapper, '添加', { exact: true })!
     await addBtn.trigger('click')
     await flushPromises()
 
-    expect(messageMock.error).toHaveBeenCalledWith('添加失败: Error: 参数错误: 保司已存在: 泰康人寿')
+    expect(messageApi.error).toHaveBeenCalledWith('添加失败: Error: 参数错误: 保司已存在: 泰康人寿')
     // 表单不清空，用户可直接修正
     expect(nameInput.element.value).toBe('泰康人寿')
   })
@@ -154,27 +126,27 @@ describe('InsurerManager.vue 管理（issue #714 / ADR-0082 决策 3）', () => 
   it('改名：编辑弹窗回填，保存调用 update_insurer，重拉后即时显示新名并关窗', async () => {
     const wrapper = mount(InsurerManager)
     const firstRow = wrapper.findAll('tbody tr')[0]!
-    await firstRow.findAll('button').find((b) => b.text() === '编辑')!.trigger('click')
+    await findButton(firstRow, '编辑', { exact: true })!.trigger('click')
     await flushPromises()
 
     // 弹窗回填当前名
     const nameInput = findBodyInputByPlaceholder('保险公司名称')
     expect(nameInput.element.value).toBe('平安人寿')
 
-    stubReferenceInvoke({
-      update_insurer: (args?: { id?: string; input?: { name?: string } }) => {
-        insurerDb = insurerDb.map((i) =>
-          i.id === args!.id ? { ...i, name: args!.input!.name! } : i,
-        )
-        return Promise.resolve(undefined)
+    wireInvokeSeam({
+      overrides: {
+        update_insurer: (args?: { id?: string; input?: { name?: string } }) => {
+          insurerDb = insurerDb.map((i) =>
+            i.id === args!.id ? { ...i, name: args!.input!.name! } : i,
+          )
+          return Promise.resolve(undefined)
+        },
+        list_insurers: () => insurerDb,
       },
-      list_insurers: () => insurerDb,
     })
     await nameInput.setValue('平安人寿股份')
-    const saveBtn = Array.from(document.body.querySelectorAll('button')).find(
-      (b) => b.textContent?.trim() === '保存',
-    )!
-    await new DOMWrapper(saveBtn).trigger('click')
+    const saveBtn = findBodyButton('保存', { exact: true })!
+    await saveBtn.trigger('click')
     await flushPromises()
 
     expect(insurerCalls('update_insurer')).toHaveLength(1)
@@ -193,24 +165,22 @@ describe('InsurerManager.vue 管理（issue #714 / ADR-0082 决策 3）', () => 
 
   it('改名重名失败：错误提示、弹窗不关、内容不丢', async () => {
     const wrapper = mount(InsurerManager)
-    await wrapper.findAll('tbody tr')[0]!.findAll('button').find((b) => b.text() === '编辑')!.trigger('click')
+    await findButton(wrapper.findAll('tbody tr')[0]!, '编辑', { exact: true })!.trigger('click')
     await flushPromises()
 
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'update_insurer') {
-        return Promise.reject(new Error('参数错误: 保司已存在: 人保财险'))
-      }
-      return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    // 其余命令保持接缝未命中报错基座（旧桩末尾同形 reject）
+    wireInvokeSeam({
+      overrides: {
+        update_insurer: () => Promise.reject(new Error('参数错误: 保司已存在: 人保财险')),
+      },
     })
     const nameInput = findBodyInputByPlaceholder('保险公司名称')
     await nameInput.setValue('人保财险')
-    const saveBtn = Array.from(document.body.querySelectorAll('button')).find(
-      (b) => b.textContent?.trim() === '保存',
-    )!
-    await new DOMWrapper(saveBtn).trigger('click')
+    const saveBtn = findBodyButton('保存', { exact: true })!
+    await saveBtn.trigger('click')
     await flushPromises()
 
-    expect(messageMock.error).toHaveBeenCalledWith('更新失败: Error: 参数错误: 保司已存在: 人保财险')
+    expect(messageApi.error).toHaveBeenCalledWith('更新失败: Error: 参数错误: 保司已存在: 人保财险')
     // 弹窗不关、内容不丢
     expect(
       wrapper.findComponent(InsurerEditModal).emitted('update:show'),
@@ -221,7 +191,7 @@ describe('InsurerManager.vue 管理（issue #714 / ADR-0082 决策 3）', () => 
   it('软删：走行内确认弹层调用 delete_insurer，重拉后默认列表不含', async () => {
     const wrapper = mount(InsurerManager)
     const row = wrapper.findAll('tbody tr')[0]!
-    await row.findAll('button').find((b) => b.text() === '删除')!.trigger('click')
+    await findButton(row, '删除', { exact: true })!.trigger('click')
     await flushPromises()
     // popconfirm 内容 teleport 到 body，直接对其组件 emit 正向点击（PoliciesView 先例）
     wrapper.findComponent(NPopconfirm).vm.$emit('positiveClick')

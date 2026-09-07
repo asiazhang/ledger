@@ -1,17 +1,12 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
-import { setActivePinia, createPinia } from 'pinia'
-import { listen } from '@tauri-apps/api/event'
 import { useReferenceStore } from '@/stores/reference'
 import HoldingsOverview from '@/components/investments/HoldingsOverview.vue'
 import {
-  invokeHandler,
   makeHolding,
   makeInstrument,
-  mockAccounts,
-  mockCurrencies,
   mockHoldings,
   mockInstruments,
 } from './factories'
@@ -19,8 +14,6 @@ import {
   firePricesChanged,
   resetPricesChangedHandler,
 } from './prices-changed-mock'
-
-const mockListen = vi.mocked(listen)
 
 // 价格失效信号订阅基座 mock（issue #238 / ADR-0031 决策 3）：捕获订阅回调，
 // 测试中手动触发模拟后端 emit；失败/零更新路径后端不 emit，即无重拉。
@@ -32,38 +25,16 @@ vi.mock('@/composables/usePricesChanged', async () => {
   }
 })
 
-// NCard 内组件直接挂载在 wrapper 下，但统一沿用项目的清理约定
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
-})
-
-/** 默认 invoke mock：参考数据 + 持仓 + 持仓标的字典 + 增量同步 */
-function baseInvoke(extra?: Record<string, unknown>) {
-  mockInvoke.mockImplementation(
-    invokeHandler(
-      {
-        list_currencies: mockCurrencies,
-        list_accounts: mockAccounts,
-        list_categories: [],
-        list_merchants: [],
-        list_insurers: [],
-        list_holdings: mockHoldings,
-        list_instruments: { items: mockInstruments, total: mockInstruments.length },
-        sync_holding_prices: { synced: 2, skipped: 0, message: '已同步 2 只，跳过 0 只' },
-      },
-      extra,
-    ),
-  )
+/** 默认布线 defaults 表：持仓 + 持仓标的字典 + 增量同步（参考五命令走接缝规范兜底） */
+const BASE_DEFAULTS = {
+  list_holdings: mockHoldings,
+  list_instruments: { items: mockInstruments, total: mockInstruments.length },
+  sync_holding_prices: { synced: 2, skipped: 0, message: '已同步 2 只，跳过 0 只' },
 }
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  mockListen.mockReset()
-  mockListen.mockResolvedValue(() => {})
   resetPricesChangedHandler()
-  baseInvoke()
+  wireInvokeSeam({ defaults: BASE_DEFAULTS })
   const store = useReferenceStore()
   await store.refresh()
 })
@@ -104,7 +75,10 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
   })
 
   it('无持仓时显示空态', async () => {
-    baseInvoke({ list_holdings: [], list_instruments: { items: [], total: 0 } })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_holdings: [], list_instruments: { items: [], total: 0 } },
+    })
     wrapper = mount(HoldingsOverview)
     await flushPromises()
     expect(wrapper.find('.n-empty').exists()).toBe(true)
@@ -123,14 +97,17 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
       market_value_cents: 123450,
       unrealized_pnl_cents: 50,
     })
-    baseInvoke({
-      list_holdings: [fundHolding],
-      list_instruments: {
-        items: [
-          ...mockInstruments,
-          makeInstrument({ id: 'inst-fund', symbol: '000123', name: '净值保真基金' }),
-        ],
-        total: mockInstruments.length + 1,
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        list_holdings: [fundHolding],
+        list_instruments: {
+          items: [
+            ...mockInstruments,
+            makeInstrument({ id: 'inst-fund', symbol: '000123', name: '净值保真基金' }),
+          ],
+          total: mockInstruments.length + 1,
+        },
       },
     })
     wrapper = mount(HoldingsOverview)
@@ -151,14 +128,17 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
       market_value_cents: 334800,
       unrealized_pnl_cents: 50,
     })
-    baseInvoke({
-      list_holdings: [mockHoldings[0]!, fundHolding],
-      list_instruments: {
-        items: [
-          ...mockInstruments,
-          makeInstrument({ id: 'inst-fund', symbol: '110022', name: '易方达消费行业' }),
-        ],
-        total: mockInstruments.length + 1,
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        list_holdings: [mockHoldings[0]!, fundHolding],
+        list_instruments: {
+          items: [
+            ...mockInstruments,
+            makeInstrument({ id: 'inst-fund', symbol: '110022', name: '易方达消费行业' }),
+          ],
+          total: mockInstruments.length + 1,
+        },
       },
     })
     wrapper = mount(HoldingsOverview)
@@ -185,11 +165,14 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
 
   it('同步进行中按钮 loading', async () => {
     let resolveSync!: (v: unknown) => void
-    baseInvoke({
-      sync_holding_prices: () =>
-        new Promise((res) => {
-          resolveSync = res
-        }),
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        sync_holding_prices: () =>
+          new Promise((res) => {
+            resolveSync = res
+          }),
+      },
     })
     wrapper = mount(HoldingsOverview)
     await flushPromises()
@@ -228,7 +211,10 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
   })
 
   it('同步失败显示错误消息', async () => {
-    baseInvoke({ sync_holding_prices: () => Promise.reject(new Error('网络错误')) })
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { sync_holding_prices: () => Promise.reject(new Error('网络错误')) },
+    })
     wrapper = mount(HoldingsOverview)
     await flushPromises()
     const callsBefore = mockInvoke.mock.calls.filter(([c]) => c === 'list_holdings').length

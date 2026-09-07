@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { setActivePinia, createPinia } from 'pinia'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { useReferenceStore } from '@/stores/reference'
 import { resolveLendingDirection } from '@/domain/lending'
 import { useLendingForm } from '@/composables/useLendingForm'
@@ -41,17 +39,14 @@ const FUND_IDS = ['acc-cash', 'acc-bank']
 const RECV_IDS = ['acc-recv-zhang', 'acc-recv-co']
 const DEBT_IDS = ['acc-debt-li']
 
+/** 参考命令覆写集（beforeEach 与用例级覆写共享）：账户保留本文件夹具，其余三表空集。 */
+const REFERENCE_OVERRIDES = {
+  list_accounts: mockAccounts,
+}
+
 describe('useLendingForm（借贷变体 composable，issue #374 S3）', () => {
   beforeEach(async () => {
-    setActivePinia(createPinia())
-    mockInvoke.mockReset()
-    // 参考命令桩统一走共享助手（issue #725）：币种与规范夹具等值流入，账户保留本文件夹具
-    stubReferenceInvoke({
-      list_accounts: mockAccounts,
-      list_categories: [],
-      list_insurers: [],
-      list_merchants: [],
-    })
+    wireInvokeSeam({ overrides: { ...REFERENCE_OVERRIDES } })
     // 账户过滤集断言依赖参考数据就绪：等 self-init 拉取完成
     await useReferenceStore().refresh()
   })
@@ -128,7 +123,7 @@ describe('useLendingForm（借贷变体 composable，issue #374 S3）', () => {
 
   describe('提交路由（与转账同构）', () => {
     it('借出提交调 create_transaction：kind=transfer、方向即双账户填法', async () => {
-      mockInvoke.mockResolvedValue('new-txn-id')
+      wireInvokeSeam({ overrides: { ...REFERENCE_OVERRIDES, create_transaction: 'new-txn-id' } })
       const form = useLendingForm()
       form.accountId.value = 'acc-cash'
       form.toAccountId.value = 'acc-recv-zhang'
@@ -146,7 +141,7 @@ describe('useLendingForm（借贷变体 composable，issue #374 S3）', () => {
     })
 
     it('还款提交同样落 transfer（debt→资金）', async () => {
-      mockInvoke.mockResolvedValue('new-txn-id')
+      wireInvokeSeam({ overrides: { ...REFERENCE_OVERRIDES, create_transaction: 'new-txn-id' } })
       const form = useLendingForm({ initialDirection: 'borrow' })
       form.setDirection('repay')
       form.accountId.value = 'acc-bank'
@@ -210,7 +205,7 @@ describe('useLendingForm（借贷变体 composable，issue #374 S3）', () => {
     })
 
     it('提交走更新命令、kind 恒 transfer（方向只影响双账户填法）', async () => {
-      mockInvoke.mockResolvedValue(undefined)
+      wireInvokeSeam({ overrides: { ...REFERENCE_OVERRIDES, update_transaction: undefined } })
       const onUpdated = vi.fn()
       const form = useLendingForm({ editing: () => editingTx, onUpdated })
       form.amountText.value = '500'

@@ -1,12 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { captureListenHandlers, mockListen, type CapturedListener } from './helpers/listen-mock'
+import { wireInvokeSeam } from './helpers/invoke-mock'
+import { captureListenHandlers, type CapturedListener } from './helpers/listen-mock'
 import { mount, flushPromises } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
 import { NDialogProvider, NSelect, NTreeSelect } from 'naive-ui'
 import { h, reactive } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import CategoryManager from '@/components/CategoryManager.vue'
 import CategoryForm from '@/components/CategoryForm.vue'
 import TransactionsView from '@/views/TransactionsView.vue'
@@ -121,13 +119,9 @@ function listOverrides(overrides: {
 }
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  mockListen.mockReset()
-  stubReferenceInvoke(listOverrides())
+  wireInvokeSeam({ overrides: listOverrides() })
   // 多个 store（reference / items 等）各自订阅同一信号，全部捕获、全部触发
   changedHandlers = captureListenHandlers()
-  localStorage.clear()
   // 先访问 store 以捕获 listen 回调（组件复用同一 store 单例），再确保数据就绪
   const store = useReferenceStore()
   await store.refresh()
@@ -147,7 +141,7 @@ async function simulateExternalWrite(patch: {
   accounts?: Account[]
   categories?: Category[]
 }) {
-  stubReferenceInvoke(listOverrides(patch))
+  wireInvokeSeam({ overrides: listOverrides(patch) })
   changedHandlers.forEach((h) => h({ payload: undefined }))
   await flushPromises()
 }
@@ -188,9 +182,11 @@ describe('组件层反应性：mock ledger:changed 使界面/选项原地更新�
 
   it('交易列表映射渲染：外部 AI 更新分类名后，已打开的交易列表分类列原地显示新名称', async () => {
     const txnDb: Transaction[] = [makeTxn(1, 'cat-food'), makeTxn(2, 'cat-food')]
-    stubReferenceInvoke({
-      ...listOverrides(),
-      list_transactions: () => Promise.resolve({ items: txnDb, total: txnDb.length }),
+    wireInvokeSeam({
+      overrides: {
+        ...listOverrides(),
+        list_transactions: () => Promise.resolve({ items: txnDb, total: txnDb.length }),
+      },
     })
 
     // TransactionsView 顶层调用 useDialog（issue #151），需 NDialogProvider 包裹（同 App.vue）
@@ -216,12 +212,14 @@ describe('组件层反应性：mock ledger:changed 使界面/选项原地更新�
     expect(wrapper.text()).toContain('餐饮')
 
     let resolveCats!: (v: Category[]) => void
-    stubReferenceInvoke({
-      ...listOverrides(),
-      list_categories: () =>
-        new Promise((res) => {
-          resolveCats = res
-        }),
+    wireInvokeSeam({
+      overrides: {
+        ...listOverrides(),
+        list_categories: () =>
+          new Promise((res) => {
+            resolveCats = res
+          }),
+      },
     })
 
     // 触发 push：重拉挂起期间，已打开的分类树不闪空（旧数据原样保留）

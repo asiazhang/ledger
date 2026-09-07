@@ -1,21 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { setActivePinia, createPinia } from 'pinia'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { useCategoryForm } from '@/composables/useCategoryForm'
 import { useReferenceStore } from '@/stores/reference'
 import { usePoliciesStore } from '@/stores/policies'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
-import type { Account, Merchant, Policy, Transaction } from '@/types'
+import type { Merchant, Policy, Transaction } from '@/types'
 
-
-const mockAccounts: Account[] = [
-  {
-    id: 'acc-1', name: '现金', type: 'cash', currency_code: 'CNY',
-    initial_balance_cents: 0, created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z', version: 1, device_id: 'test',
-    is_deleted: false, is_hidden: false,
-  },
-]
 
 const mockMerchants: Merchant[] = [
   {
@@ -57,15 +46,10 @@ const editingTx: Transaction = {
   source: null,
 }
 
-function mockBaseCommands(merchants: Merchant[] = mockMerchants) {
-  return stubReferenceInvoke({
-    list_accounts: mockAccounts,
-    list_categories: [],
-    list_insurers: [],
-    list_merchants: merchants,
-    list_policies: mockPolicies,
-    list_policy_stats: [],
-  })
+/** 非参考命令面：保单 store 重拉的两命令（参考五命令由接缝规范夹具兜底）。 */
+const BASE_DEFAULTS = {
+  list_policies: mockPolicies,
+  list_policy_stats: [],
 }
 
 function createCalls() {
@@ -104,9 +88,7 @@ async function submitWithMerchant(
 
 describe('useCategoryForm 商户输入（issue #189）', () => {
   beforeEach(() => {
-    setActivePinia(createPinia())
-    mockInvoke.mockReset()
-    mockBaseCommands()
+    wireInvokeSeam({ defaults: BASE_DEFAULTS })
   })
 
   it('不填商户：merchant_id 为 null，不调用 create_merchant', async () => {
@@ -128,10 +110,9 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
   })
 
   it('输入新名字（未命中）：保存即建商户并携带新 id', async () => {
-    const base = mockBaseCommands()
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'create_merchant') return Promise.resolve('mch-new')
-      return base(cmd)
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { create_merchant: () => Promise.resolve('mch-new') },
     })
     const input = await submitWithMerchant('盒马')
     expect(merchantCreateCalls()).toHaveLength(1)
@@ -141,32 +122,25 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
 
   it('即建撞重名（store 陈旧）：强制重拉后按名复用已有商户，不报错', async () => {
     let stale = true
-    const base = stubReferenceInvoke({
-      list_accounts: mockAccounts,
-      list_categories: [],
-      list_insurers: [],
-      list_policies: mockPolicies,
-      list_policy_stats: [],
-      list_merchants: () => {
-        const rows: Merchant[] = stale
-          ? mockMerchants
-          : [
-              ...mockMerchants,
-              {
-                id: 'mch-exist', name: '盒马',
-                updated_at: '2026-01-01T00:00:00Z',
-                version: 1, device_id: 'test', is_deleted: false,
-              },
-            ]
-        stale = false
-        return Promise.resolve(rows)
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        list_merchants: () => {
+          const rows: Merchant[] = stale
+            ? mockMerchants
+            : [
+                ...mockMerchants,
+                {
+                  id: 'mch-exist', name: '盒马',
+                  updated_at: '2026-01-01T00:00:00Z',
+                  version: 1, device_id: 'test', is_deleted: false,
+                },
+              ]
+          stale = false
+          return Promise.resolve(rows)
+        },
+        create_merchant: () => Promise.reject(new Error('参数错误: 商户已存在: 盒马')),
       },
-    })
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'create_merchant') {
-        return Promise.reject(new Error('参数错误: 商户已存在: 盒马'))
-      }
-      return base(cmd)
     })
     const input = await submitWithMerchant('盒马')
     expect(input?.merchant_id).toBe('mch-exist')
@@ -189,7 +163,12 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
     })
 
     it('原商户已被软删（不在字典）：提交保持原 id（历史引用照常保留），兜底选项可显示', async () => {
-      mockBaseCommands([]) // 字典为空：mch-1 已软删
+      wireInvokeSeam({
+        defaults: BASE_DEFAULTS,
+        overrides: {
+          // 参考命令本场景需自定义值（overrides 优先于参考兜底）：字典为空，mch-1 视同已软删
+        },
+      })
       await useReferenceStore().refresh()
       const form = useCategoryForm('expense', { editing: () => editingTx })
       // 回填时不可用 uuid 裸值展示：兜底选项以可读标签承载原 id
@@ -238,13 +217,7 @@ describe('useCategoryForm 商户输入（issue #189）', () => {
       const form = useCategoryForm('expense', { editing: () => editingWithPolicy })
       expect(form.policyId.value).toBe('pol-1')
       // 模拟原保单已软删：重拉后 store 列表不含 pol-1
-      stubReferenceInvoke({
-        list_policies: [],
-        list_insurers: [],
-        list_merchants: mockMerchants,
-        list_accounts: mockAccounts,
-        list_categories: [],
-      })
+      wireInvokeSeam({ defaults: { list_policies: [] } })
       await usePoliciesStore().refresh()
       expect(form.policyOptions.value.some((o) => o.value === 'pol-1')).toBe(true)
       form.amountText.value = '50'

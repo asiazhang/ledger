@@ -1,9 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { wireInvokeSeam } from './helpers/invoke-mock'
 import { flushPromises, mount } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
 import AiPromptView from '@/views/AiPromptView.vue'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 
 const writeText = vi.fn().mockResolvedValue(undefined)
 
@@ -15,12 +13,7 @@ const SAMPLE_PROMPT = `# Ledger API 入口提示词
 - 批量写交易/导入前，先 GET /api/v1/import/knowledge 获取拆行约定。`
 
 beforeEach(() => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  stubReferenceInvoke({
-    get_ai_prompt: SAMPLE_PROMPT,
-    list_insurers: [],
-  })
+  wireInvokeSeam({ overrides: { get_ai_prompt: SAMPLE_PROMPT } })
   Object.assign(navigator, { clipboard: { writeText } })
   writeText.mockClear()
 })
@@ -42,7 +35,7 @@ describe('AiPromptView.vue', () => {
   })
 
   it('提示词为空时复制按钮禁用', async () => {
-    mockInvoke.mockImplementation(() => Promise.resolve(''))
+    wireInvokeSeam({ defaults: { get_ai_prompt: '' } })
     const wrapper = mount(AiPromptView)
     await flushPromises()
     expect(wrapper.find('button').attributes('disabled')).toBeDefined()
@@ -55,7 +48,7 @@ describe('AiPromptView.vue', () => {
   })
 
   it('获取失败时展示错误提示', async () => {
-    mockInvoke.mockImplementation(() => Promise.reject(new Error('boom')))
+    wireInvokeSeam({ overrides: { get_ai_prompt: () => Promise.reject(new Error('boom')) } })
     const wrapper = mount(AiPromptView)
     await flushPromises()
     expect(wrapper.find('[data-testid="prompt-body"]').text()).toContain('获取失败')

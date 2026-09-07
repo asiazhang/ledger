@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import type { Router } from 'vue-router'
@@ -17,11 +17,6 @@ import { VIEW_STATE_KEYS } from '@/utils/view-state'
 // 视图快捷键（键位带段）测试：键位带推导纯逻辑 + 键盘注册，经 sidebar-order store 装配
 // （issue #549：顺序状态归位 store，此处只测键位面对 store 组内序的响应；排序/收纳的
 // store 接口测试见 sidebar-order.test.ts）。「重启」惯用法 = setActivePinia(createPinia())。
-
-beforeEach(() => {
-  localStorage.clear()
-  setActivePinia(createPinia())
-})
 
 function setPlatform(platform: string) {
   Object.defineProperty(navigator, 'platform', { value: platform, configurable: true })

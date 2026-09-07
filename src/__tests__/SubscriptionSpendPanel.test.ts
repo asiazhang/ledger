@@ -1,23 +1,13 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
-import { listen } from '@tauri-apps/api/event'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { wireInvokeSeam } from './helpers/invoke-mock'
+import { mount, flushPromises } from '@vue/test-utils'
 import { useReferenceStore } from '@/stores/reference'
 import SubscriptionSpendPanel from '@/components/scheduled/SubscriptionSpendPanel.vue'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import type { SubscriptionSpendOverview, SubscriptionSpendRow } from '@/types'
 
 vi.mock('vue-chartjs', async () => {
   const { BarChartStub } = await import('./line-chart-stub')
   return { Bar: BarChartStub }
-})
-
-const mockListen = vi.mocked(listen)
-
-enableAutoUnmount(afterEach)
-afterEach(() => {
-  document.body.innerHTML = ''
 })
 
 /** 生成以 endMonth 结尾的连续 n 个月（YYYY-MM，旧→新） */
@@ -72,23 +62,12 @@ const overview: SubscriptionSpendOverview = {
   ],
 }
 
-function baseInvoke(spend: SubscriptionSpendOverview | Error = overview) {
-  stubReferenceInvoke({
-    list_accounts: [],
-    list_categories: [],
-    list_insurers: [],
-    list_merchants: [],
-    subscription_spend_overview: () =>
-      spend instanceof Error ? Promise.reject(spend) : Promise.resolve(spend),
-  })
-}
-
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  mockListen.mockReset()
-  mockListen.mockResolvedValue(() => {})
-  baseInvoke()
+  wireInvokeSeam({
+    overrides: {
+      subscription_spend_overview: () => Promise.resolve(overview),
+    },
+  })
   const store = useReferenceStore()
   await store.refresh()
 })
@@ -140,7 +119,11 @@ describe('SubscriptionSpendPanel 订阅花费双口径（issue #160/#161）', ()
   })
 
   it('命令失败（如缺汇率中文错误上抛）时显示失败态，不静默混算', async () => {
-    baseInvoke(new Error('缺少 USD 兑 CNY 汇率'))
+    wireInvokeSeam({
+      overrides: {
+        subscription_spend_overview: () => Promise.reject(new Error('缺少 USD 兑 CNY 汇率')),
+      },
+    })
     const wrapper = mount(SubscriptionSpendPanel)
     await flushPromises()
     expect(wrapper.find('[data-testid="spend-failed"]').exists()).toBe(true)

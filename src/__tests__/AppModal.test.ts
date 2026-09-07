@@ -1,9 +1,6 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
-import { mount, enableAutoUnmount, flushPromises } from '@vue/test-utils'
+import { describe, it, expect, vi } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
 import AppModal from '@/components/AppModal.vue'
-
-// NModal 内容传送至 document.body：每测后卸载，避免弹窗残留污染下一用例查询
-enableAutoUnmount(afterEach)
 
 /** 在 body 上查找遮罩元素（弹层抑制同款信号，见 useViewShortcuts）。 */
 function findMask(): HTMLElement {
