@@ -19,7 +19,7 @@ import { makeInstrument } from '../factories'
 // 布线走唯一接缝（issue #748）：标的清单契约进 defaults 表、同步动作为
 // overrides；参考字典五命令由规范夹具兑底；store 层预热 opt-in 开启
 // （币种选项为 self-init，弹窗内下拉依赖就绪后的渲染，先例：
-// CreateInstrumentModal.test.ts）。清理四件套由全局壳层承担。
+// AddInstrumentModal.test.ts）。清理四件套由全局壳层承担。
 
 const mockInstruments = [
   makeInstrument({ id: 'inst-1' }),

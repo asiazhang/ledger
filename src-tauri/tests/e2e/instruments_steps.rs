@@ -541,7 +541,8 @@ fn assert_add_instrument_error(world: &mut LedgerWorld, fragment: String) {
 }
 
 /// 股票/ETF 通道落库后的现价断言（issue #697）：与基金现价不同源——
-/// priced_at 为写入时刻、nav_date 恒 None（净值日期是场外基金语义）。
+/// priced_at 为写入时刻、净值日期恒空（净值日期是场外基金语义，详断
+/// 在域单测 stock_add 钉住，此处不断言）。
 #[then(expr = "标的 {string} 现价为 {int} 币种 {string}")]
 fn assert_stock_market_price(
     world: &mut LedgerWorld,
@@ -549,16 +550,15 @@ fn assert_stock_market_price(
     price_cents: i64,
     currency: String,
 ) {
-    let row: (i64, String, Option<String>) = world_conn!(world)
+    let row: (i64, String) = world_conn!(world)
         .query_row(
-            "SELECT p.price_cents, p.currency_code, p.nav_date \
+            "SELECT p.price_cents, p.currency_code \
              FROM market_prices p JOIN instruments i ON i.id = p.instrument_id \
              WHERE i.symbol=?1",
             params![symbol],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap_or_else(|e| panic!("标的 {symbol} 应有现价（{e}）"));
     assert_eq!(row.0, price_cents, "现价（万分之一元）不符");
     assert_eq!(row.1, currency, "币种不符");
-    assert_eq!(row.2, None, "股票通道现价不带净值日期");
 }
