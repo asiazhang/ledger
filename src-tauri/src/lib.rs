@@ -39,7 +39,8 @@ pub mod sync;
 #[cfg(test)]
 mod signals_cross_check;
 // 统一测试数据库工厂与共享断言库（ADR-0084，issue #751）：建库/种子/对拍断言
-// 单一入口，域测试与外部集成测试共用，仅测试可见。
+// 单一入口，域测试与外部集成测试共用；仅测试消费，生产路径不得消费
+//（C 类豁免声明，ADR-0060）。
 #[doc(hidden)]
 pub mod test_support;
 #[doc(hidden)]
