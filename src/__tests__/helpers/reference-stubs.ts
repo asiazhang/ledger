@@ -1,6 +1,5 @@
-import { vi } from 'vitest'
-import { invoke } from '@tauri-apps/api/core'
 import type { Account, Category, Currency, Insurer, Merchant } from '@/types'
+import { wireInvokeSeam } from './invoke-mock'
 
 /**
  * 参考数据测试桩的单一来源（issue #725）。
@@ -150,16 +149,15 @@ export type ReferenceStubOverride =
   | undefined
   | object
 
-function isThenable(value: unknown): value is Promise<unknown> {
-  return typeof (value as Promise<unknown> | undefined)?.then === 'function'
-}
-
 /**
  * 桩住参考 store 重拉的全部 `list_*` 命令（默认规范夹具），`overrides` 按命令
  * 覆写（参考命令与领域数据命令均可覆写；函数型覆写在派发时以 args 调用）。
  * 未覆写的非参考命令保持 `unexpected invoke` 拒绝。
  * 返回派发函数本身：`mockImplementationOnce` 等一次性桩处理完自己的领域命令后，
  * 可把其余命令委托回派发函数，避免手拷参考命令兑底（参考命令集合随助手演进）。
+ *
+ * 迁移期薄别名（issue #746）：能力已并入唯一接缝 `wireInvokeSeam`，本入口保持
+ * 既有形态供既有使用者不改一字；迁移完成后由收尾票删除。
  *
  * 典型用法（beforeEach 内，mockReset 之后）：
  * ```ts
@@ -172,18 +170,5 @@ function isThenable(value: unknown): value is Promise<unknown> {
 export function stubReferenceInvoke(
   overrides: Record<string, ReferenceStubOverride> = {},
 ): (cmd: string, args?: Record<string, unknown>) => Promise<unknown> {
-  const dispatch = (cmd: string, args?: Record<string, unknown>): Promise<unknown> => {
-    if (cmd in overrides) {
-      const handler = overrides[cmd]
-      if (typeof handler === 'function') {
-        const out = (handler as (a?: Record<string, unknown>) => unknown)(args)
-        return isThenable(out) ? out : Promise.resolve(out)
-      }
-      return Promise.resolve(handler)
-    }
-    if (cmd in REFERENCE_DEFAULTS) return Promise.resolve(REFERENCE_DEFAULTS[cmd])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
-  }
-  vi.mocked(invoke).mockImplementation(dispatch as typeof invoke)
-  return dispatch
+  return wireInvokeSeam({ overrides })
 }

@@ -1,6 +1,5 @@
 import { vi, type Mock } from 'vitest'
-import { REFERENCE_DEFAULTS } from './helpers/reference-stubs'
-import type { AppInvokeHandler } from './helpers/invoke-mock'
+import { resolveSeamFallback, type AppInvokeHandler } from './helpers/invoke-mock'
 import { registerToastSink, type ToastSink } from '@/composables/useLoadable'
 import type {
   Account,
@@ -281,6 +280,10 @@ export function resetToastSink(): void {
  * 返回类型声明为 AppInvokeHandler，供直接传给 `mockInvoke.mockImplementation`；
  * 唯一例外是函数型 handler 的裸返回值原样透传（刻意不包 Promise——
  * globalBusy.test.ts 借此观察「非 thenable 兑底」路径），类型层在单点按契约声明。
+ *
+ * 迁移期薄别名（issue #746）：只组装不接线的既有形态，静态兜底层（defaults →
+ * 参考数据预热 → 未命中报错）与唯一接缝 `wireInvokeSeam` 共用同一实现；
+ * 本入口保持既有形态供既有使用者不改一字，迁移完成后由收尾票删除。
  */
 export function invokeHandler(
   defaults: Record<string, unknown>,
@@ -290,8 +293,6 @@ export function invokeHandler(
     const handler = extra && extra[cmd]
     if (typeof handler === 'function') return (handler as () => unknown)() as Promise<unknown>
     if (handler !== undefined) return Promise.resolve(handler)
-    if (cmd in defaults) return Promise.resolve(defaults[cmd])
-    if (cmd in REFERENCE_DEFAULTS) return Promise.resolve(REFERENCE_DEFAULTS[cmd])
-    return Promise.reject(new Error(`unexpected invoke: ${cmd}`))
+    return resolveSeamFallback(cmd, defaults)
   }
 }
