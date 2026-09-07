@@ -5,8 +5,7 @@ import { defineComponent, h, onUnmounted } from 'vue'
 import { getActivePinia } from 'pinia'
 import { useReferenceStore } from '@/stores/reference'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
-import { refCurrencies, stubReferenceInvoke } from './helpers/reference-stubs'
-import { invokeHandler } from './factories'
+import { refCurrencies } from './helpers/reference-stubs'
 import { messageApi } from './helpers/message-mock'
 import { useMessage } from 'naive-ui'
 
@@ -103,33 +102,6 @@ describe('invoke 测试接缝（issue #746，ADR-0085）', () => {
       await flushPromises()
       expect(store.status).toBe('ready')
       expect(store.currencies).toEqual(refCurrencies)
-    })
-  })
-
-  describe('迁移期薄别名（既有使用者不改一字）', () => {
-    it('stubReferenceInvoke：接线 + 覆写 + 参考兜底 + 未命中拒绝，语义不变', async () => {
-      const base = stubReferenceInvoke({ domain_cmd: 'stubbed' })
-      await expect(mockInvoke('domain_cmd')).resolves.toBe('stubbed')
-      await expect(mockInvoke('list_categories')).resolves.toEqual(expect.any(Array))
-      await expect(mockInvoke('unknown_cmd')).rejects.toThrow('unexpected invoke: unknown_cmd')
-      expect(typeof base).toBe('function')
-    })
-
-    it('invokeHandler：只组装不接线，函数型 handler 裸返回值原样透传', async () => {
-      const handler = invokeHandler(
-        { defaults_cmd: 'd' },
-        { fn_cmd: () => 'raw', identity_cmd: (args?: Record<string, unknown>) => args },
-      )
-      // 只组装不接线：组装后 mock 仍处于全局未命中报错基座态
-      await expect(mockInvoke('defaults_cmd')).rejects.toThrow('unexpected invoke: defaults_cmd')
-      mockInvoke.mockImplementation(handler)
-      await expect(mockInvoke('defaults_cmd')).resolves.toBe('d')
-      // 裸值透传：返回值是裸字符串而非 Promise 包装
-      expect(mockInvoke('fn_cmd')).toBe('raw')
-      // 函数型 handler 以零参调用（既有语义）
-      expect(mockInvoke('identity_cmd')).toBeUndefined()
-      await expect(mockInvoke('list_insurers')).resolves.toEqual(expect.any(Array))
-      await expect(mockInvoke('nope')).rejects.toThrow('unexpected invoke: nope')
     })
   })
 

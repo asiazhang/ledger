@@ -53,8 +53,8 @@ export function trackBusy<T>(task: Promise<T>): Promise<T> {
     }
   }
   // Promise.resolve 对原生 promise 恒等返回（生产路径零失真），仅对非 thenable
-  // 兑底包装（测试替身的 invoke 可能返回裸值，先例：invokeHandler 裸值处理器，
-  // 行为有测试钉住）；递减挂在收尾通道，不改变值与错误的传递契约，原样返回调用方
+  // 兑底包装（测试替身的 invoke 可能返回裸值，裸值契约有测试钉住）；递减挂在
+  // 收尾通道，不改变值与错误的传递契约，原样返回调用方
   const p = Promise.resolve(task)
   p.then(end, end)
   return p

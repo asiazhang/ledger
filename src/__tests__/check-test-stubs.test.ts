@@ -54,17 +54,16 @@ function makeFixture(files: Record<string, string>, extraCommands: string[] = []
   return dir
 }
 
-const CLEAN_TEST = `import { stubReferenceInvoke } from './helpers/reference-stubs'
-// 领域数据命令的手搓 if 链不在守门范围
-mockInvoke.mockImplementation((cmd: string) => {
-  if (cmd === 'list_transactions') return Promise.resolve([])
-  return Promise.reject(new Error('unexpected invoke'))
-})
-stubReferenceInvoke({ list_transactions: [] })
+const CLEAN_TEST = `import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+// 参考命令由接缝内建兜底；领域命令走 overrides 表或一次性委托（钦定形态）
+wireInvokeSeam({ overrides: { list_transactions: [] } })
+const base = wireInvokeSeam()
+mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
+  cmd === 'create_transaction' ? Promise.resolve('new-id') : base(cmd, args))
 `
 
 describe('check-test-stubs', () => {
-  it('全仓无手搓参考数据桩 if 链时通过（退出码 0）', () => {
+  it('全仓测试走唯一接缝与钦定一次性委托时通过（退出码 0）', () => {
     const dir = makeFixture({ 'SomeView.test.ts': CLEAN_TEST })
     const r = run([dir])
     expect(r.status).toBe(0)
@@ -107,14 +106,17 @@ describe('check-test-stubs', () => {
     expect(r.output).toContain('list_accounts')
   })
 
-  it('领域数据命令（不在登记处）的手搓 if 链不红', () => {
+  it('领域数据命令（不在登记处）的手写分发桩同样红（规则 3）', () => {
     const dir = makeFixture({
       'Domain.test.ts': `mockInvoke.mockImplementation((cmd: string) => {
   if (cmd === 'list_policies') return Promise.resolve([])
   return Promise.reject(new Error('unexpected invoke'))
 })`,
     })
-    expect(run([dir]).status).toBe(0)
+    const r = run([dir])
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('Domain.test.ts')
+    expect(r.output).toContain('手写 invoke 分发桩')
   })
 
   it('命令清单以助手登记处为单一来源：新增参考命令自动纳管', () => {
@@ -187,7 +189,7 @@ describe('check-test-stubs 同回调重复接线检测（#726）', () => {
     expect(r.output).toContain('行 2、4')
   })
 
-  it('同回调不同命令各一次合法', () => {
+  it('同回调不同命令各桩一次不触发重复规则（规则 3 另行拦截手写分发桩）', () => {
     const dir = makeFixture({
       'Multi.test.ts': `mockInvoke.mockImplementation((cmd: string) => {
   if (cmd === 'list_transactions') return Promise.resolve([])
@@ -195,10 +197,13 @@ describe('check-test-stubs 同回调重复接线检测（#726）', () => {
   return Promise.reject(new Error('unexpected invoke'))
 })`,
     })
-    expect(run([dir]).status).toBe(0)
+    const r = run([dir])
+    expect(r.status).toBe(1)
+    expect(r.output).not.toContain('同回调重复桩（')
+    expect(r.output).toContain('手写 invoke 分发桩')
   })
 
-  it('嵌套回调各自成单元不误报（DataLocationSettings 内层 cmd2 先例）', () => {
+  it('嵌套回调各自成单元不误报重复（外层分发桩由规则 3 拦截）', () => {
     const dir = makeFixture({
       'Nested.test.ts': `mockInvoke.mockImplementation((cmd: string) => {
   if (cmd === 'submit_data_location_change') {
@@ -212,10 +217,13 @@ describe('check-test-stubs 同回调重复接线检测（#726）', () => {
   return Promise.reject(new Error('unexpected invoke'))
 })`,
     })
-    expect(run([dir]).status).toBe(0)
+    const r = run([dir])
+    expect(r.status).toBe(1)
+    expect(r.output).not.toContain('同回调重复桩（')
+    expect(r.output).toContain('手写 invoke 分发桩')
   })
 
-  it('嵌套内外层同名形参 cmd 各桩一次同命令，不误报', () => {
+  it('嵌套内外层同名形参 cmd 各桩一次同命令，不误报重复（规则 3 各自分发桩另计）', () => {
     const dir = makeFixture({
       'NestedSameParam.test.ts': `mockInvoke.mockImplementation((cmd: string) => {
   if (cmd === 'get_settings') return Promise.resolve(s)
@@ -226,7 +234,9 @@ describe('check-test-stubs 同回调重复接线检测（#726）', () => {
   return Promise.reject(new Error('unreachable'))
 })`,
     })
-    expect(run([dir]).status).toBe(0)
+    const r = run([dir])
+    expect(r.status).toBe(1)
+    expect(r.output).not.toContain('同回调重复桩（')
   })
 
   it('else-if 形态的重复同样识别', () => {
@@ -243,7 +253,7 @@ describe('check-test-stubs 同回调重复接线检测（#726）', () => {
     expect(r.output).toContain('行 2、3')
   })
 
-  it('两个独立 mockImplementation 各桩同命令一次，合法（整体替换语义）', () => {
+  it('两个独立 mockImplementation 各桩同命令一次：不触发重复规则（分发桩由规则 3 拦截）', () => {
     const dir = makeFixture({
       'Restub.test.ts': `mockInvoke.mockImplementation((cmd: string) => {
   if (cmd === 'get_settings') return Promise.resolve(s)
@@ -254,10 +264,12 @@ mockInvoke.mockImplementation((cmd: string) => {
   return Promise.reject(new Error('unexpected invoke'))
 })`,
     })
-    expect(run([dir]).status).toBe(0)
+    const r = run([dir])
+    expect(r.status).toBe(1)
+    expect(r.output).not.toContain('同回调重复桩（')
   })
 
-  it('helpers/ 内的同回调重复桩同样拦截（规则 2 扫描测试 helper）', () => {
+  it('helpers/ 内的同回调重复桩同样拦截（规则 2 扫描测试 helper；规则 3 豁免 helper）', () => {
     const dir = makeFixture({
       'helpers/domain-stubs.ts': `export function stubDomain(mockInvoke: { mockImplementation: (f: unknown) => void }) {
   mockInvoke.mockImplementation((cmd: string) => {
@@ -271,9 +283,10 @@ mockInvoke.mockImplementation((cmd: string) => {
     expect(r.status).toBe(1)
     expect(r.output).toContain(join('helpers', 'domain-stubs.ts'))
     expect(r.output).toContain('同回调重复桩')
+    expect(r.output).not.toContain('手写 invoke 分发桩（')
   })
 
-  it('回调体内注释含不配对引号/括号不影响括号配对（词法跳过注释）', () => {
+  it('回调体内注释含不配对引号/括号不影响括号配对（词法跳过注释，活分发仍被规则 3 拦截）', () => {
     const dir = makeFixture({
       'Comments.test.ts': `mockInvoke.mockImplementation((cmd: string) => {
   // don't stub twice (it's covered by the guard's own fixture)
@@ -286,10 +299,13 @@ mockInvoke.mockImplementation((cmd: string) => {
   return Promise.reject(new Error('unexpected invoke'))
 })`,
     })
-    expect(run([dir]).status).toBe(0)
+    const r = run([dir])
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('手写 invoke 分发桩')
+    expect(r.output).not.toContain('同回调重复桩（')
   })
 
-  it('字符串字面量内的接线形文本不计数（仅统计活代码）', () => {
+  it('字符串字面量内的接线形文本不计数（重复规则不误报；活分发由规则 3 拦截）', () => {
     const dir = makeFixture({
       'StringShape.test.ts': `mockInvoke.mockImplementation((cmd: string) => {
   const hint = "if (cmd === 'get_settings') is a wiring shape, not wiring"
@@ -297,16 +313,137 @@ mockInvoke.mockImplementation((cmd: string) => {
   return Promise.reject(new Error('unexpected invoke'))
 })`,
     })
-    expect(run([dir]).status).toBe(0)
+    const r = run([dir])
+    expect(r.status).toBe(1)
+    expect(r.output).not.toContain('同回调重复桩（')
+    expect(r.output).toContain('手写 invoke 分发桩')
   })
 
-  it('注释掉的接线不计数（临时注释掉不致守门误红）', () => {
+  it('注释掉的接线不计数（临时注释掉不致守门误红；活分发由规则 3 拦截）', () => {
     const dir = makeFixture({
       'DeadWiring.test.ts': `mockInvoke.mockImplementation((cmd: string) => {
   // if (cmd === 'get_settings') return Promise.resolve(dead)
   if (cmd === 'get_settings') return Promise.resolve(s)
   return Promise.reject(new Error('unexpected invoke'))
 })`,
+    })
+    const r = run([dir])
+    expect(r.status).toBe(1)
+    expect(r.output).not.toContain('同回调重复桩（')
+    expect(r.output).toContain('手写 invoke 分发桩')
+  })
+})
+
+describe('check-test-stubs 手写分发桩与本地布线包装检测（#750 规则 3）', () => {
+  it('三元分发形态的全量替换桩同样红', () => {
+    const dir = makeFixture({
+      'Ternary3.test.ts': `mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+  cmd === 'create_transaction' ? Promise.resolve('new-id') : undefined)`,
+    })
+    const r = run([dir])
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('Ternary3.test.ts')
+    expect(r.output).toContain('手写 invoke 分发桩')
+  })
+
+  it('case 分发形态的全量替换桩同样红', () => {
+    const dir = makeFixture({
+      'Switch3.test.ts': `mockInvoke.mockImplementation((cmd: string) => {
+  switch (cmd) {
+    case 'list_transactions':
+      return Promise.resolve([])
+    default:
+      return Promise.reject(new Error('x'))
+  }
+})`,
+    })
+    const r = run([dir])
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('Switch3.test.ts')
+    expect(r.output).toContain('手写 invoke 分发桩')
+  })
+
+  it('mockImplementationOnce 一次性委托不触发（接缝文档钦定先例形态）', () => {
+    const dir = makeFixture({
+      'Once.test.ts': `const base = wireInvokeSeam()
+mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
+  cmd === 'create_transaction' ? Promise.resolve('new-id') : base(cmd, args))`,
+    })
+    expect(run([dir]).status).toBe(0)
+  })
+
+  it('无 cmd 形参的全量替换不触发（裸值/在途契约用例先例）', () => {
+    const dir = makeFixture({
+      'NoCmdParam.test.ts': `mockInvoke.mockImplementation((() => []) as unknown as AppInvokeHandler)
+mockInvoke.mockImplementation(() => new Promise(() => {}))`,
+    })
+    expect(run([dir]).status).toBe(0)
+  })
+
+  it('分发特征仅存在于字符串或注释中不触发（词法掩码）', () => {
+    const dir = makeFixture({
+      'Masked.test.ts': `mockInvoke.mockImplementation((cmd: string) => {
+  const hint = "if (cmd === 'get_settings') is text, not wiring"
+  // cmd === 'get_settings' ? never() : never()
+  return Promise.resolve({})
+})`,
+    })
+    expect(run([dir]).status).toBe(0)
+  })
+
+  it('形参改名（cmd → c）逃逸匹配（已知文本不可达，靠评审兜底）', () => {
+    const dir = makeFixture({
+      'Renamed.test.ts': `mockInvoke.mockImplementation((c: string) => {
+  if (c === 'list_transactions') return Promise.resolve([])
+  return Promise.reject(new Error('unexpected invoke'))
+})`,
+    })
+    expect(run([dir]).status).toBe(0)
+  })
+
+  it('本地布线包装声明即红（baseInvoke/stubInvoke/mockBaseCommands/invokeHandler）', () => {
+    const dir = makeFixture({
+      'Wrapper.test.ts': `function baseInvoke(defaults: Record<string, unknown>) {}
+const stubInvoke = (table: Record<string, unknown>) => {}
+let mockBaseCommands: unknown
+var invokeHandler = () => {}`,
+    })
+    const r = run([dir])
+    expect(r.status).toBe(1)
+    for (const name of ['baseInvoke', 'stubInvoke', 'mockBaseCommands', 'invokeHandler']) {
+      expect(r.output).toContain(name)
+    }
+    expect(r.output).toContain('本地布线包装')
+  })
+
+  it('注释或字符串中提及布线包装名不触发（声明形才拦截）', () => {
+    const dir = makeFixture({
+      'Mention.test.ts': `// 旧形态 function baseInvoke(...) 已删除，历史见 issue #750
+const note = 'stubInvoke was here'
+export const doc = { name: 'mockBaseCommands' }
+export const legacy = { fn: 'invokeHandler' }`,
+    })
+    expect(run([dir]).status).toBe(0)
+  })
+
+  it('接缝自测文件（invoke-seam.test.ts）文件级豁免', () => {
+    const dir = makeFixture({
+      'invoke-seam.test.ts': `mockInvoke.mockImplementation((cmd: string) => {
+  if (cmd === 'list_transactions') return Promise.resolve([])
+  return Promise.reject(new Error('unexpected invoke'))
+})`,
+    })
+    expect(run([dir]).status).toBe(0)
+  })
+
+  it('helpers/ 目录自身豁免（规则 3 豁免范围与规则 1 同）', () => {
+    const dir = makeFixture({
+      'helpers/seam-like.ts': `export function wireThing() {
+  mockInvoke.mockImplementation((cmd: string) => {
+    if (cmd === 'list_transactions') return Promise.resolve([])
+    return Promise.reject(new Error('unexpected invoke'))
+  })
+}`, 
     })
     expect(run([dir]).status).toBe(0)
   })

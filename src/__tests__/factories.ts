@@ -1,5 +1,4 @@
 import { vi, type Mock } from 'vitest'
-import { resolveSeamFallback, type AppInvokeHandler } from './helpers/invoke-mock'
 import { registerToastSink, type ToastSink } from '@/composables/useLoadable'
 import type {
   Account,
@@ -19,8 +18,9 @@ import type {
 } from '@/types'
 
 /**
- * 组件/composable 测试的共享数据工厂与测试辅助（issue #110 审查：消除测试文件间重复）。
- * 各测试文件经 baseInvoke 辅助把这些对象接到对应 invoke 命令上。
+ * 组件/composable 测试的共享数据工厂（issue #110 审查：消除测试文件间重复）。
+ * invoke 布线一律走唯一接缝 wireInvokeSeam（helpers/invoke-mock.ts，ADR-0085），
+ * 本文件只承载数据夹具与 toast sink 假件，不含任何布线能力。
  */
 
 export const mockCurrencies: Currency[] = [
@@ -272,27 +272,3 @@ export function resetToastSink(): void {
   registerToastSink({ error: () => {} })
 }
 
-/**
- * invoke mock 处理函数组装器：extra 优先，其次 defaults，再次参考数据桩助手
- * 规范夹具（issue #725：参考命令默认值单一来源，新增参考表零测试文件改动），
- * 均未命中则 reject「unexpected invoke」。
- * extra 中函数型 handler 以参数调用；其余当固定返回值。
- * 返回类型声明为 AppInvokeHandler，供直接传给 `mockInvoke.mockImplementation`；
- * 唯一例外是函数型 handler 的裸返回值原样透传（刻意不包 Promise——
- * globalBusy.test.ts 借此观察「非 thenable 兑底」路径），类型层在单点按契约声明。
- *
- * 迁移期薄别名（issue #746）：只组装不接线的既有形态，静态兜底层（defaults →
- * 参考数据预热 → 未命中报错）与唯一接缝 `wireInvokeSeam` 共用同一实现；
- * 本入口保持既有形态供既有使用者不改一字，迁移完成后由收尾票删除。
- */
-export function invokeHandler(
-  defaults: Record<string, unknown>,
-  extra?: Record<string, unknown>,
-): AppInvokeHandler {
-  return (cmd, _args) => {
-    const handler = extra && extra[cmd]
-    if (typeof handler === 'function') return (handler as () => unknown)() as Promise<unknown>
-    if (handler !== undefined) return Promise.resolve(handler)
-    return resolveSeamFallback(cmd, defaults)
-  }
-}

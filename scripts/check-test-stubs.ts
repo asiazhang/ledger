@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// 前端测试桩守门（issue #725 + #726），两条规则：
+// 前端测试桩守门（issue #725 + #726 + #750），三条规则：
 //
 // 规则 1（#725）：前端测试文件不得再手搓参考数据 `list_*` 桩接线。
 //
@@ -7,24 +7,25 @@
 // list_insurers）曾散落全仓 ~57 个测试文件，两分支并行各插一行后合并出同回调
 // 重复桩——if 链先命中短路，后一条永远不生效，带数据桩被兜底空桩静默短路，
 // 测试以「数据缺失」的间接方式失败，排查成本高。
-// 治理：桩来源收敛到 src/__tests__/helpers/reference-stubs.ts（stubReferenceInvoke，
-// 深模块单一来源）；本脚本防回归。
+// 治理：参考命令接线收敛到唯一接缝 wireInvokeSeam（helpers/invoke-mock.ts，
+// 登记处在 helpers/reference-stubs.ts）；本脚本防回归。
 //
 // 命令清单单一来源：从助手的 `REFERENCE_DEFAULTS` 登记处文本提取命令名——
 // 新增参考表只改助手，守门清单自动跟随，无双源漂移。登记处提不出任何命令
 // 即红（清单漂移 fail loud）。
 //
 // 扫描边界：文本级扫描 `<testsDir>/**`（默认 src/__tests__）下全部 .ts 文件
-// （含 .test.ts、helpers/ 测试助手与共享桩模块）。规则 1 豁免 helpers/（任意深度的同名
+// （含 .test.ts、helpers/ 测试助手与共享桩模块）。规则 1 与规则 3 豁免 helpers/（任意深度的同名
 // 目录）——登记处即桩来源，接线合法；规则 2 不豁免 helpers/（#726 明确要求扫描测试
 // helper，且 helper 内重复桩危害面更大）。本守门自身的包装测试
-// check-test-stubs.test.ts 豁免（其夹具文本合法包含违规形态）。
+// check-test-stubs.test.ts 与接缝自测 invoke-seam.test.ts 文件级豁免（夹具文本合法
+// 包含违规形态；接缝自测是接缝自身的符合性测试）。
 // 命中形态限桩接线：`if (cmd === '<命令>')`（if 链）、`cmd === '<命令>' ?`（三元）、
 // `case '<命令>':`（switch）；断言里的命令等值比较（如 mock.calls.filter 箭头函数体）
 // 非接线，不误报。已知文本不可达处（靠评审兜底）：桩实现形参改名（如 cmd → c）
-// 即逃逸匹配；经变量间接分派、对象字面量覆写（overrides / invokeHandler defaults）
+// 即逃逸匹配；经变量间接分派、对象字面量覆写（overrides / defaults 表）
 // 等合法形态同样不可达。
-// 领域数据命令（list_transactions 等，不在登记处）的手搓桩不在守门范围。
+// 领域数据命令（list_transactions 等，不在登记处）的手写分发桩由规则 3 纳管。
 //
 // 规则 2（#726）：同一 `mockImplementation` 回调体内同名命令的 `if (cmd === 'X')` 接线
 // 不得重复（PR #721/#722/#723 合并曾产出 63 处同回调重复桩：if 链先命中短路，后一条
@@ -41,6 +42,20 @@
 // 内含引号/括号时可致词法错位——失衡单元跳过不计（宁漏不误），或局部误判（漏报）；
 // 恰好整体等于接线形态的字符串字面量理论上可误报（现实中未见）。同一文件两个独立
 // 回调各桩同命令一次是整体替换语义，合法。
+//
+// 规则 3（#750，ADR-0085 决策 9）：迁移完成后禁回潮——测试辅助出口之外禁止
+// 手写 invoke 分发桩与本地布线包装定义。
+//   3a 手写分发桩：`.mockImplementation(`（非 Once）回调，首参名为 cmd，且回调体
+//      活代码含命令分发特征（`if (cmd ===`、`cmd === '…' ?`、`switch (cmd)`）——
+//      全量替换 + 命令分发即手写接缝，无论是否委托回接缝。特征串以 #750 收尾后
+//      残余形态为准：钦定保留形态 = mockImplementationOnce 一次性委托（队列语义，
+//      接缝文档典型用法）与无 cmd 形参的全量替换契约桩（裸值/在途用例），均不拦。
+//   3b 本地布线包装：声明形出现 baseInvoke/stubInvoke/mockBaseCommands/invokeHandler
+//      （迁移期已清零的历史布线包装名）即红；注释/字符串中提及不拦。
+//   豁免范围与规则 1 同（helpers/ 目录自身、守门自测文件）另加接缝自测文件。
+//   已知文本不可达处（靠评审兜底）：形参改名（cmd → c）与 async (cmd) 等前缀形态逃逸
+//   3a；Once 无委托形态、非声明形的局部布线包装不可达。3b 按行首判定跳过注释行、
+//   不做字符串掩码——字符串内恰好含完整声明形态文本理论上可误红（现实中未见）。
 //
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/check-test-stubs.ts`。
@@ -71,14 +86,18 @@ function extractCommands(): string[] {
   return [...registryMatch[1].matchAll(/^\s*(list_[a-z_]+):/gm)].map((m) => m[1])
 }
 
-// —— 递归收集 .ts 文件（helpers/ 纳入扫描；守门自身包装测试豁免） ——
+// —— 递归收集 .ts 文件（helpers/ 纳入扫描；守门自身包装测试与接缝自测豁免） ——
 function walk(dir: string): string[] {
   const out: string[] = []
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, entry.name)
     if (entry.isDirectory()) {
       out.push(...walk(p))
-    } else if (entry.name.endsWith('.ts') && entry.name !== 'check-test-stubs.test.ts') {
+    } else if (
+      entry.name.endsWith('.ts') &&
+      entry.name !== 'check-test-stubs.test.ts' &&
+      entry.name !== 'invoke-seam.test.ts'
+    ) {
       out.push(p)
     }
   }
@@ -102,7 +121,7 @@ function findHandWiredReferenceStubs(rel: string, source: string, commands: stri
   source.split('\n').forEach((line, i) => {
     for (const { cmd, re } of wirings) {
       if (re.test(line)) {
-        hits.push(`  ${rel}:${i + 1}  手搓参考数据桩（${cmd}）——改用 helpers/reference-stubs.ts 的 stubReferenceInvoke`)
+        hits.push(`  ${rel}:${i + 1}  手搓参考数据桩（${cmd}）——改走唯一接缝 wireInvokeSeam（helpers/invoke-mock.ts）`)
       }
     }
   })
@@ -204,6 +223,78 @@ function findDuplicateWiring(rel: string, source: string, units: CallbackUnit[])
   return hits
 }
 
+// —— 规则 3a：手写 invoke 分发桩（全量替换 mockImplementation 回调 + cmd 首参 +
+//    活代码命令分发特征）。Once 一次性委托（队列语义）与无 cmd 形参的契约桩不拦。
+const DISPATCH_FEATURE = new RegExp(
+  [
+    '\\bif\\s*\\(\\s*cmd\\s*===', // if (cmd === '…')
+    '\\bcmd\\s*===\\s*[\'"`][^\'"`\\n]*[\'"`]\\s*\\?', // cmd === '…' ?
+    '\\bswitch\\s*\\(\\s*cmd\\s*\\)', // switch (cmd)
+  ].join('|'),
+  'g',
+)
+
+function findHandWrittenDispatchStub(rel: string, source: string, units: CallbackUnit[]): string[] {
+  const hits: string[] = []
+  for (const unit of units) {
+    const raw = source.slice(unit.start, unit.end)
+    // 首参名限定 cmd（形参改名即逃逸匹配，已知文本不可达处）；cmd2 等不误伤
+    if (!/^\s*\(?\s*cmd\b/.test(raw)) continue
+    // 挖空嵌套回调单元与字符串/注释（与规则 2 同款词法掩码），只看本单元活代码
+    let text = raw
+    for (const nested of units) {
+      if (nested === unit) continue
+      if (nested.start >= unit.start && nested.end <= unit.end) {
+        const st = nested.start - unit.start
+        const en = nested.end - unit.start
+        text = text.slice(0, st) + text.slice(st, en).replace(/[^\n]/g, ' ') + text.slice(en)
+      }
+    }
+    const masks = unit.masks.map(
+      ([ms, me]) => [ms - unit.start, Math.min(me, unit.end) - unit.start] as [number, number],
+    )
+    DISPATCH_FEATURE.lastIndex = 0
+    let m: RegExpExecArray | null
+    let dispatched = false
+    while ((m = DISPATCH_FEATURE.exec(text))) {
+      const at = m.index
+      const len = m[0].length
+      // 存在性检测：匹配整体落在字符串/注释掩码内才算死（三元特征必然内含命令名
+      // 字符串字面量，部分重叠不算死——与规则 2 的计数口径有意不同）
+      const dead = masks.some(([ms, me]) => ms <= at && at + len <= me)
+      if (!dead) {
+        dispatched = true
+        break
+      }
+    }
+    if (dispatched) {
+      hits.push(
+        `  ${rel}:${lineOf(source, unit.start)}  手写 invoke 分发桩（mockImplementation 全量替换 + cmd 分发）——改走唯一接缝 wireInvokeSeam 两表布线，一次性覆盖用 mockImplementationOnce 委托`,
+      )
+    }
+  }
+  return hits
+}
+
+// —— 规则 3b：本地布线包装定义（迁移期已清零的历史布线包装名，声明形出现即红；
+//    注释/字符串中提及不拦——注释行整行跳过，字符串内无声明关键字前缀不匹配） ——
+const WRAPPER_DECL =
+  /\b(?:function\s+|(?:const|let|var)\s+)(baseInvoke|stubInvoke|mockBaseCommands|invokeHandler)\b/g
+
+function findLocalWiringWrapper(rel: string, source: string): string[] {
+  const hits: string[] = []
+  source.split('\n').forEach((line, i) => {
+    const t = line.trim()
+    if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) return
+    WRAPPER_DECL.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = WRAPPER_DECL.exec(line))) {
+      hits.push(`  ${rel}:${i + 1}  本地布线包装定义（${m[1]}）——布线一律走唯一接缝 wireInvokeSeam`)
+    }
+  })
+  return hits
+}
+
 function main(): void {
   const commands = extractCommands()
   if (commands.length === 0) {
@@ -212,28 +303,35 @@ function main(): void {
 
   let handWired = 0
   let duplicated = 0
+  let dispatchStubs = 0
+  let wiringWrappers = 0
   const violations: string[] = []
   for (const file of walk(testsDir)) {
     const rel = relative(testsDir, file)
     const source = readFileSync(file, 'utf8')
     const inHelpers = rel.split(sep).includes('helpers')
+    const units = extractCallbackUnits(source)
     const rule1 = inHelpers ? [] : findHandWiredReferenceStubs(rel, source, commands)
-    const rule2 = findDuplicateWiring(rel, source, extractCallbackUnits(source))
+    const rule2 = findDuplicateWiring(rel, source, units)
+    const rule3a = inHelpers ? [] : findHandWrittenDispatchStub(rel, source, units)
+    const rule3b = inHelpers ? [] : findLocalWiringWrapper(rel, source)
     handWired += rule1.length
     duplicated += rule2.length
-    violations.push(...rule1, ...rule2)
+    dispatchStubs += rule3a.length
+    wiringWrappers += rule3b.length
+    violations.push(...rule1, ...rule2, ...rule3a, ...rule3b)
   }
 
   if (violations.length > 0) {
     console.error(
-      `✗ 测试桩守门：发现 ${handWired} 处手搓参考数据桩、${duplicated} 处同回调重复桩（登记处命令：${commands.join(' ')}）\n` +
+      `✗ 测试桩守门：发现 ${handWired} 处手搓参考数据桩、${duplicated} 处同回调重复桩、${dispatchStubs} 处手写 invoke 分发桩、${wiringWrappers} 处本地布线包装（登记处命令：${commands.join(' ')}）\n` +
         violations.join('\n') +
-        `\n参考数据桩单一来源：stubReferenceInvoke（${relative(process.cwd(), helperPath)}，issue #725）`,
+        `\ninvoke 布线唯一接缝：wireInvokeSeam（${relative(process.cwd(), join(testsDir, 'helpers', 'invoke-mock.ts'))}，issue #746/#750，ADR-0085）`,
     )
     process.exit(1)
   }
 
-  console.log(`✅ 测试桩守门通过（登记处 ${commands.length} 条命令；同回调重复 0，testsDir=${relative(process.cwd(), testsDir) || '.'}）`)
+  console.log(`✅ 测试桩守门通过（登记处 ${commands.length} 条命令；同回调重复 0、手写分发桩 0、本地布线包装 0，testsDir=${relative(process.cwd(), testsDir) || '.'}）`)
 }
 
 // 仅直接运行时执行 main；被测试/其他工具 import 时只取导出的扫描函数。
