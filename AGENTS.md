@@ -42,7 +42,7 @@
 
 ## 测试、工作流与发布
 
-- Rust 业务行为按项目约定补 BDD；HTTP-only 行为补 API 集成测试；纯内部逻辑可补单测；前端逻辑补 Vitest；BDD world 只保存跨步骤读写的状态。
+- Rust 侧测试三层各有权威：域行为归域单测（写入编排、金额折算、余额规则、删除清理副作用、查询语义）；壳行为归 API 集成测试（参数解包、状态码、错误码、壳层接线），域语义至多以接线证明出现；跨模块用户旅程归 e2e BDD，不为域规则凑数据。前端逻辑补 Vitest；BDD world 只保存跨步骤读写的状态。
 - 调用 `/implement` 实施代码改动时：对应 GitHub issue 先认领（见 `docs/agents/issue-tracker.md` 开发认领），再使用独立 git worktree，并在工作树内完成验证和提交；提交后推送分支并主动在 GitHub 上创建 PR，PR 是交付终点，不自行合并。worktree 缺少前端依赖时先运行 `pnpm install`。
 - 只读审查不修改、不提交；研究任务是否写入文档，以用户要求和对应 skill 为准。
 - 修改迁移、AI API 契约、数据模型或准备发布时，先判断当前提交相对最新 tag 的发布边界。无可用 tag 时，先报告无法判断发布边界，不擅自把 schema/AI API 契约当作已发布或未发布。已发布 AI API 契约和数据模型只增不改；已发布迁移的就地修改须在 migration 文件头部注明对应 CHANGELOG 条目，并在 `CHANGELOG.md` 的对应版本或 `Unreleased` 下增加 BREAKING 条目。
