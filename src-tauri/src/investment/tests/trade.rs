@@ -288,6 +288,61 @@ fn buy_update_native_cents_converted_via_amount_seam() {
     );
 }
 
+/// sell 本位币金额同样经 Amount 接缝折算（issue #771 自 API 集成层移交域权威）：
+/// 非 1:1 汇率下卖出行落库的 `amount_native_cents` 为折算值而非原始金额。
+#[test]
+fn sell_native_cents_converted_via_amount_seam() {
+    let conn = open();
+    seed_account(&conn, "acc-test-sell-conv", "美股", "investment", "USD", 0);
+    seed_exchange_rate(&conn, "USD", "CNY", 7.2);
+    seed_instrument(
+        &conn,
+        "inst-test-sell-conv",
+        "TSLA",
+        "Tesla",
+        "USD",
+        "unknown",
+    );
+
+    // 前置买入建仓，卖出按 FIFO 消费持仓。
+    create_transaction_internal(
+        &conn,
+        make_buy_input(
+            "acc-test-sell-conv",
+            "inst-test-sell-conv",
+            10.0,
+            1_000_000,
+            0,
+        ),
+    )
+    .unwrap();
+    let sell_id = create_transaction_internal(
+        &conn,
+        make_sell_input(
+            "acc-test-sell-conv",
+            "inst-test-sell-conv",
+            4.0,
+            1_100_000,
+            0,
+        ),
+    )
+    .unwrap()
+    .id;
+
+    let (amount_cents, amount_native_cents): (i64, i64) = conn
+        .query_row(
+            "SELECT amount_cents, amount_native_cents FROM transactions WHERE id=?1",
+            params![sell_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(amount_cents, 44000, "卖出入账 = 数量×单价−手续费");
+    assert_eq!(
+        amount_native_cents, 316800,
+        "本位币金额应经 convert_to_native 折算（44000 × 7.2）"
+    );
+}
+
 #[test]
 fn buy_transaction_requires_investment_account() {
     let conn = open();
