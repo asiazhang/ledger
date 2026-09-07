@@ -289,7 +289,8 @@ describe('useReferenceStore', () => {
   it('getCurrency 按 code 返回币种', async () => {
     const store = useReferenceStore()
     await store.refresh()
-    expect(store.getCurrency('CNY')?.symbol).toBe('¥')
+    // 返回种子里对应 code 的那行币种（含 symbol/小数位全字段，store 克隆后深等），非格式断言
+    expect(store.getCurrency('CNY')).toStrictEqual(mockCurrencies[0])
     expect(store.getCurrency('EUR')).toBeUndefined()
   })
 })

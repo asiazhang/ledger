@@ -12,14 +12,15 @@
 //! 归一化代码全等（错前缀 secid 也会返回其他标的，回显全等防错配）。
 //!
 //! f62 与 f59 为未公开字段，语义可能无声变更（spec #690 Further Notes）——
-//! f62 的类型探测隔离在 [`detect_kind_hint`] 单点、f59 的换算隔离在
-//! [`price_cents_from_raw`] 单点，注入测试钉住已知样本，漂移时改一处即可。
+//! f62 的类型探测隔离在 [`detect_kind_hint`] 单点、f59 的价格换算隔离在 http 层
+//! [`price_cents_from_raw`] 单点（与增量同步批量报价共用，#695），fixture 单测
+//! 钉住已知样本，漂移时改一处即可。
 
 use serde::Deserialize;
 
 use super::fund::deserialize_flexible_f64;
 use super::http::{
-    API_HOSTS, Pacer, RetryConfig, STOCK_GET_PATH, build_client, f2_to_price,
+    API_HOSTS, Pacer, RetryConfig, STOCK_GET_PATH, build_client, price_cents_from_raw,
     request_json_from_hosts, secid_prefix,
 };
 use super::incremental::beijing_date;
@@ -83,17 +84,6 @@ pub(crate) fn detect_kind_hint(kind_feature: Option<f64>) -> InstrumentType {
     match kind_feature {
         Some(0.0) => InstrumentType::Etf,
         _ => InstrumentType::Stock,
-    }
-}
-
-/// 东财最新价原始值（f43，按 f59 精度缩放）→ 万分之一元（ADR-0038 价格刻度）：
-/// `price_cents = f43 × 10^(4 − f59)`。精度缺省或越界（1..=4 之外）时按市场
-/// 回退（A 股 2 位、港股 3 位，与增量同步换算 [`f2_to_price`] 同口径）——
-/// 回退分支只兜异常形态，正常样本恒有合法精度位。
-pub(crate) fn price_cents_from_raw(raw: f64, precision: Option<f64>, market: &str) -> i64 {
-    match precision {
-        Some(p) if (1.0..=4.0).contains(&p) => (raw * 10f64.powi(4 - p as i32)).round() as i64,
-        _ => f2_to_price(raw, market),
     }
 }
 

@@ -20,7 +20,7 @@ use crate::world::LedgerWorld;
 /// 创建隐藏账户（`is_hidden=1`，含黑洞同款可见性）并注册名称→id 映射：创建经
 /// 账户域公开入口（余额缓存行不变量由产品代码保证，#763 旁路归零）；
 /// `is_hidden` 无公开入口可表达（黑洞账户仅由种子预置），库内状态直置后仅在
-/// 该属性上留置（归 #764 例外清单汇总）。
+/// 该属性上留置（#764 已登记例外）。
 #[given(expr = "存在隐藏账户 {string} 类型 {string} 币种 {string} 初始余额 {int}")]
 fn create_hidden_account(
     world: &mut LedgerWorld,

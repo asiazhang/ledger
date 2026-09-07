@@ -7,7 +7,12 @@ import GroupMoreView from '@/views/GroupMoreView.vue'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
 import { makePolicy, makePolicyStats } from './factories'
 import { routes, router } from '@/router'
+import { formatAmount } from '@/utils/money'
+import { refCurrencies } from './helpers/reference-stubs'
 import type { SubscriptionSpendOverview } from '@/types'
+
+// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
+const cny = refCurrencies[0]
 
 
 /** 订阅花费总览空数据（定时页签挂载即拉取，容器壳测试不关心行内容）。 */
@@ -111,9 +116,9 @@ describe('GroupMoreView 组内「更多」容器（issue #472 / ADR-0063 决策 
     expect(text).toContain('P2026-001')
     // 软删入口在行上可达（确认交互归 PoliciesView 自身测试）
     expect(wrapper.find('[data-testid="policy-delete-policy-1"]').exists()).toBe(true)
-    // 保单视角统计：累计已缴 600_000 分 → ¥6000（同 PoliciesView 既有断言口径）
+    // 保单视角统计：累计已缴 600_000 分（同 PoliciesView 既有断言口径）
     expect(text).toContain('累计已缴')
-    expect(text).toContain('¥6000')
+    expect(text).toContain(formatAmount(600_000, cny))
     expect(wrapper.find('[data-testid="policy-new"]').exists()).toBe(true)
   })
 })

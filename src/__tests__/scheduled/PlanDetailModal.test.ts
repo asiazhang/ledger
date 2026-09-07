@@ -3,6 +3,8 @@ import { mockInvoke, wireInvokeSeam } from '../helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
 import { mountFlushed } from '../helpers/mount'
+import { formatAmount } from '@/utils/money'
+import { refCurrencies } from '../helpers/reference-stubs'
 import type {
   Account,
   Category,
@@ -11,6 +13,9 @@ import type {
   ScheduledTransactionDetail,
   ScheduledTransactionOccurrence,
 } from '@/types'
+
+// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
+const cny = refCurrencies[0]
 
 
 const mockAccounts: Account[] = [
@@ -232,8 +237,8 @@ describe('PlanDetailModal 期次列表（issue #205）', () => {
     expect(q('[data-testid="occ-status-c1"]')!.textContent).toBe('已完成')
     expect(q('[data-testid="occ-status-f1"]')!.textContent).toBe('失败')
     expect(q('[data-testid="occ-status-o2"]')!.textContent).toBe('待执行')
-    // 金额按计划币种展示（1500 分 = ¥15）
-    expect(text).toContain('¥15')
+    // 金额按计划币种展示（1500 分）
+    expect(text).toContain(formatAmount(1500, cny))
   })
 
   it('重试按钮状态门控：仅 failed 期次有重试入口', async () => {

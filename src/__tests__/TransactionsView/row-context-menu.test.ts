@@ -11,7 +11,12 @@ import RefundForm from '@/components/RefundForm.vue'
 import AddItemForm from '@/components/AddItemForm.vue'
 import MerchantLink from '@/components/MerchantLink.vue'
 import { useReferenceStore } from '@/stores/reference'
+import { formatAmount } from '@/utils/money'
+import { refCurrencies } from '../helpers/reference-stubs'
 import type { Transaction } from '@/types'
+
+// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
+const cny = refCurrencies[0]
 
 describe('TransactionsView 行右键菜单（issue #151）', () => {
   // 混合数据集：expense / income / transfer 行并存，供菜单项可见性与删除/退款断言
@@ -152,7 +157,7 @@ describe('TransactionsView 行右键菜单（issue #151）', () => {
     expect(form.exists()).toBe(true)
     // 原交易只读信息：日期 / 金额 / 账户名（teleport 到 body，从卡片查文本）
     expect(visibleModalText()).toContain('2026-01-01')
-    expect(visibleModalText()).toContain('¥30')
+    expect(visibleModalText()).toContain(formatAmount(3000, cny))
     expect(visibleModalText()).toContain('现金')
     // 金额默认原交易金额（可改，字段错误态改造后为自由文本输入框，ADR-0058 / #415），
     // 币种/账户锁定（disabled）

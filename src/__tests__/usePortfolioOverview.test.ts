@@ -17,6 +17,13 @@ import {
   mockInstruments,
   resetToastSink,
 } from './factories'
+import { formatAmount } from '@/utils/money'
+import type { Currency } from '@/types'
+
+// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测；
+// formatCurrencyGroups 自身规则只剩「 / 」连接符，仍以字面量锁定
+const cny = mockCurrencies[0]
+const usd: Currency = { code: 'USD', name: '美元', symbol: '$', decimal_places: 2 }
 
 /** 默认 invoke 布线：持仓 + 持仓标的字典契约快照（参考字典命令走接缝内建兑底） */
 const BASE_DEFAULTS = {
@@ -66,10 +73,7 @@ describe('sumByCurrency 按币种汇总金额', () => {
 describe('formatCurrencyGroups 分组合计展示文本（issue #145 首页复用）', () => {
   it('逐组格式化后以「 / 」连接', () => {
     const currencyMap = new Map(
-      [
-        ...mockCurrencies,
-        { code: 'USD', name: '美元', symbol: '$', decimal_places: 2 },
-      ].map((c) => [c.code, c]),
+      [...mockCurrencies, usd].map((c) => [c.code, c]),
     )
     expect(
       formatCurrencyGroups(
@@ -79,7 +83,7 @@ describe('formatCurrencyGroups 分组合计展示文本（issue #145 首页复�
         ],
         currencyMap,
       ),
-    ).toBe('¥3 / -$5')
+    ).toBe(`${formatAmount(300, cny)} / ${formatAmount(-500, usd)}`)
   })
 
   it('空分组降级为 -', () => {

@@ -10,7 +10,12 @@ import { resetOverlays } from '@/composables/overlayRegistry'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { findButton } from './helpers/dom'
 import { makeTransaction } from './factories'
+import { refCurrencies } from './helpers/reference-stubs'
+import { formatAmount } from '@/utils/money'
 import type { Account, Category, Merchant, Transaction } from '@/types'
+
+// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
+const cny = refCurrencies[0]
 
 
 // jsdom 无元素滚动：期间直达面板打开时 naive-ui 会 scrollTo，补空实现避免
@@ -339,7 +344,7 @@ describe('SearchView.vue', () => {
     await typeAndSearch(wrapper, '报销')
     expect(wrapper.text()).toContain('命中 2 条')
     expect(wrapper.text()).toContain('报销')
-    expect(wrapper.text()).toContain('¥33')
+    expect(wrapper.text()).toContain(formatAmount(3300, cny))
     expect(wrapper.text()).toContain('支出')
     expect(wrapper.text()).toContain('餐饮')
     expect(wrapper.text()).toContain('现金')
@@ -474,7 +479,7 @@ describe('SearchView.vue', () => {
       await minAmountInput(wrapper).setValue('15.5')
       await applyFilters()
       expect(wrapper.text()).toContain('已应用筛选')
-      expect(wrapper.text()).toContain('最低 ¥15.5')
+      expect(wrapper.text()).toContain(`最低 ${formatAmount(1550, cny)}`)
 
       const clearBtn = findButton(wrapper, '清除筛选', { exact: true })
       expect(clearBtn).toBeTruthy()
@@ -606,7 +611,7 @@ describe('SearchView.vue', () => {
       // 金额与芯片变更防抖合并为一次搜索
       expect(searchCalls().length).toBe(1)
       expect(wrapper.text()).toContain('已应用筛选')
-      expect(wrapper.text()).toContain('最低 ¥15.5')
+      expect(wrapper.text()).toContain(`最低 ${formatAmount(1550, cny)}`)
       expect(wrapper.text()).toContain('起始 2026-02-01')
       expect(wrapper.text()).toContain('结束 2026-02-28')
 

@@ -19,7 +19,9 @@
 //! 写入的形态；写入失败被静默吞掉属违规（CONTEXT-testing「步骤动词」）。
 
 use tauri_app_lib::accounts::{AccountInput, AccountType, create_account};
+use tauri_app_lib::currencies::ExchangeRateInput;
 use tauri_app_lib::error::AppError;
+use tauri_app_lib::investment::create_exchange_rate;
 use tauri_app_lib::scheduled_transactions::{
     CreateScheduledInput, ScheduledStatus, create_plan, update_plan_status,
 };
@@ -277,10 +279,38 @@ pub(crate) fn account_currency_code(world: &LedgerWorld, account_id: &str) -> St
 
 /// 计划生命周期动词（#762 接线）：经既有生命周期命令形态的域函数
 /// `update_plan_status`（暂停/恢复/取消命令体）变更状态；失败即 panic。
-/// 不为测试开旁路——期次状态回写等无公开入口的直置不在此列（归 #763 例外裁决）。
+/// 不为测试开旁路——期次状态回写等无公开入口的直置不在此列（归 #764 例外裁决）。
 pub fn update_plan_status_verb(world: &mut LedgerWorld, id: &str, status: ScheduledStatus) {
     world
         .db
         .write(|conn| update_plan_status(conn, id, status))
         .expect("计划状态变更失败");
+}
+
+// ---------------------------------------------------------------------------
+// 投资域动词：汇率夹具经 investment::create_exchange_rate（upsert 单点）
+// ---------------------------------------------------------------------------
+
+/// 汇率夹具动词（#764 接线，替代「存在汇率」类步骤的内联直写）：经投资域公开
+/// 创建入口写入一条汇率（base → quote，upsert 单点）；失败即 panic。**不经
+/// `db.write` 置脏包装**——与 [`create_account_verb`] 同款取舍：本动词服务
+/// 「存在汇率」类前置夹具，夹具自身不触发自动备份脏标记；需要置脏的汇率
+/// 写路径场景由 backup_steps 的「写入汇率」步骤（db.write + 同一域入口）表达。
+/// source 固定 'manual'（手动汇率语义，与既有直置夹具同值）；`priced_at` 为
+/// 报价时刻，折算查询不消费，值无断言语义（取非 FIXED_NOW 值避免守门规则 3）。
+pub fn create_exchange_rate_verb(
+    world: &mut LedgerWorld,
+    base: &str,
+    quote: &str,
+    rate: f64,
+    priced_at: &str,
+) {
+    let input = ExchangeRateInput {
+        base_code: base.into(),
+        quote_code: quote.into(),
+        rate,
+        priced_at: priced_at.into(),
+        source: Some("manual".into()),
+    };
+    create_exchange_rate(&world_conn!(world), input).expect("存在汇率夹具：写入失败");
 }

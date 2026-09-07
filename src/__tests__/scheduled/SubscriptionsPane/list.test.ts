@@ -7,6 +7,8 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
+import { formatAmount } from '@/utils/money'
+import { refCurrencies } from '../../helpers/reference-stubs'
 import {
   mockDetails,
   makeDetail,
@@ -16,6 +18,9 @@ import {
   setMockPlans,
   setup,
 } from './common'
+
+// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
+const cny = refCurrencies[0]
 
 beforeEach(setup)
 
@@ -76,7 +81,7 @@ describe('SubscriptionsPane 订阅清单渲染冒烟（编排用例见 useSchedu
     )
     const wrapper = await mountView()
     expect(wrapper.text()).toContain('2026-03-01')
-    expect(wrapper.text()).toContain('¥15')
+    expect(wrapper.text()).toContain(formatAmount(1500, cny))
     expect(wrapper.text()).not.toContain('2026-04-01')
   })
 
@@ -104,7 +109,7 @@ describe('SubscriptionsPane 订阅清单渲染冒烟（编排用例见 useSchedu
     setMockPlans([plan])
     mockDetails.set('a1', makeDetail(plan, []))
     const wrapper = await mountView()
-    expect(wrapper.text()).toContain('¥99')
+    expect(wrapper.text()).toContain(formatAmount(9900, cny))
     expect(wrapper.text()).toContain('每3月')
   })
 })

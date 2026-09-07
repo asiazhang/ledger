@@ -42,6 +42,9 @@ fn create_txn_with_category(
 
 /// 同日批量导入：直接写库模拟"同一批导入每批一个时间戳"（全部行 created_at 相同，
 /// 只有 id tiebreaker 能区分排序），用于验证确定性排序下翻页无重复无遗漏。
+/// 库内状态直置（#764 已登记例外）：同 created_at 平局正是被测前提，行为层
+/// 逐行发放秒级时钟（writer 内 `now_iso()`），跨秒即失去平局、前提无法确定性
+/// 构造；写入路径无时刻注入接缝（为测试开口被 ADR-0086 否决）。
 #[when(expr = "批量导入 {int} 笔同日交易 日期 {string} 到账户 {string}")]
 fn batch_import_same_day(world: &mut LedgerWorld, count: i64, date: String, account_name: String) {
     let account_id = world.account_id(&account_name);
@@ -347,6 +350,8 @@ fn parse_kinds(raw: &str) -> Vec<TransactionKind> {
 /// 播种 8 种 kind × 带分类/无分类共 16 行（读侧过滤域级测试）：写入路径按 kind 各有
 /// 专用校验（buy/sell 需要标的、refund 需关联原支出），而本场景只针对读过滤接缝
 /// （kind IN + category_id IS NULL 的 AND 组合），直插 SQL 与同日批量导入步骤同先例。
+/// 库内状态直置（#764 已登记例外）：dividend/split 未实现，公开写入入口显式拒绝，
+/// 全 kind 覆盖无法经行为层构造。
 #[when(expr = "播种 8 类交易各带分类与无分类 日期 {string} 到账户 {string} 分类 {string}")]
 fn seed_kinds_with_and_without_category(
     world: &mut LedgerWorld,

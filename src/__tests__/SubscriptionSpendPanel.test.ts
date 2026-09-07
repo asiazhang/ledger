@@ -3,7 +3,12 @@ import { wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { useReferenceStore } from '@/stores/reference'
 import SubscriptionSpendPanel from '@/components/scheduled/SubscriptionSpendPanel.vue'
+import { formatAmount } from '@/utils/money'
+import { refCurrencies } from './helpers/reference-stubs'
 import type { SubscriptionSpendOverview, SubscriptionSpendRow } from '@/types'
+
+// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
+const cny = refCurrencies[0]
 
 vi.mock('vue-chartjs', async () => {
   const { BarChartStub } = await import('./line-chart-stub')
@@ -84,16 +89,16 @@ describe('SubscriptionSpendPanel 订阅花费双口径（issue #160/#161）', ()
   it('渲染本月/本年实际花费汇总（本位币）', async () => {
     const wrapper = mount(SubscriptionSpendPanel)
     await flushPromises()
-    expect(wrapper.get('[data-testid="spend-this-month"]').text()).toBe('¥30')
-    expect(wrapper.get('[data-testid="spend-this-year"]').text()).toBe('¥648')
+    expect(wrapper.get('[data-testid="spend-this-month"]').text()).toBe(formatAmount(3000, cny))
+    expect(wrapper.get('[data-testid="spend-this-year"]').text()).toBe(formatAmount(64800, cny))
     expect(wrapper.text()).toContain('单位：CNY（本位币）· 不摊销')
   })
 
   it('渲染折算月/年推算成本（只统计进行中订阅，纯展示口径）', async () => {
     const wrapper = mount(SubscriptionSpendPanel)
     await flushPromises()
-    expect(wrapper.get('[data-testid="spend-projected-month"]').text()).toBe('¥40.3')
-    expect(wrapper.get('[data-testid="spend-projected-year"]').text()).toBe('¥483.6')
+    expect(wrapper.get('[data-testid="spend-projected-month"]').text()).toBe(formatAmount(4030, cny))
+    expect(wrapper.get('[data-testid="spend-projected-year"]').text()).toBe(formatAmount(48360, cny))
     expect(wrapper.text()).toContain('推算：只计进行中的计划')
   })
 
@@ -115,7 +120,7 @@ describe('SubscriptionSpendPanel 订阅花费双口径（issue #160/#161）', ()
     expect(table.text()).toContain('视频会员')
     expect(table.text()).toContain('已退订服务')
     expect(table.text()).toContain('已取消')
-    expect(table.text()).toContain('¥618')
+    expect(table.text()).toContain(formatAmount(61800, cny))
   })
 
   it('命令失败（如缺汇率中文错误上抛）时显示失败态，不静默混算', async () => {
