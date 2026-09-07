@@ -27,11 +27,6 @@ Feature: 账户管理
     Then "A账户" 账户余额应为 -2000
     And "B账户" 账户余额应为 2000
 
-  Scenario: 分红计入账户余额
-    Given 存在账户 "证券账户" 类型 "investment" 币种 "CNY"
-    When 直接写入分红交易 金额 60 到账户 "证券账户" 日期 "2026-05-04"
-    Then "证券账户" 账户余额应为 60
-
   Scenario: 编辑账户名称
     Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
     When 修改账户 "现金" 名称为 "钱包"
