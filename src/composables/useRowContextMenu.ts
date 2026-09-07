@@ -14,10 +14,14 @@ import type { Ref } from 'vue'
  * 组内收纳页签菜单（GroupMoreView）——后两份为目标语义不同的非行拷贝，排除裁决
  * 见 ADR-0077；行拷贝的迁移以「既有视图测试零断言变化全绿」为等价证据。
  *
- * 接口四面：
+ * 接口五面：
  * - state：单判别状态 `{ x, y, row } | null`（只读），可见性由非空派生、
  *   无独立开关布尔；close 清回全空终态，无滞留行，「行非空但菜单已关」的
  *   非法中间态由形态消灭（ADR-0045「show 由意图派生」同款）；
+ * - position：定位坐标（最近一次 open 的捕获点，只读）——与显示状态分离
+ *   持有，不随 close 清零：naive-ui animated 下拉在离场动画期间仍按 x/y
+ *   props 重定位弹层，坐标清零会让淡出中的菜单跳到视口左上角闪现一次
+ *   （「关闭帧坐标无消费方」是已被证伪的错误假设，issue #798）；
  * - open(event, row)：幂等升级——未开即开、已开即重定位；统一「收起 → 下一帧
  *   重开」舞步单路径，从关闭态打开同样延迟一帧（与既有行为严格等价，不做快
  *   路径优化）；同一同步批次内连续 open，最后一次开启胜出；
@@ -43,6 +47,8 @@ export interface RowContextMenuState<TRow> {
 export interface UseRowContextMenuReturn<TRow> {
   /** 当前状态（只读）：null = 关闭终态（菜单不显示）；非空即「菜单显示」。 */
   readonly state: Readonly<Ref<RowContextMenuState<TRow> | null>>
+  /** 定位坐标（只读）：最近一次 open 的捕获点；不随 close 清零（离场动画仍消费）。 */
+  readonly position: Readonly<Ref<{ x: number; y: number }>>
   /** 打开（未开即开、已开即重定位）：收起 → 下一帧以事件坐标与目标行重开。 */
   open(event: MouseEvent, row: TRow): void
   /** 关闭：清回全空终态（无滞留目标行）。 */
@@ -59,12 +65,19 @@ export function useRowContextMenu<TRow>(
   onSelect: (key: string | number, row: TRow) => void,
 ): UseRowContextMenuReturn<TRow> {
   const state = ref(null) as Ref<RowContextMenuState<TRow> | null>
+  // 定位坐标与显示状态分离持有：close 只清显示终态（无滞留行），坐标保留——
+  // naive-ui animated 下拉离场动画期间仍按 x/y props 重定位弹层（vueuc Follower
+  // watch x/y → syncPosition），清零会让淡出中的菜单跳到视口左上角闪现一次
+  // （issue #798）。初始 (0,0) 无消费方：菜单未开过时 show 恒 false。
+  const position = ref({ x: 0, y: 0 })
 
   function open(event: MouseEvent, row: TRow) {
     // 坐标在调用瞬间捕获（事件对象随传播结束失效）；先收起再下一帧重开，
-    // 已开重定位与关闭态打开同一路径（单路径，无快路径）。
+    // 已开重定位与关闭态打开同一路径（单路径，无快路径）。定位坐标同步更新
+    // （与侧栏排序菜单、页签菜单手写拷贝同款舞步），不下一帧。
     const x = event.clientX
     const y = event.clientY
+    position.value = { x, y }
     state.value = null
     void nextTick(() => {
       state.value = { x, y, row }
@@ -86,6 +99,7 @@ export function useRowContextMenu<TRow>(
     // 泛型 TRow 下 readonly() 的 DeepReadonly 无法结构赋值给 Readonly<Ref<...>>，
     // 在接缝处显式收窄（消费方只读 .value，行为不变；先例 useModalIntent）。
     state: readonly(state) as Readonly<Ref<RowContextMenuState<TRow> | null>>,
+    position: readonly(position) as Readonly<Ref<{ x: number; y: number }>>,
     open,
     close,
     select,

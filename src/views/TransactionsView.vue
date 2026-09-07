@@ -317,10 +317,12 @@ const rowMenu = useRowContextMenu<Transaction>((key, row) => {
   else if (key === 'delete') confirmDelete(row)
 })
 
-// 可见性与定位由单判别状态派生（非空即显示；关闭帧坐标无消费方）。
+// 可见性由单判别状态派生（非空即显示）；定位坐标取工厂保留值（open 同步更新、
+// close 不清零）：naive-ui 离场动画期间仍按 x/y 重定位弹层，视图侧清零会让
+// 淡出中的菜单跳到视口左上角闪现一次（issue #798）。
 const menuShow = computed(() => rowMenu.state.value !== null)
-const menuX = computed(() => rowMenu.state.value?.x ?? 0)
-const menuY = computed(() => rowMenu.state.value?.y ?? 0)
+const menuX = computed(() => rowMenu.position.value.x)
+const menuY = computed(() => rowMenu.position.value.y)
 
 /** 已建物品的交易 id 集合（按物品溯源指针比对，不新增查询、不建反向引用）。 */
 const linkedTxIds = computed(
