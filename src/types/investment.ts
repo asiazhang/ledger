@@ -2,10 +2,35 @@ import type { Syncable } from './common'
 
 export type InstrumentType = 'stock' | 'fund' | 'bond' | 'etf' | 'other'
 
-export type MarketType = 'sh' | 'sz' | 'hk' | 'unknown'
+export type MarketType = 'sh' | 'sz' | 'hk' | 'nasdaq' | 'nyse' | 'amex' | 'unknown'
 
-/** 市场闭集；显示标签在文案资源 investments.market.*（i18n，ADR-0049） */
-export const MARKET_TYPES: MarketType[] = ['sh', 'sz', 'hk', 'unknown']
+/**
+ * 市场闭集镜像（ADR-0081）：显示标签在文案资源 investments.market.*（i18n，
+ * ADR-0049）；美股三交易所（nasdaq/nyse/amex）UI 折叠显示「美股」，仅用于
+ * 枚举标签翻译（enumLabel 闭集成员判定），筛选下拉不得展开三交易所选项
+ * （见 MARKET_FILTER_TYPES）。
+ */
+export const MARKET_TYPES: MarketType[] = [
+  'sh',
+  'sz',
+  'hk',
+  'nasdaq',
+  'nyse',
+  'amex',
+  'unknown',
+]
+
+/** 标的页市场筛选下拉的选项闭集（ADR-0081）：后端筛选为精确匹配，美股三
+ * 交易所不展开重复选项（UI 只显「美股」的折叠语义，见 MARKET_TYPES 注释）。 */
+export const MARKET_FILTER_TYPES: MarketType[] = ['sh', 'sz', 'hk', 'unknown']
+
+/**
+ * 「添加投资标的」的录入通道（市场下拉，issue #697 / spec #690）：通道标签
+ * 而非存储市场——场外基金（fund）走按代码即拉、落 fund 类型恒 unknown 市场
+ * （ADR-0038）；美股（us）是三交易所的 UI 折叠，落库经候选遍历取精确归属
+ * （ADR-0081）；沪/深/港为显式市场通道。
+ */
+export type AddInstrumentChannel = 'sh' | 'sz' | 'hk' | 'us' | 'fund'
 
 /** 标的类型闭集；显示标签在文案资源 investments.type.*（i18n，ADR-0049） */
 export const INSTRUMENT_TYPES: InstrumentType[] = ['stock', 'fund', 'bond', 'etf', 'other']
@@ -111,6 +136,27 @@ export interface AddFundResult {
   nav_cents: number | null
   /** 净值日期（ISO 日期）；未取到为 null */
   nav_date: string | null
+  /** 是否落了现价缓存（后端据此判定是否广播价格失效信号） */
+  price_written: boolean
+}
+
+/** 「添加投资标的」股票侧（沪/深/港/美股通道）按代码添加的结果（issue #697 /
+ * ADR-0081）：标的行落库 + 识别回显投影；场外基金通道返回 AddFundResult。 */
+export interface AddStockInstrumentResult {
+  instrument_id: string
+  /** 归一化代码（港股左补零至 5 位、美股大写） */
+  symbol: string
+  /** 东财权威名称（已回填标的行） */
+  name: string
+  /** 自动识别的类型（stock / etf） */
+  type: InstrumentType
+  /** 精确市场（美股为遍历命中的交易所归属） */
+  market: MarketType
+  currency_code: string
+  /** 最新价（万分之一元，ADR-0038 价格刻度）；停牌/无有效报价为 null */
+  price_cents: number | null
+  /** 价格日期（ISO 日期）；无有效时间戳为 null */
+  price_date: string | null
   /** 是否落了现价缓存（后端据此判定是否广播价格失效信号） */
   price_written: boolean
 }

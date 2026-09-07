@@ -176,6 +176,32 @@ pub struct AddFundResult {
     pub price_written: bool,
 }
 
+/// 「添加投资标的」股票侧（沪/深/港/美股通道）按代码添加的结果（issue #697 /
+/// ADR-0081）：标的行落库 + 识别回显投影——东财权威名称、自动识别的类型
+/// （行情命中 → stock、类型特征 → etf）、精确市场（美股为遍历命中的交易所
+/// 归属）与最新价（万分之一元）。场外基金通道返回既有 [`AddFundResult`]。
+#[derive(Debug, Serialize)]
+pub struct AddStockInstrumentResult {
+    pub instrument_id: String,
+    /// 归一化代码（港股左补零至 5 位、美股大写）。
+    pub symbol: String,
+    /// 东财权威名称（已回填标的行）。
+    pub name: String,
+    /// 自动识别的类型（stock / etf）。
+    #[serde(rename = "type")]
+    pub kind: InstrumentType,
+    /// 精确市场（sh / sz / hk / nasdaq / nyse / amex）。
+    pub market: String,
+    /// 报价币种（按市场推导：沪深→CNY、港→HKD、美股→USD）。
+    pub currency_code: String,
+    /// 最新价（万分之一元，ADR-0038 价格刻度）；停牌/无有效报价为 None。
+    pub price_cents: Option<i64>,
+    /// 价格日期（ISO 日期）；无有效时间戳为 None。
+    pub price_date: Option<String>,
+    /// 是否落了现价缓存（价格失效信号的广播判定依据，同 [`AddFundResult`]）。
+    pub price_written: bool,
+}
+
 /// 交易买卖明细（issue #180）：一笔 buy/sell 交易在 `security_transactions` 扩展表
 /// 中的投影（核心 `transactions` 行不含投资字段，见 ADR-0003 核心表 + 扩展表），
 /// 供投资表单编辑模式回填标的/数量/价格/费用。`symbol`/`instrument_name` 为

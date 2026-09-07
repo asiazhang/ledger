@@ -34,7 +34,7 @@ const error = ref<string | null>(null)
 const canSubmit = computed(() => price.value !== null && price.value > 0 && !!date.value && !submitting.value)
 
 // 打开时重置表单（日期回到今天、清空价格与错误），immediate 兼容初始即开
-// （先例：MerchantEditModal / CreateInstrumentModal）
+// （先例：MerchantEditModal）
 watch(
   () => props.show,
   (show) => {

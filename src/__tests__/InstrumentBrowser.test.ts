@@ -433,202 +433,38 @@ describe('InstrumentBrowser 全量同步（issue #109）', () => {
   })
 })
 
-describe('InstrumentBrowser 添加基金（issue #301 / ADR-0038）', () => {
-  const fundResult = {
-    instrument_id: 'inst-fund-1',
-    symbol: '000001',
-    name: '华夏成长混合',
-    fund_class: '混合型-灵活',
-    nav_cents: 13180,
-    nav_date: '2026-08-28',
-    price_written: true,
-  }
-
-  async function openAddFundModal() {
+describe('InstrumentBrowser 添加投资标的入口（issue #697 / spec #690）', () => {
+  it('工具栏包含「添加投资标的」按钮，点击打开统一对话框；旧「添加基金」「新建标的」入口已退役', async () => {
     const wrapper = mountBrowser()
     await flushPromises()
-    await wrapper.find('[data-testid="add-fund"]').trigger('click')
-    await nextTick()
-    return wrapper
-  }
-
-  async function setCode(code: string) {
-    // data-testid 落在 NInput 根元素上，真正受控的是内部 input 元素：
-    // 原生赋值 + 冒泡 input 事件驱动 v-model 更新。
-    const input = bodyQuery('[data-testid="add-fund-code"]')!.querySelector('input')!
-    input.value = code
-    input.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(wrapper.find('[data-testid="add-instrument"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('添加投资标的')
+    expect(wrapper.find('[data-testid="add-fund"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="create-instrument"]').exists()).toBe(false)
+    await wrapper.find('[data-testid="add-instrument"]').trigger('click')
     await nextTick()
     await flushPromises()
-    await nextTick()
-  }
+    // 统一对话框打开（市场必选下拉在场）；弹窗内交互由 AddInstrumentModal.test.ts 覆盖
+    expect(bodyQuery('[data-testid="add-instrument-market"]')).not.toBeNull()
+  })
 
-  it('工具栏包含「添加基金」按钮', async () => {
+  it('添加成功：页面级回执 + 列表重拉（回到第 1 页）', async () => {
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: BASE_OVERRIDES,
+    })
     const wrapper = mountBrowser()
     await flushPromises()
-    const btn = wrapper.find('[data-testid="add-fund"]')
-    expect(btn.exists()).toBe(true)
-    expect(btn.text()).toContain('添加基金')
-  })
-
-  it('点击打开弹窗；非 6 位数字时提交按钮禁用、不发请求', async () => {
-    wireInvokeSeam({
-      defaults: BASE_DEFAULTS,
-      overrides: { ...BASE_OVERRIDES, add_fund_by_code: () => Promise.resolve(fundResult) },
-    })
-    await openAddFundModal()
-    expect(bodyQuery('[data-testid="add-fund-code"]')).not.toBeNull()
-    // 空码 / 位数不足：提交禁用
-    expect(
-      (bodyQuery('[data-testid="submit-add-fund"]') as HTMLButtonElement).disabled,
-    ).toBe(true)
-    await setCode('1234')
-    expect(
-      (bodyQuery('[data-testid="submit-add-fund"]') as HTMLButtonElement).disabled,
-    ).toBe(true)
-    expect(mockInvoke).not.toHaveBeenCalledWith('add_fund_by_code', { code: '1234' })
-  })
-
-  it('输入过滤非数字字符（粘贴字母只剩数字）', async () => {
-    await openAddFundModal()
-    await setCode('12a3b4')
-    // watch 过滤后应为 1234（未满 6 位仍禁用），输满 6 位数字后可用
-    expect(
-      (bodyQuery('[data-testid="submit-add-fund"]') as HTMLButtonElement).disabled,
-    ).toBe(true)
-    await setCode('000001')
-    expect(
-      (bodyQuery('[data-testid="submit-add-fund"]') as HTMLButtonElement).disabled,
-    ).toBe(false)
-  })
-
-  // 弹窗退场过渡（NModal ~200ms）后断言 DOM 已卸载
-  async function waitForModalLeave() {
-    await new Promise((r) => setTimeout(r, 300))
-    await nextTick()
-    await flushPromises()
-  }
-
-  it('有效代码提交：调用 add_fund_by_code，成功回执展示名称/分类/净值/日期并重拉列表', async () => {
-    wireInvokeSeam({
-      defaults: BASE_DEFAULTS,
-      overrides: { ...BASE_OVERRIDES, add_fund_by_code: () => Promise.resolve(fundResult) },
-    })
-    const wrapper = await openAddFundModal()
     const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
-    await setCode('000001')
-    await clickBody('[data-testid="submit-add-fund"]')
-    expect(mockInvoke).toHaveBeenCalledWith('add_fund_by_code', { code: '000001' })
-    await waitForModalLeave()
-    // 成功回执（页面级）：名称、代码、分类、4 位小数净值与净值日期
-    const msg = wrapper.find('[data-testid="add-fund-result"]')
-    expect(msg.exists()).toBe(true)
-    expect(msg.text()).toContain('已添加基金：华夏成长混合（000001 · 混合型-灵活）')
-    expect(msg.text()).toContain('最新净值 1.318（2026-08-28）')
-    // 列表重拉（新标的上列表）；弹窗关闭的 DOM 断言受 NModal 退场过渡影响
-    //（jsdom 不触发 transitionend，先例：全量同步确认框测试交状态层覆盖），此处不断言。
-    const after = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
-    expect(after).toBeGreaterThan(before)
-  })
-
-  it('未取到净值：仍添加成功，回执提示暂未取到净值', async () => {
-    wireInvokeSeam({
-      defaults: BASE_DEFAULTS,
-      overrides: {
-        ...BASE_OVERRIDES,
-        add_fund_by_code: () =>
-          Promise.resolve({
-            ...fundResult,
-            nav_cents: null,
-            nav_date: null,
-            price_written: false,
-          }),      },
-    })
-    const wrapper = await openAddFundModal()
-    await setCode('012345')
-    await clickBody('[data-testid="submit-add-fund"]')
-    const msg = wrapper.find('[data-testid="add-fund-result"]')
-    expect(msg.text()).toContain('暂未取到净值')
-  })
-
-  it('查无此码：弹窗内展示中文报错，不重拉列表、无成功回执', async () => {
-    wireInvokeSeam({
-      defaults: BASE_DEFAULTS,
-      overrides: {
-        ...BASE_OVERRIDES,
-        add_fund_by_code: () =>
-          Promise.reject({ kind: 'Invalid', message: '查无基金代码 999999，请核对后重试' }),      },
-    })
-    const wrapper = await openAddFundModal()
-    const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
-    await setCode('999999')
-    await clickBody('[data-testid="submit-add-fund"]')
-    // 中文报错在弹窗内展示（AppError 序列化对象形态经 errorMessage 提取），
-    // 弹窗保持打开供改码重试（DOM 卸载断言受退场过渡影响，以错误区呈现为准）
-    const err = bodyQuery('[data-testid="add-fund-error"]')!
-    expect(err).not.toBeNull()
-    expect(err.textContent).toContain('查无基金代码 999999')
-    expect(err.textContent).not.toContain('[object Object]')
-    // 失败不产生标的行：无成功回执、不重拉列表
-    expect(wrapper.find('[data-testid="add-fund-result"]').exists()).toBe(false)
-    const after = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
-    expect(after).toBe(before)
-  })
-})
-
-describe('InstrumentBrowser 来源列与新建标的入口（issue #290 / ADR-0036）', () => {
-  it('来源列渲染：同步标的显示「同步」，手动标的显示「手动」标记', async () => {
-    wireInvokeSeam({
-      defaults: BASE_DEFAULTS,
-      overrides: {
-        ...BASE_OVERRIDES,
-        list_instruments: () =>
-          Promise.resolve({
-            items: [
-              ...mockInstruments,
-              makeInstrument({ id: 'inst-3', symbol: '稳稳地幸福', type: 'other', name: '稳稳地幸福', market: 'unknown', source: 'manual' }),
-            ],
-            total: 3,
-          }),      },
-    })
-    const wrapper = mountBrowser()
-    await flushPromises()
-    const sourceCells = wrapper.findAll('td[data-col-key="source"]')
-    expect(sourceCells.map((c) => c.text())).toEqual(['同步', '同步', '手动'])
-    // 手动标的带突出标记（tag），同步标的为纯文本
-    expect(wrapper.findAll('[data-testid="source-manual"]').length).toBe(1)
-  })
-
-  it('「新建标的」按钮打开创建弹窗', async () => {
-    const wrapper = mountBrowser()
-    await flushPromises()
-    await wrapper.find('[data-testid="create-instrument"]').trigger('click')
-    await nextTick()
-    expect(bodyQuery('[data-testid="create-instrument-name"]')).not.toBeNull()
-    expect(document.body.textContent).toContain('新建标的')
-  })
-
-  it('创建成功：页面级回执 + 列表重拉（回到第 1 页）', async () => {
-    wireInvokeSeam({
-      defaults: BASE_DEFAULTS,
-      overrides: {
-        ...BASE_OVERRIDES,
-        create_instrument: () => Promise.resolve('inst-new'),      },
-    })
-    const wrapper = mountBrowser()
-    await flushPromises()
-    await wrapper.find('[data-testid="create-instrument"]').trigger('click')
-    await nextTick()
-    // 经组件 emit 驱动（弹窗内表单校验与提交流程由 CreateInstrumentModal.test.ts 覆盖）
-    const before = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
-    wrapper.findComponent({ name: 'CreateInstrumentModal' }).vm.$emit(
-      'created',
-      '已创建标的：稳稳地幸福（稳稳地幸福）',
+    // 经组件 emit 驱动（对话框内查询/识别/兜底流程由 AddInstrumentModal.test.ts 覆盖）
+    wrapper.findComponent({ name: 'AddInstrumentModal' }).vm.$emit(
+      'added',
+      '已添加投资标的：贵州茅台（600519 · 股票）最新价 123.45',
     )
     await flushPromises()
-    const msg = wrapper.find('[data-testid="create-instrument-result"]')
+    const msg = wrapper.find('[data-testid="add-instrument-result"]')
     expect(msg.exists()).toBe(true)
-    expect(msg.text()).toContain('已创建标的：稳稳地幸福（稳稳地幸福）')
+    expect(msg.text()).toContain('已添加投资标的：贵州茅台')
     const after = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
     expect(after).toBe(before + 1)
   })

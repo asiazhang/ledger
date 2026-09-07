@@ -23,9 +23,10 @@ use crate::db::{DbState, run_db};
 use crate::error::{AppError, Result};
 use crate::investment as investment_domain;
 use crate::investment::{
-    AddFundResult, Holding, InstrumentInput, InstrumentListFilter, InstrumentListResult,
-    InstrumentPriceTrend, ManualPriceInput, ManualPriceResult, MarketPrice, MarketPriceInput,
-    PnlFilter, PortfolioValueTrend, RealizedPnlSummary, TransactionTrade, TrendRange,
+    AddFundResult, AddStockInstrumentResult, Holding, InstrumentInput, InstrumentListFilter,
+    InstrumentListResult, InstrumentPriceTrend, ManualPriceInput, ManualPriceResult, MarketPrice,
+    MarketPriceInput, PnlFilter, PortfolioValueTrend, RealizedPnlSummary, TransactionTrade,
+    TrendRange,
 };
 use crate::signals::{WriteEvidence, WriteOp};
 use crate::write_entry::{Outcome, write_entry};
@@ -215,6 +216,49 @@ pub async fn add_fund_by_code(
             // 编排单点：经接缝以已拉取的详情驱动（注入闭包同值回放）。
             let mut fetch = |_: &str| Ok(detail.clone());
             investment_domain::add_fund_by_code_with(conn, &code, &mut fetch).map(|result| {
+                let evidence = WriteEvidence::PriceWritten(result.price_written);
+                Outcome::Evidenced(result, evidence)
+            })
+        },
+    )
+    .await
+}
+
+/// IPC 命令：按代码添加投资标的·场内通道（issue #697 / spec #690 / ADR-0081）。
+/// 市场必选的录入通道（沪 sh/深 sz/港 hk/美股 us；场外基金通道走
+/// `add_fund_by_code`，不在本命令）→ 查询阶段在连接锁外完成（通道解析 → 候选
+/// 遍历 → 东财行情，单请求叠加限流冷却重试最长可达分钟级，任何形状下不进锁，
+/// 慢闭包纪律）→ 识别落库经统一写入口（ADR-0073）：类型自动识别（行情命中 →
+/// stock、类型特征 → etf，识别单点在投资域）后经创建增强同一落库接缝回填权威
+/// 名称与最新价。落现价即广播价格失效信号（ADR-0031），停牌未取到价仅建标的
+/// 零信号；查询未命中与临时不可达均显式报错不建档（兑底手动建档由前端对话框
+/// 内 `create_instrument` 承接，不在本命令）。
+#[tauri::command]
+pub async fn add_instrument_by_code(
+    db: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    market: String,
+    code: String,
+) -> Result<AddStockInstrumentResult> {
+    let conn = db.conn.clone();
+    // 查询阶段在锁外：网络往返不进锁（慢闭包纪律）；生产拉取闭包与同步域同一
+    // HTTP 层（主机池/重试/限流），未命中/临时错误以码化错误上抛给对话框分流。
+    let quote = tauri::async_runtime::spawn_blocking(move || {
+        let mut fetch =
+            |market: &str, code: &str| crate::sync::fetch_stock_quote_production(market, code);
+        investment_domain::fetch_stock_quote_for_add(&market, &code, &mut fetch)
+    })
+    .await
+    .map_err(|e| AppError::Io(format!("投资标的查询任务执行失败: {e}")))??;
+    // 识别落库阶段经统一写入口：类型 = 行情 kind_hint（识别语义在投资域单点），
+    // 证据随闭包返回必达（价格失效信号广播判定）。
+    write_entry(
+        "add_instrument_by_code",
+        conn,
+        Some(&app),
+        WriteOp::AddInstrumentByCode,
+        move |conn| {
+            investment_domain::add_stock_instrument_with_quote(conn, &quote).map(|result| {
                 let evidence = WriteEvidence::PriceWritten(result.price_written);
                 Outcome::Evidenced(result, evidence)
             })

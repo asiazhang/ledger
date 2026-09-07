@@ -21,10 +21,17 @@ import { useInstrumentFullSync } from '@/composables/useInstrumentFullSync'
 import { usePricesChanged } from '@/composables/usePricesChanged'
 import { useAppDialog } from '@/composables/useAppDialog'
 import { errorMessage as extractErrorMessage } from '@/utils/errors'
-import { formatPrice, INSTRUMENT_SOURCES, INSTRUMENT_TYPES, MARKET_TYPES, canManualPrice } from '@/types'
+import {
+  formatPrice,
+  INSTRUMENT_SOURCES,
+  INSTRUMENT_TYPES,
+  MARKET_FILTER_TYPES,
+  MARKET_TYPES,
+  canManualPrice,
+} from '@/types'
 import AppModal from '@/components/AppModal.vue'
 import AppSelect from '@/components/AppSelect.vue'
-import CreateInstrumentModal from '@/components/investments/CreateInstrumentModal.vue'
+import AddInstrumentModal from '@/components/investments/AddInstrumentModal.vue'
 import ManualPriceModal from '@/components/investments/ManualPriceModal.vue'
 import type { Instrument, MarketType } from '@/types'
 
@@ -77,7 +84,9 @@ const loading = ref(false)
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 
 const marketOptions = computed(() =>
-  MARKET_TYPES.map((value) => ({ label: t(`investments.market.${value}`), value })),
+  // 筛选下拉不展开美股三交易所选项（后端筛选为精确匹配，UI 只显「美股」，
+  // ADR-0081）；市场列的枚举标签翻译仍用全闭集 MARKET_TYPES。
+  MARKET_FILTER_TYPES.map((value) => ({ label: t(`investments.market.${value}`), value })),
 )
 
 /** 枚举显示标签：闭集内经 t() 随界面语言切换；闭集外的库值原样回退（防脏数据渲染成 key） */
@@ -123,16 +132,18 @@ usePricesChanged(() => {
 })
 
 // ---------------------------------------------------------------------------
-// 新建标的（issue #290 / ADR-0036）：手动创建非股票类标的的入口，类型白名单
-// （债券/ETF/其他）与名称必填经 CreateInstrumentModal 表单约束 + 后端 IPC
-// 命令入口层守卫双重收口；（代码，类型）已存在时后端复用并更新名称（upsert）。
+// 添加投资标的（issue #697 / spec #690）：标的创建的唯一入口——市场必选录入通道
+// + 按代码查询（命中自动识别类型并回填权威名称与最新价，未命中对话框内手动建档
+// 兑底）。既有「新建标的」独立弹窗与「添加基金」独立入口随本入口收编退役。
 // ---------------------------------------------------------------------------
-const createOpen = ref(false)
-const createMessage = ref<string | null>(null)
+const addInstrumentOpen = ref(false)
 
-function onInstrumentCreated(message: string) {
-  createMessage.value = message
-  // 新标的行上列表：回到第 1 页重拉（创建不落价，不发价格失效信号）
+/** 页面级成功回执（展示命中回显/兑底建档结果；重拉后仍可见） */
+const addInstrumentMessage = ref<string | null>(null)
+
+function onInstrumentAdded(message: string) {
+  addInstrumentMessage.value = message
+  // 新标的行上列表：回到第 1 页重拉（命中落价的价格缓存刷新由价格失效信号驱动）
   reload()
 }
 
@@ -193,66 +204,6 @@ function onQuoted(message: string) {
   // 只记页面级回执：现价列刷新由价格失效信号驱动（信号在信号处理中已保留
   // 分页/搜索状态原地重拉），调用方不手动重拉。
   quoteMessage.value = message
-}
-
-// ---------------------------------------------------------------------------
-// 添加基金（issue #301 / ADR-0038）：fund 类型唯一创建入口——输入 6 位基金代码，
-// 东财按代码即拉名称/分类/最新净值自动回填；查无此码中文报错、不产生标的行。
-// ---------------------------------------------------------------------------
-const addFundOpen = ref(false)
-const addFundCode = ref('')
-const addFundSubmitting = ref(false)
-/** 弹窗内错误提示（查无此码等）：保持弹窗打开供用户改码重试 */
-const addFundError = ref<string | null>(null)
-/** 页面级成功回执（展示东财回填的名称/分类/净值） */
-const addFundMessage = ref<string | null>(null)
-
-// 6 位纯数字才可提交（后端同样校验，前端仅提前拦截不发起无效请求）
-const addFundCodeValid = computed(() => /^\d{6}$/.test(addFundCode.value))
-
-// 输入过滤：只留数字、最长 6 位
-watch(addFundCode, () => {
-  const filtered = addFundCode.value.replace(/\D/g, '').slice(0, 6)
-  if (filtered !== addFundCode.value) addFundCode.value = filtered
-})
-
-function openAddFund() {
-  addFundError.value = null
-  addFundOpen.value = true
-}
-
-function closeAddFund() {
-  addFundOpen.value = false
-  addFundCode.value = ''
-  addFundError.value = null
-}
-
-async function submitAddFund() {
-  if (!addFundCodeValid.value || addFundSubmitting.value) return
-  addFundSubmitting.value = true
-  addFundError.value = null
-  try {
-    const res = await api.addFundByCode(addFundCode.value)
-    const navText = res.nav_cents !== null && res.nav_date !== null
-      ? t('investments.browser.addFundNav', {
-          price: formatPrice(res.nav_cents),
-          date: res.nav_date,
-        })
-      : t('investments.browser.addFundNavMissing')
-    addFundMessage.value = t('investments.browser.addFundSuccess', {
-      name: res.name,
-      symbol: res.symbol,
-      fundClass: res.fund_class,
-      nav: navText,
-    })
-    closeAddFund()
-    // 新标的行上列表：回到第 1 页重拉（价格缓存刷新由价格失效信号驱动）
-    reload()
-  } catch (e) {
-    addFundError.value = extractErrorMessage(e)
-  } finally {
-    addFundSubmitting.value = false
-  }
 }
 
 const pagination = computed(() => ({
@@ -412,18 +363,10 @@ onMounted(load)
       <NButton
         secondary
         size="small"
-        data-testid="add-fund"
-        @click="openAddFund"
+        data-testid="add-instrument"
+        @click="addInstrumentOpen = true"
       >
-        {{ t('investments.browser.addFund') }}
-      </NButton>
-      <NButton
-        secondary
-        size="small"
-        data-testid="create-instrument"
-        @click="createOpen = true"
-      >
-        {{ t('investments.browser.createInstrument') }}
+        {{ t('investments.browser.addInstrument') }}
       </NButton>
       <NButton
         type="primary"
@@ -449,11 +392,8 @@ onMounted(load)
     <NText v-if="resultMessage" :type="status === 'error' ? 'error' : 'info'">
       {{ resultMessage }}
     </NText>
-    <NText v-if="addFundMessage" type="success" data-testid="add-fund-result">
-      {{ addFundMessage }}
-    </NText>
-    <NText v-if="createMessage" type="success" data-testid="create-instrument-result">
-      {{ createMessage }}
+    <NText v-if="addInstrumentMessage" type="success" data-testid="add-instrument-result">
+      {{ addInstrumentMessage }}
     </NText>
     <NText
       v-if="deleteMessage"
@@ -475,11 +415,13 @@ onMounted(load)
       :pagination="pagination"
     />
 
-    <!-- 新建标的（issue #290 / ADR-0036）：手动创建非股票类标的，类型白名单
-         债券/ETF/其他、名称必填、市场固定未知、币种默认人民币 -->
-    <CreateInstrumentModal
-      v-model:show="createOpen"
-      @created="onInstrumentCreated"
+    <!-- 添加投资标的（issue #697 / spec #690）：标的创建唯一入口——市场必选
+         录入通道 + 按代码查询（命中自动识别类型并回填名称/最新价，未命中对话框
+         内手动建档兑底；场外基金通道即原「添加基金」按代码即拉，语义不变）。
+         既有「新建标的」独立弹窗随本入口收编退役 -->
+    <AddInstrumentModal
+      v-model:show="addInstrumentOpen"
+      @added="onInstrumentAdded"
     />
 
     <!-- 手动报价（issue #291 / ADR-0036）：日期 + 价格弹窗；录价成功后现价列
@@ -489,46 +431,6 @@ onMounted(load)
       :instrument="quoteTarget"
       @quoted="onQuoted"
     />
-
-    <!-- 添加基金（按代码即拉，issue #301）：6 位代码 → 东财回填名称/分类/最新净值；
-         查无此码中文报错且不产生标的行（弹窗保持打开供改码重试） -->
-    <AppModal
-      v-model:show="addFundOpen"
-      preset="card"
-      :title="t('investments.browser.addFundTitle')"
-      card-size="md"
-    >
-      <NSpace vertical :size="12">
-        <NText depth="3">
-          {{ t('investments.browser.addFundIntro') }}
-        </NText>
-        <NInput
-          v-model:value="addFundCode"
-          :placeholder="t('investments.browser.addFundCodePlaceholder')"
-          :maxlength="6"
-          :disabled="addFundSubmitting"
-          data-testid="add-fund-code"
-          @keyup.enter="submitAddFund"
-        />
-        <NText v-if="addFundError" type="error" data-testid="add-fund-error">
-          {{ addFundError }}
-        </NText>
-        <NSpace justify="end" :size="12">
-          <NButton data-testid="cancel-add-fund" @click="closeAddFund">
-            {{ t('investments.browser.addFundCancel') }}
-          </NButton>
-          <NButton
-            type="primary"
-            data-testid="submit-add-fund"
-            :loading="addFundSubmitting"
-            :disabled="!addFundCodeValid"
-            @click="submitAddFund"
-          >
-            {{ t('investments.browser.addFundSubmit') }}
-          </NButton>
-        </NSpace>
-      </NSpace>
-    </AppModal>
 
     <!-- 二次确认：未确认不发起同步（issue #109） -->
     <AppModal

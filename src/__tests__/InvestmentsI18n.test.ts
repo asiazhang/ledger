@@ -78,8 +78,7 @@ describe('InvestmentsView 英文渲染（issue #350 / ADR-0049）', () => {
     await flushPromises()
     await clickTab(wrapper, 1)
     expect(wrapper.text()).toContain('Holdings only')
-    expect(wrapper.text()).toContain('Add Fund')
-    expect(wrapper.text()).toContain('New Instrument')
+    expect(wrapper.text()).toContain('Add Instrument')
     expect(wrapper.text()).toContain('Full Sync')
     expect(wrapper.find('input[placeholder="Search symbol or name..."]').exists()).toBe(true)
     // 空表列头英文
