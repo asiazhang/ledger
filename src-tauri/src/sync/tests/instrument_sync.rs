@@ -101,11 +101,13 @@ fn do_sync_inserts_new_instruments_and_prices() {
             code: "000001".into(),
             name: "平安银行".into(),
             price: Some(1234.0),
+            precision: None,
         },
         StockItem {
             code: "000002".into(),
             name: "万科A".into(),
             price: Some(1500.0),
+            precision: None,
         },
     ];
 
@@ -157,6 +159,7 @@ fn do_sync_updates_existing_instrument_name_and_market() {
         code: "000001".into(),
         name: "旧名称".into(),
         price: Some(500.0),
+        precision: None,
     }];
     do_sync_with_items(&conn, "sh", "CNY", &existing).unwrap();
 
@@ -164,6 +167,7 @@ fn do_sync_updates_existing_instrument_name_and_market() {
         code: "000001".into(),
         name: "平安银行".into(),
         price: Some(1234.0),
+        precision: None,
     }];
     let (inserted, u) = do_sync_with_items(&conn, "sz", "CNY", &updated).unwrap();
     assert_eq!(inserted, 0);
@@ -209,6 +213,7 @@ fn do_sync_update_keeps_existing_source() {
         code: "000001".into(),
         name: "平安银行".into(),
         price: Some(1234.0),
+        precision: None,
     }];
     let (inserted, updated_count) = do_sync_with_items(&conn, "sz", "CNY", &updated).unwrap();
     assert_eq!((inserted, updated_count), (0, 1));
@@ -233,6 +238,7 @@ fn do_sync_skips_zero_price() {
         code: "000001".into(),
         name: "平安银行".into(),
         price: None,
+        precision: None,
     }];
     let (inserted, _) = do_sync_with_items(&conn, "sh", "CNY", &items).unwrap();
     assert_eq!(inserted, 1);
@@ -251,6 +257,7 @@ fn do_sync_updates_market_price_on_existing_instrument() {
         code: "000001".into(),
         name: "平安银行".into(),
         price: Some(1000.0),
+        precision: None,
     }];
     do_sync_with_items(&conn, "sh", "CNY", &first).unwrap();
 
@@ -258,6 +265,7 @@ fn do_sync_updates_market_price_on_existing_instrument() {
         code: "000001".into(),
         name: "平安银行".into(),
         price: Some(2000.0),
+        precision: None,
     }];
     do_sync_with_items(&conn, "sh", "CNY", &second).unwrap();
 

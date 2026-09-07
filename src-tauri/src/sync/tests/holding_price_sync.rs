@@ -13,7 +13,7 @@ use crate::investment::prices::{
 use crate::sync::fund_nav::{LsjzPage, NavPoint, NavQuery};
 use crate::sync::http::{
     KlineBar, KlineResponse, StockItem, ULIST_BATCH_SIZE, UlistResponse, f2_to_price,
-    fx_secid_candidates, parse_klines, secid_prefix,
+    fx_secid_candidates, parse_klines, price_cents_from_raw, secid_prefix,
 };
 use crate::sync::incremental::{beijing_date, beijing_today, do_incremental_sync_with};
 
@@ -115,6 +115,7 @@ fn mock_fetch<'a>(
                     name: format!("名称-{code}"),
                     code,
                     price: *price,
+                    precision: None,
                 });
             }
         }
@@ -154,6 +155,44 @@ fn ulist_response_null_data_yields_no_items() {
     let json = r#"{"rc":102,"rt":1,"svr":177622402,"lt":1,"full":1,"dlmkts":"8,10,128","dsc":"0","data":null}"#;
     let resp: UlistResponse = serde_json::from_str(json).unwrap();
     assert!(resp.data.is_none());
+}
+
+#[test]
+fn ulist_items_carry_precision_and_convert_etf_scale() {
+    // 真实 ulist.np/get 响应样本（2026-02 实测，fields=f12,f14,f1,f2）：场内 ETF
+    // 报价为 3 位小数刻度（f1=3，与 stock/get 的 f59 同义），A 股股票为 2 位（f1=2）
+    // ——批量报价换算按精度位单点，不再按市场固定倍数（#695）。
+    let json = r#"{"rc":0,"rt":11,"svr":177622159,"lt":1,"full":1,"dlmkts":"8,10,128","dsc":"0","data":{"total":2,"diff":[{"f1":3,"f2":4634,"f12":"510300","f14":"沪深300ETF华泰柏瑞"},{"f1":2,"f2":131601,"f12":"600519","f14":"贵州茅台"}]}}"#;
+    let resp: UlistResponse = serde_json::from_str(json).unwrap();
+    let items = resp.data.unwrap().diff.unwrap().into_items();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0].precision, Some(3.0), "ETF 精度位随行返回");
+    assert_eq!(items[1].precision, Some(2.0));
+    // 精度位换算（万分之一元，ADR-0038）：ETF 4.634 元 → 46340；股票 1316.01 元 → 13160100。
+    assert_eq!(
+        price_cents_from_raw(items[0].price.unwrap(), items[0].precision, "sh"),
+        46_340,
+        "ETF 按三位小数精度换算，市场固定 ×100 会得十倍错价"
+    );
+    assert_eq!(
+        price_cents_from_raw(items[1].price.unwrap(), items[1].precision, "sh"),
+        13_160_100
+    );
+}
+
+#[test]
+fn ulist_items_without_precision_fall_back_to_market_scale() {
+    // 缺 f1（旧形态响应 / 全量同步 clist 通道不带 f1）→ None：按市场回退，
+    // 股票行为与既有 f2_to_price 完全一致（回退分支只兕异常/旧形态）。
+    let json = r#"{"rc":0,"data":{"total":1,"diff":[{"f2":4634,"f12":"510300","f14":"沪深300ETF华泰柏瑞"}]}}"#;
+    let resp: UlistResponse = serde_json::from_str(json).unwrap();
+    let items = resp.data.unwrap().diff.unwrap().into_items();
+    assert_eq!(items[0].precision, None);
+    assert_eq!(
+        price_cents_from_raw(items[0].price.unwrap(), items[0].precision, "sh"),
+        463_400,
+        "缺精度位回退按市场粗粒度（与 f2_to_price 同口径）"
+    );
 }
 
 #[test]
@@ -471,6 +510,7 @@ fn incremental_sync_batches_by_fifty() {
                     code,
                     name: "名称".into(),
                     price: Some(1000.0),
+                    precision: None,
                 }
             })
             .collect())
@@ -1290,6 +1330,186 @@ fn fund_and_stock_partitions_roll_up_into_one_result() {
 }
 
 // ---------------------------------------------------------------------------
+// ETF 行情分区（issue #695 / ADR-0081 决策 6）：行情分区从仅 stock 扩为
+// stock|etf——场内 ETF 持仓与股票同走批量报价/日 K 通道；fund 仍走净值通道；
+// 债券等无行情来源标的仍计入跳过。离线注入桩钉住三分区行为。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn etf_holding_syncs_quote_and_kline_backfill() {
+    let conn = crate::test_support::open();
+    insert_holding(&conn, "acc-1", "inst-etf", "510300", "etf", "CNY", "sh");
+
+    // 批量报价按精度位换算（ETF f1=3，raw 4634 → 4.634 元 → 46340 万分之一元）。
+    let mut fetch = |_: &str| {
+        Ok(vec![StockItem {
+            name: "沪深300ETF华泰柏瑞".into(),
+            code: "510300".into(),
+            price: Some(4634.0),
+            precision: Some(3.0),
+        }])
+    };
+    // 近两年日 K 回填样本（真实价格值）：跨两周，各周取最后一个有报价交易日。
+    let klines = [(
+        "1.510300",
+        vec![bar("2026-01-05", 4.600), bar("2026-01-12", 4.649)],
+    )];
+    let mut kline = mock_kline(&klines);
+
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut no_fx, &mut no_nav).unwrap();
+
+    assert_eq!(result.synced, 1, "ETF 持仓走行情通道计入同步成功");
+    assert_eq!(result.skipped, 0);
+    assert_eq!(result.written, 1, "实际落价计入写入（信号判定）");
+    assert_eq!(
+        market_price_of(&conn, "inst-etf"),
+        Some(46_340),
+        "ETF 报价按精度位换算（f1=3，三位小数报价）"
+    );
+    assert_eq!(
+        price_history_rows(&conn, "inst-etf"),
+        vec![
+            ("2026-01-05".into(), 46_000, "CNY".into()),
+            ("2026-01-12".into(), 46_490, "CNY".into()),
+        ],
+        "ETF 近两年回填与股票同规则周采样落 PriceHistory"
+    );
+}
+
+#[test]
+fn etf_holding_unknown_market_counts_skipped_without_requests() {
+    let conn = crate::test_support::open();
+    // 市场未知的 ETF 持仓（如手动建档未设市场）：在行情分区内仍无法构造 secid，
+    // 计入跳过且零请求（跳过统计与标的收集同源，不报错）。
+    insert_holding(
+        &conn, "acc-1", "inst-etf", "510300", "etf", "CNY", "unknown",
+    );
+
+    let secid_log = RefCell::new(Vec::new());
+    let mut fetch = |secids: &str| -> Result<Vec<StockItem>> {
+        secid_log.borrow_mut().push(secids.to_string());
+        Ok(vec![])
+    };
+    let mut kline = mock_kline(&[]);
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut no_fx, &mut no_nav).unwrap();
+
+    assert_eq!(result.synced, 0);
+    assert_eq!(result.skipped, 1, "市场未知在行情分区内仍计入跳过");
+    assert!(secid_log.borrow().is_empty(), "不可查询行不得发起报价请求");
+    assert_eq!(market_price_of(&conn, "inst-etf"), None);
+}
+
+#[test]
+fn three_type_partitions_roll_up_into_one_result() {
+    let conn = crate::test_support::open();
+    // 三分区一次钉住：行情分区 = stock + etf；净值通道 = fund；跳过 =
+    // 名称充代码基金行 + bond + other。跳过统计与标的收集出自同一次收集（同源）。
+    insert_holding(&conn, "acc-1", "inst-etf", "510300", "etf", "CNY", "sh");
+    insert_holding(&conn, "acc-2", "inst-sh", "600519", "stock", "CNY", "sh");
+    insert_holding(
+        &conn,
+        "acc-3",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+    insert_holding(
+        &conn,
+        "acc-4",
+        "inst-namefund",
+        "华夏成长混合",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+    insert_holding(
+        &conn,
+        "acc-5",
+        "inst-bond",
+        "019547",
+        "bond",
+        "CNY",
+        "unknown",
+    );
+    insert_holding(
+        &conn,
+        "acc-6",
+        "inst-other",
+        "稳稳地幸福",
+        "other",
+        "CNY",
+        "unknown",
+    );
+
+    // 报价批次同时携带股票与 ETF（同一分区、同批构造 secid，收集按 symbol 升序）；
+    // 精度位随行：ETF f1=3、股票 f1=2。
+    let secid_log = RefCell::new(Vec::new());
+    let mut fetch = |secids: &str| -> Result<Vec<StockItem>> {
+        secid_log.borrow_mut().push(secids.to_string());
+        Ok(vec![
+            StockItem {
+                name: "沪深300ETF华泰柏瑞".into(),
+                code: "510300".into(),
+                price: Some(4634.0),
+                precision: Some(3.0),
+            },
+            StockItem {
+                name: "贵州茅台".into(),
+                code: "600519".into(),
+                price: Some(131601.0),
+                precision: Some(2.0),
+            },
+        ])
+    };
+    let pages = [("110022", vec![nav_page(1, &[("2026-01-30", 3.348)])])];
+    let nav_requested = RefCell::new(Vec::new());
+    let mut nav = mock_nav(&pages, &nav_requested);
+    let mut kline = mock_kline(&[]);
+
+    let result =
+        do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut no_fx, &mut nav).unwrap();
+
+    // synced = 行情分区 2（股票+ETF）+ 基金 1；skipped = 名称充代码基金 + 债券 + 其他；
+    // written = 实际落价 3（基金首刷落净值计入）。
+    assert_eq!(result.synced, 3);
+    assert_eq!(result.skipped, 3);
+    assert_eq!(result.written, 3);
+    assert_eq!(result.message, "已同步 3 只，跳过 3 只");
+    assert_eq!(
+        *secid_log.borrow(),
+        vec!["1.510300,1.600519".to_string()],
+        "股票与 ETF 同走行情分区、同批查询（收集按 symbol 升序）"
+    );
+    let nav_codes: Vec<String> = nav_requested
+        .borrow()
+        .iter()
+        .map(|q| q.code.clone())
+        .collect();
+    assert_eq!(
+        nav_codes,
+        vec!["110022".to_string()],
+        "净值通道只发起基金请求"
+    );
+    assert_eq!(market_price_of(&conn, "inst-etf"), Some(46_340));
+    assert_eq!(market_price_of(&conn, "inst-sh"), Some(13_160_100));
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((33480, Some("2026-01-30".into())))
+    );
+    assert_eq!(
+        market_price_of(&conn, "inst-bond"),
+        None,
+        "无行情来源持仓不写价格"
+    );
+    assert_eq!(market_price_of(&conn, "inst-other"), None);
+    assert_eq!(market_price_of(&conn, "inst-namefund"), None);
+}
+
+// ---------------------------------------------------------------------------
 // 美股行情通道（issue #696 / ADR-0081 决策 2）：f2 刻度实测钉住、美股持仓
 // 刷价 + 日 K 回填 + USDCNY 汇率同期采集的端到端离线注入。
 // ---------------------------------------------------------------------------
@@ -1303,6 +1523,11 @@ fn us_quotes_deserialize_with_thousand_scale() {
     let resp: UlistResponse = serde_json::from_str(json).unwrap();
     let items = resp.data.unwrap().diff.unwrap().into_items();
     assert_eq!(items.len(), 3);
+    assert_eq!(
+        items[0].precision,
+        Some(3.0),
+        "美股精度位随行返回（与本票 ETF 共用同一字段）"
+    );
     // 价格换算（万分之一元）：美股 f2 × 10 —— 319.970 / 113.240 / 770.190。
     assert_eq!(f2_to_price(items[0].price.unwrap(), "nasdaq"), 3_199_700);
     assert_eq!(f2_to_price(items[1].price.unwrap(), "nyse"), 1_132_400);
@@ -1332,6 +1557,7 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
             name: "苹果".into(),
             code: "AAPL".into(),
             price: Some(319_970.0),
+            precision: None,
         }])
     };
     // 近两年日 K 回填样本（美股美元价）：跨两周（01-02 周五、01-08 周四），末周取最后交易日。
@@ -1398,6 +1624,7 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
             name: "苹果".into(),
             code: "AAPL".into(),
             price: Some(320_000.0),
+            precision: None,
         }])
     };
     let mut kline = mock_kline(&klines);
@@ -1421,7 +1648,6 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
 #[test]
 fn us_stock_holdings_route_exact_secids_per_market() {
     // 三市场各一持仓：secid 前缀按精确市场映射（105/106/107），互不串市场。
-    // （全 stock 类型：ETF 行情分区扩展属 #695，不在本票范围。）
     let conn = crate::test_support::open();
     insert_holding(&conn, "acc-1", "inst-nq", "AAPL", "stock", "USD", "nasdaq");
     insert_holding(&conn, "acc-2", "inst-ny", "BABA", "stock", "USD", "nyse");

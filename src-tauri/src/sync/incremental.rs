@@ -1,9 +1,10 @@
-//! 持仓价格增量同步编排（issue #103，issue #137 升级，issue #303 基金分区；标的
-//! 收集改走单点谓词 issue #239）：单次收集全量持仓标的（口径 = InvestedInstrument，
-//! 见 `investment::predicates`），一次执行完成四件事：① 批量报价刷股票现价 upsert
-//! `market_prices`；② 每股票一次日 K 请求回填近两年日线，本地降采样为周线落
-//! `price_history`；③ 持仓非本位币币种对的汇率 K 线同期落 `fx_rate_history`；
-//! ④ 基金走历史净值通道逐只按水位增量回填（ADR-0038 决策 6，见 `fund_nav`）。
+//! 持仓价格增量同步编排（issue #103，issue #137 升级，issue #303 基金分区，
+//! issue #695 ETF 纳入行情通道；标的收集改走单点谓词 issue #239）：单次收集全量
+//! 持仓标的（口径 = InvestedInstrument，见 `investment::predicates`），一次执行完成
+//! 四件事：① 批量报价刷股票/场内 ETF 现价 upsert `market_prices`；② 每行情分区
+//! 标的一次日 K 请求回填近两年日线，本地降采样为周线落 `price_history`；③ 持仓
+//! 非本位币币种对的汇率 K 线同期落 `fx_rate_history`；④ 基金走历史净值通道逐只
+//! 按水位增量回填（ADR-0038 决策 6，见 `fund_nav`）。
 //! 类型分区在 Rust 侧完成，不增删、不改标的字典（名称/市场/数量）。
 //! 职责切分：全量同步修字典 / 增量同步刷价格 + 沉淀历史（issue #101、#137）。
 //!
@@ -28,8 +29,8 @@ use crate::transaction::amount::default_currency_code;
 
 use super::fund_nav::{LsjzPage, NavQuery, sync_fund_navs};
 use super::http::{
-    KlineBar, Pacer, StockItem, ULIST_BATCH_SIZE, build_client, f2_to_price, fetch_fx_kline,
-    fetch_kline, fetch_ulist, secid_prefix,
+    KlineBar, Pacer, StockItem, ULIST_BATCH_SIZE, build_client, fetch_fx_kline, fetch_kline,
+    fetch_ulist, price_cents_from_raw, secid_prefix,
 };
 use super::persist::upsert_fx_rate_history;
 
@@ -49,9 +50,11 @@ pub(super) struct HeldInstrument {
 }
 
 impl HeldInstrument {
-    /// 是否股票类：走行情报价/日 K 通道。
-    fn is_stock(&self) -> bool {
-        self.instrument_type == "stock"
+    /// 是否走行情通道：股票与场内 ETF（stock|etf，issue #695 / ADR-0081 决策 6）。
+    /// 场内 ETF 与股票共用东财行情报价/日 K 接口族，按市场+代码构造 secid 同路
+    /// 刷价与回填；市场未知仍无法构造 secid，照常计入跳过。
+    fn is_quote_channel(&self) -> bool {
+        matches!(self.instrument_type.as_str(), "stock" | "etf")
     }
 
     /// 是否场外基金：走历史净值通道（ADR-0038 决策 6）。
@@ -89,12 +92,12 @@ fn collect_held_instruments(conn: &Connection) -> Result<Vec<HeldInstrument>> {
     Ok(instruments)
 }
 
-/// 增量同步核心流程：单次收集全量持仓标的并按类型分区 → 股票侧构造 secid
-/// 批量报价 upsert 现价 + 日 K 回填周线；基金侧逐只历史净值按水位增量回填
-///（ADR-0038 决策 6，委托 [`sync_fund_navs`]）；汇率 K 线同期落
-/// `fx_rate_history` → 结果统计。
+/// 增量同步核心流程：单次收集全量持仓标的并按类型分区 → 行情分区（stock|etf，
+/// #695）构造 secid 批量报价 upsert 现价（换算按随行精度位单点）+ 日 K 回填周线；
+/// 基金侧逐只历史净值按水位增量回填（ADR-0038 决策 6，委托 [`sync_fund_navs`]）；
+/// 汇率 K 线同期落 `fx_rate_history` → 结果统计。
 /// 四个抓取函数均由调用方注入（生产接 HTTP 层，测试注入 mock），本函数不触碰网络。
-/// 返回统计：`synced` = 处理成功的标的数（股票有效价 + 基金处理成功，含基金
+/// 返回统计：`synced` = 处理成功的标的数（行情分区有效价 + 基金处理成功，含基金
 /// 「已是最新」）；`skipped` = 债券等无行情来源持仓 + 名称充代码的基金行 + 市场未知
 /// + 停牌/无效价/查询无果 + 首刷查无净值的基金；`written` = 实际写入价格的标的数
 ///   （价格失效信号判定依据：零变化不广播，基金无新净值不算写入）。
@@ -113,11 +116,13 @@ where
 {
     let held = collect_held_instruments(conn)?;
     // 单次收集全量持仓标的（一条 SQL、一个谓词引用点），Rust 内按 instrument_type
-    // 分区：股票侧构造 secid 查报价与日 K；基金侧走历史净值通道（ADR-0038 决策 6）；
-    // 其余（债券/ETF/其他等无行情来源）计入跳过统计——三类统计天然同源。
-    let stocks: Vec<&HeldInstrument> = held.iter().filter(|i| i.is_stock()).collect();
+    // 分区：行情分区（stock|etf，issue #695）构造 secid 查报价与日 K；基金侧走历史
+    // 净值通道（ADR-0038 决策 6）；其余（债券/其他等无行情来源）计入跳过统计——
+    // 三类统计天然同源。
+    let quote_channel: Vec<&HeldInstrument> =
+        held.iter().filter(|i| i.is_quote_channel()).collect();
     let funds: Vec<&HeldInstrument> = held.iter().filter(|i| i.is_fund()).collect();
-    let no_quote_source = held.len() - stocks.len() - funds.len();
+    let no_quote_source = held.len() - quote_channel.len() - funds.len();
 
     // 完全无持仓：明确提示，不报错。
     if held.is_empty() {
@@ -129,17 +134,18 @@ where
         });
     }
 
-    // 构造可查询 secid 与报价代码 → 持仓股票 映射。键为报价代码（已归一化，与响应 f12 对齐）；
-    // 股票内 symbol 唯一（instruments 的 UNIQUE(symbol, instrument_type)），同代码不冲突。
+    // 构造可查询 secid 与报价代码 → 行情分区标的 映射。键为报价代码（已归一化，
+    // 与响应 f12 对齐）；行情分区内 symbol 唯一（instruments 的
+    // UNIQUE(symbol, instrument_type)），同代码不冲突。
     // 市场未知（unknown）无法构造 secid，计入跳过。
     let mut meta: HashMap<String, &HeldInstrument> = HashMap::new();
     let mut queryable: Vec<(String, &HeldInstrument)> = Vec::new();
     let mut skipped_unqueryable = 0usize;
-    for stock in &stocks {
-        if let Some(prefix) = secid_prefix(&stock.market) {
-            let code = quote_code(&stock.symbol);
-            meta.insert(code.to_string(), stock);
-            queryable.push((format!("{prefix}.{code}"), stock));
+    for inst in &quote_channel {
+        if let Some(prefix) = secid_prefix(&inst.market) {
+            let code = quote_code(&inst.symbol);
+            meta.insert(code.to_string(), inst);
+            queryable.push((format!("{prefix}.{code}"), inst));
         } else {
             skipped_unqueryable += 1;
         }
@@ -151,15 +157,16 @@ where
         let secids: Vec<&str> = chunk.iter().map(|(secid, _)| secid.as_str()).collect();
         let items = fetch(&secids.join(","))?;
         for item in &items {
-            if let Some(stock) = meta.get(&item.code) {
+            if let Some(inst) = meta.get(&item.code) {
                 // f2≤0（停牌/无效价）经 deserialize_f2 已过滤为 None，此处跳过、保留旧价。
                 if let Some(raw) = item.price {
-                    let price = f2_to_price(raw, &stock.market);
+                    // 换算按随行精度位单点（场内 ETF 三位小数报价，#695；缺 f1 按市场回退）。
+                    let price = price_cents_from_raw(raw, item.precision, &inst.market);
                     upsert_market_price(
                         conn,
-                        &stock.instrument_id,
+                        &inst.instrument_id,
                         price,
-                        &stock.currency,
+                        &inst.currency,
                         &crate::db::now_iso(),
                         None,
                         Some(EASTMONEY_PRICE_SOURCE),
@@ -170,18 +177,18 @@ where
         }
     }
 
-    // ② 近两年日 K 回填 → 周线降采样落 PriceHistory。仅覆盖股票类持仓标的
-    // （口径同 InvestedInstrument）；清仓后不再采集、历史保留不删；停牌/整周无有效
-    // 报价该周无点，不中断同步。
-    for (secid, stock) in &queryable {
+    // ② 近两年日 K 回填 → 周线降采样落 PriceHistory。覆盖行情分区持仓标的
+    // （stock|etf，#695；口径同 InvestedInstrument）；清仓后不再采集、历史保留不删；
+    // 停牌/整周无有效报价该周无点，不中断同步。
+    for (secid, inst) in &queryable {
         let bars = fetch_kline(secid)?;
         for (trade_date, close) in downsample_weekly(&bars) {
             upsert_price_history(
                 conn,
-                &stock.instrument_id,
+                &inst.instrument_id,
                 &trade_date,
                 price_value_to_cents(close),
-                &stock.currency,
+                &inst.currency,
                 EASTMONEY_PRICE_SOURCE,
             )?;
         }
