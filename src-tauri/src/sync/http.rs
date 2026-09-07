@@ -12,7 +12,8 @@ use serde::Deserialize;
 use crate::error::{AppError, Result};
 
 // 批量报价接口路径：按 secid 一次携带多只跨市场代码查询最新价（增量同步用，issue #103）。
-// 响应结构与 clist 一致（data.total / data.diff，条目 f12/f14/f2），复用同一套解析。
+// 响应 data 为列表对象（data.diff，条目 f12/f14/f1/f2），与已退役的 clist 接口同形、
+// 复用同一套解析（全量同步 clist 爬取已随 ADR-0081 决策 3 退役）。
 pub(super) const ULIST_PATH: &str = "/api/qt/ulist.np/get";
 // 单点行情接口路径：按单个 secid 返回个股实时详情（股票按代码查询用，issue #693）。
 // 响应 data 为单个对象（f43 价格 / f57 代码 / f58 名称 / f59 精度 / f62 类型特征 /
@@ -170,11 +171,11 @@ pub(super) fn price_cents_from_raw(raw: f64, precision: Option<f64>, market: &st
 /// 此时应视为无行情条目而非错误，保证增量同步「停牌/无效价不中断同步」语义。
 #[derive(Debug, Deserialize)]
 pub(super) struct UlistResponse {
-    pub(super) data: Option<ClistData>,
+    pub(super) data: Option<UlistData>,
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct ClistData {
+pub(super) struct UlistData {
     pub(super) diff: Option<DiffField>,
 }
 

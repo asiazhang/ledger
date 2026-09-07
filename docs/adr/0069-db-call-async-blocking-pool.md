@@ -29,7 +29,7 @@
 三批迁移（#501 参考数据与核心查询、#502 交易与计划域、#503 投资与基础设施 + HTTP handlers）已合入。收口扫描口径：`#[tauri::command]` 逐个分类、HTTP handlers 逐个分类，凡触 DB 而不经 `run_db` 即残留。扫描结论（#504 复核，rg 可机械重放）：
 
 - **IPC 命令**：18 个命令壳文件的触 DB 命令全部 async 化并经 helper；写路径信号在 await 后发射（ADR-0044 映射单点不变，ADR-0054 主线程非阻塞投递使阻塞线程发射安全）；
-- **保留同步形态的命令（六个，均不触 DB，sweep 逐个判定）**：`sync_instruments`（发射后不管长任务：分离线程逐页推进，连接经访问器按页短暂获取，网络拉取与进度推送不持锁）、`cancel_sync_instruments`（纯原子标志位）、`set_auto_execution_enabled`（设备级运行时镜像推送）、`get_ai_prompt`（内存常量克隆）、`open_log_dir`（即发即忘系统调用）、`restart_app`（系统控制）；
+- **保留同步形态的命令（决策时六个，均不触 DB，sweep 逐个判定；其中前两个已随 ADR-0081 决策 3 退役删除，issue #698，现存四个）**：`sync_instruments`（发射后不管长任务：分离线程逐页推进，连接经访问器按页短暂获取，网络拉取与进度推送不持锁）、`cancel_sync_instruments`（纯原子标志位）、`set_auto_execution_enabled`（设备级运行时镜像推送）、`get_ai_prompt`（内存常量克隆）、`open_log_dir`（即发即忘系统调用）、`restart_app`（系统控制）；
 - **HTTP handlers**：触 DB 端点全部 async 化并经 helper（`run_db` 端点名用 `METHOD /path` 身份格式，与 `HTTP_ENDPOINT_WRITE_OPS` 声明表同款）；不触 DB 端点形态不变——`GET /funds/{code}`（实时网络往返，分钟级阻塞拉取在连接锁外完成）、`GET /import/knowledge` 与 OpenAPI 文档（静态内容）。
 
 ### 3. SQL 归因显式跨线程：helper 重建/携带 span

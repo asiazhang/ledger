@@ -14,7 +14,7 @@
 ## 决策
 
 1. **新增价格失效信号 `ledger:prices-changed`**：后端事件、无 payload、粗粒度，与参考失效信号 `ledger:changed`（ADR-0012）、备份信号 `ledger:backups-changed`（issue #129）平行，同一 `ledger:*` 命名空间与命名风格（`<domain 复数>-changed`）。语义锚「价格数据已变更」，覆盖 MarketPrice / PriceHistory / FxRateHistory 三者（增量同步一次写全三样，信号宽度与写入面对齐）。
-2. **生产者 = 两个同步命令，触发条件 = 实际写入**：
+2. **生产者 = 两个同步命令（其中全量同步已随 ADR-0081 决策 3 退役删除，issue #698，现存生产者清单见投资域词汇表价格失效信号词条），触发条件 = 实际写入**：
    - `sync_holding_prices` 成功返回且 `synced > 0` 时 emit；`synced = 0`（无持仓标的、全部跳过）为库内零变化，不广播——失效信号的本义是「数据变了」。
    - `sync_instruments` 结束（含用户中断，只要本次运行有落库）同样 emit：全量同步也 upsert `market_prices`，且其入口恰在标的页，同步后标的列表现价列陈旧与主 bug 同形；中断保留已落库价格（upsert 幂等），不发信号即失真。
 3. **消费方自选订阅**：前端价格消费方各自 `listen` 后重拉自身数据。本期接线三处——持仓概览（`usePortfolioOverview`）、标的页标的列表、组合走势（`usePortfolioTrend`，走势同样吃 `market_prices`，漏接就是下一个陈旧点），并移除盈亏页概览卡的手动重拉样板；仪表盘等信号可用性已备好，订阅留后续（spec #170 用户故事 5/7：未来第三入口与新消费方行为自动一致、零记忆负担）。
