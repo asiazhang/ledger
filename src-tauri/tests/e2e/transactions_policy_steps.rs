@@ -90,8 +90,8 @@ fn create_txn_with_policy(
         "创建挂单交易失败: {:?}",
         result.err().map(|e| e.to_string())
     );
-    world.last_transaction_id = Some(result.unwrap().id);
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.last_transaction_id = Some(result.unwrap().id);
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 #[when(
@@ -243,6 +243,7 @@ fn try_sell_with_policy(
 #[when(expr = "尝试创建退款 金额 {int} 关联最近支出 日期 {string} 挂保单 {string}")]
 fn try_refund_with_policy(world: &mut LedgerWorld, amount: i64, date: String, policy_id: String) {
     let source_id = world
+        .txn
         .last_transaction_id
         .clone()
         .expect("退款挂单步骤：应有原支出交易");
@@ -318,7 +319,7 @@ fn batch_import_with_policy(world: &mut LedgerWorld, step: &cucumber::gherkin::S
         .db
         .write(|conn| TransactionBatch::run(conn, inputs, true))
         .expect("批量导入挂单交易失败");
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 // ---------------------------------------------------------------------------
@@ -327,10 +328,15 @@ fn batch_import_with_policy(world: &mut LedgerWorld, step: &cucumber::gherkin::S
 
 #[when(expr = "修改最近交易挂保单 {string}")]
 fn update_last_txn_policy(world: &mut LedgerWorld, policy_number: String) {
-    let id = world.last_transaction_id.clone().expect("没有可修改的交易");
+    let id = world
+        .txn
+        .last_transaction_id
+        .clone()
+        .expect("没有可修改的交易");
     let policy_id = policy_id_by_number(world, &policy_number)
         .unwrap_or_else(|| panic!("改挂步骤：保单 {policy_number} 应已存在"));
     let existing = world
+        .txn
         .transactions_list
         .iter()
         .find(|t| t.id == id)
@@ -345,8 +351,13 @@ fn update_last_txn_policy(world: &mut LedgerWorld, policy_number: String) {
 
 #[when(expr = "修改最近交易清除挂单")]
 fn clear_last_txn_policy(world: &mut LedgerWorld) {
-    let id = world.last_transaction_id.clone().expect("没有可修改的交易");
+    let id = world
+        .txn
+        .last_transaction_id
+        .clone()
+        .expect("没有可修改的交易");
     let existing = world
+        .txn
         .transactions_list
         .iter()
         .find(|t| t.id == id)
@@ -364,12 +375,13 @@ fn clear_last_txn_policy(world: &mut LedgerWorld) {
 #[when(expr = "修改第 {int} 条交易备注 {string} 保持原挂单")]
 fn update_keep_policy(world: &mut LedgerWorld, index: usize, note: String) {
     let existing = world
+        .txn
         .transactions_list
         .get(index - 1)
         .unwrap_or_else(|| panic!("交易列表第 {index} 条不存在"))
         .clone();
     let id = existing.id.clone();
-    world.last_transaction_id = Some(id.clone());
+    world.txn.last_transaction_id = Some(id.clone());
     let input = TransactionInput {
         note: Some(note),
         ..existing_to_input(&existing)
@@ -407,7 +419,7 @@ fn update_and_refresh(world: &mut LedgerWorld, id: &str, input: TransactionInput
         "修改交易失败: {:?}",
         result.err().map(|e| e.to_string())
     );
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 // ---------------------------------------------------------------------------
@@ -417,6 +429,7 @@ fn update_and_refresh(world: &mut LedgerWorld, id: &str, input: TransactionInput
 #[then(expr = "第 {int} 条交易挂单应为保单号 {string}")]
 fn check_txn_policy(world: &mut LedgerWorld, index: usize, policy_number: String) {
     let txn = world
+        .txn
         .transactions_list
         .get(index - 1)
         .unwrap_or_else(|| panic!("交易列表第 {index} 条不存在"));
@@ -437,6 +450,7 @@ fn check_txn_policy(world: &mut LedgerWorld, index: usize, policy_number: String
 #[then(expr = "第 {int} 条交易应无挂单")]
 fn check_txn_no_policy(world: &mut LedgerWorld, index: usize) {
     let txn = world
+        .txn
         .transactions_list
         .get(index - 1)
         .unwrap_or_else(|| panic!("交易列表第 {index} 条不存在"));
@@ -452,6 +466,7 @@ fn check_txn_no_policy(world: &mut LedgerWorld, index: usize) {
 #[then(expr = "第 {int} 条交易挂单引用应保留（软删保单不置空）")]
 fn check_txn_policy_kept(world: &mut LedgerWorld, index: usize) {
     let txn = world
+        .txn
         .transactions_list
         .get(index - 1)
         .unwrap_or_else(|| panic!("交易列表第 {index} 条不存在"));

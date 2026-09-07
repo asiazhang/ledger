@@ -56,8 +56,8 @@ fn create_txn(
         .db
         .write(|conn| create_transaction_internal(conn, input));
     assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
-    world.last_transaction_id = Some(result.unwrap().id);
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.last_transaction_id = Some(result.unwrap().id);
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 #[when(expr = "创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string} 备注 {string}")]
@@ -93,8 +93,8 @@ fn create_txn_with_note(
         .db
         .write(|conn| create_transaction_internal(conn, input));
     assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
-    world.last_transaction_id = Some(result.unwrap().id);
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.last_transaction_id = Some(result.unwrap().id);
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 #[when(expr = "尝试创建转账 金额 {int} 从账户 {string} 日期 {string}")]
@@ -327,7 +327,11 @@ fn inject_soft_delete_failure_trigger(world: &mut LedgerWorld) {
 /// 尝试删除最近一笔交易并捕获错误（供「应返回错误」断言，issue #229）。
 #[when(expr = "尝试删除最近交易")]
 fn try_delete_last_txn(world: &mut LedgerWorld) {
-    let id = world.last_transaction_id.clone().expect("没有可删除的交易");
+    let id = world
+        .txn
+        .last_transaction_id
+        .clone()
+        .expect("没有可删除的交易");
     world.last_error = match delete_transaction_internal(&world_conn!(world), &id) {
         Ok(()) => None,
         Err(e) => Some(e.to_string()),
@@ -363,13 +367,14 @@ fn create_transfer(
     };
     let result = create_transaction_internal(&world_conn!(world), input);
     assert!(result.is_ok(), "创建转账失败: {:?}", result.err());
-    world.last_transaction_id = Some(result.unwrap().id);
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.last_transaction_id = Some(result.unwrap().id);
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 #[when(expr = "关联上一笔交易创建退款 金额 {int} 日期 {string}")]
 fn create_refund(world: &mut LedgerWorld, amount: i64, date: String) {
     let expense_id = world
+        .txn
         .last_transaction_id
         .clone()
         .expect("没有上一笔交易可关联");
@@ -382,6 +387,7 @@ fn create_refund(world: &mut LedgerWorld, amount: i64, date: String) {
         account_id: {
             // 从已有交易中获取支出的 account_id
             let txn = world
+                .txn
                 .transactions_list
                 .iter()
                 .find(|t| t.id == expense_id)
@@ -402,8 +408,8 @@ fn create_refund(world: &mut LedgerWorld, amount: i64, date: String) {
     };
     let result = create_transaction_internal(&world_conn!(world), input);
     assert!(result.is_ok(), "创建退款失败: {:?}", result.err());
-    world.last_transaction_id = Some(result.unwrap().id);
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.last_transaction_id = Some(result.unwrap().id);
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 // ---------------------------------------------------------------------------
@@ -412,9 +418,9 @@ fn create_refund(world: &mut LedgerWorld, amount: i64, date: String) {
 
 #[then(expr = "交易列表应包含 {int} 条记录")]
 fn check_transaction_count(world: &mut LedgerWorld, expected: i64) {
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
     assert_eq!(
-        world.transactions_list.len() as i64,
+        world.txn.transactions_list.len() as i64,
         expected,
         "交易数量不匹配"
     );
@@ -429,11 +435,11 @@ fn check_txn_kind_amount(
 ) {
     let idx = (index - 1) as usize;
     assert!(
-        idx < world.transactions_list.len(),
+        idx < world.txn.transactions_list.len(),
         "交易列表只有 {} 条，无法访问第 {index} 条",
-        world.transactions_list.len()
+        world.txn.transactions_list.len()
     );
-    let txn = &world.transactions_list[idx];
+    let txn = &world.txn.transactions_list[idx];
     assert_eq!(txn.kind.as_str(), expected_kind, "交易类型不匹配");
     assert_eq!(txn.amount_cents, expected_amount, "交易金额不匹配");
 }
@@ -448,11 +454,11 @@ fn check_txn_kind_amount_note(
 ) {
     let idx = (index - 1) as usize;
     assert!(
-        idx < world.transactions_list.len(),
+        idx < world.txn.transactions_list.len(),
         "交易列表只有 {} 条",
-        world.transactions_list.len()
+        world.txn.transactions_list.len()
     );
-    let txn = &world.transactions_list[idx];
+    let txn = &world.txn.transactions_list[idx];
     assert_eq!(txn.kind.as_str(), expected_kind, "交易类型不匹配");
     assert_eq!(txn.amount_cents, expected_amount, "交易金额不匹配");
     assert_eq!(
@@ -486,32 +492,35 @@ fn assert_no_lot_and_trade_residue(world: &mut LedgerWorld) {
 
 #[then(expr = "该转账类型应为 {string}")]
 fn check_transfer_kind(world: &mut LedgerWorld, expected_kind: String) {
-    let txn = world.transactions_list.last().expect("交易列表为空");
+    let txn = world.txn.transactions_list.last().expect("交易列表为空");
     assert_eq!(txn.kind.as_str(), expected_kind);
 }
 
 #[then(expr = "该转账 account_id 应匹配账户 {string}")]
 fn check_transfer_from(world: &mut LedgerWorld, account_name: String) {
-    let txn = world.transactions_list.last().expect("交易列表为空");
+    let txn = world.txn.transactions_list.last().expect("交易列表为空");
     let expected_id = world.account_id(&account_name);
     assert_eq!(txn.account_id, expected_id);
 }
 
 #[then(expr = "该转账 to_account_id 应匹配账户 {string}")]
 fn check_transfer_to(world: &mut LedgerWorld, account_name: String) {
-    let txn = world.transactions_list.last().expect("交易列表为空");
+    let txn = world.txn.transactions_list.last().expect("交易列表为空");
     let expected_id = world.account_id(&account_name);
     assert_eq!(txn.to_account_id.as_deref(), Some(expected_id.as_str()));
 }
 
 #[then(expr = "退款交易的 refund_of 应指向原支出交易")]
 fn check_refund_linked(world: &mut LedgerWorld) {
-    assert!(world.transactions_list.len() >= 2, "需要有至少 2 条交易");
+    assert!(
+        world.txn.transactions_list.len() >= 2,
+        "需要有至少 2 条交易"
+    );
     // 第一条是原支出（date DESC 排序，后创建的 refund 排前面）
     // 实际上：expense 日期 04-01, refund 日期 04-05
     // 按 date DESC: refund (04-05) 在前，expense (04-01) 在后
-    let refund = &world.transactions_list[0];
-    let expense = &world.transactions_list[1];
+    let refund = &world.txn.transactions_list[0];
+    let expense = &world.txn.transactions_list[1];
     assert_eq!(refund.kind, TransactionKind::Refund, "第一条应为退款");
     assert_eq!(expense.kind, TransactionKind::Expense, "第二条应为原支出");
     assert_eq!(

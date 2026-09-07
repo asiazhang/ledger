@@ -132,7 +132,7 @@ fn adjust_balance(world: &mut LedgerWorld, name: String, target: i64, date: Stri
         )
     }) {
         Ok((tx_id, _)) => {
-            world.last_transaction_id = Some(tx_id);
+            world.txn.last_transaction_id = Some(tx_id);
             world.last_error = None;
         }
         Err(e) => world.last_error = Some(e.to_string()),
@@ -143,6 +143,7 @@ fn adjust_balance(world: &mut LedgerWorld, name: String, target: i64, date: Stri
 #[when(expr = "删除上一笔交易")]
 fn delete_last_transaction(world: &mut LedgerWorld) {
     let tx_id = world
+        .txn
         .last_transaction_id
         .clone()
         .expect("场景中应先产生一笔交易");

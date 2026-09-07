@@ -127,7 +127,7 @@ fn delete_instrument(world: &mut LedgerWorld, symbol: String) {
 /// 列出全部标的（无过滤）：验证列表返回体来源字段的接缝（issue #290 验收项）。
 #[when(expr = "列出全部标的")]
 fn list_all_instruments(world: &mut LedgerWorld) {
-    world.last_instrument_search = Some(
+    world.asset.last_instrument_search = Some(
         list_instruments(&world_conn!(world), &InstrumentListFilter::default())
             .expect("标的列表查询失败"),
     );
@@ -139,7 +139,7 @@ fn search_instruments(world: &mut LedgerWorld, query: String) {
         search: Some(query),
         ..Default::default()
     };
-    world.last_instrument_search =
+    world.asset.last_instrument_search =
         Some(list_instruments(&world_conn!(world), &filter).expect("标的搜索失败"));
 }
 
@@ -151,7 +151,7 @@ fn search_instruments_of_kind(world: &mut LedgerWorld, kind: String, query: Stri
         kind: Some(kind.parse().expect("未知金融工具类型")),
         ..Default::default()
     };
-    world.last_instrument_search =
+    world.asset.last_instrument_search =
         Some(list_instruments(&world_conn!(world), &filter).expect("标的搜索失败"));
 }
 
@@ -162,6 +162,7 @@ fn search_instruments_of_kind(world: &mut LedgerWorld, kind: String, query: Stri
 #[then(expr = "标的搜索命中 {int} 条 总数 {int}")]
 fn assert_instrument_search(world: &mut LedgerWorld, items: usize, total: i64) {
     let result = world
+        .asset
         .last_instrument_search
         .as_ref()
         .expect("未执行标的搜索");
@@ -172,6 +173,7 @@ fn assert_instrument_search(world: &mut LedgerWorld, items: usize, total: i64) {
 #[then(expr = "标的搜索首个结果代码为 {string}")]
 fn assert_instrument_first_symbol(world: &mut LedgerWorld, symbol: String) {
     let result = world
+        .asset
         .last_instrument_search
         .as_ref()
         .expect("未执行标的搜索");
@@ -187,6 +189,7 @@ fn assert_instrument_first_symbol(world: &mut LedgerWorld, symbol: String) {
 #[then(expr = "标的列表代码 {string} 来源应为 {string}")]
 fn assert_instrument_list_source(world: &mut LedgerWorld, symbol: String, source: String) {
     let result = world
+        .asset
         .last_instrument_search
         .as_ref()
         .expect("未执行标的列表查询");
@@ -201,6 +204,7 @@ fn assert_instrument_list_source(world: &mut LedgerWorld, symbol: String, source
 #[then(expr = "标的列表共 {int} 条")]
 fn assert_instrument_list_total(world: &mut LedgerWorld, total: usize) {
     let result = world
+        .asset
         .last_instrument_search
         .as_ref()
         .expect("未执行标的列表查询");

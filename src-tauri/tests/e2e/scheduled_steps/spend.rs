@@ -57,13 +57,13 @@ fn create_subscription_plan_with_recurrence(
             )
         })
         .expect("创建订阅计划失败");
-    world.last_plan_id = Some(id);
+    world.plan.last_plan_id = Some(id);
 }
 
 /// 执行最近计划的前 N 条 pending 期次（scheduled_date 升序）。
 #[when(expr = "执行该计划前 {int} 期")]
 fn execute_first_n_occurrences(world: &mut LedgerWorld, n: usize) {
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let occ_ids: Vec<String> = {
         let conn = world_conn!(world);
         let mut stmt = conn
@@ -86,7 +86,7 @@ fn execute_first_n_occurrences(world: &mut LedgerWorld, n: usize) {
 /// 取消最近的订阅计划（走 update_plan_status 命令体）。
 #[when(expr = "取消该订阅计划")]
 fn cancel_subscription_plan(world: &mut LedgerWorld) {
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     world
         .db
         .write(|conn| update_plan_status(conn, &plan_id, ScheduledStatus::Cancelled))
@@ -96,7 +96,7 @@ fn cancel_subscription_plan(world: &mut LedgerWorld) {
 /// 暂停最近的订阅计划（走 update_plan_status 命令体）。
 #[when(expr = "暂停该订阅计划")]
 fn pause_subscription_plan(world: &mut LedgerWorld) {
-    let plan_id = world.last_plan_id.clone().expect("尚无定时计划");
+    let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     world
         .db
         .write(|conn| update_plan_status(conn, &plan_id, ScheduledStatus::Paused))
@@ -108,12 +108,12 @@ fn pause_subscription_plan(world: &mut LedgerWorld) {
 fn query_spend_with_today(world: &mut LedgerWorld, today: String) {
     let today =
         chrono::NaiveDate::parse_from_str(&today, "%Y-%m-%d").expect("今日日期应为 YYYY-MM-DD");
-    world.last_spend =
+    world.plan.last_spend =
         Some(query_subscription_spend(&world_conn!(world), today).expect("查询订阅花费失败"));
 }
 
 fn last_spend(world: &LedgerWorld) -> &SubscriptionSpendOverview {
-    world.last_spend.as_ref().expect("尚未查询订阅花费")
+    world.plan.last_spend.as_ref().expect("尚未查询订阅花费")
 }
 
 #[then(expr = "本月实际花费应为 {int}")]

@@ -14,7 +14,7 @@ use tauri_app_lib::transaction::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::create_transaction_internal;
 
-use crate::items_common::{build_input, nth_item};
+use crate::items_common::build_input;
 use crate::world::LedgerWorld;
 
 /// 关联购买交易的入参：日期/成本/币种填入**故意错误的占位值**，
@@ -40,7 +40,7 @@ fn try_create_item_unlinked(world: &mut LedgerWorld, name: String) {
         build_input(&name, "2026-03-01".into(), 20_000, "CNY"),
         &mut || signals += 1,
     );
-    world.item_signal_count = signals;
+    world.item.item_signal_count = signals;
     world.last_error = match result {
         Err(AppError::Invalid(msg)) => Some(msg),
         Err(e) => Some(e.to_string()),
@@ -50,7 +50,7 @@ fn try_create_item_unlinked(world: &mut LedgerWorld, name: String) {
 
 #[then(expr = "第 {int} 件物品购买日期应为 {string}")]
 fn check_item_purchase_date(world: &mut LedgerWorld, n: usize, date: String) {
-    assert_eq!(nth_item(world, n).item.purchase_date, date);
+    assert_eq!(world.item.nth(n).item.purchase_date, date);
 }
 
 // ---------------------------------------------------------------------------
@@ -87,13 +87,13 @@ fn create_expense_txn_with_currency(
     };
     let result = create_transaction_internal(&world_conn!(world), input);
     let write = result.unwrap_or_else(|e| panic!("创建支出交易应成功但失败: {e}"));
-    world.last_transaction_id = Some(write.id);
+    world.txn.last_transaction_id = Some(write.id);
 }
 
 /// 记住最近创建的交易为关联购买交易（后续「关联该购买交易」步骤引用它）。
 #[when(expr = "记住该交易为关联购买交易")]
 fn remember_purchase_transaction(world: &mut LedgerWorld) {
-    world.remembered_purchase_transaction_id = world.last_transaction_id.clone();
+    world.item.remembered_purchase_transaction_id = world.txn.last_transaction_id.clone();
 }
 
 /// 创建物品并关联记住的购买交易：入参日期/成本为占位值，
@@ -101,6 +101,7 @@ fn remember_purchase_transaction(world: &mut LedgerWorld) {
 #[when(expr = "创建物品 {string} 关联该购买交易")]
 fn create_item_linked(world: &mut LedgerWorld, name: String) {
     let tx_id = world
+        .item
         .remembered_purchase_transaction_id
         .clone()
         .unwrap_or_else(|| panic!("没有记住的关联购买交易（先调「记住该交易为关联购买交易」）"));
@@ -112,8 +113,8 @@ fn create_item_linked(world: &mut LedgerWorld, name: String) {
     );
     match result {
         Ok(id) => {
-            world.last_item_id = Some(id);
-            world.item_signal_count = signals;
+            world.item.last_item_id = Some(id);
+            world.item.item_signal_count = signals;
         }
         Err(e) => panic!("创建物品应成功但失败: {e}"),
     }
@@ -123,6 +124,7 @@ fn create_item_linked(world: &mut LedgerWorld, name: String) {
 #[when(expr = "尝试创建物品 {string} 关联该购买交易")]
 fn try_create_item_linked(world: &mut LedgerWorld, name: String) {
     let tx_id = world
+        .item
         .remembered_purchase_transaction_id
         .clone()
         .unwrap_or_else(|| panic!("没有记住的关联购买交易（先调「记住该交易为关联购买交易」）"));
@@ -132,7 +134,7 @@ fn try_create_item_linked(world: &mut LedgerWorld, name: String) {
         build_linked_input(&name, &tx_id),
         &mut || signals += 1,
     );
-    world.item_signal_count = signals;
+    world.item.item_signal_count = signals;
     world.last_error = match result {
         Err(e) => Some(e.to_string()),
         Ok(_) => Some("预期失败但成功了".into()),
@@ -148,7 +150,7 @@ fn try_create_item_linked_missing(world: &mut LedgerWorld, name: String) {
         build_linked_input(&name, "no-such-transaction"),
         &mut || signals += 1,
     );
-    world.item_signal_count = signals;
+    world.item.item_signal_count = signals;
     world.last_error = match result {
         Err(e) => Some(e.to_string()),
         Ok(_) => Some("预期失败但成功了".into()),
@@ -170,11 +172,13 @@ fn update_item_linked(
     note: String,
 ) {
     let tx_id = world
+        .item
         .remembered_purchase_transaction_id
         .clone()
         .unwrap_or_else(|| panic!("没有记住的关联购买交易（先调「记住该交易为关联购买交易」）"));
     let mut signals = 0;
     let id = world
+        .item
         .last_item_id
         .clone()
         .unwrap_or_else(|| panic!("没有已创建的物品可修改"));
@@ -185,7 +189,7 @@ fn update_item_linked(
     input.note = if note.is_empty() { None } else { Some(note) };
     let result = update_item(&world_conn!(world), &id, input, &mut || signals += 1);
     match result {
-        Ok(()) => world.item_signal_count = signals,
+        Ok(()) => world.item.item_signal_count = signals,
         Err(e) => panic!("修改物品应成功但失败: {e}"),
     }
 }
@@ -203,11 +207,13 @@ fn try_update_item_linked(
     note: String,
 ) {
     let tx_id = world
+        .item
         .remembered_purchase_transaction_id
         .clone()
         .unwrap_or_else(|| panic!("没有记住的关联购买交易"));
     let mut signals = 0;
     let id = world
+        .item
         .last_item_id
         .clone()
         .unwrap_or_else(|| panic!("没有已创建的物品可修改"));
@@ -217,7 +223,7 @@ fn try_update_item_linked(
     input.currency_code = currency;
     input.note = if note.is_empty() { None } else { Some(note) };
     let result = update_item(&world_conn!(world), &id, input, &mut || signals += 1);
-    world.item_signal_count = signals;
+    world.item.item_signal_count = signals;
     world.last_error = match result {
         Err(e) => Some(e.to_string()),
         Ok(()) => Some("预期失败但成功了".into()),
@@ -228,11 +234,12 @@ fn try_update_item_linked(
 #[then(expr = "第 {int} 件物品关联购买交易应为记住的交易")]
 fn check_item_linked_transaction(world: &mut LedgerWorld, n: usize) {
     let expected = world
+        .item
         .remembered_purchase_transaction_id
         .clone()
         .unwrap_or_else(|| panic!("没有记住的关联购买交易"));
     assert_eq!(
-        nth_item(world, n).item.purchase_transaction_id.as_deref(),
+        world.item.nth(n).item.purchase_transaction_id.as_deref(),
         Some(expected.as_str()),
         "物品溯源应指向记住的关联购买交易"
     );

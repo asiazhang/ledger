@@ -90,7 +90,7 @@ fn insert_budget_row(
 fn create_transaction(world: &mut LedgerWorld, input: TransactionInput) -> String {
     let result = create_transaction_internal(&world_conn!(world), input);
     let write = result.unwrap_or_else(|e| panic!("创建交易失败: {e:?}"));
-    world.last_transaction_id = Some(write.id.clone());
+    world.txn.last_transaction_id = Some(write.id.clone());
     write.id
 }
 
@@ -336,7 +336,7 @@ fn assert_category_gone(world: &mut LedgerWorld, name: String) {
 #[when(expr = "查询预算进度")]
 fn query_budget_progress(world: &mut LedgerWorld) {
     let today = scenario_today(world);
-    world.last_budget_progress = budget_progress_rows(&world_conn!(world), today).unwrap();
+    world.report.last_budget_progress = budget_progress_rows(&world_conn!(world), today).unwrap();
 }
 
 /// 上一笔支出本月收到退款：走行为层。Writer 归一化会以原支出覆盖账户/币种/分类，
@@ -344,6 +344,7 @@ fn query_budget_progress(world: &mut LedgerWorld) {
 #[when(expr = "上一笔支出本月收到退款 {int}")]
 fn refund_last_expense(world: &mut LedgerWorld, amount: i64) {
     let expense_id = world
+        .txn
         .last_transaction_id
         .clone()
         .expect("场景中没有可退款的前序支出");
@@ -376,6 +377,7 @@ fn refund_last_expense(world: &mut LedgerWorld, amount: i64) {
 #[then(expr = "分类 {string} 的预算进度应为 {int}")]
 fn assert_budget_spent(world: &mut LedgerWorld, name: String, expected: i64) {
     let row = world
+        .report
         .last_budget_progress
         .iter()
         .find(|p| p.category_name == name)
@@ -390,6 +392,7 @@ fn assert_budget_spent(world: &mut LedgerWorld, name: String, expected: i64) {
 #[then(expr = "分类 {string} 的预算应超支")]
 fn assert_over_budget(world: &mut LedgerWorld, name: String) {
     let row = world
+        .report
         .last_budget_progress
         .iter()
         .find(|p| p.category_name == name)
@@ -400,6 +403,7 @@ fn assert_over_budget(world: &mut LedgerWorld, name: String) {
 #[then(expr = "分类 {string} 的预算不应超支")]
 fn assert_not_over_budget(world: &mut LedgerWorld, name: String) {
     let row = world
+        .report
         .last_budget_progress
         .iter()
         .find(|p| p.category_name == name)
@@ -439,6 +443,7 @@ fn assert_update_budget_succeeded(world: &mut LedgerWorld) {
 #[then(expr = "分类 {string} 的预算金额应为 {int}")]
 fn assert_budget_amount(world: &mut LedgerWorld, name: String, expected: i64) {
     let row = world
+        .report
         .last_budget_progress
         .iter()
         .find(|p| p.category_name == name)

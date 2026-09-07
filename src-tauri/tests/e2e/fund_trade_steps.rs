@@ -76,8 +76,8 @@ fn fund_trade(
         idempotency_key: None,
     };
     let write = create_transaction_internal(&world_conn!(world), input).expect("基金申赎落库失败");
-    world.last_transaction_id = Some(write.id);
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.last_transaction_id = Some(write.id);
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 #[when(expr = "按确认单申购基金 {string} 份额 {float} 金额 {int} 手续费 {int} 到投资账户 {string}")]
@@ -129,6 +129,7 @@ fn assert_fund_trade_detail(
     fee_cents: i64,
 ) {
     let id = world
+        .txn
         .last_transaction_id
         .clone()
         .expect("没有最近的申赎交易");

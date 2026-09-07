@@ -8,7 +8,6 @@ use tauri_app_lib::item::ItemDisposeInput;
 use tauri_app_lib::item::domain::{delete_item, dispose_item};
 
 use crate::common::assert_last_error_contains;
-use crate::items_common::nth_item;
 use crate::world::LedgerWorld;
 
 /// 按名称查未删除物品 id 的辅助（失败即 panic，场景数据自洽由写步骤保证）。
@@ -27,7 +26,7 @@ fn soft_delete_item(world: &mut LedgerWorld, name: String) {
     let id = find_item_id_by_name(&world_conn!(world), &name);
     let mut signals = 0;
     let result = delete_item(&world_conn!(world), &id, &mut || signals += 1);
-    world.item_signal_count = signals;
+    world.item.item_signal_count = signals;
     if let Err(e) = result {
         panic!("软删除物品 {name} 应成功但失败: {e}");
     }
@@ -36,7 +35,7 @@ fn soft_delete_item(world: &mut LedgerWorld, name: String) {
 #[then(expr = "删除后应发出 {int} 次失效信号")]
 fn check_item_delete_signals(world: &mut LedgerWorld, expected: usize) {
     assert_eq!(
-        world.item_signal_count, expected,
+        world.item.item_signal_count, expected,
         "删除失效信号次数不匹配（生产路径对应 ledger:changed）"
     );
 }
@@ -60,7 +59,7 @@ fn check_item_row_soft_deleted(world: &mut LedgerWorld, name: String) {
 fn try_delete_missing_item(world: &mut LedgerWorld) {
     let mut signals = 0;
     let result = delete_item(&world_conn!(world), "no-such-item-id", &mut || signals += 1);
-    world.item_signal_count = signals;
+    world.item.item_signal_count = signals;
     world.last_error = match result {
         Err(e) => Some(e.to_string()),
         Ok(()) => Some("预期失败但成功了".into()),
@@ -80,14 +79,15 @@ fn dispose_by_id(
 ) -> Result<(), tauri_app_lib::error::AppError> {
     let mut signals = 0;
     let result = dispose_item(&world_conn!(world), id, input, &mut || signals += 1);
-    world.item_signal_count = signals;
+    world.item.item_signal_count = signals;
     result
 }
 
-/// 处置最近创建的物品（`world.last_item_id`），要求成功。
+/// 处置最近创建的物品（`world.item.last_item_id`），要求成功。
 #[when(expr = "处置物品 处置日期 {string} 残值 {int}")]
 fn dispose_item_with_residual(world: &mut LedgerWorld, date: String, residual: i64) {
     let id = world
+        .item
         .last_item_id
         .clone()
         .unwrap_or_else(|| panic!("没有已创建的物品可处置"));
@@ -98,6 +98,7 @@ fn dispose_item_with_residual(world: &mut LedgerWorld, date: String, residual: i
 #[when(expr = "处置物品 处置日期 {string} 不填残值")]
 fn dispose_item_without_residual(world: &mut LedgerWorld, date: String) {
     let id = world
+        .item
         .last_item_id
         .clone()
         .unwrap_or_else(|| panic!("没有已创建的物品可处置"));
@@ -121,6 +122,7 @@ fn assert_dispose_ok(world: &mut LedgerWorld, id: &str, date: String, residual: 
 #[when(expr = "尝试处置物品 处置日期 {string} 残值 {int}")]
 fn try_dispose_item(world: &mut LedgerWorld, date: String, residual: i64) {
     let id = world
+        .item
         .last_item_id
         .clone()
         .unwrap_or_else(|| "no-such-item".into());
@@ -156,7 +158,7 @@ fn try_dispose_missing_item(world: &mut LedgerWorld) {
 /// 断言第 n 件物品的处置日期与残值读回。
 #[then(expr = "第 {int} 件物品处置日期应为 {string} 残值应为 {int}")]
 fn check_item_disposal(world: &mut LedgerWorld, n: usize, date: String, residual: i64) {
-    let item = &nth_item(world, n).item;
+    let item = &world.item.nth(n).item;
     assert_eq!(item.disposal_date.as_deref(), Some(date.as_str()));
     assert_eq!(item.residual_value_cents, Some(residual));
 }
@@ -164,7 +166,7 @@ fn check_item_disposal(world: &mut LedgerWorld, n: usize, date: String, residual
 /// 断言第 n 件物品处置日期读回且残值为空（可选残值语义）。
 #[then(expr = "第 {int} 件物品处置日期应为 {string} 残值应为空")]
 fn check_item_disposal_no_residual(world: &mut LedgerWorld, n: usize, date: String) {
-    let item = &nth_item(world, n).item;
+    let item = &world.item.nth(n).item;
     assert_eq!(item.disposal_date.as_deref(), Some(date.as_str()));
     assert_eq!(item.residual_value_cents, None);
 }

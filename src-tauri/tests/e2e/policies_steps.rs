@@ -78,8 +78,8 @@ fn create_policy(
     let mut signals = 0;
     match create_policy_domain(&world_conn!(world), input, &mut || signals += 1) {
         Ok(id) => {
-            world.last_policy_id = Some(id);
-            world.policy_signal_count = signals;
+            world.policy.last_policy_id = Some(id);
+            world.policy.policy_signal_count = signals;
         }
         Err(e) => panic!("创建保单应成功但失败: {e}"),
     }
@@ -115,7 +115,7 @@ fn try_create_policy(
         Ok(_) => panic!("创建保单应失败但成功"),
         Err(e) => {
             world.last_error = Some(e.to_string());
-            world.policy_signal_count = signals;
+            world.policy.policy_signal_count = signals;
         }
     }
 }
@@ -136,6 +136,7 @@ fn update_policy(
     currency: String,
 ) {
     let id = world
+        .policy
         .last_policy_id
         .clone()
         .expect("编辑保单前应先创建保单");
@@ -151,7 +152,7 @@ fn update_policy(
     );
     let mut signals = 0;
     match update_policy_domain(&world_conn!(world), &id, input, &mut || signals += 1) {
-        Ok(()) => world.policy_signal_count += signals,
+        Ok(()) => world.policy.policy_signal_count += signals,
         Err(e) => panic!("编辑保单应成功但失败: {e}"),
     }
 }
@@ -172,6 +173,7 @@ fn try_update_policy(
     currency: String,
 ) {
     let id = world
+        .policy
         .last_policy_id
         .clone()
         .expect("编辑保单前应先创建保单");
@@ -190,7 +192,7 @@ fn try_update_policy(
         Ok(()) => panic!("编辑保单应失败但成功"),
         Err(e) => {
             world.last_error = Some(e.to_string());
-            world.policy_signal_count += signals;
+            world.policy.policy_signal_count += signals;
         }
     }
 }
@@ -199,14 +201,15 @@ fn try_update_policy(
 #[when(expr = "软删第 {int} 张保单")]
 fn delete_policy(world: &mut LedgerWorld, n: usize) {
     let id = world
+        .policy
         .policies_list
         .get(n - 1)
         .map(|p| p.id.clone())
-        .or_else(|| world.last_policy_id.clone())
+        .or_else(|| world.policy.last_policy_id.clone())
         .expect("软删保单前应先创建保单");
     let mut signals = 0;
     match delete_policy_domain(&world_conn!(world), &id, &mut || signals += 1) {
-        Ok(()) => world.policy_signal_count += signals,
+        Ok(()) => world.policy.policy_signal_count += signals,
         Err(e) => panic!("软删保单应成功但失败: {e}"),
     }
 }
@@ -215,6 +218,7 @@ fn delete_policy(world: &mut LedgerWorld, n: usize) {
 #[when(expr = "尝试软删第 {int} 张保单")]
 fn try_delete_policy(world: &mut LedgerWorld, _n: usize) {
     let id = world
+        .policy
         .last_policy_id
         .clone()
         .expect("软删保单前应先创建保单");
@@ -223,7 +227,7 @@ fn try_delete_policy(world: &mut LedgerWorld, _n: usize) {
         Ok(()) => panic!("软删保单应失败但成功"),
         Err(e) => {
             world.last_error = Some(e.to_string());
-            world.policy_signal_count += signals;
+            world.policy.policy_signal_count += signals;
         }
     }
 }
@@ -231,12 +235,14 @@ fn try_delete_policy(world: &mut LedgerWorld, _n: usize) {
 /// 刷新保单列表快照（Then 断言数据源）。
 #[when(expr = "记住第 {int} 张保单的创建时间")]
 fn remember_created_at(world: &mut LedgerWorld, n: usize) {
-    world.policies_list = list_policies_domain(&world_conn!(world)).expect("查询保单列表失败");
+    world.policy.policies_list =
+        list_policies_domain(&world_conn!(world)).expect("查询保单列表失败");
     let policy = world
+        .policy
         .policies_list
         .get(n - 1)
         .unwrap_or_else(|| panic!("保单列表第 {n} 张不存在"));
-    world.remembered_policy_created_at = Some(policy.created_at.clone());
+    world.policy.remembered_policy_created_at = Some(policy.created_at.clone());
 }
 
 // ---------------------------------------------------------------------------
@@ -245,13 +251,19 @@ fn remember_created_at(world: &mut LedgerWorld, n: usize) {
 
 #[then(expr = "保单列表应包含 {int} 张保单")]
 fn check_list_count(world: &mut LedgerWorld, expected: usize) {
-    world.policies_list = list_policies_domain(&world_conn!(world)).expect("查询保单列表失败");
-    assert_eq!(world.policies_list.len(), expected, "保单列表条数不匹配");
+    world.policy.policies_list =
+        list_policies_domain(&world_conn!(world)).expect("查询保单列表失败");
+    assert_eq!(
+        world.policy.policies_list.len(),
+        expected,
+        "保单列表条数不匹配"
+    );
 }
 
 /// 取第 n 张（1 起）保单快照的辅助。
 fn nth(world: &LedgerWorld, n: usize) -> &tauri_app_lib::policy::Policy {
     world
+        .policy
         .policies_list
         .get(n - 1)
         .unwrap_or_else(|| panic!("保单列表第 {n} 张不存在"))
@@ -319,7 +331,7 @@ fn check_version_and_created_at(world: &mut LedgerWorld, n: usize, version: i64)
     assert_eq!(policy.version, version, "版本应递增");
     assert_eq!(
         Some(&policy.created_at),
-        world.remembered_policy_created_at.as_ref(),
+        world.policy.remembered_policy_created_at.as_ref(),
         "编辑后 created_at 应保留"
     );
 }
@@ -327,6 +339,7 @@ fn check_version_and_created_at(world: &mut LedgerWorld, n: usize, version: i64)
 #[then(expr = "库内该保单行仍保留原保单号 {string} 与保司引用")]
 fn check_soft_deleted_row_kept(world: &mut LedgerWorld, number: String) {
     let id = world
+        .policy
         .last_policy_id
         .clone()
         .expect("软删保留断言前应先创建保单");
@@ -345,14 +358,14 @@ fn check_soft_deleted_row_kept(world: &mut LedgerWorld, number: String) {
 #[then(expr = "保单写入后应发出 {int} 次失效信号")]
 fn check_signals(world: &mut LedgerWorld, expected: usize) {
     assert_eq!(
-        world.policy_signal_count, expected,
+        world.policy.policy_signal_count, expected,
         "失效信号次数不匹配（生产路径对应 ledger:changed）"
     );
 }
 
 #[then(expr = "保单未发出失效信号")]
 fn check_no_signals(world: &mut LedgerWorld) {
-    assert_eq!(world.policy_signal_count, 0, "不应发出失效信号");
+    assert_eq!(world.policy.policy_signal_count, 0, "不应发出失效信号");
 }
 
 #[then(expr = "保单创建应返回错误 {string}")]

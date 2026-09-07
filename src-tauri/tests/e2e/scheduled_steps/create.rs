@@ -72,7 +72,7 @@ fn create_subscription_plan_inner(
             )
         })
         .expect("创建订阅计划失败");
-    world.last_plan_id = Some(id);
+    world.plan.last_plan_id = Some(id);
 }
 
 #[when(expr = "创建分期计划 总额 {int} 期数 {int} 账户 {string} 起始日期 {string}")]
@@ -108,7 +108,7 @@ fn create_installment_plan(
             )
         })
         .expect("创建分期计划失败");
-    world.last_plan_id = Some(id);
+    world.plan.last_plan_id = Some(id);
 }
 
 /// 带备注的分期计划变体（issue #707 来源列场景）：备注即计划名（来源列展示名口径）。
@@ -146,7 +146,7 @@ fn create_installment_plan_with_note(
             )
         })
         .expect("创建分期计划失败");
-    world.last_plan_id = Some(id);
+    world.plan.last_plan_id = Some(id);
 }
 
 #[when(expr = "创建定时转账计划 金额 {int} 从 {string} 到 {string} 期数 {int} 起始日期 {string}")]
@@ -183,7 +183,7 @@ fn create_scheduled_transfer_plan(
             )
         })
         .expect("创建定时转账计划失败");
-    world.last_plan_id = Some(id);
+    world.plan.last_plan_id = Some(id);
 }
 
 /// 带备注的定时转账计划变体（issue #707 来源列场景）：备注即计划名。
@@ -224,7 +224,7 @@ fn create_scheduled_transfer_plan_with_note(
             )
         })
         .expect("创建定时转账计划失败");
-    world.last_plan_id = Some(id);
+    world.plan.last_plan_id = Some(id);
 }
 
 /// 创建不带期数的定时转账（无限循环，total_occurrences=None）并记录 id（issue #203）。
@@ -269,7 +269,7 @@ fn create_scheduled_transfer_plan_infinite(
             )
         })
         .expect("创建定时转账计划失败");
-    world.last_plan_id = Some(id);
+    world.plan.last_plan_id = Some(id);
 }
 
 /// 尝试创建定时转账计划（不带商户）并捕获错误：两账户币种不一致被拒（issue #203）。

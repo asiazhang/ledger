@@ -58,15 +58,16 @@ fn batch_import(world: &mut LedgerWorld, #[step] step: &Step) {
         .write(|conn| TransactionBatch::run(conn, inputs, true))
         .expect("批量导入失败")
         .results;
-    world.last_import_rows = rows;
-    world.last_batch_results = results;
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.last_import_rows = rows;
+    world.txn.last_batch_results = results;
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 重跑刚才的批量导入：与首次导入相同的行、相同的 dedup 语义。
 #[when(expr = "重跑刚才的批量导入")]
 fn reimport(world: &mut LedgerWorld) {
     let inputs: Vec<TransactionInput> = world
+        .txn
         .last_import_rows
         .iter()
         .map(|r| r.to_input(world))
@@ -77,8 +78,8 @@ fn reimport(world: &mut LedgerWorld) {
         .write(|conn| TransactionBatch::run(conn, inputs, true))
         .expect("重跑批量导入失败")
         .results;
-    world.last_batch_results = results;
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.last_batch_results = results;
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 按幂等键找到对应交易并全字段替换（模拟 AI 读回后用 PUT 修改的纠错路径）。
@@ -113,7 +114,7 @@ fn edit_txn_by_key(world: &mut LedgerWorld, key: String, amount: i64, date: Stri
         idempotency_key: None,
     };
     update_transaction_internal(&world_conn!(world), &id, input).expect("修改交易失败");
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 /// 删除备注为指定值的交易（软删除，与 HTTP DELETE 端点共用 `delete_transaction_internal`）。
@@ -127,14 +128,14 @@ fn delete_txn_by_note(world: &mut LedgerWorld, note: String) {
         )
         .unwrap_or_else(|_| panic!("未找到备注为 '{note}' 的交易"));
     delete_transaction_internal(&world_conn!(world), &id).expect("删除交易失败");
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
-/// 查询全部未删除账户的实时余额（含黑洞账户），快照到 world.balances。
+/// 查询全部未删除账户的实时余额（含黑洞账户），快照到 world.txn.balances。
 #[when(expr = "查询全部账户余额")]
 fn query_balances(world: &mut LedgerWorld) {
     let balances = list_account_balances_for_api(&world_conn!(world)).expect("查询账户余额失败");
-    world.balances = balances
+    world.txn.balances = balances
         .into_iter()
         .map(|ab| (ab.account.name, (ab.balance_cents, ab.account.is_hidden)))
         .collect();
@@ -169,7 +170,7 @@ fn readback_count(world: &mut LedgerWorld, expected: i64) {
     let result = list_transactions_internal(&world_conn!(world), &TransactionListFilter::default())
         .expect("读回交易失败");
     assert_eq!(result.items.len() as i64, expected, "读回交易数量不匹配");
-    world.transactions_list = result.items;
+    world.txn.transactions_list = result.items;
 }
 
 #[then(expr = "读回 {string} 至 {string} 交易 应包含 {int} 条记录")]
@@ -237,9 +238,10 @@ fn readback_kind_amount(
 
 #[then(expr = "读回交易 应包含 金额 {int} 的记录")]
 fn readback_with_amount(world: &mut LedgerWorld, amount: i64) {
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
     assert!(
         world
+            .txn
             .transactions_list
             .iter()
             .any(|t| t.amount_cents == amount),
@@ -249,9 +251,10 @@ fn readback_with_amount(world: &mut LedgerWorld, amount: i64) {
 
 #[then(expr = "读回交易 应不包含 金额 {int} 的记录")]
 fn readback_without_amount(world: &mut LedgerWorld, amount: i64) {
-    world.transactions_list = query_all_transactions(&world_conn!(world));
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
     assert!(
         !world
+            .txn
             .transactions_list
             .iter()
             .any(|t| t.amount_cents == amount),
@@ -262,7 +265,7 @@ fn readback_without_amount(world: &mut LedgerWorld, amount: i64) {
 #[then(expr = "余额清单应包含 {int} 个账户")]
 fn balance_count(world: &mut LedgerWorld, expected: i64) {
     assert_eq!(
-        world.balances.len() as i64,
+        world.txn.balances.len() as i64,
         expected,
         "余额清单账户数量不匹配"
     );
@@ -270,11 +273,11 @@ fn balance_count(world: &mut LedgerWorld, expected: i64) {
 
 #[then(expr = "账户 {string} 余额应为 {int}")]
 fn balance_of_name(world: &mut LedgerWorld, name: String, expected: i64) {
-    let (actual, _) = world.balances.get(&name).unwrap_or_else(|| {
+    let (actual, _) = world.txn.balances.get(&name).unwrap_or_else(|| {
         panic!(
             "余额清单应包含账户 '{}'，实际为 {:?}",
             name,
-            world.balances.keys().collect::<Vec<_>>()
+            world.txn.balances.keys().collect::<Vec<_>>()
         )
     });
     assert_eq!(*actual, expected, "账户 '{name}' 余额不匹配");
@@ -282,11 +285,11 @@ fn balance_of_name(world: &mut LedgerWorld, name: String, expected: i64) {
 
 #[then(expr = "账户 {string} 应为黑洞账户")]
 fn check_is_hidden(world: &mut LedgerWorld, name: String) {
-    let (_, is_hidden) = world.balances.get(&name).unwrap_or_else(|| {
+    let (_, is_hidden) = world.txn.balances.get(&name).unwrap_or_else(|| {
         panic!(
             "余额清单应包含账户 '{}'，实际为 {:?}",
             name,
-            world.balances.keys().collect::<Vec<_>>()
+            world.txn.balances.keys().collect::<Vec<_>>()
         )
     });
     assert!(*is_hidden, "账户 '{name}' 应为黑洞账户（is_hidden=true）");
@@ -294,11 +297,11 @@ fn check_is_hidden(world: &mut LedgerWorld, name: String) {
 
 #[then(expr = "账户 {string} 不应为黑洞账户")]
 fn check_not_hidden(world: &mut LedgerWorld, name: String) {
-    let (_, is_hidden) = world.balances.get(&name).unwrap_or_else(|| {
+    let (_, is_hidden) = world.txn.balances.get(&name).unwrap_or_else(|| {
         panic!(
             "余额清单应包含账户 '{}'，实际为 {:?}",
             name,
-            world.balances.keys().collect::<Vec<_>>()
+            world.txn.balances.keys().collect::<Vec<_>>()
         )
     });
     assert!(
@@ -310,11 +313,13 @@ fn check_not_hidden(world: &mut LedgerWorld, name: String) {
 #[then(expr = "最近一次导入应有 {int} 条去重跳过 {int} 条新写入")]
 fn check_batch_results(world: &mut LedgerWorld, duplicates: i64, new: i64) {
     let dup_count = world
+        .txn
         .last_batch_results
         .iter()
         .filter(|r| r.duplicate)
         .count();
     let new_count = world
+        .txn
         .last_batch_results
         .iter()
         .filter(|r| !r.duplicate && r.success)
@@ -327,6 +332,7 @@ fn check_batch_results(world: &mut LedgerWorld, duplicates: i64, new: i64) {
 #[then(expr = "最近一次导入的去重结果应通过幂等键返回已有 id")]
 fn check_dup_returns_existing_id(world: &mut LedgerWorld) {
     let dups: Vec<&tauri_app_lib::transaction::CreateTransactionResult> = world
+        .txn
         .last_batch_results
         .iter()
         .filter(|r| r.duplicate)

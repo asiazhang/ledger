@@ -182,19 +182,23 @@ fn create_trade(
 fn query_portfolio_trend(world: &mut LedgerWorld) {
     match query_portfolio_value_trend(&world_conn!(world), &TrendRange::default()) {
         Ok(trend) => {
-            world.last_portfolio_trend = Some(trend);
+            world.asset.last_portfolio_trend = Some(trend);
             world.last_error = None;
         }
         Err(e) => {
             world.last_error = Some(e.to_string());
-            world.last_portfolio_trend = None;
+            world.asset.last_portfolio_trend = None;
         }
     }
 }
 
 #[then(expr = "组合走势应有 {int} 个周点")]
 fn assert_portfolio_trend_point_count(world: &mut LedgerWorld, expected: usize) {
-    let trend = world.last_portfolio_trend.as_ref().expect("未查询组合走势");
+    let trend = world
+        .asset
+        .last_portfolio_trend
+        .as_ref()
+        .expect("未查询组合走势");
     assert_eq!(
         trend.points.len(),
         expected,
@@ -209,12 +213,12 @@ fn query_instrument_trend(world: &mut LedgerWorld, symbol: String) {
     let id = instrument_id(&world_conn!(world), &symbol);
     match query_instrument_price_trend(&world_conn!(world), &id, &TrendRange::default()) {
         Ok(trend) => {
-            world.last_instrument_trend = Some(trend);
+            world.asset.last_instrument_trend = Some(trend);
             world.last_error = None;
         }
         Err(e) => {
             world.last_error = Some(e.to_string());
-            world.last_instrument_trend = None;
+            world.asset.last_instrument_trend = None;
         }
     }
 }
@@ -222,6 +226,7 @@ fn query_instrument_trend(world: &mut LedgerWorld, symbol: String) {
 #[then(expr = "标的走势应有 {int} 个周点")]
 fn assert_instrument_trend_point_count(world: &mut LedgerWorld, expected: usize) {
     let trend = world
+        .asset
         .last_instrument_trend
         .as_ref()
         .expect("未查询标的走势");
@@ -234,7 +239,11 @@ fn assert_instrument_trend_point_count(world: &mut LedgerWorld, expected: usize)
 
 #[then(expr = "组合走势 {string} 周市值应为 {int}")]
 fn assert_portfolio_trend_week_value(world: &mut LedgerWorld, week_start: String, expected: i64) {
-    let trend = world.last_portfolio_trend.as_ref().expect("未查询组合走势");
+    let trend = world
+        .asset
+        .last_portfolio_trend
+        .as_ref()
+        .expect("未查询组合走势");
     let point = trend
         .points
         .iter()

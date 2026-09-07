@@ -50,12 +50,12 @@ fn create_hidden_account(
 fn query_financial_freedom_step(world: &mut LedgerWorld) {
     match query_financial_freedom(&world_conn!(world)) {
         Ok(overview) => {
-            world.last_financial_freedom = Some(overview);
+            world.asset.last_financial_freedom = Some(overview);
             world.last_error = None;
         }
         Err(e) => {
             world.last_error = Some(e.to_string());
-            world.last_financial_freedom = None;
+            world.asset.last_financial_freedom = None;
         }
     }
 }
@@ -67,6 +67,7 @@ fn query_financial_freedom_step(world: &mut LedgerWorld) {
 /// 取最近一次自由度快照（各 Then 断言共用）。
 fn overview_of(world: &LedgerWorld) -> &tauri_app_lib::investment::FinancialFreedomOverview {
     world
+        .asset
         .last_financial_freedom
         .as_ref()
         .expect("未查询到财务自由度总览")
