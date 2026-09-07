@@ -10,6 +10,11 @@ import {
 import InstallmentsPane from '@/components/scheduled/InstallmentsPane.vue'
 import { findInputByTestId as findInput } from '../helpers/dom'
 import { mountFlushed } from '../helpers/mount'
+import {
+  makeInstallmentPlan,
+  makeSubscriptionPlan,
+  makeTransferPlan,
+} from '../factories'
 import { componentVm } from '../helpers/component-vm'
 import { refCurrencies } from '../helpers/reference-stubs'
 import { formatAmount } from '@/utils/money'
@@ -19,7 +24,6 @@ import type {
   InstallmentPlan,
   Merchant,
   ScheduledStatus,
-  ScheduledTransaction,
   ScheduledTransactionDetail,
   ScheduledTransactionWithExt,
 } from '@/types'
@@ -82,41 +86,7 @@ const mockMerchants: Merchant[] = [
 /** 可变商户字典：状态操作 / 即建后重载读得到最新值。 */
 let mockMerchantsState: Merchant[] = mockMerchants
 
-/** 分期计划工厂：core.kind 固定 installment；扩展字段携带总额与期数（可选商户）。 */
-function makePlan(
-  partial: Partial<ScheduledTransaction> & { id: string },
-  ext: { total_amount_cents: number; total_occurrences: number },
-  merchantId: string | null = null,
-): ScheduledTransactionWithExt {
-  const core: ScheduledTransaction = {
-    kind: 'installment',
-    status: 'active',
-    account_id: 'acc-1',
-    category_id: 'cat-1',
-    amount_cents: Math.floor(ext.total_amount_cents / ext.total_occurrences),
-    currency_code: 'CNY',
-    recurrence_type: 'monthly',
-    recurrence_interval: 1,
-    recurrence_day: null,
-    start_date: '2026-01-01',
-    note: '手机分期',
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    ...partial,
-  }
-  return {
-    core,
-    merchant_id: merchantId,
-    policy_id: null,
-    total_amount_cents: ext.total_amount_cents,
-    total_occurrences: ext.total_occurrences,
-    to_account_id: null,
-  }
-}
-
+/** 分期详情组装（目录特有派生包装，留守本地）。 */
 function makeDetail(
   plan: ScheduledTransactionWithExt,
   completed: { count: number; amount: number },
@@ -194,13 +164,11 @@ beforeEach(async () => {
           merchant_id: string | null
         }
         const id = `new-${input.kind}-${input.note ?? ''}`
-        const plan = makePlan(
+        const createInput = args!.input as { total_amount_cents: number; total_occurrences: number }
+        const plan = makeInstallmentPlan(
           { id, note: input.note ?? null },
-          {
-            total_amount_cents:
-              (args!.input as { total_amount_cents: number }).total_amount_cents ?? 0,
-            total_occurrences: (args!.input as { total_occurrences: number }).total_occurrences ?? 1,
-          },
+          createInput.total_amount_cents ?? 0,
+          createInput.total_occurrences ?? 1,
           input.merchant_id,
         )
         mockPlans = [...mockPlans, plan]
@@ -225,20 +193,11 @@ beforeEach(async () => {
 
 describe('InstallmentsPane 清单渲染冒烟（编排用例见 useScheduledPlanList.test.ts）', () => {
   it('只展示分期计划，订阅 / 定时转账不出现（按形态过滤归模块，此处验渲染）', async () => {
-    const inst = makePlan(
-      { id: 'i1', note: '手机分期' },
-      { total_amount_cents: 120000, total_occurrences: 12 },
-    )
+    const inst = makeInstallmentPlan({ id: 'i1', note: '手机分期' }, 120000, 12)
     mockPlans = [
       inst,
-      makePlan(
-        { id: 's1', note: '某订阅', kind: 'subscription' },
-        { total_amount_cents: 0, total_occurrences: 0 },
-      ),
-      makePlan(
-        { id: 't1', note: '某定时转账', kind: 'scheduled_transfer' },
-        { total_amount_cents: 0, total_occurrences: 0 },
-      ),
+      makeSubscriptionPlan({ id: 's1', note: '某订阅' }),
+      makeTransferPlan({ id: 't1', note: '某定时转账' }, null),
     ]
     mockDetails.set('i1', makeDetail(inst, { count: 3, amount: 30000 }))
     const wrapper = await mountView()
@@ -248,10 +207,7 @@ describe('InstallmentsPane 清单渲染冒烟（编排用例见 useScheduledPlan
   })
 
   it('进度格显示进度条 + 已还金额/总额 · X/N 期（expandDetail 接线：期数与金额取自详情命令）', async () => {
-    const inst = makePlan(
-      { id: 'i1', note: '手机分期' },
-      { total_amount_cents: 120000, total_occurrences: 12 },
-    )
+    const inst = makeInstallmentPlan({ id: 'i1', note: '手机分期' }, 120000, 12)
     mockPlans = [inst]
     mockDetails.set('i1', makeDetail(inst, { count: 3, amount: 30000 }))
     const wrapper = await mountView()
@@ -267,10 +223,7 @@ describe('InstallmentsPane 清单渲染冒烟（编排用例见 useScheduledPlan
   it('已完成金额来自详情命令的 completed_amount_cents，不由前端推算', async () => {
     // 1200 分 12 期每期应为 100，但已完成汇总给 150（模拟失败重试等真实历史）：
     // 显示以汇总为准，不用 total/occurrences 推算
-    const inst = makePlan(
-      { id: 'i1', note: '手机分期' },
-      { total_amount_cents: 1200, total_occurrences: 12 },
-    )
+    const inst = makeInstallmentPlan({ id: 'i1', note: '手机分期' }, 1200, 12)
     mockPlans = [inst]
     mockDetails.set('i1', makeDetail(inst, { count: 1, amount: 150 }))
     const wrapper = await mountView()
@@ -278,14 +231,8 @@ describe('InstallmentsPane 清单渲染冒烟（编排用例见 useScheduledPlan
   })
 
   it('默认只显示进行中（active）的分期，可切换过滤（默认过滤归模块，此处验渲染）', async () => {
-    const a1 = makePlan(
-      { id: 'a1', note: '进行中分期' },
-      { total_amount_cents: 1200, total_occurrences: 12 },
-    )
-    const p1 = makePlan(
-      { id: 'p1', note: '已暂停分期', status: 'paused' },
-      { total_amount_cents: 600, total_occurrences: 6 },
-    )
+    const a1 = makeInstallmentPlan({ id: 'a1', note: '进行中分期' }, 1200, 12)
+    const p1 = makeInstallmentPlan({ id: 'p1', note: '已暂停分期', status: 'paused' }, 600, 6)
     mockPlans = [a1, p1]
     mockDetails.set('a1', makeDetail(a1, { count: 0, amount: 0 }))
     mockDetails.set('p1', makeDetail(p1, { count: 0, amount: 0 }))
@@ -299,14 +246,8 @@ describe('InstallmentsPane 清单渲染冒烟（编排用例见 useScheduledPlan
   })
 
   it('状态过滤含「已完成」：completed 行经「已完成」过滤可见（#309 显式可见变化之二，迁移步 3 落地）', async () => {
-    const done = makePlan(
-      { id: 'd1', note: '已还清分期', status: 'completed' },
-      { total_amount_cents: 1200, total_occurrences: 12 },
-    )
-    const active = makePlan(
-      { id: 'a1', note: '进行中分期' },
-      { total_amount_cents: 1200, total_occurrences: 12 },
-    )
+    const done = makeInstallmentPlan({ id: 'd1', note: '已还清分期', status: 'completed' }, 1200, 12)
+    const active = makeInstallmentPlan({ id: 'a1', note: '进行中分期' }, 1200, 12)
     mockPlans = [done, active]
     mockDetails.set('d1', makeDetail(done, { count: 12, amount: 1200 }))
     mockDetails.set('a1', makeDetail(active, { count: 0, amount: 0 }))
@@ -325,10 +266,7 @@ describe('InstallmentsPane 清单渲染冒烟（编排用例见 useScheduledPlan
 
 describe('InstallmentsPane 操作列渲染与确认交互（可用性矩阵与状态机见模块测试）', () => {
   it('active 行点「暂停」发出状态命令（交互冒烟：描述符 → 按钮 onClick 接线）', async () => {
-    const plan = makePlan(
-      { id: 'a1' },
-      { total_amount_cents: 1200, total_occurrences: 12 },
-    )
+    const plan = makeInstallmentPlan({ id: 'a1' }, 1200, 12)
     mockPlans = [plan]
     mockDetails.set('a1', makeDetail(plan, { count: 0, amount: 0 }))
     const wrapper = await mountView()
@@ -344,10 +282,7 @@ describe('InstallmentsPane 操作列渲染与确认交互（可用性矩阵与�
   })
 
   it('已暂停的分期可恢复', async () => {
-    const plan = makePlan(
-      { id: 'p1', status: 'paused' },
-      { total_amount_cents: 1200, total_occurrences: 12 },
-    )
+    const plan = makeInstallmentPlan({ id: 'p1', status: 'paused' }, 1200, 12)
     mockPlans = [plan]
     mockDetails.set('p1', makeDetail(plan, { count: 0, amount: 0 }))
     const wrapper = await mountView()
@@ -365,10 +300,7 @@ describe('InstallmentsPane 操作列渲染与确认交互（可用性矩阵与�
   })
 
   it('取消需二次确认（NPopconfirm），说明历史保留，确认后走状态命令', async () => {
-    const plan = makePlan(
-      { id: 'a1' },
-      { total_amount_cents: 1200, total_occurrences: 12 },
-    )
+    const plan = makeInstallmentPlan({ id: 'a1' }, 1200, 12)
     mockPlans = [plan]
     mockDetails.set('a1', makeDetail(plan, { count: 0, amount: 0 }))
     const wrapper = await mountView()
@@ -393,10 +325,7 @@ describe('InstallmentsPane 操作列渲染与确认交互（可用性矩阵与�
   })
 
   it('已取消的分期不再提供状态操作（可用性矩阵归模块，此处验渲染接线）', async () => {
-    const plan = makePlan(
-      { id: 'c1', status: 'cancelled', note: '已取消分期' },
-      { total_amount_cents: 1200, total_occurrences: 12 },
-    )
+    const plan = makeInstallmentPlan({ id: 'c1', status: 'cancelled', note: '已取消分期' }, 1200, 12)
     mockPlans = [plan]
     mockDetails.set('c1', makeDetail(plan, { count: 0, amount: 0 }))
     const wrapper = await mountView()
@@ -603,11 +532,7 @@ describe('InstallmentsPane 商户挂靠（issue #206：表单接缝接线冒烟�
   })
 
   it('清单显示计划商户（merchantMap 派生，改名即时生效）', async () => {
-    const inst = makePlan(
-      { id: 'i1', note: '手机分期' },
-      { total_amount_cents: 120000, total_occurrences: 12 },
-      'mer-1',
-    )
+    const inst = makeInstallmentPlan({ id: 'i1', note: '手机分期' }, 120000, 12, 'mer-1')
     mockPlans = [inst]
     mockDetails.set('i1', makeDetail(inst, { count: 0, amount: 0 }))
     const wrapper = await mountView()
@@ -616,10 +541,7 @@ describe('InstallmentsPane 商户挂靠（issue #206：表单接缝接线冒烟�
   })
 
   it('无商户计划不显示商户名', async () => {
-    const inst = makePlan(
-      { id: 'i1', note: '手机分期' },
-      { total_amount_cents: 120000, total_occurrences: 12 },
-    )
+    const inst = makeInstallmentPlan({ id: 'i1', note: '手机分期' }, 120000, 12)
     mockPlans = [inst]
     mockDetails.set('i1', makeDetail(inst, { count: 0, amount: 0 }))
     const wrapper = await mountView()

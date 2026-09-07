@@ -5,12 +5,12 @@ import { NModal, NSelect, NPopconfirm } from 'naive-ui'
 import TransfersPane from '@/components/scheduled/TransfersPane.vue'
 import { findInputByTestId as findInput } from '../helpers/dom'
 import { mountFlushed } from '../helpers/mount'
+import { makeOccurrence, makeTransferPlan } from '../factories'
 import { formatAmount } from '@/utils/money'
 import type {
   Account,
   Currency,
   ScheduledStatus,
-  ScheduledTransaction,
   ScheduledTransactionDetail,
   ScheduledTransactionOccurrence,
   ScheduledTransactionWithExt,
@@ -54,59 +54,7 @@ function makeAccount(id: string, name: string, currency_code: string): Account {
   }
 }
 
-/** 定时转账计划工厂：core.kind 固定 scheduled_transfer，其余可覆写。 */
-function makeTransferPlan(
-  partial: Partial<ScheduledTransaction> & { id: string },
-  to_account_id: string | null,
-  total_occurrences: number | null = null,
-): ScheduledTransactionWithExt {
-  const core: ScheduledTransaction = {
-    kind: 'scheduled_transfer',
-    status: 'active',
-    account_id: 'acc-cny1',
-    category_id: null,
-    amount_cents: 50000,
-    currency_code: 'CNY',
-    recurrence_type: 'monthly',
-    recurrence_interval: 1,
-    recurrence_day: null,
-    start_date: '2026-01-01',
-    note: null,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    ...partial,
-  }
-  return {
-    core,
-    merchant_id: null,
-    policy_id: null,
-    total_amount_cents: null,
-    total_occurrences,
-    to_account_id,
-  }
-}
-
-function makeOccurrence(
-  partial: Partial<ScheduledTransactionOccurrence> & { id: string },
-): ScheduledTransactionOccurrence {
-  return {
-    scheduled_transaction_id: 'unknown',
-    scheduled_date: '2026-03-01',
-    status: 'pending',
-    transaction_id: null,
-    amount_cents: 50000,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    ...partial,
-  }
-}
-
+/** 转账详情组装（目录特有派生包装，留守本地）。 */
 function makeDetail(
   plan: ScheduledTransactionWithExt,
   pending_occurrences: ScheduledTransactionOccurrence[],

@@ -5,10 +5,10 @@ import { useReferenceStore } from '@/stores/reference'
 import { mockInvoke } from '../../helpers/invoke-mock'
 import { formatAmount } from '@/utils/money'
 import { refCurrencies } from '../../helpers/reference-stubs'
+import { makeSubscriptionPlan } from '../../factories'
 import {
   mockDetails,
   makeDetail,
-  makePlan,
   mockMerchants,
   findInput,
   mountView,
@@ -40,8 +40,8 @@ describe('SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
   }
 
   it('进行中/已暂停行提供编辑入口，已取消行不提供', async () => {
-    const plan = makePlan({ id: 'a1' })
-    setMockPlans([plan, makePlan({ id: 'c1', status: 'cancelled', note: '已取消订阅' })])
+    const plan = makeSubscriptionPlan({ id: 'a1' })
+    setMockPlans([plan, makeSubscriptionPlan({ id: 'c1', status: 'cancelled', note: '已取消订阅' })])
     mockDetails.set('a1', makeDetail(plan, []))
     const wrapper = await mountView()
     expect(wrapper.find('[data-testid="op-edit-a1"]').exists()).toBe(true)
@@ -52,7 +52,7 @@ describe('SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
   })
 
   it('编辑弹窗预填非金额字段且无金额输入', async () => {
-    const plan = makePlan({
+    const plan = makeSubscriptionPlan({
       id: 'a1',
       note: '视频会员',
       category_id: 'cat-1',
@@ -77,7 +77,7 @@ describe('SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
   })
 
   it('未选账户时不提交编辑', async () => {
-    const plan = makePlan({ id: 'a1' })
+    const plan = makeSubscriptionPlan({ id: 'a1' })
     setMockPlans([plan])
     mockDetails.set('a1', makeDetail(plan, []))
     const wrapper = await mountView()
@@ -93,7 +93,7 @@ describe('SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
   })
 
   it('提交编辑走订阅编辑命令，参数不含金额字段，成功后关闭弹窗并刷新清单', async () => {
-    const plan = makePlan({ id: 'a1', note: '视频会员' }, 'mer-1')
+    const plan = makeSubscriptionPlan({ id: 'a1', note: '视频会员' }, 'mer-1')
     setMockPlans([plan])
     mockDetails.set('a1', makeDetail(plan, []))
     const wrapper = await mountView()
@@ -138,7 +138,7 @@ describe('SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
     ])
     // beforeEach 已加载 store，显式 refresh 强制重拉拿新字典
     await useReferenceStore().refresh()
-    const plan = makePlan({ id: 'a1', note: '视频会员' }, 'mer-1')
+    const plan = makeSubscriptionPlan({ id: 'a1', note: '视频会员' }, 'mer-1')
     setMockPlans([plan])
     mockDetails.set('a1', makeDetail(plan, []))
     const wrapper = await mountView()
@@ -160,7 +160,7 @@ describe('SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
   })
 
   it('挂保单的缴费协议编辑弹窗不显示商户字段（issue #713 / ADR-0082：付款对象语义由保司承担）', async () => {
-    const plan = { ...makePlan({ id: 'a1', note: '重疾险年缴' }), policy_id: 'policy-1' }
+    const plan = { ...makeSubscriptionPlan({ id: 'a1', note: '重疾险年缴' }), policy_id: 'policy-1' }
     setMockPlans([plan])
     mockDetails.set('a1', makeDetail(plan, []))
     const wrapper = await mountView()
@@ -172,7 +172,7 @@ describe('SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
   })
 
   it('原商户软删且不在字典：下拉兜底选项承载原 id，未改动提交仍携带原 id（接缝软删兜底分支接线）', async () => {
-    const plan = makePlan({ id: 'a1', note: '视频会员' }, 'mer-gone')
+    const plan = makeSubscriptionPlan({ id: 'a1', note: '视频会员' }, 'mer-gone')
     setMockPlans([plan])
     mockDetails.set('a1', makeDetail(plan, []))
     // 商户字典为空：原商户已软删且超出会话缓存
@@ -195,7 +195,7 @@ describe('SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
   })
 
   it('提交失败时弹窗保持打开', async () => {
-    const plan = makePlan({ id: 'a1' })
+    const plan = makeSubscriptionPlan({ id: 'a1' })
     setMockPlans([plan])
     mockDetails.set('a1', makeDetail(plan, []))
     const wrapper = await mountView()

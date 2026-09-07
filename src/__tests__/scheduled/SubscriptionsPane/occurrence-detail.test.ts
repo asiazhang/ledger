@@ -1,10 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
+import { makeOccurrence, makeSubscriptionPlan } from '../../factories'
 import {
   mockDetails,
   makeDetail,
-  makeOccurrence,
-  makePlan,
   mountView,
   setMockPlans,
   setup,
@@ -15,7 +14,7 @@ beforeEach(setup)
 
 describe('SubscriptionsPane 期次详情弹窗入口（issue #205）', () => {
   it('点击「期次」打开通用期次详情弹窗', async () => {
-    const plan = makePlan({ id: 'a1' })
+    const plan = makeSubscriptionPlan({ id: 'a1' })
     setMockPlans([plan])
     mockDetails.set('a1', makeDetail(plan, []))
     const wrapper = await mountView()
@@ -26,7 +25,7 @@ describe('SubscriptionsPane 期次详情弹窗入口（issue #205）', () => {
   })
 
   it('弹窗内重试成功后清单刷新（changed 信号联动）', async () => {
-    const plan = makePlan({ id: 'a1' })
+    const plan = makeSubscriptionPlan({ id: 'a1' })
     setMockPlans([plan])
     mockDetails.set(
       'a1',

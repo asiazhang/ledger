@@ -1,12 +1,12 @@
 import { wireInvokeSeam } from '../../helpers/invoke-mock'
 import { mountFlushed } from '../../helpers/mount'
+import { makeSubscriptionPlan } from '../../factories'
 import SubscriptionsPane from '@/components/scheduled/SubscriptionsPane.vue'
 import type {
   Account,
   Category,
   Merchant,
   ScheduledStatus,
-  ScheduledTransaction,
   ScheduledTransactionDetail,
   ScheduledTransactionOccurrence,
   ScheduledTransactionWithExt,
@@ -67,58 +67,7 @@ export const mockMerchants: Merchant[] = [
   },
 ]
 
-/** 订阅计划工厂：core.kind 固定 subscription，其余可覆写；merchant_id 为扩展字段。 */
-export function makePlan(
-  partial: Partial<ScheduledTransaction> & { id: string },
-  merchant_id: string | null = null,
-): ScheduledTransactionWithExt {
-  const core: ScheduledTransaction = {
-    kind: 'subscription',
-    status: 'active',
-    account_id: 'acc-1',
-    category_id: 'cat-1',
-    amount_cents: 1500,
-    currency_code: 'CNY',
-    recurrence_type: 'monthly',
-    recurrence_interval: 1,
-    recurrence_day: null,
-    start_date: '2026-01-01',
-    note: '视频会员',
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    ...partial,
-  }
-  return {
-    core,
-    merchant_id,
-    policy_id: null,
-    total_amount_cents: null,
-    total_occurrences: null,
-    to_account_id: null,
-  }
-}
-
-export function makeOccurrence(
-  partial: Partial<ScheduledTransactionOccurrence> & { id: string },
-): ScheduledTransactionOccurrence {
-  return {
-    scheduled_transaction_id: 'unknown',
-    scheduled_date: '2026-03-01',
-    status: 'pending',
-    transaction_id: null,
-    amount_cents: 1500,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    ...partial,
-  }
-}
-
+/** 订阅详情组装（目录特有派生包装，留守本地）：core + SubscriptionPlan 全字段扩展装配。 */
 export function makeDetail(
   plan: ScheduledTransactionWithExt,
   pending_occurrences: ScheduledTransactionOccurrence[],
@@ -202,7 +151,7 @@ export async function setup() {
       create_scheduled_transaction: (args?: Record<string, unknown>) => {
         const input = args?.input as { kind: string; note: string | null; merchant_id: string | null }
         const id = `new-${input.kind}-${input.note ?? ''}`
-        const plan = makePlan(
+        const plan = makeSubscriptionPlan(
           { id, note: input.note ?? null },
           input.merchant_id,
         )

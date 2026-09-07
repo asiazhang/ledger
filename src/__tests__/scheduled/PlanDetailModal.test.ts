@@ -3,6 +3,7 @@ import { mockInvoke, wireInvokeSeam } from '../helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
 import { mountFlushed } from '../helpers/mount'
+import { makeOccurrence } from '../factories'
 import { formatAmount } from '@/utils/money'
 import { refCurrencies } from '../helpers/reference-stubs'
 import type {
@@ -65,24 +66,6 @@ function makeCore(partial: Partial<ScheduledTransaction> & { id: string }): Sche
     recurrence_day: null,
     start_date: '2026-01-01',
     note: '视频会员',
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    ...partial,
-  }
-}
-
-function makeOccurrence(
-  partial: Partial<ScheduledTransactionOccurrence> & { id: string },
-): ScheduledTransactionOccurrence {
-  return {
-    scheduled_transaction_id: 'plan-1',
-    scheduled_date: '2026-03-01',
-    status: 'pending',
-    transaction_id: null,
-    amount_cents: 1500,
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     version: 1,
