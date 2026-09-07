@@ -33,9 +33,9 @@ use tauri_app_lib::transaction::amount::TransactionKind;
 // 交易输入工厂：按已实现 kind 各设构造函数
 // ---------------------------------------------------------------------------
 
-/// 通用 kind 的中性底座（income/expense/transfer/refund 共用）：合法且语义中性
+/// 交易底座（income/expense/transfer/refund/buy/sell 共用）：合法且语义中性
 /// 的默认值 + 热点字段占位。私有实现细节，per-kind 构造函数在此上做差异覆盖。
-fn common_input(
+fn txn_base(
     kind: TransactionKind,
     amount_cents: i64,
     account_id: &str,
@@ -64,12 +64,12 @@ fn common_input(
 
 /// 支出输入：金额、账户、日期为热点；分类/商户/备注等冷字段经结构体更新覆盖。
 pub fn expense_input(amount_cents: i64, account_id: &str, date: &str) -> TransactionInput {
-    common_input(TransactionKind::Expense, amount_cents, account_id, date)
+    txn_base(TransactionKind::Expense, amount_cents, account_id, date)
 }
 
 /// 收入输入：同 [`expense_input`] 形态。
 pub fn income_input(amount_cents: i64, account_id: &str, date: &str) -> TransactionInput {
-    common_input(TransactionKind::Income, amount_cents, account_id, date)
+    txn_base(TransactionKind::Income, amount_cents, account_id, date)
 }
 
 /// 转账输入：两端账户都是热点（per-kind 矩阵：转账必须指定目标账户，writer 守卫
@@ -82,7 +82,7 @@ pub fn transfer_input(
 ) -> TransactionInput {
     TransactionInput {
         to_account_id: Some(to_account_id.into()),
-        ..common_input(
+        ..txn_base(
             TransactionKind::Transfer,
             amount_cents,
             from_account_id,
@@ -103,7 +103,7 @@ pub fn refund_input(
 ) -> TransactionInput {
     TransactionInput {
         refund_of_transaction_id: Some(refund_of_transaction_id.into()),
-        ..common_input(TransactionKind::Refund, amount_cents, account_id, date)
+        ..txn_base(TransactionKind::Refund, amount_cents, account_id, date)
     }
 }
 
@@ -123,7 +123,7 @@ pub fn buy_input(
         instrument_id: Some(instrument_id.into()),
         quantity: Some(quantity),
         price_cents,
-        ..common_input(TransactionKind::Buy, 0, account_id, date)
+        ..txn_base(TransactionKind::Buy, 0, account_id, date)
     }
 }
 
@@ -140,7 +140,7 @@ pub fn sell_input(
         instrument_id: Some(instrument_id.into()),
         quantity: Some(quantity),
         price_cents,
-        ..common_input(TransactionKind::Sell, 0, account_id, date)
+        ..txn_base(TransactionKind::Sell, 0, account_id, date)
     }
 }
 
@@ -195,6 +195,10 @@ pub fn subscription_plan_input(
 /// 分期计划输入：总额 + 期数为热点，每期金额 = 总额 ÷ 期数（与既有分期步骤同
 /// 口径）；`total_amount_cents` / `total_occurrences` 是分期形态的必备字段（engine
 /// 守卫 `scheduled-plan.installment-total-required`），由本构造函数按热点推导。
+///
+/// 尖角：`total_occurrences <= 0` 时除法在工厂内先行 panic（结构体更新救不回，
+/// 除法发生在构造函数内部）——非法期数场景不可经本工厂构造，直接字面量构造
+/// `CreateScheduledInput` 后走 `try_create_plan_verb`。
 pub fn installment_plan_input(
     total_amount_cents: i64,
     total_occurrences: i64,
