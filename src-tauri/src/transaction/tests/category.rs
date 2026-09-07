@@ -4,8 +4,9 @@
 //! 修改路径与批量导入路径同款收口（先例：[`super::merchant`] 商户携带收口）。
 
 use super::super::*;
-use super::common::{insert_account, make_input, setup};
+use super::common::make_input;
 use crate::error::AppError;
+use crate::test_support;
 use crate::transaction::amount::TransactionKind;
 use rusqlite::{Connection, params};
 
@@ -33,8 +34,8 @@ fn assert_coded_rejection(err: AppError, code: &str, message_part: &str) {
 fn insert_category(conn: &Connection, id: &str, name: &str, kind: &str) {
     conn.execute(
         "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,NULL,NULL,0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        params![id, name, kind],
+         VALUES (?1,?2,?3,NULL,NULL,0,?4,?4,1,'test',0)",
+        params![id, name, kind, test_support::FIXED_NOW],
     )
     .unwrap();
 }
@@ -63,10 +64,10 @@ fn active_txn_count(conn: &Connection) -> i64 {
 /// 携带分类 → 行为层拒绝（schema 不设 kind 限制）；不携带分类的 transfer 行为不变。
 #[test]
 fn create_expense_income_carry_category_transfer_buy_sell_rejected() {
-    let conn = setup();
-    insert_account(&conn, "acc-c", "现金", "cash", "CNY");
-    insert_account(&conn, "acc-c-to", "银行", "bank", "CNY");
-    insert_account(&conn, "acc-c-inv", "证券", "investment", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-c", "现金", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-c-to", "银行", "bank", "CNY", 0);
+    test_support::seed_account(&conn, "acc-c-inv", "证券", "investment", "CNY", 0);
     insert_category(&conn, "cat-food", "餐饮", "expense");
     insert_category(&conn, "cat-salary", "工资", "income");
 
@@ -162,8 +163,8 @@ fn create_expense_income_carry_category_transfer_buy_sell_rejected() {
 /// refund 忽略调用方填的分类、继承原支出分类（与账户/币种/商户同款继承语义）。
 #[test]
 fn create_refund_ignores_caller_category_and_inherits_original() {
-    let conn = setup();
-    insert_account(&conn, "acc-c", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-c", "现金", "cash", "CNY", 0);
     insert_category(&conn, "cat-food", "餐饮", "expense");
     insert_category(&conn, "cat-toy", "玩具", "expense");
 
@@ -204,8 +205,8 @@ fn create_refund_ignores_caller_category_and_inherits_original() {
 /// （比照商户收口先例，两者均拒绝且不落库）。
 #[test]
 fn create_dividend_split_with_category_reports_category_rejection_first() {
-    let conn = setup();
-    insert_account(&conn, "acc-c", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-c", "现金", "cash", "CNY", 0);
     insert_category(&conn, "cat-food", "餐饮", "expense");
 
     for kind in [TransactionKind::Dividend, TransactionKind::Split] {
@@ -250,9 +251,9 @@ fn create_dividend_split_with_category_reports_category_rejection_first() {
 /// 原交易保持不变。
 #[test]
 fn update_to_transfer_with_category_rejected_and_rolls_back() {
-    let conn = setup();
-    insert_account(&conn, "acc-c", "现金", "cash", "CNY");
-    insert_account(&conn, "acc-c-to", "银行", "bank", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-c", "现金", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-c-to", "银行", "bank", "CNY", 0);
     insert_category(&conn, "cat-food", "餐饮", "expense");
 
     let id = create_transaction_internal(
@@ -291,9 +292,9 @@ fn update_to_transfer_with_category_rejected_and_rolls_back() {
 /// （该行 success:false + 错误信息，不影响同批其他行），不静默剥掉分类落库。
 #[test]
 fn batch_transfer_with_category_fails_row_without_silent_strip() {
-    let conn = setup();
-    insert_account(&conn, "acc-c", "现金", "cash", "CNY");
-    insert_account(&conn, "acc-c-to", "银行", "bank", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-c", "现金", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-c-to", "银行", "bank", "CNY", 0);
     insert_category(&conn, "cat-food", "餐饮", "expense");
 
     let inputs = vec![

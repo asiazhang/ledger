@@ -1,7 +1,8 @@
 //! 交易查询：列表排序、过滤（账户 / kind / 日期）、分页与退化输入边界。
 
 use super::super::*;
-use super::common::{insert_account, make_input, setup};
+use super::common::make_input;
+use crate::test_support;
 use crate::transaction::{TransactionInput, TransactionListFilter};
 use rusqlite::Connection;
 
@@ -10,8 +11,8 @@ use rusqlite::params;
 
 #[test]
 fn list_transactions_ordered_by_date_desc() {
-    let conn = setup();
-    insert_account(&conn, "acc-list", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-list", "现金", "cash", "CNY", 0);
 
     create_transaction_internal(
         &conn,
@@ -47,8 +48,8 @@ fn list_transactions_ordered_by_date_desc() {
 
 #[test]
 fn list_transactions_limit() {
-    let conn = setup();
-    insert_account(&conn, "acc-limit", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-limit", "现金", "cash", "CNY", 0);
 
     create_transaction_internal(
         &conn,
@@ -90,8 +91,8 @@ fn set_created_at(conn: &Connection, created_at: &str) {
 
 #[test]
 fn list_transactions_pagination_returns_page_and_total() {
-    let conn = setup();
-    insert_account(&conn, "acc-page", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-page", "现金", "cash", "CNY", 0);
 
     for i in 1..=25 {
         create_transaction_internal(
@@ -133,9 +134,9 @@ fn list_transactions_pagination_returns_page_and_total() {
 
 #[test]
 fn list_transactions_pagination_total_respects_filters() {
-    let conn = setup();
-    insert_account(&conn, "acc-f1", "现金", "cash", "CNY");
-    insert_account(&conn, "acc-f2", "银行", "bank", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-f1", "现金", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-f2", "银行", "bank", "CNY", 0);
 
     for i in 1..=8 {
         create_transaction_internal(
@@ -201,10 +202,10 @@ fn list_transactions_pagination_total_respects_filters() {
 
 #[test]
 fn list_transactions_involving_account_filter() {
-    let conn = setup();
-    insert_account(&conn, "acc-inv-1", "现金", "cash", "CNY");
-    insert_account(&conn, "acc-inv-2", "银行", "bank", "CNY");
-    insert_account(&conn, "acc-inv-3", "支付宝", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-inv-1", "现金", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-inv-2", "银行", "bank", "CNY", 0);
+    test_support::seed_account(&conn, "acc-inv-3", "支付宝", "cash", "CNY", 0);
 
     // 普通交易：现金支出（account_id 命中）
     create_transaction_internal(
@@ -332,8 +333,8 @@ fn list_transactions_involving_account_filter() {
 
 #[test]
 fn list_transactions_deterministic_order_by_id_when_same_timestamp() {
-    let conn = setup();
-    insert_account(&conn, "acc-same", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-same", "现金", "cash", "CNY", 0);
 
     let mut ids = Vec::new();
     for i in 1..=5 {
@@ -345,8 +346,9 @@ fn list_transactions_deterministic_order_by_id_when_same_timestamp() {
         .id;
         ids.push(id);
     }
-    // 同一批导入：所有行 created_at 相同（每批一个时间戳）
-    set_created_at(&conn, "2026-01-01T00:00:00Z");
+    // 同一批导入：所有行 created_at 相同（每批一个时间戳；具体取值不影响排序断言，
+    // 引用工厂簿记戳常量避免默认时刻字面量——ADR-0084 决策 5）。
+    set_created_at(&conn, test_support::FIXED_NOW);
 
     // 期望顺序 = SQLite TEXT 列的 id DESC（字典序降序，确定性 tiebreaker）
     let mut expected = ids.clone();
@@ -376,8 +378,8 @@ fn list_transactions_deterministic_order_by_id_when_same_timestamp() {
 
 #[test]
 fn list_transactions_default_returns_all_with_total() {
-    let conn = setup();
-    insert_account(&conn, "acc-all", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-all", "现金", "cash", "CNY", 0);
     for i in 1..=5 {
         create_transaction_internal(
             &conn,
@@ -397,8 +399,8 @@ fn list_transactions_default_returns_all_with_total() {
 
 #[test]
 fn list_transactions_limit_path_unchanged() {
-    let conn = setup();
-    insert_account(&conn, "acc-lim", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-lim", "现金", "cash", "CNY", 0);
     for i in 1..=5 {
         create_transaction_internal(
             &conn,
@@ -453,8 +455,8 @@ fn list_transactions_limit_path_unchanged() {
 
 #[test]
 fn list_transactions_out_of_range_page_and_empty_result() {
-    let conn = setup();
-    insert_account(&conn, "acc-bnd", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-bnd", "现金", "cash", "CNY", 0);
     for i in 1..=3 {
         create_transaction_internal(
             &conn,
@@ -511,8 +513,8 @@ fn list_transactions_out_of_range_page_and_empty_result() {
 
 #[test]
 fn list_transactions_degenerate_inputs_do_not_panic() {
-    let conn = setup();
-    insert_account(&conn, "acc-deg", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-deg", "现金", "cash", "CNY", 0);
     for i in 1..=5 {
         create_transaction_internal(
             &conn,

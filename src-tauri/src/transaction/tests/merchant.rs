@@ -2,7 +2,8 @@
 //! 以及「即建商户」证据外传（issue #331 / ADR-0044 决策 4）。
 
 use super::super::*;
-use super::common::{insert_account, make_input, setup};
+use super::common::make_input;
+use crate::test_support;
 use crate::transaction::{TransactionInput, TransactionListFilter};
 use rusqlite::Connection;
 
@@ -16,8 +17,8 @@ use rusqlite::params;
 fn insert_merchant(conn: &Connection, id: &str, name: &str) {
     conn.execute(
         "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        params![id, name],
+         VALUES (?1,?2,?3,?3,1,'test',0)",
+        params![id, name, test_support::FIXED_NOW],
     )
     .unwrap();
 }
@@ -25,8 +26,8 @@ fn insert_merchant(conn: &Connection, id: &str, name: &str) {
 /// expense / income / refund 可携带商户：创建成功且读回 merchant_id 正确。
 #[test]
 fn create_income_expense_refund_with_merchant() {
-    let conn = setup();
-    insert_account(&conn, "acc-m", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-m", "现金", "cash", "CNY", 0);
     insert_merchant(&conn, "mer-jd", "京东");
 
     let expense_id = create_transaction_internal(
@@ -87,10 +88,10 @@ fn create_income_expense_refund_with_merchant() {
 /// transfer / buy / sell / dividend / split 携带商户 → 行为层拒绝（schema 不设 kind 限制）。
 #[test]
 fn create_txn_with_merchant_rejected_for_non_merchant_kinds() {
-    let conn = setup();
-    insert_account(&conn, "acc-m", "现金", "cash", "CNY");
-    insert_account(&conn, "acc-m-to", "银行", "bank", "CNY");
-    insert_account(&conn, "acc-m-inv", "证券", "investment", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-m", "现金", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-m-to", "银行", "bank", "CNY", 0);
+    test_support::seed_account(&conn, "acc-m-inv", "证券", "investment", "CNY", 0);
     insert_merchant(&conn, "mer-jd", "京东");
 
     // transfer：转出/转入账户齐备，仅因携带商户被拒。
@@ -161,9 +162,9 @@ fn create_txn_with_merchant_rejected_for_non_merchant_kinds() {
 /// 修改路径同款收口：把既有交易改成携带商户的 transfer → 拒绝且事务回滚。
 #[test]
 fn update_txn_with_merchant_rejected_for_transfer() {
-    let conn = setup();
-    insert_account(&conn, "acc-m", "现金", "cash", "CNY");
-    insert_account(&conn, "acc-m-to", "银行", "bank", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-m", "现金", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-m-to", "银行", "bank", "CNY", 0);
     insert_merchant(&conn, "mer-jd", "京东");
 
     let id = create_transaction_internal(
@@ -196,8 +197,8 @@ fn update_txn_with_merchant_rejected_for_transfer() {
 /// 照常保留（商户名由前端经参考表解析，改名即时生效——引用指向 id 不回刷历史行）。
 #[test]
 fn read_back_carries_merchant_id_after_merchant_soft_delete_and_rename() {
-    let conn = setup();
-    insert_account(&conn, "acc-m", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-m", "现金", "cash", "CNY", 0);
     insert_merchant(&conn, "mer-jd", "京东");
 
     let id = create_transaction_internal(
@@ -236,8 +237,8 @@ fn read_back_carries_merchant_id_after_merchant_soft_delete_and_rename() {
 /// 与账户/分类更新语义一致——引用已软删参考数据不阻止编辑既有行。
 #[test]
 fn update_historical_txn_keeps_soft_deleted_merchant() {
-    let conn = setup();
-    insert_account(&conn, "acc-m", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-m", "现金", "cash", "CNY", 0);
     insert_merchant(&conn, "mer-jd", "京东");
     let id = create_transaction_internal(
         &conn,
@@ -334,8 +335,8 @@ fn merchant_id_of(conn: &Connection, id: &str) -> Option<String> {
 /// 证据喂映射单点 → 参考失效信号（壳层将要发射的就是这个）。
 #[test]
 fn create_with_new_merchant_name_reports_merchant_created() {
-    let conn = setup();
-    insert_account(&conn, "acc-ev", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-ev", "现金", "cash", "CNY", 0);
 
     let write = create_transaction_internal(
         &conn,
@@ -373,8 +374,8 @@ fn create_with_new_merchant_name_reports_merchant_created() {
 /// 创建名字命中复用 → 证据假、零信号（不播无谓重拉）。
 #[test]
 fn create_with_hit_merchant_name_reports_reuse_and_zero_signal() {
-    let conn = setup();
-    insert_account(&conn, "acc-ev", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-ev", "现金", "cash", "CNY", 0);
     insert_merchant(&conn, "mer-jd", "京东");
 
     let write = create_transaction_internal(
@@ -396,8 +397,8 @@ fn create_with_hit_merchant_name_reports_reuse_and_zero_signal() {
 /// 直接带 merchant_id / 不带商户 → 证据恒假、零信号。
 #[test]
 fn create_without_new_name_reports_false_evidence() {
-    let conn = setup();
-    insert_account(&conn, "acc-ev", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-ev", "现金", "cash", "CNY", 0);
     insert_merchant(&conn, "mer-jd", "京东");
 
     let with_id = create_transaction_internal(
@@ -430,8 +431,8 @@ fn create_without_new_name_reports_false_evidence() {
 /// refund 携带商户名被继承语义忽略（不解析、不即建）→ 证据假、无碎商户。
 #[test]
 fn create_refund_ignores_merchant_name_and_reports_false() {
-    let conn = setup();
-    insert_account(&conn, "acc-ev", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-ev", "现金", "cash", "CNY", 0);
     insert_merchant(&conn, "mer-jd", "京东");
 
     let expense_id = create_transaction_internal(
@@ -467,8 +468,8 @@ fn create_refund_ignores_merchant_name_and_reports_false() {
 /// 修改为带新商户名 → 证据真、商户行落库；映射单点 → 参考失效信号。
 #[test]
 fn update_to_new_merchant_name_reports_merchant_created() {
-    let conn = setup();
-    insert_account(&conn, "acc-ev", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-ev", "现金", "cash", "CNY", 0);
     let id = create_transaction_internal(
         &conn,
         make_input("acc-ev", TransactionKind::Expense, 1000, "2026-01-01"),
@@ -498,8 +499,8 @@ fn update_to_new_merchant_name_reports_merchant_created() {
 /// 修改名字命中复用 / 保持 merchant_id → 证据假、零信号。
 #[test]
 fn update_reusing_merchant_reports_false_and_zero_signal() {
-    let conn = setup();
-    insert_account(&conn, "acc-ev", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-ev", "现金", "cash", "CNY", 0);
     insert_merchant(&conn, "mer-jd", "京东");
 
     // 改成名字命中：复用既有商户，证据假。

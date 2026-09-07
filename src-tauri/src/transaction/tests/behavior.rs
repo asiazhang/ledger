@@ -2,8 +2,9 @@
 //! 买入卖出副作用清理，以及行为层编排入口（嵌套感知事务，issue #228 / #229 / ADR-0033）。
 
 use super::super::*;
-use super::common::{insert_account, make_buy_input, make_input, setup, setup_investment_account};
+use super::common::{make_buy_input, make_input};
 use crate::error::{AppError, ErrClass};
+use crate::test_support;
 use crate::transaction::TransactionInput;
 use rusqlite::Connection;
 
@@ -13,8 +14,8 @@ use rusqlite::params;
 
 #[test]
 fn create_income_and_expense_transactions() {
-    let conn = setup();
-    insert_account(&conn, "acc-crud", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-crud", "现金", "cash", "CNY", 0);
 
     let id1 = create_transaction_internal(
         &conn,
@@ -48,9 +49,9 @@ fn create_income_and_expense_transactions() {
 
 #[test]
 fn create_transfer_with_to_account() {
-    let conn = setup();
-    insert_account(&conn, "acc-from", "A账户", "cash", "CNY");
-    insert_account(&conn, "acc-to", "B账户", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-from", "A账户", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-to", "B账户", "cash", "CNY", 0);
 
     let id = create_transaction_internal(
         &conn,
@@ -90,8 +91,8 @@ fn create_transfer_with_to_account() {
 
 #[test]
 fn delete_transaction_soft_deletes() {
-    let conn = setup();
-    insert_account(&conn, "acc-del", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-del", "现金", "cash", "CNY", 0);
 
     let id = create_transaction_internal(
         &conn,
@@ -125,8 +126,8 @@ fn delete_transaction_soft_deletes() {
 
 #[test]
 fn delete_transaction_internal_returns_not_found_for_missing_id() {
-    let conn = setup();
-    insert_account(&conn, "acc-missing", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-missing", "现金", "cash", "CNY", 0);
 
     let err = delete_transaction_internal(&conn, "不存在的id").unwrap_err();
     match err {
@@ -137,8 +138,8 @@ fn delete_transaction_internal_returns_not_found_for_missing_id() {
 
 #[test]
 fn delete_transaction_internal_returns_not_found_for_already_deleted() {
-    let conn = setup();
-    insert_account(&conn, "acc-gone", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-gone", "现金", "cash", "CNY", 0);
     let id = create_transaction_internal(
         &conn,
         make_input("acc-gone", TransactionKind::Income, 1000, "2026-01-01"),
@@ -169,8 +170,8 @@ fn delete_transaction_internal_returns_not_found_for_already_deleted() {
 /// 「仅处理通用交易类型」；现改为明确的「暂不支持」——两者均不落库（见 spec #69）。
 #[test]
 fn create_transaction_internal_rejects_dividend_and_split_with_not_supported() {
-    let conn = setup();
-    insert_account(&conn, "acc-unsup", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-unsup", "现金", "cash", "CNY", 0);
 
     for (kind, amount) in [(TransactionKind::Dividend, 60), (TransactionKind::Split, 0)] {
         let err =
@@ -198,8 +199,8 @@ fn create_transaction_internal_rejects_dividend_and_split_with_not_supported() {
 /// 修改为 dividend/split 同样经行为层显式拒绝（单点分派覆盖创建与修改，事务回滚）。
 #[test]
 fn update_transaction_rejects_dividend_and_split_with_not_supported() {
-    let conn = setup();
-    insert_account(&conn, "acc-unsup-upd", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-unsup-upd", "现金", "cash", "CNY", 0);
     let id = create_transaction_internal(
         &conn,
         make_input("acc-unsup-upd", TransactionKind::Expense, 500, "2026-01-01"),
@@ -232,9 +233,9 @@ fn update_transaction_rejects_dividend_and_split_with_not_supported() {
 /// expense→buy 建仓、buy→expense 清理，均不留孤儿持仓关联。
 #[test]
 fn update_transaction_cross_kind_rebuilds_side_effects_atomically() {
-    let conn = setup();
-    insert_account(&conn, "acc-cash-x", "现金", "cash", "CNY");
-    setup_investment_account(&conn, "acc-x", "inst-x");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-cash-x", "现金", "cash", "CNY", 0);
+    test_support::seed_investment_setup(&conn, "acc-x", "inst-x");
 
     // expense → buy：应建仓 lot。
     let id = create_transaction_internal(
@@ -283,8 +284,8 @@ fn update_transaction_cross_kind_rebuilds_side_effects_atomically() {
 
 #[test]
 fn delete_transaction_internal_cleans_up_buy_lots() {
-    let conn = setup();
-    setup_investment_account(&conn, "acc-inv", "inst-aapl");
+    let conn = test_support::open();
+    test_support::seed_investment_setup(&conn, "acc-inv", "inst-aapl");
 
     let buy_id = create_transaction_internal(
         &conn,
@@ -340,8 +341,8 @@ fn delete_transaction_internal_cleans_up_buy_lots() {
 
 #[test]
 fn delete_transaction_internal_rejects_partially_sold_buy() {
-    let conn = setup();
-    setup_investment_account(&conn, "acc-inv2", "inst-msft");
+    let conn = test_support::open();
+    test_support::seed_investment_setup(&conn, "acc-inv2", "inst-msft");
 
     let buy_id = create_transaction_internal(
         &conn,
@@ -380,8 +381,8 @@ fn inject_soft_delete_failure(conn: &Connection) {
 /// 「持仓已删而交易仍在」的中间态，报错返回。
 #[test]
 fn delete_transaction_internal_rolls_back_lot_cleanup_when_soft_delete_fails() {
-    let conn = setup();
-    setup_investment_account(&conn, "acc-inv-rb", "inst-rb2");
+    let conn = test_support::open();
+    test_support::seed_investment_setup(&conn, "acc-inv-rb", "inst-rb2");
 
     let buy_id = create_transaction_internal(
         &conn,
@@ -414,8 +415,8 @@ fn delete_transaction_internal_rolls_back_lot_cleanup_when_soft_delete_fails() {
 
 #[test]
 fn create_refund_linked_to_expense() {
-    let conn = setup();
-    insert_account(&conn, "acc-ref", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-ref", "现金", "cash", "CNY", 0);
 
     let expense_id = create_transaction_internal(
         &conn,
@@ -480,8 +481,8 @@ fn create_refund_linked_to_expense() {
 
 #[test]
 fn update_transaction_internal_replaces_fields_and_bumps_version() {
-    let conn = setup();
-    insert_account(&conn, "acc-upd", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-upd", "现金", "cash", "CNY", 0);
     let id = create_transaction_internal(
         &conn,
         make_input("acc-upd", TransactionKind::Expense, 500, "2026-01-01"),
@@ -503,8 +504,8 @@ fn update_transaction_internal_replaces_fields_and_bumps_version() {
 
 #[test]
 fn update_transaction_internal_returns_not_found_for_missing_or_deleted() {
-    let conn = setup();
-    insert_account(&conn, "acc-upd", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-upd", "现金", "cash", "CNY", 0);
     let id = create_transaction_internal(
         &conn,
         make_input("acc-upd", TransactionKind::Expense, 500, "2026-01-01"),
@@ -551,8 +552,8 @@ fn update_transaction_internal_returns_not_found_for_missing_or_deleted() {
 
 #[test]
 fn update_transaction_internal_reuses_kind_validation_transfer_needs_target() {
-    let conn = setup();
-    insert_account(&conn, "acc-upd", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-upd", "现金", "cash", "CNY", 0);
     let id = create_transaction_internal(
         &conn,
         make_input("acc-upd", TransactionKind::Expense, 500, "2026-01-01"),
@@ -574,9 +575,9 @@ fn update_transaction_internal_reuses_kind_validation_transfer_needs_target() {
 
 #[test]
 fn update_transaction_internal_cross_kind_expense_to_transfer() {
-    let conn = setup();
-    insert_account(&conn, "acc-upd-a", "A", "cash", "CNY");
-    insert_account(&conn, "acc-upd-b", "B", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-upd-a", "A", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-upd-b", "B", "cash", "CNY", 0);
     let id = create_transaction_internal(
         &conn,
         make_input("acc-upd-a", TransactionKind::Expense, 500, "2026-01-01"),
@@ -598,8 +599,8 @@ fn update_transaction_internal_cross_kind_expense_to_transfer() {
 
 #[test]
 fn update_transaction_internal_buy_rebuilds_lot() {
-    let conn = setup();
-    setup_investment_account(&conn, "acc-inv", "inst-aapl");
+    let conn = test_support::open();
+    test_support::seed_investment_setup(&conn, "acc-inv", "inst-aapl");
     let buy_id = create_transaction_internal(
         &conn,
         make_buy_input("acc-inv", "inst-aapl", 10.0, 1000000, 500),
@@ -637,8 +638,8 @@ fn update_transaction_internal_buy_rebuilds_lot() {
 
 #[test]
 fn update_transaction_internal_rejects_partially_sold_buy() {
-    let conn = setup();
-    setup_investment_account(&conn, "acc-inv2", "inst-msft");
+    let conn = test_support::open();
+    test_support::seed_investment_setup(&conn, "acc-inv2", "inst-msft");
     let buy_id = create_transaction_internal(
         &conn,
         make_buy_input("acc-inv2", "inst-msft", 10.0, 1000000, 0),
@@ -666,8 +667,8 @@ fn update_transaction_internal_rejects_partially_sold_buy() {
 
 #[test]
 fn update_transaction_internal_sell_reverses_and_reapplies() {
-    let conn = setup();
-    setup_investment_account(&conn, "acc-inv3", "inst-tsla");
+    let conn = test_support::open();
+    test_support::seed_investment_setup(&conn, "acc-inv3", "inst-tsla");
     let buy_id = create_transaction_internal(
         &conn,
         make_buy_input("acc-inv3", "inst-tsla", 10.0, 1000000, 0),
@@ -744,8 +745,8 @@ fn assert_no_creation_residue(conn: &Connection) {
 /// （issue #228 验收：自持事务整体回滚，修复创建路径中间态缺口）。
 #[test]
 fn create_buy_mid_apply_failure_rolls_back_all() {
-    let conn = setup();
-    setup_investment_account(&conn, "acc-rb", "inst-rb");
+    let conn = test_support::open();
+    test_support::seed_investment_setup(&conn, "acc-rb", "inst-rb");
     inject_buy_lot_failure(&conn);
 
     let err =
@@ -762,8 +763,8 @@ fn create_buy_mid_apply_failure_rolls_back_all() {
 /// ——Ok 不提交（外层 ROLLBACK 即消失）、Err 不回滚外层已写的行。
 #[test]
 fn create_nested_mode_leaves_rollback_ownership_to_outer_holder() {
-    let conn = setup();
-    insert_account(&conn, "acc-n1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-n1", "现金", "cash", "CNY", 0);
 
     // 加入外层：Ok 不自持 COMMIT——外层 ROLLBACK 仍能成功、回滚后行消失，
     // 证明提交点归外层持有者（若 create 自作主张提交，ROLLBACK 会因无活动事务报错）。
@@ -784,8 +785,8 @@ fn create_nested_mode_leaves_rollback_ownership_to_outer_holder() {
     conn.execute("BEGIN", []).unwrap();
     conn.execute(
         "INSERT INTO transactions (id,kind,amount_cents,currency_code,amount_native_cents,account_id,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES ('outer-row','income',1,'CNY',1,'acc-n1','2026-01-01','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        [],
+         VALUES ('outer-row','income',1,'CNY',1,'acc-n1','2026-01-01',?1,?1,1,'test',0)",
+        params![test_support::FIXED_NOW],
     )
     .unwrap();
     let err = create_transaction_internal(
@@ -809,8 +810,8 @@ fn create_nested_mode_leaves_rollback_ownership_to_outer_holder() {
 /// ——Ok 不提交（外层 ROLLBACK 即消失）、Err 不回滚外层已写的行。
 #[test]
 fn update_nested_mode_leaves_rollback_ownership_to_outer_holder() {
-    let conn = setup();
-    insert_account(&conn, "acc-un1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-un1", "现金", "cash", "CNY", 0);
     let id = create_transaction_internal(
         &conn,
         make_input("acc-un1", TransactionKind::Income, 1000, "2026-01-01"),
@@ -841,8 +842,8 @@ fn update_nested_mode_leaves_rollback_ownership_to_outer_holder() {
     conn.execute("BEGIN", []).unwrap();
     conn.execute(
         "INSERT INTO transactions (id,kind,amount_cents,currency_code,amount_native_cents,account_id,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES ('outer-row-u','income',1,'CNY',1,'acc-un1','2026-01-01','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        [],
+         VALUES ('outer-row-u','income',1,'CNY',1,'acc-un1','2026-01-01',?1,?1,1,'test',0)",
+        params![test_support::FIXED_NOW],
     )
     .unwrap();
     let err = update_transaction_internal(

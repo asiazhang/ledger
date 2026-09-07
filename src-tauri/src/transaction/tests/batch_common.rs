@@ -1,24 +1,10 @@
-//! 批量写入测试共享脚手架：仅限本测试目录内各子模块使用（跨测试模块合并不在此列，见 #250）。
+//! 批量写入测试共享脚手架：仅限本测试目录内各子模块使用。通用夹具（建库两行序、
+//! 账户种子）已上收统一测试工厂 `crate::test_support`（spec #728 / issue #757 /
+//! ADR-0084 决策 4/7），本文件剩余函数为域语义输入构造器——非 DB 夹具，
+//! 按准入规则（ADR-0084 决策 1）留域内。
 
-use rusqlite::{Connection, params};
-
-use crate::db::{init_db, open_in_memory};
 use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
-
-pub(super) fn setup() -> Connection {
-    let mut conn = open_in_memory().unwrap();
-    init_db(&mut conn).unwrap();
-    conn
-}
-
-pub(super) fn insert_account(conn: &Connection, id: &str, name: &str, kind: &str, currency: &str) {
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        params![id, name, kind, currency],
-    ).unwrap();
-}
 
 pub(super) fn make_input(
     account_id: &str,

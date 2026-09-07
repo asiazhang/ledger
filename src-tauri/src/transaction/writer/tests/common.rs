@@ -1,31 +1,20 @@
-//! Writer 接缝测试共享脚手架：仅限本测试目录（`writer::tests`）内部使用
-//! （跨测试模块合并不在此列，见 #250）。
+//! Writer 接缝测试共享脚手架：仅限本测试目录（`writer::tests`）内部使用。
+//! 通用夹具（建库两行序、账户种子）已上收统一测试工厂 `crate::test_support`
+//! （spec #728 / issue #757 / ADR-0084 决策 4/7）；分类种子为单域夹具按准入规则
+//! 留薄皮（簿记戳经 `test_support::FIXED_NOW` 发放），其余为域语义输入构造器
+//! 与 Writer 编排铺垫（ADR-0084 决策 1）。
 
 use rusqlite::{Connection, params};
 
+use crate::test_support::FIXED_NOW;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::writer::{Input, insert_row, normalize};
-
-pub(super) fn setup_db() -> Connection {
-    let mut conn = crate::db::open_in_memory().unwrap();
-    crate::db::init_db(&mut conn).unwrap();
-    conn
-}
-
-pub(super) fn insert_account(conn: &Connection, id: &str, currency: &str) {
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id) \
-         VALUES (?1,?1,'cash',?2,0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        params![id, currency],
-    )
-    .unwrap();
-}
 
 pub(super) fn insert_category(conn: &Connection, id: &str) {
     conn.execute(
         "INSERT INTO categories (id,name,kind,created_at,updated_at,version,device_id) \
-         VALUES (?1,?1,'expense','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        params![id],
+         VALUES (?1,?1,'expense',?2,?2,1,'test')",
+        params![id, FIXED_NOW],
     )
     .unwrap();
 }
