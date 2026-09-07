@@ -3,6 +3,7 @@ use rusqlite::params;
 
 use tauri_app_lib::accounts::balance::refresh_account_balances;
 use tauri_app_lib::db::new_uuid;
+use tauri_app_lib::error::AppError;
 use tauri_app_lib::transaction::Transaction;
 
 use crate::world::LedgerWorld;
@@ -16,6 +17,17 @@ pub fn assert_last_error_contains(world: &LedgerWorld, needle: &str) {
         ),
         None => panic!("预期错误但未发生"),
     }
+}
+
+/// 错误断言路径的 When 侧捕获（与 [`assert_last_error_contains`] 成对）：行为层
+/// 写入结果记入 `world.last_error`。臂形固定为两臂——码化错误记 message，其余
+/// （意外成功、非码化错误）一律记「预期失败但成功了」，由后续「应返回错误」
+/// 断言变红；与 write/edit 步骤既有逐处内联 match 同形，断言语义不变。
+pub fn capture_expected_error<T>(world: &mut LedgerWorld, result: Result<T, AppError>) {
+    world.last_error = match result {
+        Err(AppError::Coded { message, .. }) => Some(message),
+        _ => Some("预期失败但成功了".into()),
+    };
 }
 
 /// 在数据库中插入账户用于测试。
@@ -34,6 +46,17 @@ pub fn insert_account(conn: &Connection, id: &str, name: &str, kind: &str, curre
 /// 生成 UUID v7 作为账户 ID。
 pub fn new_account_id() -> String {
     new_uuid()
+}
+
+/// 按标的代码取 id（场景内代码唯一；不存在即 panic——场景文本错误）。买入/卖出/
+/// 明细断言步骤共用（#761 收编：原 write/edit/policy 三文件内联同款 SELECT）。
+pub fn instrument_id_by_symbol(conn: &Connection, symbol: &str) -> String {
+    conn.query_row(
+        "SELECT id FROM instruments WHERE symbol=?1",
+        params![symbol],
+        |r| r.get(0),
+    )
+    .expect("标的不存在，先铺垫 Given 存在标的")
 }
 
 /// 查询全部未删除交易，按日期倒序（与 `list_transactions_internal` 的确定性排序一致，id 为 tiebreaker）。
