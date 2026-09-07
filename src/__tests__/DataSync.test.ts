@@ -1,33 +1,14 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
-import { setActivePinia, createPinia } from 'pinia'
-import { useReferenceStore } from '@/stores/reference'
+import { wireInvokeSeam } from './helpers/invoke-mock'
 import SettingsView from '@/views/SettingsView.vue'
 import CategoryManager from '@/components/CategoryManager.vue'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
-import type { Currency } from '@/types'
-
-
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-  { code: 'USD', name: '美元', symbol: '$', decimal_places: 2 },
-]
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
-  mockInvoke.mockReset()
-  stubReferenceInvoke({
-    list_currencies: mockCurrencies,
-    list_accounts: [],
-    list_categories: [],
-    list_insurers: [],
-    list_merchants: [],
-  })
-  localStorage.clear()
-  const store = useReferenceStore()
-  await store.refresh()
+  // 参考 store 预载走接缝 opt-in 参数（五个 list 命令由桩层内建规范夹具兜底，
+  // 不在本文件枚举）。
+  await wireInvokeSeam({ refreshReferenceStores: true }).ready
 })
 
 describe('SettingsView 不含同步入口（issue #111）', () => {

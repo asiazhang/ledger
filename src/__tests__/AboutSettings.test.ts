@@ -1,25 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mockInvoke } from './helpers/invoke-mock'
+import { messageApi } from './helpers/message-mock'
+import { findButton } from './helpers/dom'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect } from 'naive-ui'
 import AboutSettings from '@/components/settings/AboutSettings.vue'
 
 const writeText = vi.fn().mockResolvedValue(undefined)
-
-// 覆写 setup.ts 的 useMessage mock：改用稳定实例以便断言反馈分支
-// （issue #283：成功→无提示、失败→原样透传后端中文错误）。
-const messageApi = vi.hoisted(() => ({
-  success: vi.fn(),
-  warning: vi.fn(),
-  error: vi.fn(),
-  info: vi.fn(),
-  loading: vi.fn(),
-  destroyAll: vi.fn(),
-}))
-vi.mock('naive-ui', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('naive-ui')>()
-  return { ...actual, useMessage: () => messageApi }
-})
 
 // 固定值注入全局常量：生产环境由 vite define 注入，测试用 stubGlobal 等价注入
 const FULL_SHA = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0'
@@ -82,12 +69,6 @@ describe('AboutSettings.vue — Git 版本行', () => {
 })
 
 describe('AboutSettings.vue — 日志等级下拉（spec #611）', () => {
-  beforeEach(() => {
-    mockInvoke.mockReset()
-    messageApi.error.mockClear()
-    messageApi.success.mockClear()
-  })
-
   async function mountWithLogLevel(level: string) {
     // 挂载即 onMounted 拉取持久化档位（get_log_level）
     mockInvoke.mockResolvedValueOnce({ level })
@@ -131,13 +112,8 @@ describe('AboutSettings.vue — 日志等级下拉（spec #611）', () => {
 })
 
 describe('AboutSettings.vue — 打开日志目录（issue #283）', () => {
-  beforeEach(() => {
-    mockInvoke.mockReset()
-    messageApi.error.mockClear()
-  })
-
   function findOpenLogButton(wrapper: ReturnType<typeof mount>) {
-    const btn = wrapper.findAll('button').find((b) => b.text() === '打开日志目录')
+    const btn = findButton(wrapper, '打开日志目录', { exact: true })
     expect(btn, '组件应渲染「打开日志目录」按钮').toBeTruthy()
     return btn!
   }
