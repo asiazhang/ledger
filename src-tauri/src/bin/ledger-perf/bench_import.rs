@@ -278,12 +278,13 @@ pub(crate) fn eligible_account_ids(all: &[Account]) -> Vec<String> {
 /// 与共享断言库
 /// [`tauri_app_lib::test_support::assert_balance_cache_matches_realtime`]
 /// 的分工边界（issue #776 裁决，甲案不归一）：两份实现刻意不同、各自长期
-/// 存在，非漏收编——本函数属基准工具域正确性底线：Result 契约（失败给可读
-/// 报告让量测作废，非 panic；bin 生产路径在 ADR-0060 六件套 deny 下，panic
-/// 形态需另行豁免论证）+ 生产读出口接缝（要验证的正是生产读路径没跑在坏
-/// 缓存上）；共享版本属测试域对拍：panic 契约 + 逐账户 `compute_balance`
-/// 审计口径（ADR-0084 决策 6 收编清单不含本函数，决策 1 准入规则只收跨
-/// ≥2 域重复）。
+/// 存在，非漏收编——本函数属基准工具（开发侧基础设施，ADR-0062 不产生领域
+/// 术语）的正确性底线：Result 契约（失败给可读报告让量测作废，非 panic；bin
+/// 生产构建在 ADR-0060 六件套 deny 下，panic 形态需另行豁免论证）+
+/// 生产读出口接缝（要验证的正是生产读路径没跑在坏缓存上）；共享版本属
+/// 测试域对拍：panic 契约 + 逐账户 `compute_balance` 审计口径（ADR-0084
+/// 决策 6 收编清单不含本函数；决策 1 准入规则「只收跨 ≥2 域重复的夹具」
+/// 同理排除）。
 pub(crate) fn assert_cache_matches_realtime(conn: &Connection) -> Result<(), String> {
     let cached = accounts::list_account_balances_with_visibility(conn, true)
         .map_err(|e| format!("余额缓存读取失败（缓存行缺失即不变量破坏）：{e}"))?;
