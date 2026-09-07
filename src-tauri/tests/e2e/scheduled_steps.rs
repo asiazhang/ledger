@@ -3,8 +3,13 @@
 //!   convert_to_native 折算（非硬编码 1:1），缺汇率报错且期次保持可重试；
 //! - 分期 / 订阅 / 定时转账生成的类型与金额不回归。
 //!
-//! 步骤直接调 `scheduled_transactions` 领域函数（即 `commands::scheduled` 的
-//! 命令体），与 transactions_steps 直调命令函数的 seam 一致。
+//! #762 迁移：计划创建与生命周期变更收编步骤共享层——输入构造走 L1 步骤输入
+//! 工厂（三形态工厂，[`crate::step_inputs`]）、写入走 L2 步骤动词（经计划域公开
+//! 函数 `create_plan` / `update_plan_status`，[`crate::step_verbs`]）；步骤函数
+//! 薄化为文本解析 + 冷字段覆盖，断言语义零变化。
+//!
+//! 历史 seam（#71–#707）：步骤直调 `scheduled_transactions` 领域函数（即
+//! `commands::scheduled` 的命令体）；迁移后写入不经步骤函数直连。
 //!
 //! 步骤按主题拆为子模块（issue #263，纯移动不增删改名任何步骤与断言）：
 //! - `create`：创建计划——订阅 / 分期 / 定时转账变体（含无限循环、币种不一致拒绝）

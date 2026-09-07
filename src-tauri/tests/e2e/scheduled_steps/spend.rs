@@ -1,14 +1,20 @@
 //! 订阅实际花费口径（issue #160，ADR-0023 决策二）：多周期订阅夹具、
 //! 执行前 N 期 / 取消 / 暂停、花费总览断言。
+//!
+//! #762 迁移：计划创建收编 L1 订阅工厂（周期/备注为冷字段覆盖）、写入收编 L2
+//! 计划动词；生命周期变更（取消/暂停）经生命周期动词走既有命令形态域函数
+//! `update_plan_status`，不为测试开旁路。
 
 use cucumber::{then, when};
 use rusqlite::params;
 
 use tauri_app_lib::scheduled_transactions::{
-    CreateScheduledInput, RecurrenceType, ScheduledKind, ScheduledStatus,
-    SubscriptionSpendOverview, create_plan, query_subscription_spend, update_plan_status,
+    CreateScheduledInput, RecurrenceType, ScheduledStatus, SubscriptionSpendOverview,
+    query_subscription_spend,
 };
 
+use crate::step_inputs::subscription_plan_input;
+use crate::step_verbs::{create_plan_verb, update_plan_status_verb};
 use crate::world::LedgerWorld;
 
 use super::common::execute_occurrence_step;
@@ -32,32 +38,15 @@ fn create_subscription_plan_with_recurrence(
     let recurrence_type: RecurrenceType = recurrence
         .parse()
         .expect("周期应为 daily/weekly/monthly/yearly");
-    let id = world
-        .db
-        .write(|conn| {
-            create_plan(
-                conn,
-                CreateScheduledInput {
-                    kind: ScheduledKind::Subscription,
-                    account_id: world.account_id(&account),
-                    category_id: None,
-                    amount_cents: amount,
-                    currency_code: currency,
-                    recurrence_type,
-                    recurrence_interval: 1,
-                    recurrence_day: None,
-                    start_date: start,
-                    note: Some(note),
-                    merchant_id: None,
-                    policy_id: None,
-                    total_amount_cents: None,
-                    total_occurrences: None,
-                    to_account_id: None,
-                },
-            )
-        })
-        .expect("创建订阅计划失败");
-    world.plan.last_plan_id = Some(id);
+    let account_id = world.account_id(&account);
+    create_plan_verb(
+        world,
+        CreateScheduledInput {
+            recurrence_type,
+            note: Some(note),
+            ..subscription_plan_input(amount, &account_id, &currency, &start)
+        },
+    );
 }
 
 /// 执行最近计划的前 N 条 pending 期次（scheduled_date 升序）。
@@ -83,24 +72,18 @@ fn execute_first_n_occurrences(world: &mut LedgerWorld, n: usize) {
     }
 }
 
-/// 取消最近的订阅计划（走 update_plan_status 命令体）。
+/// 取消最近的订阅计划（生命周期动词 → update_plan_status 命令体）。
 #[when(expr = "取消该订阅计划")]
 fn cancel_subscription_plan(world: &mut LedgerWorld) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
-    world
-        .db
-        .write(|conn| update_plan_status(conn, &plan_id, ScheduledStatus::Cancelled))
-        .expect("取消订阅计划失败");
+    update_plan_status_verb(world, &plan_id, ScheduledStatus::Cancelled);
 }
 
-/// 暂停最近的订阅计划（走 update_plan_status 命令体）。
+/// 暂停最近的订阅计划（生命周期动词 → update_plan_status 命令体）。
 #[when(expr = "暂停该订阅计划")]
 fn pause_subscription_plan(world: &mut LedgerWorld) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
-    world
-        .db
-        .write(|conn| update_plan_status(conn, &plan_id, ScheduledStatus::Paused))
-        .expect("暂停订阅计划失败");
+    update_plan_status_verb(world, &plan_id, ScheduledStatus::Paused);
 }
 
 /// 以注入的固定「今日」查询订阅实际花费总览（确定性口径，不依赖真实时钟）。
