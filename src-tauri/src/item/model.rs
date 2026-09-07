@@ -163,6 +163,35 @@ pub struct ItemWithDailyCost {
     pub per_day_cents: f64,
 }
 
+/// 交易列表来源反查投影（spec #704 / issue #708，词汇表「来源列」）：按溯源
+/// 指针（`purchase_transaction_id`）批量取物品展示字段的最小行——物品名（来源
+/// 列展示名）+ 已处置标志（来源状态），供核心交易域按页填充来源列。展示层
+/// 反查不落任何数据级反向引用（物品域 source_transaction_id 词条边界）。
+#[derive(Debug, Clone)]
+pub struct ItemSourceDisplay {
+    pub id: String,
+    /// 溯源指针（购买交易 id）：调用方按它把物品归位到交易行。
+    pub purchase_transaction_id: Option<String>,
+    /// 物品名称（来源列展示名）。
+    pub name: String,
+    /// 已处置标志（disposed）：来源列携带「已处置」状态标注（物品列表仍在册，
+    /// 跳转不落空）。只查未删除物品：软删物品不在物品列表（跳转会落空），且
+    /// 溯源唯一守卫只看未删除物品（软删后该交易可再次建物品）——来源列同口径
+    /// 视为无来源。
+    pub is_disposed: bool,
+}
+
+impl FromRow for ItemSourceDisplay {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(ItemSourceDisplay {
+            id: row.get(0)?,
+            purchase_transaction_id: row.get(1)?,
+            name: row.get(2)?,
+            is_disposed: row.get::<_, String>(3)? == ItemStatus::Disposed.as_str(),
+        })
+    }
+}
+
 /// 每天使用成本计算结果（issue #121 自选参考日重算）：不带物品实体的独立形态，
 /// 供单件计算命令（`calculate_item_cost`）返回；三元组与 [`ItemWithDailyCost`]
 /// 同一口径（均经 `item::cost` 接缝），前端详情视图重算展示共用。
