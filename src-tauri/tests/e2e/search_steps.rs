@@ -1,10 +1,9 @@
 use cucumber::{given, then, when};
 
 use crate::step_inputs::expense_input;
+use crate::step_verbs::create_exchange_rate_verb;
 use crate::step_verbs::create_transaction_verb;
 use crate::world::LedgerWorld;
-use tauri_app_lib::currencies::ExchangeRateInput;
-use tauri_app_lib::investment::create_exchange_rate;
 use tauri_app_lib::transaction::search_transactions_internal;
 use tauri_app_lib::transaction::{TransactionInput, TransactionSearchResult};
 
@@ -31,9 +30,9 @@ fn legacy_txn(
 }
 
 /// 存量外币交易：经行为层写入，原始币种分与本位币分显式分叉（issue #395）。
-/// 本位币分由产品折算路径产生：先经投资域公开创建入口按「本位币 ÷ 金额」综合
-/// 汇率（原直插模拟「汇率折算后的落库形态」，收敛后改走真实折算，锁定金额区
-/// 间过滤的本位币分口径；折算四舍五入由产品承担）。
+/// 本位币分由产品折算路径产生：先经汇率夹具动词按「本位币 ÷ 金额」综合汇率
+/// （原直插模拟「汇率折算后的落库形态」，收敛后改走真实折算，锁定金额区间
+/// 过滤的本位币分口径；折算四舍五入由产品承担）。
 #[given(
     expr = "存量外币交易 备注 {string} 金额 {int} 币种 {string} 本位币 {int} 账户 {string} 日期 {string}"
 )]
@@ -48,17 +47,13 @@ fn legacy_foreign_txn(
 ) {
     assert!(amount > 0, "存量外币交易金额须为正（汇率综合需要）");
     let account_id = world.account_id(&account_name);
-    create_exchange_rate(
-        &world_conn!(world),
-        ExchangeRateInput {
-            base_code: currency.clone(),
-            quote_code: "CNY".into(),
-            rate: native_amount as f64 / amount as f64,
-            priced_at: date.clone(),
-            source: Some("manual".into()),
-        },
-    )
-    .expect("存量外币交易夹具：综合汇率失败");
+    create_exchange_rate_verb(
+        world,
+        &currency,
+        "CNY",
+        native_amount as f64 / amount as f64,
+        &date,
+    );
     let input = TransactionInput {
         note: Some(note),
         currency_code: currency,

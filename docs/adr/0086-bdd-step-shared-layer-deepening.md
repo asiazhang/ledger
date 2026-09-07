@@ -72,6 +72,6 @@ grilling（2026-09-07）对评审证据修正两处（以代码为准）：
 | `instruments_steps.rs` 标的直插 ×3（INSERT instruments，#763 裁决） | 存量同步行夹具：公开创建入口只产 'manual' 行且来源随行终身不变（ADR-0036），「同步来源拒删」等被测前提依赖 'eastmoney' 直置 |
 | `financial_freedom_steps.rs` 隐藏标志直置（UPDATE accounts.is_hidden，#763 裁决） | 创建经公开入口后 `is_hidden` 无公开入口可表达（黑洞账户仅由种子预置），窄化为单属性 UPDATE |
 
-**已消失项（裁决时点前已被既有票处置，无需再裁）**：持仓时间戳回溯（investment_migration 的 security_lots UPDATE）随 #773 迁移链路两层收缩消失（旅程改走批量导入行为路径）；交易直插播种第 5 处（accounts_steps）随 #772 删除凑数据场景消失。
+**已消失项（裁决时点前已被既有票处置，无需再裁）**：持仓时间戳回溯（investment_migration 的 security_lots UPDATE）随 #773 迁移链路两层收缩消失（旅程改走批量导入行为路径）；交易直插播种第 5 处（accounts_steps）随 #772 删除凑数据场景消失。本次裁决无「需要新产品入口」的发现，无需登记后续 issue。
 
 **与 ADR-0084 守门衔接（决策 8 终态）**：`scripts/check-test-support.ts` 恢复对 tests/e2e 的规则 2（禁夹具表裸 SQL）/规则 3（禁默认时刻字面量）整目录覆盖，未登记命中即红；e2e 存量例外以「文件 + 规则 + 预期命中数 + 动机」登记于脚本例外表，与本节清单一一对应并严格相等校验（命中数漂移、例外收敛后条目滞留均红——失效登记是第二份事实）。规则 1（禁直连建库）裁决为不辖 tests/e2e：BDD 层与工厂分层互斥（决策 9；ADR-0084 决策 3 文件库/加密不入工厂），e2e 建库走产品开库入口（world 持产品 DbState、boot 组文件库 init_db/open_db_in）是分层形态而非旁路。域时刻字面量恰同 FIXED_NOW 值者按守门注记改写（存在汇率夹具的 priced_at 无断言语义，取非同值字面量）。

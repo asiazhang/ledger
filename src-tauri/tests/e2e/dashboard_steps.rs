@@ -34,7 +34,8 @@ fn create_instrument_fixture(world: &mut LedgerWorld, symbol: String, currency: 
 
 /// 插入标的市场现价（market_prices 每标的仅保留最新一行）：经投资域现价缓存
 /// 写入单点 [`upsert_market_price`]（#764 旁路收敛）；`priced_at` 为行情日期
-/// （域时刻，无断言语义）；source 落 NULL、股票无 nav_date，与原直插形状一致。
+/// （域时刻，无断言语义，取非 FIXED_NOW 日期段）；source 落 NULL、股票无
+/// nav_date，与原直插形状一致。
 #[given(expr = "标的 {string} 现价 {int} 币种 {string}")]
 fn set_market_price(world: &mut LedgerWorld, symbol: String, price: i64, currency: String) {
     let instrument_id = instrument_id_by_symbol(&world_conn!(world), &symbol);
@@ -43,7 +44,7 @@ fn set_market_price(world: &mut LedgerWorld, symbol: String, price: i64, currenc
         &instrument_id,
         price,
         &currency,
-        "2026-01-01",
+        "2025-06-01",
         None,
         None,
     )
