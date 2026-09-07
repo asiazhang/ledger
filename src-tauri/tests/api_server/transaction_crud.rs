@@ -1,5 +1,7 @@
 use axum::http::StatusCode;
 
+use tauri_app_lib::test_support;
+
 use crate::common::{
     batch_body, create_account_via_api, delete_transaction_via_api, get_json, items_of, post_batch,
     put_transaction_via_api, setup_app,
@@ -139,27 +141,8 @@ async fn test_update_transaction_reuses_kind_validation_returns_400() {
 #[tokio::test]
 async fn test_update_buy_to_missing_instrument_returns_400_with_readable_error() {
     let (app, conn) = setup_app();
-    {
-        let conn = conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES ('acc-inv-295','美股','investment','USD',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-             VALUES ('inst-295','AAPL','stock','Apple','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,updated_at,version,device_id) \
-             VALUES ('er-295','USD','CNY',1.0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-            [],
-        )
-        .unwrap();
-    }
+    // 投资铺垫（账户+标的+1:1 汇率）一行建成：工厂组合种子（spec #728 / ADR-0084）。
+    test_support::seed_investment_setup(&conn.lock().unwrap(), "acc-inv-295", "inst-295");
 
     let buy = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-295","date":"2026-01-10","instrument_id":"inst-295","quantity":10.0,"price_cents":1000000,"fee_cents":0}]}"#;
     let created = post_batch(&app, buy.to_string()).await;
@@ -240,21 +223,15 @@ async fn test_buy_native_cents_converted_via_writer_seam() {
     let (app, conn) = setup_app();
     {
         let conn = conn.lock().unwrap();
+        test_support::seed_investment_setup(&conn, "acc-inv-70", "inst-70");
+        // 7.2 折算是本测试的行为输入（ADR-0084 决策 5）：表约束每货币对仅一行，
+        // 删除组合种子的 1:1 行后种入目标汇率。
         conn.execute(
-            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted)              VALUES ('acc-inv-70','美股','investment','USD',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            "DELETE FROM exchange_rates WHERE base_code='USD' AND quote_code='CNY'",
             [],
         )
         .unwrap();
-        conn.execute(
-            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id)              VALUES ('inst-70','AAPL','stock','Apple','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,updated_at,version,device_id)              VALUES ('er-70','USD','CNY',7.2,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-            [],
-        )
-        .unwrap();
+        test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
     }
 
     let body = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-70","date":"2026-01-10","instrument_id":"inst-70","quantity":10.0,"price_cents":1000000,"fee_cents":500}]}"#;
@@ -283,21 +260,15 @@ async fn test_sell_native_cents_converted_via_writer_seam() {
     let (app, conn) = setup_app();
     {
         let conn = conn.lock().unwrap();
+        test_support::seed_investment_setup(&conn, "acc-inv-70s", "inst-70s");
+        // 7.2 折算是本测试的行为输入（ADR-0084 决策 5）：表约束每货币对仅一行，
+        // 删除组合种子的 1:1 行后种入目标汇率。
         conn.execute(
-            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted)              VALUES ('acc-inv-70s','美股','investment','USD',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+            "DELETE FROM exchange_rates WHERE base_code='USD' AND quote_code='CNY'",
             [],
         )
         .unwrap();
-        conn.execute(
-            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id)              VALUES ('inst-70s','MSFT','stock','Msft','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,updated_at,version,device_id)              VALUES ('er-70s','USD','CNY',7.2,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-            [],
-        )
-        .unwrap();
+        test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
     }
 
     // 先买 10 股（10000/股，0 费），再卖 4 股（11000/股，0 费）→ 净额 44000。
@@ -333,25 +304,9 @@ async fn test_delete_buy_transaction_cleans_up_security_lots() {
     let (app, conn) = setup_app();
     {
         let conn = conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-             VALUES ('acc-inv-del','美股','investment','USD',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-             VALUES ('inst-del','DEL','stock','Delete','USD','unknown','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-            [],
-        )
-        .unwrap();
-        // buy 本位币折算走 Amount 接缝（issue #70）：补一条 USD→CNY 汇率，1:1 不改变本测试意图。
-        conn.execute(
-            "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,updated_at,version,device_id) \
-             VALUES ('er-del','USD','CNY',1.0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-            [],
-        )
-        .unwrap();
+        // 投资铺垫一行建成：工厂组合种子（spec #728 / ADR-0084）；补的 1:1 汇率
+        // 不改变本测试意图（issue #70 本位币折算经 Amount 接缝）。
+        test_support::seed_investment_setup(&conn, "acc-inv-del", "inst-del");
         let buy = TransactionInput {
             merchant_name: None,
             policy_id: None,
