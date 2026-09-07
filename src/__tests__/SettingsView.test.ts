@@ -145,13 +145,6 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     expect(store.theme).toBe('light')
   })
 
-  it('「通用」页含界面语言选择器，默认「跟随系统」（issue #342 / ADR-0049）', () => {
-    const wrapper = mount(SettingsView)
-    const html = wrapper.html()
-    expect(html).toContain('界面语言')
-    expect(html).toContain('跟随系统')
-  })
-
   it('「分类」含分类管理器，不再展示支持币种表格（ADR-0034）', async () => {
     const wrapper = mount(SettingsView)
     await openTab(wrapper, '分类')
@@ -174,34 +167,6 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     expect(html).toContain('一键备份')
     expect(html).not.toContain('数据存储位置')
     expect(html).not.toContain('拼音搜索数据')
-  })
-
-  it('「数据」承载备份、存储位置、数据修复三组件，随子页签挂载（issue #568）', async () => {
-    wireInvokeSeam({
-      defaults: SCENE_DEFAULTS,
-      overrides: {
-        ...SCENE_OVERRIDES,
-        get_data_location_info: () => Promise.resolve(dataLocationInfo()),
-      },
-    })
-    const wrapper = mount(SettingsView)
-    await openTab(wrapper, '数据')
-    await flushPromises()
-    // 默认「备份」子页签：备份组件原样在场。
-    let html = wrapper.html()
-    expect(html).toContain('一键备份')
-    expect(html).toContain('从备份恢复')
-    // 「存储位置」子页签：DataLocationSettings 原样迁入。
-    await openTab(wrapper, '存储位置')
-    await flushPromises()
-    expect(mockInvoke).toHaveBeenCalledWith('get_data_location_info')
-    html = wrapper.html()
-    expect(html).toContain('数据存储位置')
-    expect(html).toContain('/Users/me/Library/Application Support/ledger')
-    // 「数据修复」子页签：SearchDataSettings 原样迁入（issue #513 修复工具）。
-    await openTab(wrapper, '数据修复')
-    await flushPromises()
-    expect(wrapper.html()).toContain('拼音搜索数据')
   })
 
   it('子页签来回切换备份列表不卸载重拉（子 pane show:lazy + 显式 key，issue #568）', async () => {
@@ -261,14 +226,6 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     expect(style).toContain('max-width: 720px')
     // 左对齐：无居中 margin（margin auto 居中与否在此由 margin 属性是否出现表达）。
     expect(style).not.toContain('margin')
-  })
-
-  it('「关于」在末位，显示版本号', async () => {
-    const wrapper = mount(SettingsView)
-    const tabs = wrapper.findAll('.n-tabs-tab')
-    expect(tabs[tabs.length - 1].text()).toBe('关于')
-    await openTab(wrapper, '关于')
-    expect(wrapper.html()).toContain('版本号')
   })
 
   it('备份列表在 Tab 切换间保留缓存，不随切换重拉', async () => {
@@ -456,13 +413,6 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     expect(wrapper.html()).not.toContain('设置备份目录后自动备份生效')
   })
 
-  it('从未自动备份时显示从未占位', async () => {
-    const wrapper = mount(SettingsView)
-    await openTab(wrapper, '数据')
-    await flushPromises()
-    expect(wrapper.html()).toContain('上次自动备份：从未')
-  })
-
   it('恢复前经应用内弹窗确认（issue #572）：读取备份元数据，确认后带 passphrase 调用 restore_backup', async () => {
     mockOpen.mockResolvedValueOnce('/Users/me/backups/ledger-backup.db.zip')
     wireInvokeSeam({
@@ -602,6 +552,37 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     html = wrapper2.html()
     expect(html).toContain('已回退到默认位置')
     expect(html).toContain('权限不足')
+  })
+})
+
+describe('SettingsView.vue 页签内容存在性矩阵（issue #769：切页签断言文案在场的用例收行）', () => {
+  // 行 =（导航动作，期望文案数组）；删掉对应页签/入口即红（生杀线内，见 CONTEXT-testing「存在性断言」）。
+  // 行 ↔ 原用例对应：
+  //   通用 → 原「页含界面语言选择器，默认跟随系统」（#342 / ADR-0049）；
+  //   关于 → 原「在末位，显示版本号」（末位次序由 Tab 格局用例的全等断言守护）；
+  //   数据 → 原「从未自动备份时显示从未占位」；
+  //   数据 → 备份 / 存储位置 / 数据修复 三行 ↔ 原「三组件随子页签挂载」（#568）按子页签拆行；
+  //     其中 get_data_location_info 调用断言不另保留——目录文案即该调用应答的渲染结果，
+  //     渲染断言已覆盖其失败面。
+  it.each([
+    { nav: '进入「通用」页签', path: ['通用'], texts: ['界面语言', '跟随系统'] },
+    { nav: '进入「关于」页签', path: ['关于'], texts: ['版本号'] },
+    { nav: '进入「数据」页签', path: ['数据'], texts: ['上次自动备份：从未'] },
+    { nav: '进入「数据 → 备份」子页签', path: ['数据', '备份'], texts: ['一键备份', '从备份恢复'] },
+    {
+      nav: '进入「数据 → 存储位置」子页签',
+      path: ['数据', '存储位置'],
+      texts: ['数据存储位置', '/Users/me/Library/Application Support/ledger'],
+    },
+    { nav: '进入「数据 → 数据修复」子页签', path: ['数据', '数据修复'], texts: ['拼音搜索数据'] },
+  ])('$nav：期望文案在场 $texts', async ({ path, texts }) => {
+    const wrapper = mount(SettingsView)
+    for (const tab of path) {
+      await openTab(wrapper, tab)
+      await flushPromises()
+    }
+    const html = wrapper.html()
+    for (const text of texts) expect(html).toContain(text)
   })
 })
 
