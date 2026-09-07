@@ -5,9 +5,10 @@
 
 use rusqlite::{Connection, params};
 
-use super::common::setup_db;
+use super::common::insert_instrument_with_source;
 use crate::investment::create_instrument_manual;
 use crate::investment::{InstrumentInput, InstrumentType};
+use crate::test_support::open;
 
 fn input(kind: InstrumentType, symbol: &str, name: Option<&str>) -> InstrumentInput {
     InstrumentInput {
@@ -31,7 +32,7 @@ fn count_of(conn: &Connection, kind: &str) -> i64 {
 /// 白名单拦截：股票类明确拒绝（中文报错），不产生标的行。
 #[test]
 fn manual_create_rejects_stock() {
-    let conn = setup_db();
+    let conn = open();
     let err = create_instrument_manual(
         &conn,
         input(InstrumentType::Stock, "600519", Some("贵州茅台")),
@@ -47,7 +48,7 @@ fn manual_create_rejects_stock() {
 /// 白名单拦截：基金类拒绝（fund 唯一创建入口归按代码即拉，issue #301 / ADR-0038）。
 #[test]
 fn manual_create_rejects_fund() {
-    let conn = setup_db();
+    let conn = open();
     let err = create_instrument_manual(
         &conn,
         input(InstrumentType::Fund, "000001", Some("华夏成长混合")),
@@ -63,7 +64,7 @@ fn manual_create_rejects_fund() {
 /// 白名单放行：债券/ETF/其他三类经守卫到达核心创建函数（新建行来源 manual）。
 #[test]
 fn manual_create_allows_whitelisted_kinds() {
-    let conn = setup_db();
+    let conn = open();
     for (kind, symbol) in [
         (InstrumentType::Bond, "019547"),
         (InstrumentType::Etf, "510300"),
@@ -86,7 +87,7 @@ fn manual_create_allows_whitelisted_kinds() {
 /// 名称必填：空串与纯空白均拒绝（自建标的主身份是名称），不产生标的行。
 #[test]
 fn manual_create_requires_name() {
-    let conn = setup_db();
+    let conn = open();
     for name in [None, Some(""), Some("   ")] {
         let err = create_instrument_manual(&conn, input(InstrumentType::Other, "HW-VR", name))
             .unwrap_err();
@@ -102,14 +103,17 @@ fn manual_create_requires_name() {
 /// （守卫只加拦截，不改写核心创建函数行为）。
 #[test]
 fn manual_create_reuse_keeps_existing_source() {
-    let conn = setup_db();
-    conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id,source) \
-         VALUES ('inst-em','510300','etf','','CNY','sh',\
-                 '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test','eastmoney')",
-        [],
-    )
-    .unwrap();
+    let conn = open();
+    insert_instrument_with_source(
+        &conn,
+        "inst-em",
+        "510300",
+        "",
+        "CNY",
+        "sh",
+        "etf",
+        "eastmoney",
+    );
     let id = create_instrument_manual(
         &conn,
         input(InstrumentType::Etf, "510300", Some("沪深300ETF")),

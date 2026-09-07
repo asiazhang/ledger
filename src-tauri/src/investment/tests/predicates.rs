@@ -10,18 +10,9 @@
 
 use rusqlite::{Connection, params};
 
-use super::common::{insert_account, setup_db};
+use super::common::insert_instrument_with_market;
 use crate::investment::predicates::INVESTED_EXISTS;
-
-/// 直插一个标的（类型可指定），绕过命令层以聚焦谓词集合本身。
-fn insert_instrument_typed(conn: &Connection, id: &str, symbol: &str, kind: &str) {
-    conn.execute(
-        "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,?4,'CNY','sh','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test')",
-        params![id, symbol, kind, format!("名称-{symbol}")],
-    )
-    .unwrap();
-}
+use crate::test_support::{open, seed_account};
 
 /// 直插一条最小买入链（transaction → security_transaction → lot）：谓词与视图
 /// 的驱动表是 security_lots，补齐外键链即可，绕过交易行为层以聚焦本测试。
@@ -85,33 +76,81 @@ fn view_instrument_set(conn: &Connection) -> Vec<String> {
 
 #[test]
 fn invested_predicate_set_equals_v_holdings_instrument_set() {
-    let conn = setup_db();
+    let conn = open();
 
     // ① 普通在持标的：股票，正常账户 —— 两侧都应包含。
-    insert_account(&conn, "acc-live", "在持账户", "investment", "CNY");
-    insert_instrument_typed(&conn, "inst-stock", "600001", "stock");
+    seed_account(&conn, "acc-live", "在持账户", "investment", "CNY", 0);
+    insert_instrument_with_market(
+        &conn,
+        "inst-stock",
+        "600001",
+        "名称-600001",
+        "CNY",
+        "sh",
+        "stock",
+    );
     insert_lot(&conn, "acc-live", "inst-stock", 10.0, "CNY");
 
     // ② 非股票持仓（基金/债券）：数据源无行情，但「持仓标的」判定与类型无关
     //    （增量同步侧按类型分区计跳过，判定口径本身不分类型）——两侧都应包含。
-    insert_instrument_typed(&conn, "inst-fund", "110011", "fund");
+    insert_instrument_with_market(
+        &conn,
+        "inst-fund",
+        "110011",
+        "名称-110011",
+        "CNY",
+        "sh",
+        "fund",
+    );
     insert_lot(&conn, "acc-live", "inst-fund", 100.0, "CNY");
-    insert_instrument_typed(&conn, "inst-bond", "019547", "bond");
+    insert_instrument_with_market(
+        &conn,
+        "inst-bond",
+        "019547",
+        "名称-019547",
+        "CNY",
+        "sh",
+        "bond",
+    );
     insert_lot(&conn, "acc-live", "inst-bond", 10.0, "CNY");
 
     // ③ 已清仓标的：批次剩余数量为 0 ——「持仓标的」不含已清仓，两侧都应排除。
-    insert_instrument_typed(&conn, "inst-cleared", "600002", "stock");
+    insert_instrument_with_market(
+        &conn,
+        "inst-cleared",
+        "600002",
+        "名称-600002",
+        "CNY",
+        "sh",
+        "stock",
+    );
     insert_lot(&conn, "acc-live", "inst-cleared", 0.0, "CNY");
 
     // ④ 软删除账户的批次：口径明确排除 —— 两侧都应排除。
-    insert_account(&conn, "acc-del", "已删账户", "investment", "CNY");
-    insert_instrument_typed(&conn, "inst-softdel", "600003", "stock");
+    seed_account(&conn, "acc-del", "已删账户", "investment", "CNY", 0);
+    insert_instrument_with_market(
+        &conn,
+        "inst-softdel",
+        "600003",
+        "名称-600003",
+        "CNY",
+        "sh",
+        "stock",
+    );
     insert_lot(&conn, "acc-del", "inst-softdel", 10.0, "CNY");
     soft_delete_account(&conn, "acc-del");
 
     // ⑤ 同账户同标的不同币种 lot：视图 GROUP BY 含 currency_code，一标的出两行；
     //    谓词按标的判定只出一次 —— 去重后两侧逐标的相等。
-    insert_instrument_typed(&conn, "inst-multiccy", "600004", "stock");
+    insert_instrument_with_market(
+        &conn,
+        "inst-multiccy",
+        "600004",
+        "名称-600004",
+        "CNY",
+        "sh",
+        "stock",
+    );
     insert_lot(&conn, "acc-live", "inst-multiccy", 5.0, "CNY");
     insert_lot(&conn, "acc-live", "inst-multiccy", 3.0, "USD");
 

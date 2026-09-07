@@ -8,7 +8,7 @@ use crate::investment::{
     route_stock_creation,
 };
 
-use super::common::setup_db;
+use crate::test_support::open;
 
 /// 构造一份典型股票行情（价格万分之一元刻度）。
 fn quote(code: &str, name: &str, market: &str, price: Option<i64>) -> StockQuote {
@@ -172,7 +172,7 @@ fn routes_non_code_shapes_to_generic_path() {
 
 #[test]
 fn persists_quote_as_stock_row_with_market_and_price() {
-    let conn = setup_db();
+    let conn = open();
     let outcome = persist_stock_quote(
         &conn,
         InstrumentType::Stock,
@@ -198,7 +198,7 @@ fn persists_quote_as_stock_row_with_market_and_price() {
 
 #[test]
 fn persists_quote_without_price_skips_price_row() {
-    let conn = setup_db();
+    let conn = open();
     let outcome = persist_stock_quote(
         &conn,
         InstrumentType::Stock,
@@ -218,7 +218,7 @@ fn persists_quote_without_price_skips_price_row() {
 
 #[test]
 fn hong_kong_quote_derives_hkd_currency() {
-    let conn = setup_db();
+    let conn = open();
     let outcome = persist_stock_quote(
         &conn,
         InstrumentType::Stock,
@@ -239,7 +239,7 @@ fn hong_kong_quote_derives_hkd_currency() {
 
 #[test]
 fn degraded_creation_preserves_resolved_market() {
-    let conn = setup_db();
+    let conn = open();
     let outcome = create_stock_degraded(
         &conn,
         InstrumentType::Stock,
@@ -270,7 +270,7 @@ fn degraded_creation_preserves_resolved_market() {
 
 #[test]
 fn degraded_creation_without_ai_name_creates_nameless_row() {
-    let conn = setup_db();
+    let conn = open();
     create_stock_degraded(&conn, InstrumentType::Stock, "sz", "000001", None)
         .expect("降级不因缺名称被阻塞");
     let (name, market, ..) = stock_row(&conn, "000001");
@@ -283,7 +283,7 @@ fn degraded_creation_without_ai_name_creates_nameless_row() {
 
 #[test]
 fn degraded_replay_reuses_row_without_overwriting_authoritative_name() {
-    let conn = setup_db();
+    let conn = open();
     // 第一笔：东财可达 → 权威名称回填 + 落价。
     let first = persist_stock_quote(
         &conn,
@@ -319,7 +319,7 @@ fn degraded_replay_reuses_row_without_overwriting_authoritative_name() {
 
 #[test]
 fn persists_quote_with_submitted_etf_kind_preserves_type() {
-    let conn = setup_db();
+    let conn = open();
     // 场内基金段代码 + 调用方按类型提示提交 etf：增强照常生效，类型以提交为准
     //（东财类型提示只在查询端点投影，不在此改写）。
     let outcome = persist_stock_quote(
