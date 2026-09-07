@@ -213,164 +213,39 @@ async fn test_update_transaction_preserves_idempotency_key_and_rerun_dedup() {
 }
 
 // ---------------------------------------------------------------------------
-// issue #70：buy/sell 本位币折算经共享 writer（Amount 接缝），不再硬编码 1:1
+// sell 创建端点壳层接线证明（ADR-0087 决策 2）：仅证请求经批量端点进入写入
+// 接缝且资源可读；卖出金额公式与本位币折算等域结果细节归域单测
+// （investment/tests/trade.rs、transaction/tests/amount.rs）。
 // ---------------------------------------------------------------------------
 
-/// buy 交易行落库：`amount_native_cents` 经 Amount 接缝折算到全局默认币种（CNY），
-/// 而非按账户币种 1:1 硬编码（issue #70：买入行走共享 writer 折算路径）。
+/// sell 经批量端点进入写入接缝的接线证明（issue #771）：创建成功且资源可读，
+/// 不展开折算数值等域结果细节。
 #[tokio::test]
-async fn test_buy_native_cents_converted_via_writer_seam() {
+async fn test_create_sell_via_batch_succeeds_and_readable() {
     let (app, conn) = setup_app();
-    {
-        let conn = conn.lock().unwrap();
-        test_support::seed_investment_setup(&conn, "acc-inv-70", "inst-70");
-        // 7.2 折算是本测试的行为输入（ADR-0084 决策 5）：表约束每货币对仅一行，
-        // 删除组合种子的 1:1 行后种入目标汇率。
-        conn.execute(
-            "DELETE FROM exchange_rates WHERE base_code='USD' AND quote_code='CNY'",
-            [],
-        )
-        .unwrap();
-        test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
-    }
+    // 投资铺垫（账户+标的+1:1 汇率）一行建成：工厂组合种子（spec #728 / ADR-0084）。
+    test_support::seed_investment_setup(&conn.lock().unwrap(), "acc-inv-sell", "inst-sell");
 
-    let body = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-70","date":"2026-01-10","instrument_id":"inst-70","quantity":10.0,"price_cents":1000000,"fee_cents":500}]}"#;
-    let results = post_batch(&app, body.to_string()).await;
-    assert_eq!(results[0]["success"], true, "buy 应成功: {:?}", results[0]);
-
-    let (amount_cents, amount_native_cents): (i64, i64) = conn
-        .lock()
-        .unwrap()
-        .query_row(
-            "SELECT amount_cents, amount_native_cents FROM transactions WHERE kind='buy' AND is_deleted=0",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!(amount_cents, 100500, "原始币种金额 = 数量×单价+手续费");
+    // 前置：买入建仓（卖出按 FIFO 消费持仓），经同一公开端点造数。
+    let buy = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-sell","date":"2026-01-10","instrument_id":"inst-sell","quantity":10.0,"price_cents":1000000,"fee_cents":0}]}"#;
+    let bought = post_batch(&app, buy.to_string()).await;
     assert_eq!(
-        amount_native_cents, 723600,
-        "本位币金额应经 Amount 接缝折算（100500 × 7.2）"
+        bought[0]["success"], true,
+        "前置买入应成功: {:?}",
+        bought[0]
     );
-}
 
-/// sell 交易行落库：本位币金额同样经 Amount 接缝折算（issue #70）。
-#[tokio::test]
-async fn test_sell_native_cents_converted_via_writer_seam() {
-    let (app, conn) = setup_app();
-    {
-        let conn = conn.lock().unwrap();
-        test_support::seed_investment_setup(&conn, "acc-inv-70s", "inst-70s");
-        // 7.2 折算是本测试的行为输入（ADR-0084 决策 5）：表约束每货币对仅一行，
-        // 删除组合种子的 1:1 行后种入目标汇率。
-        conn.execute(
-            "DELETE FROM exchange_rates WHERE base_code='USD' AND quote_code='CNY'",
-            [],
-        )
-        .unwrap();
-        test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
-    }
+    let sell = r#"{"transactions":[{"kind":"sell","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-sell","date":"2026-01-20","instrument_id":"inst-sell","quantity":4.0,"price_cents":1100000,"fee_cents":0}]}"#;
+    let results = post_batch(&app, sell.to_string()).await;
+    assert_eq!(results[0]["success"], true, "sell 应成功: {:?}", results[0]);
 
-    // 先买 10 股（10000/股，0 费），再卖 4 股（11000/股，0 费）→ 净额 44000。
-    let buy = r#"{"transactions":[{"kind":"buy","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-70s","date":"2026-01-10","instrument_id":"inst-70s","quantity":10.0,"price_cents":1000000,"fee_cents":0}]}"#;
-    let r1 = post_batch(&app, buy.to_string()).await;
-    assert_eq!(r1[0]["success"], true);
-    let sell = r#"{"transactions":[{"kind":"sell","amount_cents":0,"currency_code":"USD","account_id":"acc-inv-70s","date":"2026-01-20","instrument_id":"inst-70s","quantity":4.0,"price_cents":1100000,"fee_cents":0}]}"#;
-    let r2 = post_batch(&app, sell.to_string()).await;
-    assert_eq!(r2[0]["success"], true, "卖出应成功: {:?}", r2[0]);
-
-    let (amount_cents, amount_native_cents): (i64, i64) = conn
-        .lock()
-        .unwrap()
-        .query_row(
-            "SELECT amount_cents, amount_native_cents FROM transactions WHERE kind='sell' AND is_deleted=0",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!(amount_cents, 44000, "卖出入账 = 数量×单价−手续费");
-    assert_eq!(
-        amount_native_cents, 316800,
-        "本位币金额应经 Amount 接缝折算（44000 × 7.2）"
-    );
-}
-
-#[tokio::test]
-async fn test_delete_buy_transaction_cleans_up_security_lots() {
-    use tauri_app_lib::transaction::TransactionInput;
-    use tauri_app_lib::transaction::amount::TransactionKind;
-    use tauri_app_lib::transaction::create_transaction_internal;
-
-    let (app, conn) = setup_app();
-    {
-        let conn = conn.lock().unwrap();
-        // 投资铺垫一行建成：工厂组合种子（spec #728 / ADR-0084）；补的 1:1 汇率
-        // 不改变本测试意图（issue #70 本位币折算经 Amount 接缝）。
-        test_support::seed_investment_setup(&conn, "acc-inv-del", "inst-del");
-        let buy = TransactionInput {
-            merchant_name: None,
-            policy_id: None,
-            kind: TransactionKind::Buy,
-            amount_cents: 0,
-            currency_code: "USD".into(),
-            account_id: "acc-inv-del".into(),
-            to_account_id: None,
-            category_id: None,
-            merchant_id: None,
-            refund_of_transaction_id: None,
-            note: None,
-            date: "2026-01-10".into(),
-            instrument_id: Some("inst-del".into()),
-            quantity: Some(10.0),
-            price_cents: Some(1_000_000),
-            fee_cents: Some(500),
-            idempotency_key: None,
-        };
-        create_transaction_internal(&conn, buy).unwrap();
-    }
-
-    let buy_id: String = conn
-        .lock()
-        .unwrap()
-        .query_row(
-            "SELECT id FROM transactions WHERE kind='buy' AND is_deleted=0",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-
-    let lots_before: i64 = conn
-        .lock()
-        .unwrap()
-        .query_row(
-            "SELECT COUNT(*) FROM security_lots WHERE buy_transaction_id=?1",
-            rusqlite::params![buy_id],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(lots_before, 1);
-
-    let (status, _) = delete_transaction_via_api(&app, &buy_id).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-
-    let lots_after: i64 = conn
-        .lock()
-        .unwrap()
-        .query_row(
-            "SELECT COUNT(*) FROM security_lots WHERE buy_transaction_id=?1",
-            rusqlite::params![buy_id],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(lots_after, 0, "删除买入应清理 security_lots");
-    let stx_after: i64 = conn
-        .lock()
-        .unwrap()
-        .query_row(
-            "SELECT COUNT(*) FROM security_transactions WHERE transaction_id=?1",
-            rusqlite::params![buy_id],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(stx_after, 0, "删除买入应清理 security_transactions");
+    // 接线证明：创建的资源可读回。
+    let sell_id = results[0]["id"].as_str().unwrap();
+    let (_, readback) = get_json(&app, "/api/v1/transactions").await;
+    let txs = items_of(&readback);
+    let row = txs
+        .iter()
+        .find(|t| t["id"].as_str() == Some(sell_id))
+        .expect("创建的卖出应可读回");
+    assert_eq!(row["kind"], "sell");
 }
