@@ -1,10 +1,9 @@
 //! 首页财务全貌（净资产跨币种合计）e2e 步骤定义（issue #142）。
 
 use cucumber::{given, then, when};
-use rusqlite::params;
 
 use tauri_app_lib::dashboard::query_dashboard_overview;
-use tauri_app_lib::db::{device_id, new_uuid, now_iso};
+use tauri_app_lib::investment::prices::upsert_market_price;
 use tauri_app_lib::investment::{InstrumentInput, InstrumentType, create_instrument};
 use tauri_app_lib::transaction::{TransactionKind, create_transaction_internal};
 
@@ -33,18 +32,23 @@ fn create_instrument_fixture(world: &mut LedgerWorld, symbol: String, currency: 
         .expect("新建标的失败");
 }
 
-/// 插入标的市场现价（market_prices 每标的仅保留最新一行）。
+/// 插入标的市场现价（market_prices 每标的仅保留最新一行）：经投资域现价缓存
+/// 写入单点 [`upsert_market_price`]（#764 旁路收敛）；`priced_at` 为行情日期
+/// （域时刻，无断言语义，取非 FIXED_NOW 日期段）；source 落 NULL、股票无
+/// nav_date，与原直插形状一致。
 #[given(expr = "标的 {string} 现价 {int} 币种 {string}")]
 fn set_market_price(world: &mut LedgerWorld, symbol: String, price: i64, currency: String) {
     let instrument_id = instrument_id_by_symbol(&world_conn!(world), &symbol);
-    let now = now_iso();
-    world_conn!(world)
-        .execute(
-            "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,created_at,updated_at,version,device_id) \
-             VALUES (?1,?2,?3,?4,'2026-01-01',?5,?5,1,?6)",
-            params![new_uuid(), instrument_id, price, currency, now, device_id()],
-        )
-        .unwrap();
+    upsert_market_price(
+        &world_conn!(world),
+        &instrument_id,
+        price,
+        &currency,
+        "2025-06-01",
+        None,
+        None,
+    )
+    .expect("标的现价夹具：写入失败");
 }
 
 /// 经行为层创建一笔买入交易（建立持仓批次），走与真实写路径一致的 plan → insert → apply。

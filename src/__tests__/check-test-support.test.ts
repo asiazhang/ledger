@@ -135,7 +135,7 @@ describe('check-test-support（Rust 测试守门，纯禁令）', () => {
     expect(r.output).toContain('规则 3（默认时刻字面量）命中 1 处')
   })
 
-  it('tests/e2e 暂离扫描边界（spec #729/#764 辖域，#764 落地时恢复覆盖）：同形态在 api_server 照常命中', () => {
+  it('tests/e2e 规则 2/3 整目录覆盖（#764 恢复）：未登记命中即红；规则 1 不辖（分层形态）', () => {
     const violation = [
       'fn t() {',
       '  let mut c = crate::db::open_in_memory();',
@@ -144,14 +144,40 @@ describe('check-test-support（Rust 测试守门，纯禁令）', () => {
       '}',
     ].join('\n')
     const dir = makeFixture({
-      // BDD 层与工厂分层互斥（CONTEXT-testing「公开写入口（测试侧）」）：处置归 #764
+      // BDD 层与工厂分层互斥（CONTEXT-testing「公开写入口（测试侧）」）：规则 1
+      // 的建库两行序是分层形态不辖；规则 2 的种子表 INSERT 未登记例外即红
       'tests/e2e/steps.rs': violation,
-      // API 集成层是工厂辖域：同形态照常命中
+      // API 集成层是工厂辖域：同形态三条规则照常全命中
       'tests/api_server/common.rs': violation,
     })
     const r = run([dir])
     expect(r.status).toBe(1)
     expect(r.output).toContain('tests/api_server/common.rs')
-    expect(r.output).not.toContain('tests/e2e')
+    // e2e 侧：规则 2 未登记例外即红；规则 1 建库形态不辖（不进违规清单）
+    expect(r.output).toContain('tests/e2e/steps.rs')
+    expect(r.output).toContain('规则 2（夹具裸SQL）命中 1 处——未登记例外')
+    expect(r.output).toContain('登记处 ADR-0086 修订注记')
+  })
+
+  it('tests/e2e 已登记例外严格相等校验：命中数漂移即红、命中清零即红', () => {
+    const violation = [
+      'fn t() {',
+      '  let mut c = crate::db::open_in_memory();',
+      '  crate::db::init_db(&mut c);',
+      '  let _ = "INSERT INTO instruments (id) VALUES (1)";',
+      '  let _ = "2026-01-01T00:00:00Z";',
+      '}',
+    ].join('\n')
+    // 夹具路径与例外表条目同形，触发「实际命中数 ≠ 登记数」与「登记条目零命中」两侧
+    const dir = makeFixture({
+      'tests/e2e/instruments_steps.rs': violation,
+      'tests/e2e/investment_trend_steps.rs': 'fn t() {}',
+      'tests/e2e/transactions_query_steps.rs': 'fn t() {}',
+    })
+    const r = run([dir])
+    expect(r.status).toBe(1)
+    expect(r.output).toContain('实际命中 1 处 ≠ 登记的 3 处')
+    expect(r.output).toContain('规则 3（默认时刻字面量）命中 1 处——未登记例外')
+    expect(r.output).toContain('已登记例外 1 处实际命中 0 处——例外已收敛')
   })
 })

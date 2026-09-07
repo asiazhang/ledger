@@ -126,11 +126,24 @@ fn auto_backup_to_temp(world: &mut LedgerWorld) {
     }
 }
 
+/// 删除全部交易：逐笔经域层删除入口（#764 旁路收敛——原 execute_batch 直置
+/// UPDATE is_deleted；删除是公开入口存在的状态变更，行为层删除含存在性守卫
+/// 与余额缓存等派生数据维护，备份场景的被测语义「软删态随备份落盘」不变）。
 #[when(expr = "删除全部交易")]
 fn delete_all_txns(world: &mut LedgerWorld) {
-    world_conn!(world)
-        .execute_batch("UPDATE transactions SET is_deleted=1")
-        .unwrap();
+    let conn = world_conn!(world);
+    let ids: Vec<String> = {
+        let mut stmt = conn
+            .prepare("SELECT id FROM transactions WHERE is_deleted=0")
+            .unwrap();
+        stmt.query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect()
+    };
+    for id in ids {
+        delete_transaction_internal(&conn, &id).expect("删除交易失败");
+    }
 }
 
 #[when(expr = "从备份恢复到临时数据库")]

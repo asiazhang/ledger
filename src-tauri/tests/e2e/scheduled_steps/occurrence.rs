@@ -5,6 +5,7 @@ use cucumber::{given, then, when};
 use rusqlite::params;
 
 use crate::common::assert_last_error_contains;
+use crate::step_verbs::create_exchange_rate_verb;
 use crate::world::LedgerWorld;
 
 use super::common::execute_occurrence_step;
@@ -13,16 +14,12 @@ use super::common::execute_occurrence_step;
 // Given
 // ---------------------------------------------------------------------------
 
-/// 写入一条汇率（base → quote）。币种须存在于种子 currencies（FK 约束）。
+/// 写入一条汇率（base → quote），经汇率夹具动词走投资域公开创建入口（#764
+/// 旁路收敛；source 落 'manual'，场景不断言来源）；币种须存在于种子 currencies
+/// （FK 约束）。报价时刻无断言语义（折算查询不消费），取非 FIXED_NOW 值。
 #[given(expr = "存在汇率 {string} 兑 {string} 为 {float}")]
 fn add_exchange_rate(world: &mut LedgerWorld, base: String, quote: String, rate: f64) {
-    world_conn!(world)
-        .execute(
-            "INSERT INTO exchange_rates (id,base_code,quote_code,rate,priced_at,updated_at,version,device_id) \
-             VALUES ('er-' || hex(randomblob(8)), ?1, ?2, ?3, '2026-02-01T00:00:00Z','2026-02-01T00:00:00Z',1,'test')",
-            params![base, quote, rate],
-        )
-        .unwrap();
+    create_exchange_rate_verb(world, &base, &quote, rate, "2026-02-01T00:00:00Z");
 }
 
 // ---------------------------------------------------------------------------
