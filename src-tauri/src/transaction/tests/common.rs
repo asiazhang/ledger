@@ -1,23 +1,10 @@
 //! 交易命令域测试共享脚手架：仅限本测试目录（`transactions::tests`）内部使用。
-//!
-//! 建库与跨域重复夹具（账户、投资铺垫）已上收统一测试工厂 `crate::test_support`
-//! （spec #728 / ADR-0084，域迁移票 #757）：本薄皮按检查点结论（#754，中大型域）
-//! 保留一行转发，调用点不动、种子常数单点化。域语义构造器（`make_input` 等
-//! TransactionInput 构造，非 DB 夹具）按准入规则留域内。
+//! 通用夹具（建库两行序、账户种子、投资铺垫）已上收统一测试工厂
+//! `crate::test_support`（spec #728 / issue #757 / ADR-0084 决策 4/7），本文件剩余
+//! 函数全部为域语义输入构造器——非 DB 夹具，按准入规则（ADR-0084 决策 1）留域内。
 
 use crate::transaction::TransactionInput;
-use rusqlite::Connection;
-
 use crate::transaction::amount::TransactionKind;
-
-pub(crate) fn setup() -> Connection {
-    crate::test_support::open()
-}
-
-pub(crate) fn insert_account(conn: &Connection, id: &str, name: &str, kind: &str, currency: &str) {
-    // 脚手架账户：工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）。
-    crate::test_support::seed_account(conn, id, name, kind, currency, 0);
-}
 
 pub(crate) fn make_input(
     account_id: &str,
@@ -46,6 +33,7 @@ pub(crate) fn make_input(
     }
 }
 
+/// 买入输入构造器（投资语义，非 DB 夹具）：本目录唯一真源，batch_create 等直接引用。
 pub(crate) fn make_buy_input(
     account_id: &str,
     instrument_id: &str,

@@ -1,10 +1,13 @@
-//! 交易流水直挂保单 BDD 步骤（issue #361 / spec #358 / ADR-0051 决策 3）。
+//! 交易流水直挂保单 BDD 步骤（issue #361 / spec #358 / ADR-0051 决策 3；issue #761
+//! 迁移：交易输入构造收编 L1 步骤输入工厂——中性底座/买卖/退款工厂 + 保单与币种
+//! 冷字段覆盖，写入收编 L2 动词，错误断言路径改走 try 形态，断言语义不变）。
 //!
-//! 经 `commands::transactions` 的 `*_internal` seam 断言外部可观察行为：
-//! 手动挂单归属、改挂/清除、不可挂单 kind 被行为层拒绝、挂单引用不存在的保单被拒、
-//! 软删保单历史引用保留不置空且保持原挂单可继续编辑（与商户「保持历史引用」同款语义）。
+//! 经行为层 `*_internal` seam 断言外部可观察行为：手动挂单归属、改挂/清除、
+//! 不可挂单 kind 被行为层拒绝、挂单引用不存在的保单被拒、软删保单历史引用保留
+//! 不置空且保持原挂单可继续编辑（与商户「保持历史引用」同款语义）。
 //! 商户/保单/标的 Given 复用 `merchants_steps.rs` / `policies_steps.rs` /
-//! `instruments_steps.rs` 已注册步骤。
+//! `instruments_steps.rs` 已注册步骤；批量导入直走 `TransactionBatch::run`
+//! （与 HTTP 批量导入端点同一写接缝）。
 
 use cucumber::{then, when};
 use rusqlite::params;
@@ -13,9 +16,13 @@ use tauri_app_lib::error::AppError;
 use tauri_app_lib::transaction::TransactionBatch;
 use tauri_app_lib::transaction::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::{create_transaction_internal, update_transaction_internal};
 
-use crate::common::query_all_transactions;
+use crate::common::{instrument_id_by_symbol, query_all_transactions};
+use crate::step_inputs::existing_input;
+use crate::step_inputs::{buy_input, parse_kind, plain_input, refund_input, sell_input};
+use crate::step_verbs::{
+    create_transaction_verb, try_create_transaction_verb, update_transaction_verb,
+};
 use crate::world::LedgerWorld;
 
 /// 按保单号查保单 id（场景内保单号唯一；不存在返回 None 供 404 路径直提裸值）。
@@ -29,7 +36,7 @@ fn policy_id_by_number(world: &LedgerWorld, number: &str) -> Option<String> {
         .ok()
 }
 
-/// 组装带可选保单引用的交易入参（挂单场景统一入口）。
+/// 组装带可选保单引用的交易入参（挂单场景统一入口）：中性底座 + 保单覆盖。
 fn input_with_policy(
     world: &LedgerWorld,
     kind: TransactionKind,
@@ -39,23 +46,17 @@ fn input_with_policy(
     policy_id: Option<String>,
 ) -> TransactionInput {
     TransactionInput {
-        merchant_name: None,
-        kind,
-        amount_cents: amount,
-        currency_code: "CNY".into(),
-        account_id: world.account_id(account_name),
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
         policy_id,
-        refund_of_transaction_id: None,
-        note: None,
-        date: date.into(),
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
+        ..plain_input(kind, amount, &world.account_id(account_name), date)
+    }
+}
+
+/// 记录「预期失败但成功了」/ 行为层错误到 `world.last_error`（挂单拒绝路径共用）。
+fn last_error_of(result: Result<String, AppError>) -> Option<String> {
+    match result {
+        Err(AppError::Coded { message, .. }) => Some(message),
+        Ok(_) => Some("预期失败但成功了".into()),
+        Err(e) => Some(e.to_string()),
     }
 }
 
@@ -76,21 +77,13 @@ fn create_txn_with_policy(
         .unwrap_or_else(|| panic!("挂单步骤：保单 {policy_number} 应已存在"));
     let input = input_with_policy(
         world,
-        TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
+        parse_kind(&kind),
         amount,
         &account_name,
         &date,
         Some(policy_id),
     );
-    let result = world
-        .db
-        .write(|conn| create_transaction_internal(conn, input));
-    assert!(
-        result.is_ok(),
-        "创建挂单交易失败: {:?}",
-        result.err().map(|e| e.to_string())
-    );
-    world.txn.last_transaction_id = Some(result.unwrap().id);
+    create_transaction_verb(world, input);
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
@@ -107,18 +100,13 @@ fn try_create_txn_with_policy(
 ) {
     let input = input_with_policy(
         world,
-        TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
+        parse_kind(&kind),
         amount,
         &account_name,
         &date,
         Some(policy_id),
     );
-    let result = create_transaction_internal(&world_conn!(world), input);
-    world.last_error = match result {
-        Err(AppError::Coded { message, .. }) => Some(message),
-        Ok(_) => Some("预期失败但成功了".into()),
-        Err(e) => Some(e.to_string()),
-    };
+    world.last_error = last_error_of(try_create_transaction_verb(world, input));
 }
 
 /// 修改路径同样收口在行为层：转账/买入等不可挂单 kind 携带保单，plan 阶段拒绝。
@@ -142,12 +130,7 @@ fn try_transfer_with_policy(
         Some(policy_id),
     );
     input.to_account_id = Some(world.account_id(&to_account));
-    let result = create_transaction_internal(&world_conn!(world), input);
-    world.last_error = match result {
-        Err(AppError::Coded { message, .. }) => Some(message),
-        Ok(_) => Some("预期失败但成功了".into()),
-        Err(e) => Some(e.to_string()),
-    };
+    world.last_error = last_error_of(try_create_transaction_verb(world, input));
 }
 
 /// buy 携带保单：行为层 plan 在投资域 prepare 之前即拒绝（准入收口先于副作用）。
@@ -160,38 +143,19 @@ fn try_buy_with_policy(
     account_name: String,
     policy_id: String,
 ) {
-    let instrument_id: String = world_conn!(world)
-        .query_row(
-            "SELECT id FROM instruments WHERE symbol=?1",
-            params![symbol],
-            |r| r.get(0),
-        )
-        .expect("买入挂单步骤：标的应已存在");
+    let instrument_id = instrument_id_by_symbol(&world_conn!(world), &symbol);
+    let account_id = world.account_id(&account_name);
     let input = TransactionInput {
-        merchant_name: None,
-        kind: TransactionKind::Buy,
-        amount_cents: 0,
-        currency_code: "CNY".into(),
-        account_id: world.account_id(&account_name),
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
         policy_id: Some(policy_id),
-        refund_of_transaction_id: None,
-        note: None,
-        date: "2026-05-01".into(),
-        instrument_id: Some(instrument_id),
-        quantity: Some(quantity as f64),
-        price_cents: Some(price),
-        fee_cents: None,
-        idempotency_key: None,
+        ..buy_input(
+            &instrument_id,
+            quantity as f64,
+            Some(price),
+            &account_id,
+            "2026-05-01",
+        )
     };
-    let result = create_transaction_internal(&world_conn!(world), input);
-    world.last_error = match result {
-        Err(AppError::Coded { message, .. }) => Some(message),
-        Ok(_) => Some("预期失败但成功了".into()),
-        Err(e) => Some(e.to_string()),
-    };
+    world.last_error = last_error_of(try_create_transaction_verb(world, input));
 }
 
 /// sell 携带保单：买入铺垫后尝试卖出挂单，plan 阶段拒绝（不应产生卖出副作用）。
@@ -204,38 +168,19 @@ fn try_sell_with_policy(
     account_name: String,
     policy_id: String,
 ) {
-    let instrument_id: String = world_conn!(world)
-        .query_row(
-            "SELECT id FROM instruments WHERE symbol=?1",
-            params![symbol],
-            |r| r.get(0),
-        )
-        .expect("卖出挂单步骤：标的应已存在");
+    let instrument_id = instrument_id_by_symbol(&world_conn!(world), &symbol);
+    let account_id = world.account_id(&account_name);
     let input = TransactionInput {
-        merchant_name: None,
-        kind: TransactionKind::Sell,
-        amount_cents: 0,
-        currency_code: "CNY".into(),
-        account_id: world.account_id(&account_name),
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
         policy_id: Some(policy_id),
-        refund_of_transaction_id: None,
-        note: None,
-        date: "2026-05-02".into(),
-        instrument_id: Some(instrument_id),
-        quantity: Some(quantity as f64),
-        price_cents: Some(price),
-        fee_cents: None,
-        idempotency_key: None,
+        ..sell_input(
+            &instrument_id,
+            quantity as f64,
+            Some(price),
+            &account_id,
+            "2026-05-02",
+        )
     };
-    let result = create_transaction_internal(&world_conn!(world), input);
-    world.last_error = match result {
-        Err(AppError::Coded { message, .. }) => Some(message),
-        Ok(_) => Some("预期失败但成功了".into()),
-        Err(e) => Some(e.to_string()),
-    };
+    world.last_error = last_error_of(try_create_transaction_verb(world, input));
 }
 
 /// refund 携带保单：现金流入记 income 挂单而非 refund（ADR-0051 决策 4），
@@ -247,31 +192,12 @@ fn try_refund_with_policy(world: &mut LedgerWorld, amount: i64, date: String, po
         .last_transaction_id
         .clone()
         .expect("退款挂单步骤：应有原支出交易");
+    let account_id = world.account_id("A账户");
     let input = TransactionInput {
-        merchant_name: None,
-        kind: TransactionKind::Refund,
-        amount_cents: amount,
-        currency_code: "CNY".into(),
-        account_id: world.account_id("A账户"),
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
         policy_id: Some(policy_id),
-        refund_of_transaction_id: Some(source_id),
-        note: None,
-        date,
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
+        ..refund_input(amount, &account_id, &source_id, &date)
     };
-    let result = create_transaction_internal(&world_conn!(world), input);
-    world.last_error = match result {
-        Err(AppError::Coded { message, .. }) => Some(message),
-        Ok(_) => Some("预期失败但成功了".into()),
-        Err(e) => Some(e.to_string()),
-    };
+    world.last_error = last_error_of(try_create_transaction_verb(world, input));
 }
 
 // ---------------------------------------------------------------------------
@@ -295,24 +221,14 @@ fn batch_import_with_policy(world: &mut LedgerWorld, step: &cucumber::gherkin::S
         .iter()
         .skip(1)
         .map(|row| TransactionInput {
-            merchant_name: None,
-            kind: TransactionKind::parse(&get(row, "kind"))
-                .unwrap_or_else(|e| panic!("非法 kind: {}（{e}）", get(row, "kind"))),
-            amount_cents: get(row, "金额").parse().expect("金额必须是整数"),
             currency_code: get(row, "币种"),
-            account_id: world.account_id(&get(row, "账户")),
-            to_account_id: None,
-            category_id: None,
-            merchant_id: None,
             policy_id: policy_id_by_number(world, &get(row, "保单号")),
-            refund_of_transaction_id: None,
-            note: None,
-            date: get(row, "日期"),
-            instrument_id: None,
-            quantity: None,
-            price_cents: None,
-            fee_cents: None,
-            idempotency_key: None,
+            ..plain_input(
+                parse_kind(&get(row, "kind")),
+                get(row, "金额").parse().expect("金额必须是整数"),
+                &world.account_id(&get(row, "账户")),
+                &get(row, "日期"),
+            )
         })
         .collect();
     let _ = world
@@ -340,11 +256,10 @@ fn update_last_txn_policy(world: &mut LedgerWorld, policy_number: String) {
         .transactions_list
         .iter()
         .find(|t| t.id == id)
-        .expect("原交易不存在")
-        .clone();
+        .expect("原交易不存在");
     let input = TransactionInput {
         policy_id: Some(policy_id),
-        ..existing_to_input(&existing)
+        ..existing_input(existing)
     };
     update_and_refresh(world, &id, input);
 }
@@ -361,11 +276,10 @@ fn clear_last_txn_policy(world: &mut LedgerWorld) {
         .transactions_list
         .iter()
         .find(|t| t.id == id)
-        .expect("原交易不存在")
-        .clone();
+        .expect("原交易不存在");
     let input = TransactionInput {
         policy_id: None,
-        ..existing_to_input(&existing)
+        ..existing_input(existing)
     };
     update_and_refresh(world, &id, input);
 }
@@ -378,47 +292,18 @@ fn update_keep_policy(world: &mut LedgerWorld, index: usize, note: String) {
         .txn
         .transactions_list
         .get(index - 1)
-        .unwrap_or_else(|| panic!("交易列表第 {index} 条不存在"))
-        .clone();
+        .unwrap_or_else(|| panic!("交易列表第 {index} 条不存在"));
     let id = existing.id.clone();
     world.txn.last_transaction_id = Some(id.clone());
     let input = TransactionInput {
         note: Some(note),
-        ..existing_to_input(&existing)
+        ..existing_input(existing)
     };
     update_and_refresh(world, &id, input);
 }
 
-/// 既有交易 → 全量替换入参（修改是全字段替换，未提及字段原样保留）。
-fn existing_to_input(existing: &tauri_app_lib::transaction::Transaction) -> TransactionInput {
-    TransactionInput {
-        merchant_name: None,
-        kind: existing.kind,
-        amount_cents: existing.amount_cents,
-        currency_code: existing.currency_code.clone(),
-        account_id: existing.account_id.clone(),
-        to_account_id: existing.to_account_id.clone(),
-        category_id: existing.category_id.clone(),
-        merchant_id: existing.merchant_id.clone(),
-        policy_id: existing.policy_id.clone(),
-        refund_of_transaction_id: existing.refund_of_transaction_id.clone(),
-        note: existing.note.clone(),
-        date: existing.date.clone(),
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
-    }
-}
-
 fn update_and_refresh(world: &mut LedgerWorld, id: &str, input: TransactionInput) {
-    let result = update_transaction_internal(&world_conn!(world), id, input);
-    assert!(
-        result.is_ok(),
-        "修改交易失败: {:?}",
-        result.err().map(|e| e.to_string())
-    );
+    update_transaction_verb(world, id, input);
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 

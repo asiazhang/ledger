@@ -7,7 +7,8 @@ use rusqlite::{Connection, params};
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::writer::{Input, NormalizedRow, insert_row, normalize, update_row};
 
-use super::common::{input, insert_account, insert_category, setup_db, setup_db_state};
+use super::common::{input, insert_category};
+use crate::test_support;
 
 /// 读回一行交易的全部业务字段（与 insert_row 的列映射逐列比对）。
 fn read_row(conn: &Connection, id: &str) -> NormalizedRow {
@@ -76,8 +77,8 @@ struct RowFields {
 /// （version=1 / is_deleted=0 / created_at==updated_at / device_id 一致）。
 #[test]
 fn insert_row_writes_full_row_and_generates_audit_fields() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let norm = normalize(
         &conn,
         &Input {
@@ -113,8 +114,8 @@ fn insert_row_writes_full_row_and_generates_audit_fields() {
 /// 两次 insert 生成互异的 id。
 #[test]
 fn insert_row_generates_distinct_ids() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let norm = normalize(&conn, &input(TransactionKind::Income, 100, "acc")).unwrap();
     let id1 = insert_row(&conn, &norm).unwrap();
     let id2 = insert_row(&conn, &norm).unwrap();
@@ -128,9 +129,9 @@ fn insert_row_generates_distinct_ids() {
 /// update 覆盖全部可编辑字段，保留 id / created_at，version 递增。
 #[test]
 fn update_row_overwrites_fields_and_bumps_version() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-a", "CNY");
-    insert_account(&conn, "acc-b", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-a", "acc-a", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-b", "acc-b", "cash", "CNY", 0);
     let norm = normalize(
         &conn,
         &Input {
@@ -180,8 +181,8 @@ fn update_row_overwrites_fields_and_bumps_version() {
 /// update 保留幂等身份（idempotency_key / dedup_hash，由命令层回写、本模块不触碰）。
 #[test]
 fn update_row_preserves_idempotent_identity() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let norm = normalize(&conn, &input(TransactionKind::Expense, 500, "acc")).unwrap();
     let id = insert_row(&conn, &norm).unwrap();
     // 模拟批量导入回写幂等身份（与 batch 模块落库后 UPDATE 同构）
@@ -220,8 +221,8 @@ fn update_row_preserves_idempotent_identity() {
 /// 创建再修改一笔交易：归一化 → 落库 → 读回 → 更新 → 读回，全链路一致。
 #[test]
 fn normalize_insert_update_roundtrip() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     insert_category(&conn, "cat-food");
 
     let created = normalize(
@@ -271,8 +272,8 @@ fn normalize_insert_update_roundtrip() {
 /// 由提交点单点置脏。
 #[test]
 fn writer_rows_do_not_mark_dirty_entry_does() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
 
     let row = normalize(&conn, &input(TransactionKind::Expense, 1500, "acc")).unwrap();
     let id = insert_row(&conn, &row).unwrap();
@@ -287,11 +288,14 @@ fn writer_rows_do_not_mark_dirty_entry_does() {
     );
 
     // 经写入口执行同样的落库（与 IPC 命令同形态）→ 提交点置脏，且置脏是幂等
-    // 标记、不做「已脏跳过」优化。连接本身经工厂打开（薄皮包装成共享锁形态）。
-    let state = setup_db_state();
+    // 标记、不做「已脏跳过」优化。共享锁形态由工厂打开的连接构造（建库两行序
+    // 的唯一入口是 test_support::open，ADR-0084 决策 8 规则 1）。
+    let state = crate::db::DbState {
+        conn: std::sync::Arc::new(std::sync::Mutex::new(test_support::open())),
+    };
     state
         .write(|conn| {
-            insert_account(conn, "acc", "CNY");
+            test_support::seed_account(conn, "acc", "acc", "cash", "CNY", 0);
             let row = normalize(conn, &input(TransactionKind::Expense, 1500, "acc")).unwrap();
             let id = insert_row(conn, &row).unwrap();
             assert!(

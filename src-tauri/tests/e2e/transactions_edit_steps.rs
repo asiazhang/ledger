@@ -1,14 +1,20 @@
+//! 交易修改/删除 BDD 步骤（issue #761 迁移）：修改入参经 L1 [`existing_input`]
+//! 底座（既有行 → 全量替换入参）+ 步骤文本字段覆盖，写入收编 L2 修改/删除动词；
+//! 买卖铺垫与买卖修改经 create/update 动词，错误断言路径改走 try 形态，断言语义
+//! 不变。
+
 use cucumber::{then, when};
 use rusqlite::params;
 
-use tauri_app_lib::error::AppError;
 use tauri_app_lib::transaction::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::{
-    create_transaction_internal, delete_transaction_internal, update_transaction_internal,
-};
 
-use crate::common::query_all_transactions;
+use crate::common::{capture_expected_error, instrument_id_by_symbol, query_all_transactions};
+use crate::step_inputs::{existing_input, expense_input, parse_kind, trade_input};
+use crate::step_verbs::{
+    create_transaction_verb, delete_transaction_verb, try_update_transaction_verb,
+    update_transaction_verb,
+};
 use crate::world::LedgerWorld;
 
 /// 按 id 全字段替换最近一笔交易（修改场景），沿用原交易账户/币种等非编辑字段。
@@ -26,26 +32,13 @@ fn update_last_txn(world: &mut LedgerWorld, kind: String, amount: i64, date: Str
         .find(|t| t.id == id)
         .expect("原交易不存在");
     let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
+        kind: parse_kind(&kind),
         amount_cents: amount,
-        currency_code: existing.currency_code.clone(),
-        account_id: existing.account_id.clone(),
-        to_account_id: existing.to_account_id.clone(),
-        category_id: existing.category_id.clone(),
-        merchant_id: existing.merchant_id.clone(),
-        refund_of_transaction_id: existing.refund_of_transaction_id.clone(),
         note: Some(note),
         date,
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
+        ..existing_input(existing)
     };
-    let result = update_transaction_internal(&world_conn!(world), &id, input);
-    assert!(result.is_ok(), "修改交易失败: {:?}", result.err());
+    update_transaction_verb(world, &id, input);
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
@@ -64,57 +57,15 @@ fn try_update_last_to_transfer(world: &mut LedgerWorld, amount: i64, date: Strin
         .find(|t| t.id == id)
         .expect("原交易不存在");
     let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
         kind: TransactionKind::Transfer,
         amount_cents: amount,
-        currency_code: existing.currency_code.clone(),
-        account_id: existing.account_id.clone(),
         to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: None,
         note: None,
         date,
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
+        ..existing_input(existing)
     };
-    world.last_error = match update_transaction_internal(&world_conn!(world), &id, input) {
-        Err(AppError::Coded { message, .. }) => Some(message),
-        _ => Some("预期失败但成功了".into()),
-    };
-}
-
-/// 尝试修改一笔不存在的交易，应返回明确错误（NotFound）。
-#[when(expr = "尝试修改不存在的交易 金额 {int} 日期 {string}")]
-fn try_update_missing_txn(world: &mut LedgerWorld, amount: i64, date: String) {
-    let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::Expense,
-        amount_cents: amount,
-        currency_code: "CNY".into(),
-        account_id: "missing-acc".into(),
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: None,
-        note: None,
-        date,
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
-    };
-    world.last_error =
-        match update_transaction_internal(&world_conn!(world), "nonexistent-id", input) {
-            Err(AppError::Coded { message, .. }) => Some(message),
-            _ => Some("预期失败但成功了".into()),
-        };
+    let result = try_update_transaction_verb(world, &id, input);
+    capture_expected_error(world, result);
 }
 
 /// 删除最近一笔交易（软删除，与 IPC/HTTP 删除同一行为层权威），
@@ -126,18 +77,8 @@ fn delete_last_txn(world: &mut LedgerWorld) {
         .last_transaction_id
         .clone()
         .expect("没有可删除的交易");
-    delete_transaction_internal(&world_conn!(world), &id).expect("删除交易失败");
+    delete_transaction_verb(world, &id);
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
-}
-
-/// 查询账户币种（买入/卖出以账户币种成交，与真实写路径一致）。
-fn account_currency(conn: &rusqlite::Connection, account_id: &str) -> String {
-    conn.query_row(
-        "SELECT currency_code FROM accounts WHERE id=?1",
-        params![account_id],
-        |r| r.get(0),
-    )
-    .unwrap()
 }
 
 /// 按标的 + 动作（buy/sell）定位交易 id：场景内同标的多笔买卖并存，
@@ -165,36 +106,19 @@ fn insert_trade_for_edit(
     account_name: &str,
     date: &str,
 ) {
-    let instrument_id: String = world_conn!(world)
-        .query_row(
-            "SELECT id FROM instruments WHERE symbol=?1",
-            params![symbol],
-            |r| r.get(0),
-        )
-        .expect("标的不存在，先铺垫 Given 存在标的");
+    let instrument_id = instrument_id_by_symbol(&world_conn!(world), symbol);
     let account_id = world.account_id(account_name);
-    let currency_code = account_currency(&world_conn!(world), &account_id);
-    let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind,
-        amount_cents: quantity * price_cents,
-        currency_code,
-        account_id,
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: None,
-        note: None,
-        date: date.into(),
-        instrument_id: Some(instrument_id),
-        quantity: Some(quantity as f64),
-        price_cents: Some(price_cents),
-        fee_cents: Some(0),
-        idempotency_key: None,
-    };
-    let write = create_transaction_internal(&world_conn!(world), input).expect("创建买卖交易失败");
-    world.txn.last_transaction_id = Some(write.id);
+    create_transaction_verb(
+        world,
+        trade_input(
+            kind,
+            &instrument_id,
+            quantity as f64,
+            price_cents,
+            &account_id,
+            date,
+        ),
+    );
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
@@ -260,23 +184,13 @@ fn trade_edit_input(
         .find(|t| t.id == id)
         .expect("原交易不存在");
     TransactionInput {
-        merchant_name: None,
-        policy_id: None,
         kind,
         amount_cents: 0,
-        currency_code: existing.currency_code.clone(),
-        account_id: existing.account_id.clone(),
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: None,
-        note: existing.note.clone(),
-        date: existing.date.clone(),
         instrument_id: Some(instrument_id),
         quantity: Some(quantity as f64),
         price_cents: Some(price_cents),
         fee_cents: Some(fee_cents),
-        idempotency_key: None,
+        ..existing_input(existing)
     }
 }
 
@@ -298,8 +212,7 @@ fn update_buy(
         price_cents,
         fee_cents,
     );
-    let result = update_transaction_internal(&world_conn!(world), &id, input);
-    assert!(result.is_ok(), "修改买入交易失败: {:?}", result.err());
+    update_transaction_verb(world, &id, input);
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
@@ -313,10 +226,8 @@ fn try_update_partially_sold_buy(
 ) {
     let id = trade_txn_id(world, &symbol, "buy");
     let input = trade_edit_input(world, TransactionKind::Buy, &id, quantity, price_cents, 0);
-    world.last_error = match update_transaction_internal(&world_conn!(world), &id, input) {
-        Err(AppError::Coded { message, .. }) => Some(message),
-        _ => Some("预期失败但成功了".into()),
-    };
+    let result = try_update_transaction_verb(world, &id, input);
+    capture_expected_error(world, result);
 }
 
 /// 修改卖出交易（issue #180）：回补持仓后按新输入重建卖出匹配。
@@ -337,8 +248,7 @@ fn update_sell(
         price_cents,
         fee_cents,
     );
-    let result = update_transaction_internal(&world_conn!(world), &id, input);
-    assert!(result.is_ok(), "修改卖出交易失败: {:?}", result.err());
+    update_transaction_verb(world, &id, input);
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
@@ -350,29 +260,9 @@ fn try_update_deleted_txn(world: &mut LedgerWorld, amount: i64, date: String) {
         .last_transaction_id
         .clone()
         .expect("没有可修改的交易");
-    let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::Expense,
-        amount_cents: amount,
-        currency_code: "CNY".into(),
-        account_id: "acc-x".into(),
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: None,
-        note: None,
-        date,
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
-    };
-    world.last_error = match update_transaction_internal(&world_conn!(world), &id, input) {
-        Err(AppError::Coded { message, .. }) => Some(message),
-        _ => Some("预期失败但成功了".into()),
-    };
+    let input = expense_input(amount, "acc-x", &date);
+    let result = try_update_transaction_verb(world, &id, input);
+    capture_expected_error(world, result);
 }
 
 #[then(expr = "第 {int} 条交易版本应为 {int}")]
@@ -416,13 +306,7 @@ fn assert_trade_detail_of(
     fee_cents: i64,
 ) {
     let id = trade_txn_id(world, symbol, action);
-    let expected_instrument_id: String = world_conn!(world)
-        .query_row(
-            "SELECT id FROM instruments WHERE symbol=?1",
-            params![symbol],
-            |r| r.get(0),
-        )
-        .expect("标的不存在");
+    let expected_instrument_id = instrument_id_by_symbol(&world_conn!(world), symbol);
     // 直接断言扩展表投影（与 IPC get_transaction_trade 同一数据源：
     // security_transactions JOIN instruments），验证编辑后回填数据正确
     let (instrument_id, trade_quantity, trade_price, trade_fee): (String, f64, i64, i64) =

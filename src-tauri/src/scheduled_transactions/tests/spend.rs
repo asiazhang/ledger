@@ -4,8 +4,9 @@
 use super::super::*;
 use super::common::{
     create_installment, create_subscription, create_subscription_cycle, create_transfer_plan,
-    insert_account, insert_rate, read_txn, setup_db,
+    read_txn,
 };
+use crate::test_support;
 use rusqlite::Connection;
 use rusqlite::params;
 
@@ -46,8 +47,8 @@ fn month_cents(overview: &SubscriptionSpendOverview, month: &str) -> i64 {
 /// 实际花费按期次流水逐月忠实统计（本位币），非扣款月补 0；不摊销。
 #[test]
 fn subscription_spend_aggregates_by_calendar_month() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let plan_id = create_subscription(&conn, "acc", "CNY", 3000, Some("视频会员"));
     // 2026-01-15 起月付，执行前两期 → 2026-01 / 2026-02 各一笔 3000
     execute_first_n_occurrences(&conn, &plan_id, 2);
@@ -67,8 +68,8 @@ fn subscription_spend_aggregates_by_calendar_month() {
 /// 年付订阅不摊销：扣款月全额计入，其余月份为 0。
 #[test]
 fn subscription_spend_yearly_not_amortized() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let plan_id = create_plan(
         &conn,
         CreateScheduledInput {
@@ -103,8 +104,8 @@ fn subscription_spend_yearly_not_amortized() {
 /// 计划取消/暂停不影响历史实际花费；非订阅计划（分期/定时转账）不计入。
 #[test]
 fn subscription_spend_keeps_cancelled_history_and_excludes_other_kinds() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let sub_id = create_subscription(&conn, "acc", "CNY", 3000, Some("视频会员"));
     execute_first_n_occurrences(&conn, &sub_id, 2);
     update_plan_status(&conn, &sub_id, ScheduledStatus::Cancelled).unwrap();
@@ -113,7 +114,7 @@ fn subscription_spend_keeps_cancelled_history_and_excludes_other_kinds() {
     let inst_id = create_installment(&conn, "acc", 3100, 3);
     execute_first_n_occurrences(&conn, &inst_id, 1);
     let transfer_id = {
-        insert_account(&conn, "acc2", "CNY");
+        test_support::seed_account(&conn, "acc2", "acc2", "cash", "CNY", 0);
         create_transfer_plan(&conn, "acc", "acc2", 50000)
     };
     execute_first_n_occurrences(&conn, &transfer_id, 1);
@@ -136,8 +137,8 @@ fn subscription_spend_keeps_cancelled_history_and_excludes_other_kinds() {
 /// recurrence_interval > 1 时按间隔均摊；折算年成本 = 折算月成本 × 12。
 #[test]
 fn subscription_projected_spend_coefficients() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     create_subscription_cycle(
         &conn,
         "acc",
@@ -197,8 +198,8 @@ fn subscription_projected_spend_coefficients() {
 /// 推算成本只统计 active 计划（暂停/取消不计入），且不看执行情况（未执行也计入）。
 #[test]
 fn subscription_projected_spend_counts_only_active_plans() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     create_subscription(&conn, "acc", "CNY", 3000, Some("进行中"));
     let paused = create_subscription(&conn, "acc", "CNY", 5000, Some("已暂停"));
     update_plan_status(&conn, &paused, ScheduledStatus::Paused).unwrap();
@@ -219,9 +220,9 @@ fn subscription_projected_spend_counts_only_active_plans() {
 /// 推算成本在计划币种上折算本位币；缺汇率时报错上抛，不静默混算。
 #[test]
 fn subscription_projected_spend_converts_and_requires_rate() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-usd", "USD");
-    insert_rate(&conn, "USD", "CNY", 7.2);
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-usd", "acc-usd", "cash", "USD", 0);
+    test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
     create_subscription(&conn, "acc-usd", "USD", 10000, Some("国际订阅"));
 
     let overview = query_subscription_spend(&conn, date("2026-03-20")).unwrap();
@@ -239,9 +240,9 @@ fn subscription_projected_spend_converts_and_requires_rate() {
 /// 非默认币种订阅按流水的本位币金额（落库时折算）计入，不二次折算。
 #[test]
 fn subscription_spend_uses_native_amounts_from_transactions() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-usd", "USD");
-    insert_rate(&conn, "USD", "CNY", 7.2);
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-usd", "acc-usd", "cash", "USD", 0);
+    test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
     let plan_id = create_subscription(&conn, "acc-usd", "USD", 10000, Some("国际订阅"));
     execute_first_n_occurrences(&conn, &plan_id, 1);
 
@@ -263,8 +264,8 @@ fn subscription_spend_uses_native_amounts_from_transactions() {
 /// 引擎行为漂移不再静默改变实际花费。
 #[test]
 fn subscription_spend_aggregates_expense_net_from_matrix() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let plan_id = create_subscription(&conn, "acc", "CNY", 3000, Some("视频会员"));
     execute_first_n_occurrences(&conn, &plan_id, 1); // 2026-01：expense 3000
     let expense_txn_id: String = conn
@@ -298,7 +299,9 @@ fn subscription_spend_aggregates_expense_net_from_matrix() {
 }
 
 /// 漂移注入辅助：给计划挂一笔 completed 期次并直接插入指定 kind 的关联流水
-/// （绕过执行引擎，模拟期次生成非支出流水的假想漂移）。
+/// （绕过执行引擎，模拟期次生成非支出流水的假想漂移）。簿记戳取工厂固定时刻
+/// `test_support::FIXED_NOW`（ADR-0084 决策 5：夹具簿记戳零字面量），`date` 与
+/// `scheduled_date` 是域时刻（行为输入），仍由参数显式传入。
 fn insert_occurrence_txn(
     conn: &Connection,
     plan_id: &str,
@@ -312,20 +315,21 @@ fn insert_occurrence_txn(
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,'CNY',?3,'acc',NULL,NULL,?4,NULL,?5,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        params![txn_id, kind, amount_cents, refund_of, sched_date],
+         VALUES (?1,?2,?3,'CNY',?3,'acc',NULL,NULL,?4,NULL,?5,?6,?6,1,'test',0)",
+        params![txn_id, kind, amount_cents, refund_of, sched_date, test_support::FIXED_NOW],
     )
     .unwrap();
     conn.execute(
         "INSERT INTO scheduled_transaction_occurrences \
          (id,scheduled_transaction_id,scheduled_date,status,transaction_id,amount_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,'completed',?4,?5,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
+         VALUES (?1,?2,?3,'completed',?4,?5,?6,?6,1,'test',0)",
         params![
             format!("occ-{sched_date}-{kind}"),
             plan_id,
             sched_date,
             txn_id,
-            amount_cents
+            amount_cents,
+            test_support::FIXED_NOW
         ],
     )
     .unwrap();

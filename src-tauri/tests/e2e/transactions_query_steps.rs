@@ -5,16 +5,19 @@ use rusqlite::params;
 
 use tauri_app_lib::db::new_uuid;
 use tauri_app_lib::transaction::amount::TransactionKind;
+use tauri_app_lib::transaction::list_transactions_internal;
 use tauri_app_lib::transaction::{TransactionInput, TransactionListFilter};
-use tauri_app_lib::transaction::{create_transaction_internal, list_transactions_internal};
 
 use crate::common::query_all_transactions;
+use crate::step_inputs::{parse_kind, plain_input};
+use crate::step_verbs::create_transaction_verb;
 use crate::world::LedgerWorld;
 
 // ---------------------------------------------------------------------------
 // When：创建带分类引用的交易（issue #377 分类下钻场景用）
 // ---------------------------------------------------------------------------
 
+/// 分类下钻场景用（issue #377）：中性底座 + 分类覆盖，经创建动词写入。
 #[when(expr = "创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string} 分类 {string}")]
 fn create_txn_with_category(
     world: &mut LedgerWorld,
@@ -24,30 +27,12 @@ fn create_txn_with_category(
     date: String,
     category_name: String,
 ) {
+    let account_id = world.account_id(&account_name);
     let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
-        amount_cents: amount,
-        currency_code: "CNY".into(),
-        account_id: world.account_id(&account_name),
-        to_account_id: None,
         category_id: Some(world.category_id(&category_name)),
-        merchant_id: None,
-        refund_of_transaction_id: None,
-        note: None,
-        date,
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
+        ..plain_input(parse_kind(&kind), amount, &account_id, &date)
     };
-    // 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）创建，提交点置脏/到期检查。
-    let result = world
-        .db
-        .write(|conn| create_transaction_internal(conn, input));
-    assert!(result.is_ok(), "创建带分类交易失败: {:?}", result.err());
+    create_transaction_verb(world, input);
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 

@@ -9,9 +9,8 @@ use rusqlite::Connection;
 use super::super::search::{
     Stage1Filter, TermLowered, build_stage1_query, load_search_dicts, search_transactions_internal,
 };
-use super::common::{insert_account, setup};
 use crate::error::Result;
-use crate::test_support::FIXED_NOW;
+use crate::test_support;
 use crate::transaction::TransactionSearchResult;
 use crate::transaction::search_text::{
     is_subsequence, pinyin_initials, split_terms, term_matches, term_matches_text,
@@ -37,7 +36,7 @@ fn insert_category(conn: &Connection, id: &str, name: &str, kind: &str) {
     conn.execute(
         "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,?3,NULL,NULL,0,?4,?4,1,'test',0)",
-        rusqlite::params![id, name, kind, FIXED_NOW],
+        rusqlite::params![id, name, kind, test_support::FIXED_NOW],
     )
     .unwrap();
 }
@@ -46,7 +45,7 @@ fn insert_merchant(conn: &Connection, id: &str, name: &str) {
     conn.execute(
         "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,?3,?3,1,'test',0)",
-        rusqlite::params![id, name, FIXED_NOW],
+        rusqlite::params![id, name, test_support::FIXED_NOW],
     )
     .unwrap();
 }
@@ -64,7 +63,7 @@ fn insert_txn(
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,'expense',1000,'CNY',1000,?2,NULL,?3,NULL,?4,?5,?6,?6,1,'test',0)",
-        rusqlite::params![id, account_id, category_id, note, date, FIXED_NOW],
+        rusqlite::params![id, account_id, category_id, note, date, test_support::FIXED_NOW],
     )
     .unwrap();
 }
@@ -82,8 +81,8 @@ fn insert_txn_merchant(
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted,merchant_id) \
-         VALUES (?1,'expense',1000,'CNY',1000,?2,NULL,NULL,NULL,?3,?4,?5,?5,1,'test',0,?6)",
-        rusqlite::params![id, account_id, note, date, FIXED_NOW, merchant_id],
+         VALUES (?1,'expense',1000,'CNY',1000,?2,NULL,NULL,NULL,?3,?4,?6,?6,1,'test',0,?5)",
+        rusqlite::params![id, account_id, note, date, merchant_id, test_support::FIXED_NOW],
     )
     .unwrap();
 }
@@ -102,7 +101,7 @@ fn insert_txn_amount(
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,'expense',?2,'CNY',?2,?3,NULL,NULL,NULL,?4,?5,?6,?6,1,'test',0)",
-        rusqlite::params![id, amount_cents, account_id, note, date, FIXED_NOW],
+        rusqlite::params![id, amount_cents, account_id, note, date, test_support::FIXED_NOW],
     )
     .unwrap();
 }
@@ -258,8 +257,8 @@ fn split_terms_by_whitespace() {
 
 #[test]
 fn search_matches_merchant_name_and_initials() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_merchant(&conn, "m1", "京东");
     insert_merchant(&conn, "m2", "万科物业");
     insert_txn_merchant(&conn, "t1", "a1", Some("m1"), Some("购物"), "2026-02-01");
@@ -286,8 +285,8 @@ fn search_matches_merchant_name_and_initials() {
 #[test]
 fn search_soft_deleted_merchant_still_searchable() {
     // 软删商户的历史交易仍按商户名可搜（与交易列表显示口径一致）
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_merchant(&conn, "m1", "京东");
     insert_txn_merchant(&conn, "t1", "a1", Some("m1"), None, "2026-02-01");
     conn.execute("UPDATE merchants SET is_deleted=1 WHERE id='m1'", [])
@@ -301,8 +300,8 @@ fn search_soft_deleted_merchant_still_searchable() {
 #[test]
 fn merchant_rename_takes_effect_immediately() {
     // 无索引：商户改名即时反映到搜索（引用指向 id，按当前名字命中）
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_merchant(&conn, "m1", "京东");
     insert_txn_merchant(&conn, "t1", "a1", Some("m1"), None, "2026-02-01");
     conn.execute("UPDATE merchants SET name='物美超市' WHERE id='m1'", [])
@@ -320,8 +319,8 @@ fn merchant_rename_takes_effect_immediately() {
 #[test]
 fn search_multi_term_combines_merchant_and_note() {
     // 词条 AND：商户名与备注分属不同词条，均命中才返回
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_merchant(&conn, "m1", "京东");
     insert_txn_merchant(&conn, "t1", "a1", Some("m1"), Some("键盘"), "2026-02-01");
     insert_txn_merchant(&conn, "t2", "a1", Some("m1"), Some("鼠标"), "2026-02-02");
@@ -334,9 +333,9 @@ fn search_multi_term_combines_merchant_and_note() {
 
 #[test]
 fn search_matches_note_substring_and_account_initials() {
-    let conn = setup();
-    insert_account(&conn, "a1", "招商银行", "bank", "CNY");
-    insert_account(&conn, "a2", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "招商银行", "bank", "CNY", 0);
+    test_support::seed_account(&conn, "a2", "现金", "cash", "CNY", 0);
     insert_txn(&conn, "t1", "a1", None, Some("午餐外卖"), "2026-02-01");
     insert_txn(&conn, "t2", "a2", None, Some("打车"), "2026-02-02");
     // 备注原文子串
@@ -354,9 +353,9 @@ fn search_matches_note_substring_and_account_initials() {
 
 #[test]
 fn search_multi_term_and_combination() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
-    insert_account(&conn, "a2", "招商银行", "bank", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "a2", "招商银行", "bank", "CNY", 0);
     insert_txn(&conn, "t1", "a1", None, Some("午餐"), "2026-02-01");
     insert_txn(&conn, "t2", "a2", None, Some("午餐"), "2026-02-02");
     // 词条 AND：两词条都命中的交易才返回
@@ -374,8 +373,8 @@ fn search_multi_term_and_combination() {
 
 #[test]
 fn search_case_insensitive_and_special_chars_literal() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_txn(&conn, "t1", "a1", None, Some("ATM(取款)"), "2026-02-01");
     // 大小写不敏感（原文子串路径）
     let res = search(&conn, "atm").unwrap();
@@ -391,8 +390,8 @@ fn search_case_insensitive_and_special_chars_literal() {
 
 #[test]
 fn search_excludes_soft_deleted() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_txn(&conn, "t1", "a1", None, Some("午餐"), "2026-02-01");
     insert_txn(&conn, "t2", "a1", None, Some("晚餐"), "2026-02-02");
     conn.execute("UPDATE transactions SET is_deleted=1 WHERE id='t1'", [])
@@ -406,8 +405,8 @@ fn search_excludes_soft_deleted() {
 
 #[test]
 fn search_orders_by_date_desc() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_txn(&conn, "t1", "a1", None, Some("午餐"), "2026-02-01");
     insert_txn(&conn, "t2", "a1", None, Some("午餐"), "2026-02-10");
     insert_txn(&conn, "t3", "a1", None, Some("午餐"), "2026-02-05");
@@ -420,8 +419,8 @@ fn search_orders_by_date_desc() {
 
 #[test]
 fn search_pagination_and_total() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     for (i, id) in ["t1", "t2", "t3", "t4", "t5"].iter().enumerate() {
         let date = format!("2026-01-{:02}", i + 1);
         insert_txn_amount(
@@ -450,8 +449,8 @@ fn search_pagination_and_total() {
 
 #[test]
 fn search_extreme_page_inputs_do_not_panic() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_txn(&conn, "t1", "a1", None, Some("午餐"), "2026-02-01");
     let res = search_paged(&conn, "午餐", usize::MAX, usize::MAX).unwrap();
     assert_eq!(res.total, 1);
@@ -464,8 +463,8 @@ fn search_extreme_page_inputs_do_not_panic() {
 
 #[test]
 fn search_empty_query_returns_empty_without_filter() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_txn(&conn, "t1", "a1", None, Some("午餐"), "2026-02-01");
     let res = search(&conn, "").unwrap();
     assert_eq!(res.total, 0);
@@ -480,8 +479,8 @@ fn search_empty_query_returns_empty_without_filter() {
 
 #[test]
 fn search_amount_range_inclusive_bounds() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_txn_amount(&conn, "t1", "a1", Some("早餐"), "2026-02-01", 1000);
     insert_txn_amount(&conn, "t2", "a1", Some("午餐"), "2026-02-02", 1550);
     insert_txn_amount(&conn, "t3", "a1", Some("晚餐"), "2026-02-03", 2000);
@@ -494,8 +493,8 @@ fn search_amount_range_inclusive_bounds() {
 
 #[test]
 fn search_amount_filter_one_sided() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_txn_amount(&conn, "t1", "a1", Some("早餐"), "2026-02-01", 1000);
     insert_txn_amount(&conn, "t2", "a1", Some("午餐"), "2026-02-02", 1500);
     insert_txn_amount(&conn, "t3", "a1", Some("晚餐"), "2026-02-03", 2000);
@@ -510,15 +509,16 @@ fn search_amount_filter_one_sided() {
 /// （此前按原始币种分过滤）。
 #[test]
 fn search_amount_range_filters_on_native_cents() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     // 外币交易：USD 100 元 = 本位币 720 元（amount_cents 与 amount_native_cents 分叉）
     conn.execute(
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES ('t1','expense',10000,'USD',72000,'a1',NULL,NULL,NULL,'美元订阅','2026-02-01',?1,?1,1,'test',0)",
-        rusqlite::params![FIXED_NOW],
+         VALUES ('t1','expense',10000,'USD',72000,'a1',NULL,NULL,NULL,'美元订阅','2026-02-01',\
+         ?1,?1,1,'test',0)",
+        rusqlite::params![test_support::FIXED_NOW],
     )
     .unwrap();
     insert_txn_amount(&conn, "t2", "a1", Some("午餐"), "2026-02-02", 1500);
@@ -540,8 +540,8 @@ fn search_amount_range_filters_on_native_cents() {
 
 #[test]
 fn search_date_range_inclusive_bounds() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_txn(&conn, "t1", "a1", None, Some("早餐"), "2026-02-01");
     insert_txn(&conn, "t2", "a1", None, Some("午餐"), "2026-02-05");
     insert_txn(&conn, "t3", "a1", None, Some("晚餐"), "2026-02-10");
@@ -564,8 +564,8 @@ fn search_date_range_inclusive_bounds() {
 
 #[test]
 fn search_filters_only_without_keyword() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_txn_amount(&conn, "t1", "a1", Some("午餐"), "2026-02-01", 1500);
     insert_txn_amount(&conn, "t2", "a1", Some("晚餐"), "2026-02-02", 300);
     let res =
@@ -576,9 +576,9 @@ fn search_filters_only_without_keyword() {
 
 #[test]
 fn search_filters_exclude_soft_deleted_and_deleted_accounts() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
-    insert_account(&conn, "a2", "已删账户", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "a2", "已删账户", "cash", "CNY", 0);
     insert_txn_amount(&conn, "t1", "a1", Some("午餐"), "2026-02-01", 1500);
     insert_txn_amount(&conn, "t2", "a2", Some("午餐"), "2026-02-02", 1500);
     conn.execute("UPDATE transactions SET is_deleted=1 WHERE id='t1'", [])
@@ -592,17 +592,17 @@ fn search_filters_exclude_soft_deleted_and_deleted_accounts() {
 
 #[test]
 fn search_includes_hidden_account_and_all_kinds() {
-    let conn = setup();
+    let conn = test_support::open();
     // 黑洞账户（type=other、隐藏）交易可搜，口径与交易列表一致
-    insert_account(&conn, "a1", "无(CNY)", "other", "CNY");
-    insert_account(&conn, "a2", "现金", "cash", "CNY");
-    insert_account(&conn, "a3", "银行", "bank", "CNY");
+    test_support::seed_account(&conn, "a1", "无(CNY)", "other", "CNY", 0);
+    test_support::seed_account(&conn, "a2", "现金", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "a3", "银行", "bank", "CNY", 0);
     conn.execute(
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
          VALUES ('t1','income',700,'CNY',700,'a1',NULL,NULL,NULL,'退款入账','2026-02-01',?1,?1,1,'test',0)",
-        rusqlite::params![FIXED_NOW],
+        rusqlite::params![test_support::FIXED_NOW],
     )
     .unwrap();
     insert_txn(&conn, "t2", "a2", None, Some("工资"), "2026-02-02");
@@ -612,7 +612,7 @@ fn search_includes_hidden_account_and_all_kinds() {
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
          VALUES ('t3','transfer',3000,'CNY',3000,'a2','a3',NULL,NULL,NULL,'2026-02-03',?1,?1,1,'test',0)",
-        rusqlite::params![FIXED_NOW],
+        rusqlite::params![test_support::FIXED_NOW],
     )
     .unwrap();
     let res = search(&conn, "退款").unwrap();
@@ -631,8 +631,8 @@ fn search_includes_hidden_account_and_all_kinds() {
 #[test]
 fn account_rename_takes_effect_immediately() {
     // 无索引：账户改名即时反映到搜索
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_txn(&conn, "t1", "a1", None, Some("午餐"), "2026-02-01");
     let res = search(&conn, "zsyh").unwrap();
     assert_eq!(res.total, 0);
@@ -644,8 +644,8 @@ fn account_rename_takes_effect_immediately() {
 
 #[test]
 fn category_rename_does_not_affect_search() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_category(&conn, "c1", "餐饮", "expense");
     insert_txn(&conn, "t1", "a1", Some("c1"), Some("午餐"), "2026-02-01");
     // 分类名不在搜索范围：改名前后均不因分类名命中
@@ -680,7 +680,7 @@ fn insert_txn_note_pinyin(
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,note_pinyin,date,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,'expense',1000,'CNY',1000,?2,NULL,NULL,NULL,?3,?4,?5,?6,?6,1,'test',0)",
-        rusqlite::params![id, account_id, note, note_pinyin, date, FIXED_NOW],
+        rusqlite::params![id, account_id, note, note_pinyin, date, test_support::FIXED_NOW],
     )
     .unwrap();
 }
@@ -698,8 +698,8 @@ fn note_pinyin_of(conn: &Connection, id: &str) -> Option<String> {
 /// 搜索语义不受影响（该列只是匹配加速的派生数据）。
 #[test]
 fn writer_seam_populates_note_pinyin_on_insert_and_update() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     let row = NormalizedRow {
         kind: crate::transaction::TransactionKind::Expense,
         amount_cents: 1000,
@@ -734,8 +734,8 @@ fn writer_seam_populates_note_pinyin_on_insert_and_update() {
 /// 搜索后积压被分批回填；回填探针索引存在且收敛（命中集合不再变化）。
 #[test]
 fn lazy_backfill_heals_legacy_rows_on_search() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     // V018 之前的存量行形态：note 有值、拼音列为 NULL。
     insert_txn_note_pinyin(&conn, "t1", "a1", Some("万科物业"), "2026-02-01", None);
     insert_txn_note_pinyin(&conn, "t2", "a1", Some("招商银行转账"), "2026-02-02", None);
@@ -773,8 +773,8 @@ fn lazy_backfill_heals_legacy_rows_on_search() {
 /// 路径始终按 note 现判，拼音子序列路径按列判（派生列允许漂移，审计不在此）。
 #[test]
 fn search_uses_pinyin_column_for_subsequence_path() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     // 列已回填：拼音子序列走列值（不逐行重算）。
     insert_txn_note_pinyin(
         &conn,
@@ -796,8 +796,8 @@ fn search_uses_pinyin_column_for_subsequence_path() {
 /// 且不产生 ORDER BY 临时 B-tree——planner 漂移在 CI 即刻暴露。
 #[test]
 fn stage1_scan_plan_uses_list_order_index() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_merchant(&conn, "m1", "京东");
     let dicts = load_search_dicts(&conn).unwrap();
     let term_lowers: Vec<TermLowered> = split_terms("kf jd")
@@ -857,8 +857,8 @@ fn stage1_scan_plan_uses_list_order_index() {
 fn streaming_pagination_no_dup_no_gap_and_exact_total() {
     // 流式实现（游标逐行、命中即计数、仅当前页物化）下，逐页遍历所有命中
     // 应恰好覆盖全部命中（无重复、无遗漏），且 total 与逐页累加一致。
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     // 批量事务插入，避免逐条 autocommit 拖慢测试。
     {
         let tx = conn.unchecked_transaction().unwrap();
@@ -900,8 +900,8 @@ fn streaming_pagination_no_dup_no_gap_and_exact_total() {
 /// 按字面命中——搜「100%」不误命中任意后缀，`_` 不当单字通配，`\` 自身可搜。
 #[test]
 fn search_like_wildcards_match_literally() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_txn(&conn, "t1", "a1", None, Some("完成100%"), "2026-02-01");
     // 误命中哨兵：若 `%`/`_` 未转义，这些行会被通配误命中。
     insert_txn(&conn, "t2", "a1", None, Some("完成100x"), "2026-02-02");
@@ -928,8 +928,8 @@ fn search_like_wildcards_match_literally() {
 /// 路径仍在 Rust 侧全 Unicode 折叠，不受此边界影响）。
 #[test]
 fn unicode_non_ascii_case_folding_is_known_boundary() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_txn(&conn, "t1", "a1", None, Some("CAFÉ 午餐"), "2026-02-01");
     // 已知边界：非 ASCII 大写 É 不折叠到 é。
     let res = search(&conn, "café").unwrap();
@@ -950,7 +950,7 @@ fn unicode_non_ascii_case_folding_is_known_boundary() {
 /// 软删口径/零命中/高命中。
 #[test]
 fn pushdown_hit_set_covers_row_semantics() {
-    let conn = setup();
+    let conn = test_support::open();
     // 字典夹具：id → (名字, 是否软删) / id → 名字。
     let accounts: Vec<(&str, &str, bool)> = vec![
         ("a1", "现金", false),
@@ -962,7 +962,7 @@ fn pushdown_hit_set_covers_row_semantics() {
         vec![("m1", "京东", false), ("m2", "已删外卖商户", true)];
     let categories: Vec<(&str, bool)> = vec![("c1", false), ("c9", true)];
     for (id, name, deleted) in &accounts {
-        insert_account(&conn, id, name, "cash", "CNY");
+        test_support::seed_account(&conn, id, name, "cash", "CNY", 0);
         if *deleted {
             conn.execute("UPDATE accounts SET is_deleted=1 WHERE id=?1", [id])
                 .unwrap();

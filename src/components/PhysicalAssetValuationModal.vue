@@ -99,42 +99,45 @@ defineExpose({ save })
     @update:show="(v: boolean) => emit('update:show', v)"
   >
     <NForm label-placement="left" :show-feedback="false" size="small">
-      <NFormItem :label="t('physicalAssets.valuation.label.amount')">
-        <NInput
-          v-model:value="amountYuan"
-          :placeholder="t('physicalAssets.valuation.placeholder.amount')"
-          style="width: 160px"
-          data-testid="physical-asset-valuation-amount"
-        />
-        <AppSelect
-          v-model:value="currency"
-          :options="currencyOptions"
-          :placeholder="t('physicalAssets.form.placeholder.currency')"
-          style="width: 120px"
-          data-testid="physical-asset-valuation-currency-select"
-        />
-      </NFormItem>
-      <NFormItem :label="t('physicalAssets.valuation.label.date')">
-        <AppDatePicker
-          v-model:formatted-value="valuationDate"
-          type="date"
-          value-format="yyyy-MM-dd"
-          clearable
-          :placeholder="t('physicalAssets.valuation.placeholder.date')"
-          style="width: 160px"
-          data-testid="physical-asset-valuation-date"
-        />
-      </NFormItem>
-      <!-- 辅助说明统一段落式（spec #630 / #635）：不再内联挤在日期表单项旁 -->
-      <NText depth="3" class="form-hint">
-        {{ t('physicalAssets.valuation.dateHint') }}
-      </NText>
+      <!-- 行距节奏容器：NFormItem 默认零行距，表单项与按钮行同包（ADR-0079 决策 4 / issue #804） -->
+      <NSpace vertical :size="12">
+        <NFormItem :label="t('physicalAssets.valuation.label.amount')">
+          <NInput
+            v-model:value="amountYuan"
+            :placeholder="t('physicalAssets.valuation.placeholder.amount')"
+            style="width: 160px"
+            data-testid="physical-asset-valuation-amount"
+          />
+          <AppSelect
+            v-model:value="currency"
+            :options="currencyOptions"
+            :placeholder="t('physicalAssets.form.placeholder.currency')"
+            style="width: 120px"
+            data-testid="physical-asset-valuation-currency-select"
+          />
+        </NFormItem>
+        <NFormItem :label="t('physicalAssets.valuation.label.date')">
+          <AppDatePicker
+            v-model:formatted-value="valuationDate"
+            type="date"
+            value-format="yyyy-MM-dd"
+            clearable
+            :placeholder="t('physicalAssets.valuation.placeholder.date')"
+            style="width: 160px"
+            data-testid="physical-asset-valuation-date"
+          />
+        </NFormItem>
+        <!-- 辅助说明统一段落式（spec #630 / #635）：不再内联挤在日期表单项旁 -->
+        <NText depth="3" class="form-hint">
+          {{ t('physicalAssets.valuation.dateHint') }}
+        </NText>
 
-      <NSpace justify="end">
-        <NButton @click="close">{{ t('physicalAssets.form.cancel') }}</NButton>
-        <NButton type="primary" data-testid="physical-asset-valuation-save" @click="save">
-          {{ t('physicalAssets.form.save') }}
-        </NButton>
+        <NSpace justify="end">
+          <NButton @click="close">{{ t('physicalAssets.form.cancel') }}</NButton>
+          <NButton type="primary" data-testid="physical-asset-valuation-save" @click="save">
+            {{ t('physicalAssets.form.save') }}
+          </NButton>
+        </NSpace>
       </NSpace>
     </NForm>
   </AppModal>

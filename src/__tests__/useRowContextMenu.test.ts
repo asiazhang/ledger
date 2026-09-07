@@ -6,7 +6,8 @@ import { useRowContextMenu } from '@/composables/useRowContextMenu'
  * RowContextMenu（行右键菜单编排）模块测试（spec #522 / issue #550）：
  * 工厂零外部依赖（无 store、无 api、无组件，只等下一帧），裸调直打接口——
  * open/close/select 的状态终态与「收起 → 下一帧重开」重定位舞步，
- * select 收尾回调的 (key, row) 交付；不断言内部 nextTick 接线细节。
+ * select 收尾回调的 (key, row) 交付，定位坐标的同步更新与关闭后保留
+ * （issue #798，离场动画仍消费 x/y）；不断言内部 nextTick 接线细节。
  */
 
 /** 测试用目标行：工厂对行类型泛型、只存储回传、永不读行内容。 */
@@ -95,6 +96,31 @@ describe('useRowContextMenu close', () => {
     await nextTick()
     menu.close()
     expect(menu.state.value).toBeNull()
+  })
+})
+
+describe('useRowContextMenu 定位坐标（open 同步更新、close 保留）', () => {
+  it('open 同步更新定位坐标（不下一帧，与手写拷贝舞步一致）', () => {
+    const menu = useRowContextMenu<TestRow>(vi.fn())
+    expect(menu.position.value).toEqual({ x: 0, y: 0 })
+    menu.open(mouseAt(100, 200), rowA)
+    expect(menu.position.value).toEqual({ x: 100, y: 200 })
+  })
+
+  it('close 后定位坐标保留（离场动画仍消费 x/y，清零会左上角闪现，issue #798）', async () => {
+    const menu = useRowContextMenu<TestRow>(vi.fn())
+    menu.open(mouseAt(100, 200), rowA)
+    await nextTick()
+    menu.close()
+    expect(menu.state.value).toBeNull()
+    expect(menu.position.value).toEqual({ x: 100, y: 200 })
+  })
+
+  it('同一同步批次内连续 open：定位坐标最后一次开启胜出', () => {
+    const menu = useRowContextMenu<TestRow>(vi.fn())
+    menu.open(mouseAt(100, 200), rowA)
+    menu.open(mouseAt(300, 400), rowB)
+    expect(menu.position.value).toEqual({ x: 300, y: 400 })
   })
 })
 

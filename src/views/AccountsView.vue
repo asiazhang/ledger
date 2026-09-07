@@ -254,10 +254,12 @@ const rowMenu = useRowContextMenu<AccountBalance>((key, row) => {
   else if (key === 'delete') confirmDelete(row)
 })
 
-// 可见性与定位由单判别状态派生（非空即显示；关闭帧坐标无消费方）。
+// 可见性由单判别状态派生（非空即显示）；定位坐标取工厂保留值（open 同步更新、
+// close 不清零）：naive-ui 离场动画期间仍按 x/y 重定位弹层，视图侧清零会让
+// 淡出中的菜单跳到视口左上角闪现一次（issue #798）。
 const menuShow = computed(() => rowMenu.state.value !== null)
-const menuX = computed(() => rowMenu.state.value?.x ?? 0)
-const menuY = computed(() => rowMenu.state.value?.y ?? 0)
+const menuX = computed(() => rowMenu.position.value.x)
+const menuY = computed(() => rowMenu.position.value.y)
 
 /** 表格行属性：绑定行右键菜单（open 内化「收起 → 下一帧重开」重定位舞步；
  * 原生菜单拦截单点归窗口行为守卫，视图不再 preventDefault）。 */
@@ -360,21 +362,24 @@ onMounted(() => {
         :show-feedback="false"
         size="small"
       >
-        <NFormItem :label="t('accounts.create.name')">
-          <NInput
-            v-model:value="editName"
-            :placeholder="t('accounts.create.namePlaceholder')"
-          />
-        </NFormItem>
-        <NFormItem :label="t('accounts.create.type')">
-          <NInput :value="t(`accounts.type.${editIntent.row.account.type}`)" disabled />
-        </NFormItem>
-        <NFormItem :label="t('accounts.create.currency')">
-          <AppSelect v-model:value="editCurrency" :options="currencyOptions()" style="width: 100%" />
-        </NFormItem>
-        <NSpace justify="end" :size="8">
-          <NButton @click="closeEdit">{{ t('accounts.edit.cancel') }}</NButton>
-          <NButton type="primary" @click="submitEdit">{{ t('accounts.edit.save') }}</NButton>
+        <!-- 行距节奏容器：NFormItem 默认零行距，表单项与按钮行同包（ADR-0079 决策 4 / issue #804） -->
+        <NSpace vertical :size="12">
+          <NFormItem :label="t('accounts.create.name')">
+            <NInput
+              v-model:value="editName"
+              :placeholder="t('accounts.create.namePlaceholder')"
+            />
+          </NFormItem>
+          <NFormItem :label="t('accounts.create.type')">
+            <NInput :value="t(`accounts.type.${editIntent.row.account.type}`)" disabled />
+          </NFormItem>
+          <NFormItem :label="t('accounts.create.currency')">
+            <AppSelect v-model:value="editCurrency" :options="currencyOptions()" style="width: 100%" />
+          </NFormItem>
+          <NSpace justify="end" :size="8">
+            <NButton @click="closeEdit">{{ t('accounts.edit.cancel') }}</NButton>
+            <NButton type="primary" @click="submitEdit">{{ t('accounts.edit.save') }}</NButton>
+          </NSpace>
         </NSpace>
       </NForm>
     </AppModal>
@@ -397,37 +402,40 @@ onMounted(() => {
         :show-feedback="false"
         size="small"
       >
-        <NFormItem :label="t('accounts.adjust.currentBalance')">
-          <NText>{{
-            formatAmount(adjustIntent.row.balance_cents, adjustCurrency)
-          }}</NText>
-        </NFormItem>
-        <NFormItem :label="t('accounts.adjust.targetBalance')">
-          <NInputNumber
-            v-model:value="adjustTarget"
-            :precision="2"
-            :placeholder="t('accounts.adjust.targetPlaceholder')"
-            style="width: 100%"
-          />
-        </NFormItem>
-        <NFormItem :label="t('accounts.adjust.date')">
-          <AppDatePicker v-model:value="adjustDate" type="date" style="width: 100%" />
-        </NFormItem>
-        <NFormItem :label="t('accounts.adjust.delta')" :show-label="adjustDeltaText === ''">
-          <NText v-if="adjustDelta === 0">{{ t('accounts.adjust.deltaZero') }}</NText>
-          <NText v-else-if="adjustDeltaText" :type="adjustDelta! > 0 ? 'success' : 'warning'">
-            {{ adjustDeltaText }}{{ t('accounts.adjust.hint') }}
-          </NText>
-        </NFormItem>
-        <NSpace justify="end" :size="8">
-          <NButton @click="closeAdjust">{{ t('accounts.edit.cancel') }}</NButton>
-          <NButton
-            type="primary"
-            :disabled="adjustTargetCents === null || adjustDelta === 0"
-            @click="submitAdjust"
-          >
-            {{ t('accounts.adjust.confirm') }}
-          </NButton>
+        <!-- 行距节奏容器：NFormItem 默认零行距，表单项与按钮行同包（ADR-0079 决策 4 / issue #804） -->
+        <NSpace vertical :size="12">
+          <NFormItem :label="t('accounts.adjust.currentBalance')">
+            <NText>{{
+              formatAmount(adjustIntent.row.balance_cents, adjustCurrency)
+            }}</NText>
+          </NFormItem>
+          <NFormItem :label="t('accounts.adjust.targetBalance')">
+            <NInputNumber
+              v-model:value="adjustTarget"
+              :precision="2"
+              :placeholder="t('accounts.adjust.targetPlaceholder')"
+              style="width: 100%"
+            />
+          </NFormItem>
+          <NFormItem :label="t('accounts.adjust.date')">
+            <AppDatePicker v-model:value="adjustDate" type="date" style="width: 100%" />
+          </NFormItem>
+          <NFormItem :label="t('accounts.adjust.delta')" :show-label="adjustDeltaText === ''">
+            <NText v-if="adjustDelta === 0">{{ t('accounts.adjust.deltaZero') }}</NText>
+            <NText v-else-if="adjustDeltaText" :type="adjustDelta! > 0 ? 'success' : 'warning'">
+              {{ adjustDeltaText }}{{ t('accounts.adjust.hint') }}
+            </NText>
+          </NFormItem>
+          <NSpace justify="end" :size="8">
+            <NButton @click="closeAdjust">{{ t('accounts.edit.cancel') }}</NButton>
+            <NButton
+              type="primary"
+              :disabled="adjustTargetCents === null || adjustDelta === 0"
+              @click="submitAdjust"
+            >
+              {{ t('accounts.adjust.confirm') }}
+            </NButton>
+          </NSpace>
         </NSpace>
       </NForm>
     </AppModal>

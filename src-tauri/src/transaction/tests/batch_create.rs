@@ -4,20 +4,20 @@
 use rusqlite::{Connection, params};
 
 use crate::signals::WriteEvidence;
-use crate::test_support::{FIXED_NOW, seed_instrument, seed_investment_setup};
 use crate::test_utils::{CapturedEvent, capture_events};
 use crate::transaction::TransactionBatch;
 use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 use tracing::Level;
 
-use super::batch_common::{insert_account, make_input, setup};
+use super::batch_common::make_input;
 use super::common::make_buy_input;
+use crate::test_support;
 
 #[test]
 fn batch_create_marks_duplicates_and_keeps_rows() {
-    let conn = setup();
-    insert_account(&conn, "acc-dedup", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-dedup", "现金", "cash", "CNY", 0);
 
     let inputs = vec![
         make_input("acc-dedup", TransactionKind::Income, 1000, "2026-07-01"),
@@ -53,8 +53,8 @@ fn batch_create_marks_duplicates_and_keeps_rows() {
 
 #[test]
 fn batch_create_with_dedup_false_writes_duplicates() {
-    let conn = setup();
-    insert_account(&conn, "acc-dedup", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-dedup", "现金", "cash", "CNY", 0);
 
     let inputs = vec![make_input(
         "acc-dedup",
@@ -83,8 +83,8 @@ fn batch_create_with_dedup_false_writes_duplicates() {
 
 #[test]
 fn batch_create_idempotency_key_rerun_skips_and_returns_id() {
-    let conn = setup();
-    insert_account(&conn, "acc-key", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-key", "现金", "cash", "CNY", 0);
 
     let mut a = make_input("acc-key", TransactionKind::Income, 1000, "2026-01-01");
     a.idempotency_key = Some("file:1:1".into());
@@ -119,8 +119,8 @@ fn batch_create_idempotency_key_rerun_skips_and_returns_id() {
 
 #[test]
 fn batch_create_idempotency_key_content_agnostic() {
-    let conn = setup();
-    insert_account(&conn, "acc-key", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-key", "现金", "cash", "CNY", 0);
 
     let mut a = make_input("acc-key", TransactionKind::Income, 1000, "2026-01-01");
     a.idempotency_key = Some("file:1:1".into());
@@ -147,8 +147,8 @@ fn batch_create_idempotency_key_content_agnostic() {
 
 #[test]
 fn batch_create_idempotency_key_different_keys_same_content_keeps_both() {
-    let conn = setup();
-    insert_account(&conn, "acc-key", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-key", "现金", "cash", "CNY", 0);
 
     let mut a = make_input("acc-key", TransactionKind::Income, 1000, "2026-01-01");
     a.idempotency_key = Some("file:1:1".into());
@@ -175,8 +175,8 @@ fn batch_create_idempotency_key_different_keys_same_content_keeps_both() {
 
 #[test]
 fn batch_create_idempotency_key_same_key_dedup_false_raises_constraint() {
-    let conn = setup();
-    insert_account(&conn, "acc-key", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-key", "现金", "cash", "CNY", 0);
 
     let mut a = make_input("acc-key", TransactionKind::Income, 1000, "2026-01-01");
     a.idempotency_key = Some("dup-key".into());
@@ -203,8 +203,8 @@ fn batch_create_idempotency_key_same_key_dedup_false_raises_constraint() {
 
 #[test]
 fn idempotency_key_dedup_query_uses_partial_index() {
-    let conn = setup();
-    insert_account(&conn, "acc-key", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-key", "现金", "cash", "CNY", 0);
     let mut a = make_input("acc-key", TransactionKind::Income, 1000, "2026-01-01");
     a.idempotency_key = Some("file:1:1".into());
     TransactionBatch::run(&conn, vec![a], true).unwrap();
@@ -231,10 +231,10 @@ fn idempotency_key_dedup_query_uses_partial_index() {
 
 #[test]
 fn batch_create_idempotency_key_buy_sell_different_instruments_kept() {
-    let conn = setup();
-    seed_investment_setup(&conn, "acc-inv-key", "inst-aapl");
-    // 第二个不同标的（相同币种 USD）：工厂标的种子。
-    seed_instrument(&conn, "inst-msft", "MSFT", "Msft", "USD", "unknown");
+    let conn = test_support::open();
+    // 投资铺垫（账户+标的+1:1 汇率）一行建成；第二标的为同币种单域变体，经工厂种子。
+    test_support::seed_investment_setup(&conn, "acc-inv-key", "inst-aapl");
+    test_support::seed_instrument(&conn, "inst-msft", "MSFT", "Msft", "USD", "unknown");
 
     // 两笔买入：不同标的、相同原始金额字段（amount_cents=0，内容哈希盲区），带键应都保留。
     let mut buy1 = make_buy_input("acc-inv-key", "inst-aapl", 10.0, 10000, 500);
@@ -284,8 +284,8 @@ fn find_batch_summary(events: &[CapturedEvent]) -> Option<&CapturedEvent> {
 /// 成功批次：汇总行以 info 级别出现，含总耗时与条数（失败数=0）。
 #[test]
 fn batch_create_logs_summary_on_success() {
-    let conn = setup();
-    insert_account(&conn, "acc-log-ok", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-log-ok", "现金", "cash", "CNY", 0);
 
     let inputs = vec![
         make_input("acc-log-ok", TransactionKind::Income, 1000, "2026-07-01"),
@@ -313,8 +313,8 @@ fn batch_create_logs_summary_on_success() {
 /// 批次中途回滚：汇总行仍出现，且含失败条数（触发唯一约束回滚的那条）。
 #[test]
 fn batch_create_logs_summary_on_rollback() {
-    let conn = setup();
-    insert_account(&conn, "acc-log-rb", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-log-rb", "现金", "cash", "CNY", 0);
 
     let mut a = make_input("acc-log-rb", TransactionKind::Income, 1000, "2026-07-01");
     a.idempotency_key = Some("dup-rb".into());
@@ -339,8 +339,8 @@ fn batch_create_logs_summary_on_rollback() {
 /// 部分行无效但批次提交成功：汇总行含非零失败条数（有效行落库、无效行跳过）。
 #[test]
 fn batch_create_logs_failed_count_with_invalid_row() {
-    let conn = setup();
-    insert_account(&conn, "acc-log-part", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-log-part", "现金", "cash", "CNY", 0);
 
     // 失败行：转账未指定目标账户 → Invalid；成功行：普通收入。
     let inputs = vec![
@@ -388,8 +388,8 @@ fn batch_create_logs_failed_count_with_invalid_row() {
 /// 迁自 `transactions` 模块旧 `batch_rejects_zero_amount`，改经 `run` 断言）。
 #[test]
 fn batch_create_zero_amount_row_isolated() {
-    let conn = setup();
-    insert_account(&conn, "acc-log-zero", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-log-zero", "现金", "cash", "CNY", 0);
 
     let inputs = vec![
         TransactionInput {
@@ -450,8 +450,8 @@ fn expense_named(account: &str, date: &str, name: &str) -> TransactionInput {
 /// 任一行新名字即建 → 聚合证据真；全复用 / 无商户 / 去重重放 → 假。
 #[test]
 fn run_aggregates_merchant_created_evidence() {
-    let conn = setup();
-    insert_account(&conn, "acc-agg", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-agg", "现金", "cash", "CNY", 0);
 
     // 全无商户：假。
     let outcome = TransactionBatch::run(
@@ -486,13 +486,13 @@ fn run_aggregates_merchant_created_evidence() {
 /// 全部行命中复用（名字命中 / 直接带商户 id）→ 聚合证据假。
 #[test]
 fn run_with_reused_merchants_aggregates_false() {
-    let conn = setup();
-    insert_account(&conn, "acc-agg", "现金", "cash", "CNY");
-    // 预置既有商户「京东」，并先落一行建立 id 复用目标。
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-agg", "现金", "cash", "CNY", 0);
+    // 预置既有商户「京东」，并先落一行建立 id 复用目标（簿记戳经工厂常量发放）。
     conn.execute(
         "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
          VALUES ('mer-jd','京东',?1,?1,1,'test',0)",
-        params![FIXED_NOW],
+        params![test_support::FIXED_NOW],
     )
     .unwrap();
 
@@ -516,8 +516,8 @@ fn run_with_reused_merchants_aggregates_false() {
 /// 幂等重放：首跑即建商户，重跑整批命中去重 → 不产生碎商户、聚合证据假。
 #[test]
 fn run_dedup_replay_carries_no_merchant_evidence() {
-    let conn = setup();
-    insert_account(&conn, "acc-agg", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-agg", "现金", "cash", "CNY", 0);
     let mut input = expense_named("acc-agg", "2026-07-01", "盒马");
     input.idempotency_key = Some("file:1".into());
 
@@ -534,8 +534,8 @@ fn run_dedup_replay_carries_no_merchant_evidence() {
 /// 两段式归一化保持不变）；同批有效行聚合不受污染。
 #[test]
 fn run_invalid_row_with_new_name_creates_no_merchant() {
-    let conn = setup();
-    insert_account(&conn, "acc-agg", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-agg", "现金", "cash", "CNY", 0);
 
     let bad = TransactionInput {
         policy_id: None,

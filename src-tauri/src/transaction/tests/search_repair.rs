@@ -5,9 +5,8 @@
 use rusqlite::Connection;
 
 use super::super::search::{repair_note_pinyin, search_transactions_internal};
-use super::common::{insert_account, setup};
 use crate::error::Result;
-use crate::test_support::FIXED_NOW;
+use crate::test_support;
 use crate::transaction::{NotePinyinRepairStage, TransactionSearchResult};
 
 fn search(conn: &Connection, query: &str) -> Result<TransactionSearchResult> {
@@ -28,7 +27,7 @@ fn insert_txn_note_pinyin(
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,note_pinyin,date,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,'expense',1000,'CNY',1000,?2,NULL,NULL,NULL,?3,?4,?5,?6,?6,1,'test',0)",
-        rusqlite::params![id, account_id, note, note_pinyin, date, FIXED_NOW],
+        rusqlite::params![id, account_id, note, note_pinyin, date, test_support::FIXED_NOW],
     )
     .unwrap();
 }
@@ -54,8 +53,8 @@ fn backlog_count(conn: &Connection) -> i64 {
 /// 积压全量回填：报告回填行数、判定收敛，列值与现算规则一致，拼音搜索不漏。
 #[test]
 fn repair_backfills_all_backlog_and_converges() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_txn_note_pinyin(&conn, "t1", "a1", Some("万科物业"), "2026-02-01", None);
     insert_txn_note_pinyin(&conn, "t2", "a1", Some("招商银行转账"), "2026-02-02", None);
     insert_txn_note_pinyin(&conn, "t3", "a1", Some("买咖啡"), "2026-02-03", None);
@@ -82,8 +81,8 @@ fn repair_backfills_all_backlog_and_converges() {
 /// 幂等：重复执行不重复计数、不破坏已回填行，且仍收敛。
 #[test]
 fn repair_is_idempotent() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_txn_note_pinyin(&conn, "t1", "a1", Some("万科物业"), "2026-02-01", None);
     let first = repair_note_pinyin(&conn);
     assert_eq!(first.backfilled, 1);
@@ -99,8 +98,8 @@ fn repair_is_idempotent() {
 /// 无积压（新库/已收敛库）一键修复：零回填、收敛、无失败。
 #[test]
 fn repair_on_converged_db_is_noop() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     let report = repair_note_pinyin(&conn);
     assert_eq!(report.backfilled, 0);
     assert!(report.converged);
@@ -117,8 +116,8 @@ fn repair_on_converged_db_is_noop() {
 /// 不破坏已回填行：只补 NULL 积压，已有列值（含手工脏值）原样保留、不计入回填数。
 #[test]
 fn repair_preserves_existing_filled_rows() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_txn_note_pinyin(
         &conn,
         "t1",
@@ -149,8 +148,8 @@ fn repair_preserves_existing_filled_rows() {
 /// 无备注行不构成积压：note_pinyin 恒 NULL 但不计积压、不影响收敛判定。
 #[test]
 fn repair_ignores_noteless_rows() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_txn_note_pinyin(&conn, "t1", "a1", Some("万科物业"), "2026-02-01", None);
     insert_txn_note_pinyin(&conn, "t2", "a1", None, "2026-02-02", None);
 
@@ -164,7 +163,7 @@ fn repair_ignores_noteless_rows() {
 /// 查询出错，报告携带 Probe 阶段与底层消息、零回填、收敛保守置否。
 #[test]
 fn repair_reports_probe_failure() {
-    let conn = setup();
+    let conn = test_support::open();
     conn.execute("DROP TABLE transactions", []).unwrap();
 
     let report = repair_note_pinyin(&conn);
@@ -180,8 +179,8 @@ fn repair_reports_probe_failure() {
 /// （收敛否），且事务回滚后已回填行不损。
 #[test]
 fn repair_reports_write_failure_and_stays_honest() {
-    let conn = setup();
-    insert_account(&conn, "a1", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_txn_note_pinyin(&conn, "t1", "a1", Some("万科物业"), "2026-02-01", None);
     conn.execute(
         "CREATE TRIGGER injected_abort BEFORE UPDATE ON transactions \

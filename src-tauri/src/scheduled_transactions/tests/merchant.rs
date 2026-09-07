@@ -2,7 +2,8 @@
 //! 软删商户不可被新计划选择，历史引用照常保持，编辑商户仅影响未来期次。
 
 use super::super::*;
-use super::common::{first_pending_occurrence, insert_account, read_txn, setup_db};
+use super::common::{first_pending_occurrence, read_txn};
+use crate::test_support;
 use rusqlite::Connection;
 use rusqlite::params;
 
@@ -10,13 +11,14 @@ use rusqlite::params;
 // 商户复制（issue #190 / ADR-0028）：计划带商户 → 每期生成交易复制商户到流水
 // ---------------------------------------------------------------------------
 
-/// 插入一个在用商户，返回其 id。
+/// 插入一个在用商户，返回其 id。簿记戳取工厂固定时刻 `test_support::FIXED_NOW`
+/// （ADR-0084 决策 5：夹具簿记戳零字面量）。
 fn insert_merchant(conn: &Connection, name: &str) -> String {
     let id = format!("mer-{name}");
     conn.execute(
         "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        params![id, name],
+         VALUES (?1,?2,?3,?3,1,'test',0)",
+        params![id, name, test_support::FIXED_NOW],
     )
     .unwrap();
     id
@@ -59,8 +61,8 @@ fn create_subscription_with_merchant(
 /// 订阅计划带商户：每期生成交易复制计划的商户到流水。
 #[test]
 fn subscription_copies_merchant_to_generated_transaction() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let merchant_id = insert_merchant(&conn, "Netflix");
     let plan_id = create_subscription_with_merchant(&conn, "acc", &merchant_id);
 
@@ -76,8 +78,8 @@ fn subscription_copies_merchant_to_generated_transaction() {
 /// 分期计划带商户：每期生成交易复制计划的商户到流水。
 #[test]
 fn installment_copies_merchant_to_generated_transaction() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let merchant_id = insert_merchant(&conn, "京东白条");
     let plan_id = create_plan(
         &conn,
@@ -109,9 +111,9 @@ fn installment_copies_merchant_to_generated_transaction() {
 /// 定时转账行为层拒绝携带商户（用 to_account_id 表示本方账户间转账，ADR-0028）。
 #[test]
 fn scheduled_transfer_rejects_merchant() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-a", "CNY");
-    insert_account(&conn, "acc-b", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-a", "acc-a", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-b", "acc-b", "cash", "CNY", 0);
     let merchant_id = insert_merchant(&conn, "京东");
 
     let err = create_plan(
@@ -144,8 +146,8 @@ fn scheduled_transfer_rejects_merchant() {
 /// 创建计划携带已软删商户 → 拒绝（软删商户不可再被新计划选择）。
 #[test]
 fn create_plan_rejects_soft_deleted_merchant() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let merchant_id = insert_merchant(&conn, "京东");
     soft_delete_merchant(&conn, &merchant_id);
 
@@ -179,8 +181,8 @@ fn create_plan_rejects_soft_deleted_merchant() {
 /// 计划商户被软删后，期次仍复制该历史引用（照常执行，不因校验失败卡住）。
 #[test]
 fn occurrence_keeps_plan_merchant_after_soft_delete() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let merchant_id = insert_merchant(&conn, "京东");
     let plan_id = create_subscription_with_merchant(&conn, "acc", &merchant_id);
 
@@ -234,8 +236,8 @@ fn update_subscription_input(
 /// 编辑订阅改商户：只影响未来期次（期次执行时从计划扩展表读商户）。
 #[test]
 fn update_subscription_merchant_affects_only_future_occurrences() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let mer_a = insert_merchant(&conn, "商户A");
     let mer_b = insert_merchant(&conn, "商户B");
     let plan_id = create_subscription_with_merchant(&conn, "acc", &mer_a);
@@ -270,8 +272,8 @@ fn update_subscription_merchant_affects_only_future_occurrences() {
 /// 编辑其它字段时商户为全量替换：提交当前值（软删商户）视为保持历史引用，不报错。
 #[test]
 fn update_subscription_keeps_soft_deleted_merchant_reference() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let merchant_id = insert_merchant(&conn, "京东");
     let plan_id = create_subscription_with_merchant(&conn, "acc", &merchant_id);
     soft_delete_merchant(&conn, &merchant_id);
@@ -293,8 +295,8 @@ fn update_subscription_keeps_soft_deleted_merchant_reference() {
 /// 编辑改到已软删商户 → 拒绝（软删商户不可被新选择，与创建计划同文案）。
 #[test]
 fn update_subscription_rejects_soft_deleted_new_merchant() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let mer_a = insert_merchant(&conn, "商户A");
     let mer_b = insert_merchant(&conn, "商户B");
     let plan_id = create_subscription_with_merchant(&conn, "acc", &mer_a);
@@ -314,8 +316,8 @@ fn update_subscription_rejects_soft_deleted_new_merchant() {
 /// 编辑清空商户（merchant_id → null）：允许（无商户订阅）。
 #[test]
 fn update_subscription_clears_merchant() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let merchant_id = insert_merchant(&conn, "京东");
     let plan_id = create_subscription_with_merchant(&conn, "acc", &merchant_id);
 

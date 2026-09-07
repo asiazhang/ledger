@@ -1,9 +1,9 @@
 //! 审计字段统一生成与 native 本位币折算（issue #60：统一经 Writer 落库）。
 
 use super::super::*;
-use super::common::{insert_account, make_buy_input, make_input, setup};
+use super::common::{make_buy_input, make_input};
+use crate::test_support;
 
-use crate::test_support::seed_investment_setup;
 use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 use rusqlite::params;
@@ -16,10 +16,10 @@ use rusqlite::params;
 /// create 路径不再散落手写 INSERT（issue #60 验收：审计字段统一生成）。
 #[test]
 fn create_transaction_internal_audit_fields_uniform_across_kinds() {
-    let conn = setup();
-    insert_account(&conn, "acc-w", "现金", "cash", "CNY");
-    insert_account(&conn, "acc-w2", "银行", "bank", "CNY");
-    seed_investment_setup(&conn, "acc-inv-w", "inst-w");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-w", "现金", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-w2", "银行", "bank", "CNY", 0);
+    test_support::seed_investment_setup(&conn, "acc-inv-w", "inst-w");
 
     let expense_id = create_transaction_internal(
         &conn,
@@ -98,8 +98,8 @@ fn create_transaction_internal_audit_fields_uniform_across_kinds() {
 /// （issue #60 验收：update 不再走命令层手写 UPDATE）。
 #[test]
 fn update_transaction_internal_preserves_created_at_and_refreshes_audit() {
-    let conn = setup();
-    insert_account(&conn, "acc-upd", "现金", "cash", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-upd", "现金", "cash", "CNY", 0);
     let id = create_transaction_internal(
         &conn,
         make_input("acc-upd", TransactionKind::Expense, 500, "2026-01-01"),
@@ -134,11 +134,10 @@ fn update_transaction_internal_preserves_created_at_and_refreshes_audit() {
 /// USD 账户 + USD 金额按汇率折算到 CNY，而非按账户币种 1:1 落库。
 #[test]
 fn create_transaction_internal_generic_converts_native_via_amount_seam() {
-    let conn = setup();
-    insert_account(&conn, "acc-usd", "美元", "cash", "USD");
-    // USD 账户本位币折算需要 USD→CNY 汇率（Amount 接缝，issue #60）；折算查找只按
-    // 货币对，用工厂当前汇率种子一行建成。
-    crate::test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-usd", "美元", "cash", "USD", 0);
+    // 汇率行经工厂种子（行 id 由货币对派生，priced_at 由工厂发放，测试不读该列）。
+    test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
 
     let id = create_transaction_internal(
         &conn,

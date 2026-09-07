@@ -8,16 +8,7 @@ use rusqlite::Connection;
 use rusqlite::params;
 
 use super::super::amount::*;
-
-/// 测试库入口：统一工厂（spec #728 / ADR-0084，域迁移票 #757）。
-fn setup_db() -> Connection {
-    crate::test_support::open()
-}
-
-fn insert_account(conn: &Connection, id: &str, currency: &str) {
-    // 脚手架账户（id 兼名、cash）：工厂账户种子（归一签名，ADR-0084 决策 4）。
-    crate::test_support::seed_account(conn, id, id, "cash", currency, 0);
-}
+use crate::test_support;
 
 fn insert_txn(
     conn: &Connection,
@@ -34,12 +25,6 @@ fn insert_txn(
         params![id, kind.as_str(), amount_native_cents, account_id, to_account_id],
     )
     .unwrap();
-}
-
-fn insert_rate(conn: &Connection, base: &str, quote: &str, rate: f64) {
-    // 当前汇率一行建成：工厂种子（行 id 由货币对派生、簿记戳内部发放；折算查找只按
-    // 货币对，本文件不观察 id/priced_at）。
-    crate::test_support::seed_exchange_rate(conn, base, quote, rate);
 }
 
 // ---------------------------------------------------------------------------
@@ -194,8 +179,8 @@ fn rust_sum(conn: &Connection, measure: Measure) -> i64 {
 /// 必须与 Rust `signed_amount` 逐行求和一致。
 #[test]
 fn sql_exprs_match_rust_sums() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     for (i, kind) in TransactionKind::ALL.into_iter().enumerate() {
         insert_txn(
             &conn,
@@ -237,8 +222,8 @@ fn sql_exprs_match_rust_sums() {
 /// SQL 片段在真实库上的聚合必须与两侧度量之和逐分一致。
 #[test]
 fn expense_gross_expr_equals_net_plus_refund_gross() {
-    let conn = setup_db();
-    insert_account(&conn, "acc", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     for (i, kind) in TransactionKind::ALL.into_iter().enumerate() {
         insert_txn(
             &conn,
@@ -287,9 +272,9 @@ fn contributing_kinds_follow_matrix() {
 /// 组合出的账户余额，与 Rust 助手按账户过滤求和一致。
 #[test]
 fn account_flow_expr_balances_match_rust() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-a", "CNY");
-    insert_account(&conn, "acc-b", "CNY");
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-a", "acc-a", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-b", "acc-b", "cash", "CNY", 0);
 
     // acc-a：收入 5000、支出 1200、退款 300、买入 2000、拆股 0、转出 800 到 acc-b
     insert_txn(&conn, "t1", TransactionKind::Income, 5000, "acc-a", None);
@@ -375,7 +360,7 @@ fn account_flow_expr_balances_match_rust() {
 /// 币种与默认币种相同 → 1:1 原样返回。
 #[test]
 fn convert_to_native_same_currency_is_identity() {
-    let conn = setup_db();
+    let conn = test_support::open();
     assert_eq!(
         convert_to_native(&conn, 12345, default_currency_code()).unwrap(),
         12345
@@ -385,8 +370,8 @@ fn convert_to_native_same_currency_is_identity() {
 /// 非默认币种按汇率折算到全局默认币种。
 #[test]
 fn convert_to_native_uses_rate_to_default_currency() {
-    let conn = setup_db();
-    insert_rate(&conn, "USD", "CNY", 7.2);
+    let conn = test_support::open();
+    test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
     assert_eq!(convert_to_native(&conn, 10000, "USD").unwrap(), 72000);
 }
 
@@ -394,17 +379,17 @@ fn convert_to_native_uses_rate_to_default_currency() {
 /// 即使存在 USD 账户，USD 金额仍折算到 CNY，而非 1:1 落库。
 #[test]
 fn convert_to_native_is_independent_of_account_currency() {
-    let conn = setup_db();
-    insert_account(&conn, "acc-usd", "USD");
-    insert_rate(&conn, "USD", "CNY", 7.2);
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-usd", "acc-usd", "cash", "USD", 0);
+    test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
     assert_eq!(convert_to_native(&conn, 10000, "USD").unwrap(), 72000);
 }
 
 /// 只有反向汇率时取倒数折算。
 #[test]
 fn convert_to_native_uses_reverse_rate_when_only_reverse_exists() {
-    let conn = setup_db();
-    insert_rate(&conn, "CNY", "EUR", 0.13);
+    let conn = test_support::open();
+    test_support::seed_exchange_rate(&conn, "CNY", "EUR", 0.13);
     // 1 EUR = 1/0.13 CNY ≈ 7.6923
     assert_eq!(convert_to_native(&conn, 10000, "EUR").unwrap(), 76923);
 }
@@ -412,18 +397,18 @@ fn convert_to_native_uses_reverse_rate_when_only_reverse_exists() {
 /// 正反向汇率均无 → 报错（不允许静默 1:1 混币种相加）。
 #[test]
 fn convert_to_native_errors_without_rate() {
-    let conn = setup_db();
+    let conn = test_support::open();
     assert!(convert_to_native(&conn, 10000, "JPY").is_err());
 }
 
 /// 非正汇率（正查或反查）应报错，不得静默产出 0/负本位币金额。
 #[test]
 fn convert_to_native_rejects_non_positive_rate() {
-    let conn = setup_db();
-    insert_rate(&conn, "USD", "CNY", 0.0);
+    let conn = test_support::open();
+    test_support::seed_exchange_rate(&conn, "USD", "CNY", 0.0);
     assert!(convert_to_native(&conn, 10000, "USD").is_err());
 
-    let conn = setup_db();
-    insert_rate(&conn, "CNY", "EUR", -0.13);
+    let conn = test_support::open();
+    test_support::seed_exchange_rate(&conn, "CNY", "EUR", -0.13);
     assert!(convert_to_native(&conn, 10000, "EUR").is_err());
 }

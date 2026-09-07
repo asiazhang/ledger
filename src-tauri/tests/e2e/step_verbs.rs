@@ -11,22 +11,24 @@
 //!   复用；非法形态输入（如缺转入账户的转账）由调用方经 L1 工厂 + 结构体更新
 //!   构造后走通用 try 入口。
 //!
-//! 本模块是骨架（与既有 helper 并存，issue #760 不迁移任何调用点）；步骤函数
-//! 薄化为文本解析后由迁移票 #761–#763 消费。步骤动词是测试层唯一允许触发写入
-//! 的形态；写入失败被静默吞掉属违规（CONTEXT-testing「步骤动词」）。
+//! 本模块自 #761 起由交易域步骤消费（创建/修改/删除动词接线）；账户与计划域
+//! 动词由迁移票 #762/#763 接续消费。步骤动词是测试层唯一允许触发写入的形态；
+//! 写入失败被静默吞掉属违规（CONTEXT-testing「步骤动词」）。
 
-// 骨架票：与既有 helper 并存、不迁移任何调用点，迁移票 #761–#763 消费前全量未
-// 被引用（bin crate 的 dead_code 会报未使用）——显式豁免并登记，消费后可移除。
+// 迁移进行中：交易域动词已由 #761 消费；账户与计划域动词仍待 #762/#763 消费
+// （bin crate 的 dead_code 会报未使用）——全量消费后移除本豁免。
 #![allow(dead_code)]
 
 use tauri_app_lib::accounts::{AccountInput, AccountType, create_account};
 use tauri_app_lib::error::AppError;
 use tauri_app_lib::scheduled_transactions::{CreateScheduledInput, create_plan};
-use tauri_app_lib::transaction::{TransactionInput, TransactionWrite, create_transaction};
+use tauri_app_lib::transaction::{
+    TransactionInput, TransactionWrite, create_transaction, delete_transaction, update_transaction,
+};
 
 use crate::step_inputs::{
-    buy_input, expense_input, income_input, installment_plan_input, refund_input,
-    scheduled_transfer_plan_input, sell_input, subscription_plan_input, transfer_input,
+    expense_input, income_input, installment_plan_input, refund_input,
+    scheduled_transfer_plan_input, subscription_plan_input, transfer_input,
 };
 use crate::world::LedgerWorld;
 
@@ -152,51 +154,6 @@ pub fn refund_last_transaction(world: &mut LedgerWorld, amount_cents: i64, date:
     create_refund(world, amount_cents, &original_id, date)
 }
 
-/// 买入动词（非基金路径）：标的 id、数量、单价为热点，金额置零语义见
-/// [`buy_input`]；基金（金额权威）场景走 [`create_transaction_verb`] + 结构体更新。
-pub fn create_buy(
-    world: &mut LedgerWorld,
-    instrument_id: &str,
-    quantity: f64,
-    price_cents: i64,
-    account: &str,
-    date: &str,
-) -> String {
-    let account_id = world.account_id(account);
-    create_transaction_verb(
-        world,
-        buy_input(
-            instrument_id,
-            quantity,
-            Some(price_cents),
-            &account_id,
-            date,
-        ),
-    )
-}
-
-/// 卖出动词：同 [`create_buy`] 形态。
-pub fn create_sell(
-    world: &mut LedgerWorld,
-    instrument_id: &str,
-    quantity: f64,
-    price_cents: i64,
-    account: &str,
-    date: &str,
-) -> String {
-    let account_id = world.account_id(account);
-    create_transaction_verb(
-        world,
-        sell_input(
-            instrument_id,
-            quantity,
-            Some(price_cents),
-            &account_id,
-            date,
-        ),
-    )
-}
-
 /// 交易行的账户 id（退款动词派生账户用）。
 fn transaction_account_id(world: &LedgerWorld, transaction_id: &str) -> String {
     let conn = world_conn!(world);
@@ -206,6 +163,38 @@ fn transaction_account_id(world: &LedgerWorld, transaction_id: &str) -> String {
         |r| r.get(0),
     )
     .expect("查询原交易账户失败")
+}
+
+// ---------------------------------------------------------------------------
+// 修改/删除动词：update / delete 编排入口（同 create 形态，#761 接线）
+// ---------------------------------------------------------------------------
+
+/// 修改动词（全字段替换）：经 update 编排入口写入；失败即 panic。写证据
+/// （WriteEvidence，ADR-0044）属壳层信号语义，BDD 步骤不消费。
+pub fn update_transaction_verb(world: &mut LedgerWorld, id: &str, input: TransactionInput) {
+    try_update_transaction_verb(world, id, input).expect("修改交易失败");
+}
+
+/// [`update_transaction_verb`] 的 try 形态：不 panic，修改失败原样返回行为层错误。
+pub fn try_update_transaction_verb(
+    world: &mut LedgerWorld,
+    id: &str,
+    input: TransactionInput,
+) -> Result<(), AppError> {
+    world
+        .db
+        .write(|conn| update_transaction(conn, id, input))
+        .map(|_| ())
+}
+
+/// 删除动词（软删）：经 delete 编排入口写入；失败即 panic。
+pub fn delete_transaction_verb(world: &mut LedgerWorld, id: &str) {
+    try_delete_transaction_verb(world, id).expect("删除交易失败");
+}
+
+/// [`delete_transaction_verb`] 的 try 形态：不 panic，删除失败原样返回行为层错误。
+pub fn try_delete_transaction_verb(world: &mut LedgerWorld, id: &str) -> Result<(), AppError> {
+    world.db.write(|conn| delete_transaction(conn, id))
 }
 
 // ---------------------------------------------------------------------------
