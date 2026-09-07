@@ -362,21 +362,24 @@ onMounted(() => {
         :show-feedback="false"
         size="small"
       >
-        <NFormItem :label="t('accounts.create.name')">
-          <NInput
-            v-model:value="editName"
-            :placeholder="t('accounts.create.namePlaceholder')"
-          />
-        </NFormItem>
-        <NFormItem :label="t('accounts.create.type')">
-          <NInput :value="t(`accounts.type.${editIntent.row.account.type}`)" disabled />
-        </NFormItem>
-        <NFormItem :label="t('accounts.create.currency')">
-          <AppSelect v-model:value="editCurrency" :options="currencyOptions()" style="width: 100%" />
-        </NFormItem>
-        <NSpace justify="end" :size="8">
-          <NButton @click="closeEdit">{{ t('accounts.edit.cancel') }}</NButton>
-          <NButton type="primary" @click="submitEdit">{{ t('accounts.edit.save') }}</NButton>
+        <!-- 行距节奏容器：NFormItem 默认零行距，表单项与按钮行同包（ADR-0079 决策 4 / issue #804） -->
+        <NSpace vertical :size="12">
+          <NFormItem :label="t('accounts.create.name')">
+            <NInput
+              v-model:value="editName"
+              :placeholder="t('accounts.create.namePlaceholder')"
+            />
+          </NFormItem>
+          <NFormItem :label="t('accounts.create.type')">
+            <NInput :value="t(`accounts.type.${editIntent.row.account.type}`)" disabled />
+          </NFormItem>
+          <NFormItem :label="t('accounts.create.currency')">
+            <AppSelect v-model:value="editCurrency" :options="currencyOptions()" style="width: 100%" />
+          </NFormItem>
+          <NSpace justify="end" :size="8">
+            <NButton @click="closeEdit">{{ t('accounts.edit.cancel') }}</NButton>
+            <NButton type="primary" @click="submitEdit">{{ t('accounts.edit.save') }}</NButton>
+          </NSpace>
         </NSpace>
       </NForm>
     </AppModal>
@@ -399,37 +402,40 @@ onMounted(() => {
         :show-feedback="false"
         size="small"
       >
-        <NFormItem :label="t('accounts.adjust.currentBalance')">
-          <NText>{{
-            formatAmount(adjustIntent.row.balance_cents, adjustCurrency)
-          }}</NText>
-        </NFormItem>
-        <NFormItem :label="t('accounts.adjust.targetBalance')">
-          <NInputNumber
-            v-model:value="adjustTarget"
-            :precision="2"
-            :placeholder="t('accounts.adjust.targetPlaceholder')"
-            style="width: 100%"
-          />
-        </NFormItem>
-        <NFormItem :label="t('accounts.adjust.date')">
-          <AppDatePicker v-model:value="adjustDate" type="date" style="width: 100%" />
-        </NFormItem>
-        <NFormItem :label="t('accounts.adjust.delta')" :show-label="adjustDeltaText === ''">
-          <NText v-if="adjustDelta === 0">{{ t('accounts.adjust.deltaZero') }}</NText>
-          <NText v-else-if="adjustDeltaText" :type="adjustDelta! > 0 ? 'success' : 'warning'">
-            {{ adjustDeltaText }}{{ t('accounts.adjust.hint') }}
-          </NText>
-        </NFormItem>
-        <NSpace justify="end" :size="8">
-          <NButton @click="closeAdjust">{{ t('accounts.edit.cancel') }}</NButton>
-          <NButton
-            type="primary"
-            :disabled="adjustTargetCents === null || adjustDelta === 0"
-            @click="submitAdjust"
-          >
-            {{ t('accounts.adjust.confirm') }}
-          </NButton>
+        <!-- 行距节奏容器：NFormItem 默认零行距，表单项与按钮行同包（ADR-0079 决策 4 / issue #804） -->
+        <NSpace vertical :size="12">
+          <NFormItem :label="t('accounts.adjust.currentBalance')">
+            <NText>{{
+              formatAmount(adjustIntent.row.balance_cents, adjustCurrency)
+            }}</NText>
+          </NFormItem>
+          <NFormItem :label="t('accounts.adjust.targetBalance')">
+            <NInputNumber
+              v-model:value="adjustTarget"
+              :precision="2"
+              :placeholder="t('accounts.adjust.targetPlaceholder')"
+              style="width: 100%"
+            />
+          </NFormItem>
+          <NFormItem :label="t('accounts.adjust.date')">
+            <AppDatePicker v-model:value="adjustDate" type="date" style="width: 100%" />
+          </NFormItem>
+          <NFormItem :label="t('accounts.adjust.delta')" :show-label="adjustDeltaText === ''">
+            <NText v-if="adjustDelta === 0">{{ t('accounts.adjust.deltaZero') }}</NText>
+            <NText v-else-if="adjustDeltaText" :type="adjustDelta! > 0 ? 'success' : 'warning'">
+              {{ adjustDeltaText }}{{ t('accounts.adjust.hint') }}
+            </NText>
+          </NFormItem>
+          <NSpace justify="end" :size="8">
+            <NButton @click="closeAdjust">{{ t('accounts.edit.cancel') }}</NButton>
+            <NButton
+              type="primary"
+              :disabled="adjustTargetCents === null || adjustDelta === 0"
+              @click="submitAdjust"
+            >
+              {{ t('accounts.adjust.confirm') }}
+            </NButton>
+          </NSpace>
         </NSpace>
       </NForm>
     </AppModal>
