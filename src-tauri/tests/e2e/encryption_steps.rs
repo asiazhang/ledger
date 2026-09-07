@@ -182,8 +182,9 @@ fn given_pointer_to_empty_target(world: &mut LedgerWorld) {
 #[given(expr = "数据目录不可写")]
 fn given_dir_readonly(world: &mut LedgerWorld) {
     let dir = world.boot.enc_dir.clone().unwrap();
-    // Unix 权限位（非 root 下真实生效；root 绕过权限检查，不可依赖）。
-    // 先置只读再进入转换，转换结束后由 Then 侧恢复权限。
+    // Unix 权限位触发失败路径：非 root 下真实生效，root 架空权限位，本场景
+    // 由启动器按 @non-root-only 显式跳过（issue #793，与 #791 db 单测守卫
+    // 同策略）。先置只读再进入转换，转换结束后由 Then 侧恢复权限。
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
