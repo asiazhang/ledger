@@ -199,10 +199,39 @@ fn enable_encryption_converts_plaintext_db_and_preserves_data() {
     check_integrity(&conn).unwrap();
 }
 
+/// 「目录置只读（0o555）触发转换失败」手段是否可用（issue #791）：
+/// 仅非 root Unix 成立——root 凭 CAP_DAC_OVERRIDE 无视权限位，非 Unix
+/// 无权限位可依；不可用时测试显式跳过，不假红（CI 的 cargo test 仅在
+/// Linux 非 root runner 运行，覆盖不受影响）。
+fn readonly_trigger_available() -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // /proc/self 的属主 uid 即本进程身份（测试进程不切换 uid，零
+        // 新依赖）；无 /proc 的 Unix 平台按非 root 处理（票面针对
+        // Linux root）。
+        match std::fs::metadata("/proc/self") {
+            Ok(meta) => meta.uid() != 0,
+            Err(_) => true,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
 /// 转换中途失败时原库原样保留：导出无法落盘（目标目录不可写）时，
 /// 原库字节不变、仍是明文库、无残留临时产物——不存在半加密状态。
 #[test]
 fn enable_encryption_failure_keeps_original_db_intact() {
+    if !readonly_trigger_available() {
+        eprintln!(
+            "跳过：目录只读触发手段在当前环境不可用（root 架空权限位或非 Unix），失败路径由 Linux 非 root CI 覆盖（issue #791）"
+        );
+        return;
+    }
+
     let dir = temp_dir("convert-fail");
     let db = dir.join("ledger.db");
     {
@@ -212,8 +241,7 @@ fn enable_encryption_failure_keeps_original_db_intact() {
     }
     let original_bytes = std::fs::read(&db).unwrap();
 
-    // 目录置为不可写（探针同名目录预占 + Unix 权限位，跨环境稳定触发）。
-    std::fs::create_dir(dir.join(".x")).ok();
+    // 目录置为不可写，转换临时文件（temp_sibling）无法落盘，ATTACH 导出失败。
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
