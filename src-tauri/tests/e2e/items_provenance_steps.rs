@@ -11,10 +11,10 @@ use tauri_app_lib::error::AppError;
 use tauri_app_lib::item::ItemInput;
 use tauri_app_lib::item::domain::{create_item, update_item};
 use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::create_transaction_internal;
 
 use crate::items_common::build_input;
+use crate::step_inputs::expense_input;
 use crate::world::LedgerWorld;
 
 /// 关联购买交易的入参：日期/成本/币种填入**故意错误的占位值**，
@@ -67,23 +67,8 @@ fn create_expense_txn_with_currency(
     date: String,
 ) {
     let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::Expense,
-        amount_cents: amount,
         currency_code: currency,
-        account_id: world.account_id(&account_name),
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: None,
-        note: None,
-        date,
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
+        ..expense_input(amount, &world.account_id(&account_name), &date)
     };
     let result = create_transaction_internal(&world_conn!(world), input);
     let write = result.unwrap_or_else(|e| panic!("创建支出交易应成功但失败: {e}"));

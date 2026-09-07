@@ -90,20 +90,17 @@ export interface GateWhitelistEntry {
  * #756 清零，transaction 组已随 #757 清零。#758 收口：全表清零转纯禁令。
  */
 export const WHITELIST: readonly GateWhitelistEntry[] = [
-  // ── e2e（夹具统一另立 spec，暂无迁移票）──
-  { file: 'tests/e2e/accounts_steps.rs', note: 'e2e', r2: 2, r3: 1 },
-  { file: 'tests/e2e/backup_steps.rs', note: 'e2e', r1: 3, r2: 1 },
-  { file: 'tests/e2e/common.rs', note: 'e2e', r2: 1, r3: 2 },
+  // ── e2e（BDD 步骤共享层 spec #729：#761/#762/#763 已收编账户创建、标的夹具、
+  // 交易字面量与共享层内联 COUNT；余下直置归 #764 例外裁决）──
+  { file: 'tests/e2e/accounts_steps.rs', note: 'e2e', r2: 1, r3: 1 },
+  { file: 'tests/e2e/backup_steps.rs', note: 'e2e', r1: 3 },
   { file: 'tests/e2e/world.rs', note: 'e2e', r1: 1 },
-  { file: 'tests/e2e/dashboard_steps.rs', note: 'e2e', r2: 1 },
   { file: 'tests/e2e/data_location_steps.rs', note: 'e2e', r1: 4 },
-  { file: 'tests/e2e/encryption_steps.rs', note: 'e2e', r1: 3, r2: 1, r3: 2 },
-  { file: 'tests/e2e/financial_freedom_steps.rs', note: 'e2e', r2: 1 },
-  { file: 'tests/e2e/fund_trade_steps.rs', note: 'e2e', r2: 1 },
+  { file: 'tests/e2e/encryption_steps.rs', note: 'e2e', r1: 3 },
   { file: 'tests/e2e/instruments_steps.rs', note: 'e2e', r2: 3 },
   { file: 'tests/e2e/investment_trend_steps.rs', note: 'e2e', r2: 2 },
   { file: 'tests/e2e/scheduled_steps/occurrence.rs', note: 'e2e', r2: 1 },
-  { file: 'tests/e2e/startup_failure_steps.rs', note: 'e2e', r1: 2, r2: 1, r3: 2 },
+  { file: 'tests/e2e/startup_failure_steps.rs', note: 'e2e', r1: 2 },
   { file: 'tests/e2e/transactions_query_steps.rs', note: 'e2e', r3: 4 },
 
   // ── backup 域与壳/基础设施内联 cfg(test)（暂无迁移票）──

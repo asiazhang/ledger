@@ -14,17 +14,18 @@ use tauri_app_lib::error::AppError;
 use tauri_app_lib::item::cost;
 use tauri_app_lib::item::domain;
 use tauri_app_lib::item::{ItemInput, ItemStatus};
-use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::create_transaction_internal;
+use tauri_app_lib::transaction::{TransactionInput, create_transaction_internal};
 
-use crate::common::{assert_last_error_contains, insert_account, new_account_id};
+use crate::common::assert_last_error_contains;
 use crate::items_common::build_input;
+use crate::step_inputs::expense_input;
+use crate::step_verbs::create_account_verb;
 use crate::world::LedgerWorld;
 
 /// 脚手架：创建一笔 expense 购买交易并返回其 id（issue #207 起物品创建必关联
 /// 购买交易，未显式 Given 交易的场景由本脚手架补齐溯源）。账户按币种惰性创建
-/// 并注册到 world（与「存在账户」Given 同款）；交易经 `create_transaction_internal` 接缝，
+/// （经账户域公开创建入口动词，#763 旁路归零）并注册到 world（与「存在账户」
+/// Given 同款）；交易经 L1 工厂构造后走 `create_transaction_internal` 接缝，
 /// 金额/日期/汇率不合法会在此处失败，与真实写入路径一致。
 fn scaffold_purchase_tx(
     world: &mut LedgerWorld,
@@ -35,31 +36,11 @@ fn scaffold_purchase_tx(
     let account_name = format!("物品脚手架({currency})");
     let account_id = match world.account_name_to_id.get(&account_name) {
         Some(id) => id.clone(),
-        None => {
-            let id = new_account_id();
-            insert_account(&world_conn!(world), &id, &account_name, "cash", currency);
-            world.account_name_to_id.insert(account_name, id.clone());
-            id
-        }
+        None => create_account_verb(world, &account_name, "cash", currency, None),
     };
     let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::Expense,
-        amount_cents: cost_cents,
         currency_code: currency.into(),
-        account_id,
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: None,
-        note: None,
-        date: date.into(),
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
+        ..expense_input(cost_cents, &account_id, date)
     };
     create_transaction_internal(&world_conn!(world), input)
         .unwrap_or_else(|e| panic!("脚手架购买交易应创建成功但失败: {e}"))

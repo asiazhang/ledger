@@ -25,10 +25,10 @@ use tauri_app_lib::reports::{
     category_shares_rows, merchant_shares_report, monthly_summary_rows, query_report_date_range,
 };
 use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::create_transaction_internal;
 
 use crate::common::query_all_transactions;
+use crate::step_inputs::{expense_input, parse_kind, plain_input};
 use crate::world::LedgerWorld;
 
 // ---------------------------------------------------------------------------
@@ -102,25 +102,11 @@ fn create_expense_in_relative_year(
     account_name: String,
 ) {
     let year = resolve_year_token(&year_token, scenario_today(world));
-    let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::Expense,
-        amount_cents: amount,
-        currency_code: "CNY".into(),
-        account_id: world.account_id(&account_name),
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: None,
-        note: None,
-        date: format!("{year}-06-15"),
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
-    };
+    let input = expense_input(
+        amount,
+        &world.account_id(&account_name),
+        &format!("{year}-06-15"),
+    );
     // 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）创建，提交点置脏/到期检查。
     let result = world
         .db
@@ -152,23 +138,14 @@ fn create_txn_with_merchant_currency(
     merchant_name: String,
 ) {
     let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
-        amount_cents: amount,
         currency_code: currency,
-        account_id: world.account_id(&account_name),
-        to_account_id: None,
-        category_id: None,
         merchant_id: Some(world.merchant_id(&merchant_name)),
-        refund_of_transaction_id: None,
-        note: None,
-        date,
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
+        ..plain_input(
+            parse_kind(&kind),
+            amount,
+            &world.account_id(&account_name),
+            &date,
+        )
     };
     let result = create_transaction_internal(&world_conn!(world), input);
     assert!(result.is_ok(), "创建交易失败: {:?}", result.err());
@@ -316,23 +293,13 @@ fn create_txn_with_category(
     date: String,
 ) {
     let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::parse(&kind).unwrap_or_else(|e| panic!("非法 kind: {kind}（{e}）")),
-        amount_cents: amount,
-        currency_code: "CNY".into(),
-        account_id: world.account_id(&account_name),
-        to_account_id: None,
         category_id: Some(expense_category_id(&world_conn!(world), &category_name)),
-        merchant_id: None,
-        refund_of_transaction_id: None,
-        note: None,
-        date,
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
+        ..plain_input(
+            parse_kind(&kind),
+            amount,
+            &world.account_id(&account_name),
+            &date,
+        )
     };
     let result = create_transaction_internal(&world_conn!(world), input);
     assert!(result.is_ok(), "创建交易失败: {:?}", result.err());

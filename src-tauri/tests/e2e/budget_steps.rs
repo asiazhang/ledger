@@ -14,14 +14,14 @@ use rusqlite::params;
 use tauri_app_lib::budget::BudgetInput;
 use tauri_app_lib::budget::{budget_progress_rows, create_budget, delete_budget, update_budget};
 use tauri_app_lib::categories::{
-    delete_category as delete_category_domain, list_categories as list_categories_domain,
+    CategoryInput, create_category, delete_category as delete_category_domain,
+    list_categories as list_categories_domain,
 };
-use tauri_app_lib::db::{device_id, new_uuid, now_iso};
 use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::amount::TransactionKind;
 use tauri_app_lib::transaction::create_transaction_internal;
 
 use crate::common::assert_last_error_contains;
+use crate::step_inputs::{expense_input as expense_input_factory, refund_input};
 use crate::world::LedgerWorld;
 
 // ---------------------------------------------------------------------------
@@ -59,29 +59,42 @@ fn category_id_any(conn: &rusqlite::Connection, name: &str) -> String {
     .unwrap_or_else(|e| panic!("分类 '{}' 不存在: {e}", name))
 }
 
-fn insert_category(conn: &rusqlite::Connection, name: &str, parent_name: Option<&str>) {
+/// 经分类域公开创建入口建支出分类（可选父分类，#763 旁路归零）。
+fn create_category_via_entry(conn: &rusqlite::Connection, name: &str, parent_name: Option<&str>) {
     let parent_id = parent_name.map(|p| category_id(conn, p));
-    let now = now_iso();
-    conn.execute(
-        "INSERT INTO categories (id,name,kind,parent_id,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,'expense',?3,?4,?4,1,?5)",
-        params![new_uuid(), name, parent_id, now, device_id()],
+    create_category(
+        conn,
+        CategoryInput {
+            name: name.into(),
+            kind: "expense".into(),
+            parent_id,
+            icon: None,
+        },
     )
     .unwrap();
 }
 
-fn insert_budget_row(
+/// 经预算域公开创建入口落一条预算行（金额/分类/重复守卫由产品代码保证，
+/// #763 旁路归零；夹具均为支出分类、正金额、同周期不重复，守卫不裁剪场景）。
+fn create_budget_via_entry(
     conn: &rusqlite::Connection,
     category_id: &str,
     period: &str,
     amount_cents: i64,
     start_date: &str,
 ) {
-    let now = now_iso();
-    conn.execute(
-        "INSERT INTO budgets (id,category_id,period,amount_cents,start_date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,?5,?6,?6,1,?7,0)",
-        params![new_uuid(), category_id, period, amount_cents, start_date, now, device_id()],
+    create_budget(
+        conn,
+        &BudgetInput {
+            category_id: category_id.into(),
+            period: Some(
+                period
+                    .parse()
+                    .unwrap_or_else(|e| panic!("非法预算周期 '{period}': {e:?}")),
+            ),
+            amount_cents,
+            start_date: start_date.into(),
+        },
     )
     .unwrap();
 }
@@ -102,23 +115,8 @@ fn expense_input(
     date: String,
 ) -> TransactionInput {
     TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::Expense,
-        amount_cents: amount,
-        currency_code: "CNY".into(),
-        account_id: world.account_id(account),
-        to_account_id: None,
         category_id: Some(category_id(&world_conn!(world), category_name)),
-        merchant_id: None,
-        refund_of_transaction_id: None,
-        note: None,
-        date,
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
+        ..expense_input_factory(amount, &world.account_id(account), &date)
     }
 }
 
@@ -127,39 +125,41 @@ fn expense_input(
 // ---------------------------------------------------------------------------
 
 #[given(expr = "存在支出分类 {string}")]
-fn create_category(world: &mut LedgerWorld, name: String) {
-    insert_category(&world_conn!(world), &name, None);
+fn create_expense_category(world: &mut LedgerWorld, name: String) {
+    create_category_via_entry(&world_conn!(world), &name, None);
 }
 
 #[given(expr = "存在支出分类 {string} 属于 {string}")]
 fn create_subcategory(world: &mut LedgerWorld, name: String, parent: String) {
-    insert_category(&world_conn!(world), &name, Some(&parent));
+    create_category_via_entry(&world_conn!(world), &name, Some(&parent));
 }
 
 #[given(expr = "存在收入分类 {string}")]
 fn create_income_category(world: &mut LedgerWorld, name: String) {
-    let now = now_iso();
-    world_conn!(world)
-        .execute(
-            "INSERT INTO categories (id,name,kind,parent_id,created_at,updated_at,version,device_id) \
-             VALUES (?1,?2,'income',NULL,?3,?3,1,?4)",
-            params![new_uuid(), name, now, device_id()],
-        )
-        .unwrap();
+    create_category(
+        &world_conn!(world),
+        CategoryInput {
+            name,
+            kind: "income".into(),
+            parent_id: None,
+            icon: None,
+        },
+    )
+    .unwrap();
 }
 
 #[given(expr = "为分类 {string} 创建月预算 金额 {int}")]
 fn create_monthly_budget(world: &mut LedgerWorld, name: String, amount: i64) {
     let today = scenario_today(world);
     let id = category_id(&world_conn!(world), &name);
-    insert_budget_row(&world_conn!(world), &id, "monthly", amount, &ymd(today));
+    create_budget_via_entry(&world_conn!(world), &id, "monthly", amount, &ymd(today));
 }
 
 #[given(expr = "为分类 {string} 创建年预算 金额 {int}")]
 fn create_yearly_budget(world: &mut LedgerWorld, name: String, amount: i64) {
     let today = scenario_today(world);
     let id = category_id(&world_conn!(world), &name);
-    insert_budget_row(&world_conn!(world), &id, "yearly", amount, &ymd(today));
+    create_budget_via_entry(&world_conn!(world), &id, "yearly", amount, &ymd(today));
 }
 
 /// 模拟存量行：带历史开始日期的预算（旧数据零迁移，直接按新规则滚动生效）。
@@ -176,7 +176,7 @@ fn create_legacy_budget(
         "非法预算周期: {period}"
     );
     let id = category_id(&world_conn!(world), &name);
-    insert_budget_row(&world_conn!(world), &id, &period, amount, &start_date);
+    create_budget_via_entry(&world_conn!(world), &id, &period, amount, &start_date);
 }
 
 // ---------------------------------------------------------------------------
@@ -339,8 +339,8 @@ fn query_budget_progress(world: &mut LedgerWorld) {
     world.report.last_budget_progress = budget_progress_rows(&world_conn!(world), today).unwrap();
 }
 
-/// 上一笔支出本月收到退款：走行为层。Writer 归一化会以原支出覆盖账户/币种/分类，
-/// 此处传入的账户与币种仅为满足入参形状，实际不生效。
+/// Writer 归一化会以原支出覆盖账户/币种/分类，此处传入的账户仅为满足入参形状，
+/// 实际不生效（L1 退款工厂的账户形参同款口径）。
 #[when(expr = "上一笔支出本月收到退款 {int}")]
 fn refund_last_expense(world: &mut LedgerWorld, amount: i64) {
     let expense_id = world
@@ -348,25 +348,12 @@ fn refund_last_expense(world: &mut LedgerWorld, amount: i64) {
         .last_transaction_id
         .clone()
         .expect("场景中没有可退款的前序支出");
-    let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
-        kind: TransactionKind::Refund,
-        amount_cents: amount,
-        currency_code: "CNY".into(),
-        account_id: world.account_id("现金"),
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: Some(expense_id),
-        note: None,
-        date: ymd(scenario_today(world)),
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        idempotency_key: None,
-    };
+    let input = refund_input(
+        amount,
+        &world.account_id("现金"),
+        &expense_id,
+        &ymd(scenario_today(world)),
+    );
     create_transaction(world, input);
 }
 

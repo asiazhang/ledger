@@ -1,23 +1,20 @@
 //! 交易写入 BDD 步骤（issue #761 迁移）：交易输入构造收编 L1 步骤输入工厂
 //! （[`crate::step_inputs`]）、写入收编 L2 步骤动词（[`crate::step_verbs`]）——
 //! 步骤函数薄化为文本解析 + 快照刷新；错误断言路径改走动词 try 形态（构造 +
-//! 显式写入捕获），断言语义不变。「存在账户」前置的裸 SQL 属账户旁路，归 #763
-//! 旁路归零处置；注入触发器两步骤为纯测试侧注入（spec #169 定案），留直连例外。
+//! 显式写入捕获），断言语义不变。「存在账户」前置经账户域公开创建入口动词
+//! （#763 旁路归零）；注入触发器两步骤为纯测试侧注入（spec #169 定案），留直连例外。
 
 use cucumber::{given, then, when};
 
 use tauri_app_lib::transaction::TransactionInput;
 use tauri_app_lib::transaction::amount::TransactionKind;
 
-use crate::common::{
-    capture_expected_error, insert_account, instrument_id_by_symbol, new_account_id,
-    query_all_transactions,
-};
+use crate::common::{capture_expected_error, instrument_id_by_symbol, query_all_transactions};
 use crate::step_inputs::{buy_input, parse_kind, plain_input, trade_input};
 use crate::step_verbs;
 use crate::step_verbs::{
-    create_transaction_verb, refund_last_transaction, try_create_transaction_verb,
-    try_delete_transaction_verb,
+    create_account_verb, create_transaction_verb, refund_last_transaction,
+    try_create_transaction_verb, try_delete_transaction_verb,
 };
 use crate::world::LedgerWorld;
 
@@ -27,9 +24,7 @@ use crate::world::LedgerWorld;
 
 #[given(expr = "存在账户 {string} 类型 {string} 币种 {string}")]
 fn create_account(world: &mut LedgerWorld, name: String, kind: String, currency: String) {
-    let id = new_account_id();
-    insert_account(&world_conn!(world), &id, &name, &kind, &currency);
-    world.account_name_to_id.insert(name, id);
+    create_account_verb(world, &name, &kind, &currency, None);
 }
 
 // ---------------------------------------------------------------------------

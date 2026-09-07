@@ -18,21 +18,12 @@ use tauri_app_lib::db::{device_id, new_uuid, now_iso};
 use tauri_app_lib::investment::{
     TrendRange, query_instrument_price_trend, query_portfolio_value_trend,
 };
-use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::amount::TransactionKind;
+use tauri_app_lib::transaction::TransactionKind;
 use tauri_app_lib::transaction::create_transaction_internal;
 
+use crate::common::instrument_id_by_symbol;
+use crate::step_inputs::trade_input;
 use crate::world::LedgerWorld;
-
-/// 按标的代码查 instrument id（Given 步骤先行落库，必存在）。
-fn instrument_id(conn: &rusqlite::Connection, symbol: &str) -> String {
-    conn.query_row(
-        "SELECT id FROM instruments WHERE symbol=?1",
-        params![symbol],
-        |r| r.get(0),
-    )
-    .unwrap_or_else(|_| panic!("标的不存在，先铺垫存在标的步骤: {symbol}"))
-}
 
 // ---------------------------------------------------------------------------
 // Given：行情 / 汇率历史夹具（直插周点行，采集通道需 HTTP 故绕过）
@@ -48,7 +39,7 @@ fn add_price_history(
     price_cents: i64,
     currency: String,
 ) {
-    let instrument_id = instrument_id(&world_conn!(world), &symbol);
+    let instrument_id = instrument_id_by_symbol(&world_conn!(world), &symbol);
     let now = now_iso();
     world_conn!(world)
         .execute(
@@ -124,7 +115,9 @@ fn sell_instrument_on(
     );
 }
 
-/// 买卖流水共用写入：以账户币种成交（fixture 入参与真实写路径一致）。
+/// 经行为层创建一笔买入/卖出（plan → insert → apply，与 IPC 创建命令同一实现）：
+/// L1 买卖工厂构造（行金额置零、单价进 wire；币种/手续费后端以账户币种与重算为准，
+/// 提交值不落行——#761 迁移同款裁定）。
 fn create_trade(
     world: &mut LedgerWorld,
     kind: TransactionKind,
@@ -135,38 +128,15 @@ fn create_trade(
     date: &str,
 ) {
     let account_id = world.account_id(account_name);
-    let (instrument_id, currency_code) = {
-        let conn = world_conn!(world);
-        let instrument_id = instrument_id(&conn, symbol);
-        let currency_code: String = conn
-            .query_row(
-                "SELECT currency_code FROM accounts WHERE id=?1",
-                params![account_id],
-                |r| r.get(0),
-            )
-            .unwrap_or_else(|_| panic!("账户不存在: {account_name}"));
-        (instrument_id, currency_code)
-    };
-    let input = TransactionInput {
-        merchant_name: None,
-        policy_id: None,
+    let instrument_id = instrument_id_by_symbol(&world_conn!(world), symbol);
+    let input = trade_input(
         kind,
-        // 占位金额（prepare 按「数量 × 单价（万分之一元）÷ 100 ± 手续费」重算覆盖）
-        amount_cents: (quantity * price_cents as f64 / 100.0).round() as i64,
-        currency_code,
-        account_id,
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        refund_of_transaction_id: None,
-        note: None,
-        date: date.into(),
-        instrument_id: Some(instrument_id),
-        quantity: Some(quantity),
-        price_cents: Some(price_cents),
-        fee_cents: Some(0),
-        idempotency_key: None,
-    };
+        &instrument_id,
+        quantity,
+        price_cents,
+        &account_id,
+        date,
+    );
     // 与 IPC 命令同形态：经连接层统一写入口（ADR-0032）创建，提交点置脏/到期检查。
     let result = world
         .db
@@ -210,7 +180,7 @@ fn assert_portfolio_trend_point_count(world: &mut LedgerWorld, expected: usize) 
 /// 查询侧不感知标的类型——净值走势即此，issue #303）。
 #[when(expr = "查询标的 {string} 的走势")]
 fn query_instrument_trend(world: &mut LedgerWorld, symbol: String) {
-    let id = instrument_id(&world_conn!(world), &symbol);
+    let id = instrument_id_by_symbol(&world_conn!(world), &symbol);
     match query_instrument_price_trend(&world_conn!(world), &id, &TrendRange::default()) {
         Ok(trend) => {
             world.asset.last_instrument_trend = Some(trend);

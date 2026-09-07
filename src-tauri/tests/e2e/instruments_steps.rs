@@ -20,7 +20,10 @@ use crate::world::LedgerWorld;
 // Given
 // ---------------------------------------------------------------------------
 
-/// 直接插入金融工具字典行（投资域字典，可指定中文名称供拼音语义场景使用）。
+/// 直插金融工具字典行（投资域字典，可指定中文名称供拼音语义场景使用）。
+/// 库内状态直置（归 #764 例外清单）：场景以此夹具模拟「存量同步行」（来源
+/// 'eastmoney'），公开创建入口只产 'manual' 行（来源随行终身不变，ADR-0036），
+/// 「同步来源拒删」「upsert 来源不改写」等被测前提依赖直置。
 #[given(expr = "存在标的 {string} 名称 {string} 币种 {string}")]
 fn create_instrument_named(
     world: &mut LedgerWorld,
@@ -38,7 +41,8 @@ fn create_instrument_named(
         .unwrap();
 }
 
-/// 直接插入指定类型的金融工具字典行（同码异类型消歧场景用，issue #294）。
+/// 直插指定类型的金融工具字典行（同码异类型消歧场景用，issue #294；
+/// 同步来源直置例外，动机同上）。
 #[given(expr = "存在类型 {string} 的标的 {string} 名称 {string} 币种 {string}")]
 fn create_instrument_of_type(
     world: &mut LedgerWorld,
@@ -57,8 +61,9 @@ fn create_instrument_of_type(
         .unwrap();
 }
 
-/// 直接插入指定市场的金融工具字典行（美股持仓折算场景用，issue #696：
-/// market 为闭集值如 nasdaq/nyse/amex，经 V002 检查约束验证落库）。
+/// 直插指定市场的金融工具字典行（美股持仓折算场景用，issue #696：
+/// market 为闭集值如 nasdaq/nyse/amex，经 V002 检查约束验证落库；
+/// 同步来源直置例外，动机同上）。
 #[given(expr = "存在市场 {string} 的标的 {string} 名称 {string} 币种 {string}")]
 fn create_instrument_with_market(
     world: &mut LedgerWorld,

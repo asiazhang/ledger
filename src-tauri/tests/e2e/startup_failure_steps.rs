@@ -16,10 +16,8 @@ use tauri_app_lib::backup::{expected_schema_version, restore_db_from};
 use tauri_app_lib::db::data_location::{self, DB_FILE_NAME, effective_db_dir};
 use tauri_app_lib::db::encryption::{SQLITE_HEADER_MAGIC, enable_encryption_for_file};
 use tauri_app_lib::db::{boot, init_db, new_uuid, open_connection, open_db_in};
-use tauri_app_lib::transaction::TransactionInput;
-use tauri_app_lib::transaction::amount::TransactionKind;
-use tauri_app_lib::transaction::create_transaction_internal;
 
+use crate::common::seed_account_with_expenses;
 use crate::world::{LedgerWorld, StartupTakeover};
 
 // ---------------------------------------------------------------------------
@@ -46,40 +44,18 @@ fn target_dir_with_corrupt_db(world: &mut LedgerWorld) {
     std::fs::write(target.join(DB_FILE_NAME), b"not a database at all").unwrap();
 }
 
-/// 在文件库中建账户与 N 条交易（经 Writer/行为层接缝，含余额缓存行不变量；
-/// 与 encryption_steps 的种子同型）。本文件仅解锁屏恢复入口场景使用。
+/// 在文件库中建账户与 N 条交易：账户经域公开创建入口（余额缓存行不变量由
+/// 产品代码保证，#763 旁路归零），交易经共享种子助手（L1 工厂 + 行为层接缝）；
+/// 与 encryption_steps 的种子同型。本文件仅解锁屏恢复入口场景使用。
 fn seed_vault_db(conn: &Connection, count: usize) {
-    let account_id = new_uuid();
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,'cash','CNY',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',1,'test',0)",
-        rusqlite::params![account_id, "现金"],
-    )
-    .unwrap();
-    tauri_app_lib::accounts::balance::refresh_account_balances(conn, &[account_id.as_str()])
-        .unwrap();
-    for i in 0..count {
-        let input = TransactionInput {
-            merchant_name: None,
-            policy_id: None,
-            kind: TransactionKind::Expense,
-            amount_cents: 1000 + i as i64,
-            currency_code: "CNY".into(),
-            account_id: account_id.clone(),
-            to_account_id: None,
-            category_id: None,
-            merchant_id: None,
-            refund_of_transaction_id: None,
-            note: Some(format!("解锁屏恢复种子交易 {i}")),
-            date: "2026-03-01".into(),
-            instrument_id: None,
-            quantity: None,
-            price_cents: None,
-            fee_cents: None,
-            idempotency_key: None,
-        };
-        create_transaction_internal(conn, input).unwrap();
-    }
+    seed_account_with_expenses(
+        conn,
+        "现金",
+        "解锁屏恢复种子交易",
+        count,
+        1000,
+        "2026-03-01",
+    );
 }
 
 /// 等待解锁现场（issue #603）：默认数据目录中的真密文库（页对齐落盘形态），
