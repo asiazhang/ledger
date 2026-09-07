@@ -4,12 +4,18 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
 import HoldingsOverview from '@/components/investments/HoldingsOverview.vue'
+import { formatAmount, formatPrice } from '@/utils/money'
 import {
   makeHolding,
   makeInstrument,
   mockHoldings,
   mockInstruments,
 } from './factories'
+import { refCurrencies } from './helpers/reference-stubs'
+
+// 金额断言委托形态（issue #770）：期待值调同一 formatAmount/formatPrice 实现，
+// 格式规则唯一归属其专测；现价列为价格刻度（ADR-0038）走 formatPrice
+const cny = refCurrencies[0]
 import {
   firePricesChanged,
   resetPricesChangedHandler,
@@ -52,9 +58,9 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('当前持仓')
     expect(wrapper.text()).toContain('总市值')
-    expect(wrapper.text()).toContain('¥1500')
+    expect(wrapper.text()).toContain(formatAmount(150000, cny))
     expect(wrapper.text()).toContain('未实现盈亏合计')
-    expect(wrapper.text()).toContain('¥300')
+    expect(wrapper.text()).toContain(formatAmount(30000, cny))
   })
 
   it('渲染持仓明细表列：标的/数量/成本/现价/市值/未实现盈亏', async () => {
@@ -67,11 +73,11 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     // 行数据来自 mock
     expect(await cellText('symbol')).toEqual(['600000', '000001'])
     expect(await cellText('quantity')).toEqual(['100', '10'])
-    expect(await cellText('cost_basis')).toEqual(['¥1200', '¥80'])
-    // 无行情行显示 -
-    expect(await cellText('latest_price')).toEqual(['¥15', '-'])
-    expect(await cellText('market_value')).toEqual(['¥1500', '-'])
-    expect(await cellText('unrealized_pnl')).toEqual(['¥300', '-'])
+    expect(await cellText('cost_basis')).toEqual([formatAmount(120000, cny), formatAmount(8000, cny)])
+    // 无行情行显示 -；现价列为价格刻度（formatPrice），其余列金额刻度（formatAmount）
+    expect(await cellText('latest_price')).toEqual([formatPrice(150000, cny), '-'])
+    expect(await cellText('market_value')).toEqual([formatAmount(150000, cny), '-'])
+    expect(await cellText('unrealized_pnl')).toEqual([formatAmount(30000, cny), '-'])
   })
 
   it('无持仓时显示空态', async () => {
@@ -113,9 +119,9 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     wrapper = mount(HoldingsOverview)
     await flushPromises()
     // 现价 12345 万分之一元 = 1.2345 元，4 位小数无损展示；市值/未实现盈亏随行显形
-    expect(await cellText('latest_price')).toEqual(['¥1.2345'])
-    expect(await cellText('market_value')).toEqual(['¥1234.5'])
-    expect(await cellText('unrealized_pnl')).toEqual(['¥0.5'])
+    expect(await cellText('latest_price')).toEqual([formatPrice(12345, cny)])
+    expect(await cellText('market_value')).toEqual([formatAmount(123450, cny)])
+    expect(await cellText('unrealized_pnl')).toEqual([formatAmount(50, cny)])
   })
 
   it('基金行现价下方展示净值日期（现价对应哪天的净值，#303），股票行不展示', async () => {
@@ -145,8 +151,8 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     await flushPromises()
     const cells = await cellText('latest_price')
     // 股票行（无净值日期）只有价格
-    expect(cells[0]).toBe('¥15')
-    expect(cells[1]).toContain('¥3.348')
+    expect(cells[0]).toBe(formatPrice(150000, cny))
+    expect(cells[1]).toContain(formatPrice(33480, cny))
     // 基金行现价下方展示净值日期
     expect(cells[1]).toContain('净值 2026-01-30')
   })

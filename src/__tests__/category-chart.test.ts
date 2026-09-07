@@ -9,6 +9,7 @@ import {
 } from '@/utils/category-chart'
 import type { Category, CategoryShare } from '@/types'
 import { makeCategory } from './factories'
+import { formatAmount } from '@/utils/money'
 
 const categories: Category[] = [
   makeCategory({ id: 'food', name: '餐饮' }),
@@ -177,16 +178,16 @@ describe('tooltip 标签与合计（issue #378）', () => {
   })
 
   it('tooltip 标签 =「金额 · 占比%」，分母为全部一级柱合计', () => {
-    // formatAmount: 8500 分 → "85"、6000 分 → "60"
-    expect(barTooltipLabel(6000, 8500)).toBe('60 · 71%')
+    // 金额段委托 formatAmount（issue #770，8500 分分母）；「 · 占比%」连接与取整为本函数自身规则
+    expect(barTooltipLabel(6000, 8500)).toBe(`${formatAmount(6000)} · 71%`)
   })
 
   it('负柱显示负占比（净额口径诚实可查）', () => {
-    expect(barTooltipLabel(-500, 8500)).toBe('-5 · -6%')
+    expect(barTooltipLabel(-500, 8500)).toBe(`${formatAmount(-500)} · -6%`)
   })
 
   it('合计为 0（无柱或正负相抵）时只显示金额，不出现除零', () => {
-    expect(barTooltipLabel(1200, 0)).toBe('12')
-    expect(barTooltipLabel(-1200, 0)).toBe('-12')
+    expect(barTooltipLabel(1200, 0)).toBe(formatAmount(1200))
+    expect(barTooltipLabel(-1200, 0)).toBe(formatAmount(-1200))
   })
 })

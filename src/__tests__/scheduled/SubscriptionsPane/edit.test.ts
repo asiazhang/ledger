@@ -3,6 +3,8 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { NModal, NInputNumber, NDatePicker, NSelect, NTreeSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import { mockInvoke } from '../../helpers/invoke-mock'
+import { formatAmount } from '@/utils/money'
+import { refCurrencies } from '../../helpers/reference-stubs'
 import {
   mockDetails,
   makeDetail,
@@ -15,6 +17,9 @@ import {
   setMockPlans,
   setup,
 } from './common'
+
+// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
+const cny = refCurrencies[0]
 
 beforeEach(setup)
 
@@ -68,7 +73,7 @@ describe('SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
     expect(modal.findComponent(NInputNumber).exists()).toBe(false)
     expect(modal.findComponent(NDatePicker).exists()).toBe(false)
     // 弹窗内不出现计划金额
-    expect(modal.text()).not.toContain('¥15')
+    expect(modal.text()).not.toContain(formatAmount(1500, cny))
   })
 
   it('未选账户时不提交编辑', async () => {

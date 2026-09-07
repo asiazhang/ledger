@@ -11,6 +11,8 @@ import InstallmentsPane from '@/components/scheduled/InstallmentsPane.vue'
 import { findInputByTestId as findInput } from '../helpers/dom'
 import { mountFlushed } from '../helpers/mount'
 import { componentVm } from '../helpers/component-vm'
+import { refCurrencies } from '../helpers/reference-stubs'
+import { formatAmount } from '@/utils/money'
 import type {
   Account,
   Category,
@@ -21,6 +23,9 @@ import type {
   ScheduledTransactionDetail,
   ScheduledTransactionWithExt,
 } from '@/types'
+
+// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
+const cny = refCurrencies[0]
 
 /**
  * 分期页签组件测试（ADR-0041 决策 10，迁移步 3）：清单加载/按形态过滤/状态过滤/
@@ -251,8 +256,8 @@ describe('InstallmentsPane 清单渲染冒烟（编排用例见 useScheduledPlan
     mockDetails.set('i1', makeDetail(inst, { count: 3, amount: 30000 }))
     const wrapper = await mountView()
     const cell = wrapper.find('[data-testid="inst-progress-i1"]')
-    expect(cell.text()).toContain('¥300')
-    expect(cell.text()).toContain('¥1200')
+    expect(cell.text()).toContain(formatAmount(30000, cny))
+    expect(cell.text()).toContain(formatAmount(120000, cny))
     expect(cell.text()).toContain('3/12 期')
     const progress = cell.findComponent(NProgress)
     expect(progress.exists()).toBe(true)
@@ -269,7 +274,7 @@ describe('InstallmentsPane 清单渲染冒烟（编排用例见 useScheduledPlan
     mockPlans = [inst]
     mockDetails.set('i1', makeDetail(inst, { count: 1, amount: 150 }))
     const wrapper = await mountView()
-    expect(wrapper.find('[data-testid="inst-progress-i1"]').text()).toContain('¥1.5')
+    expect(wrapper.find('[data-testid="inst-progress-i1"]').text()).toContain(formatAmount(150, cny))
   })
 
   it('默认只显示进行中（active）的分期，可切换过滤（默认过滤归模块，此处验渲染）', async () => {
@@ -437,8 +442,9 @@ describe('InstallmentsPane 新建分期（分期形态真差异，issue #204）'
     componentVm(wrapper.findComponent('[data-testid="inst-periods"]')).$emit('update:value', 3)
     await flushPromises()
     const preview = modalText('inst-preview')
-    expect(preview).toContain('¥0.33')
-    expect(preview).toContain('¥0.34')
+    // 1 元分 3 期：每期 floor 33 分，末期 34 分（尾差归末期）
+    expect(preview).toContain(formatAmount(33, cny))
+    expect(preview).toContain(formatAmount(34, cny))
     expect(preview).toContain('尾差')
   })
 
@@ -450,7 +456,7 @@ describe('InstallmentsPane 新建分期（分期形态真差异，issue #204）'
     componentVm(wrapper.findComponent('[data-testid="inst-periods"]')).$emit('update:value', 12)
     await flushPromises()
     const preview = modalText('inst-preview')
-    expect(preview).toContain('¥100')
+    expect(preview).toContain(formatAmount(10000, cny))
     expect(preview).not.toContain('尾差')
   })
 

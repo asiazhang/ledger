@@ -85,6 +85,9 @@ describe('金额隐私模式：展示格式化层收口（issue #566）', () => 
 
   describe('关闭：输出与现状逐字符一致（回归保障）', () => {
     it('开启再关闭后，输出恢复与掩码开启前逐字符一致', () => {
+      // 下方 ¥/$ 字面量为隐私遮罩契约的豁免登记（issue #770）：本用例断言
+      // 「开启再关闭后输出逐字符还原」，字面量即契约——委托 formatAmount
+      // 期待值将与被测输出同源，退化为永真断言，故逐字面量保留。
       const before = [
         formatAmount(12345, cny),
         formatAmount(-123456789, cny, 'en-US'),
@@ -96,9 +99,15 @@ describe('金额隐私模式：展示格式化层收口（issue #566）', () => 
       amountPrivacyEnabled.value = true
       expect(formatAmount(12345, cny)).toBe(MASK)
       amountPrivacyEnabled.value = false
+      // —— 逐条豁免登记（issue #770）：字面量即契约（逐字符还原），委托期待值与被测
+      // 输出同源、退化为永真断言，故逐条保留 ——
+      // 豁免①：formatAmount 正数、尾零裁剪基线锚
       expect(formatAmount(12345, cny)).toBe('¥123.45')
+      // 豁免②：formatAmount 负号在最前 + en-US 三位分组锚
       expect(formatAmount(-123456789, cny, 'en-US')).toBe('-¥1,234,567.89')
+      // 豁免③：formatPrice 万分之一元价格刻度（ADR-0038）锚
       expect(formatPrice(12345, cny)).toBe('¥1.2345')
+      // 豁免④：formatPrice 大数 + en-US 三位分组锚
       expect(formatPrice(1234567890, cny, 'en-US')).toBe('¥123,456.789')
       expect(formatQuantity(12345.67)).toBe('1,2345.67')
       expect(formatQuantity(-1234567, 'en-US')).toBe('-1,234,567')

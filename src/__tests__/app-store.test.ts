@@ -151,11 +151,13 @@ describe('useAppStore amountPrivacyEnabled（issue #566：金额隐私模式，�
 
   it('store 状态与格式化层消费同一 ref：切换即时反映到 formatAmount', () => {
     const store = useAppStore()
-    expect(formatAmount(12345)).toBe('123.45')
+    // 具体格式归 formatAmount 专测；此处只锚「非掩码基准 ↔ 掩码」同 ref 翻转
+    const unmasked = formatAmount(12345)
+    expect(unmasked).not.toBe('••••')
     store.setAmountPrivacyEnabled(true)
     expect(formatAmount(12345)).toBe('••••')
     store.setAmountPrivacyEnabled(false)
-    expect(formatAmount(12345)).toBe('123.45')
+    expect(formatAmount(12345)).toBe(unmasked)
     expect(amountPrivacyEnabled.value).toBe(false)
   })
 })

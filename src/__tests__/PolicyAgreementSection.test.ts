@@ -3,12 +3,17 @@ import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
 import PolicyAgreementSection from '@/components/PolicyAgreementSection.vue'
 import { makePolicy } from './factories'
+import { formatAmount } from '@/utils/money'
+import { refCurrencies } from './helpers/reference-stubs'
 import type {
   Policy,
   ScheduledTransactionDetail,
   ScheduledTransactionWithExt,
 } from '@/types'
 import { componentVm } from './helpers/component-vm'
+
+// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
+const cny = refCurrencies[0]
 
 const policy: Policy = makePolicy({ id: 'policy-1', insurer_id: 'ins-1', product_name: '重疾险' })
 
@@ -120,8 +125,8 @@ describe('PolicyAgreementSection 缴费协议区（issue #362）', () => {
     const wrapper = mountSection()
     await flushPromises()
     const table = document.querySelector('[data-testid="policy-agreement-segments"]')!
-    expect(table.textContent).toContain('¥3000')
-    expect(table.textContent).toContain('¥3600')
+    expect(table.textContent).toContain(formatAmount(300_000, cny))
+    expect(table.textContent).toContain(formatAmount(360_000, cny))
     expect(table.textContent).toContain('已取消')
     // 无活跃段判断不受取消段影响：存在活跃段 → 操作行为「改价」
     expect(wrapper.find('[data-testid="policy-agreement-rebuild-open"]').exists()).toBe(true)

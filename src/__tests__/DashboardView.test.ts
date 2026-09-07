@@ -6,7 +6,7 @@ import { nextTick } from 'vue'
 import { applyLocale } from '@/i18n'
 import DashboardView from '@/views/DashboardView.vue'
 import TransactionForm from '@/components/TransactionForm.vue'
-import { amountPrivacyEnabled } from '@/utils/money'
+import { amountPrivacyEnabled, formatAmount } from '@/utils/money'
 import { useReferenceStore } from '@/stores/reference'
 import { useItemsStore } from '@/stores/items'
 import { NProgress } from 'naive-ui'
@@ -31,6 +31,9 @@ const mockCurrencies: Currency[] = [
   { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
   { code: 'USD', name: '美元', symbol: '$', decimal_places: 2 },
 ]
+
+// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
+const [cny, usd] = mockCurrencies
 
 const mockAccounts: Account[] = [
   {
@@ -140,8 +143,8 @@ describe('DashboardView 净资产总览卡（issue #143）', () => {
     const card = wrapper.find('[data-testid="net-worth-card"]')
     expect(card.exists()).toBe(true)
     expect(card.text()).toContain('净资产')
-    // 123456 分 → ¥1234.56（本位币主数字，无各币种分项）
-    expect(card.text()).toContain('¥1234.56')
+    // 123456 分（本位币主数字，无各币种分项）
+    expect(card.text()).toContain(formatAmount(123456, cny))
   })
 
   it('命令报错（如缺汇率）时卡片显示提示文案而非空数字或崩溃', async () => {
@@ -157,7 +160,7 @@ describe('DashboardView 净资产总览卡（issue #143）', () => {
     expect(card.text()).toContain('净资产')
     expect(card.text()).toContain('缺少 USD→CNY 汇率，无法折算')
     // 不渲染空数字
-    expect(card.text()).not.toContain('¥0')
+    expect(card.text()).not.toContain(formatAmount(0, cny))
   })
 })
 
@@ -166,13 +169,13 @@ describe('DashboardView 投资概览卡（issue #145）', () => {
     const wrapper = await mountView()
     const card = wrapper.find('[data-testid="investment-overview-card"]')
     expect(card.exists()).toBe(true)
-    // h-1 有行情计入：150000 分 → ¥1500；30000 分 → ¥300（4 位整数不触发万分位分组）
-    // h-2 无行情（NULL）不计入：合计中不出现 ¥0
+    // h-1 有行情计入：150000 分、30000 分（4 位整数不触发万分位分组）
+    // h-2 无行情（NULL）不计入：合计中不出现零金额
     expect(card.text()).toContain('总市值')
-    expect(card.text()).toContain('¥1500')
+    expect(card.text()).toContain(formatAmount(150000, cny))
     expect(card.text()).toContain('未实现盈亏合计')
-    expect(card.text()).toContain('¥300')
-    expect(card.text()).not.toContain('¥0')
+    expect(card.text()).toContain(formatAmount(30000, cny))
+    expect(card.text()).not.toContain(formatAmount(0, cny))
   })
 
   it('多币种持仓按币种分组展示，组间以「 / 」连接', async () => {
@@ -196,8 +199,8 @@ describe('DashboardView 投资概览卡（issue #145）', () => {
     const wrapper = await mountView()
     const card = wrapper.find('[data-testid="investment-overview-card"]')
     // 币种代码排序：CNY 在前、USD 在后
-    expect(card.text()).toContain('¥1500 / $30')
-    expect(card.text()).toContain('¥300 / -$5')
+    expect(card.text()).toContain(`${formatAmount(150000, cny)} / ${formatAmount(3000, usd)}`)
+    expect(card.text()).toContain(`${formatAmount(30000, cny)} / ${formatAmount(-500, usd)}`)
   })
 
   it('无任何持仓时卡片保留，空态占位而非统计数字', async () => {
@@ -251,9 +254,9 @@ describe('DashboardView 财务自由度卡（issue #344）', () => {
     // 7.5% 大字 + 阶段标签（<30% 积累期）
     expect(card.find('[data-testid="financial-freedom-ratio"]').text()).toBe('7.5%')
     expect(card.find('[data-testid="financial-freedom-stage"]').text()).toBe('积累期')
-    // 分子/分母（formatAmount 本位币）：500000 分 → ¥5000；2000000 分 → 万分位分组 ¥2,0000
-    expect(card.text()).toContain('可投资资产 ¥5000')
-    expect(card.text()).toContain('年度预算总额 ¥2,0000')
+    // 分子/分母（formatAmount 本位币）：500000 分与 2000000 分（后者触发万分位分组）
+    expect(card.text()).toContain(`可投资资产 ${formatAmount(500000, cny)}`)
+    expect(card.text()).toContain(`年度预算总额 ${formatAmount(2000000, cny)}`)
     // 覆盖年数副文案
     expect(card.text()).toContain('可覆盖 0.3 年')
     // 进度条随百分比；未达 100% 非成功状态
@@ -307,7 +310,7 @@ describe('DashboardView 财务自由度卡（issue #344）', () => {
     expect(card.text()).toContain('设置预算后解锁财务自由度')
     // 不渲染自由度数字、金额与进度条（口径不回退实际支出）
     expect(card.text()).not.toContain('%')
-    expect(card.text()).not.toContain('¥')
+    expect(card.text()).not.toContain(cny.symbol)
     expect(card.findComponent(NProgress).exists()).toBe(false)
     const btn = findButton(card, '去设置预算', { exact: true })
     expect(btn).toBeTruthy()
@@ -407,22 +410,24 @@ describe('DashboardView 本月收支卡（issue #144）', () => {
     const wrapper = await mountView()
     const text = wrapper.text()
     expect(text).toContain('本月收支')
-    expect(text).toContain('收入1000') // 净收入
-    expect(text).toContain('净支出750') // 净支出（毛 800 − 退款 50）
-    expect(text).toContain('结余250') // 结余
+    expect(text).toContain(`收入${formatAmount(100000)}`) // 净收入
+    expect(text).toContain(`净支出${formatAmount(75000)}`) // 净支出（毛 800 − 退款 50）
+    expect(text).toContain(`结余${formatAmount(25000)}`) // 结余
   })
 
   it('净支出与预算消耗、分类占比口径一致（退款冲减而非单列）', async () => {
     setCurrentMonthSummary({ income_cents: 0, expense_cents: 12345, refund_cents: 2345 })
     const wrapper = await mountView()
     // 净支出 10000 分 = expense_net 口径
-    expect(wrapper.text()).toContain('净支出100')
+    expect(wrapper.text()).toContain(`净支出${formatAmount(10000)}`)
   })
 
   it('当月无交易行时三格显示 0', async () => {
     mockMonthlySummary = [{ month: '1999-01', income_cents: 999, expense_cents: 888, refund_cents: 7 }]
     const wrapper = await mountView()
-    expect(wrapper.text()).toContain('本月收支收入0净支出0结余0')
+    expect(wrapper.text()).toContain(
+      `本月收支收入${formatAmount(0)}净支出${formatAmount(0)}结余${formatAmount(0)}`,
+    )
   })
 })
 
@@ -432,8 +437,8 @@ describe('DashboardView 物品使用成本卡（issue #122）', () => {
     const card = wrapper.find('[data-testid="item-daily-cost-card"]')
     expect(card.exists()).toBe(true)
     expect(card.text()).toContain('全部在用物品每天成本合计')
-    // 12345 分 → ¥123.45（默认币种，后端聚合结果直接展示）
-    expect(card.text()).toContain('¥123.45/天')
+    // 12345 分（默认币种，后端聚合结果直接展示）
+    expect(card.text()).toContain(`${formatAmount(12345, cny)}/天`)
     expect(card.text()).toContain('共 3 件在用物品')
   })
 
@@ -463,7 +468,7 @@ describe('DashboardView 物品使用成本卡（issue #122）', () => {
     const card = wrapper.find('[data-testid="item-daily-cost-card"]')
     expect(card.text()).toContain('缺少 JPY→CNY 汇率，无法折算')
     // 不渲染空数字或合计
-    expect(card.text()).not.toContain('¥')
+    expect(card.text()).not.toContain(cny.symbol)
   })
 
   it('物品写入失效（store version 变化）后自动重拉合计', async () => {
@@ -477,13 +482,15 @@ describe('DashboardView 物品使用成本卡（issue #122）', () => {
       },
     })
     const wrapper = await mountView()
-    expect(wrapper.find('[data-testid="item-daily-cost-card"]').text()).toContain('¥100/天')
+    expect(wrapper.find('[data-testid="item-daily-cost-card"]').text()).toContain(
+      `${formatAmount(10000, cny)}/天`,
+    )
     // 物品写入 → 物品 store 重拉（模拟 ledger:changed 路径）→ version 自增 → 合计跟随重拉
     total = { native_currency: 'CNY', per_day_cents: 30000, item_count: 2 }
     await useItemsStore().refresh()
     await flushPromises()
     const card = wrapper.find('[data-testid="item-daily-cost-card"]')
-    expect(card.text()).toContain('¥300/天')
+    expect(card.text()).toContain(`${formatAmount(30000, cny)}/天`)
     expect(card.text()).toContain('共 2 件在用物品')
   })
 })
@@ -515,8 +522,9 @@ describe('DashboardView 金额隐私模式（issue #567 仪表盘面核查：无
       },
     ]
     const wrapper = await mountView()
-    // 关闭态先确认现状金额在位（回归基准）
-    expect(wrapper.text()).toContain('¥1234.56')
+    // 关闭态先确认现状金额在位（回归基准）；预言在掩码开启前取（开启后 formatAmount 返回掩码）
+    const netWorthText = formatAmount(123456, cny)
+    expect(wrapper.text()).toContain(netWorthText)
 
     amountPrivacyEnabled.value = true
     await nextTick()
@@ -524,8 +532,8 @@ describe('DashboardView 金额隐私模式（issue #567 仪表盘面核查：无
     const text = wrapper.text()
     // 净资产 / 本月收支 / 投资概览 / 自由度分子分母 / 物品成本 / 预算行全部掩码；掩码无币种符号
     expect(text).toContain('••••')
-    expect(text).not.toContain('¥')
-    expect(text).not.toContain('¥1234.56')
+    expect(text).not.toContain(cny.symbol)
+    expect(text).not.toContain(netWorthText)
     expect(wrapper.find('[data-testid="budget-progress-card"]').text()).toContain('•••• / ••••')
     // 百分比与件数保留（spec #564：隐藏的是数字不是形状与方向）
     expect(wrapper.find('[data-testid="financial-freedom-ratio"]').text()).toBe('7.5%')
@@ -534,7 +542,7 @@ describe('DashboardView 金额隐私模式（issue #567 仪表盘面核查：无
     // 关闭后立即恢复原样（回归保障）
     amountPrivacyEnabled.value = false
     await nextTick()
-    expect(wrapper.text()).toContain('¥1234.56')
+    expect(wrapper.text()).toContain(netWorthText)
   })
 })
 
@@ -570,8 +578,8 @@ describe('DashboardView 预算进度卡（issue #144）', () => {
     expect(text).toContain('预算进度')
     expect(text).toContain('餐饮')
     expect(text).toContain('交通')
-    expect(text).toContain('40 / 500')
-    expect(text).toContain('0 / 100')
+    expect(text).toContain(`${formatAmount(4000)} / ${formatAmount(50000)}`)
+    expect(text).toContain(`${formatAmount(0)} / ${formatAmount(10000)}`)
     expect(wrapper.findComponent(NProgress).exists()).toBe(true)
   })
 
@@ -586,7 +594,7 @@ describe('DashboardView 预算进度卡（issue #144）', () => {
     expect(bars[1].props('status')).toBe('error')
     expect(wrapper.text()).toContain('超支')
     // 超支行金额红色高亮（NText type=error）
-    expect(wrapper.text()).toContain('600 / 500')
+    expect(wrapper.text()).toContain(`${formatAmount(60000)} / ${formatAmount(50000)}`)
   })
 
   it('无任何预算时卡片保留，空态占位而非逐行进度条', async () => {
