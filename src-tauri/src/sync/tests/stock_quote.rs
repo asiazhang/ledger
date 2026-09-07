@@ -4,9 +4,9 @@
 //!（场内基金类恒为 0），f59 精度位钉住 2 位/3 位两类缩放。
 
 use crate::investment::InstrumentType;
+use crate::sync::http::price_cents_from_raw;
 use crate::sync::stock::{
-    StockQuoteResponse, detect_kind_hint, pick_stock_quote, price_cents_from_raw,
-    price_date_from_timestamp,
+    StockQuoteResponse, detect_kind_hint, pick_stock_quote, price_date_from_timestamp,
 };
 
 fn parse(raw: &str) -> StockQuoteResponse {

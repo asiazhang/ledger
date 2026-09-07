@@ -90,6 +90,7 @@ fn run_sync_pages_cancelled_midway_keeps_processed_data() {
             code: code.clone(),
             name: format!("名称-{code}"),
             price: Some(1000.0),
+            precision: None,
         }])
     };
 
@@ -135,6 +136,7 @@ fn run_sync_pages_completes_all_pages_when_not_cancelled() {
             code: code.clone(),
             name: format!("名称-{code}"),
             price: Some(1000.0),
+            precision: None,
         }])
     };
     let mut emitted: Vec<SyncProgress> = Vec::new();
@@ -235,6 +237,7 @@ fn run_sync_pages_locks_only_for_per_page_persist() {
             code: code.clone(),
             name: format!("名称-{code}"),
             price: Some(1000.0),
+            precision: None,
         }])
     };
 

@@ -140,21 +140,28 @@ pub(super) const MARKETS: &[MarketConfig] = &[
     },
 ];
 
-/// 行情接口返回的单个股票条目（字段 f12=代码, f14=名称, f2=价格原始值）。
-/// 注意 f2 的隐含小数位因市场而异：A 股 2 位（f2=951 表示 9.51），港股 3 位（f2=475200 表示 475.200），
-/// 因此这里保留原始 f2，换算在 `f2_to_price` 按市场处理。
-/// get_total 请求只带 fields=f12，响应条目可能缺 f14/f2，因此名称与价格均可缺省。
+/// 行情接口返回的单个股票条目（字段 f12=代码, f14=名称, f2=价格原始值, f1=价格精度位）。
+/// 注意 f2 的隐含小数位随标的种类而异（由随行返回的 f1 精度位声明，与 stock/get
+/// 的 f59 同义：A 股股票 2 位、场内基金 ETF 与港股/美股 3 位），因此这里保留
+/// 原始 f2 与 f1，换算在 [`price_cents_from_raw`] 按精度位单点处理、缺省按市场
+/// 回退（[`f2_to_price`]）。
+/// get_total 请求只带 fields=f12，响应条目可能缺 f14/f2/f1，因此名称/价格/精度均可缺省。
 #[derive(Debug, Deserialize)]
 pub(super) struct StockItem {
     #[serde(rename = "f12")]
     pub(super) code: String,
     #[serde(rename = "f14", default)]
     pub(super) name: String,
-    #[serde(rename = "f2", default, deserialize_with = "deserialize_f2")]
+    #[serde(rename = "f2", default, deserialize_with = "deserialize_positive_f64")]
     pub(super) price: Option<f64>,
+    /// 价格小数位（f1；缺省/异常时为 None，换算按市场回退）。
+    #[serde(rename = "f1", default, deserialize_with = "deserialize_positive_f64")]
+    pub(super) precision: Option<f64>,
 }
 
-fn deserialize_f2<'de, D>(d: D) -> std::result::Result<Option<f64>, D::Error>
+/// 把可能缺失/非数值/非正数的字段（f2 价格、f1 精度位；停牌为 "-"、无效价 ≤0）
+/// 宽容为 Option<f64>：仅接受正数，其余一律 None。
+fn deserialize_positive_f64<'de, D>(d: D) -> std::result::Result<Option<f64>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -175,6 +182,19 @@ pub(super) fn f2_to_price(raw: f64, market_code: &str) -> i64 {
         (raw * 10.0).round() as i64
     } else {
         (raw * 100.0).round() as i64
+    }
+}
+
+/// 东财最新价原始值（按精度位缩放的整数：批量报价的 f1 与单点行情的 f59 同义）
+/// → 万分之一元（0.0001 元，价格刻度 ADR-0038）：`price_cents = raw × 10^(4 − 精度)`。
+/// 精度缺省或越界（1..=4 之外）时按市场回退（A 股 2 位、港股/美股 3 位，与
+/// [`f2_to_price`] 同口径）——回退分支只兜异常/旧形态，正常样本恒带精度位。
+/// 批量报价（增量同步）与单点行情（股票按代码查询）两条通道共用本单点，
+/// 数据源刻度语义漂移时改这一处（#695，场内 ETF 三位小数报价实测钉住）。
+pub(super) fn price_cents_from_raw(raw: f64, precision: Option<f64>, market: &str) -> i64 {
+    match precision {
+        Some(p) if (1.0..=4.0).contains(&p) => (raw * 10f64.powi(4 - p as i32)).round() as i64,
+        _ => f2_to_price(raw, market),
     }
 }
 
@@ -442,7 +462,9 @@ pub(super) fn fetch_ulist(
     secids: &str,
 ) -> Result<Vec<StockItem>> {
     tracing::debug!(secids, "批量报价查询");
-    let params = [("secids", secids), ("fields", "f12,f14,f2")];
+    // f1 随行返回价格精度位：场内 ETF 为三位小数报价，按市场固定倍数换算会得十倍错价
+    // （#695 实测）；缺 f1 的旧形态响应由换算单点按市场回退。
+    let params = [("secids", secids), ("fields", "f12,f14,f1,f2")];
     let resp: UlistResponse = request_json_from_hosts(
         client,
         &params,
