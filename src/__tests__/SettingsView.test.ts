@@ -1,18 +1,15 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mockInvoke } from './helpers/invoke-mock'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { findButton, findBodyButtonByTestId } from './helpers/dom'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { flushPromises } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
 
 import { useAppStore } from '@/stores/app'
-import { useReferenceStore } from '@/stores/reference'
 import { applyLocale } from '@/i18n'
 import SettingsView from '@/views/SettingsView.vue'
 import CategoryManager from '@/components/CategoryManager.vue'
-import { stubReferenceInvoke } from './helpers/reference-stubs'
 import { captureLastListener, mockListen } from './helpers/listen-mock'
-import type { Currency } from '@/types'
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(),
@@ -23,12 +20,6 @@ import { open, save } from '@tauri-apps/plugin-dialog'
 
 const mockOpen = vi.mocked(open)
 const mockSave = vi.mocked(save)
-
-const mockCurrencies: Currency[] = [
-  { code: 'CNY', name: '人民币', symbol: '¥', decimal_places: 2 },
-  { code: 'USD', name: '美元', symbol: '$', decimal_places: 2 },
-  { code: 'JPY', name: '日元', symbol: '¥', decimal_places: 0 },
-]
 
 /** 数据存储位置信息桩：统一形状，各用例只覆写差异字段。 */
 function dataLocationInfo(
@@ -44,34 +35,30 @@ function dataLocationInfo(
 }
 
 /**
- * mock-invoke 桩分发（沿本文件既有模式收口样板）：默认覆盖公共桩，
- * 测试用 `overrides` 只覆写差异项，未命中走默认或 reject。
- * 「数据」pane 用 display-directive='show:lazy'，首次激活挂载；pane 内子页签
- * （issue #568）默认「备份」，DataLocationSettings 随「存储位置」子页签首切才挂载
- * （show:lazy），故 get_data_location_info 仍进默认桩（子页签切换测试会触发）。
+ * 场景级接缝布线表（issue #747）：defaults 只留本场景非参考命令的静态契约快照，
+ * 五个参考 list 命令由接缝内建规范夹具兜底，不再枚举。「数据」pane 用
+ * display-directive='show:lazy'，首次激活挂载；pane 内子页签（issue #568）默认
+ * 「备份」，DataLocationSettings 随「存储位置」子页签首切才挂载（show:lazy），
+ * 故 get_data_location_info 在场景级 overrides（子页签切换测试会触发）。
  */
-function stubInvoke(overrides: Record<string, (args?: any) => unknown> = {}) {
-  stubReferenceInvoke({
-    list_currencies: mockCurrencies,
-    list_accounts: [],
-    list_categories: [],
-    list_merchants: [],
-    list_insurers: [],
-    list_backups: [],
-    get_data_location_info: () => dataLocationInfo(),
-    create_backup: {
-      path: '/tmp/ledger-backup.db.zip',
-      size_bytes: 1024,
-      schema_version: 4,
-      created_at: '2026-01-01T00:00:00Z',
-    },
-    restore_backup: { schema_version: 4, restored_at: '2026-01-01T00:00:00Z' },
-    restart_app: null,
-    prune_backups: { kept: 0, deleted: [], failed: [] },
-    get_auto_backup_state: { enabled: true, last_backup_at: null },
-    set_auto_backup_enabled: null,
-    ...overrides,
-  })
+const SCENE_DEFAULTS = {
+  list_backups: [],
+  create_backup: {
+    path: '/tmp/ledger-backup.db.zip',
+    size_bytes: 1024,
+    schema_version: 4,
+    created_at: '2026-01-01T00:00:00Z',
+  },
+  restore_backup: { schema_version: 4, restored_at: '2026-01-01T00:00:00Z' },
+  restart_app: null,
+  prune_backups: { kept: 0, deleted: [], failed: [] },
+  get_auto_backup_state: { enabled: true, last_backup_at: null },
+  set_auto_backup_enabled: null,
+}
+
+/** 场景级函数型应答（overrides 表）。 */
+const SCENE_OVERRIDES = {
+  get_data_location_info: () => dataLocationInfo(),
 }
 
 /** 定位标题为指定文本的卡片（Naive UI 卡片头主标题元素）。 */
@@ -88,19 +75,15 @@ async function openTab(wrapper: ReturnType<typeof mount>, label: string) {
 }
 
 beforeEach(async () => {
-  setActivePinia(createPinia())
   mockOpen.mockReset()
   mockSave.mockReset()
-  localStorage.clear()
-  // 默认桩收口到 stubInvoke（含备份全链路与 get_data_location_info）。
-  stubInvoke()
-  const store = useReferenceStore()
-  await store.refresh()
-})
-
-// 恢复确认弹窗（issue #572）内容 teleport 到 body，测试后清空防污染。
-afterEach(() => {
-  document.body.innerHTML = ''
+  // 参考 store 预载走接缝 opt-in 参数（清理四件套由全局壳层每测执行）。
+  const base = wireInvokeSeam({
+    defaults: SCENE_DEFAULTS,
+    overrides: SCENE_OVERRIDES,
+    refreshReferenceStores: true,
+  })
+  await base.ready
 })
 
 describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格局 5 页签）', () => {
@@ -194,8 +177,12 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
   })
 
   it('「数据」承载备份、存储位置、数据修复三组件，随子页签挂载（issue #568）', async () => {
-    stubInvoke({
-      get_data_location_info: () => Promise.resolve(dataLocationInfo()),
+    wireInvokeSeam({
+      defaults: SCENE_DEFAULTS,
+      overrides: {
+        ...SCENE_OVERRIDES,
+        get_data_location_info: () => Promise.resolve(dataLocationInfo()),
+      },
     })
     const wrapper = mount(SettingsView)
     await openTab(wrapper, '数据')
@@ -220,10 +207,14 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
   it('子页签来回切换备份列表不卸载重拉（子 pane show:lazy + 显式 key，issue #568）', async () => {
     useAppStore().setBackupDir('/Users/me/backups')
     let listBackupsCalls = 0
-    stubInvoke({
-      list_backups: () => {
-        listBackupsCalls++
-        return Promise.resolve([])
+    wireInvokeSeam({
+      defaults: SCENE_DEFAULTS,
+      overrides: {
+        ...SCENE_OVERRIDES,
+        list_backups: () => {
+          listBackupsCalls++
+          return Promise.resolve([])
+        },
       },
     })
     const wrapper = mount(SettingsView)
@@ -239,8 +230,12 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
   })
 
   it('子页签选中态不持久化：离开设置页再回来默认回「备份」（issue #568）', async () => {
-    stubInvoke({
-      get_data_location_info: () => Promise.resolve(dataLocationInfo()),
+    wireInvokeSeam({
+      defaults: SCENE_DEFAULTS,
+      overrides: {
+        ...SCENE_OVERRIDES,
+        get_data_location_info: () => Promise.resolve(dataLocationInfo()),
+      },
     })
     const wrapper = mount(SettingsView)
     await openTab(wrapper, '数据')
@@ -279,10 +274,14 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
   it('备份列表在 Tab 切换间保留缓存，不随切换重拉', async () => {
     useAppStore().setBackupDir('/Users/me/backups')
     let listBackupsCalls = 0
-    stubInvoke({
-      list_backups: () => {
-        listBackupsCalls++
-        return Promise.resolve([])
+    wireInvokeSeam({
+      defaults: SCENE_DEFAULTS,
+      overrides: {
+        ...SCENE_OVERRIDES,
+        list_backups: () => {
+          listBackupsCalls++
+          return Promise.resolve([])
+        },
       },
     })
     const wrapper = mount(SettingsView)
@@ -305,9 +304,7 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     await openTab(wrapper, '数据')
     await nextTick()
     // 按文本定位目录按钮（卡片重排后首个按钮不再固定是它，issue #651）。
-    const dirBtn = wrapper.findAll('button').find((b) =>
-      b.text().includes('选择目录') || b.text().includes('更改目录'),
-    )!
+    const dirBtn = findButton(wrapper, '选择目录')!
     await dirBtn.trigger('click')
     await nextTick()
     expect(mockOpen).toHaveBeenCalledWith({ directory: true, multiple: false, title: '选择备份目录' })
@@ -320,7 +317,7 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     const wrapper = mount(SettingsView)
     await openTab(wrapper, '数据')
     await nextTick()
-    const backupBtn = wrapper.findAll('button').find((b) => b.text().includes('一键备份'))!
+    const backupBtn = findButton(wrapper, '一键备份')!
     await backupBtn.trigger('click')
     await flushPromises()
     expect(mockInvoke).toHaveBeenCalledWith(
@@ -333,18 +330,22 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
   it('一键备份写入受管目录后自动滚动清理', async () => {
     const store = useAppStore()
     store.setBackupDir('/Users/me/backups')
-    stubInvoke({
-      create_backup: () => ({
-        path: '/Users/me/backups/ledger-backup-20260101-010101.db.zip',
-        size_bytes: 1024,
-        schema_version: 4,
-        created_at: '2026-01-01T01:01:01Z',
-      }),
+    wireInvokeSeam({
+      defaults: SCENE_DEFAULTS,
+      overrides: {
+        ...SCENE_OVERRIDES,
+        create_backup: () => ({
+          path: '/Users/me/backups/ledger-backup-20260101-010101.db.zip',
+          size_bytes: 1024,
+          schema_version: 4,
+          created_at: '2026-01-01T01:01:01Z',
+        }),
+      },
     })
     const wrapper = mount(SettingsView)
     await openTab(wrapper, '数据')
     await nextTick()
-    const backupBtn = wrapper.findAll('button').find((b) => b.text().includes('一键备份'))!
+    const backupBtn = findButton(wrapper, '一键备份')!
     await backupBtn.trigger('click')
     await flushPromises()
     expect(mockInvoke).toHaveBeenCalledWith('prune_backups', { dir: '/Users/me/backups', keep: 30 })
@@ -354,36 +355,38 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     const store = useAppStore()
     store.setBackupDir('/Users/me/backups')
     store.setBackupMaxCount(1)
-    stubInvoke({
-      list_backups: () => [
-        {
-          file_name: 'ledger-backup-20260102-010101.db.zip',
-          path: '/Users/me/backups/ledger-backup-20260102-010101.db.zip',
-          size_bytes: 2048,
-          created_at: '2026-01-02T01:01:01Z',
-        },
-        {
-          file_name: 'ledger-backup-20260101-010101.db.zip',
-          path: '/Users/me/backups/ledger-backup-20260101-010101.db.zip',
-          size_bytes: 1024,
-          created_at: '2026-01-01T01:01:01Z',
-        },
-      ],
-      prune_backups: () => ({ kept: 1, deleted: ['ledger-backup-20260101-010101.db.zip'], failed: [] }),
+    wireInvokeSeam({
+      defaults: SCENE_DEFAULTS,
+      overrides: {
+        ...SCENE_OVERRIDES,
+        list_backups: () => [
+          {
+            file_name: 'ledger-backup-20260102-010101.db.zip',
+            path: '/Users/me/backups/ledger-backup-20260102-010101.db.zip',
+            size_bytes: 2048,
+            created_at: '2026-01-02T01:01:01Z',
+          },
+          {
+            file_name: 'ledger-backup-20260101-010101.db.zip',
+            path: '/Users/me/backups/ledger-backup-20260101-010101.db.zip',
+            size_bytes: 1024,
+            created_at: '2026-01-01T01:01:01Z',
+          },
+        ],
+        prune_backups: () => ({ kept: 1, deleted: ['ledger-backup-20260101-010101.db.zip'], failed: [] }),
+      },
     })
     const wrapper = mount(SettingsView)
     await openTab(wrapper, '数据')
     await flushPromises()
     expect(wrapper.html()).toContain('当前共 2 个备份，上限 1 个')
-    const pruneBtn = wrapper.findAll('button').find((b) => b.text().includes('立即清理'))!
+    const pruneBtn = findButton(wrapper, '立即清理')!
     await pruneBtn.trigger('click')
     await flushPromises()
     // 手动清理确认弹窗（issue #652 / ADR-0078）：应用内 warning 级确认后续接删除
-    const confirmPruneBtn = document.body.querySelector(
-      '[data-testid="danger-confirm"]',
-    ) as HTMLButtonElement | null
-    expect(confirmPruneBtn, '清理确认弹窗应弹出').not.toBeNull()
-    confirmPruneBtn!.click()
+    const confirmPruneBtn = findBodyButtonByTestId('danger-confirm')
+    expect(confirmPruneBtn, '清理确认弹窗应弹出').toBeTruthy()
+    await confirmPruneBtn!.trigger('click')
     await flushPromises()
     expect(mockInvoke).toHaveBeenCalledWith('prune_backups', { dir: '/Users/me/backups', keep: 1 })
   })
@@ -401,8 +404,12 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
   })
 
   it('自动备份卡片展示开关与上次自动备份时间', async () => {
-    stubInvoke({
-      get_auto_backup_state: () => ({ enabled: false, last_backup_at: '2026-02-17T09:30:00Z' }),
+    wireInvokeSeam({
+      defaults: SCENE_DEFAULTS,
+      overrides: {
+        ...SCENE_OVERRIDES,
+        get_auto_backup_state: () => ({ enabled: false, last_backup_at: '2026-02-17T09:30:00Z' }),
+      },
     })
     const wrapper = mount(SettingsView)
     await openTab(wrapper, '数据')
@@ -417,11 +424,15 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
 
   it('切换自动备份开关调用 set_auto_backup_enabled 并刷新展示', async () => {
     let enabledState = true
-    stubInvoke({
-      get_auto_backup_state: () => ({ enabled: enabledState, last_backup_at: null }),
-      set_auto_backup_enabled: (args?: { enabled?: boolean }) => {
-        enabledState = args?.enabled ?? false
-        return Promise.resolve()
+    wireInvokeSeam({
+      defaults: SCENE_DEFAULTS,
+      overrides: {
+        ...SCENE_OVERRIDES,
+        get_auto_backup_state: () => ({ enabled: enabledState, last_backup_at: null }),
+        set_auto_backup_enabled: (args?: Record<string, unknown>) => {
+          enabledState = args?.enabled === true
+          return Promise.resolve()
+        },
       },
     })
     const wrapper = mount(SettingsView)
@@ -454,14 +465,18 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
 
   it('恢复前经应用内弹窗确认（issue #572）：读取备份元数据，确认后带 passphrase 调用 restore_backup', async () => {
     mockOpen.mockResolvedValueOnce('/Users/me/backups/ledger-backup.db.zip')
-    stubInvoke({
-      get_backup_meta: () => ({ kind: 'manual', encrypted: false }),
-      get_encryption_status: () => ({ locked: false, file_encrypted: false }),
+    wireInvokeSeam({
+      defaults: SCENE_DEFAULTS,
+      overrides: {
+        ...SCENE_OVERRIDES,
+        get_backup_meta: () => ({ kind: 'manual', encrypted: false }),
+        get_encryption_status: () => ({ locked: false, file_encrypted: false }),
+      },
     })
     const wrapper = mount(SettingsView)
     await openTab(wrapper, '数据')
     await nextTick()
-    const restoreBtn = wrapper.findAll('button').find((b) => b.text().includes('从备份恢复'))!
+    const restoreBtn = findButton(wrapper, '从备份恢复')!
     await restoreBtn.trigger('click')
     await flushPromises()
     // 元数据先行：确认弹窗已开（teleport 到 body），恢复尚未执行。
@@ -469,11 +484,9 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
       path: '/Users/me/backups/ledger-backup.db.zip',
     })
     expect(mockInvoke).not.toHaveBeenCalledWith('restore_backup', expect.anything())
-    const confirmBtn = document.body.querySelector(
-      '[data-testid="restore-confirm"]',
-    ) as HTMLButtonElement | null
-    expect(confirmBtn).not.toBeNull()
-    confirmBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    const confirmBtn = findBodyButtonByTestId('restore-confirm')
+    expect(confirmBtn, '恢复确认弹窗应弹出').toBeTruthy()
+    await confirmBtn!.trigger('click')
     await flushPromises()
     expect(mockInvoke).toHaveBeenCalledWith('restore_backup', {
       backupPath: '/Users/me/backups/ledger-backup.db.zip',
@@ -484,23 +497,27 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
   it('备份文件列表展示来源列，区分自动与手动（issue #129）', async () => {
     const store = useAppStore()
     store.setBackupDir('/Users/me/backups')
-    stubInvoke({
-      list_backups: () => [
-        {
-          file_name: 'ledger-auto-20260217-093000.db.zip',
-          path: '/Users/me/backups/ledger-auto-20260217-093000.db.zip',
-          size_bytes: 4096,
-          created_at: '2026-02-17T09:30:00Z',
-          kind: 'auto',
-        },
-        {
-          file_name: 'ledger-backup-20260101-010101.db.zip',
-          path: '/Users/me/backups/ledger-backup-20260101-010101.db.zip',
-          size_bytes: 1024,
-          created_at: '2026-01-01T01:01:01Z',
-          kind: 'manual',
-        },
-      ],
+    wireInvokeSeam({
+      defaults: SCENE_DEFAULTS,
+      overrides: {
+        ...SCENE_OVERRIDES,
+        list_backups: () => [
+          {
+            file_name: 'ledger-auto-20260217-093000.db.zip',
+            path: '/Users/me/backups/ledger-auto-20260217-093000.db.zip',
+            size_bytes: 4096,
+            created_at: '2026-02-17T09:30:00Z',
+            kind: 'auto',
+          },
+          {
+            file_name: 'ledger-backup-20260101-010101.db.zip',
+            path: '/Users/me/backups/ledger-backup-20260101-010101.db.zip',
+            size_bytes: 1024,
+            created_at: '2026-01-01T01:01:01Z',
+            kind: 'manual',
+          },
+        ],
+      },
     })
     const wrapper = mount(SettingsView)
     await openTab(wrapper, '数据')
@@ -518,9 +535,13 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     mockListen.mockReset()
     const readBackupsChanged = captureLastListener()
     let backupList: unknown[] = []
-    stubInvoke({
-      list_backups: () => Promise.resolve(backupList),
-      get_auto_backup_state: () => ({ enabled: true, last_backup_at: null }),
+    wireInvokeSeam({
+      defaults: SCENE_DEFAULTS,
+      overrides: {
+        ...SCENE_OVERRIDES,
+        list_backups: () => Promise.resolve(backupList),
+        get_auto_backup_state: () => ({ enabled: true, last_backup_at: null }),
+      },
     })
 
     const wrapper = mount(SettingsView)
@@ -548,9 +569,13 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
   })
 
   it('存储位置异常态文案不变：待重启提示与回退告警照常展示', async () => {
-    stubInvoke({
-      get_data_location_info: () =>
-        Promise.resolve(dataLocationInfo({ pending_restart: true, configured_dir: '/Users/me/ledger-data' })),
+    wireInvokeSeam({
+      defaults: SCENE_DEFAULTS,
+      overrides: {
+        ...SCENE_OVERRIDES,
+        get_data_location_info: () =>
+          Promise.resolve(dataLocationInfo({ pending_restart: true, configured_dir: '/Users/me/ledger-data' })),
+      },
     })
     const wrapper = mount(SettingsView)
     await openTab(wrapper, '数据')
@@ -562,9 +587,13 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     expect(html).toContain('下次启动')
 
     // 回退告警：fallback_reason 非空时展示回退提示，原路径仍可见。
-    stubInvoke({
-      get_data_location_info: () =>
-        Promise.resolve(dataLocationInfo({ fallback_reason: '配置的位置不可用：权限不足' })),
+    wireInvokeSeam({
+      defaults: SCENE_DEFAULTS,
+      overrides: {
+        ...SCENE_OVERRIDES,
+        get_data_location_info: () =>
+          Promise.resolve(dataLocationInfo({ fallback_reason: '配置的位置不可用：权限不足' })),
+      },
     })
     const wrapper2 = mount(SettingsView)
     await openTab(wrapper2, '数据')
