@@ -90,7 +90,9 @@ fn create_instrument_with_market(
 
 /// 手动创建标的（issue #290 / ADR-0036）：驱动 IPC 命令入口层守卫同一接缝
 /// `create_instrument_manual`（类型白名单 + 名称必填在先，核心创建函数
-/// 通用）。市场固定未知（不传入参，缺省 unknown）；结果/错误记入 world 供 Then 断言。
+/// 通用）。市场固定未知（不传入参，缺省 unknown）——自定义标的通道建档
+/// 同此形状（issue #826：#697 兜底建档的市场透传随一级通道化退役）；
+/// 结果/错误记入 world 供 Then 断言。
 #[when(expr = "手动创建标的 {string} 类型 {string} 名称 {string} 币种 {string}")]
 fn manual_create_instrument(
     world: &mut LedgerWorld,
@@ -105,31 +107,6 @@ fn manual_create_instrument(
         name: Some(name),
         currency_code: currency,
         market: None,
-    };
-    match create_instrument_manual(&world_conn!(world), input) {
-        Ok(_) => world.last_error = None,
-        Err(e) => world.last_error = Some(e.to_string()),
-    }
-}
-
-/// 手动创建标的（带市场，issue #697 兑底建档）：同上接缝，市场取所选值
-///（无市场通道时前端传 null、后端缺省 unknown）。既有命令契约本就支持
-/// 市场透传（核心创建函数单点），本步骤钉住兑底流的「市场取所选值」。
-#[when(expr = "手动创建标的 {string} 类型 {string} 名称 {string} 币种 {string} 市场 {string}")]
-fn manual_create_instrument_with_market(
-    world: &mut LedgerWorld,
-    symbol: String,
-    kind: String,
-    name: String,
-    currency: String,
-    market: String,
-) {
-    let input = InstrumentInput {
-        symbol,
-        kind: kind.parse().expect("未知金融工具类型"),
-        name: Some(name),
-        currency_code: currency,
-        market: Some(market),
     };
     match create_instrument_manual(&world_conn!(world), input) {
         Ok(_) => world.last_error = None,

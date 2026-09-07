@@ -25,12 +25,14 @@ export const MARKET_TYPES: MarketType[] = [
 export const MARKET_FILTER_TYPES: MarketType[] = ['sh', 'sz', 'hk', 'unknown']
 
 /**
- * 「添加投资标的」的录入通道（市场下拉，issue #697 / spec #690）：通道标签
- * 而非存储市场——场外基金（fund）走按代码即拉、落 fund 类型恒 unknown 市场
- * （ADR-0038）；美股（us）是三交易所的 UI 折叠，落库经候选遍历取精确归属
- * （ADR-0081）；沪/深/港为显式市场通道。
+ * 「添加投资标的」的录入通道（市场下拉，issue #697 / spec #690；六通道修订
+ * issue #826）：通道标签而非存储市场——场外基金（fund）走按代码即拉、落
+ * fund 类型恒 unknown 市场（ADR-0038）；美股（us）是三交易所的 UI 折叠，
+ * 落库经候选遍历取精确归属（ADR-0081）；沪/深/港为显式市场通道；自定义
+ * 标的（custom）零查询直接建档、落 unknown 市场（与类型白名单的「其他」
+ * 区分——那是 instrument_type 成员，这是录入通道）。
  */
-export type AddInstrumentChannel = 'sh' | 'sz' | 'hk' | 'us' | 'fund'
+export type AddInstrumentChannel = 'sh' | 'sz' | 'hk' | 'us' | 'fund' | 'custom'
 
 /** 标的类型闭集；显示标签在文案资源 investments.type.*（i18n，ADR-0049） */
 export const INSTRUMENT_TYPES: InstrumentType[] = ['stock', 'fund', 'bond', 'etf', 'other']

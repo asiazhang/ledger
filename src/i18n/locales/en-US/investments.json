@@ -166,22 +166,25 @@
   },
   "addInstrument": {
     "title": "Add Instrument",
-    "intro": "Pick a market and enter a code to fetch the authoritative name and latest price from Eastmoney automatically. Instruments not covered can be created manually right in this dialog.",
+    "intro": "Pick a channel: SH / SZ / HK / US stocks / OTC funds look up the authoritative name and latest price from Eastmoney by code; instruments with no real code (virtual shares, portfolios, etc.) can be created directly via Custom Instrument.",
     "marketLabel": "Market",
     "marketPlaceholder": "Select a market (required)",
     "channelUs": "US Stocks",
     "channelFund": "OTC Fund",
+    "channelCustom": "Custom Instrument",
     "codeLabel": "Code",
     "codePlaceholderStock": "Stock code, e.g. 600519 / 00700 / AAPL",
     "codePlaceholderFund": "6-digit fund code, e.g. 000001",
+    "codePlaceholderCustom": "Custom code, free text, e.g. HW-VR",
     "query": "Look Up & Add",
+    "create": "Create",
     "nameLabel": "Name",
     "namePlaceholder": "Required, e.g. XYZ Convertible Bond",
     "typeLabel": "Type",
     "typePlaceholder": "Select a type",
     "currencyLabel": "Currency",
-    "fallbackHint": "Not covered by Eastmoney. You can create it manually: name is required, type limited to Bond / ETF / Other, market as selected.",
-    "create": "Create Manually",
+    "customHint": "Custom instruments are created directly without lookup: the code is the idempotent key, name is required, type limited to Bond / ETF / Other; an existing instrument with the same code and type is reused and its name updated.",
+    "notFoundHint": "Not covered by the data source? Switch to the Custom Instrument channel to create it manually.",
     "cancel": "Cancel",
     "successStock": "Instrument added: {name} ({symbol} · {typeLabel}){price}",
     "successFund": "OTC fund added: {name} ({symbol} · {fundClass}){nav}",
@@ -189,6 +192,6 @@
     "priceMissing": "Latest price not available",
     "nav": "Latest NAV {price} ({date})",
     "navMissing": "NAV not available yet",
-    "fallbackSuccess": "Instrument created: {name} ({symbol})"
+    "customSuccess": "Instrument created: {name} ({symbol})"
   }
 }

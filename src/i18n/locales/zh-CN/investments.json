@@ -166,22 +166,25 @@
   },
   "addInstrument": {
     "title": "添加投资标的",
-    "intro": "选择市场、输入代码，自动从东方财富查询权威名称与最新价回填；未收录的标的可在对话框内手动建档。",
+    "intro": "选择录入通道：沪 / 深 / 港 / 美股 / 场外基金输入代码自动从东方财富查询权威名称与最新价回填；无真实代码的标的（虚拟股、组合等）选「自定义标的」直接建档。",
     "marketLabel": "市场",
     "marketPlaceholder": "选择市场（必选）",
     "channelUs": "美股",
     "channelFund": "场外基金",
+    "channelCustom": "自定义标的",
     "codeLabel": "代码",
     "codePlaceholderStock": "股票代码，如 600519 / 00700 / AAPL",
     "codePlaceholderFund": "6 位基金代码，如 000001",
+    "codePlaceholderCustom": "自定义代码，自由文本，如 HW-VR",
     "query": "查询并添加",
+    "create": "创建",
     "nameLabel": "名称",
     "namePlaceholder": "必填，如：某某转债",
     "typeLabel": "类型",
     "typePlaceholder": "请选择类型",
     "currencyLabel": "币种",
-    "fallbackHint": "东财未收录该代码，可手动建档：名称必填、类型限债券 / ETF / 其他，市场取所选值。",
-    "create": "手动建档",
+    "customHint": "自定义标的无需查询，直接建档：代码为幂等键，名称必填，类型限债券 / ETF / 其他；同（代码，类型）已存在时复用并更新名称。",
+    "notFoundHint": "数据源未覆盖该代码？切换「自定义标的」通道手动建档。",
     "cancel": "取消",
     "successStock": "已添加投资标的：{name}（{symbol} · {typeLabel}）{price}",
     "successFund": "已添加场外基金：{name}（{symbol} · {fundClass}）{nav}",
@@ -189,6 +192,6 @@
     "priceMissing": "暂未取到最新价",
     "nav": "最新净值 {price}（{date}）",
     "navMissing": "暂未取到净值",
-    "fallbackSuccess": "已手动建档：{name}（{symbol}）"
+    "customSuccess": "已创建标的：{name}（{symbol}）"
   }
 }

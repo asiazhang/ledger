@@ -13,17 +13,18 @@ import type {
   AddStockInstrumentResult,
   AddFundResult,
   InstrumentType,
-  MarketType,
 } from '@/types'
 
-// 「添加投资标的」对话框（issue #697 / spec #690 用户故事 11-16）：标的创建的
-// 唯一入口——市场必选录入通道（沪/深/港/美股/场外基金）+ 按代码查询，命中即
-// 后端自动识别类型（fund 接口命中 → fund；行情命中 → stock，类型特征 → etf）
-// 并回填权威名称与最新价；未命中在对话框内手动建档兜底（名称必填、类型白名单
-// 债券/ETF/其他、市场取所选值）。场外基金通道复用既有 add_fund_by_code 命令
-// （fund 类型唯一创建入口仍为按代码即拉，语义不变）；股票通道走
-// add_instrument_by_code（查询→识别→创建增强）。既有「新建标的」独立弹窗与
-// 「添加基金」独立入口随本弹窗收编退役。
+// 「添加投资标的」对话框（issue #697 / spec #690；六通道修订 issue #826）：标的
+// 创建的唯一入口——市场必选录入通道（沪/深/港/美股/场外基金/自定义标的）。
+// 前五通道按代码查询，命中即后端自动识别类型（fund 接口命中 → fund；行情命中
+// → stock，类型特征 → etf）并回填权威名称与最新价；「自定义标的」通道零网络
+// 请求直接展开建档表单（代码必填自由文本幂等键、名称必填、类型白名单债券/
+// ETF/其他、币种默认 CNY），落库 market=unknown（ADR-0081 口径）、同（代码，
+// 类型）复用并更新名称。查询未命中只显式报错并引导切换自定义标的通道，不转
+// 建档（全对话框仅一份建档表单）；场外基金通道复用既有 add_fund_by_code 命令
+// （fund 类型唯一创建入口仍为按代码即拉，语义不变）。既有「新建标的」独立弹
+// 窗与「添加基金」独立入口已收编退役。
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{
   'update:show': [value: boolean]
@@ -34,17 +35,19 @@ const emit = defineEmits<{
 const reference = useReferenceStore()
 
 // 市场必选的录入通道闭集（通道标签，非存储市场）：沪/深/港复用市场标签，
-// 美股/场外基金是通道语义（美股折叠三交易所、场外基金落 unknown 市场）。
+// 美股/场外基金/自定义标的是通道语义（美股折叠三交易所、场外基金落 unknown
+// 市场、自定义标的零查询直接建档）。
 const CHANNEL_OPTIONS = computed(() => [
   { label: t('investments.market.sh'), value: 'sh' as AddInstrumentChannel },
   { label: t('investments.market.sz'), value: 'sz' as AddInstrumentChannel },
   { label: t('investments.market.hk'), value: 'hk' as AddInstrumentChannel },
   { label: t('investments.addInstrument.channelUs'), value: 'us' as AddInstrumentChannel },
   { label: t('investments.addInstrument.channelFund'), value: 'fund' as AddInstrumentChannel },
+  { label: t('investments.addInstrument.channelCustom'), value: 'custom' as AddInstrumentChannel },
 ])
 
-// 兜底建档的类型白名单（与后端 IPC 入口守卫同源，ADR-0036）：股票类标的不
-// 手动建（按代码查询承担），基金唯一创建入口归按代码即拉。
+// 自定义标的通道的类型白名单（与后端 IPC 入口守卫同源，ADR-0036）：股票类标
+// 的不手动建（按代码查询承担），基金唯一创建入口归按代码即拉。
 const TYPE_OPTIONS = computed(() => [
   { label: t('investments.type.bond'), value: 'bond' as InstrumentType },
   { label: t('investments.type.etf'), value: 'etf' as InstrumentType },
@@ -54,27 +57,33 @@ const TYPE_OPTIONS = computed(() => [
 const market = ref<AddInstrumentChannel | null>(null)
 const code = ref('')
 const querying = ref(false)
-/** 兜底建档态：股票通道查询未命中（查无此码）后展开 */
-const fallback = ref(false)
-const fallbackName = ref('')
-const fallbackType = ref<InstrumentType | null>(null)
-const fallbackCurrency = ref('CNY')
+// 自定义标的通道建档表单（选中通道即展开，零网络请求）
+const customName = ref('')
+const customType = ref<InstrumentType | null>(null)
+const customCurrency = ref('CNY')
 const creating = ref(false)
-/** 弹窗内错误提示（未命中/临时故障/建档校验）：保持弹窗打开供改码重试 */
+/** 弹窗内错误提示（未命中/临时故障/建档校验失败）：保持弹窗打开供改码重试 */
 const error = ref<string | null>(null)
+/** 股票通道查无此码的引导标记：报错文案旁指向自定义标的通道 */
+const notFoundGuidance = ref(false)
+
+/** 自定义标的通道：建档表单直开、提交走创建（零网络请求直至提交） */
+const isCustom = computed(() => market.value === 'custom')
 
 const currencyOptions = computed(() =>
   reference.currencies.map((c) => ({ label: `${c.code} · ${c.name}`, value: c.code })),
 )
 
-const codePlaceholder = computed(() =>
-  market.value === 'fund'
+const codePlaceholder = computed(() => {
+  if (isCustom.value) return t('investments.addInstrument.codePlaceholderCustom')
+  return market.value === 'fund'
     ? t('investments.addInstrument.codePlaceholderFund')
-    : t('investments.addInstrument.codePlaceholderStock'),
-)
+    : t('investments.addInstrument.codePlaceholderStock')
+})
 
 // 基金通道 6 位纯数字才可提交（后端同样校验，前端仅提前拦截不发起无效请求）；
-// 股票通道代码形态由后端按通道解析（矛盾/不支持显式报错），前端只拦空白。
+// 股票通道代码形态由后端按通道解析（矛盾/不支持显式报错），前端只拦空白；
+// 自定义标的代码是自由文本幂等键，只拦空白（后端 instrument.symbol-required 同规）。
 const codeValid = computed(() => {
   const trimmed = code.value.trim()
   if (trimmed === '') return false
@@ -85,9 +94,10 @@ const codeValid = computed(() => {
 const canQuery = computed(() => market.value !== null && codeValid.value && !querying.value)
 const canCreate = computed(
   () =>
-    fallback.value &&
-    fallbackName.value.trim() !== '' &&
-    fallbackType.value !== null &&
+    isCustom.value &&
+    codeValid.value &&
+    customName.value.trim() !== '' &&
+    customType.value !== null &&
     !creating.value,
 )
 
@@ -99,16 +109,22 @@ watch(
     if (!show) return
     market.value = null
     code.value = ''
-    fallback.value = false
-    fallbackName.value = ''
-    fallbackType.value = null
-    fallbackCurrency.value = 'CNY'
+    customName.value = ''
+    customType.value = null
+    customCurrency.value = 'CNY'
     querying.value = false
     creating.value = false
     error.value = null
+    notFoundGuidance.value = false
   },
   { immediate: true },
 )
+
+// 切换通道清报错与引导标记：报错归属查询通道，建档表单以干净态展开
+watch(market, () => {
+  error.value = null
+  notFoundGuidance.value = false
+})
 
 function close() {
   emit('update:show', false)
@@ -155,39 +171,34 @@ async function submitQuery() {
     emit('added', message)
     close()
   } catch (e) {
-    // 股票通道查无此码 → 展开兜底建档；其余错误（含基金通道未命中与临时故障）
-    // 只提示。基金未命中不兜底：fund 类型唯一创建入口仍为按代码即拉。
-    if (market.value !== 'fund' && errorCodeOf(e) === 'sync.stock-not-found') {
-      fallback.value = true
-    }
+    // 查询未命中/临时故障只显式报错（#826：查询未命中兜底建档分支删除）；
+    // 股票通道查无此码追加引导文案指向自定义标的通道。基金未命中不引导：
+    // fund 类型唯一创建入口仍为按代码即拉。
+    notFoundGuidance.value =
+      market.value !== 'fund' && errorCodeOf(e) === 'sync.stock-not-found'
     error.value = extractErrorMessage(e)
   } finally {
     querying.value = false
   }
 }
 
-/** 兜底建档市场：显式市场通道透传（市场取所选值）；美股遍历未命中无法预知
- * 交易所归属、场外基金无市场概念，均传 null 走后端缺省 unknown。 */
-const fallbackMarket = computed((): MarketType | null =>
-  market.value === 'sh' || market.value === 'sz' || market.value === 'hk' ? market.value : null,
-)
-
-async function submitFallback() {
+async function submitCustom() {
   if (!canCreate.value) return
   creating.value = true
   error.value = null
   try {
     const input = {
       symbol: code.value.trim(),
-      type: fallbackType.value!,
-      name: fallbackName.value.trim(),
-      currency_code: fallbackCurrency.value,
-      market: fallbackMarket.value,
+      type: customType.value!,
+      name: customName.value.trim(),
+      currency_code: customCurrency.value,
+      // 市场恒未知（ADR-0081 口径）：自定义标的无真实市场，不透传
+      market: null,
     }
     await api.createInstrument(input)
     emit(
       'added',
-      t('investments.addInstrument.fallbackSuccess', { name: input.name, symbol: input.symbol }),
+      t('investments.addInstrument.customSuccess', { name: input.name, symbol: input.symbol }),
     )
     close()
   } catch (e) {
@@ -195,6 +206,19 @@ async function submitFallback() {
   } finally {
     creating.value = false
   }
+}
+
+/** 主按钮形态随通道分派：自定义标的通道为建档创建，其余通道为按代码查询 */
+const primaryLabel = computed(() =>
+  isCustom.value ? t('investments.addInstrument.create') : t('investments.addInstrument.query'),
+)
+const primaryLoading = computed(() => (isCustom.value ? creating.value : querying.value))
+const primaryDisabled = computed(() => (isCustom.value ? !canCreate.value : !canQuery.value))
+
+/** 主按钮分派：自定义标的通道提交建档，其余通道提交查询 */
+function submitPrimary() {
+  if (isCustom.value) void submitCustom()
+  else void submitQuery()
 }
 </script>
 
@@ -218,7 +242,7 @@ async function submitFallback() {
               v-model:value="market"
               :options="CHANNEL_OPTIONS"
               :placeholder="t('investments.addInstrument.marketPlaceholder')"
-              :disabled="fallback || querying || creating"
+              :disabled="querying || creating"
               data-testid="add-instrument-market"
               style="width: 100%"
             />
@@ -230,13 +254,13 @@ async function submitFallback() {
               :maxlength="32"
               :disabled="querying || creating"
               data-testid="add-instrument-code"
-              @keyup.enter="submitQuery"
+              @keyup.enter="submitPrimary"
             />
           </NFormItem>
-          <template v-if="fallback">
+          <template v-if="isCustom">
             <NFormItem :label="t('investments.addInstrument.nameLabel')" required>
               <NInput
-                v-model:value="fallbackName"
+                v-model:value="customName"
                 :placeholder="t('investments.addInstrument.namePlaceholder')"
                 :maxlength="64"
                 :disabled="creating"
@@ -245,7 +269,7 @@ async function submitFallback() {
             </NFormItem>
             <NFormItem :label="t('investments.addInstrument.typeLabel')" required>
               <AppSelect
-                v-model:value="fallbackType"
+                v-model:value="customType"
                 :options="TYPE_OPTIONS"
                 :placeholder="t('investments.addInstrument.typePlaceholder')"
                 :disabled="creating"
@@ -255,7 +279,7 @@ async function submitFallback() {
             </NFormItem>
             <NFormItem :label="t('investments.addInstrument.currencyLabel')">
               <AppSelect
-                v-model:value="fallbackCurrency"
+                v-model:value="customCurrency"
                 :options="currencyOptions"
                 filterable
                 :disabled="creating"
@@ -266,35 +290,27 @@ async function submitFallback() {
           </template>
         </NSpace>
       </NForm>
-      <NText v-if="fallback" depth="3" data-testid="add-instrument-fallback-hint">
-        {{ t('investments.addInstrument.fallbackHint') }}
+      <NText v-if="isCustom" depth="3" data-testid="add-instrument-custom-hint">
+        {{ t('investments.addInstrument.customHint') }}
       </NText>
       <NText v-if="error" type="error" data-testid="add-instrument-error">
         {{ error }}
+      </NText>
+      <NText v-if="notFoundGuidance" depth="3" data-testid="add-instrument-not-found-hint">
+        {{ t('investments.addInstrument.notFoundHint') }}
       </NText>
       <NSpace justify="end" :size="12">
         <NButton data-testid="cancel-add-instrument" :disabled="querying || creating" @click="close">
           {{ t('investments.addInstrument.cancel') }}
         </NButton>
         <NButton
-          v-if="!fallback"
           type="primary"
           data-testid="submit-add-instrument"
-          :loading="querying"
-          :disabled="!canQuery"
-          @click="submitQuery"
+          :loading="primaryLoading"
+          :disabled="primaryDisabled"
+          @click="submitPrimary"
         >
-          {{ t('investments.addInstrument.query') }}
-        </NButton>
-        <NButton
-          v-else
-          type="primary"
-          data-testid="submit-add-instrument-fallback"
-          :loading="creating"
-          :disabled="!canCreate"
-          @click="submitFallback"
-        >
-          {{ t('investments.addInstrument.create') }}
+          {{ primaryLabel }}
         </NButton>
       </NSpace>
     </NSpace>
