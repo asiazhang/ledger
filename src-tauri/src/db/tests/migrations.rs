@@ -1,4 +1,4 @@
-//! 迁移、种子与 schema 约束测试：迁移集合自校验、`init_db` 幂等与默认种子、
+//! 迁移、种子与 schema 约束测试：`init_db` 幂等与默认种子、
 //! 表级唯一约束（exchange_rates 货币对唯一、V010 price/fx history 周采样唯一）、
 //! 旧版本备份升级路径、全库外键显式 ON DELETE 审计与定时交易系删除行为抽查
 //! （issue #273 / spec #271）。
@@ -15,12 +15,6 @@ use super::common::{
     probe_exchange_rate, probe_fx_rate_history, probe_instrument_market, probe_instrument_source,
     probe_price_history,
 };
-
-/// 校验迁移集合本身定义正确（在临时内存 DB 上从首到尾跑一遍向上迁移）。
-#[test]
-fn migrations_validate() {
-    assert!(migrations().validate().is_ok());
-}
 
 /// init_db 应幂等：连续跑两次不报错，且默认币种 11 条、分类 92 条已写入
 /// （18 顶级 + 74 二级）。

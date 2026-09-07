@@ -537,12 +537,10 @@ pub fn exit_fallback(app: &tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db;
 
     fn conn() -> rusqlite::Connection {
-        let mut c = db::open_in_memory().expect("打开内存库");
-        db::init_db(&mut c).expect("执行迁移");
-        c
+        // 建库两行序经统一测试工厂承载（spec #728 / issue #758 / ADR-0084 决策 3/7）。
+        crate::test_support::open()
     }
 
     fn ts(s: &str) -> chrono::DateTime<chrono::Utc> {
@@ -634,7 +632,11 @@ mod tests {
     /// app_settings 表缺失（旧版本备份恢复后）同样返回默认而非报错。
     #[test]
     fn get_state_defaults_when_table_missing() {
-        let c = db::open_in_memory().expect("未迁移的内存库");
+        // 工厂库删除 app_settings 模拟旧版本备份恢复后的缺表现场（工厂无
+        // 「未迁移库」形态：建库 = 内存库 + 迁移，ADR-0084 决策 3）。
+        let c = crate::test_support::open();
+        c.execute("DROP TABLE app_settings", [])
+            .expect("删除 app_settings");
         let state = get_state(&c).expect("缺表取默认状态");
         assert_eq!(state, AutoBackupState::default());
     }
@@ -711,9 +713,8 @@ mod scheduler_tests {
     use std::path::PathBuf;
 
     fn conn() -> rusqlite::Connection {
-        let mut c = db::open_in_memory().expect("打开内存库");
-        db::init_db(&mut c).expect("执行迁移");
-        c
+        // 建库两行序经统一测试工厂承载（spec #728 / issue #758 / ADR-0084 决策 3/7）。
+        crate::test_support::open()
     }
 
     /// 与 backup 模块测试同款：临时目录唯一命名，避免并行测试互踩。

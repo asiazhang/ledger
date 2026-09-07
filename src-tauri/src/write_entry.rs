@@ -93,17 +93,18 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::DbState;
     use crate::error::AppError;
     use crate::events::{BACKUPS_CHANGED, LEDGER_CHANGED, PRICES_CHANGED};
     use crate::signals::{WriteEvidence, WriteOp};
     use crate::test_utils::GatedEmitter;
+    use rusqlite::params;
     use std::sync::Arc;
 
     /// 内存库 + 闸门式假发射器的测试夹具。
     fn fixture() -> (Arc<Mutex<Connection>>, GatedEmitter) {
-        let db = DbState::open_in_memory().expect("内存库应可打开");
-        (db.conn, GatedEmitter::gated())
+        // 建库两行序经统一测试工厂承载（spec #728 / issue #758 / ADR-0084 决策 3/7）。
+        let conn = crate::test_support::open();
+        (Arc::new(Mutex::new(conn)), GatedEmitter::gated())
     }
 
     /// 静默闭包：Ok 值带回 await 点，闭包在阻塞线程池执行（run_db 组合语义）。
@@ -141,8 +142,17 @@ mod tests {
             move |conn| {
                 conn.execute(
                     "INSERT INTO categories (id, name, kind, created_at, updated_at, version, device_id) \
-                     VALUES ('cat-1', '测试', 'expense', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1, 'device-1')",
-                    [],
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        "cat-1",
+                        "测试",
+                        "expense",
+                        // 夹具簿记戳引用工厂固定时刻（ADR-0084 决策 5）。
+                        crate::test_support::FIXED_NOW,
+                        crate::test_support::FIXED_NOW,
+                        1,
+                        "device-1"
+                    ],
                 )
                 .map_err(AppError::from)?;
                 Ok(Outcome::Silent(()))
