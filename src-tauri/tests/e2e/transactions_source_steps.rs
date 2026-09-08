@@ -316,3 +316,57 @@ fn search_nth_no_source(world: &mut LedgerWorld, index: usize) {
         txn.source
     );
 }
+
+// --- 物品分支（issue #708）：溯源指针反查 ---
+
+/// 按名称查未删除物品 id（场景内物品名唯一）。
+fn item_id_by_name(world: &LedgerWorld, name: &str) -> String {
+    world_conn!(world)
+        .query_row(
+            "SELECT id FROM items WHERE name=?1 AND is_deleted=0",
+            params![name],
+            |r| r.get::<_, String>(0),
+        )
+        .unwrap_or_else(|_| panic!("来源断言：物品 {name} 应已存在"))
+}
+
+/// 断言来源 = 物品来源（issue #708：类型/实体 id/物品名/可空状态）：
+/// 列表与搜索侧共用。
+fn assert_item_source(
+    world: &LedgerWorld,
+    source: &TransactionSource,
+    name: &str,
+    expected_status: Option<TransactionSourceStatus>,
+) {
+    assert_eq!(source.kind, TransactionSourceKind::Item, "来源类型应为物品");
+    assert_eq!(
+        source.entity_id,
+        item_id_by_name(world, name),
+        "来源实体 id 应为溯源物品 id"
+    );
+    assert_eq!(source.display_name, name, "来源展示名应为物品名");
+    assert_eq!(source.status, expected_status, "来源状态标注不匹配");
+}
+
+#[then(expr = "交易列表第 {int} 条来源应为物品 {string}")]
+fn list_nth_source_item(world: &mut LedgerWorld, index: usize, name: String) {
+    let source = nth_source(world, NthList::List, index);
+    assert_item_source(world, &source, &name, None);
+}
+
+#[then(expr = "交易列表第 {int} 条来源应为已处置物品 {string}")]
+fn list_nth_source_disposed_item(world: &mut LedgerWorld, index: usize, name: String) {
+    let source = nth_source(world, NthList::List, index);
+    assert_item_source(
+        world,
+        &source,
+        &name,
+        Some(TransactionSourceStatus::Disposed),
+    );
+}
+
+#[then(expr = "搜索结果第 {int} 条来源应为物品 {string}")]
+fn search_nth_source_item(world: &mut LedgerWorld, index: usize, name: String) {
+    let source = nth_source(world, NthList::Search, index);
+    assert_item_source(world, &source, &name, None);
+}

@@ -13,6 +13,7 @@ import type { ItemWithDailyCost } from '@/types'
 
 
 vi.mock('vue-router', () => ({
+  useRoute: () => ({ query: {} }),
   useRouter: () => ({ push: vi.fn() }),
 }))
 

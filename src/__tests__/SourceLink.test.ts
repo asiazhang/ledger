@@ -105,3 +105,36 @@ describe('计划来源渲染（spec #704 / issue #707）：三形态图标 + 计
     expect(wrapper.find('button.source-link').text()).toBe('分期计划')
   })
 })
+
+describe('物品来源渲染（spec #704 / issue #708）：物品图标 + 物品名，已处置标注、可点击', () => {
+  it('在用物品：类型图标 + 物品名，无状态标注，可点击', async () => {
+    const wrapper = mount(SourceLink, {
+      props: {
+        source: makeSource({ kind: 'item', entity_id: 'item-1', display_name: '手机' }),
+      },
+    })
+    expect(wrapper.find('.source-cell-icon').exists()).toBe(true)
+    expect(wrapper.find('button.source-link').text()).toBe('手机')
+    expect(wrapper.find('.source-cell').attributes('title')).toBe('物品')
+    expect(wrapper.text()).not.toContain('已处置')
+    await wrapper.find('button.source-link').trigger('click')
+    expect(pushMock).toHaveBeenCalledWith({ name: 'items', query: { focus: 'item-1' } })
+  })
+
+  it('已处置物品（status=disposed）：名称 +「已处置」标注，仍可点击（物品列表带标注在册，跳转不落空）', async () => {
+    const wrapper = mount(SourceLink, {
+      props: {
+        source: makeSource({
+          kind: 'item',
+          entity_id: 'item-2',
+          display_name: '耳机',
+          status: 'disposed',
+        }),
+      },
+    })
+    expect(wrapper.find('button.source-link').exists()).toBe(true)
+    expect(wrapper.text()).toContain('已处置')
+    await wrapper.find('button.source-link').trigger('click')
+    expect(pushMock).toHaveBeenCalledWith({ name: 'items', query: { focus: 'item-2' } })
+  })
+})

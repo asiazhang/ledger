@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { componentVm } from './helpers/component-vm'
 import { findButton } from './helpers/dom'
@@ -12,7 +12,12 @@ import type { Currency, ItemDailyCost, ItemInput, ItemWithDailyCost, Transaction
 
 
 const pushMock = vi.fn()
+// focus 参数读取自路由 query（useFocusParam 注入 getter，spec #704 / issue #708）。
+// 可控 mockRoute 替代真实 router：默认空 query（无 focus 空转），来源落点场景
+// 在 mount 前写入 focus；收纳态落点分流语义归 source-jump 深模块专测。
+const mockRoute = { query: {} as Record<string, string> }
 vi.mock('vue-router', () => ({
+  useRoute: () => mockRoute,
   useRouter: () => ({ push: pushMock }),
 }))
 
@@ -174,6 +179,7 @@ function setupInvoke(expenseTxs: Transaction[] = mockExpenseTxs) {
 beforeEach(async () => {
   itemList = mockItems
   calcResponse = null
+  mockRoute.query = {}
   setupInvoke()
   // 参考数据（币种选项）与物品 store 均为 self-init，提前预热
   await flushPromises()
@@ -649,4 +655,71 @@ describe('ItemsView 自选参考日重算（issue #121）', () => {
   function modalText(): string {
     return bodyQuery('[data-testid="item-detail-modal"]')!.textContent ?? ''
   }
+})
+
+/** 来源跳转落点（spec #704 / issue #708，词汇表「实体定位参数（focus 参数）」）：
+ * 视图装配断言——focus 在场 → 对应行高亮；无 focus 空转；读一次语义下
+ * 消费后路由 query 变化不再触发（高亮保持实例终态，不反复定位）。
+ * 已处置物品行同样在册可高亮（来源列可点击裁决：已处置不落空）。 */
+describe('ItemsView 来源跳转落点（issue #708）', () => {
+  beforeAll(() => {
+    if (Element.prototype.scrollIntoView) vi.mocked(Element.prototype.scrollIntoView).mockClear()
+    Element.prototype.scrollIntoView = vi.fn()
+  })
+
+  beforeEach(() => {
+    vi.mocked(Element.prototype.scrollIntoView).mockClear()
+  })
+
+  it('focus 在场：列表渲染后对应行获得高亮类，行锚点 data-item-id 恒在', async () => {
+    itemList = [
+      { ...mockItems[0], id: 'it-1' },
+      { ...mockItems[1], id: 'it-2' },
+    ]
+    mockRoute.query = { focus: 'it-2' }
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+
+    const rows = wrapper.findAll('tr[data-item-id]')
+    expect(rows.map((r) => r.attributes('data-item-id'))).toEqual(['it-1', 'it-2'])
+    expect(rows[0].classes()).not.toContain('item-row-focus')
+    expect(rows[1].classes()).toContain('item-row-focus')
+    // 高亮行已滚动定位（jsdom 仅验证调用不炸）
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled()
+  })
+
+  it('已处置物品行同样可高亮（来源列可点击，跳转不落空）', async () => {
+    itemList = [{ ...mockItems[0], id: 'it-9', status: 'disposed', disposal_date: '2026-06-01' }]
+    mockRoute.query = { focus: 'it-9' }
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+
+    const rows = wrapper.findAll('tr[data-item-id]')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].classes()).toContain('item-row-focus')
+  })
+
+  it('无 focus：全部行无高亮（安全空转）', async () => {
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+    expect(wrapper.findAll('tr.item-row-focus').length).toBe(0)
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
+  })
+
+  it('读一次语义：消费后 query 变化（页签切换 replace 保留残留 focus 场景）不重新高亮', async () => {
+    itemList = [
+      { ...mockItems[0], id: 'it-1' },
+      { ...mockItems[1], id: 'it-9' },
+    ]
+    mockRoute.query = { focus: 'it-1' }
+    const wrapper = mount(ItemsView)
+    await flushPromises()
+
+    // 模拟页签切换 replace 后残留新 focus：本实例闸门已耗尽，高亮不迁移
+    mockRoute.query = { tab: 'items', focus: 'it-9' }
+    await flushPromises()
+    const highlighted = wrapper.findAll('tr.item-row-focus')
+    expect(highlighted.length).toBe(1)
+    expect(highlighted[0].attributes('data-item-id')).toBe('it-1')
+  })
 })

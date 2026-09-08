@@ -26,7 +26,8 @@ mod model;
 /// 与 ADR-0056 阶段 1 定格形状一致（先例：`scheduled_transactions` 入口再导出）。
 pub use domain::*;
 pub use model::{
-    Item, ItemDailyCost, ItemDailyTotal, ItemDisposeInput, ItemInput, ItemStatus, ItemWithDailyCost,
+    Item, ItemDailyCost, ItemDailyTotal, ItemDisposeInput, ItemInput, ItemSourceDisplay,
+    ItemStatus, ItemWithDailyCost,
 };
 
 #[cfg(test)]

@@ -8,6 +8,7 @@ use super::model::{
 };
 use crate::db::query::{query_all, query_one};
 use crate::error::{AppError, Result};
+use crate::item;
 use crate::policy;
 use crate::scheduled_transactions::{self, ScheduledKind};
 
@@ -23,6 +24,10 @@ pub use list_transactions_internal as list_transactions;
 /// ② 计划反查（issue #707）：按生成交易 id 批量反查期次 → 计划
 ///    （`scheduled_transactions::source_display_by_transaction_ids`），展示名 =
 ///    计划名（备注，可空由前端按类型名兜底），已取消计划携带状态标注。
+/// ③ 物品反查（issue #708）：按溯源指针批量反查物品表
+///    （`item::source_display_by_transaction_ids`），展示名 = 物品名，已处置
+///    物品携带状态标注（物品列表仍在册、跳转不落空）。期次交易被建物品时
+///    计划优先（计划是流水发起方，物品是购买档案）。
 ///
 /// 零迁移：来源是读时推导，不落库；无来源交易（手动录入/AI 导入）原样为 `None`。
 pub(super) fn attach_sources(conn: &Connection, items: &mut [Transaction]) -> Result<()> {
@@ -88,6 +93,39 @@ pub(super) fn attach_sources(conn: &Connection, items: &mut [Transaction]) -> Re
                 // 展示名 = 计划名（备注）；无备注回空串，前端按类型名兜底展示。
                 display_name: row.note.clone().unwrap_or_default(),
                 status: (row.status == "cancelled").then_some(TransactionSourceStatus::Cancelled),
+            });
+        }
+    }
+
+    // ③ 物品反查（仅对保单/计划均未命中的行；溯源唯一保证一交易至多一行）
+    let item_txn_ids: Vec<String> = items
+        .iter()
+        .filter(|t| t.source.is_none())
+        .map(|t| t.id.clone())
+        .collect();
+    if !item_txn_ids.is_empty() {
+        let rows = item::source_display_by_transaction_ids(conn, &item_txn_ids)?;
+        let by_txn: HashMap<&str, &item::ItemSourceDisplay> = rows
+            .iter()
+            .filter_map(|r| {
+                r.purchase_transaction_id
+                    .as_deref()
+                    .map(|txn_id| (txn_id, r))
+            })
+            .collect();
+        for txn in items.iter_mut() {
+            if txn.source.is_some() {
+                continue;
+            }
+            let Some(row) = by_txn.get(txn.id.as_str()) else {
+                continue;
+            };
+            txn.source = Some(TransactionSource {
+                kind: TransactionSourceKind::Item,
+                entity_id: row.id.clone(),
+                // 展示名 = 物品名；已处置物品携带状态标注（列表仍在册，可点击由前端裁决）。
+                display_name: row.name.clone(),
+                status: row.is_disposed.then_some(TransactionSourceStatus::Disposed),
             });
         }
     }

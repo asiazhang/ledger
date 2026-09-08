@@ -25,7 +25,8 @@ use rusqlite::{Connection, OptionalExtension};
 use super::cost;
 use super::guard::apply_purchase_link;
 use super::model::{
-    Item, ItemDailyCost, ItemDailyTotal, ItemDisposeInput, ItemInput, ItemStatus, ItemWithDailyCost,
+    Item, ItemDailyCost, ItemDailyTotal, ItemDisposeInput, ItemInput, ItemSourceDisplay,
+    ItemStatus, ItemWithDailyCost,
 };
 use crate::db::query::{query_all, query_one};
 use crate::db::{device_id, new_uuid, now_iso};
@@ -68,6 +69,31 @@ pub fn list_items(conn: &Connection) -> Result<Vec<ItemWithDailyCost>> {
             })
         })
         .collect()
+}
+
+/// 交易列表来源反查（spec #704 / issue #708，词汇表「来源列」展示层溯源反查）：
+/// 按溯源指针（`purchase_transaction_id`）批量取指向给定交易的未删除物品
+/// （物品名 + 已处置标志），供核心交易域按页填充来源列——展示层 join，不落
+/// 任何数据级反向引用（物品域 source_transaction_id 词条边界：禁令针对数据
+/// 模型，不针对展示）。软删物品不返回（跳转会落空，且溯源唯一守卫只看未删除
+/// 物品，该交易可再次建物品——来源列同口径视为无来源）。溯源唯一（创建守卫）
+/// 使一交易至多一物品，返回仍为 Vec 供调用方按映射消费。
+pub fn source_display_by_transaction_ids(
+    conn: &Connection,
+    transaction_ids: &[String],
+) -> Result<Vec<ItemSourceDisplay>> {
+    if transaction_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = vec!["?"; transaction_ids.len()].join(",");
+    query_all(
+        conn,
+        &format!(
+            "SELECT id, purchase_transaction_id, name, status FROM items \
+             WHERE purchase_transaction_id IN ({placeholders}) AND is_deleted=0",
+        ),
+        rusqlite::params_from_iter(transaction_ids.iter()),
+    )
 }
 
 /// 以物品自身字段（分子口径：总成本 − 残值，下限 0）向指定目标日计算，

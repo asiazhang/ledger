@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
-import { h, computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { h, computed, nextTick, onMounted, ref } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import {
   NCard,
   NButton,
@@ -26,6 +26,7 @@ import AppDatePicker from '@/components/AppDatePicker.vue'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useModalIntent } from '@/composables/useModalIntent'
+import { useFocusParam } from '@/composables/useFocusParam'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { useItemsStore } from '@/stores/items'
@@ -36,6 +37,7 @@ const app = useAppStore()
 const itemsStore = useItemsStore()
 const message = useMessage()
 const router = useRouter()
+const route = useRoute()
 
 // —— 创建唯一入口提示（issue #207，ADR-0025）：物品只能经交易右键「加入物品」创建，
 // 本页不提供手动新增表单；提示条常驻顶部并一键跳转交易页。——
@@ -235,6 +237,54 @@ async function removeItem(id: string) {
 }
 
 // —— 物品列表 ——
+// —— 来源跳转落点（spec #704 / issue #708，词汇表「实体定位参数（focus 参数）」）：
+// 挂载消费一次（读一次语义归 useFocusParam 单点）；物品行高亮属「先拿 id 后等
+// 数据」——回调只暂存 id，列表渲染后滚动定位（读取时刻与生效时刻解耦）。
+// 已处置物品仍在列表（带处置标注），高亮不落空；软删物品已不在列表，来源列
+// 对其不反查（后端同口径），无落空态。高亮保持到实例消亡：刷新/重进 = 新实例
+// 重定位，URL 在场即复现、可分享。独立路由与收纳态（组「更多」物品页签，
+// 同一组件整体装载）共用本消费点。——
+const highlightedItemId = ref<string | null>(null)
+
+/** 表格组件引用：滚动定位在其自身子树内查行锚点。 */
+const tableRef = ref<{ $el?: HTMLElement } | null>(null)
+
+const focusParam = useFocusParam({
+  query: () => route.query,
+  onFocus: (itemId) => {
+    highlightedItemId.value = itemId
+  },
+})
+
+/** 行锚点 + 高亮类：滚动定位的 data 属性与高亮样式同源一处。 */
+function rowProps(row: ItemWithDailyCost): Record<string, unknown> {
+  return {
+    'data-item-id': row.id,
+    class: row.id === highlightedItemId.value ? 'item-row-focus' : undefined,
+  }
+}
+
+/** 渲染完成后滚动到高亮行（列表数据到位后调用；无 focus 空转）。 */
+async function scrollToHighlighted(): Promise<void> {
+  if (!highlightedItemId.value) return
+  // 行挂载链多跳（数据到位 → 表格行渲染），有界重试至锚点出现；在本表格子树内
+  // 按 dataset 比对定位（不经属性选择器拼接实体 id，无注入面；组件自身子树查询，
+  // 独立路由与「更多」页签装载同效）。
+  for (let hop = 0; hop < 5; hop += 1) {
+    await nextTick()
+    const root = tableRef.value?.$el as HTMLElement | undefined
+    const anchor = root
+      ? Array.from(root.querySelectorAll<HTMLElement>('[data-item-id]')).find(
+          (el) => el.dataset.itemId === highlightedItemId.value,
+        )
+      : undefined
+    if (anchor) {
+      anchor.scrollIntoView({ block: 'center' })
+      return
+    }
+  }
+}
+
 const columns: DataTableColumns<ItemWithDailyCost> = [
   { title: () => t('items.columns.name'), key: 'name' },
   { title: () => t('items.columns.purchaseDate'), key: 'purchase_date' },
@@ -291,10 +341,15 @@ const columns: DataTableColumns<ItemWithDailyCost> = [
 ]
 
 onMounted(() => {
+  // focus 读一次：先拿 id（消费闸门内化），列表到位后生效
+  focusParam.consume()
   // 物品 store self-init + ledger:changed 信号兜底；mounted 重拉覆盖错误重试
-  void itemsStore.refresh().catch(() => {
-    /* 失败信号已由 status 承载 */
-  })
+  void itemsStore
+    .refresh()
+    .catch(() => {
+      /* 失败信号已由 status 承载 */
+    })
+    .then(scrollToHighlighted)
   // 关联购买交易候选：支出交易，倒序取最近 100 笔（MVP 取舍：更早的交易不在
   // 候选内；加载失败不阻塞编辑弹窗换关）
   api
@@ -324,7 +379,14 @@ onMounted(() => {
     </NAlert>
 
     <NCard :title="t('items.listTitle')" size="small">
-      <NDataTable :columns="columns" :data="itemsStore.items" :bordered="false" size="small">
+      <NDataTable
+        ref="tableRef"
+        :columns="columns"
+        :data="itemsStore.items"
+        :row-props="rowProps"
+        :bordered="false"
+        size="small"
+      >
         <template #empty>
           <span data-testid="item-empty-guide">
             {{ t('items.emptyGuide') }}
@@ -501,3 +563,11 @@ onMounted(() => {
     </AppModal>
   </NSpace>
 </template>
+
+<style>
+/* 来源跳转行高亮（spec #704 / issue #708）：rowProps 把类打在 NDataTable 内部
+   <tr> 上，scoped 选择器够不到，故用全局规则 + 视图专名类（不被复用为通用名）。 */
+tr.item-row-focus > td {
+  background-color: rgba(245, 158, 11, 0.16);
+}
+</style>

@@ -53,7 +53,7 @@ pub enum TransactionSourceKind {
     ScheduledTransfer,
     /// 保单（PolicyReference 直挂，本票接线）。
     Policy,
-    /// 物品（溯源指针反查，#708 接线）。
+    /// 物品（溯源指针反查，本票接线）。
     Item,
     /// 投资标的（证券交易记录反查，#709 接线）。
     Instrument,
@@ -65,7 +65,7 @@ pub enum TransactionSourceKind {
 pub enum TransactionSourceStatus {
     /// 已取消（计划，#707 接线）。
     Cancelled,
-    /// 已处置（物品，#708 接线）。
+    /// 已处置（物品，本票接线）。
     Disposed,
     /// 已删除（软删保单，本票接线；历史引用保留不置空，ADR-0051 决策 5）。
     Deleted,

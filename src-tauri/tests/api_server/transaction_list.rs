@@ -445,3 +445,104 @@ async fn test_get_transactions_includes_plan_source() {
         "无来源交易 source 应为 null: {plain_txn:?}"
     );
 }
+
+/// 行携带物品来源（spec #704 / issue #708 物品分支）：溯源指针反查，返回
+/// `{kind: "item", entity_id: 物品 id, display_name: 物品名, status}`；已处置物品
+/// 携带 `status: "disposed"`（物品列表仍在册、跳转不落空）；软删物品不反查——
+/// 与溯源唯一守卫同口径（只看未删除物品，该交易可再次建物品），`source` 为
+/// `null`。物品行直插（item 域 IPC-only 无 HTTP 端点，先例保单/计划直插）。
+#[tokio::test]
+async fn test_get_transactions_includes_item_source() {
+    let (app, conn) = setup_app();
+    let account_id = create_account_via_api(&app, "现金").await;
+
+    // 经既有 batch 端点落三笔交易：两笔建物品、一笔不建
+    let with_item_1 = format!(
+        r#"{{"kind":"expense","amount_cents":599900,"currency_code":"CNY","account_id":"{account_id}","date":"2026-02-01"}}"#
+    );
+    let with_item_2 = format!(
+        r#"{{"kind":"expense","amount_cents":80000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-02-02"}}"#
+    );
+    let plain = format!(
+        r#"{{"kind":"income","amount_cents":200,"currency_code":"CNY","account_id":"{account_id}","date":"2026-03-01"}}"#
+    );
+    let created = post_batch(
+        &app,
+        batch_body(&[&with_item_1, &with_item_2, &plain], None),
+    )
+    .await;
+    assert!(created.iter().all(|r| r["success"] == true), "{created:?}");
+    let txn_id_1 = created[0]["id"].as_str().unwrap().to_string();
+    let txn_id_2 = created[1]["id"].as_str().unwrap().to_string();
+
+    // 直插物品行：item-1 在用、item-2 已处置（溯源指针指向各自购买交易）
+    {
+        let c = conn.lock().unwrap();
+        c.execute(
+            "INSERT INTO items (id,name,purchase_date,total_cost_cents,currency_code,cost_native_cents,
+             status,disposal_date,residual_value_cents,purchase_transaction_id,note,
+             created_at,updated_at,version,device_id,is_deleted)
+             VALUES ('item-1','手机','2026-02-01',599900,'CNY',599900,'in_use',NULL,NULL,?1,NULL,
+             ?2,?3,1,'test',0),
+             ('item-2','耳机','2026-02-02',80000,'CNY',80000,'disposed','2026-05-01',NULL,?4,NULL,
+             ?2,?3,1,'test',0)",
+            rusqlite::params![txn_id_1, FIXED_NOW, FIXED_NOW, txn_id_2],
+        )
+        .unwrap();
+    }
+
+    let (status, body) = get_json(&app, "/api/v1/transactions").await;
+    assert_eq!(status, StatusCode::OK);
+    let txs = items_of(&body);
+    assert_eq!(txs.len(), 3);
+
+    // 在用物品：来源 = 物品（实体 id + 物品名，无状态标注）
+    let in_use = txs.iter().find(|t| t["id"] == txn_id_1.as_str()).unwrap();
+    assert_eq!(
+        in_use["source"],
+        serde_json::json!({
+            "kind": "item",
+            "entity_id": "item-1",
+            "display_name": "手机",
+            "status": serde_json::Value::Null,
+        }),
+        "购买交易来源应为溯源物品: {in_use:?}"
+    );
+
+    // 已处置物品：来源照常返回名称 + 已处置状态标注（物品列表仍在册）
+    let disposed = txs.iter().find(|t| t["id"] == txn_id_2.as_str()).unwrap();
+    assert_eq!(
+        disposed["source"],
+        serde_json::json!({
+            "kind": "item",
+            "entity_id": "item-2",
+            "display_name": "耳机",
+            "status": "disposed",
+        }),
+        "已处置物品的购买交易来源应携带已处置标注: {disposed:?}"
+    );
+
+    // 未建物品的交易：来源为空
+    let plain_txn = txs
+        .iter()
+        .find(|t| t["id"] != txn_id_1.as_str() && t["id"] != txn_id_2.as_str())
+        .unwrap();
+    assert!(
+        plain_txn["source"].is_null(),
+        "未建物品交易 source 应为 null: {plain_txn:?}"
+    );
+
+    // 软删物品：不反查，来源回退为空（与溯源唯一守卫同口径，该交易可再次建物品）
+    {
+        let c = conn.lock().unwrap();
+        c.execute("UPDATE items SET is_deleted=1 WHERE id='item-1'", [])
+            .unwrap();
+    }
+    let (_, body) = get_json(&app, "/api/v1/transactions").await;
+    let txs = items_of(&body);
+    let unlinked = txs.iter().find(|t| t["id"] == txn_id_1.as_str()).unwrap();
+    assert!(
+        unlinked["source"].is_null(),
+        "软删物品的购买交易来源应为 null: {unlinked:?}"
+    );
+}
