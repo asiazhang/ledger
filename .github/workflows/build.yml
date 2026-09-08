@@ -314,8 +314,17 @@ jobs:
           : "${APPLE_ID:?✗ 缺少 secret APPLE_ID（公证必需）}"
           : "${APPLE_APP_SPECIFIC_PASSWORD:?✗ 缺少 secret APPLE_APP_SPECIFIC_PASSWORD（公证必需）}"
           : "${APPLE_TEAM_ID:?✗ 缺少 secret APPLE_TEAM_ID（公证必需）}"
+          # 诊断：定位公证输入产物（run 34208716376 实测 find 意外返回空，ditto 报
+          # "Cannot get the real path for source ''" 难以排障）
+          echo "pwd=$(pwd)"
+          ls -la "$MACOS_BUNDLE_DIR" || true
+          ls -la "$DMG_BUNDLE_DIR" || true
           APP_PATH=$(find "$MACOS_BUNDLE_DIR" -maxdepth 1 -name '*.app' | head -n 1)
           DMG_PATH=$(find "$DMG_BUNDLE_DIR" -maxdepth 1 -name '*.dmg' | head -n 1)
+          echo "APP_PATH=$APP_PATH"
+          echo "DMG_PATH=$DMG_PATH"
+          [ -n "$APP_PATH" ] && [ -n "$DMG_PATH" ] \
+            || { echo "✗ 未找到待公证产物（.app / .dmg），见上方目录列表"; exit 1; }
           PROFILE=openledger-notary
           xcrun notarytool store-credentials "$PROFILE" \
             --apple-id "$APPLE_ID" \
