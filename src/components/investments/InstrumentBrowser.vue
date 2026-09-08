@@ -95,7 +95,7 @@ watch(searchText, () => {
 watch(selectedMarket, reload)
 watch(onlyInvested, reload)
 
-// 价格失效信号（ADR-0031）：持仓价格同步/录价等实际写价后原地重拉——
+// 价格失效信号（ADR-0031）：标的信息同步/录价等实际写价后原地重拉——
 // 用 load() 保留分页与搜索状态；reload() 会重置到第 1 页，
 // 抽走用户视线下的行（issue #238）。
 usePricesChanged(() => {

@@ -22,7 +22,7 @@ export type InstrumentInfoSyncOutcome = Exclude<InstrumentInfoSyncStatus, 'idle'
  */
 export function useInstrumentInfoSync() {
   const syncing = ref(false)
-  /** 反馈文案：同步结果（含「无持仓标的可同步」）或失败信息 */
+  /** 反馈文案：同步结果（含「暂无标的可同步」）或失败信息 */
   const resultMessage = ref<string | null>(null)
   /** 反馈状态：成功/失败，供消息着色 */
   const status = ref<InstrumentInfoSyncStatus>('idle')

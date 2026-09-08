@@ -306,13 +306,16 @@ pub fn refresh_instrument_name(conn: &Connection, instrument_id: &str, name: &st
     if name.is_empty() {
         return Ok(false);
     }
-    let current: Option<String> = conn
-        .query_row(
-            "SELECT name FROM instruments WHERE id=?1",
-            rusqlite::params![instrument_id],
-            |r| r.get(0),
-        )
-        .ok();
+    let current: Option<String> = match conn.query_row(
+        "SELECT name FROM instruments WHERE id=?1",
+        rusqlite::params![instrument_id],
+        |r| r.get(0),
+    ) {
+        Ok(name) => Some(name),
+        // 行已不存在（并发删除）：静默跳过；其余真实 DB 错误照常上抛，不吞。
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(e) => return Err(e.into()),
+    };
     match current {
         Some(existing) if existing != name => {
             conn.execute(

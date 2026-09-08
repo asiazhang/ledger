@@ -865,7 +865,7 @@ fn kline_backfill_keeps_history_after_position_cleared() {
     assert_eq!(price_history_rows(&conn, "inst-sh").len(), 1);
     assert_eq!(price_history_rows(&conn, "inst-sz").len(), 1);
 
-    // 清仓 inst-sh：删除持仓批次后不再参与采集。
+    // 清仓 inst-sh（#827 起仍参与采集）：重复回填经周采样幂等仍单行，历史保留不删。
     conn.execute(
         "DELETE FROM security_lots WHERE instrument_id='inst-sh'",
         [],

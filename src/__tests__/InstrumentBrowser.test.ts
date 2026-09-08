@@ -164,19 +164,19 @@ describe('InstrumentBrowser 同步标的信息按钮', () => {
     expect(wrapper.text()).toContain('已同步 2 只，跳过 1 只')
   })
 
-  it('无持仓时同步不报错并提示「无持仓标的可同步」', async () => {
+  it('空库时同步不报错并提示「暂无标的可同步」', async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         list_instruments: () => Promise.resolve({ items: [], total: 0 }),
         sync_instrument_info: () =>
-          Promise.resolve({ synced: 0, skipped: 0, message: '无持仓标的可同步' }),      },
+          Promise.resolve({ synced: 0, skipped: 0, message: '暂无标的可同步' }),      },
     })
     const wrapper = mountBrowser()
     await flushPromises()
     await wrapper.find('[data-testid="sync-instrument-info"]').trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('无持仓标的可同步')
+    expect(wrapper.text()).toContain('暂无标的可同步')
   })
 
   it('同步失败显示错误消息', async () => {
@@ -255,7 +255,7 @@ describe('InstrumentBrowser 全量同步退役（issue #698 / ADR-0081 决策 3�
     await flushPromises()
     expect(wrapper.find('[data-testid="full-sync"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('全量同步')
-    // 持仓价格增量同步按钮不受退役影响
+    // 标的信息同步按钮不受退役影响
     expect(wrapper.find('[data-testid="sync-instrument-info"]').exists()).toBe(true)
   })
 })

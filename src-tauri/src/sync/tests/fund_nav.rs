@@ -1,6 +1,6 @@
 //! 历史净值通道（issue #303 / ADR-0038 决策 6）：lsjz 报文解析（fixture 为真实
 //! 接口形状）、净值同步水位窗口语义、Referer 头传播。全部离线驱动，不依赖真实
-//! 网络；基金分区编排（水位增量回填的端到端语义）见 `holding_price_sync.rs`。
+//! 网络；基金分区编排（水位增量回填的端到端语义）见 `instrument_info_sync.rs`。
 
 use std::sync::Arc;
 use std::time::Duration;
