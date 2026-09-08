@@ -1,16 +1,21 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { NTabs, NTabPane, NIcon } from 'naive-ui'
 import {
   StatsChartOutline,
   ListOutline,
   TrendingUpOutline,
 } from '@vicons/ionicons5'
+import { api } from '@/api'
 import { t } from '@/i18n'
+import { useFocusParam } from '@/composables/useFocusParam'
 import RealizedPnlPanel from '@/components/investments/RealizedPnlPanel.vue'
 import InstrumentBrowser from '@/components/investments/InstrumentBrowser.vue'
 import PortfolioTrendPanel from '@/components/investments/PortfolioTrendPanel.vue'
 import type { Instrument } from '@/types'
+
+const route = useRoute()
 
 // 各 tab 内容为独立组件：切换 tab（display-directive='if'）会重新挂载，
 // 组件 onMounted 内自行加载数据，无需在此协调刷新。
@@ -31,6 +36,27 @@ function onViewTrend(inst: Instrument) {
 watch(activeTab, (tab) => {
   if (tab !== 'trend') trendEntry.value = null
 })
+
+// —— 来源跳转落点（spec #704 / issue #709，词汇表「实体定位参数（focus 参数）」）：
+// 挂载消费一次（读一次语义归 useFocusParam 单点）。标的落走势页签——标的浏览
+// 有分页、行高亮不可靠，走势页签是唯一焦点面：切页签后按 id 精确解析标的
+// （清仓/无持仓照常可达，走势不依赖持仓）再带入单标的模式；解析失败（无效
+// focus）停留组合走势（不提供落空的跳转）。主项路由与收纳页签（资产「更多」
+// investments 页签）共用本视图实例，route.query 同源，两态一套接线。
+const focusParam = useFocusParam({
+  query: () => route.query,
+  onFocus: (instrumentId) => {
+    activeTab.value = 'trend'
+    void api.getInstrument(instrumentId).then(
+      (inst) => {
+        // 异步解析期间用户已离开走势页签则丢弃（同读一次语义的迟到意图）
+        if (activeTab.value === 'trend') trendEntry.value = inst
+      },
+      () => {},
+    )
+  },
+})
+onMounted(() => focusParam.consume())
 </script>
 
 <template>

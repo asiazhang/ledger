@@ -138,3 +138,40 @@ describe('物品来源渲染（spec #704 / issue #708）：物品图标 + 物品
     expect(pushMock).toHaveBeenCalledWith({ name: 'items', query: { focus: 'item-2' } })
   })
 })
+
+describe('标的来源渲染（spec #704 / issue #709）：走势图标 + 代码与名称，可点击', () => {
+  it('标的来源：类型图标 + 代码与名称展示名，无状态标注，主项态点击落投资主项路由 + focus', async () => {
+    const wrapper = mount(SourceLink, {
+      props: {
+        source: makeSource({
+          kind: 'instrument',
+          entity_id: 'inst-1',
+          display_name: '600519 招商银行',
+        }),
+      },
+    })
+    expect(wrapper.find('.source-cell-icon').exists()).toBe(true)
+    expect(wrapper.find('.source-cell').attributes('title')).toBe('标的')
+    expect(wrapper.find('button.source-link').text()).toBe('600519 招商银行')
+    expect(wrapper.text()).not.toContain('已删除')
+    await wrapper.find('button.source-link').trigger('click')
+    expect(pushMock).toHaveBeenCalledWith({
+      name: 'investments',
+      query: { focus: 'inst-1' },
+    })
+  })
+
+  it('收纳态（投资移入组「更多」）：点击落资产「更多」investments 页签 + focus', async () => {
+    useSidebarOrderStore().applyMoveIntoMore('investments')
+    const wrapper = mount(SourceLink, {
+      props: {
+        source: makeSource({ kind: 'instrument', entity_id: 'inst-2', display_name: '000001' }),
+      },
+    })
+    await wrapper.find('button.source-link').trigger('click')
+    expect(pushMock).toHaveBeenCalledWith({
+      name: 'assets-more',
+      query: { tab: 'investments', focus: 'inst-2' },
+    })
+  })
+})

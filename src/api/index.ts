@@ -38,6 +38,7 @@ import type {
   ExecuteOccurrenceInput,
   FinancialFreedomOverview,
   Holding,
+  Instrument,
   InstrumentInput,
   InstrumentListFilter,
   InstrumentListResult,
@@ -239,6 +240,9 @@ export const api = {
   // 金融工具
   listInstruments: (filter?: InstrumentListFilter | null) =>
     invoke<InstrumentListResult>('list_instruments', { filter: filter ?? null }),
+  // 按 id 精确取标的（issue #709）：走势页签 focus 消费的只读解析路径（列表过滤
+  // 无按 id 路径）；完整标的对象与列表行同投影，清仓/无持仓标的照常返回
+  getInstrument: (id: string) => invoke<Instrument>('get_instrument', { id }),
   // 交易买卖明细（issue #180）：buy/sell 交易编辑回填数据源（扩展表投影，非买卖交易 NotFound）
   getTransactionTrade: (id: string) =>
     invoke<TransactionTrade>('get_transaction_trade', { id }),

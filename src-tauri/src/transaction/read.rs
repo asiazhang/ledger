@@ -8,6 +8,7 @@ use super::model::{
 };
 use crate::db::query::{query_all, query_one};
 use crate::error::{AppError, Result};
+use crate::investment;
 use crate::item;
 use crate::policy;
 use crate::scheduled_transactions::{self, ScheduledKind};
@@ -28,6 +29,11 @@ pub use list_transactions_internal as list_transactions;
 ///    （`item::source_display_by_transaction_ids`），展示名 = 物品名，已处置
 ///    物品携带状态标注（物品列表仍在册、跳转不落空）。期次交易被建物品时
 ///    计划优先（计划是流水发起方，物品是购买档案）。
+/// ④ 标的反查（issue #709）：按生成交易 id 批量反查证券交易记录 → 标的
+///    （`investment::source_display_by_transaction_ids`；transaction_id 为主键，
+///    一交易至多一行），展示名 = 代码 + 名称空格连接（随走势页签标签惯例，
+///    无名称退化为裸代码）。标的字典无软删（被流水引用的标的不可删），来源
+///    恒命中、无状态标注——清仓标的同样可达（走势不依赖持仓）。
 ///
 /// 零迁移：来源是读时推导，不落库；无来源交易（手动录入/AI 导入）原样为 `None`。
 pub(super) fn attach_sources(conn: &Connection, items: &mut [Transaction]) -> Result<()> {
@@ -126,6 +132,37 @@ pub(super) fn attach_sources(conn: &Connection, items: &mut [Transaction]) -> Re
                 // 展示名 = 物品名；已处置物品携带状态标注（列表仍在册，可点击由前端裁决）。
                 display_name: row.name.clone(),
                 status: row.is_disposed.then_some(TransactionSourceStatus::Disposed),
+            });
+        }
+    }
+
+    // ④ 标的反查（仅对保单/计划/物品均未命中的行；证券交易记录 transaction_id
+    //    为主键，一交易至多一行）
+    let instrument_txn_ids: Vec<String> = items
+        .iter()
+        .filter(|t| t.source.is_none())
+        .map(|t| t.id.clone())
+        .collect();
+    if !instrument_txn_ids.is_empty() {
+        let rows = investment::source_display_by_transaction_ids(conn, &instrument_txn_ids)?;
+        let by_txn: HashMap<&str, &investment::InstrumentSourceDisplay> = rows
+            .iter()
+            .map(|r| (r.transaction_id.as_str(), r))
+            .collect();
+        for txn in items.iter_mut() {
+            if txn.source.is_some() {
+                continue;
+            }
+            let Some(row) = by_txn.get(txn.id.as_str()) else {
+                continue;
+            };
+            txn.source = Some(TransactionSource {
+                kind: TransactionSourceKind::Instrument,
+                entity_id: row.instrument_id.clone(),
+                // 展示名 = 代码 + 名称空格连接（随走势页签标签惯例），无名称退化为
+                // 裸代码；标的字典无软删，恒无状态标注（清仓标的同样可达）。
+                display_name: row.display_label(),
+                status: None,
             });
         }
     }

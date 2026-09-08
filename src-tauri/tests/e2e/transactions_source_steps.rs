@@ -370,3 +370,56 @@ fn search_nth_source_item(world: &mut LedgerWorld, index: usize, name: String) {
     let source = nth_source(world, NthList::Search, index);
     assert_item_source(world, &source, &name, None);
 }
+
+// --- 标的分支（issue #709）：证券交易记录按生成交易 id 反查 ---
+
+/// 断言来源 = 标的来源（issue #709：类型/实体 id/展示名/状态）：列表与搜索
+/// 侧共用。标的按代码定位（场景内代码唯一）；展示名 = 代码 + 名称空格连接
+/// （随走势页签标签惯例），无名称退化为裸代码；标的字典无软删（被流水引用
+/// 的标的不可删），恒无状态标注。
+fn assert_instrument_source(
+    world: &LedgerWorld,
+    source: &TransactionSource,
+    symbol: &str,
+    name: &str,
+) {
+    let instrument_id: String = world_conn!(world)
+        .query_row(
+            "SELECT id FROM instruments WHERE symbol=?1",
+            params![symbol],
+            |r| r.get(0),
+        )
+        .unwrap_or_else(|_| panic!("来源断言：标的 {symbol} 应已存在"));
+    assert_eq!(
+        source.kind,
+        TransactionSourceKind::Instrument,
+        "来源类型应为标的"
+    );
+    assert_eq!(
+        source.entity_id, instrument_id,
+        "来源实体 id 应为证券交易记录指向的标的 id"
+    );
+    let expected_label = format!("{symbol} {name}").trim().to_string();
+    assert_eq!(
+        source.display_name, expected_label,
+        "来源展示名应为代码 + 名称（空格连接，无名称退化为裸代码）"
+    );
+    assert_eq!(source.status, None, "标的来源不应携带状态标注");
+}
+
+#[then(expr = "交易列表第 {int} 条来源应为标的 {string} 名称 {string}")]
+fn list_nth_source_instrument(world: &mut LedgerWorld, index: usize, symbol: String, name: String) {
+    let source = nth_source(world, NthList::List, index);
+    assert_instrument_source(world, &source, &symbol, &name);
+}
+
+#[then(expr = "搜索结果第 {int} 条来源应为标的 {string} 名称 {string}")]
+fn search_nth_source_instrument(
+    world: &mut LedgerWorld,
+    index: usize,
+    symbol: String,
+    name: String,
+) {
+    let source = nth_source(world, NthList::Search, index);
+    assert_instrument_source(world, &source, &symbol, &name);
+}
