@@ -53,7 +53,8 @@ pub struct UnlockOutcome {
 pub struct RememberPassphraseSupport {
     /// 平台是否支持本机缓存主口令（v1 仅 macOS；不支持时前端隐藏选项、回退手输）。
     pub supported: bool,
-    /// 运行形态（issue #662）：`biometry` = 发布构建，条目带 Touch ID 生物认证门；
+    /// 运行形态（issue #662 / #866）：`biometry` = 发布构建，读取前先过
+    /// LocalAuthentication 应用层门（弹 Touch ID，条目本身无 ACL）；
     /// `dev-fallback` = 开发/未签名构建的无门缓存回退（读取不弹生物认证）。
     pub mode: RememberMode,
 }
@@ -149,7 +150,8 @@ pub async fn unlock_encryption(app: AppHandle, passphrase: String) -> Result<Unl
 }
 
 /// 凭本机缓存的主口令解锁（issue #574 / ADR-0075 决策 3/5）：从系统钥匙串读取
-/// 缓存的主口令（macOS 在此弹 Touch ID 生物认证门）→ 以之为凭据走 [`do_unlock`]。
+/// 缓存的主口令（macOS 生物门形态读取前先过 LocalAuthentication 应用层门弹
+/// Touch ID，issue #866）→ 以之为凭据走 [`do_unlock`]。
 /// 只在锁定状态可达；**口令不回流前端**（前端只调本命令、不拿口令）。
 ///
 /// 失败回退（只损失便利，不损失数据）：
