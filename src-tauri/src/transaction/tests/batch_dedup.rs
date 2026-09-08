@@ -4,7 +4,8 @@
 
 use rusqlite::params;
 
-use crate::db::{device_id, now_iso};
+use crate::db::now_iso;
+use crate::sync_engine::device_id;
 use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::{
@@ -282,7 +283,7 @@ fn dedup_ignores_soft_deleted_transactions() {
 
     conn.execute(
         "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-        params![id, now_iso(), device_id()],
+        params![id, now_iso(), device_id(&conn).unwrap()],
     ).unwrap();
 
     let second = TransactionBatch::run(&conn, vec![input], true)

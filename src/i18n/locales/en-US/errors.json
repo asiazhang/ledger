@@ -226,5 +226,8 @@
   },
   "settings": {
     "log-level-invalid": "Invalid log level: {0} (valid values: error/warn/info/debug/trace)"
+  },
+  "sync-engine": {
+    "command-unsupported": "Replaying commands of transaction type {0} is not supported yet (investment command replay comes later)."
   }
 }

@@ -2,6 +2,12 @@
 
 本文件记录开源记账（OpenLedger）各版本对使用者可见的变更，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)规则。
 
+## [Unreleased]
+
+### Added
+
+- **多端同步（基座）**：记账动作开始留下可同步的操作日志（OpLog）——桌面端每次创建/修改/删除交易，都会把这条动作连同折算结果写入本机日志，重复送达不会记两次；新库新增同步元数据表（设备标识、端内逻辑时钟），每台设备首次使用自动生成设备标识（[#855]）。
+
 ## [0.6.0] - 2026-09-08
 
 ### Added
@@ -241,3 +247,4 @@
 [#804]: https://github.com/asiazhang/ledger/issues/804
 [#827]: https://github.com/asiazhang/ledger/issues/827
 [#839]: https://github.com/asiazhang/ledger/issues/839
+[#855]: https://github.com/asiazhang/ledger/issues/855

@@ -3,8 +3,9 @@
 
 use rusqlite::Connection;
 
-use crate::db::{device_id, now_iso};
+use crate::db::now_iso;
 use crate::reports::{category_shares_rows, merchant_shares_report, monthly_summary_rows};
+use crate::sync_engine::device_id;
 use crate::transaction::amount::{Measure, TransactionKind, contributing_kinds, signed_amount};
 
 fn setup() -> Connection {
@@ -33,7 +34,7 @@ fn insert_tx(conn: &Connection, r: &TxRow) {
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,?3,'CNY',?3,'acc',NULL,?4,NULL,NULL,?5,?6,?7,1,?8,0)",
-        rusqlite::params![r.id, r.kind.as_str(), r.amount, r.category_id, r.date, now, now, device_id()],
+        rusqlite::params![r.id, r.kind.as_str(), r.amount, r.category_id, r.date, now, now, device_id(conn).unwrap()],
     )
     .unwrap();
 }
@@ -795,7 +796,7 @@ fn insert_merchant(conn: &Connection, id: &str) {
     conn.execute(
         "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,?3,?4,1,?5,0)",
-        rusqlite::params![id, format!("商户-{id}"), now, now, device_id()],
+        rusqlite::params![id, format!("商户-{id}"), now, now, device_id(conn).unwrap()],
     )
     .unwrap();
 }
@@ -816,7 +817,7 @@ fn insert_merchant_tx(conn: &Connection, r: &MerchantTxRow) {
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,merchant_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,?3,'CNY',?3,'acc',NULL,NULL,?4,NULL,NULL,?5,?6,?7,1,?8,0)",
-        rusqlite::params![r.id, r.kind.as_str(), r.amount, r.merchant_id, r.date, now, now, device_id()],
+        rusqlite::params![r.id, r.kind.as_str(), r.amount, r.merchant_id, r.date, now, now, device_id(conn).unwrap()],
     )
     .unwrap();
 }

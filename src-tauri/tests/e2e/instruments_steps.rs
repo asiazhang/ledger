@@ -7,7 +7,7 @@
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::db::{device_id, new_uuid, now_iso};
+use tauri_app_lib::db::{new_uuid, now_iso};
 use tauri_app_lib::error::Result;
 use tauri_app_lib::investment::{
     FundDetail, FundNav, InstrumentInput, InstrumentListFilter, StockQuote, add_fund_by_code_with,
@@ -38,7 +38,7 @@ fn create_instrument_named(
         .execute(
             "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
              VALUES (?1,?2,'stock',?3,?4,'unknown',?5,?5,1,?6)",
-            params![new_uuid(), symbol, name, currency, now, device_id()],
+            params![new_uuid(), symbol, name, currency, now, "e2e-fixture"],
         )
         .unwrap();
 }
@@ -58,7 +58,7 @@ fn create_instrument_of_type(
         .execute(
             "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
              VALUES (?1,?2,?3,?4,?5,'unknown',?6,?6,1,?7)",
-            params![new_uuid(), symbol, kind, name, currency, now, device_id()],
+            params![new_uuid(), symbol, kind, name, currency, now, "e2e-fixture"],
         )
         .unwrap();
 }
@@ -79,7 +79,7 @@ fn create_instrument_with_market(
         .execute(
             "INSERT INTO instruments (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
              VALUES (?1,?2,'stock',?3,?4,?5,?6,?6,1,?7)",
-            params![new_uuid(), symbol, name, currency, market, now, device_id()],
+            params![new_uuid(), symbol, name, currency, market, now, "e2e-fixture"],
         )
         .unwrap();
 }

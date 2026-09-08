@@ -13,8 +13,9 @@ use super::predicates::INVESTED_EXISTS;
 use super::prices::upsert_market_price;
 use crate::currencies::{ExchangeRate, ExchangeRateInput};
 use crate::db::query::{query_all, query_one};
-use crate::db::{device_id, new_uuid, now_iso};
+use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
+use crate::sync_engine::device_id;
 use crate::transaction::search_text::{split_terms, term_matches_text};
 
 pub fn list_holdings(conn: &Connection) -> Result<Vec<Holding>> {
@@ -65,7 +66,7 @@ pub fn create_exchange_rate(conn: &Connection, input: ExchangeRateInput) -> Resu
             input.source,
             now,
             1,
-            device_id()
+            device_id(conn)?
         ],
     )?;
     Ok(id)
@@ -323,7 +324,7 @@ pub fn create_instrument(conn: &Connection, input: InstrumentInput) -> Result<St
             now,
             now,
             1,
-            device_id()
+            device_id(conn)?
         ],
     )?;
     Ok(id)

@@ -2,8 +2,9 @@ use chrono::Datelike;
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::db::query::{query_all, query_one};
-use crate::db::{device_id, new_uuid, now_iso};
+use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
+use crate::sync_engine::device_id;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::writer;
 
@@ -125,7 +126,7 @@ pub fn create_plan(conn: &Connection, input: CreateScheduledInput) -> Result<Str
             input.note,
             now,
             now,
-            device_id(),
+            device_id(conn)?,
         ],
     )?;
 
@@ -220,7 +221,7 @@ pub fn update_plan_status(conn: &Connection, id: &str, new_status: ScheduledStat
     let now = now_iso();
     conn.execute(
         "UPDATE scheduled_transactions SET status=?2, updated_at=?3, version=version+1, device_id=?4 WHERE id=?1",
-        rusqlite::params![id, status_str, now, device_id()],
+        rusqlite::params![id, status_str, now, device_id(conn)?],
     )?;
 
     // 取消时把所有 pending 期次置为 cancelled
@@ -228,7 +229,7 @@ pub fn update_plan_status(conn: &Connection, id: &str, new_status: ScheduledStat
         conn.execute(
             "UPDATE scheduled_transaction_occurrences SET status='cancelled', updated_at=?2, version=version+1, device_id=?3 \
              WHERE scheduled_transaction_id=?1 AND status='pending' AND is_deleted=0",
-            rusqlite::params![id, now, device_id()],
+            rusqlite::params![id, now, device_id(conn)?],
         )?;
     }
 
@@ -306,7 +307,7 @@ pub fn update_subscription(conn: &Connection, input: UpdateSubscriptionInput) ->
             &input.category_id,
             &input.note,
             now_iso(),
-            device_id(),
+            device_id(conn)?,
         ],
     )?;
     conn.execute(
@@ -630,7 +631,7 @@ pub fn expand_occurrences(conn: &Connection, st_id: &str) -> Result<Vec<String>>
                  (id,scheduled_transaction_id,scheduled_date,status,transaction_id,amount_cents,\
                  created_at,updated_at,version,device_id,is_deleted) \
                  VALUES (?1,?2,?3,'pending',NULL,?4,?5,?5,1,?6,0)",
-                rusqlite::params![occ_id, st_id, date, amount, now, device_id()],
+                rusqlite::params![occ_id, st_id, date, amount, now, device_id(conn)?],
             )?;
             ids.push(occ_id);
         }
@@ -644,7 +645,7 @@ pub fn expand_occurrences(conn: &Connection, st_id: &str) -> Result<Vec<String>>
                  (id,scheduled_transaction_id,scheduled_date,status,transaction_id,amount_cents,\
                  created_at,updated_at,version,device_id,is_deleted) \
                  VALUES (?1,?2,?3,'pending',NULL,?4,?5,?5,1,?6,0)",
-                rusqlite::params![occ_id, st_id, date, st.amount_cents, now, device_id()],
+                rusqlite::params![occ_id, st_id, date, st.amount_cents, now, device_id(conn)?],
             )?;
             ids.push(occ_id);
         }
@@ -940,7 +941,7 @@ fn execute_within_transaction(
     let updated = conn.execute(
         "UPDATE scheduled_transaction_occurrences SET status='processing', updated_at=?2, version=version+1, device_id=?3 \
          WHERE id=?1 AND status=?4 AND is_deleted=0",
-        rusqlite::params![occurrence_id, now, device_id(), expected_status],
+        rusqlite::params![occurrence_id, now, device_id(conn)?, expected_status],
     )?;
     if updated == 0 {
         tracing::warn!(occurrence_id = %occurrence_id, "期次 CAS 冲突，已被其他设备执行");
@@ -956,7 +957,7 @@ fn execute_within_transaction(
     conn.execute(
         "UPDATE scheduled_transaction_occurrences SET status='completed', transaction_id=?2, updated_at=?3, version=version+1, device_id=?4 \
          WHERE id=?1",
-        rusqlite::params![occurrence_id, txn_id, now, device_id()],
+        rusqlite::params![occurrence_id, txn_id, now, device_id(conn)?],
     )?;
 
     // 检查计划是否应标记为 completed
@@ -998,7 +999,7 @@ fn check_and_complete_plan(conn: &Connection, st_id: &str) -> Result<()> {
             let now = now_iso();
             conn.execute(
                 "UPDATE scheduled_transactions SET status='completed', updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-                rusqlite::params![st_id, now, device_id()],
+                rusqlite::params![st_id, now, device_id(conn)?],
             )?;
         }
     }

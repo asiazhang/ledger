@@ -8,7 +8,8 @@ use crate::test_support;
 use crate::transaction::TransactionInput;
 use rusqlite::Connection;
 
-use crate::db::{device_id, now_iso};
+use crate::db::now_iso;
+use crate::sync_engine::device_id;
 use crate::transaction::amount::TransactionKind;
 use rusqlite::params;
 
@@ -111,7 +112,7 @@ fn delete_transaction_soft_deletes() {
 
     conn.execute(
         "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-        params![id, now_iso(), device_id()],
+        params![id, now_iso(), device_id(&conn).unwrap()],
     ).unwrap();
 
     let count_after: i64 = conn

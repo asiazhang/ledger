@@ -34,6 +34,7 @@ pub mod scheduled_transactions;
 pub mod settings;
 pub mod signals;
 pub mod sync;
+pub mod sync_engine;
 // 信号守门测试（signals_cross_check，ADR-0044 决策 3 修订 / ADR-0073 决策 5）：
 // 写路径接线源码扫描核对，仅测试可见。
 #[cfg(test)]

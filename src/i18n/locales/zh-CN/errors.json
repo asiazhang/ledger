@@ -226,5 +226,8 @@
   },
   "settings": {
     "log-level-invalid": "日志等级非法: {0}（合法值: error/warn/info/debug/trace）"
+  },
+  "sync-engine": {
+    "command-unsupported": "交易类型 {0} 的命令重放暂不支持（投资命令重放待后续版本）"
   }
 }

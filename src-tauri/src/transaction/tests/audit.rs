@@ -87,7 +87,7 @@ fn create_transaction_internal_audit_fields_uniform_across_kinds() {
         assert_eq!(version, 1, "新建行 version 应为 1");
         assert_eq!(
             device_id,
-            crate::db::device_id(),
+            crate::sync_engine::device_id(&conn).unwrap(),
             "device_id 由 Writer 统一生成"
         );
         assert_eq!(is_deleted, 0, "新建行不应被删除");

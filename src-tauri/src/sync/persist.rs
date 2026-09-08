@@ -6,8 +6,9 @@
 use rusqlite::Connection;
 use rusqlite::params;
 
-use crate::db::{device_id, new_uuid, now_iso};
+use crate::db::{new_uuid, now_iso};
 use crate::error::Result;
+use crate::sync_engine::device_id;
 
 /// 按 (币种对, ISO 周) 插入或覆盖一条周采样汇率历史，规则与投资域价格历史
 /// 周采样 upsert（[`crate::investment::prices::upsert_price_history`]）对齐
@@ -26,7 +27,7 @@ pub(super) fn upsert_fx_rate_history(
          ON CONFLICT(base_code, quote_code, week_start) DO UPDATE SET \
          trade_date=excluded.trade_date, rate=excluded.rate, source=excluded.source, \
          updated_at=excluded.updated_at, version=version+1",
-        params![new_uuid(), base_code, quote_code, trade_date, rate, now, device_id()],
+        params![new_uuid(), base_code, quote_code, trade_date, rate, now, device_id(conn)?],
     )?;
     Ok(())
 }

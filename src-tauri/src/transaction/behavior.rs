@@ -38,12 +38,14 @@
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 
-use super::model::TransactionInput;
+use super::command::{InvestmentCommandFields, TransactionCommand, record_local};
+use super::model::{NormalizedTransaction, TransactionInput};
 use crate::accounts::balance::{affected_accounts, refresh_account_balances};
-use crate::db::{device_id, now_iso};
+use crate::db::now_iso;
 use crate::error::{AppError, Result};
 use crate::investment;
 use crate::signals::WriteEvidence;
+use crate::sync_engine::device_id;
 
 use super::amount::TransactionKind;
 use super::writer;
@@ -87,7 +89,10 @@ impl Plan {
 /// BEGIN/COMMIT/ROLLBACK（`f` 中途失败整体回滚）；已在事务中则加入外层、失败直接
 /// 返回错误——回滚归外层持有者（批量导入的批次事务与余额调整的外层事务壳，
 /// issue #310，是嵌套模式的合法使用者）。
-fn ensure_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
+///
+/// `pub(crate)`（issue #855）：`sync_engine::apply_ops` 重放外来 op 时复用同一
+/// 事务原语（命令执行 + op 落日志同事务原子），不另造第二份嵌套感知实现。
+pub(crate) fn ensure_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
     // is_autocommit()=true ⇔ 连接不在事务中（rusqlite 语义），据此选分支。
     if !conn.is_autocommit() {
         return f();
@@ -136,7 +141,9 @@ pub fn create(conn: &Connection, input: TransactionInput) -> Result<TransactionW
     ensure_transaction(conn, || create_within_transaction(conn, &input))
 }
 
-/// 创建协议本体：`plan → insert_row → apply`（无事务语义，由 [`ensure_transaction`] 包裹）。
+/// 创建协议本体：`plan → insert_row → apply → 产出 op`（无事务语义，由
+/// [`ensure_transaction`] 包裹）。op 产出为最后一步：写与副作用全部成功后才追加，
+/// 随同一事务提交/回滚（失败不残留 op）。
 fn create_within_transaction(
     conn: &Connection,
     input: &TransactionInput,
@@ -147,6 +154,9 @@ fn create_within_transaction(
     apply(conn, &id, &plan)?;
     // 搜索（V018 两段式，issue #492）：Writer 接缝同写维护 note_pinyin 派生列，
     // 交易立即可搜（存量积压由读路径惰性回填兜底）。
+    // op 产出接缝（issue #855 / ADR-0091）：本地写成功 → 动作连同归一化行
+    // （含源端折算）追加进本机 OpLog；全部写路径经本入口收敛，产出不散落。
+    record_local(conn, create_command(&id, &plan))?;
     Ok(TransactionWrite {
         id,
         evidence: WriteEvidence::MerchantCreated(merchant_created),
@@ -212,6 +222,9 @@ fn update_within_transaction(
     let row = plan.normalized_row()?;
     writer::update_row(conn, id, &row)?;
     apply(conn, id, &plan)?;
+    // op 产出接缝（issue #855 / ADR-0091）：修改成功 → 新行（含源端折算）随
+    // update op 追加；随同一事务提交/回滚。
+    record_local(conn, update_command(id, &plan))?;
     Ok(WriteEvidence::MerchantCreated(merchant_created))
 }
 
@@ -255,7 +268,7 @@ fn delete_within_transaction(conn: &Connection, id: &str) -> Result<()> {
 
     conn.execute(
         "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-        rusqlite::params![id, now_iso(), device_id()],
+        rusqlite::params![id, now_iso(), device_id(conn)?],
     )?;
     // 余额缓存写路径（issue #491 / ADR-0067）：软删后对原行账户引用对（受影响
     // 账户推导，消费余额模块唯一定义，issue #534）同事务整体重算。
@@ -263,6 +276,9 @@ fn delete_within_transaction(conn: &Connection, id: &str) -> Result<()> {
     refresh_account_balances(conn, &affected)?;
     // 搜索（V018 两段式，issue #492）：候选流带 is_deleted 口径过滤，软删即刻
     // 生效，删除的交易不再可搜（拼音列非本路径维护字段，无需处理）。
+    // op 产出接缝（issue #855 / ADR-0091）：删除成功 → delete op（实体 id）
+    // 追加；随同一事务提交/回滚。
+    record_local(conn, TransactionCommand::Delete { id: id.to_string() })?;
     Ok(())
 }
 
@@ -440,4 +456,125 @@ fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
         Plan::Common(_) => Ok(()),
         Plan::Investment(p) => investment::apply(conn, id, p),
     }
+}
+
+// ---------------------------------------------------------------------------
+// 同步命令（issue #855 / ADR-0091）：产出侧桥与重放执行形态
+// ---------------------------------------------------------------------------
+
+/// 编排计划 → 命令载荷部件（产出侧桥）：归一化行 + 投资 kind 的语义字段。
+/// 投资计划的投资字段随 op 留痕（其重放执行待 #861），普通 kind 恒 None。
+fn command_parts(plan: &Plan) -> (NormalizedTransaction, Option<InvestmentCommandFields>) {
+    match plan {
+        Plan::Common(r) => (NormalizedTransaction::from(r), None),
+        Plan::Investment(p) => {
+            let fields = match p {
+                investment::Plan::Buy(b) => InvestmentCommandFields {
+                    instrument_id: b.instrument_id.clone(),
+                    quantity: b.quantity,
+                    price_cents: b.price_cents,
+                    fee_cents: b.fee_cents,
+                },
+                investment::Plan::Sell(s) => InvestmentCommandFields {
+                    instrument_id: s.instrument_id.clone(),
+                    quantity: s.quantity,
+                    price_cents: s.price_cents,
+                    fee_cents: s.fee_cents,
+                },
+            };
+            (p.normalized().clone(), Some(fields))
+        }
+    }
+}
+
+/// 创建命令构造（行为层创建协议专用）。
+fn create_command(id: &str, plan: &Plan) -> TransactionCommand {
+    let (row, investment) = command_parts(plan);
+    TransactionCommand::Create {
+        id: id.to_string(),
+        row,
+        investment,
+    }
+}
+
+/// 修改命令构造（行为层修改协议专用）。
+fn update_command(id: &str, plan: &Plan) -> TransactionCommand {
+    let (row, investment) = command_parts(plan);
+    TransactionCommand::Update {
+        id: id.to_string(),
+        row,
+        investment,
+    }
+}
+
+/// 同步重放入口：执行外来交易命令（issue #855 / ADR-0091）。
+///
+/// 与本地写入共用同一编排协议（`revert → 落库 → apply` 与既有守卫文案），但
+/// 三处刻意差异构成重放形态：
+/// - **折算随命令携带**（源端折算）：行数据原样落库，不查本地汇率表——重放
+///   不依赖本地汇率表状态与设备配置（ADR-0091 决策 3）；
+/// - **实体 id 随命令携带**：创建经 [`writer::insert_row_with_id`] 落库，两端
+///   对同一笔交易收敛到同一行；
+/// - **不产出 op**：外来 op 由同步引擎（`sync_engine::apply_ops`）在重放事务
+///   内落日志，命令执行不得再追加本地 op。
+///
+/// 投资命令（buy/sell 的创建/修改）v1 显式码化拒绝：持仓/卖出关联的确定性
+/// 重放依赖跨端标的身份解析，待 #861 补齐；失败 fail loud（op 不落日志、
+/// 重投递重试），挂起队列语义由 #856 承接。删除重放支持全部 kind（按行现状
+/// 执行与本地删除同一协议，含 buy 守卫与持仓清理）。
+pub(crate) fn replay_command(conn: &Connection, command: &TransactionCommand) -> Result<()> {
+    match command {
+        TransactionCommand::Create { id, row, .. } => replay_create(conn, id, row),
+        TransactionCommand::Update { id, row, .. } => replay_update(conn, id, row),
+        TransactionCommand::Delete { id } => delete_within_transaction(conn, id),
+    }
+}
+
+/// 重放创建：普通 kind 原样落库（含余额缓存重算）；投资/未实现 kind 拒绝。
+fn replay_create(conn: &Connection, id: &str, row: &NormalizedTransaction) -> Result<()> {
+    let row = writer::NormalizedRow::try_from(row)?;
+    match row.kind {
+        TransactionKind::Income
+        | TransactionKind::Expense
+        | TransactionKind::Transfer
+        | TransactionKind::Refund => writer::insert_row_with_id(conn, id, &row),
+        TransactionKind::Buy
+        | TransactionKind::Sell
+        | TransactionKind::Dividend
+        | TransactionKind::Split => Err(unsupported_replay_kind(row.kind)),
+    }
+}
+
+/// 重放修改：存在性守卫与本地修改同款（不存在或已软删返回码化 NotFound）；
+/// 新旧行任一侧涉投资 kind 即拒绝（v1，待 #861）。
+fn replay_update(conn: &Connection, id: &str, row: &NormalizedTransaction) -> Result<()> {
+    let (old_kind,): (TransactionKind,) = conn
+        .query_row(
+            "SELECT kind FROM transactions WHERE id=?1 AND is_deleted=0",
+            rusqlite::params![id],
+            |r| Ok((r.get(0)?,)),
+        )
+        .optional()?
+        .ok_or_else(|| {
+            AppError::codedp_not_found("transaction.not-found", format!("交易不存在: {id}"), &[id])
+        })?;
+    let new_kind = row.kind;
+    if is_investment_kind(old_kind) || is_investment_kind(new_kind) {
+        return Err(unsupported_replay_kind(new_kind));
+    }
+    let row = writer::NormalizedRow::try_from(row)?;
+    writer::update_row(conn, id, &row)
+}
+
+fn is_investment_kind(kind: TransactionKind) -> bool {
+    matches!(kind, TransactionKind::Buy | TransactionKind::Sell)
+}
+
+/// 投资命令重放的统一拒绝（v1 边界，#861 承接；#856 起进挂起队列）。
+fn unsupported_replay_kind(kind: TransactionKind) -> AppError {
+    AppError::codedp(
+        "sync-engine.command-unsupported",
+        format!("交易类型 {kind} 的命令重放暂不支持（投资命令重放待后续版本）"),
+        &[&kind.to_string()],
+    )
 }

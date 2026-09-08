@@ -3,7 +3,8 @@
 //! 接缝：
 //! - [`amount`]（口径权威）：kind 枚举真源 + kind→度量矩阵 + 本位币折算。
 //! - [`batch`]（批量编排权威）：批量事务、幂等键/内容哈希去重判定与批次汇总日志（`TransactionBatch::run`）。
-//! - [`behavior`]（行为层编排权威）：create / update / delete 三编排入口、嵌套事务感知、plan/apply 副作用分派与即建商户证据。
+//! - [`behavior`]（行为层编排权威）：create / update / delete 三编排入口、嵌套事务感知、plan/apply 副作用分派与即建商户证据；以及同步重放的命令执行形态（`replay_command`，与本地写入共用协议）。
+//! - [`command`]（同步命令，issue #855）：交易同步命令载荷形态与 op 产出单点（`record_local`，行为编排入口专用）。
 //! - [`read`]（读取权威）：交易列表（过滤/排序/分页）与单笔读取。
 //! - [`search`]（搜索权威）：SQL 候选流式扫描 + 统一模糊搜索契约过滤与分页。
 //! - [`search_text`]（统一模糊搜索语义）：拼音首字母、子序列判定与词条匹配纯函数（ADR-0027）。
@@ -16,6 +17,7 @@
 pub mod amount;
 pub mod batch;
 pub mod behavior;
+pub mod command;
 pub mod read;
 pub mod search;
 pub mod search_text;
@@ -47,6 +49,10 @@ pub use behavior::{
     delete_transaction, delete_transaction_internal, update, update_transaction,
     update_transaction_internal,
 };
+/// 同步重放与嵌套感知事务原语（crate 内消费：`sync_engine::apply_ops` 经本接缝
+/// 执行外来命令并复用同一事务原语，ADR-0033）。
+pub(crate) use behavior::{ensure_transaction, replay_command};
+pub use command::{InvestmentCommandFields, TransactionCommand};
 pub use read::{
     get_transaction, get_transaction_internal, list_transactions, list_transactions_internal,
 };

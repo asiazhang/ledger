@@ -66,9 +66,9 @@ fn init_db_is_idempotent_and_seeds_defaults() {
     assert_eq!(mismatched, 0);
 }
 
-/// 当前迁移序列长度（V001–V019，V005 移除不回填，共 18 条）；新增迁移时随
+/// 当前迁移序列长度（V001–V020，V005 移除不回填，共 19 条）；新增迁移时随
 /// `migrations()` 同步更新。钉住「从零迁移到最新」的完整性基线。
-const LATEST_SCHEMA_VERSION: usize = 18;
+const LATEST_SCHEMA_VERSION: usize = 19;
 
 /// 从零迁移完整性（内存库从零 → 最新）：user_version 停在最新、全库完整性
 /// 检查通过、每条迁移的签名表/列在场。漏跑或中途失败的迁移批次会停在半途
@@ -110,6 +110,8 @@ fn migration_from_zero_reaches_latest_completely() {
         "insurers",
         "account_balance_cache",
         "net_worth_cache",
+        "sync_device",
+        "sync_ops",
     ] {
         let hit: i64 = conn
             .query_row(

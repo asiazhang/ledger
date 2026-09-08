@@ -18,8 +18,9 @@ use super::validation::{
     validate_dispose_input, validate_input, validate_update_input, validate_valuation_input,
 };
 use crate::db::query::{query_all, query_one};
-use crate::db::{device_id, new_uuid, now_iso};
+use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
+use crate::sync_engine::device_id;
 use crate::transaction::amount::{convert_to_native, default_currency_code};
 
 /// 资产全列 + 当前估值三件套（JOIN 每资产最新一条估值历史行）。
@@ -90,7 +91,7 @@ pub fn create_physical_asset(
                 normalized.purchase_price_cents,
                 normalized.purchase_currency_code,
                 now,
-                device_id(),
+                device_id(conn)?,
             ],
         )?;
         conn.execute(
@@ -103,7 +104,7 @@ pub fn create_physical_asset(
                 normalized.initial_valuation_date,
                 normalized.initial_valuation_cents,
                 normalized.initial_valuation_currency_code,
-                device_id(),
+                device_id(conn)?,
                 now_iso(),
             ],
         )?;
@@ -251,7 +252,7 @@ pub fn update_physical_asset(
             normalized.purchase_price_cents,
             normalized.purchase_currency_code,
             now_iso(),
-            device_id(),
+            device_id(conn)?,
         ],
     )?;
     debug_assert_eq!(
@@ -287,7 +288,7 @@ pub fn update_physical_asset_valuation(
             normalized.valuation_date,
             normalized.amount_cents,
             normalized.currency_code,
-            device_id(),
+            device_id(conn)?,
             now_iso(),
         ],
     )?;
@@ -334,7 +335,7 @@ pub fn dispose_physical_asset(
             normalized.disposal_price_cents,
             normalized.disposal_currency_code,
             now_iso(),
-            device_id(),
+            device_id(conn)?,
         ],
     )?;
     debug_assert_eq!(
@@ -355,7 +356,7 @@ pub fn delete_physical_asset(conn: &Connection, id: &str, notify: &mut dyn FnMut
     let deleted = conn.execute(
         "UPDATE physical_assets SET is_deleted=1, updated_at=?2, \
          version=version+1, device_id=?3 WHERE id=?1",
-        rusqlite::params![id, now_iso(), device_id()],
+        rusqlite::params![id, now_iso(), device_id(conn)?],
     )?;
     debug_assert_eq!(
         deleted, 1,

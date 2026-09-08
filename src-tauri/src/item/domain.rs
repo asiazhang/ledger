@@ -29,8 +29,9 @@ use super::model::{
     ItemStatus, ItemWithDailyCost,
 };
 use crate::db::query::{query_all, query_one};
-use crate::db::{device_id, new_uuid, now_iso};
+use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
+use crate::sync_engine::device_id;
 use crate::transaction::amount;
 
 /// 按 `id` 读未删除物品（多命令共用的前检）：不存在（或已软删除）返回 `None`。
@@ -193,7 +194,7 @@ pub fn create_item(
             input.note,
             now,
             now,
-            device_id(),
+            device_id(conn)?,
         ],
     )?;
     // 写入成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
@@ -293,7 +294,7 @@ pub fn update_item(
             link,
             input.note,
             now_iso(),
-            device_id(),
+            device_id(conn)?,
         ],
     )?;
     debug_assert_eq!(
@@ -357,7 +358,7 @@ pub fn dispose_item(
             disposal_date.format("%Y-%m-%d").to_string(),
             input.residual_value_cents,
             now_iso(),
-            device_id(),
+            device_id(conn)?,
         ],
     )?;
     debug_assert_eq!(
@@ -389,7 +390,7 @@ pub fn delete_item(conn: &Connection, id: &str, notify: &mut dyn FnMut()) -> Res
     }
     conn.execute(
         "UPDATE items SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-        rusqlite::params![id, now_iso(), device_id()],
+        rusqlite::params![id, now_iso(), device_id(conn)?],
     )?;
     // 删除成功 → 通知调用方发出失效信号（生产为 ledger:changed）。
     notify();

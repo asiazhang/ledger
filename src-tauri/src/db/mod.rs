@@ -59,6 +59,7 @@ fn migrations() -> &'static Migrations<'static> {
             M::up(include_str!(
                 "../../migrations/V019__insurer_dictionary.sql"
             )),
+            M::up(include_str!("../../migrations/V020__sync_oplog.sql")),
         ])
     })
 }
@@ -87,9 +88,13 @@ pub fn new_uuid() -> String {
     uuid::Uuid::new_v7(uuid::Timestamp::now(uuid::NoContext)).to_string()
 }
 
-/// 当前设备标识。MVP 阶段使用固定占位值，后续可改为从配置文件读取。
-pub fn device_id() -> String {
-    String::from("device-1")
+/// 当前 schema 版本（SQLite `user_version`，迁移自动追踪）。
+///
+/// 同步 op 产生时随身携带（issue #855 / ADR-0091：产生时 schema 版本），
+/// schema 偏斜判定（#856）依据；作为通用库级事实收口在基础设施。
+pub fn schema_version(conn: &Connection) -> Result<i64> {
+    conn.query_row("PRAGMA user_version", [], |r| r.get(0))
+        .map_err(AppError::from)
 }
 
 /// 在指定目录打开库并完成 schema 迁移，返回裸连接（原位重引导的连接换入用：
