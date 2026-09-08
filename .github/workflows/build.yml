@@ -282,6 +282,10 @@ jobs:
           KEYCHAIN_PASSWORD=$(openssl rand -hex 24)
           echo -n "$APPLE_CERT_P12" | base64 --decode -o "$CERT_PATH"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          # 关闭自动锁（新建钥匙串默认 5 分钟空闲上锁）：冷编译动辄几十分钟，
+          # 到 codesign 碰私钥时钥匙串已锁，headless runner 上弹解锁框 = 永久挂起
+          # （run 34202814573 实测卡死 10+ 分钟）。-t 21600 = 6 小时空闲才锁。
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security default-keychain -s "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security import "$CERT_PATH" -P "$APPLE_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
