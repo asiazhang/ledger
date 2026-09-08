@@ -439,11 +439,7 @@ pub fn mutable_registry(boot: Option<&Boot>) -> Result<&BookRegistry> {
             .fallback_reason
             .clone()
             .unwrap_or_else(|| "注册表不可读".into());
-        AppError::codedp(
-            "book.registry-corrupt",
-            format!("账本注册表损坏，已回退默认账本；请先在数据设置中恢复默认位置（{reason}）"),
-            &[&reason],
-        )
+        book_registry::registry_corrupt_error(&reason)
     })
 }
 
@@ -461,9 +457,11 @@ pub fn gather_book_list(default_dir: &Path, boot: Option<&Boot>) -> book_registr
         }
         RegistryRead::Corrupt(_) => (Vec::new(), None, false),
     };
+    // 可变性判定单一权威 = mutable_registry（写入时机契约），叠加现场非损坏
+    //（运行中注册表被外部破坏时引导快照仍是旧的）。
     let (mutable, fallback_reason) = match boot {
         Some(boot) => (
-            registry_ok && boot.deferred_relocation.is_none() && boot.registry.is_some(),
+            registry_ok && mutable_registry(Some(boot)).is_ok(),
             boot.fallback_reason.clone(),
         ),
         None => (false, None),

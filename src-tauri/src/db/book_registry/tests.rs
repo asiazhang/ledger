@@ -396,7 +396,7 @@ fn create_rejects_corrupt_registry_without_writes() {
 #[test]
 fn switch_updates_active_pointer_only() {
     let dir = temp_dir("switch");
-    let first = create_entry(&dir, "一本");
+    create_entry(&dir, "一本");
     let second = create_entry(&dir, "二本");
 
     let switched = switch_active_book(&dir, &second).unwrap();
@@ -406,7 +406,6 @@ fn switch_updates_active_pointer_only() {
     };
     assert_eq!(registry.active_id, second);
     assert_eq!(registry.books.len(), 3); // 默认 + 两本，清单不变
-    let _ = first;
 }
 
 #[test]
