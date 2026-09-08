@@ -14,7 +14,9 @@
  * （只损失便利，不损失数据）。等待有界（issue #644）：钥匙串阻塞/认证滞留
  * 超过 {@link AUTO_UNLOCK_TIMEOUT_MS} 即回退手输并提示，加载态绝不遮蔽
  * 手输与逃生门入口；后端迟到成功仍照常进入。平台不支持时隐藏「记住」
- * 选项并回退手输。「记住」偏好是前端 localStorage 轻量设置项（app store），
+ * 选项并回退手输。等待期不渲染解锁卡片，只渲染居中小提示（空悬大卡片盖
+ * 白底是启动白屏观感的来源）；全屏底色随主题 bodyColor，暗色模式不闪白。
+ * 「记住」偏好是前端 localStorage 轻量设置项（app store），
  * 钥匙串内容为主口令本身、密钥仍由口令派生（备份跨设备可移植性不受影响）。
  * 口令在自动解锁时由后端钥匙串读出，不回流前端。
  *
@@ -37,7 +39,7 @@
  * 不存在，无被抑制对象；ESC 守卫由 useWindowGuard 的全局 preventDefault
  * 覆盖，不存在「ESC 关掉解锁屏」的通路。
  */
-import { NButton, NCard, NCheckbox, NInput, NSpace, NSpin, NText, useMessage } from 'naive-ui'
+import { NButton, NCard, NCheckbox, NInput, NSpace, NSpin, NText, useMessage, useThemeVars } from 'naive-ui'
 import { onMounted, ref } from 'vue'
 import RestoreConfirmModal from '@/components/RestoreConfirmModal.vue'
 import { t } from '@/i18n'
@@ -58,6 +60,10 @@ const {
 } = useEncryptionGate()
 const store = useAppStore()
 const message = useMessage()
+
+// 全屏底色随主题（bodyColor 单源）：暗色 #0E0E10 / 亮色 naive 出厂白，
+// 消除「解锁屏覆盖层透明 → 露出 body 白底」的启动白屏感。
+const themeVars = useThemeVars()
 
 const passphrase = ref('')
 const submitting = ref(false)
@@ -171,66 +177,64 @@ async function confirmReset() {
 </script>
 
 <template>
-  <div class="unlock-screen">
-    <NCard class="unlock-card" :bordered="false">
-      <NSpace vertical :size="16" align="center" :style="{ width: '100%' }">
-        <!-- 自动解锁加载态（issue #574）：「记住」开启且正在尝试，认证通过即进入应用 -->
-        <NSpin v-if="autoUnlocking" size="small">
-          <div class="unlock-loading">{{ t('unlock.autoUnlocking') }}</div>
-        </NSpin>
+  <div class="unlock-screen" :style="{ backgroundColor: themeVars.bodyColor }">
+    <!-- 自动解锁加载态（issue #574）：「记住」开启且正在尝试，认证通过即进入应用。
+         等待期不渲染解锁卡片，只渲染居中小提示——空悬的大卡片盖在白底上是
+         启动等待期「白屏 + 孤立小框」观感的来源；回退手输后再出卡片。 -->
+    <NSpin v-if="autoUnlocking" size="small" :description="t('unlock.autoUnlocking')" />
 
-        <template v-else>
-          <NText class="unlock-title">{{ t('unlock.title') }}</NText>
-          <NText depth="3">{{ t('unlock.hint') }}</NText>
-          <NInput
-            v-model:value="passphrase"
-            type="password"
-            show-password-on="click"
-            :placeholder="t('unlock.placeholder')"
-            :disabled="submitting"
-            autofocus
-            @keyup.enter="submit"
-          />
-          <NText v-if="errorText" type="error" class="unlock-error">{{ errorText }}</NText>
-          <!-- 自动解锁回退提示（无缓存 / 生物认证取消）：告知用户回退手输 -->
-          <NText v-if="autoUnlockFallback" type="warning" class="unlock-error">
-            {{ autoUnlockFallback }}
-          </NText>
-          <NButton type="primary" block :loading="submitting" :disabled="!passphrase" @click="submit">
-            {{ t('unlock.button') }}
-          </NButton>
-          <!-- 本机记住主口令（issue #574）：平台不支持（v1 非 macOS）时隐藏该选项 -->
-          <NCheckbox
-            v-if="rememberSupport?.supported"
-            v-model:checked="rememberChecked"
-            :disabled="submitting"
+    <NCard v-else class="unlock-card" :bordered="false">
+      <NSpace vertical :size="16" align="center" :style="{ width: '100%' }">
+        <NText class="unlock-title">{{ t('unlock.title') }}</NText>
+        <NText depth="3">{{ t('unlock.hint') }}</NText>
+        <NInput
+          v-model:value="passphrase"
+          type="password"
+          show-password-on="click"
+          :placeholder="t('unlock.placeholder')"
+          :disabled="submitting"
+          autofocus
+          @keyup.enter="submit"
+        />
+        <NText v-if="errorText" type="error" class="unlock-error">{{ errorText }}</NText>
+        <!-- 自动解锁回退提示（无缓存 / 生物认证取消）：告知用户回退手输 -->
+        <NText v-if="autoUnlockFallback" type="warning" class="unlock-error">
+          {{ autoUnlockFallback }}
+        </NText>
+        <NButton type="primary" block :loading="submitting" :disabled="!passphrase" @click="submit">
+          {{ t('unlock.button') }}
+        </NButton>
+        <!-- 本机记住主口令（issue #574）：平台不支持（v1 非 macOS）时隐藏该选项 -->
+        <NCheckbox
+          v-if="rememberSupport?.supported"
+          v-model:checked="rememberChecked"
+          :disabled="submitting"
+        >
+          <NText depth="3">{{ t('unlock.remember') }}</NText>
+        </NCheckbox>
+        <!-- 提示按运行形态区分（issue #687）：dev 回退形态不宣称 Touch ID。 -->
+        <NText v-if="rememberSupport?.supported" depth="3" class="unlock-remember-hint">
+          {{
+            rememberSupport?.mode === 'dev-fallback'
+              ? t('unlock.rememberDevFallbackHint')
+              : t('unlock.rememberHint')
+          }}
+        </NText>
+        <!-- 逃生门双入口（issue #573 / #603）：忘记口令重置与从备份文件恢复并列常驻 -->
+        <NSpace :size="4" justify="center">
+          <NButton
+            quaternary
+            size="small"
+            data-testid="unlock-restore-open"
+            :disabled="resetting"
+            @click="pickRestore"
           >
-            <NText depth="3">{{ t('unlock.remember') }}</NText>
-          </NCheckbox>
-          <!-- 提示按运行形态区分（issue #687）：dev 回退形态不宣称 Touch ID。 -->
-          <NText v-if="rememberSupport?.supported" depth="3" class="unlock-remember-hint">
-            {{
-              rememberSupport?.mode === 'dev-fallback'
-                ? t('unlock.rememberDevFallbackHint')
-                : t('unlock.rememberHint')
-            }}
-          </NText>
-          <!-- 逃生门双入口（issue #573 / #603）：忘记口令重置与从备份文件恢复并列常驻 -->
-          <NSpace :size="4" justify="center">
-            <NButton
-              quaternary
-              size="small"
-              data-testid="unlock-restore-open"
-              :disabled="resetting"
-              @click="pickRestore"
-            >
-              {{ t('unlock.restore') }}
-            </NButton>
-            <NButton quaternary size="small" :disabled="resetting" @click="forgotPassphrase">
-              {{ t('unlock.forgot') }}
-            </NButton>
-          </NSpace>
-        </template>
+            {{ t('unlock.restore') }}
+          </NButton>
+          <NButton quaternary size="small" :disabled="resetting" @click="forgotPassphrase">
+            {{ t('unlock.forgot') }}
+          </NButton>
+        </NSpace>
       </NSpace>
     </NCard>
 
@@ -277,10 +281,6 @@ async function confirmReset() {
 .unlock-title {
   font-size: 18px;
   font-weight: 600;
-}
-
-.unlock-loading {
-  padding: 12px 0;
 }
 
 .unlock-error {

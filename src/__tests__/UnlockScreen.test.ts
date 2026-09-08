@@ -347,8 +347,9 @@ describe('UnlockScreen.vue 本机记住主口令（issue #574）', () => {
       await probePromise
       await flushPromises()
 
-      // 到期前：仍处于自动解锁加载态
+      // 到期前：仍处于自动解锁加载态（等待期只渲染小提示，不渲染解锁卡片）
       expect(wrapper.html()).toContain('正在尝试自动解锁')
+      expect(wrapper.html()).not.toContain('账本已加密')
       vi.advanceTimersByTime(AUTO_UNLOCK_TIMEOUT_MS)
       await flushPromises()
 
