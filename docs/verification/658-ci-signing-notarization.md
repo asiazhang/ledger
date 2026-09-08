@@ -25,14 +25,19 @@
    生成，不落 secrets）→ 导入 `.p12` 并 `set-key-partition-list` 免交互访问。
 2. **构建签名**：`tauri build` 按 `tauri.conf.json` 的 `signingIdentity`
    （"Developer ID Application" 前缀匹配）+ 默认 hardened runtime 签名。
+   **与 issue #658 步骤 4 的显式偏差：不接 entitlements 文件**——#657 证据矩阵
+   （`scripts/biometry-poc/run.sh` 头注释）实证 keychain-access-groups 类受限
+   entitlement 在 Developer ID 分发下会被 AMFI SIGKILL（须 provisioning profile
+   背书，不可得），故刻意省略，签名仅用 signingIdentity + hardened runtime。
 3. **公证**：`xcrun notarytool store-credentials`（`APPLE_ID` +
-   `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID`）→ `.app`（zip 提交）与 DMG
-   分别 `notarytool submit --wait` → `xcrun stapler staple` 附着票据；分发 zip
-   由已附着的 `.app` 重新打包生成。
+   `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID`，缺失即 fail fast，不等到
+   提交时才报错）→ `.app`（zip 提交）与 DMG 分别 `notarytool submit --wait` →
+   `xcrun stapler staple` 附着票据；分发 zip 由已附着的 `.app` 重新打包生成。
 4. **校验**：`codesign --verify --strict`、签名身份必须是 Developer ID
-   Application、`spctl --assess`（app 与 dmg）、`xcrun stapler validate`——
-   任一失败即发布失败。
-5. **清理**：删除临时钥匙串（`always()`，失败路径同样清理）。
+   Application、hardened runtime 标志必须存在（防止 bundler 默认行为变化）、
+   `spctl --assess`（app 与 dmg）、`xcrun stapler validate`——任一失败即发布失败。
+5. **清理**：删除临时钥匙串并恢复 login 钥匙串为默认（`always()`，失败路径
+   同样清理）。
 
 公证失败排查：`notarytool submit --wait` 报错后查提交详情
 （`xcrun notarytool log <submission-id> --keychain-profile <profile>`），常见
