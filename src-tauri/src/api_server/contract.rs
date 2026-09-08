@@ -1,4 +1,4 @@
-//! 紧凑契约方言投影（`GET /api/v1/contract`，issue #839 / ADR-0089）。
+//! 紧凑契约方言投影（`GET /api/v1/contract`，issue #839 / ADR-0090）。
 //!
 //! 方言（`ledger-contract-1`）不是手写文本，而是与标准 OpenAPI
 //!（`GET /api/v1/openapi.json`，原样保留）**同一 [`ApiDoc`] 源的第二个机械

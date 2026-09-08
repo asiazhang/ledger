@@ -84,11 +84,11 @@ function bodyQuery(selector: string): HTMLElement | null {
 }
 
 describe('InstrumentBrowser 标的页工具栏', () => {
-  it('工具栏包含「同步持仓价格」按钮', async () => {
+  it('工具栏包含「同步标的信息」按钮', async () => {
     const wrapper = mountBrowser()
     await flushPromises()
-    expect(wrapper.find('[data-testid="sync-holding-prices"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('同步持仓价格')
+    expect(wrapper.find('[data-testid="sync-instrument-info"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('同步标的信息')
   })
 
   it('工具栏包含「只看持仓」开关', async () => {
@@ -127,20 +127,20 @@ describe('InstrumentBrowser 持仓标记列', () => {
   })
 })
 
-describe('InstrumentBrowser 同步持仓价格按钮', () => {
-  it('点击按钮触发 sync_holding_prices，进行中按钮 loading', async () => {
+describe('InstrumentBrowser 同步标的信息按钮', () => {
+  it('点击按钮触发 sync_instrument_info，进行中按钮 loading', async () => {
     let resolveSync!: (v: unknown) => void
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
-        sync_holding_prices: () =>
+        sync_instrument_info: () =>
           new Promise((res) => {
             resolveSync = res
           }),      },
     })
     const wrapper = mountBrowser()
     await flushPromises()
-    const btn = wrapper.find('[data-testid="sync-holding-prices"]')
+    const btn = wrapper.find('[data-testid="sync-instrument-info"]')
     await btn.trigger('click')
     await nextTick()
     expect(resolveSync).toBeDefined()
@@ -154,40 +154,40 @@ describe('InstrumentBrowser 同步持仓价格按钮', () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
-        sync_holding_prices: () =>
+        sync_instrument_info: () =>
           Promise.resolve({ synced: 2, skipped: 1, message: '已同步 2 只，跳过 1 只' }),      },
     })
     const wrapper = mountBrowser()
     await flushPromises()
-    await wrapper.find('[data-testid="sync-holding-prices"]').trigger('click')
+    await wrapper.find('[data-testid="sync-instrument-info"]').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('已同步 2 只，跳过 1 只')
   })
 
-  it('无持仓时同步不报错并提示「无持仓标的可同步」', async () => {
+  it('空库时同步不报错并提示「暂无标的可同步」', async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         list_instruments: () => Promise.resolve({ items: [], total: 0 }),
-        sync_holding_prices: () =>
-          Promise.resolve({ synced: 0, skipped: 0, message: '无持仓标的可同步' }),      },
+        sync_instrument_info: () =>
+          Promise.resolve({ synced: 0, skipped: 0, message: '暂无标的可同步' }),      },
     })
     const wrapper = mountBrowser()
     await flushPromises()
-    await wrapper.find('[data-testid="sync-holding-prices"]').trigger('click')
+    await wrapper.find('[data-testid="sync-instrument-info"]').trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('无持仓标的可同步')
+    expect(wrapper.text()).toContain('暂无标的可同步')
   })
 
   it('同步失败显示错误消息', async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
-        sync_holding_prices: () => Promise.reject(new Error('网络错误')),      },
+        sync_instrument_info: () => Promise.reject(new Error('网络错误')),      },
     })
     const wrapper = mountBrowser()
     await flushPromises()
-    await wrapper.find('[data-testid="sync-holding-prices"]').trigger('click')
+    await wrapper.find('[data-testid="sync-instrument-info"]').trigger('click')
     await flushPromises()
     // 失败消息应包含具体原因，而非字符串化的 [object Object]
     expect(wrapper.text()).toContain('同步失败：网络错误')
@@ -255,8 +255,8 @@ describe('InstrumentBrowser 全量同步退役（issue #698 / ADR-0081 决策 3�
     await flushPromises()
     expect(wrapper.find('[data-testid="full-sync"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('全量同步')
-    // 持仓价格增量同步按钮不受退役影响
-    expect(wrapper.find('[data-testid="sync-holding-prices"]').exists()).toBe(true)
+    // 标的信息同步按钮不受退役影响
+    expect(wrapper.find('[data-testid="sync-instrument-info"]').exists()).toBe(true)
   })
 })
 

@@ -98,7 +98,7 @@ const instPnlColumns: DataTableColumn[] = [
 <template>
   <NSpin :show="loading">
     <NSpace vertical :size="16">
-      <!-- 当前持仓概览（issue #110）：总市值/未实现盈亏合计 + 持仓明细 + 同步持仓价格按钮 -->
+      <!-- 当前持仓概览（issue #110）：总市值/未实现盈亏合计 + 持仓明细 + 同步标的信息按钮 -->
       <HoldingsOverview />
 
       <NSpace align="center" :size="12">

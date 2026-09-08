@@ -67,7 +67,7 @@ describe('InvestmentsView 英文渲染（issue #350 / ADR-0049）', () => {
     const wrapper = mountView()
     await flushPromises()
     expect(wrapper.text()).toContain('Current Holdings')
-    expect(wrapper.text()).toContain('Sync Holding Prices')
+    expect(wrapper.text()).toContain('Sync Instrument Info')
     // 无持仓数据 → 英文空态
     expect(wrapper.text()).toContain('No holdings')
   })

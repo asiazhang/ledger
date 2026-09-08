@@ -80,7 +80,7 @@ import type {
   ScheduledTransactionDetail,
   ScheduledTransactionWithExt,
   SubscriptionSpendOverview,
-  SyncHoldingPricesResult,
+  SyncInstrumentInfoResult,
   TrendRange,
   TransactionInput,
   UpdateTransactionInput,
@@ -348,9 +348,11 @@ export const api = {
   setAutoExecutionEnabled: (enabled: boolean) =>
     invoke<void>('set_auto_execution_enabled', { enabled }),
 
-  // 同步持仓价格（增量同步）：仅刷新当前持仓标的价格，返回同步/跳过统计。
-  // 标的全量同步命令与中断命令已随 ADR-0081 决策 3 退役（issue #698）。
-  syncHoldingPrices: () => invoke<SyncHoldingPricesResult>('sync_holding_prices'),
+  // 同步标的信息（增量同步，issue #827 改名）：刷库内全部有通道标的现价并随行
+  // 刷新名称，返回同步/跳过统计。标的全量同步命令与中断命令已随 ADR-0081 决策 3
+  // 退役（issue #698）。
+  syncInstrumentInfo: () =>
+    invoke<SyncInstrumentInfoResult>('sync_instrument_info'),
 
   // 备份与恢复
   createBackup: (targetPath: string) => invoke<BackupResult>('create_backup', { targetPath }),

@@ -16,7 +16,7 @@ import { h } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
 import { t } from '@/i18n'
 import { formatAmount, formatPrice, formatQuantity } from '@/types'
-import { useHoldingPriceSync } from '@/composables/useHoldingPriceSync'
+import { useInstrumentInfoSync } from '@/composables/useInstrumentInfoSync'
 import { usePricesChanged } from '@/composables/usePricesChanged'
 import {
   formatCurrencyGroups,
@@ -28,11 +28,11 @@ const reference = useReferenceStore()
 const { rows, loading, totalMarketValueGroups, totalUnrealizedPnlGroups, refresh } =
   usePortfolioOverview()
 
-// 同步按钮复用 T4 的增量同步接缝（useHoldingPriceSync），两处行为一致：
+// 同步按钮复用 T4 的同步接缝（useInstrumentInfoSync），两处行为一致：
 // 按钮 loading + 轻量消息反馈。同步后重拉不绑在调用方自觉里：后端实际
 // 写价后 emit 价格失效信号（ADR-0031），此处订阅重拉现价/市值（含本卡
 // 所在隐藏 tab 常驻挂载的场景）；失败/零更新后端不 emit，无谓重拉也不发生。
-const { syncing, resultMessage, status, sync } = useHoldingPriceSync()
+const { syncing, resultMessage, status, sync } = useInstrumentInfoSync()
 
 usePricesChanged(() => {
   void refresh()
@@ -109,7 +109,7 @@ const overviewColumns: DataTableColumn<PortfolioRow>[] = [
         type="primary"
         size="small"
         :loading="syncing"
-        data-testid="sync-holding-prices"
+        data-testid="sync-instrument-info"
         @click="sync"
       >
         {{ t('investments.holdings.sync') }}

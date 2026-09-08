@@ -29,7 +29,7 @@
   },
   "holdings": {
     "title": "当前持仓",
-    "sync": "同步持仓价格",
+    "sync": "同步标的信息",
     "empty": "暂无持仓",
     "totalMarketValue": "总市值",
     "totalUnrealizedPnl": "未实现盈亏合计",
@@ -50,7 +50,7 @@
     "allMarkets": "全部市场",
     "onlyInvested": "只看持仓",
     "addInstrument": "添加投资标的",
-    "syncHoldingPrices": "同步持仓价格",
+    "syncInstrumentInfo": "同步标的信息",
     "columns": {
       "symbol": "代码",
       "name": "名称",
@@ -101,7 +101,7 @@
     "noSource": "暂无行情来源",
     "noSourceExtra": "该标的类型暂不参与行情采集（仅股票 / ETF 支持），不提供走势图。",
     "empty": "暂无历史价格数据",
-    "emptyExtra": "点击标的列表的「同步持仓价格」回填近两年行情后，即可查看走势。"
+    "emptyExtra": "点击标的列表的「同步标的信息」回填近两年行情后，即可查看走势。"
   },
   "form": {
     "amount": "金额",

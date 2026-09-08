@@ -210,7 +210,8 @@ pub(super) struct FundSyncStats {
     pub(super) written: usize,
 }
 
-/// 全部 fund 持仓标的的净值增量同步（ADR-0038 决策 6）：逐只请求 lsjz，以
+/// 全部 fund 标的的净值增量同步（ADR-0038 决策 6；收集面随 issue #827 放开至
+/// 库内全部 fund 行）：逐只请求 lsjz，以
 /// 现价缓存的净值日期为水位增量回填——净值点降采样落 PriceHistory（同周
 /// 整周覆盖幂等），窗口内最新公布净值落现价缓存（现价 = 单位净值、
 /// priced_at = nav_date = 净值日期，与 #301 添加基金同形）。页抓取闭包由
@@ -221,7 +222,7 @@ pub(super) struct FundSyncStats {
 /// 中断同步（跳过统计只收「无法拉取」的行，不含网络失败）。
 pub(super) fn sync_fund_navs<N>(
     conn: &Connection,
-    funds: &[&super::incremental::HeldInstrument],
+    funds: &[&super::incremental::SyncInstrument],
     fetch_nav: &mut N,
 ) -> Result<FundSyncStats>
 where
