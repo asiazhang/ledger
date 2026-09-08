@@ -1,20 +1,20 @@
 import { describe, it, expect } from 'vitest'
 import { mockInvoke } from './helpers/invoke-mock'
-import { useHoldingPriceSync } from '@/composables/useHoldingPriceSync'
+import { useInstrumentInfoSync } from '@/composables/useInstrumentInfoSync'
 
 
-describe('useHoldingPriceSync 持仓价格增量同步（标的页/盈亏页共用接缝）', () => {
-  it('无持仓时同步：resolve success（success 子形态），message 为「无持仓标的可同步」', async () => {
+describe('useInstrumentInfoSync 标的信息同步（标的页/盈亏页共用接缝）', () => {
+  it('空库时同步：resolve success（success 子形态），message 为「暂无标的可同步」', async () => {
     mockInvoke.mockResolvedValue({
       synced: 0,
       skipped: 0,
-      message: '无持仓标的可同步',
+      message: '暂无标的可同步',
     })
-    const { syncing, status, resultMessage, lastResult, sync } = useHoldingPriceSync()
+    const { syncing, status, resultMessage, lastResult, sync } = useInstrumentInfoSync()
     await expect(sync()).resolves.toBe('success')
     expect(syncing.value).toBe(false)
     expect(status.value).toBe('success')
-    expect(resultMessage.value).toBe('无持仓标的可同步')
+    expect(resultMessage.value).toBe('暂无标的可同步')
     expect(lastResult.value).toMatchObject({ synced: 0, skipped: 0 })
   })
 
@@ -24,7 +24,7 @@ describe('useHoldingPriceSync 持仓价格增量同步（标的页/盈亏页共�
       skipped: 1,
       message: '已同步 2 只，跳过 1 只',
     })
-    const { status, resultMessage, lastResult, sync } = useHoldingPriceSync()
+    const { status, resultMessage, lastResult, sync } = useInstrumentInfoSync()
     await expect(sync()).resolves.toBe('success')
     expect(status.value).toBe('success')
     expect(resultMessage.value).toBe('已同步 2 只，跳过 1 只')
@@ -33,7 +33,7 @@ describe('useHoldingPriceSync 持仓价格增量同步（标的页/盈亏页共�
 
   it('同步失败：resolve error，status 为 error，message 携带具体错误原因', async () => {
     mockInvoke.mockRejectedValue(new Error('网络错误'))
-    const { status, resultMessage, sync } = useHoldingPriceSync()
+    const { status, resultMessage, sync } = useInstrumentInfoSync()
     await expect(sync()).resolves.toBe('error')
     expect(status.value).toBe('error')
     expect(resultMessage.value).toBe('同步失败：网络错误')
@@ -44,7 +44,7 @@ describe('useHoldingPriceSync 持仓价格增量同步（标的页/盈亏页共�
     mockInvoke.mockImplementation(
       () => new Promise((res) => { resolveSync = res }),
     )
-    const { syncing, sync } = useHoldingPriceSync()
+    const { syncing, sync } = useInstrumentInfoSync()
     const p1 = sync()
     expect(syncing.value).toBe(true)
     // 进行中再次调用：应被短路（复用在途承诺），不新增 invoke

@@ -295,6 +295,36 @@ pub fn create_instrument(conn: &Connection, input: InstrumentInput) -> Result<St
     Ok(id)
 }
 
+/// 同步随行名称刷新接缝（issue #827）：以数据源权威名称覆盖标的行名称——仅当
+/// 名称实际变化时写入（零变化零写入、不虚增 version），返回是否发生写入。
+/// 与 [`create_instrument`] 的「复用即更新名称」同一份 UPDATE 语义：只改名称，
+/// 不动市场/来源等其余列。空名称（数据源缺名/测试桩）与行已不存在（并发删除）
+/// 静默跳过。名称随行刷新是字典修正的同步翼（「随用随修 + 同步随行刷新」，
+/// ADR-0036/0081 修订）：同码自建行名称被数据源覆盖为已接受代价（产品裁决留痕）。
+pub fn refresh_instrument_name(conn: &Connection, instrument_id: &str, name: &str) -> Result<bool> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Ok(false);
+    }
+    let current: Option<String> = conn
+        .query_row(
+            "SELECT name FROM instruments WHERE id=?1",
+            rusqlite::params![instrument_id],
+            |r| r.get(0),
+        )
+        .ok();
+    match current {
+        Some(existing) if existing != name => {
+            conn.execute(
+                "UPDATE instruments SET name=?1, updated_at=?2, version=version+1 WHERE id=?3",
+                rusqlite::params![name, now_iso(), instrument_id],
+            )?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
 /// 手动创建入口守卫（ADR-0036 决策 3）：类型白名单收窄为债券/ETF/其他三类——
 /// 股票字典归按代码查询/创建带回权威名称（ADR-0081）、基金唯一创建入口归按代码
 /// 即拉（issue #301 / ADR-0038），白名单让手动字典与两条自动通道永不相交；

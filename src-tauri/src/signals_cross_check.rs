@@ -441,7 +441,7 @@ fn parse_write_op(ident: &str) -> WriteOp {
         "AdjustAccountBalance" => WriteOp::AdjustAccountBalance,
         "AuditBalanceCache" => WriteOp::AuditBalanceCache,
         "RepairNotePinyin" => WriteOp::RepairNotePinyin,
-        "SyncHoldingPrices" => WriteOp::SyncHoldingPrices,
+        "SyncInstrumentInfo" => WriteOp::SyncInstrumentInfo,
         "AddFundByCode" => WriteOp::AddFundByCode,
         "AddInstrumentByCode" => WriteOp::AddInstrumentByCode,
         "RecordManualPrice" => WriteOp::RecordManualPrice,

@@ -29,7 +29,7 @@
   },
   "holdings": {
     "title": "Current Holdings",
-    "sync": "Sync Holding Prices",
+    "sync": "Sync Instrument Info",
     "empty": "No holdings",
     "totalMarketValue": "Total Market Value",
     "totalUnrealizedPnl": "Total Unrealized P&L",
@@ -49,7 +49,7 @@
     "searchPlaceholder": "Search symbol or name...",
     "allMarkets": "All markets",
     "onlyInvested": "Holdings only",
-    "syncHoldingPrices": "Sync Holding Prices",
+    "syncInstrumentInfo": "Sync Instrument Info",
     "columns": {
       "symbol": "Symbol",
       "name": "Name",
@@ -101,7 +101,7 @@
     "noSource": "No market data source",
     "noSourceExtra": "This instrument type is not covered by market data collection (stocks / ETFs only), so no trend chart is available.",
     "empty": "No historical price data",
-    "emptyExtra": "Click “Sync Holding Prices” in the instrument list to backfill the last two years of quotes, then the trend will appear."
+    "emptyExtra": "Click “Sync Instrument Info” in the instrument list to backfill the last two years of quotes, then the trend will appear."
   },
   "form": {
     "amount": "Amount",

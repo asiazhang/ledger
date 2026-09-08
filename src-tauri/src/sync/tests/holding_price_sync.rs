@@ -1,6 +1,7 @@
-//! 持仓价格增量同步（HoldingPriceSync，issue #103 / #137 / ADR-0019）：secid 构造、
-//! ulist / 日 K / 汇率 K 报文解析、现价 upsert、K 线周采样回填与幂等语义。
-//! 编排经注入 mock 查询 / kline / fx 闭包驱动，不依赖真实网络。
+//! 标的信息同步（InstrumentInfoSync，issue #103 / #137 / ADR-0019；覆盖面放开
+//! 至库内全部标的 + 名称随行刷新 issue #827）：secid 构造、ulist / 日 K / 汇率 K
+//! 报文解析、现价 upsert、K 线周采样回填、名称刷新与幂等语义。
+//! 编排经注入 mock 查询 / kline / fx / 净值 / 基金名称闭包驱动，不依赖真实网络。
 
 use std::cell::RefCell;
 
@@ -219,9 +220,15 @@ fn incremental_sync_normalizes_symbol_suffix() {
     // mock 按响应侧裸代码（f12）返回：归一化后应能匹配并写入价格。
     let prices = [("600519", Some(130280.0)), ("00700", Some(445400.0))];
     let mut fetch = mock_fetch(&prices);
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
-            .unwrap();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     assert_eq!(result.synced, 2);
     assert_eq!(result.skipped, 0);
@@ -246,9 +253,15 @@ fn incremental_sync_all_missing_response_counts_all_skipped() {
     // 查询全部无果（如整批代码无效、响应 data:null）：不报错、全部计入跳过。
     let prices: [(&str, Option<f64>); 0] = [];
     let mut fetch = mock_fetch(&prices);
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
-            .unwrap();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     assert_eq!(result.synced, 0);
     assert_eq!(result.skipped, 2);
@@ -257,15 +270,21 @@ fn incremental_sync_all_missing_response_counts_all_skipped() {
 }
 
 #[test]
-fn incremental_sync_no_holdings_returns_message() {
+fn incremental_sync_empty_library_returns_message() {
     let conn = crate::test_support::open();
     let mut fetch = mock_fetch(&[]);
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
-            .unwrap();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
     assert_eq!(result.synced, 0);
     assert_eq!(result.skipped, 0);
-    assert_eq!(result.message, "无持仓标的可同步");
+    assert_eq!(result.message, "暂无标的可同步");
 }
 
 #[test]
@@ -293,9 +312,15 @@ fn incremental_sync_updates_holding_prices_only() {
         ("00700", Some(445400.0)),
     ];
     let mut fetch = mock_fetch(&prices);
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
-            .unwrap();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     assert_eq!(result.synced, 3);
     assert_eq!(result.skipped, 0);
@@ -353,9 +378,15 @@ fn incremental_sync_skips_holdings_without_quote_source() {
 
     let prices = [("600519", Some(130280.0))];
     let mut fetch = mock_fetch(&prices);
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
-            .unwrap();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     assert_eq!(result.synced, 1);
     assert_eq!(
@@ -393,9 +424,15 @@ fn incremental_sync_keeps_old_price_when_suspended() {
     // 600519 正常价；000001 停牌（f2 无效 → None）
     let prices = [("600519", Some(130280.0)), ("000001", None)];
     let mut fetch = mock_fetch(&prices);
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
-            .unwrap();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     assert_eq!(result.synced, 1);
     assert_eq!(result.skipped, 1, "停牌/无效价应计入跳过且不中断同步");
@@ -416,9 +453,15 @@ fn incremental_sync_counts_missing_response_as_skipped() {
     // mock 只返回 600001：600002 查询无果（响应缺失）→ 计入跳过
     let prices = [("600001", Some(1000.0))];
     let mut fetch = mock_fetch(&prices);
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
-            .unwrap();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     assert_eq!(result.synced, 1);
     assert_eq!(result.skipped, 1);
@@ -437,9 +480,15 @@ fn incremental_sync_skips_unknown_market() {
 
     let prices = [("600519", Some(130280.0))];
     let mut fetch = mock_fetch(&prices);
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
-            .unwrap();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     assert_eq!(result.synced, 1);
     assert_eq!(result.skipped, 1, "市场未知应计入跳过");
@@ -453,14 +502,27 @@ fn incremental_sync_is_idempotent() {
 
     let prices = [("600519", Some(130280.0))];
     let mut fetch = mock_fetch(&prices);
-    let first = do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
-        .unwrap();
+    let first = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
     assert_eq!(first.synced, 1);
 
     let mut fetch = mock_fetch(&prices);
-    let second =
-        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
-            .unwrap();
+    let second = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
     assert_eq!(second.synced, 1);
 
     // 重复调用不产生重复价格行（每标的一条，覆盖更新）
@@ -481,9 +543,15 @@ fn incremental_sync_dedupes_same_instrument_across_accounts() {
 
     let prices = [("600519", Some(1000.0))];
     let mut fetch = mock_fetch(&prices);
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
-            .unwrap();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     assert_eq!(result.synced, 1);
     assert_eq!(result.skipped, 0);
@@ -529,9 +597,15 @@ fn incremental_sync_batches_by_fifty() {
             })
             .collect())
     };
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
-            .unwrap();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     assert_eq!(result.synced, 55);
     assert_eq!(batch_sizes, vec![50, 5]);
@@ -543,8 +617,15 @@ fn incremental_sync_propagates_fetch_error() {
     insert_holding(&conn, "acc-1", "inst-sh", "600519", "stock", "CNY", "sh");
 
     let mut fetch = |_: &str| Err(AppError::Io("模拟网络失败".into()));
-    let err = do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut no_nav)
-        .unwrap_err();
+    let err = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("模拟网络失败"));
 }
 
@@ -593,6 +674,11 @@ fn no_nav(_: &NavQuery) -> Result<LsjzPage> {
         points: vec![],
         total: 0,
     })
+}
+
+/// 空实现：既有用例不关心基金名称刷新时注入（返回空串 = 未取到名称，不落库）。
+fn no_name(_: &str) -> Result<String> {
+    Ok(String::new())
 }
 
 /// 模拟汇率 K 线抓取：按 base+quote 直连串（如 "HKDCNY"）返回汇率日线样本，
@@ -668,8 +754,15 @@ fn kline_backfill_downsamples_daily_to_weekly() {
     let mut fetch = mock_fetch(&prices);
     let mut kline = mock_kline(&klines);
     let mut fx = mock_fx(&[], &fx_log);
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut kline,
+        &mut fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     assert_eq!(result.synced, 1);
     assert_eq!(
@@ -704,12 +797,28 @@ fn kline_backfill_full_week_overwrite_is_idempotent() {
     let mut fetch = mock_fetch(&prices);
     let mut kline = mock_kline(&first);
     let mut fx = mock_fx(&[], &fx_log);
-    do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap();
+    do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut kline,
+        &mut fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     let mut fetch = mock_fetch(&prices);
     let mut kline = mock_kline(&second);
     let mut fx = mock_fx(&[], &fx_log);
-    do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap();
+    do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut kline,
+        &mut fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     assert_eq!(
         price_history_rows(&conn, "inst-sh"),
@@ -744,7 +853,15 @@ fn kline_backfill_keeps_history_after_position_cleared() {
     let mut fetch = mock_fetch(&prices);
     let mut kline = mock_kline(&bars);
     let mut fx = mock_fx(&[], &fx_log);
-    do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap();
+    do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut kline,
+        &mut fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
     assert_eq!(price_history_rows(&conn, "inst-sh").len(), 1);
     assert_eq!(price_history_rows(&conn, "inst-sz").len(), 1);
 
@@ -758,7 +875,15 @@ fn kline_backfill_keeps_history_after_position_cleared() {
     let mut fetch = mock_fetch(&prices);
     let mut kline = mock_kline(&bars);
     let mut fx = mock_fx(&[], &fx_log);
-    do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap();
+    do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut kline,
+        &mut fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     assert_eq!(
         price_history_rows(&conn, "inst-sh").len(),
@@ -797,7 +922,15 @@ fn kline_backfill_writes_fx_rate_history_alongside() {
     let mut fetch = mock_fetch(&prices);
     let mut kline = mock_kline(&klines);
     let mut fx = mock_fx(&fx_bars, &fx_log);
-    do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap();
+    do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut kline,
+        &mut fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     // 汇率与价格同期段（同周规则）落 FxRateHistory：base=HKD、quote=本位币 CNY。
     assert_eq!(
@@ -830,8 +963,15 @@ fn kline_backfill_empty_history_keeps_quote_only() {
     // 无任何日线（全段停牌 / 新上市不足一周）：历史缺 gracefully，现价照常更新。
     let mut kline = mock_kline(&[]);
     let mut fx = mock_fx(&[], &fx_log);
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut kline,
+        &mut fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     assert_eq!(result.synced, 1, "无历史不中断同步");
     assert_eq!(market_price_of(&conn, "inst-sh"), Some(100000));
@@ -850,8 +990,15 @@ fn kline_backfill_fetch_error_propagates() {
     let mut fetch = mock_fetch(&prices);
     let mut kline = |_: &str| Err(AppError::Io("模拟日 K 请求失败".into()));
     let mut fx = mock_fx(&[], &fx_log);
-    let err =
-        do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap_err();
+    let err = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut kline,
+        &mut fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("模拟日 K 请求失败"));
 }
 
@@ -1051,8 +1198,15 @@ fn fund_first_sync_backfills_two_years_with_cross_page_weekly() {
     let requested = RefCell::new(Vec::new());
     let mut fetch = mock_fetch(&[]);
     let mut nav = mock_nav(&pages, &requested);
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut nav).unwrap();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     assert_eq!(result.synced, 1);
     assert_eq!(result.skipped, 0);
@@ -1137,8 +1291,15 @@ fn fund_incremental_fetches_from_watermark_and_overwrites_same_week() {
     let requested = RefCell::new(Vec::new());
     let mut fetch = mock_fetch(&[]);
     let mut nav = mock_nav(&pages, &requested);
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut nav).unwrap();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     assert_eq!(result.synced, 1);
     assert_eq!(result.skipped, 0);
@@ -1194,8 +1355,15 @@ fn fund_incremental_up_to_date_counts_synced_without_write() {
     let requested = RefCell::new(Vec::new());
     let mut fetch = mock_fetch(&[]);
     let mut nav = mock_nav(&[], &requested);
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut nav).unwrap();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     // 「已是最新」= 处理成功但不落库：synced 计入、written 为 0（零变化不广播）。
     assert_eq!(result.synced, 1);
@@ -1225,8 +1393,15 @@ fn fund_first_sync_without_nav_counts_skipped() {
 
     let mut fetch = mock_fetch(&[]);
     let mut nav = no_nav;
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut nav).unwrap();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     // 首刷查无净值（查无此码 / 新基金未公布首期）：计入跳过，不报错不落价。
     assert_eq!(result.synced, 0);
@@ -1262,8 +1437,15 @@ fn fund_rows_without_real_code_skip_without_fetch() {
     let requested = RefCell::new(Vec::new());
     let mut fetch = mock_fetch(&[]);
     let mut nav = mock_nav(&[], &requested);
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut nav).unwrap();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     assert_eq!(result.synced, 0);
     assert_eq!(result.skipped, 2);
@@ -1286,8 +1468,15 @@ fn fund_nav_fetch_error_propagates() {
 
     let mut fetch = mock_fetch(&[]);
     let mut nav = |_: &NavQuery| Err(AppError::Io("模拟净值请求失败".into()));
-    let err = do_incremental_sync_with(&conn, &mut fetch, &mut no_kline, &mut no_fx, &mut nav)
-        .unwrap_err();
+    let err = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut no_name,
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("模拟净值请求失败"));
 }
 
@@ -1319,8 +1508,15 @@ fn etf_holding_syncs_quote_and_kline_backfill() {
     )];
     let mut kline = mock_kline(&klines);
 
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut no_fx, &mut no_nav).unwrap();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     assert_eq!(result.synced, 1, "ETF 持仓走行情通道计入同步成功");
     assert_eq!(result.skipped, 0);
@@ -1355,8 +1551,15 @@ fn etf_holding_unknown_market_counts_skipped_without_requests() {
         Ok(vec![])
     };
     let mut kline = mock_kline(&[]);
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut no_fx, &mut no_nav).unwrap();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     assert_eq!(result.synced, 0);
     assert_eq!(result.skipped, 1, "市场未知在行情分区内仍计入跳过");
@@ -1433,8 +1636,15 @@ fn three_type_partitions_roll_up_into_one_result() {
     let mut nav = mock_nav(&pages, &nav_requested);
     let mut kline = mock_kline(&[]);
 
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut no_fx, &mut nav).unwrap();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut kline,
+        &mut no_fx,
+        &mut nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     // synced = 行情分区 2（股票+ETF）+ 基金 1；skipped = 名称充代码基金 + 债券 + 其他；
     // written = 实际落价 3（基金首刷落净值计入）。
@@ -1538,8 +1748,15 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
     )];
     let mut fx = mock_fx(&fx_pairs, &fx_log);
 
-    let result =
-        do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap();
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut kline,
+        &mut fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
     assert_eq!(result.synced, 1, "美股持仓应计入同步成功");
     assert_eq!(result.skipped, 0);
     assert_eq!(result.written, 1, "实际落价应计入写入（信号判定）");
@@ -1592,7 +1809,15 @@ fn us_stock_holding_syncs_quote_kline_and_usdcny() {
     };
     let mut kline = mock_kline(&klines);
     let mut fx = mock_fx(&fx_pairs, &fx_log);
-    do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap();
+    do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut kline,
+        &mut fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
     let price_rows: i64 = conn
         .query_row("SELECT COUNT(*) FROM price_history", [], |r| r.get(0))
         .unwrap();
@@ -1625,11 +1850,295 @@ fn us_stock_holdings_route_exact_secids_per_market() {
     let fx_log = RefCell::new(Vec::new());
     let usdcny = [("USDCNY", vec![bar("2026-01-05", 7.02)])];
     let mut fx = mock_fx(&usdcny, &fx_log);
-    do_incremental_sync_with(&conn, &mut fetch, &mut kline, &mut fx, &mut no_nav).unwrap();
+    do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut kline,
+        &mut fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
 
     assert_eq!(
         *secid_log.borrow(),
         vec!["105.AAPL,106.BABA,107.SPY".to_string()],
         "三市场持仓同批查询，secid 各自按精确前缀构造（收集按 symbol 升序）"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 覆盖面放开至库内全部标的 + 名称随行刷新（issue #827）：收集不再以「当前有
+// 持仓」为界——清仓标的恢复同步、纯建档未交易标的首次同步补历史；有通道的行
+// 以数据源权威名称随行刷新（行情通道零额外请求、基金通道逐只详情查询），
+// 零变化不虚增 version；无通道行不查名称。
+// ---------------------------------------------------------------------------
+
+/// 清仓 helper：把标的全部批次剩余数量清零（模拟卖出匹配后的库内形态）。
+fn clear_position(conn: &Connection, instrument_id: &str) {
+    conn.execute(
+        "UPDATE security_lots SET remaining_quantity=0 WHERE instrument_id=?1",
+        params![instrument_id],
+    )
+    .unwrap();
+}
+
+#[test]
+fn incremental_sync_includes_cleared_instrument() {
+    let conn = crate::test_support::open();
+    insert_holding(&conn, "acc-1", "inst-held", "600519", "stock", "CNY", "sh");
+    insert_holding(
+        &conn,
+        "acc-2",
+        "inst-cleared",
+        "000001",
+        "stock",
+        "CNY",
+        "sz",
+    );
+    clear_position(&conn, "inst-cleared");
+
+    let prices = [("600519", Some(130280.0)), ("000001", Some(1173.0))];
+    let mut fetch = mock_fetch(&prices);
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
+
+    assert_eq!(
+        result.synced, 2,
+        "清仓标的与持仓标的同批收集（覆盖面不再以持仓为界）"
+    );
+    assert_eq!(result.skipped, 0);
+    assert_eq!(
+        market_price_of(&conn, "inst-cleared"),
+        Some(117300),
+        "清仓标的恢复刷现价"
+    );
+}
+
+#[test]
+fn incremental_sync_includes_never_traded_instrument() {
+    let conn = crate::test_support::open();
+    // 纯建档未交易标的：只有 instruments 行，无任何交易/批次。
+    seed_instrument(&conn, "inst-archived", "600000", "浦发银行", "CNY", "sh");
+
+    let prices = [("600000", Some(1000.0))];
+    let mut fetch = mock_fetch(&prices);
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
+
+    assert_eq!(result.synced, 1, "未交易标的首次同步照常刷价");
+    assert_eq!(market_price_of(&conn, "inst-archived"), Some(100000));
+}
+
+#[test]
+fn incremental_sync_refreshes_names_from_quote_batch() {
+    let conn = crate::test_support::open();
+    // 既有行名称过时（如手工建错/旧数据源命名）：批量报价随行带回权威名称覆盖。
+    seed_instrument(&conn, "inst-stale", "600519", "贵州茅台旧名", "CNY", "sh");
+    let version_before: i64 = conn
+        .query_row(
+            "SELECT version FROM instruments WHERE id='inst-stale'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+
+    let prices = [("600519", Some(130280.0))];
+    let mut fetch = mock_fetch(&prices);
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
+
+    let (name, version): (String, i64) = conn
+        .query_row(
+            "SELECT name, version FROM instruments WHERE id='inst-stale'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        name, "名称-600519",
+        "名称被数据源权威名称覆盖（随用随修 + 同步随行刷新）"
+    );
+    assert_eq!(version, version_before + 1, "名称刷新虚增 version 一次");
+    assert_eq!(result.renamed, 1, "名称刷新计入 renamed 统计");
+    assert!(
+        result.any_written(),
+        "仅名称刷新也应视为实际写入（信号判定）"
+    );
+}
+
+#[test]
+fn incremental_sync_skips_name_write_when_unchanged() {
+    let conn = crate::test_support::open();
+    // 名称与权威名称一致：零变化零写入，不虚增 version。
+    seed_instrument(&conn, "inst-fresh", "600519", "名称-600519", "CNY", "sh");
+    let version_before: i64 = conn
+        .query_row(
+            "SELECT version FROM instruments WHERE id='inst-fresh'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+
+    let prices = [("600519", Some(130280.0))];
+    let mut fetch = mock_fetch(&prices);
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut no_nav,
+        &mut no_name,
+    )
+    .unwrap();
+
+    let version: i64 = conn
+        .query_row(
+            "SELECT version FROM instruments WHERE id='inst-fresh'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(version, version_before, "名称未变化不写库");
+    assert_eq!(result.renamed, 0);
+}
+
+#[test]
+fn fund_name_refresh_via_detail_lookup() {
+    let conn = crate::test_support::open();
+    // 有真实代码的基金行（首刷查无净值的形态）：名称通道照常可达。
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-fund",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+    let version_before: i64 = conn
+        .query_row(
+            "SELECT version FROM instruments WHERE id='inst-fund'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+
+    let mut fetch = mock_fetch(&[]);
+    let mut nav = no_nav;
+    let mut fund_name = |code: &str| {
+        assert_eq!(code, "110022");
+        Ok("易方达优质精选混合".to_string())
+    };
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut fund_name,
+    )
+    .unwrap();
+
+    let (name, version): (String, i64) = conn
+        .query_row(
+            "SELECT name, version FROM instruments WHERE id='inst-fund'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(name, "易方达优质精选混合", "基金名称经详情通道随行刷新");
+    assert_eq!(version, version_before + 1);
+    assert_eq!(result.renamed, 1);
+}
+
+#[test]
+fn fund_name_lookup_skips_name_as_code_rows_and_empty_names() {
+    let conn = crate::test_support::open();
+    // 名称充代码的基金行（非 6 位）：无通道，不发起名称查询；6 位行返回空名称也不写。
+    insert_holding(
+        &conn,
+        "acc-1",
+        "inst-namefund",
+        "华夏成长混合",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+    insert_holding(
+        &conn,
+        "acc-2",
+        "inst-coded",
+        "110022",
+        "fund",
+        "CNY",
+        "unknown",
+    );
+
+    let name_requests = RefCell::new(Vec::new());
+    let mut fetch = mock_fetch(&[]);
+    let mut nav = no_nav;
+    let mut fund_name = |code: &str| {
+        name_requests.borrow_mut().push(code.to_string());
+        Ok(String::new())
+    };
+    let result = do_incremental_sync_with(
+        &conn,
+        &mut fetch,
+        &mut no_kline,
+        &mut no_fx,
+        &mut nav,
+        &mut fund_name,
+    )
+    .unwrap();
+
+    assert_eq!(
+        *name_requests.borrow(),
+        vec!["110022".to_string()],
+        "仅 6 位代码的基金行发起名称查询"
+    );
+    assert_eq!(result.renamed, 0, "空名称（未取到）不落库");
+}
+
+#[test]
+fn any_written_covers_name_only_and_price_only_writes() {
+    // 纯结果类型的证据判定语义：价格与名称任一写入即为真。
+    use crate::sync::SyncInstrumentInfoResult;
+    let base = |written: usize, renamed: usize| SyncInstrumentInfoResult {
+        synced: 1,
+        skipped: 0,
+        message: String::new(),
+        written,
+        renamed,
+    };
+    assert!(base(1, 0).any_written(), "价格写入");
+    assert!(
+        base(0, 1).any_written(),
+        "仅名称刷新（基金已最新 + 名称变化）"
+    );
+    assert!(
+        !base(0, 0).any_written(),
+        "零变化（全部跳过/已是最新且名称无变化）"
     );
 }

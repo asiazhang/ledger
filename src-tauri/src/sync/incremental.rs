@@ -1,18 +1,23 @@
-//! 持仓价格增量同步编排（issue #103，issue #137 升级，issue #303 基金分区，
-//! issue #695 ETF 纳入行情通道；标的收集改走单点谓词 issue #239）：单次收集全量
-//! 持仓标的（口径 = InvestedInstrument，见 `investment::predicates`），一次执行完成
-//! 四件事：① 批量报价刷股票/场内 ETF 现价 upsert `market_prices`；② 每行情分区
-//! 标的一次日 K 请求回填近两年日线，本地降采样为周线落 `price_history`；③ 持仓
-//! 非本位币币种对的汇率 K 线同期落 `fx_rate_history`；④ 基金走历史净值通道逐只
-//! 按水位增量回填（ADR-0038 决策 6，见 `fund_nav`）。
-//! 类型分区在 Rust 侧完成，不增删、不改标的字典（名称/市场/数量）。
-//! 职责切分（ADR-0015）：增量同步刷价格 + 沉淀历史；字典修正已归「按代码
-//! 查询/创建带回权威名称」（全量同步翼随 ADR-0081 决策 3 退役，issue #698）。
+//! 标的信息同步编排（issue #103，issue #137 升级，issue #303 基金分区，
+//! issue #695 ETF 纳入行情通道；覆盖面放开至库内全部标的 + 名称随行刷新
+//! issue #827）：单次收集**库内全部标的**（不再以「当前有持仓」为界，清仓
+//! 标的与纯建档未交易标的同享同步；`INVESTED_EXISTS` 谓词不再服务收集），
+//! 一次执行完成五件事：① 批量报价刷股票/场内 ETF 现价 upsert `market_prices`；
+//! ② 每行情分区标的一次日 K 请求回填近两年日线，本地降采样为周线落
+//! `price_history`；③ 非本位币币种对的汇率 K 线同期落 `fx_rate_history`；
+//! ④ 基金走历史净值通道逐只按水位增量回填（ADR-0038 决策 6，见 `fund_nav`）；
+//! ⑤ 有通道的行以数据源权威名称随行刷新标的字典名称（行情通道零额外请求，
+//! 基金通道逐只详情查询；「随用随修 + 同步随行刷新」，ADR-0036/0081 修订）。
+//! 类型分区在 Rust 侧完成，不增删标的、不改市场。
+//! 职责切分（ADR-0015，修订见 ADR-0081 / issue #827）：同步刷价格、沉淀历史、
+//! 随行修名称；按代码查询/创建随用随修（全量同步翼已随 ADR-0081 决策 3
+//! 退役，issue #698）。
 //!
 //! 编排与网络解耦：核心流程 [`do_incremental_sync_with`] 接受注入的批量报价 / 日 K /
-//! 汇率 K 三个闭包（同一签名 `&str → Result<Vec<_>>`）与历史净值页闭包
-//!（[`NavQuery`] → [`LsjzPage`]），测试以 mock 数据驱动（不依赖真实网络）；生产经
-//! [`do_incremental_sync`] 接 HTTP 层（复用主机池/重试/限流 pacer 与价格换算）。
+//! 汇率 K 三个闭包（同一签名 `&str → Result<Vec<_>>`）、历史净值页闭包
+//!（[`NavQuery`] → [`LsjzPage`]）与基金名称闭包（`&str → Result<String>`），
+//! 测试以 mock 数据驱动（不依赖真实网络）；生产经 [`do_incremental_sync`] 接
+//! HTTP 层（复用主机池/重试/限流 pacer 与价格换算）。
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -20,9 +25,10 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use chrono::{Datelike, NaiveDate};
 use rusqlite::Connection;
 
-use super::model::SyncHoldingPricesResult;
+use super::model::SyncInstrumentInfoResult;
 use crate::error::Result;
-use crate::investment::predicates::INVESTED_EXISTS;
+use crate::investment::crud::refresh_instrument_name;
+use crate::investment::is_six_digit_code;
 use crate::investment::prices::{
     EASTMONEY_PRICE_SOURCE, price_value_to_cents, upsert_market_price, upsert_price_history,
 };
@@ -41,8 +47,8 @@ fn quote_code(symbol: &str) -> &str {
     symbol.split('.').next().unwrap_or(symbol)
 }
 
-/// 持仓标的信息（一个标的一条，全量标的集合，跨账户去重由单表驱动天然成立）。
-pub(super) struct HeldInstrument {
+/// 参与同步的标的信息（一个标的一条，库内全量标的集合，单表驱动天然去重）。
+pub(super) struct SyncInstrument {
     pub(super) instrument_id: String,
     pub(super) symbol: String,
     pub(super) market: String,
@@ -50,7 +56,7 @@ pub(super) struct HeldInstrument {
     pub(super) instrument_type: String,
 }
 
-impl HeldInstrument {
+impl SyncInstrument {
     /// 是否走行情通道：股票与场内 ETF（stock|etf，issue #695 / spec #690 方案 6）。
     /// 场内 ETF 与股票共用东财行情报价/日 K 接口族，按市场+代码构造 secid 同路
     /// 刷价与回填；市场未知仍无法构造 secid，照常计入跳过。
@@ -58,27 +64,27 @@ impl HeldInstrument {
         matches!(self.instrument_type.as_str(), "stock" | "etf")
     }
 
-    /// 是否场外基金：走历史净值通道（ADR-0038 决策 6）。
+    /// 是否场外基金：走历史净值通道（ADR-0038 决策 6）；名称充代码的基金行
+    ///（非 6 位代码）在净值编排内计入跳过。
     fn is_fund(&self) -> bool {
         self.instrument_type == "fund"
     }
 }
 
-/// 单次收集全量持仓标的（一条 SQL、一个谓词引用点）：口径走投资域单点谓词
-/// [`INVESTED_EXISTS`]（InvestedInstrument，ADR-0015 决策 1；别名契约
-/// i = instruments），与 invested 派生列、「只看持仓」过滤、持仓概览同源，
-/// 不再读 v_holdings 视图（视图与谓词的一致性由投资域绑定测试钉住）。
-/// 按 symbol 升序；股票/非股票分区在 Rust 侧完成（见 [`do_incremental_sync_with`]）。
-fn collect_held_instruments(conn: &Connection) -> Result<Vec<HeldInstrument>> {
-    let sql = format!(
-        "SELECT i.id, i.symbol, i.market, i.currency_code, i.instrument_type \
-         FROM instruments i \
-         WHERE {INVESTED_EXISTS} \
-         ORDER BY i.symbol"
-    );
-    let mut stmt = conn.prepare(&sql)?;
+/// 单次收集库内全部标的（一条 SQL，无持仓前置条件，issue #827）：覆盖面从
+/// 「当前有持仓」（`INVESTED_EXISTS`）放开为全库标的、按通道能力分区——清仓
+/// 标的恢复同步，纯建档未交易标的首次同步按既有近两年日 K/净值回填规则补
+/// 历史；无通道行（无行情类型、市场未知、名称充代码）由分区/编排自然计入
+/// 跳过。`INVESTED_EXISTS` 谓词自此只服务 invested 派生列、「只看持仓」过滤
+/// 与盈亏页持仓概览三处（见 `investment::predicates`）。按 symbol 升序；
+/// 通道分区在 Rust 侧完成（见 [`do_incremental_sync_with`]）。
+fn collect_instruments(conn: &Connection) -> Result<Vec<SyncInstrument>> {
+    let sql = "SELECT i.id, i.symbol, i.market, i.currency_code, i.instrument_type \
+               FROM instruments i \
+               ORDER BY i.symbol";
+    let mut stmt = conn.prepare(sql)?;
     let rows = stmt.query_map([], |r| {
-        Ok(HeldInstrument {
+        Ok(SyncInstrument {
             instrument_id: r.get(0)?,
             symbol: r.get(1)?,
             market: r.get(2)?,
@@ -93,45 +99,51 @@ fn collect_held_instruments(conn: &Connection) -> Result<Vec<HeldInstrument>> {
     Ok(instruments)
 }
 
-/// 增量同步核心流程：单次收集全量持仓标的并按类型分区 → 行情分区（stock|etf，
-/// #695）构造 secid 批量报价 upsert 现价（换算按随行精度位单点）+ 日 K 回填周线；
-/// 基金侧逐只历史净值按水位增量回填（ADR-0038 决策 6，委托 [`sync_fund_navs`]）；
-/// 汇率 K 线同期落 `fx_rate_history` → 结果统计。
-/// 四个抓取函数均由调用方注入（生产接 HTTP 层，测试注入 mock），本函数不触碰网络。
+/// 标的信息同步核心流程：单次收集库内全部标的并按通道分区 → 行情分区（stock|etf，
+/// #695）构造 secid 批量报价 upsert 现价（换算按随行精度位单点）、名称随行刷新、
+/// 日 K 回填周线；基金侧逐只历史净值按水位增量回填（ADR-0038 决策 6，委托
+/// [`sync_fund_navs`]）与逐只名称刷新；汇率 K 线同期落 `fx_rate_history` → 结果统计。
+/// 五个抓取函数均由调用方注入（生产接 HTTP 层，测试注入 mock），本函数不触碰网络。
 /// 返回统计：`synced` = 处理成功的标的数（行情分区有效价 + 基金处理成功，含基金
-/// 「已是最新」）；`skipped` = 债券等无行情来源持仓 + 名称充代码的基金行 + 市场未知
-/// + 停牌/无效价/查询无果 + 首刷查无净值的基金；`written` = 实际写入价格的标的数
-///   （价格失效信号判定依据：零变化不广播，基金无新净值不算写入）。
-pub(super) fn do_incremental_sync_with<F, K, X, N>(
+/// 「已是最新」）；`skipped` = 无通道行（无行情类型/市场未知/名称充代码）、停牌/
+/// 无效价/查询无果与首刷查无净值的基金；`written` = 实际写入价格的标的数，
+/// `renamed` = 名称被刷新的标的数（两者共同决定价格失效信号：零变化不广播，
+/// 基金无新净值不算价格写入，issue #827）。
+pub(super) fn do_incremental_sync_with<F, K, X, N, M>(
     conn: &Connection,
     fetch: &mut F,
     fetch_kline: &mut K,
     fetch_fx: &mut X,
     fetch_nav: &mut N,
-) -> Result<SyncHoldingPricesResult>
+    fetch_fund_name: &mut M,
+) -> Result<SyncInstrumentInfoResult>
 where
     F: FnMut(&str) -> Result<Vec<StockItem>>,
     K: FnMut(&str) -> Result<Vec<KlineBar>>,
     X: FnMut(&str) -> Result<Vec<KlineBar>>,
     N: FnMut(&NavQuery) -> Result<LsjzPage>,
+    // 基金名称闭包（issue #827）：6 位代码 → 数据源权威名称；空串表示未取到
+    // （不落库）。生产接基金详情通道，测试注入 mock。
+    M: FnMut(&str) -> Result<String>,
 {
-    let held = collect_held_instruments(conn)?;
-    // 单次收集全量持仓标的（一条 SQL、一个谓词引用点），Rust 内按 instrument_type
+    let held = collect_instruments(conn)?;
+    // 单次收集库内全部标的（一条 SQL，无持仓前置，issue #827），Rust 内按通道能力
     // 分区：行情分区（stock|etf，issue #695）构造 secid 查报价与日 K；基金侧走历史
-    // 净值通道（ADR-0038 决策 6）；其余（债券/其他等无行情来源）计入跳过统计——
-    // 三类统计天然同源。
-    let quote_channel: Vec<&HeldInstrument> =
+    // 净值通道（ADR-0038 决策 6）；其余（债券/其他、市场未知自建行等无通道）计入
+    // 跳过统计——三类统计天然同源。
+    let quote_channel: Vec<&SyncInstrument> =
         held.iter().filter(|i| i.is_quote_channel()).collect();
-    let funds: Vec<&HeldInstrument> = held.iter().filter(|i| i.is_fund()).collect();
+    let funds: Vec<&SyncInstrument> = held.iter().filter(|i| i.is_fund()).collect();
     let no_quote_source = held.len() - quote_channel.len() - funds.len();
 
-    // 完全无持仓：明确提示，不报错。
+    // 库内无任何标的：明确提示，不报错。
     if held.is_empty() {
-        return Ok(SyncHoldingPricesResult {
+        return Ok(SyncInstrumentInfoResult {
             synced: 0,
             skipped: 0,
-            message: "无持仓标的可同步".into(),
+            message: "暂无标的可同步".into(),
             written: 0,
+            renamed: 0,
         });
     }
 
@@ -139,8 +151,8 @@ where
     // 与响应 f12 对齐）；行情分区内 symbol 唯一（instruments 的
     // UNIQUE(symbol, instrument_type)），同代码不冲突。
     // 市场未知（unknown）无法构造 secid，计入跳过。
-    let mut meta: HashMap<String, &HeldInstrument> = HashMap::new();
-    let mut queryable: Vec<(String, &HeldInstrument)> = Vec::new();
+    let mut meta: HashMap<String, &SyncInstrument> = HashMap::new();
+    let mut queryable: Vec<(String, &SyncInstrument)> = Vec::new();
     let mut skipped_unqueryable = 0usize;
     for inst in &quote_channel {
         if let Some(prefix) = secid_prefix(&inst.market) {
@@ -152,13 +164,20 @@ where
         }
     }
 
-    // ① 按批查询并 upsert 现价（幂等：每标的一条 market_prices 覆盖更新，原行为不变）。
+    // ① 按批查询并 upsert 现价（幂等：每标的一条 market_prices 覆盖更新，原行为不变），
+    // 名称随行刷新（issue #827）：批量报价响应携带数据源权威名称（f14），零额外请求，
+    // 与价格解耦——停牌无价仍刷名称。
     let mut synced_codes: HashSet<String> = HashSet::new();
+    let mut renamed = 0usize;
     for chunk in queryable.chunks(ULIST_BATCH_SIZE) {
         let secids: Vec<&str> = chunk.iter().map(|(secid, _)| secid.as_str()).collect();
         let items = fetch(&secids.join(","))?;
         for item in &items {
             if let Some(inst) = meta.get(&item.code) {
+                // 名称随行刷新（issue #827）：以数据源权威名称覆盖（仅实际变化才落库）。
+                if refresh_instrument_name(conn, &inst.instrument_id, &item.name)? {
+                    renamed += 1;
+                }
                 // f2≤0（停牌/无效价）经 deserialize_positive_f64 已过滤为 None，此处跳过、保留旧价。
                 if let Some(raw) = item.price {
                     // 换算按随行精度位单点（场内 ETF 三位小数报价，#695；缺 f1 按市场回退）。
@@ -178,9 +197,9 @@ where
         }
     }
 
-    // ② 近两年日 K 回填 → 周线降采样落 PriceHistory。覆盖行情分区持仓标的
-    // （stock|etf，#695；口径同 InvestedInstrument）；清仓后不再采集、历史保留不删；
-    // 停牌/整周无有效报价该周无点，不中断同步。
+    // ② 近两年日 K 回填 → 周线降采样落 PriceHistory。覆盖行情分区全部标的
+    // （stock|etf，#695；清仓标的自 #827 恢复采集）；停牌/整周无有效报价该周无点，
+    // 不中断同步。
     for (secid, inst) in &queryable {
         let bars = fetch_kline(secid)?;
         for (trade_date, close) in downsample_weekly(&bars) {
@@ -195,9 +214,9 @@ where
         }
     }
 
-    // ③ 汇率 K 线回填 → FxRateHistory：仅持仓中的非本位币币种对（与本位币相同的
+    // ③ 汇率 K 线回填 → FxRateHistory：仅非本位币币种对（与本位币相同的
     // 无需历史折算），与价格历史同期段采集、同周规则落库。汇率消费方含基金与股票
-    // 的历史市值折算，币种对取全量持仓（与分区无关）。
+    // 的历史市值折算，币种对取全量标的（与分区无关）。
     let mut pairs: Vec<(String, String)> = held
         .iter()
         .map(|s| (s.currency.clone(), default_currency_code().to_string()))
@@ -216,6 +235,18 @@ where
     // 落周线、最新净值落现价缓存；跳过/写入统计与股票同源汇总。
     let fund_stats = sync_fund_navs(conn, &funds, fetch_nav)?;
 
+    // ⑤ 基金名称随行刷新（issue #827）：净值通道报文不携带名称，逐只经基金详情
+    // 通道取权威名称（每只有码基金一请求）；名称充代码行（非 6 位）无通道，不查。
+    for fund in &funds {
+        if !is_six_digit_code(&fund.symbol) {
+            continue;
+        }
+        let name = fetch_fund_name(&fund.symbol)?;
+        if refresh_instrument_name(conn, &fund.instrument_id, &name)? {
+            renamed += 1;
+        }
+    }
+
     let synced = synced_codes.len() + fund_stats.synced;
     // 已查询但未取到有效价的（停牌/无效价/查询无果）计入跳过。
     let invalid = queryable.len() - synced_codes.len();
@@ -223,10 +254,11 @@ where
     // 实际写入 = 股票有效价 + 基金实际落库净值（基金「已是最新」不算写入）。
     let written = synced_codes.len() + fund_stats.written;
 
-    Ok(SyncHoldingPricesResult {
+    Ok(SyncInstrumentInfoResult {
         synced,
         skipped,
         written,
+        renamed,
         message: format!("已同步 {synced} 只，跳过 {skipped} 只"),
     })
 }
@@ -284,10 +316,10 @@ pub(super) fn week_monday(d: NaiveDate) -> NaiveDate {
     d - chrono::Duration::days(d.weekday().num_days_from_monday() as i64)
 }
 
-/// 生产入口：接 HTTP 层的批量报价 / 日 K / 汇率 K 线 / 历史净值页查询（复用主机池、
-/// 重试、限流 pacer 与价格换算）。四个闭包串行使用，pacer 以 RefCell 共享，保证
-/// 全部请求之间仍然保持统一的限速间隔。
-pub fn do_incremental_sync(conn: &Connection) -> Result<SyncHoldingPricesResult> {
+/// 生产入口：接 HTTP 层的批量报价 / 日 K / 汇率 K 线 / 历史净值页 / 基金详情查询
+///（复用主机池、重试、限流 pacer 与价格换算）。五个闭包串行使用，pacer 以 RefCell
+/// 共享，保证全部请求之间仍然保持统一的限速间隔。
+pub fn do_incremental_sync(conn: &Connection) -> Result<SyncInstrumentInfoResult> {
     let client = build_client()?;
     let pacer = RefCell::new(Pacer::default());
     let beg = kline_beg();
@@ -296,5 +328,14 @@ pub fn do_incremental_sync(conn: &Connection) -> Result<SyncHoldingPricesResult>
     let mut fx = |pair: &str| fetch_fx_kline(&client, &mut pacer.borrow_mut(), pair, &beg);
     let mut nav =
         |query: &NavQuery| super::fund_nav::fetch_nav_page(&client, &mut pacer.borrow_mut(), query);
-    do_incremental_sync_with(conn, &mut fetch, &mut kline, &mut fx, &mut nav)
+    let mut fund_name =
+        |code: &str| super::fetch_fund_detail_production(code).map(|detail| detail.name);
+    do_incremental_sync_with(
+        conn,
+        &mut fetch,
+        &mut kline,
+        &mut fx,
+        &mut nav,
+        &mut fund_name,
+    )
 }

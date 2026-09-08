@@ -109,8 +109,9 @@ pub enum WriteOp {
 
     // ── 价格域：条件信号 `ledger:prices-changed`（ADR-0031），证据
     //    [`WriteEvidence::PriceWritten`]，映射内共享一份「实际写入」判定 ──
-    /// 增量同步持仓价格（IPC `sync_holding_prices`）：证据 = 实际写入 n>0。
-    SyncHoldingPrices,
+    /// 标的信息同步（IPC `sync_instrument_info`，issue #827 前名
+    /// `sync_holding_prices`）：证据 = 价格或名称实际写入（`any_written`）。
+    SyncInstrumentInfo,
     /// 按代码即拉场外基金（IPC `add_fund_by_code`，ADR-0038）：证据 = 落现价缓存。
     AddFundByCode,
     /// 按代码添加投资标的·场内通道（IPC `add_instrument_by_code`，issue #697 /
@@ -262,7 +263,7 @@ impl WriteOp {
         WriteOp::AdjustAccountBalance,
         WriteOp::AuditBalanceCache,
         // 价格域
-        WriteOp::SyncHoldingPrices,
+        WriteOp::SyncInstrumentInfo,
         WriteOp::AddFundByCode,
         WriteOp::AddInstrumentByCode,
         WriteOp::RecordManualPrice,
@@ -418,7 +419,7 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
 
         // ── 价格域：四操作共享同一行——映射内唯一一份「实际写入 → 发价格
         //    信号」判定（ADR-0044 决策 4）；零变化不广播（ADR-0031）──
-        WriteOp::SyncHoldingPrices
+        WriteOp::SyncInstrumentInfo
         | WriteOp::AddFundByCode
         | WriteOp::AddInstrumentByCode
         | WriteOp::RecordManualPrice
@@ -735,14 +736,14 @@ mod tests {
     // ── 价格域：共享一份「实际写入」判定 ──
 
     #[test]
-    fn sync_holding_prices_emits_prices_changed_only_when_written() {
+    fn sync_instrument_info_emits_prices_changed_only_when_written() {
         assert_signals(
-            signals_for(Op::SyncHoldingPrices, E::PriceWritten(true)),
+            signals_for(Op::SyncInstrumentInfo, E::PriceWritten(true)),
             &[Signal::PricesChanged],
         );
-        // 零变化不广播（无持仓 / 全部跳过 / 基金全部「已是最新」）。
+        // 零变化不广播（空库 / 全部跳过 / 基金全部「已是最新」且名称无变化）。
         assert_signals(
-            signals_for(Op::SyncHoldingPrices, E::PriceWritten(false)),
+            signals_for(Op::SyncInstrumentInfo, E::PriceWritten(false)),
             &[],
         );
     }
@@ -994,7 +995,7 @@ mod tests {
         // 证据错配保守降级（经公共接缝断言，不发错信号）：
         // 条件行拿到非本域证据或无证据，一律零信号。
         let price_ops = [
-            Op::SyncHoldingPrices,
+            Op::SyncInstrumentInfo,
             Op::AddFundByCode,
             Op::AddInstrumentByCode,
             Op::RecordManualPrice,
