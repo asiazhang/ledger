@@ -21,6 +21,7 @@ import {
   type MenuOption,
 } from 'naive-ui'
 import AppDropdown from '@/components/AppDropdown.vue'
+import MobileNavShell from '@/components/MobileNavShell.vue'
 import {
   HomeOutline,
   SwapHorizontalOutline,
@@ -65,6 +66,7 @@ import {
   type ContainableViewName,
 } from '@/stores/sidebar-order'
 import { useWindowGuard } from '@/composables/useWindowGuard'
+import { useWindowTier } from '@/composables/useWindowTier'
 
 const router = useRouter()
 const route = useRoute()
@@ -79,6 +81,11 @@ const { viewShortcuts } = useViewShortcuts(router)
 // 窗口行为守卫（issue #154）：ESC 不作用于窗口层 + 禁用原生右键菜单（可编辑元素例外），
 // 根组件挂载一次，详见 composables/useWindowGuard.ts。
 useWindowGuard()
+
+// 窗口分级（ADR-0088 决策 2 / 词汇表「窗口分级」）：单一断点两档。桌面档渲染既有
+// 侧栏布局（一字不动）；<840 移动档渲染导航壳（顶栏 + 导航抽屉，词汇表「导航抽屉」），
+// 抽屉消费同一份导航状态（menuOptions / handleSelect），ViewState 语义与存储零改动。
+const tier = useWindowTier()
 
 // 侧栏展开宽度随界面语言（英文更长：160px 下组标题行「更多」链接被右缘裁切、
 // 菜单项行偏挤）：zh-CN 维持 160 不变，en-US 200；切换语言走 NLayoutSider
@@ -152,8 +159,11 @@ function renderMenuIcon(name: string) {
 // 全局「更多」固定项已退役；菜单项与快捷键共用同一顺序源（viewShortcuts：由组内序按
 // 线性位置推导键位，只扫主项），分组标题不占键位、不参与排序与计数
 // （NMenu group 选项天然不可选）；菜单响应式派生，组内排序变更时顺序与快捷键提示同步更新。
-// 每项右侧附快捷键提示（数字位或设置项的 ⌘,）；「更多」链接与收纳成员无键位、不出提示、
-// 不可键盘触发；折叠态不渲染组标题，「更多」链接随之不渲染（决策 6）。
+// 键位带仅桌面档渲染（ADR-0088 关联 ADR-0065：移动档不渲染键位带）——菜单构建以
+// 键位表入参：桌面档传完整键位带，移动抽屉传空表剥离提示；触控轴下快捷键整体
+// 退役归票③，此处是宽度轴档位的渲染口径。每项右侧附快捷键提示（数字位或设置项的 ⌘,，仅桌面档）；
+// 「更多」链接与收纳成员无键位、不出提示、不可键盘触发；
+// 折叠态不渲染组标题，「更多」链接随之不渲染（决策 6）。
 // 主项经 nodeProps 附右键组内排序菜单（issue #270/#359），固定项与分组标题不附
 // （右键无任何菜单，原生菜单由窗口守卫抑制）。注：NMenu 不支持选项级 props 字段，必须走菜单级 nodeProps。
 function renderItem(name: ViewName | ContainableViewName, key: string | null): MenuOption {
@@ -168,8 +178,9 @@ function renderItem(name: ViewName | ContainableViewName, key: string | null): M
   }
 }
 
-const menuOptions = computed<MenuOption[]>(() => {
-  const keyOf = new Map(viewShortcuts.value.map((s) => [s.name, s.key]))
+/** 菜单选项构建（桌面侧栏与移动抽屉两壳层共享的单一来源，消费同一份导航状态）：
+ *  keyOf 为视图键位表，键位缺失即不出提示。 */
+function buildMenuOptions(keyOf: Map<string, string | null>): MenuOption[] {
   // 入参含移回的种子成员（#475）：侧栏菜单项词表 = 主项 ∪ 出厂种子
   const item = (name: ViewName | ContainableViewName) => renderItem(name, keyOf.get(name) ?? null)
   return [
@@ -206,7 +217,15 @@ const menuOptions = computed<MenuOption[]>(() => {
     item(PENULTIMATE_VIEW),
     item(LAST_VIEW),
   ]
-})
+}
+
+/** 桌面侧栏菜单：键位提示随菜单渲染（⌘1–9/⌘0/⌘,/⌘`，ADR-0065）。 */
+const menuOptions = computed<MenuOption[]>(() =>
+  buildMenuOptions(new Map(viewShortcuts.value.map((s) => [s.name, s.key]))),
+)
+
+/** 移动抽屉菜单：同一导航状态、剥离键位带（移动档不渲染键位提示，ADR-0088 决策 4 关联 ADR-0065）。 */
+const drawerMenuOptions = computed<MenuOption[]>(() => buildMenuOptions(new Map()))
 
 /** 菜单级 nodeProps：仅当前在册成员附右键事件（issue #475 改用 isSidebarMember：
  *  主项与移回的种子可排序/移入；固定项与仍在清单的收纳成员无任何右键菜单）。
@@ -280,7 +299,9 @@ function handleSelect(key: string) {
 // 点击即切换并持久化；格式化层（@/utils/money）消费同一 ref，全应用金额即时掩码/恢复。
 // 渲染函数读取响应式状态，语言/开关变化时随重新渲染；侧栏折叠（宽度归零）时按钮
 // 不可见，展开即可切换（接受取舍，不设第二渲染点）。
-const title = () => {
+// 命名：brandRow（品牌行）——同文件另有顶栏视图名 title prop（MobileNavShell），
+// 同名两义易误读（审查发现），取渲染物命名。
+const brandRow = () => {
   // 无障碍标签/tooltip 反映当前状态（文案随界面语言）：关→「隐藏金额」、开→「显示金额」，
   // aria-pressed 携带开关态（WAI-ARIA toggle button 模式）
   const privacyLabel = store.amountPrivacyEnabled ? t('common.amountPrivacy.show') : t('common.amountPrivacy.hide')
@@ -333,6 +354,11 @@ const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(rou
         <!-- 探测中（null）不渲染主界面；解锁/明文后随设备偏好推送宿主一起挂载 -->
         <template v-if="locked === false">
           <DevicePreferenceSyncHost />
+          <!-- 窗口分级分支（ADR-0088 决策 2/4）：≥840 桌面档渲染既有侧栏布局（一字不动）；
+               <840 移动档渲染导航壳（顶栏 + 导航抽屉，词汇表「导航抽屉」）。两档消费同一份
+               menuOptions / handleSelect 导航状态；右键排序菜单仅桌面档（桌面专属管理动作
+               不上抽屉，ADR-0088 决策 10）。 -->
+          <template v-if="tier === 'desktop'">
           <NLayout has-sider style="height: 100vh">
           <NLayoutSider
             bordered
@@ -344,7 +370,7 @@ const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(rou
             @update:collapsed="updateSidebarCollapsed"
           >
             <NSpace vertical :size="0">
-              <component :is="title" />
+              <component :is="brandRow" />
               <NMenu
                 :options="menuOptions"
                 :value="route.name as string"
@@ -377,56 +403,23 @@ const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(rou
             </NLayoutContent>
           </NLayout>
           </NLayout>
+          </template>
+          <template v-else>
+            <MobileNavShell
+              :menu-options="drawerMenuOptions"
+              :title="pageTitle"
+              @select="handleSelect"
+            >
+              <!-- 品牌行复用侧栏标题行渲染函数：应用名 + 金额隐私眼睛按钮，
+                   侧栏的另一壳层渲染，入口仍单点（spec #564 不设第二渲染点） -->
+              <template #brand>
+                <component :is="brandRow" />
+              </template>
+              <RouterView />
+            </MobileNavShell>
+          </template>
         </template>
       </NDialogProvider>
     </NMessageProvider>
   </NConfigProvider>
 </template>
-
-<style scoped>
-/* 组标题行「更多」链接（issue #472 / ADR-0063 决策 1）。
-   这些类位于 label 渲染函数 h() 创建的元素上，不带本组件 data-v 属性，
-   scoped 原生类名选择器匹配不到，必须 :deep() 以 [data-v] 后代选择器命中
-   （锚点为 NMenu 根元素，继承父组件 scopeId）。
-   三态：静默与组标题同色 → hover 淡背景 + 实色 →
-   所在组「更多」页激活时主色 + 选中淡背景（与子菜单项选中态一致）。 */
-:deep(.sidebar-group-title) {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-  /* 14px + 链接自身 6px 右 padding = 20px，链接盒（文字+箭头）右缘
-     与上下菜单项键位提示对齐（.n-menu-item-content 18px + 键位行 2px）。 */
-  padding-right: 14px;
-}
-
-:deep(.group-more-link) {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  font-size: 12px;
-  color: var(--n-group-text-color);
-  /* 扩大点击热区（约 24x16），不显眼地包住文字与箭头 */
-  padding: 2px 6px;
-  border-radius: var(--n-border-radius, 4px);
-  cursor: pointer;
-  text-decoration: none;
-  transition:
-    color .2s var(--n-bezier),
-    background-color .2s var(--n-bezier);
-}
-
-:deep(.group-more-link:hover) {
-  color: var(--n-item-text-color-hover);
-  background-color: var(--n-item-color-hover);
-}
-
-/* 激活态置于 hover 之后：悬停已激活链接时保持选中背景不闪变 */
-:deep(.group-more-link.is-active),
-:deep(.group-more-link.is-active:hover) {
-  color: var(--n-item-text-color-active);
-  background-color: var(--n-item-color-active);
-}
-</style>

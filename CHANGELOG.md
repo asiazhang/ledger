@@ -2,6 +2,17 @@
 
 本文件记录开源记账（OpenLedger）各版本对使用者可见的变更，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)规则。
 
+## [Unreleased]
+
+### Added
+
+- **移动端**：窗口宽度 <840 时切换移动档导航壳——顶部应用栏（当前视图名 + 汉堡按钮）+ 导航抽屉，完整映射侧栏分组、组内收纳「更多」页与固定项；抽屉开合纳入弹层抑制，导航即关闭（[#842]）。
+- **移动端**：界面适配刘海与手势条安全区（viewport-fit=cover）；全局忙碌条在移动档随顶部安全区下移，不被遮挡（[#842]）。
+
+### Changed
+
+- **桌面**：窗口最小宽 900 → 360——窄窗口下自动进入移动档布局，<840 自此为受支持形态（[#842]，ADR-0088 已裁决的桌面可见变化）。
+
 ## [0.6.0] - 2026-09-08
 
 ### Added
@@ -241,3 +252,4 @@
 [#804]: https://github.com/asiazhang/ledger/issues/804
 [#827]: https://github.com/asiazhang/ledger/issues/827
 [#839]: https://github.com/asiazhang/ledger/issues/839
+[#842]: https://github.com/asiazhang/ledger/issues/842
