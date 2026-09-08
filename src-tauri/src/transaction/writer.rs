@@ -94,8 +94,9 @@ pub struct NormalizedRow {
 /// 语义（与交易行为层通用 kind 写入路径一致，见 `transaction::behavior`）：
 /// - 金额必须 > 0；
 /// - transfer 必须指定 `to_account_id`；
-/// - 商户（merchant_id）：income/expense 携带的商户必须存在且未软删除（软删商户
-///   不可再被新交易选择，历史引用照常保留）；refund 忽略调用方填的 merchant_id，
+/// - 商户（merchant_id）：携带的商户必须存在且未软删除（kind 准入在行为层收口，
+///   ADR-0092：income/expense/transfer）；软删商户
+///   不可再被新交易选择，历史引用照常保留；refund 忽略调用方填的 merchant_id，
 ///   自动继承原支出商户（与账户/币种/分类同款继承语义，ADR-0028）；
 /// - 保单（policy_id，issue #361）：携带的保单必须存在且未软删除（软删保单不可
 ///   再被新选择，历史引用照常保留——保单是档案非字典，ADR-0051 决策 5）；
@@ -178,7 +179,8 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
             // 商户与账户/币种/分类同款继承语义：忽略调用方填的 merchant_id，取原支出商户。
             (cat, acc, cur, mer, Some(ref_id))
         } else {
-            // 商户字典校验：income/expense 携带的商户必须存在且未软删除——软删商户
+            // 商户字典校验：携带的商户必须存在且未软删除（kind 准入在行为层收口，
+            // ADR-0092：income/expense/transfer）——软删商户
             // 不可再被**新选择**（新建交易引用；历史引用照常保留）。修改路径提交值与
             // 该行当前商户相同视为保持历史引用（`existing_merchant_id`），跳过校验。
             if let Some(merchant_id) = &input.merchant_id {

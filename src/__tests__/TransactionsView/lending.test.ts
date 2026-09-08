@@ -173,6 +173,42 @@ describe('记一笔借贷入口完整链路（issue #374）', () => {
     expect(fromOptions.map((o) => o.value)).toEqual(['acc-debt-li'])
     expect(toOptions.map((o) => o.value)).toEqual(['acc-cash', 'acc-bank'])
   })
+
+  // 借贷可关联商户（issue #875 / ADR-0092）：借出/借入表单暴露商户输入位（与支出表单
+  // 同款自由文本即建）；普通转账表单不暴露（另测于 TransferForm.test）。
+  it('「借出」入口暴露商户输入位：自由文本提交即建商户并携带 id', async () => {
+    const wrapper = await mountView()
+    await openLendModal(wrapper, '借出')
+    const form = wrapper.findComponent(TransactionForm).findComponent(LendingForm)
+    // 三个 PinyinSelect：转出、转入、商户（新增输入位）
+    const selects = form.findAllComponents(PinyinSelect)
+    expect(selects).toHaveLength(3)
+    expect(form.text()).toContain('商户')
+    const [fromSelect, toSelect, merchantSelect] = selects
+    fromSelect.vm.$emit('update:value', 'acc-cash')
+    toSelect.vm.$emit('update:value', 'acc-recv-zhang')
+    merchantSelect.vm.$emit('update:value', '魏有鼎')
+    form.find('input[placeholder="金额"]').setValue('1000')
+    await flushPromises()
+
+    const base = mockInvoke.getMockImplementation()!
+    // 一次性覆盖按调用序排队（先 create_merchant、后 create_transaction），
+    // 其余命令委托回基础桩（守门规则：不手写 invoke 分发）
+    mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'create_merchant' ? Promise.resolve('mch-new') : base(cmd, args))
+    mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'create_transaction' ? Promise.resolve('new-id') : base(cmd, args))
+    const submitBtn = form.findAllComponents(NButton).find((b) => b.text() === '记借出')!
+    await submitBtn.trigger('click')
+    await flushPromises()
+
+    // 未命中即建：商户名进 create_merchant，交易携带解析出的 id
+    expect(mockInvoke).toHaveBeenCalledWith('create_merchant', { input: { name: '魏有鼎' } })
+    const createCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_transaction')
+    expect(createCalls).toHaveLength(1)
+    const [, args] = createCalls[0] as [string, { input: Record<string, unknown> }]
+    expect(args.input).toMatchObject({ kind: 'transfer', merchant_id: 'mch-new' })
+  })
 })
 
 describe('借贷金额字段错误态（ADR-0058 / issue #416，共享接缝装配验证）', () => {

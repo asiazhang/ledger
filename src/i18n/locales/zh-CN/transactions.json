@@ -106,7 +106,10 @@
     "createFailed": "记账失败: {msg}",
     "policy": "保单",
     "policyPlaceholder": "选择保单（可选）",
-    "policyDeleted": "（已删除保单）"
+    "policyDeleted": "（已删除保单）",
+    "merchant": "商户",
+    "merchantPlaceholder": "选择商户，可直接输入新名称",
+    "merchantDeleted": "（已删除商户）"
   },
   "refund": {
     "title": "退款",

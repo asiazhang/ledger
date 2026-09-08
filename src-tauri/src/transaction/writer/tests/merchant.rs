@@ -22,7 +22,8 @@ fn insert_merchant(conn: &Connection, id: &str, name: &str) {
     .unwrap();
 }
 
-/// income/expense 携带存在的商户 → 归一化行透传 merchant_id。
+/// 携带存在的商户 → 归一化行透传 merchant_id（kind 准入在行为层收口，
+/// writer 只校验引用有效性，ADR-0092）。
 #[test]
 fn normalize_merchant_passthrough() {
     let conn = test_support::open();

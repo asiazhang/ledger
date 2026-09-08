@@ -22,7 +22,8 @@ use crate::merchants::Merchant;
     description = "返回商户字典的全部在用行（`is_deleted=0`），按名称排序。\
                   提交交易时可带 `merchant_name`（商户名字符串）：后端按名字精确匹配在用商户，\
                   命中复用、未命中即建，AI 无需自行去重；建议先拉取本列表、按已有名字提交，\
-                  避免同义名分裂商户字典。仅 `income`/`expense` 可携带商户（refund 自动继承原支出商户）。",
+                  避免同义名分裂商户字典。仅 `income`/`expense`/`transfer` 可携带商户（refund 自动继承原支出商户；
+                  `buy`/`sell` 不能带）。",
     responses(
         (status = 200, description = "在用商户列表", body = [Merchant]),
         (status = 500, description = "数据库错误", body = ErrorResponse)

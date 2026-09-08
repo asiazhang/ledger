@@ -35,6 +35,10 @@ function optionIds(options: Array<{ value: string }>) {
   return options.map((o) => o.value)
 }
 
+function merchantCreateCalls() {
+  return mockInvoke.mock.calls.filter(([cmd]) => cmd === 'create_merchant')
+}
+
 const FUND_IDS = ['acc-cash', 'acc-bank']
 const RECV_IDS = ['acc-recv-zhang', 'acc-recv-co']
 const DEBT_IDS = ['acc-debt-li']
@@ -171,6 +175,62 @@ describe('useLendingForm（借贷变体 composable，issue #374 S3）', () => {
     })
   })
 
+  describe('商户输入（issue #875 / ADR-0092：借贷可关联商户）', () => {
+    it('不填商户：merchant_id 为 null，不调 create_merchant', async () => {
+      wireInvokeSeam({ overrides: { ...REFERENCE_OVERRIDES, create_transaction: 'new-txn-id' } })
+      const form = useLendingForm()
+      form.accountId.value = 'acc-cash'
+      form.toAccountId.value = 'acc-recv-zhang'
+      form.amountText.value = '1000'
+
+      await form.submit()
+
+      expect(mockInvoke).toHaveBeenCalledWith('create_transaction', {
+        input: expect.objectContaining({ kind: 'transfer', merchant_id: null }),
+      })
+      expect(merchantCreateCalls()).toHaveLength(0)
+    })
+
+    it('选中已有商户（value 为 id）：原样携带，不调 create_merchant', async () => {
+      wireInvokeSeam({ overrides: { ...REFERENCE_OVERRIDES, create_transaction: 'new-txn-id' } })
+      const form = useLendingForm()
+      form.accountId.value = 'acc-cash'
+      form.toAccountId.value = 'acc-recv-zhang'
+      form.amountText.value = '1000'
+      form.merchantRef.value = 'mch-1'
+
+      await form.submit()
+
+      expect(mockInvoke).toHaveBeenCalledWith('create_transaction', {
+        input: expect.objectContaining({ kind: 'transfer', merchant_id: 'mch-1' }),
+      })
+      expect(merchantCreateCalls()).toHaveLength(0)
+    })
+
+    it('输入新名字（未命中）：保存即建商户并携带新 id（与支出表单同款自由文本即建）', async () => {
+      wireInvokeSeam({
+        overrides: {
+          ...REFERENCE_OVERRIDES,
+          create_transaction: 'new-txn-id',
+          create_merchant: () => Promise.resolve('mch-new'),
+        },
+      })
+      const form = useLendingForm()
+      form.accountId.value = 'acc-cash'
+      form.toAccountId.value = 'acc-recv-zhang'
+      form.amountText.value = '1000'
+      form.merchantRef.value = '魏有鼎'
+
+      await form.submit()
+
+      expect(merchantCreateCalls()).toHaveLength(1)
+      expect(merchantCreateCalls()[0]).toEqual(['create_merchant', { input: { name: '魏有鼎' } }])
+      expect(mockInvoke).toHaveBeenCalledWith('create_transaction', {
+        input: expect.objectContaining({ kind: 'transfer', merchant_id: 'mch-new' }),
+      })
+    })
+  })
+
   describe('编辑模式（借贷形态回填）', () => {
     /** 历史借贷：现金 → 借出·张三（transfer，账户类型正确即自动获得借贷形态） */
     const editingTx: Transaction = {
@@ -227,6 +287,34 @@ describe('useLendingForm（借贷变体 composable，issue #374 S3）', () => {
       const unknownTx = { ...editingTx, to_account_id: 'acc-gone' }
       const form = useLendingForm({ editing: () => unknownTx, initialDirection: 'borrow' })
       expect(form.direction.value).toBe('borrow')
+    })
+
+    it('回填行上商户并在提交时原样保留（借贷编辑不静默清数据）', async () => {
+      wireInvokeSeam({ overrides: { ...REFERENCE_OVERRIDES, update_transaction: undefined } })
+      const form = useLendingForm({ editing: () => ({ ...editingTx, merchant_id: 'mch-1' }) })
+      expect(form.merchantRef.value).toBe('mch-1')
+      form.amountText.value = '300'
+
+      await form.submit()
+
+      expect(mockInvoke).toHaveBeenCalledWith('update_transaction', {
+        id: 'txn-200',
+        input: expect.objectContaining({ kind: 'transfer', merchant_id: 'mch-1' }),
+      })
+    })
+
+    it('编辑时清除商户：merchant_id 为 null（显式清空而非静默）', async () => {
+      wireInvokeSeam({ overrides: { ...REFERENCE_OVERRIDES, update_transaction: undefined } })
+      const form = useLendingForm({ editing: () => ({ ...editingTx, merchant_id: 'mch-1' }) })
+      form.merchantRef.value = null
+      form.amountText.value = '300'
+
+      await form.submit()
+
+      expect(mockInvoke).toHaveBeenCalledWith('update_transaction', {
+        id: 'txn-200',
+        input: expect.objectContaining({ kind: 'transfer', merchant_id: null }),
+      })
     })
   })
 })

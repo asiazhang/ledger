@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { makeTransaction } from './factories'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
@@ -198,6 +199,33 @@ describe('TransferForm.vue', () => {
       // 成功后金额清空且时机标志重置：不显红态
       expect((amountInput(wrapper).element as HTMLInputElement).value).toBe('')
       expect(hasErrorStatus(wrapper)).toBe(false)
+    })
+  })
+
+  // 普通转账表单不暴露商户输入位（ADR-0092 决策 4），但编辑时行上商户必须随行
+  // 保留——形态退化（借贷账户被换成普通账户）退回普通转账时不静默清数据（决策 5）。
+  describe('编辑保留行上商户（issue #875 / ADR-0092）', () => {
+    const editingTxWithMerchant: Transaction = makeTransaction({
+      id: 'txn-m',
+      kind: 'transfer',
+      account_id: 'acc-1',
+      to_account_id: 'acc-2',
+      merchant_id: 'mch-1',
+      date: '2026-02-01',
+    })
+
+    it('表单不渲染商户输入位，但提交把原商户 id 原样带回', async () => {
+      wireInvokeSeam({ overrides: { list_accounts: mockAccounts, update_transaction: undefined } })
+      const wrapper = mount(TransferForm, { props: { editing: editingTxWithMerchant } })
+      expect(wrapper.text()).not.toContain('商户')
+
+      await submitButton(wrapper).trigger('click')
+      await flushPromises()
+
+      expect(mockInvoke).toHaveBeenCalledWith('update_transaction', {
+        id: 'txn-m',
+        input: expect.objectContaining({ kind: 'transfer', merchant_id: 'mch-1' }),
+      })
     })
   })
 })

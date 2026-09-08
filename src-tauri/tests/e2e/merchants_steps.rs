@@ -103,7 +103,7 @@ fn delete_merchant(world: &mut LedgerWorld, name: String) {
     delete_merchant_domain(&world_conn!(world), &id).expect("软删商户失败");
 }
 
-/// 创建带商户的交易（expense/income/refund 可携带）。
+/// 创建带商户的交易（expense/income/transfer/refund 可携带，ADR-0092）。
 #[when(expr = "创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string} 商户 {string}")]
 fn create_txn_with_merchant(
     world: &mut LedgerWorld,
@@ -154,31 +154,31 @@ fn try_create_txn_with_merchant(
     };
 }
 
-/// 尝试创建带商户的转账并捕获错误（行为层 kind 收口：transfer 拒绝商户）。
-#[when(expr = "尝试创建转账 金额 {int} 从账户 {string} 日期 {string} 商户 {string}")]
-fn try_transfer_with_merchant(
+/// 创建带商户的转账（issue #875 / ADR-0092）：transfer 准入已放开——普通转账与
+/// 借贷转账（receivable/debt 账户派生视角）共用同一收口，商户是检索与展示指针。
+#[when(expr = "创建转账 金额 {int} 从账户 {string} 到账户 {string} 日期 {string} 商户 {string}")]
+fn create_transfer_with_merchant(
     world: &mut LedgerWorld,
     amount: i64,
-    account_name: String,
+    from_name: String,
+    to_name: String,
     date: String,
     merchant_name: String,
 ) {
     let input = TransactionInput {
         merchant_id: Some(world.merchant_id(&merchant_name)),
-        // 故意不传转入账户：「不合法形态被后端守卫拒绝」的被测前提
-        // （transfer.to-account-required，与 L1 工厂 per-kind 矩阵一致）。
+        to_account_id: Some(world.account_id(&to_name)),
         ..plain_input(
             TransactionKind::Transfer,
             amount,
-            &world.account_id(&account_name),
+            &world.account_id(&from_name),
             &date,
         )
     };
     let result = create_transaction_internal(&world_conn!(world), input);
-    world.last_error = match result {
-        Err(AppError::Coded { message, .. }) => Some(message),
-        _ => Some("预期失败但成功了".into()),
-    };
+    assert!(result.is_ok(), "创建转账失败: {:?}", result.err());
+    world.txn.last_transaction_id = Some(result.unwrap().id);
+    world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
 // ---------------------------------------------------------------------------

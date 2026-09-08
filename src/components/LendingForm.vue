@@ -87,6 +87,19 @@ const ctx = useLendingForm({
         />
       </NFormItem>
 
+      <!-- 商户输入（issue #875 / ADR-0092）：借贷可关联商户（与支出表单同款自由文本即建）；
+           普通转账表单不暴露本输入位，但编辑时行上商户随行保留（ADR-0092 决策 5）。 -->
+      <NFormItem :label="t('transactions.form.merchant')">
+        <PinyinSelect
+          v-model:value="ctx.merchantRef.value"
+          :options="ctx.merchantOptions.value"
+          tag
+          clearable
+          :placeholder="t('transactions.form.merchantPlaceholder')"
+          style="width: 220px"
+        />
+      </NFormItem>
+
       <NFormItem :label="t('transactions.form.date')">
         <AppDatePicker v-model:value="ctx.date.value" type="date" style="width: 200px" />
       </NFormItem>

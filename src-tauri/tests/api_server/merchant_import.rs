@@ -211,29 +211,109 @@ async fn test_idempotent_replay_no_merchant_fragmentation() {
     assert_eq!(count_rows(&conn.lock().unwrap(), "merchants"), 1);
 }
 
-/// transfer 携带商户名被行为层拒绝，且**不**先建商户（kind 收口在解析之前）。
+/// transfer 携带商户名（issue #875 / ADR-0092）：批量导入成功，按名即建商户并挂到转账行。
+/// 借贷关联只是检索与展示指针，准入为纯 kind 判定（不要求账户类型）。
 #[tokio::test]
-async fn test_transfer_with_merchant_name_rejected_without_creating_merchant() {
+async fn test_batch_import_transfer_with_merchant_name_attaches_merchant() {
     let (app, conn) = setup_app();
+    let from = create_account_via_api(&app, "现金账户").await;
+    let to = create_account_via_api(&app, "银行账户").await;
 
     let results = post_batch(
         &app,
         batch_body(
-            &[r#"{"kind":"transfer","amount_cents":1000,"currency_code":"CNY","account_id":"x","to_account_id":"y","date":"2026-08-01","merchant_name":"盒马"}"#],
+            &[&format!(
+                r#"{{"kind":"transfer","amount_cents":1000,"currency_code":"CNY","account_id":"{from}","to_account_id":"{to}","date":"2026-08-01","merchant_name":"魏有鼎"}}"#
+            )],
             None,
         ),
     )
     .await;
-    assert_eq!(results[0]["success"], false);
-    assert!(
-        results[0]["error"]
-            .as_str()
-            .unwrap()
-            .contains("不能携带商户"),
-        "应报「不能携带商户」，实际: {results:?}"
+    assert_eq!(
+        results[0]["success"], true,
+        "transfer 携带商户应成功: {results:?}"
     );
-    assert_eq!(count_rows(&conn.lock().unwrap(), "merchants"), 0);
-    assert_eq!(count_active_transactions(&conn.lock().unwrap()), 0);
+    assert_eq!(
+        count_rows(&conn.lock().unwrap(), "merchants"),
+        1,
+        "按名即建商户"
+    );
+
+    let (_, list) = get_json(&app, "/api/v1/transactions").await;
+    let items = list["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    let merchant_id = items[0]["merchant_id"].as_str().expect("转账行应携带商户");
+
+    let (_, merchants) = get_json(&app, "/api/v1/merchants").await;
+    let hit = merchants
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == merchant_id)
+        .expect("转账行的商户应在商户列表中");
+    assert_eq!(hit["name"], "魏有鼎");
+}
+
+/// 同批多行同名 transfer 只建一个商户（与 expense 同款的未命中即建、命中复用）。
+#[tokio::test]
+async fn test_batch_import_transfer_reuses_merchant_by_name() {
+    let (app, conn) = setup_app();
+    let from = create_account_via_api(&app, "现金账户").await;
+    let to = create_account_via_api(&app, "银行账户").await;
+
+    let results = post_batch(
+        &app,
+        batch_body(
+            &[
+                &format!(
+                    r#"{{"kind":"transfer","amount_cents":1000,"currency_code":"CNY","account_id":"{from}","to_account_id":"{to}","date":"2026-08-01","merchant_name":"魏有鼎","idempotency_key":"k1"}}"#
+                ),
+                &format!(
+                    r#"{{"kind":"transfer","amount_cents":2000,"currency_code":"CNY","account_id":"{from}","to_account_id":"{to}","date":"2026-08-02","merchant_name":"魏有鼎","idempotency_key":"k2"}}"#
+                ),
+            ],
+            None,
+        ),
+    )
+    .await;
+    assert!(results.iter().all(|r| r["success"] == true));
+    assert_eq!(
+        count_rows(&conn.lock().unwrap(), "merchants"),
+        1,
+        "同名复用不分裂"
+    );
+}
+
+/// 修改路径（PUT）同样接受 transfer 携带商户名（行为层同一入口）。
+#[tokio::test]
+async fn test_update_transfer_with_merchant_name_attaches_merchant() {
+    let (app, conn) = setup_app();
+    let from = create_account_via_api(&app, "现金账户").await;
+    let to = create_account_via_api(&app, "银行账户").await;
+
+    let created = post_batch(
+        &app,
+        batch_body(
+            &[&format!(
+                r#"{{"kind":"transfer","amount_cents":1000,"currency_code":"CNY","account_id":"{from}","to_account_id":"{to}","date":"2026-08-01"}}"#
+            )],
+            None,
+        ),
+    )
+    .await;
+    let txn_id = created[0]["id"].as_str().unwrap();
+
+    let body = format!(
+        r#"{{"kind":"transfer","amount_cents":1500,"currency_code":"CNY","account_id":"{from}","to_account_id":"{to}","date":"2026-08-01","merchant_name":"魏有鼎"}}"#
+    );
+    let (status, bytes) = put_transaction_via_api(&app, txn_id, &body).await;
+    assert_eq!(status, StatusCode::OK, "PUT transfer 带商户应成功");
+    let updated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let merchant_id = updated["merchant_id"].as_str().expect("应携带商户引用");
+    assert_eq!(count_rows(&conn.lock().unwrap(), "merchants"), 1);
+
+    let (_, merchants) = get_json(&app, "/api/v1/merchants").await;
+    assert_eq!(merchants.as_array().unwrap()[0]["id"], merchant_id);
 }
 
 /// `merchant_id` 与 `merchant_name` 同时提供属请求错误（歧义，逐条校验失败不影响其他行）。
