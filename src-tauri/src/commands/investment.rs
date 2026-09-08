@@ -23,10 +23,10 @@ use crate::db::{DbState, run_db};
 use crate::error::{AppError, Result};
 use crate::investment as investment_domain;
 use crate::investment::{
-    AddFundResult, AddStockInstrumentResult, Holding, InstrumentInput, InstrumentListFilter,
-    InstrumentListResult, InstrumentPriceTrend, ManualPriceInput, ManualPriceResult, MarketPrice,
-    MarketPriceInput, PnlFilter, PortfolioValueTrend, RealizedPnlSummary, TransactionTrade,
-    TrendRange,
+    AddFundResult, AddStockInstrumentResult, Holding, Instrument, InstrumentInput,
+    InstrumentListFilter, InstrumentListResult, InstrumentPriceTrend, ManualPriceInput,
+    ManualPriceResult, MarketPrice, MarketPriceInput, PnlFilter, PortfolioValueTrend,
+    RealizedPnlSummary, TransactionTrade, TrendRange,
 };
 use crate::signals::{WriteEvidence, WriteOp};
 use crate::write_entry::{Outcome, write_entry};
@@ -155,6 +155,19 @@ pub async fn list_instruments(
         let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
         let filter = filter.unwrap_or_default();
         investment_domain::list_instruments(&conn, &filter)
+    })
+    .await
+}
+
+/// IPC 命令：按 id 精确取标的（issue #709）——走势页签 focus 消费的只读解析
+/// 路径（现有标的列表过滤仅支持搜索词/市场/类型/持仓，无按 id 路径）；完整
+/// 标的对象与列表行同投影，清仓/无持仓标的照常返回（走势不依赖持仓）。
+#[tauri::command]
+pub async fn get_instrument(db: State<'_, DbState>, id: String) -> Result<Instrument> {
+    let conn = db.conn.clone();
+    run_db("get_instrument", move || {
+        let conn = conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        investment_domain::get_instrument(&conn, &id)
     })
     .await
 }

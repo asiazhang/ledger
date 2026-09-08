@@ -36,7 +36,7 @@ use crate::write_entry::{Outcome, write_entry};
                   `page_size`（每页条数，缺省返回全部）、`limit`（取前 N 条，与分页互斥：传 `page_size` 时分页生效）、\
                   `category_id`（按分类精确过滤，不含子分类，含软删分类的历史交易）、`uncategorized_only`（`true` 时仅返回无分类交易；与 `category_id` 同时携带时按 AND 组合，恒为空集）、
                   `kinds`（类型集合过滤，逗号分隔单参数如 `kinds=expense,refund`，与其余维度 AND 组合；逐元素闭集枚举，非法值 4xx；空集合视为未携带；issue #581）。\
-                  行携带 `source` 来源字段（spec #704 / issue #706，读时反查推导）：来源类型（六类闭集：分期计划/订阅计划/定时转账计划/保单/物品/标的）+ 来源实体 id + 展示名 + 可空来源状态；本期填保单分支（展示名 = 险种名，软删保单 status = `deleted`，历史引用保留不置空），无来源交易 `source` 为 `null`。",
+                  行携带 `source` 来源字段（spec #704 / issues #706–#709，读时反查推导）：来源类型（六类闭集：分期计划/订阅计划/定时转账计划/保单/物品/标的）+ 来源实体 id + 展示名 + 可空来源状态；判定优先级 保单直挂 > 计划反查 > 物品反查 > 标的反查——展示名按来源类型：计划名（备注）、险种名、物品名、标的（代码 + 名称空格连接，随走势页签标签惯例）；状态标注：已取消计划 `cancelled`、已处置物品 `disposed`、软删保单 `deleted`（历史引用保留不置空），标的来源无状态标注（标的字典无软删，清仓标的时代历史交易同样可达）；无来源交易 `source` 为 `null`。",
     params(
         ("from" = Option<String>, Query, description = "起始日期（含），YYYY-MM-DD"),
         ("to" = Option<String>, Query, description = "结束日期（含），YYYY-MM-DD"),

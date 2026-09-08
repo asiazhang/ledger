@@ -1,4 +1,6 @@
 use axum::http::StatusCode;
+use tauri_app_lib::investment::{InstrumentInput, InstrumentType, create_instrument};
+use tauri_app_lib::test_support;
 use tauri_app_lib::test_support::FIXED_NOW;
 
 use crate::common::{
@@ -544,5 +546,72 @@ async fn test_get_transactions_includes_item_source() {
     assert!(
         unlinked["source"].is_null(),
         "软删物品的购买交易来源应为 null: {unlinked:?}"
+    );
+}
+
+/// 行携带标的来源（spec #704 / issue #709 标的分支）：证券交易记录按生成交易
+/// id 反查，返回 `{kind: "instrument", entity_id: 标的 id, display_name: 代码 +
+/// 名称（空格连接），status: null}`——标的字典无软删（被流水引用的标的不可
+/// 删），来源恒命中、无状态标注；无标的交易 `source` 为 `null`。标的行直插
+/// （instrument 域无按 id HTTP 端点，先例保单/计划/物品直插）；买卖交易经
+/// batch 端点同一 wire（kind=buy + instrument_id/quantity/price_cents）。
+#[tokio::test]
+async fn test_get_transactions_includes_instrument_source() {
+    let (app, conn) = setup_app();
+
+    // 投资账户与标的经守门认可的种子/域薄皮（ADR-0084）：seed_account 直落
+    // investment 户；create_instrument 与 IPC/HTTP 创建入口同一域接缝
+    let account_id;
+    let instrument_id;
+    {
+        let c = conn.lock().unwrap();
+        account_id = test_support::seed_account(&c, "acc-inv", "证券", "investment", "CNY", 0);
+        instrument_id = create_instrument(
+            &c,
+            InstrumentInput {
+                symbol: "600519".to_string(),
+                kind: InstrumentType::Stock,
+                name: Some("招商银行".to_string()),
+                currency_code: "CNY".to_string(),
+                market: Some("sh".to_string()),
+            },
+        )
+        .unwrap();
+    }
+
+    // 买入经既有 batch 端点（行为层重算金额并落 security_transactions 扩展行）
+    let buy = format!(
+        r#"{{"kind":"buy","amount_cents":0,"currency_code":"CNY","account_id":"{account_id}","instrument_id":"{instrument_id}","quantity":2,"price_cents":100000,"date":"2026-02-01"}}"#
+    );
+    let plain = format!(
+        r#"{{"kind":"income","amount_cents":200,"currency_code":"CNY","account_id":"{account_id}","date":"2026-03-01"}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&buy, &plain], None)).await;
+    assert!(created.iter().all(|r| r["success"] == true), "{created:?}");
+    let buy_txn_id = created[0]["id"].as_str().unwrap().to_string();
+
+    let (status, body) = get_json(&app, "/api/v1/transactions").await;
+    assert_eq!(status, StatusCode::OK);
+    let txs = items_of(&body);
+    assert_eq!(txs.len(), 2);
+
+    // 买入交易：来源 = 标的（实体 id + 代码与名称，无状态标注）
+    let buy_txn = txs.iter().find(|t| t["id"] == buy_txn_id.as_str()).unwrap();
+    assert_eq!(
+        buy_txn["source"],
+        serde_json::json!({
+            "kind": "instrument",
+            "entity_id": instrument_id,
+            "display_name": "600519 招商银行",
+            "status": serde_json::Value::Null,
+        }),
+        "买入交易来源应为标的: {buy_txn:?}"
+    );
+
+    // 无标的交易：来源为空
+    let plain_txn = txs.iter().find(|t| t["id"] != buy_txn_id.as_str()).unwrap();
+    assert!(
+        plain_txn["source"].is_null(),
+        "无标的交易 source 应为 null: {plain_txn:?}"
     );
 }

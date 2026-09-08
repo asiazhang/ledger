@@ -233,6 +233,44 @@ impl FromRow for TransactionTrade {
     }
 }
 
+/// 交易列表来源反查投影（spec #704 / issue #709，词汇表「来源列」）：按生成
+/// 交易 id 反查证券交易记录 JOIN 标的字典的最小行——标的 id（来源实体 id）+
+/// 代码与名称（来源列展示名原料），供核心交易域按页填充来源列。
+#[derive(Debug, Clone)]
+pub struct InstrumentSourceDisplay {
+    /// 生成交易 id（security_transactions 主键，一交易至多一行）：调用方按它
+    /// 把标的归位到交易行。
+    pub transaction_id: String,
+    /// 标的 id（来源实体 id，走势页签 focus 消费按它解析选中）。
+    pub instrument_id: String,
+    /// 标的代码（展示名原料，NOT NULL 恒在场）。
+    pub symbol: String,
+    /// 标的名称（可空，展示名原料）。
+    pub name: Option<String>,
+}
+
+impl InstrumentSourceDisplay {
+    /// 来源列展示名（走势页签标签惯例）：代码 + 名称空格连接，无名称（含空串）
+    /// 退化为裸代码——代码 NOT NULL 保证展示名恒非空、链接恒可读。
+    pub fn display_label(&self) -> String {
+        match self.name.as_deref() {
+            Some(name) if !name.is_empty() => format!("{} {}", self.symbol, name),
+            _ => self.symbol.clone(),
+        }
+    }
+}
+
+impl FromRow for InstrumentSourceDisplay {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(InstrumentSourceDisplay {
+            transaction_id: row.get(0)?,
+            instrument_id: row.get(1)?,
+            symbol: row.get(2)?,
+            name: row.get(3)?,
+        })
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Holding {
     pub id: String,

@@ -12,7 +12,7 @@ use super::model::{
 use super::predicates::INVESTED_EXISTS;
 use super::prices::upsert_market_price;
 use crate::currencies::{ExchangeRate, ExchangeRateInput};
-use crate::db::query::query_all;
+use crate::db::query::{query_all, query_one};
 use crate::db::{device_id, new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::transaction::search_text::{split_terms, term_matches_text};
@@ -154,10 +154,11 @@ pub fn list_instruments(
     let params_ref: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
     let select_sql = |limit_clause: &str| {
         format!(
-            "SELECT i.id,i.symbol,i.instrument_type,i.name,i.currency_code,i.market,i.created_at,i.updated_at,i.version,i.device_id,i.source,p.price_cents,\n         CASE WHEN {INVESTED_EXISTS} THEN 1 ELSE 0 END AS invested \
+            "SELECT {} \
              FROM instruments i \
              LEFT JOIN market_prices p ON p.instrument_id = i.id \
-             {where_clause} ORDER BY i.symbol{limit_clause}"
+             {where_clause} ORDER BY i.symbol{limit_clause}",
+            instrument_row_projection()
         )
     };
 
@@ -202,6 +203,39 @@ pub fn list_instruments(
     };
 
     Ok(InstrumentListResult { items, total })
+}
+
+/// 标的行 SELECT 投影单点（列表行与按 id 精确取同一形状，issue #709）：基础列
+/// 现价缓存（LEFT JOIN）与持仓标志派生列；别名契约 i = instruments、
+/// p = market_prices（持仓谓词 `INVESTED_EXISTS` 的别名契约同此），投影变更
+/// 只改这里，两个读路径不漂移。
+fn instrument_row_projection() -> String {
+    format!(
+        "i.id,i.symbol,i.instrument_type,i.name,i.currency_code,i.market,i.created_at,i.updated_at,i.version,i.device_id,i.source,p.price_cents, \
+         CASE WHEN {INVESTED_EXISTS} THEN 1 ELSE 0 END AS invested"
+    )
+}
+
+/// 按 id 精确取标的（issue #709）：走势页签 focus 消费的只读解析路径——现有
+/// 标的列表过滤仅支持搜索词/市场/类型/持仓，无按 id 路径。返回完整标的对象
+/// （行投影与 [`list_instruments`] 列表行一致：含现价缓存与持仓标志），清仓/
+/// 无持仓标的照常返回（走势不依赖持仓）；不存在返回码化错误（与删除守卫
+/// 同码 `instrument.not-found`）。
+pub fn get_instrument(conn: &Connection, id: &str) -> Result<Instrument> {
+    query_one(
+        conn,
+        &format!(
+            "SELECT {} \
+             FROM instruments i \
+             LEFT JOIN market_prices p ON p.instrument_id = i.id \
+             WHERE i.id=?1",
+            instrument_row_projection()
+        ),
+        [id],
+    )?
+    .ok_or_else(|| {
+        AppError::codedp_not_found("instrument.not-found", format!("标的 {id} 不存在"), &[id])
+    })
 }
 
 /// 自建标的物理删除（issue #292 / ADR-0036 决策 5）：守卫前置检查——仅来源为

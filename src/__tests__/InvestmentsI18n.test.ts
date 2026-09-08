@@ -13,6 +13,13 @@ vi.mock('vue-chartjs', async () => {
   return { Line: LineChartStub }
 })
 
+// 视图读 route.query（focus 落点消费，issue #709）：本文件不涉落点，空 query
+// 即安全空转（同 InvestmentsView.test.ts 的可控 mockRoute 先例）
+vi.mock('vue-router', () => ({
+  useRoute: () => ({ query: {} }),
+  useRouter: () => ({ push: vi.fn() }),
+}))
+
 /** 投资域三命令的空数据契约快照（英文渲染不消费具体数据）。 */
 const EMPTY_INVESTMENT_DEFAULTS = {
   list_instruments: { items: [], total: 0 },
