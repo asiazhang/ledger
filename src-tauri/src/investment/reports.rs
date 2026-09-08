@@ -8,13 +8,16 @@ pub fn query_realized_pnl_summary(
     conn: &Connection,
     filter: &PnlFilter,
 ) -> Result<RealizedPnlSummary> {
+    // 账户软删在 JOIN 条件排除（issue #217 定案「删除账户 = 从全部投资视角消失」，
+    // 与 v_holdings / 时点持仓读口径对齐）；交易行软删（t.is_deleted，含 sell 删除
+    // 不清理匹配行的既有行为，ADR-0013）同样排除——隐藏账户不是软删除，照常计入。
     let base_from = "FROM security_lot_sales sls \
                      JOIN transactions t ON t.id = sls.sell_transaction_id \
                      JOIN security_transactions st ON st.transaction_id = sls.sell_transaction_id \
                      JOIN instruments i ON i.id = st.instrument_id \
-                     JOIN accounts a ON a.id = t.account_id";
+                     JOIN accounts a ON a.id = t.account_id AND a.is_deleted = 0";
 
-    let mut conditions: Vec<String> = Vec::new();
+    let mut conditions: Vec<String> = vec!["t.is_deleted=0".to_string()];
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
     if let Some(acct_id) = &filter.account_id {
