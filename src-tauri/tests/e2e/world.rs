@@ -113,6 +113,8 @@ pub struct PlanGroup {
 pub struct AssetGroup {
     /// 最近一次标的搜索结果快照（标的搜索语义场景断言用，issue #199）
     pub last_instrument_search: Option<tauri_app_lib::investment::InstrumentListResult>,
+    /// 最近一次按 id 精确取标的快照（走势 focus 消费解析路径断言用，issue #709）
+    pub last_instrument: Option<tauri_app_lib::investment::Instrument>,
     /// 最近一次组合走势查询快照（组合走势场景断言用，issue #248）
     pub last_portfolio_trend: Option<tauri_app_lib::investment::PortfolioValueTrend>,
     /// 最近一次单标的走势查询快照（基金净值走势场景断言用，issue #303）

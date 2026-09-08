@@ -23,6 +23,8 @@
 //! - [`prices`]：价格写入单点——现价缓存 upsert、价格历史周采样 upsert、
 //!   价格刻度换算（`PRICE_UNITS_PER_FEN` / `price_value_to_cents`）、东财来源标记；
 //! - [`reports`]：已实现盈亏汇总查询；
+//! - [`source`]：交易列表标的来源反查（spec #704 / issue #709，按生成交易 id
+//!   批量取证券交易记录指向的标的展示字段）；
 //! - [`stock`]：股票按（市场，代码）查询的领域规则——代码形态 → 市场单点推断、
 //!   报价币种推导（issue #693 / ADR-0081；东财访问在 `sync::stock`）；
 //! - [`trade`]：buy/sell 协议三件套与买卖明细投影（`TransactionTrade`）；
@@ -46,6 +48,7 @@ pub mod manual_price;
 pub mod predicates;
 pub mod prices;
 pub mod reports;
+pub mod source;
 pub mod stock;
 pub mod trade;
 pub mod trend;
@@ -59,9 +62,10 @@ mod model;
 pub use model::{
     AccountPnl, AddFundResult, AddStockInstrumentResult, FinancialFreedomOverview, FundDetail,
     FundNav, Holding, Instrument, InstrumentInput, InstrumentListFilter, InstrumentListResult,
-    InstrumentPnl, InstrumentPriceTrend, InstrumentType, ManualPriceInput, ManualPriceResult,
-    MarketPrice, MarketPriceInput, PnlDetail, PnlFilter, PortfolioTrendPoint, PortfolioValueTrend,
-    PriceTrendPoint, RealizedPnlSummary, StockQuote, TransactionTrade, TrendRange, YearPnl,
+    InstrumentPnl, InstrumentPriceTrend, InstrumentSourceDisplay, InstrumentType, ManualPriceInput,
+    ManualPriceResult, MarketPrice, MarketPriceInput, PnlDetail, PnlFilter, PortfolioTrendPoint,
+    PortfolioValueTrend, PriceTrendPoint, RealizedPnlSummary, StockQuote, TransactionTrade,
+    TrendRange, YearPnl,
 };
 
 /// 域 API 再导出：调用面用域语言短名（`investment::list_instruments` 等），
@@ -70,7 +74,8 @@ pub use model::{
 /// 消费（先例：`item::guard` / `item::cost` 不再导出到根）。
 pub use crud::{
     create_exchange_rate, create_instrument, create_instrument_manual, create_market_price,
-    delete_instrument, list_exchange_rates, list_holdings, list_instruments, list_market_prices,
+    delete_instrument, get_instrument, list_exchange_rates, list_holdings, list_instruments,
+    list_market_prices,
 };
 pub use financial_freedom::query_financial_freedom;
 pub use fund::{
@@ -79,6 +84,7 @@ pub use fund::{
 };
 pub use manual_price::record_manual_price;
 pub use reports::query_realized_pnl_summary;
+pub use source::source_display_by_transaction_ids;
 pub use stock::{
     ResolvedStockCode, StockCreateOutcome, StockCreateRoute, StockEnhancePlan,
     add_stock_instrument_with_quote, create_stock_degraded, derive_quote_currency,

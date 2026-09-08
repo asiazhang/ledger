@@ -12,6 +12,16 @@ vi.mock('vue-chartjs', async () => {
   return { Line: LineChartStub }
 })
 
+// focus 参数读取自路由 query（useFocusParam 注入 getter，spec #704 / issue #709）。
+// 可控 mockRoute 替代真实 router（ItemsView 落点测试同款）：默认空 query（无 focus
+// 空转），来源落点场景在 mount 前写入 focus。
+const pushMock = vi.fn()
+const mockRoute = { query: {} as Record<string, string> }
+vi.mock('vue-router', () => ({
+  useRoute: () => mockRoute,
+  useRouter: () => ({ push: pushMock }),
+}))
+
 
 const mockInstruments: Instrument[] = [
   {
@@ -170,5 +180,88 @@ describe('InvestmentsView 标的 tab', () => {
     expect(instCalls.length).toBe(1)
     // 组合走势空数据 → 引导文案（而非上一标的的单标的曲线）
     expect(wrapper.text()).toContain('暂无历史价格数据')
+  })
+})
+
+/** 来源跳转落点（spec #704 / issue #709，词汇表「实体定位参数（focus 参数）」）：
+ * 视图装配断言——focus 在场 → 切走势页签 + 按 id 解析标的 + 单标的模式查询；
+ * 无 focus 空转；读一次语义下消费后 query 变化不再消费；解析失败停留组合走势
+ * （不提供落空的跳转）。清仓标的（invested=false）照常可达（走势不依赖持仓）。 */
+describe('InvestmentsView 来源跳转落点（issue #709）', () => {
+  const focusInstrument: Instrument = {
+    ...mockInstruments[0],
+    id: 'inst-sell',
+    symbol: '600519',
+    name: '招商银行',
+    invested: false,
+  }
+
+  function mountView() {
+    return mount(NDialogProvider, {
+      slots: { default: () => h(InvestmentsView) },
+    })
+  }
+
+  function activeTabText(wrapper: ReturnType<typeof mountView>): string {
+    return wrapper.findAll('.n-tabs-tab--active').map((t) => t.text()).join()
+  }
+
+  beforeEach(async () => {
+    mockRoute.query = {}
+    // focus 落点用例接 get_instrument（#709 新增按 id 精确取标的）：命中返回
+    // 清仓标的投影，未命中按后端同款码化错误拒绝
+    await wireInvokeSeam({
+      defaults: INVESTMENT_DEFAULTS,
+      overrides: {
+        get_instrument: (args) =>
+          args?.id === 'inst-sell'
+            ? focusInstrument
+            : Promise.reject(new Error('标的 xxx 不存在')),
+      },
+      refreshReferenceStores: true,
+    }).ready
+  })
+
+  it('focus 在场：切到走势页签，按 id 精确取标的并以单标的模式查询该标的（清仓标的照常可达）', async () => {
+    mockRoute.query = { focus: 'inst-sell' }
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(lastInvokeArgs('get_instrument')).toMatchObject({ id: 'inst-sell' })
+    expect(activeTabText(wrapper)).toContain('走势')
+    const call = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'instrument_price_trend').at(-1)
+    expect(call).toBeTruthy()
+    expect((call![1] as { instrumentId: string }).instrumentId).toBe('inst-sell')
+    // 选中态上屏：单标的曲线 dataset 标签 = 代码 + 名称（走势页签选中该标的，
+    // 演示路径「卖出交易点击 → 走势页签选中」的装配锚点）
+    expect(wrapper.get('[data-testid="line-chart"]').text()).toContain('600519 招商银行')
+  })
+
+  it('无 focus：停留默认盈亏页签，不调按 id 取标的', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(activeTabText(wrapper)).toContain('盈亏')
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'get_instrument')).toBe(false)
+  })
+
+  it('读一次语义：消费后 query 再变（页签切换 replace 保留残留 focus 场景）不再消费', async () => {
+    mockRoute.query = { focus: 'inst-sell' }
+    mountView()
+    await flushPromises()
+    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === 'get_instrument').length).toBe(1)
+
+    mockRoute.query = { tab: 'investments', focus: 'inst-other' }
+    await flushPromises()
+    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === 'get_instrument').length).toBe(1)
+  })
+
+  it('focus 解析失败（无效 id）：停留走势页签组合模式（不提供落空的跳转）', async () => {
+    mockRoute.query = { focus: 'ghost' }
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(activeTabText(wrapper)).toContain('走势')
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'instrument_price_trend')).toBe(false)
   })
 })
