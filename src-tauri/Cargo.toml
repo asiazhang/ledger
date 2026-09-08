@@ -23,7 +23,6 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tracing"] }
 tauri-plugin-opener = "2"
-tauri-plugin-window-state = "2"
 serde = { version = "1", features = ["derive"] }
 regex = "1"
 serde_json = "1"
@@ -75,6 +74,13 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
   "NSString",
   "NSError",
 ] }
+
+# 窗口状态插件仅桌面目标参与编译（issue #558 / ADR-0074 决策 6）：该 crate 在
+# Android 目标下被整体 cfg 剔除（上游 target-gated），依赖声明、lib.rs 注册处
+# 必须同步按目标平台门禁，缺一即 Android 编译失败。沿用 Tauri 官方片段的
+# target 三元组条件（Cargo 不解析构建脚本注入的 desktop/mobile 自定义 cfg）。
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-window-state = "2"
 
 [dev-dependencies]
 cucumber = "0.23"

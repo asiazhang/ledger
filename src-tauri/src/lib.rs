@@ -50,6 +50,9 @@ pub mod write_entry;
 
 use tauri::Manager;
 use tauri::ipc::Invoke;
+// 对话框兜底仅桌面参与（issue #558 / ADR-0074 决策 6）：移动端启动期 DB 初始化
+// 二次失败改走记日志后带错误退出，不引入主线程阻塞对话框（见 run() 的二次失败兜底）。
+#[cfg(desktop)]
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 use crate::commands::boot::{boot_sequence, recover_boot_failure};
@@ -147,12 +150,17 @@ pub fn run() {
     let ipc_gate = gate.clone();
     let boot_gate = BootFailureGate::new();
     let ipc_boot_gate = boot_gate.clone();
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init());
+    // 窗口状态插件仅桌面参与（issue #558 / ADR-0074 决策 6）：tauri-plugin-window-state
+    // 在 Android 目标下整体不参与编译，Cargo.toml 依赖与注册处均按目标平台门禁
+    // （缺一即 Android 编译失败）；桌面行为零变化。
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_window_state::Builder::default().build());
     // B 类豁免（ADR-0060）：启动装配失败即无法运行——Tauri 构建失败 fail loud 退出进程。
     #[allow(clippy::expect_used)]
-    tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+    builder
         .setup(move |app| {
             logger::init(app.handle());
             // 两扇进程级门先登记（boot_sequence 与 IPC/HTTP 门禁共同消费；实例
@@ -163,17 +171,26 @@ pub fn run() {
             try_init_database(app.handle()).map_err(|e| {
                 // 二次失败兜底（登记失败状态也失败，如连占位内存库都打不开）：
                 // 进程无法运行，fail loud 退出（B 类豁免，ADR-0060）。
+                // 分平台（issue #558 / ADR-0074 决策 6）：桌面保留模态弹窗告知用户；
+                // 移动端阻塞式对话框会死锁主线程，记日志后带错误退出。
+                #[cfg(desktop)]
                 app.dialog()
                     .message(format!("数据库初始化失败：\n\n{e}"))
                     .title("启动失败")
                     .kind(MessageDialogKind::Error)
                     .blocking_show();
+                #[cfg(mobile)]
+                tracing::error!(error = %e, "数据库初始化失败，带错误退出");
                 std::process::exit(1);
             })?;
             let locked = app.state::<EncryptionGate>().is_locked();
             let boot_failed = app.state::<BootFailureGate>().is_failed();
+            // AI 导入 HTTP 服务仅桌面启动（issue #558 / ADR-0074 决策 6）：移动端无
+            // 消费方，顺带消除启动期端口绑定失败即崩的隐患；模块本体仍参与全平台
+            // 编译，不落在任何 #[tauri::command] 上，命令注册扫描器零改动（ADR-0047）。
             // 传入 AppHandle：参考写入（HTTP 账号/分类 create/delete）成功后
             // emit `ledger:changed`，前端 useReferenceStore 据此自动重拉参考表（issue #79）。
+            #[cfg(desktop)]
             api_server::start_http_server(
                 app.handle().clone(),
                 app.state::<db::DbState>().conn.clone(),
