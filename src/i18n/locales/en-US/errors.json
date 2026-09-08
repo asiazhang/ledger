@@ -53,6 +53,9 @@
     "db-entry-missing": "ledger.db not found in the archive, not a valid ledger backup",
     "passphrase-required": "this backup is encrypted; enter the master passphrase of the database it was made from to restore"
   },
+  "book-registry": {
+    "invalid": "book registry validation failed: {0}"
+  },
   "sync": {
     "fund-not-found": "fund code {0} not found, please verify and retry",
     "stock-not-found": "stock code {0} not found, please verify and retry",

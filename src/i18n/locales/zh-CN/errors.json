@@ -53,6 +53,9 @@
     "db-entry-missing": "备份包内未找到 ledger.db，不是有效的开源记账备份",
     "passphrase-required": "该备份为密文备份，需要备份所在库的主口令才能恢复"
   },
+  "book-registry": {
+    "invalid": "账本注册表校验失败：{0}"
+  },
   "sync": {
     "fund-not-found": "查无基金代码 {0}，请核对后重试",
     "stock-not-found": "查无股票代码 {0}，请核对后重试",

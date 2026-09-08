@@ -42,3 +42,16 @@ pub fn cleanup(path: &Path) {
         std::fs::remove_file(path).ok();
     }
 }
+
+/// 原子写整个文件：先写同目录唯一临时名，再替换启用，失败清理临时文件
+///（「先写唯一临时名，校验/写入后再替换启用」的文件级共形，调用方自带
+/// 内容校验；搬迁等需要写后校验的场景仍用 [`temp_sibling`] + [`replace_file`]）。
+pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
+    let tmp = temp_sibling(path, "atomic");
+    let result = (|| -> Result<()> {
+        std::fs::write(&tmp, contents)?;
+        replace_file(&tmp, path)
+    })();
+    cleanup(&tmp);
+    result
+}

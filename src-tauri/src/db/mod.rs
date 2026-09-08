@@ -6,6 +6,7 @@ use rusqlite_migration::{M, Migrations};
 
 use crate::error::{AppError, Result};
 
+pub mod book_registry;
 pub mod boot;
 pub mod data_location;
 pub mod encryption;
