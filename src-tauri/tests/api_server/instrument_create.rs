@@ -304,13 +304,29 @@ async fn test_openapi_doc_covers_instruments_create_endpoint() {
 
     let post = &doc["paths"]["/api/v1/instruments"]["post"];
     assert!(post["summary"].is_string(), "OpenAPI 应包含标的创建端点");
+    // 端点自述为「一句话 + 指针」（issue #839 描述政策）；入参字段语义归属
+    // InstrumentCreateInput 字段级描述，来源标记语义归属 Instrument.source。
     let description = post["description"].as_str().unwrap_or_default();
-    for expected in ["幂等", "currency_code", "market", "manual"] {
+    for expected in ["幂等", "静默复用", "导入知识"] {
         assert!(
             description.contains(expected),
             "端点自述应说明 {expected} 语义"
         );
     }
+    let schemas = doc["components"]["schemas"].as_object().unwrap();
+    for field in ["currency_code", "market"] {
+        assert!(
+            schemas["InstrumentCreateInput"]["properties"][field].is_object(),
+            "InstrumentCreateInput.{field} 字段应在契约 schema 中"
+        );
+    }
+    assert!(
+        schemas["Instrument"]["properties"]["source"]["description"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("manual"),
+        "Instrument.source 字段应说明来源标记 manual"
+    );
 
     let request = &post["requestBody"]["content"]["application/json"]["schema"];
     assert_eq!(

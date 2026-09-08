@@ -683,16 +683,9 @@ async fn test_openapi_create_endpoint_documents_stock_enhancement() {
 
     let description = &doc["paths"]["/api/v1/instruments"]["post"]["description"];
     let description = description.as_str().unwrap_or_default();
-    for expected in [
-        "stock 类型增强",
-        "权威名称",
-        "落最新价现价",
-        "查无此码",
-        "降级",
-        "保留解析市场",
-        "名称充代码",
-        "北交所",
-    ] {
+    // 端点自述为「一句话 + 指针」（issue #839 描述政策）：stock 增强细节迁入
+    // 导入知识「投资交易」节，落价/市场保留/北交所/名称充代码语义由知识关键词锁保护。
+    for expected in ["fund/stock", "权威名称", "查无此码", "降级", "导入知识"] {
         assert!(
             description.contains(expected),
             "创建端点自述应说明 stock 增强: {expected}"

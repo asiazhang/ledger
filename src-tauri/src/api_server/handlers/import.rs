@@ -18,7 +18,7 @@ const IMPORT_KNOWLEDGE: &str = include_str!("../../../prompts/import-knowledge.m
     tag = "import",
     summary = "获取 LLM 导入知识",
     description = "返回导入全流程约定文本（text/plain），单一权威：每行拆解、商户约定、幂等与去重、\
-                  对账完成判定、对账纠错。AI 按入口提示词指引自行获取；文本内嵌 `/api/v1/openapi.json` 地址。",
+                  对账完成判定、对账纠错。AI 按入口提示词指引自行获取；文本内嵌 `/api/v1/contract`（紧凑契约方言）地址。",
     responses(
         (status = 200, description = "text/plain 格式的导入知识", content_type = "text/plain", body = String)
     )

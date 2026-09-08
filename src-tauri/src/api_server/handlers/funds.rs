@@ -71,14 +71,8 @@ impl From<FundDetail> for FundLookup {
     path = "/api/v1/funds/{code}",
     tag = "funds",
     summary = "按 6 位代码查询场外基金（只读，东财实时）",
-    description = "返回东财实时详情：`code` / `name`（权威名称）/ `fund_class`（东财基金分类，\
-                  如「混合型-灵活」）/ `nav_cents`（最新单位净值，万分之一元，元 × 10000）/\
-                  `nav_date`（净值日期，ISO 日期）；基金未公布净值时后两字段为 null。\
-                  `code` 必须为 6 位数字（非 6 位返回 400，不发起网络请求）；查无此码返回 400 中文错误。\
-                  本端点实时访问东方财富，网络故障返回 500。\
-                  基金申赎迁移时先按本端点确认识别，再以真实 6 位代码创建标的\
-                  （见 `POST /api/v1/instruments` 的 fund 增强与导入知识「基金申赎」节），\
-                  不走名称充代码。",
+    description = "按 6 位代码查询场外基金：返回名称/东财分类/最新净值/净值日期（\
+                  万分之一元刻度）；查无此码 400。基金申赎行拆解见导入知识「基金申赎」节。",
     params(
         ("code" = String, Path, description = "基金代码（6 位数字）")
     ),

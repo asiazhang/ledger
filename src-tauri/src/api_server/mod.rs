@@ -6,6 +6,7 @@
 //! - [`state`]：服务器状态（连接 + 发射槽 + 东财基金详情接缝）与 `FromRef` 提取器；
 //! - [`error`]：统一错误响应（`AppError` → HTTP 状态/JSON）与错误 OpenAPI schema；
 //! - [`openapi`]：OpenAPI 契约装配（`ApiDoc`）与契约自举端点；
+//! - [`contract`]：紧凑契约方言投影（`GET /api/v1/contract`，同一 ApiDoc 第二投影，issue #839）；
 //! - [`router`]：路由表与服务器启动；
 //! - [`handlers`]：端点处理函数，按资源域分文件（资源域划分与集成测试一致）。
 //!
@@ -18,6 +19,7 @@
 //! ADR-0073（spec #523）消亡为源码扫描派生物：身份内化进统一写入口调用点，
 //! 接线由扫描守门核对（`signals_cross_check`）。
 
+mod contract;
 mod error;
 mod handlers;
 mod openapi;

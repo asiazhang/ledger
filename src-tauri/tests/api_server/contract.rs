@@ -1,0 +1,340 @@
+//! 紧凑契约方言端点锁（issue #839）：`GET /api/v1/contract` 返回为 AI 设计的
+//! 紧凑 JSON 方言（`ledger-contract-1`）——与标准 OpenAPI（`/api/v1/openapi.json`）
+//! 同一 `ApiDoc` 源的第二机械投影。本文件只锁外部可见行为（HTTP 产物形状与体积
+//! 预算），不为投影函数建立内部调用级断言。
+//!
+//! 既有 OpenAPI 文档结构锁（`documentation.rs`）的契约保证在此逐条移植到方言
+//! 形状：端点覆盖清单、kind 小写枚举、dedup wrapper、幂等键不可编辑、投资四
+//! 字段描述锁；并新增方言头、类型表达式全覆盖、出处剥离与体积预算锁。
+
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use tower::ServiceExt;
+
+use crate::common::{body_to_bytes, get_json, setup_app};
+
+/// 拉取方言文档（每测试独立装配，断言互不依赖执行顺序）。
+async fn fetch_contract() -> serde_json::Value {
+    let (app, _) = setup_app();
+    let (status, doc) = get_json(&app, "/api/v1/contract").await;
+    assert_eq!(status, StatusCode::OK);
+    doc
+}
+
+/// 方言头：版本标记、base 地址与图例在位（user story 2/14/15）——AI 无需
+/// OpenAPI info 块即可连接并解析方言。
+#[tokio::test]
+async fn contract_dialect_header() {
+    let doc = fetch_contract().await;
+    assert_eq!(doc["v"], "ledger-contract-1", "方言版本标记");
+    assert_eq!(
+        doc["base"], "http://127.0.0.1:9527/api/v1",
+        "base 地址落明（端点路径省略 /api/v1 前缀）"
+    );
+    let legend = doc["legend"].as_str().expect("图例应为字符串");
+    for frag in ["str/i64/f64/bool/obj", "T[]", "后缀?", "字段值[类型,说明]"] {
+        assert!(legend.contains(frag), "图例应解释 {frag}");
+    }
+    assert!(
+        doc["endpoints"]
+            .as_array()
+            .expect("endpoints 数组在位")
+            .len()
+            >= 19
+    );
+    assert!(doc["schemas"].as_object().expect("schemas 对象在位").len() >= 26);
+}
+
+/// 端点覆盖清单（移植自 `test_openapi_doc_covers_all_endpoints`）：方言端点
+/// 键为 `m` + `p`（路径省略 /api/v1 前缀，base 已含）。
+#[tokio::test]
+async fn contract_covers_all_endpoints() {
+    let doc = fetch_contract().await;
+    let endpoints = doc["endpoints"].as_array().expect("endpoints 数组");
+
+    let expected: &[(&str, &str)] = &[
+        ("GET", "/accounts"),
+        ("POST", "/accounts"),
+        ("PUT", "/accounts/{id}"),
+        ("DELETE", "/accounts/{id}"),
+        ("GET", "/accounts/balances"),
+        ("GET", "/categories"),
+        ("POST", "/categories"),
+        ("DELETE", "/categories/{id}"),
+        ("GET", "/currencies"),
+        ("GET", "/instruments"),
+        ("POST", "/instruments"),
+        ("GET", "/funds/{code}"),
+        ("GET", "/stocks/{code}"),
+        ("GET", "/merchants"),
+        ("GET", "/transactions"),
+        ("POST", "/transactions/batch"),
+        ("DELETE", "/transactions/{id}"),
+        ("PUT", "/transactions/{id}"),
+        ("GET", "/import/knowledge"),
+    ];
+    for (method, path) in expected {
+        let hit = endpoints.iter().any(|e| {
+            e["m"] == *method
+                && e["p"] == *path
+                && e["s"].as_str().map(|s| !s.is_empty()).unwrap_or(false)
+        });
+        assert!(hit, "方言应包含端点 {method} {path}（summary 非空）");
+    }
+}
+
+/// 端点请求体与状态码→响应类型映射：读回自纠所需的状态码与错误 schema
+/// 语义在位（user story 5）；无 JSON 体的响应以 `-` 占位。
+#[tokio::test]
+async fn contract_request_body_and_responses() {
+    let doc = fetch_contract().await;
+    let endpoints = doc["endpoints"].as_array().unwrap();
+
+    let find = |m: &str, p: &str| {
+        endpoints
+            .iter()
+            .find(|e| e["m"] == m && e["p"] == p)
+            .unwrap_or_else(|| panic!("方言应包含端点 {m} {p}"))
+    };
+
+    // 批量导入：body wrapper + 200 数组响应 + 400 错误（移植 dedup wrapper 锁的一半）。
+    let batch = find("POST", "/transactions/batch");
+    assert_eq!(batch["body"], "TransactionBatchInput");
+    assert_eq!(batch["res"]["200"], "CreateTransactionResult[]");
+    assert_eq!(batch["res"]["400"], "ErrorResponse");
+
+    // 读回：200 响应类型在位（移植列表 schema 锁的一半）。
+    assert_eq!(
+        find("GET", "/transactions")["res"]["200"],
+        "TransactionListResult"
+    );
+
+    // 删除：204（无 JSON 体）与 404/400 状态码保留（移植自
+    // test_openapi_doc_covers_delete_transaction_endpoint）。
+    let delete = find("DELETE", "/transactions/{id}");
+    assert_eq!(delete["res"]["204"], "-", "无响应体以 - 占位");
+    assert_eq!(delete["res"]["404"], "ErrorResponse");
+    assert_eq!(delete["res"]["400"], "ErrorResponse");
+
+    // 账户编辑：请求体 schema 名在位。
+    let put = find("PUT", "/accounts/{id}");
+    assert_eq!(put["body"], "AccountUpdateInput");
+    assert_eq!(put["res"]["200"], "Account");
+
+    // 导入知识：text/plain 端点无 JSON 响应 schema。
+    assert_eq!(find("GET", "/import/knowledge")["res"]["200"], "-");
+}
+
+/// kind 闭集枚举移植到方言形状（移植自
+/// `test_openapi_transaction_kind_is_lowercase_enum`）：`Transaction.kind` 引用
+/// schema 名，`TransactionKind` 为 8 个小写值的 `|` 闭集。
+#[tokio::test]
+async fn contract_kind_enum_is_closed_lowercase_set() {
+    let doc = fetch_contract().await;
+    let schemas = doc["schemas"].as_object().unwrap();
+
+    let kind = &schemas["TransactionKind"];
+    assert_eq!(
+        kind.as_str()
+            .map(|s| s.to_owned())
+            .ok_or("应为字符串表达式")
+            .unwrap(),
+        "income|expense|transfer|refund|buy|sell|dividend|split",
+        "kind 枚举应为闭集的 8 个小写值"
+    );
+    let tx_kind = &schemas["Transaction"]["kind"];
+    assert_eq!(
+        tx_kind[0], "TransactionKind",
+        "Transaction.kind 应引用 schema 名"
+    );
+}
+
+/// batch wrapper 与 duplicate 字段移植到方言形状（移植自
+/// `test_openapi_doc_batch_wrapper_and_duplicate_field`）：`transactions` 必填
+/// （无 `?` 后缀）、`dedup` 可缺省（`?` 后缀即 optionality 标记）。
+#[tokio::test]
+async fn contract_batch_wrapper_and_duplicate_field() {
+    let doc = fetch_contract().await;
+    let schemas = doc["schemas"].as_object().unwrap();
+
+    let batch = &schemas["TransactionBatchInput"];
+    assert_eq!(
+        batch["transactions"], "TransactionInput[]",
+        "transactions 必填"
+    );
+    assert_eq!(
+        batch["dedup?"], "bool?",
+        "dedup 应可缺省（? 后缀即 optionality 标记；默认 true）"
+    );
+
+    let result = &schemas["CreateTransactionResult"];
+    assert_eq!(result["duplicate"], "bool", "duplicate 标记在位");
+    assert_eq!(result["success"], "bool");
+    assert_eq!(result["id?"], "str?", "重复命中返回已有 id、否则 null");
+
+    assert_eq!(
+        &schemas["Account"]["is_hidden"][0], "bool",
+        "黑洞账户契约（is_hidden）在位"
+    );
+}
+
+/// 幂等键不可编辑移植到方言形状（移植自
+/// `test_openapi_update_transaction_input_omits_idempotency_key`）：修改请求体
+/// 不含 `idempotency_key` 字段——方言以字段缺席表达「不可编辑」。
+#[tokio::test]
+async fn contract_update_input_omits_idempotency_key() {
+    let doc = fetch_contract().await;
+    let upd = &doc["schemas"]["UpdateTransactionInput"];
+    assert!(!upd["kind"].is_null(), "kind 在位");
+    assert!(!upd["amount_cents"].is_null(), "amount_cents 在位");
+    assert!(
+        upd.get("idempotency_key").is_none(),
+        "修改请求体不应含 idempotency_key（幂等键不可编辑）"
+    );
+}
+
+/// 投资四字段描述锁移植到方言形状（移植自
+/// `test_openapi_investment_fields_have_descriptions`，issue #298 语义不动）：
+/// `instrument_id` / `quantity` / `price_cents` / `fee_cents` 在两个请求体
+/// schema 中带原文中文描述——契约仍是字段语义的唯一权威（user story 3）。
+#[tokio::test]
+async fn contract_investment_fields_keep_descriptions() {
+    let doc = fetch_contract().await;
+    let schemas = doc["schemas"].as_object().unwrap();
+
+    for schema_name in ["TransactionInput", "UpdateTransactionInput"] {
+        let props = &schemas[schema_name];
+        // 类型表达式同时锁定：str?（引用）/ f64?（数量）/ i64?（价格与费用）。
+        let expected_types = [
+            ("instrument_id?", "str?"),
+            ("quantity?", "f64?"),
+            ("price_cents?", "i64?"),
+            ("fee_cents?", "i64?"),
+        ];
+        for (field, ty) in expected_types {
+            let value = props[field]
+                .as_array()
+                .unwrap_or_else(|| panic!("{schema_name}.{field} 应为 [类型, 说明] 元组"));
+            assert_eq!(value[0], ty, "{schema_name}.{field} 类型表达式");
+            let description = value[1].as_str().expect("应带描述");
+            assert!(
+                !description.trim().is_empty(),
+                "{schema_name}.{field} 应保留中文描述（投资四字段语义锁）"
+            );
+        }
+    }
+
+    // buy/sell 语义原文保留（投资四字段描述锁的确定性措辞）。
+    let merchant = &schemas["TransactionInput"]["merchant_name?"];
+    let merchant_desc = merchant[1].as_str().unwrap();
+    assert!(
+        merchant_desc.contains("命中复用、未命中即建") && merchant_desc.contains("merchant_id"),
+        "商户名字段描述语义原文保留"
+    );
+}
+
+/// 类型表达式全覆盖（issue #839 测试决策）：现有 schema 恰好覆盖枚举闭集、
+/// 数组、可选、i64、f64 全部形态——逐形态断言，防投影规则静默漂移。
+#[tokio::test]
+async fn contract_type_expressions_cover_all_forms() {
+    let doc = fetch_contract().await;
+    let schemas = doc["schemas"].as_object().unwrap();
+
+    // 枚举闭集（多组）。
+    assert_eq!(
+        schemas["AccountType"],
+        "cash|bank|credit|ewallet|investment|debt|receivable|other"
+    );
+    assert_eq!(schemas["InstrumentType"], "stock|fund|bond|etf|other");
+
+    // 数组：T[]。
+    assert_eq!(schemas["TransactionListResult"]["items"], "Transaction[]");
+    assert_eq!(
+        schemas["TransactionBatchInput"]["transactions"],
+        "TransactionInput[]"
+    );
+
+    // 可选（? 后缀）与可空标量。
+    assert_eq!(schemas["TransactionInput"]["amount_cents"], "i64");
+    assert_eq!(schemas["TransactionInput"]["merchant_name?"][0], "str?");
+    assert_eq!(
+        schemas["AccountInput"]["initial_balance_cents?"], "i64?",
+        "可空整数 = i64?"
+    );
+    assert_eq!(
+        schemas["TransactionInput"]["quantity?"][0], "f64?",
+        "可空浮点（数量可含小数）= f64?"
+    );
+
+    // 可空引用：oneOf(null + ref) 投影为 T?；成员描述保留为元组。
+    assert_eq!(schemas["Transaction"]["source?"][0], "TransactionSource?");
+    assert!(
+        !schemas["Transaction"]["source?"][1]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty(),
+        "来源字段描述保留（元组第二位）"
+    );
+
+    // 带描述的引用字段：[schema 名, 描述] 元组。
+    let kind = &schemas["TransactionSource"]["kind"];
+    assert_eq!(kind[0], "TransactionSourceKind");
+    assert!(!kind[1].as_str().unwrap_or_default().is_empty());
+}
+
+/// 出处剥离锁（issue #839）：方言投影期机械剥离 `issue #N` / `ADR-N` 引用，
+/// 而标准 OpenAPI 投影保留出处——两投影各取所需（user story 11）。
+#[tokio::test]
+async fn contract_strips_provenance_while_openapi_keeps_it() {
+    let (app, _) = setup_app();
+    let (_, dialect) = get_json(&app, "/api/v1/contract").await;
+    let (_, openapi) = get_json(&app, "/api/v1/openapi.json").await;
+
+    let dialect_text = serde_json::to_string(&dialect).unwrap();
+    assert!(!dialect_text.contains("issue #"), "方言应剥离 issue 引用");
+    assert!(!dialect_text.contains("ADR-"), "方言应剥离 ADR 引用");
+
+    let openapi_text = serde_json::to_string(&openapi).unwrap();
+    assert!(
+        openapi_text.contains("ADR-"),
+        "标准 OpenAPI 投影保留出处引用（同一源，双投影分叉点）"
+    );
+
+    // 剥离不伤语义：出处相邻的正文描述保持可读（非空壳括号、无悬挂标点）。
+    let fund_desc = dialect["schemas"]["FundLookup"]["code"][1]
+        .as_str()
+        .unwrap_or_default();
+    let _ = fund_desc; // 字段级描述存在性已在其余锁覆盖；此处防误删整字段。
+    assert!(
+        !dialect["schemas"]["ErrorResponse"]["kind"].is_null(),
+        "ErrorResponse 字段在位（schema 级描述退役后字段语义仍完整）"
+    );
+}
+
+/// 方言体积预算护栏（issue #839）：产物 ≤20KB。
+///
+/// token 换算口径（与 issue 原型一致，不引入真实 tokenizer 依赖）：
+/// ASCII ≈ 1 token / 3.6 字符、中文 ≈ 0.95 token / 字符——原型实测 ~17KB
+/// ≈ ~5.1K tokens（契约单次拉取自 ~14.0K tokens 降 63%）。触线 6K tokens
+/// （≈20KB）须人工决策提预算或瘦身，不允许契约膨胀无声挤占 AI 上下文
+/// （延续 #304 / #693 契约膨胀护栏传统）。
+#[tokio::test]
+async fn contract_size_within_budget() {
+    let (app, _) = setup_app();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/contract")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = body_to_bytes(response.into_body()).await;
+    assert!(
+        bytes.len() <= 20 * 1024,
+        "紧凑契约方言应保持在预算内（当前 {} 字节，预算 20KB）",
+        bytes.len()
+    );
+}

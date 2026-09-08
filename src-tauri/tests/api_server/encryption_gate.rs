@@ -52,21 +52,25 @@ async fn locked_gate_rejects_data_endpoints_with_coded_error() {
 }
 
 /// 锁定期间：契约自举端点不受门禁影响（OpenAPI 文档不含用户数据，
-/// AI 工具发现契约的入口保持可用）。
+/// AI 工具发现契约的入口保持可用）；紧凑方言端点（issue #839）同为
+/// 契约自举面，同路豁免。
 #[tokio::test]
 async fn locked_gate_keeps_openapi_contract_available() {
     let app = setup_locked_app();
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("GET")
-                .uri("/api/v1/openapi.json")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+    for uri in ["/api/v1/openapi.json", "/api/v1/contract"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{uri} 应不受门禁影响");
+    }
 }
 
 /// 解锁后（锁定门翻转为不锁）：同一应用数据端点照常工作——门禁只看标志，
