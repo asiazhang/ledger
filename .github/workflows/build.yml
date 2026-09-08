@@ -195,6 +195,9 @@ jobs:
 
   # 发布构建：三平台矩阵并行（ADR-0066），产物 upload-artifact 交给 publish 汇总。
   # workflow_dispatch 可在正式 tag 前手动试跑（publish 仅在 tag 触发，不会误建 Release）。
+  # macOS 签名 + 公证（issue #658）：配置了 APPLE_* secrets 时自动导入证书签名，构建后
+  # notarytool 公证（--wait）+ stapler 附着，并做 codesign/spctl/stapler validate 校验；
+  # 未配置 secrets 时相关步骤自动跳过，产物保持未签名（干跑与 PR 构建不受影响）。
   release:
     name: 发布构建（${{ matrix.label }}）
     if: "startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'"
@@ -206,7 +209,10 @@ jobs:
             os: macos-latest
             bundles: dmg
             artifact: openledger-macos-arm64
-            paths: src-tauri/target/release/bundle/dmg/*.dmg
+            # dmg 之外额外上传「已公证 .app 的分发 zip」（公证步骤生成），免挂载即可安装。
+            paths: |
+              src-tauri/target/release/bundle/dmg/*.dmg
+              src-tauri/target/release/bundle/macos/*.zip
           - label: Linux (x64)
             os: ubuntu-latest
             bundles: deb,appimage
@@ -251,9 +257,88 @@ jobs:
         if: runner.os == 'macOS'
         run: brew untap aws/tap 2>/dev/null; brew install create-dmg
 
+      # 证书导入（issue #658 步骤 3）：base64 p12 → 临时钥匙串。密码随机生成，
+      # 仅本次 runner 生命周期内使用，不入 secrets。secrets 未配置时跳过（干跑）。
+      - name: 导入 Apple 签名证书
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          if [ -z "$APPLE_CERT_P12" ]; then
+            echo "⚠️ 未配置 APPLE_CERT_P12，跳过证书导入（产物将保持未签名）"
+            exit 0
+          fi
+          CERT_PATH="$RUNNER_TEMP/openledger-cert.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/openledger-signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 24)
+          echo -n "$APPLE_CERT_P12" | base64 --decode -o "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$APPLE_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
       - run: pnpm run tauri build --bundles ${{ matrix.bundles }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 公证 + 附着（issue #658 步骤 5）：.app 以 zip 提交公证（票据 stapler 附着回 .app，
+      # 分发 zip 内即已公证），DMG 单独提交公证并附着。--wait 阻塞至 Apple 出结果。
+      - name: 公证 DMG 与 zip（notarytool + stapler）
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$APPLE_CERT_P12" ]; then
+            echo "⚠️ 未配置签名证书，跳过公证"
+            exit 0
+          fi
+          APP_PATH=$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' | head -n 1)
+          DMG_PATH=$(find src-tauri/target/release/bundle/dmg -maxdepth 1 -name '*.dmg' | head -n 1)
+          PROFILE=openledger-notary
+          xcrun notarytool store-credentials "$PROFILE" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$RUNNER_TEMP/openledger-notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/openledger-notarize.zip" --keychain-profile "$PROFILE" --wait
+          xcrun stapler staple "$APP_PATH"
+          DMG_BASENAME=$(basename "$DMG_PATH" .dmg)
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" \
+            "src-tauri/target/release/bundle/macos/${DMG_BASENAME}.zip"
+          xcrun notarytool submit "$DMG_PATH" --keychain-profile "$PROFILE" --wait
+          xcrun stapler staple "$DMG_PATH"
+
+      # 校验（issue #658 交付物）：签名身份必须是 Developer ID Application，
+      # 公证票据附着有效、Gatekeeper 评估放行——任一失败即发布失败。
+      - name: 校验签名与公证（Gatekeeper）
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+        run: |
+          if [ -z "$APPLE_CERT_P12" ]; then
+            echo "⚠️ 未配置签名证书，跳过校验"
+            exit 0
+          fi
+          APP_PATH=$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' | head -n 1)
+          DMG_PATH=$(find src-tauri/target/release/bundle/dmg -maxdepth 1 -name '*.dmg' | head -n 1)
+          codesign --verify --strict --verbose=2 "$APP_PATH"
+          codesign -dv "$APP_PATH" 2>&1 | grep -q 'Authority=Developer ID Application' \
+            || { echo "✗ 签名身份不是 Developer ID Application"; exit 1; }
+          spctl --assess --type execute -vv "$APP_PATH"
+          xcrun stapler validate "$DMG_PATH"
+          spctl --assess --type open -vv "$DMG_PATH"
+
+      - name: 清理签名钥匙串
+        if: always() && runner.os == 'macOS'
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/openledger-signing.keychain-db"
+          [ -f "$KEYCHAIN_PATH" ] && security delete-keychain "$KEYCHAIN_PATH" || true
 
       - name: 收集发布产物
         uses: actions/upload-artifact@v7
