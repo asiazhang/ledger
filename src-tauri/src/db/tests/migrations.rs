@@ -1,7 +1,15 @@
-//! 迁移、种子与 schema 约束测试：`init_db` 幂等与默认种子、
-//! 表级唯一约束（exchange_rates 货币对唯一、V010 price/fx history 周采样唯一）、
-//! 旧版本备份升级路径、全库外键显式 ON DELETE 审计与定时交易系删除行为抽查
-//! （issue #273 / spec #271）。
+//! 迁移、种子与 schema 约束测试。策略（2026-09-08 删库重启迁移失败调查后收口）：
+//! 全部以「内存库从零迁移到最新」为唯一形态——user_version 基线、完整性检查、
+//! 签名表/列/索引、`init_db` 幂等与默认种子、表级唯一约束（exchange_rates 货币对
+//! 唯一、V010 price/fx history 周采样唯一）、全库外键显式 ON DELETE 审计与定时
+//! 交易系删除行为抽查（issue #273 / spec #271）。
+//!
+//! 历史库升级路径不测：V001 等已发布迁移被就地修改后，真实历史 schema（如
+//! user_version=9 缺 merchant_id 的残留库）无法由现有迁移文件复现，旧式升级
+//! 测试只能覆盖虚构 schema（假信心，本次事故即漏网）；该输入由启动失败恢复
+//! 屏接管（重置/恢复通道）。迁移文本里的存量数据回填表达式（如 V017 缓存回填）
+//! 在从零形态无存量行可回填，不再单独锁定——未来新增带存量回填语义的迁移
+//! 时再议。
 
 use rusqlite::{Connection, params};
 
@@ -56,6 +64,98 @@ fn init_db_is_idempotent_and_seeds_defaults() {
         )
         .unwrap();
     assert_eq!(mismatched, 0);
+}
+
+/// 当前迁移序列长度（V001–V019，V005 移除不回填，共 18 条）；新增迁移时随
+/// `migrations()` 同步更新。钉住「从零迁移到最新」的完整性基线。
+const LATEST_SCHEMA_VERSION: usize = 18;
+
+/// 从零迁移完整性（内存库从零 → 最新）：user_version 停在最新、全库完整性
+/// 检查通过、每条迁移的签名表/列在场。漏跑或中途失败的迁移批次会停在半途
+/// （迁移批次单事务回滚），本测试确定性失败。
+#[test]
+fn migration_from_zero_reaches_latest_completely() {
+    let conn = crate::test_support::open();
+
+    // 完整性：user_version 到达最新（迁移批次单事务，缺迁移即版本落后）。
+    let user_version: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(
+        user_version, LATEST_SCHEMA_VERSION as i64,
+        "从零迁移应到达最新 schema 版本 {LATEST_SCHEMA_VERSION}"
+    );
+
+    // 正确性：SQLite 官方完整性判据（PRAGMA integrity_check 应为 ok）。
+    crate::db::check_integrity(&conn)
+        .unwrap_or_else(|e| panic!("从零迁移后的库应通过完整性检查: {e}"));
+
+    // 签名表：每条建表迁移至少一个代表对象（漏建在此确定性失败）。
+    for table in [
+        "accounts",
+        "categories",
+        "currencies",
+        "merchants",
+        "transactions",
+        "exchange_rates",
+        "budgets",
+        "app_settings",
+        "items",
+        "instruments",
+        "price_history",
+        "fx_rate_history",
+        "policies",
+        "scheduled_transactions",
+        "physical_assets",
+        "insurers",
+        "account_balance_cache",
+        "net_worth_cache",
+    ] {
+        let hit: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                params![table],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(hit, 1, "签名表 {table} 应存在");
+    }
+
+    // 签名列：每条加列迁移的代表列。merchant_id 即 2026-09-08 事故列（就地
+    // 修改 V001 引入、无前向迁移补列，历史残留 schema 迁移到 V018 必炸，
+    // 由启动失败恢复屏接管）——从零路径在此钉住。
+    for (table, column) in [
+        ("transactions", "merchant_id"),
+        ("transactions", "idempotency_key"),
+        ("transactions", "policy_id"),
+        ("transactions", "note_pinyin"),
+        ("instruments", "source"),
+        ("subscription_plans", "policy_id"),
+    ] {
+        let hit: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name=?2",
+                params![table, column],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(hit, 1, "签名列 {table}.{column} 应存在");
+    }
+
+    // 事故索引：V018 搜索覆盖索引在场，且定义文本引用 merchant_id
+    // （索引列集漂移在此确定性失败）。
+    let index_sql: String = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master \
+             WHERE type='index' AND name='idx_transactions_note_search'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(
+        index_sql.contains("merchant_id"),
+        "idx_transactions_note_search 定义应引用 merchant_id，实际: {index_sql}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -233,12 +333,6 @@ fn exchange_rate_single_row_per_pair() {
 // V010：价格历史化（issue #136 / ADR-0019）——price_history 与 fx_rate_history
 // ---------------------------------------------------------------------------
 
-/// 旧版本发布备份停驻的 schema 版本：发布 tag 时的迁移序列长度（现序列为 9 个），
-/// 恢复旧备份即停在此版本，由 init_db 补齐后续迁移。旧备份可能缺
-/// app_settings（位置语义重排）：读侧 settings::get 缺表返回默认值、
-/// 写侧 settings::set 就地建表自愈。
-const V030_SCHEMA_VERSION: usize = 7;
-
 /// price_history：周采样唯一约束（每标的每周至多一条，同周不同采样日也拒绝）
 /// + 标的级联删除跟随。
 #[test]
@@ -278,42 +372,25 @@ fn price_history_weekly_unique_and_cascade() {
 // V011：标的字典来源列（issue #293 / ADR-0036 决策 2、ADR-0037 决策 5）
 // ---------------------------------------------------------------------------
 
-/// V011 之前的 schema 版本：加 source 列前的迁移序列长度（V001–V004、V006–V010 共 9 个）。
-const PRE_V011_SCHEMA_VERSION: usize = 9;
-
-/// instruments.source 迁移语义：存量库升级后全部回填 'eastmoney'（UI 从无创建
-/// 入口，现存字典均出自同步）；升级后省略 source 的新写入落列默认值，显式 NULL
-/// 被 NOT NULL 拒绝。词表 'eastmoney' | 'manual' 的闭集由写入通道收口，不在
-/// 库层设 CHECK（与价格侧 source 列同款）。
+/// instruments.source 从零语义：列 NOT NULL + 默认 'eastmoney'——省略列的插入
+/// 落默认值（UI 从无创建入口，字典均出自同步）；显式 NULL 被 NOT NULL 拒绝。
+/// 词表 'eastmoney' | 'manual' 的闭集由写入通道收口，不在库层设 CHECK
+/// （与价格侧 source 列同款）。历史库的升级回填语义不再单独测（见模块注释）。
 #[test]
-fn instruments_source_backfills_eastmoney_on_upgrade() {
-    // 升级路径：旧 schema 部分开放经 db 测试域薄皮（ADR-0084 决策 7）。
-    let mut conn = super::common::open_at_schema_version(PRE_V011_SCHEMA_VERSION);
+fn instruments_source_defaults_eastmoney_and_rejects_null() {
+    let conn = crate::test_support::open();
 
-    // 旧 schema（无 source 列）下的存量行：同步产物（工厂种子列集不含 source）。
-    seed_instrument(&conn, "inst-old", "600000", "浦发银行", "CNY", "sh");
-
-    migrations().to_latest(&mut conn).unwrap();
-
+    // 省略 source 列的插入落列默认值（market 探针不带 source 列，顺带覆盖 name 可空）。
+    probe_instrument_market(&conn, "inst-d", "600000", "sh")
+        .unwrap_or_else(|e| panic!("省略 source 的标的应可落库: {e}"));
     let source: String = conn
         .query_row(
-            "SELECT source FROM instruments WHERE id='inst-old'",
+            "SELECT source FROM instruments WHERE id='inst-d'",
             [],
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(source, "eastmoney", "存量行升级后应回填同步来源");
-
-    // 升级后省略 source 的新写入落默认值。
-    seed_instrument(&conn, "inst-new", "000001", "平安银行", "CNY", "sz");
-    let source: String = conn
-        .query_row(
-            "SELECT source FROM instruments WHERE id='inst-new'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(source, "eastmoney");
+    assert_eq!(source, "eastmoney", "省略 source 的新写入应落列默认值");
 
     // 显式 NULL 被 NOT NULL 拒绝（探针直写，source 列显式入列）。
     let null_rejected = probe_instrument_source(&conn, "inst-null", "000002", "sz", None);
@@ -356,36 +433,6 @@ fn fx_rate_history_weekly_unique_per_pair() {
     // 不同周可写入；反向币种对是另一条序列，互不冲突。
     seed_fx_rate_history(&conn, "fx-03", "HKD", "CNY", "2026-06-03", 0.92);
     seed_fx_rate_history(&conn, "fx-04", "CNY", "HKD", "2026-05-27", 1.087);
-}
-
-/// 旧版本备份恢复后升级路径：旧库停在发布时的 schema 版本，经 init_db 补齐
-/// 后续迁移，price_history / fx_rate_history 自动创建。
-#[test]
-fn migration_upgrades_v030_backup_with_new_tables() {
-    // 升级路径：旧 schema 部分开放经 db 测试域薄皮（ADR-0084 决策 7）。
-    let mut conn = super::common::open_at_schema_version(V030_SCHEMA_VERSION);
-    let before: i64 = conn
-        .query_row("PRAGMA user_version", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(before, V030_SCHEMA_VERSION as i64);
-
-    // 旧库中已有数据（如一个账户）在升级后应原样保留（工厂账户种子）。
-    seed_account(&conn, "acc-01", "现金", "cash", "CNY", 0);
-
-    migrations().to_latest(&mut conn).unwrap();
-
-    // 新表存在且可直接写入（迁移不止是建表语句语法有效，约束也生效）。
-    seed_instrument(&conn, "inst-up", "600519.SH", "贵州茅台", "CNY", "sh");
-    seed_price_history(&conn, "ph-up", "inst-up", "2026-05-27", 170000, "CNY");
-    seed_fx_rate_history(&conn, "fx-up", "HKD", "CNY", "2026-05-27", 0.92);
-
-    // 旧数据未受迁移影响。
-    let acc: String = conn
-        .query_row("SELECT name FROM accounts WHERE id='acc-01'", [], |r| {
-            r.get(0)
-        })
-        .unwrap();
-    assert_eq!(acc, "现金");
 }
 
 // ---------------------------------------------------------------------------
