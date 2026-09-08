@@ -13,7 +13,7 @@ import type { DataTableColumn } from 'naive-ui'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { t } from '@/i18n'
-import { useHoldingPriceSync } from '@/composables/useHoldingPriceSync'
+import { useInstrumentInfoSync } from '@/composables/useInstrumentInfoSync'
 import { usePricesChanged } from '@/composables/usePricesChanged'
 import { useAppDialog } from '@/composables/useAppDialog'
 import { errorMessage as extractErrorMessage } from '@/utils/errors'
@@ -31,7 +31,7 @@ import ManualPriceModal from '@/components/investments/ManualPriceModal.vue'
 import type { Instrument, MarketType } from '@/types'
 
 const reference = useReferenceStore()
-const { syncing, resultMessage, status, sync } = useHoldingPriceSync()
+const { syncing, resultMessage, status, sync } = useInstrumentInfoSync()
 // 删除二次确认（issue #292）：与账户删除同语义（useAppDialog 命令式对话框，
 // ADR-0035 接入弹层注册表驱动快捷键抑制）
 const dialog = useAppDialog()
@@ -95,7 +95,7 @@ watch(searchText, () => {
 watch(selectedMarket, reload)
 watch(onlyInvested, reload)
 
-// 价格失效信号（ADR-0031）：持仓价格同步/录价等实际写价后原地重拉——
+// 价格失效信号（ADR-0031）：标的信息同步/录价等实际写价后原地重拉——
 // 用 load() 保留分页与搜索状态；reload() 会重置到第 1 页，
 // 抽走用户视线下的行（issue #238）。
 usePricesChanged(() => {
@@ -345,10 +345,10 @@ onMounted(load)
         type="primary"
         size="small"
         :loading="syncing"
-        data-testid="sync-holding-prices"
+        data-testid="sync-instrument-info"
         @click="sync"
       >
-        {{ t('investments.browser.syncHoldingPrices') }}
+        {{ t('investments.browser.syncInstrumentInfo') }}
       </NButton>
     </NSpace>
     <NText v-if="resultMessage" :type="status === 'error' ? 'error' : 'info'">

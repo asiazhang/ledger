@@ -180,7 +180,7 @@ mod tests {
             "test",
             conn,
             Some(&emitter),
-            WriteOp::SyncHoldingPrices,
+            WriteOp::SyncInstrumentInfo,
             move |_conn| {
                 Ok(Outcome::Evidenced(
                     "done",
@@ -202,7 +202,7 @@ mod tests {
             "test",
             conn,
             Some(&emitter),
-            WriteOp::SyncHoldingPrices,
+            WriteOp::SyncInstrumentInfo,
             move |_conn| Ok(Outcome::Evidenced(1, WriteEvidence::PriceWritten(false))),
         ))
         .expect("入口应传播闭包的 Ok 值");

@@ -31,11 +31,11 @@ vi.mock('@/composables/usePricesChanged', async () => {
   }
 })
 
-/** 默认布线 defaults 表：持仓 + 持仓标的字典 + 增量同步（参考五命令走接缝规范兜底） */
+/** 默认布线 defaults 表：持仓 + 持仓标的字典 + 标的信息同步（参考五命令走接缝规范兜底） */
 const BASE_DEFAULTS = {
   list_holdings: mockHoldings,
   list_instruments: { items: mockInstruments, total: mockInstruments.length },
-  sync_holding_prices: { synced: 2, skipped: 0, message: '已同步 2 只，跳过 0 只' },
+  sync_instrument_info: { synced: 2, skipped: 0, message: '已同步 2 只，跳过 0 只' },
 }
 
 beforeEach(async () => {
@@ -157,14 +157,14 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     expect(cells[1]).toContain('净值 2026-01-30')
   })
 
-  it('右上角「同步持仓价格」按钮触发增量同步命令，反馈与标的页一致', async () => {
+  it('右上角「同步标的信息」按钮触发同步命令，反馈与标的页一致', async () => {
     wrapper = mount(HoldingsOverview)
     await flushPromises()
-    const btn = wrapper.find('[data-testid="sync-holding-prices"]')
+    const btn = wrapper.find('[data-testid="sync-instrument-info"]')
     expect(btn.exists()).toBe(true)
     await btn.trigger('click')
     await flushPromises()
-    expect(mockInvoke).toHaveBeenCalledWith('sync_holding_prices')
+    expect(mockInvoke).toHaveBeenCalledWith('sync_instrument_info')
     // 同样的轻量反馈
     expect(wrapper.text()).toContain('已同步 2 只，跳过 0 只')
   })
@@ -174,7 +174,7 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
-        sync_holding_prices: () =>
+        sync_instrument_info: () =>
           new Promise((res) => {
             resolveSync = res
           }),
@@ -182,7 +182,7 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     })
     wrapper = mount(HoldingsOverview)
     await flushPromises()
-    await wrapper.find('[data-testid="sync-holding-prices"]').trigger('click')
+    await wrapper.find('[data-testid="sync-instrument-info"]').trigger('click')
     await nextTick()
     expect(wrapper.find('.n-button--loading').exists()).toBe(true)
     resolveSync({ synced: 2, skipped: 0, message: '已同步 2 只，跳过 0 只' })
@@ -204,11 +204,11 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     wrapper = mount(HoldingsOverview)
     await flushPromises()
     const callsBefore = mockInvoke.mock.calls.filter(([c]) => c === 'list_holdings').length
-    await wrapper.find('[data-testid="sync-holding-prices"]').trigger('click')
+    await wrapper.find('[data-testid="sync-instrument-info"]').trigger('click')
     await flushPromises()
     // 同步命令已发出，但点击路径自身不触发重拉——
     // 失败/零更新路径后端不 emit（ADR-0031 决策 2），即无重拉
-    expect(mockInvoke).toHaveBeenCalledWith('sync_holding_prices')
+    expect(mockInvoke).toHaveBeenCalledWith('sync_instrument_info')
     expect(mockInvoke.mock.calls.filter(([c]) => c === 'list_holdings').length).toBe(callsBefore)
     // 信号到达才重拉
     firePricesChanged()
@@ -219,12 +219,12 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
   it('同步失败显示错误消息', async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
-      overrides: { sync_holding_prices: () => Promise.reject(new Error('网络错误')) },
+      overrides: { sync_instrument_info: () => Promise.reject(new Error('网络错误')) },
     })
     wrapper = mount(HoldingsOverview)
     await flushPromises()
     const callsBefore = mockInvoke.mock.calls.filter(([c]) => c === 'list_holdings').length
-    await wrapper.find('[data-testid="sync-holding-prices"]').trigger('click')
+    await wrapper.find('[data-testid="sync-instrument-info"]').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('同步失败：网络错误')
     // 失败路径后端不 emit（ADR-0031 决策 2），即无重拉

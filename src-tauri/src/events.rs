@@ -26,7 +26,7 @@
 //!   与前者平行、同样无 payload；前端设置页订阅后自动刷新备份列表与自动备份状态。
 //!   深路径执行点拿不到 `AppHandle`，经 [`init_event_app`] 注入的镜像句柄发射。
 //! - `ledger:prices-changed`（ADR-0031，issue #236）：行情同步命令写入价格后 emit——
-//!   增量 `sync_holding_prices` 成功且实际写入（全量同步已随 ADR-0081 决策 3 退役，
+//!   标的信息同步 `sync_instrument_info` 成功且实际写入（全量同步已随 ADR-0081 决策 3 退役，
 //!   issue #698）；与前者平行、同样无 payload，前端价格消费方
 //!   各自订阅后重拉自身数据。「是否 emit」的判定单点在 `signals` 映射
 //!   （ADR-0044，#333 起价格域四命令壳层经 `emit_for` 归一化证据后发射），

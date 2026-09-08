@@ -3,7 +3,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 /**
  * 价格失效信号（issue #237 / ADR-0031）：后端价格写入路径（增量同步
- * `sync_holding_prices`、按代码即拉/录价等）实际写入价格后发出
+ * `sync_instrument_info`、按代码即拉/录价等）实际写入价格（或名称，issue #827）后发出
  * `ledger:prices-changed` 无 payload 信号（与 `ledger:changed` /
  * `ledger:backups-changed` 平行的第三域信号，同一 `ledger:*` 命名空间）。
  *

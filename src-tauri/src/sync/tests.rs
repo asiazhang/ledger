@@ -3,7 +3,7 @@
 //!
 //! #256 按行为主题拆为子模块（纯移动）：
 //! - `http_client`：HTTP 重试与多主机切换；
-//! - `holding_price_sync`：持仓价格增量同步与 ulist / 日 K 报文解析；
+//! - `instrument_info_sync`：标的信息同步与 ulist / 日 K 报文解析；
 //! - `fund_search`：东财基金搜索报文解析与命中挑选（issue #301，fixture 驱动）；
 //! - `fund_nav`：历史净值报文解析、水位窗口与 Referer 传播（issue #303，fixture 驱动）；
 //! - `stock_quote`：股票单点行情报文解析、类型特征探测与命中挑选（issue #693，fixture 驱动）。
@@ -13,6 +13,6 @@
 
 mod fund_nav;
 mod fund_search;
-mod holding_price_sync;
 mod http_client;
+mod instrument_info_sync;
 mod stock_quote;

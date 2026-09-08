@@ -254,7 +254,7 @@ fn after_commit(conn: &Connection) {
 /// - 闭包自带连接获取方式：读路径锁内执行（`conn.lock()`），写路径经连接层
 ///   统一写入口 [`write`]（ADR-0032 置脏语义零改动）；
 /// - `command` 用于在闭包内重建命令 span：异步命令与 wrapper 不同线程，SQL 耗时
-///   归因靠这里兜底（lib.rs 异步命令归因约定，先例 `sync_holding_prices`）；
+///   归因靠这里兜底（lib.rs 异步命令归因约定，先例 `sync_instrument_info`）；
 ///   调用点已有活动 span 时（HTTP handlers 在 tower_http 请求 span 内运行）改为
 ///   携带调用方 span 与 dispatcher 跨线程执行——线程局部上下文不会自动跟随
 ///   spawn_blocking，显式带入后 HTTP 侧 SQL 归因沿请求 span 不漂移（API 集成

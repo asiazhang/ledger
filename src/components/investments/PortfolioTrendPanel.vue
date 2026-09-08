@@ -180,7 +180,7 @@ ChartJS.register(Tooltip, Legend, CategoryScale, LinearScale)
         </template>
       </NEmpty>
 
-      <!-- 无历史数据：引导去「同步持仓价格」回填近两年周线（ADR-0019 单通道） -->
+      <!-- 无历史数据：引导去「同步标的信息」回填近两年周线（ADR-0019 单通道） -->
       <NEmpty
         v-else-if="trend.isEmpty.value"
         data-testid="trend-empty"

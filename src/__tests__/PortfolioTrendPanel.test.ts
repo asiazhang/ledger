@@ -107,7 +107,7 @@ describe('PortfolioTrendPanel 走势面板', () => {
     expect((last[1] as { filter: { start_date: string } }).filter.start_date).toBeTruthy()
   })
 
-  it('组合走势无数据 → 引导文案提示去「同步持仓价格」', async () => {
+  it('组合走势无数据 → 引导文案提示去「同步标的信息」', async () => {
     wireInvokeSeam({
       defaults: PANEL_DEFAULTS,
       overrides: { portfolio_value_trend: { currency_code: 'CNY', points: [] } },
@@ -115,7 +115,7 @@ describe('PortfolioTrendPanel 走势面板', () => {
     const wrapper = mount(PortfolioTrendPanel)
     await flushPromises()
     expect(wrapper.text()).toContain('暂无历史价格数据')
-    expect(wrapper.text()).toContain('同步持仓价格')
+    expect(wrapper.text()).toContain('同步标的信息')
     expect(wrapper.find('[data-testid="line-chart"]').exists()).toBe(false)
   })
 
