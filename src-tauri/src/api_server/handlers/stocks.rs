@@ -121,19 +121,10 @@ impl From<StockQuote> for StockLookup {
     path = "/api/v1/stocks/{code}",
     tag = "stocks",
     summary = "按代码查询股票实时行情（只读，东财实时，沪深港美）",
-    description = "返回东财实时行情：`code`（归一化代码，港股左补零至 5 位、美股大写）/ `name`（东财权威名称）\
-                  / `market`（精确市场）/ `currency_code`（币种：沪深→CNY、港→HKD、美股→USD）\
-                  / `price_cents`（最新价，万分之一元）/ `price_date`（价格日期，ISO 日期）\
-                  / `kind_hint`（类型提示：stock=股票、etf=场内基金类）。\
-                  停牌或无有效报价时 `price_cents` / `price_date` 为 null。\
-                  `market` 为可选查询参数：缺省按代码形态单点解析（6 位 6 开头→沪 sh、0/3 开头→深 sz、\
-                  5 开头→沪 / 1 开头→深的场内基金段（ETF/LOF）、5 位及以下数字→港 hk 左补零归一、\
-                  纯字母 ticker→美股三市场候选遍历，按 nasdaq/nyse/amex 序尝试、首个命中生效并返回精确交易所归属）；\
-                  显式传参须与代码形态一致（美股 ticker 可显式传 nasdaq/nyse/amex，零遍历开销）。北交所代码（4/8 开头）暂不支持、\
-                  无法推断的代码形态、`market` 与代码形态矛盾均返回 400 中文错误；全候选未命中（查无此码）返回 400 中文错误；\
-                  本端点实时访问东方财富，网络故障返回 500。\
-                  股票迁移先按本端点确认识别（名称/市场/币种/最新价/类型提示），\
-                  再以真实代码与精确市场创建标的，不走名称充代码。",
+    description = "按代码实时查询股票（沪深港美）：返回东财权威名称、精确市场、币种、最新价（\
+                  万分之一元）与类型提示（stock/etf）；`market` 可选、缺省按代码形态推断（美股 \
+                  ticker 遍历三市场）；查无此码与北交所代码均显式 400。三步法见导入知识「\
+                  投资交易」节。",
     params(
         ("code" = String, Path, description = "股票代码（沪深 6 位数字 / 港股 5 位及以下数字 / 美股字母 ticker，大小写不敏感）"),
         ("market" = Option<String>, Query, description = "交易市场（可选：sh/sz/hk/nasdaq/nyse/amex；缺省按代码形态解析）")

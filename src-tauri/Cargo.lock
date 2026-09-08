@@ -4622,6 +4622,7 @@ dependencies = [
  "futures",
  "http-body-util",
  "pinyin",
+ "regex",
  "reqwest",
  "rusqlite",
  "rusqlite_migration",

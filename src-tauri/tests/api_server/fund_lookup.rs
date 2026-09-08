@@ -121,11 +121,20 @@ async fn test_openapi_doc_covers_fund_lookup_endpoint() {
 
     let get_op = &doc["paths"]["/api/v1/funds/{code}"]["get"];
     assert!(get_op["summary"].is_string(), "OpenAPI 应包含基金查询端点");
+    // 端点自述为「一句话 + 指针」；nav_cents/nav_date/fund_class 语义归属
+    // FundLookup 字段级描述（issue #839 描述政策：端点教学迁入导入知识）。
     let description = get_op["description"].as_str().unwrap_or_default();
-    for expected in ["6 位", "nav_cents", "nav_date", "fund_class", "查无此码"] {
+    for expected in ["6 位", "查无此码", "基金申赎"] {
         assert!(
             description.contains(expected),
             "端点自述应说明 {expected} 语义"
+        );
+    }
+    let schemas = doc["components"]["schemas"].as_object().unwrap();
+    for field in ["nav_cents", "nav_date", "fund_class"] {
+        assert!(
+            schemas["FundLookup"]["properties"][field].is_object(),
+            "FundLookup.{field} 字段应在契约 schema 中"
         );
     }
 

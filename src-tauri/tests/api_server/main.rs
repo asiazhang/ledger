@@ -22,6 +22,7 @@ mod balance;
 mod batch_import;
 mod boot_gate;
 mod common;
+mod contract;
 mod documentation;
 mod encryption_gate;
 mod error_codes;

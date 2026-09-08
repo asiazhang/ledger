@@ -299,8 +299,8 @@ async fn test_import_knowledge_returns_ok_as_text_plain() {
     let text = String::from_utf8(bytes).unwrap();
     assert!(!text.trim().is_empty(), "知识内容不应为空");
     assert!(
-        text.contains("/api/v1/openapi.json"),
-        "知识应内嵌 OpenAPI 文档地址"
+        text.contains("/api/v1/contract"),
+        "知识应内嵌紧凑契约方言地址（issue #839：契约自描述形态换轨，教学同步换指向）"
     );
 }
 
@@ -396,6 +396,17 @@ async fn test_import_knowledge_covers_key_conventions() {
         "initial_balance_cents",
         "余额调整",
         "不自行清零余额",
+        // 契约端点教学迁入锁（issue #839）：OpenAPI 端点级长教学迁入知识对应节后，
+        // 锚定各迁入点的确定性措辞，防教学迁移静默丢失。
+        "静默复用",     // 标的创建 find-or-create（迁自 POST /instruments 描述）
+        "落最新价现价", // 标的创建东财增强落价（迁自 POST /instruments 描述）
+        "市场保留",     // 股票降级建行保留解析市场（迁自 POST /instruments 描述）
+        "拼音首字母",   // 标的搜索命中语义（迁自 GET /instruments 描述）
+        "恒 unknown",   // fund 标的市场收口（迁自 POST /instruments 描述）
+        "上限 100",     // 标的搜索封顶上限（迁自 GET /instruments 描述）
+        "不影响其余行", // 批量单行失败隔离（迁自 POST /transactions/batch 描述）
+        "稳定排序",     // 读回确定性排序（迁自 GET /transactions 描述）
+        "逗号分隔",     // kinds 多类型过滤（迁自 GET /transactions 描述）
     ];
     for kw in required_keywords {
         assert!(text.contains(kw), "导入知识应包含关键约定关键词 {kw:?}");

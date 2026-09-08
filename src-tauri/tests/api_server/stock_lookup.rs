@@ -455,10 +455,11 @@ async fn test_openapi_doc_covers_stock_lookup_endpoint() {
     let get_op = &doc["paths"]["/api/v1/stocks/{code}"]["get"];
     assert!(get_op["summary"].is_string(), "OpenAPI 应包含股票查询端点");
     let description = get_op["description"].as_str().unwrap_or_default();
+    // kind_hint 语义由字段名「类型提示」承载（字段级描述保留，issue #839）。
     for expected in [
         "market",
         "推断",
-        "kind_hint",
+        "类型提示",
         "查无此码",
         "万分之一元",
         "北交所",

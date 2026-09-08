@@ -46,14 +46,9 @@ pub struct InstrumentSearchQuery {
     path = "/api/v1/instruments",
     tag = "instruments",
     summary = "按关键词搜索标的（统一模糊搜索、封顶返回）",
-    description = "返回 `{items, total}`：`items` 为按 symbol 排序的前 `limit` 条命中标的，\
-                  `total` 恒为命中总数。`query` 必填（缺失或纯空白返回 400——本端点是搜索式而非全量列表）；\
-                  `limit` 缺省 20、上限 100（超出收敛为 100）。\
-                  命中语义为统一模糊搜索：`query` 按空白切词、词条之间 AND；每个词条对「代码 · 名称」label 判定——\
-                  原文连续子串 ∨ 拼音首字母串子序列（均大小写不敏感；无名称标的退化为裸代码），\
-                  如 `gzmt` 命中「600519 贵州茅台」。\
-                  `market` / `type` 可选精确过滤；同码异类型（如基金 000001 vs 股票 000001）\
-                  靠 `type` 消歧。返回完整 Instrument 形状（含 `price_cents` 最新行情与 `invested` 是否持仓）。",
+    description = "按关键词统一模糊搜索标的（`query` 必填、按 symbol 排序封顶返回，`limit` \
+                  缺省 20、上限 100）：作名称消歧的辅助，非带代码行的解析前提，见导入知识「\
+                  投资交易」节。",
     params(
         ("query" = String, Query, description = "搜索关键词（必填，空即 400）"),
         ("limit" = Option<i64>, Query, description = "返回条数上限，缺省 20，最大 100（小于 1 视为 1）"),
@@ -133,28 +128,10 @@ pub struct InstrumentCreateInput {
     path = "/api/v1/instruments",
     tag = "instruments",
     summary = "创建标的（按（代码，类型）幂等 find-or-create，fund/stock 类型经东财增强）",
-    description = "按自然键（`symbol` + `type`）幂等创建标的：已存在同码同类型行时**静默复用**\
-                  并按需更新名称/市场、返回既有 id，未命中创建新行（来源标记 = `manual`）——\
-                  重复创建同一标的返回同一 id，不产生字典碎片。响应照账户/分类创建先例：\
-                  201 + 裸 id 字符串，无 created 标记。\
-                  入参：`symbol` 必填（源数据只有名称时以名称充当代码）；`type` 为闭集五类\
-                  （stock/fund/bond/etf/other，五类全开）；`name` 可选；`market` 可选（缺省 `unknown`）；\
-                  `currency_code` 可选（缺省按市场推导：沪深→CNY、港→HKD、美股三市场→USD、未知→CNY，显式传参可覆盖）。\
-                  **fund 类型增强**：`symbol` 为真实 6 位代码时后端经东方财富校验并回填权威名称、\
-                  落最新净值现价；查无此码返回 400 拒绝创建；东财网络不可达时降级为提交名称 + 真实代码建行\
-                  （不阻塞导入）；非 6 位 symbol（名称充代码，仅限源数据无代码）不触发校验、不进净值通道。\
-                  fund + 6 位代码分支的字典形态收口：显式 `market` / `currency_code` 不生效（恒 unknown / 人民币）。\
-                  **stock 类型增强**（ADR-0081）：`symbol` 为可解析的真实代码（沪深 6 位 / 港 5 位及以下 /\
-                  美股字母 ticker，`market` 缺省按形态解析、显式传参须与形态一致；美股 ticker 缺省按\
-                  nasdaq/nyse/amex 序遍历三市场，首个命中生效并落精确交易所市场与 USD 币种）时后端经东方财富校验并回填权威名称、\
-                  落最新价现价（导入后持仓立有市值）；查无此码（含美股全候选未命中）返回 400 拒绝创建；东财网络不可达时降级为\
-                  提交名称 + 真实代码建行且**保留解析市场**（股票行情通道只依赖市场+代码，降级行价格同步仍可达；\
-                  美股缺省遍历无法预知交易所归属，降级落 unknown，建议查询先行取得精确市场后显式传参创建）。\
-                  北交所代码（4/8 开头）与真实代码形态的 `market` 矛盾均返回 400（不建错行）；\
-                  非代码形态（名称充代码兜底）不触发校验、按提交参数直接建行。\
-                  stock/etf 同走本增强：类型按调用方提交落库（不因东财类型提示改写），增强与降级分支的币种按解析市场推导、显式 `currency_code` 不生效（镜像 fund 收口）。\
-                  建议先按代码查询（股票 `GET /api/v1/stocks/{code}`、基金 `GET /api/v1/funds/{code}`）\
-                  确认识别，再以真实代码与精确市场创建；仅源数据确无代码时以名称充代码兜底。",
+    description = "按（symbol + type）幂等 find-or-create 标的：同码同类型静默复用返回既有 id（\
+                  201 + 裸 id 字符串）；fund/stock 类型经东财校验回填权威名称与最新价，\
+                  查无此码 400、临时不可达降级建行。标的解析三步法与降级细节见导入知识「投资交易」「\
+                  基金申赎」节。",
     request_body = InstrumentCreateInput,
     responses(
         (status = 201, description = "创建或命中复用，返回标的 ID", body = String),
