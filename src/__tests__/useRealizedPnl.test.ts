@@ -7,13 +7,13 @@ import { useRealizedPnl } from '@/composables/useRealizedPnl'
 import { registerToastSink } from '@/composables/useLoadable'
 import type { RealizedPnlSummary } from '@/types'
 import {
+  makeAccount,
   makeFakeSink,
   makeInstrument,
   makePnlSummary,
   mockAccounts,
   resetToastSink,
 } from './factories'
-
 
 const mockSummary = makePnlSummary()
 
@@ -118,9 +118,23 @@ describe('useRealizedPnl 已实现盈亏数据层', () => {
     expect(calls[0]![1]).toEqual({ filter: { instrument_id: 'inst-1' } })
   })
 
-  it('账户选项读参考数据单一来源', () => {
+  it('账户选项只含投资账户：谓词收口参考 store（隐藏投资账户保留、非投资类型排除）', async () => {
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        list_accounts: [
+          ...mockAccounts,
+          makeAccount({ id: 'acc-cash', name: '现金钱包', type: 'cash' }),
+          makeAccount({ id: 'acc-hidden', name: '隐藏证券户', is_hidden: true }),
+        ],
+      },
+    })
+    await useReferenceStore().refresh()
     const { accountOptions } = useRealizedPnl()
-    expect(accountOptions.value).toEqual([{ label: '证券账户A', value: 'acc-1' }])
+    expect(accountOptions.value).toEqual([
+      { label: '证券账户A', value: 'acc-1' },
+      { label: '隐藏证券户', value: 'acc-hidden' },
+    ])
   })
 })
 

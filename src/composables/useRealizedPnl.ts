@@ -21,9 +21,10 @@ export function useRealizedPnl() {
   const selectedAccountId = ref<string | null>(null)
   const selectedInstrumentId = ref<string | null>(null)
 
-  // 账户选项读参考数据单一来源（ledger:changed 信号保持新鲜），不再单独拉取
+  // 账户选项：投资账户谓词单点在参考 store（与投资录入表单同源，词汇表
+  // RealizedPnl 词条），非投资账户不进选项面；隐藏投资账户保留（隐藏 ≠ 软删）。
   const accountOptions = computed(() =>
-    reference.accounts.map((a) => ({ label: a.name, value: a.id })),
+    reference.investmentAccounts.map((a) => ({ label: a.name, value: a.id })),
   )
 
   // 标的筛选下拉（远程搜索，不前端全量驻留）

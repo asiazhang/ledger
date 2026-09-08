@@ -138,6 +138,15 @@ export const useReferenceStore = defineStore('reference', () => {
     categories.value.filter((c) => c.kind === 'income'),
   )
 
+  /**
+   * 投资账户单一谓词：type = investment 的账户。盈亏页账户下拉与投资录入表单
+   * 共用本派生（「投资账户下拉」语义单点收口），不排隐藏——隐藏 ≠ 软删，
+   * 与 v_holdings / 时点持仓口径一致（issue #217 定案 Q2）。
+   */
+  const investmentAccounts = computed(() =>
+    accounts.value.filter((a) => a.type === 'investment'),
+  )
+
   function categoryChildren(parentId: string): Category[] {
     return pureCategoryChildren(categories.value, parentId)
   }
@@ -249,6 +258,7 @@ export const useReferenceStore = defineStore('reference', () => {
     rootCategories,
     expenseCategories,
     incomeCategories,
+    investmentAccounts,
     categoryChildren,
     categoryPath,
     categoryDisplayName,

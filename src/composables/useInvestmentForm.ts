@@ -62,10 +62,9 @@ export function useInvestmentForm(
   const searchingInstruments = ref(false)
   let searchTimer: ReturnType<typeof setTimeout> | undefined
 
+  // 投资账户谓词单点收口在参考 store（与盈亏页账户下拉同源，词汇表 RealizedPnl 词条）
   const investmentAccountOptions = computed(() =>
-    reference.accounts
-      .filter((a) => a.type === 'investment')
-      .map((a) => ({ label: a.name, value: a.id })),
+    reference.investmentAccounts.map((a) => ({ label: a.name, value: a.id })),
   )
 
   const instrumentOptions = computed(() => {
