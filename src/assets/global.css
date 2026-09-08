@@ -50,6 +50,27 @@ textarea,
 }
 
 /*
+ * 交易备注列复制按钮（显式复制通道，见 CONTEXT-ui-interaction「界面文本不可选」）：
+ * 指针轴下悬停行或键盘聚焦时显现，避免每行常驻按钮的视觉噪音；触控轴无 hover，
+ * `hover: none` 时常驻。显隐是纯样式行为，组件不持状态。
+ */
+.note-copy-btn {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.n-data-table-tr:hover .note-copy-btn,
+.note-copy-btn:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .note-copy-btn {
+    opacity: 1;
+  }
+}
+
+/*
  * 「移回侧栏」页签菜单（GroupMoreView）选项行高随内容：组满提示是两行标签，而
  * naive 下拉菜单项行盒高度固定（height/line-height: var(--n-option-height)，
  * medium 34px）——两行内容会溢出行盒画到菜单容器外，成为无背景板、行距巨大的
