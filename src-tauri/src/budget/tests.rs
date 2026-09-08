@@ -7,8 +7,9 @@ use rusqlite::Connection;
 
 use super::model::{BudgetInput, BudgetPeriod};
 use crate::budget::{budget_progress_rows, create_budget, list_budgets, update_budget};
-use crate::db::{device_id, now_iso};
+use crate::db::now_iso;
 use crate::error::{AppError, ErrClass};
+use crate::sync_engine::device_id;
 use crate::transaction::amount::{Measure, TransactionKind, signed_amount};
 
 fn setup() -> Connection {
@@ -46,7 +47,7 @@ fn insert_budget(
     conn.execute(
         "INSERT INTO budgets (id,category_id,period,amount_cents,start_date,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0)",
-        rusqlite::params![id, category_id, period, amount_cents, start_date, now, now, 1, device_id()],
+        rusqlite::params![id, category_id, period, amount_cents, start_date, now, now, 1, device_id(conn).unwrap()],
     ).unwrap();
 }
 
@@ -76,7 +77,7 @@ fn insert_tx(conn: &Connection, r: &TxRow) {
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,?3,'CNY',?3,'dummy',NULL,?4,NULL,NULL,?5,?6,?7,1,?8,0)",
-        rusqlite::params![r.id, r.kind.as_str(), r.amount, r.category_id, r.date, now, now, device_id()],
+        rusqlite::params![r.id, r.kind.as_str(), r.amount, r.category_id, r.date, now, now, device_id(conn).unwrap()],
     )
     .unwrap();
 }
@@ -184,7 +185,7 @@ fn delete_budget_soft_deletes() {
     );
     conn.execute(
         "UPDATE budgets SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-        rusqlite::params!["budget-2", now_iso(), device_id()],
+        rusqlite::params!["budget-2", now_iso(), device_id(&conn).unwrap()],
     )
     .unwrap();
     assert_eq!(

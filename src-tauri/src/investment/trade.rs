@@ -4,8 +4,9 @@ use super::model::TransactionTrade;
 use super::prices::PRICE_UNITS_PER_FEN;
 use crate::accounts::AccountType;
 use crate::db::query::{FromRow, query_all, query_one};
-use crate::db::{device_id, new_uuid, now_iso};
+use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
+use crate::sync_engine::device_id;
 use crate::transaction::amount;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::{NormalizedTransaction, TransactionInput};
@@ -460,7 +461,7 @@ fn write_sell_side_effects(conn: &Connection, id: &str, plan: &SellPlan) -> Resu
         )?;
         conn.execute(
             "UPDATE security_lots SET remaining_quantity=remaining_quantity-?1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
-            rusqlite::params![lot.remaining_quantity, now, device_id(), lot.id],
+            rusqlite::params![lot.remaining_quantity, now, device_id(conn)?, lot.id],
         )?;
     }
 
@@ -514,7 +515,7 @@ fn reverse_sell(conn: &Connection, id: &str) -> Result<()> {
         conn.execute(
             "UPDATE security_lots SET remaining_quantity=remaining_quantity+?1, \
              updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
-            rusqlite::params![quantity, now, device_id(), lot_id],
+            rusqlite::params![quantity, now, device_id(conn)?, lot_id],
         )?;
     }
     conn.execute(
@@ -630,7 +631,7 @@ fn create_buy_lot(conn: &Connection, transaction_id: &str, plan: &BuyPlan) -> Re
     conn.execute(
         "INSERT INTO security_lots (id,account_id,instrument_id,buy_transaction_id,initial_quantity,remaining_quantity,cost_per_unit_cents,currency_code,created_at,updated_at,version,device_id) \
          VALUES (?1,?2,?3,?4,?5,?5,?6,?7,?8,?8,?9,?10)",
-        rusqlite::params![lot_id, plan.normalized.account_id, plan.instrument_id, transaction_id, plan.quantity, plan.cost_per_unit_cents, plan.normalized.currency_code, now, 1, device_id()],
+        rusqlite::params![lot_id, plan.normalized.account_id, plan.instrument_id, transaction_id, plan.quantity, plan.cost_per_unit_cents, plan.normalized.currency_code, now, 1, device_id(conn)?],
     )?;
     Ok(())
 }

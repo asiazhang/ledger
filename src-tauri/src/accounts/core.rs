@@ -11,8 +11,9 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::accounts::balance::refresh_account_balances;
 use crate::db::query::query_all;
-use crate::db::{device_id, new_uuid, now_iso};
+use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
+use crate::sync_engine::device_id;
 use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::create_transaction_internal;
@@ -46,7 +47,7 @@ pub fn create_account(conn: &Connection, input: AccountInput) -> Result<String> 
             now,
             now,
             1,
-            device_id()
+            device_id(conn)?
         ],
     )?;
     // 余额缓存写路径（issue #491 / ADR-0067）：新账户建缓存行（初始余额 + 零流水）。
@@ -99,7 +100,7 @@ pub fn delete_account(conn: &Connection, id: &str) -> Result<()> {
     }
     conn.execute(
         "UPDATE accounts SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-        rusqlite::params![id, now_iso(), device_id()],
+        rusqlite::params![id, now_iso(), device_id(conn)?],
     )?;
     // 余额缓存写路径：touch 缓存行时间戳，净资产读探针指纹即时感知账户删除。
     refresh_account_balances(conn, &[id])?;
@@ -174,7 +175,7 @@ pub fn update_account(conn: &Connection, id: &str, input: AccountUpdateInput) ->
     };
     conn.execute(
         "UPDATE accounts SET name=?2, currency_code=?3, updated_at=?4, version=version+1, device_id=?5 WHERE id=?1",
-        rusqlite::params![id, name, currency_code, now_iso(), device_id()],
+        rusqlite::params![id, name, currency_code, now_iso(), device_id(conn)?],
     )?;
     // 余额缓存写路径：touch 缓存行时间戳（币种改动影响净资产折算口径，读探针需即时感知）。
     refresh_account_balances(conn, &[id])?;
@@ -211,7 +212,7 @@ pub fn ensure_black_hole_account(conn: &Connection, currency_code: &str) -> Resu
             currency_code,
             now,
             now,
-            device_id()
+            device_id(conn)?
         ],
     )?;
     // 余额缓存写路径：新建黑洞账户同建缓存行（与 create_account 同一不变量）。

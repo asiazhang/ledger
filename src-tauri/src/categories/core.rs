@@ -7,8 +7,9 @@
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::db::query::query_all;
-use crate::db::{device_id, new_uuid, now_iso};
+use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
+use crate::sync_engine::device_id;
 
 use super::model::{Category, CategoryInput, CategoryUpdateInput, ReorderItem};
 
@@ -47,7 +48,7 @@ pub fn create_category(conn: &Connection, input: CategoryInput) -> Result<String
             now,
             now,
             1,
-            device_id()
+            device_id(conn)?
         ],
     )?;
     Ok(id)
@@ -115,7 +116,7 @@ pub fn delete_category(conn: &Connection, id: &str) -> Result<()> {
     }
     conn.execute(
         "UPDATE categories SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-        rusqlite::params![id, now_iso(), device_id()],
+        rusqlite::params![id, now_iso(), device_id(conn)?],
     )?;
     Ok(())
 }
@@ -167,7 +168,7 @@ pub fn update_category(conn: &Connection, id: &str, input: CategoryUpdateInput) 
 
     conn.execute(
         "UPDATE categories SET name=?1, icon=?2, parent_id=?3, updated_at=?4, version=version+1, device_id=?5 WHERE id=?6",
-        rusqlite::params![name, icon, parent_id, now_iso(), device_id(), id],
+        rusqlite::params![name, icon, parent_id, now_iso(), device_id(conn)?, id],
     )?;
     Ok(())
 }
@@ -176,7 +177,7 @@ pub fn update_category(conn: &Connection, id: &str, input: CategoryUpdateInput) 
 /// 同步递增）；IPC 与 HTTP 侧共用本函数，排序语义一处生效。
 pub fn reorder_categories(conn: &Connection, items: Vec<ReorderItem>) -> Result<()> {
     let now = now_iso();
-    let did = device_id();
+    let did = device_id(conn)?;
     for item in &items {
         conn.execute(
             "UPDATE categories SET sort_order=?1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",

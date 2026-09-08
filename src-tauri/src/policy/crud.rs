@@ -4,8 +4,9 @@ use rusqlite::{Connection, OptionalExtension};
 
 use super::model::{Policy, PolicyInput, PolicySourceDisplay};
 use crate::db::query::{query_all, query_one};
-use crate::db::{device_id, new_uuid, now_iso};
+use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
+use crate::sync_engine::device_id;
 
 use super::validation::validate_input;
 
@@ -80,7 +81,7 @@ pub fn create_policy(
             normalized.coverage_currency_code,
             normalized.note,
             now,
-            device_id(),
+            device_id(conn)?,
         ],
     )?;
     // 写入成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
@@ -124,7 +125,7 @@ pub fn update_policy(
             normalized.coverage_currency_code,
             normalized.note,
             now_iso(),
-            device_id(),
+            device_id(conn)?,
         ],
     )?;
     debug_assert_eq!(
@@ -156,7 +157,7 @@ pub fn delete_policy(conn: &Connection, id: &str, notify: &mut dyn FnMut()) -> R
     }
     conn.execute(
         "UPDATE policies SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-        rusqlite::params![id, now_iso(), device_id()],
+        rusqlite::params![id, now_iso(), device_id(conn)?],
     )?;
     notify();
     Ok(())

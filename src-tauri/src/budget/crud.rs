@@ -8,8 +8,9 @@ use rusqlite::{Connection, OptionalExtension};
 
 use super::model::{Budget, BudgetInput, BudgetPeriod};
 use crate::db::query::query_all;
-use crate::db::{device_id, new_uuid, now_iso};
+use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
+use crate::sync_engine::device_id;
 
 /// 列出全部未删除预算，排序按创建先后。
 pub fn list_budgets(conn: &Connection) -> Result<Vec<Budget>> {
@@ -95,7 +96,7 @@ pub fn create_budget(conn: &Connection, input: &BudgetInput) -> Result<String> {
             now,
             now,
             1,
-            device_id()
+            device_id(conn)?
         ],
     )?;
     Ok(id)
@@ -118,7 +119,7 @@ pub fn update_budget(conn: &Connection, id: &str, amount_cents: i64) -> Result<(
     validate_amount_and_category(conn, &category_id, amount_cents)?;
     conn.execute(
         "UPDATE budgets SET amount_cents=?2, updated_at=?3, version=version+1, device_id=?4 WHERE id=?1",
-        rusqlite::params![id, amount_cents, now_iso(), device_id()],
+        rusqlite::params![id, amount_cents, now_iso(), device_id(conn)?],
     )?;
     Ok(())
 }
@@ -128,7 +129,7 @@ pub fn update_budget(conn: &Connection, id: &str, amount_cents: i64) -> Result<(
 pub fn delete_budget(conn: &Connection, id: &str) -> Result<()> {
     conn.execute(
         "UPDATE budgets SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-        rusqlite::params![id, now_iso(), device_id()],
+        rusqlite::params![id, now_iso(), device_id(conn)?],
     )?;
     Ok(())
 }
