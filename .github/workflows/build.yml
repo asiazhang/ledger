@@ -338,7 +338,8 @@ jobs:
           fi
           DMG_PATH=$(find "$DMG_BUNDLE_DIR" -maxdepth 1 -name '*.dmg' | head -n 1)
           xcrun stapler validate "$DMG_PATH"
-          spctl --assess --type open -vv "$DMG_PATH"
+          # spctl 需 GUI 会话上下文，headless CI 返回 Insufficient Context 误报
+          # （run 34211413678），挪至 docs/verification/658 人工验收清单
           MNT="$RUNNER_TEMP/openledger-dmg-mount"
           hdiutil attach -readonly -nobrowse -mountpoint "$MNT" "$DMG_PATH" >/dev/null
           APP_IN_DMG=$(find "$MNT" -maxdepth 2 -name '*.app' | head -n 1)
@@ -347,7 +348,6 @@ jobs:
             || { echo "✗ 签名身份不是 Developer ID Application"; exit 1; }
           codesign -dv --verbose=4 "$APP_IN_DMG" 2>&1 | grep -q 'runtime' \
             || { echo "✗ 未启用 hardened runtime（公证必需）"; exit 1; }
-          spctl --assess --type execute -vv "$APP_IN_DMG"
           hdiutil detach "$MNT"
 
       - name: 清理签名钥匙串
