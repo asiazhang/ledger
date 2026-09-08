@@ -34,7 +34,7 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 关系即归属逻辑——一个术语放哪个域，由「谁定义它、谁消费它」决定：
 
 - **核心交易是被所有域消费的底座**。Transaction 与 Amount Model（raw/native 分离 + kind→度量符号矩阵）定义「一笔资金变动长什么样」，Category / Merchant / DefaultCurrency 是它依赖的字典与折算基准；定时计划、投资、AI 导入、物品四域产出的最终都是核心域的交易流水（或以它为对账基准），所以这些共享概念只在核心域定义。
-- **商户（Merchant）→ 核心交易定义、三域消费**：商户是继 Category / DefaultCurrency 之后核心交易域的又一共享参考字典（ADR-0028）——核心交易的 `expense` / `refund` / `income` 流水以 `merchant_id` 引用它；定时计划的分期/订阅形态挂商户并随期次复制到流水（保单缴费协议除外：保费流水不挂商户，ADR-0082；Counterparty 自由文本已废弃，词条改为指针）；AI 导入自动识别商户、精确匹配已有名字复用或即建。
+- **商户（Merchant）→ 核心交易定义、三域消费**：商户是继 Category / DefaultCurrency 之后核心交易域的又一共享参考字典（ADR-0028）——核心交易的 `expense` / `refund` / `income` / `transfer` 流水以 `merchant_id` 引用它（transfer 为借贷关联指针，ADR-0092）；定时计划的分期/订阅形态挂商户并随期次复制到流水（保单缴费协议除外：保费流水不挂商户，ADR-0082；Counterparty 自由文本已废弃，词条改为指针）；AI 导入自动识别商户、精确匹配已有名字复用或即建。
 - **定时计划 → 核心交易**：ScheduledTransaction 及其三种业务形态（InstallmentPlan / Subscription / ScheduledTransfer）是生成核心域 Transaction 的规则与模板，每期触发落一条流水（Occurrence）；生命周期、周期规则、失败策略等 MVP 决策在 ADR-0024；分期/订阅可挂核心域商户（ADR-0028）。
 - **投资域 → 核心交易**：buy/sell 首先是核心域 Transaction 的 kind（场外基金申赎同构复用，ADR-0038），Investment 是它背后的持仓/盈亏载体；市值与净资产折算消费核心域 DefaultCurrency，历史折算经本域 FxRateHistory。财务自由度（FinancialFreedom）以本域可投资资产（InvestableAssets）为分子、跨域消费预算域年度预算总额（AnnualBudgetTotal）为分母（ADR-0048）。
 - **AI 导入 → 核心交易 + 参考数据 + 投资域**：AI 经本域 AI API 幂等写入核心域 Transaction 与参考数据（账户/分类/币种/商户）及投资域标的（buy/sell 迁移先经按代码查询 → 真实代码幂等创建解析为标的 id，本地字典搜索降为辅助，ADR-0081；场外基金按真实代码建行，ADR-0039），ImportDedup / IdempotencyKey 是写入侧的去重契约，读回验证（AIReadbackVerification）按核心域 InvolvingAccount 与余额口径对账；BlackHoleAccount 是参考数据中的特殊账户，因由导入流程预置与消费而归本域。
