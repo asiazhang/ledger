@@ -34,6 +34,8 @@ pub(crate) fn record_local(conn: &Connection, command: DomainCommand) -> Result<
 
 /// 外来 op 落日志（重放事务内调用，与命令执行同事务原子）。
 pub(crate) fn insert_row(conn: &Connection, op: &SyncOp) -> Result<()> {
+    // 序列化失败属程序缺陷（载荷为本仓自有类型）：非码化 Invalid、fail loud；
+    // 「旧端载荷反序列化失败」的 schema 偏斜场景由 #856 挂起队列承接后改道。
     let payload = serde_json::to_string(&op.command)
         .map_err(|e| AppError::Invalid(format!("op 载荷序列化失败: {e}")))?;
     conn.execute(
@@ -65,11 +67,10 @@ pub(crate) fn is_known(conn: &Connection, op_id: &str) -> Result<bool> {
 }
 
 /// 读取全部 op 行（本地产出 + 已重放的外来 op；序列化与 [`insert_row`] 同源）。
+/// 不排序：排序知识单点在 [`super::engine::total_order`]（read_ops 调用方消费）。
 pub(crate) fn read_all(conn: &Connection) -> Result<Vec<SyncOp>> {
-    let mut stmt = conn.prepare(
-        "SELECT op_id, device_id, clock, schema_version, payload \
-         FROM sync_ops ORDER BY device_id, clock",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT op_id, device_id, clock, schema_version, payload FROM sync_ops")?;
     let rows = stmt.query_map([], |r| {
         Ok((
             r.get::<_, String>(0)?,
@@ -82,6 +83,8 @@ pub(crate) fn read_all(conn: &Connection) -> Result<Vec<SyncOp>> {
     let mut ops = Vec::new();
     for row in rows {
         let (op_id, device_id, clock, schema_version, payload) = row?;
+        // 反序列化失败：本仓自有类型恒成功；外来旧载荷在新 schema 上失败的
+        // schema 偏斜场景由 #856 挂起队列承接后改道（当前 fail loud 不静默丢弃）。
         let command = serde_json::from_str(&payload)
             .map_err(|e| AppError::Invalid(format!("op 载荷反序列化失败: {e}")))?;
         ops.push(SyncOp {

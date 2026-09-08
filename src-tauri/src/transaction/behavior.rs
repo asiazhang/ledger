@@ -530,7 +530,10 @@ pub(crate) fn replay_command(conn: &Connection, command: &TransactionCommand) ->
     }
 }
 
-/// 重放创建：普通 kind 原样落库（含余额缓存重算）；投资/未实现 kind 拒绝。
+/// 重放创建：普通 kind 原样落库（含余额缓存重算）；投资 kind 码化拒绝
+/// （v1 边界，待 #861）；dividend / split 与本地写入同码拒绝（kind-unsupported
+/// ——本地 plan 从不产出这两种命令，此处是伪造/漂移载荷的防御臂，防绕过
+/// 「暂不支持」守卫直落交易行）。
 fn replay_create(conn: &Connection, id: &str, row: &NormalizedTransaction) -> Result<()> {
     let row = writer::NormalizedRow::try_from(row)?;
     match row.kind {
@@ -538,15 +541,14 @@ fn replay_create(conn: &Connection, id: &str, row: &NormalizedTransaction) -> Re
         | TransactionKind::Expense
         | TransactionKind::Transfer
         | TransactionKind::Refund => writer::insert_row_with_id(conn, id, &row),
-        TransactionKind::Buy
-        | TransactionKind::Sell
-        | TransactionKind::Dividend
-        | TransactionKind::Split => Err(unsupported_replay_kind(row.kind)),
+        TransactionKind::Buy | TransactionKind::Sell => Err(unsupported_replay_kind(row.kind)),
+        TransactionKind::Dividend | TransactionKind::Split => Err(kind_unsupported(row.kind)),
     }
 }
 
 /// 重放修改：存在性守卫与本地修改同款（不存在或已软删返回码化 NotFound）；
-/// 新旧行任一侧涉投资 kind 即拒绝（v1，待 #861）。
+/// 新旧行任一侧涉投资 kind 即拒绝（v1，待 #861）；dividend / split 目标
+/// 与本地修改同码拒绝（防御臂同 [`replay_create`]）。
 fn replay_update(conn: &Connection, id: &str, row: &NormalizedTransaction) -> Result<()> {
     let (old_kind,): (TransactionKind,) = conn
         .query_row(
@@ -559,15 +561,22 @@ fn replay_update(conn: &Connection, id: &str, row: &NormalizedTransaction) -> Re
             AppError::codedp_not_found("transaction.not-found", format!("交易不存在: {id}"), &[id])
         })?;
     let new_kind = row.kind;
+    match new_kind {
+        TransactionKind::Dividend | TransactionKind::Split => {
+            return Err(kind_unsupported(new_kind));
+        }
+        TransactionKind::Income
+        | TransactionKind::Expense
+        | TransactionKind::Transfer
+        | TransactionKind::Refund
+        | TransactionKind::Buy
+        | TransactionKind::Sell => {}
+    }
     if is_investment_kind(old_kind) || is_investment_kind(new_kind) {
         return Err(unsupported_replay_kind(new_kind));
     }
     let row = writer::NormalizedRow::try_from(row)?;
     writer::update_row(conn, id, &row)
-}
-
-fn is_investment_kind(kind: TransactionKind) -> bool {
-    matches!(kind, TransactionKind::Buy | TransactionKind::Sell)
 }
 
 /// 投资命令重放的统一拒绝（v1 边界，#861 承接；#856 起进挂起队列）。
@@ -577,4 +586,17 @@ fn unsupported_replay_kind(kind: TransactionKind) -> AppError {
         format!("交易类型 {kind} 的命令重放暂不支持（投资命令重放待后续版本）"),
         &[&kind.to_string()],
     )
+}
+
+/// dividend / split 未实现（与本地 plan 同码同文案，防御臂单点复用）。
+fn kind_unsupported(kind: TransactionKind) -> AppError {
+    AppError::codedp(
+        "transaction.kind-unsupported",
+        format!("交易类型 {kind} 暂不支持（MVP 未实现）"),
+        &[&kind.to_string()],
+    )
+}
+
+fn is_investment_kind(kind: TransactionKind) -> bool {
+    matches!(kind, TransactionKind::Buy | TransactionKind::Sell)
 }
