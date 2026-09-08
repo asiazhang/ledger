@@ -3,28 +3,14 @@
 //! 建库与种子经统一测试工厂（spec #728 / issue #754 / ADR-0084 决策 7）：普通
 //! 内存库用 [`crate::test_support::open`]；instrument/price/fx 种子已上收工厂
 //! （`seed_instrument` / `seed_price_history` / `seed_fx_rate_history`）。本薄皮
-//! 只留 db 域特有编排：升级路径的部分开放与 schema 约束探针（准入规则：单域
-//! 特有留域薄皮，ADR-0084 决策 1）。
+//! 只留 db 域特有编排：schema 约束探针（准入规则：单域特有留域薄皮，
+//! ADR-0084 决策 1）。
 
 use std::sync::{Arc, Mutex};
 
 use rusqlite::{Connection, params};
 
 use crate::db::DbState;
-
-/// 打开停在指定 schema 版本的内存库（升级路径测试：先种旧世界，再补齐迁移）。
-/// 升级模拟是 db 测试域特有编排（不入工厂）；连接经 rusqlite 裸开 + 外键
-/// （对齐产品建连收尾单点 `finish_open` 的外键语义），版本钉住经产品迁移缝
-/// `db::migrations()`——补齐迁移亦走该缝（`to_latest`，即 `init_db` 的迁移核心）。
-pub(super) fn open_at_schema_version(version: usize) -> Connection {
-    let mut conn = Connection::open(":memory:").expect("打开内存库");
-    conn.execute("PRAGMA foreign_keys = ON", [])
-        .expect("启用外键");
-    crate::db::migrations()
-        .to_version(&mut conn, version)
-        .expect("迁移到指定 schema 版本");
-    conn
-}
 
 /// 构造带 Arc<Mutex<Connection>> 的 DbState（写入口持锁形态）；建库经统一测试工厂。
 pub(super) fn write_test_state() -> DbState {
