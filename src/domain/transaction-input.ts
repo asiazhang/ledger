@@ -40,12 +40,15 @@ export interface ExpenseIncomeFormState {
   date: number
 }
 
-/** 转账表单形态（useTransferForm 表单状态原样；转出=转入属语义校验，留表单层） */
+/** 转账表单形态（useTransferForm 表单状态原样；转出=转入属语义校验，留表单层）。
+ * `merchantId` 为已解析的商户 id（ADR-0092）：借贷表单可编辑（自由文本即建），普通转账
+ * 表单不暴露输入位但编辑时原样回填行上商户（形态退化保留商户，不静默清数据）。 */
 export interface TransferFormState {
   amount: number | null
   currencyCode: string
   accountId: string | null
   toAccountId: string | null
+  merchantId: string | null
   note: string
   date: number
 }
@@ -201,7 +204,8 @@ export function buildExpenseIncomeInput(state: ExpenseIncomeFormState): Transact
   }
 }
 
-/** 转账表单状态 → TransactionInput */
+/** 转账表单状态 → TransactionInput（`merchantId` 须已经表单层 resolveMerchantId 解析；
+ * 借贷关联语义见 ADR-0092，普通转账表单不暴露输入位但编辑时保留行上商户） */
 export function buildTransferInput(state: TransferFormState): TransactionInput {
   return {
     ...baseInput('transfer', {
@@ -212,6 +216,7 @@ export function buildTransferInput(state: TransferFormState): TransactionInput {
       date: requireDateISO(state.date),
     }),
     to_account_id: requireNonEmpty(state.toAccountId, t('transactions.field.toAccount')),
+    merchant_id: state.merchantId,
   }
 }
 

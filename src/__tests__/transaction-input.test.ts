@@ -34,6 +34,7 @@ const transferState: TransferFormState = {
   currencyCode: 'CNY',
   accountId: 'acc-1',
   toAccountId: 'acc-2',
+  merchantId: null,
   note: '房租分摊',
   date: localTs(2024, 6, 15),
 }
@@ -109,6 +110,13 @@ describe('buildTransferInput', () => {
       note: '房租分摊',
       date: '2024-06-15',
     })
+  })
+
+  // 借贷可关联商户（issue #875 / ADR-0092）：装配器只收已解析的 merchant_id、覆写
+  // 矩阵占位；普通转账表单不暴露输入位，但编辑时表单层回填原商户即由此携带。
+  it('携带已解析商户 id：merchant_id 覆写矩阵占位', () => {
+    const input = buildTransferInput({ ...transferState, merchantId: 'm-9' })
+    expect(input.merchant_id).toBe('m-9')
   })
 
   it('边界：本地 0–8 点的日期归属当天（不走 UTC 截断）', () => {

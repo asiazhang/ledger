@@ -24,7 +24,8 @@ use tauri_app_lib::events;
 use tauri_app_lib::test_utils::GatedEmitter;
 
 use crate::common::{
-    batch_body, create_account_via_api, delete_account_via_api, post_batch, setup_app_with_emitter,
+    batch_body, count_rows, create_account_via_api, delete_account_via_api, post_batch,
+    setup_app_with_emitter,
 };
 
 /// 核心验收（spec #367）：`POST /api/v1/accounts` 写请求返回时信号已交接、
@@ -139,5 +140,58 @@ async fn queued_signals_arrive_in_posting_order_after_gate_opens() {
         emitter.wait_delivered(),
         vec![events::LEDGER_CHANGED, events::LEDGER_CHANGED],
         "放行后按入队顺序送达、不重不漏"
+    );
+}
+
+/// transfer 挂商户的「写 → 证据 → 信号」整链（issue #875 / ADR-0092）：批量导入
+/// transfer 带未命中商户名 → 即建商户 → 交接参考失效信号；命中复用 → 零信号。
+/// 证据映射对 kind 无分支（行为层同一入口），本用例把 transfer 路径钉在同一整链上。
+#[tokio::test]
+async fn batch_import_transfer_with_merchant_signal_eventually_arrives() {
+    let emitter = GatedEmitter::gated();
+    let (app, conn) = setup_app_with_emitter(Arc::new(emitter.clone()));
+    let from = create_account_via_api(&app, "现金账户").await;
+    let to = create_account_via_api(&app, "银行账户").await;
+
+    // 两个账户创建各交接一条；此后 transfer 即建商户再交接一条。
+    let transfer_with_new_merchant = format!(
+        r#"{{"kind":"transfer","amount_cents":1000,"currency_code":"CNY","account_id":"{from}","to_account_id":"{to}","date":"2026-05-03","merchant_name":"借贷信号商户"}}"#
+    );
+    post_batch(&app, batch_body(&[&transfer_with_new_merchant], None)).await;
+    assert_eq!(
+        emitter.posted(),
+        vec![
+            events::LEDGER_CHANGED,
+            events::LEDGER_CHANGED,
+            events::LEDGER_CHANGED
+        ],
+        "两账户创建 + transfer 即建商户各交接一条参考失效信号"
+    );
+
+    // 命中复用既有商户 → 零信号。
+    let transfer_reusing = format!(
+        r#"{{"kind":"transfer","amount_cents":2000,"currency_code":"CNY","account_id":"{from}","to_account_id":"{to}","date":"2026-05-04","merchant_name":"借贷信号商户"}}"#
+    );
+    post_batch(&app, batch_body(&[&transfer_reusing], None)).await;
+    assert_eq!(
+        emitter.posted().len(),
+        3,
+        "命中复用商户的 transfer 批次是零信号行，不得交接任何事件"
+    );
+
+    emitter.open_gate();
+    assert_eq!(
+        emitter.wait_delivered(),
+        vec![
+            events::LEDGER_CHANGED,
+            events::LEDGER_CHANGED,
+            events::LEDGER_CHANGED
+        ],
+        "写请求返回后信号必须最终到达，复用批次不多发"
+    );
+    assert_eq!(
+        count_rows(&conn.lock().unwrap(), "merchants"),
+        1,
+        "两批同商户名应精确复用为同一商户行"
     );
 }

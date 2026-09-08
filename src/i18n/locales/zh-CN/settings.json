@@ -56,7 +56,6 @@
       "deleted": "已删除",
       "deleteFailed": "删除失败: {msg}",
       "sortFailed": "排序失败: {msg}",
-      "merchantDeleted": "（已删除商户）",
       "accountRequired": "请选择账户",
       "amountRequired": "请输入金额",
       "saved": "已保存修改",

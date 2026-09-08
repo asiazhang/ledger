@@ -8,6 +8,7 @@ import { judgeAmountText, fieldErrorKind } from '@/utils/field-error'
 import { useReferenceStore } from '@/stores/reference'
 import { usePoliciesStore } from '@/stores/policies'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
+import { useMerchantField } from '@/composables/useMerchantField'
 import { t } from '@/i18n'
 import type { Transaction } from '@/types'
 import { errorMessage } from "@/utils/errors";
@@ -53,7 +54,6 @@ export function useCategoryForm(
   const currencyCode = ref('CNY')
   const accountId = ref<string | null>(null)
   const categoryId = ref<string | null>(null)
-  const merchantRef = ref<string | null>(null)
   // 可选保单引用（issue #361）：支出（保费）与收入（保单现金流入）可挂一张保单；
   // 选项来自保单 store（只含未删除保单，软删不可再被新选择）。
   const policiesStore = usePoliciesStore()
@@ -69,50 +69,10 @@ export function useCategoryForm(
 
   const treeOptions = computed<TreeSelectOption[]>(() => reference.treeCategoryOptions(kind) as unknown as TreeSelectOption[])
 
-  // 商户下拉选项（issue #189）：在用商户；编辑时若原商户已不在字典（软删且超出
-  // 会话显示缓存），追加兜底选项承载原 id——裸 uuid 不可读，提交时按「未改动」
-  // 语义原样保留（后端 existing_merchant_id unchanged 语义跳过校验）。
-  const editingMerchantId = editingTx?.merchant_id ?? null
-  const merchantOptions = computed<{ label: string; value: string }[]>(() => {
-    const base = reference.merchants.map((m) => ({ label: m.name, value: m.id }))
-    if (editingMerchantId && !reference.merchantMap.has(editingMerchantId)) {
-      base.unshift({ label: t('settings.categories.msg.merchantDeleted'), value: editingMerchantId })
-    }
-    return base
-  })
-
-  /**
-   * 商户解析（保存时单点收口，issue #189）：「输入即建」交互——
-   * 1. 空 → null（无商户）；
-   * 2. 选中已有商户（value 为 id，含编辑回填的软删商户 id，会话缓存内可见）→ 原样携带；
-   * 3. 编辑未改动原商户（软删且超出缓存）→ 原样携带（后端 unchanged 语义跳过校验）；
-   * 4. 输入文本精确命中在用商户名 → 按名复用；
-   * 5. 未命中 → `create_merchant` 即建；重名错误（store 陈旧竞态）先强制重拉
-   *    按名复用，仍失败才向上抛。
-   */
-  async function resolveMerchantId(): Promise<string | null> {
-    const selected = merchantRef.value
-    if (!selected) return null
-    if (reference.merchantMap.has(selected)) return selected
-    if (editingMerchantId && selected === editingMerchantId) return selected
-    const name = selected.trim()
-    if (!name) return null
-    const existing = reference.merchantByName.get(name)
-    if (existing) return existing.id
-    try {
-      return await api.createMerchant({ name })
-    } catch (e) {
-      // 重名兑底（store 陈旧竞态）：强制重拉后按名复用；重拉失败不影响原错误上抛
-      try {
-        await reference.refresh()
-      } catch {
-        /* 保留原 create 错误 */
-      }
-      const retry = reference.merchantByName.get(name)
-      if (retry) return retry.id
-      throw e
-    }
-  }
+  // 商户输入字段（issue #189 原生，issue #875 / ADR-0092 提取共享接缝）：支出/收入与
+  // 借贷表单形态共用同一份解析与兜底语义（「输入即建」、软删历史引用保持）。
+  const { merchantRef, merchantOptions, resolveMerchantId } =
+    useMerchantField(editingTx?.merchant_id ?? null)
 
   // 保单下拉选项（issue #361）：未删除保单；编辑时若原挂保单已软删（超出列表），
   // 追加兜底选项承载原 id——裸 uuid 不可读，提交时按「未改动」语义原样保留

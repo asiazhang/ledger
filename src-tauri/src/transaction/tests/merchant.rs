@@ -1,5 +1,5 @@
-//! 商户携带收口（issue #188 / ADR-0028）：按 kind 拒绝/放行、软删商户的历史引用；
-//! 以及「即建商户」证据外传（issue #331 / ADR-0044 决策 4）。
+//! 商户携带收口（issue #188 / ADR-0028，transfer 放开见 issue #875 / ADR-0092）：按 kind
+//! 拒绝/放行、软删商户的历史引用；以及「即建商户」证据外传（issue #331 / ADR-0044 决策 4）。
 
 use super::super::*;
 use super::common::make_input;
@@ -12,7 +12,7 @@ use crate::transaction::amount::TransactionKind;
 use rusqlite::params;
 
 // ---------------------------------------------------------------------------
-// 商户携带收口（issue #188 / ADR-0028）：行为层按 kind 拒绝/放行
+// 商户携带收口（issue #188 / ADR-0028 + issue #875 / ADR-0092）：行为层按 kind 拒绝/放行
 // ---------------------------------------------------------------------------
 fn insert_merchant(conn: &Connection, id: &str, name: &str) {
     conn.execute(
@@ -23,11 +23,14 @@ fn insert_merchant(conn: &Connection, id: &str, name: &str) {
     .unwrap();
 }
 
-/// expense / income / refund 可携带商户：创建成功且读回 merchant_id 正确。
+/// expense / income / transfer / refund 可携带商户：创建成功且读回 merchant_id 正确。
+/// transfer 的借贷关联语义（ADR-0092）不引入账户类型条件——纯 kind 准入，普通转账
+/// 与借贷转账共用同一收口。
 #[test]
-fn create_income_expense_refund_with_merchant() {
+fn create_income_expense_transfer_refund_with_merchant() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-m", "现金", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-m-to", "银行", "bank", "CNY", 0);
     insert_merchant(&conn, "mer-jd", "京东");
 
     let expense_id = create_transaction_internal(
@@ -51,6 +54,19 @@ fn create_income_expense_refund_with_merchant() {
     .unwrap()
     .id;
 
+    let transfer_id = create_transaction_internal(
+        &conn,
+        TransactionInput {
+            policy_id: None,
+            kind: TransactionKind::Transfer,
+            merchant_id: Some("mer-jd".into()),
+            to_account_id: Some("acc-m-to".into()),
+            ..make_input("acc-m", TransactionKind::Transfer, 3000, "2026-01-02")
+        },
+    )
+    .unwrap()
+    .id;
+
     // refund 可携带商户（创建时携带的商户被继承覆盖，读回为原支出商户）
     let refund_id = create_transaction_internal(
         &conn,
@@ -68,6 +84,7 @@ fn create_income_expense_refund_with_merchant() {
     for (id, expect_merchant) in [
         (&expense_id, Some("mer-jd")),
         (&income_id, Some("mer-jd")),
+        (&transfer_id, Some("mer-jd")),
         (&refund_id, Some("mer-jd")),
     ] {
         let merchant_id: Option<String> = conn
@@ -85,28 +102,14 @@ fn create_income_expense_refund_with_merchant() {
     }
 }
 
-/// transfer / buy / sell / dividend / split 携带商户 → 行为层拒绝（schema 不设 kind 限制）。
+/// buy / sell / dividend / split 携带商户 → 行为层拒绝（schema 不设 kind 限制）。
+/// transfer 已放开（ADR-0092），不在本拒绝集内。
 #[test]
 fn create_txn_with_merchant_rejected_for_non_merchant_kinds() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-m", "现金", "cash", "CNY", 0);
-    test_support::seed_account(&conn, "acc-m-to", "银行", "bank", "CNY", 0);
     test_support::seed_account(&conn, "acc-m-inv", "证券", "investment", "CNY", 0);
     insert_merchant(&conn, "mer-jd", "京东");
-
-    // transfer：转出/转入账户齐备，仅因携带商户被拒。
-    let err = create_transaction_internal(
-        &conn,
-        TransactionInput {
-            policy_id: None,
-            kind: TransactionKind::Transfer,
-            merchant_id: Some("mer-jd".into()),
-            to_account_id: Some("acc-m-to".into()),
-            ..make_input("acc-m", TransactionKind::Transfer, 3000, "2026-01-01")
-        },
-    )
-    .unwrap_err();
-    assert_eq!(err.to_string(), "交易类型 transfer 不能携带商户");
 
     // buy / sell 携带商户：即使投资字段齐备也在行为层被拒（先于投资域 prepare）。
     for kind in [TransactionKind::Buy, TransactionKind::Sell] {
@@ -159,9 +162,9 @@ fn create_txn_with_merchant_rejected_for_non_merchant_kinds() {
     assert_eq!(count, 0, "拒绝的交易不应落库");
 }
 
-/// 修改路径同款收口：把既有交易改成携带商户的 transfer → 拒绝且事务回滚。
+/// 修改路径同款收口（ADR-0092）：把既有支出改成携带商户的 transfer → 成功、商户随行。
 #[test]
-fn update_txn_with_merchant_rejected_for_transfer() {
+fn update_expense_to_transfer_with_merchant_succeeds() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-m", "现金", "cash", "CNY", 0);
     test_support::seed_account(&conn, "acc-m-to", "银行", "bank", "CNY", 0);
@@ -174,7 +177,7 @@ fn update_txn_with_merchant_rejected_for_transfer() {
     .unwrap()
     .id;
 
-    let err = update_transaction_internal(
+    update_transaction_internal(
         &conn,
         &id,
         TransactionInput {
@@ -185,12 +188,90 @@ fn update_txn_with_merchant_rejected_for_transfer() {
             ..make_input("acc-m", TransactionKind::Transfer, 3000, "2026-01-02")
         },
     )
-    .unwrap_err();
-    assert_eq!(err.to_string(), "交易类型 transfer 不能携带商户");
-    // 拒绝后原交易保持不变。
+    .unwrap();
     let t = get_transaction_internal(&conn, &id).unwrap();
-    assert_eq!(t.kind, TransactionKind::Expense);
-    assert_eq!(t.merchant_id, None);
+    assert_eq!(t.kind, TransactionKind::Transfer);
+    assert_eq!(t.merchant_id.as_deref(), Some("mer-jd"));
+}
+
+/// 修改 transfer 保持既有商户（前端「行上商户保留、不清理」的后端语义前提）：
+/// 提交当前 merchant_id 即保持历史引用，与 expense 同款。
+#[test]
+fn update_transfer_keeps_existing_merchant() {
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-m", "现金", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-m-to", "银行", "bank", "CNY", 0);
+    insert_merchant(&conn, "mer-jd", "京东");
+
+    let id = create_transaction_internal(
+        &conn,
+        TransactionInput {
+            policy_id: None,
+            kind: TransactionKind::Transfer,
+            merchant_id: Some("mer-jd".into()),
+            to_account_id: Some("acc-m-to".into()),
+            ..make_input("acc-m", TransactionKind::Transfer, 3000, "2026-01-01")
+        },
+    )
+    .unwrap()
+    .id;
+
+    update_transaction_internal(
+        &conn,
+        &id,
+        TransactionInput {
+            policy_id: None,
+            kind: TransactionKind::Transfer,
+            merchant_id: Some("mer-jd".into()),
+            to_account_id: Some("acc-m-to".into()),
+            note: Some("改备注".into()),
+            ..make_input("acc-m", TransactionKind::Transfer, 3000, "2026-01-01")
+        },
+    )
+    .unwrap();
+    let t = get_transaction_internal(&conn, &id).unwrap();
+    assert_eq!(t.note.as_deref(), Some("改备注"));
+    assert_eq!(t.merchant_id.as_deref(), Some("mer-jd"), "商户引用应保留");
+}
+
+/// 修改 transfer 携带新商户名（未命中）→ 即建并挂到行上（修改路径与创建路径同构）。
+#[test]
+fn update_transfer_with_new_merchant_name_creates_and_attaches() {
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-m", "现金", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-m-to", "银行", "bank", "CNY", 0);
+
+    let id = create_transaction_internal(
+        &conn,
+        TransactionInput {
+            policy_id: None,
+            kind: TransactionKind::Transfer,
+            to_account_id: Some("acc-m-to".into()),
+            ..make_input("acc-m", TransactionKind::Transfer, 3000, "2026-01-01")
+        },
+    )
+    .unwrap()
+    .id;
+
+    let evidence = update_transaction_internal(
+        &conn,
+        &id,
+        TransactionInput {
+            merchant_name: Some("魏有鼎".into()),
+            policy_id: None,
+            kind: TransactionKind::Transfer,
+            to_account_id: Some("acc-m-to".into()),
+            ..make_input("acc-m", TransactionKind::Transfer, 3000, "2026-01-01")
+        },
+    )
+    .unwrap();
+
+    assert_eq!(evidence, WriteEvidence::MerchantCreated(true));
+    assert_eq!(active_merchant_count(&conn), 1);
+    assert!(
+        merchant_id_of(&conn, &id).is_some(),
+        "修改后交易应引用即建的商户"
+    );
 }
 
 /// 读回（list / get / search）携带 merchant_id：软删商户的历史交易读回 merchant_id
@@ -463,6 +544,65 @@ fn create_refund_ignores_merchant_name_and_reports_false() {
         signals_for(WriteOp::CreateTransaction, refund.evidence),
         &[]
     );
+}
+
+/// 创建携带新商户名的 transfer → 即建（kind 准入已放开，解析/即建与 expense 同构）。
+#[test]
+fn create_transfer_with_new_merchant_name_reports_merchant_created() {
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-ev", "现金", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-ev-to", "银行", "bank", "CNY", 0);
+
+    let write = create_transaction_internal(
+        &conn,
+        TransactionInput {
+            merchant_name: Some("魏有鼎".into()),
+            policy_id: None,
+            to_account_id: Some("acc-ev-to".into()),
+            ..make_input("acc-ev", TransactionKind::Transfer, 3000, "2026-01-01")
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        write.evidence,
+        WriteEvidence::MerchantCreated(true),
+        "transfer 带新名字即建应为真"
+    );
+    assert_eq!(active_merchant_count(&conn), 1);
+    assert!(
+        merchant_id_of(&conn, &write.id).is_some(),
+        "交易应引用即建的商户"
+    );
+    assert_eq!(
+        signals_for(WriteOp::CreateTransaction, write.evidence),
+        &[Signal::LedgerChanged]
+    );
+}
+
+/// transfer 名字命中复用 → 证据假、零信号（与 expense 同款）。
+#[test]
+fn create_transfer_with_hit_merchant_name_reports_reuse_and_zero_signal() {
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-ev", "现金", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc-ev-to", "银行", "bank", "CNY", 0);
+    insert_merchant(&conn, "mer-jd", "京东");
+
+    let write = create_transaction_internal(
+        &conn,
+        TransactionInput {
+            merchant_name: Some("京东".into()),
+            policy_id: None,
+            to_account_id: Some("acc-ev-to".into()),
+            ..make_input("acc-ev", TransactionKind::Transfer, 3000, "2026-01-01")
+        },
+    )
+    .unwrap();
+
+    assert_eq!(write.evidence, WriteEvidence::MerchantCreated(false));
+    assert_eq!(active_merchant_count(&conn), 1, "命中复用不新建");
+    assert_eq!(merchant_id_of(&conn, &write.id).as_deref(), Some("mer-jd"));
+    assert_eq!(signals_for(WriteOp::CreateTransaction, write.evidence), &[]);
 }
 
 /// 修改为带新商户名 → 证据真、商户行落库；映射单点 → 参考失效信号。

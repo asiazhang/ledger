@@ -114,7 +114,7 @@ fn ensure_transaction<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Re
 /// 交易创建的终态与结果证据（ADR-0044 决策 4）：`id` 供调用方回传 / 回写去重身份，
 /// `evidence` 随写操作自然外传（非可变状态、不穿透 `db.write` 闭包）——壳层据此经
 /// `signals_for` 判定发射。证据恒为 [`WriteEvidence::MerchantCreated`]（交易域唯一的
-/// 条件信号），未涉商户的写（transfer/buy/sell 等）证据恒假、零信号。
+/// 条件信号），未涉商户的写（buy/sell 等，或直接带 id / 不带商户）证据恒假、零信号。
 #[derive(Debug)]
 pub struct TransactionWrite {
     /// 新交易 id。
@@ -309,14 +309,20 @@ fn plan_with_existing_refs(
     existing_policy_id: Option<&str>,
 ) -> Result<(Plan, bool)> {
     let kind = input.kind;
-    // 商户携带收口（issue #188 / ADR-0028 + #194 商户名）：expense / refund / income 可携带
-    // 商户（merchant_id 或 merchant_name）；transfer / buy / sell / dividend / split 行为层
-    // 拒绝（schema 层 merchant_id 允许 NULL、不设 kind 限制，放开无需再改表）。refund 携带
-    // 的商户在 [`writer::normalize`] 里被原支出商户覆盖（继承语义），此处不拦截。
+    // 商户携带收口（issue #188 / ADR-0028 + #194 商户名 + #875 / ADR-0092 transfer）：
+    // expense / refund / income / transfer 可携带商户（merchant_id 或 merchant_name）；
+    // buy / sell / dividend / split 行为层拒绝（schema 层 merchant_id 允许 NULL、不设
+    // kind 限制，放开无需再改表）。transfer 放开是纯 kind 判定，**不引入账户类型条件**
+    // ——普通转账与借贷转账（receivable/debt 账户派生视角）共用同一收口，借贷关联
+    // 语义只是检索与展示指针（见 docs/adr/0092）。refund 携带的商户在
+    // [`writer::normalize`] 里被原支出商户覆盖（继承语义），此处不拦截。
     if (input.merchant_id.is_some() || input.merchant_name.is_some())
         && !matches!(
             kind,
-            TransactionKind::Income | TransactionKind::Expense | TransactionKind::Refund
+            TransactionKind::Income
+                | TransactionKind::Expense
+                | TransactionKind::Refund
+                | TransactionKind::Transfer
         )
     {
         return Err(AppError::codedp(
@@ -360,8 +366,8 @@ fn plan_with_existing_refs(
         | TransactionKind::Expense
         | TransactionKind::Transfer
         | TransactionKind::Refund => {
-            // 商户名解析须在 kind 收口之后：非 income/expense/refund 的行在此前已拒绝，
-            // 不会先建商户再拒绝（避免产生字典碎片）。名字与 id 同时提供属请求错误。
+            // 商户名解析须在 kind 收口之后：非 income/expense/refund/transfer 的行在此前
+            // 已拒绝，不会先建商户再拒绝（避免产生字典碎片）。名字与 id 同时提供属请求错误。
             // refund 继承原支出商户（writer::normalize 覆盖）：携带的商户（id 或名字）
             // 一律忽略，不解析、不即建——否则即建商户必成孤儿（issue #194）。
             let (merchant_id, pending_name) = if kind == TransactionKind::Refund {

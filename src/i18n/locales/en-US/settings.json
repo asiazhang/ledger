@@ -56,7 +56,6 @@
       "deleted": "Deleted",
       "deleteFailed": "Delete failed: {msg}",
       "sortFailed": "Reorder failed: {msg}",
-      "merchantDeleted": "(deleted merchant)",
       "accountRequired": "Please select an account",
       "amountRequired": "Please enter an amount",
       "saved": "Changes saved",

@@ -5,6 +5,7 @@ import { centsToYuan } from '@/types'
 import { buildTransferInput } from '@/domain/transaction-input'
 import { judgeAmountText, fieldErrorKind } from '@/utils/field-error'
 import { useFormShared, utcMidnightTimestamp } from '@/composables/useFormShared'
+import { useMerchantField } from '@/composables/useMerchantField'
 import { t } from '@/i18n'
 import type { Transaction } from '@/types'
 import { errorMessage } from "@/utils/errors";
@@ -56,6 +57,11 @@ export function useTransferForm(options?: {
   // 编辑模式（issue #178）：打开即回填该笔交易全部业务字段。日期以 UTC 午夜
   // 时间戳承载回填，提交端日期转换收口装配器 toLocalDateISO（issue #216）。
   const editingTx = options?.editing?.() ?? null
+  // 商户输入字段（issue #875 / ADR-0092）：借贷表单暴露输入位（借出/借入可关联商户）；
+  // 普通转账表单不绑定输入位，但编辑时回填行上商户、提交原样携带——形态退化
+  // （借贷账户被换成普通账户）退回普通转账时不静默清数据（ADR-0092 决策 5）。
+  const { merchantRef, merchantOptions, resolveMerchantId } =
+    useMerchantField(editingTx?.merchant_id ?? null)
   if (editingTx) {
     // 金额回填：分 → 元（不手写 /100）后以文本形态回填；整数分的合法回填至多
     // 两位小数（币种小数位 ≤ 2），判定必为 ok，不显红态
@@ -63,6 +69,7 @@ export function useTransferForm(options?: {
     currencyCode.value = editingTx.currency_code
     accountId.value = editingTx.account_id
     toAccountId.value = editingTx.to_account_id
+    merchantRef.value = editingTx.merchant_id
     note.value = editingTx.note ?? ''
     date.value = utcMidnightTimestamp(editingTx.date)
   }
@@ -93,6 +100,9 @@ export function useTransferForm(options?: {
       message.warning(t('transactions.form.warnAmount'))
       return
     }
+    // 商户解析留表单层（异步 + 即建/重拉副作用，issue #189 接缝）：装配器收已解析的 id。
+    // 普通转账表单无输入位 → merchantRef 恒为编辑回填值（null 于创建），原样携带。
+    const merchantId = await resolveMerchantId()
     // 编辑目标提交时重读（getter 约定见 options.editing 注释）
     const editing = options?.editing?.() ?? null
     try {
@@ -104,6 +114,7 @@ export function useTransferForm(options?: {
         currencyCode: currencyCode.value,
         accountId: accountId.value,
         toAccountId: toAccountId.value,
+        merchantId,
         note: note.value,
         date: date.value,
       })
@@ -138,13 +149,14 @@ export function useTransferForm(options?: {
     currencyCode.value = 'CNY'
     accountId.value = null
     toAccountId.value = null
+    merchantRef.value = null
     note.value = ''
     date.value = Date.now()
   }
 
   return {
     amountText, markAmountBlurred, amountError, hasFieldError,
-    currencyCode, accountId, toAccountId, note, date,
+    currencyCode, accountId, toAccountId, merchantRef, merchantOptions, note, date,
     accountOptions, currencyOptions,
     submit, resetForm,
   }

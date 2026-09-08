@@ -106,7 +106,10 @@
     "createFailed": "Failed to record: {msg}",
     "policy": "Policy",
     "policyPlaceholder": "Select policy (optional)",
-    "policyDeleted": "(deleted policy)"
+    "policyDeleted": "(deleted policy)",
+    "merchant": "Merchant",
+    "merchantPlaceholder": "Select or type a new merchant",
+    "merchantDeleted": "(deleted merchant)"
   },
   "refund": {
     "title": "Refund",
