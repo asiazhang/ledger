@@ -4,6 +4,7 @@ import { enableAutoUnmount } from '@vue/test-utils'
 import { invoke } from '@tauri-apps/api/core'
 import { mockInvoke, unexpectedInvoke } from './helpers/invoke-mock'
 import { mockListen } from './helpers/listen-mock'
+import { fakeMatchMedia, resetFakeMedia } from './helpers/media-mock'
 import { messageApi, resetMessageApi } from './helpers/message-mock'
 
 // jsdom 环境下 localStorage 不可用，使用 polyfill
@@ -30,20 +31,13 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn().mockResolvedValue(vi.fn()),
 }))
 
-// jsdom 缺少 matchMedia
+// jsdom 缺少 matchMedia：挂媒体查询测试接缝（issue #841）——可编程假 matchMedia
+// 取代早期「一律 false」静态桩，测试经 helpers/media-mock 的 setFakeMedia 设定
+// hover / pointer / 宽度应答换档；默认桌面指针状态使既有测试语义零迁移。
 if (typeof window !== 'undefined' && !window.matchMedia) {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
-    value: vi.fn().mockImplementation((query: string) => ({
-      matches: false,
-      media: query,
-      onchange: null,
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    })),
+    value: fakeMatchMedia,
   })
 }
 
@@ -88,6 +82,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   localStorage.clear()
   resetMessageApi()
+  resetFakeMedia()
 })
 
 enableAutoUnmount(afterEach)
