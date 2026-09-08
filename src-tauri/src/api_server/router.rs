@@ -8,6 +8,7 @@ use rusqlite::Connection;
 use tauri::AppHandle;
 use tower_http::trace::TraceLayer;
 
+use super::contract::contract_handler;
 use super::handlers::accounts::{
     create_account_handler, delete_account_handler, list_account_balances_handler,
     list_accounts_handler, update_account_handler,
@@ -37,6 +38,7 @@ use axum::response::{IntoResponse, Response};
 pub fn build_router(state: ApiState) -> Router {
     Router::new()
         .route("/api/v1/openapi.json", get(openapi_json_handler))
+        .route("/api/v1/contract", get(contract_handler))
         .route(
             "/api/v1/accounts",
             get(list_accounts_handler).post(create_account_handler),
@@ -86,18 +88,19 @@ pub fn build_router(state: ApiState) -> Router {
         .with_state(state)
 }
 
-/// 启动门中间件（加密锁定门 + 启动失败门，issue #570 / #601）：除 OpenAPI
-/// 契约自举端点外的全部端点在锁定期间返回码化错误 `encryption.locked`、
-/// 在启动失败期间返回码化错误 `boot.db-unreadable`——AI 导入 HTTP 面在解锁
-/// 前/库不可用时不可用；标志翻转（IPC 壳命令统一置位）后请求照常放行，
-/// 契约面零变化。
+/// 启动门中间件（加密锁定门 + 启动失败门，issue #570 / #601）：除契约
+/// 自举端点（标准 OpenAPI 与紧凑方言，issue #839）外的全部端点在锁定期间
+/// 返回码化错误 `encryption.locked`、在启动失败期间返回码化错误
+/// `boot.db-unreadable`——AI 导入 HTTP 面在解锁前/库不可用时不可用；标志
+/// 翻转（IPC 壳命令统一置位）后请求照常放行，契约面零变化。
 async fn startup_gate_middleware(
     State(state): State<ApiState>,
     req: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
-    const OPENAPI_PATH: &str = "/api/v1/openapi.json";
-    if req.uri().path() != OPENAPI_PATH {
+    // 契约自举端点：不含用户数据、不触 DB，锁定/启动失败期间照常可用。
+    const BOOTSTRAP_PATHS: [&str; 2] = ["/api/v1/openapi.json", "/api/v1/contract"];
+    if !BOOTSTRAP_PATHS.contains(&req.uri().path()) {
         if state.lock_gate.is_locked() {
             return AppError::coded("encryption.locked", "应用已锁定，请先解锁后再操作")
                 .into_response();

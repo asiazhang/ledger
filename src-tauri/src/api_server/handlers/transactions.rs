@@ -28,15 +28,11 @@ use crate::write_entry::{Outcome, write_entry};
     path = "/api/v1/transactions",
     tag = "transactions",
     summary = "列出交易（可按日期/账户/类型过滤 + 服务端分页）",
-    description = "返回 `{items, total}`：`items` 为当前页未删除交易，`total` 恒为满足过滤条件的未删除交易总数。\
-                  默认按 `date DESC, created_at DESC, id DESC` 确定性排序（同日期同时间戳时按 id 稳定，翻页无重复无遗漏）。\
-                  查询参数均为可选：`from`/`to`（YYYY-MM-DD 闭区间）、`account_id`（转出账户）、\
-                  `involving_account_id`（涉及账户：`account_id` 或 `to_account_id` 命中即算，含转入的转账）、\
-                  `merchant_id`（按商户过滤，含软删商户的历史交易）、`kind`（income/expense/transfer/buy/sell/refund，闭集枚举，非法值返回 4xx）、`page`（从 1 起，默认 1）、\
-                  `page_size`（每页条数，缺省返回全部）、`limit`（取前 N 条，与分页互斥：传 `page_size` 时分页生效）、\
-                  `category_id`（按分类精确过滤，不含子分类，含软删分类的历史交易）、`uncategorized_only`（`true` 时仅返回无分类交易；与 `category_id` 同时携带时按 AND 组合，恒为空集）、
-                  `kinds`（类型集合过滤，逗号分隔单参数如 `kinds=expense,refund`，与其余维度 AND 组合；逐元素闭集枚举，非法值 4xx；空集合视为未携带；issue #581）。\
-                  行携带 `source` 来源字段（spec #704 / issue #706，读时反查推导）：来源类型（六类闭集：分期计划/订阅计划/定时转账计划/保单/物品/标的）+ 来源实体 id + 展示名 + 可空来源状态；本期填保单分支（展示名 = 险种名，软删保单 status = `deleted`，历史引用保留不置空），无来源交易 `source` 为 `null`。",
+    description = "读回/列表唯一入口：返回 `{items, total}`，过滤参数（from/to、account_id、\
+                  involving_account_id、merchant_id、category_id、kind/kinds、\
+                  uncategorized_only、limit、page/page_size）全部可选；默认按日期倒序稳定排序。\
+                  读回核对与参数语义见导入知识「对账完成判定」节；行携带 `source` 来源字段（读时反查推导），\
+                  无来源交易为`null`。",
     params(
         ("from" = Option<String>, Query, description = "起始日期（含），YYYY-MM-DD"),
         ("to" = Option<String>, Query, description = "结束日期（含），YYYY-MM-DD"),
@@ -73,14 +69,9 @@ pub async fn list_transactions_handler(
     path = "/api/v1/transactions/batch",
     tag = "transactions",
     summary = "批量创建交易（默认去重）",
-    description = "请求体为 `{ \"transactions\": TransactionInput[], \"dedup\": bool }`，`dedup` 默认 `true`。\
-                  去重以交易身份为准：若一行携带 `idempotency_key`，则按该幂等键去重（内容无关——同键重跑\
-                  跳过、同键但本轮内容不同仍跳过；不同键但内容完全相同则都保留），命中已存在（`is_deleted=0`）\
-                  交易返回 `{success: true, duplicate: true, id: <已有 id>}`；命中查询走部分唯一索引，非全表扫描。\
-                  不带幂等键的行回退到确定性内容哈希 `sha256(date|kind|amount_cents|currency_code|account_id|to_account_id)`\
-                  去重（冻结契约，命中返回 `id: null`）。行可携带 `merchant_name`（商户名字符串，与 `merchant_id` 互斥）：\
-                  后端精确匹配在用商户名，命中复用、未命中即建；幂等重放不产生碎商户。单条业务校验失败（金额/转账/退款/商户/标的不存在等）返回 `success: false` 并附带 `error`，不影响其他交易；\
-                  `kind` 为闭集枚举（income/expense/transfer/refund/buy/sell/dividend/split），非法 kind 属请求体格式错误，整批返回 4xx。",
+    description = "批量创建交易（`dedup` 默认 true）：幂等键优先、内容哈希兜底去重；\
+                  单行校验失败返回 `success: false` 附中文 `error`、不影响其余行；非法 `kind` \
+                  属请求体格式错误、整批 4xx。去重与幂等键规则见导入知识「幂等与去重」节。",
     request_body = TransactionBatchInput,
     responses(
         (status = 200, description = "逐条创建结果（含 duplicate 标记）", body = [CreateTransactionResult]),
@@ -115,10 +106,8 @@ pub async fn batch_create_transactions_handler(
     path = "/api/v1/transactions/{id}",
     tag = "transactions",
     summary = "按 id 全字段替换交易（编辑）",
-    description = "按 `id` 全字段替换一笔交易，复用与创建一致的按 kind 校验（buy/refund/transfer 的关联约束一致）。\
-                  `idempotency_key` 不作为可编辑字段（不在请求体中）：编辑不重算去重身份，修改后重跑同批导入\
-                  仍按同键去重、不产生重复。buy/sell 的持仓/卖出关联同步重建；已有部分卖出的买入拒绝修改。\
-                  不存在的 id 返回 404。成功返回 200 与更新后的完整交易。",
+    description = "按 id 全字段替换交易（幂等键不可编辑，校验与创建一致）；\
+                  已有部分卖出的买入拒绝修改；不存在的 id 返回 404。纠错纪律见导入知识「对账纠错」节。",
     request_body = UpdateTransactionInput,
     params(
         ("id" = String, Path, description = "交易 ID")

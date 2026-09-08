@@ -25,6 +25,7 @@ tauri = { version = "2", features = ["tracing"] }
 tauri-plugin-opener = "2"
 tauri-plugin-window-state = "2"
 serde = { version = "1", features = ["derive"] }
+regex = "1"
 serde_json = "1"
 # 加密引擎基座（issue #569 / ADR-0075 决策 1）：SQLCipher 4 静态编译（bundled-sqlcipher），
 # OpenSSL 一并 vendored 静态编译，三平台产物自包含；加密参数用 SQLCipher 4 默认值不调参。
