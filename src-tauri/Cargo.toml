@@ -82,6 +82,7 @@ futures = "0.3"
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
+tauri = { version = "2", features = ["test"] }
 
 [[test]]
 name = "e2e"

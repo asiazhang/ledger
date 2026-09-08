@@ -32,6 +32,9 @@ use serde::{Deserialize, Serialize};
 use crate::error::Result;
 use crate::fs_util::atomic_write;
 
+/// 登记账本子目录名（[`default_dir`] 下自动创建的账本目录父目录）。
+pub const BOOKS_DIR_NAME: &str = "books";
+
 /// 注册表文件名：沿用旧数据位置指针文件名，存量安装原地升级、旧文件原地可读。
 pub const REGISTRY_FILE_NAME: &str = "data_location.json";
 
@@ -104,6 +107,22 @@ pub enum RegistryOrigin {
     NewFormat,
 }
 
+/// 账本清单信息（列表命令的聚合形态，issue #833）：登记清单 + 活动指针 +
+/// 登记变更可用性 + 回退警示。聚合由引导层完成
+/// （`data_location::gather_book_list_from_boot`），本类型与 [`Book`] 同家定义。
+#[derive(Clone, Debug, Serialize)]
+pub struct BookListInfo {
+    /// 全部已登记账本（注册表损坏时为空——清单不可信，不展示残片）。
+    pub books: Vec<Book>,
+    /// 活动账本 id；注册表损坏时 `None`（引导已回退默认目录建连）。
+    pub active_id: Option<String>,
+    /// 登记变更（新建/切换/改名/移除）当前是否可用（写入时机契约：注册表
+    /// 可读且无推迟搬迁窗口）。`false` 时前端禁用变更入口并展示回退原因。
+    pub mutable: bool,
+    /// 引导期回退原因（供界面显著提示）；`None` = 未回退。
+    pub fallback_reason: Option<String>,
+}
+
 /// 注册表文件读取结果。
 #[derive(Clone, Debug, PartialEq)]
 pub enum RegistryRead {
@@ -116,7 +135,7 @@ pub enum RegistryRead {
 }
 
 /// 一本账：身份即目录（内含固定名 `ledger.db`），id 与展示名是注册表元数据。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Book {
     /// 账本标识（注册表内的稳定句柄，供活动指针引用；UUID）。
     pub id: String,
@@ -305,6 +324,171 @@ pub fn write_registry(default_dir: &Path, registry: &BookRegistry) -> Result<()>
         active: registry.active_id.clone(),
     })?;
     atomic_write(&path, content.as_bytes())
+}
+
+// -------------------------------------------------------------------------
+// 登记变更命令内核（issue #833）：新建 / 切换 / 改名 / 移除。每个入口都是
+// 「读注册表现场 → 变更 → 原子写」的完整事务：基于文件最新态而非引导快照
+// 变更（出厂未配置形态在此折叠默认账本，首次登记即落新格式）；注册表损坏
+// 时拒绝变更（[`RegistryRead::Corrupt`] → 码化错误，不覆盖损坏文件——它可能
+// 是自定义位置的唯一记录，覆盖前须走既有「恢复默认位置」逃生舱）。写入
+// 时机契约的另一面（推迟搬迁窗口禁止变更）由引导态承载，在命令壳
+// （`data_location::mutable_registry`）预检，文件态无从得知。
+// -------------------------------------------------------------------------
+
+/// 新建账本：在应用数据目录下自动创建子目录（`books/<id>`）并登记。
+/// 只登记不建库——空目录由既有建连迁移在首次进入时建出全新空库（默认种子
+/// 照常），不新建造库逻辑。返回登记后的账本条目。
+pub fn create_book_entry(default_dir: &Path, name: &str) -> Result<Book> {
+    let name = required_name(name)?;
+    let mut registry = read_current(default_dir)?;
+    let id = super::new_uuid();
+    let dir = default_dir.join(BOOKS_DIR_NAME).join(&id);
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        crate::error::AppError::codedp(
+            "book.dir-unavailable",
+            format!("账本目录不可用（{}）：{e}", dir.display()),
+            &[&dir.to_string_lossy(), &e.to_string()],
+        )
+    })?;
+    ensure_dir_not_registered(&registry, &dir)?;
+    let book = Book {
+        id,
+        name: name.to_string(),
+        dir,
+    };
+    registry.books.push(book.clone());
+    write_registry(default_dir, &registry)?;
+    Ok(book)
+}
+
+/// 切换活动账本：校验目标可用后改写活动指针落盘，文件与清单零变化。
+/// 重引导（进目标账本）由前端在命令成功后复用原位重引导（ADR-0080）完成。
+/// 返回目标账本条目。
+pub fn switch_active_book(default_dir: &Path, id: &str) -> Result<Book> {
+    let mut registry = read_current(default_dir)?;
+    let book = registered_book(&registry, id)?.clone();
+    if registry.active_id == id {
+        return Err(crate::error::AppError::coded(
+            "book.already-active",
+            "该账本已是当前账本",
+        ));
+    }
+    // 目标可用性与引导同口径：目录可创建即可用（引导只 ensure 目录存在，
+    // 空目录由建连迁移建出新库）；不可用在此拒绝，活动指针保持不变。
+    ensure_dir_available(&book.dir)?;
+    registry.active_id = id.to_string();
+    write_registry(default_dir, &registry)?;
+    Ok(book)
+}
+
+/// 改账本展示名：只动注册表元数据，目录与库文件零变化。返回更新后的条目。
+pub fn rename_book_entry(default_dir: &Path, id: &str, name: &str) -> Result<Book> {
+    let name = required_name(name)?;
+    let mut registry = read_current(default_dir)?;
+    registered_book_mut(&mut registry, id)?.name = name.to_string();
+    write_registry(default_dir, &registry)?;
+    Ok(registered_book(&registry, id)?.clone())
+}
+
+/// 移除账本：只摘登记，目录与库文件原样保留（文件生命周期归用户，可重新
+/// 登记找回）。活动账本不可移除——先切换到其他账本；唯一账本必是活动账本，
+/// 自然被同一条规则保护。
+pub fn remove_book_entry(default_dir: &Path, id: &str) -> Result<()> {
+    let mut registry = read_current(default_dir)?;
+    if registry.active_id == id {
+        return Err(crate::error::AppError::coded(
+            "book.remove-active",
+            "不能移除当前账本，请先切换到其他账本",
+        ));
+    }
+    registered_book(&registry, id)?;
+    let before = registry.books.len();
+    registry.books.retain(|book| book.id != id);
+    if registry.books.len() == before {
+        return Err(unregistered_book_error(id));
+    }
+    write_registry(default_dir, &registry)
+}
+
+/// 待登记目录与既有条目的物理目录重复时拒绝（同一目录不得重复登记）。
+/// 路径身份按物理位置折叠：既有条目 best-effort canonicalize（目录可能已
+/// 不存在，失败用原样），待登记目录必须已存在（create 刚创建）。create 的
+/// 目录名是现铸 uuid、天然全新，此查重是登记接缝的纵深防御。
+fn ensure_dir_not_registered(registry: &BookRegistry, dir: &Path) -> Result<()> {
+    let canonical = dir.canonicalize()?;
+    for book in &registry.books {
+        let existing = book.dir.canonicalize().unwrap_or_else(|_| book.dir.clone());
+        if existing == canonical {
+            return Err(crate::error::AppError::codedp(
+                "book.dir-exists",
+                format!("该目录已登记为账本「{}」", book.name),
+                &[&book.name],
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// 目标目录可用（可创建/已存在）；不可用返回码化错误，供切换前拦截。
+fn ensure_dir_available(target: &Path) -> Result<()> {
+    std::fs::create_dir_all(target).map_err(|e| {
+        crate::error::AppError::codedp(
+            "book.dir-unavailable",
+            format!("账本目录不可用（{}）：{e}", target.display()),
+            &[&target.to_string_lossy(), &e.to_string()],
+        )
+    })
+}
+
+/// 读注册表现场（变更入口共用的第一步）：未配置折叠为出厂默认账本（首次
+/// 登记落新格式），损坏拒绝变更（不覆盖损坏文件，与引导态预检同一条件
+/// 同一码同一消息模板——码即条件，前端按码稳定命中）。
+fn read_current(default_dir: &Path) -> Result<BookRegistry> {
+    match read_registry(default_dir) {
+        RegistryRead::Resolved(registry) => Ok(registry),
+        RegistryRead::Unconfigured => Ok(BookRegistry::single_default(default_dir)),
+        RegistryRead::Corrupt(reason) => Err(crate::error::AppError::codedp(
+            "book.registry-corrupt",
+            format!("账本注册表损坏，已回退默认账本；请先在数据设置中恢复默认位置（{reason}）"),
+            &[&reason],
+        )),
+    }
+}
+
+/// 展示名参数校验：trim 后非空，返回 trim 结果。
+fn required_name(name: &str) -> Result<&str> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(crate::error::AppError::coded(
+            "book.name-required",
+            "账本名称不能为空",
+        ));
+    }
+    Ok(trimmed)
+}
+
+/// 按 id 取已登记账本（只读）；未登记返回码化错误。
+fn registered_book<'a>(registry: &'a BookRegistry, id: &str) -> Result<&'a Book> {
+    registry
+        .books
+        .iter()
+        .find(|book| book.id == id)
+        .ok_or_else(|| unregistered_book_error(id))
+}
+
+/// 按 id 取已登记账本（可变）；未登记返回码化错误。
+fn registered_book_mut<'a>(registry: &'a mut BookRegistry, id: &str) -> Result<&'a mut Book> {
+    registry
+        .books
+        .iter_mut()
+        .find(|book| book.id == id)
+        .ok_or_else(|| unregistered_book_error(id))
+}
+
+/// 未登记账本的码化错误（not-found，参数携带 id）。
+fn unregistered_book_error(id: &str) -> crate::error::AppError {
+    crate::error::AppError::codedp_not_found("book.not-found", format!("账本不存在: {id}"), &[id])
 }
 
 #[cfg(test)]

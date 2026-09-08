@@ -56,6 +56,17 @@
   "book-registry": {
     "invalid": "book registry validation failed: {0}"
   },
+  "book": {
+    "registry-unavailable": "The book registry is not ready yet, please restart the app and try again",
+    "registry-busy": "Data relocation has not finished; books cannot be changed right now. Restart the app to finish the relocation first",
+    "registry-corrupt": "The book registry is corrupted; the default book was restored. Reset the default location in data settings first ({0})",
+    "name-required": "Book name is required",
+    "not-found": "Book not found: {0}",
+    "already-active": "This book is already the active book",
+    "remove-active": "The active book cannot be removed; switch to another book first",
+    "dir-exists": "This directory is already registered as book \"{0}\"",
+    "dir-unavailable": "Book directory is unavailable ({0}): {1}"
+  },
   "sync": {
     "fund-not-found": "fund code {0} not found, please verify and retry",
     "stock-not-found": "stock code {0} not found, please verify and retry",

@@ -291,3 +291,226 @@ fn write_registry_rejects_corrupt_registry_state() {
     // 被拒绝的写入不得产生文件或残留。
     assert!(!dir.join(REGISTRY_FILE_NAME).exists());
 }
+
+// -------------------------------------------------------------------------
+// 登记变更命令内核（issue #833）：新建 / 切换 / 改名 / 移除。
+// 写入时机契约（注册表损坏、推迟搬迁窗口禁止变更）的引导级组合行为
+// 由 data_location 测试与命令集成测试覆盖，此处钉内核纯函数语义。
+// -------------------------------------------------------------------------
+
+/// 现场工具：经变更内核造一本已登记账本，返回其 id。
+fn create_entry(dir: &Path, name: &str) -> String {
+    create_book_entry(dir, name).unwrap().id
+}
+
+#[test]
+fn create_appends_entry_and_lands_new_format() {
+    let dir = temp_dir("create-append");
+    let created = create_book_entry(&dir, "家庭账本").unwrap();
+    assert_eq!(created.name, "家庭账本");
+    // 新账本目录：应用数据目录下自动创建的子目录，且物理存在。
+    assert_eq!(
+        created.dir.parent(),
+        Some(dir.join(BOOKS_DIR_NAME).as_path())
+    );
+    assert!(created.dir.is_dir());
+
+    // 注册表落新格式：默认账本（出厂折叠）+ 新账本，活动指针仍在默认账本。
+    let RegistryRead::Resolved(registry) = read_registry(&dir) else {
+        panic!("登记后应解析为新格式注册表");
+    };
+    assert_eq!(registry.origin, RegistryOrigin::NewFormat);
+    assert_eq!(registry.books.len(), 2);
+    assert_eq!(registry.books[0].name, DEFAULT_BOOK_NAME);
+    assert_eq!(registry.books[0].dir, dir);
+    assert_eq!(registry.books[1].id, created.id);
+    assert_eq!(registry.active_id, registry.books[0].id);
+}
+
+#[test]
+fn create_on_legacy_pointer_upgrades_in_place() {
+    let dir = temp_dir("create-legacy");
+    let configured = dir.join("existing-data");
+    std::fs::create_dir_all(&configured).unwrap();
+    write_raw(
+        &dir,
+        &serde_json::json!({ "data_dir": configured.to_string_lossy() }).to_string(),
+    );
+
+    create_book_entry(&dir, "副业").unwrap();
+
+    // 首次登记把旧指针确定性升级为新格式：默认账本目录 = 旧 data_dir，零数据移动。
+    let RegistryRead::Resolved(registry) = read_registry(&dir) else {
+        panic!("登记后应解析为新格式注册表");
+    };
+    assert_eq!(registry.books.len(), 2);
+    assert_eq!(registry.books[0].dir, configured);
+    assert_eq!(registry.books[0].name, DEFAULT_BOOK_NAME);
+}
+
+#[test]
+fn create_rejects_blank_name_without_writes() {
+    for name in ["", "   "] {
+        let dir = temp_dir("create-blank");
+        let err = create_book_entry(&dir, name).unwrap_err();
+        assert!(err.is_code("book.name-required"), "({name}) 实际 {err:?}");
+        assert!(!dir.join(REGISTRY_FILE_NAME).exists(), "空白名不得落盘");
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn dir_registration_check_folds_symlink_aliases() {
+    // 同一目录不得重复登记（路径身份按物理位置折叠）：待登记目录经符号链接
+    // 别名指向既有账本目录时按重复拒绝；非链接的全新路径照常放行。create 的
+    // 目录名是现铸 uuid、天然全新，此查重是登记接缝的纵深防御（行为级无法
+    // 自然触达，直测内核接缝）。
+    let dir = temp_dir("create-dup");
+    let first = create_book_entry(&dir, "一本").unwrap();
+    let link = dir.join(BOOKS_DIR_NAME).join("link-to-first");
+    std::os::unix::fs::symlink(&first.dir, &link).unwrap();
+    let RegistryRead::Resolved(registry) = read_registry(&dir) else {
+        panic!("现场应可解析");
+    };
+
+    let err = ensure_dir_not_registered(&registry, &link).unwrap_err();
+    assert!(err.is_code("book.dir-exists"), "实际 {err:?}");
+    let fresh = dir.join(BOOKS_DIR_NAME).join("fresh");
+    std::fs::create_dir_all(&fresh).unwrap();
+    ensure_dir_not_registered(&registry, &fresh).unwrap();
+}
+
+#[test]
+fn create_rejects_corrupt_registry_without_writes() {
+    let dir = temp_dir("create-corrupt");
+    write_raw(&dir, "{not json");
+    let err = create_book_entry(&dir, "家庭账本").unwrap_err();
+    assert!(err.is_code("book.registry-corrupt"), "实际 {err:?}");
+    // 损坏文件原样保留（覆盖前须走既有恢复通道）。
+    assert_eq!(
+        std::fs::read_to_string(dir.join(REGISTRY_FILE_NAME)).unwrap(),
+        "{not json"
+    );
+}
+
+#[test]
+fn switch_updates_active_pointer_only() {
+    let dir = temp_dir("switch");
+    let first = create_entry(&dir, "一本");
+    let second = create_entry(&dir, "二本");
+
+    let switched = switch_active_book(&dir, &second).unwrap();
+    assert_eq!(switched.id, second);
+    let RegistryRead::Resolved(registry) = read_registry(&dir) else {
+        panic!("切换后应可解析");
+    };
+    assert_eq!(registry.active_id, second);
+    assert_eq!(registry.books.len(), 3); // 默认 + 两本，清单不变
+    let _ = first;
+}
+
+#[test]
+fn switch_rejects_unknown_id() {
+    let dir = temp_dir("switch-unknown");
+    create_entry(&dir, "一本");
+    let err = switch_active_book(&dir, "no-such-id").unwrap_err();
+    assert!(err.is_code("book.not-found"), "实际 {err:?}");
+}
+
+#[test]
+fn switch_rejects_already_active() {
+    let dir = temp_dir("switch-active");
+    create_entry(&dir, "一本");
+    let second = create_entry(&dir, "二本");
+    switch_active_book(&dir, &second).unwrap();
+    let err = switch_active_book(&dir, &second).unwrap_err();
+    assert!(err.is_code("book.already-active"), "实际 {err:?}");
+}
+
+#[test]
+fn switch_rejects_unavailable_dir_and_keeps_pointer() {
+    let dir = temp_dir("switch-unavailable");
+    create_entry(&dir, "一本");
+    let second = create_entry(&dir, "二本");
+    // 用户删目录后同路径放普通文件：目录不可再创建 → 不可用。
+    let second_dir = dir.join(BOOKS_DIR_NAME).join(&second);
+    std::fs::remove_dir_all(&second_dir).unwrap();
+    std::fs::write(&second_dir, b"not a dir").unwrap();
+
+    let err = switch_active_book(&dir, &second).unwrap_err();
+    assert!(err.is_code("book.dir-unavailable"), "实际 {err:?}");
+    // 活动指针保持原账本，注册表未被改写。
+    let RegistryRead::Resolved(registry) = read_registry(&dir) else {
+        panic!("现场应可解析");
+    };
+    assert_ne!(registry.active_id, second);
+}
+
+#[test]
+fn rename_updates_display_name() {
+    let dir = temp_dir("rename");
+    create_entry(&dir, "一本");
+    let second = create_entry(&dir, "二本");
+
+    let renamed = rename_book_entry(&dir, &second, "家庭账本").unwrap();
+    assert_eq!(renamed.name, "家庭账本");
+    let RegistryRead::Resolved(registry) = read_registry(&dir) else {
+        panic!("改名后应可解析");
+    };
+    let book = registry.books.iter().find(|b| b.id == second).unwrap();
+    assert_eq!(book.name, "家庭账本");
+    assert_eq!(registry.active_id, registry.books[0].id); // 活动指针不受影响
+}
+
+#[test]
+fn rename_rejects_blank_and_unknown() {
+    let dir = temp_dir("rename-bad");
+    let first = create_entry(&dir, "一本");
+    let err = rename_book_entry(&dir, &first, "  ").unwrap_err();
+    assert!(err.is_code("book.name-required"), "实际 {err:?}");
+    let err = rename_book_entry(&dir, "no-such-id", "新名").unwrap_err();
+    assert!(err.is_code("book.not-found"), "实际 {err:?}");
+}
+
+#[test]
+fn remove_drops_entry_and_keeps_files() {
+    let dir = temp_dir("remove");
+    create_entry(&dir, "一本");
+    let second = create_entry(&dir, "二本");
+    let second_dir = dir.join(BOOKS_DIR_NAME).join(&second);
+    std::fs::write(second_dir.join("marker.txt"), b"keep me").unwrap();
+
+    remove_book_entry(&dir, &second).unwrap();
+    let RegistryRead::Resolved(registry) = read_registry(&dir) else {
+        panic!("移除后应可解析");
+    };
+    assert_eq!(registry.books.len(), 2);
+    assert!(registry.books.iter().all(|b| b.id != second));
+    // 文件保留原则：目录与其内容原样保留（生命周期归用户）。
+    assert!(second_dir.is_dir());
+    assert_eq!(
+        std::fs::read(second_dir.join("marker.txt")).unwrap(),
+        b"keep me"
+    );
+}
+
+#[test]
+fn remove_rejects_active_book() {
+    let dir = temp_dir("remove-active");
+    create_entry(&dir, "一本");
+    create_entry(&dir, "二本");
+    // 活动账本（默认账本）不可移除：先切走才能移除。
+    let RegistryRead::Resolved(registry) = read_registry(&dir) else {
+        panic!("现场应可解析");
+    };
+    let err = remove_book_entry(&dir, &registry.active_id).unwrap_err();
+    assert!(err.is_code("book.remove-active"), "实际 {err:?}");
+}
+
+#[test]
+fn remove_rejects_unknown_id() {
+    let dir = temp_dir("remove-unknown");
+    create_entry(&dir, "一本");
+    let err = remove_book_entry(&dir, "no-such-id").unwrap_err();
+    assert!(err.is_code("book.not-found"), "实际 {err:?}");
+}

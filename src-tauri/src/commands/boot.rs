@@ -24,7 +24,7 @@ use std::sync::RwLock;
 
 use rusqlite::Connection;
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Runtime};
 
 use crate::backup;
 use crate::commands::data_location::{default_data_dir, effective_db_dir_of};
@@ -55,7 +55,7 @@ fn register_boot(app: &AppHandle, boot: Boot) {
 
 /// 读取当前引导结果（克隆快照）；未登记（极端时序）返回 `None`，消费方按
 /// 各自的兜底语义处理（与旧 `try_state::<Boot>()` 同形）。
-pub(crate) fn current_boot(app: &AppHandle) -> Option<Boot> {
+pub(crate) fn current_boot<R: Runtime>(app: &AppHandle<R>) -> Option<Boot> {
     app.try_state::<BootCell>()
         .map(|cell| cell.read().unwrap_or_else(|e| e.into_inner()).clone())
 }

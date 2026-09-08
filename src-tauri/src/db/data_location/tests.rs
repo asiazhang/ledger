@@ -298,3 +298,109 @@ fn configured_intent_maps_all_pointer_states() {
     .unwrap();
     assert_eq!(configured_intent(&dir), Some(book_dir));
 }
+
+// -------------------------------------------------------------------------
+// 账本注册表命令面支撑（issue #833）：mutable_registry 写入时机契约预检与
+// gather_book_list_from_boot 清单聚合。
+// -------------------------------------------------------------------------
+
+#[test]
+fn mutable_registry_follows_write_timing_contract() {
+    // 三个禁因各自稳定码化（ADR-0050 一条件一码）。
+    // 未登记（极端时序）→ registry-unavailable。
+    let err = mutable_registry(None).unwrap_err();
+    assert!(err.is_code("book.registry-unavailable"), "实际 {err:?}");
+    // 注册表损坏（registry None）→ registry-corrupt，原因随参数携带。
+    let corrupt = Boot {
+        db_dir: PathBuf::from("/data/default"),
+        fallback_reason: Some("损坏".into()),
+        deferred_relocation: None,
+        registry: None,
+    };
+    let err = mutable_registry(Some(&corrupt)).unwrap_err();
+    assert!(err.is_code("book.registry-corrupt"), "实际 {err:?}");
+    // 推迟搬迁窗口 → registry-busy（registry Some 也不放行）。
+    let mut deferred = corrupt.clone();
+    deferred.registry = Some(BookRegistry::single_default(Path::new("/data/default")));
+    deferred.db_dir = PathBuf::from("/data/default");
+    deferred.deferred_relocation = Some(PathBuf::from("/data/target"));
+    let err = mutable_registry(Some(&deferred)).unwrap_err();
+    assert!(err.is_code("book.registry-busy"), "实际 {err:?}");
+    // 可读且无搬迁窗口 → 放行。
+    let mut ready = deferred;
+    ready.deferred_relocation = None;
+    assert!(mutable_registry(Some(&ready)).is_ok());
+}
+
+#[test]
+fn gather_book_list_follows_boot_states() {
+    use book_registry::RegistryRead;
+
+    // 可读注册表：清单 + 活动指针 + 可变。
+    let dir = temp_dir("list-ok");
+    let book_dir = dir.join("books").join("m");
+    std::fs::create_dir_all(&book_dir).unwrap();
+    book_registry::write_registry(
+        &dir,
+        &book_registry::BookRegistry {
+            active_id: "m".into(),
+            books: vec![book_registry::Book {
+                id: "m".into(),
+                name: "默认账本".into(),
+                dir: book_dir,
+            }],
+            origin: book_registry::RegistryOrigin::NewFormat,
+        },
+    )
+    .unwrap();
+    let boot = super::boot(&dir);
+    let info = gather_book_list(&dir, Some(&boot));
+    assert_eq!(info.books.len(), 1);
+    assert_eq!(info.active_id.as_deref(), Some("m"));
+    assert!(info.mutable);
+    assert!(info.fallback_reason.is_none());
+
+    // 登记变更落盘后清单立即可见（现场权威，不被引导快照留在旧态）：
+    // 快照仍是引导时的单本，现场已有两本，清单应报两本。
+    let second_dir = dir.join("books").join("s");
+    std::fs::create_dir_all(&second_dir).unwrap();
+    let mut registry = match book_registry::read_registry(&dir) {
+        RegistryRead::Resolved(registry) => registry,
+        other => panic!("现场应可解析，实际 {other:?}"),
+    };
+    registry.books.push(book_registry::Book {
+        id: "s".into(),
+        name: "二本".into(),
+        dir: second_dir,
+    });
+    book_registry::write_registry(&dir, &registry).unwrap();
+    let info = gather_book_list(&dir, Some(&boot));
+    assert_eq!(info.books.len(), 2, "清单应取最新落盘态");
+
+    // 损坏注册表：清单不可信（空 + 不可变），回退原因随行。
+    let broken = temp_dir("list-broken");
+    std::fs::write(broken.join(POINTER_FILE_NAME), "{broken").unwrap();
+    let boot = super::boot(&broken);
+    let info = gather_book_list(&broken, Some(&boot));
+    assert!(info.books.is_empty());
+    assert_eq!(info.active_id, None);
+    assert!(!info.mutable);
+    assert!(info.fallback_reason.is_some());
+
+    // 推迟搬迁窗口（直接构造引导态，聚合只消费 Boot 字段）：清单可展示，但变更被禁。
+    let boot = Boot {
+        db_dir: PathBuf::from("/data/source"),
+        fallback_reason: None,
+        deferred_relocation: Some(PathBuf::from("/data/target")),
+        registry: Some(BookRegistry::single_default(Path::new("/data/source"))),
+    };
+    let info = gather_book_list(Path::new("/data/source"), Some(&boot));
+    assert_eq!(info.books.len(), 1);
+    assert!(!info.mutable);
+    assert!(info.fallback_reason.is_none());
+
+    // 未登记（极端时序）：现场可读则清单照常，但不可变。
+    let info = gather_book_list(&dir, None);
+    assert_eq!(info.books.len(), 2);
+    assert!(!info.mutable);
+}
