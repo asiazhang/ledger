@@ -216,10 +216,7 @@ jobs:
             os: macos-latest
             bundles: dmg
             artifact: openledger-macos-arm64
-            # dmg 之外额外上传「已公证 .app 的分发 zip」（公证步骤生成），免挂载即可安装。
-            paths: |
-              src-tauri/target/release/bundle/dmg/*.dmg
-              src-tauri/target/release/bundle/macos/*.zip
+            paths: src-tauri/target/release/bundle/dmg/*.dmg
           - label: Linux (x64)
             os: ubuntu-latest
             bundles: deb,appimage
@@ -296,9 +293,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 公证 + 附着（issue #658 步骤 5）：.app 以 zip 提交公证（票据 stapler 附着回 .app，
-      # 分发 zip 内即已公证），DMG 单独提交公证并附着。--wait 阻塞至 Apple 出结果。
-      - name: 公证 DMG 与 zip（notarytool + stapler）
+      # 公证 + 附着（issue #658 步骤 5）：公证输入为 DMG 本体（submit --wait 阻塞至
+      # Apple 出结果 → stapler 附着票据）。注：tauri 的 dmg 打包流程结束后会清掉
+      # bundle/macos 下的 .app（run 34210128468 实测目录为空），无 .app 可单独公证，
+      # zip 分发需另行方案（见 docs/verification/658-ci-signing-notarization.md）。
+      - name: 公证 DMG（notarytool + stapler）
         if: runner.os == 'macOS'
         env:
           APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
@@ -314,34 +313,20 @@ jobs:
           : "${APPLE_ID:?✗ 缺少 secret APPLE_ID（公证必需）}"
           : "${APPLE_APP_SPECIFIC_PASSWORD:?✗ 缺少 secret APPLE_APP_SPECIFIC_PASSWORD（公证必需）}"
           : "${APPLE_TEAM_ID:?✗ 缺少 secret APPLE_TEAM_ID（公证必需）}"
-          # 诊断：定位公证输入产物（run 34208716376 实测 find 意外返回空，ditto 报
-          # "Cannot get the real path for source ''" 难以排障）
-          echo "pwd=$(pwd)"
-          ls -la "$MACOS_BUNDLE_DIR" || true
-          ls -la "$DMG_BUNDLE_DIR" || true
-          APP_PATH=$(find "$MACOS_BUNDLE_DIR" -maxdepth 1 -name '*.app' | head -n 1)
           DMG_PATH=$(find "$DMG_BUNDLE_DIR" -maxdepth 1 -name '*.dmg' | head -n 1)
-          echo "APP_PATH=$APP_PATH"
           echo "DMG_PATH=$DMG_PATH"
-          [ -n "$APP_PATH" ] && [ -n "$DMG_PATH" ] \
-            || { echo "✗ 未找到待公证产物（.app / .dmg），见上方目录列表"; exit 1; }
+          [ -n "$DMG_PATH" ] || { echo "✗ 未找到待公证 .dmg"; exit 1; }
           PROFILE=openledger-notary
           xcrun notarytool store-credentials "$PROFILE" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
             --team-id "$APPLE_TEAM_ID"
-          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$RUNNER_TEMP/openledger-notarize.zip"
-          xcrun notarytool submit "$RUNNER_TEMP/openledger-notarize.zip" --keychain-profile "$PROFILE" --wait
-          xcrun stapler staple "$APP_PATH"
-          DMG_STEM=$(basename "$DMG_PATH" .dmg)
-          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" \
-            "$MACOS_BUNDLE_DIR/${DMG_STEM}.zip"
           xcrun notarytool submit "$DMG_PATH" --keychain-profile "$PROFILE" --wait
           xcrun stapler staple "$DMG_PATH"
 
-      # 校验（issue #658 交付物）：签名身份必须是 Developer ID Application 且
-      # 启用 hardened runtime（公证必需，防止 bundler 默认行为变化），公证票据
-      # 附着有效、Gatekeeper 评估放行——任一失败即发布失败。
+      # 校验（issue #658 交付物）：DMG 公证票据附着有效、Gatekeeper 放行；临时
+      # 挂载 DMG 验内部 .app——签名身份必须是 Developer ID Application 且启用
+      # hardened runtime（公证必需，防止 bundler 默认行为变化）。任一失败即发布失败。
       - name: 校验签名与公证（Gatekeeper）
         if: runner.os == 'macOS'
         env:
@@ -351,16 +336,19 @@ jobs:
             echo "⚠️ 未配置签名证书，跳过校验"
             exit 0
           fi
-          APP_PATH=$(find "$MACOS_BUNDLE_DIR" -maxdepth 1 -name '*.app' | head -n 1)
           DMG_PATH=$(find "$DMG_BUNDLE_DIR" -maxdepth 1 -name '*.dmg' | head -n 1)
-          codesign --verify --strict --verbose=2 "$APP_PATH"
-          codesign -dv "$APP_PATH" 2>&1 | grep -q 'Authority=Developer ID Application' \
-            || { echo "✗ 签名身份不是 Developer ID Application"; exit 1; }
-          codesign -dv --verbose=4 "$APP_PATH" 2>&1 | grep -q 'runtime' \
-            || { echo "✗ 未启用 hardened runtime（公证必需）"; exit 1; }
-          spctl --assess --type execute -vv "$APP_PATH"
           xcrun stapler validate "$DMG_PATH"
           spctl --assess --type open -vv "$DMG_PATH"
+          MNT="$RUNNER_TEMP/openledger-dmg-mount"
+          hdiutil attach -readonly -nobrowse -mountpoint "$MNT" "$DMG_PATH" >/dev/null
+          APP_IN_DMG=$(find "$MNT" -maxdepth 2 -name '*.app' | head -n 1)
+          codesign --verify --strict --verbose=2 "$APP_IN_DMG"
+          codesign -dv "$APP_IN_DMG" 2>&1 | grep -q 'Authority=Developer ID Application' \
+            || { echo "✗ 签名身份不是 Developer ID Application"; exit 1; }
+          codesign -dv --verbose=4 "$APP_IN_DMG" 2>&1 | grep -q 'runtime' \
+            || { echo "✗ 未启用 hardened runtime（公证必需）"; exit 1; }
+          spctl --assess --type execute -vv "$APP_IN_DMG"
+          hdiutil detach "$MNT"
 
       - name: 清理签名钥匙串
         if: always() && runner.os == 'macOS'

@@ -2,9 +2,9 @@
 
 > `.github/workflows/build.yml` 的 release job 在 macOS 矩阵上完成 Developer ID
 > 签名（`tauri.conf.json` 的 `signingIdentity`，#657 落地）与公证（notarytool
-> `--wait` + stapler 附着），使 `v*` tag 发布的 DMG / zip 产物可被 Gatekeeper
-> 放行。证书与公证凭据全部经 GitHub Actions secrets 注入，本文件记录各 secret
-> 的来源、CI 读取方式与发布产物的人工验收清单。
+> `--wait` + stapler 附着），使 `v*` tag 发布的 DMG 产物可被 Gatekeeper 放行。
+> 证书与公证凭据全部经 GitHub Actions secrets 注入，本文件记录各 secret 的
+> 来源、CI 读取方式与发布产物的人工验收清单。
 
 ## Actions secrets 清单与来源
 
@@ -31,11 +31,15 @@
    背书，不可得），故刻意省略，签名仅用 signingIdentity + hardened runtime。
 3. **公证**：`xcrun notarytool store-credentials`（`APPLE_ID` +
    `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID`，缺失即 fail fast，不等到
-   提交时才报错）→ `.app`（zip 提交）与 DMG 分别 `notarytool submit --wait` →
-   `xcrun stapler staple` 附着票据；分发 zip 由已附着的 `.app` 重新打包生成。
-4. **校验**：`codesign --verify --strict`、签名身份必须是 Developer ID
-   Application、hardened runtime 标志必须存在（防止 bundler 默认行为变化）、
-   `spctl --assess`（app 与 dmg）、`xcrun stapler validate`——任一失败即发布失败。
+   提交时才报错）→ DMG 本体 `notarytool submit --wait` → `xcrun stapler staple`
+   附着票据。
+   注：tauri 的 dmg 打包流程结束后会清掉 `bundle/macos` 下的 `.app`
+   （实测），公证输入只有 DMG。issue 步骤 6 的「及 zip」分发暂缓——zip 内
+   `.app` 自带票据需改用 tauri 内建公证或调整打包顺序，另开 ticket 处理。
+4. **校验**：`xcrun stapler validate` + `spctl --assess`（DMG）→ 临时挂载 DMG
+   （`hdiutil attach -readonly`）验内部 `.app`：`codesign --verify --strict`、
+   签名身份必须是 Developer ID Application、hardened runtime 标志必须存在
+   （防止 bundler 默认行为变化）——任一失败即发布失败。
 5. **清理**：删除临时钥匙串并恢复 login 钥匙串为默认（`always()`，失败路径
    同样清理）。
 
@@ -50,10 +54,10 @@
 
 - [ ] `xcrun stapler validate OpenLedger_<版本>_aarch64.dmg` 通过。
 - [ ] `spctl --assess --type open -vv <dmg>` 显示 accepted（来源含 Notarized）。
-- [ ] zip 内 `.app`：`codesign -dv --verbose=4` 显示 Developer ID Application
-  与 TeamIdentifier；`spctl --assess --type execute -vv` accepted。
-- [ ] 挂载 DMG 拷出 `.app`，在未登录开发者账号的机器上首次启动：Gatekeeper
-  提示「已验证」放行（无「无法验证开发者」拦截）。
+- [ ] 挂载 DMG 拷出 `.app`：`codesign -dv --verbose=4` 显示 Developer ID
+  Application 与 TeamIdentifier；`spctl --assess --type execute -vv` accepted。
+- [ ] 在未登录开发者账号的机器上首次启动：Gatekeeper 提示「已验证」放行
+  （无「无法验证开发者」拦截）。
 
 ## 记录
 
