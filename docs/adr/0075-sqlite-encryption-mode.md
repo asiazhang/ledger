@@ -123,3 +123,18 @@
   解锁的等待有界（30s），到期回退手输并提示、加载态不再遮蔽手输与逃生门双入口；后端
   调用不取消，迟到成功照常进入（等待有界、结果不丢）。完成后自动重启的机制由 ADR-0080
   （原位重引导）承接，转换/恢复「完成后自动重启」的时机与用户可见语义不变。
+
+- **2026-09-08：生物门改用 LocalAuthentication 应用层门（issue #866，方案 A）。**
+  决策 3 的生物认证门机制由 item 级 ACL（`kSecAttrAccessControl` +
+  `BIOMETRY_CURRENT_SET`，#662 发布构建维持形态）修订为**读取前应用层门**：
+  #657 证据矩阵实测（macOS 26.6.2 arm64，Individual + Developer ID Application，
+  链 Developer ID Certification Authority G2）证明 ACL 生物门对 Developer ID 分发
+  不可用——不挂 entitlements 建/读报 `errSecMissingEntitlement`（-34018），挂
+  restricted entitlement（`keychain-access-groups`）被 AMFI SIGKILL，只挂
+  `application-identifier` 钥匙串不认。新形态：钥匙串条目普通写入（无 ACL，
+  开发回退与发布形态写入相同），发布构建读取前先经
+  `LAContext.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics)` 弹 Touch ID，
+  验证通过才读条目（#657 矩阵 4 实测 Developer ID + hardened runtime 完整走通）；
+  取消/不可用回退语义不变。已知行为差异：生物特征重录**不再使缓存失效**
+  （门在读取时评估当前生物特征，不与条目绑定）。运行形态分叉（#662）保留，
+  形态判别纯函数与 wire 值不变；历史 ACL 条目由先删后建自然迁移为普通条目。

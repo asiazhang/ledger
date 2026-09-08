@@ -58,9 +58,23 @@ pinyin = "0.11"
 # 刻意不启用 OSX_10_15（use_protected_keychain / 数据保护钥匙串）：macOS 26 对
 # 未签名/ad-hoc 进程的无门 DPK 写入同样报 -34018（#662 本机探针实证；先例
 # block/buzz#1266），开发回退走传统钥匙串无门条目，勿因「重签稳定」旧论再开。
+# 生物门自 issue #866 起为 LocalAuthentication 应用层门（读取前 LAContext 弹
+# Touch ID，条目本身无 ACL）：objc2-local-authentication 与依赖树中 objc2 0.6
+# 同代（0.3.x），Developer ID + hardened runtime 可用已被 #657 证据矩阵实证。
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3.7"
 security-framework-sys = "2.17"
+objc2-local-authentication = "0.3"
+# 类型桥接（命名生成绑定的公开类型，与依赖树同代，feature 由统一化合并）：
+# block2 = LAContext evaluatePolicy 的 reply block；objc2 = runtime Bool；
+# objc2-foundation = NSString（localizedReason）/ NSError（错误码）。
+block2 = { version = "0.6", default-features = false, features = ["alloc"] }
+objc2 = { version = "0.6", default-features = false, features = ["std"] }
+objc2-foundation = { version = "0.3", default-features = false, features = [
+  "alloc",
+  "NSString",
+  "NSError",
+] }
 
 [dev-dependencies]
 cucumber = "0.23"
