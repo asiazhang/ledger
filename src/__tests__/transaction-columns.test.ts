@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import type { DataTableColumn } from 'naive-ui'
+import { NEllipsis, type DataTableColumn } from 'naive-ui'
 import type { VNode } from 'vue'
 import {
   buildTransactionColumns,
   type ReferenceStore,
 } from '@/components/transaction-columns'
 import SourceLink from '@/components/SourceLink.vue'
+import NoteCopyButton from '@/components/NoteCopyButton.vue'
 import { useAppStore } from '@/stores/app'
 import { kindSemanticColor } from '@/theme/semantic-colors'
 import { TRANSACTION_KINDS, type Transaction, type TransactionSource } from '@/types'
@@ -117,5 +118,28 @@ describe('buildTransactionColumns 来源列', () => {
 
   it('无来源留空（占位符，手动/AI 导入口径）', () => {
     expect(sourceCellOf(makeTransaction({ id: 't3' }))).toBe('-')
+  })
+})
+
+/** 备注列（显式复制通道，见「界面文本不可选」词条）：只测单元格产物——
+ * 占位符/容器结构/按钮载荷；复制动作与 toast 归 NoteCopyButton 组件测试（一缝一测）。 */
+describe('buildTransactionColumns 备注列', () => {
+  function noteCellOf(row: Transaction) {
+    const render = renderColumnOf(buildTransactionColumns(reference), 'note')
+    return render(row, 0)
+  }
+
+  it('无备注渲染占位符，不渲染复制按钮（空备注无可复制）', () => {
+    expect(noteCellOf(makeTransaction({ id: 't1', note: null }))).toBe('-')
+  })
+
+  it('有备注渲染单元格容器：文本 NEllipsis（自省略+悬停全文）与复制按钮并排，按钮携带完整备注', () => {
+    const vnode = noteCellOf(makeTransaction({ id: 't2', note: '视频会员月费' })) as VNode
+    expect((vnode.props as { style: string }).style).toContain('display: flex')
+    const children = vnode.children as VNode[]
+    expect(children).toHaveLength(2)
+    expect(children[0].type).toBe(NEllipsis)
+    expect(children[1].type).toBe(NoteCopyButton)
+    expect((children[1].props as { note: string }).note).toBe('视频会员月费')
   })
 })

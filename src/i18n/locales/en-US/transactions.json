@@ -47,7 +47,10 @@
     "emptyFiltered": "No matching transactions",
     "loadFailed": "Failed to load: {msg}",
     "deleted": "Deleted",
-    "deleteFailed": "Failed to delete: {msg}"
+    "deleteFailed": "Failed to delete: {msg}",
+    "copyNote": "Copy note",
+    "copyNoteOk": "Note copied",
+    "copyNoteFailed": "Failed to copy: {msg}"
   },
   "filter": {
     "account": "Account",

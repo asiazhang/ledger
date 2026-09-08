@@ -3,7 +3,7 @@
 // 渲染函数在运行时读取 store 的响应式数据，构建一次即可，无需 computed 包裹。
 
 import { h, type VNode } from 'vue'
-import { NTag, type DataTableColumn } from 'naive-ui'
+import { NEllipsis, NTag, type DataTableColumn } from 'naive-ui'
 import { formatAmount } from '@/types'
 import type { Transaction, TransactionKind } from '@/types'
 import type { useReferenceStore } from '@/stores/reference'
@@ -13,6 +13,7 @@ import { t } from '@/i18n'
 import AccountLink from '@/components/AccountLink.vue'
 import MerchantLink from '@/components/MerchantLink.vue'
 import SourceLink from '@/components/SourceLink.vue'
+import NoteCopyButton from '@/components/NoteCopyButton.vue'
 import { lendingLabelKey, resolveLendingDirection } from '@/domain/lending'
 
 export type ReferenceStore = ReturnType<typeof useReferenceStore>
@@ -44,7 +45,8 @@ export function sumFixedColumnWidths(columns: DataTableColumn<Transaction>[]): n
  *   `minWidth`/`maxWidth` 均无效（maxWidth 仅 `resizable` 时生效）。
  * - 策略：除备注外所有列显式 `width`（贴合实际内容，不随窗口漂移）；**备注列不设 `width`，
  *   作为唯一弹性列吸收剩余空间**——窗口更宽则备注更宽、更窄则备注收缩，表格始终铺满容器，
- *   其余列不被挤压也不被拉伸。备注超长时由 `ellipsis` 省略 + 悬停全文。
+ *   其余列不被挤压也不被拉伸。备注超长时由单元格内 NEllipsis 省略 + 悬停全文
+ *   （复制按钮并排，见 renderNoteCell）。
  * - 不要覆盖 table 的 `width`（改 `auto` 会让带 `ellipsis` 的列被长文本撑宽，实测分类
  *   150→286px、备注 240→398px）。
  * - 使用方以「所有固定列（有 `width` 的列，含金额列；备注不计入）宽度总和」作为 `scroll-x`，
@@ -61,6 +63,24 @@ function kindLabel(reference: ReferenceStore, row: Transaction): string {
   if (row.kind !== 'transfer') return t(`transactions.kind.${row.kind}`)
   const direction = resolveLendingDirection(row, (id) => reference.accountMap.get(id)?.type)
   return t(lendingLabelKey(direction ?? 'none'))
+}
+
+/** 备注单元格布局：文本占满剩余宽度（自省略），复制按钮固定宽度靠右。 */
+const NOTE_CELL_STYLE =
+  'display: flex; align-items: center; gap: 2px; width: 100%; max-width: 100%;'
+
+/** 备注单元格渲染（显式复制通道，见 CONTEXT-ui-interaction「界面文本不可选」）：
+ * - 无备注渲染 '-'，不渲染复制按钮（空备注无可复制）；
+ * - 有备注：单元格内 flex——NEllipsis 承载文本（自省略 + 悬停全文，同账户/来源列的
+ *   单元格内省略模式），NoteCopyButton 复制完整备注（clipboard API + toast），
+ *   按钮悬停行显现（显隐样式收口 global.css）。 */
+function renderNoteCell(row: Transaction): VNode | string {
+  const { note } = row
+  if (!note) return '-'
+  return h('div', { style: NOTE_CELL_STYLE }, [
+    h(NEllipsis, { style: 'flex: 1 1 auto; min-width: 0;' }, { default: () => note }),
+    h(NoteCopyButton, { note, style: 'flex: none;' }),
+  ])
 }
 
 export function buildTransactionColumns(reference: ReferenceStore): DataTableColumn<Transaction>[] {
@@ -108,9 +128,10 @@ export function buildTransactionColumns(reference: ReferenceStore): DataTableCol
     {
       title: t('transactions.columns.note'),
       key: 'note',
-      // 弹性列：不设 width，由 fixed 布局均分剩余空间（超长时省略号 + 悬停显示全文）
-      ellipsis: { tooltip: true },
-      render: (row) => row.note ?? '-',
+      // 弹性列：不设 width，由 fixed 布局均分剩余空间（超长时省略号 + 悬停显示全文）；
+      // 不设列级 ellipsis（账户/来源列同款理由：会把复制按钮一起包进省略容器），
+      // 省略与悬停全文由单元格内 NEllipsis 承担（fixed 布局由分类/商户列维持）
+      render: renderNoteCell,
     },
     {
       title: t('transactions.columns.amount'),

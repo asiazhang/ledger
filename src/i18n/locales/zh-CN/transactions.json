@@ -47,7 +47,10 @@
     "emptyFiltered": "没有符合条件的交易",
     "loadFailed": "加载失败: {msg}",
     "deleted": "已删除",
-    "deleteFailed": "删除失败: {msg}"
+    "deleteFailed": "删除失败: {msg}",
+    "copyNote": "复制备注",
+    "copyNoteOk": "备注已复制",
+    "copyNoteFailed": "复制失败: {msg}"
   },
   "filter": {
     "account": "账户",
