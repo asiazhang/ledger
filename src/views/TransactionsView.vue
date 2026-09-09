@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { t } from '@/i18n'
 import { errorMessage } from '@/utils/errors'
-import { computed, h, onMounted, ref, watch } from 'vue'
+import { computed, h, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   NDataTable,
@@ -31,6 +31,7 @@ import { useCreateShortcuts, CREATE_KIND_KEYS } from '@/composables/useCreateSho
 import { useInputMode } from '@/composables/useInputMode'
 import { useRowContextMenu } from '@/composables/useRowContextMenu'
 import { useTransactionFilter, UNCATEGORIZED_ONLY } from '@/composables/useTransactionFilter'
+import { registerViewReset } from '@/composables/viewResetRegistry'
 import { useTransactionModalState } from '@/composables/useTransactionModalState'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
@@ -75,6 +76,13 @@ const {
   afterRowDelete,
   syncUrlQuery,
 } = useTransactionFilter()
+
+// ESC 复位接线（spec #892 / ADR-0094）：本视图持有保留态，setup 期向复位回调注册表
+// 声明复位回调、作用域销毁时自动撤销（注册表内化，导航离开/跨断点换档卸载均不滞留）；
+// 窗口行为守卫在无弹层 ESC 时消费。复位即清除保留态本身：走模块既有复位出口
+// resetFilters（清全部过滤 + 翻页归零 + 页大小回默认 + 版本 bump 照常重拉），
+// 复位后离开再回来 = 默认；无保留状态时幂等无操作（与按钮禁用态判定不同源，见 store）。
+registerViewReset(resetFilters)
 
 // 行操作弹窗编排（ADR-0045）：意图闭集为唯一事实源，显示开关由「意图非空」派生，
 // 回调序号随 open 递增内化（作表单 key 强制重建实例）。四个行操作弹窗——记一笔（#338）、
@@ -137,6 +145,14 @@ async function load() {
     // 类型集合维度（issue #581，下钻专用，无手动控件）：非空集合 → 后端 kinds 数组（浅拷贝脱只读）
     if (filters.kinds?.length) filter.kinds = [...filters.kinds]
     const res = await api.listTransactions(filter)
+    // 页码钳制（issue #893）：页码超出当前数据有效范围时自愈——空页 + 尚有数据
+    // + 非第一页 → 走 ADR-0045 页码回退入口回退一页重拉（既有出口，不新增第二出口、
+    // 视图不直写页码），本响应不落数据（不渲染空页）。恢复访次是其主场景，
+    // 数据缩页的并发漂移同规自愈。
+    if (res.items.length === 0 && res.total > 0 && page.value > 1) {
+      afterRowDelete(0)
+      return
+    }
     data.value = res.items
     total.value = res.total
   } catch (e) {
@@ -146,18 +162,22 @@ async function load() {
   }
 }
 
-// 重拉唯一触发点：模块 bump 版本号 = 需以当前模块状态重拉。首刷（onMounted 经统一出口
-// refresh）与全部意图入口共用此路径；同一同步批次内的多次 bump（如 URL 多维度同时
-// 声明意图）由 watcher 去重为一次请求，双刷被出口唯一性消灭。
-watch(refreshVersion, () => {
-  void load()
-})
-
 // URL 下钻只读入口（issue #234 / #96 决策 3/4）：?account= / ?merchant= / ?category=（issue #377）
 // 的解析与校验、复位规则、参考数据就绪补判与字段级让位全部内化在 TransactionFilter 参数表；
 // 视图只监听路由并把 query 递给模块，不持任何时序标志与解析逻辑。
-// URL 只读不写回（组件状态是唯一事实源）。
+// URL 只读不写回（会话级 store 是唯一事实源，issue #893）。
+// 注册顺序在首拉 watch 之前（issue #893）：setup 期 immediate 同步登记本趟 query，
+// 首拉读到的即 URL 应用后的最终状态。
 watch(() => route.query, (query) => syncUrlQuery(query), { immediate: true })
+
+// 首拉与重拉唯一触发点：模块 bump 版本号 = 需以当前模块状态重拉；首拉由 immediate
+// 承担（issue #893 会话内保留）：默认态（含冷启动）以默认态拉取，恢复访次以保留态
+// （恢复的页码与筛选）拉取，不经 refresh 出口的翻回第一页语义——离开期间新账回来
+// 即见，保留的是选择不是数据快照。同一同步批次内的多次 bump（如 URL 多维度同时
+// 声明意图）由 watcher 去重为一次请求，双刷被出口唯一性消灭。
+watch(refreshVersion, () => {
+  void load()
+}, { immediate: true })
 
 /** 页大小选项（不持久化，遵守 ViewState 决策） */
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
@@ -391,13 +411,6 @@ const columns = computed<DataTableColumn<Transaction>[]>(() => [
 // scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和
 const scrollX = computed(() => sumFixedColumnWidths(columns.value))
 
-onMounted(() => {
-  // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll；
-  // 首刷经模块统一出口（refresh 即「翻回第 1 页 + 重拉」；URL 初始化已在 setup 期
-  // 声明意图，同一同步批次内被 watcher 去重为一次首刷请求）；时间维度行的
-  // 边界拉取与「今天」时钟由 QuickTimeRange 组件内化，视图不再编排
-  refresh()
-})
 </script>
 
 <template>
