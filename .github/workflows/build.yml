@@ -367,16 +367,19 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # arm64 单 ABI 产物（ADR-0074 决策 2，显式 --target，不沿用 Tauri 默认四 ABI）。
-      # versionCode/versionName 经 --config 补丁注入（CLI 写入 gen/android/app/tauri.properties，
-      # gradle 读取），不改 tauri.conf.json 与已入库的 gen/android 工程。
+      # 注入经 --config 补丁（CLI 写入 gen/android/app/tauri.properties，gradle 读取），
+      # 不改 tauri.conf.json 与已入库的 gen/android 工程：versionCode 显式注入（公式
+      # 唯一口径）；versionName 无对应配置键（CLI 2.11.4 schema 实测拒绝，run
+      # 34318179293），改注入根 version——versionName 与 CLI 默认 versionCode 数学
+      # （major×10⁶ + minor×10³ + patch，与显式注入同值）均从它派生。
       - name: 构建 Android arm64 APK
         if: matrix.platform == 'android'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           CONFIG="$RUNNER_TEMP/android-version-config.json"
-          printf '{"bundle":{"android":{"versionCode":%s,"versionName":"%s"}}}\n' \
-            "$APP_VERSION_CODE" "$APP_VERSION" > "$CONFIG"
+          printf '{"version":"%s","bundle":{"android":{"versionCode":%s}}}\n' \
+            "$APP_VERSION" "$APP_VERSION_CODE" > "$CONFIG"
           pnpm run tauri android build --apk --target aarch64-linux-android --config "$CONFIG"
 
       # 公证 + 附着（issue #658 步骤 5）：公证输入为 DMG 本体（submit --wait 阻塞至
