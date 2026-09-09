@@ -28,9 +28,12 @@ pub struct MerchantInput {
     pub name: String,
 }
 
-/// 更新入参：`name` 可省略（省略即保持原值，等价空更新）；改名须避开在用同名。
-#[derive(Debug, Deserialize)]
+/// 更新入参（IPC `update_merchant` 与 HTTP `PUT /api/v1/merchants/{id}` 共用）：
+/// `name` 可省略（省略即保持原值，等价空更新）；入参先 trim（与导入即建同款归一），
+/// trim 后为空报 `merchant.name-required`，改名撞在用同名报 `merchant.already-exists`。
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct MerchantUpdateInput {
+    /// 新商户名（可省略：省略即保持原值；首尾空白由后端修剪）。
     pub name: Option<String>,
 }
 

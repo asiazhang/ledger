@@ -344,7 +344,9 @@ jobs:
           hdiutil attach -readonly -nobrowse -mountpoint "$MNT" "$DMG_PATH" >/dev/null
           APP_IN_DMG=$(find "$MNT" -maxdepth 2 -name '*.app' | head -n 1)
           codesign --verify --strict --verbose=2 "$APP_IN_DMG"
-          codesign -dv "$APP_IN_DMG" 2>&1 | grep -q 'Authority=Developer ID Application' \
+          # Authority= 证书链行需 --verbose>=2 才输出，缺省 -dv 会让下方 grep 恒假阴性
+          # （run 34301373513 实测：签名与公证均通过，仅因缺 verbose 误报失败）
+          codesign -dv --verbose=4 "$APP_IN_DMG" 2>&1 | grep -q 'Authority=Developer ID Application' \
             || { echo "✗ 签名身份不是 Developer ID Application"; exit 1; }
           codesign -dv --verbose=4 "$APP_IN_DMG" 2>&1 | grep -q 'runtime' \
             || { echo "✗ 未启用 hardened runtime（公证必需）"; exit 1; }
