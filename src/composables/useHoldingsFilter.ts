@@ -1,4 +1,4 @@
-import { computed, onScopeDispose, ref, readonly, type Ref } from 'vue'
+import { computed, onScopeDispose, ref, watch, readonly, type Ref } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
 import { matchLabel } from '@/utils/pinyin-filter'
 import { sumByCurrency, type CurrencyAmountGroup, type PortfolioRow } from '@/composables/usePortfolioOverview'
@@ -11,7 +11,7 @@ import { sumByCurrency, type CurrencyAmountGroup, type PortfolioRow } from '@/co
  * （`list_holdings` 契约不动）。
  *
  * 与交易过滤（useTransactionFilter）形态学同源但独立实现：数据域不同、
- * 无分页无 URL 下钻无会话保留——三维状态全瞬态，实例随页签挂载而生、
+ * 无 URL 下钻无会话保留——三维状态与页码全瞬态，实例随页签挂载而生、
  * 卸载而灭，进入投资视图一律回默认。
  *
  * 维度闭集三：
@@ -30,6 +30,11 @@ import { sumByCurrency, type CurrencyAmountGroup, type PortfolioRow } from '@/co
  * 不计入合计。**多币种混合时金额列排序为账户本位币数值直比**——市值/未实现
  * 盈亏按各账户本位币折算，跨币种比较无精确语义，已接受代价（投资域词汇表
  * Holding 词条注记）。
+ *
+ * 分页（issue #912）：过滤排序之后派生行集的**展示切片**，不是第四个过滤
+ * 维度——本模块只持页码状态与「翻页归零」语义（三维任一应用值实际变化即回
+ * 第一页；页大小固定 20 不设选择器），切片由表格组件内置分页完成；合计与
+ * 空态在切片前判定，与可见页无关。
  */
 
 /** 排序维度闭集：市值 / 未实现盈亏两列（与持仓明细表列 key 一致） */
@@ -50,6 +55,9 @@ export interface NaiveUiSorterState {
 
 /** 搜索输入防抖时长（标的浏览器 300ms 先例） */
 export const HOLDINGS_SEARCH_DEBOUNCE_MS = 300
+
+/** 分页页大小：固定值不设选择器（全仓先例：交易页与搜索页同为 20，issue #912） */
+export const HOLDINGS_PAGE_SIZE = 20
 
 // ---------------------------------------------------------------------------
 // 纯函数：排序（null 恒排末尾、多币种数值直比、默认代码字母序）
@@ -142,6 +150,10 @@ export interface UseHoldingsFilterReturn {
   setSorter(next: NaiveUiSorterState | NaiveUiSorterState[]): void
   /** 派生行集合：过滤（搜索 × 账户）+ 排序后的展示行 */
   readonly filteredRows: Ref<PortfolioRow[]>
+  /** 页码（1 起）：过滤排序之后派生行集的展示切片，不是第四个过滤维度 */
+  readonly page: Ref<number>
+  /** 翻页意图：表格分页条 onChange 回传入口（切片本身由表格内置分页完成） */
+  setPage(next: number): void
   /** 派生合计（按币种分组）：随过滤子集更新，排序不影响，缺价行不计入 */
   readonly totalMarketValueGroups: Ref<CurrencyAmountGroup[]>
   readonly totalUnrealizedPnlGroups: Ref<CurrencyAmountGroup[]>
@@ -156,6 +168,7 @@ export function useHoldingsFilter(rows: Ref<PortfolioRow[]>): UseHoldingsFilterR
   const search = ref('')
   const accountId = ref<string | null>(null)
   const sorter = ref<HoldingsSorter | null>(null)
+  const page = ref(1)
 
   let debounceTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -174,15 +187,23 @@ export function useHoldingsFilter(rows: Ref<PortfolioRow[]>): UseHoldingsFilterR
   function setSorter(next: NaiveUiSorterState | NaiveUiSorterState[]) {
     // naive-ui 单列排序闭集：数组形态（多列回传）不属本模块维度，视作清除
     const single = Array.isArray(next) ? next[0] : next
+    let resolved: HoldingsSorter | null = null
     if (
-      !single ||
-      single.order === false ||
-      (single.columnKey !== 'market_value' && single.columnKey !== 'unrealized_pnl')
+      single &&
+      single.order !== false &&
+      (single.columnKey === 'market_value' || single.columnKey === 'unrealized_pnl')
     ) {
-      sorter.value = null
+      resolved = { columnKey: single.columnKey, order: single.order }
+    }
+    // 同值重设不产生新状态（翻页归零只对实际变化响应）：引用相等使
+    // sync watch 中的 Object.is 比较短路
+    if (
+      sorter.value?.columnKey === resolved?.columnKey &&
+      sorter.value?.order === resolved?.order
+    ) {
       return
     }
-    sorter.value = { columnKey: single.columnKey, order: single.order }
+    sorter.value = resolved
   }
 
   // 派生链：过滤（搜索 × 账户）→ 排序 → 合计。合计只依赖过滤子集，
@@ -193,6 +214,19 @@ export function useHoldingsFilter(rows: Ref<PortfolioRow[]>): UseHoldingsFilterR
       sorter.value,
     ),
   )
+
+  // 翻页归零（issue #912）：三维任一「应用值」实际变化即回第一页，与行集收窄
+  // 同步（搜索以 300ms 防抖后的应用时点为准，回显不翻页）；同步 flush 使归零
+  // 与意图应用原子生效，不留「维度已变、页码未归」的中间态；离开页签实例消亡，
+  // 页码随三维状态同瞬态回默认。页码超出行集范围时由表格内置钳制兜底
+  // （行集无意图收窄的场景，如重拉后持仓减少）。
+  watch([search, accountId, sorter], () => {
+    page.value = 1
+  }, { flush: 'sync' })
+
+  function setPage(next: number) {
+    page.value = next
+  }
   const totalMarketValueGroups = computed(() =>
     sumByCurrency(
       filteredRows.value.map((r) => ({ currencyCode: r.valueCurrencyCode, cents: r.marketValueCents })),
@@ -224,6 +258,8 @@ export function useHoldingsFilter(rows: Ref<PortfolioRow[]>): UseHoldingsFilterR
     sorter: readonly(sorter),
     setSorter,
     filteredRows,
+    page: readonly(page),
+    setPage,
     totalMarketValueGroups,
     totalUnrealizedPnlGroups,
     accountOptions,

@@ -28,15 +28,17 @@ import {
 } from '@/composables/usePortfolioOverview'
 import {
   useHoldingsFilter,
+  HOLDINGS_PAGE_SIZE,
   type HoldingsSortColumn,
 } from '@/composables/useHoldingsFilter'
+import { sumFixedColumnWidths } from '@/utils/table'
 
 const reference = useReferenceStore()
 
 // 数据拉取（list_holdings + 持仓标的字典拼装）归 usePortfolioOverview——与首页
 // 投资概览卡共享同一拼装接缝（issue #901/#902 契约不动）；过滤/排序/合计派生
-// 归 useHoldingsFilter 三维深模块，全在前端内存完成，实例随页签挂载而生、
-// 卸载而灭（页签与筛选/排序状态全瞬态，进入投资视图一律回默认）。
+// 与页码归 useHoldingsFilter，全在前端内存完成，实例随页签挂载而生、
+// 卸载而灭（页签与筛选/排序/页码状态全瞬态，进入投资视图一律回默认）。
 const { rows, loading, refresh } = usePortfolioOverview()
 const {
   searchInput,
@@ -46,6 +48,8 @@ const {
   sorter,
   setSorter,
   filteredRows,
+  page,
+  setPage,
   totalMarketValueGroups,
   totalUnrealizedPnlGroups,
   accountOptions,
@@ -72,6 +76,21 @@ function columnSortOrder(key: HoldingsSortColumn) {
   return sorter.value?.columnKey === key ? sorter.value.order : false
 }
 
+// 分页（issue #912）：页码状态归 useHoldingsFilter（三维任一变化即翻页归零，
+// 卸载重挂回默认），切片由表格内置分页完成（客户端模式按页码内存切片，
+// itemCount 缺省取行集长度）；页大小固定 20 不设选择器；单页时收起分页条
+// （paginate-single-page=false，≤20 行全量直显不出翻页噪声）。合计/空态在
+// 切片前判定（派生自 filteredRows），与可见页无关。
+const pagination = computed(() => ({
+  page: page.value,
+  pageSize: HOLDINGS_PAGE_SIZE,
+  onChange: setPage,
+}))
+
+// 横向滚动下限 = 各固定列宽总和（全仓单一收口）：净值日期独立列的
+// +90px 由窄窗口横向滚动吸收（投资视图无窗口分级分支，#898 边界维持）。
+const scrollX = computed(() => sumFixedColumnWidths(overviewColumns.value))
+
 const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
   { title: t('investments.holdings.columns.symbol'), key: 'symbol', width: 100, render: (r) => r.symbol ?? '-' },
   { title: t('investments.holdings.columns.name'), key: 'instrumentName', width: 160, render: (r) => r.instrumentName ?? '-' },
@@ -88,24 +107,19 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
     key: 'latest_price',
     width: 130,
     // 现价为价格列（万分之一元刻度，ADR-0038），用 formatPrice 展示；
-    // 基金现价 = 最新公布单位净值，下方小字展示净值日期——现价对应哪天的
-    // 净值一眼可辨（#303），股票无净值日期不渲染该行。
-    render: (r) => {
-      if (r.latestPriceCents === null) return '-'
-      const price = formatPrice(
-        r.latestPriceCents,
-        reference.currencyMap.get(r.latestPriceCurrencyCode ?? ''),
-      )
-      if (r.latestNavDate === null) return price
-      return h('div', [
-        price,
-        h(
-          'div',
-          { style: 'font-size:12px;opacity:.65;line-height:1.4' },
-          t('investments.holdings.navDate', { date: r.latestNavDate }),
-        ),
-      ])
-    },
+    // 净值日期已独立成列（issue #912），本列恢复单行渲染。
+    render: (r) =>
+      r.latestPriceCents === null
+        ? '-'
+        : formatPrice(r.latestPriceCents, reference.currencyMap.get(r.latestPriceCurrencyCode ?? '')),
+  },
+  {
+    title: t('investments.holdings.columns.navDate'),
+    key: 'nav_date',
+    width: 90,
+    // 净值日期独立成列（#303 形态修订，issue #912）：仅基金行携带（现价 =
+    // 最新公布单位净值），其余行显示「-」；不可排序。
+    render: (r) => r.latestNavDate ?? '-',
   },
   {
     title: t('investments.holdings.columns.marketValue'),
@@ -211,6 +225,9 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
             :bordered="false"
             size="small"
             :row-key="(r: PortfolioRow) => r.holdingId"
+            :scroll-x="scrollX"
+            :pagination="pagination"
+            :paginate-single-page="false"
             @update:sorter="setSorter"
           />
         </template>

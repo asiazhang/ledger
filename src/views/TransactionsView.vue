@@ -36,7 +36,8 @@ import { useTransactionModalState } from '@/composables/useTransactionModalState
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
 import { useItemsStore } from '@/stores/items'
-import { buildTransactionColumns, sumFixedColumnWidths } from '@/components/transaction-columns'
+import { buildTransactionColumns } from '@/components/transaction-columns'
+import { sumFixedColumnWidths } from '@/utils/table'
 import { isLendingEntryKind } from '@/domain/lending'
 import { type NullableDateRange } from '@/utils/time-period'
 import {
