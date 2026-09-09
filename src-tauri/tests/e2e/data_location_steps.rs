@@ -363,6 +363,22 @@ fn submit_to_readonly_dir(world: &mut LedgerWorld) {
     }
 }
 
+#[when(expr = "向副业账的登记目录提交更改意图")]
+fn submit_to_other_book_dir(world: &mut LedgerWorld) {
+    let default_dir = world.boot.dl_default_dir.clone().unwrap();
+    // 目标 = 指定账本的登记目录（清单来自注册表最新落盘态，与界面同一读入口）。
+    let other_dir = match data_location_configured_books(&default_dir) {
+        Ok(books) => books
+            .into_iter()
+            .find(|(name, _)| name == "副业账")
+            .map(|(_, dir)| dir)
+            .expect("现场应有账本「副业账」"),
+        Err(e) => panic!("读取账本清单失败: {e}"),
+    };
+    world.boot.dl_target_dir = Some(other_dir.clone());
+    submit(world, &other_dir, false);
+}
+
 #[when(expr = "向当前生效目录提交更改意图（不接管既有库）")]
 fn submit_to_active_dir(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
@@ -374,6 +390,18 @@ fn submit_to_active_dir(world: &mut LedgerWorld) {
         .unwrap_or_else(|| default_dir.clone());
     world.boot.dl_target_dir = Some(active.clone());
     submit(world, &active, false);
+}
+
+/// 尝试在搬迁意图未生效期间新建账本：应被拒绝（book.registry-busy）。
+#[when(expr = "尝试新建账本应被拒绝（搬迁未完成）")]
+fn create_book_while_relocation_pending(world: &mut LedgerWorld) {
+    let default_dir = world.boot.dl_default_dir.clone().unwrap();
+    let err = tauri_app_lib::db::book_registry::create_book_entry(&default_dir, "第三本")
+        .expect_err("搬迁未完成期间新建账本应被拒绝");
+    assert!(
+        err.is_code("book.registry-busy"),
+        "应报搬迁未完成，实际 {err:?}"
+    );
 }
 
 #[when(expr = "向该目标目录提交更改意图（不接管既有库）")]
@@ -528,4 +556,18 @@ fn target_dir_with_db_no_pointer(world: &mut LedgerWorld, count: usize) {
     init_db(&mut conn).unwrap();
     seed_db(&conn, "目标现金", count);
     world.boot.dl_target_dir = Some(target);
+}
+
+/// 读取注册表最新落盘态的账本清单（展示名 → 登记目录）。
+fn data_location_configured_books(
+    default_dir: &std::path::Path,
+) -> Result<Vec<(String, std::path::PathBuf)>, String> {
+    match tauri_app_lib::db::book_registry::read_registry(default_dir) {
+        tauri_app_lib::db::book_registry::RegistryRead::Resolved(registry) => Ok(registry
+            .books
+            .into_iter()
+            .map(|book| (book.name, book.dir))
+            .collect()),
+        other => Err(format!("注册表不可读: {other:?}")),
+    }
 }

@@ -281,7 +281,7 @@ fn legacy_backup_restores_and_lists_without_error() {
     crate::fs_util::cleanup(&raw);
 
     // 列表：旧格式文件按命名规则正常被识别，来源按 manual 处理。
-    let list = list_managed_backups(&dir).unwrap();
+    let list = list_managed_backups(&dir, None).unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(
         read_backup_kind(Path::new(&list[0].path)).unwrap(),
@@ -330,7 +330,7 @@ fn list_and_prune_managed_backups() {
     std::fs::write(dir.join("notes.zip"), b"x").unwrap();
     std::fs::create_dir(dir.join("ledger-backup-20260104-010101.db.zip")).unwrap();
 
-    let list = list_managed_backups(&dir).unwrap();
+    let list = list_managed_backups(&dir, None).unwrap();
     assert_eq!(list.len(), 4);
     assert_eq!(
         list[0].file_name, "ledger-auto-20260201-010101.db.zip",
@@ -343,7 +343,7 @@ fn list_and_prune_managed_backups() {
     assert_eq!(list[3].kind, BackupKind::Manual);
 
     // 修剪到 2：删除最旧的手动 2 个；不匹配文件与目录不受影响。
-    let r = prune_managed_backups(&dir, 2).unwrap();
+    let r = prune_managed_backups(&dir, 2, None).unwrap();
     assert_eq!(
         r.deleted,
         vec![
@@ -358,7 +358,7 @@ fn list_and_prune_managed_backups() {
     assert!(dir.join("ledger-auto-20260201-010101.db.zip").exists());
 
     // 继续修剪到 1。
-    let r2 = prune_managed_backups(&dir, 1).unwrap();
+    let r2 = prune_managed_backups(&dir, 1, None).unwrap();
     assert_eq!(r2.deleted, vec!["ledger-backup-20260103-010101.db.zip"]);
     assert_eq!(r2.kept, 1);
     assert!(dir.join("ledger-auto-20260201-010101.db.zip").exists());
@@ -376,14 +376,14 @@ fn prune_keeps_all_when_within_limit_and_missing_dir() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("ledger-backup-20260101-010101.db.zip"), b"x").unwrap();
 
-    let r = prune_managed_backups(&dir, 30).unwrap();
+    let r = prune_managed_backups(&dir, 30, None).unwrap();
     assert!(r.deleted.is_empty());
     assert_eq!(r.kept, 1);
 
     // 目录不存在：空结果而非报错。
     let missing = dir.join("gone");
-    assert!(list_managed_backups(&missing).unwrap().is_empty());
-    let r2 = prune_managed_backups(&missing, 5).unwrap();
+    assert!(list_managed_backups(&missing, None).unwrap().is_empty());
+    let r2 = prune_managed_backups(&missing, 5, None).unwrap();
     assert_eq!(r2.kept, 0);
     assert!(r2.deleted.is_empty());
 
@@ -403,4 +403,178 @@ fn backup_fails_when_target_dir_missing() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("备份目标目录不存在"));
+}
+
+// -------------------------------------------------------------------------
+// 备份按账本分域（issue #836 / ADR-0089 决策 5）：命名携带账本标识、列表与
+// 滚动清理按本作用域、无标识历史产物归登记序首本。
+// -------------------------------------------------------------------------
+
+/// 命名/解析往返：标识内容含 `-`（UUID 与目录派生哈希）从尾部定宽解析不受干扰；
+/// 旧命名缺标识可读；非受管/残缺命名不参与解析。
+#[test]
+fn managed_name_roundtrip_with_book_tag() {
+    let cases: Vec<(String, &str, Option<&str>)> = vec![
+        (
+            "ledger-backup-20260909-123456.db.zip".into(),
+            "ledger-backup",
+            None,
+        ),
+        (
+            "ledger-auto-20260909-123456.db.zip".into(),
+            "ledger-auto",
+            None,
+        ),
+        (
+            "ledger-backup-20260909-123456-3f2a9c4e-8b1d-4c2a-9f3e-5a7b8c9d0e1f.db.zip".into(),
+            "ledger-backup",
+            Some("3f2a9c4e-8b1d-4c2a-9f3e-5a7b8c9d0e1f"),
+        ),
+        (
+            "ledger-auto-20260909-123456-ab12cd34ef56ab12.db.zip".into(),
+            "ledger-auto",
+            Some("ab12cd34ef56ab12"),
+        ),
+    ];
+    for (name, _prefix, book) in cases {
+        let path = Path::new(&name);
+        // 解析出的标识与命名一致；时间戳可解析。
+        assert_eq!(
+            super::engine::split_managed_name(&name).map(|(ts, book)| (
+                ts.format("%Y%m%d-%H%M%S").to_string(),
+                book.map(str::to_string)
+            )),
+            Some(("20260909-123456".into(), book.map(str::to_string))),
+            "{name}"
+        );
+        assert!(super::engine::is_managed_backup_file_name(&name), "{name}");
+        let _ = path;
+    }
+    // 非受管 / 残缺命名：不解析。
+    for name in [
+        "other-20260909-123456.db.zip",
+        "ledger-backup-not-a-timestamp.db.zip",
+        "ledger-backup-short.db.zip",
+        "ledger-backup-20260909-123456.db",
+    ] {
+        assert_eq!(
+            super::engine::split_managed_name(name),
+            None,
+            "{name} 不应解析"
+        );
+    }
+}
+
+/// 作用域过滤：标识匹配可见；其他账本的产物不可见；无标识历史产物仅
+/// `include_legacy`（登记序首本）可见；无作用域全可见（兼容口径）。
+#[test]
+fn scoped_listing_filters_by_book() {
+    let dir = std::env::temp_dir().join(format!(
+        "ledger-backup-scope-list-{}-{}",
+        std::process::id(),
+        db::new_uuid()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in [
+        "ledger-backup-20260101-000000.db.zip", // 无标识（历史产物）
+        "ledger-auto-20260102-000000-book-a.db.zip", // 账本 A
+        "ledger-backup-20260103-000000-book-a.db.zip", // 账本 A
+        "ledger-backup-20260104-000000-book-b.db.zip", // 账本 B
+    ] {
+        std::fs::write(dir.join(name), b"x").unwrap();
+    }
+    let names = |list: &[BackupFileInfo]| -> Vec<String> {
+        let mut v: Vec<String> = list.iter().map(|f| f.file_name.clone()).collect();
+        v.sort();
+        v
+    };
+
+    // 无作用域：全部可见（兼容口径）。
+    assert_eq!(names(&list_managed_backups(&dir, None).unwrap()).len(), 4);
+    // 账本 A（登记序首本，include_legacy）：历史产物 + A 的两份。
+    let scope_a = BackupScope {
+        book_id: "book-a".into(),
+        include_legacy: true,
+    };
+    assert_eq!(
+        names(&list_managed_backups(&dir, Some(&scope_a)).unwrap()),
+        vec![
+            "ledger-auto-20260102-000000-book-a.db.zip",
+            "ledger-backup-20260101-000000.db.zip",
+            "ledger-backup-20260103-000000-book-a.db.zip",
+        ]
+    );
+    // 账本 B（非首本）：只见 B 自己的产物，历史产物不归属。
+    let scope_b = BackupScope {
+        book_id: "book-b".into(),
+        include_legacy: false,
+    };
+    assert_eq!(
+        names(&list_managed_backups(&dir, Some(&scope_b)).unwrap()),
+        vec!["ledger-backup-20260104-000000-book-b.db.zip"]
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 按本滚动清理：共享目录内各账本独立计算保留上限，互不影响。
+#[test]
+fn scoped_prune_is_per_book() {
+    let dir = std::env::temp_dir().join(format!(
+        "ledger-backup-scope-prune-{}-{}",
+        std::process::id(),
+        db::new_uuid()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in [
+        "ledger-auto-20260101-000000-book-a.db.zip",
+        "ledger-auto-20260102-000000-book-a.db.zip",
+        "ledger-auto-20260103-000000-book-a.db.zip",
+        "ledger-auto-20260101-000000-book-b.db.zip",
+        "ledger-backup-20260101-000000.db.zip",
+    ] {
+        std::fs::write(dir.join(name), b"x").unwrap();
+    }
+    // 账本 A 上限 1：只删 A 自己最旧的两份，B 的与历史产物不受影响。
+    let scope_a = BackupScope {
+        book_id: "book-a".into(),
+        include_legacy: false,
+    };
+    let r = prune_managed_backups(&dir, 1, Some(&scope_a)).unwrap();
+    assert_eq!(
+        r.deleted,
+        vec![
+            "ledger-auto-20260101-000000-book-a.db.zip",
+            "ledger-auto-20260102-000000-book-a.db.zip",
+        ]
+    );
+    assert!(
+        dir.join("ledger-auto-20260103-000000-book-a.db.zip")
+            .exists()
+    );
+    assert!(
+        dir.join("ledger-auto-20260101-000000-book-b.db.zip")
+            .exists()
+    );
+    assert!(dir.join("ledger-backup-20260101-000000.db.zip").exists());
+
+    // 首本作用域（include_legacy）：历史产物计入上限，最旧淘汰。
+    let scope_first = BackupScope {
+        book_id: "book-a".into(),
+        include_legacy: true,
+    };
+    let r2 = prune_managed_backups(&dir, 1, Some(&scope_first)).unwrap();
+    assert_eq!(r2.deleted, vec!["ledger-backup-20260101-000000.db.zip"]);
+    // 作用域内 = A 的 1 份 + 历史产物 1 份 = 2，上限 1 → 删最旧的历史产物。
+    assert_eq!(r2.kept, 1, "作用域内只剩 A 的最新一份");
+    assert!(
+        dir.join("ledger-auto-20260103-000000-book-a.db.zip")
+            .exists()
+    );
+    assert!(
+        dir.join("ledger-auto-20260101-000000-book-b.db.zip")
+            .exists()
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
 }

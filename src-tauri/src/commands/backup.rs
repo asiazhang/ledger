@@ -22,16 +22,30 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
 use crate::backup;
+use crate::backup::BackupScope;
 use crate::backup::{
     BackupFileInfo, BackupKind, BackupMetaSummary, BackupResult, PruneResult, RestoreResult,
     backup_db_to, expected_schema_version, list_managed_backups, probe_backup_meta,
     prune_managed_backups, restore_db_from,
 };
+use crate::commands::boot::current_boot;
 use crate::commands::data_location::effective_db_dir_of;
 use crate::db::data_location::DB_FILE_NAME;
 use crate::db::{DbState, run_db};
 use crate::error::{AppError, Result};
 use crate::signals::{WriteEvidence, WriteOp, emit_for};
+
+/// 当前活动账本的备份作用域（列表/清理命令共用，issue #836）：从引导快照的
+/// 注册表登记信息构造；注册表不可用（极端时序/损坏回退）时 `None`——退化为
+/// 不过滤的兼容口径，行为与多账本之前一致。已知边界：退化现场共享目录内
+/// 其他账本的带标识产物也会被计入保留上限的滚动清理窗（列表同理可见全部）；
+/// 损坏回退本就阻断一切业务写（含备份域写面之外），且属应引导用户修复注册表
+/// 的瞬态现场，此处不过度设计第三种作用域形态，靠注释留痕。
+fn backup_scope_of<R: tauri::Runtime>(app: &AppHandle<R>) -> Option<BackupScope> {
+    current_boot(app)
+        .and_then(|boot| boot.registry)
+        .map(|registry| BackupScope::of_registry(&registry))
+}
 
 /// 把当前数据库备份为 zip 包写入 `target_path`（完整文件路径，含文件名）。
 #[tauri::command]
@@ -104,12 +118,15 @@ pub async fn get_backup_meta(path: String) -> Result<BackupMetaSummary> {
     .await
 }
 
-/// 列出备份目录中的受管备份文件（自动命名，含手动 `ledger-backup-*` 与
-/// 自动 `ledger-auto-*` 两类前缀），按新→旧排序。
+/// 列出备份目录中当前账本的受管备份文件（issue #836：按账本分域——文件名
+/// 携带账本标识，其他账本的产物不可见），按新→旧排序。含手动 `ledger-backup-*`
+/// 与自动 `ledger-auto-*` 两类前缀；无标识的历史产物归登记序首本（升级时的
+/// 默认账本）。
 #[tauri::command]
-pub async fn list_backups(dir: String) -> Result<Vec<BackupFileInfo>> {
+pub async fn list_backups(app: AppHandle, dir: String) -> Result<Vec<BackupFileInfo>> {
     run_db("list_backups", move || {
-        list_managed_backups(Path::new(&dir))
+        let scope = backup_scope_of(&app);
+        list_managed_backups(Path::new(&dir), scope.as_ref())
     })
     .await
 }
@@ -119,6 +136,7 @@ pub async fn list_backups(dir: String) -> Result<Vec<BackupFileInfo>> {
 /// `signals::emit_for` 判定发射，ADR-0044），前端列表随之自动刷新。
 #[tauri::command]
 pub async fn prune_backups(app: AppHandle, dir: String, keep: i64) -> Result<PruneResult> {
+    let scope = backup_scope_of(&app);
     let r = run_db("prune_backups", move || {
         let keep = usize::try_from(keep).map_err(|_| {
             AppError::codedp(
@@ -127,7 +145,9 @@ pub async fn prune_backups(app: AppHandle, dir: String, keep: i64) -> Result<Pru
                 &[&keep.to_string()],
             )
         })?;
-        prune_managed_backups(Path::new(&dir), keep)
+        // 按当前账本作用域滚动清理（issue #836）：上限按本独立计算，其他账本
+        // 的产物不受影响。
+        prune_managed_backups(Path::new(&dir), keep, scope.as_ref())
     })
     .await?;
     emit_for(&app, WriteOp::PruneBackups, WriteEvidence::None);
@@ -157,8 +177,14 @@ pub async fn set_auto_backup_dir(app: AppHandle, dir: String) -> Result<()> {
             return Ok(());
         };
         let version = app.package_info().version.to_string();
-        let _ =
-            backup::run_first_backup(&conn, normalized.as_deref(), &version, chrono::Utc::now());
+        let scope = backup_scope_of(&app);
+        let _ = backup::run_first_backup(
+            &conn,
+            normalized.as_deref(),
+            &version,
+            chrono::Utc::now(),
+            scope.as_ref(),
+        );
         Ok(())
     })
     .await
