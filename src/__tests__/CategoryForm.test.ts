@@ -2,9 +2,13 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
+import { defineComponent } from 'vue'
 import { NSelect } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import CategoryForm from '@/components/CategoryForm.vue'
+import AppModal from '@/components/AppModal.vue'
+import { MOBILE_CARD_CLASS } from '@/components/app-modal.css.ts'
+import { setFakeMedia } from './helpers/media-mock'
 import type { Account, Category, Transaction } from '@/types'
 
 
@@ -264,6 +268,42 @@ describe('CategoryForm.vue', () => {
       // 成功后金额清空且时机标志重置：不显红态
       expect((amountInput(wrapper).element as HTMLInputElement).value).toBe('')
       expect(hasErrorStatus(wrapper)).toBe(false)
+    })
+  })
+
+  // issue #844 代表挂载：记一笔/编辑表单弹窗经薄封装在移动档自动全屏化。
+  // 分支与钩子收口在 AppModal（卡片钩子类 + 近全屏内联尺寸）及其旁路样式文件
+  // （标签上置/按钮行推底为纯 CSS，选择器产出物由 app-modal-mobile-css.test
+  // 捕获断言）；此处证明真实表单弹窗的 DOM 恰好命中这些钩子与选择器——
+  // 左置标签表单项（被翻转对象）在场、按钮行是节奏容器末块（被推底对象）。
+  describe('记一笔表单 × AppModal 移动档（issue #844）', () => {
+    function mountFormModal() {
+      const Harness = defineComponent({
+        components: { AppModal, CategoryForm },
+        template: `
+          <AppModal :show="true" title="记一笔" preset="card" card-size="md">
+            <CategoryForm kind="expense" submit-label="记支出" />
+          </AppModal>
+        `,
+      })
+      return mount(Harness)
+    }
+
+    it('移动档呈全屏化结构：近全屏卡片 + 左置标签表单项 + 按钮行居节奏容器末块', async () => {
+      setFakeMedia({ width: 390 })
+      mountFormModal()
+      await flushPromises()
+
+      const card = document.body.querySelector('.n-card')
+      expect(card, '卡片应存在').not.toBeNull()
+      expect(card!.classList.contains(MOBILE_CARD_CLASS)).toBe(true)
+      expect((card as HTMLElement).style.width).toBe('calc(100vw - 32px)')
+      // 标签上置的选择器命中面：左置标签表单项在真实表单中在场
+      expect(document.body.querySelector('.n-form-item.n-form-item--left-labelled')).not.toBeNull()
+      // 按钮行推底的选择器命中面：节奏容器末块即按钮行（含提交按钮）
+      const last = document.body.querySelector('.n-form > .n-space > :last-child')
+      expect(last, '节奏容器末块应存在').not.toBeNull()
+      expect(last!.querySelector('button')).not.toBeNull()
     })
   })
 })

@@ -104,7 +104,7 @@ async function confirmReset() {
       :show="confirmVisible"
       preset="card"
       :title="t('startupFailure.resetTitle')"
-      style="width: 480px"
+      card-size="md"
       :bordered="false"
       :mask-closable="false"
       @update:show="cancelConfirm"
