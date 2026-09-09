@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { NCard, NSpace, NSwitch, NText } from 'naive-ui'
 import AppSelect from '@/components/AppSelect.vue'
+import LogSettings from '@/components/settings/LogSettings.vue'
 import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
 import { t, type LocaleSetting } from '@/i18n'
@@ -21,8 +22,10 @@ const languageOptions = computed<{ label: string; value: LocaleSetting }[]>(() =
   { label: t('common.language.en'), value: 'en-US' },
 ])
 
-// 本卡片只承载轻量设备偏好（ADR-0022 轻量资格线）；本位币基准是账本级设置
-// （issue #858），按领域归属落设置页「分类」页签（BaseCurrencySettings）。
+// 本 Tab 收纳不归属任何业务域页签的应用级偏好（ADR-0022 修订，issue #930）：以下卡片为
+// 轻量设备偏好；「日志」卡片（LogSettings，后端消费、随备份迁移）是应用级设置的扩展
+// 收纳。本位币基准是账本级设置（issue #858），按领域归属落设置页「分类」页签
+// （BaseCurrencySettings）。
 </script>
 
 <template>
@@ -59,5 +62,7 @@ const languageOptions = computed<{ label: string; value: LocaleSetting }[]>(() =
         style="max-width: 280px"
       />
     </NCard>
+
+    <LogSettings />
   </NSpace>
 </template>

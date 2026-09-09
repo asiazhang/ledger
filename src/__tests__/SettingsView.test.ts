@@ -43,6 +43,7 @@ function dataLocationInfo(
  */
 const SCENE_DEFAULTS = {
   list_backups: [],
+  get_log_level: { level: 'info' },
   create_backup: {
     path: '/tmp/ledger-backup.db.zip',
     size_bytes: 1024,
@@ -128,13 +129,16 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     expect(labels).not.toContain('商户')
   })
 
-  it('「通用」默认激活，含深色模式开关与展示币种下拉，不含账本级本位币基准（issue #858 币种设置拆分）', async () => {
+  it('「通用」默认激活，含深色模式开关、展示币种下拉与日志卡片，不含账本级本位币基准（issue #858 币种设置拆分；issue #930 日志卡片迁入）', async () => {
     const wrapper = mount(SettingsView)
     // 通用是首个 Tab，无需点击即挂载（show:lazy 语义）。
     const html = wrapper.html()
     expect(html).toContain('深色模式')
     expect(html).toContain('展示币种')
-    // 本位币基准是账本级设置（非轻量，ADR-0022 轻量资格线），落「分类」页签。
+    // 日志卡片（issue #930 / ADR-0022 修订）：等级下拉与「打开日志目录」同卡在末位。
+    expect(html).toContain('日志等级')
+    expect(html).toContain('打开日志目录')
+    // 本位币基准是账本级设置，落「分类」页签。
     expect(html).not.toContain('本位币基准')
     // 深色模式开关反映当前主题（默认暗色）。
     expect(wrapper.find('.n-switch').attributes('aria-checked')).toBe('true')
