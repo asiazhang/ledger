@@ -14,6 +14,7 @@
 - **多端同步**：支持检查点快照，新设备凭快照引导、只重放增量即达一致（[#857]）。
 - **多端同步**：内置 WebDAV 同步通道，同步包可选加密上云，检查点可发布上云（[#859]）。
 - **多端同步**：本位币基准随同步在各设备一致生效；原「默认币种」更名为「展示币种」，仅影响本机展示（[#858]）。
+- **多端同步**：定时计划、账户/分类/商户字典、预算、保险、物品与实物资产的变化随同步分发，各端业务数据一致（[#860]）。
 - **移动端**：窗口 <840 切换移动档导航壳（顶栏 + 抽屉），适配刘海与手势条安全区（[#842]）。
 - **移动端**：触屏交互适配——交易行常显「⋯」菜单，悬停信息点按可达（[#843]）。
 - **AI 导入**：新增商户改名端点 `PUT /api/v1/merchants/{id}`（[#884]）。
@@ -272,6 +273,7 @@
 [#857]: https://github.com/asiazhang/ledger/issues/857
 [#859]: https://github.com/asiazhang/ledger/issues/859
 [#858]: https://github.com/asiazhang/ledger/issues/858
+[#860]: https://github.com/asiazhang/ledger/issues/860
 [#834]: https://github.com/asiazhang/ledger/issues/834
 [#836]: https://github.com/asiazhang/ledger/issues/836
 [#831]: https://github.com/asiazhang/ledger/issues/831

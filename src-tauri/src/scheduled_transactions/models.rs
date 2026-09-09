@@ -237,7 +237,7 @@ pub struct ScheduledTransferPlan {
 // Input / output types for commands
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct CreateScheduledInput {
     pub kind: ScheduledKind,
     pub account_id: String,

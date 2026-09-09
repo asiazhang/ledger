@@ -38,7 +38,8 @@ pub struct CategoryUpdateInput {
     pub parent_id: Option<Option<String>>,
 }
 
-#[derive(Debug, Deserialize)]
+/// 排序重排项（IPC 入参；同步命令 Reorder 变体随行载荷复用，issue #860）。
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ReorderItem {
     pub id: String,
     pub sort_order: i64,

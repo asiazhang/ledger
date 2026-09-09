@@ -18,6 +18,9 @@ use crate::db::query::{FromRow, query_all};
 use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::sync_engine::device_id;
+use crate::transaction::ensure_transaction;
+
+use super::command::{InsurerCommand, record_insurer_local};
 
 /// 保司字典行（参考数据模式，与商户同款审计字段；名字字典，无视觉字段）。
 /// 不进 OpenAPI/AI 契约面（ADR-0082：保司字典同在 AI 契约之外），故无 ToSchema。
@@ -83,6 +86,21 @@ pub fn create_insurer(conn: &Connection, input: InsurerInput) -> Result<String> 
     if name.is_empty() {
         return Err(AppError::coded("insurer.name-required", "保司名不能为空"));
     }
+    ensure_transaction(conn, || {
+        let id = write_create(conn, &new_uuid(), name)?;
+        record_insurer_local(
+            conn,
+            InsurerCommand::Create {
+                id: id.clone(),
+                name: name.to_string(),
+            },
+        )?;
+        Ok(id)
+    })
+}
+
+/// 保司落库协议（本地创建与重放共用，无 op 产出）：在用行同名检查 + 插入。
+fn write_create(conn: &Connection, id: &str, name: &str) -> Result<String> {
     if insurer_name_taken(conn, name, None)? {
         return Err(AppError::codedp(
             "insurer.already-exists",
@@ -90,19 +108,33 @@ pub fn create_insurer(conn: &Connection, input: InsurerInput) -> Result<String> 
             &[name],
         ));
     }
-    let id = new_uuid();
     let now = now_iso();
     conn.execute(
         "INSERT INTO insurers (id,name,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,?3,?4,?5,?6,0)",
         rusqlite::params![id, name, now, now, 1, device_id(conn)?],
     )?;
-    Ok(id)
+    Ok(id.to_string())
 }
 
 /// 更新保司（改名）：字段省略即保持原值；改名撞在用同名 → 明确错误。
 /// 不存在（或已软删除）的 id → 码化 NotFound。
 pub fn update_insurer(conn: &Connection, id: &str, input: InsurerUpdateInput) -> Result<()> {
+    ensure_transaction(conn, || {
+        let name = write_update(conn, id, &input)?;
+        record_insurer_local(
+            conn,
+            InsurerCommand::Update {
+                id: id.to_string(),
+                name,
+            },
+        )
+    })
+}
+
+/// 保司改名协议（本地修改与重放共用，无 op 产出）：存在性检查 + trim 非空 +
+/// 撞名检查 + 落库，返回解决后的落定名。
+fn write_update(conn: &Connection, id: &str, input: &InsurerUpdateInput) -> Result<String> {
     let existing: Insurer = query_all(
         conn,
         &format!("SELECT {INSURER_COLUMNS} FROM insurers WHERE id=?1 AND is_deleted=0"),
@@ -114,7 +146,7 @@ pub fn update_insurer(conn: &Connection, id: &str, input: InsurerUpdateInput) ->
         AppError::codedp_not_found("insurer.not-found", format!("保司不存在: {id}"), &[id])
     })?;
 
-    let name = input.name.unwrap_or(existing.name);
+    let name = input.name.clone().unwrap_or(existing.name);
     let name = name.trim();
     if name.is_empty() {
         return Err(AppError::coded("insurer.name-required", "保司名不能为空"));
@@ -132,12 +164,20 @@ pub fn update_insurer(conn: &Connection, id: &str, input: InsurerUpdateInput) ->
         rusqlite::params![name, now_iso(), device_id(conn)?, id],
     )?;
     // 改名即时生效：引用指向 insurer_id，不回刷历史行（ADR-0082 决策 1）。
-    Ok(())
+    Ok(name.to_string())
 }
 
 /// 软删除保司（`is_deleted=1`）。不存在的 id → 码化 NotFound。
 /// 存量引用保留照常显示（软删保司不可被新保单选择，由消费方校验，本票只管字典）。
 pub fn delete_insurer(conn: &Connection, id: &str) -> Result<()> {
+    ensure_transaction(conn, || {
+        write_delete(conn, id)?;
+        record_insurer_local(conn, InsurerCommand::Delete { id: id.to_string() })
+    })
+}
+
+/// 保司软删协议（本地删除与重放共用，无 op 产出）：存在性检查 + 软删。
+fn write_delete(conn: &Connection, id: &str) -> Result<()> {
     let exists: bool = conn
         .query_row(
             "SELECT 1 FROM insurers WHERE id=?1 AND is_deleted=0",
@@ -208,4 +248,27 @@ fn insurer_name_taken(conn: &Connection, name: &str, exclude_id: Option<&str>) -
         .optional()?
         .is_some();
     Ok(found)
+}
+
+/// 重放执行：创建（同名冲突码化报错 → 挂起待裁决）。
+pub(crate) fn replay_create(conn: &Connection, id: &str, name: &str) -> Result<()> {
+    write_create(conn, id, name)?;
+    Ok(())
+}
+
+/// 重放执行：改名（同名冲突码化报错 → 挂起待裁决）。
+pub(crate) fn replay_update(conn: &Connection, id: &str, name: &str) -> Result<()> {
+    write_update(
+        conn,
+        id,
+        &InsurerUpdateInput {
+            name: Some(name.to_string()),
+        },
+    )?;
+    Ok(())
+}
+
+/// 重放执行：软删除（同一协议含存在性检查）。
+pub(crate) fn replay_delete(conn: &Connection, id: &str) -> Result<()> {
+    write_delete(conn, id)
 }

@@ -22,7 +22,9 @@
 
 use rusqlite::{Connection, OptionalExtension};
 
+use super::command::{ItemCommand, ItemCommandRow, record_local};
 use super::cost;
+use super::guard;
 use super::guard::apply_purchase_link;
 use super::model::{
     Item, ItemDailyCost, ItemDailyTotal, ItemDisposeInput, ItemInput, ItemSourceDisplay,
@@ -33,6 +35,7 @@ use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::sync_engine::device_id;
 use crate::transaction::amount;
+use crate::transaction::ensure_transaction;
 
 /// 按 `id` 读未删除物品（多命令共用的前检）：不存在（或已软删除）返回 `None`。
 fn get_item_by_id(conn: &Connection, id: &str) -> Result<Option<Item>> {
@@ -165,18 +168,45 @@ pub fn create_item(
     input: ItemInput,
     notify: &mut dyn FnMut(),
 ) -> Result<String> {
+    let id = ensure_transaction(conn, || create_within_transaction(conn, &input))?;
+    // 写入成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
+    notify();
+    Ok(id)
+}
+
+/// 创建协议本体（无事务语义，由 [`ensure_transaction`] 包裹）：溯源守卫 → 校验
+/// → 源端折算 → 落库 + op 产出（随同一事务提交/回滚）。
+fn create_within_transaction(conn: &Connection, input: &ItemInput) -> Result<String> {
     // 溯源守卫：创建必须关联购买交易（修改路径不受此限，None = 保留既有溯源）。
     if input.purchase_transaction_id.is_none() {
-        return Err(AppError::coded(
-            "item.purchase-link-required",
-            "物品必须关联一笔购买交易创建：请在交易页右键一笔支出交易，选择「加入物品」",
-        ));
+        return Err(guard::link_required_error());
     }
     // 关联购买交易：校验存在且为 expense，自动带出日期/成本/币种（覆盖同名入参）。
-    let effective = apply_purchase_link(conn, &input)?;
+    let effective = apply_purchase_link(conn, input)?;
     let (name, purchase_date, cost_native_cents) = validate_and_convert(conn, &effective)?;
+    let row = ItemCommandRow {
+        name,
+        purchase_date,
+        total_cost_cents: effective.total_cost_cents,
+        currency_code: effective.currency_code,
+        cost_native_cents,
+        purchase_transaction_id: input.purchase_transaction_id.clone(),
+        note: input.note.clone(),
+    };
+    let id = write_create(conn, &new_uuid(), &row)?;
+    // op 产出接缝（issue #860）：创建成功后随同一事务追加 op。
+    record_local(
+        conn,
+        ItemCommand::Create {
+            id: id.clone(),
+            row,
+        },
+    )?;
+    Ok(id)
+}
 
-    let id = new_uuid();
+/// 物品行落库协议（本地创建与重放共用，无 op 产出）：插入在用行（处置字段空）。
+fn write_create(conn: &Connection, id: &str, row: &ItemCommandRow) -> Result<String> {
     let now = now_iso();
     conn.execute(
         "INSERT INTO items \
@@ -185,21 +215,19 @@ pub fn create_item(
          VALUES (?1,?2,?3,?4,?5,?6,'in_use',NULL,NULL,?7,?8,?9,?10,1,?11,0)",
         rusqlite::params![
             id,
-            name,
-            purchase_date,
-            effective.total_cost_cents,
-            effective.currency_code,
-            cost_native_cents,
-            input.purchase_transaction_id,
-            input.note,
+            row.name,
+            row.purchase_date,
+            row.total_cost_cents,
+            row.currency_code,
+            row.cost_native_cents,
+            row.purchase_transaction_id,
+            row.note,
             now,
             now,
             device_id(conn)?,
         ],
     )?;
-    // 写入成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
-    notify();
-    Ok(id)
+    Ok(id.to_string())
 }
 
 /// 创建/修改共用的入参校验与归一化：名称非空、总成本 > 0、购买日期可解析
@@ -242,6 +270,15 @@ pub fn update_item(
     input: ItemInput,
     notify: &mut dyn FnMut(),
 ) -> Result<()> {
+    ensure_transaction(conn, || update_within_transaction(conn, id, &input))?;
+    // 写入成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
+    notify();
+    Ok(())
+}
+
+/// 修改协议本体（无事务语义，由 [`ensure_transaction`] 包裹）：带出/校验 →
+/// 落库 + op 产出（随同一事务提交/回滚）。
+fn update_within_transaction(conn: &Connection, id: &str, input: &ItemInput) -> Result<()> {
     let existing = get_item_by_id(conn, id)?;
     let Some(existing) = existing else {
         return Err(AppError::codedp_not_found(
@@ -256,7 +293,7 @@ pub fn update_item(
     // 手动调整的成本/日期照常生效（溯源只增不减，None 不等于取消关联）。
     let effective = match &input.purchase_transaction_id {
         Some(tx_id) if Some(tx_id.as_str()) != existing.purchase_transaction_id.as_deref() => {
-            apply_purchase_link(conn, &input)?
+            apply_purchase_link(conn, input)?
         }
         _ => input.clone(),
     };
@@ -268,16 +305,33 @@ pub fn update_item(
     let (name, purchase_date, cost_native_cents) = validate_and_convert(conn, &effective)?;
 
     // 已处置物品的购买日期不得晚于处置日，否则列表/详情读取时成本口径报错（不可达状态）。
-    if let Some(disposal_date) = &existing.disposal_date
-        && parse_date(&purchase_date)? > parse_date(disposal_date)?
-    {
-        return Err(AppError::codedp(
-            "item.purchase-after-disposal",
-            format!("购买日期 {purchase_date} 晚于处置日期 {disposal_date}，请先调整处置日期"),
-            &[&purchase_date, disposal_date],
-        ));
+    if let Some(disposal_date) = &existing.disposal_date {
+        ensure_purchase_not_after_disposal(&purchase_date, disposal_date)?;
     }
 
+    let row = ItemCommandRow {
+        name,
+        purchase_date,
+        total_cost_cents: effective.total_cost_cents,
+        currency_code: effective.currency_code,
+        cost_native_cents,
+        purchase_transaction_id: link,
+        note: input.note.clone(),
+    };
+    write_update_row(conn, id, &row)?;
+    // op 产出接缝（issue #860）：修改成功后随同一事务追加 op。
+    record_local(
+        conn,
+        ItemCommand::Update {
+            id: id.to_string(),
+            row,
+        },
+    )
+}
+
+/// 物品行更新协议（本地修改与重放共用，无 op 产出）：替换编辑面字段
+/// （status / 处置字段 / is_deleted 不动）。
+fn write_update_row(conn: &Connection, id: &str, row: &ItemCommandRow) -> Result<()> {
     let updated = conn.execute(
         "UPDATE items \
          SET name=?2, purchase_date=?3, total_cost_cents=?4, currency_code=?5, \
@@ -286,13 +340,13 @@ pub fn update_item(
          WHERE id=?1 AND is_deleted=0",
         rusqlite::params![
             id,
-            name,
-            purchase_date,
-            effective.total_cost_cents,
-            effective.currency_code,
-            cost_native_cents,
-            link,
-            input.note,
+            row.name,
+            row.purchase_date,
+            row.total_cost_cents,
+            row.currency_code,
+            row.cost_native_cents,
+            row.purchase_transaction_id,
+            row.note,
             now_iso(),
             device_id(conn)?,
         ],
@@ -301,8 +355,6 @@ pub fn update_item(
         updated, 1,
         "前置存在性检查已排除 id 不存在/软删除，单连接下不可达"
     );
-    // 写入成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
-    notify();
     Ok(())
 }
 
@@ -321,6 +373,25 @@ pub fn dispose_item(
     input: ItemDisposeInput,
     notify: &mut dyn FnMut(),
 ) -> Result<()> {
+    ensure_transaction(conn, || {
+        let date = write_dispose(conn, id, &input)?;
+        record_local(
+            conn,
+            ItemCommand::Dispose {
+                id: id.to_string(),
+                disposal_date: date,
+                residual_value_cents: input.residual_value_cents,
+            },
+        )
+    })?;
+    // 处置成功 → 通知调用方发出失效信号（生产为 ledger:changed）。
+    notify();
+    Ok(())
+}
+
+/// 物品处置协议（本地处置与重放共用，无 op 产出）：校验 + 状态流转，返回
+/// 规范化后的处置日期（YYYY-MM-DD）。
+fn write_dispose(conn: &Connection, id: &str, input: &ItemDisposeInput) -> Result<String> {
     let Some(existing) = get_item_by_id(conn, id)? else {
         return Err(AppError::coded_not_found(
             "item.not-found",
@@ -350,12 +421,13 @@ pub fn dispose_item(
         return Err(AppError::coded("item.residual-negative", "残值不能为负"));
     }
 
+    let date = disposal_date.format("%Y-%m-%d").to_string();
     let updated = conn.execute(
         "UPDATE items SET status='disposed', disposal_date=?2, residual_value_cents=?3, \
          updated_at=?4, version=version+1, device_id=?5 WHERE id=?1 AND is_deleted=0",
         rusqlite::params![
             id,
-            disposal_date.format("%Y-%m-%d").to_string(),
+            &date,
             input.residual_value_cents,
             now_iso(),
             device_id(conn)?,
@@ -365,15 +437,24 @@ pub fn dispose_item(
         updated, 1,
         "前置存在性检查已排除 id 不存在/软删除，单连接下不可达"
     );
-    // 处置成功 → 通知调用方发出失效信号（生产为 ledger:changed）。
-    notify();
-    Ok(())
+    Ok(date)
 }
 
 /// 软删除物品（`is_deleted=1`，不物理移除）：标准列表（`WHERE is_deleted=0`）
 /// 自动过滤。不校验引用（物品当前无下游引用）。不存在（含已删除）的 id 返回
 /// `AppError::NotFound`。成功后调用 `notify`（生产路径发 `ledger:changed`）。
 pub fn delete_item(conn: &Connection, id: &str, notify: &mut dyn FnMut()) -> Result<()> {
+    ensure_transaction(conn, || {
+        write_delete(conn, id)?;
+        record_local(conn, ItemCommand::Delete { id: id.to_string() })
+    })?;
+    // 删除成功 → 通知调用方发出失效信号（生产为 ledger:changed）。
+    notify();
+    Ok(())
+}
+
+/// 物品软删协议（本地删除与重放共用，无 op 产出）：存在性检查 + 软删。
+fn write_delete(conn: &Connection, id: &str) -> Result<()> {
     let exists: bool = conn
         .query_row(
             "SELECT 1 FROM items WHERE id=?1 AND is_deleted=0",
@@ -392,8 +473,21 @@ pub fn delete_item(conn: &Connection, id: &str, notify: &mut dyn FnMut()) -> Res
         "UPDATE items SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id(conn)?],
     )?;
-    // 删除成功 → 通知调用方发出失效信号（生产为 ledger:changed）。
-    notify();
+    Ok(())
+}
+
+/// 已处置物品的购买日期不得晚于处置日（本地修改与重放共用的不可达状态守卫，
+/// 否则列表/详情读取时成本口径报错）。
+fn ensure_purchase_not_after_disposal(purchase_date: &str, disposal_date: &str) -> Result<()> {
+    let purchase = parse_date(purchase_date)?;
+    let disposal = parse_date(disposal_date)?;
+    if purchase > disposal {
+        return Err(AppError::codedp(
+            "item.purchase-after-disposal",
+            format!("购买日期 {purchase_date} 晚于处置日期 {disposal_date}，请先调整处置日期"),
+            &[purchase_date, disposal_date],
+        ));
+    }
     Ok(())
 }
 
@@ -406,6 +500,46 @@ fn parse_date(s: &str) -> Result<chrono::NaiveDate> {
             &[s],
         )
     })
+}
+
+/// 重放执行：创建（溯源守卫原样生效：关联交易缺失/被占 → 挂起待裁决；
+/// 折算结果随命令携带，不重折算——ADR-0091 决策 3）。
+pub(crate) fn replay_create(conn: &Connection, id: &str, row: &ItemCommandRow) -> Result<()> {
+    let Some(tx_id) = &row.purchase_transaction_id else {
+        return Err(guard::link_required_error());
+    };
+    guard::resolve_purchase_link(conn, tx_id)?;
+    write_create(conn, id, row)?;
+    Ok(())
+}
+
+/// 重放执行：修改（换关时复验溯源守卫；处置先后守卫与本地同语义）。
+pub(crate) fn replay_update(conn: &Connection, id: &str, row: &ItemCommandRow) -> Result<()> {
+    let existing = get_item_by_id(conn, id)?.ok_or_else(|| {
+        AppError::codedp_not_found("item.not-found", format!("物品不存在: {id}"), &[id])
+    })?;
+    // 换关（与既有指针不同）→ 校验新关联（存在/expense/溯源唯一）。
+    if let Some(tx_id) = &row.purchase_transaction_id
+        && Some(tx_id.as_str()) != existing.purchase_transaction_id.as_deref()
+    {
+        guard::resolve_purchase_link(conn, tx_id)?;
+    }
+    // 已处置物品的购买日期不得晚于处置日（与本地修改同一不可达状态守卫）。
+    if let Some(disposal_date) = &existing.disposal_date {
+        ensure_purchase_not_after_disposal(&row.purchase_date, disposal_date)?;
+    }
+    write_update_row(conn, id, row)
+}
+
+/// 重放执行：处置（同一协议含全部日期/残值守卫）。
+pub(crate) fn replay_dispose(conn: &Connection, id: &str, input: &ItemDisposeInput) -> Result<()> {
+    write_dispose(conn, id, input)?;
+    Ok(())
+}
+
+/// 重放执行：软删除（同一协议含存在性检查）。
+pub(crate) fn replay_delete(conn: &Connection, id: &str) -> Result<()> {
+    write_delete(conn, id)
 }
 
 /// 全部在用物品「每天成本合计」（issue #122 dashboard 汇总卡）：conn 级聚合，

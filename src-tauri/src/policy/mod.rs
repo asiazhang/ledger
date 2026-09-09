@@ -15,11 +15,15 @@
 //! 保司字典（Insurer，issue #712 / ADR-0082）归保险域自有：单消费方 Policy，
 //! 不进参考数据域与核心交易域；模型与 CRUD 收口 [`insurer`]（体量小不拆）。
 
+pub mod command;
 pub mod crud;
 pub mod insurer;
 mod model;
 pub mod stats;
 pub mod validation;
+
+pub use command::{InsurerCommand, PolicyCommand, PolicyCommandRow};
+pub(crate) use command::{replay_insurer_command, replay_policy_command};
 
 /// 域 API 再导出：调用面用域语言短名（`policy::list_policies` 等），
 /// 与 ADR-0056 定格形状一致（先例：`item` / `scheduled_transactions` 入口再导出）。

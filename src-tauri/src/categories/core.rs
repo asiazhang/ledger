@@ -10,7 +10,9 @@ use crate::db::query::query_all;
 use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::sync_engine::device_id;
+use crate::transaction::ensure_transaction;
 
+use super::command::{CategoryCommand, CategoryCommandRow, record_local};
 use super::model::{Category, CategoryInput, CategoryUpdateInput, ReorderItem};
 
 /// 分类列表：默认仅未删除；`include_deleted=true` 返回含软删全量（issue #377）。
@@ -33,25 +35,43 @@ pub fn list_categories(conn: &Connection, include_deleted: bool) -> Result<Vec<C
 }
 
 pub fn create_category(conn: &Connection, input: CategoryInput) -> Result<String> {
-    let id = new_uuid();
+    ensure_transaction(conn, || {
+        let row = CategoryCommandRow {
+            name: input.name.clone(),
+            kind: input.kind.clone(),
+            parent_id: input.parent_id.clone(),
+            icon: input.icon.clone(),
+        };
+        let id = write_create(conn, &new_uuid(), &row)?;
+        record_local(
+            conn,
+            CategoryCommand::Create {
+                id: id.clone(),
+                row,
+            },
+        )?;
+        Ok(id)
+    })
+}
+
+/// 分类落库协议（本地创建与重放共用，无 op 产出）：新建行落 `sort_order=0`。
+fn write_create(conn: &Connection, id: &str, row: &CategoryCommandRow) -> Result<String> {
     let now = now_iso();
     conn.execute(
         "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,0)",
+         VALUES (?1,?2,?3,?4,?5,0,?6,?7,1,?8,0)",
         rusqlite::params![
             id,
-            input.name,
-            input.kind,
-            input.parent_id,
-            input.icon,
-            0,
+            row.name,
+            row.kind,
+            row.parent_id,
+            row.icon,
             now,
             now,
-            1,
             device_id(conn)?
         ],
     )?;
-    Ok(id)
+    Ok(id.to_string())
 }
 
 /// 按自然键（name + kind + parent_id）幂等创建分类：已存在（未删除）时返回已有 id，
@@ -84,6 +104,15 @@ fn find_category_by_natural_key(
 /// 返回 `AppError::NotFound`（HTTP 侧映射 404）。IPC 与 HTTP 端点共用本函数，
 /// 守卫一处生效。
 pub fn delete_category(conn: &Connection, id: &str) -> Result<()> {
+    ensure_transaction(conn, || {
+        write_delete(conn, id)?;
+        record_local(conn, CategoryCommand::Delete { id: id.to_string() })
+    })
+}
+
+/// 分类软删协议（本地删除与重放共用，无 op 产出）：存在性检查 + 预算删除守卫
+/// （issue #355）+ 软删。
+fn write_delete(conn: &Connection, id: &str) -> Result<()> {
     let exists: bool = conn
         .query_row(
             "SELECT 1 FROM categories WHERE id=?1 AND is_deleted=0",
@@ -125,6 +154,27 @@ pub fn delete_category(conn: &Connection, id: &str) -> Result<()> {
 /// 自身不可为父、父分类须存在（未删除）且 `kind` 与自身一致——通过后落库。
 /// 分类名不在搜索范围内（ADR-0027），且搜索无索引，改名无需任何后续处理。
 pub fn update_category(conn: &Connection, id: &str, input: CategoryUpdateInput) -> Result<()> {
+    ensure_transaction(conn, || {
+        let (name, icon, parent_id) = write_update(conn, id, &input)?;
+        record_local(
+            conn,
+            CategoryCommand::Update {
+                id: id.to_string(),
+                name,
+                icon,
+                parent_id,
+            },
+        )
+    })
+}
+
+/// 分类编辑协议（本地修改与重放共用，无 op 产出）：两级分类校验 + 落库，返回
+/// 解决后的落定值（名称 / 图标 / 父分类）。调用方保证处于写事务内。
+fn write_update(
+    conn: &Connection,
+    id: &str,
+    input: &CategoryUpdateInput,
+) -> Result<(String, Option<String>, Option<String>)> {
     let existing: Category = query_all(
         conn,
         "SELECT id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted \
@@ -135,7 +185,7 @@ pub fn update_category(conn: &Connection, id: &str, input: CategoryUpdateInput) 
     .next()
     .ok_or_else(|| AppError::codedp_not_found("category.not-found", format!("分类不存在: {id}"), &[id]))?;
 
-    let parent_id = input.parent_id.unwrap_or(existing.parent_id);
+    let parent_id = input.parent_id.clone().unwrap_or(existing.parent_id);
 
     if let Some(ref pid) = parent_id {
         if *pid == id {
@@ -163,26 +213,66 @@ pub fn update_category(conn: &Connection, id: &str, input: CategoryUpdateInput) 
         }
     }
 
-    let name = input.name.unwrap_or(existing.name);
-    let icon = input.icon.or(existing.icon);
+    let name = input.name.clone().unwrap_or(existing.name);
+    let icon = input.icon.clone().or(existing.icon);
 
     conn.execute(
         "UPDATE categories SET name=?1, icon=?2, parent_id=?3, updated_at=?4, version=version+1, device_id=?5 WHERE id=?6",
-        rusqlite::params![name, icon, parent_id, now_iso(), device_id(conn)?, id],
+        rusqlite::params![&name, &icon, &parent_id, now_iso(), device_id(conn)?, id],
     )?;
-    Ok(())
+    Ok((name, icon, parent_id))
 }
 
 /// 排序重排：按提交顺序逐行落 `sort_order`（`updated_at`/`version`/`device_id`
 /// 同步递增）；IPC 与 HTTP 侧共用本函数，排序语义一处生效。
 pub fn reorder_categories(conn: &Connection, items: Vec<ReorderItem>) -> Result<()> {
+    ensure_transaction(conn, || {
+        write_reorder(conn, &items)?;
+        record_local(conn, CategoryCommand::Reorder { items })
+    })
+}
+
+/// 重排落库协议（本地重排与重放共用，无 op 产出）：循环逐行 UPDATE（原样
+/// 保持逐行递增的簿记戳语义）；调用方保证处于写事务内（op 随整批提交/回滚）。
+pub(crate) fn write_reorder(conn: &Connection, items: &[ReorderItem]) -> Result<()> {
     let now = now_iso();
     let did = device_id(conn)?;
-    for item in &items {
+    for item in items {
         conn.execute(
             "UPDATE categories SET sort_order=?1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
             rusqlite::params![item.sort_order, now, did, item.id],
         )?;
     }
     Ok(())
+}
+
+/// 重放执行：创建（不产出 op；两级分类校验原样生效）。
+pub(crate) fn replay_create(conn: &Connection, id: &str, row: &CategoryCommandRow) -> Result<()> {
+    write_create(conn, id, row)?;
+    Ok(())
+}
+
+/// 重放执行：修改——携带的即解决后的落定值，以同一协议复验两级分类校验后落库。
+pub(crate) fn replay_update(
+    conn: &Connection,
+    id: &str,
+    name: &str,
+    icon: Option<&str>,
+    parent_id: Option<&str>,
+) -> Result<()> {
+    write_update(
+        conn,
+        id,
+        &CategoryUpdateInput {
+            name: Some(name.to_string()),
+            icon: icon.map(String::from),
+            parent_id: Some(parent_id.map(String::from)),
+        },
+    )?;
+    Ok(())
+}
+
+/// 重放执行：软删除（同一协议含预算删除守卫：引用失败挂起待裁决）。
+pub(crate) fn replay_delete(conn: &Connection, id: &str) -> Result<()> {
+    write_delete(conn, id)
 }

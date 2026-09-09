@@ -15,12 +15,15 @@
 //!
 //! 依赖方向恒为「壳层 → physical_asset → 基础设施」：本模块不反向依赖壳层。
 
+pub mod command;
 pub mod crud;
 mod model;
 pub mod validation;
 
+pub(crate) use command::replay_command;
 /// 域 API 再导出：调用面用域语言短名（`physical_asset::list_physical_assets` 等），
 /// 与 ADR-0056 定格形状一致（先例：`policy` / `item` 入口再导出）。
+pub use command::{PhysicalAssetCommand, ValuationCommandRow};
 pub use crud::{
     create_physical_asset, delete_physical_asset, dispose_physical_asset, get_physical_asset,
     list_physical_assets, update_physical_asset, update_physical_asset_valuation,

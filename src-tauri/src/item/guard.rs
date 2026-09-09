@@ -15,6 +15,15 @@ use super::model::ItemInput;
 use crate::error::{AppError, Result};
 use crate::transaction::amount::TransactionKind;
 
+/// 「物品必须关联购买交易创建」的码化拒绝（创建本地路径与重放路径共用，
+/// 用户可见文案单点维护）。
+pub(super) fn link_required_error() -> AppError {
+    AppError::coded(
+        "item.purchase-link-required",
+        "物品必须关联一笔购买交易创建：请在交易页右键一笔支出交易，选择「加入物品」",
+    )
+}
+
 /// 解析关联购买交易并自动带出（issue #119）：入参带交易 id 时校验交易
 /// 存在、未删除且为 `expense`，用交易值覆盖入参的购买日期/总成本/币种
 /// （自动带出）；不带关联时原样返回。返回有效入参，调用方继续走统一校验。

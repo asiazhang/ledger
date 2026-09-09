@@ -2,11 +2,13 @@
 
 use rusqlite::{Connection, OptionalExtension};
 
+use super::command::{PolicyCommand, PolicyCommandRow, record_policy_local};
 use super::model::{Policy, PolicyInput, PolicySourceDisplay};
 use crate::db::query::{query_all, query_one};
 use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::sync_engine::device_id;
+use crate::transaction::ensure_transaction;
 
 use super::validation::validate_input;
 
@@ -61,9 +63,26 @@ pub fn create_policy(
     input: PolicyInput,
     notify: &mut dyn FnMut(),
 ) -> Result<String> {
-    let normalized = validate_input(conn, &input, false)?;
+    let id = ensure_transaction(conn, || {
+        let normalized = validate_input(conn, &input, false)?;
+        let row = PolicyCommandRow::from(&normalized);
+        let id = write_create(conn, &new_uuid(), &row)?;
+        record_policy_local(
+            conn,
+            PolicyCommand::Create {
+                id: id.clone(),
+                row,
+            },
+        )?;
+        Ok(id)
+    })?;
+    // 写入成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
+    notify();
+    Ok(id)
+}
 
-    let id = new_uuid();
+/// 保单落库协议（本地创建与重放共用，无 op 产出）：插入行（生成 id 与审计字段）。
+fn write_create(conn: &Connection, id: &str, row: &PolicyCommandRow) -> Result<String> {
     let now = now_iso();
     conn.execute(
         "INSERT INTO policies \
@@ -72,21 +91,19 @@ pub fn create_policy(
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10,1,?11,0)",
         rusqlite::params![
             id,
-            normalized.insurer_id,
-            normalized.policy_number,
-            normalized.product_name,
-            normalized.start_date,
-            normalized.end_date,
-            normalized.coverage_amount_cents,
-            normalized.coverage_currency_code,
-            normalized.note,
+            row.insurer_id,
+            row.policy_number,
+            row.product_name,
+            row.start_date,
+            row.end_date,
+            row.coverage_amount_cents,
+            row.coverage_currency_code,
+            row.note,
             now,
             device_id(conn)?,
         ],
     )?;
-    // 写入成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
-    notify();
-    Ok(id)
+    Ok(id.to_string())
 }
 
 /// 按 `id` 编辑保单静态要素（全量替换）：保留审计字段（`id` / `created_at` /
@@ -103,27 +120,44 @@ pub fn update_policy(
     input: PolicyInput,
     notify: &mut dyn FnMut(),
 ) -> Result<()> {
-    let existing = get_policy_by_id(conn, id)?.ok_or_else(|| {
-        AppError::codedp_not_found("policy.not-found", format!("保单不存在: {id}"), &[id])
+    ensure_transaction(conn, || {
+        let existing = get_policy_by_id(conn, id)?.ok_or_else(|| {
+            AppError::codedp_not_found("policy.not-found", format!("保单不存在: {id}"), &[id])
+        })?;
+
+        let insurer_unchanged = existing.insurer_id == input.insurer_id;
+        let normalized = validate_input(conn, &input, insurer_unchanged)?;
+        let row = PolicyCommandRow::from(&normalized);
+        write_update(conn, id, &row)?;
+        record_policy_local(
+            conn,
+            PolicyCommand::Update {
+                id: id.to_string(),
+                row,
+            },
+        )
     })?;
+    notify();
+    Ok(())
+}
 
-    let insurer_unchanged = existing.insurer_id == input.insurer_id;
-    let normalized = validate_input(conn, &input, insurer_unchanged)?;
-
+/// 保单编辑落库协议（本地编辑与重放共用，无 op 产出）：全量替换静态要素，
+/// 保留审计字段（id / created_at / is_deleted）。
+fn write_update(conn: &Connection, id: &str, row: &PolicyCommandRow) -> Result<()> {
     let updated = conn.execute(
         "UPDATE policies SET insurer_id=?2, policy_number=?3, product_name=?4, start_date=?5, \
          end_date=?6, coverage_amount_cents=?7, coverage_currency_code=?8, note=?9, \
          updated_at=?10, version=version+1, device_id=?11 WHERE id=?1 AND is_deleted=0",
         rusqlite::params![
             id,
-            normalized.insurer_id,
-            normalized.policy_number,
-            normalized.product_name,
-            normalized.start_date,
-            normalized.end_date,
-            normalized.coverage_amount_cents,
-            normalized.coverage_currency_code,
-            normalized.note,
+            row.insurer_id,
+            row.policy_number,
+            row.product_name,
+            row.start_date,
+            row.end_date,
+            row.coverage_amount_cents,
+            row.coverage_currency_code,
+            row.note,
             now_iso(),
             device_id(conn)?,
         ],
@@ -132,7 +166,6 @@ pub fn update_policy(
         updated, 1,
         "前置存在性检查已排除 id 不存在/软删除，单连接下不可达"
     );
-    notify();
     Ok(())
 }
 
@@ -141,6 +174,17 @@ pub fn update_policy(
 /// 历史语义不可毁）。不存在（含已删除）的 id → [`AppError::NotFound`]。
 /// 成功后调用 `notify`（生产路径发 `ledger:changed`）。
 pub fn delete_policy(conn: &Connection, id: &str, notify: &mut dyn FnMut()) -> Result<()> {
+    ensure_transaction(conn, || {
+        write_delete(conn, id)?;
+        record_policy_local(conn, PolicyCommand::Delete { id: id.to_string() })
+    })?;
+    notify();
+    Ok(())
+}
+
+/// 保单软删协议（本地删除与重放共用，无 op 产出）：存在性检查 + 软删，
+/// 库内行与既有引用列原样保留、不置空（ADR-0051 决策 5）。
+fn write_delete(conn: &Connection, id: &str) -> Result<()> {
     let exists: bool = conn
         .query_row(
             "SELECT 1 FROM policies WHERE id=?1 AND is_deleted=0",
@@ -159,6 +203,28 @@ pub fn delete_policy(conn: &Connection, id: &str, notify: &mut dyn FnMut()) -> R
         "UPDATE policies SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id(conn)?],
     )?;
-    notify();
     Ok(())
+}
+
+/// 重放执行：创建（保司在用校验等依赖检查原样生效，保司缺失挂起待裁决）。
+pub(crate) fn replay_create(conn: &Connection, id: &str, row: &PolicyCommandRow) -> Result<()> {
+    validate_input(conn, &PolicyInput::from(row), false)?;
+    write_create(conn, id, row)?;
+    Ok(())
+}
+
+/// 重放执行：编辑（保司「保持历史引用」判定与本地同语义：携带保司与既有相同
+/// 则跳过在用校验）。
+pub(crate) fn replay_update(conn: &Connection, id: &str, row: &PolicyCommandRow) -> Result<()> {
+    let existing = get_policy_by_id(conn, id)?.ok_or_else(|| {
+        AppError::codedp_not_found("policy.not-found", format!("保单不存在: {id}"), &[id])
+    })?;
+    let insurer_unchanged = existing.insurer_id == row.insurer_id;
+    validate_input(conn, &PolicyInput::from(row), insurer_unchanged)?;
+    write_update(conn, id, row)
+}
+
+/// 重放执行：软删除（同一协议含存在性检查）。
+pub(crate) fn replay_delete(conn: &Connection, id: &str) -> Result<()> {
+    write_delete(conn, id)
 }

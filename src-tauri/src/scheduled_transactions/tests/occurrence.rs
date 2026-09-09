@@ -338,8 +338,18 @@ fn execute_occurrence_with_preexisting_landing_completes_without_second_row() {
         .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
         .unwrap();
     assert_eq!(count, 1, "同一期次只落一笔");
+    // 日志中含建档 op（create_subscription 经域入口产出，#860），但已落地路径
+    // 不得产出**期次触发** op（落地 op 已存在于全局日志）。
     assert!(
-        crate::sync_engine::read_ops(&conn).unwrap().is_empty(),
+        !crate::sync_engine::read_ops(&conn)
+            .unwrap()
+            .iter()
+            .any(|op| matches!(
+                &op.command,
+                crate::sync_engine::DomainCommand::Scheduled(
+                    crate::scheduled_transactions::ScheduledCommand::ExecuteOccurrence { .. }
+                )
+            )),
         "已落地路径不产出期次 op"
     );
 }

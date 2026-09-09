@@ -10,6 +10,7 @@ use crate::error::{AppError, Result};
 use crate::sync_engine::device_id;
 use crate::transaction::NormalizedTransaction;
 use crate::transaction::amount::TransactionKind;
+use crate::transaction::ensure_transaction;
 use crate::transaction::writer;
 
 use super::models::*;
@@ -23,6 +24,29 @@ const WINDOW_SIZE: i64 = 12;
 
 /// 创建定时交易计划（核心 + 扩展表 + 预生成期次）。
 pub fn create_plan(conn: &Connection, input: CreateScheduledInput) -> Result<String> {
+    ensure_transaction(conn, || {
+        let id = new_uuid();
+        create_protocol(conn, &id, &input)?;
+        // op 产出接缝（issue #860）：建档成功后随同一事务追加 op（全量入参随行；
+        // 期次展开不在载荷内——重放端按同一协议本地展开，行 id 各端独立生成）。
+        record_local(
+            conn,
+            ScheduledCommand::CreatePlan {
+                id: id.clone(),
+                input,
+            },
+        )?;
+        Ok(id)
+    })
+}
+
+/// 计划建档协议（本地创建与重放共用，无 op 产出）：校验 + 核心表/扩展表插入 +
+/// 期次展开（按本端现状展开，行 id 各端独立生成、不作身份）。
+pub(crate) fn create_protocol(
+    conn: &Connection,
+    id: &str,
+    input: &CreateScheduledInput,
+) -> Result<()> {
     if input.amount_cents <= 0 {
         return Err(AppError::coded(
             "scheduled-plan.amount-positive",
@@ -106,7 +130,6 @@ pub fn create_plan(conn: &Connection, input: CreateScheduledInput) -> Result<Str
         writer::validate_policy_active(conn, input.policy_id.as_deref())?;
     }
 
-    let id = new_uuid();
     let now = now_iso();
     let kind_str = input.kind.to_string();
 
@@ -119,15 +142,15 @@ pub fn create_plan(conn: &Connection, input: CreateScheduledInput) -> Result<Str
         rusqlite::params![
             id,
             kind_str,
-            input.account_id,
-            input.category_id,
+            &input.account_id,
+            &input.category_id,
             input.amount_cents,
-            input.currency_code,
+            &input.currency_code,
             input.recurrence_type.to_string(),
             input.recurrence_interval,
             input.recurrence_day,
-            input.start_date,
-            input.note,
+            &input.start_date,
+            &input.note,
             now,
             now,
             device_id(conn)?,
@@ -157,17 +180,17 @@ pub fn create_plan(conn: &Connection, input: CreateScheduledInput) -> Result<Str
             conn.execute(
                 "INSERT INTO installment_plans (scheduled_transaction_id,merchant_id,total_amount_cents,total_occurrences) \
                  VALUES (?1,?2,?3,?4)",
-                rusqlite::params![id, input.merchant_id, total, total_occ],
+                rusqlite::params![id, &input.merchant_id, total, total_occ],
             )?;
         }
         ScheduledKind::Subscription => {
             conn.execute(
                 "INSERT INTO subscription_plans (scheduled_transaction_id,merchant_id,policy_id) VALUES (?1,?2,?3)",
-                rusqlite::params![id, input.merchant_id, input.policy_id],
+                rusqlite::params![id, &input.merchant_id, &input.policy_id],
             )?;
         }
         ScheduledKind::ScheduledTransfer => {
-            let to_acc = input.to_account_id.ok_or_else(|| {
+            let to_acc = input.to_account_id.clone().ok_or_else(|| {
                 AppError::coded(
                     "scheduled-plan.to-account-required",
                     "定时转账必须指定目标账户",
@@ -181,13 +204,33 @@ pub fn create_plan(conn: &Connection, input: CreateScheduledInput) -> Result<Str
         }
     }
 
-    expand_occurrences(conn, &id)?;
+    expand_occurrences_protocol(conn, id)?;
 
-    Ok(id)
+    Ok(())
 }
 
 /// 更新计划状态（暂停/恢复/取消）。
 pub fn update_plan_status(conn: &Connection, id: &str, new_status: ScheduledStatus) -> Result<()> {
+    ensure_transaction(conn, || {
+        update_plan_status_protocol(conn, id, new_status)?;
+        // op 产出接缝（issue #860）：状态变更成功后随同一事务追加 op。
+        record_local(
+            conn,
+            ScheduledCommand::UpdatePlanStatus {
+                id: id.to_string(),
+                new_status,
+            },
+        )
+    })
+}
+
+/// 计划状态变更协议（本地变更与重放共用，无 op 产出）：状态机校验 + 落库，
+/// 取消时把所有 pending 期次置为 cancelled（级联副作用随同一协议在重放端生效）。
+pub(crate) fn update_plan_status_protocol(
+    conn: &Connection,
+    id: &str,
+    new_status: ScheduledStatus,
+) -> Result<()> {
     let st: ScheduledTransaction = query_one(
         conn,
         "SELECT id,kind,status,account_id,category_id,amount_cents,currency_code,\
@@ -248,6 +291,29 @@ pub fn update_plan_status(conn: &Connection, id: &str, new_status: ScheduledStat
 /// 因此编辑天然只影响未来期次。商户为**全量替换**语义：提交值与扩展表当前值
 /// 相同视为保持历史引用（软删商户照常保留），变更时校验新商户在用。
 pub fn update_subscription(conn: &Connection, input: UpdateSubscriptionInput) -> Result<()> {
+    ensure_transaction(conn, || {
+        update_subscription_protocol(conn, &input)?;
+        // op 产出接缝（issue #860）：编辑成功后随同一事务追加 op（解决后的非金额
+        // 字段随行；金额不可编辑哨兵在源端已裁决，不随行携带）。
+        record_local(
+            conn,
+            ScheduledCommand::UpdateSubscription {
+                id: input.id.clone(),
+                account_id: input.account_id.clone(),
+                category_id: input.category_id.clone(),
+                note: input.note.clone(),
+                merchant_id: input.merchant_id.clone(),
+            },
+        )
+    })
+}
+
+/// 订阅编辑协议（本地编辑与重放共用，无 op 产出）：金额哨兵拒绝 + 存在性/形态
+/// 校验 + 商户保持历史引用语义 + 落库。
+pub(crate) fn update_subscription_protocol(
+    conn: &Connection,
+    input: &UpdateSubscriptionInput,
+) -> Result<()> {
     if input.amount_cents || input.total_amount_cents {
         return Err(AppError::coded(
             "scheduled-plan.edit-amount-forbidden",
@@ -298,7 +364,7 @@ pub fn update_subscription(conn: &Connection, input: UpdateSubscriptionInput) ->
         )
         .optional()?
         .flatten();
-    if input.merchant_id != current_merchant {
+    if input.merchant_id.as_ref() != current_merchant.as_ref() {
         writer::validate_merchant_active(conn, input.merchant_id.as_deref())?;
     }
 
@@ -511,9 +577,27 @@ pub fn list_plans(conn: &Connection) -> Result<Vec<ScheduledTransactionWithExt>>
 // 期次展开
 // ---------------------------------------------------------------------------
 
-/// 预生成下一批期次。对于有上限的计划（如 installment）生成所有剩余期次；
-/// 对于无限循环的计划生成有限窗口。
+/// 预生成下一批期次（壳层写入口：op 产出随同一事务）。
 pub fn expand_occurrences(conn: &Connection, st_id: &str) -> Result<Vec<String>> {
+    ensure_transaction(conn, || {
+        let ids = expand_occurrences_protocol(conn, st_id)?;
+        // op 产出接缝（issue #860）：展开成功后随同一事务追加 op（重放端按本端
+        // 现状重推同一协议，count 守卫防溢出，行 id 各端独立生成）。
+        if !ids.is_empty() {
+            record_local(
+                conn,
+                ScheduledCommand::ExpandOccurrences {
+                    plan_id: st_id.to_string(),
+                },
+            )?;
+        }
+        Ok(ids)
+    })
+}
+
+/// 期次展开协议（本地展开与重放共用，无 op 产出）。对于有上限的计划（如
+/// installment）生成所有剩余期次；对于无限循环的计划生成有限窗口。
+pub(crate) fn expand_occurrences_protocol(conn: &Connection, st_id: &str) -> Result<Vec<String>> {
     let st: ScheduledTransaction = query_one(
         conn,
         "SELECT id,kind,status,account_id,category_id,amount_cents,currency_code,\
