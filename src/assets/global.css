@@ -149,3 +149,12 @@ textarea,
 .tab-back-option .n-dropdown-option .n-dropdown-option-body {
   height: auto;
 }
+
+/*
+ * 表格数值列等宽数字（词汇表「表格列形态」）：列配置以 className 单点挂载，
+ * 与 align: 'right' 并列声明；字体声明只收口在此一处，调用点不散落
+ * font-variant-numeric（AmountCell 弹层全文的同款声明是组件内先例）。
+ */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
