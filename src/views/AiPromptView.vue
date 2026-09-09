@@ -4,6 +4,8 @@ import { onMounted, ref } from 'vue'
 import { NCard, NButton, NSpace, NText, useMessage } from 'naive-ui'
 import { api } from '@/api'
 import { t } from '@/i18n'
+// 样式方案试点（issue #888 / ADR-0093）：样式住旁路样式文件，随根元素主题类亮暗换装
+import { promptBody } from './AiPromptView.css.ts'
 
 const message = useMessage()
 const prompt = ref('')
@@ -41,27 +43,12 @@ async function copyPrompt() {
         <NText depth="3" style="font-size: 13px">
           {{ t('ai.description') }}
         </NText>
+        <!-- class 来自旁路样式文件（issue #888 试点）：原 scoped 样式块已迁出删除 -->
         <pre
-          class="prompt-body"
+          :class="promptBody"
           data-testid="prompt-body"
         >{{ prompt || (loading ? t('ai.loading') : t('ai.loadFailed')) }}</pre>
       </NSpace>
     </NCard>
   </NSpace>
 </template>
-
-<style scoped>
-.prompt-body {
-  margin: 0;
-  padding: 12px 16px;
-  border-radius: 6px;
-  background: rgba(128, 128, 128, 0.08);
-  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 13px;
-  line-height: 1.7;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 60vh;
-  overflow: auto;
-}
-</style>
