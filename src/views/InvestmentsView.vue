@@ -5,12 +5,14 @@ import { NTabs, NTabPane, NIcon } from 'naive-ui'
 import {
   StatsChartOutline,
   ListOutline,
+  PieChartOutline,
   TrendingUpOutline,
 } from '@vicons/ionicons5'
 import { api } from '@/api'
 import { t } from '@/i18n'
 import { useFocusParam } from '@/composables/useFocusParam'
 import RealizedPnlPanel from '@/components/investments/RealizedPnlPanel.vue'
+import HoldingsOverview from '@/components/investments/HoldingsOverview.vue'
 import InstrumentBrowser from '@/components/investments/InstrumentBrowser.vue'
 import PortfolioTrendPanel from '@/components/investments/PortfolioTrendPanel.vue'
 import type { Instrument } from '@/types'
@@ -63,10 +65,17 @@ onMounted(() => focusParam.consume())
   <NTabs v-model:value="activeTab" type="line">
     <!-- pnl pane 用 display-directive='show'：内容保持挂载（v-show 隐藏），
          筛选/汇总状态在 tab 切换间保留，与原视图顶层 ref 行为一致。
-         标的/走势 tab 保持默认 'if'，切回时重新挂载加载，与原 watch(activeTab) 刷新一致。 -->
+         持仓/标的/走势 tab 保持默认 'if'，切回时重新挂载加载，与原 watch(activeTab) 刷新一致。 -->
     <NTabPane name="pnl" display-directive="show">
       <template #tab><span class="pane-tab"><NIcon :component="StatsChartOutline" />{{ t('investments.tabs.pnl') }}</span></template>
       <RealizedPnlPanel />
+    </NTabPane>
+
+    <!-- 持仓页签（issue #901）：原盈亏页顶部的持仓概览卡整体迁入，
+         卡内自带同步接缝与价格失效信号订阅，独立挂载即可自洽。 -->
+    <NTabPane name="holdings">
+      <template #tab><span class="pane-tab"><NIcon :component="PieChartOutline" />{{ t('investments.tabs.holdings') }}</span></template>
+      <HoldingsOverview />
     </NTabPane>
 
     <NTabPane name="instruments">

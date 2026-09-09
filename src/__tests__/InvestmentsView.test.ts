@@ -1,15 +1,32 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
-import { mount, flushPromises } from '@vue/test-utils'
-import { h, nextTick } from 'vue'
-import { NDialogProvider } from 'naive-ui'
+import { flushPromises } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import InvestmentsView from '@/views/InvestmentsView.vue'
+import { formatAmount } from '@/utils/money'
+import { clickTab, findTab } from './helpers/dom'
+import { mountWithDialog } from './helpers/mount'
+import { refCurrencies } from './helpers/reference-stubs'
+import { mockHoldings } from './factories'
+import {
+  firePricesChanged,
+  resetPricesChangedHandler,
+} from './prices-changed-mock'
 import type { Instrument } from '@/types'
 
 // 走势图用共享桩组件替代：组件层测试只验证数据联动与文案渲染，不验证 canvas 绘制
 vi.mock('vue-chartjs', async () => {
   const { LineChartStub } = await import('./line-chart-stub')
   return { Line: LineChartStub }
+})
+
+// 价格失效信号订阅 mock（同 HoldingsOverview.test.ts 基座）：捕获订阅回调，
+// 视图级用例手动触发模拟后端 emit（同步写价 → 持仓自动刷新，issue #901）。
+vi.mock('@/composables/usePricesChanged', async () => {
+  const { capturePricesChangedHandler } = await import('./prices-changed-mock')
+  return {
+    usePricesChanged: (cb: () => void) => capturePricesChangedHandler(cb),
+  }
 })
 
 // focus 参数读取自路由 query（useFocusParam 注入 getter，spec #704 / issue #709）。
@@ -22,6 +39,9 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push: pushMock }),
 }))
 
+/** 视图挂载走共享基座（helpers/mount.ts 单点收口）：顶层 InstrumentBrowser 调
+ * useAppDialog（删除二次确认，issue #292），与 App.vue 同构需 NDialogProvider 包裹。 */
+const mountView = () => mountWithDialog(InvestmentsView)
 
 const mockInstruments: Instrument[] = [
   {
@@ -95,24 +115,17 @@ const INVESTMENT_DEFAULTS = {
 }
 
 beforeEach(async () => {
+  resetPricesChangedHandler()
   // 参考 store 预载走接缝 opt-in 参数（五个 list 命令由桩层规范夹具兑底）。
   await wireInvokeSeam({ defaults: INVESTMENT_DEFAULTS, refreshReferenceStores: true }).ready
 })
 
 describe('InvestmentsView 标的 tab', () => {
-  /** 标的页 InstrumentBrowser 顶层调用 useAppDialog（删除二次确认，issue #292），
-   * 与 App.vue 同构需 NDialogProvider 包裹（先例：AccountsView.test.ts 的 mountView）。 */
-  function mountView() {
-    return mount(NDialogProvider, {
-      slots: { default: () => h(InvestmentsView) },
-    })
-  }
-
   // issue #769：页签存在性收行——行 = 页签名，删页签即红（生杀线内，见 CONTEXT-testing「存在性断言」）。
-  it.each(['盈亏', '标的', '走势'])('%s tab 存在', async (tab) => {
+  it.each(['盈亏', '持仓', '标的', '走势'])('%s tab 存在', async (tab) => {
     const wrapper = mountView()
     await nextTick()
-    expect(wrapper.findAll('.n-tabs-tab').map((t) => t.text())).toContain(tab)
+    expect(findTab(wrapper, tab, { exact: true }), `页签「${tab}」应存在`).toBeTruthy()
   })
 
   // issue #769：标的 tab 内容存在性收行——原「显示标的搜索框」与「支持搜索」近重复合并为一行
@@ -120,19 +133,14 @@ describe('InvestmentsView 标的 tab', () => {
   it.each(['搜索代码或名称', '全部市场'])('标的 tab 显示「%s」', async (text) => {
     const wrapper = mountView()
     await nextTick()
-    await wrapper.findAll('.n-tabs-tab')[1].trigger('click')
-    await nextTick()
-    await nextTick()
+    await clickTab(wrapper, '标的')
     expect(wrapper.html()).toContain(text)
   })
 
   it('标的 tab 分页请求携带 page/page_size', async () => {
     const wrapper = mountView()
     await nextTick()
-    const instTab = wrapper.findAll('.n-tabs-tab')[1]
-    await instTab.trigger('click')
-    await nextTick()
-    await nextTick()
+    await clickTab(wrapper, '标的')
     expect(lastInvokeArgs('list_instruments').filter).toMatchObject({ page: 1, page_size: 50 })
   })
 
@@ -140,9 +148,7 @@ describe('InvestmentsView 标的 tab', () => {
     const wrapper = mountView()
     await nextTick()
     // 进入标的 tab
-    await wrapper.findAll('.n-tabs-tab')[1].trigger('click')
-    await nextTick()
-    await nextTick()
+    await clickTab(wrapper, '标的')
     // 点第一行（600000 浦发银行）的「走势」按钮
     const btn = wrapper.find('[data-testid="view-trend-600000"]')
     expect(btn.exists()).toBe(true)
@@ -160,9 +166,7 @@ describe('InvestmentsView 标的 tab', () => {
     const wrapper = mountView()
     await nextTick()
     // 经标的列表入口进入单标的走势
-    await wrapper.findAll('.n-tabs-tab')[1].trigger('click')
-    await nextTick()
-    await nextTick()
+    await clickTab(wrapper, '标的')
     await wrapper.find('[data-testid="view-trend-600000"]').trigger('click')
     await nextTick()
     await nextTick()
@@ -171,15 +175,98 @@ describe('InvestmentsView 标的 tab', () => {
     ).length
     expect(instCallsAfterEntry).toBe(1)
     // 切到盈亏再直入走势：入口残留已清空，回到组合模式（无新的单标的查询）
-    await wrapper.findAll('.n-tabs-tab')[0].trigger('click')
-    await nextTick()
-    await nextTick()
-    await wrapper.findAll('.n-tabs-tab')[2].trigger('click')
-    await flushPromises()
+    await clickTab(wrapper, '盈亏')
+    await clickTab(wrapper, '走势')
     const instCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'instrument_price_trend')
     expect(instCalls.length).toBe(1)
     // 组合走势空数据 → 引导文案（而非上一标的的单标的曲线）
     expect(wrapper.text()).toContain('暂无历史价格数据')
+  })
+})
+
+/** 持仓迁为投资页独立页签（issue #901）：持仓概览卡整体迁入新持仓页签，
+ * 盈亏页签收窄为纯已实现盈亏视图；页签选中维持组件本地瞬态。 */
+describe('InvestmentsView 持仓页签（issue #901）', () => {
+  const cny = refCurrencies[0]
+
+  it('页签顺序为盈亏/持仓/标的/走势，默认选中盈亏', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.findAll('.n-tabs-tab').map((el) => el.text())).toEqual([
+      '盈亏',
+      '持仓',
+      '标的',
+      '走势',
+    ])
+    expect(wrapper.findAll('.n-tabs-tab--active').map((el) => el.text())).toEqual(['盈亏'])
+  })
+
+  it('持仓页签完整呈现：按币种合计统计 + 持仓明细表 + 同步按钮在位', async () => {
+    wireInvokeSeam({ defaults: INVESTMENT_DEFAULTS, overrides: { list_holdings: mockHoldings } })
+    const wrapper = mountView()
+    await flushPromises()
+    await clickTab(wrapper, '持仓')
+    expect(wrapper.text()).toContain('当前持仓')
+    expect(wrapper.text()).toContain('总市值')
+    expect(wrapper.text()).toContain(formatAmount(150000, cny))
+    expect(wrapper.text()).toContain('未实现盈亏合计')
+    // 持仓明细行上屏（600000 浦发银行）
+    expect(wrapper.text()).toContain('600000')
+    expect(wrapper.find('[data-testid="sync-instrument-info"]').exists()).toBe(true)
+  })
+
+  it('盈亏页签不再渲染持仓卡（收窄为纯已实现盈亏视图），访问持仓页签后返回亦不残留', async () => {
+    wireInvokeSeam({ defaults: INVESTMENT_DEFAULTS, overrides: { list_holdings: mockHoldings } })
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('当前持仓')
+    expect(wrapper.find('[data-testid="sync-instrument-info"]').exists()).toBe(false)
+    // 盈亏页自有过滤与汇总视图原样保留
+    expect(wrapper.text()).toContain('已实现盈亏概览')
+    await clickTab(wrapper, '持仓')
+    await clickTab(wrapper, '盈亏')
+    expect(wrapper.text()).not.toContain('当前持仓')
+    expect(wrapper.find('[data-testid="sync-instrument-info"]').exists()).toBe(false)
+  })
+
+  it('价格失效信号触发持仓重查：翻新后的市值合计上屏（自动刷新贯通取数与渲染）', async () => {
+    // 第二次取数返回写价后的行情：h-1 价格/市值/未实现盈亏联动翻新（合计 150000 → 300000）
+    const repriced = [
+      {
+        ...mockHoldings[0],
+        latest_price_cents: 300000,
+        market_value_cents: 300000,
+        unrealized_pnl_cents: 180000,
+      },
+      mockHoldings[1],
+    ]
+    let holdingsCalls = 0
+    wireInvokeSeam({
+      defaults: INVESTMENT_DEFAULTS,
+      overrides: { list_holdings: () => (holdingsCalls++ === 0 ? mockHoldings : repriced) },
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await clickTab(wrapper, '持仓')
+    expect(wrapper.text()).toContain(formatAmount(150000, cny))
+    const callsBefore = mockInvoke.mock.calls.filter(([c]) => c === 'list_holdings').length
+    firePricesChanged()
+    await flushPromises()
+    // 重查恰好一次，且翻新数据上屏（旧合计不再残留）
+    expect(mockInvoke.mock.calls.filter(([c]) => c === 'list_holdings').length).toBe(callsBefore + 1)
+    expect(wrapper.text()).toContain(formatAmount(300000, cny))
+    expect(wrapper.text()).not.toContain(formatAmount(150000, cny))
+  })
+
+  it('页签选中为瞬态：卸载重挂回默认盈亏（不入 URL、不持久化）', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await clickTab(wrapper, '持仓')
+    expect(wrapper.findAll('.n-tabs-tab--active').map((el) => el.text())).toEqual(['持仓'])
+    wrapper.unmount()
+    const remounted = mountView()
+    await flushPromises()
+    expect(remounted.findAll('.n-tabs-tab--active').map((el) => el.text())).toEqual(['盈亏'])
   })
 })
 
@@ -194,12 +281,6 @@ describe('InvestmentsView 来源跳转落点（issue #709）', () => {
     symbol: '600519',
     name: '招商银行',
     invested: false,
-  }
-
-  function mountView() {
-    return mount(NDialogProvider, {
-      slots: { default: () => h(InvestmentsView) },
-    })
   }
 
   function activeTabText(wrapper: ReturnType<typeof mountView>): string {

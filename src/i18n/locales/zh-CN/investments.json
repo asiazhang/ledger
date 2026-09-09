@@ -1,6 +1,7 @@
 {
   "tabs": {
     "pnl": "盈亏",
+    "holdings": "持仓",
     "instruments": "标的",
     "trend": "走势"
   },

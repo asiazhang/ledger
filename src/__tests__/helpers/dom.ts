@@ -1,5 +1,6 @@
 import { expect } from 'vitest'
 import { DOMWrapper, flushPromises, type VueWrapper } from '@vue/test-utils'
+import { nextTick } from 'vue'
 
 /**
  * 测试侧 DOM 查找助手的单一出口（issue #746，ADR-0085 决策 6）。
@@ -48,6 +49,30 @@ export function findButton(
 /** wrapper 范围内按 data-testid 找按钮（既有 `wrapper.find('[data-testid="…"]')` 形态的收口）。 */
 export function findButtonByTestId(wrapper: VueWrapper, testid: string): DOMWrapper<HTMLButtonElement> {
   return wrapper.find(`[data-testid="${testid}"]`) as DOMWrapper<HTMLButtonElement>
+}
+
+/** wrapper 范围内按可见标签文字找页签（NTabs 渲染的 `.n-tabs-tab`）。按名定位：
+ * 插入/增删页签不再牵连全文件下标移位（issue #901 审查，位置下标点的收口）。 */
+export function findTab(
+  wrapper: VueWrapper,
+  label: string,
+  options: FindByTextOptions = {},
+): DOMWrapper<Element> | undefined {
+  const hit = wrapper.findAll('.n-tabs-tab').find((tab) =>
+    options.exact ? tab.text() === label : tab.text().includes(label),
+  )
+  return hit as DOMWrapper<Element> | undefined
+}
+
+/** 按可见标签文字点击页签并等稳定：flushPromises 兜 'if' 懒挂载的数据装载，
+ * 两拍 nextTick 兜重渲染（ InvestmentsI18n.test.ts 原地 clickTab 语义的收口）。 */
+export async function clickTab(wrapper: VueWrapper, label: string): Promise<void> {
+  const tab = findTab(wrapper, label)
+  expect(tab, `页签「${label}」应存在`).toBeTruthy()
+  await tab!.trigger('click')
+  await flushPromises()
+  await nextTick()
+  await nextTick()
 }
 
 /** body 范围内按文本找按钮（弹窗经 NModal teleport 到 body 后的查找形态）。 */
