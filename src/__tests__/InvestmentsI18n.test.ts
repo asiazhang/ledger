@@ -58,21 +58,23 @@ async function clickTab(wrapper: ReturnType<typeof mountView>, index: number) {
 }
 
 describe('InvestmentsView 英文渲染（issue #350 / ADR-0049）', () => {
-  it('页签渲染英文：P&L / Instruments / Trend', async () => {
+  it('页签渲染英文：P&L / Holdings / Instruments / Trend', async () => {
     await applyLocale('en-US')
     await nextTick()
     const wrapper = mountView()
     await nextTick()
     const labels = wrapper.findAll('.n-tabs-tab').map((el) => el.text())
     expect(labels).toContain('P&L')
+    expect(labels).toContain('Holdings')
     expect(labels).toContain('Instruments')
     expect(labels).toContain('Trend')
   })
 
-  it('盈亏页持仓概览渲染英文（Current Holdings / 空态）', async () => {
+  it('持仓页签渲染英文（Current Holdings / 空态，issue #901）', async () => {
     await applyLocale('en-US')
     const wrapper = mountView()
     await flushPromises()
+    await clickTab(wrapper, 1)
     expect(wrapper.text()).toContain('Current Holdings')
     expect(wrapper.text()).toContain('Sync Instrument Info')
     // 无持仓数据 → 英文空态
@@ -83,7 +85,7 @@ describe('InvestmentsView 英文渲染（issue #350 / ADR-0049）', () => {
     await applyLocale('en-US')
     const wrapper = mountView()
     await flushPromises()
-    await clickTab(wrapper, 1)
+    await clickTab(wrapper, 2)
     expect(wrapper.text()).toContain('Holdings only')
     expect(wrapper.text()).toContain('Add Instrument')
     // 全量同步入口已退役（issue #698），不再渲染 Full Sync
@@ -100,7 +102,7 @@ describe('InvestmentsView 英文渲染（issue #350 / ADR-0049）', () => {
     await applyLocale('en-US')
     const wrapper = mountView()
     await flushPromises()
-    await clickTab(wrapper, 2)
+    await clickTab(wrapper, 3)
     const text = wrapper.text()
     expect(text).toContain('Portfolio Value')
     expect(text).toContain('Single Instrument')
