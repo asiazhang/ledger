@@ -71,6 +71,56 @@ textarea,
 }
 
 /*
+ * 侧栏组标题行与「更多」链接（issue #472 / ADR-0063 决策 1；全局化的原因见下）。
+ * 这些类位于菜单选项 label 渲染函数 h() 创建的元素上，不带渲染方组件 data-v 属性。
+ * 原先以 App.vue 的 :deep() 命中；移动导航壳（issue #842）引入后，抽屉 NMenu 是
+ * 另一处消费同一份 menuOptions 的渲染点（传送门到 body），scoped :deep 不再覆盖，
+ * 故上收全局：桌面侧栏与移动抽屉单一来源，语义三态——
+ * 静默与组标题同色 → hover 淡背景 + 实色 →
+ * 所在组「更多」页激活时主色 + 选中淡背景（与子菜单项选中态一致）。
+ * 类名为菜单选项专属自定义类，全局选择器无碰撞面。
+ */
+.sidebar-group-title {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  /* 14px + 链接自身 6px 右 padding = 20px，链接盒（文字+箭头）右缘
+     与上下菜单项键位提示对齐（.n-menu-item-content 18px + 键位行 2px）。 */
+  padding-right: 14px;
+}
+
+.group-more-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--n-group-text-color);
+  /* 扩大点击热区（约 24x16），不显眼地包住文字与箭头 */
+  padding: 2px 6px;
+  border-radius: var(--n-border-radius, 4px);
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    color .2s var(--n-bezier),
+    background-color .2s var(--n-bezier);
+}
+
+.group-more-link:hover {
+  color: var(--n-item-text-color-hover);
+  background-color: var(--n-item-color-hover);
+}
+
+/* 激活态置于 hover 之后：悬停已激活链接时保持选中背景不闪变 */
+.group-more-link.is-active,
+.group-more-link.is-active:hover {
+  color: var(--n-item-text-color-active);
+  background-color: var(--n-item-color-active);
+}
+
+/*
  * 「移回侧栏」页签菜单（GroupMoreView）选项行高随内容：组满提示是两行标签，而
  * naive 下拉菜单项行盒高度固定（height/line-height: var(--n-option-height)，
  * medium 34px）——两行内容会溢出行盒画到菜单容器外，成为无背景板、行距巨大的
