@@ -11,6 +11,7 @@ use super::super::{
     parked_ops, read_ops, stream_positions, truncate_stream_before,
 };
 use super::common::{make_expense, read_transaction, wire_in, wire_out};
+use crate::sync_engine::{ops, positions};
 use crate::test_support::{self, assert_balance_cache_matches_realtime, seed_account};
 use crate::transaction::behavior;
 
@@ -403,4 +404,114 @@ fn encrypted_checkpoint_roundtrip_and_passphrase_guards() {
     assert_balance_cache_matches_realtime(&conn_b);
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 首见流批次内含未裁决 op（wire 不可解挂起：不落日志、不触发推进）：位点
+/// 从 0 起步、被缺口挡住，不越过任何未应用 op（首见若直接以裁决时钟建行会
+/// 越过挂起 op，属不变量违例——回归钉）。
+#[test]
+fn first_sighting_with_pending_park_pins_position_below_it() {
+    let conn_a = test_support::open();
+    let conn_b = test_support::open();
+    base_ledger(&conn_a);
+    seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
+    behavior::create(&conn_a, make_expense("acc-1", 2500, "咖啡")).unwrap();
+    // A 流 [op1, op2]；投递时 op1 的 wire 原文被篡改为不可解（合成挂起），
+    // op2 正常解析应用——B 对 A 流首见裁决即含未应用缺口。
+    let mut wire = wire_out(&conn_a);
+    assert_eq!(wire.len(), 2);
+    wire[0] = "{not-json".to_string();
+    wire_in(&conn_b, &wire);
+
+    let dev_a = device_of(&conn_a);
+    let pos = stream_positions(&conn_b)
+        .unwrap()
+        .into_iter()
+        .find(|p| p.device_id == dev_a)
+        .expect("首见裁决建行");
+    assert_eq!(
+        pos.applied_through, 0,
+        "首见建行被挂起缺口挡在 0，不越过未应用 op"
+    );
+    assert_eq!(parked_ops(&conn_b).unwrap().len(), 1, "op1 挂起待裁决");
+}
+
+/// 位点前滚吸收已补齐区段：挂起 op 补齐后落日志，下一次推进前滚跨过整段
+/// 缺口，水位落到已裁决末端（「补齐后自愈」的机制根据；白盒走域内推进接缝）。
+#[test]
+fn advance_rolls_forward_across_backfilled_range() {
+    let (conn_a, conn_b, _t2) = pinned_world();
+    let dev_a = device_of(&conn_a);
+    // pinned_world：B 对 A 流位点 = 1（op2 挂起钉住），日志持有 op1、op3。
+    assert_eq!(stream_positions(&conn_b).unwrap()[0].applied_through, 1);
+    // 模拟「op2 补齐后成功应用」：经域内接缝落日志（绕过重放分派，仅此白盒）。
+    let op2 = read_ops(&conn_a)
+        .unwrap()
+        .into_iter()
+        .find(|op| op.clock == 2)
+        .expect("A 流时钟 2 的 op 在源日志");
+    ops::insert_row(&conn_b, &op2).unwrap();
+    // 下一次裁决落定的推进（任意该流时钟 > 1 的 op）把水位滚到已裁决末端。
+    positions::advance(&conn_b, &dev_a, 3).unwrap();
+    let pos = stream_positions(&conn_b)
+        .unwrap()
+        .into_iter()
+        .find(|p| p.device_id == dev_a)
+        .unwrap();
+    assert_eq!(
+        pos.applied_through, 3,
+        "前滚跨过已补齐区段，水位落到连续已裁决末端"
+    );
+}
+
+/// 引导 schema 偏斜（较旧快照）：重建后对齐快照版本并前向迁移升级到本端
+/// 最新版本（V022 位点表在场、位点写入可用、业务数据完整）。
+#[test]
+fn bootstrap_migrates_older_schema_snapshot() {
+    let conn_a = test_support::open();
+    let id = base_ledger(&conn_a);
+    let cp22 = create_checkpoint(&conn_a).unwrap();
+
+    // 把快照化成 V021 时代的真实形态：卸下 V022 位点表并回拨 user_version
+    //（user_version 以迁移条目计：V005 移除不回填，V022 = 第 21 条，V021 时代 = 20）。
+    let stale_path = std::env::temp_dir().join(format!("ledger-v21-{}.db", crate::db::new_uuid()));
+    std::fs::write(&stale_path, &cp22.snapshot).unwrap();
+    {
+        let stale = crate::db::open_connection(&stale_path).unwrap();
+        stale
+            .execute("DROP TABLE sync_stream_positions", [])
+            .unwrap();
+        stale.execute("PRAGMA user_version = 20", []).unwrap();
+    }
+    let cp = super::super::Checkpoint {
+        positions: cp22.positions,
+        snapshot: std::fs::read(&stale_path).unwrap(),
+    };
+    crate::fs_util::cleanup(&stale_path);
+
+    let mut conn_b = test_support::open();
+    bootstrap_from_checkpoint(&mut conn_b, &cp, None).unwrap();
+
+    // 迁移升级完成：版本与全新库一致、位点表在场且位点写入生效、数据完整。
+    let fresh = test_support::open();
+    let expected: i64 = fresh
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    let actual: i64 = conn_b
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(actual, expected, "引导后迁移升级到本端最新 schema");
+    let dev_a = device_of(&conn_a);
+    let pos = stream_positions(&conn_b)
+        .unwrap()
+        .into_iter()
+        .find(|p| p.device_id == dev_a)
+        .expect("位点表已随迁移重建，位点写入生效");
+    assert_eq!(pos.applied_through, 1);
+    assert_eq!(
+        read_transaction(&conn_b, &id).unwrap().note.as_deref(),
+        Some("午饭"),
+        "业务数据完整"
+    );
+    assert_balance_cache_matches_realtime(&conn_b);
 }

@@ -92,7 +92,7 @@ pub fn bootstrap_from_checkpoint(
     // 守卫：目标尚未参与同步（三张同步元数据表全空）。
     for (table, empty) in [
         ("sync_ops", ops::is_empty(conn)?),
-        ("sync_stream_positions", positions::list(conn)?.is_empty()),
+        ("sync_stream_positions", positions::is_empty(conn)?),
         ("sync_parked_ops", super::parked::is_empty(conn)?),
     ] {
         if !empty {
@@ -208,7 +208,6 @@ fn attach_sql(conn: &Connection, sql: &str, key: &str, path: &Path) -> Result<()
     if let Err(e) = conn.query_row("SELECT count(*) FROM sync_snap.sqlite_master", [], |r| {
         r.get::<_, i64>(0)
     }) {
-        eprintln!("DBG-ATTACH-ERR: {e:?}");
         if db::encryption::is_not_a_database(&e) {
             return Err(db::encryption::passphrase_incorrect_error());
         }
@@ -256,9 +255,11 @@ fn rebuild_main_from_snapshot(conn: &Connection, snapshot_version: i64) -> Resul
                 r.get(0)
             })?;
         if violations > 0 {
-            return Err(AppError::Invalid(format!(
-                "检查点快照外键校验失败（{violations} 处），快照不可用"
-            )));
+            return Err(AppError::codedp(
+                "sync-engine.checkpoint-fk-violation",
+                format!("检查点快照外键校验失败（{violations} 处），快照不可用"),
+                &[&violations.to_string()],
+            ));
         }
         Ok(())
     });

@@ -8,7 +8,8 @@
 //! 「截断不丢失未应用 op」的机制根据。
 //!
 //! 推进规则（[`advance`]，仅在 op 裁决落定后调用）：
-//! - 流首见：以该 op 时钟建行（本端从此刻开始跟踪该流）；
+//! - 流首见：从 0 建行并连续前滚（首见裁决之前可能存在同流挂起 op——不落
+//!   日志、不触发推进，直接以裁决时钟建行会越过它）；
 //! - 已有行且裁决时钟更大：从水位起就近日志**连续前滚**——吸收挂起出队后的
 //!   补齐（水位跨过已补齐区段），遇缺口（仍有未应用 op）即停；
 //! - 其余情形水位已覆盖，不动。
@@ -28,6 +29,14 @@ pub struct StreamPosition {
     pub device_id: String,
     /// 该流已应用到的时钟（连续前缀水位；此之前的 op 全部并入本端）。
     pub applied_through: i64,
+}
+
+/// 位点表是否为空（引导守卫用：目标已有位点即已参与同步）。
+pub(super) fn is_empty(conn: &Connection) -> Result<bool> {
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM sync_stream_positions", [], |r| {
+        r.get(0)
+    })?;
+    Ok(count == 0)
 }
 
 /// 位点清单（按 DeviceId 序稳定返回）：Checkpoint 位点组件与通道 manifest 上报
@@ -61,34 +70,37 @@ pub(super) fn position_of(conn: &Connection, device_id: &str) -> Result<Option<i
 }
 
 /// 位点推进（op 裁决落定后调用；推进规则见模块文档）。
+///
+/// 首见建行从 0 起：若同流先于首见裁决存在挂起 op（不落日志、不触发推进），
+/// 直接以裁决时钟建行会越过它——从 0 起统一走连续前滚，水位被缺口挡在挂起
+/// op 之前（安全钉住）；补齐后后续推进自然前滚。
 pub(super) fn advance(conn: &Connection, device_id: &str, decided_clock: i64) -> Result<()> {
-    match position_of(conn, device_id)? {
+    let position = match position_of(conn, device_id)? {
         None => {
             conn.execute(
                 "INSERT INTO sync_stream_positions (device_id, applied_through, updated_at) \
-                 VALUES (?1, ?2, ?3)",
-                params![device_id, decided_clock, now_iso()],
+                 VALUES (?1, 0, ?2)",
+                params![device_id, now_iso()],
             )?;
-            Ok(())
+            0
         }
-        Some(position) if decided_clock > position => {
-            // 连续前滚：水位 +1 已在日志则前移，吸收挂起补齐后的区段；遇缺口即停
-            //（缺口 op 未应用，水位不越过——安全钉住）。
-            let mut through = position;
-            while super::ops::is_known_at(conn, device_id, through + 1)? {
-                through += 1;
-            }
-            if through > position {
-                conn.execute(
-                    "UPDATE sync_stream_positions SET applied_through = ?2, updated_at = ?3 \
-                     WHERE device_id = ?1",
-                    params![device_id, through, now_iso()],
-                )?;
-            }
-            Ok(())
-        }
-        Some(_) => Ok(()),
+        Some(position) if decided_clock <= position => return Ok(()),
+        Some(position) => position,
+    };
+    // 连续前滚：水位 +1 已在日志则前移，吸收挂起补齐后的区段；遇缺口即停
+    //（缺口 op 未应用，水位不越过——安全钉住）。
+    let mut through = position;
+    while super::ops::is_known_at(conn, device_id, through + 1)? {
+        through += 1;
     }
+    if through > position {
+        conn.execute(
+            "UPDATE sync_stream_positions SET applied_through = ?2, updated_at = ?3 \
+             WHERE device_id = ?1",
+            params![device_id, through, now_iso()],
+        )?;
+    }
+    Ok(())
 }
 
 /// 位点整体覆写（Checkpoint 引导专用）：以 Checkpoint 携带的位点为准重建位点表
