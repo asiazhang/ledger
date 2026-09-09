@@ -3,12 +3,19 @@
 // 只做渲染消费——可见性唯一来源是忙碌状态模块的 busyVisible，聚合/阈值/递减语义
 // 全部收口在模块侧；本组件不持状态、不接弹层注册表（非模态环境指示，不抑制快捷键，
 // ADR-0035 豁免，理由见词汇表 GlobalBusyBar 词条）。无障碍标签经 i18n（ADR-0049）。
+// 移动档位置适配（issue #842）：顶部应用栏占据窗口顶部且自身避让安全区，忙碌条
+// 随之下移到安全区下沿（与顶栏顶缘重合），避免落在刘海/状态栏下不可见；桌面档
+// env 恒 0，位置不变（≥840 零变化）。
 import { useThemeVars } from 'naive-ui'
 import { busyVisible } from '@/composables/globalBusy'
+import { useWindowTier } from '@/composables/useWindowTier'
 import { t } from '@/i18n'
 
 // 强调色取自应用主题（useThemeVars 需在 NConfigProvider 子树内），亮暗主题即时换色
 const themeVars = useThemeVars()
+
+// 窗口分级：仅决定定位类名（移动档安全区下沿），不改变忙碌条语义
+const tier = useWindowTier()
 </script>
 
 <template>
@@ -16,6 +23,7 @@ const themeVars = useThemeVars()
     <div
       v-if="busyVisible"
       class="global-busy-bar"
+      :class="{ 'is-mobile-tier': tier === 'mobile' }"
       role="progressbar"
       :style="{ '--busy-color': themeVars.primaryColor }"
       :aria-label="t('common.globalBusyBar.label')"
@@ -36,6 +44,11 @@ const themeVars = useThemeVars()
   z-index: 3000;
   pointer-events: none;
   overflow: hidden;
+}
+
+/* 移动档：下移到顶部安全区下沿（与顶栏顶缘重合），不落进刘海/状态栏 */
+.global-busy-bar.is-mobile-tier {
+  top: env(safe-area-inset-top, 0px);
 }
 
 /* 无确定进度的往返滑动：只表达「在工作」，不表达进度 */
