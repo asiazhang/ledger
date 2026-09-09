@@ -121,7 +121,7 @@ fn auto_backup_with_active_book_scope(world: &mut LedgerWorld) {
         tauri_app_lib::db::book_registry::RegistryRead::Resolved(registry) => registry,
         other => panic!("注册表应可读，实际 {other:?}"),
     };
-    world.boot.backup_scope = tauri_app_lib::backup::BackupScope::of_registry(&registry);
+    world.boot.backup_scope = Some(tauri_app_lib::backup::BackupScope::of_registry(&registry));
     auto_backup_with_world_scope(world);
 }
 

@@ -37,11 +37,14 @@ use crate::signals::{WriteEvidence, WriteOp, emit_for};
 
 /// 当前活动账本的备份作用域（列表/清理命令共用，issue #836）：从引导快照的
 /// 注册表登记信息构造；注册表不可用（极端时序/损坏回退）时 `None`——退化为
-/// 不过滤的兼容口径，行为与多账本之前一致。
+/// 不过滤的兼容口径，行为与多账本之前一致。已知边界：退化现场共享目录内
+/// 其他账本的带标识产物也会被计入保留上限的滚动清理窗（列表同理可见全部）；
+/// 损坏回退本就阻断一切业务写（含备份域写面之外），且属应引导用户修复注册表
+/// 的瞬态现场，此处不过度设计第三种作用域形态，靠注释留痕。
 fn backup_scope_of<R: tauri::Runtime>(app: &AppHandle<R>) -> Option<BackupScope> {
     current_boot(app)
         .and_then(|boot| boot.registry)
-        .and_then(|registry| BackupScope::of_registry(&registry))
+        .map(|registry| BackupScope::of_registry(&registry))
 }
 
 /// 把当前数据库备份为 zip 包写入 `target_path`（完整文件路径，含文件名）。

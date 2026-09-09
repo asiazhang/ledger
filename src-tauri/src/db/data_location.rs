@@ -202,7 +202,7 @@ fn enter_pending_relocation(
 /// 搬迁失败回退默认目录；源库为密文库时搬迁需要主口令（启动期不可得），
 /// 改为推迟到解锁后补做，同样以源库位置生效、不携带回退警示。
 fn relocate_or_adopt(default_dir: &Path, target: &Path, mut registry: BookRegistry) -> Boot {
-    match enter_target(default_dir, target) {
+    match enter_target_with_source(default_dir, target) {
         Ok(()) => Boot {
             db_dir: target.to_path_buf(),
             fallback_reason: None,
@@ -247,10 +247,6 @@ fn relocate_or_adopt(default_dir: &Path, target: &Path, mut registry: BookRegist
 enum EnterTargetError {
     Failed(String),
     DeferredEncryptedRelocation,
-}
-
-fn enter_target(default_dir: &Path, target: &Path) -> std::result::Result<(), EnterTargetError> {
-    enter_target_with_source(default_dir, target)
 }
 
 /// 三分支（来源目录参数化，issue #836：旧格式来源恒为默认数据目录，新格式

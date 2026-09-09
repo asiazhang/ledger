@@ -12,7 +12,7 @@ use crate::error::{AppError, Result};
 use crate::fs_util::{cleanup, replace_file, temp_sibling};
 
 /// 备份作用域（issue #836 / ADR-0089 决策 5：备份按账本分域）：受管备份的
-/// 列表、滚动清理与首次兕底判定都按当前活动账本过滤；`None` 为引擎级兼容
+/// 列表、滚动清理与首次兜底判定都按当前活动账本过滤；`None` 为引擎级兼容
 /// 口径（不过滤，测试与历史调用形态）。
 ///
 /// 无账本标识的历史产物归属「登记序首本」（升级时折叠的默认账本，结构性
@@ -31,15 +31,16 @@ pub struct BackupScope {
 }
 
 impl BackupScope {
-    /// 由注册表构造当前活动账本的作用域（注册表损坏时调用方拿到 `None`，
-    /// 退化为无作用域口径）。
-    pub fn of_registry(registry: &crate::db::book_registry::BookRegistry) -> Option<Self> {
+    /// 由注册表构造当前活动账本的作用域：活动账本即登记序首本时一并归属
+    /// 无标识历史产物（include_legacy）。注册表不可用的降级（无作用域口径）
+    /// 由调用方的 `Option<registry>` 层承担，本函数恒可构造。
+    pub fn of_registry(registry: &crate::db::book_registry::BookRegistry) -> Self {
         let include_legacy =
             registry.books.first().map(|b| b.id.as_str()) == Some(registry.active_id.as_str());
-        Some(Self {
+        Self {
             book_id: registry.active_id.clone(),
             include_legacy,
-        })
+        }
     }
 
     /// 文件名携带的账本标识（命名侧消费；无作用域 = 旧命名）。
@@ -303,9 +304,7 @@ pub fn list_managed_backups(
             continue;
         }
         // 时间戳解析失败的残缺命名按「无标识」归入历史产物桶（标识无从谈起）。
-        let file_book = split_managed_name(&name)
-            .map(|(_, book)| book)
-            .unwrap_or(None);
+        let file_book = split_managed_name(&name).and_then(|(_, book)| book);
         if !in_scope(file_book, scope) {
             continue;
         }

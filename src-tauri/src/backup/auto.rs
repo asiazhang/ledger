@@ -469,7 +469,7 @@ impl PrefsState {
 /// 的现场无从归属账本，自动备份退化为旧命名兼容口径（产物仍可靠，仅命名
 /// 不携带账本标识，待注册表修复后自然恢复分域）。
 pub fn seed_book_scope(registry: Option<&crate::db::book_registry::BookRegistry>) {
-    let scope = registry.and_then(super::engine::BackupScope::of_registry);
+    let scope = registry.map(super::engine::BackupScope::of_registry);
     *shared_prefs().lock_scope() = scope;
     tracing::debug!(
         seeded = shared_prefs().snapshot_scope().is_some(),
