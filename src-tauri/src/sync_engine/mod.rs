@@ -10,6 +10,11 @@
 //!   [`engine::parked_ops`]（挂起队列清单）——本域行为的唯一断言权威层（域单测）。
 //! - [`checkpoint`]：Checkpoint 产出（全量快照 + 位点）、新端引导与截断机制
 //!   （issue #857，v1 永不截断、机制默认不启用）。
+//! - [`channel`]：通道层（issue #859）——哑字节通道上的目录布局与 manifest、
+//!   同步轮次（发布自己流 / 拉取他人流）、SyncEnvelope 封包（[`envelope`]）、
+//!   Checkpoint 通道传递与新端取件。
+//! - [`transport`]：Transport 哑字节通道抽象（v1 内置 WebDAV 后端，两端同一
+//!   代码路径）。
 //! - [`positions`]：位点（各来源流已应用水位，`sync_stream_positions` 表的
 //!   唯一 SQL 收口）。
 //! - [`device`]：DeviceId 读取（首用生成并持久化）与端内单调逻辑时钟分配。
@@ -31,19 +36,27 @@
 //! 分派与其嵌套感知事务原语），域间横向消费是既有事实（先例：investment ↔
 //! transaction、scheduled_transactions → transaction）。
 
+pub mod channel;
 pub mod checkpoint;
 pub mod command;
 pub mod device;
 pub mod engine;
+pub mod envelope;
 pub mod model;
 pub mod ops;
 pub mod parked;
 pub mod positions;
+pub mod transport;
 
 /// 域内共享接缝（crate 内消费）：DeviceId 读取与本地 op 产出信封。
 pub(crate) use device::device_id;
 pub(crate) use ops::record_local;
 
+pub use channel::{
+    ChannelLayout, ChannelManifest, ChannelOptions, CheckpointPointer, SegmentEntry,
+    StreamManifest, SyncRoundReport, fetch_checkpoint, publish_checkpoint, publish_checkpoint_with,
+    run_round, run_round_with,
+};
 pub use checkpoint::{
     Checkpoint, bootstrap_from_checkpoint, create_checkpoint, truncate_stream_before,
 };
@@ -55,6 +68,10 @@ pub use engine::{
 pub use model::SyncOp;
 pub use parked::ParkedOp;
 pub use positions::StreamPosition;
+pub use transport::{
+    Transport,
+    webdav::{WebDavConfig, WebDavTransport},
+};
 
 #[cfg(test)]
 mod tests;
