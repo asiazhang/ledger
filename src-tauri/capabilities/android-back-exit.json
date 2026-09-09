@@ -1,0 +1,14 @@
+{
+  "$schema": "./gen/schemas/desktop-schema.json",
+  "identifier": "android-back-exit",
+  "description": "系统返回桥接栈底交还系统（issue #845）：Android 返回键在应用路由栈底时销毁主窗口结束 Activity，等价原生默认分支的 finish。仅 Android 构建含此权限，桌面构建零渗透。",
+  "windows": [
+    "main"
+  ],
+  "platforms": [
+    "android"
+  ],
+  "permissions": [
+    "core:window:allow-destroy"
+  ]
+}

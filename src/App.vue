@@ -68,6 +68,7 @@ import {
   type ContainableViewName,
 } from '@/stores/sidebar-order'
 import { useWindowGuard } from '@/composables/useWindowGuard'
+import { useSystemBack } from '@/composables/useSystemBack'
 import { useWindowTier } from '@/composables/useWindowTier'
 
 const router = useRouter()
@@ -83,6 +84,11 @@ const { viewShortcuts } = useViewShortcuts(router)
 // 窗口行为守卫（issue #154）：ESC 不作用于窗口层 + 禁用原生右键菜单（可编辑元素例外），
 // 根组件挂载一次，详见 composables/useWindowGuard.ts。
 useWindowGuard()
+
+// 系统返回桥接（issue #845 / ADR-0088 决策 7）：Android 返回键语义三段（关最上层
+// 弹层 → 路由回退 → 交还系统），仅移动档挂载，根组件挂载一次，详见
+// composables/useSystemBack.ts。
+useSystemBack()
 
 // 窗口分级（ADR-0088 决策 2 / 词汇表「窗口分级」）：单一断点两档。桌面档渲染既有
 // 侧栏布局（一字不动）；<840 移动档渲染导航壳（顶栏 + 导航抽屉，词汇表「导航抽屉」），
