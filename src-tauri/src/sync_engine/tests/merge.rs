@@ -19,6 +19,11 @@ use crate::transaction::behavior;
 fn concurrent_same_field_edits_converge_to_order_last() {
     let conn_a = test_support::open();
     let conn_b = test_support::open();
+    // 固定 DeviceId：dev-a < dev-b。A 的 create 与 B 的 update 同为 clock=1，
+    // 全序同钟 tiebreak 落 DeviceId——不固定时投递序随随机 UUIDv7 漂移，
+    // reports 顺序断言偶发翻车（CI run 34359461485 实测）。
+    seed_device(&conn_a, "dev-a");
+    seed_device(&conn_b, "dev-b");
     seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
 
