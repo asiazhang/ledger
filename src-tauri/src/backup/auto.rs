@@ -1250,10 +1250,15 @@ mod book_scope_tests {
         match &outcome {
             AttemptOutcome::Performed { path } => {
                 let name = Path::new(path).file_name().unwrap().to_str().unwrap();
-                assert_eq!(
-                    name, "ledger-auto-20260217-160000-book-b.db.zip",
-                    "产物命名按本地时间渲染并携带账本标识"
+                // 时间戳取注入时刻的本地时间渲染：期望值用 Local 反推，
+                // 对运行机器时区稳定（CI runner 为 UTC，不漂移）。
+                let expected = format!(
+                    "ledger-auto-{}-book-b.db.zip",
+                    now_at("2026-02-17T08:00:00Z")
+                        .with_timezone(&Local)
+                        .format("%Y%m%d-%H%M%S")
                 );
+                assert_eq!(name, expected, "产物命名按本地时间渲染并携带账本标识");
             }
             other => panic!("账本 B 应有自己的首次兜底，实际 {other:?}"),
         }
