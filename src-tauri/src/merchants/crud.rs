@@ -55,10 +55,10 @@ pub fn create_merchant(conn: &Connection, input: MerchantInput) -> Result<String
     Ok(id)
 }
 
-/// 更新商户（改名）：字段省略即保持原值；改名撞在用同名 → 明确错误。
-/// 不存在（或已软删除）的 id → `AppError::NotFound`。
-pub fn update_merchant(conn: &Connection, id: &str, input: MerchantUpdateInput) -> Result<()> {
-    let existing: Merchant = query_all(
+/// 按 id 取单个在用商户；不存在（或已软删除）的 id → `AppError::NotFound`
+///（码化 `merchant.not-found`，HTTP 修改端点与域层共用同一判定）。
+pub fn get_merchant(conn: &Connection, id: &str) -> Result<Merchant> {
+    query_all(
         conn,
         &format!("SELECT {MERCHANT_COLUMNS} FROM merchants WHERE id=?1 AND is_deleted=0"),
         rusqlite::params![id],
@@ -67,9 +67,25 @@ pub fn update_merchant(conn: &Connection, id: &str, input: MerchantUpdateInput) 
     .next()
     .ok_or_else(|| {
         AppError::codedp_not_found("merchant.not-found", format!("商户不存在: {id}"), &[id])
-    })?;
+    })
+}
 
-    let name = input.name.unwrap_or(existing.name);
+/// 更新商户（改名）：字段省略即保持原值；入参先 trim（与导入即建同款归一，
+/// 防带空白绕开唯一性产生碎商户），trim 后为空 → 明确错误；改名撞在用同名
+/// → 明确错误。不存在（或已软删除）的 id → `AppError::NotFound`。
+pub fn update_merchant(conn: &Connection, id: &str, input: MerchantUpdateInput) -> Result<()> {
+    let existing = get_merchant(conn, id)?;
+
+    let name = match input.name {
+        Some(raw) => {
+            let name = raw.trim();
+            if name.is_empty() {
+                return Err(AppError::coded("merchant.name-required", "商户名不能为空"));
+            }
+            name.to_string()
+        }
+        None => existing.name,
+    };
     if merchant_name_taken(conn, &name, Some(id))? {
         return Err(AppError::codedp(
             "merchant.already-exists",

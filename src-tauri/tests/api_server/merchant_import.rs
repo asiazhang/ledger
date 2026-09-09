@@ -10,7 +10,7 @@ use tower::ServiceExt;
 
 use crate::common::{
     batch_body, body_to_bytes, count_active_transactions, count_rows, create_account_via_api,
-    get_json, post_batch, put_transaction_via_api, setup_app,
+    get_json, post_batch, put_merchant_via_api, put_transaction_via_api, setup_app,
 };
 
 /// 批量导入一行带商户名的支出。
@@ -560,4 +560,173 @@ async fn test_update_transaction_with_merchant_name_creates_then_reuses() {
 
     let (_, merchants) = get_json(&app, "/api/v1/merchants").await;
     assert_eq!(merchants.as_array().unwrap().len(), 1, "复用不新建");
+}
+
+/// 商户改名端点（issue #884）：改名成功 200 返回更新后完整商户；改名即时生效——
+/// 商户列表按新名呈现，历史交易仍引用同一 `merchant_id`（不回刷，ADR-0028）。
+#[tokio::test]
+async fn test_put_merchant_renames() {
+    let (app, _) = setup_app();
+    let account_id = create_account_via_api(&app, "现金账户").await;
+    post_batch(
+        &app,
+        batch_body(
+            &[&expense_with_merchant(
+                &account_id,
+                "2026-08-01",
+                "京东商城-京东白条",
+                None,
+            )],
+            None,
+        ),
+    )
+    .await;
+
+    let (_, merchants) = get_json(&app, "/api/v1/merchants").await;
+    let merchant_id = merchants.as_array().unwrap()[0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (_, txs_before) = get_json(&app, "/api/v1/transactions").await;
+    let tx_merchant_id = txs_before["items"][0]["merchant_id"].clone();
+
+    let (status, bytes) = put_merchant_via_api(&app, &merchant_id, r#"{"name":"京东"}"#).await;
+    assert_eq!(status, StatusCode::OK);
+    let updated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(updated["id"], merchant_id, "返回更新后完整商户");
+    assert_eq!(updated["name"], "京东");
+
+    let (_, merchants) = get_json(&app, "/api/v1/merchants").await;
+    let list = merchants.as_array().unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0]["name"], "京东");
+
+    let (_, txs) = get_json(&app, "/api/v1/transactions").await;
+    assert_eq!(
+        txs["items"][0]["merchant_id"], tx_merchant_id,
+        "改名不迁移交易引用（ADR-0028）"
+    );
+}
+
+/// `name` 可省略：省略即保持原值（等价空更新，200 不报错）。
+#[tokio::test]
+async fn test_put_merchant_name_omitted_keeps_original() {
+    let (app, _) = setup_app();
+    let account_id = create_account_via_api(&app, "现金账户").await;
+    post_batch(
+        &app,
+        batch_body(
+            &[&expense_with_merchant(
+                &account_id,
+                "2026-08-01",
+                "盒马",
+                None,
+            )],
+            None,
+        ),
+    )
+    .await;
+    let (_, merchants) = get_json(&app, "/api/v1/merchants").await;
+    let merchant_id = merchants.as_array().unwrap()[0]["id"].as_str().unwrap();
+
+    let (status, bytes) = put_merchant_via_api(&app, merchant_id, r#"{}"#).await;
+    assert_eq!(status, StatusCode::OK);
+    let updated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(updated["name"], "盒马", "name 省略即保持原值");
+}
+
+/// 不存在的 id → 404 码化 `merchant.not-found`（与域层同一判定，软删 id 同样 404）。
+#[tokio::test]
+async fn test_put_merchant_unknown_id_returns_coded_404() {
+    let (app, _) = setup_app();
+    let (status, bytes) =
+        put_merchant_via_api(&app, "no-such-merchant", r#"{"name":"京东"}"#).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["kind"], "NotFound");
+    assert_eq!(err["code"], "merchant.not-found");
+    assert_eq!(err["message"], "商户不存在: no-such-merchant");
+}
+
+/// 改名撞在用同名 → 400 码化 `merchant.already-exists`，不做同义合并
+/// （改名不迁移交易引用，合并需逐笔改挂交易，另立题）。
+#[tokio::test]
+async fn test_put_merchant_collision_returns_coded_400() {
+    let (app, _) = setup_app();
+    let account_id = create_account_via_api(&app, "现金账户").await;
+    post_batch(
+        &app,
+        batch_body(
+            &[
+                &expense_with_merchant(&account_id, "2026-08-01", "盒马", Some("k1")),
+                &expense_with_merchant(&account_id, "2026-08-02", "永辉", Some("k2")),
+            ],
+            None,
+        ),
+    )
+    .await;
+    let (_, merchants) = get_json(&app, "/api/v1/merchants").await;
+    let yonghui_id = merchants
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "永辉")
+        .expect("应包含永辉")["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (status, bytes) = put_merchant_via_api(&app, &yonghui_id, r#"{"name":"盒马"}"#).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["kind"], "Invalid");
+    assert_eq!(err["code"], "merchant.already-exists");
+    assert_eq!(err["message"], "商户已存在: 盒马");
+
+    // 失败改名不落库：字典仍两行、名字原样。
+    let (_, merchants) = get_json(&app, "/api/v1/merchants").await;
+    assert_eq!(merchants.as_array().unwrap().len(), 2);
+}
+
+/// 改名入参先 trim（与导入即建同款归一）：带首尾空白的名字入库前修剪；
+/// trim 后为空 → 400 码化 `merchant.name-required`，原名保持。
+#[tokio::test]
+async fn test_put_merchant_trims_name_and_rejects_blank() {
+    let (app, _) = setup_app();
+    let account_id = create_account_via_api(&app, "现金账户").await;
+    post_batch(
+        &app,
+        batch_body(
+            &[&expense_with_merchant(
+                &account_id,
+                "2026-08-01",
+                "盒马",
+                None,
+            )],
+            None,
+        ),
+    )
+    .await;
+    let (_, merchants) = get_json(&app, "/api/v1/merchants").await;
+    let merchant_id = merchants.as_array().unwrap()[0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (status, bytes) = put_merchant_via_api(&app, &merchant_id, r#"{"name":"  京东  "}"#).await;
+    assert_eq!(status, StatusCode::OK);
+    let updated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(updated["name"], "京东", "入库前修剪首尾空白");
+
+    let (status, bytes) = put_merchant_via_api(&app, &merchant_id, r#"{"name":"   "}"#).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["code"], "merchant.name-required");
+
+    let (_, merchants) = get_json(&app, "/api/v1/merchants").await;
+    assert_eq!(
+        merchants.as_array().unwrap()[0]["name"],
+        "京东",
+        "失败改名原名保持"
+    );
 }

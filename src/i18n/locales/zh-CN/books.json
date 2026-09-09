@@ -1,0 +1,46 @@
+{
+  "entry": {
+    "label": "账本",
+    "open": "账本入口：查看与切换账本"
+  },
+  "panel": {
+    "current": "当前",
+    "new": "新建账本",
+    "rename": "重命名",
+    "remove": "移除",
+    "removeConfirm": "移除后可随时重新登记找回，账本文件仍保留在磁盘。确定移除「{name}」？",
+    "removeConfirmPositive": "移除",
+    "loadFailed": "账本清单读取失败",
+    "retry": "重试",
+    "empty": "暂无账本"
+  },
+  "fallback": {
+    "title": "账本注册表异常，已回退默认账本"
+  },
+  "switchDialog": {
+    "title": "切换账本",
+    "content": "切换到「{name}」将重载应用：未保存的输入会丢失，账本数据本身不受影响。",
+    "confirm": "切换并重载",
+    "cancel": "取消"
+  },
+  "createModal": {
+    "title": "新建账本",
+    "nameLabel": "账本名称",
+    "namePlaceholder": "例如：家庭账本",
+    "confirm": "创建",
+    "cancel": "取消"
+  },
+  "renameModal": {
+    "title": "重命名账本",
+    "nameLabel": "账本名称",
+    "confirm": "保存",
+    "cancel": "取消"
+  },
+  "toasts": {
+    "created": "已创建账本「{name}」，进入即自动建库",
+    "renamed": "已重命名为「{name}」",
+    "removed": "已移除账本「{name}」，文件仍保留在磁盘",
+    "switching": "正在切换到「{name}」，应用即将重载",
+    "loadFailed": "账本清单读取失败：{msg}"
+  }
+}

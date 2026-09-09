@@ -20,7 +20,7 @@ use super::handlers::currencies::list_currencies_handler;
 use super::handlers::funds::lookup_fund_handler;
 use super::handlers::import::import_knowledge_handler;
 use super::handlers::instruments::{create_instrument_handler, search_instruments_handler};
-use super::handlers::merchants::list_merchants_handler;
+use super::handlers::merchants::{list_merchants_handler, update_merchant_handler};
 use super::handlers::stocks::lookup_stock_handler;
 use super::handlers::transactions::{
     batch_create_transactions_handler, delete_transaction_handler, list_transactions_handler,
@@ -73,6 +73,7 @@ pub fn build_router(state: ApiState) -> Router {
         .route("/api/v1/funds/{code}", get(lookup_fund_handler))
         .route("/api/v1/stocks/{code}", get(lookup_stock_handler))
         .route("/api/v1/merchants", get(list_merchants_handler))
+        .route("/api/v1/merchants/{id}", put(update_merchant_handler))
         .route("/api/v1/import/knowledge", get(import_knowledge_handler))
         // 注意：axum 的 `Router::layer` 只包裹“当前已有的” route——若在声明任何 route
         // 之前调用，会对空路由集合空操作（`route_layer` 则会在无 route 时 panic，强制先
