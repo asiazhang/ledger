@@ -10,3 +10,11 @@ export interface SyncInstrumentInfoResult {
   /// 结果提示文案（空库时为「暂无标的可同步」），供轻量消息直接展示
   message: string
 }
+
+/// 标的信息同步确定进度载荷（issue #897 / ADR-0095）：后端
+/// `ledger:instrument-sync-progress` 事件的 payload——done = 已完成的有通道
+/// 标的数，total = 有通道标的总数（跳过行不计入分母）。
+export interface InstrumentSyncProgress {
+  done: number
+  total: number
+}

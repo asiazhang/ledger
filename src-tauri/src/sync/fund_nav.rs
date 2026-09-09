@@ -5,18 +5,18 @@
 //!   单测见 `tests/fund_nav.rs`（真实报文形状，不依赖真实网络）；
 //! - 页抓取（[`fetch_nav_page`]）复用行情 HTTP 层的主机池 / 重试 / 限流泛型层；
 //!   lsjz 为单主机接口且必须携带 Referer 头（缺省被以 ErrCode=-999 拦截）；
-//! - 分区编排 [`sync_fund_navs`] 接受注入的页抓取闭包（生产接 HTTP 层，测试
+//! - 逐只编排 [`sync_one_fund_nav`] 接受注入的页抓取闭包（生产接 HTTP 层，测试
 //!   注入 mock），以现价缓存的净值日期（`market_prices.nav_date`，#301 落）为
 //!   水位：首刷（无水位）回填近两年、此后从水位次日起按页增量（常态每只一页，
 //!   页大小为服务端硬上限 20）；全部净值点攒齐后一次降采样落周线（跨页同周取
-//!   最后一个净值日），现价 = 窗口内最新公布单位净值。
+//!   最后一个净值日），现价 = 窗口内最新公布单位净值。基金间的遍历与名称随行
+//!   刷新、进度推进归增量同步编排（`incremental`，issue #897 逐只合并推进）。
 
 use chrono::NaiveDate;
 use rusqlite::{Connection, params};
 use serde::Deserialize;
 
 use crate::error::Result;
-use crate::investment::is_six_digit_code;
 use crate::investment::prices::{
     EASTMONEY_PRICE_SOURCE, price_value_to_cents, upsert_market_price, upsert_price_history,
 };
@@ -202,125 +202,118 @@ pub(super) fn fetch_nav_page_from(
 
 /// 基金分区的同步统计（与 [`super::incremental`] 的股票统计同源汇总）：
 /// `synced` = 处理成功（含「已是最新、无新净值」）；`skipped` = 无法拉取
-/// （非 6 位代码 / 首刷查无净值）；`written` = 实际落库净值的只数（价格失效
-/// 信号判定依据，零变化不广播）。
+/// （首刷查无净值；名称充代码行的跳过计数由编排层派生，不入本结构）；
+/// `written` = 实际落库净值的只数（价格失效信号判定依据，零变化不广播）。
 pub(super) struct FundSyncStats {
     pub(super) synced: usize,
     pub(super) skipped: usize,
     pub(super) written: usize,
 }
 
-/// 全部 fund 标的的净值增量同步（ADR-0038 决策 6；收集面随 issue #827 放开至
-/// 库内全部 fund 行）：逐只请求 lsjz，以
+/// 单只 fund 标的的净值增量同步（ADR-0038 决策 6；收集面随 issue #827 放开至
+/// 库内全部 fund 行）：请求 lsjz，以
 /// 现价缓存的净值日期为水位增量回填——净值点降采样落 PriceHistory（同周
 /// 整周覆盖幂等），窗口内最新公布净值落现价缓存（现价 = 单位净值、
 /// priced_at = nav_date = 净值日期，与 #301 添加基金同形）。页抓取闭包由
-/// 调用方注入（生产接 HTTP 层，测试 mock），本函数不触碰网络。
+/// 调用方注入（生产接 HTTP 层，测试 mock），本函数不触碰网络；单只结果累加
+/// 进调用方的 `stats`（基金间的遍历、名称随行刷新与进度推进归编排层，
+/// issue #897）。
 ///
-/// 跳过语义：非 6 位代码（名称充代码等无真实代码的行，查不到净值）与首刷
-/// 查无净值计入 `skipped`，不报错不中断；单只网络失败与股票通道一致——上抛
-/// 中断同步（跳过统计只收「无法拉取」的行，不含网络失败）。
-pub(super) fn sync_fund_navs<N>(
+/// **前置条件**：`fund` 为 6 位真实代码的有通道基金行——名称充代码行（查不到
+/// 净值）由调用方计入跳过、零请求（issue #897 起跳过判定与分母口径同收编排层）。
+/// 跳过语义：首刷查无净值计入 `skipped`，不报错不中断；单只网络失败与股票
+/// 通道一致——上抛中断同步（跳过统计只收「无法拉取」的行，不含网络失败）。
+pub(super) fn sync_one_fund_nav<N>(
     conn: &Connection,
-    funds: &[&super::incremental::SyncInstrument],
+    fund: &super::incremental::SyncInstrument,
     fetch_nav: &mut N,
-) -> Result<FundSyncStats>
+    stats: &mut FundSyncStats,
+) -> Result<()>
 where
     N: FnMut(&NavQuery) -> Result<LsjzPage>,
 {
     let today = super::incremental::beijing_today();
-    let mut stats = FundSyncStats {
-        synced: 0,
-        skipped: 0,
-        written: 0,
+    // 水位 = 现价缓存的净值日期（股票行恒 NULL，基金行由 #301/本通道写入）。
+    let watermark: Option<String> = conn
+        .query_row(
+            "SELECT nav_date FROM market_prices WHERE instrument_id=?1",
+            params![fund.instrument_id],
+            |r| r.get(0),
+        )
+        .ok();
+    let (start, end) = nav_window(watermark.as_deref(), today);
+    let query = |page: u64| NavQuery {
+        code: fund.symbol.clone(),
+        start_date: start.clone(),
+        end_date: end.clone(),
+        page,
     };
-    for fund in funds {
-        if !is_six_digit_code(&fund.symbol) {
+    // 按服务端总数翻页（页大小为服务端硬上限）；先攒齐全部净值点再一次性
+    // 降采样——跨页同周的采样必须取最后一个净值日，逐页落库会用后页的
+    // 更早日期覆盖前页采样。
+    let first = fetch_nav(&query(1))?;
+    let mut points = first.points;
+    let raw_pages = first
+        .total
+        .max(points.len() as u64)
+        .div_ceil(LSJZ_PAGE_SIZE);
+    let pages = raw_pages.min(MAX_NAV_PAGES);
+    if raw_pages > MAX_NAV_PAGES {
+        tracing::warn!(code = %fund.symbol, total = %first.total, "历史净值页数触顶，窗口可能未采全");
+    }
+    for page in 2..=pages {
+        points.extend(fetch_nav(&query(page))?.points);
+    }
+
+    if points.is_empty() {
+        if watermark.is_some() {
+            // 增量窗口内无新净值：现价已是最新，处理成功但不落库、不计跳过。
+            stats.synced += 1;
+        } else {
+            // 首刷查无净值（查无此码 / 新基金未公布首期）：无法拉取，计入跳过。
             stats.skipped += 1;
-            continue;
         }
-        // 水位 = 现价缓存的净值日期（股票行恒 NULL，基金行由 #301/本通道写入）。
-        let watermark: Option<String> = conn
-            .query_row(
-                "SELECT nav_date FROM market_prices WHERE instrument_id=?1",
-                params![fund.instrument_id],
-                |r| r.get(0),
-            )
-            .ok();
-        let (start, end) = nav_window(watermark.as_deref(), today);
-        let query = |page: u64| NavQuery {
-            code: fund.symbol.clone(),
-            start_date: start.clone(),
-            end_date: end.clone(),
-            page,
-        };
-        // 按服务端总数翻页（页大小为服务端硬上限）；先攒齐全部净值点再一次性
-        // 降采样——跨页同周的采样必须取最后一个净值日，逐页落库会用后页的
-        // 更早日期覆盖前页采样。
-        let first = fetch_nav(&query(1))?;
-        let mut points = first.points;
-        let raw_pages = first
-            .total
-            .max(points.len() as u64)
-            .div_ceil(LSJZ_PAGE_SIZE);
-        let pages = raw_pages.min(MAX_NAV_PAGES);
-        if raw_pages > MAX_NAV_PAGES {
-            tracing::warn!(code = %fund.symbol, total = %first.total, "历史净值页数触顶，窗口可能未采全");
-        }
-        for page in 2..=pages {
-            points.extend(fetch_nav(&query(page))?.points);
-        }
+        return Ok(());
+    }
 
-        if points.is_empty() {
-            if watermark.is_some() {
-                // 增量窗口内无新净值：现价已是最新，处理成功但不落库、不计跳过。
-                stats.synced += 1;
-            } else {
-                // 首刷查无净值（查无此码 / 新基金未公布首期）：无法拉取，计入跳过。
-                stats.skipped += 1;
-            }
-            continue;
-        }
-
-        // 周采样落库：单位净值即价格（ADR-0038 决策 3），与日线共用降采样与
-        // 「整周覆盖」幂等（同周重复获取零重复行）。
-        let bars: Vec<KlineBar> = points
-            .iter()
-            .map(|p| KlineBar {
-                date: p.date.clone(),
-                close: p.nav,
-            })
-            .collect();
-        for (trade_date, nav) in super::incremental::downsample_weekly(&bars) {
-            upsert_price_history(
-                conn,
-                &fund.instrument_id,
-                &trade_date,
-                price_value_to_cents(nav),
-                &fund.currency,
-                EASTMONEY_PRICE_SOURCE,
-            )?;
-        }
-        // 现价 = 窗口内最新公布单位净值；priced_at = nav_date = 净值日期
-        // （与 #301 添加基金同形；nav_date 兼任下次同步的水位）。
-        // let-else 显式防线（#434，ADR-0060 A 类临时豁免已摘）：points 非空由
-        // 前文判空保证，此臂理论不可达；一旦前置防线被移除，此处记警告并跳过
-        // 该只、不中断同步。
-        let Some(latest) = points.iter().max_by_key(|p| p.date.as_str()) else {
-            tracing::warn!(code = %fund.symbol, "净值点意外为空，跳过现价更新");
-            continue;
-        };
-        upsert_market_price(
+    // 周采样落库：单位净值即价格（ADR-0038 决策 3），与日线共用降采样与
+    // 「整周覆盖」幂等（同周重复获取零重复行）。
+    let bars: Vec<KlineBar> = points
+        .iter()
+        .map(|p| KlineBar {
+            date: p.date.clone(),
+            close: p.nav,
+        })
+        .collect();
+    for (trade_date, nav) in super::incremental::downsample_weekly(&bars) {
+        upsert_price_history(
             conn,
             &fund.instrument_id,
-            price_value_to_cents(latest.nav),
+            &trade_date,
+            price_value_to_cents(nav),
             &fund.currency,
-            &latest.date,
-            Some(&latest.date),
-            Some(EASTMONEY_PRICE_SOURCE),
+            EASTMONEY_PRICE_SOURCE,
         )?;
-        stats.synced += 1;
-        stats.written += 1;
     }
-    Ok(stats)
+    // 现价 = 窗口内最新公布单位净值；priced_at = nav_date = 净值日期
+    // （与 #301 添加基金同形；nav_date 兼任下次同步的水位）。
+    // let-else 显式防线（#434，ADR-0060 A 类临时豁免已摘）：points 非空由
+    // 前文判空保证，此臂理论不可达；一旦前置防线被移除，此处记警告并跳过
+    // 该只、不中断同步。
+    let Some(latest) = points.iter().max_by_key(|p| p.date.as_str()) else {
+        tracing::warn!(code = %fund.symbol, "净值点意外为空，跳过现价更新");
+        return Ok(());
+    };
+    upsert_market_price(
+        conn,
+        &fund.instrument_id,
+        price_value_to_cents(latest.nav),
+        &fund.currency,
+        &latest.date,
+        Some(&latest.date),
+        Some(EASTMONEY_PRICE_SOURCE),
+    )?;
+    stats.synced += 1;
+    stats.written += 1;
+    Ok(())
 }
