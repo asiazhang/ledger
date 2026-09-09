@@ -176,6 +176,8 @@ const backupColumns = [
         </NButton>
       </template>
       <NSpace vertical :size="12">
+        <!-- 备份按账本分域（issue #836）：列表只呈现当前账本的产物。 -->
+        <NText depth="3">{{ t('settings.data.backup.listHint') }}</NText>
         <NSpace align="center" justify="space-between" style="width: 100%">
           <NText depth="3">{{ t('settings.data.backup.count', { n: backups.length, max: store.backupMaxCount }) }}</NText>
           <NButton

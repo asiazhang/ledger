@@ -253,11 +253,15 @@ fn after_commit(conn: &Connection) {
         tracing::warn!(error = %e, "写库成功但置脏失败（忽略）");
     }
     let dir = crate::backup::shared_prefs().snapshot_dir();
+    // 备份作用域从偏好镜像快照（引导登记点播种，issue #836）：写路径深处只有
+    // `&Connection`，账本归属经镜像统一承载，与调度线程同一来源。
+    let scope = crate::backup::shared_prefs().snapshot_scope();
     crate::backup::run_due_backup(
         conn,
         dir.as_deref(),
         env!("CARGO_PKG_VERSION"),
         chrono::Utc::now(),
+        scope.as_ref(),
     );
 }
 

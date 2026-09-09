@@ -19,11 +19,11 @@ mod engine;
 pub use auto::{
     AUTO_BACKUP_PREFIX, AttemptOutcome, AutoBackupState, BackupDecision, PrefsState, SkipReason,
     auto_backup_file_name, due_decision, exit_fallback, get_state, reset, run_due_backup,
-    run_exit_backup, run_first_backup, set_state, shared_prefs, start_scheduler,
+    run_exit_backup, run_first_backup, seed_book_scope, set_state, shared_prefs, start_scheduler,
 };
 pub use engine::{
-    BackupFileInfo, BackupKind, BackupMetaSummary, BackupResult, PruneResult, RestoreResult,
-    backup_db_to, expected_schema_version, list_managed_backups, probe_backup_meta,
+    BackupFileInfo, BackupKind, BackupMetaSummary, BackupResult, BackupScope, PruneResult,
+    RestoreResult, backup_db_to, expected_schema_version, list_managed_backups, probe_backup_meta,
     prune_managed_backups, read_backup_kind, read_backup_meta, restore_db_from,
 };
 

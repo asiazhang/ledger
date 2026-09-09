@@ -57,10 +57,27 @@ use crate::error::AppError;
 /// 仅 macOS 的 `imp` 实现消费；非 macOS 桩编译掉该实现，故为 dead code，豁免之。
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) const KEYCHAIN_SERVICE: &str = "com.zhangheng.ledger";
-/// 钥匙串 account：单一主口令缓存条目。密文库的主口令是**库文件的属性**，不随
-/// 位移/搬迁变化，故固定 account、不按 db 路径分键（改口令时同条目覆写）。
+/// 钥匙串 account 前缀。多账本（issue #836 / ADR-0089 决策 3「自动解锁缓存按
+/// 账本区分」）后 account 携带账本标识：`master-passphrase[-<账本标识>]`——
+/// 每本独立缓存与清除，切到无缓存的密文库仍落解锁屏。主口令是**库文件的
+/// 属性**，不随位移/搬迁变化，故 account 不含库路径（改口令时同条目覆写）。
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub(crate) const KEYCHAIN_ACCOUNT: &str = "master-passphrase";
+pub(crate) const KEYCHAIN_ACCOUNT_PREFIX: &str = "master-passphrase";
+/// 多账本之前的历史 account（无账本标识）。升级后不再读写，仅在建立新条目时
+/// 顺手清除（幂等 best-effort，见 [`store`]），避免遗留不可达的口令缓存。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) const KEYCHAIN_LEGACY_ACCOUNT: &str = "master-passphrase";
+
+/// 缓存条目的 account（纯函数）：`Some(账本标识)` → 按本分域；`None`（注册表
+/// 不可用，应用处于回退默认目录的现场）→ 历史无标识 account——回退现场运行
+/// 的正是折叠默认账本，历史条目本就属于它，升级用户在此现场不丢自动解锁。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn account_for(book: Option<&str>) -> String {
+    match book {
+        Some(id) => format!("{KEYCHAIN_ACCOUNT_PREFIX}-{id}"),
+        None => KEYCHAIN_LEGACY_ACCOUNT.to_string(),
+    }
+}
 
 /// 平台是否支持本机记住主口令（v1 仅 macOS）。
 pub(crate) fn supported() -> bool {
@@ -172,9 +189,10 @@ mod imp {
     }
 
     /// 条目查询/属性字典（service + account，传统 file-based 钥匙串）。
-    /// 读写删除共用同一字典：两种形态的条目同址，形态切换不留混合条目。
-    fn entry_options() -> PasswordOptions {
-        PasswordOptions::new_generic_password(super::KEYCHAIN_SERVICE, super::KEYCHAIN_ACCOUNT)
+    /// 读写删除共用同一字典：两种形态的条目同址，形态切换不留混合条目；
+    /// account 由账本标识派生（[`super::account_for`]，issue #836 按本分域）。
+    fn entry_options(book: Option<&str>) -> PasswordOptions {
+        PasswordOptions::new_generic_password(super::KEYCHAIN_SERVICE, &super::account_for(book))
     }
 
     /// LocalAuthentication 应用层门的评估结局（issue #866）。
@@ -253,9 +271,9 @@ mod imp {
     /// 幂等成功，故此处上抛的才是真实失败），再普通新建——issue #866 起两种
     /// 形态写入完全相同（无 ACL 普通条目，生物门改由读取路径承担）；`gated`
     /// 形态参数保留为形态接缝，与 [`load`] 的门判定同源（[`super::uses_biometry_gate`]）。
-    pub(super) fn store(passphrase: &str, _gated: bool) -> Result<()> {
-        delete()?;
-        let options = entry_options();
+    pub(super) fn store(passphrase: &str, book: Option<&str>, _gated: bool) -> Result<()> {
+        delete(book)?;
+        let options = entry_options(book);
         set_generic_password_options(passphrase.as_bytes(), options).map_err(|e| {
             if e.code() == ERR_SEC_MISSING_ENTITLEMENT {
                 entitlement_restricted()
@@ -274,9 +292,9 @@ mod imp {
     /// 读取缓存的入口令：生物门形态先过 LocalAuthentication 应用层门——验证
     /// 通过才读条目，取消/不可用按门结局返回（均回退手输，条目保留）；无门
     /// 形态（开发回退）直接读出、不弹生物认证。查询字典与形态无关（同
-    /// service + account 同址）。历史 ACL 条目（#866 之前发布形态建立）由
-    /// `store` 先删后建自然迁移为普通条目。
-    pub(super) fn load(gated: bool) -> Result<super::CacheLoad> {
+    /// service + account 同址，account 由账本标识派生）。历史 ACL 条目（#866
+    /// 之前发布形态建立）由 `store` 先删后建自然迁移为普通条目。
+    pub(super) fn load(book: Option<&str>, gated: bool) -> Result<super::CacheLoad> {
         if gated {
             match evaluate_biometrics() {
                 BiometryOutcome::Passed => {}
@@ -284,7 +302,7 @@ mod imp {
                 BiometryOutcome::Unavailable => return Ok(super::CacheLoad::NotFound),
             }
         }
-        match generic_password(entry_options()) {
+        match generic_password(entry_options(book)) {
             Ok(bytes) => Ok(super::CacheLoad::Found(
                 String::from_utf8_lossy(&bytes).into_owned(),
             )),
@@ -296,8 +314,8 @@ mod imp {
     }
 
     /// 删除缓存的入口令（幂等：条目不存在视为成功）。
-    pub(super) fn delete() -> Result<()> {
-        match delete_generic_password_options(entry_options()) {
+    pub(super) fn delete(book: Option<&str>) -> Result<()> {
+        match delete_generic_password_options(entry_options(book)) {
             Ok(()) => Ok(()),
             Err(e) if e.code() == errSecItemNotFound => Ok(()),
             Err(e) => Err(AppError::Io(format!("钥匙串删除失败：{}", e.code()))),
@@ -307,22 +325,28 @@ mod imp {
 
 /// 存储（建/更）缓存的入口令（形态由构建 profile 判定，issue #662：发布构建
 /// 读取前过生物认证门，开发/未签名构建无门回退；两形态写入相同，issue #866）。
+/// `book`：条目按账本标识分域（issue #836）；携带标识时顺手清除历史无标识
+/// 条目（幂等 best-effort，失败不阻断——升级后遗留的旧条目不再被任何路径
+/// 消费，清不掉也无害，仅少一次钥匙串清理）。
 #[cfg(target_os = "macos")]
-pub(crate) fn store(passphrase: &str) -> Result<()> {
-    imp::store(passphrase, uses_biometry_gate(is_dev_build()))
+pub(crate) fn store(passphrase: &str, book: Option<&str>) -> Result<()> {
+    if book.is_some() {
+        let _ = imp::delete(None);
+    }
+    imp::store(passphrase, book, uses_biometry_gate(is_dev_build()))
 }
 
 /// 读取缓存的入口令（生物门形态先过 LocalAuthentication 应用层门再读条目，
-/// 三态见 [`CacheLoad`]；开发态无门直接读出，issue #866）。
+/// 三态见 [`CacheLoad`]；开发态无门直接读出，issue #866）。`book` 见 [`store`]。
 #[cfg(target_os = "macos")]
-pub(crate) fn load() -> Result<CacheLoad> {
-    imp::load(uses_biometry_gate(is_dev_build()))
+pub(crate) fn load(book: Option<&str>) -> Result<CacheLoad> {
+    imp::load(book, uses_biometry_gate(is_dev_build()))
 }
 
-/// 删除缓存的入口令（幂等）。
+/// 删除缓存的入口令（幂等）。`book` 见 [`store`]。
 #[cfg(target_os = "macos")]
-pub(crate) fn delete() -> Result<()> {
-    imp::delete()
+pub(crate) fn delete(book: Option<&str>) -> Result<()> {
+    imp::delete(book)
 }
 
 // ---------------------------------------------------------------------------
@@ -331,7 +355,7 @@ pub(crate) fn delete() -> Result<()> {
 
 /// 存储（建/更）缓存的入口令：不支持平台统一报码化错误（前端隐藏选项即不会触达）。
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn store(_passphrase: &str) -> Result<()> {
+pub(crate) fn store(_passphrase: &str, _book: Option<&str>) -> Result<()> {
     Err(AppError::coded(
         "encryption.remember-unsupported",
         "当前平台不支持本机记住主口令",
@@ -340,13 +364,13 @@ pub(crate) fn store(_passphrase: &str) -> Result<()> {
 
 /// 读取缓存的入口令：不支持平台视为无缓存（回退手输）。
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn load() -> Result<CacheLoad> {
+pub(crate) fn load(_book: Option<&str>) -> Result<CacheLoad> {
     Ok(CacheLoad::NotFound)
 }
 
 /// 删除缓存的入口令：不支持平台幂等成功。
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn delete() -> Result<()> {
+pub(crate) fn delete(_book: Option<&str>) -> Result<()> {
     Ok(())
 }
 
@@ -391,6 +415,22 @@ mod tests {
         assert_eq!(
             serde_json::to_value(RememberMode::DevFallback).unwrap(),
             "dev-fallback"
+        );
+    }
+
+    /// 缓存条目 account 按账本标识分域（issue #836）：携带标识 → 按本分域；
+    /// 无标识（注册表不可用的回退现场，运行的是折叠默认账本）→ 历史无标识
+    /// account——升级用户在回退现场不丢自动解锁。
+    #[test]
+    fn account_scopes_by_book_id() {
+        assert_eq!(account_for(None), "master-passphrase");
+        assert_eq!(
+            account_for(Some("3f2a9c4e-8b1d-4c2a-9f3e-5a7b8c9d0e1f")),
+            "master-passphrase-3f2a9c4e-8b1d-4c2a-9f3e-5a7b8c9d0e1f"
+        );
+        assert_eq!(
+            account_for(Some("ab12cd34ef56ab12")),
+            "master-passphrase-ab12cd34ef56ab12"
         );
     }
 }

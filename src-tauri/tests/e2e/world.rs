@@ -205,6 +205,9 @@ pub struct BootGroup {
     pub last_auto_backup_path: Option<PathBuf>,
     /// 本场景自动备份产物所在目录（日界门场景复用同一目录：同日/跨日产物计数）
     pub auto_backup_dir: Option<PathBuf>,
+    /// 备份作用域（issue #836）：触发入口的账本作用域注入；默认 None = 旧命名
+    /// 兼容口径（既有场景产物名不变），按账本分域的场景显式设置。
+    pub backup_scope: Option<tauri_app_lib::backup::BackupScope>,
     /// 最近一次恢复的恢复安全备份目录（加密库安全备份断言用，issue #572）
     pub restore_safety_dir: Option<PathBuf>,
     /// DataLocation 引导场景：默认应用数据目录（真临时目录）
@@ -306,6 +309,7 @@ impl fmt::Debug for LedgerWorld {
             .field("last_backup", &self.boot.last_backup_path)
             .field("last_auto_backup", &self.boot.last_auto_backup_path)
             .field("auto_backup_dir", &self.boot.auto_backup_dir)
+            .field("backup_scope", &self.boot.backup_scope)
             .field(
                 "last_search_total",
                 &self.txn.last_search.as_ref().map(|s| s.total),
