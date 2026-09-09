@@ -194,7 +194,7 @@ pub struct ReportGroup {
     pub last_date_range: Option<tauri_app_lib::reports::DateRange>,
 }
 
-/// 引导组快照：备份 + 数据位置 + 加密 + 启动失败的文件级/引导级状态。
+/// 引导组快照：备份 + 数据位置 + 加密 + 启动失败 + 账本登记的文件级/引导级状态。
 #[derive(Default)]
 pub struct BootGroup {
     /// 最近一次备份文件的路径（备份/恢复场景用）
@@ -237,6 +237,11 @@ pub struct BootGroup {
     pub sf_last_takeover: Option<StartupTakeover>,
     /// 启动失败恢复场景（issue #601）：以未登记引导解析出的生效库目录
     pub sf_resolved_dir: Option<PathBuf>,
+    /// 账本场景（issue #835）：最近一次引导处置判定（密文库落解锁屏 /
+    /// 明文库就绪建连，启动与原位重引导共用序列的产物）
+    pub book_last_disposition: Option<Result<tauri_app_lib::db::boot::BootDisposition, String>>,
+    /// 账本场景（issue #835）：最近一次账本清单聚合（列表命令内核同款）
+    pub book_last_list: Option<tauri_app_lib::db::book_registry::BookListInfo>,
 }
 
 /// Cucumber World：每个 Scenario 独立持有一个 in-memory SQLite 数据库。
@@ -274,7 +279,7 @@ pub struct LedgerWorld {
     pub policy: PolicyGroup,
     /// 报表组快照
     pub report: ReportGroup,
-    /// 引导组快照（备份 + 数据位置 + 加密 + 启动失败）
+    /// 引导组快照（备份 + 数据位置 + 加密 + 启动失败 + 账本登记）
     pub boot: BootGroup,
 }
 

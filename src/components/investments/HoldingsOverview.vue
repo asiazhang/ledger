@@ -18,6 +18,7 @@ import { t } from '@/i18n'
 import { formatAmount, formatPrice, formatQuantity } from '@/types'
 import { useInstrumentInfoSync } from '@/composables/useInstrumentInfoSync'
 import { usePricesChanged } from '@/composables/usePricesChanged'
+import SyncProgressBar from '@/components/investments/SyncProgressBar.vue'
 import {
   formatCurrencyGroups,
   usePortfolioOverview,
@@ -29,10 +30,11 @@ const { rows, loading, totalMarketValueGroups, totalUnrealizedPnlGroups, refresh
   usePortfolioOverview()
 
 // 同步按钮复用 T4 的同步接缝（useInstrumentInfoSync），两处行为一致：
-// 按钮 loading + 轻量消息反馈。同步后重拉不绑在调用方自觉里：后端实际
+// 按钮 loading + 轻量消息反馈 + 确定进度条（issue #897，与标的页同一份
+// SyncProgressBar 展示组件、同一份共享进度状态）。同步后重拉不绑在调用方自觉里：后端实际
 // 写价后 emit 价格失效信号（ADR-0031），此处订阅重拉现价/市值（含本卡
 // 所在隐藏 tab 常驻挂载的场景）；失败/零更新后端不 emit，无谓重拉也不发生。
-const { syncing, resultMessage, status, sync } = useInstrumentInfoSync()
+const { syncing, resultMessage, status, progress, sync } = useInstrumentInfoSync()
 
 usePricesChanged(() => {
   void refresh()
@@ -118,6 +120,9 @@ const overviewColumns: DataTableColumn<PortfolioRow>[] = [
 
     <NSpin :show="loading">
       <NSpace vertical :size="12">
+        <!-- 同步确定进度条（issue #897）：卡顶就近反馈，与标的页同一展示组件 -->
+        <SyncProgressBar :progress="progress" />
+
         <!-- 与标的页一致的轻量反馈：成功/失败着色 -->
         <NText v-if="resultMessage" :type="status === 'error' ? 'error' : 'info'">
           {{ resultMessage }}

@@ -16,6 +16,7 @@ import { t } from '@/i18n'
 import { useInstrumentInfoSync } from '@/composables/useInstrumentInfoSync'
 import { usePricesChanged } from '@/composables/usePricesChanged'
 import { useAppDialog } from '@/composables/useAppDialog'
+import SyncProgressBar from '@/components/investments/SyncProgressBar.vue'
 import { errorMessage as extractErrorMessage } from '@/utils/errors'
 import {
   formatPrice,
@@ -31,7 +32,9 @@ import ManualPriceModal from '@/components/investments/ManualPriceModal.vue'
 import type { Instrument, MarketType } from '@/types'
 
 const reference = useReferenceStore()
-const { syncing, resultMessage, status, sync } = useInstrumentInfoSync()
+// 同步接缝（与盈亏页共用）：按钮 loading + 轻量消息反馈 + 确定进度条
+//（issue #897，两入口同一份展示组件、同一份共享进度状态）。
+const { syncing, resultMessage, status, progress, sync } = useInstrumentInfoSync()
 // 删除二次确认（issue #292）：与账户删除同语义（useAppDialog 命令式对话框，
 // ADR-0035 接入弹层注册表驱动快捷键抑制）
 const dialog = useAppDialog()
@@ -313,6 +316,8 @@ onMounted(load)
 
 <template>
   <NSpace vertical :size="12">
+    <!-- 同步确定进度条（issue #897）：列表顶部就近反馈，与盈亏页同一展示组件 -->
+    <SyncProgressBar :progress="progress" />
     <NSpace align="center" :size="12">
       <NInput
         v-model:value="searchText"

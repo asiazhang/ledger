@@ -23,6 +23,8 @@ export const MERCHANT_TOP_N_DEFAULT: number = 5
  *   （分类下钻词条既有裁决随状态迁入）；
  * - 商户排行 TopN 档位（issue #588）：会话内保留、冷启动回默认，与期间/下钻
  *   互不牵连；切换由视图 watch 以新 top_n 重拉商户卡。
+ * - ESC 复位出口（issue #894）：resetToDefault 经既有意图入口把三维拉回默认，
+ *   视图经复位回调注册表（viewResetRegistry）向窗口行为守卫声明本出口。
  * 报表视图退为接线：QuickTimeRange 受控 v-model 进出，三卡数据拉取与 loading
  * 仍归视图，进入与期间变化照常重拉。
  */
@@ -57,6 +59,20 @@ export const useReportsSessionStore = defineStore('reports-session', () => {
     merchantTopN.value = n
   }
 
+  /** ESC 复位出口（issue #894，spec #892 / ADR-0094）：期间回默认「当年」、下钻回
+   * 基础态、TopN 回默认档——复位即清除保留态本身（复位后离开再回来 = 默认）。
+   * 「当年」在复位时现算（与冷启动默认同口径：默认是动态的「当下年份自然年」，
+   * 非冻结首次使用的快照——会话跨年存活时复位落在当下年份是刻意取舍，spec
+   * 「期间回默认『当年』」的自然读法）。走既有意图入口：setPeriod 自带同值守卫
+   * 与期间切换复位下钻，setDrilldown / setMerchantTopN 同值不动作；重拉由视图
+   * 既有 watch 按实际变化照常驱动（期间变化三卡重拉、TopN 变化商户卡重拉、
+   * 仅下钻变化是纯视图投影不重拉），全默认时复位天然幂等无操作。 */
+  function resetToDefault() {
+    setPeriod(presetRange('year', new Date()))
+    setDrilldown(null)
+    setMerchantTopN(MERCHANT_TOP_N_DEFAULT)
+  }
+
   return {
     period,
     drilledRootId,
@@ -64,5 +80,6 @@ export const useReportsSessionStore = defineStore('reports-session', () => {
     setPeriod,
     setDrilldown,
     setMerchantTopN,
+    resetToDefault,
   }
 })

@@ -1,5 +1,5 @@
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
-import { h, type Component } from 'vue'
+import { defineComponent, h, type Component } from 'vue'
 import { NDialogProvider } from 'naive-ui'
 
 /**
@@ -29,4 +29,26 @@ export function mountWithDialog(component: Component): VueWrapper {
   return mount(NDialogProvider, {
     slots: { default: () => h(component) },
   }) as VueWrapper
+}
+
+/**
+ * 在真实组件 setup 上下文内调用组合式函数（薄壳数据层测试的直调收口）。
+ *
+ * 薄壳 composable 在 setup 内注册 onMounted 自动首刷（部分另有 onUnmounted 清理），
+ * 测试裸调会触发 Vue「no active component instance」警告且自动首刷不生效；经本助手
+ * 在宿主组件 setup 内调用后生命周期如实生效。返回 shell（组合式函数的返回值）；
+ * 宿主 wrapper 由全局 enableAutoUnmount（setup.ts）在每测 afterEach 统一卸载，
+ * onUnmounted 清理随之自动执行，无需调用方手工卸载。
+ */
+export function withSetup<T>(composable: () => T): T {
+  let shell!: T
+  mount(
+    defineComponent({
+      setup() {
+        shell = composable()
+        return () => h('div')
+      },
+    }),
+  )
+  return shell as T
 }

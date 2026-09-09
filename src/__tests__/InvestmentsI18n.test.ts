@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
-import { h, nextTick } from 'vue'
-import { NDialogProvider } from 'naive-ui'
+import { nextTick } from 'vue'
 import { applyLocale } from '@/i18n'
+import { clickTab } from './helpers/dom'
+import { mountWithDialog } from './helpers/mount'
 import InvestmentsView from '@/views/InvestmentsView.vue'
 import InvestmentForm from '@/components/InvestmentForm.vue'
 
@@ -45,34 +46,27 @@ afterEach(async () => {
   await applyLocale('zh-CN')
 })
 
-function mountView() {
-  return mount(NDialogProvider, {
-    slots: { default: () => h(InvestmentsView) },
-  })
-}
-
-async function clickTab(wrapper: ReturnType<typeof mountView>, index: number) {
-  await wrapper.findAll('.n-tabs-tab')[index]!.trigger('click')
-  await nextTick()
-  await nextTick()
-}
+/** 视图挂载走共享基座（helpers/mount.ts 单点收口，NDialogProvider 包裹）。 */
+const mountView = () => mountWithDialog(InvestmentsView)
 
 describe('InvestmentsView 英文渲染（issue #350 / ADR-0049）', () => {
-  it('页签渲染英文：P&L / Instruments / Trend', async () => {
+  it('页签渲染英文：P&L / Holdings / Instruments / Trend', async () => {
     await applyLocale('en-US')
     await nextTick()
     const wrapper = mountView()
     await nextTick()
     const labels = wrapper.findAll('.n-tabs-tab').map((el) => el.text())
     expect(labels).toContain('P&L')
+    expect(labels).toContain('Holdings')
     expect(labels).toContain('Instruments')
     expect(labels).toContain('Trend')
   })
 
-  it('盈亏页持仓概览渲染英文（Current Holdings / 空态）', async () => {
+  it('持仓页签渲染英文（Current Holdings / 空态，issue #901）', async () => {
     await applyLocale('en-US')
     const wrapper = mountView()
     await flushPromises()
+    await clickTab(wrapper, 'Holdings')
     expect(wrapper.text()).toContain('Current Holdings')
     expect(wrapper.text()).toContain('Sync Instrument Info')
     // 无持仓数据 → 英文空态
@@ -83,7 +77,7 @@ describe('InvestmentsView 英文渲染（issue #350 / ADR-0049）', () => {
     await applyLocale('en-US')
     const wrapper = mountView()
     await flushPromises()
-    await clickTab(wrapper, 1)
+    await clickTab(wrapper, 'Instruments')
     expect(wrapper.text()).toContain('Holdings only')
     expect(wrapper.text()).toContain('Add Instrument')
     // 全量同步入口已退役（issue #698），不再渲染 Full Sync
@@ -100,7 +94,7 @@ describe('InvestmentsView 英文渲染（issue #350 / ADR-0049）', () => {
     await applyLocale('en-US')
     const wrapper = mountView()
     await flushPromises()
-    await clickTab(wrapper, 2)
+    await clickTab(wrapper, 'Trend')
     const text = wrapper.text()
     expect(text).toContain('Portfolio Value')
     expect(text).toContain('Single Instrument')

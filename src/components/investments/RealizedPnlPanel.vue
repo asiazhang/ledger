@@ -18,7 +18,6 @@ import { useReferenceStore } from '@/stores/reference'
 import { formatAmount, formatPrice, formatQuantity } from '@/types'
 import type { PnlDetail } from '@/types'
 import { useRealizedPnl } from '@/composables/useRealizedPnl'
-import HoldingsOverview from '@/components/investments/HoldingsOverview.vue'
 
 const reference = useReferenceStore()
 const {
@@ -98,9 +97,6 @@ const instPnlColumns: DataTableColumn[] = [
 <template>
   <NSpin :show="loading">
     <NSpace vertical :size="16">
-      <!-- 当前持仓概览（issue #110）：总市值/未实现盈亏合计 + 持仓明细 + 同步标的信息按钮 -->
-      <HoldingsOverview />
-
       <NSpace align="center" :size="12">
         <PinyinSelect
           v-model:value="selectedAccountId"

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
+import { withSetup } from './helpers/mount'
 import { defineComponent } from 'vue'
 import { useItemsStore } from '@/stores/items'
 import { useItemDailyTotal } from '@/composables/useItemDailyTotal'
@@ -45,7 +46,7 @@ describe('useItemDailyTotal 物品日成本数据层（issue #122）', () => {
         item_daily_total: () => Promise.reject(new Error('缺少 JPY→CNY 汇率，无法折算')),
       },
     })
-    const { total, loading, error, refresh } = useItemDailyTotal()
+    const { total, loading, error, refresh } = withSetup(() => useItemDailyTotal())
     await expect(refresh()).resolves.not.toThrow()
     expect(loading.value).toBe(false)
     expect(total.value).toBeNull()
@@ -57,13 +58,13 @@ describe('useItemDailyTotal 物品日成本数据层（issue #122）', () => {
       defaults: BASE_DEFAULTS,
       overrides: { item_daily_total: () => Promise.reject('缺汇率') },
     })
-    const { error, refresh } = useItemDailyTotal()
+    const { error, refresh } = withSetup(() => useItemDailyTotal())
     await refresh()
     expect(error.value).toBe('缺汇率')
   })
 
   it('成功后再次报错：total 清空并切换到错误态；再次成功则恢复', async () => {
-    const { total, error, refresh } = useItemDailyTotal()
+    const { total, error, refresh } = withSetup(() => useItemDailyTotal())
     await refresh()
     expect(total.value).not.toBeNull()
 
@@ -88,7 +89,7 @@ describe('useItemDailyTotal 物品日成本数据层（issue #122）', () => {
       defaults: BASE_DEFAULTS,
       overrides: { item_daily_total: () => Promise.reject(new Error('缺少 USD→CNY 汇率')) },
     })
-    const { error, refresh } = useItemDailyTotal()
+    const { error, refresh } = withSetup(() => useItemDailyTotal())
     // 先让 store self-init 的 version 首跳与跟随重拉落定（此时 sink 仍为 no-op），再开始计数
     await flushPromises()
 
