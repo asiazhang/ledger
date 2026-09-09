@@ -37,7 +37,6 @@
     "filterAccount": "All accounts",
     "totalMarketValue": "Total Market Value",
     "totalUnrealizedPnl": "Total Unrealized P&L",
-    "navDate": "NAV {date}",
     "columns": {
       "symbol": "Instrument",
       "name": "Name",
@@ -45,6 +44,7 @@
       "quantity": "Qty",
       "cost": "Cost",
       "price": "Price",
+      "navDate": "NAV Date",
       "marketValue": "Market Value",
       "unrealizedPnl": "Unrealized P&L"
     }

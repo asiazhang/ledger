@@ -28,15 +28,6 @@ const KIND_TAG_TYPE: Record<TransactionKind, 'success' | 'warning' | 'info' | 'd
   sell: 'default',
 }
 
-/** 固定列宽总和（备注为弹性列不设 `width`，不计入）。
- * 作为 `scroll-x` 的窄窗口横向滚动下限。 */
-export function sumFixedColumnWidths(columns: DataTableColumn<Transaction>[]): number {
-  return columns.reduce(
-    (sum, col) => sum + (typeof col.width === 'number' ? col.width : 0),
-    0,
-  )
-}
-
 /** 交易基础列：日期/类型/分类/账户/备注/金额（搜索结果与交易列表共用，只读）。
  * 列名经 t() 取当前语言：使用方以 computed 构造列数组（TransactionsView/SearchView），
  * 语言切换时重建列，表头即时更新。

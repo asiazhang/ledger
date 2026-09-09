@@ -3,6 +3,7 @@ import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
+import { applyLocale } from '@/i18n'
 import HoldingsOverview from '@/components/investments/HoldingsOverview.vue'
 import {
   INSTRUMENT_SYNC_PROGRESS_EVENT,
@@ -75,7 +76,7 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     wrapper = mount(HoldingsOverview)
     await flushPromises()
     const headers = wrapper.findAll('th').map((th) => th.text())
-    for (const h of ['标的', '名称', '账户', '数量', '成本', '现价', '市值', '未实现盈亏']) {
+    for (const h of ['标的', '名称', '账户', '数量', '成本', '现价', '净值日期', '市值', '未实现盈亏']) {
       expect(headers).toContain(h)
     }
     // 行数据来自 mock（默认标的代码字母序，issue #902：000001 < 600000）
@@ -132,7 +133,7 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     expect(await cellText('unrealized_pnl')).toEqual([formatAmount(50, cny)])
   })
 
-  it('基金行现价下方展示净值日期（现价对应哪天的净值，#303），股票行不展示', async () => {
+  it('净值日期独立成列：基金行有值、股票行显示 -；现价列恢复单行（#303 形态修订，issue #912）', async () => {
     const fundHolding = makeHolding({
       id: 'h-fund',
       instrument_id: 'inst-fund',
@@ -157,13 +158,11 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     })
     wrapper = mount(HoldingsOverview)
     await flushPromises()
-    const cells = await cellText('latest_price')
     // 默认代码字母序：110022（基金）在前、600000（股票）在后
-    // 股票行（无净值日期）只有价格
-    expect(cells[1]).toBe(formatPrice(150000, cny))
-    expect(cells[0]).toContain(formatPrice(33480, cny))
-    // 基金行现价下方展示净值日期
-    expect(cells[0]).toContain('净值 2026-01-30')
+    // 净值日期列：仅基金行携带，股票行显示「-」
+    expect(await cellText('nav_date')).toEqual(['2026-01-30', '-'])
+    // 现价列恢复单行：只含价格本身，不再附净值日期小字
+    expect(await cellText('latest_price')).toEqual([formatPrice(33480, cny), formatPrice(150000, cny)])
   })
 
   it('右上角「同步标的信息」按钮触发同步命令，反馈与标的页一致', async () => {
@@ -492,5 +491,162 @@ describe('HoldingsOverview 三维过滤排序（issue #902）', () => {
     expect(wrapper.text()).not.toContain('筛选条件下无匹配持仓')
     // 无持仓时过滤控件不渲染（无可过滤之列）
     expect(wrapper.find('[data-testid="holdings-search"]').exists()).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 持仓页签客户端分页（issue #912）：页大小固定 20，切片由表格内置分页完成、
+// 页码状态归 useHoldingsFilter（三维任一变化即翻页归零，卸载重挂回默认）；
+// 合计/空态在切片前判定，与可见页无关。25 行夹具：第 21–25 行落第二页。
+// ---------------------------------------------------------------------------
+
+/** 分页夹具账户：22 行在 acc-1、3 行在 acc-2（账户过滤收窄后仍超一页） */
+const PAGE_ACCOUNTS: Account[] = [
+  makeAccount({ id: 'acc-page-1', name: '证券A' }),
+  makeAccount({ id: 'acc-page-2', name: '证券B', currency_code: 'HKD' }),
+]
+
+/** 25 行持仓 + 字典：三位零填充代码序 = 数目字序，市值随序号递增（降序首行为 025） */
+const PAGE_HOLDINGS: Holding[] = Array.from({ length: 25 }, (_, i) => {
+  const code = String(i + 1).padStart(3, '0')
+  return makeHolding({
+    id: `ph-${code}`,
+    account_id: i < 22 ? 'acc-page-1' : 'acc-page-2',
+    instrument_id: `pinst-${code}`,
+    quantity: 100,
+    latest_price_cents: 100000 + i,
+    latest_price_currency_code: 'CNY',
+    market_value_cents: 10000000 + i,
+    unrealized_pnl_cents: 1000 + i,
+  })
+})
+
+const PAGE_INSTRUMENTS: Instrument[] = PAGE_HOLDINGS.map((h, i) =>
+  makeInstrument({
+    id: h.instrument_id,
+    symbol: String(i + 1).padStart(3, '0'),
+    name: `标的${String(i + 1).padStart(3, '0')}`,
+  }),
+)
+
+const PAGE_DEFAULTS = {
+  list_holdings: PAGE_HOLDINGS,
+  list_instruments: { items: PAGE_INSTRUMENTS, total: PAGE_INSTRUMENTS.length },
+  sync_instrument_info: { synced: 25, skipped: 0, message: '已同步 25 只，跳过 0 只' },
+}
+
+describe('HoldingsOverview 客户端分页（issue #912）', () => {
+  beforeEach(async () => {
+    vi.useFakeTimers()
+    resetPricesChangedHandler()
+    resetInstrumentInfoSyncForTest()
+    wireInvokeSeam({ defaults: PAGE_DEFAULTS, overrides: { list_accounts: PAGE_ACCOUNTS } })
+    const store = useReferenceStore()
+    await store.refresh()
+  })
+
+  afterEach(async () => {
+    vi.useRealTimers()
+    if (wrapper) {
+      wrapper.unmount()
+      wrapper = undefined
+    }
+  })
+
+  /** 点分页条页码项（.n-pagination-item 文本即页码；前后键无文本不参与匹配） */
+  async function goToPage(page: number) {
+    await wrapper!.findAll('.n-pagination-item').find((el) => el.text() === String(page))!.trigger('click')
+    await nextTick()
+  }
+
+  it('超一页时分页条出现：首页 20 行，第二页余量 5 行，翻回恢复', async () => {
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    expect(wrapper.find('.n-pagination').exists()).toBe(true)
+    expect(await cellText('symbol')).toHaveLength(20)
+    expect((await cellText('symbol'))[0]).toBe('001')
+    await goToPage(2)
+    expect(await cellText('symbol')).toEqual(['021', '022', '023', '024', '025'])
+    await goToPage(1)
+    expect(await cellText('symbol')).toHaveLength(20)
+    expect((await cellText('symbol'))[0]).toBe('001')
+  })
+
+  it('合计为过滤子集全量口径，翻页不改变合计', async () => {
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    const totalText = () => wrapper!.find('[data-testid="total-market-value"]').text()
+    const before = totalText()
+    await goToPage(2)
+    expect(totalText()).toBe(before)
+  })
+
+  it('筛选变化翻页归零：第二页时改账户过滤，回新行集第一页', async () => {
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    await goToPage(2)
+    expect(await cellText('symbol')).toHaveLength(5)
+    // 账户过滤收窄到 22 行（>20）：归零后第一页显示 20 行；若停留第 2 页只会看到 2 行
+    componentVm(wrapper.findComponent('[data-testid="holdings-account-filter"]')).$emit(
+      'update:value',
+      'acc-page-1',
+    )
+    await nextTick()
+    expect(await cellText('symbol')).toHaveLength(20)
+    expect((await cellText('symbol'))[0]).toBe('001')
+  })
+
+  it('排序变化翻页归零：第二页时点市值列头，回排序后第一页', async () => {
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    await goToPage(2)
+    expect(await cellText('symbol')).toHaveLength(5)
+    // 受控排序重排行集 + 页码归零：显示市值降序前 20 行（首行市值最大 = 025）
+    await wrapper!.findAll('th').find((th) => th.text() === '市值')!.trigger('click')
+    await nextTick()
+    expect(await cellText('symbol')).toHaveLength(20)
+    expect((await cellText('symbol'))[0]).toBe('025')
+  })
+
+  it('搜索变化翻页归零：第二页时搜索命中全量，回新行集第一页', async () => {
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    await goToPage(2)
+    expect(await cellText('symbol')).toHaveLength(5)
+    // 「标的」命中全部 25 行名（>20）：归零后第一页 20 行；若停留第 2 页只剩 5 行
+    await typeSearch(wrapper, '标的')
+    expect(await cellText('symbol')).toHaveLength(20)
+    expect((await cellText('symbol'))[0]).toBe('001')
+  })
+
+  it('页码与三维状态同瞬态：卸载重挂回第一页（离开视图回默认）', async () => {
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    await goToPage(2)
+    expect(await cellText('symbol')).toHaveLength(5)
+    wrapper.unmount()
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    expect(await cellText('symbol')).toHaveLength(20)
+    expect(wrapper.findAll('.n-pagination-item--active').map((el) => el.text())).toEqual(['1'])
+  })
+
+  it('单页行集不出现分页条（4 行三维过滤夹具回归不变）', async () => {
+    wireInvokeSeam({ defaults: FILTER_DEFAULTS, overrides: { list_accounts: FILTER_ACCOUNTS } })
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    expect(wrapper.find('.n-pagination').exists()).toBe(false)
+    expect(await cellText('symbol')).toEqual(['000001', '00700', '600000', 'AAPL'])
+  })
+
+  it('净值日期列名 i18n：en-US 为 NAV Date（用例后还原 zh-CN）', async () => {
+    await applyLocale('en-US')
+    try {
+      wrapper = mount(HoldingsOverview)
+      await flushPromises()
+      expect(wrapper.findAll('th').map((th) => th.text())).toContain('NAV Date')
+    } finally {
+      await applyLocale('zh-CN')
+    }
   })
 })

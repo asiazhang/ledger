@@ -307,3 +307,82 @@ describe('useHoldingsFilter 工厂', () => {
     expect(nonReferenceCmds).toEqual([])
   })
 })
+
+// ---------------------------------------------------------------------------
+// 页码生命周期（issue #912）：分页是过滤排序之后派生行集的展示切片，不是第四
+// 个过滤维度——本模块只持页码状态与「翻页归零」语义，切片由表格组件内置分页
+// 完成（NDataTable 客户端模式）。
+// ---------------------------------------------------------------------------
+
+describe('useHoldingsFilter 页码生命周期（issue #912）', () => {
+  let scope: ReturnType<typeof effectScope> | undefined
+
+  function setup(rows: PortfolioRow[]) {
+    const rowsRef = ref(rows)
+    let instance: ReturnType<typeof useHoldingsFilter> | undefined
+    scope = effectScope()
+    scope.run(() => {
+      instance = useHoldingsFilter(rowsRef)
+    })
+    return instance!
+  }
+
+  beforeEach(async () => {
+    vi.useFakeTimers()
+    setActivePinia(createPinia())
+    wireInvokeSeam({ overrides: { list_accounts: FILTER_ACCOUNTS } })
+    await useReferenceStore().refresh()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    scope?.stop()
+  })
+
+  it('默认第一页；翻页意图更新页码', () => {
+    const hf = setup(FIXTURE_ROWS)
+    expect(hf.page.value).toBe(1)
+    hf.setPage(3)
+    expect(hf.page.value).toBe(3)
+  })
+
+  it('账户过滤实际变化即翻页归零', () => {
+    const hf = setup(FIXTURE_ROWS)
+    hf.setPage(2)
+    hf.setAccount('acc-inv-2')
+    expect(hf.page.value).toBe(1)
+  })
+
+  it('搜索以防抖后应用时点归零：回显不归零，应用收窄行集才归零', async () => {
+    const hf = setup(FIXTURE_ROWS)
+    hf.setPage(2)
+    // 输入回显阶段应用值未变、行集未动，不翻页
+    hf.setSearch('txkg')
+    expect(hf.page.value).toBe(2)
+    vi.advanceTimersByTime(HOLDINGS_SEARCH_DEBOUNCE_MS)
+    await flushPromises()
+    // 应用搜索收窄行集，页码归零（与行集变化同步）
+    expect(hf.page.value).toBe(1)
+  })
+
+  it('排序变化（含第三态清除）即翻页归零', () => {
+    const hf = setup(FIXTURE_ROWS)
+    hf.setPage(2)
+    hf.setSorter({ columnKey: 'market_value', order: 'descend' })
+    expect(hf.page.value).toBe(1)
+    hf.setPage(2)
+    hf.setSorter({ columnKey: 'market_value', order: false })
+    expect(hf.page.value).toBe(1)
+  })
+
+  it('同值重设不归零（watch 只对实际变化响应）：账户与排序同规', () => {
+    const hf = setup(FIXTURE_ROWS)
+    hf.setAccount('acc-inv-1')
+    hf.setSorter({ columnKey: 'market_value', order: 'descend' })
+    hf.setPage(2)
+    // 与当前值相同的账户/排序重设：行集未变，页码保持
+    hf.setAccount('acc-inv-1')
+    hf.setSorter({ columnKey: 'market_value', order: 'descend' })
+    expect(hf.page.value).toBe(2)
+  })
+})
