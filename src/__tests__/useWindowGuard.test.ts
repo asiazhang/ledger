@@ -2,6 +2,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { useWindowGuard } from '@/composables/useWindowGuard'
+import { createOverlayToken, resetOverlays } from '@/composables/overlayRegistry'
+import { registerViewReset, clearViewResets } from '@/composables/viewResetRegistry'
 
 /**
  * 窗口行为守卫（issue #154）测试：只测外部行为——
@@ -12,6 +14,8 @@ import { useWindowGuard } from '@/composables/useWindowGuard'
 const wrappers: VueWrapper[] = []
 afterEach(() => {
   while (wrappers.length) wrappers.pop()?.unmount()
+  resetOverlays()
+  clearViewResets()
 })
 
 function mountHost() {
@@ -75,6 +79,83 @@ describe('useWindowGuard：Escape 拦截', () => {
     const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
     document.body.dispatchEvent(enter)
     expect(enter.defaultPrevented).toBe(false)
+  })
+})
+
+// —— ESC 两级语义（spec #892 / ADR-0094）：有弹层时弹层库默认行为接管，无弹层时
+// 消费当前视图注册的复位回调。判定复用弹层注册表（ADR-0035），不做 DOM 推断。
+
+describe('useWindowGuard：ESC 两级语义（spec #892）', () => {
+  /** 带注册回调的宿主（模拟持有保留态的视图；守卫与注册宿主分离，
+   * 真实应用中守卫只在 App.vue 挂载一次）。 */
+  function mountHostWithReset(reset: () => void, withGuard = true) {
+    const Host = defineComponent({
+      setup() {
+        if (withGuard) useWindowGuard()
+        registerViewReset(reset)
+        return () => h('div')
+      },
+    })
+    const wrapper = mount(Host)
+    wrappers.push(wrapper)
+    return wrapper
+  }
+
+  function fireEscape() {
+    const esc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    document.body.dispatchEvent(esc)
+    return esc
+  }
+
+  it('无弹层 + 有注册回调：ESC 触发复位回调（仍 preventDefault，不作用于窗口层）', () => {
+    const reset = vi.fn()
+    mountHostWithReset(reset)
+    const esc = fireEscape()
+    expect(esc.defaultPrevented).toBe(true)
+    expect(reset).toHaveBeenCalledTimes(1)
+  })
+
+  it('有弹层：ESC 不消费复位回调（弹层库默认关闭行为接管，一次按键只做一件事）', () => {
+    const reset = vi.fn()
+    mountHostWithReset(reset)
+    const token = createOverlayToken('modal')
+    token.set(true)
+    fireEscape()
+    expect(reset).not.toHaveBeenCalled()
+    token.set(false)
+    // 弹层关再按：复位通道恢复
+    fireEscape()
+    expect(reset).toHaveBeenCalledTimes(1)
+  })
+
+  it('无注册回调：ESC 无操作（不报错，无保留状态的视图天然无操作）', () => {
+    mountHost()
+    expect(() => fireEscape()).not.toThrow()
+  })
+
+  it('视图卸载后注册自动撤销：ESC 不再触发（不滞留注册态）', () => {
+    const reset = vi.fn()
+    const host = mountHostWithReset(reset)
+    fireEscape()
+    expect(reset).toHaveBeenCalledTimes(1)
+    host.unmount()
+    fireEscape()
+    expect(reset).toHaveBeenCalledTimes(1)
+  })
+
+  it('多视图先后注册：以最后一次注册为准（当前视图的复位回调），先注册者卸载不误清', () => {
+    const first = vi.fn()
+    const second = vi.fn()
+    mountHost() // 守卫仅一处
+    mountHostWithReset(first, false)
+    mountHostWithReset(second, false)
+    fireEscape()
+    expect(first).not.toHaveBeenCalled()
+    expect(second).toHaveBeenCalledTimes(1)
+    // 先注册的视图卸载不撤销后注册的回调（注册表按「当前注册」判定，不误清）
+    wrappers[1]!.unmount()
+    fireEscape()
+    expect(second).toHaveBeenCalledTimes(2)
   })
 })
 
