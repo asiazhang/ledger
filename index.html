@@ -3,7 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover（issue #842 移动档安全区适配）：WebView 延伸到系统栏时，
+         env(safe-area-inset-*) 才非零，顶栏/忙碌条据此避让刘海与手势条；
+         桌面浏览器 env 恒 0，零影响 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>OpenLedger</title>
   </head>
 
