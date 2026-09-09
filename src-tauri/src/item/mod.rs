@@ -17,13 +17,16 @@
 //! 物品实体、入参与读模型集中本域 [`model`]（#420 随域归位），
 //! 消费方经域路径逐类型显式 import。
 
+pub mod command;
 pub mod cost;
 pub mod domain;
 pub mod guard;
 mod model;
 
+pub(crate) use command::replay_command;
 /// 域 API 再导出：调用面用域语言短名（`item::create_item` 等），
 /// 与 ADR-0056 阶段 1 定格形状一致（先例：`scheduled_transactions` 入口再导出）。
+pub use command::{ItemCommand, ItemCommandRow};
 pub use domain::*;
 pub use model::{
     Item, ItemDailyCost, ItemDailyTotal, ItemDisposeInput, ItemInput, ItemSourceDisplay,

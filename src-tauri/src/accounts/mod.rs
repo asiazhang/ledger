@@ -7,6 +7,7 @@
 //! 账户类型枚举、账户实体、入参与账户余额读模型 DTO 集中本域 [`model`]
 //! （#419 随域归位），消费方经域路径逐类型显式 import。
 
+mod command;
 mod core;
 mod model;
 
@@ -15,6 +16,8 @@ mod model;
 /// 详见 [`balance`] 模块文档。
 pub mod balance;
 
+pub(crate) use command::replay_command;
+pub use command::{AccountCommand, AccountCommandRow};
 pub use core::{
     adjust_account_balance, audit_balance_cache, create_account, create_account_idempotent,
     delete_account, ensure_black_hole_account, get_account, list_account_balances_for_api,

@@ -10,6 +10,7 @@
 
 use rusqlite::{Connection, OptionalExtension};
 
+use super::command::{PhysicalAssetCommand, ValuationCommandRow, record_local};
 use super::model::{
     AssetRecord, PhysicalAsset, PhysicalAssetDisposeInput, PhysicalAssetInput, PhysicalAssetList,
     PhysicalAssetStatus, PhysicalAssetUpdateInput, PhysicalAssetValuationInput,
@@ -77,42 +78,87 @@ pub fn create_physical_asset(
 
     let id = in_transaction(conn, || {
         let id = new_uuid();
-        let now = now_iso();
-        conn.execute(
-            "INSERT INTO physical_assets \
-             (id,name,purchase_date,purchase_price_cents,purchase_currency_code,\
-             status,disposal_date,disposal_price_cents,disposal_currency_code,\
-             created_at,updated_at,version,device_id,is_deleted) \
-             VALUES (?1,?2,?3,?4,?5,'holding',NULL,NULL,NULL,?6,?6,1,?7,0)",
-            rusqlite::params![
-                id,
-                normalized.name,
-                normalized.purchase_date,
-                normalized.purchase_price_cents,
-                normalized.purchase_currency_code,
-                now,
-                device_id(conn)?,
-            ],
+        let first_valuation = ValuationCommandRow {
+            id: new_uuid(),
+            valuation_date: normalized.initial_valuation_date.clone(),
+            amount_cents: normalized.initial_valuation_cents,
+            currency_code: normalized.initial_valuation_currency_code.clone(),
+        };
+        write_create(
+            conn,
+            &NewAssetRows {
+                id: &id,
+                name: &normalized.name,
+                purchase_date: normalized.purchase_date.as_deref(),
+                purchase_price_cents: normalized.purchase_price_cents,
+                purchase_currency_code: normalized.purchase_currency_code.as_deref(),
+                first_valuation: &first_valuation,
+            },
         )?;
-        conn.execute(
-            "INSERT INTO physical_asset_valuations \
-             (id,asset_id,valuation_date,amount_cents,currency_code,device_id,created_at) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7)",
-            rusqlite::params![
-                new_uuid(),
-                id,
-                normalized.initial_valuation_date,
-                normalized.initial_valuation_cents,
-                normalized.initial_valuation_currency_code,
-                device_id(conn)?,
-                now_iso(),
-            ],
+        // op 产出接缝（issue #860）：两表写入与 op 同事务（估值行 id 随行保序）。
+        record_local(
+            conn,
+            PhysicalAssetCommand::Create {
+                id: id.clone(),
+                name: normalized.name.clone(),
+                purchase_date: normalized.purchase_date.clone(),
+                purchase_price_cents: normalized.purchase_price_cents,
+                purchase_currency_code: normalized.purchase_currency_code.clone(),
+                first_valuation,
+            },
         )?;
         Ok(id)
     })?;
     // 写入成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
     notify();
     Ok(id)
+}
+
+/// 建档行参数（本地建档与重放共用的落库参数集，避免长参数列表）。
+struct NewAssetRows<'a> {
+    id: &'a str,
+    name: &'a str,
+    purchase_date: Option<&'a str>,
+    purchase_price_cents: Option<i64>,
+    purchase_currency_code: Option<&'a str>,
+    first_valuation: &'a ValuationCommandRow,
+}
+
+/// 建档落库协议（本地建档与重放共用，无 op 产出）：资产行 + 首条估值行，
+/// 两表写入由调用方保证同事务；估值行 id 随首条估值载荷保序。
+fn write_create(conn: &Connection, asset: &NewAssetRows<'_>) -> Result<()> {
+    let now = now_iso();
+    conn.execute(
+        "INSERT INTO physical_assets \
+         (id,name,purchase_date,purchase_price_cents,purchase_currency_code,\
+         status,disposal_date,disposal_price_cents,disposal_currency_code,\
+         created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,?3,?4,?5,'holding',NULL,NULL,NULL,?6,?6,1,?7,0)",
+        rusqlite::params![
+            asset.id,
+            asset.name,
+            asset.purchase_date,
+            asset.purchase_price_cents,
+            asset.purchase_currency_code,
+            now,
+            device_id(conn)?,
+        ],
+    )?;
+    conn.execute(
+        "INSERT INTO physical_asset_valuations \
+         (id,asset_id,valuation_date,amount_cents,currency_code,device_id,created_at) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        rusqlite::params![
+            asset.first_valuation.id,
+            asset.id,
+            asset.first_valuation.valuation_date,
+            asset.first_valuation.amount_cents,
+            asset.first_valuation.currency_code,
+            device_id(conn)?,
+            now_iso(),
+        ],
+    )?;
+    Ok(())
 }
 
 /// 列表：未删除资产（按状态筛选，缺省 = 在持）+ **在持**估值合计。
@@ -228,6 +274,24 @@ fn require_asset_exists(conn: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// 处置守卫所需的既有行购买日期单列裸读（本地处置与重放共用；不存在或已
+/// 软删除 → 码化 NotFound，与 [`require_asset_exists`] 同款判定与解耦理由）。
+fn require_asset_purchase_date(conn: &Connection, id: &str) -> Result<Option<String>> {
+    conn.query_row(
+        "SELECT purchase_date FROM physical_assets WHERE id=?1 AND is_deleted=0",
+        rusqlite::params![id],
+        |row| row.get(0),
+    )
+    .optional()?
+    .ok_or_else(|| {
+        AppError::codedp_not_found(
+            "physical-asset.not-found",
+            format!("实物资产不存在: {id}"),
+            &[id],
+        )
+    })
+}
+
 /// 编辑档案（issue #467 T2）：只改名称与购买信息（估值不经本入口变更，
 /// 只能走 [`update_physical_asset_valuation`] 追加历史行）。不存在（或已软
 /// 删除）→ 码化 NotFound；成功后 bump version / updated_at 并调用 `notify`。
@@ -238,19 +302,52 @@ pub fn update_physical_asset(
     input: PhysicalAssetUpdateInput,
     notify: &mut dyn FnMut(),
 ) -> Result<()> {
-    require_asset_exists(conn, id)?;
-    let normalized = validate_update_input(conn, &input)?;
+    in_transaction(conn, || {
+        require_asset_exists(conn, id)?;
+        let normalized = validate_update_input(conn, &input)?;
+        write_update(
+            conn,
+            id,
+            &normalized.name,
+            normalized.purchase_date.as_deref(),
+            normalized.purchase_price_cents,
+            normalized.purchase_currency_code.as_deref(),
+        )?;
+        record_local(
+            conn,
+            PhysicalAssetCommand::Update {
+                id: id.to_string(),
+                name: normalized.name.clone(),
+                purchase_date: normalized.purchase_date.clone(),
+                purchase_price_cents: normalized.purchase_price_cents,
+                purchase_currency_code: normalized.purchase_currency_code.clone(),
+            },
+        )
+    })?;
+    notify();
+    Ok(())
+}
 
+/// 编辑落库协议（本地编辑与重放共用，无 op 产出）：只改名称与购买信息
+/// （估值不经本入口变更）；购买价可清空（存 NULL，与币种成对落空）。
+fn write_update(
+    conn: &Connection,
+    id: &str,
+    name: &str,
+    purchase_date: Option<&str>,
+    purchase_price_cents: Option<i64>,
+    purchase_currency_code: Option<&str>,
+) -> Result<()> {
     let updated = conn.execute(
         "UPDATE physical_assets SET name=?2, purchase_date=?3, purchase_price_cents=?4, \
          purchase_currency_code=?5, updated_at=?6, version=version+1, device_id=?7 \
          WHERE id=?1 AND is_deleted=0",
         rusqlite::params![
             id,
-            normalized.name,
-            normalized.purchase_date,
-            normalized.purchase_price_cents,
-            normalized.purchase_currency_code,
+            name,
+            purchase_date,
+            purchase_price_cents,
+            purchase_currency_code,
             now_iso(),
             device_id(conn)?,
         ],
@@ -259,7 +356,6 @@ pub fn update_physical_asset(
         updated, 1,
         "前置存在性检查已排除 id 不存在/软删除，单连接下不可达"
     );
-    notify();
     Ok(())
 }
 
@@ -274,25 +370,51 @@ pub fn update_physical_asset_valuation(
     input: PhysicalAssetValuationInput,
     notify: &mut dyn FnMut(),
 ) -> Result<()> {
-    // 前置存在性检查（含软删过滤）：估值历史依附资产存续，不允许孤儿行。
-    require_asset_exists(conn, id)?;
-    let normalized = validate_valuation_input(conn, &input)?;
+    in_transaction(conn, || {
+        // 前置存在性检查（含软删过滤）：估值历史依附资产存续，不允许孤儿行。
+        require_asset_exists(conn, id)?;
+        let normalized = validate_valuation_input(conn, &input)?;
+        let valuation = ValuationCommandRow {
+            id: new_uuid(),
+            valuation_date: normalized.valuation_date.clone(),
+            amount_cents: normalized.amount_cents,
+            currency_code: normalized.currency_code.clone(),
+        };
+        write_valuation(conn, id, &valuation)?;
+        // op 产出接缝（issue #860）：追加成功后随同一事务产出 op（估值行 id 随行）。
+        record_local(
+            conn,
+            PhysicalAssetCommand::UpdateValuation {
+                asset_id: id.to_string(),
+                valuation,
+            },
+        )
+    })?;
+    notify();
+    Ok(())
+}
 
+/// 估值追加落库协议（本地与重放共用，无 op 产出）：插入一条历史行（id 随行
+/// 保序），不触碰资产行 version（LWW 口径不变）。
+fn write_valuation(
+    conn: &Connection,
+    asset_id: &str,
+    valuation: &ValuationCommandRow,
+) -> Result<()> {
     conn.execute(
         "INSERT INTO physical_asset_valuations \
          (id,asset_id,valuation_date,amount_cents,currency_code,device_id,created_at) \
          VALUES (?1,?2,?3,?4,?5,?6,?7)",
         rusqlite::params![
-            new_uuid(),
-            id,
-            normalized.valuation_date,
-            normalized.amount_cents,
-            normalized.currency_code,
+            valuation.id,
+            asset_id,
+            valuation.valuation_date,
+            valuation.amount_cents,
+            valuation.currency_code,
             device_id(conn)?,
             now_iso(),
         ],
     )?;
-    notify();
     Ok(())
 }
 
@@ -307,33 +429,50 @@ pub fn dispose_physical_asset(
     input: PhysicalAssetDisposeInput,
     notify: &mut dyn FnMut(),
 ) -> Result<()> {
-    // 处置日期与购买日期的先后守卫需要既有行的购买日期：单列裸读（与折算
-    // 读路径解耦，先例 require_asset_exists 的注释理由）。
-    let purchase_date: Option<String> = conn
-        .query_row(
-            "SELECT purchase_date FROM physical_assets WHERE id=?1 AND is_deleted=0",
-            rusqlite::params![id],
-            |row| row.get(0),
+    in_transaction(conn, || {
+        // 处置日期与购买日期的先后守卫需要既有行的购买日期：单列裸读（与折算
+        // 读路径解耦，先例 require_asset_exists 的注释理由）。
+        let purchase_date = require_asset_purchase_date(conn, id)?;
+        let normalized = validate_dispose_input(conn, purchase_date.as_deref(), &input)?;
+        write_dispose(
+            conn,
+            id,
+            &normalized.disposal_date,
+            normalized.disposal_price_cents,
+            normalized.disposal_currency_code.as_deref(),
+        )?;
+        record_local(
+            conn,
+            PhysicalAssetCommand::Dispose {
+                id: id.to_string(),
+                disposal_date: normalized.disposal_date.clone(),
+                disposal_price_cents: normalized.disposal_price_cents,
+                disposal_currency_code: normalized.disposal_currency_code.clone(),
+            },
         )
-        .optional()?
-        .ok_or_else(|| {
-            AppError::codedp_not_found(
-                "physical-asset.not-found",
-                format!("实物资产不存在: {id}"),
-                &[id],
-            )
-        })?;
-    let normalized = validate_dispose_input(conn, purchase_date.as_deref(), &input)?;
+    })?;
+    // 处置成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
+    notify();
+    Ok(())
+}
 
+/// 处置落库协议（本地处置与重放共用，无 op 产出）：状态标记 + 处置信息。
+fn write_dispose(
+    conn: &Connection,
+    id: &str,
+    disposal_date: &str,
+    disposal_price_cents: Option<i64>,
+    disposal_currency_code: Option<&str>,
+) -> Result<()> {
     let updated = conn.execute(
         "UPDATE physical_assets SET status='disposed', disposal_date=?2, \
          disposal_price_cents=?3, disposal_currency_code=?4, updated_at=?5, \
          version=version+1, device_id=?6 WHERE id=?1 AND is_deleted=0",
         rusqlite::params![
             id,
-            normalized.disposal_date,
-            normalized.disposal_price_cents,
-            normalized.disposal_currency_code,
+            disposal_date,
+            disposal_price_cents,
+            disposal_currency_code,
             now_iso(),
             device_id(conn)?,
         ],
@@ -342,8 +481,6 @@ pub fn dispose_physical_asset(
         updated, 1,
         "前置存在性检查已排除 id 不存在/软删除，单连接下不可达"
     );
-    // 处置成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
-    notify();
     Ok(())
 }
 
@@ -352,7 +489,18 @@ pub fn dispose_physical_asset(
 /// `WHERE is_deleted=0` 自动过滤。不存在（含已删除）→ 码化 NotFound；
 /// 成功后 bump version / updated_at 并调用 `notify`。
 pub fn delete_physical_asset(conn: &Connection, id: &str, notify: &mut dyn FnMut()) -> Result<()> {
-    require_asset_exists(conn, id)?;
+    in_transaction(conn, || {
+        require_asset_exists(conn, id)?;
+        write_delete(conn, id)?;
+        record_local(conn, PhysicalAssetCommand::Delete { id: id.to_string() })
+    })?;
+    // 删除成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
+    notify();
+    Ok(())
+}
+
+/// 软删落库协议（本地删除与重放共用，无 op 产出）：数据与估值历史全保留。
+fn write_delete(conn: &Connection, id: &str) -> Result<()> {
     let deleted = conn.execute(
         "UPDATE physical_assets SET is_deleted=1, updated_at=?2, \
          version=version+1, device_id=?3 WHERE id=?1",
@@ -362,9 +510,126 @@ pub fn delete_physical_asset(conn: &Connection, id: &str, notify: &mut dyn FnMut
         deleted, 1,
         "前置存在性检查已排除 id 不存在/软删除，单连接下不可达"
     );
-    // 删除成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
-    notify();
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 重放执行（同步引擎分派接缝；与本地写同一执行协议，不产出 op）
+// ---------------------------------------------------------------------------
+
+/// 重放执行：建档（名称 / 成对 / 金额 / 币种 / 日期守卫原样生效，币种缺失挂起）。
+pub(crate) fn replay_create(
+    conn: &Connection,
+    id: &str,
+    name: &str,
+    purchase_date: Option<&str>,
+    purchase_price_cents: Option<i64>,
+    purchase_currency_code: Option<&str>,
+    first_valuation: &ValuationCommandRow,
+) -> Result<()> {
+    let normalized = validate_input(
+        conn,
+        &PhysicalAssetInput {
+            name: name.to_string(),
+            purchase_date: purchase_date.map(String::from),
+            purchase_price_cents,
+            purchase_currency_code: purchase_currency_code.map(String::from),
+            initial_valuation_cents: Some(first_valuation.amount_cents),
+            initial_valuation_currency_code: Some(first_valuation.currency_code.clone()),
+            initial_valuation_date: Some(first_valuation.valuation_date.clone()),
+        },
+    )?;
+    write_create(
+        conn,
+        &NewAssetRows {
+            id,
+            name: &normalized.name,
+            purchase_date: normalized.purchase_date.as_deref(),
+            purchase_price_cents: normalized.purchase_price_cents,
+            purchase_currency_code: normalized.purchase_currency_code.as_deref(),
+            first_valuation,
+        },
+    )
+}
+
+/// 重放执行：编辑（名称 / 成对守卫原样生效）。
+pub(crate) fn replay_update(
+    conn: &Connection,
+    id: &str,
+    name: &str,
+    purchase_date: Option<&str>,
+    purchase_price_cents: Option<i64>,
+    purchase_currency_code: Option<&str>,
+) -> Result<()> {
+    require_asset_exists(conn, id)?;
+    let normalized = validate_update_input(
+        conn,
+        &PhysicalAssetUpdateInput {
+            name: name.to_string(),
+            purchase_date: purchase_date.map(String::from),
+            purchase_price_cents,
+            purchase_currency_code: purchase_currency_code.map(String::from),
+        },
+    )?;
+    write_update(
+        conn,
+        id,
+        &normalized.name,
+        normalized.purchase_date.as_deref(),
+        normalized.purchase_price_cents,
+        normalized.purchase_currency_code.as_deref(),
+    )
+}
+
+/// 重放执行：追加估值（资产在位守卫 + 估值守卫原样生效；估值行 id 随行保序）。
+pub(crate) fn replay_valuation(
+    conn: &Connection,
+    asset_id: &str,
+    valuation: &ValuationCommandRow,
+) -> Result<()> {
+    require_asset_exists(conn, asset_id)?;
+    validate_valuation_input(
+        conn,
+        &PhysicalAssetValuationInput {
+            amount_cents: Some(valuation.amount_cents),
+            currency_code: Some(valuation.currency_code.clone()),
+            valuation_date: Some(valuation.valuation_date.clone()),
+        },
+    )?;
+    write_valuation(conn, asset_id, valuation)
+}
+
+/// 重放执行：处置（日期 / 成对守卫原样生效）。
+pub(crate) fn replay_dispose(
+    conn: &Connection,
+    id: &str,
+    disposal_date: &str,
+    disposal_price_cents: Option<i64>,
+    disposal_currency_code: Option<&str>,
+) -> Result<()> {
+    let purchase_date = require_asset_purchase_date(conn, id)?;
+    let normalized = validate_dispose_input(
+        conn,
+        purchase_date.as_deref(),
+        &PhysicalAssetDisposeInput {
+            disposal_date: Some(disposal_date.to_string()),
+            disposal_price_cents,
+            disposal_currency_code: disposal_currency_code.map(String::from),
+        },
+    )?;
+    write_dispose(
+        conn,
+        id,
+        &normalized.disposal_date,
+        normalized.disposal_price_cents,
+        normalized.disposal_currency_code.as_deref(),
+    )
+}
+
+/// 重放执行：软删除（同一协议含存在性检查）。
+pub(crate) fn replay_delete(conn: &Connection, id: &str) -> Result<()> {
+    require_asset_exists(conn, id)?;
+    write_delete(conn, id)
 }
 
 /// 按 `id` 读单个未删除资产（详情）：不存在（或已软删除）→ 码化 NotFound。

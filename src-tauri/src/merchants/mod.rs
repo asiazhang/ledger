@@ -5,9 +5,12 @@
 //! 交易行为层经本入口消费商户归一化能力。商户实体与入参集中本域
 //! [`model`]（#419 随域归位），消费方经域路径逐类型显式 import。
 
+mod command;
 mod crud;
 mod model;
 
+pub use command::MerchantCommand;
+pub(crate) use command::replay_command;
 pub use crud::{
     create_merchant, create_merchant_by_name, delete_merchant, find_merchant_by_name, get_merchant,
     list_merchants, transaction_counts, update_merchant,

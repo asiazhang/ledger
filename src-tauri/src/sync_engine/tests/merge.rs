@@ -265,6 +265,7 @@ fn occurrence_command_has_no_entity_subject() {
             scheduled_date,
             ..
         } => (plan_id, scheduled_date),
+        _ => panic!("应为期次触发命令"),
     };
     assert_eq!(plan_id, PLAN);
     assert_eq!(scheduled_date, FEB);

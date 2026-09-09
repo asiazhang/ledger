@@ -360,6 +360,38 @@ fn dispatch(conn: &rusqlite::Connection, command: &DomainCommand) -> Result<Repl
             crate::currencies::replay_command(conn, cmd)?;
             Ok(ReplayEffect::Applied)
         }
+        DomainCommand::Account(cmd) => {
+            crate::accounts::replay_command(conn, cmd)?;
+            Ok(ReplayEffect::Applied)
+        }
+        DomainCommand::Category(cmd) => {
+            crate::categories::replay_command(conn, cmd)?;
+            Ok(ReplayEffect::Applied)
+        }
+        DomainCommand::Merchant(cmd) => {
+            crate::merchants::replay_command(conn, cmd)?;
+            Ok(ReplayEffect::Applied)
+        }
+        DomainCommand::Budget(cmd) => {
+            crate::budget::replay_command(conn, cmd)?;
+            Ok(ReplayEffect::Applied)
+        }
+        DomainCommand::Policy(cmd) => {
+            crate::policy::replay_policy_command(conn, cmd)?;
+            Ok(ReplayEffect::Applied)
+        }
+        DomainCommand::Insurer(cmd) => {
+            crate::policy::replay_insurer_command(conn, cmd)?;
+            Ok(ReplayEffect::Applied)
+        }
+        DomainCommand::Item(cmd) => {
+            crate::item::replay_command(conn, cmd)?;
+            Ok(ReplayEffect::Applied)
+        }
+        DomainCommand::PhysicalAsset(cmd) => {
+            crate::physical_asset::replay_command(conn, cmd)?;
+            Ok(ReplayEffect::Applied)
+        }
     }
 }
 

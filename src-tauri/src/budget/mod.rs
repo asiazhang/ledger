@@ -5,10 +5,13 @@
 //! `ExpenseNet` 度量矩阵。预算实体、入参与进度集中本域 [`model`]（#420 随域归位），
 //! 消费方经域路径逐类型显式 import。
 
+pub mod command;
 pub mod crud;
 mod model;
 pub mod progress;
 
+pub use command::BudgetCommand;
+pub(crate) use command::replay_command;
 pub use crud::{create_budget, delete_budget, list_budgets, update_budget};
 pub use model::{Budget, BudgetInput, BudgetPeriod, BudgetProgress, BudgetUpdateInput};
 pub use progress::budget_progress_rows;

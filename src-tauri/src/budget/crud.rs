@@ -6,11 +6,13 @@
 
 use rusqlite::{Connection, OptionalExtension};
 
+use super::command::{BudgetCommand, record_local};
 use super::model::{Budget, BudgetInput, BudgetPeriod};
 use crate::db::query::query_all;
 use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::sync_engine::device_id;
+use crate::transaction::ensure_transaction;
 
 /// 列出全部未删除预算，排序按创建先后。
 pub fn list_budgets(conn: &Connection) -> Result<Vec<Budget>> {
@@ -61,12 +63,45 @@ fn validate_amount_and_category(
 /// 1) 金额必须为正数；2) 只能挂支出分类（金额与分类校验经 [`validate_amount_and_category`]）；
 /// 3) 同「分类 + 周期」已有未删除预算时明确拒绝（中文提示并引导编辑），不静默覆盖。
 pub fn create_budget(conn: &Connection, input: &BudgetInput) -> Result<String> {
-    validate_amount_and_category(conn, &input.category_id, input.amount_cents)?;
-    let period = input.period.unwrap_or(BudgetPeriod::Monthly);
+    ensure_transaction(conn, || {
+        let period = input.period.unwrap_or(BudgetPeriod::Monthly);
+        let id = write_create(
+            conn,
+            &new_uuid(),
+            &input.category_id,
+            period,
+            input.amount_cents,
+            &input.start_date,
+        )?;
+        record_local(
+            conn,
+            BudgetCommand::Create {
+                id: id.clone(),
+                category_id: input.category_id.clone(),
+                period,
+                amount_cents: input.amount_cents,
+                start_date: input.start_date.clone(),
+            },
+        )?;
+        Ok(id)
+    })
+}
+
+/// 预算落库协议（本地创建与重放共用，无 op 产出）：金额 / 支出分类 / 「分类 +
+/// 周期」唯一校验 + 插入。
+fn write_create(
+    conn: &Connection,
+    id: &str,
+    category_id: &str,
+    period: BudgetPeriod,
+    amount_cents: i64,
+    start_date: &str,
+) -> Result<String> {
+    validate_amount_and_category(conn, category_id, amount_cents)?;
     let duplicate: Option<i64> = conn
         .query_row(
             "SELECT 1 FROM budgets WHERE category_id=?1 AND period=?2 AND is_deleted=0 LIMIT 1",
-            rusqlite::params![input.category_id, period.to_string()],
+            rusqlite::params![category_id, period.to_string()],
             |r| r.get(0),
         )
         .optional()?;
@@ -82,30 +117,34 @@ pub fn create_budget(conn: &Connection, input: &BudgetInput) -> Result<String> {
             ),
         });
     }
-    let id = new_uuid();
     let now = now_iso();
     conn.execute(
         "INSERT INTO budgets (id,category_id,period,amount_cents,start_date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0)",
-        rusqlite::params![
-            id,
-            input.category_id,
-            period.to_string(),
-            input.amount_cents,
-            input.start_date,
-            now,
-            now,
-            1,
-            device_id(conn)?
-        ],
+         VALUES (?1,?2,?3,?4,?5,?6,?7,1,?8,0)",
+        rusqlite::params![id, category_id, period.to_string(), amount_cents, start_date, now, now, device_id(conn)?],
     )?;
-    Ok(id)
+    Ok(id.to_string())
 }
 
 /// 预算编辑核心（issue #184）：仅修改金额，沿用软删除同一套
 /// updated_at/version/device_id 更新机制；金额与支出分类校验复用创建侧逻辑。
 /// 分类/周期不可改（改法为删旧建新）。
 pub fn update_budget(conn: &Connection, id: &str, amount_cents: i64) -> Result<()> {
+    ensure_transaction(conn, || {
+        write_update(conn, id, amount_cents)?;
+        record_local(
+            conn,
+            BudgetCommand::Update {
+                id: id.to_string(),
+                amount_cents,
+            },
+        )
+    })
+}
+
+/// 预算编辑协议（本地编辑与重放共用，无 op 产出）：存在性检查 + 金额与支出
+/// 分类校验 + 落库。
+fn write_update(conn: &Connection, id: &str, amount_cents: i64) -> Result<()> {
     let category_id: String = conn
         .query_row(
             "SELECT category_id FROM budgets WHERE id=?1 AND is_deleted=0",
@@ -127,9 +166,36 @@ pub fn update_budget(conn: &Connection, id: &str, amount_cents: i64) -> Result<(
 /// 预算删除核心：软删除 + 审计字段更新，与创建/编辑共用同一套机制
 /// （与创建/编辑核心对齐，测试与 e2e 通过同一域接缝调用）。
 pub fn delete_budget(conn: &Connection, id: &str) -> Result<()> {
+    ensure_transaction(conn, || {
+        write_delete(conn, id)?;
+        record_local(conn, BudgetCommand::Delete { id: id.to_string() })
+    })
+}
+
+/// 预算软删协议（本地删除与重放共用，无 op 产出）：与本地删除同语义，id 不存在
+/// 时 UPDATE 静默 0 行、仍返回 Ok（幂等友好）。
+pub(crate) fn write_delete(conn: &Connection, id: &str) -> Result<()> {
     conn.execute(
         "UPDATE budgets SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id(conn)?],
     )?;
     Ok(())
+}
+
+/// 重放执行：创建（金额 / 分类 / 唯一性校验原样生效，冲突挂起待裁决）。
+pub(crate) fn replay_create(
+    conn: &Connection,
+    id: &str,
+    category_id: &str,
+    period: BudgetPeriod,
+    amount_cents: i64,
+    start_date: &str,
+) -> Result<()> {
+    write_create(conn, id, category_id, period, amount_cents, start_date)?;
+    Ok(())
+}
+
+/// 重放执行：编辑金额（同一协议含存在性检查与分类校验）。
+pub(crate) fn replay_update(conn: &Connection, id: &str, amount_cents: i64) -> Result<()> {
+    write_update(conn, id, amount_cents)
 }

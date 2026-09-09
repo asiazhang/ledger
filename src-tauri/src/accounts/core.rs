@@ -17,10 +17,12 @@ use crate::sync_engine::device_id;
 use crate::transaction::TransactionInput;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::create_transaction_internal;
+use crate::transaction::ensure_transaction;
 
+use super::command::{AccountCommand, AccountCommandRow, record_local};
 use super::model::{
-    Account, AccountBalance, AccountBalanceAdjustInput, AccountInput, AccountUpdateInput,
-    BalanceCacheAudit, BalanceCacheDrift,
+    Account, AccountBalance, AccountBalanceAdjustInput, AccountInput, AccountType,
+    AccountUpdateInput, BalanceCacheAudit, BalanceCacheDrift,
 };
 
 pub fn list_accounts(conn: &Connection) -> Result<Vec<Account>> {
@@ -33,26 +35,52 @@ pub fn list_accounts_for_api(conn: &Connection) -> Result<Vec<Account>> {
 }
 
 pub fn create_account(conn: &Connection, input: AccountInput) -> Result<String> {
-    let id = new_uuid();
+    ensure_transaction(conn, || create_within_transaction(conn, &input))
+}
+
+/// 创建协议本体（无事务语义，由 [`ensure_transaction`] 包裹）：落库 + 缓存行 +
+/// op 产出（issue #860）——写与副作用全部成功后才追加 op，随同一事务提交/回滚。
+fn create_within_transaction(conn: &Connection, input: &AccountInput) -> Result<String> {
+    let row = AccountCommandRow {
+        name: input.name.clone(),
+        kind: input.kind,
+        currency_code: input.currency_code.clone(),
+        initial_balance_cents: input.initial_balance_cents.unwrap_or(0),
+        is_hidden: false,
+    };
+    let id = write_create(conn, &new_uuid(), &row)?;
+    record_local(
+        conn,
+        AccountCommand::Create {
+            id: id.clone(),
+            row,
+        },
+    )?;
+    Ok(id)
+}
+
+/// 账户落库协议（本地创建与重放共用，无 op 产出）：插入行 + 建余额缓存行
+/// （issue #491 / ADR-0067）。调用方保证处于写事务内。
+fn write_create(conn: &Connection, id: &str, row: &AccountCommandRow) -> Result<String> {
     let now = now_iso();
     conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0)",
+        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,1,?8,0,?9)",
         rusqlite::params![
             id,
-            input.name,
-            input.kind,
-            input.currency_code,
-            input.initial_balance_cents.unwrap_or(0),
+            row.name,
+            row.kind,
+            row.currency_code,
+            row.initial_balance_cents,
             now,
             now,
-            1,
-            device_id(conn)?
+            device_id(conn)?,
+            row.is_hidden,
         ],
     )?;
     // 余额缓存写路径（issue #491 / ADR-0067）：新账户建缓存行（初始余额 + 零流水）。
-    refresh_account_balances(conn, &[id.as_str()])?;
-    Ok(id)
+    refresh_account_balances(conn, &[id])?;
+    Ok(id.to_string())
 }
 
 /// 按自然键（name + type + currency_code）幂等创建账户：已存在（未删除）时返回已有 id，
@@ -84,6 +112,15 @@ fn find_account_by_natural_key(conn: &Connection, input: &AccountInput) -> Resul
 /// 历史交易仍保留）。不存在的 id 返回 `AppError::NotFound`（HTTP 侧映射 404）。
 /// IPC 与 HTTP 端点共用本函数。
 pub fn delete_account(conn: &Connection, id: &str) -> Result<()> {
+    ensure_transaction(conn, || {
+        write_delete(conn, id)?;
+        record_local(conn, AccountCommand::Delete { id: id.to_string() })
+    })
+}
+
+/// 账户软删协议（本地删除与重放共用，无 op 产出）：存在性检查 + 软删 + 缓存
+/// touch。调用方保证处于写事务内。
+fn write_delete(conn: &Connection, id: &str) -> Result<()> {
     let exists: bool = conn
         .query_row(
             "SELECT 1 FROM accounts WHERE id=?1 AND is_deleted=0",
@@ -127,6 +164,26 @@ pub fn get_account(conn: &Connection, id: &str) -> Result<Account> {
 /// - `currency_code` 仅无交易账户可改（有交易时改币种使历史折算口径错乱）；
 /// - `initial_balance_cents` 不在此改，归余额调整（见 ADR-0026）。
 pub fn update_account(conn: &Connection, id: &str, input: AccountUpdateInput) -> Result<()> {
+    ensure_transaction(conn, || {
+        let (name, currency_code) = write_update(conn, id, &input)?;
+        record_local(
+            conn,
+            AccountCommand::Update {
+                id: id.to_string(),
+                name,
+                currency_code,
+            },
+        )
+    })
+}
+
+/// 账户编辑协议（本地修改与重放共用，无 op 产出）：解决 + 校验 + 落库，返回
+/// 解决后的落定值（名称非空、币种为实际生效值）。调用方保证处于写事务内。
+fn write_update(
+    conn: &Connection,
+    id: &str,
+    input: &AccountUpdateInput,
+) -> Result<(String, String)> {
     let existing = get_account(conn, id)?;
     let name = match input.name {
         Some(ref n) => {
@@ -175,11 +232,41 @@ pub fn update_account(conn: &Connection, id: &str, input: AccountUpdateInput) ->
     };
     conn.execute(
         "UPDATE accounts SET name=?2, currency_code=?3, updated_at=?4, version=version+1, device_id=?5 WHERE id=?1",
-        rusqlite::params![id, name, currency_code, now_iso(), device_id(conn)?],
+        rusqlite::params![id, &name, &currency_code, now_iso(), device_id(conn)?],
     )?;
     // 余额缓存写路径：touch 缓存行时间戳（币种改动影响净资产折算口径，读探针需即时感知）。
     refresh_account_balances(conn, &[id])?;
+    Ok((name, currency_code))
+}
+
+/// 重放执行：创建（同事务内由同步引擎包裹；不产出 op）。
+pub(crate) fn replay_create(conn: &Connection, id: &str, row: &AccountCommandRow) -> Result<()> {
+    write_create(conn, id, row)?;
     Ok(())
+}
+
+/// 重放执行：修改——携带的即解决后的落定值，以同一协议复验依赖（币种锁定、
+/// 币种存在）后落库。
+pub(crate) fn replay_update(
+    conn: &Connection,
+    id: &str,
+    name: &str,
+    currency_code: &str,
+) -> Result<()> {
+    write_update(
+        conn,
+        id,
+        &AccountUpdateInput {
+            name: Some(name.to_string()),
+            currency_code: Some(currency_code.to_string()),
+        },
+    )?;
+    Ok(())
+}
+
+/// 重放执行：软删除（同一协议含存在性检查：引用失败挂起待裁决）。
+pub(crate) fn replay_delete(conn: &Connection, id: &str) -> Result<()> {
+    write_delete(conn, id)
 }
 
 /// 查找指定币种的黑洞账户（未删除且 `is_hidden=1`，取最早创建的一个）。
@@ -201,22 +288,25 @@ pub fn ensure_black_hole_account(conn: &Connection, currency_code: &str) -> Resu
     if let Some(id) = find_black_hole_account(conn, currency_code)? {
         return Ok((id, false));
     }
-    let id = new_uuid();
-    let now = now_iso();
-    conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden) \
-         VALUES (?1,?2,'other',?3,0,?4,?5,1,?6,0,1)",
-        rusqlite::params![
-            id,
-            format!("无({currency_code})"),
-            currency_code,
-            now,
-            now,
-            device_id(conn)?
-        ],
+    // 复用账户落库协议（与 create_account 同一 INSERT + 缓存行不变量），
+    // op 载荷与落库行同源构造（无第二事实源漂移）。
+    let row = AccountCommandRow {
+        name: format!("无({currency_code})"),
+        kind: AccountType::Other,
+        currency_code: currency_code.to_string(),
+        initial_balance_cents: 0,
+        is_hidden: true,
+    };
+    let id = write_create(conn, &new_uuid(), &row)?;
+    // op 产出接缝（issue #860）：黑洞即建也是账户写——随调用方事务追加创建 op，
+    // 否则对端重放本笔调整交易时账户缺失而挂起（外键依赖失败）。
+    record_local(
+        conn,
+        AccountCommand::Create {
+            id: id.clone(),
+            row,
+        },
     )?;
-    // 余额缓存写路径：新建黑洞账户同建缓存行（与 create_account 同一不变量）。
-    refresh_account_balances(conn, &[id.as_str()])?;
     Ok((id, true))
 }
 

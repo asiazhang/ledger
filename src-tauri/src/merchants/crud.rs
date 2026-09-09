@@ -13,7 +13,9 @@ use crate::db::query::query_all;
 use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::sync_engine::device_id;
+use crate::transaction::ensure_transaction;
 
+use super::command::{MerchantCommand, record_local};
 use super::model::{Merchant, MerchantInput, MerchantTransactionCount, MerchantUpdateInput};
 
 const MERCHANT_COLUMNS: &str = "id,name,created_at,updated_at,version,device_id,is_deleted";
@@ -38,21 +40,35 @@ pub fn list_merchants(conn: &Connection, include_deleted: bool) -> Result<Vec<Me
 
 /// 创建商户，返回新商户 id。在用行同名（含改名目标）→ 明确错误。
 pub fn create_merchant(conn: &Connection, input: MerchantInput) -> Result<String> {
-    if merchant_name_taken(conn, &input.name, None)? {
+    ensure_transaction(conn, || {
+        let id = write_create(conn, &new_uuid(), &input.name)?;
+        record_local(
+            conn,
+            MerchantCommand::Create {
+                id: id.clone(),
+                name: input.name,
+            },
+        )?;
+        Ok(id)
+    })
+}
+
+/// 商户落库协议（本地创建与重放共用，无 op 产出）：在用行同名检查 + 插入。
+fn write_create(conn: &Connection, id: &str, name: &str) -> Result<String> {
+    if merchant_name_taken(conn, name, None)? {
         return Err(AppError::codedp(
             "merchant.already-exists",
-            format!("商户已存在: {}", input.name),
-            &[&input.name],
+            format!("商户已存在: {name}"),
+            &[name],
         ));
     }
-    let id = new_uuid();
     let now = now_iso();
     conn.execute(
         "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,?3,?4,?5,?6,0)",
-        rusqlite::params![id, input.name, now, now, 1, device_id(conn)?],
+        rusqlite::params![id, name, now, now, 1, device_id(conn)?],
     )?;
-    Ok(id)
+    Ok(id.to_string())
 }
 
 /// 按 id 取单个在用商户；不存在（或已软删除）的 id → `AppError::NotFound`
@@ -74,10 +90,25 @@ pub fn get_merchant(conn: &Connection, id: &str) -> Result<Merchant> {
 /// 防带空白绕开唯一性产生碎商户），trim 后为空 → 明确错误；改名撞在用同名
 /// → 明确错误。不存在（或已软删除）的 id → `AppError::NotFound`。
 pub fn update_merchant(conn: &Connection, id: &str, input: MerchantUpdateInput) -> Result<()> {
+    ensure_transaction(conn, || {
+        let name = write_update(conn, id, &input)?;
+        record_local(
+            conn,
+            MerchantCommand::Update {
+                id: id.to_string(),
+                name,
+            },
+        )
+    })
+}
+
+/// 商户改名协议（本地修改与重放共用，无 op 产出）：trim 非空 + 改名撞名检查 +
+/// 落库，返回解决后的落定名。
+fn write_update(conn: &Connection, id: &str, input: &MerchantUpdateInput) -> Result<String> {
     let existing = get_merchant(conn, id)?;
 
     let name = match input.name {
-        Some(raw) => {
+        Some(ref raw) => {
             let name = raw.trim();
             if name.is_empty() {
                 return Err(AppError::coded("merchant.name-required", "商户名不能为空"));
@@ -96,15 +127,23 @@ pub fn update_merchant(conn: &Connection, id: &str, input: MerchantUpdateInput) 
 
     conn.execute(
         "UPDATE merchants SET name=?1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
-        rusqlite::params![name, now_iso(), device_id(conn)?, id],
+        rusqlite::params![&name, now_iso(), device_id(conn)?, id],
     )?;
     // 改名即时生效：交易以 merchant_id 引用，不回刷历史交易行（ADR-0028）。
-    Ok(())
+    Ok(name)
 }
 
 /// 软删除商户（`is_deleted=1`）。不存在的 id → `AppError::NotFound`。
 /// 历史交易引用保留（交易侧对软删商户仅拦截新写入），照常显示商户名。
 pub fn delete_merchant(conn: &Connection, id: &str) -> Result<()> {
+    ensure_transaction(conn, || {
+        write_delete(conn, id)?;
+        record_local(conn, MerchantCommand::Delete { id: id.to_string() })
+    })
+}
+
+/// 商户软删协议（本地删除与重放共用，无 op 产出）：存在性检查 + 软删。
+fn write_delete(conn: &Connection, id: &str) -> Result<()> {
     let exists: bool = conn
         .query_row(
             "SELECT 1 FROM merchants WHERE id=?1 AND is_deleted=0",
@@ -195,4 +234,27 @@ fn merchant_name_taken(conn: &Connection, name: &str, exclude_id: Option<&str>) 
         .optional()?
         .is_some();
     Ok(found)
+}
+
+/// 重放执行：创建（同名冲突码化报错 → 挂起待裁决）。
+pub(crate) fn replay_create(conn: &Connection, id: &str, name: &str) -> Result<()> {
+    write_create(conn, id, name)?;
+    Ok(())
+}
+
+/// 重放执行：改名（同名冲突码化报错 → 挂起待裁决）。
+pub(crate) fn replay_update(conn: &Connection, id: &str, name: &str) -> Result<()> {
+    write_update(
+        conn,
+        id,
+        &MerchantUpdateInput {
+            name: Some(name.to_string()),
+        },
+    )?;
+    Ok(())
+}
+
+/// 重放执行：软删除（同一协议含存在性检查）。
+pub(crate) fn replay_delete(conn: &Connection, id: &str) -> Result<()> {
+    write_delete(conn, id)
 }

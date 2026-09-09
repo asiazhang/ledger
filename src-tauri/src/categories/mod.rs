@@ -5,9 +5,12 @@
 //! `commands::categories` 壳层。域不依赖壳层。分类实体与入参、排序项集中
 //! 本域 [`model`]（#419 随域归位），消费方经域路径逐类型显式 import。
 
+mod command;
 mod core;
 mod model;
 
+pub(crate) use command::replay_command;
+pub use command::{CategoryCommand, CategoryCommandRow};
 pub use core::{
     create_category, create_category_idempotent, delete_category, list_categories,
     reorder_categories, update_category,
