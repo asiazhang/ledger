@@ -346,3 +346,35 @@ describe('InvestmentsView 来源跳转落点（issue #709）', () => {
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === 'instrument_price_trend')).toBe(false)
   })
 })
+
+/** 持仓页签三维过滤排序（issue #902）：筛选/排序状态全瞬态——页签内容为
+ * display-directive 'if'，切走再切回即重挂回默认；重进投资视图同理。 */
+describe('InvestmentsView 持仓页签筛选瞬态（issue #902）', () => {
+  it('切走再切回持仓页签：搜索词回默认、完整列表恢复', async () => {
+    vi.useFakeTimers()
+    try {
+      wireInvokeSeam({ defaults: INVESTMENT_DEFAULTS, overrides: { list_holdings: mockHoldings } })
+      const wrapper = mountView()
+      await flushPromises()
+      await clickTab(wrapper, '持仓')
+      await flushPromises()
+      // 搜索命中单行
+      await wrapper.find('[data-testid="holdings-search"] input').setValue('600')
+      vi.advanceTimersByTime(300)
+      await flushPromises()
+      expect(wrapper.findAll('td[data-col-key="symbol"]').map((c) => c.text())).toEqual(['600000'])
+      // 切到标的再回持仓：页签重挂，搜索与行集合回默认
+      await clickTab(wrapper, '标的')
+      await clickTab(wrapper, '持仓')
+      await flushPromises()
+      const searchInput = wrapper.find('[data-testid="holdings-search"] input')
+      expect((searchInput.element as HTMLInputElement).value).toBe('')
+      expect(wrapper.findAll('td[data-col-key="symbol"]').map((c) => c.text())).toEqual([
+        '000001',
+        '600000',
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

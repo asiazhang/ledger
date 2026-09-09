@@ -6,28 +6,50 @@ import {
   NEmpty,
   NGi,
   NGrid,
+  NInput,
   NSpace,
   NSpin,
   NStatistic,
   NText,
 } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
-import { h } from 'vue'
+import { computed, h } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
 import { t } from '@/i18n'
 import { formatAmount, formatPrice, formatQuantity } from '@/types'
 import { useInstrumentInfoSync } from '@/composables/useInstrumentInfoSync'
 import { usePricesChanged } from '@/composables/usePricesChanged'
 import SyncProgressBar from '@/components/investments/SyncProgressBar.vue'
+import PinyinSelect from '@/components/PinyinSelect.vue'
 import {
   formatCurrencyGroups,
   usePortfolioOverview,
   type PortfolioRow,
 } from '@/composables/usePortfolioOverview'
+import {
+  useHoldingsFilter,
+  type HoldingsSortColumn,
+} from '@/composables/useHoldingsFilter'
 
 const reference = useReferenceStore()
-const { rows, loading, totalMarketValueGroups, totalUnrealizedPnlGroups, refresh } =
-  usePortfolioOverview()
+
+// 数据拉取（list_holdings + 持仓标的字典拼装）归 usePortfolioOverview——与首页
+// 投资概览卡共享同一拼装接缝（issue #901/#902 契约不动）；过滤/排序/合计派生
+// 归 useHoldingsFilter 三维深模块，全在前端内存完成，实例随页签挂载而生、
+// 卸载而灭（页签与筛选/排序状态全瞬态，进入投资视图一律回默认）。
+const { rows, loading, refresh } = usePortfolioOverview()
+const {
+  searchInput,
+  setSearch,
+  accountId,
+  setAccount,
+  sorter,
+  setSorter,
+  filteredRows,
+  totalMarketValueGroups,
+  totalUnrealizedPnlGroups,
+  accountOptions,
+} = useHoldingsFilter(rows)
 
 // 同步按钮复用 T4 的同步接缝（useInstrumentInfoSync），两处行为一致：
 // 按钮 loading + 轻量消息反馈 + 确定进度条（issue #897，与标的页同一份
@@ -44,7 +66,13 @@ function pnlColor(cents: number): string {
   return cents >= 0 ? '#18a058' : '#d03050'
 }
 
-const overviewColumns: DataTableColumn<PortfolioRow>[] = [
+// 市值/未实现盈亏两列列头排序为受控形态（sorter: true + 受控 sortOrder）：
+// 排序状态与行集合产出都归 useHoldingsFilter，表头只回传点击意图。
+function columnSortOrder(key: HoldingsSortColumn) {
+  return sorter.value?.columnKey === key ? sorter.value.order : false
+}
+
+const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
   { title: t('investments.holdings.columns.symbol'), key: 'symbol', width: 100, render: (r) => r.symbol ?? '-' },
   { title: t('investments.holdings.columns.name'), key: 'instrumentName', width: 160, render: (r) => r.instrumentName ?? '-' },
   { title: t('investments.holdings.columns.account'), key: 'accountName', width: 120, render: (r) => r.accountName ?? '-' },
@@ -83,6 +111,8 @@ const overviewColumns: DataTableColumn<PortfolioRow>[] = [
     title: t('investments.holdings.columns.marketValue'),
     key: 'market_value',
     width: 110,
+    sorter: true,
+    sortOrder: columnSortOrder('market_value'),
     render: (r) =>
       r.marketValueCents === null
         ? '-'
@@ -92,6 +122,8 @@ const overviewColumns: DataTableColumn<PortfolioRow>[] = [
     title: t('investments.holdings.columns.unrealizedPnl'),
     key: 'unrealized_pnl',
     width: 130,
+    sorter: true,
+    sortOrder: columnSortOrder('unrealized_pnl'),
     render: (r) => {
       if (r.unrealizedPnlCents === null) return '-'
       return h(
@@ -101,7 +133,7 @@ const overviewColumns: DataTableColumn<PortfolioRow>[] = [
       )
     },
   },
-]
+])
 </script>
 
 <template>
@@ -130,6 +162,29 @@ const overviewColumns: DataTableColumn<PortfolioRow>[] = [
 
         <NEmpty v-if="rows.length === 0 && !loading" :description="t('investments.holdings.empty')" />
         <template v-else-if="rows.length > 0">
+          <!-- 三维过滤（issue #902）：搜索（300ms 防抖在 composable 内）+ 账户单选
+               （与盈亏页账户下拉同源，clearable 即「全部」默认态）；无持仓时不渲染 -->
+          <NSpace align="center" :size="12">
+            <NInput
+              :value="searchInput"
+              clearable
+              :placeholder="t('investments.holdings.searchPlaceholder')"
+              data-testid="holdings-search"
+              style="width: 240px"
+              @update:value="setSearch"
+            />
+            <PinyinSelect
+              :value="accountId"
+              :options="accountOptions"
+              clearable
+              :placeholder="t('investments.holdings.filterAccount')"
+              data-testid="holdings-account-filter"
+              style="width: 180px"
+              @update:value="setAccount"
+            />
+          </NSpace>
+
+          <!-- 合计随过滤子集更新（排序不影响）；排序只是重排行，不换口径 -->
           <NGrid :x-gap="16" cols="1 s:2">
             <NGi>
               <NStatistic :label="t('investments.holdings.totalMarketValue')" data-testid="total-market-value">
@@ -143,12 +198,20 @@ const overviewColumns: DataTableColumn<PortfolioRow>[] = [
             </NGi>
           </NGrid>
 
+          <!-- 「没有持仓」（上方）与「筛选条件下无匹配」（此处）两种空态可区分 -->
+          <NEmpty
+            v-if="filteredRows.length === 0"
+            :description="t('investments.holdings.filterNoMatch')"
+            data-testid="holdings-no-match"
+          />
           <NDataTable
+            v-else
             :columns="overviewColumns"
-            :data="rows"
+            :data="filteredRows"
             :bordered="false"
             size="small"
             :row-key="(r: PortfolioRow) => r.holdingId"
+            @update:sorter="setSorter"
           />
         </template>
       </NSpace>
