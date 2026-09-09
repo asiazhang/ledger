@@ -6,6 +6,10 @@
 # will have schema files for capabilities auto-completion
 /gen/schemas
 
+# Android 签名材料（issue #560 / ADR-0074 决策 3）：keystore 与口令文件永不入库
+/gen/android/keystore.properties
+/gen/android/*.jks
+
 # Coverage reports (cargo llvm-cov)
 /lcov.info
 /coverage/

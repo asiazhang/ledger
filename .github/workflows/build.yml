@@ -200,7 +200,10 @@ jobs:
   # aarch64-linux-android 单 target——真机几乎全为 arm64-v8a，不沿用 Tauri 默认四 ABI
   # 合一（armv7 仅旧 32 位设备、x86 系仅模拟器，均无真实消费方）；versionCode 由 CI
   # 从 tag 按公式 major×10⁶ + minor×10³ + patch 派生并经 --config 注入（唯一口径，零手工）。
-  # 本阶段产物未签名（决策 3 的 keystore 接线由后续票完成）。
+  # 签名接线（决策 3，issue #560）：配置 ANDROID_KEY_* secrets 后，构建经
+  # keystore.properties 注入 release 签名并 apksigner 校验；未配置时干跑保持未签名，
+  # tag 构建缺 secrets 直接失败（「先备份、再配 secrets、才启用发版」的机械执行），
+  # 流程与验收见 docs/verification/560-android-apk-signing.md。
   # macOS 签名 + 公证（issue #658）：配置了 APPLE_* secrets 时自动导入证书签名，构建后
   # notarytool 公证（--wait）+ stapler 附着，并做 codesign/spctl/stapler validate 校验；
   # 未配置 secrets 时相关步骤自动跳过，产物保持未签名（干跑与 PR 构建不受影响）。
@@ -379,6 +382,38 @@ jobs:
       # 唯一口径）；versionName 无对应配置键（CLI 2.11.4 schema 实测拒绝，run
       # 34318179293），改注入根 version——versionName 与 CLI 默认 versionCode 数学
       # （major×10⁶ + minor×10³ + patch，与显式注入同值）均从它派生。
+      # 签名接线（issue #560 / ADR-0074 决策 3）：base64 keystore 解码到 runner 临时
+      # 目录，口令与路径写入 keystore.properties（gradle release 签名配置读取，Tauri
+      # 官方接线）。secrets 未配置时跳过（干跑保持未签名，与 macOS 证书行为一致）；
+      # 跳过判断在脚本内而非 step if：secrets 不升 job 级 env（见 job env 注释）。
+      - name: 解码 Android 签名 keystore
+        if: matrix.platform == 'android'
+        env:
+          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -z "$ANDROID_KEY_BASE64" ]; then
+            # tag 发布缺 secrets 直接失败：发版强约束是「先配 secrets 才启用」
+            # （ADR-0074 决策 3），未签名 APK 不可安装也无法覆盖升级，禁止进 Release。
+            if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+              echo "✗ tag 发布必须已签名：缺少 ANDROID_KEY_BASE64（先完成 keystore 备份并配齐 secrets，见 docs/verification/560-android-apk-signing.md）"
+              exit 1
+            fi
+            echo "⚠️ 未配置 ANDROID_KEY_BASE64，跳过签名接线（产物将保持未签名）"
+            exit 0
+          fi
+          : "${ANDROID_KEY_PASSWORD:?✗ 缺少 secret ANDROID_KEY_PASSWORD（签名必需）}"
+          : "${ANDROID_KEY_ALIAS:?✗ 缺少 secret ANDROID_KEY_ALIAS（签名必需）}"
+          KEYSTORE="$RUNNER_TEMP/openledger-release.jks"
+          printf '%s' "$ANDROID_KEY_BASE64" | base64 --decode > "$KEYSTORE"
+          {
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "password=$ANDROID_KEY_PASSWORD"
+            echo "storeFile=$KEYSTORE"
+          } > src-tauri/gen/android/keystore.properties
+          echo "ANDROID_SIGNING=1" >> "$GITHUB_ENV"
+
       - name: 构建 Android arm64 APK
         if: matrix.platform == 'android'
         env:
@@ -459,7 +494,9 @@ jobs:
           security list-keychain -d user -s login.keychain-db || true
 
       # 归一命名（OpenLedger_<版本>_arm64.apk）后交 upload-artifact，与桌面
-      # 产物一同汇入 publish 的单一 Release。未签名 APK 真机安装需放行未知来源。
+      # 产物一同汇入 publish 的单一 Release。未配置签名 secrets 的干跑产物未签名，
+      # 真机安装需放行未知来源；正式 tag 缺 secrets 已在签名步骤直接失败
+      # （升级安装的签名硬前提）。
       # 路径含 universal 系 gradle flavor 名：cargo-mobile2 不带 --split-per-abi 时
       # 恒走 assembleUniversal，target 经 -PabiList/-ParchList/-PtargetList 收窄，
       # 实际 APK 内容仅 arm64-v8a。
@@ -471,6 +508,26 @@ jobs:
           [ -n "$APK" ] || { echo "✗ 未找到 APK 产物"; exit 1; }
           mkdir -p "$APK_BUNDLE_DIR"
           cp "$APK" "$APK_BUNDLE_DIR/OpenLedger_${APP_VERSION}_arm64.apk"
+
+      # 签名校验（issue #560）：apksigner 确认最终上传的 APK 确已签名可安装。
+      # 不用 jarsigner——minSdk 24 时 AGP 默认仅 v2+ scheme 签名，jarsigner 只认
+      # v1 JAR 签名，会误报未签名。
+      - name: 校验 APK 签名（apksigner）
+        if: matrix.platform == 'android'
+        run: |
+          if [ -z "${ANDROID_SIGNING:-}" ]; then
+            if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+              echo "✗ tag 发布产物必须已签名，但签名未生效（ANDROID_SIGNING 未置位）"
+              exit 1
+            fi
+            echo "⚠️ APK 未签名（未配置签名 secrets），跳过签名校验"
+            exit 0
+          fi
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)
+          [ -n "$APKSIGNER" ] || { echo "✗ build-tools 中未找到 apksigner"; exit 1; }
+          APK="$APK_BUNDLE_DIR/OpenLedger_${APP_VERSION}_arm64.apk"
+          [ -f "$APK" ] || { echo "✗ 未找到归集后的 APK：$APK"; exit 1; }
+          "$APKSIGNER" verify --print-certs "$APK"
 
       - name: 收集发布产物
         uses: actions/upload-artifact@v7
