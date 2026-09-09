@@ -18,8 +18,15 @@
 //!   区间命名、永不覆盖他人段（op 只增不改，重传同段内容确定等同）。
 //! - **manifest 是唯一小而整体替换的文件**：读最新远端 → 归并（自己流以本地
 //!   为权威、他人流原样保留）→ 整体替换写入；并发整体替换的丢失更新由下一
-//!   轮次再发布自愈。段条目携带尺寸与 SHA-256，下载后校验（内容自校验兜底
-//!   弱原子性），不依赖锁。
+//!   轮次再发布自愈。段/检查点条目携带尺寸与 SHA-256，下载后校验（内容自
+//!   校验兜底弱原子性），不依赖锁；清单自身无副本回退——撕裂写被 JSON 解析
+//!   拦下（`manifest-corrupt` 显性失败，不静默按空清单处理），修复路径 = 删
+//!   清单文件后各端下轮重发布自愈（自己流重传内容确定等同，他人流随其下轮
+//!   归并回归）。
+//! - **拉取粒度为整段**（设计补充「段内偏移续读」的显性偏离）：信封是整包
+//!   AEAD，密文分段解密无法验证完整性——偏移续读与信封认证不相容；位点落
+//!   在段中间（挂起 op 钉住）时整段重拉、靠引擎幂等重放跳过已应用 op，多传
+//!   字节以段容量为界（单文件永远有界）。
 //! - **轮次顺序**：先发布（他人尽早可见，网络中断时已上传进度不回退）后拉取
 //!   （按本端位点跳过已覆盖段）；manifest 只在归并结果变化时写回。
 //!
@@ -104,13 +111,19 @@ impl ChannelLayout {
         format!("{}/{}", self.streams_dir(), device_id)
     }
 
+    /// 流目录下指定文件路径（manifest 段名 → 通道地址的单一出口）。
+    pub fn stream_file_path(&self, device_id: &str, file: &str) -> String {
+        format!("{}/{}", self.stream_dir(device_id), file)
+    }
+
     /// 段文件路径（按 op 序号区间命名，永不与他人段重名冲突）。
     pub fn segment_path(&self, device_id: &str, first_clock: i64, last_clock: i64) -> String {
-        format!(
-            "{}/{}",
-            self.stream_dir(device_id),
-            segment_file_name(first_clock, last_clock)
-        )
+        self.stream_file_path(device_id, &segment_file_name(first_clock, last_clock))
+    }
+
+    /// 检查点目录下指定文件路径（manifest 指针 → 通道地址的单一出口）。
+    pub fn checkpoint_file_path(&self, file: &str) -> String {
+        format!("{}/{}", self.checkpoint_dir(), file)
     }
 
     /// 检查点文件路径（按代独立文件）。
@@ -239,6 +252,15 @@ pub struct CheckpointPointer {
     pub created_at: String,
 }
 
+/// 单个同步轮次的共享上下文（恒结伴参数的聚合）。
+struct RoundCtx<'a, 'p> {
+    conn: &'a Connection,
+    transport: &'a dyn Transport,
+    layout: &'a ChannelLayout,
+    mode: &'a EnvelopeMode<'p>,
+    options: &'a ChannelOptions,
+}
+
 /// 通道轮次选项（段容量与封包参数；生产走默认值）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChannelOptions {
@@ -305,6 +327,13 @@ pub fn run_round_with(
     transport.ensure_dir(&layout.checkpoint_dir())?;
     transport.ensure_dir(&layout.streams_dir())?;
 
+    let ctx = RoundCtx {
+        conn,
+        transport,
+        layout,
+        mode,
+        options,
+    };
     let remote = read_manifest(transport, layout)?;
     let mut report = SyncRoundReport {
         plaintext_mode: mode.is_plaintext(),
@@ -313,17 +342,7 @@ pub fn run_round_with(
 
     // 发布：自己流新 op → 段（封包 → PUT）→ manifest 归并（自己流本地权威）。
     let mut manifest = remote.clone();
-    publish_own_ops(
-        conn,
-        transport,
-        layout,
-        mode,
-        options,
-        &device_id,
-        &remote,
-        &mut manifest,
-        &mut report,
-    )?;
+    publish_own_ops(&ctx, &device_id, &remote, &mut manifest, &mut report)?;
 
     // manifest 变化才整体替换写回（读侧轮次零写入）。
     if manifest != remote {
@@ -331,15 +350,7 @@ pub fn run_round_with(
     }
 
     // 拉取：他人流按本端位点跳过已覆盖段（manifest 视图），逐段校验 → 解封 → 应用。
-    pull_foreign_streams(
-        conn,
-        transport,
-        layout,
-        mode,
-        &device_id,
-        &manifest,
-        &mut report,
-    )?;
+    pull_foreign_streams(&ctx, &device_id, &manifest, &mut report)?;
     Ok(report)
 }
 
@@ -356,13 +367,8 @@ fn read_manifest(transport: &dyn Transport, layout: &ChannelLayout) -> Result<Ch
 ///
 /// 上传位点取自 manifest 而非本地表——「清单写回失败」后重传同段内容确定
 /// 等同（op 只增不改），天然幂等；本地不为此新增状态。
-#[allow(clippy::too_many_arguments)]
 fn publish_own_ops(
-    conn: &Connection,
-    transport: &dyn Transport,
-    layout: &ChannelLayout,
-    mode: &EnvelopeMode<'_>,
-    options: &ChannelOptions,
+    ctx: &RoundCtx<'_, '_>,
     device_id: &str,
     remote: &ChannelManifest,
     manifest: &mut ChannelManifest,
@@ -377,7 +383,7 @@ fn publish_own_ops(
             device_id: device_id.to_string(),
             segments: Vec::new(),
         });
-    let own_ops = ops::read_own_since(conn, device_id, remote_own.uploaded_through())?;
+    let own_ops = ops::read_own_since(ctx.conn, device_id, remote_own.uploaded_through())?;
     if own_ops.is_empty() {
         return Ok(());
     }
@@ -387,8 +393,9 @@ fn publish_own_ops(
         .iter()
         .map(|s| (s.file.clone(), s.clone()))
         .collect();
-    transport.ensure_dir(&layout.stream_dir(device_id))?;
-    for chunk in split_chunks(&own_ops, options.segment_max_ops) {
+    ctx.transport
+        .ensure_dir(&ctx.layout.stream_dir(device_id))?;
+    for chunk in split_chunks(&own_ops, ctx.options.segment_max_ops) {
         let first = chunk.first().map(|o| o.clock).unwrap_or(0);
         let last = chunk.last().map(|o| o.clock).unwrap_or(0);
         let file = segment_file_name(first, last);
@@ -397,8 +404,9 @@ fn publish_own_ops(
         }
         let payload = serde_json::to_vec(&chunk)
             .map_err(|e| AppError::Invalid(format!("段载荷序列化失败: {e}")))?;
-        let sealed = envelope::seal(&payload, mode, &options.envelope)?;
-        transport.write_file(&layout.segment_path(device_id, first, last), &sealed)?;
+        let sealed = envelope::seal(&payload, ctx.mode, &ctx.options.envelope)?;
+        ctx.transport
+            .write_file(&ctx.layout.segment_path(device_id, first, last), &sealed)?;
         segments.insert(
             file.clone(),
             SegmentEntry {
@@ -432,15 +440,12 @@ fn publish_own_ops(
 /// 拉取他人流：按本端位点跳过已覆盖段；段下载后校验尺寸与 hash，解封解析，
 /// 经同步引擎幂等重放（LWW / 挂起 / 去重语义全在引擎，通道不重复裁决）。
 fn pull_foreign_streams(
-    conn: &Connection,
-    transport: &dyn Transport,
-    layout: &ChannelLayout,
-    mode: &EnvelopeMode<'_>,
+    ctx: &RoundCtx<'_, '_>,
     device_id: &str,
     manifest: &ChannelManifest,
     report: &mut SyncRoundReport,
 ) -> Result<()> {
-    let passphrase = match mode {
+    let passphrase = match ctx.mode {
         EnvelopeMode::Encrypted { passphrase } => Some(*passphrase),
         EnvelopeMode::Plaintext => None,
     };
@@ -448,13 +453,16 @@ fn pull_foreign_streams(
         if stream.device_id == device_id {
             continue;
         }
-        let position = positions::position_of(conn, &stream.device_id)?.unwrap_or(0);
+        let position = positions::position_of(ctx.conn, &stream.device_id)?.unwrap_or(0);
         for segment in &stream.segments {
             if segment.last_clock <= position {
                 continue; // 位点已覆盖整段：无需下载。
             }
-            let path = format!("{}/{}", layout.stream_dir(&stream.device_id), segment.file);
-            let bytes = transport
+            let path = ctx
+                .layout
+                .stream_file_path(&stream.device_id, &segment.file);
+            let bytes = ctx
+                .transport
                 .read_file(&path)?
                 .ok_or_else(|| segment_missing_error(&path))?;
             if bytes.len() as u64 != segment.size || sha256_hex(&bytes) != segment.sha256 {
@@ -467,7 +475,7 @@ fn pull_foreign_streams(
             if incoming.iter().any(|op| op.device_id != stream.device_id) {
                 return Err(segment_corrupt_error(&path));
             }
-            let reports = engine::apply_ops(conn, &incoming)?;
+            let reports = engine::apply_ops(ctx.conn, &incoming)?;
             for item in reports {
                 match item.outcome {
                     super::OpOutcome::Applied => report.applied += 1,
@@ -556,7 +564,7 @@ pub fn fetch_checkpoint(
     let pointer = manifest.checkpoint.ok_or_else(|| {
         AppError::coded("sync-channel.checkpoint-none", "同步通道上还没有检查点快照")
     })?;
-    let path = format!("{}/{}", layout.checkpoint_dir(), pointer.file);
+    let path = layout.checkpoint_file_path(&pointer.file);
     let bytes = transport
         .read_file(&path)?
         .ok_or_else(|| checkpoint_missing_error(&path))?;

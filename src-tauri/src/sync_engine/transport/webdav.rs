@@ -35,6 +35,8 @@ pub struct WebDavTransport {
     /// 归一化后的根 URL（无尾斜杠；空路径拒绝）。
     base_url: String,
     auth: HeaderValue,
+    /// WebDAV 扩展方法 `MKCOL`（构建期解析一次，失败即构建错误，不静默降级）。
+    mkcol: reqwest::Method,
 }
 
 impl WebDavTransport {
@@ -68,10 +70,13 @@ impl WebDavTransport {
             .timeout(std::time::Duration::from_secs(120))
             .build()
             .map_err(|e| network_failed_error(&e.to_string()))?;
+        let mkcol = reqwest::Method::from_bytes(b"MKCOL")
+            .map_err(|_| AppError::Invalid("MKCOL 方法名非法（程序缺陷）".to_string()))?;
         Ok(Self {
             client,
             base_url,
             auth: headers[AUTHORIZATION].clone(),
+            mkcol,
         })
     }
 
@@ -96,17 +101,12 @@ impl WebDavTransport {
         &self,
         request: reqwest::blocking::RequestBuilder,
     ) -> Result<reqwest::blocking::Response> {
-        let request = request.header(AUTHORIZATION, self.auth.clone());
-        let response = request.send().map_err(|e| {
-            if e.status().is_some() {
-                // 有状态码的失败不落这里（send 只在传输层失败时报错），防御归网络错误。
-                network_failed_error(&e.to_string())
-            } else {
-                network_failed_error(&e.to_string())
-            }
-        })?;
-        let status = response.status();
-        match status {
+        // 传输层失败（连接/超时/DNS）统一归网络错误：明确、可重试。
+        let response = request
+            .header(AUTHORIZATION, self.auth.clone())
+            .send()
+            .map_err(|e| network_failed_error(&e.to_string()))?;
+        match response.status() {
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(auth_failed_error()),
             _ => Ok(response),
         }
@@ -126,7 +126,7 @@ impl Transport for WebDavTransport {
             }
             cumulative.push_str(segment);
             let url = self.url_for(&cumulative)?;
-            let response = self.send(self.client.request(mkcol_method(), &url))?;
+            let response = self.send(self.client.request(self.mkcol.clone(), &url))?;
             let status = response.status();
             match status {
                 StatusCode::CREATED | StatusCode::OK | StatusCode::METHOD_NOT_ALLOWED => {}
@@ -159,9 +159,4 @@ impl Transport for WebDavTransport {
             status => Err(http_failed_error(status.as_u16(), "PUT 失败")),
         }
     }
-}
-
-/// `MKCOL` HTTP 方法（WebDAV 扩展方法，按字面量构造）。
-fn mkcol_method() -> reqwest::Method {
-    reqwest::Method::from_bytes(b"MKCOL").unwrap_or(reqwest::Method::GET)
 }

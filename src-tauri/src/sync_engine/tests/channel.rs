@@ -144,20 +144,19 @@ fn two_way_exchange_converges_over_channel() {
         assert_eq!(read_ops(conn).unwrap().len(), 2, "两端日志等量");
         assert_balance_cache_matches_realtime(conn);
     }
-    // 全序一致：两端对同一批 op 排出唯一顺序（通道路径不破坏全序）。
-    let mut ids_a: Vec<String> = read_ops(&conn_a)
+    // 全序一致：两端对同一批 op 排出唯一一致的顺序（read_ops 即全序返回，
+    // 元素级比较同时证明集合相等与顺序一致）。
+    let ids_a: Vec<String> = read_ops(&conn_a)
         .unwrap()
         .into_iter()
         .map(|o| o.op_id)
         .collect();
-    let mut ids_b: Vec<String> = read_ops(&conn_b)
+    let ids_b: Vec<String> = read_ops(&conn_b)
         .unwrap()
         .into_iter()
         .map(|o| o.op_id)
         .collect();
-    ids_a.sort();
-    ids_b.sort();
-    assert_eq!(ids_a, ids_b);
+    assert_eq!(ids_a, ids_b, "两端全序必须逐元素一致");
 }
 
 use crate::test_support::assert_balance_cache_matches_realtime;
@@ -367,7 +366,7 @@ fn checkpoint_publish_bootstrap_and_increment_over_channel() {
     assert_eq!(pointer.generation, 1);
 
     let raw = mem
-        .read_file(&(layout.checkpoint_dir() + "/" + &pointer.file))
+        .read_file(&layout.checkpoint_file_path(&pointer.file))
         .unwrap()
         .unwrap();
     assert!(!is_sealed(&raw), "明文模式检查点为明文快照");
@@ -480,7 +479,7 @@ fn encrypted_exchange_over_local_webdav_stub() {
         serde_json::from_slice(&dav.read_file(&layout.manifest_path()).unwrap().unwrap()).unwrap();
     let segment = &manifest.streams[0].segments[0];
     let raw = dav
-        .read_file(&(layout.stream_dir(&manifest.streams[0].device_id) + "/" + &segment.file))
+        .read_file(&layout.stream_file_path(&manifest.streams[0].device_id, &segment.file))
         .unwrap()
         .unwrap();
     assert!(is_sealed(&raw), "WebDAV 上必须是密文信封");

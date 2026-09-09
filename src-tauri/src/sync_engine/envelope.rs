@@ -34,8 +34,14 @@ const NONCE_LEN: usize = 12;
 /// 派生密钥长度（字节，AES-256）。
 const KEY_LEN: usize = 32;
 
-/// 头部长度：魔数(4) + 版本(1) + 迭代次数 u32 LE(4) + 盐(16) + nonce(12)。
-const HEADER_LEN: usize = 4 + 1 + 4 + SALT_LEN + NONCE_LEN;
+/// 头部分段偏移（组装与解析共用，杜绝魔法数字漂移）：
+/// 魔数(4) | 版本(1) | 迭代次数 u32 LE(4) | 盐(16) | nonce(12)。
+const VERSION_OFFSET: usize = MAGIC.len();
+const ITERATIONS_OFFSET: usize = VERSION_OFFSET + 1;
+const SALT_OFFSET: usize = ITERATIONS_OFFSET + 4;
+const NONCE_OFFSET: usize = SALT_OFFSET + SALT_LEN;
+/// 头部长度 = nonce 末尾。
+const HEADER_LEN: usize = NONCE_OFFSET + NONCE_LEN;
 
 /// GCM 认证标签长度（字节）。
 const TAG_LEN: usize = 16;
@@ -131,18 +137,18 @@ pub fn open(envelope: &[u8], passphrase: Option<&str>) -> Result<Vec<u8>> {
     if envelope.len() < HEADER_LEN + TAG_LEN {
         return Err(envelope_corrupt("信封长度不足"));
     }
-    if envelope[4] != VERSION {
+    if envelope[VERSION_OFFSET] != VERSION {
         return Err(envelope_corrupt("信封版本未知"));
     }
     let iterations = u32::from_le_bytes(
-        envelope[5..9]
+        envelope[ITERATIONS_OFFSET..SALT_OFFSET]
             .try_into()
             .map_err(|_| envelope_corrupt("信封头损坏"))?,
     );
     let mut header = Vec::with_capacity(HEADER_LEN);
     header.extend_from_slice(&envelope[..HEADER_LEN]);
-    let salt: &[u8] = &envelope[9..9 + SALT_LEN];
-    let nonce_bytes: [u8; NONCE_LEN] = envelope[25..25 + NONCE_LEN]
+    let salt: &[u8] = &envelope[SALT_OFFSET..NONCE_OFFSET];
+    let nonce_bytes: [u8; NONCE_LEN] = envelope[NONCE_OFFSET..HEADER_LEN]
         .try_into()
         .map_err(|_| envelope_corrupt("信封头损坏"))?;
     if iterations == 0 {
@@ -189,10 +195,15 @@ fn derive_key(passphrase: &str, salt: &[u8], iterations: u32) -> Result<[u8; KEY
 fn header_bytes(iterations: u32, salt: &[u8; SALT_LEN], nonce: &[u8; NONCE_LEN]) -> Vec<u8> {
     let mut header = Vec::with_capacity(HEADER_LEN);
     header.extend_from_slice(MAGIC);
+    debug_assert_eq!(header.len(), VERSION_OFFSET);
     header.push(VERSION);
+    debug_assert_eq!(header.len(), ITERATIONS_OFFSET);
     header.extend_from_slice(&iterations.to_le_bytes());
+    debug_assert_eq!(header.len(), SALT_OFFSET);
     header.extend_from_slice(salt);
+    debug_assert_eq!(header.len(), NONCE_OFFSET);
     header.extend_from_slice(nonce);
+    debug_assert_eq!(header.len(), HEADER_LEN);
     header
 }
 
