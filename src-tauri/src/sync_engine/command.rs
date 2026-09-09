@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::currencies::LedgerSettingCommand;
 use crate::scheduled_transactions::ScheduledCommand;
 use crate::transaction::TransactionCommand;
 
@@ -17,6 +18,8 @@ pub enum DomainCommand {
     Transaction(TransactionCommand),
     /// 定时计划域命令（期次触发等；ADR-0091 决策 5）。
     Scheduled(ScheduledCommand),
+    /// 账本级设置命令（LedgerLevelSetting，issue #858 / ADR-0091 决策 3）。
+    LedgerSetting(LedgerSettingCommand),
 }
 
 impl DomainCommand {
@@ -25,6 +28,7 @@ impl DomainCommand {
         match self {
             DomainCommand::Transaction(_) => "transaction",
             DomainCommand::Scheduled(_) => "scheduled",
+            DomainCommand::LedgerSetting(_) => "ledger_setting",
         }
     }
 
@@ -35,6 +39,7 @@ impl DomainCommand {
         match self {
             DomainCommand::Transaction(cmd) => Some(("transaction", cmd.subject_id())),
             DomainCommand::Scheduled(_) => None,
+            DomainCommand::LedgerSetting(cmd) => Some(("ledger_setting", cmd.subject_id())),
         }
     }
 }

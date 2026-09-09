@@ -362,9 +362,28 @@ fn account_flow_expr_balances_match_rust() {
 fn convert_to_native_same_currency_is_identity() {
     let conn = test_support::open();
     assert_eq!(
-        convert_to_native(&conn, 12345, default_currency_code()).unwrap(),
+        convert_to_native(&conn, 12345, &default_currency_code(&conn).unwrap()).unwrap(),
         12345
     );
+}
+
+/// 本位币基准读账本级设置（issue #858 / ADR-0091 决策 3）：缺 key 回默认 CNY，
+/// 设置后随设置切换（存储与写协议归币种域，折算基准单一根据）。
+#[test]
+fn default_currency_code_reads_ledger_setting() {
+    let conn = test_support::open();
+    assert_eq!(default_currency_code(&conn).unwrap(), "CNY");
+    crate::currencies::set_base_currency(&conn, "USD").unwrap();
+    assert_eq!(default_currency_code(&conn).unwrap(), "USD");
+}
+
+/// 折算基准跟随账本级设置：基准设为 USD 后，EUR 按 EUR→USD 汇率折算。
+#[test]
+fn convert_to_native_follows_base_currency_setting() {
+    let conn = test_support::open();
+    test_support::seed_exchange_rate(&conn, "EUR", "USD", 1.1);
+    crate::currencies::set_base_currency(&conn, "USD").unwrap();
+    assert_eq!(convert_to_native(&conn, 10000, "EUR").unwrap(), 11000);
 }
 
 /// 非默认币种按汇率折算到全局默认币种。

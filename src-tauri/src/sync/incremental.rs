@@ -251,9 +251,10 @@ where
     // ③ 汇率 K 线回填 → FxRateHistory：仅非本位币币种对（与本位币相同的
     // 无需历史折算），与价格历史同期段采集、同周规则落库。汇率消费方含基金与股票
     // 的历史市值折算，币种对取全量标的（与分区无关）。
+    let native = default_currency_code(conn)?;
     let mut pairs: Vec<(String, String)> = held
         .iter()
-        .map(|s| (s.currency.clone(), default_currency_code().to_string()))
+        .map(|s| (s.currency.clone(), native.clone()))
         .filter(|(base, quote)| base != quote)
         .collect();
     pairs.sort();

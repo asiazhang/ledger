@@ -113,7 +113,7 @@ pub fn query_portfolio_value_trend(
     range: &TrendRange,
 ) -> Result<PortfolioValueTrend> {
     validate_range(range)?;
-    let native = default_currency_code();
+    let native = default_currency_code(conn)?;
 
     // 1. 区间内价格历史周点（week_start 为 STORED 生成列，直读即为周键）。
     let mut conditions: Vec<String> = vec!["1=1".to_string()];
@@ -183,7 +183,7 @@ pub fn query_portfolio_value_trend(
             let rate = if row.currency_code == native {
                 Some(1.0)
             } else {
-                historical_fx_rate(&fx, &row.currency_code, native, &week)
+                historical_fx_rate(&fx, &row.currency_code, &native, &week)
             };
             let Some(rate) = rate else { continue };
             let quantity = holdings_as_of(conn, Some(&row.instrument_id), &row.trade_date)?;

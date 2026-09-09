@@ -137,7 +137,7 @@ pub fn list_physical_assets(conn: &Connection, status: Option<&str>) -> Result<P
         [],
     )?;
 
-    let native_currency = default_currency_code().to_string();
+    let native_currency = default_currency_code(conn)?;
     let mut assets = Vec::with_capacity(records.len());
     let mut holding_total_native_cents = 0i64;
     for record in records {
@@ -386,7 +386,7 @@ pub fn get_physical_asset(conn: &Connection, id: &str) -> Result<PhysicalAsset> 
     })?;
 
     // 详情与列表同一读口径（单一搬运点）；详情无合计语义，累计值丢弃。
-    let native_currency = default_currency_code().to_string();
+    let native_currency = default_currency_code(conn)?;
     let mut unused_total = 0i64;
     into_entity(conn, record, &mut unused_total, &native_currency)
 }

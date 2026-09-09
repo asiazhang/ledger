@@ -217,6 +217,11 @@ pub enum WriteOp {
     /// ADR-0006）：刻意零信号——设置不是账本数据（ADR-0032 置脏豁免），也不属参考 /
     /// 价格 / 备份任何失效语义；设置页自读回显。
     SetLogLevel,
+    /// 设置本位币基准（IPC `set_base_currency`，issue #858，写 `app_settings` 的
+    /// `ledger.base_currency` 并同事务产出同步 op）：刻意零信号——字典与流水未变，
+    /// 设置页自读回显；与 [`WriteOp::SetLogLevel`] 的区别是本写经 `write_entry`
+    /// （op 与设置写同事务，非置脏豁免路径——基准是账本数据）。
+    SetBaseCurrency,
 }
 
 impl WriteOp {
@@ -229,7 +234,7 @@ impl WriteOp {
     /// 清单紧邻 enum，同步义务就地可查（同 `TransactionKind::ALL` 先例）。
     /// 长度标注与初始化个数不符即编译错；但 enum 新增变体而本清单漏登不会报错，
     /// 改 enum 必须同步改这里。
-    pub const ALL: [WriteOp; 58] = [
+    pub const ALL: [WriteOp; 59] = [
         // 参考数据四表
         WriteOp::CreateAccount,
         WriteOp::UpdateAccount,
@@ -299,6 +304,7 @@ impl WriteOp {
         WriteOp::SubmitDataLocationChange,
         WriteOp::RestoreDefaultDataLocation,
         WriteOp::SetLogLevel,
+        WriteOp::SetBaseCurrency,
     ];
 }
 
@@ -469,7 +475,8 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
         | WriteOp::SetAutoExecutionEnabled
         | WriteOp::SubmitDataLocationChange
         | WriteOp::RestoreDefaultDataLocation
-        | WriteOp::SetLogLevel => NO_SIGNALS,
+        | WriteOp::SetLogLevel
+        | WriteOp::SetBaseCurrency => NO_SIGNALS,
     }
 }
 

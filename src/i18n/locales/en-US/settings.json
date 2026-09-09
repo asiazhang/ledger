@@ -352,6 +352,11 @@
   "appearance": {
     "card": "Theme",
     "darkMode": "Dark mode",
-    "defaultCurrency": "Default Currency"
+    "baseCurrency": "Base Currency",
+    "baseCurrencyHint": "Ledger-level setting: changes sync to all devices and keep the conversion basis consistent everywhere.",
+    "displayCurrency": "Display Currency",
+    "displayCurrencyHint": "Per-device amount formatting and new-entry preselect; not synced.",
+    "baseCurrencyLoadFailed": "Failed to load base currency: {msg}",
+    "baseCurrencySaveFailed": "Failed to save base currency: {msg}"
   }
 }

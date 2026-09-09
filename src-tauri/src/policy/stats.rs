@@ -157,7 +157,8 @@ pub fn policy_stats(conn: &Connection, today: NaiveDate) -> Result<Vec<PolicySta
             let next_charge_date = next_charges.get(&policy_id).cloned();
             Ok(PolicyStats {
                 policy_id,
-                native_currency: crate::transaction::amount::default_currency_code().to_string(),
+                native_currency: crate::transaction::amount::default_currency_code(conn)?
+                    .to_string(),
                 total_paid_native_cents,
                 total_inflow_native_cents,
                 next_charge_date,

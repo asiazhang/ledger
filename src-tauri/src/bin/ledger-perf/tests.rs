@@ -314,6 +314,7 @@ fn acct(id: &str, kind: AccountType, ccy: &str) -> Account {
 
 #[test]
 fn bench_import_eligible_accounts_filter_excludes_investment_and_foreign() {
+    let conn = test_support::open();
     let all = vec![
         acct("a-cny-cash", AccountType::Cash, "CNY"),
         acct("a-cny-inv", AccountType::Investment, "CNY"),
@@ -321,7 +322,7 @@ fn bench_import_eligible_accounts_filter_excludes_investment_and_foreign() {
         acct("a-cny-credit", AccountType::Credit, "CNY"),
     ];
     assert_eq!(
-        bench_import::eligible_account_ids(&all),
+        bench_import::eligible_account_ids(&conn, &all).unwrap(),
         vec!["a-cny-cash".to_string(), "a-cny-credit".to_string()],
         "投资户与外币户不进导入基准账户池（本位币折算与投资副作用都不属被测路径）"
     );

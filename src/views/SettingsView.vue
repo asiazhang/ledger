@@ -20,7 +20,7 @@
  * （搜索修复卡片标题以「拼音搜索数据」开头，若需在模板内注释，避免使用组件会渲染的
  * 文案字样——dev 编译保留模板注释，会被测试的 html 断言读到。）
  */
-import { NTabs, NTabPane, NIcon } from 'naive-ui'
+import { NTabs, NTabPane, NIcon, NSpace } from 'naive-ui'
 import {
   OptionsOutline,
   GridOutline,
@@ -30,6 +30,7 @@ import {
 } from '@vicons/ionicons5'
 import GeneralSettings from '@/components/settings/GeneralSettings.vue'
 import CategoryManager from '@/components/CategoryManager.vue'
+import BaseCurrencySettings from '@/components/settings/BaseCurrencySettings.vue'
 import BackupSettings from '@/components/settings/BackupSettings.vue'
 import DataLocationSettings from '@/components/settings/DataLocationSettings.vue'
 import EncryptionSettings from '@/components/settings/EncryptionSettings.vue'
@@ -51,7 +52,12 @@ import { t } from '@/i18n'
 
       <NTabPane name="categories" key="categories">
         <template #tab><span class="pane-tab"><NIcon :component="GridOutline" />{{ t('settings.tabs.categories') }}</span></template>
-        <CategoryManager />
+        <!-- 本位币基准（issue #858，账本级设置）随币种域落本页签（ADR-0022
+             归属领域定 Tab；与分类管理器同属参考数据域维护面）。 -->
+        <NSpace vertical :size="16">
+          <BaseCurrencySettings />
+          <CategoryManager />
+        </NSpace>
       </NTabPane>
 
       <NTabPane name="data" key="data" display-directive="show:lazy">
