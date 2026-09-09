@@ -2,10 +2,21 @@ import { vi, beforeEach, afterEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { enableAutoUnmount } from '@vue/test-utils'
 import { invoke } from '@tauri-apps/api/core'
+import { setFileScope } from '@vanilla-extract/css/fileScope'
 import { mockInvoke, unexpectedInvoke } from './helpers/invoke-mock'
 import { mockListen } from './helpers/listen-mock'
 import { fakeMatchMedia, resetFakeMedia } from './helpers/media-mock'
 import { messageApi, resetMessageApi } from './helpers/message-mock'
+
+// vanilla-extract 无 bundler 运行时的默认 file scope（issue #888）：vitest 不挂 ve
+// 插件（见 vitest.config.ts），*.css.ts 走纯运行时求值，而 style()/createTheme 在
+// 模块求值期必须有 file scope——无 scope 即抛「Styles were unable to be assigned
+// to a file」。App.vue（经 theme-contract.ts）与试点组件（经旁路样式文件）静态引
+// 入 .css.ts，任何挂载它们的测试文件都会触发求值；setup 先于每个测试文件的模块
+// 求值执行，此处装配的作用域即全测试面的兜底默认。主题合同测试（
+// theme-contract.test.ts）要捕获 CSS 产出物，会在自己的 beforeAll 另设专属 scope
+// ——后设者居栈顶优先生效、endFileScope 弹回本兜底，互不干扰。
+setFileScope('src/__tests__/setup.ts')
 
 // jsdom 环境下 localStorage 不可用，使用 polyfill
 if (typeof localStorage === 'undefined' || localStorage === null) {
