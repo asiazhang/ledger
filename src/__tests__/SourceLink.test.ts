@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import SourceLink from '@/components/SourceLink.vue'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
+import { setFakeMedia } from './helpers/media-mock'
 import type { TransactionSource } from '@/types'
 
 // 点击跳转经 useRouter（MerchantLink/AccountLink 同款 pushMock 断言先例）
@@ -173,5 +174,37 @@ describe('标的来源渲染（spec #704 / issue #709）：走势图标 + 代码
       name: 'assets-more',
       query: { tab: 'investments', focus: 'inst-2' },
     })
+  })
+})
+
+describe('来源列触控轴（issue #843 / ADR-0088 决策 6：类型全称常驻，title 不可达的一击可达替代）', () => {
+  it('触控轴：类型全称常驻小字；名称可点击跳转不变；title 保留', async () => {
+    setFakeMedia({ hover: 'none', pointer: 'coarse' })
+    const wrapper = mount(SourceLink, {
+      props: { source: makeSource({ kind: 'subscription', display_name: '视频会员' }) },
+    })
+    const label = wrapper.find('.source-type-label')
+    expect(label.exists()).toBe(true)
+    expect(label.text()).toBe('订阅计划')
+    expect(wrapper.find('.source-cell').attributes('title')).toBe('订阅计划')
+    await wrapper.find('button.source-link').trigger('click')
+    expect(pushMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('触控轴：展示名为类型名兜底（无备注计划）时不重复渲染类型小字', () => {
+    setFakeMedia({ hover: 'none', pointer: 'coarse' })
+    const wrapper = mount(SourceLink, {
+      props: { source: makeSource({ kind: 'installmentPlan', display_name: '' }) },
+    })
+    expect(wrapper.find('.source-type-label').exists()).toBe(false)
+  })
+
+  it('指针轴：无常驻类型小字（行为不变，两轴对比）', () => {
+    setFakeMedia({ hover: 'hover', pointer: 'fine' })
+    const wrapper = mount(SourceLink, {
+      props: { source: makeSource({ kind: 'subscription', display_name: '视频会员' }) },
+    })
+    expect(wrapper.find('.source-type-label').exists()).toBe(false)
+    expect(wrapper.find('.source-cell').attributes('title')).toBe('订阅计划')
   })
 })

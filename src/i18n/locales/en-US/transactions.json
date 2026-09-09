@@ -24,7 +24,8 @@
     "account": "Account",
     "source": "Source",
     "note": "Note",
-    "amount": "Amount"
+    "amount": "Amount",
+    "actions": "Actions"
   },
   "source": {
     "kind": {
@@ -78,7 +79,8 @@
     "edit": "Edit",
     "refund": "Refund",
     "addItem": "Add Item",
-    "delete": "Delete"
+    "delete": "Delete",
+    "actions": "More actions"
   },
   "form": {
     "amount": "Amount",
