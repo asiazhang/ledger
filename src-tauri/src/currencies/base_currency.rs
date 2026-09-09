@@ -16,7 +16,7 @@
 //!
 //! 折算消费方为 Amount 接缝（`transaction::amount`），经域路径显式 import。
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 use crate::error::{AppError, Result};
 use crate::settings;
@@ -43,11 +43,7 @@ fn write_setting(conn: &Connection, code: &str) -> Result<()> {
         .query_row("SELECT 1 FROM currencies WHERE code = ?1", [code], |r| {
             r.get(0)
         })
-        .map(Some)
-        .or_else(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => Ok(None),
-            other => Err(other),
-        })?;
+        .optional()?;
     if known.is_none() {
         return Err(AppError::codedp(
             "currency.base-invalid",

@@ -246,5 +246,8 @@
     "schema-ahead": "This operation was produced by a newer version of the app; it will retry automatically after you upgrade.",
     "op-undecodable": "Sync command could not be recognized (possibly produced by a newer version): {0}",
     "replay-failed": "Sync operation failed on this device and is parked for review: {0}"
+  },
+  "currency": {
+    "base-invalid": "Base currency must be a currency from the dictionary: {0}"
   }
 }

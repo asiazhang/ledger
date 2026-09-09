@@ -128,13 +128,14 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     expect(labels).not.toContain('商户')
   })
 
-  it('「通用」默认激活，含深色模式开关与本位币基准/展示币种下拉（issue #858 币种设置拆分）', async () => {
+  it('「通用」默认激活，含深色模式开关与展示币种下拉，不含账本级本位币基准（issue #858 币种设置拆分）', async () => {
     const wrapper = mount(SettingsView)
     // 通用是首个 Tab，无需点击即挂载（show:lazy 语义）。
     const html = wrapper.html()
     expect(html).toContain('深色模式')
-    expect(html).toContain('本位币基准')
     expect(html).toContain('展示币种')
+    // 本位币基准是账本级设置（非轻量，ADR-0022 轻量资格线），落「分类」页签。
+    expect(html).not.toContain('本位币基准')
     // 深色模式开关反映当前主题（默认暗色）。
     expect(wrapper.find('.n-switch').attributes('aria-checked')).toBe('true')
   })
@@ -146,11 +147,13 @@ describe('SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     expect(store.theme).toBe('light')
   })
 
-  it('「分类」含分类管理器，不再展示支持币种表格（ADR-0034）', async () => {
+  it('「分类」含分类管理器与本位币基准卡片（issue #858，账本级设置按领域归属落本页签）', async () => {
     const wrapper = mount(SettingsView)
     await openTab(wrapper, '分类')
     expect(wrapper.findComponent(CategoryManager).exists()).toBe(true)
     const html = wrapper.html()
+    expect(html).toContain('本位币基准')
+    // 币种字典本体仍无维护界面（ADR-0034，只读表格不回归）。
     expect(html).not.toContain('支持币种')
     expect(html).not.toContain('默认币种')
   })
