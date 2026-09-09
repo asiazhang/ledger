@@ -114,6 +114,19 @@ describe('账本入口（issue #834）：当前账本名与清单弹层', () => 
     expect(hasOpenOverlay()).toBe(true)
   })
 
+  it('面板开着时再次点击入口关闭（toggle 语义）；注册表上报随之撤销', async () => {
+    const wrapper = mountEntry()
+    await flushPromises()
+    await openPanel(wrapper)
+    expect(panelRows()).toHaveLength(2)
+    expect(hasOpenOverlay()).toBe(true)
+    await wrapper.find('[data-testid="book-entry"]').trigger('click')
+    await flushPromises()
+    await nextTick()
+    expect(hasOpenOverlay()).toBe(false)
+    expect(panelRows()).toHaveLength(0)
+  })
+
   it('读取失败诚实呈现：入口回退「账本」字样，弹层内给错误行与重试；重试成功恢复清单', async () => {
     // 首次 list_books 拒绝，其后恢复应答（计数桩，重试路径同门）
     let failures = 1

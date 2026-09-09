@@ -42,9 +42,6 @@ const {
   refresh,
   requestSwitch,
   panelShow,
-  panelX,
-  panelY,
-  togglePanel,
   closePanel,
   nameIntent,
   nameDraft,
@@ -66,49 +63,49 @@ watch(
 
 <template>
   <div class="book-entry-root">
-    <!-- 展开态：侧栏底部常驻入口，显示当前账本名 -->
-    <NButton
-      v-if="!collapsed"
-      quaternary
-      block
-      size="small"
-      class="book-entry"
-      data-testid="book-entry"
-      :aria-label="t('books.entry.open')"
-      @click="togglePanel"
-    >
-      <span class="book-entry-inner">
-        <NIcon :size="16" class="book-entry-icon"><BookOutline /></NIcon>
-        <span class="book-entry-name">{{ activeBook?.name ?? t('books.entry.label') }}</span>
-        <NIcon :size="12" class="book-entry-caret"><ChevronUpOutline /></NIcon>
-      </span>
-    </NButton>
-
-    <!-- 折叠态：固定左下角浮标图标形态（侧栏折叠宽度归零后入口仍随时可达） -->
-    <NButton
-      v-else
-      circle
-      quaternary
-      size="medium"
-      class="book-entry-float"
-      data-testid="book-entry-float"
-      :title="t('books.entry.open')"
-      :aria-label="t('books.entry.open')"
-      @click="togglePanel"
-    >
-      <NIcon :size="18"><BookOutline /></NIcon>
-    </NButton>
-
-    <!-- 账本清单弹层（非模态面板：点外部关闭；手动定位锚定触发按钮上方） -->
+    <!-- 账本清单弹层（非模态面板：点外部/再点入口关闭；点击触发，锚定入口上方）。
+         两形态入口（展开态常驻按钮 / 折叠态浮标）同处 #trigger，v-if/v-else 同期只渲染一个。 -->
     <AppPopover
-      trigger="manual"
+      trigger="click"
       placement="top-start"
+      :show-arrow="false"
       :show="panelShow"
-      :x="panelX"
-      :y="panelY"
       class="book-panel-popover"
-      @clickoutside="closePanel"
+      @update:show="panelShow = $event"
     >
+      <template #trigger>
+        <!-- 展开态：侧栏底部常驻入口，显示当前账本名 -->
+        <NButton
+          v-if="!collapsed"
+          quaternary
+          block
+          size="small"
+          class="book-entry"
+          data-testid="book-entry"
+          :aria-label="t('books.entry.open')"
+        >
+          <span class="book-entry-inner">
+            <NIcon :size="16" class="book-entry-icon"><BookOutline /></NIcon>
+            <span class="book-entry-name">{{ activeBook?.name ?? t('books.entry.label') }}</span>
+            <NIcon :size="12" class="book-entry-caret"><ChevronUpOutline /></NIcon>
+          </span>
+        </NButton>
+
+        <!-- 折叠态：固定左下角浮标图标形态（侧栏折叠宽度归零后入口仍随时可达） -->
+        <NButton
+          v-else
+          circle
+          quaternary
+          size="medium"
+          class="book-entry-float"
+          data-testid="book-entry-float"
+          :title="t('books.entry.open')"
+          :aria-label="t('books.entry.open')"
+        >
+          <NIcon :size="18"><BookOutline /></NIcon>
+        </NButton>
+      </template>
+
       <div class="book-panel">
         <!-- 注册表回退警示（fallback_reason 通道，损坏时显著提示） -->
         <NAlert v-if="fallbackReason" type="warning" :show-icon="true" class="book-panel-alert">

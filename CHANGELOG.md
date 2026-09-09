@@ -6,6 +6,7 @@
 
 ### Added
 
+- **账本**：新增多账本（Book）——侧栏左下角常驻账本入口，弹层内可新建、改名、移除（仅摘登记，文件保留在磁盘）与切换账本；切换经轻量确认后应用原地重载进入目标账本，加密账本切换后落解锁屏。现有数据自动成为唯一的「默认账本」，升级无感（[#831]、[#834]）。
 - **多端同步（基座）**：记账动作开始留下可同步的操作日志（OpLog）——桌面端每次创建/修改/删除交易，都会把这条动作连同折算结果写入本机日志，重复送达不会记两次；新库新增同步元数据表（设备标识、端内逻辑时钟），每台设备首次使用自动生成设备标识（[#855]）。
 
 ## [0.6.0] - 2026-09-08
@@ -248,3 +249,5 @@
 [#827]: https://github.com/asiazhang/ledger/issues/827
 [#839]: https://github.com/asiazhang/ledger/issues/839
 [#855]: https://github.com/asiazhang/ledger/issues/855
+[#834]: https://github.com/asiazhang/ledger/issues/834
+[#831]: https://github.com/asiazhang/ledger/issues/831

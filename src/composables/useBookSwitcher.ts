@@ -15,11 +15,12 @@ import type { Book } from '@/types'
  * 产出可观察状态与动作；入口组件（BookSidebarEntry）是它的薄适配器，展开态
  * 常驻入口与折叠态浮标共用同一弹层实例。
  *
- * 弹层纪律：清单弹层为非模态面板（下拉菜单族）——点外部关闭是其交互本体，
- * 开/关经 AppPopover 上报弹层注册表（ADR-0035）；切换确认经 useAppDialog
- * 应用内弹窗（遮罩点击不构成关闭意图，issue #252 语义）；新建/改名弹窗的
- * 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072），意图闭集二：
- * create（无载荷）/ rename（携带目标账本行快照）。
+ * 弹层纪律：清单弹层为非模态面板（下拉菜单族）——点外部/再点入口关闭是其
+ * 交互本体（开/关时序归弹层组件库 trigger=click 协调），开/关经 AppPopover
+ * 上报弹层注册表（ADR-0035）；切换确认经 useAppDialog 应用内弹窗（遮罩点击
+ * 不构成关闭意图，issue #252 语义）；新建/改名弹窗的开启/目标/关闭编排归
+ * 弹窗意图工厂 ModalIntent（ADR-0072），意图闭集二：create（无载荷）/
+ * rename（携带目标账本行快照）。
  *
  * 动作失败诚实呈现：错误经码化模板本地化后 toast（errorMessage，ADR-0050），
  * 状态不变——改名/新建弹窗保持打开可改后重试；切换失败留在当前账本。
@@ -44,6 +45,7 @@ export function useBookSwitcher() {
   const fallbackReason = ref<string | null>(null)
   const loading = ref(false)
   const loadFailed = ref(false)
+  /** 切换在途（写指针→重载窗口）：期间拒绝再次发起切换。 */
   const switching = ref(false)
 
   /** 当前活动账本（入口按钮展示名；清单未就绪或损坏时为 null）。 */
@@ -139,18 +141,10 @@ export function useBookSwitcher() {
     }
   }
 
-  // —— 清单弹层开合（单弹层双入口：展开态入口 / 折叠态浮标，坐标随点击锚定；
-  //  toggle 语义 + clickoutside 关闭，均为同步置收，无重定位舞步需求） ——
+  // —— 清单弹层开合：show 归弹层组件库协调（trigger=click 的开/关/点外/再点入口
+  //  皆由其内部处理，无手写事件序），开关经 update:show 回流；命令式关闭仅两处：
+  //  侧栏折叠形态互换时收起、确认切换后随重载收起 ——
   const panelShow = ref(false)
-  const panelX = ref(0)
-  const panelY = ref(0)
-
-  function togglePanel(e: MouseEvent): void {
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    panelX.value = rect.left
-    panelY.value = rect.top
-    panelShow.value = !panelShow.value
-  }
 
   function closePanel(): void {
     panelShow.value = false
@@ -201,15 +195,11 @@ export function useBookSwitcher() {
     fallbackReason,
     loading,
     loadFailed,
-    switching,
     refresh,
     // 切换意图
     requestSwitch,
     // 弹层开合
     panelShow,
-    panelX,
-    panelY,
-    togglePanel,
     closePanel,
     // 新建/改名弹窗
     nameIntent,
