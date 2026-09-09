@@ -380,7 +380,9 @@ jobs:
           CONFIG="$RUNNER_TEMP/android-version-config.json"
           printf '{"version":"%s","bundle":{"android":{"versionCode":%s}}}\n' \
             "$APP_VERSION" "$APP_VERSION_CODE" > "$CONFIG"
-          pnpm run tauri android build --apk --target aarch64-linux-android --config "$CONFIG"
+          # --target 取值为短 ABI 名（aarch64/armv7/i686/x86_64，非 rust triple；
+          # run 34319079302 实测），rustup 侧仍装 triple 全名。
+          pnpm run tauri android build --apk --target aarch64 --config "$CONFIG"
 
       # 公证 + 附着（issue #658 步骤 5）：公证输入为 DMG 本体（submit --wait 阻塞至
       # Apple 出结果 → stapler 附着票据）。注：tauri 的 dmg 打包流程结束后会清掉
