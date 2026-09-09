@@ -19,6 +19,7 @@
 - **AI 导入**：新增商户改名端点 `PUT /api/v1/merchants/{id}`（[#884]）。
 - **交易**：交易页筛选与分页会话内保留，切走再回原样恢复（[#893]）。
 - **发布**：Android arm64 APK 进入发布矩阵，随 GitHub Release 发布（[#559]）。
+- **发布**：Android APK 发布签名就绪——发布构建以 CI secrets 注入 keystore 签名，tag 构建缺签名 secrets 直接失败；试跑产物经 apksigner 校验可真机直装（[#560]）。
 - **报表**：报表页接入 ESC 复位（[#894]）。
 
 ### Changed
@@ -229,6 +230,7 @@
 [#515]: https://github.com/asiazhang/ledger/issues/515
 [#526]: https://github.com/asiazhang/ledger/issues/526
 [#559]: https://github.com/asiazhang/ledger/issues/559
+[#560]: https://github.com/asiazhang/ledger/issues/560
 [#566]: https://github.com/asiazhang/ledger/issues/566
 [#582]: https://github.com/asiazhang/ledger/issues/582
 [#584]: https://github.com/asiazhang/ledger/issues/584

@@ -93,4 +93,8 @@ tag 触发，不会误建 Release。签名验收看 Android 行：
 
 | 日期 | 触发 | 结果 | 备注 |
 | --- | --- | --- | --- |
-|     |     |      |     |
+| 2026-09-09 | workflow_dispatch [run 34359461485] | Android 行签名链路三项全绿（解码 keystore → 构建 → apksigner 校验），证书 `CN=OpenLedger` / SHA-256 `51d01983d808…1878`；versionCode 6000（0.6.0 按公式派生） | Windows 行与后端测试红：分支缺 main 的 LF 补丁修复（#917）+ sync 测试同钟 op 投递序 flake（`fix(sync-tests)` 提交修复，与签名无关） |
+| 2026-09-09 | workflow_dispatch [run 34362202380] | 全矩阵绿；Android 行签名链路三项全 success；artifact `openledger-android-arm64` = `OpenLedger_0.6.0_arm64.apk`（sha256 `4e24a8dc…977e`）已下载 | 合入 main + 固定 DeviceId 后重跑；待真机安装验收 |
+
+[run 34359461485]: https://github.com/asiazhang/ledger/actions/runs/34359461485
+[run 34362202380]: https://github.com/asiazhang/ledger/actions/runs/34362202380
