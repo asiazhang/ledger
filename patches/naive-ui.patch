@@ -1,0 +1,28 @@
+diff --git a/es/space/src/Space.mjs b/es/space/src/Space.mjs
+index e9e4ea5bded0045f004ac8888f7f4a10e84c7ffe..9fc97bdc616595e56dfa100f20a5c8ed648743b3 100644
+--- a/es/space/src/Space.mjs
++++ b/es/space/src/Space.mjs
+@@ -126,8 +126,8 @@ var Space_default = defineComponent({
+       key: 0
+     }, [normalizeVNode(() => children)], 64)) : (openBlock(), createElementBlock(Fragment, {
+       key: 1
+-    }, [normalizeVNode(() => children.map((child, index) => child.type === Comment ? child : (openBlock(), createElementBlock("div", {
+-      key: 1,
++}, [normalizeVNode(() => children.map((child, index) => child.type === Comment ? child : (openBlock(), createElementBlock("div", {
++      key: index,
+       role: "none",
+       class: normalizeClass$1(itemClass),
+       style: normalizeStyle([itemStyle, {
+diff --git a/lib/space/src/Space.js b/lib/space/src/Space.js
+index 7b53167756ef21a7d8ae9fa122b1f0f8b0a104a0..9ca124cf06445e797353a25625d248c3aca10687 100644
+--- a/lib/space/src/Space.js
++++ b/lib/space/src/Space.js
+@@ -106,7 +106,7 @@ var Space_default = (0, vue.defineComponent)({
+ 				gap: useGap ? `${margin.vertical}px ${margin.horizontal}px` : ""
+ 			})
+ 		}, [!wrapItem && (useGap || internalUseGap) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 0 }, [require_vdom.normalizeVNode(() => children)], 64)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 1 }, [require_vdom.normalizeVNode(() => children.map((child, index) => child.type === vue.Comment ? child : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
+-			key: 1,
++			key: index,
+ 			role: "none",
+ 			class: require_vdom.normalizeClass(itemClass),
+ 			style: (0, vue.normalizeStyle)([
