@@ -40,7 +40,7 @@ const tier = useWindowTier()
   top: 0;
   left: 0;
   right: 0;
-  height: 3px;
+  height: 2px;
   z-index: 3000;
   pointer-events: none;
   overflow: hidden;
@@ -57,7 +57,7 @@ const tier = useWindowTier()
   width: 30%;
   border-radius: 999px;
   background: var(--busy-color);
-  animation: global-busy-bar-slide 1.1s ease-in-out infinite;
+  animation: global-busy-bar-slide 1.8s ease-in-out infinite;
 }
 
 @keyframes global-busy-bar-slide {
