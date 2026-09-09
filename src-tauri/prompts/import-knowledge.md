@@ -68,7 +68,7 @@
 
 - **读回核对**：`GET /api/v1/transactions` 按日期区间过滤（区间取源文件覆盖范围）核对：响应为 `{items, total}`，读回取 `.items`；不传分页参数（`page`/`page_size`）即返回满足条件的全部交易，逐行核对源文件各行是否全部落库、金额是否一致（超大账本也可用 `page`/`page_size` 分批读回，以 `total` 核对总条数）；按账户核对（含转账转入侧）时加 `involving_account_id`（涉及账户：`account_id` 或 `to_account_id` 命中即算），账户 id 取自 `GET /api/v1/accounts`（**含黑洞账户**）。
 - 读回过滤参数全部可选：`kinds=expense,refund` 逗号分隔多类型（与其余维度 AND 组合）、`category_id` / `merchant_id` 按分类/商户精确过滤（含软删字典的历史行）、`uncategorized_only=true` 仅无分类行、`limit` 取前 N 条与分页互斥；默认按日期倒序稳定排序，翻页无重复无遗漏。
-- **查询纪律**：只确认某类行是否存在或求合计的子集检查，直接用服务端过滤参数查询（如 `kinds=buy,sell`），不要拉大页后在脚本里本地筛选。
+- **查询纪律**：子集检查——只确认某类行是否存在或求合计——直接用服务端过滤参数查询（如 `kinds=buy,sell`），返回行即全部待核对对象。
 - **分页纪律**：分页读回时响应 `total` 是满足过滤条件的总条数，`len(items)` 只是本页条数；未核对 `total` 前不得下「不存在 / 已全部读回」的结论（按日期倒序的首页只覆盖最新一段，更早区间可能仍有行）。
 - buy/sell 行核对标的关联认 `source` 字段（`kind: "instrument"`，`entity_id` 为标的 id、`display_name` 为「代码 名称」）；交易行上没有 `instrument_id` / `quantity` 字段（二者只出现在写入入参，不经交易读回返回）。
 - **余额核对**：`GET /api/v1/accounts/balances`（**含黑洞账户**）核对各账户期末余额与源数据吻合。
