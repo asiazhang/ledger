@@ -14,6 +14,8 @@ import type {
   AutoBackupState,
   BackupMetaSummary,
   BackupResult,
+  Book,
+  BookListInfo,
   Budget,
   BudgetInput,
   BudgetProgress,
@@ -384,6 +386,15 @@ export const api = {
     }),
   restoreDefaultDataLocation: (adoptExisting: boolean) =>
     invoke<DataLocationChangeOutcome>('restore_default_data_location', { adoptExisting }),
+
+  // 账本注册表（issue #833 / ADR-0089）：列出/新建/切换/改名/移除。切换只写
+  // 活动指针落盘，原位重引导由前端在成功后经 restartAppShortly 重载进目标账本
+  // （明文库直进主界面、密文库落解锁屏）。
+  listBooks: () => invoke<BookListInfo>('list_books'),
+  createBook: (name: string) => invoke<Book>('create_book', { name }),
+  switchBook: (id: string) => invoke<Book>('switch_book', { id }),
+  renameBook: (id: string, name: string) => invoke<Book>('rename_book', { id, name }),
+  removeBook: (id: string) => invoke<void>('remove_book', { id }),
 
   // 启动状态与启动失败恢复（issue #601 / ADR-0075 决策 5 修订）：前端启动探测
   // 唯一入口（主界面/解锁屏/失败恢复屏三态选择）+ 失败恢复屏的重置通道。

@@ -1,7 +1,8 @@
 use super::model::Account;
 use crate::db::query::query_all;
-use crate::db::{device_id, new_uuid, now_iso};
+use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, ErrClass};
+use crate::sync_engine::device_id;
 use crate::transaction::amount::{Measure, TransactionKind, TransferSide, signed_amount};
 
 fn setup() -> rusqlite::Connection {
@@ -59,7 +60,7 @@ fn insert_tx(
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
          category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,?3,'CNY',?3,?4,?5,NULL,NULL,NULL,'2026-01-15',?6,?7,?8,?9,0)",
-        rusqlite::params![id, kind, amount, account_id, to_account_id, now, now, 1, device_id()],
+        rusqlite::params![id, kind, amount, account_id, to_account_id, now, now, 1, device_id(conn).unwrap()],
     ).unwrap();
     // 裸 SQL 绕过 Writer 接缝缓存刷新，同步补齐两侧账户的缓存行（保持「缓存==实时」
     // 不变量，ADR-0067）。
@@ -98,7 +99,7 @@ fn delete_account_soft_deletes() {
     assert!(list_accounts(&conn).iter().any(|a| a.id == id));
     conn.execute(
         "UPDATE accounts SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-        rusqlite::params![id, now_iso(), device_id()],
+        rusqlite::params![id, now_iso(), device_id(&conn).unwrap()],
     ).unwrap();
     assert!(!list_accounts(&conn).iter().any(|a| a.id == id));
 }
@@ -273,7 +274,7 @@ fn soft_deleted_transaction_excluded_from_balance() {
     assert_eq!(balance(&conn, "acc-bal-5"), 5000);
     conn.execute(
         "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-        rusqlite::params!["tx6", now_iso(), device_id()],
+        rusqlite::params!["tx6", now_iso(), device_id(&conn).unwrap()],
     ).unwrap();
     assert_eq!(balance(&conn, "acc-bal-5"), 0);
 }
@@ -459,7 +460,7 @@ fn compute_all_balances_excludes_soft_deleted_accounts() {
     insert_account(&conn, "acc-deleted", "已删除", "cash", "CNY", 2000);
     conn.execute(
         "UPDATE accounts SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-        rusqlite::params!["acc-deleted", now_iso(), device_id()],
+        rusqlite::params!["acc-deleted", now_iso(), device_id(&conn).unwrap()],
     ).unwrap();
 
     let all = crate::accounts::balance::compute_all_balances(&conn).unwrap();
@@ -875,7 +876,7 @@ fn adjust_deleted_adjustment_tx_reverts_balance() {
     // 调整产生的转账就是普通 transfer：删除即撤销调整
     conn.execute(
         "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-        rusqlite::params![tx_id, now_iso(), device_id()],
+        rusqlite::params![tx_id, now_iso(), device_id(&conn).unwrap()],
     )
     .unwrap();
     assert_eq!(balance(&conn, "acc-adj-7"), 0, "删除调整交易即恢复原余额");

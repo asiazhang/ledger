@@ -75,6 +75,7 @@ export const WHITELIST: readonly WhitelistEntry[] = [
   { path: 'dashboard', layer: '域目录', note: '仪表盘域（#405 归位，全仓净资产跨币种折算聚合）' },
   { path: 'backup', layer: '域目录', note: '备份域（#406 归位，备份引擎自 commands/backup/core、自动备份调度自顶层 auto_backup.rs 整合随迁）' },
   { path: 'sync', layer: '域目录', note: '行情同步域（#407 归位，HTTP 爬取/东财基金净值/同步编排自 commands/sync 随迁；全量修字典翼已退役，issue #698）' },
+  { path: 'sync_engine', layer: '域目录', note: '多端同步域（issue #855 新建即归位，ADR-0091 OpLog 基座；与行情同步域 sync 相邻不同域）' },
   { path: 'test_support', layer: '域目录', note: '测试支持域（统一测试数据库工厂与共享断言库，ADR-0084 / #751；依赖域与基础设施合法，对壳层零依赖）' },
   { path: 'db', layer: '基础设施', note: '数据库连接' },
   { path: 'signals.rs', layer: '基础设施', note: '信号映射（ADR-0044）' },

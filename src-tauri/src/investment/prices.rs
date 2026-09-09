@@ -9,8 +9,9 @@
 
 use rusqlite::{Connection, params};
 
-use crate::db::{device_id, new_uuid, now_iso};
+use crate::db::{new_uuid, now_iso};
 use crate::error::Result;
+use crate::sync_engine::device_id;
 
 /// 价格刻度换算因子（ADR-0038）：1 分 = 100 万分之一元——
 /// 金额（分）= 数量 × 单价（万分之一元）÷ 本因子；手续费分摊薄入每份成本时
@@ -50,7 +51,7 @@ pub fn upsert_price_history(
          trade_date=excluded.trade_date, price_cents=excluded.price_cents, \
          currency_code=excluded.currency_code, source=excluded.source, \
          updated_at=excluded.updated_at, version=version+1",
-        params![new_uuid(), instrument_id, trade_date, price_cents, currency, source, now, device_id()],
+        params![new_uuid(), instrument_id, trade_date, price_cents, currency, source, now, device_id(conn)?],
     )?;
     Ok(())
 }
@@ -97,7 +98,7 @@ pub fn upsert_market_price(
             now,
             now,
             1,
-            device_id()
+            device_id(conn)?
         ],
     )?;
     Ok(id)

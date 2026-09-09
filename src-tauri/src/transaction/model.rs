@@ -236,7 +236,9 @@ impl From<UpdateTransactionInput> for TransactionInput {
 ///
 /// 创建路径据此 INSERT、修改路径据此 UPDATE —— 校验与字段解析只做一次。
 /// buy/sell 的持仓/卖出关联等副作用由调用方在落库时按其身份（新增或替换）另行执行。
-#[derive(Debug, Clone)]
+/// serde（issue #855）：作为交易同步命令（`TransactionCommand`）的行载荷随 op
+/// 序列化跨端搬运，含源端折算结果（`amount_native_cents`）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NormalizedTransaction {
     pub kind: TransactionKind,
     pub amount_cents: i64,
@@ -277,6 +279,28 @@ impl TryFrom<&NormalizedTransaction> for writer::NormalizedRow {
             note: norm.note.clone(),
             date: norm.date.clone(),
         })
+    }
+}
+
+/// `writer::NormalizedRow` → `NormalizedTransaction`（issue #855）：同步命令
+/// 载荷构造的反向桥——本地编排计划（行为层 `Plan` 的归一化行，通用 kind）
+/// 组装 op 载荷时使用；纯字段拷贝，与正向 [`TryFrom`] 同源互逆。
+impl From<&writer::NormalizedRow> for NormalizedTransaction {
+    fn from(row: &writer::NormalizedRow) -> Self {
+        NormalizedTransaction {
+            kind: row.kind,
+            amount_cents: row.amount_cents,
+            currency_code: row.currency_code.clone(),
+            amount_native_cents: row.amount_native_cents,
+            account_id: row.account_id.clone(),
+            to_account_id: row.to_account_id.clone(),
+            category_id: row.category_id.clone(),
+            merchant_id: row.merchant_id.clone(),
+            policy_id: row.policy_id.clone(),
+            refund_of_transaction_id: row.refund_of_transaction_id.clone(),
+            note: row.note.clone(),
+            date: row.date.clone(),
+        }
     }
 }
 

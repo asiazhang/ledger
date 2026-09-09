@@ -410,5 +410,69 @@ pub fn gather_info(
     }
 }
 
+// -------------------------------------------------------------------------
+// 账本注册表命令面支撑（issue #833）：登记变更的写入时机契约预检与清单
+// 聚合。两者都以引导结果为唯一输入——写入时机契约（#832 契约：变更登记须
+// registry 可读且 deferred_relocation 为 None）是引导态语义，文件态无从
+// 得知；聚合与 [`Self::gather_info_from_boot`] 同归口。
+// -------------------------------------------------------------------------
+
+/// 从引导结果取可变更的登记信息（写入时机契约）：注册表可读且无推迟搬迁
+/// 窗口。`boot` 未登记（极端时序）、推迟搬迁未完成、注册表损坏是三个独立
+/// 错误条件，各自稳定码化（ADR-0050：一条件一码，行动指向各异）——新建/
+/// 切换/改名/移除共用此预检。
+pub fn mutable_registry(boot: Option<&Boot>) -> Result<&BookRegistry> {
+    let Some(boot) = boot else {
+        return Err(AppError::coded(
+            "book.registry-unavailable",
+            "账本注册表尚未就绪，请重启应用后再试",
+        ));
+    };
+    if boot.deferred_relocation.is_some() {
+        return Err(AppError::coded(
+            "book.registry-busy",
+            "数据搬迁尚未完成，暂无法变更账本登记；请重启应用完成搬迁后再试",
+        ));
+    }
+    boot.registry.as_ref().ok_or_else(|| {
+        let reason = boot
+            .fallback_reason
+            .clone()
+            .unwrap_or_else(|| "注册表不可读".into());
+        book_registry::registry_corrupt_error(&reason)
+    })
+}
+
+/// 聚合账本清单信息（列表命令内核）：登记清单、活动指针、登记变更可用性
+/// 与回退警示。清单与活动指针读注册表**最新落盘态**（登记变更落盘后立即可
+/// 见，不被引导快照留在旧态；缺失折叠出厂默认账本）；可变性与回退警示是
+/// 引导态语义，从 [`Boot`] 快照读取。损坏时清单不可信（`books` 空、
+/// `mutable` false），回退原因随行供界面显著提示。
+pub fn gather_book_list(default_dir: &Path, boot: Option<&Boot>) -> book_registry::BookListInfo {
+    let (books, active_id, registry_ok) = match book_registry::read_registry(default_dir) {
+        RegistryRead::Resolved(registry) => (registry.books, Some(registry.active_id), true),
+        RegistryRead::Unconfigured => {
+            let registry = BookRegistry::single_default(default_dir);
+            (registry.books, Some(registry.active_id), true)
+        }
+        RegistryRead::Corrupt(_) => (Vec::new(), None, false),
+    };
+    // 可变性判定单一权威 = mutable_registry（写入时机契约），叠加现场非损坏
+    //（运行中注册表被外部破坏时引导快照仍是旧的）。
+    let (mutable, fallback_reason) = match boot {
+        Some(boot) => (
+            registry_ok && mutable_registry(Some(boot)).is_ok(),
+            boot.fallback_reason.clone(),
+        ),
+        None => (false, None),
+    };
+    book_registry::BookListInfo {
+        books,
+        active_id,
+        mutable,
+        fallback_reason,
+    }
+}
+
 #[cfg(test)]
 mod tests;

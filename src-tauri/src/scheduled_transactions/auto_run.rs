@@ -25,8 +25,9 @@ use chrono::NaiveDate;
 use rusqlite::{Connection, params};
 
 use super::engine::execute_occurrence;
-use crate::db::{device_id, now_iso};
+use crate::db::now_iso;
 use crate::error::Result;
+use crate::sync_engine::device_id;
 
 /// 后端运行时镜像（进程级）：设备级开关默认关，前端启动/变更时经 IPC 推送更新。
 static ENABLED: AtomicBool = AtomicBool::new(false);
@@ -144,7 +145,7 @@ fn mark_failed(conn: &Connection, occurrence_id: &str) -> Result<()> {
         "UPDATE scheduled_transaction_occurrences SET status='failed', updated_at=?2, \
          version=version+1, device_id=?3 \
          WHERE id=?1 AND status='pending' AND is_deleted=0",
-        params![occurrence_id, now_iso(), device_id()],
+        params![occurrence_id, now_iso(), device_id(conn)?],
     )?;
     Ok(())
 }

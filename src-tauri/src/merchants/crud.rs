@@ -10,8 +10,9 @@
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::db::query::query_all;
-use crate::db::{device_id, new_uuid, now_iso};
+use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
+use crate::sync_engine::device_id;
 
 use super::model::{Merchant, MerchantInput, MerchantTransactionCount, MerchantUpdateInput};
 
@@ -49,7 +50,7 @@ pub fn create_merchant(conn: &Connection, input: MerchantInput) -> Result<String
     conn.execute(
         "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,?3,?4,?5,?6,0)",
-        rusqlite::params![id, input.name, now, now, 1, device_id()],
+        rusqlite::params![id, input.name, now, now, 1, device_id(conn)?],
     )?;
     Ok(id)
 }
@@ -79,7 +80,7 @@ pub fn update_merchant(conn: &Connection, id: &str, input: MerchantUpdateInput) 
 
     conn.execute(
         "UPDATE merchants SET name=?1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
-        rusqlite::params![name, now_iso(), device_id(), id],
+        rusqlite::params![name, now_iso(), device_id(conn)?, id],
     )?;
     // 改名即时生效：交易以 merchant_id 引用，不回刷历史交易行（ADR-0028）。
     Ok(())
@@ -105,7 +106,7 @@ pub fn delete_merchant(conn: &Connection, id: &str) -> Result<()> {
     }
     conn.execute(
         "UPDATE merchants SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-        rusqlite::params![id, now_iso(), device_id()],
+        rusqlite::params![id, now_iso(), device_id(conn)?],
     )?;
     Ok(())
 }

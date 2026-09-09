@@ -23,8 +23,9 @@ use rusqlite::OptionalExtension;
 use rusqlite::params;
 
 use crate::accounts::balance::{affected_accounts, refresh_account_balances};
-use crate::db::{device_id, new_uuid, now_iso};
+use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
+use crate::sync_engine::device_id;
 
 use super::amount::{self, TransactionKind};
 use super::search_text::pinyin_initials;
@@ -283,6 +284,14 @@ pub fn validate_policy_active(conn: &Connection, policy_id: Option<&str>) -> Res
 /// 在落库后另行回写，保持本模块单一职责。
 pub fn insert_row(conn: &Connection, row: &NormalizedRow) -> Result<String> {
     let id = new_uuid();
+    insert_row_with_id(conn, &id, row)?;
+    Ok(id)
+}
+
+/// [`insert_row`] 的显式 id 形态（issue #855）：同步重放时实体 id 随 op 携带，
+/// 重放端不得重新生成（两端对同一笔交易收敛到同一行）。本地创建一律走
+/// [`insert_row`]（id 由本模块生成），显式 id 仅限重放路径。
+pub fn insert_row_with_id(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()> {
     let now = now_iso();
     conn.execute(
         "INSERT INTO transactions \
@@ -307,19 +316,19 @@ pub fn insert_row(conn: &Connection, row: &NormalizedRow) -> Result<String> {
             now,
             now,
             1,
-            device_id(),
+            device_id(conn)?,
         ],
     )?;
     // 余额缓存写路径（issue #491 / ADR-0067）：新行落库后在同一事务内对受影响
     // 账户按口径表达式整体重算。本接缝是全部交易创建（手动/批量导入/余额调整/
-    // buy/sell/定时引擎例外）的单一收口，挂此处即覆盖全部创建入口。
+    // buy/sell/定时引擎例外/同步重放）的单一收口，挂此处即覆盖全部创建入口。
     // 受影响账户推导消费余额模块唯一定义（issue #533）：创建 = 新行账户引用对。
     let affected = affected_accounts(
         None,
         Some((row.account_id.as_str(), row.to_account_id.as_deref())),
     );
     refresh_account_balances(conn, &affected)?;
-    Ok(id)
+    Ok(())
 }
 
 /// 按 `id` 更新交易行字段：保留 `id`、`created_at` 与幂等身份
@@ -355,7 +364,7 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
             note_pinyin_of(row.note.as_deref()),
             row.date,
             now_iso(),
-            device_id(),
+            device_id(conn)?,
         ],
     )?;
     // 余额缓存写路径：受影响账户 = 旧行 ∪ 新行账户引用对，消费余额模块唯一

@@ -1,5 +1,6 @@
 use crate::db::query::query_all;
-use crate::db::{device_id, new_uuid, now_iso};
+use crate::db::{new_uuid, now_iso};
+use crate::sync_engine::device_id;
 
 use super::model::Category;
 
@@ -37,7 +38,7 @@ fn create_category_inserts_and_returns_id() {
     conn.execute(
         "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,?3,NULL,NULL,0,?4,?5,?6,?7,0)",
-        rusqlite::params![id, "交通", "expense", now, now, 1, device_id()],
+        rusqlite::params![id, "交通", "expense", now, now, 1, device_id(&conn).unwrap()],
     )
     .unwrap();
     let cats = list_categories(&conn);
@@ -53,13 +54,13 @@ fn create_subcategory_with_parent() {
     conn.execute(
         "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,'expense',NULL,NULL,0,?3,?4,?5,?6,0)",
-        rusqlite::params![parent_id, "出行", now, now, 1, device_id()],
+        rusqlite::params![parent_id, "出行", now, now, 1, device_id(&conn).unwrap()],
     )
     .unwrap();
     conn.execute(
         "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,'expense',?3,NULL,0,?4,?5,?6,?7,0)",
-        rusqlite::params![child_id, "打车", parent_id, now, now, 1, device_id()],
+        rusqlite::params![child_id, "打车", parent_id, now, now, 1, device_id(&conn).unwrap()],
     )
     .unwrap();
     let cats = list_categories(&conn);
@@ -75,13 +76,13 @@ fn delete_category_soft_deletes() {
     conn.execute(
         "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,'expense',NULL,NULL,0,?3,?4,?5,?6,0)",
-        rusqlite::params![id, "临时分类", now, now, 1, device_id()],
+        rusqlite::params![id, "临时分类", now, now, 1, device_id(&conn).unwrap()],
     )
     .unwrap();
     assert!(list_categories(&conn).iter().any(|c| c.id == id));
     conn.execute(
         "UPDATE categories SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-        rusqlite::params![id, now_iso(), device_id()],
+        rusqlite::params![id, now_iso(), device_id(&conn).unwrap()],
     )
     .unwrap();
     assert!(!list_categories(&conn).iter().any(|c| c.id == id));
@@ -95,7 +96,7 @@ fn delete_category_soft_deletes_and_excludes_from_readback() {
     conn.execute(
         "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,'expense',NULL,NULL,0,?3,?4,?5,?6,0)",
-        rusqlite::params![id, "临时分类", now, now, 1, device_id()],
+        rusqlite::params![id, "临时分类", now, now, 1, device_id(&conn).unwrap()],
     )
     .unwrap();
     super::delete_category(&conn, &id).unwrap();
@@ -127,7 +128,7 @@ fn delete_category_returns_not_found_for_already_deleted() {
     conn.execute(
         "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,'expense',NULL,NULL,0,?3,?4,?5,?6,0)",
-        rusqlite::params![id, "临时分类", now, now, 1, device_id()],
+        rusqlite::params![id, "临时分类", now, now, 1, device_id(&conn).unwrap()],
     )
     .unwrap();
     super::delete_category(&conn, &id).unwrap();
@@ -156,7 +157,7 @@ fn insert_expense_category_row(
     conn.execute(
         "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,'expense',?3,NULL,0,?4,?5,?6,?7,0)",
-        rusqlite::params![id, name, parent_id, now, now, 1, device_id()],
+        rusqlite::params![id, name, parent_id, now, now, 1, device_id(conn).unwrap()],
     )
     .unwrap();
     id
@@ -166,7 +167,7 @@ fn insert_budget_row(conn: &rusqlite::Connection, category_id: &str, is_deleted:
     conn.execute(
         "INSERT INTO budgets (id,category_id,period,amount_cents,start_date,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,'monthly',50000,'2026-01-01',?3,?3,1,?4,?5)",
-        rusqlite::params![new_uuid(), category_id, now_iso(), device_id(), is_deleted],
+        rusqlite::params![new_uuid(), category_id, now_iso(), device_id(conn).unwrap(), is_deleted],
     )
     .unwrap();
 }
@@ -231,7 +232,7 @@ fn update_category_updates_fields() {
     conn.execute(
         "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,'expense',NULL,NULL,0,?3,?4,?5,?6,0)",
-        rusqlite::params![id, "原始分类", now, now, 1, device_id()],
+        rusqlite::params![id, "原始分类", now, now, 1, device_id(&conn).unwrap()],
     )
     .unwrap();
 
@@ -242,7 +243,7 @@ fn update_category_updates_fields() {
     };
     conn.execute(
         "UPDATE categories SET name=?1, icon=?2, parent_id=?3, updated_at=?4, version=version+1, device_id=?5 WHERE id=?6",
-        rusqlite::params![input.name, input.icon, input.parent_id.unwrap_or(None), now_iso(), device_id(), id],
+        rusqlite::params![input.name, input.icon, input.parent_id.unwrap_or(None), now_iso(), device_id(&conn).unwrap(), id],
     )
     .unwrap();
     let cats = list_categories(&conn);
@@ -260,24 +261,24 @@ fn reorder_categories_sets_sort_order() {
     conn.execute(
         "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,'expense',NULL,NULL,0,?3,?4,?5,?6,0)",
-        rusqlite::params![id1, "分类A", now, now, 1, device_id()],
+        rusqlite::params![id1, "分类A", now, now, 1, device_id(&conn).unwrap()],
     )
     .unwrap();
     conn.execute(
         "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,'expense',NULL,NULL,0,?3,?4,?5,?6,0)",
-        rusqlite::params![id2, "分类B", now, now, 1, device_id()],
+        rusqlite::params![id2, "分类B", now, now, 1, device_id(&conn).unwrap()],
     )
     .unwrap();
 
     conn.execute(
         "UPDATE categories SET sort_order=?1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
-        rusqlite::params![2, now_iso(), device_id(), id1],
+        rusqlite::params![2, now_iso(), device_id(&conn).unwrap(), id1],
     )
     .unwrap();
     conn.execute(
         "UPDATE categories SET sort_order=?1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
-        rusqlite::params![1, now_iso(), device_id(), id2],
+        rusqlite::params![1, now_iso(), device_id(&conn).unwrap(), id2],
     )
     .unwrap();
 

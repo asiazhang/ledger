@@ -16,7 +16,7 @@
 use cucumber::{given, then, when};
 use rusqlite::params;
 
-use tauri_app_lib::db::{device_id, new_uuid, now_iso};
+use tauri_app_lib::db::{new_uuid, now_iso};
 use tauri_app_lib::investment::prices::upsert_price_history;
 use tauri_app_lib::investment::{
     TrendRange, query_instrument_price_trend, query_portfolio_value_trend,
@@ -72,7 +72,7 @@ fn add_fx_rate_history(
         .execute(
             "INSERT INTO fx_rate_history (id,base_code,quote_code,trade_date,rate,source,created_at,updated_at,version,device_id) \
              VALUES (?1,?2,?3,?4,?5,'eastmoney',?6,?6,1,?7)",
-            params![new_uuid(), base, quote, trade_date, rate, now, device_id()],
+            params![new_uuid(), base, quote, trade_date, rate, now, "e2e-fixture"],
         )
         .unwrap();
 }

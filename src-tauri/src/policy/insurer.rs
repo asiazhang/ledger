@@ -15,8 +15,9 @@
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::db::query::{FromRow, query_all};
-use crate::db::{device_id, new_uuid, now_iso};
+use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
+use crate::sync_engine::device_id;
 
 /// 保司字典行（参考数据模式，与商户同款审计字段；名字字典，无视觉字段）。
 /// 不进 OpenAPI/AI 契约面（ADR-0082：保司字典同在 AI 契约之外），故无 ToSchema。
@@ -94,7 +95,7 @@ pub fn create_insurer(conn: &Connection, input: InsurerInput) -> Result<String> 
     conn.execute(
         "INSERT INTO insurers (id,name,created_at,updated_at,version,device_id,is_deleted) \
          VALUES (?1,?2,?3,?4,?5,?6,0)",
-        rusqlite::params![id, name, now, now, 1, device_id()],
+        rusqlite::params![id, name, now, now, 1, device_id(conn)?],
     )?;
     Ok(id)
 }
@@ -128,7 +129,7 @@ pub fn update_insurer(conn: &Connection, id: &str, input: InsurerUpdateInput) ->
 
     conn.execute(
         "UPDATE insurers SET name=?1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
-        rusqlite::params![name, now_iso(), device_id(), id],
+        rusqlite::params![name, now_iso(), device_id(conn)?, id],
     )?;
     // 改名即时生效：引用指向 insurer_id，不回刷历史行（ADR-0082 决策 1）。
     Ok(())
@@ -154,7 +155,7 @@ pub fn delete_insurer(conn: &Connection, id: &str) -> Result<()> {
     }
     conn.execute(
         "UPDATE insurers SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-        rusqlite::params![id, now_iso(), device_id()],
+        rusqlite::params![id, now_iso(), device_id(conn)?],
     )?;
     Ok(())
 }

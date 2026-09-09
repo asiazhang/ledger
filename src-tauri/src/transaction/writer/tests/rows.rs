@@ -107,7 +107,7 @@ fn insert_row_writes_full_row_and_generates_audit_fields() {
         "新建行 created_at 与 updated_at 一致"
     );
     assert_eq!(version, 1);
-    assert_eq!(device_id, crate::db::device_id());
+    assert_eq!(device_id, crate::sync_engine::device_id(&conn).unwrap());
     assert_eq!(is_deleted, 0);
 }
 
