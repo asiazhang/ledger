@@ -64,11 +64,13 @@ globalStyle(`.${MOBILE_CARD_CLASS} .n-form-item--left-labelled .n-form-item-labe
 })
 
 /**
- * 按钮行底部固定：表单（非 inline）与其节奏容器（ADR-0079 决策 4 的 12px
- * NSpace vertical）依次撑满剩余高度，节奏容器末块（「取消 + 主操作」按钮行，
- * 调用点统一编排在此）以 auto 外边距推至卡片底部——主操作拇指可及。内容超高
- * 时滚动、auto 边距归零，按钮行随内容流（遮罩不关原则不动，表单不因固定按钮
- * 遮挡丢内容）。inline 表单（页面级筛选形态）不是弹窗表单约定对象，豁免。
+ * 按钮行底部固定：节奏容器（ADR-0079 决策 4 的 12px NSpace vertical）撑满
+ * 剩余高度，其末块（「取消 + 主操作」按钮行，调用点统一编排在此）以 auto
+ * 外边距推至卡片底部——主操作拇指可及。内容超高时滚动、auto 边距归零，
+ * 按钮行随内容流（遮罩不关原则不动，表单不因固定按钮遮挡丢内容）。两个
+ * 作用面：表单弹窗的节奏容器（表单自身先撑满剩余高度）；无表单内容形态
+ * （确认框族：说明段 + 按钮行的裸节奏容器直挂内容区）。inline 表单（页面
+ * 级筛选形态）不是弹窗表单约定对象，豁免。
  */
 globalStyle(`.${MOBILE_CARD_CLASS} form.n-form:not(.n-form--inline)`, {
   display: 'flex',
@@ -76,22 +78,16 @@ globalStyle(`.${MOBILE_CARD_CLASS} form.n-form:not(.n-form--inline)`, {
   flexGrow: 1,
 })
 
-globalStyle(`.${MOBILE_CARD_CLASS} form.n-form:not(.n-form--inline) > .n-space`, {
-  flexGrow: 1,
-})
+globalStyle(
+  `.${MOBILE_CARD_CLASS} form.n-form:not(.n-form--inline) > .n-space, .${MOBILE_CARD_CLASS} .n-card-content > .n-space`,
+  {
+    flexGrow: 1,
+  },
+)
 
-globalStyle(`.${MOBILE_CARD_CLASS} form.n-form:not(.n-form--inline) > .n-space > :last-child`, {
-  marginTop: 'auto',
-})
-
-/**
- * 无表单内容形态（确认框族：说明段 + 按钮行的裸节奏容器直挂内容区）同规：
- * 节奏容器撑满、末块推底。
- */
-globalStyle(`.${MOBILE_CARD_CLASS} .n-card-content > .n-space`, {
-  flexGrow: 1,
-})
-
-globalStyle(`.${MOBILE_CARD_CLASS} .n-card-content > .n-space > :last-child`, {
-  marginTop: 'auto',
-})
+globalStyle(
+  `.${MOBILE_CARD_CLASS} form.n-form:not(.n-form--inline) > .n-space > :last-child, .${MOBILE_CARD_CLASS} .n-card-content > .n-space > :last-child`,
+  {
+    marginTop: 'auto',
+  },
+)

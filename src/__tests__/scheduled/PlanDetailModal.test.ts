@@ -6,6 +6,8 @@ import { mountFlushed } from '../helpers/mount'
 import { makeOccurrence } from '../factories'
 import { formatAmount } from '@/utils/money'
 import { refCurrencies } from '../helpers/reference-stubs'
+import { MOBILE_CARD_CLASS } from '@/components/app-modal.css.ts'
+import { setFakeMedia } from '../helpers/media-mock'
 import type {
   Account,
   Category,
@@ -328,5 +330,28 @@ describe('PlanDetailModal 展开更多期次（issue #205）', () => {
     const wrapper = await mountModal()
     await openModal(wrapper)
     expect(exists('[data-testid="occ-expand"]')).toBe(false)
+  })
+})
+
+// issue #844 代表挂载：lg 档（表格详情类）弹窗在移动档自动全屏化，期次表格
+// 作为滚动方案（内容区纵向滚动）的真实作用面在场。
+describe('PlanDetailModal 移动档全屏化（issue #844）', () => {
+  it('lg 表格详情弹窗移动档呈全屏化结构：卡片钩子类 + 近全屏尺寸 + 期次表在场', async () => {
+    setFakeMedia({ width: 390 })
+    mockDetails.set(
+      'plan-1',
+      makeDetail(makeCore({ id: 'plan-1' }), {
+        pending: [makeOccurrence({ id: 'o1', scheduled_date: '2026-04-01' })],
+      }),
+    )
+    const wrapper = await mountModal()
+    await openModal(wrapper)
+
+    const card = document.body.querySelector('.n-card')
+    expect(card, '卡片应存在').not.toBeNull()
+    expect(card!.classList.contains(MOBILE_CARD_CLASS)).toBe(true)
+    expect((card as HTMLElement).style.width).toBe('calc(100vw - 32px)')
+    // 滚动方案的作用面：期次表格真实渲染于卡片内容区
+    expect(document.body.querySelector('.n-card-content .n-data-table')).not.toBeNull()
   })
 })

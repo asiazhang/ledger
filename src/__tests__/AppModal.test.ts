@@ -194,6 +194,17 @@ describe('AppModal 弹窗移动档（issue #844 / ADR-0088 决策 8 全屏化分
     expect(onUpdateShow).toHaveBeenCalledWith(false)
   })
 
+  it('移动档 ESC 照常关闭（弹层库默认行为，关闭通道零变化）', async () => {
+    setFakeMedia({ width: 390 })
+    const { onUpdateShow } = mountModal()
+    await flushPromises()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', bubbles: true }))
+    await flushPromises()
+
+    expect(onUpdateShow).toHaveBeenCalledWith(false)
+  })
+
   it('移动档开/关上报弹层注册表照常（快捷键抑制不回归）', async () => {
     setFakeMedia({ width: 390 })
     resetOverlays()
