@@ -23,9 +23,13 @@ export type InstrumentInfoSyncOutcome = Exclude<InstrumentInfoSyncStatus, 'idle'
  *
  * 同步全程可见（issue #897 / ADR-0095）：接缝订阅后端确定进度事件
  * [`INSTRUMENT_SYNC_PROGRESS_EVENT`]（payload `{ done, total }`），经
- * `progress` 产出可观察进度；进度状态为模块级共享单例（两入口渲染同一份
- * 状态，切页不丢进度），仅在途同步期间接受事件，终态（成功/失败）收起清空。
- * 在途短路期间进度共享：重复 `sync()` 复用唯一那次在途同步的进度。
+ * `progress` 产出可观察进度；同步全程唯一——任一入口在途时，其余入口的
+ * `sync()` 一律短路复用同一承诺、不并发第二次同步。
+ *
+ * **全部接缝状态为模块级共享单例**（唯一读写方是本模块的事件订阅与 sync
+ * 生命周期，先例：globalBusy 的聚合计数）：同步只有一场，进行中/进度/结果
+ * 消息就是同一份——两入口渲染同一状态、行为零分叉，短路入口与发起入口看到
+ * 完全相同的终态反馈（按钮 loading、结果消息/错误提示），切页不丢状态。
  */
 
 /** 标的信息同步进度事件名（issue #897 / ADR-0095；带 payload，与无 payload
@@ -33,11 +37,15 @@ export type InstrumentInfoSyncOutcome = Exclude<InstrumentInfoSyncStatus, 'idle'
  * 载荷形状见 `types/sync.ts` 的 InstrumentSyncProgress。 */
 export const INSTRUMENT_SYNC_PROGRESS_EVENT = 'ledger:instrument-sync-progress'
 
-/**
- * 进度状态：模块级共享单例（唯一读写方是本模块的事件订阅与 sync 生命周期，
- * 先例：globalBusy 的聚合计数）。两入口的接缝实例经同一份 ref 天然一致，
- * 页签切换（组件卸载重建）后进度仍在。
- */
+/** 同步进行中：按钮 loading 的唯一来源（两入口共享，短路入口同样成立）。 */
+const syncing = ref(false)
+/** 反馈文案：同步结果（含「暂无标的可同步」）或失败信息 */
+const resultMessage = ref<string | null>(null)
+/** 反馈状态：成功/失败，供消息着色 */
+const status = ref<InstrumentInfoSyncStatus>('idle')
+/** 最近一次同步结果（含同步/跳过统计），便于调用方按需展示 */
+const lastResult = ref<SyncInstrumentInfoResult | null>(null)
+/** 确定进度（issue #897）：终态收起清空，两入口共享同一份 */
 const progress = ref<InstrumentSyncProgress | null>(null)
 
 /** 在途同步计数：进度事件只在该计数非零时被接受（终态后迟到事件不复活进度条）。 */
@@ -59,13 +67,13 @@ function ensureProgressSubscription(): void {
   // 先例：globalBusy 聚合计数）；注册失败静默（本地事件，极少发生）。
   void listen<InstrumentSyncProgress>(INSTRUMENT_SYNC_PROGRESS_EVENT, (event) => {
     // 守卫：进度事件只在同步在途时有意义——终态后迟到的 (done, total)
-    // 不得让进度条复活；载荷形状异常（脏数据）一并忽略。
+    // 不得让进度条复活；载荷形状异常（脏数据/NaN）一并忽略。
     const payload = event.payload as Partial<InstrumentSyncProgress> | undefined
     if (
       inFlightSyncs > 0 &&
       payload &&
-      typeof payload.done === 'number' &&
-      typeof payload.total === 'number'
+      typeof payload.done === 'number' && Number.isFinite(payload.done) &&
+      typeof payload.total === 'number' && Number.isFinite(payload.total)
     ) {
       progress.value = { done: payload.done, total: payload.total }
     }
@@ -75,10 +83,14 @@ function ensureProgressSubscription(): void {
 }
 
 /**
- * 测试隔离用：清空进度状态与在途计数、撤销订阅登记（先例：resetGlobalBusy）。
- * 生产代码不得调用。
+ * 测试隔离用：清空全部接缝状态与在途计数、撤销订阅登记
+ *（先例：resetGlobalBusy）。生产代码不得调用。
  */
-export function resetInstrumentSyncProgress(): void {
+export function resetInstrumentInfoSyncForTest(): void {
+  syncing.value = false
+  resultMessage.value = null
+  status.value = 'idle'
+  lastResult.value = null
   progress.value = null
   inFlightSyncs = 0
   inFlight = null
@@ -86,19 +98,16 @@ export function resetInstrumentSyncProgress(): void {
 }
 
 /**
- * 标的信息同步接缝（标的页/盈亏页共用；行为一致性由同一接缝保证）。
+ * 标的信息同步接缝（标的页/盈亏页共用；状态为模块级单例，行为一致性由
+ * 同一接缝同一份状态保证——短路入口与发起入口零分叉）。
  */
 export function useInstrumentInfoSync() {
   ensureProgressSubscription()
-  const syncing = ref(false)
-  /** 反馈文案：同步结果（含「暂无标的可同步」）或失败信息 */
-  const resultMessage = ref<string | null>(null)
-  /** 反馈状态：成功/失败，供消息着色 */
-  const status = ref<InstrumentInfoSyncStatus>('idle')
-  /** 最近一次同步结果（含同步/跳过统计），便于调用方按需展示 */
-  const lastResult = ref<SyncInstrumentInfoResult | null>(null)
 
   function sync(): Promise<InstrumentInfoSyncOutcome> {
+    // 在途短路：直接复用唯一那次在途同步的承诺。本实例无需自行置 loading/
+    // 清消息——全部状态是模块级单例，进行中的表现（按钮 loading、进度条）
+    // 与终态反馈（结果消息/错误提示）随共享状态自然到达本入口。
     if (inFlight) return inFlight
     syncing.value = true
     resultMessage.value = null

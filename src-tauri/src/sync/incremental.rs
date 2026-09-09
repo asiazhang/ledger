@@ -36,7 +36,7 @@ use crate::investment::prices::{
 };
 use crate::transaction::amount::default_currency_code;
 
-use super::fund_nav::{LsjzPage, NavQuery, sync_one_fund_nav};
+use super::fund_nav::{FundSyncStats, LsjzPage, NavQuery, sync_one_fund_nav};
 use super::http::{
     KlineBar, Pacer, StockItem, ULIST_BATCH_SIZE, build_client, fetch_fx_kline, fetch_kline,
     fetch_ulist, price_cents_from_raw, secid_prefix,
@@ -180,13 +180,16 @@ where
 
     // 进度分母（issue #897 / ADR-0095）：有通道标的数 = 可构造查询的行情分区
     // 标的（市场未知无法构造 secid，计入跳过、不进分母）+ 有真实代码（6 位）的
-    // 基金（名称充代码行计入跳过、不进分母）。收集与分区已完成，立即发 total；
-    // total 为 0 不发任何进度事件。
-    let total = queryable.len()
-        + funds
-            .iter()
-            .filter(|f| is_six_digit_code(&f.symbol))
-            .count();
+    // 基金（名称充代码行计入跳过、不进分母）。可拉取基金集合单点派生——分母、
+    // 基金循环与跳过计数共用同一集合，done == total 不变量由结构保证；
+    // 收集与分区完成后立即发 total；total 为 0 不发任何进度事件。
+    let syncable_funds: Vec<&SyncInstrument> = funds
+        .iter()
+        .filter(|f| is_six_digit_code(&f.symbol))
+        .copied()
+        .collect();
+    let skipped_name_as_code = funds.len() - syncable_funds.len();
+    let total = queryable.len() + syncable_funds.len();
     if total > 0 {
         progress(0, total);
     }
@@ -266,19 +269,15 @@ where
     //（ADR-0038 决策 6，委托 [`sync_one_fund_nav`]）+ 权威名称随行刷新（issue
     // #827，净值报文不携带名称，逐只经基金详情通道；每只有码基金一请求）合并为
     // 该基金的一格——净值与名称都完成才推进；「已是最新（无新净值）」同样推进。
-    // 名称充代码行（非 6 位）无通道：计入跳过、零请求、不进分母。
-    let mut fund_synced = 0usize;
-    let mut fund_skipped = 0usize;
-    let mut fund_written = 0usize;
-    for fund in &funds {
-        if !is_six_digit_code(&fund.symbol) {
-            fund_skipped += 1;
-            continue;
-        }
-        let one = sync_one_fund_nav(conn, fund, fetch_nav)?;
-        fund_synced += one.synced;
-        fund_skipped += one.skipped;
-        fund_written += one.written;
+    // 名称充代码行（非 6 位）无通道：不进 syncable_funds（不进分母、零请求），
+    // 计数由 len 差值派生（见上方 skipped_name_as_code）。
+    let mut fund_stats = FundSyncStats {
+        synced: 0,
+        skipped: 0,
+        written: 0,
+    };
+    for fund in &syncable_funds {
+        sync_one_fund_nav(conn, fund, fetch_nav, &mut fund_stats)?;
         let name = fetch_fund_name(&fund.symbol)?;
         if refresh_instrument_name(conn, &fund.instrument_id, &name)? {
             renamed += 1;
@@ -287,12 +286,13 @@ where
         progress(done, total);
     }
 
-    let synced = synced_codes.len() + fund_synced;
+    let synced = synced_codes.len() + fund_stats.synced;
     // 已查询但未取到有效价的（停牌/无效价/查询无果）计入跳过。
     let invalid = queryable.len() - synced_codes.len();
-    let skipped = no_quote_source + skipped_unqueryable + invalid + fund_skipped;
+    let skipped =
+        no_quote_source + skipped_unqueryable + invalid + skipped_name_as_code + fund_stats.skipped;
     // 实际写入 = 股票有效价 + 基金实际落库净值（基金「已是最新」不算写入）。
-    let written = synced_codes.len() + fund_written;
+    let written = synced_codes.len() + fund_stats.written;
 
     Ok(SyncInstrumentInfoResult {
         synced,

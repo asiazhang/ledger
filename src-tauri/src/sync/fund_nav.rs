@@ -202,8 +202,8 @@ pub(super) fn fetch_nav_page_from(
 
 /// 基金分区的同步统计（与 [`super::incremental`] 的股票统计同源汇总）：
 /// `synced` = 处理成功（含「已是最新、无新净值」）；`skipped` = 无法拉取
-/// （非 6 位代码 / 首刷查无净值）；`written` = 实际落库净值的只数（价格失效
-/// 信号判定依据，零变化不广播）。
+/// （首刷查无净值；名称充代码行的跳过计数由编排层派生，不入本结构）；
+/// `written` = 实际落库净值的只数（价格失效信号判定依据，零变化不广播）。
 pub(super) struct FundSyncStats {
     pub(super) synced: usize,
     pub(super) skipped: usize,
@@ -215,7 +215,9 @@ pub(super) struct FundSyncStats {
 /// 现价缓存的净值日期为水位增量回填——净值点降采样落 PriceHistory（同周
 /// 整周覆盖幂等），窗口内最新公布净值落现价缓存（现价 = 单位净值、
 /// priced_at = nav_date = 净值日期，与 #301 添加基金同形）。页抓取闭包由
-/// 调用方注入（生产接 HTTP 层，测试 mock），本函数不触碰网络。
+/// 调用方注入（生产接 HTTP 层，测试 mock），本函数不触碰网络；单只结果累加
+/// 进调用方的 `stats`（基金间的遍历、名称随行刷新与进度推进归编排层，
+/// issue #897）。
 ///
 /// **前置条件**：`fund` 为 6 位真实代码的有通道基金行——名称充代码行（查不到
 /// 净值）由调用方计入跳过、零请求（issue #897 起跳过判定与分母口径同收编排层）。
@@ -225,16 +227,12 @@ pub(super) fn sync_one_fund_nav<N>(
     conn: &Connection,
     fund: &super::incremental::SyncInstrument,
     fetch_nav: &mut N,
-) -> Result<FundSyncStats>
+    stats: &mut FundSyncStats,
+) -> Result<()>
 where
     N: FnMut(&NavQuery) -> Result<LsjzPage>,
 {
     let today = super::incremental::beijing_today();
-    let mut stats = FundSyncStats {
-        synced: 0,
-        skipped: 0,
-        written: 0,
-    };
     // 水位 = 现价缓存的净值日期（股票行恒 NULL，基金行由 #301/本通道写入）。
     let watermark: Option<String> = conn
         .query_row(
@@ -275,7 +273,7 @@ where
             // 首刷查无净值（查无此码 / 新基金未公布首期）：无法拉取，计入跳过。
             stats.skipped += 1;
         }
-        return Ok(stats);
+        return Ok(());
     }
 
     // 周采样落库：单位净值即价格（ADR-0038 决策 3），与日线共用降采样与
@@ -304,7 +302,7 @@ where
     // 该只、不中断同步。
     let Some(latest) = points.iter().max_by_key(|p| p.date.as_str()) else {
         tracing::warn!(code = %fund.symbol, "净值点意外为空，跳过现价更新");
-        return Ok(stats);
+        return Ok(());
     };
     upsert_market_price(
         conn,
@@ -317,5 +315,5 @@ where
     )?;
     stats.synced += 1;
     stats.written += 1;
-    Ok(stats)
+    Ok(())
 }

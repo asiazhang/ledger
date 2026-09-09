@@ -6,7 +6,7 @@ import { useReferenceStore } from '@/stores/reference'
 import HoldingsOverview from '@/components/investments/HoldingsOverview.vue'
 import {
   INSTRUMENT_SYNC_PROGRESS_EVENT,
-  resetInstrumentSyncProgress,
+  resetInstrumentInfoSyncForTest,
 } from '@/composables/useInstrumentInfoSync'
 import { captureListenHandlers } from './helpers/listen-mock'
 import { formatAmount, formatPrice } from '@/utils/money'
@@ -232,7 +232,7 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
           }),
       },
     })
-    resetInstrumentSyncProgress()
+    resetInstrumentInfoSyncForTest()
     const handlers = captureListenHandlers()
     wrapper = mount(HoldingsOverview)
     await flushPromises()

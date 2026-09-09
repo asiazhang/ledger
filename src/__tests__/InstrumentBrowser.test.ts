@@ -7,7 +7,7 @@ import { useReferenceStore } from '@/stores/reference'
 import InstrumentBrowser from '@/components/investments/InstrumentBrowser.vue'
 import {
   INSTRUMENT_SYNC_PROGRESS_EVENT,
-  resetInstrumentSyncProgress,
+  resetInstrumentInfoSyncForTest,
 } from '@/composables/useInstrumentInfoSync'
 import { captureListenHandlers } from './helpers/listen-mock'
 import { makeInstrument } from './factories'
@@ -211,7 +211,7 @@ describe('InstrumentBrowser 同步确定进度条（issue #897 / ADR-0095）', (
           }),
       },
     })
-    resetInstrumentSyncProgress()
+    resetInstrumentInfoSyncForTest()
     const handlers = captureListenHandlers()
     const wrapper = mountBrowser()
     await flushPromises()

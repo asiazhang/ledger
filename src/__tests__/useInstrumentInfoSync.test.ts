@@ -8,7 +8,7 @@ import {
 } from './helpers/listen-mock'
 import {
   INSTRUMENT_SYNC_PROGRESS_EVENT,
-  resetInstrumentSyncProgress,
+  resetInstrumentInfoSyncForTest,
   useInstrumentInfoSync,
 } from '@/composables/useInstrumentInfoSync'
 
@@ -75,7 +75,7 @@ describe('useInstrumentInfoSync 标的信息同步（标的页/盈亏页共用�
 let progressHandlers: CapturedListener[] = []
 
 beforeEach(() => {
-  resetInstrumentSyncProgress()
+  resetInstrumentInfoSyncForTest()
   progressHandlers = captureListenHandlers()
 })
 
@@ -187,7 +187,7 @@ describe('useInstrumentInfoSync 同步进度（issue #897）', () => {
     await expect(p2).resolves.toBe('success')
   })
 
-  it('在途短路期间进度共享：另一实例消费同一份进度状态', async () => {
+  it('在途短路期间进度共享：另一实例消费同一份进度状态，终态反馈零分叉', async () => {
     let resolveSync!: (v: unknown) => void
     mockInvoke.mockImplementation(
       () => new Promise((res) => { resolveSync = res }),
@@ -210,6 +210,27 @@ describe('useInstrumentInfoSync 同步进度（issue #897）', () => {
     await expect(p2).resolves.toBe('success')
     expect(first.progress.value).toBeNull()
     expect(second.progress.value).toBeNull()
+    // 终态反馈两入口同显同一份（短路口不缺按钮 loading 与结果消息）
+    expect(second.resultMessage.value).toBe('已同步 100 只，跳过 0 只')
+    expect(second.status.value).toBe('success')
+  })
+
+  it('短路入口的失败终态反馈同样到达（错误消息零分叉）', async () => {
+    let rejectSync!: (e: unknown) => void
+    mockInvoke.mockImplementation(
+      () => new Promise((_, rej) => { rejectSync = rej }),
+    )
+    const first = useInstrumentInfoSync()
+    const p1 = first.sync()
+    const second = useInstrumentInfoSync()
+    const p2 = second.sync()
+
+    rejectSync(new Error('网络错误'))
+    await expect(p1).resolves.toBe('error')
+    await expect(p2).resolves.toBe('error')
+    expect(second.resultMessage.value).toBe('同步失败：网络错误')
+    expect(second.status.value).toBe('error')
+    expect(second.progress.value).toBeNull()
   })
 
   it('载荷形状异常的进度事件被忽略（防脏 payload 渲染）', async () => {
@@ -221,6 +242,7 @@ describe('useInstrumentInfoSync 同步进度（issue #897）', () => {
     const p = sync()
     fireProgress(undefined)
     fireProgress({ done: 'x' })
+    fireProgress({ done: Number.NaN, total: Number.NaN })
     await flushPromises()
     expect(progress.value).toBeNull()
     resolveSync({ synced: 0, skipped: 0, message: '暂无标的可同步' })
