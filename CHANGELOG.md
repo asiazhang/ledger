@@ -24,6 +24,10 @@
 - **桌面**：窗口最小宽 900 → 360——窄窗口下自动进入移动档布局，<840 自此为受支持形态（[#842]，ADR-0088 已裁决的桌面可见变化）。
 - **桌面**：交易列表每行新增常显「⋯」操作按钮（点开与右键同一菜单）——三端操作一致（[#843]，ADR-0088 已裁决的桌面可见变化）。
 
+### Fixed
+
+- **发布**：修复 Windows 发布行 pnpm install 必然失败（ERR_PNPM_INVALID_PATCH）——补丁文件随检出端行尾配置被检成 CRLF 后 pnpm 解析报错，仓库现强制补丁文件以 LF 检出（[#917]）。
+
 ## [0.6.0] - 2026-09-08
 
 ### Added
@@ -275,3 +279,4 @@
 [#893]: https://github.com/asiazhang/ledger/issues/893
 [#894]: https://github.com/asiazhang/ledger/issues/894
 [#897]: https://github.com/asiazhang/ledger/issues/897
+[#917]: https://github.com/asiazhang/ledger/issues/917

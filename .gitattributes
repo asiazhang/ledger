@@ -1,0 +1,6 @@
+# pnpm 补丁解析器把行尾 \r 当作未引号文件名里的非法字符（ERR_PNPM_INVALID_PATCH，
+# issue #917）：Windows runner/开发机默认 core.autocrlf=true 会把补丁文件检成 CRLF，
+# 而 Linux/macOS 行检出 LF 正常。强制补丁文件一律以 LF 检出，不随检出端行尾
+# 配置漂移；属性随提交树生效，对 CI 全新 clone 与本地开发机同时生效。已检成
+# CRLF 的既有工作副本需重新检出该文件一次（git checkout -- <补丁文件>）。
+patches/**/*.patch text eol=lf
