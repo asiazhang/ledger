@@ -51,6 +51,7 @@ import StartupFailureScreen from '@/components/StartupFailureScreen.vue'
 import DevicePreferenceSyncHost from '@/components/DevicePreferenceSyncHost.vue'
 import MessageSinkBridge from '@/components/MessageSinkBridge.vue'
 import GlobalBusyBar from '@/components/GlobalBusyBar.vue'
+import BookSidebarEntry from '@/components/BookSidebarEntry.vue'
 import { loadSidebarCollapsed, saveSidebarCollapsed } from '@/utils/view-state'
 import { shortcutHint, useViewShortcuts } from '@/composables/useViewShortcuts'
 import {
@@ -343,16 +344,21 @@ const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(rou
             collapse-mode="width"
             @update:collapsed="updateSidebarCollapsed"
           >
-            <NSpace vertical :size="0">
+            <div class="sider-column">
               <component :is="title" />
-              <NMenu
-                :options="menuOptions"
-                :value="route.name as string"
-                :indent="16"
-                :node-props="nodeProps"
-                @update:value="handleSelect"
-              />
-            </NSpace>
+              <div class="sider-menu-area">
+                <NMenu
+                  :options="menuOptions"
+                  :value="route.name as string"
+                  :indent="16"
+                  :node-props="nodeProps"
+                  @update:value="handleSelect"
+                />
+              </div>
+              <!-- 侧栏左下角账本入口（issue #834 / ADR-0089）：当前账本名按钮 →
+                   清单弹层（切换/新建/改名/移除）；折叠时入口以浮标图标形态可达 -->
+              <BookSidebarEntry :collapsed="sidebarCollapsed" />
+            </div>
             <!-- 可排区右键组内排序菜单（issue #270/#359）：手动定位弹出 -->
             <AppDropdown
               trigger="manual"
@@ -384,6 +390,20 @@ const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(rou
 </template>
 
 <style scoped>
+/* 侧栏纵向骨架：标题行 → 菜单区（弹性伸展、独立滚动）→ 底部账本入口（issue #834）。
+   取代原 NSpace vertical size=0（wrap-item 包裹层会让 flex:1 失效）。 */
+.sider-column {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.sider-menu-area {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 /* 组标题行「更多」链接（issue #472 / ADR-0063 决策 1）。
    这些类位于 label 渲染函数 h() 创建的元素上，不带本组件 data-v 属性，
    scoped 原生类名选择器匹配不到，必须 :deep() 以 [data-v] 后代选择器命中
