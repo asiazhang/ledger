@@ -24,6 +24,24 @@ android {
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
     }
+    // 发布签名（issue #560 / ADR-0074 决策 3）：keystore.properties 由 CI 从 secrets
+    // 生成（本地开发通常不存在），存在时 release APK 用它签名；不存在时保持未签名。
+    // 配置创建与 signingConfig 赋值都必须条件化——半初始化的 release 签名配置会让
+    // 打包直接失败（SigningConfig "release" is missing required property "storeFile"）。
+    val keystorePropertiesFile = rootProject.file("keystore.properties")
+    signingConfigs {
+        if (keystorePropertiesFile.exists()) {
+            create("release") {
+                val keystoreProperties = Properties().apply {
+                    keystorePropertiesFile.inputStream().use { load(it) }
+                }
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["password"] as String
+                storeFile = file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["password"] as String
+            }
+        }
+    }
     buildTypes {
         getByName("debug") {
             manifestPlaceholders["usesCleartextTraffic"] = "true"
@@ -37,6 +55,9 @@ android {
             }
         }
         getByName("release") {
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = true
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }
