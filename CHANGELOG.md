@@ -16,6 +16,7 @@
 - **移动端**：界面适配刘海与手势条安全区（viewport-fit=cover）；全局忙碌条在移动档随顶部安全区下移，不被遮挡（[#842]）。
 - **AI 导入**：新增商户改名端点 `PUT /api/v1/merchants/{id}`——读回发现错名商户可直接纠正，改名即时生效、无需删后重导（[#884]）。
 - **交易**：交易页筛选与分页会话内保留——切到其他页再回来（侧栏切换、报表下钻往返、回退）原样恢复，数据按恢复的选择现拉，离开期间新记的账回来即见；应用重启回默认无筛选态；URL 下钻参数在场时永远生效；恢复页码超出数据有效范围时自动回落，不落空页；ESC 在无弹层时一键复位筛选回默认（[#893]）。
+- **报表**：报表页接入 ESC 复位——无弹层时按 ESC，期间回默认「当年」、分类下钻回基础态、商户排行档位回默认 Top 5；复位后离开再回来回到默认，已是默认态时按键无操作（[#894]）。
 
 ### Changed
 
@@ -270,4 +271,5 @@
 [#831]: https://github.com/asiazhang/ledger/issues/831
 [#884]: https://github.com/asiazhang/ledger/issues/884
 [#893]: https://github.com/asiazhang/ledger/issues/893
+[#894]: https://github.com/asiazhang/ledger/issues/894
 [#897]: https://github.com/asiazhang/ledger/issues/897

@@ -20,6 +20,7 @@ import { t } from '@/i18n'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { useReportsSessionStore } from '@/stores/reports-session'
+import { registerViewReset } from '@/composables/viewResetRegistry'
 import { kindSemanticColor } from '@/theme/semantic-colors'
 import {
   SOFT_BAR_PERCENTAGE,
@@ -57,6 +58,14 @@ const router = useRouter()
 // 冷启动回默认「当年」；不写 localStorage、不写回路由 URL。
 // 同值守卫与期间切换复位下钻两条规则内化在 store，视图只接线。
 const session = useReportsSessionStore()
+
+// ESC 复位接线（spec #892 / ADR-0094，issue #894）：本视图持有保留态，setup 期向
+// 复位回调注册表声明复位回调、作用域销毁时自动撤销（导航离开/跨断点换档卸载均不
+// 滞留注册态）；窗口行为守卫在无弹层 ESC 时消费。复位即清除保留态本身：走报表
+// 会话 store 的既有复位出口 resetToDefault（期间回默认「当年」、下钻回基础态、
+// TopN 回默认档），重拉由视图既有 watch 按实际变化照常驱动；无保留状态（全默认）
+// 时同值守卫幂等无操作。
+registerViewReset(session.resetToDefault)
 // 月度收支图三根语义色柱随主题响应式换色（issue #435）：色值单一来源在
 // @/theme/semantic-colors，与交易列表/搜索金额列同源；barChartData 读
 // app store 主题，切换外观即时重算，无需重建图表。

@@ -81,3 +81,33 @@ describe('useReportsSessionStore（issue #427 报表页会话状态）', () => {
     expect(useReportsSessionStore().merchantTopN).toBe(5)
   })
 })
+
+describe('resetToDefault（issue #894 ESC 复位出口）', () => {
+  it('偏离的期间/下钻/TopN 全部回默认：期间 = 当年快照、下钻 = 基础态、TopN = 默认档（清除保留态本身）', () => {
+    const store = useReportsSessionStore()
+    store.setPeriod({ from: '2025-01-01', to: '2025-12-31' })
+    store.setDrilldown('food')
+    store.setMerchantTopN(10)
+    store.resetToDefault()
+    expect(store.period).toEqual({ from: `${Y}-01-01`, to: `${Y}-12-31` })
+    expect(store.drilledRootId).toBeNull()
+    expect(store.merchantTopN).toBe(5)
+  })
+
+  it('复位经既有意图入口：期间已默认仅下钻偏离时，期间不动、只复位下钻', () => {
+    const store = useReportsSessionStore()
+    store.setDrilldown('food')
+    store.resetToDefault()
+    expect(store.period).toEqual({ from: `${Y}-01-01`, to: `${Y}-12-31` })
+    expect(store.drilledRootId).toBeNull()
+    expect(store.merchantTopN).toBe(5)
+  })
+
+  it('默认态复位幂等：全默认时复位无副作用（无保留状态无操作）', () => {
+    const store = useReportsSessionStore()
+    store.resetToDefault()
+    expect(store.period).toEqual({ from: `${Y}-01-01`, to: `${Y}-12-31` })
+    expect(store.drilledRootId).toBeNull()
+    expect(store.merchantTopN).toBe(5)
+  })
+})

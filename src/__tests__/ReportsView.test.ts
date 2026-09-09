@@ -2,10 +2,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
+import { defineComponent, h } from 'vue'
 import { NButton, NEmpty, NSelect } from 'naive-ui'
 import QuickTimeRange from '@/components/QuickTimeRange.vue'
 import ReportsView from '@/views/ReportsView.vue'
 import { categoryColor } from '@/utils/category-chart'
+import { useWindowGuard } from '@/composables/useWindowGuard'
+import { createOverlayToken, resetOverlays } from '@/composables/overlayRegistry'
+import { fireViewReset, clearViewResets } from '@/composables/viewResetRegistry'
 import { UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS, MERCHANT_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
 import { makeCategory } from './factories'
 import { formatAmount } from '@/utils/money'
@@ -939,5 +943,156 @@ describe('ReportsView 商户排行表格化 + TopN（issue #588 → #618）', ()
         kinds: MERCHANT_DRILLDOWN_KINDS,
       },
     })
+  })
+})
+
+describe('ReportsView ESC 复位接线（issue #894 / spec #892）：注册 → 守卫消费 → 清除保留态本身', () => {
+  beforeEach(() => {
+    resetOverlays()
+    clearViewResets()
+  })
+
+  afterEach(() => {
+    clearViewResets()
+  })
+
+  /** 窗口行为守卫宿主（App.vue 同构：守卫全局唯一）。 */
+  function mountGuardHost() {
+    const Host = defineComponent({
+      setup() {
+        useWindowGuard()
+        return () => h('div')
+      },
+    })
+    return mount(Host)
+  }
+
+  function fireEscape() {
+    document.body.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    )
+  }
+
+  it('无弹层 ESC 触发复位出口：期间回默认「当年」、下钻回基础态、TopN 回默认档，重拉照常；复位后卸载重挂 = 默认', async () => {
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
+    const guard = mountGuardHost()
+    const first = await mountReports()
+    await clickChip(first, '去年')
+    await clickBar(first, 0) // 图内下钻餐饮
+    await first.find('[data-testid="merchant-topn-10"] input').setValue(true)
+    await flushPromises()
+    expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', {
+      year: Y - 1,
+      from: `${Y - 1}-01-01`,
+      to: `${Y - 1}-12-31`,
+      topN: 10,
+    })
+
+    mockInvoke.mockClear()
+    fireEscape()
+    await flushPromises()
+    // 三卡以默认「当年」重拉、商户卡回默认档
+    expect(mockInvoke).toHaveBeenCalledWith('monthly_summary', {
+      year: Y,
+      from: `${Y}-01-01`,
+      to: `${Y}-12-31`,
+    })
+    expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', {
+      year: Y,
+      from: `${Y}-01-01`,
+      to: `${Y}-12-31`,
+      topN: 5,
+    })
+    expect(mockInvoke).toHaveBeenCalledWith('category_shares', {
+      kind: 'expense',
+      month: null,
+      year: null,
+      from: `${Y}-01-01`,
+      to: `${Y}-12-31`,
+    })
+    // 下钻回基础态（面包屑消失）、期间芯片回「当年」高亮
+    expect(breadcrumbOf(first).exists()).toBe(false)
+    expect(categoryChartProp('data', first).labels).toEqual(['餐饮', '交通', '未分类'])
+    expect(chip(first, '当年').props('type')).toBe('primary')
+    first.unmount()
+
+    // 复位即清除保留态本身：复位后卸载重挂 = 默认（不再回到去年的选择）
+    const second = await mountReports()
+    expect(mockInvoke).toHaveBeenCalledWith('merchant_shares', {
+      year: Y,
+      from: `${Y}-01-01`,
+      to: `${Y}-12-31`,
+      topN: 5,
+    })
+    expect(breadcrumbOf(second).exists()).toBe(false)
+    second.unmount()
+    guard.unmount()
+  })
+
+  it('仅下钻偏离（期间/TopN 已默认）：ESC 回基础态且不重拉（下钻是纯视图投影，同源数据）', async () => {
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
+    const guard = mountGuardHost()
+    const wrapper = await mountReports()
+    await clickBar(wrapper, 0)
+    expect(breadcrumbOf(wrapper).exists()).toBe(true)
+    mockInvoke.mockClear()
+    fireEscape()
+    await flushPromises()
+    expect(breadcrumbOf(wrapper).exists()).toBe(false)
+    expect(categoryChartProp('data', wrapper).labels).toEqual(['餐饮', '交通', '未分类'])
+    const reportCalls = mockInvoke.mock.calls.filter(([cmd]) =>
+      ['monthly_summary', 'category_shares', 'merchant_shares'].includes(cmd as string),
+    )
+    expect(reportCalls).toHaveLength(0)
+    wrapper.unmount()
+    guard.unmount()
+  })
+
+  it('无保留状态（全默认）ESC 幂等：不产生任何重拉', async () => {
+    const guard = mountGuardHost()
+    const wrapper = await mountReports()
+    mockInvoke.mockClear()
+    fireEscape()
+    await flushPromises()
+    expect(mockInvoke).not.toHaveBeenCalled()
+    wrapper.unmount()
+    guard.unmount()
+  })
+
+  it('有弹层时 ESC 不复位：弹层库默认关闭行为接管，保留态不动（一次按键只做一件事）', async () => {
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { list_categories: mockCategories, category_shares: mockShares },
+    })
+    const guard = mountGuardHost()
+    const wrapper = await mountReports()
+    await clickChip(wrapper, '去年')
+    await clickBar(wrapper, 0)
+    // 弹层注册表登记打开的弹层（AppModal/AppSelect 等封装组件的上报形态）
+    const token = createOverlayToken('modal')
+    token.set(true)
+    fireEscape()
+    await flushPromises()
+    // 期间与下钻保留态原样：仍以去年期间、下钻态呈现
+    expect(breadcrumbOf(wrapper).exists()).toBe(true)
+    expect(categoryChartProp('data', wrapper).labels).toEqual(['餐饮（直挂）', '零食'])
+    token.set(false)
+    wrapper.unmount()
+    guard.unmount()
+  })
+
+  it('视图卸载后复位注册自动撤销：守卫消费不再触达本视图（导航离开不滞留注册态）', async () => {
+    const guard = mountGuardHost()
+    const wrapper = await mountReports()
+    expect(fireViewReset()).toBe(true) // 挂载中：注册在场（默认态复位幂等不动作）
+    wrapper.unmount()
+    expect(fireViewReset()).toBe(false)
+    guard.unmount()
   })
 })
