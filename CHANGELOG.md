@@ -19,6 +19,7 @@
 - **移动端**：触屏交互适配——交易行常显「⋯」菜单，悬停信息点按可达（[#843]）。
 - **移动端**：Android 系统返回键/手势获得应用内语义——有弹层先关最上层，无弹层路由回退，路由栈底交还系统退出；遮罩点击不关的原则不变，桌面档无此通道（[#845]）。
 - **AI 导入**：新增商户改名端点 `PUT /api/v1/merchants/{id}`（[#884]）。
+- **AI 导入**：导入知识新增查询与分页纪律——子集检查用服务端过滤参数、分页读回以 `total` 为准核对总条数、buy/sell 标的关联认 `source` 字段（[#928]）。
 - **交易**：交易页筛选与分页会话内保留，切走再回原样恢复（[#893]）。
 - **发布**：Android arm64 APK 进入发布矩阵，随 GitHub Release 发布（[#559]）。
 - **发布**：Android APK 发布签名就绪——发布构建以 CI secrets 注入 keystore 签名，tag 构建缺签名 secrets 直接失败；试跑产物经 apksigner 校验可真机直装（[#560]）。
@@ -287,3 +288,4 @@
 [#897]: https://github.com/asiazhang/ledger/issues/897
 [#917]: https://github.com/asiazhang/ledger/issues/917
 [#920]: https://github.com/asiazhang/ledger/issues/920
+[#928]: https://github.com/asiazhang/ledger/issues/928
