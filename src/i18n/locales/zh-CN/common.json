@@ -54,6 +54,10 @@
   "globalBusyBar": {
     "label": "正在处理"
   },
+  "globalErrorBanner": {
+    "prefix": "界面渲染出错（已记录上报）：",
+    "dismiss": "知道了"
+  },
   "amountPrivacy": {
     "hide": "隐藏金额",
     "show": "显示金额"

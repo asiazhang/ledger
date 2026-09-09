@@ -1,4 +1,5 @@
-//! 系统 opener 命令壳：「打开日志目录」（issue #283）与「在访达中显示」（issue #653）。
+//! 系统 opener 命令壳：「打开日志目录」（issue #283）、「在访达中显示」（issue #653）
+//! 与「前端渲染错误回传落盘」（issue #926）。
 //!
 //! 纯壳系统命令，无业务语义（ADR-0056：确认纯壳不建域）。保持同步形态（形状乙
 //! sweep 判定，spec #498 / #503）：不触 DB，opener 调用是即发即忘的系统调用
@@ -17,6 +18,15 @@ pub fn open_log_dir(app: tauri::AppHandle) -> Result<(), String> {
         .open_path(dir, None::<&str>)
         .map_err(|e| format!("打开日志目录失败：{e}"))?;
     Ok(())
+}
+
+/// 前端渲染错误回传落盘（issue #926）：`app.config.errorHandler` 兜底的渲染层
+/// 异常经此命令写入应用日志（tracing ERROR 级，按天滚动文件可随「打开日志目录」
+/// 查看）。纯壳即发即忘：只记日志、无返回错误路径；节流/去重护栏在前端
+/// global-error-handler 单点内化，本命令不重复设防。
+#[tauri::command]
+pub fn log_frontend_error(message: String) {
+    tracing::error!(target: "frontend_error", "前端渲染错误 message={}", message);
 }
 
 /// 在系统文件管理器中定位指定文件（issue #653）：经系统 opener 插件的文件定位

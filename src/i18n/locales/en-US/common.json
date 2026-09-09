@@ -54,6 +54,10 @@
   "globalBusyBar": {
     "label": "Working"
   },
+  "globalErrorBanner": {
+    "prefix": "A rendering error occurred (logged): ",
+    "dismiss": "Dismiss"
+  },
   "amountPrivacy": {
     "hide": "Hide amounts",
     "show": "Show amounts"

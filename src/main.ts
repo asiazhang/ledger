@@ -5,10 +5,15 @@ import App from "./App.vue";
 import { router } from "./router";
 import { getSavedRouteName } from "@/utils/view-state";
 import { initAppLocale } from "@/i18n";
+import { installGlobalErrorHandler } from "@/utils/global-error-handler";
 
 async function bootstrap() {
   const app = createApp(App);
-  app.use(createPinia());
+  const pinia = createPinia();
+  app.use(pinia);
+  // 全局渲染错误兜底（issue #926）：渲染层异常 → 非阻断提示条 + 后端日志落盘；
+  // 需在 pinia 安装后、挂载前安装（handler 经 pinia 实例解析错误 store）。
+  installGlobalErrorHandler(app, pinia);
   app.use(router);
 
   // 界面语言：按判定链（手动覆盖 > 系统语言 > zh-CN）在首帧前解析完成，
