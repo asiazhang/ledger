@@ -1,0 +1,46 @@
+{
+  "entry": {
+    "label": "Books",
+    "open": "Books: view and switch books"
+  },
+  "panel": {
+    "current": "Current",
+    "new": "New book",
+    "rename": "Rename",
+    "remove": "Remove",
+    "removeConfirm": "A removed book can be registered again anytime; its files stay on disk. Remove “{name}”?",
+    "removeConfirmPositive": "Remove",
+    "loadFailed": "Failed to load books",
+    "retry": "Retry",
+    "empty": "No books"
+  },
+  "fallback": {
+    "title": "Book registry problem; fell back to the default book"
+  },
+  "switchDialog": {
+    "title": "Switch book",
+    "content": "Switching to “{name}” will reload the app: unsaved input is lost; the book data itself is not affected.",
+    "confirm": "Switch & reload",
+    "cancel": "Cancel"
+  },
+  "createModal": {
+    "title": "New book",
+    "nameLabel": "Book name",
+    "namePlaceholder": "e.g. Family",
+    "confirm": "Create",
+    "cancel": "Cancel"
+  },
+  "renameModal": {
+    "title": "Rename book",
+    "nameLabel": "Book name",
+    "confirm": "Save",
+    "cancel": "Cancel"
+  },
+  "toasts": {
+    "created": "Book “{name}” created; its database is created on first entry",
+    "renamed": "Renamed to “{name}”",
+    "removed": "Book “{name}” removed; files remain on disk",
+    "switching": "Switching to “{name}”; reloading the app",
+    "loadFailed": "Failed to load books: {msg}"
+  }
+}
