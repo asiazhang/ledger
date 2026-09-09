@@ -33,6 +33,9 @@ bun scripts/check-commands.ts
 echo "▶ 结构守门检查 (bun scripts/check-structure.ts)"
 bun scripts/check-structure.ts
 
+echo "▶ 样式块守门检查 (bun scripts/check-style-blocks.ts)"
+bun scripts/check-style-blocks.ts
+
 echo "▶ i18n key 全等检查 (bun scripts/check-i18n-keys.ts)"
 bun scripts/check-i18n-keys.ts
 

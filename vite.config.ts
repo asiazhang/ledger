@@ -77,7 +77,17 @@ function windowTierBreakpointCss(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [vue(), windowTierBreakpointCss()],
+  // vanilla-extract 插件（issue #888 / ADR-0093）：构建期把 *.css.ts 编译为
+  // 静态 CSS，无 codegen 产物目录；置于 vue 插件之前（官方推荐顺序）。
+  // 惰性动态导入：本模块被 useWindowTier.test.ts 直接导入（断点占位符替换
+  // 函数的测试消费方），静态引入 esbuild（vanilla-extract 依赖链）会在该测试
+  // 的 jsdom 环境下触发 TextEncoder 不变式崩溃；动态导入使导入本模块不拉起
+  // esbuild，仅真实 vite 构建时加载插件。
+  plugins: [
+    (await import("@vanilla-extract/vite-plugin")).vanillaExtractPlugin(),
+    vue(),
+    windowTierBreakpointCss(),
+  ],
 
   define,
 
