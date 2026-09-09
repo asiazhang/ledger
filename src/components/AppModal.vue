@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, useAttrs, watch } from 'vue'
+import { computed } from 'vue'
 import { NModal } from 'naive-ui'
-import { createOverlayToken } from '@/composables/overlayRegistry'
+import { useOverlayReporting } from '@/composables/useOverlayReporting'
 import { useWindowTier } from '@/composables/useWindowTier'
 import { MOBILE_CARD_CLASS } from './app-modal.css.ts'
 
@@ -19,10 +19,12 @@ import { MOBILE_CARD_CLASS } from './app-modal.css.ts'
 // 默认。两者均可被调用方显式覆盖：仍传 style 宽度或 :bordered 的既有调用
 // 点行为不变（style 冲突时调用方显式值胜出）。
 //
-// 另接入弹层注册表（ADR-0035）：开/关状态实时上报，驱动快捷键抑制。刻意
-// 不声明 show prop（原因见 AppSelect 注释）：非受控/受控内部触发的开合经根上
+// 另接入弹层注册表（ADR-0035）：开/关状态实时上报，驱动快捷键抑制。上报与
+// 关闭通道（含系统返回桥接的「关最上层」出口，issue #845）收口于
+// useOverlayReporting：刻意不声明 show prop——非受控/受控内部触发的开合经根上
 // 的 update:show 监听上报，受控调用方直接改 :show prop 的开合由 attrs watch
-// 兜底。
+// 兕底；关闭请求中继调用方 update:show 监听器（与 ESC 关闭同一条路径），根上
+// 显式绑定 :show（值恒等于调用方传入，行为不变）。
 //
 // 弹窗移动档（issue #844 / ADR-0088 决策 8）：窗口分级落移动档（<840）时统一
 // 走全屏化分支——近全屏卡片、标签上置、按钮行底部固定（后两者为纯 CSS，收口
@@ -57,16 +59,7 @@ const cardStyle = computed(() => {
   return props.cardSize === undefined ? undefined : { width: `${CARD_WIDTH_PX[props.cardSize]}px` }
 })
 
-const attrs = useAttrs()
-const overlay = createOverlayToken('modal')
-const onUpdateShow = (value: boolean) => overlay.set(value)
-watch(
-  () => attrs.show,
-  (value) => {
-    if (value !== undefined) overlay.set(Boolean(value))
-  },
-  { immediate: true },
-)
+const { onUpdateShow, resolvedShow } = useOverlayReporting('modal')
 </script>
 
 <template>
@@ -75,6 +68,7 @@ watch(
     :mask-closable="maskClosable"
     :bordered="bordered"
     :style="cardStyle"
+    :show="resolvedShow"
     @update:show="onUpdateShow"
   >
     <template v-for="(_, name) in $slots" :key="name" #[name]="slotProps">

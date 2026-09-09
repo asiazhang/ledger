@@ -16,6 +16,7 @@
 - **多端同步**：本位币基准随同步在各设备一致生效；原「默认币种」更名为「展示币种」，仅影响本机展示（[#858]）。
 - **移动端**：窗口 <840 切换移动档导航壳（顶栏 + 抽屉），适配刘海与手势条安全区（[#842]）。
 - **移动端**：触屏交互适配——交易行常显「⋯」菜单，悬停信息点按可达（[#843]）。
+- **移动端**：Android 系统返回键/手势获得应用内语义——有弹层先关最上层，无弹层路由回退，路由栈底交还系统退出；遮罩点击不关的原则不变，桌面档无此通道（[#845]）。
 - **AI 导入**：新增商户改名端点 `PUT /api/v1/merchants/{id}`（[#884]）。
 - **交易**：交易页筛选与分页会话内保留，切走再回原样恢复（[#893]）。
 - **发布**：Android arm64 APK 进入发布矩阵，随 GitHub Release 发布（[#559]）。
@@ -267,6 +268,7 @@
 [#839]: https://github.com/asiazhang/ledger/issues/839
 [#842]: https://github.com/asiazhang/ledger/issues/842
 [#843]: https://github.com/asiazhang/ledger/issues/843
+[#845]: https://github.com/asiazhang/ledger/issues/845
 [#855]: https://github.com/asiazhang/ledger/issues/855
 [#856]: https://github.com/asiazhang/ledger/issues/856
 [#857]: https://github.com/asiazhang/ledger/issues/857

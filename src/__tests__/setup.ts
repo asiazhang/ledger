@@ -2,9 +2,11 @@ import { vi, beforeEach, afterEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { enableAutoUnmount } from '@vue/test-utils'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { setFileScope } from '@vanilla-extract/css/fileScope'
 import { mockInvoke, unexpectedInvoke } from './helpers/invoke-mock'
 import { mockListen } from './helpers/listen-mock'
+import { mockOnBackButtonPress } from './helpers/back-mock'
 import { fakeMatchMedia, resetFakeMedia } from './helpers/media-mock'
 import { messageApi, resetMessageApi } from './helpers/message-mock'
 
@@ -40,6 +42,16 @@ vi.mock('@tauri-apps/api/core', () => ({
 // Mock Tauri event listener
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn().mockResolvedValue(vi.fn()),
+}))
+
+// Mock Tauri app/window 模块（issue #845 系统返回桥接）：注册/撤销与窗口销毁
+// 经 helpers/back-mock 助手装配；默认实现为「注册即成功、销毁为 no-op」。App.vue
+// 的 setTitle 动态导入在 mock 下拿到裸 vi.fn()，返回 undefined 由其 try/catch 吸收。
+vi.mock('@tauri-apps/api/app', () => ({
+  onBackButtonPress: vi.fn(),
+}))
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: vi.fn(),
 }))
 
 // jsdom 缺少 matchMedia：挂媒体查询测试接缝（issue #841）——可编程假 matchMedia
@@ -90,6 +102,9 @@ beforeEach(() => {
   mockInvoke.mockImplementation(unexpectedInvoke as typeof invoke)
   mockListen.mockReset()
   mockListen.mockResolvedValue(vi.fn())
+  mockOnBackButtonPress.mockReset()
+  mockOnBackButtonPress.mockResolvedValue({ unregister: () => Promise.resolve() })
+  vi.mocked(getCurrentWindow).mockReset()
   setActivePinia(createPinia())
   localStorage.clear()
   resetMessageApi()
