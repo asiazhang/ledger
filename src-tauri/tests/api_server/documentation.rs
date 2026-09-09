@@ -366,17 +366,12 @@ async fn test_import_knowledge_covers_key_conventions() {
         "6 位代码",
         "GET /api/v1/funds",
         "名称充代码",
-        // 投资交易三步法关键词锁（issue #694 / ADR-0081）：先按代码查询 → 再创建
-        //（带精确市场）→ 写 buy/sell，与基金申赎节对称；名称充代码收敛为兜底；
-        // 查询未命中/东财降级/北交所边界与回填落价的确定性措辞。
-        "GET /api/v1/stocks",
-        "类型提示",
-        "精确市场",
-        "权威名称",
+        // 投资交易三步法关键词锁（issue #694 / ADR-0081）：先按代码查询 → 再创建 →
+        // 写 buy/sell，与基金申赎节对称；名称充代码收敛为兜底。查询未命中/东财
+        // 降级的流程措辞留此锁定；市场推断/类型提示/回填落价等行为语义已随
+        // #931 迁回契约端点描述，锁随内容迁至契约锁测试（见下）。
         "查无此码",
         "降级",
-        "北交所",
-        "美股",
         "兜底建行",
         // 个人间借贷教学关键词锁（issue #368 / ADR-0053）：落账映射方向
         // （借出=自资金账户转入 receivable、借入经 debt、还款反向转账、
@@ -397,20 +392,54 @@ async fn test_import_knowledge_covers_key_conventions() {
         "initial_balance_cents",
         "余额调整",
         "不自行清零余额",
-        // 契约端点教学迁入锁（issue #839）：OpenAPI 端点级长教学迁入知识对应节后，
-        // 锚定各迁入点的确定性措辞，防教学迁移静默丢失。
-        "静默复用",     // 标的创建 find-or-create（迁自 POST /instruments 描述）
-        "落最新价现价", // 标的创建东财增强落价（迁自 POST /instruments 描述）
-        "市场保留",     // 股票降级建行保留解析市场（迁自 POST /instruments 描述）
-        "拼音首字母",   // 标的搜索命中语义（迁自 GET /instruments 描述）
-        "恒 unknown",   // fund 标的市场收口（迁自 POST /instruments 描述）
-        "上限 100",     // 标的搜索封顶上限（迁自 GET /instruments 描述）
-        "不影响其余行", // 批量单行失败隔离（迁自 POST /transactions/batch 描述）
-        "稳定排序",     // 读回确定性排序（迁自 GET /transactions 描述）
-        "逗号分隔",     // kinds 多类型过滤（迁自 GET /transactions 描述）
+        // 契约端点教学迁入锁（issue #839 → #931 反向迁出）：#839 曾把端点教学迁入
+        // 知识并逐词锚定；#931 按「契约管字段语义、知识管流程（手写零复述）」把
+        // 行为语义迁回契约端点描述，锁随内容迁至下方契约锁测试；知识侧只留流程
+        // 措辞与契约缺口缓存（命中语义、fund 市场收口、降级流程后果）。
+        "恒 unknown", // fund 标的市场收口（知识侧差异教学保留）
+        "市场保留",   // 股票降级建行保留解析市场（流程后果措辞）
+        "稳定排序",   // 读回确定性排序（流程保证）
+        "逗号分隔",   // kinds 多类型过滤（读回用法）
     ];
     for kw in required_keywords {
         assert!(text.contains(kw), "导入知识应包含关键约定关键词 {kw:?}");
+    }
+}
+#[tokio::test]
+async fn test_contract_covers_behavior_semantics_keywords() {
+    let (app, _) = setup_app();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/contract")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = body_to_bytes(response.into_body()).await;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let text = serde_json::to_string(&value).unwrap();
+
+    // 行为语义关键词锁（issue #931）：知识侧的契约第二副本剪除后，行为语义措辞
+    // 回落契约端点描述（「手写零复述」）；本锁随内容迁至契约，防这些语义在
+    // 注解层被静默删除（知识侧流程锁见上一个测试）。
+    let required_keywords = [
+        "类型提示",             // GET /stocks 返回（stock/etf）
+        "精确市场",             // GET /stocks 返回与 POST /instruments 入参
+        "权威名称",             // 东财校验回填（POST /instruments 描述）
+        "北交所",               // 显式 400 边界（GET /stocks 描述）
+        "美股",                 // ticker 遍历三市场（GET /stocks 描述）
+        "静默复用",             // 标的 find-or-create（POST /instruments 描述）
+        "回填权威名称与最新价", // 东财增强落价（POST /instruments 描述）
+        "上限 100",             // 搜索封顶上限（GET /instruments 描述）
+        "不影响其余行",         // 批量单行失败隔离（POST /transactions/batch 描述）
+    ];
+    for kw in required_keywords {
+        assert!(text.contains(kw), "契约应包含行为语义关键词 {kw:?}");
     }
 }
 
