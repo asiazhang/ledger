@@ -242,6 +242,9 @@
     "log-level-invalid": "日志等级非法: {0}（合法值: error/warn/info/debug/trace）"
   },
   "sync-engine": {
-    "command-unsupported": "交易类型 {0} 的命令重放暂不支持（投资命令重放待后续版本）"
+    "command-unsupported": "交易类型 {0} 的命令重放暂不支持（投资命令重放待后续版本）",
+    "schema-ahead": "该操作来自更新版本的应用，升级本端后将自动重试",
+    "op-undecodable": "同步命令无法识别（可能产生自更高版本的应用）：{0}",
+    "replay-failed": "同步操作在本机执行失败，已挂起等待处理：{0}"
   }
 }

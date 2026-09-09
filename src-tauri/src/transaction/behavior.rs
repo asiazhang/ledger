@@ -519,8 +519,8 @@ fn update_command(id: &str, plan: &Plan) -> TransactionCommand {
 ///   内落日志，命令执行不得再追加本地 op。
 ///
 /// 投资命令（buy/sell 的创建/修改）v1 显式码化拒绝：持仓/卖出关联的确定性
-/// 重放依赖跨端标的身份解析，待 #861 补齐；失败 fail loud（op 不落日志、
-/// 重投递重试），挂起队列语义由 #856 承接。删除重放支持全部 kind（按行现状
+/// 重放依赖跨端标的身份解析，待 #861 补齐；失败由同步引擎挂起进队列（
+/// issue #856，不阻塞其余重放、重投递重试）。删除重放支持全部 kind（按行现状
 /// 执行与本地删除同一协议，含 buy 守卫与持仓清理）。
 pub(crate) fn replay_command(conn: &Connection, command: &TransactionCommand) -> Result<()> {
     match command {
@@ -533,14 +533,18 @@ pub(crate) fn replay_command(conn: &Connection, command: &TransactionCommand) ->
 /// 重放创建：普通 kind 原样落库（含余额缓存重算）；投资 kind 码化拒绝
 /// （v1 边界，待 #861）；dividend / split 与本地写入同码拒绝（kind-unsupported
 /// ——本地 plan 从不产出这两种命令，此处是伪造/漂移载荷的防御臂，防绕过
-/// 「暂不支持」守卫直落交易行）。
+/// 「暂不支持」守卫直落交易行）。落地前校验账户引用存活（issue #856：
+/// 「往已删账户记账」码化拒绝，引擎挂起待裁决，不自动复活已删账户）。
 fn replay_create(conn: &Connection, id: &str, row: &NormalizedTransaction) -> Result<()> {
     let row = writer::NormalizedRow::try_from(row)?;
     match row.kind {
         TransactionKind::Income
         | TransactionKind::Expense
         | TransactionKind::Transfer
-        | TransactionKind::Refund => writer::insert_row_with_id(conn, id, &row),
+        | TransactionKind::Refund => {
+            writer::validate_accounts_alive(conn, &row.account_id, row.to_account_id.as_deref())?;
+            writer::insert_row_with_id(conn, id, &row)
+        }
         TransactionKind::Buy | TransactionKind::Sell => Err(unsupported_replay_kind(row.kind)),
         TransactionKind::Dividend | TransactionKind::Split => Err(kind_unsupported(row.kind)),
     }
@@ -576,6 +580,9 @@ fn replay_update(conn: &Connection, id: &str, row: &NormalizedTransaction) -> Re
         return Err(unsupported_replay_kind(new_kind));
     }
     let row = writer::NormalizedRow::try_from(row)?;
+    // 账户引用存活守卫（issue #856，与重放创建同款）：修改不得把交易改挂到
+    // 已删账户上。
+    writer::validate_accounts_alive(conn, &row.account_id, row.to_account_id.as_deref())?;
     writer::update_row(conn, id, &row)
 }
 

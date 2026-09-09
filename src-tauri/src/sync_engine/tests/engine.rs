@@ -5,7 +5,7 @@
 //! 传递（#859 接线）；重放复用既有行为编排入口，不新增写接缝。
 //! 参考数据（账户字典）的同步归 #860，本目录两端以同一夹具等量种子。
 
-use super::super::{ApplyReport, DomainCommand, OpOutcome, apply_ops, read_ops};
+use super::super::{ApplyReport, DomainCommand, OpOutcome, apply_ops, parked_ops, read_ops};
 use super::common::{make_expense, read_transaction};
 use crate::test_support::{self, assert_balance_cache_matches_realtime, seed_account};
 use crate::transaction::behavior;
@@ -154,49 +154,55 @@ fn apply_ops_on_empty_batch_is_noop() {
 }
 
 #[test]
-fn failing_op_is_not_recorded_and_propagates() {
-    // 零丢失失败语义：执行不了的 op 不落日志、错误上抛（重投递会重试）；
-    // 此前已应用的 op 保持已应用。挂起队列（不阻塞其余重放）由 #856 承接。
+fn dependency_failure_parks_without_blocking_batch_and_redelivery_applies() {
+    // 挂起队列（issue #856 / ADR-0091 决策 6）：外键依赖失败（参考数据未同步）
+    // 的 op 进挂起队列并发码化错误，不阻塞其余 op 重放，不静默丢弃；依赖方
+    // 补齐后重投递自然重试，成功即出队。
     let conn_a = test_support::open();
     let conn_b = test_support::open();
     seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
     seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
 
-    // op1：合法（两端账户齐备）；op2：引用仅 A 端有的账户（B 端外键依赖失败，
-    // 真实世界对应「参考数据未同步」）。
+    // op1：合法（两端账户齐备）；op2：引用仅 A 端有的账户（B 端外键依赖失败）。
     seed_account(&conn_a, "acc-a-only", "A 独有账户", "cash", "CNY", 0);
     behavior::create(&conn_a, make_expense("acc-1", 10000, "好的")).unwrap();
-    behavior::create(&conn_a, make_expense("acc-a-only", 500, "坏引用")).unwrap();
+    let bad = behavior::create(&conn_a, make_expense("acc-a-only", 500, "坏引用"))
+        .unwrap()
+        .id;
     let ops = read_ops(&conn_a).unwrap();
     assert_eq!(ops.len(), 2);
 
-    apply_ops(&conn_b, &ops).unwrap_err();
-    // 失败 op 不落日志（重投递重试，不静默丢弃）；
+    let reports = apply_ops(&conn_b, &ops).unwrap();
     assert!(
-        read_ops(&conn_b)
+        matches!(&reports[0].outcome, OpOutcome::Applied),
+        "好 op 不受阻塞"
+    );
+    assert!(
+        matches!(&reports[1].outcome, OpOutcome::Parked { code, .. } if !code.is_empty()),
+        "坏引用挂起并发码化错误"
+    );
+    // 挂起 op 不落日志（未应用），账本无其效果，也不自动补建缺失账户。
+    assert!(
+        !read_ops(&conn_b)
             .unwrap()
             .iter()
-            .all(|op| op.op_id != ops[1].op_id)
+            .any(|op| op.op_id == ops[1].op_id)
     );
-    // 此前已应用的 op 保持已应用，且对应数据在库。
+    assert!(read_transaction(&conn_b, &bad).is_none());
+    let parked = parked_ops(&conn_b).unwrap();
+    assert_eq!(parked.len(), 1);
+    assert_eq!(parked[0].op_id, ops[1].op_id);
+    assert_eq!(parked[0].entity, "transaction");
+
+    // 依赖方补齐（A 独有账户同步到达）：重投递同一 op 自然重试，成功即出队。
+    seed_account(&conn_b, "acc-a-only", "A 独有账户", "cash", "CNY", 0);
+    let reports = apply_ops(&conn_b, &ops).unwrap();
+    assert_eq!(reports[0].outcome, OpOutcome::Skipped, "已应用 op 幂等跳过");
+    assert_eq!(reports[1].outcome, OpOutcome::Applied, "重投递自然重试成功");
     assert!(
-        read_ops(&conn_b)
-            .unwrap()
-            .iter()
-            .any(|op| op.op_id == ops[0].op_id),
-        "失败前的 op 保持已应用"
+        read_transaction(&conn_b, &bad).is_some(),
+        "补齐后重投递落地"
     );
-    let DomainCommand::Transaction(crate::transaction::TransactionCommand::Create {
-        id: applied_id,
-        ..
-    }) = &ops[0].command
-    else {
-        panic!("应为 create 命令");
-    };
-    assert!(
-        read_transaction(&conn_b, applied_id).is_some(),
-        "已应用 op 的数据在库"
-    );
-    // 幂等重试：仅重投失败 op 仍失败（非「已应用却报错」的假失败）。
-    assert!(apply_ops(&conn_b, &ops[1..]).is_err());
+    assert!(parked_ops(&conn_b).unwrap().is_empty(), "成功即出队");
+    assert_balance_cache_matches_realtime(&conn_b);
 }
