@@ -142,7 +142,9 @@
     "recordFailed": "Failed to record: {message}"
   },
   "sync": {
-    "failed": "Sync failed: {message}"
+    "failed": "Sync failed: {message}",
+    "progress": "Syncing instruments {done}/{total}",
+    "progressAriaLabel": "Instrument info sync progress"
   },
   "market": {
     "sh": "Shanghai",

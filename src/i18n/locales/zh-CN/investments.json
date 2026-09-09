@@ -142,7 +142,9 @@
     "recordFailed": "记账失败: {message}"
   },
   "sync": {
-    "failed": "同步失败：{message}"
+    "failed": "同步失败：{message}",
+    "progress": "同步标的信息 {done}/{total}",
+    "progressAriaLabel": "同步标的信息进度"
   },
   "market": {
     "sh": "沪市",

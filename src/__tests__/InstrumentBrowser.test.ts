@@ -5,6 +5,11 @@ import { h, nextTick } from 'vue'
 import { NDialogProvider } from 'naive-ui'
 import { useReferenceStore } from '@/stores/reference'
 import InstrumentBrowser from '@/components/investments/InstrumentBrowser.vue'
+import {
+  INSTRUMENT_SYNC_PROGRESS_EVENT,
+  resetInstrumentSyncProgress,
+} from '@/composables/useInstrumentInfoSync'
+import { captureListenHandlers } from './helpers/listen-mock'
 import { makeInstrument } from './factories'
 import {
   firePricesChanged,
@@ -191,6 +196,40 @@ describe('InstrumentBrowser 同步标的信息按钮', () => {
     await flushPromises()
     // 失败消息应包含具体原因，而非字符串化的 [object Object]
     expect(wrapper.text()).toContain('同步失败：网络错误')
+  })
+})
+
+describe('InstrumentBrowser 同步确定进度条（issue #897 / ADR-0095）', () => {
+  it('同步进行中在列表顶部展示确定进度条，完成后收起、结果消息接棒', async () => {
+    let resolveSync!: (v: unknown) => void
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        sync_instrument_info: () =>
+          new Promise((res) => {
+            resolveSync = res
+          }),
+      },
+    })
+    resetInstrumentSyncProgress()
+    const handlers = captureListenHandlers()
+    const wrapper = mountBrowser()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="instrument-sync-progress"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="sync-instrument-info"]').trigger('click')
+    await nextTick()
+    handlers.at(-1)!({ event: INSTRUMENT_SYNC_PROGRESS_EVENT, payload: { done: 37, total: 100 } })
+    await flushPromises()
+
+    const bar = wrapper.find('[data-testid="instrument-sync-progress"]')
+    expect(bar.exists()).toBe(true)
+    expect(bar.text()).toContain('同步标的信息 37/100')
+
+    resolveSync({ synced: 100, skipped: 0, message: '已同步 100 只，跳过 0 只' })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="instrument-sync-progress"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('已同步 100 只，跳过 0 只')
   })
 })
 

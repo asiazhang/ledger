@@ -4,6 +4,11 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
 import HoldingsOverview from '@/components/investments/HoldingsOverview.vue'
+import {
+  INSTRUMENT_SYNC_PROGRESS_EVENT,
+  resetInstrumentSyncProgress,
+} from '@/composables/useInstrumentInfoSync'
+import { captureListenHandlers } from './helpers/listen-mock'
 import { formatAmount, formatPrice } from '@/utils/money'
 import {
   makeHolding,
@@ -214,6 +219,38 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
     firePricesChanged()
     await flushPromises()
     expect(mockInvoke.mock.calls.filter(([c]) => c === 'list_holdings').length).toBe(callsBefore + 1)
+  })
+
+  it('同步进行中在卡顶展示确定进度条，完成后收起、结果消息接棒（issue #897）', async () => {
+    let resolveSync!: (v: unknown) => void
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        sync_instrument_info: () =>
+          new Promise((res) => {
+            resolveSync = res
+          }),
+      },
+    })
+    resetInstrumentSyncProgress()
+    const handlers = captureListenHandlers()
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="instrument-sync-progress"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="sync-instrument-info"]').trigger('click')
+    await nextTick()
+    handlers.at(-1)!({ event: INSTRUMENT_SYNC_PROGRESS_EVENT, payload: { done: 37, total: 100 } })
+    await flushPromises()
+
+    const bar = wrapper.find('[data-testid="instrument-sync-progress"]')
+    expect(bar.exists()).toBe(true)
+    expect(bar.text()).toContain('同步标的信息 37/100')
+
+    resolveSync({ synced: 100, skipped: 0, message: '已同步 100 只，跳过 0 只' })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="instrument-sync-progress"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('已同步 100 只，跳过 0 只')
   })
 
   it('同步失败显示错误消息', async () => {

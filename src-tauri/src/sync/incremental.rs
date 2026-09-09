@@ -15,9 +15,11 @@
 //!
 //! 编排与网络解耦：核心流程 [`do_incremental_sync_with`] 接受注入的批量报价 / 日 K /
 //! 汇率 K 三个闭包（同一签名 `&str → Result<Vec<_>>`）、历史净值页闭包
-//!（[`NavQuery`] → [`LsjzPage`]）与基金名称闭包（`&str → Result<String>`），
-//! 测试以 mock 数据驱动（不依赖真实网络）；生产经 [`do_incremental_sync`] 接
-//! HTTP 层（复用主机池/重试/限流 pacer 与价格换算）。
+//!（[`NavQuery`] → [`LsjzPage`]）、基金名称闭包（`&str → Result<String>`）与进度
+//! 回调闭包（`done, total`，issue #897 / ADR-0095），测试以 mock 数据驱动（不依赖
+//! 真实网络）；生产经 [`do_incremental_sync`] 接 HTTP 层（复用主机池/重试/限流
+//! pacer 与价格换算）。进度回调闭包是本函数唯一的对外观察点：编排核心不碰网络、
+//! 不碰事件系统，进度事件发射归壳层接线（见 `commands::sync`）。
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -34,7 +36,7 @@ use crate::investment::prices::{
 };
 use crate::transaction::amount::default_currency_code;
 
-use super::fund_nav::{LsjzPage, NavQuery, sync_fund_navs};
+use super::fund_nav::{LsjzPage, NavQuery, sync_one_fund_nav};
 use super::http::{
     KlineBar, Pacer, StockItem, ULIST_BATCH_SIZE, build_client, fetch_fx_kline, fetch_kline,
     fetch_ulist, price_cents_from_raw, secid_prefix,
@@ -102,20 +104,29 @@ fn collect_instruments(conn: &Connection) -> Result<Vec<SyncInstrument>> {
 /// 标的信息同步核心流程：单次收集库内全部标的并按通道分区 → 行情分区（stock|etf，
 /// #695）构造 secid 批量报价 upsert 现价（换算按随行精度位单点）、名称随行刷新、
 /// 日 K 回填周线；基金侧逐只历史净值按水位增量回填（ADR-0038 决策 6，委托
-/// [`sync_fund_navs`]）与逐只名称刷新；汇率 K 线同期落 `fx_rate_history` → 结果统计。
-/// 五个抓取函数均由调用方注入（生产接 HTTP 层，测试注入 mock），本函数不触碰网络。
+/// [`sync_one_fund_nav`]）与逐只名称刷新；汇率 K 线同期落 `fx_rate_history` →
+/// 结果统计。六个回调均由调用方注入（五个抓取 + 一个进度回调，issue #897；生产接
+/// HTTP 层与事件发射，测试注入 mock），本函数不触碰网络、不碰事件系统。
 /// 返回统计：`synced` = 处理成功的标的数（行情分区有效价 + 基金处理成功，含基金
 /// 「已是最新」）；`skipped` = 无通道行（无行情类型/市场未知/名称充代码）、停牌/
 /// 无效价/查询无果与首刷查无净值的基金；`written` = 实际写入价格的标的数，
 /// `renamed` = 名称被刷新的标的数（两者共同决定价格失效信号：零变化不广播，
 /// 基金无新净值不算价格写入，issue #827）。
-pub(super) fn do_incremental_sync_with<F, K, X, N, M>(
+///
+/// 进度回调（issue #897 / ADR-0095）：`progress(done, total)`——分母 `total` 为
+/// **有通道标的数**（可构造查询的行情标的 + 有真实代码的基金；无通道行不计），
+/// 收集与分区完成后立即发 `(0, total)`；此后每完成一个有通道标的推进一格
+///（报价+日 K 合并为行情标的一格，净值+名称合并为基金一格；停牌/查询无果/
+/// 「已是最新」照常推进——有通道标的不以成败计格）。`total` 为 0（全部无通道）
+/// 不发任何进度事件，空转不伪装成推进。
+pub(super) fn do_incremental_sync_with<F, K, X, N, M, P>(
     conn: &Connection,
     fetch: &mut F,
     fetch_kline: &mut K,
     fetch_fx: &mut X,
     fetch_nav: &mut N,
     fetch_fund_name: &mut M,
+    progress: &mut P,
 ) -> Result<SyncInstrumentInfoResult>
 where
     F: FnMut(&str) -> Result<Vec<StockItem>>,
@@ -125,6 +136,9 @@ where
     // 基金名称闭包（issue #827）：6 位代码 → 数据源权威名称；空串表示未取到
     // （不落库）。生产接基金详情通道，测试注入 mock。
     M: FnMut(&str) -> Result<String>,
+    // 进度回调闭包（issue #897 / ADR-0095）：(done, total)，逐有通道标的推进；
+    // 生产接事件发射（壳层接线），测试注入记录闭包。
+    P: FnMut(usize, usize),
 {
     let held = collect_instruments(conn)?;
     // 单次收集库内全部标的（一条 SQL，无持仓前置，issue #827），Rust 内按通道能力
@@ -164,9 +178,24 @@ where
         }
     }
 
+    // 进度分母（issue #897 / ADR-0095）：有通道标的数 = 可构造查询的行情分区
+    // 标的（市场未知无法构造 secid，计入跳过、不进分母）+ 有真实代码（6 位）的
+    // 基金（名称充代码行计入跳过、不进分母）。收集与分区已完成，立即发 total；
+    // total 为 0 不发任何进度事件。
+    let total = queryable.len()
+        + funds
+            .iter()
+            .filter(|f| is_six_digit_code(&f.symbol))
+            .count();
+    if total > 0 {
+        progress(0, total);
+    }
+    let mut done = 0usize;
+
     // ① 按批查询并 upsert 现价（幂等：每标的一条 market_prices 覆盖更新，原行为不变），
     // 名称随行刷新（issue #827）：批量报价响应携带数据源权威名称（f14），零额外请求，
-    // 与价格解耦——停牌无价仍刷名称。
+    // 与价格解耦——停牌无价仍刷名称。报价 + 日 K 合并为该标的一格（issue #897）：
+    // 批内逐只回填日 K 后推进一格，停牌/查询无果照常推进。
     let mut synced_codes: HashSet<String> = HashSet::new();
     let mut renamed = 0usize;
     for chunk in queryable.chunks(ULIST_BATCH_SIZE) {
@@ -195,22 +224,24 @@ where
                 }
             }
         }
-    }
 
-    // ② 近两年日 K 回填 → 周线降采样落 PriceHistory。覆盖行情分区全部标的
-    // （stock|etf，#695；清仓标的自 #827 恢复采集）；停牌/整周无有效报价该周无点，
-    // 不中断同步。
-    for (secid, inst) in &queryable {
-        let bars = fetch_kline(secid)?;
-        for (trade_date, close) in downsample_weekly(&bars) {
-            upsert_price_history(
-                conn,
-                &inst.instrument_id,
-                &trade_date,
-                price_value_to_cents(close),
-                &inst.currency,
-                EASTMONEY_PRICE_SOURCE,
-            )?;
+        // ② 近两年日 K 回填 → 周线降采样落 PriceHistory（批内逐只，与报价合并为
+        // 该标的一格）。覆盖行情分区全部标的（stock|etf，#695；清仓标的自 #827
+        // 恢复采集）；停牌/整周无有效报价该周无点，不中断同步。
+        for (secid, inst) in chunk {
+            let bars = fetch_kline(secid)?;
+            for (trade_date, close) in downsample_weekly(&bars) {
+                upsert_price_history(
+                    conn,
+                    &inst.instrument_id,
+                    &trade_date,
+                    price_value_to_cents(close),
+                    &inst.currency,
+                    EASTMONEY_PRICE_SOURCE,
+                )?;
+            }
+            done += 1;
+            progress(done, total);
         }
     }
 
@@ -231,28 +262,37 @@ where
         }
     }
 
-    // ④ 基金分区：逐只历史净值按水位增量回填（ADR-0038 决策 6），净值点降采样
-    // 落周线、最新净值落现价缓存；跳过/写入统计与股票同源汇总。
-    let fund_stats = sync_fund_navs(conn, &funds, fetch_nav)?;
-
-    // ⑤ 基金名称随行刷新（issue #827）：净值通道报文不携带名称，逐只经基金详情
-    // 通道取权威名称（每只有码基金一请求）；名称充代码行（非 6 位）无通道，不查。
+    // ④⑤ 基金分区逐只（issue #897 逐只合并推进）：历史净值按水位增量回填
+    //（ADR-0038 决策 6，委托 [`sync_one_fund_nav`]）+ 权威名称随行刷新（issue
+    // #827，净值报文不携带名称，逐只经基金详情通道；每只有码基金一请求）合并为
+    // 该基金的一格——净值与名称都完成才推进；「已是最新（无新净值）」同样推进。
+    // 名称充代码行（非 6 位）无通道：计入跳过、零请求、不进分母。
+    let mut fund_synced = 0usize;
+    let mut fund_skipped = 0usize;
+    let mut fund_written = 0usize;
     for fund in &funds {
         if !is_six_digit_code(&fund.symbol) {
+            fund_skipped += 1;
             continue;
         }
+        let one = sync_one_fund_nav(conn, fund, fetch_nav)?;
+        fund_synced += one.synced;
+        fund_skipped += one.skipped;
+        fund_written += one.written;
         let name = fetch_fund_name(&fund.symbol)?;
         if refresh_instrument_name(conn, &fund.instrument_id, &name)? {
             renamed += 1;
         }
+        done += 1;
+        progress(done, total);
     }
 
-    let synced = synced_codes.len() + fund_stats.synced;
+    let synced = synced_codes.len() + fund_synced;
     // 已查询但未取到有效价的（停牌/无效价/查询无果）计入跳过。
     let invalid = queryable.len() - synced_codes.len();
-    let skipped = no_quote_source + skipped_unqueryable + invalid + fund_stats.skipped;
+    let skipped = no_quote_source + skipped_unqueryable + invalid + fund_skipped;
     // 实际写入 = 股票有效价 + 基金实际落库净值（基金「已是最新」不算写入）。
-    let written = synced_codes.len() + fund_stats.written;
+    let written = synced_codes.len() + fund_written;
 
     Ok(SyncInstrumentInfoResult {
         synced,
@@ -317,9 +357,16 @@ pub(super) fn week_monday(d: NaiveDate) -> NaiveDate {
 }
 
 /// 生产入口：接 HTTP 层的批量报价 / 日 K / 汇率 K 线 / 历史净值页 / 基金详情查询
-///（复用主机池、重试、限流 pacer 与价格换算）。五个闭包串行使用，pacer 以 RefCell
-/// 共享，保证全部请求之间仍然保持统一的限速间隔。
-pub fn do_incremental_sync(conn: &Connection) -> Result<SyncInstrumentInfoResult> {
+///（复用主机池、重试、限流 pacer 与价格换算）。五个抓取闭包串行使用，pacer 以 RefCell
+/// 共享，保证全部请求之间仍然保持统一的限速间隔。进度回调透传调用方（生产接
+/// 事件发射，issue #897）。
+pub fn do_incremental_sync<P>(
+    conn: &Connection,
+    progress: &mut P,
+) -> Result<SyncInstrumentInfoResult>
+where
+    P: FnMut(usize, usize),
+{
     let client = build_client()?;
     let pacer = RefCell::new(Pacer::default());
     let beg = kline_beg();
@@ -337,5 +384,6 @@ pub fn do_incremental_sync(conn: &Connection) -> Result<SyncInstrumentInfoResult
         &mut fx,
         &mut nav,
         &mut fund_name,
+        progress,
     )
 }
