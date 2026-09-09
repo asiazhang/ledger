@@ -16,7 +16,8 @@ import type { OverlayCloseRequest } from '@/composables/overlayRegistry'
 export function useAppDialog() {
   const dialog = useDialog()
 
-  function track(options: DialogOptions): { options: DialogOptions; setInstance: (instance: DialogReactive) => void } {
+  function open(method: 'info' | 'success' | 'warning' | 'error', options: DialogOptions): DialogReactive {
+    // DialogReactive 在 dialog[method] 返回后才存在，requestClose 经闭包迟到绑定
     let instance: DialogReactive | null = null
     const requestClose: OverlayCloseRequest = () => {
       instance?.destroy()
@@ -26,25 +27,14 @@ export function useAppDialog() {
     const overlay = createOverlayToken('dialog', requestClose)
     overlay.set(true)
     const { onAfterLeave } = options
-    return {
-      options: {
-        ...options,
-        onAfterLeave: () => {
-          overlay.set(false)
-          instance = null
-          onAfterLeave?.()
-        },
+    instance = dialog[method]({
+      ...options,
+      onAfterLeave: () => {
+        overlay.set(false)
+        instance = null
+        onAfterLeave?.()
       },
-      setInstance: (value: DialogReactive) => {
-        instance = value
-      },
-    }
-  }
-
-  const open = (method: 'info' | 'success' | 'warning' | 'error', options: DialogOptions): DialogReactive => {
-    const tracked = track(options)
-    const instance = dialog[method](tracked.options)
-    tracked.setInstance(instance)
+    })
     return instance
   }
 

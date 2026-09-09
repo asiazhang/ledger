@@ -12,6 +12,10 @@ import {
 import AppSelect from '@/components/AppSelect.vue'
 import AppModal from '@/components/AppModal.vue'
 import AppDropdown from '@/components/AppDropdown.vue'
+import AppDatePicker from '@/components/AppDatePicker.vue'
+import AppPopover from '@/components/AppPopover.vue'
+import AppPopconfirm from '@/components/AppPopconfirm.vue'
+import AppTreeSelect from '@/components/AppTreeSelect.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import { NDialogProvider } from 'naive-ui'
 import { useAppDialog } from '@/composables/useAppDialog'
@@ -208,6 +212,65 @@ describe('封装关闭通道（closeTopOverlay 消费面，issue #845）', () =>
       attachTo: document.body,
     })
     await wrapper.find('button').trigger('click')
+    await flushPromises()
+    expect(hasOpenOverlay()).toBe(true)
+
+    expect(closeTopOverlay()).toBe(true)
+    await flushPromises()
+    expect(hasOpenOverlay()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('AppPopconfirm 非受控 click 触发：closeTopOverlay 关气泡并撤销上报', async () => {
+    const wrapper = mount(AppPopconfirm, {
+      slots: { trigger: () => h('button', { class: 'pc-trigger' }, 't'), default: () => '确认？' },
+      attachTo: document.body,
+    })
+    await wrapper.find('.pc-trigger').trigger('click')
+    await flushPromises()
+    expect(hasOpenOverlay()).toBe(true)
+
+    expect(closeTopOverlay()).toBe(true)
+    await flushPromises()
+    expect(hasOpenOverlay()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('AppPopover 非受控 click 触发：closeTopOverlay 关弹层并撤销上报', async () => {
+    const wrapper = mount(AppPopover, {
+      props: { trigger: 'click' },
+      slots: { default: () => h('div', '内容'), trigger: () => h('button', { class: 'pop-trigger' }, 't') },
+      attachTo: document.body,
+    })
+    await wrapper.find('.pop-trigger').trigger('click')
+    await flushPromises()
+    expect(hasOpenOverlay()).toBe(true)
+
+    expect(closeTopOverlay()).toBe(true)
+    await flushPromises()
+    expect(hasOpenOverlay()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('AppDatePicker 非受控用法：开 → closeTopOverlay 关面板并撤销上报', async () => {
+    const wrapper = mount(AppDatePicker, { props: { type: 'date' }, attachTo: document.body })
+    await wrapper.find('input').trigger('click')
+    await flushPromises()
+    expect(hasOpenOverlay()).toBe(true)
+    expect(document.querySelector('.n-date-panel')).not.toBeNull()
+
+    expect(closeTopOverlay()).toBe(true)
+    await flushPromises()
+    expect(hasOpenOverlay()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('AppTreeSelect 非受控用法：开 → closeTopOverlay 关菜单并撤销上报', async () => {
+    const wrapper = mount(AppTreeSelect, {
+      props: { options: [{ key: 'a', label: 'A' }], virtualScroll: false },
+      attachTo: document.body,
+    })
+    await wrapper.find('.n-base-selection').trigger('click')
     await flushPromises()
     expect(hasOpenOverlay()).toBe(true)
 

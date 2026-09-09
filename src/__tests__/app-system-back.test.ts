@@ -3,7 +3,7 @@ import { flushPromises } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { wireInvokeSeam } from './helpers/invoke-mock'
 import { setFakeMedia } from './helpers/media-mock'
-import { captureBackHandler, mockWindowDestroy } from './helpers/back-mock'
+import { captureBackHandler, mockOnBackButtonPress, mockWindowDestroy } from './helpers/back-mock'
 import { openMobileDrawer } from './helpers/mobile-nav'
 import App from '@/App.vue'
 import { mount } from '@vue/test-utils'
@@ -76,8 +76,8 @@ describe('App 壳系统返回桥接（移动档）', () => {
 
 describe('App 壳桌面档零渗透（issue #845）', () => {
   it('桌面档（≥840）不注册返回监听：返回事件面不存在', async () => {
-    const { mockOnBackButtonPress } = await import('./helpers/back-mock')
-    await mountApp()
+    const { wrapper } = await mountApp()
     expect(mockOnBackButtonPress).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
 })

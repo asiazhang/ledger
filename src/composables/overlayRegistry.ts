@@ -66,13 +66,14 @@ export function openOverlayNames(): string[] {
 
 /**
  * 关闭最上层弹层（系统返回桥接专用，issue #845）：只调用栈顶的 requestClose，
- * 返回其受理结果；空栈或栈顶无通道返回 false。栈顶不可关（如受控调用方未提供
- * 监听器的退化用法）时**不动栈**——消费方（useSystemBack）据此吞掉本次返回键，
- * 不回退路由（弹层开着时路由回退会让状态被埋在弹层下，属数据丢失面）。
+ * 返回其受理结果；空栈或栈顶无通道返回 false、不动栈。注意：消费方
+ * （useSystemBack）以 hasOpenOverlay() 先行判定本次返回键归属弹层层——
+ * 栈顶不可关时本次返回被吞掉（不回退路由：弹层开着时路由回退会把状态埋在
+ * 弹层下，属数据丢失面），本函数返回值只表达「关闭是否受理」。
  */
 export function closeTopOverlay(): boolean {
   const top = openOverlays[openOverlays.length - 1]
-  if (top?.requestClose === null || top === undefined) return false
+  if (!top || !top.requestClose) return false
   return top.requestClose()
 }
 

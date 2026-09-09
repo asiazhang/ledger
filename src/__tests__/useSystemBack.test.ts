@@ -51,7 +51,7 @@ describe('注册面：按窗口分级挂载，桌面档零渗透', () => {
     expect(mockOnBackButtonPress).toHaveBeenCalledTimes(1)
   })
 
-  it('跨断点换档（839 → 1280）：撤销已注册监听（迟到注册同样自撤）', async () => {
+  it('跨断点换档（839 → 1280）：撤销已注册监听', async () => {
     setFakeMedia({ width: 839 })
     const read = captureBackRegistration()
     const { wrapper } = await mountBackHost()
@@ -72,7 +72,8 @@ describe('注册面：按窗口分级挂载，桌面档零渗透', () => {
     wrapper.unmount()
     await flushPromises()
     expect(registration!.unregister).toHaveBeenCalled()
-  })})
+  })
+})
 
 describe('语义三段', () => {
   it('有弹层 → 关最上层：路由不动、不交还系统', async () => {
