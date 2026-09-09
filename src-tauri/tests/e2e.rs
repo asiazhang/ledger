@@ -22,6 +22,8 @@ mod world;
 mod accounts_steps;
 #[path = "e2e/backup_steps.rs"]
 mod backup_steps;
+#[path = "e2e/books_steps.rs"]
+mod books_steps;
 #[path = "e2e/budget_steps.rs"]
 mod budget_steps;
 #[path = "e2e/categories_steps.rs"]

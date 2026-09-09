@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { wireInvokeSeam } from './helpers/invoke-mock'
 import { defineComponent, watch } from 'vue'
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { createTestingPinia } from '@pinia/testing'
 import { useTransactionFilter, UNCATEGORIZED_ONLY, CATEGORY_DRILLDOWN_KINDS } from '@/composables/useTransactionFilter'
 import type { UseTransactionFilterReturn } from '@/composables/useTransactionFilter'
@@ -89,10 +90,18 @@ const FilterHarness = defineComponent({
 })
 
 function mountHarness() {
-  mount(FilterHarness, {
+  const wrapper = mount(FilterHarness, {
     global: { plugins: [createTestingPinia({ stubActions: false })] },
   })
-  return harness!
+  return { wrapper, ...harness! }
+}
+
+/** 会话内保留组挂载（issue #893）：用全局 active pinia（全局壳层每测新建，报表页保留
+ * 测试同款形态）——同一测试内先挂后挂共享同一会话，「卸载重挂」才表达「同一会话内
+ * 离开再回来」；新 pinia 表达冷启动。 */
+function mountSessionHarness() {
+  const wrapper = mount(FilterHarness)
+  return { wrapper: wrapper as VueWrapper, ...harness! }
 }
 
 function lastRequest(): TransactionListFilter {
@@ -337,17 +346,15 @@ describe('useTransactionFilter 页码回退入口（删除路径）', () => {
   })
 })
 
-describe('useTransactionFilter 工厂形态', () => {
-  it('每次调用返回独立实例：状态与版本号互不串扰', async () => {
+describe('useTransactionFilter 工厂形态（issue #893 起状态住交易页会话 store）', () => {
+  it('同一会话内多次调用共享会话状态：可观察状态与版本号同源（会话内保留的载体）', async () => {
     const { tf: tf1 } = mountHarness()
     const tf2 = useTransactionFilter()
     await flushPromises()
     tf1.setFilter({ kind: 'income' })
     await flushPromises()
-    expect(tf1.filters.kind).toBe('income')
-    expect(tf1.refreshVersion.value).toBe(1)
-    expect(tf2.filters.kind).toBeNull()
-    expect(tf2.refreshVersion.value).toBe(0)
+    expect(tf2.filters.kind).toBe('income')
+    expect(tf2.refreshVersion.value).toBe(tf1.refreshVersion.value)
     expect(tf2.page.value).toBe(1)
   })
 })
@@ -1085,5 +1092,211 @@ describe('useTransactionFilter URL 参数表·字段级让位（issue #234 新�
     await useReferenceStore().refresh()
     await flushPromises()
     expect(tf.filters.involvingAccountId).toBe('acc-2')
+  })
+})
+
+// —— 会话内保留（issue #893 / ADR-0094，spec #892）：筛选与分页住交易页会话 store ——
+// 只测外部行为：「保留」的判据是同会话卸载重挂（同一 pinia 内重新挂载消费组件）后
+// 状态恢复且以恢复状态重拉；「冷启动」的判据是新 pinia 实例回默认；「零写盘」的判据
+// 是全程无 localStorage 写入（报表页保留测试先例的三锚点，spec #892 测试决策）。
+describe('useTransactionFilter 会话内保留（issue #893）：同会话卸载重挂恢复，新会话冷启动', () => {
+  it('筛选全维 + 翻页 + 换页大小后卸载重挂（同一会话）：状态恢复，恢复首刷以恢复状态重拉不翻页', async () => {
+    const first = mountSessionHarness()
+    await flushPromises()
+    first.tf.setFilter({
+      involvingAccountId: 'acc-1',
+      kind: 'income',
+      dateFrom: '2026-01-01',
+      dateTo: '2026-03-31',
+    })
+    first.tf.page.value = 3
+    first.tf.pageSize.value = 50
+    await flushPromises()
+    first.wrapper.unmount()
+
+    // 同一会话重挂（侧栏往返/下钻往返/回退）：离开时的选择原样恢复
+    const second = mountSessionHarness()
+    await flushPromises()
+    expect(second.tf.filters).toEqual({
+      dateFrom: '2026-01-01',
+      dateTo: '2026-03-31',
+      involvingAccountId: 'acc-1',
+      merchantId: null,
+      categoryId: null,
+      kind: 'income',
+      kinds: null,
+    })
+    expect(second.tf.page.value).toBe(3)
+    expect(second.tf.pageSize.value).toBe(50)
+    // 恢复访次的重拉（以恢复状态现拉，不翻页）由消费方首拉承担：视图层锚定
+    // （TransactionsView session-retention 测试）；模块边界只产出状态与版本信号
+    second.wrapper.unmount()
+  })
+
+  it('新 pinia 表达冷启动：回默认无筛选态、第 1 页、默认页大小，无恢复首刷', async () => {
+    const first = mountSessionHarness()
+    await flushPromises()
+    first.tf.setFilter({ merchantId: 'mch-1', kind: 'income' })
+    first.tf.page.value = 2
+    await flushPromises()
+    first.wrapper.unmount()
+
+    // 新 pinia = 新会话（应用重启）：回默认
+    setActivePinia(createPinia())
+    const second = mountSessionHarness()
+    await flushPromises()
+    expect(second.tf.filters).toEqual({
+      dateFrom: null,
+      dateTo: null,
+      involvingAccountId: null,
+      merchantId: null,
+      categoryId: null,
+      kind: null,
+      kinds: null,
+    })
+    expect(second.tf.page.value).toBe(1)
+    expect(second.tf.pageSize.value).toBe(20)
+    expect(second.requests).toHaveLength(0)
+    second.wrapper.unmount()
+  })
+
+  it('零持久化：选择筛选与卸载重挂全程 localStorage 零写入', async () => {
+    const first = mountSessionHarness()
+    await flushPromises()
+    const keysBefore = Object.keys(localStorage)
+    first.tf.setFilter({ involvingAccountId: 'acc-1', kind: 'transfer' })
+    first.tf.page.value = 2
+    await flushPromises()
+    first.wrapper.unmount()
+    const second = mountSessionHarness()
+    await flushPromises()
+    expect(second.tf.filters.involvingAccountId).toBe('acc-1')
+    expect(Object.keys(localStorage)).toEqual(keysBefore)
+    second.wrapper.unmount()
+  })
+
+  it('URL 下钻参数在场永远赢：覆盖保留态对应维度，无参数维度恢复保留态，翻页归零走统一出口', async () => {
+    const first = mountSessionHarness()
+    await flushPromises()
+    first.tf.setFilter({ merchantId: 'mch-1', kind: 'income' })
+    first.tf.page.value = 2
+    await flushPromises()
+    first.wrapper.unmount()
+
+    const second = mountSessionHarness()
+    second.tf.syncUrlQuery({ account: 'acc-1' })
+    await flushPromises()
+    // URL 参数维度按参数装配（显式跳转意图）；无参数维度保留离开时的选择
+    expect(second.tf.filters.involvingAccountId).toBe('acc-1')
+    expect(second.tf.filters.merchantId).toBe('mch-1')
+    expect(second.tf.filters.kind).toBe('income')
+    expect(second.tf.page.value).toBe(1)
+    // URL 应用走统一出口：一次重拉、参数完整（恢复态的重拉由消费方首拉承担）
+    expect(second.requests).toHaveLength(1)
+    expect(second.requests[0]).toEqual({
+      page: 1,
+      page_size: 20,
+      involving_account_id: 'acc-1',
+      merchant_id: 'mch-1',
+      kind: 'income',
+    })
+    second.wrapper.unmount()
+  })
+
+  it('URL 参数命中保留态同维度：跨访问的旧手动状态不抗参数（让位守卫仅限单次进入内）', async () => {
+    const first = mountSessionHarness()
+    await flushPromises()
+    first.tf.setFilter({ involvingAccountId: 'acc-2' }) // 上一次访问留下的手动状态
+    await flushPromises()
+    first.wrapper.unmount()
+
+    const second = mountSessionHarness()
+    second.tf.syncUrlQuery({ account: 'acc-1' })
+    await flushPromises()
+    expect(second.tf.filters.involvingAccountId).toBe('acc-1')
+    second.wrapper.unmount()
+  })
+
+  it('无参数恢复保留态：不带参重挂保留筛选与页码（侧栏往返与下钻往返互不干扰）', async () => {
+    const first = mountSessionHarness()
+    await flushPromises()
+    first.tf.setFilter({ involvingAccountId: 'acc-1' })
+    first.tf.page.value = 2
+    await flushPromises()
+    first.wrapper.unmount()
+
+    const second = mountSessionHarness()
+    second.tf.syncUrlQuery({}) // 视图 immediate 转发当前无参 query
+    await flushPromises()
+    expect(second.tf.filters.involvingAccountId).toBe('acc-1')
+    expect(second.tf.page.value).toBe(2)
+    // 无参数：URL 出口不动作，恢复态原样（重拉由消费方首拉承担）
+    expect(second.requests).toHaveLength(0)
+    second.wrapper.unmount()
+  })
+
+  it('纯翻页偏离（无筛选）也是保留态：重挂恢复页码；复位出口对纯翻页同样归零', async () => {
+    const first = mountSessionHarness()
+    await flushPromises()
+    first.tf.page.value = 3
+    await flushPromises()
+    first.wrapper.unmount()
+
+    const second = mountSessionHarness()
+    await flushPromises()
+    expect(second.tf.page.value).toBe(3)
+    // 复位出口的激活判定含纯翻页偏离：ESC 复位归零 + 重拉
+    second.tf.resetFilters()
+    await flushPromises()
+    expect(second.tf.page.value).toBe(1)
+    expect(second.requests).toHaveLength(1)
+    expect(second.requests[0]).toEqual({ page: 1, page_size: 20 })
+    second.wrapper.unmount()
+  })
+
+  it('复位出口清除保留态本身：复位后卸载重挂 = 默认态、无恢复首刷（story #10）', async () => {
+    const first = mountSessionHarness()
+    await flushPromises()
+    first.tf.setFilter({ involvingAccountId: 'acc-1', kind: 'income' })
+    first.tf.page.value = 2
+    await flushPromises()
+    first.tf.resetFilters() // ESC 复位走模块既有复位出口
+    await flushPromises()
+    expect(first.tf.page.value).toBe(1)
+    first.wrapper.unmount()
+
+    const second = mountSessionHarness()
+    await flushPromises()
+    expect(second.tf.filters).toEqual({
+      dateFrom: null,
+      dateTo: null,
+      involvingAccountId: null,
+      merchantId: null,
+      categoryId: null,
+      kind: null,
+      kinds: null,
+    })
+    expect(second.tf.page.value).toBe(1)
+    expect(second.requests).toHaveLength(0)
+    second.wrapper.unmount()
+  })
+
+  it('恢复访次内 refresh 语义不变：外部数据变化仍翻回第一页，筛选保留', async () => {
+    const first = mountSessionHarness()
+    await flushPromises()
+    first.tf.setFilter({ involvingAccountId: 'acc-1' })
+    first.tf.page.value = 3
+    await flushPromises()
+    first.wrapper.unmount()
+
+    const second = mountSessionHarness()
+    await flushPromises()
+    expect(second.tf.page.value).toBe(3)
+    second.tf.refresh() // 记一笔提交等外部数据变化回填
+    await flushPromises()
+    expect(second.tf.page.value).toBe(1)
+    expect(second.tf.filters.involvingAccountId).toBe('acc-1')
+    expect(second.requests).toEqual([{ page: 1, page_size: 20, involving_account_id: 'acc-1' }])
+    second.wrapper.unmount()
   })
 })

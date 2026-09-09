@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { t } from '@/i18n'
 import type { InstrumentSyncProgress } from '@/types'
+import { bar, root, text, track } from './sync-progress-bar.css.ts'
 
 // 同步进度条展示组件（issue #897 / ADR-0095）：标的信息同步的确定进度——
 // 形态与 GlobalBusyBar 同款细条（2px），蓝色区分（品牌强调色为琥珀，蓝色是
@@ -23,7 +24,7 @@ const percent = computed(() => {
 <template>
   <div
     v-if="progress"
-    class="sync-progress"
+    :class="root"
     data-testid="instrument-sync-progress"
     role="progressbar"
     :aria-valuemin="0"
@@ -31,52 +32,11 @@ const percent = computed(() => {
     :aria-valuenow="progress.done"
     :aria-label="t('investments.sync.progressAriaLabel')"
   >
-    <div class="sync-progress-track">
-      <div class="sync-progress-bar" :style="{ width: percent + '%' }" />
+    <div :class="track">
+      <div :class="bar" data-testid="instrument-sync-progress-bar" :style="{ width: percent + '%' }" />
     </div>
-    <span class="sync-progress-text">
+    <span :class="text">
       {{ t('investments.sync.progress', { done: progress.done, total: progress.total }) }}
     </span>
   </div>
 </template>
-
-<style scoped>
-/* 与 GlobalBusyBar 同款细条高度（2px）；占据文档流一行，不拦截指针 */
-.sync-progress {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  pointer-events: none;
-}
-
-.sync-progress-track {
-  flex: 1;
-  height: 2px;
-  border-radius: 999px;
-  background: rgba(127, 127, 127, 0.2);
-  overflow: hidden;
-}
-
-/* 蓝色区分：同步进度专属色（亮暗主题同色相可读） */
-.sync-progress-bar {
-  height: 100%;
-  border-radius: 999px;
-  background: #2080f0;
-  transition: width 0.2s ease;
-}
-
-/* 减弱动态偏好：宽度变化即时生效，不做过渡动画 */
-@media (prefers-reduced-motion: reduce) {
-  .sync-progress-bar {
-    transition: none;
-  }
-}
-
-.sync-progress-text {
-  font-size: 12px;
-  line-height: 1.4;
-  opacity: 0.75;
-  white-space: nowrap;
-}
-</style>

@@ -1,6 +1,7 @@
 {
   "tabs": {
     "pnl": "P&L",
+    "holdings": "Holdings",
     "instruments": "Instruments",
     "trend": "Trend"
   },

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, nextTick, ref, watch, type Component, type HTMLAttributes } from 'vue'
+import { computed, h, nextTick, ref, watch, watchEffect, type Component, type HTMLAttributes } from 'vue'
 import { RouterView, useRouter, useRoute } from 'vue-router'
 import {
   NConfigProvider,
@@ -45,7 +45,7 @@ import {
 import { useAppStore } from '@/stores/app'
 import { currentLocale, t } from '@/i18n'
 import { viewLabel } from '@/i18n/view-label'
-import { darkOverrides, lightOverrides } from '@/theme/overrides'
+import { bindRootThemeClass, resolveAppTheme } from '@/theme/theme-contract'
 import { useEncryptionGate } from '@/composables/useEncryptionGate'
 import UnlockScreen from '@/components/UnlockScreen.vue'
 import StartupFailureScreen from '@/components/StartupFailureScreen.vue'
@@ -101,6 +101,13 @@ function updateSidebarCollapsed(collapsed: boolean) {
   saveSidebarCollapsed(collapsed)
 }
 const store = useAppStore()
+
+// 主题合同（issue #888 / ADR-0093）：亮/暗模式一次解析出根元素主题类与组件库
+// 覆盖。主题类经 bindRootThemeClass 绑定 document.body（新方案 vanilla-extract
+// 样式的变量宿主，teleport 弹层同域继承），由 Appearance 设备偏好驱动，与组件
+// 库主题切换并行不互扰，不出现第二主题状态源。
+const appTheme = computed(() => resolveAppTheme(store.theme))
+watchEffect(() => bindRootThemeClass(appTheme.value.rootClass))
 
 // UI 组件库内置文案（日期选择器、分页、空态等）随应用界面语言切换（ADR-0049）：
 // 经 NConfigProvider 的 locale / date-locale 注入，语言切换即时生效。
@@ -345,7 +352,7 @@ const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(rou
 <template>
   <NConfigProvider
     :theme="store.theme === 'dark' ? darkTheme : null"
-    :theme-overrides="store.theme === 'dark' ? darkOverrides : lightOverrides"
+    :theme-overrides="appTheme.overrides"
     :locale="naiveLocale"
     :date-locale="naiveDateLocale"
   >

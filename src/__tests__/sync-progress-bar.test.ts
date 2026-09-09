@@ -26,7 +26,7 @@ describe('SyncProgressBar 同步进度条（issue #897）', () => {
     expect(bar.exists()).toBe(true)
     // 中文文案形如「同步标的信息 37/100」（i18n 单点）
     expect(bar.text()).toContain('同步标的信息 37/100')
-    expect(bar.find('.sync-progress-bar').attributes('style')).toContain('width: 37%')
+    expect(bar.find('[data-testid="instrument-sync-progress-bar"]').attributes('style')).toContain('width: 37%')
   })
 
   it('进度语义可访问：role=progressbar 与 aria 值域/当前值', () => {
@@ -42,6 +42,6 @@ describe('SyncProgressBar 同步进度条（issue #897）', () => {
   it('done 为 0 时渲染 0% 起点而非隐藏', () => {
     const wrapper = mountBar({ done: 0, total: 100 })
     expect(wrapper.text()).toContain('同步标的信息 0/100')
-    expect(wrapper.find('.sync-progress-bar').attributes('style')).toContain('width: 0%')
+    expect(wrapper.find('[data-testid="instrument-sync-progress-bar"]').attributes('style')).toContain('width: 0%')
   })
 })
