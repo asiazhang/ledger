@@ -278,7 +278,7 @@ pub fn query_subscription_spend(
     let (projected_month_native_cents, projected_year_native_cents) = query_projected_cost(conn)?;
 
     Ok(SubscriptionSpendOverview {
-        native_currency: amount::default_currency_code().to_string(),
+        native_currency: amount::default_currency_code(conn)?.to_string(),
         this_month_native_cents,
         this_year_native_cents,
         months,

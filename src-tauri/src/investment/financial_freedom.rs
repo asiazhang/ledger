@@ -103,7 +103,7 @@ pub fn query_financial_freedom(conn: &Connection) -> Result<FinancialFreedomOver
         numerator_cents,
         denominator_cents,
         coverage_years,
-        native_currency: amount::default_currency_code().to_string(),
+        native_currency: amount::default_currency_code(conn)?.to_string(),
     })
 }
 

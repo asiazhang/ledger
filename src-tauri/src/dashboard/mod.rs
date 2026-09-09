@@ -94,7 +94,7 @@ fn compute_dashboard_overview(conn: &Connection) -> Result<DashboardOverview> {
         physical_asset::list_physical_assets(conn, None)?.holding_total_native_cents;
 
     Ok(DashboardOverview {
-        native_currency: amount::default_currency_code().to_string(),
+        native_currency: amount::default_currency_code(conn)?.to_string(),
         net_worth_cents: accounts_sum + holdings_sum + physical_assets_value_cents,
         accounts_balance_cents: accounts_sum,
         holdings_market_value_cents: holdings_sum,

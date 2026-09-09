@@ -1,4 +1,4 @@
-// 设置域 IPC 载荷类型（spec #611，About 页「关于」Tab 日志等级）。
+// 设置域 IPC 载荷类型（spec #611 日志等级 / issue #858 本位币基准）。
 
 /**
  * 日志等级当前持久化档位（`get_log_level` 回显）。
@@ -8,4 +8,13 @@
 export interface LogLevelState {
   /** 闭集五档指令字符串之一：error / warn / info / debug / trace。 */
   level: string
+}
+
+/**
+ * 本位币基准当前值（`get_base_currency` / `set_base_currency` 回显，issue #858）：
+ * 账本级设置（LedgerLevelSetting 首个成员），随多端同步全设备一致。
+ */
+export interface BaseCurrencyState {
+  /** 当前基准币种代码（缺 key 回默认 CNY）。 */
+  code: string
 }

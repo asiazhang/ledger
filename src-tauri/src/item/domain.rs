@@ -429,7 +429,7 @@ pub fn item_daily_total(conn: &Connection) -> Result<ItemDailyTotal> {
         item_count += 1;
     }
     Ok(ItemDailyTotal {
-        native_currency: amount::default_currency_code().to_string(),
+        native_currency: amount::default_currency_code(conn)?.to_string(),
         per_day_cents: per_day_total,
         item_count,
     })
