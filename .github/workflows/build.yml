@@ -301,7 +301,14 @@ jobs:
           ANDROID_NDK_VERSION: 27.0.12077973
         run: |
           sdkmanager --install "platforms;android-36" "ndk;$ANDROID_NDK_VERSION"
+          NDK_BIN="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
           echo "NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          # llvm 统一工具链后 NDK 不再带 <triple>-ranlib 包装，openssl-sys vendored
+          # 的 android Configure 目标仍按 {cross_prefix}ranlib 找工具（run
+          # 34319561130 实测 not found → make install_dev 127），补 PATH 垫片。
+          mkdir -p "$RUNNER_TEMP/android-shims"
+          ln -sf "$NDK_BIN/llvm-ranlib" "$RUNNER_TEMP/android-shims/aarch64-linux-android-ranlib"
+          echo "$RUNNER_TEMP/android-shims" >> "$GITHUB_PATH"
 
       - name: 安装 Rust Android 目标（arm64）
         if: matrix.platform == 'android'
