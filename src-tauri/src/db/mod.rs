@@ -61,6 +61,9 @@ fn migrations() -> &'static Migrations<'static> {
                 "../../migrations/V019__insurer_dictionary.sql"
             )),
             M::up(include_str!("../../migrations/V020__sync_oplog.sql")),
+            M::up(include_str!(
+                "../../migrations/V021__sync_merge_semantics.sql"
+            )),
         ])
     })
 }
@@ -87,6 +90,15 @@ pub fn iso_at(now: chrono::DateTime<chrono::Utc>) -> String {
 /// 生成新的 UUID v7（时间有序，适合主键与同步）。
 pub fn new_uuid() -> String {
     uuid::Uuid::new_v7(uuid::Timestamp::now(uuid::NoContext)).to_string()
+}
+
+/// 确定性 UUID v5 的本仓命名空间（跨端一致派生 id 的派生根；先例：V004 默认
+/// 种子的确定性 UUID v5——同名恒同值，保证各端独立派生不产生重复行）。
+pub const DETERMINISTIC_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes(*b"ledger_sync_v5_1");
+
+/// 确定性 UUID v5：同名同空间跨端恒同值（同步场景的确定性落地身份）。
+pub fn deterministic_uuid(name: &str) -> String {
+    uuid::Uuid::new_v5(&DETERMINISTIC_NAMESPACE, name.as_bytes()).to_string()
 }
 
 /// 当前 schema 版本（SQLite `user_version`，迁移自动追踪）。

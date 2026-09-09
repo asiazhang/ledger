@@ -279,3 +279,67 @@ fn execute_occurrence_rejects_paused_plan() {
     let err = execute_occurrence(&conn, &occ_id).unwrap_err();
     assert_eq!(err.to_string(), "关联计划未处于活跃状态");
 }
+
+// ---------------------------------------------------------------------------
+// 落地身份与同步 op 产出（issue #856 / ADR-0091 决策 5）
+// ---------------------------------------------------------------------------
+
+/// 落地行先于期次执行在场（真实世界对应他端经同步先落地、本端期次行晚到）：
+/// 执行发现落地已存在，只回填完成、不插第二笔、不产出第二条期次 op（一表
+/// 一期的部分唯一索引同时保证一笔落地至多被一期的回填认领）。
+#[test]
+fn execute_occurrence_with_preexisting_landing_completes_without_second_row() {
+    use crate::transaction::writer;
+
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-a", "现金", "cash", "CNY", 0);
+    let plan_id = create_subscription(&conn, "acc-a", "CNY", 3000, None);
+    let occ_id = first_pending_occurrence(&conn, &plan_id);
+    let date: String = conn
+        .query_row(
+            "SELECT scheduled_date FROM scheduled_transaction_occurrences WHERE id=?1",
+            [&occ_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let landing = occurrence_transaction_id(&plan_id, &date);
+
+    // 落地行直置（模拟他端 op 已重放落地；经本域消费的同一 Writer 接缝落库）。
+    let norm = writer::normalize(
+        &conn,
+        &writer::Input {
+            kind: crate::transaction::amount::TransactionKind::Expense,
+            amount_cents: 3000,
+            currency_code: "CNY".into(),
+            account_id: "acc-a".into(),
+            to_account_id: None,
+            category_id: None,
+            merchant_id: None,
+            existing_merchant_id: None,
+            policy_id: None,
+            existing_policy_id: None,
+            refund_of_transaction_id: None,
+            note: None,
+            date: date.clone(),
+        },
+    )
+    .unwrap();
+    writer::insert_row_with_id(&conn, &landing, &norm).unwrap();
+
+    // 执行：发现落地已存在，只回填完成，不插第二笔、不产出第二条期次 op。
+    let again = execute_occurrence(&conn, &occ_id).unwrap();
+    assert_eq!(again, landing, "执行复用确定性落地身份");
+    assert_eq!(
+        occurrence_status(&conn, &occ_id),
+        ("completed".into(), Some(landing)),
+        "期次完成并回填既有落地"
+    );
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 1, "同一期次只落一笔");
+    assert!(
+        crate::sync_engine::read_ops(&conn).unwrap().is_empty(),
+        "已落地路径不产出期次 op"
+    );
+}
