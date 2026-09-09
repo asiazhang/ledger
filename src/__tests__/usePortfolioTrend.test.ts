@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
 import {
   mockInvoke,
   wireInvokeSeam,
   type InvokeSeamOverride,
 } from './helpers/invoke-mock'
+import { withSetup } from './helpers/mount'
 import { useReferenceStore } from '@/stores/reference'
 import {
   toTrendRange,
@@ -142,7 +144,7 @@ describe('hasMarketSource 行情来源判定（纯函数）', () => {
 
 describe('usePortfolioTrend 走势数据层', () => {
   it('默认组合模式：加载组合市值曲线并映射为图表序列', async () => {
-    const { refresh, chartSeries, currencyCode, isEmpty } = usePortfolioTrend()
+    const { refresh, chartSeries, currencyCode, isEmpty } = withSetup(() => usePortfolioTrend())
     await refresh()
     expect(mockInvoke.mock.calls.some(([c]) => c === 'portfolio_value_trend')).toBe(true)
     expect(chartSeries.value).toEqual({
@@ -154,7 +156,7 @@ describe('usePortfolioTrend 走势数据层', () => {
   })
 
   it('区间切换重新拉取：预设起止日期进入查询参数', async () => {
-    const { preset, refresh } = usePortfolioTrend()
+    const { preset, refresh } = withSetup(() => usePortfolioTrend())
     await refresh()
     preset.value = '3m'
     await refresh()
@@ -179,7 +181,7 @@ describe('usePortfolioTrend 走势数据层', () => {
         },
       },
     })
-    const { refresh, mode, showInstrument, chartSeries, currencyCode } = usePortfolioTrend()
+    const { refresh, mode, showInstrument, chartSeries, currencyCode } = withSetup(() => usePortfolioTrend())
     await refresh()
     showInstrument(
       makeInstrument({ id: 'inst-1', symbol: '600000', name: '浦发银行', type: 'stock', market: 'sh' }),
@@ -199,13 +201,13 @@ describe('usePortfolioTrend 走势数据层', () => {
         portfolio_value_trend: { currency_code: 'CNY', points: [] },
       },
     })
-    const { refresh, isEmpty } = usePortfolioTrend()
+    const { refresh, isEmpty } = withSetup(() => usePortfolioTrend())
     await refresh()
     expect(isEmpty.value).toBe(true)
   })
 
   it('showPortfolio 切回组合模式', async () => {
-    const { mode, showInstrument, showPortfolio } = usePortfolioTrend()
+    const { mode, showInstrument, showPortfolio } = withSetup(() => usePortfolioTrend())
     showInstrument(makeInstrument({ id: 'inst-1', type: 'stock', market: 'sh' }))
     expect(mode.value).toBe('instrument')
     showPortfolio()
@@ -219,7 +221,9 @@ describe('usePortfolioTrend 走势数据层', () => {
         portfolio_value_trend: () => Promise.reject(new Error('boom')),
       },
     })
-    const { refresh, loading } = usePortfolioTrend()
+    const { refresh, loading } = withSetup(() => usePortfolioTrend())
+    // 挂载自动首刷先吃到拒绝布线并重置去重短路键，冲刷落定后手动 refresh 才会重发
+    await flushPromises()
     await expect(refresh()).rejects.toThrow('boom')
     expect(loading.value).toBe(false)
   })

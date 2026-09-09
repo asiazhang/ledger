@@ -12,6 +12,7 @@ use crate::error::{AppError, Result};
 use super::command::DomainCommand;
 use super::device;
 use super::model::SyncOp;
+use super::positions;
 
 /// 本地 op 产出（op 产出信封单点）：分配 DeviceId / 逻辑时钟 / schema 版本，
 /// 序列化载荷并落日志，返回完整 op。
@@ -29,6 +30,10 @@ pub(crate) fn record_local(conn: &Connection, command: DomainCommand) -> Result<
         command,
     };
     insert_row(conn, &op)?;
+    // 本机流位点同步推进（同一写事务内）：本端产出的 op 即刻裁决落定，水位
+    // 跟进使位点门能拦住「源端截掉旧 op 后对端全量重投」的本机旧 op（不复活，
+    // issue #857）。
+    positions::advance(conn, &op.device_id, op.clock)?;
     Ok(op)
 }
 
@@ -93,6 +98,40 @@ pub(crate) fn is_known(conn: &Connection, op_id: &str) -> Result<bool> {
         )
         .optional()?
         .is_some())
+}
+
+/// 流内某时钟的 op 是否已知（位点连续前滚的日志在位判定；(device_id, clock)
+/// 唯一索引支撑）。
+pub(super) fn is_known_at(conn: &Connection, device_id: &str, clock: i64) -> Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM sync_ops WHERE device_id = ?1 AND clock = ?2",
+            params![device_id, clock],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
+/// 截断单流日志前缀（时钟 ≤ `through_position`）：仅删 `sync_ops` 行，返回删
+/// 除行数。挂起队列不进本表（未应用），天然不受影响；位点表独立留存、水位不
+/// 回退。调用界（owner 门与水位来源）在 [`super::checkpoint::truncate_stream_before`]。
+pub(super) fn delete_stream_before(
+    conn: &Connection,
+    device_id: &str,
+    through_position: i64,
+) -> Result<usize> {
+    let deleted = conn.execute(
+        "DELETE FROM sync_ops WHERE device_id = ?1 AND clock <= ?2",
+        params![device_id, through_position],
+    )?;
+    Ok(deleted)
+}
+
+/// 日志是否为空（引导守卫用：目标已有日志即已参与同步）。
+pub(super) fn is_empty(conn: &Connection) -> Result<bool> {
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM sync_ops", [], |r| r.get(0))?;
+    Ok(count == 0)
 }
 
 /// 读取全部 op 行（本地产出 + 已重放的外来 op；序列化与 [`insert_row`] 同源）。

@@ -6,3 +6,5 @@
 allowBuilds:
   esbuild: true
   fsevents: true
+patchedDependencies:
+  naive-ui: patches/naive-ui.patch

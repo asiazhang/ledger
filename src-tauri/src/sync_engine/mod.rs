@@ -6,7 +6,12 @@
 //! - [`engine`]（同步引擎公开接口）：[`engine::apply_ops`]（幂等重放）、
 //!   [`engine::ingest_ops`]（wire 接入，解析失败挂起）、[`engine::read_ops`]
 //!   （日志读取，全序返回）、[`engine::total_order`]（跨端全序）、
+//!   [`engine::ops_after_positions`]（位点之后的增量）、
 //!   [`engine::parked_ops`]（挂起队列清单）——本域行为的唯一断言权威层（域单测）。
+//! - [`checkpoint`]：Checkpoint 产出（全量快照 + 位点）、新端引导与截断机制
+//!   （issue #857，v1 永不截断、机制默认不启用）。
+//! - [`positions`]：位点（各来源流已应用水位，`sync_stream_positions` 表的
+//!   唯一 SQL 收口）。
 //! - [`device`]：DeviceId 读取（首用生成并持久化）与端内单调逻辑时钟分配。
 //! - [`ops`]：op 行落库与读取（`sync_ops` 表的唯一 SQL 收口）。
 //! - [`parked`]：挂起队列（`sync_parked_ops` 表的唯一 SQL 收口）。
@@ -26,23 +31,30 @@
 //! 分派与其嵌套感知事务原语），域间横向消费是既有事实（先例：investment ↔
 //! transaction、scheduled_transactions → transaction）。
 
+pub mod checkpoint;
 pub mod command;
 pub mod device;
 pub mod engine;
 pub mod model;
 pub mod ops;
 pub mod parked;
+pub mod positions;
 
 /// 域内共享接缝（crate 内消费）：DeviceId 读取与本地 op 产出信封。
 pub(crate) use device::device_id;
 pub(crate) use ops::record_local;
 
+pub use checkpoint::{
+    Checkpoint, bootstrap_from_checkpoint, create_checkpoint, truncate_stream_before,
+};
 pub use command::DomainCommand;
 pub use engine::{
-    ApplyReport, OpOutcome, apply_ops, ingest_ops, parked_ops, read_ops, total_order,
+    ApplyReport, OpOutcome, apply_ops, ingest_ops, ops_after_positions, parked_ops, read_ops,
+    stream_positions, total_order,
 };
 pub use model::SyncOp;
 pub use parked::ParkedOp;
+pub use positions::StreamPosition;
 
 #[cfg(test)]
 mod tests;

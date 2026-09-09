@@ -7,9 +7,9 @@
 //! [`SignalEmitter::post`] / [`post_emit_with`] **投递到主线程事件循环队尾**
 //! 非阻塞执行（机理与死锁背景见其文档，spec #364 / ADR-0054）：IPC 壳、HTTP 壳
 //! 与深路径镜像句柄三条失效信号发射路径共用这一处投递机制，一处改动全壳生效。
-//! 不经失效信号映射的带 payload 事件（行情同步进度 `sync-instruments:progress`，
-//! issue #369）只共用 [`post_emit_with`] 投递机制——其事件名常量与发射入口归
-//! 领域侧（`sync` 域的 `emit_progress`），本模块不承载其知识，
+//! 不经失效信号映射的带 payload 事件（标的同步进度 `ledger:instrument-sync-progress`，
+//! issue #897）只共用 [`post_emit_with`] 投递机制——其事件名常量与发射入口归
+//! 领域侧（`sync` 域的 `progress` 模块），本模块不承载其知识，
 //! 投递机制不另起第二套。发射器接缝（[`SignalEmitter`]，spec #366）是
 //! 「非阻塞」约定的类型化载体与回归测试注入点。
 //!
@@ -68,9 +68,9 @@ pub fn init_event_app(app: &AppHandle) {
 /// 机制收口单点（spec #364 / ADR-0054）：把「发射动作」闭包投递到
 /// **主线程事件循环队尾**执行——`AppHandle::run_on_main_thread` 非阻塞入队
 /// （tauri `send_user_message` 只投递不等回执），调用即返回、不等发射完成。
-/// 泛化为收任意发射动作闭包（issue #369）：失效信号经 [`SignalEmitter`] 接缝
-/// （[`AppHandle`] 实现构造 emit 闭包）走同一机制；带 payload 的事件（如行情
-/// 同步进度，不经失效信号映射 ADR-0044）由领域侧在此构造 `emit` 闭包，
+/// 泛化为收任意发射动作闭包：失效信号经 [`SignalEmitter`] 接缝
+/// （[`AppHandle`] 实现构造 emit 闭包）走同一机制；带 payload 的事件（如标的
+/// 同步进度，issue #897，不经失效信号映射 ADR-0044）由领域侧在此构造 `emit` 闭包，
 /// 不另起第二套投递机制。
 ///
 /// 为什么必须投递而不就地发射：tauri 的 `app.emit`（`tracing` feature 下走

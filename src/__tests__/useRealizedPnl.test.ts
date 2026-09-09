@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { flushPromises, mount } from '@vue/test-utils'
+import { withSetup } from './helpers/mount'
 import { defineComponent } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
 import { useRealizedPnl } from '@/composables/useRealizedPnl'
@@ -44,7 +45,7 @@ beforeEach(async () => {
 
 describe('useRealizedPnl 已实现盈亏数据层', () => {
   it('加载已实现盈亏汇总并派生 totalPnl', async () => {
-    const { summary, loading, totalPnl, refresh } = useRealizedPnl()
+    const { summary, loading, totalPnl, refresh } = withSetup(() => useRealizedPnl())
     expect(totalPnl.value).toBe(0) // 未加载前空态
     await refresh()
     expect(loading.value).toBe(false)
@@ -53,7 +54,7 @@ describe('useRealizedPnl 已实现盈亏数据层', () => {
   })
 
   it('无筛选时不带 filter 参数（后端全表口径）', async () => {
-    const { refresh } = useRealizedPnl()
+    const { refresh } = withSetup(() => useRealizedPnl())
     await refresh()
     const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'realized_pnl_summary')
     expect(call![1]).toEqual({ filter: null })
@@ -78,7 +79,7 @@ describe('useRealizedPnl 已实现盈亏数据层', () => {
         },
       },
     })
-    const { summary, error, refresh } = useRealizedPnl()
+    const { summary, error, refresh } = withSetup(() => useRealizedPnl())
     const first = refresh()
     const second = refresh()
     await second
@@ -92,30 +93,32 @@ describe('useRealizedPnl 已实现盈亏数据层', () => {
   })
 
   it('账户/标的筛选生效：refresh 闭包自读当前筛选（0 元闭包，发起时点即最新值）', async () => {
-    const { selectedAccountId, selectedInstrumentId, refresh } = useRealizedPnl()
+    const { selectedAccountId, selectedInstrumentId, refresh } = withSetup(() => useRealizedPnl())
     await refresh()
 
     selectedAccountId.value = 'acc-1'
     await refresh()
+    // 调用序：[0] 挂载自动首刷（无筛选）、[1] 无筛选显式刷、[2] 账户筛选、[3] 双筛选
     const accountCall = mockInvoke.mock.calls.filter(
       ([cmd]) => cmd === 'realized_pnl_summary',
-    )[1]
+    )[2]
     expect(accountCall![1]).toEqual({ filter: { account_id: 'acc-1' } })
 
     selectedInstrumentId.value = 'inst-1'
     await refresh()
-    const bothCall = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'realized_pnl_summary')[2]
+    const bothCall = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'realized_pnl_summary')[3]
     expect(bothCall![1]).toEqual({ filter: { account_id: 'acc-1', instrument_id: 'inst-1' } })
   })
 
   it('onSelectInstrument 更新标的筛选并立即刷新', async () => {
-    const { selectedInstrumentId, onSelectInstrument } = useRealizedPnl()
+    const { selectedInstrumentId, onSelectInstrument } = withSetup(() => useRealizedPnl())
     onSelectInstrument('inst-1')
     await flushPromises()
     expect(selectedInstrumentId.value).toBe('inst-1')
     const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'realized_pnl_summary')
-    expect(calls.length).toBe(1)
-    expect(calls[0]![1]).toEqual({ filter: { instrument_id: 'inst-1' } })
+    // 挂载自动首刷 + onSelectInstrument 即时刷新
+    expect(calls.length).toBe(2)
+    expect(calls.at(-1)![1]).toEqual({ filter: { instrument_id: 'inst-1' } })
   })
 
   it('账户选项只含投资账户：谓词收口参考 store（隐藏投资账户保留、非投资类型排除）', async () => {
@@ -130,7 +133,7 @@ describe('useRealizedPnl 已实现盈亏数据层', () => {
       },
     })
     await useReferenceStore().refresh()
-    const { accountOptions } = useRealizedPnl()
+    const { accountOptions } = withSetup(() => useRealizedPnl())
     expect(accountOptions.value).toEqual([
       { label: '证券账户A', value: 'acc-1' },
       { label: '隐藏证券户', value: 'acc-hidden' },
@@ -141,7 +144,7 @@ describe('useRealizedPnl 已实现盈亏数据层', () => {
 describe('useRealizedPnl 标的远程搜索（防抖 + 刻意吞错，不收编）', () => {
   it('防抖后携带 search 参数远程搜索，仅最后一次触发生效', async () => {
     vi.useFakeTimers()
-    const { searchInstruments, pnlInstrumentOptions } = useRealizedPnl()
+    const { searchInstruments, pnlInstrumentOptions } = withSetup(() => useRealizedPnl())
     searchInstruments('浦发')
     searchInstruments('浦发银')
     await vi.advanceTimersByTimeAsync(300)
@@ -164,7 +167,7 @@ describe('useRealizedPnl 标的远程搜索（防抖 + 刻意吞错，不收编�
       },
     })
     vi.useFakeTimers()
-    const { searchInstruments, error, searchingInstruments } = useRealizedPnl()
+    const { searchInstruments, error, searchingInstruments } = withSetup(() => useRealizedPnl())
     searchInstruments('浦发')
     await vi.advanceTimersByTimeAsync(300)
     await flushPromises()
@@ -177,7 +180,7 @@ describe('useRealizedPnl 标的远程搜索（防抖 + 刻意吞错，不收编�
 
 describe('useRealizedPnl 失败治愈（issue #325 Loadable 薄壳化）', () => {
   it('刷新失败不向调用方抛出：error 置位、loading 收尾、summary 保持原值不清空', async () => {
-    const { summary, loading, error, refresh } = useRealizedPnl()
+    const { summary, loading, error, refresh } = withSetup(() => useRealizedPnl())
     await refresh()
     expect(summary.value).toEqual(mockSummary)
 
@@ -204,8 +207,9 @@ describe('useRealizedPnl 失败治愈（issue #325 Loadable 薄壳化）', () =>
         realized_pnl_summary: () => Promise.reject({ kind: 'db', message: '盈亏汇总查询失败' }),
       },
     })
-    const { error, refresh } = useRealizedPnl()
-    await refresh()
+    // 挂载自动首刷已吃到拒绝布线并弹一次 toast，无需再显式首刷
+    const { error, refresh } = withSetup(() => useRealizedPnl())
+    await flushPromises()
     expect(error.value).toBe('盈亏汇总查询失败')
     expect(sink.error).toHaveBeenCalledTimes(1)
     expect(sink.error).toHaveBeenCalledWith('盈亏汇总查询失败')
@@ -223,7 +227,7 @@ describe('useRealizedPnl 失败治愈（issue #325 Loadable 薄壳化）', () =>
         realized_pnl_summary: () => Promise.reject('首刷失败'),
       },
     })
-    const { summary, error, refresh } = useRealizedPnl()
+    const { summary, error, refresh } = withSetup(() => useRealizedPnl())
     await refresh()
     expect(error.value).toBe('首刷失败')
     expect(summary.value).toBeNull()

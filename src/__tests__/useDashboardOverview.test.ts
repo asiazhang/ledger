@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
+import { withSetup } from './helpers/mount'
 import { useReferenceStore } from '@/stores/reference'
 import { useDashboardOverview } from '@/composables/useDashboardOverview'
 import { registerToastSink } from '@/composables/useLoadable'
@@ -23,7 +25,7 @@ describe('useDashboardOverview 首页净资产数据层（issue #143）', () => 
   it('加载 dashboard_overview 并装配出总览数据', async () => {
     const sink = makeFakeSink()
     registerToastSink(sink)
-    const { overview, loading, error, refresh } = useDashboardOverview()
+    const { overview, loading, error, refresh } = withSetup(() => useDashboardOverview())
     await refresh()
     expect(loading.value).toBe(false)
     expect(error.value).toBeNull()
@@ -42,8 +44,9 @@ describe('useDashboardOverview 首页净资产数据层（issue #143）', () => 
     })
     const sink = makeFakeSink()
     registerToastSink(sink)
-    const { overview, loading, error, refresh } = useDashboardOverview()
-    await expect(refresh()).resolves.not.toThrow()
+    // 挂载自动首刷吃到拒绝布线：治愈后不抛（未处理 rejection 会让测试失败）
+    const { overview, loading, error } = withSetup(() => useDashboardOverview())
+    await flushPromises()
     expect(loading.value).toBe(false)
     expect(overview.value).toBeNull()
     expect(error.value).toBe('缺少 USD→CNY 汇率，无法折算')
@@ -57,13 +60,13 @@ describe('useDashboardOverview 首页净资产数据层（issue #143）', () => 
       defaults: BASE_DEFAULTS,
       overrides: { dashboard_overview: () => Promise.reject('缺汇率') },
     })
-    const { error, refresh } = useDashboardOverview()
+    const { error, refresh } = withSetup(() => useDashboardOverview())
     await refresh()
     expect(error.value).toBe('缺汇率')
   })
 
   it('成功后再次报错：overview 清空并切换到错误态；再次成功则恢复', async () => {
-    const { overview, error, refresh } = useDashboardOverview()
+    const { overview, error, refresh } = withSetup(() => useDashboardOverview())
     await refresh()
     expect(overview.value).not.toBeNull()
 
@@ -92,8 +95,9 @@ describe('useDashboardOverview 首页净资产数据层（issue #143）', () => 
         dashboard_overview: () => Promise.reject(new Error('缺少 HKD→CNY 汇率')),
       },
     })
-    const { refresh } = useDashboardOverview()
-    await refresh()
+    // 挂载自动首刷已吃到拒绝布线并弹一次 toast，无需再显式首刷
+    const { refresh } = withSetup(() => useDashboardOverview())
+    await flushPromises()
     expect(sink.error).toHaveBeenCalledTimes(1)
 
     wireInvokeSeam({ defaults: BASE_DEFAULTS })

@@ -183,18 +183,20 @@ export function usePortfolioTrend() {
     mode.value = 'portfolio'
   }
 
+  // 内部自动刷新（watch / 挂载首刷 / 价格失效信号）治愈失败：不再产生未处理
+  // rejection（spec 治愈清单①同款语义）；返回的 refresh 仍向外抛，由调用方处置。
   watch([preset, mode, () => instrument.value?.id], () => {
-    void refresh()
+    void refresh().catch(() => {})
   })
 
   // 价格失效信号（ADR-0031）：同步实际写价后走势采样点（market_prices）
   // 已陈旧，强制重拉——不重置去重短路则重拉被吞、留下陈旧点（issue #238）。
   usePricesChanged(() => {
-    void forceRefresh()
+    void forceRefresh().catch(() => {})
   })
 
   onMounted(() => {
-    void refresh()
+    void refresh().catch(() => {})
   })
 
   /** 当前模式的采样点序列（统一形态，供图表与空态消费） */
