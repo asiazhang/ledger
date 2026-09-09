@@ -55,17 +55,23 @@ export const HOLDINGS_SEARCH_DEBOUNCE_MS = 300
 // 纯函数：排序（null 恒排末尾、多币种数值直比、默认代码字母序）
 // ---------------------------------------------------------------------------
 
+/** 空值恒排末尾的三向比较（与方向无关）：双侧空值相等，单侧空值殿后，
+ * 否则交由比较器。金额排序与默认代码字母序共用同一空值语义。 */
+function nullsLast<T>(a: T | null, b: T | null, cmp: (x: T, y: T) => number): number {
+  if (a === null && b === null) return 0
+  if (a === null) return 1
+  if (b === null) return -1
+  return cmp(a, b)
+}
+
 /** 市值/未实现盈亏两列的比较器：缺价行恒排末尾（与方向无关）；
  * 两侧均有值时**数值直比**（跨币种无精确语义，已接受代价）。 */
 export function comparePortfolioRows(a: PortfolioRow, b: PortfolioRow, sorter: HoldingsSorter): number {
   const key = sorter.columnKey === 'market_value' ? 'marketValueCents' : 'unrealizedPnlCents'
-  const av = a[key]
-  const bv = b[key]
-  if (av === null && bv === null) return 0
-  if (av === null) return 1
-  if (bv === null) return -1
-  const cmp = av - bv
-  return sorter.order === 'descend' ? -cmp : cmp
+  return nullsLast(a[key], b[key], (x, y) => {
+    const ascending = x - y
+    return sorter.order === 'descend' ? -ascending : ascending
+  })
 }
 
 /** 排序产出新集合（不修改输入）：null 排序状态 = 默认标的代码字母序
@@ -73,12 +79,7 @@ export function comparePortfolioRows(a: PortfolioRow, b: PortfolioRow, sorter: H
 export function sortHoldings(rows: PortfolioRow[], sorter: HoldingsSorter | null): PortfolioRow[] {
   const sorted = [...rows]
   if (sorter === null) {
-    sorted.sort((a, b) => {
-      if (a.symbol === null && b.symbol === null) return 0
-      if (a.symbol === null) return 1
-      if (b.symbol === null) return -1
-      return a.symbol.localeCompare(b.symbol)
-    })
+    sorted.sort((a, b) => nullsLast(a.symbol, b.symbol, (x, y) => x.localeCompare(y)))
     return sorted
   }
   return sorted.sort((a, b) => comparePortfolioRows(a, b, sorter))
