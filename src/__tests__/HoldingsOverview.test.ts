@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
+import { NDataTable } from 'naive-ui'
 import { nextTick } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
 import { applyLocale } from '@/i18n'
@@ -647,6 +648,27 @@ describe('HoldingsOverview 客户端分页（issue #912）', () => {
       expect(wrapper.findAll('th').map((th) => th.text())).toContain('NAV Date')
     } finally {
       await applyLocale('zh-CN')
+    }
+  })
+})
+
+describe('HoldingsOverview 表格列形态（词汇表「表格列形态」约定）', () => {
+  it('数值列右对齐 + 等宽数字；名称列唯一弹性（无固定宽、minWidth + ellipsis）', async () => {
+    wrapper = mount(HoldingsOverview)
+    await flushPromises()
+    const columns = wrapper.findComponent(NDataTable).props('columns') as unknown as Array<Record<string, unknown>>
+    const byKey = (key: string) => columns.find((c) => c.key === key)!
+    for (const key of ['quantity', 'cost_basis', 'latest_price', 'nav_date', 'market_value', 'unrealized_pnl']) {
+      expect(byKey(key).align, key).toBe('right')
+      expect(byKey(key).className, key).toBe('tabular-nums')
+    }
+    const nameCol = byKey('instrumentName')
+    expect(nameCol.width).toBeUndefined()
+    expect(nameCol.minWidth).toBeGreaterThan(0)
+    expect(nameCol.ellipsis).toBeTruthy()
+    // 其余短内容列维持固定宽（scrollX = 固定列宽总和的前提）
+    for (const key of ['symbol', 'accountName', 'nav_date']) {
+      expect(typeof byKey(key).width, key).toBe('number')
     }
   })
 })
