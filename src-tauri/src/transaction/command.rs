@@ -47,6 +47,16 @@ pub enum TransactionCommand {
     Delete { id: String },
 }
 
+impl TransactionCommand {
+    /// 命令指向的实体 id（创建/修改随行携带，删除即目标 id）。
+    pub(crate) fn subject_id(&self) -> &str {
+        match self {
+            TransactionCommand::Create { id, .. } | TransactionCommand::Update { id, .. } => id,
+            TransactionCommand::Delete { id } => id,
+        }
+    }
+}
+
 /// 投资 kind（buy/sell）的命令字段：随 op 携带的语义输入，供审计留痕与后续
 /// 投资命令重放（#861）消费；v1 重放对投资命令显式码化拒绝（fail loud）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

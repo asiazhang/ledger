@@ -92,6 +92,14 @@ impl AppError {
         matches!(self, AppError::Coded { code: c, .. } if c == code)
     }
 
+    /// 码化错误的稳定错误码；非码化错误返回 None（只判读、不构造）。
+    pub fn code(&self) -> Option<&str> {
+        match self {
+            AppError::Coded { code, .. } => Some(code),
+            _ => None,
+        }
+    }
+
     /// 序列化parts：`(kind, message, code, params)`——code/params 为 None 时字段整体缺席。
     fn parts(&self) -> (&'static str, &str, Option<&str>, Option<&[String]>) {
         match self {

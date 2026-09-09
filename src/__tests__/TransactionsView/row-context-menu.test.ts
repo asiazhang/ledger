@@ -51,11 +51,37 @@ describe('TransactionsView 行右键菜单（issue #151）', () => {
     expect(rowMenuKeys(wrapper)).toEqual(['delete'])
   })
 
-  it('操作列从表格移除', async () => {
+  it('交易行「⋯」常显（ADR-0088 决策 6 / issue #843）：操作列末位，每行一枚「⋯」', async () => {
     const wrapper = await mountView()
-    const cols = wrapper.findComponent(NDataTable).props('columns') as Array<{ title?: string }>
-    expect(cols.some((c) => c.title === '操作')).toBe(false)
+    const cols = wrapper.findComponent(NDataTable).props('columns') as Array<{ key?: string }>
+    expect(cols[cols.length - 1].key).toBe('actions')
+    expect(wrapper.findAll('.row-actions-btn')).toHaveLength(3)
     expect(wrapper.findAllComponents(NPopconfirm)).toHaveLength(0)
+  })
+
+  it('点「⋯」打开的菜单项集合与右键一致（同一行菜单编排工厂 open 入口）', async () => {
+    const wrapper = await mountView()
+    // expense 行：右键与「⋯」点开集合一致
+    await openMenuOnRow(wrapper, 0)
+    expect(rowMenuKeys(wrapper)).toEqual(['edit', 'refund', 'add-item', 'menu-divider', 'delete'])
+    await wrapper.findAll('.row-actions-btn')[0].trigger('click')
+    await flushPromises()
+    expect(rowMenu(wrapper).props('show')).toBe(true)
+    expect(rowMenuKeys(wrapper)).toEqual(['edit', 'refund', 'add-item', 'menu-divider', 'delete'])
+    // income 行：「⋯」与右键集合一致（编辑 + 删除）
+    await openMenuOnRow(wrapper, 1)
+    const rightClickKeys = rowMenuKeys(wrapper)
+    await wrapper.findAll('.row-actions-btn')[1].trigger('click')
+    await flushPromises()
+    expect(rowMenuKeys(wrapper)).toEqual(rightClickKeys)
+  })
+
+  it('「⋯」选中的动作与右键同一分派：点删除弹二次确认（issue #151）', async () => {
+    const wrapper = await mountView()
+    await wrapper.findAll('.row-actions-btn')[0].trigger('click')
+    await flushPromises()
+    await selectRowMenu(wrapper, 'delete')
+    expect(dialogText()).toContain('删除后不可恢复')
   })
 
   it('交易列表展示商户列：商户名来自参考数据 merchantMap（issue #189）', async () => {

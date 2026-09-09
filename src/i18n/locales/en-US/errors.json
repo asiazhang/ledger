@@ -242,6 +242,9 @@
     "log-level-invalid": "Invalid log level: {0} (valid values: error/warn/info/debug/trace)"
   },
   "sync-engine": {
-    "command-unsupported": "Replaying commands of transaction type {0} is not supported yet (investment command replay comes later)."
+    "command-unsupported": "Replaying commands of transaction type {0} is not supported yet (investment command replay comes later).",
+    "schema-ahead": "This operation was produced by a newer version of the app; it will retry automatically after you upgrade.",
+    "op-undecodable": "Sync command could not be recognized (possibly produced by a newer version): {0}",
+    "replay-failed": "Sync operation failed on this device and is parked for review: {0}"
   }
 }

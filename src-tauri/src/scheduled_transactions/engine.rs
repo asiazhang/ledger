@@ -1,10 +1,14 @@
 use chrono::Datelike;
 use rusqlite::{Connection, OptionalExtension};
 
+use super::command::{
+    ScheduledCommand, occurrence_transaction_id, record_local, transaction_landed,
+};
 use crate::db::query::{query_all, query_one};
 use crate::db::{new_uuid, now_iso};
 use crate::error::{AppError, Result};
 use crate::sync_engine::device_id;
+use crate::transaction::NormalizedTransaction;
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::writer;
 
@@ -846,8 +850,9 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
     //   把原始金额当作 amount_native_cents 落库的 bug（故事 3/17/23）；
     // - normalize 为只读校验+折算，放在 CAS 锁定**之前**：业务错误（如非默认币种
     //   缺汇率）直接返回、期次保持 pending 可重试，不会滞留 processing；
-    // - id 与审计字段（created_at/updated_at/version/device_id/is_deleted）由
-    //   insert_row 生成，与手动创建/导入共用同一写入权威，列清单不在此重复。
+    // - id 由 OccurrenceKey 确定性派生（落地身份，issue #856），审计字段
+    //   （created_at/updated_at/version/device_id/is_deleted）由写入接缝生成，
+    //   与手动创建/导入共用同一写入权威。
     // 商户复制语义（issue #190 / ADR-0028）：期次生成交易复制计划的商户引用。
     // `existing_merchant_id` 传同值——计划对商户的引用是历史引用（创建计划时已校验
     // 商户在用），期次只是把该引用复制到流水：计划商户随后被软删时，历史引用照常
@@ -878,7 +883,15 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
     // 事务自持：从 CAS 置 processing 起包到计划完成检查（事务边界见本函数 doc）。
     let now = now_iso();
     conn.execute("BEGIN", [])?;
-    match execute_within_transaction(conn, occurrence_id, &occ.status, &norm, &st.id, &now) {
+    match execute_within_transaction(
+        conn,
+        occurrence_id,
+        &occ.status,
+        &norm,
+        &st.id,
+        &occ.scheduled_date,
+        &now,
+    ) {
         Ok(txn_id) => match conn.execute("COMMIT", []) {
             Ok(_) => {
                 tracing::info!(occurrence_id = %occurrence_id, transaction_id = %txn_id, "定时交易期次执行成功");
@@ -929,12 +942,19 @@ struct PlanExtProjection {
 
 /// 期次落库协议本体（无事务语义，由 [`execute_occurrence`] 自持事务包裹）：
 /// CAS 置 processing → 交易行落库 → 回填 transaction_id → 计划完成检查。
+///
+/// 落地身份（issue #856 / ADR-0091 决策 5）：交易 id 由 OccurrenceKey
+/// （plan_id + 期次计划日期）确定性派生（[`occurrence_transaction_id`]）——
+/// 落地已存在（他端经同步落地、本端期次行晚到）则只回填完成、不插第二笔、
+/// 不产出 op（落地 op 已存在于全局日志）；否则落库并产出期次触发 op（随本
+/// 事务提交/回滚）。双端同时自动执行同一期派生同一 id，同步收敛后只落一次。
 fn execute_within_transaction(
     conn: &Connection,
     occurrence_id: &str,
     expected_status: &str,
     norm: &writer::NormalizedRow,
     plan_id: &str,
+    scheduled_date: &str,
     now: &str,
 ) -> Result<String> {
     // 锁定期次: CAS update status -> processing
@@ -951,19 +971,37 @@ fn execute_within_transaction(
         ));
     }
 
-    let txn_id = writer::insert_row(conn, norm)?;
+    // 落地身份：OccurrenceKey 派生，跨端一致（防双扣的结构承载）。
+    let landing_id = occurrence_transaction_id(plan_id, scheduled_date);
+    let landed = transaction_landed(conn, &landing_id)?;
+    if !landed {
+        // 落库（显式 id 形态：落地身份即主键）。
+        writer::insert_row_with_id(conn, &landing_id, norm)?;
+        // op 产出接缝（issue #856 / ADR-0091 决策 5）：期次触发动作连同归一化行
+        // （含源端折算）追加进本机 OpLog；随本事务提交/回滚。落地身份由键派生、
+        // 不随命令携带（消除第二事实源漂移）。
+        record_local(
+            conn,
+            ScheduledCommand::ExecuteOccurrence {
+                plan_id: plan_id.to_string(),
+                scheduled_date: scheduled_date.to_string(),
+                row: NormalizedTransaction::from(norm),
+            },
+        )?;
+    }
 
-    // 回填 transaction_id
+    // 回填 transaction_id（已落地路径只回填完成：不插第二笔、不产出 op——
+    // 落地 op 已存在于全局日志；不自动复活被用户删除的落地）。
     conn.execute(
         "UPDATE scheduled_transaction_occurrences SET status='completed', transaction_id=?2, updated_at=?3, version=version+1, device_id=?4 \
          WHERE id=?1",
-        rusqlite::params![occurrence_id, txn_id, now, device_id(conn)?],
+        rusqlite::params![occurrence_id, landing_id, now, device_id(conn)?],
     )?;
 
     // 检查计划是否应标记为 completed
     check_and_complete_plan(conn, plan_id)?;
 
-    Ok(txn_id)
+    Ok(landing_id)
 }
 
 /// 检查计划是否所有期次已完成，如果是则标记为 completed。

@@ -3,7 +3,7 @@
 // 渲染函数在运行时读取 store 的响应式数据，构建一次即可，无需 computed 包裹。
 
 import { h, type VNode } from 'vue'
-import { NEllipsis, NTag, type DataTableColumn } from 'naive-ui'
+import { NEllipsis, NButton, NTag, type DataTableColumn } from 'naive-ui'
 import { formatAmount } from '@/types'
 import type { Transaction, TransactionKind } from '@/types'
 import type { useReferenceStore } from '@/stores/reference'
@@ -14,6 +14,7 @@ import AccountLink from '@/components/AccountLink.vue'
 import MerchantLink from '@/components/MerchantLink.vue'
 import SourceLink from '@/components/SourceLink.vue'
 import NoteCopyButton from '@/components/NoteCopyButton.vue'
+import AmountCell from '@/components/AmountCell.vue'
 import { lendingLabelKey, resolveLendingDirection } from '@/domain/lending'
 
 export type ReferenceStore = ReturnType<typeof useReferenceStore>
@@ -83,8 +84,19 @@ function renderNoteCell(row: Transaction): VNode | string {
   ])
 }
 
-export function buildTransactionColumns(reference: ReferenceStore): DataTableColumn<Transaction>[] {
-  return [
+/** buildTransactionColumns 可选装配面：调用方按需声明，缺省即纯只读列（搜索结果同款）。 */
+export interface BuildTransactionColumnsOptions {
+  /** 交易行「⋯」常显按钮的打开回调（ADR-0088 决策 6，issue #843）：传入即
+   * 追加常显操作列，与行右键共用 RowContextMenu 同一 open 入口（账户行先例）；
+   * 不传则不渲染该列（搜索结果无行菜单，保持只读）。 */
+  onRowMenuOpen?: (event: MouseEvent, row: Transaction) => void
+}
+
+export function buildTransactionColumns(
+  reference: ReferenceStore,
+  options: BuildTransactionColumnsOptions = {},
+): DataTableColumn<Transaction>[] {
+  const columns: DataTableColumn<Transaction>[] = [
     { title: t('transactions.columns.date'), key: 'date', width: 105 },
     {
       title: t('transactions.columns.kind'),
@@ -141,14 +153,38 @@ export function buildTransactionColumns(reference: ReferenceStore): DataTableCol
       // @/theme/semantic-colors（六类型亮/暗两套）。主题在渲染时读取 app store
       // 响应式取值：切换外观主题即时换色，无需重建列；借出/借入/收回/还款是
       // transfer 的派生视角（ADR-0053），随 transfer 同紫，不做派生级区分。
+      // 单元格交互归 AmountCell（issue #843）：指针轴纯 span 零变化，触控轴
+      // 点按弹出全文（悬停一击可达；文案与色在此单点计算后传入）。
       render: (row) =>
-        h(
-          'span',
-          { style: `color: ${kindSemanticColor(row.kind, useAppStore().theme)}` },
-          formatAmount(row.amount_native_cents, reference.getCurrency(row.currency_code)),
-        ),
+        h(AmountCell, {
+          text: formatAmount(row.amount_native_cents, reference.getCurrency(row.currency_code)),
+          color: kindSemanticColor(row.kind, useAppStore().theme),
+        }),
     },
   ]
+  // 交易行「⋯」常显列（ADR-0088 决策 6，issue #843）：与右键共用同一行菜单编排
+  // open 入口、以点击坐标弹出，全平台常显（账户行先例，桌面可见变化已裁决）；
+  // 仅声明了回调的调用方（交易列表）渲染，搜索结果不追加。
+  if (options.onRowMenuOpen) {
+    columns.push({
+      title: t('transactions.columns.actions'),
+      key: 'actions',
+      width: 64,
+      render: (row) =>
+        h(
+          NButton,
+          {
+            size: 'tiny',
+            quaternary: true,
+            class: 'row-actions-btn touch-hit-area',
+            'aria-label': t('transactions.menu.actions'),
+            onClick: (e: MouseEvent) => options.onRowMenuOpen!(e, row),
+          },
+          () => '⋯',
+        ),
+    })
+  }
+  return columns
 }
 
 /** 转账单元格内账户链接的布局样式：内容宽度 + 允许收缩省略 + 文本左对齐。

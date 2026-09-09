@@ -35,23 +35,52 @@ pub(crate) fn record_local(conn: &Connection, command: DomainCommand) -> Result<
 /// 外来 op 落日志（重放事务内调用，与命令执行同事务原子）。
 pub(crate) fn insert_row(conn: &Connection, op: &SyncOp) -> Result<()> {
     // 序列化失败属程序缺陷（载荷为本仓自有类型）：非码化 Invalid、fail loud；
-    // 「旧端载荷反序列化失败」的 schema 偏斜场景由 #856 挂起队列承接后改道。
+    // 「旧端载荷反序列化失败」的 schema 偏斜场景由挂起队列承接后改道。
     let payload = serde_json::to_string(&op.command)
         .map_err(|e| AppError::Invalid(format!("op 载荷序列化失败: {e}")))?;
     conn.execute(
-        "INSERT INTO sync_ops (op_id, device_id, clock, schema_version, entity, payload, recorded_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO sync_ops (op_id, device_id, clock, schema_version, entity, entity_id, payload, recorded_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             op.op_id,
             op.device_id,
             op.clock,
             op.schema_version,
             op.command.entity(),
+            op.command
+                .subject()
+                .map(|(_, id)| id)
+                .unwrap_or_default(),
             payload,
             now_iso(),
         ],
     )?;
     Ok(())
+}
+
+/// LWW 裁决检索：本地日志中是否存在同实体且全序更后的 op（ADR-0091 决策 4）。
+///
+/// 全序更后 = (clock, device_id) 字典序更大；命中即意味着序末者已在本端生效，
+/// 全序更前的同实体 op 为输者（落日志可追溯、不执行）。无实体指向的调用方
+/// （冲突域在 OccurrenceKey 的命令）不进本查询。
+pub(crate) fn has_later_subject(
+    conn: &Connection,
+    entity: &str,
+    entity_id: &str,
+    clock: i64,
+    device_id: &str,
+) -> Result<bool> {
+    let later = conn
+        .query_row(
+            "SELECT 1 FROM sync_ops \
+             WHERE entity = ?1 AND entity_id = ?2 \
+               AND (clock > ?3 OR (clock = ?3 AND device_id > ?4)) \
+             LIMIT 1",
+            params![entity, entity_id, clock, device_id],
+            |_| Ok(()),
+        )
+        .optional()?;
+    Ok(later.is_some())
 }
 
 /// op 是否已知（幂等判定单点）：按 `op_id` 主键存在性。
@@ -83,8 +112,8 @@ pub(crate) fn read_all(conn: &Connection) -> Result<Vec<SyncOp>> {
     let mut ops = Vec::new();
     for row in rows {
         let (op_id, device_id, clock, schema_version, payload) = row?;
-        // 反序列化失败：本仓自有类型恒成功；外来旧载荷在新 schema 上失败的
-        // schema 偏斜场景由 #856 挂起队列承接后改道（当前 fail loud 不静默丢弃）。
+        // 反序列化失败：本仓自有类型恒成功（wire 接入路径的旧载荷不可解析场景
+        // 由 [`super::engine::ingest_ops`] 挂起承接，不进本函数）。
         let command = serde_json::from_str(&payload)
             .map_err(|e| AppError::Invalid(format!("op 载荷反序列化失败: {e}")))?;
         ops.push(SyncOp {

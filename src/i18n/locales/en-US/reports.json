@@ -11,7 +11,8 @@
     "title": "Expense by Category",
     "empty": "No expense data",
     "all": "All Categories",
-    "direct": "{name} (direct)"
+    "direct": "{name} (direct)",
+    "showPercent": "Percent"
   },
   "merchant": {
     "title": "Merchant Ranking",

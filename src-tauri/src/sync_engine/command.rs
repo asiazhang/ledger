@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::scheduled_transactions::ScheduledCommand;
 use crate::transaction::TransactionCommand;
 
 /// 语义命令（按实体分派；`entity` tag 与 `sync_ops.entity` 列同源）。
@@ -14,6 +15,8 @@ use crate::transaction::TransactionCommand;
 pub enum DomainCommand {
     /// 交易创建/修改/删除命令（核心交易域）。
     Transaction(TransactionCommand),
+    /// 定时计划域命令（期次触发等；ADR-0091 决策 5）。
+    Scheduled(ScheduledCommand),
 }
 
 impl DomainCommand {
@@ -21,6 +24,17 @@ impl DomainCommand {
     pub fn entity(&self) -> &'static str {
         match self {
             DomainCommand::Transaction(_) => "transaction",
+            DomainCommand::Scheduled(_) => "scheduled",
+        }
+    }
+
+    /// 命令指向的实体（实体判别键，实体 id）：LWW 裁决域（同实体并发编辑取
+    /// 全序末者，ADR-0091 决策 4）。无实体指向的命令返回 None——其冲突域另行
+    /// 裁定（如期次触发命令的 OccurrenceKey，ADR-0091 决策 5）。
+    pub fn subject(&self) -> Option<(&'static str, &str)> {
+        match self {
+            DomainCommand::Transaction(cmd) => Some(("transaction", cmd.subject_id())),
+            DomainCommand::Scheduled(_) => None,
         }
     }
 }

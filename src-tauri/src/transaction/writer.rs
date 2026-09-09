@@ -277,6 +277,38 @@ pub fn validate_policy_active(conn: &Connection, policy_id: Option<&str>) -> Res
     Ok(())
 }
 
+/// 重放路径的账户引用存活守卫（issue #856）：转出/转入账户必须存在且未软删除，
+/// 否则码化 NotFound（引擎挂起进队列、不自动复活已删账户）。
+///
+/// 仅同步重放消费：重放端在命令执行前无法预知对端账户的存活状态，与本地写入
+/// （账户引用来自在用字典选取）的守卫位置不同、不变量相同——「往已删账户记账」
+/// 不产生新行。
+pub fn validate_accounts_alive(
+    conn: &Connection,
+    account_id: &str,
+    to_account_id: Option<&str>,
+) -> Result<()> {
+    let mut ids = [Some(account_id), to_account_id];
+    for id in ids.iter_mut().flatten() {
+        let alive: bool = conn
+            .query_row(
+                "SELECT 1 FROM accounts WHERE id=?1 AND is_deleted=0",
+                params![*id],
+                |_| Ok(true),
+            )
+            .optional()?
+            .is_some();
+        if !alive {
+            return Err(AppError::codedp_not_found(
+                "account.not-found",
+                format!("账户不存在或已删除: {id}"),
+                &[*id],
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// 将归一化行落库为完整交易行：生成 `id`（UUID v7）+ 审计字段
 /// （created_at / updated_at / version=1 / device_id / is_deleted=0），返回新交易 `id`。
 ///

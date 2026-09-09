@@ -28,6 +28,7 @@ import RefundForm from '@/components/RefundForm.vue'
 import AddItemForm from '@/components/AddItemForm.vue'
 import { buildRowMenuOptions } from '@/components/transaction-row-menu'
 import { useCreateShortcuts, CREATE_KIND_KEYS } from '@/composables/useCreateShortcuts'
+import { useInputMode } from '@/composables/useInputMode'
 import { useRowContextMenu } from '@/composables/useRowContextMenu'
 import { useTransactionFilter, UNCATEGORIZED_ONLY } from '@/composables/useTransactionFilter'
 import { registerViewReset } from '@/composables/viewResetRegistry'
@@ -194,13 +195,19 @@ function createKindLabel(kind: CreateFormKind): string {
 /** 下拉选项：5 种可创建类型（refund 不在入口：退款已移出表单域，入口由交易条目
  * 右键菜单承接，独立 ticket 落地前处于过渡态）+ 借贷变体「借出」「借入」两项
  * （issue #374，分隔线分组；不占快捷键键位）。kind 项标签后附裸键快捷键提示（issue #153），
- * 键位来自 CREATE_KIND_KEYS 单一来源，与 keydown 匹配共用。 */
+ * 键位来自 CREATE_KIND_KEYS 单一来源，与 keydown 匹配共用。
+ * 触控轴下裸键监听不绑定（ADR-0088 决策 6 / issue #843），键位标注同步退役
+ * （提示不存在的键位是误导）；指针轴行为不变。 */
+const inputMode = useInputMode()
 const createKindOptions = computed<DropdownOption[]>(() => [
   ...CREATE_KINDS.map((k) => ({
-    label: t('transactions.create.kindWithKey', {
-      kind: t(`transactions.kind.${k}`),
-      key: CREATE_KIND_KEYS[k],
-    }),
+    label:
+      inputMode.value === 'pointer'
+        ? t('transactions.create.kindWithKey', {
+            kind: t(`transactions.kind.${k}`),
+            key: CREATE_KIND_KEYS[k],
+          })
+        : t(`transactions.kind.${k}`),
     key: k,
   })),
   { type: 'divider', key: 'create-lending-divider' },
@@ -392,9 +399,13 @@ const pagination = computed<PaginationProps>(() => ({
   },
 }))
 
-// 列经 computed 构造：列名（t()）随语言切换即时重建（列宽总和随之联动）
+// 列经 computed 构造：列名（t()）随语言切换即时重建（列宽总和随之联动）。
+// 传入 onRowMenuOpen 即追加常显「⋯」操作列（ADR-0088 决策 6 / issue #843）：
+// 与行右键共用同一行菜单编排工厂 open 入口，以点击坐标弹出（账户行先例）。
 const columns = computed<DataTableColumn<Transaction>[]>(() => [
-  ...buildTransactionColumns(reference),
+  ...buildTransactionColumns(reference, {
+    onRowMenuOpen: (e, row) => rowMenu.open(e, row),
+  }),
 ])
 
 // scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和

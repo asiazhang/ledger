@@ -13,6 +13,7 @@ import {
 import { resolveSourceJumpTarget, type TransactionSourceKind } from '@/components/source-jump'
 import { useAppStore } from '@/stores/app'
 import { useSidebarOrderStore } from '@/stores/sidebar-order'
+import { useInputMode } from '@/composables/useInputMode'
 import { darkOverrides, lightOverrides } from '@/theme/overrides'
 import { t } from '@/i18n'
 import type { TransactionSource } from '@/types'
@@ -28,7 +29,8 @@ import type { TransactionSource } from '@/types'
  * 其余状态（取消的计划/已处置物品）可点击、名称旁带标注。
  *
  * 视觉与交互同 MerchantLink/AccountLink 先例（真 <button> + 主题强调色 + 省略号）；
- * 来源类型全称收进悬停 tooltip（词汇表「列形态」）。
+ * 来源类型全称指针轴收进悬停 tooltip、触控轴常驻小字（issue #843 悬停一击可达，
+ * 词汇表「列形态」）。
  */
 
 /** 来源类型 → 图标（六类闭集穷尽映射，编译器强制补行；与侧栏视图图标同源惯例：
@@ -50,6 +52,12 @@ const props = defineProps<{
 const router = useRouter()
 const app = useAppStore()
 const sidebarOrder = useSidebarOrderStore()
+
+// 输入轴（ADR-0088 决策 6 / issue #843）：来源类型全称悬停收进 title tooltip；
+// 触控轴下 title 不可达，改常驻小字展示（悬停一击可达原则「空间够则常驻」——
+// 列宽内一行可容，无需点按）；指针轴零变化。
+const inputMode = useInputMode()
+const isTouch = computed(() => inputMode.value === 'touch')
 
 /** 状态标注文案（status 为空则无标注）。 */
 const statusLabel = computed(() =>
@@ -98,6 +106,10 @@ function go() {
       {{ displayName }}
     </button>
     <span v-else class="source-name">{{ displayName }}</span>
+    <span
+      v-if="isTouch && source.display_name"
+      class="source-type-label"
+    >{{ t(`transactions.source.kind.${source.kind}`) }}</span>
     <NTag v-if="statusLabel" size="small" :bordered="false">{{ statusLabel }}</NTag>
   </span>
 </template>
@@ -144,5 +156,12 @@ function go() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.source-type-label {
+  /* 触控轴常驻类型全称（title 不可达的一击可达替代）：弱化小字、不收缩，
+     超长名称由名称自身省略号让位；display_name 为空（按类型名兜底）时不重复渲染 */
+  flex: none;
+  font-size: 11px;
+  opacity: 0.55;
 }
 </style>

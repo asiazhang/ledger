@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { defineComponent, h } from 'vue'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import {
   CREATE_KIND_KEYS,
   matchCreateShortcut,
@@ -8,6 +8,7 @@ import {
   useCreateShortcuts,
 } from '@/composables/useCreateShortcuts'
 import { createOverlayToken, resetOverlays } from '@/composables/overlayRegistry'
+import { setFakeMedia } from './helpers/media-mock'
 import { CREATE_KINDS } from '@/types'
 import type { CreateTransactionKind } from '@/types'
 
@@ -165,5 +166,43 @@ describe('useCreateShortcuts', () => {
     wrapper.unmount()
     window.dispatchEvent(press('a'))
     expect(open).not.toHaveBeenCalled()
+  })
+
+  describe('输入轴退役（ADR-0088 决策 6 / issue #843，媒体查询测试接缝换档）', () => {
+    beforeEach(() => {
+      setFakeMedia({ hover: 'hover', pointer: 'fine' })
+    })
+
+    it('指针轴注册裸键监听；触控轴不绑定', () => {
+      const pointer = mountHost()
+      window.dispatchEvent(press('a'))
+      expect(pointer.open).toHaveBeenCalledTimes(1)
+      pointer.wrapper.unmount()
+
+      setFakeMedia({ hover: 'none', pointer: 'coarse' })
+      const touch = mountHost()
+      window.dispatchEvent(press('a'))
+      expect(touch.open).not.toHaveBeenCalled()
+      touch.wrapper.unmount()
+    })
+
+    it('运行中换轴实时拆装：触控轴挂载 → 切指针轴即监听 → 切回触控轴即解绑', async () => {
+      setFakeMedia({ hover: 'none', pointer: 'coarse' })
+      const { open, wrapper } = mountHost()
+      window.dispatchEvent(press('a'))
+      expect(open).not.toHaveBeenCalled()
+
+      // watcher 回调随预刷新队列异步执行：换轴后先等 flush 再按键
+      setFakeMedia({ hover: 'hover', pointer: 'fine' })
+      await flushPromises()
+      window.dispatchEvent(press('a'))
+      expect(open).toHaveBeenCalledTimes(1)
+
+      setFakeMedia({ hover: 'none' })
+      await flushPromises()
+      window.dispatchEvent(press('a'))
+      expect(open).toHaveBeenCalledTimes(1)
+      wrapper.unmount()
+    })
   })
 })
