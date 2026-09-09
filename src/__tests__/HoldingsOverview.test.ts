@@ -12,6 +12,7 @@ import { captureListenHandlers } from './helpers/listen-mock'
 import { componentVm } from './helpers/component-vm'
 import { formatAmount, formatPrice } from '@/utils/money'
 import {
+  makeAccount,
   makeHolding,
   makeInstrument,
   mockHoldings,
@@ -278,47 +279,11 @@ describe('HoldingsOverview 当前持仓概览卡（issue #110）', () => {
 // 缺价行金额列显示 "-"、排序恒排末尾；两态空态可区分。
 // ---------------------------------------------------------------------------
 
-/** 过滤夹具账户：现金（非投资，不进下拉）+ 两投资账户（HKD 本位币） */
+/** 过滤夹具账户：现金（非投资，不进下拉）+ 两投资账户（HKD 本位币账户走 makeAccount 工厂） */
 const FILTER_ACCOUNTS: Account[] = [
-  {
-    id: 'acc-1',
-    name: '现金',
-    type: 'cash',
-    currency_code: 'CNY',
-    initial_balance_cents: 0,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    is_hidden: false,
-  },
-  {
-    id: 'acc-a',
-    name: '证券A',
-    type: 'investment',
-    currency_code: 'CNY',
-    initial_balance_cents: 0,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    is_hidden: false,
-  },
-  {
-    id: 'acc-b',
-    name: '证券B',
-    type: 'investment',
-    currency_code: 'HKD',
-    initial_balance_cents: 0,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    is_hidden: false,
-  },
+  makeAccount({ id: 'acc-1', name: '现金', type: 'cash' }),
+  makeAccount({ id: 'acc-a', name: '证券A' }),
+  makeAccount({ id: 'acc-b', name: '证券B', currency_code: 'HKD' }),
 ]
 
 const FILTER_INSTRUMENTS: Instrument[] = [

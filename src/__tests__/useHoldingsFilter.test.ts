@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ref, effectScope } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { makeAccount } from './factories'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { REFERENCE_DEFAULTS } from './helpers/reference-stubs'
 import { useReferenceStore } from '@/stores/reference'
@@ -192,47 +193,11 @@ describe('filterHoldings 过滤语义', () => {
 // 工厂形态 composable：过滤意图进、可观察状态与派生合计出（零 IPC 触达）
 // ---------------------------------------------------------------------------
 
-/** 账户下拉同源夹具：投资账户谓词收口（cash / 已删非投资账户不进选项面） */
+/** 账户下拉同源夹具：投资账户谓词收口（cash 不进选项面；夹具归 makeAccount 工厂） */
 const FILTER_ACCOUNTS: Account[] = [
-  {
-    id: 'acc-cash',
-    name: '现金',
-    type: 'cash',
-    currency_code: 'CNY',
-    initial_balance_cents: 0,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    is_hidden: false,
-  },
-  {
-    id: 'acc-inv-1',
-    name: 'A股账户',
-    type: 'investment',
-    currency_code: 'CNY',
-    initial_balance_cents: 0,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    is_hidden: false,
-  },
-  {
-    id: 'acc-inv-2',
-    name: '港美账户',
-    type: 'investment',
-    currency_code: 'HKD',
-    initial_balance_cents: 0,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    version: 1,
-    device_id: 'test',
-    is_deleted: false,
-    is_hidden: false,
-  },
+  makeAccount({ id: 'acc-cash', name: '现金', type: 'cash' }),
+  makeAccount({ id: 'acc-inv-1', name: 'A股账户' }),
+  makeAccount({ id: 'acc-inv-2', name: '港美账户', currency_code: 'HKD' }),
 ]
 
 describe('useHoldingsFilter 工厂', () => {
