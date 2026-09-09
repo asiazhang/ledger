@@ -81,6 +81,12 @@ pub(super) fn resolve(conn: &rusqlite::Connection, op_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// 挂起队列是否为空（引导守卫用：目标已有挂起即已参与同步）。
+pub(super) fn is_empty(conn: &rusqlite::Connection) -> Result<bool> {
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM sync_parked_ops", [], |r| r.get(0))?;
+    Ok(count == 0)
+}
+
 /// 挂起清单（按全序返回：挂起通知与裁决界面的数据面）。
 pub(super) fn list(conn: &rusqlite::Connection) -> Result<Vec<ParkedOp>> {
     let mut stmt = conn.prepare(

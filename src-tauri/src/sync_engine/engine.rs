@@ -30,6 +30,7 @@ use super::command::DomainCommand;
 use super::model::SyncOp;
 use super::ops;
 use super::parked::{self, ParkedOp};
+use super::positions;
 
 /// 单条 op 的重放结果：执行（含 op 落日志）、按幂等跳过、LWW 压制、期次去重
 /// 或挂起。
@@ -37,7 +38,8 @@ use super::parked::{self, ParkedOp};
 pub enum OpOutcome {
     /// 未知 op：命令已执行、op 已落日志。
     Applied,
-    /// 已知 op：按 `op_id` 幂等跳过，无第二次效果。
+    /// 已知 op（按 `op_id`）或位点已覆盖（流位点 ≥ 该 op 时钟：已并入快照谱系
+    /// 或日志已截断，issue #857）：无第二次效果。
     Skipped,
     /// LWW 输者（ADR-0091 决策 4）：本地日志已有同实体且全序更后的 op，本 op
     /// 落日志可追溯、不执行。
@@ -67,6 +69,30 @@ pub fn total_order(ops: &mut [SyncOp]) {
 /// 全序排序键单点：(端内逻辑时钟, DeviceId) 字典序（ADR-0091 决策 4）。
 fn order_key(op: &SyncOp) -> (i64, &str) {
     (op.clock, op.device_id.as_str())
+}
+
+/// 位点之后的增量（issue #857）：从候选 op 中滤出本端位点未覆盖的部分。
+///
+/// 「仅重放位点之后的 op」的拉取侧接缝：位点之前的 op 已并入快照谱系或日志，
+/// 无需重投；无位点行的流（前检查点世界）全量保留，由重放幂等去重兑底。
+pub fn ops_after_positions(
+    conn: &rusqlite::Connection,
+    incoming: &[SyncOp],
+) -> Result<Vec<SyncOp>> {
+    let mut pending = Vec::with_capacity(incoming.len());
+    for op in incoming {
+        match positions::position_of(conn, &op.device_id)? {
+            Some(position) if op.clock <= position => continue,
+            _ => pending.push(op.clone()),
+        }
+    }
+    Ok(pending)
+}
+
+/// 位点清单（按 DeviceId 序）：Checkpoint 位点组件与通道 manifest 上报位点
+/// 的数据面（issue #857）。
+pub fn stream_positions(conn: &rusqlite::Connection) -> Result<Vec<positions::StreamPosition>> {
+    positions::list(conn)
 }
 
 /// 幂等重放：外来 op 批量应用到本机账本。
@@ -173,6 +199,15 @@ fn replay_one(conn: &rusqlite::Connection, op: &SyncOp, local_version: i64) -> R
     };
     // 已知 op：幂等跳过（含此前已应用的、已压制的输者与已出队的挂起者）。
     if ops::is_known(conn, &op.op_id)? {
+        advance_position(conn, op)?;
+        return Ok(report(OpOutcome::Skipped));
+    }
+    // 位点门（issue #857）：流位点已越过该 op（已并入快照谱系或日志已截断）
+    // ⇒ 无需重放、无第二次效果。无位点行的流（前检查点世界）不设门，重放
+    // 幂等去重兑底。
+    if let Some(position) = positions::position_of(conn, &op.device_id)?
+        && op.clock <= position
+    {
         return Ok(report(OpOutcome::Skipped));
     }
     // schema 版本偏斜（旧端收到新命令）：op 产生自更新版本，本端不可信执行，
@@ -195,13 +230,18 @@ fn replay_one(conn: &rusqlite::Connection, op: &SyncOp, local_version: i64) -> R
     if let Some((entity, entity_id)) = op.command.subject()
         && ops::has_later_subject(conn, entity, entity_id, op.clock, &op.device_id)?
     {
-        ops::insert_row(conn, op)?;
+        ensure_transaction(conn, || {
+            ops::insert_row(conn, op)?;
+            advance_position(conn, op)
+        })?;
         return Ok(report(OpOutcome::Superseded));
     }
-    // 执行：命令 + op 落日志同事务原子；失败不落日志，挂起后不阻塞其余重放。
+    // 执行：命令 + op 落日志 + 位点推进同事务原子；失败不落日志、水位不动，
+    // 挂起后不阻塞其余重放。
     match ensure_transaction(conn, || {
         let effect = dispatch(conn, &op.command)?;
         ops::insert_row(conn, op)?;
+        advance_position(conn, op)?;
         Ok(effect)
     }) {
         Ok(effect) => {
@@ -223,6 +263,12 @@ fn replay_one(conn: &rusqlite::Connection, op: &SyncOp, local_version: i64) -> R
             }))
         }
     }
+}
+
+/// 位点推进（op 裁决落定后调用；挂起不推进——位点不越过未应用 op，这是
+/// 「截断不丢失未应用 op」的机制根据，issue #857）。
+fn advance_position(conn: &rusqlite::Connection, op: &SyncOp) -> Result<()> {
+    positions::advance(conn, &op.device_id, op.clock)
 }
 
 /// 挂起入队（补齐簿记戳后经 parked 模块落库）。
