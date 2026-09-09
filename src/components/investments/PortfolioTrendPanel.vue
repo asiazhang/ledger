@@ -3,8 +3,10 @@ import { computed, watch } from 'vue'
 import { NEmpty, NRadio, NRadioGroup, NSpace, NSpin, NText } from 'naive-ui'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import { Line } from 'vue-chartjs'
-import { Chart as ChartJS, Tooltip, Legend, CategoryScale, LinearScale } from 'chart.js'
 import type { ChartOptions, TooltipItem } from 'chart.js'
+// Chart.js 统一注册模块（issue #926）：折线图所需 controller/element/scale 一处
+// 注册，不再组件自持子集（缺项曾致渲染错误循环冻结界面）；导入即完成注册。
+import '@/utils/chart-registration'
 import { useReferenceStore } from '@/stores/reference'
 import { formatAmount, formatPrice } from '@/types'
 import { amountPrivacyEnabled } from '@/utils/money'
@@ -128,7 +130,6 @@ const chartOptions = computed<ChartOptions<'line'>>(() => {
   }
 })
 
-ChartJS.register(Tooltip, Legend, CategoryScale, LinearScale)
 </script>
 
 <template>

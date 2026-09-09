@@ -52,6 +52,7 @@ import StartupFailureScreen from '@/components/StartupFailureScreen.vue'
 import DevicePreferenceSyncHost from '@/components/DevicePreferenceSyncHost.vue'
 import MessageSinkBridge from '@/components/MessageSinkBridge.vue'
 import GlobalBusyBar from '@/components/GlobalBusyBar.vue'
+import GlobalErrorBanner from '@/components/GlobalErrorBanner.vue'
 import BookSidebarEntry from '@/components/BookSidebarEntry.vue'
 import { loadSidebarCollapsed, saveSidebarCollapsed } from '@/utils/view-state'
 import { shortcutHint, useViewShortcuts } from '@/composables/useViewShortcuts'
@@ -359,6 +360,8 @@ const pageTitle = computed(() => (typeof route.name === 'string' ? viewLabel(rou
     <!-- 全局忙碌条（issue #500）：非模态环境指示，只随忙碌状态渲染，
          不注册 Overlay Suppression（ADR-0035 豁免，见词汇表词条） -->
     <GlobalBusyBar />
+    <!-- 全局渲染错误提示条（issue #926）：非模态环境指示，同一豁免口径 -->
+    <GlobalErrorBanner />
     <NMessageProvider>
       <NDialogProvider>
         <!-- 启动失败分支（issue #601）：失败恢复屏整体替代主界面 -->

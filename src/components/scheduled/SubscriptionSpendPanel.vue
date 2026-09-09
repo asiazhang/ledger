@@ -3,8 +3,10 @@ import { errorMessage } from '@/utils/errors'
 import { computed, onMounted, ref } from 'vue'
 import { NCard, NDataTable, NEmpty, NSpace, NSpin, useMessage, type DataTableColumns } from 'naive-ui'
 import { Bar } from 'vue-chartjs'
-import { BarElement, CategoryScale, Chart as ChartJS, LinearScale, Tooltip } from 'chart.js'
 import type { ChartOptions, TooltipItem } from 'chart.js'
+// Chart.js 统一注册模块（issue #926）：柱状图所需 controller/element/scale 一处
+// 注册，不再组件自持子集；导入即完成注册。
+import '@/utils/chart-registration'
 import { api } from '@/api'
 import { formatAmount } from '@/types'
 import { amountPrivacyEnabled } from '@/utils/money'
@@ -85,8 +87,6 @@ const chartOptions = computed<ChartOptions<'bar'>>(() => {
     },
   }
 })
-
-ChartJS.register(BarElement, CategoryScale, LinearScale, Tooltip)
 
 /** 逐订阅行（含已取消/暂停计划，历史花费如实保留） */
 const rows = computed(() => overview.value?.rows ?? [])

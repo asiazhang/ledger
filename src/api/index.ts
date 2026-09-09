@@ -427,6 +427,10 @@ export const api = {
 
   // 日志（issue #283）：打开日志目录（系统文件管理器展示，按天滚动、保留 7 天）
   openLogDir: () => invoke<void>('open_log_dir'),
+  // 前端渲染错误回传落盘（issue #926）：global-error-handler 兜底的渲染层异常
+  // 经此写入后端日志（tracing ERROR）；节流/去重护栏在 handler 单点内化，
+  // 纯壳即发即忘，无返回错误路径
+  logFrontendError: (message: string) => invoke<void>('log_frontend_error', { message }),
 
   // 在系统文件管理器中定位文件（issue #653）：薄壳系统命令包装 opener 插件定位
   // 能力（「打开日志目录」同款先例），无业务语义；设置页备份列表行消费
