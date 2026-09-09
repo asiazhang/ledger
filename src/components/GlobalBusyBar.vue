@@ -57,7 +57,7 @@ const tier = useWindowTier()
   width: 30%;
   border-radius: 999px;
   background: var(--busy-color);
-  animation: global-busy-bar-slide 1.8s ease-in-out infinite;
+  animation: global-busy-bar-slide 1.4s ease-in-out infinite;
 }
 
 @keyframes global-busy-bar-slide {
