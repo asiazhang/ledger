@@ -1,7 +1,14 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import MerchantRankingPanel from '@/components/reports/MerchantRankingPanel.vue'
+
+// 行内商户名渲染 MerchantLink（顶层 useRouter 下钻）：本面板测试不走路由，
+// 桩掉说明符即可（下钻经 drillIntent 意图上报，不触发真实跳转）。
+vi.mock('vue-router', () => ({
+  useRoute: () => ({ query: {} }),
+  useRouter: () => ({ push: vi.fn() }),
+}))
 import { useReferenceStore } from '@/stores/reference'
 import { paletteColor } from '@/utils/category-chart'
 import { formatAmount } from '@/utils/money'

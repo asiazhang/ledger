@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
+import { withSetup } from './helpers/mount'
 import { defineComponent } from 'vue'
 import { useReferenceStore } from '@/stores/reference'
 import { registerToastSink } from '@/composables/useLoadable'
@@ -93,7 +94,7 @@ describe('formatCurrencyGroups 分组合计展示文本（issue #145 首页复�
 
 describe('usePortfolioOverview 盈亏页持仓概览数据层（issue #110）', () => {
   it('加载持仓并与持仓标的字典/账户信息拼装成行', async () => {
-    const { rows, loading, refresh } = usePortfolioOverview()
+    const { rows, loading, refresh } = withSetup(() => usePortfolioOverview())
     await refresh()
     expect(loading.value).toBe(false)
     expect(rows.value.length).toBe(2)
@@ -111,14 +112,14 @@ describe('usePortfolioOverview 盈亏页持仓概览数据层（issue #110）', 
   })
 
   it('查询持仓标的字典时携带 only_invested=true（与增量同步同口径）', async () => {
-    const { refresh } = usePortfolioOverview()
+    const { refresh } = withSetup(() => usePortfolioOverview())
     await refresh()
     const call = mockInvoke.mock.calls.find(([cmd]) => cmd === 'list_instruments')
     expect(call![1]).toMatchObject({ filter: { only_invested: true } })
   })
 
   it('净值日期透传到行（基金现价对应哪天的净值，#303）', async () => {
-    const { rows, refresh } = usePortfolioOverview()
+    const { rows, refresh } = withSetup(() => usePortfolioOverview())
     await refresh()
     // 默认夹具为股票行：latest_nav_date 为 null
     expect(rows.value[0]!.latestNavDate).toBeNull()
@@ -126,7 +127,7 @@ describe('usePortfolioOverview 盈亏页持仓概览数据层（issue #110）', 
 
   it('总市值与未实现盈亏合计：排除无行情行，按账户币种汇总', async () => {
     const { totalMarketValueGroups, totalUnrealizedPnlGroups, refresh } =
-      usePortfolioOverview()
+      withSetup(() => usePortfolioOverview())
     await refresh()
     // h-2 无行情 NULL 不计入；只有 h-1 计入
     expect(totalMarketValueGroups.value).toEqual([{ currencyCode: 'CNY', cents: 150000 }])
@@ -143,7 +144,7 @@ describe('usePortfolioOverview 盈亏页持仓概览数据层（issue #110）', 
       },
     })
     const { rows, loading, totalMarketValueGroups, totalUnrealizedPnlGroups, refresh } =
-      usePortfolioOverview()
+      withSetup(() => usePortfolioOverview())
     await refresh()
     expect(rows.value).toEqual([])
     expect(totalMarketValueGroups.value).toEqual([])
@@ -154,7 +155,7 @@ describe('usePortfolioOverview 盈亏页持仓概览数据层（issue #110）', 
 
 describe('usePortfolioOverview 失败治愈（issue #324 Loadable 薄壳化）', () => {
   it('刷新失败不向调用方抛出：error 置位、loading 收尾、rows 保持原值不清空', async () => {
-    const { rows, loading, error, refresh } = usePortfolioOverview()
+    const { rows, loading, error, refresh } = withSetup(() => usePortfolioOverview())
     await refresh()
     expect(rows.value.length).toBe(2)
 
@@ -181,8 +182,9 @@ describe('usePortfolioOverview 失败治愈（issue #324 Loadable 薄壳化）',
         list_holdings: () => Promise.reject({ kind: 'db', message: '持仓查询失败' }),
       },
     })
-    const { error, refresh } = usePortfolioOverview()
-    await refresh()
+    // 挂载自动首刷已吃到拒绝布线并弹一次 toast，无需再显式首刷
+    const { error, refresh } = withSetup(() => usePortfolioOverview())
+    await flushPromises()
     expect(error.value).toBe('持仓查询失败')
     expect(sink.error).toHaveBeenCalledTimes(1)
     expect(sink.error).toHaveBeenCalledWith('持仓查询失败')
@@ -197,7 +199,7 @@ describe('usePortfolioOverview 失败治愈（issue #324 Loadable 薄壳化）',
       defaults: BASE_DEFAULTS,
       overrides: { ...REFERENCE_OVERRIDES, list_holdings: () => Promise.reject('首刷失败') },
     })
-    const { rows, error, refresh } = usePortfolioOverview()
+    const { rows, error, refresh } = withSetup(() => usePortfolioOverview())
     await refresh()
     expect(error.value).toBe('首刷失败')
     expect(rows.value).toEqual([])

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
+import { withSetup } from './helpers/mount'
 import { defineComponent } from 'vue'
 import { useFinancialFreedom } from '@/composables/useFinancialFreedom'
 import { registerToastSink } from '@/composables/useLoadable'
@@ -44,7 +45,7 @@ describe('useFinancialFreedom 财务自由度数据层（issue #344）', () => {
         financial_freedom: () => Promise.reject(new Error('缺少 JPY→CNY 汇率，无法折算')),
       },
     })
-    const { data, loading, error, refresh } = useFinancialFreedom()
+    const { data, loading, error, refresh } = withSetup(() => useFinancialFreedom())
     await expect(refresh()).resolves.not.toThrow()
     expect(loading.value).toBe(false)
     expect(data.value).toBeNull()
@@ -56,13 +57,13 @@ describe('useFinancialFreedom 财务自由度数据层（issue #344）', () => {
       defaults: BASE_DEFAULTS,
       overrides: { financial_freedom: () => Promise.reject('缺汇率') },
     })
-    const { error, refresh } = useFinancialFreedom()
+    const { error, refresh } = withSetup(() => useFinancialFreedom())
     await refresh()
     expect(error.value).toBe('缺汇率')
   })
 
   it('成功后再次报错：data 清空并切换到错误态；再次成功则恢复（重试即 refresh）', async () => {
-    const { data, error, refresh } = useFinancialFreedom()
+    const { data, error, refresh } = withSetup(() => useFinancialFreedom())
     await refresh()
     expect(data.value).not.toBeNull()
 
@@ -87,10 +88,12 @@ describe('useFinancialFreedom 财务自由度数据层（issue #344）', () => {
       defaults: BASE_DEFAULTS,
       overrides: { financial_freedom: () => Promise.reject(new Error('缺少 USD→CNY 汇率')) },
     })
-    const { error, refresh } = useFinancialFreedom()
+    // 挂载自动首刷已吃到拒绝布线并弹一次 toast（sink 已注册），无需再显式首刷
+    const { error, refresh } = withSetup(() => useFinancialFreedom())
     const sink = makeFakeSink()
     registerToastSink(sink)
-    await refresh()
+    await flushPromises()
+    expect(error.value).toBe('缺少 USD→CNY 汇率')
     expect(sink.error).toHaveBeenCalledTimes(1)
     expect(sink.error).toHaveBeenCalledWith('缺少 USD→CNY 汇率')
     expect(error.value).toBe('缺少 USD→CNY 汇率')
