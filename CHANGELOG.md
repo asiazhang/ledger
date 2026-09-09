@@ -16,6 +16,7 @@
 - **移动端**：界面适配刘海与手势条安全区（viewport-fit=cover）；全局忙碌条在移动档随顶部安全区下移，不被遮挡（[#842]）。
 - **AI 导入**：新增商户改名端点 `PUT /api/v1/merchants/{id}`——读回发现错名商户可直接纠正，改名即时生效、无需删后重导（[#884]）。
 - **交易**：交易页筛选与分页会话内保留——切到其他页再回来（侧栏切换、报表下钻往返、回退）原样恢复，数据按恢复的选择现拉，离开期间新记的账回来即见；应用重启回默认无筛选态；URL 下钻参数在场时永远生效；恢复页码超出数据有效范围时自动回落，不落空页；ESC 在无弹层时一键复位筛选回默认（[#893]）。
+- **发布**：Android arm64 APK 进入发布矩阵——仅含 arm64-v8a 单 ABI（2016 年后绝大多数真机），CI 从 tag 按公式 major×10⁶ + minor×10³ + patch 派生 versionCode 并注入构建，APK 与桌面安装包汇入同一 GitHub Release，真机直装（[#559]）。
 - **报表**：报表页接入 ESC 复位——无弹层时按 ESC，期间回默认「当年」、分类下钻回基础态、商户排行档位回默认 Top 5；复位后离开再回来回到默认，已是默认态时按键无操作（[#894]）。
 
 ### Changed
@@ -226,6 +227,7 @@
 [#513]: https://github.com/asiazhang/ledger/issues/513
 [#515]: https://github.com/asiazhang/ledger/issues/515
 [#526]: https://github.com/asiazhang/ledger/issues/526
+[#559]: https://github.com/asiazhang/ledger/issues/559
 [#566]: https://github.com/asiazhang/ledger/issues/566
 [#582]: https://github.com/asiazhang/ledger/issues/582
 [#584]: https://github.com/asiazhang/ledger/issues/584

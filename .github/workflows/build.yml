@@ -193,8 +193,14 @@ jobs:
       - name: Clippy 检查
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-  # 发布构建：三平台矩阵并行（ADR-0066），产物 upload-artifact 交给 publish 汇总。
+  # 发布构建：桌面三平台 + Android 四行矩阵并行（ADR-0066 / ADR-0074），产物
+  # upload-artifact 交给 publish 汇总，单一 GitHub Release 拓扑不变。
   # workflow_dispatch 可在正式 tag 前手动试跑（publish 仅在 tag 触发，不会误建 Release）。
+  # Android 行（ADR-0074 决策 2/4）：Ubuntu runner 上 tauri android build 显式指定
+  # aarch64-linux-android 单 target——真机几乎全为 arm64-v8a，不沿用 Tauri 默认四 ABI
+  # 合一（armv7 仅旧 32 位设备、x86 系仅模拟器，均无真实消费方）；versionCode 由 CI
+  # 从 tag 按公式 major×10⁶ + minor×10³ + patch 派生并经 --config 注入（唯一口径，零手工）。
+  # 本阶段产物未签名（决策 3 的 keystore 接线由后续票完成）。
   # macOS 签名 + 公证（issue #658）：配置了 APPLE_* secrets 时自动导入证书签名，构建后
   # notarytool 公证（--wait）+ stapler 附着，并做 codesign/spctl/stapler validate 校验；
   # 未配置 secrets 时相关步骤自动跳过，产物保持未签名（干跑与 PR 构建不受影响）。
@@ -208,16 +214,19 @@ jobs:
     env:
       MACOS_BUNDLE_DIR: src-tauri/target/release/bundle/macos
       DMG_BUNDLE_DIR: src-tauri/target/release/bundle/dmg
+      APK_BUNDLE_DIR: src-tauri/target/release/bundle/apk
     strategy:
       fail-fast: false
       matrix:
         include:
-          - label: macOS (arm64)
+          - platform: macos
+            label: macOS (arm64)
             os: macos-latest
             bundles: dmg
             artifact: openledger-macos-arm64
             paths: src-tauri/target/release/bundle/dmg/*.dmg
-          - label: Linux (x64)
+          - platform: linux
+            label: Linux (x64)
             os: ubuntu-latest
             bundles: deb,appimage
             artifact: openledger-linux-x64
@@ -225,11 +234,19 @@ jobs:
             paths: |
               src-tauri/target/release/bundle/deb/*.deb
               src-tauri/target/release/bundle/appimage/*.AppImage
-          - label: Windows (x64)
+          - platform: windows
+            label: Windows (x64)
             os: windows-latest
             bundles: nsis
             artifact: openledger-windows-x64
             paths: src-tauri/target/release/bundle/nsis/*.exe
+          # Android：bundles 不适用，构建走 tauri android build 专用步骤；产物经
+          # 归集步骤统一命名为 OpenLedger_<版本>_arm64.apk 后交给 upload-artifact。
+          - platform: android
+            label: Android (arm64)
+            os: ubuntu-latest
+            artifact: openledger-android-arm64
+            paths: src-tauri/target/release/bundle/apk/*.apk
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -246,8 +263,9 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # Android 行同为 Linux runner，但不编译桌面目标，跳过 webkit/gtk 系统依赖。
       - name: 安装 Linux 系统依赖（tauri 编译与 AppImage 打包所需）
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.platform != 'android'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -260,6 +278,66 @@ jobs:
       - name: 安装 create-dmg（macOS DMG 打包所需）
         if: runner.os == 'macOS'
         run: brew untap aws/tap 2>/dev/null; brew install create-dmg
+
+      # Android 构建链（ADR-0074）：JDK 17 + SDK（commandline-tools + 组件）+ 固定
+      # 版本 NDK。runner 镜像不预置 sdkmanager（run 34317731980 实测 command not
+      # found），统一走 setup-android；NDK 版本显式固定，NDK_HOME 指向固定路径供
+      # tauri CLI 与 gradle rust 插件交叉编译共用。不做 SDK 缓存（首次冷跑下载
+      # 约 2GB，接受）。
+      - name: 安装 JDK 17（Android gradle 构建所需）
+        if: matrix.platform == 'android'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: 安装 Android SDK（commandline-tools + licenses）
+        if: matrix.platform == 'android'
+        uses: android-actions/setup-android@v3
+
+      - name: 安装 Android SDK 组件与 NDK
+        if: matrix.platform == 'android'
+        env:
+          ANDROID_NDK_VERSION: 27.0.12077973
+        run: |
+          sdkmanager --install "platforms;android-36" "ndk;$ANDROID_NDK_VERSION"
+          NDK_BIN="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          # llvm 统一工具链后 NDK 不再带 <triple>-ranlib 包装，openssl-sys vendored
+          # 的 android Configure 目标仍按 {cross_prefix}ranlib 找工具（run
+          # 34319561130 实测 not found → make install_dev 127），补 PATH 垫片。
+          mkdir -p "$RUNNER_TEMP/android-shims"
+          ln -sf "$NDK_BIN/llvm-ranlib" "$RUNNER_TEMP/android-shims/aarch64-linux-android-ranlib"
+          echo "$RUNNER_TEMP/android-shims" >> "$GITHUB_PATH"
+
+      - name: 安装 Rust Android 目标（arm64）
+        if: matrix.platform == 'android'
+        run: |
+          rustup target add aarch64-linux-android
+
+      # versionCode 唯一口径（ADR-0074 决策 4）：major×10⁶ + minor×10³ + patch。
+      # tag 触发时从 tag 派生；workflow_dispatch 试跑无 tag，回退 tauri.conf.json 版本。
+      # 非三段式版本显式失败，不静默算出错误值。
+      - name: 派生版本与 versionCode
+        if: matrix.platform == 'android'
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(jq -r .version src-tauri/tauri.conf.json)"
+          fi
+          MAJOR=${VERSION%%.*}
+          REST=${VERSION#*.}
+          MINOR=${REST%%.*}
+          PATCH=${REST#*.}
+          case "$REST" in *.*) ;; *) echo "✗ 版本号 $VERSION 不是三段式语义版本，无法派生 versionCode"; exit 1;; esac
+          case "$MAJOR$MINOR$PATCH" in ''|*[!0-9]*) echo "✗ 版本号 $VERSION 不是三段式语义版本，无法派生 versionCode"; exit 1;; esac
+          VERSION_CODE=$((MAJOR * 1000000 + MINOR * 1000 + PATCH))
+          echo "versionCode=$VERSION_CODE versionName=$VERSION source=$GITHUB_REF_TYPE"
+          {
+            echo "APP_VERSION=$VERSION"
+            echo "APP_VERSION_CODE=$VERSION_CODE"
+          } >> "$GITHUB_ENV"
 
       # 证书导入（issue #658 步骤 3）：base64 p12 → 临时钥匙串。密码随机生成，
       # 仅本次 runner 生命周期内使用，不入 secrets。secrets 未配置时跳过（干跑）；
@@ -289,9 +367,29 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH"
 
-      - run: pnpm run tauri build --bundles ${{ matrix.bundles }}
+      - name: 构建桌面产物
+        if: matrix.platform != 'android'
+        run: pnpm run tauri build --bundles ${{ matrix.bundles }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # arm64 单 ABI 产物（ADR-0074 决策 2，显式 --target，不沿用 Tauri 默认四 ABI）。
+      # 注入经 --config 补丁（CLI 写入 gen/android/app/tauri.properties，gradle 读取），
+      # 不改 tauri.conf.json 与已入库的 gen/android 工程：versionCode 显式注入（公式
+      # 唯一口径）；versionName 无对应配置键（CLI 2.11.4 schema 实测拒绝，run
+      # 34318179293），改注入根 version——versionName 与 CLI 默认 versionCode 数学
+      # （major×10⁶ + minor×10³ + patch，与显式注入同值）均从它派生。
+      - name: 构建 Android arm64 APK
+        if: matrix.platform == 'android'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CONFIG="$RUNNER_TEMP/android-version-config.json"
+          printf '{"version":"%s","bundle":{"android":{"versionCode":%s}}}\n' \
+            "$APP_VERSION" "$APP_VERSION_CODE" > "$CONFIG"
+          # --target 取值为短 ABI 名（aarch64/armv7/i686/x86_64，非 rust triple；
+          # run 34319079302 实测），rustup 侧仍装 triple 全名。
+          pnpm run tauri android build --apk --target aarch64 --config "$CONFIG"
 
       # 公证 + 附着（issue #658 步骤 5）：公证输入为 DMG 本体（submit --wait 阻塞至
       # Apple 出结果 → stapler 附着票据）。注：tauri 的 dmg 打包流程结束后会清掉
@@ -359,6 +457,20 @@ jobs:
           [ -f "$KEYCHAIN_PATH" ] && security delete-keychain "$KEYCHAIN_PATH" || true
           # 恢复 login 钥匙串为默认，避免影响后续需要钥匙串的步骤
           security list-keychain -d user -s login.keychain-db || true
+
+      # 归一命名（OpenLedger_<版本>_arm64.apk）后交 upload-artifact，与桌面
+      # 产物一同汇入 publish 的单一 Release。未签名 APK 真机安装需放行未知来源。
+      # 路径含 universal 系 gradle flavor 名：cargo-mobile2 不带 --split-per-abi 时
+      # 恒走 assembleUniversal，target 经 -PabiList/-ParchList/-PtargetList 收窄，
+      # 实际 APK 内容仅 arm64-v8a。
+      - name: 归集 Android APK
+        if: matrix.platform == 'android'
+        run: |
+          APK_OUT="src-tauri/gen/android/app/build/outputs/apk/universal/release"
+          APK=$(find "$APK_OUT" -maxdepth 1 -name '*.apk' | head -n 1)
+          [ -n "$APK" ] || { echo "✗ 未找到 APK 产物"; exit 1; }
+          mkdir -p "$APK_BUNDLE_DIR"
+          cp "$APK" "$APK_BUNDLE_DIR/OpenLedger_${APP_VERSION}_arm64.apk"
 
       - name: 收集发布产物
         uses: actions/upload-artifact@v7

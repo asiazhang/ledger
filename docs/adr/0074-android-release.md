@@ -24,11 +24,14 @@ Android 目标，但本仓库移动工程未初始化（`src-tauri/gen/` 无 `an
 
 ### 2. 分发与 CI 拓扑：并入现有 `build.yml` 矩阵，产物汇入单一 GitHub Release
 
-- release 矩阵新增 Android 行（`ubuntu-latest`），构建 universal APK（Tauri 默认四 ABI 合一，
-  产物单一）；`upload-artifact` 后由既有 publish job 汇入**同一个** GitHub Release，复用 CHANGELOG
-  说明提取；`workflow_dispatch` 试跑机制自动继承。
+- release 矩阵新增 Android 行（`ubuntu-latest`），构建 arm64 单 ABI APK（显式
+  `--target aarch64-linux-android`，产物单一）；`upload-artifact` 后由既有 publish job 汇入**同一个**
+  GitHub Release，复用 CHANGELOG 说明提取；`workflow_dispatch` 试跑机制自动继承。
 - **备选与否决**：独立 `mobile.yml`——会重新引入 ADR-0066 决策 3 特意消灭的多 job 竞争建 Release
-  问题，publish 拓扑需另做。
+  问题，publish 拓扑需另做；Tauri 默认四 ABI 合一 universal APK——真机几乎全为 arm64-v8a，
+  armv7 仅剩旧 32 位设备、x86 系仅模拟器与极少数 Chromebook，本仓库无这些消费方（决策 5：
+  包作者本人即用户），单 ABI 省三份 so 库与三次交叉编译；模拟器需要时本地按需
+  `rustup target add` 即可。
 
 ### 3. 签名：自签名 keystore，先备份、后配 secrets、再启用
 
