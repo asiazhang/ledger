@@ -4652,6 +4652,7 @@ name = "tauri-app"
 version = "0.6.0"
 dependencies = [
  "axum",
+ "base64 0.23.1",
  "block2",
  "chrono",
  "cucumber",
@@ -4663,6 +4664,7 @@ dependencies = [
  "pinyin",
  "regex",
  "reqwest",
+ "ring",
  "rusqlite",
  "rusqlite_migration",
  "security-framework",

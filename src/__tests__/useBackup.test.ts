@@ -52,6 +52,14 @@ function makeStub(initialList: BackupFileInfo[]) {
       get_auto_backup_state: () => Promise.resolve(autoState),
       set_auto_backup_enabled: { kept: 0, deleted: [], failed: [] },
       prune_backups: { kept: 0, deleted: [], failed: [] },
+      // 活动账本标识（issue #836）：手动备份默认名按本分域。
+      list_books: () =>
+        Promise.resolve({
+          books: [{ id: "book-a", name: "默认账本", dir: "/data/a" }],
+          active_id: "book-a",
+          mutable: true,
+          fallback_reason: null,
+        }),
     },
   });
 
@@ -446,5 +454,85 @@ describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => 
 
     await backup.manualPrune();
     expect(backup.pruneConfirmShow.value).toBe(false);
+  });
+});
+
+describe("useBackup 手动备份按账本分域（issue #836）", () => {
+  beforeEach(() => {
+    // 默认名内嵌 `new Date()`：冻结系统时间使命名可精确断言。
+    vi.useFakeTimers({ now: new Date(2026, 1, 17, 9, 30, 5) });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("一键备份默认名携带活动账本标识（产物互不覆盖）", async () => {
+    makeStub([]);
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(save).mockResolvedValue(
+      "/Users/me/backups/ledger-backup-20260217-093005-book-a.db.zip",
+    );
+    wireInvokeSeam({
+      overrides: {
+        create_backup: {
+          path: "/Users/me/backups/ledger-backup-20260217-093005-book-a.db.zip",
+          size_bytes: 1,
+          schema_version: 24,
+          created_at: "2026-02-17T09:30:05Z",
+        },
+        // 接缝表按调用整体替换：补上 makeStub 的清单应答（断言 active_id 用）。
+        list_books: () =>
+          Promise.resolve({
+            books: [{ id: "book-a", name: "默认账本", dir: "/data/a" }],
+            active_id: "book-a",
+            mutable: true,
+            fallback_reason: null,
+          }),
+      },
+    });
+
+    const { backup } = mountHost();
+    await flushPromises();
+    expect(backup.activeBookId.value).toBe("book-a");
+
+    await backup.backupOnce();
+    await flushPromises();
+    const call = mockInvoke.mock.calls.filter(([c]) => c === "create_backup").at(-1);
+    expect(call![1]).toEqual({
+      targetPath: "/Users/me/backups/ledger-backup-20260217-093005-book-a.db.zip",
+    });
+  });
+
+  it("账本清单不可用时退化为无标识旧命名（产物仍可靠）", async () => {
+    wireInvokeSeam({
+      overrides: {
+        list_backups: () => Promise.resolve([]),
+        get_auto_backup_state: () =>
+          Promise.resolve({ enabled: true, last_backup_at: null }),
+        // 注册表不可用现场：清单读取失败 → active_id 为 null。
+        list_books: () => Promise.reject(new Error("registry corrupt")),
+        create_backup: {
+          path: "/Users/me/backups/ledger-backup-20260217-093005.db.zip",
+          size_bytes: 1,
+          schema_version: 24,
+          created_at: "2026-02-17T09:30:05Z",
+        },
+      },
+    });
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(save).mockResolvedValue(
+      "/Users/me/backups/ledger-backup-20260217-093005.db.zip",
+    );
+
+    const { backup } = mountHost();
+    await flushPromises();
+    expect(backup.activeBookId.value).toBeNull();
+
+    await backup.backupOnce();
+    await flushPromises();
+    const call = mockInvoke.mock.calls.filter(([c]) => c === "create_backup").at(-1);
+    expect(call![1]).toEqual({
+      targetPath: "/Users/me/backups/ledger-backup-20260217-093005.db.zip",
+    });
   });
 });

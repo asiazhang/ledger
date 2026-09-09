@@ -11,16 +11,73 @@ use crate::db::encryption::DbFileKind;
 use crate::error::{AppError, Result};
 use crate::fs_util::{cleanup, replace_file, temp_sibling};
 
+/// 备份作用域（issue #836 / ADR-0089 决策 5：备份按账本分域）：受管备份的
+/// 列表、滚动清理与首次兜底判定都按当前活动账本过滤；`None` 为引擎级兼容
+/// 口径（不过滤，测试与历史调用形态）。
+///
+/// 无账本标识的历史产物归属「登记序首本」（升级时折叠的默认账本，结构性
+/// 恒为清单第一项）：无标识文件本身不携带归属信息，按首本归属让升级用户
+/// 的存量备份继续受保留上限约束（不归属则永远不清，上限静默失效）。已知
+/// 取舍：移除默认账本后首本漂移，存量无标识文件随之归新首本——归属近似
+/// 的误差范围是有界多删/少删受管旧备份，与 ADR-0016 接受的前缀双份常量同
+/// 级取舍。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackupScope {
+    /// 当前活动账本标识（注册表内句柄；产物文件名携带同一标识）。
+    pub book_id: String,
+    /// 是否把无账本标识的历史受管产物计入本作用域（仅活动账本为登记序
+    /// 首本时为真，见类型级注释）。
+    pub include_legacy: bool,
+}
+
+impl BackupScope {
+    /// 由注册表构造当前活动账本的作用域：活动账本即登记序首本时一并归属
+    /// 无标识历史产物（include_legacy）。注册表不可用的降级（无作用域口径）
+    /// 由调用方的 `Option<registry>` 层承担，本函数恒可构造。
+    pub fn of_registry(registry: &crate::db::book_registry::BookRegistry) -> Self {
+        let include_legacy =
+            registry.books.first().map(|b| b.id.as_str()) == Some(registry.active_id.as_str());
+        Self {
+            book_id: registry.active_id.clone(),
+            include_legacy,
+        }
+    }
+
+    /// 文件名携带的账本标识（命名侧消费；无作用域 = 旧命名）。
+    pub(crate) fn book_tag(&self) -> &str {
+        &self.book_id
+    }
+}
+
 /// zip 包内数据库条目名。
 const ZIP_DB_ENTRY: &str = "ledger.db";
 /// zip 包内元数据条目名。
 const ZIP_META_ENTRY: &str = "backup.json";
 
-/// 受管备份命名规则（与前端 `defaultBackupFileName` 保持一致）：
-/// 手动 `ledger-backup-YYYYMMDD-HHMMSS.db.zip` + 自动
-/// `ledger-auto-YYYYMMDD-HHMMSS.db.zip`（ADR-0016，两类同等参与清理与首次兜底判定）。
+/// 受管备份命名规则（与前端 `defaultBackupFileName` 保持一致，ADR-0016，
+/// issue #127；账本标识见 [`managed_backup_file_name`]，issue #836）：
+/// 手动 `ledger-backup-…` + 自动 `ledger-auto-…`（两类同等参与清理与首次
+/// 兜底判定）。
 const MANAGED_BACKUP_PREFIXES: &[&str] = &["ledger-backup-", super::auto::AUTO_BACKUP_PREFIX];
 const MANAGED_BACKUP_SUFFIX: &str = ".db.zip";
+
+/// 文件名内时间戳段的定宽（`YYYYMMDD-HHMMSS`）。
+const TIMESTAMP_SEGMENT_LEN: usize = 15;
+
+/// 受管备份产物名（命名规则唯一构造点，前后端共享同一格式约定，issue #836）：
+/// `<前缀><YYYYMMDD-HHMMSS>[-<账本标识>].db.zip`。账本标识：携带当前活动账本
+/// 标识，两本账的产物在共享备份目录内可区分、互不覆盖；`book` 为 `None` 时
+/// 退化为无标识的旧命名（兼容口径，测试/无作用域现场）。
+pub(crate) fn managed_backup_file_name(
+    prefix: &str,
+    timestamp: &str,
+    book: Option<&str>,
+) -> String {
+    match book {
+        Some(id) => format!("{prefix}{timestamp}-{id}{MANAGED_BACKUP_SUFFIX}"),
+        None => format!("{prefix}{timestamp}{MANAGED_BACKUP_SUFFIX}"),
+    }
+}
 
 /// 备份来源标记（issue #127）：写入 zip 包内 `backup.json` 的 `kind` 字段，
 /// 自动与手动产物除文件名前缀外再以元数据显式区分。
@@ -103,7 +160,7 @@ fn matched_managed_prefix(name: &str) -> Option<&'static str> {
 }
 
 /// 判断文件名是否为受管备份（自动命名 `<前缀>YYYYMMDD-HHMMSS.db.zip`）。
-fn is_managed_backup_file_name(name: &str) -> bool {
+pub(crate) fn is_managed_backup_file_name(name: &str) -> bool {
     matched_managed_prefix(name).is_some() && name.ends_with(MANAGED_BACKUP_SUFFIX)
 }
 
@@ -181,21 +238,60 @@ pub fn read_backup_kind(backup_path: &Path) -> Result<BackupKind> {
     read_backup_meta(backup_path).map(|s| s.kind)
 }
 
-/// 从受管备份文件名解析备份时间（`YYYYMMDD-HHMMSS`）；解析失败返回 None。
-fn parse_backup_timestamp(file_name: &str) -> Option<NaiveDateTime> {
+/// 从受管备份文件名拆出（备份时间，账本标识）：时间戳在头部，为定宽
+/// `YYYYMMDD-HHMMSS`；账本标识跟在其后、可缺省（历史产物）。解析定位在头部
+/// 定宽段，对标识内容（UUID / 目录派生哈希，均可能含 `-`）不敏感。
+pub(crate) fn split_managed_name(file_name: &str) -> Option<(NaiveDateTime, Option<&str>)> {
     let prefix = matched_managed_prefix(file_name)?;
     let stem = file_name
         .strip_prefix(prefix)?
         .strip_suffix(MANAGED_BACKUP_SUFFIX)?;
-    NaiveDateTime::parse_from_str(stem, "%Y%m%d-%H%M%S").ok()
+    if stem.len() == TIMESTAMP_SEGMENT_LEN {
+        // 旧命名：整段即时间戳。
+        let ts = NaiveDateTime::parse_from_str(stem, "%Y%m%d-%H%M%S").ok()?;
+        return Some((ts, None));
+    }
+    // 新命名：头部为定宽时间戳段，其后是连接 `-` 与账本标识。
+    if stem.len() > TIMESTAMP_SEGMENT_LEN + 1 && stem.as_bytes()[TIMESTAMP_SEGMENT_LEN] == b'-' {
+        let ts =
+            NaiveDateTime::parse_from_str(&stem[..TIMESTAMP_SEGMENT_LEN], "%Y%m%d-%H%M%S").ok()?;
+        let book = &stem[TIMESTAMP_SEGMENT_LEN + 1..];
+        if !book.is_empty() {
+            return Some((ts, Some(book)));
+        }
+    }
+    None
 }
 
-/// 列出目录中的受管备份文件，按新→旧排序。
+/// 从受管备份文件名解析备份时间；解析失败返回 None（列表回退文件修改时间）。
+fn parse_backup_timestamp(file_name: &str) -> Option<NaiveDateTime> {
+    split_managed_name(file_name).map(|(ts, _)| ts)
+}
+
+/// 文件是否落入作用域（issue #836）：无作用域 = 全部受管（引擎级兼容口径）；
+/// 有作用域 = 文件名账本标识匹配，无标识历史产物按 `include_legacy` 归登记序
+/// 首本（见 [`BackupScope`] 类型级注释）。
+fn in_scope(file_book: Option<&str>, scope: Option<&BackupScope>) -> bool {
+    match scope {
+        None => true,
+        Some(scope) => match file_book {
+            Some(id) => id == scope.book_id,
+            None => scope.include_legacy,
+        },
+    }
+}
+
+/// 列出目录中作用域内的受管备份文件，按新→旧排序。
 ///
+/// `scope`：账本作用域（`None` = 不过滤的兼容口径）；文件名携带的账本标识
+/// 与作用域不匹配的产物（其他账本的备份）不可见、不参与清理。
 /// 备份时间优先取文件名时间戳（与命名规则强一致），解析失败回退文件修改时间；
 /// 两者皆失败按最旧处理（排序最靠后，清理时最先被删）。目录不存在时返回空列表
 /// （界面展示空态而非报错）。
-pub fn list_managed_backups(dir: &Path) -> Result<Vec<BackupFileInfo>> {
+pub fn list_managed_backups(
+    dir: &Path,
+    scope: Option<&BackupScope>,
+) -> Result<Vec<BackupFileInfo>> {
     if !dir.is_dir() {
         return Ok(Vec::new());
     }
@@ -205,6 +301,11 @@ pub fn list_managed_backups(dir: &Path) -> Result<Vec<BackupFileInfo>> {
         let name = entry.file_name().to_string_lossy().into_owned();
         let is_file = entry.file_type().map(|t| t.is_file()).unwrap_or(false);
         if !is_managed_backup_file_name(&name) || !is_file {
+            continue;
+        }
+        // 时间戳解析失败的残缺命名按「无标识」归入历史产物桶（标识无从谈起）。
+        let file_book = split_managed_name(&name).and_then(|(_, book)| book);
+        if !in_scope(file_book, scope) {
             continue;
         }
         let ts = parse_backup_timestamp(&name).or_else(|| {
@@ -251,11 +352,17 @@ pub fn list_managed_backups(dir: &Path) -> Result<Vec<BackupFileInfo>> {
         .collect()
 }
 
-/// 将目录中的受管备份修剪到最多 `keep` 个：按旧→新删除超出部分。
+/// 将目录中作用域内的受管备份修剪到最多 `keep` 个：按旧→新删除超出部分
+/// （issue #836：各账本在共享 BackupDirectory 内分别滚动清理，保留上限为
+/// 设备本地偏好、按本独立计算）。
 ///
 /// 单个文件删除失败（占用/无权限）时跳过并记入 `failed`，不中断其余清理。
-pub fn prune_managed_backups(dir: &Path, keep: usize) -> Result<PruneResult> {
-    let files = list_managed_backups(dir)?;
+pub fn prune_managed_backups(
+    dir: &Path,
+    keep: usize,
+    scope: Option<&BackupScope>,
+) -> Result<PruneResult> {
+    let files = list_managed_backups(dir, scope)?;
     let total = files.len();
     if total <= keep {
         return Ok(PruneResult {

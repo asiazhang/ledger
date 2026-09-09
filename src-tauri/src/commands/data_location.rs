@@ -55,7 +55,10 @@ pub async fn get_data_location_info(app: AppHandle) -> Result<data_location::Dat
     .await
 }
 
-/// 提交更改位置意图：三步校验通过后写入指针文件，下次启动搬迁生效。
+/// 提交更改位置意图：引导态预检（仅拦截旧格式密文库推迟搬迁窗口）后，
+/// 三步校验通过并把「当前活动账本搬目录」意图写入账本注册表，下次启动搬迁
+/// 生效（issue #836：其他账本原地不动；注册表损坏不在此拦截——更改位置是
+/// 既有逃生舱，内核按出厂折叠语义覆盖损坏文件）。
 #[tauri::command]
 pub async fn submit_data_location_change(
     app: AppHandle,
@@ -63,6 +66,7 @@ pub async fn submit_data_location_change(
     adopt_existing: bool,
 ) -> Result<data_location::DataLocationChangeOutcome> {
     run_db("submit_data_location_change", move || {
+        data_location::ensure_relocation_settled(current_boot(&app).as_ref())?;
         let default_dir = default_data_dir(&app)?;
         let trimmed = target_dir.trim();
         if trimmed.is_empty() {
@@ -76,14 +80,17 @@ pub async fn submit_data_location_change(
     .await
 }
 
-/// 恢复默认位置：与更改完全相同的校验 + 写意图机制，目标是默认应用数据目录。
-/// 默认目录可能仍保留搬迁前的旧库（原库永久保留），此时同样返回二选一信号。
+/// 恢复默认位置：与更改完全相同的校验 + 写意图机制（收窄后同为当前活动账本
+/// 搬目录），目标是默认应用数据目录。默认目录可能仍保留搬迁前的旧库（原库
+/// 永久保留），或已登记为其他账本（目录唯一性拒绝），此时同样返回二选一信号 /
+/// 码化错误。
 #[tauri::command]
 pub async fn restore_default_data_location(
     app: AppHandle,
     adopt_existing: bool,
 ) -> Result<data_location::DataLocationChangeOutcome> {
     run_db("restore_default_data_location", move || {
+        data_location::ensure_relocation_settled(current_boot(&app).as_ref())?;
         let default_dir = default_data_dir(&app)?;
         data_location::validate_and_commit(&default_dir, &default_dir, adopt_existing)
     })

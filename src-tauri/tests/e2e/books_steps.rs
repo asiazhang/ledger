@@ -161,8 +161,14 @@ fn when_record_expenses(world: &mut LedgerWorld, count: usize, account: String) 
         .dl_conn
         .as_ref()
         .expect("当前账本无已打开连接（引导未就绪建连）");
-    let conn = state.conn.lock().unwrap_or_else(|e| e.into_inner());
-    seed_book_expenses(&conn, &account, count);
+    // 经统一写入口写（用户旅程本义）：写后置脏是入口的结构性副作用（ADR-0032），
+    // 自动备份等以脏标记为触发条件的下游场景因此与真实运行一致。
+    state
+        .write(|conn| {
+            seed_book_expenses(conn, &account, count);
+            Ok(())
+        })
+        .expect("记账失败");
 }
 
 #[when(expr = "关闭当前账本连接")]

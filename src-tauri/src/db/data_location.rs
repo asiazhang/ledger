@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 use rusqlite::params;
 use serde::Serialize;
 
-use super::book_registry::{self, BookRegistry, RegistryOrigin, RegistryRead, read_registry};
+use super::book_registry::{
+    self, BookRegistry, PendingRelocation, RegistryOrigin, RegistryRead, read_registry,
+};
 use super::encryption::{DbFileKind, probe_file_kind};
 use super::{check_integrity, open_connection, open_connection_with_passphrase};
 use crate::error::{AppError, Result};
@@ -73,8 +75,11 @@ pub fn boot(default_dir: &Path) -> Boot {
 
 /// 按注册表形态进入活动账本目录：旧格式指针保留启动期搬迁语义（三分支逐字
 /// 不动）；新格式登记只确保目录存在、**绝不从默认目录搬迁**——多本世界里默认
-/// 目录中的库属于默认账本，向空的活动账本目录搬迁会造成跨本数据复制。
-fn enter_registry(default_dir: &Path, registry: BookRegistry) -> Boot {
+/// 目录中的库属于默认账本，向空的活动账本目录搬迁会造成跨本数据复制；新格式
+/// 唯一的搬迁通道是活动账本搬迁意图（[`PendingRelocation`]，issue #836）——
+/// 「更改数据位置」提交的意图在下次启动时按同一套三分支语义，把**当前活动
+/// 账本**从意图携带的来源目录搬进登记目录，其他账本原地不动。
+fn enter_registry(default_dir: &Path, mut registry: BookRegistry) -> Boot {
     let Some(book) = registry.active() else {
         // 防御：read_registry 已保证活动指针可解析，不应到达；按损坏回退。
         tracing::error!("注册表已解析但活动账本指针不可解析，按损坏回退默认目录");
@@ -88,28 +93,107 @@ fn enter_registry(default_dir: &Path, registry: BookRegistry) -> Boot {
     let target = book.dir.clone();
     match registry.origin {
         RegistryOrigin::LegacyPointer => relocate_or_adopt(default_dir, &target, registry),
-        RegistryOrigin::NewFormat => match ensure_target_dir(&target) {
-            Ok(()) => Boot {
-                db_dir: target,
+        RegistryOrigin::NewFormat => {
+            // 引导只消费匹配当前活动账本的意图（其余形态仅由手工编辑产生，
+            // 已被校验挡住或无害滞留，留待下一次登记变更自愈清除）。
+            let pending = registry
+                .pending_relocation
+                .take_if(|pending| pending.book_id == registry.active_id);
+            match pending {
+                Some(pending) => enter_pending_relocation(registry, pending, &target),
+                None => match ensure_target_dir(&target) {
+                    Ok(()) => Boot {
+                        db_dir: target,
+                        fallback_reason: None,
+                        deferred_relocation: None,
+                        registry: Some(registry),
+                    },
+                    Err(reason) => {
+                        tracing::warn!(
+                            target = %target.display(),
+                            reason = %reason,
+                            "活动账本目录不可用，回退默认目录"
+                        );
+                        // 注册表本身可读：登记信息仍可展示，用户可经切换命令回到默认账本。
+                        Boot {
+                            db_dir: default_dir.to_path_buf(),
+                            fallback_reason: Some(reason),
+                            deferred_relocation: None,
+                            registry: Some(registry),
+                        }
+                    }
+                },
+            }
+        }
+    }
+}
+
+/// 消费活动账本搬迁意图（issue #836）：与旧格式指针同款三分支，只是来源从
+/// 默认数据目录换成意图携带的来源目录（账本当前所在处，非默认目录）。
+/// - 目标已有库 → 直接接管使用（接管提交 / 二次启动幂等），意图就地消费
+///   （引导不回写文件，落盘意图由下一次登记变更自愈清除）；
+/// - 目标为空而来源有库 → 整库搬迁（`VACUUM INTO`），成功即消费意图；来源
+///   为密文库时推迟到解锁后补做（同旧格式：以来源位置生效、意图保留待重试）；
+/// - 搬迁失败 → 以来源位置生效并携带回退警示，意图保留待下次启动重试（与
+///   旧格式失败重试同语义）；未消费期间登记变更被拒
+///   （[`book_registry::settle_pending_relocation`]），更改位置可重写意图脱困。
+fn enter_pending_relocation(
+    mut registry: BookRegistry,
+    pending: PendingRelocation,
+    target: &Path,
+) -> Boot {
+    let source = pending.from_dir.clone();
+    tracing::info!(
+        book = %pending.book_id,
+        from = %source.display(),
+        to = %target.display(),
+        "消费活动账本搬迁意图"
+    );
+    match enter_target_with_source(&source, target) {
+        Ok(()) => {
+            // 意图已消费：内存态清除（文件态自愈归登记变更），进入目标目录。
+            registry.pending_relocation = None;
+            Boot {
+                db_dir: target.to_path_buf(),
                 fallback_reason: None,
                 deferred_relocation: None,
                 registry: Some(registry),
-            },
-            Err(reason) => {
-                tracing::warn!(
-                    target = %target.display(),
-                    reason = %reason,
-                    "活动账本目录不可用，回退默认目录"
-                );
-                // 注册表本身可读：登记信息仍可展示，用户可经切换命令回到默认账本。
-                Boot {
-                    db_dir: default_dir.to_path_buf(),
-                    fallback_reason: Some(reason),
-                    deferred_relocation: None,
-                    registry: Some(registry),
-                }
             }
-        },
+        }
+        Err(EnterTargetError::DeferredEncryptedRelocation) => {
+            tracing::info!(
+                target = %target.display(),
+                "来源库为密文库，搬迁待解锁后补做（本次仍以来源位置生效）"
+            );
+            // 推迟窗口内账本仍在来源目录（物理真值）：登记信息同步改写
+            //（仅内存、不落盘），意图保留待解锁补做；解锁补做成功后重启，
+            // 由下次引导按文件真值消费意图。
+            registry.redirect_active_book(&source);
+            registry.pending_relocation = Some(pending);
+            Boot {
+                db_dir: source,
+                fallback_reason: None,
+                deferred_relocation: Some(target.to_path_buf()),
+                registry: Some(registry),
+            }
+        }
+        Err(EnterTargetError::Failed(reason)) => {
+            tracing::warn!(
+                target = %target.display(),
+                reason = %reason,
+                "活动账本搬迁失败，以来源位置生效（意图保留待下次启动重试）"
+            );
+            // 意图保留：下次启动重试（与旧格式搬迁失败的逐次重试同语义）；
+            // 以来源位置生效并显著提示。登记信息按文件真值展示（账本目录
+            // = 目标），未消费期间登记变更被意图守卫拦截。
+            registry.pending_relocation = Some(pending);
+            Boot {
+                db_dir: source,
+                fallback_reason: Some(reason),
+                deferred_relocation: None,
+                registry: Some(registry),
+            }
+        }
     }
 }
 
@@ -118,7 +202,7 @@ fn enter_registry(default_dir: &Path, registry: BookRegistry) -> Boot {
 /// 搬迁失败回退默认目录；源库为密文库时搬迁需要主口令（启动期不可得），
 /// 改为推迟到解锁后补做，同样以源库位置生效、不携带回退警示。
 fn relocate_or_adopt(default_dir: &Path, target: &Path, mut registry: BookRegistry) -> Boot {
-    match enter_target(default_dir, target) {
+    match enter_target_with_source(default_dir, target) {
         Ok(()) => Boot {
             db_dir: target.to_path_buf(),
             fallback_reason: None,
@@ -165,9 +249,16 @@ enum EnterTargetError {
     DeferredEncryptedRelocation,
 }
 
-fn enter_target(default_dir: &Path, target: &Path) -> std::result::Result<(), EnterTargetError> {
+/// 三分支（来源目录参数化，issue #836：旧格式来源恒为默认数据目录，新格式
+/// 搬迁意图来源为账本当前所在目录）：目标位置已有库 → 直接使用（接管已就位
+/// 的库 / 二次启动幂等）；目标为空而原位置有库 → `VACUUM INTO` 整库搬迁后再
+/// 使用；两者皆无 → 使用目标位置（新建空库由随后的建连完成）。
+fn enter_target_with_source(
+    source_dir: &Path,
+    target: &Path,
+) -> std::result::Result<(), EnterTargetError> {
     let target_db = target.join(DB_FILE_NAME);
-    let source_db = default_dir.join(DB_FILE_NAME);
+    let source_db = source_dir.join(DB_FILE_NAME);
 
     // 分支 1：目标位置已有库 → 直接使用（接管已就位的库 / 二次启动幂等）。
     if target_db.exists() {
@@ -259,12 +350,10 @@ pub fn configured_intent(default_dir: &Path) -> Option<PathBuf> {
     }
 }
 
-/// 把「库所在目录」意图写入引导文件（原子：先写唯一临时名再替换）。
-/// 供命令层「更改位置 / 恢复默认」提交意图使用。
-///
-/// 注意：本函数保持旧格式单字段落盘——更改位置的搬迁语义（两段式生效）仍由
-/// 旧格式指针承载，新格式注册表无搬迁概念；多账本下搬迁收窄为活动账本搬目录
-/// 时（spec #831 / issue #836）再一并改造。
+/// 把「库所在目录」意图以旧格式单字段落盘（测试与历史语义保持用）：新格式
+/// 注册表写入已收口 [`book_registry::write_registry`]（含活动账本搬迁意图，
+/// issue #836），本函数不再被生产路径消费——存量旧格式指针的引导语义（含
+/// 搬迁）仍由 [`boot`] 原样支持，读取侧双格式兼容不受影响。
 pub fn write_pointer(default_dir: &Path, target: &Path) -> crate::error::Result<()> {
     std::fs::create_dir_all(default_dir)?;
     let pointer = default_dir.join(POINTER_FILE_NAME);
@@ -301,9 +390,17 @@ pub struct DataLocationChangeOutcome {
     pub target_dir: Option<String>,
 }
 
-/// 对目标目录执行三步校验，通过后把更改意图写入指针文件。
+/// 对目标目录执行三步校验，通过后把「当前活动账本搬目录」的搬迁意图写入
+/// 账本注册表（issue #836 / ADR-0089 决策 5：搬迁收窄为当前活动账本搬目录，
+/// 校验复用既有三步校验）。
 /// `adopt_existing`：目标已有同名 `ledger.db` 时是否接管（用户二选一后二次提交）。
-/// 本函数不搬迁任何文件、不解析既有库内容；真实搬迁只发生在下次启动。
+/// 本函数不搬迁任何文件、不解析既有库内容；真实搬迁只发生在下次启动（引导
+/// 消费意图，来源目录随意图携带，其他账本原地不动）。
+///
+/// 逃生舱语义（与旧指针写入时代逐字对齐）：注册表损坏时视同出厂未配置折叠
+/// 默认账本继续提交——损坏文件可能是自定义位置的唯一记录，但更改位置/恢复
+/// 默认是既有「重获可控位置」的指定逃生舱，覆盖损坏文件正是其职责；其他账本
+/// 登记随覆盖丢失（文件保留在磁盘，可重新登记找回）。
 pub fn validate_and_commit(
     default_dir: &Path,
     target: &Path,
@@ -343,14 +440,72 @@ pub fn validate_and_commit(
         });
     }
 
-    // 校验通过 → 意图落盘（指针文件原子写入）。
-    write_pointer(default_dir, target)?;
-    tracing::info!(target = %target.display(), "DataLocation 更改意图已落盘，下次启动生效");
+    // 折叠注册表现场（损坏视同未配置，见函数级逃生舱注释）。
+    let mut registry = match read_registry(default_dir) {
+        RegistryRead::Resolved(registry) => registry,
+        RegistryRead::Unconfigured | RegistryRead::Corrupt(_) => {
+            BookRegistry::single_default(default_dir)
+        }
+    };
+    let Some(book) = registry.active() else {
+        // 防御：校验通过的注册表活动指针必达；异常现场按不可用拒绝，不覆盖文件。
+        return Err(AppError::coded(
+            "book.registry-unavailable",
+            "账本注册表尚未就绪，请重启应用后再试",
+        ));
+    };
+    let book_id = book.id.clone();
+    let from_dir = book.dir.clone();
+    if from_dir == target {
+        // 幂等意图：目标即当前位置，无目录变更、无搬迁。与旧指针「同位重写」
+        // 同语义：落盘折叠后的注册表，维持「提交成功 ⇒ 引导文件已配置」不变量
+        //（信息聚合据此报告无待重启状态）。
+        book_registry::write_registry(default_dir, &registry)?;
+        tracing::info!(target = %target.display(), "目标即当前位置，注册表已落盘（无搬迁）");
+        return Ok(DataLocationChangeOutcome {
+            requires_choice: false,
+            committed: true,
+            target_dir: Some(target.to_string_lossy().into_owned()),
+        });
+    }
+    // 目录唯一性：目标不得与**其他**账本的目录重复（同一目录不得登记两个账本）。
+    ensure_target_not_registered(&registry, &book_id, target)?;
+    if let Some(book) = registry.active_mut() {
+        book.dir = target.to_path_buf();
+    }
+    registry.pending_relocation = Some(book_registry::PendingRelocation { book_id, from_dir });
+    book_registry::write_registry(default_dir, &registry)?;
+    tracing::info!(target = %target.display(), "活动账本搬迁意图已落盘，下次启动生效");
     Ok(DataLocationChangeOutcome {
         requires_choice: false,
         committed: true,
         target_dir: Some(target.to_string_lossy().into_owned()),
     })
+}
+
+/// 待登记目录与**其他**账本既有目录重复时拒绝（排除活动账本自身——它正是
+/// 正在搬家的对象）。路径身份按物理位置折叠：既有条目 best-effort
+/// canonicalize（目录可能已不存在，失败用原样），目标必须已存在（① 刚创建）。
+fn ensure_target_not_registered(
+    registry: &BookRegistry,
+    active_id: &str,
+    target: &Path,
+) -> Result<()> {
+    let canonical = target.canonicalize()?;
+    for book in &registry.books {
+        if book.id == active_id {
+            continue;
+        }
+        let existing = book.dir.canonicalize().unwrap_or_else(|_| book.dir.clone());
+        if existing == canonical {
+            return Err(AppError::codedp(
+                "book.dir-exists",
+                format!("该目录已登记为账本「{}」", book.name),
+                &[&book.name],
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// DataLocation 当前信息（issue #133）：设置页展示用。
@@ -429,10 +584,7 @@ pub fn mutable_registry(boot: Option<&Boot>) -> Result<&BookRegistry> {
         ));
     };
     if boot.deferred_relocation.is_some() {
-        return Err(AppError::coded(
-            "book.registry-busy",
-            "数据搬迁尚未完成，暂无法变更账本登记；请重启应用完成搬迁后再试",
-        ));
+        return Err(book_registry::registry_busy_error());
     }
     boot.registry.as_ref().ok_or_else(|| {
         let reason = boot
@@ -441,6 +593,18 @@ pub fn mutable_registry(boot: Option<&Boot>) -> Result<&BookRegistry> {
             .unwrap_or_else(|| "注册表不可读".into());
         book_registry::registry_corrupt_error(&reason)
     })
+}
+
+/// 更改位置 / 恢复默认的引导态前置预检（issue #836）：仅拦截旧格式密文库
+/// 推迟搬迁窗口（意图未执行完时落新格式会把它抹掉，写入时机契约）。与登记
+/// 变更的 [`mutable_registry`] 不同：**注册表损坏不在此拦截**——更改位置是
+/// 既有「重获可控位置」逃生舱（覆盖损坏文件正是其职责），意图未完成的新格式
+/// 搬迁也不拦截——重写意图正是搬迁卡住时的脱困通道。
+pub fn ensure_relocation_settled(boot: Option<&Boot>) -> Result<()> {
+    if boot.is_some_and(|boot| boot.deferred_relocation.is_some()) {
+        return Err(book_registry::registry_busy_error());
+    }
+    Ok(())
 }
 
 /// 聚合账本清单信息（列表命令内核）：登记清单、活动指针、登记变更可用性

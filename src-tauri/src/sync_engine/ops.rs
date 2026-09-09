@@ -139,29 +139,49 @@ pub(super) fn is_empty(conn: &Connection) -> Result<bool> {
 pub(crate) fn read_all(conn: &Connection) -> Result<Vec<SyncOp>> {
     let mut stmt =
         conn.prepare("SELECT op_id, device_id, clock, schema_version, payload FROM sync_ops")?;
-    let rows = stmt.query_map([], |r| {
-        Ok((
-            r.get::<_, String>(0)?,
-            r.get::<_, String>(1)?,
-            r.get::<_, i64>(2)?,
-            r.get::<_, i64>(3)?,
-            r.get::<_, String>(4)?,
-        ))
-    })?;
+    let rows = stmt.query_map([], map_op_row)?;
     let mut ops = Vec::new();
     for row in rows {
-        let (op_id, device_id, clock, schema_version, payload) = row?;
-        // 反序列化失败：本仓自有类型恒成功（wire 接入路径的旧载荷不可解析场景
-        // 由 [`super::engine::ingest_ops`] 挂起承接，不进本函数）。
-        let command = serde_json::from_str(&payload)
-            .map_err(|e| AppError::Invalid(format!("op 载荷反序列化失败: {e}")))?;
-        ops.push(SyncOp {
-            op_id,
-            device_id,
-            clock,
-            schema_version,
-            command,
-        });
+        ops.push(op_from_row(row?));
     }
-    Ok(ops)
+    ops.into_iter().collect::<Result<Vec<_>>>()
+}
+
+/// 读取本机产出且时钟晚于 `after_clock` 的 op（通道上传接缝：只发布自己流，
+/// 按时钟序返回；通道上传位点以 manifest 为权威，见 `channel::publish_own_ops`）。
+pub(crate) fn read_own_since(
+    conn: &Connection,
+    device_id: &str,
+    after_clock: i64,
+) -> Result<Vec<SyncOp>> {
+    let mut stmt = conn.prepare(
+        "SELECT op_id, device_id, clock, schema_version, payload FROM sync_ops \
+         WHERE device_id = ?1 AND clock > ?2 ORDER BY clock ASC",
+    )?;
+    let rows = stmt.query_map(params![device_id, after_clock], map_op_row)?;
+    let mut ops = Vec::new();
+    for row in rows {
+        ops.push(op_from_row(row?));
+    }
+    ops.into_iter().collect::<Result<Vec<_>>>()
+}
+
+/// op 行读取映射（[`read_all`] / [`read_own_since`] 共用；反序列化失败属程序
+/// 缺陷，fail loud——wire 侧不可解析载荷由 [`super::engine::ingest_ops`] 挂起承接）。
+fn map_op_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<(String, String, i64, i64, String)> {
+    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+}
+
+/// 行五元组 → op 信封（载荷反序列化同源单点）。
+fn op_from_row(row: (String, String, i64, i64, String)) -> Result<SyncOp> {
+    let (op_id, device_id, clock, schema_version, payload) = row;
+    let command = serde_json::from_str(&payload)
+        .map_err(|e| AppError::Invalid(format!("op 载荷反序列化失败: {e}")))?;
+    Ok(SyncOp {
+        op_id,
+        device_id,
+        clock,
+        schema_version,
+        command,
+    })
 }
