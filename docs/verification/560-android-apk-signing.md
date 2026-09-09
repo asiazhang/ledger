@@ -64,8 +64,9 @@ rm ~/openledger-release.jks.b64
 
 1. **解码**：`ANDROID_KEY_BASE64` base64 解码 → `$RUNNER_TEMP/openledger-release.jks`；
    口令与路径写入 `src-tauri/gen/android/keystore.properties`（gradle 官方接线，
-   已 gitignore）。`secrets` 未配置时整步跳过（干跑保持未签名，与 macOS 证书
-   行为一致）。
+   已 gitignore）。`secrets` 未配置时干跑整步跳过（产物保持未签名，与 macOS 证书
+   行为一致）；**tag 构建缺 secrets 直接失败**——「先配 secrets 才启用发版」
+   （ADR-0074 决策 3）的机械执行，未签名 APK 不可安装也无法覆盖升级。
 2. **构建签名**：gradle release buildType 条件挂 `signingConfig`（仅当
    `keystore.properties` 存在；无条件挂载会因半初始化配置直接打包失败）。
 3. **校验**：`apksigner verify --print-certs` 校验归一命名后的最终 APK

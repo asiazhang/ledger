@@ -201,8 +201,9 @@ jobs:
   # 合一（armv7 仅旧 32 位设备、x86 系仅模拟器，均无真实消费方）；versionCode 由 CI
   # 从 tag 按公式 major×10⁶ + minor×10³ + patch 派生并经 --config 注入（唯一口径，零手工）。
   # 签名接线（决策 3，issue #560）：配置 ANDROID_KEY_* secrets 后，构建经
-  # keystore.properties 注入 release 签名并 apksigner 校验；未配置时产物保持未签名
-  # （干跑），流程与验收见 docs/verification/560-android-apk-signing.md。
+  # keystore.properties 注入 release 签名并 apksigner 校验；未配置时干跑保持未签名，
+  # tag 构建缺 secrets 直接失败（「先备份、再配 secrets、才启用发版」的机械执行），
+  # 流程与验收见 docs/verification/560-android-apk-signing.md。
   # macOS 签名 + 公证（issue #658）：配置了 APPLE_* secrets 时自动导入证书签名，构建后
   # notarytool 公证（--wait）+ stapler 附着，并做 codesign/spctl/stapler validate 校验；
   # 未配置 secrets 时相关步骤自动跳过，产物保持未签名（干跑与 PR 构建不受影响）。
@@ -393,6 +394,12 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           if [ -z "$ANDROID_KEY_BASE64" ]; then
+            # tag 发布缺 secrets 直接失败：发版强约束是「先配 secrets 才启用」
+            # （ADR-0074 决策 3），未签名 APK 不可安装也无法覆盖升级，禁止进 Release。
+            if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+              echo "✗ tag 发布必须已签名：缺少 ANDROID_KEY_BASE64（先完成 keystore 备份并配齐 secrets，见 docs/verification/560-android-apk-signing.md）"
+              exit 1
+            fi
             echo "⚠️ 未配置 ANDROID_KEY_BASE64，跳过签名接线（产物将保持未签名）"
             exit 0
           fi
@@ -488,7 +495,8 @@ jobs:
 
       # 归一命名（OpenLedger_<版本>_arm64.apk）后交 upload-artifact，与桌面
       # 产物一同汇入 publish 的单一 Release。未配置签名 secrets 的干跑产物未签名，
-      # 真机安装需放行未知来源；正式 tag 发布前必须配齐 secrets（升级安装的签名硬前提）。
+      # 真机安装需放行未知来源；正式 tag 缺 secrets 已在签名步骤直接失败
+      # （升级安装的签名硬前提）。
       # 路径含 universal 系 gradle flavor 名：cargo-mobile2 不带 --split-per-abi 时
       # 恒走 assembleUniversal，target 经 -PabiList/-ParchList/-PtargetList 收窄，
       # 实际 APK 内容仅 arm64-v8a。
@@ -508,6 +516,10 @@ jobs:
         if: matrix.platform == 'android'
         run: |
           if [ -z "${ANDROID_SIGNING:-}" ]; then
+            if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+              echo "✗ tag 发布产物必须已签名，但签名未生效（ANDROID_SIGNING 未置位）"
+              exit 1
+            fi
             echo "⚠️ APK 未签名（未配置签名 secrets），跳过签名校验"
             exit 0
           fi
