@@ -55,6 +55,7 @@ import GlobalBusyBar from '@/components/GlobalBusyBar.vue'
 import BookSidebarEntry from '@/components/BookSidebarEntry.vue'
 import { loadSidebarCollapsed, saveSidebarCollapsed } from '@/utils/view-state'
 import { shortcutHint, useViewShortcuts } from '@/composables/useViewShortcuts'
+import { useInputMode } from '@/composables/useInputMode'
 import {
   useSidebarOrderStore,
   isSidebarSortAction,
@@ -155,14 +156,14 @@ function renderMenuIcon(name: string) {
   return () => h(NIcon, { size: 18 }, { default: () => h(viewIcons[name]) })
 }
 
-// 菜单形态（issue #359 侧栏分组；#473 终态，ADR-0063 决策 1）：概览（固定）+
+// 菜单项形态（issue #359 侧栏分组；#473 终态，ADR-0063 决策 1）：概览（固定）+
 // 记账/资产/洞察三组（各自主项 + 组标题行按需「更多」链接）+ AI、设置（两固定项）。
 // 全局「更多」固定项已退役；菜单项与快捷键共用同一顺序源（viewShortcuts：由组内序按
 // 线性位置推导键位，只扫主项），分组标题不占键位、不参与排序与计数
 // （NMenu group 选项天然不可选）；菜单响应式派生，组内排序变更时顺序与快捷键提示同步更新。
-// 键位带仅桌面档渲染（ADR-0088 关联 ADR-0065：移动档不渲染键位带）——菜单构建以
-// 键位表入参：桌面档传完整键位带，移动抽屉传空表剥离提示；触控轴下快捷键整体
-// 退役归票③，此处是宽度轴档位的渲染口径。每项右侧附快捷键提示（数字位或设置项的 ⌘,，仅桌面档）；
+// 键位提示两轴各按其轴退役（ADR-0088 决策 4/6，票③已落地）：宽度轴——移动抽屉
+// 恒传空表剥离；输入轴——触控轴桌面侧栏同规传空表（快捷键仅退役渲染，监听保留，
+// 带键盘的触屏设备仍可 Cmd/Ctrl 切换）。每项右侧附快捷键提示（数字位或设置项的 ⌘,，仅指针轴桌面档）；
 // 「更多」链接与收纳成员无键位、不出提示、不可键盘触发；
 // 折叠态不渲染组标题，「更多」链接随之不渲染（决策 6）。
 // 主项经 nodeProps 附右键组内排序菜单（issue #270/#359），固定项与分组标题不附
@@ -178,6 +179,8 @@ function renderItem(name: ViewName | ContainableViewName, key: string | null): M
       ]),
   }
 }
+
+const inputMode = useInputMode()
 
 /** 菜单选项构建（桌面侧栏与移动抽屉两壳层共享的单一来源，消费同一份导航状态）：
  *  keyOf 为视图键位表，键位缺失即不出提示。 */
@@ -220,9 +223,14 @@ function buildMenuOptions(keyOf: Map<string, string | null>): MenuOption[] {
   ]
 }
 
-/** 桌面侧栏菜单：键位提示随菜单渲染（⌘1–9/⌘0/⌘,/⌘`，ADR-0065）。 */
+/** 桌面侧栏菜单：指针轴渲染键位提示（⌘1–9/⌘0/⌘,/⌘`，ADR-0065）；触控轴
+ *  退役渲染（ADR-0088 决策 6 / issue #843）——传空表剥离提示，监听不受影响。 */
 const menuOptions = computed<MenuOption[]>(() =>
-  buildMenuOptions(new Map(viewShortcuts.value.map((s) => [s.name, s.key]))),
+  buildMenuOptions(
+    inputMode.value === 'pointer'
+      ? new Map(viewShortcuts.value.map((s) => [s.name, s.key]))
+      : new Map(),
+  ),
 )
 
 /** 移动抽屉菜单：同一导航状态、剥离键位带（移动档不渲染键位提示，ADR-0088 决策 4 关联 ADR-0065）。 */

@@ -3,13 +3,15 @@ import { useAttrs, watch } from 'vue'
 import { NPopover } from 'naive-ui'
 import { createOverlayToken } from '@/composables/overlayRegistry'
 
-// 薄封装 NPopover，接入弹层注册表（ADR-0035）：应用内的 NPopover 一律经本组件
-// 使用，面板开/关状态实时上报，驱动快捷键抑制。其余 props/attrs/slots 原样透传。
+// 薄封装 NPopover，接入弹层注册表（ADR-0035）：应用内的 NPopover 一律经本
+// 组件使用，弹层开/关状态实时上报，驱动快捷键抑制。default（内容）/trigger
+// 等 slots 与其余 props/attrs 原样透传。
 //
 // 刻意不声明 show prop（原因见 AppSelect 注释）：:show / @update:show 经 attrs
-// 原样透传；非受控开合与 clickoutside 触发的关闭经根上的 update:show 监听上报，
-// 受控调用方直接改 :show prop 的开合由 attrs watch 兜底（issue #834 账本入口
-// 弹层为「新增弹层形态先补封装」的落地先例）。
+// 原样透传；非受控开合与 clickoutside 触发的关闭（trigger="click" 等）经根上
+// 的 update:show 监听上报，受控调用方直接改 :show prop 的开合由 attrs watch
+// 兜底。先例：账本入口弹层（issue #834）、交易表金额全文点按查看
+//（ADR-0088 决策 6 悬停一击可达）。
 const attrs = useAttrs()
 const overlay = createOverlayToken('popover')
 const onUpdateShow = (value: boolean) => overlay.set(value)

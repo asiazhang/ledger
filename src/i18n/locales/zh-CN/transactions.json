@@ -24,7 +24,8 @@
     "account": "账户",
     "source": "来源",
     "note": "备注",
-    "amount": "金额"
+    "amount": "金额",
+    "actions": "操作"
   },
   "source": {
     "kind": {
@@ -78,7 +79,8 @@
     "edit": "编辑",
     "refund": "退款",
     "addItem": "加入物品",
-    "delete": "删除"
+    "delete": "删除",
+    "actions": "更多操作"
   },
   "form": {
     "amount": "金额",
