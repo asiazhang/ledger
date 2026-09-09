@@ -8,7 +8,7 @@ use crate::accounts::{Account, AccountBalance, AccountInput, AccountType, Accoun
 use crate::categories::{Category, CategoryInput};
 use crate::currencies::Currency;
 use crate::investment::{Instrument, InstrumentListResult, InstrumentType};
-use crate::merchants::Merchant;
+use crate::merchants::{Merchant, MerchantUpdateInput};
 use crate::transaction::amount::TransactionKind;
 use crate::transaction::{
     CreateTransactionResult, Transaction, TransactionBatchInput, TransactionInput,
@@ -61,6 +61,7 @@ use super::handlers::stocks::StockLookup;
         handlers::funds::lookup_fund_handler,
         handlers::stocks::lookup_stock_handler,
         handlers::merchants::list_merchants_handler,
+        handlers::merchants::update_merchant_handler,
         handlers::transactions::list_transactions_handler,
         handlers::transactions::batch_create_transactions_handler,
         handlers::transactions::update_transaction_handler,
@@ -82,6 +83,7 @@ use super::handlers::stocks::StockLookup;
         InstrumentListResult,
         InstrumentType,
         Merchant,
+        MerchantUpdateInput,
         StockLookup,
         Transaction,
         TransactionInput,

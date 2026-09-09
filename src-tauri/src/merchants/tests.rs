@@ -125,6 +125,85 @@ fn update_merchant_rename_to_taken_name_rejected() {
     assert_eq!(err.to_string(), "商户已存在: 京东");
 }
 
+/// 改名入参先 trim（issue #884，与导入即建同款归一）：带首尾空白的名字入库前修剪，
+/// 防带空白绕开唯一性产生碎商户。
+#[test]
+fn update_merchant_trims_name() {
+    let conn = setup();
+    let id = create_merchant(
+        &conn,
+        MerchantInput {
+            name: "京东".into(),
+        },
+    )
+    .unwrap();
+    update_merchant(
+        &conn,
+        &id,
+        MerchantUpdateInput {
+            name: Some("  京东商城\t".into()),
+        },
+    )
+    .unwrap();
+    assert_eq!(list_merchants(&conn)[0].name, "京东商城");
+}
+
+/// 改名 trim 后为空 → 码化错误 `merchant.name-required`（与导入即建同码），
+/// 原名保持不变。
+#[test]
+fn update_merchant_blank_name_rejected() {
+    let conn = setup();
+    let id = create_merchant(
+        &conn,
+        MerchantInput {
+            name: "京东".into(),
+        },
+    )
+    .unwrap();
+    let err = update_merchant(
+        &conn,
+        &id,
+        MerchantUpdateInput {
+            name: Some("   ".into()),
+        },
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, AppError::Coded { ref message, .. } if message.contains("商户名不能为空"))
+    );
+    assert_eq!(list_merchants(&conn)[0].name, "京东");
+}
+
+/// 改名撞名判定在 trim 之后：改成「空白 + 在用同名」同样报已存在，
+/// 不得绕开唯一性。
+#[test]
+fn update_merchant_trim_collides_with_existing_name() {
+    let conn = setup();
+    create_merchant(
+        &conn,
+        MerchantInput {
+            name: "美团".into(),
+        },
+    )
+    .unwrap();
+    let id = create_merchant(
+        &conn,
+        MerchantInput {
+            name: "拼多多".into(),
+        },
+    )
+    .unwrap();
+    let err = update_merchant(
+        &conn,
+        &id,
+        MerchantUpdateInput {
+            name: Some("  美团  ".into()),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(err.to_string(), "商户已存在: 美团");
+}
+
 #[test]
 fn update_merchant_missing_is_not_found() {
     let conn = setup();

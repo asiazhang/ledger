@@ -79,6 +79,7 @@ async fn test_openapi_doc_covers_all_endpoints() {
         ("/api/v1/funds/{code}", "get"),
         ("/api/v1/stocks/{code}", "get"),
         ("/api/v1/merchants", "get"),
+        ("/api/v1/merchants/{id}", "put"),
         ("/api/v1/transactions", "get"),
         ("/api/v1/transactions/batch", "post"),
         ("/api/v1/transactions/{id}", "delete"),
@@ -241,7 +242,7 @@ async fn test_openapi_doc_has_currencies_endpoint() {
     assert!(schemas.contains_key("TransactionInput"));
 }
 
-/// OpenAPI 契约文档体积预算护栏：当前 18 端点 ≈ 41KB，预算 48KB 留增长空间；
+/// OpenAPI 契约文档体积预算护栏：当前 19 端点 ≈ 42KB，预算 48KB 留增长空间；
 /// 端点继续增长触线时需人工决策（拆文档或提预算），避免契约文档无界膨胀挤占
 /// AI 上下文（32KB 预算在基金查询端点加入时触线，issue #304 人工决策提至 40KB；
 /// 40KB 在股票查询端点加入时触线，issue #693 人工决策提至 48KB：18 端点下契约

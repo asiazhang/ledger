@@ -484,6 +484,31 @@ pub(crate) async fn delete_account_via_api(app: &Router, id: &str) -> (StatusCod
     (status, bytes)
 }
 
+/// PUT /api/v1/merchants/{id}，返回（状态码，原始响应体）。响应体不在此处反序列化：
+/// 200 为更新后完整商户、4xx 为统一错误形状 JSON，由各测试自行解析
+///（先例：put_transaction_via_api 同名辅助上收共享）。
+pub(crate) async fn put_merchant_via_api(
+    app: &Router,
+    id: &str,
+    body: &str,
+) -> (StatusCode, Vec<u8>) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/merchants/{id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_owned()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = body_to_bytes(response.into_body()).await;
+    (status, bytes)
+}
+
 pub(crate) async fn delete_category_via_api(app: &Router, id: &str) -> (StatusCode, Vec<u8>) {
     let response = app
         .clone()

@@ -9,7 +9,7 @@ mod crud;
 mod model;
 
 pub use crud::{
-    create_merchant, create_merchant_by_name, delete_merchant, find_merchant_by_name,
+    create_merchant, create_merchant_by_name, delete_merchant, find_merchant_by_name, get_merchant,
     list_merchants, transaction_counts, update_merchant,
 };
 pub use model::{Merchant, MerchantInput, MerchantTransactionCount, MerchantUpdateInput};
