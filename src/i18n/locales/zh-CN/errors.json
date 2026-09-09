@@ -56,6 +56,17 @@
   "book-registry": {
     "invalid": "账本注册表校验失败：{0}"
   },
+  "book": {
+    "registry-unavailable": "账本注册表尚未就绪，请重启应用后再试",
+    "registry-busy": "数据搬迁尚未完成，暂无法变更账本登记；请重启应用完成搬迁后再试",
+    "registry-corrupt": "账本注册表损坏，已回退默认账本；请先在数据设置中恢复默认位置（{0}）",
+    "name-required": "账本名称不能为空",
+    "not-found": "账本不存在: {0}",
+    "already-active": "该账本已是当前账本",
+    "remove-active": "不能移除当前账本，请先切换到其他账本",
+    "dir-exists": "该目录已登记为账本「{0}」",
+    "dir-unavailable": "账本目录不可用（{0}）：{1}"
+  },
   "sync": {
     "fund-not-found": "查无基金代码 {0}，请核对后重试",
     "stock-not-found": "查无股票代码 {0}，请核对后重试",

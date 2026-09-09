@@ -6,6 +6,7 @@
 pub mod accounts;
 pub mod ai;
 pub mod backup;
+pub mod book;
 pub mod boot;
 pub mod budget;
 pub mod categories;
@@ -31,6 +32,7 @@ pub mod transactions;
 pub use accounts::*;
 pub use ai::*;
 pub use backup::*;
+pub use book::*;
 pub use boot::*;
 pub use budget::*;
 pub use categories::*;

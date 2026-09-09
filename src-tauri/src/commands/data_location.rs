@@ -17,7 +17,7 @@
 
 use std::path::{Path, PathBuf};
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Runtime};
 
 use crate::commands::boot::current_boot;
 use crate::db::data_location;
@@ -26,7 +26,7 @@ use crate::error::{AppError, Result};
 
 /// 默认应用数据目录（指针文件所在地，也是「恢复默认」的目标）。启动引导
 /// 序列（commands::boot）与 DataLocation 信息聚合共用的同一解析点。
-pub(crate) fn default_data_dir(app: &AppHandle) -> Result<PathBuf> {
+pub(crate) fn default_data_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf> {
     app.path()
         .app_data_dir()
         .map_err(|e| AppError::Io(format!("获取默认数据目录失败：{e}")))
@@ -35,7 +35,7 @@ pub(crate) fn default_data_dir(app: &AppHandle) -> Result<PathBuf> {
 /// 生效库目录（恢复通道共用，issue #601）：优先启动引导登记的生效目录，
 /// 未登记时回退默认数据目录——恢复命令目标路径与启动失败重置共用的
 /// 壳层解析点（领域解析见 [`data_location::effective_db_dir`]）。
-pub(crate) fn effective_db_dir_of(app: &AppHandle) -> Result<PathBuf> {
+pub(crate) fn effective_db_dir_of<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf> {
     let default_dir = default_data_dir(app)?;
     let boot = current_boot(app);
     Ok(data_location::effective_db_dir(boot.as_ref(), &default_dir))
