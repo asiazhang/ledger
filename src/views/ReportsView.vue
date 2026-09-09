@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { NCard, NSpace, NEmpty, NSpin, NBreadcrumb, NBreadcrumbItem } from 'naive-ui'
+import { NButton, NCard, NSpace, NEmpty, NSpin, NBreadcrumb, NBreadcrumbItem } from 'naive-ui'
 import QuickTimeRange from '@/components/QuickTimeRange.vue'
+import { useInputMode } from '@/composables/useInputMode'
 import { Bar } from 'vue-chartjs'
 import {
   Chart as ChartJS,
@@ -327,6 +328,24 @@ const categoryChartHeight = computed(() => {
   return rows * CATEGORY_ROW_HEIGHT
 })
 
+// 输入轴（ADR-0088 决策 6 / issue #843）：分类构成占比指针轴收进悬停 tooltip
+// （分母随层级，词汇表「分类下钻」）；触控轴 canvas 悬停不可达且点柱即下钻，
+// 改经头部「占比」切换按钮点按显示——开启后柱尾标注升级为「金额 · 占比%」
+//（口径同 tooltip 单点 barTooltipLabel，分母随层级），再点收回；仅退役标注面，
+// 图数据、下钻与隐私掩码（口径内 formatAmount）零改动；指针轴无此按钮。
+const inputMode = useInputMode()
+const isTouch = computed(() => inputMode.value === 'touch')
+const showPercent = ref(false)
+// 占比覆盖双门条件：显式开启且处于触控轴——换轴即失效（指针轴永远走悬停
+// tooltip 的既有形态，不带任何切换残留；触控轴切回后重新点按即可恢复）
+const categoryBarEndLabels = computed(() =>
+  isTouch.value && showPercent.value
+    ? categoryBarsData.value.map((b) =>
+        barTooltipLabel(b.value, categoryBarTotal(categoryBarsData.value)),
+      )
+    : undefined,
+)
+
 // 柱尾只标金额；占比收进 tooltip（悬停可见，分母随层级）。
 // 柱尾标注插件自 #588 起收口 chart-style 单点（分类图与商户图共用）。
 
@@ -346,6 +365,8 @@ const categoryChartOptions = computed<ChartOptions<'bar'>>(() => {
     onClick: handleCategoryBarClick,
     plugins: {
       legend: { display: false },
+      // 柱尾标注：默认金额；占比开启时按索引传入「金额 · 占比%」覆盖（口径同 tooltip）
+      barEndAmounts: { labels: categoryBarEndLabels.value },
       tooltip: {
         ...SOFT_TOOLTIP,
         callbacks: {
@@ -412,6 +433,19 @@ onMounted(() => {
                 <span data-testid="breadcrumb-current">{{ drilledRoot.name }}</span>
               </NBreadcrumbItem>
             </NBreadcrumb>
+            <!-- 触控轴占比一击可达（issue #843）：点按切换柱尾「金额 · 占比%」标注 -->
+            <NButton
+              v-if="isTouch"
+              size="tiny"
+              quaternary
+              data-testid="category-percent-toggle"
+              :type="showPercent ? 'primary' : 'default'"
+              :aria-pressed="showPercent"
+              class="touch-hit-area"
+              @click="showPercent = !showPercent"
+            >
+              {{ t('reports.category.showPercent') }}
+            </NButton>
           </div>
         </template>
         <NEmpty v-if="categoryBarsData.length === 0" :description="t('reports.category.empty')" />
@@ -444,10 +478,16 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* 分类卡头部：标题与下钻面包屑同行（issue #379） */
+/* 分类卡头部：标题与下钻面包屑同行（issue #379）；触控轴占比切换按钮靠右（issue #843） */
 .category-card-header {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+.category-card-header :deep(.n-button) {
+  margin-left: auto;
+  /* 热区外扩量覆盖（global.css touch-hit-area 工具类）：卡片头部无跨行误触，
+     垂直可外扩至 ≈48px；位置基准由工具类提供 */
+  --touch-hit-inset: -12px -14px;
 }
 </style>

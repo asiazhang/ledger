@@ -71,6 +71,23 @@ textarea,
 }
 
 /*
+ * 触控热区扩展工具类（ADR-0088 触控目标 ≥48px 抽查项，issue #843）：视觉不变，
+ * 以透明伪元素外扩命中面；外扩量经 --touch-hit-inset 按场景覆盖——默认适配
+ * 表格单元格（垂直 ±6px 以不跨相邻行为限，水平 ±14px 达 ≈48px），卡片头部
+ * 等无跨行误触场景可外扩更多。与 MobileNavShell 抽屉内伪元素热区同型（票②
+ * 作用域样式，不动）。
+ */
+.touch-hit-area {
+  position: relative;
+}
+
+.touch-hit-area::after {
+  content: '';
+  position: absolute;
+  inset: var(--touch-hit-inset, -6px -14px);
+}
+
+/*
  * 侧栏组标题行与「更多」链接（issue #472 / ADR-0063 决策 1；全局化的原因见下）。
  * 这些类位于菜单选项 label 渲染函数 h() 创建的元素上，不带渲染方组件 data-v 属性。
  * 原先以 App.vue 的 :deep() 命中；移动导航壳（issue #842）引入后，抽屉 NMenu 是

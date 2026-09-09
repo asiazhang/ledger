@@ -53,17 +53,28 @@ function withAlpha(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
+/** 柱尾标注插件选项（chart options 的 plugins.barEndAmounts，issue #843）：
+ *  labels 按索引覆盖默认金额标注；缺省（未提供或不覆盖到的索引）回退金额。 */
+export interface BarEndAmountsPluginOptions {
+  /** 柱尾标注覆盖（按索引）：分类构成占比点按显示（ADR-0088 决策 6）由视图经
+   *  「金额 · 占比%」口径（barTooltipLabel）构造传入；插件不认识任何口径。 */
+  labels?: string[]
+}
+
 /**
  * 柱尾金额标注插件（issue #378 立项，issue #588 起报表页两张横向柱图共用单点）：
  * afterDatasetsDraw 阶段在柱尾外侧画 formatAmount 金额（隐私模式同源掩码，#567）；
  * 正值柱标柱尾右侧、负值柱标柱尾左侧（0 轴如实渲染）。挂进 Bar 的 plugins 即生效，
- * 与柱体渐隐插件同先例。
- */
+ * 与柱体渐隐插件同先例。标注文案可经 plugins.barEndAmounts.labels 按索引覆盖
+ * （issue #843），插件只画传入的字符串，不含任何占比口径。 */
 export const barEndAmountPlugin = {
   id: 'barEndAmounts',
   afterDatasetsDraw(chart: Chart<'bar'>) {
     const data = chart.data.datasets[0]?.data as number[] | undefined
     if (!data?.length) return
+    const labelOverrides = (
+      chart.options.plugins as Record<string, BarEndAmountsPluginOptions | undefined> | undefined
+    )?.barEndAmounts?.labels
     const ctx = chart.ctx
     ctx.save()
     ctx.fillStyle = typeof chart.options.color === 'string' ? chart.options.color : '#666'
@@ -72,10 +83,11 @@ export const barEndAmountPlugin = {
     ctx.textBaseline = 'middle'
     chart.getDatasetMeta(0).data.forEach((el, i) => {
       const value = data[i]
+      const label = labelOverrides?.[i] ?? formatAmount(value)
       const { x, y } = el.getProps(['x', 'y'], true)
       // 正值柱标在柱尾右侧，负值柱标在柱尾左侧（0 轴如实渲染）
       ctx.textAlign = value >= 0 ? 'left' : 'right'
-      ctx.fillText(formatAmount(value), value >= 0 ? x + 6 : x - 6, y)
+      ctx.fillText(label, value >= 0 ? x + 6 : x - 6, y)
     })
     ctx.restore()
   },

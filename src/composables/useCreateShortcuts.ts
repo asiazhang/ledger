@@ -1,5 +1,6 @@
-import { onMounted, onUnmounted } from 'vue'
+import { onUnmounted, watch } from 'vue'
 import { hasOpenOverlay } from '@/composables/overlayRegistry'
+import { useInputMode } from '@/composables/useInputMode'
 import type { CreateTransactionKind } from '@/types'
 
 /**
@@ -47,6 +48,10 @@ export function isEditableTarget(e: Event): boolean {
 /**
  * 交易页「记一笔」快捷键：裸键 a/z/i/b/s 打开对应类型弹窗（复用 #150 的弹窗入口）。
  * 仅在交易页挂载（随视图装卸），抑制条件：焦点在可编辑元素或任一弹层打开。
+ *
+ * 触控轴退役（ADR-0088 决策 6 / issue #843）：指针轴注册裸键监听；触控轴不绑定
+ * （含运行中换轴实时拆装——输入轴信号变化即重接线）；卸载时清理。监听面由输入轴
+ * composable 唯一事实源驱动，纯函数 matchCreateShortcut 与轴无关（可独立测试）。
  */
 export function useCreateShortcuts(open: (kind: CreateTransactionKind) => void) {
   const onKeydown = (e: KeyboardEvent) => {
@@ -56,6 +61,14 @@ export function useCreateShortcuts(open: (kind: CreateTransactionKind) => void) 
     e.preventDefault()
     open(kind)
   }
-  onMounted(() => window.addEventListener('keydown', onKeydown))
+  const inputMode = useInputMode()
+  watch(
+    inputMode,
+    (mode) => {
+      if (mode === 'pointer') window.addEventListener('keydown', onKeydown)
+      else window.removeEventListener('keydown', onKeydown)
+    },
+    { immediate: true },
+  )
   onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 }
