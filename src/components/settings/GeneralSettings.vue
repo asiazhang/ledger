@@ -20,6 +20,9 @@ const languageOptions = computed<{ label: string; value: LocaleSetting }[]>(() =
   { label: t('common.language.zh'), value: 'zh-CN' },
   { label: t('common.language.en'), value: 'en-US' },
 ])
+
+// 本卡片只承载轻量设备偏好（ADR-0022 轻量资格线）；本位币基准是账本级设置
+// （issue #858），按领域归属落设置页「分类」页签（BaseCurrencySettings）。
 </script>
 
 <template>
@@ -34,13 +37,18 @@ const languageOptions = computed<{ label: string; value: LocaleSetting }[]>(() =
       </NSpace>
     </NCard>
 
-    <NCard :title="t('settings.appearance.defaultCurrency')" size="small">
-      <AppSelect
-        :value="store.defaultCurrency"
-        :options="currencyOptions"
-        @update:value="(val: string) => store.setDefaultCurrency(val)"
-        style="max-width: 280px"
-      />
+    <NCard :title="t('settings.appearance.displayCurrency')" size="small">
+      <NSpace vertical :size="8">
+        <AppSelect
+          :value="store.defaultCurrency"
+          :options="currencyOptions"
+          @update:value="(val: string) => store.setDefaultCurrency(val)"
+          style="max-width: 280px"
+        />
+        <NText depth="3" style="font-size: 12px">
+          {{ t('settings.appearance.displayCurrencyHint') }}
+        </NText>
+      </NSpace>
     </NCard>
 
     <NCard :title="t('common.language.label')" size="small">

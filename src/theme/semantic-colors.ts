@@ -44,3 +44,19 @@ export const SEMANTIC_COLOR_KINDS = Object.keys(KIND_SEMANTIC_COLORS) as Transac
 export function kindSemanticColor(kind: TransactionKind, theme: Theme): string {
   return KIND_SEMANTIC_COLORS[kind][theme]
 }
+
+/**
+ * 盈亏涨跌色（红涨绿跌，A股/基金语境）——与交易类型语义色正交：income 绿 /
+ * expense 红是账本语义（赤字 = 红），适用于交易金额与收支图；证券涨跌色只
+ * 用于盈亏数字（持仓未实现盈亏、已实现盈亏），独立词条可各自演化——两族
+ * 色值当前同相属巧合，不互相引用。
+ */
+export const PNL_COLORS = {
+  gain: { light: '#d03050', dark: '#e88080' },
+  loss: { light: '#18a058', dark: '#63e2b7' },
+} as const
+
+/** 按盈亏符号与当前主题取涨跌色（纯选择器，随主题响应式消费；0 归涨色）。 */
+export function pnlSemanticColor(cents: number, theme: Theme): string {
+  return cents >= 0 ? PNL_COLORS.gain[theme] : PNL_COLORS.loss[theme]
+}

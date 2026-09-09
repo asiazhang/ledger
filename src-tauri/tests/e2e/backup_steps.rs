@@ -105,18 +105,64 @@ fn backup_to_temp(world: &mut LedgerWorld) {
 /// 独立临时目录并复用（日界门场景据同目录产物计数区分「跳过/新增」）。
 #[when(expr = "自动备份数据库到临时目录")]
 fn auto_backup_to_temp(world: &mut LedgerWorld) {
+    auto_backup_with_world_scope(world);
+}
+
+/// 以当前活动账本作用域触发自动备份（issue #836）：作用域由注册表最新落盘态
+/// 构造（活动账本标识 + 登记序首本归属历史产物），与壳层构造规则同一语义。
+#[when(expr = "以当前账本作用域自动备份数据库到临时目录")]
+fn auto_backup_with_active_book_scope(world: &mut LedgerWorld) {
+    let default_dir = world
+        .boot
+        .dl_default_dir
+        .clone()
+        .expect("本场景需账本登记现场");
+    let registry = match tauri_app_lib::db::book_registry::read_registry(&default_dir) {
+        tauri_app_lib::db::book_registry::RegistryRead::Resolved(registry) => registry,
+        other => panic!("注册表应可读，实际 {other:?}"),
+    };
+    world.boot.backup_scope = Some(tauri_app_lib::backup::BackupScope::of_registry(&registry));
+    auto_backup_with_world_scope(world);
+}
+
+/// 备份产物文件名携带当前活动账本标识（命名按本分域，产物互不覆盖）。
+#[then(expr = "备份产物文件名应携带当前账本标识")]
+fn backup_file_name_carries_book_id(world: &mut LedgerWorld) {
+    let default_dir = world
+        .boot
+        .dl_default_dir
+        .clone()
+        .expect("本场景需账本登记现场");
+    let active_id = match tauri_app_lib::db::book_registry::read_registry(&default_dir) {
+        tauri_app_lib::db::book_registry::RegistryRead::Resolved(registry) => registry.active_id,
+        other => panic!("注册表应可读，实际 {other:?}"),
+    };
+    let path = world
+        .boot
+        .last_auto_backup_path
+        .as_ref()
+        .expect("尚未自动备份");
+    let name = path.file_name().unwrap().to_string_lossy();
+    assert!(
+        name.ends_with(&format!("-{active_id}.db.zip")),
+        "产物名应携带活动账本标识（…-{active_id}.db.zip），实际 {name}"
+    );
+}
+
+/// 触发入口的公共执行体：场景作用域（默认 None = 旧命名兼容口径）+ 独立临时目录。
+fn auto_backup_with_world_scope(world: &mut LedgerWorld) {
     let dir = world.boot.auto_backup_dir.clone().unwrap_or_else(|| {
         let dir = std::env::temp_dir().join(format!("ledger-e2e-auto-backup-{}", new_uuid()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     });
     world.boot.auto_backup_dir = Some(dir.clone());
-    let outcome = tauri_app_lib::backup::run_due_backup(
-        &world_conn!(world),
-        Some(dir.to_str().unwrap()),
-        "0.2.0",
-        chrono::Utc::now(),
-    );
+    // 多账本旅程现场（有当前账本连接）备份当前账本的库；纯备份场景仍用 world 库。
+    let outcome = if let Some(state) = world.boot.dl_conn.as_ref() {
+        run_due_on(state, &dir, world.boot.backup_scope.as_ref())
+    } else {
+        run_due_on_ref(&world_conn!(world), &dir, world.boot.backup_scope.as_ref())
+    };
     assert!(
         matches!(outcome, AttemptOutcome::Performed { .. }),
         "自动备份应执行，实际 {outcome:?}"
@@ -124,6 +170,35 @@ fn auto_backup_to_temp(world: &mut LedgerWorld) {
     if let AttemptOutcome::Performed { path } = outcome {
         world.boot.last_auto_backup_path = Some(PathBuf::from(path));
     }
+}
+
+fn run_due_on(
+    state: &tauri_app_lib::db::DbState,
+    dir: &std::path::Path,
+    scope: Option<&tauri_app_lib::backup::BackupScope>,
+) -> tauri_app_lib::backup::AttemptOutcome {
+    let conn = state.conn.lock().unwrap_or_else(|e| e.into_inner());
+    tauri_app_lib::backup::run_due_backup(
+        &conn,
+        Some(dir.to_str().unwrap()),
+        "0.2.0",
+        chrono::Utc::now(),
+        scope,
+    )
+}
+
+fn run_due_on_ref(
+    conn: &rusqlite::Connection,
+    dir: &std::path::Path,
+    scope: Option<&tauri_app_lib::backup::BackupScope>,
+) -> tauri_app_lib::backup::AttemptOutcome {
+    tauri_app_lib::backup::run_due_backup(
+        conn,
+        Some(dir.to_str().unwrap()),
+        "0.2.0",
+        chrono::Utc::now(),
+        scope,
+    )
 }
 
 /// 删除全部交易：逐笔经域层删除入口（#764 旁路收敛——原 execute_batch 直置
@@ -387,6 +462,7 @@ fn due_trigger_skipped_by_day_gate(world: &mut LedgerWorld) {
         ),
         "0.2.0",
         chrono::Utc::now(),
+        world.boot.backup_scope.as_ref(),
     );
     assert_eq!(
         outcome,
@@ -417,6 +493,7 @@ fn exit_fallback_skipped_by_day_gate(world: &mut LedgerWorld) {
         ),
         "0.2.0",
         chrono::Utc::now(),
+        world.boot.backup_scope.as_ref(),
     );
     assert_eq!(
         outcome,
@@ -441,6 +518,7 @@ fn auto_backup_next_day_to_temp(world: &mut LedgerWorld) {
         Some(dir.to_str().unwrap()),
         "0.2.0",
         chrono::Utc::now() + chrono::Duration::days(1),
+        world.boot.backup_scope.as_ref(),
     );
     assert!(
         matches!(outcome, AttemptOutcome::Performed { .. }),
@@ -468,6 +546,7 @@ fn first_fallback_skipped_by_day_gate(world: &mut LedgerWorld) {
         ),
         "0.2.0",
         chrono::Utc::now(),
+        world.boot.backup_scope.as_ref(),
     );
     assert_eq!(
         outcome,
@@ -981,7 +1060,7 @@ fn auto_backup_meta_encrypted(world: &mut LedgerWorld) {
 #[then(expr = "受管备份列表应显示 {int} 份密文备份与 {int} 份明文备份")]
 fn managed_list_encrypted_flags(world: &mut LedgerWorld, encrypted: usize, plaintext: usize) {
     let dir = world.boot.auto_backup_dir.as_ref().expect("无受管备份目录");
-    let files = list_managed_backups(dir).expect("列受管备份失败");
+    let files = list_managed_backups(dir, None).expect("列受管备份失败");
     assert_eq!(
         files.iter().filter(|f| f.encrypted).count(),
         encrypted,

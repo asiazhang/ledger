@@ -356,6 +356,10 @@ fn dispatch(conn: &rusqlite::Connection, command: &DomainCommand) -> Result<Repl
             Ok(ReplayEffect::Applied)
         }
         DomainCommand::Scheduled(cmd) => crate::scheduled_transactions::replay_command(conn, cmd),
+        DomainCommand::LedgerSetting(cmd) => {
+            crate::currencies::replay_command(conn, cmd)?;
+            Ok(ReplayEffect::Applied)
+        }
     }
 }
 

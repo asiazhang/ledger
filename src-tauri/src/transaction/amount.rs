@@ -385,12 +385,13 @@ pub fn contributing_kinds_sql(measure: Measure) -> String {
 // 本位币折算
 // ---------------------------------------------------------------------------
 
-/// 全局默认（本位）币种。所有 `amount_native_cents` 的折算基准。
-///
-/// MVP 阶段为常量 `CNY`（与种子数据一致）；未来引入用户设置时，
-/// 仅此函数改为读设置，模块内其余口径不变。
-pub fn default_currency_code() -> &'static str {
-    "CNY"
+/// 全局默认（本位）币种基准：`amount_native_cents` 的折算基准，读账本级设置
+/// （LedgerLevelSetting 首个成员，issue #858 / ADR-0091 决策 3）：存储落
+/// `app_settings`（ADR-0017，读写协议归币种域 [`crate::currencies`]），缺 key /
+/// 缺表回默认 [`crate::currencies::DEFAULT_BASE_CURRENCY`]（行为免费正确），
+/// 随多端同步分发、全设备强制一致。模块内其余口径不变。
+pub fn default_currency_code(conn: &Connection) -> Result<String> {
+    crate::currencies::current_base_currency(conn)
 }
 
 /// 查询货币对当前汇率（正查失败则反查取倒数）。
@@ -443,10 +444,10 @@ fn lookup_exchange_rate(conn: &Connection, base_code: &str, quote_code: &str) ->
 ///   各账户的交易统一折算到同一本位币，避免跨账户漂移。
 /// - 正反向汇率均无 → 报错，不静默混币种。
 pub fn convert_to_native(conn: &Connection, amount_cents: i64, currency_code: &str) -> Result<i64> {
-    let target = default_currency_code();
+    let target = default_currency_code(conn)?;
     if currency_code == target {
         return Ok(amount_cents);
     }
-    let rate = lookup_exchange_rate(conn, currency_code, target)?;
+    let rate = lookup_exchange_rate(conn, currency_code, &target)?;
     Ok((amount_cents as f64 * rate).round() as i64)
 }

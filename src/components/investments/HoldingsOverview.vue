@@ -14,11 +14,13 @@ import {
 } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
 import { computed, h } from 'vue'
+import { useAppStore } from '@/stores/app'
 import { useReferenceStore } from '@/stores/reference'
 import { t } from '@/i18n'
 import { formatAmount, formatPrice, formatQuantity } from '@/types'
 import { useInstrumentInfoSync } from '@/composables/useInstrumentInfoSync'
 import { usePricesChanged } from '@/composables/usePricesChanged'
+import { pnlSemanticColor } from '@/theme/semantic-colors'
 import SyncProgressBar from '@/components/investments/SyncProgressBar.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import {
@@ -34,6 +36,7 @@ import {
 import { sumFixedColumnWidths } from '@/utils/table'
 
 const reference = useReferenceStore()
+const appStore = useAppStore()
 
 // 数据拉取（list_holdings + 持仓标的字典拼装）归 usePortfolioOverview——与首页
 // 投资概览卡共享同一拼装接缝（issue #901/#902 契约不动）；过滤/排序/合计派生
@@ -66,9 +69,7 @@ usePricesChanged(() => {
   void refresh()
 })
 
-function pnlColor(cents: number): string {
-  return cents >= 0 ? '#18a058' : '#d03050'
-}
+// 盈亏数字着色：红涨绿跌（A股/基金语境，词汇表「盈亏涨跌色」），随主题取亮/暗变体
 
 // 市值/未实现盈亏两列列头排序为受控形态（sorter: true + 受控 sortOrder）：
 // 排序状态与行集合产出都归 useHoldingsFilter，表头只回传点击意图。
@@ -87,25 +88,51 @@ const pagination = computed(() => ({
   onChange: setPage,
 }))
 
-// 横向滚动下限 = 各固定列宽总和（全仓单一收口）：净值日期独立列的
-// +90px 由窄窗口横向滚动吸收（投资视图无窗口分级分支，#898 边界维持）。
+// 横向滚动下限 = 各固定列宽总和（全仓单一收口）：名称列是唯一弹性列（minWidth
+// 不计入），窄窗口由横向滚动吸收（投资视图无窗口分级分支，#898 边界维持）。
 const scrollX = computed(() => sumFixedColumnWidths(overviewColumns.value))
 
+// 列形态遵循词汇表「表格列形态」约定：数值列右对齐 + 等宽数字（className 单点
+// 挂全局工具类），长名称列弹性 + 单行 ellipsis 悬停全名，短内容列按内容定宽。
 const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
   { title: t('investments.holdings.columns.symbol'), key: 'symbol', width: 100, render: (r) => r.symbol ?? '-' },
-  { title: t('investments.holdings.columns.name'), key: 'instrumentName', width: 160, render: (r) => r.instrumentName ?? '-' },
-  { title: t('investments.holdings.columns.account'), key: 'accountName', width: 120, render: (r) => r.accountName ?? '-' },
-  { title: t('investments.holdings.columns.quantity'), key: 'quantity', width: 80, render: (r) => formatQuantity(r.quantity) },
+  {
+    title: t('investments.holdings.columns.name'),
+    key: 'instrumentName',
+    // 唯一弹性列：不设固定宽，独吃窗口剩余宽度；minWidth 保窄窗口下限
+    minWidth: 160,
+    ellipsis: { tooltip: true },
+    render: (r) => r.instrumentName ?? '-',
+  },
+  {
+    title: t('investments.holdings.columns.account'),
+    key: 'accountName',
+    width: 80,
+    ellipsis: { tooltip: true },
+    render: (r) => r.accountName ?? '-',
+  },
+  {
+    title: t('investments.holdings.columns.quantity'),
+    key: 'quantity',
+    width: 110,
+    align: 'right',
+    className: 'tabular-nums',
+    render: (r) => formatQuantity(r.quantity),
+  },
   {
     title: t('investments.holdings.columns.cost'),
     key: 'cost_basis',
-    width: 110,
+    width: 120,
+    align: 'right',
+    className: 'tabular-nums',
     render: (r) => formatAmount(r.costBasisCents, reference.currencyMap.get(r.costCurrencyCode)),
   },
   {
     title: t('investments.holdings.columns.price'),
     key: 'latest_price',
-    width: 130,
+    width: 110,
+    align: 'right',
+    className: 'tabular-nums',
     // 现价为价格列（万分之一元刻度，ADR-0038），用 formatPrice 展示；
     // 净值日期已独立成列（issue #912），本列恢复单行渲染。
     render: (r) =>
@@ -116,7 +143,9 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
   {
     title: t('investments.holdings.columns.navDate'),
     key: 'nav_date',
-    width: 90,
+    width: 100,
+    align: 'right',
+    className: 'tabular-nums',
     // 净值日期独立成列（#303 形态修订，issue #912）：仅基金行携带（现价 =
     // 最新公布单位净值），其余行显示「-」；不可排序。
     render: (r) => r.latestNavDate ?? '-',
@@ -124,7 +153,9 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
   {
     title: t('investments.holdings.columns.marketValue'),
     key: 'market_value',
-    width: 110,
+    width: 120,
+    align: 'right',
+    className: 'tabular-nums',
     sorter: true,
     sortOrder: columnSortOrder('market_value'),
     render: (r) =>
@@ -136,13 +167,15 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
     title: t('investments.holdings.columns.unrealizedPnl'),
     key: 'unrealized_pnl',
     width: 130,
+    align: 'right',
+    className: 'tabular-nums',
     sorter: true,
     sortOrder: columnSortOrder('unrealized_pnl'),
     render: (r) => {
       if (r.unrealizedPnlCents === null) return '-'
       return h(
         'span',
-        { style: { color: pnlColor(r.unrealizedPnlCents) } },
+        { style: { color: pnlSemanticColor(r.unrealizedPnlCents, appStore.theme) } },
         formatAmount(r.unrealizedPnlCents, reference.currencyMap.get(r.valueCurrencyCode)),
       )
     },

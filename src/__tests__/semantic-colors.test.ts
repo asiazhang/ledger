@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   KIND_SEMANTIC_COLORS,
   kindSemanticColor,
+  PNL_COLORS,
+  pnlSemanticColor,
   SEMANTIC_COLOR_KINDS,
 } from '@/theme/semantic-colors'
 import { TRANSACTION_KINDS } from '@/types'
@@ -45,6 +47,21 @@ describe('KIND_SEMANTIC_COLORS（交易类型语义色表）', () => {
     expect(KIND_SEMANTIC_COLORS.transfer).toEqual({ light: '#722ed1', dark: '#b37feb' })
     expect(KIND_SEMANTIC_COLORS.buy).toEqual({ light: '#eb2f96', dark: '#ff85c0' })
     expect(KIND_SEMANTIC_COLORS.sell).toEqual({ light: '#13c2c2', dark: '#5cdbd3' })
+  })
+})
+
+describe('PNL_COLORS（盈亏涨跌色，红涨绿跌）', () => {
+  it('定案方向：盈利红、亏损绿（A股/基金语境），亮暗两套齐全', () => {
+    expect(PNL_COLORS.gain).toEqual({ light: '#d03050', dark: '#e88080' })
+    expect(PNL_COLORS.loss).toEqual({ light: '#18a058', dark: '#63e2b7' })
+  })
+
+  it('pnlSemanticColor：正亏负损取向正确，0 归涨色，随主题取变体', () => {
+    expect(pnlSemanticColor(150084, 'light')).toBe('#d03050')
+    expect(pnlSemanticColor(-102, 'light')).toBe('#18a058')
+    expect(pnlSemanticColor(0, 'light')).toBe('#d03050')
+    expect(pnlSemanticColor(150084, 'dark')).toBe('#e88080')
+    expect(pnlSemanticColor(-102, 'dark')).toBe('#63e2b7')
   })
 })
 

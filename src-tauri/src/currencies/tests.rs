@@ -1,4 +1,5 @@
 use crate::db::query::query_all;
+use crate::error::AppError;
 
 use super::model::Currency;
 
@@ -43,4 +44,41 @@ fn currencies_have_correct_decimal_places() {
     assert_eq!(cny.decimal_places, 2);
     let usd = currencies.iter().find(|c| c.code == "USD").unwrap();
     assert_eq!(usd.decimal_places, 2);
+}
+
+// ── 本位币基准（LedgerLevelSetting 首个成员，issue #858 / ADR-0091 决策 3）──
+// 存储落 AppSettings（ADR-0017：后端消费配置存库），读写收口本域。
+
+#[test]
+fn base_currency_defaults_to_cny_when_unset() {
+    let conn = setup();
+    assert_eq!(
+        super::base_currency::current_base_currency(&conn).unwrap(),
+        "CNY"
+    );
+}
+
+#[test]
+fn set_base_currency_roundtrips() {
+    let conn = setup();
+    super::base_currency::set_base_currency(&conn, "USD").unwrap();
+    assert_eq!(
+        super::base_currency::current_base_currency(&conn).unwrap(),
+        "USD"
+    );
+}
+
+#[test]
+fn set_base_currency_rejects_unknown_code() {
+    let conn = setup();
+    let err = super::base_currency::set_base_currency(&conn, "XXY").unwrap_err();
+    assert!(
+        matches!(err, AppError::Coded { ref code, .. } if code == "currency.base-invalid"),
+        "应为码化错误 currency.base-invalid，实际 {err:?}"
+    );
+    // 校验失败不落库：基准保持默认。
+    assert_eq!(
+        super::base_currency::current_base_currency(&conn).unwrap(),
+        "CNY"
+    );
 }

@@ -24,10 +24,27 @@
 //! `registry` 为 `None`（注册表损坏）时同样禁止写入：损坏文件可能是自定义位置
 //! 的唯一记录，覆盖前须走既有「恢复默认位置」逃生舱。
 
+//! 活动账本搬迁意图（issue #836 / ADR-0089 决策 5「搬迁收窄为当前活动账本搬
+//! 目录」）：注册表新格式携带可选 `relocation` 意图（目标账本 + 来源目录），
+//! 由「更改数据位置」命令落盘、引导在下次启动时消费（三分支：目标已有库直接
+//! 接管 / 来源有库则整库搬迁 / 皆无则直接启用，与旧格式指针同语义）。意图
+//! 未消费前（目标尚无库而来源仍有库）登记变更被拒（[`settle_pending_relocation`]）
+//! ——此刻改清单会让意图落空、账本目录悬空；意图已完成（目标已有库或双方皆
+//! 无库）时由下一次登记变更就地消费，从文件中自愈清除。任何路径绝不删除或
+//! 修改既有库文件；搬迁完成后旧位置库永久保留。
+//!
+//! 默认账本的稳定标识（issue #836）：备份产物命名与钥匙串条目按账本标识分域
+//! （ADR-0089 决策 5），标识必须跨启动稳定；折叠默认账本的 id 若每次读取现铸
+//! 随机值，其历史备份与缓存会随启动漂移。故折叠默认账本的 id 由其目录派生
+//!（[`stable_book_id`]，确定性、跨进程稳定），首次登记写入落盘后与随机登记
+//! 的账本标识无差别；「身份即目录」语义下目录即身份，派生标识随目录而变正是
+//! 语义本身。新登记账本仍用随机 UUID。
+
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::error::Result;
 use crate::fs_util::atomic_write;
@@ -44,16 +61,18 @@ pub const REGISTRY_FORMAT_VERSION: u32 = 1;
 /// 旧格式折叠出的唯一默认账本展示名（随首次登记写入落盘；改名命令可改）。
 pub const DEFAULT_BOOK_NAME: &str = "默认账本";
 
-/// 账本注册表：账本清单 + 活动账本指针 + 来源形态（内存形态）。
+/// 账本注册表：账本清单 + 活动账本指针 + 搬迁意图 + 来源形态（内存形态）。
 ///
 /// 来源形态决定引导进入活动账本目录的语义（[`RegistryOrigin`]），随注册表
-/// 一同解析、只存内存，不参与写入格式（落盘恒为新格式，见 [`write_registry`]）。
+/// 一同解析；搬迁意图（[`PendingRelocation`]）随读写往返保留，由引导消费。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BookRegistry {
     /// 全部已登记账本。
     pub books: Vec<Book>,
     /// 活动账本 id（必须指向 [`BookRegistry::books`] 中的一项）。
     pub active_id: String,
+    /// 活动账本搬迁意图（issue #836）：`Some` = 已提交、待引导在下次启动消费。
+    pub pending_relocation: Option<PendingRelocation>,
     /// 来源形态：旧格式指针 / 新格式注册表。
     pub origin: RegistryOrigin,
 }
@@ -69,17 +88,18 @@ impl BookRegistry {
         self.active().map(|book| book.dir.as_path())
     }
 
-    /// 出厂/旧格式形态：唯一默认账本位于 `dir`，兼活动账本。id 现铸（仅内存，
-    /// 随首次登记写入落盘——读取路径不回写文件）。
+    /// 出厂/旧格式形态：唯一默认账本位于 `dir`，兼活动账本。id 由目录派生
+    ///（[`stable_book_id`]）——跨启动稳定，备份命名与钥匙串条目得以按本分域。
     pub fn single_default(dir: &Path) -> Self {
         let book = Book {
-            id: super::new_uuid(),
+            id: stable_book_id(dir),
             name: DEFAULT_BOOK_NAME.to_string(),
             dir: dir.to_path_buf(),
         };
         Self {
             active_id: book.id.clone(),
             books: vec![book],
+            pending_relocation: None,
             origin: RegistryOrigin::LegacyPointer,
         }
     }
@@ -92,6 +112,41 @@ impl BookRegistry {
             book.dir = dir.to_path_buf();
         }
     }
+
+    /// 把活动账本的目录改写为 `dir`（仅内存、不落盘）：新格式密文库推迟搬迁
+    /// 窗口内把登记信息指向源目录的物理真值（`data_location::enter_registry`
+    /// 消费），与 [`Self::redirect_default_book`] 同型。
+    pub(crate) fn redirect_active_book(&mut self, dir: &Path) {
+        if let Some(book) = self.active_mut() {
+            book.dir = dir.to_path_buf();
+        }
+    }
+
+    /// 活动账本（可变）；校验通过的注册表恒为 `Some`。
+    pub(crate) fn active_mut(&mut self) -> Option<&mut Book> {
+        let active_id = self.active_id.clone();
+        self.books.iter_mut().find(|book| book.id == active_id)
+    }
+}
+
+/// 折叠默认账本的稳定标识：目录路径的 SHA-256 截取 16 位十六进制。确定性
+///（同目录同标识、跨进程跨版本稳定）是唯一要求，非机密用途；新登记账本不经
+/// 此函数（随机 UUID，见 [`create_book_entry`]）。
+pub(crate) fn stable_book_id(dir: &Path) -> String {
+    let digest = Sha256::digest(dir.to_string_lossy().as_bytes());
+    digest[..8].iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// 活动账本搬迁意图（issue #836 / ADR-0089 决策 5）：由「更改数据位置」命令
+/// 写入（活动账本目录改指目标 + 意图携带来源目录），引导在下次启动消费——
+/// 目标已有库直接接管；目标为空而来源有库则整库搬迁；皆无则直接启用。消费
+/// 完成后意图随下一次登记变更从文件中清除（自愈，引导自身不回写文件）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingRelocation {
+    /// 待搬迁的账本（提交时的活动账本；引导只消费匹配当前活动账本的意图）。
+    pub book_id: String,
+    /// 搬迁来源目录（库文件当前位置；目标 = 该账本登记目录）。
+    pub from_dir: PathBuf,
 }
 
 /// 注册表来源形态：决定引导进入活动账本目录的语义。
@@ -157,6 +212,15 @@ struct RegistryFile {
     books: Option<Vec<BookEntry>>,
     /// 新格式活动账本指针。
     active: Option<String>,
+    /// 新格式活动账本搬迁意图（issue #836；可缺省——无意图时字段缺席）。
+    relocation: Option<PendingRelocationEntry>,
+}
+
+/// 搬迁意图条目的反序列化形状（字段缺失在校验层报无效，不在解析层报错）。
+#[derive(Deserialize)]
+struct PendingRelocationEntry {
+    book_id: Option<String>,
+    from_dir: Option<String>,
 }
 
 /// 注册表账本条目的反序列化形状（字段缺失在校验层报无效，不在解析层报错）。
@@ -173,6 +237,9 @@ struct RegistryFileOut {
     version: u32,
     books: Vec<BookOut>,
     active: String,
+    /// 搬迁意图：无意图时不落字段（保持登记态文件的常态形状最小）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    relocation: Option<PendingRelocation>,
 }
 
 /// 序列化账本条目。
@@ -222,7 +289,7 @@ fn resolve_file(path: &Path, file: RegistryFile) -> RegistryRead {
         return invalid(format!("注册表版本 {version} 不受支持"));
     }
     match (file.books.as_deref(), file.active.as_deref()) {
-        (Some(entries), Some(active)) => match build_registry(entries, active) {
+        (Some(entries), Some(active)) => match build_registry(entries, active, file.relocation) {
             Ok(registry) => RegistryRead::Resolved(registry),
             Err(detail) => invalid(detail),
         },
@@ -249,7 +316,27 @@ fn resolve_file(path: &Path, file: RegistryFile) -> RegistryRead {
 fn build_registry(
     entries: &[BookEntry],
     active: &str,
+    relocation: Option<PendingRelocationEntry>,
 ) -> std::result::Result<BookRegistry, String> {
+    let pending = match relocation {
+        None => None,
+        Some(entry) => Some(PendingRelocation {
+            book_id: entry
+                .book_id
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
+            from_dir: PathBuf::from(
+                entry
+                    .from_dir
+                    .as_deref()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string(),
+            ),
+        }),
+    };
     let registry = BookRegistry {
         active_id: active.trim().to_string(),
         books: entries
@@ -260,6 +347,7 @@ fn build_registry(
                 dir: PathBuf::from(entry.dir.as_deref().unwrap_or_default().trim()),
             })
             .collect(),
+        pending_relocation: pending,
         origin: RegistryOrigin::NewFormat,
     };
     validate_registry(&registry)?;
@@ -295,6 +383,20 @@ fn validate_registry(registry: &BookRegistry) -> std::result::Result<(), String>
     if registry.active().is_none() {
         return Err("活动账本指针指向未登记的账本".into());
     }
+    // 搬迁意图的引用完整性（issue #836）：意图必须指向已登记账本、来源目录
+    // 齐备。悬空意图与悬空活动指针同等对待——注册表是机器写出的，出现悬空
+    // 即手工损坏，整体按损坏走出厂逃生舱，不做局部抢救。
+    if let Some(pending) = &registry.pending_relocation {
+        if pending.book_id.trim().is_empty() {
+            return Err("搬迁意图缺少账本标识".into());
+        }
+        if pending.from_dir.as_os_str().is_empty() {
+            return Err("搬迁意图缺少来源目录".into());
+        }
+        if registry.books.iter().all(|book| book.id != pending.book_id) {
+            return Err("搬迁意图指向未登记的账本".into());
+        }
+    }
     Ok(())
 }
 
@@ -322,6 +424,7 @@ pub fn write_registry(default_dir: &Path, registry: &BookRegistry) -> Result<()>
             })
             .collect(),
         active: registry.active_id.clone(),
+        relocation: registry.pending_relocation.clone(),
     })?;
     atomic_write(&path, content.as_bytes())
 }
@@ -346,12 +449,55 @@ pub(crate) fn registry_corrupt_error(reason: &str) -> crate::error::AppError {
     )
 }
 
+/// 搬迁未完成（变更拒绝路径的统一错误构造：码 + 消息模板单一来源）。两个
+/// 独立条件共用同码：引导态的密文库推迟搬迁窗口（`mutable_registry` 预检）
+/// 与文件态的未消费搬迁意图（[`settle_pending_relocation`]）——条件同属
+/// 「搬迁尚未完成，登记变更会让目录变更落空」。
+pub(crate) fn registry_busy_error() -> crate::error::AppError {
+    crate::error::AppError::coded(
+        "book.registry-busy",
+        "数据搬迁尚未完成，暂无法变更账本登记；请重启应用完成搬迁后再试",
+    )
+}
+
+/// 登记变更前的搬迁意图守卫（写入时机契约的多账本延伸，issue #836）：
+/// - 无意图 → 直接放行；
+/// - 意图未完成（目标目录尚无库、来源目录仍有库）→ 拒绝变更（同码
+///   `book.registry-busy`）——此刻基于清单变更会让意图落空、账本目录悬空；
+/// - 意图已完成（目标已有库，或来源与目标皆无库）→ 就地消费（清除意图）
+///   后放行，随后的登记写入自然把已消费的意图从文件中一并带走（自愈）。
+pub(crate) fn settle_pending_relocation(registry: &mut BookRegistry) -> Result<()> {
+    let Some(pending) = registry.pending_relocation.clone() else {
+        return Ok(());
+    };
+    // 校验已保证意图不悬空（读取与写入共用同一份校验）；防御性兜底按未完成拒绝。
+    let Some(book) = registry.books.iter().find(|b| b.id == pending.book_id) else {
+        return Err(registry_busy_error());
+    };
+    let target_has_db = book.dir.join(super::data_location::DB_FILE_NAME).exists();
+    let source_has_db = pending
+        .from_dir
+        .join(super::data_location::DB_FILE_NAME)
+        .exists();
+    if !target_has_db && source_has_db {
+        tracing::info!(
+            book = %pending.book_id,
+            from = %pending.from_dir.display(),
+            to = %book.dir.display(),
+            "搬迁意图尚未生效，拒绝变更账本登记"
+        );
+        return Err(registry_busy_error());
+    }
+    registry.pending_relocation = None;
+    Ok(())
+}
+
 /// 新建账本：在应用数据目录下自动创建子目录（`books/<id>`）并登记。
 /// 只登记不建库——空目录由既有建连迁移在首次进入时建出全新空库（默认种子
 /// 照常），不新建造库逻辑。返回登记后的账本条目。
 pub fn create_book_entry(default_dir: &Path, name: &str) -> Result<Book> {
     let name = required_name(name)?;
-    let mut registry = read_current(default_dir)?;
+    let mut registry = read_for_mutation(default_dir)?;
     let id = super::new_uuid();
     let dir = default_dir.join(BOOKS_DIR_NAME).join(&id);
     ensure_dir_available(&dir)?;
@@ -375,7 +521,7 @@ pub fn create_book_entry(default_dir: &Path, name: &str) -> Result<Book> {
 /// 重引导（进目标账本）由前端在命令成功后复用原位重引导（ADR-0080）完成。
 /// 返回目标账本条目。
 pub fn switch_active_book(default_dir: &Path, id: &str) -> Result<Book> {
-    let mut registry = read_current(default_dir)?;
+    let mut registry = read_for_mutation(default_dir)?;
     let book = registered_book(&registry, id)?.clone();
     if registry.active_id == id {
         return Err(crate::error::AppError::coded(
@@ -394,7 +540,7 @@ pub fn switch_active_book(default_dir: &Path, id: &str) -> Result<Book> {
 /// 改账本展示名：只动注册表元数据，目录与库文件零变化。返回更新后的条目。
 pub fn rename_book_entry(default_dir: &Path, id: &str, name: &str) -> Result<Book> {
     let name = required_name(name)?;
-    let mut registry = read_current(default_dir)?;
+    let mut registry = read_for_mutation(default_dir)?;
     registered_book_mut(&mut registry, id)?.name = name.to_string();
     write_registry(default_dir, &registry)?;
     Ok(registered_book(&registry, id)?.clone())
@@ -404,7 +550,7 @@ pub fn rename_book_entry(default_dir: &Path, id: &str, name: &str) -> Result<Boo
 /// 登记找回）。活动账本不可移除——先切换到其他账本；唯一账本必是活动账本，
 /// 自然被同一条规则保护。
 pub fn remove_book_entry(default_dir: &Path, id: &str) -> Result<()> {
-    let mut registry = read_current(default_dir)?;
+    let mut registry = read_for_mutation(default_dir)?;
     // 判序：不存在先于活动本（not-found 优先，避免悬空指针场景错位报码）。
     registered_book(&registry, id)?;
     if registry.active_id == id {
@@ -456,6 +602,16 @@ fn read_current(default_dir: &Path) -> Result<BookRegistry> {
         RegistryRead::Unconfigured => Ok(BookRegistry::single_default(default_dir)),
         RegistryRead::Corrupt(reason) => Err(registry_corrupt_error(&reason)),
     }
+}
+
+/// 读注册表现场并消费已完成/拦截未完成的搬迁意图（四个变更内核共用的第一步，
+/// issue #836）：在 [`read_current`] 之上叠加 [`settle_pending_relocation`]——
+/// 变更基于文件最新态，意图的消费与拒绝也以文件态为准（引导态预检
+/// `mutable_registry` 只是前置过滤，此处是权威判定）。
+fn read_for_mutation(default_dir: &Path) -> Result<BookRegistry> {
+    let mut registry = read_current(default_dir)?;
+    settle_pending_relocation(&mut registry)?;
+    Ok(registry)
 }
 
 /// 展示名参数校验：trim 后非空，返回 trim 结果。

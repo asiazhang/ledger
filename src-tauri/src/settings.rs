@@ -34,6 +34,11 @@ pub enum SettingKey {
     /// 见 [`crate::logger::LogLevel`]）：后端消费、随 Backup/Restore 迁移（ADR-0006 / #611）。
     /// 持久化表示取档位指令字符串（同 [`crate::logger::LogLevel::directive`]）。
     LogLevel,
+    /// 本位币基准（币种代码字符串，默认 "CNY"，见
+    /// [`crate::currencies::base_currency`]）：账本级设置（LedgerLevelSetting 首个
+    /// 成员，issue #858 / ADR-0091 决策 3）——后端消费（Amount 折算基准）故按
+    /// ADR-0017 存库，随多端同步分发、全设备强制一致。
+    LedgerBaseCurrency,
 }
 
 impl SettingKey {
@@ -44,6 +49,7 @@ impl SettingKey {
             Self::AutoBackupLastBackupAt => "auto_backup.last_backup_at",
             Self::AutoBackupNextDueAt => "auto_backup.next_due_at",
             Self::LogLevel => "logging.level",
+            Self::LedgerBaseCurrency => "ledger.base_currency",
         }
     }
 }

@@ -261,11 +261,16 @@ pub(crate) fn generate_inputs(
 ///
 /// 投资户排除：expense 落投资户不触发 buy/sell 副作用但偏离画像语义；外币户
 /// 排除：折算要查汇率、行金额口径随币种漂移，两者都不属被测的刷新粒度问题。
-pub(crate) fn eligible_account_ids(all: &[Account]) -> Vec<String> {
-    all.iter()
-        .filter(|a| a.kind != AccountType::Investment && a.currency_code == default_currency_code())
+pub(crate) fn eligible_account_ids(
+    conn: &rusqlite::Connection,
+    all: &[Account],
+) -> Result<Vec<String>, String> {
+    let native = default_currency_code(conn).map_err(|e| e.to_string())?;
+    Ok(all
+        .iter()
+        .filter(|a| a.kind != AccountType::Investment && a.currency_code == native)
         .map(|a| a.id.clone())
-        .collect()
+        .collect())
 }
 
 /// 正确性底线（issue #532 测试决策）：余额缓存与实时计算逐账户一致。
@@ -337,7 +342,7 @@ fn probe_dataset(conn: &Connection) -> Result<DatasetProbe, String> {
         .ok_or_else(|| "基准日期计算越界".to_string())?
         .to_string();
     let all_accounts = accounts::list_accounts(conn).map_err(|e| e.to_string())?;
-    let account_pool = eligible_account_ids(&all_accounts);
+    let account_pool = eligible_account_ids(conn, &all_accounts)?;
     if account_pool.is_empty() {
         return Err(
             "库内无本位币非投资账户，无法构建导入账户池，请先运行 ledger-perf generate".to_string(),
@@ -497,7 +502,7 @@ fn run_cell(
             rows,
             &probe.account_pool,
             distribution,
-            default_currency_code(),
+            &default_currency_code(&conn).map_err(|e| e.to_string())?,
             &probe.bench_date,
         );
         let start = Instant::now();

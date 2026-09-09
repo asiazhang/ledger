@@ -70,6 +70,16 @@ fn active_db_path(app: &AppHandle) -> Result<std::path::PathBuf> {
     Ok(db_dir.join(DB_FILE_NAME))
 }
 
+/// 当前活动账本标识（issue #836：钥匙串自动解锁条目按本分域的依据）：从引导
+/// 快照的注册表取活动账本 id。注册表不可用（极端时序/损坏回退）时 `None`——
+/// 回退现场运行的是折叠默认账本，钥匙串退回历史无标识条目
+///（[`crate::db::passphrase_cache::account_for`]），升级用户不丢自动解锁。
+fn active_book_id(app: &AppHandle) -> Option<String> {
+    current_boot(app)
+        .and_then(|boot| boot.registry)
+        .map(|registry| registry.active_id)
+}
+
 /// 转换类命令（开启/关闭/修改主口令）的共同门禁：应用处于锁定状态时
 /// 拒绝——转换只能在解锁后的运行中应用发起。
 fn ensure_unlocked(app: &AppHandle) -> Result<()> {
@@ -172,8 +182,12 @@ pub async fn unlock_with_remembered_passphrase(app: AppHandle) -> Result<UnlockO
     // 异常拉长即「钥匙串阻塞」（白屏根因一），与「WebView 未加载」（根因二）
     // 在日志上可区分。口令本体不落日志（ADR-0075）。
     tracing::info!("自动解锁开始：读取钥匙串缓存");
+    let book = active_book_id(&app);
     let started = std::time::Instant::now();
-    let cached = run_db("read_remembered_passphrase", passphrase_cache::load).await;
+    let cached = run_db("read_remembered_passphrase", move || {
+        passphrase_cache::load(book.as_deref())
+    })
+    .await;
     let outcome = match &cached {
         Ok(CacheLoad::Found(_)) => "found",
         Ok(CacheLoad::NotFound) => "not-found",
@@ -192,10 +206,10 @@ pub async fn unlock_with_remembered_passphrase(app: AppHandle) -> Result<UnlockO
             Err(e) if e.is_code("encryption.passphrase-incorrect") => {
                 // 缓存口令已过期：清缓存（下次仍回退手输），并把错误上报前端回退。
                 tracing::warn!("本机缓存的主口令已过期，清理缓存以回退手输");
-                let _ = run_db(
-                    "clear_stale_remembered_passphrase",
-                    passphrase_cache::delete,
-                )
+                let book = active_book_id(&app);
+                let _ = run_db("clear_stale_remembered_passphrase", move || {
+                    passphrase_cache::delete(book.as_deref())
+                })
                 .await;
                 Err(e)
             }
@@ -265,8 +279,13 @@ pub async fn disable_encryption(app: AppHandle, passphrase: String) -> Result<()
     })
     .await?;
     // 关闭加密后主口令不再适用：清钥匙串缓存（幂等，失败不阻断转换），
-    // 避免残留可自动解锁的旧口令（ADR-0075 决策 5）。
-    let _ = run_db("clear_remember_after_disable", passphrase_cache::delete).await;
+    // 避免残留可自动解锁的旧口令（ADR-0075 决策 5）。只清当前账本的条目
+    //（issue #836 按本分域：其他账本的缓存互不相干）。
+    let book = active_book_id(&app);
+    let _ = run_db("clear_remember_after_disable", move || {
+        passphrase_cache::delete(book.as_deref())
+    })
+    .await;
     tracing::info!("整库转换完成（关闭加密），待重启以明文重新打开");
     Ok(())
 }
@@ -312,8 +331,13 @@ pub async fn reset_after_forgotten_passphrase(app: AppHandle) -> Result<()> {
     })
     .await?;
     // 忘记口令重置：旧主口令不再适用，清钥匙串缓存（幂等，失败不阻断重置），
-    // 不残留可自动解锁的旧口令（ADR-0075 决策 5）。
-    let _ = run_db("clear_remember_after_reset", passphrase_cache::delete).await;
+    // 不残留可自动解锁的旧口令（ADR-0075 决策 5）。只清当前账本的条目
+    //（issue #836 按本分域）。
+    let book = active_book_id(&app);
+    let _ = run_db("clear_remember_after_reset", move || {
+        passphrase_cache::delete(book.as_deref())
+    })
+    .await;
     resume_business_surface(&app, conn)?;
     tracing::info!("忘记口令重置完成，应用以全新明文空库回到明文模式");
     Ok(())
@@ -336,8 +360,10 @@ pub async fn get_remember_passphrase_support() -> Result<RememberPassphraseSuppo
 #[tauri::command]
 pub async fn set_remember_passphrase(app: AppHandle, passphrase: String) -> Result<()> {
     ensure_unlocked(&app)?;
+    // 条目按当前活动账本分域（issue #836）：开启/关闭/清除只影响对应账本。
+    let book = active_book_id(&app);
     run_db("set_remember_passphrase", move || {
-        passphrase_cache::store(&passphrase)
+        passphrase_cache::store(&passphrase, book.as_deref())
     })
     .await
 }
@@ -348,5 +374,9 @@ pub async fn set_remember_passphrase(app: AppHandle, passphrase: String) -> Resu
 #[tauri::command]
 pub async fn clear_remember_passphrase(app: AppHandle) -> Result<()> {
     ensure_unlocked(&app)?;
-    run_db("clear_remember_passphrase", passphrase_cache::delete).await
+    let book = active_book_id(&app);
+    run_db("clear_remember_passphrase", move || {
+        passphrase_cache::delete(book.as_deref())
+    })
+    .await
 }

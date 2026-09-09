@@ -292,6 +292,7 @@ fn configured_intent_maps_all_pointer_states() {
                 name: "默认账本".into(),
                 dir: book_dir.clone(),
             }],
+            pending_relocation: None,
             origin: book_registry::RegistryOrigin::NewFormat,
         },
     )
@@ -349,6 +350,7 @@ fn gather_book_list_follows_boot_states() {
                 name: "默认账本".into(),
                 dir: book_dir,
             }],
+            pending_relocation: None,
             origin: book_registry::RegistryOrigin::NewFormat,
         },
     )
@@ -403,4 +405,379 @@ fn gather_book_list_follows_boot_states() {
     let info = gather_book_list(&dir, None);
     assert_eq!(info.books.len(), 2);
     assert!(!info.mutable);
+}
+
+// ---------------------------------------------------------------------------
+// 活动账本搬迁意图：引导消费与提交收窄（issue #836）
+// ---------------------------------------------------------------------------
+
+/// 造一本已登记账本的注册表现场工具。
+fn write_registry_with_books(dir: &Path, books: &[(&str, &str, &Path)], active: &str) {
+    let entries: Vec<serde_json::Value> = books
+        .iter()
+        .map(|(id, name, path)| {
+            serde_json::json!({ "id": id, "name": name, "dir": path.to_string_lossy() })
+        })
+        .collect();
+    std::fs::write(
+        dir.join(POINTER_FILE_NAME),
+        serde_json::json!({ "version": 1, "books": entries, "active": active }).to_string(),
+    )
+    .unwrap();
+}
+
+/// 引导消费意图（分支一）：目标已有库 → 直接接管、内存态消费意图、其他账本
+/// 原地不动；文件中的滞留意图由下一次登记变更自愈（引导自身不回写）。
+#[test]
+fn boot_consumes_pending_relocation_target_has_db() {
+    let dir = temp_dir("pending-adopt");
+    let source = dir.join("source");
+    let target = dir.join("target");
+    let other = dir.join("other");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(source.join("ledger.db"), b"old").unwrap();
+    std::fs::write(target.join("ledger.db"), b"new").unwrap();
+    std::fs::write(other.join("ledger.db"), b"other").unwrap();
+    write_registry_with_books(
+        &dir,
+        &[("a", "默认账本", &source), ("b", "副业", &other)],
+        "a",
+    );
+    std::fs::write(
+        dir.join(POINTER_FILE_NAME),
+        serde_json::json!({
+            "version": 1,
+            "books": [
+                { "id": "a", "name": "默认账本", "dir": target.to_string_lossy() },
+                { "id": "b", "name": "副业", "dir": other.to_string_lossy() }
+            ],
+            "active": "a",
+            "relocation": { "book_id": "a", "from_dir": source.to_string_lossy() }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let result = boot(&dir);
+    assert_eq!(result.db_dir, target);
+    assert_eq!(result.fallback_reason, None);
+    assert_eq!(result.deferred_relocation, None);
+    let registry = result.registry.expect("登记信息应可用");
+    assert_eq!(
+        registry.pending_relocation, None,
+        "内存态意图已消费（文件态由登记变更自愈）"
+    );
+    assert_eq!(file_bytes(&target.join("ledger.db")), b"new", "接管目标库");
+    assert_eq!(
+        file_bytes(&source.join("ledger.db")),
+        b"old",
+        "来源库原样保留"
+    );
+    assert_eq!(
+        file_bytes(&other.join("ledger.db")),
+        b"other",
+        "其他账本原地不动"
+    );
+    // 二次启动幂等（文件中的滞留意图按「目标已有库」再度消费）。
+    let again = boot(&dir);
+    assert_eq!(again.db_dir, target);
+}
+
+/// 引导消费意图（分支二）：目标为空而来源有库 → 整库搬迁（`VACUUM INTO`），
+/// 数据就位目标、来源原样保留、其他账本不动；清单（文件态）显示账本在目标。
+#[test]
+fn boot_pending_relocation_moves_db_via_vacuum() {
+    let dir = temp_dir("pending-move");
+    let source = dir.join("source");
+    let target = dir.join("target");
+    let other = dir.join("other");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    // 来源库：经产品建连迁移入口造真实库文件（建连迁移本就是引导的既有步骤），
+    // 保证 VACUUM INTO 产物可校验。
+    drop(super::super::open_db_in(&source).unwrap());
+    write_registry_with_books(
+        &dir,
+        &[("a", "默认账本", &target), ("b", "副业", &other)],
+        "a",
+    );
+    std::fs::write(
+        dir.join(POINTER_FILE_NAME),
+        serde_json::json!({
+            "version": 1,
+            "books": [
+                { "id": "a", "name": "默认账本", "dir": target.to_string_lossy() },
+                { "id": "b", "name": "副业", "dir": other.to_string_lossy() }
+            ],
+            "active": "a",
+            "relocation": { "book_id": "a", "from_dir": source.to_string_lossy() }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let boot = boot(&dir);
+    assert_eq!(boot.db_dir, target);
+    assert_eq!(boot.fallback_reason, None);
+    assert_eq!(
+        boot.registry.expect("登记信息应可用").pending_relocation,
+        None,
+        "搬迁成功即消费意图"
+    );
+    assert!(target.join("ledger.db").is_file(), "库已就位目标目录");
+    // 目标库可打开且完整性通过（VACUUM INTO 产物）。
+    check_integrity(&open_connection(target.join(DB_FILE_NAME)).unwrap()).unwrap();
+    assert!(source.join("ledger.db").is_file(), "来源库原样保留");
+    assert!(!other.join("ledger.db").exists(), "其他账本不动");
+}
+
+/// 引导消费意图（密文库推迟）：来源为密文库时搬迁待解锁补做——以来源位置
+/// 生效、意图保留、`deferred_relocation` 指向目标（与旧格式推迟同语义）。
+#[test]
+fn boot_pending_relocation_encrypted_source_defers() {
+    let dir = temp_dir("pending-encrypted");
+    let source = dir.join("source");
+    let target = dir.join("target");
+    std::fs::create_dir_all(&source).unwrap();
+    {
+        drop(super::super::open_db_in(&source).unwrap());
+        crate::db::encryption::enable_encryption_for_file(&source.join(DB_FILE_NAME), "pw")
+            .unwrap();
+    }
+    write_registry_with_books(&dir, &[("a", "默认账本", &target)], "a");
+    std::fs::write(
+        dir.join(POINTER_FILE_NAME),
+        serde_json::json!({
+            "version": 1,
+            "books": [
+                { "id": "a", "name": "默认账本", "dir": target.to_string_lossy() }
+            ],
+            "active": "a",
+            "relocation": { "book_id": "a", "from_dir": source.to_string_lossy() }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let boot = boot(&dir);
+    assert_eq!(boot.db_dir, source, "推迟窗口以来源位置生效");
+    assert_eq!(boot.deferred_relocation, Some(target.clone()));
+    assert_eq!(boot.fallback_reason, None);
+    let registry = boot.registry.expect("登记信息应可用");
+    // 推迟窗口内登记信息指向来源（物理真值），意图保留待补做。
+    assert_eq!(registry.active_dir(), Some(source.as_path()));
+    assert_eq!(
+        registry.pending_relocation,
+        Some(book_registry::PendingRelocation {
+            book_id: "a".into(),
+            from_dir: source.clone()
+        })
+    );
+}
+
+/// 引导消费意图（搬迁失败）：以来源位置生效并携带回退警示，意图保留待下次
+/// 启动重试（与旧格式失败逐次重试同语义）。
+#[test]
+fn boot_pending_relocation_failure_falls_back_to_source_with_reason() {
+    let dir = temp_dir("pending-fail");
+    let source = dir.join("source");
+    let target = dir.join("target");
+    std::fs::create_dir_all(&source).unwrap();
+    // 来源库损坏（非页对齐杂讯）：搬迁失败。
+    std::fs::write(source.join("ledger.db"), b"garbage-not-a-db").unwrap();
+    write_registry_with_books(&dir, &[("a", "默认账本", &target)], "a");
+    std::fs::write(
+        dir.join(POINTER_FILE_NAME),
+        serde_json::json!({
+            "version": 1,
+            "books": [
+                { "id": "a", "name": "默认账本", "dir": target.to_string_lossy() }
+            ],
+            "active": "a",
+            "relocation": { "book_id": "a", "from_dir": source.to_string_lossy() }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let boot = boot(&dir);
+    assert_eq!(boot.db_dir, source, "失败以来源位置生效");
+    assert_eq!(boot.deferred_relocation, None);
+    let reason = boot.fallback_reason.expect("失败应携带回退警示");
+    assert!(
+        reason.contains("搬迁") || reason.contains("原库"),
+        "{reason}"
+    );
+    assert!(
+        boot.registry
+            .expect("登记信息应可用")
+            .pending_relocation
+            .is_some(),
+        "意图保留待重试"
+    );
+    // 目标目录不被写入任何库文件；来源损坏文件原样。
+    assert!(!target.join("ledger.db").exists());
+    assert_eq!(file_bytes(&source.join("ledger.db")), b"garbage-not-a-db");
+}
+
+/// 引导只消费匹配当前活动账本的意图；不匹配的滞留意图被忽略（无害滞留，
+/// 留待登记变更自愈）。
+#[test]
+fn boot_ignores_pending_relocation_of_non_active_book() {
+    let dir = temp_dir("pending-inactive");
+    let a = dir.join("a");
+    let b = dir.join("b");
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    write_registry_with_books(&dir, &[("a", "默认账本", &a), ("b", "副业", &b)], "b");
+    std::fs::write(
+        dir.join(POINTER_FILE_NAME),
+        serde_json::json!({
+            "version": 1,
+            "books": [
+                { "id": "a", "name": "默认账本", "dir": a.to_string_lossy() },
+                { "id": "b", "name": "副业", "dir": b.to_string_lossy() }
+            ],
+            "active": "b",
+            "relocation": { "book_id": "a", "from_dir": dir.to_string_lossy() }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let boot = boot(&dir);
+    assert_eq!(boot.db_dir, b, "按活动账本进入，意图不干扰");
+    assert_eq!(boot.fallback_reason, None);
+    assert!(!a.join("ledger.db").exists());
+}
+
+/// 提交收窄（issue #836）：更改位置 = 活动账本登记目录改指目标 + 意图落盘，
+/// 旧格式指针原地升级为新格式；下次启动只搬活动账本，其他账本原地不动。
+#[test]
+fn validate_and_commit_writes_pending_intent_for_active_book() {
+    let dir = temp_dir("commit-narrow");
+    let legacy_dir = dir.join("legacy-custom");
+    let target = dir.join("new-place");
+    let other = dir.join("other-book");
+    std::fs::create_dir_all(&legacy_dir).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    // 活动账本的库（真实库文件）在旧位置；其他账本的库用占位字节。
+    drop(super::super::open_db_in(&legacy_dir).unwrap());
+    std::fs::write(other.join("ledger.db"), b"other").unwrap();
+    // 旧格式指针（存量安装形态）。
+    std::fs::write(
+        dir.join(POINTER_FILE_NAME),
+        serde_json::json!({ "data_dir": legacy_dir.to_string_lossy() }).to_string(),
+    )
+    .unwrap();
+
+    let outcome = validate_and_commit(&dir, &target, false).unwrap();
+    assert!(outcome.committed && !outcome.requires_choice);
+    assert_eq!(
+        outcome.target_dir.as_deref(),
+        Some(target.to_str().unwrap())
+    );
+
+    // 意图落盘为新格式：活动账本（折叠默认账本）目录 = 目标，意图携带来源。
+    let RegistryRead::Resolved(registry) = book_registry::read_registry(&dir) else {
+        panic!("提交后应为新格式注册表");
+    };
+    assert_eq!(registry.books.len(), 1);
+    assert_eq!(registry.books[0].dir, target);
+    assert_eq!(
+        registry.pending_relocation,
+        Some(book_registry::PendingRelocation {
+            book_id: registry.active_id.clone(),
+            from_dir: legacy_dir.clone(),
+        })
+    );
+
+    // 下次启动：只搬活动账本；登记信息按文件真值。
+    let boot = boot(&dir);
+    assert_eq!(boot.db_dir, target);
+    assert_eq!(boot.fallback_reason, None);
+    // 目标库是活动账本数据的真实副本（可打开、完整性通过）。
+    check_integrity(&open_connection(target.join("ledger.db")).unwrap()).unwrap();
+    assert!(legacy_dir.join("ledger.db").is_file(), "原位置库保留");
+    assert_eq!(file_bytes(&other.join("ledger.db")), b"other");
+}
+
+/// 提交幂等：目标即当前登记目录 → 已提交；引导文件同位重写为当前语义，
+/// 维持「提交成功 ⇒ 引导文件已配置」不变量（与旧指针同位重写同语义），
+/// 且不产生搬迁意图。
+#[test]
+fn validate_and_commit_is_noop_when_target_is_current_dir() {
+    let dir = temp_dir("commit-noop");
+    let target = dir.join("books").join("m");
+    std::fs::create_dir_all(&target).unwrap();
+    write_registry_with_books(&dir, &[("m", "默认账本", &target)], "m");
+
+    let outcome = validate_and_commit(&dir, &target, false).unwrap();
+    assert!(outcome.committed);
+    // 同位重写：配置状态维持为当前目录，无待重启意图。
+    assert_eq!(configured_intent(&dir), Some(target.clone()));
+    let registry = match read_registry(&dir) {
+        RegistryRead::Resolved(registry) => registry,
+        other => panic!("注册表应可读，实际 {other:?}"),
+    };
+    assert!(
+        registry.pending_relocation.is_none(),
+        "幂等提交不产生搬迁意图"
+    );
+}
+
+/// 目录唯一性：目标已登记为其他账本 → 拒绝（同一目录不得登记两个账本）。
+#[test]
+fn validate_and_commit_rejects_target_of_other_book() {
+    let dir = temp_dir("commit-dup");
+    let a = dir.join("a");
+    let b = dir.join("b");
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    write_registry_with_books(&dir, &[("a", "默认账本", &a), ("b", "副业", &b)], "a");
+
+    let err = validate_and_commit(&dir, &b, false).unwrap_err();
+    assert!(err.is_code("book.dir-exists"), "实际 {err:?}");
+    assert!(
+        err.to_string().contains("副业"),
+        "错误应指认占用账本：{err}"
+    );
+}
+
+/// 既有逃生舱保持：注册表损坏时更改位置视同出厂折叠继续提交（覆盖损坏文件
+/// 正是该逃生舱的职责，与旧指针写入时代行为对齐）。
+#[test]
+fn validate_and_commit_overwrites_corrupt_registry_as_escape() {
+    let dir = temp_dir("commit-corrupt");
+    std::fs::write(dir.join(POINTER_FILE_NAME), "{not valid json").unwrap();
+    let target = dir.join("fresh");
+
+    let outcome = validate_and_commit(&dir, &target, false).unwrap();
+    assert!(outcome.committed);
+    let RegistryRead::Resolved(registry) = book_registry::read_registry(&dir) else {
+        panic!("逃生舱提交后应可解析");
+    };
+    assert_eq!(registry.books[0].dir, target);
+    assert_eq!(
+        registry.pending_relocation,
+        Some(book_registry::PendingRelocation {
+            book_id: registry.active_id.clone(),
+            from_dir: dir.clone(),
+        })
+    );
+}
+
+/// 二选一优先于任何写入：目标已有库且未选择接管 → 需要二选一，注册表不动。
+#[test]
+fn validate_and_commit_requires_choice_before_writes() {
+    let dir = temp_dir("commit-choice");
+    let target = dir.join("occupied");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(target.join(DB_FILE_NAME), b"existing").unwrap();
+
+    let outcome = validate_and_commit(&dir, &target, false).unwrap();
+    assert!(outcome.requires_choice && !outcome.committed);
+    assert!(!dir.join(POINTER_FILE_NAME).exists(), "未选择接管前不落盘");
 }

@@ -153,7 +153,7 @@ pub fn query_dashboard_overview(conn: &Connection) -> Result<DashboardOverview> 
     let fingerprint = current_fingerprint(conn)?;
     if let Some(cached) = read_valid(conn, &fingerprint)? {
         // 基准币种与当前一致才可信（缓存跨币种设置变更不成立时重算）。
-        if cached.native_currency == amount::default_currency_code() {
+        if cached.native_currency == amount::default_currency_code(conn)? {
             return Ok(cached);
         }
     }

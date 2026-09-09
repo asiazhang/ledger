@@ -75,6 +75,8 @@ fn new_format_registry_roundtrips_books_and_active() {
     let registry = BookRegistry {
         active_id: book_b.id.clone(),
         books: vec![book_a.clone(), book_b.clone()],
+        pending_relocation: None,
+
         origin: RegistryOrigin::NewFormat,
     };
     write_registry(&dir, &registry).unwrap();
@@ -98,6 +100,8 @@ fn registry_write_lands_new_format_shape_without_legacy_field() {
     let registry = BookRegistry {
         active_id: book.id.clone(),
         books: vec![book],
+        pending_relocation: None,
+
         origin: RegistryOrigin::NewFormat,
     };
     write_registry(&dir, &registry).unwrap();
@@ -126,6 +130,8 @@ fn registry_write_replaces_atomically_without_temp_leftovers() {
     let first = BookRegistry {
         active_id: book_a.id.clone(),
         books: vec![book_a],
+        pending_relocation: None,
+
         origin: RegistryOrigin::NewFormat,
     };
     write_registry(&dir, &first).unwrap();
@@ -133,6 +139,8 @@ fn registry_write_replaces_atomically_without_temp_leftovers() {
     let second = BookRegistry {
         active_id: book_b.id.clone(),
         books: vec![book_b],
+        pending_relocation: None,
+
         origin: RegistryOrigin::NewFormat,
     };
     write_registry(&dir, &second).unwrap();
@@ -256,11 +264,15 @@ fn write_registry_rejects_corrupt_registry_state() {
     let dangling = BookRegistry {
         active_id: "zzz".into(),
         books: vec![book.clone()],
+        pending_relocation: None,
+
         origin: RegistryOrigin::NewFormat,
     };
     let empty = BookRegistry {
         active_id: "a".into(),
         books: vec![],
+        pending_relocation: None,
+
         origin: RegistryOrigin::NewFormat,
     };
     let duplicate_dir = BookRegistry {
@@ -273,6 +285,8 @@ fn write_registry_rejects_corrupt_registry_state() {
                 dir: book.dir.clone(),
             },
         ],
+        pending_relocation: None,
+
         origin: RegistryOrigin::NewFormat,
     };
     let dangling_entry = BookRegistry {
@@ -282,6 +296,8 @@ fn write_registry_rejects_corrupt_registry_state() {
             name: String::new(),
             dir: PathBuf::from("/data/a"),
         }],
+        pending_relocation: None,
+
         origin: RegistryOrigin::NewFormat,
     };
     for registry in [dangling, empty, duplicate_dir, dangling_entry] {
@@ -512,4 +528,193 @@ fn remove_rejects_unknown_id() {
     create_entry(&dir, "一本");
     let err = remove_book_entry(&dir, "no-such-id").unwrap_err();
     assert!(err.is_code("book.not-found"), "实际 {err:?}");
+}
+
+// -------------------------------------------------------------------------
+// 活动账本搬迁意图与稳定标识（issue #836）
+// -------------------------------------------------------------------------
+
+/// 折叠默认账本 id 由目录派生：同目录跨实例/跨进程稳定，不同目录不同 id——
+/// 备份命名与钥匙串条目据此按本分域而 histories 不漂移。
+#[test]
+fn stable_default_book_id_is_deterministic_per_dir() {
+    let dir = temp_dir("stable-id");
+    let a1 = BookRegistry::single_default(&dir);
+    let a2 = BookRegistry::single_default(&dir);
+    assert_eq!(a1.books[0].id, a2.books[0].id, "同目录 id 稳定");
+    assert_eq!(a1.books[0].id.len(), 16, "目录派生 id 为 16 位十六进制");
+    assert!(a1.books[0].id.chars().all(|c| c.is_ascii_hexdigit()));
+    let other = temp_dir("stable-id-other");
+    assert_ne!(
+        BookRegistry::single_default(&dir).books[0].id,
+        BookRegistry::single_default(&other).books[0].id,
+        "不同目录 id 不同"
+    );
+}
+
+/// 搬迁意图随注册表读写往返；无意图时落盘文件不携带 relocation 字段。
+#[test]
+fn pending_relocation_roundtrips_through_file() {
+    let dir = temp_dir("pending-roundtrip");
+    let book = Book {
+        id: "m".into(),
+        name: "默认账本".into(),
+        dir: dir.join("books").join("m"),
+    };
+    let from = dir.join("elsewhere");
+    let mut registry = BookRegistry {
+        active_id: book.id.clone(),
+        books: vec![book],
+        pending_relocation: Some(PendingRelocation {
+            book_id: "m".into(),
+            from_dir: from.clone(),
+        }),
+        origin: RegistryOrigin::NewFormat,
+    };
+    write_registry(&dir, &registry).unwrap();
+    let RegistryRead::Resolved(resolved) = read_registry(&dir) else {
+        panic!("应可解析");
+    };
+    assert_eq!(
+        resolved.pending_relocation,
+        Some(PendingRelocation {
+            book_id: "m".into(),
+            from_dir: from.clone()
+        }),
+        "意图随文件往返"
+    );
+    assert_eq!(resolved, registry);
+
+    // 消费后写回：文件不再携带 relocation 字段（常态形状最小）。
+    registry.pending_relocation = None;
+    write_registry(&dir, &registry).unwrap();
+    let raw: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join(REGISTRY_FILE_NAME)).unwrap())
+            .unwrap();
+    assert!(raw.get("relocation").is_none(), "无意图不落字段");
+    assert_eq!(read_registry(&dir), RegistryRead::Resolved(registry));
+}
+
+/// 搬迁意图的引用完整性：悬空账本标识 / 缺来源目录按损坏整体回退（注册表
+/// 是机器写出的，出现悬空即手工损坏，走出厂逃生舱）。
+#[test]
+fn dangling_pending_relocation_is_corrupt() {
+    for raw in [
+        serde_json::json!({
+            "version": 1,
+            "books": [{ "id": "a", "name": "A", "dir": "/data/a" }],
+            "active": "a",
+            "relocation": { "book_id": "zz", "from_dir": "/data/gone" }
+        }),
+        serde_json::json!({
+            "version": 1,
+            "books": [{ "id": "a", "name": "A", "dir": "/data/a" }],
+            "active": "a",
+            "relocation": { "book_id": "a" }
+        }),
+    ] {
+        let probe = temp_dir("pending-dangling");
+        write_raw(&probe, &raw.to_string());
+        assert!(
+            matches!(read_registry(&probe), RegistryRead::Corrupt(_)),
+            "{raw} 应按损坏回退"
+        );
+    }
+}
+
+/// 意图守卫判定矩阵：目标已有库 → 消费放行；来源有库且目标无 → 拒绝
+/// （registry-busy）；双方皆无 → 消费放行（无库可搬，搬迁已然完成）。
+#[test]
+fn settle_pending_relocation_matrix() {
+    let dir = temp_dir("settle-matrix");
+    let from = dir.join("from");
+    let to = dir.join("to");
+    std::fs::create_dir_all(&from).unwrap();
+    std::fs::create_dir_all(&to).unwrap();
+    let mut registry = BookRegistry::single_default(&dir);
+    registry.books[0].dir = to.clone();
+    registry.origin = RegistryOrigin::NewFormat;
+
+    // 未完成：来源有库、目标无库。
+    registry.pending_relocation = Some(PendingRelocation {
+        book_id: registry.active_id.clone(),
+        from_dir: from.clone(),
+    });
+    std::fs::write(from.join(super::super::data_location::DB_FILE_NAME), b"db").unwrap();
+    let err = settle_pending_relocation(&mut registry).unwrap_err();
+    assert!(err.is_code("book.registry-busy"), "实际 {err:?}");
+    assert!(registry.pending_relocation.is_some(), "拒绝不消费意图");
+
+    // 完成：目标已有库。
+    std::fs::write(to.join(super::super::data_location::DB_FILE_NAME), b"db").unwrap();
+    settle_pending_relocation(&mut registry).unwrap();
+    assert_eq!(registry.pending_relocation, None, "完成即消费");
+
+    // 完成（皆无库）：无库可搬，消费放行。
+    std::fs::remove_file(to.join(super::super::data_location::DB_FILE_NAME)).unwrap();
+    std::fs::remove_file(from.join(super::super::data_location::DB_FILE_NAME)).unwrap();
+    registry.pending_relocation = Some(PendingRelocation {
+        book_id: registry.active_id.clone(),
+        from_dir: from,
+    });
+    settle_pending_relocation(&mut registry).unwrap();
+    assert_eq!(registry.pending_relocation, None);
+}
+
+/// 登记变更内核在意图未完成期间统一拒绝（busy），完成后放行并把已消费的
+/// 意图从文件中一并带走（自愈）。
+#[test]
+fn mutation_kernels_guard_pending_relocation() {
+    let dir = temp_dir("kernel-guard");
+    let second = create_entry(&dir, "副业");
+    let first = {
+        let RegistryRead::Resolved(registry) = read_registry(&dir) else {
+            panic!("应可解析");
+        };
+        registry.active_id.clone()
+    };
+
+    // 伪造未完成意图：默认账本（活动本）登记目录改指 books/moved（空），
+    // 来源目录仍有库——目标无库而来源有库，即「意图未生效」现场。
+    let from = dir.join("from");
+    let to = dir.join(BOOKS_DIR_NAME).join("moved");
+    std::fs::create_dir_all(&from).unwrap();
+    std::fs::create_dir_all(&to).unwrap();
+    std::fs::write(from.join(super::super::data_location::DB_FILE_NAME), b"db").unwrap();
+    let mut registry = read_registry_resolved(&dir);
+    registry.books[0].dir = to.clone();
+    registry.pending_relocation = Some(PendingRelocation {
+        book_id: first.clone(),
+        from_dir: from.clone(),
+    });
+    write_registry(&dir, &registry).unwrap();
+
+    // 四个内核全被拦（busy），文件保持原样。
+    let assert_busy = |err: crate::error::AppError| {
+        assert!(err.is_code("book.registry-busy"), "实际 {err:?}");
+    };
+    assert_busy(create_book_entry(&dir, "三本").unwrap_err());
+    assert_busy(switch_active_book(&dir, &second).unwrap_err());
+    assert_busy(rename_book_entry(&dir, &second, "新名").unwrap_err());
+    assert_busy(remove_book_entry(&dir, &second).unwrap_err());
+    assert!(
+        read_registry_resolved(&dir).pending_relocation.is_some(),
+        "被拒现场意图保留"
+    );
+
+    // 完成后（目标已有库）：内核放行，且写回的文件不再携带意图（自愈）。
+    std::fs::write(to.join(super::super::data_location::DB_FILE_NAME), b"db").unwrap();
+    rename_book_entry(&dir, &second, "新名").unwrap();
+    let healed = read_registry_resolved(&dir);
+    assert_eq!(healed.pending_relocation, None, "登记写入自愈清除意图");
+    let renamed = healed.books.iter().find(|b| b.id == second).unwrap();
+    assert_eq!(renamed.name, "新名");
+}
+
+/// 读取现场的工具：解析失败 panic（测试现场由用例自控）。
+fn read_registry_resolved(dir: &Path) -> BookRegistry {
+    match read_registry(dir) {
+        RegistryRead::Resolved(registry) => registry,
+        other => panic!("测试现场应可解析，实际 {other:?}"),
+    }
 }

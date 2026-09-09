@@ -95,6 +95,7 @@ import type {
   UpdateStatusInput,
   UpdateSubscriptionInput,
   LogLevelState,
+  BaseCurrencyState,
 } from '@/types'
 
 /** 统一 invoke 封装（全局忙碌条收口点，issue #500）：所有 IPC IO 的生命周期自动
@@ -436,4 +437,10 @@ export const api = {
   // 界面展示的是持久化档位；显式 RUST_LOG 环境变量在本次启动内优先且不写库。
   getLogLevel: () => invoke<LogLevelState>('get_log_level'),
   setLogLevel: (level: string) => invoke<void>('set_log_level', { level }),
+
+  // 本位币基准（issue #858，设置页「通用」Tab）：账本级设置（LedgerLevelSetting
+  // 首个成员），读缺 key 回默认 CNY；写经后端校验币种字典并同事务产出同步 op，
+  // 随多端同步全设备一致（ADR-0091 决策 3）。
+  getBaseCurrency: () => invoke<BaseCurrencyState>('get_base_currency'),
+  setBaseCurrency: (code: string) => invoke<BaseCurrencyState>('set_base_currency', { code }),
 }

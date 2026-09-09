@@ -470,6 +470,7 @@ fn parse_write_op(ident: &str) -> WriteOp {
         "SetAutoExecutionEnabled" => WriteOp::SetAutoExecutionEnabled,
         "SubmitDataLocationChange" => WriteOp::SubmitDataLocationChange,
         "RestoreDefaultDataLocation" => WriteOp::RestoreDefaultDataLocation,
+        "SetBaseCurrency" => WriteOp::SetBaseCurrency,
         other => panic!(
             "未知 WriteOp 变体标识符 {other}——enum 新增变体须同步 parse_write_op 与 WriteOp::ALL"
         ),

@@ -116,7 +116,7 @@
       "chooseDir": "Choose",
       "clear": "Clear",
       "keepLimitLabel": "Backups to keep",
-      "keepLimitSuffix": " (1–100). The oldest backups beyond the limit are pruned automatically after each backup.",
+      "keepLimitSuffix": " (1–100). The oldest backups beyond the limit are pruned automatically after each backup (counted per current book).",
       "columns": {
         "fileName": "File",
         "source": "Source",
@@ -150,11 +150,12 @@
       "copyPath": "Copy Path",
       "copyPathOk": "Full path copied",
       "copyPathFailed": "Failed to copy path: {msg}",
-      "revealInFinder": "Reveal in Finder"
+      "revealInFinder": "Reveal in Finder",
+      "listHint": "Only the current book's backups are shown; other books' files are invisible to each other and pruned independently."
     },
     "location": {
       "title": "Data Location",
-      "hint": "Directory where the ledger database lives. After a change, the app automatically migrates the existing database to the new location on next startup; the files at the old location are kept permanently as a safety net. Restoring the default follows the same flow.",
+      "hint": "Directory of the current book's database. After changing the location, the app will move the current book's database to the new place on next startup; the old file is kept forever as a safety net. Other books are unaffected. Restoring the default follows the same flow.",
       "fallbackTitle": "Fallen back to default location",
       "fallbackBody": "The configured location is unavailable: {reason}. The app has fallen back to the default location automatically; the original database is untouched where it was. You can change the location again or keep things as they are.",
       "pendingTitle": "Changed, effective after restart",
@@ -351,6 +352,11 @@
   "appearance": {
     "card": "Theme",
     "darkMode": "Dark mode",
-    "defaultCurrency": "Default Currency"
+    "baseCurrency": "Base Currency",
+    "baseCurrencyHint": "Ledger-level setting: changes sync to all devices and keep the conversion basis consistent everywhere.",
+    "displayCurrency": "Display Currency",
+    "displayCurrencyHint": "Per-device amount formatting and new-entry preselect; not synced.",
+    "baseCurrencyLoadFailed": "Failed to load base currency: {msg}",
+    "baseCurrencySaveFailed": "Failed to save base currency: {msg}"
   }
 }

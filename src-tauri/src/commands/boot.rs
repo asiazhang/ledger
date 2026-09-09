@@ -127,6 +127,10 @@ pub(crate) fn boot_sequence(app: &AppHandle) -> Result<BootPhase> {
         tracing::warn!(reason = %reason, "DataLocation 引导发生回退，已改用默认数据目录");
     }
     let db_dir = boot.db_dir.clone();
+    // 备份作用域播种（issue #836）：以本次引导的注册表登记信息为准，调度线程、
+    // 连接层写入口提交点与退出兜底经偏好镜像统一消费。注册表损坏时镜像清空
+    // （备份退化为旧命名兼容口径）。
+    backup::seed_book_scope(boot.registry.as_ref());
     register_boot(app, boot);
     let gate = app.state::<EncryptionGate>();
     let boot_gate = app.state::<BootFailureGate>();

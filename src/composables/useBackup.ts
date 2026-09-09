@@ -100,6 +100,20 @@ export function useBackup() {
   const autoBackupEnabled = ref(true);
   const autoBackupLastAt = ref<string | null>(null);
 
+  // 当前活动账本标识（issue #836 / ADR-0089 决策 5）：手动备份默认名携带它，
+  // 两本账的产物在共享备份目录内可区分、互不覆盖。清单不可用（注册表损坏的
+  // 回退现场）时为 null——退化为无标识旧命名，产物仍可靠。
+  const activeBookId = ref<string | null>(null);
+
+  /** 拉取活动账本标识（挂载首刷；切换账本经原位重引导，会话内不变）。 */
+  async function refreshActiveBook() {
+    try {
+      activeBookId.value = (await api.listBooks()).active_id;
+    } catch {
+      activeBookId.value = null;
+    }
+  }
+
   /** 展示文案：格式化 UTC ISO 为 `YYYY-MM-DD HH:mm`，从未备份时显示「从未」。 */
   const autoBackupLastText = computed(() =>
     autoBackupLastAt.value
@@ -266,18 +280,17 @@ export function useBackup() {
   async function backupOnce() {
     if (store.backupDir) {
       const { dir, sep } = normalizeBackupDir(store.backupDir);
-      await doBackup(`${dir}${sep}${defaultBackupFileName()}`);
+      await doBackup(`${dir}${sep}${defaultBackupFileName(new Date(), activeBookId.value)}`);
     } else {
       await backupAs();
     }
   }
 
   async function backupAs() {
+    const defaultName = defaultBackupFileName(new Date(), activeBookId.value);
     const path = await save({
       title: t("settings.data.msg.saveAsTitle"),
-      defaultPath: store.backupDir
-        ? `${store.backupDir}/${defaultBackupFileName()}`
-        : defaultBackupFileName(),
+      defaultPath: store.backupDir ? `${store.backupDir}/${defaultName}` : defaultName,
       filters: [{ name: t("settings.data.msg.filterName"), extensions: ["zip"] }],
     });
     if (typeof path === "string" && path) await doBackup(path);
@@ -320,6 +333,7 @@ export function useBackup() {
   onMounted(async () => {
     void refreshBackups();
     void refreshAutoBackupState();
+    void refreshActiveBook();
     // 订阅备份产物变更信号（issue #129）：自动备份完成 / 清理后列表自动刷新。
     try {
       unlistenBackupsChanged = await listen(BACKUPS_CHANGED_EVENT, () => {
@@ -340,6 +354,7 @@ export function useBackup() {
   return {
     backingUp,
     restoring,
+    activeBookId,
     lastBackup,
     backups,
     pruning,
