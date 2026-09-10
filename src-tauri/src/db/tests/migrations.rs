@@ -136,6 +136,8 @@ fn migration_from_zero_reaches_latest_completely() {
         ("transactions", "funding_account_id"),
         ("instruments", "source"),
         ("subscription_plans", "policy_id"),
+        // V021 就地修改（issue #957）：挂起原因的插值参数列。
+        ("sync_parked_ops", "park_params"),
     ] {
         let hit: i64 = conn
             .query_row(

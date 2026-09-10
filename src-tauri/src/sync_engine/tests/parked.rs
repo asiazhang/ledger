@@ -97,6 +97,18 @@ fn undecodable_wire_ops_park_and_never_drop() {
     );
     assert_eq!(synthetic.payload, garbage);
     assert!(read_ops(&conn).unwrap().is_empty(), "挂起不进日志");
+    // 不可解码挂起同样携带插值参数（issue #957）：详情即 params[0]，
+    // 前端按 sync-engine.op-undecodable 模板插出解析详情而非空悬冒号。
+    for row in &parked {
+        assert_eq!(row.code, "sync-engine.op-undecodable");
+        assert_eq!(row.params.len(), 1, "解析详情应作唯一插值参数");
+        assert!(!row.params[0].is_empty());
+        assert!(
+            row.message.ends_with(&row.params[0]),
+            "message 已渲染：应以 params[0] 结尾，实际 {:?}",
+            row.message
+        );
+    }
 }
 
 /// 往已删账户记账（AC3 旗舰场景）：重放命中账户存活守卫，码化挂起、不落地、
@@ -150,7 +162,23 @@ fn replay_onto_deleted_account_parks_and_never_resurrects() {
         )
         .unwrap();
     assert_eq!(alive, 0, "已删账户不复活");
-    assert_eq!(parked_ops(&conn_b).unwrap().len(), 2);
+    let parked = parked_ops(&conn_b).unwrap();
+    assert_eq!(parked.len(), 2);
+    // 码化原因三要素同源落库（issue #957）：params 承载动态值（账户 id），
+    // 前端才能按 errors.<code> 模板插出完整句（否则渲染成「账户不存在或已删除: 」）。
+    for row in &parked {
+        assert_eq!(row.code, "account.not-found");
+        assert_eq!(
+            row.params,
+            vec!["acc-x".to_string()],
+            "params 应携带账户 id"
+        );
+        assert!(
+            row.message.contains("acc-x"),
+            "message 是已渲染完整句，应含动态值，实际 {:?}",
+            row.message
+        );
+    }
 
     // 重复失败投递：按 op 幂等覆盖挂起行，不堆积。
     wire_in(&conn_b, &wire_out(&conn_a));

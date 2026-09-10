@@ -20,6 +20,7 @@
 //! 显式收时刻。守门票（#752）禁 `FIXED_NOW` 值的字面量出现在工厂之外。
 //!
 //! **本版收编清单**（吸收体 → 工厂成员，供按域迁移票 #753–#757 核对）：
+//!
 //! - 建库两行序（transaction/investment/reports/policy/merchants/item/sync/
 //!   scheduled_transactions/db 等域薄皮与 `tests/api_server/common.rs` 逐字重复）→ [`open`]；
 //! - `transaction/tests/common.rs` 与 `investment/tests/common.rs` 的 `insert_account`
@@ -37,6 +38,13 @@
 //!   「回填 == 实时」对拍断言 → [`assert_balance_cache_matches_realtime`]（本票唯一
 //!   的既有调用改动：两域旧断言体删除改调共享版本）。
 //!
+//! **#956 追加**（通道线格式替身）：命令面集成测试与 BDD 步骤层各自手工复制的
+//! 「构造合法通道段 + 归并 manifest」（含各自的 `sha256_hex`）→
+//! [`publish_raw_segment`]（`test_support::channel`）。共享物是**通道线格式契约**
+//! （字节级成帧），不是建库/种子/默认值集，ADR-0086 决策 9 不破；由此新增一条
+//! `test_support → sync_engine` 测试专用边（登记处：ADR-0084 迁移状态段），
+//! 该边由测试豁免路径消费、不进产品依赖图。
+//!
 //! 说明：集成测试 `tests/api_server/` 链接的是非 `#[cfg(test)]` 构建的 lib，
 //! 因此本模块不能仅以 `#[cfg(test)]` 编译；对生产二进制的影响只是一些未使用的
 //! 测试辅助函数（可被编译器消除）。
@@ -53,12 +61,14 @@
 )]
 
 mod assert;
+pub mod channel;
 mod seed;
 #[cfg(test)]
 mod tests;
 pub mod webdav;
 
 pub use assert::{assert_balance_cache_matches_realtime, read_scalar_i64};
+pub use channel::publish_raw_segment;
 pub use seed::{
     seed_account, seed_exchange_rate, seed_fx_rate_history, seed_instrument, seed_investment_setup,
     seed_price_history,

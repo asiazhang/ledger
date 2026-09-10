@@ -647,7 +647,12 @@ fn split_chunks(ops: &[SyncOp], max_ops: usize) -> Vec<&[SyncOp]> {
 }
 
 /// SHA-256 hex 摘要（通道条目自校验单点）。
-fn sha256_hex(bytes: &[u8]) -> String {
+///
+/// `pub(crate)` 而非私有（issue #956）：测试支持域的「通道线格式替身」
+/// （`test_support::channel`）据此成帧，使测试侧不再自建第二份摘要口径。
+/// 这是测试专用放宽（ADR-0084 决策 2 同款：`test_support` 本身即测试专用
+/// 放宽面），产品路径的消费者仍只有本模块。
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     let mut hex = String::with_capacity(digest.len() * 2);
     for byte in digest {
