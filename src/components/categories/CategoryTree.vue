@@ -6,6 +6,7 @@ import type { TreeOption, TreeDropInfo } from 'naive-ui'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import { api } from '@/api'
 import { useReferenceStore } from '@/stores/reference'
+import { useWindowTier } from '@/composables/useWindowTier'
 import { getIconComponent } from '@/types/icon'
 import { buildCategoryTree } from '@/utils/category-tree'
 import { t } from '@/i18n'
@@ -16,6 +17,12 @@ const emit = defineEmits<{ edit: [cat: Category] }>()
 
 const reference = useReferenceStore()
 const message = useMessage()
+
+// 拖拽排序是桌面专属管理动作（ADR-0088 决策 10，issue #849）：移动档隐藏入口
+//（树节点不可拖拽），移动档只读消费排序产出；桌面档照常。编辑/删除入口两档
+// 同在（生命周期操作不裁剪）。
+const windowTier = useWindowTier()
+const isMobileTier = computed(() => windowTier.value === 'mobile')
 
 interface TreeCategoryNode extends TreeOption {
   category: Category
@@ -108,7 +115,7 @@ async function removeCategory(id: string) {
     :data="treeData"
     :render-prefix="renderPrefix"
     :render-suffix="renderSuffix"
-    draggable
+    :draggable="!isMobileTier"
     block-line
     :default-expand-all="true"
     @drop="handleDrop"

@@ -479,10 +479,12 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* 分类卡头部：标题与下钻面包屑同行（issue #379）；触控轴占比切换按钮靠右（issue #843） */
+/* 分类卡头部：标题与下钻面包屑同行（issue #379）；触控轴占比切换按钮靠右（issue #843）。
+   窄屏放不下时换行（issue #849）：桌面档不溢出永不触发，渲染零变化。 */
 .category-card-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
 }
 .category-card-header :deep(.n-button) {

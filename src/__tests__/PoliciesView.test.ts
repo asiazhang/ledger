@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest'
+import { assertMobileTierScrollX } from './helpers/mobile-scroll-x'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
 import { NPopconfirm } from 'naive-ui'
@@ -437,5 +438,11 @@ describe('PoliciesView 来源跳转落点（issue #706）', () => {
     const highlighted = wrapper.findAll('tr.policy-row-focus')
     expect(highlighted.length).toBe(1)
     expect(highlighted[0].attributes('data-policy-id')).toBe('p-1')
+  })
+})
+
+describe('PoliciesView 移动档横向滚动下限（issue #849 / ADR-0088 决策 11 票⑨）', () => {
+  it('窄屏表格挂 scroll-x = 固定列宽总和（横向滚动吸收窄屏）；桌面档不挂零变化', async () => {
+    await assertMobileTierScrollX(() => mount(PoliciesView))
   })
 })

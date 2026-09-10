@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import { assertMobileTierScrollX } from './helpers/mobile-scroll-x'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { findButtonByTestId, findBodyButtonByTestId } from './helpers/dom'
 import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
@@ -229,5 +230,11 @@ describe('PhysicalAssetsView 实物资产弹窗族排版统一（issue #635）',
     expect(hint?.textContent).toContain('已处置')
     const labels = [...modal.querySelectorAll<HTMLElement>('.n-form-item-label')]
     expect(labels.some((el) => el.textContent!.trim() === '')).toBe(false)
+  })
+})
+
+describe('PhysicalAssetsView 移动档横向滚动下限（issue #849 / ADR-0088 决策 11 票⑨）', () => {
+  it('窄屏表格挂 scroll-x = 固定列宽总和（横向滚动吸收窄屏）；桌面档不挂零变化', async () => {
+    await assertMobileTierScrollX(() => mount(PhysicalAssetsView))
   })
 })

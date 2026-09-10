@@ -3,6 +3,7 @@ import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from './helpers/invoke-moc
 import { mount, flushPromises } from '@vue/test-utils'
 import { h, nextTick } from 'vue'
 import { NDialogProvider } from 'naive-ui'
+import { assertMobileTierScrollX } from './helpers/mobile-scroll-x'
 import { useReferenceStore } from '@/stores/reference'
 import InstrumentBrowser from '@/components/investments/InstrumentBrowser.vue'
 import {
@@ -332,6 +333,12 @@ describe('InstrumentBrowser 添加投资标的入口（issue #697 / spec #690）
     expect(msg.text()).toContain('已添加投资标的：贵州茅台')
     const after = mockInvoke.mock.calls.filter(([cmd]) => cmd === 'list_instruments').length
     expect(after).toBe(before + 1)
+  })
+})
+
+describe('InstrumentBrowser 移动档横向滚动下限（issue #849 / ADR-0088 决策 11 票⑨）', () => {
+  it('窄屏表格挂 scroll-x = 固定列宽总和（横向滚动吸收窄屏，列不压碎）；桌面档不挂零变化', async () => {
+    await assertMobileTierScrollX(() => mountBrowser())
   })
 })
 

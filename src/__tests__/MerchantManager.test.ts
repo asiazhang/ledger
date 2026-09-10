@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { assertMobileTierScrollX } from './helpers/mobile-scroll-x'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { mount, flushPromises } from '@vue/test-utils'
 import { NDataTable, NPopconfirm } from 'naive-ui'
@@ -678,5 +679,11 @@ describe('MerchantManager.vue 前端分页（issue #457）', () => {
     expect(paginationProps(remounted).page).toBe(1)
     expect(paginationProps(remounted).pageSize).toBe(50)
     expect(rowTexts(remounted)).toHaveLength(50)
+  })
+})
+
+describe('MerchantManager 移动档横向滚动下限（issue #849 / ADR-0088 决策 11 票⑨）', () => {
+  it('窄屏表格挂 scroll-x = 固定列宽总和（横向滚动吸收窄屏）；桌面档不挂零变化', async () => {
+    await assertMobileTierScrollX(() => mount(MerchantManager))
   })
 })

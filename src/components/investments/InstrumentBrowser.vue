@@ -16,6 +16,7 @@ import { t } from '@/i18n'
 import { useInstrumentInfoSync } from '@/composables/useInstrumentInfoSync'
 import { usePricesChanged } from '@/composables/usePricesChanged'
 import { useAppDialog } from '@/composables/useAppDialog'
+import { useWindowTier } from '@/composables/useWindowTier'
 import SyncProgressBar from '@/components/investments/SyncProgressBar.vue'
 import { errorMessage as extractErrorMessage } from '@/utils/errors'
 import {
@@ -26,12 +27,19 @@ import {
   MARKET_TYPES,
   canManualPrice,
 } from '@/types'
+import { sumFixedColumnWidths } from '@/utils/table'
 import AppSelect from '@/components/AppSelect.vue'
 import AddInstrumentModal from '@/components/investments/AddInstrumentModal.vue'
 import ManualPriceModal from '@/components/investments/ManualPriceModal.vue'
 import type { Instrument, MarketType } from '@/types'
 
 const reference = useReferenceStore()
+
+// 移动档横向滚动下限（issue #849 / ADR-0088 决策 11 票⑨）：标的明细表 10 列固定宽
+// 在窄屏无法并读，移动档挂 scroll-x = 固定列宽总和（词汇表「表格列形态」窄窗口由
+// 横向滚动吸收，触屏滑动可达全部列），桌面档不挂（既有压缩行为一字不变）。
+const windowTier = useWindowTier()
+const isMobileTier = computed(() => windowTier.value === 'mobile')
 // 同步接缝（与盈亏页共用）：按钮 loading + 轻量消息反馈 + 确定进度条
 //（issue #897，两入口同一份展示组件、同一份共享进度状态）。
 const { syncing, resultMessage, status, progress, sync } = useInstrumentInfoSync()
@@ -312,6 +320,9 @@ const instrumentBrowseColumns = computed<DataTableColumn<Instrument>[]>(() => [
 ])
 
 onMounted(load)
+
+/** 横向滚动下限 = 固定列宽总和（列定义之后单点派生，桌面档不消费）。 */
+const browseScrollX = computed(() => sumFixedColumnWidths(instrumentBrowseColumns.value))
 </script>
 
 <template>
@@ -379,6 +390,7 @@ onMounted(load)
       :bordered="false"
       size="small"
       remote
+      :scroll-x="isMobileTier ? browseScrollX : undefined"
       :pagination="pagination"
     />
 

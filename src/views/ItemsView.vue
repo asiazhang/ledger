@@ -27,12 +27,20 @@ import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import { useModalIntent } from '@/composables/useModalIntent'
 import { useFocusParam } from '@/composables/useFocusParam'
+import { useWindowTier } from '@/composables/useWindowTier'
+import { sumFixedColumnWidths } from '@/utils/table'
 import { useReferenceStore } from '@/stores/reference'
 import { useAppStore } from '@/stores/app'
 import { useItemsStore } from '@/stores/items'
 import { t } from '@/i18n'
 
 const reference = useReferenceStore()
+
+// 移动档（issue #849 / ADR-0088 决策 11 票⑨，收纳页布局核对级适配）：低频管理表
+// 窄屏不重排列结构，挂 scroll-x = 固定列宽总和由横向滚动吸收（触屏滑动可达全部
+// 列与行内操作）；桌面档不挂（既有压缩行为一字不变）。
+const windowTier = useWindowTier()
+const isMobileTier = computed(() => windowTier.value === 'mobile')
 const app = useAppStore()
 const itemsStore = useItemsStore()
 const message = useMessage()
@@ -340,6 +348,9 @@ const columns: DataTableColumns<ItemWithDailyCost> = [
   },
 ]
 
+/** 横向滚动下限 = 固定列宽总和（列定义之后单点派生，桌面档不消费）。 */
+const tableScrollX = sumFixedColumnWidths(columns)
+
 onMounted(() => {
   // focus 读一次：先拿 id（消费闸门内化），列表到位后生效
   focusParam.consume()
@@ -386,6 +397,7 @@ onMounted(() => {
         :row-props="rowProps"
         :bordered="false"
         size="small"
+        :scroll-x="isMobileTier ? tableScrollX : undefined"
       >
         <template #empty>
           <span data-testid="item-empty-guide">

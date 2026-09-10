@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import MerchantRankingPanel from '@/components/reports/MerchantRankingPanel.vue'
+import { setFakeMedia } from './helpers/media-mock'
 
 // 行内商户名渲染 MerchantLink（顶层 useRouter 下钻）：本面板测试不走路由，
 // 桩掉说明符即可（下钻经 drillIntent 意图上报，不触发真实跳转）。
@@ -140,5 +141,52 @@ describe('MerchantRankingPanel 表格化（issue #618）', () => {
     const wrapper = mountPanel({ report: { rows: [], total_cents: 0 } })
     expect(wrapper.find('[data-testid="merchant-empty"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="merchant-table"]').exists()).toBe(false)
+  })
+})
+
+describe('MerchantRankingPanel 移动档堆叠（issue #849 / ADR-0088 决策 11 票⑨）', () => {
+  // 自裁量记录：排行是逐行对账的阅读面，窄屏改两列堆叠（名＋条 / 金额＋占比·笔数）
+  // 让五列信息一屏并读，不引入横向滚动；下钻 testid 与事件闭集两档同源。
+  it('窄屏改两列：商户名（副行金额分布条）+ 金额（副行占比 · 笔数），信息零丢失', () => {
+    setFakeMedia({ width: 400, hover: 'hover', pointer: 'fine' })
+    const wrapper = mountPanel()
+    const headers = wrapper
+      .findAll('[data-testid="merchant-table"] thead th')
+      .map((th) => th.text().trim())
+    expect(headers).toEqual(['商户名', '金额'])
+
+    const trs = bodyRows(wrapper)
+    expect(trs).toHaveLength(3)
+    // 首列：商户名主行 + 金额分布条副行（下钻与条形 testid 两档同源）
+    expect(cellText(trs[0], 'merchant-name')).toBe('京东')
+    expect(trs[0].find('[data-testid="merchant-bar-track"]').exists()).toBe(true)
+    expect(trs[0].find('[data-testid="merchant-bar"]').exists()).toBe(true)
+    // 次列：金额主行 + 占比 · 笔数副行（口径与桌面同行同源）
+    expect(cellText(trs[0], 'merchant-amount')).toBe(formatAmount(170000))
+    expect(cellText(trs[0], 'merchant-share')).toBe('50%')
+    expect(cellText(trs[0], 'merchant-count')).toBe('9')
+    // 负净额行：不画条，金额与占比照实（堆叠后语义不回归）
+    expect(trs[2].find('[data-testid="merchant-bar"]').attributes('style')).toContain('width: 0%')
+    expect(cellText(trs[2], 'merchant-amount')).toBe(formatAmount(-5000))
+  })
+
+  it('窄屏点商户名仍上报下钻意图（跳转载荷仍归报表视图构造，同口径不回归）', async () => {
+    setFakeMedia({ width: 400, hover: 'hover', pointer: 'fine' })
+    const wrapper = mountPanel()
+    await bodyRows(wrapper)[1].find('[data-testid="merchant-name"]').trigger('click')
+    expect(wrapper.emitted('drilldown')).toEqual([['m2']])
+  })
+
+  it('TopN 档位控件触控轴达标 ≥48px（头部控件同样过基线），指针轴不挂', () => {
+    setFakeMedia({ width: 400, hover: 'none', pointer: 'coarse' })
+    const touch = mountPanel()
+    expect(touch.find('[data-testid="merchant-topn-5"]').attributes('style')).toContain(
+      'min-height: 48px',
+    )
+    setFakeMedia({ width: 1280, hover: 'hover', pointer: 'fine' })
+    const desktop = mountPanel()
+    expect(desktop.find('[data-testid="merchant-topn-5"]').attributes('style') ?? '').not.toContain(
+      'min-height',
+    )
   })
 })

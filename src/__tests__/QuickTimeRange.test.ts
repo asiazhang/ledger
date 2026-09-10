@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
 import { mockInvoke, wireInvokeSeam } from './helpers/invoke-mock'
 import { captureListenHandlers } from './helpers/listen-mock'
+import { setFakeMedia } from './helpers/media-mock'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { NButton, NDatePicker } from 'naive-ui'
 import { resetOverlays, hasOpenOverlay, openOverlayNames } from '@/composables/overlayRegistry'
@@ -245,6 +246,36 @@ describe('QuickTimeRange 共享受控组件（issue #410）', () => {
     wrapper.findComponent(NDatePicker).vm.$emit('update:show', false)
     await flushPromises()
     expect(hasOpenOverlay()).toBe(false)
+  })
+
+  it('触控轴触控目标基线（issue #849 / ADR-0088 决策 6）：芯片、步进器与期间标签按钮本体 ≥48px 高，指针轴不挂零变化', async () => {
+    // 触控轴：hover none + coarse pointer（任一触控信号成立即触控轴）
+    setFakeMedia({ width: 1280, hover: 'none', pointer: 'coarse' })
+    const wrapper = mountRange()
+    await flushPromises()
+    for (const label of ['全部', '当月', '当季', '当年', '去年']) {
+      expect(chip(wrapper, label).attributes('style')).toContain('min-height: 48px')
+    }
+    expect(stepButton(wrapper, 'prev').attributes('style')).toContain('min-height: 48px')
+    expect(stepButton(wrapper, 'next').attributes('style')).toContain('min-height: 48px')
+    // 期间标签按钮（面板触发器）同样达标
+    const labelButton = wrapper.findAllComponents(NButton).find((b) => b.find('.period-label-text').exists())!
+    expect(labelButton.attributes('style')).toContain('min-height: 48px')
+
+    // 指针轴（默认桌面指针环境）：不挂触控目标样式，渲染零变化
+    setFakeMedia({ width: 1280, hover: 'hover', pointer: 'fine' })
+    const desktop = mountRange()
+    await flushPromises()
+    expect(chip(desktop, '全部').attributes('style') ?? '').not.toContain('min-height')
+    expect(stepButton(desktop, 'prev').attributes('style') ?? '').not.toContain('min-height')
+  })
+
+  it('触控轴交互语义不变：点芯片仍 emit 快照、步进仍换算（触控目标只是呈现层，不触语义）', async () => {
+    setFakeMedia({ width: 1280, hover: 'none', pointer: 'coarse' })
+    const wrapper = mountRange()
+    await flushPromises()
+    await clickChip(wrapper, '当月')
+    expect(lastEmitted(wrapper)).toEqual({ from: '2026-01-01', to: '2026-01-31' })
   })
 
   it('presets prop 收窄芯片闭集（报表页日期闭集消费形态，ADR-0057）：无「全部」', async () => {

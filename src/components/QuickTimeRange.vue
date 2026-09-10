@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { NButton, NButtonGroup, NIcon, NSpace } from 'naive-ui'
 import { ChevronBack, ChevronDown, ChevronForward } from '@vicons/ionicons5'
 import AppDatePicker from '@/components/AppDatePicker.vue'
+import { useInputMode } from '@/composables/useInputMode'
 import { api } from '@/api'
 import { t } from '@/i18n'
 import type { ReportDateRange } from '@/types'
@@ -62,6 +63,15 @@ const emit = defineEmits<{
 // 不属于选择状态源——快照区间的唯一事实源恒在调用方。
 const nowTick = ref(Date.now())
 let nowTicker: ReturnType<typeof setInterval> | undefined
+
+// 触控轴触控目标基线（issue #849 / ADR-0088 决策 6，全局验收基线 ≥48px）：
+// 芯片、步进箭头与期间标签按钮本体 min-height 48px。本体增高而不用伪元素外扩
+//（touch-hit-area）：芯片/箭头在按钮组内紧邻，外扩热区会横向互侵，本体增高
+// 无重叠面；按输入轴判定（平板横屏 = 桌面档 + 触控轴同样达标），指针轴不挂零变化。
+// 交互语义零变化：选择产出仍只经 update:modelValue 回流调用方。
+const inputMode = useInputMode()
+const isTouch = computed(() => inputMode.value === 'touch')
+const TOUCH_TARGET_STYLE = { minHeight: '48px' }
 
 /** 当前点亮芯片：当前区间恰为某预设定义（相对今天）时返回该预设，跨期自动熄灭。 */
 const activePreset = computed(() =>
@@ -236,6 +246,7 @@ onBeforeUnmount(() => {
         :type="activePreset === p ? 'primary' : 'default'"
         :quaternary="activePreset !== p"
         :aria-pressed="activePreset === p"
+        :style="isTouch ? TOUCH_TARGET_STYLE : undefined"
         @click="onPresetSelect(p)"
       >
         {{ presetLabel(p) }}
@@ -245,6 +256,7 @@ onBeforeUnmount(() => {
       <NButton
         size="small"
         quaternary
+        :style="isTouch ? TOUCH_TARGET_STYLE : undefined"
         :disabled="!canStepPrev"
         :aria-label="t('quickTimeRange.period.prev')"
         @click="onStepPeriod(-1)"
@@ -260,6 +272,7 @@ onBeforeUnmount(() => {
         <NButton
           size="small"
           quaternary
+          :style="isTouch ? TOUCH_TARGET_STYLE : undefined"
           aria-haspopup="dialog"
           :aria-expanded="periodPanelOpen"
           @keydown.enter.prevent="periodPanelOpen = true"
@@ -286,6 +299,7 @@ onBeforeUnmount(() => {
       <NButton
         size="small"
         quaternary
+        :style="isTouch ? TOUCH_TARGET_STYLE : undefined"
         :disabled="!canStepNext"
         :aria-label="t('quickTimeRange.period.next')"
         @click="onStepPeriod(1)"
