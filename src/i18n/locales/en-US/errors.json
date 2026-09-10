@@ -87,9 +87,10 @@
     "category-unsupported": "transaction type {0} cannot carry a category",
     "merchant-id-and-name-conflict": "merchant_id and merchant_name cannot both be provided",
     "kind-unsupported": "transaction type {0} is not supported yet (not implemented in MVP)",
-    "replay-unsupported": "sync replay for transaction type {0} is not wired yet",
     "policy-unsupported": "Transaction kind {0} cannot carry a policy",
-    "funding-unsupported": "transaction type {0} cannot carry a funding account"
+    "funding-unsupported": "transaction type {0} cannot carry a funding account",
+    "convert-fields-missing": "this conversion operation lacks the fields required for sync replay (produced by an earlier version) and cannot be replayed here; delete and re-enter the conversion on the source device, then sync again",
+    "convert-carried-cost-mismatch": "conversion carried-cost check mismatch (source {0}, local rebuild {1}, row amount {2}); parked for review"
   },
   "funding": {
     "account-not-found": "funding account does not exist or has been deleted: {0}",

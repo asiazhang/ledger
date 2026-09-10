@@ -42,6 +42,7 @@ fn create_appends_one_op_with_source_folding() {
         id,
         row,
         investment,
+        ..
     }) = &op.command
     else {
         panic!("应为 create 命令，实际: {:?}", op.command);
@@ -167,6 +168,7 @@ fn buy_op_carries_investment_fields_for_audit() {
         id: cid,
         row,
         investment,
+        ..
     }) = &ops[0].command
     else {
         panic!("应为 create 命令");
@@ -181,4 +183,55 @@ fn buy_op_carries_investment_fields_for_audit() {
     assert!((inv.quantity - 10.0).abs() < f64::EPSILON);
     assert_eq!(inv.price_cents, 15000);
     assert_eq!(inv.fee_cents, 100);
+}
+
+#[test]
+fn convert_op_carries_convert_fields_and_carried_cost() {
+    let conn = test_support::open();
+    crate::test_support::seed_account(&conn, "acc-cv", "基金户", "investment", "CNY", 0);
+    crate::test_support::seed_instrument(&conn, "inst-out", "006793", "转出基金", "CNY", "unknown");
+    crate::test_support::seed_instrument(&conn, "inst-in", "519700", "转入基金", "CNY", "unknown");
+    create_transaction_internal(&conn, make_buy_input("acc-cv", "inst-out", 10.0, 10_000, 0))
+        .unwrap();
+
+    let mut input = make_input("acc-cv", TransactionKind::Convert, 0, "2026-02-01");
+    input.instrument_id = Some("inst-out".into());
+    input.quantity = Some(10.0);
+    input.to_instrument_id = Some("inst-in".into());
+    input.to_quantity = Some(10.0);
+    input.out_amount_cents = Some(1_100);
+    input.in_amount_cents = Some(1_100);
+    input.fee_cents = Some(0);
+    let convert_id = create_transaction_internal(&conn, input).unwrap().id;
+
+    let ops = ops(&conn);
+    assert_eq!(ops.len(), 2, "建仓 + 转换各一条 op");
+    let DomainCommand::Transaction(TransactionCommand::Create {
+        id,
+        row,
+        investment,
+        convert,
+    }) = &ops[1].command
+    else {
+        panic!("应为 create 命令，实际: {:?}", ops[1].command);
+    };
+    assert_eq!(id, &convert_id);
+    assert_eq!(row.kind, TransactionKind::Convert);
+    assert_eq!(
+        row.amount_cents, 1_000,
+        "行金额锚点 = 源端 FIFO 结转成本随 op 携带"
+    );
+    assert!(investment.is_none(), "转换不携 buy/sell 语义字段");
+    let fields = convert.as_ref().expect("转换 op 应携带转换字段");
+    assert_eq!(fields.instrument_id, "inst-out");
+    assert!((fields.quantity - 10.0).abs() < f64::EPSILON);
+    assert_eq!(fields.to_instrument_id, "inst-in");
+    assert!((fields.to_quantity - 10.0).abs() < f64::EPSILON);
+    assert_eq!(fields.out_amount_cents, 1_100);
+    assert_eq!(fields.in_amount_cents, 1_100);
+    assert_eq!(fields.fee_cents, 0);
+    assert_eq!(
+        fields.carried_cost_cents, 1_000,
+        "结转成本由源端算定随命令携带"
+    );
 }

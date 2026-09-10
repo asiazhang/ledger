@@ -12,6 +12,8 @@
 //! - [`insurance`]：保司字典 + 保单全域 op 产出、依赖缺失挂起重投递自愈（issue #860）
 //! - [`investment`]：投资域与 AI 导入路径全域 op 产出——buy/sell 三件套重放、标的字典、
 //!   汇率/现价/手动报价与 IdempotencyKey 去重独立性（issue #861）
+//! - [`convert`]：基金转换的语义命令重放——create/update/delete 三 op 收敛、
+//!   结转成本随命令携带与本地 FIFO 重建、schema 超前挂起与旧载荷兼容（issue #980）
 //! - [`item`]：物品全域 op 产出、源端折算随行（issue #860）
 //! - [`physical_asset`]：实物资产全域 op 产出、并发估值全部存活（issue #860）
 //! - [`scheduled_plan`]：定时计划全域 op 产出与收敛（issue #860）
@@ -26,6 +28,7 @@ mod budget;
 mod channel;
 mod checkpoint;
 pub(crate) mod common;
+mod convert;
 mod device;
 mod engine;
 mod envelope;

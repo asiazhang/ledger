@@ -9,7 +9,7 @@ use crate::error::{AppError, Result};
 use crate::sync_engine::device_id;
 use crate::transaction::amount;
 use crate::transaction::amount::TransactionKind;
-use crate::transaction::command::InvestmentCommandFields;
+use crate::transaction::command::{ConvertCommandFields, InvestmentCommandFields};
 use crate::transaction::{ConvertFields, NormalizedTransaction, TransactionInput};
 
 /// 查询账户本位币代码（原 `commands::fx::account_currency_code`，随投资域归位
@@ -51,6 +51,16 @@ fn fetch_instrument_type(
             &[instrument_id],
         )
     })
+}
+
+/// 「可卖出数量不足」码化错误（buy/sell/convert 的 FIFO 守卫共用单点）：本地
+/// prepare 与重放计划重建同一口径（同码同文案同插值参数），两端与两路径不漂移。
+fn insufficient_holding_error(total_available: f64, quantity: f64) -> AppError {
+    AppError::codedp(
+        "trade.insufficient-holding",
+        format!("可卖出数量不足，当前持有 {total_available}，尝试卖出 {quantity}"),
+        &[&total_available.to_string(), &quantity.to_string()],
+    )
 }
 
 /// 投资交易对外出口（issue #72 / spec #69）：`prepare / apply / revert` 三件套 +
@@ -403,13 +413,7 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
     let lots: Vec<ActiveLot> = fifo_active_lots(conn, &input.account_id, &instrument_id)?;
     let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
     if total_available < quantity {
-        let avail = total_available.to_string();
-        let qty = quantity.to_string();
-        return Err(AppError::codedp(
-            "trade.insufficient-holding",
-            format!("可卖出数量不足，当前持有 {total_available}，尝试卖出 {quantity}"),
-            &[&avail, &qty],
-        ));
+        return Err(insufficient_holding_error(total_available, quantity));
     }
 
     Ok(SellPlan {
@@ -436,6 +440,19 @@ fn prepare_sell(conn: &Connection, input: &TransactionInput) -> Result<SellPlan>
         lots,
         gross_proceeds_cents: gross_proceeds,
     })
+}
+
+/// 转出腿展示单价：确认单金额 ÷ 份额反算到万分之一元（金额权威、单价反算，
+/// 与场外基金同款）。录入与重放共用本单点（同一公式，两端不得算出不同单价）。
+fn derived_out_price_cents(out_amount_cents: i64, quantity: f64) -> Result<i64> {
+    let price_cents = (out_amount_cents as f64 * PRICE_UNITS_PER_FEN / quantity).round() as i64;
+    if price_cents <= 0 {
+        return Err(AppError::coded(
+            "trade.derived-price-positive",
+            "反算单价必须大于 0（确认金额过小或份额过大）",
+        ));
+    }
+    Ok(price_cents)
 }
 
 /// 校验并归一化一笔基金转换（不落库）。创建与修改共用。
@@ -516,14 +533,9 @@ fn prepare_convert(conn: &Connection, input: &TransactionInput) -> Result<Conver
             "转换转入金额必须大于 0",
         ));
     }
-    // 转出腿展示单价：确认单金额 ÷ 份额反算到万分之一元（金额权威、单价反算，与场外基金同款）。
-    let price_cents = (out_amount_cents as f64 * PRICE_UNITS_PER_FEN / quantity).round() as i64;
-    if price_cents <= 0 {
-        return Err(AppError::coded(
-            "trade.derived-price-positive",
-            "反算单价必须大于 0（确认金额过小或份额过大）",
-        ));
-    }
+    // 转出腿展示单价：确认单金额 ÷ 份额反算到万分之一元（金额权威、单价反算，
+    // 与场外基金同款）；录入与重放共用同一公式（单点归属，两端不得算出不同单价）。
+    let price_cents = derived_out_price_cents(out_amount_cents, quantity)?;
     ensure_investment_account(
         conn,
         &input.account_id,
@@ -550,18 +562,12 @@ fn prepare_convert(conn: &Connection, input: &TransactionInput) -> Result<Conver
     let lots = fifo_active_lots(conn, &input.account_id, &instrument_id)?;
     let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
     if total_available < quantity {
-        let avail = total_available.to_string();
-        let qty = quantity.to_string();
-        return Err(AppError::codedp(
-            "trade.insufficient-holding",
-            format!("可卖出数量不足，当前持有 {total_available}，尝试卖出 {quantity}"),
-            &[&avail, &qty],
-        ));
+        return Err(insufficient_holding_error(total_available, quantity));
     }
     // 转出腿 FIFO 消耗与逐批次结转成本（含耗尽批次闭合）在 prepare 阶段算定：
     // 它是行金额锚点与转入批次成本的唯一依据，apply 原样落消耗记录与批次。
     let consumed = plan_lot_consumption(conn, &lots, quantity)?;
-    let carried_cost_cents: i64 = consumed.iter().map(|c| c.cost_cents).sum();
+    let carried_cost_cents = total_consumed_cost(&consumed);
     let amount_native_cents =
         amount::convert_to_native(conn, carried_cost_cents, &account_currency)?;
 
@@ -662,6 +668,12 @@ pub(crate) struct Consumption {
     pub(crate) lot: ActiveLot,
     /// 本次消耗成本（分）——卖出为匹配成本、转换为结转成本。
     pub(crate) cost_cents: i64,
+}
+
+/// 逐批次消耗成本合计（分）：即转换的**结转成本**——行金额锚点与转入批次成本
+/// 来源（ADR-0099 决策 3）。录入、产出与重放共用本单点，不得各算各的。
+fn total_consumed_cost(consumed: &[Consumption]) -> i64 {
+    consumed.iter().map(|c| c.cost_cents).sum()
 }
 
 /// 该批次此前已消耗成本合计（分）：卖出匹配与转换转出两条消耗记录同口径求和。
@@ -1052,6 +1064,14 @@ pub struct ConvertPlan {
     pub(crate) consumed: Vec<Consumption>,
 }
 
+impl ConvertPlan {
+    /// 结转成本合计（分）：见 [`total_consumed_cost`]。产出侧与重放侧均经本
+    /// 访问器取值（单一来源）。
+    pub(crate) fn carried_cost_cents(&self) -> i64 {
+        total_consumed_cost(&self.consumed)
+    }
+}
+
 /// 投资交易计划：归一化后的交易行 + kind 特有副作用数据（不落库）。
 pub enum Plan {
     Buy(BuyPlan),
@@ -1194,7 +1214,7 @@ fn write_convert_side_effects(conn: &Connection, id: &str, plan: &ConvertPlan) -
     }
     // 转入腿：以结转成本建立批次（每份成本 = 结转成本 ÷ 转入份额，单次舍入）——
     // 批次锚定本转换行，既有「耗尽批次成本闭合」在此闭合到结转成本。
-    let carried_cost_cents: i64 = plan.consumed.iter().map(|c| c.cost_cents).sum();
+    let carried_cost_cents = plan.carried_cost_cents();
     let cost_per_unit_cents =
         (carried_cost_cents as f64 * PRICE_UNITS_PER_FEN / plan.to_quantity).round() as i64;
     conn.execute(
@@ -1335,16 +1355,7 @@ pub(crate) fn replay_plan(
                 fifo_active_lots(conn, &row.account_id, &fields.instrument_id)?;
             let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
             if total_available < fields.quantity {
-                let avail = total_available.to_string();
-                let qty = fields.quantity.to_string();
-                return Err(AppError::codedp(
-                    "trade.insufficient-holding",
-                    format!(
-                        "可卖出数量不足，当前持有 {total_available}，尝试卖出 {}",
-                        fields.quantity
-                    ),
-                    &[&avail, &qty],
-                ));
+                return Err(insufficient_holding_error(total_available, fields.quantity));
             }
             Ok(Plan::Sell(SellPlan {
                 normalized: row.clone(),
@@ -1356,10 +1367,9 @@ pub(crate) fn replay_plan(
                 gross_proceeds_cents,
             }))
         }
-        // 行为层重放入口穷尽分派保证仅转发 buy/sell；其余 kind 属编排错误，
-        // 显式拒绝防误用（不引入 panic 构造，ADR-0060）。
-        // 转换的同步命令字段（ConvertCommandFields）随同步票（issue #980）落地；
-        // 在此之前重放端不落转换副作用（防半套数据），由行为层重放入口先行拒绝。
+        // 行为层重放入口穷尽分派保证仅转发 buy/sell 至本函数（转换走
+        // [`replay_convert_plan`]）；其余 kind 属编排错误，显式拒绝防误用
+        //（不引入 panic 构造，ADR-0060）。
         TransactionKind::Income
         | TransactionKind::Expense
         | TransactionKind::Transfer
@@ -1370,6 +1380,131 @@ pub(crate) fn replay_plan(
             "投资层重放仅处理 buy/sell，收到: {kind}"
         ))),
     }
+}
+
+/// 转换（convert）重放形态的计划重建（issue #980 / ADR-0099 决策 6）：从随命令
+/// 携带的转换字段与归一化行重建 [`apply`] 所需计划。
+///
+/// 与本地 [`prepare_convert`] 的分工：归一化行（金额锚点 = 结转成本、本位币折算
+/// 结果）与两侧确认金额/份额随命令携带，重放不重折算、不读本地汇率表；**逐批次
+/// 消耗记录按本地 FIFO 快照重建**（转出时的 FIFO 状态在源端后续交易发生后同样
+/// 不可重建，两端只能靠同序重放得到同一快照，ADR-0091 决策 3）；源端算定的
+/// `carried_cost_cents` 是权威比对基准——本地重建的逐批次成本合计与它不一致
+/// （或与行金额锚点不一致）即本地快照发散，显式失败挂起，不静默落出错误成本基础。
+///
+/// 依赖缺失（标的不存在、账户非投资、可卖数量不足）以与本地写入同码的码化错误
+/// 上抛，由同步引擎挂起进队列（issue #856），依赖方 op 补齐后重投递自然重试。
+pub(crate) fn replay_convert_plan(
+    conn: &Connection,
+    row: &NormalizedTransaction,
+    fields: &ConvertCommandFields,
+) -> Result<Plan> {
+    // 与本地 prepare 同序的守卫：身份（两标的互异 + 存在）→ 数值 → 账户 → 持仓。
+    if fields.instrument_id == fields.to_instrument_id {
+        return Err(AppError::coded(
+            "trade.convert-same-instrument",
+            "转换的转出标的与转入标的不能相同",
+        ));
+    }
+    fetch_instrument_type(
+        conn,
+        &fields.instrument_id,
+        "转换转出",
+        "trade.convert-instrument-not-found",
+    )?;
+    fetch_instrument_type(
+        conn,
+        &fields.to_instrument_id,
+        "转换转入",
+        "trade.convert-to-instrument-not-found",
+    )?;
+    if fields.quantity <= 0.0 {
+        return Err(AppError::coded(
+            "trade.convert-quantity-positive",
+            "转换转出份额必须大于 0",
+        ));
+    }
+    if fields.to_quantity <= 0.0 {
+        return Err(AppError::coded(
+            "trade.convert-to-quantity-positive",
+            "转换转入份额必须大于 0",
+        ));
+    }
+    if fields.out_amount_cents <= 0 {
+        return Err(AppError::coded(
+            "trade.convert-out-amount-positive",
+            "转换转出金额必须大于 0",
+        ));
+    }
+    if fields.in_amount_cents <= 0 {
+        return Err(AppError::coded(
+            "trade.convert-in-amount-positive",
+            "转换转入金额必须大于 0",
+        ));
+    }
+    // 展示单价由确认单金额 ÷ 份额反算（与本地录入同一公式单点）。
+    let price_cents = derived_out_price_cents(fields.out_amount_cents, fields.quantity)?;
+    ensure_investment_account(
+        conn,
+        &row.account_id,
+        "trade.convert-account-not-investment",
+        "转换交易必须使用投资账户",
+    )?;
+    // 不跨账户（与本地录入同码）：两腿是同一投资账户内的两个标的，携带转入账户即
+    // 伪造/漂移载荷，重放不得绕开本地不变量（CONTEXT-sync「经同一接缝执行」）。
+    if row.to_account_id.is_some() {
+        return Err(AppError::coded(
+            "trade.convert-to-account-forbidden",
+            "转换不跨账户：转出与转入必须同属一个投资账户，不能携带转入账户",
+        ));
+    }
+    // 出资账户准入（与本地录入共用同一条接缝）：convert 不在出资闭集内，携带即拒绝。
+    crate::transaction::funding::validate_funding_account(
+        conn,
+        TransactionKind::Convert,
+        row.funding_account_id.as_deref(),
+        &row.currency_code,
+    )?;
+    // FIFO 批次快照在本端重建（排序键 rowid 的跨端确定性依据同 [`prepare_sell`]）：
+    // 同序重放 ⇒ 与源端同状态 ⇒ 同一逐批次消耗结果。
+    let lots = fifo_active_lots(conn, &row.account_id, &fields.instrument_id)?;
+    let total_available: f64 = lots.iter().map(|l| l.remaining_quantity).sum();
+    if total_available < fields.quantity {
+        return Err(insufficient_holding_error(total_available, fields.quantity));
+    }
+    let consumed = plan_lot_consumption(conn, &lots, fields.quantity)?;
+    // 源端结转成本与本地重建的逐批次成本合计必须一致（兼行金额锚点校验）：
+    // 不一致即本地 FIFO 快照发散（前序 op 缺失或非确定），挂起待裁决，
+    // 不静默落出错误成本基础（ADR-0099 决策 6「不静默错账」）。
+    let rebuilt_cost_cents = total_consumed_cost(&consumed);
+    if rebuilt_cost_cents != fields.carried_cost_cents
+        || row.amount_cents != fields.carried_cost_cents
+    {
+        return Err(AppError::codedp(
+            "transaction.convert-carried-cost-mismatch",
+            format!(
+                "转换结转成本校验不一致（源端 {}，本机重建 {rebuilt_cost_cents}，行金额 {}），已挂起等待处理",
+                fields.carried_cost_cents, row.amount_cents
+            ),
+            &[
+                &fields.carried_cost_cents.to_string(),
+                &rebuilt_cost_cents.to_string(),
+                &row.amount_cents.to_string(),
+            ],
+        ));
+    }
+    Ok(Plan::Convert(ConvertPlan {
+        normalized: row.clone(),
+        instrument_id: fields.instrument_id.clone(),
+        to_instrument_id: fields.to_instrument_id.clone(),
+        quantity: fields.quantity,
+        to_quantity: fields.to_quantity,
+        price_cents,
+        fee_cents: fields.fee_cents,
+        out_amount_cents: fields.out_amount_cents,
+        in_amount_cents: fields.in_amount_cents,
+        consumed,
+    }))
 }
 
 /// 账户投资类型校验（重放形态）：行内引用的账户必须存在且为投资类型；

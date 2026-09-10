@@ -4,7 +4,7 @@
 //! 的 op 产出与 IdempotencyKey 去重独立性。
 
 use super::super::{OpOutcome, parked_ops, read_ops};
-use super::common::{seed_device, wire_in, wire_out};
+use super::common::{read_lot, read_lot_sale, seed_device, wire_in, wire_out};
 use crate::investment::{
     InstrumentInput, InstrumentType, add_fund_by_code_with, create_exchange_rate,
     create_instrument, create_market_price, delete_instrument, record_manual_price,
@@ -58,35 +58,6 @@ fn sell_input(
         kind: TransactionKind::Sell,
         ..buy_input(account_id, instrument_id, quantity, price, fee)
     }
-}
-
-/// 持仓批次业务快照（自然键 = 账户 × 标的 × 买入交易；批次行 id 各端独立生成，
-/// 不参与状态等值判定——与交易行审计列同一取舍）。
-fn read_lot(conn: &rusqlite::Connection, buy_tx_id: &str) -> Option<(f64, f64, i64, String)> {
-    conn.query_row(
-        "SELECT initial_quantity, remaining_quantity, cost_per_unit_cents, currency_code \
-         FROM security_lots WHERE buy_transaction_id = ?1",
-        [buy_tx_id],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-    )
-    .ok()
-}
-
-/// 卖出匹配业务快照（自然键 = 卖出交易 × 买入交易；匹配行 id / lot id 各端独立）。
-fn read_lot_sale(
-    conn: &rusqlite::Connection,
-    sell_tx_id: &str,
-    buy_tx_id: &str,
-) -> Option<(f64, i64, i64)> {
-    conn.query_row(
-        "SELECT s.quantity, s.cost_per_unit_cents, s.realized_pnl_cents \
-         FROM security_lot_sales s \
-         JOIN security_lots l ON l.id = s.lot_id \
-         WHERE s.sell_transaction_id = ?1 AND l.buy_transaction_id = ?2",
-        [sell_tx_id, buy_tx_id],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-    )
-    .ok()
 }
 
 #[test]
@@ -195,6 +166,13 @@ fn buy_delete_replay_cleans_lot() {
     assert_eq!(deleted(&conn_b), 1, "删除重放后同软删");
     assert_eq!(read_lot(&conn_a, &buy_id), None, "买入删除清理持仓批次");
     assert_eq!(read_lot(&conn_b, &buy_id), None, "删除重放同样清理批次");
+    // 删除重放不产出本地 op（ADR-0091：重放不得追加本地 op）：两端 op 日志全等
+    // ——否则重放端会再发布一条 Delete，对端重放命中已删行即挂起（issue #980）。
+    assert_eq!(
+        read_ops(&conn_a).unwrap(),
+        read_ops(&conn_b).unwrap(),
+        "删除重放不产 op，两端日志全等"
+    );
 }
 
 #[test]

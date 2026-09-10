@@ -87,9 +87,10 @@
     "category-unsupported": "交易类型 {0} 不能携带分类",
     "merchant-id-and-name-conflict": "merchant_id 与 merchant_name 不可同时提供",
     "kind-unsupported": "交易类型 {0} 暂不支持（MVP 未实现）",
-    "replay-unsupported": "交易类型 {0} 的同步重放尚未接入",
     "policy-unsupported": "交易类型 {0} 不能挂保单",
-    "funding-unsupported": "交易类型 {0} 不能携带出资账户"
+    "funding-unsupported": "交易类型 {0} 不能携带出资账户",
+    "convert-fields-missing": "该转换操作缺少同步所需的转换字段（产生自较早版本），无法在本机重放；请在来源设备上删除并重新录入该转换后再次同步",
+    "convert-carried-cost-mismatch": "转换结转成本校验不一致（源端 {0}，本机重建 {1}，行金额 {2}），已挂起等待处理"
   },
   "funding": {
     "account-not-found": "出资账户不存在或已删除: {0}",
