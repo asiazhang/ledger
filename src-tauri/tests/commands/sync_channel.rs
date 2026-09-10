@@ -47,7 +47,7 @@ static ISOLATE: Once = Once::new();
 /// HOME 重定向（进程内一次）：mock runtime 回退路径解析与 `$HOME` 派生的默认
 /// 数据目录落在进程专属临时目录。SAFETY：`set_var` 自 Rust 2024 起 unsafe；
 /// 调用点在各测试函数首行，本测试目标无其他代码并发读取 `$HOME`。
-fn isolate_home() {
+pub(crate) fn isolate_home() {
     ISOLATE.call_once(|| {
         let root = std::env::temp_dir().join(format!(
             "ledger-syncchannel-it-{}",
@@ -61,7 +61,7 @@ fn isolate_home() {
 
 /// 引导登记态在位的 mock 应用 + 独立临时目录（不含库连接；连接由调用方按
 /// 明文/密文形态自行挂载，tauri manage 同型仅首次生效）。
-fn fresh_app(tag: &str) -> (tauri::App<tauri::test::MockRuntime>, PathBuf) {
+pub(crate) fn fresh_app(tag: &str) -> (tauri::App<tauri::test::MockRuntime>, PathBuf) {
     let dir = std::env::temp_dir().join(format!(
         "ledger-syncchannel-it-{tag}-{}",
         tauri_app_lib::db::new_uuid()
@@ -74,7 +74,7 @@ fn fresh_app(tag: &str) -> (tauri::App<tauri::test::MockRuntime>, PathBuf) {
 }
 
 /// 一台「设备」：mock 应用 + 独立临时目录文件库 + 真实引导登记态（BootCell）。
-fn device_app(tag: &str) -> (tauri::AppHandle<tauri::test::MockRuntime>, PathBuf) {
+pub(crate) fn device_app(tag: &str) -> (tauri::AppHandle<tauri::test::MockRuntime>, PathBuf) {
     let (app, dir) = fresh_app(tag);
     app.manage(db::open_db_in(&dir).unwrap());
     (app.handle().clone(), dir)
@@ -86,7 +86,7 @@ fn assert_code(err: AppError, code: &str) {
 }
 
 /// 支出交易输入构造器（行为前置经壳层公开命令，op 产出随之发生）。
-fn expense_input(account_id: &str, amount_cents: i64, note: &str) -> TransactionInput {
+pub(crate) fn expense_input(account_id: &str, amount_cents: i64, note: &str) -> TransactionInput {
     TransactionInput {
         merchant_name: None,
         policy_id: None,
@@ -109,11 +109,14 @@ fn expense_input(account_id: &str, amount_cents: i64, note: &str) -> Transaction
     }
 }
 
-const STUB_USER: &str = "alice";
-const STUB_PASS: &str = "app-pass";
+pub(crate) const STUB_USER: &str = "alice";
+pub(crate) const STUB_PASS: &str = "app-pass";
 
 /// 两端配置同一 WebDAV 桩与同一同步空间（跨端共识的世界身份）。
-async fn configure_channel(app: &tauri::AppHandle<tauri::test::MockRuntime>, base_url: &str) {
+pub(crate) async fn configure_channel(
+    app: &tauri::AppHandle<tauri::test::MockRuntime>,
+    base_url: &str,
+) {
     let input = SyncChannelConfigInput {
         base_url: base_url.into(),
         username: STUB_USER.into(),

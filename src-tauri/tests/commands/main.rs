@@ -20,3 +20,4 @@
 
 mod books;
 mod sync_channel;
+mod sync_trigger;

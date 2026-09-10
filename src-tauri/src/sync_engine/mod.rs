@@ -77,9 +77,9 @@ pub use transport::{
     webdav::{WebDavConfig, WebDavTransport},
 };
 pub use trigger::{
-    SessionEnvelope, SyncChannel, SyncChannelConfig, build_channel, configured_channel,
-    run_auto_round, run_round_once, start_sync_scheduler, start_triggers, sync_after_write,
-    sync_on_start,
+    SessionEnvelope, SyncChannel, SyncChannelConfig, TriggerTimings, build_channel,
+    configured_channel, run_auto_round, run_round_once, start_sync_scheduler,
+    start_sync_scheduler_with, start_triggers, sync_after_write, sync_on_start,
 };
 
 #[cfg(test)]
