@@ -41,7 +41,7 @@ use crate::write_entry::{Outcome, write_entry};
         ("merchant_id" = Option<String>, Query, description = "按商户过滤（含软删商户的历史交易）"),
         ("category_id" = Option<String>, Query, description = "按分类精确过滤（不含子分类，含软删分类的历史交易）"),
         ("uncategorized_only" = Option<bool>, Query, description = "true 时仅返回无分类交易；与 category_id 同携按 AND 组合"),
-        ("kind" = Option<TransactionKind>, Query, description = "income / expense / transfer / buy / sell / refund（闭集枚举，非法值 4xx）"),
+        ("kind" = Option<TransactionKind>, Query, description = "交易类型过滤（闭集枚举，非法值 4xx；含 convert 基金转换）"),
         ("kinds" = Option<Vec<TransactionKind>>, Query, description = "类型集合过滤（issue #581）：逗号分隔单参数如 expense,refund，命中 kind IN (...)；与其余维度 AND 组合，非法值 4xx"),
         ("limit" = Option<i64>, Query, description = "取前 N 条，缺省返回全部；传 page_size 时分页路径生效"),
         ("page" = Option<usize>, Query, description = "页码，从 1 开始，默认 1"),

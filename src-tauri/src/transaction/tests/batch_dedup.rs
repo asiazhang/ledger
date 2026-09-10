@@ -156,6 +156,58 @@ fn dedup_hash_includes_funding_account_when_present() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// 基金转换腿字段纳入哈希（ADR-0099 / issue #978）：多腿转换单拆成多条 convert
+// 记录（每腿一条），仅日期/账户/金额占位相同的两腿必须判为不同内容；非 convert
+// 输入的哈希与旧公式逐字节同输入（历史行兼容）。
+// ---------------------------------------------------------------------------
+
+/// 构造一笔 convert 输入（腿字段由调用方给定），其余字段取中性默认。
+fn convert_input(to_instrument_id: &str, out_amount_cents: i64) -> TransactionInput {
+    let base = make_input("acc-cv", TransactionKind::Income, 0, "2026-07-01");
+    TransactionInput {
+        kind: TransactionKind::Convert,
+        to_instrument_id: Some(to_instrument_id.into()),
+        to_quantity: Some(10.0),
+        out_amount_cents: Some(out_amount_cents),
+        in_amount_cents: Some(out_amount_cents),
+        ..base
+    }
+}
+
+#[test]
+fn dedup_hash_includes_convert_leg_fields() {
+    let first = convert_input("inst-b", 1000);
+    let second = convert_input("inst-c", 1000);
+    assert_ne!(
+        compute_dedup_hash(&first),
+        compute_dedup_hash(&second),
+        "多腿转换仅转入标的不同的两腿不应互相去重"
+    );
+    // 同一腿内容重复提交：哈希稳定（幂等重跑仍命中）。
+    assert_eq!(
+        compute_dedup_hash(&first),
+        compute_dedup_hash(&convert_input("inst-b", 1000))
+    );
+    // 金额也入哈希（不同腿的确认金额不同时同样区分）。
+    assert_ne!(
+        compute_dedup_hash(&first),
+        compute_dedup_hash(&convert_input("inst-b", 2000))
+    );
+}
+
+#[test]
+fn dedup_hash_unchanged_for_non_convert_inputs() {
+    // 非 convert 输入与旧公式逐字节同输入：既有已知向量（无出资账户）仍成立。
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-1", "现金", "cash", "CNY", 0);
+    let input = make_input("acc-1", TransactionKind::Income, 1000, "2026-07-01");
+    assert_eq!(
+        compute_dedup_hash(&input),
+        "d5a4ee5fa04913672a319a06c454283d74d312f13506a27fc81c72b09602a558"
+    );
+}
+
 #[test]
 fn dedup_hash_matches_known_vector_with_funding_account() {
     let conn = test_support::open();

@@ -191,6 +191,8 @@ export function makeTransaction(partial: Partial<Transaction> & { id: string }):
     is_deleted: false,
     // 来源列默认无来源（列表/搜索读路径才填充）；来源场景显式传 source
     source: null,
+    // 转换扩展默认无（仅 convert 行由列表/搜索读路径填充）；转换场景显式传 convert
+    convert: null,
     ...partial,
   }
 }

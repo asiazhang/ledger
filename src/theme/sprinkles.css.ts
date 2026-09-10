@@ -12,7 +12,7 @@ import { appVars } from './app-theme.css.ts'
  *   原子类不烘焙取值，随根元素主题类整体换装；中性 token 尚未覆盖的轴
  *   （间距、字号等）不入 sprinkles，待 token 化后再扩，避免第二套常量来源。
  * - **语义色不入合同**（issue #888 / Design Tokens 词条边界）：业务语义色
- *   （六种交易类型）维持 `semantic-colors.ts` 既有接缝，新方案需要时直接消费
+ *   （七种交易类型）维持 `semantic-colors.ts` 既有接缝，新方案需要时直接消费
  *   该接缝，不并入合同变量、不在此重复定义。
  * - 布尔轴（display/对齐族）是无条件原子，值集按需增补，不预设全量。
  */

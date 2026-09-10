@@ -131,7 +131,7 @@ async fn contract_request_body_and_responses() {
 
 /// kind 闭集枚举移植到方言形状（移植自
 /// `test_openapi_transaction_kind_is_lowercase_enum`）：`Transaction.kind` 引用
-/// schema 名，`TransactionKind` 为 8 个小写值的 `|` 闭集。
+/// schema 名，`TransactionKind` 为 9 个小写值的 `|` 闭集。
 #[tokio::test]
 async fn contract_kind_enum_is_closed_lowercase_set() {
     let doc = fetch_contract().await;
@@ -143,8 +143,8 @@ async fn contract_kind_enum_is_closed_lowercase_set() {
             .map(|s| s.to_owned())
             .ok_or("应为字符串表达式")
             .unwrap(),
-        "income|expense|transfer|refund|buy|sell|dividend|split",
-        "kind 枚举应为闭集的 8 个小写值"
+        "income|expense|transfer|refund|buy|sell|dividend|split|convert",
+        "kind 枚举应为闭集的 9 个小写值"
     );
     let tx_kind = &schemas["Transaction"]["kind"];
     assert_eq!(
@@ -344,7 +344,9 @@ async fn contract_transaction_schemas_carry_funding_account() {
 /// ASCII ≈ 1 token / 3.6 字符、中文 ≈ 0.95 token / 字符——原型实测 ~17KB
 /// ≈ ~5.1K tokens（契约单次拉取自 ~14.0K tokens 降 63%）。触线 6K tokens
 /// （≈20KB）须人工决策提预算或瘦身，不允许契约膨胀无声挤占 AI 上下文
-/// （延续 #304 / #693 契约膨胀护栏传统）。
+/// （延续 #304 / #693 契约膨胀护栏传统）。基金转换（issue #978）的四个可选字段
+/// 与转换读投影加入后仍在预算内（实测 ≈19.7KB，余量 ≈0.35KB）；触线时按先例先
+/// 瘦身再谈提预算，不擅自抬预算。
 #[tokio::test]
 async fn contract_size_within_budget() {
     let (app, _) = setup_app();

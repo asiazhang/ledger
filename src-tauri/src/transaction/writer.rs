@@ -95,7 +95,7 @@ pub struct NormalizedRow {
 
 /// 校验并按 kind 归一化交易字段，产出可直接 INSERT/UPDATE 的交易行。
 ///
-/// 只处理通用 kind（income/expense/transfer/refund）；buy/sell/dividend/split 属
+/// 只处理通用 kind（income/expense/transfer/refund）；buy/sell/convert/dividend/split 属
 /// 投资层路径（产出归一化行后调 [`insert_row`]/[`update_row`]），收到即报错防误用。
 ///
 /// 语义（与交易行为层通用 kind 写入路径一致，见 `transaction::behavior`）：
@@ -130,7 +130,8 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
         TransactionKind::Buy
         | TransactionKind::Sell
         | TransactionKind::Dividend
-        | TransactionKind::Split => {
+        | TransactionKind::Split
+        | TransactionKind::Convert => {
             return Err(AppError::Invalid(format!(
                 "writer::normalize 仅处理通用交易类型（income/expense/transfer/refund），收到: {}",
                 input.kind

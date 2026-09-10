@@ -9,7 +9,7 @@ import { t } from '@/i18n'
 import MerchantLink from '@/components/MerchantLink.vue'
 import SourceLink from '@/components/SourceLink.vue'
 import AmountCell from '@/components/AmountCell.vue'
-import { kindLabel, KIND_TAG_TYPE, renderAccountCell } from '@/components/transaction-columns'
+import { kindLabel, KIND_TAG_TYPE, displayAmountCents, renderAccountCell } from '@/components/transaction-columns'
 import {
   TRANSACTION_CARD_LIST_CLASS,
   TRANSACTION_CARD_CLASS,
@@ -63,9 +63,10 @@ function hasMeta(row: Transaction): boolean {
   return row.category_id !== null || row.merchant_id !== null
 }
 
-/** 金额文案与语义色（formatAmount / kindSemanticColor 口径不变，归其单点）。 */
+/** 金额文案与语义色（formatAmount / kindSemanticColor 口径不变，归其单点）；
+ * 转换行金额读展示口径单点（转出金额，与表格金额列同源）。 */
 function amountText(row: Transaction): string {
-  return formatAmount(row.amount_native_cents, reference.getCurrency(row.currency_code))
+  return formatAmount(displayAmountCents(row), reference.getCurrency(row.currency_code))
 }
 function amountColor(row: Transaction): string {
   return kindSemanticColor(row.kind, app.theme)

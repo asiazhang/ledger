@@ -41,6 +41,26 @@ pub struct Transaction {
     /// 零数据迁移。仅列表/搜索读路径填充（`attach_sources`）；单笔读回与写入响应
     /// 不做反查，恒为 `None`；无来源交易（手动录入/AI 导入）为 `None`。
     pub source: Option<TransactionSource>,
+    /// 转换两腿扩展（仅 convert，ADR-0099 / 词汇表「基金转换（Conversion）」）：
+    /// 列表/搜索读路径填充，非转换行恒 `None`。
+    /// 列表金额列展示转出金额（`out_amount_cents`），不读行金额锚点（锚点是结转成本）。
+    pub convert: Option<ConvertFields>,
+}
+
+/// 基金转换扩展（ADR-0099）：一笔 convert 两腿的标的、份额与两侧确认金额。
+///
+/// 行金额锚点（`transactions.amount_cents`）= 服务端按 FIFO 消耗算出的**结转成本**，
+/// 不是确认单金额；两侧确认金额存本扩展（展示与多腿分摊口径的输入）。
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ConvertFields {
+    /// 转入标的。
+    pub to_instrument_id: String,
+    /// 转入份额。
+    pub to_quantity: f64,
+    /// 转出金额（分，确认单权威）。
+    pub out_amount_cents: i64,
+    /// 转入金额（分，确认单权威）。
+    pub in_amount_cents: i64,
 }
 
 /// 交易来源类型闭集（spec #704 / issue #706，词汇表「来源列」）：定时计划三形态 /
@@ -159,20 +179,28 @@ pub struct TransactionInput {
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
-    /// 标的 id（仅 buy/sell 需提供）：先用标的搜索端点（`GET /api/v1/instruments`）
-    /// 把源数据中的标的描述解析为 id，未命中再按创建端点幂等新建；
-    /// 引用不存在的标的返回 400（中文错误，可读回自纠）。
+    /// 标的 id（仅 buy/sell/convert 需提供）：先用标的搜索端点
+    /// （`GET /api/v1/instruments`）把源数据中的标的描述解析为 id，未命中再按创建端点
+    /// 幂等新建；引用不存在的标的返回 400（中文错误，可读回自纠）。
     pub instrument_id: Option<String>,
-    /// 成交数量（份，可含小数）：仅 buy/sell 需提供，必须 > 0。
+    /// 成交数量（份，可含小数）：仅 buy/sell/convert 需提供，必须 > 0（convert 为转出份额）。
     pub quantity: Option<f64>,
     /// 成交单价（万分之一元，元 × 10000；价格刻度见 ADR-0038，金额列仍为整数分）：
     /// 非基金标的必填且必须 > 0；场外基金（issue #302 / ADR-0038 金额权威）不提供，
-    /// 由后端按（行金额 ∓ 手续费）÷ 数量反算到万分之一元。
+    /// 由后端按（行金额 ∓ 手续费）÷ 数量反算到万分之一元；convert 不提供（由转出金额 ÷ 转出份额反算）。
     pub price_cents: Option<i64>,
     /// 手续费（整数分，可省，默认 0）：sell 不得超过卖出收入（数量 × 单价，非基金）；
     /// 服务端行金额：非基金按 buy = 数量 × 单价 + 费用、sell = 数量 × 单价 − 费用重算；
-    /// 场外基金以 `amount_cents`（确认单整分金额）为权威，行金额原样采用。
+    /// 场外基金以 `amount_cents`（确认单整分金额）为权威，行金额原样采用；convert 如实记录、不进支出报表。
     pub fee_cents: Option<i64>,
+    /// 转入标的 id（仅 convert）：与 `instrument_id`（转出标的）必须不同。
+    pub to_instrument_id: Option<String>,
+    /// 转入份额（仅 convert，必须 > 0）：转入批次建仓数量。
+    pub to_quantity: Option<f64>,
+    /// 转出金额（仅 convert，整数分，必须 > 0）：确认单转出端金额（列表展示口径）。
+    pub out_amount_cents: Option<i64>,
+    /// 转入金额（仅 convert，整数分，必须 > 0）：确认单转入端金额。
+    pub in_amount_cents: Option<i64>,
     /// 客户端提供的、内容无关的导入幂等键（指向"该交易来自源文件哪一行"）。
     /// 带键时批量导入以其为准去重（同键跳过、内容无关）；无键时回退内容哈希兜底。
     pub idempotency_key: Option<String>,
@@ -182,7 +210,8 @@ pub struct TransactionInput {
 ///
 /// 与 `TransactionInput` 的唯一差异是不含 `idempotency_key`：幂等键不可编辑，只在导入时落定，
 /// 编辑不改变导入身份（修改后重跑同批导入仍按同键去重、不产生重复）。
-/// buy/sell 仍需 `instrument_id`/`quantity`/`price_cents`/`fee_cents`。
+/// buy/sell 仍需 `instrument_id`/`quantity`/`price_cents`/`fee_cents`；convert 不在
+/// 本修改契约内（转换的修改尚未接入，走不到这一个输入形状）。
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct UpdateTransactionInput {
     pub kind: TransactionKind,
@@ -203,7 +232,7 @@ pub struct UpdateTransactionInput {
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
     pub date: String,
-    /// 标的 id（仅 buy/sell 需提供）：与 `TransactionInput.instrument_id` 同一契约；
+    /// 标的 id（仅 buy/sell 需提供）：与 `TransactionInput` 同一契约；
     /// 引用不存在的标的返回 400（中文错误，可读回自纠）。
     pub instrument_id: Option<String>,
     /// 成交数量（份，可含小数）：与 `TransactionInput.quantity` 同一契约，必须 > 0。
@@ -217,7 +246,8 @@ pub struct UpdateTransactionInput {
 impl From<UpdateTransactionInput> for TransactionInput {
     fn from(u: UpdateTransactionInput) -> Self {
         // 幂等键不作为可编辑字段：修改路径忽略请求中的该字段（保留既有行的幂等键），
-        // 此处统一置 None 表达"不写入新幂等键"。
+        // 此处统一置 None 表达"不写入新幂等键"。转换四腿字段同样不在修改契约内
+        // （转换的修改尚未接入，kind 变更与就地修改均被拒，见 `behavior::update`）。
         TransactionInput {
             kind: u.kind,
             amount_cents: u.amount_cents,
@@ -236,6 +266,11 @@ impl From<UpdateTransactionInput> for TransactionInput {
             quantity: u.quantity,
             price_cents: u.price_cents,
             fee_cents: u.fee_cents,
+            // 转换四腿字段不在修改契约内（转换的修改尚未接入）。
+            to_instrument_id: None,
+            to_quantity: None,
+            out_amount_cents: None,
+            in_amount_cents: None,
             idempotency_key: None,
         }
     }
@@ -366,7 +401,7 @@ pub struct TransactionListFilter {
     /// （两条件矛盾，恒为空集）；前端分类维度为单选三态（不过滤/精确/仅无分类），
     /// 不会同时携带两者。
     pub uncategorized_only: Option<bool>,
-    /// 交易类型过滤（income / expense / transfer / buy / sell / refund）。
+    /// 交易类型过滤（income / expense / transfer / buy / sell / refund / dividend / split / convert，闭集枚举）。
     /// 枚举反序列化对未知值报参数错误（400），不再静默传字符串给 SQL。
     pub kind: Option<TransactionKind>,
     /// 交易类型集合过滤（issue #581 报表分类下钻载荷）：命中 `kind IN (...)` 的未删除交易，
@@ -475,6 +510,8 @@ impl FromRow for Transaction {
             policy_id: row.get(18)?,
             // 来源列非库列：FromRow 恒空，由列表/搜索读路径 `attach_sources` 按页填充。
             source: None,
+            // 转换扩展同规：非库列，由列表/搜索读路径 `attach_convert_fields` 按页填充。
+            convert: None,
         })
     }
 }

@@ -26,6 +26,23 @@ export const KIND_TAG_TYPE: Record<TransactionKind, 'success' | 'warning' | 'inf
   transfer: 'default',
   buy: 'default',
   sell: 'default',
+  // 基金转换（ADR-0099）取 info 蓝色标注：与退款同色型但标签文案不同，
+  // 一眼区分于买入/卖出的中性标签（投资类默认色）。
+  convert: 'info',
+}
+
+/**
+ * 列表/卡片金额展示口径单点：基金转换行展示**转出金额**（确认单权威，ADR-0099），
+ * 其余行展示行金额锚点（本位币口径）。
+ *
+ * 转换行的行金额锚点是服务端按 FIFO 消耗算出的**结转成本**（不是用户看到的转出金额），
+ * 故展示必须走扩展字段；扩展缺失（旧数据/直读快照）时回退行金额，不抛错、不显空。
+ * 表格金额列与移动卡片共用本函数，两处各自分支即口径漂移。
+ */
+export function displayAmountCents(row: Transaction): number {
+  return row.kind === 'convert' && row.convert
+    ? row.convert.out_amount_cents
+    : row.amount_native_cents
 }
 
 /** 交易基础列：日期/类型/分类/账户/备注/金额（搜索结果与交易列表共用，只读）。
@@ -149,7 +166,7 @@ export function buildTransactionColumns(
       // 点按弹出全文（悬停一击可达；文案与色在此单点计算后传入）。
       render: (row) =>
         h(AmountCell, {
-          text: formatAmount(row.amount_native_cents, reference.getCurrency(row.currency_code)),
+          text: formatAmount(displayAmountCents(row), reference.getCurrency(row.currency_code)),
           color: kindSemanticColor(row.kind, useAppStore().theme),
         }),
     },

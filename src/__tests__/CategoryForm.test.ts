@@ -141,6 +141,7 @@ describe('CategoryForm.vue', () => {
       merchant_id: null,
       policy_id: null,
       source: null,
+      convert: null,
       refund_of_transaction_id: null,
       note: null,
       date: '2026-02-01',
