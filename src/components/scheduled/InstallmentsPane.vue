@@ -35,11 +35,7 @@ import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import PlanRowActions from '@/components/scheduled/PlanRowActions.vue'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
-import {
-  PLAN_MOBILE_CELL_STYLE,
-  PLAN_MOBILE_SUB_STYLE,
-  planSubLine,
-} from '@/components/scheduled/plan-mobile'
+import { MOBILE_CELL_STYLE, MOBILE_SUB_STYLE, mobileSubLine } from '@/components/mobile-cells'
 import { usePlanFocusLanding } from '@/composables/usePlanFocusLanding'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 
@@ -258,12 +254,12 @@ const columns = computed<DataTableColumns<InstallmentRow>>(() => {
         title: t('scheduled.column.note'),
         key: 'note',
         render: (row) =>
-          h('div', { style: PLAN_MOBILE_CELL_STYLE }, [
+          h('div', { style: MOBILE_CELL_STYLE }, [
             h('span', null, row.plan.core.note ?? '—'),
             h(
               'span',
-              { style: PLAN_MOBILE_SUB_STYLE },
-              planSubLine(
+              { style: MOBILE_SUB_STYLE },
+              mobileSubLine(
                 statusLabel(row.plan.core.status),
                 scheduledRecurrenceLabel(row.plan.core.recurrence_type, row.plan.core.recurrence_interval),
                 row.plan.core.start_date,
@@ -271,8 +267,8 @@ const columns = computed<DataTableColumns<InstallmentRow>>(() => {
             ),
             h(
               'span',
-              { style: PLAN_MOBILE_SUB_STYLE },
-              planSubLine(
+              { style: MOBILE_SUB_STYLE },
+              mobileSubLine(
                 merchantName(row),
                 reference.categoryPath(row.plan.core.category_id),
                 accountName(row),
@@ -284,11 +280,11 @@ const columns = computed<DataTableColumns<InstallmentRow>>(() => {
         title: t('scheduled.column.totalAmount'),
         key: 'total',
         render: (row) =>
-          h('div', { style: PLAN_MOBILE_CELL_STYLE }, [
+          h('div', { style: MOBILE_CELL_STYLE }, [
             h('span', null, formatAmount(row.plan.total_amount_cents ?? 0, reference.getCurrency(row.plan.core.currency_code))),
             h(
               'div',
-              { style: PLAN_MOBILE_SUB_STYLE, 'data-testid': `inst-progress-${row.plan.core.id}` },
+              { style: MOBILE_SUB_STYLE, 'data-testid': `inst-progress-${row.plan.core.id}` },
               [
                 row.detailFailed
                   ? null

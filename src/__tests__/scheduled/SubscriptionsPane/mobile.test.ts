@@ -92,6 +92,31 @@ describe('SubscriptionsPane 移动档（issue #848 / ADR-0088 决策 11 票⑧�
     ).toBe(true)
   })
 
+  it('移动档暂停/恢复两侧可达：paused 行恢复按钮 ≥48px 且走同一状态命令', async () => {
+    setFakeMedia({ width: 600 })
+    const paused = makeSubscriptionPlan({ id: 'p1', note: '已暂停订阅', status: 'paused' })
+    setMockPlans([paused])
+    mockDetails.set('p1', makeDetail(paused, []))
+    const wrapper = await mountView()
+    // paused 行默认不在「进行中」过滤内，切过滤后恢复按钮可见
+    await wrapper.find('[data-testid="filter-paused"]').trigger('click')
+    await flushPromises()
+    const resume = wrapper.find('[data-testid="op-resume-p1"]')
+    expect(resume.exists()).toBe(true)
+    const el = resume.element as HTMLElement
+    expect(el.style.minWidth).toBe('48px')
+    expect(el.style.minHeight).toBe('48px')
+    await resume.trigger('click')
+    await flushPromises()
+    expect(
+      mockInvoke.mock.calls.some(
+        ([cmd, args]) =>
+          cmd === 'update_scheduled_transaction_status' &&
+          (args as { input: { new_status: string } }).input.new_status === 'active',
+      ),
+    ).toBe(true)
+  })
+
   it('移动档状态过滤不回归：过滤芯片照常切捧行集', async () => {
     setFakeMedia({ width: 600 })
     wireActivePlan()

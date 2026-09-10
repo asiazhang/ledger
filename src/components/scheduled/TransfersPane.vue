@@ -34,11 +34,7 @@ import { useScheduledPlanForm } from '@/composables/useScheduledPlanForm'
 import AppModal from '@/components/AppModal.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
-import {
-  PLAN_MOBILE_CELL_STYLE,
-  PLAN_MOBILE_SUB_STYLE,
-  planSubLine,
-} from '@/components/scheduled/plan-mobile'
+import { MOBILE_CELL_STYLE, MOBILE_SUB_STYLE, mobileSubLine } from '@/components/mobile-cells'
 import { usePlanFocusLanding } from '@/composables/usePlanFocusLanding'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 
@@ -233,12 +229,12 @@ const columns = computed<DataTableColumns<TransferRow>>(() => {
         title: t('scheduled.column.note'),
         key: 'note',
         render: (row) =>
-          h('div', { style: PLAN_MOBILE_CELL_STYLE }, [
+          h('div', { style: MOBILE_CELL_STYLE }, [
             h('span', null, row.plan.core.note ?? '—'),
             h(
               'span',
-              { style: PLAN_MOBILE_SUB_STYLE },
-              planSubLine(
+              { style: MOBILE_SUB_STYLE },
+              mobileSubLine(
                 statusLabel(row.plan.core.status),
                 scheduledRecurrenceLabel(row.plan.core.recurrence_type, row.plan.core.recurrence_interval),
                 row.plan.core.start_date,
@@ -246,8 +242,8 @@ const columns = computed<DataTableColumns<TransferRow>>(() => {
             ),
             h(
               'span',
-              { style: PLAN_MOBILE_SUB_STYLE },
-              planSubLine(fromAccountName(row), '→', toAccountName(row)),
+              { style: MOBILE_SUB_STYLE },
+              mobileSubLine(fromAccountName(row), '→', toAccountName(row)),
             ),
           ]),
       },
@@ -255,11 +251,11 @@ const columns = computed<DataTableColumns<TransferRow>>(() => {
         title: t('scheduled.column.amount'),
         key: 'amount',
         render: (row) =>
-          h('div', { style: PLAN_MOBILE_CELL_STYLE }, [
+          h('div', { style: MOBILE_CELL_STYLE }, [
             h('span', null, amountText(row)),
             h(
               'span',
-              { style: PLAN_MOBILE_SUB_STYLE, 'data-testid': `next-transfer-${row.plan.core.id}` },
+              { style: MOBILE_SUB_STYLE, 'data-testid': `next-transfer-${row.plan.core.id}` },
               nextTransferText(row),
             ),
           ]),

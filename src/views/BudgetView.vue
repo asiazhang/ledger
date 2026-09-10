@@ -22,6 +22,11 @@ import { useWindowTier } from '@/composables/useWindowTier'
 import AppModal from '@/components/AppModal.vue'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
 import PinyinSelect from '@/components/PinyinSelect.vue'
+import {
+  MOBILE_CELL_STYLE,
+  MOBILE_SUB_STYLE,
+  MOBILE_TOUCH_TARGET_STYLE,
+} from '@/components/mobile-cells'
 import { useReferenceStore } from '@/stores/reference'
 import { errorMessage } from '@/utils/errors'
 import { yuanToCents } from '@/utils/money'
@@ -41,16 +46,9 @@ const loading = ref(false)
 const windowTier = useWindowTier()
 const isMobileTier = computed(() => windowTier.value === 'mobile')
 
-/** 移动档单元格布局：纵排堆叠（内联样式收口在列配置单点，同 accounts/
- * transaction-columns 渲染函数先例）。 */
-const MOBILE_CELL_STYLE = 'display: flex; flex-direction: column; gap: 2px; min-width: 0;'
-/** 移动档首行：分类名 + 状态标签同行（状态不随副行弱化）。 */
+// 移动档单元格共用样式（纵排堆叠/弱化副行/触控目标）全仓单点：@/components/mobile-cells；
+// 首行「分类名 + 状态标签同行」为预算列特有布局，留守本地。
 const MOBILE_HEAD_STYLE = 'display: flex; align-items: center; gap: 6px; min-width: 0;'
-/** 移动档弱化副行。 */
-const MOBILE_SUB_STYLE = 'font-size: 12px; opacity: 0.65;'
-/** 移动档操作按钮：显式 ≥48px 触控目标（相邻热区互不侵入，不用伪元素外扩；
- * 账户行「⋯」同款取舍）。桌面档不挂，尺寸零变化。 */
-const MOBILE_ACTION_STYLE = { minWidth: '48px', minHeight: '48px' }
 
 const categoryId = ref<string | null>(null)
 const amount = ref<number | null>(null)
@@ -240,7 +238,7 @@ const columns = computed<DataTableColumns<BudgetProgress>>(() => {
                 size: 'tiny',
                 type: 'primary',
                 quaternary: true,
-                style: MOBILE_ACTION_STYLE,
+                style: MOBILE_TOUCH_TARGET_STYLE,
                 onClick: () => openEdit(row),
               },
               () => t('budget.actions.edit'),
@@ -253,7 +251,7 @@ const columns = computed<DataTableColumns<BudgetProgress>>(() => {
                 trigger: () =>
                   h(
                     NButton,
-                    { size: 'tiny', type: 'error', quaternary: true, style: MOBILE_ACTION_STYLE },
+                    { size: 'tiny', type: 'error', quaternary: true, style: MOBILE_TOUCH_TARGET_STYLE },
                     () => t('budget.actions.delete'),
                   ),
               },

@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { NButton, NSpace } from 'naive-ui'
 import AppPopconfirm from '@/components/AppPopconfirm.vue'
+import { MOBILE_TOUCH_TARGET_STYLE } from '@/components/mobile-cells'
 import type { ScheduledPlanRowAction } from '@/composables/useScheduledPlanList'
 
 /**
@@ -29,10 +30,6 @@ const props = defineProps<{
 
 /** 仅渲染可用动作；全不可用时空占位「—」。 */
 const visibleActions = computed(() => props.actions.filter((a) => a.available))
-
-/** 移动档触控目标（ADR-0088 全局验收基线）：显式 min 尺寸（相邻堆叠按钮热区
- *  互不侵入，不用伪元素外扩；账户行「⋯」同款取舍），随文本自然加宽不溢出。 */
-const TOUCH_TARGET_STYLE = { minWidth: '48px', minHeight: '48px' }
 </script>
 
 <template>
@@ -45,7 +42,7 @@ const TOUCH_TARGET_STYLE = { minWidth: '48px', minHeight: '48px' }
             :size="mobile ? 'small' : 'tiny'"
             type="error"
             quaternary
-            :style="mobile ? TOUCH_TARGET_STYLE : undefined"
+            :style="mobile ? MOBILE_TOUCH_TARGET_STYLE : undefined"
             :data-testid="`op-${a.key}-${rowId}`"
           >
             {{ a.label }}
@@ -55,7 +52,7 @@ const TOUCH_TARGET_STYLE = { minWidth: '48px', minHeight: '48px' }
       <NButton
         v-else
         :size="mobile ? 'small' : 'tiny'"
-        :style="mobile ? TOUCH_TARGET_STYLE : undefined"
+        :style="mobile ? MOBILE_TOUCH_TARGET_STYLE : undefined"
         :data-testid="`op-${a.key}-${rowId}`"
         @click="a.run"
       >

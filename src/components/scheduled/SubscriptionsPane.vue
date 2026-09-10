@@ -39,11 +39,7 @@ import PinyinSelect from '@/components/PinyinSelect.vue'
 import PlanRowActions from '@/components/scheduled/PlanRowActions.vue'
 import SubscriptionSpendPanel from '@/components/scheduled/SubscriptionSpendPanel.vue'
 import PlanDetailModal from '@/components/scheduled/PlanDetailModal.vue'
-import {
-  PLAN_MOBILE_CELL_STYLE,
-  PLAN_MOBILE_SUB_STYLE,
-  planSubLine,
-} from '@/components/scheduled/plan-mobile'
+import { MOBILE_CELL_STYLE, MOBILE_SUB_STYLE, mobileSubLine } from '@/components/mobile-cells'
 import { usePlanFocusLanding } from '@/composables/usePlanFocusLanding'
 import { scheduledStatusLabel } from '@/utils/scheduled'
 
@@ -328,12 +324,12 @@ const columns = computed<DataTableColumns<SubscriptionRow>>(() => {
         title: t('scheduled.column.note'),
         key: 'note',
         render: (row) =>
-          h('div', { style: PLAN_MOBILE_CELL_STYLE }, [
+          h('div', { style: MOBILE_CELL_STYLE }, [
             h('span', null, row.plan.core.note ?? '—'),
             h(
               'span',
-              { style: PLAN_MOBILE_SUB_STYLE },
-              planSubLine(
+              { style: MOBILE_SUB_STYLE },
+              mobileSubLine(
                 statusLabel(row.plan.core.status),
                 scheduledRecurrenceLabel(row.plan.core.recurrence_type, row.plan.core.recurrence_interval),
                 row.plan.core.start_date,
@@ -341,8 +337,8 @@ const columns = computed<DataTableColumns<SubscriptionRow>>(() => {
             ),
             h(
               'span',
-              { style: PLAN_MOBILE_SUB_STYLE },
-              planSubLine(
+              { style: MOBILE_SUB_STYLE },
+              mobileSubLine(
                 merchantName(row),
                 reference.categoryPath(row.plan.core.category_id),
                 accountName(row),
@@ -354,11 +350,11 @@ const columns = computed<DataTableColumns<SubscriptionRow>>(() => {
         title: t('scheduled.column.amount'),
         key: 'amount',
         render: (row) =>
-          h('div', { style: PLAN_MOBILE_CELL_STYLE }, [
+          h('div', { style: MOBILE_CELL_STYLE }, [
             h('span', null, formatAmount(row.plan.core.amount_cents, reference.getCurrency(row.plan.core.currency_code))),
             h(
               'span',
-              { style: PLAN_MOBILE_SUB_STYLE, 'data-testid': `next-charge-${row.plan.core.id}` },
+              { style: MOBILE_SUB_STYLE, 'data-testid': `next-charge-${row.plan.core.id}` },
               nextChargeText(row),
             ),
           ]),
