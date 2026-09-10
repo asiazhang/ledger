@@ -8,7 +8,7 @@
 //! 通道用真实 WebDAV 桩（进程内 axum，域单测与命令集成测试同体消费，ADR-0084
 //! 决策 1），故「配置通道 → 触发同步 → 数据落库」是真实 HTTP 语义而非内存替身。
 //!
-//! 桩按场景现起（`world.sync.stub`，Drop 清理）：每个场景一个独立通道世界，
+//! 桩按场景现起（`world.boot.sync_stub`，Drop 清理）：每个场景一个独立通道世界，
 //! 场景之间零串扰（域单测里桩是场景内局部量，同款纪律）。对端投递用「另起一个
 //! 设备库发布」与「直接写一段坏 op 的段文件」两条真实通道路径，不绕过产品代码。
 //!
@@ -64,8 +64,8 @@ fn channel_of(world: &LedgerWorld) -> SyncChannel {
 /// 桩的同步根 URL（场景应先配置通道）。
 fn stub_url(world: &LedgerWorld) -> String {
     world
-        .sync
-        .stub
+        .boot
+        .sync_stub
         .as_ref()
         .expect("场景应先起通道桩")
         .base_url
@@ -105,8 +105,8 @@ fn configure_channel_impl(world: &mut LedgerWorld, space: String) {
     // 场景前置：清会话密钥记忆（进程级单例跨场景共享，明文库场景不应残留密文形态）。
     SessionEnvelope::forget();
     // 通道桩按场景现起（同场景内重复配置复用同一桩——语义等价于「改配置」）。
-    if world.sync.stub.is_none() {
-        world.sync.stub = Some(spawn_webdav_stub(None));
+    if world.boot.sync_stub.is_none() {
+        world.boot.sync_stub = Some(spawn_webdav_stub(None));
     }
     let config = SyncChannelConfig {
         base_url: stub_url(world),
@@ -262,7 +262,7 @@ fn point_to_unreachable_channel(world: &mut LedgerWorld) {
 #[when(expr = "打开应用即同步一轮")]
 fn auto_sync_once(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
-    world.sync.last_auto_round = Some(blocking(|| {
+    world.boot.sync_last_auto_round = Some(blocking(|| {
         run_auto_round(&conn, &SessionEnvelope::Plaintext)
     }));
 }
@@ -273,7 +273,7 @@ fn manual_sync_once(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
     match blocking(|| run_round_once(&conn, &channel, &EnvelopeMode::Plaintext)) {
         Ok(report) => {
-            world.sync.last_report = Some(report);
+            world.boot.sync_last_report = Some(report);
             world.last_app_error = None;
         }
         Err(e) => world.last_app_error = Some(e),
@@ -285,9 +285,9 @@ fn auto_sync_encrypted_session(world: &mut LedgerWorld) {
     // 密文库会话形态：记入会话口令（自动轮次据此封包，不读钥匙串）。
     SessionEnvelope::remember(SessionEnvelope::Encrypted("master-pass".into()));
     let session = SessionEnvelope::current();
-    world.sync.session_encrypted = matches!(session, SessionEnvelope::Encrypted(_));
+    world.boot.sync_session_encrypted = matches!(session, SessionEnvelope::Encrypted(_));
     let conn = world_conn!(world);
-    world.sync.last_auto_round = Some(blocking(|| run_auto_round(&conn, &session)));
+    world.boot.sync_last_auto_round = Some(blocking(|| run_auto_round(&conn, &session)));
     SessionEnvelope::forget();
 }
 
@@ -318,8 +318,8 @@ fn channel_has_book_dir(world: &mut LedgerWorld) {
 #[then(expr = "本轮同步应上传 {int} 条操作")]
 fn uploaded_ops_is(world: &mut LedgerWorld, expected: usize) {
     let round = world
-        .sync
-        .last_auto_round
+        .boot
+        .sync_last_auto_round
         .as_ref()
         .expect("应先执行自动轮次")
         .as_ref()
@@ -330,7 +330,11 @@ fn uploaded_ops_is(world: &mut LedgerWorld, expected: usize) {
 
 #[then(expr = "本端应已应用对端操作")]
 fn applied_foreign_ops(world: &mut LedgerWorld) {
-    let report = world.sync.last_report.as_ref().expect("应先执行手动轮次");
+    let report = world
+        .boot
+        .sync_last_report
+        .as_ref()
+        .expect("应先执行手动轮次");
     assert!(
         report.applied >= 1,
         "本端应至少应用一条对端 op，实际报告 {report:?}"
@@ -366,8 +370,8 @@ fn status_has_last_sync_at(world: &mut LedgerWorld) {
 #[then(expr = "同步轮次应零动作")]
 fn auto_sync_was_noop(world: &mut LedgerWorld) {
     let round = world
-        .sync
-        .last_auto_round
+        .boot
+        .sync_last_auto_round
         .as_ref()
         .expect("应先执行同步轮次");
     assert!(
@@ -399,7 +403,7 @@ fn parked_notice_has_code(world: &mut LedgerWorld) {
 #[then(expr = "会话信封形态应为密文")]
 fn session_is_encrypted(world: &mut LedgerWorld) {
     assert!(
-        world.sync.session_encrypted,
+        world.boot.sync_session_encrypted,
         "会话口令在场即密文形态（自动轮次不读钥匙串）"
     );
 }
@@ -407,8 +411,8 @@ fn session_is_encrypted(world: &mut LedgerWorld) {
 #[then(expr = "同步轮次应封包上传")]
 fn auto_round_sealed(world: &mut LedgerWorld) {
     let round = world
-        .sync
-        .last_auto_round
+        .boot
+        .sync_last_auto_round
         .as_ref()
         .expect("应先执行同步轮次")
         .as_ref()
