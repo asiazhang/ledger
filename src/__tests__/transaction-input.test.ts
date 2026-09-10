@@ -249,10 +249,12 @@ describe('buildTradeInput', () => {
     })
   })
 
-  it('出资账户（issue #936 / ADR-0096）：表单选择落 funding_account_id，缺省 null（编辑全字段替换不丢字段）', () => {
+  it('出资账户（issue #936 / #938 / ADR-0096）：buy/sell 表单选择落 funding_account_id，缺省 null（编辑全字段替换不丢字段）', () => {
     const input = buildTradeInput({ ...buyState, fundingAccountId: 'bank-1' })
     expect(input.funding_account_id).toBe('bank-1')
-    // 不填 = 维持余额买入语义（结算账户 = 投资账户），wire 显式 null 而非缺省缺字段
+    // sell 同款：回卡卖出（记 + 于出资账户）与买入共用同一装配路径，wire 形状一致
+    expect(buildTradeInput({ ...buyState, kind: 'sell', fundingAccountId: 'bank-1' }).funding_account_id).toBe('bank-1')
+    // 不填 = 维持余额买卖语义（结算账户 = 投资账户），wire 显式 null 而非缺省缺字段
     expect(buildTradeInput(buyState).funding_account_id).toBeNull()
   })
 

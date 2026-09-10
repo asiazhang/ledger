@@ -461,7 +461,7 @@ describe('InvestmentForm.vue 编辑模式（issue #180）', () => {
   })
 })
 
-describe('出资账户表单行（issue #936 / ADR-0096，买入侧先行）', () => {
+describe('出资账户表单行（issue #936 / #938 / ADR-0096，buy/sell 对称）', () => {
   /** 候选全集：投资账户 + 现金类银行卡（出资候选）；
    * 编辑回填用交易与买卖明细复用本文件既有形状（funding_account_id 为差异点） */
   const accountsWithFunding = [
@@ -514,11 +514,11 @@ describe('出资账户表单行（issue #936 / ADR-0096，买入侧先行）', (
     await useReferenceStore().refresh()
   }
 
-  it('买入渲染出资账户下拉（默认空、可选清空）；卖出不渲染（#938 对称票落地）', () => {
+  it('买入与卖出都渲染出资账户下拉（默认空、可选清空，#938 卖出对称落地）', () => {
     const buy = mount(InvestmentForm, { props: { kind: 'buy', submitLabel: '记买入' } })
     expect(buy.text()).toContain('出资账户')
     const sell = mount(InvestmentForm, { props: { kind: 'sell', submitLabel: '记卖出' } })
-    expect(sell.text()).not.toContain('出资账户')
+    expect(sell.text()).toContain('出资账户')
   })
 
   it('编辑回填：带出资账户的买入打开即显示当前值（AC「字段回填显示」）', async () => {
@@ -536,5 +536,18 @@ describe('出资账户表单行（issue #936 / ADR-0096，买入侧先行）', (
       },
     })
     expect(fundingSelect(untouched).props('value')).toBeNull()
+  })
+
+  it('卖出编辑回填与买入同款：带出资账户打开即显示当前值（#938 对称）', async () => {
+    await mountWithFundingReference()
+    const wrapper = mount(InvestmentForm, {
+      props: {
+        kind: 'sell',
+        submitLabel: '记卖出',
+        editing: { ...editingTx, kind: 'sell', id: 'txn-sell-1' },
+        trade: editingTrade,
+      },
+    })
+    expect(fundingSelect(wrapper).props('value')).toBe('acc-bank')
   })
 })
